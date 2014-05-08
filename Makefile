@@ -11,7 +11,7 @@ OS		= Darwin
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
-CFLAGS	= -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -DDEBUG_FS
+CFLAGS	= -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -I./ -DDEBUG_FS
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
@@ -38,47 +38,48 @@ OBJS	= boot.o \
 
 all: kernel
 
+
 kernel: $(OBJS)
 	$(LD) $(LDFLAGS) -e 0x100010 -o $(TARGET) $(OBJS)
 
-boot.o: kernel.asm
-	$(ASM) $(ASFLAGS) kernel.asm -o boot.o
+boot.o: boot/kernel.asm
+	$(ASM) $(ASFLAGS) boot/kernel.asm -o boot.o
 
-int.o: int.S
-	$(CC) $(CFLAGS) int.S -o int.o
+int.o: int/int.S
+	$(CC) $(CFLAGS) int/int.S -o int.o
 
-interrupt.o: int.c int.h
-	$(CC) $(CFLAGS) int.c -o interrupt.o 
+interrupt.o: int/int.c int/int.h
+	$(CC) $(CFLAGS) int/int.c -o interrupt.o 
 
-kernel.o: kernel.c
-	$(CC) $(CFLAGS) kernel.c -o kernel.o
+kernel.o: boot/kernel.c
+	$(CC) $(CFLAGS) boot/kernel.c -o kernel.o
 
-tty.o: tty.c tty.h
-	$(CC) $(CFLAGS) tty.c -o tty.o
+tty.o: drivers/tty.c drivers/tty.h
+	$(CC) $(CFLAGS) drivers/tty.c -o tty.o
 
-keyboard.o: keyboard.c keyboard.h
-	$(CC) $(CFLAGS) keyboard.c -o keyboard.o
+keyboard.o: drivers/keyboard.c drivers/keyboard.h
+	$(CC) $(CFLAGS) drivers/keyboard.c -o keyboard.o
 
-klib.o: klib.c klib.h tty.h
-	$(CC) $(CFLAGS) klib.c -o klib.o
+klib.o: lib/klib.c lib/klib.h drivers/tty.h
+	$(CC) $(CFLAGS) lib/klib.c -o klib.o
 
-list.o: list.c list.h
-	$(CC) $(CFLAGS) list.c -o list.o
+list.o: lib/list.c lib/list.h
+	$(CC) $(CFLAGS) lib/list.c -o list.o
 
-dsr.o: dsr.c dsr.h
-	$(CC) $(CFLAGS) dsr.c -o dsr.o
+dsr.o: int/dsr.c int/dsr.h
+	$(CC) $(CFLAGS) int/dsr.c -o dsr.o
 
-mm.o: mm.c mm.h multiboot.h
-	$(CC) $(CFLAGS) -o mm.o mm.c
+mm.o: mm/mm.c mm/mm.h boot/multiboot.h
+	$(CC) $(CFLAGS) -o mm.o mm/mm.c
 
-timer.o: timer.c timer.h
-	$(CC) $(CFLAGS) -o timer.o timer.c
+timer.o: int/timer.c int/timer.h
+	$(CC) $(CFLAGS) -o timer.o int/timer.c
 
-ps.o: ps.c ps.h
-	$(CC) $(CFLAGS) -o ps.o ps.c
+ps.o: ps/ps.c ps/ps.h
+	$(CC) $(CFLAGS) -o ps.o ps/ps.c
 
-lock.o: lock.c lock.h
-	$(CC) $(CFLAGS) -o lock.o lock.c
+lock.o: ps/lock.c ps/lock.h
+	$(CC) $(CFLAGS) -o lock.o ps/lock.c
 
 
 vfs.o: fs/vfs.c fs/vfs.h
@@ -118,4 +119,3 @@ clean:
 	find . -name "*.o" -exec rm -f {} \;
 	-rm $(TARGET)
 	-rm user/run
-

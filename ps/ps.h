@@ -1,8 +1,8 @@
 #ifndef _PS_H_
 #define _PS_H_
 
-#include "list.h"
-#include "lock.h"
+#include <lib/list.h>
+#include <ps/lock.h>
 /*
  * ----------------------------
  * offset	|31-16		15-0  |

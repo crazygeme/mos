@@ -1,6 +1,6 @@
 #ifndef _VFS_H_
 #define _VFS_H_
-#include "../list.h"
+#include <lib/list.h>
 
 #define S_IFMT  00170000
 #define S_IFSOCK 0140000

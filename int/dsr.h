@@ -1,7 +1,7 @@
 #ifndef _DSR_H_
 #define _DSR_H_
 
-#include "list.h"
+#include <lib/list.h>
 
 typedef void (*dsr_callback)(void* param);
 

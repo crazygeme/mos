@@ -1,7 +1,7 @@
-#include "klib.h"
-#include "tty.h"
-#include "timer.h"
-#include "lock.h"
+#include <lib/klib.h>
+#include <drivers/tty.h>
+#include <int/timer.h>
+#include <ps/lock.h>
 
 static int cursor = 0;
 #define CUR_ROW (cursor / TTY_MAX_COL)

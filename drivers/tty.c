@@ -3,7 +3,7 @@
  * Copyright (C) 2014  Ender Zheng
  * License: GPL version 2 or higher http://www.gnu.org/licenses/gpl.html
  */
-#include "tty.h"
+#include <drivers/tty.h>
 static void tty_copy_row(int src, int dst);
 static void tty_clear_row(int row);
 static char *vidptr = (char*)0xC00b8000;

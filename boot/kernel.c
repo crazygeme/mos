@@ -1,16 +1,15 @@
-
-#include "klib.h"
-#include "int.h"
-#include "keyboard.h"
-#include "mm.h"
-#include "multiboot.h"
-#include "dsr.h"
-#include "timer.h"
-#include "ps.h"
-#include "drivers/block.h"
-#include "drivers/hdd.h"
-#include "fs/vfs.h"
-#include "fs/mount.h"
+#include <lib/klib.h>
+#include <int/int.h>
+#include <drivers/keyboard.h>
+#include <mm/mm.h>
+#include <boot/multiboot.h>
+#include <int/dsr.h>
+#include <int/timer.h>
+#include <ps/ps.h>
+#include <drivers/block.h>
+#include <drivers/hdd.h>
+#include <fs/vfs.h>
+#include <fs/mount.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);

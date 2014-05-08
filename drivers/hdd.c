@@ -1,7 +1,7 @@
-#include "hdd.h"
-#include "../lock.h"
-#include "../int.h"
-#include "block.h"
+#include <drivers/hdd.h>
+#include <ps/lock.h>
+#include <int/int.h>
+#include <drivers/block.h>
 
 
 /* The code in this file is an interface to an ATA (IDE)

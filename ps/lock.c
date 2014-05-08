@@ -1,6 +1,6 @@
-#include "lock.h"
-#include "ps.h"
-#include "klib.h"
+#include <ps/lock.h>
+#include <ps/ps.h>
+#include <lib/klib.h>
 
 static void waitable_get(void* waitable);
 

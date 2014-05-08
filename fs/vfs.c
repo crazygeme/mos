@@ -1,6 +1,6 @@
-#include "vfs.h"
-#include "../klib.h"
-#include "../lock.h"
+#include <fs/vfs.h>
+#include <lib/klib.h>
+#include <ps/lock.h>
 
 static LIST_ENTRY vfs_list;
 static semaphore vfs_lock;

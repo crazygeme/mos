@@ -1,8 +1,8 @@
-#include "keyboard.h"
-#include "klib.h"
-#include "int.h"
-#include "keymap.h"
-#include "dsr.h"
+#include <drivers/keyboard.h>
+#include <lib/klib.h>
+#include <int/int.h>
+#include <drivers/keymap.h>
+#include <int/dsr.h>
 
 static int shift_on = 0;
 static int ctrl_on = 0;

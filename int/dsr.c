@@ -1,7 +1,7 @@
-#include "dsr.h"
-#include "klib.h"
-#include "int.h"
-#include "lock.h"
+#include <int/dsr.h>
+#include <lib/klib.h>
+#include <int/int.h>
+#include <ps/lock.h>
 
 #define SOFTIRQ 0x1
 #define TRIGGER_SOFTIRQ() \

@@ -1,9 +1,9 @@
-#include "ps.h"
-#include "lock.h"
-#include "mm.h"
-#include "klib.h"
-#include "config.h"
-#include "int.h"
+#include <ps/ps.h>
+#include <ps/lock.h>
+#include <mm/mm.h>
+#include <lib/klib.h>
+#include <config.h>
+#include <int/int.h>
 
 typedef struct _ps_control
 {

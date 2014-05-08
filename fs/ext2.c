@@ -19,9 +19,12 @@ static void ext2_add_dir_entry(DIR dir, INODE entry);
 static void ext2_del_dir_entry(DIR dir, INODE entry);
 static void ext2_close_dir(DIR dir);
 static char* ext2_get_name(INODE node);
-static char* ext2_get_size(INODE node);
-static unsigned int ext2_get_blockno(void* type, unsigned int* blocks, unsigned int index);
+static unsigned int ext2_get_size(INODE node);
+static int ext2_copy_stat(INODE node, struct stat* s);
 
+
+// internal
+static unsigned int ext2_get_blockno(void* type, unsigned int* blocks, unsigned int index);
 static int ext2_read_block(void* type, unsigned int bno, void* buf);
 static int ext2_read_inode(void* type, unsigned int group, unsigned int ino, struct ext2_inode* buf);
 
@@ -67,6 +70,7 @@ static struct inode_opreations ext2_inode_operations = {
     ext2_close_dir,
     ext2_get_name,
 	ext2_get_size,
+    ext2_copy_stat
 };
 
 
@@ -164,29 +168,30 @@ void ext2_attach(block* b)
         INODE entry = 0;
         printk("-------------------------\n");
 
-        dir =  vfs_open_dir(type, root);
+        dir =  vfs_open_dir(root);
+        vfs_free_inode(root);
+
         if (!dir) {
-            vfs_free_inode(type, root);
             break;
         }
-        entry = vfs_read_dir(type,dir);
+
+        entry = vfs_read_dir(dir);
         while (entry) {
             printk("%s, isdir %d, size %d\n",
-						vfs_get_name(type, entry),
-						S_ISDIR(vfs_get_mode(type,entry)), 
-						vfs_get_size(type, entry));
-			if (S_ISREG(vfs_get_mode(type, entry))){
+						vfs_get_name(entry),
+						S_ISDIR(vfs_get_mode(entry)), 
+						vfs_get_size(entry));
+			if (S_ISREG(vfs_get_mode(entry))){
 				char buf[32];
 				memset(buf, 0, 32);
-				unsigned readed = vfs_read_file(type, entry, 0, buf, 32); 
+				unsigned readed = vfs_read_file(entry, 0, buf, 32); 
 				printk("read size %d, content\n++++++\n%s\n++++++\n", readed, buf);
 			}
 			
-			vfs_free_inode(type, entry);
-            entry = vfs_read_dir(type,dir);
+			vfs_free_inode(entry);
+            entry = vfs_read_dir(dir);
         }
-        vfs_close_dir(type,dir);
-        vfs_free_inode(type, root);
+        vfs_close_dir(dir);
 		printk("-------------------------\n");
 	} while (0);
 #endif
@@ -282,6 +287,7 @@ static INODE ext2_get_root(struct filesys_type* type)
     struct ext2_inode_info* info = kmalloc(sizeof(*info));
 
     info->inode = node;
+    info->inode_no = EXT2_ROOT_INO;
     ext2_read_inode(type, 0, EXT2_ROOT_INO, node);
     strcpy(info->name, "");
     info->type = type;
@@ -391,6 +397,7 @@ static INODE ext2_read_dir(DIR d)
     // return current and move to next
     ret = kmalloc(sizeof(*ret));
     ret->inode = kmalloc(sizeof(*ret->inode));
+    ret->inode_no = entry->inode;
     ext2_read_inode(dir->type, 0, entry->inode, ret->inode);
     ret->type = dir->type;
 	memcpy(ret->name, entry->name, entry->name_len);
@@ -445,10 +452,32 @@ static char* ext2_get_name(INODE node)
     return info->name;
 }
 
-static char* ext2_get_size(INODE node)
+static unsigned int ext2_get_size(INODE node)
 {
     struct ext2_inode_info* info = (struct ext2_inode_info*)node;
     return info->inode->i_size;
+}
+
+static int ext2_copy_stat(INODE node, struct stat* s)
+{
+    struct ext2_inode_info* info = (struct ext2_inode_info*)node;
+    struct ext2_inode* inode = (struct ext2_inode*)info->inode;
+    struct ext2_super_block* sb = (struct ext2_super_block*)info->type->sb;
+
+    s->st_atime = inode->i_atime;
+    s->st_blksize = EXT2_BLOCK_SIZE(sb);
+    s->st_blocks = inode->i_blocks;
+    s->st_ctime = inode->i_ctime;
+    s->st_dev = (unsigned)info->type;
+    s->st_gid = inode->i_gid;
+    s->st_ino = info->inode_no;
+    s->st_mode = inode->i_mode;
+    s->st_mtime = inode->i_mtime;
+    s->st_nlink = inode->i_links_count;
+    s->st_size = inode->i_size;
+    s->st_uid = inode->i_uid;
+
+    return 1;
 }
 
 

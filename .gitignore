@@ -3,6 +3,8 @@
 *.ko
 *.obj
 *.elf
+kernel
+user/run
 
 # Libraries
 *.lib

@@ -1,7 +1,7 @@
-#include "timer.h"
-#include "int.h"
-#include "ps.h"
-#include "dsr.h"
+#include <int/timer.h>
+#include <int/int.h>
+#include <ps/ps.h>
+#include <int/dsr.h>
 
 static unsigned long tickets;
 static unsigned long seconds;

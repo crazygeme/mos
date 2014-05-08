@@ -1,8 +1,8 @@
-#include "mm.h"
-#include "klib.h"
-#include "multiboot.h"
-#include "list.h"
-#include "lock.h"
+#include <mm/mm.h>
+#include <lib/klib.h>
+#include <boot/multiboot.h>
+#include <lib/list.h>
+#include <ps/lock.h>
 
 #define GDT_ADDRESS			0x1C0000
 #define PG0_ADDRESS			0x1C1000

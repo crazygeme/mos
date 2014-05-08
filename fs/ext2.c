@@ -1,7 +1,7 @@
-#include "ext2.h"
-#include "../drivers/block.h"
-#include "vfs.h"
-#include "../config.h"
+#include <fs/ext2.h>
+#include <drivers/block.h>
+#include <fs/vfs.h>
+#include <config.h>
 
 
 static INODE ext2_create_inode (struct filesys_type*);

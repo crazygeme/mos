@@ -1,4 +1,4 @@
-#include "list.h"
+#include <lib/list.h>
 
 void InitializeListHead(PLIST_ENTRY ListHead)
 {

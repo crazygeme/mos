@@ -1,6 +1,6 @@
-#include "block.h"
-#include "../lock.h"
-#include "../klib.h"
+#include <drivers/block.h>
+#include <ps/lock.h>
+#include <lib/klib.h>
 
 static struct _block_control
 {

@@ -1,7 +1,7 @@
-#include "mount.h"
-#include "vfs.h"
-#include "../list.h"
-#include "../lock.h"
+#include <fs/mount.h>
+#include <fs/vfs.h>
+#include <lib/list.h>
+#include <ps/lock.h>
 
 static LIST_ENTRY mnt_list;
 static semaphore mnt_lock;

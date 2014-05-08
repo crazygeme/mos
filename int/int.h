@@ -2,8 +2,8 @@
  #ifndef _INT_H_
  #define _INT_H_
 
-#include "config.h"
-#include "mm.h"
+#include <config.h>
+#include <mm/mm.h>
 
 #define  INT_M_CTL     0x20  
 #define  INT_M_CTLMASK 0x21  

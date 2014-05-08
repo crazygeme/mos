@@ -1,6 +1,6 @@
 #ifndef _KLIB_H_
 #define _KLIB_H_
-#include "mm.h"
+#include <mm/mm.h>
 
 void klib_init();
 

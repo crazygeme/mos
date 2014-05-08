@@ -1,5 +1,5 @@
-#include "int.h"
-#include "keyboard.h"
+#include <int/int.h>
+#include <drivers/keyboard.h>
 
 
 _START static void init_interrupt()

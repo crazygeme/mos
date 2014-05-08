@@ -1,6 +1,6 @@
 #ifndef _TTY_H_
 #define _TTY_H_
-#include "mm.h"
+#include <mm/mm.h>
 
 #define TTY_MAX_ROW 25
 #define TTY_MAX_COL 80

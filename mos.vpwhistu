@@ -1,0 +1,22 @@
+[Global]
+CurrentProject=mos.vpj
+[ActiveConfig]
+mos.vpj=Release
+[TreeExpansion2]
+scroll:0
+[State]
+SCREEN: 1440 900 98 84 1198 768 0 0 M 0 0 0 0 1003 571 0
+CWD: ../mos
+FILEHIST: 9
+../mkernel/fs/ext2.h
+../mkernel/list.h
+../mkernel/fs/mount.h
+../mkernel/kernel.c
+../mkernel/Makefile.mac
+../mkernel/fs/vfs.h
+../mkernel/fs/vfs.c
+../mkernel/fs/ext2.c
+../mkernel/fs/mount.c
+TBCLASS: 0 0
+[ProjectDates]
+mos.vpj=20140508164829000

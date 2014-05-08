@@ -25,8 +25,6 @@ void spinlock_uninit(spinlock_t lock)
 		}
 }
 
-// FIXME
-// spin lock implement has some problem
 
 void spinlock_lock(spinlock_t lock)
 {

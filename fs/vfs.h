@@ -37,11 +37,29 @@
 #define S_IWOTH 00002
 #define S_IXOTH 00001
 
-typedef void* INODE;
-typedef void* DIR;
+typedef struct _INODE* INODE;
+typedef struct _INODE* DIR;
 typedef void* SUPORBLOCK;
 typedef void* DESC;
 struct filesys_type;
+
+struct stat  
+{  
+    unsigned       st_dev;     /* ID of device containing file*/  
+    INODE          st_ino;     /* inode number */  
+    unsigned       st_mode;    /* protection mode*/  
+    unsigned       st_nlink;   /* number of hard links */  
+    unsigned short st_uid;     /* user ID of owner -user id*/  
+    unsigned short st_gid;     /* group ID of owner - group id*/  
+    unsigned       st_rdev;    /* device ID (if special file)*/  
+    unsigned       st_size;    /* total size, in bytes*/  
+    unsigned       st_blksize; /* blocksize for filesystem I/O*/  
+    unsigned       st_blocks;  /* number of blocks allocated*/  
+    unsigned       st_atime;   /* time of last access*/  
+    unsigned       st_mtime;   /* time of last modification*/  
+    unsigned       st_ctime;   /* time of last status change */  
+  
+};  
 
 struct super_operations {
 	INODE (*create_inode) (struct filesys_type* type);
@@ -52,7 +70,6 @@ struct super_operations {
 	INODE (*get_root)(struct filesys_type*);
 };
 
-typedef void* DIR;
 struct inode_opreations{
 	unsigned (*get_mode)(INODE inode);
 	unsigned (*read_file)(INODE inode, unsigned int offset, void* buf, unsigned len);
@@ -64,6 +81,7 @@ struct inode_opreations{
 	void (*close_dir)(DIR dir);
 	char* (*get_name)(INODE node);
 	unsigned (*get_size)(INODE node);
+    int (*copy_stat)(INODE node, struct stat* stat);
 };
 
 struct filesys_type{
@@ -76,40 +94,52 @@ struct filesys_type{
 	LIST_ENTRY fs_list;
 };
 
+typedef struct _INODE
+{
+    struct filesys_type* type;
+
+}*INODE, *DIR;
+
+
+
+
+
 void vfs_init();
 struct filesys_type* register_vfs(void* sb, void* desc, void* dev, struct super_operations* ops, struct inode_opreations* inop, char* rootname); 
 void vfs_trying_to_mount_root();
 
 INODE vfs_create_inode (struct filesys_type* type);
 
-void vfs_destroy_inode (struct filesys_type* type, INODE);
+void vfs_destroy_inode (INODE);
 
-void vfs_write_super (struct filesys_type* type, SUPORBLOCK);
+void vfs_write_super (struct filesys_type* type);
 
-void vfs_write_desc (struct filesys_type* type, DESC);
+void vfs_write_desc (struct filesys_type* type);
 
-void vfs_free_inode(struct filesys_type* type,INODE);
+void vfs_free_inode(INODE);
 
 INODE vfs_get_root(struct filesys_type* type);
 
-unsigned vfs_get_mode(struct filesys_type* type, INODE inode);
+unsigned vfs_get_mode( INODE inode);
 
-unsigned vfs_read_file(struct filesys_type* type, INODE inode, unsigned int offset, void* buf, unsigned len);
+unsigned vfs_read_file(INODE inode, unsigned int offset, void* buf, unsigned len);
 
-unsigned vfs_write_file(struct filesys_type* type, INODE inode, unsigned int offset, void* buf, unsigned len);
+unsigned vfs_write_file(INODE inode, unsigned int offset, void* buf, unsigned len);
 
-DIR vfs_open_dir(struct filesys_type* type, INODE inode);
+DIR vfs_open_dir( INODE inode);
 
-INODE vfs_read_dir(struct filesys_type* type, DIR dir);
+INODE vfs_read_dir(DIR dir);
 
-void vfs_add_dir_entry(struct filesys_type* type, DIR dir, INODE entry);
+void vfs_add_dir_entry(DIR dir, INODE entry);
 
-void vfs_del_dir_entry(struct filesys_type* type, DIR dir, INODE entry);
+void vfs_del_dir_entry(DIR dir, INODE entry);
 
-void vfs_close_dir(struct filesys_type* type, DIR dir);
+void vfs_close_dir(DIR dir);
 
-char* vfs_get_name(struct filesys_type* type, INODE node);
+char* vfs_get_name(INODE node);
 
-unsigned vfs_get_size(struct filesys_type* type, INODE node);
+unsigned vfs_get_size(INODE node);
+
+int vfs_copy_stat(INODE node, struct stat* s);
 
 #endif

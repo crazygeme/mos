@@ -18,9 +18,6 @@ static spinlock psid_lock;
 static unsigned int ps_id;
 
 static void lock_ps() {
-    // FIXME
-    // lock must be wrong here..
-    // if we add lock we will get deadlock
     spinlock_lock(&ps_lock);
 }
 
@@ -131,6 +128,7 @@ typedef struct _stack_frame
 // now we ignore priority
 unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     unsigned int stack_buttom;
+    int i = 0;
     //unsigned int* val;
     task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
     stack_frame *frame;
@@ -159,7 +157,12 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
     task->is_switching = 0;
-    task->magic = 0xdeadbeef;
+    for (i = 0; i < MAX_FD; i++) {
+        task->fds[i] = 0;
+    }
+
+    sema_init(&task->fd_lock, 0, "fd_lock");
+    task->magic = 0xdeadbeef; 
 
     frame = (stack_frame *)(unsigned int)(stack_buttom - sizeof(*frame));
     frame->ebp = task->tss.ebp;

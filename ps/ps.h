@@ -3,6 +3,7 @@
 
 #include <lib/list.h>
 #include <ps/lock.h>
+#include <fs/vfs.h>
 /*
  * ----------------------------
  * offset	|31-16		15-0  |
@@ -138,6 +139,8 @@ typedef enum _ps_type
 
 typedef void (*process_fn)(void* param);
 
+#define MAX_FD 256
+
 typedef struct _task_struct
 {
 	tss_struct tss;
@@ -151,6 +154,8 @@ typedef struct _task_struct
     ps_type type;
     int remain_ticks;
     int is_switching;
+    INODE fds[MAX_FD];
+    semaphore fd_lock;
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;

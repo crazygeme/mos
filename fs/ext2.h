@@ -190,6 +190,7 @@ struct filesys_type;
 struct ext2_inode_info{
     struct filesys_type* type;
     struct ext2_inode* inode;
+    unsigned inode_no;
     char name[EXT2_NAME_LEN];
 };
 

@@ -1,0 +1,57 @@
+* KERNEL_CODE_SEGMENT = 0x8, 是模拟器启动/grub引导后的值
+* 引导后protect mode已经开了，但paging没开
+* 在cr3正确设置&&pageing enable之前，用的一直是物理地址，包括已经设置的interrupt地址等,所以到时候写mm模块的时候把这段起始空间保留下来直接map到物理地址，省的再设置一遍
+* 再保留一段直接映射的给kmalloc用
+* 进入kmalloc后地址从0x100000开始算。打算把前8M都直接映射成相同的物理地址
+* boot阶段的映射，用户态和内核态都需要把虚拟地址的前8M映射到物理地址的前8M，因为用户态是低地址，boot阶段都是低地址
+* 需要指定boot的代码到0x100000开始的地址，其他倒0xc0000000+0x100000开始的地址。在链接脚本里做手脚。
+	- 之所以大家都把boot的代码全写成一个汇编函数，是因为这样最省力（不用每个函数都指定boot section)
+	- __attribute__((section("section_name")))
+* 创建/加载 磁盘
+	1) 创建rootfs img
+	qemu-img create rootfs.img 5G 
+	mkfs.ext3 -b 2048 rootfs.img 
+	sudo mount -o loop rootfs.img /mnt
+	// copy your program in /bin of rootfs
+	sudo umount -l /mnt
+	// if loop device busy, try `fuser -m /mnt`
+	2) 加载rootfs
+	qemu -kernel kernel -hda rootfs.img
+
+
+---------	
+from grub:
+When the boot loader invokes the 32-bit operating system, the machine must have the following state:
+
+‘EAX’
+    Must contain the magic value ‘0x2BADB002’; the presence of this value indicates to the operating system that it was loaded by a Multiboot-compliant boot loader (e.g. as opposed to another type of boot loader that the operating system can also be loaded from).
+‘EBX’
+    Must contain the 32-bit physical address of the Multiboot information structure provided by the boot loader (see Boot information format).
+‘CS’
+    Must be a 32-bit read/execute code segment with an offset of ‘0’ and a limit of ‘0xFFFFFFFF’. The exact value is undefined.
+‘DS’
+‘ES’
+‘FS’
+‘GS’
+‘SS’
+    Must be a 32-bit read/write data segment with an offset of ‘0’ and a limit of ‘0xFFFFFFFF’. The exact values are all undefined.
+‘A20 gate’
+    Must be enabled.
+‘CR0’
+    Bit 31 (PG) must be cleared. Bit 0 (PE) must be set. Other bits are all undefined.
+‘EFLAGS’
+    Bit 17 (VM) must be cleared. Bit 9 (IF) must be cleared. Other bits are all undefined. 
+
+All other processor registers and flag bits are undefined. This includes, in particular:
+
+‘ESP’
+    The OS image must create its own stack as soon as it needs one.
+‘GDTR’
+    Even though the segment registers are set up as described above, the ‘GDTR’ may be invalid, so the OS image must not load any segment registers (even just reloading the same values!) until it sets up its own ‘GDT’.
+‘IDTR’
+    The OS image must leave interrupts disabled until it sets up its own IDT. 
+
+However, other machine state should be left by the boot loader in normal working order, i.e. as initialized by the bios (or DOS, if that's what the boot loader runs from). In other words, the operating system should be able to make bios calls and such after being loaded, as long as it does not overwrite the bios data structures before doing so. Also, the boot loader must leave the pic programmed with the normal bios/DOS values, even if it changed them during the switch to 32-bit mode. 
+
+
+

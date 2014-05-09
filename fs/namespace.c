@@ -95,11 +95,10 @@ int fs_stat(char* path, struct stat* s)
     return ret;
 }
 
-struct directory* fs_opendir(char* path)
+DIR fs_opendir(char* path)
 {
     INODE node = fs_lookup_inode(path);
     DIR ret;
-	struct directory* dir = kmalloc(sizeof(*dir));
     if (!node) {
         return 0;
     }
@@ -108,12 +107,11 @@ struct directory* fs_opendir(char* path)
 	}
 
     ret = vfs_open_dir(node);
-	dir->vfs_dir = ret;
-	dir->vfs_node = node;
-	return dir;
+	vfs_free_inode(node);
+	return ret;
 }
 
-int fs_readdir(struct directory* dir, char* name, unsigned* mode)
+int fs_readdir(DIR dir, char* name, unsigned* mode)
 {
     INODE node = 0;
 
@@ -121,13 +119,13 @@ int fs_readdir(struct directory* dir, char* name, unsigned* mode)
         return 0;
     }
 
-    if (!dir || !dir->vfs_dir) {
+    if (!dir) {
         *name = '\0';
         *mode = 0;
         return 0;
     }
 
-    node = vfs_read_dir(dir->vfs_dir);
+    node = vfs_read_dir(dir);
 	if (!node){
 		*name = '\0';
 		*mode = 0;
@@ -139,15 +137,13 @@ int fs_readdir(struct directory* dir, char* name, unsigned* mode)
 	return 1;
 }
 
-void fs_closedir(struct directory* dir)
+void fs_closedir(DIR dir)
 {
-    if (!dir || !dir->vfs_dir) {
+    if (!dir) {
         return;
     }
 
-    vfs_close_dir(dir->vfs_dir);
-	vfs_free_inode(dir->vfs_node);
-	kfree(dir);
+    vfs_close_dir(dir);
 }
 
 
@@ -286,7 +282,7 @@ static void list_dir(char* name, int depth)
 {
 	char file[32];
 	unsigned mode;
-	struct directory* dir = fs_opendir(name);
+	DIR dir = fs_opendir(name);
 	while (fs_readdir(dir, file, &mode)){
 		int i = 0;
 		if (!strcmp(file, ".") || !strcmp(file, "..") )
@@ -295,31 +291,30 @@ static void list_dir(char* name, int depth)
 		for (i = 0; i < depth; i++)
 		  printf("\t");
 		printf("%s\n", file);
-		/*if (S_ISDIR(mode)){
+		if (S_ISDIR(mode)){
 			char path[32];
 			strcpy(path, name);
 			if ( strcmp(name, "/") )
 				strcat(path, "/");
 			strcat(path, file);
 			list_dir(path, depth+1);
-		}*/
+		}
 	}
-	printk("1\n");
 	fs_closedir(dir);
-	printk("%s list done\n", name);
 }
 
 static void test_stat(char* path)
 {
 	struct stat s;
 	fs_stat(path, &s);
-	printk("%s: is dir %d\n", path, S_ISDIR(s.st_mode));
+	printk("%s: is dir %d, size %d\n", path, S_ISDIR(s.st_mode), s.st_size);
 }
 
 void test_ns()
 {
 	unsigned fd;
 	char text[32];
+	klogquota();
 	printk("test_ns\n");
 
 	fd = fs_open("/readme.txt");
@@ -332,5 +327,6 @@ void test_ns()
 	list_dir("/", 1);
 
 	test_stat("/bin/run");
+	klogquota();
 }
 #endif

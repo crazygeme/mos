@@ -27,3 +27,4 @@ user/run
 # not a code
 *.txt
 tags
+*.taghl

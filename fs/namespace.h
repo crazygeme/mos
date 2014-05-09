@@ -2,6 +2,12 @@
 #define _NAMESPACE_H_
 #include <fs/vfs.h>
 
+
+struct directory{
+	DIR vfs_dir;
+	INODE vfs_node;
+};
+
 unsigned fs_open(char* path);
 
 void fs_close(unsigned int fd);
@@ -18,10 +24,10 @@ int fs_rename(char* path, char* new);
 
 int fs_stat(char* path, struct stat* s);
 
-DIR fs_opendir(char* path);
+struct directory* fs_opendir(char* path);
 
-void fs_readdir(DIR dir, char* name, unsigned* mode);
+int fs_readdir(struct directory* dir, char* name, unsigned* mode);
 
-void fs_closedir(DIR dir);
+void fs_closedir(struct directory* dir);
 
 #endif

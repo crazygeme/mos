@@ -196,7 +196,7 @@ struct ext2_inode_info{
 
 struct ext2_dir_info{
     struct filesys_type* type;
-    struct ext2_inode* inode;
+	struct ext2_inode* inode;
     struct ext2_dir_entry_2* dir;
     char name[EXT2_NAME_LEN];
     unsigned cur;

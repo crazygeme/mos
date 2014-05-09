@@ -442,7 +442,7 @@ static void ext2_del_dir_entry(DIR dir, INODE entry)
 static void ext2_close_dir(DIR d)
 {
     struct ext2_dir_info* dir = (struct ext2_dir_info*)d;
-    kfree(dir->cur_block);
+	kfree(dir->cur_block);
     kfree(dir);
 }
 

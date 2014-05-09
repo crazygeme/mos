@@ -98,7 +98,7 @@ typedef struct _INODE
 {
     struct filesys_type* type;
 
-}*INODE, *DIR;
+}*INODE,*DIR;
 
 
 

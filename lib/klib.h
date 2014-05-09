@@ -63,6 +63,8 @@ int strcmp(char* str, char* dst);
 
 char* strcat(char* str, char* msg);
 
+char* strchr(char* str, char c);
+
 void printf(const char* str, ...);
 
 void printk(const char* str, ...);

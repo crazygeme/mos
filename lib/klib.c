@@ -526,6 +526,19 @@ char* strcat(char* src, char* msg)
 	return src;
 }
 
+char* strchr(char* str, char c)
+{
+	int i = 0;
+	int len = strlen(str);
+
+	for (i = 0; i < len; i++){
+		if (str[i] == c)
+		  return (str+i);
+	}
+
+	return 0;
+}
+
 int isspace(const char c)
 {
     return (c == ' ' || c == '\t' || c == '\n');

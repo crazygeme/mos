@@ -1,0 +1,12 @@
+[Global]
+CurrentProject=mos.vpj
+[ProjectDates]
+mos.vpj=20140509035406005
+[TreeExpansion2]
+-@ mos.vpj
+  - Source Files
+  - Header Files
+  - Resource Files
+  + Bitmaps
+  - Other Files
+scroll:0

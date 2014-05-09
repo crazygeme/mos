@@ -46,7 +46,6 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
     }
 
     ret = vfs_read_file(node, offset,buf,len);
-    vfs_free_inode(node);
     return ret;
 }
 
@@ -60,7 +59,6 @@ unsigned fs_write(unsigned fd, unsigned offset, void* buf, unsigned len)
     }
 
     ret = vfs_write_file(node, offset,buf,len);
-    vfs_free_inode(node);
     return ret;
 }
 
@@ -87,13 +85,11 @@ int fs_stat(char* path, struct stat* s)
     INODE node = 0;
     int ret;
 	
-	printk("fs_stat\n");
 	node = fs_lookup_inode(path);
     if (!node) {
         return -1;
     }
 
-	printk("fs_stat %x\n", node);
     ret = vfs_copy_stat(node,s);
     vfs_free_inode(node);
     return ret;
@@ -290,7 +286,7 @@ static void list_dir(char* name, int depth)
 {
 	char file[32];
 	unsigned mode;
-	DIR dir = fs_opendir(name);
+	struct directory* dir = fs_opendir(name);
 	while (fs_readdir(dir, file, &mode)){
 		int i = 0;
 		if (!strcmp(file, ".") || !strcmp(file, "..") )
@@ -317,7 +313,7 @@ static void test_stat(char* path)
 {
 	struct stat s;
 	fs_stat(path, &s);
-	printk("%s: is dir %d\n", S_ISDIR(s.st_mode));
+	printk("%s: is dir %d\n", path, S_ISDIR(s.st_mode));
 }
 
 void test_ns()

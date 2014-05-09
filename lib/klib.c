@@ -19,6 +19,8 @@ static unsigned int klib_random_num = 1;
 static spinlock tty_lock;
 static spinlock heap_lock;
 
+static unsigned int heap_quota;
+
 static void lock_tty()
 {
 	spinlock_lock(&tty_lock);
@@ -45,6 +47,7 @@ void klib_init()
 	
 	klib_random_num = 1;
 	cursor = 0;
+	heap_quota = 0;
 	cur_block_top = KHEAP_BEGIN;
 	spinlock_init(&tty_lock);
 	spinlock_init(&heap_lock);
@@ -221,6 +224,7 @@ void* kmalloc(unsigned size)
 		block->size = size;
 		ret = (unsigned int)block;
 		ret += sizeof(kblock);
+		heap_quota += size;
 		unlock_heap();
 		return (void*)ret;
 	}
@@ -242,12 +246,23 @@ void kfree(void* buf)
 	lock_heap();
 	block = (kblock*)((unsigned int)buf - 8);
 	size = block->size;
+	if (size == 0xdeadbeef) {
+		// double free
+		*((int *)0) = 0;
+	}
 	free_list_index = size / 8 + 1;
-
+	block->size = 0xdeadbeef;
 	memset(buf, 'c', size);
+	heap_quota -= size;
 	klib_add_to_free_list(free_list_index, block, 1);
 	
 	unlock_heap();
+}
+
+void klogquota()
+{
+	unsigned int quota = heap_quota;
+	klib_info("heap quota: ", quota, "\n");
 }
 
 

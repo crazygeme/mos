@@ -362,7 +362,8 @@ static DIR ext2_open_dir(INODE node)
 
     strcpy(dir->name, info->name);
     dir->cur = 0;
-    dir->inode = info->inode;
+    dir->inode = kmalloc(sizeof(*dir->inode));
+	memcpy(dir->inode, info->inode, sizeof(*dir->inode));
     dir->type = info->type;
     dir->max = 0xFF;
     if (dir->max == 0) {
@@ -442,6 +443,7 @@ static void ext2_del_dir_entry(DIR dir, INODE entry)
 static void ext2_close_dir(DIR d)
 {
     struct ext2_dir_info* dir = (struct ext2_dir_info*)d;
+	kfree(dir->inode);
 	kfree(dir->cur_block);
     kfree(dir);
 }

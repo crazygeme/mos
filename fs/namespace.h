@@ -3,10 +3,6 @@
 #include <fs/vfs.h>
 
 
-struct directory{
-	DIR vfs_dir;
-	INODE vfs_node;
-};
 
 unsigned fs_open(char* path);
 
@@ -24,10 +20,10 @@ int fs_rename(char* path, char* new);
 
 int fs_stat(char* path, struct stat* s);
 
-struct directory* fs_opendir(char* path);
+DIR fs_opendir(char* path);
 
-int fs_readdir(struct directory* dir, char* name, unsigned* mode);
+int fs_readdir(DIR dir, char* name, unsigned* mode);
 
-void fs_closedir(struct directory* dir);
+void fs_closedir(DIR dir);
 
 #endif

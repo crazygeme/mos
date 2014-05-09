@@ -41,6 +41,8 @@ void* kmalloc(unsigned int size);
 
 void kfree(void* buf);
 
+void klogquota();
+
 void memcpy(void* src, void* dst, unsigned len);
 
 void memmove(void* src, void* dst, unsigned len);

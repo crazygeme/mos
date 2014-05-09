@@ -244,7 +244,7 @@ void kfree(void* buf)
 	size = block->size;
 	free_list_index = size / 8 + 1;
 
-
+	memset(buf, 'c', size);
 	klib_add_to_free_list(free_list_index, block, 1);
 	
 	unlock_heap();

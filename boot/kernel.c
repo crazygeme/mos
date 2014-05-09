@@ -124,6 +124,8 @@ static void kmain_process(void* param)
 	extern void test_ns();
 	test_ns();
 #endif
+
+    printk("idle\n");
     while (1) {
         // this can become wait syscall
         ps_cleanup_dying_task();

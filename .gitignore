@@ -29,3 +29,4 @@ user/run
 tags
 *.taghl
 *.swp
+.DS_Store

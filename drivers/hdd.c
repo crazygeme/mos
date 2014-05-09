@@ -532,7 +532,9 @@ static void found_partition ( block *block, unsigned char part_type,
       b = block_register(p,name,partition_read, partition_write, type, size);
 		if (type == BLOCK_LINUX){
 			ext2_attach(b);
-		}
+		}else if(type == BLOCK_FILESYS){
+            ffs_attach(b);
+        }
     }
 }
 

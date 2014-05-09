@@ -31,6 +31,16 @@ SECTIONS
 		*(.text)
 	}
 
+	.user BLOCK(4K): AT(ADDR(.user)-0xC0000000)
+	{
+		*(.user)
+	}
+
+	.userdata BLOCK(4K): AT(ADDR(.userdata)-0xC0000000)
+	{
+		*(.userdata)
+	}
+
 	/* Read-only data. */
 	.rodata BLOCK(4K) : AT(ADDR(.rodata)-0xC0000000)
 	{

@@ -20,6 +20,7 @@ static spinlock tty_lock;
 static spinlock heap_lock;
 
 static unsigned int heap_quota;
+static unsigned int heap_quota_high;
 
 static void lock_tty()
 {
@@ -48,6 +49,7 @@ void klib_init()
 	klib_random_num = 1;
 	cursor = 0;
 	heap_quota = 0;
+    heap_quota_high = 0;
 	cur_block_top = KHEAP_BEGIN;
 	spinlock_init(&tty_lock);
 	spinlock_init(&heap_lock);
@@ -225,7 +227,10 @@ void* kmalloc(unsigned size)
 		ret = (unsigned int)block;
 		ret += sizeof(kblock);
 		heap_quota += size;
-		unlock_heap();
+        if (heap_quota_high < heap_quota) {
+            heap_quota_high = heap_quota;
+        }
+        unlock_heap(); 
 		return (void*)ret;
 	}
 

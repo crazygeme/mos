@@ -120,6 +120,10 @@ static void kmain_process(void* param)
     dump_mount_point();
 #endif
 
+#ifdef TEST_NS
+	extern void test_ns();
+	test_ns();
+#endif
     while (1) {
         // this can become wait syscall
         ps_cleanup_dying_task();

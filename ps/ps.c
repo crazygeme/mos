@@ -164,7 +164,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     frame->fs = frame->gs = frame->es = frame->ss = frame->ds = 
         KERNEL_DATA_SELECTOR;
 
-    task->esp0 = (unsigned int)frame;
+    task->esp0 = task->esp = (unsigned int)frame;
     //val = (unsigned int*)(stack_buttom-4);
     //printf("create ps %x, frame %x, thing in stack button %x\n", task, frame, val[0]);
     ps_put_task(&control.ready_queue, task);
@@ -179,6 +179,7 @@ static void reset_tss(task_struct* task)
     tss_address->esp0 = task->esp0;
     tss_address->iomap = (unsigned short) sizeof(tss_struct);
     tss_address->ss0 = KERNEL_DATA_SELECTOR;
+    int_update_tss((unsigned int)tss_address - KERNEL_OFFSET);
 }
 
 void ps_kickoff() {
@@ -311,8 +312,8 @@ static void _task_sched(PLIST_ENTRY wait_list) {
 
     // put self to ready queue, and choose next
     SAVE_ALL();
-    __asm__("movl %%esp, %0" : "=q"(current->esp0));
-    __asm__("movl %0, %%eax" : : "q"(task->esp0));
+    __asm__("movl %%esp, %0" : "=q"(current->esp));
+    __asm__("movl %0, %%eax" : : "q"(task->esp));
     __asm__("movl %eax, %esp");
     RESTORE_ALL();
     __asm__("NEXT: nop");

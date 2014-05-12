@@ -144,7 +144,8 @@ typedef void (*process_fn)(void* param);
 typedef struct _task_struct
 {
 	// tss_struct tss;
-	unsigned int esp0;
+	unsigned int esp0; // kernel esp
+	unsigned int esp; // kernel or user esp
 	unsigned int ebp;
 	unsigned int cr3;
     unsigned int psid;

@@ -81,6 +81,8 @@ static void ps_run() {
 
 
 static int debug = 0;
+static tss_struct* tss_address = 0;
+
 void ps_init() {
     InitializeListHead(&control.dying_queue);
     InitializeListHead(&control.ready_queue);
@@ -90,6 +92,9 @@ void ps_init() {
     ps_id = 0;
     _ps_enabled = 0;
 	debug = 0;
+    tss_address = kmalloc(sizeof(tss_struct));
+    int_update_tss((unsigned int)tss_address - KERNEL_OFFSET);
+
 }
 
 
@@ -135,20 +140,9 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
 
 	stack_buttom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
-    task->tss.eip = (unsigned int)ps_run;
-    task->tss.esp = task->tss.esp0 = task->tss.ebp = stack_buttom;
-    LOAD_CR3(task->tss.cr3);
-    if (type == ps_kernel) {
-        task->tss.ss0 = KERNEL_DATA_SELECTOR;
-        task->tss.ss = task->tss.gs = task->tss.fs = 
-            task->tss.es = task->tss.ds = KERNEL_DATA_SELECTOR;
-        task->tss.cs = KERNEL_CODE_SELECTOR;
-    } else {
-        task->tss.ss0 = USER_DATA_SELECTOR;
-        task->tss.ss = task->tss.gs = task->tss.fs = 
-            task->tss.es = task->tss.ds = USER_DATA_SELECTOR;
-        task->tss.cs = USER_CODE_SELECTOR;
-    }
+    task->esp0 = task->ebp = stack_buttom;
+    LOAD_CR3(task->cr3);
+
     task->fn = fn;
     task->param = param;
     task->priority = priority;
@@ -165,17 +159,26 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->magic = 0xdeadbeef; 
 
     frame = (stack_frame *)(unsigned int)(stack_buttom - sizeof(*frame));
-    frame->ebp = task->tss.ebp;
-    frame->eip = task->tss.eip;
+    frame->ebp = stack_buttom;
+    frame->eip = (unsigned int)ps_run;
     frame->fs = frame->gs = frame->es = frame->ss = frame->ds = 
-        task->tss.fs;
+        KERNEL_DATA_SELECTOR;
 
-    task->tss.esp = (unsigned int)frame;
+    task->esp0 = (unsigned int)frame;
     //val = (unsigned int*)(stack_buttom-4);
     //printf("create ps %x, frame %x, thing in stack button %x\n", task, frame, val[0]);
     ps_put_task(&control.ready_queue, task);
 	
 	return task->psid;
+}
+
+
+static void reset_tss(task_struct* task)
+{
+    tss_address->cr3 = task->cr3;
+    tss_address->esp0 = task->esp0;
+    tss_address->iomap = (unsigned short) sizeof(tss_struct);
+    tss_address->ss0 = KERNEL_DATA_SELECTOR;
 }
 
 void ps_kickoff() {
@@ -201,13 +204,15 @@ void ps_kickoff() {
     }
 
 
+    reset_tss(task);
+
     __asm__("movl %0, %%eax" : : "m"(task->fn));
     __asm__("pushl %eax");
     __asm__("movl %0, %%ebx" : : "m"(task->param));
     __asm__("pushl %ebx");
-    __asm__("movl %0, %%ecx" : : "m"(task->tss.ebp));
+    __asm__("movl %0, %%ecx" : : "m"(task->ebp));
     __asm__("pushl %ecx");
-    __asm__("movl %0, %%edx" : : "m"(task->tss.esp));
+    __asm__("movl %0, %%edx" : : "m"(task->esp0));
     __asm__("pushl %edx");
     __asm__("popl %edx");
     __asm__("popl %ecx");
@@ -306,11 +311,12 @@ static void _task_sched(PLIST_ENTRY wait_list) {
 
     // put self to ready queue, and choose next
     SAVE_ALL();
-    __asm__("movl %%esp, %0" : "=q"(current->tss.esp));
-    __asm__("movl %0, %%eax" : : "q"(task->tss.esp));
+    __asm__("movl %%esp, %0" : "=q"(current->esp0));
+    __asm__("movl %0, %%eax" : : "q"(task->esp0));
     __asm__("movl %eax, %esp");
     RESTORE_ALL();
     __asm__("NEXT: nop");
+    reset_tss(task);
     CURRENT_TASK()->is_switching = 0;
     return;
 }

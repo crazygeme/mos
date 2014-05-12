@@ -143,7 +143,10 @@ typedef void (*process_fn)(void* param);
 
 typedef struct _task_struct
 {
-	tss_struct tss;
+	// tss_struct tss;
+	unsigned int esp0;
+	unsigned int ebp;
+	unsigned int cr3;
     unsigned int psid;
     process_fn fn;
 	void* param;

@@ -2,6 +2,7 @@
 #include <drivers/keyboard.h>
 
 
+
 _START static void init_interrupt()
 {
 
@@ -293,6 +294,7 @@ _START static void setup_gdt()
    RELOAD_KERNEL_DS();
 }
 
+
 static void virtual_setup_gdt()
 {
 
@@ -313,11 +315,13 @@ static void virtual_setup_gdt()
    RELOAD_GDT(virtual_gdtr_operand);
    RELOAD_KERNEL_CS();
    RELOAD_KERNEL_DS();
+
+
 }
 /*
  * address should be a physical address
  */
-_START void int_update_tss(void* address)
+void int_update_tss(void* address)
 {
    virtual_gdt = (unsigned long long *)((unsigned int)gdt + KERNEL_OFFSET);
     unsigned int base = (unsigned int)address;

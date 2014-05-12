@@ -322,8 +322,8 @@ void test_ns()
 	fs_read(fd, 0, text, 31);
 	printk("file context: %s\n", text);
 	fs_close(fd);
-	
-	printf("/\n");
+
+	klogquota();
 	list_dir("/", 1);
 
 	test_stat("/bin/run");

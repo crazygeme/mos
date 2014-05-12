@@ -18,7 +18,17 @@
 	2) 加载rootfs
 	qemu -kernel kernel -hda rootfs.img
 
-
+* i386-elf-gdb:
+	sudo port install gettext
+	download gdb source code
+	./configure --prefix=/opt/local \
+            --program-prefix=i386-elf- \
+            --target=i386-elf \
+            --with-gmp=/opt/local \
+            --with-libelf=/opt/local \
+            --with-build-libsubdir=/opt/local
+	!! copy /opt/local/include/libintl.h to $(GBDSRC)/include/
+	make & sudo make install
 ---------	
 from grub:
 When the boot loader invokes the 32-bit operating system, the machine must have the following state:

@@ -34,7 +34,10 @@ OBJS	= boot.o \
           hdd.o\
           block.o\
 		  mount.o\
-		  namespace.o
+		  namespace.o\
+		  elf.o\
+		  ps0.o\
+		  ffs.o
 
 all: kernel
 
@@ -99,6 +102,15 @@ mount.o: fs/mount.c fs/mount.h
 
 namespace.o: fs/namespace.c fs/namespace.h
 	$(CC) $(CFLAGS) -o namespace.o fs/namespace.c
+
+elf.o: ps/elf.c ps/elf.h
+	$(CC) $(CFLAGS) -o elf.o ps/elf.c
+
+ps0.o: user/ps0.c user/ps0.h
+	$(CC) $(CFLAGS) -o ps0.o user/ps0.c
+
+ffs.o: fs/ffs.c fs/ffs.h
+	$(CC) $(CFLAGS) -o ffs.o fs/ffs.c
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

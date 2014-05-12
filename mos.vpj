@@ -58,7 +58,9 @@
 			Filters="*.c;*.C;*.cc;*.cpp;*.cp;*.cxx;*.c++;*.prg;*.pas;*.dpr;*.asm;*.s;*.bas;*.java;*.cs;*.sc;*.e;*.cob;*.html;*.rc;*.tcl;*.py;*.pl;*.d;*.m;*.mm;*.go">
 			<F N="drivers/block.c"/>
 			<F N="int/dsr.c"/>
+			<F N="ps/elf.c"/>
 			<F N="fs/ext2.c"/>
+			<F N="fs/ffs.c"/>
 			<F N="drivers/hdd.c"/>
 			<F N="int/int.c"/>
 			<F N="int/int.S"/>
@@ -72,6 +74,7 @@
 			<F N="fs/mount.c"/>
 			<F N="fs/namespace.c"/>
 			<F N="ps/ps.c"/>
+			<F N="user/ps0.c"/>
 			<F N="user/run.c"/>
 			<F N="int/timer.c"/>
 			<F N="drivers/tty.c"/>
@@ -83,7 +86,9 @@
 			<F N="drivers/block.h"/>
 			<F N="config.h"/>
 			<F N="int/dsr.h"/>
+			<F N="ps/elf.h"/>
 			<F N="fs/ext2.h"/>
+			<F N="fs/ffs.h"/>
 			<F N="drivers/hdd.h"/>
 			<F N="int/int.h"/>
 			<F N="drivers/keyboard.h"/>
@@ -95,6 +100,7 @@
 			<F N="boot/multiboot.h"/>
 			<F N="fs/namespace.h"/>
 			<F N="ps/ps.h"/>
+			<F N="user/ps0.h"/>
 			<F N="user/run.h"/>
 			<F N="int/timer.h"/>
 			<F N="drivers/tty.h"/>
@@ -109,6 +115,7 @@
 		<Folder
 			Name="Other Files"
 			Filters="">
+			<F N="link.ld"/>
 			<F
 				N="Makefile"
 				Type="Makefile"/>

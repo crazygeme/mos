@@ -1,6 +1,7 @@
 #ifndef _KLIB_H_
 #define _KLIB_H_
 #include <mm/mm.h>
+#include <config.h>
 
 void klib_init();
 
@@ -18,8 +19,6 @@ char* klib_itoa(char* str, int num);
 
 // following is above 0xC0000000 code & data
 // reserve one page to setup page table itself
-#define KHEAP_END	 0xC07FF000
-#define KHEAP_BEGIN	 0xC0300000
 #define NULL (void*)0
 typedef struct _kblock
 {

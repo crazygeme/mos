@@ -105,7 +105,7 @@ void _write_dwb (unsigned short port, const void *addr, unsigned cnt);
 
 _START void int_init();
 
-_START void int_update_tss(void* address);
+void int_update_tss(void* address);
 
 _START unsigned int_get_phymem_size();
 

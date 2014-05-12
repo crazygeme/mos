@@ -11,7 +11,7 @@ OS		= Darwin
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
-CFLAGS	= -g -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -I./ -DTEST_NS
+CFLAGS	= -g -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -I./ -DTEST_PS=5
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)

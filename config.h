@@ -22,6 +22,9 @@
 
 #define IDT_SIZE 256
 
+#define KHEAP_END	 0xC07FF000
+#define KHEAP_BEGIN	 0xC0300000
+
 #define UNIMPL printk("unimpl function %s\n", __func__)
  
 

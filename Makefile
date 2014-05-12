@@ -11,7 +11,7 @@ OS		= Darwin
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
-CFLAGS	= -g -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -I./ -DTEST_PS=5
+CFLAGS	= -ggdb3 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -I./ -DTEST_PS=5
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
@@ -43,7 +43,8 @@ all: kernel
 
 
 kernel: $(OBJS)
-	$(LD) $(LDFLAGS) -e 0x100010 -o $(TARGET) $(OBJS)
+	$(LD) $(LDFLAGS)-e 0x100010 -o $(TARGET).dbg $(OBJS)
+	$(LD) $(LDFLAGS) -s -e 0x100010 -o $(TARGET) $(OBJS)
 
 boot.o: boot/kernel.asm
 	$(ASM) $(ASFLAGS) boot/kernel.asm -o boot.o

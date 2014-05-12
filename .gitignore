@@ -5,6 +5,7 @@
 *.elf
 kernel
 user/run
+kernel.dbg
 
 # Libraries
 *.lib
@@ -30,3 +31,4 @@ tags
 *.taghl
 *.swp
 .DS_Store
+*.v*

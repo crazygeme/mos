@@ -314,7 +314,7 @@ static void mm_high_memory_fun()
 
 _START static void mm_setup_beginning_8m()
 {
-    unsigned int phy = 7;
+    unsigned int phy = PAGE_ENTRY_USER_DATA;
     int i = 0;
     unsigned int * gdt = (int*)GDT_ADDRESS;
     unsigned int * pg0 = (int*)PG0_ADDRESS;
@@ -324,13 +324,13 @@ _START static void mm_setup_beginning_8m()
         gdt[i] = 0;
     }
     // following two are for user space
-    gdt[0] = PG0_ADDRESS | 0x07; 
-    gdt[1] = PG1_ADDRESS | 0x07;
+    gdt[0] = PG0_ADDRESS | PAGE_ENTRY_USER_DATA; 
+    gdt[1] = PG1_ADDRESS | PAGE_ENTRY_USER_DATA;
 
     // following two are for kernel space
-    gdt[768] = PG0_ADDRESS | 0x07;
-    gdt[769] = PG1_ADDRESS | 0x07;
-	gdt[770] = PG_CACHE_ADDRESS | 0x07;
+    gdt[768] = PG0_ADDRESS | PAGE_ENTRY_USER_DATA;
+    gdt[769] = PG1_ADDRESS | PAGE_ENTRY_USER_DATA;
+	gdt[770] = PG_CACHE_ADDRESS | PAGE_ENTRY_USER_DATA;
 
     for (i = 0; i < PE_TABLE_SIZE; i++) {
         pg0[i] = phy;
@@ -386,13 +386,13 @@ int mm_add_direct_map(unsigned int vir)
 			return -1;
 		}
 
-		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | 0x07;
+		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
 	}
 	
 	{
 		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
 		unsigned int phy_page = (vir - KERNEL_OFFSET) & PAGE_SIZE_MASK;
-		table[page_table_offset] = phy_page | 0x07;
+		table[page_table_offset] = phy_page | PAGE_ENTRY_KERNEL_DATA;
 		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
 		if (vir == ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET))
 		  return 1;
@@ -517,6 +517,83 @@ void vm_free(unsigned int vm, int page_count)
 		mm_del_direct_map(cur);
 	}
 	unlock_mm();
+
+}
+
+void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
+{
+	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET);
+	unsigned int page_busy = 0;
+	unsigned int page_index = 0;
+	unsigned int target_phy = 0;
+
+
+	page_index = mm_get_free_phy_page_index();// vm_alloc(1) - KERNEL_OFFSET;
+	target_phy = page_index*PAGE_SIZE;
+
+
+
+	page_index = (target_phy) & PAGE_SIZE_MASK;
+	page_index = page_index / PAGE_SIZE;
+
+
+	if ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) == 0){
+		unsigned int table_addr = mm_alloc_page_table();
+		if (table_addr == 0){
+			return ;
+		}
+
+		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | flag;
+	}
+	
+	{
+		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
+		unsigned int phy_page = (target_phy) & PAGE_SIZE_MASK;
+		table[page_table_offset] = phy_page | flag;
+		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
+
+		if (phy) {
+			char* src = (char*)phy + KERNEL_OFFSET;
+			char* dst = (char*)vir;
+			memcpy(dst,src,PAGE_SIZE);
+		}
+	}
+
+
+}
+
+void mm_del_dynamic_map(unsigned int vir)
+{
+	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET);
+	unsigned int *page_table;
+	unsigned int phy_addr;
+	int empty = 1;
+	int i = 0;
+
+
+
+
+	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
+	phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
+
+	page_table[page_table_offset] = 0;
+	mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
+
+	for (i = 0; i < 1024; i++){
+		if (page_table[i] !=0){
+			empty = 0;
+			break;
+		}
+	}
+
+	if (empty){
+		mm_free_page_table( (unsigned int)page_table + KERNEL_OFFSET);
+		page_dir[page_dir_offset] = 0;
+	}
 
 }
 

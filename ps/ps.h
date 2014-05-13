@@ -118,9 +118,16 @@ typedef volatile struct __tss_struct {
 
 } tss_struct;
 
+typedef struct _page_table_list_entry
+{
+	unsigned int addr;
+	LIST_ENTRY list;
+}page_table_list_entry;
+
 typedef struct _user_enviroment
 {
-	unsigned int page_dir;
+	unsigned int page_dir; // every process needs it's own clone of page dir
+	LIST_ENTRY page_table_list;
 }user_enviroment;
 
 typedef enum _ps_status
@@ -178,6 +185,10 @@ unsigned ps_create(process_fn, void* param, int priority, ps_type type);
 void ps_kickoff();
 
 int ps_enabled();
+
+void ps_update_tss(unsigned int esp0);
+
+void ps_record_dynamic_map(unsigned int vir);
 
 // task functions
 void task_sched();

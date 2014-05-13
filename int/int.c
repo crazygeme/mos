@@ -225,6 +225,13 @@ it can be used in rings numbered DPL or lower. In practice,
 DPL==3 means that user processes can use the segment and
 DPL==0 means that only the kernel can use the segment. See
 [IA32-v3a] 4.5 "Privilege Levels" for further discussion. */
+typedef unsigned long long (*fpmake_seg_desc)(unsigned int base,
+               unsigned int limit,
+               unsigned int class,
+               int type,
+               int dpl,
+               unsigned int granularity);
+
 _START static unsigned long long
 make_seg_desc (unsigned int base,
                unsigned int limit,
@@ -323,9 +330,10 @@ static void virtual_setup_gdt()
  */
 void int_update_tss(void* address)
 {
+	fpmake_seg_desc _make_seg_desc = (unsigned int)make_seg_desc + KERNEL_OFFSET;
    virtual_gdt = (unsigned long long *)((unsigned int)gdt + KERNEL_OFFSET);
     unsigned int base = (unsigned int)address;
-    virtual_gdt[TSS_SELECTOR / 8] =          make_seg_desc(base, 0x67,       SEG_CLASS_SYSTEM,   9,  KERNEL_PRIVILEGE, SEG_BASE_1);
+    virtual_gdt[TSS_SELECTOR / 8] =  _make_seg_desc(base, 0x67,       SEG_CLASS_SYSTEM,   9,  KERNEL_PRIVILEGE, SEG_BASE_1);
     RELOAD_TSS(TSS_SELECTOR);
 }
 

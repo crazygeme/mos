@@ -125,6 +125,8 @@ static void kmain_process(void* param)
 	test_ns();
 #endif
 
+        user_first_process_run();
+
     printk("idle\n");
     while (1) {
         // this can become wait syscall

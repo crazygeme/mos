@@ -93,7 +93,7 @@ void ps_init() {
     _ps_enabled = 0;
 	debug = 0;
     tss_address = kmalloc(sizeof(tss_struct));
-    int_update_tss((unsigned int)tss_address - KERNEL_OFFSET);
+    int_update_tss((unsigned int)tss_address);
 
 }
 
@@ -187,7 +187,7 @@ static void reset_tss(task_struct* task)
     tss_address->ss = tss_address->gs = tss_address->fs = 
         tss_address->ds = tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
     tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
-    int_update_tss((unsigned int)tss_address - KERNEL_OFFSET);
+    int_update_tss((unsigned int)tss_address);
 }
 
 void ps_update_tss(unsigned int esp0)
@@ -222,7 +222,7 @@ void ps_kickoff() {
 
 
     reset_tss(task);
-
+    _ps_enabled = 1;
     __asm__("movl %0, %%eax" : : "m"(task->fn));
     __asm__("pushl %eax");
     __asm__("movl %0, %%ebx" : : "m"(task->param));

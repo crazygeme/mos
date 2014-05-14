@@ -17,17 +17,26 @@
 .func intr_entry
 intr_entry:
 /* Save caller's registers. */
-pushl %ds
-pushl %es
-pushl %fs
-pushl %gs
-pushal
+push %ds
+push %es
+push %fs
+push %gs
+pushl %eax
+pushl %ecx
+pushl %edx
+pushl %ebx
+pushl $0
+pushl %ebp
+pushl %esi
+pushl %edi
         
 /* Set up kernel environment. */
 cld	/* String instructions go upward. */
-mov $KERNEL_CODE_SELECTOR, %eax	/* Initialize segment registers. */
-mov %eax, %ds
-mov %eax, %es
+pushl %edx
+mov $KERNEL_CODE_SELECTOR, %edx	/* Initialize segment registers. */
+mov %edx, %ds
+mov %edx, %es
+popl %edx
 leal 56(%esp), %ebp	/* Set up frame pointer. */
 
 /* Call interrupt handler. */
@@ -49,11 +58,18 @@ addl $4, %esp
 .func intr_exit
 intr_exit:
         /* Restore caller's registers. */
-popal
-popl %gs
-popl %fs
-popl %es
-popl %ds
+popl %edi
+popl %esi
+popl %ebp
+addl $4, %esp // dummy esp always 0
+popl %ebx
+popl %edx
+popl %ecx
+addl $4, %esp // eax is the return val
+pop %gs
+pop %fs
+pop %es
+pop %ds
 
         /* Discard `struct intr_frame' vec_no, error_code,
            frame_pointer members. */
@@ -254,12 +270,16 @@ switch_to_user_mode:
      mov %esp, %eax; 
      pushl $0x1b; 
      pushl %eax; 
-     pushf; \ 
+     pushf;
+     pop %ax;
+     or $0x200,%ax 
+     push %ax;
      pushl $0x23; 
      push $1f; 
      iret; 
    1: nop;
      movl $0x00803f00, %esp
+     movl $0x00803f00, %ebp
      movl $0x00804000, %eax
      jmp *%eax
 .endfunc

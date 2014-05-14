@@ -50,7 +50,6 @@ static void timer_process(intr_frame* frame)
     dsr_add(timer_dsr, 0);
 
 
-//    printf("\r%d days %d hourse %d minutes %d seconds", days, hourse, minutes, seconds); 
 }
 
 
@@ -115,6 +114,7 @@ void timer_calculate_cpu_cycle()
 static void timer_dsr(void* param)
 {
     task_struct* cur = CURRENT_TASK();
+
     if (!ps_enabled()) {
         return;
     }

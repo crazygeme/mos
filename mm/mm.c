@@ -530,6 +530,7 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	unsigned int target_phy = 0;
 
 
+	phy = phy & PAGE_SIZE_MASK;
 	page_index = mm_get_free_phy_page_index();// vm_alloc(1) - KERNEL_OFFSET;
 	target_phy = page_index*PAGE_SIZE;
 

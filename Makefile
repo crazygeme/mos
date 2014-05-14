@@ -31,13 +31,14 @@ OBJS	= boot.o \
 		  lock.o\
 		  vfs.o\
 		  ext2.o\
-          hdd.o\
-          block.o\
+		hdd.o\
+		block.o\
 		  mount.o\
 		  namespace.o\
 		  elf.o\
 		  ps0.o\
-		  ffs.o
+		  ffs.o\
+		  syscall.o
 
 all: kernel
 
@@ -112,6 +113,9 @@ ps0.o: user/ps0.c user/ps0.h
 
 ffs.o: fs/ffs.c fs/ffs.h
 	$(CC) $(CFLAGS) -o ffs.o fs/ffs.c
+
+syscall.o: syscall/syscall.c syscall/syscall.h
+	$(CC) $(CFLAGS) -o syscall.o syscall/syscall.c
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

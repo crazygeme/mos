@@ -10,6 +10,7 @@
 #include <drivers/hdd.h>
 #include <fs/vfs.h>
 #include <fs/mount.h>
+#include <syscall/syscall.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -98,9 +99,10 @@ void kmain_startup()
 
 }
 
+
 static void kmain_process(void* param)
 {
-	vfs_init();
+    vfs_init();
 
     mount_init();
 
@@ -125,7 +127,9 @@ static void kmain_process(void* param)
 	test_ns();
 #endif
 
-        user_first_process_run();
+    syscall_init();
+
+    user_first_process_run();
 
     printk("idle\n");
     while (1) {
@@ -134,6 +138,7 @@ static void kmain_process(void* param)
     }
     run();
 }
+
 
 
 

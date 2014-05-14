@@ -285,7 +285,7 @@ _START static void setup_gdt()
    gdt[0] = 0;
    gdt[KERNEL_CODE_SELECTOR / 8] =  make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     10, KERNEL_PRIVILEGE, SEG_BASE_4K); 
    gdt[KERNEL_DATA_SELECTOR / 8] =  make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     2,  KERNEL_PRIVILEGE, SEG_BASE_4K);
-   gdt[USER_CODE_SELECTOR / 8] =    make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     10, USER_PRIVILEGE, SEG_BASE_4K); 
+   gdt[USER_CODE_SELECTOR / 8] =    make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     8, USER_PRIVILEGE, SEG_BASE_4K); 
    gdt[USER_DATA_SELECTOR / 8] =    make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     2,  USER_PRIVILEGE, SEG_BASE_4K); 
    gdt[TSS_SELECTOR / 8] =          make_seg_desc(0, 0x67,          SEG_CLASS_SYSTEM,   9,  KERNEL_PRIVILEGE, SEG_BASE_1); // tmp
 
@@ -308,7 +308,7 @@ static void virtual_setup_gdt()
    virtual_gdt = (unsigned long long *)((unsigned int)gdt + KERNEL_OFFSET);
    virtual_gdt[KERNEL_CODE_SELECTOR / 8] =  make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     10, KERNEL_PRIVILEGE, SEG_BASE_4K); 
    virtual_gdt[KERNEL_DATA_SELECTOR / 8] =  make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     2,  KERNEL_PRIVILEGE, SEG_BASE_4K);
-   virtual_gdt[USER_CODE_SELECTOR / 8] =    make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     10, USER_PRIVILEGE, SEG_BASE_4K); 
+   virtual_gdt[USER_CODE_SELECTOR / 8] =    make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     8, USER_PRIVILEGE, SEG_BASE_4K); 
    virtual_gdt[USER_DATA_SELECTOR / 8] =    make_seg_desc(0, ADDRESS_LIMIT, SEG_CLASS_DATA,     2,  USER_PRIVILEGE, SEG_BASE_4K); 
    virtual_gdt[TSS_SELECTOR / 8] =          make_seg_desc(0, 0x67,          SEG_CLASS_SYSTEM,   9,  KERNEL_PRIVILEGE, SEG_BASE_1); // tmp
 

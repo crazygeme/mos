@@ -184,6 +184,9 @@ static void reset_tss(task_struct* task)
     tss_address->esp0 = task->esp0;
     tss_address->iomap = (unsigned short) sizeof(tss_struct);
     tss_address->ss0 = KERNEL_DATA_SELECTOR;
+    tss_address->ss = tss_address->gs = tss_address->fs = 
+        tss_address->ds = tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
+    tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
     int_update_tss((unsigned int)tss_address - KERNEL_OFFSET);
 }
 

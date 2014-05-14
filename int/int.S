@@ -239,3 +239,27 @@ _RELOAD_USER_CS:
 1:	nop
 	ret
 .endfunc
+
+.global switch_to_user_mode;
+.section .text;
+.func switch_to_user_mode
+switch_to_user_mode:
+     cli;
+     mov $0x1b, %ax; 
+     mov %ax, %ds; 
+     mov %ax, %es; 
+     mov %ax, %fs; 
+     mov %ax, %gs; 
+                   
+     mov %esp, %eax; 
+     pushl $0x1b; 
+     pushl %eax; 
+     pushf; \ 
+     pushl $0x23; 
+     push $1f; 
+     iret; 
+   1: nop;
+     movl $0x00803f00, %esp
+     movl $0x00804000, %eax
+     jmp *%eax
+.endfunc

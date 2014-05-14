@@ -80,7 +80,7 @@ These are the interrupted task's saved registers. */
     unsigned int eflags; /* Saved CPU flags. */
     void *esp; /* Saved stack pointer. */
     unsigned short ss, :16; /* Data segment for esp. */
-  }intr_frame;
+  }__attribute__ ((packed)) intr_frame;
 
   
  

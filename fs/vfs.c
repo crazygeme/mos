@@ -1,6 +1,11 @@
 #include <fs/vfs.h>
+#ifdef WIN32
+#include <windows.h>
+#include <osdep.h>
+#else
 #include <lib/klib.h>
 #include <ps/lock.h>
+#endif
 
 static LIST_ENTRY vfs_list;
 static semaphore vfs_lock;
@@ -165,7 +170,7 @@ INODE vfs_read_dir( DIR dir)
     return type->ino_ops->read_dir(dir);
 }
 
-void vfs_add_dir_entry(DIR dir, INODE entry)
+void vfs_add_dir_entry(DIR dir, unsigned mode, char* name)
 {
     struct filesys_type* type = dir->type;
 
@@ -173,10 +178,10 @@ void vfs_add_dir_entry(DIR dir, INODE entry)
         return ;
     }
 
-    return type->ino_ops->add_dir_entry(dir,entry);
+    return type->ino_ops->add_dir_entry(dir,mode, name);
 }
 
-void vfs_del_dir_entry(DIR dir, INODE entry)
+void vfs_del_dir_entry(DIR dir, char* name)
 {
     struct filesys_type* type = dir->type;
 
@@ -184,7 +189,7 @@ void vfs_del_dir_entry(DIR dir, INODE entry)
         return ;
     }
 
-    return type->ino_ops->del_dir_entry(dir,entry);
+    return type->ino_ops->del_dir_entry(dir,name);
 }
 
 void vfs_close_dir(DIR dir)

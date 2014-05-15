@@ -1,7 +1,12 @@
 #include <fs/mount.h>
 #include <fs/vfs.h>
+#ifdef WIN32
+#include <Windows.h>
+#include <osdep.h>
+#else
 #include <lib/list.h>
 #include <ps/lock.h>
+#endif
 
 static LIST_ENTRY mnt_list;
 static semaphore mnt_lock;

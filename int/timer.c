@@ -202,3 +202,8 @@ void delay(unsigned int us)
 	busy_wait(cycles);
 }
 
+unsigned long long time(unsigned long long* t)
+{
+    return 0;
+}
+

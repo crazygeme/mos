@@ -15,8 +15,8 @@ static unsigned ext2_read_file(INODE inode, unsigned int offset, void* buf, unsi
 static unsigned ext2_write_file(INODE inode, unsigned int offset, void* buf, unsigned len);
 static DIR ext2_open_dir(INODE inode);
 static INODE ext2_read_dir(DIR dir);
-static void ext2_add_dir_entry(DIR dir, INODE entry);
-static void ext2_del_dir_entry(DIR dir, INODE entry);
+static void ext2_add_dir_entry(DIR dir, unsigned mode, char* name);
+static void ext2_del_dir_entry(DIR dir, char* name);
 static void ext2_close_dir(DIR dir);
 static char* ext2_get_name(INODE node);
 static unsigned int ext2_get_size(INODE node);
@@ -430,12 +430,12 @@ static INODE ext2_read_dir(DIR d)
     return ret;
 }
 
-static void ext2_add_dir_entry(DIR dir, INODE entry)
+static void ext2_add_dir_entry(DIR dir, unsigned mode, char* name)
 {
     UNIMPL;
 }
 
-static void ext2_del_dir_entry(DIR dir, INODE entry)
+static void ext2_del_dir_entry(DIR dir, char* name)
 {
     UNIMPL;
 }

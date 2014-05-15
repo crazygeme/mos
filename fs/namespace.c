@@ -1,9 +1,14 @@
 #include <fs/namespace.h>
+#ifdef WIN32
+#include <windows.h>
+#include <osdep.h>
+#else
 #include <ps/ps.h>
 #include <ps/lock.h>
 #include <config.h>
 #include <lib/klib.h>
 #include <fs/mount.h>
+#endif
 
 static INODE fs_lookup_inode(char* path);
 static unsigned fs_get_free_fd(INODE node);

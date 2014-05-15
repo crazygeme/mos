@@ -42,18 +42,32 @@ struct ffs_meta_info
  
 struct ffs_super_node
 {
-    unsigned total_size;
-    unsigned used_size;
+    unsigned total_size; // in sector
+    unsigned used_size;  // in sector
     unsigned bitmap_sector;
+	unsigned first_valid_sector;
     unsigned magic;
     struct ffs_meta_info root;
-    char reserve[416];
+    char reserve[428];
+};
+
+struct ffs_bitmap_node
+{
+	unsigned char bits[BLOCK_SECTOR_SIZE];
+};
+
+struct ffs_bitmap_cache
+{
+	unsigned sector;
+	struct ffs_bitmap_node node;
 };
 
 struct ffs_inode
 {
     struct filesys_type* type;
     struct ffs_meta_info meta;
+	unsigned meta_sector;
+	unsigned meta_offset;
 };
 
 struct ffs_dir

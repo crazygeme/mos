@@ -1,6 +1,11 @@
 #ifndef _VFS_H_
 #define _VFS_H_
+
+#ifdef WIN32
+#include <windows.h>
+#else
 #include <lib/list.h>
+#endif
 
 #define S_IFMT  00170000
 #define S_IFSOCK 0140000
@@ -76,8 +81,8 @@ struct inode_opreations{
 	unsigned (*write_file)(INODE inode, unsigned int offset, void* buf, unsigned len);
 	DIR (*open_dir)(INODE inode);
 	INODE (*read_dir)(DIR dir);
-	void (*add_dir_entry)(DIR dir, INODE entry);
-	void (*del_dir_entry)(DIR dir, INODE entry);
+	void (*add_dir_entry)(DIR dir, unsigned mode, char* name);
+	void (*del_dir_entry)(DIR dir, char* name);
 	void (*close_dir)(DIR dir);
 	char* (*get_name)(INODE node);
 	unsigned (*get_size)(INODE node);
@@ -130,9 +135,9 @@ DIR vfs_open_dir( INODE inode);
 
 INODE vfs_read_dir(DIR dir);
 
-void vfs_add_dir_entry(DIR dir, INODE entry);
+void vfs_add_dir_entry(DIR dir, unsigned mode, char* name);
 
-void vfs_del_dir_entry(DIR dir, INODE entry);
+void vfs_del_dir_entry(DIR dir, char* name);
 
 void vfs_close_dir(DIR dir);
 

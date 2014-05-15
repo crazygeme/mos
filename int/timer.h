@@ -62,4 +62,6 @@ void usleep(unsigned int us);
 
 void delay(unsigned int us);
 
+unsigned long long time(unsigned long long* t);
+
 #endif

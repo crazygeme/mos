@@ -98,7 +98,31 @@ int fs_create(char* path, unsigned mode)
 
 int fs_delete(char* path)
 {  
+	DIR dir;
+	char dir_name[260] = { 0 };
+	char* t;
 
+	strcpy(dir_name, path);
+	t = strrchr(dir_name, '/');
+	if (!t)
+		return 0;
+
+	*t = '\0';
+	t++;
+
+	if (*dir_name == '\0')
+		dir = fs_opendir("/");
+	else
+		dir = fs_opendir(dir_name);
+
+	if (!dir)
+		return 0;
+
+	vfs_del_dir_entry(dir, t);
+
+
+	fs_closedir(dir);
+	return 1;
     return 0;
 }
 

@@ -32,4 +32,4 @@ tags
 *.taghl
 *.swp
 .DS_Store
-*.v*
+*.vtg

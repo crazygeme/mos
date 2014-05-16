@@ -36,7 +36,7 @@ static void ffs_flush_bitmap(block* b, struct ffs_bitmap_cache* cache);
 
 static void ffs_set_bitmap(block* b, struct ffs_bitmap_cache* cache, unsigned sector, unsigned used)
 {
-	unsigned index = sector / (BLOCK_SECTOR_SIZE * 8);
+	unsigned index = sector / (BLOCK_SECTOR_SIZE * 8) + 1;
 	unsigned idx_inside_sector = sector % (BLOCK_SECTOR_SIZE * 8);
 	unsigned idx_inside_node = idx_inside_sector / 8;
 	unsigned idx_inside_byte = idx_inside_sector % 8;
@@ -104,12 +104,17 @@ static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_
 {
 	block* b = node->type->dev;
 	struct ffs_super_node* super = node->type->sb;
+	char* tmp = kmalloc(BLOCK_SECTOR_SIZE);
 	int i = 1;
 	unsigned bitmap_sector_count = (super->total_size - 1) / (BLOCK_SECTOR_SIZE * 8) + 1;
 	unsigned sector = ffs_find_free_sector(cache);
+
+	memset(tmp, 0, BLOCK_SECTOR_SIZE);
 	if (sector){
 		ffs_set_bitmap(b, cache, sector, 1);
+		b->write(b->aux, sector, tmp, BLOCK_SECTOR_SIZE);
 		super->used_size++;
+		kfree(tmp);
 		return sector;
 	}
 
@@ -119,11 +124,14 @@ static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_
 		sector = ffs_find_free_sector(cache);
 		if (sector){
 			ffs_set_bitmap(b, cache, sector, 1);
+			b->write(b->aux, sector, tmp, BLOCK_SECTOR_SIZE);
 			super->used_size++;
+			kfree(tmp);
 			return sector;
 		}
 	}
 
+	kfree(tmp);
 	return 0;
 }
 
@@ -138,6 +146,10 @@ static void ffs_update_node_meta(struct ffs_inode* node, char* buf)
 	info = (struct ffs_meta_info*)(buf + node->meta_offset);
 	memcpy(info, &node->meta, sizeof(*info));
 	b->write(b->aux, node->meta_sector, buf, BLOCK_SECTOR_SIZE);
+
+	if (node->meta_sector == 0){
+		b->read(b->aux, 0, node->type->sb, BLOCK_SECTOR_SIZE);
+	}
 }
 
 static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info* meta)
@@ -150,6 +162,7 @@ static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info*
 	ino = meta->sectors[0];
 	if (ino){
 		ffs_set_bitmap(node->type->dev, node->type->desc, ino, 0);
+
 		meta->sectors[0] = 0;
 	}
 
@@ -267,6 +280,7 @@ void ffs_format(block* b)
 
 	bitmap = kmalloc(sizeof(*bitmap));
 	bitmap->sector = 1;
+	ffs_load_bitmap(b, bitmap);
 	for (i = 0; i <= bitmap_sector_count; i++)
 	{
 		ffs_set_bitmap(b, bitmap, i, 1);
@@ -406,10 +420,10 @@ static void ffs_enum_dentry(struct ffs_inode* node, void* buf,
 	max = (INODE_PER_SECTOR*INODE_PER_SECTOR + INODE_PER_SECTOR + 1)*META_PER_SECTOR;
 	count = 0;
 	for (i = 0; i < max ; i++){
-		ino = ffs_file_get_ino(node, i / META_PER_SECTOR, buf);
+		ino = ffs_file_get_ino(node, i , buf);
 		if (!ino){
 			if (empty)
-				empty(node, i / META_PER_SECTOR, buf, aux);
+				empty(node, i , buf, aux);
 			return;
 		}
 

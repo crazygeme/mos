@@ -7,7 +7,7 @@ kernel
 user/run
 kernel.dbg
 ffstool/ffstool
-
+ffstool/ffswin32/Debug/*
 # Libraries
 *.lib
 *.a

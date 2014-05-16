@@ -74,7 +74,7 @@ struct ffs_dir
 {
     struct filesys_type* type;
     unsigned cur;
-    struct ffs_meta_info meta;
+	struct ffs_inode self;
 };
 
 void ffs_attach(block* b);

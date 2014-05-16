@@ -12,7 +12,7 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len);
 
 unsigned fs_write(unsigned fd, unsigned offset, void* buf, unsigned len);
 
-int fs_create(char* path);
+int fs_create(char* path, unsigned mode);
 
 int fs_delete(char* path);
 

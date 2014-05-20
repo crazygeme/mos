@@ -66,6 +66,8 @@ char* strcat(char* str, char* msg);
 
 char* strchr(char* str, char c);
 
+char* strrchr(char* str, char c);
+
 void printf(const char* str, ...);
 
 void printk(const char* str, ...);

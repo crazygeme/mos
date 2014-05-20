@@ -1,7 +1,7 @@
 #!/bin/bash
 # mak
 if [ "$2" == "" ]; then
-	diskfile="rootfs.img"
+	diskfile="ffs.img"
 else
 	diskfile="$2"
 fi

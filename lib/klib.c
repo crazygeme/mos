@@ -564,6 +564,18 @@ char* strchr(char* str, char c)
 	return 0;
 }
 
+char* strrchr(char* str, char c)
+{
+	int i = 0;
+	int len = strlen(str);
+	for (i = len-1; i >= 0; i--) {
+		if (str[i] == c)
+		  return (str+i);
+	}
+
+	return 0;
+}
+
 int isspace(const char c)
 {
     return (c == ' ' || c == '\t' || c == '\n');

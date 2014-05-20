@@ -26,4 +26,6 @@ int fs_readdir(DIR dir, char* name, unsigned* mode);
 
 void fs_closedir(DIR dir);
 
+void fs_flush(char* filesys);
+
 #endif

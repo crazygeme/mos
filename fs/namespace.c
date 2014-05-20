@@ -72,6 +72,8 @@ int fs_create(char* path, unsigned mode)
 	DIR dir;
 	char dir_name[260] = { 0 };
 	char* t;
+	struct stat s;
+	int stat_status;
 
 	strcpy(dir_name, path);
 	t = strrchr(dir_name, '/');
@@ -81,13 +83,27 @@ int fs_create(char* path, unsigned mode)
 	*t = '\0';
 	t++;
 
-	if (*dir_name == '\0')
+	if (*dir_name == '\0'){
 		dir = fs_opendir("/");
-	else
+		stat_status = fs_stat("/", &s);
+	}
+	else{
 		dir = fs_opendir(dir_name);
+		stat_status = fs_stat(dir_name, &s);
+	}
 
 	if (!dir)
 		return 0;
+
+	if (stat_status == -1 || !S_ISDIR(s.st_mode)){
+		fs_closedir(dir);
+		return 0;
+	}
+
+	if (fs_stat(path, &s) != -1){
+		fs_closedir(dir);
+		return 0;
+	}
 
 	vfs_add_dir_entry(dir, mode, t);
 
@@ -101,6 +117,8 @@ int fs_delete(char* path)
 	DIR dir;
 	char dir_name[260] = { 0 };
 	char* t;
+	struct stat s;
+	int stat_status;
 
 	strcpy(dir_name, path);
 	t = strrchr(dir_name, '/');
@@ -110,20 +128,33 @@ int fs_delete(char* path)
 	*t = '\0';
 	t++;
 
-	if (*dir_name == '\0')
+	if (*dir_name == '\0'){
 		dir = fs_opendir("/");
-	else
+		stat_status = fs_stat("/", &s);
+	}
+	else{
 		dir = fs_opendir(dir_name);
+		stat_status = fs_stat(dir_name, &s);
+	}
 
 	if (!dir)
 		return 0;
+
+	if (stat_status == -1 || !S_ISDIR(s.st_mode)){
+		fs_closedir(dir);
+		return 0;
+	}
+
+	if (fs_stat(path, &s) == -1){
+		fs_closedir(dir);
+		return 0;
+	}
 
 	vfs_del_dir_entry(dir, t);
 
 
 	fs_closedir(dir);
 	return 1;
-    return 0;
 }
 
 int fs_rename(char* path, char* new)
@@ -327,6 +358,11 @@ static INODE fs_clear_fd(unsigned fd)
 
     return node;
 
+}
+
+void fs_flush(char* filesys)
+{
+	struct filesys_type* type = mount_lookup("/");
 }
 
 #ifdef TEST_NS

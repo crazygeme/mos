@@ -237,4 +237,14 @@ int vfs_copy_stat(INODE node, struct stat* s)
     return type->ino_ops->copy_stat(node, s);
 }
 
+void vfs_close(struct filesys_type* type)
+{
+	if (!type || !type->super_ops) {
+		return ;
+	}
+
+	type->super_ops->write_super(type, type->sb);
+	type->super_ops->write_desc(type, type->desc);
+}
+
 

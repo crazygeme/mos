@@ -115,8 +115,13 @@ static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_
 		b->write(b->aux, sector, tmp, BLOCK_SECTOR_SIZE);
 		super->used_size++;
 		kfree(tmp);
+#ifdef DEBUG_FFS
+		printk("[free_sector] %d\n", sector);
+#endif
 		return sector;
 	}
+
+	ffs_flush_bitmap(b, cache);
 
 	for (i = 1; i <= bitmap_sector_count; i++){
 		cache->sector = i;
@@ -127,6 +132,9 @@ static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_
 			b->write(b->aux, sector, tmp, BLOCK_SECTOR_SIZE);
 			super->used_size++;
 			kfree(tmp);
+#ifdef DEBUG_FFS
+			printk("[free_sector] %d\n", sector);
+#endif
 			return sector;
 		}
 	}
@@ -141,6 +149,7 @@ static void ffs_update_node_meta(struct ffs_inode* node, char* buf)
 {
 	block* b = node->type->dev;
 	struct ffs_meta_info* info;
+	struct ffs_super_node* super = node->type->sb;
 
 	b->read(b->aux, node->meta_sector, buf, BLOCK_SECTOR_SIZE);
 	info = (struct ffs_meta_info*)(buf + node->meta_offset);
@@ -148,7 +157,7 @@ static void ffs_update_node_meta(struct ffs_inode* node, char* buf)
 	b->write(b->aux, node->meta_sector, buf, BLOCK_SECTOR_SIZE);
 
 	if (node->meta_sector == 0){
-		b->read(b->aux, 0, node->type->sb, BLOCK_SECTOR_SIZE);
+		memcpy(&super->root, &node->meta, sizeof(*info));
 	}
 }
 
@@ -159,6 +168,7 @@ static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info*
 	block* dev = node->type->dev;
 	int i, j;
 
+	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	ino = meta->sectors[0];
 	if (ino){
 		ffs_set_bitmap(node->type->dev, node->type->desc, ino, 0);
@@ -181,6 +191,8 @@ static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info*
 	if (ino){
 		char* tmp = kmalloc(BLOCK_SECTOR_SIZE);
 		unsigned* table = tmp;
+
+		memset(tmp, 0, BLOCK_SECTOR_SIZE);
 		dev->read(dev->aux, ino, tmp, BLOCK_SECTOR_SIZE);
 		for (i = 0; i < INODE_PER_SECTOR; i++){
 			unsigned* level2_table = buf;
@@ -351,6 +363,9 @@ static unsigned int ffs_file_get_ino(struct ffs_inode* node, unsigned index, voi
 	if (index < 1) // directly
 	{
 		ino = node->meta.sectors[0];
+#ifdef DEBUG_FFS
+		printk("[get %d]sectors[0] = %d\n", node->meta_sector, ino);
+#endif
 	}
 	else if (index < (INODE_PER_SECTOR + 1)) // indirect
 	{
@@ -363,6 +378,9 @@ static unsigned int ffs_file_get_ino(struct ffs_inode* node, unsigned index, voi
 		b->read(b->aux, i, buf, BLOCK_SECTOR_SIZE);
 		table = (unsigned*)buf;
 		ino = table[index];
+#ifdef DEBUG_FFS
+		printk("[get %d]sectors[1] = %d, table[%d] = %d\n", node->meta_sector, i, index, ino);
+#endif
 
 	}
 	else if (index < (INODE_PER_SECTOR*INODE_PER_SECTOR + INODE_PER_SECTOR + 1)) // double indirect
@@ -370,6 +388,7 @@ static unsigned int ffs_file_get_ino(struct ffs_inode* node, unsigned index, voi
 		unsigned i = node->meta.sectors[2];
 		unsigned level1_index, level2_index;
 		unsigned* table;
+		unsigned level1_ino = 0, level2_ino = 0;
 
 		if (!i)
 			return 0;
@@ -378,15 +397,26 @@ static unsigned int ffs_file_get_ino(struct ffs_inode* node, unsigned index, voi
 		level1_index = index / INODE_PER_SECTOR;
 		level2_index = index % INODE_PER_SECTOR;
 
+		memset(buf, 0, BLOCK_SECTOR_SIZE);
 		b->read(b->aux, i, buf, BLOCK_SECTOR_SIZE);
 		table = (unsigned*)buf;
 		i = table[level1_index];
+		level1_ino = i;
 		if (!i)
 			return 0;
 
+		memset(buf, 0, BLOCK_SECTOR_SIZE);
 		b->read(b->aux, i, buf, BLOCK_SECTOR_SIZE);
 		table = (unsigned*)buf;
 		ino = table[level2_index];
+		level2_ino = ino;
+#ifdef DEBUG_FFS
+		printk("[get %d]sectors[2] = %d, table1[%d] = %d, table2[%d] = %d\n",
+			node->meta_sector,
+			node->meta.sectors[2], level1_index, level1_ino,
+			level2_index, level2_ino);
+#endif
+
 
 	}
 	else // not possible
@@ -518,6 +548,7 @@ static unsigned ffs_create_inode_at_table(struct ffs_inode* node, unsigned table
 	unsigned *table;
 	unsigned ino;
 
+	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	b->read(b->aux, table_ino, buf, BLOCK_SECTOR_SIZE);
 	table = buf;
 	if (table[index] && !replace)
@@ -544,6 +575,9 @@ static unsigned ffs_file_create_inode(struct ffs_inode* node, unsigned index, vo
 			return 0;
 
 		node->meta.sectors[0] = ino;
+#ifdef DEBUG_FFS
+		printk("[create %d]sectors[0] = %d\n", node->meta_sector, ino);
+#endif
 	}
 	else if (index < (INODE_PER_SECTOR + 1)) // indirect
 	{
@@ -559,6 +593,9 @@ static unsigned ffs_file_create_inode(struct ffs_inode* node, unsigned index, vo
 		index -= 1;
 
 		ino = ffs_create_inode_at_table(node, indirect_ino, index, buf, 1);
+#ifdef DEBUG_FFS
+		printk("[create %d]sectors[1] = %d, table[%d] = %d\n", node->meta_sector, indirect_ino, index, ino);
+#endif
 		return ino;
 
 	}
@@ -567,7 +604,7 @@ static unsigned ffs_file_create_inode(struct ffs_inode* node, unsigned index, vo
 		unsigned indirect_ino = node->meta.sectors[2];
 		unsigned* table;
 		unsigned level1_index, level2_index;
-		unsigned level1_ino, level2_ino;
+		unsigned level1_ino = 0, level2_ino = 0;
 
 		index -= (INODE_PER_SECTOR + 1);
 		level1_index = index / INODE_PER_SECTOR;
@@ -578,12 +615,24 @@ static unsigned ffs_file_create_inode(struct ffs_inode* node, unsigned index, vo
 			if (!indirect_ino)
 				return 0;
 			node->meta.sectors[2] = indirect_ino;
+		}else{
+			memset(buf, 0, BLOCK_SECTOR_SIZE);
+			b->read(b->aux, indirect_ino, buf, BLOCK_SECTOR_SIZE);
+			table = (unsigned*)buf;
+			level1_ino = table[level1_index];
 		}
 
-		level1_ino = ffs_create_inode_at_table(node, indirect_ino, level1_index, buf, 0);
+		if (!level1_ino){
+			level1_ino = ffs_create_inode_at_table(node, indirect_ino, level1_index, buf, 0);
+		}
 
 		level2_ino = ffs_create_inode_at_table(node, level1_ino, level2_index, buf, 0);
-
+#ifdef DEBUG_FFS
+		printk("[create %d]sectors[2] = %d, table1[%d] = %d, table2[%d] = %d\n", 
+			node->meta_sector,
+			indirect_ino, level1_index, level1_ino,
+			level2_index, level2_ino);
+#endif
 		return level2_ino;
 	}
 	else // not possible
@@ -608,7 +657,7 @@ static unsigned ffs_read_file(INODE inode, unsigned int offset, char* buf, unsig
 
 
 
-
+	memset(tmp, 0, BLOCK_SECTOR_SIZE);
 	while (left){
 		char* t = 0;
 		unsigned copy_size = BLOCK_SECTOR_SIZE - offset_in_sec;
@@ -646,6 +695,7 @@ static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsi
 		return 0;
 
 	tmp = kmalloc(BLOCK_SECTOR_SIZE);
+	memset(tmp, 0, BLOCK_SECTOR_SIZE);
 	while (left){
 		char* t = 0;
 		unsigned copy_size = BLOCK_SECTOR_SIZE - offset_in_sec;
@@ -711,6 +761,7 @@ static INODE ffs_read_dir(DIR d)
 
 	ret = kmalloc(sizeof(*ret));
 	tmp = kmalloc(BLOCK_SECTOR_SIZE);
+	memset(tmp, 0, BLOCK_SECTOR_SIZE);
 	ffs_dentry_get_meta(&dir->self, dir->cur, &ret->meta, &ret->meta_sector, &ret->meta_offset, tmp);
 	if (!ret->meta_sector){
 		kfree(ret);
@@ -796,6 +847,8 @@ static void ffs_add_dir_entry(DIR d, unsigned mode, char* name)
 	struct ffs_dir* dir = d;
 	dir_add_del_block b;
 	char* buf = kmalloc(BLOCK_SECTOR_SIZE);
+
+	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	b.mode = mode;
 	b.name = name;
 	b.ok = 0;
@@ -817,6 +870,8 @@ static void ffs_del_dir_entry(DIR d, char* name)
 	struct ffs_dir* dir = d;
 	dir_add_del_block b;
 	char* buf = kmalloc(BLOCK_SECTOR_SIZE);
+
+	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	b.name = name;
 	b.ok = 0;
 	ffs_enum_dentry(&dir->self, buf, dir_delete_dentry_callback, 0, 0, &b);
@@ -849,7 +904,20 @@ static unsigned int ffs_get_size(INODE node)
 static int ffs_copy_stat(INODE node, struct stat* s)
 {
 	struct ffs_inode* n = node;
+	struct ffs_super_node* super = n->type->sb;
+
 	s->st_atime = n->meta.mt_access;
+	s->st_mode = n->meta.mode;
+	s->st_size = n->meta.len;
+	s->st_blksize = BLOCK_SECTOR_SIZE;
+	s->st_blocks = super->total_size;
+	s->st_ctime = n->meta.mt_create;
+	s->st_dev = 0;
+	s->st_gid = 0;
+	s->st_ino = n->meta_sector;
+	s->st_mtime = n->meta.mt_modify;
+	s->st_uid = 0;
+
 	return 1;
 }
 

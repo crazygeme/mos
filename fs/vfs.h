@@ -147,4 +147,6 @@ unsigned vfs_get_size(INODE node);
 
 int vfs_copy_stat(INODE node, struct stat* s);
 
+void vfs_close(struct filesys_type* type);
+
 #endif

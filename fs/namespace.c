@@ -2,6 +2,8 @@
 #ifdef WIN32
 #include <windows.h>
 #include <osdep.h>
+#elif MACOS
+#include <osdep.h>
 #else
 #include <ps/ps.h>
 #include <ps/lock.h>
@@ -255,7 +257,7 @@ static INODE fs_get_dirent_node(INODE node, char* name)
 
 static INODE fs_lookup_inode(char* path)
 {
-    struct filesys_type* type = 0;
+    struct filesys_type* type = (void*)0;
 	INODE root;
 	char parent[256];
 	char* tmp;
@@ -439,7 +441,7 @@ void test_ns()
 	klogquota();
 
 	printk("test_ns\n");
-	list_dir("/", 0);
+	//list_dir("/", 0);
 
 	test_write();
 	klogquota();

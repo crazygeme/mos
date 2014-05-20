@@ -25,7 +25,7 @@ void InsertHeadList(PLIST_ENTRY ListHead,PLIST_ENTRY Entry);
 void AppendTailList(PLIST_ENTRY ListHead,PLIST_ENTRY ListToAppend);
 
 #define OFFSET_OF(type, field) \
-	(unsigned int)(&(((type*)0)->field))
+	(unsigned long long)(&(((type*)0)->field))
 
 #define CONTAINER_OF( node, type, field ) \
 	(type*)( (char *)node - OFFSET_OF(type, field)   )

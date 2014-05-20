@@ -3,6 +3,9 @@
 #ifdef WIN32
 #include <osdep.h>
 #include <time.h>
+#elif MACOS
+#include <osdep.h>
+#include <time.h>
 #else
 #include <lib/klib.h>
 #include <int/timer.h>
@@ -315,7 +318,7 @@ void ffs_format(block* b)
 		(unsigned)time(0);
 	strcpy(super->root.name, "/");
 	super->root.sectors[0] = super->root.sectors[1] = 
-		super->root.sectors[3] = 0;
+		super->root.sectors[2] = 0;
 	super->total_size = b->sector_size;
 	
 	// init bitmap

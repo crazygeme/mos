@@ -188,7 +188,6 @@ static void interrupt_handler (intr_frame * f)
             
             sema_trigger(&c->sema);      /* Wake up waiter. */
 
-            c->expecting_interrupt = 0;
           }
         else
           printk ("%s: unexpected interrupt\n", c->name);
@@ -534,7 +533,7 @@ static void found_partition ( block *block, unsigned char part_type,
       strcat(name, ext);
 
       #ifdef DEBUG
-      printk("got a partition, with start %d, bootable %x\n", p->start, p->bootable);
+      printk("got a partition, with start %d, bootable %x, type %x\n", p->start, p->bootable, type);
       #endif
 
       b = block_register(p,name,partition_read, partition_write, type, size);
@@ -624,6 +623,8 @@ select_sector ( ata_disk *d, unsigned int sec_no)
   _write_port (reg_lbah (c), (sec_no >> 16));
   _write_port (reg_device (c),
         DEV_MBS | DEV_LBA | (d->dev_no == 1 ? DEV_DEV : 0) | (sec_no >> 24));
+
+  delay(400);
 }
 
 

@@ -2,6 +2,8 @@
 #ifdef WIN32
 #include <windows.h>
 #include <osdep.h>
+#elif MACOS
+#include <osdep.h>
 #else
 #include <lib/klib.h>
 #include <ps/lock.h>

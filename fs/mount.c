@@ -3,6 +3,9 @@
 #ifdef WIN32
 #include <Windows.h>
 #include <osdep.h>
+#elif MACOS
+#include <osdep.h>
+#include <lib/list.h>
 #else
 #include <lib/list.h>
 #include <ps/lock.h>
@@ -14,8 +17,8 @@ static semaphore mnt_lock;
 typedef struct _mnt_list_entry
 {
     LIST_ENTRY mnt_list;
-    char path[260];
     struct filesys_type* type;
+    char path[260];
 }mnt_list_entry;
 
 void mount_init()
@@ -87,12 +90,14 @@ int do_umount(char* path)
 struct filesys_type* mount_lookup(char* path)
 {
     mnt_list_entry* mnt = do_mount_lookup(path);
+    struct filesys_type* ret;
 
     if (!mnt) {
         return 0;
     }
 
-    return mnt->type;
+    ret = mnt->type;
+    return ret;
 }
 
 #ifdef TEST_MOUNT

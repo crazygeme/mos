@@ -2,6 +2,7 @@
 #include <ps/lock.h>
 #include <int/int.h>
 #include <drivers/block.h>
+#include <int/timer.h>
 
 
 /* The code in this file is an interface to an ATA (IDE)
@@ -186,6 +187,8 @@ static void interrupt_handler (intr_frame * f)
             _read_port (reg_status (c));               /* Acknowledge interrupt. */
             
             sema_trigger(&c->sema);      /* Wake up waiter. */
+
+            c->expecting_interrupt = 0;
           }
         else
           printk ("%s: unexpected interrupt\n", c->name);
@@ -256,6 +259,7 @@ static int wait_while_busy (const ata_disk * d)
 {
   channel *c = d->channel;
   int i;
+  int ret;
   
   for (i = 0; i < 3000; i++)
     {
@@ -265,7 +269,12 @@ static int wait_while_busy (const ata_disk * d)
         {
           if (i >= 700)
             printk ("ok\n");
-          return (_read_port (reg_alt_status (c)) & STA_DRQ) != 0;
+          ret = (_read_port (reg_alt_status (c)) & STA_DRQ);
+          if (ret == 0)
+            {
+              printk("loop %d return fail, ret %x\n", i, ret);
+            }
+          return ret != 0;
         }
       delay (10000);
     }
@@ -282,7 +291,6 @@ static void select_device ( const ata_disk * d)
     dev |= DEV_DEV;
   _write_port (reg_device (c), dev);
   _read_port (reg_alt_status (c));
-  delay (400);
 }
 
 static int check_device_type ( ata_disk * d)
@@ -562,19 +570,20 @@ static void select_device_wait (const ata_disk * d)
 
 static void issue_pio_command ( channel * c, unsigned char command)
 {
-  c->expecting_interrupt = 1;
   sema_reset(&c->sema);
+  c->expecting_interrupt = 1;
   _write_port (reg_command (c), command);
 }
 
 static void input_sector ( channel * c, void * sector)
 {
-  _read_wb(reg_data (c), sector, BLOCK_SECTOR_SIZE / 2);
+  _read_dwb(reg_data (c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
 static void output_sector ( channel *c, const void *sector) 
 {
-  _write_wb (reg_data (c), sector, BLOCK_SECTOR_SIZE / 2);
+
+  _write_dwb (reg_data (c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
 
@@ -618,22 +627,149 @@ select_sector ( ata_disk *d, unsigned int sec_no)
 }
 
 
+#ifdef DEBUG_FFS
+static time_t read_select, read_wait, read_io;
+static time_t writ_select, writ_wait, writ_io;
 
+static unsigned long read_select_t = 0, read_wait_t = 0, read_io_t = 0;
+static unsigned long writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
+
+static unsigned long read_times = 0, write_times = 0;
+
+static void break_hdd_read_select_begin()
+{
+  timer_current(&read_select);
+}
+
+static void break_hdd_read_select_end()
+{
+  time_t now;
+  timer_current(&now);
+
+  read_select_t += (now.seconds*1000 + now.milliseconds - 
+    read_select.seconds*1000 - read_select.milliseconds); 
+}
+
+static void break_hdd_read_wait_begin()
+{
+  timer_current(&read_wait);
+}
+
+static void break_hdd_read_wait_end()
+{
+  time_t now;
+  timer_current(&now);
+
+  read_wait_t += (now.seconds*1000 + now.milliseconds - 
+    read_wait.seconds*1000 - read_wait.milliseconds); 
+}
+
+static void break_hdd_read_io_begin()
+{
+  timer_current(&read_io);
+}
+
+static void break_hdd_read_io_end()
+{
+  time_t now;
+  timer_current(&now);
+
+  read_io_t += (now.seconds*1000 + now.milliseconds - 
+    read_io.seconds*1000 - read_io.milliseconds);
+}
+
+static void break_hdd_write_select_begin()
+{
+  timer_current(&writ_select);
+}
+
+static void break_hdd_write_select_end()
+{
+  time_t now;
+  timer_current(&now);
+
+  writ_select_t += (now.seconds*1000 + now.milliseconds - 
+    writ_select.seconds*1000 - writ_select.milliseconds);
+}
+
+static void break_hdd_write_wait_begin()
+{
+  timer_current(&writ_wait);
+}
+
+static void break_hdd_write_wait_end()
+{
+  time_t now;
+  timer_current(&now);
+
+  writ_wait_t += (now.seconds*1000 + now.milliseconds - 
+    writ_wait.seconds*1000 - writ_wait.milliseconds);
+
+}
+
+static void break_hdd_write_io_begin()
+{
+  timer_current(&writ_io);
+}
+
+static void break_hdd_write_io_end()
+{
+  time_t now;
+  timer_current(&now);
+
+  writ_io_t += (now.seconds*1000 + now.milliseconds - 
+    writ_io.seconds*1000 - writ_io.milliseconds);
+
+}
+
+void report_hdd_time()
+{
+  printk("read  %d times: select %u, wait %u, io %u\n", read_times, read_select_t,
+         read_wait_t, read_io_t);
+  printk("write %d times: select %u, wait %u, io %u\n", write_times,writ_select_t,
+         writ_wait_t, writ_io_t);
+  read_select_t = 0, read_wait_t = 0, read_io_t = 0;
+  writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
+  read_times = write_times = 0;
+}
+#endif
 
 static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
 {
   ata_disk *d = aux;
   channel *c = d->channel;
   sema_wait(&c->iolock);
+ #ifdef DEBUG_FFS
+  break_hdd_read_select_begin();
+ #endif
   select_sector (d, sec_no);
+ #ifdef DEBUG_FFS
+  break_hdd_read_select_end();
+ #endif
+
+#ifdef DEBUG_FFS
+  break_hdd_read_wait_begin();
+#endif
   issue_pio_command (c, CMD_READ_SECTOR_RETRY);
   sema_wait (&c->sema);
   if (!wait_while_busy (d)){
     printk ("%s: disk read failed, sector=%d\n", d->name, sec_no);
     return 0;
   }
+#ifdef DEBUG_FFS
+  break_hdd_read_wait_end();
+#endif
+
+#ifdef DEBUG_FFS
+  break_hdd_read_io_begin();
+#endif
   input_sector (c, buf);
+#ifdef DEBUG_FFS
+  break_hdd_read_io_end();
+#endif
   sema_trigger (&c->iolock);
+
+  read_times++;
   return len;
 }
 
@@ -643,15 +779,36 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
   ata_disk *d = aux;
   channel *c = d->channel;
   sema_wait (&c->iolock);
+#ifdef DEBUG_FFS
+  break_hdd_write_select_begin();
+#endif
   select_sector (d, sec_no);
+#ifdef DEBUG_FFS
+  break_hdd_write_select_end();
+#endif
   issue_pio_command (c, CMD_WRITE_SECTOR_RETRY);
   if (!wait_while_busy (d)){
     printk ("%s: disk write failed, sector=%d\n", d->name, sec_no);
     return 0;
   }
+#ifdef DEBUG_FFS
+  break_hdd_write_io_begin();
+#endif
   output_sector (c, buf);
+#ifdef DEBUG_FFS
+  break_hdd_write_io_end();
+#endif
+
+#ifdef DEBUG_FFS
+  break_hdd_write_wait_begin();
+#endif
   sema_wait (&c->sema);
+#ifdef DEBUG_FFS
+  break_hdd_write_wait_end();
+#endif
   sema_trigger (&c->iolock);
+
+  write_times++;
   return len;
 }
 

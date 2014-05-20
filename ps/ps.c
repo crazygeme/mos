@@ -334,6 +334,7 @@ static void _task_sched(PLIST_ENTRY wait_list) {
 
     if (!task) {
         task = current;
+        goto SELF;
     }
     task->status = ps_running; 
 
@@ -363,6 +364,7 @@ static void _task_sched(PLIST_ENTRY wait_list) {
     __asm__("movl %eax, %esp");
     RESTORE_ALL();
     __asm__("NEXT: nop");
+
     current = CURRENT_TASK();
     reset_tss(current);
     if (current->user.page_dir) {
@@ -376,6 +378,7 @@ static void _task_sched(PLIST_ENTRY wait_list) {
             in_use[i] = per_ps[i];
         }
     }
+ SELF:
     current ->is_switching = 0;
     return;
 }

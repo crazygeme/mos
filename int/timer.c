@@ -138,6 +138,7 @@ void timer_init()
     hourse = 0;
     days = 0;
     cycle_per_ticket = 0;
+    total_seconds = 0;
 
 	int_register(0x20, timer_process, 0, 0);
 

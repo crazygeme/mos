@@ -39,17 +39,15 @@ void kmain_startup()
     int i = 0;
 	
 	
+    dsr_init();
 
-	int_enable_all();
+    int_enable_all();
 
-	mm_del_user_map();
+    mm_del_user_map();
 
-	dsr_init();
-
-
-	kb_init();
+    kb_init();
 	
-	timer_init();
+    timer_init();
 
     klib_init();
 

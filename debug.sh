@@ -6,7 +6,23 @@ else
 	diskfile="$2"
 fi
 
+if [ "$diskfile" == "ffs.img" ]; then
+	if [ -e "$diskfile" ]; then
+		rm "$diskfile"
+	fi
+	cp rootfs.img $diskfile
+	cd ffstool
+	if [ ! -e ffstool ]; then
+		make
+	fi
+	echo "format ffs.img"
+	./ffstool format
+	echo "done"
+	cd ..
+fi
+echo "begin enum"
 #sudo mount -o loop rootfs.img mnt
 qemu-system-i386 -no-kvm -no-reboot -m 256 -hda "$diskfile" -kernel $1 -gdb tcp::8888 -S
+#qemu-system-i386 -no-kvm -m 256 -drive file="$diskfile",index=0,media=disk,if=virtio,cache=unsafe -kernel $1
 #sudo umount -l mnt
 

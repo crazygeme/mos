@@ -414,7 +414,7 @@ static void test_write()
 
 	buf = kmalloc(1024);
 	memset(buf, 'd', 1024);
-	for (i = 0; i < (4 * 1024); i++){
+	for (i = 0; i < (1024); i++){
 		if (i % 100 == 0) {
 			printk("write index %d\n", i);
 			#ifdef DEBUG_FFS
@@ -434,6 +434,40 @@ static void test_write()
 	printk("%d: write end\n", time.seconds*60+time.milliseconds);
 }
 
+static void test_read()
+{	
+	unsigned int fd = fs_open("/readme.txt");
+	char* buf = 0;
+	int i = 0;
+	time_t time;
+	timer_current(&time);
+	printk("%d: read  begin\n", time.seconds*60+time.milliseconds);
+	if (fd == MAX_FD)
+		return;
+
+	buf = kmalloc(1024);
+	memset(buf, 0, 1024);
+	for (i = 0; i < (4*1024); i++){
+		if (i % 500 == 0) {
+			printk("read  index %d\n", i);
+			#ifdef DEBUG_FFS
+			extern void report_time();
+			extern void report_hdd_time();
+			report_time();
+			report_hdd_time();
+			#endif
+		}
+		memset(buf, 0, 1024);
+		fs_read(fd, i*1024, buf, 1024);
+		
+	}
+	kfree(buf);
+	fs_close(fd);
+
+	timer_current(&time);
+	printk("%d: write end\n", time.seconds*60+time.milliseconds);
+}
+
 void test_ns()
 {
 	unsigned fd;
@@ -443,7 +477,7 @@ void test_ns()
 	printk("test_ns\n");
 	//list_dir("/", 0);
 
-	test_write();
+	test_read();
 	klogquota();
 }
 #endif

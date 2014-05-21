@@ -8,6 +8,7 @@ user/run
 kernel.dbg
 ffstool/ffstool
 ffstool/ffswin32/Debug/*
+ffstool/Debug/*
 # Libraries
 *.lib
 *.a
@@ -33,3 +34,4 @@ tags
 *.swp
 .DS_Store
 *.vtg
+*.img

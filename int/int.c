@@ -167,6 +167,7 @@ intr_handler (intr_frame *frame)
 	if (external)
 		pic_end_of_interrupt(frame->vec_no);
 	//for(;;);
+	dsr_process();
 }
 
 static void virtual_setup_gdt();

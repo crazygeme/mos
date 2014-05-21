@@ -29,7 +29,7 @@ void dsr_init()
 {
 	InitializeListHead(&dsr_head);
 	spinlock_init(&dsr_lock);
-	int_register(SOFTIRQ, dsr_interrupt, 1, 0);
+	//int_register(SOFTIRQ, dsr_interrupt, 1, 0);
 }
 
 void dsr_add(dsr_callback fn, void* param)
@@ -41,7 +41,7 @@ void dsr_add(dsr_callback fn, void* param)
 	lock_dsr();
 	InsertTailList(&dsr_head, &(node->dsr_list));	
 	unlock_dsr();
-	TRIGGER_SOFTIRQ();
+	//TRIGGER_SOFTIRQ();
 
 }
 

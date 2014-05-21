@@ -3,10 +3,10 @@ CurrentProject=mos.vpj
 [ProjectDates]
 mos.vpj=20140516064531947
 [TreeExpansion2]
-+@ mos.vpj
+-@ mos.vpj
   - Source Files
-  - Header Files
-  + Resource Files
+  + Header Files
+  - Resource Files
   + Bitmaps
   - Other Files
 scroll:0

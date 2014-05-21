@@ -148,6 +148,11 @@ void sema_trigger(semaphore* s)
     task_sched();
 }
 
+void sema_trigger_at_intr(semaphore* s)
+{
+	__sync_lock_test_and_set(&(s->lock), 0);
+}
+
 
 
 

@@ -65,7 +65,11 @@ addl $4, %esp // dummy esp always 0
 popl %ebx
 popl %edx
 popl %ecx
-addl $4, %esp // eax is the return val
+// for a system call, eax is the return val
+// but for an external interrupt, eax must be restored
+// or else a return value in kernel function will be broken
+/*addl $4, %esp*/ 
+popl %eax
 pop %gs
 pop %fs
 pop %es

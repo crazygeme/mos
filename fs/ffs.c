@@ -153,11 +153,12 @@ static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_
 {
 	block* b = node->type->dev;
 	struct ffs_super_node* super = node->type->sb;
-	char* tmp = kmalloc(BLOCK_SECTOR_SIZE);
+	char* tmp = 0;
 	int i = 1;
 	unsigned bitmap_sector_count = (super->total_size - 1) / (BLOCK_SECTOR_SIZE * 8) + 1;
 	unsigned sector = ffs_find_free_sector(cache);
 
+	tmp = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(tmp, 0, BLOCK_SECTOR_SIZE);
 	if (sector){
 		ffs_set_bitmap(b, cache, sector, 1);
@@ -208,11 +209,12 @@ static void ffs_update_node_meta(struct ffs_inode* node, char* buf)
 
 static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info* meta)
 {
-	char* buf = kmalloc(BLOCK_SECTOR_SIZE);
+	char* buf = 0;
 	unsigned ino;
 	block* dev = node->type->dev;
 	int i, j;
 
+	buf = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	ino = meta->sectors[0];
 	if (ino){
@@ -234,9 +236,10 @@ static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info*
 
 	ino = meta->sectors[2];
 	if (ino){
-		char* tmp = kmalloc(BLOCK_SECTOR_SIZE);
+		char* tmp = 0;
 		unsigned* table = tmp;
 
+		tmp = kmalloc(BLOCK_SECTOR_SIZE);
 		memset(tmp, 0, BLOCK_SECTOR_SIZE);
 		dev->read(dev->aux, ino, tmp, BLOCK_SECTOR_SIZE);
 		for (i = 0; i < INODE_PER_SECTOR; i++){
@@ -253,7 +256,10 @@ static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info*
 			ffs_set_bitmap(node->type->dev, node->type->desc, level2, 0);
 		}
 		ffs_set_bitmap(node->type->dev, node->type->desc, ino, 0);
+		kfree(tmp);
 	}
+
+	kfree(buf);
 }
 
 static struct super_operations ffs_super_operations = {
@@ -678,12 +684,11 @@ static unsigned ffs_read_file(INODE inode, unsigned int offset, char* buf, unsig
 	unsigned int inode_index = offset / BLOCK_SECTOR_SIZE;
 	unsigned int offset_in_sec = offset % BLOCK_SECTOR_SIZE;
 	unsigned int ino;
-	void* tmp = kmalloc(BLOCK_SECTOR_SIZE);
+	void* tmp = 0;
 	unsigned total = ((node->meta.len - offset) > len) ? len : (node->meta.len - offset);
 	unsigned left = total;
 
-
-
+	tmp = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(tmp, 0, BLOCK_SECTOR_SIZE);
 	while (left){
 		char* t = 0;
@@ -883,8 +888,10 @@ static void ffs_add_dir_entry(DIR d, unsigned mode, char* name)
 {
 	struct ffs_dir* dir = d;
 	dir_add_del_block b;
-	char* buf = kmalloc(BLOCK_SECTOR_SIZE);
+	char* buf = 0;
 
+
+	buf = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	b.mode = mode;
 	b.name = name;
@@ -906,8 +913,10 @@ static void ffs_del_dir_entry(DIR d, char* name)
 {
 	struct ffs_dir* dir = d;
 	dir_add_del_block b;
-	char* buf = kmalloc(BLOCK_SECTOR_SIZE);
+	char* buf = 0;
 
+
+	buf = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	b.name = name;
 	b.ok = 0;

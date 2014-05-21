@@ -249,7 +249,7 @@ void ps_kickoff() {
 task_struct* CURRENT_TASK() {
     unsigned int esp;
     task_struct *ret;
-    __asm__("movl %%esp, %0" : "=q"(esp));
+    __asm__("movl %%esp, %0" : "=m"(esp));
     ret = (task_struct *)((unsigned int)esp & PAGE_SIZE_MASK);
     return ret;
 }
@@ -380,7 +380,7 @@ static void _task_sched(PLIST_ENTRY wait_list) {
         }
     }
  SELF:
-     if (intr_enabled) {
+     if (1) {
          int_intr_enable();
      }
      

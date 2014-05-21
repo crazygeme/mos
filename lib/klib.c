@@ -238,7 +238,6 @@ void* kmalloc(unsigned size)
 		return (void*)ret;
 	}
 
-
 	unlock_heap();
 	return NULL;
 

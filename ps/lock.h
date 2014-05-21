@@ -64,4 +64,6 @@ void sema_reset(semaphore* s);
 
 void sema_trigger(semaphore* s);
 
+void sema_trigger_at_intr(semaphore* s);
+
 #endif

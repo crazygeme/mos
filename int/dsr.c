@@ -2,12 +2,13 @@
 #include <lib/klib.h>
 #include <int/int.h>
 #include <ps/lock.h>
+#include <config.h>
 
 #define SOFTIRQ 0x1
 #define TRIGGER_SOFTIRQ() \
 	__asm__ ("int $1");
 
-#define DSR_CACHE_DEPTH 100
+
 
 static LIST_ENTRY dsr_head;
 static spinlock dsr_lock;

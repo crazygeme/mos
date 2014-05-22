@@ -27,5 +27,15 @@
 
 #define UNIMPL printk("unimpl function %s\n", __func__)
  
+#define DSR_CACHE_DEPTH 100
+
+#define HDD_CACHE_SIZE 32 /* pages */
+
+#define HDD_CACHE_OPEN 1
+
+#define HDD_CACHE_WRITE_THOUGH 0
+#define HDD_CACHE_WRITE_BACK 1
+
+#define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
 
 #endif

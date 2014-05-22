@@ -203,8 +203,10 @@ void delay(unsigned int us)
 	busy_wait(cycles);
 }
 
-unsigned long long time(unsigned long long* t)
+unsigned long time(unsigned long t)
 {
-    return 0;
+    time_t now;
+    timer_current(&now);
+    return (now.seconds*1000 + now.milliseconds - t);
 }
 

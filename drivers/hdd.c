@@ -3,6 +3,7 @@
 #include <int/int.h>
 #include <drivers/block.h>
 #include <int/timer.h>
+#include <config.h>
 
 
 /* The code in this file is an interface to an ATA (IDE)
@@ -68,12 +69,39 @@ typedef struct _channel
 	ata_disk devices[2];     /* The devices on this channel. */
   }channel;
 
+#if HDD_CACHE_OPEN
+
+#define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
+#define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
+
+typedef struct _block_cache_item
+{
+  int sector;
+  unsigned last_time;
+  unsigned dirty;
+  void* buf;
+}block_cache_item;
+
+typedef struct _block_cache
+{
+  void* vm_pages[HDD_CACHE_SIZE];
+  block_cache_item cache_item[CACHE_SECTOR_COUNT];
+}block_cache;
+
+#endif
+
   typedef struct _partition
     {
       block *block;                /* Underlying block device. */
       unsigned int start;               /* First sector within device. */
       unsigned char bootable;
+      #if HDD_CACHE_OPEN
+      block_cache cache;
+      #endif
     }partition;
+
+
+
 
 
   static void interrupt_handler (intr_frame *);
@@ -100,6 +128,11 @@ typedef struct _channel
 
   static int partition_read(void* aux, unsigned sector, void* buf, unsigned len);  
   static int partition_write(void* aux, unsigned sector, void* buf, unsigned len);
+
+  #if HDD_CACHE_OPEN
+  static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len);  
+  static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned len);
+  #endif
 
   /* We support the two "legacy" ATA channels found in a standard PC. */
 #define CHANNEL_CNT 2
@@ -497,6 +530,189 @@ static void read_partition_table (block *block, unsigned int sector,
   kfree (pt);
 }
 
+#if HDD_CACHE_OPEN
+static unsigned total_read = 0;
+static unsigned total_writ = 0;
+static unsigned cache_hit = 0;
+void report_cache()
+{
+  printk("cache: %d hit, read hdd %d, write hdd %d\n", cache_hit, total_read, total_writ);
+  total_writ = total_read = cache_hit = 0;
+}
+
+static void init_partition_cache(partition* p)
+{
+    int i = 0;
+
+    for (i = 0; i < HDD_CACHE_SIZE; i++)
+      {
+        p->cache.vm_pages[i] = vm_alloc(1);
+      }
+
+    for (i = 0; i < CACHE_SECTOR_COUNT; i++)
+      {
+        unsigned page_idx, page_oft;
+        unsigned buf = 0;
+
+        page_idx = i / SECTOR_PER_PAGE;
+        page_oft = i % SECTOR_PER_PAGE;
+        buf = (unsigned)p->cache.vm_pages[page_idx] + (page_oft * BLOCK_SECTOR_SIZE);
+        p->cache.cache_item[i].dirty = 
+        p->cache.cache_item[i].last_time = 0;
+        p->cache.cache_item[i].sector = -1;
+        p->cache.cache_item[i].buf = (void*)buf;
+      }
+}
+
+static int hdd_cache_lookup(partition* p, int sector)
+{
+  int i = 0;
+
+  if (sector == -1)
+    {
+      return -1;
+    }
+
+  for (i = 0; i < CACHE_SECTOR_COUNT; i++)
+    {
+    if (p->cache.cache_item[i].sector == sector)
+      {
+        cache_hit++;
+        return i;
+      }
+    }
+  return -1;
+}
+
+static int hdd_cache_find_empty(partition* p)
+{
+  int i = 0;
+  for (i = 0; i < CACHE_SECTOR_COUNT; i++)
+    {
+    if (p->cache.cache_item[i].sector == -1)
+      {
+        return i;
+      }
+    }
+  return -1;
+}
+
+static int hdd_cache_find_oldest(partition* p)
+{
+  unsigned oldest = 0xffffffff;
+  int ret = -1;
+  int i = 0;
+
+  for (i = 0; i < CACHE_SECTOR_COUNT; i++)
+    {
+      if (p->cache.cache_item[i].sector == -1)
+        continue;
+
+      if (oldest > p->cache.cache_item[i].last_time)
+        {
+          oldest = p->cache.cache_item[i].last_time;
+          ret = i;
+        }
+    }
+  return ret;
+}
+
+static void hdd_cache_flush(partition*p, int index)
+{
+  void* buf = p->cache.cache_item[index].buf;
+  int sector = p->cache.cache_item[index].sector;
+
+  if (sector < 0)
+    return;
+  if (p->cache.cache_item[index].dirty)
+    {
+      total_writ++;
+      partition_write(p,sector,buf,BLOCK_SECTOR_SIZE);
+    }
+}
+
+static void hdd_cache_update(partition*p, int index, int sector, void* buf, int mark_dirty)
+{
+  p->cache.cache_item[index].dirty = mark_dirty;
+  p->cache.cache_item[index].sector = sector;
+  p->cache.cache_item[index].last_time = time(0);
+  memcpy(p->cache.cache_item[index].buf, buf, BLOCK_SECTOR_SIZE);
+  #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
+  if (mark_dirty)
+    {
+      hdd_cache_flush(p,index);
+    }
+  #endif
+}
+
+
+
+static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len)
+{
+  partition* p = aux;
+  int index = 0;
+
+  index = hdd_cache_lookup(p,sector);
+  if (index >= 0)
+    {
+      memcpy(buf, p->cache.cache_item[index].buf, BLOCK_SECTOR_SIZE);
+      return BLOCK_SECTOR_SIZE;
+    }
+
+  total_read++;
+  partition_read(aux,sector,buf,len);
+  index = hdd_cache_find_empty(p);
+  if (index >= 0)
+    {
+      hdd_cache_update(p,index,sector,buf,0);
+      return len;
+    }
+
+  index = hdd_cache_find_oldest(p);
+  if (index >= 0)
+    {
+      hdd_cache_flush(p,index);
+      hdd_cache_update(p,index,sector,buf,0);
+      return len;
+    }
+
+  return -1;
+
+}
+
+static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned len)
+{
+  partition* p = aux;
+  int index = hdd_cache_lookup(p,sector);
+  if (index >= 0)
+    {
+      hdd_cache_update(p,index,sector,buf,1);
+      return BLOCK_SECTOR_SIZE;
+    }
+
+  index = hdd_cache_find_empty(p);
+  if (index >= 0)
+    {
+      hdd_cache_update(p,index,sector,buf,1);
+      return len;
+    }
+
+  index = hdd_cache_find_oldest(p);
+  if (index >= 0)
+    {
+      hdd_cache_flush(p,index);
+      hdd_cache_update(p,index,sector,buf,1);
+      return len;
+    }
+
+  return -1;
+}
+#else
+void report_cache()
+{
+}
+#endif
+
 static void found_partition ( block *block, unsigned char part_type,
                  unsigned int start, unsigned int size,
                  int part_nr, unsigned char bootable)
@@ -520,8 +736,8 @@ static void found_partition ( block *block, unsigned char part_type,
       char extra_info[128];
       char name[16];
       char ext[2];
-
-      p = (partition*)kmalloc (sizeof *p);
+      unsigned size = sizeof(*p)/PAGE_SIZE+1;
+      p = (partition*)vm_alloc (size);
       if (p == 0){
         printk ("Failed to allocate memory for partition descriptor");
         return ;
@@ -535,11 +751,20 @@ static void found_partition ( block *block, unsigned char part_type,
       ext[1] = '\0';
       strcat(name, ext);
 
+#if HDD_CACHE_OPEN
+      init_partition_cache(p);
+#endif
+
       #ifdef DEBUG
       printk("got a partition, with start %d, bootable %x\n", p->start, p->bootable);
       #endif
 
+      #if HDD_CACHE_OPEN
+      b = block_register(p, name, partition_cache_read, partition_cache_write, type, size);
+      #else
       b = block_register(p,name,partition_read, partition_write, type, size);
+      #endif
+      
 		if (type == BLOCK_LINUX){
 			ext2_attach(b);
 		}else if(type == BLOCK_FILESYS){

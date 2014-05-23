@@ -38,7 +38,7 @@ struct filesys_type* register_vfs(void* sb, void* desc, void* dev,
 void vfs_trying_to_mount_root()
 {
     PLIST_ENTRY entry;
-    struct filesys_type* fs;
+    struct filesys_type* fs = 0;
     int found = 0;
     sema_wait(&vfs_lock);
     entry = vfs_list.Flink;
@@ -55,6 +55,9 @@ void vfs_trying_to_mount_root()
     if (!found) {
         return;
     }
+
+	if (!fs)
+		return;
 
     do_mount("/", fs);
 }

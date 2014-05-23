@@ -167,6 +167,7 @@ intr_handler (intr_frame *frame)
 	if (external)
 		pic_end_of_interrupt(frame->vec_no);
 	//for(;;);
+    // have to move syscall to another routine anyway..
 	dsr_process();
 }
 

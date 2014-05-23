@@ -265,6 +265,8 @@ _RELOAD_USER_CS:
 .func switch_to_user_mode
 switch_to_user_mode:
      cli;
+	 movl 4(%esp), %ecx
+	 movl 8(%esp), %edx
      mov $0x1b, %ax; 
      mov %ax, %ds; 
      mov %ax, %es; 
@@ -282,8 +284,8 @@ switch_to_user_mode:
      push $1f; 
      iret; 
    1: nop;
-     movl $0x00803f00, %esp
-     movl $0x00803f00, %ebp
-     movl $0x00804000, %eax
+     movl %edx, %esp
+     movl %edx, %ebp
+     movl %ecx, %eax
      jmp *%eax
 .endfunc

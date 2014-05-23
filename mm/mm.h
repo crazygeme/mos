@@ -33,6 +33,8 @@ typedef struct multiboot_info multiboot_info_t;
 #define PAGE_ENTRY_USER_CODE (PAGE_ENTRY_PRESENT|PAGE_ENTRY_DPL_USER)
 #define PAGE_ENTRY_USER_DATA (PAGE_ENTRY_PRESENT|PAGE_ENTRY_WRITABLE|PAGE_ENTRY_DPL_USER)
 
+#define ROUND_UP(X, STEP) (((X) + (STEP) - 1) / (STEP) * (STEP))
+
 #define _START \
     __attribute__((section(".start")))
 

@@ -14,9 +14,10 @@ static unsigned call_table[NR_syscalls] = {
 	0			// 5
 };
 
-static void unhandled_syscall(unsigned callno)
+static int unhandled_syscall(unsigned callno)
 {
 	printk("unhandled syscall %d\n", callno);
+    return -1;
 }
 
 static void syscall_process(intr_frame* frame)
@@ -50,8 +51,8 @@ static int test_call(unsigned arg0, unsigned arg1, unsigned arg2)
 
 static int sys_write(unsigned fd, char* buf, unsigned len)
 {
-	// FIXME, fd 0 not always refer to console
-	if (fd == 0)
+	// FIXME, fd 1 not always refer to console
+	if (fd == 1)
 	{
 		printf(buf);
 	}

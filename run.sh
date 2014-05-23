@@ -6,6 +6,10 @@ else
 	diskfile="$2"
 fi
 
+cd user
+make clean
+make
+cd ..
 if [ "$diskfile" == "ffs.img" ]; then
 	if [ -e "$diskfile" ]; then
 		rm "$diskfile"

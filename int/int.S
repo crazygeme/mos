@@ -289,3 +289,64 @@ switch_to_user_mode:
      movl %ecx, %eax
      jmp *%eax
 .endfunc
+
+.global syscall_handler;
+.section .text
+.func syscall_handler
+syscall_handler:
+	pushl %ebp
+	pushl $0
+	push $0x80
+	/* Save caller's registers. */
+	push %ds
+	push %es
+	push %fs
+	push %gs
+	pushl %eax
+	pushl %ecx
+	pushl %edx
+	pushl %ebx
+	pushl $0
+	pushl %ebp
+	pushl %esi
+	pushl %edi
+        
+	/* Set up kernel environment. */
+	pushl %edx
+	mov $KERNEL_CODE_SELECTOR, %edx	/* Initialize segment registers. */
+	mov %edx, %ds
+	mov %edx, %es
+	popl %edx
+	leal 56(%esp), %ebp	/* Set up frame pointer. */
+
+	/* Call interrupt handler. */
+	pushl %esp
+	.globl intr_syscall_handler
+	call intr_syscall_handler
+	addl $4, %esp
+
+	/* Restore caller's registers. */
+	popl %edi
+	popl %esi
+	popl %ebp
+	addl $4, %esp // dummy esp always 0
+	popl %ebx
+	popl %edx
+	popl %ecx
+	// for a system call, eax is the return val
+	// but for an external interrupt, eax must be restored
+	// or else a return value in kernel function will be broken
+	addl $4, %esp
+	// popl %eax
+	pop %gs
+	pop %fs
+	pop %es
+	pop %ds
+
+	/* Discard `struct intr_frame' vec_no, error_code,
+		frame_pointer members. */
+	addl $12, %esp
+
+			/* Return to caller. */
+	iret
+.endfunc

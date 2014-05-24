@@ -82,6 +82,8 @@ unsigned long *virtual_intr_stubs;
 _START static void setup_idt()
 {
 	int i = 0;
+    extern void syscall_handler();
+    intr_stubs[SYSCALL_INT_NO] = syscall_handler;
 	for (i = 0; i < IDT_SIZE; i++){
 		idt[i] = make_intr_gate (intr_stubs[i], 0);
 	}
@@ -168,7 +170,16 @@ intr_handler (intr_frame *frame)
 		pic_end_of_interrupt(frame->vec_no);
 	//for(;;);
     // have to move syscall to another routine anyway..
-	dsr_process();
+    dsr_process(); 
+}
+
+void intr_syscall_handler(intr_frame* frame)
+{
+	int_callback fn = 0;
+	fn = in_callbacks[frame->vec_no];
+	if(fn)
+	  fn(frame);
+    return;
 }
 
 static void virtual_setup_gdt();

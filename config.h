@@ -40,4 +40,6 @@
 
 #define USER_STACK_PAGES 3
 
+#define SYSCALL_INT_NO 0x80
+
 #endif

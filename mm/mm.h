@@ -72,4 +72,8 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
 
 void mm_del_dynamic_map(unsigned int vir);
 
+unsigned int  mm_get_free_phy_page_index();
+
+void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
+
 #endif

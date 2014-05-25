@@ -156,7 +156,7 @@ _START static void simulate_paging(unsigned address)
     klib_info("physical address: ", phy, "\n");
 }
 
-static void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
+void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
 {
 	int mask_index = page_index / 8;
 	int mask_offset = page_index % 8;
@@ -199,7 +199,7 @@ static void mm_init_free_phy_page_mask()
 
 }
 
-static unsigned int  mm_get_free_phy_page_index()
+unsigned int  mm_get_free_phy_page_index()
 {
 	unsigned int i = 0;
 	unsigned int page_mask_index = 0;
@@ -496,6 +496,7 @@ unsigned int vm_alloc(int page_count)
 	for (i = 0; i < page_count; i++){
 		vir = (page_index+i) * PAGE_SIZE + KERNEL_OFFSET; 
 		mm_add_direct_map(vir);
+        memset(vir, 0, PAGE_SIZE);
 	}
 
 	vir = page_index * PAGE_SIZE + KERNEL_OFFSET;
@@ -562,6 +563,10 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 		}
 	}
 
+    if (vir < KERNEL_OFFSET) {
+        ps_record_dynamic_map(vir);
+        
+    }
 
 }
 

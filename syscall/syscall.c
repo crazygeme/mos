@@ -57,7 +57,8 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	// FIXME, fd 1 not always refer to console
 	if (fd == 1)
 	{
-		printf(buf);
+        task_struct* task = CURRENT_TASK();
+		printk("ps[%d]: %s", task->psid, buf);
 	}
 
 	return len;

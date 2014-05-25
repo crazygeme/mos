@@ -36,7 +36,6 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
     copy_page = mem_page;
     while (total_pages) {
         mm_add_dynamic_map(copy_page, 0, PAGE_ENTRY_USER_DATA); 
-
         if (read_bytes >= PAGE_SIZE) {
             fs_read(fd, file_page+(copy_page-mem_page), copy_page, PAGE_SIZE);
             read_bytes -= PAGE_SIZE;

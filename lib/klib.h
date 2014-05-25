@@ -42,9 +42,9 @@ void kfree(void* buf);
 
 void klogquota();
 
-void memcpy(void* src, void* dst, unsigned len);
+void memcpy(void* dst, void* src, unsigned len);
 
-void memmove(void* src, void* dst, unsigned len);
+void memmove(void* dst, void* src, unsigned len);
 
 int memcmp(void* src, void* dst, unsigned len);
 

@@ -1,6 +1,11 @@
 #include <ps/elf.h>
 #include <fs/namespace.h>
+#if defined WIN32 || defined MACOS
 #include <osdep.h>
+#else
+#include <mm/mm.h>
+#include <ps/ps.h>
+#endif
 
 static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
 {
@@ -9,6 +14,8 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
 	unsigned mem_page = phdr->p_vaddr & PAGE_SIZE_MASK;
 	unsigned page_offset = phdr->p_vaddr & ~PAGE_SIZE_MASK;
 	unsigned read_bytes, zero_bytes;
+    unsigned copy_page;
+    unsigned total_pages = ROUND_UP(page_offset + phdr->p_memsz, PAGE_SIZE);
 
 	if (phdr->p_filesz > 0)
 	{
@@ -26,7 +33,26 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
 		zero_bytes = ROUND_UP(page_offset + phdr->p_memsz, PAGE_SIZE);
 	}
 
+    copy_page = mem_page;
+    while (total_pages) {
+        mm_add_dynamic_map(copy_page, 0, PAGE_ENTRY_USER_DATA); 
+        if (read_bytes >= PAGE_SIZE) {
+            fs_read(fd, file_page+(copy_page-mem_page), copy_page, PAGE_SIZE);
+            read_bytes -= PAGE_SIZE;
+        }else if(read_bytes){
+            memset(copy_page+read_bytes, 0, PAGE_SIZE-read_bytes);
+            fs_read(fd, file_page+(copy_page-mem_page), copy_page, read_bytes);
+            read_bytes = 0;
+        }else{
+            memset(copy_page, 0, PAGE_SIZE);
+        }
+
+        copy_page += PAGE_SIZE;
+        total_pages -= PAGE_SIZE;
+    }
 	//mmap(mem_page, read_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, file_page);
+
+    return 1;
 }
 
 static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned size, unsigned num)
@@ -43,6 +69,8 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
 		elf_map_section(fd, &phdr);
 	}
 
+    return 1;
+
 }
 
 unsigned elf_map(char* path)
@@ -51,7 +79,11 @@ unsigned elf_map(char* path)
 	unsigned entry_point = 0;
 	unsigned head_len = 0;
 	Elf32_Ehdr elf;
-	// elf header will at the beginning of va anyway
+
+    if (fd == MAX_FD) {
+        return 0;
+    }
+    // elf header will at the beginning of va anyway
 	fs_read(fd, 0, &elf, sizeof(Elf32_Ehdr));
 	entry_point = elf.e_entry;
 	head_len = elf.e_ehsize;
@@ -69,8 +101,8 @@ unsigned elf_map(char* path)
 		return 0;
 
 	elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
+	fs_close(fd);
 
 	return entry_point;
 
-	fs_close(fd);
 }

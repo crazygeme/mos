@@ -3,6 +3,7 @@
 #include <int/timer.h>
 #include <ps/lock.h>
 
+#ifdef __KERNEL__
 static int cursor = 0;
 #define CUR_ROW (cursor / TTY_MAX_COL)
 #define CUR_COL (cursor % TTY_MAX_COL)
@@ -419,6 +420,7 @@ static void klib_add_to_free_list(int index, kblock* buf, int force_merge)
 	}
 
 }
+#endif
 
 ////
 
@@ -609,6 +611,8 @@ int isupper(int c)
 {
 	return (c >= 'A' && c <= 'Z');
 }
+
+#ifdef __KERNEL__
 
 void printf(const char* str, ...)
 {
@@ -856,7 +860,7 @@ void shutdown()
   printf ("still running...\n");
   for (;;);
 }
-
+#endif
 
 #ifdef TEST_MALLOC
 	void test_malloc_process()

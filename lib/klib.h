@@ -1,5 +1,11 @@
 #ifndef _KLIB_H_
 #define _KLIB_H_
+
+#define NULL (void*)0
+
+
+#ifdef __KERNEL__
+
 #include <mm/mm.h>
 #include <config.h>
 
@@ -19,7 +25,6 @@ char* klib_itoa(char* str, int num);
 
 // following is above 0xC0000000 code & data
 // reserve one page to setup page table itself
-#define NULL (void*)0
 typedef struct _kblock
 {
 	unsigned int size;
@@ -41,6 +46,7 @@ void* kmalloc(unsigned int size);
 void kfree(void* buf);
 
 void klogquota();
+#endif
 
 void memcpy(void* dst, void* src, unsigned len);
 
@@ -68,6 +74,8 @@ char* strchr(char* str, char c);
 
 char* strrchr(char* str, char c);
 
+#ifdef __KERNEL__
+
 void printf(const char* str, ...);
 
 void printk(const char* str, ...);
@@ -79,6 +87,8 @@ void vprintf(const char* str, va_list ap);
 void print_human_readable_size (unsigned int size) ;
 
 char* itoa(int num, int base, int sign);
+
+#endif
 
 int tolower(int c);
 

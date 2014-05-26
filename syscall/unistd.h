@@ -198,4 +198,15 @@
 
 #define NR_syscalls 193
 
+#define	_SYS_NAMELEN	256
+
+
+struct	utsname {
+	char	sysname[_SYS_NAMELEN];	/* [XSI] Name of OS */
+	char	nodename[_SYS_NAMELEN];	/* [XSI] Name of this network node */
+	char	release[_SYS_NAMELEN];	/* [XSI] Release level */
+	char	version[_SYS_NAMELEN];	/* [XSI] Version level */
+	char	machine[_SYS_NAMELEN];	/* [XSI] Hardware type */
+};
+
 #endif

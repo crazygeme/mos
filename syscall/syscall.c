@@ -6,12 +6,13 @@
 #include <config.h>
 
 static int test_call(unsigned arg0, unsigned arg1, unsigned arg2);
+static int sys_read(unsigned fd, char* buf, unsigned len);
 static int sys_write(unsigned fd, char* buf, unsigned len);
 static int sys_getpid();
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
-    0, sys_fork, 0, sys_write, 0,   // 0  ~ 5
+    0, sys_fork, sys_read, sys_write, 0,   // 1  ~ 5
     0, 0, 0, 0, 0,           // 6  ~ 10  
     sys_execve, 0, 0, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20                   
@@ -51,6 +52,38 @@ static int test_call(unsigned arg0, unsigned arg1, unsigned arg2)
 {
 	printk("test call: arg0 %x, arg1 %x, arg2 %x\n", arg0, arg1, arg2);
 	return 0;
+}
+
+static int sys_read(unsigned fd, char* buf, unsigned len)
+{
+	task_struct* cur = CURRENT_TASK();
+	unsigned ino = 0;
+
+	if (fd > MAX_FD)
+		return -1;
+
+	ino = cur->fds[fd];
+	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
+	{
+		return -1;
+	}
+	else if ( ino == INODE_STD_IN )
+	{
+		if ( len < 1 )
+		   return -1;
+
+		*buf = kb_buf_get();
+		return 1;
+	}
+	else
+	{
+		unsigned offset = cur->file_off[fd];
+		fs_read(fd, offset, buf, len);
+		offset += len;
+		cur->file_off[fd] = offset;
+	}
+
+	return len;
 }
 
 static int sys_write(unsigned fd, char* buf, unsigned len)

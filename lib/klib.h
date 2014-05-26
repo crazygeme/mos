@@ -80,6 +80,14 @@ void print_human_readable_size (unsigned int size) ;
 
 char* itoa(int num, int base, int sign);
 
+int tolower(int c);
+
+int toupper(int c);
+
+int islower(int c);
+
+int isupper(int c);
+
 
 // misc
 //

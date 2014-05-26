@@ -9,7 +9,7 @@ mos.vpj=20140516064531947
   - Resource Files
   + Bitmaps
   - Other Files
-scroll:16
+scroll:0
 [State]
 SCREEN: 1600 900 200 61 1201 739 0 0 M 0 0 0 0 1168 574 0
 CWD: ..\mos

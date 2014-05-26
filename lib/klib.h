@@ -72,6 +72,8 @@ void printf(const char* str, ...);
 
 void printk(const char* str, ...);
 
+void tty_write(const char* str, unsigned len);
+
 void vprintf(const char* str, va_list ap);
 
 void print_human_readable_size (unsigned int size) ;

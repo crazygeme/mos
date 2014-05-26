@@ -166,6 +166,7 @@ typedef struct _task_struct
     int remain_ticks;
     int is_switching;
     INODE fds[MAX_FD];
+	unsigned file_off[MAX_FD];
     semaphore fd_lock;
 	unsigned int magic; // to avoid stack overflow
 

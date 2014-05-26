@@ -54,11 +54,27 @@ static int test_call(unsigned arg0, unsigned arg1, unsigned arg2)
 
 static int sys_write(unsigned fd, char* buf, unsigned len)
 {
-	// FIXME, fd 1 not always refer to console
-	if (fd == 1)
+	task_struct* cur = CURRENT_TASK();
+	unsigned ino = 0;
+
+	if (fd > MAX_FD)
+		return -1;
+
+	ino = cur->fds[fd];
+	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
 	{
-        task_struct* task = CURRENT_TASK();
-		printk("ps[%d]: %s", task->psid, buf);
+		tty_write(buf, len);
+	}
+	else if ( ino == INODE_STD_IN )
+	{
+		return -1;
+	}
+	else
+	{
+		unsigned offset = cur->file_off[fd];
+		fs_write(fd, offset, buf, len);
+		offset += len;
+		cur->file_off[fd] = offset;
 	}
 
 	return len;

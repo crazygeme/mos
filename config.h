@@ -19,6 +19,7 @@
 
 #define  SEG_BASE_4K            1       // address count with 4k
 #define  SEG_BASE_1             0       // address count with 1 byte
+#define  TSS_SEG_BASE SEG_BASE_1
 
 #define IDT_SIZE 256
 
@@ -41,5 +42,13 @@
 #define USER_STACK_PAGES 3
 
 #define SYSCALL_INT_NO 0x80
+
+#define INODE_STD_IN  0xfffffffe
+#define INODE_STD_OUT 0xfffffffd
+#define INODE_STD_ERR 0xfffffffc
+
+#define STDIN_FILENO    0   /* Standard input.  */
+#define STDOUT_FILENO   1   /* Standard output.  */
+#define STDERR_FILENO   2   /* Standard error output.  */
 
 #endif

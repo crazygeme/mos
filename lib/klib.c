@@ -613,6 +613,16 @@ void printk(const char* str, ...)
     unlock_tty();
 }
 
+void tty_write(const char* buf, unsigned len)
+{
+	int i = 0;
+	lock_tty();
+	for (i = 0; i < len; i++)
+			klib_putchar(buf[i]);
+	unlock_tty();
+}
+
+
 void vprintf(const char* src, va_list ap)
 {
 	int len = strlen(src);

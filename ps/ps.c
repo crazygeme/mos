@@ -158,7 +158,11 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->is_switching = 0;
     for (i = 0; i < MAX_FD; i++) {
         task->fds[i] = 0;
+        task->file_off[i] = 0;
     }
+    task->fds[STDIN_FILENO] = INODE_STD_IN;
+    task->fds[STDOUT_FILENO] = INODE_STD_OUT;
+    task->fds[STDERR_FILENO] = INODE_STD_ERR;
 
     sema_init(&task->fd_lock, "fd_lock", 0);
     task->magic = 0xdeadbeef; 
@@ -242,7 +246,7 @@ static void ps_resolve_ebp_to_new(unsigned ebp)
     while (ebp != 0 && ebp > bottom && ebp < top) {
         unsigned *saved = (unsigned *)ebp; 
         unsigned saved_ebp = *saved;
-        if (saved_ebp == 0 && saved_ebp < KERNEL_OFFSET) {
+        if (saved_ebp == 0 || saved_ebp < KERNEL_OFFSET) {
             return;
         }
         if (saved_ebp > top || saved_ebp < bottom) {
@@ -264,8 +268,7 @@ int sys_fork()
     //      * or else kernel stack will be missed
     // 3. copy file descriptors
     //      * open INODE in new task
-    // 4. add a function in mm.h/mm.c, get phy from vir
-    // 5. copy user memory maps
+    // 4. copy user memory maps
     //      * page tables should be newly allocated
     //      * target physical pages newly allocated too
     //      * then copy content from current to new
@@ -277,7 +280,7 @@ int sys_fork()
     int is_parent = 0;
 
     memcpy(task, cur, PAGE_SIZE);
-    task->remain_ticks = cur->remain_ticks = cur->remain_ticks / 2;
+    task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
     sema_init(&task->fd_lock, "fd_lock", 0);
     __asm__ ("movl %%esp, %0" : "=m"(esp));
@@ -293,8 +296,9 @@ int sys_fork()
     task->esp0 = (unsigned int)task + PAGE_SIZE -4;
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur,task);
-
     ps_put_task(&control.ready_queue,task);
+
+
     task_sched();
     is_parent = 1;
     __asm__("CHILD: nop");
@@ -306,7 +310,6 @@ int sys_fork()
         ps_update_tss(cur->esp0);
         ps_restore_user_map();
         cur->is_switching = 0;
-
         int_intr_enable();
         return 0; 
     }

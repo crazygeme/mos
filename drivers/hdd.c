@@ -305,7 +305,6 @@ static int wait_while_busy (const ata_disk * d)
           ret = (_read_port (reg_alt_status (c)) & STA_DRQ);
           if (ret == 0)
             {
-              printk("loop %d return fail, ret %x\n", i, ret);
             }
           return 1;
         }

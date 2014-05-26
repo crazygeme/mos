@@ -186,14 +186,14 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
 
 static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
 {
-	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+    unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+    unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
     unsigned int* page_table;
     unsigned int tmp;
     int i = 0;
 
     if (!new_ps[page_dir_offset]) {
-        new_ps[page_dir_offset] = vm_alloc(1) - KERNEL_OFFSET;
+        new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
         new_ps[page_dir_offset] |= flag;
 
     }
@@ -428,6 +428,18 @@ task_struct* CURRENT_TASK() {
     __asm__("popl %eax");\
     __asm__("jmp *%eax");
 
+void ps_cleanup_all_user_map(task_struct* task)
+{
+    PLIST_ENTRY entry;
+    page_table_list_entry* node;
+
+    while (!IsListEmpty(&(task->user.page_table_list))) {
+        entry = RemoveHeadList(&(task->user.page_table_list));
+        node = CONTAINER_OF(entry, page_table_list_entry, list);
+        mm_del_dynamic_map(node->addr);
+        kfree(node);
+    }
+}
 
 void ps_cleanup_dying_task()
 {
@@ -435,8 +447,7 @@ void ps_cleanup_dying_task()
 
     task = ps_get_task(&control.dying_queue);
     while (task) {
-        PLIST_ENTRY entry;
-        page_table_list_entry* node;
+
 
         //#ifdef DEBUG
         printf("cleanup %d\n", task->psid);
@@ -446,12 +457,7 @@ void ps_cleanup_dying_task()
             vm_free(task->user.page_dir, 1);
         }
 
-        while (!IsListEmpty(&(task->user.page_table_list))) {
-            entry = RemoveHeadList(&(task->user.page_table_list));
-            node = CONTAINER_OF(entry, page_table_list_entry, list);
-            mm_del_dynamic_map(node->addr);
-            kfree(node);
-        }
+        ps_cleanup_all_user_map(task);
 
         vm_free((unsigned int)task, KERNEL_TASK_SIZE);
         task = ps_get_task(&control.dying_queue);

@@ -5,6 +5,7 @@
 *.elf
 kernel
 user/run
+user/test
 kernel.dbg
 ffstool/ffstool
 ffstool/ffswin32/Debug/*

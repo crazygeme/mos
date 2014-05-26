@@ -200,6 +200,7 @@ void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all);
 
 void ps_cleanup_dying_task();
 
+void ps_cleanup_all_user_map(task_struct* task);
 
 // syscall handler
 int sys_fork();

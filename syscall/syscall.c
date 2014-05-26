@@ -2,6 +2,7 @@
 #include <int/int.h>
 #include <syscall/unistd.h>
 #include <ps/ps.h>
+#include <user/ps0.h>
 #include <config.h>
 
 static int test_call(unsigned arg0, unsigned arg1, unsigned arg2);
@@ -12,7 +13,7 @@ static unsigned call_table[NR_syscalls] = {
 	test_call, 
     0, sys_fork, 0, sys_write, 0,   // 0  ~ 5
     0, 0, 0, 0, 0,           // 6  ~ 10  
-    0, 0, 0, 0, 0,           // 11 ~ 15
+    sys_execve, 0, 0, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20                   
     0
 };

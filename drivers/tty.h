@@ -45,4 +45,6 @@ void tty_roll_one_line();
 
 void tty_clear();
 
+void tty_movecurse(unsigned short cp);
+
 #endif

@@ -112,3 +112,9 @@ void tty_clear()
 	for (row = 0; row < TTY_MAX_ROW; row++)
 		tty_clear_row(row);
 }
+
+void tty_movecurse(unsigned short cp)
+{
+	_write_word (0x3d4, 0x0e | (cp & 0xff00));
+	_write_word (0x3d4, 0x0f | (cp << 8));
+}

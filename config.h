@@ -51,4 +51,5 @@
 #define STDOUT_FILENO   1   /* Standard output.  */
 #define STDERR_FILENO   2   /* Standard error output.  */
 
+#define KEYBOARD_BUF_LEN 64
 #endif

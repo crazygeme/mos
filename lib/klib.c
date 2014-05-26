@@ -124,6 +124,8 @@ static void klib_cursor_forward(int new_pos)
 		tty_roll_one_line();
 		cursor -= TTY_MAX_COL;
 	}
+
+	tty_movecurse((unsigned short)cursor);
 }
 
 char *klib_itoa(char *str, int num)
@@ -578,6 +580,34 @@ char* strrchr(char* str, char c)
 int isspace(const char c)
 {
     return (c == ' ' || c == '\t' || c == '\n');
+}
+
+int tolower(int c)
+{
+	if (isupper(c)) {
+		return (c - 'A' + 'a');
+	}
+
+	return c;
+}
+
+int toupper(int c)
+{
+	if (islower(c)) {
+		return (c - 'a' + 'A');
+	}
+
+	return c;
+}
+
+int islower(int c)
+{
+	return (c >= 'a' && c <= 'z');
+}
+
+int isupper(int c)
+{
+	return (c >= 'A' && c <= 'Z');
 }
 
 void printf(const char* str, ...)

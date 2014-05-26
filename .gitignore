@@ -5,7 +5,7 @@
 *.elf
 kernel
 user/bin/*
-kernel.dbg
+*.dbg
 ffstool/ffstool
 ffstool/ffswin32/Debug/*
 ffstool/Debug/*

@@ -85,7 +85,7 @@ static void kb_dsr(void* param);
 unsigned char kb_buf_get()
 {
   unsigned length = 0;
-  length = __sync_fetch_and_add(&(key_buf.len), 0);
+  length = key_buf.len;
   unsigned read_idx;
   unsigned char ret;
 
@@ -119,7 +119,7 @@ static void kb_buf_put(unsigned char key)
     unsigned write_idx;
     int needs_trigger = 0;
 
-    length = __sync_fetch_and_add(&(key_buf.len), 0);
+    length = key_buf.len;
 
     if (length == KEYBOARD_BUF_LEN)
       return;

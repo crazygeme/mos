@@ -16,7 +16,7 @@ static ps_control control;
 static spinlock ps_lock;
 static spinlock psid_lock;
 static unsigned int ps_id;
-
+static void ps_restore_user_map();
 static void lock_ps() {
     spinlock_lock(&ps_lock);
 }
@@ -58,6 +58,7 @@ static void ps_run() {
     process_fn fn;
     void *param;
 
+    int_intr_enable();
     _ps_enabled = 1;
     task = CURRENT_TASK();
     task->status = ps_running;
@@ -134,7 +135,6 @@ typedef struct _stack_frame
 unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     unsigned int stack_buttom;
     int i = 0;
-    //unsigned int* val;
     task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
     stack_frame *frame;
     memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
@@ -160,7 +160,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
         task->fds[i] = 0;
     }
 
-    sema_init(&task->fd_lock, 0, "fd_lock");
+    sema_init(&task->fd_lock, "fd_lock", 0);
     task->magic = 0xdeadbeef; 
 
     frame = (stack_frame *)(unsigned int)(stack_buttom - sizeof(*frame));
@@ -170,11 +170,155 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
         KERNEL_DATA_SELECTOR;
 
     task->esp0 = task->esp = (unsigned int)frame;
-    //val = (unsigned int*)(stack_buttom-4);
-    //printf("create ps %x, frame %x, thing in stack button %x\n", task, frame, val[0]);
     ps_put_task(&control.ready_queue, task);
 	
 	return task->psid;
+}
+
+static void ps_dup_fds(task_struct* cur, task_struct* task)
+{
+    // FIXME
+}
+
+static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
+{
+	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+    unsigned int* page_table;
+    unsigned int tmp;
+    int i = 0;
+
+    if (!new_ps[page_dir_offset]) {
+        new_ps[page_dir_offset] = vm_alloc(1) - KERNEL_OFFSET;
+        new_ps[page_dir_offset] |= flag;
+
+    }
+
+    page_table = (new_ps[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET;
+    tmp = vm_alloc(1);
+    page_table[page_table_offset] = tmp - KERNEL_OFFSET;
+    page_table[page_table_offset] |= flag;
+    memcpy(tmp, vir, PAGE_SIZE);
+    vm_free(tmp, 1);
+    mm_set_phy_page_mask( (tmp-KERNEL_OFFSET) / PAGE_SIZE, 1);
+}
+
+static void ps_dup_user_maps(task_struct* cur, task_struct* task)
+{
+    unsigned int* per_ps = 0;
+    unsigned int* new_ps = 0;
+    LIST_ENTRY* entry = 0;
+    int i = 0;
+    unsigned int cr3;
+
+    __asm__("movl %%cr3, %0" : "=q"(cr3));
+    per_ps = (unsigned int*)(cr3+KERNEL_OFFSET);
+    task->user.page_dir = vm_alloc(1);
+    new_ps = (unsigned int*)task->user.page_dir;
+    for (i = 0; i < 1024; i++) {
+        new_ps[i] = 0;
+    }
+
+    InitializeListHead(&(task->user.page_table_list));
+    entry = cur->user.page_table_list.Flink;
+    while (entry != (&cur->user.page_table_list)) {
+        page_table_list_entry* pt = CONTAINER_OF(entry, page_table_list_entry, list);
+        page_table_list_entry* new_entry = kmalloc(sizeof(*new_entry));
+
+        ps_dup_user_page(pt->addr, new_ps, PAGE_ENTRY_USER_DATA);
+
+        new_entry->addr = pt->addr;
+        InsertTailList(&task->user.page_table_list, &new_entry->list);
+
+        entry = entry->Flink;
+    }
+}
+
+static void ps_resolve_ebp_to_new(unsigned ebp)
+{
+    unsigned offset;
+    unsigned bottom = ebp & PAGE_SIZE_MASK;
+    unsigned top = bottom + PAGE_SIZE - 4;
+    while (ebp != 0 && ebp > bottom && ebp < top) {
+        unsigned *saved = (unsigned *)ebp; 
+        unsigned saved_ebp = *saved;
+        if (saved_ebp == 0 && saved_ebp < KERNEL_OFFSET) {
+            return;
+        }
+        if (saved_ebp > top || saved_ebp < bottom) {
+            offset = saved_ebp & (~PAGE_SIZE_MASK);
+            *saved = bottom + offset;
+        }
+
+        ebp = *saved;
+    }
+}
+
+int sys_fork()
+{
+    // todo:
+    // 1. create new task struct
+    // 2. copy flags, eip, esp from current to new
+    //      * actually whole page should be copied
+    //      * then init new task, set values if possible
+    //      * or else kernel stack will be missed
+    // 3. copy file descriptors
+    //      * open INODE in new task
+    // 4. add a function in mm.h/mm.c, get phy from vir
+    // 5. copy user memory maps
+    //      * page tables should be newly allocated
+    //      * target physical pages newly allocated too
+    //      * then copy content from current to new
+    task_struct* cur = CURRENT_TASK();
+    task_struct* task = vm_alloc(KERNEL_TASK_SIZE);
+    unsigned esp = 0, ebp = 0;
+    stack_frame* frame = 0;
+    unsigned esp_off = 0;
+    int is_parent = 0;
+
+    memcpy(task, cur, PAGE_SIZE);
+    task->remain_ticks = cur->remain_ticks = cur->remain_ticks / 2;
+    task->psid = ps_id_gen();
+    sema_init(&task->fd_lock, "fd_lock", 0);
+    __asm__ ("movl %%esp, %0" : "=m"(esp));
+    esp_off = esp - (unsigned)cur;
+    frame = (stack_frame*)((unsigned)task + esp_off - sizeof(*frame));
+    __asm__ ("movl %%ebp, %0" : "=m"(ebp));
+    __asm__ ("movl $CHILD, %0" : "=m"(frame->eip) );
+    frame->fs = frame->gs = frame->es = frame->ss = frame->ds = 
+        KERNEL_DATA_SELECTOR;
+    frame->ebp = (ebp - (unsigned)cur) + (unsigned)task;
+    ps_resolve_ebp_to_new(frame->ebp);
+    task->esp = frame; 
+    task->esp0 = (unsigned int)task + PAGE_SIZE -4;
+    ps_dup_fds(cur, task);
+    ps_dup_user_maps(cur,task);
+
+    ps_put_task(&control.ready_queue,task);
+    task_sched();
+    is_parent = 1;
+    __asm__("CHILD: nop");
+
+    if (is_parent) {
+        return task->psid;
+    }else{
+        cur = CURRENT_TASK();
+        ps_update_tss(cur->esp0);
+        ps_restore_user_map();
+        cur->is_switching = 0;
+
+        int_intr_enable();
+        return 0; 
+    }
+
+//  __asm__("movl %0, %%eax" : : "m"(task->psid));
+//  __asm__("popl %ebp");
+//  __asm__("ret");
+//  __asm__("CHILD: nop");
+//  __asm__("popl %ebp");
+//  __asm__("movl $0, %eax");
+//  __asm__("ret");
+
 }
 
 
@@ -312,6 +456,63 @@ void ps_cleanup_dying_task()
 
 }
 
+static void ps_save_user_map()
+{
+    task_struct *current = 0;
+    int i = 0;
+    current = CURRENT_TASK();
+
+    if (current->user.page_dir) {
+        unsigned int cr3;
+        unsigned int* in_use;
+        unsigned int* per_ps = (unsigned int*)current->user.page_dir;
+
+        __asm__("movl %%cr3, %0" : "=q"(cr3));
+        in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
+        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+            per_ps[i] = in_use[i];
+        }
+    }
+}
+
+static void ps_restore_user_map()
+{
+    task_struct *current = 0;
+    int i = 0;
+    current = CURRENT_TASK();
+
+    if (current->user.page_dir) {
+        unsigned int cr3;
+        unsigned int* in_use;
+        unsigned int* per_ps = (unsigned int*)current->user.page_dir;
+
+        __asm__("movl %%cr3, %0" : "=q"(cr3));
+        in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
+        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+            in_use[i] = per_ps[i];
+        }
+    }
+}
+
+static task_struct* ps_get_next_task(PLIST_ENTRY wait_list)
+{
+    task_struct* task = 0;
+    do {
+         task = ps_get_task(wait_list); // next avaliable
+         if (!task) {
+             break;
+         }
+         if (task->status == ps_dying) {
+            task = ps_get_task(wait_list);
+        }else{
+            break;
+        }
+    }while (1); 
+
+    return task;
+
+}
+
 static void _task_sched(PLIST_ENTRY wait_list) {
     task_struct *task = 0;
     task_struct *current = 0;
@@ -321,18 +522,8 @@ static void _task_sched(PLIST_ENTRY wait_list) {
     int_intr_disable();
     current = CURRENT_TASK();
     current->is_switching = 1;
-    do {
-         task = ps_get_task(&control.ready_queue); // next avaliable
-         if (!task) {
-             break;
-         }
-         if (task->status == ps_dying) {
-            task = ps_get_task(&control.ready_queue);
-        }else{
-            break;
-        }
-    }while (1); 
-
+    // put self to ready queue, and choose next
+    task = ps_get_next_task(wait_list);
     if (!task) {
         task = current;
         goto SELF;
@@ -346,39 +537,23 @@ static void _task_sched(PLIST_ENTRY wait_list) {
     }
 	
     // save page dir entry for user space
-    if (current->user.page_dir) {
-        unsigned int cr3;
-        unsigned int* in_use;
-        unsigned int* per_ps = (unsigned int*)current->user.page_dir;
+    ps_save_user_map();
 
-        __asm__("movl %%cr3, %0" : "=q"(cr3));
-        in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-            per_ps[i] = in_use[i];
-        }
-    }
-
-    // put self to ready queue, and choose next
     SAVE_ALL();
     __asm__("movl %%esp, %0" : "=q"(current->esp));
     __asm__("movl %0, %%eax" : : "q"(task->esp));
     __asm__("movl %eax, %esp");
+
+
+
     RESTORE_ALL();
+
     __asm__("NEXT: nop");
 
     current = CURRENT_TASK();
     reset_tss(current);
-    if (current->user.page_dir) {
-        unsigned int cr3;
-        unsigned int* in_use;
-        unsigned int* per_ps = (unsigned int*)current->user.page_dir;
-
-        __asm__("movl %%cr3, %0" : "=q"(cr3));
-        in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-            in_use[i] = per_ps[i];
-        }
-    }
+    
+    ps_restore_user_map();
  SELF:
      if (1) {
          int_intr_enable();

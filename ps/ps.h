@@ -199,6 +199,10 @@ void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all);
 
 void ps_cleanup_dying_task();
 
+
+// syscall handler
+int sys_fork();
+
 #ifdef TEST_PS
 void ps_mmm();
 #endif

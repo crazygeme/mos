@@ -33,6 +33,8 @@ typedef struct multiboot_info multiboot_info_t;
 #define PAGE_ENTRY_USER_CODE (PAGE_ENTRY_PRESENT|PAGE_ENTRY_DPL_USER)
 #define PAGE_ENTRY_USER_DATA (PAGE_ENTRY_PRESENT|PAGE_ENTRY_WRITABLE|PAGE_ENTRY_DPL_USER)
 
+#define ROUND_UP(X, STEP) (((X) + (STEP) - 1) / (STEP) * (STEP))
+
 #define _START \
     __attribute__((section(".start")))
 
@@ -69,5 +71,9 @@ void vm_free(unsigned int vm, int page_count);
 void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
 
 void mm_del_dynamic_map(unsigned int vir);
+
+unsigned int  mm_get_free_phy_page_index();
+
+void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
 #endif

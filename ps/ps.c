@@ -491,6 +491,8 @@ static void ps_restore_user_map()
         for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
             in_use[i] = per_ps[i];
         }
+
+        RELOAD_CR3(cr3);
     }
 }
 

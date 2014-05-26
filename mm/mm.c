@@ -109,8 +109,7 @@ _START static void mm_get_phy_mem_bound(multiboot_info_t* mb)
      // klib_info("code address: ", &mm_get_phy_mem_bound, "\n");
 }
 
-#define RELOAD_CR3(address) \
-    __asm__ ("movl %0, %%cr3" : : "q" (address));
+
 
 #define ENABLE_PAGING() \
     __asm__ ("movl %cr0,%eax"); \

@@ -11,6 +11,7 @@
 #include <lib/klib.h>
 #include <fs/mount.h>
 #include <int/timer.h>
+#include <syscall/unistd.h>
 #endif
 
 static INODE fs_lookup_inode(char* path);

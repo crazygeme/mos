@@ -47,24 +47,8 @@ typedef struct _INODE* DIR;
 typedef void* SUPORBLOCK;
 typedef void* DESC;
 struct filesys_type;
-
-struct stat  
-{  
-    unsigned       st_dev;     /* ID of device containing file*/  
-    INODE          st_ino;     /* inode number */  
-    unsigned       st_mode;    /* protection mode*/  
-    unsigned       st_nlink;   /* number of hard links */  
-    unsigned short st_uid;     /* user ID of owner -user id*/  
-    unsigned short st_gid;     /* group ID of owner - group id*/  
-    unsigned       st_rdev;    /* device ID (if special file)*/  
-    unsigned       st_size;    /* total size, in bytes*/  
-    unsigned       st_blksize; /* blocksize for filesystem I/O*/  
-    unsigned       st_blocks;  /* number of blocks allocated*/  
-    unsigned       st_atime;   /* time of last access*/  
-    unsigned       st_mtime;   /* time of last modification*/  
-    unsigned       st_ctime;   /* time of last status change */  
-  
-};  
+struct stat;
+ 
 
 struct super_operations {
 	INODE (*create_inode) (struct filesys_type* type);

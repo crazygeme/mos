@@ -129,6 +129,7 @@ static void kmain_process(void* param)
 
     user_first_process_run();
 
+    // we never here
     printk("idle\n");
     while (1) {
         // this can become wait syscall

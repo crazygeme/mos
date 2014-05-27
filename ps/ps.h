@@ -168,6 +168,8 @@ typedef struct _task_struct
     INODE fds[MAX_FD];
 	unsigned file_off[MAX_FD];
     semaphore fd_lock;
+	unsigned exit_status;
+	unsigned parent;
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;
@@ -205,6 +207,7 @@ void ps_cleanup_all_user_map(task_struct* task);
 // syscall handler
 int sys_fork();
 int sys_exit(unsigned status);
+int sys_waitpid(unsigned pid, int* status, int options);
 
 #ifdef TEST_PS
 void ps_mmm();

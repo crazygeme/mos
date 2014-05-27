@@ -204,6 +204,7 @@ void ps_cleanup_all_user_map(task_struct* task);
 
 // syscall handler
 int sys_fork();
+int sys_exit(unsigned status);
 
 #ifdef TEST_PS
 void ps_mmm();

@@ -62,6 +62,7 @@ static void ps_run() {
     _ps_enabled = 1;
     task = CURRENT_TASK();
     task->status = ps_running;
+    task->is_switching = 0;
     fn = task->fn;
     if (fn) {
         fn(task->param);
@@ -293,7 +294,7 @@ int sys_fork()
     frame->ebp = (ebp - (unsigned)cur) + (unsigned)task;
     ps_resolve_ebp_to_new(frame->ebp);
     task->esp = frame; 
-    task->esp0 = (unsigned int)task + PAGE_SIZE -4;
+    task->esp0 = (unsigned int)task + PAGE_SIZE;
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur,task);
     ps_put_task(&control.ready_queue,task);
@@ -314,13 +315,6 @@ int sys_fork()
         return 0; 
     }
 
-//  __asm__("movl %0, %%eax" : : "m"(task->psid));
-//  __asm__("popl %ebp");
-//  __asm__("ret");
-//  __asm__("CHILD: nop");
-//  __asm__("popl %ebp");
-//  __asm__("movl $0, %eax");
-//  __asm__("ret");
 
 }
 
@@ -345,52 +339,13 @@ void ps_update_tss(unsigned int esp0)
 
 }
 
-void ps_kickoff() {
-    task_struct *task = ps_get_task(&control.ready_queue);
-
-    if (!task) {
-        return;
-    }
-
-
-    // when kickoff, it's always in kernel mode
-    // FIXME: change it to run in user mode, then we dont have to warry about
-    // code segment anymore, tss always do it for us
-
-    //printf("kikoff task %x, type %x, fn %x\n", task, task->type, task->fn);
-    // a first process should never return, if it does, we just halt
-    if (task->type == ps_kernel) {
-        _RELOAD_KERNEL_CS();
-        RELOAD_KERNEL_DS();
-    } else {
-        _RELOAD_USER_CS();
-        RELOAD_USER_DS();
-    }
-
-
-    reset_tss(task);
+void ps_kickoff() 
+{
+    task_struct* cur = CURRENT_TASK();
+    cur->psid = 0xffffffff;
     _ps_enabled = 1;
-    __asm__("movl %0, %%eax" : : "m"(task->fn));
-    __asm__("pushl %eax");
-    __asm__("movl %0, %%ebx" : : "m"(task->param));
-    __asm__("pushl %ebx");
-    __asm__("movl %0, %%ecx" : : "m"(task->ebp));
-    __asm__("pushl %ecx");
-    __asm__("movl %0, %%edx" : : "m"(task->esp0));
-    __asm__("pushl %edx");
-    __asm__("popl %edx");
-    __asm__("popl %ecx");
-    __asm__("popl %ebx");
-    __asm__("popl %eax");
-    __asm__("movl %ecx, %ebp");
-    __asm__("movl %edx, %esp");
-    __asm__("pushl %ebx");
-    __asm__("call *%eax");
-
-
-    __asm__("hlt");
-
-
+    task_sched();
+    return;
 }
 
 task_struct* CURRENT_TASK() {
@@ -542,7 +497,8 @@ static void _task_sched(PLIST_ENTRY wait_list) {
     task->status = ps_running; 
 
 
-    if (current->status != ps_dying) {
+    if (current->status != ps_dying &&
+        current->psid != 0xffffffff) {
         current->status = ps_ready; 
         ps_put_task(wait_list, current);
     }

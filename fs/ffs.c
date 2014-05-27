@@ -9,6 +9,7 @@
 #else
 #include <lib/klib.h>
 #include <int/timer.h>
+#include <syscall/unistd.h>
 #endif
 
 #define INODE_PER_SECTOR (BLOCK_SECTOR_SIZE / 4)
@@ -687,6 +688,10 @@ static unsigned ffs_read_file(INODE inode, unsigned int offset, char* buf, unsig
 	void* tmp = 0;
 	unsigned total = ((node->meta.len - offset) > len) ? len : (node->meta.len - offset);
 	unsigned left = total;
+
+    if (offset >= node->meta.len) {
+        return 0;
+    }
 
 	tmp = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(tmp, 0, BLOCK_SECTOR_SIZE);

@@ -579,6 +579,19 @@ char* strrchr(char* str, char c)
 	return 0;
 }
 
+char* strdup(char* str)
+{
+#ifdef __KERNEL__
+    unsigned len = strlen(str)+1;
+    char* ret = kmalloc(len);
+    strcpy(ret, str);
+    ret[len-1] = '\0';
+    return ret;
+#else
+    return 0;
+#endif
+}
+
 int isspace(const char c)
 {
     return (c == ' ' || c == '\t' || c == '\n');

@@ -2,6 +2,7 @@
 #include <drivers/block.h>
 #include <fs/vfs.h>
 #include <config.h>
+#include <syscall/unistd.h>
 
 
 static INODE ext2_create_inode (struct filesys_type*);

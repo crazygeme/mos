@@ -224,6 +224,16 @@ int fs_readdir(DIR dir, char* name, unsigned* mode)
 	return 1;
 }
 
+int sys_readdir(DIR dir, struct dirent* entry)
+{
+    int ret = fs_readdir(dir, entry->d_name, &entry->d_mode);
+    if (ret) {
+        entry->d_namlen = strlen(entry->d_name); 
+        entry->d_ino = 0;
+    }
+    return ret;
+}
+
 void fs_closedir(DIR dir)
 {
     if (!dir) {

@@ -28,5 +28,7 @@ void fs_closedir(DIR dir);
 
 void fs_flush(char* filesys);
 
+int sys_readdir(DIR dir, struct dirent* entry);
+
 
 #endif

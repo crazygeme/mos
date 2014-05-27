@@ -280,10 +280,10 @@ switch_to_user_mode:
      pop %ax;
      or $0x200,%ax 
      push %ax;
-     pushl $0x23; 
-     push $1f; 
+     push $0x23; 
+     push $USER; 
      iret; 
-   1: nop;
+   USER: nop;
      movl %edx, %esp
      movl %edx, %ebp
      movl %ecx, %eax

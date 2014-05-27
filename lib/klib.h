@@ -74,6 +74,8 @@ char* strchr(char* str, char c);
 
 char* strrchr(char* str, char c);
 
+char* strdup(char* str);
+
 #ifdef __KERNEL__
 
 void printf(const char* str, ...);

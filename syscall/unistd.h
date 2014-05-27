@@ -201,6 +201,8 @@
 #define	_SYS_NAMELEN	256
 
 
+
+
 struct	utsname {
 	char	sysname[_SYS_NAMELEN];	/* [XSI] Name of OS */
 	char	nodename[_SYS_NAMELEN];	/* [XSI] Name of this network node */
@@ -208,5 +210,23 @@ struct	utsname {
 	char	version[_SYS_NAMELEN];	/* [XSI] Version level */
 	char	machine[_SYS_NAMELEN];	/* [XSI] Hardware type */
 };
+
+struct stat  
+{  
+    unsigned       st_dev;     /* ID of device containing file*/  
+    void*          st_ino;     /* inode number */  
+    unsigned       st_mode;    /* protection mode*/  
+    unsigned       st_nlink;   /* number of hard links */  
+    unsigned short st_uid;     /* user ID of owner -user id*/  
+    unsigned short st_gid;     /* group ID of owner - group id*/  
+    unsigned       st_rdev;    /* device ID (if special file)*/  
+    unsigned       st_size;    /* total size, in bytes*/  
+    unsigned       st_blksize; /* blocksize for filesystem I/O*/  
+    unsigned       st_blocks;  /* number of blocks allocated*/  
+    unsigned       st_atime;   /* time of last access*/  
+    unsigned       st_mtime;   /* time of last modification*/  
+    unsigned       st_ctime;   /* time of last status change */  
+  
+}; 
 
 #endif

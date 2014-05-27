@@ -15,6 +15,7 @@ typedef struct _ps_control
 static ps_control control;
 static spinlock ps_lock;
 static spinlock psid_lock;
+static spinlock dying_queue_lock;
 static unsigned int ps_id;
 static void ps_restore_user_map();
 static void lock_ps() {
@@ -23,6 +24,14 @@ static void lock_ps() {
 
 static void unlock_ps() {
     spinlock_unlock(&ps_lock);
+}
+
+static void lock_dying() {
+    spinlock_lock(&dying_queue_lock);
+}
+
+static void unlock_dying() {
+    spinlock_unlock(&dying_queue_lock);
 }
 
 static task_struct* ps_get_task(PLIST_ENTRY list) {
@@ -91,6 +100,7 @@ void ps_init() {
 
     spinlock_init(&ps_lock);
     spinlock_init(&psid_lock);
+    spinlock_init(&dying_queue_lock);
     ps_id = 0;
     _ps_enabled = 0;
 	debug = 0;
@@ -295,6 +305,7 @@ int sys_fork()
     ps_resolve_ebp_to_new(frame->ebp);
     task->esp = frame; 
     task->esp0 = (unsigned int)task + PAGE_SIZE;
+    task->parent = cur->psid;
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur,task);
     ps_put_task(&control.ready_queue,task);
@@ -320,7 +331,65 @@ int sys_fork()
 
 int sys_exit(unsigned status)
 {
+    task_struct *cur = CURRENT_TASK();
+    cur->exit_status = status;
+    ps_cleanup_all_user_map(cur);
+    if (cur->user.page_dir) {
+        vm_free(cur->user.page_dir, 1);
+    }
+
+    if (cur->psid == 0) {
+        printk("fatal error! process 0 exit\n");
+        __asm__ ("hlt");
+    }
+
+    // FIXME
+    // modify all child->parent into cur->parent
+    cur->status = ps_dying;
+    ps_put_task(&control.dying_queue,cur);
+    task_sched();
     return 0;
+}
+
+int sys_waitpid(unsigned pid, int* status, int options)
+{
+    LIST_ENTRY* entry = 0;
+    task_struct* cur = CURRENT_TASK();
+    int ret = 0;
+    int can_return = 0;
+
+    do {
+        lock_dying();
+        entry = control.dying_queue.Flink;
+        while (entry != &control.dying_queue) {
+            task_struct* task = CONTAINER_OF(entry, task_struct, ps_list);
+            int match = 0;
+            if (task->parent == cur->psid) {
+                if ( pid && (pid == task->psid)) {
+                    match = 1;
+                }else if(!pid){
+                    match = 1;
+                }
+            }
+
+            if (match) {
+                ret = task->psid;
+                if (status) {
+                    *status = task->exit_status;
+                }
+                RemoveEntryList(entry);
+                vm_free(task, 1);
+                can_return = 1;
+                break;
+            }
+
+            entry = entry->Flink;
+        }
+        unlock_dying();
+        task_sched();
+    }
+    while (can_return == 0); 
+    return ret;
 }
 
 
@@ -403,26 +472,6 @@ void ps_cleanup_all_user_map(task_struct* task)
 
 void ps_cleanup_dying_task()
 {
-    task_struct *task = 0;
-
-    task = ps_get_task(&control.dying_queue);
-    while (task) {
-
-
-        //#ifdef DEBUG
-        printf("cleanup %d\n", task->psid);
-        //#endif
-
-        if (task->user.page_dir) {
-            vm_free(task->user.page_dir, 1);
-        }
-
-        ps_cleanup_all_user_map(task);
-
-        vm_free((unsigned int)task, KERNEL_TASK_SIZE);
-        task = ps_get_task(&control.dying_queue);
-    }
-
 }
 
 static void ps_save_user_map()
@@ -506,10 +555,11 @@ static void _task_sched(PLIST_ENTRY wait_list) {
         current->psid != 0xffffffff) {
         current->status = ps_ready; 
         ps_put_task(wait_list, current);
+        // save page dir entry for user space
+        ps_save_user_map();
     }
 	
-    // save page dir entry for user space
-    ps_save_user_map();
+
 
     SAVE_ALL();
     __asm__("movl %%esp, %0" : "=q"(current->esp));

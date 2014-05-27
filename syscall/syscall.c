@@ -4,7 +4,7 @@
 #include <ps/ps.h>
 #include <user/ps0.h>
 #include <config.h>
-
+#include <fs/namespace.h>
 
 
 
@@ -18,7 +18,7 @@ static int sys_sched_yield();
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
     sys_exit, sys_fork, sys_read, sys_write, 0,   // 1  ~ 5
-    0, 0, 0, 0, 0,           // 6  ~ 10  
+    0, sys_waitpid, 0, 0, 0,           // 6  ~ 10  
     sys_execve, 0, 0, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, 0, 0,          // 21 ~ 25 
@@ -38,7 +38,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
-    0, 0, 0, 0, 0,          // 106 ~ 110 
+    fs_stat, 0, 0, 0, 0,          // 106 ~ 110 
     0, 0, 0, 0, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
     0, sys_uname, 0, 0, 0,          // 121 ~ 125

@@ -17,7 +17,7 @@ static int sys_sched_yield();
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
-    0, sys_fork, sys_read, sys_write, 0,   // 1  ~ 5
+    sys_exit, sys_fork, sys_read, sys_write, 0,   // 1  ~ 5
     0, 0, 0, 0, 0,           // 6  ~ 10  
     sys_execve, 0, 0, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   

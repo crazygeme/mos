@@ -318,6 +318,11 @@ int sys_fork()
 
 }
 
+int sys_exit(unsigned status)
+{
+    return 0;
+}
+
 
 static void reset_tss(task_struct* task)
 {

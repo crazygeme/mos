@@ -13,12 +13,14 @@ static int sys_read(unsigned fd, char* buf, unsigned len);
 static int sys_write(unsigned fd, char* buf, unsigned len);
 static int sys_getpid();
 static int sys_uname(struct utsname* utname);
+static int sys_open(const char* name);
+static int sys_close(unsigned fd);
 static int sys_sched_yield();
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
-    sys_exit, sys_fork, sys_read, sys_write, 0,   // 1  ~ 5
-    0, sys_waitpid, 0, 0, 0,           // 6  ~ 10  
+    sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
+    sys_close, sys_waitpid, 0, 0, 0,           // 6  ~ 10  
     sys_execve, 0, 0, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, 0, 0,          // 21 ~ 25 
@@ -117,7 +119,7 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 	else
 	{
 		unsigned offset = cur->file_off[fd];
-		fs_read(fd, offset, buf, len);
+		len = fs_read(fd, offset, buf, len);
 		offset += len;
 		cur->file_off[fd] = offset;
 	}
@@ -145,7 +147,7 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	else
 	{
 		unsigned offset = cur->file_off[fd];
-		fs_write(fd, offset, buf, len);
+		len = fs_write(fd, offset, buf, len);
 		offset += len;
 		cur->file_off[fd] = offset;
 	}
@@ -175,5 +177,15 @@ static int sys_sched_yield()
     return 0;
 }
 
+static int sys_open(const char* name)
+{
+	return fs_open(name);
+}
+
+static int sys_close(unsigned fd)
+{
+	fs_close(fd);
+	return 1;
+}
 
 

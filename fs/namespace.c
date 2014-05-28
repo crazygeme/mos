@@ -330,6 +330,7 @@ static unsigned fs_get_free_fd(INODE node)
     for (i = 0; i < MAX_FD; i++) {
         if (cur->fds[i] == 0) {
             cur->fds[i] = node;
+			cur->file_off[i] = 0;
             break;
         }
     }
@@ -368,6 +369,7 @@ static INODE fs_clear_fd(unsigned fd)
     sema_wait(&cur->fd_lock);
     node = cur->fds[fd];
     cur->fds[fd] = 0;
+	cur->file_off[fd] = 0;
     sema_trigger(&cur->fd_lock);
 
     return node;

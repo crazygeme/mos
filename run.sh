@@ -9,7 +9,7 @@ fi
 cd user
 make clean
 make
-cp ../note bin/
+cp ../README.md bin/
 cd ..
 if [ "$diskfile" == "ffs.img" ]; then
 	if [ -e "$diskfile" ]; then

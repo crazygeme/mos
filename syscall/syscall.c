@@ -5,6 +5,7 @@
 #include <user/ps0.h>
 #include <config.h>
 #include <fs/namespace.h>
+#include <int/timer.h>
 
 
 
@@ -16,18 +17,19 @@ static int sys_uname(struct utsname* utname);
 static int sys_open(const char* name);
 static int sys_close(unsigned fd);
 static int sys_sched_yield();
+static int sys_brk(unsigned top);
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
     sys_close, sys_waitpid, 0, 0, 0,           // 6  ~ 10  
-    sys_execve, 0, 0, 0, 0,           // 11 ~ 15
+    sys_execve, 0, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, 0, 0,          // 21 ~ 25 
     0, 0, 0, 0, 0,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, 0, 0,          // 36 ~ 40 
-    0, 0, 0, 0, 0,          // 41 ~ 45 
+    0, 0, 0, 0, sys_brk,          // 41 ~ 45 
     0, 0, 0, 0, 0,          // 46 ~ 50 
     0, 0, 0, 0, 0,          // 51 ~ 55 
     0, 0, 0, 0, 0,          // 56 ~ 60 
@@ -186,6 +188,40 @@ static int sys_close(unsigned fd)
 {
 	fs_close(fd);
 	return 1;
+}
+
+static int sys_brk(unsigned top)
+{
+	task_struct* task = CURRENT_TASK();
+	unsigned size = 0;
+	unsigned pages = 0;
+
+	if ( top == 0 )
+	{
+		return task->user.heap_top;
+	}
+	else if ( top > task->user.heap_top )
+	{
+		int i = 0;
+		size = top - task->user.heap_top;
+		pages = (size-1) / PAGE_SIZE + 1;
+
+		for (i = 0; i < pages; i++)
+		{
+			unsigned vir = task->user.heap_top + i * PAGE_SIZE;
+			mm_add_dynamic_map(vir, 0, PAGE_ENTRY_USER_DATA);
+		}
+
+		top = task->user.heap_top + pages * PAGE_SIZE;
+		task->user.heap_top = top;
+		printk("ps[%d] new heap top %x\n", task->psid, top);
+		return top;
+	}else{
+		// FIXME
+		// free heap
+	}
+
+	return 0;
 }
 
 

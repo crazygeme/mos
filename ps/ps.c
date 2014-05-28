@@ -174,6 +174,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->fds[STDIN_FILENO] = INODE_STD_IN;
     task->fds[STDOUT_FILENO] = INODE_STD_OUT;
     task->fds[STDERR_FILENO] = INODE_STD_ERR;
+    task->user.heap_top = USER_HEAP_BEGIN;
 
     sema_init(&task->fd_lock, "fd_lock", 0);
     task->magic = 0xdeadbeef; 

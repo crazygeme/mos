@@ -6,6 +6,11 @@ else
 	diskfile="$2"
 fi
 
+cd ffstool
+make clean
+make
+cd ..
+
 cd user
 make clean
 make

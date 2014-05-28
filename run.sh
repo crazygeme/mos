@@ -9,7 +9,7 @@ fi
 cd user
 make clean
 make
-cp ../README.md bin/
+cp ../note bin/
 cd ..
 if [ "$diskfile" == "ffs.img" ]; then
 	if [ -e "$diskfile" ]; then
@@ -27,7 +27,7 @@ if [ "$diskfile" == "ffs.img" ]; then
 fi
 echo "begin enum"
 #sudo mount -o loop rootfs.img mnt
-qemu-system-i386 -no-kvm -m 256 -hda "$diskfile" -kernel $1
+qemu-system-i386 -no-kvm -curses -m 256 -hda "$diskfile" -kernel $1
 #qemu-system-i386 -no-kvm -m 256 -drive file="$diskfile",index=0,media=disk,if=virtio,cache=unsafe -kernel $1
 #sudo umount -l mnt
 

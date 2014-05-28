@@ -4,7 +4,7 @@
 #include <drivers/block.h>
 #include <int/timer.h>
 #include <config.h>
-
+#include <lib/klib.h>
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */

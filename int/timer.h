@@ -19,8 +19,15 @@ typedef struct _timer_control
 
 typedef struct _time_t
 {
-    unsigned long seconds;
-    unsigned long milliseconds;
+    union{
+        struct{
+        
+            unsigned long seconds;
+            unsigned long milliseconds;
+        };
+        unsigned long long time;
+    };
+
 }time_t;
  
 #define CHANNEL_0  0 //= Channel 0
@@ -62,6 +69,6 @@ void usleep(unsigned int us);
 
 void delay(unsigned int us);
 
-unsigned long time(unsigned long t);
+unsigned long time(unsigned long* t);
 
 #endif

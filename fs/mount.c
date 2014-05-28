@@ -9,6 +9,7 @@
 #else
 #include <lib/list.h>
 #include <ps/lock.h>
+#include <lib/klib.h>
 #endif
 
 static LIST_ENTRY mnt_list;

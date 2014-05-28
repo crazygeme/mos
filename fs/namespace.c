@@ -477,7 +477,7 @@ static void test_read()
 		klogquota();
 		for (i = 0; i < (4*1024); i++){
 			if (i % 100 == 0) {
-				unsigned span = time(t);
+				unsigned span = time(0) - t;
 				unsigned speed = 0;
 				if (span) {
 					speed=((100*1024) / span) * 1000;

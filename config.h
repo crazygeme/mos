@@ -52,4 +52,7 @@
 #define STDERR_FILENO   2   /* Standard error output.  */
 
 #define KEYBOARD_BUF_LEN 64
+
+#define USER_HEAP_BEGIN 0x40000000
+
 #endif

@@ -1,27 +1,36 @@
+#ifdef __KERNEL__
 #include <lib/klib.h>
 #include <drivers/tty.h>
 #include <int/timer.h>
 #include <ps/lock.h>
+#else
+#include <syscall.h>
+#include <lib/klib.h>
+#endif
+
+// following for malloc/free
+
+static kblock free_list[513] = { 0 }; 
+static void klib_add_to_free_list(int index, kblock* buf, int force_merge);
+static unsigned int heap_quota;
+static unsigned int heap_quota_high;
+static unsigned int klib_random_num = 1;
 
 #ifdef __KERNEL__
+
+static unsigned int cur_block_top = KHEAP_BEGIN;
 static int cursor = 0;
 #define CUR_ROW (cursor / TTY_MAX_COL)
 #define CUR_COL (cursor % TTY_MAX_COL)
 
-// following for malloc/free
-static unsigned int cur_block_top = KHEAP_BEGIN;
-static kblock free_list[513] = { 0 }; 
-static unsigned int kblk(unsigned page_count);
-static void klib_add_to_free_list(int index, kblock* buf, int force_merge);
 
+static unsigned int kblk(unsigned page_count);
 static void klib_cursor_forward(int new_pos);
-static unsigned int klib_random_num = 1;
 
 static spinlock tty_lock;
 static spinlock heap_lock;
 
-static unsigned int heap_quota;
-static unsigned int heap_quota_high;
+
 
 static void lock_tty()
 {
@@ -162,9 +171,100 @@ char *klib_itoa(char *str, int num)
 
 
 
+void klogquota()
+{
+	unsigned int quota = heap_quota;
+	klib_info("heap quota: ", quota, " ");
+	klib_info("max usage:  ", heap_quota_high, "\n");
+}
+
+
+static unsigned int kblk(unsigned page_count)
+{
+	unsigned ret = cur_block_top;
+
+	//klib_putint(cur_block_top);
+	
+	if (page_count == 0)
+		return 0;
+
+	if (cur_block_top + page_count * PAGE_SIZE >= KHEAP_END){
+		klib_print("buffer overflow\n");
+		klib_info("cur_block_top: ", cur_block_top, "\n");
+		klib_info("page_count: ", page_count, "\n");
+		klib_info("KHEAP_BEGIN: ", KHEAP_BEGIN, "\n");
+		klib_info("KHEAP_END: ", KHEAP_END, "\n");
+		return 0;
+	}
+
+	cur_block_top += page_count * PAGE_SIZE;
+
+#ifdef TEST_MALLOC
+	klib_info("cur_block_top: ", cur_block_top, "\n");
+#endif
+
+	return ret;
+}
+
+
+#else
+
+static unsigned int cur_block_top = 0;
+
+#define kblk(page) blk(page)
+#define klib_putchar libc_putchar
+#define klib_print libc_print
+
+static unsigned int blk(unsigned page_count)
+{
+	unsigned ret = cur_block_top;
+	unsigned new_top = cur_block_top + page_count * PAGE_SIZE;
+
+	if (page_count == 0) {
+		return ret;
+	}
+
+	cur_block_top = brk(new_top);
+	return ret;
+
+}
+
+static void lock_heap()
+{
+}
+
+static void unlock_heap()
+{
+}
+
+
+void libc_init()
+{
+	cur_block_top = brk(0);
+	heap_quota = heap_quota_high = 0;
+}
+
+
+void libc_putchar(char c)
+{
+	char buf[1];
+	buf[0] = c;
+	write(1, buf, 1);
+}
+
+
+
+void libc_print(char *str)
+{
+	write(1, str, strlen(str));
+}
+
+#endif
+
+
 //// 
 
-void* kmalloc(unsigned size)
+void* malloc(unsigned size)
 {
 	unsigned int ret = 0;
 	int free_list_index = size / 8 + 1;
@@ -246,7 +346,7 @@ void* kmalloc(unsigned size)
 
 }
 
-void kfree(void* buf)
+void free(void* buf)
 {
 	kblock* block = NULL;
 	int size = 0;
@@ -270,40 +370,6 @@ void kfree(void* buf)
 	unlock_heap();
 }
 
-void klogquota()
-{
-	unsigned int quota = heap_quota;
-	klib_info("heap quota: ", quota, " ");
-	klib_info("max usage:  ", heap_quota_high, "\n");
-}
-
-
-static unsigned int kblk(unsigned page_count)
-{
-	unsigned ret = cur_block_top;
-
-	//klib_putint(cur_block_top);
-	
-	if (page_count == 0)
-		return 0;
-
-	if (cur_block_top + page_count * PAGE_SIZE >= KHEAP_END){
-		klib_print("buffer overflow\n");
-		klib_info("cur_block_top: ", cur_block_top, "\n");
-		klib_info("page_count: ", page_count, "\n");
-		klib_info("KHEAP_BEGIN: ", KHEAP_BEGIN, "\n");
-		klib_info("KHEAP_END: ", KHEAP_END, "\n");
-		return 0;
-	}
-
-	cur_block_top += page_count * PAGE_SIZE;
-
-#ifdef TEST_MALLOC
-	klib_info("cur_block_top: ", cur_block_top, "\n");
-#endif
-
-	return ret;
-}
 
 static int klib_same_page(unsigned addr1, unsigned addr2)
 {
@@ -420,9 +486,7 @@ static void klib_add_to_free_list(int index, kblock* buf, int force_merge)
 	}
 
 }
-#endif
 
-////
 
 void memcpy(void* _src, void* _dst, unsigned len)
 {
@@ -581,15 +645,13 @@ char* strrchr(char* str, char c)
 
 char* strdup(char* str)
 {
-#ifdef __KERNEL__
+
     unsigned len = strlen(str)+1;
-    char* ret = kmalloc(len);
+    char* ret = malloc(len);
     strcpy(ret, str);
     ret[len-1] = '\0';
     return ret;
-#else
-    return 0;
-#endif
+
 }
 
 int isspace(const char c)
@@ -625,7 +687,6 @@ int isupper(int c)
 	return (c >= 'A' && c <= 'Z');
 }
 
-#ifdef __KERNEL__
 
 void printf(const char* str, ...)
 {
@@ -633,40 +694,6 @@ void printf(const char* str, ...)
 	va_start(ap, str);
 	vprintf(str,ap);
 	va_end(ap);
-}
-
-void printk(const char* str, ...)
-{
-	va_list ap;
-    char* str_mill;
-    int len = 0;
-    int i = 0;
-	time_t time;
-	timer_current(&time);
-    str_mill = itoa(time.milliseconds, 10, 0);
-    len = strlen(str_mill);
-    len = 3 - len;
-    lock_tty();
-	printf("[%d.", time.seconds);
-    for (i = 0; i < len; i++) {
-        printf("0");
-    }
-    klib_print(str_mill);
-	klib_print("]");
-    kfree(str_mill);
-    va_start(ap, str); 
-	vprintf(str,ap);
-	va_end(ap);
-    unlock_tty();
-}
-
-void tty_write(const char* buf, unsigned len)
-{
-	int i = 0;
-	lock_tty();
-	for (i = 0; i < len; i++)
-			klib_putchar(buf[i]);
-	unlock_tty();
 }
 
 
@@ -689,7 +716,7 @@ void vprintf(const char* src, va_list ap)
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 1);
 					klib_print(s);
-					kfree(s);
+					free(s);
 					break;
 				}
 			case 'x':
@@ -698,7 +725,7 @@ void vprintf(const char* src, va_list ap)
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 16, 0);
 					klib_print(s);
-					kfree(s);
+					free(s);
 					break;
 				}
 			case 'u':
@@ -706,7 +733,7 @@ void vprintf(const char* src, va_list ap)
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 0);
 					klib_print(s);
-					kfree(s);
+					free(s);
 					break;
 				}
 			case 's':
@@ -761,7 +788,7 @@ static char _num(int i){
 char* itoa(int num, int base, int sign)
 {
 	int str_len = 12;
-	char* str = kmalloc(12);
+	char* str = malloc(12);
 	char* ret = str;
 	int left = num;
     unsigned uleft = num;
@@ -785,7 +812,7 @@ char* itoa(int num, int base, int sign)
 	}
 
     if (base != 10 && base != 16) {
-		kfree(str);
+		free(str);
         return NULL;
     }
 
@@ -822,16 +849,12 @@ char* itoa(int num, int base, int sign)
 	return ret;
 }
 
-
-
-
-
-void klib_srand(unsigned _seed)
+void srand(unsigned _seed)
 {
 	klib_random_num = _seed;
 }
 
-unsigned int klib_rand()
+unsigned int rand()
 {
 	unsigned int ret = klib_random_num * 0x343fd;
 	ret += 0x269EC3;
@@ -840,6 +863,43 @@ unsigned int klib_rand()
 	ret >>= 0x10;
 	ret = ret & 0x7fff;
 	return ret;
+}
+
+
+#ifdef __KERNEL__
+
+void printk(const char* str, ...)
+{
+	va_list ap;
+    char* str_mill;
+    int len = 0;
+    int i = 0;
+	time_t time;
+	timer_current(&time);
+    str_mill = itoa(time.milliseconds, 10, 0);
+    len = strlen(str_mill);
+    len = 3 - len;
+    lock_tty();
+	printf("[%d.", time.seconds);
+    for (i = 0; i < len; i++) {
+        printf("0");
+    }
+    klib_print(str_mill);
+	klib_print("]");
+    kfree(str_mill);
+    va_start(ap, str); 
+	vprintf(str,ap);
+	va_end(ap);
+    unlock_tty();
+}
+
+void tty_write(const char* buf, unsigned len)
+{
+	int i = 0;
+	lock_tty();
+	for (i = 0; i < len; i++)
+			klib_putchar(buf[i]);
+	unlock_tty();
 }
 
 

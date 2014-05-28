@@ -528,7 +528,6 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	unsigned int page_busy = 0;
 	unsigned int page_index = 0;
 	unsigned int target_phy = 0;
-    unsigned cr3;
 
 	phy = phy & PAGE_SIZE_MASK;
 	page_index = mm_get_free_phy_page_index();// vm_alloc(1) - KERNEL_OFFSET;
@@ -567,8 +566,6 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
         
     }
 
-    __asm__("movl %%cr3, %0" : "=q"(cr3));
-    RELOAD_CR3(cr3);
 
 }
 
@@ -581,8 +578,6 @@ void mm_del_dynamic_map(unsigned int vir)
 	unsigned int phy_addr;
 	int empty = 1;
 	int i = 0;
-    unsigned cr3;
-
 
 
 	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
@@ -603,8 +598,6 @@ void mm_del_dynamic_map(unsigned int vir)
 		page_dir[page_dir_offset] = 0;
 	}
 
-    __asm__("movl %%cr3, %0" : "=q"(cr3));
-    RELOAD_CR3(cr3);
 
 }
 

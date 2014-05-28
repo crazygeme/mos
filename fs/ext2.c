@@ -3,7 +3,7 @@
 #include <fs/vfs.h>
 #include <config.h>
 #include <syscall/unistd.h>
-
+#include <lib/klib.h>
 
 static INODE ext2_create_inode (struct filesys_type*);
 static void ext2_destroy_inode (struct filesys_type*,INODE);

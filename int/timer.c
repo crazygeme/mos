@@ -100,9 +100,6 @@ static void timer_calibrate (void)
     if (!too_many_loops (high_bit | test_bit))
       cycle_per_ticket |= test_bit;
 
-
-  printk("cycle_per_ticket %d\n", cycle_per_ticket);
-
 }
 
 void timer_calculate_cpu_cycle()

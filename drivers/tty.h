@@ -1,7 +1,7 @@
 #ifndef _TTY_H_
 #define _TTY_H_
 #include <mm/mm.h>
-
+#include <lib/klib.h>
 #define TTY_MAX_ROW 25
 #define TTY_MAX_COL 80
 #define TTY_MAX_CHARS (TTY_MAX_ROW * TTY_MAX_COL)
@@ -9,25 +9,6 @@
 	(row * TTY_MAX_COL + col)
 
 
-typedef enum _TTY_COLOR
-{ 
-	clBlack , 
-	clBlue , 
-	clGreen , 
-	clCyan , 
-	clRed , 
-	clMagenta ,
-	clBrown , 
-	clLightGray , 
-	clDarkGray , 
-	clLightBlue , 
-	clLightGreen ,
-	clLightCyan , 
-	clLightRed , 
-	clLightMagenta , 
-	clYellow , 
-	clWhite 
-}TTY_COLOR;
 
 void tty_init(void);
 

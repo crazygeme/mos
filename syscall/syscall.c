@@ -18,12 +18,15 @@ static int sys_open(const char* name);
 static int sys_close(unsigned fd);
 static int sys_sched_yield();
 static int sys_brk(unsigned top);
+static int sys_chdir(const char *path);
+static char *sys_getcwd(char *buf, unsigned size);
+static int sys_ioctl(int d, int request, char* buf);
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
     sys_close, sys_waitpid, 0, 0, 0,           // 6  ~ 10  
-    sys_execve, 0, time, 0, 0,           // 11 ~ 15
+    sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, 0, 0,          // 21 ~ 25 
     0, 0, 0, 0, 0,          // 26 ~ 30 
@@ -31,7 +34,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 36 ~ 40 
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
     0, 0, 0, 0, 0,          // 46 ~ 50 
-    0, 0, 0, 0, 0,          // 51 ~ 55 
+    0, 0, 0, sys_ioctl, 0,          // 51 ~ 55 
     0, 0, 0, 0, 0,          // 56 ~ 60 
     0, 0, 0, 0, 0,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
@@ -57,7 +60,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 165 ~ 170
     0, 0, 0, 0, 0,          // 171 ~ 175
     0, 0, 0, 0, 0,          // 175 ~ 180
-    0, 0, 0, 0, 0,          // 181 ~ 185
+    0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
     0, 0, fs_opendir, fs_closedir,             // 191 ~ 194
 };
@@ -157,6 +160,33 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	return len;
 }
 
+static int sys_ioctl(int fd, int request, char* buf)
+{
+	task_struct* cur = CURRENT_TASK();
+	unsigned ino = 0;
+
+	if (fd > MAX_FD)
+		return -1;
+
+	if (request > IOCTL_MAX)
+		return -1;
+
+	ino = cur->fds[fd];
+	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
+	{
+		if (request == IOCTL_TTY)
+		{
+			return tty_ioctl(buf);
+		}
+	}
+	else
+	{
+		return -1;
+	}
+
+	return 1;
+}
+
 static int sys_getpid()
 {
     task_struct* cur = CURRENT_TASK();
@@ -214,7 +244,7 @@ static int sys_brk(unsigned top)
 
 		top = task->user.heap_top + pages * PAGE_SIZE;
 		task->user.heap_top = top;
-		printk("ps[%d] new heap top %x\n", task->psid, top);
+		//printk("ps[%d] new heap top %x\n", task->psid, top);
 		return top;
 	}else{
 		// FIXME
@@ -222,6 +252,91 @@ static int sys_brk(unsigned top)
 	}
 
 	return 0;
+}
+
+static int _chdir(const char* cwd, const char *path)
+{
+	struct stat s;
+
+	if (!path)
+	   return 0;
+
+	if (!*path)
+		return 1;
+
+	if (!strcmp(path, "."))
+		return 1;
+
+	if (!strcmp(path, "..")){
+		char* tmp;
+		tmp = strrchr(cwd, '/');
+		if (tmp)
+			*tmp = '\0';
+		strcpy(cwd, cwd);
+		return 1;
+	}
+
+	strcat(cwd, "/");
+	strcat(cwd, path);
+	if(fs_stat(cwd, &s) == -1)
+		return 0;
+
+	if (!S_ISDIR(s.st_mode))
+		return 0;
+
+	strcpy(cwd, cwd);
+		return 1;
+}
+
+static int sys_chdir(const char* path)
+{
+	char name[256] = {0};
+	char* slash, *tmp;
+	char cwd[256] = {0};
+	int ret = 1;
+	task_struct* cur = CURRENT_TASK();
+	
+	
+
+	if (!path || !*path)
+	   return 0;
+
+	if (*path != '/')
+		strcpy(cwd, cur->cwd);
+
+	strcpy(name, path);
+	slash = strchr(name, '/');
+	tmp = name;
+	while (slash)
+	{
+		*slash = '\0';
+		ret = _chdir(cwd, tmp);
+		if (!ret)
+			return 0;
+
+		slash++;
+		tmp = slash;
+		slash = strchr(tmp, '/');
+	}
+
+	ret = _chdir(cwd, tmp);
+	if (!ret)
+		return 0;
+
+	strcpy(cur->cwd, cwd);
+	return 1;
+}
+
+static char *sys_getcwd(char *buf, unsigned size)
+{
+	task_struct* cur = CURRENT_TASK();
+
+	if (!cur->cwd[0])
+	    strcpy(buf, "/");
+	else
+		strcpy(buf, cur->cwd);
+
+	return buf;
 }
 
 

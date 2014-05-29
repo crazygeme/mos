@@ -4,6 +4,7 @@
  * License: GPL version 2 or higher http://www.gnu.org/licenses/gpl.html
  */
 #include <drivers/tty.h>
+
 static void tty_copy_row(int src, int dst);
 static void tty_clear_row(int row);
 static char *vidptr = (char*)0xC00b8000;
@@ -83,8 +84,9 @@ char tty_getchar(int x, int y)
 void tty_roll_one_line()
 {
 	int row = 0;
-	for (row = 0; row < (TTY_MAX_ROW-1); row++)
+	for (row = 0; row < (TTY_MAX_ROW-1); row++){
 		tty_copy_row(row+1, row);
+	}
 
 	tty_clear_row(TTY_MAX_ROW-1);
 }
@@ -92,17 +94,23 @@ void tty_roll_one_line()
 static void tty_copy_row(int src, int dst)
 {
 	int col = 0;
-
-	for (col = 0; col < TTY_MAX_COL; col++)
-	  tty_putchar(dst, col, tty_getchar(src, col));
+	TTY_COLOR fg, bg;
+	for (col = 0; col < TTY_MAX_COL; col++){
+		fg = tty_get_frontcolor(src, col);
+		bg = tty_get_backcolor(src, col);
+		tty_setcolor(dst, col, fg, bg);
+		tty_putchar(dst, col, tty_getchar(src, col));
+	}
 }
 
 static void tty_clear_row(int row)
 {
 	int col = 0;
 
-	for (col = 0; col < TTY_MAX_COL; col++)
+	for (col = 0; col < TTY_MAX_COL; col++){
+		tty_setcolor(row, col, clWhite, clBlack);
 		tty_putchar(row, col, ' ');
+	}
 }
 
 void tty_clear()

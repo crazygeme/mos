@@ -766,12 +766,12 @@ void print_human_readable_size (unsigned int size)
     printf ("1 byte");
   else 
     {
-      static const char *factors[] = {"bytes", "kB", "MB", "GB", "TB", NULL};
+      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
       const char **fp;
 
       for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
         size /= 1024;
-      printf ("%u %s", size, *fp);
+      printf ("%u%s", size, *fp);
     }
 }
 
@@ -938,6 +938,7 @@ void tty_write(const char* buf, unsigned len)
 
 void reboot()
 {
+	block_close();
 	// FIXME do formal steps before reboot
 	_write_port(0x64, 0xfe);
 }

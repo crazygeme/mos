@@ -1,6 +1,53 @@
 #ifndef _KLIB_H_
 #define _KLIB_H_
 
+
+typedef enum _TTY_COLOR
+{ 
+	clBlack , 
+	clBlue , 
+	clGreen , 
+	clCyan , 
+	clRed , 
+	clMagenta ,
+	clBrown , 
+	clLightGray , 
+	clDarkGray , 
+	clLightBlue , 
+	clLightGreen ,
+	clLightCyan , 
+	clLightRed , 
+	clLightMagenta , 
+	clYellow , 
+	clWhite 
+}TTY_COLOR;
+
+/// TTY 
+typedef enum _tty_command_id
+{
+	tty_cmd_get_color,
+	tty_cmd_set_color,
+	tty_cmd_get_curse,
+	tty_cmd_set_curse
+}tty_command_id;
+
+typedef struct _tty_command
+{
+	tty_command_id cmd_id;
+	union{
+		struct{
+			TTY_COLOR fg_color;
+			TTY_COLOR bg_color;
+		} color;
+
+		struct{
+			unsigned cx;
+			unsigned cy;
+		}curse;
+	};
+}tty_command;
+
+/// heap
 #define NULL (void*)0
 
 typedef struct _kblock
@@ -61,6 +108,7 @@ void shutdown();
 
 void printk(const char* str, ...);
 
+int tty_ioctl(tty_command* cmd);
 
 #else
 
@@ -123,5 +171,6 @@ int islower(int c);
 int isupper(int c);
 
 void srand(unsigned _seed);
+
 
 #endif

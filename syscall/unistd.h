@@ -204,6 +204,9 @@
 
 
 
+#define IOCTL_TTY 0
+#define IOCTL_MAX 1
+
 
 struct	utsname {
 	char	sysname[_SYS_NAMELEN];	/* [XSI] Name of OS */

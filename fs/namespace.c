@@ -248,6 +248,7 @@ static INODE fs_get_dirent_node(INODE node, char* name)
 {
 	DIR dir = 0;
 	INODE entry = 0;
+	int found = 0;
 
 	if (!S_ISDIR(vfs_get_mode(node)))
 	  return 0;
@@ -255,15 +256,21 @@ static INODE fs_get_dirent_node(INODE node, char* name)
 	dir = vfs_open_dir(node);
 	entry = vfs_read_dir(dir);
 	while(entry){
-		if ( !strcmp(name, vfs_get_name(entry)) )
+		if ( !strcmp(name, vfs_get_name(entry)) ){
+			found = 1;
 		  break;
+		}
 		
 		vfs_free_inode(entry);
 		entry = vfs_read_dir(dir);
 	}
 
 	vfs_close_dir(dir);
-	return entry;
+	if (found) {
+		return entry;
+	}else{
+		return 0;
+	}
 }
 
 static INODE fs_lookup_inode(char* path)

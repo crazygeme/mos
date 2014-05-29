@@ -97,6 +97,7 @@ typedef struct _block_cache
       unsigned char bootable;
       #if HDD_CACHE_OPEN
       block_cache cache;
+      int cache_inited;
       #endif
     }partition;
 
@@ -118,6 +119,7 @@ typedef struct _block_cache
   static void channel_wait_polling(channel *c);
   static int hdd_read(void* aux, unsigned sector, void* buf, unsigned len);  
   static int hdd_write(void* aux, unsigned sector, void* buf, unsigned len);
+  static void hdd_close(void* aux);
   static void parse_partition ( block *block);
   static void read_partition_table (block *block, unsigned int sector,
                       unsigned int primary_extended_sector,
@@ -128,7 +130,7 @@ typedef struct _block_cache
 
   static int partition_read(void* aux, unsigned sector, void* buf, unsigned len);  
   static int partition_write(void* aux, unsigned sector, void* buf, unsigned len);
-
+  static void partition_close(void* aux);
   #if HDD_CACHE_OPEN
   static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len);  
   static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned len);
@@ -405,7 +407,7 @@ static void identify_ata_device ( ata_disk * d)
       return;
 	}
 
-  block = block_register(d, d->name, hdd_read, hdd_write, BLOCK_RAW, capacity);
+  block = block_register(d, d->name, hdd_read, hdd_write, hdd_close, BLOCK_RAW, capacity);
   parse_partition(block);
 }
 
@@ -561,7 +563,11 @@ static void init_partition_cache(partition* p)
         p->cache.cache_item[i].sector = -1;
         p->cache.cache_item[i].buf = (void*)buf;
       }
+
+    p->cache_inited = 1;
 }
+
+
 
 static int hdd_cache_lookup(partition* p, int sector)
 {
@@ -627,6 +633,7 @@ static void hdd_cache_flush(partition*p, int index)
     {
       total_writ++;
       partition_write(p,sector,buf,BLOCK_SECTOR_SIZE);
+      p->cache.cache_item[index].dirty = 0;
     }
 }
 
@@ -644,7 +651,16 @@ static void hdd_cache_update(partition*p, int index, int sector, void* buf, int 
   #endif
 }
 
+static void flush_partition_cache(partition* p)
+{
+  int i = 0;
+  for (i = 0; i < CACHE_SECTOR_COUNT; i++){
+     if (p->cache.cache_item[i].sector == -1)
+        continue;
 
+     hdd_cache_flush(p,i);
+  }
+}
 
 static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len)
 {
@@ -744,7 +760,7 @@ static void found_partition ( block *block, unsigned char part_type,
       p->block = block;
       p->start = start;
       p->bootable = bootable;
-
+      p->cache_inited = 0;
       strcpy(name, block->name);
       ext[0] = '0' + part_nr;
       ext[1] = '\0';
@@ -759,9 +775,9 @@ static void found_partition ( block *block, unsigned char part_type,
       #endif
 
       #if HDD_CACHE_OPEN
-      b = block_register(p, name, partition_cache_read, partition_cache_write, type, size);
+      b = block_register(p, name, partition_cache_read, partition_cache_write, partition_close,type, size);
       #else
-      b = block_register(p,name,partition_read, partition_write, type, size);
+      b = block_register(p,name,partition_read, partition_write, partition_close,type, size);
       #endif
       
 		if (type == BLOCK_LINUX){
@@ -1047,6 +1063,11 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
   return len;
 }
 
+static void hdd_close(void* aux)
+{
+
+}
+
 
 static int partition_read(void* aux, unsigned sector, void* buf, unsigned len)
 {
@@ -1060,6 +1081,24 @@ static int partition_write(void* aux, unsigned sector, void* buf, unsigned len)
     partition *p = aux;
     return p->block->write(p->block->aux, p->start + sector, buf, len);
 
+}
+
+static void partition_close(void* aux)
+{
+  #if HDD_CACHE_OPEN
+  int i = 0;
+  partition* p = aux;
+  if (p->cache_inited)
+    {
+    flush_partition_cache(aux);
+    for (i = 0; i < HDD_CACHE_SIZE; i++)
+      {
+        vm_free(p->cache.vm_pages[i], 1);
+      }
+
+    p->cache_inited = 0;
+    }
+  #endif
 }
 
 

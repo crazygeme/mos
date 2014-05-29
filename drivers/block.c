@@ -13,37 +13,39 @@ static unsigned int id;
 
 static void block_add_to_list(block* b, block_type type)
 {
-	LIST_ENTRY head = control.block_lists[type];
+	LIST_ENTRY* head = &control.block_lists[type];
 
 	spinlock_lock(&control.lock);
-	InsertTailList(&head, &(b->block_list));
+	InsertTailList(head, &(b->block_list));
 	control.block_count[type] = control.block_count[type]+1;
 	spinlock_unlock(&control.lock);
 }
 
 static block* block_get_first(block_type type)
 {
-	LIST_ENTRY head = control.block_lists[type];
+	LIST_ENTRY* head = &control.block_lists[type];
 	PLIST_ENTRY node = 0;
 	block* ret = 0;
 
-	if (IsListEmpty(&head))
+	if (IsListEmpty(head))
 	  return 0;
 	
 	spinlock_lock(&control.lock);
 
-	node = head.Flink;
+	node = head->Flink;
 
 	spinlock_unlock(&control.lock);
 	
-	ret = CONTAINER_OF(node, block, block_list);
+	if (node == head)
+	  return 0;
+	else
+	  return (CONTAINER_OF(node, block, block_list) );
 
-	return ret;
 }
 
 static block* block_get_next(block* b)
 {
-	LIST_ENTRY head = control.block_lists[b->type];
+	LIST_ENTRY* head = &control.block_lists[b->type];
 	PLIST_ENTRY node = 0;
 
 	spinlock_lock(&control.lock);
@@ -52,7 +54,7 @@ static block* block_get_next(block* b)
 
 	spinlock_unlock(&control.lock);
 
-	if (node == &head)
+	if (node == head)
 	  return 0;
 	else
 	  return (CONTAINER_OF(node, block, block_list) );
@@ -83,7 +85,7 @@ void block_init()
 }
 
 
-block* block_register(void* aux, char* name, fpblock_read read, fpblock_write write, 
+block* block_register(void* aux, char* name, fpblock_read read, fpblock_write write, fpblock_close close,
 			block_type type, unsigned int sector_size)
 {
 	block* b = kmalloc(sizeof(*b));
@@ -97,6 +99,7 @@ block* block_register(void* aux, char* name, fpblock_read read, fpblock_write wr
 
 	b->read = read;
 	b->write = write;
+	b->close = close;
 	b->type = type;
 	b->sector_size = sector_size;
 	b->id = block_id_gen();
@@ -137,6 +140,20 @@ unsigned int block_get_by_type(block_type type, block** blocks)
 	}
 	
 	return count;
+}
+
+void block_close()
+{
+	int i = 0;
+	block* b = 0;
+
+	for (i = 0; i < BLOCK_MAX; i++){
+		for (b = block_get_first((block_type)i); b; b = block_get_next(b)){
+			if (b->close) {
+				b->close(b->aux);
+			}
+		}
+	}
 }
 
 const char* block_type_name(block* b)

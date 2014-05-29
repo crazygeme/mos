@@ -24,6 +24,7 @@ static int sys_ioctl(int d, int request, char* buf);
 static int sys_creat(const char* path, unsigned mode);
 static int sys_mkdir(const char* path, unsigned mode);
 static int sys_rmdir(const char* path);
+static int sys_reboot(unsigned cmd);
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
@@ -44,7 +45,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
-    0, 0, 0, sys_readdir, 0,          // 86 ~ 90 
+    0, 0, sys_reboot, sys_readdir, 0,          // 86 ~ 90 
     0, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
@@ -347,7 +348,6 @@ static int sys_creat(const char* path, unsigned mode)
 	struct stat s;
 	if (fs_stat(path, &s) != -1)
 		return 0;
-
 	return fs_create(path,mode);
 }
 
@@ -370,6 +370,22 @@ static int sys_rmdir(const char* path)
 		return 0;
 
 	return fs_delete(path);
+}
+
+static int sys_reboot(unsigned cmd)
+{
+	switch (cmd)
+	{
+	case MOS_REBOOT_CMD_RESTART:
+		reboot();
+		break;
+	case MOS_REBOOT_CMD_POWER_OFF:
+		shutdown();
+		break;
+	default:
+		break;
+	}
+	return 0;
 }
 
 

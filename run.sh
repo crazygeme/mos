@@ -22,7 +22,7 @@ if [ ! -e "ffs.img" ]; then
 	_format="1"
 fi
 
-for arg in "$*"
+for arg in $@
 do
 if [ "$arg" == "rebuild" ]; then
 	_rebuild="1"

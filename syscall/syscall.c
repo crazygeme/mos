@@ -21,17 +21,20 @@ static int sys_brk(unsigned top);
 static int sys_chdir(const char *path);
 static char *sys_getcwd(char *buf, unsigned size);
 static int sys_ioctl(int d, int request, char* buf);
+static int sys_creat(const char* path, unsigned mode);
+static int sys_mkdir(const char* path, unsigned mode);
+static int sys_rmdir(const char* path);
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
-    sys_close, sys_waitpid, 0, 0, 0,           // 6  ~ 10  
+    sys_close, sys_waitpid, sys_creat, 0, 0,           // 6  ~ 10  
     sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, 0, 0,          // 21 ~ 25 
     0, 0, 0, 0, 0,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
-    0, 0, 0, 0, 0,          // 36 ~ 40 
+    0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
     0, 0, 0, 0, 0,          // 46 ~ 50 
     0, 0, 0, sys_ioctl, 0,          // 51 ~ 55 
@@ -337,6 +340,36 @@ static char *sys_getcwd(char *buf, unsigned size)
 		strcpy(buf, cur->cwd);
 
 	return buf;
+}
+
+static int sys_creat(const char* path, unsigned mode)
+{
+	struct stat s;
+	if (fs_stat(path, &s) != -1)
+		return 0;
+
+	return fs_create(path,mode);
+}
+
+static int sys_mkdir(const char* path, unsigned mode)
+{
+	mode |= S_IFDIR;
+	return sys_creat(path,mode);
+}
+
+static int sys_rmdir(const char* path)
+{
+	struct stat s;
+	if (fs_stat(path, &s) == -1)
+		return 0;
+
+	if (!S_ISDIR(s.st_mode))
+		return 0;
+
+	if (s.st_size)
+		return 0;
+
+	return fs_delete(path);
 }
 
 

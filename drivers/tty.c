@@ -20,6 +20,8 @@ void tty_init(void)
 			tty_putchar(i, j, ' ');
 		}
 	}
+
+	tty_movecurse(0);
 }
 
 void tty_setcolor(int x, int y, TTY_COLOR front, TTY_COLOR back)

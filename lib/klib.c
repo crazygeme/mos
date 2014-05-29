@@ -950,6 +950,7 @@ void shutdown()
 
   printf ("Powering off...\n");
 
+  block_close();
 
   /* 	This is a special power-off sequence supported by Bochs and
 		QEMU, but not by physical hardware. */

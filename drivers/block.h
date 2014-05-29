@@ -19,6 +19,8 @@ typedef int (*fpblock_read)(void* aux, unsigned sector, void* buf, unsigned len)
 
 typedef int (*fpblock_write)(void* aux, unsigned sector, void* buf, unsigned len);
 
+typedef void (*fpblock_close)(void* aux);
+
 typedef enum _block_type
 {
 	BLOCK_KERNEL,
@@ -38,6 +40,7 @@ typedef struct _block
 	void* aux;
 	fpblock_read read;
 	fpblock_write write;
+	fpblock_close close;
 	block_type type;
 	unsigned int sector_size;
 	LIST_ENTRY block_list;
@@ -46,12 +49,13 @@ typedef struct _block
 
 void block_init();
 
-block* block_register(void* aux, char* name, fpblock_read read, fpblock_write write, 
+block* block_register(void* aux, char* name, fpblock_read read, fpblock_write write, fpblock_close close,
 			block_type type, unsigned int sector_size);
 
 block* block_get_by_id(unsigned int id);
 
 unsigned int block_get_by_type(block_type type, block** blocks);
 
+void block_close();
 
 #endif

@@ -28,7 +28,8 @@ typedef enum _tty_command_id
 	tty_cmd_get_color,
 	tty_cmd_set_color,
 	tty_cmd_get_curse,
-	tty_cmd_set_curse
+	tty_cmd_set_curse,
+	tty_cmd_is_tty
 }tty_command_id;
 
 typedef struct _tty_command
@@ -44,6 +45,11 @@ typedef struct _tty_command
 			unsigned cx;
 			unsigned cy;
 		}curse;
+
+		struct{
+			unsigned fd;
+			int is_tty;
+		};
 	};
 }tty_command;
 

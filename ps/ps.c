@@ -146,9 +146,12 @@ typedef struct _stack_frame
 unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     unsigned int stack_buttom;
     int i = 0;
+    int size = 0;
     task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
     stack_frame *frame;
     memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
+
+    size = sizeof(*task);
 
     task->user.page_dir = (unsigned int)vm_alloc(1);
     // 0 ~ KERNEL_PAGE_DIR_OFFSET-1 are dynamic, KERNEL_PAGE_DIR_OFFSET ~ 1023 are shared
@@ -175,7 +178,8 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->fds[STDOUT_FILENO] = INODE_STD_OUT;
     task->fds[STDERR_FILENO] = INODE_STD_ERR;
     task->user.heap_top = USER_HEAP_BEGIN;
-    strcpy(task->cwd, "\0");
+    memset(task->cwd, 0, 256);
+    //strcpy(task->cwd, "\0");
 
     sema_init(&task->fd_lock, "fd_lock", 0);
     task->magic = 0xdeadbeef; 
@@ -308,6 +312,8 @@ int sys_fork()
     task->esp = frame; 
     task->esp0 = (unsigned int)task + PAGE_SIZE;
     task->parent = cur->psid;
+    memset(task->cwd, 0, 256);
+    strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur,task);
     ps_put_task(&control.ready_queue,task);
@@ -420,6 +426,7 @@ void ps_kickoff()
     task_struct* cur = CURRENT_TASK();
     cur->psid = 0xffffffff;
     _ps_enabled = 1;
+    memset(cur->cwd, 0, 256);
     task_sched();
     return;
 }

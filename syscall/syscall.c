@@ -25,6 +25,10 @@ static int sys_creat(const char* path, unsigned mode);
 static int sys_mkdir(const char* path, unsigned mode);
 static int sys_rmdir(const char* path);
 static int sys_reboot(unsigned cmd);
+static int sys_getuid();
+static int sys_getgid();
+static int sys_geteuid();
+static int sys_getegid();
 
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
@@ -32,12 +36,12 @@ static unsigned call_table[NR_syscalls] = {
     sys_close, sys_waitpid, sys_creat, 0, 0,           // 6  ~ 10  
     sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
-    0, 0, 0, 0, 0,          // 21 ~ 25 
+    0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, 0, 0,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
-    0, 0, 0, 0, 0,          // 46 ~ 50 
+    0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
     0, 0, 0, sys_ioctl, 0,          // 51 ~ 55 
     0, 0, 0, 0, 0,          // 56 ~ 60 
     0, 0, 0, 0, 0,          // 61 ~ 65 
@@ -387,5 +391,26 @@ static int sys_reboot(unsigned cmd)
 	}
 	return 0;
 }
+
+static int sys_getuid()
+{
+    return 0;
+}
+
+static int sys_getgid()
+{
+    return 0;
+}
+
+static int sys_geteuid()
+{
+    return 0;
+}
+
+static int sys_getegid()
+{
+    return 0;
+}
+
 
 

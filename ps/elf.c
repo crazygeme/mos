@@ -5,6 +5,7 @@
 #else
 #include <mm/mm.h>
 #include <ps/ps.h>
+#include <lib/klib.h>
 #endif
 
 static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
@@ -50,9 +51,38 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
         copy_page += PAGE_SIZE;
         total_pages -= PAGE_SIZE;
     }
-	//mmap(mem_page, read_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, file_page);
 
     return 1;
+}
+
+static int elf_read_interp(unsigned fd, Elf32_Phdr* phdr, char* path)
+{
+    unsigned off = phdr->p_offset;
+    unsigned size = phdr->p_filesz;
+
+    return (fs_read(fd, off, path, size) != 0xffffffff);
+ 
+
+}
+
+static int elf_find_interp(unsigned fd, unsigned table_offset, unsigned size, unsigned num, char* path)
+{
+    unsigned offset = 0;
+	int i = 0;
+
+	for (i = 0; i < num; i++){
+		unsigned head_offset = table_offset + i * size;
+		Elf32_Phdr phdr;
+		fs_read(fd, head_offset, &phdr, sizeof(phdr));
+		if (phdr.p_type == PT_INTERP){
+            return elf_read_interp(fd, &phdr, path);
+        } else {
+            continue;
+        }
+        
+    }
+
+    return 0;
 }
 
 static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned size, unsigned num)
@@ -63,11 +93,17 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
 	for (i = 0; i < num; i++){
 		unsigned head_offset = table_offset + i * size;
 		Elf32_Phdr phdr;
+        char path[256] = {0};
 		fs_read(fd, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type != PT_LOAD)
-			continue;
-		elf_map_section(fd, &phdr);
-	}
+
+        if (phdr.p_type == PT_DYNAMIC ||
+            phdr.p_type == PT_LOAD) {
+            elf_map_section(fd, &phdr);
+        } else {
+            continue;
+        }
+        
+    }
 
     return 1;
 
@@ -79,8 +115,11 @@ unsigned elf_map(char* path)
 	unsigned entry_point = 0;
 	unsigned head_len = 0;
 	Elf32_Ehdr elf;
+    char* interp = kmalloc(256);
+    memset(interp, 0, 256);
 
     if (fd == MAX_FD) {
+        kfree(interp);
         return 0;
     }
     // elf header will at the beginning of va anyway
@@ -89,19 +128,31 @@ unsigned elf_map(char* path)
 	head_len = elf.e_ehsize;
 
 
-	if (elf.e_ident[0] != 0x7f)
+	if (elf.e_ident[0] != 0x7f){
+        kfree(interp);
 		return 0;
+    }
 
 	// now we only support ia32, sorry..
-	if (elf.e_ident[4] != ELFCLASS32)
+	if (elf.e_ident[4] != ELFCLASS32){
+        kfree(interp);
 		return 0;
+    }
 
-	// now we only support executable file
-	if (elf.e_type != ET_EXEC)
+	if (elf.e_type != ET_EXEC &&
+        elf.e_type != ET_DYN){
+        kfree(interp);
 		return 0;
+    }
 
-	elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
-	fs_close(fd);
+    if( elf_find_interp(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, path)){
+        entry_point = elf_map(path);
+    }else{
+        elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
+    }
+
+    fs_close(fd);
+    kfree(interp);
 
 	return entry_point;
 

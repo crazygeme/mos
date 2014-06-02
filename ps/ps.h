@@ -166,11 +166,14 @@ typedef struct _task_struct
     ps_type type;
     int remain_ticks;
     int is_switching;
+    //INODE *fds;
     INODE fds[MAX_FD];
+    //unsigned *file_off;
 	unsigned file_off[MAX_FD];
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;
+    //char* cwd;
 	char cwd[256];
 	unsigned int magic; // to avoid stack overflow
 

@@ -19,19 +19,33 @@ static unsigned fs_get_free_fd(INODE node);
 static INODE fs_get_fd(unsigned id);
 static void* fs_clear_fd(unsigned fd, int* isdir);
 
+static unsigned fs_dir_get_free_fd(DIR node);
+static DIR fs_dir_get_fd(unsigned id);
+
 unsigned fs_open(char* path)
 {
     INODE node = fs_lookup_inode( path);
+	DIR dir = 0;
     unsigned fd;
 
     if (!node) {
         return MAX_FD;
     }
 
-    fd = fs_get_free_fd(node);
-    if (fd == MAX_FD) {
-        vfs_free_inode(node);
-    }
+	if (S_ISDIR(vfs_get_mode(node))){
+		dir = vfs_open_dir(node);
+		fd = fs_dir_get_free_fd(dir);
+		vfs_free_inode(node);
+		if (fd == MAX_FD) {
+			vfs_close_dir(dir);
+		}
+	}else{
+		fd = fs_get_free_fd(node);
+		if (fd == MAX_FD) {
+			vfs_free_inode(node);
+		}
+	}
+
 
     return fd;
 }
@@ -45,7 +59,7 @@ void fs_close(unsigned int fd)
 	if (isdir) {
 		dir = ret;
 		if (dir) {
-			fs_closedir(dir);
+			vfs_close_dir(dir);
 		}
 	}else{
 		node = ret;
@@ -234,8 +248,9 @@ int fs_readdir(DIR dir, char* name, unsigned* mode)
 	return 1;
 }
 
-int sys_readdir(DIR dir, struct dirent* entry)
+int sys_readdir(unsigned fd, struct dirent* entry)
 {
+	DIR dir = fs_dir_get_fd(fd);
     int ret = fs_readdir(dir, entry->d_name, &entry->d_mode);
     if (ret) {
         entry->d_namlen = strlen(entry->d_name); 
@@ -374,6 +389,49 @@ static INODE fs_get_fd(unsigned fd)
 		node = 0;
 	}else{
 		node = cur->fds[fd].file;
+	}
+    sema_trigger(&cur->fd_lock);
+
+    return node;
+}
+
+static unsigned fs_dir_get_free_fd(DIR node)
+{
+    task_struct* cur = CURRENT_TASK();
+    int i = 0;
+
+    sema_wait(&cur->fd_lock);
+
+    for (i = 0; i < MAX_FD; i++) {
+        if (cur->fds[i].flag == 0) {
+            cur->fds[i].dir = node;
+			cur->fds[i].file_off = 0;
+			cur->fds[i].flag |= fd_flag_used;
+			cur->fds[i].flag |= fd_flag_isdir;
+            break;
+        }
+    }
+
+    sema_trigger(&cur->fd_lock);
+
+    return i;
+}
+
+static DIR fs_dir_get_fd(unsigned fd)
+{
+    task_struct* cur = CURRENT_TASK();
+    DIR node;
+
+    if (fd >= MAX_FD) {
+        return 0;
+    }
+
+
+    sema_wait(&cur->fd_lock);
+	if (!(cur->fds[fd].flag & fd_flag_isdir)) {
+		node = 0;
+	}else{
+		node = cur->fds[fd].dir;
 	}
     sema_trigger(&cur->fd_lock);
 

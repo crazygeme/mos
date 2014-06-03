@@ -70,7 +70,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
-    0, 0, fs_opendir, fs_closedir,             // 191 ~ 194
+    0, 0, 0, 0,             // 191 ~ 194
 };
 
 static int unhandled_syscall(unsigned callno)

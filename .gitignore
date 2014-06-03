@@ -38,3 +38,4 @@ tags
 *.img
 *.vpwhist
 */*.vpwhist
+*/*.vtg

@@ -11,6 +11,7 @@
 #include <fs/vfs.h>
 #include <fs/mount.h>
 #include <syscall/syscall.h>
+#include <mm/pagefault.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -69,6 +70,7 @@ void kmain_startup()
 
 	ps_init();
 
+        pf_init();
 
 #ifdef TEST_PS
 	//ps_mmm();

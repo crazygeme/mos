@@ -20,6 +20,8 @@ int fs_rename(char* path, char* new);
 
 int fs_stat(char* path, struct stat* s);
 
+int fs_fstat(int fd, struct stat* s);
+
 DIR fs_opendir(char* path);
 
 int fs_readdir(DIR dir, char* name, unsigned* mode);

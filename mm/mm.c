@@ -3,6 +3,7 @@
 #include <boot/multiboot.h>
 #include <lib/list.h>
 #include <ps/lock.h>
+#include <ps/ps.h>
 
 #define GDT_ADDRESS			0x1C0000
 #define PG0_ADDRESS			0x1C1000
@@ -551,7 +552,11 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	{
 		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
 		unsigned int phy_page = (target_phy) & PAGE_SIZE_MASK;
-		table[page_table_offset] = phy_page | flag;
+        unsigned int table_entry = table[page_table_offset] & PAGE_SIZE_MASK;
+        if (table_entry) 
+            return;
+
+        table[page_table_offset] = phy_page | flag; 
 		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
 
 		if (phy) {
@@ -599,6 +604,16 @@ void mm_del_dynamic_map(unsigned int vir)
 	}
 
 
+}
+
+unsigned vm_get_usr_zone(unsigned page_count)
+{
+    task_struct* cur = CURRENT_TASK();
+    unsigned ret = cur->user.zone_top;
+
+    cur->user.zone_top += page_count * PAGE_SIZE;
+
+    return ret;
 }
 
 

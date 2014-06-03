@@ -129,6 +129,7 @@ typedef struct _user_enviroment
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	LIST_ENTRY page_table_list;
 	unsigned heap_top;
+	unsigned zone_top;
 }user_enviroment;
 
 typedef enum _ps_status

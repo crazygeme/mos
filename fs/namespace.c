@@ -28,8 +28,14 @@ unsigned fs_open(char* path)
 	DIR dir = 0;
     unsigned fd;
 
+	#ifdef __VERBOS_SYSCALL__
+	printf("open %s, ", path);
+	#endif
     if (!node) {
-        return MAX_FD;
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %d\n", -1);
+		#endif
+        return 0xffffffff;
     }
 
 	if (S_ISDIR(vfs_get_mode(node))){
@@ -46,7 +52,9 @@ unsigned fs_open(char* path)
 		}
 	}
 
-
+	#ifdef __VERBOS_SYSCALL__
+	printf("ret %d\n", fd);
+	#endif
     return fd;
 }
 
@@ -56,6 +64,10 @@ void fs_close(unsigned int fd)
 	DIR   dir = 0;
 	int isdir;
 	void* ret = fs_clear_fd(fd,&isdir);
+
+	#ifdef __VERBOS_SYSCALL__
+	printf("close %d, isdir %d\n", fd, isdir);
+	#endif
 	if (isdir) {
 		dir = ret;
 		if (dir) {
@@ -74,11 +86,20 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
     INODE node = fs_get_fd(fd);
     unsigned ret;
 
+	if (fd == 0xffffffff) {
+		return 0xffffffff;
+    }
+
     if (!node) {
         return 0xffffffff;
     }
-
+	#ifdef __VERBOS_SYSCALL__
+	printf("read(%d, %d, %x, %d) = ", fd, offset, buf, len);
+	#endif
     ret = vfs_read_file(node, offset,buf,len);
+	#ifdef __VERBOS_SYSCALL__
+	printf("%d\n", ret);
+	#endif
     return ret;
 }
 
@@ -86,6 +107,10 @@ unsigned fs_write(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
     INODE node = fs_get_fd(fd);
     unsigned ret;
+
+    if (fd == 0xffffffff) {
+		return 0xffffffff;
+    }
 
     if (!node) {
         return 0xffffffff;
@@ -196,13 +221,56 @@ int fs_stat(char* path, struct stat* s)
     INODE node = 0;
     int ret;
 	
+	#ifdef __VERBOS_SYSCALL__
+	printf("stat %s, ", path);
+	#endif
+
 	node = fs_lookup_inode(path);
     if (!node) {
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %d\n", -1);
+		#endif
         return -1;
     }
 
     ret = vfs_copy_stat(node,s);
     vfs_free_inode(node);
+	#ifdef __VERBOS_SYSCALL__
+	printf("ret %d\n", ret);
+	#endif
+    return ret;
+}
+
+int fs_fstat(int fd, struct stat* s)
+{
+	INODE node = 0;
+	int ret;
+
+	#ifdef __VERBOS_SYSCALL__
+	printf("fstat %d, ", fd);
+	#endif
+
+    if (fd < 0 || fd >= MAX_FD) {
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %d\n", -1);
+		#endif
+        return -1;
+    }
+
+	node = fs_get_fd(fd);
+
+	if (!node) {
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %d\n", -1);
+		#endif
+        return -1;
+    }
+
+    ret = vfs_copy_stat(node,s);
+	#ifdef __VERBOS_SYSCALL__
+	printf("ret %d\n", ret);
+	#endif
+
     return ret;
 }
 

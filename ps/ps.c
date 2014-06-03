@@ -184,6 +184,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->fds[STDOUT_FILENO].flag |= fd_flag_used;
     task->fds[STDERR_FILENO].flag |= fd_flag_used;
     task->user.heap_top = USER_HEAP_BEGIN;
+    task->user.zone_top = USER_ZONE_BEGIN;
     memset(task->cwd, 0, 256);
     //strcpy(task->cwd, "\0");
 

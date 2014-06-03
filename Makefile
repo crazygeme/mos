@@ -38,7 +38,8 @@ OBJS	= boot.o \
 		  elf.o\
 		  ps0.o\
 		  ffs.o\
-		  syscall.o
+		  syscall.o\
+		  pagefault.o
 
 all: kernel
 
@@ -116,6 +117,9 @@ ffs.o: fs/ffs.c fs/ffs.h
 
 syscall.o: syscall/syscall.c syscall/syscall.h
 	$(CC) $(CFLAGS) -o syscall.o syscall/syscall.c
+
+pagefault.o: mm/pagefault.c mm/pagefault.h
+	$(CC) $(CFLAGS) -o pagefault.o mm/pagefault.c
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

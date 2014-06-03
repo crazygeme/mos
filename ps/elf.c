@@ -129,6 +129,8 @@ static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned siz
         if (phdr.p_type == PT_PHDR) {
             fmt->e_phnum = num;
             elf_map_section(fd, &phdr, fmt);
+        } else if(phdr.p_type == PT_LOAD){
+            elf_map_section(fd, &phdr, 0);
         } else {
             continue;
         }

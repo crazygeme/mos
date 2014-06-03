@@ -30,6 +30,49 @@ static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
 
+static char* call_table_name[NR_syscalls] = {
+	"test_call", 
+    "sys_exit", "sys_fork", "sys_read", "sys_write", "sys_open",   // 1  ~ 5
+    "sys_close", "sys_waitpid", "sys_creat", 0, 0,           // 6  ~ 10  
+    "sys_execve", "sys_chdir", "time", 0, 0,           // 11 ~ 15
+    0, 0, 0, 0, "sys_getpid",  // 16 ~ 20   
+    0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
+    0, 0, 0, 0, 0,          // 26 ~ 30 
+    0, 0, 0, 0, 0,          // 31 ~ 35 
+    0, 0, 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
+    0, 0, 0, 0, "sys_brk",          // 41 ~ 45 
+    0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
+    0, 0, 0, "sys_ioctl", 0,          // 51 ~ 55 
+    0, 0, 0, 0, 0,          // 56 ~ 60 
+    0, 0, 0, 0, 0,          // 61 ~ 65 
+    0, 0, 0, 0, 0,          // 66 ~ 70 
+    0, 0, 0, 0, 0,          // 71 ~ 75 
+    0, 0, 0, 0, 0,          // 76 ~ 80 
+    0, 0, 0, 0, 0,          // 81 ~ 85 
+    0, 0, "sys_reboot", "sys_readdir", 0,          // 86 ~ 90 
+    0, 0, 0, 0, 0,          // 91 ~ 95 
+    0, 0, 0, 0, 0,          // 96 ~ 100 
+    0, 0, 0, 0, 0,          // 101 ~ 105
+    "fs_stat", 0, 0, 0, 0,          // 106 ~ 110 
+    0, 0, 0, 0, 0,          // 111 ~ 115
+    0, 0, 0, 0, 0,          // 116 ~ 120
+    0, "sys_uname", 0, 0, 0,          // 121 ~ 125
+    0, 0, 0, 0, 0,          // 126 ~ 130
+    0, 0, 0, 0, 0,          // 131 ~ 135
+    0, 0, 0, 0, 0,          // 136 ~ 140
+    0, 0, 0, 0, 0,          // 141 ~ 145
+    0, 0, 0, 0, 0,          // 145 ~ 150
+    0, 0, 0, 0, 0,          // 151 ~ 155
+    0, 0, "sys_sched_yield", 0, 0,          // 156 ~ 160
+    0, 0, 0, 0, 0,          // 161 ~ 165
+    0, 0, 0, 0, 0,          // 165 ~ 170
+    0, 0, 0, 0, 0,          // 171 ~ 175
+    0, 0, 0, 0, 0,          // 175 ~ 180
+    0, 0, "sys_getcwd", 0, 0,          // 181 ~ 185
+    0, 0, 0, 0, 0,          // 185 ~ 190
+    0, 0, 0, 0,             // 191 ~ 194
+};
+
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
@@ -79,30 +122,26 @@ static int unhandled_syscall(unsigned callno)
     return -1;
 }
 
+typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
+
 static void syscall_process(intr_frame* frame)
 {
-	unsigned fn = call_table[frame->eax];
-	unsigned ret = 0;
+	syscall_fn fn = call_table[frame->eax];
+	int ret = 0;
 	if ( !fn )
 	{
 		return unhandled_syscall(frame->eax);
 	}
 
-	//printk("syscall: no %d, arg0 %x, arg1 %x, arg2 %x, ", 
-	//	   frame->eax, frame->ebx, frame->ecx, frame->edx);
-	__asm__("movl %0, %%eax" : : "m"(fn));
-	__asm__("pushl %edx");
-	__asm__("pushl %ecx");
-	__asm__("pushl %ebx");
-	__asm__("call *%eax");
-	__asm__("popl %ebx");
-	__asm__("popl %ecx");
-	__asm__("popl %edx");
+	ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx);
 
-//  __asm__("pushl %eax");
-//  __asm__("movl %%eax, %0" : "=m"(ret));
-//  printk("syscall %d, ret %x\n", frame->eax, ret);
-//  __asm__("popl %eax");
+	#ifdef __VERBOS_SYSCALL__
+	printf("%s(%x, %x, %x) = %x\n", call_table_name[frame->eax],
+		   frame->ebx, frame->ecx, frame->edx, ret);
+	#endif
+
+	__asm__("movl %0, %%eax" : : "m"(ret));
+	return;
 }
 
 void syscall_init()

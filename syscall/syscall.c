@@ -82,11 +82,14 @@ static int unhandled_syscall(unsigned callno)
 static void syscall_process(intr_frame* frame)
 {
 	unsigned fn = call_table[frame->eax];
+	unsigned ret = 0;
 	if ( !fn )
 	{
 		return unhandled_syscall(frame->eax);
 	}
 
+	//printk("syscall: no %d, arg0 %x, arg1 %x, arg2 %x, ", 
+	//	   frame->eax, frame->ebx, frame->ecx, frame->edx);
 	__asm__("movl %0, %%eax" : : "m"(fn));
 	__asm__("pushl %edx");
 	__asm__("pushl %ecx");
@@ -95,6 +98,11 @@ static void syscall_process(intr_frame* frame)
 	__asm__("popl %ebx");
 	__asm__("popl %ecx");
 	__asm__("popl %edx");
+
+//  __asm__("pushl %eax");
+//  __asm__("movl %%eax, %0" : "=m"(ret));
+//  printk("syscall %d, ret %x\n", frame->eax, ret);
+//  __asm__("popl %eax");
 }
 
 void syscall_init()
@@ -116,7 +124,10 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 	if (fd > MAX_FD)
 		return -1;
 
-	ino = cur->fds[fd];
+	if (cur->fds[fd].flag & fd_flag_isdir)
+		return -1;
+
+	ino = cur->fds[fd].file;
 	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
 	{
 		return -1;
@@ -131,10 +142,10 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 	}
 	else
 	{
-		unsigned offset = cur->file_off[fd];
+		unsigned offset = cur->fds[fd].file_off;
 		len = fs_read(fd, offset, buf, len);
 		offset += len;
-		cur->file_off[fd] = offset;
+		cur->fds[fd].file_off = offset;
 	}
 
 	return len;
@@ -148,7 +159,10 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	if (fd > MAX_FD)
 		return -1;
 
-	ino = cur->fds[fd];
+	if (cur->fds[fd].flag & fd_flag_isdir)
+		return -1;
+
+	ino = cur->fds[fd].file;
 	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
 	{
 		tty_write(buf, len);
@@ -159,10 +173,10 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	}
 	else
 	{
-		unsigned offset = cur->file_off[fd];
+		unsigned offset = cur->fds[fd].file_off;
 		len = fs_write(fd, offset, buf, len);
 		offset += len;
-		cur->file_off[fd] = offset;
+		cur->fds[fd].file_off = offset;
 	}
 
 	return len;
@@ -176,10 +190,13 @@ static int sys_ioctl(int fd, int request, char* buf)
 	if (fd > MAX_FD)
 		return -1;
 
+	if (cur->fds[fd].flag & fd_flag_isdir)
+		return -1;
+
 	if (request > IOCTL_MAX)
 		return -1;
 
-	ino = cur->fds[fd];
+	ino = cur->fds[fd].file;
 	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
 	{
 		if (request == IOCTL_TTY)

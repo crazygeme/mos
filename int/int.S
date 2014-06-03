@@ -296,7 +296,7 @@ switch_to_user_mode:
 syscall_handler:
 	pushl %ebp
 	pushl $0
-	push $0x80
+	pushl $0x80
 	/* Save caller's registers. */
 	push %ds
 	push %es
@@ -337,7 +337,6 @@ syscall_handler:
 	// but for an external interrupt, eax must be restored
 	// or else a return value in kernel function will be broken
 	addl $4, %esp
-	// popl %eax
 	pop %gs
 	pop %fs
 	pop %es

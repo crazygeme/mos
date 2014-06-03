@@ -79,4 +79,6 @@ unsigned int  mm_get_free_phy_page_index();
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
+unsigned vm_get_usr_zone(unsigned page_count);
+
 #endif

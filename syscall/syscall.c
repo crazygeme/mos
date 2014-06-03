@@ -16,6 +16,11 @@ struct mmap_arg_struct32 {
     unsigned int offset;            
 };
 
+struct iovec {
+	char   *iov_base;  /* Base address. */
+	unsigned iov_len;    /* Length. */
+};
+
 
 static int test_call(unsigned arg0, unsigned arg1, unsigned arg2);
 static int sys_read(unsigned fd, char* buf, unsigned len);
@@ -38,6 +43,9 @@ static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
 static int sys_mmap(struct mmap_arg_struct32* arg);
+static int sys_fstat(int fd, struct stat* s);
+static int sys_mprotect(void *addr, unsigned len, int prot);
+static int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -62,15 +70,15 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
-    "fs_stat", 0, 0, 0, 0,          // 106 ~ 110 
+    "stat", 0, "fstat", 0, 0,          // 106 ~ 110 
     0, 0, 0, 0, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
-    0, "sys_uname", 0, 0, 0,          // 121 ~ 125
+    0, "sys_uname", 0, 0, "sys_mprotect",          // 121 ~ 125
     0, 0, 0, 0, 0,          // 126 ~ 130
     0, 0, 0, 0, 0,          // 131 ~ 135
     0, 0, 0, 0, 0,          // 136 ~ 140
     0, 0, 0, 0, 0,          // 141 ~ 145
-    0, 0, 0, 0, 0,          // 145 ~ 150
+    "sys_writev", 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, "sys_sched_yield", 0, 0,          // 156 ~ 160
     0, 0, 0, 0, 0,          // 161 ~ 165
@@ -105,15 +113,15 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
-    fs_stat, 0, 0, 0, 0,          // 106 ~ 110 
+    fs_stat, 0, fs_fstat, 0, 0,          // 106 ~ 110 
     0, 0, 0, 0, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
-    0, sys_uname, 0, 0, 0,          // 121 ~ 125
+    0, sys_uname, 0, 0, sys_mprotect,          // 121 ~ 125
     0, 0, 0, 0, 0,          // 126 ~ 130
     0, 0, 0, 0, 0,          // 131 ~ 135
     0, 0, 0, 0, 0,          // 136 ~ 140
     0, 0, 0, 0, 0,          // 141 ~ 145
-    0, 0, 0, 0, 0,          // 145 ~ 150
+    sys_writev, 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, sys_sched_yield, 0, 0,          // 156 ~ 160
     0, 0, 0, 0, 0,          // 161 ~ 165
@@ -144,10 +152,6 @@ static void syscall_process(intr_frame* frame)
 
 	ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx);
 
-	#ifdef __VERBOS_SYSCALL__
-	printf("%s(%x, %x, %x) = %x\n", call_table_name[frame->eax],
-		   frame->ebx, frame->ecx, frame->edx, ret);
-	#endif
 
 	__asm__("movl %0, %%eax" : : "m"(ret));
 	return;
@@ -299,8 +303,20 @@ static int sys_brk(unsigned top)
 	unsigned size = 0;
 	unsigned pages = 0;
 
+    if (task->user.heap_top == USER_HEAP_BEGIN) {
+        mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
+		task->user.heap_top += PAGE_SIZE;
+    }
+
+	#ifdef __VERBOS_SYSCALL__
+	printf("brk: top %x, ", top);
+	#endif
 	if ( top == 0 )
 	{
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %x\n", task->user.heap_top);
+		#endif
+
 		return task->user.heap_top;
 	}
 	else if ( top > task->user.heap_top )
@@ -317,7 +333,9 @@ static int sys_brk(unsigned top)
 
 		top = task->user.heap_top + pages * PAGE_SIZE;
 		task->user.heap_top = top;
-		//printk("ps[%d] new heap top %x\n", task->psid, top);
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %x\n", top);
+		#endif
 		return top;
 	}else{
 		// FIXME
@@ -480,20 +498,49 @@ static int sys_getegid()
 static int sys_mmap(struct mmap_arg_struct32* arg)
 {
 	unsigned addr = arg->addr & PAGE_SIZE_MASK;
-	unsigned last_addr = (arg->addr + arg->len) & PAGE_SIZE_MASK;
-
+	unsigned last_addr = (arg->addr + arg->len-1) & PAGE_SIZE_MASK;
 	unsigned i = addr;
+	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
+	unsigned read_addr = arg->addr;
+
+    if (arg->addr == 0) {
+        addr = vm_get_usr_zone(page_count);
+		last_addr = addr + (page_count-1)*PAGE_SIZE;
+		read_addr = addr;
+    }
 
 	for (i = addr; i <= last_addr; i+=PAGE_SIZE)
 		mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
 
 	if (arg->fd > 0 && arg->fd < MAX_FD)
-		fs_read(arg->fd, arg->offset, arg->addr, arg->len);
+		fs_read(arg->fd, arg->offset, read_addr, arg->len);
 
-	printk("mmap: fd %d, offset %d, len %d at addr %x\n",
-		   arg->fd, arg->offset, arg->len, arg->addr);
+	#ifdef __VERBOS_SYSCALL__
+	printf("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
+		   arg->fd, arg->addr, arg->offset, arg->len, addr);
+	#endif
 
 	return addr;
+}
+
+static int sys_mprotect(void *addr, unsigned len, int prot)
+{
+	#ifdef __VERBOS_SYSCALL__
+	printf("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
+	#endif
+	return 0;
+}
+
+static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
+{
+	int i = 0;
+	unsigned total = 0;
+
+    for (i = 0; i < iovcnt; i++) {
+		total += sys_write(fildes, iov[i].iov_base, iov[i].iov_len);
+        
+    }
+	return total;
 }
 
 

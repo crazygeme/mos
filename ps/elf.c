@@ -8,7 +8,7 @@
 #include <lib/klib.h>
 #endif
 
-static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
+static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr, mos_binfmt* fmt)
 {
 	int writable = (phdr->p_flags & PF_W) != 0;
 	unsigned file_page = phdr->p_offset & PAGE_SIZE_MASK;
@@ -17,6 +17,11 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr)
 	unsigned read_bytes, zero_bytes;
     unsigned copy_page;
     unsigned total_pages = ROUND_UP(page_offset + phdr->p_memsz, PAGE_SIZE);
+
+    if (fmt) {
+        fmt->e_phoff = page_offset;
+        fmt->elf_load_addr = mem_page;
+    }
 
 	if (phdr->p_filesz > 0)
 	{
@@ -98,7 +103,8 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
 
         if (phdr.p_type == PT_DYNAMIC ||
             phdr.p_type == PT_LOAD) {
-            elf_map_section(fd, &phdr);
+            elf_map_section(fd, &phdr, 0);
+       
         } else {
             continue;
         }
@@ -108,8 +114,31 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
     return 1;
 
 }
+static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned size, unsigned num,
+                                mos_binfmt* fmt)
+{
+	unsigned offset = 0;
+	int i = 0;
 
-unsigned elf_map(char* path)
+	for (i = 0; i < num; i++){
+		unsigned head_offset = table_offset + i * size;
+		Elf32_Phdr phdr;
+        char path[256] = {0};
+		fs_read(fd, head_offset, &phdr, sizeof(phdr));
+
+        if (phdr.p_type == PT_PHDR) {
+            fmt->e_phnum = num;
+            elf_map_section(fd, &phdr, fmt);
+        } else {
+            continue;
+        }
+        
+    }
+
+    return 1;
+}
+
+unsigned elf_map(char* path, mos_binfmt* fmt)
 {
 	unsigned fd = fs_open(path);
 	unsigned entry_point = 0;
@@ -146,7 +175,10 @@ unsigned elf_map(char* path)
     }
 
     if( elf_find_interp(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, path)){
-        entry_point = elf_map(path);
+        fmt->e_entry = elf.e_entry;
+        elf_map_elf_hdr(fd,elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
+        entry_point = elf_map(path, 0);
+        fmt->interp_load_addr = entry_point;
     }else{
         elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
     }

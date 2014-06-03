@@ -84,6 +84,7 @@
 		<Folder
 			Name="Header Files"
 			Filters="*.h;*.H;*.hh;*.hpp;*.hxx;*.inc;*.sh;*.cpy;*.if">
+			<F N="ps/binfmt/binfmts.h"/>
 			<F N="drivers/block.h"/>
 			<F N="config.h"/>
 			<F N="int/dsr.h"/>

@@ -7,6 +7,14 @@
 #include <fs/namespace.h>
 #include <int/timer.h>
 
+struct mmap_arg_struct32 {          
+    unsigned int addr;              
+    unsigned int len;               
+    unsigned int prot;              
+    unsigned int flags;             
+    int fd;                
+    unsigned int offset;            
+};
 
 
 static int test_call(unsigned arg0, unsigned arg1, unsigned arg2);
@@ -29,6 +37,7 @@ static int sys_getuid();
 static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
+static int sys_mmap(struct mmap_arg_struct32* arg);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -49,7 +58,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
-    0, 0, "sys_reboot", "sys_readdir", 0,          // 86 ~ 90 
+    0, 0, "sys_reboot", "sys_readdir", "sys_mmap",          // 86 ~ 90 
     0, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
@@ -92,7 +101,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
-    0, 0, sys_reboot, sys_readdir, 0,          // 86 ~ 90 
+    0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
     0, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
@@ -466,6 +475,25 @@ static int sys_geteuid()
 static int sys_getegid()
 {
     return 0;
+}
+
+static int sys_mmap(struct mmap_arg_struct32* arg)
+{
+	unsigned addr = arg->addr & PAGE_SIZE_MASK;
+	unsigned last_addr = (arg->addr + arg->len) & PAGE_SIZE_MASK;
+
+	unsigned i = addr;
+
+	for (i = addr; i <= last_addr; i+=PAGE_SIZE)
+		mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
+
+	if (arg->fd > 0 && arg->fd < MAX_FD)
+		fs_read(arg->fd, arg->offset, arg->addr, arg->len);
+
+	printk("mmap: fd %d, offset %d, len %d at addr %x\n",
+		   arg->fd, arg->offset, arg->len, arg->addr);
+
+	return addr;
 }
 
 

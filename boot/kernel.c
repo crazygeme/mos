@@ -38,7 +38,8 @@ void kmain_startup()
 {
     int i = 0;
 	
-	
+    klib_init();
+
     dsr_init();
 
     int_enable_all();
@@ -49,7 +50,6 @@ void kmain_startup()
 	
     timer_init();
 
-    klib_init();
 
     // now we are debuggable
     // printk("hello from %d, %u, %x, %s\n", -100, -100, -100, "world");

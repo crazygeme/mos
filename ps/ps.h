@@ -149,6 +149,24 @@ typedef void (*process_fn)(void* param);
 
 #define MAX_FD 256
 
+typedef struct _fd_type
+{
+	union{
+		INODE	file;
+		DIR		dir;
+	};
+	unsigned file_off;
+	unsigned flag;
+}fd_type;
+
+
+#define fd_flag_isdir 0x00000001
+#define fd_flag_readonly 0x00000002
+#define fd_flag_create 0x00000004
+#define fd_flag_append 0x00000008
+#define fd_flag_used	0x80000000
+
+
 typedef struct _task_struct
 {
 	// tss_struct tss;
@@ -167,9 +185,10 @@ typedef struct _task_struct
     int remain_ticks;
     int is_switching;
     //INODE *fds;
-    INODE fds[MAX_FD];
+    //INODE fds[MAX_FD];
     //unsigned *file_off;
-	unsigned file_off[MAX_FD];
+	//unsigned file_off[MAX_FD];
+	fd_type* fds;
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;

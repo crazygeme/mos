@@ -17,7 +17,7 @@
 static INODE fs_lookup_inode(char* path);
 static unsigned fs_get_free_fd(INODE node);
 static INODE fs_get_fd(unsigned id);
-static INODE fs_clear_fd(unsigned fd);
+static void* fs_clear_fd(unsigned fd, int* isdir);
 
 unsigned fs_open(char* path)
 {
@@ -38,11 +38,21 @@ unsigned fs_open(char* path)
 
 void fs_close(unsigned int fd)
 {
-    INODE node = fs_clear_fd(fd);
-
-    if (node) {
-        vfs_free_inode(node); 
-    }
+    INODE node = 0;
+	DIR   dir = 0;
+	int isdir;
+	void* ret = fs_clear_fd(fd,&isdir);
+	if (isdir) {
+		dir = ret;
+		if (dir) {
+			fs_closedir(dir);
+		}
+	}else{
+		node = ret;
+		if (node) {
+			vfs_free_inode(node); 
+		}
+	}
 }
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
@@ -335,9 +345,10 @@ static unsigned fs_get_free_fd(INODE node)
     sema_wait(&cur->fd_lock);
 
     for (i = 0; i < MAX_FD; i++) {
-        if (cur->fds[i] == 0) {
-            cur->fds[i] = node;
-			cur->file_off[i] = 0;
+        if (cur->fds[i].flag == 0) {
+            cur->fds[i].file = node;
+			cur->fds[i].file_off = 0;
+			cur->fds[i].flag |= fd_flag_used;
             break;
         }
     }
@@ -357,14 +368,19 @@ static INODE fs_get_fd(unsigned fd)
         return 0;
     }
 
+
     sema_wait(&cur->fd_lock);
-    node = cur->fds[fd];
+	if (cur->fds[fd].flag & fd_flag_isdir) {
+		node = 0;
+	}else{
+		node = cur->fds[fd].file;
+	}
     sema_trigger(&cur->fd_lock);
 
     return node;
 }
 
-static INODE fs_clear_fd(unsigned fd)
+static void* fs_clear_fd(unsigned fd, int* isdir)
 {
     task_struct* cur = CURRENT_TASK();
     INODE node;
@@ -374,9 +390,11 @@ static INODE fs_clear_fd(unsigned fd)
     }
 
     sema_wait(&cur->fd_lock);
-    node = cur->fds[fd];
-    cur->fds[fd] = 0;
-	cur->file_off[fd] = 0;
+	*isdir = (cur->fds[fd].flag & fd_flag_isdir);
+    node = cur->fds[fd].file;
+    cur->fds[fd].file = 0;
+	cur->fds[fd].file_off = 0;
+	cur->fds[fd].flag = 0;
     sema_trigger(&cur->fd_lock);
 
     return node;

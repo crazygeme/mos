@@ -36,3 +36,5 @@ tags
 .DS_Store
 *.vtg
 *.img
+*.vpwhist
+*/*.vpwhist

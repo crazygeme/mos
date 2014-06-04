@@ -84,6 +84,19 @@ void report_time()
 
 #endif
 
+
+
+/**
+ * mark sector $sector into $used 
+ * supply cache to spped up 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param b block device
+ * @param cache cache to speed up, which contains the last 
+ *  			accessed sector data
+ * @param sector sector number
+ * @param used used or not
+ */
 static void ffs_set_bitmap(block* b, struct ffs_bitmap_cache* cache, unsigned sector, unsigned used)
 {
 	unsigned index = sector / (BLOCK_SECTOR_SIZE * 8) + 1;
@@ -107,16 +120,46 @@ static void ffs_set_bitmap(block* b, struct ffs_bitmap_cache* cache, unsigned se
 		node->bits[idx_inside_node] &= ~mask;
 	}
 }
+
+/**
+ * Reload sector cache
+ * cache number described in cache->sector 
+ *  
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param b block device
+ * @param cache cache to speed up, which contains the last 
+ *  			accessed sector data
+ */
 static void ffs_load_bitmap(block* b, struct ffs_bitmap_cache* cache)
 {
 	b->read(b->aux, cache->sector, &(cache->node.bits[0]), BLOCK_SECTOR_SIZE);
 }
 
+/**
+ * Flush sector cache
+ * cache number described in cache->sector 
+ *  
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param b block device
+ * @param cache cache to speed up, which contains the last 
+ *  			accessed sector data
+ */
 static void ffs_flush_bitmap(block* b, struct ffs_bitmap_cache* cache)
 {
 	b->write(b->aux, cache->sector, &(cache->node.bits[0]), BLOCK_SECTOR_SIZE);
 }
 
+/**
+ * Find a free sector , seek inside cache
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param cache 
+ * 
+ * @return unsigned 1 for found , 0 for not found
+ */
 static unsigned ffs_find_free_sector(struct ffs_bitmap_cache* cache)
 {
 	unsigned bitmap_sector = cache->sector-1;
@@ -150,6 +193,18 @@ static unsigned ffs_find_free_sector(struct ffs_bitmap_cache* cache)
 	return (bitmap_sector*BLOCK_SECTOR_SIZE * 8 + bitmap_byte_index * 8 + bitmap_byte_offset);
 }
 
+/**
+ * Find a free sector for INODE, first seek inside cache, if not
+ * found enum all bitmaps and find a free one, then reload cache 
+ * into that sector 
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node INODE which needs a new sector
+ * @param cache to speed up
+ * 
+ * @return unsigned $sector_number for found, 0 for not found
+ */
 static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_cache* cache)
 {
 	block* b = node->type->dev;
@@ -191,7 +246,15 @@ static unsigned ffs_alloc_free_sector(struct ffs_inode* node, struct ffs_bitmap_
 }
 
 
-
+/**
+ * update meta data for INODE
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node INODE which want to update its meta
+ * @param buf as a temporary memory area, to reduce malloc/free 
+ *  		  times
+ */
 static void ffs_update_node_meta(struct ffs_inode* node, char* buf)
 {
 	block* b = node->type->dev;
@@ -206,8 +269,17 @@ static void ffs_update_node_meta(struct ffs_inode* node, char* buf)
 	if (node->meta_sector == 0){
 		memcpy(&super->root, &node->meta, sizeof(*info));
 	}
+
 }
 
+/**
+ * Remove an INODE which store its meta in $meta
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node parent inode
+ * @param meta meta for inode needs remove
+ */
 static void ffs_remove_ino_in_meta(struct ffs_inode* node, struct ffs_meta_info* meta)
 {
 	char* buf = 0;
@@ -286,6 +358,13 @@ static struct inode_opreations ffs_inode_operations = {
 	ffs_copy_stat
 };
 
+/**
+ * Attach file system into hardware (most likely a harddisk)
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param b block struct for a block device
+ */
 void ffs_attach(block* b)
 {
 	struct ffs_super_node* super = kmalloc(BLOCK_SECTOR_SIZE);
@@ -302,6 +381,13 @@ void ffs_attach(block* b)
 	
 }
 
+/**
+ * Format a block device into ffs filesystem
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param b block struct for a block device
+ */
 void ffs_format(block* b)
 {
 	int super_block_len = sizeof(struct ffs_super_node);
@@ -359,18 +445,44 @@ void ffs_format(block* b)
 
 }
 
+/**
+ * useless!!
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param t 
+ * 
+ * @return INODE 
+ */
 static INODE ffs_create_inode(struct filesys_type* t)
 {
 	UNIMPL;
 	return 0;
 }
 
+
+/**
+ * useless!!
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param t 
+ * @param n 
+ */
 static void ffs_destroy_inode(struct filesys_type* t, INODE n)
 {
 	UNIMPL;
 	return;
 }
 
+/**
+ * Flush super block
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param t file system type
+ * @param s super block
+ */
 static void ffs_write_super(struct filesys_type* t, SUPORBLOCK s)
 {
 	block* b = t->dev;
@@ -378,16 +490,41 @@ static void ffs_write_super(struct filesys_type* t, SUPORBLOCK s)
 	b->write(b->aux, 0, s, BLOCK_SECTOR_SIZE);
 }
 
+/**
+ * Flush descriptor( bitmaps in ffs case)
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param t file system type
+ * @param d descriptor
+ */
 static void ffs_write_desc(struct filesys_type* t, DESC d)
 {
 	ffs_flush_bitmap(t->dev, d);
 }
 
+/**
+ * Free an INODE memory
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param t filesystem type
+ * @param d inode needs free
+ */
 static void ffs_free_inode(struct filesys_type* t, INODE d)
 {
 	kfree(d);
 }
 
+/**
+ * Get the root INODE in this block
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param t filesystem type
+ * 
+ * @return INODE root INODE
+ */
 static INODE ffs_get_root(struct filesys_type* t)
 {
 	struct ffs_inode* node = kmalloc(sizeof(*node));
@@ -400,6 +537,15 @@ static INODE ffs_get_root(struct filesys_type* t)
 	return node;
 }
 
+/**
+ * get file mode for an INODE
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param inode 
+ * 
+ * @return unsigned file mode
+ */
 static unsigned ffs_get_mode(INODE inode)
 {
 	struct ffs_inode* node = inode;
@@ -407,6 +553,17 @@ static unsigned ffs_get_mode(INODE inode)
 	return node->meta.mode;
 }
 
+/**
+ * Get sector number at $index
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param index 
+ * @param buf a temporaty memory buf to reduce malloc/free times
+ * 
+ * @return unsigned int $sector_number if found, 0 if not found
+ */
 static unsigned int ffs_file_get_ino(struct ffs_inode* node, unsigned index, void* buf)
 {
 	unsigned int ino;
@@ -470,13 +627,49 @@ static unsigned int ffs_file_get_ino(struct ffs_inode* node, unsigned index, voi
 	return ino;
 }
 
+/**
+ * callbacks for ffs_enum_dentry, trigger when empty sector at 
+ * the end of this file if found 
+ * $index sector in $node is empty, you can use $buf as 
+ * temporary memory 
+ */
 typedef void (*fp_empty_ino_callback)(struct ffs_inode* node, unsigned index, void* buf, void* aux);
+
+/**
+ * callbacks for ffs_enum_dentry, trigger when a valid sector is 
+ * found 
+ * sector $ino contains valid inode, whose parent is $node, the
+ * $offset's data in $ino sector, dentry table represent in 
+ * $sector_ctx , it's index in table is $count 
+ * retrn 1 to continue search, 0 to break immediately 
+ */
 typedef int (*fp_valid_dentry_callback)(struct ffs_inode* node, unsigned ino, 
 	unsigned offset, unsigned count, 
 	void* sector_ctx,
 	void* aux);
+
+/**
+ * callbacks for ffs_enum_dentry, trigger when a hole is found 
+ * (a hole is an entry that was created then deleted) 
+ *  sector $ino contains a hole, whose parent is $node, the
+ *  $offset's entry in $ino is a hole, dentry table represent in
+ *  $sector_ctx
+ *  retrn 1 to continue search, 0 to break immediately 
+ */
 typedef int(*fp_dentry_hole_found)(struct ffs_inode* node, unsigned ino, unsigned offset, void* sector_ctx, void* aux);
 
+/**
+ * enum a directory entry, trigger callbacks when issue detected
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node a directory inode
+ * @param buf temporary memory
+ * @param valid valid callback
+ * @param empty empty callback
+ * @param hole hole callback
+ * @param aux 
+ */
 static void ffs_enum_dentry(struct ffs_inode* node, void* buf, 
 	fp_valid_dentry_callback valid,
 	fp_empty_ino_callback empty,
@@ -538,6 +731,11 @@ typedef struct _ffs_dentry_enum_block
 	int ok;
 }ffs_dentry_enum_block;
 
+/**
+ * valid callback for dentry reading
+ * 
+ * @author ejzheng (6/4/2014)
+ */
 static int valid_dentry_callback(struct ffs_inode* node, unsigned ino,
 	unsigned offset, unsigned count, void* sector_ctx, void* aux)
 {
@@ -555,6 +753,20 @@ static int valid_dentry_callback(struct ffs_inode* node, unsigned ino,
 	return 1;
 }
 
+/**
+ * read $index's dentry meta inside $node
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param index 
+ * @return meta meta info read
+ * @return no sector number contains this meta
+ * @return off offset inside sector
+ * @param buf temporary memory
+ * 
+ * @return int 1 for found, 0 for not found
+ */
 static int ffs_dentry_get_meta(struct ffs_inode* node, unsigned index, 
 				struct ffs_meta_info* meta, 
 				unsigned* no, unsigned* off,
@@ -584,6 +796,21 @@ static int ffs_dentry_get_meta(struct ffs_inode* node, unsigned index,
 
 }
 
+/**
+ * add an inode inside $node 
+ * !! this is a file operation 
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node which needs to add new inode
+ * @param table_ino sector number for inode table
+ * @param index index inside inode table
+ * @param buf 
+ * @param replace replace old one if set to 1, orelse just 
+ *  			  returns
+ * 
+ * @return unsigned 1 for success, 0 for fail
+ */
 static unsigned ffs_create_inode_at_table(struct ffs_inode* node, unsigned table_ino, 
 	unsigned index, void* buf, int replace)
 {
@@ -606,6 +833,17 @@ static unsigned ffs_create_inode_at_table(struct ffs_inode* node, unsigned table
 	return ino;
 }
 
+/**
+ * Create new node inside $node at $index
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param index 
+ * @param buf 
+ * 
+ * @return unsigned 1 for success, 0 for fail
+ */
 static unsigned ffs_file_create_inode(struct ffs_inode* node, unsigned index, void* buf)
 {
 	unsigned ino;
@@ -678,6 +916,18 @@ static unsigned ffs_file_create_inode(struct ffs_inode* node, unsigned index, vo
 
 }
 
+/**
+ * read data in $inode at offset $offset, put data in $buf
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param inode which present a file
+ * @param offset read offset
+ * @param buf 
+ * @param len 
+ * 
+ * @return unsigned data readed
+ */
 static unsigned ffs_read_file(INODE inode, unsigned int offset, char* buf, unsigned len)
 {
 	struct ffs_inode* node = inode;
@@ -718,6 +968,18 @@ static unsigned ffs_read_file(INODE inode, unsigned int offset, char* buf, unsig
 	return (total - left);
 }
 
+/**
+ * write data in $inode at offset $offset, get data in $buf
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param inode which present a file
+ * @param offset write offset
+ * @param buf 
+ * @param len 
+ * 
+ * @return unsigned data wrote
+ */
 static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsigned len)
 {
 	struct ffs_inode* node = inode;
@@ -782,7 +1044,15 @@ static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsi
 }
 
 
-
+/**
+ * create a DIR struct, and a reading stream for $inode
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param inode represent a directory
+ * 
+ * @return DIR struct for upper layer usage
+ */
 static DIR ffs_open_dir(INODE inode)
 {
 	struct ffs_dir* dir = kmalloc(sizeof(*dir));
@@ -799,6 +1069,15 @@ static DIR ffs_open_dir(INODE inode)
 	return dir;
 }
 
+/**
+ * read dentry inside dir, 0 when reach ends
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param d 
+ * 
+ * @return INODE 
+ */
 static INODE ffs_read_dir(DIR d)
 {
 	struct ffs_inode* ret = 0;
@@ -831,6 +1110,16 @@ typedef struct _dir_add_del_block
 	int ok;
 }dir_add_del_block;
 
+/**
+ * empty callbacks for dir add operation
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param index 
+ * @param buf 
+ * @param aux 
+ */
 static void dir_add_empty_ino_callback(struct ffs_inode* node, unsigned index, void* buf, void* aux)
 {
 	dir_add_del_block* b = aux;
@@ -853,6 +1142,19 @@ static void dir_add_empty_ino_callback(struct ffs_inode* node, unsigned index, v
 	b->ok = 1;
 }
 
+/**
+ * hole callbacks for dir add operation
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param ino 
+ * @param offset 
+ * @param sector_ctx 
+ * @param aux 
+ * 
+ * @return int 
+ */
 static int dir_add_dentry_hole_found(struct ffs_inode* node, unsigned ino, unsigned offset, void* sector_ctx, void* aux)
 {
 	struct ffs_meta_info* table = sector_ctx;
@@ -870,6 +1172,16 @@ static int dir_add_dentry_hole_found(struct ffs_inode* node, unsigned ino, unsig
 	return 0;
 }
 
+/**
+ * valid callbacks for dir del operation
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param index 
+ * @param buf 
+ * @param aux 
+ */
 static int dir_delete_dentry_callback(struct ffs_inode* node, unsigned ino,
 	unsigned offset, unsigned count, void* sector_ctx, void* aux)
 {
@@ -889,6 +1201,16 @@ static int dir_delete_dentry_callback(struct ffs_inode* node, unsigned ino,
 	return 1;
 }
 
+
+/**
+ * Add an entry 
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param d dir which needs an new entry
+ * @param mode for new entry
+ * @param name for new entry
+ */
 static void ffs_add_dir_entry(DIR d, unsigned mode, char* name)
 {
 	struct ffs_dir* dir = d;
@@ -914,6 +1236,14 @@ static void ffs_add_dir_entry(DIR d, unsigned mode, char* name)
 	return;
 }
 
+/**
+ * remove an entry in dir
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param d dir which want to remove an entry
+ * @param name entry name that needs remove
+ */
 static void ffs_del_dir_entry(DIR d, char* name)
 {
 	struct ffs_dir* dir = d;
@@ -934,24 +1264,59 @@ static void ffs_del_dir_entry(DIR d, char* name)
 	return;
 }
 
+/**
+ * close dir and it's reading stream
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param dir 
+ */
 static void ffs_close_dir(DIR dir)
 {
 	kfree(dir);
 	return;
 }
 
+/**
+ * get name of INODE
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * 
+ * @return char* 
+ */
 static char* ffs_get_name(INODE node)
 {
 	struct ffs_inode* n = node;
 	return n->meta.name;
 }
 
+/**
+ * get size of INODE
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * 
+ * @return unsigned int 
+ */
 static unsigned int ffs_get_size(INODE node)
 {
 	struct ffs_inode* n = node;
 	return n->meta.len;
 }
 
+/**
+ * copy struct stat of an INODE
+ * 
+ * @author ejzheng (6/4/2014)
+ * 
+ * @param node 
+ * @param s 
+ * 
+ * @return int 
+ */
 static int ffs_copy_stat(INODE node, struct stat* s)
 {
 	struct ffs_inode* n = node;

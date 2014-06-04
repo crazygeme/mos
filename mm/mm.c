@@ -20,6 +20,7 @@ static unsigned long long phy_mem_high;
 _STARTDATA static unsigned long long _phy_mem_low;
 _STARTDATA static unsigned long long _phy_mem_high;
 
+// this can present 256*1024*4k = 1G
 #define PAGE_MASK_TABLE_SIZE (256*1024)
 static unsigned char free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
 
@@ -299,9 +300,11 @@ static void unlock_mm()
 
 static void mm_high_memory_fun()
 {
+	// ok now we make eip as virtual address
 	RELOAD_EIP();
 	phy_mem_high = _phy_mem_high;
 	phy_mem_low = _phy_mem_low;
+	// ok now we make esp as virtual address
 	RELOAD_ESP(KERNEL_OFFSET);
 
 	 mm_init_free_phy_page_mask();

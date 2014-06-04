@@ -113,3 +113,13 @@ However, other machine state should be left by the boot loader in normal working
   (0xbffffffc)      [ end marker ]                4   (= NULL)
 
   (0xc0000000)      < top of stack >              0   (virtual)
+  
+-----------------
+mount a vdi(virtual box hdd) file 
+sudo modprobe nbd
+sudo qemu-nbd -c /dev/nbd0 "/home/ejzheng/VirtualBox VMs/redhat/rh.vdi"
+sudo mount /dev/nbd0p1 mnt
+
+umount it
+sudo umount mnt
+sudo qemu-nbd -d /dev/nbd0 

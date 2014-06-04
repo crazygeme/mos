@@ -38,7 +38,8 @@ static void kmain_process(void* param);
 void kmain_startup()
 {
     int i = 0;
-	
+    
+    // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
 
     dsr_init();
@@ -51,9 +52,6 @@ void kmain_startup()
 	
     timer_init();
 
-
-    // now we are debuggable
-    // printk("hello from %d, %u, %x, %s\n", -100, -100, -100, "world");
 
 
     timer_calculate_cpu_cycle();
@@ -85,8 +83,7 @@ void kmain_startup()
 
 #ifndef TEST_PS
 #ifndef TEST_LOCK
-    // FIXME
-    // make it ps_user
+    // create first process
     ps_create(kmain_process, 0, 1, ps_kernel);
     ps_kickoff();
 

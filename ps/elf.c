@@ -100,8 +100,8 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
 		Elf32_Phdr phdr;
         char path[256] = {0};
 		fs_read(fd, head_offset, &phdr, sizeof(phdr));
-
-        if (phdr.p_type == PT_DYNAMIC ||
+        printf("[%d:%x - %x] ", phdr.p_type, phdr.p_vaddr, phdr.p_memsz);
+        if (/*phdr.p_type == PT_DYNAMIC ||*/
             phdr.p_type == PT_LOAD) {
             elf_map_section(fd, &phdr, 0);
        
@@ -176,13 +176,16 @@ unsigned elf_map(char* path, mos_binfmt* fmt)
 		return 0;
     }
 
+    printf("map_elf %s , ", path);
     if( elf_find_interp(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, path)){
         fmt->e_entry = elf.e_entry;
         elf_map_elf_hdr(fd,elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
+        printf("\n");
         entry_point = elf_map(path, 0);
         fmt->interp_load_addr = entry_point;
     }else{
         elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
+        printf("\n");
     }
 
     fs_close(fd);

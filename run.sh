@@ -81,7 +81,7 @@ fi
 echo "begin enum"
 
 if [ "$_debug" == "0" ]; then
-	qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel
+	qemu-system-i386 -d in_asm -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel
 else		
 	qemu-system-i386 -no-kvm -no-reboot -m 256 -hda "$diskfile" -kernel kernel -gdb tcp::8888 -S
 fi

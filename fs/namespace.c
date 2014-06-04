@@ -94,7 +94,7 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
         return 0xffffffff;
     }
 	#ifdef __VERBOS_SYSCALL__
-	printf("read(%d, %d, %x, %d) = ", fd, offset, buf, len);
+	printf("read(%d, %x, %x, %x) = ", fd, offset, buf, len);
 	#endif
     ret = vfs_read_file(node, offset,buf,len);
 	#ifdef __VERBOS_SYSCALL__

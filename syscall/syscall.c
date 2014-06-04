@@ -323,9 +323,6 @@ static int sys_ioctl(int fd, int request, char* buf)
 static int sys_getpid()
 {
     task_struct* cur = CURRENT_TASK();
-		//#ifdef __VERBOS_SYSCALL__
-	printf("getpid() = %d\n", cur->psid);
-	//#endif
     return cur->psid;
 }
 
@@ -485,7 +482,6 @@ static char *sys_getcwd(char *buf, unsigned size)
 	    strcpy(buf, "/");
 	else
 		strcpy(buf, cur->cwd);
-	printf("getcwd(%x, %d) = %s\n", buf, size, buf);
 
 	return buf;
 }
@@ -569,8 +565,10 @@ static int sys_mmap(struct mmap_arg_struct32* arg)
 		read_addr = addr;
     }
 
-	for (i = addr; i <= last_addr; i+=PAGE_SIZE)
+	for (i = addr; i <= last_addr; i+=PAGE_SIZE){
 		mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
+		memset(0, i, PAGE_SIZE);
+	}
 
 	if (arg->fd > 0 && arg->fd < MAX_FD)
 		fs_read(arg->fd, arg->offset, read_addr, arg->len);

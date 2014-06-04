@@ -16,6 +16,6 @@ static void pf_process(intr_frame* frame)
     __asm__("movl %cr2, %eax");
     __asm__("movl %%eax, %0" : "=m"(cr2));
     printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
-    mm_add_dynamic_map(cr2, 0, PAGE_ENTRY_USER_DATA);
-    printk("mapped\n");
+    __asm__("hlt");
+	for(;;);
 }

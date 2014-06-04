@@ -18,6 +18,8 @@ _START static void init_interrupt()
   write_port( 0x21 , 0x1 ) ;
   write_port( 0xA1 , 0x1 ) ;
 
+  // disable all interrupt in this time,
+  // enable them after all setup done
   write_port( 0x21 , 0xFF ) ;
   write_port( 0xA1 , 0xFF ) ;
 }

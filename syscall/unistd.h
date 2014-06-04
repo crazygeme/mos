@@ -195,10 +195,7 @@
 #define __NR_ugetrlimit 191 /* SuS compliant getrlimit */
 #define __NR_mmap2 192
 
-#define __NR_opendir 193
-#define __NR_closedir 194
-
-#define NR_syscalls 195
+#define NR_syscalls 193
 
 #define	_SYS_NAMELEN	256
 

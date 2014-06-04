@@ -1,0 +1,16 @@
+1. 物理内存管理
+2. 虚拟内存管理
+3. ext2的完整实现
+4. 各级cache （目前只有HDD有cache）
+5. mount point
+6. 文件权限
+7. 用户概念
+8. syscall的返回值
+9. 内存权限
+10. scheduler的效率
+11. 网络和socket接口
+12. 源代码的分类整理 （至少把include单独列出来）
+13. 真正的page fault handler （可以读写文件的）
+14. IPC机制
+15. INODE的引用计数
+16. fork的时候复制fd

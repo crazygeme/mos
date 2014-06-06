@@ -93,13 +93,7 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
     if (!node) {
         return 0xffffffff;
     }
-	#ifdef __VERBOS_SYSCALL__
-	printf("read(%d, %x, %x, %x) = ", fd, offset, buf, len);
-	#endif
     ret = vfs_read_file(node, offset,buf,len);
-	#ifdef __VERBOS_SYSCALL__
-	printf("%d\n", ret);
-	#endif
     return ret;
 }
 
@@ -236,9 +230,9 @@ int fs_stat(char* path, struct stat* s)
     ret = vfs_copy_stat(node,s);
     vfs_free_inode(node);
 	#ifdef __VERBOS_SYSCALL__
-	printf("ret %d\n", ret);
+	printf("ret %d\n", 0);
 	#endif
-    return ret;
+    return 0;
 }
 
 int fs_fstat(int fd, struct stat* s)
@@ -268,10 +262,10 @@ int fs_fstat(int fd, struct stat* s)
 
     ret = vfs_copy_stat(node,s);
 	#ifdef __VERBOS_SYSCALL__
-	printf("ret %d\n", ret);
+	printf("(%x, %d)ret %d\n",s->st_mode, s->st_size, 0);
 	#endif
 
-    return ret;
+    return 1;
 }
 
 DIR fs_opendir(char* path)

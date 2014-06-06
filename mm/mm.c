@@ -524,7 +524,7 @@ void vm_free(unsigned int vm, int page_count)
 
 }
 
-void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
+int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 {
 	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
@@ -546,7 +546,7 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	if ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) == 0){
 		unsigned int table_addr = mm_alloc_page_table();
 		if (table_addr == 0){
-			return ;
+			return -1;
 		}
 
 		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | flag;
@@ -557,7 +557,7 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 		unsigned int phy_page = (target_phy) & PAGE_SIZE_MASK;
         unsigned int table_entry = table[page_table_offset] & PAGE_SIZE_MASK;
         if (table_entry) 
-            return;
+            return 0;
 
         table[page_table_offset] = phy_page | flag; 
 		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
@@ -574,7 +574,7 @@ void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
         
     }
 
-
+	return 1;
 }
 
 void mm_del_dynamic_map(unsigned int vir)

@@ -71,7 +71,7 @@ unsigned int vm_alloc(int page_count);
 
 void vm_free(unsigned int vm, int page_count);
 
-void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
+int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
 
 void mm_del_dynamic_map(unsigned int vir);
 

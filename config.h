@@ -32,7 +32,7 @@
 
 #define HDD_CACHE_SIZE 32 /* pages */
 
-#define HDD_CACHE_OPEN 1
+#define HDD_CACHE_OPEN 0
 
 #define HDD_CACHE_WRITE_THOUGH 0
 #define HDD_CACHE_WRITE_BACK 1
@@ -53,7 +53,7 @@
 
 #define KEYBOARD_BUF_LEN 64
 
-#define USER_HEAP_BEGIN 0x40000000
+#define USER_HEAP_BEGIN  0x40000000
 
 #define USER_ZONE_BEGIN 0x80000000
 

@@ -11,7 +11,7 @@ OS		= Darwin
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
-CFLAGS	= -ggdb3 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__KERNEL__ -D__VERBOS_SYSCALL__ -I./
+CFLAGS	= -ggdb3 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__KERNEL__ -I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
@@ -120,6 +120,8 @@ syscall.o: syscall/syscall.c syscall/syscall.h
 
 pagefault.o: mm/pagefault.c mm/pagefault.h
 	$(CC) $(CFLAGS) -o pagefault.o mm/pagefault.c
+
+
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

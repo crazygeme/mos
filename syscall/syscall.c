@@ -7,6 +7,18 @@
 #include <fs/namespace.h>
 #include <int/timer.h>
 
+  #define MAP_SHARED      0x01            /* Share changes */
+  #define MAP_PRIVATE     0x02            /* Changes are private */
+  #define MAP_TYPE        0x0f            /* Mask for type of mapping */
+  #define MAP_FIXED       0x10            /* Interpret addr exactly */
+  #define MAP_ANONYMOUS   0x20            /* don't use a file */
+  #ifdef CONFIG_MMAP_ALLOW_UNINITIALIZED
+  # define MAP_UNINITIALIZED 0x4000000    /* For anonymous mmap, memory could be uninitialized */
+  #else
+  # define MAP_UNINITIALIZED 0x0          /* Don't support this flag */
+  #endif
+  
+
 struct mmap_arg_struct32 {          
     unsigned int addr;              
     unsigned int len;               
@@ -251,7 +263,13 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 	else
 	{
 		unsigned offset = cur->fds[fd].file_off;
+		#ifdef __VERBOS_SYSCALL__
+		printf("read(%d, %x, %x, %x) = ", fd, offset, buf, len);
+		#endif
 		len = fs_read(fd, offset, buf, len);
+		#ifdef __VERBOS_SYSCALL__
+		printf("%d\n", len);
+		#endif
 		offset += len;
 		cur->fds[fd].file_off = offset;
 	}
@@ -550,14 +568,15 @@ static int sys_getegid()
 {
     return 0;
 }
+static int debug = 0;
 
 static int sys_mmap(struct mmap_arg_struct32* arg)
 {
 	unsigned addr = arg->addr & PAGE_SIZE_MASK;
 	unsigned last_addr = (arg->addr + arg->len-1) & PAGE_SIZE_MASK;
-	unsigned i = addr;
+	unsigned i = addr, map_ret;
 	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	unsigned read_addr = arg->addr;
+	unsigned read_addr = addr;
 
     if (arg->addr == 0) {
         addr = vm_get_usr_zone(page_count);
@@ -566,18 +585,34 @@ static int sys_mmap(struct mmap_arg_struct32* arg)
     }
 
 	for (i = addr; i <= last_addr; i+=PAGE_SIZE){
-		mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
-		memset(0, i, PAGE_SIZE);
+		map_ret = mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
+		if (map_ret > 0 && arg->fd > 0)
+		{
+			memset(0, i, PAGE_SIZE);
+		}
 	}
-
-	if (arg->fd > 0 && arg->fd < MAX_FD)
-		fs_read(arg->fd, arg->offset, read_addr, arg->len);
 
 	#ifdef __VERBOS_SYSCALL__
 	printf("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
 		   arg->fd, arg->addr, arg->offset, arg->len, addr);
-	printf("\t page count %d, first %x, last %x\n", page_count, addr, last_addr);
+	printf("\t page count %d, first %x, last %x\n", page_count, addr, last_addr+PAGE_SIZE);
 	#endif
+
+	if ((map_ret > 0) || (arg->flags & MAP_FIXED)){
+		if (arg->fd > 0 && arg->fd < MAX_FD){
+			unsigned ret = 0;
+			memset(read_addr, 0, arg->len);
+			if (!debug)
+			{
+				ret = fs_read(arg->fd, arg->offset, read_addr, arg->len);
+			}
+			#ifdef __VERBOS_SYSCALL__
+			printf("\t read(%d, %x, %x %x) = %x\n", arg->fd, arg->offset, read_addr, arg->len, ret);
+			#endif
+		}else{
+			memset(read_addr, 0, arg->len);
+		}
+	}
 
 	return addr;
 }

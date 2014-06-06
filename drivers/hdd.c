@@ -760,13 +760,14 @@ static void found_partition ( block *block, unsigned char part_type,
       p->block = block;
       p->start = start;
       p->bootable = bootable;
-      p->cache_inited = 0;
       strcpy(name, block->name);
       ext[0] = '0' + part_nr;
       ext[1] = '\0';
       strcat(name, ext);
 
 #if HDD_CACHE_OPEN
+      p->cache_inited = 0;
+
       init_partition_cache(p);
 #endif
 

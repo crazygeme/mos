@@ -1324,6 +1324,9 @@ static int ffs_copy_stat(INODE node, struct stat* s)
 
 	s->st_atime = n->meta.mt_access;
 	s->st_mode = n->meta.mode;
+	if (!S_ISDIR(s->st_mode)) {
+		s->st_mode |= S_IFREG;
+	}
 	s->st_size = n->meta.len;
 	s->st_blksize = BLOCK_SECTOR_SIZE;
 	s->st_blocks = super->total_size;

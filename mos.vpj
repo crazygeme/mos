@@ -71,6 +71,7 @@
 			<F N="lib/list.c"/>
 			<F N="ps/lock.c"/>
 			<F N="mm/mm.c"/>
+			<F N="mm/mmap.c"/>
 			<F N="fs/mount.c"/>
 			<F N="fs/namespace.c"/>
 			<F N="mm/pagefault.c"/>
@@ -98,6 +99,7 @@
 			<F N="lib/list.h"/>
 			<F N="ps/lock.h"/>
 			<F N="mm/mm.h"/>
+			<F N="mm/mmap.h"/>
 			<F N="fs/mount.h"/>
 			<F N="boot/multiboot.h"/>
 			<F N="fs/namespace.h"/>

@@ -21,7 +21,7 @@ static void ext2_del_dir_entry(DIR dir, char* name);
 static void ext2_close_dir(DIR dir);
 static char* ext2_get_name(INODE node);
 static unsigned int ext2_get_size(INODE node);
-static int ext2_copy_stat(INODE node, struct stat* s);
+static int ext2_copy_stat(INODE node, struct stat* s, int is_dir);
 
 
 // internal
@@ -461,7 +461,7 @@ static unsigned int ext2_get_size(INODE node)
     return info->inode->i_size;
 }
 
-static int ext2_copy_stat(INODE node, struct stat* s)
+static int ext2_copy_stat(INODE node, struct stat* s, int is_dir)
 {
     struct ext2_inode_info* info = (struct ext2_inode_info*)node;
     struct ext2_inode* inode = (struct ext2_inode*)info->inode;

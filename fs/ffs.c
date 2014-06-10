@@ -33,7 +33,7 @@ static void ffs_del_dir_entry(DIR dir, char* name);
 static void ffs_close_dir(DIR dir);
 static char* ffs_get_name(INODE node);
 static unsigned int ffs_get_size(INODE node);
-static int ffs_copy_stat(INODE node, struct stat* s);
+static int ffs_copy_stat(INODE node, struct stat* s, int is_dir);
 
 static void ffs_set_bitmap(block* b, struct ffs_bitmap_cache* cache, unsigned sector, unsigned used);
 static void ffs_load_bitmap(block* b, struct ffs_bitmap_cache* cache);
@@ -1317,10 +1317,20 @@ static unsigned int ffs_get_size(INODE node)
  * 
  * @return int 
  */
-static int ffs_copy_stat(INODE node, struct stat* s)
+static int ffs_copy_stat(INODE node, struct stat* s, int is_dir)
 {
-	struct ffs_inode* n = node;
-	struct ffs_super_node* super = n->type->sb;
+	struct ffs_inode* n = 0;
+	struct ffs_super_node* super = 0;
+	struct ffs_dir* dir = 0;
+
+	if (is_dir) {
+		dir = (struct ffs_dir*)node;
+		n = &dir->self;
+		super = dir->type->sb;
+	}else{
+		n = node;
+		super = n->type->sb;
+	}
 
 	s->st_atime = n->meta.mt_access;
 	s->st_mode = n->meta.mode;

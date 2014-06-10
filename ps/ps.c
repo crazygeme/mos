@@ -374,13 +374,25 @@ int sys_exit(unsigned status)
     return 0;
 }
 
+char *sys_getcwd(char *buf, unsigned size)
+{
+	task_struct* cur = CURRENT_TASK();
+
+	if (!cur->cwd[0])
+	    strcpy(buf, "/");
+	else
+		strcpy(buf, cur->cwd);
+
+	return buf;
+}
+
+
 int sys_waitpid(unsigned pid, int* status, int options)
 {
     LIST_ENTRY* entry = 0;
     task_struct* cur = CURRENT_TASK();
     int ret = 0;
     int can_return = 0;
-
     do {
         lock_dying();
         entry = control.dying_queue.Flink;

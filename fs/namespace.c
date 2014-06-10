@@ -24,17 +24,47 @@ static DIR fs_dir_get_fd(unsigned id);
 
 unsigned fs_open(char* path)
 {
-    INODE node = fs_lookup_inode( path);
+    INODE node = 0;
 	DIR dir = 0;
     unsigned fd;
+	char* fullPath = kmalloc(64);
+	memset(fullPath, 0, 64);
+	
+
+	// FIXME
+	if (!strcmp(path, ".")) {
+		sys_getcwd(fullPath, 64);
+	}else{
+		strcpy(fullPath, path);
+	}
+
+	node = fs_lookup_inode(fullPath);
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("open %s, ", path);
+	printf("open %s, ", fullPath);
 	#endif
+
+	// FIXME
+	// /dev/null is a virtual fs
+	if (!strcmp(fullPath, "/dev/null")) 
+	{
+		fd = fs_get_free_fd(INODE_NULL);
+		if (fd == MAX_FD)
+			fd = 0xffffffff;
+
+		#ifdef __VERBOS_SYSCALL__
+			printf("ret %d\n", fd);
+		#endif
+
+		kfree(fullPath);
+		return fd;
+	}
+
     if (!node) {
 		#ifdef __VERBOS_SYSCALL__
 		printf("ret %d\n", -1);
 		#endif
+		kfree(fullPath);
         return 0xffffffff;
     }
 
@@ -55,6 +85,11 @@ unsigned fs_open(char* path)
 	#ifdef __VERBOS_SYSCALL__
 	printf("ret %d\n", fd);
 	#endif
+	if (fd == MAX_FD) {
+		fd = 0xffffffff;
+	}
+
+	kfree(fullPath);
     return fd;
 }
 
@@ -68,6 +103,16 @@ void fs_close(unsigned int fd)
 	#ifdef __VERBOS_SYSCALL__
 	printf("close %d, isdir %d\n", fd, isdir);
 	#endif
+
+	// FIXME
+	if (ret == INODE_STD_ERR ||
+		ret == INODE_STD_IN ||
+		ret == INODE_STD_OUT ||
+		ret == INODE_NULL
+		) {
+		return;
+	}
+
 	if (isdir) {
 		dir = ret;
 		if (dir) {
@@ -214,30 +259,46 @@ int fs_stat(char* path, struct stat* s)
 {
     INODE node = 0;
     int ret;
+	char* fullPath = kmalloc(64);
+	memset(fullPath, 0, 64);
 	
+
+	// FIXME
+	if (!strcmp(path, ".")) {
+		sys_getcwd(fullPath, 64);
+	}else{
+		strcpy(fullPath, path);
+	}
+
 	#ifdef __VERBOS_SYSCALL__
-	printf("stat %s, ", path);
+	printf("stat %s, ", fullPath);
 	#endif
 
-	node = fs_lookup_inode(path);
+	node = fs_lookup_inode(fullPath);
     if (!node) {
 		#ifdef __VERBOS_SYSCALL__
 		printf("ret %d\n", -1);
 		#endif
+		kfree(fullPath);
         return -1;
     }
 
-    ret = vfs_copy_stat(node,s);
+    ret = vfs_copy_stat(node,s, 0);
     vfs_free_inode(node);
 	#ifdef __VERBOS_SYSCALL__
 	printf("ret %d\n", 0);
 	#endif
+	kfree(fullPath);
     return 0;
 }
 
+// FIXME!
+// do not seperate INODE and DIR
+// orelse ugly code will have to added
 int fs_fstat(int fd, struct stat* s)
 {
 	INODE node = 0;
+	DIR dir = 0;
 	int ret;
 
 	#ifdef __VERBOS_SYSCALL__
@@ -254,13 +315,21 @@ int fs_fstat(int fd, struct stat* s)
 	node = fs_get_fd(fd);
 
 	if (!node) {
+		dir = fs_dir_get_fd(fd);
+	}
+
+	if (!node && !dir) {
 		#ifdef __VERBOS_SYSCALL__
 		printf("ret %d\n", -1);
 		#endif
         return -1;
     }
 
-    ret = vfs_copy_stat(node,s);
+	if (node) {
+		ret = vfs_copy_stat(node,s, 0);
+	}else if(dir){
+		ret = vfs_copy_stat(dir, s, 1);
+	}
 	#ifdef __VERBOS_SYSCALL__
 	printf("(%x, %d)ret %d\n",s->st_mode, s->st_size, 0);
 	#endif

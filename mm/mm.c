@@ -619,4 +619,66 @@ unsigned vm_get_usr_zone(unsigned page_count)
     return ret;
 }
 
+  #define MAP_SHARED      0x01            /* Share changes */
+  #define MAP_PRIVATE     0x02            /* Changes are private */
+  #define MAP_TYPE        0x0f            /* Mask for type of mapping */
+  #define MAP_FIXED       0x10            /* Interpret addr exactly */
+  #define MAP_ANONYMOUS   0x20            /* don't use a file */
+  #ifdef CONFIG_MMAP_ALLOW_UNINITIALIZED
+  # define MAP_UNINITIALIZED 0x4000000    /* For anonymous mmap, memory could be uninitialized */
+  #else
+  # define MAP_UNINITIALIZED 0x0          /* Don't support this flag */
+  #endif
+
+
+// FIXME
+// buggy implement
+// in elf.c we mmap interop using mixed address, it will not reserve vm zone before map
+// so after elf mmap user.zone_top not updated. When ld-linux.so.2 mmap it begins from
+// USER_ZONE_TOP again!
+// So we WAR it by increase zone_top at @WAR1
+// this is totally a mess, rewrite is please
+int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
+			unsigned int flags, int fd,unsigned int offset)
+{
+	unsigned addr = _addr & PAGE_SIZE_MASK;
+	unsigned last_addr = (_addr + _len-1) & PAGE_SIZE_MASK;
+	unsigned i = addr, map_ret;
+	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
+	unsigned read_addr = addr;
+	task_struct* cur = CURRENT_TASK();
+
+    if (_addr == 0) {
+        addr = vm_get_usr_zone(page_count);
+		last_addr = addr + (page_count-1)*PAGE_SIZE;
+		read_addr = addr;
+    }
+
+	for (i = addr; i <= last_addr; i+=PAGE_SIZE){
+		map_ret = mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
+		if (map_ret > 0 && fd > 0)
+		{
+			memset(i, 0, PAGE_SIZE);
+		}
+		// WAR1
+		if (cur->user.zone_top < (i+PAGE_SIZE)) {
+			cur->user.zone_top = (i+PAGE_SIZE);
+		}
+	}
+
+
+	if ((map_ret > 0) || (flags & MAP_FIXED)){
+		if (fd > 0 && fd < MAX_FD){
+			unsigned ret = 0;
+			memset(read_addr, 0, _len);
+			ret = fs_read(fd, offset, read_addr, _len);
+		}else{
+			memset(read_addr, 0, _len);
+		}
+	}
+
+	return addr;
+
+}
+
 

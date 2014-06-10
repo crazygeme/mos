@@ -231,7 +231,7 @@ unsigned vfs_get_size(INODE node)
 
 }
 
-int vfs_copy_stat(INODE node, struct stat* s)
+int vfs_copy_stat(INODE node, struct stat* s, int is_dir)
 {
     struct filesys_type* type = node->type;
 
@@ -239,7 +239,7 @@ int vfs_copy_stat(INODE node, struct stat* s)
         return 0;
     }
 
-    return type->ino_ops->copy_stat(node, s);
+    return type->ino_ops->copy_stat(node, s, is_dir);
 }
 
 void vfs_close(struct filesys_type* type)

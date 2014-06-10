@@ -70,7 +70,7 @@ struct inode_opreations{
 	void (*close_dir)(DIR dir);
 	char* (*get_name)(INODE node);
 	unsigned (*get_size)(INODE node);
-    int (*copy_stat)(INODE node, struct stat* stat);
+    int (*copy_stat)(INODE node, struct stat* stat, int is_dir);
 };
 
 struct filesys_type{
@@ -138,7 +138,7 @@ char* vfs_get_name(INODE node);
 
 unsigned vfs_get_size(INODE node);
 
-int vfs_copy_stat(INODE node, struct stat* s);
+int vfs_copy_stat(INODE node, struct stat* s, int is_dir);
 
 void vfs_close(struct filesys_type* type);
 

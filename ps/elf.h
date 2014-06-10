@@ -416,6 +416,7 @@ typedef struct _mos_binfmt
 	unsigned e_phnum;
 	unsigned interp_load_addr;
 	unsigned e_entry;
+	unsigned interp_bias;
 
 }mos_binfmt;
 

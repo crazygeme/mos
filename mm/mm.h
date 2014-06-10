@@ -79,6 +79,11 @@ unsigned int  mm_get_free_phy_page_index();
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
+// buggy
 unsigned vm_get_usr_zone(unsigned page_count);
+
+int do_mmap(unsigned int addr, unsigned int len,unsigned int prot,
+			unsigned int flags,int fd,unsigned int offset);
+
 
 #endif

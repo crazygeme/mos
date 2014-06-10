@@ -7,16 +7,7 @@
 #include <fs/namespace.h>
 #include <int/timer.h>
 
-  #define MAP_SHARED      0x01            /* Share changes */
-  #define MAP_PRIVATE     0x02            /* Changes are private */
-  #define MAP_TYPE        0x0f            /* Mask for type of mapping */
-  #define MAP_FIXED       0x10            /* Interpret addr exactly */
-  #define MAP_ANONYMOUS   0x20            /* don't use a file */
-  #ifdef CONFIG_MMAP_ALLOW_UNINITIALIZED
-  # define MAP_UNINITIALIZED 0x4000000    /* For anonymous mmap, memory could be uninitialized */
-  #else
-  # define MAP_UNINITIALIZED 0x0          /* Don't support this flag */
-  #endif
+
   
 
 struct mmap_arg_struct32 {          
@@ -31,6 +22,22 @@ struct mmap_arg_struct32 {
 struct iovec {
 	char   *iov_base;  /* Base address. */
 	unsigned iov_len;    /* Length. */
+};
+
+struct linux_dirent
+{
+	unsigned long  d_ino;     /* Inode number */
+	unsigned long  d_off;     /* Offset to next linux_dirent */
+	unsigned short d_reclen;  /* Length of this linux_dirent */
+	char           d_name[];  /* Filename (null-terminated) */
+	/* length is actually (d_reclen - 2 -
+	   offsetof(struct linux_dirent, d_name) */
+	/*
+	char           pad;       // Zero padding byte
+	char           d_type;    // File type (only since Linux 2.6.4;
+							  // offset is (d_reclen - 1))
+	*/
+
 };
 
     
@@ -97,7 +104,6 @@ static int sys_close(unsigned fd);
 static int sys_sched_yield();
 static int sys_brk(unsigned top);
 static int sys_chdir(const char *path);
-static char *sys_getcwd(char *buf, unsigned size);
 static int sys_ioctl(int d, int request, char* buf);
 static int sys_creat(const char* path, unsigned mode);
 static int sys_mkdir(const char* path, unsigned mode);
@@ -112,6 +118,8 @@ static int sys_fstat(int fd, struct stat* s);
 static int sys_mprotect(void *addr, unsigned len, int prot);
 static int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
 static long sys_personality(unsigned int personality);
+static int sys_fcntl(int fd, int cmd, int arg);
+static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -125,7 +133,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
     0, 0, 0, 0, "sys_brk",          // 41 ~ 45 
     0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
-    0, 0, 0, "sys_ioctl", 0,          // 51 ~ 55 
+    0, 0, 0, "sys_ioctl", "sys_fcntl",          // 51 ~ 55 
     0, 0, 0, 0, 0,          // 56 ~ 60 
     0, 0, 0, 0, 0,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
@@ -143,7 +151,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 126 ~ 130
     0, 0, 0, 0, 0,          // 131 ~ 135
     "sys_personality", 0, 0, 0, 0,          // 136 ~ 140
-    0, 0, 0, 0, 0,          // 141 ~ 145
+    "sys_getdents", 0, 0, 0, 0,          // 141 ~ 145
     "sys_writev", 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, "sys_sched_yield", 0, 0,          // 156 ~ 160
@@ -170,7 +178,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
     0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
-    0, 0, 0, sys_ioctl, 0,          // 51 ~ 55 
+    0, 0, 0, sys_ioctl, sys_fcntl,          // 51 ~ 55 
     0, 0, 0, 0, 0,          // 56 ~ 60 
     0, 0, 0, 0, 0,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
@@ -188,7 +196,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 126 ~ 130
     0, 0, 0, 0, 0,          // 131 ~ 135
     sys_personality, 0, 0, 0, 0,          // 136 ~ 140
-    0, 0, 0, 0, 0,          // 141 ~ 145
+    sys_getdents, 0, 0, 0, 0,          // 141 ~ 145
     sys_writev, 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, sys_sched_yield, 0, 0,          // 156 ~ 160
@@ -260,6 +268,11 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 		*buf = kb_buf_get();
 		return 1;
 	}
+	else if (ino == INODE_NULL)
+	{
+		memset(buf, len);
+		return len;
+	}
 	else
 	{
 		unsigned offset = cur->fds[fd].file_off;
@@ -288,6 +301,10 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	if (cur->fds[fd].flag & fd_flag_isdir)
 		return -1;
 
+	#ifdef __VERBOS_SYSCALL__
+	printf("write(%d, %x, %d)\n", fd, buf, len);
+	#endif
+
 	ino = cur->fds[fd].file;
 	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
 	{
@@ -296,6 +313,10 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	else if ( ino == INODE_STD_IN )
 	{
 		return -1;
+	}
+	else if (ino == INODE_NULL)
+	{
+		return len;
 	}
 	else
 	{
@@ -313,14 +334,17 @@ static int sys_ioctl(int fd, int request, char* buf)
 	task_struct* cur = CURRENT_TASK();
 	unsigned ino = 0;
 
+	#ifdef __VERBOS_SYSCALL__
+	printf("ioctl(%d, %d, %x)\n", fd, request, buf);
+	#endif
 	if (fd > MAX_FD)
-		return -1;
+		return 0;
 
 	if (cur->fds[fd].flag & fd_flag_isdir)
-		return -1;
+		return 0;
 
 	if (request > IOCTL_MAX)
-		return -1;
+		return 0;
 
 	ino = cur->fds[fd].file;
 	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
@@ -332,10 +356,10 @@ static int sys_ioctl(int fd, int request, char* buf)
 	}
 	else
 	{
-		return -1;
+		return 0;
 	}
 
-	return 1;
+	return 0;
 }
 
 static int sys_getpid()
@@ -492,17 +516,9 @@ static int sys_chdir(const char* path)
 	return 1;
 }
 
-static char *sys_getcwd(char *buf, unsigned size)
-{
-	task_struct* cur = CURRENT_TASK();
 
-	if (!cur->cwd[0])
-	    strcpy(buf, "/");
-	else
-		strcpy(buf, cur->cwd);
 
-	return buf;
-}
+
 
 static int sys_creat(const char* path, unsigned mode)
 {
@@ -572,49 +588,14 @@ static int debug = 0;
 
 static int sys_mmap(struct mmap_arg_struct32* arg)
 {
-	unsigned addr = arg->addr & PAGE_SIZE_MASK;
-	unsigned last_addr = (arg->addr + arg->len-1) & PAGE_SIZE_MASK;
-	unsigned i = addr, map_ret;
-	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	unsigned read_addr = addr;
-
-    if (arg->addr == 0) {
-        addr = vm_get_usr_zone(page_count);
-		last_addr = addr + (page_count-1)*PAGE_SIZE;
-		read_addr = addr;
-    }
-
-	for (i = addr; i <= last_addr; i+=PAGE_SIZE){
-		map_ret = mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
-		if (map_ret > 0 && arg->fd > 0)
-		{
-			memset(0, i, PAGE_SIZE);
-		}
-	}
+	int vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd, arg->offset);
 
 	#ifdef __VERBOS_SYSCALL__
 	printf("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
-		   arg->fd, arg->addr, arg->offset, arg->len, addr);
-	printf("\t page count %d, first %x, last %x\n", page_count, addr, last_addr+PAGE_SIZE);
+		   arg->fd, arg->addr, arg->offset, arg->len, vir);
 	#endif
 
-	if ((map_ret > 0) || (arg->flags & MAP_FIXED)){
-		if (arg->fd > 0 && arg->fd < MAX_FD){
-			unsigned ret = 0;
-			memset(read_addr, 0, arg->len);
-			if (!debug)
-			{
-				ret = fs_read(arg->fd, arg->offset, read_addr, arg->len);
-			}
-			#ifdef __VERBOS_SYSCALL__
-			printf("\t read(%d, %x, %x %x) = %x\n", arg->fd, arg->offset, read_addr, arg->len, ret);
-			#endif
-		}else{
-			memset(read_addr, 0, arg->len);
-		}
-	}
-
-	return addr;
+	return vir;
 }
 
 static int sys_mprotect(void *addr, unsigned len, int prot)
@@ -642,5 +623,114 @@ static long sys_personality(unsigned int personality)
 	return PER_LINUX32_3GB;
 }
 
+static int sys_fcntl(int fd, int cmd, int arg)
+{
+	return 0;
+}
+
+
+#define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
+#define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
+static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
+{
+  struct dirent d;
+  int retcount;
+  int len;
+  int ret = 0;
+  int copied = 0;
+  struct linux_dirent *prev;
+
+  	#ifdef __VERBOS_SYSCALL__
+	printf("getdents(%d, %x, %d)", fd, dirp, count);
+	#endif
+  
+  if (fd < 0 || fd >= MAX_FD) {
+	#ifdef __VERBOS_SYSCALL__
+	printf(" = %d\n", -9);
+	#endif
+    return -9;
+  }
+  
+
+
+  if (count < sizeof(struct linux_dirent)) {
+	  #ifdef __VERBOS_SYSCALL__
+	  printf(" = %d\n", -22);
+	  #endif
+    return -22;   
+  }
+
+  retcount = 0;
+  prev = 0;
+
+  
+  while (count > 0) {
+
+
+    ret = sys_readdir(fd, &d);
+	if (ret == 0){
+		if (prev)
+		{
+			prev->d_off = 4096;
+		}
+		memset((char*)dirp, 0, count);
+		break;
+	}
+
+	if (!copied)
+	{
+		  // FIXME
+		  if (count > 12)
+		  {
+			  memset((char*)dirp, 0, 16);
+
+			  dirp->d_ino = 0;
+			  dirp->d_off = 12;
+			  dirp->d_reclen = 16;
+			  strcpy(dirp->d_name, ".");
+			  retcount += dirp->d_reclen;
+			  count -= dirp->d_reclen;
+			  prev = dirp;
+			  dirp = (char*)dirp + dirp->d_reclen;
+		  }
+
+		  if (count > 12)
+		  {
+			  memset((char*)dirp, 0, 16);
+			  dirp->d_ino = 0;
+			  dirp->d_off = 24;
+			  dirp->d_reclen = 16;
+			  strcpy(dirp->d_name, "..");
+			  retcount += dirp->d_reclen;
+			  count -= dirp->d_reclen;
+			  prev = dirp;
+			  dirp = (char*)dirp + dirp->d_reclen;
+		  }
+
+		  copied = 1;
+	}
+
+	len = ROUND_UP(NAME_OFFSET(dirp) + strlen(d.d_name)+1);
+	memset(dirp, 0, len);
+    dirp->d_ino = d.d_ino;
+    strcpy(dirp->d_name, d.d_name);
+	
+    dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name)+1);
+    dirp->d_off = prev->d_off + prev->d_reclen - 4;
+
+    if (count <= dirp->d_reclen) {
+      break;
+    }
+    retcount += dirp->d_reclen;
+    count -= dirp->d_reclen;
+	prev = dirp;
+    dirp = (char*)dirp + dirp->d_reclen;
+
+  }
+#ifdef __VERBOS_SYSCALL__
+  printf(" = %d\n", retcount);
+#endif
+  return retcount;
+}
 
 

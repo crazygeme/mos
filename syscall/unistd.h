@@ -194,8 +194,10 @@
 #define __NR_vfork 190
 #define __NR_ugetrlimit 191 /* SuS compliant getrlimit */
 #define __NR_mmap2 192
+#define __NR_lstat64 196
+#define __NR_fstat64 197
 
-#define NR_syscalls 193
+#define NR_syscalls 198
 
 #define	_SYS_NAMELEN	256
 
@@ -235,22 +237,56 @@ struct	utsname {
 	char	machine[_SYS_NAMELEN];	/* [XSI] Hardware type */
 };
 
-struct stat  
+// oldstat
+struct oldstat  
 {  
-    unsigned       st_dev;     /* ID of device containing file*/  
-    void*          st_ino;     /* inode number */  
-    unsigned       st_mode;    /* protection mode*/  
-    unsigned       st_nlink;   /* number of hard links */  
-    unsigned short st_uid;     /* user ID of owner -user id*/  
-    unsigned short st_gid;     /* group ID of owner - group id*/  
-    unsigned       st_rdev;    /* device ID (if special file)*/  
-    unsigned       st_size;    /* total size, in bytes*/  
-    unsigned       st_blksize; /* blocksize for filesystem I/O*/  
-    unsigned       st_blocks;  /* number of blocks allocated*/  
-    unsigned       st_atime;   /* time of last access*/  
-    unsigned       st_mtime;   /* time of last modification*/  
-    unsigned       st_ctime;   /* time of last status change */  
+	unsigned short st_dev;
+    unsigned short st_ino;
+    unsigned short st_mode;
+    unsigned short st_nlink;
+    unsigned short st_uid;
+    unsigned short st_gid;
+    unsigned short st_rdev;
+    unsigned long st_size;
+    unsigned long st_atime;
+    unsigned long st_mtime;
+    unsigned long st_ctime;
   
+};
+
+struct stat {
+    unsigned st_dev; /* ID of device containing file*/
+    void* st_ino; /* inode number */
+    unsigned st_mode; /* protection mode*/
+    unsigned st_nlink; /* number of hard links */
+    unsigned short st_uid; /* user ID of owner -user id*/
+    unsigned short st_gid; /* group ID of owner - group id*/
+    unsigned st_rdev; /* device ID (if special file)*/
+    unsigned st_size; /* total size, in bytes*/
+    unsigned st_blksize; /* blocksize for filesystem I/O*/
+    unsigned st_blocks; /* number of blocks allocated*/
+    unsigned st_atime; /* time of last access*/
+    unsigned st_mtime; /* time of last modification*/
+    unsigned st_ctime; /* time of last status change */ 
+};
+
+
+ 
+struct stat64 {
+    unsigned st_dev;
+    unsigned long long st_ino;
+    unsigned st_mode;
+    unsigned st_nlink;
+    unsigned st_uid;
+    unsigned st_gid;
+    unsigned st_rdev;
+    unsigned long long st_size;
+    unsigned st_atime;
+    unsigned st_mtime;
+    unsigned st_ctime;
+    unsigned st_blksize;
+    unsigned long long st_blocks;
+    unsigned st_attr;
 }; 
 
 #endif

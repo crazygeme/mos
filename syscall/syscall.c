@@ -120,6 +120,8 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
 static long sys_personality(unsigned int personality);
 static int sys_fcntl(int fd, int cmd, int arg);
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
+static int sys_lstat64(const char* path, struct stat64* s);
+static int sys_fstat64(int fd, struct stat64* s);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -161,7 +163,8 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, "sys_getcwd", 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
-    0, 0,             // 191 ~ 194
+    0, 0, 0, 0, 0,            // 191 ~ 195
+	"sys_lstat64", "sys_fstat64"             // 196 ~ 195
 };
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
@@ -206,7 +209,8 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
-    0, 0             // 191 ~ 194
+    0, 0, 0, 0, 0,            // 191 ~ 195
+	sys_lstat64, sys_fstat64            // 196 ~ 195
 };
 
 static int unhandled_syscall(unsigned callno)
@@ -301,9 +305,6 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	if (cur->fds[fd].flag & fd_flag_isdir)
 		return -1;
 
-	#ifdef __VERBOS_SYSCALL__
-	printf("write(%d, %x, %d)\n", fd, buf, len);
-	#endif
 
 	ino = cur->fds[fd].file;
 	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
@@ -334,9 +335,6 @@ static int sys_ioctl(int fd, int request, char* buf)
 	task_struct* cur = CURRENT_TASK();
 	unsigned ino = 0;
 
-	#ifdef __VERBOS_SYSCALL__
-	printf("ioctl(%d, %d, %x)\n", fd, request, buf);
-	#endif
 	if (fd > MAX_FD)
 		return 0;
 
@@ -731,6 +729,78 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   printf(" = %d\n", retcount);
 #endif
   return retcount;
+}
+
+static int sys_fstat64(int fd, struct stat64* s)
+{
+	// FIXME
+	// rewrite it all please
+	task_struct* cur = CURRENT_TASK();
+	unsigned ino = 0;
+
+	if (fd > MAX_FD)
+		return -1;
+
+	#ifdef __VERBOS_SYSCALL__
+	printf("fstat64(%d, %x)\n", fd, s);
+	#endif
+
+	ino = cur->fds[fd].file;
+	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
+	{
+		s->st_atime = s->st_mtime = s->st_ctime = time(0);
+		//s->st_blksize = 0;
+		//s->st_blocks = 0;
+		s->st_dev = 0;
+		s->st_gid = s->st_uid = 0;
+		s->st_ino = 0;
+		s->st_nlink = 1;
+		s->st_size = 0;
+		s->st_rdev = 0;
+		s->st_mode = S_IFCHR | S_IWUSR | S_IRUSR | S_IWGRP | S_IWOTH;
+	}
+	else if ( ino == INODE_STD_IN )
+	{
+		s->st_atime = s->st_mtime = s->st_ctime = time(0);
+		//s->st_blksize = 0;
+		//s->st_blocks = 0;
+		s->st_dev = 0;
+		s->st_gid = s->st_uid = 0;
+		s->st_ino = 0;
+		s->st_nlink = 1;
+		s->st_size = 0;
+		s->st_rdev = 0;
+		s->st_mode = S_IFCHR | S_IWUSR | S_IRUSR | S_IRGRP | S_IROTH;
+	}
+	else if (ino == INODE_NULL)
+	{
+		s->st_atime = s->st_mtime = s->st_ctime = time(0);
+		//s->st_blksize = 0;
+		//s->st_blocks = 0;
+		s->st_dev = 0;
+		s->st_gid = s->st_uid = 0;
+		s->st_ino = 0;
+		s->st_nlink = 1;
+		s->st_size = 0;
+		s->st_rdev = 0;
+		s->st_mode = S_IFCHR | S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+	}
+	else
+	{
+		return -1;
+	}
+
+	return -1;
+}
+
+static int sys_lstat64(const char* path, struct stat64* s)
+{
+	#ifdef __VERBOS_SYSCALL__
+	printf("lstat64(%s, %x)\n", path, s);
+	#endif
+	s->st_mode = S_IFDIR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH;
+	s->st_size = 2;
+	return -1;
 }
 
 

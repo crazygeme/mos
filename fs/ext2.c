@@ -468,8 +468,8 @@ static int ext2_copy_stat(INODE node, struct stat* s, int is_dir)
     struct ext2_super_block* sb = (struct ext2_super_block*)info->type->sb;
 
     s->st_atime = inode->i_atime;
-    s->st_blksize = EXT2_BLOCK_SIZE(sb);
-    s->st_blocks = inode->i_blocks;
+    //s->st_blksize = EXT2_BLOCK_SIZE(sb);
+    //s->st_blocks = inode->i_blocks;
     s->st_ctime = inode->i_ctime;
     s->st_dev = (unsigned)info->type;
     s->st_gid = inode->i_gid;

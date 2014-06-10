@@ -6,6 +6,7 @@
 kernel
 user/bin/*
 user/lib/*
+user/rh6/*
 *.dbg
 ffstool/ffstool
 ffstool/ffswin32/Debug/*

@@ -114,14 +114,15 @@ static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
 static int sys_mmap(struct mmap_arg_struct32* arg);
-static int sys_fstat(int fd, struct stat* s);
 static int sys_mprotect(void *addr, unsigned len, int prot);
 static int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
 static long sys_personality(unsigned int personality);
 static int sys_fcntl(int fd, int cmd, int arg);
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
 static int sys_lstat64(const char* path, struct stat64* s);
+static int sys_fstat(int fd, struct stat64* s);
 static int sys_fstat64(int fd, struct stat64* s);
+static int sys_munmap(void *addr, unsigned length);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -143,10 +144,10 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
     0, 0, "sys_reboot", "sys_readdir", "sys_mmap",          // 86 ~ 90 
-    0, 0, 0, 0, 0,          // 91 ~ 95 
+    "sys_munmap", 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
-    "stat", 0, "fstat", 0, 0,          // 106 ~ 110 
+    "stat", 0, "fs_fstat", 0, 0,          // 106 ~ 110 
     0, 0, 0, 0, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
     0, "sys_uname", 0, 0, "sys_mprotect",          // 121 ~ 125
@@ -189,7 +190,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
-    0, 0, 0, 0, 0,          // 91 ~ 95 
+    sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, 0, 0, 0, 0,          // 101 ~ 105
     fs_stat, 0, fs_fstat, 0, 0,          // 106 ~ 110 
@@ -265,13 +266,7 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 	ino = cur->fds[fd].file;
 	
 		unsigned offset = cur->fds[fd].file_off;
-		#ifdef __VERBOS_SYSCALL__
-		printf("read(%d, %x, %x, %x) = ", fd, offset, buf, len);
-		#endif
 		len = fs_read(fd, offset, buf, len);
-		#ifdef __VERBOS_SYSCALL__
-		printf("%d\n", len);
-		#endif
 		offset += len;
 		cur->fds[fd].file_off = offset;
 	
@@ -283,25 +278,34 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 {
 	task_struct* cur = CURRENT_TASK();
 	unsigned ino = 0;
+	unsigned _len;
+	//printf("write(%d, \"", fd );
 
-	if (fd > MAX_FD)
+	if (fd > MAX_FD){
+		//printf("-1\n");
 		return -1;
+	}
 
-	if (cur->fds[fd].flag == 0)
+	if (cur->fds[fd].flag == 0){
+		//printf("-1\n");
 		return -1;
+	}
 
-	if (cur->fds[fd].flag & fd_flag_isdir)
+	if (cur->fds[fd].flag & fd_flag_isdir){
+		//printf("-1\n");
 		return -1;
+	}
 
 
 	ino = cur->fds[fd].file;
 
 		unsigned offset = cur->fds[fd].file_off;
-		len = fs_write(fd, offset, buf, len);
-		offset += len;
+		_len = fs_write(fd, offset, buf, len);
+		offset += _len;
 		cur->fds[fd].file_off = offset;
 
-	return len;
+		//printf("\", %d) = %d\n", len, _len);
+	return _len;
 }
 
 static int sys_ioctl(int fd, int request, char* buf)
@@ -309,23 +313,40 @@ static int sys_ioctl(int fd, int request, char* buf)
 	task_struct* cur = CURRENT_TASK();
 	unsigned ino = 0;
 
+	//printf("ioctl(%d, %d, %x)\n", fd, request, buf);
 	if (fd > MAX_FD)
 		return 0;
 
 	if (cur->fds[fd].flag == 0)
-		return -1;
+		return 0;
 
 	if (cur->fds[fd].flag & fd_flag_isdir)
 		return 0;
 
-	if (request > IOCTL_MAX)
-		return 0;
-
-	ino = cur->fds[fd].file;
 
 	if (request == IOCTL_TTY)
 	{
 		return tty_ioctl(buf);
+	}
+	else if (request == 0x5401)
+	{
+		struct termios* s = (struct termios*)buf;
+		char tmp[] = {0x03, 0x1c, 0x7f, 0x15, 0x04, 
+			0x00, 0x01, 0x00, 0x11, 0x13, 
+			0x1a, 0x00, 0x12, 0x0f, 0x17, 
+			0x16, 0x00, 0x00, 0x00, 0x00, 
+			0x00, 0x00, 0x00, 0x00, 0x00, 
+			0x00, 0x00, 0x00, 0x00, 0x00, 
+			0x00, 0x00};
+		s->c_iflag  = 0x500;
+		s->c_oflag  = 0x5;
+		s->c_cflag  = 0xbf;
+		s->c_lflag  = 0x8a3b;
+		s->c_line = 0x0;
+		memcpy(s->c_cc, tmp, 16);
+//  	s->c_ispeed  = 0xf;
+//  	s->c_ospeed  = 0xf;
+		return 0;
 	}
 	else
 	{
@@ -365,7 +386,7 @@ static int sys_open(const char* name)
 static int sys_close(unsigned fd)
 {
 	fs_close(fd);
-	return 1;
+	return 0;
 }
 
 static int sys_brk(unsigned top)
@@ -380,7 +401,7 @@ static int sys_brk(unsigned top)
     }
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("brk: top %x, ", top);
+	printf("brk: cur %x top %x, ", task->user.heap_top, top);
 	#endif
 	if ( top == 0 )
 	{
@@ -390,7 +411,14 @@ static int sys_brk(unsigned top)
 
 		return task->user.heap_top;
 	}
-	else if ( top > task->user.heap_top )
+	else if (top >= USER_HEAP_END)
+	{
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %x\n", task->user.heap_top);
+		#endif
+		return task->user.heap_top;
+	}
+	else if ( top > task->user.heap_top)
 	{
 		int i = 0;
 		size = top - task->user.heap_top;
@@ -408,6 +436,7 @@ static int sys_brk(unsigned top)
 		printf("ret %x\n", top);
 		#endif
 		return top;
+
 	}else{
 		// FIXME
 		// free heap
@@ -571,6 +600,12 @@ static int sys_mmap(struct mmap_arg_struct32* arg)
 	return vir;
 }
 
+static int sys_munmap(void *addr, unsigned length)
+{
+	// FIXME
+	return 0;
+}
+
 static int sys_mprotect(void *addr, unsigned len, int prot)
 {
 	#ifdef __VERBOS_SYSCALL__
@@ -583,7 +618,6 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i = 0;
 	unsigned total = 0;
-
     for (i = 0; i < iovcnt; i++) {
 		total += sys_write(fildes, iov[i].iov_base, iov[i].iov_len);
         
@@ -610,7 +644,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   int retcount;
   int len;
   int ret = 0;
-  int copied = 0;
+  int copied = 1;
   struct linux_dirent *prev;
 
   	#ifdef __VERBOS_SYSCALL__
@@ -689,7 +723,14 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
     strcpy(dirp->d_name, d.d_name);
 	
     dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name)+1);
-    dirp->d_off = prev->d_off + prev->d_reclen - 4;
+	if (prev)
+	{
+		dirp->d_off = prev->d_off + prev->d_reclen - 4;
+	}
+	else
+	{
+		dirp->d_off = len - 4;
+	}
 
     if (count <= dirp->d_reclen) {
       break;
@@ -706,12 +747,17 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   return retcount;
 }
 
+static int sys_fstat(int fd, struct stat64* s)
+{
+	return sys_fstat64(fd, s);
+}
+
 static int sys_fstat64(int fd, struct stat64* s)
 {
 	// FIXME
 	// rewrite it all please
 	task_struct* cur = CURRENT_TASK();
-	unsigned ino = 0;
+	struct stat s32;
 
 	if (fd > MAX_FD)
 		return -1;
@@ -720,10 +766,23 @@ static int sys_fstat64(int fd, struct stat64* s)
 	printf("fstat64(%d, %x)\n", fd, s);
 	#endif
 
-	ino = cur->fds[fd].file;
+	fs_fstat(fd,&s32);
+	s->st_dev = s32.st_dev;
+    s->st_ino = s32.st_ino;
+    s->st_mode = s32.st_mode;
+    s->st_nlink = s32.st_nlink;
+    s->st_uid = s32.st_uid;
+    s->st_gid = s32.st_gid;
+    s->st_rdev = s32.st_rdev;
+    s->st_size = s32.st_size;
+    s->st_blksize = s32.st_blksize;
+    s->st_blocks = s32.st_blocks;
+    s->st_atime = s32.st_atime;
+    s->st_mtime = s32.st_mtime;
+    s->st_ctime = s32.st_ctime;
 	
+	return 1;	
 
-	return -1;
 }
 
 static int sys_lstat64(const char* path, struct stat64* s)
@@ -731,9 +790,9 @@ static int sys_lstat64(const char* path, struct stat64* s)
 	#ifdef __VERBOS_SYSCALL__
 	printf("lstat64(%s, %x)\n", path, s);
 	#endif
-	s->st_mode = S_IFDIR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH;
+	s->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH;
 	s->st_size = 2;
-	return -1;
+	return 1;
 }
 
 

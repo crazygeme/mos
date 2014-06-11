@@ -74,7 +74,7 @@ static INODE console_get_root(struct filesys_type* t)
 
 static unsigned console_get_mode(INODE inode)
 {
-	return (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH);
+	return (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
 }
 
 static unsigned console_write_file(INODE inode, unsigned int offset, char* buf, unsigned len)
@@ -93,13 +93,14 @@ static int console_copy_stat(INODE node, struct stat* s, int is_dir)
 	s->st_mode = console_get_mode(node);
 	s->st_size = 0;
 	s->st_blksize = 0;
-	s->st_blocks = 0;
+	s->st_blocks = 400;
 	s->st_ctime = time(0);
-	s->st_dev = 0;
+	s->st_dev = 0xb;
 	s->st_gid = 0;
 	s->st_ino = 0;
 	s->st_mtime = 0;
 	s->st_uid = 0;
+	s->st_nlink = 1;
 	
 	return 1;
 }

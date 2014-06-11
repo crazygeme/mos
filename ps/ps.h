@@ -193,6 +193,7 @@ typedef struct _task_struct
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;
+	unsigned group_id;
     //char* cwd;
 	char cwd[256];
 	unsigned int magic; // to avoid stack overflow

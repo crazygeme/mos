@@ -28,7 +28,7 @@ chardev* chardev_register(void* aux, char* name, fpchar_read read, fpchar_write 
 	chardev* dev = kmalloc(sizeof(*dev));
 	memset(dev, 0, sizeof(*dev));
 	dev->aux = aux;
-	dev->id = __sync_fetch_and_add(&chardev_id, 1);
+	dev->id = __sync_add_and_fetch(&chardev_id, 1);
 	dev->read = read;
 	dev->write = write;
 	dev->close = close;

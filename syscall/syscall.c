@@ -123,6 +123,13 @@ static int sys_lstat64(const char* path, struct stat64* s);
 static int sys_fstat(int fd, struct stat64* s);
 static int sys_fstat64(int fd, struct stat64* s);
 static int sys_munmap(void *addr, unsigned length);
+static int sys_getppid();
+static int sys_getpgrp(unsigned pid);
+static int sys_setpgid(unsigned pid, unsigned pgid);
+static int sys_wait4(int pid, int* status, void* rusage);
+static int sys_socketcall(int call, unsigned long *args);
+static int sys_sigaction(int sig, void* act, void*  oact);
+static int sys_sigprocmask(int how, void* set, void * oset);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -137,8 +144,8 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, "sys_brk",          // 41 ~ 45 
     0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
     0, 0, 0, "sys_ioctl", "sys_fcntl",          // 51 ~ 55 
-    0, 0, 0, 0, 0,          // 56 ~ 60 
-    0, 0, 0, 0, 0,          // 61 ~ 65 
+    0, "sys_setpgid", 0, 0, 0,          // 56 ~ 60 
+    0, 0, 0, "sys_getppid", "sys_getpgrp",          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
@@ -146,9 +153,9 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, "sys_reboot", "sys_readdir", "sys_mmap",          // 86 ~ 90 
     "sys_munmap", 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
-    0, 0, 0, 0, 0,          // 101 ~ 105
+    0, "sys_socketcall", 0, 0, 0,          // 101 ~ 105
     "stat", 0, "fs_fstat", 0, 0,          // 106 ~ 110 
-    0, 0, 0, 0, 0,          // 111 ~ 115
+    0, 0, 0, "sys_wait4", 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
     0, "sys_uname", 0, 0, "sys_mprotect",          // 121 ~ 125
     0, 0, 0, 0, 0,          // 126 ~ 130
@@ -160,7 +167,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, "sys_sched_yield", 0, 0,          // 156 ~ 160
     0, 0, 0, 0, 0,          // 161 ~ 165
     0, 0, 0, 0, 0,          // 165 ~ 170
-    0, 0, 0, 0, 0,          // 171 ~ 175
+    0, 0, 0, "sys_sigaction", "sys_sigprocmask",          // 171 ~ 175
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, "sys_getcwd", 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
@@ -183,8 +190,8 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
     0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
     0, 0, 0, sys_ioctl, sys_fcntl,          // 51 ~ 55 
-    0, 0, 0, 0, 0,          // 56 ~ 60 
-    0, 0, 0, 0, 0,          // 61 ~ 65 
+    0, sys_setpgid, 0, 0, 0,          // 56 ~ 60 
+    0, 0, 0, sys_getppid, sys_getpgrp,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
@@ -192,9 +199,9 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
     sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
-    0, 0, 0, 0, 0,          // 101 ~ 105
+    0, sys_socketcall, 0, 0, 0,          // 101 ~ 105
     fs_stat, 0, fs_fstat, 0, 0,          // 106 ~ 110 
-    0, 0, 0, 0, 0,          // 111 ~ 115
+    0, 0, 0, sys_wait4, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
     0, sys_uname, 0, 0, sys_mprotect,          // 121 ~ 125
     0, 0, 0, 0, 0,          // 126 ~ 130
@@ -206,7 +213,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, sys_sched_yield, 0, 0,          // 156 ~ 160
     0, 0, 0, 0, 0,          // 161 ~ 165
     0, 0, 0, 0, 0,          // 165 ~ 170
-    0, 0, 0, 0, 0,          // 171 ~ 175
+    0, 0, 0, sys_sigaction, sys_sigprocmask,          // 171 ~ 175
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
@@ -644,7 +651,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   int retcount;
   int len;
   int ret = 0;
-  int copied = 1;
+  int copied = 0;
   struct linux_dirent *prev;
 
   	#ifdef __VERBOS_SYSCALL__
@@ -781,18 +788,91 @@ static int sys_fstat64(int fd, struct stat64* s)
     s->st_mtime = s32.st_mtime;
     s->st_ctime = s32.st_ctime;
 	
-	return 1;	
+	return 0;	
 
 }
 
 static int sys_lstat64(const char* path, struct stat64* s)
 {
+	struct stat s32;
+
+
 	#ifdef __VERBOS_SYSCALL__
 	printf("lstat64(%s, %x)\n", path, s);
 	#endif
-	s->st_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH;
-	s->st_size = 2;
-	return 1;
+	fs_stat(path,&s32);
+	s->st_dev = s32.st_dev;
+    s->st_ino = s32.st_ino;
+    s->st_mode = s32.st_mode;
+    s->st_nlink = s32.st_nlink;
+    s->st_uid = s32.st_uid;
+    s->st_gid = s32.st_gid;
+    s->st_rdev = s32.st_rdev;
+    s->st_size = s32.st_size;
+    s->st_blksize = s32.st_blksize;
+    s->st_blocks = s32.st_blocks;
+    s->st_atime = s32.st_atime;
+    s->st_mtime = s32.st_mtime;
+    s->st_ctime = s32.st_ctime;
+	return 0;
+}
+
+static int sys_getppid()
+{
+	task_struct* cur = CURRENT_TASK();
+	return cur->parent;
+}
+
+static int sys_getpgrp(unsigned pid)
+{
+	// FIXME
+	return 0;
+}
+
+static int sys_setpgid(unsigned pid, unsigned pgid)
+{
+	// FIXME
+    if (pid == 0) {
+		task_struct* cur = CURRENT_TASK();
+		cur->group_id = pgid;
+        
+    }
+    return 0; 
+}
+
+static int sys_wait4(int pid, int* status, void* rusage)
+{
+	printf("wait4(%d,%x,%x)\n", pid, status, rusage);
+    if (pid == -1) {
+		return sys_waitpid(0,status,0);
+    } else if (pid < -1) {
+		// FIXME
+		// wait on group id
+        return 0;
+    }else{
+		return sys_waitpid(pid,status,0);
+	}
+}
+
+static int sys_socketcall(int call, unsigned long *args)
+{
+	// FIXME
+	// no socket at all right now
+	return -1;
+}
+
+static int sys_sigaction(int sig, void* act, void*  oact)
+{
+	// FIXME
+	// no signal at all
+	return -1;
+}
+
+static int sys_sigprocmask(int how, void* set, void * oset)
+{
+	// FIXME
+	// no signal
+	return -1;
 }
 
 

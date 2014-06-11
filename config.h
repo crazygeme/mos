@@ -43,11 +43,6 @@
 
 #define SYSCALL_INT_NO 0x80
 
-#define INODE_STD_IN  0xfffffffe
-#define INODE_STD_OUT 0xfffffffd
-#define INODE_STD_ERR 0xfffffffc
-// FIXME
-#define INODE_NULL	  0xfffffffb
 
 #define STDIN_FILENO    0   /* Standard input.  */
 #define STDOUT_FILENO   1   /* Standard output.  */

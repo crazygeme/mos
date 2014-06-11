@@ -57,6 +57,8 @@
 			Name="Source Files"
 			Filters="*.c;*.C;*.cc;*.cpp;*.cp;*.cxx;*.c++;*.prg;*.pas;*.dpr;*.asm;*.s;*.bas;*.java;*.cs;*.sc;*.e;*.cob;*.html;*.rc;*.tcl;*.py;*.pl;*.d;*.m;*.mm;*.go">
 			<F N="drivers/block.c"/>
+			<F N="drivers/chardev.c"/>
+			<F N="fs/console.c"/>
 			<F N="int/dsr.c"/>
 			<F N="ps/elf.c"/>
 			<F N="fs/ext2.c"/>
@@ -64,6 +66,7 @@
 			<F N="drivers/hdd.c"/>
 			<F N="int/int.c"/>
 			<F N="int/int.S"/>
+			<F N="fs/kbchar.c"/>
 			<F N="boot/kernel.asm"/>
 			<F N="boot/kernel.c"/>
 			<F N="drivers/keyboard.c"/>
@@ -73,6 +76,7 @@
 			<F N="mm/mm.c"/>
 			<F N="fs/mount.c"/>
 			<F N="fs/namespace.c"/>
+			<F N="fs/null.c"/>
 			<F N="mm/pagefault.c"/>
 			<F N="ps/ps.c"/>
 			<F N="user/ps0.c"/>
@@ -86,13 +90,16 @@
 			Name="Header Files"
 			Filters="*.h;*.H;*.hh;*.hpp;*.hxx;*.inc;*.sh;*.cpy;*.if">
 			<F N="drivers/block.h"/>
+			<F N="drivers/chardev.h"/>
 			<F N="config.h"/>
+			<F N="fs/console.h"/>
 			<F N="int/dsr.h"/>
 			<F N="ps/elf.h"/>
 			<F N="fs/ext2.h"/>
 			<F N="fs/ffs.h"/>
 			<F N="drivers/hdd.h"/>
 			<F N="int/int.h"/>
+			<F N="fs/kbchar.h"/>
 			<F N="drivers/keyboard.h"/>
 			<F N="lib/klib.h"/>
 			<F N="lib/list.h"/>
@@ -101,6 +108,7 @@
 			<F N="fs/mount.h"/>
 			<F N="boot/multiboot.h"/>
 			<F N="fs/namespace.h"/>
+			<F N="fs/null.h"/>
 			<F N="mm/pagefault.h"/>
 			<F N="ps/ps.h"/>
 			<F N="user/ps0.h"/>

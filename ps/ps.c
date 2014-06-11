@@ -177,12 +177,6 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
         task->fds[i].file_off = 0;
         task->fds[i].flag = 0;
     }
-    task->fds[STDIN_FILENO].file = INODE_STD_IN;
-    task->fds[STDOUT_FILENO].file = INODE_STD_OUT;
-    task->fds[STDERR_FILENO].file = INODE_STD_ERR;
-    task->fds[STDIN_FILENO].flag |= fd_flag_used;
-    task->fds[STDOUT_FILENO].flag |= fd_flag_used;
-    task->fds[STDERR_FILENO].flag |= fd_flag_used;
     task->user.heap_top = USER_HEAP_BEGIN;
     task->user.zone_top = USER_ZONE_BEGIN;
     memset(task->cwd, 0, 256);
@@ -205,14 +199,9 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
 
 static void ps_dup_fds(task_struct* cur, task_struct* task)
 {
-    // FIXME
+    unsigned fd;
     memset(task->fds, 0, MAX_FD*sizeof(fd_type));
-    task->fds[STDIN_FILENO].file = INODE_STD_IN;
-    task->fds[STDOUT_FILENO].file = INODE_STD_OUT;
-    task->fds[STDERR_FILENO].file = INODE_STD_ERR;
-    task->fds[STDIN_FILENO].flag |= fd_flag_used;
-    task->fds[STDOUT_FILENO].flag |= fd_flag_used;
-    task->fds[STDERR_FILENO].flag |= fd_flag_used;
+
 }
 
 static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)

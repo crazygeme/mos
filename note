@@ -122,4 +122,8 @@ sudo mount /dev/nbd0p1 mnt
 
 umount it
 sudo umount mnt
-sudo qemu-nbd -d /dev/nbd0 
+sudo qemu-nbd -d /dev/nbd0
+
+----------------------------------------
+load dynamic library(ld-linux.so.2)时必须有offset，不能直接load在0地址上。因为0地址有特殊含义：NULL
+

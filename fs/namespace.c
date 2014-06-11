@@ -44,21 +44,6 @@ unsigned fs_open(char* path)
 	printf("open %s, ", fullPath);
 	#endif
 
-	// FIXME
-	// /dev/null is a virtual fs
-	if (!strcmp(fullPath, "/dev/null")) 
-	{
-		fd = fs_get_free_fd(INODE_NULL);
-		if (fd == MAX_FD)
-			fd = 0xffffffff;
-
-		#ifdef __VERBOS_SYSCALL__
-			printf("ret %d\n", fd);
-		#endif
-
-		kfree(fullPath);
-		return fd;
-	}
 
     if (!node) {
 		#ifdef __VERBOS_SYSCALL__
@@ -103,15 +88,6 @@ void fs_close(unsigned int fd)
 	#ifdef __VERBOS_SYSCALL__
 	printf("close %d, isdir %d\n", fd, isdir);
 	#endif
-
-	// FIXME
-	if (ret == INODE_STD_ERR ||
-		ret == INODE_STD_IN ||
-		ret == INODE_STD_OUT ||
-		ret == INODE_NULL
-		) {
-		return;
-	}
 
 	if (isdir) {
 		dir = ret;
@@ -429,12 +405,27 @@ static INODE fs_get_dirent_node(INODE node, char* name)
 	}
 }
 
+static INODE fs_check_mountpoint(char* path)
+{
+	struct filesys_type* type = 0;
+
+	type = mount_lookup(path);
+	if (!type || !type->super_ops || !type->super_ops->get_root) {
+		return 0;
+	}
+
+
+	return type->super_ops->get_root(type);
+
+}
+
 static INODE fs_lookup_inode(char* path)
 {
     struct filesys_type* type = (void*)0;
 	INODE root;
-	char parent[256];
+	char* parent = 0;
 	char* tmp;
+
 	if (!path || !*path)
 	  return 0;
 	
@@ -448,13 +439,15 @@ static INODE fs_lookup_inode(char* path)
 		return root;
 	}
 	
+	parent = kmalloc(256);
+	memset(parent, 0, 256);
+
 	strcpy(parent, path);
 	tmp = parent;
 
 	// FIXME
 	// check mount point every time takes too much effert
 	// linux will cache dirent with mount point info attached
-	// we ignore different mount point now, fix it later
 	//
 	do{
 		INODE p;
@@ -467,18 +460,28 @@ static INODE fs_lookup_inode(char* path)
 		slash = strchr(tmp, '/');
 		while (slash){
 			*slash = '\0';
-			node = fs_get_dirent_node(p, tmp);
+			node = fs_check_mountpoint(parent);
+			if (!node) {
+				node = fs_get_dirent_node(p, tmp);
+			}
 			vfs_free_inode(p);
-			if (!node)
-			  return 0;
+			if (!node){
+				*slash = '/';
+				node = fs_check_mountpoint(parent);
+				kfree(parent);
+			  return node;
+			}
 			p = node;
 			tmp = slash+1;
 			*slash = '/';
 			slash = strchr(tmp, '/');
 		}
-
-		node = fs_get_dirent_node(p, tmp);
+		node = fs_check_mountpoint(parent);
+		if (!node) {
+			node = fs_get_dirent_node(p, tmp);
+		}
 		vfs_free_inode(p);
+		kfree(parent);
 		return node;
 	}while(0);
 }

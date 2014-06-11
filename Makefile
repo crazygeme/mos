@@ -39,7 +39,11 @@ OBJS	= boot.o \
 		  ps0.o\
 		  ffs.o\
 		  syscall.o\
-		  pagefault.o
+		  pagefault.o\
+		  chardev.o\
+		  kbchar.o\
+		  console.o\
+		  null.o
 
 all: kernel
 
@@ -121,6 +125,17 @@ syscall.o: syscall/syscall.c syscall/syscall.h
 pagefault.o: mm/pagefault.c mm/pagefault.h
 	$(CC) $(CFLAGS) -o pagefault.o mm/pagefault.c
 
+chardev.o: drivers/chardev.c drivers/chardev.h
+	$(CC) $(CFLAGS) -o chardev.o drivers/chardev.c
+
+kbchar.o: fs/kbchar.c fs/kbchar.h
+	$(CC) $(CFLAGS) -o kbchar.o fs/kbchar.c
+
+console.o: fs/console.c fs/console.h
+	$(CC) $(CFLAGS) -o console.o fs/console.c
+
+null.o: fs/null.c fs/null.h
+	$(CC) $(CFLAGS) -o null.o fs/null.c
 
 
 user: user/run.h user/run.c

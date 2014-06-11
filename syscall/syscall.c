@@ -256,29 +256,14 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 	if (fd > MAX_FD)
 		return -1;
 
+	if (cur->fds[fd].flag == 0)
+		return -1;
+
 	if (cur->fds[fd].flag & fd_flag_isdir)
 		return -1;
 
 	ino = cur->fds[fd].file;
-	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
-	{
-		return -1;
-	}
-	else if ( ino == INODE_STD_IN )
-	{
-		if ( len < 1 )
-		   return -1;
-
-		*buf = kb_buf_get();
-		return 1;
-	}
-	else if (ino == INODE_NULL)
-	{
-		memset(buf, len);
-		return len;
-	}
-	else
-	{
+	
 		unsigned offset = cur->fds[fd].file_off;
 		#ifdef __VERBOS_SYSCALL__
 		printf("read(%d, %x, %x, %x) = ", fd, offset, buf, len);
@@ -289,7 +274,7 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 		#endif
 		offset += len;
 		cur->fds[fd].file_off = offset;
-	}
+	
 
 	return len;
 }
@@ -302,30 +287,19 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	if (fd > MAX_FD)
 		return -1;
 
+	if (cur->fds[fd].flag == 0)
+		return -1;
+
 	if (cur->fds[fd].flag & fd_flag_isdir)
 		return -1;
 
 
 	ino = cur->fds[fd].file;
-	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
-	{
-		tty_write(buf, len);
-	}
-	else if ( ino == INODE_STD_IN )
-	{
-		return -1;
-	}
-	else if (ino == INODE_NULL)
-	{
-		return len;
-	}
-	else
-	{
+
 		unsigned offset = cur->fds[fd].file_off;
 		len = fs_write(fd, offset, buf, len);
 		offset += len;
 		cur->fds[fd].file_off = offset;
-	}
 
 	return len;
 }
@@ -338,6 +312,9 @@ static int sys_ioctl(int fd, int request, char* buf)
 	if (fd > MAX_FD)
 		return 0;
 
+	if (cur->fds[fd].flag == 0)
+		return -1;
+
 	if (cur->fds[fd].flag & fd_flag_isdir)
 		return 0;
 
@@ -345,12 +322,10 @@ static int sys_ioctl(int fd, int request, char* buf)
 		return 0;
 
 	ino = cur->fds[fd].file;
-	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
+
+	if (request == IOCTL_TTY)
 	{
-		if (request == IOCTL_TTY)
-		{
-			return tty_ioctl(buf);
-		}
+		return tty_ioctl(buf);
 	}
 	else
 	{
@@ -746,49 +721,7 @@ static int sys_fstat64(int fd, struct stat64* s)
 	#endif
 
 	ino = cur->fds[fd].file;
-	if ( ino == INODE_STD_OUT || ino == INODE_STD_ERR )
-	{
-		s->st_atime = s->st_mtime = s->st_ctime = time(0);
-		//s->st_blksize = 0;
-		//s->st_blocks = 0;
-		s->st_dev = 0;
-		s->st_gid = s->st_uid = 0;
-		s->st_ino = 0;
-		s->st_nlink = 1;
-		s->st_size = 0;
-		s->st_rdev = 0;
-		s->st_mode = S_IFCHR | S_IWUSR | S_IRUSR | S_IWGRP | S_IWOTH;
-	}
-	else if ( ino == INODE_STD_IN )
-	{
-		s->st_atime = s->st_mtime = s->st_ctime = time(0);
-		//s->st_blksize = 0;
-		//s->st_blocks = 0;
-		s->st_dev = 0;
-		s->st_gid = s->st_uid = 0;
-		s->st_ino = 0;
-		s->st_nlink = 1;
-		s->st_size = 0;
-		s->st_rdev = 0;
-		s->st_mode = S_IFCHR | S_IWUSR | S_IRUSR | S_IRGRP | S_IROTH;
-	}
-	else if (ino == INODE_NULL)
-	{
-		s->st_atime = s->st_mtime = s->st_ctime = time(0);
-		//s->st_blksize = 0;
-		//s->st_blocks = 0;
-		s->st_dev = 0;
-		s->st_gid = s->st_uid = 0;
-		s->st_ino = 0;
-		s->st_nlink = 1;
-		s->st_size = 0;
-		s->st_rdev = 0;
-		s->st_mode = S_IFCHR | S_IWUSR | S_IRUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
-	}
-	else
-	{
-		return -1;
-	}
+	
 
 	return -1;
 }

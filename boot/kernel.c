@@ -12,6 +12,9 @@
 #include <fs/mount.h>
 #include <syscall/syscall.h>
 #include <mm/pagefault.h>
+#include <fs/console.h>
+#include <fs/kbchar.h>
+#include <fs/null.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -108,6 +111,14 @@ static void kmain_process(void* param)
     hdd_init();
 
     vfs_trying_to_mount_root();
+
+    chardev_init();
+
+    kbchar_init();
+
+    console_init();
+
+    null_init();
 
 #ifdef TEST_BLOCK
 	extern void test_block_process();

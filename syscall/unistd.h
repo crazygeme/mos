@@ -273,20 +273,45 @@ struct stat {
 
  
 struct stat64 {
-    unsigned st_dev;
-    unsigned long long st_ino;
-    unsigned st_mode;
-    unsigned st_nlink;
-    unsigned st_uid;
-    unsigned st_gid;
-    unsigned st_rdev;
-    unsigned long long st_size;
-    unsigned st_atime;
-    unsigned st_mtime;
-    unsigned st_ctime;
-    unsigned st_blksize;
-    unsigned long long st_blocks;
-    unsigned st_attr;
+    unsigned long long st_dev; 	//0
+    unsigned __pad1;		//8
+    unsigned st_ino;		//12
+    unsigned st_mode;		//16
+    unsigned st_nlink;		//20
+    unsigned st_uid;		//24
+    unsigned st_gid;		//28
+    unsigned long long st_rdev;	//32
+    unsigned __pad2;		//40
+    unsigned st_size;		//44
+    unsigned st_blksize;	//48
+    unsigned st_blocks;		//52
+    unsigned st_atime;		//56
+    unsigned __pad3;		//60
+    unsigned st_mtime;		//64
+    unsigned __pad4;		//68
+    unsigned st_ctime;		//72
+    unsigned __pad5;
+    unsigned __pad6;
+    unsigned __pad7;
+    unsigned __pad8;
 }; 
+
+
+typedef unsigned char   cc_t;
+typedef unsigned int    speed_t;
+typedef unsigned int    tcflag_t;
+
+#define NCCS 32
+struct termios
+  {
+    tcflag_t c_iflag;           /* input mode flags */
+    tcflag_t c_oflag;           /* output mode flags */
+    tcflag_t c_cflag;           /* control mode flags */
+    tcflag_t c_lflag;           /* local mode flags */
+    cc_t c_line;                        /* line discipline */
+    cc_t c_cc[NCCS];            /* control characters */
+    speed_t c_ispeed;           /* input speed */
+    speed_t c_ospeed;           /* output speed */
+  };
 
 #endif

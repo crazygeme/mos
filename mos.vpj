@@ -80,7 +80,6 @@
 			<F N="mm/pagefault.c"/>
 			<F N="ps/ps.c"/>
 			<F N="user/ps0.c"/>
-			<F N="user/run.c"/>
 			<F N="syscall/syscall.c"/>
 			<F N="int/timer.c"/>
 			<F N="drivers/tty.c"/>

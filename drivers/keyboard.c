@@ -227,7 +227,6 @@ static void kb_dsr(void* param)
             c += 0x80;
 
           /* Append to keyboard buffer. */
-          // FIXME
           kb_buf_put(c);
         }
     }

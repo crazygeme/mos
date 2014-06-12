@@ -6,6 +6,7 @@
 kernel
 user/bin/*
 user/lib/*
+user/etc/*
 user/rh6/*
 *.dbg
 ffstool/ffstool

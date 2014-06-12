@@ -124,12 +124,25 @@ typedef struct _page_table_list_entry
 	LIST_ENTRY list;
 }page_table_list_entry;
 
+struct _region_elem
+{
+	int fd;
+	int file_off;
+	unsigned start;
+	unsigned end;
+	struct _region_elem* next;
+};
+
+typedef struct _region_elem region_elem;
+typedef region_elem* region_elem_t;
+
 typedef struct _user_enviroment
 {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	LIST_ENTRY page_table_list;
 	unsigned heap_top;
 	unsigned zone_top;
+	region_elem_t region_head;
 }user_enviroment;
 
 typedef enum _ps_status
@@ -185,17 +198,12 @@ typedef struct _task_struct
     ps_type type;
     int remain_ticks;
     int is_switching;
-    //INODE *fds;
-    //INODE fds[MAX_FD];
-    //unsigned *file_off;
-	//unsigned file_off[MAX_FD];
 	fd_type* fds;
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;
 	unsigned group_id;
-    //char* cwd;
-	char cwd[256];
+	char cwd[64];
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;

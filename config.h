@@ -30,7 +30,7 @@
  
 #define DSR_CACHE_DEPTH 100
 
-#define HDD_CACHE_SIZE 32 /* pages */
+#define HDD_CACHE_SIZE 2048 /* pages */
 
 #define HDD_CACHE_OPEN 0
 
@@ -50,9 +50,12 @@
 
 #define KEYBOARD_BUF_LEN 64
 
-#define USER_HEAP_BEGIN  0x40000000
-#define USER_HEAP_END	 0x400f0000
+#define USER_HEAP_BEGIN  0x30000000
+// left one page (a hole) to protect stack overflow and heap overflow
+#define USER_HEAP_END	(KERNEL_OFFSET - (USER_STACK_PAGES-1)*PAGE_SIZE)
+//#define USER_HEAP_END	 0x600f0000
 
-#define USER_ZONE_BEGIN 0x80000000
+#define USER_ZONE_BEGIN 0x10000000
+#define USER_ZONE_END	(USER_HEAP_BEGIN - PAGE_SIZE)
 
 #endif

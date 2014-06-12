@@ -670,6 +670,7 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
   index = hdd_cache_lookup(p,sector);
   if (index >= 0)
     {
+      p->cache.cache_item[index].last_time = time(0);
       memcpy(buf, p->cache.cache_item[index].buf, BLOCK_SECTOR_SIZE);
       return BLOCK_SECTOR_SIZE;
     }

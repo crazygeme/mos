@@ -43,7 +43,8 @@ OBJS	= boot.o \
 		  chardev.o\
 		  kbchar.o\
 		  console.o\
-		  null.o
+		  null.o\
+		  region.o
 
 all: kernel
 
@@ -136,6 +137,9 @@ console.o: fs/console.c fs/console.h
 
 null.o: fs/null.c fs/null.h
 	$(CC) $(CFLAGS) -o null.o fs/null.c
+
+region.o: mm/region.c mm/region.h
+	$(CC) $(CFLAGS) -o region.o mm/region.c
 
 
 user: user/run.h user/run.c

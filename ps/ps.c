@@ -179,6 +179,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     }
     task->user.heap_top = USER_HEAP_BEGIN;
     task->user.zone_top = USER_ZONE_BEGIN;
+    task->user.region_head = 0;
     memset(task->cwd, 0, 256);
     //strcpy(task->cwd, "\0");
 

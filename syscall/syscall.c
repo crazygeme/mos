@@ -371,11 +371,12 @@ static int sys_getpid()
 
 static int sys_uname(struct utsname* utname)
 {
-	strcpy(utname->machine, "qemu");
+	strcpy(utname->machine, "i386");
 	strcpy(utname->nodename, "qemu-enum");
-	strcpy(utname->release, "ender");
+	strcpy(utname->release, "0.1-generic");
 	strcpy(utname->sysname, "Mos");
-	strcpy(utname->version, "0.1");
+	strcpy(utname->version, "Mos Wed Feb 19 04:14:56 UTC 2014");
+	strcpy(utname->domain, "Ender");
 	return 1;
 }
 
@@ -842,7 +843,6 @@ static int sys_setpgid(unsigned pid, unsigned pgid)
 
 static int sys_wait4(int pid, int* status, void* rusage)
 {
-	printf("wait4(%d,%x,%x)\n", pid, status, rusage);
     if (pid == -1) {
 		return sys_waitpid(0,status,0);
     } else if (pid < -1) {

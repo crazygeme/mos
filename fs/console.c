@@ -101,6 +101,7 @@ static int console_copy_stat(INODE node, struct stat* s, int is_dir)
 	s->st_mtime = 0;
 	s->st_uid = 0;
 	s->st_nlink = 1;
+	s->st_rdev = 8004;
 	
 	return 1;
 }

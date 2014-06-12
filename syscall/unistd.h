@@ -199,7 +199,7 @@
 
 #define NR_syscalls 198
 
-#define	_SYS_NAMELEN	256
+#define	_SYS_NAMELEN	65 // in linux 2.1
 
 
 /// TTY
@@ -235,6 +235,7 @@ struct	utsname {
 	char	release[_SYS_NAMELEN];	/* [XSI] Release level */
 	char	version[_SYS_NAMELEN];	/* [XSI] Version level */
 	char	machine[_SYS_NAMELEN];	/* [XSI] Hardware type */
+	char	domain[_SYS_NAMELEN];
 };
 
 // oldstat

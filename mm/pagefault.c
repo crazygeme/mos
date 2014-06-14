@@ -16,6 +16,9 @@ static void pf_process(intr_frame* frame)
     __asm__("movl %cr2, %eax");
     __asm__("movl %%eax, %0" : "=m"(cr2));
     printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
-    __asm__("hlt");
-	for(;;);
+
+	for(;;)
+    {
+        __asm__("hlt");
+    }
 }

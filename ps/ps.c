@@ -412,6 +412,7 @@ int sys_waitpid(unsigned pid, int* status, int options)
             entry = entry->Flink;
         }
         unlock_dying();
+
         task_sched();
     }
     while (can_return == 0); 

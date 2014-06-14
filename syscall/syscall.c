@@ -130,6 +130,7 @@ static int sys_wait4(int pid, int* status, void* rusage);
 static int sys_socketcall(int call, unsigned long *args);
 static int sys_sigaction(int sig, void* act, void*  oact);
 static int sys_sigprocmask(int how, void* set, void * oset);
+static int sys_pause();
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -138,7 +139,7 @@ static char* call_table_name[NR_syscalls] = {
     "sys_execve", "sys_chdir", "time", 0, 0,           // 11 ~ 15
     0, 0, 0, 0, "sys_getpid",  // 16 ~ 20   
     0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
-    0, 0, 0, 0, 0,          // 26 ~ 30 
+    0, 0, 0, "sys_pause", 0,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
     0, 0, 0, 0, "sys_brk",          // 41 ~ 45 
@@ -184,7 +185,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
-    0, 0, 0, 0, 0,          // 26 ~ 30 
+    0, 0, 0, sys_pause, 0,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
@@ -872,6 +873,12 @@ static int sys_sigprocmask(int how, void* set, void * oset)
 {
 	// FIXME
 	// no signal
+	return -1;
+}
+
+static int sys_pause()
+{
+	__asm__("hlt");
 	return -1;
 }
 

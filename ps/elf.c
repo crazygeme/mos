@@ -161,6 +161,33 @@ static unsigned elf_map_programs_at(unsigned fd, unsigned table_offset, unsigned
 
 }
 
+static unsigned elf_map_get_dynamic_pages(unsigned fd, unsigned table_offset, unsigned size, unsigned num)
+{
+    unsigned va_page_start = 0xffffffff;
+    unsigned va_page_end = 0;
+	unsigned offset = 0;
+	int i = 0;
+	for (i = 0; i < num; i++){
+		unsigned head_offset = table_offset + i * size;
+		Elf32_Phdr phdr;
+		fs_read(fd, head_offset, &phdr, sizeof(phdr));
+        if (phdr.p_type == PT_LOAD) {
+            unsigned va_begin = phdr.p_vaddr & PAGE_SIZE_MASK;
+            unsigned va_end = (phdr.p_vaddr + phdr.p_memsz - 1) & PAGE_SIZE_MASK;
+            if (va_begin < va_page_start) {
+                va_page_start = va_begin;
+            }
+            if (va_end > va_page_end) {
+                va_page_end = va_end;
+            }
+        } else {
+            continue;
+        }
+    }
+
+    return (va_page_end - va_page_start) / PAGE_SIZE + 1;
+}
+
 static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 {
 	unsigned fd = fs_open(path);
@@ -191,7 +218,7 @@ static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
     }
 
     // interop must be the first dynamic library
-    fmt->interp_bias = USER_ZONE_BEGIN;
+    fmt->interp_bias = vm_get_usr_zone(  elf_map_get_dynamic_pages(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum) );
     fmt->interp_load_addr = fmt->interp_bias + elf.e_entry;
     elf_map_programs_at(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt->interp_bias);
 

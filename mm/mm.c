@@ -631,13 +631,7 @@ unsigned vm_get_usr_zone(unsigned page_count)
   #endif
 
 
-// FIXME
-// buggy implement
-// in elf.c we mmap interop using mixed address, it will not reserve vm zone before map
-// so after elf mmap user.zone_top not updated. When ld-linux.so.2 mmap it begins from
-// USER_ZONE_TOP again!
-// So we WAR it by increase zone_top at @WAR1
-// this is totally a mess, rewrite is please
+
 int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
 			unsigned int flags, int fd,unsigned int offset)
 {
@@ -659,10 +653,6 @@ int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
 		if (map_ret > 0 && fd > 0)
 		{
 			memset(i, 0, PAGE_SIZE);
-		}
-		// WAR1
-		if (cur->user.zone_top < (i+PAGE_SIZE)) {
-			cur->user.zone_top = (i+PAGE_SIZE);
 		}
 	}
 

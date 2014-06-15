@@ -4,7 +4,7 @@
 #include <lib/list.h>
 #include <ps/lock.h>
 #include <ps/ps.h>
-
+#include <int/timer.h>
 #define GDT_ADDRESS			0x1C0000
 #define PG0_ADDRESS			0x1C1000
 #define PG1_ADDRESS			0x1C2000
@@ -660,8 +660,20 @@ int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
 	if ((map_ret > 0) || (flags & MAP_FIXED)){
 		if (fd > 0 && fd < MAX_FD){
 			unsigned ret = 0;
+            time_t t;
+            time_t now;
+            unsigned speed = 0;
+            unsigned span = 0;
+            timer_current(&t);
 			memset(read_addr, 0, _len);
 			ret = fs_read(fd, offset, read_addr, _len);
+            timer_current(&now);
+            span = (now.seconds*1000+now.milliseconds - (t.seconds*1000+t.milliseconds));
+            if (span) {
+                speed = (_len * 1000) / span; 
+                printf("map %d speed %h/s\n", fd, speed);
+            }
+
 		}else{
 			memset(read_addr, 0, _len);
 		}

@@ -171,6 +171,7 @@ typedef struct _fd_type
 	};
 	unsigned file_off;
 	unsigned flag;
+	char* path;
 }fd_type;
 
 

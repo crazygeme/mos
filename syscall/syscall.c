@@ -653,7 +653,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   int retcount;
   int len;
   int ret = 0;
-  int copied = 0;
+  int cur_pos = 0;
   struct linux_dirent *prev;
 
   	#ifdef __VERBOS_SYSCALL__
@@ -687,43 +687,10 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
 	if (ret == 0){
 		if (prev)
 		{
-			prev->d_off = 4096;
+			prev->d_off = 512;
 		}
 		memset((char*)dirp, 0, count);
 		break;
-	}
-
-	if (!copied)
-	{
-		  // FIXME
-		  if (count > 12)
-		  {
-			  memset((char*)dirp, 0, 16);
-
-			  dirp->d_ino = 0;
-			  dirp->d_off = 12;
-			  dirp->d_reclen = 16;
-			  strcpy(dirp->d_name, ".");
-			  retcount += dirp->d_reclen;
-			  count -= dirp->d_reclen;
-			  prev = dirp;
-			  dirp = (char*)dirp + dirp->d_reclen;
-		  }
-
-		  if (count > 12)
-		  {
-			  memset((char*)dirp, 0, 16);
-			  dirp->d_ino = 0;
-			  dirp->d_off = 24;
-			  dirp->d_reclen = 16;
-			  strcpy(dirp->d_name, "..");
-			  retcount += dirp->d_reclen;
-			  count -= dirp->d_reclen;
-			  prev = dirp;
-			  dirp = (char*)dirp + dirp->d_reclen;
-		  }
-
-		  copied = 1;
 	}
 
 	len = ROUND_UP(NAME_OFFSET(dirp) + strlen(d.d_name)+1);
@@ -732,14 +699,10 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
     strcpy(dirp->d_name, d.d_name);
 	
     dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name)+1);
-	if (prev)
-	{
-		dirp->d_off = prev->d_off + prev->d_reclen - 4;
-	}
-	else
-	{
-		dirp->d_off = len - 4;
-	}
+	
+	cur_pos += dirp->d_reclen;
+	dirp->d_off = cur_pos;
+
 
     if (count <= dirp->d_reclen) {
       break;

@@ -170,7 +170,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
     task->is_switching = 0;
-    task->fds = kmalloc(MAX_FD*sizeof(fd_type));
+    task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
 
     for (i = 0; i < MAX_FD; i++) {
         task->fds[i].file = 0;
@@ -201,7 +201,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
 static void ps_dup_fds(task_struct* cur, task_struct* task)
 {
     unsigned fd;
-    memset(task->fds, 0, MAX_FD*sizeof(fd_type));
+    memset(task->fds, 0, PAGE_SIZE);
 
 }
 
@@ -316,7 +316,7 @@ int sys_fork()
     task->esp = frame; 
     task->esp0 = (unsigned int)task + PAGE_SIZE;
     task->parent = cur->psid;
-    task->fds = kmalloc(MAX_FD*sizeof(fd_type));
+    task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
     memset(task->cwd, 0, 256);
     strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
@@ -403,7 +403,7 @@ int sys_waitpid(unsigned pid, int* status, int options)
                     *status = task->exit_status;
                 }
                 RemoveEntryList(entry);
-                kfree(task->fds);
+                vm_free(task->fds, 1);
                 vm_free(task, 1);
                 can_return = 1;
                 break;

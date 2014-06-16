@@ -7,9 +7,13 @@
 #include <fs/namespace.h>
 #include <int/timer.h>
 #include <lib/klib.h>
+#include <fs/fcntl.h>
 
 
-  
+struct utimbuf {
+	unsigned actime;       /* access time */
+	unsigned modtime;      /* modification time */
+};
 
 struct mmap_arg_struct32 {          
     unsigned int addr;              
@@ -100,7 +104,7 @@ static int sys_read(unsigned fd, char* buf, unsigned len);
 static int sys_write(unsigned fd, char* buf, unsigned len);
 static int sys_getpid();
 static int sys_uname(struct utsname* utname);
-static int sys_open(const char* name);
+static int sys_open(const char* name, int flags, unsigned mode);
 static int sys_close(unsigned fd);
 static int sys_sched_yield();
 static int sys_brk(unsigned top);
@@ -132,6 +136,7 @@ static int sys_socketcall(int call, unsigned long *args);
 static int sys_sigaction(int sig, void* act, void*  oact);
 static int sys_sigprocmask(int how, void* set, void * oset);
 static int sys_pause();
+static int sys_utime(const char *filename, const struct utimbuf *times);
 
 
 static int resolve_path(char* old, char* new);
@@ -143,7 +148,7 @@ static char* call_table_name[NR_syscalls] = {
     "sys_execve", "sys_chdir", "time", 0, 0,           // 11 ~ 15
     0, 0, 0, 0, "sys_getpid",  // 16 ~ 20   
     0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
-    0, 0, 0, "sys_pause", 0,          // 26 ~ 30 
+    0, 0, 0, "sys_pause", "sys_utime",          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
     0, 0, 0, 0, "sys_brk",          // 41 ~ 45 
@@ -189,7 +194,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
-    0, 0, 0, sys_pause, 0,          // 26 ~ 30 
+    0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     0, 0, 0, 0, sys_brk,          // 41 ~ 45 
@@ -391,9 +396,46 @@ static int sys_sched_yield()
     return 0;
 }
 
-static int sys_open(const char* name)
+static int sys_open(const char* _name, int flags, unsigned mode)
 {
-	return fs_open(name);
+	char* name = kmalloc(64);
+	int creat_if_not_exist = 0;
+	int resize_to_zero = 0;
+	int open_mode = flags & O_ACCMODE;
+	struct stat s;
+	int fd = -1;
+
+	if (flags & O_CREAT)
+		creat_if_not_exist = 1;
+
+	if (flags & O_TRUNC)
+		resize_to_zero = 1;
+
+	resolve_path(_name, name);
+	#ifdef __VERBOS_SYSCALL__
+	printf("open(%s, %x, %x)\n", name, flags, mode);
+	#endif
+
+	if (fs_stat(name, &s) == -1)
+	{
+		if(creat_if_not_exist){
+			fs_create(name, mode);
+		}
+	}
+	else
+	{
+		if (resize_to_zero)
+		{
+			fs_delete(name);
+			fs_create(name,s.st_mode);
+		}
+	}
+
+
+	fd = fs_open(name);
+	kfree(name);
+
+	return fd;
 }
 
 static int sys_close(unsigned fd)
@@ -873,6 +915,12 @@ static int resolve_path(char* old, char* new)
 	if (strcmp(new, "/"))
 		strcat(new, "/");
 	strcat(new, old);
+	return 0;
+}
+
+static int sys_utime(const char *filename, const struct utimbuf *times)
+{
+	// FIXME
 	return 0;
 }
 

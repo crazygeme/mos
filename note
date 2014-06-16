@@ -127,3 +127,7 @@ sudo qemu-nbd -d /dev/nbd0
 ----------------------------------------
 load dynamic library(ld-linux.so.2)时必须有offset，不能直接load在0地址上。因为0地址有特殊含义：NULL
 
+
+----------------------------------------
+getdents/readdir等函数，返回值里的d_ino不能为0，否则认为是无效项
+

@@ -15,11 +15,11 @@
 #endif
 
 static INODE fs_lookup_inode(char* path);
-static unsigned fs_get_free_fd(INODE node);
-static INODE fs_get_fd(unsigned id);
+static unsigned fs_get_free_fd(INODE node, char* path);
+static INODE fs_get_fd(unsigned id, char* path);
 static void* fs_clear_fd(unsigned fd, int* isdir);
 
-static unsigned fs_dir_get_free_fd(DIR node);
+static unsigned fs_dir_get_free_fd(DIR node, char* path);
 static DIR fs_dir_get_fd(unsigned id);
 
 unsigned fs_open(char* path)
@@ -55,13 +55,13 @@ unsigned fs_open(char* path)
 
 	if (S_ISDIR(vfs_get_mode(node))){
 		dir = vfs_open_dir(node);
-		fd = fs_dir_get_free_fd(dir);
+		fd = fs_dir_get_free_fd(dir, fullPath);
 		vfs_free_inode(node);
 		if (fd == MAX_FD) {
 			vfs_close_dir(dir);
 		}
 	}else{
-		fd = fs_get_free_fd(node);
+		fd = fs_get_free_fd(node, fullPath);
 		if (fd == MAX_FD) {
 			vfs_free_inode(node);
 		}
@@ -104,23 +104,38 @@ void fs_close(unsigned int fd)
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
-    INODE node = fs_get_fd(fd);
+	char* path = kmalloc(64);
+    INODE node = fs_get_fd(fd, path);
     unsigned ret;
+	void* hash = 0;
 
 	if (fd == 0xffffffff) {
+		kfree(path);
 		return 0xffffffff;
     }
 
     if (!node) {
+		kfree(path);
         return 0xffffffff;
     }
+
+
+	if (path && path[0]) {
+		hash = file_cache_find(path);
+		if (hash) {
+			kfree(path);
+			return file_cache_read(hash, offset, buf, len);
+		}
+	}
+
+	kfree(path);
     ret = vfs_read_file(node, offset,buf,len);
     return ret;
 }
 
 unsigned fs_write(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
-    INODE node = fs_get_fd(fd);
+    INODE node = fs_get_fd(fd, 0);
     unsigned ret;
 
     if (fd == 0xffffffff) {
@@ -288,7 +303,7 @@ int fs_fstat(int fd, struct stat* s)
         return -1;
     }
 
-	node = fs_get_fd(fd);
+	node = fs_get_fd(fd, 0);
 
 	if (!node) {
 		dir = fs_dir_get_fd(fd);
@@ -362,7 +377,16 @@ int sys_readdir(unsigned fd, struct dirent* entry)
     if (ret) {
         entry->d_namlen = strlen(entry->d_name); 
         entry->d_ino = 0;
+		entry->d_reclen = ((entry->d_namlen + 10)/4 + 1) * 4;
+
     }
+
+	#ifdef __VERBOS_SYSCALL__
+	printf("readdir(%d, %x) = %d (%d, %d, %x, %d, %s)\n",
+		   fd, entry, ret, entry->d_ino, entry->d_reclen, entry->d_mode, 
+		   entry->d_namlen, entry->d_name);
+	#endif
+
     return ret;
 }
 
@@ -486,7 +510,7 @@ static INODE fs_lookup_inode(char* path)
 	}while(0);
 }
 
-static unsigned fs_get_free_fd(INODE node)
+static unsigned fs_get_free_fd(INODE node, char* path)
 {
     task_struct* cur = CURRENT_TASK();
     int i = 0;
@@ -498,6 +522,7 @@ static unsigned fs_get_free_fd(INODE node)
             cur->fds[i].file = node;
 			cur->fds[i].file_off = 0;
 			cur->fds[i].flag |= fd_flag_used;
+			cur->fds[i].path = strdup(path);
             break;
         }
     }
@@ -508,7 +533,7 @@ static unsigned fs_get_free_fd(INODE node)
 
 }
 
-static INODE fs_get_fd(unsigned fd)
+static INODE fs_get_fd(unsigned fd, char* path)
 {
     task_struct* cur = CURRENT_TASK();
     INODE node;
@@ -523,13 +548,16 @@ static INODE fs_get_fd(unsigned fd)
 		node = 0;
 	}else{
 		node = cur->fds[fd].file;
+		if (path) {
+			strcpy(path, cur->fds[fd].path); 
+		}
 	}
     sema_trigger(&cur->fd_lock);
 
     return node;
 }
 
-static unsigned fs_dir_get_free_fd(DIR node)
+static unsigned fs_dir_get_free_fd(DIR node, char* path)
 {
     task_struct* cur = CURRENT_TASK();
     int i = 0;
@@ -542,6 +570,7 @@ static unsigned fs_dir_get_free_fd(DIR node)
 			cur->fds[i].file_off = 0;
 			cur->fds[i].flag |= fd_flag_used;
 			cur->fds[i].flag |= fd_flag_isdir;
+			cur->fds[i].path = strdup(path);
             break;
         }
     }
@@ -587,6 +616,8 @@ static void* fs_clear_fd(unsigned fd, int* isdir)
     cur->fds[fd].file = 0;
 	cur->fds[fd].file_off = 0;
 	cur->fds[fd].flag = 0;
+	kfree(cur->fds[fd].path);
+	cur->fds[fd].path = 0;
     sema_trigger(&cur->fd_lock);
 
     return node;

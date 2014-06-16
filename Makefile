@@ -11,7 +11,7 @@ OS		= Darwin
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
-CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__KERNEL__ -I./
+CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__KERNEL__ -D__VERBOS_SYSCALL__ -I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
@@ -44,7 +44,8 @@ OBJS	= boot.o \
 		  kbchar.o\
 		  console.o\
 		  null.o\
-		  region.o
+		  region.o\
+		  cache.o
 
 all: kernel
 
@@ -137,6 +138,9 @@ console.o: fs/console.c fs/console.h
 
 null.o: fs/null.c fs/null.h
 	$(CC) $(CFLAGS) -o null.o fs/null.c
+
+cache.o: fs/cache.c fs/cache.h
+	$(CC) $(CFLAGS) -o cache.o fs/cache.c
 
 region.o: mm/region.c mm/region.h
 	$(CC) $(CFLAGS) -o region.o mm/region.c

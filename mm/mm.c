@@ -660,19 +660,19 @@ int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
 	if ((map_ret > 0) || (flags & MAP_FIXED)){
 		if (fd > 0 && fd < MAX_FD){
 			unsigned ret = 0;
-            time_t t;
-            time_t now;
-            unsigned speed = 0;
-            unsigned span = 0;
-            timer_current(&t);
-			memset(read_addr, 0, _len);
+//          time_t t;
+//          time_t now;
+//          unsigned speed = 0;
+//          unsigned span = 0;
+//          timer_current(&t);
+			//memset(read_addr, 0, _len);
 			ret = fs_read(fd, offset, read_addr, _len);
-            timer_current(&now);
-            span = (now.seconds*1000+now.milliseconds - (t.seconds*1000+t.milliseconds));
-            if (span) {
-                speed = (_len * 1000) / span; 
-                printf("map %d speed %h/s\n", fd, speed);
-            }
+//          timer_current(&now);
+//          span = (now.seconds*1000+now.milliseconds - (t.seconds*1000+t.milliseconds));
+//          if (span) {
+//              speed = (_len * 1000) / span;
+//              printf("map %d size %h speed %h/s, using time %d.%d second\n", fd, _len, speed, (span/1000), (span%1000));
+//          }
 
 		}else{
 			memset(read_addr, 0, _len);

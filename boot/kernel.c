@@ -15,6 +15,7 @@
 #include <fs/console.h>
 #include <fs/kbchar.h>
 #include <fs/null.h>
+#include <fs/cache.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -45,14 +46,18 @@ void kmain_startup()
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
 
+    printk("Init dsr\n");
     dsr_init();
 
+    printk("Enable interrupts\n");
     int_enable_all();
 
     mm_del_user_map();
 
+    printk("Init keyboard\n");
     kb_init();
 	
+    printk("Init timer\n");
     timer_init();
 
 
@@ -69,8 +74,10 @@ void kmain_startup()
 	mm_test();
 #endif
 
+        printk("Init process\n");
 	ps_init();
 
+        printk("Init page fault\n");
         pf_init();
 
 #ifdef TEST_PS
@@ -86,6 +93,8 @@ void kmain_startup()
 
 #ifndef TEST_PS
 #ifndef TEST_LOCK
+
+        printk("Start first process\n");
     // create first process
     ps_create(kmain_process, 0, 1, ps_kernel);
     ps_kickoff();
@@ -102,16 +111,21 @@ void kmain_startup()
 
 static void kmain_process(void* param)
 {
+    printk("Init vfs\n");
     vfs_init();
 
+    printk("Init mount points\n");
     mount_init();
 
+    printk("Init block devices\n");
     block_init();
 
     hdd_init();
 
+    printk("Mount root fs to \"/\" \n");
     vfs_trying_to_mount_root();
 
+    printk("Init char devices\n");
     chardev_init();
 
     kbchar_init();
@@ -119,6 +133,10 @@ static void kmain_process(void* param)
     console_init();
 
     null_init();
+
+    printk("Init file cache for libc, it take times...\n");
+    file_cache_init();
+    printk("Cache init done\n");
 
 #ifdef TEST_BLOCK
 	extern void test_block_process();
@@ -135,8 +153,10 @@ static void kmain_process(void* param)
 	test_ns();
 #endif
 
+    printk("Init system call table\n");
     syscall_init();
 
+    klib_clear();
     user_first_process_run();
 
     // we never here

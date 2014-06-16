@@ -57,6 +57,7 @@
 			Name="Source Files"
 			Filters="*.c;*.C;*.cc;*.cpp;*.cp;*.cxx;*.c++;*.prg;*.pas;*.dpr;*.asm;*.s;*.bas;*.java;*.cs;*.sc;*.e;*.cob;*.html;*.rc;*.tcl;*.py;*.pl;*.d;*.m;*.mm;*.go">
 			<F N="drivers/block.c"/>
+			<F N="fs/cache.c"/>
 			<F N="drivers/chardev.c"/>
 			<F N="fs/console.c"/>
 			<F N="int/dsr.c"/>
@@ -90,6 +91,7 @@
 			Name="Header Files"
 			Filters="*.h;*.H;*.hh;*.hpp;*.hxx;*.inc;*.sh;*.cpy;*.if">
 			<F N="drivers/block.h"/>
+			<F N="fs/cache.h"/>
 			<F N="drivers/chardev.h"/>
 			<F N="config.h"/>
 			<F N="fs/console.h"/>

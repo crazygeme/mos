@@ -283,9 +283,9 @@ struct stat64 {
     unsigned st_gid;		//28
     unsigned long long st_rdev;	//32
     unsigned __pad2;		//40
-    unsigned st_size;		//44
+    unsigned long long st_size;		//44
     unsigned st_blksize;	//48
-    unsigned st_blocks;		//52
+    unsigned long long st_blocks;		//52
     unsigned st_atime;		//56
     unsigned __pad3;		//60
     unsigned st_mtime;		//64

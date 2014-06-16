@@ -6,6 +6,7 @@
 #include <config.h>
 #include <fs/namespace.h>
 #include <int/timer.h>
+#include <lib/klib.h>
 
 
   
@@ -131,6 +132,9 @@ static int sys_socketcall(int call, unsigned long *args);
 static int sys_sigaction(int sig, void* act, void*  oact);
 static int sys_sigprocmask(int how, void* set, void * oset);
 static int sys_pause();
+
+
+static int resolve_path(char* old, char* new);
 
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
@@ -717,6 +721,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   printf(" = %d\n", retcount);
 #endif
   return retcount;
+  
 }
 
 static int sys_fstat(int fd, struct stat64* s)
@@ -761,11 +766,13 @@ static int sys_lstat64(const char* path, struct stat64* s)
 {
 	struct stat s32;
 
-
+	char* new = kmalloc(64);
+	resolve_path(path, new);
 	#ifdef __VERBOS_SYSCALL__
-	printf("lstat64(%s, %x)\n", path, s);
+	printf("lstat64(%s, %x)\n", new, s);
 	#endif
-	fs_stat(path,&s32);
+	fs_stat(new,&s32);
+	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
     s->st_ino = s32.st_ino;
     s->st_mode = s32.st_mode;
@@ -779,6 +786,7 @@ static int sys_lstat64(const char* path, struct stat64* s)
     s->st_atime = s32.st_atime;
     s->st_mtime = s32.st_mtime;
     s->st_ctime = s32.st_ctime;
+	kfree(new);
 	return 0;
 }
 
@@ -843,6 +851,29 @@ static int sys_pause()
 {
 	__asm__("hlt");
 	return -1;
+}
+
+static int resolve_path(char* old, char* new)
+{
+	if (!old || !*old)
+		return -1;
+
+	if (!strcmp(old, ".")){
+		sys_getcwd(new, 64);
+		return 0;
+	}
+
+	if (old[0] == '/')
+	{
+		strcpy(new, old);
+		return 0;
+	}
+
+	sys_getcwd(new, 64);
+	if (strcmp(new, "/"))
+		strcat(new, "/");
+	strcat(new, old);
+	return 0;
 }
 
 

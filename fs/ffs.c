@@ -1348,6 +1348,7 @@ static int ffs_copy_stat(INODE node, struct stat* s, int is_dir)
 	s->st_ino = n->meta_sector;
 	s->st_mtime = n->meta.mt_modify;
 	s->st_uid = 0;
+	s->st_nlink = 1;
 
 	return 1;
 }

@@ -376,7 +376,7 @@ int sys_readdir(unsigned fd, struct dirent* entry)
     int ret = fs_readdir(dir, entry->d_name, &entry->d_mode);
     if (ret) {
         entry->d_namlen = strlen(entry->d_name); 
-        entry->d_ino = 0;
+        entry->d_ino = 1;
 		entry->d_reclen = ((entry->d_namlen + 10)/4 + 1) * 4;
 
     }

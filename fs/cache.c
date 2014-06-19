@@ -26,6 +26,7 @@ void file_cache_init()
 	memset(cache, 0, sizeof(cache));
 	file_cache_add("/lib/libc.so.6");
 	file_cache_add("/lib/ld-linux.so.2");
+	file_cache_add("/bin/ls");
 }
 
 void* file_cache_find(char* path)

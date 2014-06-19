@@ -3,6 +3,7 @@
 *.ko
 *.obj
 *.elf
+*.log
 kernel
 user/bin/*
 user/lib/*

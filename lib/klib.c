@@ -3,6 +3,7 @@
 #include <drivers/tty.h>
 #include <int/timer.h>
 #include <ps/lock.h>
+#include <fs/vfs.h>;
 #else
 #include <syscall.h>
 #include <lib/klib.h>
@@ -52,6 +53,62 @@ static void unlock_heap()
 	spinlock_unlock(&heap_lock);
 }
 
+#ifdef __VERBOS_SYSCALL__
+static INODE krn_log = 0;
+static unsigned krn_log_off = 0;
+static unsigned krn_log_buf_pos = 0;
+static char *krn_log_buf;
+void klog_init()
+{
+	krn_log_buf = vm_alloc(3);
+	krn_log = fs_open_log();
+	krn_log_off = 0;
+	krn_log_buf_pos = 0;
+
+	printk("\n\n===========================\n");
+	
+}
+
+void klog_write(char c)
+{
+	if (krn_log == 0) {
+		klib_putchar(c);
+		return;
+	}
+	krn_log_buf[krn_log_buf_pos] = c;
+	if (krn_log_buf_pos >= (3*PAGE_SIZE-1)) {
+		krn_log_off = 0;
+		krn_log_buf_pos = 0;
+	}else{
+		krn_log_buf_pos++;
+	}
+}
+
+void klog_close()
+{
+	if (krn_log_buf_pos) {
+		vfs_write_file(krn_log, krn_log_off, krn_log_buf, krn_log_buf_pos);
+	}
+
+	vfs_free_inode(krn_log);
+	vm_free(krn_log_buf, 3);
+}
+
+#else
+void klog_init()
+{
+}
+
+void klog_write(char c)
+{
+	klib_putchar(c);
+}
+
+void klog_close()
+{
+}
+#endif
+
 void klib_init()
 {
 	tty_init();
@@ -65,6 +122,7 @@ void klib_init()
 	cur_block_top = KHEAP_BEGIN;
 	spinlock_init(&tty_lock);
 	spinlock_init(&heap_lock);
+
 }
 
 
@@ -101,7 +159,11 @@ void klib_print(char *str)
 	}
 
 	while (*str){
+		#ifdef __VERBOS_SYSCALL__
+		klog_write(*str++);
+		#else
 		klib_putchar( *str++);
+		#endif
 	}
 }
 
@@ -709,7 +771,13 @@ void vprintf(const char* src, va_list ap)
 			cur = src[i+1];
             switch (cur) {
 			case '%':
+				#ifdef __VERBOS_SYSCALL__
+				klog_write(src[i+1]);
+				#else
 				klib_putchar(src[i+1]);
+				#endif
+				
+				
 				break;
 			case 'd':
 				{
@@ -750,12 +818,20 @@ void vprintf(const char* src, va_list ap)
                 }
 			default:
 				{
+					#ifdef __VERBOS_SYSCALL__
+					klog_write('?');
+					#else
 					klib_putchar('?');
+					#endif
 				}
             }
 			i++;
         }else{
+			#ifdef __VERBOS_SYSCALL__
+			klog_write(cur);
+			#else
 			klib_putchar(cur);
+			#endif
 		}
     }
 }
@@ -938,6 +1014,7 @@ void tty_write(const char* buf, unsigned len)
 
 void reboot()
 {
+	klog_close();
 	block_close();
 	// FIXME do formal steps before reboot
 	_write_port(0x64, 0xfe);
@@ -950,7 +1027,7 @@ void shutdown()
   const char *p;
 
   printf ("Powering off...\n");
-
+  klog_close();
   block_close();
 
   /* 	This is a special power-off sequence supported by Bochs and

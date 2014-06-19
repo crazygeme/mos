@@ -85,3 +85,12 @@ if [ "$_debug" == "0" ]; then
 else		
 	qemu-system-i386 -no-kvm -no-reboot -m 256 -hda "$diskfile" -kernel kernel -gdb tcp::8888 -S
 fi
+
+cd ffstool
+if [ ! -e ffstool ]; then
+	make
+fi
+./ffstool log
+if [ -e "krn.log" ]; then
+	cp -f krn.log ../
+fi

@@ -41,7 +41,7 @@ unsigned fs_open(char* path)
 	node = fs_lookup_inode(fullPath);
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("open %s, ", fullPath);
+	printk("open %s, ", fullPath);
 	#endif
 
 
@@ -86,7 +86,7 @@ void fs_close(unsigned int fd)
 	void* ret = fs_clear_fd(fd,&isdir);
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("close %d, isdir %d\n", fd, isdir);
+	printk("close %d, isdir %d\n", fd, isdir);
 	#endif
 
 	if (isdir) {
@@ -262,7 +262,7 @@ int fs_stat(char* path, struct stat* s)
 	}
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("stat %s, ", fullPath);
+	printk("stat %s, ", fullPath);
 	#endif
 
 	node = fs_lookup_inode(fullPath);
@@ -293,7 +293,7 @@ int fs_fstat(int fd, struct stat* s)
 	int ret;
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("fstat %d, ", fd);
+	printk("fstat %d, ", fd);
 	#endif
 
     if (fd < 0 || fd >= MAX_FD) {
@@ -322,7 +322,7 @@ int fs_fstat(int fd, struct stat* s)
 		ret = vfs_copy_stat(dir, s, 1);
 	}
 	#ifdef __VERBOS_SYSCALL__
-	printf("(%x, %d)ret %d\n",s->st_mode, s->st_size, 0);
+	printf(" (stat: %x, %d) ret %d\n",s->st_mode, s->st_size, 0);
 	#endif
 
     return 1;
@@ -380,12 +380,6 @@ int sys_readdir(unsigned fd, struct dirent* entry)
 		entry->d_reclen = ((entry->d_namlen + 10)/4 + 1) * 4;
 
     }
-
-	#ifdef __VERBOS_SYSCALL__
-	printf("readdir(%d, %x) = %d (%d, %d, %x, %d, %s)\n",
-		   fd, entry, ret, entry->d_ino, entry->d_reclen, entry->d_mode, 
-		   entry->d_namlen, entry->d_name);
-	#endif
 
     return ret;
 }
@@ -627,6 +621,23 @@ static void* fs_clear_fd(unsigned fd, int* isdir)
 void fs_flush(char* filesys)
 {
 	struct filesys_type* type = mount_lookup("/");
+}
+
+INODE fs_open_log()
+{
+	INODE ret = fs_lookup_inode("/krn.log");
+	INODE root = 0;
+	DIR d = 0;
+	if (ret == 0) {
+		root = fs_lookup_inode("/");
+		d = vfs_open_dir(root);
+		vfs_free_inode(root);
+		vfs_add_dir_entry(d, S_IRWXU | S_IRWXG | S_IRWXO, "krn.log");
+		vfs_close_dir(d);
+		ret = fs_lookup_inode("/krn.log");
+	}
+
+	return ret;
 }
 
 #ifdef TEST_NS

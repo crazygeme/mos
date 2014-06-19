@@ -2,7 +2,8 @@
 #define _NAMESPACE_H_
 #include <fs/vfs.h>
 
-
+// for debug
+INODE fs_open_log();
 
 unsigned fs_open(char* path);
 

@@ -83,6 +83,12 @@ void free(void* buf);
 
 void klib_init();
 
+void klog_init();
+
+void klog_write(char c);
+
+void klog_close();
+
 void klib_putchar(char c);
 
 void klib_putint(int num);

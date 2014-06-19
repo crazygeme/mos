@@ -134,6 +134,7 @@ static void kmain_process(void* param)
 
     null_init();
 
+
     printk("Init file cache for libc, it take times...\n");
     file_cache_init();
     printk("Cache init done\n");
@@ -155,6 +156,8 @@ static void kmain_process(void* param)
 
     printk("Init system call table\n");
     syscall_init();
+
+    klog_init();
 
     klib_clear();
     user_first_process_run();

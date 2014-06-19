@@ -296,7 +296,14 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	task_struct* cur = CURRENT_TASK();
 	unsigned ino = 0;
 	unsigned _len;
-	//printf("write(%d, \"", fd );
+	#ifdef __VERBOS_SYSCALL__
+	char* tmp;
+	tmp = kmalloc(len+1);
+	memset(tmp, 0, len+1);
+	memcpy(tmp, buf, len);
+	printk("write(%d, \"%s\", %d) ", fd, tmp, len);
+	kfree(tmp);
+	#endif
 
 	if (fd > MAX_FD){
 		//printf("-1\n");
@@ -304,12 +311,16 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 	}
 
 	if (cur->fds[fd].flag == 0){
-		//printf("-1\n");
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret -1\n");
+		#endif
 		return -1;
 	}
 
 	if (cur->fds[fd].flag & fd_flag_isdir){
-		//printf("-1\n");
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret -1\n");
+		#endif
 		return -1;
 	}
 
@@ -321,7 +332,9 @@ static int sys_write(unsigned fd, char* buf, unsigned len)
 		offset += _len;
 		cur->fds[fd].file_off = offset;
 
-		//printf("\", %d) = %d\n", len, _len);
+		#ifdef __VERBOS_SYSCALL__
+		printf("ret %d\n", _len);
+		#endif
 	return _len;
 }
 
@@ -413,7 +426,7 @@ static int sys_open(const char* _name, int flags, unsigned mode)
 
 	resolve_path(_name, name);
 	#ifdef __VERBOS_SYSCALL__
-	printf("open(%s, %x, %x)\n", name, flags, mode);
+	printk("open(%s, %x, %x)\n", name, flags, mode);
 	#endif
 
 	if (fs_stat(name, &s) == -1)
@@ -456,7 +469,7 @@ static int sys_brk(unsigned top)
     }
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("brk: cur %x top %x, ", task->user.heap_top, top);
+	printk("brk: cur %x top %x, ", task->user.heap_top, top);
 	#endif
 	if ( top == 0 )
 	{
@@ -648,7 +661,7 @@ static int sys_mmap(struct mmap_arg_struct32* arg)
 	int vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd, arg->offset);
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
+	printk("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
 		   arg->fd, arg->addr, arg->offset, arg->len, vir);
 	#endif
 
@@ -664,7 +677,7 @@ static int sys_munmap(void *addr, unsigned length)
 static int sys_mprotect(void *addr, unsigned len, int prot)
 {
 	#ifdef __VERBOS_SYSCALL__
-	printf("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
+	printk("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
 	#endif
 	return 0;
 }
@@ -703,7 +716,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
   struct linux_dirent *prev;
 
   	#ifdef __VERBOS_SYSCALL__
-	printf("getdents(%d, %x, %d)", fd, dirp, count);
+	printk("getdents(%d, %x, %d)", fd, dirp, count);
 	#endif
   
   if (fd < 0 || fd >= MAX_FD) {
@@ -782,7 +795,7 @@ static int sys_fstat64(int fd, struct stat64* s)
 		return -1;
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("fstat64(%d, %x)\n", fd, s);
+	printk("fstat64(%d, %x)\n", fd, s);
 	#endif
 
 	fs_fstat(fd,&s32);
@@ -811,7 +824,7 @@ static int sys_lstat64(const char* path, struct stat64* s)
 	char* new = kmalloc(64);
 	resolve_path(path, new);
 	#ifdef __VERBOS_SYSCALL__
-	printf("lstat64(%s, %x)\n", new, s);
+	printk("lstat64(%s, %x)\n", new, s);
 	#endif
 	fs_stat(new,&s32);
 	memset(s, 0, sizeof(*s));

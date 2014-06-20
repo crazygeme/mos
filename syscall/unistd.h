@@ -320,6 +320,7 @@ struct krnquota
 {
 	unsigned heap_cur;  // current usage
 	unsigned heap_wm; 	// water mask
+	unsigned heap_top;
 	unsigned phymm_max;
 	unsigned phymm_cur;
 	unsigned phymm_wm;

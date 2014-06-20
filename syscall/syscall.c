@@ -469,22 +469,22 @@ static int sys_brk(unsigned top)
 		task->user.heap_top += PAGE_SIZE;
     }
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("brk: cur %x top %x, ", task->user.heap_top, top);
-	#endif
+//  #ifdef __VERBOS_SYSCALL__
+//  klog("brk: cur %x top %x, ", task->user.heap_top, top);
+//  #endif
 	if ( top == 0 )
 	{
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", task->user.heap_top);
-		#endif
+//  	#ifdef __VERBOS_SYSCALL__
+//  	klog_printf("ret %x\n", task->user.heap_top);
+//  	#endif
 
 		return task->user.heap_top;
 	}
 	else if (top >= USER_HEAP_END)
 	{
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", task->user.heap_top);
-		#endif
+//  	#ifdef __VERBOS_SYSCALL__
+//  	klog_printf("ret %x\n", task->user.heap_top);
+//  	#endif
 		return task->user.heap_top;
 	}
 	else if ( top > task->user.heap_top)
@@ -501,9 +501,9 @@ static int sys_brk(unsigned top)
 
 		top = task->user.heap_top + pages * PAGE_SIZE;
 		task->user.heap_top = top;
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", top);
-		#endif
+//  	#ifdef __VERBOS_SYSCALL__
+//  	klog_printf("ret %x\n", top);
+//  	#endif
 		return top;
 
 	}else{
@@ -709,6 +709,21 @@ static int sys_fcntl(int fd, int cmd, int arg)
 #define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 {
+
+	/*
+	static unsigned char buf[] = {
+		0xa0, 0x1c, 0x76, 0x00, 0x79, 0xd3, 0xe9, 0x0b, 0x18, 0x00, 0x64, 0x69, 0x72, 0x5f, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x63, 0x00, 0x00, 0x00, 0x08, //  . . v . y . . . . . d i r _ t e s t . c . . . .
+0x01, 0x00, 0x76, 0x00, 0xe4, 0xd5, 0x29, 0x32, 0x10, 0x00, 0x2e, 0x00, 0x00, 0x00, 0x00, 0x04, //  . . v . . . ) 2 . . . . . . . .
+0x12, 0x08, 0x80, 0x00, 0x1a, 0xa0, 0xa7, 0x4b, 0x10, 0x00, 0x6c, 0x69, 0x62, 0x00, 0x00, 0x04, //  . . . . . . . K . . l i b . . .
+0x48, 0x04, 0xa0, 0x03, 0x97, 0x7e, 0xbc, 0x52, 0x10, 0x00, 0x2e, 0x2e, 0x00, 0x00, 0x00, 0x04, //  H . . . . ~ . R . . . . . . . .
+0x03, 0x00, 0x76, 0x00, 0xaa, 0xa0, 0x07, 0x58, 0x10, 0x00, 0x62, 0x69, 0x6e, 0x00, 0x00, 0x04, //  . . v . . . . X . . b i n . . .
+0x05, 0x00, 0x76, 0x00, 0x37, 0x82, 0x10, 0x76, 0x10, 0x00, 0x65, 0x74, 0x63, 0x00, 0x00, 0x04, //  . . v . 7 . . v . . e t c . . .
+0x02, 0x00, 0x76, 0x00, 0xff, 0xff, 0xff, 0x7f, 0x14, 0x00, 0x64, 0x69, 0x72, 0x5f, 0x74, 0x65, 0x73, 0x74, 0x00, 0x08, //  . . v . . . . . . . d i r _ t e s t . .
+	};
+	memcpy(dirp, buf, sizeof(buf));
+	return (sizeof(buf)); 
+	*/ 
+	
   struct dirent d;
   int retcount;
   int len;
@@ -796,7 +811,8 @@ static int sys_fstat64(int fd, struct stat64* s)
 		return -1;
 
 	#ifdef __VERBOS_SYSCALL__
-	klog("fstat64(%d, %x)\n", fd, s);
+	klog("fstat64(%d, %x) size %d blocks %d blksize %d\n", 
+		 fd, s, s32.st_size, s32.st_blocks, s32.st_blksize);
 	#endif
 
 	fs_fstat(fd,&s32);
@@ -824,10 +840,13 @@ static int sys_lstat64(const char* path, struct stat64* s)
 
 	char* new = kmalloc(64);
 	resolve_path(path, new);
-	#ifdef __VERBOS_SYSCALL__
-	klog("lstat64(%s, %x)\n", new, s);
-	#endif
 	fs_stat(new,&s32);
+
+	#ifdef __VERBOS_SYSCALL__
+	klog("lstat64(%s, %x) blksize %d blocks %d, size %d \n", new, s, 
+		 s32.st_blksize, s32.st_blocks, s32.st_size);
+	#endif
+
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
     s->st_ino = s32.st_ino;
@@ -843,6 +862,7 @@ static int sys_lstat64(const char* path, struct stat64* s)
     s->st_mtime = s32.st_mtime;
     s->st_ctime = s32.st_ctime;
 	kfree(new);
+
 	return 0;
 }
 
@@ -940,6 +960,7 @@ static int sys_utime(const char *filename, const struct utimbuf *times)
 
 extern unsigned int heap_quota;
 extern unsigned int heap_quota_high;
+extern unsigned int cur_block_top;
 extern unsigned phymm_cur;
 extern unsigned phymm_high;
 extern unsigned phymm_max;
@@ -947,6 +968,7 @@ static int sys_quota(struct krnquota* quota)
 {
 	quota->heap_cur = heap_quota;
 	quota->heap_wm = heap_quota_high;
+	quota->heap_top = cur_block_top;
 	quota->phymm_cur = phymm_cur;
 	quota->phymm_wm = phymm_high;
 	quota->phymm_max = phymm_max;

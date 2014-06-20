@@ -322,7 +322,8 @@ int fs_fstat(int fd, struct stat* s)
 		ret = vfs_copy_stat(dir, s, 1);
 	}
 	#ifdef __VERBOS_SYSCALL__
-	klog_printf(" (stat: %x, %d) ret %d\n",s->st_mode, s->st_size, 0);
+	klog_printf(" (stat: mode %x, size %d, blocks %d, blksize %d) ret %d\n",
+				s->st_mode, s->st_size, s->st_blocks, s->st_blksize, 0);
 	#endif
 
     return 1;

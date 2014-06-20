@@ -345,8 +345,21 @@ int sys_fork()
 int sys_exit(unsigned status)
 {
     task_struct *cur = CURRENT_TASK();
+    int i = 0;
     cur->exit_status = status;
+
+    // close all fds
+    for (i = 0; i < MAX_FD; i++) {
+        if (cur->fds[i].flag) {
+            fs_close(i);
+        }
+    }
+
+    vm_free(cur->fds, 1);
+
+    // free all physical memory
     ps_cleanup_all_user_map(cur);
+
     if (cur->user.page_dir) {
         vm_free(cur->user.page_dir, 1);
     }
@@ -403,7 +416,6 @@ int sys_waitpid(unsigned pid, int* status, int options)
                     *status = task->exit_status;
                 }
                 RemoveEntryList(entry);
-                vm_free(task->fds, 1);
                 vm_free(task, 1);
                 can_return = 1;
                 break;

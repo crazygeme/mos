@@ -106,7 +106,6 @@ static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned siz
 	for (i = 0; i < num; i++){
 		unsigned head_offset = table_offset + i * size;
 		Elf32_Phdr phdr;
-        char path[256] = {0};
 		fs_read(fd, head_offset, &phdr, sizeof(phdr));
 
         if (phdr.p_type == PT_PHDR) {

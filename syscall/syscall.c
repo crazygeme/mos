@@ -137,6 +137,7 @@ static int sys_sigaction(int sig, void* act, void*  oact);
 static int sys_sigprocmask(int how, void* set, void * oset);
 static int sys_pause();
 static int sys_utime(const char *filename, const struct utimbuf *times);
+static int sys_quota(struct krnquota* quota);
 
 
 static int resolve_path(char* old, char* new);
@@ -182,7 +183,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, "sys_getcwd", 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
     0, 0, 0, 0, 0,            // 191 ~ 195
-	"sys_lstat64", "sys_fstat64"             // 196 ~ 195
+	"sys_lstat64", "sys_fstat64" , "sys_quota"             // 196 ~ 198
 };
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
@@ -228,7 +229,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
     0, 0, 0, 0, 0,          // 185 ~ 190
     0, 0, 0, 0, 0,            // 191 ~ 195
-	sys_lstat64, sys_fstat64            // 196 ~ 195
+	sys_lstat64, sys_fstat64, sys_quota            // 196 ~ 198
 };
 
 static int unhandled_syscall(unsigned callno)
@@ -934,6 +935,22 @@ static int resolve_path(char* old, char* new)
 static int sys_utime(const char *filename, const struct utimbuf *times)
 {
 	// FIXME
+	return 0;
+}
+
+extern unsigned int heap_quota;
+extern unsigned int heap_quota_high;
+extern unsigned phymm_cur;
+extern unsigned phymm_high;
+extern unsigned phymm_max;
+static int sys_quota(struct krnquota* quota)
+{
+	quota->heap_cur = heap_quota;
+	quota->heap_wm = heap_quota_high;
+	quota->phymm_cur = phymm_cur;
+	quota->phymm_wm = phymm_high;
+	quota->phymm_max = phymm_max;
+
 	return 0;
 }
 

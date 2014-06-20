@@ -87,6 +87,10 @@ void klog_init();
 
 void klog_write(char c);
 
+void klog_printf(const char* str, ...);
+
+void klog(char* str, ...);
+
 void klog_close();
 
 void klib_putchar(char c);
@@ -168,7 +172,10 @@ char* strdup(char* str);
 
 void printf(const char* str, ...);
 
-void vprintf(const char* str, va_list ap);
+typedef void (*fpputc)(unsigned char c);
+typedef void (*fputstr)(char* str);
+
+void vprintf(fpputc _putc, fputstr _putstr, const char* str, va_list ap);
 
 void print_human_readable_size (unsigned int size) ;
 

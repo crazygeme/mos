@@ -41,13 +41,13 @@ unsigned fs_open(char* path)
 	node = fs_lookup_inode(fullPath);
 
 	#ifdef __VERBOS_SYSCALL__
-	printk("open %s, ", fullPath);
+	klog("open %s, ", fullPath);
 	#endif
 
 
     if (!node) {
 		#ifdef __VERBOS_SYSCALL__
-		printf("ret %d\n", -1);
+		klog_printf("ret %d\n", -1);
 		#endif
 		kfree(fullPath);
         return 0xffffffff;
@@ -68,7 +68,7 @@ unsigned fs_open(char* path)
 	}
 
 	#ifdef __VERBOS_SYSCALL__
-	printf("ret %d\n", fd);
+	klog_printf("ret %d\n", fd);
 	#endif
 	if (fd == MAX_FD) {
 		fd = 0xffffffff;
@@ -86,7 +86,7 @@ void fs_close(unsigned int fd)
 	void* ret = fs_clear_fd(fd,&isdir);
 
 	#ifdef __VERBOS_SYSCALL__
-	printk("close %d, isdir %d\n", fd, isdir);
+	klog("close %d, isdir %d\n", fd, isdir);
 	#endif
 
 	if (isdir) {
@@ -262,13 +262,13 @@ int fs_stat(char* path, struct stat* s)
 	}
 
 	#ifdef __VERBOS_SYSCALL__
-	printk("stat %s, ", fullPath);
+	klog("stat %s, ", fullPath);
 	#endif
 
 	node = fs_lookup_inode(fullPath);
     if (!node) {
 		#ifdef __VERBOS_SYSCALL__
-		printf("ret %d\n", -1);
+		klog_printf("ret %d\n", -1);
 		#endif
 		kfree(fullPath);
         return -1;
@@ -277,7 +277,7 @@ int fs_stat(char* path, struct stat* s)
     ret = vfs_copy_stat(node,s, 0);
     vfs_free_inode(node);
 	#ifdef __VERBOS_SYSCALL__
-	printf("ret %d\n", 0);
+	klog_printf("ret %d\n", 0);
 	#endif
 	kfree(fullPath);
     return 0;
@@ -293,12 +293,12 @@ int fs_fstat(int fd, struct stat* s)
 	int ret;
 
 	#ifdef __VERBOS_SYSCALL__
-	printk("fstat %d, ", fd);
+	klog("fstat %d, ", fd);
 	#endif
 
     if (fd < 0 || fd >= MAX_FD) {
 		#ifdef __VERBOS_SYSCALL__
-		printf("ret %d\n", -1);
+		klog_printf("ret %d\n", -1);
 		#endif
         return -1;
     }
@@ -311,7 +311,7 @@ int fs_fstat(int fd, struct stat* s)
 
 	if (!node && !dir) {
 		#ifdef __VERBOS_SYSCALL__
-		printf("ret %d\n", -1);
+		klog_printf("ret %d\n", -1);
 		#endif
         return -1;
     }
@@ -322,7 +322,7 @@ int fs_fstat(int fd, struct stat* s)
 		ret = vfs_copy_stat(dir, s, 1);
 	}
 	#ifdef __VERBOS_SYSCALL__
-	printf(" (stat: %x, %d) ret %d\n",s->st_mode, s->st_size, 0);
+	klog_printf(" (stat: %x, %d) ret %d\n",s->st_mode, s->st_size, 0);
 	#endif
 
     return 1;

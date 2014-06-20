@@ -17,7 +17,10 @@ static unsigned int heap_quota;
 static unsigned int heap_quota_high;
 static unsigned int klib_random_num = 1;
 
+
 #ifdef __KERNEL__
+
+
 
 static unsigned int cur_block_top = KHEAP_BEGIN;
 static int cursor = 0;
@@ -53,45 +56,35 @@ static void unlock_heap()
 	spinlock_unlock(&heap_lock);
 }
 
-#ifdef __VERBOS_SYSCALL__
-static INODE krn_log = 0;
-static unsigned krn_log_off = 0;
-static unsigned krn_log_buf_pos = 0;
-static char *krn_log_buf;
+#ifdef __DEBUG__
+static int klog_inited = 0;
 void klog_init()
 {
-	krn_log_buf = vm_alloc(3);
-	krn_log = fs_open_log();
-	krn_log_off = 0;
-	krn_log_buf_pos = 0;
+	klog_inited = 1;
 
-	printk("\n\n===========================\n");
+	klog("\n\n===========================\n");
 	
 }
 
 void klog_write(char c)
 {
-	if (krn_log == 0) {
-		klib_putchar(c);
+	serial_putc(c);
+}
+
+void klog_writestr(char* str)
+{
+	if (!str || !*str) {
 		return;
 	}
-	krn_log_buf[krn_log_buf_pos] = c;
-	if (krn_log_buf_pos >= (3*PAGE_SIZE-1)) {
-		krn_log_off = 0;
-		krn_log_buf_pos = 0;
-	}else{
-		krn_log_buf_pos++;
+
+	while (*str) {
+		serial_putc(*str++);
 	}
 }
 
 void klog_close()
 {
-	if (krn_log_buf_pos) {
-		vfs_write_file(krn_log, krn_log_off, krn_log_buf, krn_log_buf_pos);
-	}
-
-	vfs_free_inode(krn_log);
-	vm_free(krn_log_buf, 3);
+	serial_flush();
 }
 
 #else
@@ -101,7 +94,10 @@ void klog_init()
 
 void klog_write(char c)
 {
-	klib_putchar(c);
+}
+
+void klog_writestr(char* str)
+{
 }
 
 void klog_close()
@@ -159,11 +155,7 @@ void klib_print(char *str)
 	}
 
 	while (*str){
-		#ifdef __VERBOS_SYSCALL__
-		klog_write(*str++);
-		#else
 		klib_putchar( *str++);
-		#endif
 	}
 }
 
@@ -754,12 +746,12 @@ void printf(const char* str, ...)
 {
 	va_list ap;
 	va_start(ap, str);
-	vprintf(str,ap);
+	vprintf(klib_putchar, klib_print, str,ap);
 	va_end(ap);
 }
 
 
-void vprintf(const char* src, va_list ap)
+void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 {
 	int len = strlen(src);
 	int i = 0;
@@ -771,19 +763,13 @@ void vprintf(const char* src, va_list ap)
 			cur = src[i+1];
             switch (cur) {
 			case '%':
-				#ifdef __VERBOS_SYSCALL__
-				klog_write(src[i+1]);
-				#else
-				klib_putchar(src[i+1]);
-				#endif
-				
-				
+				_putc(src[i+1]);
 				break;
 			case 'd':
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 1);
-					klib_print(s);
+					_putstr(s);
 					free(s);
 					break;
 				}
@@ -792,7 +778,7 @@ void vprintf(const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 16, 0);
-					klib_print(s);
+					_putstr(s);
 					free(s);
 					break;
 				}
@@ -800,14 +786,14 @@ void vprintf(const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 0);
-					klib_print(s);
+					_putstr(s);
 					free(s);
 					break;
 				}
 			case 's':
 				{
 					char* arg = va_arg(ap, char*);
-					klib_print(arg);
+					_putstr(arg);
 					break;
 				}
             case 'h':
@@ -818,20 +804,13 @@ void vprintf(const char* src, va_list ap)
                 }
 			default:
 				{
-					#ifdef __VERBOS_SYSCALL__
-					klog_write('?');
-					#else
-					klib_putchar('?');
-					#endif
+					_putc('?');
+					break;
 				}
             }
 			i++;
         }else{
-			#ifdef __VERBOS_SYSCALL__
-			klog_write(cur);
-			#else
-			klib_putchar(cur);
-			#endif
+			_putc(cur);
 		}
     }
 }
@@ -995,9 +974,40 @@ void printk(const char* str, ...)
 	klib_print("]");
     kfree(str_mill);
     va_start(ap, str); 
-	vprintf(str,ap);
+	vprintf(klib_putchar, klib_print, str,ap);
 	va_end(ap);
     unlock_tty();
+}
+
+void klog_printf(const char* str, ...)
+{
+	va_list ap;
+	va_start(ap, str);
+	vprintf(klog_write, klog_writestr, str,ap);
+	va_end(ap);
+}
+
+void klog(char* str, ...)
+{
+	va_list ap;
+    char* str_mill;
+    int len = 0;
+    int i = 0;
+	time_t time;
+	timer_current(&time);
+    str_mill = itoa(time.milliseconds, 10, 0);
+    len = strlen(str_mill);
+    len = 3 - len;
+	klog_printf("[%d.", time.seconds);
+    for (i = 0; i < len; i++) {
+        klog_printf("0");
+    }
+    klog_writestr(str_mill);
+	klog_writestr("]");
+    kfree(str_mill);
+    va_start(ap, str); 
+	vprintf(klog_write, klog_writestr, str,ap);
+	va_end(ap);
 }
 
 void tty_write(const char* buf, unsigned len)

@@ -128,6 +128,8 @@ unsigned int_intr_enable();
 
 unsigned int_intr_disable();
 
+void int_intr_setlevel(unsigned enabled);
+
 #define LOAD_CR3(val) \
     __asm__("movl %%cr3, %0" : "=r"(val))
 

@@ -5,16 +5,10 @@
 #include <int/dsr.h>
 #include <ps/lock.h>
 #include <config.h>
+#include <lib/cyclebuf.h>
 
-static struct _key_buf
-{
-  unsigned len;
-  unsigned write_idx;
-  unsigned read_idx;
-  semaphore lock;
-  spinlock idx_lock;
-  unsigned char buf[KEYBOARD_BUF_LEN];
-}key_buf;
+static cy_buf* buf;
+
 
 /* Current state of shift keys.
    True if depressed, 0 otherwise. */
@@ -84,76 +78,19 @@ static void kb_dsr(void* param);
 // this will wait if empty
 unsigned char kb_buf_get()
 {
-  unsigned length = 0;
-  length = key_buf.len;
-  unsigned read_idx;
-  unsigned char ret;
 
-  if (length == 0)
-    {
-      sema_wait(&key_buf.lock);
-    }
-
-  spinlock_lock(&key_buf.idx_lock);
-
-  read_idx = key_buf.read_idx;
-  ret = key_buf.buf[read_idx];
-  read_idx++;
-  if (read_idx == KEYBOARD_BUF_LEN)
-    read_idx = 0;
-
-  key_buf.read_idx = read_idx;
-  key_buf.len--;
-  if (key_buf.len == 0)
-    sema_reset(&key_buf.lock);
-
-  spinlock_unlock(&key_buf.idx_lock);
-
-  return ret;
+  return cyb_getc(buf);
 }
 
 // this will drop key if full
 static void kb_buf_put(unsigned char key)
 {
-    unsigned length = 0;
-    unsigned write_idx;
-    int needs_trigger = 0;
-
-    length = key_buf.len;
-
-    if (length == KEYBOARD_BUF_LEN)
-      return;
-
-    if (length == 0)
-      needs_trigger = 1;
-
-    spinlock_lock(&key_buf.idx_lock);
-
-    write_idx = key_buf.write_idx;
-    key_buf.buf[write_idx] = key;
-    write_idx++;
-    if (write_idx == KEYBOARD_BUF_LEN)
-      write_idx = 0;
-    key_buf.write_idx = write_idx;
-    key_buf.len++;
-
-    spinlock_unlock(&key_buf.idx_lock);
-
-    if (needs_trigger)
-      sema_trigger(&key_buf.lock);
+  return cyb_putc(buf, key);
 }
 
 void kb_init()
 {
-  int i = 0;
-
-  for (i = 0; i < KEYBOARD_BUF_LEN; i++)
-    {
-      key_buf.buf[i] = 0;
-    }
-  key_buf.len = key_buf.read_idx = key_buf.write_idx = 0;
-  sema_init(&key_buf.lock, "keyboard", 1);
-  spinlock_init(&key_buf.idx_lock);
+  buf = cyb_create("keyboard");
 	int_register(0x21, kb_process, 0, 0); 
 }
 

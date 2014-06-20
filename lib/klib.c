@@ -22,7 +22,7 @@ static unsigned int klib_random_num = 1;
 
 
 
-static unsigned int cur_block_top = KHEAP_BEGIN;
+unsigned int cur_block_top = KHEAP_BEGIN;
 static int cursor = 0;
 #define CUR_ROW (cursor / TTY_MAX_COL)
 #define CUR_COL (cursor % TTY_MAX_COL)

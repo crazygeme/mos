@@ -37,7 +37,7 @@ elif [ "$arg" == "" ]; then
 	_rebuild="0"
 	_debug="0"
 elif [ "$arg" == "logtofile" ]; then
-	_logtofile="krn.log"
+	_logtofile="file:krn.log"
 else
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."

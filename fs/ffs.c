@@ -1338,10 +1338,12 @@ static int ffs_copy_stat(INODE node, struct stat* s, int is_dir)
 		s->st_mode |= S_IFREG;
 		s->st_size = n->meta.len;
 	}else{
-		s->st_size = n->meta.len * sizeof(struct ffs_meta_info);
+		unsigned blocks = n->meta.len * sizeof(struct ffs_meta_info);
+		blocks = (blocks-1) / BLOCK_SECTOR_SIZE + 1;
+		s->st_size = blocks * BLOCK_SECTOR_SIZE ;
 	}
 	s->st_blksize = BLOCK_SECTOR_SIZE;
-	s->st_blocks = super->total_size;
+	s->st_blocks = (s->st_size-1) / BLOCK_SECTOR_SIZE + 3;
 	s->st_ctime = n->meta.mt_create;
 	s->st_dev = 0;
 	s->st_gid = 0;

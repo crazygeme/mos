@@ -16,6 +16,7 @@
 #include <fs/kbchar.h>
 #include <fs/null.h>
 #include <fs/cache.h>
+#include <drivers/serial.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -53,6 +54,10 @@ void kmain_startup()
     int_enable_all();
 
     mm_del_user_map();
+
+    printk("Init serial\n");
+    serial_init_queue();
+
 
     printk("Init keyboard\n");
     kb_init();

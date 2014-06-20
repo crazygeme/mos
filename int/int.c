@@ -439,6 +439,15 @@ unsigned int_intr_disable()
     return old;
 }
 
+void int_intr_setlevel(unsigned enabled)
+{
+	if (enabled) {
+		int_intr_enable();
+	}else{
+		int_intr_disable();
+	}
+}
+
 
 /* Reads CNT bytes from PORT, one after another, and stores them
    into the buffer starting at ADDR. */

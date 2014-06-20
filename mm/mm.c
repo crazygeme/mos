@@ -17,6 +17,10 @@ _START static void mm_setup_beginning_8m();
 static unsigned long long phy_mem_low;
 static unsigned long long phy_mem_high;
 
+unsigned phymm_cur = 0;
+unsigned phymm_high = 0;
+unsigned phymm_max = 0;
+
 _STARTDATA static unsigned long long _phy_mem_low;
 _STARTDATA static unsigned long long _phy_mem_high;
 
@@ -157,18 +161,6 @@ _START static void simulate_paging(unsigned address)
     klib_info("physical address: ", phy, "\n");
 }
 
-void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
-{
-	int mask_index = page_index / 8;
-	int mask_offset = page_index % 8;
-	int mask = 1 << mask_offset;
-	if (used){	
-		free_phy_page_mask[mask_index] |= mask;
-	}else{
-		free_phy_page_mask[mask_index] &= ~mask;
-	}
-}
-
 static unsigned int mm_get_phy_page_mask(unsigned int page_index)
 {
 	int mask_index = page_index / 8;
@@ -177,6 +169,29 @@ static unsigned int mm_get_phy_page_mask(unsigned int page_index)
 
 	return ((free_phy_page_mask[mask_index] & mask));
 }
+
+void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
+{
+	int mask_index = page_index / 8;
+	int mask_offset = page_index % 8;
+	int mask = 1 << mask_offset;
+	if (used){
+		unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
+		unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
+		if (page_index > phy_page_low && page_index < phy_page_high) {
+			phymm_cur += PAGE_SIZE;
+			if (phymm_cur > phymm_high) {
+				phymm_high = phymm_cur;
+			}
+		}
+		free_phy_page_mask[mask_index] |= mask;
+	}else{
+		phymm_cur -= PAGE_SIZE;
+		free_phy_page_mask[mask_index] &= ~mask;
+	}
+}
+
+
 
 static void mm_init_free_phy_page_mask()
 {
@@ -304,6 +319,8 @@ static void mm_high_memory_fun()
 	RELOAD_EIP();
 	phy_mem_high = _phy_mem_high;
 	phy_mem_low = _phy_mem_low;
+	phymm_max = phy_mem_high - phy_mem_low;
+	phymm_cur = phymm_high = 0;
 	// ok now we make esp as virtual address
 	RELOAD_ESP(KERNEL_OFFSET);
 

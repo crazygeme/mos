@@ -44,7 +44,7 @@
 #define outb _write_port
 #define inb _read_port
 /* Transmission mode. */
-static enum { UNINIT, POLL, QUEUE } mode;
+static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 
 /* Data to be transmitted. */
 static cy_buf* txq;

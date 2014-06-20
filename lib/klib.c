@@ -13,8 +13,8 @@
 
 static kblock free_list[513] = { 0 }; 
 static void klib_add_to_free_list(int index, kblock* buf, int force_merge);
-static unsigned int heap_quota;
-static unsigned int heap_quota_high;
+unsigned int heap_quota;
+unsigned int heap_quota_high;
 static unsigned int klib_random_num = 1;
 
 

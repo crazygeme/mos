@@ -197,7 +197,8 @@
 #define __NR_lstat64 196
 #define __NR_fstat64 197
 
-#define NR_syscalls 198
+#define __NR_quota 198
+#define NR_syscalls 199
 
 #define	_SYS_NAMELEN	65 // in linux 2.1
 
@@ -314,5 +315,14 @@ struct termios
     speed_t c_ispeed;           /* input speed */
     speed_t c_ospeed;           /* output speed */
   };
+
+struct krnquota
+{
+	unsigned heap_cur;  // current usage
+	unsigned heap_wm; 	// water mask
+	unsigned phymm_max;
+	unsigned phymm_cur;
+	unsigned phymm_wm;
+};
 
 #endif

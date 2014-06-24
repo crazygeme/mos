@@ -534,6 +534,7 @@ static INODE ffs_get_root(struct filesys_type* t)
 	memcpy(&node->meta, &super->root, sizeof(super->root));
 	node->meta_sector = 0;
 	node->meta_offset = &(((struct ffs_super_node*)0)->root);
+	node->ref_count = 0;
 	return node;
 }
 
@@ -1066,6 +1067,7 @@ static DIR ffs_open_dir(INODE inode)
 	dir->type = inode->type;
 	dir->cur = 0;
 	memcpy(&dir->self, node, sizeof(*node));
+	dir->ref_count = 0;
 	return dir;
 }
 
@@ -1098,6 +1100,7 @@ static INODE ffs_read_dir(DIR d)
 
 	ret->type = dir->type;
 	dir->cur++;
+	ret->ref_count = 0;
 	return ret;
 	
 	

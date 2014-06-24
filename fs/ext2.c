@@ -292,6 +292,7 @@ static INODE ext2_get_root(struct filesys_type* type)
     ext2_read_inode(type, 0, EXT2_ROOT_INO, node);
     strcpy(info->name, "");
     info->type = type;
+	info->ref_count = 0;
     return info;
 
 }
@@ -381,6 +382,7 @@ static DIR ext2_open_dir(INODE node)
     dir->cur_block = kmalloc(EXT2_BLOCK_SIZE(sb)); 
     ext2_read_block(dir->type, data_block, dir->cur_block);
     dir->dir = (struct ext2_dir_entry_2*)dir->cur_block;
+	dir->ref_count = 0;
     return dir;
 }
 
@@ -427,7 +429,7 @@ static INODE ext2_read_dir(DIR d)
 
 
 
-
+	ret->ref_count = 0;
     return ret;
 }
 

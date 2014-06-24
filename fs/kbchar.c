@@ -73,6 +73,7 @@ static INODE kb_get_root(struct filesys_type* t)
 {
 	INODE n = kmalloc(sizeof(*n));
 	n->type = t;
+	n->ref_count = 0;
 	return n;
 }
 

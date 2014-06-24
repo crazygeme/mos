@@ -143,10 +143,17 @@ void klib_putchar(char c)
 		new_pos = cursor;
     } else if (c  == '\r') {
 		new_pos = ROW_COL_TO_CUR(CUR_ROW, 0);
-	}else{
+    } else if (c == '\b' ) {
+        cursor --;
+        tty_putchar( CUR_ROW, CUR_COL, ' ');
+        new_pos = cursor;
+        
+	}else if (isprint(c)){
 		tty_putchar( CUR_ROW, CUR_COL, c);
 		new_pos = cursor + 1;
-	}
+	}else{
+        return;
+    }
 
 	klib_cursor_forward(new_pos);
 }
@@ -745,6 +752,16 @@ int isupper(int c)
 	return (c >= 'A' && c <= 'Z');
 }
 
+int isprint(int c)
+{
+    
+      if((c > 31) && (c <  127))
+      {
+         return 1;
+      }
+   
+      return 0;
+}
 
 void printf(const char* str, ...)
 {

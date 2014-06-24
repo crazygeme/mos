@@ -42,8 +42,6 @@ void cyb_putc(cy_buf* b, unsigned char key)
 
 	length = b->len;
 
-	if (length == PIPE_BUF_LEN)
-		return;
 
 	if (length == 0)
 		needs_trigger = 1;
@@ -56,12 +54,20 @@ void cyb_putc(cy_buf* b, unsigned char key)
 	if (write_idx == PIPE_BUF_LEN)
 		write_idx = 0;
 	b->write_idx = write_idx;
+
+    if (b->write_idx == b->read_idx) {
+        b->read_idx++;
+        if (b->read_idx == PIPE_BUF_LEN) {
+            b->read_idx = 0;
+        }
+        b->len--;
+    }
 	b->len++;
 
 	spinlock_unlock(&b->idx_lock);
 
   if (key == EOF)
-			b->write_closed = 1;
+		b->write_closed = 1;
 
 	if (needs_trigger)
 		sema_trigger(&b->lock);
@@ -79,9 +85,9 @@ unsigned char cyb_getc(cy_buf* b)
 
   if (length == 0)
     {
-			if (b->write_closed)
-					return EOF;
-
+      if (b->write_closed){
+			return EOF;
+      }
       sema_wait(&b->lock);
     }
 

@@ -112,7 +112,6 @@ void vfs_free_inode(INODE node)
     if (node->ref_count == 0) {
         type->super_ops->free_inode(type, node);
     }else{
-        klog("not free inode??\n");
     }
 }
 

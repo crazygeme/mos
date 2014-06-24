@@ -97,7 +97,7 @@ static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsi
 		tmp++;
 	}
 
-	return i;
+    return i; 
 }
 
 static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, unsigned len)

@@ -94,7 +94,7 @@ int PushStack(PSTACK stack, unsigned int val)
 {
 	if (stack->top < 1024){
 		stack->mem[stack->top] = val;
-		stack->top++;
+		__sync_add_and_fetch(&(stack->top), 1);
 		return 1;
 	}else{
 		return 0;
@@ -103,12 +103,15 @@ int PushStack(PSTACK stack, unsigned int val)
 
 unsigned int PopStack(PSTACK stack)
 {
+	unsigned ret = 0;
 	if (stack->top > 0){
-		stack->top --;
-		return stack->mem[stack->top];
+		__sync_add_and_fetch(&(stack->top), -1);
+		ret = stack->mem[stack->top];
 	}else{
-		return 0;
+		ret = 0;
 	}
+
+	return ret;
 }
 
 

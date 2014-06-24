@@ -13,4 +13,5 @@ int cyb_isempty(cy_buf* b);
 
 int cyb_isfull(cy_buf* b);
 
+
 #endif

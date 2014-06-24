@@ -2,6 +2,7 @@
 #include <ps/lock.h>
 #include <lib/klib.h>
 #include <config.h>
+#include <fs/vfs.h>
 
 typedef struct _cy_buf
 {
@@ -10,6 +11,7 @@ typedef struct _cy_buf
   unsigned read_idx;
   semaphore lock;
   spinlock idx_lock;
+	int write_closed;
   unsigned char buf[PIPE_BUF_LEN];
 }cy_buf;
 
@@ -25,6 +27,7 @@ cy_buf* cyb_create(char* name)
 	}
 
 	ret->len = ret->read_idx = ret->write_idx = 0;
+	ret->write_closed = 0;
 	sema_init(&ret->lock, name, 1);
 	spinlock_init(&ret->idx_lock); 
 
@@ -57,6 +60,9 @@ void cyb_putc(cy_buf* b, unsigned char key)
 
 	spinlock_unlock(&b->idx_lock);
 
+  if (key == EOF)
+			b->write_closed = 1;
+
 	if (needs_trigger)
 		sema_trigger(&b->lock);
 
@@ -69,8 +75,13 @@ unsigned char cyb_getc(cy_buf* b)
   unsigned read_idx;
   unsigned char ret;
 
+
+
   if (length == 0)
     {
+			if (b->write_closed)
+					return EOF;
+
       sema_wait(&b->lock);
     }
 

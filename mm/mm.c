@@ -450,7 +450,7 @@ void mm_del_direct_map(unsigned int vir)
 	}
 
 	if (empty){
-		mm_free_page_table( (unsigned int)page_table + KERNEL_OFFSET);
+		mm_free_page_table( (unsigned int)page_table);
 		page_dir[page_dir_offset] = 0;
 	}
 }
@@ -466,10 +466,12 @@ void mm_del_user_map()
 unsigned int mm_alloc_page_table()
 {
 	unsigned int *ret = PopStack(&page_table_cache);
-	
+	task_struct* cur = CURRENT_TASK();
 	if (ret == 0)
 	  return ret;
-	//printk("alloc page table %x\n", ret);
+	if (ret < 0xC0000000) {
+		printk("[%d] alloc page table %x\n", cur->psid, ret);
+	}
 	memset(ret, 0, PAGE_SIZE);
 	return ret;
 }
@@ -478,7 +480,9 @@ void mm_free_page_table(unsigned int vir)
 {	
 	int ret = PushStack(&page_table_cache, vir);
 
-	// printk("free page table %x\n", vir);
+	if (vir < 0xC0000000) {
+		printk("free page table %x\n", vir);
+	}
 
 	if (!ret){
 		printk("fatal error: stack overflow\n");

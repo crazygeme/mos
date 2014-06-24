@@ -19,6 +19,7 @@ static unsigned pipe_get_mode(INODE inode);
 static int pipe_copy_stat(INODE node, struct stat* s, int is_dir);
 static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsigned len);
 static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, unsigned len);
+
 static struct super_operations pipe_super_operations = {
 	0,
 	0,
@@ -61,6 +62,8 @@ void pipe_init()
 
 static void pipe_free_inode(struct filesys_type* t, INODE n)
 {
+	pipe_inode* node = (pipe_inode*)n;
+	kfree(node->buf);
 	kfree(n);
 }
 
@@ -78,30 +81,36 @@ static unsigned pipe_get_mode(INODE inode)
 	return (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR | S_IRGRP | S_IROTH);
 }
 
+
 static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsigned len)
 {
 	int i = 0;
 	pipe_inode* n = (pipe_inode*)inode;
+	unsigned char* tmp = buf;
 
 	while(i < len)
 	{
-		*buf = cyb_getc(n->buf);
+		*tmp = cyb_getc(n->buf);
+		if (*tmp == EOF)
+			break;
 		i++;
-		buf++;
+		tmp++;
 	}
-	return len;
+
+	return i;
 }
 
 static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, unsigned len)
 {
 	int i = 0;
 	pipe_inode* n = (pipe_inode*)inode;
+	unsigned char* tmp = buf;
 
 	while(i < len)
 	{
-		cyb_putc(n->buf, *buf);
+		cyb_putc(n->buf, *tmp);
 		i++;
-		buf++;
+		tmp++;
 	}
 	return len;
 }

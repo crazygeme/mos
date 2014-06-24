@@ -121,7 +121,27 @@ void fs_close(unsigned int fd)
     INODE node = 0;
 	DIR   dir = 0;
 	int isdir;
-	void* ret = fs_clear_fd(fd,&isdir);
+	void* ret = 0;
+	task_struct* cur = CURRENT_TASK();
+
+	if (!cur->fds[fd].flag) {
+		return;
+	}
+
+	// FIXME
+	// hack for pipe
+	if (cur->fds[fd].flag &&
+		cur->fds[fd].file->ref_count <= 2 &&
+		!strcmp(cur->fds[fd].path, "/dev/pipe") &&
+		cur->fds[fd].flag & fd_flag_writonly) {
+		char tmp[2] = {0};
+		tmp[0] = EOF;
+		fs_write(fd, 0, tmp, 1);
+	}
+
+
+
+	ret = fs_clear_fd(fd,&isdir);
 
 	#ifdef __VERBOS_SYSCALL__
 	klog("close %d, isdir %d\n", fd, isdir);

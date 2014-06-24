@@ -42,6 +42,8 @@
 #define S_IWOTH 00002
 #define S_IXOTH 00001
 
+#define EOF ((unsigned char)(-1))
+
 typedef struct _INODE* INODE;
 typedef struct _INODE* DIR;
 typedef void* SUPORBLOCK;

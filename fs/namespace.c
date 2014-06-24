@@ -22,6 +22,8 @@ static void* fs_clear_fd(unsigned fd, int* isdir);
 static unsigned fs_dir_get_free_fd(DIR node, char* path);
 static DIR fs_dir_get_fd(unsigned id);
 
+static unsigned fs_dup_to_free_fd(unsigned fd);
+
 unsigned fs_open(char* path)
 {
     INODE node = 0;
@@ -76,6 +78,42 @@ unsigned fs_open(char* path)
 
 	kfree(fullPath);
     return fd;
+}
+
+int fs_dup(int oldfd)
+{
+	unsigned fd = fs_dup_to_free_fd(oldfd);
+	if (fd == MAX_FD) {
+		return 0xffffffff;
+	}
+
+	return fd;
+}
+
+int fs_dup2(int oldfd, int newfd)
+{
+	task_struct* cur = CURRENT_TASK();
+
+	if (!cur->fds[oldfd].flag) {
+		return -1;
+	}
+
+
+	if (cur->fds[newfd].flag) {
+		fs_close(newfd);
+	}
+
+	sema_wait(&cur->fd_lock);
+
+
+	cur->fds[newfd] = cur->fds[oldfd];
+	cur->fds[newfd].path = strdup(cur->fds[oldfd].path);
+	vfs_refrence(cur->fds[oldfd].file);
+
+
+    sema_trigger(&cur->fd_lock);
+
+	return 0;
 }
 
 void fs_close(unsigned int fd)
@@ -530,6 +568,34 @@ static unsigned fs_get_free_fd(INODE node, char* path)
 
     return i;
 
+}
+
+static unsigned fs_dup_to_free_fd(unsigned fd)
+{
+    task_struct* cur = CURRENT_TASK();
+	int i = 0;
+
+	if (cur->fds[fd].flag == 0) {
+		return MAX_FD;
+	}
+
+
+    sema_wait(&cur->fd_lock);
+
+    for (i = 0; i < MAX_FD; i++) {
+        if (cur->fds[i].flag != 0) {
+            continue;
+        }
+
+		cur->fds[i] = cur->fds[fd];
+		cur->fds[i].path = strdup(cur->fds[fd].path);
+		vfs_refrence(cur->fds[fd].file);
+		break;
+    }
+
+    sema_trigger(&cur->fd_lock);
+
+	return i;
 }
 
 static INODE fs_get_fd(unsigned fd, char* path)

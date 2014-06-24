@@ -7,6 +7,7 @@ typedef struct _spinlock
 	unsigned int lock;
 	int inited;
 	unsigned int int_status;
+	unsigned holder;
 }spinlock, *spinlock_t;
 
 void spinlock_init(spinlock_t lock);

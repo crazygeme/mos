@@ -177,8 +177,11 @@ typedef struct _fd_type
 
 #define fd_flag_isdir 0x00000001
 #define fd_flag_readonly 0x00000002
-#define fd_flag_create 0x00000004
-#define fd_flag_append 0x00000008
+#define fd_flag_writonly 0x00000004
+#define fd_flag_rw		0x00000008
+#define fd_flag_create 0x00000010
+#define fd_flag_append 0x00000020
+#define fd_flag_closeexec 0x00000040
 #define fd_flag_used	0x80000000
 
 

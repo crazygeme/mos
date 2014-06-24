@@ -16,6 +16,7 @@
 #include <fs/kbchar.h>
 #include <fs/null.h>
 #include <fs/cache.h>
+#include <fs/pipechar.h>
 #include <drivers/serial.h>
 
 static void run(void);
@@ -138,6 +139,8 @@ static void kmain_process(void* param)
     console_init();
 
     null_init();
+
+    pipe_init();
 
 
     printk("Init file cache for libc, it take times...\n");

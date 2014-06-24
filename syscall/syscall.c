@@ -138,7 +138,8 @@ static int sys_sigprocmask(int how, void* set, void * oset);
 static int sys_pause();
 static int sys_utime(const char *filename, const struct utimbuf *times);
 static int sys_quota(struct krnquota* quota);
-
+static int sys_pipe(int pipefd[2]);
+static int sys_dup2(int oldfd, int newfd);
 
 static int resolve_path(char* old, char* new);
 
@@ -152,11 +153,11 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, "sys_pause", "sys_utime",          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
-    0, 0, 0, 0, "sys_brk",          // 41 ~ 45 
+    0, "sys_pipe", 0, 0, "sys_brk",          // 41 ~ 45 
     0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
     0, 0, 0, "sys_ioctl", "sys_fcntl",          // 51 ~ 55 
     0, "sys_setpgid", 0, 0, 0,          // 56 ~ 60 
-    0, 0, 0, "sys_getppid", "sys_getpgrp",          // 61 ~ 65 
+    0, 0, "sys_dup2", "sys_getppid", "sys_getpgrp",          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
@@ -198,11 +199,11 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
     0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
-    0, 0, 0, 0, sys_brk,          // 41 ~ 45 
+    0, sys_pipe, 0, 0, sys_brk,          // 41 ~ 45 
     0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
     0, 0, 0, sys_ioctl, sys_fcntl,          // 51 ~ 55 
     0, sys_setpgid, 0, 0, 0,          // 56 ~ 60 
-    0, 0, 0, sys_getppid, sys_getpgrp,          // 61 ~ 65 
+    0, 0, sys_dup2, sys_getppid, sys_getpgrp,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     0, 0, 0, 0, 0,          // 76 ~ 80 
@@ -416,8 +417,10 @@ static int sys_open(const char* _name, int flags, unsigned mode)
 	int creat_if_not_exist = 0;
 	int resize_to_zero = 0;
 	int open_mode = flags & O_ACCMODE;
+	int close_on_exec = flags & FD_CLOEXEC;
 	struct stat s;
 	int fd = -1;
+	task_struct* cur = CURRENT_TASK();
 
 	if (flags & O_CREAT)
 		creat_if_not_exist = 1;
@@ -448,6 +451,11 @@ static int sys_open(const char* _name, int flags, unsigned mode)
 
 	fd = fs_open(name);
 	kfree(name);
+
+	if (fd != -1 && close_on_exec){
+		cur->fds[fd].flag |= fd_flag_closeexec;
+	}
+
 
 	return fd;
 }
@@ -976,4 +984,41 @@ static int sys_quota(struct krnquota* quota)
 	return 0;
 }
 
+
+static int sys_pipe(int pipefd[2])
+{
+	task_struct* cur = CURRENT_TASK();
+	int readfd = fs_open("/dev/pipe");
+	int writfd = -1;
+
+	if (readfd == -1)
+		return -1;
+
+	writfd = fs_dup(readfd);
+	if (writfd == -1)
+		return -1;
+
+	cur->fds[readfd].flag |= fd_flag_readonly;
+	cur->fds[writfd].flag |= fd_flag_writonly;
+	pipefd[0] = readfd;
+	pipefd[1] = writfd;
+
+	#ifdef __VERBOS_SYSCALL__
+	klog("sys_pipe(pipefd[%d,%d])\n", readfd, writfd);
+	#endif
+
+	return 0;
+}
+
+static int sys_dup2(int oldfd, int newfd)
+{
+	#ifdef __VERBOS_SYSCALL__
+	klog("sys_dup2(%d, %d)\n", oldfd, newfd);
+	#endif
+
+	if (oldfd == -1 || newfd == -1)
+		return -1;
+
+	return fs_dup2(oldfd, newfd);
+}
 

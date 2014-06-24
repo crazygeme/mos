@@ -108,16 +108,27 @@ void vfs_free_inode(INODE node)
         return ;
     }
 
-    return type->super_ops->free_inode(type, node);
+    __sync_add_and_fetch(&(node->ref_count), -1);
+    if (node->ref_count == 0) {
+        type->super_ops->free_inode(type, node);
+    }else{
+        klog("not free inode??\n");
+    }
 }
 
 INODE vfs_get_root(struct filesys_type* type)
 {
+    INODE root = 0;
     if (!type || !type->super_ops || !type->super_ops->get_root) {
         return 0;
     }
 
-    return type->super_ops->get_root(type);
+    root = type->super_ops->get_root(type);
+    if (root) {
+        vfs_refrence(root);
+    }
+
+    return root;
 }
 
 
@@ -156,23 +167,34 @@ unsigned vfs_write_file(INODE inode, unsigned int offset, void* buf, unsigned le
 DIR vfs_open_dir(INODE inode)
 {
     struct filesys_type* type = inode->type;
+    DIR dir = 0;
 
     if (!type || !type->ino_ops || !type->ino_ops->open_dir) {
         return 0;
     }
 
-    return type->ino_ops->open_dir(inode);
+    dir = type->ino_ops->open_dir(inode);
+    if (dir) {
+        vfs_refrence((INODE)dir);
+    }
+
+    return dir;
 }
 
 INODE vfs_read_dir( DIR dir)
 {
     struct filesys_type* type = dir->type;
-
+    INODE node = 0;
     if (!type || !type->ino_ops || !type->ino_ops->read_dir) {
         return 0;
     }
 
-    return type->ino_ops->read_dir(dir);
+    node = type->ino_ops->read_dir(dir);
+    if (node) {
+        vfs_refrence(node);
+    }
+
+    return node;
 }
 
 void vfs_add_dir_entry(DIR dir, unsigned mode, char* name)
@@ -205,7 +227,11 @@ void vfs_close_dir(DIR dir)
         return ;
     }
 
-    return type->ino_ops->close_dir(dir);
+    __sync_add_and_fetch(&(dir->ref_count), -1);
+
+    if (dir->ref_count == 0) {
+        type->ino_ops->close_dir(dir);
+    }
 }
 
 char* vfs_get_name(INODE node)
@@ -255,6 +281,11 @@ void vfs_close(struct filesys_type* type)
     if (type->super_ops->write_desc) {
         type->super_ops->write_desc(type, type->desc);
     }
+}
+
+void vfs_refrence(INODE node)
+{
+    __sync_add_and_fetch(&(node->ref_count), 1);
 }
 
 

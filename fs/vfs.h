@@ -86,6 +86,7 @@ struct filesys_type{
 typedef struct _INODE
 {
     struct filesys_type* type;
+	unsigned ref_count;
 
 }*INODE,*DIR;
 
@@ -141,5 +142,7 @@ unsigned vfs_get_size(INODE node);
 int vfs_copy_stat(INODE node, struct stat* s, int is_dir);
 
 void vfs_close(struct filesys_type* type);
+
+void vfs_refrence(INODE node);
 
 #endif

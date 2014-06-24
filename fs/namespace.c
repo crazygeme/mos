@@ -427,14 +427,18 @@ static INODE fs_get_dirent_node(INODE node, char* name)
 static INODE fs_check_mountpoint(char* path)
 {
 	struct filesys_type* type = 0;
-
+	INODE node = 0;
 	type = mount_lookup(path);
 	if (!type || !type->super_ops || !type->super_ops->get_root) {
 		return 0;
 	}
 
 
-	return type->super_ops->get_root(type);
+	node = type->super_ops->get_root(type);
+	if (node) {
+		vfs_refrence(node);
+	}
+	return node;
 
 }
 

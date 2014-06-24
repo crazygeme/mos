@@ -189,6 +189,8 @@ int islower(int c);
 
 int isupper(int c);
 
+int isprint(int c);
+
 void srand(unsigned _seed);
 
 

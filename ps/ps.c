@@ -201,7 +201,20 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
 static void ps_dup_fds(task_struct* cur, task_struct* task)
 {
     unsigned fd;
+    int i = 0;
     memset(task->fds, 0, PAGE_SIZE);
+    sema_wait(&cur->fd_lock);
+    for (i = 0; i < MAX_FD; i++) {
+        if (!cur->fds[i].flag) {
+            continue;
+        }
+
+        task->fds[i] = cur->fds[i];
+        task->fds[i].path = strdup(cur->fds[i].path);
+        vfs_refrence(cur->fds[i].file);
+    }
+    sema_trigger(&cur->fd_lock);
+
 
 }
 

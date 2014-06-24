@@ -80,6 +80,7 @@
 			<F N="fs/namespace.c"/>
 			<F N="fs/null.c"/>
 			<F N="mm/pagefault.c"/>
+			<F N="fs/pipechar.c"/>
 			<F N="ps/ps.c"/>
 			<F N="user/ps0.c"/>
 			<F N="mm/region.c"/>
@@ -101,6 +102,7 @@
 			<F N="int/dsr.h"/>
 			<F N="ps/elf.h"/>
 			<F N="fs/ext2.h"/>
+			<F N="fs/fcntl.h"/>
 			<F N="fs/ffs.h"/>
 			<F N="drivers/hdd.h"/>
 			<F N="int/int.h"/>
@@ -115,6 +117,7 @@
 			<F N="fs/namespace.h"/>
 			<F N="fs/null.h"/>
 			<F N="mm/pagefault.h"/>
+			<F N="fs/pipechar.h"/>
 			<F N="ps/ps.h"/>
 			<F N="user/ps0.h"/>
 			<F N="mm/region.h"/>

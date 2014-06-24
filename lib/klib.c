@@ -33,6 +33,7 @@ static void klib_cursor_forward(int new_pos);
 
 static spinlock tty_lock;
 static spinlock heap_lock;
+static semaphore klog_lock;
 
 
 
@@ -61,6 +62,7 @@ static int klog_inited = 0;
 void klog_init()
 {
 	klog_inited = 1;
+	sema_init(&klog_lock, "klog", 0);
 
 	klog("\n\n===========================\n");
 	
@@ -90,6 +92,7 @@ void klog_close()
 #else
 void klog_init()
 {
+	sema_init(&klog_lock, "klog", 0);
 }
 
 void klog_write(char c)
@@ -413,6 +416,7 @@ void free(void* buf)
 	size = block->size;
 	if (size == 0xdeadbeef) {
 		// double free
+		printf("double free!\n");
 		*((int *)0) = 0;
 	}
 	free_list_index = size / 8 + 1;
@@ -994,6 +998,9 @@ void klog(char* str, ...)
     int len = 0;
     int i = 0;
 	time_t time;
+
+	sema_wait(&klog_lock);
+
 	timer_current(&time);
     str_mill = itoa(time.milliseconds, 10, 0);
     len = strlen(str_mill);
@@ -1008,6 +1015,8 @@ void klog(char* str, ...)
     va_start(ap, str); 
 	vprintf(klog_write, klog_writestr, str,ap);
 	va_end(ap);
+
+	sema_trigger(&klog_lock);
 }
 
 void tty_write(const char* buf, unsigned len)

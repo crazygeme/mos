@@ -33,5 +33,7 @@ void fs_flush(char* filesys);
 
 int sys_readdir(unsigned fd, struct dirent* entry);
 
+int fs_dup(int oldfd);
 
+int fs_dup2(int oldfd, int newfd);
 #endif

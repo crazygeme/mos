@@ -373,6 +373,7 @@ int sys_exit(unsigned status)
 
     if (cur->user.page_dir) {
         vm_free(cur->user.page_dir, 1);
+        cur->user.page_dir = 0;
     }
 
     if (cur->psid == 0) {
@@ -637,9 +638,11 @@ static void _task_sched(PLIST_ENTRY wait_list) {
         ps_put_task(wait_list, current);
     }
 
-    // save page dir entry for kernel space
-    ps_save_kernel_map(task);
 
+    if (current->status != ps_dying) {
+        // save page dir entry for kernel space
+        ps_save_kernel_map(task);
+    }
 	
 
 

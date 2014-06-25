@@ -3,6 +3,7 @@
 #include <drivers/tty.h>
 #include <int/timer.h>
 #include <ps/lock.h>
+#include <ps/ps.h>
 #include <fs/vfs.h>;
 #else
 #include <syscall.h>
@@ -1015,6 +1016,7 @@ void klog(char* str, ...)
     int len = 0;
     int i = 0;
 	time_t time;
+    task_struct* cur = CURRENT_TASK();
 
 	sema_wait(&klog_lock);
 
@@ -1022,7 +1024,7 @@ void klog(char* str, ...)
     str_mill = itoa(time.milliseconds, 10, 0);
     len = strlen(str_mill);
     len = 3 - len;
-	klog_printf("[%d.", time.seconds);
+	klog_printf("[%d: %d.", cur->psid, time.seconds );
     for (i = 0; i < len; i++) {
         klog_printf("0");
     }

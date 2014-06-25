@@ -1031,6 +1031,7 @@ static int sys_pipe(int pipefd[2])
 
 static int sys_dup2(int oldfd, int newfd)
 {
+	int ret = -1;
 	#ifdef __VERBOS_SYSCALL__
 	klog("sys_dup2(%d, %d)\n", oldfd, newfd);
 	#endif
@@ -1041,7 +1042,16 @@ static int sys_dup2(int oldfd, int newfd)
 	if (oldfd >= MAX_FD || newfd >= MAX_FD)
 		return -1;
 
-	return fs_dup2(oldfd, newfd);
+    if (oldfd == newfd) {
+		return oldfd;
+    }
+
+	ret = fs_dup2(oldfd, newfd);
+    if (ret == 0) {
+        return newfd;
+    }
+
+	return ret;
 }
 
 static int sys_dup(int oldfd)

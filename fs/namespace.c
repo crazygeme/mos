@@ -310,24 +310,15 @@ int fs_stat(char* path, struct stat* s)
 		strcpy(fullPath, path);
 	}
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("stat %s, ", fullPath);
-	#endif
 
 	node = fs_lookup_inode(fullPath);
     if (!node) {
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %d\n", -1);
-		#endif
 		kfree(fullPath);
         return -1;
     }
 
     ret = vfs_copy_stat(node,s, 0);
     vfs_free_inode(node);
-	#ifdef __VERBOS_SYSCALL__
-	klog_printf("ret %d\n", 0);
-	#endif
 	kfree(fullPath);
     return 0;
 }

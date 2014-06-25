@@ -481,22 +481,13 @@ static int sys_brk(unsigned top)
 		task->user.heap_top += PAGE_SIZE;
     }
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("brk: cur %x newtop %x, ", task->user.heap_top, top);
-	#endif
+
 	if ( top == 0 )
 	{
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", task->user.heap_top);
-		#endif
-
 		return task->user.heap_top;
 	}
 	else if (top >= USER_HEAP_END)
 	{
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", task->user.heap_top);
-		#endif
 		return task->user.heap_top;
 	}
 	else if ( top > task->user.heap_top)
@@ -513,14 +504,9 @@ static int sys_brk(unsigned top)
 
 		top = task->user.heap_top + pages * PAGE_SIZE;
 		task->user.heap_top = top;
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", top);
-		#endif
 		return top;
 
 	}else{
-		// FIXME
-		// free heap
 		int i = 0;
 
 		if (top < USER_HEAP_BEGIN)
@@ -533,11 +519,11 @@ static int sys_brk(unsigned top)
 			unsigned vir = top + i * PAGE_SIZE;
 			mm_del_dynamic_map(vir);
 		}
-
-		task->user.heap_top = top;
 		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %x\n", top);
+		klog("brk: cur %x newtop %x, ret %x\n", task->user.heap_top, top, top);
 		#endif
+		task->user.heap_top = top;
+
 		return top;
 
 	}

@@ -11,6 +11,7 @@ typedef struct _ps_control
     LIST_ENTRY dying_queue;
 }ps_control;
 
+static unsigned cur_cr3, cr3, next_cr3;
 
 static ps_control control;
 static spinlock ps_lock;
@@ -156,9 +157,8 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->user.page_dir = (unsigned int)vm_alloc(1);
     // 0 ~ KERNEL_PAGE_DIR_OFFSET-1 are dynamic, KERNEL_PAGE_DIR_OFFSET ~ 1023 are shared
     memset(task->user.page_dir, 0, PAGE_SIZE);
-    InitializeListHead(&(task->user.page_table_list));
 
-	stack_buttom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
+    stack_buttom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
     task->esp0 = task->ebp = stack_buttom;
     LOAD_CR3(task->cr3);
 
@@ -241,6 +241,14 @@ static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
     mm_set_phy_page_mask( (tmp-KERNEL_OFFSET) / PAGE_SIZE, 1);
 }
 
+
+static void ps_enum_for_dup(void* aux, unsigned vir, unsigned phy)
+{
+    unsigned int* new_ps = aux;
+    ps_dup_user_page(vir, new_ps, PAGE_ENTRY_USER_DATA);
+
+}
+
 static void ps_dup_user_maps(task_struct* cur, task_struct* task)
 {
     unsigned int* per_ps = 0;
@@ -257,19 +265,8 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
         new_ps[i] = 0;
     }
 
-    InitializeListHead(&(task->user.page_table_list));
-    entry = cur->user.page_table_list.Flink;
-    while (entry != (&cur->user.page_table_list)) {
-        page_table_list_entry* pt = CONTAINER_OF(entry, page_table_list_entry, list);
-        page_table_list_entry* new_entry = kmalloc(sizeof(*new_entry));
 
-        ps_dup_user_page(pt->addr, new_ps, PAGE_ENTRY_USER_DATA);
-
-        new_entry->addr = pt->addr;
-        InsertTailList(&task->user.page_table_list, &new_entry->list);
-
-        entry = entry->Flink;
-    }
+    ps_enum_user_map(cur, ps_enum_for_dup, new_ps);
 }
 
 static void ps_resolve_ebp_to_new(unsigned ebp)
@@ -346,7 +343,8 @@ int sys_fork()
     }else{
         cur = CURRENT_TASK();
         ps_update_tss(cur->esp0);
-        ps_restore_user_map();
+        next_cr3 = cur->user.page_dir - KERNEL_OFFSET;
+        RELOAD_CR3(next_cr3);
         cur->is_switching = 0;
         int_intr_enable();
         return 0; 
@@ -510,16 +508,42 @@ task_struct* CURRENT_TASK() {
     __asm__("popl %eax");\
     __asm__("jmp *%eax");
 
+
+static void ps_cleanup_enum_callback(void* aux, unsigned vir, unsigned phy)
+{
+    mm_del_dynamic_map(vir);
+}
+
 void ps_cleanup_all_user_map(task_struct* task)
 {
-    PLIST_ENTRY entry;
-    page_table_list_entry* node;
+    ps_enum_user_map(task, ps_cleanup_enum_callback, 0);
+}
 
-    while (!IsListEmpty(&(task->user.page_table_list))) {
-        entry = RemoveHeadList(&(task->user.page_table_list));
-        node = CONTAINER_OF(entry, page_table_list_entry, list);
-        mm_del_dynamic_map(node->addr);
-        kfree(node);
+void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux)
+{
+    unsigned i = 0, j = 0;
+
+    if (!fn) {
+        return;
+    }
+
+    if (task->user.page_dir) {
+        unsigned int* page_dir = (unsigned int*)task->user.page_dir;
+        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+            unsigned *page_table = (unsigned*)(page_dir[i] & PAGE_SIZE_MASK);
+            if (!page_table) {
+                continue;
+            }
+
+            page_table = (unsigned*)((unsigned)page_table + KERNEL_OFFSET);
+            for (j = 0; j < 1024; j++) {
+                if (page_table[j] != 0) {
+                    unsigned vir = (i << 22) + (j << 12);
+                    unsigned phy = page_table[i] & PAGE_SIZE_MASK;
+                    fn(aux, vir, phy);
+                }
+            }
+        }
     }
 }
 
@@ -527,20 +551,18 @@ void ps_cleanup_dying_task()
 {
 }
 
-static void ps_save_user_map()
+static void ps_save_kernel_map(task_struct* task)
 {
-    task_struct *current = 0;
     int i = 0;
-    current = CURRENT_TASK();
 
-    if (current->user.page_dir) {
+    if (task->user.page_dir) {
         unsigned int cr3;
         unsigned int* in_use;
-        unsigned int* per_ps = (unsigned int*)current->user.page_dir;
+        unsigned int* per_ps = (unsigned int*)task->user.page_dir;
 
         __asm__("movl %%cr3, %0" : "=q"(cr3));
         in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+        for (i = KERNEL_PAGE_DIR_OFFSET; i < 1024; i++) {
             per_ps[i] = in_use[i];
         }
     }
@@ -589,6 +611,7 @@ static task_struct* ps_get_next_task(PLIST_ENTRY wait_list)
 static void _task_sched(PLIST_ENTRY wait_list) {
     task_struct *task = 0;
     task_struct *current = 0;
+    unsigned pdr;
     int i = 0;
     int intr_enabled = int_is_intr_enabled();
 
@@ -597,20 +620,26 @@ static void _task_sched(PLIST_ENTRY wait_list) {
     current->is_switching = 1;
     // put self to ready queue, and choose next
     task = ps_get_next_task(wait_list);
+
+    cur_cr3 = current->user.page_dir - KERNEL_OFFSET;
+    __asm__("movl %%cr3, %0" : "=q"(cr3));
     if (!task) {
         task = current;
+        next_cr3 = cur_cr3;
         goto SELF;
     }
     task->status = ps_running; 
-
+    next_cr3 = task->user.page_dir - KERNEL_OFFSET;
 
     if (current->status != ps_dying &&
         current->psid != 0xffffffff) {
         current->status = ps_ready; 
         ps_put_task(wait_list, current);
-        // save page dir entry for user space
-        ps_save_user_map();
     }
+
+    // save page dir entry for kernel space
+    ps_save_kernel_map(task);
+
 	
 
 
@@ -625,11 +654,13 @@ static void _task_sched(PLIST_ENTRY wait_list) {
 
     __asm__("NEXT: nop");
 
+
+ SELF:
     current = CURRENT_TASK();
     reset_tss(current);
     
-    ps_restore_user_map();
- SELF:
+    RELOAD_CR3(next_cr3);
+
      if (1) {
          int_intr_enable();
      }
@@ -673,33 +704,6 @@ void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all)
 	// _task_sched(&control.ready_queue);
 }
 
-void ps_record_dynamic_map(unsigned int vir)
-{
-    task_struct* cur = CURRENT_TASK();
-    page_table_list_entry* entry = kmalloc(sizeof(*entry));
-
-    entry->addr = vir;
-    InsertTailList(&cur->user.page_table_list, &entry->list);
-}
-
-void ps_del_dynamic_map(unsigned int vir)
-{
-    task_struct* cur = CURRENT_TASK();
-    LIST_ENTRY *head = &cur->user.page_table_list;
-    LIST_ENTRY *node = head->Flink;
-    page_table_list_entry* entry = 0;
-    while (node != head) {
-        entry = CONTAINER_OF(node, page_table_list_entry, list);
-        if (entry->addr == vir) {
-            LIST_ENTRY *next = node->Flink;
-            RemoveEntryList(node);
-            kfree(entry);
-            node = next;
-        }else{
-            node = node->Flink;
-        }
-    }
-}
 
 #ifdef TEST_PS
 void ps_mmm() {

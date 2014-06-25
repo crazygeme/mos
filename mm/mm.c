@@ -627,6 +627,11 @@ void mm_del_dynamic_map(unsigned int vir)
 		page_dir[page_dir_offset] = 0;
 	}
 
+	if (vir < KERNEL_OFFSET) {
+        ps_del_dynamic_map(vir);
+        
+    }
+
 
 }
 

@@ -139,7 +139,6 @@ typedef region_elem* region_elem_t;
 typedef struct _user_enviroment
 {
 	unsigned int page_dir; // every process needs it's own clone of page dir
-	LIST_ENTRY page_table_list;
 	unsigned heap_top;
 	unsigned zone_top;
 	region_elem_t region_head;
@@ -229,9 +228,6 @@ int ps_enabled();
 
 void ps_update_tss(unsigned int esp0);
 
-void ps_record_dynamic_map(unsigned int vir);
-
-void ps_del_dynamic_map(unsigned int vir);
 
 // task functions
 void task_sched();
@@ -241,6 +237,10 @@ void task_sched_wait(PLIST_ENTRY wait_list);
 void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all);
 
 void ps_cleanup_dying_task();
+
+typedef void (*fpuser_map_callback)(void* aux, unsigned vir, unsigned phy);
+
+void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux);
 
 void ps_cleanup_all_user_map(task_struct* task);
 

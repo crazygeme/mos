@@ -288,6 +288,13 @@ void mm_test()
 }
 #endif
 
+static unsigned mm_get_pagedir()
+{
+	unsigned cr3 = 0;
+	__asm__("movl %%cr3, %0" : "=r"(cr3));
+	return cr3 + KERNEL_OFFSET;
+}
+
 static STACK page_table_cache;
 // take 8M ~ 12M as page table cache
 static void mm_init_page_table_cache()
@@ -380,7 +387,7 @@ int mm_add_direct_map(unsigned int vir)
 {
 	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
 	unsigned int page_busy = 0;
 	unsigned int page_index = 0;
 	// only kernel space has direct map
@@ -425,7 +432,7 @@ void mm_del_direct_map(unsigned int vir)
 {
 	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
 	unsigned int *page_table;
 	unsigned int phy_addr = (vir >= KERNEL_OFFSET) ? 
 		( (vir&PAGE_SIZE_MASK)-KERNEL_OFFSET) : (vir&PAGE_SIZE_MASK);
@@ -458,7 +465,7 @@ void mm_del_direct_map(unsigned int vir)
 
 void mm_del_user_map()
 {
-	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET); 
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir(); 
 	page_dir[0] = 0;
 	page_dir[1] = 0;
 }
@@ -549,7 +556,7 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 {
 	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
 	unsigned int page_busy = 0;
 	unsigned int page_index = 0;
 	unsigned int target_phy = 0;
@@ -590,10 +597,6 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 		}
 	}
 
-    if (vir < KERNEL_OFFSET) {
-        ps_record_dynamic_map(vir);
-        
-    }
 
 	return 1;
 }
@@ -602,7 +605,7 @@ void mm_del_dynamic_map(unsigned int vir)
 {
 	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-	unsigned int *page_dir = (unsigned int*)(GDT_ADDRESS+KERNEL_OFFSET);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
 	unsigned int *page_table;
 	unsigned int phy_addr;
 	int empty = 1;
@@ -627,10 +630,6 @@ void mm_del_dynamic_map(unsigned int vir)
 		page_dir[page_dir_offset] = 0;
 	}
 
-	if (vir < KERNEL_OFFSET) {
-        ps_del_dynamic_map(vir);
-        
-    }
 
 
 }

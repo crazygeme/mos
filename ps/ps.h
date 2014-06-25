@@ -231,6 +231,8 @@ void ps_update_tss(unsigned int esp0);
 
 void ps_record_dynamic_map(unsigned int vir);
 
+void ps_del_dynamic_map(unsigned int vir);
+
 // task functions
 void task_sched();
 

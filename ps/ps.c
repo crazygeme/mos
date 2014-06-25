@@ -682,6 +682,25 @@ void ps_record_dynamic_map(unsigned int vir)
     InsertTailList(&cur->user.page_table_list, &entry->list);
 }
 
+void ps_del_dynamic_map(unsigned int vir)
+{
+    task_struct* cur = CURRENT_TASK();
+    LIST_ENTRY *head = &cur->user.page_table_list;
+    LIST_ENTRY *node = head->Flink;
+    page_table_list_entry* entry = 0;
+    while (node != head) {
+        entry = CONTAINER_OF(node, page_table_list_entry, list);
+        if (entry->addr == vir) {
+            LIST_ENTRY *next = node->Flink;
+            RemoveEntryList(node);
+            kfree(entry);
+            node = next;
+        }else{
+            node = node->Flink;
+        }
+    }
+}
+
 #ifdef TEST_PS
 void ps_mmm() {
     task_struct *task1 = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);

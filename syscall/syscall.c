@@ -139,7 +139,11 @@ static int sys_pause();
 static int sys_utime(const char *filename, const struct utimbuf *times);
 static int sys_quota(struct krnquota* quota);
 static int sys_pipe(int pipefd[2]);
+static int sys_dup(int oldfd);
 static int sys_dup2(int oldfd, int newfd);
+static int sys_getrlimit(int resource, void* limit);
+static int sys_kill(unsigned pid, int sig);
+static int sys_unlink(const char *pathname);
 
 static int resolve_path(char* old, char* new);
 
@@ -152,15 +156,15 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
     0, 0, 0, "sys_pause", "sys_utime",          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
-    0, 0, 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
-    0, "sys_pipe", 0, 0, "sys_brk",          // 41 ~ 45 
+    0, "sys_kill", 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
+    "sys_dup", "sys_pipe", 0, 0, "sys_brk",          // 41 ~ 45 
     0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
     0, 0, 0, "sys_ioctl", "sys_fcntl",          // 51 ~ 55 
     0, "sys_setpgid", 0, 0, 0,          // 56 ~ 60 
     0, 0, "sys_dup2", "sys_getppid", "sys_getpgrp",          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
-    0, 0, 0, 0, 0,          // 76 ~ 80 
+    "sys_getrlimit", 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
     0, 0, "sys_reboot", "sys_readdir", "sys_mmap",          // 86 ~ 90 
     "sys_munmap", 0, 0, 0, 0,          // 91 ~ 95 
@@ -198,15 +202,15 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
     0, 0, 0, 0, 0,          // 31 ~ 35 
-    0, 0, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
-    0, sys_pipe, 0, 0, sys_brk,          // 41 ~ 45 
+    0, sys_kill, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
+    sys_dup, sys_pipe, 0, 0, sys_brk,          // 41 ~ 45 
     0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
     0, 0, 0, sys_ioctl, sys_fcntl,          // 51 ~ 55 
     0, sys_setpgid, 0, 0, 0,          // 56 ~ 60 
     0, 0, sys_dup2, sys_getppid, sys_getpgrp,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
-    0, 0, 0, 0, 0,          // 76 ~ 80 
+    sys_getrlimit, 0, 0, 0, 0,          // 76 ~ 80 
     0, 0, 0, 0, 0,          // 81 ~ 85 
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
     sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
@@ -477,22 +481,22 @@ static int sys_brk(unsigned top)
 		task->user.heap_top += PAGE_SIZE;
     }
 
-//  #ifdef __VERBOS_SYSCALL__
-//  klog("brk: cur %x top %x, ", task->user.heap_top, top);
-//  #endif
+	#ifdef __VERBOS_SYSCALL__
+	klog("brk: cur %x newtop %x, ", task->user.heap_top, top);
+	#endif
 	if ( top == 0 )
 	{
-//  	#ifdef __VERBOS_SYSCALL__
-//  	klog_printf("ret %x\n", task->user.heap_top);
-//  	#endif
+		#ifdef __VERBOS_SYSCALL__
+		klog_printf("ret %x\n", task->user.heap_top);
+		#endif
 
 		return task->user.heap_top;
 	}
 	else if (top >= USER_HEAP_END)
 	{
-//  	#ifdef __VERBOS_SYSCALL__
-//  	klog_printf("ret %x\n", task->user.heap_top);
-//  	#endif
+		#ifdef __VERBOS_SYSCALL__
+		klog_printf("ret %x\n", task->user.heap_top);
+		#endif
 		return task->user.heap_top;
 	}
 	else if ( top > task->user.heap_top)
@@ -509,14 +513,33 @@ static int sys_brk(unsigned top)
 
 		top = task->user.heap_top + pages * PAGE_SIZE;
 		task->user.heap_top = top;
-//  	#ifdef __VERBOS_SYSCALL__
-//  	klog_printf("ret %x\n", top);
-//  	#endif
+		#ifdef __VERBOS_SYSCALL__
+		klog_printf("ret %x\n", top);
+		#endif
 		return top;
 
 	}else{
 		// FIXME
 		// free heap
+		int i = 0;
+
+		if (top < USER_HEAP_BEGIN)
+			top = USER_HEAP_BEGIN;
+
+		size = task->user.heap_top - top;
+		pages = (size-1) / PAGE_SIZE + 1;
+		for (i = 0; i < pages; i++)
+		{
+			unsigned vir = top + i * PAGE_SIZE;
+			mm_del_dynamic_map(vir);
+		}
+
+		task->user.heap_top = top;
+		#ifdef __VERBOS_SYSCALL__
+		klog_printf("ret %x\n", top);
+		#endif
+		return top;
+
 	}
 
 	return 0;
@@ -667,7 +690,14 @@ static int debug = 0;
 
 static int sys_mmap(struct mmap_arg_struct32* arg)
 {
-	int vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd, arg->offset);
+	int vir = 0;
+
+	if (arg->len > (10*1024*1024))
+	{
+		return -1;
+	}
+
+	vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd, arg->offset);
 
 	#ifdef __VERBOS_SYSCALL__
 	klog("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
@@ -953,6 +983,9 @@ static int resolve_path(char* old, char* new)
 		return 0;
 	}
 
+	else if (strlen(old) > 1 && old[0] == '.' && old[1] == '/')
+		old += 2;
+
 	sys_getcwd(new, 64);
 	if (strcmp(new, "/"))
 		strcat(new, "/");
@@ -1019,6 +1052,37 @@ static int sys_dup2(int oldfd, int newfd)
 	if (oldfd == -1 || newfd == -1)
 		return -1;
 
+	if (oldfd >= MAX_FD || newfd >= MAX_FD)
+		return -1;
+
 	return fs_dup2(oldfd, newfd);
+}
+
+static int sys_dup(int oldfd)
+{
+	int ret = -1;
+
+	if (oldfd == -1 || oldfd >= MAX_FD)
+		return -1;
+
+
+
+	ret = fs_dup(oldfd);
+
+	#ifdef __VERBOS_SYSCALL__
+	klog("sys_dup(%d) = %d\n", oldfd, ret);
+	#endif
+
+	return ret;
+}
+
+static int sys_getrlimit(int resource, void* limit)
+{
+	return -1;
+}
+
+static int sys_kill(unsigned pid, int sig)
+{
+	return -1;
 }
 

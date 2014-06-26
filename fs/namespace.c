@@ -247,15 +247,18 @@ int fs_create(char* path, unsigned mode)
 int fs_delete(char* path)
 {  
 	DIR dir;
-	char dir_name[260] = { 0 };
+	char *dir_name;
 	char* t;
 	struct stat s;
 	int stat_status;
 
+	dir_name = kmalloc(64);
 	strcpy(dir_name, path);
 	t = strrchr(dir_name, '/');
-	if (!t)
+	if (!t){
+		kfree(dir_name);
 		return 0;
+	}
 
 	*t = '\0';
 	t++;
@@ -269,16 +272,20 @@ int fs_delete(char* path)
 		stat_status = fs_stat(dir_name, &s);
 	}
 
-	if (!dir)
+	if (!dir){
+		kfree(dir_name);
 		return 0;
+	}
 
 	if (stat_status == -1 || !S_ISDIR(s.st_mode)){
 		fs_closedir(dir);
+		kfree(dir_name);
 		return 0;
 	}
 
 	if (fs_stat(path, &s) == -1){
 		fs_closedir(dir);
+		kfree(dir_name);
 		return 0;
 	}
 
@@ -286,6 +293,7 @@ int fs_delete(char* path)
 
 
 	fs_closedir(dir);
+	kfree(dir_name);
 	return 1;
 }
 

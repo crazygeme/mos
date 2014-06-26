@@ -23,7 +23,7 @@ static int caps_lock;
 /* Maps a set of contiguous scancodes into characters. */
 struct keymap
   {
-    unsigned char first_scancode;     /* First scancode. */
+    unsigned short first_scancode;     /* First scancode. */
     const char *chars;          /* chars[0] has scancode first_scancode,
                                    chars[1] has scancode first_scancode + 1,
                                    and so on to the end of the string. */
@@ -70,10 +70,27 @@ static const struct keymap shifted_keymap[] =
     {0, NULL},
   };
 
+static const struct keymap special_keymap[] = 
+{
+  {0xe04b, "\033[D"},           /* Left */
+  {0xe04d, "\033[C"},           /* Right */
+  {0xe048, "\033[A"},           /* Up */
+  {0xe050, "\033[B"},           /* Down */
+  {0xe049, "\033[5"},           /* Page Up */
+  {0xe051, "\033[6"},           /* Page Down */
+  {0xe047, "\033[1"},           /* Home */
+  {0xe04f, "\033[4"},           /* End */
+  {0xe052, "\033[2"},           /* Insert */
+  //{0xe053, "\b"},           /* Delete */
+  {0, NULL},
+};
+
+
 static int map_key (const struct keymap[], unsigned scancode, unsigned char *);
 
 static void kb_dsr(void* param);
 
+static const char* map_special_key(const struct keymap[], unsigned scancode);
 
 // this will wait if empty
 unsigned char kb_buf_get()
@@ -116,6 +133,7 @@ static void kb_dsr(void* param)
   /* Character that corresponds to `code'. */
   unsigned char c;
 
+  const char* special = 0;
   /* Read scancode, including second byte if prefix code. */
   code = _read_port (KB_DATA);
   if (code == 0xe0)
@@ -145,7 +163,7 @@ static void kb_dsr(void* param)
             reboot ();
 
           if (c == 'P'  && ctrl && alt)
-			shutdown();
+            shutdown();
 
           /* Handle Ctrl, Shift.
              Note that Ctrl overrides Shift. */
@@ -166,6 +184,16 @@ static void kb_dsr(void* param)
           /* Append to keyboard buffer. */
           kb_buf_put(c);
         }
+    }
+  else if (special = map_special_key(special_keymap, code))
+    {
+    if (!release) 
+        {
+          while (*special)
+          {
+           kb_buf_put(*special++);
+          }
+      }
     }
   else
     {
@@ -218,3 +246,16 @@ map_key (const struct keymap k[], unsigned scancode, unsigned char *c)
   return 0;
 }
 
+
+static const char* map_special_key(const struct keymap k[], unsigned scancode)
+{
+  for (; k->first_scancode != 0; k++)
+    {
+    if (k->first_scancode == scancode)
+      {
+        return k->chars;
+      }
+    }
+
+  return 0;
+}

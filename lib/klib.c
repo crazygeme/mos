@@ -71,7 +71,11 @@ void klog_init()
 
 void klog_write(char c)
 {
-	serial_putc(c);
+	if (isprint(c)) {
+		serial_putc(c);
+	}else{
+		klog_printf("\\%x", c);
+	}
 }
 
 void klog_writestr(char* str)
@@ -81,7 +85,7 @@ void klog_writestr(char* str)
 	}
 
 	while (*str) {
-		serial_putc(*str++);
+		klog_write(*str++);
 	}
 }
 
@@ -146,7 +150,7 @@ void klib_putchar(char c)
 		new_pos = ROW_COL_TO_CUR(CUR_ROW, 0);
     } else if (c == '\b' ) {
         cursor --;
-        tty_putchar( CUR_ROW, CUR_COL, ' ');
+        //tty_putchar( CUR_ROW, CUR_COL, ' ');
         new_pos = cursor;
         
 	}else if (isprint(c)){
@@ -760,6 +764,10 @@ int isprint(int c)
       {
          return 1;
       }
+
+	  if ( c == 10 || c == 13 || c == 9) {
+		  return 1;
+	  }
    
       return 0;
 }
@@ -824,6 +832,12 @@ void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
                     print_human_readable_size(arg);
                     break;
                 }
+			case 'c':
+				{
+					unsigned char arg = va_arg(ap, unsigned char);
+					_putc(arg);
+					break;
+				}
 			default:
 				{
 					_putc('?');

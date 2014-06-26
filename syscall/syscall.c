@@ -8,6 +8,7 @@
 #include <int/timer.h>
 #include <lib/klib.h>
 #include <fs/fcntl.h>
+#include <errno.h>
 
 
 struct utimbuf {
@@ -150,7 +151,7 @@ static int resolve_path(char* old, char* new);
 static char* call_table_name[NR_syscalls] = {
 	"test_call", 
     "sys_exit", "sys_fork", "sys_read", "sys_write", "sys_open",   // 1  ~ 5
-    "sys_close", "sys_waitpid", "sys_creat", 0, 0,           // 6  ~ 10  
+    "sys_close", "sys_waitpid", "sys_creat", 0, "sys_unlink",           // 6  ~ 10  
     "sys_execve", "sys_chdir", "time", 0, 0,           // 11 ~ 15
     0, 0, 0, 0, "sys_getpid",  // 16 ~ 20   
     0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
@@ -196,7 +197,7 @@ typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
 static unsigned call_table[NR_syscalls] = {
 	test_call, 
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
-    sys_close, sys_waitpid, sys_creat, 0, 0,           // 6  ~ 10  
+    sys_close, sys_waitpid, sys_creat, 0, sys_unlink,           // 6  ~ 10  
     sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
@@ -276,6 +277,7 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 {
 	task_struct* cur = CURRENT_TASK();
 	unsigned ino = 0;
+	int i = 0, pri_len = 0;
 
 	if (fd > MAX_FD)
 		return -1;
@@ -294,86 +296,99 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
 		cur->fds[fd].file_off = offset;
 	
 
+	#ifdef __VERBOS_SYSCALL__
+	pri_len = (len > 5) ? 5 : len;
+	klog("read(%d, \"", fd);
+	for (i = 0; i< pri_len; i++){
+		if (isprint(buf[i]))
+			klog_printf("%c", buf[i]);
+		else
+			klog_printf("\\%x", buf[i]);
+	}
+	klog_printf("\", %d)\n", len);
+	#endif
+
+
+
 	return len;
 }
 
-static int sys_write(unsigned fd, char* buf, unsigned len)
+static int sys_write(unsigned fd, char *buf, unsigned len)
 {
-	task_struct* cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 	unsigned ino = 0;
 	unsigned _len;
-	#ifdef __VERBOS_SYSCALL__
-	char* tmp;
-	tmp = kmalloc(len+1);
-	memset(tmp, 0, len+1);
+#ifdef __VERBOS_SYSCALL__
+	char *tmp;
+	tmp = kmalloc(len + 1);
+	memset(tmp, 0, len + 1);
 	memcpy(tmp, buf, len);
 	klog("write(%d, \"%s\", %d) ", fd, tmp, len);
 	kfree(tmp);
-	#endif
+#endif
 
-	if (fd > MAX_FD){
+	if (fd > MAX_FD)
+	{
 		//printf("-1\n");
 		return -1;
 	}
 
-	if (cur->fds[fd].flag == 0){
-		#ifdef __VERBOS_SYSCALL__
+	if (cur->fds[fd].flag == 0)
+	{
+#ifdef __VERBOS_SYSCALL__
 		klog_printf("ret -1\n");
-		#endif
+#endif
 		return -1;
 	}
 
-	if (cur->fds[fd].flag & fd_flag_isdir){
-		#ifdef __VERBOS_SYSCALL__
+	if (cur->fds[fd].flag & fd_flag_isdir)
+	{
+#ifdef __VERBOS_SYSCALL__
 		klog_printf("ret -1\n");
-		#endif
+#endif
 		return -1;
 	}
 
 
 	ino = cur->fds[fd].file;
 
-		unsigned offset = cur->fds[fd].file_off;
-		_len = fs_write(fd, offset, buf, len);
-		offset += _len;
-		cur->fds[fd].file_off = offset;
+	unsigned offset = cur->fds[fd].file_off;
+	_len = fs_write(fd, offset, buf, len);
+	offset += _len;
+	cur->fds[fd].file_off = offset;
 
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %d\n", _len);
-		#endif
+#ifdef __VERBOS_SYSCALL__
+	klog_printf("ret %d\n", _len);
+#endif
 	return _len;
 }
 
-static int sys_ioctl(int fd, int request, char* buf)
+static int sys_ioctl(int fd, int request, char *buf)
 {
-	task_struct* cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 	unsigned ino = 0;
 
 	//printf("ioctl(%d, %d, %x)\n", fd, request, buf);
-	if (fd > MAX_FD)
-		return 0;
+	if (fd > MAX_FD) return 0;
 
-	if (cur->fds[fd].flag == 0)
-		return 0;
+	if (cur->fds[fd].flag == 0) return 0;
 
-	if (cur->fds[fd].flag & fd_flag_isdir)
-		return 0;
+	if (cur->fds[fd].flag & fd_flag_isdir) return 0;
 
 
 	if (request == IOCTL_TTY)
 	{
 		return tty_ioctl(buf);
-	}
-	else if (request == 0x5401)
+	} else if (request == 0x5401)
 	{
-		struct termios* s = (struct termios*)buf;
-		char tmp[] = {0x03, 0x1c, 0x7f, 0x15, 0x04, 
-			0x00, 0x01, 0x00, 0x11, 0x13, 
-			0x1a, 0x00, 0x12, 0x0f, 0x17, 
-			0x16, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00, 0x00, 0x00, 0x00, 
-			0x00, 0x00};
+		struct termios *s = (struct termios *)buf;
+		char tmp[] = { 0x03, 0x1c, 0x7f, 0x15, 0x04,
+			0x00, 0x01, 0x00, 0x11, 0x13,
+			0x1a, 0x00, 0x12, 0x0f, 0x17,
+			0x16, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00 };
 		s->c_iflag  = 0x500;
 		s->c_oflag  = 0x5;
 		s->c_cflag  = 0xbf;
@@ -383,8 +398,7 @@ static int sys_ioctl(int fd, int request, char* buf)
 //  	s->c_ispeed  = 0xf;
 //  	s->c_ospeed  = 0xf;
 		return 0;
-	}
-	else
+	} else
 	{
 		return 0;
 	}
@@ -394,11 +408,11 @@ static int sys_ioctl(int fd, int request, char* buf)
 
 static int sys_getpid()
 {
-    task_struct* cur = CURRENT_TASK();
-    return cur->psid;
+	task_struct *cur = CURRENT_TASK();
+	return cur->psid;
 }
 
-static int sys_uname(struct utsname* utname)
+static int sys_uname(struct utsname *utname)
 {
 	strcpy(utname->machine, "i386");
 	strcpy(utname->nodename, "qemu-enum");
@@ -411,44 +425,42 @@ static int sys_uname(struct utsname* utname)
 
 static int sys_sched_yield()
 {
-    task_sched();
-    return 0;
+	task_sched();
+	return 0;
 }
 
-static int sys_open(const char* _name, int flags, unsigned mode)
+static int sys_open(const char *_name, int flags, unsigned mode)
 {
-	char* name = kmalloc(64);
+	char *name = kmalloc(64);
 	int creat_if_not_exist = 0;
 	int resize_to_zero = 0;
 	int open_mode = flags & O_ACCMODE;
 	int close_on_exec = flags & FD_CLOEXEC;
 	struct stat s;
 	int fd = -1;
-	task_struct* cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 
-	if (flags & O_CREAT)
-		creat_if_not_exist = 1;
+	if (flags & O_CREAT) creat_if_not_exist = 1;
 
-	if (flags & O_TRUNC)
-		resize_to_zero = 1;
+	if (flags & O_TRUNC) resize_to_zero = 1;
 
 	resolve_path(_name, name);
-	#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 	klog("open(%s, %x, %x)\n", name, flags, mode);
-	#endif
+#endif
 
 	if (fs_stat(name, &s) == -1)
 	{
-		if(creat_if_not_exist){
+		if (creat_if_not_exist)
+		{
 			fs_create(name, mode);
 		}
-	}
-	else
+	} else
 	{
 		if (resize_to_zero)
 		{
 			fs_delete(name);
-			fs_create(name,s.st_mode);
+			fs_create(name, s.st_mode);
 		}
 	}
 
@@ -456,7 +468,8 @@ static int sys_open(const char* _name, int flags, unsigned mode)
 	fd = fs_open(name);
 	kfree(name);
 
-	if (fd != -1 && close_on_exec){
+	if (fd != -1 && close_on_exec)
+	{
 		cur->fds[fd].flag |= fd_flag_closeexec;
 	}
 
@@ -472,29 +485,28 @@ static int sys_close(unsigned fd)
 
 static int sys_brk(unsigned top)
 {
-	task_struct* task = CURRENT_TASK();
+	task_struct *task = CURRENT_TASK();
 	unsigned size = 0;
 	unsigned pages = 0;
 
-    if (task->user.heap_top == USER_HEAP_BEGIN) {
-        mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
+	if (task->user.heap_top == USER_HEAP_BEGIN)
+	{
+		mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
 		task->user.heap_top += PAGE_SIZE;
-    }
+	}
 
 
-	if ( top == 0 )
+	if (top == 0)
 	{
 		return task->user.heap_top;
-	}
-	else if (top >= USER_HEAP_END)
+	} else if (top >= USER_HEAP_END)
 	{
 		return task->user.heap_top;
-	}
-	else if ( top > task->user.heap_top)
+	} else if (top > task->user.heap_top)
 	{
 		int i = 0;
 		size = top - task->user.heap_top;
-		pages = (size-1) / PAGE_SIZE + 1;
+		pages = (size - 1) / PAGE_SIZE + 1;
 
 		for (i = 0; i < pages; i++)
 		{
@@ -506,22 +518,22 @@ static int sys_brk(unsigned top)
 		task->user.heap_top = top;
 		return top;
 
-	}else{
+	} else
+	{
 		int i = 0;
 
-		if (top < USER_HEAP_BEGIN)
-			top = USER_HEAP_BEGIN;
+		if (top < USER_HEAP_BEGIN) top = USER_HEAP_BEGIN;
 
 		size = task->user.heap_top - top;
-		pages = (size-1) / PAGE_SIZE + 1;
+		pages = (size - 1) / PAGE_SIZE + 1;
 		for (i = 0; i < pages; i++)
 		{
 			unsigned vir = top + i * PAGE_SIZE;
 			mm_del_dynamic_map(vir);
 		}
-		#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 		klog("brk: cur %x newtop %x, ret %x\n", task->user.heap_top, top, top);
-		#endif
+#endif
 		task->user.heap_top = top;
 
 		return top;
@@ -531,55 +543,48 @@ static int sys_brk(unsigned top)
 	return 0;
 }
 
-static int _chdir(const char* cwd, const char *path)
+static int _chdir(const char *cwd, const char *path)
 {
 	struct stat s;
 
-	if (!path)
-	   return 0;
+	if (!path) return 0;
 
-	if (!*path)
-		return 1;
+	if (!*path) return 1;
 
-	if (!strcmp(path, "."))
-		return 1;
+	if (!strcmp(path, ".")) return 1;
 
-	if (!strcmp(path, "..")){
-		char* tmp;
+	if (!strcmp(path, ".."))
+	{
+		char *tmp;
 		tmp = strrchr(cwd, '/');
-		if (tmp)
-			*tmp = '\0';
+		if (tmp) *tmp = '\0';
 		strcpy(cwd, cwd);
 		return 1;
 	}
 
 	strcat(cwd, "/");
 	strcat(cwd, path);
-	if(fs_stat(cwd, &s) == -1)
-		return 0;
+	if (fs_stat(cwd, &s) == -1) return 0;
 
-	if (!S_ISDIR(s.st_mode))
-		return 0;
+	if (!S_ISDIR(s.st_mode)) return 0;
 
 	strcpy(cwd, cwd);
-		return 1;
+	return 1;
 }
 
-static int sys_chdir(const char* path)
+static int sys_chdir(const char *path)
 {
-	char name[256] = {0};
-	char* slash, *tmp;
-	char cwd[256] = {0};
+	char name[256] = { 0 };
+	char *slash, *tmp;
+	char cwd[256] = { 0 };
 	int ret = 1;
-	task_struct* cur = CURRENT_TASK();
-	
-	
+	task_struct *cur = CURRENT_TASK();
 
-	if (!path || !*path)
-	   return 0;
 
-	if (*path != '/')
-		strcpy(cwd, cur->cwd);
+
+	if (!path || !*path) return 0;
+
+	if (*path != '/') strcpy(cwd, cur->cwd);
 
 	strcpy(name, path);
 	slash = strchr(name, '/');
@@ -588,8 +593,7 @@ static int sys_chdir(const char* path)
 	{
 		*slash = '\0';
 		ret = _chdir(cwd, tmp);
-		if (!ret)
-			return 0;
+		if (!ret) return 0;
 
 		slash++;
 		tmp = slash;
@@ -597,42 +601,37 @@ static int sys_chdir(const char* path)
 	}
 
 	ret = _chdir(cwd, tmp);
-	if (!ret)
-		return 0;
+	if (!ret) return -1;
 
 	strcpy(cur->cwd, cwd);
-	return 1;
+	return 0;
 }
 
 
 
 
 
-static int sys_creat(const char* path, unsigned mode)
+static int sys_creat(const char *path, unsigned mode)
 {
 	struct stat s;
-	if (fs_stat(path, &s) != -1)
-		return 0;
-	return fs_create(path,mode);
+	if (fs_stat(path, &s) != -1) return 0;
+	return fs_create(path, mode);
 }
 
-static int sys_mkdir(const char* path, unsigned mode)
+static int sys_mkdir(const char *path, unsigned mode)
 {
 	mode |= S_IFDIR;
-	return sys_creat(path,mode);
+	return sys_creat(path, mode);
 }
 
-static int sys_rmdir(const char* path)
+static int sys_rmdir(const char *path)
 {
 	struct stat s;
-	if (fs_stat(path, &s) == -1)
-		return 0;
+	if (fs_stat(path, &s) == -1) return 0;
 
-	if (!S_ISDIR(s.st_mode))
-		return 0;
+	if (!S_ISDIR(s.st_mode)) return 0;
 
-	if (s.st_size)
-		return 0;
+	if (s.st_size) return 0;
 
 	return fs_delete(path);
 }
@@ -655,40 +654,40 @@ static int sys_reboot(unsigned cmd)
 
 static int sys_getuid()
 {
-    return 0;
+	return 0;
 }
 
 static int sys_getgid()
 {
-    return 0;
+	return 0;
 }
 
 static int sys_geteuid()
 {
-    return 0;
+	return 0;
 }
 
 static int sys_getegid()
 {
-    return 0;
+	return 0;
 }
 static int debug = 0;
 
-static int sys_mmap(struct mmap_arg_struct32* arg)
+static int sys_mmap(struct mmap_arg_struct32 *arg)
 {
 	int vir = 0;
 
-	if (arg->len > (10*1024*1024))
+	if (arg->len > (10 * 1024 * 1024))
 	{
 		return -1;
 	}
 
 	vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd, arg->offset);
 
-	#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 	klog("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
-		   arg->fd, arg->addr, arg->offset, arg->len, vir);
-	#endif
+		 arg->fd, arg->addr, arg->offset, arg->len, vir);
+#endif
 
 	return vir;
 }
@@ -701,9 +700,9 @@ static int sys_munmap(void *addr, unsigned length)
 
 static int sys_mprotect(void *addr, unsigned len, int prot)
 {
-	#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 	klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
-	#endif
+#endif
 	return 0;
 }
 
@@ -711,10 +710,11 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i = 0;
 	unsigned total = 0;
-    for (i = 0; i < iovcnt; i++) {
+	for (i = 0; i < iovcnt; i++)
+	{
 		total += sys_write(fildes, iov[i].iov_base, iov[i].iov_len);
-        
-    }
+
+	}
 	return total;
 }
 
@@ -746,145 +746,149 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
 	};
 	memcpy(dirp, buf, sizeof(buf));
 	return (sizeof(buf)); 
-	*/ 
-	
-  struct dirent d;
-  int retcount;
-  int len;
-  int ret = 0;
-  int cur_pos = 0;
-  struct linux_dirent *prev;
+	*/
 
-  	#ifdef __VERBOS_SYSCALL__
+	struct dirent d;
+	int retcount;
+	int len;
+	int ret = 0;
+	int cur_pos = 0;
+	struct linux_dirent *prev;
+
+#ifdef __VERBOS_SYSCALL__
 	klog("getdents(%d, %x, %d)", fd, dirp, count);
-	#endif
-  
-  if (fd < 0 || fd >= MAX_FD) {
-	#ifdef __VERBOS_SYSCALL__
-	klog_printf(" = %d\n", -9);
-	#endif
-    return -9;
-  }
-  
+#endif
 
-
-  if (count < sizeof(struct linux_dirent)) {
-	  #ifdef __VERBOS_SYSCALL__
-	  klog_printf(" = %d\n", -22);
-	  #endif
-    return -22;   
-  }
-
-  retcount = 0;
-  prev = 0;
-
-  
-  while (count > 0) {
-
-
-    ret = sys_readdir(fd, &d);
-	if (ret == 0){
-		if (prev)
-		{
-			prev->d_off = 512;
-		}
-		memset((char*)dirp, 0, count);
-		break;
+	if (fd < 0 || fd >= MAX_FD)
+	{
+#ifdef __VERBOS_SYSCALL__
+		klog_printf(" = %d\n", -9);
+#endif
+		return -9;
 	}
 
-	len = ROUND_UP(NAME_OFFSET(dirp) + strlen(d.d_name)+1);
-	memset(dirp, 0, len);
-    dirp->d_ino = d.d_ino;
-    strcpy(dirp->d_name, d.d_name);
-	
-    dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name)+1);
-	
-	cur_pos += dirp->d_reclen;
-	dirp->d_off = cur_pos;
 
 
-    if (count <= dirp->d_reclen) {
-      break;
-    }
-    retcount += dirp->d_reclen;
-    count -= dirp->d_reclen;
-	prev = dirp;
-    dirp = (char*)dirp + dirp->d_reclen;
-
-  }
+	if (count < sizeof(struct linux_dirent))
+	{
 #ifdef __VERBOS_SYSCALL__
-  klog_printf(" = %d\n", retcount);
+		klog_printf(" = %d\n", -22);
 #endif
-  return retcount;
-  
+		return -22;
+	}
+
+	retcount = 0;
+	prev = 0;
+
+
+	while (count > 0)
+	{
+
+
+		ret = sys_readdir(fd, &d);
+		if (ret == 0)
+		{
+			if (prev)
+			{
+				prev->d_off = 512;
+			}
+			memset((char *)dirp, 0, count);
+			break;
+		}
+
+		len = ROUND_UP(NAME_OFFSET(dirp) + strlen(d.d_name) + 1);
+		memset(dirp, 0, len);
+		dirp->d_ino = d.d_ino;
+		strcpy(dirp->d_name, d.d_name);
+
+		dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
+
+		cur_pos += dirp->d_reclen;
+		dirp->d_off = cur_pos;
+
+
+		if (count <= dirp->d_reclen)
+		{
+			break;
+		}
+		retcount += dirp->d_reclen;
+		count -= dirp->d_reclen;
+		prev = dirp;
+		dirp = (char *)dirp + dirp->d_reclen;
+
+	}
+#ifdef __VERBOS_SYSCALL__
+	klog_printf(" = %d\n", retcount);
+#endif
+	return retcount;
+
 }
 
-static int sys_fstat(int fd, struct stat64* s)
+static int sys_fstat(int fd, struct stat64 *s)
 {
 	return sys_fstat64(fd, s);
 }
 
-static int sys_fstat64(int fd, struct stat64* s)
+static int sys_fstat64(int fd, struct stat64 *s)
 {
 	// FIXME
 	// rewrite it all please
-	task_struct* cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 	struct stat s32;
 
-	if (fd > MAX_FD)
-		return -1;
+	if (fd > MAX_FD) return -1;
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("fstat64(%d, %x) size %d blocks %d blksize %d\n", 
+#ifdef __VERBOS_SYSCALL__
+	klog("fstat64(%d, %x) size %d blocks %d blksize %d\n",
 		 fd, s, s32.st_size, s32.st_blocks, s32.st_blksize);
-	#endif
+#endif
 
-	fs_fstat(fd,&s32);
+	fs_fstat(fd, &s32);
 	s->st_dev = s32.st_dev;
-    s->st_ino = s32.st_ino;
-    s->st_mode = s32.st_mode;
-    s->st_nlink = s32.st_nlink;
-    s->st_uid = s32.st_uid;
-    s->st_gid = s32.st_gid;
-    s->st_rdev = s32.st_rdev;
-    s->st_size = s32.st_size;
-    s->st_blksize = s32.st_blksize;
-    s->st_blocks = s32.st_blocks;
-    s->st_atime = s32.st_atime;
-    s->st_mtime = s32.st_mtime;
-    s->st_ctime = s32.st_ctime;
-	
-	return 0;	
+	s->st_ino = s32.st_ino;
+	s->st_mode = s32.st_mode;
+	s->st_nlink = s32.st_nlink;
+	s->st_uid = s32.st_uid;
+	s->st_gid = s32.st_gid;
+	s->st_rdev = s32.st_rdev;
+	s->st_size = s32.st_size;
+	s->st_blksize = s32.st_blksize;
+	s->st_blocks = s32.st_blocks;
+	s->st_atime = s32.st_atime;
+	s->st_mtime = s32.st_mtime;
+	s->st_ctime = s32.st_ctime;
+
+	return 0;
 
 }
 
-static int sys_lstat64(const char* path, struct stat64* s)
+static int sys_lstat64(const char *path, struct stat64 *s)
 {
 	struct stat s32;
 
-	char* new = kmalloc(64);
+	char *new = kmalloc(64);
 	resolve_path(path, new);
-	fs_stat(new,&s32);
+	fs_stat(new, &s32);
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("lstat64(%s, %x) blksize %d blocks %d, size %d \n", new, s, 
+#ifdef __VERBOS_SYSCALL__
+	klog("lstat64(%s, %x) blksize %d blocks %d, size %d \n", new, s,
 		 s32.st_blksize, s32.st_blocks, s32.st_size);
-	#endif
+#endif
 
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
-    s->st_ino = s32.st_ino;
-    s->st_mode = s32.st_mode;
-    s->st_nlink = s32.st_nlink;
-    s->st_uid = s32.st_uid;
-    s->st_gid = s32.st_gid;
-    s->st_rdev = s32.st_rdev;
-    s->st_size = s32.st_size;
-    s->st_blksize = s32.st_blksize;
-    s->st_blocks = s32.st_blocks;
-    s->st_atime = s32.st_atime;
-    s->st_mtime = s32.st_mtime;
-    s->st_ctime = s32.st_ctime;
+	s->st_ino = s32.st_ino;
+	s->st_mode = s32.st_mode;
+	s->st_nlink = s32.st_nlink;
+	s->st_uid = s32.st_uid;
+	s->st_gid = s32.st_gid;
+	s->st_rdev = s32.st_rdev;
+	s->st_size = s32.st_size;
+	s->st_blksize = s32.st_blksize;
+	s->st_blocks = s32.st_blocks;
+	s->st_atime = s32.st_atime;
+	s->st_mtime = s32.st_mtime;
+	s->st_ctime = s32.st_ctime;
 	kfree(new);
 
 	return 0;
@@ -892,7 +896,7 @@ static int sys_lstat64(const char* path, struct stat64* s)
 
 static int sys_getppid()
 {
-	task_struct* cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 	return cur->parent;
 }
 
@@ -905,24 +909,28 @@ static int sys_getpgrp(unsigned pid)
 static int sys_setpgid(unsigned pid, unsigned pgid)
 {
 	// FIXME
-    if (pid == 0) {
-		task_struct* cur = CURRENT_TASK();
+	if (pid == 0)
+	{
+		task_struct *cur = CURRENT_TASK();
 		cur->group_id = pgid;
-        
-    }
-    return 0; 
+
+	}
+	return 0;
 }
 
-static int sys_wait4(int pid, int* status, void* rusage)
+static int sys_wait4(int pid, int *status, void *rusage)
 {
-    if (pid == -1) {
-		return sys_waitpid(0,status,0);
-    } else if (pid < -1) {
+	if (pid == -1)
+	{
+		return sys_waitpid(0, status, 0);
+	} else if (pid < -1)
+	{
 		// FIXME
 		// wait on group id
-        return 0;
-    }else{
-		return sys_waitpid(pid,status,0);
+		return 0;
+	} else
+	{
+		return sys_waitpid(pid, status, 0);
 	}
 }
 
@@ -933,14 +941,14 @@ static int sys_socketcall(int call, unsigned long *args)
 	return -1;
 }
 
-static int sys_sigaction(int sig, void* act, void*  oact)
+static int sys_sigaction(int sig, void *act, void *oact)
 {
 	// FIXME
 	// no signal at all
 	return -1;
 }
 
-static int sys_sigprocmask(int how, void* set, void * oset)
+static int sys_sigprocmask(int how, void *set, void *oset)
 {
 	// FIXME
 	// no signal
@@ -953,12 +961,12 @@ static int sys_pause()
 	return -1;
 }
 
-static int resolve_path(char* old, char* new)
+static int resolve_path(char *old, char *new)
 {
-	if (!old || !*old)
-		return -1;
+	if (!old || !*old) return -1;
 
-	if (!strcmp(old, ".")){
+	if (!strcmp(old, "."))
+	{
 		sys_getcwd(new, 64);
 		return 0;
 	}
@@ -967,14 +975,10 @@ static int resolve_path(char* old, char* new)
 	{
 		strcpy(new, old);
 		return 0;
-	}
-
-	else if (strlen(old) > 1 && old[0] == '.' && old[1] == '/')
-		old += 2;
+	} else if (strlen(old) > 1 && old[0] == '.' && old[1] == '/') old += 2;
 
 	sys_getcwd(new, 64);
-	if (strcmp(new, "/"))
-		strcat(new, "/");
+	if (strcmp(new, "/")) strcat(new, "/");
 	strcat(new, old);
 	return 0;
 }
@@ -991,7 +995,7 @@ extern unsigned int cur_block_top;
 extern unsigned phymm_cur;
 extern unsigned phymm_high;
 extern unsigned phymm_max;
-static int sys_quota(struct krnquota* quota)
+static int sys_quota(struct krnquota *quota)
 {
 	quota->heap_cur = heap_quota;
 	quota->heap_wm = heap_quota_high;
@@ -1006,25 +1010,23 @@ static int sys_quota(struct krnquota* quota)
 
 static int sys_pipe(int pipefd[2])
 {
-	task_struct* cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 	int readfd = fs_open("/dev/pipe");
 	int writfd = -1;
 
-	if (readfd == -1)
-		return -1;
+	if (readfd == -1) return -1;
 
 	writfd = fs_dup(readfd);
-	if (writfd == -1)
-		return -1;
+	if (writfd == -1) return -1;
 
 	cur->fds[readfd].flag |= fd_flag_readonly;
 	cur->fds[writfd].flag |= fd_flag_writonly;
 	pipefd[0] = readfd;
 	pipefd[1] = writfd;
 
-	#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 	klog("sys_pipe(pipefd[%d,%d])\n", readfd, writfd);
-	#endif
+#endif
 
 	return 0;
 }
@@ -1032,24 +1034,24 @@ static int sys_pipe(int pipefd[2])
 static int sys_dup2(int oldfd, int newfd)
 {
 	int ret = -1;
-	#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 	klog("sys_dup2(%d, %d)\n", oldfd, newfd);
-	#endif
+#endif
 
-	if (oldfd == -1 || newfd == -1)
-		return -1;
+	if (oldfd == -1 || newfd == -1) return -1;
 
-	if (oldfd >= MAX_FD || newfd >= MAX_FD)
-		return -1;
+	if (oldfd >= MAX_FD || newfd >= MAX_FD) return -1;
 
-    if (oldfd == newfd) {
+	if (oldfd == newfd)
+	{
 		return oldfd;
-    }
+	}
 
 	ret = fs_dup2(oldfd, newfd);
-    if (ret == 0) {
-        return newfd;
-    }
+	if (ret == 0)
+	{
+		return newfd;
+	}
 
 	return ret;
 }
@@ -1058,21 +1060,20 @@ static int sys_dup(int oldfd)
 {
 	int ret = -1;
 
-	if (oldfd == -1 || oldfd >= MAX_FD)
-		return -1;
+	if (oldfd == -1 || oldfd >= MAX_FD) return -1;
 
 
 
 	ret = fs_dup(oldfd);
 
-	#ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
 	klog("sys_dup(%d) = %d\n", oldfd, ret);
-	#endif
+#endif
 
 	return ret;
 }
 
-static int sys_getrlimit(int resource, void* limit)
+static int sys_getrlimit(int resource, void *limit)
 {
 	return -1;
 }
@@ -1080,5 +1081,43 @@ static int sys_getrlimit(int resource, void* limit)
 static int sys_kill(unsigned pid, int sig)
 {
 	return -1;
+}
+
+static int sys_unlink(const char *path)
+{
+	char *new = 0;
+	struct stat s;
+	int ret = -1;
+
+#ifdef __VERBOS_SYSCALL__
+	klog("sys_unlink(%s)\n", path);
+#endif
+
+	return 0;
+
+	if (!path || !*path) return -EINVAL;
+
+	new = kmalloc(64);
+	resolve_path(path, new);
+
+	if (fs_stat(new, &s) == -1)
+	{
+		kfree(new);
+		return -ENOENT;
+	}
+
+	if (S_ISDIR(s.st_mode))
+	{
+		kfree(new);
+		return -EISDIR;
+	}
+
+	ret = fs_delete(new); 
+	kfree(new);
+	if (ret)
+		return 0;
+	else
+		return -1;
+		
 }
 

@@ -687,6 +687,7 @@ static void* fs_clear_fd(unsigned fd, int* isdir)
 
     sema_wait(&cur->fd_lock);
 
+	#ifdef __KERNEL__
 	// FIXME
 	// hack for pipe
 	if (cur->fds[fd].flag &&
@@ -697,6 +698,7 @@ static void* fs_clear_fd(unsigned fd, int* isdir)
 		tmp[0] = EOF;
 		vfs_write_file(cur->fds[fd].file, 0, tmp, 1);
 	}
+	#endif
 
 	*isdir = (cur->fds[fd].flag & fd_flag_isdir);
     node = cur->fds[fd].file;

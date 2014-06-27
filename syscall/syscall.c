@@ -240,7 +240,9 @@ static unsigned call_table[NR_syscalls] = {
 
 static int unhandled_syscall(unsigned callno)
 {
-	printk("unhandled syscall %d\n", callno);
+	#ifdef __VERBOS_SYSCALL__
+	klog("unhandled syscall %d\n", callno);
+	#endif
     return -1;
 }
 

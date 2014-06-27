@@ -181,6 +181,8 @@ void print_human_readable_size (unsigned int size) ;
 
 char* itoa(int num, int base, int sign);
 
+int atoi(const char *str);
+
 int tolower(int c);
 
 int toupper(int c);

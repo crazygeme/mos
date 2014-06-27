@@ -129,10 +129,146 @@ void klib_init()
 
 }
 
+static int ansi_control_flag = 0;
+static char ansi_control[10] = {0};
+static int ansi_control_idx = 0;
+
+static void ansi_control_begin()
+{
+	memset(ansi_control, 0, sizeof(ansi_control));
+	ansi_control_idx = 0;
+	ansi_control_flag = 1;
+}
+
+static void ansi_control_end()
+{
+	memset(ansi_control, 0, sizeof(ansi_control));
+	ansi_control_idx = 0;
+	ansi_control_flag = 0;
+}
+
+static int is_ansi_control_begin()
+{
+	return ansi_control_flag;
+}
+
+
+static void ansi_control_add(char c)
+{
+	char* str_arg = ansi_control + 1;
+	int arg = 0;
+	int row, col;
+	int new_pos = 0;
+	char* str_row, *str_col;
+
+	switch (c) {
+	case 'm':
+		arg = atoi(str_arg);
+		if (arg == 0) { // 关闭所有属性
+		} else if (arg == 1){ // 设置高亮度 
+		} else if (arg == 4){ // 下划线 
+		} else if (arg == 5){ // 闪 烁 
+		} else if (arg == 7){ // 反显 
+		} else if (arg == 8){ // 消隐 
+		} else if (arg >= 30 && arg <= 37){ // 设置前景色 
+		} else if (arg >= 40 && arg <= 47) { // 设置背景色 
+		}
+		break;
+	case 'A': //光标上移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		row -= arg;
+		if (row < 0)
+			row = 0;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		
+		break;
+	case 'B': // 光标下移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		row += arg;
+		if (row >= TTY_MAX_ROW)
+			row = TTY_MAX_ROW-1;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'C': // 光标右移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		col += arg;
+		if (col >= TTY_MAX_COL)
+			col = TTY_MAX_COL-1;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'D': // 光标左移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		col -= arg;
+		if (col < 0)
+			col = 0;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'H': // 设置光标位置 (ROW:COL)
+		str_col = strchr(str_arg, ';');
+		*str_col = '\0';
+		str_col++;
+		str_row = str_arg;
+		row = atoi(str_row);
+		col = atoi(str_col);
+		if (row < 0)
+			row = 0;
+		if (row >= TTY_MAX_ROW)
+			row = TTY_MAX_ROW - 1;
+		if (col < 0)
+			col = 0;
+		if (col >= TTY_MAX_COL)
+			col = TTY_MAX_COL - 1;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'J': // 清屏 
+		tty_clear();
+		break;
+	case 'K': // 清除从光标到行尾的内容 
+		break;
+	case 's':
+		break;
+	case 'u':
+		break;
+	case 'l':
+		break;
+	case 'h':
+		break;
+	default:
+		break;
+	}
+
+	if ( (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z')){
+		// not support yet
+		ansi_control_end();
+	} else {
+		ansi_control[ansi_control_idx] = c;
+		ansi_control_idx++;
+	}
+}
 
 void klib_putchar(char c)
 {
 	int new_pos = 0;
+
+	if (is_ansi_control_begin()) {
+		ansi_control_add(c);
+		return;
+	}
+
 	if ( c == '\n'){
 		int new_row = CUR_ROW + 1;
 		int new_col = 0;
@@ -152,10 +288,13 @@ void klib_putchar(char c)
         cursor --;
         //tty_putchar( CUR_ROW, CUR_COL, ' ');
         new_pos = cursor;
-        
+	}else if ( (unsigned)c == 0xc){
+		tty_clear();
 	}else if (isprint(c)){
 		tty_putchar( CUR_ROW, CUR_COL, c);
 		new_pos = cursor + 1;
+	}else if ((unsigned)c == 0x1b) {
+		ansi_control_begin();
 	}else{
         return;
     }
@@ -938,6 +1077,74 @@ char* itoa(int num, int base, int sign)
 	strrev(begin);
 
 	return ret;
+}
+
+int atoi(const char *str)
+{
+	int base = 10;
+	int neg = 0;
+	int ret = 0;
+
+	if (!str || !*str) {
+		return 0;
+	}
+
+	if (*str == '-') {
+		neg = 1;
+		str++;
+	}
+
+	// things like -0x will be positive!
+	if (*str == '0') {
+		neg = 0;
+		str++;
+		base = (*str == 'x') ? 16 
+			: (*str == '0') ? 8
+			: (*str == 'b') ? 2 
+			: 0;
+		str++;
+	}
+
+	if (base == 0) {
+		return 0;
+	}
+
+	while (*str) {
+		int cur = 0;
+
+		if ( (base == 8) && (*str > '7' || *str < '0')) {
+			break;
+		}
+
+		if ( (base == 10) && (*str > '9' || *str < '0')) {
+			break;
+		}
+
+		if ( (base == 16) && !( (*str >= '0' && *str <= '9') ||
+								(*str >= 'a' && *str <= 'f') ||
+								(*str >= 'A' && *str <= 'F')
+								)
+			 ) {
+			break;
+		}
+
+		if (*str >= '0' && *str <= '9') {
+			cur = *str - '0';
+		}else if (*str >= 'a' && *str <= 'f') {
+			cur = *str - 'a' + 10;
+		}else if (*str >= 'A' && *str <= 'F') {
+			cur = *str - 'A' + 10;
+		}
+
+		ret = ret*base + cur;
+		str++;
+	}
+
+	if (neg) {
+		return (0-ret);
+	}else{
+		return ret;
+	}
 }
 
 void srand(unsigned _seed)

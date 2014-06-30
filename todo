@@ -11,6 +11,6 @@
 11. 网络和socket接口
 12. 源代码的分类整理 （至少把include单独列出来）
 13. 真正的page fault handler （可以读写文件的）
-14. IPC机制							80% ( pipe done, needs refine )
+14. IPC机制							100% ( pipe done)
 15. INODE的引用计数					100%
 16. fork的时候复制fd				100%

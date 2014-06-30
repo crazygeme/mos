@@ -1285,12 +1285,15 @@ void shutdown()
   const char s[] = "Shutdown";
   const char *p;
 
-  printf ("Powering off...\n");
+  printf ("Powering off\n");
+  printf ("Close klog\n");
   klog_close();
+  printf ("Flush block cache\n");
   block_close();
 
   /* 	This is a special power-off sequence supported by Bochs and
 		QEMU, but not by physical hardware. */
+  printf ("Power off...\n");
   for (p = s; *p != '\0'; p++)
     _write_port (0x8900, *p);
 

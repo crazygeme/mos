@@ -49,9 +49,11 @@ else
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	exit
 fi
-
-
 done
+
+if [ "$_curses" == "-curses" ]; then
+	_logtofile="file:krn.log"
+fi
 
 if [ "$_rebuild" == "1" ]; then
 	cd ffstool

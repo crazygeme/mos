@@ -12,6 +12,7 @@
 #include <fs/mount.h>
 #include <int/timer.h>
 #include <syscall/unistd.h>
+#include <lib/cyclebuf.h>
 #endif
 
 static INODE fs_lookup_inode(char* path);
@@ -149,6 +150,33 @@ void fs_close(unsigned int fd)
 			vfs_free_inode(node); 
 		}
 	}
+}
+
+
+int fs_pipe(int* pipefd)
+{
+	task_struct *cur = CURRENT_TASK();
+	cy_buf* buf = cyb_create("pipe");
+	INODE reader = pipe_create_reader(buf);
+	INODE writer = pipe_create_writer(buf);
+
+	int readfd = fs_get_free_fd(reader, "pipefs");
+	int writfd = fs_get_free_fd(writer, "pipefs");
+
+
+	vfs_refrence(reader);
+	vfs_refrence(writer);
+
+	if (readfd == -1) return -1;
+
+	if (writfd == -1) return -1;
+
+	cur->fds[readfd].flag |= fd_flag_readonly;
+	cur->fds[writfd].flag |= fd_flag_writonly;
+	pipefd[0] = readfd;
+	pipefd[1] = writfd;
+
+	return 0;
 }
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
@@ -687,18 +715,6 @@ static void* fs_clear_fd(unsigned fd, int* isdir)
 
     sema_wait(&cur->fd_lock);
 
-	#ifdef __KERNEL__
-	// FIXME
-	// hack for pipe
-	if (cur->fds[fd].flag &&
-		cur->fds[fd].file->ref_count <= 2 &&
-		!strcmp(cur->fds[fd].path, "/dev/pipe") &&
-		cur->fds[fd].flag & fd_flag_writonly) {
-		char tmp[2] = {0};
-		tmp[0] = EOF;
-		vfs_write_file(cur->fds[fd].file, 0, tmp, 1);
-	}
-	#endif
 
 	*isdir = (cur->fds[fd].flag & fd_flag_isdir);
     node = cur->fds[fd].file;

@@ -11,7 +11,7 @@ typedef struct _cy_buf
   unsigned read_idx;
   semaphore lock;
   spinlock idx_lock;
-	int write_closed;
+  int write_closed;
   unsigned char buf[PIPE_BUF_LEN];
 }cy_buf;
 
@@ -118,4 +118,16 @@ int cyb_isempty(cy_buf* b)
 int cyb_isfull(cy_buf* b)
 {
 	return (b->len == PIPE_BUF_LEN);
+}
+
+int cyb_is_writer_closed(cy_buf* b)
+{
+	return b->write_closed;
+}
+
+void cyb_writer_close(cy_buf* b)
+{
+	cyb_putc(b, EOF);
+
+	b->write_closed = 1;
 }

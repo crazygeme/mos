@@ -36,4 +36,6 @@ int sys_readdir(unsigned fd, struct dirent* entry);
 int fs_dup(int oldfd);
 
 int fs_dup2(int oldfd, int newfd);
+
+int fs_pipe(int* pipefd);
 #endif

@@ -1012,25 +1012,13 @@ static int sys_quota(struct krnquota *quota)
 
 static int sys_pipe(int pipefd[2])
 {
-	task_struct *cur = CURRENT_TASK();
-	int readfd = fs_open("/dev/pipe");
-	int writfd = -1;
-
-	if (readfd == -1) return -1;
-
-	writfd = fs_dup(readfd);
-	if (writfd == -1) return -1;
-
-	cur->fds[readfd].flag |= fd_flag_readonly;
-	cur->fds[writfd].flag |= fd_flag_writonly;
-	pipefd[0] = readfd;
-	pipefd[1] = writfd;
+	int ret = fs_pipe(pipefd);
 
 #ifdef __VERBOS_SYSCALL__
-	klog("sys_pipe(pipefd[%d,%d])\n", readfd, writfd);
+	klog("sys_pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
 #endif
 
-	return 0;
+	return ret;
 }
 
 static int sys_dup2(int oldfd, int newfd)

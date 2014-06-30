@@ -13,5 +13,8 @@ int cyb_isempty(cy_buf* b);
 
 int cyb_isfull(cy_buf* b);
 
+int cyb_is_writer_closed(cy_buf* b);
+
+void cyb_writer_close(cy_buf* b);
 
 #endif

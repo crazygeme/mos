@@ -11,6 +11,7 @@ typedef struct _pipe_inode
 	struct filesys_type* type;
 	unsigned ref_count;
 	cy_buf* buf;
+	int readonly;
 }pipe_inode;
 
 static void pipe_free_inode(struct filesys_type*, INODE);
@@ -54,26 +55,59 @@ void pipe_init()
 
 	type = register_vfs(0, 0, dev, &pipe_super_operations, &pipe_inode_operations, "pipe" );
 
-	do_mount("/dev/pipe", type);
+	do_mount("pipefs", type);
 
 }
 
+INODE pipe_create_reader(cy_buf* buf)
+{
+	pipe_inode* n = kmalloc(sizeof(*n));
+	n->type = mount_lookup("pipefs");
+	n->ref_count = 0;
+	n->buf = buf;
+	n->readonly = 1;
+	return n;
+}
+
+INODE pipe_create_writer(cy_buf* buf)
+{
+	pipe_inode* n = kmalloc(sizeof(*n));
+	n->type = mount_lookup("pipefs");
+	n->ref_count = 0;
+	n->buf = buf;
+	n->readonly = 0;
+	return n;
+}
 
 
 static void pipe_free_inode(struct filesys_type* t, INODE n)
 {
 	pipe_inode* node = (pipe_inode*)n;
-	kfree(node->buf);
+	klog("[pipe]node readonly %d, buf closed %d\n", node->readonly, cyb_is_writer_closed(node->buf));
+	if(!node->readonly)
+	{
+		klog("[pipe] close writer\n");
+		cyb_writer_close(node->buf);
+	}
+
+	if(node->readonly && cyb_is_writer_closed(node->buf))
+	{
+		klog("[pipe] free cycle buffer\n");
+		kfree(node->buf);
+	}
+
+	klog("[pipe] node %x\n", n);
 	kfree(n);
 }
 
 static INODE pipe_get_root(struct filesys_type* t)
 {
-	pipe_inode* n = kmalloc(sizeof(*n));
-	n->type = t;
-	n->ref_count = 0;
-	n->buf = cyb_create("pipe");
-	return n;
+//  pipe_inode* n = kmalloc(sizeof(*n));
+//  n->type = t;
+//  n->ref_count = 0;
+//  n->buf = cyb_create("pipe");
+//  return n;
+	return 0;
 }
 
 static unsigned pipe_get_mode(INODE inode)
@@ -87,6 +121,9 @@ static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsi
 	int i = 0;
 	pipe_inode* n = (pipe_inode*)inode;
 	unsigned char* tmp = buf;
+
+	if(!n->readonly)
+		return 0;
 
 	while(i < len)
 	{
@@ -105,6 +142,9 @@ static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, uns
 	int i = 0;
 	pipe_inode* n = (pipe_inode*)inode;
 	unsigned char* tmp = buf;
+
+	if(n->readonly)
+		return 0;
 
 	while(i < len)
 	{

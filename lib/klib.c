@@ -60,11 +60,9 @@ static void unlock_heap()
 
 #ifdef __DEBUG__
 static int klog_inited = 0;
-static int klog_enabled = 0;
 void klog_init()
 {
 	klog_inited = 1;
-	klog_enabled = 0;
 	sema_init(&klog_lock, "klog", 0);
 
 	klog("\n\n===========================\n");
@@ -1236,18 +1234,11 @@ void printk(const char* str, ...)
     unlock_tty();
 }
 
-void klog_enable()
-{
-	klog_enabled = 1;
-}
 
 void klog_printf(const char* str, ...)
 {
 	va_list ap;
 
-	if (!klog_enabled) {
-		return;
-	}
 	va_start(ap, str);
 	vprintf(klog_write, klog_writestr, str,ap);
 	va_end(ap);
@@ -1261,10 +1252,6 @@ void klog(char* str, ...)
     int i = 0;
 	time_t time;
     task_struct* cur = 0;
-
-	if (!klog_enabled) {
-		return;
-	}
 
 	cur = CURRENT_TASK();
 

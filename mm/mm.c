@@ -28,6 +28,8 @@ _STARTDATA static unsigned long long _phy_mem_high;
 #define PAGE_MASK_TABLE_SIZE (32*1024)
 static unsigned char free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
 
+short pgc_entry_count[1024];
+
 _START void mm_init(multiboot_info_t* mb)
 {
     // mm_dump_phy(mb);
@@ -299,12 +301,13 @@ static STACK page_table_cache;
 // take 8M ~ 12M as page table cache
 static void mm_init_page_table_cache()
 {
+	int i = 0;
 
 	InitializeStack(&page_table_cache);
-//  for(i = 0; i < 1024; i++){
-//  	PushStack(&page_table_cache, cache_addr);
-//  	cache_addr += PAGE_SIZE;
-//  }
+
+	for (i = 0; i < 1024; i++) {
+		pgc_entry_count[i] = 0;
+	}
 }
 
 
@@ -418,6 +421,12 @@ int mm_add_direct_map(unsigned int vir)
 	{
 		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
 		unsigned int phy_page = (vir - KERNEL_OFFSET) & PAGE_SIZE_MASK;
+		unsigned int entry = table[page_table_offset] & PAGE_SIZE_MASK;
+
+		if (!entry) {
+			int idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
+			pgc_entry_count[idx]++;
+		}
 		table[page_table_offset] = phy_page | PAGE_ENTRY_KERNEL_DATA;
 		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
 		if (vir == ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET))
@@ -432,11 +441,11 @@ void mm_del_direct_map(unsigned int vir)
 	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
 	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-	unsigned int *page_table;
+	unsigned int *page_table, phy;
 	unsigned int phy_addr = (vir >= KERNEL_OFFSET) ? 
 		( (vir&PAGE_SIZE_MASK)-KERNEL_OFFSET) : (vir&PAGE_SIZE_MASK);
 	int empty = 1;
-	int i = 0;
+	int i = 0, idx;
 
 	// 0xC0000000 ~ 0xC0C00000 is always mapped
 	if (vir >= 0xC0000000 && vir < 0xC0C00000)
@@ -445,15 +454,19 @@ void mm_del_direct_map(unsigned int vir)
 
 	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
 
+	phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
+
 	page_table[page_table_offset] = 0;
 	mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
 
-	for (i = 0; i < 1024; i++){
-		if (page_table[i] !=0){
-			empty = 0;
-			break;
-		}
+	if (phy) {
+		idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
+		pgc_entry_count[idx]--;
+		empty = (pgc_entry_count[idx] == 0);
+	}else{
+		empty = 0;
 	}
+
 
 	if (empty){
 		mm_free_page_table( (unsigned int)page_table);
@@ -583,8 +596,12 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
 		unsigned int phy_page = (target_phy) & PAGE_SIZE_MASK;
         unsigned int table_entry = table[page_table_offset] & PAGE_SIZE_MASK;
-        if (table_entry) 
+        if (table_entry){
             return 0;
+		}else{
+			int idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
+			pgc_entry_count[idx]++;
+		}
 
         table[page_table_offset] = phy_page | flag; 
 		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
@@ -608,7 +625,7 @@ void mm_del_dynamic_map(unsigned int vir)
 	unsigned int *page_table;
 	unsigned int phy_addr;
 	int empty = 1;
-	int i = 0;
+	int i = 0, idx;
 
 
 	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
@@ -617,12 +634,15 @@ void mm_del_dynamic_map(unsigned int vir)
 	page_table[page_table_offset] = 0;
 	mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
 
-	for (i = 0; i < 1024; i++){
-		if (page_table[i] !=0){
-			empty = 0;
-			break;
-		}
+	if (phy_addr) {
+		idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
+		pgc_entry_count[idx]--;
+		empty = (pgc_entry_count[idx] == 0);
+	}else{
+		empty = 0;
 	}
+
+
 
 	if (empty){
 		mm_free_page_table( (unsigned int)page_table);

@@ -58,7 +58,6 @@ void kmain_startup()
 
     printk("Init serial\n");
     serial_init_queue();
-    klog_enable();
 
     printk("Init keyboard\n");
     kb_init();

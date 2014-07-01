@@ -12,7 +12,7 @@ endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
 CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
-	-D__KERNEL__ -D__VERBOS_SYSCALL__ -D__DEBUG__\
+	-D__KERNEL__  -D__DEBUG__\
 	-I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 

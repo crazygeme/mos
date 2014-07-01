@@ -218,13 +218,14 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
 
 }
 
+extern short pgc_entry_count[1024];
 static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
 {
     unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
     unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
     unsigned int* page_table;
-    unsigned int tmp;
-    int i = 0;
+    unsigned int tmp, phy;
+    int i = 0, idx;
 
     if (!new_ps[page_dir_offset]) {
         new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
@@ -233,6 +234,12 @@ static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
     }
 
     page_table = (new_ps[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET;
+
+    phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
+    if (!phy) {
+        idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
+        pgc_entry_count[idx]++;
+    }
     tmp = vm_alloc(1);
     page_table[page_table_offset] = tmp - KERNEL_OFFSET;
     page_table[page_table_offset] |= flag;

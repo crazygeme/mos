@@ -26,6 +26,9 @@
 #define KHEAP_END	 0xC07FF000
 #define KHEAP_BEGIN	 0xC0300000
 
+#define PAGE_TABLE_CACHE_BEGIN 0xC0800000
+#define PAGE_TABLE_CACHE_END   0xC0C00000
+
 #define UNIMPL printk("unimpl function %s\n", __func__)
  
 #define DSR_CACHE_DEPTH 100

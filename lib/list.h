@@ -33,7 +33,8 @@ void AppendTailList(PLIST_ENTRY ListHead,PLIST_ENTRY ListToAppend);
 
 typedef struct _STACK {
 	unsigned int top;
-	unsigned int mem[1024];
+	unsigned int count;
+	//unsigned int mem[1024];
 }STACK, *PSTACK;
 
 void InitializeStack(PSTACK stack);

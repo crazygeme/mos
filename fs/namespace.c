@@ -43,15 +43,11 @@ unsigned fs_open(char* path)
 
 	node = fs_lookup_inode(fullPath);
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("open %s, ", fullPath);
-	#endif
+
 
 
     if (!node) {
-		#ifdef __VERBOS_SYSCALL__
-		klog_printf("ret %d\n", -1);
-		#endif
+
 		kfree(fullPath);
         return 0xffffffff;
     }
@@ -70,9 +66,6 @@ unsigned fs_open(char* path)
 		}
 	}
 
-	#ifdef __VERBOS_SYSCALL__
-	klog_printf("ret %d\n", fd);
-	#endif
 	if (fd == MAX_FD) {
 		fd = 0xffffffff;
 	}
@@ -129,15 +122,8 @@ void fs_close(unsigned int fd)
 		return;
 	}
 
-
-
-
-
 	ret = fs_clear_fd(fd,&isdir);
 
-	#ifdef __VERBOS_SYSCALL__
-	klog("close %d, isdir %d\n", fd, isdir);
-	#endif
 
 	if (isdir) {
 		dir = ret;

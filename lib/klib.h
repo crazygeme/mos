@@ -87,6 +87,8 @@ void klog_init();
 
 void klog_write(char c);
 
+void klog_enable();
+
 void klog_printf(const char* str, ...);
 
 void klog(char* str, ...);

@@ -359,6 +359,9 @@ int sys_exit(unsigned status)
     int i = 0;
     cur->exit_status = status;
 
+    #ifdef __VERBOS_SYSCALL__
+    klog("exit(%d)\n", status);
+    #endif
     // close all fds
     for (i = 0; i < MAX_FD; i++) {
         if (cur->fds[i].flag) {
@@ -540,7 +543,7 @@ void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux)
             for (j = 0; j < 1024; j++) {
                 if (page_table[j] != 0) {
                     unsigned vir = (i << 22) + (j << 12);
-                    unsigned phy = page_table[i] & PAGE_SIZE_MASK;
+                    unsigned phy = page_table[j] & PAGE_SIZE_MASK;
                     fn(aux, vir, phy);
                 }
             }

@@ -24,8 +24,8 @@ unsigned phymm_max = 0;
 _STARTDATA static unsigned long long _phy_mem_low;
 _STARTDATA static unsigned long long _phy_mem_high;
 
-// this can present 256*1024*4k = 1G
-#define PAGE_MASK_TABLE_SIZE (256*1024)
+// this can present 8*32*1024*4k = 1G
+#define PAGE_MASK_TABLE_SIZE (32*1024)
 static unsigned char free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
 
 _START void mm_init(multiboot_info_t* mb)
@@ -206,7 +206,7 @@ static void mm_init_free_phy_page_mask()
 	  mm_set_phy_page_mask(i, 1);
 
 	// higher then phy_mem_high set to used
-	for (i = phy_page_high; i < (1024*1024); i++)
+	for (i = phy_page_high; i < (8*PAGE_MASK_TABLE_SIZE); i++)
 	  mm_set_phy_page_mask(i, 1);
 	
 	// first 12M are used
@@ -299,13 +299,12 @@ static STACK page_table_cache;
 // take 8M ~ 12M as page table cache
 static void mm_init_page_table_cache()
 {
-	unsigned int cache_addr = 0xC0800000;
-	unsigned int i = 0;
+
 	InitializeStack(&page_table_cache);
-	for(i = 0; i < 1024; i++){
-		PushStack(&page_table_cache, cache_addr);
-		cache_addr += PAGE_SIZE;
-	}
+//  for(i = 0; i < 1024; i++){
+//  	PushStack(&page_table_cache, cache_addr);
+//  	cache_addr += PAGE_SIZE;
+//  }
 }
 
 

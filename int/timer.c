@@ -120,7 +120,7 @@ static void timer_dsr(void* param)
     cur->remain_ticks--; 
     if (cur->remain_ticks <= 0) {
         cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-        if ((!CURRENT_TASK()->is_switching)) {
+        if ((!cur->is_switching)) {
             task_sched(); 
         }
     }

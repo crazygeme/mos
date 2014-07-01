@@ -58,7 +58,7 @@ void kmain_startup()
 
     printk("Init serial\n");
     serial_init_queue();
-
+    klog_enable();
 
     printk("Init keyboard\n");
     kb_init();
@@ -67,7 +67,7 @@ void kmain_startup()
     timer_init();
 
 
-
+    printk("Caculate CPU caps\n");
     timer_calculate_cpu_cycle();
 
 
@@ -117,6 +117,8 @@ void kmain_startup()
 
 static void kmain_process(void* param)
 {
+    klog_init();
+
     printk("Init vfs\n");
     vfs_init();
 
@@ -165,7 +167,6 @@ static void kmain_process(void* param)
     printk("Init system call table\n");
     syscall_init();
 
-    klog_init();
 
     klib_clear();
     user_first_process_run();

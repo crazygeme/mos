@@ -60,9 +60,11 @@ static void unlock_heap()
 
 #ifdef __DEBUG__
 static int klog_inited = 0;
+static int klog_enabled = 0;
 void klog_init()
 {
 	klog_inited = 1;
+	klog_enabled = 0;
 	sema_init(&klog_lock, "klog", 0);
 
 	klog("\n\n===========================\n");
@@ -71,6 +73,10 @@ void klog_init()
 
 void klog_write(char c)
 {
+	if (!klog_inited) {
+		return;
+	}
+
 	if (isprint(c)) {
 		serial_putc(c);
 	}else{
@@ -80,6 +86,10 @@ void klog_write(char c)
 
 void klog_writestr(char* str)
 {
+	if (!klog_inited) {
+		return;
+	}
+
 	if (!str || !*str) {
 		return;
 	}
@@ -91,6 +101,10 @@ void klog_writestr(char* str)
 
 void klog_close()
 {
+	if (!klog_inited) {
+		return;
+	}
+
 	serial_flush();
 }
 
@@ -1222,9 +1236,18 @@ void printk(const char* str, ...)
     unlock_tty();
 }
 
+void klog_enable()
+{
+	klog_enabled = 1;
+}
+
 void klog_printf(const char* str, ...)
 {
 	va_list ap;
+
+	if (!klog_enabled) {
+		return;
+	}
 	va_start(ap, str);
 	vprintf(klog_write, klog_writestr, str,ap);
 	va_end(ap);
@@ -1237,7 +1260,13 @@ void klog(char* str, ...)
     int len = 0;
     int i = 0;
 	time_t time;
-    task_struct* cur = CURRENT_TASK();
+    task_struct* cur = 0;
+
+	if (!klog_enabled) {
+		return;
+	}
+
+	cur = CURRENT_TASK();
 
 	sema_wait(&klog_lock);
 

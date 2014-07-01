@@ -324,6 +324,8 @@ struct krnquota
 	unsigned phymm_max;
 	unsigned phymm_cur;
 	unsigned phymm_wm;
+	unsigned pgc_count;
+	unsigned pgc_top;
 };
 
 #endif

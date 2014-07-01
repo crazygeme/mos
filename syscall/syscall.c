@@ -448,7 +448,7 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 
 	resolve_path(_name, name);
 #ifdef __VERBOS_SYSCALL__
-	klog("open(%s, %x, %x)\n", name, flags, mode);
+	klog("open(%s, %x, %x)", name, flags, mode);
 #endif
 
 	if (fs_stat(name, &s) == -1)
@@ -475,12 +475,17 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 		cur->fds[fd].flag |= fd_flag_closeexec;
 	}
 
-
+#ifdef __VERBOS_SYSCALL__
+	klog_printf("ret %d\n", fd);
+#endif
 	return fd;
 }
 
 static int sys_close(unsigned fd)
 {
+	#ifdef __VERBOS_SYSCALL__
+	klog("close(%d)\n", fd);
+	#endif
 	fs_close(fd);
 	return 0;
 }
@@ -997,6 +1002,8 @@ extern unsigned int cur_block_top;
 extern unsigned phymm_cur;
 extern unsigned phymm_high;
 extern unsigned phymm_max;
+extern unsigned pgc_count;
+extern unsigned pgc_top;
 static int sys_quota(struct krnquota *quota)
 {
 	quota->heap_cur = heap_quota;
@@ -1005,6 +1012,8 @@ static int sys_quota(struct krnquota *quota)
 	quota->phymm_cur = phymm_cur;
 	quota->phymm_wm = phymm_high;
 	quota->phymm_max = phymm_max;
+	quota->pgc_count = pgc_count;
+	quota->pgc_top = pgc_top;
 
 	return 0;
 }

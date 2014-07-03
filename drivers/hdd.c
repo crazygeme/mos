@@ -44,7 +44,9 @@
    use. */
 #define CMD_IDENTIFY_DEVICE 0xec        /* IDENTIFY DEVICE. */
 #define CMD_READ_SECTOR_RETRY 0x20      /* READ SECTOR with retries. */
+#define CMD_READ_SECTOR_RETRY_EXT 0x24      /* READ SECTOR with retries. */
 #define CMD_WRITE_SECTOR_RETRY 0x30     /* WRITE SECTOR with retries. */
+#define CMD_WRITE_SECTOR_RETRY_EXT 0x34     /* WRITE SECTOR with retries. */
 
 /* An ATA device. */
 typedef struct _ata_disk

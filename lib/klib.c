@@ -232,8 +232,8 @@ static void ansi_control_add(char c)
 		*str_col = '\0';
 		str_col++;
 		str_row = str_arg;
-		row = atoi(str_row);
-		col = atoi(str_col);
+		row = atoi(str_row)-1;
+		col = atoi(str_col)-1;
 		if (row < 0)
 			row = 0;
 		if (row >= TTY_MAX_ROW)

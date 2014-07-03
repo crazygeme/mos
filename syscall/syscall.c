@@ -1084,6 +1084,8 @@ static int sys_kill(unsigned pid, int sig)
 
 static int sys_unlink(const char *path)
 {
+	return -1;
+	#if 0
 	char *new = 0;
 	struct stat s;
 	int ret = -1;
@@ -1092,7 +1094,6 @@ static int sys_unlink(const char *path)
 	klog("sys_unlink(%s)\n", path);
 #endif
 
-	return 0;
 
 	if (!path || !*path) return -EINVAL;
 
@@ -1117,6 +1118,6 @@ static int sys_unlink(const char *path)
 		return 0;
 	else
 		return -1;
-		
+	#endif
 }
 

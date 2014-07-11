@@ -409,12 +409,7 @@ static unsigned int kblk(unsigned page_count)
 		return 0;
 
 	if (cur_block_top + page_count * PAGE_SIZE >= KHEAP_END){
-		klib_print("buffer overflow\n");
-		klib_info("cur_block_top: ", cur_block_top, "\n");
-		klib_info("page_count: ", page_count, "\n");
-		klib_info("KHEAP_BEGIN: ", KHEAP_BEGIN, "\n");
-		klib_info("KHEAP_END: ", KHEAP_END, "\n");
-		return 0;
+		return vm_alloc(page_count);
 	}
 
 	cur_block_top += page_count * PAGE_SIZE;

@@ -770,24 +770,30 @@ static void test_stat(char* path)
 	printk("%s: is dir %d, size %d\n", path, S_ISDIR(s.st_mode), s.st_size);
 }
 
+static unsigned time_now()
+{
+	time_t t;
+	timer_current(&t);
+	return (t.seconds * 1000 + t.milliseconds);
+}
 static void test_write()
 {	
-	unsigned int fd = fs_open("/readme.txt");
+	int fd = fs_open("/lib/libc.so.6");
 	char* buf = 0;
 	int i = 0;
 	time_t now;
 	unsigned t;
 	timer_current(&now);
-	printk("%d: write begin\n", now.seconds*60+now.milliseconds);
-	if (fd == MAX_FD)
+	printk("%d: write begin, fd %d\n", now.seconds*60+now.milliseconds, fd);
+	if (fd == -1)
 		return;
 
 	buf = kmalloc(1024);
 	memset(buf, 'd', 1024);
-	t = time(0);
-	for (i = 0; i < (4*1024); i++){
+	t = time_now();
+	for (i = 0; i < (3*1024); i++){
 		if (i % 100 == 0) {
-			unsigned span = time(t);
+			unsigned span = time_now() - t;
 			unsigned speed = 0;
 			if (span) {
 				speed=((100*1024) / span) * 1000;
@@ -815,25 +821,25 @@ static void test_write()
 
 static void test_read()
 {	
-	unsigned int fd = fs_open("/readme.txt");
+	int fd = fs_open("/lib/libc.so.6");
 	char* buf = 0;
 	int i = 0;
 	time_t now;
 	unsigned t;
 	timer_current(&now);
 	printk("%d: read  begin\n", now.seconds*60+now.milliseconds);
-	if (fd == MAX_FD)
+	if (fd == -1)
 		return;
 
 	buf = kmalloc(1024);
 	memset(buf, 0, 1024);
-	t = time(0);
+	t = time_now();
 	while (1) {
 		printk("");
 		klogquota();
-		for (i = 0; i < (4*1024); i++){
+		for (i = 0; i < (3*1024); i++){
 			if (i % 100 == 0) {
-				unsigned span = time(0) - t;
+				unsigned span = time_now() - t;
 				unsigned speed = 0;
 				if (span) {
 					speed=((100*1024) / span) * 1000;
@@ -858,7 +864,7 @@ static void test_read()
 	fs_close(fd);
 
 	timer_current(&now);
-	printk("%d: write end\n", now.seconds*60+now.milliseconds);
+	printk("%d: read end\n", now.seconds*60+now.milliseconds);
 }
 
 void test_ns()
@@ -869,8 +875,11 @@ void test_ns()
 
 	printk("test_ns\n");
 	//list_dir("/", 0);
-
-	test_write();
+	test_read();
 	klogquota();
+
+	for (;;) {
+		__asm__("hlt");
+	}
 }
 #endif

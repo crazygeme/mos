@@ -83,6 +83,7 @@
 			<F N="fs/pipechar.c"/>
 			<F N="ps/ps.c"/>
 			<F N="user/ps0.c"/>
+			<F N="lib/rbtree.c"/>
 			<F N="mm/region.c"/>
 			<F N="drivers/serial.c"/>
 			<F N="syscall/syscall.c"/>
@@ -120,6 +121,7 @@
 			<F N="fs/pipechar.h"/>
 			<F N="ps/ps.h"/>
 			<F N="user/ps0.h"/>
+			<F N="lib/rbtree.h"/>
 			<F N="mm/region.h"/>
 			<F N="user/run.h"/>
 			<F N="drivers/serial.h"/>

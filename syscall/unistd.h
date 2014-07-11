@@ -326,6 +326,8 @@ struct krnquota
 	unsigned phymm_wm;
 	unsigned pgc_count;
 	unsigned pgc_top;
+	unsigned sched_spent;
+	unsigned total_spent;
 };
 
 #endif

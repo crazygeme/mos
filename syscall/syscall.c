@@ -1004,6 +1004,7 @@ extern unsigned phymm_high;
 extern unsigned phymm_max;
 extern unsigned pgc_count;
 extern unsigned pgc_top;
+extern unsigned task_schedule_time;
 static int sys_quota(struct krnquota *quota)
 {
 	quota->heap_cur = heap_quota;
@@ -1014,7 +1015,8 @@ static int sys_quota(struct krnquota *quota)
 	quota->phymm_max = phymm_max;
 	quota->pgc_count = pgc_count;
 	quota->pgc_top = pgc_top;
-
+	quota->sched_spent = task_schedule_time;
+	quota->total_spent = time_now();
 	return 0;
 }
 

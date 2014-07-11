@@ -12,7 +12,7 @@ endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
 CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
-	-D__KERNEL__ -D__VERBOS_SYSCALL__ -D__DEBUG__\
+	-D__KERNEL__\
 	-I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
@@ -50,7 +50,8 @@ OBJS	= boot.o \
 		  cache.o\
 		  cyclebuf.o\
 		  serial.o\
-		  pipe.o
+		  pipe.o\
+		  rbtree.o
 
 all: kernel
 
@@ -82,6 +83,9 @@ klib.o: lib/klib.c lib/klib.h drivers/tty.h
 
 list.o: lib/list.c lib/list.h
 	$(CC) $(CFLAGS) lib/list.c -o list.o
+
+rbtree.o: lib/rbtree.c lib/rbtree.h
+	$(CC) $(CFLAGS) lib/rbtree.c -o rbtree.o
 
 dsr.o: int/dsr.c int/dsr.h
 	$(CC) $(CFLAGS) int/dsr.c -o dsr.o

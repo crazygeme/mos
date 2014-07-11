@@ -5,6 +5,8 @@
 #include <int/timer.h>
 #include <config.h>
 #include <lib/klib.h>
+#include <lib/rbtree.h>
+#include <lib/list.h>
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */
@@ -82,13 +84,45 @@ typedef struct _block_cache_item
   unsigned last_time;
   unsigned dirty;
   void* buf;
+  struct rb_node hash_node;
+  LIST_ENTRY time_list;
 }block_cache_item;
 
 typedef struct _block_cache
 {
-  void* vm_pages[HDD_CACHE_SIZE];
-  block_cache_item cache_item[CACHE_SECTOR_COUNT];
+  hash_table* hash;
+  LIST_ENTRY timer_list_head;
+  int count;
 }block_cache;
+
+static int int_comp(void* key1, void* key2)
+{
+  int k1 = (int)key1;
+  int k2 = (int)key2;
+
+  return (k1 - k2);
+}
+
+static block_cache_item* block_cache_item_create()
+{
+  block_cache_item* item = kmalloc(sizeof(*item));
+  item->sector = -1;
+  item->last_time = 0;
+  item->dirty = 0;
+  item->buf = kmalloc(BLOCK_SECTOR_SIZE);
+  rb_init_node(&item->hash_node);
+  InitializeListHead(&item->time_list);
+  return item;
+}
+
+static void block_cache_item_remove(block_cache_item* item)
+{
+  if (!item)
+    return;
+
+  kfree(item->buf);
+  kfree(item);
+}
 
 #endif
 
@@ -547,150 +581,153 @@ static void init_partition_cache(partition* p)
 {
     int i = 0;
 
-    for (i = 0; i < HDD_CACHE_SIZE; i++)
-      {
-        p->cache.vm_pages[i] = vm_alloc(1);
-      }
-
-    for (i = 0; i < CACHE_SECTOR_COUNT; i++)
-      {
-        unsigned page_idx, page_oft;
-        unsigned buf = 0;
-
-        page_idx = i / SECTOR_PER_PAGE;
-        page_oft = i % SECTOR_PER_PAGE;
-        buf = (unsigned)p->cache.vm_pages[page_idx] + (page_oft * BLOCK_SECTOR_SIZE);
-        p->cache.cache_item[i].dirty = 
-        p->cache.cache_item[i].last_time = 0;
-        p->cache.cache_item[i].sector = -1;
-        p->cache.cache_item[i].buf = (void*)buf;
-      }
-
+    p->cache.count = 0;
+    p->cache.hash = hash_create(int_comp);
+    InitializeListHead(&p->cache.timer_list_head);
     p->cache_inited = 1;
 }
 
 
 
-static int hdd_cache_lookup(partition* p, int sector)
+static block_cache_item* hdd_cache_lookup(partition* p, int sector)
 {
   int i = 0;
-
+  key_value_pair* pair = 0;
+  block_cache_item* ret = 0;
   if (sector == -1)
     {
       return -1;
     }
 
-  for (i = 0; i < CACHE_SECTOR_COUNT; i++)
-    {
-    if (p->cache.cache_item[i].sector == sector)
-      {
-        cache_hit++;
-        return i;
-      }
-    }
-  return -1;
-}
+  pair = hash_find(p->cache.hash, sector);
+  if (!pair)
+    return 0;
 
-static int hdd_cache_find_empty(partition* p)
-{
-  int i = 0;
-  for (i = 0; i < CACHE_SECTOR_COUNT; i++)
-    {
-    if (p->cache.cache_item[i].sector == -1)
-      {
-        return i;
-      }
-    }
-  return -1;
-}
+  ret = pair->val;
 
-static int hdd_cache_find_oldest(partition* p)
-{
-  unsigned oldest = 0xffffffff;
-  int ret = -1;
-  int i = 0;
-
-  for (i = 0; i < CACHE_SECTOR_COUNT; i++)
-    {
-      if (p->cache.cache_item[i].sector == -1)
-        continue;
-
-      if (oldest > p->cache.cache_item[i].last_time)
-        {
-          oldest = p->cache.cache_item[i].last_time;
-          ret = i;
-        }
-    }
   return ret;
 }
 
-static void hdd_cache_flush(partition*p, int index)
+static block_cache_item* hdd_cache_find_empty(partition* p, int sector)
 {
-  void* buf = p->cache.cache_item[index].buf;
-  int sector = p->cache.cache_item[index].sector;
+  block_cache_item* item;
+  if (p->cache.count >= CACHE_SECTOR_COUNT)
+    {
+    return 0;
+    }
+
+  item = block_cache_item_create();
+  item->sector = sector;
+  InsertTailList(&p->cache.timer_list_head, &item->time_list);
+  hash_insert(p->cache.hash, sector, item);
+  p->cache.count++;
+  return item;
+}
+
+static block_cache_item* hdd_cache_find_oldest(partition* p)
+{
+  LIST_ENTRY* node;
+  block_cache_item* item = 0;
+
+  if (p->cache.count == 0)
+    return 0;
+
+  node = p->cache.timer_list_head.Flink;
+  item = CONTAINER_OF(node, block_cache_item, time_list);
+  return item;
+
+}
+
+static void hdd_cache_flush(partition*p, block_cache_item* item)
+{
+  void* buf = item->buf;
+  int sector = item->sector;
 
   if (sector < 0)
     return;
-  if (p->cache.cache_item[index].dirty)
+
+  if (item->dirty)
     {
       total_writ++;
       partition_write(p,sector,buf,BLOCK_SECTOR_SIZE);
-      p->cache.cache_item[index].dirty = 0;
+      item->dirty = 0;
     }
 }
 
-static void hdd_cache_update(partition*p, int index, int sector, void* buf, int mark_dirty)
+static void hdd_cache_update(partition*p, block_cache_item* item, int sector, void* buf, int mark_dirty)
 {
-  p->cache.cache_item[index].dirty = mark_dirty;
-  p->cache.cache_item[index].sector = sector;
-  p->cache.cache_item[index].last_time = time(0);
-  memcpy(p->cache.cache_item[index].buf, buf, BLOCK_SECTOR_SIZE);
+  int same_sector = (item->sector == sector);
+
+  if (!same_sector)
+  {
+     hash_remove(p->cache.hash, item->sector);
+     hash_insert(p->cache.hash, sector, item);
+  }
+  item->dirty = mark_dirty;
+  item->sector = sector;
+  item->last_time = time(0);
+
+  RemoveEntryList(&item->time_list);
+  InsertTailList(&p->cache.timer_list_head, &item->time_list);
+
+  memcpy(item->buf, buf, BLOCK_SECTOR_SIZE);
   #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
   if (mark_dirty)
     {
-      hdd_cache_flush(p,index);
+      hdd_cache_flush(p,item);
     }
   #endif
+
 }
 
 static void flush_partition_cache(partition* p)
 {
-  int i = 0;
-  for (i = 0; i < CACHE_SECTOR_COUNT; i++){
-     if (p->cache.cache_item[i].sector == -1)
-        continue;
-
-     hdd_cache_flush(p,i);
-  }
+  LIST_ENTRY* entry = p->cache.timer_list_head.Flink;
+  LIST_ENTRY* next;
+  while (entry != &p->cache.timer_list_head)
+    {
+      next = entry->Flink;
+      block_cache_item* item = CONTAINER_OF(entry, block_cache_item, time_list);
+      if (item && item->sector != -1)
+        {
+          hdd_cache_flush(p, item);
+        }
+      block_cache_item_remove(item);
+      p->cache.count--;
+      entry = next;
+    }
 }
 
 static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len)
 {
   partition* p = aux;
   int index = 0;
+  block_cache_item* item = 0;
 
-  index = hdd_cache_lookup(p,sector);
-  if (index >= 0)
+  item = hdd_cache_lookup(p,sector);
+  if (item)
     {
-      p->cache.cache_item[index].last_time = time(0);
-      memcpy(buf, p->cache.cache_item[index].buf, BLOCK_SECTOR_SIZE);
+      item->last_time = time(0);
+      RemoveEntryList(&item->time_list);
+      InsertTailList(&p->cache.timer_list_head, &item->time_list);
+      memcpy(buf, item->buf, BLOCK_SECTOR_SIZE);
       return BLOCK_SECTOR_SIZE;
     }
 
   total_read++;
   partition_read(aux,sector,buf,len);
-  index = hdd_cache_find_empty(p);
-  if (index >= 0)
+  item = hdd_cache_find_empty(p, sector);
+  if (item)
     {
-      hdd_cache_update(p,index,sector,buf,0);
+      hdd_cache_update(p,item,sector,buf,0);
       return len;
     }
 
-  index = hdd_cache_find_oldest(p);
-  if (index >= 0)
+  item = hdd_cache_find_oldest(p);
+  if (item)
     {
-      hdd_cache_flush(p,index);
-      hdd_cache_update(p,index,sector,buf,0);
+      hdd_cache_flush(p,item);
+      hdd_cache_update(p,item,sector,buf,0);
       return len;
     }
 
@@ -701,25 +738,26 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
 static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned len)
 {
   partition* p = aux;
-  int index = hdd_cache_lookup(p,sector);
-  if (index >= 0)
+  block_cache_item* item = 0;
+  item = hdd_cache_lookup(p,sector);
+  if (item)
     {
-      hdd_cache_update(p,index,sector,buf,1);
+      hdd_cache_update(p,item,sector,buf,1);
       return BLOCK_SECTOR_SIZE;
     }
 
-  index = hdd_cache_find_empty(p);
-  if (index >= 0)
+  item = hdd_cache_find_empty(p, sector);
+  if (item)
     {
-      hdd_cache_update(p,index,sector,buf,1);
+      hdd_cache_update(p,item,sector,buf,1);
       return len;
     }
 
-  index = hdd_cache_find_oldest(p);
-  if (index >= 0)
+  item = hdd_cache_find_oldest(p);
+  if (item)
     {
-      hdd_cache_flush(p,index);
-      hdd_cache_update(p,index,sector,buf,1);
+      hdd_cache_flush(p,item);
+      hdd_cache_update(p,item,sector,buf,1);
       return len;
     }
 
@@ -1095,11 +1133,6 @@ static void partition_close(void* aux)
   if (p->cache_inited)
     {
     flush_partition_cache(aux);
-    for (i = 0; i < HDD_CACHE_SIZE; i++)
-      {
-        vm_free(p->cache.vm_pages[i], 1);
-      }
-
     p->cache_inited = 0;
     }
   #endif

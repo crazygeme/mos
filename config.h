@@ -35,7 +35,7 @@
 
 #define HDD_CACHE_SIZE 2048 /* pages */
 
-#define HDD_CACHE_OPEN 0
+#define HDD_CACHE_OPEN 1
 
 #define HDD_CACHE_WRITE_THOUGH 0
 #define HDD_CACHE_WRITE_BACK 1

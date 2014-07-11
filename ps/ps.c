@@ -62,6 +62,23 @@ static void ps_put_task(PLIST_ENTRY list, task_struct *task) {
 
 
 static int _ps_enabled = 0;
+unsigned task_schedule_time = 0;
+static unsigned sched_begin = 0;
+static unsigned sched_end = 0;
+
+static void sched_cal_begin()
+{
+    sched_begin = time_now();
+}
+
+static void sched_cal_end()
+{
+    sched_end = time_now();
+    if (sched_begin) {
+        task_schedule_time += (sched_end - sched_begin);
+    }
+    sched_begin = sched_end = 0;
+}
 
 static void ps_run() {
     task_struct *task;
@@ -104,6 +121,8 @@ void ps_init() {
     spinlock_init(&dying_queue_lock);
     ps_id = 0;
     _ps_enabled = 0;
+    task_schedule_time = 0;
+    sched_begin = sched_end = 0;
 	debug = 0;
     tss_address = kmalloc(sizeof(tss_struct));
     int_update_tss((unsigned int)tss_address);
@@ -354,6 +373,7 @@ int sys_fork()
         RELOAD_CR3(next_cr3);
         cur->is_switching = 0;
         int_intr_enable();
+        sched_cal_end();
         return 0; 
     }
 
@@ -609,7 +629,7 @@ static task_struct* ps_get_next_task(PLIST_ENTRY wait_list)
              break;
          }
          if (task->status == ps_dying) {
-            task = ps_get_task(wait_list);
+            continue;
         }else{
             break;
         }
@@ -625,6 +645,9 @@ static void _task_sched(PLIST_ENTRY wait_list) {
     unsigned pdr;
     int i = 0;
     int intr_enabled = int_is_intr_enabled();
+
+
+    sched_cal_begin();
 
     int_intr_disable();
     current = CURRENT_TASK();
@@ -669,6 +692,7 @@ static void _task_sched(PLIST_ENTRY wait_list) {
 
 
  SELF:
+     
     current = CURRENT_TASK();
     reset_tss(current);
     
@@ -679,6 +703,7 @@ static void _task_sched(PLIST_ENTRY wait_list) {
      }
      
     current ->is_switching = 0;
+    sched_cal_end();
     return;
 }
 

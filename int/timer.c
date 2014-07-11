@@ -158,6 +158,11 @@ void timer_current(time_t* time)
     time->milliseconds = tickets*10;
 }
 
+unsigned time_now()
+{
+    return (total_seconds * 1000 + tickets*10);
+}
+
 void msleep(unsigned int ms)
 {
     time_t base;

@@ -13,6 +13,7 @@ typedef struct _ps_control
     LIST_ENTRY ready_queue[MAX_PRIORITY];
     LIST_ENTRY dying_queue;
     LIST_ENTRY  wait_queue;
+    LIST_ENTRY  mgr_queue;
 }ps_control;
 
 static unsigned cur_cr3, cr3, next_cr3;
@@ -22,6 +23,7 @@ static spinlock ps_lock;
 static spinlock psid_lock;
 static spinlock dying_queue_lock;
 static spinlock wait_queue_lock;
+static spinlock mgr_queue_lock;
 static unsigned int ps_id;
 static void ps_restore_user_map();
 static void lock_ps() {
@@ -48,6 +50,58 @@ static void unlock_waiting() {
     spinlock_unlock(&wait_queue_lock);
 }
 
+static void lock_mgr() {
+    spinlock_lock(&mgr_queue_lock);
+}
+
+static void unlock_mgr() {
+    spinlock_unlock(&mgr_queue_lock);
+}
+
+static void ps_add_mgr(task_struct* task)
+{
+    lock_mgr();
+    InsertTailList(&control.mgr_queue, &task->ps_mgr);
+    unlock_mgr();
+}
+
+static void ps_remove_mgr(task_struct* task)
+{
+    lock_mgr();
+    RemoveEntryList(&task->ps_mgr);
+    unlock_mgr();
+}
+
+static void ps_notify_process(unsigned pid)
+{
+    task_struct* task = ps_find_process(pid);
+    if (task) {
+        ps_put_to_ready_queue(task);
+    }
+}
+
+task_struct* ps_find_process(unsigned psid)
+{
+    LIST_ENTRY* head = &control.mgr_queue;
+    LIST_ENTRY* entry;
+    task_struct* task = 0;
+
+    lock_mgr();
+
+    entry = head->Flink;
+    while (entry != head) {
+        task = CONTAINER_OF(entry, task_struct, ps_mgr);
+        if (task->psid == psid) {
+            break;
+        }else{
+            task = 0;
+        }
+        entry = entry->Flink; 
+    }
+    unlock_mgr();
+
+    return task;
+}
 
 void ps_put_to_dying_queue(task_struct* task)
 {
@@ -175,6 +229,8 @@ static void ps_run() {
     task->status = ps_dying;
     // put to dying_queue
     ps_put_to_dying_queue(task);
+    ps_remove_mgr(task);
+    ps_notify_process(task->parent);
     task_sched();
     //vm_free(task, KERNEL_TASK_SIZE);
 }
@@ -187,6 +243,7 @@ void ps_init() {
     int i = 0;
     InitializeListHead(&control.dying_queue);
     InitializeListHead(&control.wait_queue);
+    InitializeListHead(&control.mgr_queue);
     for (i = 0; i < MAX_PRIORITY; i++) {
         InitializeListHead(&control.ready_queue[i]);
     }
@@ -194,6 +251,7 @@ void ps_init() {
     spinlock_init(&psid_lock);
     spinlock_init(&dying_queue_lock);
     spinlock_init(&wait_queue_lock);
+    spinlock_init(&mgr_queue_lock);
     ps_id = 0;
     _ps_enabled = 0;
     task_schedule_time = 0;
@@ -294,6 +352,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->esp0 = task->esp = (unsigned int)frame;
     ps_put_to_ready_queue(task);
 	
+    ps_add_mgr(task);
 	return task->psid;
 }
 
@@ -439,7 +498,7 @@ int sys_fork()
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur,task);
     ps_put_to_ready_queue(task);
-
+    ps_add_mgr(task);
 
     task_sched();
     is_parent = 1;
@@ -496,6 +555,8 @@ int sys_exit(unsigned status)
     // modify all child->parent into cur->parent
     cur->status = ps_dying;
     ps_put_to_dying_queue(cur);
+    ps_remove_mgr(cur);
+    ps_notify_process(cur->parent);
     task_sched();
     return 0;
 }
@@ -548,7 +609,10 @@ int sys_waitpid(unsigned pid, int* status, int options)
         }
         unlock_dying();
 
-        task_sched();
+        if (!can_return) {
+            ps_put_to_wait_queue(cur);
+        }
+        task_sched(); 
     }
     while (can_return == 0); 
     return ret;

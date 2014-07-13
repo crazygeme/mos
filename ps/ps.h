@@ -196,8 +196,12 @@ typedef struct _task_struct
 	void* param;
 	user_enviroment user;
 	int priority;
+    // in schedule list
 	LIST_ENTRY ps_list;
+    // in wait list if waiting a lock
     LIST_ENTRY lock_list;
+    // in all process list
+    LIST_ENTRY ps_mgr;
 	ps_status status;
     ps_type type;
     int remain_ticks;
@@ -245,6 +249,8 @@ void ps_put_to_ready_queue(task_struct* task);
 void ps_put_to_dying_queue(task_struct* task);
 
 void ps_put_to_wait_queue(task_struct* task);
+
+task_struct* ps_find_process(unsigned psid);
 
 // syscall handler
 int sys_fork();

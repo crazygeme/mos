@@ -40,6 +40,7 @@ _START void kmain(multiboot_info_t* mb, unsigned int magic)
 
 
 static void kmain_process(void* param);
+static void idle_process(void* param);
 
 void kmain_startup()
 {
@@ -100,6 +101,8 @@ void kmain_startup()
 #ifndef TEST_LOCK
 
         printk("Start first process\n");
+    // create idle process
+    ps_create(idle_process, 0, 0, ps_kernel);
     // create first process
     ps_create(kmain_process, 0, 1, ps_kernel);
     ps_kickoff();
@@ -113,6 +116,13 @@ void kmain_startup()
 
 }
 
+static void idle_process(void* param)
+{
+    while (1) {
+        printk("idle!\n");
+        __asm__("hlt");
+    }
+}
 
 static void kmain_process(void* param)
 {
@@ -170,12 +180,6 @@ static void kmain_process(void* param)
     klib_clear();
     user_first_process_run();
 
-    // we never here
-    printk("idle\n");
-    while (1) {
-        // this can become wait syscall
-        ps_cleanup_dying_task();
-    }
     run();
 }
 

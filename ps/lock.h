@@ -18,37 +18,6 @@ void spinlock_lock(spinlock_t lock);
 
 void spinlock_unlock(spinlock_t lock);
 
-
-// waitable object
-typedef enum _wait_type
-{
-	wait_type_event, // wakeup only one object in waiting list
-	wait_type_notify, // wakeup all object int waiting list
-	wait_type_lock // wakeup one object and that object get lock
-}wait_type;
-
-typedef struct _waitable_object
-{
-	char name[16];
-	wait_type type;
-	LIST_ENTRY wait_list;
-	unsigned int lock;
-	unsigned int depth;
-}waitable_object;
-
-typedef struct _event
-{
-	waitable_object obj;
-}event;
-
-event* create_event(wait_type type, unsigned initial_state, const char* name);
-
-void delete_event(event* e);
-
-void wait_event(event* e);
-
-void set_event(event* e);
-
 // semaphore
 
 typedef struct _semaphore

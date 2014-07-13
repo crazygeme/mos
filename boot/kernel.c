@@ -119,7 +119,6 @@ void kmain_startup()
 static void idle_process(void* param)
 {
     while (1) {
-        printk("idle!\n");
         __asm__("hlt");
     }
 }

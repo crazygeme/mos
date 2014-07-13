@@ -133,7 +133,6 @@ static task_struct* ps_get_next_task()
         }
     }
     unlock_ps();
-
     return task;
 
 }

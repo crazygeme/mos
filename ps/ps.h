@@ -197,6 +197,7 @@ typedef struct _task_struct
 	user_enviroment user;
 	int priority;
 	LIST_ENTRY ps_list;
+    LIST_ENTRY lock_list;
 	ps_status status;
     ps_type type;
     int remain_ticks;

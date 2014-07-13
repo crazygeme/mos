@@ -24,11 +24,15 @@ typedef struct _semaphore
 {
 	char name[16];
 	unsigned int lock;
+    LIST_ENTRY wait_list;
+    spinlock wait_lock;
 }semaphore;
 
 void sema_init(semaphore* s, const char* name, unsigned int initstat);
 
 void sema_wait(semaphore* s);
+
+void sema_wait_for_intr(semaphore* s);
 
 void sema_reset(semaphore* s);
 

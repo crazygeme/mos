@@ -770,12 +770,12 @@ static void test_stat(char* path)
 	printk("%s: is dir %d, size %d\n", path, S_ISDIR(s.st_mode), s.st_size);
 }
 
-static unsigned time_now()
-{
-	time_t t;
-	timer_current(&t);
-	return (t.seconds * 1000 + t.milliseconds);
-}
+//static unsigned time_now()
+//{
+//	time_t t;
+//	timer_current(&t);
+//	return (t.seconds * 1000 + t.milliseconds);
+//}
 static void test_write()
 {	
 	int fd = fs_open("/lib/libc.so.6");
@@ -841,6 +841,7 @@ static void test_read()
 			if (i % 100 == 0) {
 				unsigned span = time_now() - t;
 				unsigned speed = 0;
+
 				if (span) {
 					speed=((100*1024) / span) * 1000;
 				}

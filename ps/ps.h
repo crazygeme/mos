@@ -232,17 +232,18 @@ void ps_update_tss(unsigned int esp0);
 // task functions
 void task_sched();
 
-void task_sched_wait(PLIST_ENTRY wait_list);
-
-void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all);
-
-void ps_cleanup_dying_task();
 
 typedef void (*fpuser_map_callback)(void* aux, unsigned vir, unsigned phy);
 
 void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux);
 
 void ps_cleanup_all_user_map(task_struct* task);
+
+void ps_put_to_ready_queue(task_struct* task);
+
+void ps_put_to_dying_queue(task_struct* task);
+
+void ps_put_to_wait_queue(task_struct* task);
 
 // syscall handler
 int sys_fork();

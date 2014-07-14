@@ -98,9 +98,6 @@ static void tty_copy_row(int src, int dst)
 	int col = 0;
 	TTY_COLOR fg, bg;
 	for (col = 0; col < TTY_MAX_COL; col++){
-		fg = tty_get_frontcolor(src, col);
-		bg = tty_get_backcolor(src, col);
-		tty_setcolor(dst, col, fg, bg);
 		tty_putchar(dst, col, tty_getchar(src, col));
 	}
 }
@@ -110,7 +107,6 @@ static void tty_clear_row(int row)
 	int col = 0;
 
 	for (col = 0; col < TTY_MAX_COL; col++){
-		tty_setcolor(row, col, clWhite, clBlack);
 		tty_putchar(row, col, ' ');
 	}
 }

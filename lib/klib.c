@@ -927,25 +927,69 @@ void printf(const char* str, ...)
 }
 
 
+#define TTY_BUF_SIZE 512
+static char tty_buf[TTY_BUF_SIZE];
+static char* tty_buf_pos;
+static void _put_buf_c(fputstr _putstr, char c)
+{
+	*tty_buf_pos = c;
+	tty_buf_pos++;
+	if ((tty_buf_pos - tty_buf) >= TTY_BUF_SIZE) {
+		_putstr(tty_buf);
+		tty_buf_pos = tty_buf;
+	}
+	*tty_buf_pos = '\0';
+}
+
+static void _put_buf_str(fputstr _putstr, char* str)
+{
+	while (*str) {
+		_put_buf_c(_putstr, *str);
+		str++;
+	}
+}
+
+static void print_human_readable_size (fputstr _putstr, unsigned int size) 
+{
+  char* s = 0;
+
+  if (size == 1)
+    _put_buf_str (_putstr, "1");
+  else 
+    {
+      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
+      const char **fp;
+
+      for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
+        size /= 1024;
+
+	  s = itoa(size, 10, 0);
+	  _put_buf_str(_putstr, s);
+	  free(s);
+	  _put_buf_str(_putstr, *fp);
+    }
+}
+
 void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 {
 	int len = strlen(src);
 	int i = 0;
     int min_len = 0;
-
+	tty_buf[0] = '\0';
+	tty_buf_pos = tty_buf;
     for (i = 0; i < len; i++) {
         char cur = src[i];
         if (cur == '%') {
 			cur = src[i+1];
             switch (cur) {
 			case '%':
-				_putc(src[i+1]);
+				_put_buf_c(_putstr, src[i+1]);
 				break;
 			case 'd':
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 1);
-					_putstr(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
@@ -954,7 +998,7 @@ void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 16, 0);
-					_putstr(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
@@ -962,55 +1006,44 @@ void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 0);
-					_putstr(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
 			case 's':
 				{
 					char* arg = va_arg(ap, char*);
-					_putstr(arg);
+					_put_buf_str(_putstr, arg);
 					break;
 				}
             case 'h':
                 {
                     unsigned arg = va_arg(ap, unsigned);
-                    print_human_readable_size(arg);
+                    print_human_readable_size(_putstr, arg);
                     break;
                 }
 			case 'c':
 				{
 					unsigned char arg = va_arg(ap, unsigned char);
-					_putc(arg);
+					_put_buf_c(_putstr, arg);
 					break;
 				}
 			default:
 				{
-					_putc('?');
+					_put_buf_c(_putstr,'?');
 					break;
 				}
             }
 			i++;
         }else{
-			_putc(cur);
+			_put_buf_c(_putstr,cur);
 		}
     }
+
+	_putstr(tty_buf);
 }
 
-void print_human_readable_size (unsigned int size) 
-{
-  if (size == 1)
-    printf ("1 byte");
-  else 
-    {
-      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
-      const char **fp;
 
-      for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
-        size /= 1024;
-      printf ("%u%s", size, *fp);
-    }
-}
 
 static char _num(int i){
 
@@ -1275,7 +1308,7 @@ void tty_write(const char* buf, unsigned len)
 	int i = 0;
 	lock_tty();
 	for (i = 0; i < len; i++){
-		tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
+		//tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
 		klib_putchar(buf[i]);
 	}
 	unlock_tty();

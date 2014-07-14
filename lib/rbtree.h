@@ -96,6 +96,7 @@ return ret;
 
 #include <lib/klib.h>
 #include <lib/list.h>
+#include <ps/lock.h>
 
 #ifndef NULL
 #define NULL ((void*)0)
@@ -199,6 +200,7 @@ struct _hash_table
 {
 	struct rb_root root;
 	hash_comp_fn comp;
+	spinlock lock;
 };
 
 struct _key_value_pair

@@ -13,7 +13,9 @@
 #include <int/timer.h>
 #include <syscall/unistd.h>
 #include <lib/cyclebuf.h>
+#include <fs/cache.h>
 #endif
+
 
 static INODE fs_lookup_inode(char* path);
 static unsigned fs_get_free_fd(INODE node, char* path);
@@ -183,13 +185,13 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
     }
 
 
-	if (path && path[0]) {
-		hash = file_cache_find(path);
-		if (hash) {
-			kfree(path);
-			return file_cache_read(hash, offset, buf, len);
-		}
-	}
+//  if (path && path[0]) {
+//  	hash = file_cache_find(path);
+//  	if (hash) {
+//  		kfree(path);
+//  		return file_cache_read(hash, offset, buf, len);
+//  	}
+//  }
 
 	kfree(path);
     ret = vfs_read_file(node, offset,buf,len);
@@ -510,9 +512,18 @@ static INODE fs_lookup_inode(char* path)
 	INODE root;
 	char* parent = 0;
 	char* tmp;
+	key_value_pair* pair = 0;
 
 	if (!path || !*path)
 	  return 0;
+
+//  pair = hash_find(inode_cache, path);
+//  if (pair) {
+//  	INODE ret = pair->val;
+//  	printk("find inode cache %s\n", path);
+//  	vfs_refrence(ret);
+//  	return ret;
+//  }
 	
 	// find root file system
 	type = mount_lookup("/");
@@ -521,6 +532,8 @@ static INODE fs_lookup_inode(char* path)
 	
 	root = vfs_get_root(type);
 	if (!strcmp(path, "/")){
+		//vfs_refrence(root);
+		//hash_insert(inode_cache, strdup(path), root);
 		return root;
 	}
 	
@@ -554,7 +567,7 @@ static INODE fs_lookup_inode(char* path)
 				*slash = '/';
 				node = fs_check_mountpoint(parent);
 				kfree(parent);
-			  return node;
+				return node;
 			}
 			p = node;
 			tmp = slash+1;
@@ -564,6 +577,11 @@ static INODE fs_lookup_inode(char* path)
 		node = fs_check_mountpoint(parent);
 		if (!node) {
 			node = fs_get_dirent_node(p, tmp);
+			if (node) {
+				//vfs_refrence(node);
+				//hash_insert(inode_cache, strdup(path), node);
+			}
+		}else{
 		}
 		vfs_free_inode(p);
 		kfree(parent);

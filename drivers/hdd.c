@@ -688,7 +688,7 @@ static void flush_partition_cache(partition* p)
     {
       next = entry->Flink;
       block_cache_item* item = CONTAINER_OF(entry, block_cache_item, time_list);
-      if (item && item->sector != -1)
+      if (item && item->sector != -1 && item->dirty)
         {
           hdd_cache_flush(p, item);
         }

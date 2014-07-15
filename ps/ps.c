@@ -362,7 +362,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     ps_put_to_ready_queue(task);
 	
     ps_add_mgr(task);
-	return task->psid;
+    return task->psid;
 }
 
 static void ps_dup_fds(task_struct* cur, task_struct* task)

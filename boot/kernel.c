@@ -101,10 +101,15 @@ void kmain_startup()
 #ifndef TEST_LOCK
 
         printk("Start first process\n");
-    // create idle process
-    ps_create(idle_process, 0, 0, ps_kernel);
+
+
     // create first process
-    ps_create(kmain_process, 0, 1, ps_kernel);
+    ps_create(kmain_process, 0, 3, ps_kernel);
+
+
+    // create idle process
+    ps_create(idle_process, 0, 1, ps_kernel);
+
     ps_kickoff();
 
     // never going to here because ps0 never exit
@@ -120,6 +125,9 @@ static void idle_process(void* param)
 {
     while (1) {
         __asm__("hlt");
+
+        // wakeup by interrupt
+        task_sched();
     }
 }
 

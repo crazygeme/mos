@@ -5,7 +5,7 @@
 #include <lib/klib.h>
 #include <syscall/unistd.h>
 
-#define CACHE_HASH_SIZE 10
+#define CACHE_HASH_SIZE 0
 
 typedef struct _file_cache_item
 {
@@ -18,7 +18,6 @@ typedef struct _file_cache_item
 static file_cache_item cache[CACHE_HASH_SIZE];
 
 hash_table* inode_cache;
-
 
 static void file_cache_add(char* path);
 static int file_cache_hash(char* path);

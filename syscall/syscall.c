@@ -7,6 +7,7 @@
 #include <fs/namespace.h>
 #include <int/timer.h>
 #include <lib/klib.h>
+#include <lib/rbtree.h>
 #include <fs/fcntl.h>
 #include <errno.h>
 
@@ -191,6 +192,8 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,            // 191 ~ 195
 	"sys_lstat64", "sys_fstat64" , "sys_quota"             // 196 ~ 198
 };
+
+extern hash_table* file_exist_cache;
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
 
@@ -440,6 +443,7 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 	int close_on_exec = flags & FD_CLOEXEC;
 	struct stat s;
 	int fd = -1;
+    key_value_pair* pair = 0;
 	task_struct *cur = CURRENT_TASK();
 
 	if (flags & O_CREAT) creat_if_not_exist = 1;
@@ -447,16 +451,19 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 	if (flags & O_TRUNC) resize_to_zero = 1;
 
 	resolve_path(_name, name);
+
+
 #ifdef __VERBOS_SYSCALL__
 	klog("open(%s, %x, %x)", name, flags, mode);
 #endif
+
 
 	if (fs_stat(name, &s) == -1)
 	{
 		if (creat_if_not_exist)
 		{
 			fs_create(name, mode);
-		}
+        }
 	} else
 	{
 		if (resize_to_zero)
@@ -468,9 +475,8 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 
 
 	fd = fs_open(name);
-	kfree(name);
 
-	if (fd != -1 && close_on_exec)
+	if (fd >= 0 && close_on_exec)
 	{
 		cur->fds[fd].flag |= fd_flag_closeexec;
 	}
@@ -478,7 +484,9 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 #ifdef __VERBOS_SYSCALL__
 	klog_printf("ret %d\n", fd);
 #endif
-	return fd;
+
+	kfree(name);
+    return fd; 
 }
 
 static int sys_close(unsigned fd)
@@ -581,9 +589,9 @@ static int _chdir(const char *cwd, const char *path)
 
 static int sys_chdir(const char *path)
 {
-	char name[256] = { 0 };
+	char name[64] = { 0 };
 	char *slash, *tmp;
-	char cwd[256] = { 0 };
+	char cwd[64] = { 0 };
 	int ret = 1;
 	task_struct *cur = CURRENT_TASK();
 

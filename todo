@@ -1,8 +1,8 @@
 1. 物理内存管理
 2. 虚拟内存管理
 3. ext2的完整实现
-4. 各级cache （目前只有HDD有cache）
-5. mount point						50% ( lookup done, ls not done )
+4. 各级cache						100% ( hdd cache, inode cache )
+5. mount point						50%  ( lookup done, ls not done )
 6. 文件权限
 7. 用户概念
 8. syscall的返回值

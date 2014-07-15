@@ -506,6 +506,13 @@ static INODE fs_check_mountpoint(char* path)
 
 }
 
+
+static void fs_add_inode_cache(INODE node, char* path)
+{
+	vfs_refrence(node);
+	hash_insert(inode_cache, strdup(path), node);
+}
+
 static INODE fs_lookup_inode(char* path)
 {
     struct filesys_type* type = (void*)0;
@@ -521,6 +528,7 @@ static INODE fs_lookup_inode(char* path)
   if (pair) {
 	  INODE ret = pair->val;
 	  vfs_refrence(ret);
+	  //printk("find cached inode %s\n", path);
 	  return ret;
   }
 	
@@ -531,8 +539,7 @@ static INODE fs_lookup_inode(char* path)
 	
 	root = vfs_get_root(type);
 	if (!strcmp(path, "/")){
-		vfs_refrence(root);
-		hash_insert(inode_cache, strdup(path), root);
+		fs_add_inode_cache(root, path);
 		return root;
 	}
 	
@@ -542,10 +549,6 @@ static INODE fs_lookup_inode(char* path)
 	strcpy(parent, path);
 	tmp = parent;
 
-	// FIXME
-	// check mount point every time takes too much effert
-	// linux will cache dirent with mount point info attached
-	//
 	do{
 		INODE p;
 		INODE node; 
@@ -560,11 +563,16 @@ static INODE fs_lookup_inode(char* path)
 			node = fs_check_mountpoint(parent);
 			if (!node) {
 				node = fs_get_dirent_node(p, tmp);
+			}else{
+				fs_add_inode_cache(node, parent);
 			}
 			vfs_free_inode(p);
 			if (!node){
 				*slash = '/';
 				node = fs_check_mountpoint(parent);
+				if (node) {
+					fs_add_inode_cache(node, parent);
+				}
 				kfree(parent);
 				return node;
 			}
@@ -577,10 +585,10 @@ static INODE fs_lookup_inode(char* path)
 		if (!node) {
 			node = fs_get_dirent_node(p, tmp);
 			if (node) {
-				vfs_refrence(node);
-				hash_insert(inode_cache, strdup(path), node);
+				fs_add_inode_cache(node, path);
 			}
 		}else{
+			fs_add_inode_cache(node, parent);
 		}
 		vfs_free_inode(p);
 		kfree(parent);

@@ -1,3 +1,7 @@
+* windows:
+	cygwin
+	qemu: http://qemu.weilnetz.de/w64/
+	compiler: http://www.crosstool-ng.org/#download_and_usage
 * KERNEL_CODE_SEGMENT = 0x8, 是模拟器启动/grub引导后的值
 * 引导后protect mode已经开了，但paging没开
 * 在cr3正确设置&&pageing enable之前，用的一直是物理地址，包括已经设置的interrupt地址等,所以到时候写mm模块的时候把这段起始空间保留下来直接map到物理地址，省的再设置一遍

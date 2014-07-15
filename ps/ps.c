@@ -210,6 +210,15 @@ static void sched_cal_end()
     sched_begin = sched_end = 0;
 }
 
+void report_sched_time()
+{
+    unsigned total = time_now();
+    unsigned sched = task_schedule_time;
+
+    printk("total time: %d.%d, sched used %d.%d\n", (total/1000), (total%1000),
+           (sched/1000), (sched%1000));
+}
+
 static void ps_run() {
     task_struct *task;
     process_fn fn;
@@ -781,7 +790,7 @@ static void _task_sched() {
 
     cur_cr3 = current->user.page_dir - KERNEL_OFFSET;
     __asm__("movl %%cr3, %0" : "=q"(cr3));
-    if (task == current) {
+    if (task->psid == current->psid) {
         next_cr3 = cur_cr3;
         goto SELF;
     }
@@ -810,7 +819,6 @@ static void _task_sched() {
      
     current = CURRENT_TASK();
     reset_tss(current);
-    
     RELOAD_CR3(next_cr3);
 
      if (1) {

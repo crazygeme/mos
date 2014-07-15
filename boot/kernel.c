@@ -201,7 +201,5 @@ _START static void init(multiboot_info_t* mb)
 
 static void run()
 {
-
-	while(1){
-    }
+    idle_process(0);
 }

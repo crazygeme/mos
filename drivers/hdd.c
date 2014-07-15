@@ -604,6 +604,7 @@ static block_cache_item* hdd_cache_lookup(partition* p, int sector)
     return 0;
 
   ret = pair->val;
+  cache_hit++;
 
   return ret;
 }

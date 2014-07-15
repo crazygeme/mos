@@ -795,12 +795,12 @@ static void test_stat(char* path)
 	printk("%s: is dir %d, size %d\n", path, S_ISDIR(s.st_mode), s.st_size);
 }
 
-//static unsigned time_now()
-//{
-//	time_t t;
-//	timer_current(&t);
-//	return (t.seconds * 1000 + t.milliseconds);
-//}
+static unsigned _time_now()
+{
+	time_t t;
+	timer_current(&t);
+	return (t.seconds * 1000 + t.milliseconds);
+}
 static void test_write()
 {	
 	int fd = fs_open("/lib/libc.so.6");
@@ -815,10 +815,10 @@ static void test_write()
 
 	buf = kmalloc(1024);
 	memset(buf, 'd', 1024);
-	t = time_now();
+	t = _time_now();
 	for (i = 0; i < (3*1024); i++){
 		if (i % 100 == 0) {
-			unsigned span = time_now() - t;
+			unsigned span = _time_now() - t;
 			unsigned speed = 0;
 			if (span) {
 				speed=((100*1024) / span) * 1000;
@@ -829,9 +829,11 @@ static void test_write()
 			extern void report_time();
 			extern void report_hdd_time();
 			extern void report_cache();
+			extern void report_sched_time();
 			report_time();
 			report_hdd_time();
 			report_cache();
+			report_sched_time();
 			#endif
 		}
 		fs_write(fd, i*1024, buf, 1024);
@@ -858,13 +860,13 @@ static void test_read()
 
 	buf = kmalloc(1024);
 	memset(buf, 0, 1024);
-	t = time_now();
+	t = _time_now();
 	while (1) {
 		printk("");
 		klogquota();
 		for (i = 0; i < (3*1024); i++){
 			if (i % 100 == 0) {
-				unsigned span = time_now() - t;
+				unsigned span = _time_now() - t;
 				unsigned speed = 0;
 
 				if (span) {
@@ -876,9 +878,11 @@ static void test_read()
 				extern void report_time();
 				extern void report_hdd_time();
 				extern void report_cache();
+				extern void report_sched_time();
 				report_time();
 				report_hdd_time();
 				report_cache();
+				report_sched_time();
 				#endif
 			}
 			memset(buf, 0, 1024);
@@ -901,7 +905,8 @@ void test_ns()
 
 	printk("test_ns\n");
 	//list_dir("/", 0);
-	test_read();
+	//test_read();
+	test_write();
 	klogquota();
 
 	for (;;) {

@@ -9,7 +9,7 @@ mos.vpj=Release
   + Resource Files
   + Bitmaps
   - Other Files
-scroll:10
+scroll:0
 [State]
 SCREEN: 1440 900 98 84 1217 787 0 0 M 0 0 0 0 1006 571 0
 CWD: ../mos

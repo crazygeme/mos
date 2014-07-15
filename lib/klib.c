@@ -16,11 +16,18 @@ static kblock free_list[513] = { 0 };
 static void klib_add_to_free_list(int index, kblock* buf, int force_merge);
 unsigned int heap_quota;
 unsigned int heap_quota_high;
+unsigned int mem_time;
+unsigned int heap_time;
 static unsigned int klib_random_num = 1;
 
 
 #ifdef __KERNEL__
 
+void mm_report()
+{
+    printk("memcpy time %d millisecond, malloc/free time %d millisecond\n", mem_time, heap_time);
+    mem_time = heap_time = 0;
+}
 
 
 unsigned int cur_block_top = KHEAP_BEGIN;
@@ -132,8 +139,9 @@ void klib_init()
 	klib_random_num = 1;
 	cursor = 0;
 	heap_quota = 0;
-
     heap_quota_high = 0;
+    mem_time = 0;
+    heap_time = 0;
 
 	cur_block_top = KHEAP_BEGIN;
 	spinlock_init(&tty_lock);
@@ -486,7 +494,9 @@ void* malloc(unsigned size)
 	kblock* free_list_head = &free_list[free_list_index];
 	int index = 0;
 	int sliced = 0;
-
+#ifdef DEBUG_FFS
+    unsigned t = time_now();
+#endif
 	
 	if (free_list_index > 511) // that's too large
 		return NULL;
@@ -528,6 +538,9 @@ void* malloc(unsigned size)
 			int left_count;
 			if (vir == 0){
 				unlock_heap();
+                #ifdef DEBUG_FFS
+                heap_time += time_now() - t;
+                #endif
 				return NULL;
 			}
 			index = 511;
@@ -553,10 +566,16 @@ void* malloc(unsigned size)
         }
         unlock_heap(); 
 
+        #ifdef DEBUG_FFS
+        heap_time += time_now() - t;
+        #endif
 		return (void*)ret;
 	}
 
 	unlock_heap();
+    #ifdef DEBUG_FFS
+    heap_time += time_now() - t;
+    #endif
 	return NULL;
 
 }
@@ -566,6 +585,11 @@ void free(void* buf)
 	kblock* block = NULL;
 	int size = 0;
 	int free_list_index;
+
+    #ifdef DEBUG_FFS
+    unsigned t = time_now();
+    #endif
+
 	if (buf == NULL)
 		return;
 
@@ -584,6 +608,10 @@ void free(void* buf)
 	klib_add_to_free_list(free_list_index, block, 1);
 	
 	unlock_heap();
+
+    #ifdef DEBUG_FFS
+    heap_time += time_now() - t;
+    #endif
 }
 
 
@@ -708,11 +736,29 @@ void memcpy(void* _src, void* _dst, unsigned len)
 {
 	char* src = _src;
 	char* dst = _dst;
-
+    unsigned* isrc = _src;
+    unsigned* idst = _dst;
 	int i = 0;
-    for (i = 0; i < len; i++) {
-        src[i] = dst[i];
+#ifdef DEBUG_FFS
+    unsigned t = time_now();
+#endif
+
+    if ( ((((unsigned)src) % 4) == 0) &&
+        ((((unsigned)dst) % 4) == 0) &&
+         (len % 4 == 0)) {
+        int ilen = len / 4;
+        for (i = 0; i < ilen; i++) {
+            isrc[i] = idst[i];
+        }
+    }else{
+        for (i = 0; i < len; i++) {
+            src[i] = dst[i];
+        }
     }
+
+#ifdef DEBUG_FFS
+    mem_time += time_now() - t;
+#endif
 }
 
 void memmove(void* _src, void* _dst, unsigned len)

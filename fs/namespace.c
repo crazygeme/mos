@@ -14,6 +14,7 @@
 #include <syscall/unistd.h>
 #include <lib/cyclebuf.h>
 #include <fs/cache.h>
+#include <errno.h>
 #endif
 
 
@@ -51,7 +52,7 @@ unsigned fs_open(char* path)
     if (!node) {
 
 		kfree(fullPath);
-        return 0xffffffff;
+        return -ENOENT;
     }
 
 	if (S_ISDIR(vfs_get_mode(node))){
@@ -69,7 +70,7 @@ unsigned fs_open(char* path)
 	}
 
 	if (fd == MAX_FD) {
-		fd = 0xffffffff;
+		fd = -ENFILE;
 	}
 
 	kfree(fullPath);
@@ -173,6 +174,8 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
     INODE node = fs_get_fd(fd, path);
     unsigned ret;
 	void* hash = 0;
+	//unsigned t = time_now();
+	//unsigned span = 0;
 
 	if (fd == 0xffffffff) {
 		kfree(path);
@@ -184,17 +187,13 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
         return 0xffffffff;
     }
 
-
-//  if (path && path[0]) {
-//  	hash = file_cache_find(path);
-//  	if (hash) {
-//  		kfree(path);
-//  		return file_cache_read(hash, offset, buf, len);
-//  	}
-//  }
-
 	kfree(path);
     ret = vfs_read_file(node, offset,buf,len);
+//	span = time_now() - t;
+//    if (span && len) {
+//        unsigned speed = (len * 1000 / span);
+//		printk("read fd %d, len %d, speed %h B/s\n", fd, len, speed);
+//    }
     return ret;
 }
 

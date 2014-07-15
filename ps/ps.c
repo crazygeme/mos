@@ -553,15 +553,17 @@ int sys_exit(unsigned status)
     // free all physical memory
     ps_cleanup_all_user_map(cur);
 
+    if (cur->user.reserve) {
+        vm_free(cur->user.reserve, 1);
+        cur->user.reserve = 0;
+    }
+
     if (cur->user.page_dir) {
         vm_free(cur->user.page_dir, 1);
         cur->user.page_dir = 0;
     }
 
-    if (cur->user.reserve) {
-        vm_free(cur->user.reserve, 1);
-        cur->user.reserve = 0;
-    }
+
     if (cur->psid == 0) {
         printk("fatal error! process 0 exit\n");
         __asm__ ("hlt");

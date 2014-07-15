@@ -517,13 +517,12 @@ static INODE fs_lookup_inode(char* path)
 	if (!path || !*path)
 	  return 0;
 
-//  pair = hash_find(inode_cache, path);
-//  if (pair) {
-//  	INODE ret = pair->val;
-//  	printk("find inode cache %s\n", path);
-//  	vfs_refrence(ret);
-//  	return ret;
-//  }
+  pair = hash_find(inode_cache, path);
+  if (pair) {
+	  INODE ret = pair->val;
+	  vfs_refrence(ret);
+	  return ret;
+  }
 	
 	// find root file system
 	type = mount_lookup("/");
@@ -532,8 +531,8 @@ static INODE fs_lookup_inode(char* path)
 	
 	root = vfs_get_root(type);
 	if (!strcmp(path, "/")){
-		//vfs_refrence(root);
-		//hash_insert(inode_cache, strdup(path), root);
+		vfs_refrence(root);
+		hash_insert(inode_cache, strdup(path), root);
 		return root;
 	}
 	
@@ -578,8 +577,8 @@ static INODE fs_lookup_inode(char* path)
 		if (!node) {
 			node = fs_get_dirent_node(p, tmp);
 			if (node) {
-				//vfs_refrence(node);
-				//hash_insert(inode_cache, strdup(path), node);
+				vfs_refrence(node);
+				hash_insert(inode_cache, strdup(path), node);
 			}
 		}else{
 		}

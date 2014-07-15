@@ -232,8 +232,8 @@ unsigned elf_map(char* path, mos_binfmt* fmt)
 	unsigned entry_point = 0;
 	unsigned head_len = 0;
 	Elf32_Ehdr elf;
-    char* interp = kmalloc(256);
-    memset(interp, 0, 256);
+    char* interp = kmalloc(64);
+    memset(interp, 0, 64);
 
     if (fd == MAX_FD) {
         kfree(interp);

@@ -139,7 +139,8 @@ typedef region_elem* region_elem_t;
 typedef struct _user_enviroment
 {
 	unsigned int page_dir; // every process needs it's own clone of page dir
-	unsigned heap_top;
+    unsigned reserve;
+    unsigned heap_top;
 	unsigned zone_top;
 	region_elem_t region_head;
 }user_enviroment;

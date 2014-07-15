@@ -1,6 +1,7 @@
 * 先crate idle再create p0速度会变慢：
 	第一个create的process内存跟hdd cache临近
 	改进memcpy算法可以缓解
+	确保每个task_struct占内存为4 page的倍数
 * windows:
 	cygwin
 	qemu: http://qemu.weilnetz.de/w64/

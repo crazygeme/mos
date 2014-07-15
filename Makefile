@@ -4,10 +4,13 @@ ASM		= nasm
 LD		= ld
 OS		= Linux
 else
+ifeq ($(shell uname),Darwin)
 CC		= /opt/local/bin/i386-elf-gcc
 ASM 	= /opt/local/bin/nasm
 LD		= /opt/local/bin/i386-elf-ld
 OS		= Darwin
+else
+endif
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized

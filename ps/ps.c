@@ -313,6 +313,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     stack_frame *frame;
 
     if (priority >= MAX_PRIORITY) {
+        vm_free(task, 1);
         return 0xffffffff;
     }
 
@@ -320,6 +321,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
 
     size = sizeof(*task);
 
+    task->user.reserve = (unsigned)vm_alloc(1);
     task->user.page_dir = (unsigned int)vm_alloc(1);
     // 0 ~ KERNEL_PAGE_DIR_OFFSET-1 are dynamic, KERNEL_PAGE_DIR_OFFSET ~ 1023 are shared
     memset(task->user.page_dir, 0, PAGE_SIZE);
@@ -346,7 +348,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->user.heap_top = USER_HEAP_BEGIN;
     task->user.zone_top = USER_ZONE_BEGIN;
     task->user.region_head = 0;
-    memset(task->cwd, 0, 256);
+    memset(task->cwd, 0, 64);
     //strcpy(task->cwd, "\0");
 
     sema_init(&task->fd_lock, "fd_lock", 0);
@@ -502,7 +504,8 @@ int sys_fork()
     task->parent = cur->psid;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
     task->ps_list.Blink = task->ps_list.Flink = 0;
-    memset(task->cwd, 0, 256);
+    task->user.reserve = (unsigned)vm_alloc(1);
+    memset(task->cwd, 0, 64);
     strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur,task);
@@ -555,6 +558,10 @@ int sys_exit(unsigned status)
         cur->user.page_dir = 0;
     }
 
+    if (cur->user.reserve) {
+        vm_free(cur->user.reserve, 1);
+        cur->user.reserve = 0;
+    }
     if (cur->psid == 0) {
         printk("fatal error! process 0 exit\n");
         __asm__ ("hlt");

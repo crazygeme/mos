@@ -543,8 +543,8 @@ static INODE fs_lookup_inode(char* path)
 		return root;
 	}
 	
-	parent = kmalloc(256);
-	memset(parent, 0, 256);
+	parent = kmalloc(64);
+	memset(parent, 0, 64);
 
 	strcpy(parent, path);
 	tmp = parent;

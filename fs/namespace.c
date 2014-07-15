@@ -830,10 +830,12 @@ static void test_write()
 			extern void report_hdd_time();
 			extern void report_cache();
 			extern void report_sched_time();
+			extern void mm_report();
 			report_time();
 			report_hdd_time();
 			report_cache();
 			report_sched_time();
+			mm_report();
 			#endif
 		}
 		fs_write(fd, i*1024, buf, 1024);
@@ -879,10 +881,12 @@ static void test_read()
 				extern void report_hdd_time();
 				extern void report_cache();
 				extern void report_sched_time();
+				extern void mm_report();
 				report_time();
 				report_hdd_time();
 				report_cache();
 				report_sched_time();
+				mm_report();
 				#endif
 			}
 			memset(buf, 0, 1024);

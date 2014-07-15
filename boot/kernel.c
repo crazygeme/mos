@@ -102,13 +102,12 @@ void kmain_startup()
 
         printk("Start first process\n");
 
+    // create idle process
+    ps_create(idle_process, 0, 1, ps_kernel);
 
     // create first process
     ps_create(kmain_process, 0, 3, ps_kernel);
 
-
-    // create idle process
-    ps_create(idle_process, 0, 1, ps_kernel);
 
     ps_kickoff();
 

@@ -654,7 +654,7 @@ void ps_kickoff()
     cur->psid = 0xffffffff;
     cur->ps_list.Flink = cur->ps_list.Blink = 0;
     _ps_enabled = 1;
-    memset(cur->cwd, 0, 256);
+    memset(cur->cwd, 0, 64);
     task_sched();
     return;
 }

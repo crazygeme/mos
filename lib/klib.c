@@ -1319,7 +1319,6 @@ void reboot()
 {
 	klog_close();
 	block_close();
-	// FIXME do formal steps before reboot
 	_write_port(0x64, 0xfe);
 }
 

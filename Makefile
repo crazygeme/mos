@@ -31,6 +31,7 @@ OBJS	= boot.o \
 		  list.o\
 		  dsr.o\
 		  mm.o\
+		  mmap.o\
 		  timer.o\
 		  ps.o\
 		  lock.o\
@@ -49,7 +50,6 @@ OBJS	= boot.o \
 		  kbchar.o\
 		  console.o\
 		  null.o\
-		  region.o\
 		  cache.o\
 		  cyclebuf.o\
 		  serial.o\
@@ -93,8 +93,11 @@ rbtree.o: lib/rbtree.c lib/rbtree.h
 dsr.o: int/dsr.c int/dsr.h
 	$(CC) $(CFLAGS) int/dsr.c -o dsr.o
 
-mm.o: mm/mm.c mm/mm.h boot/multiboot.h
+mm.o: mm/mm.c mm/mm.h boot/multiboot.h mm/mmap.h
 	$(CC) $(CFLAGS) -o mm.o mm/mm.c
+
+mmap.o: mm/mmap.c mm/mmap.h mm/mm.h
+	$(CC) $(CFLAGS) -o mmap.o mm/mmap.c
 
 timer.o: int/timer.c int/timer.h
 	$(CC) $(CFLAGS) -o timer.o int/timer.c
@@ -157,9 +160,6 @@ pipe.o: fs/pipechar.c fs/pipechar.h
 cache.o: fs/cache.c fs/cache.h
 	$(CC) $(CFLAGS) -o cache.o fs/cache.c
 
-region.o: mm/region.c mm/region.h
-	$(CC) $(CFLAGS) -o region.o mm/region.c
-
 cyclebuf.o: lib/cyclebuf.c lib/cyclebuf.h
 	$(CC) $(CFLAGS) -o cyclebuf.o lib/cyclebuf.c
 
@@ -185,4 +185,5 @@ clean:
 	find . -name "*.o" -exec rm -f {} \;
 	-rm $(TARGET)
 	-rm user/run
+
 

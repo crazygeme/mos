@@ -25,8 +25,8 @@ _STARTDATA static unsigned long long _phy_mem_low;
 _STARTDATA static unsigned long long _phy_mem_high;
 
 // this can present 8*32*1024*4k = 1G
-#define PAGE_MASK_TABLE_SIZE (32*1024)
-static unsigned char free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
+#define PAGE_MASK_TABLE_SIZE (8*1024)
+static unsigned free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
 
 short pgc_entry_count[1024];
 
@@ -165,8 +165,8 @@ _START static void simulate_paging(unsigned address)
 
 static unsigned int mm_get_phy_page_mask(unsigned int page_index)
 {
-	int mask_index = page_index / 8;
-	int mask_offset = page_index % 8;
+	int mask_index = page_index / 32;
+	int mask_offset = page_index % 32;
 	int mask = 1 << mask_offset;
 
 	return ((free_phy_page_mask[mask_index] & mask));
@@ -174,8 +174,8 @@ static unsigned int mm_get_phy_page_mask(unsigned int page_index)
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
 {
-	int mask_index = page_index / 8;
-	int mask_offset = page_index % 8;
+	int mask_index = page_index / 32;
+	int mask_offset = page_index % 32;
 	int mask = 1 << mask_offset;
 	if (used){
 		unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
@@ -217,6 +217,17 @@ static void mm_init_free_phy_page_mask()
 
 }
 
+static inline int first_not_set(int x) 
+{
+	int r;
+
+	x = ~x;
+	asm("bsfl %1,%0\n\t"
+        "cmovzl %2,%0"
+        : "=r" (r) : "rm" (x), "r" (-1));
+	return r;
+}
+
 unsigned int  mm_get_free_phy_page_index()
 {
 	unsigned int i = 0;
@@ -225,7 +236,7 @@ unsigned int  mm_get_free_phy_page_index()
 	int offset = 0;
 
 	for (i = 0; i < PAGE_MASK_TABLE_SIZE; i++){
-		if (free_phy_page_mask[i] != 0xff){
+		if (free_phy_page_mask[i] != 0xffffffff){
 			page_mask_index = i;
 			break;
 		}
@@ -235,13 +246,17 @@ unsigned int  mm_get_free_phy_page_index()
 	  return -1;
 
 	mask = free_phy_page_mask[page_mask_index];
-	mask = ~mask;
-	while((mask%2) == 0){
-		offset++;
-		mask = mask / 2;
-	}
+	
 
-	return (page_mask_index * 8 + offset);
+	// find first bit '0' from least to highest
+	offset = first_not_set(mask);
+//  mask = ~mask;
+//  while((mask%2) == 0){
+//  	offset++;
+//  	mask = mask / 2;
+//  }
+
+	return (page_mask_index * 32 + offset);
 }
 
 #ifdef TEST_MM

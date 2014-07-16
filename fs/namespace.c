@@ -173,9 +173,6 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 	char* path = kmalloc(64);
     INODE node = fs_get_fd(fd, path);
     unsigned ret;
-	void* hash = 0;
-	//unsigned t = time_now();
-	//unsigned span = 0;
 
 	if (fd == 0xffffffff) {
 		kfree(path);
@@ -189,11 +186,6 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 
 	kfree(path);
     ret = vfs_read_file(node, offset,buf,len);
-//	span = time_now() - t;
-//    if (span && len) {
-//        unsigned speed = (len * 1000 / span);
-//		printk("read fd %d, len %d, speed %h B/s\n", fd, len, speed);
-//    }
     return ret;
 }
 
@@ -908,8 +900,8 @@ void test_ns()
 
 	printk("test_ns\n");
 	//list_dir("/", 0);
-	//test_read();
-	test_write();
+	//test_write();
+	test_read();
 	klogquota();
 
 	for (;;) {

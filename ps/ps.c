@@ -486,6 +486,9 @@ int sys_fork()
     unsigned esp_off = 0;
     int is_parent = 0;
 
+#ifdef __VERBOS_SYSCALL__
+	klog("fork()\n");
+#endif
     memcpy(task, cur, PAGE_SIZE);
     task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
@@ -512,6 +515,8 @@ int sys_fork()
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
 
+    task->remain_ticks = cur->remain_ticks =
+        cur->remain_ticks / 2;
     task_sched();
     is_parent = 1;
     __asm__("CHILD: nop");

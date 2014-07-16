@@ -115,6 +115,10 @@ serial_putc (unsigned char byte)
           putc_poll (cyb_getc (txq)); 
         }
 
+      if (byte == '\n')
+        {
+        cyb_putc (txq, '\r'); 
+        }
       cyb_putc (txq, byte); 
       write_ier ();
     }

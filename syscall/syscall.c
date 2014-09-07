@@ -709,8 +709,10 @@ static int sys_mmap(struct mmap_arg_struct32 *arg)
 
 static int sys_munmap(void *addr, unsigned length)
 {
-	// FIXME
-	return 0;
+#ifdef __VERBOS_SYSCALL__
+	klog("munmap (%x, %x)\n", addr, length);
+#endif
+    return do_munmap(addr, length);
 }
 
 static int sys_mprotect(void *addr, unsigned len, int prot)

@@ -222,6 +222,10 @@ key_value_pair* hash_find(hash_table* table, void* key);
 
 int hash_update(hash_table* table, void* key, void* val);
 
+key_value_pair* hash_first(hash_table* table);
+
+key_value_pair* hash_next(hash_table* table, key_value_pair* pair);
+
 #ifdef DEBUG_RB
 
 void hash_print(hash_table* table);

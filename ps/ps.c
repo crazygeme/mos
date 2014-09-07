@@ -346,8 +346,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
         task->fds[i].flag = 0;
     }
     task->user.heap_top = USER_HEAP_BEGIN;
-    task->user.zone_top = USER_ZONE_BEGIN;
-    task->user.region_head = 0;
+    task->user.vm = vm_create();
     memset(task->cwd, 0, 64);
     //strcpy(task->cwd, "\0");
 
@@ -436,6 +435,11 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
     __asm__("movl %%cr3, %0" : "=q"(cr3));
     per_ps = (unsigned int*)(cr3+KERNEL_OFFSET);
     task->user.page_dir = vm_alloc(1);
+
+    vm_dup(cur->user.vm, task->user.vm);
+    
+    // FIXME
+    // change it into COW
     new_ps = (unsigned int*)task->user.page_dir;
     for (i = 0; i < 1024; i++) {
         new_ps[i] = 0;
@@ -443,6 +447,7 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
 
 
     ps_enum_user_map(cur, ps_enum_for_dup, new_ps);
+    
 }
 
 static void ps_resolve_ebp_to_new(unsigned ebp)
@@ -507,6 +512,7 @@ int sys_fork()
     task->parent = cur->psid;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
     task->ps_list.Blink = task->ps_list.Flink = 0;
+    task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
     memset(task->cwd, 0, 64);
     strcpy(task->cwd, cur->cwd);

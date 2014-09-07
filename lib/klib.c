@@ -1074,6 +1074,18 @@ void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 					_put_buf_c(_putstr, arg);
 					break;
 				}
+            case 'b':
+                {
+                    unsigned char  arg = va_arg(ap, unsigned char );
+					char* s = itoa(arg, 16, 0);
+                    char* str = (s+2);
+                    if (strlen(str) == 1) {
+                        _put_buf_str(_putstr, "0"); 
+                    }
+                    _put_buf_str(_putstr, str); 
+					free(s);
+					break;
+                }
 			default:
 				{
 					_put_buf_c(_putstr,'?');

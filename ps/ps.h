@@ -133,16 +133,17 @@ struct _region_elem
 	struct _region_elem* next;
 };
 
-typedef struct _region_elem region_elem;
-typedef region_elem* region_elem_t;
+
+typedef void* vm_struct_t; 
 
 typedef struct _user_enviroment
 {
 	unsigned int page_dir; // every process needs it's own clone of page dir
     unsigned reserve;
     unsigned heap_top;
-	unsigned zone_top;
-	region_elem_t region_head;
+	//unsigned zone_top;
+    vm_struct_t vm;
+	//region_elem_t region_head;
 }user_enviroment;
 
 typedef enum _ps_status

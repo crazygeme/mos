@@ -6,37 +6,85 @@ mos.vpj=Release
 -@ mos.vpj
   - Source Files
   - Header Files
-  + Resource Files
+  - Resource Files
   + Bitmaps
   - Other Files
-scroll:20
+scroll:40
 [State]
-SCREEN: 1440 900 98 84 1217 787 0 0 M 0 0 0 0 1006 571 0
+SCREEN: 1440 900 98 84 1218 788 0 0 M 0 0 0 0 1006 530 0
 CWD: ../mos
+BUFFER: BN="mm/mmap.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=120521312 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.7871 CL=1 LE=0 CX=2 CY=12 WI=5 BI=239 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="boot/kernel.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=119603808 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.2114 CL=1 LE=0 CX=2 CY=4 WI=5 BI=525 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="int/int.S"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=1 ST=8 IN=1 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=Unix Assembly	HM=0 MF=50331648 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.1877 CL=1 LE=0 CX=2 CY=10 WI=5 BI=365 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="lib/klib.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=121438816 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.4783 CL=1 LE=0 CX=2 CY=5 WI=5 BI=279 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="mm/pagefault.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=121438816 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.1871 CL=1 LE=0 CX=2 CY=15 WI=5 BI=236 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="user/ps0.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=120652640 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.6749 CL=1 LE=0 CX=2 CY=15 WI=5 BI=592 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="mm/mm.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=121439072 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.17595 CL=1 LE=0 CX=2 CY=2 WI=5 BI=156 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="int/int.c"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=50331648 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.4658 CL=1 LE=0 CX=2 CY=15 WI=5 BI=534 HT=0 HN=0 HF=0 HC=4
+BUFFER: BN="Makefile"
+BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=1 ST=14 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=Makefile	HM=0 MF=50332200 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
+VIEW: LN=.365 CL=38 LE=0 CX=39 CY=17 WI=5 BI=282 HT=0 HN=0 HF=0 HC=4
 BUFFER: BN="ps/ps.c"
 BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=120652384 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
-VIEW: LN=.122 CL=19 LE=0 CX=20 CY=6 WI=5 BI=25 HT=0 HN=0 HF=0 HC=4
-BUFFER: BN="lib/list.h"
-BI: MA=1 74 1  TABS=1 5  WWS=1 IWT=0 ST=8 IN=2 BW=0 US=32000 RO=0 SE=1 SN=0 BIN=0 MN=C/C++	HM=0 MF=117440608 TL=0 MLL=0 ASE=0 LNL=4 LCF=6 CAPS=0 E=0 ESBU2=1 CL="" SC="" SCE= SCU=
-VIEW: LN=.247 CL=16 LE=0 CX=17 CY=14 WI=5 BI=27 HT=0 HN=0 HF=0 HC=4
-WINDOW: 1 24 1004 546 0 0 N  WF=0 WT=2 ",,," DID=0
-BUFFER: BN="lib/list.h"
-VIEW: LN=.247 CL=16 LE=0 CX=22 CY=14 WI=161 BI=27 HT=0 HN=0 HF=0 HC=4
-WINDOW: 1 24 1004 546 0 0 N  WF=0 WT=20 ",,," DID=0
+VIEW: LN=.8875 CL=29 LE=0 CX=30 CY=6 WI=5 BI=600 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 505 0 0 N  WF=0 WT=2 ",,," DID=0
+BUFFER: BN="mm/pagefault.c"
+VIEW: LN=.1871 CL=1 LE=0 CX=7 CY=15 WI=2156 BI=236 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 334 0 0 N  WF=0 WT=8 ",,," DID=0
+BUFFER: BN="user/ps0.c"
+VIEW: LN=.6749 CL=1 LE=0 CX=7 CY=15 WI=7825 BI=592 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 505 0 0 N  WF=0 WT=4 ",,," DID=0
+BUFFER: BN="mm/mm.c"
+VIEW: LN=.17595 CL=1 LE=0 CX=7 CY=2 WI=2892 BI=156 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 334 0 0 N  WF=0 WT=7 ",,," DID=0
+BUFFER: BN="boot/kernel.c"
+VIEW: LN=.2114 CL=1 LE=0 CX=7 CY=4 WI=7660 BI=525 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 334 0 0 N  WF=0 WT=5 ",,," DID=0
+BUFFER: BN="lib/klib.c"
+VIEW: LN=.4783 CL=1 LE=0 CX=7 CY=5 WI=5252 BI=279 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 334 0 0 N  WF=0 WT=9 ",,," DID=0
+BUFFER: BN="int/int.c"
+VIEW: LN=.4658 CL=1 LE=0 CX=7 CY=15 WI=7745 BI=534 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 334 0 0 N  WF=0 WT=6 ",,," DID=0
+BUFFER: BN="int/int.S"
+VIEW: LN=.1877 CL=1 LE=0 CX=7 CY=10 WI=6866 BI=365 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 505 0 0 N  WF=0 WT=3 ",,," DID=0
+BUFFER: BN="Makefile"
+VIEW: LN=.365 CL=17 LE=0 CX=23 CY=17 WI=2170 BI=282 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 505 0 0 N  WF=0 WT=34 ",,," DID=0
+BUFFER: BN="mm/mmap.c"
+VIEW: LN=.7871 CL=1 LE=0 CX=7 CY=12 WI=1065 BI=239 HT=0 HN=0 HF=0 HC=4
+WINDOW: 1 24 1004 505 0 0 N  WF=0 WT=10 ",,," DID=0
 BUFFER: BN="ps/ps.c"
-VIEW: LN=.2032 CL=36 LE=0 CX=42 CY=21 WI=213 BI=25 HT=0 HN=0 HF=0 HC=4
+VIEW: LN=.9449 CL=16 LE=0 CX=22 CY=23 WI=8033 BI=600 HT=0 HN=0 HF=0 HC=4
 MDISTATE: 1
-AAAAAAAAAAHaAAAAAAAAACQAAAVqAAADP+oAAAAC+gAAAAIAAAACAAAAAQAAAAD6AAAAAgAAAAIAAAAAAAAAAfwAAABYADIAOgA6ADoALwBVAHMAZQByAHMALwB6AGgAZQBuAGcAZQBuAGQAZQByAC8AUAByAG8AagBlAGMAdAAvAG0AbwBzAC8AbABpAGIALwBsAGkAcwB0AC4AaAAA/////wAA/AAAAFQAMgAwADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAHAAcwAvAHAAcwAuAGMBAP////8AAQ==
+AAAAAAAAAAHaAAAAAAAAACQAAAVqAAADP+oAAAAC+gAAAAoAAAAKAAAACAAAAAYAAAAEAAAABwAAAAIAAAAJAAAABQAAAAEAAAAAAAAAA/oAAAAKAAAACgAAAAgAAAAJAAAAAAAAAAIAAAABAAAAAwAAAAUAAAAEAAAABwAAAAb8AAAAVgA5ADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAGkAbgB0AC8AaQBuAHQALgBjAAD/////AAD8AAAAVgA2ADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAGkAbgB0AC8AaQBuAHQALgBTAAD/////AAD8AAAAXgA3ADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAGIAbwBvAHQALwBrAGUAcgBuAGUAbAAuAGMAAP////8AAPwAAABYADUAOgA6ADoALwBVAHMAZQByAHMALwB6AGgAZQBuAGcAZQBuAGQAZQByAC8AUAByAG8AagBlAGMAdAAvAG0AbwBzAC8AbABpAGIALwBrAGwAaQBiAC4AYwAA/////wAA/AAAAFQAMwA6ADoAOgAvAFUAcwBlAHIAcwAvAHoAaABlAG4AZwBlAG4AZABlAHIALwBQAHIAbwBqAGUAYwB0AC8AbQBvAHMALwBNAGEAawBlAGYAaQBsAGUAAP////8AAPwAAABSADQAOgA6ADoALwBVAHMAZQByAHMALwB6AGgAZQBuAGcAZQBuAGQAZQByAC8AUAByAG8AagBlAGMAdAAvAG0AbwBzAC8AbQBtAC8AbQBtAC4AYwAA/////wAA/AAAAFgAMwA0ADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAG0AbQAvAG0AbQBhAHAALgBjAAD/////AAD8AAAAYAAyADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAG0AbQAvAHAAYQBnAGUAZgBhAHUAbAB0AC4AYwAA/////wAA/AAAAFQAMQAwADoAOgA6AC8AVQBzAGUAcgBzAC8AegBoAGUAbgBnAGUAbgBkAGUAcgAvAFAAcgBvAGoAZQBjAHQALwBtAG8AcwAvAHAAcwAvAHAAcwAuAGMBAP////8AAfwAAABYADgAOgA6ADoALwBVAHMAZQByAHMALwB6AGgAZQBuAGcAZQBuAGQAZQByAC8AUAByAG8AagBlAGMAdAAvAG0AbwBzAC8AdQBzAGUAcgAvAHAAcwAwAC4AYwAA/////wAA
 FILEHIST: 9
+int/int.c
+int/int.S
+mm/mm.c
+mm/pagefault.c
 user/ps0.c
-fs/pipechar.c
-fs/mount.c
-fs/pipechar.h
-fs/namespace.c
-Makefile
-ps/ps.h
-lib/list.h
+boot/kernel.c
+mm/mmap.c
 ps/ps.c
+Makefile
 TBCLASS: 0 0
 DEBUG: 4 0 5 0 3 0 gdb
 1heap_quota0
@@ -58,11 +106,12 @@ printf
 strcpy
 std::*
 SESSION: gdb REMOTE: /Users/zhengender/Project/mos/kernel.dbg
-DEBUG: 3 0 1 0 3 0 gdb
-1(unsigned)c0
-1argv[0]0
-1copy_page0
-00pf_processmm/pagefault.c2210xc020eaab0
+DEBUG: 3 0 2 0 3 0 gdb
+1region0
+1i0
+1mask0
+00sys_execveuser/ps0.c29000xc020d0ee0
+00ps_dup_user_mapsps/ps.c43910xc0206b760
 printf
 strcpy
 std::*
@@ -84,37 +133,36 @@ printf
 strcpy
 std::*
 SESSION: gdb REMOTE: /Users/zhengender/Project/mos/user/lib/ld-linux.so.2
-DEBUG: 0 0 2 0 3 0 gdb
+DEBUG: 0 0 3 0 3 0 gdb
 00sys_readdirfs/namespace.c4521<PENDING>0
 00sys_lstat64syscall/syscall.c84810
+00ps_kickoffps/ps.c57610
 printf
 strcpy
 std::*
 DEBUG2: 4
-00task_schedps/ps.c32000xc0204249055
-{
-unsignedint*per_ps=0;
-unsignedint*new_ps=0;
-LIST_ENTRY*entry=0;
-inti=0;
-unsignedintcr3;
-
-__asm__("movl%%cr3,%0":"=q"(cr3));
-per_ps=(unsignedint*)(cr3+KERNEL_OFFSET);
-task->user.page_dir=vm_alloc(1);
-new_ps=(unsignedint*)task->user.page_dir;
-00test_nsfs/namespace.c4460055
-entry->d_namlen=strlen(entry->d_name);
-entry->d_ino=1;
-entry->d_reclen=((entry->d_namlen+10)/4+1)*4;
-
+00task_schedps/ps.c32000xc0204249045
+if(priority>=MAX_PRIORITY){
+vm_free(task,1);
+return0xffffffff;
 }
+memset(task,0,KERNEL_TASK_SIZE*PAGE_SIZE);
 
-returnret;
+size=sizeof(*task);
+
+task->user.reserve=(unsigned)vm_alloc(1);
+task->user.page_dir=(unsignedint)vm_alloc(1);
+00test_nsfs/namespace.c4460054
 }
 
 voidfs_closedir(DIRdir)
 {
+if(!dir){
+return;
+}
+
+vfs_close_dir(dir);
+}
 00mainffstool/ffstool.c1381055
 case'r':
 test_read();
@@ -154,19 +202,29 @@ DEBUG2: 1
 
 /*DisableaccesstoIDEdisksover1GB,whicharelikely
 SESSION2: gdb REMOTE: /Users/zhengender/Project/mos/kernel.dbg
-DEBUG2: 1
-00pf_processmm/pagefault.c2210xc020eaab055
-unsignedcr3;
-task_struct*cur=CURRENT_TASK();
-__asm__("movl%cr2,%eax");
-__asm__("movl%%eax,%0":"=m"(cr2));
-__asm__("movl%%cr3,%0":"=q"(cr3));
-printk("pagefault!errorcode%x,address%x,eip%x\n",frame->error_code,cr2,frame->eip);
-printk("cur->user.page_dir%x,cr3%x\n",cur->user.page_dir,cr3);
+DEBUG2: 2
+00sys_execveuser/ps0.c29000xc020d0ee055
+unsignedesp_top=KERNEL_OFFSET;
+char*file_name;
+unsignedargc=0,envc=0;
+char**s_argv=0;
+char**s_envp=0;
+mos_binfmtfmt={0};
 
-for(;;)
-{
-__asm__("hlt");
+
+if(!file){
+printk("fatalerror:tryingtoexecvpemptyfile!\n");
+return-1;
+00ps_dup_user_mapsps/ps.c43910xc0206b76035
+__asm__("movl%%cr3,%0":"=q"(cr3));
+per_ps=(unsignedint*)(cr3+KERNEL_OFFSET);
+task->user.page_dir=vm_alloc(1);
+vm_dup(cur->user.vm,task->user.vm);
+
+//FIXME
+//changeitintoCOW
+new_ps=(unsignedint*)task->user.page_dir;
+for(i=0;i<1024;i++){
 SESSION2: gdb REMOTE: /Users/zhengender/Project/mos/user/run
 DEBUG2: 0
 SESSION2: gdb REMOTE: /Users/zhengender/Project/mos/user/ls.dbg
@@ -197,29 +255,39 @@ DEBUG2: 2
 SESSION2: gdb REMOTE: /Users/zhengender/Project/mos/user/sh.dbg
 DEBUG2: 0
 SESSION2: gdb REMOTE: /Users/zhengender/Project/mos/user/lib/ld-linux.so.2
-DEBUG2: 2
-00sys_readdirfs/namespace.c4521<PENDING>055
-returnret;
-}
-
-voidfs_closedir(DIRdir)
-{
-if(!dir){
-return;
+DEBUG2: 3
+00sys_readdirfs/namespace.c4521<PENDING>045
 }
 
 vfs_close_dir(dir);
 }
+
+staticINODEfs_get_dirent_node(INODEnode,char*name)
+{
+DIRdir=0;
+INODEentry=0;
+intfound=0;
 00sys_lstat64syscall/syscall.c8481045
+staticintsys_fstat(intfd,structstat64*s)
+{
+returnsys_fstat64(fd,s);
+}
+
+staticintsys_fstat64(intfd,structstat64*s)
+{
+//FIXME
+//rewriteitallplease
 task_struct*cur=CURRENT_TASK();
-structstats32;
+00ps_kickoffps/ps.c5761045
+if(cur->user.page_dir){
+vm_free(cur->user.page_dir,1);
+cur->user.page_dir=0;
+}
 
-if(fd>MAX_FD)return-1;
-#ifdef__VERBOS_SYSCALL__
-klog("fstat64(%d,%x)size%dblocks%dblksize%d\n",
-fd,s,s32.st_size,s32.st_blocks,s32.st_blksize);
-#endif
 
-fs_fstat(fd,&s32);
+if(cur->psid==0){
+printk("fatalerror!process0exit\n");
+__asm__("hlt");
+}
 [ProjectDates]
-mos.vpj=20140713032932000
+mos.vpj=20140907091647000

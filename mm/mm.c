@@ -5,6 +5,9 @@
 #include <ps/lock.h>
 #include <ps/ps.h>
 #include <int/timer.h>
+#include <errno.h>
+#include <mm/mmap.h>
+
 #define GDT_ADDRESS			0x1C0000
 #define PG0_ADDRESS			0x1C1000
 #define PG1_ADDRESS			0x1C2000
@@ -647,9 +650,11 @@ void mm_del_dynamic_map(unsigned int vir)
 	phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
 
 	page_table[page_table_offset] = 0;
-	mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
+
+
 
 	if (phy_addr) {
+        mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
 		idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
 		pgc_entry_count[idx]--;
 		empty = (pgc_entry_count[idx] == 0);
@@ -670,12 +675,12 @@ void mm_del_dynamic_map(unsigned int vir)
 
 unsigned vm_get_usr_zone(unsigned page_count)
 {
+    // FIXME
+    // only used in load elf, please modify it
     task_struct* cur = CURRENT_TASK();
-    unsigned ret = cur->user.zone_top;
-
-    cur->user.zone_top += page_count * PAGE_SIZE;
-
-    return ret;
+    unsigned begin = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
+    
+    return begin;
 }
 
   #define MAP_SHARED      0x01            /* Share changes */
@@ -696,38 +701,59 @@ int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
 {
 	unsigned addr = _addr & PAGE_SIZE_MASK;
 	unsigned last_addr = (_addr + _len-1) & PAGE_SIZE_MASK;
-	unsigned i = addr, map_ret;
-	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	unsigned read_addr = addr;
-	task_struct* cur = CURRENT_TASK();
-
+    unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
+    INODE node;
+    task_struct* cur = CURRENT_TASK();
+    
     if (_addr == 0) {
-        addr = vm_get_usr_zone(page_count);
-		last_addr = addr + (page_count-1)*PAGE_SIZE;
-		read_addr = addr;
+        addr = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
     }
 
-	for (i = addr; i <= last_addr; i+=PAGE_SIZE){
-		map_ret = mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
-		if (map_ret > 0 && fd > 0)
-		{
-			memset(i, 0, PAGE_SIZE);
-		}
-	}
+    // FIXME
+    // lots of flags and prot
+    if (fd != -1 && cur->fds[fd].flag != 0)
+        node = cur->fds[fd].file;
+    else
+        node = 0;
+        
+    vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, node, offset); 
 
-
-	if ((map_ret > 0) || (flags & MAP_FIXED)){
-		if (fd > 0 && fd < MAX_FD){
-			unsigned ret = 0;
-			ret = fs_read(fd, offset, read_addr, _len);
-
-		}else{
-			memset(read_addr, 0, _len);
-		}
-	}
 
 	return addr;
 
+}
+
+int do_munmap(void *addr, unsigned length)
+{
+    task_struct* cur = CURRENT_TASK();
+    vm_region* region = vm_find_map(cur->user.vm,addr);
+    unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
+    unsigned end = ((unsigned)addr + length - 1) & PAGE_SIZE_MASK;
+    unsigned page_count = (end - begin) / PAGE_SIZE + 1;
+
+    end = begin + page_count*PAGE_SIZE;
+    if (!region) {
+        return (-EINVAL);
+    }
+
+
+    if (begin > region->begin && end < region->end) {
+        vm_del_map(cur->user.vm, addr); 
+        vm_add_map(cur->user.vm, region->begin, begin, region->node, region->offset);
+        vm_add_map(cur->user.vm, end, region->end, region->node, region->offset + (end - region->begin));
+    }else if(begin > region->begin && end == region->end){
+        vm_del_map(cur->user.vm, addr); 
+        vm_add_map(cur->user.vm, region->begin, begin, region->node, region->offset);
+    }else if(begin == region->begin && end < region->end){
+        vm_del_map(cur->user.vm, addr); 
+        vm_add_map(cur->user.vm, end, region->end, region->node, region->offset + (end - region->begin));
+    }else if(begin == region->begin && end == region->end){
+        vm_del_map(cur->user.vm, addr); 
+    }else{
+        return (-EINVAL);
+    }
+    
+    return 0;
 }
 
 

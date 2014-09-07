@@ -134,6 +134,12 @@ static void kmain_process(void* param)
 {
     klog_init();
 
+    #ifdef TEST_MMAP
+    extern vm_test();
+    vm_test();
+    for (;;);
+    #endif
+
     printk("Init vfs\n");
     vfs_init();
 

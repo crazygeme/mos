@@ -510,11 +510,13 @@ int hash_destroy(hash_table* table)
 {
 	int ret = 0;
 
-	if (!table || !table->root.rb_node)
+	if (!table )
 		return 0;
 	
 	spinlock_lock(&table->lock);
-	ret = hash_free_node(table->root.rb_node);
+    if (table->root.rb_node) {
+        ret = hash_free_node(table->root.rb_node); 
+    }
 	spinlock_unlock(&table->lock);
 	kfree(table);
 	return 1;
@@ -631,6 +633,33 @@ int hash_update(hash_table* table, void* key, void* val)
 	pair->val = val;
 
 	return 1;
+}
+
+key_value_pair* hash_first(hash_table* table)
+{
+    struct rb_node* first = rb_first( &table->root );
+    key_value_pair* pair;
+
+    if (!first) {
+        return 0;
+    }
+
+    pair = rb_entry(first, key_value_pair, node);
+    return pair;
+}
+
+key_value_pair* hash_next(hash_table* table, key_value_pair* pair)
+{
+    struct rb_node* next = rb_next(&pair->node);
+    key_value_pair* ret;
+
+    if (!next) {
+        return 0;
+    }
+
+    ret = rb_entry(next, key_value_pair, node);
+    return ret;
+
 }
 
 #ifdef DEBUG_RB

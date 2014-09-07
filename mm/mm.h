@@ -84,5 +84,6 @@ unsigned vm_get_usr_zone(unsigned page_count);
 int do_mmap(unsigned int addr, unsigned int len,unsigned int prot,
 			unsigned int flags,int fd,unsigned int offset);
 
+int do_munmap(void *addr, unsigned length);
 
 #endif

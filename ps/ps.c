@@ -552,6 +552,15 @@ int sys_exit(unsigned status)
     #ifdef __VERBOS_SYSCALL__
     klog("exit(%d)\n", status);
     #endif
+
+
+    if (cur->user.vm) {
+        vm_destroy(cur->user.vm);
+        cur->user.vm = 0;
+    }
+
+
+
     // close all fds
     for (i = 0; i < MAX_FD; i++) {
         if (cur->fds[i].flag) {

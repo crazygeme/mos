@@ -17,10 +17,16 @@
 
 #include <boot/multiboot.h>
 #include <mm/mm.h>
+#include <config.h>
+
+
 
 _START void fb_init(multiboot_info_t* mboot_ptr);
 
 
+void fb_enable();
+
+void fb_map_lfb();
 /*
  * terminal bitmap fallback font
  */
@@ -55,5 +61,30 @@ _START void fb_init(multiboot_info_t* mboot_ptr);
 #define VBE_DISPI_BPP_32 0x20 
 
 
+extern unsigned char ** _number_font;
+extern unsigned _fb_buffer;
+extern unsigned _resolution_x;
+extern unsigned _resolution_y;
+extern unsigned _window_char_width;
+extern unsigned _window_char_height;
+extern unsigned _fb_font_width;
+extern unsigned _fb_font_height;
+extern char _fb_text[];
+
+void fb_write_char(int x, int y, int val, unsigned color);
+void fb_write_color(int x, int y, unsigned color);
+
+// pre defined color
+#define _RED(color) ((color & 0x00FF0000) / 0x10000)
+#define _GRE(color) ((color & 0x0000FF00) / 0x100)
+#define _BLU(color) ((color & 0x000000FF) / 0x1)
+#define _ALP(color) ((color & 0xFF000000) / 0x1000000)
+
+#define ARGB(a, r, g, b) ( (0xFF *0x1000000) + ((0xFF & r) * 0x10000) + ((0xFF & g) * 0x100) + ((0xFF & b) * 0x1))
+#define VGA_COLOR_BLACK ARGB(0xff, 0x00, 0x00, 0x00)
+#define VGA_COLOR_WHITE ARGB(0xff, 0xff, 0xff, 0xff)
+#define VGA_COLOR_RED ARGB(0xff, 0xff, 0x00, 0x00)
+#define VGA_COLOR_GREEN ARGB(0xff, 0x00, 0xff, 0x00)
+#define VGA_COLOR_BLUE ARGB(0xff, 0x00, 0x00, 0xFF)
 
 #endif /** BOOT_VIDEO_H */

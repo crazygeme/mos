@@ -2,8 +2,8 @@
 #define _TTY_H_
 #include <mm/mm.h>
 #include <lib/klib.h>
-#define TTY_MAX_ROW 25
-#define TTY_MAX_COL 80
+extern unsigned TTY_MAX_ROW;
+extern unsigned TTY_MAX_COL;
 #define TTY_MAX_CHARS (TTY_MAX_ROW * TTY_MAX_COL)
 #define ROW_COL_TO_CUR(row, col) \
 	(row * TTY_MAX_COL + col)
@@ -26,6 +26,6 @@ void tty_roll_one_line();
 
 void tty_clear();
 
-void tty_movecurse(unsigned short cp);
+void tty_movecurse(unsigned cp);
 
 #endif

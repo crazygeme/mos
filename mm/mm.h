@@ -57,6 +57,8 @@ void mm_test();
 // return (is used for page table)
 int mm_add_direct_map(unsigned int vir);
 
+int mm_add_resource_map(unsigned int phy);
+
 void mm_del_direct_map(unsigned int vir);
 
 void mm_del_user_map();

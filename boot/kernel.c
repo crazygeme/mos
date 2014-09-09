@@ -18,6 +18,7 @@
 #include <fs/cache.h>
 #include <fs/pipechar.h>
 #include <drivers/serial.h>
+#include <drivers/vga.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -45,7 +46,8 @@ static void idle_process(void* param);
 void kmain_startup()
 {
     int i = 0;
-    
+
+    fb_enable();
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
 

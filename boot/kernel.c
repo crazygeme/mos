@@ -204,6 +204,7 @@ _START static void init(multiboot_info_t* mb)
 
     int_init();
 
+    fb_init(mb);
     mm_init(mb);
 	
 	

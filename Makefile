@@ -54,7 +54,9 @@ OBJS	= boot.o \
 		  cyclebuf.o\
 		  serial.o\
 		  pipe.o\
-		  rbtree.o
+		  rbtree.o\
+		  vga.o\
+		  pci.o
 
 all: kernel
 
@@ -165,6 +167,12 @@ cyclebuf.o: lib/cyclebuf.c lib/cyclebuf.h
 
 serial.o: drivers/serial.c drivers/serial.h
 	$(CC) $(CFLAGS) -o serial.o drivers/serial.c
+
+vga.o: drivers/vga.c drivers/vga.h
+	$(CC) $(CFLAGS) -o vga.o drivers/vga.c
+
+pci.o: drivers/pci.c drivers/pci.h
+	$(CC) $(CFLAGS) -o pci.o drivers/pci.c
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

@@ -15,83 +15,45 @@
 #ifndef BOOT_VIDEO_H
 #define BOOT_VIDEO_H
 
-#include <int/int.h>
-#include <lib/klib.h>
+#include <boot/multiboot.h>
+#include <mm/mm.h>
 
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned int u32;
-typedef unsigned long long u64;
+_START void fb_init(multiboot_info_t* mboot_ptr);
 
-/**
- * This code uses an extended set of video mode numbers. These include:
- * Aliases for standard modes
- *      NORMAL_VGA (-1)
- *      EXTENDED_VGA (-2)
- *      ASK_VGA (-3)
- * Video modes numbered by menu position -- NOT RECOMMENDED because of lack
- * of compatibility when extending the table. These are between 0x00 and 0xff.
+
+/*
+ * terminal bitmap fallback font
  */
-#define VIDEO_FIRST_MENU 0x0000
 
-/** Standard BIOS video modes (BIOS number + 0x0100) */
-#define VIDEO_FIRST_BIOS 0x0100
+/* Binary Literals */
+#define b(x) ((unsigned char)b_(0 ## x ## uL))
+#define b_(x) ((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | (x >> 14 & 128))
 
-/** VESA BIOS video modes (VESA number + 0x0200) */
-#define VIDEO_FIRST_VESA 0x0200
+#define VBE_DISPI_ID5 0xB0C5
+#define VBE_DISPI_IOPORT_INDEX 0x01CE
+#define VBE_DISPI_IOPORT_DATA 0x01CF
+#define VBE_DISPI_DISABLED 0x00
+#define VBE_DISPI_ENABLED 0x01
+#define VBE_DISPI_LFB_ENABLED 0x40
+#define VBE_DISPI_NOCLEARMEM 0x80
+#define VBE_DISPI_INDEX_ID 0
+#define VBE_DISPI_INDEX_XRES 1
+#define VBE_DISPI_INDEX_YRES 2
+#define VBE_DISPI_INDEX_BPP 3
+#define VBE_DISPI_INDEX_ENABLE 4
+#define VBE_DISPI_INDEX_BANK 5
+#define VBE_DISPI_INDEX_VIRT_WIDTH 6
+#define VBE_DISPI_INDEX_VIRT_HEIGHT 7
+#define VBE_DISPI_INDEX_X_OFFSET 8
+#define VBE_DISPI_INDEX_Y_OFFSET 9
 
-/** Video7 special modes (BIOS number + 0x0900) */
-#define VIDEO_FIRST_V7 0x0900
-
-/** Special video modes */
-#define VIDEO_FIRST_SPECIAL 0x0f00
-#define VIDEO_80x25 0x0f00
-#define VIDEO_8POINT 0x0f01
-#define VIDEO_80x43 0x0f02
-#define VIDEO_80x28 0x0f03
-#define VIDEO_CURRENT_MODE 0x0f04
-#define VIDEO_80x30 0x0f05
-#define VIDEO_80x34 0x0f06
-#define VIDEO_80x60 0x0f07
-#define VIDEO_GFX_HACK 0x0f08
-#define VIDEO_LAST_SPECIAL 0x0f09
-
-/** Video modes given by resolution */
-#define VIDEO_FIRST_RESOLUTION 0x1000
-
-/** The "recalculate timings" flag */
-#define VIDEO_RECALC 0x8000
-
-
-/** Basic video information */
-#define ADAPTER_CGA	0	/** CGA/MDA/HGC */
-#define ADAPTER_EGA	1
-#define ADAPTER_VGA	2
+#define VBE_DISPI_BPP_4 0x04
+#define VBE_DISPI_BPP_8 0x08
+#define VBE_DISPI_BPP_15 0x0F
+#define VBE_DISPI_BPP_16 0x10
+#define VBE_DISPI_BPP_24 0x18
+#define VBE_DISPI_BPP_32 0x20 
 
 
-
-/** Accessing VGA indexed registers */
-_START static inline u8 in_idx(u16 port, u8 index)
-{
-	write_port(port, index);
-	return read_port(port+1);
-}
-
-_START static inline void out_idx(u8 v, u16 port, u8 index)
-{
-	write_word(port, index+(v << 8));
-}
-
-/** Writes a value to an indexed port and then reads the port again */
-_START static inline u8 tst_idx(u8 v, u16 port, u8 index)
-{
-	out_idx(port, index, v);
-	return in_idx(port, index);
-}
-
-
-_START void intcall(u8 int_no, const struct biosregs *ireg, struct biosregs *oreg);
-_START int vga_set_mode(unsigned mode);
 
 #endif /** BOOT_VIDEO_H */
-

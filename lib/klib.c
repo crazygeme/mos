@@ -363,7 +363,7 @@ static void klib_cursor_forward(int new_pos)
 		cursor -= TTY_MAX_COL;
 	}
 
-	tty_movecurse((unsigned short)cursor);
+	tty_movecurse((unsigned)cursor);
 }
 
 char *klib_itoa(char *str, int num)

@@ -9,6 +9,7 @@
 #include <drivers/vga.h>
 #include <boot/multiboot.h>
 #include <drivers/pci.h>
+#include <mm/mm.h>
 
 
 _STARTDATA unsigned resolution_x;
@@ -20,7 +21,7 @@ _STARTDATA unsigned _vga_height;
 #define b(x) ((unsigned char)b_(0 ## x ## uL))
 #define b_(x) ((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | (x >> 14 & 128))
 
-_STARTDATA static unsigned char number_font[][12] = {
+static unsigned char number_font[][12] = {
 	{	b(00000000),
 		b(00000000),
 		b(00000000),
@@ -1737,8 +1738,38 @@ _STARTDATA static unsigned char number_font[][12] = {
 		b(00000000),
 		b(00000000) /* 12 */
 	},
+
 };
 
+
+static unsigned char cursor_font[][12] = {
+    {	b(00000000),
+		b(01111110),
+		b(01111110),
+		b(01111110), /* 4 */
+		b(01111110),
+		b(01111110),
+		b(01111110),
+		b(01111110), /* 8 */
+		b(01111110),
+		b(01111110),
+		b(01111110),
+		b(00000000) /* 12 */
+	},
+    {	b(00000000),
+		b(00000000),
+		b(00000000),
+		b(00000000), /* 4 */
+		b(00000000),
+		b(00000000),
+		b(00000000),
+		b(00000000), /* 8 */
+		b(00000000),
+		b(00000000),
+		b(00000000),
+		b(00000000) /* 12 */
+	},
+};
 
 _STARTDATA unsigned int * fb_buffer = 0xE0000;
 
@@ -1799,24 +1830,60 @@ _START static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void 
 #define char_height 12
 #define char_width  8
 
+unsigned char ** _number_font;
+unsigned _fb_buffer;
+unsigned _fb_buffer_phy;
+unsigned _resolution_x;
+unsigned _resolution_y;
+unsigned _window_char_width;
+unsigned _window_char_height;
+unsigned _fb_font_width;
+unsigned _fb_font_height;
+char _fb_text[VGA_RESOLUTION_X*VGA_RESOLUTION_Y] = {0};
 
-_START static void set_point(int x, int y, unsigned value) {
-	unsigned * disp = (unsigned *)fb_buffer;
-	unsigned * cell = &disp[y * resolution_x + x];
+static void fb_set_point(int x, int y, unsigned value) {
+	unsigned * disp = (unsigned *)_fb_buffer;
+	unsigned * cell = &disp[y * _resolution_x + x];
 	*cell = value;
 }
 
-_START static void write_char(int x, int y, int val, uint32_t color) {
+void fb_write_char(int x, int y, int val, unsigned color) {
     unsigned char i, j, *c;
+
+    x = x * char_width;
+    y = y * char_height;
+
 	if (val > 128) {
-		val = 4;
-	}
-	c = number_font[val];
+        if (val == 129) {
+            c = cursor_font[0];
+        } else if (val == 130) {
+            c = cursor_font[1];
+        }else{
+            val = 4; 
+            c = number_font[val];
+        }
+	}else{
+        c = number_font[val];
+    }
 	for (i = 0; i < char_height; ++i) {
 		for (j = 0; j < char_width; ++j) {
 			if (c[i] & (1 << (8-j))) {
-				set_point(x+j,y+i,color);
-			}
+				fb_set_point(x+j,y+i,color);
+			}else{
+                fb_set_point(x+j,y+i, VGA_COLOR_BLACK);
+            }
+		}
+	}
+}
+
+void fb_write_color(int x, int y, unsigned color) {
+    unsigned char i, j;
+    x = x * char_width;
+    y = y * char_height;
+
+	for (i = 0; i < char_height; ++i) {
+		for (j = 0; j < char_width; ++j) {
+            fb_set_point(x+j,y+i,color);
 		}
 	}
 }
@@ -1826,13 +1893,13 @@ _START void fb_init(multiboot_info_t* mboot_ptr)
     int newest_version = BgaIsAvailable();
     
     unsigned bpp = (newest_version) ? VBE_DISPI_BPP_32 : VBE_DISPI_BPP_8;
-	BgaSetVideoMode(1024, 768, VBE_DISPI_BPP_32, 1, 1);
+	BgaSetVideoMode(VGA_RESOLUTION_X, VGA_RESOLUTION_Y, VGA_COLOR_DEPTH, 1, 1);
 
 	pci_scan(bochs_scan_pci, -1, &fb_buffer);
 
     if (fb_buffer) {
-        resolution_x = 1024;
-        resolution_y = 768;
+        resolution_x = VGA_RESOLUTION_X;
+        resolution_y = VGA_RESOLUTION_Y;
         _vga_width = resolution_x / char_width;
         _vga_height = resolution_y / char_height;
     }else{
@@ -1850,6 +1917,28 @@ _START void fb_init(multiboot_info_t* mboot_ptr)
     write_char(4*char_width, 0, 'o', 0xFFFFFFFF);
     */
 
+}
+
+void fb_enable()
+{
+    unsigned mm_size = 0;
+    unsigned dma = fb_buffer;
+    _number_font = number_font;
+    _fb_buffer_phy = fb_buffer;
+    _resolution_x = resolution_x;
+    _resolution_y = resolution_y;
+    _window_char_width = _vga_width;
+    _window_char_height = _vga_height;
+    _fb_font_width = char_width;
+    _fb_font_height = char_height;
+
+    mm_size = resolution_x * resolution_y * 4;
+    if (_fb_buffer_phy) {
+        for (dma = fb_buffer; dma < (_fb_buffer_phy + mm_size); dma += PAGE_SIZE) {
+            mm_add_resource_map(dma); 
+        }
+        _fb_buffer = _fb_buffer_phy;
+    }
 }
 
 

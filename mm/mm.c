@@ -401,7 +401,34 @@ _START static void mm_setup_beginning_8m()
     // simulate_paging(0x001012a0);
 }
 
+int mm_add_resource_map(unsigned int phy)
+{
+    unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(phy);
+	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(phy);
+    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
 
+
+    if (phy < KERNEL_OFFSET) {
+        return -1;
+    }
+
+    if ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) == 0){
+		unsigned int table_addr = mm_alloc_page_table();
+		if (table_addr == 0){
+			return -1;
+		}
+
+		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
+	}
+
+    {
+		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
+		unsigned int phy_page = (phy) & PAGE_SIZE_MASK;
+
+		table[page_table_offset] = phy_page | PAGE_ENTRY_KERNEL_DATA;
+		return 1;
+	}
+}
 
 int mm_add_direct_map(unsigned int vir)
 {

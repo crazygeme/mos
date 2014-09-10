@@ -65,14 +65,19 @@ extern unsigned char ** _number_font;
 extern unsigned _fb_buffer;
 extern unsigned _resolution_x;
 extern unsigned _resolution_y;
+extern unsigned _hw_resolution_x;
+extern unsigned _hw_resolution_y;
 extern unsigned _window_char_width;
 extern unsigned _window_char_height;
 extern unsigned _fb_font_width;
 extern unsigned _fb_font_height;
 extern char _fb_text[];
+extern unsigned _fb_x_off;
+extern unsigned _fb_y_off;
 
 void fb_write_char(int x, int y, int val, unsigned color);
 void fb_write_color(int x, int y, unsigned color);
+void fb_set_point(int x, int y, unsigned value);
 
 // pre defined color
 #define _RED(color) ((color & 0x00FF0000) / 0x10000)
@@ -86,5 +91,10 @@ void fb_write_color(int x, int y, unsigned color);
 #define VGA_COLOR_RED ARGB(0xff, 0xff, 0x00, 0x00)
 #define VGA_COLOR_GREEN ARGB(0xff, 0x00, 0xff, 0x00)
 #define VGA_COLOR_BLUE ARGB(0xff, 0x00, 0x00, 0xFF)
+#define VGA_COLOR_GRAY ARGB(0xff, 0xaa, 0xaa, 0xaa)
+#define VGA_COLOR_YELLOW ARGB(0xff, 0xFF, 0xFF, 0x00)
+
+#define char_height 12
+#define char_width  8
 
 #endif /** BOOT_VIDEO_H */

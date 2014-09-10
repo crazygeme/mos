@@ -15,7 +15,7 @@ endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
 CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
-	-D__KERNEL__\
+	-D__KERNEL__ -DTEST_GUI\
 	-I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
@@ -56,7 +56,9 @@ OBJS	= boot.o \
 		  pipe.o\
 		  rbtree.o\
 		  vga.o\
-		  pci.o
+		  pci.o\
+		  gui_test.o\
+		  gui_core.o
 
 all: kernel
 
@@ -173,6 +175,12 @@ vga.o: drivers/vga.c drivers/vga.h
 
 pci.o: drivers/pci.c drivers/pci.h
 	$(CC) $(CFLAGS) -o pci.o drivers/pci.c
+
+gui_test.o: gui/gui_test.c gui/gui_test.h
+	$(CC) $(CFLAGS) -o gui_test.o gui/gui_test.c
+
+gui_core.o: gui/gui_core.c gui/gui_core.h
+	$(CC) $(CFLAGS) -o gui_core.o gui/gui_core.c
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

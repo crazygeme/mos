@@ -1827,8 +1827,7 @@ _START static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void 
 	}
 }
 
-#define char_height 12
-#define char_width  8
+
 
 unsigned char ** _number_font;
 unsigned _fb_buffer;
@@ -1837,18 +1836,32 @@ unsigned _resolution_x;
 unsigned _resolution_y;
 unsigned _window_char_width;
 unsigned _window_char_height;
+
+unsigned _hw_resolution_x;
+unsigned _hw_resolution_y;
+
 unsigned _fb_font_width;
 unsigned _fb_font_height;
 char _fb_text[VGA_RESOLUTION_X*VGA_RESOLUTION_Y] = {0};
+unsigned _fb_x_off;
+unsigned _fb_y_off;
 
-static void fb_set_point(int x, int y, unsigned value) {
+void fb_set_point(int x, int y, unsigned value) {
 	unsigned * disp = (unsigned *)_fb_buffer;
-	unsigned * cell = &disp[y * _resolution_x + x];
+	unsigned * cell = &disp[y * _hw_resolution_x + x];
 	*cell = value;
+}
+
+unsigned fb_get_point(int x, int y)
+{
+    unsigned * disp = (unsigned *)_fb_buffer;
+	unsigned * cell = &disp[y * _hw_resolution_x + x];
+	return (*cell);
 }
 
 void fb_write_char(int x, int y, int val, unsigned color) {
     unsigned char i, j, *c;
+    unsigned back_color;
 
     x = x * char_width;
     y = y * char_height;
@@ -1865,12 +1878,18 @@ void fb_write_char(int x, int y, int val, unsigned color) {
 	}else{
         c = number_font[val];
     }
+
+    back_color = fb_get_point(_fb_x_off+x, _fb_y_off+y);
+
+    // FIXME
+    // will fill all '0' bit into back_color
+    // this will mass a picture, because not all pixel are same
 	for (i = 0; i < char_height; ++i) {
 		for (j = 0; j < char_width; ++j) {
 			if (c[i] & (1 << (8-j))) {
-				fb_set_point(x+j,y+i,color);
+				fb_set_point(_fb_x_off+x+j,_fb_y_off+y+i,color);
 			}else{
-                fb_set_point(x+j,y+i, VGA_COLOR_BLACK);
+                fb_set_point(_fb_x_off+x+j,_fb_y_off+y+i, back_color);
             }
 		}
 	}
@@ -1883,7 +1902,7 @@ void fb_write_color(int x, int y, unsigned color) {
 
 	for (i = 0; i < char_height; ++i) {
 		for (j = 0; j < char_width; ++j) {
-            fb_set_point(x+j,y+i,color);
+            fb_set_point(_fb_x_off+x+j,_fb_y_off+y+i,color);
 		}
 	}
 }
@@ -1927,10 +1946,13 @@ void fb_enable()
     _fb_buffer_phy = fb_buffer;
     _resolution_x = resolution_x;
     _resolution_y = resolution_y;
+    _hw_resolution_x = _resolution_x;
+    _hw_resolution_y = _resolution_y;
     _window_char_width = _vga_width;
     _window_char_height = _vga_height;
     _fb_font_width = char_width;
     _fb_font_height = char_height;
+    _fb_x_off = _fb_y_off = 0;
 
     mm_size = resolution_x * resolution_y * 4;
     if (_fb_buffer_phy) {

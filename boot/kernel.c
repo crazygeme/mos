@@ -48,6 +48,7 @@ void kmain_startup()
     int i = 0;
 
     fb_enable();
+
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
 
@@ -190,8 +191,13 @@ static void kmain_process(void* param)
     printk("Init system call table\n");
     syscall_init();
 
-
     klib_clear();
+
+    #ifdef TEST_GUI
+    extern gui_test();
+    gui_test();
+    #endif
+
     user_first_process_run();
 
     run();

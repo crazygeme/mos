@@ -65,6 +65,8 @@
 			<F N="ps/elf.c"/>
 			<F N="fs/ext2.c"/>
 			<F N="fs/ffs.c"/>
+			<F N="gui/gui_core.c"/>
+			<F N="gui/gui_test.c"/>
 			<F N="drivers/hdd.c"/>
 			<F N="int/int.c"/>
 			<F N="int/int.S"/>
@@ -108,6 +110,8 @@
 			<F N="fs/ext2.h"/>
 			<F N="fs/fcntl.h"/>
 			<F N="fs/ffs.h"/>
+			<F N="gui/gui_core.h"/>
+			<F N="gui/gui_test.h"/>
 			<F N="drivers/hdd.h"/>
 			<F N="int/int.h"/>
 			<F N="fs/kbchar.h"/>

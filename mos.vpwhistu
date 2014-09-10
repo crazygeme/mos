@@ -9,7 +9,7 @@ mos.vpj=Release
   - Resource Files
   + Bitmaps
   - Other Files
-scroll:0
+scroll:2
 [State]
 SCREEN: 1440 900 98 84 1219 789 0 0 M 0 0 0 0 1009 530 0
 CWD: ../toaruos
@@ -290,4 +290,4 @@ DEBUG2: 3
 __asm__("hlt");
 }
 [ProjectDates]
-mos.vpj=20140909111407000
+mos.vpj=20140910105456000

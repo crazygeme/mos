@@ -132,7 +132,7 @@ char tty_getchar(int x, int y)
 
 void tty_roll_one_line()
 {
-    if (!vga_enabled) {
+    if (!vga_enabled || (_resolution_x != _hw_resolution_x) || (_resolution_y != _hw_resolution_y)) {
         int row = 0; 
         for (row = 0; row < (TTY_MAX_ROW-1); row++){
             tty_copy_row(row+1, row);
@@ -166,7 +166,6 @@ void tty_roll_one_line()
         }
 
         memcpy(_fb_text, next_char_row, txt_copy_size);
-
         memset(last_char_row, ' ', _window_char_width);
         // FIXME
         // assume it's BLACK background color

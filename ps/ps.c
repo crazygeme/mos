@@ -864,6 +864,23 @@ void task_sched()
 	_task_sched();
 }
 
+int ps_has_ready(int priority)
+{
+    int i = 0;
+
+    if (priority >= MAX_PRIORITY || priority < 0) {
+        return 0;
+    }
+
+    for (i = priority; i < MAX_PRIORITY; i++) {
+        LIST_ENTRY* head = &(control.ready_queue[i]);
+        if (!IsListEmpty(head))
+            return 1;
+    }
+
+    return 0;
+}
+
 
 
 #ifdef TEST_PS

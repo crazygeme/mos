@@ -125,11 +125,15 @@ void kmain_startup()
 
 static void idle_process(void* param)
 {
+    task_struct* cur = CURRENT_TASK();
     while (1) {
         __asm__("hlt");
 
         // wakeup by interrupt
-        task_sched();
+        if (ps_has_ready(1)) {
+            cur->remain_ticks = 5;
+        }
+        task_sched(); 
     }
 }
 

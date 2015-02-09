@@ -32,6 +32,7 @@ OBJS	= boot.o \
 		  dsr.o\
 		  mm.o\
 		  mmap.o\
+		  phymm.o\
 		  timer.o\
 		  ps.o\
 		  lock.o\
@@ -102,6 +103,9 @@ mm.o: mm/mm.c mm/mm.h boot/multiboot.h mm/mmap.h
 
 mmap.o: mm/mmap.c mm/mmap.h mm/mm.h
 	$(CC) $(CFLAGS) -o mmap.o mm/mmap.c
+
+phymm.o: mm/phymm.c mm/phymm.h mm/mm.h
+	$(CC) $(CFLAGS) -o phymm.o mm/phymm.c
 
 timer.o: int/timer.c int/timer.h
 	$(CC) $(CFLAGS) -o timer.o int/timer.c

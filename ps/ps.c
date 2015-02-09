@@ -389,13 +389,15 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
 extern short pgc_entry_count[1024];
 static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
 {
+    unsigned target_page_idx = mm_get_attached_page_index(vir);
+    unsigned target_page_addr = target_page_idx * PAGE_SIZE;
     unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
     unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
     unsigned int* page_table;
     unsigned int tmp, phy;
     int i = 0, idx;
 
-    if (!new_ps[page_dir_offset]) {
+    if (!(new_ps[page_dir_offset]&PAGE_SIZE_MASK)) {
         new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
         new_ps[page_dir_offset] |= flag;
 
@@ -408,12 +410,17 @@ static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
         idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
         pgc_entry_count[idx]++;
     }
+
     tmp = vm_alloc(1);
-    page_table[page_table_offset] = tmp - KERNEL_OFFSET;
-    page_table[page_table_offset] |= flag;
     memcpy(tmp, vir, PAGE_SIZE);
     vm_free(tmp, 1);
-    mm_set_phy_page_mask( (tmp-KERNEL_OFFSET) / PAGE_SIZE, 1);
+    page_table[page_table_offset] = tmp - KERNEL_OFFSET;
+    page_table[page_table_offset] |= flag;
+    mm_set_phy_page_mask((tmp - KERNEL_OFFSET)/PAGE_SIZE, 1);
+
+//  page_table[page_table_offset] = target_page_addr;
+//  page_table[page_table_offset] |= (flag &(~PAGE_ENTRY_WRITABLE));
+//  mm_set_phy_page_mask(target_page_idx, 1);
 }
 
 

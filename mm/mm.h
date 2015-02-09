@@ -53,6 +53,8 @@ _START void mm_init(multiboot_info_t* mb);
 void mm_test();
 #endif
 
+unsigned mm_get_pagedir();
+
 // map 0xCxxxxxxxx to xxxxxxx
 // return (is used for page table)
 int mm_add_direct_map(unsigned int vir);
@@ -77,7 +79,13 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
 
 void mm_del_dynamic_map(unsigned int vir);
 
+unsigned mm_get_attached_page_index(unsigned int vir);
+
 unsigned int  mm_get_free_phy_page_index();
+
+unsigned mm_get_map_flag(unsigned vir);
+
+void mm_set_map_flag(unsigned vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 

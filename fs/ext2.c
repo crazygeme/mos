@@ -21,7 +21,7 @@ static void ext2_del_dir_entry(DIR dir, char* name);
 static void ext2_close_dir(DIR dir);
 static char* ext2_get_name(INODE node);
 static unsigned int ext2_get_size(INODE node);
-static int ext2_copy_stat(INODE node, struct stat* s);
+static int ext2_copy_stat(INODE node, struct stat* s, int is_dir);
 
 
 // internal
@@ -292,6 +292,7 @@ static INODE ext2_get_root(struct filesys_type* type)
     ext2_read_inode(type, 0, EXT2_ROOT_INO, node);
     strcpy(info->name, "");
     info->type = type;
+	info->ref_count = 0;
     return info;
 
 }
@@ -381,6 +382,7 @@ static DIR ext2_open_dir(INODE node)
     dir->cur_block = kmalloc(EXT2_BLOCK_SIZE(sb)); 
     ext2_read_block(dir->type, data_block, dir->cur_block);
     dir->dir = (struct ext2_dir_entry_2*)dir->cur_block;
+	dir->ref_count = 0;
     return dir;
 }
 
@@ -427,7 +429,7 @@ static INODE ext2_read_dir(DIR d)
 
 
 
-
+	ret->ref_count = 0;
     return ret;
 }
 
@@ -461,15 +463,15 @@ static unsigned int ext2_get_size(INODE node)
     return info->inode->i_size;
 }
 
-static int ext2_copy_stat(INODE node, struct stat* s)
+static int ext2_copy_stat(INODE node, struct stat* s, int is_dir)
 {
     struct ext2_inode_info* info = (struct ext2_inode_info*)node;
     struct ext2_inode* inode = (struct ext2_inode*)info->inode;
     struct ext2_super_block* sb = (struct ext2_super_block*)info->type->sb;
 
     s->st_atime = inode->i_atime;
-    s->st_blksize = EXT2_BLOCK_SIZE(sb);
-    s->st_blocks = inode->i_blocks;
+    //s->st_blksize = EXT2_BLOCK_SIZE(sb);
+    //s->st_blocks = inode->i_blocks;
     s->st_ctime = inode->i_ctime;
     s->st_dev = (unsigned)info->type;
     s->st_gid = inode->i_gid;

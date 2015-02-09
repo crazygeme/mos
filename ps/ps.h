@@ -124,11 +124,26 @@ typedef struct _page_table_list_entry
 	LIST_ENTRY list;
 }page_table_list_entry;
 
+struct _region_elem
+{
+	int fd;
+	int file_off;
+	unsigned start;
+	unsigned end;
+	struct _region_elem* next;
+};
+
+
+typedef void* vm_struct_t; 
+
 typedef struct _user_enviroment
 {
 	unsigned int page_dir; // every process needs it's own clone of page dir
-	LIST_ENTRY page_table_list;
-	unsigned heap_top;
+    unsigned reserve;
+    unsigned heap_top;
+	//unsigned zone_top;
+    vm_struct_t vm;
+	//region_elem_t region_head;
 }user_enviroment;
 
 typedef enum _ps_status
@@ -149,6 +164,28 @@ typedef void (*process_fn)(void* param);
 
 #define MAX_FD 256
 
+typedef struct _fd_type
+{
+	union{
+		INODE	file;
+		DIR		dir;
+	};
+	unsigned file_off;
+	unsigned flag;
+	char* path;
+}fd_type;
+
+
+#define fd_flag_isdir 0x00000001
+#define fd_flag_readonly 0x00000002
+#define fd_flag_writonly 0x00000004
+#define fd_flag_rw		0x00000008
+#define fd_flag_create 0x00000010
+#define fd_flag_append 0x00000020
+#define fd_flag_closeexec 0x00000040
+#define fd_flag_used	0x80000000
+
+
 typedef struct _task_struct
 {
 	// tss_struct tss;
@@ -161,17 +198,22 @@ typedef struct _task_struct
 	void* param;
 	user_enviroment user;
 	int priority;
+    // in schedule list
 	LIST_ENTRY ps_list;
+    // in wait list if waiting a lock
+    LIST_ENTRY lock_list;
+    // in all process list
+    LIST_ENTRY ps_mgr;
 	ps_status status;
     ps_type type;
     int remain_ticks;
     int is_switching;
-    INODE fds[MAX_FD];
-	unsigned file_off[MAX_FD];
+	fd_type* fds;
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;
-	char cwd[256];
+	unsigned group_id;
+	char cwd[64];
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;
@@ -193,23 +235,30 @@ int ps_enabled();
 
 void ps_update_tss(unsigned int esp0);
 
-void ps_record_dynamic_map(unsigned int vir);
 
 // task functions
 void task_sched();
 
-void task_sched_wait(PLIST_ENTRY wait_list);
 
-void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all);
+typedef void (*fpuser_map_callback)(void* aux, unsigned vir, unsigned phy);
 
-void ps_cleanup_dying_task();
+void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux);
 
 void ps_cleanup_all_user_map(task_struct* task);
+
+void ps_put_to_ready_queue(task_struct* task);
+
+void ps_put_to_dying_queue(task_struct* task);
+
+void ps_put_to_wait_queue(task_struct* task);
+
+task_struct* ps_find_process(unsigned psid);
 
 // syscall handler
 int sys_fork();
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int* status, int options);
+char *sys_getcwd(char *buf, unsigned size);
 
 #ifdef TEST_PS
 void ps_mmm();

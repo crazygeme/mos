@@ -103,6 +103,14 @@ void _write_wb (unsigned short port, const void *addr, unsigned cnt);
 void _write_dwrod (unsigned short port, unsigned int data);
 void _write_dwb (unsigned short port, const void *addr, unsigned cnt);
 
+_START void write_word (unsigned short port, unsigned short data);
+
+_START unsigned short read_word (unsigned short port);
+
+_START unsigned int read_dword (unsigned short port);
+
+_START void write_dword (unsigned short port, unsigned int data);
+
 _START void int_init();
 
 void int_update_tss(void* address);
@@ -127,6 +135,8 @@ unsigned int_is_intr_enabled();
 unsigned int_intr_enable();
 
 unsigned int_intr_disable();
+
+void int_intr_setlevel(unsigned enabled);
 
 #define LOAD_CR3(val) \
     __asm__("movl %%cr3, %0" : "=r"(val))

@@ -57,6 +57,8 @@ void mm_test();
 // return (is used for page table)
 int mm_add_direct_map(unsigned int vir);
 
+int mm_add_resource_map(unsigned int phy);
+
 void mm_del_direct_map(unsigned int vir);
 
 void mm_del_user_map();
@@ -71,12 +73,19 @@ unsigned int vm_alloc(int page_count);
 
 void vm_free(unsigned int vm, int page_count);
 
-void mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
+int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
 
 void mm_del_dynamic_map(unsigned int vir);
 
 unsigned int  mm_get_free_phy_page_index();
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
+
+unsigned vm_get_usr_zone(unsigned page_count);
+
+int do_mmap(unsigned int addr, unsigned int len,unsigned int prot,
+			unsigned int flags,int fd,unsigned int offset);
+
+int do_munmap(void *addr, unsigned length);
 
 #endif

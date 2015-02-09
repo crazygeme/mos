@@ -26,11 +26,14 @@
 #define KHEAP_END	 0xC07FF000
 #define KHEAP_BEGIN	 0xC0300000
 
+#define PAGE_TABLE_CACHE_BEGIN 0xC0800000
+#define PAGE_TABLE_CACHE_END   0xC0C00000
+
 #define UNIMPL printk("unimpl function %s\n", __func__)
  
 #define DSR_CACHE_DEPTH 100
 
-#define HDD_CACHE_SIZE 32 /* pages */
+#define HDD_CACHE_SIZE 2048 /* pages */
 
 #define HDD_CACHE_OPEN 1
 
@@ -39,20 +42,28 @@
 
 #define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
 
-#define USER_STACK_PAGES 3
+#define USER_STACK_PAGES 16
 
 #define SYSCALL_INT_NO 0x80
 
-#define INODE_STD_IN  0xfffffffe
-#define INODE_STD_OUT 0xfffffffd
-#define INODE_STD_ERR 0xfffffffc
 
 #define STDIN_FILENO    0   /* Standard input.  */
 #define STDOUT_FILENO   1   /* Standard output.  */
 #define STDERR_FILENO   2   /* Standard error output.  */
 
-#define KEYBOARD_BUF_LEN 64
+#define PIPE_BUF_LEN 2048
 
-#define USER_HEAP_BEGIN 0x40000000
+#define USER_HEAP_BEGIN  0x30000000
+// left one page (a hole) to protect stack overflow and heap overflow
+#define USER_HEAP_END	(KERNEL_OFFSET - (USER_STACK_PAGES-1)*PAGE_SIZE)
+//#define USER_HEAP_END	 0x600f0000
+
+#define USER_ZONE_BEGIN 0x10000000
+#define USER_ZONE_END	(USER_HEAP_BEGIN - PAGE_SIZE)
+
+// supported resolution
+#define VGA_RESOLUTION_X 1024
+#define VGA_RESOLUTION_Y 768
+#define VGA_COLOR_DEPTH  32
 
 #endif

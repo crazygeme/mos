@@ -83,6 +83,18 @@ void free(void* buf);
 
 void klib_init();
 
+void klog_init();
+
+void klog_write(char c);
+
+void klog_enable();
+
+void klog_printf(const char* str, ...);
+
+void klog(char* str, ...);
+
+void klog_close();
+
 void klib_putchar(char c);
 
 void klib_putint(int num);
@@ -162,11 +174,16 @@ char* strdup(char* str);
 
 void printf(const char* str, ...);
 
-void vprintf(const char* str, va_list ap);
 
-void print_human_readable_size (unsigned int size) ;
+typedef void (*fpputc)(unsigned char c);
+typedef void (*fputstr)(char* str);
+
+void vprintf(fpputc _putc, fputstr _putstr, const char* str, va_list ap);
+
 
 char* itoa(int num, int base, int sign);
+
+int atoi(const char *str);
 
 int tolower(int c);
 
@@ -175,6 +192,8 @@ int toupper(int c);
 int islower(int c);
 
 int isupper(int c);
+
+int isprint(int c);
 
 void srand(unsigned _seed);
 

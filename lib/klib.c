@@ -3,6 +3,8 @@
 #include <drivers/tty.h>
 #include <int/timer.h>
 #include <ps/lock.h>
+#include <ps/ps.h>
+#include <fs/vfs.h>;
 #else
 #include <syscall.h>
 #include <lib/klib.h>
@@ -12,13 +14,23 @@
 
 static kblock free_list[513] = { 0 }; 
 static void klib_add_to_free_list(int index, kblock* buf, int force_merge);
-static unsigned int heap_quota;
-static unsigned int heap_quota_high;
+unsigned int heap_quota;
+unsigned int heap_quota_high;
+unsigned int mem_time;
+unsigned int heap_time;
 static unsigned int klib_random_num = 1;
+
 
 #ifdef __KERNEL__
 
-static unsigned int cur_block_top = KHEAP_BEGIN;
+void mm_report()
+{
+    printk("memcpy time %d millisecond, malloc/free time %d millisecond\n", mem_time, heap_time);
+    mem_time = heap_time = 0;
+}
+
+
+unsigned int cur_block_top = KHEAP_BEGIN;
 static int cursor = 0;
 #define CUR_ROW (cursor / TTY_MAX_COL)
 #define CUR_COL (cursor % TTY_MAX_COL)
@@ -29,6 +41,7 @@ static void klib_cursor_forward(int new_pos);
 
 static spinlock tty_lock;
 static spinlock heap_lock;
+static semaphore klog_lock;
 
 
 
@@ -52,6 +65,73 @@ static void unlock_heap()
 	spinlock_unlock(&heap_lock);
 }
 
+#ifdef __DEBUG__
+static int klog_inited = 0;
+void klog_init()
+{
+	klog_inited = 1;
+	sema_init(&klog_lock, "klog", 0);
+
+	klog("\n\n===========================\n");
+	
+}
+
+void klog_write(char c)
+{
+	if (!klog_inited) {
+		return;
+	}
+
+	if (isprint(c)) {
+		serial_putc(c);
+	}else{
+		klog_printf("\\%x", c);
+	}
+}
+
+void klog_writestr(char* str)
+{
+	if (!klog_inited) {
+		return;
+	}
+
+	if (!str || !*str) {
+		return;
+	}
+
+	while (*str) {
+		klog_write(*str++);
+	}
+}
+
+void klog_close()
+{
+	if (!klog_inited) {
+		return;
+	}
+
+	serial_flush();
+}
+
+#else
+void klog_init()
+{
+	sema_init(&klog_lock, "klog", 0);
+}
+
+void klog_write(char c)
+{
+}
+
+void klog_writestr(char* str)
+{
+}
+
+void klog_close()
+{
+}
+#endif
+
 void klib_init()
 {
 	tty_init();
@@ -59,18 +139,156 @@ void klib_init()
 	klib_random_num = 1;
 	cursor = 0;
 	heap_quota = 0;
-
     heap_quota_high = 0;
+    mem_time = 0;
+    heap_time = 0;
 
 	cur_block_top = KHEAP_BEGIN;
 	spinlock_init(&tty_lock);
 	spinlock_init(&heap_lock);
+
 }
 
+static int ansi_control_flag = 0;
+static char ansi_control[10] = {0};
+static int ansi_control_idx = 0;
+
+static void ansi_control_begin()
+{
+	memset(ansi_control, 0, sizeof(ansi_control));
+	ansi_control_idx = 0;
+	ansi_control_flag = 1;
+}
+
+static void ansi_control_end()
+{
+	memset(ansi_control, 0, sizeof(ansi_control));
+	ansi_control_idx = 0;
+	ansi_control_flag = 0;
+}
+
+static int is_ansi_control_begin()
+{
+	return ansi_control_flag;
+}
+
+
+static void ansi_control_add(char c)
+{
+	char* str_arg = ansi_control + 1;
+	int arg = 0;
+	int row, col;
+	int new_pos = 0;
+	char* str_row, *str_col;
+
+	switch (c) {
+	case 'm':
+		arg = atoi(str_arg);
+		if (arg == 0) { // 关闭所有属性
+		} else if (arg == 1){ // 设置高亮度 
+		} else if (arg == 4){ // 下划线 
+		} else if (arg == 5){ // 闪 烁 
+		} else if (arg == 7){ // 反显 
+		} else if (arg == 8){ // 消隐 
+		} else if (arg >= 30 && arg <= 37){ // 设置前景色 
+		} else if (arg >= 40 && arg <= 47) { // 设置背景色 
+		}
+		break;
+	case 'A': //光标上移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		row -= arg;
+		if (row < 0)
+			row = 0;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		
+		break;
+	case 'B': // 光标下移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		row += arg;
+		if (row >= TTY_MAX_ROW)
+			row = TTY_MAX_ROW-1;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'C': // 光标右移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		col += arg;
+		if (col >= TTY_MAX_COL)
+			col = TTY_MAX_COL-1;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'D': // 光标左移n行 
+		arg = atoi(str_arg);
+		row = CUR_ROW;
+		col = CUR_COL;
+		col -= arg;
+		if (col < 0)
+			col = 0;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'H': // 设置光标位置 (ROW:COL)
+		str_col = strchr(str_arg, ';');
+		*str_col = '\0';
+		str_col++;
+		str_row = str_arg;
+		row = atoi(str_row)-1;
+		col = atoi(str_col)-1;
+		if (row < 0)
+			row = 0;
+		if (row >= TTY_MAX_ROW)
+			row = TTY_MAX_ROW - 1;
+		if (col < 0)
+			col = 0;
+		if (col >= TTY_MAX_COL)
+			col = TTY_MAX_COL - 1;
+		new_pos = ROW_COL_TO_CUR(row, col);
+		klib_cursor_forward(new_pos); 
+		break;
+	case 'J': // 清屏 
+		tty_clear();
+		break;
+	case 'K': // 清除从光标到行尾的内容 
+		break;
+	case 's':
+		break;
+	case 'u':
+		break;
+	case 'l':
+		break;
+	case 'h':
+		break;
+	default:
+		break;
+	}
+
+	if ( (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z')){
+		// not support yet
+		ansi_control_end();
+	} else {
+		ansi_control[ansi_control_idx] = c;
+		ansi_control_idx++;
+	}
+}
 
 void klib_putchar(char c)
 {
 	int new_pos = 0;
+
+	if (is_ansi_control_begin()) {
+		ansi_control_add(c);
+		return;
+	}
+
 	if ( c == '\n'){
 		int new_row = CUR_ROW + 1;
 		int new_col = 0;
@@ -86,10 +304,20 @@ void klib_putchar(char c)
 		new_pos = cursor;
     } else if (c  == '\r') {
 		new_pos = ROW_COL_TO_CUR(CUR_ROW, 0);
-	}else{
+    } else if (c == '\b' ) {
+        cursor --;
+        //tty_putchar( CUR_ROW, CUR_COL, ' ');
+        new_pos = cursor;
+	}else if ( (unsigned)c == 0xc){
+		tty_clear();
+	}else if (isprint(c)){
 		tty_putchar( CUR_ROW, CUR_COL, c);
 		new_pos = cursor + 1;
-	}
+	}else if ((unsigned)c == 0x1b) {
+		ansi_control_begin();
+	}else{
+        return;
+    }
 
 	klib_cursor_forward(new_pos);
 }
@@ -135,7 +363,7 @@ static void klib_cursor_forward(int new_pos)
 		cursor -= TTY_MAX_COL;
 	}
 
-	tty_movecurse((unsigned short)cursor);
+	tty_movecurse((unsigned)cursor);
 }
 
 char *klib_itoa(char *str, int num)
@@ -189,12 +417,7 @@ static unsigned int kblk(unsigned page_count)
 		return 0;
 
 	if (cur_block_top + page_count * PAGE_SIZE >= KHEAP_END){
-		klib_print("buffer overflow\n");
-		klib_info("cur_block_top: ", cur_block_top, "\n");
-		klib_info("page_count: ", page_count, "\n");
-		klib_info("KHEAP_BEGIN: ", KHEAP_BEGIN, "\n");
-		klib_info("KHEAP_END: ", KHEAP_END, "\n");
-		return 0;
+		return vm_alloc(page_count);
 	}
 
 	cur_block_top += page_count * PAGE_SIZE;
@@ -271,7 +494,9 @@ void* malloc(unsigned size)
 	kblock* free_list_head = &free_list[free_list_index];
 	int index = 0;
 	int sliced = 0;
-
+#ifdef DEBUG_FFS
+    unsigned t = time_now();
+#endif
 	
 	if (free_list_index > 511) // that's too large
 		return NULL;
@@ -313,6 +538,9 @@ void* malloc(unsigned size)
 			int left_count;
 			if (vir == 0){
 				unlock_heap();
+                #ifdef DEBUG_FFS
+                heap_time += time_now() - t;
+                #endif
 				return NULL;
 			}
 			index = 511;
@@ -338,10 +566,16 @@ void* malloc(unsigned size)
         }
         unlock_heap(); 
 
+        #ifdef DEBUG_FFS
+        heap_time += time_now() - t;
+        #endif
 		return (void*)ret;
 	}
 
 	unlock_heap();
+    #ifdef DEBUG_FFS
+    heap_time += time_now() - t;
+    #endif
 	return NULL;
 
 }
@@ -351,6 +585,11 @@ void free(void* buf)
 	kblock* block = NULL;
 	int size = 0;
 	int free_list_index;
+
+    #ifdef DEBUG_FFS
+    unsigned t = time_now();
+    #endif
+
 	if (buf == NULL)
 		return;
 
@@ -359,6 +598,7 @@ void free(void* buf)
 	size = block->size;
 	if (size == 0xdeadbeef) {
 		// double free
+		printf("double free!\n");
 		*((int *)0) = 0;
 	}
 	free_list_index = size / 8 + 1;
@@ -368,6 +608,10 @@ void free(void* buf)
 	klib_add_to_free_list(free_list_index, block, 1);
 	
 	unlock_heap();
+
+    #ifdef DEBUG_FFS
+    heap_time += time_now() - t;
+    #endif
 }
 
 
@@ -492,11 +736,29 @@ void memcpy(void* _src, void* _dst, unsigned len)
 {
 	char* src = _src;
 	char* dst = _dst;
-
+    unsigned* isrc = _src;
+    unsigned* idst = _dst;
 	int i = 0;
-    for (i = 0; i < len; i++) {
-        src[i] = dst[i];
+#ifdef DEBUG_FFS
+    unsigned t = time_now();
+#endif
+
+    if ( ((((unsigned)src) % 4) == 0) &&
+        ((((unsigned)dst) % 4) == 0) &&
+         (len % 4 == 0)) {
+        int ilen = len / 4;
+        for (i = 0; i < ilen; i++) {
+            isrc[i] = idst[i];
+        }
+    }else{
+        for (i = 0; i < len; i++) {
+            src[i] = dst[i];
+        }
     }
+
+#ifdef DEBUG_FFS
+    mem_time += time_now() - t;
+#endif
 }
 
 void memmove(void* _src, void* _dst, unsigned len)
@@ -687,35 +949,93 @@ int isupper(int c)
 	return (c >= 'A' && c <= 'Z');
 }
 
+int isprint(int c)
+{
+    
+      if((c > 31) && (c <  127))
+      {
+         return 1;
+      }
+
+	  if ( c == 10 || c == 13 || c == 9) {
+		  return 1;
+	  }
+   
+      return 0;
+}
 
 void printf(const char* str, ...)
 {
 	va_list ap;
 	va_start(ap, str);
-	vprintf(str,ap);
+	vprintf(klib_putchar, klib_print, str,ap);
 	va_end(ap);
 }
 
 
-void vprintf(const char* src, va_list ap)
+#define TTY_BUF_SIZE 512
+static char tty_buf[TTY_BUF_SIZE];
+static char* tty_buf_pos;
+static void _put_buf_c(fputstr _putstr, char c)
+{
+	*tty_buf_pos = c;
+	tty_buf_pos++;
+	if ((tty_buf_pos - tty_buf) >= TTY_BUF_SIZE) {
+		_putstr(tty_buf);
+		tty_buf_pos = tty_buf;
+	}
+	*tty_buf_pos = '\0';
+}
+
+static void _put_buf_str(fputstr _putstr, char* str)
+{
+	while (*str) {
+		_put_buf_c(_putstr, *str);
+		str++;
+	}
+}
+
+static void print_human_readable_size (fputstr _putstr, unsigned int size) 
+{
+  char* s = 0;
+
+  if (size == 1)
+    _put_buf_str (_putstr, "1");
+  else 
+    {
+      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
+      const char **fp;
+
+      for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
+        size /= 1024;
+
+	  s = itoa(size, 10, 0);
+	  _put_buf_str(_putstr, s);
+	  free(s);
+	  _put_buf_str(_putstr, *fp);
+    }
+}
+
+void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 {
 	int len = strlen(src);
 	int i = 0;
     int min_len = 0;
-
+	tty_buf[0] = '\0';
+	tty_buf_pos = tty_buf;
     for (i = 0; i < len; i++) {
         char cur = src[i];
         if (cur == '%') {
 			cur = src[i+1];
             switch (cur) {
 			case '%':
-				klib_putchar(src[i+1]);
+				_put_buf_c(_putstr, src[i+1]);
 				break;
 			case 'd':
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 1);
-					klib_print(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
@@ -724,7 +1044,7 @@ void vprintf(const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 16, 0);
-					klib_print(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
@@ -732,48 +1052,56 @@ void vprintf(const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 0);
-					klib_print(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
 			case 's':
 				{
 					char* arg = va_arg(ap, char*);
-					klib_print(arg);
+					_put_buf_str(_putstr, arg);
 					break;
 				}
             case 'h':
                 {
                     unsigned arg = va_arg(ap, unsigned);
-                    print_human_readable_size(arg);
+                    print_human_readable_size(_putstr, arg);
                     break;
+                }
+			case 'c':
+				{
+					unsigned char arg = va_arg(ap, unsigned char);
+					_put_buf_c(_putstr, arg);
+					break;
+				}
+            case 'b':
+                {
+                    unsigned char  arg = va_arg(ap, unsigned char );
+					char* s = itoa(arg, 16, 0);
+                    char* str = (s+2);
+                    if (strlen(str) == 1) {
+                        _put_buf_str(_putstr, "0"); 
+                    }
+                    _put_buf_str(_putstr, str); 
+					free(s);
+					break;
                 }
 			default:
 				{
-					klib_putchar('?');
+					_put_buf_c(_putstr,'?');
+					break;
 				}
             }
 			i++;
         }else{
-			klib_putchar(cur);
+			_put_buf_c(_putstr,cur);
 		}
     }
+
+	_putstr(tty_buf);
 }
 
-void print_human_readable_size (unsigned int size) 
-{
-  if (size == 1)
-    printf ("1 byte");
-  else 
-    {
-      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
-      const char **fp;
 
-      for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
-        size /= 1024;
-      printf ("%u%s", size, *fp);
-    }
-}
 
 static char _num(int i){
 
@@ -849,6 +1177,74 @@ char* itoa(int num, int base, int sign)
 	return ret;
 }
 
+int atoi(const char *str)
+{
+	int base = 10;
+	int neg = 0;
+	int ret = 0;
+
+	if (!str || !*str) {
+		return 0;
+	}
+
+	if (*str == '-') {
+		neg = 1;
+		str++;
+	}
+
+	// things like -0x will be positive!
+	if (*str == '0') {
+		neg = 0;
+		str++;
+		base = (*str == 'x') ? 16 
+			: (*str == '0') ? 8
+			: (*str == 'b') ? 2 
+			: 0;
+		str++;
+	}
+
+	if (base == 0) {
+		return 0;
+	}
+
+	while (*str) {
+		int cur = 0;
+
+		if ( (base == 8) && (*str > '7' || *str < '0')) {
+			break;
+		}
+
+		if ( (base == 10) && (*str > '9' || *str < '0')) {
+			break;
+		}
+
+		if ( (base == 16) && !( (*str >= '0' && *str <= '9') ||
+								(*str >= 'a' && *str <= 'f') ||
+								(*str >= 'A' && *str <= 'F')
+								)
+			 ) {
+			break;
+		}
+
+		if (*str >= '0' && *str <= '9') {
+			cur = *str - '0';
+		}else if (*str >= 'a' && *str <= 'f') {
+			cur = *str - 'a' + 10;
+		}else if (*str >= 'A' && *str <= 'F') {
+			cur = *str - 'A' + 10;
+		}
+
+		ret = ret*base + cur;
+		str++;
+	}
+
+	if (neg) {
+		return (0-ret);
+	}else{
+		return ret;
+	}
+}
+
 void srand(unsigned _seed)
 {
 	klib_random_num = _seed;
@@ -919,9 +1315,50 @@ void printk(const char* str, ...)
 	klib_print("]");
     kfree(str_mill);
     va_start(ap, str); 
-	vprintf(str,ap);
+	vprintf(klib_putchar, klib_print, str,ap);
 	va_end(ap);
     unlock_tty();
+}
+
+
+void klog_printf(const char* str, ...)
+{
+	va_list ap;
+
+	va_start(ap, str);
+	vprintf(klog_write, klog_writestr, str,ap);
+	va_end(ap);
+}
+
+void klog(char* str, ...)
+{
+	va_list ap;
+    char* str_mill;
+    int len = 0;
+    int i = 0;
+	time_t time;
+    task_struct* cur = 0;
+
+	cur = CURRENT_TASK();
+
+	sema_wait(&klog_lock);
+
+	timer_current(&time);
+    str_mill = itoa(time.milliseconds, 10, 0);
+    len = strlen(str_mill);
+    len = 3 - len;
+	klog_printf("[%d: %d.", cur->psid, time.seconds );
+    for (i = 0; i < len; i++) {
+        klog_printf("0");
+    }
+    klog_writestr(str_mill);
+	klog_writestr("]");
+    kfree(str_mill);
+    va_start(ap, str); 
+	vprintf(klog_write, klog_writestr, str,ap);
+	va_end(ap);
+
+	sema_trigger(&klog_lock);
 }
 
 void tty_write(const char* buf, unsigned len)
@@ -929,7 +1366,7 @@ void tty_write(const char* buf, unsigned len)
 	int i = 0;
 	lock_tty();
 	for (i = 0; i < len; i++){
-		tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
+		//tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
 		klib_putchar(buf[i]);
 	}
 	unlock_tty();
@@ -938,8 +1375,8 @@ void tty_write(const char* buf, unsigned len)
 
 void reboot()
 {
+	klog_close();
 	block_close();
-	// FIXME do formal steps before reboot
 	_write_port(0x64, 0xfe);
 }
 
@@ -949,12 +1386,15 @@ void shutdown()
   const char s[] = "Shutdown";
   const char *p;
 
-  printf ("Powering off...\n");
-
+  printf ("Powering off\n");
+  printf ("Close klog\n");
+  klog_close();
+  printf ("Flush block cache\n");
   block_close();
 
   /* 	This is a special power-off sequence supported by Bochs and
 		QEMU, but not by physical hardware. */
+  printf ("Power off...\n");
   for (p = s; *p != '\0'; p++)
     _write_port (0x8900, *p);
 

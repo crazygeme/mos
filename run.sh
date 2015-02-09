@@ -5,6 +5,7 @@ _rebuild="0"
 _debug="0"
 _format="0"
 _curses=""
+_logtofile="stdio"
 
 if [ ! -e "kernel" ]; then
 	_rebuild="1"
@@ -35,6 +36,8 @@ elif [ "$arg" == "format" ]; then
 elif [ "$arg" == "" ]; then
 	_rebuild="0"
 	_debug="0"
+elif [ "$arg" == "logtofile" ]; then
+	_logtofile="file:krn.log"
 else
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
@@ -43,11 +46,14 @@ else
 	echo -e "\t debug: wait for gdb before running"
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t format: format disk, and copy all bins under user/bin into vm /bin  before running"
+	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	exit
 fi
-
-
 done
+
+if [ "$_curses" == "-curses" ]; then
+	_logtofile="file:krn.log"
+fi
 
 if [ "$_rebuild" == "1" ]; then
 	cd ffstool
@@ -78,10 +84,13 @@ if [ "$_format" == "1" ]; then
 	echo "done"
 	cd ..
 fi
+
+
 echo "begin enum"
 
 if [ "$_debug" == "0" ]; then
-	qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel
+	qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std
 else		
-	qemu-system-i386 -no-kvm -no-reboot -m 256 -hda "$diskfile" -kernel kernel -gdb tcp::8888 -S
+	qemu-system-i386 -no-kvm $_curses -no-reboot -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std -gdb tcp::8888 -S
 fi
+

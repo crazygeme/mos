@@ -63,6 +63,8 @@ void timer_calculate_cpu_cycle();
 
 void timer_current(time_t* time);
 
+unsigned time_now();
+
 void msleep(unsigned int ms);
 
 void usleep(unsigned int us);

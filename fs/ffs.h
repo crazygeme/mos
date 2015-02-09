@@ -45,7 +45,7 @@ struct ffs_super_node
     unsigned total_size; // in sector
     unsigned used_size;  // in sector
     unsigned bitmap_sector;
-	unsigned first_valid_sector;
+    unsigned first_valid_sector;
     unsigned magic;
     struct ffs_meta_info root;
     char reserve[428];
@@ -65,16 +65,18 @@ struct ffs_bitmap_cache
 struct ffs_inode
 {
     struct filesys_type* type;
+    unsigned ref_count;
     struct ffs_meta_info meta;
-	unsigned meta_sector;
-	unsigned meta_offset;
+    unsigned meta_sector;
+    unsigned meta_offset;
 };
 
 struct ffs_dir
 {
     struct filesys_type* type;
+    unsigned ref_count;
     unsigned cur;
-	struct ffs_inode self;
+    struct ffs_inode* self;
 };
 
 void ffs_attach(block* b);

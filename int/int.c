@@ -18,6 +18,8 @@ _START static void init_interrupt()
   write_port( 0x21 , 0x1 ) ;
   write_port( 0xA1 , 0x1 ) ;
 
+  // disable all interrupt in this time,
+  // enable them after all setup done
   write_port( 0x21 , 0xFF ) ;
   write_port( 0xA1 , 0xFF ) ;
 }
@@ -437,6 +439,15 @@ unsigned int_intr_disable()
     return old;
 }
 
+void int_intr_setlevel(unsigned enabled)
+{
+	if (enabled) {
+		int_intr_enable();
+	}else{
+		int_intr_disable();
+	}
+}
+
 
 /* Reads CNT bytes from PORT, one after another, and stores them
    into the buffer starting at ADDR. */
@@ -517,6 +528,36 @@ void _write_dwb (unsigned short port, const void *addr, unsigned cnt)
 {
   /* See [IA32-v2b] "OUTS". */
   asm volatile ("rep outsl" : "+S" (addr), "+c" (cnt) : "d" (port));
+}
+
+
+
+_START void write_word (unsigned short port, unsigned short data)
+{
+  /* See [IA32-v2b] "OUT". */
+  asm volatile ("outw %w0, %w1" : : "a" (data), "Nd" (port));
+}
+
+_START unsigned short read_word (unsigned short port)
+{
+  unsigned short data;
+  /* See [IA32-v2a] "IN". */
+  asm volatile ("inw %w1, %w0" : "=a" (data) : "Nd" (port));
+  return data;
+}
+
+_START unsigned int read_dword (unsigned short port)
+{
+  /* See [IA32-v2a] "IN". */
+  unsigned int data;
+  asm volatile ("inl %w1, %0" : "=a" (data) : "Nd" (port));
+  return data;
+}
+
+_START void write_dword (unsigned short port, unsigned int data)
+{
+  /* See [IA32-v2b] "OUT". */
+  asm volatile ("outl %0, %w1" : : "a" (data), "Nd" (port));
 }
 
 

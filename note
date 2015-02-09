@@ -1,3 +1,11 @@
+* 先crate idle再create p0速度会变慢：
+	第一个create的process内存跟hdd cache临近
+	改进memcpy算法可以缓解
+	确保每个task_struct占内存为4 page的倍数
+* windows:
+	cygwin
+	qemu: http://qemu.weilnetz.de/w64/
+	compiler: http://www.crosstool-ng.org/#download_and_usage
 * KERNEL_CODE_SEGMENT = 0x8, 是模拟器启动/grub引导后的值
 * 引导后protect mode已经开了，但paging没开
 * 在cr3正确设置&&pageing enable之前，用的一直是物理地址，包括已经设置的interrupt地址等,所以到时候写mm模块的时候把这段起始空间保留下来直接map到物理地址，省的再设置一遍
@@ -29,6 +37,10 @@
             --with-build-libsubdir=/opt/local
 	!! copy /opt/local/include/libintl.h to $(GBDSRC)/include/
 	make & sudo make install
+
+
+
+
 ---------	
 from grub:
 When the boot loader invokes the 32-bit operating system, the machine must have the following state:
@@ -64,4 +76,70 @@ All other processor registers and flag bits are undefined. This includes, in par
 However, other machine state should be left by the boot loader in normal working order, i.e. as initialized by the bios (or DOS, if that's what the boot loader runs from). In other words, the operating system should be able to make bios calls and such after being loaded, as long as it does not overwrite the bios data structures before doing so. Also, the boot loader must leave the pic programmed with the normal bios/DOS values, even if it changed them during the switch to 32-bit mode. 
 
 
+------------
+2.内核传递给ld.so的参数在堆栈中的形式如下
+
+  position            content                     size (bytes) + comment
+  ------------------------------------------------------------------------
+  stack pointer ->  [ argc = number of args ]     4
+                    [ argv[0] (pointer) ]         4   (program name)
+                    [ argv[1] (pointer) ]         4
+                    [ argv[..] (pointer) ]        4 * x
+                    [ argv[n - 1] (pointer) ]     4
+                    [ argv[n] (pointer) ]         4   (= NULL)
+
+                    [ envp[0] (pointer) ]         4
+                    [ envp[1] (pointer) ]         4
+                    [ envp[..] (pointer) ]        4
+                    [ envp[term] (pointer) ]      4   (= NULL)
+
+                    [ auxv[0] AT_PHDR (Elf32_auxv_t) ]    8
+                    [ auxv[1] AT_PHENT (Elf32_auxv_t) ]    8
+                    [ auxv[2] AT_PHNUM (Elf32_auxv_t) ]   8
+                    [ auxv[3] AT_BASE (Elf32_auxv_t) ]   8
+                    [ auxv[4] AT_FLAGS (Elf32_auxv_t) ]   8
+                    [ auxv[5] AT_ENTRY (Elf32_auxv_t) ]   8
+                    [ auxv[6] AT_UID (Elf32_auxv_t) ]   8
+                    [ auxv[7] AT_EUID (Elf32_auxv_t) ]   8
+                    [ auxv[8] AT_GID (Elf32_auxv_t) ]   8
+                    [ auxv[9] AT_EGID (Elf32_auxv_t) ]   8
+                    [ auxv[10] AT_HWCAP (Elf32_auxv_t) ]   8
+                    [ auxv[11] AT_PAGESZ (Elf32_auxv_t) ]   8
+                    [ auxv[12] AT_CLKTCK (Elf32_auxv_t) ]   8
+                    [ auxv[13] AT_PLATFORM (Elf32_auxv_t) ]   8
+                    [ auxv[14] (Elf32_auxv_t) ] 8   (= AT_NULL vector)
+
+                    [ padding ]                   0 - 15                  
+                    [ padding ]                   16                   
+                    [ padding ]                   0 - 15                   
+
+                    [k_platform]                  0 - 65
+                    [ argument ASCIIZ strings ]   >= 0
+                    [ environment ASCIIZ str. ]   >= 0
+                    [filename] >=0
+
+  (0xbffffffc)      [ end marker ]                4   (= NULL)
+
+  (0xc0000000)      < top of stack >              0   (virtual)
+  
+-----------------
+mount a vdi(virtual box hdd) file 
+sudo modprobe nbd
+sudo qemu-nbd -c /dev/nbd0 "/home/ejzheng/VirtualBox VMs/redhat/rh.vdi"
+sudo mount /dev/nbd0p1 mnt
+
+umount it
+sudo umount mnt
+sudo qemu-nbd -d /dev/nbd0
+
+----------------------------------------
+load dynamic library(ld-linux.so.2)时必须有offset，不能直接load在0地址上。因为0地址有特殊含义：NULL
+
+
+----------------------------------------
+getdents/readdir等函数，返回值里的d_ino不能为0，否则认为是无效项
+
+----------------------------------------
+tty 大小
+ioctl(STDIN_FILENO, TIOCGWINSZ, &ts)
 

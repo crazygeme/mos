@@ -194,13 +194,13 @@
 #define __NR_vfork 190
 #define __NR_ugetrlimit 191 /* SuS compliant getrlimit */
 #define __NR_mmap2 192
+#define __NR_lstat64 196
+#define __NR_fstat64 197
 
-#define __NR_opendir 193
-#define __NR_closedir 194
+#define __NR_quota 198
+#define NR_syscalls 199
 
-#define NR_syscalls 195
-
-#define	_SYS_NAMELEN	256
+#define	_SYS_NAMELEN	65 // in linux 2.1
 
 
 /// TTY
@@ -236,24 +236,98 @@ struct	utsname {
 	char	release[_SYS_NAMELEN];	/* [XSI] Release level */
 	char	version[_SYS_NAMELEN];	/* [XSI] Version level */
 	char	machine[_SYS_NAMELEN];	/* [XSI] Hardware type */
+	char	domain[_SYS_NAMELEN];
 };
 
-struct stat  
+// oldstat
+struct oldstat  
 {  
-    unsigned       st_dev;     /* ID of device containing file*/  
-    void*          st_ino;     /* inode number */  
-    unsigned       st_mode;    /* protection mode*/  
-    unsigned       st_nlink;   /* number of hard links */  
-    unsigned short st_uid;     /* user ID of owner -user id*/  
-    unsigned short st_gid;     /* group ID of owner - group id*/  
-    unsigned       st_rdev;    /* device ID (if special file)*/  
-    unsigned       st_size;    /* total size, in bytes*/  
-    unsigned       st_blksize; /* blocksize for filesystem I/O*/  
-    unsigned       st_blocks;  /* number of blocks allocated*/  
-    unsigned       st_atime;   /* time of last access*/  
-    unsigned       st_mtime;   /* time of last modification*/  
-    unsigned       st_ctime;   /* time of last status change */  
+	unsigned short st_dev;
+    unsigned short st_ino;
+    unsigned short st_mode;
+    unsigned short st_nlink;
+    unsigned short st_uid;
+    unsigned short st_gid;
+    unsigned short st_rdev;
+    unsigned long st_size;
+    unsigned long st_atime;
+    unsigned long st_mtime;
+    unsigned long st_ctime;
   
+};
+
+struct stat {
+    unsigned st_dev; /* ID of device containing file*/
+    void* st_ino; /* inode number */
+    unsigned st_mode; /* protection mode*/
+    unsigned st_nlink; /* number of hard links */
+    unsigned short st_uid; /* user ID of owner -user id*/
+    unsigned short st_gid; /* group ID of owner - group id*/
+    unsigned st_rdev; /* device ID (if special file)*/
+    unsigned st_size; /* total size, in bytes*/
+    unsigned st_blksize; /* blocksize for filesystem I/O*/
+    unsigned st_blocks; /* number of blocks allocated*/
+    unsigned st_atime; /* time of last access*/
+    unsigned st_mtime; /* time of last modification*/
+    unsigned st_ctime; /* time of last status change */ 
+};
+
+
+ 
+struct stat64 {
+    unsigned long long st_dev; 	//0
+    unsigned __pad1;		//8
+    unsigned st_ino;		//12
+    unsigned st_mode;		//16
+    unsigned st_nlink;		//20
+    unsigned st_uid;		//24
+    unsigned st_gid;		//28
+    unsigned long long st_rdev;	//32
+    unsigned __pad2;		//40
+    unsigned long long st_size;		//44
+    unsigned st_blksize;	//48
+    unsigned long long st_blocks;		//52
+    unsigned st_atime;		//56
+    unsigned __pad3;		//60
+    unsigned st_mtime;		//64
+    unsigned __pad4;		//68
+    unsigned st_ctime;		//72
+    unsigned __pad5;
+    unsigned __pad6;
+    unsigned __pad7;
+    unsigned __pad8;
 }; 
+
+
+typedef unsigned char   cc_t;
+typedef unsigned int    speed_t;
+typedef unsigned int    tcflag_t;
+
+#define NCCS 32
+struct termios
+  {
+    tcflag_t c_iflag;           /* input mode flags */
+    tcflag_t c_oflag;           /* output mode flags */
+    tcflag_t c_cflag;           /* control mode flags */
+    tcflag_t c_lflag;           /* local mode flags */
+    cc_t c_line;                        /* line discipline */
+    cc_t c_cc[NCCS];            /* control characters */
+    speed_t c_ispeed;           /* input speed */
+    speed_t c_ospeed;           /* output speed */
+  };
+
+struct krnquota
+{
+	unsigned heap_cur;  // current usage
+	unsigned heap_wm; 	// water mask
+	unsigned heap_top;
+	unsigned phymm_max;
+	unsigned phymm_cur;
+	unsigned phymm_wm;
+	unsigned pgc_count;
+	unsigned pgc_top;
+	unsigned sched_spent;
+	unsigned total_spent;
+};
 
 #endif

@@ -4,14 +4,19 @@ ASM		= nasm
 LD		= ld
 OS		= Linux
 else
+ifeq ($(shell uname),Darwin)
 CC		= /opt/local/bin/i386-elf-gcc
 ASM 	= /opt/local/bin/nasm
 LD		= /opt/local/bin/i386-elf-ld
 OS		= Darwin
+else
+endif
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
-CFLAGS	= -ggdb3 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__KERNEL__ -I./
+CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
+	-D__KERNEL__ -DTEST_GUI\
+	-I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
@@ -26,6 +31,7 @@ OBJS	= boot.o \
 		  list.o\
 		  dsr.o\
 		  mm.o\
+		  mmap.o\
 		  timer.o\
 		  ps.o\
 		  lock.o\
@@ -38,7 +44,21 @@ OBJS	= boot.o \
 		  elf.o\
 		  ps0.o\
 		  ffs.o\
-		  syscall.o
+		  syscall.o\
+		  pagefault.o\
+		  chardev.o\
+		  kbchar.o\
+		  console.o\
+		  null.o\
+		  cache.o\
+		  cyclebuf.o\
+		  serial.o\
+		  pipe.o\
+		  rbtree.o\
+		  vga.o\
+		  pci.o\
+		  gui_test.o\
+		  gui_core.o
 
 all: kernel
 
@@ -71,11 +91,17 @@ klib.o: lib/klib.c lib/klib.h drivers/tty.h
 list.o: lib/list.c lib/list.h
 	$(CC) $(CFLAGS) lib/list.c -o list.o
 
+rbtree.o: lib/rbtree.c lib/rbtree.h
+	$(CC) $(CFLAGS) lib/rbtree.c -o rbtree.o
+
 dsr.o: int/dsr.c int/dsr.h
 	$(CC) $(CFLAGS) int/dsr.c -o dsr.o
 
-mm.o: mm/mm.c mm/mm.h boot/multiboot.h
+mm.o: mm/mm.c mm/mm.h boot/multiboot.h mm/mmap.h
 	$(CC) $(CFLAGS) -o mm.o mm/mm.c
+
+mmap.o: mm/mmap.c mm/mmap.h mm/mm.h
+	$(CC) $(CFLAGS) -o mmap.o mm/mmap.c
 
 timer.o: int/timer.c int/timer.h
 	$(CC) $(CFLAGS) -o timer.o int/timer.c
@@ -117,6 +143,45 @@ ffs.o: fs/ffs.c fs/ffs.h
 syscall.o: syscall/syscall.c syscall/syscall.h
 	$(CC) $(CFLAGS) -o syscall.o syscall/syscall.c
 
+pagefault.o: mm/pagefault.c mm/pagefault.h
+	$(CC) $(CFLAGS) -o pagefault.o mm/pagefault.c
+
+chardev.o: drivers/chardev.c drivers/chardev.h
+	$(CC) $(CFLAGS) -o chardev.o drivers/chardev.c
+
+kbchar.o: fs/kbchar.c fs/kbchar.h
+	$(CC) $(CFLAGS) -o kbchar.o fs/kbchar.c
+
+console.o: fs/console.c fs/console.h
+	$(CC) $(CFLAGS) -o console.o fs/console.c
+
+null.o: fs/null.c fs/null.h
+	$(CC) $(CFLAGS) -o null.o fs/null.c
+
+pipe.o: fs/pipechar.c fs/pipechar.h
+	$(CC) $(CFLAGS) -o pipe.o fs/pipechar.c
+
+cache.o: fs/cache.c fs/cache.h
+	$(CC) $(CFLAGS) -o cache.o fs/cache.c
+
+cyclebuf.o: lib/cyclebuf.c lib/cyclebuf.h
+	$(CC) $(CFLAGS) -o cyclebuf.o lib/cyclebuf.c
+
+serial.o: drivers/serial.c drivers/serial.h
+	$(CC) $(CFLAGS) -o serial.o drivers/serial.c
+
+vga.o: drivers/vga.c drivers/vga.h
+	$(CC) $(CFLAGS) -o vga.o drivers/vga.c
+
+pci.o: drivers/pci.c drivers/pci.h
+	$(CC) $(CFLAGS) -o pci.o drivers/pci.c
+
+gui_test.o: gui/gui_test.c gui/gui_test.h
+	$(CC) $(CFLAGS) -o gui_test.o gui/gui_test.c
+
+gui_core.o: gui/gui_core.c gui/gui_core.h
+	$(CC) $(CFLAGS) -o gui_core.o gui/gui_core.c
+
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)
 	cd user && make -f Makefile run
@@ -136,4 +201,5 @@ clean:
 	find . -name "*.o" -exec rm -f {} \;
 	-rm $(TARGET)
 	-rm user/run
+
 

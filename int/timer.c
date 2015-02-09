@@ -120,7 +120,7 @@ static void timer_dsr(void* param)
     cur->remain_ticks--; 
     if (cur->remain_ticks <= 0) {
         cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-        if ((!CURRENT_TASK()->is_switching)) {
+        if ((!cur->is_switching)) {
             task_sched(); 
         }
     }
@@ -156,6 +156,11 @@ void timer_current(time_t* time)
 {
     time->seconds = total_seconds;
     time->milliseconds = tickets*10;
+}
+
+unsigned time_now()
+{
+    return (total_seconds * 1000 + tickets*10);
 }
 
 void msleep(unsigned int ms)

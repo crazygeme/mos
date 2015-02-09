@@ -12,56 +12,191 @@
 #include <fs/mount.h>
 #include <int/timer.h>
 #include <syscall/unistd.h>
+#include <lib/cyclebuf.h>
+#include <fs/cache.h>
+#include <errno.h>
 #endif
 
+
 static INODE fs_lookup_inode(char* path);
-static unsigned fs_get_free_fd(INODE node);
-static INODE fs_get_fd(unsigned id);
-static INODE fs_clear_fd(unsigned fd);
+static unsigned fs_get_free_fd(INODE node, char* path);
+static INODE fs_get_fd(unsigned id, char* path);
+static void* fs_clear_fd(unsigned fd, int* isdir);
+
+static unsigned fs_dir_get_free_fd(DIR node, char* path);
+static DIR fs_dir_get_fd(unsigned id);
+
+static unsigned fs_dup_to_free_fd(unsigned fd);
 
 unsigned fs_open(char* path)
 {
-    INODE node = fs_lookup_inode( path);
+    INODE node = 0;
+	DIR dir = 0;
     unsigned fd;
+	char* fullPath = kmalloc(64);
+	memset(fullPath, 0, 64);
+	
+
+	// FIXME
+	if (!strcmp(path, ".")) {
+		sys_getcwd(fullPath, 64);
+	}else{
+		strcpy(fullPath, path);
+	}
+
+	node = fs_lookup_inode(fullPath);
+
+
+
 
     if (!node) {
-        return MAX_FD;
+
+		kfree(fullPath);
+        return -ENOENT;
     }
 
-    fd = fs_get_free_fd(node);
-    if (fd == MAX_FD) {
-        vfs_free_inode(node);
-    }
+	if (S_ISDIR(vfs_get_mode(node))){
+		dir = vfs_open_dir(node);
+		fd = fs_dir_get_free_fd(dir, fullPath);
+		vfs_free_inode(node);
+		if (fd == MAX_FD) {
+			vfs_close_dir(dir);
+		}
+	}else{
+		fd = fs_get_free_fd(node, fullPath);
+		if (fd == MAX_FD) {
+			vfs_free_inode(node);
+		}
+	}
 
+	if (fd == MAX_FD) {
+		fd = -ENFILE;
+	}
+
+	kfree(fullPath);
     return fd;
+}
+
+int fs_dup(int oldfd)
+{
+	unsigned fd = fs_dup_to_free_fd(oldfd);
+	if (fd == MAX_FD) {
+		return 0xffffffff;
+	}
+
+	return fd;
+}
+
+int fs_dup2(int oldfd, int newfd)
+{
+	task_struct* cur = CURRENT_TASK();
+
+	if (!cur->fds[oldfd].flag) {
+		return -1;
+	}
+
+
+	if (cur->fds[newfd].flag) {
+		fs_close(newfd);
+	}
+
+	sema_wait(&cur->fd_lock);
+
+
+	cur->fds[newfd] = cur->fds[oldfd];
+	cur->fds[newfd].path = strdup(cur->fds[oldfd].path);
+	vfs_refrence(cur->fds[oldfd].file);
+
+
+    sema_trigger(&cur->fd_lock);
+
+	return 0;
 }
 
 void fs_close(unsigned int fd)
 {
-    INODE node = fs_clear_fd(fd);
+    INODE node = 0;
+	DIR   dir = 0;
+	int isdir;
+	void* ret = 0;
+	task_struct* cur = CURRENT_TASK();
 
-    if (node) {
-        vfs_free_inode(node); 
-    }
+	if (!cur->fds[fd].flag) {
+		return;
+	}
+
+	ret = fs_clear_fd(fd,&isdir);
+
+
+	if (isdir) {
+		dir = ret;
+		if (dir) {
+			vfs_close_dir(dir);
+		}
+	}else{
+		node = ret;
+		if (node) {
+			vfs_free_inode(node); 
+		}
+	}
+}
+
+
+int fs_pipe(int* pipefd)
+{
+	task_struct *cur = CURRENT_TASK();
+	cy_buf* buf = cyb_create("pipe");
+	INODE reader = pipe_create_reader(buf);
+	INODE writer = pipe_create_writer(buf);
+
+	int readfd = fs_get_free_fd(reader, "pipefs");
+	int writfd = fs_get_free_fd(writer, "pipefs");
+
+
+	vfs_refrence(reader);
+	vfs_refrence(writer);
+
+	if (readfd == -1) return -1;
+
+	if (writfd == -1) return -1;
+
+	cur->fds[readfd].flag |= fd_flag_readonly;
+	cur->fds[writfd].flag |= fd_flag_writonly;
+	pipefd[0] = readfd;
+	pipefd[1] = writfd;
+
+	return 0;
 }
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
-    INODE node = fs_get_fd(fd);
+	char* path = kmalloc(64);
+    INODE node = fs_get_fd(fd, path);
     unsigned ret;
 
+	if (fd == 0xffffffff) {
+		kfree(path);
+		return 0xffffffff;
+    }
+
     if (!node) {
+		kfree(path);
         return 0xffffffff;
     }
 
+	kfree(path);
     ret = vfs_read_file(node, offset,buf,len);
     return ret;
 }
 
 unsigned fs_write(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
-    INODE node = fs_get_fd(fd);
+    INODE node = fs_get_fd(fd, 0);
     unsigned ret;
+
+    if (fd == 0xffffffff) {
+		return 0xffffffff;
+    }
 
     if (!node) {
         return 0xffffffff;
@@ -119,15 +254,18 @@ int fs_create(char* path, unsigned mode)
 int fs_delete(char* path)
 {  
 	DIR dir;
-	char dir_name[260] = { 0 };
+	char *dir_name;
 	char* t;
 	struct stat s;
 	int stat_status;
 
+	dir_name = kmalloc(64);
 	strcpy(dir_name, path);
 	t = strrchr(dir_name, '/');
-	if (!t)
+	if (!t){
+		kfree(dir_name);
 		return 0;
+	}
 
 	*t = '\0';
 	t++;
@@ -141,16 +279,20 @@ int fs_delete(char* path)
 		stat_status = fs_stat(dir_name, &s);
 	}
 
-	if (!dir)
+	if (!dir){
+		kfree(dir_name);
 		return 0;
+	}
 
 	if (stat_status == -1 || !S_ISDIR(s.st_mode)){
 		fs_closedir(dir);
+		kfree(dir_name);
 		return 0;
 	}
 
 	if (fs_stat(path, &s) == -1){
 		fs_closedir(dir);
+		kfree(dir_name);
 		return 0;
 	}
 
@@ -158,6 +300,7 @@ int fs_delete(char* path)
 
 
 	fs_closedir(dir);
+	kfree(dir_name);
 	return 1;
 }
 
@@ -171,15 +314,74 @@ int fs_stat(char* path, struct stat* s)
 {
     INODE node = 0;
     int ret;
+	char* fullPath = kmalloc(64);
+	memset(fullPath, 0, 64);
 	
-	node = fs_lookup_inode(path);
+
+	// FIXME
+	if (!strcmp(path, ".")) {
+		sys_getcwd(fullPath, 64);
+	}else{
+		strcpy(fullPath, path);
+	}
+
+
+	node = fs_lookup_inode(fullPath);
     if (!node) {
+		kfree(fullPath);
         return -1;
     }
 
-    ret = vfs_copy_stat(node,s);
+    ret = vfs_copy_stat(node,s, 0);
     vfs_free_inode(node);
-    return ret;
+	kfree(fullPath);
+    return 0;
+}
+
+// FIXME!
+// do not seperate INODE and DIR
+// orelse ugly code will have to added
+int fs_fstat(int fd, struct stat* s)
+{
+	INODE node = 0;
+	DIR dir = 0;
+	int ret;
+
+	#ifdef __VERBOS_SYSCALL__
+	klog("fstat %d, ", fd);
+	#endif
+
+    if (fd < 0 || fd >= MAX_FD) {
+		#ifdef __VERBOS_SYSCALL__
+		klog_printf("ret %d\n", -1);
+		#endif
+        return -1;
+    }
+
+	node = fs_get_fd(fd, 0);
+
+	if (!node) {
+		dir = fs_dir_get_fd(fd);
+	}
+
+	if (!node && !dir) {
+		#ifdef __VERBOS_SYSCALL__
+		klog_printf("ret %d\n", -1);
+		#endif
+        return -1;
+    }
+
+	if (node) {
+		ret = vfs_copy_stat(node,s, 0);
+	}else if(dir){
+		ret = vfs_copy_stat(dir, s, 1);
+	}
+	#ifdef __VERBOS_SYSCALL__
+	klog_printf(" (stat: mode %x, size %d, blocks %d, blksize %d) ret %d\n",
+				s->st_mode, s->st_size, s->st_blocks, s->st_blksize, 0);
+	#endif
+
+    return 1;
 }
 
 DIR fs_opendir(char* path)
@@ -224,13 +426,17 @@ int fs_readdir(DIR dir, char* name, unsigned* mode)
 	return 1;
 }
 
-int sys_readdir(DIR dir, struct dirent* entry)
+int sys_readdir(unsigned fd, struct dirent* entry)
 {
+	DIR dir = fs_dir_get_fd(fd);
     int ret = fs_readdir(dir, entry->d_name, &entry->d_mode);
     if (ret) {
         entry->d_namlen = strlen(entry->d_name); 
-        entry->d_ino = 0;
+        entry->d_ino = 1;
+		entry->d_reclen = ((entry->d_namlen + 10)/4 + 1) * 4;
+
     }
+
     return ret;
 }
 
@@ -273,14 +479,49 @@ static INODE fs_get_dirent_node(INODE node, char* name)
 	}
 }
 
+static INODE fs_check_mountpoint(char* path)
+{
+	struct filesys_type* type = 0;
+	INODE node = 0;
+	type = mount_lookup(path);
+	if (!type || !type->super_ops || !type->super_ops->get_root) {
+		return 0;
+	}
+
+
+	node = type->super_ops->get_root(type);
+	if (node) {
+		vfs_refrence(node);
+	}
+	return node;
+
+}
+
+
+static void fs_add_inode_cache(INODE node, char* path)
+{
+	vfs_refrence(node);
+	hash_insert(inode_cache, strdup(path), node);
+}
+
 static INODE fs_lookup_inode(char* path)
 {
     struct filesys_type* type = (void*)0;
 	INODE root;
-	char parent[256];
+	char* parent = 0;
 	char* tmp;
+	key_value_pair* pair = 0;
+
 	if (!path || !*path)
 	  return 0;
+
+  pair = hash_find(inode_cache, path);
+  if (pair) {
+	  INODE ret = pair->val;
+	  vfs_refrence(ret);
+	  //printk("find cached inode %s\n", path);
+	  return ret;
+  }
 	
 	// find root file system
 	type = mount_lookup("/");
@@ -289,17 +530,16 @@ static INODE fs_lookup_inode(char* path)
 	
 	root = vfs_get_root(type);
 	if (!strcmp(path, "/")){
+		fs_add_inode_cache(root, path);
 		return root;
 	}
 	
+	parent = kmalloc(64);
+	memset(parent, 0, 64);
+
 	strcpy(parent, path);
 	tmp = parent;
 
-	// FIXME
-	// check mount point every time takes too much effert
-	// linux will cache dirent with mount point info attached
-	// we ignore different mount point now, fix it later
-	//
 	do{
 		INODE p;
 		INODE node; 
@@ -311,23 +551,43 @@ static INODE fs_lookup_inode(char* path)
 		slash = strchr(tmp, '/');
 		while (slash){
 			*slash = '\0';
-			node = fs_get_dirent_node(p, tmp);
+			node = fs_check_mountpoint(parent);
+			if (!node) {
+				node = fs_get_dirent_node(p, tmp);
+			}else{
+				fs_add_inode_cache(node, parent);
+			}
 			vfs_free_inode(p);
-			if (!node)
-			  return 0;
+			if (!node){
+				*slash = '/';
+				node = fs_check_mountpoint(parent);
+				if (node) {
+					fs_add_inode_cache(node, parent);
+				}
+				kfree(parent);
+				return node;
+			}
 			p = node;
 			tmp = slash+1;
 			*slash = '/';
 			slash = strchr(tmp, '/');
 		}
-
-		node = fs_get_dirent_node(p, tmp);
+		node = fs_check_mountpoint(parent);
+		if (!node) {
+			node = fs_get_dirent_node(p, tmp);
+			if (node) {
+				fs_add_inode_cache(node, path);
+			}
+		}else{
+			fs_add_inode_cache(node, parent);
+		}
 		vfs_free_inode(p);
+		kfree(parent);
 		return node;
 	}while(0);
 }
 
-static unsigned fs_get_free_fd(INODE node)
+static unsigned fs_get_free_fd(INODE node, char* path)
 {
     task_struct* cur = CURRENT_TASK();
     int i = 0;
@@ -335,9 +595,11 @@ static unsigned fs_get_free_fd(INODE node)
     sema_wait(&cur->fd_lock);
 
     for (i = 0; i < MAX_FD; i++) {
-        if (cur->fds[i] == 0) {
-            cur->fds[i] = node;
-			cur->file_off[i] = 0;
+        if (cur->fds[i].flag == 0) {
+            cur->fds[i].file = node;
+			cur->fds[i].file_off = 0;
+			cur->fds[i].flag |= fd_flag_used;
+			cur->fds[i].path = strdup(path);
             break;
         }
     }
@@ -348,7 +610,35 @@ static unsigned fs_get_free_fd(INODE node)
 
 }
 
-static INODE fs_get_fd(unsigned fd)
+static unsigned fs_dup_to_free_fd(unsigned fd)
+{
+    task_struct* cur = CURRENT_TASK();
+	int i = 0;
+
+	if (cur->fds[fd].flag == 0) {
+		return MAX_FD;
+	}
+
+
+    sema_wait(&cur->fd_lock);
+
+    for (i = 0; i < MAX_FD; i++) {
+        if (cur->fds[i].flag != 0) {
+            continue;
+        }
+
+		cur->fds[i] = cur->fds[fd];
+		cur->fds[i].path = strdup(cur->fds[fd].path);
+		vfs_refrence(cur->fds[fd].file);
+		break;
+    }
+
+    sema_trigger(&cur->fd_lock);
+
+	return i;
+}
+
+static INODE fs_get_fd(unsigned fd, char* path)
 {
     task_struct* cur = CURRENT_TASK();
     INODE node;
@@ -357,14 +647,66 @@ static INODE fs_get_fd(unsigned fd)
         return 0;
     }
 
+
     sema_wait(&cur->fd_lock);
-    node = cur->fds[fd];
+	if (cur->fds[fd].flag & fd_flag_isdir) {
+		node = 0;
+	}else{
+		node = cur->fds[fd].file;
+		if (path) {
+			strcpy(path, cur->fds[fd].path); 
+		}
+	}
     sema_trigger(&cur->fd_lock);
 
     return node;
 }
 
-static INODE fs_clear_fd(unsigned fd)
+static unsigned fs_dir_get_free_fd(DIR node, char* path)
+{
+    task_struct* cur = CURRENT_TASK();
+    int i = 0;
+
+    sema_wait(&cur->fd_lock);
+
+    for (i = 0; i < MAX_FD; i++) {
+        if (cur->fds[i].flag == 0) {
+            cur->fds[i].dir = node;
+			cur->fds[i].file_off = 0;
+			cur->fds[i].flag |= fd_flag_used;
+			cur->fds[i].flag |= fd_flag_isdir;
+			cur->fds[i].path = strdup(path);
+            break;
+        }
+    }
+
+    sema_trigger(&cur->fd_lock);
+
+    return i;
+}
+
+static DIR fs_dir_get_fd(unsigned fd)
+{
+    task_struct* cur = CURRENT_TASK();
+    DIR node;
+
+    if (fd >= MAX_FD) {
+        return 0;
+    }
+
+
+    sema_wait(&cur->fd_lock);
+	if (!(cur->fds[fd].flag & fd_flag_isdir)) {
+		node = 0;
+	}else{
+		node = cur->fds[fd].dir;
+	}
+    sema_trigger(&cur->fd_lock);
+
+    return node;
+}
+
+static void* fs_clear_fd(unsigned fd, int* isdir)
 {
     task_struct* cur = CURRENT_TASK();
     INODE node;
@@ -374,9 +716,15 @@ static INODE fs_clear_fd(unsigned fd)
     }
 
     sema_wait(&cur->fd_lock);
-    node = cur->fds[fd];
-    cur->fds[fd] = 0;
-	cur->file_off[fd] = 0;
+
+
+	*isdir = (cur->fds[fd].flag & fd_flag_isdir);
+    node = cur->fds[fd].file;
+    cur->fds[fd].file = 0;
+	cur->fds[fd].file_off = 0;
+	cur->fds[fd].flag = 0;
+	kfree(cur->fds[fd].path);
+	cur->fds[fd].path = 0;
     sema_trigger(&cur->fd_lock);
 
     return node;
@@ -386,6 +734,23 @@ static INODE fs_clear_fd(unsigned fd)
 void fs_flush(char* filesys)
 {
 	struct filesys_type* type = mount_lookup("/");
+}
+
+INODE fs_open_log()
+{
+	INODE ret = fs_lookup_inode("/krn.log");
+	INODE root = 0;
+	DIR d = 0;
+	if (ret == 0) {
+		root = fs_lookup_inode("/");
+		d = vfs_open_dir(root);
+		vfs_free_inode(root);
+		vfs_add_dir_entry(d, S_IRWXU | S_IRWXG | S_IRWXO, "krn.log");
+		vfs_close_dir(d);
+		ret = fs_lookup_inode("/krn.log");
+	}
+
+	return ret;
 }
 
 #ifdef TEST_NS
@@ -421,24 +786,30 @@ static void test_stat(char* path)
 	printk("%s: is dir %d, size %d\n", path, S_ISDIR(s.st_mode), s.st_size);
 }
 
+static unsigned _time_now()
+{
+	time_t t;
+	timer_current(&t);
+	return (t.seconds * 1000 + t.milliseconds);
+}
 static void test_write()
 {	
-	unsigned int fd = fs_open("/readme.txt");
+	int fd = fs_open("/lib/libc.so.6");
 	char* buf = 0;
 	int i = 0;
 	time_t now;
 	unsigned t;
 	timer_current(&now);
-	printk("%d: write begin\n", now.seconds*60+now.milliseconds);
-	if (fd == MAX_FD)
+	printk("%d: write begin, fd %d\n", now.seconds*60+now.milliseconds, fd);
+	if (fd == -1)
 		return;
 
 	buf = kmalloc(1024);
 	memset(buf, 'd', 1024);
-	t = time(0);
-	for (i = 0; i < (4*1024); i++){
+	t = _time_now();
+	for (i = 0; i < (3*1024); i++){
 		if (i % 100 == 0) {
-			unsigned span = time(t);
+			unsigned span = _time_now() - t;
 			unsigned speed = 0;
 			if (span) {
 				speed=((100*1024) / span) * 1000;
@@ -449,9 +820,13 @@ static void test_write()
 			extern void report_time();
 			extern void report_hdd_time();
 			extern void report_cache();
+			extern void report_sched_time();
+			extern void mm_report();
 			report_time();
 			report_hdd_time();
 			report_cache();
+			report_sched_time();
+			mm_report();
 			#endif
 		}
 		fs_write(fd, i*1024, buf, 1024);
@@ -466,26 +841,27 @@ static void test_write()
 
 static void test_read()
 {	
-	unsigned int fd = fs_open("/readme.txt");
+	int fd = fs_open("/lib/libc.so.6");
 	char* buf = 0;
 	int i = 0;
 	time_t now;
 	unsigned t;
 	timer_current(&now);
 	printk("%d: read  begin\n", now.seconds*60+now.milliseconds);
-	if (fd == MAX_FD)
+	if (fd == -1)
 		return;
 
 	buf = kmalloc(1024);
 	memset(buf, 0, 1024);
-	t = time(0);
+	t = _time_now();
 	while (1) {
 		printk("");
 		klogquota();
-		for (i = 0; i < (4*1024); i++){
+		for (i = 0; i < (3*1024); i++){
 			if (i % 100 == 0) {
-				unsigned span = time(0) - t;
+				unsigned span = _time_now() - t;
 				unsigned speed = 0;
+
 				if (span) {
 					speed=((100*1024) / span) * 1000;
 				}
@@ -495,9 +871,13 @@ static void test_read()
 				extern void report_time();
 				extern void report_hdd_time();
 				extern void report_cache();
+				extern void report_sched_time();
+				extern void mm_report();
 				report_time();
 				report_hdd_time();
 				report_cache();
+				report_sched_time();
+				mm_report();
 				#endif
 			}
 			memset(buf, 0, 1024);
@@ -509,7 +889,7 @@ static void test_read()
 	fs_close(fd);
 
 	timer_current(&now);
-	printk("%d: write end\n", now.seconds*60+now.milliseconds);
+	printk("%d: read end\n", now.seconds*60+now.milliseconds);
 }
 
 void test_ns()
@@ -520,8 +900,12 @@ void test_ns()
 
 	printk("test_ns\n");
 	//list_dir("/", 0);
-
-	test_write();
+	//test_write();
+	test_read();
 	klogquota();
+
+	for (;;) {
+		__asm__("hlt");
+	}
 }
 #endif

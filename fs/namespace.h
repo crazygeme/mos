@@ -2,7 +2,8 @@
 #define _NAMESPACE_H_
 #include <fs/vfs.h>
 
-
+// for debug
+INODE fs_open_log();
 
 unsigned fs_open(char* path);
 
@@ -20,6 +21,8 @@ int fs_rename(char* path, char* new);
 
 int fs_stat(char* path, struct stat* s);
 
+int fs_fstat(int fd, struct stat* s);
+
 DIR fs_opendir(char* path);
 
 int fs_readdir(DIR dir, char* name, unsigned* mode);
@@ -28,7 +31,11 @@ void fs_closedir(DIR dir);
 
 void fs_flush(char* filesys);
 
-int sys_readdir(DIR dir, struct dirent* entry);
+int sys_readdir(unsigned fd, struct dirent* entry);
 
+int fs_dup(int oldfd);
 
+int fs_dup2(int oldfd, int newfd);
+
+int fs_pipe(int* pipefd);
 #endif

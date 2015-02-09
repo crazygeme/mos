@@ -64,7 +64,7 @@ void vfs_trying_to_mount_root()
 
 INODE vfs_create_inode (struct filesys_type* type)
 {
-    if (!type || !type->super_ops) {
+    if (!type || !type->super_ops || !type->super_ops->create_inode) {
         return 0;
     }
 
@@ -74,7 +74,7 @@ INODE vfs_create_inode (struct filesys_type* type)
 void vfs_destroy_inode (INODE node)
 {
     struct filesys_type* type = node->type;
-    if (!type || !type->super_ops) {
+    if (!type || !type->super_ops || !type->super_ops->destroy_inode) {
         return ;
     }
 
@@ -84,7 +84,7 @@ void vfs_destroy_inode (INODE node)
 void vfs_write_super (struct filesys_type* type)
 {
 
-    if (!type || !type->super_ops) {
+    if (!type || !type->super_ops || !type->super_ops->write_super) {
         return ;
     }
 
@@ -93,7 +93,7 @@ void vfs_write_super (struct filesys_type* type)
 
 void vfs_write_desc (struct filesys_type* type)
 {
-    if (!type || !type->super_ops) {
+    if (!type || !type->super_ops || !type->super_ops->write_desc) {
         return ;
     }
 
@@ -104,27 +104,37 @@ void vfs_free_inode(INODE node)
 {
     struct filesys_type* type = node->type;
 
-    if (!type || !type->super_ops) {
+    if (!type || !type->super_ops || !type->super_ops->free_inode) {
         return ;
     }
 
-    return type->super_ops->free_inode(type, node);
+    __sync_add_and_fetch(&(node->ref_count), -1);
+    if (node->ref_count == 0) {
+        type->super_ops->free_inode(type, node);
+    }else{
+    }
 }
 
 INODE vfs_get_root(struct filesys_type* type)
 {
-    if (!type || !type->super_ops) {
+    INODE root = 0;
+    if (!type || !type->super_ops || !type->super_ops->get_root) {
         return 0;
     }
 
-    return type->super_ops->get_root(type);
+    root = type->super_ops->get_root(type);
+    if (root) {
+        vfs_refrence(root);
+    }
+
+    return root;
 }
 
 
 unsigned vfs_get_mode(INODE inode)
 {
     struct filesys_type* type = inode->type;
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->get_mode) {
         return 0;
     }
 
@@ -135,7 +145,7 @@ unsigned vfs_read_file(INODE inode, unsigned int offset, void* buf, unsigned len
 {
     struct filesys_type* type = inode->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->read_file) {
         return 0;
     }
 
@@ -146,7 +156,7 @@ unsigned vfs_write_file(INODE inode, unsigned int offset, void* buf, unsigned le
 {
     struct filesys_type* type = inode->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->write_file) {
         return 0;
     }
 
@@ -156,30 +166,41 @@ unsigned vfs_write_file(INODE inode, unsigned int offset, void* buf, unsigned le
 DIR vfs_open_dir(INODE inode)
 {
     struct filesys_type* type = inode->type;
+    DIR dir = 0;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->open_dir) {
         return 0;
     }
 
-    return type->ino_ops->open_dir(inode);
+    dir = type->ino_ops->open_dir(inode);
+    if (dir) {
+        vfs_refrence((INODE)dir);
+    }
+
+    return dir;
 }
 
 INODE vfs_read_dir( DIR dir)
 {
     struct filesys_type* type = dir->type;
-
-    if (!type || !type->ino_ops) {
+    INODE node = 0;
+    if (!type || !type->ino_ops || !type->ino_ops->read_dir) {
         return 0;
     }
 
-    return type->ino_ops->read_dir(dir);
+    node = type->ino_ops->read_dir(dir);
+    if (node) {
+        vfs_refrence(node);
+    }
+
+    return node;
 }
 
 void vfs_add_dir_entry(DIR dir, unsigned mode, char* name)
 {
     struct filesys_type* type = dir->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->add_dir_entry) {
         return ;
     }
 
@@ -190,7 +211,7 @@ void vfs_del_dir_entry(DIR dir, char* name)
 {
     struct filesys_type* type = dir->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->del_dir_entry) {
         return ;
     }
 
@@ -201,18 +222,22 @@ void vfs_close_dir(DIR dir)
 {
     struct filesys_type* type = dir->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->close_dir) {
         return ;
     }
 
-    return type->ino_ops->close_dir(dir);
+    __sync_add_and_fetch(&(dir->ref_count), -1);
+
+    if (dir->ref_count == 0) {
+        type->ino_ops->close_dir(dir);
+    }
 }
 
 char* vfs_get_name(INODE node)
 {
     struct filesys_type* type = node->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->get_name) {
         return 0;
     }
 
@@ -223,7 +248,7 @@ unsigned vfs_get_size(INODE node)
 {
     struct filesys_type* type = node->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->get_size) {
         return 0;
     }
 
@@ -231,15 +256,15 @@ unsigned vfs_get_size(INODE node)
 
 }
 
-int vfs_copy_stat(INODE node, struct stat* s)
+int vfs_copy_stat(INODE node, struct stat* s, int is_dir)
 {
     struct filesys_type* type = node->type;
 
-    if (!type || !type->ino_ops) {
+    if (!type || !type->ino_ops || !type->ino_ops->copy_stat) {
         return 0;
     }
 
-    return type->ino_ops->copy_stat(node, s);
+    return type->ino_ops->copy_stat(node, s, is_dir);
 }
 
 void vfs_close(struct filesys_type* type)
@@ -248,8 +273,18 @@ void vfs_close(struct filesys_type* type)
 		return ;
 	}
 
-	type->super_ops->write_super(type, type->sb);
-	type->super_ops->write_desc(type, type->desc);
+    if (type->super_ops->write_super) {
+        type->super_ops->write_super(type, type->sb);
+    }
+
+    if (type->super_ops->write_desc) {
+        type->super_ops->write_desc(type, type->desc);
+    }
+}
+
+void vfs_refrence(INODE node)
+{
+    __sync_add_and_fetch(&(node->ref_count), 1);
 }
 
 

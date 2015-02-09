@@ -11,6 +11,14 @@
 #include <fs/vfs.h>
 #include <fs/mount.h>
 #include <syscall/syscall.h>
+#include <mm/pagefault.h>
+#include <fs/console.h>
+#include <fs/kbchar.h>
+#include <fs/null.h>
+#include <fs/cache.h>
+#include <fs/pipechar.h>
+#include <drivers/serial.h>
+#include <drivers/vga.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -33,28 +41,36 @@ _START void kmain(multiboot_info_t* mb, unsigned int magic)
 
 
 static void kmain_process(void* param);
+static void idle_process(void* param);
 
 void kmain_startup()
 {
     int i = 0;
-	
-	
+
+    fb_enable();
+
+    // after klib_init, kmalloc/kfree/prink/etc are workable    
+    klib_init();
+
+    printk("Init dsr\n");
     dsr_init();
 
+    printk("Enable interrupts\n");
     int_enable_all();
 
     mm_del_user_map();
 
+    printk("Init serial\n");
+    serial_init_queue();
+
+    printk("Init keyboard\n");
     kb_init();
 	
+    printk("Init timer\n");
     timer_init();
 
-    klib_init();
 
-    // now we are debuggable
-    // printk("hello from %d, %u, %x, %s\n", -100, -100, -100, "world");
-
-
+    printk("Caculate CPU caps\n");
     timer_calculate_cpu_cycle();
 
 
@@ -67,8 +83,11 @@ void kmain_startup()
 	mm_test();
 #endif
 
+        printk("Init process\n");
 	ps_init();
 
+        printk("Init page fault\n");
+        pf_init();
 
 #ifdef TEST_PS
 	//ps_mmm();
@@ -83,9 +102,16 @@ void kmain_startup()
 
 #ifndef TEST_PS
 #ifndef TEST_LOCK
-    // FIXME
-    // make it ps_user
-    ps_create(kmain_process, 0, 1, ps_kernel);
+
+        printk("Start first process\n");
+
+    // create idle process
+    ps_create(idle_process, 0, 1, ps_kernel);
+
+    // create first process
+    ps_create(kmain_process, 0, 3, ps_kernel);
+
+
     ps_kickoff();
 
     // never going to here because ps0 never exit
@@ -97,18 +123,55 @@ void kmain_startup()
 
 }
 
+static void idle_process(void* param)
+{
+    while (1) {
+        __asm__("hlt");
+
+        // wakeup by interrupt
+        task_sched();
+    }
+}
 
 static void kmain_process(void* param)
 {
+    klog_init();
+
+    #ifdef TEST_MMAP
+    extern vm_test();
+    vm_test();
+    for (;;);
+    #endif
+
+    printk("Init vfs\n");
     vfs_init();
 
+    printk("Init mount points\n");
     mount_init();
 
+    printk("Init block devices\n");
     block_init();
 
     hdd_init();
 
+    printk("Mount root fs to \"/\" \n");
     vfs_trying_to_mount_root();
+
+    printk("Init char devices\n");
+    chardev_init();
+
+    kbchar_init();
+
+    console_init();
+
+    null_init();
+
+    pipe_init();
+
+
+    printk("Init file cache for libc, it take times...\n");
+    file_cache_init();
+    printk("Cache init done\n");
 
 #ifdef TEST_BLOCK
 	extern void test_block_process();
@@ -125,16 +188,18 @@ static void kmain_process(void* param)
 	test_ns();
 #endif
 
+    printk("Init system call table\n");
     syscall_init();
+
+    klib_clear();
+
+    #ifdef TEST_GUI
+    extern gui_test();
+    gui_test();
+    #endif
 
     user_first_process_run();
 
-    // we never here
-    printk("idle\n");
-    while (1) {
-        // this can become wait syscall
-        ps_cleanup_dying_task();
-    }
     run();
 }
 
@@ -147,6 +212,7 @@ _START static void init(multiboot_info_t* mb)
 
     int_init();
 
+    fb_init(mb);
     mm_init(mb);
 	
 	
@@ -157,7 +223,5 @@ _START static void init(multiboot_info_t* mb)
 
 static void run()
 {
-
-	while(1){
-    }
+    idle_process(0);
 }

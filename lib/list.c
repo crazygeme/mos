@@ -1,4 +1,6 @@
 #include <lib/list.h>
+#include <mm/mm.h>
+#include <config.h>
 
 void InitializeListHead(PLIST_ENTRY ListHead)
 {
@@ -84,17 +86,26 @@ void AppendTailList(PLIST_ENTRY ListHead,PLIST_ENTRY ListToAppend)
 void InitializeStack(PSTACK stack)
 {
 	int i = 0;
-	stack->top = 0;
-	for (i = 0; i < 1024; i++){
-		stack->mem[i] = 0xFFFFFFFF;
+
+	for (i = 0; i < 1024; i++) {
+		stack->mem[i] = PAGE_TABLE_CACHE_BEGIN + i * PAGE_SIZE;
 	}
+	stack->top = 1023;
+	stack->count = 1024;
 }
+
+
+unsigned pgc_count;
+unsigned pgc_top;
 
 int PushStack(PSTACK stack, unsigned int val)
 {
-	if (stack->top < 1024){
+	if (stack->count < 1024){
 		stack->mem[stack->top] = val;
-		stack->top++;
+		__sync_add_and_fetch(&(stack->top), 1);
+		__sync_add_and_fetch(&(stack->count), 1);
+		pgc_count = stack->count;
+		pgc_top = stack->top;
 		return 1;
 	}else{
 		return 0;
@@ -103,12 +114,18 @@ int PushStack(PSTACK stack, unsigned int val)
 
 unsigned int PopStack(PSTACK stack)
 {
-	if (stack->top > 0){
-		stack->top --;
-		return stack->mem[stack->top];
+	unsigned ret = 0;
+	if (stack->count > 0){
+		__sync_add_and_fetch(&(stack->top), -1);
+		ret = stack->mem[stack->top];
+		__sync_add_and_fetch(&(stack->count), -1);
+		pgc_count = stack->count;
+		pgc_top = stack->top;
 	}else{
-		return 0;
+		ret = 0;
 	}
+
+	return ret;
 }
 
 

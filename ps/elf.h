@@ -409,6 +409,19 @@ typedef struct elf64_note {
 	Elf64_Word n_type;	/* Content type */
 } Elf64_Nhdr;
 
-unsigned elf_map(char* path);
+typedef struct _mos_binfmt
+{
+	unsigned elf_load_addr;
+	unsigned e_phoff;
+	unsigned e_phnum;
+	unsigned interp_load_addr;
+	unsigned e_entry;
+	unsigned interp_bias;
+
+}mos_binfmt;
+
+unsigned elf_map(char* path, mos_binfmt* fmt);
+
+
 
 #endif

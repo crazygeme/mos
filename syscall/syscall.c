@@ -421,9 +421,9 @@ static int sys_uname(struct utsname *utname)
 {
 	strcpy(utname->machine, "i386");
 	strcpy(utname->nodename, "qemu-enum");
-	strcpy(utname->release, "0.1-generic");
+	strcpy(utname->release, "0.5-generic");
 	strcpy(utname->sysname, "Mos");
-	strcpy(utname->version, "Mos Wed Feb 19 04:14:56 UTC 2014");
+	strcpy(utname->version, "Mos Wed Feb 19 10:56:00 UTC 2015");
 	strcpy(utname->domain, "Ender");
 	return 1;
 }
@@ -1015,6 +1015,8 @@ extern unsigned phymm_max;
 extern unsigned pgc_count;
 extern unsigned pgc_top;
 extern unsigned task_schedule_time;
+extern unsigned page_fault_count;
+extern unsigned page_falut_total_time;
 static int sys_quota(struct krnquota *quota)
 {
 	quota->heap_cur = heap_quota;
@@ -1027,6 +1029,8 @@ static int sys_quota(struct krnquota *quota)
 	quota->pgc_top = pgc_top;
 	quota->sched_spent = task_schedule_time;
 	quota->total_spent = time_now();
+    //printk("page fault count %d, total time %d ms\n", page_fault_count, page_falut_total_time);
+    //quota->page_fault = page_fault_count;
 	return 0;
 }
 

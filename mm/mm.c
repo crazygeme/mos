@@ -189,6 +189,7 @@ void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
         if (page_index >= phymm_valid) {
             ref_count = phymm_reference_page(page_index);
             if (ref_count == 1) {
+                phymm_clear_cow(page_index);
                 free_phy_page_mask[mask_index] |= mask; 
                 set = 1;
             }
@@ -211,6 +212,7 @@ void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
         if (page_index >= phymm_valid) {
             ref_count = phymm_dereference_page(page_index);
             if (ref_count == 0) {
+                phymm_clear_cow(page_index);
                 free_phy_page_mask[mask_index] &= ~mask; 
                 set = 1;
             }
@@ -750,6 +752,7 @@ void mm_set_map_flag(unsigned vir, unsigned flag)
 	unsigned int *page_table;
 
 	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
+    page_table[page_table_offset] &= PAGE_SIZE_MASK;
     page_table[page_table_offset] |= flag;
 }
 

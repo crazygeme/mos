@@ -5,12 +5,16 @@
 #include <mm/mmap.h>
 #include <fs/namespace.h>
 
+unsigned page_fault_count;
+unsigned page_falut_total_time;
+
 static void pf_process(intr_frame* frame);
 
 void pf_init()
 {
+    page_fault_count = 0;
+    page_falut_total_time = 0;
 	int_register(0xe, pf_process, 0, 0);
-
 }
 
 /*
@@ -36,6 +40,10 @@ static void pf_process(intr_frame* frame)
     int page_valid;
     int write_access;
     int user_mode;
+    unsigned oldint;
+    unsigned begin = time_now();
+
+    oldint = int_intr_disable();
 
     __asm__("movl %cr2, %eax");
     __asm__("movl %%eax, %0" : "=m"(cr2));
@@ -43,6 +51,7 @@ static void pf_process(intr_frame* frame)
     __asm__("movl %cr3, %eax");
     __asm__("movl %%eax, %0" : "=m"(cr3));
 
+    page_fault_count++;
     page_valid = ((error & PF_MASK_P) == PF_MASK_P);
     write_access = ((error & PF_MASK_RW) == PF_MASK_RW);
     user_mode = ((error & PF_MASK_US) == PF_MASK_US);
@@ -63,7 +72,7 @@ static void pf_process(intr_frame* frame)
             if (fd != 0) {
                 vfs_read_file(fd, this_offset, this_begin, PAGE_SIZE);
             }
-            return;
+            goto Done;
         } else {
             printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
         }
@@ -86,13 +95,14 @@ static void pf_process(intr_frame* frame)
             mm_add_dynamic_map(vir, tmp-KERNEL_OFFSET, flag | PAGE_ENTRY_PRESENT);
             vm_free(tmp, 1);
             phymm_clear_cow(page_index);
+            RELOAD_CR3(cr3);
         }else{
             flag = mm_get_map_flag(cr2);
             flag |= PAGE_ENTRY_WRITABLE;
             mm_set_map_flag(cr2,flag);
         }
 
-        return;
+        goto Done;
     } else {
         printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
     }
@@ -101,4 +111,11 @@ static void pf_process(intr_frame* frame)
     {
         __asm__("hlt");
     }
+
+ Done:
+    if (oldint) {
+        int_intr_enable();
+    }
+
+    page_falut_total_time += (time_now() - begin);
 }

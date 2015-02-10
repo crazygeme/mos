@@ -328,6 +328,7 @@ struct krnquota
 	unsigned pgc_top;
 	unsigned sched_spent;
 	unsigned total_spent;
+    unsigned page_fault;
 };
 
 #endif

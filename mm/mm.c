@@ -10,9 +10,6 @@
 #include <mm/phymm.h>
 
 #define GDT_ADDRESS			0x1C0000
-#define PG0_ADDRESS			0x1C1000
-#define PG1_ADDRESS			0x1C2000
-#define PG_CACHE_ADDRESS	0x1C3000
 
 _START static void mm_dump_phy(multiboot_info_t* mb);
 _START static void mm_get_phy_mem_bound(multiboot_info_t* mb);
@@ -246,8 +243,7 @@ static void mm_init_free_phy_page_mask()
 	for (i = phy_page_high; i < (8*PAGE_MASK_TABLE_SIZE); i++)
 	  mm_set_phy_page_mask(i, 1);
 	
-	// first 12M are used
-	for (i = phy_page_low; i < (phy_page_low+(3*1024)); i++)
+	for (i = phy_page_low; i < (phy_page_low+RESERVED_PAGES); i++)
 	  mm_set_phy_page_mask(i, 1);
 }
 
@@ -383,13 +379,13 @@ static void mm_high_memory_fun()
 	RELOAD_ESP(KERNEL_OFFSET);
 
     phymm_valid = phymm_get_mgmt_pages(phy_mem_high);
-    phymm_valid += (phy_mem_low/PAGE_SIZE + 3*1024);
+    phymm_valid += (phy_mem_low/PAGE_SIZE + RESERVED_PAGES);
 
 	mm_init_free_phy_page_mask();
 	mm_init_page_table_cache();
 
     // physical memory management
-    phymm_setup_mgmt_pages(phy_mem_low/PAGE_SIZE + 3*1024);
+    phymm_setup_mgmt_pages(phy_mem_low/PAGE_SIZE + RESERVED_PAGES);
 
 
 	spinlock_init(&mm_lock);
@@ -400,37 +396,27 @@ static void mm_high_memory_fun()
 _START static void mm_setup_beginning_8m()
 {
     unsigned int phy = PAGE_ENTRY_USER_DATA;
-    int i = 0;
+    unsigned int reserved_page_tables = ( RESERVED_PAGES / 1024);
+    unsigned int pg = (GDT_ADDRESS + PAGE_SIZE);
+    unsigned int * pgt;
+    int i = 0, j = 0;
     unsigned int * gdt = (int*)GDT_ADDRESS;
-    unsigned int * pg0 = (int*)PG0_ADDRESS;
-    unsigned int * pg1 = (int*)PG1_ADDRESS;
-	unsigned int * pg2 = (int*)PG_CACHE_ADDRESS;
+
     for (i = 0; i < PG_TABLE_SIZE; i++) {
         gdt[i] = 0;
     }
-    // following two are for user space
-    gdt[0] = PG0_ADDRESS | PAGE_ENTRY_USER_DATA; 
-    gdt[1] = PG1_ADDRESS | PAGE_ENTRY_USER_DATA;
-
-    // following two are for kernel space
-    gdt[768] = PG0_ADDRESS | PAGE_ENTRY_USER_DATA;
-    gdt[769] = PG1_ADDRESS | PAGE_ENTRY_USER_DATA;
-	gdt[770] = PG_CACHE_ADDRESS | PAGE_ENTRY_USER_DATA;
-
-    for (i = 0; i < PE_TABLE_SIZE; i++) {
-        pg0[i] = phy;
-        phy += PAGE_SIZE;
+    for (i = 0; i < reserved_page_tables; i++) {
+        gdt[i] = (pg + i * PAGE_SIZE) | PAGE_ENTRY_USER_DATA;
+        gdt[i+768] = (pg + i * PAGE_SIZE) | PAGE_ENTRY_USER_DATA;
     }
 
-    for (i = 0; i < PE_TABLE_SIZE; i++) {
-        pg1[i] = phy;
-        phy += PAGE_SIZE;
+    for (j = 0; j < reserved_page_tables; j++) {
+        pgt = (unsigned int *)(pg + j * PAGE_SIZE);
+        for (i = 0; i < PE_TABLE_SIZE; i++) {
+            pgt[i] = phy;
+            phy += PAGE_SIZE;
+        }
     }
-
-	for (i = 0; i < PE_TABLE_SIZE; i++){
-		pg2[i] = phy;
-		phy += PAGE_SIZE;
-	}
 
     RELOAD_CR3(GDT_ADDRESS);
     ENABLE_PAGING();
@@ -479,7 +465,7 @@ int mm_add_direct_map(unsigned int vir)
 	if (vir < KERNEL_OFFSET)
 	  return -1;
 
-	if (vir >= 0xC0000000 && vir < 0xC0C00000)
+	if (vir >= 0xC0000000 && vir < PAGE_TABLE_CACHE_END)
 	  return 1;
 
 	page_index = (vir - KERNEL_OFFSET) & PAGE_SIZE_MASK;
@@ -530,8 +516,8 @@ void mm_del_direct_map(unsigned int vir)
 	int empty = 1;
 	int i = 0, idx;
 
-	// 0xC0000000 ~ 0xC0C00000 is always mapped
-	if (vir >= 0xC0000000 && vir < 0xC0C00000)
+	// 0xC0000000 ~ PAGE_TABLE_CACHE_END is always mapped
+	if (vir >= 0xC0000000 && vir < PAGE_TABLE_CACHE_END)
 	  return;
 
 

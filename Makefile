@@ -10,6 +10,10 @@ ASM 	= /opt/local/bin/nasm
 LD		= /opt/local/bin/i386-elf-ld
 OS		= Darwin
 else
+CC      = i386-elf-gcc
+ASM     = nasm
+LD      = i386-elf-ld
+OS      = Cygwin
 endif
 endif
 

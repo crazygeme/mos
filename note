@@ -1,3 +1,13 @@
+* cygwin 环境
+    1. 安装 libmpc-devel libmpfr-devel libncurses-devel libgmp-devel
+    2. 下载binutils
+    3. ./configure --target=i386-elf --prefix=/usr/local --exec-prefix=/usr/local --disable-gdb
+    4. make & make install
+    5. 将 /usr/local/bin 加到PATH里， （写到.bashrc里然后source .bashrc）
+    7. 下载 gcc
+    8. ./configure --target=i386-elf --disable-nls --without-headers --disable-shared
+    9. make all-gcc
+    10. make install-gcc
 * 编译选项：
 	TEST_NS : 测试磁盘读写速度
 	DEBUG_FFS：打印更多的磁盘信息（在TEST_NS打开的情况下生效）

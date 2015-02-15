@@ -11,11 +11,11 @@
 #include <lib/klib.h>
 #include <fs/mount.h>
 #include <int/timer.h>
-#include <syscall/unistd.h>
-#include <lib/cyclebuf.h>
-#include <fs/cache.h>
 #include <errno.h>
+#include <lib/cyclebuf.h>
 #endif
+#include <syscall/unistd.h>
+#include <fs/cache.h>
 
 
 static INODE fs_lookup_inode(char* path);
@@ -141,7 +141,8 @@ void fs_close(unsigned int fd)
 	}
 }
 
-
+#ifndef WIN32
+#ifndef MACOS
 int fs_pipe(int* pipefd)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -167,6 +168,8 @@ int fs_pipe(int* pipefd)
 
 	return 0;
 }
+#endif
+#endif
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 {

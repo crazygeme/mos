@@ -47,7 +47,9 @@ typedef struct multiboot_info multiboot_info_t;
 #define _STR \
     __attribute__((section(".startdataro")))
 
+#ifndef WIN32
 _START void mm_init(multiboot_info_t* mb);
+#endif
 
 #ifdef TEST_MM
 void mm_test();

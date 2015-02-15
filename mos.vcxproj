@@ -1,0 +1,160 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{51581BCF-EB15-416C-8B9E-EF4C1091DF9F}</ProjectGuid>
+    <Keyword>MakeFileProj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v120</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v120</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <NMakePreprocessorDefinitions>WIN32;_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <NMakePreprocessorDefinitions>WIN32;NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="boot\kernel.c" />
+    <ClCompile Include="drivers\block.c" />
+    <ClCompile Include="drivers\chardev.c" />
+    <ClCompile Include="drivers\hdd.c" />
+    <ClCompile Include="drivers\keyboard.c" />
+    <ClCompile Include="drivers\pci.c" />
+    <ClCompile Include="drivers\serial.c" />
+    <ClCompile Include="drivers\tty.c" />
+    <ClCompile Include="drivers\vga.c" />
+    <ClCompile Include="ffstool\ffstool.c" />
+    <ClCompile Include="ffstool\fileblock.c" />
+    <ClCompile Include="ffstool\osdep.c" />
+    <ClCompile Include="fs\cache.c" />
+    <ClCompile Include="fs\console.c" />
+    <ClCompile Include="fs\ext2.c" />
+    <ClCompile Include="fs\ffs.c" />
+    <ClCompile Include="fs\kbchar.c" />
+    <ClCompile Include="fs\mount.c" />
+    <ClCompile Include="fs\namespace.c" />
+    <ClCompile Include="fs\null.c" />
+    <ClCompile Include="fs\pipechar.c" />
+    <ClCompile Include="fs\vfs.c" />
+    <ClCompile Include="gui\gui_core.c" />
+    <ClCompile Include="gui\gui_test.c" />
+    <ClCompile Include="gui\gui_toolkit.c" />
+    <ClCompile Include="int\dsr.c" />
+    <ClCompile Include="int\int.c" />
+    <ClCompile Include="int\timer.c" />
+    <ClCompile Include="lib\cyclebuf.c" />
+    <ClCompile Include="lib\klib.c" />
+    <ClCompile Include="lib\list.c" />
+    <ClCompile Include="lib\rbtree.c" />
+    <ClCompile Include="mm\mm.c" />
+    <ClCompile Include="mm\mmap.c" />
+    <ClCompile Include="mm\pagefault.c" />
+    <ClCompile Include="mm\phymm.c" />
+    <ClCompile Include="ps\elf.c" />
+    <ClCompile Include="ps\lock.c" />
+    <ClCompile Include="ps\ps.c" />
+    <ClCompile Include="syscall\syscall.c" />
+    <ClCompile Include="user\ps0.c" />
+    <ClCompile Include="user\src\cat.c" />
+    <ClCompile Include="user\src\idle.c" />
+    <ClCompile Include="user\src\ls.c" />
+    <ClCompile Include="user\src\mkdir.c" />
+    <ClCompile Include="user\src\pwd.c" />
+    <ClCompile Include="user\src\quota.c" />
+    <ClCompile Include="user\src\reboot.c" />
+    <ClCompile Include="user\src\rmdir.c" />
+    <ClCompile Include="user\src\run.c" />
+    <ClCompile Include="user\src\sh.c" />
+    <ClCompile Include="user\src\test.c" />
+    <ClCompile Include="user\src\uname.c" />
+    <ClCompile Include="user\syscall.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="boot\kernel.asm" />
+    <None Include="mm\mm.asm" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="boot\multiboot.h" />
+    <ClInclude Include="config.h" />
+    <ClInclude Include="drivers\block.h" />
+    <ClInclude Include="drivers\chardev.h" />
+    <ClInclude Include="drivers\hdd.h" />
+    <ClInclude Include="drivers\keyboard.h" />
+    <ClInclude Include="drivers\keymap.h" />
+    <ClInclude Include="drivers\pci.h" />
+    <ClInclude Include="drivers\pci_list.h" />
+    <ClInclude Include="drivers\serial.h" />
+    <ClInclude Include="drivers\tty.h" />
+    <ClInclude Include="drivers\vga.h" />
+    <ClInclude Include="errno.h" />
+    <ClInclude Include="ffstool\fileblock.h" />
+    <ClInclude Include="ffstool\osdep.h" />
+    <ClInclude Include="fs\cache.h" />
+    <ClInclude Include="fs\console.h" />
+    <ClInclude Include="fs\ext2.h" />
+    <ClInclude Include="fs\fcntl.h" />
+    <ClInclude Include="fs\ffs.h" />
+    <ClInclude Include="fs\kbchar.h" />
+    <ClInclude Include="fs\mount.h" />
+    <ClInclude Include="fs\namespace.h" />
+    <ClInclude Include="fs\null.h" />
+    <ClInclude Include="fs\pipechar.h" />
+    <ClInclude Include="fs\vfs.h" />
+    <ClInclude Include="gui\gui_core.h" />
+    <ClInclude Include="gui\gui_test.h" />
+    <ClInclude Include="gui\gui_toolkit.h" />
+    <ClInclude Include="int\dsr.h" />
+    <ClInclude Include="int\int.h" />
+    <ClInclude Include="int\timer.h" />
+    <ClInclude Include="lib\cyclebuf.h" />
+    <ClInclude Include="lib\klib.h" />
+    <ClInclude Include="lib\list.h" />
+    <ClInclude Include="lib\rbtree.h" />
+    <ClInclude Include="mm\mm.h" />
+    <ClInclude Include="mm\mmap.h" />
+    <ClInclude Include="mm\pagefault.h" />
+    <ClInclude Include="mm\phymm.h" />
+    <ClInclude Include="ps\elf.h" />
+    <ClInclude Include="ps\lock.h" />
+    <ClInclude Include="ps\ps.h" />
+    <ClInclude Include="syscall\syscall.h" />
+    <ClInclude Include="syscall\unistd.h" />
+    <ClInclude Include="user\fs.h" />
+    <ClInclude Include="user\ps0.h" />
+    <ClInclude Include="user\run.h" />
+    <ClInclude Include="user\syscall.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

@@ -11,9 +11,9 @@ if [ ! -e "kernel" ]; then
 	_rebuild="1"
 fi
 
-if [ ! -e "ffstool/ffstool" ]; then
-	_rebuild="1"
-fi
+#if [ ! -e "ffstool/ffstool" ]; then
+#	_rebuild="1"
+#fi
 
 if [ ! -e "user/bin/run" ]; then
 	_rebuild="1"

@@ -662,6 +662,15 @@ key_value_pair* hash_next(hash_table* table, key_value_pair* pair)
 
 }
 
+int hash_isempty(hash_table* table)
+{
+    if (!table) {
+        return 1;
+    }
+
+    return (table->root.rb_node == NULL);
+}
+
 #ifdef DEBUG_RB
 
 static void hash_print_depth(char* flag, struct rb_node* node, int depth)

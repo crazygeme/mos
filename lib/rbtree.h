@@ -232,6 +232,8 @@ key_value_pair* hash_first(hash_table* table);
 
 key_value_pair* hash_next(hash_table* table, key_value_pair* pair);
 
+int hash_isempty(hash_table* table);
+
 #ifdef DEBUG_RB
 
 void hash_print(hash_table* table);

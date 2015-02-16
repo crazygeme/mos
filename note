@@ -34,12 +34,28 @@
 * 创建/加载 磁盘
 	1) 创建rootfs img
 	qemu-img create rootfs.img 5G 
-	mkfs.ext3 -b 2048 rootfs.img 
-	sudo mount -o loop rootfs.img /mnt
+	2) 分区
+	losetup /dev/loop0 rootfs.img 
+	fdisk /dev/loop0
+		n // add a new partition
+		p // primary
+		1 // partition number
+		2048 // first sector (default)
+		40959 // last sector (default)
+		w // save
+	losetup -d /dev/loop0
+	3) mkfs.ext2
+	fdisk -lu rootfs.img 	// get setcor size and first sector
+				// sector size 512, first 2048 == 1048576 == 1M
+	losetup -o 1M /dev/loop0 rootfs.img
+	mkfs.ext2 /dev/loop0
+	losetup -d /dev/loop0
 	// copy your program in /bin of rootfs
-	sudo umount -l /mnt
-	// if loop device busy, try `fuser -m /mnt`
-	2) 加载rootfs
+	mkdir rootfs
+	mount -t ext2 -o loop,offset=1048576 rootfs.img rootfs
+	4) copy your program
+	5) umount rootfs
+	6) 加载rootfs
 	qemu -kernel kernel -hda rootfs.img
 
 * i386-elf-gdb:

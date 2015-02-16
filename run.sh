@@ -1,6 +1,6 @@
 #!/bin/bash
 # mak
-diskfile="ffs.img"
+diskfile="rootfs.img"
 _rebuild="0"
 _debug="0"
 _format="0"
@@ -19,7 +19,7 @@ if [ ! -e "user/bin/run" ]; then
 	_rebuild="1"
 fi
 
-if [ ! -e "ffs.img" ]; then
+if [ ! -e $diskfile ]; then
 	_format="1"
 fi
 
@@ -79,7 +79,7 @@ if [ "$_format" == "1" ]; then
 	if [ ! -e ffstool ]; then
 		make
 	fi
-	echo "format ffs.img"
+	echo "format $diskfile"
 	./ffstool format
 	echo "done"
 	cd ..

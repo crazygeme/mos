@@ -174,12 +174,12 @@ char* strdup(char* str);
 
 void printf(const char* str, ...);
 
+
 typedef void (*fpputc)(unsigned char c);
 typedef void (*fputstr)(char* str);
 
 void vprintf(fpputc _putc, fputstr _putstr, const char* str, va_list ap);
 
-void print_human_readable_size (unsigned int size) ;
 
 char* itoa(int num, int base, int sign);
 

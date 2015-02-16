@@ -5,10 +5,11 @@
 #include <ps/lock.h>
 #include <ps/ps.h>
 #include <int/timer.h>
+#include <errno.h>
+#include <mm/mmap.h>
+#include <mm/phymm.h>
+
 #define GDT_ADDRESS			0x1C0000
-#define PG0_ADDRESS			0x1C1000
-#define PG1_ADDRESS			0x1C2000
-#define PG_CACHE_ADDRESS	0x1C3000
 
 _START static void mm_dump_phy(multiboot_info_t* mb);
 _START static void mm_get_phy_mem_bound(multiboot_info_t* mb);
@@ -20,13 +21,14 @@ static unsigned long long phy_mem_high;
 unsigned phymm_cur = 0;
 unsigned phymm_high = 0;
 unsigned phymm_max = 0;
+unsigned phymm_valid = 0;
 
 _STARTDATA static unsigned long long _phy_mem_low;
 _STARTDATA static unsigned long long _phy_mem_high;
 
 // this can present 8*32*1024*4k = 1G
-#define PAGE_MASK_TABLE_SIZE (32*1024)
-static unsigned char free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
+#define PAGE_MASK_TABLE_SIZE (8*1024)
+static unsigned free_phy_page_mask[PAGE_MASK_TABLE_SIZE];
 
 short pgc_entry_count[1024];
 
@@ -165,8 +167,8 @@ _START static void simulate_paging(unsigned address)
 
 static unsigned int mm_get_phy_page_mask(unsigned int page_index)
 {
-	int mask_index = page_index / 8;
-	int mask_offset = page_index % 8;
+	int mask_index = page_index / 32;
+	int mask_offset = page_index % 32;
 	int mask = 1 << mask_offset;
 
 	return ((free_phy_page_mask[mask_index] & mask));
@@ -174,23 +176,52 @@ static unsigned int mm_get_phy_page_mask(unsigned int page_index)
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
 {
-	int mask_index = page_index / 8;
-	int mask_offset = page_index % 8;
+	int mask_index = page_index / 32;
+	int mask_offset = page_index % 32;
 	int mask = 1 << mask_offset;
+    unsigned ref_count;
+    int set = 0;
+
 	if (used){
-		unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
-		unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
-		if (page_index > phy_page_low && page_index < phy_page_high) {
-			phymm_cur += PAGE_SIZE;
-			if (phymm_cur > phymm_high) {
-				phymm_high = phymm_cur;
-			}
-		}
-		free_phy_page_mask[mask_index] |= mask;
-	}else{
-		phymm_cur -= PAGE_SIZE;
-		free_phy_page_mask[mask_index] &= ~mask;
-	}
+        if (page_index >= phymm_valid) {
+            ref_count = phymm_reference_page(page_index);
+            if (ref_count == 1) {
+                phymm_clear_cow(page_index);
+                free_phy_page_mask[mask_index] |= mask; 
+                set = 1;
+            }
+        } else {
+            free_phy_page_mask[mask_index] |= mask; 
+            set = 1;
+        }
+
+        if (set) {
+            unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
+            unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
+            if (page_index > phy_page_low && page_index < phy_page_high) {
+                phymm_cur += PAGE_SIZE;
+                if (phymm_cur > phymm_high) {
+                    phymm_high = phymm_cur;
+                }
+            }
+        }
+    } else {
+        if (page_index >= phymm_valid) {
+            ref_count = phymm_dereference_page(page_index);
+            if (ref_count == 0) {
+                phymm_clear_cow(page_index);
+                free_phy_page_mask[mask_index] &= ~mask; 
+                set = 1;
+            }
+        }else{
+            free_phy_page_mask[mask_index] &= ~mask; 
+            set = 1;
+        }
+        
+        if (set) {
+            phymm_cur -= PAGE_SIZE;          
+        }
+    }
 }
 
 
@@ -200,7 +231,8 @@ static void mm_init_free_phy_page_mask()
 	int i = 0;
 	unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
 	unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
-	for (i = 0; i < PAGE_MASK_TABLE_SIZE; i++)
+
+    for (i = 0; i < PAGE_MASK_TABLE_SIZE; i++)
 	  free_phy_page_mask[i] = 0;
 
 	// lower then phy_mem_low set to used
@@ -211,10 +243,19 @@ static void mm_init_free_phy_page_mask()
 	for (i = phy_page_high; i < (8*PAGE_MASK_TABLE_SIZE); i++)
 	  mm_set_phy_page_mask(i, 1);
 	
-	// first 12M are used
-	for (i = phy_page_low; i < (3*1024); i++)
+	for (i = phy_page_low; i < (phy_page_low+RESERVED_PAGES); i++)
 	  mm_set_phy_page_mask(i, 1);
+}
 
+static inline int first_not_set(int x) 
+{
+	int r;
+
+	x = ~x;
+	asm("bsfl %1,%0\n\t"
+        "cmovzl %2,%0"
+        : "=r" (r) : "rm" (x), "r" (-1));
+	return r;
 }
 
 unsigned int  mm_get_free_phy_page_index()
@@ -225,7 +266,7 @@ unsigned int  mm_get_free_phy_page_index()
 	int offset = 0;
 
 	for (i = 0; i < PAGE_MASK_TABLE_SIZE; i++){
-		if (free_phy_page_mask[i] != 0xff){
+		if (free_phy_page_mask[i] != 0xffffffff){
 			page_mask_index = i;
 			break;
 		}
@@ -235,13 +276,17 @@ unsigned int  mm_get_free_phy_page_index()
 	  return -1;
 
 	mask = free_phy_page_mask[page_mask_index];
-	mask = ~mask;
-	while((mask%2) == 0){
-		offset++;
-		mask = mask / 2;
-	}
+	
 
-	return (page_mask_index * 8 + offset);
+	// find first bit '0' from least to highest
+	offset = first_not_set(mask);
+//  mask = ~mask;
+//  while((mask%2) == 0){
+//  	offset++;
+//  	mask = mask / 2;
+//  }
+
+	return (page_mask_index * 32 + offset);
 }
 
 #ifdef TEST_MM
@@ -290,7 +335,7 @@ void mm_test()
 }
 #endif
 
-static unsigned mm_get_pagedir()
+unsigned mm_get_pagedir()
 {
 	unsigned cr3 = 0;
 	__asm__("movl %%cr3, %0" : "=r"(cr3));
@@ -333,8 +378,15 @@ static void mm_high_memory_fun()
 	// ok now we make esp as virtual address
 	RELOAD_ESP(KERNEL_OFFSET);
 
-	 mm_init_free_phy_page_mask();
+    phymm_valid = phymm_get_mgmt_pages(phy_mem_high);
+    phymm_valid += (phy_mem_low/PAGE_SIZE + RESERVED_PAGES);
+
+	mm_init_free_phy_page_mask();
 	mm_init_page_table_cache();
+
+    // physical memory management
+    phymm_setup_mgmt_pages(phy_mem_low/PAGE_SIZE + RESERVED_PAGES);
+
 
 	spinlock_init(&mm_lock);
 	extern kmain_startup();
@@ -344,37 +396,27 @@ static void mm_high_memory_fun()
 _START static void mm_setup_beginning_8m()
 {
     unsigned int phy = PAGE_ENTRY_USER_DATA;
-    int i = 0;
+    unsigned int reserved_page_tables = ( RESERVED_PAGES / 1024);
+    unsigned int pg = (GDT_ADDRESS + PAGE_SIZE);
+    unsigned int * pgt;
+    int i = 0, j = 0;
     unsigned int * gdt = (int*)GDT_ADDRESS;
-    unsigned int * pg0 = (int*)PG0_ADDRESS;
-    unsigned int * pg1 = (int*)PG1_ADDRESS;
-	unsigned int * pg2 = (int*)PG_CACHE_ADDRESS;
+
     for (i = 0; i < PG_TABLE_SIZE; i++) {
         gdt[i] = 0;
     }
-    // following two are for user space
-    gdt[0] = PG0_ADDRESS | PAGE_ENTRY_USER_DATA; 
-    gdt[1] = PG1_ADDRESS | PAGE_ENTRY_USER_DATA;
-
-    // following two are for kernel space
-    gdt[768] = PG0_ADDRESS | PAGE_ENTRY_USER_DATA;
-    gdt[769] = PG1_ADDRESS | PAGE_ENTRY_USER_DATA;
-	gdt[770] = PG_CACHE_ADDRESS | PAGE_ENTRY_USER_DATA;
-
-    for (i = 0; i < PE_TABLE_SIZE; i++) {
-        pg0[i] = phy;
-        phy += PAGE_SIZE;
+    for (i = 0; i < reserved_page_tables; i++) {
+        gdt[i] = (pg + i * PAGE_SIZE) | PAGE_ENTRY_USER_DATA;
+        gdt[i+768] = (pg + i * PAGE_SIZE) | PAGE_ENTRY_USER_DATA;
     }
 
-    for (i = 0; i < PE_TABLE_SIZE; i++) {
-        pg1[i] = phy;
-        phy += PAGE_SIZE;
+    for (j = 0; j < reserved_page_tables; j++) {
+        pgt = (unsigned int *)(pg + j * PAGE_SIZE);
+        for (i = 0; i < PE_TABLE_SIZE; i++) {
+            pgt[i] = phy;
+            phy += PAGE_SIZE;
+        }
     }
-
-	for (i = 0; i < PE_TABLE_SIZE; i++){
-		pg2[i] = phy;
-		phy += PAGE_SIZE;
-	}
 
     RELOAD_CR3(GDT_ADDRESS);
     ENABLE_PAGING();
@@ -383,7 +425,34 @@ _START static void mm_setup_beginning_8m()
     // simulate_paging(0x001012a0);
 }
 
+int mm_add_resource_map(unsigned int phy)
+{
+    unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(phy);
+	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(phy);
+    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
 
+
+    if (phy < KERNEL_OFFSET) {
+        return -1;
+    }
+
+    if ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) == 0){
+		unsigned int table_addr = mm_alloc_page_table();
+		if (table_addr == 0){
+			return -1;
+		}
+
+		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
+	}
+
+    {
+		unsigned int *table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK)+KERNEL_OFFSET);
+		unsigned int phy_page = (phy) & PAGE_SIZE_MASK;
+
+		table[page_table_offset] = phy_page | PAGE_ENTRY_KERNEL_DATA;
+		return 1;
+	}
+}
 
 int mm_add_direct_map(unsigned int vir)
 {
@@ -396,7 +465,7 @@ int mm_add_direct_map(unsigned int vir)
 	if (vir < KERNEL_OFFSET)
 	  return -1;
 
-	if (vir >= 0xC0000000 && vir < 0xC0C00000)
+	if (vir >= 0xC0000000 && vir < PAGE_TABLE_CACHE_END)
 	  return 1;
 
 	page_index = (vir - KERNEL_OFFSET) & PAGE_SIZE_MASK;
@@ -447,8 +516,8 @@ void mm_del_direct_map(unsigned int vir)
 	int empty = 1;
 	int i = 0, idx;
 
-	// 0xC0000000 ~ 0xC0C00000 is always mapped
-	if (vir >= 0xC0000000 && vir < 0xC0C00000)
+	// 0xC0000000 ~ PAGE_TABLE_CACHE_END is always mapped
+	if (vir >= 0xC0000000 && vir < PAGE_TABLE_CACHE_END)
 	  return;
 
 
@@ -573,14 +642,14 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	unsigned int page_index = 0;
 	unsigned int target_phy = 0;
 
-	phy = phy & PAGE_SIZE_MASK;
-	page_index = mm_get_free_phy_page_index();// vm_alloc(1) - KERNEL_OFFSET;
-	target_phy = page_index*PAGE_SIZE;
-
-
-
-	page_index = (target_phy) & PAGE_SIZE_MASK;
-	page_index = page_index / PAGE_SIZE;
+    if (phy) {
+        phy = phy & PAGE_SIZE_MASK;
+        page_index = phy / PAGE_SIZE;
+        target_phy = phy;
+    }else{
+        page_index = mm_get_free_phy_page_index(); // vm_alloc(1) - KERNEL_OFFSET;
+        target_phy = page_index*PAGE_SIZE;
+    }
 
 
 	if ((page_dir[page_dir_offset]&PAGE_SIZE_MASK) == 0){
@@ -588,8 +657,9 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 		if (table_addr == 0){
 			return -1;
 		}
-
-		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | flag;
+        
+		page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | flag ;
+        page_dir[page_dir_offset] |= PAGE_ENTRY_WRITABLE;
 	}
 	
 	{
@@ -606,14 +676,7 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
         table[page_table_offset] = phy_page | flag; 
 		mm_set_phy_page_mask(  phy_page / PAGE_SIZE, 1);
 
-		if (phy) {
-			char* src = (char*)phy + KERNEL_OFFSET;
-			char* dst = (char*)vir;
-			memcpy(dst,src,PAGE_SIZE);
-		}
 	}
-
-
 	return 1;
 }
 
@@ -632,9 +695,11 @@ void mm_del_dynamic_map(unsigned int vir)
 	phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
 
 	page_table[page_table_offset] = 0;
-	mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
+
+
 
 	if (phy_addr) {
+        mm_set_phy_page_mask( phy_addr / PAGE_SIZE, 0);
 		idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
 		pgc_entry_count[idx]--;
 		empty = (pgc_entry_count[idx] == 0);
@@ -649,18 +714,57 @@ void mm_del_dynamic_map(unsigned int vir)
 		page_dir[page_dir_offset] = 0;
 	}
 
-
-
 }
+
+unsigned mm_get_map_flag(unsigned vir)
+{
+	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
+	unsigned int *page_table;
+    unsigned flag;
+
+	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
+    flag = page_table[page_table_offset];
+    flag &= ~PAGE_SIZE_MASK;
+    return flag;
+}
+
+void mm_set_map_flag(unsigned vir, unsigned flag)
+{
+	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
+	unsigned int *page_table;
+
+	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
+    page_table[page_table_offset] &= PAGE_SIZE_MASK;
+    page_table[page_table_offset] |= flag;
+}
+
+unsigned mm_get_attached_page_index(unsigned int vir)
+{
+	int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
+	int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+	unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
+	unsigned int *page_table;
+	unsigned int phy_addr;
+
+	page_table = (unsigned int*)((page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET);
+	phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
+
+    return (phy_addr / PAGE_SIZE);
+}
+
 
 unsigned vm_get_usr_zone(unsigned page_count)
 {
+    // FIXME
+    // only used in load elf, please modify it
     task_struct* cur = CURRENT_TASK();
-    unsigned ret = cur->user.zone_top;
-
-    cur->user.zone_top += page_count * PAGE_SIZE;
-
-    return ret;
+    unsigned begin = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
+    
+    return begin;
 }
 
   #define MAP_SHARED      0x01            /* Share changes */
@@ -681,50 +785,59 @@ int do_mmap(unsigned int _addr, unsigned int _len,unsigned int prot,
 {
 	unsigned addr = _addr & PAGE_SIZE_MASK;
 	unsigned last_addr = (_addr + _len-1) & PAGE_SIZE_MASK;
-	unsigned i = addr, map_ret;
-	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	unsigned read_addr = addr;
-	task_struct* cur = CURRENT_TASK();
-
+    unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
+    INODE node;
+    task_struct* cur = CURRENT_TASK();
+    
     if (_addr == 0) {
-        addr = vm_get_usr_zone(page_count);
-		last_addr = addr + (page_count-1)*PAGE_SIZE;
-		read_addr = addr;
+        addr = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
     }
 
-	for (i = addr; i <= last_addr; i+=PAGE_SIZE){
-		map_ret = mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
-		if (map_ret > 0 && fd > 0)
-		{
-			memset(i, 0, PAGE_SIZE);
-		}
-	}
+    // FIXME
+    // lots of flags and prot
+    if (fd != -1 && cur->fds[fd].flag != 0)
+        node = cur->fds[fd].file;
+    else
+        node = 0;
+        
+    vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, node, offset); 
 
-
-	if ((map_ret > 0) || (flags & MAP_FIXED)){
-		if (fd > 0 && fd < MAX_FD){
-			unsigned ret = 0;
-//          time_t t;
-//          time_t now;
-//          unsigned speed = 0;
-//          unsigned span = 0;
-//          timer_current(&t);
-			//memset(read_addr, 0, _len);
-			ret = fs_read(fd, offset, read_addr, _len);
-//          timer_current(&now);
-//          span = (now.seconds*1000+now.milliseconds - (t.seconds*1000+t.milliseconds));
-//          if (span) {
-//              speed = (_len * 1000) / span;
-//              printf("map %d size %h speed %h/s, using time %d.%d second\n", fd, _len, speed, (span/1000), (span%1000));
-//          }
-
-		}else{
-			memset(read_addr, 0, _len);
-		}
-	}
 
 	return addr;
 
+}
+
+int do_munmap(void *addr, unsigned length)
+{
+    task_struct* cur = CURRENT_TASK();
+    vm_region* region = vm_find_map(cur->user.vm,addr);
+    unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
+    unsigned end = ((unsigned)addr + length - 1) & PAGE_SIZE_MASK;
+    unsigned page_count = (end - begin) / PAGE_SIZE + 1;
+
+    end = begin + page_count*PAGE_SIZE;
+    if (!region) {
+        return (-EINVAL);
+    }
+
+
+    if (begin > region->begin && end < region->end) {
+        vm_del_map(cur->user.vm, addr); 
+        vm_add_map(cur->user.vm, region->begin, begin, region->node, region->offset);
+        vm_add_map(cur->user.vm, end, region->end, region->node, region->offset + (end - region->begin));
+    }else if(begin > region->begin && end == region->end){
+        vm_del_map(cur->user.vm, addr); 
+        vm_add_map(cur->user.vm, region->begin, begin, region->node, region->offset);
+    }else if(begin == region->begin && end < region->end){
+        vm_del_map(cur->user.vm, addr); 
+        vm_add_map(cur->user.vm, end, region->end, region->node, region->offset + (end - region->begin));
+    }else if(begin == region->begin && end == region->end){
+        vm_del_map(cur->user.vm, addr); 
+    }else{
+        return (-EINVAL);
+    }
+    
+    return 0;
 }
 
 

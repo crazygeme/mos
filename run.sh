@@ -11,9 +11,9 @@ if [ ! -e "kernel" ]; then
 	_rebuild="1"
 fi
 
-if [ ! -e "ffstool/ffstool" ]; then
-	_rebuild="1"
-fi
+#if [ ! -e "ffstool/ffstool" ]; then
+#	_rebuild="1"
+#fi
 
 if [ ! -e "user/bin/run" ]; then
 	_rebuild="1"
@@ -89,8 +89,8 @@ fi
 echo "begin enum"
 
 if [ "$_debug" == "0" ]; then
-	qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile
+	qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std
 else		
-	qemu-system-i386 -no-kvm $_curses -no-reboot -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -gdb tcp::8888 -S
+	qemu-system-i386 -no-kvm $_curses -no-reboot -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std -gdb tcp::8888 -S
 fi
 

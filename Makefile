@@ -4,15 +4,22 @@ ASM		= nasm
 LD		= ld
 OS		= Linux
 else
+ifeq ($(shell uname),Darwin)
 CC		= /opt/local/bin/i386-elf-gcc
 ASM 	= /opt/local/bin/nasm
 LD		= /opt/local/bin/i386-elf-ld
 OS		= Darwin
+else
+CC      = i386-elf-gcc
+ASM     = nasm
+LD      = i386-elf-ld
+OS      = Cygwin
+endif
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
 CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
-	-D__KERNEL__\
+	-D__KERNEL__ -D__DEBUG__ -D__VERBOS_SYSCALL__\
 	-I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
@@ -28,6 +35,8 @@ OBJS	= boot.o \
 		  list.o\
 		  dsr.o\
 		  mm.o\
+		  mmap.o\
+		  phymm.o\
 		  timer.o\
 		  ps.o\
 		  lock.o\
@@ -46,12 +55,15 @@ OBJS	= boot.o \
 		  kbchar.o\
 		  console.o\
 		  null.o\
-		  region.o\
 		  cache.o\
 		  cyclebuf.o\
 		  serial.o\
 		  pipe.o\
-		  rbtree.o
+		  rbtree.o\
+		  vga.o\
+		  pci.o\
+		  gui_test.o\
+		  gui_core.o
 
 all: kernel
 
@@ -90,8 +102,14 @@ rbtree.o: lib/rbtree.c lib/rbtree.h
 dsr.o: int/dsr.c int/dsr.h
 	$(CC) $(CFLAGS) int/dsr.c -o dsr.o
 
-mm.o: mm/mm.c mm/mm.h boot/multiboot.h
+mm.o: mm/mm.c mm/mm.h boot/multiboot.h mm/mmap.h
 	$(CC) $(CFLAGS) -o mm.o mm/mm.c
+
+mmap.o: mm/mmap.c mm/mmap.h mm/mm.h
+	$(CC) $(CFLAGS) -o mmap.o mm/mmap.c
+
+phymm.o: mm/phymm.c mm/phymm.h mm/mm.h
+	$(CC) $(CFLAGS) -o phymm.o mm/phymm.c
 
 timer.o: int/timer.c int/timer.h
 	$(CC) $(CFLAGS) -o timer.o int/timer.c
@@ -154,14 +172,23 @@ pipe.o: fs/pipechar.c fs/pipechar.h
 cache.o: fs/cache.c fs/cache.h
 	$(CC) $(CFLAGS) -o cache.o fs/cache.c
 
-region.o: mm/region.c mm/region.h
-	$(CC) $(CFLAGS) -o region.o mm/region.c
-
 cyclebuf.o: lib/cyclebuf.c lib/cyclebuf.h
 	$(CC) $(CFLAGS) -o cyclebuf.o lib/cyclebuf.c
 
 serial.o: drivers/serial.c drivers/serial.h
 	$(CC) $(CFLAGS) -o serial.o drivers/serial.c
+
+vga.o: drivers/vga.c drivers/vga.h
+	$(CC) $(CFLAGS) -o vga.o drivers/vga.c
+
+pci.o: drivers/pci.c drivers/pci.h
+	$(CC) $(CFLAGS) -o pci.o drivers/pci.c
+
+gui_test.o: gui/gui_test.c gui/gui_test.h
+	$(CC) $(CFLAGS) -o gui_test.o gui/gui_test.c
+
+gui_core.o: gui/gui_core.c gui/gui_core.h
+	$(CC) $(CFLAGS) -o gui_core.o gui/gui_core.c
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)
@@ -182,4 +209,5 @@ clean:
 	find . -name "*.o" -exec rm -f {} \;
 	-rm $(TARGET)
 	-rm user/run
+
 

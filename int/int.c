@@ -532,3 +532,33 @@ void _write_dwb (unsigned short port, const void *addr, unsigned cnt)
 
 
 
+_START void write_word (unsigned short port, unsigned short data)
+{
+  /* See [IA32-v2b] "OUT". */
+  asm volatile ("outw %w0, %w1" : : "a" (data), "Nd" (port));
+}
+
+_START unsigned short read_word (unsigned short port)
+{
+  unsigned short data;
+  /* See [IA32-v2a] "IN". */
+  asm volatile ("inw %w1, %w0" : "=a" (data) : "Nd" (port));
+  return data;
+}
+
+_START unsigned int read_dword (unsigned short port)
+{
+  /* See [IA32-v2a] "IN". */
+  unsigned int data;
+  asm volatile ("inl %w1, %0" : "=a" (data) : "Nd" (port));
+  return data;
+}
+
+_START void write_dword (unsigned short port, unsigned int data)
+{
+  /* See [IA32-v2b] "OUT". */
+  asm volatile ("outl %0, %w1" : : "a" (data), "Nd" (port));
+}
+
+
+

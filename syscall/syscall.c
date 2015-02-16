@@ -7,6 +7,7 @@
 #include <fs/namespace.h>
 #include <int/timer.h>
 #include <lib/klib.h>
+#include <lib/rbtree.h>
 #include <fs/fcntl.h>
 #include <errno.h>
 
@@ -191,6 +192,8 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,            // 191 ~ 195
 	"sys_lstat64", "sys_fstat64" , "sys_quota"             // 196 ~ 198
 };
+
+extern hash_table* file_exist_cache;
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
 
@@ -418,9 +421,9 @@ static int sys_uname(struct utsname *utname)
 {
 	strcpy(utname->machine, "i386");
 	strcpy(utname->nodename, "qemu-enum");
-	strcpy(utname->release, "0.1-generic");
+	strcpy(utname->release, "0.5-generic");
 	strcpy(utname->sysname, "Mos");
-	strcpy(utname->version, "Mos Wed Feb 19 04:14:56 UTC 2014");
+	strcpy(utname->version, "Mos Wed Feb 19 10:56:00 UTC 2015");
 	strcpy(utname->domain, "Ender");
 	return 1;
 }
@@ -440,6 +443,7 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 	int close_on_exec = flags & FD_CLOEXEC;
 	struct stat s;
 	int fd = -1;
+    key_value_pair* pair = 0;
 	task_struct *cur = CURRENT_TASK();
 
 	if (flags & O_CREAT) creat_if_not_exist = 1;
@@ -447,16 +451,19 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 	if (flags & O_TRUNC) resize_to_zero = 1;
 
 	resolve_path(_name, name);
+
+
 #ifdef __VERBOS_SYSCALL__
 	klog("open(%s, %x, %x)", name, flags, mode);
 #endif
+
 
 	if (fs_stat(name, &s) == -1)
 	{
 		if (creat_if_not_exist)
 		{
 			fs_create(name, mode);
-		}
+        }
 	} else
 	{
 		if (resize_to_zero)
@@ -468,9 +475,8 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 
 
 	fd = fs_open(name);
-	kfree(name);
 
-	if (fd != -1 && close_on_exec)
+	if (fd >= 0 && close_on_exec)
 	{
 		cur->fds[fd].flag |= fd_flag_closeexec;
 	}
@@ -478,7 +484,9 @@ static int sys_open(const char *_name, int flags, unsigned mode)
 #ifdef __VERBOS_SYSCALL__
 	klog_printf("ret %d\n", fd);
 #endif
-	return fd;
+
+	kfree(name);
+    return fd; 
 }
 
 static int sys_close(unsigned fd)
@@ -581,9 +589,9 @@ static int _chdir(const char *cwd, const char *path)
 
 static int sys_chdir(const char *path)
 {
-	char name[256] = { 0 };
+	char name[64] = { 0 };
 	char *slash, *tmp;
-	char cwd[256] = { 0 };
+	char cwd[64] = { 0 };
 	int ret = 1;
 	task_struct *cur = CURRENT_TASK();
 
@@ -701,8 +709,10 @@ static int sys_mmap(struct mmap_arg_struct32 *arg)
 
 static int sys_munmap(void *addr, unsigned length)
 {
-	// FIXME
-	return 0;
+#ifdef __VERBOS_SYSCALL__
+	klog("munmap (%x, %x)\n", addr, length);
+#endif
+    return do_munmap(addr, length);
 }
 
 static int sys_mprotect(void *addr, unsigned len, int prot)
@@ -1005,6 +1015,8 @@ extern unsigned phymm_max;
 extern unsigned pgc_count;
 extern unsigned pgc_top;
 extern unsigned task_schedule_time;
+extern unsigned page_fault_count;
+extern unsigned page_falut_total_time;
 static int sys_quota(struct krnquota *quota)
 {
 	quota->heap_cur = heap_quota;
@@ -1017,6 +1029,8 @@ static int sys_quota(struct krnquota *quota)
 	quota->pgc_top = pgc_top;
 	quota->sched_spent = task_schedule_time;
 	quota->total_spent = time_now();
+    //printk("page fault count %d, total time %d ms\n", page_fault_count, page_falut_total_time);
+    //quota->page_fault = page_fault_count;
 	return 0;
 }
 

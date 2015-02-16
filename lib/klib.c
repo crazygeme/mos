@@ -16,11 +16,18 @@ static kblock free_list[513] = { 0 };
 static void klib_add_to_free_list(int index, kblock* buf, int force_merge);
 unsigned int heap_quota;
 unsigned int heap_quota_high;
+unsigned int mem_time;
+unsigned int heap_time;
 static unsigned int klib_random_num = 1;
 
 
 #ifdef __KERNEL__
 
+void mm_report()
+{
+    printk("memcpy time %d millisecond, malloc/free time %d millisecond\n", mem_time, heap_time);
+    mem_time = heap_time = 0;
+}
 
 
 unsigned int cur_block_top = KHEAP_BEGIN;
@@ -132,8 +139,9 @@ void klib_init()
 	klib_random_num = 1;
 	cursor = 0;
 	heap_quota = 0;
-
     heap_quota_high = 0;
+    mem_time = 0;
+    heap_time = 0;
 
 	cur_block_top = KHEAP_BEGIN;
 	spinlock_init(&tty_lock);
@@ -355,7 +363,7 @@ static void klib_cursor_forward(int new_pos)
 		cursor -= TTY_MAX_COL;
 	}
 
-	tty_movecurse((unsigned short)cursor);
+	tty_movecurse((unsigned)cursor);
 }
 
 char *klib_itoa(char *str, int num)
@@ -486,7 +494,9 @@ void* malloc(unsigned size)
 	kblock* free_list_head = &free_list[free_list_index];
 	int index = 0;
 	int sliced = 0;
-
+#ifdef DEBUG_FFS
+    unsigned t = time_now();
+#endif
 	
 	if (free_list_index > 511) // that's too large
 		return NULL;
@@ -528,6 +538,9 @@ void* malloc(unsigned size)
 			int left_count;
 			if (vir == 0){
 				unlock_heap();
+                #ifdef DEBUG_FFS
+                heap_time += time_now() - t;
+                #endif
 				return NULL;
 			}
 			index = 511;
@@ -553,10 +566,16 @@ void* malloc(unsigned size)
         }
         unlock_heap(); 
 
+        #ifdef DEBUG_FFS
+        heap_time += time_now() - t;
+        #endif
 		return (void*)ret;
 	}
 
 	unlock_heap();
+    #ifdef DEBUG_FFS
+    heap_time += time_now() - t;
+    #endif
 	return NULL;
 
 }
@@ -566,6 +585,11 @@ void free(void* buf)
 	kblock* block = NULL;
 	int size = 0;
 	int free_list_index;
+
+    #ifdef DEBUG_FFS
+    unsigned t = time_now();
+    #endif
+
 	if (buf == NULL)
 		return;
 
@@ -584,6 +608,10 @@ void free(void* buf)
 	klib_add_to_free_list(free_list_index, block, 1);
 	
 	unlock_heap();
+
+    #ifdef DEBUG_FFS
+    heap_time += time_now() - t;
+    #endif
 }
 
 
@@ -708,11 +736,29 @@ void memcpy(void* _src, void* _dst, unsigned len)
 {
 	char* src = _src;
 	char* dst = _dst;
-
+    unsigned* isrc = _src;
+    unsigned* idst = _dst;
 	int i = 0;
-    for (i = 0; i < len; i++) {
-        src[i] = dst[i];
+#ifdef DEBUG_FFS
+    unsigned t = time_now();
+#endif
+
+    if ( ((((unsigned)src) % 4) == 0) &&
+        ((((unsigned)dst) % 4) == 0) &&
+         (len % 4 == 0)) {
+        int ilen = len / 4;
+        for (i = 0; i < ilen; i++) {
+            isrc[i] = idst[i];
+        }
+    }else{
+        for (i = 0; i < len; i++) {
+            src[i] = dst[i];
+        }
     }
+
+#ifdef DEBUG_FFS
+    mem_time += time_now() - t;
+#endif
 }
 
 void memmove(void* _src, void* _dst, unsigned len)
@@ -927,25 +973,69 @@ void printf(const char* str, ...)
 }
 
 
+#define TTY_BUF_SIZE 512
+static char tty_buf[TTY_BUF_SIZE];
+static char* tty_buf_pos;
+static void _put_buf_c(fputstr _putstr, char c)
+{
+	*tty_buf_pos = c;
+	tty_buf_pos++;
+	if ((tty_buf_pos - tty_buf) >= TTY_BUF_SIZE) {
+		_putstr(tty_buf);
+		tty_buf_pos = tty_buf;
+	}
+	*tty_buf_pos = '\0';
+}
+
+static void _put_buf_str(fputstr _putstr, char* str)
+{
+	while (*str) {
+		_put_buf_c(_putstr, *str);
+		str++;
+	}
+}
+
+static void print_human_readable_size (fputstr _putstr, unsigned int size) 
+{
+  char* s = 0;
+
+  if (size == 1)
+    _put_buf_str (_putstr, "1");
+  else 
+    {
+      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
+      const char **fp;
+
+      for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
+        size /= 1024;
+
+	  s = itoa(size, 10, 0);
+	  _put_buf_str(_putstr, s);
+	  free(s);
+	  _put_buf_str(_putstr, *fp);
+    }
+}
+
 void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 {
 	int len = strlen(src);
 	int i = 0;
     int min_len = 0;
-
+	tty_buf[0] = '\0';
+	tty_buf_pos = tty_buf;
     for (i = 0; i < len; i++) {
         char cur = src[i];
         if (cur == '%') {
 			cur = src[i+1];
             switch (cur) {
 			case '%':
-				_putc(src[i+1]);
+				_put_buf_c(_putstr, src[i+1]);
 				break;
 			case 'd':
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 1);
-					_putstr(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
@@ -954,7 +1044,7 @@ void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 16, 0);
-					_putstr(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
@@ -962,55 +1052,56 @@ void vprintf(fpputc _putc, fputstr _putstr, const char* src, va_list ap)
 				{
 					int arg = va_arg(ap, int);
 					char* s = itoa(arg, 10, 0);
-					_putstr(s);
+					_put_buf_str(_putstr, s);
 					free(s);
 					break;
 				}
 			case 's':
 				{
 					char* arg = va_arg(ap, char*);
-					_putstr(arg);
+					_put_buf_str(_putstr, arg);
 					break;
 				}
             case 'h':
                 {
                     unsigned arg = va_arg(ap, unsigned);
-                    print_human_readable_size(arg);
+                    print_human_readable_size(_putstr, arg);
                     break;
                 }
 			case 'c':
 				{
 					unsigned char arg = va_arg(ap, unsigned char);
-					_putc(arg);
+					_put_buf_c(_putstr, arg);
 					break;
 				}
+            case 'b':
+                {
+                    unsigned char  arg = va_arg(ap, unsigned char );
+					char* s = itoa(arg, 16, 0);
+                    char* str = (s+2);
+                    if (strlen(str) == 1) {
+                        _put_buf_str(_putstr, "0"); 
+                    }
+                    _put_buf_str(_putstr, str); 
+					free(s);
+					break;
+                }
 			default:
 				{
-					_putc('?');
+					_put_buf_c(_putstr,'?');
 					break;
 				}
             }
 			i++;
         }else{
-			_putc(cur);
+			_put_buf_c(_putstr,cur);
 		}
     }
+
+	_putstr(tty_buf);
 }
 
-void print_human_readable_size (unsigned int size) 
-{
-  if (size == 1)
-    printf ("1 byte");
-  else 
-    {
-      static const char *factors[] = {"", "k", "M", "G", "T", NULL};
-      const char **fp;
 
-      for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
-        size /= 1024;
-      printf ("%u%s", size, *fp);
-    }
-}
 
 static char _num(int i){
 
@@ -1275,7 +1366,7 @@ void tty_write(const char* buf, unsigned len)
 	int i = 0;
 	lock_tty();
 	for (i = 0; i < len; i++){
-		tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
+		//tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
 		klib_putchar(buf[i]);
 	}
 	unlock_tty();
@@ -1286,7 +1377,6 @@ void reboot()
 {
 	klog_close();
 	block_close();
-	// FIXME do formal steps before reboot
 	_write_port(0x64, 0xfe);
 }
 

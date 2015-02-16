@@ -23,11 +23,14 @@
 
 #define IDT_SIZE 256
 
-#define KHEAP_END	 0xC07FF000
-#define KHEAP_BEGIN	 0xC0300000
+#define KHEAP_BEGIN             0xC0700000 // increase by 4M if kernel img is too large for this reserve
+#define KHEAP_END               (KHEAP_BEGIN + 0x004FF000)
 
-#define PAGE_TABLE_CACHE_BEGIN 0xC0800000
-#define PAGE_TABLE_CACHE_END   0xC0C00000
+#define PAGE_TABLE_CACHE_BEGIN  (KHEAP_END + 0x00001000)
+#define PAGE_TABLE_CACHE_END    (PAGE_TABLE_CACHE_BEGIN + 0x0400000)
+
+#define RESERVED_PAGES ((PAGE_TABLE_CACHE_END - KERNEL_OFFSET)/PAGE_SIZE)
+
 
 #define UNIMPL printk("unimpl function %s\n", __func__)
  
@@ -60,5 +63,10 @@
 
 #define USER_ZONE_BEGIN 0x10000000
 #define USER_ZONE_END	(USER_HEAP_BEGIN - PAGE_SIZE)
+
+// supported resolution
+#define VGA_RESOLUTION_X 1024
+#define VGA_RESOLUTION_Y 768
+#define VGA_COLOR_DEPTH  32
 
 #endif

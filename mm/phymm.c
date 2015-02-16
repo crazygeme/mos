@@ -1,5 +1,6 @@
 #include "phymm.h"
 #include "mm.h"
+#include <ps/ps.h>
 
 phymm_page* phymm_pages;
 
@@ -34,17 +35,9 @@ unsigned phymm_dereference_page(unsigned page_index)
     return __sync_add_and_fetch(&(phymm_pages[page_index].ref_count), -1);
 }
 
-void phymm_set_cow(unsigned page_index)
-{
-    phymm_pages[page_index].flags |= PHYMM_PAGE_COW;
-}
-
 int phymm_is_cow(unsigned page_index)
 {
-    return ((phymm_pages[page_index].flags & PHYMM_PAGE_COW) == PHYMM_PAGE_COW);
+    int ret = __sync_add_and_fetch(&(phymm_pages[page_index].ref_count), 0);
+    return (ret > 1);
 }
 
-void phymm_clear_cow(unsigned page_index)
-{
-    phymm_pages[page_index].flags &= ~PHYMM_PAGE_COW;
-}

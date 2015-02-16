@@ -14,6 +14,7 @@
 _START static void mm_dump_phy(multiboot_info_t* mb);
 _START static void mm_get_phy_mem_bound(multiboot_info_t* mb);
 _START static void mm_setup_beginning_8m();
+static void mm_clear_beginning_user_map();
 
 static unsigned long long phy_mem_low;
 static unsigned long long phy_mem_high;
@@ -181,12 +182,14 @@ void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
 	int mask = 1 << mask_offset;
     unsigned ref_count;
     int set = 0;
+    unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
+    unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
+
 
 	if (used){
-        if (page_index >= phymm_valid) {
+        if (page_index >= phymm_valid && page_index < phy_page_high) {
             ref_count = phymm_reference_page(page_index);
             if (ref_count == 1) {
-                phymm_clear_cow(page_index);
                 free_phy_page_mask[mask_index] |= mask; 
                 set = 1;
             }
@@ -196,8 +199,7 @@ void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
         }
 
         if (set) {
-            unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
-            unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
+
             if (page_index > phy_page_low && page_index < phy_page_high) {
                 phymm_cur += PAGE_SIZE;
                 if (phymm_cur > phymm_high) {
@@ -206,15 +208,25 @@ void mm_set_phy_page_mask(unsigned int page_index, unsigned int used)
             }
         }
     } else {
-        if (page_index >= phymm_valid) {
+
+        if (page_index >= phymm_valid && page_index < phy_page_high) {
             ref_count = phymm_dereference_page(page_index);
             if (ref_count == 0) {
-                phymm_clear_cow(page_index);
                 free_phy_page_mask[mask_index] &= ~mask; 
                 set = 1;
             }
         }else{
-            free_phy_page_mask[mask_index] &= ~mask; 
+            // FIXME
+            // before first process runs, kernel routine will map gdt[0 ...] and gdt[768...]
+            // to same physical memory
+            // this will make dup_user_map reference to reserved physical memory, because
+            //      1. phy[0...] will ref to new process, with COW
+            //      2. if cur write-access page fault occurs, cur will allocate new memory and point to it
+            //      3. after that new process write-access page fault occures, just set this page as writable
+            //      4. then phy[0...] belong to new process
+            //      5. will set to free when new process end
+            // should clear gdt[0...] in proper time
+            // free_phy_page_mask[mask_index] &= ~mask; 
             set = 1;
         }
         
@@ -280,13 +292,12 @@ unsigned int  mm_get_free_phy_page_index()
 
 	// find first bit '0' from least to highest
 	offset = first_not_set(mask);
-//  mask = ~mask;
-//  while((mask%2) == 0){
-//  	offset++;
-//  	mask = mask / 2;
-//  }
 
-	return (page_mask_index * 32 + offset);
+    if ((page_mask_index * 32 + offset) < 10) {
+        klog("ops\n");
+        
+    }
+    return (page_mask_index * 32 + offset); 
 }
 
 #ifdef TEST_MM
@@ -387,10 +398,21 @@ static void mm_high_memory_fun()
     // physical memory management
     phymm_setup_mgmt_pages(phy_mem_low/PAGE_SIZE + RESERVED_PAGES);
 
-
 	spinlock_init(&mm_lock);
 	extern kmain_startup();
 	kmain_startup();
+}
+
+static void mm_clear_beginning_user_map()
+{
+    unsigned int reserved_page_tables = ( RESERVED_PAGES / 1024);
+    unsigned int * gdt = (int*)(GDT_ADDRESS+KERNEL_OFFSET);
+    int i;
+
+    for (i = 0; i < reserved_page_tables; i++) {
+        gdt[i] = 0;
+    }
+
 }
 
 _START static void mm_setup_beginning_8m()

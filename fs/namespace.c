@@ -847,6 +847,7 @@ static void test_read()
 	int fd = fs_open("/lib/libc.so.6");
 	char* buf = 0;
 	int i = 0;
+    int count = 1;
 	time_t now;
 	unsigned t;
 	timer_current(&now);
@@ -858,35 +859,36 @@ static void test_read()
 	memset(buf, 0, 1024);
 	t = _time_now();
 	while (1) {
-		printk("");
-		klogquota();
-		for (i = 0; i < (3*1024); i++){
-			if (i % 100 == 0) {
-				unsigned span = _time_now() - t;
-				unsigned speed = 0;
+        if ((count % 1000) == 0) {
+            unsigned span = _time_now() - t; 
+            unsigned speed = 0;
 
-				if (span) {
-					speed=((100*1024) / span) * 1000;
-				}
-				t = t+span;
-				printk("read index %d, speed %h/s\n", i, speed);
-				#ifdef DEBUG_FFS
-				extern void report_time();
-				extern void report_hdd_time();
-				extern void report_cache();
-				extern void report_sched_time();
-				extern void mm_report();
-				report_time();
-				report_hdd_time();
-				report_cache();
-				report_sched_time();
-				mm_report();
-				#endif
-			}
+            if (span) {
+                    speed=((1000*2048) / span) * 1000;
+            }
+            t = t+span;
+
+            printk("read count %d, speed %h/s\n", count, speed);
+            #ifdef DEBUG_FFS
+            extern void report_time();
+            extern void report_hdd_time();
+            extern void report_cache();
+            extern void report_sched_time();
+            extern void mm_report();
+            report_time();
+            report_hdd_time();
+            report_cache();
+            report_sched_time();
+            mm_report();
+            #endif
+
+        }
+		for (i = 0; i < 4; i++){
 			memset(buf, 0, 1024);
 			fs_read(fd, i*1024, buf, 1024);
 			
 		}
+        count++;
 	}
 	kfree(buf);
 	fs_close(fd);

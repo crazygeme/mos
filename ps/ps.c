@@ -387,8 +387,9 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
 }
 
 extern short pgc_entry_count[1024];
-static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
+static void ps_dup_user_page(unsigned vir, task_struct* task, unsigned flag)
 {
+    unsigned int* new_ps = (unsigned int*)task->user.page_dir;
     unsigned target_page_idx = mm_get_attached_page_index(vir);
     unsigned target_page_addr = target_page_idx * PAGE_SIZE;
     unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
@@ -418,14 +419,13 @@ static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
 
     page_table[page_table_offset] = cur_page_table[page_table_offset];
     mm_set_phy_page_mask(target_page_idx, 1);
-    phymm_set_cow(target_page_idx);
 }
 
 
 static void ps_enum_for_dup(void* aux, unsigned vir, unsigned phy)
 {
-    unsigned int* new_ps = aux;
-    ps_dup_user_page(vir, new_ps, PAGE_ENTRY_USER_DATA);
+    task_struct* task = aux;
+    ps_dup_user_page(vir, task, PAGE_ENTRY_USER_DATA);
 
 }
 
@@ -451,7 +451,7 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
     }
 
 
-    ps_enum_user_map(cur, ps_enum_for_dup, new_ps);
+    ps_enum_user_map(cur, ps_enum_for_dup, task);
     
 }
 

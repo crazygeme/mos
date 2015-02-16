@@ -86,15 +86,17 @@ static void pf_process(intr_frame* frame)
         unsigned flag;
 
         cow = phymm_is_cow(page_index);
+        klog("ps %d write %x fault, cow %d\n", cur->psid, page_index, cow);
         if (cow) {
             vir = cr2; 
             tmp = vm_alloc(1);
             memcpy(tmp, (vir&PAGE_SIZE_MASK), PAGE_SIZE);
             flag = mm_get_map_flag(vir);
+            flag |= PAGE_ENTRY_PRESENT;
+            flag |= PAGE_ENTRY_WRITABLE;
             mm_del_dynamic_map(vir);
-            mm_add_dynamic_map(vir, tmp-KERNEL_OFFSET, flag | PAGE_ENTRY_PRESENT);
+            mm_add_dynamic_map(vir, tmp-KERNEL_OFFSET, flag);
             vm_free(tmp, 1);
-            phymm_clear_cow(page_index);
             RELOAD_CR3(cr3);
         }else{
             flag = mm_get_map_flag(cr2);

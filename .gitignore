@@ -42,3 +42,10 @@ tags
 *.vpwhist
 */*.vpwhist
 */*.vtg
+*.opensdf
+*/*.opensdf
+*.suo
+*/*/suo
+*.sdf
+*/*.sdf
+*klocwork*

@@ -1,0 +1,338 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="boot\kernel.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\block.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\chardev.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\hdd.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\keyboard.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\pci.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\serial.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\tty.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="drivers\vga.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ffstool\ffstool.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ffstool\fileblock.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ffstool\osdep.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\cache.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\console.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\ext2.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\ffs.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\kbchar.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\mount.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\namespace.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\null.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\pipechar.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="fs\vfs.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="gui\gui_core.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="gui\gui_test.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="gui\gui_toolkit.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="int\dsr.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="int\int.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="int\timer.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\cyclebuf.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\klib.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\list.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\rbtree.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mm\mm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mm\mmap.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mm\pagefault.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mm\phymm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ps\elf.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ps\lock.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ps\ps.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="syscall\syscall.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\ps0.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\syscall.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\cat.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\idle.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\ls.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\mkdir.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\pwd.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\quota.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\reboot.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\rmdir.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\run.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\sh.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\test.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="user\src\uname.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="boot\kernel.asm">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="mm\mm.asm">
+      <Filter>Source Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="errno.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="boot\multiboot.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\block.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\chardev.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\hdd.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\keyboard.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\keymap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\pci.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\pci_list.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\serial.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\tty.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="drivers\vga.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ffstool\fileblock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ffstool\osdep.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\cache.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\console.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\ext2.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\fcntl.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\ffs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\kbchar.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\mount.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\namespace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\null.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\pipechar.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="fs\vfs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gui\gui_core.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gui\gui_test.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gui\gui_toolkit.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="int\dsr.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="int\int.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="int\timer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\cyclebuf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\klib.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\list.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lib\rbtree.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mm\mm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mm\mmap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mm\pagefault.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="mm\phymm.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ps\elf.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ps\lock.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ps\ps.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="syscall\syscall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="syscall\unistd.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="user\fs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="user\ps0.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="user\run.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="user\syscall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>

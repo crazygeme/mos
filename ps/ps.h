@@ -254,6 +254,9 @@ void ps_put_to_wait_queue(task_struct* task);
 
 task_struct* ps_find_process(unsigned psid);
 
+// if process that >= priority exist
+int ps_has_ready(int priority);
+
 // syscall handler
 int sys_fork();
 int sys_exit(unsigned status);

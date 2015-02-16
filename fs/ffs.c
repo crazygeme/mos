@@ -9,8 +9,9 @@
 #else
 #include <lib/klib.h>
 #include <int/timer.h>
-#include <syscall/unistd.h>
 #endif
+#include <syscall/unistd.h>
+
 
 #define INODE_PER_SECTOR (BLOCK_SECTOR_SIZE / 4)
 #define META_PER_SECTOR (BLOCK_SECTOR_SIZE / (sizeof(struct ffs_meta_info)))

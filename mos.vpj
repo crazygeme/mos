@@ -84,6 +84,7 @@
 			<F N="fs/null.c"/>
 			<F N="mm/pagefault.c"/>
 			<F N="drivers/pci.c"/>
+			<F N="mm/phymm.c"/>
 			<F N="fs/pipechar.c"/>
 			<F N="ps/ps.c"/>
 			<F N="user/ps0.c"/>
@@ -128,6 +129,7 @@
 			<F N="mm/pagefault.h"/>
 			<F N="drivers/pci.h"/>
 			<F N="drivers/pci_list.h"/>
+			<F N="mm/phymm.h"/>
 			<F N="fs/pipechar.h"/>
 			<F N="ps/ps.h"/>
 			<F N="user/ps0.h"/>

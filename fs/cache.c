@@ -1,11 +1,19 @@
-#include <fs/cache.h>
+#ifdef WIN32
+#include <osdep.h>
+#define CACHE_HASH_SIZE 1
+#elif defined MACOS
+#include <osdep.h>
+#else
 #include <fs/namespace.h>
 #include <fs/vfs.h>
 #include <mm/mm.h>
 #include <lib/klib.h>
+#define CACHE_HASH_SIZE 0
+#endif
+#include <fs/cache.h>
 #include <syscall/unistd.h>
 
-#define CACHE_HASH_SIZE 0
+
 
 typedef struct _file_cache_item
 {

@@ -11,9 +11,12 @@
 #include <lib/klib.h>
 #include <fs/mount.h>
 #include <int/timer.h>
-#include <syscall/unistd.h>
+#include <errno.h>
 #include <lib/cyclebuf.h>
 #endif
+#include <syscall/unistd.h>
+#include <fs/cache.h>
+
 
 static INODE fs_lookup_inode(char* path);
 static unsigned fs_get_free_fd(INODE node, char* path);
@@ -49,7 +52,7 @@ unsigned fs_open(char* path)
     if (!node) {
 
 		kfree(fullPath);
-        return 0xffffffff;
+        return -ENOENT;
     }
 
 	if (S_ISDIR(vfs_get_mode(node))){
@@ -67,7 +70,7 @@ unsigned fs_open(char* path)
 	}
 
 	if (fd == MAX_FD) {
-		fd = 0xffffffff;
+		fd = -ENFILE;
 	}
 
 	kfree(fullPath);
@@ -138,7 +141,8 @@ void fs_close(unsigned int fd)
 	}
 }
 
-
+#ifndef WIN32
+#ifndef MACOS
 int fs_pipe(int* pipefd)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -164,13 +168,14 @@ int fs_pipe(int* pipefd)
 
 	return 0;
 }
+#endif
+#endif
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
 	char* path = kmalloc(64);
     INODE node = fs_get_fd(fd, path);
     unsigned ret;
-	void* hash = 0;
 
 	if (fd == 0xffffffff) {
 		kfree(path);
@@ -181,15 +186,6 @@ unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 		kfree(path);
         return 0xffffffff;
     }
-
-
-	if (path && path[0]) {
-		hash = file_cache_find(path);
-		if (hash) {
-			kfree(path);
-			return file_cache_read(hash, offset, buf, len);
-		}
-	}
 
 	kfree(path);
     ret = vfs_read_file(node, offset,buf,len);
@@ -504,15 +500,31 @@ static INODE fs_check_mountpoint(char* path)
 
 }
 
+
+static void fs_add_inode_cache(INODE node, char* path)
+{
+	vfs_refrence(node);
+	hash_insert(inode_cache, strdup(path), node);
+}
+
 static INODE fs_lookup_inode(char* path)
 {
     struct filesys_type* type = (void*)0;
 	INODE root;
 	char* parent = 0;
 	char* tmp;
+	key_value_pair* pair = 0;
 
 	if (!path || !*path)
 	  return 0;
+
+  pair = hash_find(inode_cache, path);
+  if (pair) {
+	  INODE ret = pair->val;
+	  vfs_refrence(ret);
+	  //printk("find cached inode %s\n", path);
+	  return ret;
+  }
 	
 	// find root file system
 	type = mount_lookup("/");
@@ -521,19 +533,16 @@ static INODE fs_lookup_inode(char* path)
 	
 	root = vfs_get_root(type);
 	if (!strcmp(path, "/")){
+		fs_add_inode_cache(root, path);
 		return root;
 	}
 	
-	parent = kmalloc(256);
-	memset(parent, 0, 256);
+	parent = kmalloc(64);
+	memset(parent, 0, 64);
 
 	strcpy(parent, path);
 	tmp = parent;
 
-	// FIXME
-	// check mount point every time takes too much effert
-	// linux will cache dirent with mount point info attached
-	//
 	do{
 		INODE p;
 		INODE node; 
@@ -548,13 +557,18 @@ static INODE fs_lookup_inode(char* path)
 			node = fs_check_mountpoint(parent);
 			if (!node) {
 				node = fs_get_dirent_node(p, tmp);
+			}else{
+				fs_add_inode_cache(node, parent);
 			}
 			vfs_free_inode(p);
 			if (!node){
 				*slash = '/';
 				node = fs_check_mountpoint(parent);
+				if (node) {
+					fs_add_inode_cache(node, parent);
+				}
 				kfree(parent);
-			  return node;
+				return node;
 			}
 			p = node;
 			tmp = slash+1;
@@ -564,6 +578,11 @@ static INODE fs_lookup_inode(char* path)
 		node = fs_check_mountpoint(parent);
 		if (!node) {
 			node = fs_get_dirent_node(p, tmp);
+			if (node) {
+				fs_add_inode_cache(node, path);
+			}
+		}else{
+			fs_add_inode_cache(node, parent);
 		}
 		vfs_free_inode(p);
 		kfree(parent);
@@ -770,7 +789,7 @@ static void test_stat(char* path)
 	printk("%s: is dir %d, size %d\n", path, S_ISDIR(s.st_mode), s.st_size);
 }
 
-static unsigned time_now()
+static unsigned _time_now()
 {
 	time_t t;
 	timer_current(&t);
@@ -790,10 +809,10 @@ static void test_write()
 
 	buf = kmalloc(1024);
 	memset(buf, 'd', 1024);
-	t = time_now();
+	t = _time_now();
 	for (i = 0; i < (3*1024); i++){
 		if (i % 100 == 0) {
-			unsigned span = time_now() - t;
+			unsigned span = _time_now() - t;
 			unsigned speed = 0;
 			if (span) {
 				speed=((100*1024) / span) * 1000;
@@ -804,9 +823,13 @@ static void test_write()
 			extern void report_time();
 			extern void report_hdd_time();
 			extern void report_cache();
+			extern void report_sched_time();
+			extern void mm_report();
 			report_time();
 			report_hdd_time();
 			report_cache();
+			report_sched_time();
+			mm_report();
 			#endif
 		}
 		fs_write(fd, i*1024, buf, 1024);
@@ -833,14 +856,15 @@ static void test_read()
 
 	buf = kmalloc(1024);
 	memset(buf, 0, 1024);
-	t = time_now();
+	t = _time_now();
 	while (1) {
 		printk("");
 		klogquota();
 		for (i = 0; i < (3*1024); i++){
 			if (i % 100 == 0) {
-				unsigned span = time_now() - t;
+				unsigned span = _time_now() - t;
 				unsigned speed = 0;
+
 				if (span) {
 					speed=((100*1024) / span) * 1000;
 				}
@@ -850,9 +874,13 @@ static void test_read()
 				extern void report_time();
 				extern void report_hdd_time();
 				extern void report_cache();
+				extern void report_sched_time();
+				extern void mm_report();
 				report_time();
 				report_hdd_time();
 				report_cache();
+				report_sched_time();
+				mm_report();
 				#endif
 			}
 			memset(buf, 0, 1024);
@@ -875,6 +903,7 @@ void test_ns()
 
 	printk("test_ns\n");
 	//list_dir("/", 0);
+	//test_write();
 	test_read();
 	klogquota();
 

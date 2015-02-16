@@ -1,11 +1,19 @@
-#include <fs/cache.h>
+#ifdef WIN32
+#include <osdep.h>
+#define CACHE_HASH_SIZE 1
+#elif defined MACOS
+#include <osdep.h>
+#else
 #include <fs/namespace.h>
 #include <fs/vfs.h>
 #include <mm/mm.h>
 #include <lib/klib.h>
+#define CACHE_HASH_SIZE 0
+#endif
+#include <fs/cache.h>
 #include <syscall/unistd.h>
 
-#define CACHE_HASH_SIZE 10
+
 
 typedef struct _file_cache_item
 {
@@ -17,12 +25,25 @@ typedef struct _file_cache_item
 
 static file_cache_item cache[CACHE_HASH_SIZE];
 
+hash_table* inode_cache;
 
 static void file_cache_add(char* path);
 static int file_cache_hash(char* path);
 
+static int str_cmp(void* key1, void* key2)
+{
+	char* str1 = key1;
+	char* str2 = key2;
+
+	if(!str1 || !*str1 || !str2 || !*str2)
+		return 0;
+
+	return strcmp(str1, str2);
+}
+
 void file_cache_init()
 {
+	inode_cache = hash_create(str_cmp);
 	memset(cache, 0, sizeof(cache));
 	//file_cache_add("/lib/libc.so.6");
 	//file_cache_add("/lib/ld-linux.so.2");

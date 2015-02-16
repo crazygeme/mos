@@ -133,15 +133,17 @@ struct _region_elem
 	struct _region_elem* next;
 };
 
-typedef struct _region_elem region_elem;
-typedef region_elem* region_elem_t;
+
+typedef void* vm_struct_t; 
 
 typedef struct _user_enviroment
 {
 	unsigned int page_dir; // every process needs it's own clone of page dir
-	unsigned heap_top;
-	unsigned zone_top;
-	region_elem_t region_head;
+    unsigned reserve;
+    unsigned heap_top;
+	//unsigned zone_top;
+    vm_struct_t vm;
+	//region_elem_t region_head;
 }user_enviroment;
 
 typedef enum _ps_status
@@ -196,7 +198,12 @@ typedef struct _task_struct
 	void* param;
 	user_enviroment user;
 	int priority;
+    // in schedule list
 	LIST_ENTRY ps_list;
+    // in wait list if waiting a lock
+    LIST_ENTRY lock_list;
+    // in all process list
+    LIST_ENTRY ps_mgr;
 	ps_status status;
     ps_type type;
     int remain_ticks;
@@ -232,17 +239,23 @@ void ps_update_tss(unsigned int esp0);
 // task functions
 void task_sched();
 
-void task_sched_wait(PLIST_ENTRY wait_list);
-
-void task_sched_wakeup(PLIST_ENTRY wait_list, int wakeup_all);
-
-void ps_cleanup_dying_task();
 
 typedef void (*fpuser_map_callback)(void* aux, unsigned vir, unsigned phy);
 
 void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux);
 
 void ps_cleanup_all_user_map(task_struct* task);
+
+void ps_put_to_ready_queue(task_struct* task);
+
+void ps_put_to_dying_queue(task_struct* task);
+
+void ps_put_to_wait_queue(task_struct* task);
+
+task_struct* ps_find_process(unsigned psid);
+
+// if process that >= priority exist
+int ps_has_ready(int priority);
 
 // syscall handler
 int sys_fork();

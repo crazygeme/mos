@@ -1,3 +1,27 @@
+* cygwin 环境
+    1. 安装 libmpc-devel libmpfr-devel libncurses-devel libgmp-devel
+    2. 下载binutils
+    3. ./configure --target=i386-elf --prefix=/usr/local --exec-prefix=/usr/local --disable-gdb
+    4. make & make install
+    5. 将 /usr/local/bin 加到PATH里， （写到.bashrc里然后source .bashrc）
+    7. 下载 gcc
+    8. ./configure --target=i386-elf --disable-nls --without-headers --disable-shared
+    9. make all-gcc
+    10. make install-gcc
+* 编译选项：
+	TEST_NS : 测试磁盘读写速度
+	DEBUG_FFS：打印更多的磁盘信息（在TEST_NS打开的情况下生效）
+	__DEBUG__：打印很多debug信息
+	__VERBOS_SYSCALL__：打印syscall（__DEBUG__打开的情况下生效）
+* COW时，负责新生成page的process完成它的切换后要flush cache (reload cr3)，否则可能会引起内存数据不一致
+* 先crate idle再create p0速度会变慢：
+	第一个create的process内存跟hdd cache临近
+	改进memcpy算法可以缓解
+	确保每个task_struct占内存为4 page的倍数
+* windows:
+	cygwin
+	qemu: http://qemu.weilnetz.de/w64/
+	compiler: http://www.crosstool-ng.org/#download_and_usage
 * KERNEL_CODE_SEGMENT = 0x8, 是模拟器启动/grub引导后的值
 * 引导后protect mode已经开了，但paging没开
 * 在cr3正确设置&&pageing enable之前，用的一直是物理地址，包括已经设置的interrupt地址等,所以到时候写mm模块的时候把这段起始空间保留下来直接map到物理地址，省的再设置一遍
@@ -130,4 +154,8 @@ load dynamic library(ld-linux.so.2)时必须有offset，不能直接load在0地�
 
 ----------------------------------------
 getdents/readdir等函数，返回值里的d_ino不能为0，否则认为是无效项
+
+----------------------------------------
+tty 大小
+ioctl(STDIN_FILENO, TIOCGWINSZ, &ts)
 

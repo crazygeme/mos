@@ -3,6 +3,7 @@
 #include <lib/klib.h>
 #include <config.h>
 #include <fs/vfs.h>
+#include <ps/ps.h>
 
 typedef struct _cy_buf
 {
@@ -80,7 +81,7 @@ unsigned char cyb_getc(cy_buf* b)
   length = b->len;
   unsigned read_idx;
   unsigned char ret;
-
+  task_struct* cur = CURRENT_TASK();
 
 
   if (length == 0)

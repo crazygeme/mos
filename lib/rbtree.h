@@ -93,9 +93,16 @@ return ret;
 
 #ifndef	_LINUX_RBTREE_H
 #define	_LINUX_RBTREE_H
-
+#ifdef WIN32
+#define _TIME_T_DEFINED
+#define _CTYPE_DEFINED
+#include <windows.h>
+#include <osdep.h>
+#else
 #include <lib/klib.h>
 #include <lib/list.h>
+#include <ps/lock.h>
+#endif
 
 #ifndef NULL
 #define NULL ((void*)0)
@@ -199,6 +206,7 @@ struct _hash_table
 {
 	struct rb_root root;
 	hash_comp_fn comp;
+	spinlock lock;
 };
 
 struct _key_value_pair
@@ -219,6 +227,10 @@ int hash_remove(hash_table* table, void* key);
 key_value_pair* hash_find(hash_table* table, void* key);
 
 int hash_update(hash_table* table, void* key, void* val);
+
+key_value_pair* hash_first(hash_table* table);
+
+key_value_pair* hash_next(hash_table* table, key_value_pair* pair);
 
 #ifdef DEBUG_RB
 

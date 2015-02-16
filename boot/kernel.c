@@ -18,6 +18,7 @@
 #include <fs/cache.h>
 #include <fs/pipechar.h>
 #include <drivers/serial.h>
+#include <drivers/vga.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -40,11 +41,15 @@ _START void kmain(multiboot_info_t* mb, unsigned int magic)
 
 
 static void kmain_process(void* param);
+static void idle_process(void* param);
 
 void kmain_startup()
 {
     int i = 0;
-    
+#ifdef FB_ENABLE
+    fb_enable();
+#endif
+
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
 
@@ -100,8 +105,14 @@ void kmain_startup()
 #ifndef TEST_LOCK
 
         printk("Start first process\n");
+
+    // create idle process
+    ps_create(idle_process, 0, 1, ps_kernel);
+
     // create first process
-    ps_create(kmain_process, 0, 1, ps_kernel);
+    ps_create(kmain_process, 0, 3, ps_kernel);
+
+
     ps_kickoff();
 
     // never going to here because ps0 never exit
@@ -113,10 +124,29 @@ void kmain_startup()
 
 }
 
+static void idle_process(void* param)
+{
+    task_struct* cur = CURRENT_TASK();
+    while (1) {
+        __asm__("hlt");
+
+        // wakeup by interrupt
+        if (ps_has_ready(1)) {
+            cur->remain_ticks = 5;
+        }
+        task_sched(); 
+    }
+}
 
 static void kmain_process(void* param)
 {
     klog_init();
+
+    #ifdef TEST_MMAP
+    extern vm_test();
+    vm_test();
+    for (;;);
+    #endif
 
     printk("Init vfs\n");
     vfs_init();
@@ -166,16 +196,15 @@ static void kmain_process(void* param)
     printk("Init system call table\n");
     syscall_init();
 
-
     klib_clear();
+
+    #ifdef TEST_GUI
+    extern gui_test();
+    gui_test();
+    #endif
+
     user_first_process_run();
 
-    // we never here
-    printk("idle\n");
-    while (1) {
-        // this can become wait syscall
-        ps_cleanup_dying_task();
-    }
     run();
 }
 
@@ -187,7 +216,9 @@ _START static void init(multiboot_info_t* mb)
 
 
     int_init();
-
+#ifdef FB_ENABLE
+    fb_init(mb);
+#endif
     mm_init(mb);
 	
 	
@@ -198,7 +229,5 @@ _START static void init(multiboot_info_t* mb)
 
 static void run()
 {
-
-	while(1){
-    }
+    idle_process(0);
 }

@@ -65,6 +65,8 @@
 			<F N="ps/elf.c"/>
 			<F N="fs/ext2.c"/>
 			<F N="fs/ffs.c"/>
+			<F N="gui/gui_core.c"/>
+			<F N="gui/gui_test.c"/>
 			<F N="drivers/hdd.c"/>
 			<F N="int/int.c"/>
 			<F N="int/int.S"/>
@@ -76,10 +78,13 @@
 			<F N="lib/list.c"/>
 			<F N="ps/lock.c"/>
 			<F N="mm/mm.c"/>
+			<F N="mm/mmap.c"/>
 			<F N="fs/mount.c"/>
 			<F N="fs/namespace.c"/>
 			<F N="fs/null.c"/>
 			<F N="mm/pagefault.c"/>
+			<F N="drivers/pci.c"/>
+			<F N="mm/phymm.c"/>
 			<F N="fs/pipechar.c"/>
 			<F N="ps/ps.c"/>
 			<F N="user/ps0.c"/>
@@ -90,6 +95,7 @@
 			<F N="int/timer.c"/>
 			<F N="drivers/tty.c"/>
 			<F N="fs/vfs.c"/>
+			<F N="drivers/vga.c"/>
 		</Folder>
 		<Folder
 			Name="Header Files"
@@ -105,6 +111,8 @@
 			<F N="fs/ext2.h"/>
 			<F N="fs/fcntl.h"/>
 			<F N="fs/ffs.h"/>
+			<F N="gui/gui_core.h"/>
+			<F N="gui/gui_test.h"/>
 			<F N="drivers/hdd.h"/>
 			<F N="int/int.h"/>
 			<F N="fs/kbchar.h"/>
@@ -113,11 +121,15 @@
 			<F N="lib/list.h"/>
 			<F N="ps/lock.h"/>
 			<F N="mm/mm.h"/>
+			<F N="mm/mmap.h"/>
 			<F N="fs/mount.h"/>
 			<F N="boot/multiboot.h"/>
 			<F N="fs/namespace.h"/>
 			<F N="fs/null.h"/>
 			<F N="mm/pagefault.h"/>
+			<F N="drivers/pci.h"/>
+			<F N="drivers/pci_list.h"/>
+			<F N="mm/phymm.h"/>
 			<F N="fs/pipechar.h"/>
 			<F N="ps/ps.h"/>
 			<F N="user/ps0.h"/>
@@ -130,6 +142,7 @@
 			<F N="drivers/tty.h"/>
 			<F N="syscall/unistd.h"/>
 			<F N="fs/vfs.h"/>
+			<F N="drivers/vga.h"/>
 		</Folder>
 		<Folder
 			Name="Resource Files"

@@ -9,8 +9,9 @@
 #else
 #include <lib/klib.h>
 #include <int/timer.h>
-#include <syscall/unistd.h>
 #endif
+#include <syscall/unistd.h>
+
 
 #define INODE_PER_SECTOR (BLOCK_SECTOR_SIZE / 4)
 #define META_PER_SECTOR (BLOCK_SECTOR_SIZE / (sizeof(struct ffs_meta_info)))
@@ -1066,7 +1067,9 @@ static DIR ffs_open_dir(INODE inode)
 
 	dir->type = inode->type;
 	dir->cur = 0;
-	memcpy(&dir->self, node, sizeof(*node));
+	vfs_refrence(node);
+	dir->self = inode;
+	//memcpy(&dir->self, node, sizeof(*node));
 	dir->ref_count = 0;
 	return dir;
 }
@@ -1090,7 +1093,7 @@ static INODE ffs_read_dir(DIR d)
 	ret = kmalloc(sizeof(*ret));
 	tmp = kmalloc(BLOCK_SECTOR_SIZE);
 	memset(tmp, 0, BLOCK_SECTOR_SIZE);
-	ffs_dentry_get_meta(&dir->self, dir->cur, &ret->meta, &ret->meta_sector, &ret->meta_offset, tmp);
+	ffs_dentry_get_meta(dir->self, dir->cur, &ret->meta, &ret->meta_sector, &ret->meta_offset, tmp);
 	if (!ret->meta_sector){
 		kfree(ret);
 		kfree(tmp);
@@ -1226,11 +1229,11 @@ static void ffs_add_dir_entry(DIR d, unsigned mode, char* name)
 	b.mode = mode;
 	b.name = name;
 	b.ok = 0;
-	ffs_enum_dentry(&dir->self, buf, 0, dir_add_empty_ino_callback, dir_add_dentry_hole_found, &b);
+	ffs_enum_dentry(dir->self, buf, 0, dir_add_empty_ino_callback, dir_add_dentry_hole_found, &b);
 
 	if (b.ok){
-		dir->self.meta.len++;
-		ffs_update_node_meta(&dir->self, buf);
+		dir->self->meta.len++;
+		ffs_update_node_meta(dir->self, buf);
 	}
 
 	kfree(buf);
@@ -1258,10 +1261,10 @@ static void ffs_del_dir_entry(DIR d, char* name)
 	memset(buf, 0, BLOCK_SECTOR_SIZE);
 	b.name = name;
 	b.ok = 0;
-	ffs_enum_dentry(&dir->self, buf, dir_delete_dentry_callback, 0, 0, &b);
+	ffs_enum_dentry(dir->self, buf, dir_delete_dentry_callback, 0, 0, &b);
 	if (b.ok){
-		dir->self.meta.len--;
-		ffs_update_node_meta(&dir->self, buf);
+		dir->self->meta.len--;
+		ffs_update_node_meta(dir->self, buf);
 	}
 	kfree(buf);
 	return;
@@ -1274,8 +1277,10 @@ static void ffs_del_dir_entry(DIR d, char* name)
  * 
  * @param dir 
  */
-static void ffs_close_dir(DIR dir)
+static void ffs_close_dir(DIR d)
 {
+	struct ffs_dir* dir = d;
+	vfs_free_inode(dir->self);
 	kfree(dir);
 	return;
 }
@@ -1328,7 +1333,7 @@ static int ffs_copy_stat(INODE node, struct stat* s, int is_dir)
 
 	if (is_dir) {
 		dir = (struct ffs_dir*)node;
-		n = &dir->self;
+		n = dir->self;
 		super = dir->type->sb;
 	}else{
 		n = node;

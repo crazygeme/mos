@@ -406,7 +406,7 @@ static void identify_ata_device ( ata_disk * d)
   issue_pio_command (c, CMD_IDENTIFY_DEVICE);
 
   //printk("[hdd] sema iden wait << \n");
-  sema_wait(&c->sema);
+  sema_wait_for_intr(&c->sema);
   //printk("[hdd] sema iden wait >> \n");
 
   if (!wait_while_busy (d))
@@ -604,6 +604,7 @@ static block_cache_item* hdd_cache_lookup(partition* p, int sector)
     return 0;
 
   ret = pair->val;
+  cache_hit++;
 
   return ret;
 }
@@ -688,7 +689,7 @@ static void flush_partition_cache(partition* p)
     {
       next = entry->Flink;
       block_cache_item* item = CONTAINER_OF(entry, block_cache_item, time_list);
-      if (item && item->sector != -1)
+      if (item && item->sector != -1 && item->dirty)
         {
           hdd_cache_flush(p, item);
         }
@@ -1025,7 +1026,7 @@ static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
 {
   ata_disk *d = aux;
   channel *c = d->channel;
-  sema_wait(&c->iolock);
+  sema_wait_for_intr(&c->iolock);
  #ifdef DEBUG_FFS
   break_hdd_read_select_begin();
  #endif
@@ -1039,7 +1040,7 @@ static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
 #endif
   issue_pio_command (c, CMD_READ_SECTOR_RETRY);
   //printk("[hdd] read  sema wait <<\n");
-  sema_wait (&c->sema);
+  sema_wait_for_intr (&c->sema);
   //printk("[hdd] read  sema wait >>\n");
 //if (!wait_while_busy (d)){
 //  printk ("%s: disk read failed, sector=%d\n", d->name, sec_no);
@@ -1068,7 +1069,7 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
 {
   ata_disk *d = aux;
   channel *c = d->channel;
-  sema_wait (&c->iolock);
+  sema_wait_for_intr (&c->iolock);
 #ifdef DEBUG_FFS
   break_hdd_write_select_begin();
 #endif
@@ -1093,7 +1094,7 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
   break_hdd_write_wait_begin();
 #endif
   //printk("[hdd] write sema wait <<\n");
-  sema_wait (&c->sema);
+  sema_wait_for_intr (&c->sema);
   //printk("[hdd] write sema wait >>\n");
 #ifdef DEBUG_FFS
   break_hdd_write_wait_end();

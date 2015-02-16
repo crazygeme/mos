@@ -1,9 +1,15 @@
-#include <fs/ext2.h>
-#include <drivers/block.h>
-#include <fs/vfs.h>
 #include <config.h>
-#include <syscall/unistd.h>
+#include <fs/ext2.h>
+#include <fs/vfs.h>
+#include <drivers/block.h>
+#ifdef WIN32
+#include <osdep.h>
+#include <time.h>
+#else
 #include <lib/klib.h>
+#endif
+#include <syscall/unistd.h>
+
 
 static INODE ext2_create_inode (struct filesys_type*);
 static void ext2_destroy_inode (struct filesys_type*,INODE);
@@ -36,6 +42,9 @@ static int ext2_read_inode(void* type, unsigned int group, unsigned int ino, str
 
 #define EXT2_DESCS_PER_BLOCK(b) \
 	(EXT2_BLOCK_SIZE(b) / sizeof(struct ext2_bg_descriptor))
+
+#define EXT2_BNOS_PER_BLOCK(b) \
+	(EXT2_BLOCK_SIZE(b) / sizeof(unsigned))
 
 #define EXT2_INODES_PER_SECTOR(b) \
 	(BLOCK_SECTOR_SIZE / b->s_inode_size)
@@ -198,11 +207,6 @@ void ext2_attach(block* b)
 #endif
 
 
-    do {
-        char path[32] = "/dev/";
-        strcat(path, b->name);
-        do_mount(path, type);
-    }while (0);
 }
 
 static int ext2_read_inode(void* aux, unsigned int group, unsigned int ino, struct ext2_inode* buf)
@@ -329,6 +333,9 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
 			remain;
 		unsigned data_block = ext2_get_blockno(info->type, inode->i_block, blockno);
 		
+		if (data_block == 0)
+			break;
+
 		ext2_read_block(info->type, data_block, block_buf);
 		tmp = block_buf + blockoff;
 		memcpy(tmpbuf, tmp, read_len);
@@ -343,7 +350,7 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
 		tmpbuf += read_len;
 	}
 
-	return len;
+	return (len - remain);
 	
 }
 static unsigned ext2_write_file(INODE inode, unsigned int offset, void* buf, unsigned len)
@@ -493,15 +500,23 @@ static unsigned int ext2_get_blockno(void* aux, unsigned int* blocks, unsigned i
 	struct filesys_type* fs = (struct filesys_type*)aux;
 	struct ext2_super_block* sb = (struct ext2_super_block*)fs->sb;
 	unsigned int block_size = EXT2_BLOCK_SIZE(sb);
-
+	
 	if (index < EXT2_NDIR_BLOCKS){
 		return blocks[index];
-	}else if ( (index >= EXT2_NDIR_BLOCKS) && (index < (EXT2_NDIR_BLOCKS + block_size)) ){
+	}
+	else if ((index >= EXT2_NDIR_BLOCKS) && (index < (EXT2_NDIR_BLOCKS + EXT2_BNOS_PER_BLOCK(sb)))){
 		// from 12 to (BLOCK_SIZE / 4) + 12, in indirect table
-		printk("unimpl indirect block table\n");
-		return 0;
+		unsigned indirect_node = blocks[EXT2_NDIR_BLOCKS];
+		unsigned int* indirect_table = (unsigned int*)kmalloc(block_size);
+		unsigned ret = 0;
+
+		ext2_read_block(aux, indirect_node, indirect_table);
+		ret = indirect_table[index - EXT2_NDIR_BLOCKS];
+		//printk("unimpl indirect block table, block index %d, file index %x\n", index, index*block_size);
+		kfree(indirect_table);
+		return ret;
 	}else{
-		printk("unimpl double indirect and trible indirect block table\n");
+		printk("unimpl double indirect and trible indirect block table, block index %d, file index %x\n", index, index*block_size);
 		return 0;
 	}
 }

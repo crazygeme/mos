@@ -10,12 +10,16 @@ ASM 	= /opt/local/bin/nasm
 LD		= /opt/local/bin/i386-elf-ld
 OS		= Darwin
 else
+CC      = i386-elf-gcc
+ASM     = nasm
+LD      = i386-elf-ld
+OS      = Cygwin
 endif
 endif
 
 CSTRICT	= -Werror=return-type -Werror=uninitialized
 CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
-	-D__KERNEL__ -DTEST_GUI\
+	-D__KERNEL__ -D__DEBUG__ -D__VERBOS_SYSCALL__\
 	-I./
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
@@ -32,6 +36,7 @@ OBJS	= boot.o \
 		  dsr.o\
 		  mm.o\
 		  mmap.o\
+		  phymm.o\
 		  timer.o\
 		  ps.o\
 		  lock.o\
@@ -102,6 +107,9 @@ mm.o: mm/mm.c mm/mm.h boot/multiboot.h mm/mmap.h
 
 mmap.o: mm/mmap.c mm/mmap.h mm/mm.h
 	$(CC) $(CFLAGS) -o mmap.o mm/mmap.c
+
+phymm.o: mm/phymm.c mm/phymm.h mm/mm.h
+	$(CC) $(CFLAGS) -o phymm.o mm/phymm.c
 
 timer.o: int/timer.c int/timer.h
 	$(CC) $(CFLAGS) -o timer.o int/timer.c

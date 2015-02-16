@@ -46,8 +46,9 @@ static void idle_process(void* param);
 void kmain_startup()
 {
     int i = 0;
-
+#ifdef FB_ENABLE
     fb_enable();
+#endif
 
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
@@ -125,11 +126,15 @@ void kmain_startup()
 
 static void idle_process(void* param)
 {
+    task_struct* cur = CURRENT_TASK();
     while (1) {
         __asm__("hlt");
 
         // wakeup by interrupt
-        task_sched();
+        if (ps_has_ready(1)) {
+            cur->remain_ticks = 5;
+        }
+        task_sched(); 
     }
 }
 
@@ -211,8 +216,9 @@ _START static void init(multiboot_info_t* mb)
 
 
     int_init();
-
+#ifdef FB_ENABLE
     fb_init(mb);
+#endif
     mm_init(mb);
 	
 	

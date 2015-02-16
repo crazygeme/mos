@@ -93,10 +93,16 @@ return ret;
 
 #ifndef	_LINUX_RBTREE_H
 #define	_LINUX_RBTREE_H
-
+#ifdef WIN32
+#define _TIME_T_DEFINED
+#define _CTYPE_DEFINED
+#include <windows.h>
+#include <osdep.h>
+#else
 #include <lib/klib.h>
 #include <lib/list.h>
 #include <ps/lock.h>
+#endif
 
 #ifndef NULL
 #define NULL ((void*)0)

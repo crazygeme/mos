@@ -389,31 +389,36 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
 extern short pgc_entry_count[1024];
 static void ps_dup_user_page(unsigned vir, unsigned int* new_ps, unsigned flag)
 {
+    unsigned target_page_idx = mm_get_attached_page_index(vir);
+    unsigned target_page_addr = target_page_idx * PAGE_SIZE;
     unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
     unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
+    unsigned int* cur_page_table;
+    unsigned int* cur_page_dir = mm_get_pagedir();
+    task_struct* cur = CURRENT_TASK();
     unsigned int* page_table;
     unsigned int tmp, phy;
     int i = 0, idx;
 
-    if (!new_ps[page_dir_offset]) {
+    if (!(new_ps[page_dir_offset]&PAGE_SIZE_MASK)) {
         new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
         new_ps[page_dir_offset] |= flag;
 
     }
 
     page_table = (new_ps[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET;
+    cur_page_table = (cur_page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET;
+    cur_page_table[page_table_offset] &= ~PAGE_ENTRY_WRITABLE;
 
     phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
     if (!phy) {
         idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
         pgc_entry_count[idx]++;
     }
-    tmp = vm_alloc(1);
-    page_table[page_table_offset] = tmp - KERNEL_OFFSET;
-    page_table[page_table_offset] |= flag;
-    memcpy(tmp, vir, PAGE_SIZE);
-    vm_free(tmp, 1);
-    mm_set_phy_page_mask( (tmp-KERNEL_OFFSET) / PAGE_SIZE, 1);
+
+    page_table[page_table_offset] = cur_page_table[page_table_offset];
+    mm_set_phy_page_mask(target_page_idx, 1);
+    phymm_set_cow(target_page_idx);
 }
 
 
@@ -862,6 +867,23 @@ static void _task_sched() {
 void task_sched()
 {
 	_task_sched();
+}
+
+int ps_has_ready(int priority)
+{
+    int i = 0;
+
+    if (priority >= MAX_PRIORITY || priority < 0) {
+        return 0;
+    }
+
+    for (i = priority; i < MAX_PRIORITY; i++) {
+        LIST_ENTRY* head = &(control.ready_queue[i]);
+        if (!IsListEmpty(head))
+            return 1;
+    }
+
+    return 0;
 }
 
 

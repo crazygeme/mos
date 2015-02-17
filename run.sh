@@ -56,11 +56,6 @@ if [ "$_curses" == "-curses" ]; then
 fi
 
 if [ "$_rebuild" == "1" ]; then
-	cd ffstool
-	make clean
-	make
-	cd ..
-
 	cd user
 	make clean
 	make
@@ -71,18 +66,18 @@ if [ "$_rebuild" == "1" ]; then
 fi
 
 if [ "$_format" == "1" ]; then
-	if [ -e "$diskfile" ]; then
-		rm "$diskfile"
+	if [ "$(uname)" == "linux" ]; then
+		mkdir mnt
+		sudo mount -t ext2 -o loop,offset=1048576 rootfs.img mnt
+		cp -f user/bin/* mnt/bin/
+		cp -f user/lib/* mnt/lib/
+		cp -f user/stable/bin/* mnt/bin/
+		cp -f iser/stable/lib/* mnt/lib/
+		sudo umount mnt
+		rm -rf mnt
+	else
+		echo "Only support on linux"
 	fi
-	cp rootfs.img $diskfile
-	cd ffstool
-	if [ ! -e ffstool ]; then
-		make
-	fi
-	echo "format $diskfile"
-	./ffstool format
-	echo "done"
-	cd ..
 fi
 
 

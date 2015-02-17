@@ -86,7 +86,7 @@ static void pf_process(intr_frame* frame)
         unsigned flag;
 
         cow = phymm_is_cow(page_index);
-        klog("ps %d write %x fault, cow %d\n", cur->psid, page_index, cow);
+        // klog("ps %d write %x fault, cow %d\n", cur->psid, page_index, cow);
         if (cow) {
             vir = cr2; 
             tmp = vm_alloc(1);

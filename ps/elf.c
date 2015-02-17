@@ -134,7 +134,7 @@ static unsigned elf_map_section_at(unsigned fd, Elf32_Phdr* phdr, unsigned bias)
 
     for (i = va_begin; i <= va_end; i+=PAGE_SIZE) {
         do_mmap(i+bias, PAGE_SIZE, 0, 0, -1, 0);
-        memset(i+bias, 0, PAGE_SIZE);
+        // memset(i+bias, 0, PAGE_SIZE);
     }
 
     fs_read(fd, file_off, phdr->p_vaddr+bias, fileSiz);
@@ -268,7 +268,6 @@ unsigned elf_map(char* path, mos_binfmt* fmt)
             elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
             fmt->interp_load_addr = entry_point;
         }else{
-            
             elf_map_elf_hdr(fd,elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
             elf_map_dynamic(interp, fmt);
             //fmt->interp_load_addr = entry_point;

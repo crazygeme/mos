@@ -34,6 +34,7 @@ unsigned fs_open(char* path)
 	DIR dir = 0;
     unsigned fd;
 	char* fullPath = kmalloc(64);
+    key_value_pair* pair;
 	memset(fullPath, 0, 64);
 	
 
@@ -44,13 +45,9 @@ unsigned fs_open(char* path)
 		strcpy(fullPath, path);
 	}
 
-	node = fs_lookup_inode(fullPath);
-
-
-
+    node = fs_lookup_inode(fullPath); 
 
     if (!node) {
-
 		kfree(fullPath);
         return -ENOENT;
     }

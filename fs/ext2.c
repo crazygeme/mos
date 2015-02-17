@@ -319,6 +319,7 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
 	unsigned int blockoff = offset % block_size;
 	unsigned int remain;
 	char* tmpbuf = buf;
+    char* block_buf = kmalloc(block_size);
 
 	if ((offset + len) > inode->i_size){
 		len = inode->i_size - offset;
@@ -326,7 +327,6 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
 	
 	remain = len;
 	while (remain){
-		char* block_buf = kmalloc(block_size);
 		char* tmp;
 		unsigned int read_len = ((blockoff + remain) > block_size) ? 
 			(block_size - blockoff) :
@@ -339,7 +339,6 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
 		ext2_read_block(info->type, data_block, block_buf);
 		tmp = block_buf + blockoff;
 		memcpy(tmpbuf, tmp, read_len);
-		kfree(block_buf);
 		
 		remain -= read_len;
 		if (!remain)
@@ -350,6 +349,7 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
 		tmpbuf += read_len;
 	}
 
+    kfree(block_buf);
 	return (len - remain);
 	
 }

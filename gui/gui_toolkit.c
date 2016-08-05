@@ -16,12 +16,12 @@ struct _gui_base
     fp_gui_event on_event;
 };
 
-static void gui_base_init(gui_base_t base, void* fb_buffer, 
-                          int x, int y, int width, int height, 
-                          gui_base_t parent, unsigned color, 
-                          fp_gui_event onevent)
+static void gui_base_init(gui_base_t base, void* fb_buffer,
+    int x, int y, int width, int height,
+    gui_base_t parent, unsigned color,
+    fp_gui_event onevent)
 {
-    
+
     base->x = x;
     base->y = y;
     base->width = width;
@@ -40,12 +40,14 @@ static void gui_draw(gui_base_t base)
     LIST_ENTRY* child = 0;
     LIST_ENTRY* children = &base->children;
 
-    if (base && base->on_event) {
+    if (base && base->on_event)
+    {
         base->on_event(base, WM_DRAW, 0);
     }
 
     child = children->Flink;
-    while (child != children) {
+    while (child != children)
+    {
         gui_base_t c = CONTAINER_OF(child, struct _gui_base, self);
         gui_draw(c);
         child = child->Flink;
@@ -61,7 +63,8 @@ static unsigned hw_buffer_size;
 static gui_event_result gui_topmost_event(gui_base_t base, gui_event e, void* param)
 {
     gui_event_result result = WS_UNHANDLE;
-    switch (e) {
+    switch (e)
+    {
     case WM_DRAW:
         memcpy(base->draw_buffer, background, hw_buffer_size);
         break;

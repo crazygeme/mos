@@ -14,15 +14,15 @@ void pf_init()
 {
     page_fault_count = 0;
     page_falut_total_time = 0;
-	int_register(0xe, pf_process, 0, 0);
+    int_register(0xe, pf_process, 0, 0);
 }
 
 /*
 31                4                             0
 +-----+-...-+-----+-----+-----+-----+-----+-----+
 |     Reserved    | I/D | RSVD| U/S | W/R |  P  |
-+-----+-...-+-----+-----+-----+-----+-----+-----+ 
- 
++-----+-...-+-----+-----+-----+-----+-----+-----+
+
 */
 #define PF_MASK_P       0x00000001  // page valid
 #define PF_MASK_RW      0x00000002  // write access
@@ -56,27 +56,34 @@ static void pf_process(intr_frame* frame)
     write_access = ((error & PF_MASK_RW) == PF_MASK_RW);
     user_mode = ((error & PF_MASK_US) == PF_MASK_US);
 
-    if (!page_valid) {
+    if (!page_valid)
+    {
         vm_region* region;
         unsigned this_offset;
         INODE fd;
 
         this_begin = cr2 & PAGE_SIZE_MASK;
 
-        region = vm_find_map(cur->user.vm, this_begin); 
-        if (region) {
-            fd = region->node; 
+        region = vm_find_map(cur->user.vm, this_begin);
+        if (region)
+        {
+            fd = region->node;
             this_offset = region->offset + (this_begin - region->begin);
             mm_add_dynamic_map(this_begin, 0, PAGE_ENTRY_USER_DATA);
             memset(this_begin, 0, PAGE_SIZE);
-            if (fd != 0) {
+            if (fd != 0)
+            {
                 vfs_read_file(fd, this_offset, this_begin, PAGE_SIZE);
             }
             goto Done;
-        } else {
+        }
+        else
+        {
             printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
         }
-    } else if (write_access) {
+    }
+    else if (write_access)
+    {
         unsigned page_index = mm_get_attached_page_index(cr2);
         task_struct* cur = CURRENT_TASK();
         unsigned cow;
@@ -87,35 +94,41 @@ static void pf_process(intr_frame* frame)
 
         cow = phymm_is_cow(page_index);
         // klog("ps %d write %x fault, cow %d\n", cur->psid, page_index, cow);
-        if (cow) {
-            vir = cr2; 
+        if (cow)
+        {
+            vir = cr2;
             tmp = vm_alloc(1);
             memcpy(tmp, (vir&PAGE_SIZE_MASK), PAGE_SIZE);
             flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_PRESENT;
             flag |= PAGE_ENTRY_WRITABLE;
             mm_del_dynamic_map(vir);
-            mm_add_dynamic_map(vir, tmp-KERNEL_OFFSET, flag);
+            mm_add_dynamic_map(vir, tmp - KERNEL_OFFSET, flag);
             vm_free(tmp, 1);
             RELOAD_CR3(cr3);
-        }else{
+        }
+        else
+        {
             flag = mm_get_map_flag(cr2);
             flag |= PAGE_ENTRY_WRITABLE;
-            mm_set_map_flag(cr2,flag);
+            mm_set_map_flag(cr2, flag);
         }
 
         goto Done;
-    } else {
+    }
+    else
+    {
         printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
     }
 
-	for(;;)
+    for (;;)
     {
         __asm__("hlt");
     }
 
- Done:
-    if (oldint) {
+Done:
+    if (oldint)
+    {
         int_intr_enable();
     }
 

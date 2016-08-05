@@ -26,7 +26,8 @@ _START static void init(multiboot_info_t* mb);
 _START void kmain(multiboot_info_t* mb, unsigned int magic)
 {
 
-    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
+    if (magic != MULTIBOOT_BOOTLOADER_MAGIC)
+    {
         return;
     }
 
@@ -34,9 +35,9 @@ _START void kmain(multiboot_info_t* mb, unsigned int magic)
     init(mb);
 
 
-	// never to here
-	
-	return;
+    // never to here
+
+    return;
 }
 
 
@@ -66,7 +67,7 @@ void kmain_startup()
 
     printk("Init keyboard\n");
     kb_init();
-	
+
     printk("Init timer\n");
     timer_init();
 
@@ -76,35 +77,35 @@ void kmain_startup()
 
 
 #ifdef TEST_MALLOC
-	extern test_malloc_process();
-	test_malloc_process();
+    extern test_malloc_process();
+    test_malloc_process();
 #endif
 
 #ifdef TEST_MM
-	mm_test();
+    mm_test();
 #endif
 
-        printk("Init process\n");
-	ps_init();
+    printk("Init process\n");
+    ps_init();
 
-        printk("Init page fault\n");
-        pf_init();
+    printk("Init page fault\n");
+    pf_init();
 
 #ifdef TEST_PS
-	//ps_mmm();
-	extern void test_ps_process();
+    //ps_mmm();
+    extern void test_ps_process();
     test_ps_process();
 #endif
 
 #ifdef TEST_LOCK
-	extern void test_event_process();
-	test_event_process();
+    extern void test_event_process();
+    test_event_process();
 #endif
 
 #ifndef TEST_PS
 #ifndef TEST_LOCK
 
-        printk("Start first process\n");
+    printk("Start first process\n");
 
     // create idle process
     ps_create(idle_process, 0, 1, ps_kernel);
@@ -120,17 +121,18 @@ void kmain_startup()
 #endif
 
 
-	run();
+    run();
 
 }
 
 static void idle_process(void* param)
 {
     task_struct* cur = CURRENT_TASK();
-    while (1) {
+    while (1)
+    {
         __asm__("hlt");
 
-        task_sched(); 
+        task_sched();
     }
 }
 
@@ -138,11 +140,11 @@ static void kmain_process(void* param)
 {
     klog_init();
 
-    #ifdef TEST_MMAP
+#ifdef TEST_MMAP
     extern vm_test();
     vm_test();
     for (;;);
-    #endif
+#endif
 
     printk("Init vfs\n");
     vfs_init();
@@ -175,8 +177,8 @@ static void kmain_process(void* param)
     printk("Cache init done\n");
 
 #ifdef TEST_BLOCK
-	extern void test_block_process();
-	test_block_process();
+    extern void test_block_process();
+    test_block_process();
 #endif
 
 #ifdef TEST_MOUNT
@@ -185,8 +187,8 @@ static void kmain_process(void* param)
 #endif
 
 #ifdef TEST_NS
-	extern void test_ns();
-	test_ns();
+    extern void test_ns();
+    test_ns();
 #endif
 
     printk("Init system call table\n");
@@ -194,10 +196,10 @@ static void kmain_process(void* param)
 
     klib_clear();
 
-    #ifdef TEST_GUI
+#ifdef TEST_GUI
     extern gui_test();
     gui_test();
-    #endif
+#endif
 
     user_first_process_run();
 
@@ -216,10 +218,10 @@ _START static void init(multiboot_info_t* mb)
     fb_init(mb);
 #endif
     mm_init(mb);
-	
-	
-	// never to here
-	return;
+
+
+    // never to here
+    return;
 
 }
 

@@ -26,35 +26,43 @@ static spinlock wait_queue_lock;
 static spinlock mgr_queue_lock;
 static unsigned int ps_id;
 static void ps_restore_user_map();
-static void lock_ps() {
+static void lock_ps()
+{
     spinlock_lock(&ps_lock);
 }
 
-static void unlock_ps() {
+static void unlock_ps()
+{
     spinlock_unlock(&ps_lock);
 }
 
-static void lock_dying() {
+static void lock_dying()
+{
     spinlock_lock(&dying_queue_lock);
 }
 
-static void unlock_dying() {
+static void unlock_dying()
+{
     spinlock_unlock(&dying_queue_lock);
 }
 
-static void lock_waiting() {
+static void lock_waiting()
+{
     spinlock_lock(&wait_queue_lock);
 }
 
-static void unlock_waiting() {
+static void unlock_waiting()
+{
     spinlock_unlock(&wait_queue_lock);
 }
 
-static void lock_mgr() {
+static void lock_mgr()
+{
     spinlock_lock(&mgr_queue_lock);
 }
 
-static void unlock_mgr() {
+static void unlock_mgr()
+{
     spinlock_unlock(&mgr_queue_lock);
 }
 
@@ -75,7 +83,8 @@ static void ps_remove_mgr(task_struct* task)
 static void ps_notify_process(unsigned pid)
 {
     task_struct* task = ps_find_process(pid);
-    if (task) {
+    if (task)
+    {
         ps_put_to_ready_queue(task);
     }
 }
@@ -89,14 +98,18 @@ task_struct* ps_find_process(unsigned psid)
     lock_mgr();
 
     entry = head->Flink;
-    while (entry != head) {
+    while (entry != head)
+    {
         task = CONTAINER_OF(entry, task_struct, ps_mgr);
-        if (task->psid == psid) {
+        if (task->psid == psid)
+        {
             break;
-        }else{
+        }
+        else
+        {
             task = 0;
         }
-        entry = entry->Flink; 
+        entry = entry->Flink;
     }
     unlock_mgr();
 
@@ -107,8 +120,9 @@ void ps_put_to_dying_queue(task_struct* task)
 {
     // Remove from whatever queue it is, then put into dying queue
     lock_dying();
-    if (task->ps_list.Flink && task->ps_list.Blink) {
-        RemoveEntryList(&task->ps_list); 
+    if (task->ps_list.Flink && task->ps_list.Blink)
+    {
+        RemoveEntryList(&task->ps_list);
     }
     if (task->psid != 0xffffffff)
         InsertTailList(&control.dying_queue, &task->ps_list);
@@ -119,11 +133,12 @@ void ps_put_to_wait_queue(task_struct* task)
 {
     // Remove from whatever queue it is, then put into wait queue
     lock_waiting();
-    if (task->ps_list.Flink && task->ps_list.Blink) {
-        RemoveEntryList(&task->ps_list); 
+    if (task->ps_list.Flink && task->ps_list.Blink)
+    {
+        RemoveEntryList(&task->ps_list);
     }
-    if (task->psid != 0xffffffff) 
-        InsertTailList(&control.wait_queue, &task->ps_list); 
+    if (task->psid != 0xffffffff)
+        InsertTailList(&control.wait_queue, &task->ps_list);
 
     unlock_waiting();
 }
@@ -132,8 +147,9 @@ void ps_put_to_ready_queue(task_struct* task)
 {
     // Remove from whatever queue it is, then put into ready queue
     lock_ps();
-    if (task->ps_list.Flink && task->ps_list.Blink) {
-        RemoveEntryList(&task->ps_list); 
+    if (task->ps_list.Flink && task->ps_list.Blink)
+    {
+        RemoveEntryList(&task->ps_list);
     }
 
     if (task->psid != 0xffffffff)
@@ -147,23 +163,28 @@ static task_struct* ps_get_available_ready_task(LIST_ENTRY* ready_queue)
     task_struct* task = 0;
     entry = ready_queue->Flink;
 
-    while (entry != ready_queue) {
-        task = CONTAINER_OF(entry, task_struct, ps_list); 
-        if (task->status == ps_dying) {
+    while (entry != ready_queue)
+    {
+        task = CONTAINER_OF(entry, task_struct, ps_list);
+        if (task->status == ps_dying)
+        {
             task = 0;
             entry = entry->Flink;
             continue;
-        }else{
+        }
+        else
+        {
             break;
         }
     }
 
     // put it to last, so it will not be picked immediately next time
-    if (task) {
+    if (task)
+    {
         RemoveEntryList(&task->ps_list);
         InsertTailList(&control.ready_queue[task->priority], &task->ps_list);
     }
-    return task; 
+    return task;
 }
 
 static task_struct* ps_get_next_task()
@@ -173,16 +194,21 @@ static task_struct* ps_get_next_task()
     LIST_ENTRY* ready_queue;
     lock_ps();
 
-    for (; i >=0; i--) {
+    for (; i >= 0; i--)
+    {
         ready_queue = &control.ready_queue[i];
-        if (IsListEmpty(ready_queue)) {
+        if (IsListEmpty(ready_queue))
+        {
             continue;
         }
 
         task = ps_get_available_ready_task(ready_queue);
-        if (!task) {
+        if (!task)
+        {
             continue;
-        }else{
+        }
+        else
+        {
             break;
         }
     }
@@ -204,7 +230,8 @@ static void sched_cal_begin()
 static void sched_cal_end()
 {
     sched_end = time_now();
-    if (sched_begin) {
+    if (sched_begin)
+    {
         task_schedule_time += (sched_end - sched_begin);
     }
     sched_begin = sched_end = 0;
@@ -215,11 +242,12 @@ void report_sched_time()
     unsigned total = time_now();
     unsigned sched = task_schedule_time;
 
-    printk("total time: %d.%d, sched used %d.%d\n", (total/1000), (total%1000),
-           (sched/1000), (sched%1000));
+    printk("total time: %d.%d, sched used %d.%d\n", (total / 1000), (total % 1000),
+        (sched / 1000), (sched % 1000));
 }
 
-static void ps_run() {
+static void ps_run()
+{
     task_struct *task;
     process_fn fn;
     void *param;
@@ -230,7 +258,8 @@ static void ps_run() {
     task->status = ps_running;
     task->is_switching = 0;
     fn = task->fn;
-    if (fn) {
+    if (fn)
+    {
         fn(task->param);
     }
 
@@ -248,12 +277,14 @@ static void ps_run() {
 static int debug = 0;
 static tss_struct* tss_address = 0;
 
-void ps_init() {
+void ps_init()
+{
     int i = 0;
     InitializeListHead(&control.dying_queue);
     InitializeListHead(&control.wait_queue);
     InitializeListHead(&control.mgr_queue);
-    for (i = 0; i < MAX_PRIORITY; i++) {
+    for (i = 0; i < MAX_PRIORITY; i++)
+    {
         InitializeListHead(&control.ready_queue[i]);
     }
     spinlock_init(&ps_lock);
@@ -265,7 +296,7 @@ void ps_init() {
     _ps_enabled = 0;
     task_schedule_time = 0;
     sched_begin = sched_end = 0;
-	debug = 0;
+    debug = 0;
     tss_address = kmalloc(sizeof(tss_struct));
     int_update_tss((unsigned int)tss_address);
 
@@ -274,11 +305,12 @@ void ps_init() {
 
 
 int ps_enabled()
-{ 
+{
     return _ps_enabled;
 }
 
-unsigned int ps_id_gen() {
+unsigned int ps_id_gen()
+{
     unsigned int ret;
     spinlock_lock(&psid_lock);
     ret = ps_id;
@@ -305,19 +337,21 @@ typedef struct _stack_frame
 
 // FIXME
 // now we ignore priority
-unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
+unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
+{
     unsigned int stack_buttom;
     int i = 0;
     int size = 0;
     task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
     stack_frame *frame;
 
-    if (priority >= MAX_PRIORITY) {
+    if (priority >= MAX_PRIORITY)
+    {
         vm_free(task, 1);
         return 0xffffffff;
     }
 
-    memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE); 
+    memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
 
     size = sizeof(*task);
 
@@ -340,7 +374,8 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     task->is_switching = 0;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
 
-    for (i = 0; i < MAX_FD; i++) {
+    for (i = 0; i < MAX_FD; i++)
+    {
         task->fds[i].file = 0;
         task->fds[i].file_off = 0;
         task->fds[i].flag = 0;
@@ -351,17 +386,17 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type) {
     //strcpy(task->cwd, "\0");
 
     sema_init(&task->fd_lock, "fd_lock", 0);
-    task->magic = 0xdeadbeef; 
+    task->magic = 0xdeadbeef;
 
     frame = (stack_frame *)(unsigned int)(stack_buttom - sizeof(*frame));
     frame->ebp = stack_buttom;
     frame->eip = (unsigned int)ps_run;
-    frame->fs = frame->gs = frame->es = frame->ss = frame->ds = 
+    frame->fs = frame->gs = frame->es = frame->ss = frame->ds =
         KERNEL_DATA_SELECTOR;
 
     task->esp0 = task->esp = (unsigned int)frame;
     ps_put_to_ready_queue(task);
-	
+
     ps_add_mgr(task);
     return task->psid;
 }
@@ -372,8 +407,10 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
     int i = 0;
     memset(task->fds, 0, PAGE_SIZE);
     sema_wait(&cur->fd_lock);
-    for (i = 0; i < MAX_FD; i++) {
-        if (!cur->fds[i].flag) {
+    for (i = 0; i < MAX_FD; i++)
+    {
+        if (!cur->fds[i].flag)
+        {
             continue;
         }
 
@@ -401,18 +438,20 @@ static void ps_dup_user_page(unsigned vir, task_struct* task, unsigned flag)
     unsigned int tmp, phy;
     int i = 0, idx;
 
-    if (!(new_ps[page_dir_offset]&PAGE_SIZE_MASK)) {
+    if (!(new_ps[page_dir_offset] & PAGE_SIZE_MASK))
+    {
         new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
         new_ps[page_dir_offset] |= flag;
 
     }
 
-    page_table = (new_ps[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET;
-    cur_page_table = (cur_page_dir[page_dir_offset]&PAGE_SIZE_MASK) + KERNEL_OFFSET;
+    page_table = (new_ps[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET;
+    cur_page_table = (cur_page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET;
     cur_page_table[page_table_offset] &= ~PAGE_ENTRY_WRITABLE;
 
     phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
-    if (!phy) {
+    if (!phy)
+    {
         idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
         pgc_entry_count[idx]++;
     }
@@ -438,21 +477,22 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
     unsigned int cr3;
 
     __asm__("movl %%cr3, %0" : "=q"(cr3));
-    per_ps = (unsigned int*)(cr3+KERNEL_OFFSET);
+    per_ps = (unsigned int*)(cr3 + KERNEL_OFFSET);
     task->user.page_dir = vm_alloc(1);
 
     vm_dup(cur->user.vm, task->user.vm);
-    
+
     // FIXME
     // change it into COW
     new_ps = (unsigned int*)task->user.page_dir;
-    for (i = 0; i < 1024; i++) {
+    for (i = 0; i < 1024; i++)
+    {
         new_ps[i] = 0;
     }
 
 
     ps_enum_user_map(cur, ps_enum_for_dup, task);
-    
+
 }
 
 static void ps_resolve_ebp_to_new(unsigned ebp)
@@ -460,13 +500,16 @@ static void ps_resolve_ebp_to_new(unsigned ebp)
     unsigned offset;
     unsigned bottom = ebp & PAGE_SIZE_MASK;
     unsigned top = bottom + PAGE_SIZE - 4;
-    while (ebp != 0 && ebp > bottom && ebp < top) {
-        unsigned *saved = (unsigned *)ebp; 
+    while (ebp != 0 && ebp > bottom && ebp < top)
+    {
+        unsigned *saved = (unsigned *)ebp;
         unsigned saved_ebp = *saved;
-        if (saved_ebp == 0 || saved_ebp < KERNEL_OFFSET) {
+        if (saved_ebp == 0 || saved_ebp < KERNEL_OFFSET)
+        {
             return;
         }
-        if (saved_ebp > top || saved_ebp < bottom) {
+        if (saved_ebp > top || saved_ebp < bottom)
+        {
             offset = saved_ebp & (~PAGE_SIZE_MASK);
             *saved = bottom + offset;
         }
@@ -497,22 +540,22 @@ int sys_fork()
     int is_parent = 0;
 
 #ifdef __VERBOS_SYSCALL__
-	klog("fork()\n");
+    klog("fork()\n");
 #endif
     memcpy(task, cur, PAGE_SIZE);
     task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
     sema_init(&task->fd_lock, "fd_lock", 0);
-    __asm__ ("movl %%esp, %0" : "=m"(esp));
+    __asm__("movl %%esp, %0" : "=m"(esp));
     esp_off = esp - (unsigned)cur;
     frame = (stack_frame*)((unsigned)task + esp_off - sizeof(*frame));
-    __asm__ ("movl %%ebp, %0" : "=m"(ebp));
-    __asm__ ("movl $CHILD, %0" : "=m"(frame->eip) );
-    frame->fs = frame->gs = frame->es = frame->ss = frame->ds = 
+    __asm__("movl %%ebp, %0" : "=m"(ebp));
+    __asm__("movl $CHILD, %0" : "=m"(frame->eip));
+    frame->fs = frame->gs = frame->es = frame->ss = frame->ds =
         KERNEL_DATA_SELECTOR;
     frame->ebp = (ebp - (unsigned)cur) + (unsigned)task;
     ps_resolve_ebp_to_new(frame->ebp);
-    task->esp = frame; 
+    task->esp = frame;
     task->esp0 = (unsigned int)task + PAGE_SIZE;
     task->parent = cur->psid;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
@@ -522,7 +565,7 @@ int sys_fork()
     memset(task->cwd, 0, 64);
     strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
-    ps_dup_user_maps(cur,task);
+    ps_dup_user_maps(cur, task);
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
 
@@ -532,9 +575,12 @@ int sys_fork()
     is_parent = 1;
     __asm__("CHILD: nop");
 
-    if (is_parent) {
+    if (is_parent)
+    {
         return task->psid;
-    }else{
+    }
+    else
+    {
         cur = CURRENT_TASK();
         ps_update_tss(cur->esp0);
         next_cr3 = cur->user.page_dir - KERNEL_OFFSET;
@@ -542,7 +588,7 @@ int sys_fork()
         cur->is_switching = 0;
         int_intr_enable();
         sched_cal_end();
-        return 0; 
+        return 0;
     }
 
 
@@ -554,12 +600,13 @@ int sys_exit(unsigned status)
     int i = 0;
     cur->exit_status = status;
 
-    #ifdef __VERBOS_SYSCALL__
+#ifdef __VERBOS_SYSCALL__
     klog("exit(%d)\n", status);
-    #endif
+#endif
 
 
-    if (cur->user.vm) {
+    if (cur->user.vm)
+    {
         vm_destroy(cur->user.vm);
         cur->user.vm = 0;
     }
@@ -567,8 +614,10 @@ int sys_exit(unsigned status)
 
 
     // close all fds
-    for (i = 0; i < MAX_FD; i++) {
-        if (cur->fds[i].flag) {
+    for (i = 0; i < MAX_FD; i++)
+    {
+        if (cur->fds[i].flag)
+        {
             fs_close(i);
         }
     }
@@ -578,20 +627,23 @@ int sys_exit(unsigned status)
     // free all physical memory
     ps_cleanup_all_user_map(cur);
 
-    if (cur->user.reserve) {
+    if (cur->user.reserve)
+    {
         vm_free(cur->user.reserve, 1);
         cur->user.reserve = 0;
     }
 
-    if (cur->user.page_dir) {
+    if (cur->user.page_dir)
+    {
         vm_free(cur->user.page_dir, 1);
         cur->user.page_dir = 0;
     }
 
 
-    if (cur->psid == 0) {
+    if (cur->psid == 0)
+    {
         printk("fatal error! process 0 exit\n");
-        __asm__ ("hlt");
+        __asm__("hlt");
     }
 
     // FIXME
@@ -606,14 +658,14 @@ int sys_exit(unsigned status)
 
 char *sys_getcwd(char *buf, unsigned size)
 {
-	task_struct* cur = CURRENT_TASK();
+    task_struct* cur = CURRENT_TASK();
 
-	if (!cur->cwd[0])
-	    strcpy(buf, "/");
-	else
-		strcpy(buf, cur->cwd);
+    if (!cur->cwd[0])
+        strcpy(buf, "/");
+    else
+        strcpy(buf, cur->cwd);
 
-	return buf;
+    return buf;
 }
 
 
@@ -623,23 +675,31 @@ int sys_waitpid(unsigned pid, int* status, int options)
     task_struct* cur = CURRENT_TASK();
     int ret = 0;
     int can_return = 0;
-    do {
+    do
+    {
         lock_dying();
         entry = control.dying_queue.Flink;
-        while (entry != &control.dying_queue) {
+        while (entry != &control.dying_queue)
+        {
             task_struct* task = CONTAINER_OF(entry, task_struct, ps_list);
             int match = 0;
-            if (task->parent == cur->psid) {
-                if ( pid && (pid == task->psid)) {
+            if (task->parent == cur->psid)
+            {
+                if (pid && (pid == task->psid))
+                {
                     match = 1;
-                }else if(!pid){
+                }
+                else if (!pid)
+                {
                     match = 1;
                 }
             }
 
-            if (match) {
+            if (match)
+            {
                 ret = task->psid;
-                if (status) {
+                if (status)
+                {
                     *status = task->exit_status;
                 }
                 RemoveEntryList(entry);
@@ -652,12 +712,13 @@ int sys_waitpid(unsigned pid, int* status, int options)
         }
         unlock_dying();
 
-        if (!can_return) {
+        if (!can_return)
+        {
             ps_put_to_wait_queue(cur);
         }
-        task_sched(); 
+        task_sched();
     }
-    while (can_return == 0); 
+    while (can_return == 0);
     return ret;
 }
 
@@ -668,7 +729,7 @@ static void reset_tss(task_struct* task)
     tss_address->esp0 = task->esp0;
     tss_address->iomap = (unsigned short) sizeof(tss_struct);
     tss_address->ss0 = KERNEL_DATA_SELECTOR;
-    tss_address->ss = tss_address->gs = tss_address->fs = 
+    tss_address->ss = tss_address->gs = tss_address->fs =
         tss_address->ds = tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
     tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
     int_update_tss((unsigned int)tss_address);
@@ -682,7 +743,7 @@ void ps_update_tss(unsigned int esp0)
 
 }
 
-void ps_kickoff() 
+void ps_kickoff()
 {
     task_struct* cur = CURRENT_TASK();
     cur->psid = 0xffffffff;
@@ -693,7 +754,8 @@ void ps_kickoff()
     return;
 }
 
-task_struct* CURRENT_TASK() {
+task_struct* CURRENT_TASK()
+{
     unsigned int esp;
     task_struct *ret;
     __asm__("movl %%esp, %0" : "=m"(esp));
@@ -743,21 +805,27 @@ void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux)
 {
     unsigned i = 0, j = 0;
 
-    if (!fn) {
+    if (!fn)
+    {
         return;
     }
 
-    if (task->user.page_dir) {
+    if (task->user.page_dir)
+    {
         unsigned int* page_dir = (unsigned int*)task->user.page_dir;
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++)
+        {
             unsigned *page_table = (unsigned*)(page_dir[i] & PAGE_SIZE_MASK);
-            if (!page_table) {
+            if (!page_table)
+            {
                 continue;
             }
 
             page_table = (unsigned*)((unsigned)page_table + KERNEL_OFFSET);
-            for (j = 0; j < 1024; j++) {
-                if (page_table[j] != 0) {
+            for (j = 0; j < 1024; j++)
+            {
+                if (page_table[j] != 0)
+                {
                     unsigned vir = (i << 22) + (j << 12);
                     unsigned phy = page_table[j] & PAGE_SIZE_MASK;
                     fn(aux, vir, phy);
@@ -771,14 +839,16 @@ static void ps_save_kernel_map(task_struct* task)
 {
     int i = 0;
 
-    if (task->user.page_dir) {
+    if (task->user.page_dir)
+    {
         unsigned int cr3;
         unsigned int* in_use;
         unsigned int* per_ps = (unsigned int*)task->user.page_dir;
 
         __asm__("movl %%cr3, %0" : "=q"(cr3));
-        in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
-        for (i = KERNEL_PAGE_DIR_OFFSET; i < 1024; i++) {
+        in_use = (unsigned int*)(cr3 + KERNEL_OFFSET);
+        for (i = KERNEL_PAGE_DIR_OFFSET; i < 1024; i++)
+        {
             per_ps[i] = in_use[i];
         }
     }
@@ -790,14 +860,16 @@ static void ps_restore_user_map()
     int i = 0;
     current = CURRENT_TASK();
 
-    if (current->user.page_dir) {
+    if (current->user.page_dir)
+    {
         unsigned int cr3;
         unsigned int* in_use;
         unsigned int* per_ps = (unsigned int*)current->user.page_dir;
 
         __asm__("movl %%cr3, %0" : "=q"(cr3));
-        in_use = (unsigned int*)(cr3+KERNEL_OFFSET);
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+        in_use = (unsigned int*)(cr3 + KERNEL_OFFSET);
+        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++)
+        {
             in_use[i] = per_ps[i];
         }
 
@@ -807,7 +879,8 @@ static void ps_restore_user_map()
 
 
 
-static void _task_sched() {
+static void _task_sched()
+{
     task_struct *task = 0;
     task_struct *current = 0;
     unsigned pdr;
@@ -824,17 +897,19 @@ static void _task_sched() {
 
     cur_cr3 = current->user.page_dir - KERNEL_OFFSET;
     __asm__("movl %%cr3, %0" : "=q"(cr3));
-    if (task->psid == current->psid) {
+    if (task->psid == current->psid)
+    {
         next_cr3 = cur_cr3;
         goto SELF;
     }
-    task->status = ps_running; 
+    task->status = ps_running;
     next_cr3 = task->user.page_dir - KERNEL_OFFSET;
-    if (current->status != ps_dying) {
+    if (current->status != ps_dying)
+    {
         // save page dir entry for kernel space
         ps_save_kernel_map(task);
     }
-	
+
 
 
     SAVE_ALL();
@@ -849,35 +924,38 @@ static void _task_sched() {
     __asm__("NEXT: nop");
 
 
- SELF:
-     
+SELF:
+
     current = CURRENT_TASK();
     reset_tss(current);
     RELOAD_CR3(next_cr3);
 
-     if (1) {
-         int_intr_enable();
-     }
-     
-    current ->is_switching = 0;
+    if (1)
+    {
+        int_intr_enable();
+    }
+
+    current->is_switching = 0;
     sched_cal_end();
     return;
 }
 
 void task_sched()
 {
-	_task_sched();
+    _task_sched();
 }
 
 int ps_has_ready(int priority)
 {
     int i = 0;
 
-    if (priority >= MAX_PRIORITY || priority < 0) {
+    if (priority >= MAX_PRIORITY || priority < 0)
+    {
         return 0;
     }
 
-    for (i = priority; i < MAX_PRIORITY; i++) {
+    for (i = priority; i < MAX_PRIORITY; i++)
+    {
         LIST_ENTRY* head = &(control.ready_queue[i]);
         if (!IsListEmpty(head))
             return 1;
@@ -889,7 +967,8 @@ int ps_has_ready(int priority)
 
 
 #ifdef TEST_PS
-void ps_mmm() {
+void ps_mmm()
+{
     task_struct *task1 = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
     task_struct *task2 = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
 
@@ -922,46 +1001,50 @@ void ps_mmm() {
 #ifdef TEST_PS
 static void ps_test(void* param)
 {
-	task_struct *task;
-	task = CURRENT_TASK();
+    task_struct *task;
+    task = CURRENT_TASK();
 
-    while (1) {
+    while (1)
+    {
         printk("I'm a process %d\n", task->psid);
-		msleep(200);
+        msleep(200);
     }
 }
 
 static void ps_test2(void* param)
 {
-	task_struct *task;
-	int i = 0;
-	task = CURRENT_TASK();
+    task_struct *task;
+    int i = 0;
+    task = CURRENT_TASK();
 
-    while (i++<100) {
+    while (i++ < 100)
+    {
         printk("I'm a process %d\n", task->psid);
-		msleep(400);
+        msleep(400);
     }
 }
 
 static void ps_test3(void* param)
 {
-	task_struct *task;
-	int i = 0;
-	task = CURRENT_TASK();
+    task_struct *task;
+    int i = 0;
+    task = CURRENT_TASK();
 
-    while (i++<100) {
+    while (i++ < 100)
+    {
         printk("I'm a process %d\n", task->psid);
-		msleep(600);
+        msleep(600);
     }
 }
 
 static void ps_test4(void* param)
 {
-	task_struct *task;
-	unsigned int i = (unsigned int)(param);
-	task = CURRENT_TASK();
+    task_struct *task;
+    unsigned int i = (unsigned int)(param);
+    task = CURRENT_TASK();
 
-    while (1) {
+    while (1)
+    {
         printk("I'm a process %d\n", task->psid);
         msleep(i);
     }
@@ -971,11 +1054,12 @@ void test_ps_process()
 {
 #define MIN_SLEEP 1000
 #define MAX_SLEEP 2000
-	ps_create(ps_test4, 1200, 1, ps_kernel);
+    ps_create(ps_test4, 1200, 1, ps_kernel);
     {
         int i = 0;
-        for (i = 0; i < TEST_PS; i++) {
-            unsigned sleep = klib_rand() % (MAX_SLEEP-MIN_SLEEP);
+        for (i = 0; i < TEST_PS; i++)
+        {
+            unsigned sleep = klib_rand() % (MAX_SLEEP - MIN_SLEEP);
             sleep += MIN_SLEEP;
             ps_create(ps_test4, sleep, 1, ps_kernel);
         }

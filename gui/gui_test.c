@@ -26,23 +26,24 @@ static void gui_test_draw_shell()
 
 static void gui_test_draw_panel()
 {
-    gui_fill_rectange_gradually(0, MAX_Y - 40, MAX_X , 20, VGA_COLOR_GRAY, 0x00666666);
-    gui_fill_rectange_gradually(0, MAX_Y - 20, MAX_X , 20, 0x00666666, VGA_COLOR_GRAY);
+    gui_fill_rectange_gradually(0, MAX_Y - 40, MAX_X, 20, VGA_COLOR_GRAY, 0x00666666);
+    gui_fill_rectange_gradually(0, MAX_Y - 20, MAX_X, 20, 0x00666666, VGA_COLOR_GRAY);
 }
 
 static void gui_test_draw_desktop()
 {
-    if (!gui_fill_picture("/bin/screen.bmp")) {
-        gui_fill_rectangle(0, 0, MAX_X, MAX_Y, VGA_COLOR_BLUE); 
+    if (!gui_fill_picture("/bin/screen.bmp"))
+    {
+        gui_fill_rectangle(0, 0, MAX_X, MAX_Y, VGA_COLOR_BLUE);
     }
 
 }
 
 void gui_test()
 {
-  gui_test_draw_desktop();
+    gui_test_draw_desktop();
 
-  gui_test_draw_shell();
+    gui_test_draw_shell();
 
-  gui_test_draw_panel();
+    gui_test_draw_panel();
 }

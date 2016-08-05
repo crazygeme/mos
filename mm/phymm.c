@@ -9,7 +9,7 @@ unsigned phymm_get_mgmt_pages(unsigned highest_mm_addr)
 {
     unsigned page_count = highest_mm_addr / PAGE_SIZE;
     unsigned size = page_count * sizeof(phymm_page);
-    unsigned pages = ((size-1)/PAGE_SIZE)+1;
+    unsigned pages = ((size - 1) / PAGE_SIZE) + 1;
     return pages;
 }
 
@@ -17,12 +17,13 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 {
     unsigned i;
     unsigned addr;
-    for (i = (start_page * PAGE_SIZE); i < (phymm_valid * PAGE_SIZE); i += PAGE_SIZE) {
+    for (i = (start_page * PAGE_SIZE); i < (phymm_valid * PAGE_SIZE); i += PAGE_SIZE)
+    {
         addr = i + KERNEL_OFFSET;
         mm_add_direct_map(addr);
         memset(addr, 0, PAGE_SIZE);
     }
-    phymm_pages = (phymm_page*)( (start_page*PAGE_SIZE)+KERNEL_OFFSET);
+    phymm_pages = (phymm_page*)((start_page*PAGE_SIZE) + KERNEL_OFFSET);
 }
 
 unsigned phymm_reference_page(unsigned page_index)

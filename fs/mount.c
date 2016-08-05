@@ -31,7 +31,8 @@ void mount_init()
 int do_mount(char* path, struct filesys_type* type)
 {
     mnt_list_entry* entry;
-    if (mount_lookup(path)) {
+    if (mount_lookup(path))
+    {
         return 0;
     }
 
@@ -42,7 +43,7 @@ int do_mount(char* path, struct filesys_type* type)
     sema_wait(&mnt_lock);
     InsertTailList(&mnt_list, &entry->mnt_list);
     sema_trigger(&mnt_lock);
-    
+
     return 1;
 }
 
@@ -54,9 +55,11 @@ static mnt_list_entry* do_mount_lookup(char* path)
 
     sema_wait(&mnt_lock);
     entry = mnt_list.Flink;
-    while (entry != &mnt_list) {
+    while (entry != &mnt_list)
+    {
         mnt = CONTAINER_OF(entry, mnt_list_entry, mnt_list);
-        if (strcmp(mnt->path, path)==0) {
+        if (strcmp(mnt->path, path) == 0)
+        {
             found = 1;
             break;
         }
@@ -65,7 +68,8 @@ static mnt_list_entry* do_mount_lookup(char* path)
     }
     sema_trigger(&mnt_lock);
 
-    if (!found) {
+    if (!found)
+    {
         return 0;
     }
 
@@ -76,7 +80,8 @@ int do_umount(char* path)
 {
     mnt_list_entry* mnt = do_mount_lookup(path);
 
-    if (!mnt) {
+    if (!mnt)
+    {
         return 0;
     }
 
@@ -93,7 +98,8 @@ struct filesys_type* mount_lookup(char* path)
     mnt_list_entry* mnt = do_mount_lookup(path);
     struct filesys_type* ret;
 
-    if (!mnt) {
+    if (!mnt)
+    {
         return 0;
     }
 
@@ -110,7 +116,8 @@ void dump_mount_point()
 
     sema_wait(&mnt_lock);
     entry = mnt_list.Flink;
-    while (entry != &mnt_list) {
+    while (entry != &mnt_list)
+    {
         mnt = CONTAINER_OF(entry, mnt_list_entry, mnt_list);
         printk("mnt  \"%s\" --> \"%s\"\n", mnt->path, mnt->type->rootname);
         entry = entry->Flink;

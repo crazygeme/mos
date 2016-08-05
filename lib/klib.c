@@ -280,45 +280,80 @@ static void ansi_control_add(char c)
 	}
 }
 
-void klib_putchar(char c)
+int klib_putchar(char c)
 {
-	int new_pos = 0;
+    int new_pos = 0;
 
-	if (is_ansi_control_begin()) {
-		ansi_control_add(c);
-		return;
-	}
-
-	if ( c == '\n'){
-		int new_row = CUR_ROW + 1;
-		int new_col = 0;
-		new_pos = ROW_COL_TO_CUR(new_row, new_col);
-	}else if (c == '\t'){
-		int loop_count = 4 - (CUR_COL % 4);
-		int i = 0;
-		if (loop_count == 0)
-		  loop_count = 4;
-		for (i = 0; i < loop_count; i++)
-			klib_putchar(' ');
-		
-		new_pos = cursor;
-    } else if (c  == '\r') {
-		new_pos = ROW_COL_TO_CUR(CUR_ROW, 0);
-    } else if (c == '\b' ) {
-        cursor --;
-        //tty_putchar( CUR_ROW, CUR_COL, ' ');
-        new_pos = cursor;
-	}else if ( (unsigned)c == 0xc){
-		tty_clear();
-	}else if (isprint(c)){
-		tty_putchar( CUR_ROW, CUR_COL, c);
-		new_pos = cursor + 1;
-	}else if ((unsigned)c == 0x1b) {
-		ansi_control_begin();
-	}else{
-        return;
+    if (is_ansi_control_begin())
+    {
+        ansi_control_add(c);
+        return -1;
     }
 
+    if (c == '\n')
+    {
+        int new_row = CUR_ROW + 1;
+        int new_col = 0;
+        new_pos = ROW_COL_TO_CUR(new_row, new_col);
+    }
+    else if (c == '\t')
+    {
+        int loop_count = 4 - (CUR_COL % 4);
+        int i = 0;
+        if (loop_count == 0)
+            loop_count = 4;
+        for (i = 0; i < loop_count; i++)
+            klib_putchar_update_cursor(' ');
+
+        new_pos = cursor;
+    }
+    else if (c == '\r')
+    {
+        new_pos = ROW_COL_TO_CUR(CUR_ROW, 0);
+    }
+    else if (c == '\b')
+    {
+        cursor--;
+        //tty_putchar( CUR_ROW, CUR_COL, ' ');
+        new_pos = cursor;
+    }
+    else if ((unsigned)c == 0xc)
+    {
+        tty_clear();
+    }
+    else if (isprint(c))
+    {
+        tty_putchar(CUR_ROW, CUR_COL, c);
+        new_pos = cursor + 1;
+    }
+    else if ((unsigned)c == 0x1b)
+    {
+        ansi_control_begin();
+    }
+    else
+    {
+        return -1;
+    }
+
+    return new_pos;
+}
+
+void klib_update_cursor(int pos)
+{
+    if (pos < 0)
+        return;
+
+    cursor = pos;
+}
+
+void klib_flush_cursor()
+{
+    klib_cursor_forward(cursor);
+}
+
+void klib_putchar_update_cursor(char c)
+{
+    int new_pos = klib_putchar(c);
 	klib_cursor_forward(new_pos);
 }
 
@@ -329,7 +364,7 @@ void klib_print(char *str)
 	}
 
 	while (*str){
-		klib_putchar( *str++);
+		klib_putchar_update_cursor( *str++);
 	}
 }
 
@@ -435,7 +470,7 @@ static unsigned int kblk(unsigned page_count)
 static unsigned int cur_block_top = 0;
 
 #define kblk(page) blk(page)
-#define klib_putchar libc_putchar
+#define klib_putchar_update_cursor libc_putchar
 #define klib_print libc_print
 
 static unsigned int blk(unsigned page_count)
@@ -732,33 +767,10 @@ static void klib_add_to_free_list(int index, kblock* buf, int force_merge)
 }
 
 
-void memcpy(void* _src, void* _dst, unsigned len)
+extern bcopy(void* src, void*dst, unsigned n);
+void memcpy(void* to, void* from, unsigned n)
 {
-	char* src = _src;
-	char* dst = _dst;
-    unsigned* isrc = _src;
-    unsigned* idst = _dst;
-	int i = 0;
-#ifdef DEBUG_FFS
-    unsigned t = time_now();
-#endif
-
-    if ( ((((unsigned)src) % 4) == 0) &&
-        ((((unsigned)dst) % 4) == 0) &&
-         (len % 4 == 0)) {
-        int ilen = len / 4;
-        for (i = 0; i < ilen; i++) {
-            isrc[i] = idst[i];
-        }
-    }else{
-        for (i = 0; i < len; i++) {
-            src[i] = dst[i];
-        }
-    }
-
-#ifdef DEBUG_FFS
-    mem_time += time_now() - t;
-#endif
+    bcopy(from, to, n);
 }
 
 void memmove(void* _src, void* _dst, unsigned len)
@@ -968,7 +980,7 @@ void printf(const char* str, ...)
 {
 	va_list ap;
 	va_start(ap, str);
-	vprintf(klib_putchar, klib_print, str,ap);
+	vprintf(klib_putchar_update_cursor, klib_print, str,ap);
 	va_end(ap);
 }
 
@@ -1315,7 +1327,7 @@ void printk(const char* str, ...)
 	klib_print("]");
     kfree(str_mill);
     va_start(ap, str); 
-	vprintf(klib_putchar, klib_print, str,ap);
+	vprintf(klib_putchar_update_cursor, klib_print, str,ap);
 	va_end(ap);
     unlock_tty();
 }
@@ -1364,11 +1376,15 @@ void klog(char* str, ...)
 void tty_write(const char* buf, unsigned len)
 {
 	int i = 0;
+    int new_pos;
 	lock_tty();
 	for (i = 0; i < len; i++){
 		//tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
-		klib_putchar(buf[i]);
+        new_pos = klib_putchar(buf[i]);
+        klib_update_cursor(new_pos);
+		//klib_putchar_update_cursor(buf[i]);
 	}
+    klib_flush_cursor();
 	unlock_tty();
 }
 

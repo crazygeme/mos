@@ -95,7 +95,13 @@ void klog(char* str, ...);
 
 void klog_close();
 
-void klib_putchar(char c);
+int klib_putchar(char c);
+
+void klib_update_cursor(int pos);
+
+void klib_flush_cursor();
+
+void klib_putchar_update_cursor(char c);
 
 void klib_putint(int num);
 

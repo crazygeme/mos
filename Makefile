@@ -63,7 +63,8 @@ OBJS	= boot.o \
 		  vga.o\
 		  pci.o\
 		  gui_test.o\
-		  gui_core.o
+		  gui_core.o\
+		  memcpy.o
 
 all: kernel
 
@@ -189,6 +190,9 @@ gui_test.o: gui/gui_test.c gui/gui_test.h
 
 gui_core.o: gui/gui_core.c gui/gui_core.h
 	$(CC) $(CFLAGS) -o gui_core.o gui/gui_core.c
+
+memcpy.o: lib/memcpy.S
+	$(CC) $(CFLAGS) -o memcpy.o lib/memcpy.S
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

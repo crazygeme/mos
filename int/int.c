@@ -157,7 +157,7 @@ intr_handler (intr_frame *frame)
 #ifdef DEBUG
         klib_info("int ", frame->vec_no, ": ");
         klib_print(intr_names[frame->vec_no]);
-        klib_putchar('; ');
+        klib_putchar_update_cursor('; ');
         klib_info("eip: ", frame->eip, "; ");
         klib_info("esp: ", frame->esp, "\n");
 #endif

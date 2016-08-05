@@ -101,6 +101,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="boot\kernel.asm" />
+    <None Include="int\int.S" />
     <None Include="mm\mm.asm" />
   </ItemGroup>
   <ItemGroup>

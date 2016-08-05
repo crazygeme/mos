@@ -185,6 +185,9 @@
     <None Include="mm\mm.asm">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="int\int.S">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config.h">

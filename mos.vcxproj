@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -9,24 +9,44 @@
       <Configuration>Release</Configuration>
       <Platform>Win32</Platform>
     </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{51581BCF-EB15-416C-8B9E-EF4C1091DF9F}</ProjectGuid>
-    <Keyword>MakeFileProj</Keyword>
+    <ProjectGuid>{5658D642-CD6F-418A-AA52-212D0EA6BC6B}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v120</PlatformToolset>
+    <PlatformToolset>v140</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v140</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v140</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -34,57 +54,90 @@
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-    <NMakePreprocessorDefinitions>WIN32;_DEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <LinkIncremental>true</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <NMakePreprocessorDefinitions>WIN32;NDEBUG;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
+    <LinkIncremental>true</LinkIncremental>
   </PropertyGroup>
-  <ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <Optimization>Disabled</Optimization>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX86</TargetMachine>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <TargetMachine>MachineX86</TargetMachine>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="boot\kernel.c" />
-    <ClCompile Include="drivers\block.c" />
-    <ClCompile Include="drivers\chardev.c" />
-    <ClCompile Include="drivers\hdd.c" />
-    <ClCompile Include="drivers\keyboard.c" />
-    <ClCompile Include="drivers\pci.c" />
-    <ClCompile Include="drivers\serial.c" />
-    <ClCompile Include="drivers\tty.c" />
-    <ClCompile Include="drivers\vga.c" />
     <ClCompile Include="ffstool\ffstool.c" />
     <ClCompile Include="ffstool\fileblock.c" />
     <ClCompile Include="ffstool\osdep.c" />
-    <ClCompile Include="fs\cache.c" />
-    <ClCompile Include="fs\console.c" />
-    <ClCompile Include="fs\ext2.c" />
-    <ClCompile Include="fs\ffs.c" />
-    <ClCompile Include="fs\kbchar.c" />
-    <ClCompile Include="fs\mount.c" />
-    <ClCompile Include="fs\namespace.c" />
-    <ClCompile Include="fs\null.c" />
-    <ClCompile Include="fs\pipechar.c" />
-    <ClCompile Include="fs\vfs.c" />
-    <ClCompile Include="gui\gui_core.c" />
-    <ClCompile Include="gui\gui_test.c" />
-    <ClCompile Include="gui\gui_toolkit.c" />
-    <ClCompile Include="int\dsr.c" />
-    <ClCompile Include="int\int.c" />
-    <ClCompile Include="int\timer.c" />
-    <ClCompile Include="lib\cyclebuf.c" />
-    <ClCompile Include="lib\klib.c" />
-    <ClCompile Include="lib\list.c" />
-    <ClCompile Include="lib\rbtree.c" />
-    <ClCompile Include="mm\mm.c" />
-    <ClCompile Include="mm\mmap.c" />
-    <ClCompile Include="mm\pagefault.c" />
-    <ClCompile Include="mm\phymm.c" />
-    <ClCompile Include="ps\elf.c" />
-    <ClCompile Include="ps\lock.c" />
-    <ClCompile Include="ps\ps.c" />
-    <ClCompile Include="syscall\syscall.c" />
-    <ClCompile Include="user\ps0.c" />
+    <ClCompile Include="src\boot\kernel.c" />
+    <ClCompile Include="src\drivers\block.c" />
+    <ClCompile Include="src\drivers\chardev.c" />
+    <ClCompile Include="src\drivers\hdd.c" />
+    <ClCompile Include="src\drivers\keyboard.c" />
+    <ClCompile Include="src\drivers\pci.c" />
+    <ClCompile Include="src\drivers\serial.c" />
+    <ClCompile Include="src\drivers\tty.c" />
+    <ClCompile Include="src\drivers\vga.c" />
+    <ClCompile Include="src\fs\cache.c" />
+    <ClCompile Include="src\fs\console.c" />
+    <ClCompile Include="src\fs\ext2.c" />
+    <ClCompile Include="src\fs\ffs.c" />
+    <ClCompile Include="src\fs\kbchar.c" />
+    <ClCompile Include="src\fs\mount.c" />
+    <ClCompile Include="src\fs\namespace.c" />
+    <ClCompile Include="src\fs\null.c" />
+    <ClCompile Include="src\fs\pipechar.c" />
+    <ClCompile Include="src\fs\vfs.c" />
+    <ClCompile Include="src\gui\gui_core.c" />
+    <ClCompile Include="src\gui\gui_test.c" />
+    <ClCompile Include="src\gui\gui_toolkit.c" />
+    <ClCompile Include="src\int\dsr.c" />
+    <ClCompile Include="src\int\int.c" />
+    <ClCompile Include="src\int\timer.c" />
+    <ClCompile Include="src\lib\cyclebuf.c" />
+    <ClCompile Include="src\lib\klib.c" />
+    <ClCompile Include="src\lib\list.c" />
+    <ClCompile Include="src\lib\rbtree.c" />
+    <ClCompile Include="src\mm\mm.c" />
+    <ClCompile Include="src\mm\mmap.c" />
+    <ClCompile Include="src\mm\pagefault.c" />
+    <ClCompile Include="src\mm\phymm.c" />
+    <ClCompile Include="src\ps\elf.c" />
+    <ClCompile Include="src\ps\lock.c" />
+    <ClCompile Include="src\ps\ps.c" />
+    <ClCompile Include="src\ps\ps0.c" />
+    <ClCompile Include="src\syscall\syscall.c" />
     <ClCompile Include="user\src\cat.c" />
     <ClCompile Include="user\src\idle.c" />
     <ClCompile Include="user\src\ls.c" />
@@ -100,58 +153,61 @@
     <ClCompile Include="user\syscall.c" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="boot\kernel.asm" />
-    <None Include="int\int.S" />
-    <None Include="mm\mm.asm" />
+    <None Include="src\boot\kernel.asm" />
+    <None Include="src\int\int.S" />
+    <None Include="src\lib\memcpy.S" />
+    <None Include="src\mm\mm.asm" />
+    <None Include="user\crt0.s" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="boot\multiboot.h" />
     <ClInclude Include="config.h" />
-    <ClInclude Include="drivers\block.h" />
-    <ClInclude Include="drivers\chardev.h" />
-    <ClInclude Include="drivers\hdd.h" />
-    <ClInclude Include="drivers\keyboard.h" />
-    <ClInclude Include="drivers\keymap.h" />
-    <ClInclude Include="drivers\pci.h" />
-    <ClInclude Include="drivers\pci_list.h" />
-    <ClInclude Include="drivers\serial.h" />
-    <ClInclude Include="drivers\tty.h" />
-    <ClInclude Include="drivers\vga.h" />
     <ClInclude Include="errno.h" />
     <ClInclude Include="ffstool\fileblock.h" />
     <ClInclude Include="ffstool\osdep.h" />
-    <ClInclude Include="fs\cache.h" />
-    <ClInclude Include="fs\console.h" />
-    <ClInclude Include="fs\ext2.h" />
-    <ClInclude Include="fs\fcntl.h" />
-    <ClInclude Include="fs\ffs.h" />
-    <ClInclude Include="fs\kbchar.h" />
-    <ClInclude Include="fs\mount.h" />
-    <ClInclude Include="fs\namespace.h" />
-    <ClInclude Include="fs\null.h" />
-    <ClInclude Include="fs\pipechar.h" />
-    <ClInclude Include="fs\vfs.h" />
-    <ClInclude Include="gui\gui_core.h" />
-    <ClInclude Include="gui\gui_test.h" />
-    <ClInclude Include="gui\gui_toolkit.h" />
-    <ClInclude Include="int\dsr.h" />
-    <ClInclude Include="int\int.h" />
-    <ClInclude Include="int\timer.h" />
-    <ClInclude Include="lib\cyclebuf.h" />
-    <ClInclude Include="lib\klib.h" />
-    <ClInclude Include="lib\list.h" />
-    <ClInclude Include="lib\rbtree.h" />
-    <ClInclude Include="mm\mm.h" />
-    <ClInclude Include="mm\mmap.h" />
-    <ClInclude Include="mm\pagefault.h" />
-    <ClInclude Include="mm\phymm.h" />
-    <ClInclude Include="ps\elf.h" />
-    <ClInclude Include="ps\lock.h" />
-    <ClInclude Include="ps\ps.h" />
-    <ClInclude Include="syscall\syscall.h" />
-    <ClInclude Include="syscall\unistd.h" />
+    <ClInclude Include="include\block.h" />
+    <ClInclude Include="include\cache.h" />
+    <ClInclude Include="include\chardev.h" />
+    <ClInclude Include="include\console.h" />
+    <ClInclude Include="include\cyclebuf.h" />
+    <ClInclude Include="include\dsr.h" />
+    <ClInclude Include="include\elf.h" />
+    <ClInclude Include="include\ext2.h" />
+    <ClInclude Include="include\fcntl.h" />
+    <ClInclude Include="include\ffs.h" />
+    <ClInclude Include="include\gui_core.h" />
+    <ClInclude Include="include\gui_test.h" />
+    <ClInclude Include="include\gui_toolkit.h" />
+    <ClInclude Include="include\hdd.h" />
+    <ClInclude Include="include\int.h" />
+    <ClInclude Include="include\kbchar.h" />
+    <ClInclude Include="include\keyboard.h" />
+    <ClInclude Include="include\keymap.h" />
+    <ClInclude Include="include\klib.h" />
+    <ClInclude Include="include\list.h" />
+    <ClInclude Include="include\lock.h" />
+    <ClInclude Include="include\mm.h" />
+    <ClInclude Include="include\mmap.h" />
+    <ClInclude Include="include\mount.h" />
+    <ClInclude Include="include\multiboot.h" />
+    <ClInclude Include="include\namespace.h" />
+    <ClInclude Include="include\null.h" />
+    <ClInclude Include="include\pagefault.h" />
+    <ClInclude Include="include\pci.h" />
+    <ClInclude Include="include\pci_list.h" />
+    <ClInclude Include="include\phymm.h" />
+    <ClInclude Include="include\pipechar.h" />
+    <ClInclude Include="include\ps.h" />
+    <ClInclude Include="include\ps0.h" />
+    <ClInclude Include="include\rbtree.h" />
+    <ClInclude Include="include\serial.h" />
+    <ClInclude Include="include\syscall.h" />
+    <ClInclude Include="include\timer.h" />
+    <ClInclude Include="include\tty.h" />
+    <ClInclude Include="include\unistd.h" />
+    <ClInclude Include="include\vfs.h" />
+    <ClInclude Include="include\vga.h" />
+    <ClInclude Include="src\fs\ffs.h" />
     <ClInclude Include="user\fs.h" />
-    <ClInclude Include="user\ps0.h" />
     <ClInclude Include="user\run.h" />
     <ClInclude Include="user\syscall.h" />
   </ItemGroup>

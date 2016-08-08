@@ -69,4 +69,5 @@
 #define VGA_RESOLUTION_Y 768
 #define VGA_COLOR_DEPTH  32
 
+
 #endif

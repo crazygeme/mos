@@ -154,11 +154,10 @@ void tty_roll_one_line()
 {
     if (!vga_enabled || (_resolution_x != _hw_resolution_x) || (_resolution_y != _hw_resolution_y))
     {
-        int row = 0;
-        for (row = 0; row < (TTY_MAX_ROW - 1); row++)
-        {
-            tty_copy_row(row + 1, row);
-        }
+        char* dst = vidptr;
+        char* src = dst + TTY_MAX_COL * 2;
+        unsigned len = TTY_MAX_COL * (TTY_MAX_ROW - 1) * 2;
+        memmove(dst, src, len);
         tty_clear_row(TTY_MAX_ROW - 1);
     }
     else
@@ -222,9 +221,14 @@ static void tty_clear_row(int row)
 void tty_clear()
 {
     int row = 0;
-
-    for (row = 0; row < TTY_MAX_ROW; row++)
-        tty_clear_row(row);
+    char* src = vidptr;
+    unsigned len = TTY_MAX_COL * 2;
+    tty_clear_row(0);
+    for (row = 1; row < TTY_MAX_ROW; row++)
+    {
+        char* dst = src + row * TTY_MAX_COL * 2;
+        memcpy(dst, src, len);
+    }
 }
 
 

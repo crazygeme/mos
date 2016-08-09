@@ -40,7 +40,6 @@ static void ffs_set_bitmap(block* b, struct ffs_bitmap_cache* cache, unsigned se
 static void ffs_load_bitmap(block* b, struct ffs_bitmap_cache* cache);
 static void ffs_flush_bitmap(block* b, struct ffs_bitmap_cache* cache);
 
-#ifdef DEBUG_FFS
 static unsigned long break_find_ino = 0;
 static unsigned long break_write = 0;
 static time_t find_time;
@@ -48,11 +47,17 @@ static time_t write_time;
 
 static void break_find_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&find_time);
 }
 
 static void break_write_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&write_time);
 }
 
@@ -60,6 +65,9 @@ static void break_find_end()
 {
     time_t now;
     unsigned long span;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
     span = now.seconds * 1000 + now.milliseconds -
         find_time.seconds * 1000 - find_time.milliseconds;
@@ -70,6 +78,9 @@ static void break_write_end()
 {
     time_t now;
     unsigned long span;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
     span = now.seconds * 1000 + now.milliseconds -
         write_time.seconds * 1000 - write_time.milliseconds;
@@ -78,12 +89,13 @@ static void break_write_end()
 
 void report_time()
 {
+    if (!TestControl.test_ffs)
+        return;
+
     printk("find ino use %u milli-seconds, write use %u milli-seconds\n",
         break_find_ino, break_write);
     break_write = break_find_ino = 0;
 }
-
-#endif
 
 
 
@@ -1036,9 +1048,9 @@ static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsi
         char* t = 0;
         unsigned copy_size = BLOCK_SECTOR_SIZE - offset_in_sec;
         copy_size = (copy_size > left) ? left : copy_size;
-#ifdef DEBUG_FFS
-        break_find_begin();
-#endif
+        if (TestControl.test_ffs)
+            break_find_begin();
+
         ino = ffs_file_get_ino(node, inode_index, tmp);
         if (!ino)
         {
@@ -1046,13 +1058,13 @@ static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsi
             if (!ino)
                 break;
         }
-#ifdef DEBUG_FFS
-        break_find_end();
-#endif
+        if (TestControl.test_ffs)
+            break_find_end();
 
-#ifdef DEBUG_FFS
-        break_write_begin();
-#endif
+
+        if (TestControl.test_ffs)
+            break_write_begin();
+
         if (copy_size == BLOCK_SECTOR_SIZE)
         {
             b->write(b->aux, ino, buf, copy_size);
@@ -1065,9 +1077,9 @@ static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsi
             memcpy(t, buf, copy_size);
             b->write(b->aux, ino, tmp, BLOCK_SECTOR_SIZE);
         }
-#ifdef DEBUG_FFS
-        break_write_end();
-#endif
+        if (TestControl.test_ffs)
+            break_write_end();
+
         buf += copy_size;
         left -= copy_size;
         offset_in_sec = 0;

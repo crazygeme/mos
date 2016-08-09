@@ -70,8 +70,5 @@ unsigned vm_disc_map(vm_struct_t vm, int size);
  */
 void vm_dup(vm_struct_t cur, vm_struct_t new);
 
-#ifdef TEST_MMAP
-void vm_test();
-#endif
 
 #endif

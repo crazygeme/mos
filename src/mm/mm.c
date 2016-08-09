@@ -16,8 +16,8 @@ _START static void mm_get_phy_mem_bound(multiboot_info_t* mb);
 _START static void mm_setup_beginning_8m();
 static void mm_clear_beginning_user_map();
 
-static unsigned long long phy_mem_low;
-static unsigned long long phy_mem_high;
+unsigned long long phy_mem_low;
+unsigned long long phy_mem_high;
 
 unsigned phymm_cur = 0;
 unsigned phymm_high = 0;
@@ -171,7 +171,7 @@ _START static void simulate_paging(unsigned address)
     klib_info("physical address: ", phy, "\n");
 }
 
-static unsigned int mm_get_phy_page_mask(unsigned int page_index)
+unsigned int mm_get_phy_page_mask(unsigned int page_index)
 {
     int mask_index = page_index / 32;
     int mask_offset = page_index % 32;
@@ -323,52 +323,6 @@ unsigned int  mm_get_free_phy_page_index()
     return (page_mask_index * 32 + offset);
 }
 
-#ifdef TEST_MM
-void mm_test()
-{
-    unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
-    unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
-    printk("mask of 8M -1: %x\n", mm_get_phy_page_mask(2 * 1024 - 1));
-    printk("mask of 8M: %x \n", mm_get_phy_page_mask(2 * 1024));
-    printk("mask of high bound -1: %x, high bound is %x \n",
-        mm_get_phy_page_mask(phy_page_high - 1),
-        phy_page_high);
-    printk("mask of high bound: %x, high bound is %x \n",
-        mm_get_phy_page_mask(phy_page_high),
-        phy_page_high);
-
-    printk("mask of high bound +1: %x, high bound is %x \n",
-        mm_get_phy_page_mask(phy_page_high + 1),
-        phy_page_high);
-
-    printk("first free page index is %x\n", mm_get_free_phy_page_index());
-
-    if (0)
-    {
-        int i = 0;
-        unsigned int *table1, *table2;
-        for (i = 0; i < 5; i++)
-        {
-            table1 = mm_alloc_page_table();
-            table2 = mm_alloc_page_table();
-            printk("alloc page1 %x, page 2 %x\n", table1, table2);
-            printk("table1[0] %x, table1[1] %x\n", table1[0], table1[1]);
-            printk("table2[0] %x, table2[1] %x\n", table2[0], table2[1]);
-
-            mm_free_page_table(table2);
-            mm_free_page_table(table1);
-        }
-    }
-    if (1)
-    {
-        unsigned int vm = vm_alloc(4);
-        unsigned int vm2 = vm_alloc(6);
-        printk("vm alloc %x, vm2 %x\n", vm, vm2);
-        vm_free(vm, 4);
-        vm_free(vm2, 6);
-    }
-}
-#endif
 
 unsigned mm_get_pagedir()
 {

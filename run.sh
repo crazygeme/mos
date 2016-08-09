@@ -6,6 +6,8 @@ _debug="0"
 _format="0"
 _curses=""
 _logtofile="stdio"
+_test="0"
+_test_arg=""
 
 if [ ! -e "kernel" ]; then
 	_rebuild="1"
@@ -23,9 +25,14 @@ if [ ! -e $diskfile ]; then
 	_format="1"
 fi
 
+_test_arg_need="0"
+
 for arg in $@
 do
-if [ "$arg" == "rebuild" ]; then
+if [ "$_test_arg_need" == "1" ]; then
+	_test_arg="$_test_arg $arg"
+	_test_arg_need="0"
+elif [ "$arg" == "rebuild" ]; then
 	_rebuild="1"
 elif [ "$arg" == "debug" ]; then
 	_debug="1"
@@ -38,6 +45,9 @@ elif [ "$arg" == "" ]; then
 	_debug="0"
 elif [ "$arg" == "logtofile" ]; then
 	_logtofile="file:krn.log"
+elif [ "$arg" == "test" ]; then
+	_test="1"
+	_test_arg_need="1"
 else
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
@@ -47,6 +57,7 @@ else
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t format: format disk, and copy all bins under user/bin into vm /bin  before running"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
+	echo -e "\t testall: run all tests"
 	exit
 fi
 done
@@ -84,7 +95,11 @@ fi
 echo "begin enum"
 
 if [ "$_debug" == "0" ]; then
-	qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std
+	if [ "$_test" == "1" ]; then
+		qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -append "test $_test_arg" -serial $_logtofile -vga std
+	else
+		qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std
+	fi
 else		
 	qemu-system-i386 -no-kvm $_curses -no-reboot -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std -gdb tcp::8888 -S
 fi

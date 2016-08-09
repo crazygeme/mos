@@ -267,23 +267,34 @@ switch_to_user_mode:
      cli;
 	 movl 4(%esp), %ecx
 	 movl 8(%esp), %edx
-     mov $0x1b, %ax; 
+     mov $USER_DATA_SELECTOR, %ax; 
      mov %ax, %ds; 
      mov %ax, %es; 
      mov %ax, %fs; 
      mov %ax, %gs; 
                    
      mov %esp, %eax; 
-     pushl $0x1b; 
+     pushl $USER_DATA_SELECTOR; 
      pushl %eax; 
      pushf;
      pop %ax;
      or $0x200,%ax 
      push %ax;
-     push $0x23; 
+     push $USER_CODE_SELECTOR; 
      push $USER; 
      iret; 
-   USER: nop;
+	 // before iret, the stack is like this:
+	 //		* user ds
+	 //		* kernel esp
+	 //		* user cs
+	 //		* return eip
+	 // after iret, all above are poped automatically
+	 // so data segment is user ds, code segment is user cs
+	 // next instruction is label user, and stack is still kernel
+	 // and right after USER label we setup user stack
+	 // usually above stack is setup by system call instruction
+	 // but here we are trying to "create" a user routine
+USER: nop;
      movl %edx, %esp
      movl %edx, %ebp
      movl %ecx, %eax

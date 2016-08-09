@@ -146,22 +146,7 @@ void sema_trigger_at_intr(semaphore* s)
 static semaphore sema;
 static void main_process(void* param)
 {
-    /*
-    wait_type type = (wait_type)param;
-    int i;
-    printk("main_process\n");
-    waitable_get(test_event);
-
-    msleep(1000);
-
-    if (type == wait_type_event){
-        for( i = 0; i < TEST_LOCK; i++)
-            waitable_put(test_event);
-    }else{
-        waitable_put(test_event);
-    }
-    */
-
+    
     int i;
 
     for (i = 0; i < TEST_LOCK; i++)
@@ -179,22 +164,6 @@ static void main_process(void* param)
 
 static void wait_process(void* param)
 {
-    /*
-    wait_type type = (wait_type)param;
-    task_struct* cur = CURRENT_TASK();
-    if (type != wait_type_lock){
-        printk("%d wait_process\n", cur->psid);
-        waitable_get(test_event);
-        printk("%d wakeup, depth %d\n", cur->psid, test_event->obj.depth);
-
-    }else{
-        waitable_get(test_event);
-        printk("%d get lock\n", cur->psid);
-        msleep(200);
-        printk("%d put lock\n", cur->psid);
-        waitable_put(test_event);
-    }
-    */
     task_struct* cur = CURRENT_TASK();
     sema_wait(&sema);
     printk("process %d triggered\n", cur->psid);
@@ -202,20 +171,7 @@ static void wait_process(void* param)
 
 void test_event_process()
 {
-    /*
-    int i = 0;
-    wait_type type = wait_type_notify;
-    printk("test_event_process\n");
-    test_event = create_event(type, 0, "event");
-    printk("create event is %x, wait_list %x\n", test_event, &(test_event->obj.wait_list));
-    printk("wait_list flink %x blikn %x\n", test_event->obj.wait_list.Flink,
-                test_event->obj.wait_list.Blink);
-    ps_create(main_process, (void*)type, 1, ps_kernel);
 
-    for(i = 0; i < TEST_LOCK; i++){
-        proc[i] = ps_create(wait_process, (void*)type, 1, ps_kernel);
-    }
-    */
     int i = 0;
     sema_init(&sema, "test", 1);
 

@@ -25,12 +25,10 @@ _START static void init(multiboot_info_t* mb);
 
 _START void kmain(multiboot_info_t* mb, unsigned int magic)
 {
-
     if (magic != MULTIBOOT_BOOTLOADER_MAGIC)
     {
         return;
     }
-
 
     init(mb);
 

@@ -921,7 +921,6 @@ select_sector(ata_disk *d, unsigned int sec_no)
 }
 
 
-#ifdef DEBUG_FFS
 static time_t read_select, read_wait, read_io;
 static time_t writ_select, writ_wait, writ_io;
 
@@ -932,12 +931,17 @@ static unsigned long read_times = 0, write_times = 0;
 
 static void break_hdd_read_select_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
     timer_current(&read_select);
 }
 
 static void break_hdd_read_select_end()
 {
     time_t now;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
 
     read_select_t += (now.seconds * 1000 + now.milliseconds -
@@ -946,12 +950,17 @@ static void break_hdd_read_select_end()
 
 static void break_hdd_read_wait_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
     timer_current(&read_wait);
 }
 
 static void break_hdd_read_wait_end()
 {
     time_t now;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
 
     read_wait_t += (now.seconds * 1000 + now.milliseconds -
@@ -960,12 +969,17 @@ static void break_hdd_read_wait_end()
 
 static void break_hdd_read_io_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
     timer_current(&read_io);
 }
 
 static void break_hdd_read_io_end()
 {
     time_t now;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
 
     read_io_t += (now.seconds * 1000 + now.milliseconds -
@@ -974,12 +988,17 @@ static void break_hdd_read_io_end()
 
 static void break_hdd_write_select_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
     timer_current(&writ_select);
 }
 
 static void break_hdd_write_select_end()
 {
     time_t now;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
 
     writ_select_t += (now.seconds * 1000 + now.milliseconds -
@@ -988,12 +1007,18 @@ static void break_hdd_write_select_end()
 
 static void break_hdd_write_wait_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&writ_wait);
 }
 
 static void break_hdd_write_wait_end()
 {
     time_t now;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
 
     writ_wait_t += (now.seconds * 1000 + now.milliseconds -
@@ -1003,12 +1028,18 @@ static void break_hdd_write_wait_end()
 
 static void break_hdd_write_io_begin()
 {
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&writ_io);
 }
 
 static void break_hdd_write_io_end()
 {
     time_t now;
+    if (!TestControl.test_ffs)
+        return;
+
     timer_current(&now);
 
     writ_io_t += (now.seconds * 1000 + now.milliseconds -
@@ -1018,6 +1049,9 @@ static void break_hdd_write_io_end()
 
 void report_hdd_time()
 {
+    if (!TestControl.test_ffs)
+        return;
+
     printk("read  %d times: select %u, wait %u, io %u\n", read_times, read_select_t,
         read_wait_t, read_io_t);
     printk("write %d times: select %u, wait %u, io %u\n", write_times, writ_select_t,
@@ -1026,45 +1060,41 @@ void report_hdd_time()
     writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
     read_times = write_times = 0;
 }
-#endif
 
 static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
 {
     ata_disk *d = aux;
     channel *c = d->channel;
     sema_wait_for_intr(&c->iolock);
-#ifdef DEBUG_FFS
-    break_hdd_read_select_begin();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_read_select_begin();
+
     select_sector(d, sec_no);
-#ifdef DEBUG_FFS
-    break_hdd_read_select_end();
-#endif
 
-#ifdef DEBUG_FFS
-    break_hdd_read_wait_begin();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_read_select_end();
+
+    if (TestControl.test_ffs)
+        break_hdd_read_wait_begin();
+
     issue_pio_command(c, CMD_READ_SECTOR_RETRY);
-    //printk("[hdd] read  sema wait <<\n");
+
     sema_wait_for_intr(&c->sema);
-    //printk("[hdd] read  sema wait >>\n");
-  //if (!wait_while_busy (d)){
-  //  printk ("%s: disk read failed, sector=%d\n", d->name, sec_no);
-  //  return 0;
-  //}
-#ifdef DEBUG_FFS
-    break_hdd_read_wait_end();
-#endif
 
-#ifdef DEBUG_FFS
-    break_hdd_read_io_begin();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_read_wait_end();
+
+    if (TestControl.test_ffs)
+        break_hdd_read_io_begin();
+
     input_sector(c, buf);
-#ifdef DEBUG_FFS
-    break_hdd_read_io_end();
-    read_times++;
 
-#endif
+    if (TestControl.test_ffs)
+    {
+        break_hdd_read_io_end();
+        read_times++;
+    }
+
     sema_trigger(&c->iolock);
 
     return len;
@@ -1076,37 +1106,33 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
     ata_disk *d = aux;
     channel *c = d->channel;
     sema_wait_for_intr(&c->iolock);
-#ifdef DEBUG_FFS
-    break_hdd_write_select_begin();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_write_select_begin();
+
     select_sector(d, sec_no);
-#ifdef DEBUG_FFS
-    break_hdd_write_select_end();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_write_select_end();
+
     issue_pio_command(c, CMD_WRITE_SECTOR_RETRY);
-    //if (!wait_while_busy (d)){
-    //  printk ("%s: disk write failed, sector=%d\n", d->name, sec_no);
-    //  return 0;
-    //}
-#ifdef DEBUG_FFS
-    break_hdd_write_io_begin();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_write_io_begin();
+
     output_sector(c, buf);
-#ifdef DEBUG_FFS
-    break_hdd_write_io_end();
-#endif
+    if (TestControl.test_ffs)
+        break_hdd_write_io_end();
 
-#ifdef DEBUG_FFS
-    break_hdd_write_wait_begin();
-#endif
-    //printk("[hdd] write sema wait <<\n");
+
+    if (TestControl.test_ffs)
+        break_hdd_write_wait_begin();
+
     sema_wait_for_intr(&c->sema);
-    //printk("[hdd] write sema wait >>\n");
-#ifdef DEBUG_FFS
-    break_hdd_write_wait_end();
-    write_times++;
 
-#endif
+    if (TestControl.test_ffs)
+    {
+        break_hdd_write_wait_end();
+        write_times++;
+    }
+
     sema_trigger(&c->iolock);
 
     return len;

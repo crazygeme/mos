@@ -16,12 +16,7 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr, mos_binfmt* fmt)
     unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
     unsigned i = 0;
 
-    for (i = va_begin; i <= va_end; i += PAGE_SIZE)
-    {
-        mm_add_dynamic_map(i, 0, PAGE_ENTRY_USER_DATA);
-        memset(i, 0, PAGE_SIZE);
-    }
-
+    do_mmap(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, -1, 0);
     fs_read(fd, file_off, phdr->p_vaddr, fileSiz);
     return 1;
 }
@@ -103,7 +98,7 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
         for (i = 0; i < page_count; i++)
         {
             mm_add_dynamic_map(elf_bss + i*PAGE_SIZE, 0, PAGE_ENTRY_USER_DATA);
-            memset(elf_bss + i*PAGE_SIZE, 0, PAGE_SIZE);
+            //memset(elf_bss + i*PAGE_SIZE, 0, PAGE_SIZE);
         }
     }
 
@@ -151,12 +146,7 @@ static unsigned elf_map_section_at(unsigned fd, Elf32_Phdr* phdr, unsigned bias)
     unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
     unsigned i = 0;
 
-    for (i = va_begin; i <= va_end; i += PAGE_SIZE)
-    {
-        do_mmap(i + bias, PAGE_SIZE, 0, 0, -1, 0);
-        // memset(i+bias, 0, PAGE_SIZE);
-    }
-
+    do_mmap(bias+ va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, -1, 0);
     fs_read(fd, file_off, phdr->p_vaddr + bias, fileSiz);
     return 1;
 }

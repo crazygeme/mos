@@ -19,6 +19,7 @@ unsigned int heap_quota_high;
 unsigned int mem_time;
 unsigned int heap_time;
 static unsigned int klib_random_num = 1;
+unsigned int cur_block_top = KHEAP_BEGIN;
 
 
 #ifdef __KERNEL__
@@ -30,7 +31,6 @@ void mm_report()
 }
 
 
-unsigned int cur_block_top = KHEAP_BEGIN;
 static int cursor = 0;
 #define CUR_ROW (cursor / TTY_MAX_COL)
 #define CUR_COL (cursor % TTY_MAX_COL)
@@ -487,9 +487,9 @@ static unsigned int kblk(unsigned page_count)
 
     cur_block_top += page_count * PAGE_SIZE;
 
-#ifdef TEST_MALLOC
-    klib_info("cur_block_top: ", cur_block_top, "\n");
-#endif
+    if(TestControl.test_mm)
+        klib_info("cur_block_top: ", cur_block_top, "\n");
+
 
     return ret;
 }
@@ -560,9 +560,11 @@ void* malloc(unsigned size)
     kblock* free_list_head = &free_list[free_list_index];
     int index = 0;
     int sliced = 0;
-#ifdef DEBUG_FFS
-    unsigned t = time_now();
-#endif
+    unsigned t = 0;
+
+    if (TestControl.test_ffs || TestControl.test_mm)
+        t = time_now();
+
 
     if (free_list_index > 511) // that's too large
         return NULL;
@@ -608,9 +610,9 @@ void* malloc(unsigned size)
             if (vir == 0)
             {
                 unlock_heap();
-#ifdef DEBUG_FFS
-                heap_time += time_now() - t;
-#endif
+                if (TestControl.test_ffs || TestControl.test_mm)
+                    heap_time += time_now() - t;
+
                 return NULL;
             }
             index = 511;
@@ -638,16 +640,16 @@ void* malloc(unsigned size)
         }
         unlock_heap();
 
-#ifdef DEBUG_FFS
-        heap_time += time_now() - t;
-#endif
+        if (TestControl.test_ffs || TestControl.test_mm)
+            heap_time += time_now() - t;
+
         return (void*)ret;
     }
 
     unlock_heap();
-#ifdef DEBUG_FFS
-    heap_time += time_now() - t;
-#endif
+    if (TestControl.test_ffs || TestControl.test_mm)
+        heap_time += time_now() - t;
+
     return NULL;
 
 }
@@ -658,9 +660,9 @@ void free(void* buf)
     int size = 0;
     int free_list_index;
 
-#ifdef DEBUG_FFS
-    unsigned t = time_now();
-#endif
+    unsigned t = 0;
+    if (TestControl.test_ffs || TestControl.test_mm)
+        t = time_now();
 
     if (buf == NULL)
         return;
@@ -678,13 +680,13 @@ void free(void* buf)
     block->size = 0xdeadbeef;
     memset(buf, 'c', size);
     heap_quota -= size;
-    klib_add_to_free_list(free_list_index, block, 1);
+    klib_add_to_free_list(free_list_index, block, 0);
 
     unlock_heap();
 
-#ifdef DEBUG_FFS
-    heap_time += time_now() - t;
-#endif
+    if (TestControl.test_ffs || TestControl.test_mm)
+        heap_time += time_now() - t;
+
 }
 
 
@@ -739,7 +741,7 @@ static int klib_free_list_merge(int node_index, kblock* buf, int target)
             ppre->next = node;
             buf->next = NULL;
             pre->next = NULL;
-            klib_add_to_free_list(merged_index, pre, 1);
+            klib_add_to_free_list(merged_index, pre, 0);
             merged = 1;
             //log("[pre+buf] %d + %d blocks merged into %d block\n", target, node_index, merged_index);
         }
@@ -754,7 +756,7 @@ static int klib_free_list_merge(int node_index, kblock* buf, int target)
             pre->next = node->next;
             buf->next = NULL;
             node->next = NULL;
-            klib_add_to_free_list(merged_index, buf, 1);
+            klib_add_to_free_list(merged_index, buf, 0);
             merged = 1;
             //log("[buf+node] %d + %d  blocks merged into %d block\n", node_index, target, merged_index);
         }
@@ -820,31 +822,22 @@ static void klib_add_to_free_list(int index, kblock* buf, int force_merge)
 extern bcopy(void* src, void*dst, unsigned n);
 void memcpy(void* to, void* from, unsigned n)
 {
+    unsigned t = 0;
+    if (TestControl.test_ffs || TestControl.test_mm)
+    {
+        t = time_now();
+    }
     bcopy(from, to, n);
+    if (TestControl.test_ffs || TestControl.test_mm)
+    {
+        mem_time += time_now() - t;
+    }
 }
 
 void memmove(void* _src, void* _dst, unsigned len)
 {
-    char* src = _src;
-    char* dst = _dst;
-
-    int i = 0;
-
-    if (src >= dst)
-    {
-        for (i = 0; i < len; i++)
-        {
-            src[i] = dst[i];
-        }
-    }
-    else
-    {
-        for (i = len - 1; i >= 0; i--)
-        {
-            src[i] = dst[i];
-        }
-    }
-
+    
+    memcpy(_src, _dst, len);
 }
 
 int memcmp(void* _src, void* _dst, unsigned len)
@@ -868,16 +861,16 @@ int memcmp(void* _src, void* _dst, unsigned len)
     return 0;
 }
 
-void memset(void* _src, char val, int len)
-{
-    char* src = _src;
-    int i = 0;
-
-    for (i = 0; i < len; i++)
-    {
-        src[i] = val;
-    }
-}
+//void memset(void* _src, char val, int len)
+//{
+//    char* src = _src;
+//    int i = 0;
+//
+//    for (i = 0; i < len; i++)
+//    {
+//        src[i] = val;
+//    }
+//}
 
 unsigned strlen(const char* str)
 {
@@ -1544,45 +1537,4 @@ void shutdown()
 }
 #endif
 
-#ifdef TEST_MALLOC
-void test_malloc_process()
-{
-#define MIN_MEM 1
-#define MAX_MEM 4080
-#define ALLOC_COUNT 10
-    // test kmalloc, kfree
-    void* addr[ALLOC_COUNT];
-    int size = 0;
-    int mallocor = 10;
-    int* a = kmalloc(1);
-    int* b = kmalloc(25);
-    int i = 0;
-    kfree(a);
-    kfree(b);
-    while (1)
-    {
-        int mem_count = klib_rand() % ALLOC_COUNT;
-        if (mem_count == 0)
-            mem_count = 1;
-        for (i = 0; i < mem_count; i++)
-        {
-            size = klib_rand() % (MAX_MEM - MIN_MEM);
-            size += MIN_MEM;
-            if (size == 0)
-                addr[i] = 0;
-            else
-            {
-                addr[i] = kmalloc(size);
-                if (addr[i])
-                    memset(addr[i], 0xc, size);
-            }
-        }
-        for (i = 0; i < mem_count; i++)
-        {
-            kfree(addr[i]);
-        }
-    }
-}
-
-#endif
 

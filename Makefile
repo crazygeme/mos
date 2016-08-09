@@ -25,6 +25,7 @@ LDFILE	= -m elf_i386 -T link.ld
 LDFLAGS	= $(LDFILE)
 TARGET	= kernel
 DST		= obj
+TEST 	= test
 OBJS	= $(DST)/boot.o \
 		  $(DST)/kernel.o \
 		  $(DST)/tty.o \
@@ -64,17 +65,32 @@ OBJS	= $(DST)/boot.o \
 		  $(DST)/pci.o\
 		  $(DST)/gui_test.o\
 		  $(DST)/gui_core.o\
-		  $(DST)/memcpy.o
+		  $(DST)/memory.o
+
+TESTS	= $(DST)/$(TEST)/mmap_test.o\
+		  $(DST)/$(TEST)/fs_test.o\
+		  $(DST)/$(TEST)/mm_test.o
+
 
 all: kernel
 
 
-kernel: dst $(OBJS)
-	$(LD) $(LDFLAGS)-e 0x100010 -o $(TARGET).dbg $(OBJS)
-	$(LD) $(LDFLAGS) -s -e 0x100010 -o $(TARGET) $(OBJS)
+kernel: dst $(OBJS) $(TESTS)
+	$(LD) $(LDFLAGS)-e 0x100010 -o $(TARGET).dbg $(OBJS) $(TESTS)
+	$(LD) $(LDFLAGS) -s -e 0x100010 -o $(TARGET) $(OBJS) $(TESTS)
 
 dst:
 	-mkdir $(DST)
+	-mkdir $(DST)/$(TEST)	
+
+$(DST)/$(TEST)/mmap_test.o: test/mmap_test.c
+	$(CC) $(CFLAGS) test/mmap_test.c -o $(DST)/$(TEST)/mmap_test.o
+
+$(DST)/$(TEST)/fs_test.o: test/fs_test.c
+	$(CC) $(CFLAGS) test/fs_test.c -o $(DST)/$(TEST)/fs_test.o
+
+$(DST)/$(TEST)/mm_test.o: test/mm_test.c
+	$(CC) $(CFLAGS) test/mm_test.c -o $(DST)/$(TEST)/mm_test.o
 
 $(DST)/boot.o: src/boot/kernel.S
 	$(CC) $(CFLAGS) src/boot/kernel.S -o $(DST)/boot.o
@@ -194,8 +210,8 @@ $(DST)/gui_test.o: src/gui/gui_test.c include/gui_test.h
 $(DST)/gui_core.o: src/gui/gui_core.c include/gui_core.h
 	$(CC) $(CFLAGS) -o $(DST)/gui_core.o src/gui/gui_core.c
 
-$(DST)/memcpy.o: src/lib/memcpy.S
-	$(CC) $(CFLAGS) -o $(DST)/memcpy.o src/lib/memcpy.S
+$(DST)/memory.o: src/lib/memory.S
+	$(CC) $(CFLAGS) -o $(DST)/memory.o src/lib/memory.S
 
 user: user/run.h user/run.c
 ifeq ($(OS),Linux)

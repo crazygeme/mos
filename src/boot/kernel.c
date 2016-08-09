@@ -19,9 +19,13 @@
 #include <pipechar.h>
 #include <serial.h>
 #include <vga.h>
+#include <tests.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
+_STARTDATA static multiboot_info_t* _g_mb;
+static multiboot_info_t* g_mb;
+TEST_CONTROL TestControl;
 
 _START void kmain(multiboot_info_t* mb, unsigned int magic)
 {
@@ -29,6 +33,8 @@ _START void kmain(multiboot_info_t* mb, unsigned int magic)
     {
         return;
     }
+
+    _g_mb = mb;
 
     init(mb);
 
@@ -41,6 +47,7 @@ _START void kmain(multiboot_info_t* mb, unsigned int magic)
 
 static void kmain_process(void* param);
 static void idle_process(void* param);
+static void parse_kernel_cmdline();
 
 void kmain_startup()
 {
@@ -48,9 +55,12 @@ void kmain_startup()
 #ifdef FB_ENABLE
     fb_enable();
 #endif
-
+    g_mb = (multiboot_info_t*)((unsigned)_g_mb + KERNEL_OFFSET);
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
+
+    printk("parse kernel command line\n");
+    parse_kernel_cmdline();
 
     printk("Init dsr\n");
     dsr_init();
@@ -74,14 +84,12 @@ void kmain_startup()
     timer_calculate_cpu_cycle();
 
 
-#ifdef TEST_MALLOC
-    extern test_malloc_process();
-    test_malloc_process();
-#endif
+    if (TestControl.test_mm)
+    {
+        mm_test();
+        malloc_test();
+    }
 
-#ifdef TEST_MM
-    mm_test();
-#endif
 
     printk("Init process\n");
     ps_init();
@@ -138,11 +146,12 @@ static void kmain_process(void* param)
 {
     klog_init();
 
-#ifdef TEST_MMAP
-    extern vm_test();
-    vm_test();
-    for (;;);
-#endif
+    if (TestControl.test_mmap)
+    {
+        vm_test();
+        if (!TestControl.test_all)
+            for (;;);
+    }
 
     printk("Init vfs\n");
     vfs_init();
@@ -184,10 +193,12 @@ static void kmain_process(void* param)
     dump_mount_point();
 #endif
 
-#ifdef TEST_NS
-    extern void test_ns();
-    test_ns();
-#endif
+    if (TestControl.test_fs_read || TestControl.test_fs_write)
+    {
+        extern void test_ns();
+        test_ns();
+    }
+
 
     printk("Init system call table\n");
     syscall_init();
@@ -226,4 +237,61 @@ _START static void init(multiboot_info_t* mb)
 static void run()
 {
     idle_process(0);
+}
+
+static void parse_kernel_cmdline()
+{
+    char* cmd = strdup((char*)g_mb->cmdline);
+    char *token, *end;
+    token = cmd;
+    memset(&TestControl, 0, sizeof(TestControl));
+
+#define SKIP_WHILE(t)\
+    do{\
+        while (*t == ' ' || *t == '\t')\
+            t++;\
+    }while(0)
+
+#define SKIP_CHAR(t)\
+    do{\
+        while (*t != ' ' && *t != '\t' && *t != '\0')\
+            t++;\
+    }while(0)
+
+    do 
+    {
+        SKIP_WHILE(token);
+        end = token;
+        SKIP_CHAR(end);
+        if (*token == '\0')
+            break;
+        *end = '\0';
+        end++;
+        if (strcmp(token, "test") == 0)
+            TestControl.test_enable = 1;
+
+        if (strcmp(token, "all") == 0)
+            TestControl.test_all = 1;
+
+        if (strcmp(token, "mmap") == 0)
+            TestControl.test_mmap = 1;
+
+        if (strcmp(token, "mm") == 0)
+            TestControl.test_mm= 1;
+
+        if (strcmp(token, "fs_read") == 0)
+            TestControl.test_fs_read = 1;
+
+        if (strcmp(token, "fs_write") == 0)
+            TestControl.test_fs_write = 1;
+
+        if (strcmp(token, "ffs") == 0)
+        {
+            TestControl.test_fs_read = 1;
+            TestControl.test_ffs = 1;
+        }
+
+        token = end;
+    } while (1);
+
 }

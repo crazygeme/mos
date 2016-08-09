@@ -370,51 +370,9 @@ _START void int_init()
 
     setup_idt();
 
-    // int_diags();
 }
 
 
-void int_diags()
-{
-    int _cr0 = 0;
-    int _cr3 = 0;
-    int a20 = 0;
-    int cs = 0;
-    int ds = 0;
-    int esp = 0;
-    int eip = 0;
-    unsigned long addr;
-    unsigned mem;
-    // output cr0
-    __asm__("movl %%cr0, %0" : "=r"(_cr0));
-    printf("cr0: \t%x\n", _cr0);
-    printf("---------------\n");
-
-    printf("\t\tprotected mode enabled: %d\n", (_cr0 & 0x1) != 0);
-    printf("\t\tpaging enabled: %d\n", (_cr0 & 0x80000000) != 0);
-
-
-    __asm__("movl %%cr3, %0" : "=r"(_cr3));
-    printf("cr3: \t%x\n", _cr3);
-
-    __asm__("movl %%cs, %0" : "=r"(cs));
-    printf("cs: \t%x\n", cs);
-
-    __asm__("movl %%fs, %0" : "=r"(ds));
-    printf("ds: \t%x\n", ds);
-
-    __asm__("movl %%esp, %0" : "=r"(esp));
-    printf("esp: \t%x\n", esp);
-
-
-    // output A20
-    a20 = read_port(0x92);
-    printf("a20: \t%x\n", a20);
-
-
-    // start function address
-
-}
 
 #define GET_INTR_FLAG(flag)\
     __asm__("pushfl"); \

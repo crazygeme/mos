@@ -120,7 +120,6 @@ _START unsigned int_get_phymem_size();
 _START extern void RELOAD_KERNEL_CS();
 _START extern void RELOAD_USER_CS();
 
-void int_diags();
 
 void int_enable_all();
 

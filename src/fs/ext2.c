@@ -84,7 +84,7 @@ static struct inode_opreations ext2_inode_operations = {
 };
 
 
-#ifdef DEBUG_FS
+#ifdef DEBUG
 static void print_dir_entry(struct ext2_dir_entry_2* dir, unsigned int count)
 {
     int i = 0;
@@ -163,7 +163,7 @@ void ext2_attach(block* b)
     }
 
     type = register_vfs(e2sb, bgd, b, &ext2_super_operations, &ext2_inode_operations, "rootfs");
-#ifdef DEBUG_FS
+#ifdef DEBUG
     for (i = 0; i < EXT2_BLOCK_GROUP_COUNT(b, e2sb); i++)
     {
 
@@ -179,7 +179,7 @@ void ext2_attach(block* b)
 #endif
 
 
-#ifdef DEBUG_FS
+#ifdef DEBUG
     do
     {
         INODE root = vfs_get_root(type);

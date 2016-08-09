@@ -116,7 +116,6 @@ char* klib_itoa(char* str, int num);
 void tty_write(const char* str, unsigned len);
 
 
-
 #define kmalloc(size) malloc(size)
 
 #define kfree(p) free(p)
@@ -133,6 +132,19 @@ void shutdown();
 void printk(const char* str, ...);
 
 int tty_ioctl(tty_command* cmd);
+
+typedef struct _TEST_CONTROL
+{
+    int test_enable;
+    int test_all;
+    int test_mmap;
+    int test_mm;
+    int test_fs_read;
+    int test_fs_write;
+    int test_ffs;
+    int test_ext2;
+}TEST_CONTROL;
+extern TEST_CONTROL TestControl;
 
 #else
 

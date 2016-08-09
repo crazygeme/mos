@@ -231,7 +231,6 @@ static unsigned ps_setup_v(char* file,
   __put_user ((val), sp+(nr*2+1));
 
 
-    //开始存放辅助向量
     sp -= 2;
     NEW_AUX_ENT(0, AT_NULL, 0);//end of vector
     if (platform)
@@ -251,10 +250,9 @@ static unsigned ps_setup_v(char* file,
         NEW_AUX_ENT(0, AT_PHDR, exec->elf_load_addr + exec->e_phoff);
         NEW_AUX_ENT(1, AT_PHENT, sizeof(Elf32_Phdr));
         NEW_AUX_ENT(2, AT_PHNUM, exec->e_phnum);
-        //interp加载基址,如果就是/lib/ld-linux.so.2或静态链接可执行文件，则为0
         NEW_AUX_ENT(3, AT_BASE, exec->interp_bias);
         NEW_AUX_ENT(4, AT_FLAGS, 0);
-        NEW_AUX_ENT(5, AT_ENTRY, exec->e_entry);//原程序入口
+        NEW_AUX_ENT(5, AT_ENTRY, exec->e_entry);
         NEW_AUX_ENT(6, AT_UID, 0);
         NEW_AUX_ENT(7, AT_EUID, 0);
         NEW_AUX_ENT(8, AT_GID, 0);

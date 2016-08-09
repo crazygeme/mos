@@ -1,17 +1,14 @@
 ifeq ($(shell uname),Linux)
 CC		= gcc
-ASM		= nasm
 LD		= ld
 OS		= Linux
 else
 ifeq ($(shell uname),Darwin)
 CC		= /opt/local/bin/i386-elf-gcc
-ASM 	= /opt/local/bin/nasm
 LD		= /opt/local/bin/i386-elf-ld
 OS		= Darwin
 else
 CC      = i386-elf-gcc
-ASM     = nasm
 LD      = i386-elf-ld
 OS      = Cygwin
 endif
@@ -79,8 +76,8 @@ kernel: dst $(OBJS)
 dst:
 	-mkdir $(DST)
 
-$(DST)/boot.o: src/boot/kernel.asm
-	$(ASM) $(ASFLAGS) src/boot/kernel.asm -o $(DST)/boot.o
+$(DST)/boot.o: src/boot/kernel.S
+	$(CC) $(CFLAGS) src/boot/kernel.S -o $(DST)/boot.o
 
 $(DST)/int.o: src/int/int.S
 	$(CC) $(CFLAGS) src/int/int.S -o $(DST)/int.o

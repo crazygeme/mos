@@ -52,9 +52,9 @@ static void parse_kernel_cmdline();
 void kmain_startup()
 {
     int i = 0;
-#ifdef FB_ENABLE
+
     fb_enable();
-#endif
+
     g_mb = (multiboot_info_t*)((unsigned)_g_mb + KERNEL_OFFSET);
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
@@ -223,9 +223,9 @@ _START static void init(multiboot_info_t* mb)
 
 
     int_init();
-#ifdef FB_ENABLE
+
     fb_init(mb);
-#endif
+
     mm_init(mb);
 
 

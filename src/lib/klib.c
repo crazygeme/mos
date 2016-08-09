@@ -321,6 +321,7 @@ int klib_putchar(char c)
     {
         int new_row = CUR_ROW + 1;
         int new_col = 0;
+        klib_putchar(' ');
         new_pos = ROW_COL_TO_CUR(new_row, new_col);
     }
     else if (c == '\t')

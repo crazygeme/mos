@@ -223,11 +223,20 @@ void tty_clear()
     int row = 0;
     char* src = vidptr;
     unsigned len = TTY_MAX_COL * 2;
-    tty_clear_row(0);
-    for (row = 1; row < TTY_MAX_ROW; row++)
+    if (!vga_enabled)
     {
-        char* dst = src + row * TTY_MAX_COL * 2;
-        memcpy(dst, src, len);
+        tty_clear_row(0);
+        for (row = 1; row < TTY_MAX_ROW; row++)
+        {
+            char* dst = src + row * TTY_MAX_COL * 2;
+            memcpy(dst, src, len);
+        }
+    }
+    else
+    {
+        src = _fb_buffer;
+        len = VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
+        memset(src, 0, len);
     }
 }
 

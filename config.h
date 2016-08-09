@@ -66,7 +66,7 @@
 
 // supported resolution
 #define VGA_RESOLUTION_X 1024
-#define VGA_RESOLUTION_Y 768
+#define VGA_RESOLUTION_Y 512
 #define VGA_COLOR_DEPTH  32
 
 

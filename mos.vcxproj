@@ -138,6 +138,9 @@
     <ClCompile Include="src\ps\ps.c" />
     <ClCompile Include="src\ps\ps0.c" />
     <ClCompile Include="src\syscall\syscall.c" />
+    <ClCompile Include="test\fs_test.c" />
+    <ClCompile Include="test\mmap_test.c" />
+    <ClCompile Include="test\mm_test.c" />
     <ClCompile Include="user\src\cat.c" />
     <ClCompile Include="user\src\idle.c" />
     <ClCompile Include="user\src\ls.c" />
@@ -153,10 +156,9 @@
     <ClCompile Include="user\syscall.c" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="src\boot\kernel.asm" />
+    <None Include="src\boot\kernel.S" />
     <None Include="src\int\int.S" />
-    <None Include="src\lib\memcpy.S" />
-    <None Include="src\mm\mm.asm" />
+    <None Include="src\lib\memory.S" />
     <None Include="user\crt0.s" />
   </ItemGroup>
   <ItemGroup>
@@ -201,12 +203,12 @@
     <ClInclude Include="include\rbtree.h" />
     <ClInclude Include="include\serial.h" />
     <ClInclude Include="include\syscall.h" />
+    <ClInclude Include="include\tests.h" />
     <ClInclude Include="include\timer.h" />
     <ClInclude Include="include\tty.h" />
     <ClInclude Include="include\unistd.h" />
     <ClInclude Include="include\vfs.h" />
     <ClInclude Include="include\vga.h" />
-    <ClInclude Include="src\fs\ffs.h" />
     <ClInclude Include="user\fs.h" />
     <ClInclude Include="user\run.h" />
     <ClInclude Include="user\syscall.h" />

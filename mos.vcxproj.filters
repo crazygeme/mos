@@ -177,17 +177,21 @@
     <ClCompile Include="user\src\uname.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="test\mmap_test.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="test\fs_test.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="test\mm_test.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="src\boot\kernel.asm">
-      <Filter>Source Files</Filter>
-    </None>
-    <None Include="src\mm\mm.asm">
-      <Filter>Source Files</Filter>
-    </None>
     <None Include="src\int\int.S" />
-    <None Include="src\lib\memcpy.S" />
     <None Include="user\crt0.s" />
+    <None Include="src\boot\kernel.S" />
+    <None Include="src\lib\memory.S" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config.h">
@@ -328,9 +332,6 @@
     <ClInclude Include="include\vga.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\fs\ffs.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="user\fs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -338,6 +339,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="user\syscall.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\tests.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

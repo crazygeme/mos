@@ -133,7 +133,7 @@ static void test_read()
 
             if (span)
             {
-                speed = ((1024 * 4096) / span) * 1000;
+                speed = ((1024 * 10240) / span) * 1000;
             }
             //t = t + span;
 
@@ -154,7 +154,7 @@ static void test_read()
             t = _time_now();
 
         }
-        for (i = 0; i < 4; i++)
+        for (i = 0; i < 10; i++)
         {
             //memset(buf, 0, 1024);
             fs_read(fd, i * 1024, buf, 1024);

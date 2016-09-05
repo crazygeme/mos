@@ -55,12 +55,12 @@ static void unlock_tty()
     spinlock_unlock(&tty_lock);
 }
 
-static void lock_heap()
+static inline void lock_heap()
 {
     spinlock_lock(&heap_lock);
 }
 
-static void unlock_heap()
+static inline void unlock_heap()
 {
     spinlock_unlock(&heap_lock);
 }
@@ -341,8 +341,8 @@ int klib_putchar(char c)
     }
     else if (c == '\b')
     {
+        tty_putchar(CUR_ROW, CUR_COL, ' ');
         cursor--;
-        //tty_putchar( CUR_ROW, CUR_COL, ' ');
         new_pos = cursor;
     }
     else if ((unsigned)c == 0xc)
@@ -563,7 +563,7 @@ void* malloc(unsigned size)
     int sliced = 0;
     unsigned t = 0;
 
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         t = time_now();
 
 
@@ -611,7 +611,7 @@ void* malloc(unsigned size)
             if (vir == 0)
             {
                 unlock_heap();
-                if (TestControl.test_ffs || TestControl.test_mm)
+                if (TestControl.test_ffs)
                     heap_time += time_now() - t;
 
                 return NULL;
@@ -641,14 +641,14 @@ void* malloc(unsigned size)
         }
         unlock_heap();
 
-        if (TestControl.test_ffs || TestControl.test_mm)
+        if (TestControl.test_ffs)
             heap_time += time_now() - t;
 
         return (void*)ret;
     }
 
     unlock_heap();
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         heap_time += time_now() - t;
 
     return NULL;
@@ -662,7 +662,7 @@ void free(void* buf)
     int free_list_index;
 
     unsigned t = 0;
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         t = time_now();
 
     if (buf == NULL)
@@ -671,21 +671,13 @@ void free(void* buf)
     lock_heap();
     block = (kblock*)((unsigned int)buf - 8);
     size = block->size;
-    if (size == 0xdeadbeef)
-    {
-        // double free
-        printf("double free!\n");
-        *((int *)0) = 0;
-    }
     free_list_index = size / 8 + 1;
-    block->size = 0xdeadbeef;
-    memset(buf, 'c', size);
     heap_quota -= size;
     klib_add_to_free_list(free_list_index, block, 0);
 
     unlock_heap();
 
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         heap_time += time_now() - t;
 
 }
@@ -824,12 +816,12 @@ extern bcopy(void* src, void*dst, unsigned n);
 void memcpy(void* to, void* from, unsigned n)
 {
     unsigned t = 0;
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
     {
         t = time_now();
     }
     bcopy(from, to, n);
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
     {
         mem_time += time_now() - t;
     }
@@ -885,15 +877,9 @@ unsigned strlen(const char* str)
 
 char* strcpy(char* dst, const char* src)
 {
-    char *ret = dst;
-    int len = strlen(src);
-    int i = 0;
-    for (i = 0; i < len; i++)
-    {
-        ret[i] = src[i];
-    }
-    ret[i] = '\0';
-    return dst;
+    char* d = dst;
+    while ((*dst++ = *src++) != '\0');
+    return d;
 }
 
 char* strstr(const char* src, const char* str)

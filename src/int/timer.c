@@ -170,6 +170,33 @@ unsigned time_now()
     return (total_seconds * 1000 + tickets * 10);
 }
 
+unsigned long long time_now_percisely()
+{
+    unsigned low, high;
+    unsigned long long cycle;
+    __asm("pushl %eax");
+    __asm("pushl %edx");
+    __asm("rdtsc");
+    __asm("movl %%eax, %0" :"=r"(low));
+    __asm("movl %%edx, %0" :"=r"(high));
+    __asm("popl %eax");
+    __asm("popl %edx");
+    cycle = ((unsigned long long)high) << 32 + low;
+    return cycle;
+}
+
+unsigned cycle_to_ms(unsigned dur_cycles)
+{
+    unsigned cycle_per_micro_second;
+    unsigned tick;
+    cycle_per_micro_second = cycle_per_ticket / 10000;
+    if (cycle_per_micro_second)
+        tick = dur_cycles / cycle_per_micro_second;
+    else
+        tick = 0;
+    return tick / 1000;
+}
+
 void msleep(unsigned int ms)
 {
     time_t base;

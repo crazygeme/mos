@@ -137,7 +137,7 @@ static void test_read()
             }
             //t = t + span;
 
-            printk("read count %d, speed %h/s\n", count, speed);
+            printk("read count %d, speed %h/s with time %d ms\n", count, speed, span);
             if (TestControl.test_ffs)
             {
                 extern void report_time();

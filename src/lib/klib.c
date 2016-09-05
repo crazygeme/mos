@@ -194,31 +194,31 @@ static void ansi_control_add(char c)
     case 'm':
         arg = atoi(str_arg);
         if (arg == 0)
-        { // ¹Ø±ÕËùÓÐÊôÐÔ
+        { // ï¿½Ø±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
         }
         else if (arg == 1)
-        { // ÉèÖÃ¸ßÁÁ¶È 
+        { // ï¿½ï¿½ï¿½Ã¸ï¿½ï¿½ï¿½ï¿½ï¿½ 
         }
         else if (arg == 4)
-        { // ÏÂ»®Ïß 
+        { // ï¿½Â»ï¿½ï¿½ï¿½ 
         }
         else if (arg == 5)
-        { // ÉÁ Ë¸ 
+        { // ï¿½ï¿½ Ë¸ 
         }
         else if (arg == 7)
-        { // ·´ÏÔ 
+        { // ï¿½ï¿½ï¿½ï¿½ 
         }
         else if (arg == 8)
-        { // ÏûÒþ 
+        { // ï¿½ï¿½ï¿½ï¿½ 
         }
         else if (arg >= 30 && arg <= 37)
-        { // ÉèÖÃÇ°¾°É« 
+        { // ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½É« 
         }
         else if (arg >= 40 && arg <= 47)
-        { // ÉèÖÃ±³¾°É« 
+        { // ï¿½ï¿½ï¿½Ã±ï¿½ï¿½ï¿½É« 
         }
         break;
-    case 'A': //¹â±êÉÏÒÆnÐÐ 
+    case 'A': //ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½nï¿½ï¿½ 
         arg = atoi(str_arg);
         row = CUR_ROW;
         col = CUR_COL;
@@ -229,7 +229,7 @@ static void ansi_control_add(char c)
         klib_cursor_forward(new_pos);
 
         break;
-    case 'B': // ¹â±êÏÂÒÆnÐÐ 
+    case 'B': // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½nï¿½ï¿½ 
         arg = atoi(str_arg);
         row = CUR_ROW;
         col = CUR_COL;
@@ -239,7 +239,7 @@ static void ansi_control_add(char c)
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
         break;
-    case 'C': // ¹â±êÓÒÒÆnÐÐ 
+    case 'C': // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½nï¿½ï¿½ 
         arg = atoi(str_arg);
         row = CUR_ROW;
         col = CUR_COL;
@@ -249,7 +249,7 @@ static void ansi_control_add(char c)
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
         break;
-    case 'D': // ¹â±ê×óÒÆnÐÐ 
+    case 'D': // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½nï¿½ï¿½ 
         arg = atoi(str_arg);
         row = CUR_ROW;
         col = CUR_COL;
@@ -259,7 +259,7 @@ static void ansi_control_add(char c)
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
         break;
-    case 'H': // ÉèÖÃ¹â±êÎ»ÖÃ (ROW:COL)
+    case 'H': // ï¿½ï¿½ï¿½Ã¹ï¿½ï¿½ï¿½Î»ï¿½ï¿½ (ROW:COL)
         str_col = strchr(str_arg, ';');
         *str_col = '\0';
         str_col++;
@@ -277,10 +277,10 @@ static void ansi_control_add(char c)
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
         break;
-    case 'J': // ÇåÆÁ 
+    case 'J': // ï¿½ï¿½ï¿½ï¿½ 
         tty_clear();
         break;
-    case 'K': // Çå³ý´Ó¹â±êµ½ÐÐÎ²µÄÄÚÈÝ 
+    case 'K': // ï¿½ï¿½ï¿½ï¿½ï¿½Ó¹ï¿½ï¿½êµ½ï¿½ï¿½Î²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ 
         break;
     case 's':
         break;
@@ -563,7 +563,7 @@ void* malloc(unsigned size)
     int sliced = 0;
     unsigned t = 0;
 
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         t = time_now();
 
 
@@ -611,7 +611,7 @@ void* malloc(unsigned size)
             if (vir == 0)
             {
                 unlock_heap();
-                if (TestControl.test_ffs || TestControl.test_mm)
+                if (TestControl.test_ffs)
                     heap_time += time_now() - t;
 
                 return NULL;
@@ -641,14 +641,14 @@ void* malloc(unsigned size)
         }
         unlock_heap();
 
-        if (TestControl.test_ffs || TestControl.test_mm)
+        if (TestControl.test_ffs)
             heap_time += time_now() - t;
 
         return (void*)ret;
     }
 
     unlock_heap();
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         heap_time += time_now() - t;
 
     return NULL;
@@ -662,7 +662,7 @@ void free(void* buf)
     int free_list_index;
 
     unsigned t = 0;
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         t = time_now();
 
     if (buf == NULL)
@@ -671,21 +671,13 @@ void free(void* buf)
     lock_heap();
     block = (kblock*)((unsigned int)buf - 8);
     size = block->size;
-    if (size == 0xdeadbeef)
-    {
-        // double free
-        printf("double free!\n");
-        *((int *)0) = 0;
-    }
     free_list_index = size / 8 + 1;
-    block->size = 0xdeadbeef;
-    memset(buf, 'c', size);
     heap_quota -= size;
     klib_add_to_free_list(free_list_index, block, 0);
 
     unlock_heap();
 
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
         heap_time += time_now() - t;
 
 }
@@ -824,12 +816,12 @@ extern bcopy(void* src, void*dst, unsigned n);
 void memcpy(void* to, void* from, unsigned n)
 {
     unsigned t = 0;
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
     {
         t = time_now();
     }
     bcopy(from, to, n);
-    if (TestControl.test_ffs || TestControl.test_mm)
+    if (TestControl.test_ffs)
     {
         mem_time += time_now() - t;
     }

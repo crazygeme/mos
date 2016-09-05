@@ -86,6 +86,7 @@ void kmain_startup()
 
     if (TestControl.test_mm)
     {
+        memcpy_measure();
         mm_test();
         malloc_test();
     }

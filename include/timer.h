@@ -65,6 +65,10 @@ void timer_current(time_t* time);
 
 unsigned time_now();
 
+unsigned long long time_now_percisely();
+
+unsigned cycle_to_ms(unsigned dur_cycles);
+
 void msleep(unsigned int ms);
 
 void usleep(unsigned int us);

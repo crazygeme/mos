@@ -113,3 +113,58 @@ void mm_test()
     }
 }
 
+void memcpy_measure()
+{
+    int i = 0, j = 0, k = 0;
+
+    for(;;)
+    {
+        void *src = 0;
+        void* dst = 0;
+        unsigned cycle = 0;
+        unsigned dur = 0;
+        unsigned throughput = 0;
+        unsigned mcycle = 0;
+        unsigned mdur = 0;
+        unsigned mthroughput = 0;
+
+        mcycle = time_now();
+
+        for (i = 0; i < 1024; i++)
+        {
+            for (k = 0; k < 100; k++)
+            {
+                src = kmalloc(512);
+                kfree(src);
+            }
+        }
+
+        mdur = time_now() - mcycle;
+        if (mdur != 0)
+            mthroughput = (unsigned)(1000* 100 / mdur);
+        else
+            mthroughput = 0;
+
+
+        src = vm_alloc(16);
+        dst = vm_alloc(16);
+        memset(src, 0xff, 64 * 1024);
+        cycle = time_now();
+
+        for (i = 0; i < 1024; i++)
+        {
+            memcpy(dst, src, 64 * 1024);
+        }
+
+        dur = time_now() - cycle;
+        if (dur != 0)
+            throughput = (unsigned)(64 * 1000 / dur);
+        else
+            throughput = 0;
+        printk("malloc %d KOP/s with %d ms, memcpy %d MB/S with %d ms\n", mthroughput, mdur, throughput, dur);
+        vm_free(src, 16);
+        vm_free(dst, 16);
+
+    }
+}
+

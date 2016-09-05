@@ -25,7 +25,6 @@ static int elf_read_interp(unsigned fd, Elf32_Phdr* phdr, char* path)
 {
     unsigned off = phdr->p_offset;
     unsigned size = phdr->p_filesz;
-
     return (fs_read(fd, off, path, size) != 0xffffffff);
 
 

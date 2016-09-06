@@ -9,6 +9,7 @@
 #include <klib.h>
 #endif
 #include <unistd.h>
+#include <ps.h>
 
 
 static INODE ext2_create_inode(struct filesys_type*);
@@ -32,7 +33,7 @@ static int ext2_copy_stat(INODE node, struct stat* s, int is_dir);
 
 // internal
 static unsigned int ext2_get_blockno(void* type, unsigned int* blocks, unsigned int index);
-static int ext2_read_block(void* type, unsigned int bno, void* buf);
+static int ext2_read_block(void* type, unsigned int bno, unsigned offset, void* buf, unsigned len);
 static int ext2_read_inode(void* type, unsigned int group, unsigned int ino, struct ext2_inode* buf);
 
 #define EXT2_BLOCK_SIZE(b) \
@@ -82,7 +83,6 @@ static struct inode_opreations ext2_inode_operations = {
     ext2_get_size,
     ext2_copy_stat
 };
-
 
 #ifdef DEBUG
 static void print_dir_entry(struct ext2_dir_entry_2* dir, unsigned int count)
@@ -159,15 +159,13 @@ void ext2_attach(block* b)
             b
         };
         bgd[i] = kmalloc(EXT2_BLOCK_SIZE(e2sb));
-        ext2_read_block(&tmpfs, 1 + i, bgd[i]);
+        ext2_read_block(&tmpfs, 1 + i, 0, bgd[i], EXT2_BLOCK_SIZE(e2sb));
     }
 
     type = register_vfs(e2sb, bgd, b, &ext2_super_operations, &ext2_inode_operations, "rootfs");
 #ifdef DEBUG
     for (i = 0; i < EXT2_BLOCK_GROUP_COUNT(b, e2sb); i++)
     {
-
-
         do
         {
             printk("block group %d\n", i);
@@ -177,48 +175,6 @@ void ext2_attach(block* b)
         while (0);
     }
 #endif
-
-
-#ifdef DEBUG
-    do
-    {
-        INODE root = vfs_get_root(type);
-        DIR dir = 0;
-        INODE entry = 0;
-        printk("-------------------------\n");
-
-        dir = vfs_open_dir(root);
-        vfs_free_inode(root);
-
-        if (!dir)
-        {
-            break;
-        }
-
-        entry = vfs_read_dir(dir);
-        while (entry)
-        {
-            printk("%s, isdir %d, size %d\n",
-                vfs_get_name(entry),
-                S_ISDIR(vfs_get_mode(entry)),
-                vfs_get_size(entry));
-            if (S_ISREG(vfs_get_mode(entry)))
-            {
-                char buf[32];
-                memset(buf, 0, 32);
-                unsigned readed = vfs_read_file(entry, 0, buf, 32);
-                printk("read size %d, content\n++++++\n%s\n++++++\n", readed, buf);
-            }
-
-            vfs_free_inode(entry);
-            entry = vfs_read_dir(dir);
-        }
-        vfs_close_dir(dir);
-        printk("-------------------------\n");
-    }
-    while (0);
-#endif
-
 
 }
 
@@ -243,33 +199,39 @@ static int ext2_read_inode(void* aux, unsigned int group, unsigned int ino, stru
     sec_no = inode_blockno * EXT2_SECTORS_PER_BLOCK(sb);
     sec_no += ((ino - 1) / EXT2_INODES_PER_SECTOR(sb));
     sec_offset = (ino - 1) % EXT2_INODES_PER_SECTOR(sb);
-    tmp = kmalloc(BLOCK_SECTOR_SIZE);
+    tmp = CURRENT_TASK()->user.reserve;
     b->read(b->aux, sec_no, tmp, BLOCK_SECTOR_SIZE);
     tmpinode = (struct ext2_inode*)tmp;
     tmpinode += sec_offset;
     memcpy(buf, tmpinode, sizeof(*tmpinode));
-    kfree(tmp);
     return sizeof(*buf);
 }
 
-static int ext2_read_block(void* aux, unsigned int bno, void* buf)
+static int ext2_read_block(void* aux, unsigned int bno, unsigned offset, void* buf, unsigned len)
 {
     struct filesys_type* fs = (struct filesys_type*)aux;
     struct ext2_super_block* sb = (struct ext2_super_block*)fs->sb;
     block* b = (block*)fs->dev;
     unsigned sec_no, sec_count, i;
     char* tmp = (char*)buf;
-
+    unsigned read_count;
+    unsigned sec_off;
     sec_count = (EXT2_BLOCK_SIZE(sb) / BLOCK_SECTOR_SIZE);
-    sec_no = bno * sec_count;
 
-    for (i = 0; i < sec_count; i++)
+    read_count = len / BLOCK_SECTOR_SIZE;
+    if ((read_count*BLOCK_SECTOR_SIZE) < len)
+        read_count++;
+
+    sec_no = bno * sec_count;
+    sec_off = offset / BLOCK_SECTOR_SIZE;
+    sec_no += sec_off;
+    for (i = 0; i < read_count; i++)
     {
         b->read(b->aux, sec_no + i, tmp, BLOCK_SECTOR_SIZE);
         tmp += BLOCK_SECTOR_SIZE;
     }
 
-    return EXT2_BLOCK_SIZE(sb);
+    return (sec_no*BLOCK_SECTOR_SIZE);
 }
 
 
@@ -333,7 +295,7 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
     unsigned int blockoff = offset % block_size;
     unsigned int remain;
     char* tmpbuf = buf;
-    char* block_buf = kmalloc(block_size);
+    char* block_buf = CURRENT_TASK()->user.reserve;
 
     if ((offset + len) > inode->i_size)
     {
@@ -347,14 +309,31 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
         unsigned int read_len = ((blockoff + remain) > block_size) ?
             (block_size - blockoff) :
             remain;
-        unsigned data_block = ext2_get_blockno(info->type, inode->i_block, blockno);
+        unsigned data_block = -1;
+        
 
+        data_block = ext2_get_blockno(info->type, inode->i_block, blockno);
         if (data_block == 0)
             break;
 
-        ext2_read_block(info->type, data_block, block_buf);
-        tmp = block_buf + blockoff;
-        memcpy(tmpbuf, tmp, read_len);
+        if ((blockoff == 0) && (read_len == block_size))
+        {
+            ext2_read_block(info->type, data_block, 0, tmpbuf, read_len);
+        }
+        else if (blockoff != 0)
+        {
+            unsigned sec_off = blockoff / BLOCK_SECTOR_SIZE * BLOCK_SECTOR_SIZE;
+            unsigned sec_remain = blockoff - sec_off;
+            ext2_read_block(info->type, data_block, blockoff, block_buf, read_len);
+            memcpy(tmpbuf, block_buf+sec_remain, read_len);
+        }
+        else
+        {
+            ext2_read_block(info->type, data_block, 0, block_buf, read_len);
+            memcpy(tmpbuf, block_buf, read_len);
+        }
+
+
 
         remain -= read_len;
         if (!remain)
@@ -365,7 +344,7 @@ static unsigned ext2_read_file(INODE node, unsigned int offset, void* buf, unsig
         tmpbuf += read_len;
     }
 
-    kfree(block_buf);
+    //kfree(block_buf);
     return (len - remain);
 
 }
@@ -405,7 +384,7 @@ static DIR ext2_open_dir(INODE node)
         return 0;
     }
     dir->cur_block = kmalloc(EXT2_BLOCK_SIZE(sb));
-    ext2_read_block(dir->type, data_block, dir->cur_block);
+    ext2_read_block(dir->type, data_block, 0, dir->cur_block, EXT2_BLOCK_SIZE(sb));
     dir->dir = (struct ext2_dir_entry_2*)dir->cur_block;
     dir->ref_count = 0;
     return dir;
@@ -452,7 +431,7 @@ static INODE ext2_read_dir(DIR d)
             }
             else
             {
-                ext2_read_block(dir->type, data_block, dir->cur_block);
+                ext2_read_block(dir->type, data_block, 0, dir->cur_block, EXT2_BLOCK_SIZE(sb));
                 dir->dir = (struct ext2_dir_entry_2*)dir->cur_block;
             }
         }
@@ -540,7 +519,7 @@ static unsigned int ext2_get_blockno(void* aux, unsigned int* blocks, unsigned i
         unsigned int* indirect_table = (unsigned int*)kmalloc(block_size);
         unsigned ret = 0;
 
-        ext2_read_block(aux, indirect_node, indirect_table);
+        ext2_read_block(aux, indirect_node, 0, indirect_table, block_size);
         ret = indirect_table[index - EXT2_NDIR_BLOCKS];
         //printk("unimpl indirect block table, block index %d, file index %x\n", index, index*block_size);
         kfree(indirect_table);

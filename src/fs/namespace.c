@@ -721,7 +721,6 @@ static INODE fs_get_fd(unsigned fd, char* path)
     }
 
 
-    sema_wait(&cur->fd_lock);
     if (cur->fds[fd].flag & fd_flag_isdir)
     {
         node = 0;
@@ -734,7 +733,6 @@ static INODE fs_get_fd(unsigned fd, char* path)
             strcpy(path, cur->fds[fd].path);
         }
     }
-    sema_trigger(&cur->fd_lock);
 
     return node;
 }

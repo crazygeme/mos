@@ -189,23 +189,19 @@ int fs_pipe(int* pipefd)
 
 unsigned fs_read(unsigned fd, unsigned offset, void* buf, unsigned len)
 {
-    char* path = kmalloc(64);
-    INODE node = fs_get_fd(fd, path);
+    INODE node = fs_get_fd(fd, 0);
     unsigned ret;
 
     if (fd == 0xffffffff)
     {
-        kfree(path);
         return 0xffffffff;
     }
 
     if (!node)
     {
-        kfree(path);
         return 0xffffffff;
     }
 
-    kfree(path);
     ret = vfs_read_file(node, offset, buf, len);
     return ret;
 }

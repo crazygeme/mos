@@ -51,9 +51,6 @@ typedef struct multiboot_info multiboot_info_t;
 _START void mm_init(multiboot_info_t* mb);
 #endif
 
-#ifdef TEST_MM
-void mm_test();
-#endif
 
 unsigned mm_get_pagedir();
 

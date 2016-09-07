@@ -121,8 +121,8 @@ static void test_read()
     if (fd == -1)
         return;
 
-    buf = kmalloc(1024);
-    memset(buf, 0, 1024);
+    buf = kmalloc(2048);
+    memset(buf, 0, 2048);
     t = _time_now();
     while (1)
     {
@@ -133,11 +133,11 @@ static void test_read()
 
             if (span)
             {
-                speed = ((1024 * 4096) / span) * 1000;
+                speed = ((1024 * 10240) / span) * 1000;
             }
             //t = t + span;
 
-            printk("read count %d, speed %h/s\n", count, speed);
+            printk("read count %d, speed %h/s with time %d ms\n", count, speed, span);
             if (TestControl.test_ffs)
             {
                 extern void report_time();
@@ -154,10 +154,9 @@ static void test_read()
             t = _time_now();
 
         }
-        for (i = 0; i < 4; i++)
+        for (i = 0; i < 20; i++)
         {
-            //memset(buf, 0, 1024);
-            fs_read(fd, i * 1024, buf, 1024);
+            fs_read(fd, i * 512, buf, 512);
 
         }
         count++;

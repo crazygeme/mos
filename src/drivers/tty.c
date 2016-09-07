@@ -178,7 +178,7 @@ void tty_roll_one_line()
         {
             char val = _fb_text[cursor];
 
-            if (val == ' ' || val == '\0' || val == '\n' || val == '\r' || val == '\t')
+            if (val == ' ' || val == '\0' || val == '\n' || val == '\r' || val == '\t' || val == '\b')
             {
                 fb_write_char(CUR_COL, CUR_ROW, 130, VGA_COLOR_BLACK);
             }

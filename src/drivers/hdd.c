@@ -77,7 +77,7 @@ typedef struct _channel
 
 #define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
-#define PREREAD_SECTOR 8
+#define PREREAD_SECTOR 16
 #define HEAD_SECTOR(sector) (sector / PREREAD_SECTOR * PREREAD_SECTOR)
 #define SECTOR_OFF(sector) (sector - HEAD_SECTOR(sector))
 
@@ -511,19 +511,6 @@ static void read_partition_table(block *block, unsigned int sector,
         return;
     }
     block->read(block->aux, 0, pt, BLOCK_SECTOR_SIZE);
-
-    /* Check signature. */
-    //if (pt->signature != 0xaa55)
-    if (0)
-    {
-        if (primary_extended_sector == 0)
-            printk("%s: Invalid partition table signature, which is %x\n", block->name, pt->signature);
-        else
-            printk("%s: Invalid extended partition table in sector %d\n",
-                block->name, sector);
-        kfree(pt);
-        return;
-    }
 
     /* Parse partitions. */
     for (i = 0; i < sizeof pt->partitions / sizeof *pt->partitions; i++)

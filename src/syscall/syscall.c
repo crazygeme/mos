@@ -379,6 +379,9 @@ static int sys_ioctl(int fd, int request, char *buf)
     task_struct *cur = CURRENT_TASK();
     unsigned ino = 0;
 
+#ifdef __VERBOS_SYSCALL__
+    klog("ioctl(%d, %x, %x)\n", fd, request, buf);
+#endif
     //printf("ioctl(%d, %d, %x)\n", fd, request, buf);
     if (fd > MAX_FD) return 0;
 
@@ -422,11 +425,17 @@ static int sys_ioctl(int fd, int request, char *buf)
 static int sys_getpid()
 {
     task_struct *cur = CURRENT_TASK();
+#ifdef __VERBOS_SYSCALL__
+    klog("getpid() = %d\n", cur->psid);
+#endif
     return cur->psid;
 }
 
 static int sys_uname(struct utsname *utname)
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("uname\n");
+#endif
     strcpy(utname->machine, "i386");
     strcpy(utname->nodename, "qemu-enum");
     strcpy(utname->release, "0.5-generic");
@@ -438,6 +447,9 @@ static int sys_uname(struct utsname *utname)
 
 static int sys_sched_yield()
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("yield\n");
+#endif
     task_sched();
     return 0;
 }
@@ -607,9 +619,11 @@ static int sys_chdir(const char *path)
     int ret = 1;
     task_struct *cur = CURRENT_TASK();
 
-
-
     if (!path || !*path) return 0;
+
+#ifdef __VERBOS_SYSCALL__
+    klog("chdir %s\n", path);
+#endif
 
     if (*path != '/') strcpy(cwd, cur->cwd);
 
@@ -641,12 +655,18 @@ static int sys_chdir(const char *path)
 static int sys_creat(const char *path, unsigned mode)
 {
     struct stat s;
+#ifdef __VERBOS_SYSCALL__
+    klog("creat(%s, %d)\n", path, mode);
+#endif
     if (fs_stat(path, &s) != -1) return 0;
     return fs_create(path, mode);
 }
 
 static int sys_mkdir(const char *path, unsigned mode)
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("mkdir(%s, %d)\n", path, mode);
+#endif
     mode |= S_IFDIR;
     return sys_creat(path, mode);
 }
@@ -654,6 +674,10 @@ static int sys_mkdir(const char *path, unsigned mode)
 static int sys_rmdir(const char *path)
 {
     struct stat s;
+
+#ifdef __VERBOS_SYSCALL__
+    klog("rmdir(%s)\n", path);
+#endif
     if (fs_stat(path, &s) == -1) return 0;
 
     if (!S_ISDIR(s.st_mode)) return 0;
@@ -681,21 +705,33 @@ static int sys_reboot(unsigned cmd)
 
 static int sys_getuid()
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("getuid\n");
+#endif
     return 0;
 }
 
 static int sys_getgid()
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("getgid\n");
+#endif
     return 0;
 }
 
 static int sys_geteuid()
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("geteuid\n");
+#endif
     return 0;
 }
 
 static int sys_getegid()
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("getegid\n");
+#endif
     return 0;
 }
 static int debug = 0;
@@ -737,6 +773,9 @@ static int sys_mprotect(void *addr, unsigned len, int prot)
 
 static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("writev: fd %d\n", fildes);
+#endif
     int i = 0;
     unsigned total = 0;
     for (i = 0; i < iovcnt; i++)
@@ -749,11 +788,17 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 
 static long sys_personality(unsigned int personality)
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("personality\n");
+#endif
     return PER_LINUX32_3GB;
 }
 
 static int sys_fcntl(int fd, int cmd, int arg)
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("fcntl(%d, %d, %d)\n", fd, cmd, arg);
+#endif
     return 0;
 }
 
@@ -926,17 +971,26 @@ static int sys_lstat64(const char *path, struct stat64 *s)
 static int sys_getppid()
 {
     task_struct *cur = CURRENT_TASK();
+#ifdef __VERBOS__SYSCALL__
+    klog("getppid\n");
+#endif
     return cur->parent;
 }
 
 static int sys_getpgrp(unsigned pid)
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("getpgrp\n");
+#endif
     // FIXME
     return 0;
 }
 
 static int sys_setpgid(unsigned pid, unsigned pgid)
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("setgpid\n");
+#endif
     // FIXME
     if (pid == 0)
     {
@@ -949,6 +1003,9 @@ static int sys_setpgid(unsigned pid, unsigned pgid)
 
 static int sys_wait4(int pid, int *status, void *rusage)
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("wait4\n");
+#endif
     if (pid == -1)
     {
         return sys_waitpid(0, status, 0);
@@ -969,6 +1026,9 @@ static int sys_socketcall(int call, unsigned long *args)
 {
     // FIXME
     // no socket at all right now
+#ifdef __VERBOS__SYSCALL__
+    klog("socketcall\n");
+#endif
     return -1;
 }
 
@@ -976,6 +1036,9 @@ static int sys_sigaction(int sig, void *act, void *oact)
 {
     // FIXME
     // no signal at all
+#ifdef __VERBOS__SYSCALL__
+    klog("sigaction\n");
+#endif
     return -1;
 }
 
@@ -983,11 +1046,17 @@ static int sys_sigprocmask(int how, void *set, void *oset)
 {
     // FIXME
     // no signal
+#ifdef __VERBOS__SYSCALL__
+    klog("sigprocmask\n");
+#endif
     return -1;
 }
 
 static int sys_pause()
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("pause\n");
+#endif
     __asm__("hlt");
     return -1;
 }
@@ -1018,6 +1087,9 @@ static int resolve_path(char *old, char *new)
 static int sys_utime(const char *filename, const struct utimbuf *times)
 {
     // FIXME
+#ifdef __VERBOS__SYSCALL__
+    klog("utime\n");
+#endif
     return 0;
 }
 
@@ -1055,7 +1127,7 @@ static int sys_pipe(int pipefd[2])
     int ret = fs_pipe(pipefd);
 
 #ifdef __VERBOS_SYSCALL__
-    klog("sys_pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
+    klog("pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
 #endif
 
     return ret;
@@ -1065,7 +1137,7 @@ static int sys_dup2(int oldfd, int newfd)
 {
     int ret = -1;
 #ifdef __VERBOS_SYSCALL__
-    klog("sys_dup2(%d, %d)\n", oldfd, newfd);
+    klog("dup2(%d, %d)\n", oldfd, newfd);
 #endif
 
     if (oldfd == -1 || newfd == -1) return -1;
@@ -1097,7 +1169,7 @@ static int sys_dup(int oldfd)
     ret = fs_dup(oldfd);
 
 #ifdef __VERBOS_SYSCALL__
-    klog("sys_dup(%d) = %d\n", oldfd, ret);
+    klog("dup(%d) = %d\n", oldfd, ret);
 #endif
 
     return ret;
@@ -1105,50 +1177,25 @@ static int sys_dup(int oldfd)
 
 static int sys_getrlimit(int resource, void *limit)
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("getrlimit\n");
+#endif
     return -1;
 }
 
 static int sys_kill(unsigned pid, int sig)
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("kill\n");
+#endif
     return -1;
 }
 
 static int sys_unlink(const char *path)
 {
+#ifdef __VERBOS__SYSCALL__
+    klog("unlink\n");
+#endif
     return -1;
-#if 0
-    char *new = 0;
-    struct stat s;
-    int ret = -1;
-
-#ifdef __VERBOS_SYSCALL__
-    klog("sys_unlink(%s)\n", path);
-#endif
-
-
-    if (!path || !*path) return -EINVAL;
-
-    new = kmalloc(64);
-    resolve_path(path, new);
-
-    if (fs_stat(new, &s) == -1)
-    {
-        kfree(new);
-        return -ENOENT;
-    }
-
-    if (S_ISDIR(s.st_mode))
-    {
-        kfree(new);
-        return -EISDIR;
-    }
-
-    ret = fs_delete(new);
-    kfree(new);
-    if (ret)
-        return 0;
-    else
-        return -1;
-#endif
 }
 

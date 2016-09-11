@@ -154,9 +154,9 @@ static void test_read()
             t = _time_now();
 
         }
-        for (i = 0; i < 20; i++)
+        for (i = 0; i < 5; i++)
         {
-            fs_read(fd, i * 512, buf, 512);
+            fs_read(fd, i*2048, buf, 2048);
 
         }
         count++;

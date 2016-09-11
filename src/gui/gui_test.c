@@ -41,7 +41,7 @@ static void gui_test_draw_desktop()
 
 void gui_test()
 {
-    gui_test_draw_desktop();
+    //gui_test_draw_desktop();
 
     gui_test_draw_shell();
 

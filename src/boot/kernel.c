@@ -120,7 +120,6 @@ void kmain_startup()
     // create first process
     ps_create(kmain_process, 0, 3, ps_kernel);
 
-
     ps_kickoff();
 
     // never going to here because ps0 never exit
@@ -179,10 +178,7 @@ static void kmain_process(void* param)
 
     pipe_init();
 
-
-    printk("Init file cache for libc, it take times...\n");
     file_cache_init();
-    printk("Cache init done\n");
 
 #ifdef TEST_BLOCK
     extern void test_block_process();

@@ -101,6 +101,6 @@ if [ "$_debug" == "0" ]; then
 		qemu-system-i386 -no-kvm $_curses -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std
 	fi
 else		
-	qemu-system-i386 -no-kvm $_curses -no-reboot -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std -gdb tcp::8888 -S
+	qemu-system-i386 -no-kvm $_curses -no-reboot -m 256 -hda "$diskfile" -kernel kernel -serial $_logtofile -vga std  -gdb tcp::8888 -S
 fi
 

@@ -259,6 +259,7 @@ static int unhandled_syscall(unsigned callno)
 static void syscall_process(intr_frame* frame)
 {
     syscall_fn fn = call_table[frame->eax];
+    unsigned off = (char*)frame - (char*)CURRENT_TASK();
     int ret = 0;
     if (!fn)
     {
@@ -266,9 +267,8 @@ static void syscall_process(intr_frame* frame)
     }
 
     ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx);
-
-
-    __asm__("movl %0, %%eax" : : "m"(ret));
+    frame = (char*)CURRENT_TASK() + off;
+    frame->eax = ret;
     return;
 }
 

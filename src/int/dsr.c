@@ -87,7 +87,6 @@ void dsr_init()
 void dsr_add(dsr_callback fn, void* param)
 {
     dsr_node* node = 0;
-
     node = dsr_alloc_node();
     if (!node)
     {
@@ -103,24 +102,51 @@ void dsr_add(dsr_callback fn, void* param)
 
 }
 
+int dsr_has_task()
+{
+    int has = 0;
+    lock_dsr();
+    has = !IsListEmpty(&dsr_head);
+    unlock_dsr();
+    return has;
+}
+
+static int is_dsr_running = 0;
+
+int dsr_running()
+{
+    int ret = 0;
+    lock_dsr();
+    ret = is_dsr_running;
+    unlock_dsr();
+    return ret;
+}
+
 void dsr_process()
 {
     LIST_ENTRY* node;
     dsr_node *dsr;
-    lock_dsr();
-    while (!IsListEmpty(&dsr_head))
+    do 
     {
-        node = RemoveHeadList(&dsr_head);
-        dsr = CONTAINER_OF(node, dsr_node, dsr_list);
-        unlock_dsr();
-        if (dsr->fn)
-        {
-            dsr->fn(dsr->param);
-        }
-        dsr_free_node(dsr);
         lock_dsr();
-    }
-    unlock_dsr();
+        is_dsr_running = 1;
+        while (!IsListEmpty(&dsr_head))
+        {
+            node = RemoveHeadList(&dsr_head);
+            unlock_dsr();
+            dsr = CONTAINER_OF(node, dsr_node, dsr_list);
+            if (dsr->fn)
+            {
+                dsr->fn(dsr->param);
+            }
+            dsr_free_node(dsr);
+            lock_dsr();
+        }
+        is_dsr_running = 0;
+        unlock_dsr();
+        task_sched();
+    } while (1);
+
 }
 
 

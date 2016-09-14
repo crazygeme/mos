@@ -20,6 +20,7 @@ static unsigned long rtc_get_time(void);
    optimization barrier.  See "Optimization Barriers" in the
    reference guide for more information.*/
 #define barrier() asm volatile ("" : : : "memory")
+static int timer_dsr_count = 0;
 
 static void timer_dsr(void* param);
 static void timer_process(intr_frame* frame)
@@ -52,7 +53,11 @@ static void timer_process(intr_frame* frame)
         hourse = 0;
     }
 
-    dsr_add(timer_dsr, 0);
+    if (__sync_add_and_fetch(&(timer_dsr_count), 0) == 0)
+    {
+        __sync_add_and_fetch(&(timer_dsr_count), 1);
+        dsr_add(timer_dsr, 0);
+    }
 
 
 }
@@ -119,6 +124,7 @@ static void timer_dsr(void* param)
 
     if (!ps_enabled())
     {
+        __sync_add_and_fetch(&(timer_dsr_count), -1);
         return;
     }
 
@@ -126,11 +132,12 @@ static void timer_dsr(void* param)
     if (cur->remain_ticks <= 0)
     {
         cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-        if ((!cur->is_switching))
+        if ((!cur->is_switching) && (!dsr_running()))
         {
             task_sched();
         }
     }
+    __sync_add_and_fetch(&(timer_dsr_count), -1);
 }
 
 void timer_init()

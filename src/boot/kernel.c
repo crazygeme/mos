@@ -62,6 +62,9 @@ void kmain_startup()
     printk("parse kernel command line\n");
     parse_kernel_cmdline();
 
+    printk("Init process\n");
+    ps_init();
+
     printk("Init dsr\n");
     dsr_init();
 
@@ -91,10 +94,6 @@ void kmain_startup()
         malloc_test();
     }
 
-
-    printk("Init process\n");
-    ps_init();
-
     printk("Init page fault\n");
     pf_init();
 
@@ -119,6 +118,8 @@ void kmain_startup()
 
     // create first process
     ps_create(kmain_process, 0, 3, ps_kernel);
+
+    ps_create(dsr_process, 0, 4, ps_dsr);
 
     ps_kickoff();
 

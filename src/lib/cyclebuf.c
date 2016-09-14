@@ -73,7 +73,7 @@ void cyb_putc(cy_buf* b, unsigned char key)
         b->write_closed = 1;
 
     if (needs_trigger)
-        sema_trigger(&b->lock);
+        sema_trigger(&b->lock, 0);
 
 }
 

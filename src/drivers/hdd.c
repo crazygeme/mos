@@ -1140,7 +1140,7 @@ static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
         read_times++;
     }
 
-    sema_trigger(&c->iolock);
+    sema_trigger_at_intr(&c->iolock);
 
     return len;
 }
@@ -1178,7 +1178,7 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
         write_times++;
     }
 
-    sema_trigger(&c->iolock);
+    sema_trigger_at_intr(&c->iolock);
 
     return len;
 }

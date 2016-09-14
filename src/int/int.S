@@ -347,7 +347,8 @@ syscall_handler:
 	// for a system call, eax is the return val
 	// but for an external interrupt, eax must be restored
 	// or else a return value in kernel function will be broken
-	addl $4, %esp
+	//addl $4, %esp
+	popl %eax
 	pop %gs
 	pop %fs
 	pop %es

@@ -1467,7 +1467,7 @@ void klog(char* str, ...)
     vprintf(klog_write, klog_writestr, str, ap);
     va_end(ap);
 
-    sema_trigger(&klog_lock);
+    sema_trigger(&klog_lock, 0);
 }
 
 void tty_write(const char* buf, unsigned len)

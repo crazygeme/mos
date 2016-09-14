@@ -157,8 +157,12 @@ typedef enum _ps_status
 typedef enum _ps_type
 {
     ps_kernel,
-    ps_user
+    ps_user,
+    ps_dsr
 }ps_type;
+
+#define MAX_PRIORITY 5
+
 
 typedef void (*process_fn)(void* param);
 

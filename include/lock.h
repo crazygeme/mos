@@ -36,7 +36,7 @@ void sema_wait_for_intr(semaphore* s);
 
 void sema_reset(semaphore* s);
 
-void sema_trigger(semaphore* s);
+void sema_trigger(semaphore* s, int force_sched);
 
 void sema_trigger_at_intr(semaphore* s);
 

@@ -118,7 +118,7 @@ int fs_dup2(int oldfd, int newfd)
     vfs_refrence(cur->fds[oldfd].file);
 
 
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock, 0);
 
     return 0;
 }
@@ -673,7 +673,7 @@ static unsigned fs_get_free_fd(INODE node, char* path)
         }
     }
 
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock, 0);
 
     return i;
 
@@ -705,7 +705,7 @@ static unsigned fs_dup_to_free_fd(unsigned fd)
         break;
     }
 
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock, 0);
 
     return i;
 }
@@ -757,9 +757,33 @@ static unsigned fs_dir_get_free_fd(DIR node, char* path)
         }
     }
 
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock, 1);
 
     return i;
+}
+
+static void* fs_clear_fd(unsigned fd, int* isdir)
+{
+    task_struct* cur = CURRENT_TASK();
+    INODE node;
+
+    if (fd >= MAX_FD)
+    {
+        return 0;
+    }
+
+    sema_wait(&cur->fd_lock);
+    *isdir = (cur->fds[fd].flag & fd_flag_isdir);
+    node = cur->fds[fd].file;
+    cur->fds[fd].file = 0;
+    cur->fds[fd].file_off = 0;
+    cur->fds[fd].flag = 0;
+    kfree(cur->fds[fd].path);
+    cur->fds[fd].path = 0;
+    sema_trigger(&cur->fd_lock, 1);
+
+    return node;
+
 }
 
 static DIR fs_dir_get_fd(unsigned fd)
@@ -782,36 +806,12 @@ static DIR fs_dir_get_fd(unsigned fd)
     {
         node = cur->fds[fd].dir;
     }
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock, 0);
 
     return node;
 }
 
-static void* fs_clear_fd(unsigned fd, int* isdir)
-{
-    task_struct* cur = CURRENT_TASK();
-    INODE node;
 
-    if (fd >= MAX_FD)
-    {
-        return 0;
-    }
-
-    sema_wait(&cur->fd_lock);
-
-
-    *isdir = (cur->fds[fd].flag & fd_flag_isdir);
-    node = cur->fds[fd].file;
-    cur->fds[fd].file = 0;
-    cur->fds[fd].file_off = 0;
-    cur->fds[fd].flag = 0;
-    kfree(cur->fds[fd].path);
-    cur->fds[fd].path = 0;
-    sema_trigger(&cur->fd_lock);
-
-    return node;
-
-}
 
 void fs_flush(char* filesys)
 {

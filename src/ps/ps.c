@@ -6,7 +6,6 @@
 #include <int.h>
 #include <list.h>
 
-#define MAX_PRIORITY 5
 
 typedef struct _ps_control
 {
@@ -14,6 +13,7 @@ typedef struct _ps_control
     LIST_ENTRY dying_queue;
     LIST_ENTRY  wait_queue;
     LIST_ENTRY  mgr_queue;
+    task_struct* ps_dsr;
 }ps_control;
 
 static unsigned cur_cr3, cr3, next_cr3;
@@ -145,15 +145,22 @@ void ps_put_to_wait_queue(task_struct* task)
 
 void ps_put_to_ready_queue(task_struct* task)
 {
-    // Remove from whatever queue it is, then put into ready queue
     lock_ps();
-    if (task->ps_list.Flink && task->ps_list.Blink)
+    if (task->type == ps_dsr)
     {
-        RemoveEntryList(&task->ps_list);
+        control.ps_dsr = task;
     }
+    else
+    {
+        // Remove from whatever queue it is, then put into ready queue
+        if (task->ps_list.Flink && task->ps_list.Blink)
+        {
+            RemoveEntryList(&task->ps_list);
+        }
 
-    if (task->psid != 0xffffffff)
-        InsertTailList(&control.ready_queue[task->priority], &task->ps_list);
+        if (task->psid != 0xffffffff)
+            InsertTailList(&control.ready_queue[task->priority], &task->ps_list);
+    }
     unlock_ps();
 }
 
@@ -192,6 +199,11 @@ static task_struct* ps_get_next_task()
     task_struct* task = 0;
     int i = MAX_PRIORITY - 1;
     LIST_ENTRY* ready_queue;
+    if (dsr_has_task())
+    {
+        return control.ps_dsr;
+    }
+        
     lock_ps();
 
     for (; i >= 0; i--)
@@ -418,7 +430,7 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
         task->fds[i].path = strdup(cur->fds[i].path);
         vfs_refrence(cur->fds[i].file);
     }
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock, 0);
 
 
 }
@@ -910,31 +922,20 @@ static void _task_sched()
         ps_save_kernel_map(task);
     }
 
-
-
     SAVE_ALL();
     __asm__("movl %%esp, %0" : "=q"(current->esp));
     __asm__("movl %0, %%eax" : : "q"(task->esp));
     __asm__("movl %eax, %esp");
 
-
-
     RESTORE_ALL();
 
     __asm__("NEXT: nop");
 
-
 SELF:
-
+    RELOAD_CR3(next_cr3);
     current = CURRENT_TASK();
     reset_tss(current);
-    RELOAD_CR3(next_cr3);
-
-    if (1)
-    {
-        int_intr_enable();
-    }
-
+    int_intr_enable();
     current->is_switching = 0;
     sched_cal_end();
     return;

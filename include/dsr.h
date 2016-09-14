@@ -18,4 +18,8 @@ void dsr_add(dsr_callback fn, void* param);
 
 void dsr_process();
 
+int dsr_has_task();
+
+int dsr_running();
+
 #endif

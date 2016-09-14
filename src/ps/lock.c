@@ -99,10 +99,11 @@ void sema_reset(semaphore* s)
 }
 
 
-static void sema_notice_one(semaphore* s)
+static int sema_notice_one(semaphore* s)
 {
     task_struct* task = 0;
     LIST_ENTRY* entry = 0;
+    int has = 0;
     spinlock_lock(&s->wait_lock);
     // get a waiting task is has
     if (!IsListEmpty(&s->wait_list))
@@ -112,16 +113,20 @@ static void sema_notice_one(semaphore* s)
         // then put it into ready status
         task->status = ps_ready;
         ps_put_to_ready_queue(task);
+        has = 1;
     }
     spinlock_unlock(&s->wait_lock);
+    return has;
 }
 
-void sema_trigger(semaphore* s)
+void sema_trigger(semaphore* s, int force_sched)
 {
-    sema_notice_one(s);
+    int has = sema_notice_one(s);
 
     __sync_lock_test_and_set(&(s->lock), 0);
-    task_sched();
+
+    if (has || force_sched)
+        task_sched();
 }
 
 void sema_wait_for_intr(semaphore* s)
@@ -153,7 +158,7 @@ static void main_process(void* param)
     {
         msleep(100);
         printk("main process trigger semaphore\n");
-        sema_trigger(&sema);
+        sema_trigger(&sema, 0);
     }
 
     while (1)

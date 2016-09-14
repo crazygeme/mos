@@ -158,28 +158,14 @@ intr_handler(intr_frame *frame)
     fn = in_callbacks[frame->vec_no];
     if (fn)
         fn(frame);
-    else
-    {
-        //      for (;;) {
-#ifdef DEBUG
-        klib_info("int ", frame->vec_no, ": ");
-        klib_print(intr_names[frame->vec_no]);
-        klib_putchar_update_cursor('; ');
-        klib_info("eip: ", frame->eip, "; ");
-        klib_info("esp: ", frame->esp, "\n");
-#endif
-        //  	//printf("int %x: %s\n", frame->vec_no, intr_names[frame->vec_no]);
-        //  	//printf("eip %x, esp %x\n", frame->eip, frame->esp);
-        //
-        //
-        //      }
-    }
 
     if (external)
         pic_end_of_interrupt(frame->vec_no);
-    //for(;;);
-    // have to move syscall to another routine anyway..
-    dsr_process();
+
+    // if has dsr, call task_sched
+    // task_sched function will pick dsr process first
+    if (dsr_has_task() && ps_enabled())
+        task_sched();
 }
 
 void intr_syscall_handler(intr_frame* frame)

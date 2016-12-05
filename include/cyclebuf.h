@@ -7,6 +7,8 @@ cy_buf* cyb_create(char* name);
 
 void cyb_putc(cy_buf* b, unsigned char c);
 
+void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len);
+
 unsigned char cyb_getc(cy_buf* b);
 
 int cyb_isempty(cy_buf* b);

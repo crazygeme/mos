@@ -83,20 +83,16 @@ INODE pipe_create_writer(cy_buf* buf)
 static void pipe_free_inode(struct filesys_type* t, INODE n)
 {
     pipe_inode* node = (pipe_inode*)n;
-    klog("[pipe]node readonly %d, buf closed %d\n", node->readonly, cyb_is_writer_closed(node->buf));
     if (!node->readonly)
     {
-        klog("[pipe] close writer\n");
         cyb_writer_close(node->buf);
     }
 
     if (node->readonly && cyb_is_writer_closed(node->buf))
     {
-        klog("[pipe] free cycle buffer\n");
         kfree(node->buf);
     }
 
-    klog("[pipe] node %x\n", n);
     kfree(n);
 }
 
@@ -146,12 +142,8 @@ static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, uns
     if (n->readonly)
         return 0;
 
-    while (i < len)
-    {
-        cyb_putc(n->buf, *tmp);
-        i++;
-        tmp++;
-    }
+    cyb_putbuf(n->buf, tmp, len);
+
     return len;
 }
 

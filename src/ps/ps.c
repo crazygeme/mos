@@ -24,6 +24,7 @@ static spinlock psid_lock;
 static spinlock dying_queue_lock;
 static spinlock wait_queue_lock;
 static spinlock mgr_queue_lock;
+static spinlock map_lock;
 static unsigned int ps_id;
 static void ps_restore_user_map();
 static void lock_ps()
@@ -292,6 +293,7 @@ void ps_init()
     spinlock_init(&dying_queue_lock);
     spinlock_init(&wait_queue_lock);
     spinlock_init(&mgr_queue_lock);
+    spinlock_init(&map_lock);
     ps_id = 0;
     _ps_enabled = 0;
     task_schedule_time = 0;
@@ -668,6 +670,70 @@ char *sys_getcwd(char *buf, unsigned size)
     return buf;
 }
 
+static struct _sched_call_map
+{
+    char* func;
+    int times
+} sched_call_map[100] = {0};
+
+
+static void sched_call_map_add(const char* func, int times)
+{
+    int i;
+    int found = 0;
+    spinlock_lock(&map_lock);
+    for (i = 0; i < 100; i++)
+    {
+        if (sched_call_map[i].func != NULL)
+            if (!strcmp(sched_call_map[i].func, func)) {
+                sched_call_map[i].times += times;
+                found = 1;
+                break;
+            }
+    }
+
+    if (!found)
+    {
+        for(i = 0; i < 100; i++)
+            if (sched_call_map[i].func == NULL)
+            {
+                sched_call_map[i].func = strdup(func);
+                sched_call_map[i].times = times;
+                break;
+            }
+    }
+    spinlock_unlock(&map_lock);
+}
+
+static void sched_call_map_clear()
+{
+    int i;
+    spinlock_lock(&map_lock);
+    for (i = 0; i < 100; i++)
+    {
+        if (sched_call_map[i].func != NULL)
+        {
+            kfree(sched_call_map[i].func);
+            sched_call_map[i].func = NULL;
+            sched_call_map[i].times = 0;
+        }
+    }
+    spinlock_unlock(&map_lock);
+}
+
+static void sched_call_map_print()
+{
+    int i;
+    spinlock_lock(&map_lock);
+    for (i = 0; i < 100; i++)
+    {
+        if (sched_call_map[i].func != NULL)
+        {
+            printk("[sched] %s: %d times\n", sched_call_map[i].func, sched_call_map[i].times);
+        }
+    }
+    spinlock_unlock(&map_lock);
+}
 
 int sys_waitpid(unsigned pid, int* status, int options)
 {
@@ -705,6 +771,8 @@ int sys_waitpid(unsigned pid, int* status, int options)
                 RemoveEntryList(entry);
                 vm_free(task, 1);
                 can_return = 1;
+                sched_call_map_print();
+                sched_call_map_clear();
                 break;
             }
 
@@ -878,8 +946,7 @@ static void ps_restore_user_map()
 }
 
 
-
-static void _task_sched()
+void _task_sched(const char* func)
 {
     task_struct *task = 0;
     task_struct *current = 0;
@@ -887,6 +954,7 @@ static void _task_sched()
     int i = 0;
     int intr_enabled = int_is_intr_enabled();
 
+    sched_call_map_add(func, 1);
 
     sched_cal_begin();
 
@@ -940,10 +1008,6 @@ SELF:
     return;
 }
 
-void task_sched()
-{
-    _task_sched();
-}
 
 int ps_has_ready(int priority)
 {

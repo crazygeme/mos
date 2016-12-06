@@ -241,7 +241,8 @@ void ps_update_tss(unsigned int esp0);
 
 
 // task functions
-void task_sched();
+void _task_sched(const char* func);
+#define task_sched() _task_sched(__func__)
 
 
 typedef void (*fpuser_map_callback)(void* aux, unsigned vir, unsigned phy);

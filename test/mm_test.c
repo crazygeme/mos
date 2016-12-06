@@ -71,20 +71,6 @@ void mm_test()
 {
     unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
     unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
-    printk("mask of 8M -1: %x\n", mm_get_phy_page_mask(2 * 1024 - 1));
-    printk("mask of 8M: %x \n", mm_get_phy_page_mask(2 * 1024));
-    printk("mask of high bound -1: %x, high bound is %x \n",
-        mm_get_phy_page_mask(phy_page_high - 1),
-        phy_page_high);
-    printk("mask of high bound: %x, high bound is %x \n",
-        mm_get_phy_page_mask(phy_page_high),
-        phy_page_high);
-
-    printk("mask of high bound +1: %x, high bound is %x \n",
-        mm_get_phy_page_mask(phy_page_high + 1),
-        phy_page_high);
-
-    printk("first free page index is %x\n", mm_get_free_phy_page_index());
 
     if (1)
     {

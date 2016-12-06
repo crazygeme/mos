@@ -1109,8 +1109,6 @@ static int sys_quota(struct krnquota *quota)
     quota->heap_cur = heap_quota;
     quota->heap_wm = heap_quota_high;
     quota->heap_top = cur_block_top;
-    quota->phymm_cur = phymm_cur;
-    quota->phymm_wm = phymm_high;
     quota->phymm_max = phymm_max;
     quota->pgc_count = pgc_count;
     quota->pgc_top = pgc_top;

@@ -118,7 +118,7 @@ int fs_dup2(int oldfd, int newfd)
     vfs_refrence(cur->fds[oldfd].file);
 
 
-    sema_trigger(&cur->fd_lock, 0);
+    sema_trigger(&cur->fd_lock);
 
     return 0;
 }
@@ -155,6 +155,8 @@ void fs_close(unsigned int fd)
             vfs_free_inode(node);
         }
     }
+    
+
 }
 
 #ifndef WIN32
@@ -673,7 +675,7 @@ static unsigned fs_get_free_fd(INODE node, char* path)
         }
     }
 
-    sema_trigger(&cur->fd_lock, 0);
+    sema_trigger(&cur->fd_lock);
 
     return i;
 
@@ -705,7 +707,7 @@ static unsigned fs_dup_to_free_fd(unsigned fd)
         break;
     }
 
-    sema_trigger(&cur->fd_lock, 0);
+    sema_trigger(&cur->fd_lock);
 
     return i;
 }
@@ -757,7 +759,7 @@ static unsigned fs_dir_get_free_fd(DIR node, char* path)
         }
     }
 
-    sema_trigger(&cur->fd_lock, 1);
+    sema_trigger(&cur->fd_lock);
 
     return i;
 }
@@ -780,7 +782,7 @@ static void* fs_clear_fd(unsigned fd, int* isdir)
     cur->fds[fd].flag = 0;
     kfree(cur->fds[fd].path);
     cur->fds[fd].path = 0;
-    sema_trigger(&cur->fd_lock, 1);
+    sema_trigger(&cur->fd_lock);
 
     return node;
 
@@ -806,7 +808,7 @@ static DIR fs_dir_get_fd(unsigned fd)
     {
         node = cur->fds[fd].dir;
     }
-    sema_trigger(&cur->fd_lock, 0);
+    sema_trigger(&cur->fd_lock);
 
     return node;
 }

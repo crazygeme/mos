@@ -119,13 +119,13 @@ static int sema_notice_one(semaphore* s)
     return has;
 }
 
-void sema_trigger(semaphore* s, int force_sched)
+void sema_trigger(semaphore* s)
 {
     int has = sema_notice_one(s);
 
     __sync_lock_test_and_set(&(s->lock), 0);
 
-    if (has || force_sched)
+    if (has)
         task_sched();
 }
 

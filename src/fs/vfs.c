@@ -7,6 +7,7 @@
 #else
 #include <klib.h>
 #include <lock.h>
+#include <ps.h>
 #endif
 
 static LIST_ENTRY vfs_list;
@@ -31,7 +32,7 @@ struct filesys_type* register_vfs(void* sb, void* desc, void* dev,
     strcpy(fs->rootname, rootname);
     sema_wait(&vfs_lock);
     InsertTailList(&vfs_list, &fs->fs_list);
-    sema_trigger(&vfs_lock, 0);
+    sema_trigger(&vfs_lock);
     return fs;
 }
 
@@ -52,7 +53,7 @@ void vfs_trying_to_mount_root()
         }
         entry = entry->Flink;
     }
-    sema_trigger(&vfs_lock, 0);
+    sema_trigger(&vfs_lock);
 
     if (!found)
     {
@@ -123,6 +124,7 @@ void vfs_free_inode(INODE node)
     }
     else
     {
+        task_sched();
     }
 }
 
@@ -254,6 +256,10 @@ void vfs_close_dir(DIR dir)
     if (dir->ref_count == 0)
     {
         type->ino_ops->close_dir(dir);
+    }
+    else
+    {
+        task_sched();
     }
 }
 

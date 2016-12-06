@@ -74,7 +74,7 @@ static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite)
 
     if (notifyOnWrite)
         if (needs_trigger)
-            sema_trigger(&b->lock, 0);
+            sema_trigger(&b->lock);
 
 }
 
@@ -99,7 +99,7 @@ void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len)
     }
 
     if (needs_trigger)
-        sema_trigger(&b->lock, 0);
+        sema_trigger(&b->lock);
 }
 
 unsigned char cyb_getc(cy_buf* b)

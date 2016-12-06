@@ -4,12 +4,12 @@
 #include <ps.h>
 #include <mmap.h>
 #include <namespace.h>
+#include <phymm.h>
 
 unsigned page_fault_count;
 unsigned page_falut_total_time;
 
 static void pf_process(intr_frame* frame);
-
 void pf_init()
 {
     page_fault_count = 0;
@@ -28,6 +28,7 @@ void pf_init()
 #define PF_MASK_RW      0x00000002  // write access
 #define PF_MASK_US      0x00000004  // user mode access
 #define PF_MASK_RSVD    0x00000008
+extern phymm_page* phymm_pages;
 static void pf_process(intr_frame* frame)
 {
     unsigned cr2;
@@ -97,28 +98,32 @@ static void pf_process(intr_frame* frame)
         if (cow)
         {
             vir = cr2;
-            tmp = vm_alloc(1);
-            memcpy(tmp, (vir&PAGE_SIZE_MASK), PAGE_SIZE);
+            vir = (vir&PAGE_SIZE_MASK);
+            memcpy(cur->user.reserve, vir, PAGE_SIZE);
             flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_PRESENT;
             flag |= PAGE_ENTRY_WRITABLE;
             mm_del_dynamic_map(vir);
-            mm_add_dynamic_map(vir, tmp - KERNEL_OFFSET, flag);
-            vm_free(tmp, 1);
+            mm_add_dynamic_map(vir, 0, flag);
             RELOAD_CR3(cr3);
+            memcpy(vir, cur->user.reserve, PAGE_SIZE);
+            
         }
         else
         {
-            flag = mm_get_map_flag(cr2);
+            vir = cr2;
+            vir = (vir&PAGE_SIZE_MASK);
+            flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_WRITABLE;
-            mm_set_map_flag(cr2, flag);
+            mm_set_map_flag(vir, flag);
         }
 
         goto Done;
     }
     else
     {
-        printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
+        task_struct* cur = CURRENT_TASK();
+        printk("[%d]page fault! error code %x, address %x, eip %x\n", cur->psid, frame->error_code, cr2, frame->eip);
     }
 
     for (;;)

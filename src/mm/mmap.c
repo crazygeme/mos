@@ -2,6 +2,8 @@
 #include <rbtree.h>
 #include <klib.h>
 #include <config.h>
+#include <ps.h>
+#include <errno.h>
 
 typedef struct _vm_key
 {
@@ -314,4 +316,89 @@ void vm_dup(vm_struct_t cur, vm_struct_t new)
 
         pair = hash_next(table, pair);
     }
+}
+
+
+#define MAP_SHARED      0x01            /* Share changes */
+#define MAP_PRIVATE     0x02            /* Changes are private */
+#define MAP_TYPE        0x0f            /* Mask for type of mapping */
+#define MAP_FIXED       0x10            /* Interpret addr exactly */
+#define MAP_ANONYMOUS   0x20            /* don't use a file */
+#ifdef CONFIG_MMAP_ALLOW_UNINITIALIZED
+# define MAP_UNINITIALIZED 0x4000000    /* For anonymous mmap, memory could be uninitialized */
+#else
+# define MAP_UNINITIALIZED 0x0          /* Don't support this flag */
+#endif
+
+
+
+int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
+    unsigned int flags, int fd, unsigned int offset)
+{
+    unsigned addr = _addr & PAGE_SIZE_MASK;
+    unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
+    unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
+    INODE node;
+    task_struct* cur = CURRENT_TASK();
+
+    if (_addr == 0)
+    {
+        addr = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
+    }
+
+    // FIXME
+    // lots of flags and prot
+    if (fd != -1 && cur->fds[fd].flag != 0)
+        node = cur->fds[fd].file;
+    else
+        node = 0;
+
+    vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, node, offset);
+
+
+    return addr;
+
+}
+
+int do_munmap(void *addr, unsigned length)
+{
+    task_struct* cur = CURRENT_TASK();
+    vm_region* region = vm_find_map(cur->user.vm, addr);
+    unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
+    unsigned end = ((unsigned)addr + length - 1) & PAGE_SIZE_MASK;
+    unsigned page_count = (end - begin) / PAGE_SIZE + 1;
+
+    end = begin + page_count*PAGE_SIZE;
+    if (!region)
+    {
+        return (-EINVAL);
+    }
+
+
+    if (begin > region->begin && end < region->end)
+    {
+        vm_del_map(cur->user.vm, addr);
+        vm_add_map(cur->user.vm, region->begin, begin, region->node, region->offset);
+        vm_add_map(cur->user.vm, end, region->end, region->node, region->offset + (end - region->begin));
+    }
+    else if (begin > region->begin && end == region->end)
+    {
+        vm_del_map(cur->user.vm, addr);
+        vm_add_map(cur->user.vm, region->begin, begin, region->node, region->offset);
+    }
+    else if (begin == region->begin && end < region->end)
+    {
+        vm_del_map(cur->user.vm, addr);
+        vm_add_map(cur->user.vm, end, region->end, region->node, region->offset + (end - region->begin));
+    }
+    else if (begin == region->begin && end == region->end)
+    {
+        vm_del_map(cur->user.vm, addr);
+    }
+    else
+    {
+        return (-EINVAL);
+    }
+
+    return 0;
 }

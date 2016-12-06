@@ -432,7 +432,7 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
         task->fds[i].path = strdup(cur->fds[i].path);
         vfs_refrence(cur->fds[i].file);
     }
-    sema_trigger(&cur->fd_lock, 0);
+    sema_trigger(&cur->fd_lock);
 
 
 }
@@ -471,7 +471,7 @@ static void ps_dup_user_page(unsigned vir, task_struct* task, unsigned flag)
     }
 
     page_table[page_table_offset] = cur_page_table[page_table_offset];
-    mm_set_phy_page_mask(target_page_idx, 1);
+    phymm_reference_page(target_page_idx);
 }
 
 
@@ -682,6 +682,7 @@ char *sys_getcwd(char *buf, unsigned size)
     return buf;
 }
 
+#ifdef TRACE_SCHED_CALL
 static struct _sched_call_map
 {
     char* func;
@@ -746,6 +747,7 @@ static void sched_call_map_print()
     }
     spinlock_unlock(&map_lock);
 }
+#endif
 
 int sys_waitpid(unsigned pid, int* status, int options)
 {
@@ -783,8 +785,10 @@ int sys_waitpid(unsigned pid, int* status, int options)
                 RemoveEntryList(entry);
                 vm_free(task, 1);
                 can_return = 1;
+#ifdef TRACE_SCHED_CALL
                 sched_call_map_print();
                 sched_call_map_clear();
+#endif
                 break;
             }
 
@@ -966,7 +970,9 @@ void _task_sched(const char* func)
     int i = 0;
     int intr_enabled = int_is_intr_enabled();
 
+#ifdef TRACE_SCHED_CALL
     sched_call_map_add(func, 1);
+#endif
 
     sched_cal_begin();
 

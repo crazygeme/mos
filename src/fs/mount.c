@@ -42,7 +42,7 @@ int do_mount(char* path, struct filesys_type* type)
 
     sema_wait(&mnt_lock);
     InsertTailList(&mnt_list, &entry->mnt_list);
-    sema_trigger(&mnt_lock, 0);
+    sema_trigger(&mnt_lock);
 
     return 1;
 }
@@ -66,7 +66,7 @@ static mnt_list_entry* do_mount_lookup(char* path)
 
         entry = entry->Flink;
     }
-    sema_trigger(&mnt_lock, 0);
+    sema_trigger(&mnt_lock);
 
     if (!found)
     {
@@ -87,7 +87,7 @@ int do_umount(char* path)
 
     sema_wait(&mnt_lock);
     RemoveEntryList(&mnt->mnt_list);
-    sema_trigger(&mnt_lock, 0);
+    sema_trigger(&mnt_lock);
     kfree(mnt);
 
     return 1;
@@ -122,7 +122,7 @@ void dump_mount_point()
         printk("mnt  \"%s\" --> \"%s\"\n", mnt->path, mnt->type->rootname);
         entry = entry->Flink;
     }
-    sema_trigger(&mnt_lock, 0);
+    sema_trigger(&mnt_lock);
 
 }
 #endif

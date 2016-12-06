@@ -35,7 +35,7 @@ cy_buf* cyb_create(char* name)
     return ret;
 }
 
-void cyb_putc(cy_buf* b, unsigned char key)
+static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite)
 {
     unsigned length = 0;
     unsigned write_idx;
@@ -43,9 +43,9 @@ void cyb_putc(cy_buf* b, unsigned char key)
 
     length = b->len;
 
-
-    if (length == 0)
-        needs_trigger = 1;
+    if (notifyOnWrite)
+        if (length == 0)
+            needs_trigger = 1;
 
     spinlock_lock(&b->idx_lock);
 
@@ -72,9 +72,34 @@ void cyb_putc(cy_buf* b, unsigned char key)
     if (key == EOF)
         b->write_closed = 1;
 
+    if (notifyOnWrite)
+        if (needs_trigger)
+            sema_trigger(&b->lock, 0);
+
+}
+
+void cyb_putc(cy_buf* b, unsigned char key)
+{
+    return cyb_putc_internal(b, key, 1);
+}
+
+void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len)
+{
+    unsigned i = 0;
+    int needs_trigger = 0;
+    unsigned length = 0;
+
+    length = b->len;
+    if (length == 0)
+        needs_trigger = 1;
+
+    for (i = 0; i < len; i++)
+    {
+        cyb_putc_internal(b, buf[i], 0);
+    }
+
     if (needs_trigger)
         sema_trigger(&b->lock, 0);
-
 }
 
 unsigned char cyb_getc(cy_buf* b)

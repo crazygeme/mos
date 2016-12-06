@@ -3,6 +3,7 @@
 #include <int.h>
 #include <lock.h>
 #include <config.h>
+#include <ps.h>
 
 #define SOFTIRQ 0x1
 #define TRIGGER_SOFTIRQ() \

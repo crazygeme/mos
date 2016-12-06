@@ -1,6 +1,6 @@
 #include <int.h>
 #include <keyboard.h>
-
+#include <ps.h>
 
 
 _START static void init_interrupt()

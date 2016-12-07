@@ -93,28 +93,16 @@ return ret;
 
 #ifndef	_LINUX_RBTREE_H
 #define	_LINUX_RBTREE_H
-#ifdef WIN32
-#define _TIME_T_DEFINED
-#define _CTYPE_DEFINED
-#include <windows.h>
-#include <osdep.h>
-#else
 #include <klib.h>
 #include <list.h>
 #include <lock.h>
-#endif
 
 #ifndef NULL
 #define NULL ((void*)0)
 #endif
 
-#ifndef WIN32
-#define INLINE inline
-#define container_of CONTAINER_OF
-#else
 #define INLINE 
 #define container_of CONTAINER_OF
-#endif
 
 struct rb_node
 {

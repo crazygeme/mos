@@ -1,26 +1,11 @@
 #include <mount.h>
 #include <vfs.h>
-#ifdef WIN32
-#include <Windows.h>
-#include <osdep.h>
-#elif MACOS
-#include <osdep.h>
-#include <list.h>
-#else
 #include <list.h>
 #include <lock.h>
 #include <klib.h>
-#endif
 
-static LIST_ENTRY mnt_list;
+LIST_ENTRY mnt_list;
 static semaphore mnt_lock;
-
-typedef struct _mnt_list_entry
-{
-    LIST_ENTRY mnt_list;
-    struct filesys_type* type;
-    char path[260];
-}mnt_list_entry;
 
 void mount_init()
 {
@@ -106,23 +91,3 @@ struct filesys_type* mount_lookup(char* path)
     ret = mnt->type;
     return ret;
 }
-
-#ifdef TEST_MOUNT
-void dump_mount_point()
-{
-    PLIST_ENTRY entry;
-    mnt_list_entry* mnt = 0;
-    int found = 0;
-
-    sema_wait(&mnt_lock);
-    entry = mnt_list.Flink;
-    while (entry != &mnt_list)
-    {
-        mnt = CONTAINER_OF(entry, mnt_list_entry, mnt_list);
-        printk("mnt  \"%s\" --> \"%s\"\n", mnt->path, mnt->type->rootname);
-        entry = entry->Flink;
-    }
-    sema_trigger(&mnt_lock);
-
-}
-#endif

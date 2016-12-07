@@ -267,9 +267,4 @@ int sys_fork();
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int* status, int options);
 char *sys_getcwd(char *buf, unsigned size);
-
-#ifdef TEST_PS
-void ps_mmm();
-#endif
-
 #endif

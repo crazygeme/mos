@@ -1,11 +1,6 @@
 #ifndef _VFS_H_
 #define _VFS_H_
-
-#ifdef WIN32
-#include <windows.h>
-#else
 #include <list.h>
-#endif
 
 #define S_IFMT  00170000
 #define S_IFSOCK 0140000

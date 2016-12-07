@@ -15,16 +15,15 @@ endif
 endif
 
 CSTRICT	= 	-Werror=return-type\
-			-Werror=uninitialized\
-			-w
-CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin \
-	-D__KERNEL__ -D__DEBUG__\
+		-Werror=uninitialized\
+		-w
+CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__DEBUG__\
 	-I./ -Iinclude
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
 TARGET	= kernel
-DST		= obj
+DST	= obj
 TEST 	= test
 OBJS	= $(DST)/boot.o \
 		  $(DST)/kernel.o \
@@ -69,7 +68,9 @@ OBJS	= $(DST)/boot.o \
 
 TESTS	= $(DST)/$(TEST)/mmap_test.o\
 		  $(DST)/$(TEST)/fs_test.o\
-		  $(DST)/$(TEST)/mm_test.o
+		  $(DST)/$(TEST)/mm_test.o\
+		  $(DST)/$(TEST)/block_test.o\
+		  $(DST)/$(TEST)/mount_test.o
 
 
 all: kernel
@@ -91,6 +92,12 @@ $(DST)/$(TEST)/fs_test.o: test/fs_test.c
 
 $(DST)/$(TEST)/mm_test.o: test/mm_test.c
 	$(CC) $(CFLAGS) test/mm_test.c -o $(DST)/$(TEST)/mm_test.o
+
+$(DST)/$(TEST)/block_test.o: test/block_test.c
+	$(CC) $(CFLAGS) test/block_test.c -o $(DST)/$(TEST)/block_test.o
+
+$(DST)/$(TEST)/mount_test.o: test/mount_test.c
+	$(CC) $(CFLAGS) test/mount_test.c -o $(DST)/$(TEST)/mount_test.o
 
 $(DST)/boot.o: src/boot/kernel.S
 	$(CC) $(CFLAGS) src/boot/kernel.S -o $(DST)/boot.o
@@ -212,21 +219,6 @@ $(DST)/gui_core.o: src/gui/gui_core.c include/gui_core.h
 
 $(DST)/memory.o: src/lib/memory.S
 	$(CC) $(CFLAGS) -o $(DST)/memory.o src/lib/memory.S
-
-user: user/run.h user/run.c
-ifeq ($(OS),Linux)
-	cd user && make -f Makefile run
-	-mkdir mnt
-	sudo losetup -o 1048576 /dev/loop0 rootfs.img
-	sudo mount /dev/loop0 mnt
-	sudo cp user/run mnt/bin/
-	ping -c 5 127.0.0.1 > /dev/null
-	sudo umount mnt
-	sudo losetup -d /dev/loop0
-	rm -rf mnt
-else
-	cd user && make -f Makefile run
-endif
 
 clean:
 	-rm -rf $(DST)

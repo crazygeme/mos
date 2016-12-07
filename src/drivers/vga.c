@@ -1986,6 +1986,7 @@ void fb_enable()
         {
             mm_add_resource_map(dma);
         }
+        REFRESH_CACHE();
         _fb_buffer = _fb_buffer_phy;
     }
 }

@@ -1,15 +1,7 @@
 #include <ffs.h>
 #include <vfs.h>
-#ifdef WIN32
-#include <osdep.h>
-#include <time.h>
-#elif MACOS
-#include <osdep.h>
-#include <time.h>
-#else
 #include <klib.h>
 #include <timer.h>
-#endif
 #include <unistd.h>
 
 

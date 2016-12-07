@@ -341,10 +341,6 @@ int sys_execve(const char* file, char** argv, char** envp)
     }
 
     do_mmap(esp_buttom, USER_STACK_PAGES*PAGE_SIZE, 0, 0, -1, 0);
-    //  for (i = 0; i < USER_STACK_PAGES; i++) {
-    //      mm_add_dynamic_map(esp_buttom+i*PAGE_SIZE, 0, PAGE_ENTRY_USER_DATA);
-    //      memset(esp_buttom+i*PAGE_SIZE, 0, PAGE_SIZE);
-    //  }
 
     esp_top = ps_setup_v(file_name, argc, s_argv, envc, s_envp, esp_top, &fmt);
     ps_free_v(s_argv, argc);

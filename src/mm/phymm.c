@@ -176,9 +176,11 @@ void phymm_setup_mgmt_pages(unsigned start_page)
     {
         addr = i + KERNEL_OFFSET;
         mm_add_direct_map(addr);
-        memset(addr, 0, PAGE_SIZE);
     }
-    phymm_pages = (phymm_page*)((start_page*PAGE_SIZE) + KERNEL_OFFSET);
+    REFRESH_CACHE();
+    addr = (start_page * PAGE_SIZE) + KERNEL_OFFSET;
+    memset(addr, 0, (phymm_valid-start_page)*PAGE_SIZE);
+    phymm_pages = (phymm_page*)(addr);
 }
 
 unsigned phymm_reference_page(unsigned page_index)

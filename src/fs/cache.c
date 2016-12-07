@@ -1,15 +1,8 @@
-#ifdef WIN32
-#include <osdep.h>
-#define CACHE_HASH_SIZE 1
-#elif defined MACOS
-#include <osdep.h>
-#else
 #include <namespace.h>
 #include <vfs.h>
 #include <mm.h>
 #include <klib.h>
 #define CACHE_HASH_SIZE 0
-#endif
 #include <cache.h>
 #include <unistd.h>
 

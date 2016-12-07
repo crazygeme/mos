@@ -528,6 +528,7 @@ static int sys_brk(unsigned top)
     if (task->user.heap_top == USER_HEAP_BEGIN)
     {
         mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
+        REFRESH_CACHE();
         task->user.heap_top += PAGE_SIZE;
     }
 
@@ -551,7 +552,7 @@ static int sys_brk(unsigned top)
             unsigned vir = task->user.heap_top + i * PAGE_SIZE;
             mm_add_dynamic_map(vir, 0, PAGE_ENTRY_USER_DATA);
         }
-
+        REFRESH_CACHE();
         top = task->user.heap_top + pages * PAGE_SIZE;
         task->user.heap_top = top;
         return top;
@@ -570,6 +571,7 @@ static int sys_brk(unsigned top)
             unsigned vir = top + i * PAGE_SIZE;
             mm_del_dynamic_map(vir);
         }
+        REFRESH_CACHE();
 #ifdef __VERBOS_SYSCALL__
         klog("brk: cur %x newtop %x, ret %x\n", task->user.heap_top, top, top);
 #endif

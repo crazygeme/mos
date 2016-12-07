@@ -2,12 +2,7 @@
 #include <ext2.h>
 #include <vfs.h>
 #include <block.h>
-#ifdef WIN32
-#include <osdep.h>
-#include <time.h>
-#else
 #include <klib.h>
-#endif
 #include <unistd.h>
 #include <ps.h>
 

@@ -1,10 +1,4 @@
 #include <namespace.h>
-#ifdef WIN32
-#include <windows.h>
-#include <osdep.h>
-#elif MACOS
-#include <osdep.h>
-#else
 #include <ps.h>
 #include <lock.h>
 #include <config.h>
@@ -13,7 +7,6 @@
 #include <timer.h>
 #include <errno.h>
 #include <cyclebuf.h>
-#endif
 #include <unistd.h>
 #include <cache.h>
 

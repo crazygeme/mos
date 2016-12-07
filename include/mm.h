@@ -36,6 +36,13 @@ typedef struct multiboot_info multiboot_info_t;
 #define RELOAD_CR3(address) \
     __asm__ ("movl %0, %%cr3" : : "q" (address));
 
+#define REFRESH_CACHE() \
+    do{\
+        unsigned __cr3__;\
+        __asm__("movl %%cr3, %0" : "=q"(__cr3__));\
+        __asm__("movl %0, %%cr3" : : "q" (__cr3__));\
+    }while(0)
+
 #define ROUND_UP(X, STEP) (((X) + (STEP) - 1) / (STEP) * (STEP))
 
 #define _START \

@@ -224,6 +224,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
     {
         mm_del_dynamic_map(vir);
     }
+    REFRESH_CACHE();
 
     if (region->node)
     {

@@ -64,6 +64,10 @@ static void pf_process(intr_frame* frame)
         INODE fd;
 
         this_begin = cr2 & PAGE_SIZE_MASK;
+        if (this_begin == 0)
+        {
+            goto HLT;
+        } 
 
         region = vm_find_map(cur->user.vm, this_begin);
         if (region)
@@ -71,6 +75,7 @@ static void pf_process(intr_frame* frame)
             fd = region->node;
             this_offset = region->offset + (this_begin - region->begin);
             mm_add_dynamic_map(this_begin, 0, PAGE_ENTRY_USER_DATA);
+            REFRESH_CACHE();
             memset(this_begin, 0, PAGE_SIZE);
             if (fd != 0)
             {
@@ -80,7 +85,7 @@ static void pf_process(intr_frame* frame)
         }
         else
         {
-            printk("page fault! error code %x, address %x, eip %x\n", frame->error_code, cr2, frame->eip);
+            goto HLT;
         }
     }
     else if (write_access)
@@ -105,7 +110,7 @@ static void pf_process(intr_frame* frame)
             flag |= PAGE_ENTRY_WRITABLE;
             mm_del_dynamic_map(vir);
             mm_add_dynamic_map(vir, 0, flag);
-            RELOAD_CR3(cr3);
+            REFRESH_CACHE();
             memcpy(vir, cur->user.reserve, PAGE_SIZE);
             
         }
@@ -116,16 +121,22 @@ static void pf_process(intr_frame* frame)
             flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_WRITABLE;
             mm_set_map_flag(vir, flag);
+            REFRESH_CACHE();
         }
 
         goto Done;
     }
     else
     {
-        task_struct* cur = CURRENT_TASK();
-        printk("[%d]page fault! error code %x, address %x, eip %x\n", cur->psid, frame->error_code, cr2, frame->eip);
+        goto HLT;
     }
 
+HLT:
+    do{
+       task_struct* cur = CURRENT_TASK();
+        printk("[%d]page fault! error code %x, address %x, eip %x\n", cur->psid, frame->error_code, cr2, frame->eip);
+    }while(0);
+ 
     for (;;)
     {
         __asm__("hlt");

@@ -1,15 +1,9 @@
-#ifdef __KERNEL__
 #include <klib.h>
 #include <tty.h>
 #include <timer.h>
 #include <lock.h>
 #include <ps.h>
-#include <vfs.h>;
-#else
-#include <syscall.h>
-#include <klib.h>
-#endif
-
+#include <vfs.h>
 // following for malloc/free
 
 static kblock free_list[513] = {0};
@@ -20,9 +14,6 @@ unsigned int mem_time;
 unsigned int heap_time;
 static unsigned int klib_random_num = 1;
 unsigned int cur_block_top = KHEAP_BEGIN;
-
-
-#ifdef __KERNEL__
 
 void mm_report()
 {
@@ -495,61 +486,6 @@ static unsigned int kblk(unsigned page_count)
     return ret;
 }
 
-
-#else
-
-static unsigned int cur_block_top = 0;
-
-#define kblk(page) blk(page)
-#define klib_putchar_update_cursor libc_putchar
-#define klib_print libc_print
-
-static unsigned int blk(unsigned page_count)
-{
-    unsigned ret = cur_block_top;
-    unsigned new_top = cur_block_top + page_count * PAGE_SIZE;
-
-    if (page_count == 0)
-    {
-        return ret;
-    }
-
-    cur_block_top = brk(new_top);
-    return ret;
-
-}
-
-static void lock_heap()
-{
-}
-
-static void unlock_heap()
-{
-}
-
-
-void libc_init()
-{
-    cur_block_top = brk(0);
-    heap_quota = heap_quota_high = 0;
-}
-
-
-void libc_putchar(char c)
-{
-    char buf[1];
-    buf[0] = c;
-    write(1, buf, 1);
-}
-
-
-
-void libc_print(char *str)
-{
-    write(1, str, strlen(str));
-}
-
-#endif
 
 
 //// 
@@ -1368,11 +1304,6 @@ unsigned int rand()
 }
 
 
-
-
-#ifdef __KERNEL__
-
-
 static TTY_COLOR cur_fg_color = clWhite;
 static TTY_COLOR cur_bg_color = clBlack;
 
@@ -1522,6 +1453,5 @@ void shutdown()
     printf("still running...\n");
     for (;;);
 }
-#endif
 
 

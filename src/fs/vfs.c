@@ -1,14 +1,7 @@
 #include <vfs.h>
-#ifdef WIN32
-#include <windows.h>
-#include <osdep.h>
-#elif MACOS
-#include <osdep.h>
-#else
 #include <klib.h>
 #include <lock.h>
 #include <ps.h>
-#endif
 
 static LIST_ENTRY vfs_list;
 static semaphore vfs_lock;
@@ -124,7 +117,6 @@ void vfs_free_inode(INODE node)
     }
     else
     {
-        task_sched();
     }
 }
 
@@ -259,7 +251,6 @@ void vfs_close_dir(DIR dir)
     }
     else
     {
-        task_sched();
     }
 }
 

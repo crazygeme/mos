@@ -1,14 +1,10 @@
 #ifndef _LIST_H_
 #define _LIST_H_
 
-#ifdef WIN32
-#include <Windows.h>
-#else
 typedef struct _LIST_ENTRY {
 	struct _LIST_ENTRY  *Flink;
 	struct _LIST_ENTRY  *Blink; 
 } LIST_ENTRY, *PLIST_ENTRY;
-#endif
 
 void InitializeListHead(PLIST_ENTRY ListHead);
 

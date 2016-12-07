@@ -127,6 +127,15 @@ void ps_put_to_dying_queue(task_struct* task)
     }
     if (task->psid != 0xffffffff)
         InsertTailList(&control.dying_queue, &task->ps_list);
+    
+    // insert into list before put the status into ps_dying
+    // because a ps_dying task will not be picked up by 
+    // scheduler. If this task is interrupted between set
+    // status and put into list, it will not scheduled anymore
+    // which means it will never go into dying_queue
+    task->status = ps_dying;
+
+    ps_notify_process(task->parent);
     unlock_dying();
 }
 
@@ -613,19 +622,15 @@ int sys_exit(unsigned status)
     task_struct *cur = CURRENT_TASK();
     int i = 0;
     cur->exit_status = status;
-
 #ifdef __VERBOS_SYSCALL__
     klog("exit(%d)\n", status);
 #endif
-
 
     if (cur->user.vm)
     {
         vm_destroy(cur->user.vm);
         cur->user.vm = 0;
     }
-
-
 
     // close all fds
     for (i = 0; i < MAX_FD; i++)
@@ -641,31 +646,19 @@ int sys_exit(unsigned status)
     // free all physical memory
     ps_cleanup_all_user_map(cur);
 
-    if (cur->user.reserve)
-    {
-        vm_free(cur->user.reserve, 1);
-        cur->user.reserve = 0;
-    }
-
-    if (cur->user.page_dir)
-    {
-        vm_free(cur->user.page_dir, 1);
-        cur->user.page_dir = 0;
-    }
-
-
     if (cur->psid == 0)
     {
         printk("fatal error! process 0 exit\n");
         __asm__("hlt");
     }
 
+    // things like cur->user.page_dir have to to freed in
+    // cleanup stage (polled by waitpid) because this sys
+    // call can be interrupted
+
     // FIXME
     // modify all child->parent into cur->parent
-    cur->status = ps_dying;
     ps_put_to_dying_queue(cur);
-    ps_remove_mgr(cur);
-    ps_notify_process(cur->parent);
     task_sched();
     return 0;
 }
@@ -783,6 +776,18 @@ int sys_waitpid(unsigned pid, int* status, int options)
                     *status = task->exit_status;
                 }
                 RemoveEntryList(entry);
+                if (task->user.reserve)
+                {
+                    vm_free(task->user.reserve, 1);
+                    task->user.reserve = 0;
+                }
+
+                if (task->user.page_dir)
+                {
+                    vm_free(task->user.page_dir, 1);
+                    task->user.page_dir = 0;
+                }
+                ps_remove_mgr(task);
                 vm_free(task, 1);
                 can_return = 1;
 #ifdef TRACE_SCHED_CALL
@@ -794,12 +799,12 @@ int sys_waitpid(unsigned pid, int* status, int options)
 
             entry = entry->Flink;
         }
-        unlock_dying();
 
         if (!can_return)
         {
             ps_put_to_wait_queue(cur);
         }
+        unlock_dying();
         task_sched();
     }
     while (can_return == 0);
@@ -883,6 +888,7 @@ static void ps_cleanup_enum_callback(void* aux, unsigned vir, unsigned phy)
 void ps_cleanup_all_user_map(task_struct* task)
 {
     ps_enum_user_map(task, ps_cleanup_enum_callback, 0);
+    REFRESH_CACHE();
 }
 
 void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux)
@@ -970,9 +976,6 @@ void _task_sched(const char* func)
     int i = 0;
     int intr_enabled = int_is_intr_enabled();
 
-#ifdef TRACE_SCHED_CALL
-    sched_call_map_add(func, 1);
-#endif
 
     sched_cal_begin();
 
@@ -985,9 +988,13 @@ void _task_sched(const char* func)
     __asm__("movl %%cr3, %0" : "=q"(cr3));
     if (task->psid == current->psid)
     {
-        next_cr3 = cur_cr3;
         goto SELF;
     }
+
+#ifdef TRACE_SCHED_CALL
+    sched_call_map_add(func, 1);
+#endif
+
     task->status = ps_running;
     next_cr3 = task->user.page_dir - KERNEL_OFFSET;
     if (current->status != ps_dying)
@@ -1005,10 +1012,10 @@ void _task_sched(const char* func)
 
     __asm__("NEXT: nop");
 
-SELF:
     RELOAD_CR3(next_cr3);
     current = CURRENT_TASK();
     reset_tss(current);
+SELF:
     int_intr_enable();
     current->is_switching = 0;
     sched_cal_end();
@@ -1034,108 +1041,3 @@ int ps_has_ready(int priority)
 
     return 0;
 }
-
-
-
-#ifdef TEST_PS
-void ps_mmm()
-{
-    task_struct *task1 = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
-    task_struct *task2 = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
-
-    printf("1: create task1 %x, task2 %x\n", task1, task2);
-
-    ps_put_task(&control.ready_queue, task1);
-    ps_put_task(&control.ready_queue, task2);
-
-    task1 = ps_get_task(&control.ready_queue);
-    task2 = ps_get_task(&control.ready_queue);
-
-    printf("2: create task1 %x, task2 %x\n", task1, task2);
-
-
-    ps_put_task(&control.ready_queue, task1);
-    ps_put_task(&control.ready_queue, task2);
-
-    task1 = ps_get_task(&control.ready_queue);
-
-    ps_put_task(&control.ready_queue, task1);
-
-    task2 = ps_get_task(&control.ready_queue);
-
-    printf("2: create task1 %x, task2 %x\n", task1, task2);
-
-
-}
-#endif
-
-#ifdef TEST_PS
-static void ps_test(void* param)
-{
-    task_struct *task;
-    task = CURRENT_TASK();
-
-    while (1)
-    {
-        printk("I'm a process %d\n", task->psid);
-        msleep(200);
-    }
-}
-
-static void ps_test2(void* param)
-{
-    task_struct *task;
-    int i = 0;
-    task = CURRENT_TASK();
-
-    while (i++ < 100)
-    {
-        printk("I'm a process %d\n", task->psid);
-        msleep(400);
-    }
-}
-
-static void ps_test3(void* param)
-{
-    task_struct *task;
-    int i = 0;
-    task = CURRENT_TASK();
-
-    while (i++ < 100)
-    {
-        printk("I'm a process %d\n", task->psid);
-        msleep(600);
-    }
-}
-
-static void ps_test4(void* param)
-{
-    task_struct *task;
-    unsigned int i = (unsigned int)(param);
-    task = CURRENT_TASK();
-
-    while (1)
-    {
-        printk("I'm a process %d\n", task->psid);
-        msleep(i);
-    }
-}
-
-void test_ps_process()
-{
-#define MIN_SLEEP 1000
-#define MAX_SLEEP 2000
-    ps_create(ps_test4, 1200, 1, ps_kernel);
-    {
-        int i = 0;
-        for (i = 0; i < TEST_PS; i++)
-        {
-            unsigned sleep = klib_rand() % (MAX_SLEEP - MIN_SLEEP);
-            sleep += MIN_SLEEP;
-            ps_create(ps_test4, sleep, 1, ps_kernel);
-        }
-    }
-    ps_kickoff();
-}
-#endif
-

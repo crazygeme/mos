@@ -1,6 +1,7 @@
 #ifndef _KLIB_H_
 #define _KLIB_H_
-
+#include <mm.h>
+#include <config.h>
 
 typedef enum _TTY_COLOR
 { 
@@ -76,10 +77,7 @@ void* malloc(unsigned int size);
 
 void free(void* buf);
 
-#ifdef __KERNEL__
-
-#include <mm.h>
-#include <config.h>
+/// logs
 
 void klib_init();
 
@@ -143,24 +141,10 @@ typedef struct _TEST_CONTROL
     int test_fs_write;
     int test_ffs;
     int test_ext2;
+	int test_mount;
+	int test_block;
 }TEST_CONTROL;
 extern TEST_CONTROL TestControl;
-
-#else
-
-#include <syscall.h>
-
-#define PAGE_SIZE (4*1024)
-
-void libc_init();
-
-void libc_init();
-
-void libc_putchar(char c);
-
-void libc_print(char *str);
-
-#endif
 
 void memcpy(void* dst, void* src, unsigned len);
 

@@ -72,6 +72,7 @@ void kmain_startup()
     int_enable_all();
 
     mm_del_user_map();
+    REFRESH_CACHE();
 
     printk("Init serial\n");
     serial_init_queue();
@@ -86,30 +87,8 @@ void kmain_startup()
     printk("Caculate CPU caps\n");
     timer_calculate_cpu_cycle();
 
-
-    if (TestControl.test_mm)
-    {
-        memcpy_measure();
-        mm_test();
-        malloc_test();
-    }
-
     printk("Init page fault\n");
     pf_init();
-
-#ifdef TEST_PS
-    //ps_mmm();
-    extern void test_ps_process();
-    test_ps_process();
-#endif
-
-#ifdef TEST_LOCK
-    extern void test_event_process();
-    test_event_process();
-#endif
-
-#ifndef TEST_PS
-#ifndef TEST_LOCK
 
     printk("Start first process\n");
 
@@ -123,13 +102,7 @@ void kmain_startup()
 
     ps_kickoff();
 
-    // never going to here because ps0 never exit
-#endif
-#endif
-
-
     run();
-
 }
 
 static void idle_process(void* param)
@@ -138,21 +111,48 @@ static void idle_process(void* param)
     while (1)
     {
         __asm__("hlt");
-
         task_sched();
+    }
+}
+
+static void run_tests_if_has()
+{
+    if (TestControl.test_mount)
+    {
+        dump_mount_point();
+        run();
+    }
+
+    if (TestControl.test_block)
+    {
+        test_block_process();
+        run();
+    }
+
+    if (TestControl.test_mm)
+    {
+        memcpy_measure();
+        mm_test();
+        malloc_test();
+        run();
+    }
+
+    if (TestControl.test_fs_read || TestControl.test_fs_write)
+    {
+        test_ns();
+        run();
+    }
+
+    if (TestControl.test_mmap)
+    {
+        vm_test();
+        run();
     }
 }
 
 static void kmain_process(void* param)
 {
     klog_init();
-
-    if (TestControl.test_mmap)
-    {
-        vm_test();
-        if (!TestControl.test_all)
-            for (;;);
-    }
 
     printk("Init vfs\n");
     vfs_init();
@@ -181,22 +181,7 @@ static void kmain_process(void* param)
 
     file_cache_init();
 
-#ifdef TEST_BLOCK
-    extern void test_block_process();
-    test_block_process();
-#endif
-
-#ifdef TEST_MOUNT
-    extern void dump_mount_point();
-    dump_mount_point();
-#endif
-
-    if (TestControl.test_fs_read || TestControl.test_fs_write)
-    {
-        extern void test_ns();
-        test_ns();
-    }
-
+    run_tests_if_has();
 
     printk("Init system call table\n");
     syscall_init();
@@ -218,18 +203,13 @@ static void kmain_process(void* param)
 
 _START static void init(multiboot_info_t* mb)
 {
-
-
     int_init();
 
     fb_init(mb);
 
     mm_init(mb);
-
-
     // never to here
     return;
-
 }
 
 static void run()
@@ -273,6 +253,12 @@ static void parse_kernel_cmdline()
 
         if (strcmp(token, "mmap") == 0)
             TestControl.test_mmap = 1;
+
+        if (strcmp(token, "block") == 0)
+            TestControl.test_block = 1;
+        
+        if (strcmp(token, "mount") == 0)
+            TestControl.test_mount = 1;
 
         if (strcmp(token, "mm") == 0)
             TestControl.test_mm= 1;

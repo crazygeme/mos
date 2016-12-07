@@ -125,7 +125,9 @@ static void mm_high_memory_fun()
     phymm_setup_mgmt_pages(phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
 
     spinlock_init(&mm_lock);
+
     extern kmain_startup();
+
     kmain_startup();
 }
 
@@ -358,10 +360,10 @@ unsigned int vm_alloc(int page_count)
     {
         vir = (page_index + i) * PAGE_SIZE + KERNEL_OFFSET;
         mm_add_direct_map(vir);
-        memset(vir, 0, PAGE_SIZE);
     }
-
+    REFRESH_CACHE();
     vir = page_index * PAGE_SIZE + KERNEL_OFFSET;
+    memset(vir, 0, page_count * PAGE_SIZE);
     unlock_mm();
     return vir;
 
@@ -380,7 +382,7 @@ void vm_free(unsigned int vm, int page_count)
         phy = cur - KERNEL_OFFSET;
         mm_del_direct_map(cur);
     }
-
+    REFRESH_CACHE();
     phymm_free_kernel((vm-KERNEL_OFFSET)/PAGE_SIZE, page_count);
 
     unlock_mm();
@@ -451,16 +453,12 @@ void mm_del_dynamic_map(unsigned int vir)
     unsigned int phy_addr;
     int empty = 1;
     int i = 0, idx;
-
-
+    int page_index;
     page_table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
     phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
-
     page_table[page_table_offset] = 0;
-
-
-
-    if (phy_addr)
+    page_index = phy_addr / PAGE_SIZE;
+    if ((page_index >= phymm_valid) && (page_index < phymm_max))
     {
         if (phymm_dereference_page(phy_addr / PAGE_SIZE) == 0)
             phymm_free_user(phy_addr / PAGE_SIZE);
@@ -472,8 +470,6 @@ void mm_del_dynamic_map(unsigned int vir)
     {
         empty = 0;
     }
-
-
 
     if (empty)
     {

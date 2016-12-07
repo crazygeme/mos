@@ -97,8 +97,8 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
         for (i = 0; i < page_count; i++)
         {
             mm_add_dynamic_map(elf_bss + i*PAGE_SIZE, 0, PAGE_ENTRY_USER_DATA);
-            //memset(elf_bss + i*PAGE_SIZE, 0, PAGE_SIZE);
         }
+        REFRESH_CACHE();
     }
 
     return 1;

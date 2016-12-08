@@ -134,6 +134,9 @@ void ps_put_to_dying_queue(task_struct* task)
     // status and put into list, it will not scheduled anymore
     // which means it will never go into dying_queue
     task->status = ps_dying;
+
+    ps_notify_process(task->parent);
+    
     unlock_dying();
 }
 
@@ -657,8 +660,9 @@ int sys_exit(unsigned status)
     // FIXME
     // modify all child->parent into cur->parent
     ps_put_to_dying_queue(cur);
-    ps_notify_process(cur->parent);
+    
     task_sched();
+    
     return 0;
 }
 
@@ -798,12 +802,12 @@ int sys_waitpid(unsigned pid, int* status, int options)
 
             entry = entry->Flink;
         }
-        unlock_dying();
 
         if (!can_return)
         {
             ps_put_to_wait_queue(cur);
         }
+        unlock_dying();
         task_sched();
     }
     while (can_return == 0);

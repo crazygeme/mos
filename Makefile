@@ -64,7 +64,8 @@ OBJS	= $(DST)/boot.o \
 		  $(DST)/pci.o\
 		  $(DST)/gui_test.o\
 		  $(DST)/gui_core.o\
-		  $(DST)/memory.o
+		  $(DST)/memory.o\
+		  $(DST)/profiling.o
 
 TESTS	= $(DST)/$(TEST)/mmap_test.o\
 		  $(DST)/$(TEST)/fs_test.o\
@@ -98,6 +99,9 @@ $(DST)/$(TEST)/block_test.o: test/block_test.c
 
 $(DST)/$(TEST)/mount_test.o: test/mount_test.c
 	$(CC) $(CFLAGS) test/mount_test.c -o $(DST)/$(TEST)/mount_test.o
+
+$(DST)/profiling.o: src/profiling/profiling.c
+	$(CC) $(CFLAGS) src/profiling/profiling.c -o $(DST)/profiling.o
 
 $(DST)/boot.o: src/boot/kernel.S
 	$(CC) $(CFLAGS) src/boot/kernel.S -o $(DST)/boot.o

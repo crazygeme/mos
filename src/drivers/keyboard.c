@@ -6,6 +6,7 @@
 #include <lock.h>
 #include <config.h>
 #include <cyclebuf.h>
+#include <profiling.h>
 
 static cy_buf* buf;
 
@@ -164,6 +165,12 @@ static void kb_dsr(void* param)
 
             if (c == 'P'  && ctrl && alt)
                 shutdown();
+
+            if (c == '1' && ctrl)
+                profiling_start();
+
+            if (c == '2' && ctrl)
+                profiling_stop();
 
             /* Handle Ctrl, Shift.
                Note that Ctrl overrides Shift. */

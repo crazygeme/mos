@@ -2,6 +2,7 @@
 #include <int.h>
 #include <ps.h>
 #include <dsr.h>
+#include <profiling.h>
 
 static unsigned long tickets;
 static unsigned long seconds;
@@ -27,7 +28,7 @@ static void timer_process(intr_frame* frame)
 {
     // printf("timer process\n");
     tickets++;
-
+    profiling_add_record(frame->eip);
     if (tickets == HZ)
     {
         seconds++;

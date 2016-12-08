@@ -84,7 +84,6 @@ typedef struct _channel
 typedef struct _block_cache_item
 {
     int sector;
-    unsigned last_time;
     unsigned dirty;
     void* buf;
     struct rb_node hash_node;
@@ -113,7 +112,6 @@ static block_cache_item* block_cache_item_create()
         buf_size = 1;
     block_cache_item* item = kmalloc(sizeof(*item));
     item->sector = -1;
-    item->last_time = 0;
     item->dirty = 0;
     item->buf = vm_alloc(buf_size);//kmalloc(BLOCK_SECTOR_SIZE);
     rb_init_node(&item->hash_node);
@@ -682,7 +680,6 @@ static void hdd_cache_update(partition*p, block_cache_item* item, int sector, vo
     }
     item->dirty |= mark_dirty;
     item->sector = head_sector;
-    item->last_time = time(0);
 
     RemoveEntryList(&item->time_list);
     InsertTailList(&p->cache.timer_list_head, &item->time_list);
@@ -709,7 +706,6 @@ static void hdd_cache_update_all(void* aux, partition*p, block_cache_item* item,
 
     item->dirty |= mark_dirty;
     item->sector = head_sector;
-    item->last_time = time(0);
 
     RemoveEntryList(&item->time_list);
     InsertTailList(&p->cache.timer_list_head, &item->time_list);
@@ -752,7 +748,6 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     item = hdd_cache_lookup(p, sector);
     if (item)
     {
-        item->last_time = time(0);
         RemoveEntryList(&item->time_list);
         InsertTailList(&p->cache.timer_list_head, &item->time_list);
         memcpy(buf, (char*)item->buf + sector_off*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);

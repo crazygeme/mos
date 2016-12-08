@@ -2,7 +2,6 @@
 #include <int.h>
 #include <ps.h>
 #include <dsr.h>
-#include <profiling.h>
 
 static unsigned long tickets;
 static unsigned long seconds;
@@ -28,7 +27,7 @@ static void timer_process(intr_frame* frame)
 {
     // printf("timer process\n");
     tickets++;
-    profiling_add_record(frame->eip);
+
     if (tickets == HZ)
     {
         seconds++;
@@ -254,14 +253,16 @@ void delay(unsigned int us)
     busy_wait(cycles);
 }
 
-unsigned long time(unsigned long* t)
+time_t time(time_t* t)
 {
-    unsigned long now = rtc_get_time();
+    unsigned long long now = time_now_percisely();
+    time_t ret;
+    ret.time = now;
     if (t)
     {
-        *t = now;
+        t->time = now;
     }
-    return now;
+    return ret;
 }
 
 

@@ -75,6 +75,6 @@ void usleep(unsigned int us);
 
 void delay(unsigned int us);
 
-unsigned long time(unsigned long* t);
+time_t time(time_t* t);
 
 #endif

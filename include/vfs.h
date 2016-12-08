@@ -140,6 +140,7 @@ int vfs_copy_stat(INODE node, struct stat* s, int is_dir);
 
 void vfs_close(struct filesys_type* type);
 
-void vfs_refrence(INODE node);
+#define vfs_refrence(node)\
+	__sync_add_and_fetch(&(((INODE)(node))->ref_count), 1)
 
 #endif

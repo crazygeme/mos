@@ -81,12 +81,12 @@ static unsigned null_write_file(INODE inode, unsigned int offset, char* buf, uns
 
 static int null_copy_stat(INODE node, struct stat* s, int is_dir)
 {
-    s->st_atime = time(0);
+    s->st_atime = time_now();
     s->st_mode = null_get_mode(node);
     s->st_size = 0;
     s->st_blksize = 0;
     s->st_blocks = 0;
-    s->st_ctime = time(0);
+    s->st_ctime = time_now();
     s->st_dev = 0;
     s->st_gid = 0;
     s->st_ino = 0;

@@ -431,7 +431,7 @@ void ffs_format(block* b)
     super->root.len = 0;
     super->root.mode = (S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH | S_IFDIR);
     super->root.mt_access = super->root.mt_create = super->root.mt_modify =
-        (unsigned)time(0);
+        (unsigned)time_now();
     strcpy(super->root.name, "/");
     super->root.sectors[0] = super->root.sectors[1] =
         super->root.sectors[2] = 0;
@@ -1080,7 +1080,7 @@ static unsigned ffs_write_file(INODE inode, unsigned int offset, char* buf, unsi
     }
 
     node->meta.len = (offset + len - left);
-    node->meta.mt_modify = time(0);
+    node->meta.mt_modify = time_now();
     ffs_update_node_meta(node, tmp);
 
     kfree(tmp);
@@ -1186,7 +1186,7 @@ static void dir_add_empty_ino_callback(struct ffs_inode* node, unsigned index, v
     dev->read(dev->aux, ino, buf, BLOCK_SECTOR_SIZE);
     table[0].len = 0;
     table[0].mode = b->mode;
-    table[0].mt_access = table[0].mt_create = table[0].mt_modify = time(0);
+    table[0].mt_access = table[0].mt_create = table[0].mt_modify = time_now();
     table[0].sectors[0] = table[0].sectors[1] = table[0].sectors[2] = 0;
     strcpy(table[0].name, b->name);
     dev->write(dev->aux, ino, buf, BLOCK_SECTOR_SIZE);
@@ -1214,7 +1214,7 @@ static int dir_add_dentry_hole_found(struct ffs_inode* node, unsigned ino, unsig
 
     table[offset].len = 0;
     table[offset].mode = b->mode;
-    table[offset].mt_access = table[offset].mt_create = table[offset].mt_modify = time(0);
+    table[offset].mt_access = table[offset].mt_create = table[offset].mt_modify = time_now();
     table[offset].sectors[0] = table[offset].sectors[1] = table[offset].sectors[2] = 0;
     strcpy(table[offset].name, b->name);
 

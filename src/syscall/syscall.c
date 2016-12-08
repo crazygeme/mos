@@ -151,6 +151,7 @@ static int sys_dup2(int oldfd, int newfd);
 static int sys_getrlimit(int resource, void* limit);
 static int sys_kill(unsigned pid, int sig);
 static int sys_unlink(const char *pathname);
+static int sys_time(unsigned* t);
 
 static int resolve_path(char* old, char* new);
 
@@ -206,7 +207,7 @@ static unsigned call_table[NR_syscalls] = {
     test_call,
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
     sys_close, sys_waitpid, sys_creat, 0, sys_unlink,           // 6  ~ 10  
-    sys_execve, sys_chdir, time, 0, 0,           // 11 ~ 15
+    sys_execve, sys_chdir, sys_time, 0, 0,           // 11 ~ 15
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
@@ -1197,5 +1198,14 @@ static int sys_unlink(const char *path)
     klog("unlink\n");
 #endif
     return -1;
+}
+
+static int sys_time(unsigned* t)
+{
+    if (!t)
+        return -1;
+
+    *t = (unsigned)time(0).time;
+    return 0;
 }
 

@@ -2,9 +2,13 @@
 
 import os
 import re
+import sys
+dumpfile = "./krn.log"
+if len(sys.argv) > 1:
+    dumpfile = sys.argv[1]
 
-if not os.access("./krn.log", os.R_OK):
-    print "no kernel log (krn.log) generated!"
+if not os.access(dumpfile, os.R_OK):
+    print "no kernel log" + dumpfile + " generated!"
     quit()
 
 if not os.access("./kernel.dbg", os.R_OK):
@@ -16,28 +20,25 @@ desessmbly = desessmbly + " -S kernel.dbg > __tmp__"
 os.system(desessmbly)
 
 addr_to_name = {}
-code_patten = '^[0-9a-f]{8}:.*$'
-func_name_patten = '[0-9a-f]{8} <\D+>:$'
+code_patten = '^[0-9a-f]+:.*$'
+func_name_patten = '^[0-9a-f]+ <.*>:$'
+gdb_dump_patten = '^#[0-9]+[\s]+0x[0-9a-f]+[\s]+in.*$'
 dsf = open("./__tmp__")
 symbols = dsf.readlines()
+cur_func_name = ""
 for i in range(0, len(symbols)):
     s = symbols[i]
+    if re.match(func_name_patten, s):
+        left = s.index('<')
+        right = s.index('>')
+        cur_func_name = s[left+1:right]
+        continue
     if not re.match(code_patten, s):
         continue
     index = s.index(':')
     s = '0x'+ s[0:index]
     addr = int(s, 16)
-    j = i-1
-    while True:
-        search_str = symbols[j]
-        if not re.match(func_name_patten, search_str):
-            j = j-1
-            continue
-        left = search_str.index('<')
-        right = search_str.index('>')
-        func_name = search_str[left+1:right]
-        addr_to_name[addr] = func_name
-        break
+    addr_to_name[addr] = cur_func_name
 
 dsf.close()
 os.unlink("./__tmp__")
@@ -50,14 +51,20 @@ def get_func_name(addr):
 
 function_called_times = {}
 
-f = open("./krn.log")
+f = open(dumpfile)
 for line in f:
-    if not line.startswith("[profiling]0x"):
+    if line.startswith("[profiling]0x"):
+        line = line.replace("[profiling]", "")
+        line = line.replace("\r", "").replace("\n", "").replace(" ", "")
+    elif re.match(gdb_dump_patten, line):
+        line = line.split()[1]
+    else:
         continue
-    line = line.replace("[profiling]", "")
-    line = line.replace("\r", "").replace("\n", "").replace(" ", "")
     address = int(line, 16)
     func_name = get_func_name(address)
+    if func_name == "vfs_close":
+        print "{0:x}: {1}".format(address, func_name)
+
     if func_name in function_called_times.keys():
         function_called_times[func_name] += 1
     else:

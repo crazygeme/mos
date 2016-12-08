@@ -309,9 +309,3 @@ void vfs_close(struct filesys_type* type)
     }
 }
 
-void vfs_refrence(INODE node)
-{
-    __sync_add_and_fetch(&(node->ref_count), 1);
-}
-
-

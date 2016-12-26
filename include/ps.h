@@ -190,13 +190,29 @@ typedef struct _fd_type
 #define fd_flag_used	0x80000000
 
 
+
+typedef struct _task_frame
+{
+    unsigned short ds;
+    unsigned short ss;
+    unsigned short es;
+    unsigned short gs;
+    unsigned short fs;
+    unsigned short cs;
+    unsigned long edx;
+    unsigned long ecx;
+    unsigned long ebx;
+    unsigned long eax;
+    unsigned long ebp;
+    unsigned long eip;
+    unsigned long esp0; // kernel esp
+	unsigned long esp;  // kernel or user esp
+}task_frame;
+
 typedef struct _task_struct
 {
-	// tss_struct tss;
-	unsigned int esp0; // kernel esp
-	unsigned int esp; // kernel or user esp
-	unsigned int ebp;
-	unsigned int cr3;
+	task_frame tss;
+    unsigned long cr3;
     unsigned int psid;
     process_fn fn;
 	void* param;
@@ -217,7 +233,7 @@ typedef struct _task_struct
 	unsigned exit_status;
 	unsigned parent;
 	unsigned group_id;
-	char cwd[64];
+	char *cwd;
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;

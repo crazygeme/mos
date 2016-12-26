@@ -17,6 +17,7 @@ typedef struct _ps_control
 }ps_control;
 
 static unsigned cur_cr3, cr3, next_cr3;
+static unsigned next_eip;
 
 static ps_control control;
 static spinlock ps_lock;
@@ -343,21 +344,68 @@ unsigned int ps_id_gen()
     return ret;
 }
 
-typedef struct _stack_frame
+static void ps_setup_task_frame(task_struct* task, unsigned data_seg,
+                                unsigned eax, unsigned ebx,
+                                unsigned ecx, unsigned edx,
+                                unsigned ebp, unsigned esp,
+                                unsigned esp0, unsigned eip)
 {
-    unsigned long ds;
-    unsigned long ss;
-    unsigned long es;
-    unsigned long gs;
-    unsigned long fs;
-    unsigned long edx;
-    unsigned long ecx;
-    unsigned long ebx;
-    unsigned long eax;
-    unsigned long ebp;
-    unsigned long eip;
-}stack_frame;
+    task->tss.fs = 
+    task->tss.gs = 
+    task->tss.es = 
+    task->tss.ss = 
+    task->tss.ds = data_seg;
+    task->tss.cs = KERNEL_CODE_SELECTOR;
+    task->tss.eax = eax;
+    task->tss.ebx = ebx;
+    task->tss.ecx = ecx;
+    task->tss.edx = edx;
+    task->tss.ebp = ebp;
+    task->tss.esp = esp;
+    task->tss.esp0 = esp0;
+    task->tss.eip = eip;
+}
 
+#define SAVE_ALL(task)\
+({\
+    __asm__("movl $NEXT, %0" : "=m"(current->tss.eip));\
+    __asm__("movl %%ebp, %0" : "=m"(current->tss.ebp));\
+    __asm__("movl %%eax, %0" : "=m"(current->tss.eax));\
+    __asm__("movl %%ebx, %0" : "=m"(current->tss.ebx));\
+    __asm__("movl %%ecx, %0" : "=m"(current->tss.ecx));\
+    __asm__("movl %%edx, %0" : "=m"(current->tss.edx));\
+    __asm__("movl %%esp, %0" : "=m"(current->tss.esp));\
+    __asm__("mov %%fs, %0" : "=m"(current->tss.fs));\
+    __asm__("mov %%gs, %0" : "=m"(current->tss.gs));\
+    __asm__("mov %%es, %0" : "=m"(current->tss.es));\
+    __asm__("mov %%ss, %0" : "=m"(current->tss.ss));\
+    __asm__("mov %%ds, %0" : "=m"(current->tss.ds));\
+})
+
+#define RESTORE_ALL(task)\
+({\
+    __asm__("mov %0, %%ds" : : "m"(task->tss.ds));\
+    __asm__("mov %0, %%ss" : : "m"(task->tss.ss));\
+    __asm__("mov %0, %%es" : : "m"(task->tss.es));\
+    __asm__("mov %0, %%gs" : : "m"(task->tss.gs));\
+    __asm__("mov %0, %%fs" : : "m"(task->tss.fs));\
+    __asm__("movl %0, %%edx" : : "m"(task->tss.edx));\
+    __asm__("movl %0, %%ecx" : : "m"(task->tss.ecx));\
+    __asm__("movl %0, %%ebx" : : "m"(task->tss.ebx));\
+    /* after we change ebp, "task" variable will be changed \
+     so ebp should be the last one that restored \
+     that's why we have to save eip into edx first \
+     FIXME: we assume edx not used */ \
+    next_eip = task->tss.eip;\
+    __asm__("movl %0, %%esp" : : "m"(task->tss.esp));\
+    __asm__("movl %0, %%ebp" : : "m"(task->tss.ebp));\
+})
+
+#define JUMP_TO_NEXT_TASK_EIP()\
+({\
+    __asm__("movl %0, %%edx" : : "m"(next_eip));\
+    __asm__("jmp *%edx");\
+})
 
 // FIXME
 // now we ignore priority
@@ -367,7 +415,6 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     int i = 0;
     int size = 0;
     task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
-    stack_frame *frame;
 
     if (priority >= MAX_PRIORITY)
     {
@@ -385,7 +432,6 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     memset(task->user.page_dir, 0, PAGE_SIZE);
 
     stack_buttom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
-    task->esp0 = task->ebp = stack_buttom;
     LOAD_CR3(task->cr3);
     task->ps_list.Flink = task->ps_list.Blink = 0;
     task->fn = fn;
@@ -396,14 +442,9 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
     task->is_switching = 0;
-    task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
-
-    for (i = 0; i < MAX_FD; i++)
-    {
-        task->fds[i].file = 0;
-        task->fds[i].file_off = 0;
-        task->fds[i].flag = 0;
-    }
+    task->fds = vm_alloc(1);
+    task->cwd = kmalloc(64);
+    memset(task->fds, 0, PAGE_SIZE);
     task->user.heap_top = USER_HEAP_BEGIN;
     task->user.vm = vm_create();
     memset(task->cwd, 0, 64);
@@ -412,15 +453,14 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     sema_init(&task->fd_lock, "fd_lock", 0);
     task->magic = 0xdeadbeef;
 
-    frame = (stack_frame *)(unsigned int)(stack_buttom - sizeof(*frame));
-    frame->ebp = stack_buttom;
-    frame->eip = (unsigned int)ps_run;
-    frame->fs = frame->gs = frame->es = frame->ss = frame->ds =
-        KERNEL_DATA_SELECTOR;
-
-    task->esp0 = task->esp = (unsigned int)frame;
+    ps_setup_task_frame(task,
+                        KERNEL_DATA_SELECTOR,
+                        0, 0, 0, 0,
+                        (unsigned)stack_buttom,
+                        (unsigned)stack_buttom,
+                        (unsigned)stack_buttom,
+                        (unsigned)ps_run);
     ps_put_to_ready_queue(task);
-
     ps_add_mgr(task);
     return task->psid;
 }
@@ -506,42 +546,12 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
 
     vm_dup(cur->user.vm, task->user.vm);
 
-    // FIXME
-    // change it into COW
     new_ps = (unsigned int*)task->user.page_dir;
-    for (i = 0; i < 1024; i++)
-    {
-        new_ps[i] = 0;
-    }
-
-
+    memset((char*)new_ps, 0, PAGE_SIZE);
     ps_enum_user_map(cur, ps_enum_for_dup, task);
-
 }
 
-static void ps_resolve_ebp_to_new(unsigned ebp)
-{
-    unsigned offset;
-    unsigned bottom = ebp & PAGE_SIZE_MASK;
-    unsigned top = bottom + PAGE_SIZE - 4;
-    while (ebp != 0 && ebp > bottom && ebp < top)
-    {
-        unsigned *saved = (unsigned *)ebp;
-        unsigned saved_ebp = *saved;
-        if (saved_ebp == 0 || saved_ebp < KERNEL_OFFSET)
-        {
-            return;
-        }
-        if (saved_ebp > top || saved_ebp < bottom)
-        {
-            offset = saved_ebp & (~PAGE_SIZE_MASK);
-            *saved = bottom + offset;
-        }
-
-        ebp = *saved;
-    }
-}
-
+extern void ret_from_syscall();
 int sys_fork()
 {
     // todo:
@@ -558,64 +568,42 @@ int sys_fork()
     //      * then copy content from current to new
     task_struct* cur = CURRENT_TASK();
     task_struct* task = vm_alloc(KERNEL_TASK_SIZE);
-    unsigned esp = 0, ebp = 0;
-    stack_frame* frame = 0;
-    unsigned esp_off = 0;
-    int is_parent = 0;
-
+    intr_frame* cur_intr_frame = (intr_frame*)((char*)cur + PAGE_SIZE - sizeof(intr_frame));
+    intr_frame* task_intr_frame = (intr_frame*)((char*)task + PAGE_SIZE - sizeof(intr_frame));
 #ifdef __VERBOS_SYSCALL__
     klog("fork()\n");
 #endif
-    memcpy(task, cur, PAGE_SIZE);
+    //memcpy(task, cur, PAGE_SIZE);
+    *task = *cur;
+    *task_intr_frame = *cur_intr_frame;
     task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
     task->psid = ps_id_gen();
     sema_init(&task->fd_lock, "fd_lock", 0);
-    __asm__("movl %%esp, %0" : "=m"(esp));
-    esp_off = esp - (unsigned)cur;
-    frame = (stack_frame*)((unsigned)task + esp_off - sizeof(*frame));
-    __asm__("movl %%ebp, %0" : "=m"(ebp));
-    __asm__("movl $CHILD, %0" : "=m"(frame->eip));
-    frame->fs = frame->gs = frame->es = frame->ss = frame->ds =
-        KERNEL_DATA_SELECTOR;
-    frame->ebp = (ebp - (unsigned)cur) + (unsigned)task;
-    ps_resolve_ebp_to_new(frame->ebp);
-    task->esp = frame;
-    task->esp0 = (unsigned int)task + PAGE_SIZE;
+
+    // for kernel part
+    // when return from intr, those will restored by user mode value
+    task->tss.fs = task->tss.gs = task->tss.ds = task->tss.es = task->tss.ss = KERNEL_DATA_SELECTOR;
+    task->tss.cs = KERNEL_CODE_SELECTOR;
+    // those are for new task
+    task->tss.eax = 0;
+    task->tss.esp = (char*)task_intr_frame;
+    task->tss.esp0 = (unsigned)task + PAGE_SIZE;
+    task->tss.eip = (unsigned)ret_from_syscall;
+    task_intr_frame->eax = 0;
     task->parent = cur->psid;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
     task->ps_list.Blink = task->ps_list.Flink = 0;
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
+    task->cwd = kmalloc(64);
     memset(task->cwd, 0, 64);
     strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur, task);
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
-
-    task->remain_ticks = cur->remain_ticks =
-        cur->remain_ticks / 2;
-    task_sched();
-    is_parent = 1;
-    __asm__("CHILD: nop");
-
-    if (is_parent)
-    {
-        return task->psid;
-    }
-    else
-    {
-        cur = CURRENT_TASK();
-        ps_update_tss(cur->esp0);
-        next_cr3 = cur->user.page_dir - KERNEL_OFFSET;
-        RELOAD_CR3(next_cr3);
-        cur->is_switching = 0;
-        int_intr_enable();
-        sched_cal_end();
-        return 0;
-    }
-
-
+    cur_intr_frame->eax = task->psid;
+    return task->psid;
 }
 
 int sys_exit(unsigned status)
@@ -785,6 +773,12 @@ int sys_waitpid(unsigned pid, int* status, int options)
                     task->user.reserve = 0;
                 }
 
+                if (task->cwd)
+                {
+                    kfree(task->cwd);
+                    task->cwd = 0;
+                }
+
                 if (task->user.page_dir)
                 {
                     vm_free(task->user.page_dir, 1);
@@ -818,7 +812,7 @@ int sys_waitpid(unsigned pid, int* status, int options)
 static void reset_tss(task_struct* task)
 {
     tss_address->cr3 = task->cr3;
-    tss_address->esp0 = task->esp0;
+    tss_address->esp0 = task->tss.esp0;
     tss_address->iomap = (unsigned short) sizeof(tss_struct);
     tss_address->ss0 = KERNEL_DATA_SELECTOR;
     tss_address->ss = tss_address->gs = tss_address->fs =
@@ -830,7 +824,7 @@ static void reset_tss(task_struct* task)
 void ps_update_tss(unsigned int esp0)
 {
     task_struct* task = CURRENT_TASK();
-    task->esp0 = esp0;
+    task->tss.esp0 = esp0;
     reset_tss(task);
 
 }
@@ -841,7 +835,6 @@ void ps_kickoff()
     cur->psid = 0xffffffff;
     cur->ps_list.Flink = cur->ps_list.Blink = 0;
     _ps_enabled = 1;
-    memset(cur->cwd, 0, 64);
     task_sched();
     return;
 }
@@ -855,32 +848,8 @@ task_struct* CURRENT_TASK()
     return ret;
 }
 
-#define SAVE_ALL() \
-    __asm__("push $NEXT");\
-    __asm__("pushl %ebp");\
-    __asm__("pushl %eax");\
-    __asm__("pushl %ebx");\
-    __asm__("pushl %ecx");\
-    __asm__("pushl %edx");\
-    __asm__("push %fs");\
-    __asm__("push %gs");\
-    __asm__("push %es");\
-    __asm__("push %ss");\
-    __asm__("push %ds");
 
-#define RESTORE_ALL()\
-    __asm__("pop %ds");\
-    __asm__("pop %ss");\
-    __asm__("pop %es");\
-    __asm__("pop %gs");\
-    __asm__("pop %fs");\
-    __asm__("popl %edx");\
-    __asm__("popl %ecx");\
-    __asm__("popl %ebx");\
-    __asm__("popl %eax");\
-    __asm__("popl %ebp");\
-    __asm__("popl %eax");\
-    __asm__("jmp *%eax");
+
 
 
 static void ps_cleanup_enum_callback(void* aux, unsigned vir, unsigned phy)
@@ -1006,18 +975,14 @@ void _task_sched(const char* func)
         ps_save_kernel_map(task);
     }
 
-    SAVE_ALL();
-    __asm__("movl %%esp, %0" : "=q"(current->esp));
-    __asm__("movl %0, %%eax" : : "q"(task->esp));
-    __asm__("movl %eax, %esp");
-
-    RESTORE_ALL();
-
-    __asm__("NEXT: nop");
-
+    SAVE_ALL(current);
+    
+    RESTORE_ALL(task);
     RELOAD_CR3(next_cr3);
     current = CURRENT_TASK();
     reset_tss(current);
+    JUMP_TO_NEXT_TASK_EIP();
+    __asm__("NEXT: nop");
 SELF:
     int_intr_enable();
     current->is_switching = 0;

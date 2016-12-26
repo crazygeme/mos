@@ -301,6 +301,7 @@ USER: nop;
      jmp *%eax
 .endfunc
 
+.global ret_from_syscall;
 .global syscall_handler;
 .section .text
 .func syscall_handler
@@ -336,6 +337,7 @@ syscall_handler:
 	call intr_syscall_handler
 	addl $4, %esp
 
+ret_from_syscall:
 	/* Restore caller's registers. */
 	popl %edi
 	popl %esi

@@ -74,20 +74,6 @@ void vm_destroy(vm_struct_t vm)
 
         kfree(key);
 
-        // no need do this...
-        /*
-        // close all opened fd anyway because it's not useless after
-        // thia call, process's virtual memory is destroy!!
-        if (region->fd >= 0 && region->fd < MAX_FD) {
-            fs_close(region->fd);
-        }
-
-        for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
-            mm_del_dynamic_map(vir);
-        }
-
-        */
-
         kfree(region);
 
         node = rb_first(&table->root);
@@ -112,7 +98,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void* fd, int offs
         region->node = fd;
         if (fd)
         {
-            vfs_refrence(fd);
+            fs_refrence(fd);
         }
         region->offset = offset;
         hash_insert(table, key, region);
@@ -228,7 +214,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 
     if (region->node)
     {
-        vfs_free_inode(region->node);
+        fs_destroy(region->node);
     }
     kfree(region);
 
@@ -339,7 +325,7 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
     unsigned addr = _addr & PAGE_SIZE_MASK;
     unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
     unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-    INODE node;
+    void* node;
     task_struct* cur = CURRENT_TASK();
 
     if (_addr == 0)
@@ -349,8 +335,8 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 
     // FIXME
     // lots of flags and prot
-    if (fd != -1 && cur->fds[fd].flag != 0)
-        node = cur->fds[fd].file;
+    if (fd != -1 && cur->fds[fd] != 0)
+        node = cur->fds[fd];
     else
         node = 0;
 

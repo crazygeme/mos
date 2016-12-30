@@ -166,6 +166,8 @@ char* strrev(char *src);
 
 int strcmp(char* str, char* dst);
 
+int strncmp(char* s1, char* s2, int n);
+
 char* strcat(char* str, char* msg);
 
 char* strchr(char* str, char c);

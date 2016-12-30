@@ -3,7 +3,6 @@
 #include <timer.h>
 #include <lock.h>
 #include <ps.h>
-#include <vfs.h>;
 #include <mm.h>
 #include <multiboot.h>
 #include <list.h>

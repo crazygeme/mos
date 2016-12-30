@@ -4,7 +4,6 @@
 #include <ps.h>
 #include <ps0.h>
 #include <config.h>
-#include <namespace.h>
 #include <timer.h>
 #include <klib.h>
 #include <rbtree.h>
@@ -49,6 +48,15 @@ struct linux_dirent
        */
 
 };
+
+#define NAME_MAX 255
+struct old_linux_dirent {
+    unsigned long  d_ino;               /* inode number */
+    unsigned long d_off;                /* offset to this old_linux_dirent */
+    unsigned short d_reclen;            /* length of this d_name */
+    char  d_name[NAME_MAX+1];           /* filename (null-terminated) */
+};
+
 
 
 enum
@@ -107,8 +115,8 @@ enum
 
 
 static int test_call(unsigned arg0, unsigned arg1, unsigned arg2);
-static int sys_read(unsigned fd, char* buf, unsigned len);
-static int sys_write(unsigned fd, char* buf, unsigned len);
+static int sys_read(int fd, char* buf, unsigned len);
+static int sys_write(int fd, char* buf, unsigned len);
 static int sys_getpid();
 static int sys_uname(struct utsname* utname);
 static int sys_open(const char* name, int flags, unsigned mode);
@@ -120,11 +128,13 @@ static int sys_ioctl(int d, int request, char* buf);
 static int sys_creat(const char* path, unsigned mode);
 static int sys_mkdir(const char* path, unsigned mode);
 static int sys_rmdir(const char* path);
+static int sys_readdir(unsigned fd, struct old_linux_dirent *dirp, unsigned count);
 static int sys_reboot(unsigned cmd);
 static int sys_getuid();
 static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
+static int sys_stat(const char *pathname, struct stat *buf);
 static int sys_mmap(struct mmap_arg_struct32* arg);
 static int sys_mprotect(void *addr, unsigned len, int prot);
 static int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
@@ -132,7 +142,7 @@ static long sys_personality(unsigned int personality);
 static int sys_fcntl(int fd, int cmd, int arg);
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
 static int sys_lstat64(const char* path, struct stat64* s);
-static int sys_fstat(int fd, struct stat64* s);
+static int sys_fstat(int fd, struct stat* s);
 static int sys_fstat64(int fd, struct stat64* s);
 static int sys_munmap(void *addr, unsigned length);
 static int sys_getppid();
@@ -152,7 +162,6 @@ static int sys_getrlimit(int resource, void* limit);
 static int sys_kill(unsigned pid, int sig);
 static int sys_unlink(const char *pathname);
 static int sys_time(unsigned* t);
-
 static int resolve_path(char* old, char* new);
 
 static char* call_table_name[NR_syscalls] = {
@@ -226,7 +235,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, sys_socketcall, 0, 0, 0,          // 101 ~ 105
-    fs_stat, 0, fs_fstat, 0, 0,          // 106 ~ 110 
+    sys_stat, 0, sys_fstat, 0, 0,          // 106 ~ 110 
     0, 0, 0, sys_wait4, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
     0, sys_uname, 0, 0, sys_mprotect,          // 121 ~ 125
@@ -282,27 +291,24 @@ static int test_call(unsigned arg0, unsigned arg1, unsigned arg2)
     return 0;
 }
 
-static int sys_read(unsigned fd, char* buf, unsigned len)
+static int sys_read(int fd, char* buf, unsigned len)
 {
     task_struct* cur = CURRENT_TASK();
-    unsigned ino = 0;
     int i = 0, pri_len = 0;
 
-    if (fd > MAX_FD)
+    if (fd < 0 || fd >= MAX_FD)
         return -1;
 
-    if (cur->fds[fd].flag == 0)
+    if (cur->fds[fd] == 0)
         return -1;
 
-    if (cur->fds[fd].flag & fd_flag_isdir)
+    if ( S_ISDIR(cur->fds[fd]->mode))
         return -1;
 
-    ino = cur->fds[fd].file;
-
-    unsigned offset = cur->fds[fd].file_off;
+    unsigned offset = cur->fds[fd]->file_off;
     len = fs_read(fd, offset, buf, len);
     offset += len;
-    cur->fds[fd].file_off = offset;
+    cur->fds[fd]->file_off = offset;
 
 
 #ifdef __VERBOS_SYSCALL__
@@ -323,10 +329,9 @@ static int sys_read(unsigned fd, char* buf, unsigned len)
     return len;
 }
 
-static int sys_write(unsigned fd, char *buf, unsigned len)
+static int sys_write(int fd, char *buf, unsigned len)
 {
     task_struct *cur = CURRENT_TASK();
-    unsigned ino = 0;
     unsigned _len;
 #ifdef __VERBOS_SYSCALL__
     char *tmp;
@@ -337,21 +342,12 @@ static int sys_write(unsigned fd, char *buf, unsigned len)
     kfree(tmp);
 #endif
 
-    if (fd > MAX_FD)
+    if (fd < 0 || fd >= MAX_FD)
     {
-        //printf("-1\n");
         return -1;
     }
 
-    if (cur->fds[fd].flag == 0)
-    {
-#ifdef __VERBOS_SYSCALL__
-        klog_printf("ret -1\n");
-#endif
-        return -1;
-    }
-
-    if (cur->fds[fd].flag & fd_flag_isdir)
+    if (cur->fds[fd] == 0)
     {
 #ifdef __VERBOS_SYSCALL__
         klog_printf("ret -1\n");
@@ -359,13 +355,18 @@ static int sys_write(unsigned fd, char *buf, unsigned len)
         return -1;
     }
 
+    if ( S_ISDIR(cur->fds[fd]->mode))
+    {
+#ifdef __VERBOS_SYSCALL__
+        klog_printf("ret -1\n");
+#endif
+        return -1;
+    }
 
-    ino = cur->fds[fd].file;
-
-    unsigned offset = cur->fds[fd].file_off;
+    unsigned offset = cur->fds[fd]->file_off;
     _len = fs_write(fd, offset, buf, len);
     offset += _len;
-    cur->fds[fd].file_off = offset;
+    cur->fds[fd]->file_off = offset;
 
 #ifdef __VERBOS_SYSCALL__
     klog_printf("ret %d\n", _len);
@@ -384,9 +385,9 @@ static int sys_ioctl(int fd, int request, char *buf)
     //printf("ioctl(%d, %d, %x)\n", fd, request, buf);
     if (fd > MAX_FD) return 0;
 
-    if (cur->fds[fd].flag == 0) return 0;
+    if (cur->fds[fd] == 0) return 0;
 
-    if (cur->fds[fd].flag & fd_flag_isdir) return 0;
+    if (S_ISDIR(cur->fds[fd]->mode)) return 0;
 
 
     if (request == IOCTL_TTY)
@@ -456,19 +457,7 @@ static int sys_sched_yield()
 static int sys_open(const char *_name, int flags, unsigned mode)
 {
     char *name = kmalloc(64);
-    int creat_if_not_exist = 0;
-    int resize_to_zero = 0;
-    int open_mode = flags & O_ACCMODE;
-    int close_on_exec = flags & FD_CLOEXEC;
-    struct stat s;
-    int fd = -1;
-    key_value_pair* pair = 0;
-    task_struct *cur = CURRENT_TASK();
-
-    if (flags & O_CREAT) creat_if_not_exist = 1;
-
-    if (flags & O_TRUNC) resize_to_zero = 1;
-
+    int fd;
     resolve_path(_name, name);
 
 
@@ -476,30 +465,7 @@ static int sys_open(const char *_name, int flags, unsigned mode)
     klog("open(%s, %x, %x)", name, flags, mode);
 #endif
 
-
-    if (fs_stat(name, &s) == -1)
-    {
-        if (creat_if_not_exist)
-        {
-            fs_create(name, mode);
-        }
-    }
-    else
-    {
-        if (resize_to_zero)
-        {
-            fs_delete(name);
-            fs_create(name, s.st_mode);
-        }
-    }
-
-
-    fd = fs_open(name);
-
-    if (fd >= 0 && close_on_exec)
-    {
-        cur->fds[fd].flag |= fd_flag_closeexec;
-    }
+    fd = fs_open(name, flags, mode);
 
 #ifdef __VERBOS_SYSCALL__
     klog_printf("ret %d\n", fd);
@@ -514,8 +480,7 @@ static int sys_close(unsigned fd)
 #ifdef __VERBOS_SYSCALL__
     klog("close(%d)\n", fd);
 #endif
-    fs_close(fd);
-    return 0;
+    return fs_close(fd);
 }
 
 static int sys_brk(unsigned top)
@@ -655,12 +620,7 @@ static int sys_chdir(const char *path)
 
 static int sys_creat(const char *path, unsigned mode)
 {
-    struct stat s;
-#ifdef __VERBOS_SYSCALL__
-    klog("creat(%s, %d)\n", path, mode);
-#endif
-    if (fs_stat(path, &s) != -1) return 0;
-    return fs_create(path, mode);
+    return -1;
 }
 
 static int sys_mkdir(const char *path, unsigned mode)
@@ -668,24 +628,12 @@ static int sys_mkdir(const char *path, unsigned mode)
 #ifdef __VERBOS_SYSCALL__
     klog("mkdir(%s, %d)\n", path, mode);
 #endif
-    mode |= S_IFDIR;
-    return sys_creat(path, mode);
+    return ext4_dir_mk(path);
 }
 
 static int sys_rmdir(const char *path)
 {
-    struct stat s;
-
-#ifdef __VERBOS_SYSCALL__
-    klog("rmdir(%s)\n", path);
-#endif
-    if (fs_stat(path, &s) == -1) return 0;
-
-    if (!S_ISDIR(s.st_mode)) return 0;
-
-    if (s.st_size) return 0;
-
-    return fs_delete(path);
+    return ext4_dir_rm(path);
 }
 
 static int sys_reboot(unsigned cmd)
@@ -806,24 +754,9 @@ static int sys_fcntl(int fd, int cmd, int arg)
 
 #define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
 #define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
-static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
-{
-
-    /*
-    static unsigned char buf[] = {
-        0xa0, 0x1c, 0x76, 0x00, 0x79, 0xd3, 0xe9, 0x0b, 0x18, 0x00, 0x64, 0x69, 0x72, 0x5f, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x63, 0x00, 0x00, 0x00, 0x08, //  . . v . y . . . . . d i r _ t e s t . c . . . .
-0x01, 0x00, 0x76, 0x00, 0xe4, 0xd5, 0x29, 0x32, 0x10, 0x00, 0x2e, 0x00, 0x00, 0x00, 0x00, 0x04, //  . . v . . . ) 2 . . . . . . . .
-0x12, 0x08, 0x80, 0x00, 0x1a, 0xa0, 0xa7, 0x4b, 0x10, 0x00, 0x6c, 0x69, 0x62, 0x00, 0x00, 0x04, //  . . . . . . . K . . l i b . . .
-0x48, 0x04, 0xa0, 0x03, 0x97, 0x7e, 0xbc, 0x52, 0x10, 0x00, 0x2e, 0x2e, 0x00, 0x00, 0x00, 0x04, //  H . . . . ~ . R . . . . . . . .
-0x03, 0x00, 0x76, 0x00, 0xaa, 0xa0, 0x07, 0x58, 0x10, 0x00, 0x62, 0x69, 0x6e, 0x00, 0x00, 0x04, //  . . v . . . . X . . b i n . . .
-0x05, 0x00, 0x76, 0x00, 0x37, 0x82, 0x10, 0x76, 0x10, 0x00, 0x65, 0x74, 0x63, 0x00, 0x00, 0x04, //  . . v . 7 . . v . . e t c . . .
-0x02, 0x00, 0x76, 0x00, 0xff, 0xff, 0xff, 0x7f, 0x14, 0x00, 0x64, 0x69, 0x72, 0x5f, 0x74, 0x65, 0x73, 0x74, 0x00, 0x08, //  . . v . . . . . . . d i r _ t e s t . .
-    };
-    memcpy(dirp, buf, sizeof(buf));
-    return (sizeof(buf));
-    */
-
-    struct dirent d;
+ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
+ {
+    ext4_direntry* entry = kmalloc(sizeof(*entry));
     int retcount;
     int len;
     int ret = 0;
@@ -842,8 +775,6 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
         return -9;
     }
 
-
-
     if (count < sizeof(struct linux_dirent))
     {
 #ifdef __VERBOS_SYSCALL__
@@ -851,16 +782,11 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
 #endif
         return -22;
     }
-
     retcount = 0;
     prev = 0;
-
-
     while (count > 0)
     {
-
-
-        ret = sys_readdir(fd, &d);
+        ret = fs_read(fd, 0, entry, sizeof(*entry));
         if (ret == 0)
         {
             if (prev)
@@ -871,17 +797,13 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
             break;
         }
 
-        len = ROUND_UP(NAME_OFFSET(dirp) + strlen(d.d_name) + 1);
+        len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
         memset(dirp, 0, len);
-        dirp->d_ino = d.d_ino;
-        strcpy(dirp->d_name, d.d_name);
-
+        dirp->d_ino = entry->inode;
+        strcpy(dirp->d_name, entry->name);
         dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
-
         cur_pos += dirp->d_reclen;
         dirp->d_off = cur_pos;
-
-
         if (count <= dirp->d_reclen)
         {
             break;
@@ -890,18 +812,17 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int
         count -= dirp->d_reclen;
         prev = dirp;
         dirp = (char *)dirp + dirp->d_reclen;
-
     }
 #ifdef __VERBOS_SYSCALL__
     klog_printf(" = %d\n", retcount);
 #endif
     return retcount;
+ 
+ }
 
-}
-
-static int sys_fstat(int fd, struct stat64 *s)
+static int sys_fstat(int fd, struct stat*s)
 {
-    return sys_fstat64(fd, s);
+    return 0;
 }
 
 static int sys_fstat64(int fd, struct stat64 *s)
@@ -917,21 +838,6 @@ static int sys_fstat64(int fd, struct stat64 *s)
     klog("fstat64(%d, %x) size %d blocks %d blksize %d\n",
         fd, s, s32.st_size, s32.st_blocks, s32.st_blksize);
 #endif
-
-    fs_fstat(fd, &s32);
-    s->st_dev = s32.st_dev;
-    s->st_ino = s32.st_ino;
-    s->st_mode = s32.st_mode;
-    s->st_nlink = s32.st_nlink;
-    s->st_uid = s32.st_uid;
-    s->st_gid = s32.st_gid;
-    s->st_rdev = s32.st_rdev;
-    s->st_size = s32.st_size;
-    s->st_blksize = s32.st_blksize;
-    s->st_blocks = s32.st_blocks;
-    s->st_atime = s32.st_atime;
-    s->st_mtime = s32.st_mtime;
-    s->st_ctime = s32.st_ctime;
 
     return 0;
 
@@ -1205,5 +1111,23 @@ static int sys_time(unsigned* t)
 
     *t = (unsigned)time(0).time;
     return 0;
+}
+
+static int sys_readdir(unsigned fd, struct old_linux_dirent *dirp, unsigned count)
+{
+    int ret = -1;
+#ifdef __VERBOS__SYSCALL__
+    klog("readdir(%d, %x, %d) = %d\n", fd, dirp, count, ret);
+#endif
+    return ret;
+}
+
+static int sys_stat(const char *pathname, struct stat *buf)
+{
+    int ret = -1;
+#ifdef __VERBOS__SYSCALL__
+    klog("sys_stat(%s, %x) = %d\n", pathname, buf, ret);
+#endif
+    return ret;
 }
 

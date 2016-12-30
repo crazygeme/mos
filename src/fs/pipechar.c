@@ -1,86 +1,39 @@
 #include <pipechar.h>
-#include <chardev.h>
-#include <vfs.h>
-#include <mount.h>
 #include <unistd.h>
 #include <klib.h>
 #include <cyclebuf.h>
+#include <fs.h>
 
 typedef struct _pipe_inode
 {
-    struct filesys_type* type;
-    unsigned ref_count;
     cy_buf* buf;
     int readonly;
 }pipe_inode;
 
-static void pipe_free_inode(struct filesys_type*, INODE);
-static INODE pipe_get_root(struct filesys_type*);
-static unsigned pipe_get_mode(INODE inode);
-static int pipe_copy_stat(INODE node, struct stat* s, int is_dir);
-static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsigned len);
-static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, unsigned len);
-
-static struct super_operations pipe_super_operations = {
-    0,
-    0,
-    0,
-    0,
-    pipe_free_inode,
-    pipe_get_root
-};
-
-static struct inode_opreations pipe_inode_operations = {
-    pipe_get_mode,
-    pipe_read_file,
-    pipe_write_file,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    pipe_copy_stat
-};
 
 void pipe_init()
 {
-    chardev* dev = 0;
-    struct filesys_type* type = 0;
-
-    dev = chardev_register(0, "pipe", 0, 0, 0);
-    if (!dev)
-        return;
-
-    type = register_vfs(0, 0, dev, &pipe_super_operations, &pipe_inode_operations, "pipe");
-
-    do_mount("pipefs", type);
 
 }
 
-INODE pipe_create_reader(cy_buf* buf)
+static void* pipe_create_reader(cy_buf* buf)
 {
     pipe_inode* n = kmalloc(sizeof(*n));
-    n->type = mount_lookup("pipefs");
-    n->ref_count = 0;
     n->buf = buf;
     n->readonly = 1;
     return n;
 }
 
-INODE pipe_create_writer(cy_buf* buf)
+static void* pipe_create_writer(cy_buf* buf)
 {
     pipe_inode* n = kmalloc(sizeof(*n));
-    n->type = mount_lookup("pipefs");
-    n->ref_count = 0;
     n->buf = buf;
     n->readonly = 0;
     return n;
 }
 
 
-static void pipe_free_inode(struct filesys_type* t, INODE n)
+static int pipe_close(void* n)
 {
     pipe_inode* node = (pipe_inode*)n;
     if (!node->readonly)
@@ -94,25 +47,12 @@ static void pipe_free_inode(struct filesys_type* t, INODE n)
     }
 
     kfree(n);
-}
 
-static INODE pipe_get_root(struct filesys_type* t)
-{
-    //  pipe_inode* n = kmalloc(sizeof(*n));
-    //  n->type = t;
-    //  n->ref_count = 0;
-    //  n->buf = cyb_create("pipe");
-    //  return n;
     return 0;
 }
 
-static unsigned pipe_get_mode(INODE inode)
-{
-    return (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR | S_IRGRP | S_IROTH);
-}
 
-
-static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsigned len)
+static int pipe_read(void* inode, const void *buf, size_t len, size_t *wcnt)
 {
     int i = 0;
     pipe_inode* n = (pipe_inode*)inode;
@@ -130,10 +70,12 @@ static unsigned pipe_read_file(INODE inode, unsigned int offset, char* buf, unsi
         tmp++;
     }
 
-    return i;
+    if (wcnt)
+        *wcnt = i;
+    return 0;
 }
 
-static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, unsigned len)
+static int pipe_write(void* inode, const void *buf, size_t len, size_t *wcnt)
 {
     int i = 0;
     pipe_inode* n = (pipe_inode*)inode;
@@ -144,24 +86,44 @@ static unsigned pipe_write_file(INODE inode, unsigned int offset, char* buf, uns
 
     cyb_putbuf(n->buf, tmp, len);
 
-    return len;
+    if (wcnt)
+        *wcnt = len;
+    return 0;
 }
 
-static int pipe_copy_stat(INODE node, struct stat* s, int is_dir)
-{
-    s->st_atime = time_now();
-    s->st_mode = pipe_get_mode(node);
-    s->st_size = 0;
-    s->st_blksize = 0;
-    s->st_blocks = 0;
-    s->st_ctime = time_now();
-    s->st_dev = 0;
-    s->st_gid = 0;
-    s->st_ino = 0;
-    s->st_mtime = 0;
-    s->st_uid = 0;
+static fileop readop = {
+    .read = pipe_read,
+    .close = pipe_close,
+};
 
-    return 1;
+static fileop writeop = {
+    .write = pipe_write,
+    .close = pipe_close
+};
+
+int fs_alloc_filep_pipe(filep* pipes)
+{
+    cy_buf* buf = cyb_create("pipe");
+    filep fp_read = calloc(1, sizeof(*fp_read));
+    fp_read->file_type = FILE_TYPE_PIPE;
+    fp_read->inode = pipe_create_reader(buf);
+    fp_read->ref_cnt = 0;
+    fp_read->file_off = 0;
+    fp_read->flag = 0;
+    fp_read->op = readop;
+
+    filep fp_write = calloc(1, sizeof(*fp_write));
+    fp_write->file_type = FILE_TYPE_PIPE;
+    fp_write->inode = pipe_create_reader(buf);
+    fp_write->ref_cnt = 0;
+    fp_write->file_off = 0;
+    fp_write->flag = 0;
+    fp_write->op = writeop;
+
+    pipes[0] = fp_read;
+    pipes[1] = fp_write;
+
+    return 0;
 }
 
 

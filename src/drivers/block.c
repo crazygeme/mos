@@ -184,3 +184,80 @@ const char* block_type_name(block* b)
         return "BLOCK_UNKNOW";
     }
 }
+
+static int file_close(void* inode)
+{
+    int ret;
+    ext4_file* file = inode;
+    ret = ext4_fclose(file);
+    free(inode);
+
+    if (ret != EOK)
+        return -1;
+    return 0;
+}
+
+static int dir_close(void* inode)
+{
+    int ret;
+    ext4_dir* dir = inode;
+    ret = ext4_dir_close(dir);
+    free(inode);
+    if (ret != EOK)
+        return -1;
+    return 0;
+}
+
+static int dir_read(ext4_dir *dir, void *buf, size_t size, size_t *rcnt)
+{
+    int ret = 0;
+    ext4_direntry* entry = ext4_dir_entry_next(dir);
+    if (!entry){
+        ret =0;
+    }else{
+        ret = offsetof(ext4_direntry, name) + entry->name_length;
+        memcpy(buf, entry, ret);
+    }
+done:
+    if (rcnt)
+        *rcnt = ret;
+    return 0;
+}
+
+static fileop file_op = {
+    .read = ext4_fread,
+    .write = ext4_fwrite,
+    .close = file_close,
+    .seek = ext4_fseek,
+};
+
+static fileop dir_op = {
+    .read = dir_read,
+    .close = dir_close,
+};
+
+filep fs_alloc_filep_normal(void* content)
+{
+    filep fp = calloc(1, sizeof(*fp));
+    fp->file_type = FILE_TYPE_NORMAL;
+    fp->inode = content;
+    fp->ref_cnt = 0;
+    fp->file_off = 0;
+    fp->flag = 0;
+    fp->op = file_op;
+    return fp;
+}
+
+
+
+filep fs_alloc_filep_dir(void* content)
+{
+    filep fp = calloc(1, sizeof(*fp));
+    fp->file_type = FILE_TYPE_DIR;
+    fp->inode = content;
+    fp->ref_cnt = 0;
+    fp->file_off = 0;
+    fp->flag = 0;
+    fp->op = dir_op;
+    return fp;
+}

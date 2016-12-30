@@ -1,12 +1,8 @@
 #include <elf.h>
-#include <namespace.h>
-#if defined WIN32 || defined MACOS
-#include <osdep.h>
-#else
 #include <mm.h>
 #include <ps.h>
 #include <klib.h>
-#endif
+
 
 static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr, mos_binfmt* fmt)
 {
@@ -208,7 +204,7 @@ static unsigned elf_map_get_dynamic_pages(unsigned fd, unsigned table_offset, un
 
 static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 {
-    unsigned fd = fs_open(path);
+    unsigned fd = fs_open(path, O_RDWR, 0);
     unsigned entry_point = 0;
     unsigned head_len = 0;
     Elf32_Ehdr elf;
@@ -251,7 +247,7 @@ static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 
 unsigned elf_map(char* path, mos_binfmt* fmt)
 {
-    unsigned fd = fs_open(path);
+    unsigned fd = fs_open(path, O_RDWR, 0);
     unsigned entry_point = 0;
     unsigned head_len = 0;
     Elf32_Ehdr elf;

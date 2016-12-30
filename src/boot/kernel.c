@@ -8,18 +8,16 @@
 #include <ps.h>
 #include <block.h>
 #include <hdd.h>
-#include <vfs.h>
-#include <mount.h>
 #include <syscall.h>
 #include <pagefault.h>
 #include <console.h>
 #include <kbchar.h>
 #include <null.h>
-#include <cache.h>
 #include <pipechar.h>
 #include <serial.h>
 #include <vga.h>
 #include <tests.h>
+#include <fs.h>
 
 static void run(void);
 _START static void init(multiboot_info_t* mb);
@@ -117,11 +115,6 @@ static void idle_process(void* param)
 
 static void run_tests_if_has()
 {
-    if (TestControl.test_mount)
-    {
-        dump_mount_point();
-        run();
-    }
 
     if (TestControl.test_block)
     {
@@ -137,11 +130,11 @@ static void run_tests_if_has()
         run();
     }
 
-    if (TestControl.test_fs_read || TestControl.test_fs_write)
-    {
-        test_ns();
-        run();
-    }
+    // if (TestControl.test_fs_read || TestControl.test_fs_write)
+    // {
+    //     test_ns();
+    //     run();
+    // }
 
     if (TestControl.test_mmap)
     {
@@ -154,22 +147,13 @@ static void kmain_process(void* param)
 {
     klog_init();
 
-    printk("Init vfs\n");
-    vfs_init();
-
-    printk("Init mount points\n");
-    mount_init();
-
     printk("Init block devices\n");
     block_init();
 
     hdd_init();
 
     printk("Mount root fs to \"/\" \n");
-    vfs_trying_to_mount_root();
-
-    printk("Init char devices\n");
-    chardev_init();
+    fs_mount_root();
 
     kbchar_init();
 
@@ -178,8 +162,6 @@ static void kmain_process(void* param)
     null_init();
 
     pipe_init();
-
-    file_cache_init();
 
     run_tests_if_has();
 

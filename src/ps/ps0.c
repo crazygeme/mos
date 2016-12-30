@@ -8,7 +8,7 @@
 #include <config.h>
 #include <unistd.h>
 #include <mmap.h>
-
+#include <fcntl.h>
 
 static void cleanup()
 {
@@ -17,14 +17,11 @@ static void cleanup()
 
     for (i = 0; i < MAX_FD; i++)
     {
-        if (cur->fds[i].flag & fd_flag_closeexec)
+        if ( cur->fds[i] && (cur->fds[i]->flag & FD_CLOEXEC))
         {
             fs_close(i);
         }
     }
-
-
-
     ps_cleanup_all_user_map(cur);
 
     cur->user.heap_top = USER_HEAP_BEGIN;
@@ -160,35 +157,23 @@ static unsigned ps_setup_v(char* file,
     mos_binfmt* exec)
 {
     int i = 0;
-    char* esp = (char*)(top);
-    unsigned* sp, *platform = 0;
-    int argv_buf_len = argc * sizeof(char*);
-    int env_buf_len = envc * sizeof(char*);
-    char** tmp_array_argv = 0;
-    char** tmp_array_env = 0;
+    char *esp = (char *)(top);
+    unsigned *sp, *platform = 0;
+    int argv_buf_len = argc * sizeof(char *);
+    int env_buf_len = envc * sizeof(char *);
+    char **tmp_array_argv = 0;
+    char **tmp_array_env = 0;
     unsigned argvp, envpp;
     int len;
-
-    if (1)
-    {
-        tmp_array_argv = kmalloc(argv_buf_len + 4);
-    }
-
-    if (1)
-    {
-        tmp_array_env = kmalloc(env_buf_len + 4);
-    }
-
+    tmp_array_argv = kmalloc(argv_buf_len + 4);
+    tmp_array_env = kmalloc(env_buf_len + 4);
     // end marker
     esp -= 4;
-    *((unsigned*)esp) = 0;
-
+    *((unsigned *)esp) = 0;
     // file name
     len = strlen(file) + 1;
     esp -= len;
     strcpy(esp, file);
-
-
     // env strings
     for (i = envc - 1; i >= 0; i--)
     {
@@ -199,8 +184,6 @@ static unsigned ps_setup_v(char* file,
         esp[len - 1] = '\0';
     }
     tmp_array_env[envc] = 0;
-
-
     // argv strings
     for (i = argc - 1; i >= 0; i--)
     {
@@ -210,29 +193,24 @@ static unsigned ps_setup_v(char* file,
         tmp_array_argv[i] = esp;
         esp[len - 1] = '\0';
     }
-
     tmp_array_argv[argc] = 0;
-
-
     // platform
     len = sizeof(ELF_PLATFORM);
     esp -= len;
     strcpy(esp, ELF_PLATFORM);
     platform = esp;
-
     // 16 byte padding
     esp = (char *)((~15UL & (unsigned long)(esp)) - 16UL);
     sp = esp;
 
-#define __put_user(val, addr) ( *(unsigned long*)(addr) = (unsigned long)(val))
+#define __put_user(val, addr) (*(unsigned long *)(addr) = (unsigned long)(val))
 
-#define NEW_AUX_ENT(nr, id, val) \
-  __put_user ((id), sp+(nr*2)); \
-  __put_user ((val), sp+(nr*2+1));
-
+#define NEW_AUX_ENT(nr, id, val)     \
+    __put_user((id), sp + (nr * 2)); \
+    __put_user((val), sp + (nr * 2 + 1));
 
     sp -= 2;
-    NEW_AUX_ENT(0, AT_NULL, 0);//end of vector
+    NEW_AUX_ENT(0, AT_NULL, 0); //end of vector
     if (platform)
     {
         sp -= 2;
@@ -240,62 +218,36 @@ static unsigned ps_setup_v(char* file,
     }
     sp -= 3 * 2;
     NEW_AUX_ENT(0, AT_HWCAP, ELF_HWCAP);
-    NEW_AUX_ENT(1, AT_PAGESZ, 4096);// 4096
-    NEW_AUX_ENT(2, AT_CLKTCK, 100);// 100
+    NEW_AUX_ENT(1, AT_PAGESZ, 4096); // 4096
+    NEW_AUX_ENT(2, AT_CLKTCK, 100);  // 100
 
-    if (1)
-    {//elf interp
-        sp -= 10 * 2;
+    sp -= 10 * 2;
 
-        NEW_AUX_ENT(0, AT_PHDR, exec->elf_load_addr + exec->e_phoff);
-        NEW_AUX_ENT(1, AT_PHENT, sizeof(Elf32_Phdr));
-        NEW_AUX_ENT(2, AT_PHNUM, exec->e_phnum);
-        NEW_AUX_ENT(3, AT_BASE, exec->interp_bias);
-        NEW_AUX_ENT(4, AT_FLAGS, 0);
-        NEW_AUX_ENT(5, AT_ENTRY, exec->e_entry);
-        NEW_AUX_ENT(6, AT_UID, 0);
-        NEW_AUX_ENT(7, AT_EUID, 0);
-        NEW_AUX_ENT(8, AT_GID, 0);
-        NEW_AUX_ENT(9, AT_EGID, 0);
-    }
+    NEW_AUX_ENT(0, AT_PHDR, exec->elf_load_addr + exec->e_phoff);
+    NEW_AUX_ENT(1, AT_PHENT, sizeof(Elf32_Phdr));
+    NEW_AUX_ENT(2, AT_PHNUM, exec->e_phnum);
+    NEW_AUX_ENT(3, AT_BASE, exec->interp_bias);
+    NEW_AUX_ENT(4, AT_FLAGS, 0);
+    NEW_AUX_ENT(5, AT_ENTRY, exec->e_entry);
+    NEW_AUX_ENT(6, AT_UID, 0);
+    NEW_AUX_ENT(7, AT_EUID, 0);
+    NEW_AUX_ENT(8, AT_GID, 0);
+    NEW_AUX_ENT(9, AT_EGID, 0);
+
 #undef NEW_AUX_ENT
 
     esp = sp;
-    if (1)
-    {
-        esp -= (env_buf_len + 4);
-        envpp = esp;
-        memcpy(envpp, tmp_array_env, env_buf_len + 4);
-    }
-
-    if (1)
-    {
-        esp -= (argv_buf_len + 4);
-        argvp = esp;
-        memcpy(argvp, tmp_array_argv, argv_buf_len + 4);
-    }
-
-
-
-    if (1)
-    {
-        kfree(tmp_array_argv);
-    }
-
-    if (1)
-    {
-        kfree(tmp_array_env);
-    }
-
-
+    esp -= (env_buf_len + 4);
+    envpp = esp;
+    memcpy(envpp, tmp_array_env, env_buf_len + 4);
+    esp -= (argv_buf_len + 4);
+    argvp = esp;
+    memcpy(argvp, tmp_array_argv, argv_buf_len + 4);
+    kfree(tmp_array_argv);
+    kfree(tmp_array_env);
     esp -= 4;
-    *((unsigned*)esp) = argc;
-
-    //esp -= 4;
-    //*((unsigned*)esp) = 0;
-
+    *((unsigned *)esp) = argc;
     return esp;
-
 }
 
 int sys_execve(const char* file, char** argv, char** envp)
@@ -368,9 +320,9 @@ static void user_setup_enviroment()
     unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
     ps_update_tss(esp0);
     // fd 0, 1, 2
-    fs_open("/dev/kb0");
-    fs_open("/dev/tty0");
-    fs_open("/dev/tty0");
+    fs_open("k", O_RDWR, 0);
+    fs_open("t", O_RDWR, 0);
+    fs_open("t", O_RDWR, 0);
 
     run_if_exist("/bin/bash");
     run_if_exist("/bin/run");
@@ -381,8 +333,5 @@ static void user_setup_enviroment()
 
 void user_first_process_run()
 {
-    task_struct* task = CURRENT_TASK();
-
     user_setup_enviroment();
-
 }

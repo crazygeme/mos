@@ -1,6 +1,8 @@
 #ifndef _CYCLEBUF_H_
 #define _CYCLEBUF_H_
 
+#define EOF ((unsigned char)(-1))
+
 typedef struct _cy_buf cy_buf;
 
 cy_buf* cyb_create(char* name);

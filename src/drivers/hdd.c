@@ -835,8 +835,8 @@ static void found_partition(block *block, unsigned char part_type,
         char extra_info[128];
         char name[16];
         char ext[2];
-        unsigned size = sizeof(*p) / PAGE_SIZE + 1;
-        p = (partition*)vm_alloc(size);
+        unsigned z = sizeof(*p) / PAGE_SIZE + 1;
+        p = (partition*)vm_alloc(z);
         if (p == 0)
         {
             printk("Failed to allocate memory for partition descriptor");
@@ -868,11 +868,7 @@ static void found_partition(block *block, unsigned char part_type,
 
         if (type == BLOCK_LINUX)
         {
-            ext2_attach(b);
-        }
-        else if (type == BLOCK_FILESYS)
-        {
-            ffs_attach(b);
+            ext4_blockdev_register(b, name, BLOCK_SECTOR_SIZE, size);
         }
     }
 }

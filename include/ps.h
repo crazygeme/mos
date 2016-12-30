@@ -3,7 +3,7 @@
 
 #include <list.h>
 #include <lock.h>
-#include <vfs.h>
+#include <fs.h>
 /*
  * ----------------------------
  * offset	|31-16		15-0  |
@@ -166,31 +166,6 @@ typedef enum _ps_type
 
 typedef void (*process_fn)(void* param);
 
-#define MAX_FD 256
-
-typedef struct _fd_type
-{
-	union{
-		INODE	file;
-		DIR		dir;
-	};
-	unsigned file_off;
-	unsigned flag;
-	char* path;
-}fd_type;
-
-
-#define fd_flag_isdir 0x00000001
-#define fd_flag_readonly 0x00000002
-#define fd_flag_writonly 0x00000004
-#define fd_flag_rw		0x00000008
-#define fd_flag_create 0x00000010
-#define fd_flag_append 0x00000020
-#define fd_flag_closeexec 0x00000040
-#define fd_flag_used	0x80000000
-
-
-
 typedef struct _task_frame
 {
     unsigned short ds;
@@ -228,7 +203,7 @@ typedef struct _task_struct
     ps_type type;
     int remain_ticks;
     int is_switching;
-	fd_type* fds;
+	filep* fds;
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;

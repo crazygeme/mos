@@ -3,8 +3,8 @@
 #include <mm.h>
 #include <ps.h>
 #include <mmap.h>
-#include <namespace.h>
 #include <phymm.h>
+#include <fs.h>
 
 unsigned page_fault_count;
 unsigned page_falut_total_time;
@@ -61,7 +61,8 @@ static void pf_process(intr_frame* frame)
     {
         vm_region* region;
         unsigned this_offset;
-        INODE fd;
+        filep f;
+        ext4_file* ff;
 
         this_begin = cr2 & PAGE_SIZE_MASK;
         if (this_begin == 0)
@@ -72,14 +73,23 @@ static void pf_process(intr_frame* frame)
         region = vm_find_map(cur->user.vm, this_begin);
         if (region)
         {
-            fd = region->node;
+            f = region->node;
             this_offset = region->offset + (this_begin - region->begin);
             mm_add_dynamic_map(this_begin, 0, PAGE_ENTRY_USER_DATA);
             REFRESH_CACHE();
             memset(this_begin, 0, PAGE_SIZE);
-            if (fd != 0)
+            if (f != 0)
             {
-                vfs_read_file(fd, this_offset, this_begin, PAGE_SIZE);
+                int ret = 0;
+                ff = f->inode;
+                ret = ext4_fseek(ff, this_offset, SEEK_SET);
+                if (ret != EOK){
+                    klog("FAIL: mmap: seek to off %x\n", this_offset);
+                }
+                ret = ext4_fread(ff, this_begin, PAGE_SIZE, NULL);
+                if (ret != EOK){
+                    klog("FAIL: mmap: read to buffer %x, size %x\n", this_begin, PAGE_SIZE);
+                }
             }
             goto Done;
         }

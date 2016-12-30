@@ -471,20 +471,14 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
     int i = 0;
     memset(task->fds, 0, PAGE_SIZE);
     sema_wait(&cur->fd_lock);
-    for (i = 0; i < MAX_FD; i++)
-    {
-        if (!cur->fds[i].flag)
-        {
+    for (i = 0; i < MAX_FD; i++){
+        if (!cur->fds[i])
             continue;
-        }
 
         task->fds[i] = cur->fds[i];
-        task->fds[i].path = strdup(cur->fds[i].path);
-        vfs_refrence(cur->fds[i].file);
+        fs_refrence(cur->fds[i]);
     }
     sema_trigger(&cur->fd_lock);
-
-
 }
 
 extern short pgc_entry_count[1024];
@@ -554,18 +548,6 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
 extern void ret_from_syscall();
 int sys_fork()
 {
-    // todo:
-    // 1. create new task struct
-    // 2. copy flags, eip, esp from current to new
-    //      * actually whole page should be copied
-    //      * then init new task, set values if possible
-    //      * or else kernel stack will be missed
-    // 3. copy file descriptors
-    //      * open INODE in new task
-    // 4. copy user memory maps
-    //      * page tables should be newly allocated
-    //      * target physical pages newly allocated too
-    //      * then copy content from current to new
     task_struct* cur = CURRENT_TASK();
     task_struct* task = vm_alloc(KERNEL_TASK_SIZE);
     intr_frame* cur_intr_frame = (intr_frame*)((char*)cur + PAGE_SIZE - sizeof(intr_frame));
@@ -624,7 +606,7 @@ int sys_exit(unsigned status)
     // close all fds
     for (i = 0; i < MAX_FD; i++)
     {
-        if (cur->fds[i].flag)
+        if (cur->fds[i])
         {
             fs_close(i);
         }

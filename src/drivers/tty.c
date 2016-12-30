@@ -262,17 +262,5 @@ void tty_movecurse(unsigned c)
         }
         cursor = c;
         fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
-        //      if (c == 0) {
-        //          fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
-        //          cursor = c;
-        //      } else if (c == last) {
-        //          fb_write_char(CUR_COL, CUR_ROW, 130, VGA_COLOR_BLACK);
-        //          cursor = c;
-        //          fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
-        //      }else{
-        //          fb_write_char(CUR_COL, CUR_ROW, 130, VGA_COLOR_BLACK);
-        //          cursor = c;
-        //          fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
-        //      }
     }
 }

@@ -2,7 +2,6 @@
 #include <lock.h>
 #include <klib.h>
 #include <config.h>
-#include <vfs.h>
 #include <ps.h>
 
 typedef struct _cy_buf

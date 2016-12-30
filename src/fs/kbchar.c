@@ -1,110 +1,48 @@
 #include <kbchar.h>
-#include <chardev.h>
-#include <vfs.h>
-#include <mount.h>
 #include <klib.h>
 #include <keyboard.h>
 #include <unistd.h>
+#include <fs.h>
 
-static int kbchar_read(void* aux, void* buf, unsigned len);
-
-static void kb_free_inode(struct filesys_type*, INODE);
-static INODE kb_get_root(struct filesys_type*);
-static unsigned kb_get_mode(INODE inode);
-static unsigned kb_read_file(INODE inode, unsigned int offset, char* buf, unsigned len);
-static int kb_copy_stat(INODE node, struct stat* s, int is_dir);
-
-static struct super_operations kb_super_operations = {
-    0,
-    0,
-    0,
-    0,
-    kb_free_inode,
-    kb_get_root
-};
-
-static struct inode_opreations kb_inode_operations = {
-    kb_get_mode,
-    kb_read_file,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    kb_copy_stat
-};
+static int kb_read(void* inode, const void *buf, size_t size, size_t *wcnt);
+static int kb_close(struct ext4_blockdev *bdev);
 
 void kbchar_init()
 {
-    chardev* dev = 0;
-    struct filesys_type* type = 0;
-
-    dev = chardev_register(0, "keyboard", kbchar_read, 0, 0);
-    if (!dev)
-        return;
-
-    type = register_vfs(0, 0, dev, &kb_super_operations, &kb_inode_operations, "kb0");
-
-    do_mount("/dev/kb0", type);
-
 }
 
-static int kbchar_read(void* aux, void* buf, unsigned len)
+static int kb_read(void* inode, const void *buf, size_t size, size_t *wcnt)
 {
     char d;
     char* tmp = buf;
-    if (len < 1 || !buf)
+    if (size < 1 || !buf)
         return 0;
 
     d = kb_buf_get();
     *tmp = d;
-    return 1;
+    if (wcnt)
+        *wcnt = 1;
+    return 0;
 }
 
-static void kb_free_inode(struct filesys_type* t, INODE n)
+static int kb_close(struct ext4_blockdev *bdev)
 {
-    kfree(n);
+    return 0;
 }
 
-static INODE kb_get_root(struct filesys_type* t)
+static fileop kbop = {
+    .read = kb_read,
+    .close = kb_close,
+};
+
+filep fs_alloc_filep_kb()
 {
-    INODE n = kmalloc(sizeof(*n));
-    n->type = t;
-    n->ref_count = 0;
-    return n;
-}
-
-static unsigned kb_get_mode(INODE inode)
-{
-    return (S_IFCHR | S_IRUSR | S_IRGRP | S_IROTH);
-}
-
-static unsigned kb_read_file(INODE inode, unsigned int offset, char* buf, unsigned len)
-{
-    chardev* dev = inode->type->dev;
-
-    if (!dev || !dev->read)
-        return 0;
-
-    return dev->read(dev->aux, buf, len);
-}
-
-static int kb_copy_stat(INODE node, struct stat* s, int is_dir)
-{
-    s->st_atime = time_now();
-    s->st_mode = kb_get_mode(node);
-    s->st_size = 0;
-    s->st_blksize = 0;
-    s->st_blocks = 0;
-    s->st_ctime = time_now();
-    s->st_dev = 0;
-    s->st_gid = 0;
-    s->st_ino = 0;
-    s->st_mtime = 0;
-    s->st_uid = 0;
-
-    return 1;
+    filep fp = calloc(1, sizeof(*fp));
+    fp->file_type = FILE_TYPE_CHAR;
+    fp->inode = NULL;
+    fp->ref_cnt = 0;
+    fp->file_off = 0;
+    fp->flag = 0;
+    fp->op = kbop;
+    return fp;
 }

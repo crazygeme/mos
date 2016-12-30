@@ -1,8 +1,7 @@
 #include <gui_core.h>
 #include <vga.h>
-#include <namespace.h>
 #include <unistd.h>
-
+#include <fcntl.h>
 
 static unsigned gui_alpha_color(int x, int y, unsigned color, double alpha)
 {
@@ -166,7 +165,7 @@ static int load_bmp(const char * filename)
     unsigned data_off;
 
     ret = 0;
-    fd = fs_open(filename);
+    fd = fs_open(filename, O_RDWR, 0);
     if (fd == -1)
     {
         return 0;

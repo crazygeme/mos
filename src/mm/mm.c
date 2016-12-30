@@ -179,43 +179,95 @@ _START static void mm_setup_beginning_8m()
     return;
 }
 
+
+static int mm_get_valid_page_table(unsigned addr, unsigned flag,
+    unsigned** page_dir, 
+    unsigned** dir_entry,
+    unsigned** page_table,
+    unsigned** table_entry)
+{
+    unsigned int *_page_dir;
+    unsigned int *_dir_entry;
+    unsigned int *_page_table;
+    unsigned int *_table_entry;
+    
+    _page_dir = (unsigned int*)mm_get_pagedir();
+
+    if ((_page_dir[ADDR_TO_PGT_OFFSET(addr)] & PAGE_SIZE_MASK) == 0){
+        unsigned int table_addr = mm_alloc_page_table();
+        if (table_addr == 0){
+            return 0;
+        }
+        _page_dir[ADDR_TO_PGT_OFFSET(addr)] = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
+        _page_dir[ADDR_TO_PGT_OFFSET(addr)] |= flag;
+    }
+    _dir_entry = &(_page_dir[ADDR_TO_PGT_OFFSET(addr)]);
+    _page_table = (unsigned int*)((_page_dir[ADDR_TO_PGT_OFFSET(addr)] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+    _table_entry = &(_page_table[ADDR_TO_PET_OFFSET(addr)]);
+    if (page_dir) *page_dir = _page_dir;
+    if (dir_entry) *dir_entry = _dir_entry;
+    if (page_table) *page_table = _page_table;
+    if (table_entry) *table_entry = _table_entry;
+    return 1;
+}
+
+static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
+{
+    unsigned int *table, *entry;
+    unsigned int data;
+
+    if (!mm_get_valid_page_table(addr, flag, NULL, NULL, &table, &entry))
+        return 0;
+
+    data = (*entry) & PAGE_SIZE_MASK;
+    if (!data){
+        int idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
+        pgc_entry_count[idx]++;
+    }
+
+    (*entry) = value;
+    return 1;
+}
+
+static int mm_clear_page_table_entry(unsigned *dir_entry, unsigned page_table, unsigned* table_entry)
+{
+    unsigned phy;
+    int idx, empty;
+    phy = (*table_entry) & PAGE_SIZE_MASK;
+    (*table_entry) = 0;
+    if (phy)
+    {
+        idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
+        pgc_entry_count[idx]--;
+
+    }
+
+    if (pgc_entry_count[idx] == 0)
+    {
+        mm_free_page_table((unsigned int)page_table);
+        *dir_entry = 0;
+    }
+}
+
 int mm_add_resource_map(unsigned int phy)
 {
-    unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(phy);
-    unsigned int page_table_offset = ADDR_TO_PET_OFFSET(phy);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-
+    unsigned int *entry;
+    unsigned int phy_page = (phy) & PAGE_SIZE_MASK;
 
     if (phy < KERNEL_OFFSET)
-    {
         return -1;
-    }
 
-    if ((page_dir[page_dir_offset] & PAGE_SIZE_MASK) == 0)
-    {
-        unsigned int table_addr = mm_alloc_page_table();
-        if (table_addr == 0)
-        {
-            return -1;
-        }
+    if (!mm_get_valid_page_table(phy, 0, NULL, NULL, NULL, &entry))
+        return -1;
 
-        page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
-    }
-
-    {
-        unsigned int *table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-        unsigned int phy_page = (phy)& PAGE_SIZE_MASK;
-
-        table[page_table_offset] = phy_page | PAGE_ENTRY_KERNEL_DATA;
-        return 1;
-    }
+    *entry = phy_page | PAGE_ENTRY_KERNEL_DATA;
+    return 1;
 }
 
 int mm_add_direct_map(unsigned int vir)
 {
-    unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
+    unsigned int *page_dir, *table, *entry;
+    unsigned int phy_page = (vir - KERNEL_OFFSET) & PAGE_SIZE_MASK;
     unsigned int page_busy = 0;
     unsigned int page_index = 0;
     // only kernel space has direct map
@@ -229,49 +281,22 @@ int mm_add_direct_map(unsigned int vir)
     page_index = page_index / PAGE_SIZE;
     page_busy = phymm_is_used(page_index);
     if (page_busy)
-    {
         return -1;
-    }
 
     if ((page_index * PAGE_SIZE) > KERNEL_SIZE)
         return -1;
 
-    if ((page_dir[page_dir_offset] & PAGE_SIZE_MASK) == 0)
-    {
-        unsigned int table_addr = mm_alloc_page_table();
-        if (table_addr == 0)
-        {
-            return -1;
-        }
+    if (!mm_set_page_table_entry(vir, 0, phy_page | PAGE_ENTRY_KERNEL_DATA))
+        return -1;
 
-        page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
-    }
-
-    {
-        unsigned int *table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-        unsigned int phy_page = (vir - KERNEL_OFFSET) & PAGE_SIZE_MASK;
-        unsigned int entry = table[page_table_offset] & PAGE_SIZE_MASK;
-
-        if (!entry)
-        {
-            int idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
-            pgc_entry_count[idx]++;
-        }
-        table[page_table_offset] = phy_page | PAGE_ENTRY_KERNEL_DATA;
-        phymm_reference_page(phy_page / PAGE_SIZE);
-        if (vir == ((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET))
-            return 1;
-        else
-            return 0;
-    }
+    phymm_reference_page(phy_page / PAGE_SIZE);
+    return 1;
 }
 
 void mm_del_direct_map(unsigned int vir)
 {
-    int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-    unsigned int *page_table, phy;
+    unsigned int *page_table, *table_entry, *dir_entry;
+    unsigned int phy;
     unsigned int phy_addr = (vir >= KERNEL_OFFSET) ?
         ((vir&PAGE_SIZE_MASK) - KERNEL_OFFSET) : (vir&PAGE_SIZE_MASK);
     int empty = 1;
@@ -281,31 +306,14 @@ void mm_del_direct_map(unsigned int vir)
     if (vir >= 0xC0000000 && vir < PAGE_TABLE_CACHE_END)
         return;
 
+    if (!mm_get_valid_page_table(vir, 0, NULL, &dir_entry, &page_table, &table_entry))
+        return;
 
-    page_table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+    if (!mm_clear_page_table_entry(dir_entry, page_table, table_entry))
+        return;
+    
 
-    phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
-
-    page_table[page_table_offset] = 0;
     phymm_dereference_page(phy_addr / PAGE_SIZE);
-
-    if (phy)
-    {
-        idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
-        pgc_entry_count[idx]--;
-        empty = (pgc_entry_count[idx] == 0);
-    }
-    else
-    {
-        empty = 0;
-    }
-
-
-    if (empty)
-    {
-        mm_free_page_table((unsigned int)page_table);
-        page_dir[page_dir_offset] = 0;
-    }
 }
 
 
@@ -322,27 +330,13 @@ unsigned int mm_alloc_page_table()
     task_struct* cur = CURRENT_TASK();
     if (ret == 0)
         return ret;
-    if (ret < 0xC0000000)
-    {
-        printk("[%d] alloc page table %x\n", cur->psid, ret);
-    }
     memset(ret, 0, PAGE_SIZE);
     return ret;
 }
 
 void mm_free_page_table(unsigned int vir)
 {
-    int ret = PushStack(&page_table_cache, vir);
-
-    if (vir < 0xC0000000)
-    {
-        printk("free page table %x\n", vir);
-    }
-
-    if (!ret)
-    {
-        printk("fatal error: stack overflow\n");
-    }
+    PushStack(&page_table_cache, vir);
 }
 
 unsigned int vm_alloc(int page_count)
@@ -391,9 +385,8 @@ void vm_free(unsigned int vm, int page_count)
 
 int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 {
-    unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
+    unsigned int phy_page;
+    unsigned int *page_dir, *table, *entry;
     unsigned int page_busy = 0;
     unsigned int page_index = 0;
     unsigned int target_phy = 0;
@@ -410,112 +403,74 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
         target_phy = page_index*PAGE_SIZE;
     }
 
+    phy_page = (target_phy)& PAGE_SIZE_MASK;
 
-    if ((page_dir[page_dir_offset] & PAGE_SIZE_MASK) == 0)
-    {
-        unsigned int table_addr = mm_alloc_page_table();
-        if (table_addr == 0)
-        {
-            return -1;
-        }
+    if (!mm_set_page_table_entry(vir, (flag | PAGE_ENTRY_WRITABLE), phy_page | flag))
+        return -1;
 
-        page_dir[page_dir_offset] = (table_addr - KERNEL_OFFSET) | flag;
-        page_dir[page_dir_offset] |= PAGE_ENTRY_WRITABLE;
-    }
+    phymm_reference_page(phy_page / PAGE_SIZE);
 
-    {
-        unsigned int *table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-        unsigned int phy_page = (target_phy)& PAGE_SIZE_MASK;
-        unsigned int table_entry = table[page_table_offset] & PAGE_SIZE_MASK;
-        if (table_entry)
-        {
-            return 0;
-        }
-        else
-        {
-            int idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
-            pgc_entry_count[idx]++;
-        }
-
-        table[page_table_offset] = phy_page | flag;
-        phymm_reference_page(phy_page / PAGE_SIZE);
-
-    }
     return 1;
 }
 
 void mm_del_dynamic_map(unsigned int vir)
 {
-    int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-    unsigned int *page_table;
+    unsigned int *page_table, *table_entry, *dir_entry;
     unsigned int phy_addr;
     int empty = 1;
     int i = 0, idx;
     int page_index;
-    page_table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-    phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
-    page_table[page_table_offset] = 0;
+    
+    if (!mm_get_valid_page_table(vir, 0, NULL, &dir_entry, &page_table, &table_entry))
+        return;
+
+    phy_addr = (*table_entry) & PAGE_SIZE_MASK;
     page_index = phy_addr / PAGE_SIZE;
+    
     if ((page_index >= phymm_valid) && (page_index < phymm_max))
     {
         if (phymm_dereference_page(phy_addr / PAGE_SIZE) == 0)
             phymm_free_user(phy_addr / PAGE_SIZE);
-        idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) / PAGE_SIZE - 1;
-        pgc_entry_count[idx]--;
-        empty = (pgc_entry_count[idx] == 0);
+        mm_clear_page_table_entry(dir_entry, page_table, table_entry);
     }
-    else
-    {
-        empty = 0;
-    }
-
-    if (empty)
-    {
-        mm_free_page_table((unsigned int)page_table);
-        page_dir[page_dir_offset] = 0;
-    }
-
 }
 
 unsigned mm_get_map_flag(unsigned vir)
 {
-    int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-    unsigned int *page_table;
+    unsigned int *table_entry;
     unsigned flag;
-
-    page_table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-    flag = page_table[page_table_offset];
+    if (!mm_get_valid_page_table(vir, 0, 
+        NULL, NULL, NULL,
+        &table_entry))
+        return 0;
+    flag = *table_entry;
     flag &= ~PAGE_SIZE_MASK;
     return flag;
 }
 
 void mm_set_map_flag(unsigned vir, unsigned flag)
 {
-    int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-    unsigned int *page_table;
-
-    page_table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-    page_table[page_table_offset] &= PAGE_SIZE_MASK;
-    page_table[page_table_offset] |= flag;
+    unsigned int *table_entry;
+    unsigned f;
+    if (!mm_get_valid_page_table(vir, 0, 
+        NULL, NULL, NULL,
+        &table_entry))
+        return 0;
+    f = *table_entry;
+    f &= PAGE_SIZE_MASK;
+    f |= flag;
+    *table_entry = f;
 }
 
 unsigned mm_get_attached_page_index(unsigned int vir)
-{
-    int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-    int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-    unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
-    unsigned int *page_table;
+{ 
     unsigned int phy_addr;
-
-    page_table = (unsigned int*)((page_dir[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-    phy_addr = page_table[page_table_offset] & PAGE_SIZE_MASK;
-
+    unsigned int *table_entry;
+    if (!mm_get_valid_page_table(vir, 0, 
+        NULL, NULL, NULL,
+        &table_entry))
+        return 0;
+    phy_addr = (*table_entry) & PAGE_SIZE_MASK;
     return (phy_addr / PAGE_SIZE);
 }
 

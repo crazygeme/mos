@@ -18,7 +18,21 @@ CSTRICT	= 	-Werror=return-type\
 		-Werror=uninitialized\
 		-w
 CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin -D__DEBUG__\
-	-I./ -Iinclude
+	-I./\
+	-Iinclude\
+	-I3rdparty\
+	-D__VERBOS_SYSCALL__\
+	-DCONFIG_EXT_FEATURE_SET_LVL=2\
+        -DCONFIG_JOURNALING_ENABLE=0\
+        -DCONFIG_DIR_INDEX_COMB_SORT=1\
+        -DCONFIG_HAVE_OWN_ERRNO=1\
+        -DCONFIG_DEBUG_PRINTF=0\
+        -DCONFIG_DEBUG_ASSERT=0\
+        -DCONFIG_HAVE_OWN_ASSERT=1\
+        -DCONFIG_HAVE_OWN_OFLAGS=1\
+        -DCONFIG_USE_USER_MALLOC=0\
+		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=12
+
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 
 LDFLAGS	= $(LDFILE)
@@ -40,22 +54,15 @@ OBJS	= $(DST)/boot.o \
 		  $(DST)/timer.o\
 		  $(DST)/ps.o\
 		  $(DST)/lock.o\
-		  $(DST)/vfs.o\
-		  $(DST)/ext2.o\
 		  $(DST)/hdd.o\
 		  $(DST)/block.o\
-		  $(DST)/mount.o\
-		  $(DST)/namespace.o\
 		  $(DST)/elf.o\
 		  $(DST)/ps0.o\
-		  $(DST)/ffs.o\
 		  $(DST)/syscall.o\
 		  $(DST)/pagefault.o\
-		  $(DST)/chardev.o\
 		  $(DST)/kbchar.o\
 		  $(DST)/console.o\
 		  $(DST)/null.o\
-		  $(DST)/cache.o\
 		  $(DST)/cyclebuf.o\
 		  $(DST)/serial.o\
 		  $(DST)/pipe.o\
@@ -65,13 +72,13 @@ OBJS	= $(DST)/boot.o \
 		  $(DST)/gui_test.o\
 		  $(DST)/gui_core.o\
 		  $(DST)/memory.o\
-		  $(DST)/profiling.o
+		  $(DST)/profiling.o\
+		  $(DST)/fs.o\
+		  $(DST)/libext4.a
 
 TESTS	= $(DST)/$(TEST)/mmap_test.o\
-		  $(DST)/$(TEST)/fs_test.o\
 		  $(DST)/$(TEST)/mm_test.o\
-		  $(DST)/$(TEST)/block_test.o\
-		  $(DST)/$(TEST)/mount_test.o
+		  $(DST)/$(TEST)/block_test.o
 
 
 all: kernel
@@ -88,17 +95,11 @@ dst:
 $(DST)/$(TEST)/mmap_test.o: test/mmap_test.c
 	$(CC) $(CFLAGS) test/mmap_test.c -o $(DST)/$(TEST)/mmap_test.o
 
-$(DST)/$(TEST)/fs_test.o: test/fs_test.c
-	$(CC) $(CFLAGS) test/fs_test.c -o $(DST)/$(TEST)/fs_test.o
-
 $(DST)/$(TEST)/mm_test.o: test/mm_test.c
 	$(CC) $(CFLAGS) test/mm_test.c -o $(DST)/$(TEST)/mm_test.o
 
 $(DST)/$(TEST)/block_test.o: test/block_test.c
 	$(CC) $(CFLAGS) test/block_test.c -o $(DST)/$(TEST)/block_test.o
-
-$(DST)/$(TEST)/mount_test.o: test/mount_test.c
-	$(CC) $(CFLAGS) test/mount_test.c -o $(DST)/$(TEST)/mount_test.o
 
 $(DST)/profiling.o: src/profiling/profiling.c
 	$(CC) $(CFLAGS) src/profiling/profiling.c -o $(DST)/profiling.o
@@ -151,24 +152,11 @@ $(DST)/ps.o: src/ps/ps.c include/ps.h
 $(DST)/lock.o: src/ps/lock.c include/lock.h
 	$(CC) $(CFLAGS) -o $(DST)/lock.o src/ps/lock.c
 
-
-$(DST)/vfs.o: src/fs/vfs.c include/vfs.h
-	$(CC) $(CFLAGS) -o $(DST)/vfs.o src/fs/vfs.c
-
-$(DST)/ext2.o: src/fs/ext2.c include/ext2.h
-	$(CC) $(CFLAGS) -o $(DST)/ext2.o src/fs/ext2.c
-
 $(DST)/block.o: include/block.h src/drivers/block.c
 	$(CC) $(CFLAGS) -o $(DST)/block.o src/drivers/block.c
 
 $(DST)/hdd.o: include/hdd.h src/drivers/hdd.c
 	$(CC) $(CFLAGS) -o $(DST)/hdd.o src/drivers/hdd.c
-
-$(DST)/mount.o: src/fs/mount.c include/mount.h
-	$(CC) $(CFLAGS) -o $(DST)/mount.o src/fs/mount.c
-
-$(DST)/namespace.o: src/fs/namespace.c include/namespace.h
-	$(CC) $(CFLAGS) -o $(DST)/namespace.o src/fs/namespace.c
 
 $(DST)/elf.o: src/ps/elf.c include/elf.h
 	$(CC) $(CFLAGS) -o $(DST)/elf.o src/ps/elf.c
@@ -176,17 +164,12 @@ $(DST)/elf.o: src/ps/elf.c include/elf.h
 $(DST)/ps0.o: src/ps/ps0.c include/ps0.h
 	$(CC) $(CFLAGS) -o $(DST)/ps0.o src/ps/ps0.c
 
-$(DST)/ffs.o: src/fs/ffs.c include/ffs.h
-	$(CC) $(CFLAGS) -o $(DST)/ffs.o src/fs/ffs.c
-
 $(DST)/syscall.o: src/syscall/syscall.c include/syscall.h
 	$(CC) $(CFLAGS) -o $(DST)/syscall.o src/syscall/syscall.c
 
 $(DST)/pagefault.o: src/mm/pagefault.c include/pagefault.h
 	$(CC) $(CFLAGS) -o $(DST)/pagefault.o src/mm/pagefault.c
 
-$(DST)/chardev.o: src/drivers/chardev.c include/chardev.h
-	$(CC) $(CFLAGS) -o $(DST)/chardev.o src/drivers/chardev.c
 
 $(DST)/kbchar.o: src/fs/kbchar.c include/kbchar.h
 	$(CC) $(CFLAGS) -o $(DST)/kbchar.o src/fs/kbchar.c
@@ -224,7 +207,16 @@ $(DST)/gui_core.o: src/gui/gui_core.c include/gui_core.h
 $(DST)/memory.o: src/lib/memory.S
 	$(CC) $(CFLAGS) -o $(DST)/memory.o src/lib/memory.S
 
+$(DST)/fs.o: src/fs/fs.c include/fs.h
+	$(CC) $(CFLAGS) -o $(DST)/fs.o src/fs/fs.c
+
+$(DST)/libext4.a:
+	make -C 3rdparty
+	mv 3rdparty/libext4.a $(DST)
+
+
 clean:
+	-make -C 3rdparty clean
 	-rm -rf $(DST)
 	-rm $(TARGET)
 	-rm $(TARGET).dbg

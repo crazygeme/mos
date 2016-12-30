@@ -21,7 +21,6 @@ CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin
 	-I./\
 	-Iinclude\
 	-I3rdparty\
-	-D__VERBOS_SYSCALL__\
 	-DCONFIG_EXT_FEATURE_SET_LVL=2\
         -DCONFIG_JOURNALING_ENABLE=0\
         -DCONFIG_DIR_INDEX_COMB_SORT=1\

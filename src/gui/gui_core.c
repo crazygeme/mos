@@ -165,7 +165,7 @@ static int load_bmp(const char * filename)
     unsigned data_off;
 
     ret = 0;
-    fd = fs_open(filename, O_RDWR, 0);
+    fd = fs_open(filename, 0, "r");
     if (fd == -1)
     {
         return 0;

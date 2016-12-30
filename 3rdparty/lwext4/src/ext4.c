@@ -55,6 +55,7 @@
 
 
 #include <klib.h>
+#include <3rdparty/lwext4/include/ext4_types.h>
 
 /**@brief   Mount point OS dependent lock*/
 #define EXT4_MP_LOCK(_m)                                                       \
@@ -1564,13 +1565,21 @@ int ext4_fopen2(ext4_file *f, const char *path, int flags)
 	if (!mp)
 		return ENOENT;
 
-        filetype = EXT4_DE_REG_FILE;
+	filetype = EXT4_DE_REG_FILE;
 
 	EXT4_MP_LOCK(mp);
 
 	ext4_block_cache_write_back(mp->fs.bdev, 1);
 	r = ext4_generic_open2(f, path, flags, filetype, NULL, NULL);
 	ext4_block_cache_write_back(mp->fs.bdev, 0);
+
+	if (r != EOK) {
+		filetype = EXT4_DE_SYMLINK;
+
+		ext4_block_cache_write_back(mp->fs.bdev, 1);
+		r = ext4_generic_open2(f, path, flags, filetype, NULL, NULL);
+		ext4_block_cache_write_back(mp->fs.bdev, 0);
+	}
 
 	EXT4_MP_UNLOCK(mp);
 	return r;
@@ -2069,7 +2078,7 @@ uint64_t ext4_fsize(ext4_file *f)
     stat->st_gid = ext4_inode_get_gid(inode_ref.inode);
     stat->st_rdev = 0;
     stat->st_size = ext4_inode_get_size(sb, inode_ref.inode);
-	stat->st_blksize = (1024 << sb->log_block_size);
+	stat->st_blksize = 0;//sb->log_block_size;
     stat->st_blocks = ext4_inode_get_blocks_count(sb, inode_ref.inode);
     stat->st_atime = ext4_inode_get_access_time(inode_ref.inode);
     stat->st_mtime = ext4_inode_get_modif_time(inode_ref.inode);

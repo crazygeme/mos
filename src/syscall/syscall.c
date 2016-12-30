@@ -9,6 +9,7 @@
 #include <rbtree.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <3rdparty/lwext4/include/ext4.h>
 
 
 struct utimbuf
@@ -119,7 +120,7 @@ static int sys_read(int fd, char* buf, unsigned len);
 static int sys_write(int fd, char* buf, unsigned len);
 static int sys_getpid();
 static int sys_uname(struct utsname* utname);
-static int sys_open(const char* name, int flags, unsigned mode);
+static int sys_open(const char* name, int flags, char* mode);
 static int sys_close(unsigned fd);
 static int sys_sched_yield();
 static int sys_brk(unsigned top);
@@ -454,7 +455,7 @@ static int sys_sched_yield()
     return 0;
 }
 
-static int sys_open(const char *_name, int flags, unsigned mode)
+static int sys_open(const char *_name, int flags, char* mode)
 {
     char *name = kmalloc(64);
     int fd;
@@ -566,10 +567,11 @@ static int _chdir(const char *cwd, const char *path)
         strcpy(cwd, cwd);
         return 1;
     }
-
-    strcat(cwd, "/");
+    if (cwd[strlen(cwd)-1] != '/')
+        strcat(cwd, "/");
     strcat(cwd, path);
-    if (fs_stat(cwd, &s) == -1) return 0;
+    strcat(cwd, "/");
+    if (sys_stat(cwd, &s) == -1) return 0;
 
     if (!S_ISDIR(s.st_mode)) return 0;
 
@@ -620,15 +622,23 @@ static int sys_chdir(const char *path)
 
 static int sys_creat(const char *path, unsigned mode)
 {
+#ifdef __VERBOS_SYSCALL__
+    klog("creat(%s, %d)\n", path, mode);
+#endif
     return -1;
 }
 
 static int sys_mkdir(const char *path, unsigned mode)
 {
+    char* name = kmalloc(64);
+    int ret;
+    resolve_path(path, name);
+    ret = ext4_dir_mk(name);
 #ifdef __VERBOS_SYSCALL__
     klog("mkdir(%s, %d)\n", path, mode);
 #endif
-    return ext4_dir_mk(path);
+    kfree(name);
+    return ret;
 }
 
 static int sys_rmdir(const char *path)
@@ -796,7 +806,7 @@ static int sys_fcntl(int fd, int cmd, int arg)
             memset((char *)dirp, 0, count);
             break;
         }
-
+        entry->name[entry->name_length] = '\0';
         len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
         memset(dirp, 0, len);
         dirp->d_ino = entry->inode;
@@ -820,28 +830,42 @@ static int sys_fcntl(int fd, int cmd, int arg)
  
  }
 
-static int sys_fstat(int fd, struct stat*s)
+static int sys_fstat(int fd, struct stat *s)
 {
-    return 0;
+    return fs_fstat(fd, s);
 }
 
-static int sys_fstat64(int fd, struct stat64 *s)
-{
+static int sys_fstat64(int fd, struct stat64 *s) {
     // FIXME
     // rewrite it all please
     task_struct *cur = CURRENT_TASK();
     struct stat s32;
 
-    if (fd > MAX_FD) return -1;
+    if (fd < 0 || fd >= MAX_FD) return -1;
+
+    fs_fstat(fd, &s32);
+    s->st_dev = s32.st_dev;
+    s->st_ino = s32.st_ino;
+    s->st_mode = s32.st_mode;
+    s->st_nlink = s32.st_nlink;
+    s->st_uid = s32.st_uid;
+    s->st_gid = s32.st_gid;
+    s->st_rdev = s32.st_rdev;
+    s->st_size = s32.st_size;
+    s->st_blksize = s32.st_blksize;
+    s->st_blocks = s32.st_blocks;
+    s->st_atime = s32.st_atime;
+    s->st_mtime = s32.st_mtime;
+    s->st_ctime = s32.st_ctime;
 
 #ifdef __VERBOS_SYSCALL__
     klog("fstat64(%d, %x) size %d blocks %d blksize %d\n",
-        fd, s, s32.st_size, s32.st_blocks, s32.st_blksize);
+         fd, s, s32.st_size, s32.st_blocks, s32.st_blksize);
 #endif
 
     return 0;
-
 }
+
 
 static int sys_lstat64(const char *path, struct stat64 *s)
 {
@@ -970,11 +994,20 @@ static int sys_pause()
 
 static int resolve_path(char *old, char *new)
 {
+    char* r;
     if (!old || !*old) return -1;
 
     if (!strcmp(old, "."))
     {
         sys_getcwd(new, 64);
+        return 0;
+    }
+
+    if (!strcmp(old, ".."))
+    {
+        sys_getcwd(new, 64);
+        r = strrchr(new, '/');
+        *r = '\0';
         return 0;
     }
 
@@ -986,7 +1019,6 @@ static int resolve_path(char *old, char *new)
     else if (strlen(old) > 1 && old[0] == '.' && old[1] == '/') old += 2;
 
     sys_getcwd(new, 64);
-    if (strcmp(new, "/")) strcat(new, "/");
     strcat(new, old);
     return 0;
 }
@@ -1119,15 +1151,24 @@ static int sys_readdir(unsigned fd, struct old_linux_dirent *dirp, unsigned coun
 #ifdef __VERBOS__SYSCALL__
     klog("readdir(%d, %x, %d) = %d\n", fd, dirp, count, ret);
 #endif
-    return ret;
+    return sys_getdents(fd, dirp, count);
 }
 
-static int sys_stat(const char *pathname, struct stat *buf)
+static int sys_stat(const char *_name, struct stat *buf)
 {
     int ret = -1;
+    int fd;
+    char *name = kmalloc(64);
+    resolve_path(_name, name);
+    fd = fs_open(name, 0, 0);
+    if (fd < 0 || fd >= MAX_FD)
+        return -1;
+    ret = fs_fstat(fd, buf);
 #ifdef __VERBOS__SYSCALL__
     klog("sys_stat(%s, %x) = %d\n", pathname, buf, ret);
 #endif
+    free(name);
+    fs_close(fd);
     return ret;
 }
 

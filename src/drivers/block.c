@@ -224,16 +224,23 @@ done:
     return 0;
 }
 
+static int dir_stat(ext4_dir *dir, struct stat* s)
+{
+    return ext4_fstat(&dir->f, s);
+}
+
 static fileop file_op = {
     .read = ext4_fread,
     .write = ext4_fwrite,
     .close = file_close,
     .seek = ext4_fseek,
+    .stat = ext4_fstat,
 };
 
 static fileop dir_op = {
     .read = dir_read,
     .close = dir_close,
+    .stat = dir_stat,
 };
 
 filep fs_alloc_filep_normal(void* content)

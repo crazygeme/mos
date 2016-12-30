@@ -162,7 +162,23 @@ int fs_write(int fd, unsigned offset, char* buf, unsigned len)
     return ret;
 }
 
-int fs_open(const char* path, int flag, int mode)
+static int fs_resolve_symlink_path(const char* linkpath, char* linkcontent, size_t name_len)
+{
+    char* r;
+    char* saved = linkcontent + PAGE_SIZE - name_len - 1;
+    if (*linkcontent == '/')
+        return 0;
+
+    saved[name_len] = '\0';
+    strcpy(saved, linkcontent);
+    strcpy(linkcontent, linkpath);
+    r = strrchr(linkcontent, '/');
+    *r = '\0';
+    strcat(linkcontent, "/");
+    strcat(linkcontent, saved);
+}
+
+int fs_open(const char* path, int flag, char* mode)
 {
     struct stat s;
     task_struct* cur = CURRENT_TASK();
@@ -171,6 +187,8 @@ int fs_open(const char* path, int flag, int mode)
     ext4_dir* dir = NULL;
     filep fp = NULL;
     int ret = -1;
+    char* linkcontent = NULL;
+    size_t name_len;
     sema_wait(&cur->fd_lock);
 
     fd = fs_find_empty_fd(cur->fds);
@@ -184,9 +202,17 @@ int fs_open(const char* path, int flag, int mode)
             fp = fs_alloc_filep_kb();
         fp->mode = 0;
     }
-    else if (strcmp (path, "/dev/null") == 0){
+    else if (strcmp (path, "/dev/null") == 0) {
         fp = fs_alloc_filep_null();
         fp->mode = 0;
+    }else if (path[strlen(path)-1] == '/'){
+        // must be a path
+        dir = calloc(1, sizeof(*dir));
+        ret = ext4_dir_open(dir, path);
+        if (ret != EOK)
+            goto fail;
+        fp = fs_alloc_filep_dir(dir);
+        fp->mode = S_IFDIR;
     }else{
         f = calloc(1, sizeof(*f));
         ret = ext4_fopen2(f, path, flag);
@@ -197,6 +223,25 @@ int fs_open(const char* path, int flag, int mode)
         if (ret != EOK){
             goto fail;
         }
+        if (S_ISLNK(s.st_mode)) {
+            linkcontent = vm_alloc(1);
+            ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
+            if (ret != EOK){
+                goto fail;
+            }
+            ext4_fclose(f);
+            fs_resolve_symlink_path(path, linkcontent, name_len);
+            ret = ext4_fopen2(f, linkcontent, flag);
+            if (ret != EOK){
+                goto fail;
+            }
+            ret = ext4_fstat(f, &s);
+            if (ret != EOK){
+                goto fail;
+            }
+            vm_free(linkcontent, 1);
+        }
+
         if (S_ISDIR(s.st_mode)){
             ret = ext4_fclose(f);
             if (ret != EOK)
@@ -220,6 +265,9 @@ int fs_open(const char* path, int flag, int mode)
 
 fail:
     fd = -1;
+    if (linkcontent)
+        vm_free(linkcontent, 1);
+
     if (f)
         free(f);
     if (dir)
@@ -260,12 +308,49 @@ int fs_stat(const char* path, struct stat *s)
 {
     // FIXME: before virtual device (/dev etc) only ext4 support
     ext4_file f;
-    int ret = ext4_fopen(&f, path, "r");
+    ext4_dir dir;
+    int isdir = 0;
+    int ret = -1;
+
+    if (path[strlen(path)-1] == '/') {
+        ret = ext4_dir_open(&dir, path);
+        isdir = 1;
+    }else {
+        ret = ext4_fopen(&f, path, "r");
+    }
 
     if (ret != EOK)
         return ret;
 
-    ret = ext4_fstat(&f, s);
+    if (!isdir) {
+        ret = ext4_fstat(&f, s);
+        ext4_fclose(&f);
+    }else {
+        ret = ext4_fstat(&dir.f, s);
+        ext4_dir_close(&dir);
+    }
+    if (ret != EOK)
+        return -1;
+    return ret;
+}
+
+int fs_fstat(int fd, struct stat* s)
+{
+    int ret;
+    task_struct* cur = CURRENT_TASK();
+    filep fp = NULL;
+    if (fd < 0 || fd >= MAX_FD)
+        return -1;
+
+    sema_wait(&cur->fd_lock);
+    fp = cur->fds[fd];
+    sema_trigger(&cur->fd_lock);
+
+    if (fp == NULL)
+        return -1;
+    if (!fp->op.stat)
+        return -1;
+    ret = fp->op.stat(fp->inode, s);
     if (ret != EOK)
         return -1;
     return ret;

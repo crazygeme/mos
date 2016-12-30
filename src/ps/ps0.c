@@ -276,7 +276,7 @@ int sys_execve(const char* file, char** argv, char** envp)
     strcpy(file_name, file);
 
 #ifdef __VERBOS_SYSCALL__
-    klog("execve(%s, [");
+    klog("execve(%s, [", file_name);
     for (i = 0; i < argc; i++)
     {
         klog_printf("%s ", argv[i]);
@@ -320,13 +320,11 @@ static void user_setup_enviroment()
     unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
     ps_update_tss(esp0);
     // fd 0, 1, 2
-    fs_open("k", O_RDWR, 0);
-    fs_open("t", O_RDWR, 0);
-    fs_open("t", O_RDWR, 0);
+    fs_open("k", 0, "r");
+    fs_open("t", 0, "r");
+    fs_open("t", 0, "r");
 
     run_if_exist("/bin/bash");
-    run_if_exist("/bin/run");
-    run_if_exist("/bin/idle");
 }
 
 

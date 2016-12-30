@@ -30,9 +30,26 @@ static int kb_close(struct ext4_blockdev *bdev)
     return 0;
 }
 
+static int kb_stat(void* inode, struct stat* s)
+{
+    s->st_atime = time_now();
+    s->st_mode = (S_IFCHR | S_IRUSR | S_IRGRP | S_IROTH);
+    s->st_size = 0;
+    s->st_blksize = 0;
+    s->st_blocks = 0;
+    s->st_ctime = time_now();
+    s->st_dev = 0;
+    s->st_gid = 0;
+    s->st_ino = 0;
+    s->st_mtime = 0;
+    s->st_uid = 0;
+    return 0;
+}
+
 static fileop kbop = {
     .read = kb_read,
     .close = kb_close,
+    .stat = kb_stat,
 };
 
 filep fs_alloc_filep_kb()

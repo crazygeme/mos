@@ -57,6 +57,7 @@ typedef struct _fileop
     int (*read)(void* inode, void *buf, size_t size, size_t *rcnt);
     int (*write)(void* inode, const void *buf, size_t size, size_t *wcnt);
     int (*seek)(void* inode, uint64_t offset, uint32_t origin);
+    int (*stat)(void* inode, struct stat* s);
 }fileop;
 
 typedef struct _file

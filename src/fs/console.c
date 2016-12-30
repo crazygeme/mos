@@ -16,6 +16,8 @@ static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt
         return 0;
 
     tty_write(buf, size);
+    if (wcnt)
+        *wcnt = size;
     return 0;
 }
 
@@ -24,9 +26,27 @@ static int console_close(void* inode)
     return 0;
 }
 
+static int console_stat(void* inode, struct stat* s)
+{
+    s->st_atime = time_now();
+    s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
+    s->st_blksize = 0;
+    s->st_blocks = 400;
+    s->st_ctime = time_now();
+    s->st_dev = 0xb;
+    s->st_gid = 0;
+    s->st_ino = 0;
+    s->st_mtime = 0;
+    s->st_uid = 0;
+    s->st_nlink = 1;
+    s->st_rdev = 8004;
+    return 0;
+}
+
 static fileop ttyop = {
     .write = console_write,
     .close = console_close,
+    .stat = console_stat,
 };
 
 filep fs_alloc_filep_tty()

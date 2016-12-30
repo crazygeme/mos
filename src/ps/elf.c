@@ -204,13 +204,14 @@ static unsigned elf_map_get_dynamic_pages(unsigned fd, unsigned table_offset, un
 
 static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 {
-    unsigned fd = fs_open(path, O_RDWR, 0);
+    int fd = fs_open(path, 0, "r");
     unsigned entry_point = 0;
     unsigned head_len = 0;
     Elf32_Ehdr elf;
 
-    if (fd == MAX_FD)
+    if (fd < 0 || fd >= MAX_FD)
     {
+        klog("!!!!!!!!!!!\n");
         return 0;
     }
     // elf header will at the beginning of va anyway
@@ -247,15 +248,16 @@ static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 
 unsigned elf_map(char* path, mos_binfmt* fmt)
 {
-    unsigned fd = fs_open(path, O_RDWR, 0);
+    int fd = fs_open(path, 0, "r");
     unsigned entry_point = 0;
     unsigned head_len = 0;
     Elf32_Ehdr elf;
     char* interp = kmalloc(64);
     memset(interp, 0, 64);
 
-    if (fd == MAX_FD)
+    if (fd < 0 || fd >= MAX_FD)
     {
+        klog("!!!!!!!!!!!\n");
         kfree(interp);
         return 0;
     }

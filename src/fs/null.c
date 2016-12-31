@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <klib.h>
 #include <fs.h>
+#include <include/fs.h>
 
 static int null_read(void* inode, const void *buf, size_t size, size_t *wcnt);
 static int null_write(void* inode, const void *buf, size_t size, size_t *wcnt);
@@ -65,5 +66,7 @@ filep fs_alloc_filep_null()
     fp->file_off = 0;
     fp->flag = 0;
     fp->op = nullop;
+    fp->close_on_exit = 0;
+    fp->istty = 0;
     return fp;
 }

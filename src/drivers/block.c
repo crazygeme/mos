@@ -1,6 +1,7 @@
 #include <block.h>
 #include <lock.h>
 #include <klib.h>
+#include <include/fs.h>
 
 static struct _block_control
 {
@@ -252,6 +253,8 @@ filep fs_alloc_filep_normal(void* content)
     fp->file_off = 0;
     fp->flag = 0;
     fp->op = file_op;
+    fp->close_on_exit = 0;
+    fp->istty = 0;
     return fp;
 }
 
@@ -266,5 +269,6 @@ filep fs_alloc_filep_dir(void* content)
     fp->file_off = 0;
     fp->flag = 0;
     fp->op = dir_op;
+    fp->close_on_exit = 0;
     return fp;
 }

@@ -30,7 +30,7 @@ CFLAGS	= -ggdb3 -march=i686 -m32 -c $(CSTRICT) -fno-stack-protector -fno-builtin
         -DCONFIG_HAVE_OWN_ASSERT=1\
         -DCONFIG_HAVE_OWN_OFLAGS=1\
         -DCONFIG_USE_USER_MALLOC=0\
-		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=12
+	-DCONFIG_EXT4_MOUNTPOINTS_COUNT=1
 
 ASFLAGS	= -f elf32
 LDFILE	= -m elf_i386 -T link.ld 

@@ -2,6 +2,7 @@
 #include <klib.h>
 #include <unistd.h>
 #include <fs.h>
+#include <include/fs.h>
 
 static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt);
 static int console_close(void* inode);
@@ -58,5 +59,8 @@ filep fs_alloc_filep_tty()
     fp->file_off = 0;
     fp->flag = 0;
     fp->op = ttyop;
+    fp->close_on_exit = 0;
+    fp->mode = 0;
+    fp->istty = 1;
     return fp;
 }

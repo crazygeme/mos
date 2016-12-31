@@ -3,6 +3,7 @@
 #include <keyboard.h>
 #include <unistd.h>
 #include <fs.h>
+#include <include/fs.h>
 
 static int kb_read(void* inode, const void *buf, size_t size, size_t *wcnt);
 static int kb_close(struct ext4_blockdev *bdev);
@@ -61,5 +62,8 @@ filep fs_alloc_filep_kb()
     fp->file_off = 0;
     fp->flag = 0;
     fp->op = kbop;
+    fp->close_on_exit = 0;
+    fp->mode = 0;
+    fp->istty = 0;
     return fp;
 }

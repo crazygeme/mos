@@ -68,6 +68,8 @@ typedef struct _file
     unsigned file_off;
     unsigned flag;
     unsigned mode;
+    int close_on_exit;
+    int istty;
     fileop op;
 }file;
 typedef file* filep;

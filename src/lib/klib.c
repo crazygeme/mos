@@ -1331,30 +1331,37 @@ unsigned int rand()
 static TTY_COLOR cur_fg_color = clWhite;
 static TTY_COLOR cur_bg_color = clBlack;
 
-int tty_ioctl(tty_command* cmd)
+int tty_ioctl(int request, void* buf)
 {
-    switch (cmd->cmd_id)
+    tty_command* cmd = (tty_command*)buf;
+    if (request == 0) // FIXME: a private request
     {
-    case tty_cmd_get_color:
-        cmd->color.fg_color = cur_fg_color;
-        cmd->color.bg_color = cur_bg_color;
-        break;
-    case tty_cmd_set_color:
-        cur_fg_color = cmd->color.fg_color;
-        cur_bg_color = cmd->color.bg_color;
-        break;
-    case tty_cmd_get_curse:
-        cmd->curse.cx = CUR_ROW;
-        cmd->curse.cy = CUR_COL;
-        break;
-    case tty_cmd_set_curse:
-        cursor = ROW_COL_TO_CUR(cmd->curse.cx, cmd->curse.cy);
-        break;
-    default:
-        return -1;
-    }
+        switch (cmd->cmd_id) {
+            case tty_cmd_get_color:
+                cmd->color.fg_color = cur_fg_color;
+                cmd->color.bg_color = cur_bg_color;
+                break;
+            case tty_cmd_set_color:
+                cur_fg_color = cmd->color.fg_color;
+                cur_bg_color = cmd->color.bg_color;
+                break;
+            case tty_cmd_get_curse:
+                cmd->curse.cx = CUR_ROW;
+                cmd->curse.cy = CUR_COL;
+                break;
+            case tty_cmd_set_curse:
+                cursor = ROW_COL_TO_CUR(cmd->curse.cx, cmd->curse.cy);
+                break;
+            default:
+                return -1;
+        }
 
-    return 1;
+        return 0;
+    }
+    else
+    {
+        return 0;
+    }
 }
 
 void printk(const char* str, ...)

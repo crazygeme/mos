@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <3rdparty/lwext4/include/ext4.h>
+#include <include/fs.h>
 
 
 struct utimbuf
@@ -164,6 +165,7 @@ static int sys_kill(unsigned pid, int sig);
 static int sys_unlink(const char *pathname);
 static int sys_time(unsigned* t);
 static int resolve_path(char* old, char* new);
+static int sys_access(const char* path, int mode);
 
 static char* call_table_name[NR_syscalls] = {
     "test_call",
@@ -173,7 +175,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, "sys_getpid",  // 16 ~ 20   
     0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
     0, 0, 0, "sys_pause", "sys_utime",          // 26 ~ 30 
-    0, 0, 0, 0, 0,          // 31 ~ 35 
+    0, 0, "sys_access", 0, 0,          // 31 ~ 35
     0, "sys_kill", 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
     "sys_dup", "sys_pipe", 0, 0, "sys_brk",          // 41 ~ 45 
     0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
@@ -221,7 +223,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
-    0, 0, 0, 0, 0,          // 31 ~ 35 
+    0, 0, sys_access, 0, 0,          // 31 ~ 35
     0, sys_kill, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     sys_dup, sys_pipe, 0, 0, sys_brk,          // 41 ~ 45 
     0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
@@ -260,7 +262,7 @@ static unsigned call_table[NR_syscalls] = {
 static int unhandled_syscall(unsigned callno)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("unhandled syscall %d\n", callno);
+    klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid,callno);
 #endif
     return -1;
 }
@@ -306,6 +308,10 @@ static int sys_read(int fd, char* buf, unsigned len)
     if ( S_ISDIR(cur->fds[fd]->mode))
         return -1;
 
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: read(%d, \"", CURRENT_TASK()->psid, fd);
+#endif
+
     unsigned offset = cur->fds[fd]->file_off;
     len = fs_read(fd, offset, buf, len);
     offset += len;
@@ -314,7 +320,6 @@ static int sys_read(int fd, char* buf, unsigned len)
 
 #ifdef __VERBOS_SYSCALL__
     pri_len = (len > 5) ? 5 : len;
-    klog("read(%d, \"", fd);
     for (i = 0; i < pri_len; i++)
     {
         if (isprint(buf[i]))
@@ -339,7 +344,7 @@ static int sys_write(int fd, char *buf, unsigned len)
     tmp = kmalloc(len + 1);
     memset(tmp, 0, len + 1);
     memcpy(tmp, buf, len);
-    klog("write(%d, \"%s\", %d) ", fd, tmp, len);
+    klog("%d: write(%d, \"%s\", %d) ",CURRENT_TASK()->psid, fd, tmp, len);
     kfree(tmp);
 #endif
 
@@ -378,56 +383,68 @@ static int sys_write(int fd, char *buf, unsigned len)
 static int sys_ioctl(int fd, int request, char *buf)
 {
     task_struct *cur = CURRENT_TASK();
-    unsigned ino = 0;
+    int ret = -1;
 
 #ifdef __VERBOS_SYSCALL__
-    klog("ioctl(%d, %x, %x)\n", fd, request, buf);
+    klog("%d: ioctl(%d, %x, %x) =", CURRENT_TASK()->psid,fd, request, buf);
 #endif
-    //printf("ioctl(%d, %d, %x)\n", fd, request, buf);
-    if (fd > MAX_FD) return 0;
-
-    if (cur->fds[fd] == 0) return 0;
-
-    if (S_ISDIR(cur->fds[fd]->mode)) return 0;
-
-
-    if (request == IOCTL_TTY)
-    {
-        return tty_ioctl(buf);
+    if (fd < 0 || fd >= MAX_FD) {
+#ifdef __VERBOS_SYSCALL__
+        klog("%s\n", "ENOENT");
+#endif
+        return -ENOENT;
     }
-    else if (request == 0x5401)
+
+    if (cur->fds[fd] == 0){
+#ifdef __VERBOS_SYSCALL__
+        klog("%s\n", "ENOENT");
+#endif
+        return -ENOENT;
+    }
+
+    if (S_ISDIR(cur->fds[fd]->mode)) {
+#ifdef __VERBOS_SYSCALL__
+        klog("%s\n", "EISDIR");
+#endif
+        return -EISDIR;
+    }
+
+
+    if (request == 0x5401)
     {
         struct termios *s = (struct termios *)buf;
         char tmp[] = {0x03, 0x1c, 0x7f, 0x15, 0x04,
-            0x00, 0x01, 0x00, 0x11, 0x13,
-            0x1a, 0x00, 0x12, 0x0f, 0x17,
-            0x16, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00};
+                      0x00, 0x01, 0x00, 0x11, 0x13,
+                      0x1a, 0x00, 0x12, 0x0f, 0x17,
+                      0x16, 0x00, 0x00, 0x00, 0x00,
+                      0x00, 0x00, 0x00, 0x00, 0x00,
+                      0x00, 0x00, 0x00, 0x00, 0x00,
+                      0x00, 0x00};
         s->c_iflag = 0x500;
         s->c_oflag = 0x5;
         s->c_cflag = 0xbf;
         s->c_lflag = 0x8a3b;
         s->c_line = 0x0;
         memcpy(s->c_cc, tmp, 16);
-        //  	s->c_ispeed  = 0xf;
-        //  	s->c_ospeed  = 0xf;
+#ifdef __VERBOS_SYSCALL__
+        klog("%s\n", "EOK");
+#endif
         return 0;
     }
     else
     {
+#ifdef __VERBOS_SYSCALL__
+        klog("%s\n", "EOK(actually not impl)");
+#endif
         return 0;
     }
-
-    return 0;
 }
 
 static int sys_getpid()
 {
     task_struct *cur = CURRENT_TASK();
 #ifdef __VERBOS_SYSCALL__
-    klog("getpid() = %d\n", cur->psid);
+    klog("%d: getpid() = %d\n", CURRENT_TASK()->psid, 0);
 #endif
     return cur->psid;
 }
@@ -435,7 +452,7 @@ static int sys_getpid()
 static int sys_uname(struct utsname *utname)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("uname\n");
+    klog("%d: uname\n",CURRENT_TASK()->psid);
 #endif
     strcpy(utname->machine, "i386");
     strcpy(utname->nodename, "qemu-enum");
@@ -449,7 +466,7 @@ static int sys_uname(struct utsname *utname)
 static int sys_sched_yield()
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("yield\n");
+    klog("%d: yield\n", CURRENT_TASK()->psid);
 #endif
     task_sched();
     return 0;
@@ -463,7 +480,7 @@ static int sys_open(const char *_name, int flags, char* mode)
 
 
 #ifdef __VERBOS_SYSCALL__
-    klog("open(%s, %x, %x)", name, flags, mode);
+    klog("%d: open(%s, %x, %x)", CURRENT_TASK()->psid,name, flags, mode);
 #endif
 
     fd = fs_open(name, flags, mode);
@@ -471,7 +488,6 @@ static int sys_open(const char *_name, int flags, char* mode)
 #ifdef __VERBOS_SYSCALL__
     klog_printf("ret %d\n", fd);
 #endif
-
     kfree(name);
     return fd;
 }
@@ -479,7 +495,7 @@ static int sys_open(const char *_name, int flags, char* mode)
 static int sys_close(unsigned fd)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("close(%d)\n", fd);
+    klog("%d: close(%d)\n", CURRENT_TASK()->psid, fd);
 #endif
     return fs_close(fd);
 }
@@ -538,7 +554,7 @@ static int sys_brk(unsigned top)
         }
         REFRESH_CACHE();
 #ifdef __VERBOS_SYSCALL__
-        klog("brk: cur %x newtop %x, ret %x\n", task->user.heap_top, top, top);
+        klog("%d: brk: cur %x newtop %x, ret %x\n", CURRENT_TASK()->psid,task->user.heap_top, top, top);
 #endif
         task->user.heap_top = top;
 
@@ -590,7 +606,7 @@ static int sys_chdir(const char *path)
     if (!path || !*path) return 0;
 
 #ifdef __VERBOS_SYSCALL__
-    klog("chdir %s\n", path);
+    klog("%d: chdir %s\n", CURRENT_TASK()->psid,path);
 #endif
 
     if (*path != '/') strcpy(cwd, cur->cwd);
@@ -623,7 +639,7 @@ static int sys_chdir(const char *path)
 static int sys_creat(const char *path, unsigned mode)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("creat(%s, %d)\n", path, mode);
+    klog("%d: creat(%s, %d)\n", CURRENT_TASK()->psid,path, mode);
 #endif
     return -1;
 }
@@ -635,7 +651,7 @@ static int sys_mkdir(const char *path, unsigned mode)
     resolve_path(path, name);
     ret = ext4_dir_mk(name);
 #ifdef __VERBOS_SYSCALL__
-    klog("mkdir(%s, %d)\n", path, mode);
+    klog("%d: %dmkdir(%s, %d)\n", CURRENT_TASK()->psid,path, mode);
 #endif
     kfree(name);
     return ret;
@@ -665,7 +681,7 @@ static int sys_reboot(unsigned cmd)
 static int sys_getuid()
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("getuid\n");
+    klog("%d: getuid\n", CURRENT_TASK()->psid);
 #endif
     return 0;
 }
@@ -673,7 +689,7 @@ static int sys_getuid()
 static int sys_getgid()
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("getgid\n");
+    klog("%d: getgid\n", CURRENT_TASK()->psid);
 #endif
     return 0;
 }
@@ -681,7 +697,7 @@ static int sys_getgid()
 static int sys_geteuid()
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("geteuid\n");
+    klog("%d: geteuid\n", CURRENT_TASK()->psid);
 #endif
     return 0;
 }
@@ -689,7 +705,7 @@ static int sys_geteuid()
 static int sys_getegid()
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("getegid\n");
+    klog("%d: getegid\n", CURRENT_TASK()->psid);
 #endif
     return 0;
 }
@@ -707,7 +723,8 @@ static int sys_mmap(struct mmap_arg_struct32 *arg)
     vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd, arg->offset);
 
 #ifdef __VERBOS_SYSCALL__
-    klog("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
+    klog("%d: mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
+         CURRENT_TASK()->psid,
         arg->fd, arg->addr, arg->offset, arg->len, vir);
 #endif
 
@@ -717,7 +734,7 @@ static int sys_mmap(struct mmap_arg_struct32 *arg)
 static int sys_munmap(void *addr, unsigned length)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("munmap (%x, %x)\n", addr, length);
+    klog("%d: munmap (%x, %x)\n", CURRENT_TASK()->psid,addr, length);
 #endif
     return do_munmap(addr, length);
 }
@@ -725,7 +742,7 @@ static int sys_munmap(void *addr, unsigned length)
 static int sys_mprotect(void *addr, unsigned len, int prot)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
+    klog("%d: mprotect: addr %x, len %x, prot %x\n", CURRENT_TASK()->psid,addr, len, prot);
 #endif
     return 0;
 }
@@ -733,7 +750,7 @@ static int sys_mprotect(void *addr, unsigned len, int prot)
 static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("writev: fd %d\n", fildes);
+    klog("%d: writev: fd %d\n", CURRENT_TASK()->psid,fildes);
 #endif
     int i = 0;
     unsigned total = 0;
@@ -748,16 +765,17 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 static long sys_personality(unsigned int personality)
 {
 #ifdef __VERBOS_SYSCALL__
-    klog("personality\n");
+    klog("%d: personality\n", CURRENT_TASK()->psid);
 #endif
     return PER_LINUX32_3GB;
 }
 
 static int sys_fcntl(int fd, int cmd, int arg)
 {
-#ifdef __VERBOS_SYSCALL__
-    klog("fcntl(%d, %d, %d)\n", fd, cmd, arg);
-#endif
+    if (fd < 0 || fd >= MAX_FD)
+        return -ENOENT;
+    
+    // FIEME:
     return 0;
 }
 
@@ -774,7 +792,7 @@ static int sys_fcntl(int fd, int cmd, int arg)
     struct linux_dirent *prev;
 
 #ifdef __VERBOS_SYSCALL__
-    klog("getdents(%d, %x, %d)", fd, dirp, count);
+    klog("%d: getdents(%d, %x, %d)", CURRENT_TASK()->psid,fd, dirp, count);
 #endif
 
     if (fd < 0 || fd >= MAX_FD)
@@ -859,7 +877,8 @@ static int sys_fstat64(int fd, struct stat64 *s) {
     s->st_ctime = s32.st_ctime;
 
 #ifdef __VERBOS_SYSCALL__
-    klog("fstat64(%d, %x) size %d blocks %d blksize %d\n",
+    klog("%d: fstat64(%d, %x) size %d blocks %d blksize %d\n",
+         CURRENT_TASK()->psid,
          fd, s, s32.st_size, s32.st_blocks, s32.st_blksize);
 #endif
 
@@ -870,16 +889,7 @@ static int sys_fstat64(int fd, struct stat64 *s) {
 static int sys_lstat64(const char *path, struct stat64 *s)
 {
     struct stat s32;
-
-    char *new = kmalloc(64);
-    resolve_path(path, new);
-    fs_stat(new, &s32);
-
-#ifdef __VERBOS_SYSCALL__
-    klog("lstat64(%s, %x) blksize %d blocks %d, size %d \n", new, s,
-        s32.st_blksize, s32.st_blocks, s32.st_size);
-#endif
-
+    sys_stat(path, &s32);
     memset(s, 0, sizeof(*s));
     s->st_dev = s32.st_dev;
     s->st_ino = s32.st_ino;
@@ -894,7 +904,6 @@ static int sys_lstat64(const char *path, struct stat64 *s)
     s->st_atime = s32.st_atime;
     s->st_mtime = s32.st_mtime;
     s->st_ctime = s32.st_ctime;
-    kfree(new);
 
     return 0;
 }
@@ -902,16 +911,16 @@ static int sys_lstat64(const char *path, struct stat64 *s)
 static int sys_getppid()
 {
     task_struct *cur = CURRENT_TASK();
-#ifdef __VERBOS__SYSCALL__
-    klog("getppid\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: getppid\n", CURRENT_TASK()->psid);
 #endif
     return cur->parent;
 }
 
 static int sys_getpgrp(unsigned pid)
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("getpgrp\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: getpgrp\n", CURRENT_TASK()->psid);
 #endif
     // FIXME
     return 0;
@@ -919,8 +928,8 @@ static int sys_getpgrp(unsigned pid)
 
 static int sys_setpgid(unsigned pid, unsigned pgid)
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("setgpid\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: setgpid\n", CURRENT_TASK()->psid);
 #endif
     // FIXME
     if (pid == 0)
@@ -934,8 +943,8 @@ static int sys_setpgid(unsigned pid, unsigned pgid)
 
 static int sys_wait4(int pid, int *status, void *rusage)
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("wait4\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: wait4\n", CURRENT_TASK()->psid);
 #endif
     if (pid == -1)
     {
@@ -957,8 +966,8 @@ static int sys_socketcall(int call, unsigned long *args)
 {
     // FIXME
     // no socket at all right now
-#ifdef __VERBOS__SYSCALL__
-    klog("socketcall\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: socketcall\n", CURRENT_TASK()->psid);
 #endif
     return -1;
 }
@@ -967,9 +976,6 @@ static int sys_sigaction(int sig, void *act, void *oact)
 {
     // FIXME
     // no signal at all
-#ifdef __VERBOS__SYSCALL__
-    klog("sigaction\n");
-#endif
     return -1;
 }
 
@@ -977,16 +983,13 @@ static int sys_sigprocmask(int how, void *set, void *oset)
 {
     // FIXME
     // no signal
-#ifdef __VERBOS__SYSCALL__
-    klog("sigprocmask\n");
-#endif
     return -1;
 }
 
 static int sys_pause()
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("pause\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: pause\n", CURRENT_TASK()->psid);
 #endif
     __asm__("hlt");
     return -1;
@@ -1008,6 +1011,10 @@ static int resolve_path(char *old, char *new)
         sys_getcwd(new, 64);
         r = strrchr(new, '/');
         *r = '\0';
+        if (*new == '\0') {
+            *new++ = '/';
+            *new++ = '\0';
+        }
         return 0;
     }
 
@@ -1026,8 +1033,8 @@ static int resolve_path(char *old, char *new)
 static int sys_utime(const char *filename, const struct utimbuf *times)
 {
     // FIXME
-#ifdef __VERBOS__SYSCALL__
-    klog("utime\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: utime\n", CURRENT_TASK()->psid);
 #endif
     return 0;
 }
@@ -1064,7 +1071,7 @@ static int sys_pipe(int pipefd[2])
     int ret = fs_pipe(pipefd);
 
 #ifdef __VERBOS_SYSCALL__
-    klog("pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
+    klog("%d: pipe(pipefd[%d,%d]) = %d\n", CURRENT_TASK()->psid,pipefd[0], pipefd[1], ret);
 #endif
 
     return ret;
@@ -1074,7 +1081,7 @@ static int sys_dup2(int oldfd, int newfd)
 {
     int ret = -1;
 #ifdef __VERBOS_SYSCALL__
-    klog("dup2(%d, %d)\n", oldfd, newfd);
+    klog("%d: dup2(%d, %d)\n", CURRENT_TASK()->psid, oldfd, newfd);
 #endif
 
     if (oldfd == -1 || newfd == -1) return -1;
@@ -1106,7 +1113,7 @@ static int sys_dup(int oldfd)
     ret = fs_dup(oldfd);
 
 #ifdef __VERBOS_SYSCALL__
-    klog("dup(%d) = %d\n", oldfd, ret);
+    klog("%d: dup(%d) = %d\n", CURRENT_TASK()->psid,oldfd, ret);
 #endif
 
     return ret;
@@ -1114,24 +1121,24 @@ static int sys_dup(int oldfd)
 
 static int sys_getrlimit(int resource, void *limit)
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("getrlimit\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: getrlimit\n", CURRENT_TASK()->psid);
 #endif
     return -1;
 }
 
 static int sys_kill(unsigned pid, int sig)
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("kill\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: kill\n", CURRENT_TASK()->psid);
 #endif
     return -1;
 }
 
 static int sys_unlink(const char *path)
 {
-#ifdef __VERBOS__SYSCALL__
-    klog("unlink\n");
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: unlink\n", CURRENT_TASK()->psid);
 #endif
     return -1;
 }
@@ -1148,10 +1155,53 @@ static int sys_time(unsigned* t)
 static int sys_readdir(unsigned fd, struct old_linux_dirent *dirp, unsigned count)
 {
     int ret = -1;
-#ifdef __VERBOS__SYSCALL__
-    klog("readdir(%d, %x, %d) = %d\n", fd, dirp, count, ret);
+#ifdef __VERBOS_SYSCALL__
+    klog("%d: readdir(%d, %x, %d) = %d\n", CURRENT_TASK()->psid, fd, dirp, count, ret);
 #endif
     return sys_getdents(fd, dirp, count);
+}
+
+static int format_modes(unsigned mode, char* str)
+{
+    memset(str, '-', 11);
+    str[0] = '-';
+    if (S_ISDIR(mode))
+        str[0] = 'd';
+    else if (S_ISCHR(mode))
+        str[0] = 'c';
+    else if (S_ISLNK(mode))
+        str[0] = 'l';
+
+    if (mode & S_IRUSR)
+        str[1] = 'r';
+
+    if (mode & S_IWUSR)
+        str[2] = 'w';
+
+    if (mode & S_IXUSR)
+        str[3] = 'x';
+
+    if (mode & S_IRGRP)
+        str[4] = 'r';
+
+    if (mode & S_IWGRP)
+        str[5] = 'w';
+
+    if (mode & S_IXGRP)
+        str[6] = 'x';
+
+    if (mode & S_IROTH)
+        str[7] = 'r';
+
+    if (mode & S_IWOTH)
+        str[8] = 'w';
+
+    if (mode & S_IXOTH)
+        str[9] = 'x';
+
+    str[10] = '\0';
+
+    return 0;
 }
 
 static int sys_stat(const char *_name, struct stat *buf)
@@ -1159,16 +1209,42 @@ static int sys_stat(const char *_name, struct stat *buf)
     int ret = -1;
     int fd;
     char *name = kmalloc(64);
+    char modes[11];
     resolve_path(_name, name);
     fd = fs_open(name, 0, 0);
     if (fd < 0 || fd >= MAX_FD)
         return -1;
     ret = fs_fstat(fd, buf);
-#ifdef __VERBOS__SYSCALL__
-    klog("sys_stat(%s, %x) = %d\n", pathname, buf, ret);
+#ifdef __VERBOS_SYSCALL__
+    format_modes(buf->st_mode, modes);
+    klog("%d: sys_stat(%s, %x) = %d, %s\n", CURRENT_TASK()->psid, name, buf, ret, modes);
 #endif
     free(name);
     fs_close(fd);
     return ret;
 }
 
+static int sys_access(const char* path, int mode)
+{
+    // FIXME: no user currently
+    struct stat s;
+    int ret = sys_stat(path, &s);
+
+    if (ret)
+        return -ENOENT;
+
+    if (mode == F_OK)
+        return ret;
+
+    ret = EOK;
+    if (mode & R_OK)
+        ret |=  ((s.st_mode & S_IRUSR) == S_IRUSR) ? EOK : (-EACCES);
+
+    if (mode & W_OK)
+        ret |= ((s.st_mode & S_IWUSR) == S_IWUSR) ? EOK : (-EACCES);
+
+    if (mode & X_OK)
+        ret |= ((s.st_mode & S_IXUSR) == S_IXUSR) ? EOK : (-EACCES);
+
+    return ret;
+}

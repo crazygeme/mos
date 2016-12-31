@@ -4,6 +4,7 @@
 #include <klib.h>
 #include <ps.h>
 #include <lwext4/include/ext4.h>
+#include <fcntl.h>
 
 static int block_proxy_open(struct ext4_blockdev *bdev);
 static int block_proxy_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
@@ -200,11 +201,11 @@ int fs_open(const char* path, int flag, char* mode)
             fp = fs_alloc_filep_tty();
         else if (*path == 'k')
             fp = fs_alloc_filep_kb();
-        fp->mode = 0;
+        fp->mode = S_IFREG;
     }
     else if (strcmp (path, "/dev/null") == 0) {
         fp = fs_alloc_filep_null();
-        fp->mode = 0;
+        fp->mode = S_IFREG;
     }else if (path[strlen(path)-1] == '/'){
         // must be a path
         dir = calloc(1, sizeof(*dir));
@@ -273,6 +274,10 @@ fail:
     if (dir)
         free(dir);
 done:
+    if (fd != -1 && fp){
+        if (flag & O_CLOEXEC)
+            fp->close_on_exit = 1;
+    }
     sema_trigger(&cur->fd_lock);
     return fd;
 }
@@ -364,12 +369,14 @@ int fs_pipe(int *pipefd)
     filep fp[2] = {0};
     sema_wait(&cur->fd_lock);
     reader = fs_find_empty_fd(cur->fds);
-    writer = fs_find_empty_fd(cur->fds);
     if (reader < 0 || reader >= MAX_FD){
         ret = -1;
         goto done;
     }
+    // hack for writer
+    cur->fds[reader] = 1;
 
+    writer = fs_find_empty_fd(cur->fds);
     if (writer < 0 || writer >= MAX_FD){
         ret = -1;
         goto done;
@@ -429,11 +436,10 @@ int fs_dup2(int fd, int newfd)
     if (newfd < 0 || newfd >= MAX_FD)
         return -1;
 
-    if (cur->fds[newfd]){
-        fs_close(newfd);
-    }
-
     sema_wait(&cur->fd_lock);
+    if (cur->fds[newfd]){
+        fs_destroy(cur->fds[newfd]);
+    }
     fp = cur->fds[fd];
     fs_refrence(fp);
     cur->fds[newfd] = fp;

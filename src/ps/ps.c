@@ -553,7 +553,7 @@ int sys_fork()
     intr_frame* cur_intr_frame = (intr_frame*)((char*)cur + PAGE_SIZE - sizeof(intr_frame));
     intr_frame* task_intr_frame = (intr_frame*)((char*)task + PAGE_SIZE - sizeof(intr_frame));
 #ifdef __VERBOS_SYSCALL__
-    klog("fork()\n");
+    klog("%d:fork()\n", cur->psid);
 #endif
     //memcpy(task, cur, PAGE_SIZE);
     *task = *cur;
@@ -585,6 +585,8 @@ int sys_fork()
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
     cur_intr_frame->eax = task->psid;
+    // have to let child run first!
+    task_sched();
     return task->psid;
 }
 
@@ -594,7 +596,7 @@ int sys_exit(unsigned status)
     int i = 0;
     cur->exit_status = status;
 #ifdef __VERBOS_SYSCALL__
-    klog("exit(%d)\n", status);
+    klog("%d: exit(%d)\n", cur->psid, status);
 #endif
 
     if (cur->user.vm)

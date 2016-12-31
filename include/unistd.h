@@ -331,4 +331,9 @@ struct krnquota
     unsigned page_fault;
 };
 
+#define R_OK 4 // test read access right
+#define W_OK 2 // test write access right
+#define X_OK 1 // test execution access right
+#define F_OK 0 // test file exist
+
 #endif

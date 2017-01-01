@@ -54,7 +54,7 @@
 #define STDOUT_FILENO   1   /* Standard output.  */
 #define STDERR_FILENO   2   /* Standard error output.  */
 
-#define PIPE_BUF_LEN 2048
+#define PIPE_BUF_LEN (4096*4)
 
 #define USER_HEAP_BEGIN  0x30000000
 // left one page (a hole) to protect stack overflow and heap overflow

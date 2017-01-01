@@ -60,9 +60,7 @@ filep fs_alloc_filep_kb()
     fp->inode = NULL;
     fp->ref_cnt = 0;
     fp->file_off = 0;
-    fp->flag = 0;
     fp->op = kbop;
-    fp->close_on_exit = 0;
     fp->mode = 0;
     fp->istty = 0;
     return fp;

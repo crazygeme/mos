@@ -43,7 +43,7 @@ static int pipe_close(void* n)
 
     if (node->readonly && cyb_is_writer_closed(node->buf))
     {
-        kfree(node->buf);
+        cyb_destroy(node->buf);
     }
 
     kfree(n);
@@ -127,9 +127,7 @@ int fs_alloc_filep_pipe(filep* pipes)
     fp_read->inode = pipe_create_reader(buf);
     fp_read->ref_cnt = 0;
     fp_read->file_off = 0;
-    fp_read->flag = 0;
     fp_read->op = readop;
-    fp_read->close_on_exit = 0;
     fp_read->istty = 0;
 
     filep fp_write = calloc(1, sizeof(*fp_write));
@@ -137,9 +135,7 @@ int fs_alloc_filep_pipe(filep* pipes)
     fp_write->inode = pipe_create_writer(buf);
     fp_write->ref_cnt = 0;
     fp_write->file_off = 0;
-    fp_write->flag = 0;
     fp_write->op = writeop;
-    fp_write->close_on_exit = 0;
     fp_write->istty = 0;
 
     pipes[0] = fp_read;

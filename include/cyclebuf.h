@@ -7,6 +7,8 @@ typedef struct _cy_buf cy_buf;
 
 cy_buf* cyb_create(char* name);
 
+void cyb_destroy(cy_buf* cyb);
+
 void cyb_putc(cy_buf* b, unsigned char c);
 
 void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len);

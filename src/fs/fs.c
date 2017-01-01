@@ -259,7 +259,7 @@ int fs_open(const char* path, int flag, char* mode)
         }
         fp->mode = s.st_mode;
     }
-    fp->flag = flag;
+    cur->fd_flsgs[fd] = flag;
     cur->fds[fd] = fp;
     fs_refrence(fp);
     goto done;
@@ -274,10 +274,6 @@ fail:
     if (dir)
         free(dir);
 done:
-    if (fd != -1 && fp){
-        if (flag & O_CLOEXEC)
-            fp->close_on_exit = 1;
-    }
     sema_trigger(&cur->fd_lock);
     return fd;
 }
@@ -292,6 +288,7 @@ int fs_close(int fd)
     sema_wait(&cur->fd_lock);
     fp = cur->fds[fd];
     cur->fds[fd] = NULL;
+    cur->fd_flsgs[fd] = 0;
     sema_trigger(&cur->fd_lock);
 
     if (fp == NULL)
@@ -390,6 +387,8 @@ int fs_pipe(int *pipefd)
 
     cur->fds[reader] = fp[0];
     cur->fds[writer] = fp[1];
+    cur->fd_flsgs[reader] = 0;
+    cur->fd_flsgs[writer] = 0;
     fs_refrence(fp[0]);
     fs_refrence(fp[1]);
     pipefd[0] = reader;
@@ -419,6 +418,8 @@ int fs_dup(int fd)
     fp = cur->fds[fd];
     fs_refrence(fp);
     cur->fds[newfd] = fp;
+    cur->fd_flsgs[newfd] = cur->fd_flsgs[fd];
+    cur->fd_flsgs[newfd] &= ~O_CLOEXEC;
     ret = newfd;
 done:
     sema_trigger(&cur->fd_lock);
@@ -443,6 +444,8 @@ int fs_dup2(int fd, int newfd)
     fp = cur->fds[fd];
     fs_refrence(fp);
     cur->fds[newfd] = fp;
+    cur->fd_flsgs[newfd] = cur->fd_flsgs[fd];
+    cur->fd_flsgs[newfd] &= ~O_CLOEXEC;
     ret = newfd;
     sema_trigger(&cur->fd_lock);
     return ret;

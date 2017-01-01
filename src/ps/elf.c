@@ -222,17 +222,20 @@ static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 
     if (elf.e_ident[0] != 0x7f)
     {
+        fs_close(fd);
         return 0;
     }
 
     // now we only support ia32, sorry..
     if (elf.e_ident[4] != ELFCLASS32)
     {
+        fs_close(fd);
         return 0;
     }
 
     if (elf.e_type != ET_DYN)
     {
+        fs_close(fd);
         return 0;
     }
 
@@ -269,6 +272,7 @@ unsigned elf_map(char* path, mos_binfmt* fmt)
 
     if (elf.e_ident[0] != 0x7f)
     {
+        fs_close(fd);
         kfree(interp);
         return 0;
     }
@@ -276,12 +280,14 @@ unsigned elf_map(char* path, mos_binfmt* fmt)
     // now we only support ia32, sorry..
     if (elf.e_ident[4] != ELFCLASS32)
     {
+        fs_close(fd);
         kfree(interp);
         return 0;
     }
 
     if (elf.e_type != ET_EXEC)
     {
+        fs_close(fd);
         kfree(interp);
         return 0;
     }

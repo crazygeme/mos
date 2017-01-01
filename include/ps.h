@@ -204,6 +204,7 @@ typedef struct _task_struct
     int remain_ticks;
     int is_switching;
 	filep* fds;
+	unsigned* fd_flsgs;
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;

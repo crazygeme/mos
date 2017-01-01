@@ -143,6 +143,7 @@ typedef struct _TEST_CONTROL
     int test_ext2;
 	int test_mount;
 	int test_block;
+	int verbos;
 }TEST_CONTROL;
 extern TEST_CONTROL TestControl;
 

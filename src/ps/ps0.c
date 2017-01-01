@@ -18,7 +18,7 @@ static void cleanup()
 
     for (i = 0; i < MAX_FD; i++)
     {
-        if ( cur->fds[i] && (cur->fds[i]->close_on_exit))
+        if ( cur->fds[i] && (cur->fd_flsgs[i] & O_CLOEXEC))
         {
             fs_close(i);
         }
@@ -276,14 +276,13 @@ int sys_execve(const char* file, char** argv, char** envp)
 
     strcpy(file_name, file);
 
-#ifdef __VERBOS_SYSCALL__
-    klog("%d: execve(%s, [", CURRENT_TASK()->psid, file_name);
-    for (i = 0; i < argc; i++)
-    {
-        klog_printf("%s ", argv[i]);
+    if (TestControl.verbos) {
+        klog("%d: execve(%s, [", CURRENT_TASK()->psid, file_name);
+        for (i = 0; i < argc; i++) {
+            klog_printf("%s ", argv[i]);
+        }
+        klog_printf("]\n");
     }
-    klog_printf("]\n");
-#endif
     cleanup();
     elf_map(file_name, &fmt);
     eip = fmt.interp_load_addr;

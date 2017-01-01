@@ -12,7 +12,7 @@ typedef struct _cy_buf
     semaphore lock;
     spinlock idx_lock;
     int write_closed;
-    unsigned char buf[PIPE_BUF_LEN];
+    char *buf;
 }cy_buf;
 
 
@@ -21,10 +21,7 @@ cy_buf* cyb_create(char* name)
     cy_buf* ret = kmalloc(sizeof(*ret));
     int i = 0;
 
-    for (i = 0; i < PIPE_BUF_LEN; i++)
-    {
-        ret->buf[i] = 0;
-    }
+    ret->buf = vm_alloc(PIPE_BUF_LEN/PAGE_SIZE);
 
     ret->len = ret->read_idx = ret->write_idx = 0;
     ret->write_closed = 0;
@@ -32,6 +29,12 @@ cy_buf* cyb_create(char* name)
     spinlock_init(&ret->idx_lock);
 
     return ret;
+}
+
+void cyb_destroy(cy_buf* cyb)
+{
+    vm_free(cyb->buf, PIPE_BUF_LEN/PAGE_SIZE);
+    kfree(cyb);
 }
 
 static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite)

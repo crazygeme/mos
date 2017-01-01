@@ -22,6 +22,15 @@ static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt
     return 0;
 }
 
+static int console_read(void* inode, const void *buf, size_t size, size_t *wcnt)
+{
+    memset(buf, '?', size);
+    if (wcnt)
+        *wcnt = size;
+
+    return 0;
+}
+
 static int console_close(void* inode)
 {
     return 0;
@@ -57,9 +66,7 @@ filep fs_alloc_filep_tty()
     fp->inode = NULL;
     fp->ref_cnt = 0;
     fp->file_off = 0;
-    fp->flag = 0;
     fp->op = ttyop;
-    fp->close_on_exit = 0;
     fp->mode = 0;
     fp->istty = 1;
     return fp;

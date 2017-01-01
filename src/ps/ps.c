@@ -443,6 +443,7 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     task->psid = ps_id_gen();
     task->is_switching = 0;
     task->fds = vm_alloc(1);
+    task->fd_flsgs = vm_alloc(1);
     task->cwd = kmalloc(64);
     memset(task->fds, 0, PAGE_SIZE);
     task->user.heap_top = USER_HEAP_BEGIN;
@@ -472,11 +473,13 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
     memset(task->fds, 0, PAGE_SIZE);
     sema_wait(&cur->fd_lock);
     for (i = 0; i < MAX_FD; i++){
+        task->fd_flsgs[i] = 0;
         if (!cur->fds[i])
             continue;
 
         task->fds[i] = cur->fds[i];
         fs_refrence(cur->fds[i]);
+        task->fd_flsgs[i] = cur->fd_flsgs[i];
     }
     sema_trigger(&cur->fd_lock);
 }
@@ -552,9 +555,9 @@ int sys_fork()
     task_struct* task = vm_alloc(KERNEL_TASK_SIZE);
     intr_frame* cur_intr_frame = (intr_frame*)((char*)cur + PAGE_SIZE - sizeof(intr_frame));
     intr_frame* task_intr_frame = (intr_frame*)((char*)task + PAGE_SIZE - sizeof(intr_frame));
-#ifdef __VERBOS_SYSCALL__
-    klog("%d:fork()\n", cur->psid);
-#endif
+    if (TestControl.verbos)
+        klog("%d:fork()\n", cur->psid);
+
     //memcpy(task, cur, PAGE_SIZE);
     *task = *cur;
     *task_intr_frame = *cur_intr_frame;
@@ -574,6 +577,7 @@ int sys_fork()
     task_intr_frame->eax = 0;
     task->parent = cur->psid;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
+    task->fd_flsgs = vm_alloc(1);
     task->ps_list.Blink = task->ps_list.Flink = 0;
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
@@ -595,9 +599,8 @@ int sys_exit(unsigned status)
     task_struct *cur = CURRENT_TASK();
     int i = 0;
     cur->exit_status = status;
-#ifdef __VERBOS_SYSCALL__
-    klog("%d: exit(%d)\n", cur->psid, status);
-#endif
+    if (TestControl.verbos)
+        klog("%d: exit(%d)\n", cur->psid, status);
 
     if (cur->user.vm)
     {
@@ -615,6 +618,7 @@ int sys_exit(unsigned status)
     }
 
     vm_free(cur->fds, 1);
+    vm_free(cur->fd_flsgs, 1);
 
     // free all physical memory
     ps_cleanup_all_user_map(cur);

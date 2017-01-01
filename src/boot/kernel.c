@@ -257,6 +257,8 @@ static void parse_kernel_cmdline()
             TestControl.test_ffs = 1;
         }
 
+        if (strcmp(token, "verbos") == 0)
+            TestControl.verbos = 1;
         token = end;
     } while (1);
 

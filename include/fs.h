@@ -66,9 +66,7 @@ typedef struct _file
     void    *inode;
     unsigned ref_cnt;
     unsigned file_off;
-    unsigned flag;
     unsigned mode;
-    int close_on_exit;
     int istty;
     fileop op;
 }file;

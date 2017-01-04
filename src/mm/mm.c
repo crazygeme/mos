@@ -94,8 +94,16 @@ static void mm_init_page_table_cache()
     }
 }
 
+typedef struct _name_cache
+{
+    LIST_ENTRY list;
+    void* buf;
+}name_cache;
+
+static name_cache name_cache_head;
 
 static spinlock mm_lock;
+static spinlock path_lock;
 static void lock_mm()
 {
     spinlock_lock(&mm_lock);
@@ -125,6 +133,8 @@ static void mm_high_memory_fun()
     phymm_setup_mgmt_pages(phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
 
     spinlock_init(&mm_lock);
+    spinlock_init(&path_lock);
+    InitializeListHead(&name_cache_head);
 
     extern kmain_startup();
 
@@ -483,4 +493,47 @@ unsigned vm_get_usr_zone(unsigned page_count)
     unsigned begin = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
 
     return begin;
+}
+
+
+// path cache
+static void lock_path_cache()
+{
+    spinlock_lock(&path_lock);
+} 
+
+static void unlock_path_cache()
+{
+    spinlock_unlock(&path_lock);
+}
+
+
+
+void* name_get()
+{
+    int pc = MAX_PATH / PAGE_SIZE;
+    void* buf = NULL;
+    name_cache* node = NULL;
+    lock_path_cache();
+
+    if (IsListEmpty(&name_cache_head)){
+        buf = vm_alloc(pc);
+    }else{
+        node = RemoveHeadList(&name_cache_head);
+        buf = node->buf;
+        free(node);
+    }
+
+    unlock_path_cache();
+    return buf;
+}
+
+void name_put(void* buf)
+{
+    name_cache* node = NULL;
+    lock_path_cache();
+    node = calloc(1, sizeof(*node));
+    node->buf = buf;
+    InsertHeadList(&name_cache_head, &node->list);
+    unlock_path_cache();
 }

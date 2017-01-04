@@ -5,6 +5,7 @@
 #include <config.h>
 #include <int.h>
 #include <list.h>
+#include <include/fs.h>
 
 
 typedef struct _ps_control
@@ -392,6 +393,7 @@ static void ps_setup_task_frame(task_struct* task, unsigned data_seg,
     __asm__("movl %0, %%edx" : : "m"(task->tss.edx));\
     __asm__("movl %0, %%ecx" : : "m"(task->tss.ecx));\
     __asm__("movl %0, %%ebx" : : "m"(task->tss.ebx));\
+    __asm__("movl %0, %%eax" : : "m"(task->tss.eax));\
     /* after we change ebp, "task" variable will be changed \
      so ebp should be the last one that restored \
      that's why we have to save eip into edx first \
@@ -443,12 +445,11 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     task->psid = ps_id_gen();
     task->is_switching = 0;
     task->fds = vm_alloc(1);
-    task->fd_flsgs = vm_alloc(1);
-    task->cwd = kmalloc(64);
+    task->cwd = name_get();
     memset(task->fds, 0, PAGE_SIZE);
     task->user.heap_top = USER_HEAP_BEGIN;
     task->user.vm = vm_create();
-    memset(task->cwd, 0, 64);
+    memset(task->cwd, 0, MAX_PATH);
     //strcpy(task->cwd, "\0");
 
     sema_init(&task->fd_lock, "fd_lock", 0);
@@ -473,13 +474,11 @@ static void ps_dup_fds(task_struct* cur, task_struct* task)
     memset(task->fds, 0, PAGE_SIZE);
     sema_wait(&cur->fd_lock);
     for (i = 0; i < MAX_FD; i++){
-        task->fd_flsgs[i] = 0;
-        if (!cur->fds[i])
+        if (!cur->fds[i].used)
             continue;
 
         task->fds[i] = cur->fds[i];
-        fs_refrence(cur->fds[i]);
-        task->fd_flsgs[i] = cur->fd_flsgs[i];
+        fs_refrence(cur->fds[i].fp);
     }
     sema_trigger(&cur->fd_lock);
 }
@@ -571,26 +570,24 @@ int sys_fork()
     task->tss.cs = KERNEL_CODE_SELECTOR;
     // those are for new task
     task->tss.eax = 0;
+    task->tss.ebp = (char*)task_intr_frame;
     task->tss.esp = (char*)task_intr_frame;
     task->tss.esp0 = (unsigned)task + PAGE_SIZE;
     task->tss.eip = (unsigned)ret_from_syscall;
     task_intr_frame->eax = 0;
     task->parent = cur->psid;
     task->fds = vm_alloc(1);//kmalloc(MAX_FD*sizeof(fd_type));
-    task->fd_flsgs = vm_alloc(1);
     task->ps_list.Blink = task->ps_list.Flink = 0;
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
-    task->cwd = kmalloc(64);
-    memset(task->cwd, 0, 64);
+    task->cwd = name_get();
+    memset(task->cwd, 0, MAX_PATH);
     strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur, task);
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
     cur_intr_frame->eax = task->psid;
-    // have to let child run first!
-    task_sched();
     return task->psid;
 }
 
@@ -611,14 +608,13 @@ int sys_exit(unsigned status)
     // close all fds
     for (i = 0; i < MAX_FD; i++)
     {
-        if (cur->fds[i])
+        if (cur->fds[i].used)
         {
             fs_close(i);
         }
     }
 
     vm_free(cur->fds, 1);
-    vm_free(cur->fd_flsgs, 1);
 
     // free all physical memory
     ps_cleanup_all_user_map(cur);
@@ -763,7 +759,7 @@ int sys_waitpid(unsigned pid, int* status, int options)
 
                 if (task->cwd)
                 {
-                    kfree(task->cwd);
+                    name_put(task->cwd);
                     task->cwd = 0;
                 }
 

@@ -18,7 +18,7 @@ static void cleanup()
 
     for (i = 0; i < MAX_FD; i++)
     {
-        if ( cur->fds[i] && (cur->fd_flsgs[i] & O_CLOEXEC))
+        if ( cur->fds[i].used && (cur->fds[i].flag & O_CLOEXEC))
         {
             fs_close(i);
         }
@@ -269,7 +269,7 @@ int sys_execve(const char* file, char** argv, char** envp)
         return -1;
     }
 
-    file_name = kmalloc(64);
+    file_name = name_get();
     ps_get_argc_envc(file, argv, envp, &argc, &envc);
     s_argv = ps_save_argv(file, argv, argc);
     s_envp = ps_save_envp(envp, envc);
@@ -297,7 +297,7 @@ int sys_execve(const char* file, char** argv, char** envp)
     esp_top = ps_setup_v(file_name, argc, s_argv, envc, s_envp, esp_top, &fmt);
     ps_free_v(s_argv, argc);
     ps_free_v(s_envp, envc);
-    kfree(file_name);
+    name_put(file_name);
     extern void switch_to_user_mode(unsigned eip, unsigned esp);
     switch_to_user_mode(eip, esp_top);
     // never return here

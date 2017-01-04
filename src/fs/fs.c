@@ -5,6 +5,7 @@
 #include <ps.h>
 #include <lwext4/include/ext4.h>
 #include <fcntl.h>
+#include <include/fs.h>
 
 static int block_proxy_open(struct ext4_blockdev *bdev);
 static int block_proxy_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
@@ -100,11 +101,11 @@ void fs_mount_root()
 
 #define UNIMPL() klog("unimplemented: %s\n", __func__)
 
-static int fs_find_empty_fd(filep* fds)
+static int fs_find_empty_fd(file_descriptor* fds)
 {
     int i;
     for (i = 0; i < MAX_FD; i++){
-        if (fds[i] == NULL)
+        if (fds[i].used == 0)
             return i;
     }
     return -1;
@@ -119,7 +120,7 @@ int fs_read(int fd, unsigned offset, char* buf, unsigned len)
     if (fd < 0 || fd >= MAX_FD)
         return -1;
 
-    fp = cur->fds[fd];
+    fp = cur->fds[fd].fp;
     if (!fp)
         return -1;
     
@@ -146,7 +147,7 @@ int fs_write(int fd, unsigned offset, char* buf, unsigned len)
     if (fd < 0 || fd >= MAX_FD)
         return -1;
 
-    fp = cur->fds[fd];
+    fp = cur->fds[fd].fp;
     if (!fp)
         return -1;
     
@@ -166,7 +167,7 @@ int fs_write(int fd, unsigned offset, char* buf, unsigned len)
 static int fs_resolve_symlink_path(const char* linkpath, char* linkcontent, size_t name_len)
 {
     char* r;
-    char* saved = linkcontent + PAGE_SIZE - name_len - 1;
+    char* saved = linkcontent + MAX_PATH - name_len - 1;
     if (*linkcontent == '/')
         return 0;
 
@@ -179,17 +180,109 @@ static int fs_resolve_symlink_path(const char* linkpath, char* linkcontent, size
     strcat(linkcontent, saved);
 }
 
+filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
+{
+    ext4_file *f = NULL;
+    ext4_dir *dir = NULL;
+    char *linkcontent = NULL;
+    size_t name_len;
+    filep ret = NULL;
+    filep fp = NULL;
+    struct stat s;
+
+    if (path[strlen(path) - 1] == '/')
+    {
+        // must be a path
+        dir = calloc(1, sizeof(*dir));
+        ret = ext4_dir_open(dir, path);
+        if (ret != EOK)
+            goto fail;
+        fp = fs_alloc_filep_dir(dir);
+        fp->mode = S_IFDIR;
+    }
+    else
+    {
+        f = calloc(1, sizeof(*f));
+        ret = ext4_fopen2(f, path, flag);
+        if (ret != EOK)
+        {
+            goto fail;
+        }
+        ret = ext4_fstat(f, &s);
+        if (ret != EOK)
+        {
+            goto fail;
+        }
+        if (S_ISLNK(s.st_mode))
+        {
+            linkcontent = name_get();
+            memset(linkcontent, 0, MAX_PATH);
+            ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
+            if (ret != EOK)
+            {
+                goto fail;
+            }
+            ext4_fclose(f);
+            fs_resolve_symlink_path(path, linkcontent, name_len);
+            ret = ext4_fopen2(f, linkcontent, flag);
+            if (ret != EOK)
+            {
+                goto fail;
+            }
+            ret = ext4_fstat(f, &s);
+            if (ret != EOK)
+            {
+                goto fail;
+            }
+            name_put(linkcontent);
+        }
+
+        if (S_ISDIR(s.st_mode))
+        {
+            ret = ext4_fclose(f);
+            if (ret != EOK)
+                goto fail;
+            free(f);
+            f = NULL;
+            dir = calloc(1, sizeof(*dir));
+            ret = ext4_dir_open(dir, path);
+            if (ret != EOK)
+                goto fail;
+            ext4_dir_entry_rewind(dir);
+            fp = fs_alloc_filep_dir(dir);
+        }
+        else
+        {
+            fp = fs_alloc_filep_normal(f);
+        }
+        fp->mode = s.st_mode;
+    }
+    ret = fp;
+    fp->name = strdup(path);
+    fs_refrence(fp);
+    goto done;
+fail:
+    ret = NULL;
+    if (linkcontent)
+        name_put(linkcontent);
+
+    if (f)
+        free(f);
+    if (dir)
+        free(dir);
+
+done:
+    return ret;
+}
+
 int fs_open(const char* path, int flag, char* mode)
 {
-    struct stat s;
+    
     task_struct* cur = CURRENT_TASK();
     int fd = -1;
-    ext4_file* f = NULL;
-    ext4_dir* dir = NULL;
+
     filep fp = NULL;
     int ret = -1;
-    char* linkcontent = NULL;
-    size_t name_len;
     sema_wait(&cur->fd_lock);
 
     fd = fs_find_empty_fd(cur->fds);
@@ -202,77 +295,27 @@ int fs_open(const char* path, int flag, char* mode)
         else if (*path == 'k')
             fp = fs_alloc_filep_kb();
         fp->mode = S_IFREG;
+        fp->name = strdup(path);
+        fs_refrence(fp);
     }
     else if (strcmp (path, "/dev/null") == 0) {
         fp = fs_alloc_filep_null();
         fp->mode = S_IFREG;
-    }else if (path[strlen(path)-1] == '/'){
-        // must be a path
-        dir = calloc(1, sizeof(*dir));
-        ret = ext4_dir_open(dir, path);
-        if (ret != EOK)
+        fp->name = strdup(path);
+        fs_refrence(fp);
+    }else {
+        fp = fs_open_file(path, flag, mode, 1);
+        if (fp == NULL)
             goto fail;
-        fp = fs_alloc_filep_dir(dir);
-        fp->mode = S_IFDIR;
-    }else{
-        f = calloc(1, sizeof(*f));
-        ret = ext4_fopen2(f, path, flag);
-        if (ret != EOK){
-            goto fail;
-        }
-        ret = ext4_fstat(f, &s);
-        if (ret != EOK){
-            goto fail;
-        }
-        if (S_ISLNK(s.st_mode)) {
-            linkcontent = vm_alloc(1);
-            ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
-            if (ret != EOK){
-                goto fail;
-            }
-            ext4_fclose(f);
-            fs_resolve_symlink_path(path, linkcontent, name_len);
-            ret = ext4_fopen2(f, linkcontent, flag);
-            if (ret != EOK){
-                goto fail;
-            }
-            ret = ext4_fstat(f, &s);
-            if (ret != EOK){
-                goto fail;
-            }
-            vm_free(linkcontent, 1);
-        }
-
-        if (S_ISDIR(s.st_mode)){
-            ret = ext4_fclose(f);
-            if (ret != EOK)
-                goto fail;
-            free(f);
-            f = NULL;
-            dir = calloc(1, sizeof(*dir));
-            ret = ext4_dir_open(dir, path);
-            if (ret != EOK)
-                goto fail;
-            fp = fs_alloc_filep_dir(dir);
-        }else{
-            fp = fs_alloc_filep_normal(f);
-        }
-        fp->mode = s.st_mode;
     }
-    cur->fd_flsgs[fd] = flag;
-    cur->fds[fd] = fp;
-    fs_refrence(fp);
+    cur->fds[fd].flag = flag;
+    cur->fds[fd].fp = fp;
+    cur->fds[fd].used = 1;
+    cur->fds[fd].file_off = 0;
+    
     goto done;
-
 fail:
     fd = -1;
-    if (linkcontent)
-        vm_free(linkcontent, 1);
-
-    if (f)
-        free(f);
-    if (dir)
-        free(dir);
 done:
     sema_trigger(&cur->fd_lock);
     return fd;
@@ -285,15 +328,17 @@ int fs_close(int fd)
     if (fd < 0 || fd >= MAX_FD)
         return -1;
 
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
+
     sema_wait(&cur->fd_lock);
-    fp = cur->fds[fd];
-    cur->fds[fd] = NULL;
-    cur->fd_flsgs[fd] = 0;
+    fp = cur->fds[fd].fp;
+    memset(&cur->fds[fd], 0, sizeof(file_descriptor));
     sema_trigger(&cur->fd_lock);
 
     if (fp == NULL)
         return -1;
-    
+
     return fs_destroy(fp);
 }
 
@@ -345,7 +390,7 @@ int fs_fstat(int fd, struct stat* s)
         return -1;
 
     sema_wait(&cur->fd_lock);
-    fp = cur->fds[fd];
+    fp = cur->fds[fd].fp;
     sema_trigger(&cur->fd_lock);
 
     if (fp == NULL)
@@ -371,24 +416,27 @@ int fs_pipe(int *pipefd)
         goto done;
     }
     // hack for writer
-    cur->fds[reader] = 1;
+    cur->fds[reader].used = 1;
 
     writer = fs_find_empty_fd(cur->fds);
     if (writer < 0 || writer >= MAX_FD){
+        cur->fds[reader].used = 0;
         ret = -1;
         goto done;
     }
-
+    cur->fds[writer].used = 1;
     ret = fs_alloc_filep_pipe(fp);
     if (ret != EOK){
+        cur->fds[reader].used = 0;
+        cur->fds[writer].used = 0;
         ret = -1;
         goto done;
     }
 
-    cur->fds[reader] = fp[0];
-    cur->fds[writer] = fp[1];
-    cur->fd_flsgs[reader] = 0;
-    cur->fd_flsgs[writer] = 0;
+    cur->fds[reader].fp = fp[0];
+    cur->fds[writer].fp = fp[1];
+    cur->fds[reader].flag = O_RDONLY;
+    cur->fds[writer].flag = O_WRONLY;
     fs_refrence(fp[0]);
     fs_refrence(fp[1]);
     pipefd[0] = reader;
@@ -406,20 +454,19 @@ int fs_dup(int fd)
     int newfd;
     int ret;
     if (fd < 0 || fd >= MAX_FD)
-        return -1;
-
+        return -ENOENT;
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
     sema_wait(&cur->fd_lock);
     newfd = fs_find_empty_fd(cur->fds);
     if (newfd < 0 || newfd >= MAX_FD){
         ret = -1;
         goto done;
     }
-
-    fp = cur->fds[fd];
+    cur->fds[newfd] = cur->fds[fd];
+    fp = cur->fds[fd].fp;
     fs_refrence(fp);
-    cur->fds[newfd] = fp;
-    cur->fd_flsgs[newfd] = cur->fd_flsgs[fd];
-    cur->fd_flsgs[newfd] &= ~O_CLOEXEC;
+    cur->fds[newfd].flag &= ~O_CLOEXEC;
     ret = newfd;
 done:
     sema_trigger(&cur->fd_lock);
@@ -432,20 +479,22 @@ int fs_dup2(int fd, int newfd)
     filep fp = NULL;
     int ret;
     if (fd < 0 || fd >= MAX_FD)
-        return -1;
+        return -ENOENT;
 
     if (newfd < 0 || newfd >= MAX_FD)
-        return -1;
+        return -EACCES;
+
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
 
     sema_wait(&cur->fd_lock);
-    if (cur->fds[newfd]){
-        fs_destroy(cur->fds[newfd]);
+    if (cur->fds[newfd].used){
+        fs_destroy(cur->fds[newfd].fp);
     }
-    fp = cur->fds[fd];
+    fp = cur->fds[fd].fp;
     fs_refrence(fp);
-    cur->fds[newfd] = fp;
-    cur->fd_flsgs[newfd] = cur->fd_flsgs[fd];
-    cur->fd_flsgs[newfd] &= ~O_CLOEXEC;
+    cur->fds[newfd] = cur->fds[fd];
+    cur->fds[newfd].flag &= ~O_CLOEXEC;
     ret = newfd;
     sema_trigger(&cur->fd_lock);
     return ret;
@@ -456,6 +505,7 @@ int fs_destroy(filep f)
     int ret = 0;
     if (__sync_add_and_fetch(&f->ref_cnt, -1) == 0){
         ret = f->op.close(f->inode);
+        free(f->name);
         free(f);
     }
     return ret;

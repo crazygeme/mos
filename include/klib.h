@@ -161,6 +161,8 @@ unsigned strlen(const char* str);
 
 char* strcpy(char* dst, const char* src);
 
+char* strncpy(char* dst, const char* src, int len);
+
 char* strstr(const char* src, const char* str);
 
 char* strrev(char *src);

@@ -102,4 +102,7 @@ int do_mmap(unsigned int addr, unsigned int len,unsigned int prot,
 
 int do_munmap(void *addr, unsigned length);
 
+void* name_get();
+
+void name_put(void* name);
 #endif

@@ -18,7 +18,7 @@ void pipe_init()
 
 static void* pipe_create_reader(cy_buf* buf)
 {
-    pipe_inode* n = kmalloc(sizeof(*n));
+    pipe_inode* n = calloc(1, sizeof(*n));
     n->buf = buf;
     n->readonly = 1;
     return n;
@@ -26,7 +26,7 @@ static void* pipe_create_reader(cy_buf* buf)
 
 static void* pipe_create_writer(cy_buf* buf)
 {
-    pipe_inode* n = kmalloc(sizeof(*n));
+    pipe_inode* n = calloc(1, sizeof(*n));
     n->buf = buf;
     n->readonly = 0;
     return n;
@@ -40,13 +40,11 @@ static int pipe_close(void* n)
     {
         cyb_writer_close(node->buf);
     }
-
-    if (node->readonly && cyb_is_writer_closed(node->buf))
-    {
-        cyb_destroy(node->buf);
+    else{
+        cyb_reader_close(node->buf);
     }
 
-    kfree(n);
+    free(n);
 
     return 0;
 }
@@ -54,24 +52,34 @@ static int pipe_close(void* n)
 
 static int pipe_read(void* inode, const void *buf, size_t len, size_t *wcnt)
 {
+    unsigned char c;
     int i = 0;
+    int remain = 0;
     pipe_inode* n = (pipe_inode*)inode;
     unsigned char* tmp = buf;
-
+    int cache_len;
     if (!n->readonly)
-        return 0;
+        return -1;
+
+    if ((cyb_writer_count(n->buf) == 0)){
+        if (cyb_isempty(n->buf)){
+            if (wcnt) *wcnt = 0;
+            return 0;
+        }
+    }
 
     while (i < len)
     {
-        *tmp = cyb_getc(n->buf);
-        if (*tmp == EOF)
+        c = cyb_getc(n->buf);
+        if (c == EOF) {
             break;
+        }
+        *tmp = c;
         i++;
         tmp++;
     }
 
-    if (wcnt)
-        *wcnt = i;
+    if (wcnt) *wcnt = i;
     return 0;
 }
 
@@ -85,7 +93,7 @@ static int pipe_write(void* inode, const void *buf, size_t len, size_t *wcnt)
         return 0;
 
     cyb_putbuf(n->buf, tmp, len);
-
+    
     if (wcnt)
         *wcnt = len;
     return 0;
@@ -94,7 +102,7 @@ static int pipe_write(void* inode, const void *buf, size_t len, size_t *wcnt)
 static int pipe_stat(void* inode, struct stat* s)
 {
     s->st_atime = time_now();
-    s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR | S_IRGRP | S_IROTH);
+    s->st_mode = S_IFIFO | S_IRUSR | S_IWUSR;
     s->st_size = 0;
     s->st_blksize = 0;
     s->st_blocks = 0;
@@ -126,7 +134,6 @@ int fs_alloc_filep_pipe(filep* pipes)
     fp_read->file_type = FILE_TYPE_PIPE;
     fp_read->inode = pipe_create_reader(buf);
     fp_read->ref_cnt = 0;
-    fp_read->file_off = 0;
     fp_read->op = readop;
     fp_read->istty = 0;
 
@@ -134,7 +141,6 @@ int fs_alloc_filep_pipe(filep* pipes)
     fp_write->file_type = FILE_TYPE_PIPE;
     fp_write->inode = pipe_create_writer(buf);
     fp_write->ref_cnt = 0;
-    fp_write->file_off = 0;
     fp_write->op = writeop;
     fp_write->istty = 0;
 

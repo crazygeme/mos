@@ -897,6 +897,19 @@ int strncmp(char* src, char* dst, int len)
     return 0;
 }
 
+char* strncpy(char* dst, const char* src, int len)
+{
+    char* d = dst;
+    int count = 0;
+    while ((*dst++ = *src++) != '\0'){
+        count ++;
+        if (count >= len)
+            break;
+    }
+    dst[len] = '\0';
+    return d;
+}
+
 char* strcat(char* src, char* msg)
 {
     char* tmp = src + strlen(src);

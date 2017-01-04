@@ -4,6 +4,7 @@
 #include <config.h>
 #include <ps.h>
 #include <errno.h>
+#include <include/fs.h>
 
 typedef struct _vm_key
 {
@@ -335,8 +336,8 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 
     // FIXME
     // lots of flags and prot
-    if (fd != -1 && cur->fds[fd] != 0)
-        node = cur->fds[fd];
+    if (fd != -1 && cur->fds[fd].used != 0)
+        node = cur->fds[fd].fp;
     else
         node = 0;
 

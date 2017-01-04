@@ -59,7 +59,6 @@ filep fs_alloc_filep_kb()
     fp->file_type = FILE_TYPE_CHAR;
     fp->inode = NULL;
     fp->ref_cnt = 0;
-    fp->file_off = 0;
     fp->op = kbop;
     fp->mode = 0;
     fp->istty = 0;

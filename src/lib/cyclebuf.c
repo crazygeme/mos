@@ -6,35 +6,68 @@
 
 typedef struct _cy_buf
 {
-    unsigned len;
+    unsigned length;
     unsigned write_idx;
     unsigned read_idx;
     semaphore lock;
     spinlock idx_lock;
-    int write_closed;
+    int writer_count;
+    int reader_count;
+    unsigned ref_count;
     char *buf;
 }cy_buf;
 
+#define PIPE_REF_INCREASE(b)\
+    __sync_add_and_fetch(&(b->ref_count), 1)
+
+#define PIPE_REF_DECREASE(b)\
+    __sync_add_and_fetch(&(b->ref_count), -1)
+
+#define PIPE_LEN_ADD(b, len)\
+    __sync_add_and_fetch(&(b->length), len)
+
+#define PIPE_LEN(b)\
+    __sync_add_and_fetch(&(b->length), 0)
+
+#define PIPE_WRITER_INCREASE(b)\
+    __sync_add_and_fetch(&(b->writer_count), 1)
+
+#define PIPE_WRITER_DECREASE(b)\
+    __sync_add_and_fetch(&(b->writer_count), -1)
+
+#define PIPE_WRITERS(b)\
+    __sync_add_and_fetch(&(b->writer_count), 0)
+
+#define PIPE_READER_INCREASE(b)\
+    __sync_add_and_fetch(&(b->reader_count), 1)
+
+#define PIPE_READER_DECREASE(b)\
+    __sync_add_and_fetch(&(b->reader_count), -1)
+
+#define PIPE_READERS(b)\
+    __sync_add_and_fetch(&(b->reader_count), 0)
 
 cy_buf* cyb_create(char* name)
 {
-    cy_buf* ret = kmalloc(sizeof(*ret));
+    cy_buf* ret = calloc(1, sizeof(*ret));
     int i = 0;
-
     ret->buf = vm_alloc(PIPE_BUF_LEN/PAGE_SIZE);
 
-    ret->len = ret->read_idx = ret->write_idx = 0;
-    ret->write_closed = 0;
+    ret->length = ret->read_idx = ret->write_idx = 0;
+    ret->reader_count = ret->writer_count = 1;
+    ret->ref_count = 2;
     sema_init(&ret->lock, name, 1);
     spinlock_init(&ret->idx_lock);
 
     return ret;
 }
 
-void cyb_destroy(cy_buf* cyb)
+void cyb_destroy(cy_buf* b)
 {
-    vm_free(cyb->buf, PIPE_BUF_LEN/PAGE_SIZE);
-    kfree(cyb);
+    if (PIPE_REF_DECREASE(b) == 0){
+        vm_free(b->buf, PIPE_BUF_LEN/PAGE_SIZE);
+        kfree(b);
+    }
 }
 
 static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite)
@@ -43,7 +76,7 @@ static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite)
     unsigned write_idx;
     int needs_trigger = 0;
 
-    length = b->len;
+    length = PIPE_LEN(b);
 
     if (notifyOnWrite)
         if (length == 0)
@@ -65,14 +98,11 @@ static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite)
         {
             b->read_idx = 0;
         }
-        b->len--;
+        PIPE_LEN_ADD(b, -1);
     }
-    b->len++;
+    PIPE_LEN_ADD(b, 1);
 
     spinlock_unlock(&b->idx_lock);
-
-    if (key == EOF)
-        b->write_closed = 1;
 
     if (notifyOnWrite)
         if (needs_trigger)
@@ -91,7 +121,7 @@ void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len)
     int needs_trigger = 0;
     unsigned length = 0;
 
-    length = b->len;
+    length = PIPE_LEN(b);
     if (length == 0)
         needs_trigger = 1;
 
@@ -107,19 +137,18 @@ void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len)
 unsigned char cyb_getc(cy_buf* b)
 {
     unsigned length = 0;
-    length = b->len;
+
     unsigned read_idx;
     unsigned char ret;
     task_struct* cur = CURRENT_TASK();
 
-
-    if (length == 0)
-    {
-        if (b->write_closed)
-        {
+    length = PIPE_LEN(b);
+    if (length == 0){
+        if (PIPE_WRITERS(b))
+            sema_wait(&b->lock);
+        if ((PIPE_WRITERS(b) == 0) &&
+            (PIPE_LEN(b) == 0))
             return EOF;
-        }
-        sema_wait(&b->lock);
     }
 
     spinlock_lock(&b->idx_lock);
@@ -131,8 +160,8 @@ unsigned char cyb_getc(cy_buf* b)
         read_idx = 0;
 
     b->read_idx = read_idx;
-    b->len--;
-    if (b->len == 0)
+    PIPE_LEN_ADD(b, -1);
+    if (PIPE_LEN(b) == 0)
         sema_reset(&b->lock);
 
     spinlock_unlock(&b->idx_lock);
@@ -143,22 +172,38 @@ unsigned char cyb_getc(cy_buf* b)
 
 int cyb_isempty(cy_buf* b)
 {
-    return (b->len == 0);
+    return (PIPE_LEN(b) == 0);
 }
 
 int cyb_isfull(cy_buf* b)
 {
-    return (b->len == PIPE_BUF_LEN);
+    return (PIPE_LEN(b) == PIPE_BUF_LEN);
 }
 
-int cyb_is_writer_closed(cy_buf* b)
+int cyb_writer_count(cy_buf* b)
 {
-    return b->write_closed;
+    return PIPE_WRITERS(b);
 }
 
-void cyb_writer_close(cy_buf* b)
+int cyb_reader_count(cy_buf* b)
 {
-    cyb_putc(b, EOF);
+    return PIPE_READERS(b);
+}
 
-    b->write_closed = 1;
+int cyb_writer_close(cy_buf* b)
+{
+    PIPE_WRITER_DECREASE(b);
+    sema_trigger(&b->lock);
+    cyb_destroy(b);
+}
+
+int cyb_reader_close(cy_buf* b)
+{
+    PIPE_READER_DECREASE(b);
+    cyb_destroy(b);
+}
+
+int cyb_get_buf_len(cy_buf* b)
+{
+    return PIPE_LEN(b);
 }

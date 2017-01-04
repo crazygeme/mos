@@ -47,10 +47,6 @@ typedef struct _block block;
 #define FILE_TYPE_CHAR      3
 #define FILE_TYPE_DIR       4
 
-
-
-#define MAX_FD ((PAGE_SIZE)/sizeof(file*))
-
 typedef struct _fileop
 {
     int (*close)(void* inode);
@@ -65,12 +61,21 @@ typedef struct _file
     int file_type;
     void    *inode;
     unsigned ref_cnt;
-    unsigned file_off;
     unsigned mode;
     int istty;
     fileop op;
+    char* name;
 }file;
 typedef file* filep;
+
+typedef struct _file_descriptor {
+    filep fp;
+    unsigned flag;
+    unsigned file_off;
+    unsigned used;
+}file_descriptor;
+
+#define MAX_FD ((PAGE_SIZE)/sizeof(file_descriptor))
 
 filep fs_alloc_filep_tty();
 filep fs_alloc_filep_kb();

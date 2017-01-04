@@ -4,7 +4,20 @@
 #include <klib.h>
 
 
-static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr, mos_binfmt* fmt)
+static int elf_read(filep fp, unsigned off, void* buf, int len)
+{
+    size_t wcnt;
+    int ret = -1;
+    ret = ext4_fseek(fp->inode, off, SEEK_SET);
+    if (ret != EOK)
+        return -1;
+    ret = ext4_fread(fp->inode, buf, len, &wcnt);
+    if (ret != EOK)
+        return -1;
+    return (int)wcnt;
+}
+
+static unsigned elf_map_section(filep fp, Elf32_Phdr* phdr, mos_binfmt* fmt)
 {
     unsigned file_off = phdr->p_offset;
     unsigned va_begin = phdr->p_vaddr & PAGE_SIZE_MASK;
@@ -13,20 +26,18 @@ static unsigned elf_map_section(unsigned fd, Elf32_Phdr* phdr, mos_binfmt* fmt)
     unsigned i = 0;
 
     do_mmap(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, -1, 0);
-    fs_read(fd, file_off, phdr->p_vaddr, fileSiz);
+    elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
     return 1;
 }
 
-static int elf_read_interp(unsigned fd, Elf32_Phdr* phdr, char* path)
+static int elf_read_interp(filep fp, Elf32_Phdr* phdr, char* path)
 {
     unsigned off = phdr->p_offset;
     unsigned size = phdr->p_filesz;
-    return (fs_read(fd, off, path, size) != 0xffffffff);
-
-
+    return (elf_read(fp, off, path, size) >= 0);
 }
 
-static int elf_find_interp(unsigned fd, unsigned table_offset, unsigned size, unsigned num, char* path)
+static int elf_find_interp(filep fp, unsigned table_offset, unsigned size, unsigned num, char* path)
 {
     unsigned offset = 0;
     int i = 0;
@@ -35,10 +46,10 @@ static int elf_find_interp(unsigned fd, unsigned table_offset, unsigned size, un
     {
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
-        fs_read(fd, head_offset, &phdr, sizeof(phdr));
+        elf_read(fp, head_offset, &phdr, sizeof(phdr));
         if (phdr.p_type == PT_INTERP)
         {
-            return elf_read_interp(fd, &phdr, path);
+            return elf_read_interp(fp, &phdr, path);
         }
         else
         {
@@ -51,7 +62,7 @@ static int elf_find_interp(unsigned fd, unsigned table_offset, unsigned size, un
 }
 
 
-static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned size, unsigned num)
+static unsigned elf_map_programs(filep fp, unsigned table_offset, unsigned size, unsigned num)
 {
     unsigned offset = 0;
     int i = 0;
@@ -62,11 +73,11 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
     {
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
-        fs_read(fd, head_offset, &phdr, sizeof(phdr));
+        elf_read(fp, head_offset, &phdr, sizeof(phdr));
         if (/*phdr.p_type == PT_DYNAMIC ||*/
             phdr.p_type == PT_LOAD)
         {
-            elf_map_section(fd, &phdr, 0);
+            elf_map_section(fp, &phdr, 0);
             k = phdr.p_filesz + phdr.p_vaddr;
             if (k > elf_bss)
             {
@@ -100,7 +111,7 @@ static unsigned elf_map_programs(unsigned fd, unsigned table_offset, unsigned si
     return 1;
 
 }
-static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned size, unsigned num,
+static unsigned elf_map_elf_hdr(filep fp, unsigned table_offset, unsigned size, unsigned num,
     mos_binfmt* fmt)
 {
     unsigned offset = 0;
@@ -110,7 +121,7 @@ static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned siz
     {
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
-        fs_read(fd, head_offset, &phdr, sizeof(phdr));
+        elf_read(fp, head_offset, &phdr, sizeof(phdr));
 
         if (phdr.p_type == PT_PHDR)
         {
@@ -120,7 +131,7 @@ static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned siz
         }
         else if (phdr.p_type == PT_LOAD/* || phdr.p_type == PT_DYNAMIC */)
         {
-            elf_map_section(fd, &phdr, 0);
+            elf_map_section(fp, &phdr, 0);
         }
         else
         {
@@ -133,7 +144,7 @@ static unsigned elf_map_elf_hdr(unsigned fd, unsigned table_offset, unsigned siz
 }
 
 
-static unsigned elf_map_section_at(unsigned fd, Elf32_Phdr* phdr, unsigned bias)
+static unsigned elf_map_section_at(filep fp, Elf32_Phdr* phdr, unsigned bias)
 {
     unsigned file_off = phdr->p_offset;
     unsigned va_begin = phdr->p_vaddr & PAGE_SIZE_MASK;
@@ -142,11 +153,11 @@ static unsigned elf_map_section_at(unsigned fd, Elf32_Phdr* phdr, unsigned bias)
     unsigned i = 0;
 
     do_mmap(bias+ va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, -1, 0);
-    fs_read(fd, file_off, phdr->p_vaddr + bias, fileSiz);
+    elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
     return 1;
 }
 
-static unsigned elf_map_programs_at(unsigned fd, unsigned table_offset, unsigned size, unsigned num, unsigned bias)
+static unsigned elf_map_programs_at(filep fp, unsigned table_offset, unsigned size, unsigned num, unsigned bias)
 {
     unsigned offset = 0;
     int i = 0;
@@ -154,11 +165,11 @@ static unsigned elf_map_programs_at(unsigned fd, unsigned table_offset, unsigned
     {
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
-        fs_read(fd, head_offset, &phdr, sizeof(phdr));
+        elf_read(fp, head_offset, &phdr, sizeof(phdr));
         if (/*phdr.p_type == PT_DYNAMIC ||*/
             phdr.p_type == PT_LOAD)
         {
-            elf_map_section_at(fd, &phdr, bias);
+            elf_map_section_at(fp, &phdr, bias);
         }
         else
         {
@@ -169,7 +180,7 @@ static unsigned elf_map_programs_at(unsigned fd, unsigned table_offset, unsigned
 
 }
 
-static unsigned elf_map_get_dynamic_pages(unsigned fd, unsigned table_offset, unsigned size, unsigned num)
+static unsigned elf_map_get_dynamic_pages(filep fp, unsigned table_offset, unsigned size, unsigned num)
 {
     unsigned va_page_start = 0xffffffff;
     unsigned va_page_end = 0;
@@ -179,7 +190,7 @@ static unsigned elf_map_get_dynamic_pages(unsigned fd, unsigned table_offset, un
     {
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
-        fs_read(fd, head_offset, &phdr, sizeof(phdr));
+        elf_read(fp, head_offset, &phdr, sizeof(phdr));
         if (phdr.p_type == PT_LOAD)
         {
             unsigned va_begin = phdr.p_vaddr & PAGE_SIZE_MASK;
@@ -204,118 +215,118 @@ static unsigned elf_map_get_dynamic_pages(unsigned fd, unsigned table_offset, un
 
 static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt)
 {
-    int fd = fs_open(path, 0, "r");
+    filep fp = fs_open_file(path, 0, "r", 1);
     unsigned entry_point = 0;
     unsigned head_len = 0;
     Elf32_Ehdr elf;
 
-    if (fd < 0 || fd >= MAX_FD)
+    if (fp == NULL)
     {
         klog("!!!!!!!!!!!\n");
         return 0;
     }
     // elf header will at the beginning of va anyway
-    fs_read(fd, 0, &elf, sizeof(Elf32_Ehdr));
+    elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
     entry_point = elf.e_entry;
     head_len = elf.e_ehsize;
 
 
     if (elf.e_ident[0] != 0x7f)
     {
-        fs_close(fd);
+        fs_destroy(fp);
         return 0;
     }
 
     // now we only support ia32, sorry..
     if (elf.e_ident[4] != ELFCLASS32)
     {
-        fs_close(fd);
+        fs_destroy(fp);
         return 0;
     }
 
     if (elf.e_type != ET_DYN)
     {
-        fs_close(fd);
+        fs_destroy(fp);
         return 0;
     }
 
     // interop must be the first dynamic library
-    fmt->interp_bias = vm_get_usr_zone(elf_map_get_dynamic_pages(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum));
+    fmt->interp_bias = vm_get_usr_zone(elf_map_get_dynamic_pages(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum));
     fmt->interp_load_addr = fmt->interp_bias + elf.e_entry;
-    elf_map_programs_at(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt->interp_bias);
+    elf_map_programs_at(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt->interp_bias);
 
-    fs_close(fd);
+    fs_destroy(fp);
 
     return 1;
 }
 
 unsigned elf_map(char* path, mos_binfmt* fmt)
 {
-    int fd = fs_open(path, 0, "r");
+    filep fp = fs_open_file(path, 0, "r", 1);
     unsigned entry_point = 0;
     unsigned head_len = 0;
     Elf32_Ehdr elf;
-    char* interp = kmalloc(64);
-    memset(interp, 0, 64);
+    char* interp = name_get();
+    memset(interp, 0, MAX_PATH);
 
-    if (fd < 0 || fd >= MAX_FD)
+    if (fp == NULL)
     {
         klog("!!!!!!!!!!!\n");
-        kfree(interp);
+        name_put(interp);
         return 0;
     }
     // elf header will at the beginning of va anyway
-    fs_read(fd, 0, &elf, sizeof(Elf32_Ehdr));
+    elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
     entry_point = elf.e_entry;
     head_len = elf.e_ehsize;
 
 
     if (elf.e_ident[0] != 0x7f)
     {
-        fs_close(fd);
-        kfree(interp);
+        fs_destroy(fp);
+        name_put(interp);
         return 0;
     }
 
     // now we only support ia32, sorry..
     if (elf.e_ident[4] != ELFCLASS32)
     {
-        fs_close(fd);
-        kfree(interp);
+        fs_destroy(fp);
+        name_put(interp);
         return 0;
     }
 
     if (elf.e_type != ET_EXEC)
     {
-        fs_close(fd);
-        kfree(interp);
+        fs_destroy(fp);
+        name_put(interp);
         return 0;
     }
 
     fmt->e_entry = elf.e_entry;
 
-    if (elf_find_interp(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, interp))
+    if (elf_find_interp(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum, interp))
     {
         if (!strcmp(path, interp))
         {
-            elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
+            elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
             fmt->interp_load_addr = entry_point;
         }
         else
         {
-            elf_map_elf_hdr(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
+            elf_map_elf_hdr(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
             elf_map_dynamic(interp, fmt);
             //fmt->interp_load_addr = entry_point;
         }
     }
     else
     {
-        elf_map_programs(fd, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
+        elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
         fmt->interp_load_addr = entry_point;
     }
 
-    fs_close(fd);
-    kfree(interp);
+    fs_destroy(fp);
+    name_put(interp);
 
     return entry_point;
 

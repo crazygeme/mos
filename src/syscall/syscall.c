@@ -167,6 +167,7 @@ static int sys_unlink(const char *pathname);
 static int sys_time(unsigned* t);
 static int resolve_path(char* old, char* new);
 static int sys_access(const char* path, int mode);
+static int do_stat(const char *_name, struct stat *buf, int follow_link);
 
 static char* call_table_name[NR_syscalls] = {
     "test_call",
@@ -303,20 +304,20 @@ static int sys_read(int fd, char* buf, unsigned len)
     if (fd < 0 || fd >= MAX_FD)
         return -1;
 
-    if (cur->fds[fd] == 0)
+    if (cur->fds[fd].used == 0)
         return -1;
 
-    if ( S_ISDIR(cur->fds[fd]->mode))
+    if ( S_ISDIR(cur->fds[fd].fp->mode))
         return -1;
 
     if (TestControl.verbos) {
         klog("%d: read(%d, \"", CURRENT_TASK()->psid, fd);
     }
 
-    unsigned offset = cur->fds[fd]->file_off;
+    unsigned offset = cur->fds[fd].file_off;
     len = fs_read(fd, offset, buf, len);
     offset += len;
-    cur->fds[fd]->file_off = offset;
+    cur->fds[fd].file_off = offset;
 
 
     if (TestControl.verbos) {
@@ -329,8 +330,6 @@ static int sys_read(int fd, char* buf, unsigned len)
         }
         klog_printf("\", %d)\n", len);
     }
-
-
 
     return len;
 }
@@ -353,7 +352,7 @@ static int sys_write(int fd, char *buf, unsigned len)
         return -1;
     }
 
-    if (cur->fds[fd] == 0)
+    if (cur->fds[fd].used == 0)
     {
         if (TestControl.verbos) {
             klog_printf("ret -1\n");
@@ -361,7 +360,7 @@ static int sys_write(int fd, char *buf, unsigned len)
         return -1;
     }
 
-    if ( S_ISDIR(cur->fds[fd]->mode))
+    if ( S_ISDIR(cur->fds[fd].fp->mode))
     {
         if (TestControl.verbos) {
             klog_printf("ret -1\n");
@@ -369,10 +368,10 @@ static int sys_write(int fd, char *buf, unsigned len)
         return -1;
     }
 
-    unsigned offset = cur->fds[fd]->file_off;
+    unsigned offset = cur->fds[fd].file_off;
     _len = fs_write(fd, offset, buf, len);
     offset += _len;
-    cur->fds[fd]->file_off = offset;
+    cur->fds[fd].file_off = offset;
 
     if (TestControl.verbos) {
         klog_printf("ret %d\n", _len);
@@ -395,14 +394,14 @@ static int sys_ioctl(int fd, int request, char *buf)
         return -ENOENT;
     }
 
-    if (cur->fds[fd] == 0){
+    if (cur->fds[fd].used == 0){
         if (TestControl.verbos) {
             klog_printf("%s\n", "ENOENT");
         }
         return -ENOENT;
     }
 
-    if (S_ISDIR(cur->fds[fd]->mode)) {
+    if (S_ISDIR(cur->fds[fd].fp->mode)) {
         if (TestControl.verbos) {
             klog_printf("%s\n", "EISDIR");
         }
@@ -474,7 +473,7 @@ static int sys_sched_yield()
 
 static int sys_open(const char *_name, int flags, char* mode)
 {
-    char *name = kmalloc(64);
+    char *name = name_get();
     int fd;
     resolve_path(_name, name);
 
@@ -488,7 +487,7 @@ static int sys_open(const char *_name, int flags, char* mode)
     if (TestControl.verbos) {
         klog_printf("ret %d\n", fd);
     }
-    kfree(name);
+    name_put(name);
     return fd;
 }
 
@@ -597,9 +596,9 @@ static int _chdir(const char *cwd, const char *path)
 
 static int sys_chdir(const char *path)
 {
-    char name[64] = {0};
+    char *name = name_get();
     char *slash, *tmp;
-    char cwd[64] = {0};
+    char *cwd = name_get();
     int ret = 1;
     task_struct *cur = CURRENT_TASK();
 
@@ -629,6 +628,9 @@ static int sys_chdir(const char *path)
     if (!ret) return -1;
 
     strcpy(cur->cwd, cwd);
+
+    name_put(name);
+    name_put(cwd);
     return 0;
 }
 
@@ -646,20 +648,28 @@ static int sys_creat(const char *path, unsigned mode)
 
 static int sys_mkdir(const char *path, unsigned mode)
 {
-    char* name = kmalloc(64);
+    char* name = name_get();
     int ret;
     resolve_path(path, name);
     ret = ext4_dir_mk(name);
     if (TestControl.verbos) {
         klog("%d: %dmkdir(%s, %d)\n", CURRENT_TASK()->psid, path, mode);
     }
-    kfree(name);
+    name_put(name);
     return ret;
 }
 
 static int sys_rmdir(const char *path)
 {
-    return ext4_dir_rm(path);
+    char* name = name_get();
+    int ret;
+    resolve_path(path, name);
+    ret = ext4_dir_rm(name);
+    if (TestControl.verbos) {
+        klog("%d: %drmdir(%s)\n", CURRENT_TASK()->psid, name);
+    }
+    name_put(name);
+    return ret;
 }
 
 static int sys_reboot(unsigned cmd)
@@ -790,7 +800,7 @@ static int sys_fcntl(int fd, int cmd, int arg)
     if (fd < 0 || fd >= MAX_FD)
         return -ENOENT;
 
-    if (cur->fds[fd] == 0)
+    if (cur->fds[fd].used == 0)
         return -ENOENT;
 
     switch(cmd) {
@@ -799,23 +809,23 @@ static int sys_fcntl(int fd, int cmd, int arg)
             break;
             // case F_DUPFD_CLOEXEC: // no in Linux ??
         case F_GETFD:
-            if (cur->fd_flsgs[fd] & O_CLOEXEC)
+            if (cur->fds[fd].flag & O_CLOEXEC)
                 ret = FD_CLOEXEC;
             else
                 ret = 0;
             break;
         case F_SETFD:
             if (arg & FD_CLOEXEC)
-                cur->fd_flsgs[fd] |= O_CLOEXEC;
+                cur->fds[fd].flag |= O_CLOEXEC;
             else
-                cur->fd_flsgs[fd] &= ~O_CLOEXEC;
+                cur->fds[fd].flag &= ~O_CLOEXEC;
             ret = 0;
             break;
         case F_GETFL:
-            ret = cur->fd_flsgs[fd];
+            ret = cur->fds[fd].flag;
             break;
         case F_SETFL:
-            cur->fd_flsgs[fd] = arg;
+            cur->fds[fd].flag = arg;
             ret = 0;
             break;
         default:
@@ -825,17 +835,19 @@ static int sys_fcntl(int fd, int cmd, int arg)
     return ret;
 }
 
-
 #define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
 #define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
  static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
  {
-    ext4_direntry* entry = kmalloc(sizeof(*entry));
+    ext4_direntry* entry = NULL;
     int retcount;
     int len;
     int ret = 0;
     int cur_pos = 0;
     struct linux_dirent *prev;
+    struct stat s;
+    filep fp;
+
 
      if (TestControl.verbos) {
          klog("%d: getdents(%d, %x, %d)", CURRENT_TASK()->psid, fd, dirp, count);
@@ -849,6 +861,14 @@ static int sys_fcntl(int fd, int cmd, int arg)
         return -9;
     }
 
+    if (sys_fstat(fd, &s) != EOK)
+        return -1;
+    
+    if (!S_ISDIR(s.st_mode))
+        return ENOTDIR;
+
+    fp = CURRENT_TASK()->fds[fd].fp;
+
     if (count < sizeof(struct linux_dirent))
     {
         if (TestControl.verbos) {
@@ -858,10 +878,12 @@ static int sys_fcntl(int fd, int cmd, int arg)
     }
     retcount = 0;
     prev = 0;
+
     while (count > 0)
     {
-        ret = fs_read(fd, 0, entry, sizeof(*entry));
-        if (ret <= 0)
+        entry = ext4_dir_entry_next(fp->inode);
+        //ret = fs_read(fd, 0, entry, sizeof(*entry));
+        if (entry == NULL)
         {
             if (prev)
             {
@@ -870,11 +892,11 @@ static int sys_fcntl(int fd, int cmd, int arg)
             memset((char *)dirp, 0, count);
             break;
         }
-        entry->name[entry->name_length] = '\0';
+        //entry->name[entry->name_length] = '\0';
         len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
         memset(dirp, 0, len);
         dirp->d_ino = entry->inode;
-        strcpy(dirp->d_name, entry->name);
+        strncpy(dirp->d_name, entry->name, entry->name_length);
         dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
         cur_pos += dirp->d_reclen;
         dirp->d_off = cur_pos;
@@ -891,7 +913,7 @@ static int sys_fcntl(int fd, int cmd, int arg)
          klog_printf(" = %d\n", retcount);
      }
 
-     kfree(entry);
+     //kfree(entry);
     return retcount;
  
  }
@@ -937,7 +959,7 @@ static int sys_fstat64(int fd, struct stat64 *s) {
 static int sys_lstat64(const char *path, struct stat64 *s)
 {
     struct stat s32;
-    sys_stat(path, &s32);
+    do_stat(path, &s32, 0);
     memset(s, 0, sizeof(*s));
     s->st_dev = s32.st_dev;
     s->st_ino = s32.st_ino;
@@ -1050,13 +1072,13 @@ static int resolve_path(char *old, char *new)
 
     if (!strcmp(old, "."))
     {
-        sys_getcwd(new, 64);
+        sys_getcwd(new, MAX_PATH);
         return 0;
     }
 
     if (!strcmp(old, ".."))
     {
-        sys_getcwd(new, 64);
+        sys_getcwd(new, MAX_PATH);
         r = strrchr(new, '/');
         *r = '\0';
         if (*new == '\0') {
@@ -1073,7 +1095,7 @@ static int resolve_path(char *old, char *new)
     }
     else if (strlen(old) > 1 && old[0] == '.' && old[1] == '/') old += 2;
 
-    sys_getcwd(new, 64);
+    sys_getcwd(new, MAX_PATH);
     strcat(new, old);
     return 0;
 }
@@ -1178,12 +1200,31 @@ static int sys_kill(unsigned pid, int sig)
     return -1;
 }
 
-static int sys_unlink(const char *path)
+static int sys_unlink(const char *_name)
 {
+    char *name = name_get();
+    struct stat s;
+    int ret = -1;
+    resolve_path(_name, name);
+
     if (TestControl.verbos) {
-        klog("%d: unlink\n", CURRENT_TASK()->psid);
+        klog("%d: unlink(%s)\n", CURRENT_TASK()->psid, name);
     }
-    return -1;
+
+    ret = do_stat(name, &s, 0);
+    if (ret != EOK)
+        goto done;
+
+    if (S_ISDIR(s.st_mode)){
+        ret = -EISDIR;
+        goto done;
+    }
+
+    ret = ext4_fremove(name);
+
+done:
+    name_put(name);
+    return ret;
 }
 
 static int sys_time(unsigned* t)
@@ -1247,24 +1288,35 @@ static int format_modes(unsigned mode, char* str)
     return 0;
 }
 
-static int sys_stat(const char *_name, struct stat *buf)
+static int do_stat(const char *_name, struct stat *buf, int follow_link)
 {
     int ret = -1;
-    int fd;
-    char *name = kmalloc(64);
+    filep fp = NULL;
+    char *name = name_get();
     char modes[11];
     resolve_path(_name, name);
-    fd = fs_open(name, 0, 0);
-    if (fd < 0 || fd >= MAX_FD)
-        return -1;
-    ret = fs_fstat(fd, buf);
+    fp = fs_open_file(name, 0, follow_link);
+    if (fp == NULL)
+        goto done;
+    if (!fp->op.stat)
+        goto done;
+    ret = fp->op.stat(fp->inode, buf);
     if (TestControl.verbos) {
         format_modes(buf->st_mode, modes);
-        klog("%d: sys_stat(%s, %x) = %d, %s\n", CURRENT_TASK()->psid, name, buf, ret, modes);
+        klog("%d: do_stat(%s, %x) = %d, %s\n", CURRENT_TASK()->psid, name, buf, ret, modes);
     }
-    free(name);
-    fs_close(fd);
+    
+done:
+    name_put(name);
+    if (fp){
+        fs_destroy(fp);
+    }
     return ret;
+}
+
+static int sys_stat(const char *_name, struct stat *buf)
+{
+    return do_stat(_name, buf, 1);
 }
 
 static int sys_access(const char* path, int mode)

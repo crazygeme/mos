@@ -216,7 +216,8 @@ static int dir_read(ext4_dir *dir, void *buf, size_t size, size_t *rcnt)
     if (!entry){
         ret =0;
     }else{
-        ret = offsetof(ext4_direntry, name) + entry->name_length;
+        // ret = offsetof(ext4_direntry, name) + entry->name_length;
+        ret = sizeof(ext4_direntry);
         memcpy(buf, entry, ret);
     }
 done:
@@ -250,7 +251,6 @@ filep fs_alloc_filep_normal(void* content)
     fp->file_type = FILE_TYPE_NORMAL;
     fp->inode = content;
     fp->ref_cnt = 0;
-    fp->file_off = 0;
     fp->op = file_op;
     fp->istty = 0;
     return fp;
@@ -264,7 +264,6 @@ filep fs_alloc_filep_dir(void* content)
     fp->file_type = FILE_TYPE_DIR;
     fp->inode = content;
     fp->ref_cnt = 0;
-    fp->file_off = 0;
     fp->op = dir_op;
     return fp;
 }

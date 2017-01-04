@@ -184,6 +184,7 @@ typedef struct _task_frame
 	unsigned long esp;  // kernel or user esp
 }task_frame;
 
+
 typedef struct _task_struct
 {
 	task_frame tss;
@@ -203,8 +204,7 @@ typedef struct _task_struct
     ps_type type;
     int remain_ticks;
     int is_switching;
-	filep* fds;
-	unsigned* fd_flsgs;
+    file_descriptor* fds;
     semaphore fd_lock;
 	unsigned exit_status;
 	unsigned parent;

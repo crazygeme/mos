@@ -16,6 +16,10 @@ static void cleanup()
     task_struct* cur = CURRENT_TASK();
     int i = 0;
 
+    if (cur->fork_flag & FORK_FLAG_VFORK){
+        sema_trigger(&cur->vfork_event);
+    }
+
     for (i = 0; i < MAX_FD; i++)
     {
         if ( cur->fds[i].used && (cur->fds[i].flag & O_CLOEXEC))

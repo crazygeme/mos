@@ -208,7 +208,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, "sys_sigaction", "sys_sigprocmask",          // 171 ~ 175
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, "sys_getcwd", 0, 0,          // 181 ~ 185
-    0, 0, 0, 0, 0,          // 185 ~ 190
+    0, 0, 0, 0, "sys_vfork",          // 185 ~ 190
     0, 0, 0, 0, 0,            // 191 ~ 195
     "sys_lstat64", "sys_fstat64" , "sys_quota"             // 196 ~ 198
 };
@@ -256,7 +256,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, sys_sigaction, sys_sigprocmask,          // 171 ~ 175
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
-    0, 0, 0, 0, 0,          // 185 ~ 190
+    0, 0, 0, 0, sys_vfork,          // 185 ~ 190
     0, 0, 0, 0, 0,            // 191 ~ 195
     sys_lstat64, sys_fstat64, sys_quota            // 196 ~ 198
 };
@@ -1065,7 +1065,9 @@ static int sys_pause()
 static int resolve_path(char *old, char *new)
 {
     char* r;
-    if (!old || !*old) return -1;
+    int len = strlen(old);
+    if (!old || !*old)
+        return -1;
 
     if (!strcmp(old, "."))
     {
@@ -1088,9 +1090,25 @@ static int resolve_path(char *old, char *new)
     if (old[0] == '/')
     {
         strcpy(new, old);
+        if (len >= 2 && new[len-1] == '.' && new[len-2] == '.')
+        {
+            r = strrchr(new, '/');
+            if (!r) return -1;
+            r = strrchr(r-1, '/');
+            if (!r) return -1;
+            r++;
+            *r = '\0';
+        }
+        else if (len >= 1 && new[len-1] == '.')
+        {
+            new[len-1] = '\0';
+        }
         return 0;
     }
-    else if (strlen(old) > 1 && old[0] == '.' && old[1] == '/') old += 2;
+    else if (len > 1 && old[0] == '.' && old[1] == '/')
+    { 
+        old += 2;
+    }
 
     sys_getcwd(new, MAX_PATH);
     strcat(new, old);

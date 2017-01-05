@@ -1465,6 +1465,7 @@ void tty_write(const char* buf, unsigned len)
 void reboot()
 {
     klog_close();
+    ext4_umount("/");
     block_close();
     _write_port(0x64, 0xfe);
 }

@@ -1013,9 +1013,6 @@ static int sys_setpgid(unsigned pid, unsigned pgid)
 
 static int sys_wait4(int pid, int *status, void *rusage)
 {
-    if (TestControl.verbos) {
-        klog("%d: wait4\n", CURRENT_TASK()->psid);
-    }
     if (pid == -1)
     {
         return sys_waitpid(0, status, 0);

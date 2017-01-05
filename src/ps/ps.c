@@ -638,14 +638,12 @@ static void ps_dup_user_maps(task_struct* cur, task_struct* task)
 }
 
 extern void ret_from_syscall();
-int sys_fork()
+int do_fork(unsigned flag)
 {
     task_struct* cur = CURRENT_TASK();
     task_struct* task = vm_alloc(KERNEL_TASK_SIZE);
     intr_frame* cur_intr_frame = (intr_frame*)((char*)cur + PAGE_SIZE - sizeof(intr_frame));
     intr_frame* task_intr_frame = (intr_frame*)((char*)task + PAGE_SIZE - sizeof(intr_frame));
-    if (TestControl.verbos)
-        klog("%d:fork()\n", cur->psid);
 
     //memcpy(task, cur, PAGE_SIZE);
     *task = *cur;
@@ -671,14 +669,39 @@ int sys_fork()
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
     task->cwd = name_get();
+    task->fork_flag = flag;
     memset(task->cwd, 0, MAX_PATH);
     strcpy(task->cwd, cur->cwd);
     ps_dup_fds(cur, task);
     ps_dup_user_maps(cur, task);
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
+    if (flag & FORK_FLAG_VFORK){
+        sema_init(&task->vfork_event, "vfork_event", 1);
+        sema_wait(&task->vfork_event);
+    }
     cur_intr_frame->eax = task->psid;
     return task->psid;
+}
+
+int sys_fork()
+{
+    if (TestControl.verbos)
+        klog("%d: fork()\n", CURRENT_TASK()->psid);
+    
+    return do_fork(0);
+}
+
+/*
+ * currently we still duplication address space
+ * it's fast enough because of COW
+ */
+int sys_vfork()
+{
+        if (TestControl.verbos)
+        klog("%d: vfork()\n", CURRENT_TASK()->psid);
+    
+    return do_fork(FORK_FLAG_VFORK);
 }
 
 int sys_exit(unsigned status)
@@ -688,6 +711,10 @@ int sys_exit(unsigned status)
     cur->exit_status = status;
     if (TestControl.verbos)
         klog("%d: exit(%d)\n", cur->psid, status);
+
+    if (cur->fork_flag & FORK_FLAG_VFORK){
+        sema_trigger(&cur->vfork_event);
+    }
 
     if (cur->user.vm)
     {

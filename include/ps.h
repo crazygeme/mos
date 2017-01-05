@@ -4,6 +4,8 @@
 #include <list.h>
 #include <lock.h>
 #include <fs.h>
+
+#define FORK_FLAG_VFORK 1
 /*
  * ----------------------------
  * offset	|31-16		15-0  |
@@ -210,6 +212,8 @@ typedef struct _task_struct
 	unsigned parent;
 	unsigned group_id;
 	char *cwd;
+    unsigned fork_flag;
+    semaphore vfork_event;
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;
@@ -256,6 +260,7 @@ int ps_has_ready(int priority);
 
 // syscall handler
 int sys_fork();
+int sys_vfork();
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int* status, int options);
 char *sys_getcwd(char *buf, unsigned size);

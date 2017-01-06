@@ -409,10 +409,15 @@ static unsigned  do_ps_id_gen()
     spinlock_unlock(&psid_lock);
     return (unsigned)ret;
 }
-
+#ifdef PSID_ALLOC
 static unsigned last_gen_pid = (unsigned)-1;
+#else
+static unsigned last_gen_pid = (unsigned)0;
+#endif
+
 unsigned ps_id_gen()
 {
+#ifdef PSID_ALLOC
     unsigned ret = do_ps_id_gen();
     unsigned ret2;
     unsigned id;
@@ -426,13 +431,18 @@ unsigned ps_id_gen()
         id = ret;
     }
     return id;
+#else
+    return __sync_fetch_and_add(&last_gen_pid, 1); 
+#endif
 }
 
 void ps_id_free(unsigned psid)
 {
+#ifdef PSID_ALLOC
     spinlock_lock(&psid_lock);
     ps_id_mark(psid, 0);
     spinlock_unlock(&psid_lock);
+#endif
 }
 
 static void ps_setup_task_frame(task_struct* task, unsigned data_seg,
@@ -1114,4 +1124,18 @@ int ps_has_ready(int priority)
     }
 
     return 0;
+}
+
+void ps_enum_all(ps_enum_callback callback)
+{
+    LIST_ENTRY* head = &control.mgr_queue;
+    LIST_ENTRY* node = head->Flink;
+    if (!callback)
+        return;
+
+    while (node != head){
+        task_struct* task = (task_struct*)CONTAINER_OF(node, task_struct, ps_mgr);
+        callback(task);
+        node = node->Flink;
+    }
 }

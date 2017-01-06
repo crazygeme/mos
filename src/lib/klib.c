@@ -1461,12 +1461,32 @@ void tty_write(const char* buf, unsigned len)
     unlock_tty();
 }
 
+static void close_fp_callback(task_struct* task)
+{
+    int i = 0;
+    for (i = 0; i < MAX_FD; i++){
+        if (task->fds[i].used == 0)
+            continue;
+
+        if (task->fds[i].fp == NULL)
+            continue;
+
+        fs_destroy(task->fds[i].fp);
+    }
+}
+
+static void system_down()
+{
+    klog_close();
+    ps_enum_all(close_fp_callback);
+    ext4_umount("/");
+    block_close();
+}
 
 void reboot()
 {
-    klog_close();
-    ext4_umount("/");
-    block_close();
+    __asm__("cli");
+    system_down();
     _write_port(0x64, 0xfe);
 }
 
@@ -1475,12 +1495,9 @@ void shutdown()
 {
     const char s[] = "Shutdown";
     const char *p;
-
-    printf("Powering off\n");
-    printf("Close klog\n");
-    klog_close();
-    printf("Flush block cache\n");
-    block_close();
+    __asm__("cli");
+    printf("Shutting down system ...\n");
+    system_down();
 
     /* 	This is a special power-off sequence supported by Bochs and
           QEMU, but not by physical hardware. */
@@ -1488,13 +1505,12 @@ void shutdown()
     for (p = s; *p != '\0'; p++)
         _write_port(0x8900, *p);
 
+    /*  In newer versions of QEMU, you can pass 
+        -device isa-debug-exit,iobase=0xf4,iosize=0x04
+        on the command-line, and do: */
+    _write_port(0xf4, 0x00);
 
-    /* 	This will power off a VMware VM if "gui.exitOnCLIHLT = TRUE"
-          is set in its configuration file. (The "pintos" script does
-          that automatically.) */
-    asm volatile ("cli; hlt" : : : "memory");
-
-    /* None of those worked. */
+    /* None of those works... */
     printf("still running...\n");
     for (;;);
 }

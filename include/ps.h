@@ -257,7 +257,8 @@ task_struct* ps_find_process(unsigned psid);
 
 // if process that >= priority exist
 int ps_has_ready(int priority);
-
+typedef void (*ps_enum_callback)(task_struct* task);
+void ps_enum_all(ps_enum_callback callback);
 // syscall handler
 int sys_fork();
 int sys_vfork();

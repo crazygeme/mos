@@ -1560,25 +1560,19 @@ int ext4_fopen2(ext4_file *f, const char *path, int flags)
 {
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
 	int r;
-	int filetype;
-
+	int filetypes[] = {EXT4_DE_REG_FILE, EXT4_DE_SYMLINK, EXT4_DE_DIR};
+	int i;
 	if (!mp)
 		return ENOENT;
 
-	filetype = EXT4_DE_REG_FILE;
-
 	EXT4_MP_LOCK(mp);
 
-	ext4_block_cache_write_back(mp->fs.bdev, 1);
-	r = ext4_generic_open2(f, path, flags, filetype, NULL, NULL);
-	ext4_block_cache_write_back(mp->fs.bdev, 0);
-
-	if (r != EOK) {
-		filetype = EXT4_DE_SYMLINK;
-
+	for (i = 0; i < sizeof(filetypes)/sizeof(filetypes[0]); i++){
 		ext4_block_cache_write_back(mp->fs.bdev, 1);
-		r = ext4_generic_open2(f, path, flags, filetype, NULL, NULL);
+		r = ext4_generic_open2(f, path, flags, filetypes[i], NULL, NULL);
 		ext4_block_cache_write_back(mp->fs.bdev, 0);
+		if (r == EOK)
+			break;
 	}
 
 	EXT4_MP_UNLOCK(mp);

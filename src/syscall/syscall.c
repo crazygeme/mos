@@ -165,9 +165,9 @@ static int sys_getrlimit(int resource, void* limit);
 static int sys_kill(unsigned pid, int sig);
 static int sys_unlink(const char *pathname);
 static int sys_time(unsigned* t);
-static int resolve_path(char* old, char* new);
+static int resolve_path(const char* old, char* new);
 static int sys_access(const char* path, int mode);
-static int do_stat(const char *_name, struct stat *buf, int follow_link);
+static int do_stat(const char* func, const char *_name, struct stat *buf, int follow_link);
 
 static char* call_table_name[NR_syscalls] = {
     "test_call",
@@ -263,9 +263,7 @@ static unsigned call_table[NR_syscalls] = {
 
 static int unhandled_syscall(unsigned callno)
 {
-    if (TestControl.verbos) {
-        klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid, callno);
-    }
+    klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid, callno);
     return -1;
 }
 
@@ -300,7 +298,7 @@ static int sys_read(int fd, char* buf, unsigned len)
 {
     task_struct* cur = CURRENT_TASK();
     int i = 0, pri_len = 0;
-
+    int ret = 0;
     if (fd < 0 || fd >= MAX_FD)
         return -1;
 
@@ -315,23 +313,23 @@ static int sys_read(int fd, char* buf, unsigned len)
     }
 
     unsigned offset = cur->fds[fd].file_off;
-    len = fs_read(fd, offset, buf, len);
-    offset += len;
+    ret = fs_read(fd, offset, buf, len);
+    offset += ret;
     cur->fds[fd].file_off = offset;
 
 
     if (TestControl.verbos) {
-        pri_len = (len > 5) ? 5 : len;
+        pri_len = (ret > 5) ? 5 : ret;
         for (i = 0; i < pri_len; i++) {
             if (isprint(buf[i]))
                 klog_printf("%c", buf[i]);
             else
                 klog_printf("\\%x", buf[i]);
         }
-        klog_printf("\", %d)\n", len);
+        klog_printf("\", %d) = %d\n", len, ret);
     }
 
-    return len;
+    return ret;
 }
 
 static int sys_write(int fd, char *buf, unsigned len)
@@ -499,12 +497,13 @@ static int sys_close(unsigned fd)
     return fs_close(fd);
 }
 
-static int sys_brk(unsigned top)
+static int sys_brk(unsigned _top)
 {
     task_struct *task = CURRENT_TASK();
     unsigned size = 0;
     unsigned pages = 0;
-
+    unsigned ret,top;
+    top = _top;
     if (task->user.heap_top == USER_HEAP_BEGIN)
     {
         mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
@@ -515,11 +514,13 @@ static int sys_brk(unsigned top)
 
     if (top == 0)
     {
-        return task->user.heap_top;
+        ret = task->user.heap_top;
+        goto done;
     }
     else if (top >= USER_HEAP_END)
     {
-        return task->user.heap_top;
+        ret =  task->user.heap_top;
+        goto done;
     }
     else if (top > task->user.heap_top)
     {
@@ -535,8 +536,8 @@ static int sys_brk(unsigned top)
         REFRESH_CACHE();
         top = task->user.heap_top + pages * PAGE_SIZE;
         task->user.heap_top = top;
-        return top;
-
+        ret =  top;
+        goto done;
     }
     else
     {
@@ -552,16 +553,15 @@ static int sys_brk(unsigned top)
             mm_del_dynamic_map(vir);
         }
         REFRESH_CACHE();
-        if (TestControl.verbos) {
-            klog("%d: brk: cur %x newtop %x, ret %x\n", CURRENT_TASK()->psid, task->user.heap_top, top, top);
-        }
         task->user.heap_top = top;
-
-        return top;
-
+        ret = top;
+        goto done;
     }
-
-    return 0;
+done:
+    if (TestControl.verbos) {
+            klog("%d: brk(%x) = %x\n", CURRENT_TASK()->psid, _top, ret);
+    }
+    return ret;
 }
 
 static int _chdir(const char *cwd, const char *path)
@@ -601,14 +601,23 @@ static int sys_chdir(const char *path)
     char *cwd = name_get();
     int ret = 1;
     task_struct *cur = CURRENT_TASK();
-
+    int len;
     if (!path || !*path) return 0;
 
     if (TestControl.verbos) {
         klog("%d: chdir %s\n", CURRENT_TASK()->psid, path);
     }
 
-    if (*path != '/') strcpy(cwd, cur->cwd);
+    if (*path != '/')
+        strcpy(cwd, cur->cwd);
+    else{
+        len = strlen(path);
+        strcpy(cur->cwd, path);
+        if (path[len-1] != '/')
+            strcat(cur->cwd, "/");
+        ret = 0;
+        goto done;
+    }
 
     strcpy(name, path);
     slash = strchr(name, '/');
@@ -617,7 +626,7 @@ static int sys_chdir(const char *path)
     {
         *slash = '\0';
         ret = _chdir(cwd, tmp);
-        if (!ret) return 0;
+        if (!ret) return -1;
 
         slash++;
         tmp = slash;
@@ -625,13 +634,16 @@ static int sys_chdir(const char *path)
     }
 
     ret = _chdir(cwd, tmp);
-    if (!ret) return -1;
+    if (!ret){
+        ret = -1;
+        goto done;
+    }
 
     strcpy(cur->cwd, cwd);
-
+done:
     name_put(name);
     name_put(cwd);
-    return 0;
+    return ret;
 }
 
 
@@ -959,7 +971,10 @@ static int sys_fstat64(int fd, struct stat64 *s) {
 static int sys_lstat64(const char *path, struct stat64 *s)
 {
     struct stat s32;
-    do_stat(path, &s32, 0);
+    char* name = name_get();
+    int ret;
+    resolve_path(path, name);
+    ret = do_stat(__func__, name, &s32, 0);
     memset(s, 0, sizeof(*s));
     s->st_dev = s32.st_dev;
     s->st_ino = s32.st_ino;
@@ -974,8 +989,8 @@ static int sys_lstat64(const char *path, struct stat64 *s)
     s->st_atime = s32.st_atime;
     s->st_mtime = s32.st_mtime;
     s->st_ctime = s32.st_ctime;
-
-    return 0;
+    name_put(name);
+    return ret;
 }
 
 static int sys_getppid()
@@ -1062,7 +1077,7 @@ static int sys_pause()
     return -1;
 }
 
-static int resolve_path(char *old, char *new)
+static int resolve_path(const char *old, char *new)
 {
     char* r;
     int len = strlen(old);
@@ -1220,13 +1235,9 @@ static int sys_unlink(const char *_name)
     char *name = name_get();
     struct stat s;
     int ret = -1;
+
     resolve_path(_name, name);
-
-    if (TestControl.verbos) {
-        klog("%d: unlink(%s)\n", CURRENT_TASK()->psid, name);
-    }
-
-    ret = do_stat(name, &s, 0);
+    ret = do_stat(__func__, name, &s, 0);
     if (ret != EOK)
         goto done;
 
@@ -1236,9 +1247,11 @@ static int sys_unlink(const char *_name)
     }
 
     ret = ext4_fremove(name);
-
 done:
     name_put(name);
+    if (TestControl.verbos) {
+       klog("%d: unlink(%s) = %d\n", CURRENT_TASK()->psid, name, ret);
+    }
     return ret;
 }
 
@@ -1303,13 +1316,11 @@ static int format_modes(unsigned mode, char* str)
     return 0;
 }
 
-static int do_stat(const char *_name, struct stat *buf, int follow_link)
+static int do_stat(const char* func, const char *name, struct stat *buf, int follow_link)
 {
     int ret = -1;
     filep fp = NULL;
-    char *name = name_get();
     char modes[11];
-    resolve_path(_name, name);
     fp = fs_open_file(name, 0, follow_link);
     if (fp == NULL)
         goto done;
@@ -1318,11 +1329,10 @@ static int do_stat(const char *_name, struct stat *buf, int follow_link)
     ret = fp->op.stat(fp->inode, buf);
     if (TestControl.verbos) {
         format_modes(buf->st_mode, modes);
-        klog("%d: do_stat(%s, %x) = %d, %s\n", CURRENT_TASK()->psid, name, buf, ret, modes);
+        klog("%d: %s(%s, %x) = %d, %s, len=%d\n", CURRENT_TASK()->psid, func, name, buf, ret, modes, buf->st_size);
     }
     
 done:
-    name_put(name);
     if (fp){
         fs_destroy(fp);
     }
@@ -1331,7 +1341,12 @@ done:
 
 static int sys_stat(const char *_name, struct stat *buf)
 {
-    return do_stat(_name, buf, 1);
+    char* name = name_get();
+    int ret;
+    resolve_path(_name, name);
+    ret = do_stat(__func__, name, buf, 1);
+    name_put(name);
+    return ret;
 }
 
 static int sys_access(const char* path, int mode)
@@ -1355,6 +1370,10 @@ static int sys_access(const char* path, int mode)
 
     if (mode & X_OK)
         ret |= ((s.st_mode & S_IXUSR) == S_IXUSR) ? EOK : (-EACCES);
+
+    if (TestControl.verbos) {
+        klog("%d: access(%s, %x) = %d\n", CURRENT_TASK()->psid, path, mode, ret);
+    }
 
     return ret;
 }

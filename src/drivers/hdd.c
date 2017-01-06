@@ -653,17 +653,20 @@ static block_cache_item* hdd_cache_find_oldest(partition* p)
 
 static void hdd_cache_flush(partition*p, block_cache_item* item)
 {
-    void* buf = item->buf;
+    char* buf = item->buf;
     int sector = item->sector;
     int head_sector = sector;
+    int i = 0;
 
     if (sector < 0)
         return;
 
     if (item->dirty)
     {
-        total_writ++;
-        partition_write(p, head_sector, buf, BLOCK_SECTOR_SIZE*PREREAD_SECTOR);
+        total_writ += PREREAD_SECTOR;
+        for (i = 0; i < PREREAD_SECTOR; i++)
+            partition_write(p, head_sector+i, buf+i*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+
         item->dirty = 0;
     }
 }

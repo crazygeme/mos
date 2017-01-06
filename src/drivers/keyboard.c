@@ -159,18 +159,12 @@ static void kb_dsr(void* param)
         /* Ordinary character. */
         if (!release)
         {
-            /* Reboot if Ctrl+Alt+Del pressed. */
+            /* Reboot if Ctrl+Alt+C pressed. */
             if (c == 'C' && ctrl && alt)
                 reboot();
 
-            if (c == 'P'  && ctrl && alt)
+            if (c == 'V'  && ctrl && alt)
                 shutdown();
-
-            if (c == '1' && ctrl)
-                profiling_start();
-
-            if (c == '2' && ctrl)
-                profiling_stop();
 
             /* Handle Ctrl, Shift.
                Note that Ctrl overrides Shift. */

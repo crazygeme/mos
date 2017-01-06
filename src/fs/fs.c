@@ -96,7 +96,7 @@ static int block_proxy_unlock(struct ext4_blockdev *bdev)
 
 void fs_mount_root()
 {
-    ext4_mount(__first_hdd_name, "/", false);
+    ext4_mount(__first_hdd_name, "/", 0);
 }
 
 #define UNIMPL() klog("unimplemented: %s\n", __func__)
@@ -205,36 +205,32 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
         f = calloc(1, sizeof(*f));
         ret = ext4_fopen2(f, path, flag);
         if (ret != EOK)
-        {
             goto fail;
-        }
+
         ret = ext4_fstat(f, &s);
         if (ret != EOK)
-        {
             goto fail;
-        }
-        if (S_ISLNK(s.st_mode))
-        {
+
+        if (S_ISLNK(s.st_mode) && follow_link){
             linkcontent = name_get();
             memset(linkcontent, 0, MAX_PATH);
+        }
+
+        while (S_ISLNK(s.st_mode) && follow_link)
+        {
             ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
             if (ret != EOK)
-            {
                 goto fail;
-            }
+
             ext4_fclose(f);
             fs_resolve_symlink_path(path, linkcontent, name_len);
             ret = ext4_fopen2(f, linkcontent, flag);
             if (ret != EOK)
-            {
                 goto fail;
-            }
+
             ret = ext4_fstat(f, &s);
             if (ret != EOK)
-            {
                 goto fail;
-            }
-            name_put(linkcontent);
         }
 
         if (S_ISDIR(s.st_mode))
@@ -242,6 +238,7 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
             ret = ext4_fclose(f);
             if (ret != EOK)
                 goto fail;
+
             free(f);
             f = NULL;
             dir = calloc(1, sizeof(*dir));

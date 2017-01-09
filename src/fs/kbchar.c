@@ -3,7 +3,7 @@
 #include <keyboard.h>
 #include <unistd.h>
 #include <fs.h>
-#include <include/fs.h>
+#include <tty.h>
 
 static int kb_read(void* inode, const void *buf, size_t size, size_t *wcnt);
 static int kb_close(struct ext4_blockdev *bdev);
@@ -39,7 +39,7 @@ static int kb_select(void* inode, unsigned type)
     if (kb_can_read())
         return 0;
 
-    return -1;
+    return 0;
 }
 
 static int kb_stat(void* inode, struct stat* s)
@@ -63,6 +63,7 @@ static fileop kbop = {
     .close = kb_close,
     .stat = kb_stat,
     .select = kb_select,
+    .ioctl = tty_ioctl,
 };
 
 filep fs_alloc_filep_kb()

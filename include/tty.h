@@ -28,4 +28,6 @@ void tty_clear();
 
 void tty_movecurse(unsigned cp);
 
+int tty_ioctl(void* inode, unsigned cmd, void* buf);
+
 #endif

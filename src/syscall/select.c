@@ -20,7 +20,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
                    void *sigmask)
 {
     fd_set *reads, *writes, *excepts;
-    int ret = EOK;
+    int ret = 0;
     int i = 0;
     unsigned time_begin = time_now(); // milliseconds
     unsigned time_span = 0;
@@ -48,11 +48,14 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
     }
 
 #define CHECK_FDS(src, dst, type)\
+        has_set = 0;                            \
         for (i = 0; src && (i < nfds); i++){    \
             if (FD_ISSET(i, src)){              \
-                if (fd_select(i, type) == 0){   \
+                if (fs_select(i, type) == 0){   \
                     FD_SET(i, dst);             \
-                    has_set = 1;                \
+                    has_set ++;                 \
+                    if (ret < has_set)          \
+                        ret = has_set;          \
                 }                               \
             }                                   \
         }
@@ -68,8 +71,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
         // check except fds
         CHECK_FDS(excepts, exceptfds, FS_SELECT_EXCEPT);
 
-        if (has_set){
-            ret = EOK;
+        if (ret > 0){
             break;
         }
 

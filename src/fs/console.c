@@ -95,6 +95,7 @@ static fileop ttyop = {
     .stat = console_stat,
     .llseek = console_llseek,
     .select = console_select,
+    .ioctl = tty_ioctl,
 };
 
 filep fs_alloc_filep_tty()

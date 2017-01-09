@@ -5,6 +5,8 @@
  */
 #include <tty.h>
 #include <vga.h>
+#include <unistd.h>
+#include <ioctl.h>
 
 static void tty_copy_row(int src, int dst);
 static void tty_clear_row(int row);
@@ -262,5 +264,32 @@ void tty_movecurse(unsigned c)
         }
         cursor = c;
         fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
+    }
+}
+
+int tty_ioctl(void* inode, unsigned cmd, void* buf)
+{
+    switch(cmd) {
+        case TCGETS: {
+            struct termios s = {ICRNL,        /* change incoming CR to NL */
+                                OPOST | ONLCR,    /* change outgoing NL to CRNL */
+                                B38400 | CS8,
+                                IXON | ISIG | ICANON | ECHO | ECHOCTL | ECHOKE,
+                                0,        /* console termio */
+                                INIT_C_CC};
+            memcpy(buf, &s, sizeof(s));
+            return 0;
+        }
+        case TCSETS: {
+            // FIXME
+            return 0;
+        }
+        case TIOCGWINSZ: {
+            struct winsize* size = (struct winsize*)buf;
+            size->ws_row = TTY_MAX_ROW;
+            size->ws_col = TTY_MAX_COL;
+            size->ws_xpixel = size->ws_ypixel = 0;
+            return 0;
+        }
     }
 }

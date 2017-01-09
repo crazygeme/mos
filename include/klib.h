@@ -129,7 +129,6 @@ void shutdown();
 
 void printk(const char* str, ...);
 
-int tty_ioctl(int req, void* cmd);
 
 typedef struct _TEST_CONTROL
 {

@@ -217,7 +217,7 @@ static void ansi_control_add(char c)
             row = 0;
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
-
+        ansi_control_end();
         break;
     case 'B': // ��������n�� 
         arg = atoi(str_arg);
@@ -228,6 +228,7 @@ static void ansi_control_add(char c)
             row = TTY_MAX_ROW - 1;
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
+        ansi_control_end();
         break;
     case 'C': // ��������n�� 
         arg = atoi(str_arg);
@@ -238,6 +239,7 @@ static void ansi_control_add(char c)
             col = TTY_MAX_COL - 1;
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
+        ansi_control_end();
         break;
     case 'D': // ��������n�� 
         arg = atoi(str_arg);
@@ -248,6 +250,7 @@ static void ansi_control_add(char c)
             col = 0;
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
+        ansi_control_end();
         break;
     case 'H': // ���ù���λ�� (ROW:COL)
         str_col = strchr(str_arg, ';');
@@ -266,9 +269,11 @@ static void ansi_control_add(char c)
             col = TTY_MAX_COL - 1;
         new_pos = ROW_COL_TO_CUR(row, col);
         klib_cursor_forward(new_pos);
+        ansi_control_end();
         break;
     case 'J': // ���� 
         tty_clear();
+        ansi_control_end();
         break;
     case 'K': // �����ӹ��굽��β������ 
         break;
@@ -1350,39 +1355,6 @@ unsigned int rand()
 
 static TTY_COLOR cur_fg_color = clWhite;
 static TTY_COLOR cur_bg_color = clBlack;
-
-int tty_ioctl(int request, void* buf)
-{
-    tty_command* cmd = (tty_command*)buf;
-    if (request == 0) // FIXME: a private request
-    {
-        switch (cmd->cmd_id) {
-            case tty_cmd_get_color:
-                cmd->color.fg_color = cur_fg_color;
-                cmd->color.bg_color = cur_bg_color;
-                break;
-            case tty_cmd_set_color:
-                cur_fg_color = cmd->color.fg_color;
-                cur_bg_color = cmd->color.bg_color;
-                break;
-            case tty_cmd_get_curse:
-                cmd->curse.cx = CUR_ROW;
-                cmd->curse.cy = CUR_COL;
-                break;
-            case tty_cmd_set_curse:
-                cursor = ROW_COL_TO_CUR(cmd->curse.cx, cmd->curse.cy);
-                break;
-            default:
-                return -1;
-        }
-
-        return 0;
-    }
-    else
-    {
-        return 0;
-    }
-}
 
 void printk(const char* str, ...)
 {

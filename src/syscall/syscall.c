@@ -274,7 +274,8 @@ static unsigned call_table[NR_syscalls] = {
 
 static int unhandled_syscall(unsigned callno)
 {
-    klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid, callno);
+    if (TestControl.verbos)
+        klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid, callno);
     return -1;
 }
 
@@ -390,62 +391,7 @@ static int sys_write(int fd, char *buf, unsigned len)
 
 static int sys_ioctl(int fd, int request, char *buf)
 {
-    task_struct *cur = CURRENT_TASK();
-    int ret = -1;
-
-    if (TestControl.verbos) {
-        klog("%d: ioctl(%d, %x, %x) =", CURRENT_TASK()->psid, fd, request, buf);
-    }
-    if (fd < 0 || fd >= MAX_FD) {
-        if (TestControl.verbos) {
-            klog_printf("%s\n", "ENOENT");
-        }
-        return -ENOENT;
-    }
-
-    if (cur->fds[fd].used == 0){
-        if (TestControl.verbos) {
-            klog_printf("%s\n", "ENOENT");
-        }
-        return -ENOENT;
-    }
-
-    if (S_ISDIR(cur->fds[fd].fp->mode)) {
-        if (TestControl.verbos) {
-            klog_printf("%s\n", "EISDIR");
-        }
-        return -EISDIR;
-    }
-
-
-    if (request == 0x5401)
-    {
-        struct termios *s = (struct termios *)buf;
-        char tmp[] = {0x03, 0x1c, 0x7f, 0x15, 0x04,
-                      0x00, 0x01, 0x00, 0x11, 0x13,
-                      0x1a, 0x00, 0x12, 0x0f, 0x17,
-                      0x16, 0x00, 0x00, 0x00, 0x00,
-                      0x00, 0x00, 0x00, 0x00, 0x00,
-                      0x00, 0x00, 0x00, 0x00, 0x00,
-                      0x00, 0x00};
-        s->c_iflag = 0x500;
-        s->c_oflag = 0x5;
-        s->c_cflag = 0xbf;
-        s->c_lflag = 0x8a3b;
-        s->c_line = 0x0;
-        memcpy(s->c_cc, tmp, 16);
-        if (TestControl.verbos) {
-            klog_printf("%s\n", "EOK");
-        }
-        return 0;
-    }
-    else
-    {
-        if (TestControl.verbos) {
-            klog_printf("%s\n", "EOK(actually not impl)");
-        }
-        return 0;
-    }
+    return fs_ioctl(fd, request, buf);
 }
 
 static int sys_getpid()
@@ -1414,12 +1360,21 @@ static int sys_llseek(int fd, unsigned offset_high,
 static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout)
 {
-    return do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
+    int ret = do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
+    if (TestControl.verbos) {
+        klog("%d: select(%d, %x, %x, %x, %x) = %d\n", CURRENT_TASK()->psid,
+             nfds, readfds, writefds, exceptfds, timeout, ret);
+    }
+    return ret;
 }
 
 static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout,
                    void *sigmask)
 {
-    return do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
+    int ret = do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
+    if (TestControl.verbos) {
+        klog("%d: pselect(%d, %x, %x, %x, %x, %x) = %d\n", CURRENT_TASK()->psid,
+             nfds, readfds, writefds, exceptfds, timeout, sigmask, ret);
+    }
 }

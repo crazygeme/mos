@@ -61,6 +61,7 @@ typedef struct _fileop
     int (*stat)(void* inode, struct stat* s);
     uint64_t (*tell)(void* inode);
     int (*select)(void* inode, unsigned type);
+    int (*ioctl)(void* inode, unsigned cmd, void* buf);
 }fileop;
 
 typedef struct _file

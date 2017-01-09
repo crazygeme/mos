@@ -130,16 +130,26 @@ static int pipe_select(void* inode, unsigned type)
     return -1;
 }
 
+static int pipe_llseek(void* inode,  unsigned high, unsigned low, uint64_t* result, uint32_t origin)
+{
+    // FIXME
+    return 0;
+}
+
 static fileop readop = {
     .read = pipe_read,
     .close = pipe_close,
     .stat = pipe_stat,
+    .llseek = pipe_llseek,
+    .select = pipe_select,
 };
 
 static fileop writeop = {
     .write = pipe_write,
     .close = pipe_close,
     .stat = pipe_stat,
+    .llseek = pipe_llseek,
+    .select = pipe_select,
 };
 
 int fs_alloc_filep_pipe(filep* pipes)

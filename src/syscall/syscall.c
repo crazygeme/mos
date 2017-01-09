@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <3rdparty/lwext4/include/ext4.h>
 #include <include/fs.h>
+#include <select.h>
 
 
 struct utimbuf
@@ -168,13 +169,23 @@ static int sys_time(unsigned* t);
 static int resolve_path(const char* old, char* new);
 static int sys_access(const char* path, int mode);
 static int do_stat(const char* func, const char *_name, struct stat *buf, int follow_link);
+static int sys_lseek(int fd, unsigned offset, int whence);
+static int sys_llseek(int fd, unsigned offset_high,
+                   unsigned offset_low, uint64_t *result,
+                   unsigned int whence);
+static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
+                   fd_set *exceptfds, const struct timespec *timeout);
+
+static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
+                   fd_set *exceptfds, const struct timespec *timeout,
+                   void *sigmask);
 
 static char* call_table_name[NR_syscalls] = {
     "test_call",
     "sys_exit", "sys_fork", "sys_read", "sys_write", "sys_open",   // 1  ~ 5
     "sys_close", "sys_waitpid", "sys_creat", 0, "sys_unlink",           // 6  ~ 10  
     "sys_execve", "sys_chdir", "time", 0, 0,           // 11 ~ 15
-    0, 0, 0, 0, "sys_getpid",  // 16 ~ 20   
+    0, 0, 0, "sys_lseek", "sys_getpid",  // 16 ~ 20   
     0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
     0, 0, 0, "sys_pause", "sys_utime",          // 26 ~ 30 
     0, 0, "sys_access", 0, 0,          // 31 ~ 35
@@ -187,7 +198,7 @@ static char* call_table_name[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     "sys_getrlimit", 0, 0, 0, 0,          // 76 ~ 80 
-    0, 0, 0, 0, 0,          // 81 ~ 85 
+    0, "sys_select", 0, 0, 0,          // 81 ~ 85 
     0, 0, "sys_reboot", "sys_readdir", "sys_mmap",          // 86 ~ 90 
     "sys_munmap", 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
@@ -198,8 +209,8 @@ static char* call_table_name[NR_syscalls] = {
     0, "sys_uname", 0, 0, "sys_mprotect",          // 121 ~ 125
     0, 0, 0, 0, 0,          // 126 ~ 130
     0, 0, 0, 0, 0,          // 131 ~ 135
-    "sys_personality", 0, 0, 0, 0,          // 136 ~ 140
-    "sys_getdents", 0, 0, 0, "sys_readv",          // 141 ~ 145
+    "sys_personality", 0, 0, 0, "sys_llseek",          // 136 ~ 140
+    "sys_getdents", "sys_newselect", 0, 0, "sys_readv",          // 141 ~ 145
     "sys_writev", 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, "sys_sched_yield", 0, 0,          // 156 ~ 160
@@ -222,7 +233,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
     sys_close, sys_waitpid, sys_creat, 0, sys_unlink,           // 6  ~ 10  
     sys_execve, sys_chdir, sys_time, 0, 0,           // 11 ~ 15
-    0, 0, 0, 0, sys_getpid,  // 16 ~ 20   
+    0, 0, 0, sys_lseek, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
     0, 0, sys_access, 0, 0,          // 31 ~ 35
@@ -235,7 +246,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     sys_getrlimit, 0, 0, 0, 0,          // 76 ~ 80 
-    0, 0, 0, 0, 0,          // 81 ~ 85 
+    0, sys_select, 0, 0, 0,          // 81 ~ 85 
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
     sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
@@ -246,8 +257,8 @@ static unsigned call_table[NR_syscalls] = {
     0, sys_uname, 0, 0, sys_mprotect,          // 121 ~ 125
     0, 0, 0, 0, 0,          // 126 ~ 130
     0, 0, 0, 0, 0,          // 131 ~ 135
-    sys_personality, 0, 0, 0, 0,          // 136 ~ 140
-    sys_getdents, 0, 0, 0, sys_readv,          // 141 ~ 145
+    sys_personality, 0, 0, 0, sys_llseek,          // 136 ~ 140
+    sys_getdents, sys_newselect, 0, 0, sys_readv,          // 141 ~ 145
     sys_writev, 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, sys_sched_yield, 0, 0,          // 156 ~ 160
@@ -1376,4 +1387,39 @@ static int sys_access(const char* path, int mode)
     }
 
     return ret;
+}
+
+static int sys_lseek(int fd, unsigned offset, int whence)
+{
+    int ret;
+    ret =  fs_seek(fd, offset, whence);
+    if (TestControl.verbos) {
+        klog("%d: lseek(%d, %d, %d) = %d\n", CURRENT_TASK()->psid, fd, offset, whence, ret);
+    }
+    return ret;
+}
+
+static int sys_llseek(int fd, unsigned offset_high,
+                   unsigned offset_low, uint64_t *result,
+                   unsigned whence)
+{
+    int ret;
+    ret = fs_llseek(fd, offset_high, offset_low, result, whence);
+    if (TestControl.verbos) {
+        klog("%d: llseek(%d, %d, %d, %x, %d) = %d\n", CURRENT_TASK()->psid, fd, offset_high, offset_low, result, whence, ret);
+    }
+    return ret;
+}
+
+static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
+                   fd_set *exceptfds, const struct timespec *timeout)
+{
+    return do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
+}
+
+static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
+                   fd_set *exceptfds, const struct timespec *timeout,
+                   void *sigmask)
+{
+    return do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
 }

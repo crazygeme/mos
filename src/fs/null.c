@@ -33,6 +33,14 @@ static int null_close(void* inode)
     return 0;
 }
 
+static int null_select(void* inode, unsigned type)
+{
+    if (type == FS_SELECT_EXCEPT)
+        return -1;
+    
+    return 0;
+}
+
 static int null_stat(void* inode, struct stat* s)
 {
     s->st_atime = time_now();
@@ -54,6 +62,7 @@ static fileop nullop = {
     .write = null_write,
     .close = null_close,
     .stat = null_stat,
+    .select = null_select,
 };
 
 

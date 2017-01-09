@@ -507,3 +507,71 @@ int fs_destroy(filep f)
     }
     return ret;
 }
+
+int fs_llseek(int fd, unsigned offset_high,
+                   unsigned offset_low, uint64_t *result,
+                   unsigned whence)
+{
+    task_struct* cur = CURRENT_TASK();
+    filep fp = NULL;
+    int ret = -1;
+    if (fd < 0 || fd >= MAX_FD)
+        return -1;
+
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
+
+    sema_wait(&cur->fd_lock);
+    fp = cur->fds[fd].fp;
+    if (!fp || !fp->op.llseek)
+        goto done;
+    ret = fp->op.llseek(fp->inode, offset_high, offset_low, result, whence);
+
+done:
+    sema_trigger(&cur->fd_lock);
+    return ret;
+}
+
+int fs_seek(int fd, unsigned offset, unsigned whence)
+{
+    task_struct* cur = CURRENT_TASK();
+    filep fp = NULL;
+    int ret = -EACCES;
+    if (fd < 0 || fd >= MAX_FD)
+        return -1;
+
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
+
+    sema_wait(&cur->fd_lock);
+    fp = cur->fds[fd].fp;
+    if (!fp->op.seek)
+        goto done;
+
+    ret = fp->op.seek(fp->inode, offset, whence);
+done:
+    sema_trigger(&cur->fd_lock);
+    return ret;
+}
+
+int fd_select(int fd, unsigned type)
+{
+    task_struct* cur = CURRENT_TASK();
+    filep fp = NULL;
+    int ret = -EACCES;
+    if (fd < 0 || fd >= MAX_FD)
+        return -1;
+
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
+
+    sema_wait(&cur->fd_lock);
+    fp = cur->fds[fd].fp;
+    if (!fp->op.select)
+        goto done;
+
+    ret = fp->op.select(fp->inode, type);
+done:
+    sema_trigger(&cur->fd_lock);
+    return ret;
+}

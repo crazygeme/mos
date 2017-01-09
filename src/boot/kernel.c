@@ -51,7 +51,7 @@ void kmain_startup()
 {
     int i = 0;
 
-    fb_enable();
+    // fb_enable();
 
     g_mb = (multiboot_info_t*)((unsigned)_g_mb + KERNEL_OFFSET);
     // after klib_init, kmalloc/kfree/prink/etc are workable    
@@ -187,7 +187,7 @@ _START static void init(multiboot_info_t* mb)
 {
     int_init();
 
-    fb_init(mb);
+    // fb_init(mb);
 
     mm_init(mb);
     // never to here

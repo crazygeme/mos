@@ -331,7 +331,7 @@ int klib_putchar(char c)
     }
     else if (c == '\b')
     {
-        tty_putchar(CUR_ROW, CUR_COL, ' ');
+        // tty_putchar(CUR_ROW, CUR_COL, ' ');
         cursor--;
         new_pos = cursor;
     }
@@ -369,11 +369,18 @@ void klib_flush_cursor()
     klib_cursor_forward(cursor);
 }
 
+int klib_get_pos()
+{
+    return cursor;  
+}
+
 void klib_putchar_update_cursor(char c)
 {
     int new_pos = klib_putchar(c);
     klib_cursor_forward(new_pos);
 }
+
+int klib_get_pos();
 
 void klib_print(char *str)
 {
@@ -1465,6 +1472,9 @@ static void close_fp_callback(task_struct* task)
 {
     int i = 0;
     for (i = 0; i < MAX_FD; i++){
+        if (task->fds == NULL)
+            continue;
+
         if (task->fds[i].used == 0)
             continue;
 

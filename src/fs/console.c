@@ -2,7 +2,7 @@
 #include <klib.h>
 #include <unistd.h>
 #include <fs.h>
-#include <include/fs.h>
+#include <tty.h>
 
 static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt);
 static int console_close(void* inode);
@@ -36,6 +36,42 @@ static int console_close(void* inode)
     return 0;
 }
 
+static int console_llseek(void* inode,  unsigned high, unsigned low, uint64_t* result, uint32_t origin)
+{
+    unsigned offset = low;
+    switch (origin)
+    {
+        case SEEK_SET:
+            klib_update_cursor(offset);
+            break;
+        case SEEK_CUR:
+            klib_update_cursor(offset + klib_get_pos());
+            break;
+        case SEEK_END:
+            klib_update_cursor(TTY_MAX_CHARS - offset);
+            break;
+    default:
+        break;
+    }
+    klib_flush_cursor();
+    if (result)
+        *result = klib_get_pos();
+}
+
+static uint64_t console_tell(void* inode)
+{
+    return (uint64_t)klib_get_pos();
+}
+
+static int console_select(void* inode, unsigned type)
+{
+    if (type == FS_SELECT_EXCEPT || type == FS_SELECT_READ)
+        return -1;
+
+    // can write any time
+    return 0;
+}
+
 static int console_stat(void* inode, struct stat* s)
 {
     s->st_atime = time_now();
@@ -57,6 +93,8 @@ static fileop ttyop = {
     .write = console_write,
     .close = console_close,
     .stat = console_stat,
+    .llseek = console_llseek,
+    .select = console_select,
 };
 
 filep fs_alloc_filep_tty()

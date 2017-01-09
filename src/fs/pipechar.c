@@ -115,6 +115,21 @@ static int pipe_stat(void* inode, struct stat* s)
     return 0;
 }
 
+static int pipe_select(void* inode, unsigned type)
+{
+    pipe_inode* n = (pipe_inode*)inode;
+    if (type == FS_SELECT_EXCEPT)
+        return -1;
+
+    if (type == FS_SELECT_READ)
+        return cyb_isempty(n->buf) ? -1 : 0;
+
+    if (type == FS_SELECT_WRITE)
+        return cyb_isfull(n->buf) ? -1 : 0;
+
+    return -1;
+}
+
 static fileop readop = {
     .read = pipe_read,
     .close = pipe_close,

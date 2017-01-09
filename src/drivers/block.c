@@ -226,6 +226,14 @@ done:
     return 0;
 }
 
+static int ext4_select(void* inode, unsigned type)
+{
+    if (type == FS_SELECT_EXCEPT)
+        return -1;
+    
+    return 0;
+}
+
 static int dir_stat(ext4_dir *dir, struct stat* s)
 {
     return ext4_fstat(&dir->f, s);
@@ -237,12 +245,15 @@ static fileop file_op = {
     .close = file_close,
     .seek = ext4_fseek,
     .stat = ext4_fstat,
+    .tell = ext4_ftell,
+    .select = ext4_select,
 };
 
 static fileop dir_op = {
     .read = dir_read,
     .close = dir_close,
     .stat = dir_stat,
+    .select = ext4_select,
 };
 
 filep fs_alloc_filep_normal(void* content)

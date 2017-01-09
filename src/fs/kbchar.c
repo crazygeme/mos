@@ -31,6 +31,17 @@ static int kb_close(struct ext4_blockdev *bdev)
     return 0;
 }
 
+static int kb_select(void* inode, unsigned type)
+{
+    if (type == FS_SELECT_WRITE || type == FS_SELECT_EXCEPT)
+        return -1;
+
+    if (kb_can_read())
+        return 0;
+
+    return -1;
+}
+
 static int kb_stat(void* inode, struct stat* s)
 {
     s->st_atime = time_now();
@@ -51,6 +62,7 @@ static fileop kbop = {
     .read = kb_read,
     .close = kb_close,
     .stat = kb_stat,
+    .select = kb_select,
 };
 
 filep fs_alloc_filep_kb()

@@ -29,6 +29,16 @@ typedef struct _time_t
     };
 
 }time_t;
+
+struct timeval {
+    long    tv_sec;         /* seconds */
+    long    tv_usec;        /* microseconds */
+};
+
+struct timespec {
+    long    tv_sec;         /* seconds */
+    long    tv_nsec;        /* nanoseconds */
+};
  
 #define CHANNEL_0  0 //= Channel 0
 #define CHANNEL_1  1 //= Channel 1

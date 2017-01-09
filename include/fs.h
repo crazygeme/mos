@@ -47,13 +47,20 @@ typedef struct _block block;
 #define FILE_TYPE_CHAR      3
 #define FILE_TYPE_DIR       4
 
+#define FS_SELECT_READ 0
+#define FS_SELECT_WRITE 1
+#define FS_SELECT_EXCEPT 2
+
 typedef struct _fileop
 {
     int (*close)(void* inode);
     int (*read)(void* inode, void *buf, size_t size, size_t *rcnt);
     int (*write)(void* inode, const void *buf, size_t size, size_t *wcnt);
     int (*seek)(void* inode, uint64_t offset, uint32_t origin);
+    int (*llseek)(void* inode, unsigned high, unsigned low, uint64_t* result, uint32_t origin);
     int (*stat)(void* inode, struct stat* s);
+    uint64_t (*tell)(void* inode);
+    int (*select)(void* inode, unsigned type);
 }fileop;
 
 typedef struct _file

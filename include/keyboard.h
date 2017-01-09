@@ -6,4 +6,5 @@ typedef struct _intr_frame intr_frame;
 void kb_init();
 void kb_process(intr_frame *frame);
 unsigned char kb_buf_get();
+int kb_can_read();
 #endif

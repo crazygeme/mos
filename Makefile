@@ -73,6 +73,7 @@ OBJS	= $(DST)/boot.o \
 		  $(DST)/memory.o\
 		  $(DST)/profiling.o\
 		  $(DST)/fs.o\
+		  $(DST)/select.o\
 		  $(DST)/libext4.a
 
 TESTS	= $(DST)/$(TEST)/mmap_test.o\
@@ -165,6 +166,9 @@ $(DST)/ps0.o: src/ps/ps0.c include/ps0.h
 
 $(DST)/syscall.o: src/syscall/syscall.c include/syscall.h
 	$(CC) $(CFLAGS) -o $(DST)/syscall.o src/syscall/syscall.c
+
+$(DST)/select.o: src/syscall/select.c include/select.h
+	$(CC) $(CFLAGS) -o $(DST)/select.o src/syscall/select.c
 
 $(DST)/pagefault.o: src/mm/pagefault.c include/pagefault.h
 	$(CC) $(CFLAGS) -o $(DST)/pagefault.o src/mm/pagefault.c

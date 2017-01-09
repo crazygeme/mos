@@ -100,6 +100,11 @@ unsigned char kb_buf_get()
     return cyb_getc(buf);
 }
 
+int kb_can_read()
+{
+    return !cyb_isempty(buf);
+}
+
 // this will drop key if full
 static void kb_buf_put(unsigned char key)
 {

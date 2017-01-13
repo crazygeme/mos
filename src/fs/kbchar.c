@@ -39,7 +39,7 @@ static int kb_select(void* inode, unsigned type)
     if (kb_can_read())
         return 0;
 
-    return 0;
+    return -1;
 }
 
 static int kb_stat(void* inode, struct stat* s)

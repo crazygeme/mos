@@ -5,7 +5,8 @@
 #include <config.h>
 #include <int.h>
 #include <list.h>
-#include <include/fs.h>
+#include <fs.h>
+#include <dsr.h>
 
 
 typedef struct _ps_control
@@ -658,7 +659,10 @@ int do_fork(unsigned flag)
     //memcpy(task, cur, PAGE_SIZE);
     *task = *cur;
     *task_intr_frame = *cur_intr_frame;
-    task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+    if (cur->remain_ticks > DEFAULT_TASK_TIME_SLICE / 2)
+        cur->remain_ticks = task->remain_ticks = cur->remain_ticks / 2;
+    else
+        task->remain_ticks = cur->remain_ticks;
     task->psid = ps_id_gen();
     sema_init(&task->fd_lock, "fd_lock", 0);
 
@@ -1068,6 +1072,7 @@ void _task_sched(const char* func)
     sched_cal_begin();
 
     int_intr_disable();
+
     current = CURRENT_TASK();
     current->is_switching = 1;
     task = ps_get_next_task();
@@ -1085,11 +1090,8 @@ void _task_sched(const char* func)
 
     task->status = ps_running;
     next_cr3 = task->user.page_dir - KERNEL_OFFSET;
-    if (current->status != ps_dying)
-    {
-        // save page dir entry for kernel space
-        ps_save_kernel_map(task);
-    }
+    // save page dir entry for kernel space
+    ps_save_kernel_map(task);
 
     SAVE_ALL(current);
     

@@ -97,6 +97,7 @@ static int block_proxy_unlock(struct ext4_blockdev *bdev)
 void fs_mount_root()
 {
     ext4_mount(__first_hdd_name, "/", 0);
+    ext4_cache_write_back("/", true);
 }
 
 #define UNIMPL() klog("unimplemented: %s\n", __func__)

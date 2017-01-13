@@ -36,32 +36,6 @@ struct iovec
     unsigned iov_len;    /* Length. */
 };
 
-struct linux_dirent
-{
-    unsigned long  d_ino;     /* Inode number */
-    unsigned long  d_off;     /* Offset to next linux_dirent */
-    unsigned short d_reclen;  /* Length of this linux_dirent */
-    char           d_name[];  /* Filename (null-terminated) */
-    /* length is actually (d_reclen - 2 -
-       offsetof(struct linux_dirent, d_name) */
-       /*
-       char           pad;       // Zero padding byte
-       char           d_type;    // File type (only since Linux 2.6.4;
-                                 // offset is (d_reclen - 1))
-       */
-
-};
-
-#define NAME_MAX 255
-struct old_linux_dirent {
-    unsigned long  d_ino;               /* inode number */
-    unsigned long d_off;                /* offset to this old_linux_dirent */
-    unsigned short d_reclen;            /* length of this d_name */
-    char  d_name[NAME_MAX+1];           /* filename (null-terminated) */
-};
-
-
-
 enum
 {
     UNAME26 = 0x0020000,
@@ -179,52 +153,6 @@ static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
 static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout,
                    void *sigmask);
-
-static char* call_table_name[NR_syscalls] = {
-    "test_call",
-    "sys_exit", "sys_fork", "sys_read", "sys_write", "sys_open",   // 1  ~ 5
-    "sys_close", "sys_waitpid", "sys_creat", 0, "sys_unlink",           // 6  ~ 10  
-    "sys_execve", "sys_chdir", "time", 0, 0,           // 11 ~ 15
-    0, 0, 0, "sys_lseek", "sys_getpid",  // 16 ~ 20   
-    0, 0, 0, "sys_getuid", 0,          // 21 ~ 25 
-    0, 0, 0, "sys_pause", "sys_utime",          // 26 ~ 30 
-    0, 0, "sys_access", 0, 0,          // 31 ~ 35
-    0, "sys_kill", 0, "sys_mkdir", "sys_rmdir",          // 36 ~ 40 
-    "sys_dup", "sys_pipe", 0, 0, "sys_brk",          // 41 ~ 45 
-    0, "sys_getgid", 0, "sys_geteuid", "sys_getegid",          // 46 ~ 50 
-    0, 0, 0, "sys_ioctl", "sys_fcntl",          // 51 ~ 55 
-    0, "sys_setpgid", 0, 0, 0,          // 56 ~ 60 
-    0, 0, "sys_dup2", "sys_getppid", "sys_getpgrp",          // 61 ~ 65 
-    0, 0, 0, 0, 0,          // 66 ~ 70 
-    0, 0, 0, 0, 0,          // 71 ~ 75 
-    "sys_getrlimit", 0, 0, 0, 0,          // 76 ~ 80 
-    0, "sys_select", 0, 0, 0,          // 81 ~ 85 
-    0, 0, "sys_reboot", "sys_readdir", "sys_mmap",          // 86 ~ 90 
-    "sys_munmap", 0, 0, 0, 0,          // 91 ~ 95 
-    0, 0, 0, 0, 0,          // 96 ~ 100 
-    0, "sys_socketcall", 0, 0, 0,          // 101 ~ 105
-    "stat", 0, "fs_fstat", 0, 0,          // 106 ~ 110 
-    0, 0, 0, "sys_wait4", 0,          // 111 ~ 115
-    0, 0, 0, 0, 0,          // 116 ~ 120
-    0, "sys_uname", 0, 0, "sys_mprotect",          // 121 ~ 125
-    0, 0, 0, 0, 0,          // 126 ~ 130
-    0, 0, 0, 0, 0,          // 131 ~ 135
-    "sys_personality", 0, 0, 0, "sys_llseek",          // 136 ~ 140
-    "sys_getdents", "sys_newselect", 0, 0, "sys_readv",          // 141 ~ 145
-    "sys_writev", 0, 0, 0, 0,          // 146 ~ 150
-    0, 0, 0, 0, 0,          // 151 ~ 155
-    0, 0, "sys_sched_yield", 0, 0,          // 156 ~ 160
-    0, 0, 0, 0, 0,          // 161 ~ 165
-    0, 0, 0, 0, 0,          // 165 ~ 170
-    0, 0, 0, "sys_sigaction", "sys_sigprocmask",          // 171 ~ 175
-    0, 0, 0, 0, 0,          // 175 ~ 180
-    0, 0, "sys_getcwd", 0, 0,          // 181 ~ 185
-    0, 0, 0, 0, "sys_vfork",          // 185 ~ 190
-    0, 0, 0, 0, 0,            // 191 ~ 195
-    "sys_lstat64", "sys_fstat64" , "sys_quota"             // 196 ~ 198
-};
-
-extern hash_table* file_exist_cache;
 
 typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
 
@@ -543,7 +471,7 @@ static int _chdir(const char *cwd, const char *path)
         strcat(cwd, "/");
     strcat(cwd, path);
     strcat(cwd, "/");
-    if (sys_stat(cwd, &s) == -1) return 0;
+    if (do_stat(__func__, cwd, &s, 1) == -1) return 0;
 
     if (!S_ISDIR(s.st_mode)) return 0;
 
@@ -804,8 +732,6 @@ static int sys_fcntl(int fd, int cmd, int arg)
     return ret;
 }
 
-#define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
-#define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
  static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
  {
     ext4_direntry* entry = NULL;
@@ -816,6 +742,7 @@ static int sys_fcntl(int fd, int cmd, int arg)
     struct linux_dirent *prev;
     struct stat s;
     filep fp;
+    ext4_dir* dir;
 
 
      if (TestControl.verbos) {
@@ -827,14 +754,14 @@ static int sys_fcntl(int fd, int cmd, int arg)
         if (TestControl.verbos) {
             klog_printf(" = %d\n", -9);
         }
-        return -9;
+        return -ENOENT;
     }
 
-    if (sys_fstat(fd, &s) != EOK)
-        return -1;
+    if (fs_fstat(fd, &s) != EOK)
+        return -ENOENT;
     
     if (!S_ISDIR(s.st_mode))
-        return ENOTDIR;
+        return -EISDIR;
 
     fp = CURRENT_TASK()->fds[fd].fp;
 
@@ -847,49 +774,55 @@ static int sys_fcntl(int fd, int cmd, int arg)
     }
     retcount = 0;
     prev = 0;
-
+    dir = fp->inode;
     while (count > 0)
     {
         entry = ext4_dir_entry_next(fp->inode);
         //ret = fs_read(fd, 0, entry, sizeof(*entry));
         if (entry == NULL)
         {
-            if (prev)
-            {
-                prev->d_off = 512;
+            if (prev){
+                prev->d_off = retcount;
             }
-            memset((char *)dirp, 0, count);
             break;
         }
         //entry->name[entry->name_length] = '\0';
         len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
+        if (count < len)
+        {
+            if (prev){
+                prev->d_off = retcount;
+            }
+            break;
+        }
         memset(dirp, 0, len);
         dirp->d_ino = entry->inode;
         strncpy(dirp->d_name, entry->name, entry->name_length);
         dirp->d_reclen = ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
         cur_pos += dirp->d_reclen;
         dirp->d_off = cur_pos;
-        if (count <= dirp->d_reclen)
-        {
-            break;
-        }
         retcount += dirp->d_reclen;
         count -= dirp->d_reclen;
         prev = dirp;
         dirp = (char *)dirp + dirp->d_reclen;
     }
+    
      if (TestControl.verbos) {
          klog_printf(" = %d\n", retcount);
      }
-
-     //kfree(entry);
     return retcount;
  
  }
 
 static int sys_fstat(int fd, struct stat *s)
 {
-    return fs_fstat(fd, s);
+    int ret = fs_fstat(fd, s);
+    if (TestControl.verbos) {
+        klog("%d: sys_fstat(%d, %x) size %d isdir %d blksize %d\n",
+             CURRENT_TASK()->psid,
+             fd, s, s->st_size, S_ISDIR(s->st_mode), s->st_blksize);
+    }
+    return ret;
 }
 
 static int sys_fstat64(int fd, struct stat64 *s) {
@@ -1286,7 +1219,7 @@ static int do_stat(const char* func, const char *name, struct stat *buf, int fol
     ret = fp->op.stat(fp->inode, buf);
     if (TestControl.verbos) {
         format_modes(buf->st_mode, modes);
-        klog("%d: %s(%s, %x) = %d, %s, len=%d\n", CURRENT_TASK()->psid, func, name, buf, ret, modes, buf->st_size);
+        klog("%d: [%s](%s, %x) = %d, %s, len=%d, blocks = %d\n", CURRENT_TASK()->psid, func, name, buf, ret, modes, buf->st_size, buf->st_blocks);
     }
     
 done:
@@ -1310,7 +1243,7 @@ static int sys_access(const char* path, int mode)
 {
     // FIXME: no user currently
     struct stat s;
-    int ret = sys_stat(path, &s);
+    int ret = do_stat(__func__, path, &s, 1);
 
     if (ret)
         return -ENOENT;

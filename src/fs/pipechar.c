@@ -104,7 +104,7 @@ static int pipe_stat(void* inode, struct stat* s)
     s->st_atime = time_now();
     s->st_mode = S_IFIFO | S_IRUSR | S_IWUSR;
     s->st_size = 0;
-    s->st_blksize = 0;
+    s->st_blksize = PAGE_SIZE;
     s->st_blocks = 0;
     s->st_ctime = time_now();
     s->st_dev = 0;

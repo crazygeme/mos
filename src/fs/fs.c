@@ -221,8 +221,8 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
             ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
             if (ret != EOK)
                 goto fail;
-
             ext4_fclose(f);
+            linkcontent[name_len] = '\0';
             fs_resolve_symlink_path(path, linkcontent, name_len);
             ret = ext4_fopen2(f, linkcontent, flag);
             if (ret != EOK)
@@ -549,8 +549,10 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
         goto done;
 
     ret = fp->op.seek(fp->inode, offset, whence);
+    if (ret >= 0)
+        cur->fds[fd].file_off = ret;
 done:
-    sema_trigger(&cur->fd_lock);
+    sema_trigger(&cur->fd_lock);    
     return ret;
 }
 

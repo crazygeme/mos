@@ -257,45 +257,59 @@ struct oldstat
 };
 
 struct stat {
-    unsigned st_dev; /* ID of device containing file*/
-    void* st_ino; /* inode number */
-    unsigned st_mode; /* protection mode*/
-    unsigned st_nlink; /* number of hard links */
-    unsigned short st_uid; /* user ID of owner -user id*/
-    unsigned short st_gid; /* group ID of owner - group id*/
-    unsigned st_rdev; /* device ID (if special file)*/
-    unsigned st_size; /* total size, in bytes*/
-    unsigned st_blksize; /* blocksize for filesystem I/O*/
-    unsigned st_blocks; /* number of blocks allocated*/
-    unsigned st_atime; /* time of last access*/
-    unsigned st_mtime; /* time of last modification*/
-    unsigned st_ctime; /* time of last status change */ 
+	unsigned long st_dev;
+	unsigned long st_ino;
+	unsigned short st_mode;
+	unsigned short st_nlink;
+	unsigned short st_uid;
+	unsigned short st_gid;
+	unsigned long st_rdev;
+	unsigned long  st_size;
+	unsigned long  st_blksize;
+	unsigned long  st_blocks;
+	unsigned long  st_atime;
+	unsigned long  __unused1;
+	unsigned long  st_mtime;
+	unsigned long  __unused2;
+	unsigned long  st_ctime;
+	unsigned long  __unused3;
+	unsigned long  __unused4;
+	unsigned long  __unused5;
 };
 
 
  
 struct stat64 {
-    unsigned long long st_dev; 	//0
-    unsigned __pad1;		//8
-    unsigned st_ino;		//12
-    unsigned st_mode;		//16
-    unsigned st_nlink;		//20
-    unsigned st_uid;		//24
-    unsigned st_gid;		//28
-    unsigned long long st_rdev;	//32
-    unsigned __pad2;		//40
-    unsigned long long st_size;		//44
-    unsigned st_blksize;	//48
-    unsigned long long st_blocks;		//52
-    unsigned st_atime;		//56
-    unsigned __pad3;		//60
-    unsigned st_mtime;		//64
-    unsigned __pad4;		//68
-    unsigned st_ctime;		//72
-    unsigned __pad5;
-    unsigned __pad6;
-    unsigned __pad7;
-    unsigned __pad8;
+	unsigned long long	st_dev;
+	unsigned char	__pad0[4];
+
+	unsigned long	__st_ino;
+
+	unsigned int	st_mode;
+	unsigned int	st_nlink;
+
+	unsigned long	st_uid;
+	unsigned long	st_gid;
+
+	unsigned long long	st_rdev;
+	unsigned char	__pad3[4];
+
+	long long	st_size;
+	unsigned long	st_blksize;
+
+	/* Number 512-byte blocks allocated. */
+	unsigned long long	st_blocks;
+
+	unsigned long	st_atime;
+	unsigned long	st_atime_nsec;
+
+	unsigned long	st_mtime;
+	unsigned int	st_mtime_nsec;
+
+	unsigned long	st_ctime;
+	unsigned long	st_ctime_nsec;
+
+	unsigned long long	st_ino;
 };
 
 struct krnquota

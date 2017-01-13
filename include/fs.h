@@ -83,6 +83,25 @@ typedef struct _file_descriptor {
     unsigned used;
 }file_descriptor;
 
+struct linux_dirent
+{
+    unsigned long  d_ino;     /* Inode number */
+    unsigned long  d_off;     /* Offset to next linux_dirent */
+    unsigned short d_reclen;  /* Length of this linux_dirent */
+    char           d_name[];  /* Filename (null-terminated) */
+};
+
+#define ROUND_UP(x) (((x)+sizeof(long)-1) & ~(sizeof(long)-1))
+#define NAME_OFFSET(de) ((int) ((de)->d_name - (char *) (de)))
+
+#define NAME_MAX 255
+struct old_linux_dirent {
+    unsigned long  d_ino;               /* inode number */
+    unsigned long d_off;                /* offset to this old_linux_dirent */
+    unsigned short d_reclen;            /* length of this d_name */
+    char  d_name[NAME_MAX+1];           /* filename (null-terminated) */
+};
+
 #define MAX_FD ((PAGE_SIZE)/sizeof(file_descriptor))
 
 filep fs_alloc_filep_tty();

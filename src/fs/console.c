@@ -76,8 +76,8 @@ static int console_stat(void* inode, struct stat* s)
 {
     s->st_atime = time_now();
     s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
-    s->st_blksize = 0;
-    s->st_blocks = 400;
+    s->st_blksize = PAGE_SIZE;
+    s->st_blocks = 0;
     s->st_ctime = time_now();
     s->st_dev = 0xb;
     s->st_gid = 0;
@@ -86,6 +86,7 @@ static int console_stat(void* inode, struct stat* s)
     s->st_uid = 0;
     s->st_nlink = 1;
     s->st_rdev = 8004;
+    s->st_size = TTY_MAX_CHARS - klib_get_pos();
     return 0;
 }
 

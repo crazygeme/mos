@@ -1247,13 +1247,19 @@ static int sys_access(const char* path, int mode)
 {
     // FIXME: no user currently
     struct stat s;
-    int ret = do_stat(__func__, path, &s, 1);
+    char* name = name_get();
+    int ret = -EACCES;
 
-    if (ret)
-        return -ENOENT;
+    resolve_path(path, name);
+    ret = do_stat(__func__, name, &s, 1);
+
+    if (ret != EOK) {
+        ret = -ENOENT;
+        goto done;
+    }
 
     if (mode == F_OK)
-        return ret;
+        goto done;
 
     ret = EOK;
     if (mode & R_OK)
@@ -1265,6 +1271,8 @@ static int sys_access(const char* path, int mode)
     if (mode & X_OK)
         ret |= ((s.st_mode & S_IXUSR) == S_IXUSR) ? EOK : (-EACCES);
 
+done:
+    name_put(name);
     if (TestControl.verbos) {
         klog("%d: access(%s, %x) = %d\n", CURRENT_TASK()->psid, path, mode, ret);
     }

@@ -321,10 +321,10 @@ int klib_putchar(char c)
     }
     else if (c == '\t')
     {
-        int loop_count = 4 - (CUR_COL % 4);
+        int loop_count = 8 - (CUR_COL % 8);
         int i = 0;
         if (loop_count == 0)
-            loop_count = 4;
+            loop_count = 8;
         for (i = 0; i < loop_count; i++)
             klib_putchar_update_cursor(' ');
 

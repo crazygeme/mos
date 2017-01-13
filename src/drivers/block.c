@@ -198,6 +198,15 @@ static int file_close(void* inode)
     return 0;
 }
 
+int file_seek(ext4_file *f, uint64_t offset, uint32_t origin)
+{
+    int ret = ext4_fseek(f, offset, origin);
+    if (ret != EOK)
+        return ret;
+    
+    return ext4_ftell(f);
+}
+
 static int dir_close(void* inode)
 {
     int ret;
@@ -239,11 +248,47 @@ static int dir_stat(ext4_dir *dir, struct stat* s)
     return ext4_fstat(&dir->f, s);
 }
 
+static int dir_seek(ext4_dir *dir, uint64_t offset, uint32_t origin)
+{
+    ext4_direntry* entry = NULL;
+    int len;
+    int ret = 0;
+    int cur_pos = 0;
+    struct linux_dirent *dirp;
+    int count = offset;
+    int loops = 0;
+    int i;
+    if (origin != SEEK_SET)
+        return -EACCES;
+
+    if (offset < sizeof(struct linux_dirent))
+    {
+        return 0;
+    }
+
+    ext4_dir_entry_rewind(dir);
+    while (count > 0)
+    {
+        entry = ext4_dir_entry_next(dir);
+        if (entry == NULL){
+            break;
+        }
+        len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
+        if (count < len){
+            return (cur_pos+len);
+        }
+        loops++;
+        cur_pos += len;
+        count -= len;
+    }
+    return cur_pos;
+}
+
 static fileop file_op = {
     .read = ext4_fread,
     .write = ext4_fwrite,
     .close = file_close,
-    .seek = ext4_fseek,
+    .seek = file_seek,
     .stat = ext4_fstat,
     .tell = ext4_ftell,
     .select = ext4_select,
@@ -252,6 +297,7 @@ static fileop file_op = {
 static fileop dir_op = {
     .read = dir_read,
     .close = dir_close,
+    .seek = dir_seek,
     .stat = dir_stat,
     .select = ext4_select,
 };

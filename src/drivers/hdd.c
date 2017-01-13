@@ -143,6 +143,7 @@ typedef struct _partition
 #if HDD_CACHE_OPEN
     block_cache cache;
     int cache_inited;
+    semaphore cache_lock;
 #endif
 }partition;
 
@@ -588,6 +589,7 @@ static void init_partition_cache(partition* p)
     p->cache.hash = hash_create(int_comp);
     InitializeListHead(&p->cache.timer_list_head);
     p->cache_inited = 1;
+    sema_init(&p->cache_lock, "cachelock", 0);
 }
 
 
@@ -748,11 +750,14 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     block_cache_item* item = 0;
     int sector_off = SECTOR_OFF(sector);
     int head_sector = HEAD_SECTOR(sector);
+
+    sema_wait(&p->cache_lock);
     item = hdd_cache_lookup(p, sector);
     if (item)
     {
         RemoveEntryList(&item->time_list);
         InsertTailList(&p->cache.timer_list_head, &item->time_list);
+        sema_trigger(&p->cache_lock);
         memcpy(buf, (char*)item->buf + sector_off*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
@@ -773,10 +778,12 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     {
         total_read += PREREAD_SECTOR;
         hdd_cache_update_all(aux, p, item, head_sector, 0);
+        sema_trigger(&p->cache_lock);
         memcpy(buf, (char*)item->buf + sector_off*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
 
+    sema_trigger(&p->cache_lock);
     return -1;
 
 }
@@ -785,10 +792,13 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
 {
     partition* p = aux;
     block_cache_item* item = 0;
+
+    sema_wait(&p->cache_lock);
     item = hdd_cache_lookup(p, sector);
     if (item)
     {
         hdd_cache_update(p, item, sector, buf, 1);
+        sema_trigger(&p->cache_lock);
         return BLOCK_SECTOR_SIZE;
     }
 
@@ -796,6 +806,7 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
     if (item)
     {
         hdd_cache_update(p, item, sector, buf, 1);
+        sema_trigger(&p->cache_lock);
         return len;
     }
 
@@ -804,9 +815,11 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
     {
         hdd_cache_flush(p, item);
         hdd_cache_update(p, item, sector, buf, 1);
+        sema_trigger(&p->cache_lock);
         return len;
     }
-
+    
+    sema_trigger(&p->cache_lock);
     return -1;
 }
 #else

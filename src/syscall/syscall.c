@@ -154,7 +154,7 @@ static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout,
                    void *sigmask);
 
-typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx);
+typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx, unsigned esi, unsigned edi);
 
 static unsigned call_table[NR_syscalls] = {
     test_call,
@@ -215,10 +215,13 @@ static void syscall_process(intr_frame* frame)
     int ret = 0;
     if (!fn)
     {
-        return unhandled_syscall(frame->eax);
+        ret = unhandled_syscall(frame->eax);
+    }
+    else
+    {
+        ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx, frame->esi, frame->edi);
     }
 
-    ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx);
     frame->eax = ret;
     return;
 }
@@ -278,9 +281,10 @@ static int sys_write(int fd, char *buf, unsigned len)
     unsigned _len;
     if (TestControl.verbos) {
         char *tmp;
-        tmp = kmalloc(len + 1);
-        memset(tmp, 0, len + 1);
-        memcpy(tmp, buf, len);
+        int pri_len = len > 5 ? 5 : len;
+        tmp = kmalloc(6);
+        memset(tmp, 0, 6);
+        memcpy(tmp, buf, pri_len);
         klog("%d: write(%d, \"%s\", %d) ", CURRENT_TASK()->psid, fd, tmp, len);
         kfree(tmp);
     }

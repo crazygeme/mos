@@ -48,7 +48,6 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
     }
 
 #define CHECK_FDS(src, dst, type)\
-        has_set = 0;                            \
         for (i = 0; src && (i < nfds); i++){    \
             if (FD_ISSET(i, src)){              \
                 if (fs_select(i, type) == 0){   \

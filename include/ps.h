@@ -219,7 +219,7 @@ typedef struct _task_struct
 }task_struct;
 
 #define KERNEL_TASK_SIZE 1 // 1 pages
-#define DEFAULT_TASK_TIME_SLICE 5
+#define DEFAULT_TASK_TIME_SLICE 10
 
 task_struct* CURRENT_TASK();
 

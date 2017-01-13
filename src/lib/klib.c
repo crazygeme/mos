@@ -773,6 +773,8 @@ void memcpy(void* to, void* from, unsigned n)
     {
         t = time_now();
     }
+    if ((unsigned)from == 0xc1d33000 || (unsigned)to == 0xc1d33000)
+        klog("");
     bcopy(from, to, n);
     if (TestControl.test_ffs)
     {

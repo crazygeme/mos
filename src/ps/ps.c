@@ -746,6 +746,7 @@ int sys_exit(unsigned status)
     }
 
     vm_free(cur->fds, 1);
+    cur->fds = NULL;
 
     // free all physical memory
     ps_cleanup_all_user_map(cur);
@@ -756,6 +757,10 @@ int sys_exit(unsigned status)
         __asm__("hlt");
     }
 
+    if (cur->psid == 1)
+    {
+        reboot();
+    }
     // things like cur->user.page_dir have to to freed in
     // cleanup stage (polled by waitpid) because this sys
     // call can be interrupted

@@ -25,6 +25,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
     unsigned time_begin = time_now(); // milliseconds
     unsigned time_span = 0;
     int infinit_wait = 0;
+    int just_test = 0;
     unsigned wait_time = 0; // milliseconds
     reads = writes = excepts = NULL;
 
@@ -42,7 +43,10 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
 #undef ALLOC_SRC
 
     if (timeout){
-        wait_time = timeout->tv_sec*1000 + timeout->tv_nsec/1000;
+        if (timeout->tv_sec == 0 && timeout->tv_nsec == 0)
+            just_test = 1;
+        else
+            wait_time = timeout->tv_sec*1000 + timeout->tv_nsec/1000;
     }else{
         infinit_wait = 1;
     }
@@ -78,7 +82,12 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds,
             task_sched();
             continue;
         }
-        
+
+        if (just_test){
+            ret = 0;
+            break;
+        }
+
         time_span = time_now() - time_begin;
         if (time_span > wait_time){
             ret = -ETIMEDOUT;
@@ -96,6 +105,9 @@ done:
     
     if (writes)
         free(writes);
+
+    if (excepts)
+        free(excepts);
 
     return ret;
 }

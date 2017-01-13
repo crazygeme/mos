@@ -312,8 +312,6 @@ void mm_del_direct_map(unsigned int vir)
     int empty = 1;
     int i = 0, idx;
 
-    if (vir == 0xc1d33000)
-        klog("");
     // 0xC0000000 ~ PAGE_TABLE_CACHE_END is always mapped
     if (vir >= 0xC0000000 && vir < PAGE_TABLE_CACHE_END)
         return;

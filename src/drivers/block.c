@@ -207,6 +207,19 @@ int file_seek(ext4_file *f, uint64_t offset, uint32_t origin)
     return ext4_ftell(f);
 }
 
+int file_llseek(ext4_file *f, unsigned high, unsigned low, uint64_t* result, uint32_t origin)
+{
+    uint64_t off = (uint64_t)high << 32 | low;
+    int ret = ext4_fseek(f, off, origin);
+
+    if (ret != EOK)
+        return ret;
+
+    if (result)
+        *result = ext4_ftell(f);
+    return 0;
+}
+
 static int dir_close(void* inode)
 {
     int ret;
@@ -289,6 +302,7 @@ static fileop file_op = {
     .write = ext4_fwrite,
     .close = file_close,
     .seek = file_seek,
+    .llseek = file_llseek,
     .stat = ext4_fstat,
     .tell = ext4_ftell,
     .select = ext4_select,

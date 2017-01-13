@@ -56,6 +56,7 @@ static int console_llseek(void* inode,  unsigned high, unsigned low, uint64_t* r
     klib_flush_cursor();
     if (result)
         *result = klib_get_pos();
+    return 0;
 }
 
 static uint64_t console_tell(void* inode)

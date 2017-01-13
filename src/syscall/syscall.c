@@ -154,12 +154,15 @@ static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout,
                    void *sigmask);
 
+static int sys_link(const char *path1, const char *path2);
+static int sys_symlink(const char *path1, const char *path2);
+
 typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx, unsigned esi, unsigned edi);
 
 static unsigned call_table[NR_syscalls] = {
     test_call,
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
-    sys_close, sys_waitpid, sys_creat, 0, sys_unlink,           // 6  ~ 10  
+    sys_close, sys_waitpid, sys_creat, sys_link, sys_unlink,           // 6  ~ 10
     sys_execve, sys_chdir, sys_time, 0, 0,           // 11 ~ 15
     0, 0, 0, sys_lseek, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
@@ -174,7 +177,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
     sys_getrlimit, 0, 0, 0, 0,          // 76 ~ 80 
-    0, sys_select, 0, 0, 0,          // 81 ~ 85 
+    0, sys_select, sys_symlink, 0, 0,          // 81 ~ 85
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
     sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
@@ -375,6 +378,7 @@ static int sys_open(const char *_name, int flags, char* mode)
         klog_printf("ret %d\n", fd);
     }
     name_put(name);
+
     return fd;
 }
 
@@ -1212,7 +1216,7 @@ static int format_modes(unsigned mode, char* str)
 
 static int do_stat(const char* func, const char *name, struct stat *buf, int follow_link)
 {
-    int ret = -1;
+    int ret = -ENOENT;
     filep fp = NULL;
     char modes[11];
     fp = fs_open_file(name, 0, follow_link);
@@ -1322,4 +1326,44 @@ static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
         klog("%d: pselect(%d, %x, %x, %x, %x, %x) = %d\n", CURRENT_TASK()->psid,
              nfds, readfds, writefds, exceptfds, timeout, sigmask, ret);
     }
+}
+
+static int sys_link(const char *path1, const char *path2)
+{
+    char* name1 = name_get();
+    char* name2 = name_get();
+    int ret = -1;
+    resolve_path(path1, name1);
+    resolve_path(path2, name2);
+
+    ret = ext4_flink(name1, name2);
+
+    if (TestControl.verbos) {
+        klog("%d: symlink(%s, %s) = %d\n", name1, name2, ret);
+    }
+
+    if (ret > 0)
+        return (0-ret);
+
+    return ret;
+}
+
+static int sys_symlink(const char *path1, const char *path2)
+{
+    char* name1 = name_get();
+    char* name2 = name_get();
+    int ret = -1;
+    resolve_path(path1, name1);
+    resolve_path(path2, name2);
+
+    ret = ext4_fsymlink(name1, name2);
+
+    if (TestControl.verbos) {
+        klog("%d: symlink(%s, %s) = %d\n", name1, name2, ret);
+    }
+
+    if (ret > 0)
+        return (0-ret);
+
+    return ret;
 }

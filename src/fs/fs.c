@@ -280,7 +280,7 @@ int fs_open(const char* path, int flag, char* mode)
     int fd = -1;
 
     filep fp = NULL;
-    int ret = -1;
+    int ret = -ENOENT;
     sema_wait(&cur->fd_lock);
 
     fd = fs_find_empty_fd(cur->fds);
@@ -313,7 +313,7 @@ int fs_open(const char* path, int flag, char* mode)
     
     goto done;
 fail:
-    fd = -1;
+    fd = ret;
 done:
     sema_trigger(&cur->fd_lock);
     return fd;
@@ -527,7 +527,8 @@ int fs_llseek(int fd, unsigned offset_high,
     if (!fp || !fp->op.llseek)
         goto done;
     ret = fp->op.llseek(fp->inode, offset_high, offset_low, result, whence);
-
+    if (ret == 0 && fp->op.tell)
+        cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
     sema_trigger(&cur->fd_lock);
     return ret;
@@ -550,8 +551,8 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
         goto done;
 
     ret = fp->op.seek(fp->inode, offset, whence);
-    if (ret >= 0)
-        cur->fds[fd].file_off = ret;
+    if (ret >= 0 && fp->op.tell)
+        cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
     sema_trigger(&cur->fd_lock);    
     return ret;

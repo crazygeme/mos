@@ -2009,22 +2009,35 @@ Finish:
 
 int ext4_fseek(ext4_file *f, uint64_t offset, uint32_t origin)
 {
+	int ret;
 	switch (origin) {
 	case SEEK_SET:
-		if (offset > f->fsize)
-			return EINVAL;
-
+		if (offset > f->fsize) {
+			ret = ext4_ftruncate(f, offset);
+			if (ret != EOK)
+				return EINVAL;
+		}
 		f->fpos = offset;
 		return EOK;
 	case SEEK_CUR:
-		if ((offset + f->fpos) > f->fsize)
-			return EINVAL;
+		if ((offset + f->fpos) > f->fsize){
+			ret = ext4_ftruncate(f, offset + f->fpos);
+			if (ret != EOK)
+				return EINVAL;
+		}
 
 		f->fpos += offset;
 		return EOK;
 	case SEEK_END:
-		if (offset > f->fsize)
-			return EINVAL;
+		if (offset > f->fsize) {
+			ret = ext4_ftruncate(f, 0);
+			if (ret != EOK)
+				return EINVAL;
+			else{
+				f->fpos = 0;
+				return EOK;
+			}
+		}
 
 		f->fpos = f->fsize - offset;
 		return EOK;

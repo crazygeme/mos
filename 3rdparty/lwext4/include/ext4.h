@@ -304,6 +304,12 @@ int ext4_fill_raw_inode(const char *path, uint32_t *ret_ino,
  * @return  standard error code*/
 int ext4_ftruncate(ext4_file *f, uint64_t size);
 
+/**@brief   File enlarge function.
+ * @param   f file handle
+ * @param   new file size
+ * @return  standard error code*/
+int ext4_fenlarge(ext4_file *f, uint64_t size);
+
 /**@brief   Read data from file.
  * @param   f file handle
  * @param   buf output buffer

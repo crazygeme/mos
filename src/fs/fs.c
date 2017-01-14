@@ -128,8 +128,10 @@ int fs_read(int fd, unsigned offset, char* buf, unsigned len)
     if (!fp->op.read)
         return -1;
 
-    if (fp->op.seek)
-        fp->op.seek(fp->inode, offset, SEEK_SET);
+    if (offset != (unsigned)-1) {
+        if (fp->op.seek)
+            fp->op.seek(fp->inode, offset, SEEK_SET);
+    }
 
     ret = fp->op.read(fp->inode, buf, len, &wcnt);
     if (ret != EOK)

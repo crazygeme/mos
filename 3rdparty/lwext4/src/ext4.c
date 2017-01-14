@@ -1666,6 +1666,52 @@ int ext4_ftruncate(ext4_file *f, uint64_t size)
 	return r;
 }
 
+int ext4_fenlarge(ext4_file *f, uint64_t size)
+{
+    int r;
+    uint64_t fpos;
+    char zero[1];
+    int i;
+    ext4_assert(f && f->mp);
+
+    if (f->mp->fs.read_only)
+        return EROFS;
+
+    if (f->flags & O_RDONLY)
+        return EPERM;
+
+    EXT4_MP_LOCK(f->mp);
+
+    ext4_trans_start(f->mp);
+
+    if (f->fsize >= size){
+        r = EOK;
+        goto finish;
+    }
+
+    fpos = f->fpos;
+    r = ext4_fseek(f, 0, SEEK_END);
+    if (r != EOK)
+        goto finish;
+
+    zero[0] = '\0';
+    for (i = 0; i < (size - fpos); i++) {
+        r = ext4_fwrite(f, zero, 1, NULL);
+        if (r != EOK)
+            goto finish;
+    }
+    r = ext4_fseek(f, fpos, SEEK_SET);
+finish:
+
+    if (r != EOK)
+        ext4_trans_abort(f->mp);
+    else
+        ext4_trans_stop(f->mp);
+
+    EXT4_MP_UNLOCK(f->mp);
+    return r;
+}
+
 int ext4_fread(ext4_file *f, void *buf, size_t size, size_t *rcnt)
 {
 	uint32_t unalg;
@@ -2020,30 +2066,20 @@ int ext4_fseek(ext4_file *f, uint64_t offset, uint32_t origin)
 	switch (origin) {
 	case SEEK_SET:
 		if (offset > f->fsize) {
-			ret = ext4_ftruncate(f, offset);
-			if (ret != EOK)
-				return EINVAL;
+            return EINVAL;
 		}
 		f->fpos = offset;
 		return EOK;
 	case SEEK_CUR:
 		if ((offset + f->fpos) > f->fsize){
-			ret = ext4_ftruncate(f, offset + f->fpos);
-			if (ret != EOK)
-				return EINVAL;
+            return EINVAL;
 		}
 
 		f->fpos += offset;
 		return EOK;
 	case SEEK_END:
 		if (offset > f->fsize) {
-			ret = ext4_ftruncate(f, 0);
-			if (ret != EOK)
-				return EINVAL;
-			else{
-				f->fpos = 0;
-				return EOK;
-			}
+            return EINVAL;
 		}
 
 		f->fpos = f->fsize - offset;
@@ -2094,7 +2130,7 @@ uint64_t ext4_fsize(ext4_file *f)
     stat->st_rdev = 0;
     stat->st_size = ext4_inode_get_size(sb, inode_ref.inode);
     stat->st_blocks = ext4_inode_get_blocks_count(sb, inode_ref.inode);
-    stat->st_blksize = stat->st_blocks * (1024 << sb->log_block_size); /* This is the optimal IO size (for stat), not the fs block size */
+    stat->st_blksize = stat->st_blocks * 512; /* This is the optimal IO size (for stat), not the fs block size */
     stat->st_atime = ext4_inode_get_access_time(inode_ref.inode);
     stat->st_mtime = ext4_inode_get_modif_time(inode_ref.inode);
     stat->st_ctime = ext4_inode_get_change_inode_time(inode_ref.inode);

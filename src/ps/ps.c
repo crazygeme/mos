@@ -286,7 +286,7 @@ static void ps_run()
     fn = task->fn;
     if (fn)
     {
-        fn(task->param);
+        fn(0);
     }
 
 
@@ -512,7 +512,7 @@ static void ps_setup_task_frame(task_struct* task, unsigned data_seg,
 
 // FIXME
 // now we ignore priority
-unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
+unsigned ps_create(process_fn fn, int priority, ps_type type)
 {
     unsigned int stack_buttom;
     int i = 0;
@@ -531,6 +531,8 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
 
     task->user.reserve = (unsigned)vm_alloc(1);
     task->user.page_dir = (unsigned int)vm_alloc(1);
+    task->command = vm_alloc(1);
+    strcpy(task->command, "system");
     // 0 ~ KERNEL_PAGE_DIR_OFFSET-1 are dynamic, KERNEL_PAGE_DIR_OFFSET ~ 1023 are shared
     memset(task->user.page_dir, 0, PAGE_SIZE);
 
@@ -538,7 +540,6 @@ unsigned ps_create(process_fn fn, void *param, int priority, ps_type type)
     LOAD_CR3(task->cr3);
     task->ps_list.Flink = task->ps_list.Blink = 0;
     task->fn = fn;
-    task->param = param;
     task->priority = priority;
     task->type = type;
     task->status = ps_ready;
@@ -682,6 +683,8 @@ int do_fork(unsigned flag)
     task->ps_list.Blink = task->ps_list.Flink = 0;
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
+    task->command = vm_alloc(1);
+    strcpy(task->command, cur->command);
     task->cwd = name_get();
     task->fork_flag = flag;
     memset(task->cwd, 0, MAX_PATH);
@@ -895,6 +898,12 @@ int sys_waitpid(unsigned pid, int* status, int options)
                 {
                     vm_free(task->user.reserve, 1);
                     task->user.reserve = 0;
+                }
+
+                if (task->command)
+                {
+                    vm_free(task->command, 1);
+                    task->command = 0;
                 }
 
                 if (task->cwd)

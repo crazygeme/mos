@@ -111,7 +111,6 @@ static int sys_getuid();
 static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
-static int sys_stat(const char *pathname, struct stat *buf);
 static int sys_mmap(struct mmap_arg_struct32* arg);
 static int sys_mprotect(void *addr, unsigned len, int prot);
 static int sys_readv(int fildes, const struct iovec *iov, int iovcnt);
@@ -119,6 +118,8 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
 static long sys_personality(unsigned int personality);
 static int sys_fcntl(int fd, int cmd, int arg);
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
+static int sys_stat(const char *pathname, struct stat *buf);
+static int sys_lstat(const char* path, struct stat* s);
 static int sys_lstat64(const char* path, struct stat64* s);
 static int sys_fstat(int fd, struct stat* s);
 static int sys_fstat64(int fd, struct stat64* s);
@@ -140,7 +141,7 @@ static int sys_getrlimit(int resource, void* limit);
 static int sys_kill(unsigned pid, int sig);
 static int sys_unlink(const char *pathname);
 static int sys_time(unsigned* t);
-static int resolve_path(const char* old, char* new);
+int resolve_path(const char* old, char* new);
 static int sys_access(const char* path, int mode);
 static int do_stat(const char* func, const char *_name, struct stat *buf, int follow_link);
 static int sys_lseek(int fd, unsigned offset, int whence);
@@ -182,7 +183,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, sys_socketcall, 0, 0, 0,          // 101 ~ 105
-    sys_stat, 0, sys_fstat, 0, 0,          // 106 ~ 110 
+    sys_stat, sys_lstat, sys_fstat, 0, 0,          // 106 ~ 110
     0, 0, 0, sys_wait4, 0,          // 111 ~ 115
     0, 0, 0, 0, 0,          // 116 ~ 120
     0, sys_uname, 0, 0, sys_mprotect,          // 121 ~ 125
@@ -259,7 +260,7 @@ static int sys_read(int fd, char* buf, unsigned len)
     }
 
     unsigned offset = cur->fds[fd].file_off;
-    ret = fs_read(fd, offset, buf, len);
+    ret = fs_read(fd, -1, buf, len);
     offset += ret;
     cur->fds[fd].file_off = offset;
 
@@ -975,7 +976,7 @@ static int sys_pause()
     return -1;
 }
 
-static int resolve_path(const char *old, char *new)
+int resolve_path(const char *old, char *new)
 {
     char* r;
     int len = strlen(old);
@@ -1243,6 +1244,16 @@ static int sys_stat(const char *_name, struct stat *buf)
     int ret;
     resolve_path(_name, name);
     ret = do_stat(__func__, name, buf, 1);
+    name_put(name);
+    return ret;
+}
+
+static int sys_lstat(const char *_name, struct stat *buf)
+{
+    char* name = name_get();
+    int ret;
+    resolve_path(_name, name);
+    ret = do_stat(__func__, name, buf, 0);
     name_put(name);
     return ret;
 }

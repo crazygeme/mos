@@ -202,22 +202,44 @@ int file_seek(ext4_file *f, uint64_t offset, uint32_t origin)
 {
     int ret = ext4_fseek(f, offset, origin);
     if (ret != EOK)
-        return ret;
+        return (0-ret);
     
     return ext4_ftell(f);
 }
 
 int file_llseek(ext4_file *f, unsigned high, unsigned low, uint64_t* result, uint32_t origin)
 {
-    uint64_t off = (uint64_t)high << 32 | low;
-    int ret = ext4_fseek(f, off, origin);
+    uint64_t offset = (uint64_t)high << 32 | low;
+    int ret;
+    switch (origin) {
+        case SEEK_SET:
+            if (offset > f->fsize) {
+                ret = ext4_fenlarge(f, offset);
+                if (ret != EOK)
+                    return (0-ret);
+            }
+            break;
+        case SEEK_CUR:
+            if ((offset + f->fpos) > f->fsize){
+                ret = ext4_fenlarge(f, offset + f->fpos);
+                if (ret != EOK)
+                    return (0-ret);
+            }
+            break;
+        case SEEK_END:
+            if (offset > f->fsize) {
+                return -EINVAL;
+            }
+            break;
+    }
+    ret = ext4_fseek(f, offset, origin);
 
     if (ret != EOK)
-        return ret;
+        return (0-ret);
 
     if (result)
         *result = ext4_ftell(f);
-    return 0;
+    return ext4_ftell(f);
 }
 
 static int dir_close(void* inode)

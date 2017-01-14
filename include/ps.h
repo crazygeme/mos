@@ -193,7 +193,7 @@ typedef struct _task_struct
     unsigned long cr3;
     unsigned int psid;
     process_fn fn;
-	void* param;
+	void* command;
 	user_enviroment user;
 	int priority;
     // in schedule list
@@ -227,7 +227,7 @@ task_struct* CURRENT_TASK();
 void ps_init();
 
 
-unsigned ps_create(process_fn, void* param, int priority, ps_type type);
+unsigned ps_create(process_fn, int priority, ps_type type);
 
 void ps_kickoff();
 

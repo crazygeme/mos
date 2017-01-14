@@ -266,19 +266,24 @@ int sys_execve(const char* file, char** argv, char** envp)
     char** s_argv = 0;
     char** s_envp = 0;
     mos_binfmt fmt = {0};
-
+    task_struct* cur = CURRENT_TASK();
     if (!file)
     {
         printk("fatal error: trying to execvp empty file!\n");
         return -1;
     }
-
     file_name = name_get();
-    ps_get_argc_envc(file, argv, envp, &argc, &envc);
-    s_argv = ps_save_argv(file, argv, argc);
+    resolve_path(file, file_name);
+    ps_get_argc_envc(file_name, argv, envp, &argc, &envc);
+    s_argv = ps_save_argv(file_name, argv, argc);
     s_envp = ps_save_envp(envp, envc);
 
-    strcpy(file_name, file);
+
+    strcpy(cur->command, file_name);
+    for (i = 1; i < argc; i++){
+        strcat(cur->command, " ");
+        strcat(cur->command, argv[i]);
+    }
 
     if (TestControl.verbos) {
         klog("%d: execve(%s, [", CURRENT_TASK()->psid, file_name);

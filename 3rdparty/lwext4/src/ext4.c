@@ -1560,7 +1560,14 @@ int ext4_fopen2(ext4_file *f, const char *path, int flags)
 {
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
 	int r;
-	int filetypes[] = {EXT4_DE_REG_FILE, EXT4_DE_SYMLINK, EXT4_DE_DIR};
+	int filetypes[] = {EXT4_DE_REG_FILE,
+                       EXT4_DE_SYMLINK,
+                       EXT4_DE_DIR,
+                       EXT4_DE_CHRDEV,
+                       EXT4_DE_BLKDEV,
+                       EXT4_DE_SOCK,
+                       EXT4_DE_FIFO
+    };
 	int i;
 	if (!mp)
 		return ENOENT;
@@ -2086,8 +2093,8 @@ uint64_t ext4_fsize(ext4_file *f)
     stat->st_gid = 0; // ext4_inode_get_gid(inode_ref.inode);
     stat->st_rdev = 0;
     stat->st_size = ext4_inode_get_size(sb, inode_ref.inode);
-	stat->st_blksize = PAGE_SIZE; /* This is the optimal IO size (for stat), not the fs block size */
     stat->st_blocks = ext4_inode_get_blocks_count(sb, inode_ref.inode);
+    stat->st_blksize = stat->st_blocks * (1024 << sb->log_block_size); /* This is the optimal IO size (for stat), not the fs block size */
     stat->st_atime = ext4_inode_get_access_time(inode_ref.inode);
     stat->st_mtime = ext4_inode_get_modif_time(inode_ref.inode);
     stat->st_ctime = ext4_inode_get_change_inode_time(inode_ref.inode);

@@ -209,7 +209,7 @@ int file_seek(ext4_file *f, uint64_t offset, uint32_t origin)
 
 int file_llseek(ext4_file *f, unsigned high, unsigned low, uint64_t* result, uint32_t origin)
 {
-    uint64_t offset = (uint64_t)high << 32 | low;
+    uint64_t offset = (uint64_t)high << 32 | (uint64_t)low;
     int ret;
     switch (origin) {
         case SEEK_SET:

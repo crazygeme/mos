@@ -70,5 +70,13 @@ unsigned vm_disc_map(vm_struct_t vm, int size);
  */
 void vm_dup(vm_struct_t cur, vm_struct_t new);
 
+/**
+ * dump all vm map information
+ *
+ * @author zhengender
+ * @param vm
+ */
+void vm_dump(vm_struct_t vm);
+
 
 #endif

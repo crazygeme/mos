@@ -315,7 +315,7 @@ static int sys_write(int fd, char *buf, unsigned len)
     }
 
     unsigned offset = cur->fds[fd].file_off;
-    _len = fs_write(fd, offset, buf, len);
+    _len = fs_write(fd, -1, buf, len);
     offset += _len;
     cur->fds[fd].file_off = offset;
 
@@ -346,7 +346,7 @@ static int sys_uname(struct utsname *utname)
     }
     strcpy(utname->machine, "i386");
     strcpy(utname->nodename, "qemu-enum");
-    strcpy(utname->release, "0.5-generic");
+    strcpy(utname->release, "0.9-generic");
     strcpy(utname->sysname, "Mos");
     strcpy(utname->version, "Mos Wed Feb 19 10:56:00 UTC 2015");
     strcpy(utname->domain, "Ender");
@@ -400,8 +400,9 @@ static int sys_brk(unsigned _top)
     top = _top;
     if (task->user.heap_top == USER_HEAP_BEGIN)
     {
-        mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
-        REFRESH_CACHE();
+        do_mmap(task->user.heap_top, PAGE_SIZE, 0, 0, -1, 0);
+        //mm_add_dynamic_map(task->user.heap_top, 0, PAGE_ENTRY_USER_DATA);
+        //REFRESH_CACHE();
         task->user.heap_top += PAGE_SIZE;
     }
 
@@ -421,13 +422,13 @@ static int sys_brk(unsigned _top)
         int i = 0;
         size = top - task->user.heap_top;
         pages = (size - 1) / PAGE_SIZE + 1;
-
-        for (i = 0; i < pages; i++)
-        {
-            unsigned vir = task->user.heap_top + i * PAGE_SIZE;
-            mm_add_dynamic_map(vir, 0, PAGE_ENTRY_USER_DATA);
-        }
-        REFRESH_CACHE();
+        do_mmap(task->user.heap_top, PAGE_SIZE*pages, 0, 0, -1, 0);
+        //for (i = 0; i < pages; i++)
+        //{
+        //    unsigned vir = task->user.heap_top + i * PAGE_SIZE;
+        //    mm_add_dynamic_map(vir, 0, PAGE_ENTRY_USER_DATA);
+        //}
+        //REFRESH_CACHE();
         top = task->user.heap_top + pages * PAGE_SIZE;
         task->user.heap_top = top;
         ret =  top;
@@ -441,12 +442,13 @@ static int sys_brk(unsigned _top)
 
         size = task->user.heap_top - top;
         pages = (size - 1) / PAGE_SIZE + 1;
-        for (i = 0; i < pages; i++)
-        {
-            unsigned vir = top + i * PAGE_SIZE;
-            mm_del_dynamic_map(vir);
-        }
-        REFRESH_CACHE();
+        //for (i = 0; i < pages; i++)
+        //{
+        //    unsigned vir = top + i * PAGE_SIZE;
+        //    mm_del_dynamic_map(vir);
+        //}
+        //REFRESH_CACHE();
+        do_munmap(top&PAGE_SIZE_MASK, pages*PAGE_SIZE);
         task->user.heap_top = top;
         ret = top;
         goto done;
@@ -1312,7 +1314,13 @@ static int sys_llseek(int fd, unsigned offset_high,
     int ret;
     ret = fs_llseek(fd, offset_high, offset_low, result, whence);
     if (TestControl.verbos) {
-        klog("%d: llseek(%d, %d, %d, %x, %d) = %d\n", CURRENT_TASK()->psid, fd, offset_high, offset_low, result, whence, ret);
+        klog("%d: llseek(%d, %x, %x, %x, %d) = %d, current %d\n",
+             CURRENT_TASK()->psid,
+             fd,
+             offset_high, offset_low,
+             result,
+             whence,
+             ret, CURRENT_TASK()->fds[fd].file_off);
     }
     return ret;
 }
@@ -1372,6 +1380,9 @@ static int sys_symlink(const char *path1, const char *path2)
     if (TestControl.verbos) {
         klog("%d: symlink(%s, %s) = %d\n", name1, name2, ret);
     }
+
+    name_put(name1);
+    name_put(name2);
 
     if (ret > 0)
         return (0-ret);

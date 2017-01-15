@@ -157,8 +157,10 @@ int fs_write(int fd, unsigned offset, char* buf, unsigned len)
     if (!fp->op.write)
         return -1;
 
-    if (fp->op.seek)
-        fp->op.seek(fp->inode, offset, SEEK_SET);
+    if (offset != (unsigned)-1) {
+        if (fp->op.seek)
+            fp->op.seek(fp->inode, offset, SEEK_SET);
+    }
 
     ret = fp->op.write(fp->inode, buf, len, &wcnt);
     if (ret != EOK)
@@ -529,7 +531,7 @@ int fs_llseek(int fd, unsigned offset_high,
     if (!fp || !fp->op.llseek)
         goto done;
     ret = fp->op.llseek(fp->inode, offset_high, offset_low, result, whence);
-    if (ret == 0 && fp->op.tell)
+    if (ret >= 0 && fp->op.tell)
         cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
     sema_trigger(&cur->fd_lock);

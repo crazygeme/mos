@@ -306,6 +306,26 @@ void vm_dup(vm_struct_t cur, vm_struct_t new)
     }
 }
 
+void vm_dump(vm_struct_t vm)
+{
+    hash_table* table = vm;
+    key_value_pair* pair = hash_first(table);
+    vm_region* region;
+    filep fp = NULL;
+    char* name = NULL;
+
+    klog("task: pid %d\n", CURRENT_TASK()->psid);
+    klog("cmd line: %s\n", CURRENT_TASK()->command);
+    while (pair)
+    {
+        fp = region->node;
+        region = pair->val;
+        name = (fp == NULL) ? "null" : fp->name ? fp->name : "null";
+        klog("map: %x - %x, file %s, offset %x\n", region->begin, region->end, name, region->offset);
+        pair = hash_next(table, pair);
+    }
+}
+
 
 #define MAP_SHARED      0x01            /* Share changes */
 #define MAP_PRIVATE     0x02            /* Changes are private */

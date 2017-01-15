@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <mmap.h>
 #include <fcntl.h>
-#include <include/fs.h>
+#include <fs.h>
 
 static void cleanup()
 {
@@ -267,13 +267,22 @@ int sys_execve(const char* file, char** argv, char** envp)
     char** s_envp = 0;
     mos_binfmt fmt = {0};
     task_struct* cur = CURRENT_TASK();
-    if (!file)
-    {
-        printk("fatal error: trying to execvp empty file!\n");
-        return -1;
+    struct stat s;
+    if (!file) {
+        return -ENOENT;
     }
     file_name = name_get();
     resolve_path(file, file_name);
+    if (fs_stat(file_name, &s) != 0) {
+        name_put(file_name);
+        return -ENOENT;
+    }
+
+    if (!(s.st_mode & S_IXUSR)) {
+        name_put(file_name);
+        return -EPERM;
+    }
+
     ps_get_argc_envc(file_name, argv, envp, &argc, &envc);
     s_argv = ps_save_argv(file_name, argv, argc);
     s_envp = ps_save_envp(envp, envc);

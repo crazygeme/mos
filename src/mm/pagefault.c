@@ -93,8 +93,14 @@ static void pf_process(intr_frame* frame)
             }
             goto Done;
         }
+        else if (user_mode)
+        {
+            vm_dump(cur->user.vm);
+            sys_exit(-1);
+        }
         else
         {
+            // it must be a kernel bug!
             goto HLT;
         }
     }

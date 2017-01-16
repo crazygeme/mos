@@ -157,6 +157,8 @@ static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 
 static int sys_link(const char *path1, const char *path2);
 static int sys_symlink(const char *path1, const char *path2);
+static int sys_chmod(const char *pathname, uint32_t mode);
+static int sys_fchmod(int fd, uint32_t mode);
 
 typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx, unsigned esi, unsigned edi);
 
@@ -164,7 +166,7 @@ static unsigned call_table[NR_syscalls] = {
     test_call,
     sys_exit, sys_fork, sys_read, sys_write, sys_open,   // 1  ~ 5
     sys_close, sys_waitpid, sys_creat, sys_link, sys_unlink,           // 6  ~ 10
-    sys_execve, sys_chdir, sys_time, 0, 0,           // 11 ~ 15
+    sys_execve, sys_chdir, sys_time, 0, sys_chmod,           // 11 ~ 15
     0, 0, 0, sys_lseek, sys_getpid,  // 16 ~ 20   
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
@@ -180,7 +182,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_getrlimit, 0, 0, 0, 0,          // 76 ~ 80 
     0, sys_select, sys_symlink, 0, 0,          // 81 ~ 85
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
-    sys_munmap, 0, 0, 0, 0,          // 91 ~ 95 
+    sys_munmap, 0, 0, sys_fchmod, 0,          // 91 ~ 95 
     0, 0, 0, 0, 0,          // 96 ~ 100 
     0, sys_socketcall, 0, 0, 0,          // 101 ~ 105
     sys_stat, sys_lstat, sys_fstat, 0, 0,          // 106 ~ 110
@@ -1089,9 +1091,7 @@ static int sys_dup2(int oldfd, int newfd)
     if (oldfd >= MAX_FD || newfd >= MAX_FD) return -1;
 
     if (oldfd == newfd)
-    {
         return -1;
-    }
 
     ret = fs_dup2(oldfd, newfd);
 
@@ -1103,8 +1103,6 @@ static int sys_dup(int oldfd)
     int ret = -1;
 
     if (oldfd == -1 || oldfd >= MAX_FD) return -1;
-
-
 
     ret = fs_dup(oldfd);
 
@@ -1361,6 +1359,9 @@ static int sys_link(const char *path1, const char *path2)
         klog("%d: symlink(%s, %s) = %d\n", name1, name2, ret);
     }
 
+    name_put(name1);
+    name_put(name2);
+
     if (ret > 0)
         return (0-ret);
 
@@ -1387,5 +1388,28 @@ static int sys_symlink(const char *path1, const char *path2)
     if (ret > 0)
         return (0-ret);
 
+    return ret;
+}
+
+static int sys_chmod(const char *pathname, uint32_t mode)
+{
+    char* name = name_get();
+    int ret = -1;
+    resolve_path(pathname, name);
+    ret = fs_chmod(name, mode);
+    name_put(name);
+    if (TestControl.verbos) {
+        klog("%d: chmod(%s, %d) = %d\n", name, mode, ret);
+    }
+    return ret;
+}
+
+static int sys_fchmod(int fd, uint32_t mode)
+{
+    int ret = -1;
+    ret = fs_fchmod(fd, mode);
+    if (TestControl.verbos) {
+        klog("%d: chmod(%d, %d) = %d\n", fd, mode, ret);
+    }
     return ret;
 }

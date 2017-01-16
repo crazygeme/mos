@@ -2196,6 +2196,48 @@ int ext4_chmod(const char *path, uint32_t mode)
 	return r;
 }
 
+int ext4_fchmod(ext4_file* f, uint32_t mode)
+{
+	int r;
+	uint32_t ino, orig_mode;
+	struct ext4_sblock *sb;
+	struct ext4_inode_ref inode_ref;
+	struct ext4_mountpoint *mp = f->mp;
+
+	if (!mp)
+		return ENOENT;
+
+	if (mp->fs.read_only)
+		return EROFS;
+
+	EXT4_MP_LOCK(mp);
+	ext4_trans_start(mp);
+
+	ino = f->inode;
+	sb = &mp->fs.sb;
+	r = ext4_fs_get_inode_ref(&mp->fs, ino, &inode_ref);
+	if (r != EOK) {
+		ext4_trans_abort(mp);
+		EXT4_MP_UNLOCK(mp);
+		return r;
+	}
+
+	orig_mode = ext4_inode_get_mode(sb, inode_ref.inode);
+	orig_mode &= ~0xFFF;
+	orig_mode |= mode & 0xFFF;
+	ext4_inode_set_mode(sb, inode_ref.inode, orig_mode);
+	inode_ref.dirty = true;
+
+	r = ext4_fs_put_inode_ref(&inode_ref);
+	if (r != EOK)
+		ext4_trans_abort(mp);
+	else
+		ext4_trans_stop(mp);
+
+	EXT4_MP_UNLOCK(mp);
+	return r;
+}
+
 int ext4_chown(const char *path, uint32_t uid, uint32_t gid)
 {
 	int r;
@@ -2221,6 +2263,44 @@ int ext4_chown(const char *path, uint32_t uid, uint32_t gid)
 	}
 	ino = f.inode;
 	ext4_fclose(&f);
+	r = ext4_fs_get_inode_ref(&mp->fs, ino, &inode_ref);
+	if (r != EOK) {
+		ext4_trans_abort(mp);
+		EXT4_MP_UNLOCK(mp);
+		return r;
+	}
+
+	ext4_inode_set_uid(inode_ref.inode, uid);
+	ext4_inode_set_gid(inode_ref.inode, gid);
+	inode_ref.dirty = true;
+
+	r = ext4_fs_put_inode_ref(&inode_ref);
+	if (r != EOK)
+		ext4_trans_abort(mp);
+	else
+		ext4_trans_stop(mp);
+
+	EXT4_MP_UNLOCK(mp);
+	return r;
+}
+
+int ext4_fchown(ext4_file* f, uint32_t uid, uint32_t gid)
+{
+	int r;
+	uint32_t ino;
+	struct ext4_inode_ref inode_ref;
+	struct ext4_mountpoint *mp = f->mp;
+
+	if (!mp)
+		return ENOENT;
+
+	if (mp->fs.read_only)
+		return EROFS;
+
+	EXT4_MP_LOCK(mp);
+	ext4_trans_start(mp);
+
+	ino = f->inode;
 	r = ext4_fs_get_inode_ref(&mp->fs, ino, &inode_ref);
 	if (r != EOK) {
 		ext4_trans_abort(mp);

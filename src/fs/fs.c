@@ -369,7 +369,7 @@ int fs_stat(const char* path, struct stat *s)
     }
 
     if (ret != EOK)
-        return ret;
+        return (0-ret);
 
     if (!isdir) {
         ret = ext4_fstat(&f, s);
@@ -602,7 +602,33 @@ int fs_ioctl(int fd, unsigned cmd, void* buf)
         goto done;
 
     ret = fp->op.ioctl(fp->inode, cmd, buf);
-    done:
+done:
     sema_trigger(&cur->fd_lock);
     return ret;
+}
+
+int fs_chmod(const char *pathname, uint32_t mode)
+{
+    int ret;
+    ret = ext4_chmod(pathname, mode);
+    return (0-ret);
+}
+
+int fs_fchmod(int fd, uint32_t mode)
+{
+    task_struct* cur = CURRENT_TASK();
+    filep fp = NULL;
+    int ret = -EACCES;
+    if (fd < 0 || fd >= MAX_FD)
+        return -1;
+
+    if (cur->fds[fd].used == 0)
+        return -ENOENT;
+
+    sema_wait(&cur->fd_lock);
+    fp = cur->fds[fd].fp;
+    sema_trigger(&cur->fd_lock);
+
+    ret = ext4_fchmod(fp->inode, mode);
+    return (0-ret);
 }

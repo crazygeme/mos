@@ -352,12 +352,25 @@ uint64_t ext4_fsize(ext4_file *f);
  * @return  standard error code*/
 int ext4_chmod(const char *path, uint32_t mode);
 
+/**@brief Change file/directory/link mode bits
+ * @param f file handle
+ * @param mode new mode bits (for example 0777)
+ * @return  standard error code*/
+int ext4_fchmod(ext4_file* f, uint32_t mode);
+
 /**@brief Change file owner and group
  * @param path to file/dir/link
  * @param uid user id
  * @param gid group id
  * @return  standard error code*/
 int ext4_chown(const char *path, uint32_t uid, uint32_t gid);
+
+/**@brief Change file owner and group
+ * @param f file handle
+ * @param uid user id
+ * @param gid group id
+ * @return  standard error code*/
+int ext4_fchown(ext4_file* f, uint32_t uid, uint32_t gid);
 
 /**@brief Set file access time
  * @param path to file/dir/link

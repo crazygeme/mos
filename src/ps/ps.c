@@ -532,6 +532,7 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
     task->user.reserve = (unsigned)vm_alloc(1);
     task->user.page_dir = (unsigned int)vm_alloc(1);
     task->command = vm_alloc(1);
+    task->umask = 0;
     strcpy(task->command, "system");
     // 0 ~ KERNEL_PAGE_DIR_OFFSET-1 are dynamic, KERNEL_PAGE_DIR_OFFSET ~ 1023 are shared
     memset(task->user.page_dir, 0, PAGE_SIZE);
@@ -684,6 +685,7 @@ int do_fork(unsigned flag)
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
     task->command = vm_alloc(1);
+    task->umask = cur->umask;
     strcpy(task->command, cur->command);
     task->cwd = name_get();
     task->fork_flag = flag;

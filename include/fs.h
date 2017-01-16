@@ -40,6 +40,8 @@ typedef struct _block block;
 #define S_IWOTH 00002
 #define S_IXOTH 00001
 
+#define S_IRWXOGU (S_IRWXU | S_IRWXG | S_IRWXO)
+
 #define EOF ((unsigned char)(-1))
 
 #define FILE_TYPE_NORMAL    1

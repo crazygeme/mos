@@ -120,8 +120,9 @@ static int sys_fcntl(int fd, int cmd, int arg);
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count);
 static int sys_stat(const char *pathname, struct stat *buf);
 static int sys_lstat(const char* path, struct stat* s);
-static int sys_lstat64(const char* path, struct stat64* s);
 static int sys_fstat(int fd, struct stat* s);
+static int sys_stat64(const char *pathname, struct stat64* s);
+static int sys_lstat64(const char* path, struct stat64* s);
 static int sys_fstat64(int fd, struct stat64* s);
 static int sys_munmap(void *addr, unsigned length);
 static int sys_getppid();
@@ -150,17 +151,17 @@ static int sys_llseek(int fd, unsigned offset_high,
                    unsigned int whence);
 static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout);
-
 static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
                    fd_set *exceptfds, const struct timespec *timeout,
                    void *sigmask);
-
 static int sys_link(const char *path1, const char *path2);
 static int sys_symlink(const char *path1, const char *path2);
 static int sys_chmod(const char *pathname, uint32_t mode);
 static int sys_fchmod(int fd, uint32_t mode);
+static int sys_rename(const char *oldpath, const char *newpath);
+static int sys_umask(unsigned mask);
 
-typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx, unsigned esi, unsigned edi);
+typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx, unsigned esi, unsigned edi, unsigned ebp);
 
 static unsigned call_table[NR_syscalls] = {
     test_call,
@@ -171,11 +172,11 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, sys_getuid, 0,          // 21 ~ 25 
     0, 0, 0, sys_pause, sys_utime,          // 26 ~ 30 
     0, 0, sys_access, 0, 0,          // 31 ~ 35
-    0, sys_kill, 0, sys_mkdir, sys_rmdir,          // 36 ~ 40 
+    0, sys_kill, sys_rename, sys_mkdir, sys_rmdir,          // 36 ~ 40 
     sys_dup, sys_pipe, 0, 0, sys_brk,          // 41 ~ 45 
     0, sys_getgid, 0, sys_geteuid, sys_getegid,          // 46 ~ 50 
     0, 0, 0, sys_ioctl, sys_fcntl,          // 51 ~ 55 
-    0, sys_setpgid, 0, 0, 0,          // 56 ~ 60 
+    0, sys_setpgid, 0, 0, sys_umask,          // 56 ~ 60 
     0, 0, sys_dup2, sys_getppid, sys_getpgrp,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
@@ -202,7 +203,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, 0, 0, 0,          // 175 ~ 180
     0, 0, sys_getcwd, 0, 0,          // 181 ~ 185
     0, 0, 0, 0, sys_vfork,          // 185 ~ 190
-    0, 0, 0, 0, 0,            // 191 ~ 195
+    0, 0, 0, 0, sys_stat64,            // 191 ~ 195
     sys_lstat64, sys_fstat64, sys_quota            // 196 ~ 198
 };
 
@@ -225,7 +226,7 @@ static void syscall_process(intr_frame* frame)
     }
     else
     {
-        ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx, frame->esi, frame->edi);
+        ret = (unsigned)fn(frame->ebx, frame->ecx, frame->edx, frame->esi, frame->edi, frame->ebp);
     }
 
     frame->eax = ret;
@@ -896,6 +897,31 @@ static int sys_lstat64(const char *path, struct stat64 *s)
     return ret;
 }
 
+static int sys_stat64(const char *path, struct stat64* s)
+{
+    struct stat s32;
+    char* name = name_get();
+    int ret;
+    resolve_path(path, name);
+    ret = do_stat(__func__, name, &s32, 1);
+    memset(s, 0, sizeof(*s));
+    s->st_dev = s32.st_dev;
+    s->st_ino = s32.st_ino;
+    s->st_mode = s32.st_mode;
+    s->st_nlink = s32.st_nlink;
+    s->st_uid = s32.st_uid;
+    s->st_gid = s32.st_gid;
+    s->st_rdev = s32.st_rdev;
+    s->st_size = s32.st_size;
+    s->st_blksize = s32.st_blksize;
+    s->st_blocks = s32.st_blocks;
+    s->st_atime = s32.st_atime;
+    s->st_mtime = s32.st_mtime;
+    s->st_ctime = s32.st_ctime;
+    name_put(name);
+    return ret;
+}
+
 static int sys_getppid()
 {
     task_struct *cur = CURRENT_TASK();
@@ -1410,6 +1436,38 @@ static int sys_fchmod(int fd, uint32_t mode)
     ret = fs_fchmod(fd, mode);
     if (TestControl.verbos) {
         klog("%d: chmod(%d, %d) = %d\n", fd, mode, ret);
+    }
+    return ret;
+}
+
+static int sys_rename(const char *oldpath, const char *newpath)
+{
+    char* name1 = name_get();
+    char* name2 = name_get();
+    int ret = -1;
+
+    if (!oldpath || !*oldpath || !newpath || !*newpath)
+        return -ENOENT;
+
+    resolve_path(oldpath, name1);
+    resolve_path(newpath, name2);
+    ret = ext4_frename(name1, name2);
+    name_put(name1);
+    name_put(name2);
+
+    if (TestControl.verbos) {
+        klog("%d: rename(%s, %s) = %d\n", name1, name2, ret);
+    }
+
+    return (0-ret);
+}
+
+static int sys_umask(unsigned mask)
+{
+    task_struct* cur = CURRENT_TASK();
+    int ret = __sync_lock_test_and_set(&cur->umask, (mask & S_IRWXOGU));
+    if (TestControl.verbos) {
+        klog("%d: umask(%d) = %d\n", mask, ret);
     }
     return ret;
 }

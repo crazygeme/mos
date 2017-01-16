@@ -214,6 +214,7 @@ typedef struct _task_struct
 	char *cwd;
     unsigned fork_flag;
     semaphore vfork_event;
+    unsigned umask;
 	unsigned int magic; // to avoid stack overflow
 
 }task_struct;

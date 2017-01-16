@@ -194,6 +194,9 @@
 #define __NR_vfork 190
 #define __NR_ugetrlimit 191 /* SuS compliant getrlimit */
 #define __NR_mmap2 192
+#define __NR_truncate64 193
+#define __NR_ftruncate64 194
+#define __NR_stat64  195
 #define __NR_lstat64 196
 #define __NR_fstat64 197
 

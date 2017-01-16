@@ -10,6 +10,7 @@
 #include <mmap.h>
 #include <fcntl.h>
 #include <fs.h>
+#include <errno.h>
 
 static void cleanup()
 {
@@ -69,7 +70,7 @@ static void ps_get_argc_envc(const char* file,
     }
 }
 
-static char** ps_save_argv(const char* file, char** argv, unsigned argc)
+static char** ps_save_argv(const char* file, char** argv, unsigned argc, char* script)
 {
     char** ret = 0;
     int i = 0;
@@ -78,11 +79,15 @@ static char** ps_save_argv(const char* file, char** argv, unsigned argc)
         return 0;
     }
 
-    ret = kmalloc(argc * sizeof(char*));
-    //ret[0] = strdup(file);
-    for (i = 0; i < (argc); i++)
-    {
-        ret[i] = strdup(argv[i]);
+    if (script){
+        ret = kmalloc((argc + 1) * sizeof(char*));
+        ret[0] = strdup(script);
+        for (i = 0; i < (argc); i++)
+            ret[i+1] = strdup(argv[i]);
+    }else{
+        ret = kmalloc(argc * sizeof(char*));
+        for (i = 0; i < (argc); i++)
+            ret[i] = strdup(argv[i]);
     }
 
 
@@ -268,40 +273,118 @@ int sys_execve(const char* file, char** argv, char** envp)
     mos_binfmt fmt = {0};
     task_struct* cur = CURRENT_TASK();
     struct stat s;
+    filep fp;
+    int len = PAGE_SIZE;
+    char* firstline = NULL;
+    size_t wcnt;
     if (!file) {
         return -ENOENT;
     }
+
+    /* resolve path into full path */
     file_name = name_get();
     resolve_path(file, file_name);
-    if (fs_stat(file_name, &s) != 0) {
+
+    /* make script interp as first argument if file starts with #! */
+
+    /* open file for state checking and first line reading */
+    fp = fs_open_file(file_name, O_RDONLY, 0, 1);
+    if (!fp){
         name_put(file_name);
         return -ENOENT;
     }
 
-    if (!(s.st_mode & S_IXUSR)) {
+      /* if file not exist, just return */
+    if (ext4_fstat(fp->inode, &s) != 0) {
+        fs_destroy(fp);
+        name_put(file_name);
+        return -ENOENT;
+    }
+
+    /* if file not executable, just return */
+    if (!(s.st_mode & S_IXUSR) || (s.st_size < 4)) {
+        fs_destroy(fp);
         name_put(file_name);
         return -EPERM;
     }
 
+    /* read first line */
+    len = len > s.st_size ? s.st_size : len;
+    firstline = vm_alloc(1);
+    if (ext4_fread(fp->inode, firstline, len, &wcnt) != EOK){
+        fs_destroy(fp);
+        name_put(file_name);
+        return -ENOENT;
+    }
+    fs_destroy(fp);
+
+    /* 
+     * check whether starts with #!, 
+     * if it is, assign script interp to file_name 
+     */
+    if (firstline[0] == 0x7f && 
+        firstline[1] == 'E' && 
+        firstline[2] == 'L' &&
+        firstline[1] != 'F'){
+        vm_free(firstline, 1);
+        firstline = NULL;
+    }else if (firstline[0] == '#' && firstline[1] == '!'){
+        char* lf = strchr(firstline, '\n');
+        if (lf)
+            *lf = '\0';
+        strcpy(file_name, firstline+2);
+    }else{
+        vm_free(firstline, 1);
+        name_put(file_name);
+        return -ENOEXEC;
+    }
+
+    /* parse arguments and enviroments */
+    /* note that a #! file needs additional slot */
     ps_get_argc_envc(file_name, argv, envp, &argc, &envc);
-    s_argv = ps_save_argv(file_name, argv, argc);
+    s_argv = ps_save_argv(file_name, argv, argc, firstline);
+    if (firstline) argc++;
     s_envp = ps_save_envp(envp, envc);
 
+    if (firstline){
+        vm_free(firstline, 1);
+        firstline = NULL;
+    }
 
+    /* save command line into task struct */
     strcpy(cur->command, file_name);
     for (i = 1; i < argc; i++){
         strcat(cur->command, " ");
-        strcat(cur->command, argv[i]);
+        strcat(cur->command, s_argv[i]);
     }
 
+    /* log if needed */
     if (TestControl.verbos) {
         klog("%d: execve(%s, [", CURRENT_TASK()->psid, file_name);
         for (i = 0; i < argc; i++) {
-            klog_printf("%s ", argv[i]);
+            klog_printf("%s ", s_argv[i]);
         }
         klog_printf("]\n");
     }
+
+    /* 
+     * unmap all user vm, and close all fds if O_CLOEXEC set
+     * note that we will trigger vfork event if this task is 
+     * created by vfork syscall
+     */
     cleanup();
+    
+    /*
+     * now we parse and load elf file. 
+     * A typical executable file in linux  will have a section 
+     * "interp" (usually ld-linux.so), we read that interp and 
+     * load PT_LOAD sections into memory, e_entry of interp is 
+     * the address we are going to jump in, setup the stack in 
+     * proper format and jump to interp, that's all we have to
+     * do in execv syscall. All staffs like dynamic library 
+     * loading / symbol resolve / etc will be handled by interp
+     * pretty easy ha?
+     */
     elf_map(file_name, &fmt);
     eip = fmt.interp_load_addr;
     if (!eip)
@@ -310,9 +393,13 @@ int sys_execve(const char* file, char** argv, char** envp)
         asm("hlt");
     }
 
+    /* don't forget to setup a stack for our program... */
     do_mmap(esp_buttom, USER_STACK_PAGES*PAGE_SIZE, 0, 0, -1, 0);
 
+    /* setup arguments and enviroments in proper way for interp */
     esp_top = ps_setup_v(file_name, argc, s_argv, envc, s_envp, esp_top, &fmt);
+
+    /* that's all */
     ps_free_v(s_argv, argc);
     ps_free_v(s_envp, envc);
     name_put(file_name);

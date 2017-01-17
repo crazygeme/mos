@@ -35,6 +35,13 @@ struct timeval {
     long    tv_usec;        /* microseconds */
 };
 
+
+struct timezone {
+    int tz_minuteswest;     /* minutes west of Greenwich */
+    int tz_dsttime;         /* type of DST correction */
+};
+
+
 struct timespec {
     long    tv_sec;         /* seconds */
     long    tv_nsec;        /* nanoseconds */
@@ -77,7 +84,7 @@ unsigned time_now();
 
 unsigned long long time_now_percisely();
 
-unsigned cycle_to_ms(unsigned dur_cycles);
+unsigned long long cycle_to_ms(unsigned long long dur_cycles);
 
 void msleep(unsigned int ms);
 

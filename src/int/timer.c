@@ -166,10 +166,11 @@ void timer_init()
 
 }
 
-void timer_current(time_t* time)
+void timer_current(time_t* t)
 {
-    time->seconds = total_seconds;
-    time->milliseconds = tickets * 10;
+    time_t now = time(0);
+    t->seconds = now.time / 1000;
+    t->milliseconds = now.time - t->seconds*1000;
 }
 
 unsigned time_now()
@@ -188,15 +189,15 @@ unsigned long long time_now_percisely()
     __asm("movl %%edx, %0" :"=r"(high));
     __asm("popl %eax");
     __asm("popl %edx");
-    cycle = ((unsigned long long)high) << 32 + low;
+    cycle = ((unsigned long long)high) << 32 | low;
     return cycle;
 }
 
-unsigned cycle_to_ms(unsigned dur_cycles)
+unsigned long long cycle_to_ms(unsigned long long dur_cycles)
 {
-    unsigned cycle_per_micro_second;
-    unsigned tick;
-    cycle_per_micro_second = cycle_per_ticket / 10000;
+    unsigned long long cycle_per_micro_second;
+    unsigned long long tick;
+    cycle_per_micro_second = (unsigned long long)cycle_per_ticket / 10000;
     if (cycle_per_micro_second)
         tick = dur_cycles / cycle_per_micro_second;
     else
@@ -236,8 +237,6 @@ void msleep(unsigned int ms)
 
 void usleep(unsigned int us)
 {
-
-
     if (us >= ((1000 / HZ) * 1000))
         return msleep(us / 1000);
 
@@ -255,7 +254,7 @@ void delay(unsigned int us)
 
 time_t time(time_t* t)
 {
-    unsigned long long now = time_now_percisely();
+    unsigned long long now = cycle_to_ms(time_now_percisely());
     time_t ret;
     ret.time = now;
     if (t)

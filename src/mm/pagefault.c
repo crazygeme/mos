@@ -65,11 +65,6 @@ static void pf_process(intr_frame* frame)
         ext4_file* ff;
 
         this_begin = cr2 & PAGE_SIZE_MASK;
-        if (this_begin == 0)
-        {
-            goto HLT;
-        } 
-
         region = vm_find_map(cur->user.vm, this_begin);
         if (region)
         {
@@ -77,7 +72,7 @@ static void pf_process(intr_frame* frame)
             this_offset = region->offset + (this_begin - region->begin);
             mm_add_dynamic_map(this_begin, 0, PAGE_ENTRY_USER_DATA);
             REFRESH_CACHE();
-            memset(this_begin, 0, PAGE_SIZE);
+            
             if (f != 0)
             {
                 int ret = 0;
@@ -90,6 +85,10 @@ static void pf_process(intr_frame* frame)
                 if (ret != EOK){
                     klog("FAIL: mmap: read to buffer %x, size %x\n", this_begin, PAGE_SIZE);
                 }
+            }
+            else
+            {
+                memset(this_begin, 0, PAGE_SIZE);
             }
             goto Done;
         }

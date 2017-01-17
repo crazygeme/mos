@@ -338,10 +338,8 @@ void vm_dump(vm_struct_t vm)
 # define MAP_UNINITIALIZED 0x0          /* Don't support this flag */
 #endif
 
-
-
-int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
-    unsigned int flags, int fd, unsigned int offset)
+int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
+    unsigned int flags, void* inode, unsigned int offset)
 {
     unsigned addr = _addr & PAGE_SIZE_MASK;
     unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
@@ -354,6 +352,16 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
         addr = vm_disc_map(cur->user.vm, page_count*PAGE_SIZE);
     }
 
+    vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, inode, offset);
+
+    return addr;
+}
+
+int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
+    unsigned int flags, int fd, unsigned int offset)
+{
+    void* node;
+    task_struct* cur = CURRENT_TASK();
     // FIXME
     // lots of flags and prot
     if (fd != -1 && cur->fds[fd].used != 0)
@@ -361,10 +369,7 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
     else
         node = 0;
 
-    vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, node, offset);
-
-
-    return addr;
+    return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
 
 }
 

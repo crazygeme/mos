@@ -1,0 +1,2 @@
+target remote localhost:8888
+symbol-file kernel.dbg

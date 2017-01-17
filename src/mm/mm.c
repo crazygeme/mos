@@ -369,7 +369,7 @@ unsigned int vm_alloc(int page_count)
     }
     REFRESH_CACHE();
     vir = page_index * PAGE_SIZE + KERNEL_OFFSET;
-    memset(vir, 0, page_count * PAGE_SIZE);
+    //memset(vir, 0, page_count * PAGE_SIZE);
     unlock_mm();
     return vir;
 

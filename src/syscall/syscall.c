@@ -160,6 +160,9 @@ static int sys_chmod(const char *pathname, uint32_t mode);
 static int sys_fchmod(int fd, uint32_t mode);
 static int sys_rename(const char *oldpath, const char *newpath);
 static int sys_umask(unsigned mask);
+static int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
+static int sys_nanosleep(const struct timespec *req, struct timespec *rem);
+
 
 typedef int(*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx, unsigned esi, unsigned edi, unsigned ebp);
 
@@ -180,7 +183,7 @@ static unsigned call_table[NR_syscalls] = {
     0, 0, sys_dup2, sys_getppid, sys_getpgrp,          // 61 ~ 65 
     0, 0, 0, 0, 0,          // 66 ~ 70 
     0, 0, 0, 0, 0,          // 71 ~ 75 
-    sys_getrlimit, 0, 0, 0, 0,          // 76 ~ 80 
+    sys_getrlimit, 0, sys_gettimeofday, 0, 0,          // 76 ~ 80 
     0, sys_select, sys_symlink, 0, 0,          // 81 ~ 85
     0, 0, sys_reboot, sys_readdir, sys_mmap,          // 86 ~ 90 
     sys_munmap, 0, 0, sys_fchmod, 0,          // 91 ~ 95 
@@ -197,7 +200,7 @@ static unsigned call_table[NR_syscalls] = {
     sys_writev, 0, 0, 0, 0,          // 146 ~ 150
     0, 0, 0, 0, 0,          // 151 ~ 155
     0, 0, sys_sched_yield, 0, 0,          // 156 ~ 160
-    0, 0, 0, 0, 0,          // 161 ~ 165
+    0, sys_nanosleep, 0, 0, 0,          // 161 ~ 165
     0, 0, 0, 0, 0,          // 165 ~ 170
     0, 0, 0, sys_sigaction, sys_sigprocmask,          // 171 ~ 175
     0, 0, 0, 0, 0,          // 175 ~ 180
@@ -839,9 +842,8 @@ static int sys_fstat(int fd, struct stat *s)
     return ret;
 }
 
-static int sys_fstat64(int fd, struct stat64 *s) {
-    // FIXME
-    // rewrite it all please
+static int sys_fstat64(int fd, struct stat64 *s) 
+{
     task_struct *cur = CURRENT_TASK();
     struct stat s32;
 
@@ -987,6 +989,9 @@ static int sys_sigaction(int sig, void *act, void *oact)
 {
     // FIXME
     // no signal at all
+    if (TestControl.verbos) {
+        klog("%d: sigaction\n", CURRENT_TASK()->psid);
+    }
     return -1;
 }
 
@@ -994,6 +999,9 @@ static int sys_sigprocmask(int how, void *set, void *oset)
 {
     // FIXME
     // no signal
+    if (TestControl.verbos) {
+        klog("%d: sigprocmask\n", CURRENT_TASK()->psid);
+    }
     return -1;
 }
 
@@ -1382,7 +1390,7 @@ static int sys_link(const char *path1, const char *path2)
     ret = ext4_flink(name1, name2);
 
     if (TestControl.verbos) {
-        klog("%d: symlink(%s, %s) = %d\n", name1, name2, ret);
+        klog("%d: symlink(%s, %s) = %d\n", CURRENT_TASK()->psid, name1, name2, ret);
     }
 
     name_put(name1);
@@ -1405,7 +1413,7 @@ static int sys_symlink(const char *path1, const char *path2)
     ret = ext4_fsymlink(name1, name2);
 
     if (TestControl.verbos) {
-        klog("%d: symlink(%s, %s) = %d\n", name1, name2, ret);
+        klog("%d: symlink(%s, %s) = %d\n", CURRENT_TASK()->psid, name1, name2, ret);
     }
 
     name_put(name1);
@@ -1425,7 +1433,7 @@ static int sys_chmod(const char *pathname, uint32_t mode)
     ret = fs_chmod(name, mode);
     name_put(name);
     if (TestControl.verbos) {
-        klog("%d: chmod(%s, %d) = %d\n", name, mode, ret);
+        klog("%d: chmod(%s, %d) = %d\n", CURRENT_TASK()->psid, name, mode, ret);
     }
     return ret;
 }
@@ -1435,7 +1443,7 @@ static int sys_fchmod(int fd, uint32_t mode)
     int ret = -1;
     ret = fs_fchmod(fd, mode);
     if (TestControl.verbos) {
-        klog("%d: chmod(%d, %d) = %d\n", fd, mode, ret);
+        klog("%d: chmod(%d, %d) = %d\n", CURRENT_TASK()->psid, fd, mode, ret);
     }
     return ret;
 }
@@ -1456,7 +1464,7 @@ static int sys_rename(const char *oldpath, const char *newpath)
     name_put(name2);
 
     if (TestControl.verbos) {
-        klog("%d: rename(%s, %s) = %d\n", name1, name2, ret);
+        klog("%d: rename(%s, %s) = %d\n",CURRENT_TASK()->psid, name1, name2, ret);
     }
 
     return (0-ret);
@@ -1470,4 +1478,40 @@ static int sys_umask(unsigned mask)
         klog("%d: umask(%d) = %d\n", mask, ret);
     }
     return ret;
+}
+
+static int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
+{
+    time_t now;
+    if (!tv)
+        return -EFAULT;
+
+    now = time(NULL);
+    tv->tv_sec = now.time / 1000;
+    tv->tv_usec = (now.time - tv->tv_sec * 1000)*1000;
+    if (tz){
+        tz->tz_minuteswest = tz->tz_dsttime = 0;
+    }
+
+    if (TestControl.verbos) {
+        klog("%d: gettimeofday() = %d(sec), %d(usec)\n", CURRENT_TASK()->psid, tv->tv_sec, tv->tv_usec);
+    }
+    return 0;
+}
+
+static int sys_nanosleep(const struct timespec *req, struct timespec *rem)
+{
+    // FIXME: no signal at all so rem never used
+    unsigned int total_millisecond = 0;
+    if (!req)
+        return -EFAULT;
+
+    if (req->tv_sec < 0 || 
+        req->tv_nsec < 0 || req->tv_nsec > 999999999)
+        return -EINVAL;
+
+    total_millisecond = req->tv_sec * 1000 + 
+                        req->tv_nsec / 1000000;
+    msleep(total_millisecond);
+    return 0;
 }

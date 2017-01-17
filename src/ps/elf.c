@@ -25,8 +25,12 @@ static unsigned elf_map_section(filep fp, Elf32_Phdr* phdr, mos_binfmt* fmt)
     unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
     unsigned i = 0;
 
-    do_mmap(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, -1, 0);
-    elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
+    if (va_begin == phdr->p_vaddr){
+        do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, fp, file_off);
+    }else{
+        do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, 0, 0);
+        elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
+    }
     return 1;
 }
 

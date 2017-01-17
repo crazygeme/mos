@@ -29,7 +29,6 @@ static spinlock wait_queue_lock;
 static spinlock mgr_queue_lock;
 static spinlock map_lock;
 static unsigned int ps_id;
-static void ps_restore_user_map();
 static void lock_ps()
 {
     spinlock_lock(&ps_lock);
@@ -1022,7 +1021,7 @@ void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux)
             page_table = (unsigned*)((unsigned)page_table + KERNEL_OFFSET);
             for (j = 0; j < 1024; j++)
             {
-                if (page_table[j] != 0)
+                if ((page_table[j] & PAGE_SIZE_MASK) != 0)
                 {
                     unsigned vir = (i << 22) + (j << 12);
                     unsigned phy = page_table[j] & PAGE_SIZE_MASK;
@@ -1035,46 +1034,21 @@ void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux)
 
 static void ps_save_kernel_map(task_struct* task)
 {
-    int i = 0;
-
     if (task->user.page_dir)
     {
         unsigned int cr3;
         unsigned int* in_use;
         unsigned int* per_ps = (unsigned int*)task->user.page_dir;
-
+        void* src;
+        void* dst;
         __asm__("movl %%cr3, %0" : "=q"(cr3));
         in_use = (unsigned int*)(cr3 + KERNEL_OFFSET);
-        for (i = KERNEL_PAGE_DIR_OFFSET; i < 1024; i++)
-        {
-            per_ps[i] = in_use[i];
-        }
+
+        src = &in_use[KERNEL_PAGE_DIR_OFFSET];
+        dst = &per_ps[KERNEL_PAGE_DIR_OFFSET];
+        memcpy(dst, src, (1024-KERNEL_PAGE_DIR_OFFSET)*sizeof(unsigned));
     }
 }
-
-static void ps_restore_user_map()
-{
-    task_struct *current = 0;
-    int i = 0;
-    current = CURRENT_TASK();
-
-    if (current->user.page_dir)
-    {
-        unsigned int cr3;
-        unsigned int* in_use;
-        unsigned int* per_ps = (unsigned int*)current->user.page_dir;
-
-        __asm__("movl %%cr3, %0" : "=q"(cr3));
-        in_use = (unsigned int*)(cr3 + KERNEL_OFFSET);
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++)
-        {
-            in_use[i] = per_ps[i];
-        }
-
-        RELOAD_CR3(cr3);
-    }
-}
-
 
 void _task_sched(const char* func)
 {

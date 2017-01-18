@@ -127,7 +127,7 @@ void tty_putchar(int x, int y, char c)
         // FIXME : only white color in text mode
         int cur = ROW_COL_TO_CUR(x, y);
         _fb_text[cur] = c;
-        fb_write_char(y, x, c, VGA_COLOR_GREEN);
+        fb_write_char(y, x, c, VGA_COLOR_WHITE);
     }
 
 }
@@ -188,7 +188,7 @@ void tty_roll_one_line()
         memcpy(old_row_ptr, new_row_ptr, copy_size);
         // then paint cursor back
         {
-            fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
+            fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_WHITE);
         }
 
         memcpy(_fb_text, next_char_row, txt_copy_size);
@@ -263,7 +263,7 @@ void tty_movecurse(unsigned c)
             fb_write_char(CUR_COL, CUR_ROW, 130, VGA_COLOR_BLACK);
         }
         cursor = c;
-        fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_GREEN);
+        fb_write_char(CUR_COL, CUR_ROW, 129, VGA_COLOR_WHITE);
     }
 }
 

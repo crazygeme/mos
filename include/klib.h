@@ -138,10 +138,12 @@ typedef struct _TEST_CONTROL
     int test_mm;
     int test_fs_read;
     int test_fs_write;
-    int test_ffs;
     int test_ext2;
 	int test_mount;
 	int test_block;
+	int test_pci;
+	int test_nic;
+	int test_socket;
 	int verbos;
 }TEST_CONTROL;
 extern TEST_CONTROL TestControl;

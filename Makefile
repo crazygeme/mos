@@ -74,11 +74,14 @@ OBJS	= $(DST)/boot.o \
 		  $(DST)/profiling.o\
 		  $(DST)/fs.o\
 		  $(DST)/select.o\
+		  $(DST)/nic.o\
+		  $(DST)/nic_intel_8254x.o\
 		  $(DST)/libext4.a
 
 TESTS	= $(DST)/$(TEST)/mmap_test.o\
 		  $(DST)/$(TEST)/mm_test.o\
-		  $(DST)/$(TEST)/block_test.o
+		  $(DST)/$(TEST)/block_test.o\
+		  $(DST)/$(TEST)/pci_test.o
 
 
 all: kernel
@@ -100,6 +103,9 @@ $(DST)/$(TEST)/mm_test.o: test/mm_test.c
 
 $(DST)/$(TEST)/block_test.o: test/block_test.c
 	$(CC) $(CFLAGS) test/block_test.c -o $(DST)/$(TEST)/block_test.o
+
+$(DST)/$(TEST)/pci_test.o: test/pci_test.c
+	$(CC) $(CFLAGS) test/pci_test.c -o $(DST)/$(TEST)/pci_test.o
 
 $(DST)/profiling.o: src/profiling/profiling.c
 	$(CC) $(CFLAGS) src/profiling/profiling.c -o $(DST)/profiling.o
@@ -169,6 +175,12 @@ $(DST)/syscall.o: src/syscall/syscall.c include/syscall.h
 
 $(DST)/select.o: src/syscall/select.c include/select.h
 	$(CC) $(CFLAGS) -o $(DST)/select.o src/syscall/select.c
+
+$(DST)/nic.o: src/drivers/nic.c include/nic.h
+	$(CC) $(CFLAGS) -o $(DST)/nic.o src/drivers/nic.c
+
+$(DST)/nic_intel_8254x.o: src/drivers/nic_intel_8254x.c include/nic.h
+	$(CC) $(CFLAGS) -o $(DST)/nic_intel_8254x.o src/drivers/nic_intel_8254x.c
 
 $(DST)/pagefault.o: src/mm/pagefault.c include/pagefault.h
 	$(CC) $(CFLAGS) -o $(DST)/pagefault.o src/mm/pagefault.c

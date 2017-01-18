@@ -981,171 +981,20 @@ static unsigned long writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
 
 static unsigned long read_times = 0, write_times = 0;
 
-static void break_hdd_read_select_begin()
-{
-    if (!TestControl.test_ffs)
-        return;
-    timer_current(&read_select);
-}
-
-static void break_hdd_read_select_end()
-{
-    time_t now;
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&now);
-
-    read_select_t += (now.seconds * 1000 + now.milliseconds -
-        read_select.seconds * 1000 - read_select.milliseconds);
-}
-
-static void break_hdd_read_wait_begin()
-{
-    if (!TestControl.test_ffs)
-        return;
-    timer_current(&read_wait);
-}
-
-static void break_hdd_read_wait_end()
-{
-    time_t now;
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&now);
-
-    read_wait_t += (now.seconds * 1000 + now.milliseconds -
-        read_wait.seconds * 1000 - read_wait.milliseconds);
-}
-
-static void break_hdd_read_io_begin()
-{
-    if (!TestControl.test_ffs)
-        return;
-    timer_current(&read_io);
-}
-
-static void break_hdd_read_io_end()
-{
-    time_t now;
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&now);
-
-    read_io_t += (now.seconds * 1000 + now.milliseconds -
-        read_io.seconds * 1000 - read_io.milliseconds);
-}
-
-static void break_hdd_write_select_begin()
-{
-    if (!TestControl.test_ffs)
-        return;
-    timer_current(&writ_select);
-}
-
-static void break_hdd_write_select_end()
-{
-    time_t now;
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&now);
-
-    writ_select_t += (now.seconds * 1000 + now.milliseconds -
-        writ_select.seconds * 1000 - writ_select.milliseconds);
-}
-
-static void break_hdd_write_wait_begin()
-{
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&writ_wait);
-}
-
-static void break_hdd_write_wait_end()
-{
-    time_t now;
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&now);
-
-    writ_wait_t += (now.seconds * 1000 + now.milliseconds -
-        writ_wait.seconds * 1000 - writ_wait.milliseconds);
-
-}
-
-static void break_hdd_write_io_begin()
-{
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&writ_io);
-}
-
-static void break_hdd_write_io_end()
-{
-    time_t now;
-    if (!TestControl.test_ffs)
-        return;
-
-    timer_current(&now);
-
-    writ_io_t += (now.seconds * 1000 + now.milliseconds -
-        writ_io.seconds * 1000 - writ_io.milliseconds);
-
-}
-
-void report_hdd_time()
-{
-    if (!TestControl.test_ffs)
-        return;
-
-    printk("read  %d times: select %u, wait %u, io %u\n", read_times, read_select_t,
-        read_wait_t, read_io_t);
-    printk("write %d times: select %u, wait %u, io %u\n", write_times, writ_select_t,
-        writ_wait_t, writ_io_t);
-    read_select_t = 0, read_wait_t = 0, read_io_t = 0;
-    writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
-    read_times = write_times = 0;
-}
 
 static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
 {
     ata_disk *d = aux;
     channel *c = d->channel;
     sema_wait_for_intr(&c->iolock);
-    if (TestControl.test_ffs)
-        break_hdd_read_select_begin();
 
     select_sector(d, sec_no);
-
-    if (TestControl.test_ffs)
-        break_hdd_read_select_end();
-
-    if (TestControl.test_ffs)
-        break_hdd_read_wait_begin();
 
     issue_pio_command(c, CMD_READ_SECTOR_RETRY);
 
     sema_wait_for_intr(&c->sema);
 
-    if (TestControl.test_ffs)
-        break_hdd_read_wait_end();
-
-    if (TestControl.test_ffs)
-        break_hdd_read_io_begin();
-
     input_sector(c, buf);
-
-    if (TestControl.test_ffs)
-    {
-        break_hdd_read_io_end();
-        read_times++;
-    }
 
     sema_trigger_at_intr(&c->iolock);
 
@@ -1158,32 +1007,15 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
     ata_disk *d = aux;
     channel *c = d->channel;
     sema_wait_for_intr(&c->iolock);
-    if (TestControl.test_ffs)
-        break_hdd_write_select_begin();
 
     select_sector(d, sec_no);
-    if (TestControl.test_ffs)
-        break_hdd_write_select_end();
-
+ 
     issue_pio_command(c, CMD_WRITE_SECTOR_RETRY);
-    if (TestControl.test_ffs)
-        break_hdd_write_io_begin();
 
     output_sector(c, buf);
-    if (TestControl.test_ffs)
-        break_hdd_write_io_end();
 
-
-    if (TestControl.test_ffs)
-        break_hdd_write_wait_begin();
 
     sema_wait_for_intr(&c->sema);
-
-    if (TestControl.test_ffs)
-    {
-        break_hdd_write_wait_end();
-        write_times++;
-    }
 
     sema_trigger_at_intr(&c->iolock);
 

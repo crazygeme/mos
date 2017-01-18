@@ -471,7 +471,7 @@ void _write_wb(unsigned short port, const void *addr, unsigned cnt)
 }
 
 /* Writes the 32-bit DATA to PORT. */
-void _write_dwrod(unsigned short port, unsigned int data)
+void _write_dword(unsigned short port, unsigned int data)
 {
     /* See [IA32-v2b] "OUT". */
     asm volatile ("outl %0, %w1" : : "a" (data), "Nd" (port));

@@ -316,7 +316,6 @@ int klib_putchar(char c)
     {
         int new_row = CUR_ROW + 1;
         int new_col = 0;
-        klib_putchar(' ');
         new_pos = ROW_COL_TO_CUR(new_row, new_col);
     }
     else if (c == '\t')
@@ -516,9 +515,6 @@ void* malloc(unsigned size)
     int sliced = 0;
     unsigned t = 0;
 
-    if (TestControl.test_ffs)
-        t = time_now();
-
 
     if (free_list_index > 511) // that's too large
         return NULL;
@@ -564,9 +560,6 @@ void* malloc(unsigned size)
             if (vir == 0)
             {
                 unlock_heap();
-                if (TestControl.test_ffs)
-                    heap_time += time_now() - t;
-
                 return NULL;
             }
             index = 511;
@@ -593,17 +586,10 @@ void* malloc(unsigned size)
             heap_quota_high = heap_quota;
         }
         unlock_heap();
-
-        if (TestControl.test_ffs)
-            heap_time += time_now() - t;
-
         return (void*)ret;
     }
 
     unlock_heap();
-    if (TestControl.test_ffs)
-        heap_time += time_now() - t;
-
     return NULL;
 
 }
@@ -613,10 +599,6 @@ void free(void* buf)
     kblock* block = NULL;
     int size = 0;
     int free_list_index;
-
-    unsigned t = 0;
-    if (TestControl.test_ffs)
-        t = time_now();
 
     if (buf == NULL)
         return;
@@ -629,10 +611,6 @@ void free(void* buf)
     klib_add_to_free_list(free_list_index, block, 0);
 
     unlock_heap();
-
-    if (TestControl.test_ffs)
-        heap_time += time_now() - t;
-
 }
 
 
@@ -769,15 +747,7 @@ extern bcopy(void* src, void*dst, unsigned n);
 void memcpy(void* to, void* from, unsigned n)
 {
     unsigned t = 0;
-    if (TestControl.test_ffs)
-    {
-        t = time_now();
-    }
     bcopy(from, to, n);
-    if (TestControl.test_ffs)
-    {
-        mem_time += time_now() - t;
-    }
 }
 
 void memmove(void* _src, void* _dst, unsigned len)
@@ -1427,14 +1397,14 @@ void klog(char* str, ...)
 void tty_write(const char* buf, unsigned len)
 {
     int i = 0;
-    int new_pos;
+    int new_pos = 0;
     lock_tty();
     for (i = 0; i < len; i++)
     {
-        //tty_setcolor(CUR_ROW, CUR_COL, cur_fg_color, cur_bg_color);
+        if (new_pos >= TTY_MAX_CHARS)
+            klib_flush_cursor();
         new_pos = klib_putchar(buf[i]);
         klib_update_cursor(new_pos);
-        //klib_putchar_update_cursor(buf[i]);
     }
     klib_flush_cursor();
     unlock_tty();

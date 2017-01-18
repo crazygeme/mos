@@ -100,7 +100,7 @@ void _read_dwb (unsigned short port, void *addr, unsigned cnt);
 void _write_sb (unsigned short port, const void *addr, unsigned cnt);
 void _write_word (unsigned short port, unsigned short data);
 void _write_wb (unsigned short port, const void *addr, unsigned cnt);
-void _write_dwrod (unsigned short port, unsigned int data);
+void _write_dword (unsigned short port, unsigned int data);
 void _write_dwb (unsigned short port, const void *addr, unsigned cnt);
 
 _START void write_word (unsigned short port, unsigned short data);

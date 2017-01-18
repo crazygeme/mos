@@ -12,14 +12,15 @@
 #include <mm.h>
 
 
-_STARTDATA unsigned resolution_x;
-_STARTDATA unsigned resolution_y;
-_STARTDATA unsigned _vga_width;
-_STARTDATA unsigned _vga_height;
+unsigned resolution_x;
+unsigned resolution_y;
+unsigned _vga_width;
+unsigned _vga_height;
 
 /* Binary Literals */
 #define b(x) ((unsigned char)b_(0 ## x ## uL))
 #define b_(x) ((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | (x >> 14 & 128))
+
 
 static unsigned char number_font[][12] = {
     {	b(00000000),
@@ -1771,21 +1772,21 @@ static unsigned char cursor_font[][12] = {
     },
 };
 
-_STARTDATA unsigned int * fb_buffer = 0xE0000;
+unsigned int * fb_buffer = 0xE0000;
 
-_START static void BgaWriteRegister(unsigned short IndexValue, unsigned short DataValue)
+static void BgaWriteRegister(unsigned short IndexValue, unsigned short DataValue)
 {
-    write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
-    write_word(VBE_DISPI_IOPORT_DATA, DataValue);
+    _write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
+    _write_word(VBE_DISPI_IOPORT_DATA, DataValue);
 }
 
-_START static unsigned short BgaReadRegister(unsigned short IndexValue)
+static unsigned short BgaReadRegister(unsigned short IndexValue)
 {
-    write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
-    return read_word(VBE_DISPI_IOPORT_DATA);
+    _write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
+    return _read_word(VBE_DISPI_IOPORT_DATA);
 }
 
-_START static int BgaIsAvailable(void)
+static int BgaIsAvailable(void)
 {
     unsigned short i = BgaReadRegister(VBE_DISPI_INDEX_ID);
     int old_version = (BgaReadRegister(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID5);
@@ -1802,7 +1803,7 @@ _START static int BgaIsAvailable(void)
     return 1;
 }
 
-_START static void BgaSetVideoMode(unsigned int Width, unsigned int Height, unsigned int BitDepth, int UseLinearFrameBuffer, int ClearVideoMemory)
+static void BgaSetVideoMode(unsigned int Width, unsigned int Height, unsigned int BitDepth, int UseLinearFrameBuffer, int ClearVideoMemory)
 {
     BgaWriteRegister(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
     BgaWriteRegister(VBE_DISPI_INDEX_XRES, Width);
@@ -1813,13 +1814,13 @@ _START static void BgaSetVideoMode(unsigned int Width, unsigned int Height, unsi
         (ClearVideoMemory ? 0 : VBE_DISPI_NOCLEARMEM));
 }
 
-_START static void BgaSetBank(unsigned short BankNumber)
+static void BgaSetBank(unsigned short BankNumber)
 {
     BgaWriteRegister(VBE_DISPI_INDEX_BANK, BankNumber);
 }
 
 
-_START static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void * extra)
+static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void * extra)
 {
     if (v == 0x1234 && d == 0x1111)
     {
@@ -1929,7 +1930,7 @@ void fb_write_color(int x, int y, unsigned color)
     }
 }
 
-_START void fb_init(multiboot_info_t* mboot_ptr)
+void fb_init()
 {
     int newest_version = BgaIsAvailable();
 

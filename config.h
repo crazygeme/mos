@@ -64,7 +64,7 @@
 #define USER_ZONE_END	(USER_HEAP_BEGIN - PAGE_SIZE)
 
 // supported resolution
-#define VGA_RESOLUTION_X 1024
+#define VGA_RESOLUTION_X 768
 #define VGA_RESOLUTION_Y 512
 #define VGA_COLOR_DEPTH  32
 

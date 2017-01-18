@@ -10,6 +10,7 @@ _test="0"
 _test_arg=""
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
+_kvm="-no-kvm"
 if [ ! -e "kernel" ]; then
 	_rebuild="1"
 fi
@@ -28,6 +29,8 @@ elif [ "$arg" == "debug" ]; then
 elif [ "$arg" == "curses" ]; then
 	_curses="-curses"
 	_vga=""
+elif [ "$arg" == "kvm" ]; then
+	_kvm="-enable-kvm"
 elif [ "$arg" == "" ]; then
 	_rebuild="0"
 	_debug="0"
@@ -62,15 +65,15 @@ echo "begin enum"
 
 if [ "$_debug" == "0" ]; then
 	if [ "$_test" == "1" ]; then
-		qemu-system-i386 -no-kvm $_curses -m $_ramsize -hda "$diskfile" -kernel kernel -append "test $_test_arg" -serial $_logtofile $_vga $_power
+		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel kernel -append "test $_test_arg" -serial $_logtofile $_vga $_power $_kvm
 	else
-		qemu-system-i386 -no-kvm $_curses -m $_ramsize -hda "$diskfile" -kernel kernel -serial $_logtofile $_vga $_power
+		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel kernel -serial $_logtofile $_vga $_power $_kvm
 	fi
 else
 	if [ "$_test" == "1" ]; then
-		qemu-system-i386 -no-kvm $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel kernel -append "test $_test_arg" -serial $_logtofile $_vga $_power -gdb tcp::8888 -S
+		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel kernel -append "test $_test_arg" -serial $_logtofile $_vga $_power $_kvm -gdb tcp::8888 -S
 	else 
-		qemu-system-i386 -no-kvm $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel kernel -serial $_logtofile $_vga $_power -gdb tcp::8888 -S
+		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel kernel -serial $_logtofile $_vga $_power $_kvm  -gdb tcp::8888 -S
 	fi
 fi
 

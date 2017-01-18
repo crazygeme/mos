@@ -21,7 +21,7 @@
 
 
 
-_START void fb_init(multiboot_info_t* mboot_ptr);
+void fb_init();
 
 
 void fb_enable();

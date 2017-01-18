@@ -38,34 +38,36 @@
 
 #define PCI_NONE 0xFFFF
 
+#define PCI_SCAN_ALL (-1)
+
 typedef unsigned uint32_t;
 typedef unsigned short uint16_t;
 typedef unsigned char uint8_t;
 
 typedef void (*pci_func_t)(uint32_t device, uint16_t vendor_id, uint16_t device_id, void * extra);
 
-_START static inline int pci_extract_bus(uint32_t device) {
+static inline int pci_extract_bus(uint32_t device) {
 	return (uint8_t)((device >> 16));
 }
-_START static inline int pci_extract_slot(uint32_t device) {
+static inline int pci_extract_slot(uint32_t device) {
 	return (uint8_t)((device >> 8));
 }
-_START static inline int pci_extract_func(uint32_t device) {
+static inline int pci_extract_func(uint32_t device) {
 	return (uint8_t)(device);
 }
 
-_START static inline uint32_t pci_get_addr(uint32_t device, int field) {
+static inline uint32_t pci_get_addr(uint32_t device, int field) {
 	return 0x80000000 | (pci_extract_bus(device) << 16) | (pci_extract_slot(device) << 11) | (pci_extract_func(device) << 8) | ((field) & 0xFC);
 }
 
-_START static inline uint32_t pci_box_device(int bus, int slot, int func) {
+static inline uint32_t pci_box_device(int bus, int slot, int func) {
 	return (uint32_t)((bus << 16) | (slot << 8) | func);
 }
 
-_START void pci_scan_bus(pci_func_t f, int type, int bus, void * extra);
+void pci_scan_bus(pci_func_t f, int type, int bus, void * extra);
 
-_START void pci_scan(pci_func_t f, int type, void * extra);
+void pci_scan(pci_func_t f, int type, void * extra);
 
-_START unsigned pci_read_field(unsigned device, int field, int size);
+unsigned pci_read_field(unsigned device, int field, int size);
 
 #endif

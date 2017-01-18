@@ -51,8 +51,10 @@ void kmain_startup()
 {
     int i = 0;
 
-    // fb_enable();
+    fb_init();
 
+    fb_enable();
+    
     g_mb = (multiboot_info_t*)((unsigned)_g_mb + KERNEL_OFFSET);
     // after klib_init, kmalloc/kfree/prink/etc are workable    
     klib_init();
@@ -116,6 +118,12 @@ static void idle_process(void* param)
 static void run_tests_if_has()
 {
 
+    if (TestControl.test_pci)
+    {
+        test_pci();
+        run();
+    }
+
     if (TestControl.test_block)
     {
         test_block_process();
@@ -163,6 +171,9 @@ static void kmain_process(void* param)
 
     pipe_init();
 
+    // enable network
+    nic_scan_all();
+
     run_tests_if_has();
 
     printk("Init system call table\n");
@@ -186,8 +197,6 @@ static void kmain_process(void* param)
 _START static void init(multiboot_info_t* mb)
 {
     int_init();
-
-    // fb_init(mb);
 
     mm_init(mb);
     // never to here
@@ -251,11 +260,8 @@ static void parse_kernel_cmdline()
         if (strcmp(token, "fs_write") == 0)
             TestControl.test_fs_write = 1;
 
-        if (strcmp(token, "ffs") == 0)
-        {
-            TestControl.test_fs_read = 1;
-            TestControl.test_ffs = 1;
-        }
+        if (strcmp(token, "pci") == 0)
+            TestControl.test_pci = 1;
 
         if (strcmp(token, "verbos") == 0)
             TestControl.verbos = 1;

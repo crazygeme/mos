@@ -48,6 +48,7 @@ else
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	echo -e "\t testall: run all tests"
+	echo -e "\t test verbos: run with debug information"
 	exit
 fi
 done

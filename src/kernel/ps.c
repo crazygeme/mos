@@ -685,6 +685,7 @@ int do_fork(unsigned flag)
     task->user.reserve = (unsigned)vm_alloc(1);
     task->command = vm_alloc(1);
     task->umask = cur->umask;
+    task->priority = cur->priority;
     strcpy(task->command, cur->command);
     task->cwd = name_get();
     task->fork_flag = flag;
@@ -869,6 +870,7 @@ int sys_waitpid(unsigned pid, int* status, int options)
     
     do
     {
+        task_sched();
         lock_dying();
         entry = control.dying_queue.Flink;
         while (entry != &control.dying_queue)
@@ -936,7 +938,6 @@ int sys_waitpid(unsigned pid, int* status, int options)
             ps_put_to_wait_queue(cur);
         }
         unlock_dying();
-        task_sched();
     }
     while (can_return == 0);
     ps_id_free(ret);

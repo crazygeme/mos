@@ -122,7 +122,7 @@ typedef volatile struct __tss_struct {
 
 typedef struct _page_table_list_entry {
     unsigned int addr;
-    LIST_ENTRY list;
+    list_entry list;
 } page_table_list_entry;
 
 struct _region_elem {
@@ -178,23 +178,23 @@ typedef struct _task_struct {
     user_enviroment user;
     int priority;
     // in schedule list
-    LIST_ENTRY ps_list;
+    list_entry ps_list;
     // in wait list if waiting a lock
-    LIST_ENTRY lock_list;
+    list_entry lock_list;
     // in all process list
-    LIST_ENTRY ps_mgr;
+    list_entry ps_mgr;
     ps_status status;
     ps_type type;
     int remain_ticks;
     int is_switching;
     file_descriptor* fds;
-    semaphore fd_lock;
+    cond_t fd_lock;
     unsigned exit_status;
     unsigned parent;
     unsigned group_id;
     char* cwd;
     unsigned fork_flag;
-    semaphore vfork_event;
+    cond_t vfork_event;
     unsigned umask;
     unsigned int magic;  // to avoid stack overflow
 

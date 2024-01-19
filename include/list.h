@@ -1,28 +1,28 @@
 #ifndef _LIST_H_
 #define _LIST_H_
 
-typedef struct _LIST_ENTRY {
-    struct _LIST_ENTRY* Flink;
-    struct _LIST_ENTRY* Blink;
-} LIST_ENTRY, *PLIST_ENTRY;
+typedef struct _list_entry {
+    struct _list_entry* Flink;
+    struct _list_entry* Blink;
+} list_entry;
 
-void InitializeListHead(PLIST_ENTRY ListHead);
+void list_init(list_entry* ListHead);
 
-int IsListEmpty(LIST_ENTRY* ListHead);
+int list_is_empty(list_entry* ListHead);
 
-PLIST_ENTRY RemoveHeadList(PLIST_ENTRY ListHead);
+list_entry* list_remove_head(list_entry* ListHead);
 
-PLIST_ENTRY RemoveTailList(PLIST_ENTRY ListHead);
+list_entry* list_remove_tail(list_entry* ListHead);
 
-void InsertTailList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry);
+void list_insert_tail(list_entry* ListHead, list_entry* Entry);
 
-void InsertHeadList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry);
+void list_insert_head(list_entry* ListHead, list_entry* Entry);
 
-void AppendTailList(PLIST_ENTRY ListHead, PLIST_ENTRY ListToAppend);
+void list_append_tail(list_entry* ListHead, list_entry* ListToAppend);
 
-#define OFFSET_OF(type, field) (unsigned long)(&(((type*)0)->field))
+#define offset_of(type, field) (unsigned long)(&(((type*)0)->field))
 
-#define CONTAINER_OF(node, type, field) (type*)((char*)node - OFFSET_OF(type, field))
+#define container_of(node, type, field) (type*)((char*)node - offset_of(type, field))
 
 typedef struct _STACK {
     unsigned int top;

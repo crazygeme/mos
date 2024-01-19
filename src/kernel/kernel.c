@@ -130,8 +130,7 @@ static void run_tests_if_has() {
         run();
     }
 
-    // if (TestControl.test_fs_read || TestControl.test_fs_write)
-    // {
+    // if (TestControl.test_fs_read || TestControl.test_fs_write) {
     //     test_ns();
     //     run();
     // }

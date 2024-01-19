@@ -2,7 +2,7 @@
 #include <int.h>
 #include <unistd.h>
 #include <ps.h>
-#include <ps0.h>
+#include <exec.h>
 #include <config.h>
 #include <timer.h>
 #include <klib.h>

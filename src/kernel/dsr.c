@@ -8,10 +8,10 @@
 #define SOFTIRQ 0x1
 #define TRIGGER_SOFTIRQ() __asm__("int $1");
 
-static LIST_ENTRY dsr_head;
+static list_entry dsr_head;
 static spinlock dsr_lock;
 static spinlock cache_lock;
-static LIST_ENTRY dsr_cache;
+static list_entry dsr_cache;
 
 static void lock_dsr() {
     spinlock_lock(&dsr_lock);
@@ -35,11 +35,11 @@ static void dsr_interrupt(intr_frame* frame) {
 
 static dsr_node* dsr_alloc_node() {
     dsr_node* dsr = 0;
-    LIST_ENTRY* node = 0;
+    list_entry* node = 0;
     lock_cache();
-    if (!IsListEmpty(&dsr_cache)) {
-        node = RemoveHeadList(&dsr_cache);
-        dsr = CONTAINER_OF(node, dsr_node, dsr_list);
+    if (!list_is_empty(&dsr_cache)) {
+        node = list_remove_head(&dsr_cache);
+        dsr = container_of(node, dsr_node, dsr_list);
     } else {
         dsr = 0;
     }
@@ -51,21 +51,21 @@ static dsr_node* dsr_alloc_node() {
 static void dsr_free_node(dsr_node* node) {
     lock_cache();
 
-    InsertHeadList(&dsr_cache, &(node->dsr_list));
+    list_insert_head(&dsr_cache, &(node->dsr_list));
 
     unlock_cache();
 }
 
 void dsr_init() {
     int i = 0;
-    InitializeListHead(&dsr_head);
-    InitializeListHead(&dsr_cache);
+    list_init(&dsr_head);
+    list_init(&dsr_cache);
     spinlock_init(&dsr_lock);
     spinlock_init(&cache_lock);
 
     for (i = 0; i < DSR_CACHE_DEPTH; i++) {
         dsr_node* node = kmalloc(sizeof(*node));
-        InsertHeadList(&dsr_cache, &(node->dsr_list));
+        list_insert_head(&dsr_cache, &(node->dsr_list));
     }
     // int_register(SOFTIRQ, dsr_interrupt, 1, 0);
 }
@@ -80,7 +80,7 @@ void dsr_add(dsr_callback fn, void* param) {
     node->fn = fn;
     node->param = param;
     lock_dsr();
-    InsertTailList(&dsr_head, &(node->dsr_list));
+    list_insert_tail(&dsr_head, &(node->dsr_list));
     unlock_dsr();
     // TRIGGER_SOFTIRQ();
 }
@@ -88,7 +88,7 @@ void dsr_add(dsr_callback fn, void* param) {
 int dsr_has_task() {
     int has = 0;
     lock_dsr();
-    has = !IsListEmpty(&dsr_head);
+    has = !list_is_empty(&dsr_head);
     unlock_dsr();
     return has;
 }
@@ -104,15 +104,15 @@ int dsr_running() {
 }
 
 void dsr_process() {
-    LIST_ENTRY* node;
+    list_entry* node;
     dsr_node* dsr;
     do {
         lock_dsr();
         is_dsr_running = 1;
-        while (!IsListEmpty(&dsr_head)) {
-            node = RemoveHeadList(&dsr_head);
+        while (!list_is_empty(&dsr_head)) {
+            node = list_remove_head(&dsr_head);
             unlock_dsr();
-            dsr = CONTAINER_OF(node, dsr_node, dsr_list);
+            dsr = container_of(node, dsr_node, dsr_list);
             if (dsr->fn) {
                 dsr->fn(dsr->param);
             }

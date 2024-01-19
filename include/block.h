@@ -36,7 +36,7 @@ typedef struct _block {
     fpblock_close close;
     block_type type;
     unsigned int sector_size;
-    LIST_ENTRY block_list;
+    list_entry block_list;
 } block;
 
 void block_init();

@@ -102,7 +102,6 @@ return ret;
 #endif
 
 #define INLINE
-#define container_of CONTAINER_OF
 
 struct rb_node {
     unsigned long rb_parent_color;

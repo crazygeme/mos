@@ -2,18 +2,18 @@
 #include <mm.h>
 #include <config.h>
 
-void InitializeListHead(PLIST_ENTRY ListHead) {
+void list_init(list_entry* ListHead) {
     ListHead->Flink = ListHead->Blink = ListHead;
     return;
 }
 
-int IsListEmpty(LIST_ENTRY* ListHead) {
+int list_is_empty(list_entry* ListHead) {
     return (int)(ListHead->Flink == ListHead);
 }
 
-int RemoveEntryList(PLIST_ENTRY Entry) {
-    PLIST_ENTRY Blink;
-    PLIST_ENTRY Flink;
+int RemoveEntryList(list_entry* Entry) {
+    list_entry* Blink;
+    list_entry* Flink;
     Flink = Entry->Flink;
     Blink = Entry->Blink;
     Blink->Flink = Flink;
@@ -21,9 +21,9 @@ int RemoveEntryList(PLIST_ENTRY Entry) {
     return (int)(Flink == Blink);
 }
 
-PLIST_ENTRY RemoveHeadList(PLIST_ENTRY ListHead) {
-    PLIST_ENTRY Flink;
-    PLIST_ENTRY Entry;
+list_entry* list_remove_head(list_entry* ListHead) {
+    list_entry* Flink;
+    list_entry* Entry;
     Entry = ListHead->Flink;
     Flink = Entry->Flink;
     ListHead->Flink = Flink;
@@ -31,9 +31,9 @@ PLIST_ENTRY RemoveHeadList(PLIST_ENTRY ListHead) {
     return Entry;
 }
 
-PLIST_ENTRY RemoveTailList(PLIST_ENTRY ListHead) {
-    PLIST_ENTRY Blink;
-    PLIST_ENTRY Entry;
+list_entry* list_remove_tail(list_entry* ListHead) {
+    list_entry* Blink;
+    list_entry* Entry;
     Entry = ListHead->Blink;
     Blink = Entry->Blink;
     ListHead->Blink = Blink;
@@ -41,8 +41,8 @@ PLIST_ENTRY RemoveTailList(PLIST_ENTRY ListHead) {
     return Entry;
 }
 
-void InsertTailList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry) {
-    PLIST_ENTRY Blink;
+void list_insert_tail(list_entry* ListHead, list_entry* Entry) {
+    list_entry* Blink;
     Blink = ListHead->Blink;
     Entry->Flink = ListHead;
     Entry->Blink = Blink;
@@ -51,8 +51,8 @@ void InsertTailList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry) {
     return;
 }
 
-void InsertHeadList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry) {
-    PLIST_ENTRY Flink;
+void list_insert_head(list_entry* ListHead, list_entry* Entry) {
+    list_entry* Flink;
     Flink = ListHead->Flink;
     Entry->Flink = Flink;
     Entry->Blink = ListHead;
@@ -61,8 +61,8 @@ void InsertHeadList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry) {
     return;
 }
 
-void AppendTailList(PLIST_ENTRY ListHead, PLIST_ENTRY ListToAppend) {
-    PLIST_ENTRY ListEnd = ListHead->Blink;
+void list_append_tail(list_entry* ListHead, list_entry* ListToAppend) {
+    list_entry* ListEnd = ListHead->Blink;
     ListHead->Blink->Flink = ListToAppend;
     ListHead->Blink = ListToAppend->Blink;
     ListToAppend->Blink->Flink = ListHead;

@@ -252,7 +252,7 @@ int fs_open(const char* path, int flag, char* mode) {
 
     filep fp = NULL;
     int ret = -ENOENT;
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
 
     fd = fs_find_empty_fd(cur->fds);
     if (fd < 0)
@@ -285,7 +285,7 @@ int fs_open(const char* path, int flag, char* mode) {
 fail:
     fd = ret;
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return fd;
 }
 
@@ -298,10 +298,10 @@ int fs_close(int fd) {
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
     memset(&cur->fds[fd], 0, sizeof(file_descriptor));
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
 
     if (fp == NULL)
         return -1;
@@ -353,9 +353,9 @@ int fs_fstat(int fd, struct stat* s) {
     if (fd < 0 || fd >= MAX_FD)
         return -1;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
 
     if (fp == NULL)
         return -1;
@@ -372,7 +372,7 @@ int fs_pipe(int* pipefd) {
     task_struct* cur = CURRENT_TASK();
     int reader, writer;
     filep fp[2] = {0};
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     reader = fs_find_empty_fd(cur->fds);
     if (reader < 0 || reader >= MAX_FD) {
         ret = -1;
@@ -406,7 +406,7 @@ int fs_pipe(int* pipefd) {
     pipefd[1] = writer;
     ret = 0;
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -419,7 +419,7 @@ int fs_dup(int fd) {
         return -ENOENT;
     if (cur->fds[fd].used == 0)
         return -ENOENT;
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     newfd = fs_find_empty_fd(cur->fds);
     if (newfd < 0 || newfd >= MAX_FD) {
         ret = -1;
@@ -431,7 +431,7 @@ int fs_dup(int fd) {
     cur->fds[newfd].flag &= ~O_CLOEXEC;
     ret = newfd;
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -448,7 +448,7 @@ int fs_dup2(int fd, int newfd) {
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     if (cur->fds[newfd].used) {
         fs_destroy(cur->fds[newfd].fp);
     }
@@ -457,7 +457,7 @@ int fs_dup2(int fd, int newfd) {
     cur->fds[newfd] = cur->fds[fd];
     cur->fds[newfd].flag &= ~O_CLOEXEC;
     ret = newfd;
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -481,7 +481,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low, uint64_t* resul
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
     if (!fp || !fp->op.llseek)
         goto done;
@@ -489,7 +489,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low, uint64_t* resul
     if (ret >= 0 && fp->op.tell)
         cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -503,7 +503,7 @@ int fs_seek(int fd, unsigned offset, unsigned whence) {
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
     if (!fp->op.seek)
         goto done;
@@ -512,7 +512,7 @@ int fs_seek(int fd, unsigned offset, unsigned whence) {
     if (ret >= 0 && fp->op.tell)
         cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -526,14 +526,14 @@ int fs_select(int fd, unsigned type) {
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
     if (!fp->op.select)
         goto done;
 
     ret = fp->op.select(fp->inode, type);
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -547,14 +547,14 @@ int fs_ioctl(int fd, unsigned cmd, void* buf) {
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
     if (!fp->op.ioctl)
         goto done;
 
     ret = fp->op.ioctl(fp->inode, cmd, buf);
 done:
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
     return ret;
 }
 
@@ -574,9 +574,9 @@ int fs_fchmod(int fd, uint32_t mode) {
     if (cur->fds[fd].used == 0)
         return -ENOENT;
 
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
 
     ret = ext4_fchmod(fp->inode, mode);
     return (0 - ret);

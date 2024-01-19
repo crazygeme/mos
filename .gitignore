@@ -49,3 +49,6 @@ tags
 *.sdf
 */*.sdf
 *klocwork*
+compile_commands.json
+*.code-workspace
+.cache

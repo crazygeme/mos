@@ -1,7 +1,7 @@
 #ifndef _KEYMAP_H_
 #define _KEYMAP_H_
 
-#define KEY_L1 0x4F  
+#define KEY_L1 0x4F
 #define KEY_L2 0x50
 #define KEY_L3 0x51
 #define KEY_L4 0x4B
@@ -11,13 +11,13 @@
 #define KEY_L9 0x49
 #define KEY_SHIFT 0x2A
 #define KEY_CTRL 0x1E
-#define KEY_ALT	0x38
+#define KEY_ALT 0x38
 #define KEY_ADD 0x2B
 #define KEY_SUB 0x2D
-#define KEY_LEFT 75      
-#define KEY_RIGHT 77    
-#define KEY_UP 72        
-#define KEY_DOWN 80      
+#define KEY_LEFT 75
+#define KEY_RIGHT 77
+#define KEY_UP 72
+#define KEY_DOWN 80
 #define KEY_F1 59
 #define KEY_F2 60
 #define KEY_F3 61
@@ -45,9 +45,9 @@
 #define KEY_COMMA 51
 #define KEY_SLASH 53
 #define KEY_BACKSLASH 43
-#define KEY_ENTER 28        
-#define KEY_BACKSPACE 14    
-#define KEY_SPACE 57        
+#define KEY_ENTER 28
+#define KEY_BACKSPACE 14
+#define KEY_SPACE 57
 #define KEY_TAB 15
 #define KEY_ESC 1
 #define KEY_Q 16
@@ -110,8 +110,8 @@
 #define KEY_CTRL_I 0x09
 #define KEY_CTRL_O 0x0F
 #define KEY_CTRL_P 0x10
-#define KEY_CTRL_LBRACKET 0x1B  
-#define KEY_CTRL_RBRACKET 0x1D  
+#define KEY_CTRL_LBRACKET 0x1B
+#define KEY_CTRL_RBRACKET 0x1D
 #define KEY_CTRL_A 0x01
 #define KEY_CTRL_S 0x13
 #define KEY_CTRL_D 0x04
@@ -131,8 +131,8 @@
 #define KEY_CTRL_SPACE 0x20
 #define KEY_CTRL_BACKSPACE 0x7F
 #define KEY_CTRL_ENTER 0x0A
-#define KEY_CTRL_BACKSLASH 0x1C  
-#define KEY_CTRL_L1 0x75  
+#define KEY_CTRL_BACKSLASH 0x1C
+#define KEY_CTRL_L1 0x75
 #define KEY_CTRL_L3 0x76
 #define KEY_CTRL_L4 0x73
 #define KEY_CTRL_L6 0x74
@@ -140,7 +140,7 @@
 #define KEY_CTRL_L9 0x84
 
 /*+++++++++++++++++++++++++SHIFT+key+++++++++++++++++++++++++*/
-#define KEY_SHIFT_LQUOTE 0x7E  
+#define KEY_SHIFT_LQUOTE 0x7E
 #define KEY_SHIFT_1 0x21
 #define KEY_SHIFT_2 0x40
 #define KEY_SHIFT_3 0x23
@@ -151,8 +151,8 @@
 #define KEY_SHIFT_8 0x2A
 #define KEY_SHIFT_9 0x28
 #define KEY_SHIFT_0 0x29
-#define KEY_SHIFT_DASH 0x5F  
-#define KEY_SHIFT_EQUAL 0x2B  
+#define KEY_SHIFT_DASH 0x5F
+#define KEY_SHIFT_EQUAL 0x2B
 #define KEY_SHIFT_BACKSPACE 0x08
 #define KEY_SHIFT_Q 0x51
 #define KEY_SHIFT_W 0x57
@@ -164,8 +164,8 @@
 #define KEY_SHIFT_I 0x49
 #define KEY_SHIFT_O 0x4F
 #define KEY_SHIFT_P 0x50
-#define KEY_SHIFT_LBRACKET 0x7B  
-#define KEY_SHIFT_RBRACKET 0x7D  
+#define KEY_SHIFT_LBRACKET 0x7B
+#define KEY_SHIFT_RBRACKET 0x7D
 #define KEY_SHIFT_ENTER 0x0D
 #define KEY_SHIFT_A 0x41
 #define KEY_SHIFT_S 0x53

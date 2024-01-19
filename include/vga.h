@@ -19,10 +19,7 @@
 #include <mm.h>
 #include <config.h>
 
-
-
 void fb_init();
-
 
 void fb_enable();
 
@@ -32,8 +29,10 @@ void fb_map_lfb();
  */
 
 /* Binary Literals */
-#define b(x) ((unsigned char)b_(0 ## x ## uL))
-#define b_(x) ((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | (x >> 14 & 128))
+#define b(x) ((unsigned char)b_(0##x##uL))
+#define b_(x)                                                                                                 \
+    ((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | \
+     (x >> 14 & 128))
 
 #define VBE_DISPI_ID5 0xB0C5
 #define VBE_DISPI_IOPORT_INDEX 0x01CE
@@ -58,10 +57,9 @@ void fb_map_lfb();
 #define VBE_DISPI_BPP_15 0x0F
 #define VBE_DISPI_BPP_16 0x10
 #define VBE_DISPI_BPP_24 0x18
-#define VBE_DISPI_BPP_32 0x20 
+#define VBE_DISPI_BPP_32 0x20
 
-
-extern unsigned char ** _number_font;
+extern unsigned char** _number_font;
 extern unsigned _fb_buffer;
 extern unsigned _resolution_x;
 extern unsigned _resolution_y;
@@ -85,7 +83,7 @@ void fb_set_point(int x, int y, unsigned value);
 #define _BLU(color) ((color & 0x000000FF) / 0x1)
 #define _ALP(color) ((color & 0xFF000000) / 0x1000000)
 
-#define ARGB(a, r, g, b) ( (0xFF *0x1000000ULL) + ((0xFF & r) * 0x10000) + ((0xFF & g) * 0x100) + ((0xFF & b) * 0x1))
+#define ARGB(a, r, g, b) ((0xFF * 0x1000000ULL) + ((0xFF & r) * 0x10000) + ((0xFF & g) * 0x100) + ((0xFF & b) * 0x1))
 #define VGA_COLOR_BLACK ARGB(0xff, 0x00, 0x00, 0x00)
 #define VGA_COLOR_WHITE ARGB(0xff, 0xff, 0xff, 0xff)
 #define VGA_COLOR_RED ARGB(0xff, 0xff, 0x00, 0x00)
@@ -95,6 +93,6 @@ void fb_set_point(int x, int y, unsigned value);
 #define VGA_COLOR_YELLOW ARGB(0xff, 0xFF, 0xFF, 0x00)
 
 #define char_height 12
-#define char_width  8
+#define char_width 8
 
 #endif /** BOOT_VIDEO_H */

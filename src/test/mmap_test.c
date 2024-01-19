@@ -3,14 +3,12 @@
 #include <klib.h>
 #include <config.h>
 
-static void vm_print(vm_struct_t vm)
-{
+static void vm_print(vm_struct_t vm) {
     hash_table* table = vm;
     key_value_pair* pair = hash_first(table);
     vm_region* region;
 
-    while (pair)
-    {
+    while (pair) {
         region = pair->val;
         printf("%x - %x, off %x\t, node %x\n", region->begin, region->end, region->offset, region->node);
 
@@ -18,8 +16,7 @@ static void vm_print(vm_struct_t vm)
     }
 }
 
-static void test_case_1()
-{
+static void test_case_1() {
     vm_struct_t vm = 0;
 
     printf("test insert case 1\n---------------\n");
@@ -33,13 +30,11 @@ static void test_case_1()
     klogquota();
 }
 
-static void test_case_2()
-{
+static void test_case_2() {
     vm_struct_t vm = 0;
 
     printf("test insert case 2\n---------------\n");
     klogquota();
-
 
     vm = vm_create();
 
@@ -53,14 +48,12 @@ static void test_case_2()
     klogquota();
 }
 
-static void test_case_3()
-{
+static void test_case_3() {
     vm_struct_t vm = 0;
 
     printf("test insert case 3\n---------------\n");
     klogquota();
 
-
     vm = vm_create();
 
     vm_add_map(vm, USER_ZONE_BEGIN + 3 * PAGE_SIZE, USER_ZONE_BEGIN + 6 * PAGE_SIZE, 0, 0);
@@ -73,14 +66,12 @@ static void test_case_3()
     klogquota();
 }
 
-static void test_case_4()
-{
+static void test_case_4() {
     vm_struct_t vm = 0;
 
     printf("test insert case 4\n---------------\n");
     klogquota();
 
-
     vm = vm_create();
 
     vm_add_map(vm, USER_ZONE_BEGIN + 0 * PAGE_SIZE, USER_ZONE_BEGIN + 5 * PAGE_SIZE, 0, 0);
@@ -93,13 +84,11 @@ static void test_case_4()
     klogquota();
 }
 
-static void test_case_5()
-{
+static void test_case_5() {
     vm_struct_t vm = 0;
 
     printf("test insert case 5\n---------------\n");
     klogquota();
-
 
     vm = vm_create();
 
@@ -113,15 +102,12 @@ static void test_case_5()
     klogquota();
 }
 
-
-static void test_case_6()
-{
+static void test_case_6() {
     vm_struct_t vm = 0;
 
     printf("test insert case 6\n---------------\n");
 
     klogquota();
-
 
     vm = vm_create();
 
@@ -135,9 +121,7 @@ static void test_case_6()
     klogquota();
 }
 
-
-static void test_find_1()
-{
+static void test_find_1() {
     vm_struct_t vm = 0;
     unsigned addr = 0;
 
@@ -152,8 +136,7 @@ static void test_find_1()
     klogquota();
 }
 
-static void test_find_2()
-{
+static void test_find_2() {
     vm_struct_t vm = 0;
     unsigned addr = 0;
 
@@ -169,9 +152,7 @@ static void test_find_2()
     klogquota();
 }
 
-
-void vm_test()
-{
+void vm_test() {
     test_case_1();
     test_case_2();
     test_case_3();

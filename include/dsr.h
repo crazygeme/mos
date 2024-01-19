@@ -5,12 +5,11 @@
 
 typedef void (*dsr_callback)(void* param);
 
-typedef struct _dsr_node
-{
-	dsr_callback fn;
-	void* param;
-	LIST_ENTRY dsr_list;
-}dsr_node, *dsr_node_t;
+typedef struct _dsr_node {
+    dsr_callback fn;
+    void* param;
+    LIST_ENTRY dsr_list;
+} dsr_node, *dsr_node_t;
 
 void dsr_init();
 

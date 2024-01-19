@@ -60,116 +60,99 @@
  * ----------------------------
  * 0x60		|reserved	|LDTR |
  * ----------------------------
- * 0x64		|IOPB		|reser| 
+ * 0x64		|IOPB		|reser|
  * ----------------------------
  */
 typedef volatile struct __tss_struct {
-    unsigned short   link;
-    unsigned short   link_h;
+    unsigned short link;
+    unsigned short link_h;
 
-    unsigned long   esp0;
-    unsigned short   ss0;
-    unsigned short   ss0_h;
+    unsigned long esp0;
+    unsigned short ss0;
+    unsigned short ss0_h;
 
-    unsigned long   esp1;
-    unsigned short   ss1;
-    unsigned short   ss1_h;
+    unsigned long esp1;
+    unsigned short ss1;
+    unsigned short ss1_h;
 
-    unsigned long   esp2;
-    unsigned short   ss2;
-    unsigned short   ss2_h;
+    unsigned long esp2;
+    unsigned short ss2;
+    unsigned short ss2_h;
 
-    unsigned long   cr3;
-    unsigned long   eip;
-    unsigned long   eflags;
+    unsigned long cr3;
+    unsigned long eip;
+    unsigned long eflags;
 
-    unsigned long   eax;
-    unsigned long   ecx;
-    unsigned long   edx;
-    unsigned long    ebx;
+    unsigned long eax;
+    unsigned long ecx;
+    unsigned long edx;
+    unsigned long ebx;
 
-    unsigned long   esp;
-    unsigned long   ebp;
+    unsigned long esp;
+    unsigned long ebp;
 
-    unsigned long   esi;
-    unsigned long   edi;
+    unsigned long esi;
+    unsigned long edi;
 
-    unsigned short   es;
-    unsigned short   es_h;
+    unsigned short es;
+    unsigned short es_h;
 
-    unsigned short   cs;
-    unsigned short   cs_h;
+    unsigned short cs;
+    unsigned short cs_h;
 
-    unsigned short   ss;
-    unsigned short   ss_h;
+    unsigned short ss;
+    unsigned short ss_h;
 
-    unsigned short   ds;
-    unsigned short   ds_h;
+    unsigned short ds;
+    unsigned short ds_h;
 
-    unsigned short   fs;
-    unsigned short   fs_h;
+    unsigned short fs;
+    unsigned short fs_h;
 
-    unsigned short   gs;
-    unsigned short   gs_h;
+    unsigned short gs;
+    unsigned short gs_h;
 
-    unsigned short   ldt;
-    unsigned short   ldt_h;
+    unsigned short ldt;
+    unsigned short ldt_h;
 
-    unsigned short   trap;
-    unsigned short   iomap;
+    unsigned short trap;
+    unsigned short iomap;
 
 } tss_struct;
 
-typedef struct _page_table_list_entry
-{
-	unsigned int addr;
-	LIST_ENTRY list;
-}page_table_list_entry;
+typedef struct _page_table_list_entry {
+    unsigned int addr;
+    LIST_ENTRY list;
+} page_table_list_entry;
 
-struct _region_elem
-{
-	int fd;
-	int file_off;
-	unsigned start;
-	unsigned end;
-	struct _region_elem* next;
+struct _region_elem {
+    int fd;
+    int file_off;
+    unsigned start;
+    unsigned end;
+    struct _region_elem* next;
 };
 
+typedef void* vm_struct_t;
 
-typedef void* vm_struct_t; 
-
-typedef struct _user_enviroment
-{
-	unsigned int page_dir; // every process needs it's own clone of page dir
+typedef struct _user_enviroment {
+    unsigned int page_dir;  // every process needs it's own clone of page dir
     unsigned reserve;
     unsigned heap_top;
-	//unsigned zone_top;
+    // unsigned zone_top;
     vm_struct_t vm;
-	//region_elem_t region_head;
-}user_enviroment;
+    // region_elem_t region_head;
+} user_enviroment;
 
-typedef enum _ps_status
-{
-	ps_running,
-	ps_ready,
-	ps_waiting,
-	ps_dying
-}ps_status;
+typedef enum _ps_status { ps_running, ps_ready, ps_waiting, ps_dying } ps_status;
 
-typedef enum _ps_type
-{
-    ps_kernel,
-    ps_user,
-    ps_dsr
-}ps_type;
+typedef enum _ps_type { ps_kernel, ps_user, ps_dsr } ps_type;
 
 #define MAX_PRIORITY 5
 
-
 typedef void (*process_fn)(void* param);
 
-typedef struct _task_frame
-{
+typedef struct _task_frame {
     unsigned short ds;
     unsigned short ss;
     unsigned short es;
@@ -182,51 +165,47 @@ typedef struct _task_frame
     unsigned long eax;
     unsigned long ebp;
     unsigned long eip;
-    unsigned long esp0; // kernel esp
-	unsigned long esp;  // kernel or user esp
-}task_frame;
+    unsigned long esp0;  // kernel esp
+    unsigned long esp;   // kernel or user esp
+} task_frame;
 
-
-typedef struct _task_struct
-{
-	task_frame tss;
+typedef struct _task_struct {
+    task_frame tss;
     unsigned long cr3;
     unsigned int psid;
     process_fn fn;
-	void* command;
-	user_enviroment user;
-	int priority;
+    void* command;
+    user_enviroment user;
+    int priority;
     // in schedule list
-	LIST_ENTRY ps_list;
+    LIST_ENTRY ps_list;
     // in wait list if waiting a lock
     LIST_ENTRY lock_list;
     // in all process list
     LIST_ENTRY ps_mgr;
-	ps_status status;
+    ps_status status;
     ps_type type;
     int remain_ticks;
     int is_switching;
     file_descriptor* fds;
     semaphore fd_lock;
-	unsigned exit_status;
-	unsigned parent;
-	unsigned group_id;
-	char *cwd;
+    unsigned exit_status;
+    unsigned parent;
+    unsigned group_id;
+    char* cwd;
     unsigned fork_flag;
     semaphore vfork_event;
     unsigned umask;
-	unsigned int magic; // to avoid stack overflow
+    unsigned int magic;  // to avoid stack overflow
 
-}task_struct;
+} task_struct;
 
-#define KERNEL_TASK_SIZE 1 // 1 pages
+#define KERNEL_TASK_SIZE 1  // 1 pages
 #define DEFAULT_TASK_TIME_SLICE 10
 
 task_struct* CURRENT_TASK();
 
-
 void ps_init();
-
 
 unsigned ps_create(process_fn, int priority, ps_type type);
 
@@ -236,11 +215,9 @@ int ps_enabled();
 
 void ps_update_tss(unsigned int esp0);
 
-
 // task functions
 void _task_sched(const char* func);
 #define task_sched() _task_sched(__func__)
-
 
 typedef void (*fpuser_map_callback)(void* aux, unsigned vir, unsigned phy);
 
@@ -265,5 +242,5 @@ int sys_fork();
 int sys_vfork();
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int* status, int options);
-char *sys_getcwd(char *buf, unsigned size);
+char* sys_getcwd(char* buf, unsigned size);
 #endif

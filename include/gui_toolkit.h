@@ -1,19 +1,14 @@
 #ifndef _GUI_TOOLKIT_H_
 #define _GUI_TOOLKIT_H_
 
-typedef enum _gui_event
-{
+typedef enum _gui_event {
     WM_CREATE,
     WM_DESTROY,
-    WM_DRAW, //draw to draw_buffer
+    WM_DRAW,  // draw to draw_buffer
     WM_MOVE
-}gui_event;
+} gui_event;
 
-typedef enum _gui_event_result
-{
-    WS_SUCCESS,
-    WS_UNHANDLE
-}gui_event_result;
+typedef enum _gui_event_result { WS_SUCCESS, WS_UNHANDLE } gui_event_result;
 
 typedef struct _gui_base* gui_base_t;
 typedef struct _gui_panel* gui_panel_t;

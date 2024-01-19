@@ -11,67 +11,65 @@
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */
 
-   /* ATA command block port addresses. */
-#define reg_data(CHANNEL) ((CHANNEL)->reg_base + 0)     /* Data. */
-#define reg_error(CHANNEL) ((CHANNEL)->reg_base + 1)    /* Error. */
-#define reg_nsect(CHANNEL) ((CHANNEL)->reg_base + 2)    /* Sector Count. */
-#define reg_lbal(CHANNEL) ((CHANNEL)->reg_base + 3)     /* LBA 0:7. */
-#define reg_lbam(CHANNEL) ((CHANNEL)->reg_base + 4)     /* LBA 15:8. */
-#define reg_lbah(CHANNEL) ((CHANNEL)->reg_base + 5)     /* LBA 23:16. */
-#define reg_device(CHANNEL) ((CHANNEL)->reg_base + 6)   /* Device/LBA 27:24. */
-#define reg_status(CHANNEL) ((CHANNEL)->reg_base + 7)   /* Status (r/o). */
-#define reg_command(CHANNEL) reg_status (CHANNEL)       /* Command (w/o). */
+/* ATA command block port addresses. */
+#define reg_data(CHANNEL) ((CHANNEL)->reg_base + 0)   /* Data. */
+#define reg_error(CHANNEL) ((CHANNEL)->reg_base + 1)  /* Error. */
+#define reg_nsect(CHANNEL) ((CHANNEL)->reg_base + 2)  /* Sector Count. */
+#define reg_lbal(CHANNEL) ((CHANNEL)->reg_base + 3)   /* LBA 0:7. */
+#define reg_lbam(CHANNEL) ((CHANNEL)->reg_base + 4)   /* LBA 15:8. */
+#define reg_lbah(CHANNEL) ((CHANNEL)->reg_base + 5)   /* LBA 23:16. */
+#define reg_device(CHANNEL) ((CHANNEL)->reg_base + 6) /* Device/LBA 27:24. */
+#define reg_status(CHANNEL) ((CHANNEL)->reg_base + 7) /* Status (r/o). */
+#define reg_command(CHANNEL) reg_status(CHANNEL)      /* Command (w/o). */
 
 /* ATA control block port addresses.
    (If we supported non-legacy ATA controllers this would not be
    flexible enough, but it's fine for what we do.) */
-#define reg_ctl(CHANNEL) ((CHANNEL)->reg_base + 0x206)  /* Control (w/o). */
-#define reg_alt_status(CHANNEL) reg_ctl (CHANNEL)       /* Alt Status (r/o). */
+#define reg_ctl(CHANNEL) ((CHANNEL)->reg_base + 0x206) /* Control (w/o). */
+#define reg_alt_status(CHANNEL) reg_ctl(CHANNEL)       /* Alt Status (r/o). */
 
-   /* Alternate Status Register bits. */
-#define STA_BSY 0x80            /* Busy. */
-#define STA_DRDY 0x40           /* Device Ready. */
-#define STA_DRQ 0x08            /* Data Request. */
+/* Alternate Status Register bits. */
+#define STA_BSY 0x80  /* Busy. */
+#define STA_DRDY 0x40 /* Device Ready. */
+#define STA_DRQ 0x08  /* Data Request. */
 
 /* Control Register bits. */
-#define CTL_SRST 0x04           /* Software Reset. */
+#define CTL_SRST 0x04 /* Software Reset. */
 
 /* Device Register bits. */
-#define DEV_MBS 0xa0            /* Must be set. */
-#define DEV_LBA 0x40            /* Linear based addressing. */
-#define DEV_DEV 0x10            /* Select device: 0=master, 1=slave. */
+#define DEV_MBS 0xa0 /* Must be set. */
+#define DEV_LBA 0x40 /* Linear based addressing. */
+#define DEV_DEV 0x10 /* Select device: 0=master, 1=slave. */
 
 /* Commands.
    Many more are defined but this is the small subset that we
    use. */
 #define CMD_IDENTIFY_DEVICE 0xec        /* IDENTIFY DEVICE. */
 #define CMD_READ_SECTOR_RETRY 0x20      /* READ SECTOR with retries. */
-#define CMD_READ_SECTOR_RETRY_EXT 0x24      /* READ SECTOR with retries. */
+#define CMD_READ_SECTOR_RETRY_EXT 0x24  /* READ SECTOR with retries. */
 #define CMD_WRITE_SECTOR_RETRY 0x30     /* WRITE SECTOR with retries. */
-#define CMD_WRITE_SECTOR_RETRY_EXT 0x34     /* WRITE SECTOR with retries. */
+#define CMD_WRITE_SECTOR_RETRY_EXT 0x34 /* WRITE SECTOR with retries. */
 
-   /* An ATA device. */
-typedef struct _ata_disk
-{
-    char name[8];               /* Name, e.g. "hda". */
-    struct _channel *channel;    /* Channel that disk is attached to. */
-    int dev_no;                 /* Device 0 or 1 for master or slave. */
-    int is_ata;                /* Is device an ATA disk? */
-}ata_disk;
+/* An ATA device. */
+typedef struct _ata_disk {
+    char name[8];             /* Name, e.g. "hda". */
+    struct _channel* channel; /* Channel that disk is attached to. */
+    int dev_no;               /* Device 0 or 1 for master or slave. */
+    int is_ata;               /* Is device an ATA disk? */
+} ata_disk;
 
 /* An ATA channel (aka controller).
    Each channel can control up to two disks. */
-typedef struct _channel
-{
-    char name[8];               /* Name, e.g. "ide0". */
-    unsigned short reg_base;          /* Base I/O port. */
-    unsigned char irq;                /* Interrupt in use. */
-    int expecting_interrupt;   /* True if an interrupt is expected, false if
-                                   any interrupt would be spurious. */
+typedef struct _channel {
+    char name[8];            /* Name, e.g. "ide0". */
+    unsigned short reg_base; /* Base I/O port. */
+    unsigned char irq;       /* Interrupt in use. */
+    int expecting_interrupt; /* True if an interrupt is expected, false if
+                                 any interrupt would be spurious. */
     semaphore iolock;
     semaphore sema;
-    ata_disk devices[2];     /* The devices on this channel. */
-}channel;
+    ata_disk devices[2]; /* The devices on this channel. */
+} channel;
 
 #if HDD_CACHE_OPEN
 
@@ -81,98 +79,85 @@ typedef struct _channel
 #define HEAD_SECTOR(sector) (sector / PREREAD_SECTOR * PREREAD_SECTOR)
 #define SECTOR_OFF(sector) (sector - HEAD_SECTOR(sector))
 
-typedef struct _block_cache_item
-{
+typedef struct _block_cache_item {
     int sector;
     unsigned dirty;
     void* buf;
     struct rb_node hash_node;
     LIST_ENTRY time_list;
-}block_cache_item;
+} block_cache_item;
 
-typedef struct _block_cache
-{
+typedef struct _block_cache {
     hash_table* hash;
     LIST_ENTRY timer_list_head;
     int count;
-}block_cache;
+} block_cache;
 
-static int int_comp(void* key1, void* key2)
-{
+static int int_comp(void* key1, void* key2) {
     int k1 = (int)key1;
     int k2 = (int)key2;
 
     return (k1 - k2);
 }
 
-static block_cache_item* block_cache_item_create()
-{
-    unsigned buf_size = BLOCK_SECTOR_SIZE*PREREAD_SECTOR/PAGE_SIZE;
-    if(!buf_size)
+static block_cache_item* block_cache_item_create() {
+    unsigned buf_size = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
+    if (!buf_size)
         buf_size = 1;
     block_cache_item* item = kmalloc(sizeof(*item));
     item->sector = -1;
     item->dirty = 0;
-    item->buf = vm_alloc(buf_size);//kmalloc(BLOCK_SECTOR_SIZE);
+    item->buf = vm_alloc(buf_size);  // kmalloc(BLOCK_SECTOR_SIZE);
     rb_init_node(&item->hash_node);
     InitializeListHead(&item->time_list);
     return item;
 }
 
-static void block_cache_item_remove(block_cache_item* item)
-{
-    unsigned buf_size = BLOCK_SECTOR_SIZE*PREREAD_SECTOR/PAGE_SIZE;
-    if(!buf_size)
+static void block_cache_item_remove(block_cache_item* item) {
+    unsigned buf_size = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
+    if (!buf_size)
         buf_size = 1;
 
     if (!item)
         return;
 
-    //kfree(item->buf);
+    // kfree(item->buf);
     vm_free(item->buf, buf_size);
     kfree(item);
 }
 
 #endif
 
-typedef struct _partition
-{
-    block *block;                /* Underlying block device. */
-    unsigned int start;               /* First sector within device. */
+typedef struct _partition {
+    block* block;       /* Underlying block device. */
+    unsigned int start; /* First sector within device. */
     unsigned char bootable;
 #if HDD_CACHE_OPEN
     block_cache cache;
     int cache_inited;
     semaphore cache_lock;
 #endif
-}partition;
+} partition;
 
-
-
-
-
-static void interrupt_handler(intr_frame *);
-static void reset_channel(channel *);
-static int check_device_type(ata_disk *);
-static void identify_ata_device(ata_disk *);
-static int wait_while_busy(const ata_disk *);
-static void select_device(const ata_disk *);
-static void select_device_wait(const ata_disk *);
-static void issue_pio_command(channel *, unsigned char command);
-static void input_sector(channel *, void *);
-static void output_sector(channel *c, const void *sector);
-static char *descramble_ata_string(char *, int size);
-static void channel_wait_polling(channel *c);
+static void interrupt_handler(intr_frame*);
+static void reset_channel(channel*);
+static int check_device_type(ata_disk*);
+static void identify_ata_device(ata_disk*);
+static int wait_while_busy(const ata_disk*);
+static void select_device(const ata_disk*);
+static void select_device_wait(const ata_disk*);
+static void issue_pio_command(channel*, unsigned char command);
+static void input_sector(channel*, void*);
+static void output_sector(channel* c, const void* sector);
+static char* descramble_ata_string(char*, int size);
+static void channel_wait_polling(channel* c);
 static int hdd_read(void* aux, unsigned sector, void* buf, unsigned len);
 static int hdd_write(void* aux, unsigned sector, void* buf, unsigned len);
 static void hdd_close(void* aux);
-static void parse_partition(block *block);
-static void read_partition_table(block *block, unsigned int sector,
-    unsigned int primary_extended_sector,
-    int *part_nr);
-static void found_partition(block *block, unsigned char part_type,
-    unsigned int start, unsigned int size,
-    int part_nr, unsigned char bootable);
+static void parse_partition(block* block);
+static void read_partition_table(block* block, unsigned int sector, unsigned int primary_extended_sector, int* part_nr);
+static void found_partition(block* block, unsigned char part_type, unsigned int start, unsigned int size, int part_nr,
+                            unsigned char bootable);
 
 static int partition_read(void* aux, unsigned sector, void* buf, unsigned len);
 static int partition_write(void* aux, unsigned sector, void* buf, unsigned len);
@@ -186,13 +171,11 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
 #define CHANNEL_CNT 2
 static channel channels[CHANNEL_CNT];
 
-void hdd_init()
-{
+void hdd_init() {
     int chan_no;
 
-    for (chan_no = 0; chan_no < CHANNEL_CNT; chan_no++)
-    {
-        channel *c = &channels[chan_no];
+    for (chan_no = 0; chan_no < CHANNEL_CNT; chan_no++) {
+        channel* c = &channels[chan_no];
         int dev_no;
 
         c->name[0] = 'i';
@@ -201,18 +184,17 @@ void hdd_init()
         c->name[3] = '0' + chan_no;
         c->name[4] = '\0';
         /* Initialize channel. */
-        switch (chan_no)
-        {
-        case 0:
-            c->reg_base = 0x1f0;
-            c->irq = 14 + 0x20;
-            break;
-        case 1:
-            c->reg_base = 0x170;
-            c->irq = 15 + 0x20;
-            break;
-        default:
-            printk("fatal error\n");
+        switch (chan_no) {
+            case 0:
+                c->reg_base = 0x1f0;
+                c->irq = 14 + 0x20;
+                break;
+            case 1:
+                c->reg_base = 0x170;
+                c->irq = 15 + 0x20;
+                break;
+            default:
+                printk("fatal error\n");
         }
 #ifdef DEBUG
         printk("channel %d, name %s\n", chan_no, c->name);
@@ -221,9 +203,8 @@ void hdd_init()
         sema_init(&c->sema, c->name, 1);
         sema_init(&c->iolock, "iolock", 0);
         /* Initialize devices. */
-        for (dev_no = 0; dev_no < 2; dev_no++)
-        {
-            ata_disk *d = &c->devices[dev_no];
+        for (dev_no = 0; dev_no < 2; dev_no++) {
+            ata_disk* d = &c->devices[dev_no];
             d->name[0] = 'h';
             d->name[1] = 'd';
             d->name[2] = 'a' + chan_no * 2 + dev_no;
@@ -253,40 +234,33 @@ void hdd_init()
             if (c->devices[dev_no].is_ata)
                 identify_ata_device(&c->devices[dev_no]);
     }
-
 }
 
-static void interrupt_handler(intr_frame * f)
-{
-    channel *c;
+static void interrupt_handler(intr_frame* f) {
+    channel* c;
 
     for (c = channels; c < channels + CHANNEL_CNT; c++)
-        if (f->vec_no == c->irq)
-        {
-            if (c->expecting_interrupt)
-            {
-                _read_port(reg_status(c));               /* Acknowledge interrupt. */
-                //printk("[hdd] sema set \n");
-                sema_trigger_at_intr(&c->sema);      /* Wake up waiter. */
+        if (f->vec_no == c->irq) {
+            if (c->expecting_interrupt) {
+                _read_port(reg_status(c)); /* Acknowledge interrupt. */
+                // printk("[hdd] sema set \n");
+                sema_trigger_at_intr(&c->sema); /* Wake up waiter. */
 
                 c->expecting_interrupt = 0;
-            }
-            else
+            } else
                 printk("%s: unexpected interrupt\n", c->name);
             return;
         }
 }
 
-static void reset_channel(channel * c)
-{
+static void reset_channel(channel* c) {
     int present[2];
     int dev_no;
 
     /* The ATA reset sequence depends on which devices are present,
        so we start by detecting device presence. */
-    for (dev_no = 0; dev_no < 2; dev_no++)
-    {
-        ata_disk *d = &c->devices[dev_no];
+    for (dev_no = 0; dev_no < 2; dev_no++) {
+        ata_disk* d = &c->devices[dev_no];
 
         select_device(d);
 
@@ -299,8 +273,7 @@ static void reset_channel(channel * c)
         _write_port(reg_nsect(c), 0x55);
         _write_port(reg_lbal(c), 0xaa);
 
-        present[dev_no] = (_read_port(reg_nsect(c)) == 0x55
-            && _read_port(reg_lbal(c)) == 0xaa);
+        present[dev_no] = (_read_port(reg_nsect(c)) == 0x55 && _read_port(reg_lbal(c)) == 0xaa);
     }
 
     /* Issue soft reset sequence, which selects device 0 as a side effect.
@@ -314,20 +287,17 @@ static void reset_channel(channel * c)
     delay(150000);
 
     /* Wait for device 0 to clear BSY. */
-    if (present[0])
-    {
+    if (present[0]) {
         select_device(&c->devices[0]);
         wait_while_busy(&c->devices[0]);
     }
 
     /* Wait for device 1 to clear BSY. */
-    if (present[1])
-    {
+    if (present[1]) {
         int i;
 
         select_device(&c->devices[1]);
-        for (i = 0; i < 3000; i++)
-        {
+        for (i = 0; i < 3000; i++) {
             if (_read_port(reg_nsect(c)) == 1 && _read_port(reg_lbal(c)) == 1)
                 break;
             delay(10000);
@@ -336,23 +306,19 @@ static void reset_channel(channel * c)
     }
 }
 
-static int wait_while_busy(const ata_disk * d)
-{
-    channel *c = d->channel;
+static int wait_while_busy(const ata_disk* d) {
+    channel* c = d->channel;
     int i;
     int ret;
 
-    for (i = 0; i < 3000; i++)
-    {
+    for (i = 0; i < 3000; i++) {
         if (i == 700)
             printk("%s: busy, waiting...", d->name);
-        if (!(_read_port(reg_alt_status(c)) & STA_BSY))
-        {
+        if (!(_read_port(reg_alt_status(c)) & STA_BSY)) {
             if (i >= 700)
                 printk("ok\n");
             ret = (_read_port(reg_alt_status(c)) & STA_DRQ);
-            if (ret == 0)
-            {
+            if (ret == 0) {
             }
             return 1;
         }
@@ -363,9 +329,8 @@ static int wait_while_busy(const ata_disk * d)
     return 0;
 }
 
-static void select_device(const ata_disk * d)
-{
-    channel *c = d->channel;
+static void select_device(const ata_disk* d) {
+    channel* c = d->channel;
     unsigned char dev = DEV_MBS;
     if (d->dev_no == 1)
         dev |= DEV_DEV;
@@ -373,9 +338,8 @@ static void select_device(const ata_disk * d)
     _read_port(reg_alt_status(c));
 }
 
-static int check_device_type(ata_disk * d)
-{
-    channel *c = d->channel;
+static int check_device_type(ata_disk* d) {
+    channel* c = d->channel;
     unsigned char error, lbam, lbah, status;
 
     select_device(d);
@@ -385,29 +349,22 @@ static int check_device_type(ata_disk * d)
     lbah = _read_port(reg_lbah(c));
     status = _read_port(reg_status(c));
 
-    if ((error != 1 && (error != 0x81 || d->dev_no == 1))
-        || (status & STA_DRDY) == 0
-        || (status & STA_BSY) != 0)
-    {
+    if ((error != 1 && (error != 0x81 || d->dev_no == 1)) || (status & STA_DRDY) == 0 || (status & STA_BSY) != 0) {
         d->is_ata = 0;
         return error != 0x81;
-    }
-    else
-    {
+    } else {
         d->is_ata = (lbam == 0 && lbah == 0) || (lbam == 0x3c && lbah == 0xc3);
         return 1;
     }
 }
 
-static void identify_ata_device(ata_disk * d)
-{
-    channel *c = d->channel;
+static void identify_ata_device(ata_disk* d) {
+    channel* c = d->channel;
     char id[BLOCK_SECTOR_SIZE];
     unsigned int capacity;
     char *model, *serial;
     char extra_info[128];
-    block *block;
-
+    block* block;
 
     /* Send the IDENTIFY DEVICE command, wait for an interrupt
        indicating the device's response is ready, and read the data
@@ -415,12 +372,11 @@ static void identify_ata_device(ata_disk * d)
     select_device_wait(d);
     issue_pio_command(c, CMD_IDENTIFY_DEVICE);
 
-    //printk("[hdd] sema iden wait << \n");
+    // printk("[hdd] sema iden wait << \n");
     sema_wait_for_intr(&c->sema);
-    //printk("[hdd] sema iden wait >> \n");
+    // printk("[hdd] sema iden wait >> \n");
 
-    if (!wait_while_busy(d))
-    {
+    if (!wait_while_busy(d)) {
         d->is_ata = 0;
         return;
     }
@@ -428,7 +384,7 @@ static void identify_ata_device(ata_disk * d)
 
     /* Calculate capacity.
        Read model name and serial number. */
-    capacity = *(unsigned int *)&id[60 * 2];
+    capacity = *(unsigned int*)&id[60 * 2];
     model = descramble_ata_string(&id[10 * 2], 20);
     serial = descramble_ata_string(&id[27 * 2], 40);
     strcpy(extra_info, "model \"");
@@ -437,7 +393,7 @@ static void identify_ata_device(ata_disk * d)
     strcat(extra_info, serial);
     strcat(extra_info, "\"");
 #ifdef DEBUG
-    printk("%s: capacity %h, model %s, serial %s\n", d->name, capacity*BLOCK_SECTOR_SIZE, model, serial);
+    printk("%s: capacity %h, model %s, serial %s\n", d->name, capacity * BLOCK_SECTOR_SIZE, model, serial);
     printk("%s: extra_info %s\n", d->name, extra_info);
 #endif
 
@@ -446,9 +402,8 @@ static void identify_ata_device(ata_disk * d)
        allow access to those, we're less likely to scribble on
        someone's important data.  You can disable this check by
        hand if you really want to do so. */
-    if (capacity >= 1024 * 1024 * 1024 / BLOCK_SECTOR_SIZE)
-    {
-        printk("%s: ignoring %h disk for safety\n", d->name, capacity*BLOCK_SECTOR_SIZE);
+    if (capacity >= 1024 * 1024 * 1024 / BLOCK_SECTOR_SIZE) {
+        printk("%s: ignoring %h disk for safety\n", d->name, capacity * BLOCK_SECTOR_SIZE);
         d->is_ata = 0;
         return;
     }
@@ -457,79 +412,64 @@ static void identify_ata_device(ata_disk * d)
     parse_partition(block);
 }
 
-static void parse_partition(block *block)
-{
+static void parse_partition(block* block) {
     int count = 0;
 
     read_partition_table(block, 0, 0, &count);
-
 }
 
-static void read_partition_table(block *block, unsigned int sector,
-    unsigned int primary_extended_sector,
-    int *part_nr)
-{
+static void read_partition_table(block* block, unsigned int sector, unsigned int primary_extended_sector,
+                                 int* part_nr) {
     /* Format of a partition table entry.  See [Partitions]. */
-    struct partition_table_entry
-    {
-        unsigned char bootable;         /* 0x00=not bootable, 0x80=bootable. */
-        unsigned char start_chs[3];     /* Encoded starting cylinder, head, sector. */
-        unsigned char type;             /* Partition type (see partition_type_name). */
-        unsigned char end_chs[3];       /* Encoded ending cylinder, head, sector. */
-        unsigned int offset;          /* Start sector offset from partition table. */
-        unsigned int size;            /* Number of sectors. */
-    }
-    __attribute__((packed));
+    struct partition_table_entry {
+        unsigned char bootable;     /* 0x00=not bootable, 0x80=bootable. */
+        unsigned char start_chs[3]; /* Encoded starting cylinder, head, sector. */
+        unsigned char type;         /* Partition type (see partition_type_name). */
+        unsigned char end_chs[3];   /* Encoded ending cylinder, head, sector. */
+        unsigned int offset;        /* Start sector offset from partition table. */
+        unsigned int size;          /* Number of sectors. */
+    } __attribute__((packed));
 
     /* Partition table sector. */
-    struct partition_table
-    {
-        unsigned char loader[446];      /* Loader, in top-level partition table. */
-        struct partition_table_entry partitions[4];       /* Table entries. */
-        unsigned short signature;       /* Should be 0xaa55. */
-    }
-    __attribute__((packed));
+    struct partition_table {
+        unsigned char loader[446];                  /* Loader, in top-level partition table. */
+        struct partition_table_entry partitions[4]; /* Table entries. */
+        unsigned short signature;                   /* Should be 0xaa55. */
+    } __attribute__((packed));
 
-    struct partition_table *pt;
+    struct partition_table* pt;
     unsigned i;
     int found = 0;
 
     /* Check SECTOR validity. */
-    if (sector >= block->sector_size)
-    {
-        printk("%s: Partition table at sector %d past end of device.\n",
-            block->name, sector);
+    if (sector >= block->sector_size) {
+        printk("%s: Partition table at sector %d past end of device.\n", block->name, sector);
         return;
     }
 
     /* Read sector. */
-    pt = (struct partition_table *)kmalloc(sizeof *pt);
-    if (pt == 0)
-    {
+    pt = (struct partition_table*)kmalloc(sizeof *pt);
+    if (pt == 0) {
         printk("Failed to allocate memory for partition table.");
         return;
     }
     block->read(block->aux, 0, pt, BLOCK_SECTOR_SIZE);
 
     /* Parse partitions. */
-    for (i = 0; i < sizeof pt->partitions / sizeof *pt->partitions; i++)
-    {
-        struct partition_table_entry *e = &pt->partitions[i];
+    for (i = 0; i < sizeof pt->partitions / sizeof *pt->partitions; i++) {
+        struct partition_table_entry* e = &pt->partitions[i];
 
-        if (e->size == 0 || e->type == 0)
-        {
+        if (e->size == 0 || e->type == 0) {
 #ifdef DEBUG
             printk("empty partition\n");
 #endif
             /* Ignore empty partition. */
-        }
-        else if (e->type == 0x05       /* Extended partition. */
-            || e->type == 0x0f    /* Windows 98 extended partition. */
-            || e->type == 0x85    /* Linux extended partition. */
-            || e->type == 0xc5)   /* DR-DOS extended partition. */
+        } else if (e->type == 0x05     /* Extended partition. */
+                   || e->type == 0x0f  /* Windows 98 extended partition. */
+                   || e->type == 0x85  /* Linux extended partition. */
+                   || e->type == 0xc5) /* DR-DOS extended partition. */
         {
-            printk("%s: Extended partition in sector %d\n",
-                block->name, sector);
+            printk("%s: Extended partition in sector %d\n", block->name, sector);
 
             /* The interpretation of the offset field for extended
                partitions is bizarre.  When the extended partition
@@ -542,26 +482,20 @@ static void read_partition_table(block *block, unsigned int sector,
             if (sector == 0)
                 read_partition_table(block, e->offset, e->offset, part_nr);
             else
-                read_partition_table(block, e->offset + primary_extended_sector,
-                    primary_extended_sector, part_nr);
-        }
-        else
-        {
+                read_partition_table(block, e->offset + primary_extended_sector, primary_extended_sector, part_nr);
+        } else {
             ++*part_nr;
 
-            found_partition(block, e->type, e->offset + sector,
-                e->size, *part_nr, e->bootable);
+            found_partition(block, e->type, e->offset + sector, e->size, *part_nr, e->bootable);
         }
     }
 
-    if (!*part_nr)
-    {
+    if (!*part_nr) {
 #ifdef DEBUG
         printk("use default\n");
 #endif
         // no partition table info, assume this disk only has one raw partition
         found_partition(block, 0x21, sector, block->sector_size, 0, 1);
-
     }
     kfree(pt);
 }
@@ -573,16 +507,15 @@ static unsigned cache_hit = 0;
 static unsigned cache_search_time = 0;
 static unsigned cache_search_count = 0;
 static unsigned max_cache_size = 0;
-void report_cache()
-{
+void report_cache() {
     printk("cache: %d hit, read hdd %d, write hdd %d\n", cache_hit, total_read, total_writ);
-    printk("cache search count %d, total time %d ms, max depth %d\n", cache_search_count, cache_search_time, max_cache_size);
+    printk("cache search count %d, total time %d ms, max depth %d\n", cache_search_count, cache_search_time,
+           max_cache_size);
     total_writ = total_read = cache_hit = 0;
     cache_search_count = cache_search_time = 0;
 }
 
-static void init_partition_cache(partition* p)
-{
+static void init_partition_cache(partition* p) {
     int i = 0;
 
     p->cache.count = 0;
@@ -592,17 +525,13 @@ static void init_partition_cache(partition* p)
     sema_init(&p->cache_lock, "cachelock", 0);
 }
 
-
-
-static block_cache_item* hdd_cache_lookup(partition* p, int sector)
-{
+static block_cache_item* hdd_cache_lookup(partition* p, int sector) {
     int i = 0;
     unsigned search_time = 0;
     int head_sector = HEAD_SECTOR(sector);
     key_value_pair* pair = 0;
     block_cache_item* ret = 0;
-    if (sector == -1)
-    {
+    if (sector == -1) {
         return -1;
     }
 
@@ -620,12 +549,10 @@ static block_cache_item* hdd_cache_lookup(partition* p, int sector)
     return ret;
 }
 
-static block_cache_item* hdd_cache_find_empty(partition* p, int sector)
-{
+static block_cache_item* hdd_cache_find_empty(partition* p, int sector) {
     block_cache_item* item;
     int head_sector = HEAD_SECTOR(sector);
-    if (p->cache.count >= CACHE_SECTOR_COUNT)
-    {
+    if (p->cache.count >= CACHE_SECTOR_COUNT) {
         return 0;
     }
 
@@ -639,8 +566,7 @@ static block_cache_item* hdd_cache_find_empty(partition* p, int sector)
     return item;
 }
 
-static block_cache_item* hdd_cache_find_oldest(partition* p)
-{
+static block_cache_item* hdd_cache_find_oldest(partition* p) {
     LIST_ENTRY* node;
     block_cache_item* item = 0;
 
@@ -650,11 +576,9 @@ static block_cache_item* hdd_cache_find_oldest(partition* p)
     node = p->cache.timer_list_head.Flink;
     item = CONTAINER_OF(node, block_cache_item, time_list);
     return item;
-
 }
 
-static void hdd_cache_flush(partition*p, block_cache_item* item)
-{
+static void hdd_cache_flush(partition* p, block_cache_item* item) {
     char* buf = item->buf;
     int sector = item->sector;
     int head_sector = sector;
@@ -663,23 +587,20 @@ static void hdd_cache_flush(partition*p, block_cache_item* item)
     if (sector < 0)
         return;
 
-    if (item->dirty)
-    {
+    if (item->dirty) {
         total_writ += PREREAD_SECTOR;
         for (i = 0; i < PREREAD_SECTOR; i++)
-            partition_write(p, head_sector+i, buf+i*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+            partition_write(p, head_sector + i, buf + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
 
         item->dirty = 0;
     }
 }
 
-static void hdd_cache_update(partition*p, block_cache_item* item, int sector, void* buf, int mark_dirty)
-{
+static void hdd_cache_update(partition* p, block_cache_item* item, int sector, void* buf, int mark_dirty) {
     int head_sector = HEAD_SECTOR(sector);
     int same_sector = (item->sector == head_sector);
     int sector_off = SECTOR_OFF(sector);
-    if (!same_sector)
-    {
+    if (!same_sector) {
         hash_remove(p->cache.hash, item->sector);
         hash_insert(p->cache.hash, head_sector, item);
     }
@@ -689,22 +610,18 @@ static void hdd_cache_update(partition*p, block_cache_item* item, int sector, vo
     RemoveEntryList(&item->time_list);
     InsertTailList(&p->cache.timer_list_head, &item->time_list);
 
-    memcpy((char*)item->buf + sector_off*BLOCK_SECTOR_SIZE, buf, BLOCK_SECTOR_SIZE);
+    memcpy((char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, buf, BLOCK_SECTOR_SIZE);
 #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
-    if (mark_dirty)
-    {
+    if (mark_dirty) {
         hdd_cache_flush(p, item);
     }
 #endif
-
 }
 
-static void hdd_cache_update_all(void* aux, partition*p, block_cache_item* item, int head_sector, int mark_dirty)
-{
+static void hdd_cache_update_all(void* aux, partition* p, block_cache_item* item, int head_sector, int mark_dirty) {
     int i = 0;
     int same_sector = (item->sector == head_sector);
-    if (!same_sector)
-    {
+    if (!same_sector) {
         hash_remove(p->cache.hash, item->sector);
         hash_insert(p->cache.hash, head_sector, item);
     }
@@ -715,25 +632,21 @@ static void hdd_cache_update_all(void* aux, partition*p, block_cache_item* item,
     RemoveEntryList(&item->time_list);
     InsertTailList(&p->cache.timer_list_head, &item->time_list);
     for (i = 0; i < PREREAD_SECTOR; i++)
-        partition_read(aux, head_sector+i, (char*)item->buf+i*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+        partition_read(aux, head_sector + i, (char*)item->buf + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
 #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
-    if (mark_dirty)
-    {
+    if (mark_dirty) {
         hdd_cache_flush(p, item);
     }
 #endif
 }
 
-static void flush_partition_cache(partition* p)
-{
+static void flush_partition_cache(partition* p) {
     LIST_ENTRY* entry = p->cache.timer_list_head.Flink;
     LIST_ENTRY* next;
-    while (entry != &p->cache.timer_list_head)
-    {
+    while (entry != &p->cache.timer_list_head) {
         next = entry->Flink;
         block_cache_item* item = CONTAINER_OF(entry, block_cache_item, time_list);
-        if (item && item->sector != -1 && item->dirty)
-        {
+        if (item && item->sector != -1 && item->dirty) {
             hdd_cache_flush(p, item);
         }
         block_cache_item_remove(item);
@@ -742,8 +655,7 @@ static void flush_partition_cache(partition* p)
     }
 }
 
-static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len)
-{
+static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned len) {
     int i = 0;
     partition* p = aux;
     int index = 0;
@@ -753,108 +665,93 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
 
     sema_wait(&p->cache_lock);
     item = hdd_cache_lookup(p, sector);
-    if (item)
-    {
+    if (item) {
         RemoveEntryList(&item->time_list);
         InsertTailList(&p->cache.timer_list_head, &item->time_list);
         sema_trigger(&p->cache_lock);
-        memcpy(buf, (char*)item->buf + sector_off*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+        memcpy(buf, (char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
 
-    //total_read++;
-    //partition_read(aux, sector, buf, len);
+    // total_read++;
+    // partition_read(aux, sector, buf, len);
     item = hdd_cache_find_empty(p, sector);
-    if (!item)
-    {
+    if (!item) {
         item = hdd_cache_find_oldest(p);
-        if (item)
-        {
+        if (item) {
             hdd_cache_flush(p, item);
         }
     }
 
-    if (item)
-    {
+    if (item) {
         total_read += PREREAD_SECTOR;
         hdd_cache_update_all(aux, p, item, head_sector, 0);
         sema_trigger(&p->cache_lock);
-        memcpy(buf, (char*)item->buf + sector_off*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+        memcpy(buf, (char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
 
     sema_trigger(&p->cache_lock);
     return -1;
-
 }
 
-static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned len)
-{
+static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned len) {
     partition* p = aux;
     block_cache_item* item = 0;
 
     sema_wait(&p->cache_lock);
     item = hdd_cache_lookup(p, sector);
-    if (item)
-    {
+    if (item) {
         hdd_cache_update(p, item, sector, buf, 1);
         sema_trigger(&p->cache_lock);
         return BLOCK_SECTOR_SIZE;
     }
 
     item = hdd_cache_find_empty(p, sector);
-    if (item)
-    {
+    if (item) {
         hdd_cache_update(p, item, sector, buf, 1);
         sema_trigger(&p->cache_lock);
         return len;
     }
 
     item = hdd_cache_find_oldest(p);
-    if (item)
-    {
+    if (item) {
         hdd_cache_flush(p, item);
         hdd_cache_update(p, item, sector, buf, 1);
         sema_trigger(&p->cache_lock);
         return len;
     }
-    
+
     sema_trigger(&p->cache_lock);
     return -1;
 }
 #else
-void report_cache()
-{
+void report_cache() {
 }
 #endif
 
-static void found_partition(block *block, unsigned char part_type,
-    unsigned int start, unsigned int size,
-    int part_nr, unsigned char bootable)
-{
+static void found_partition(block* block, unsigned char part_type, unsigned int start, unsigned int size, int part_nr,
+                            unsigned char bootable) {
     if (start >= block->sector_size)
-        printk("%s%d: Partition starts past end of device (sector %d)\n",
-            block->name, part_nr, start);
+        printk("%s%d: Partition starts past end of device (sector %d)\n", block->name, part_nr, start);
     else if (start + size < start || start + size > block->sector_size)
-        printk("%s%d: Partition end (%d) past end of device (%d)\n",
-            block->name, part_nr, start + size, block->sector_size);
-    else
-    {
-        block_type type = (part_type == 0x20 ? BLOCK_KERNEL
-            : part_type == 0x21 ? BLOCK_FILESYS
-            : part_type == 0x83 ? BLOCK_LINUX
-            : part_type == 0x22 ? BLOCK_SCRATCH
-            : part_type == 0x23 ? BLOCK_SWAP
-            : BLOCK_UNKNOW);
-        partition *p;
-        struct _block *b;
+        printk("%s%d: Partition end (%d) past end of device (%d)\n", block->name, part_nr, start + size,
+               block->sector_size);
+    else {
+        block_type type = (part_type == 0x20   ? BLOCK_KERNEL
+                           : part_type == 0x21 ? BLOCK_FILESYS
+                           : part_type == 0x83 ? BLOCK_LINUX
+                           : part_type == 0x22 ? BLOCK_SCRATCH
+                           : part_type == 0x23 ? BLOCK_SWAP
+                                               : BLOCK_UNKNOW);
+        partition* p;
+        struct _block* b;
         char extra_info[128];
         char name[16];
         char ext[2];
         unsigned z = sizeof(*p) / PAGE_SIZE + 1;
         p = (partition*)vm_alloc(z);
-        if (p == 0)
-        {
+        if (p == 0) {
             printk("Failed to allocate memory for partition descriptor");
             return;
         }
@@ -882,20 +779,16 @@ static void found_partition(block *block, unsigned char part_type,
         b = block_register(p, name, partition_read, partition_write, partition_close, type, size);
 #endif
 
-        if (type == BLOCK_LINUX)
-        {
+        if (type == BLOCK_LINUX) {
             ext4_blockdev_register(b, name, BLOCK_SECTOR_SIZE, size);
         }
     }
 }
 
-static void
-wait_until_idle(const ata_disk *d)
-{
+static void wait_until_idle(const ata_disk* d) {
     int i;
 
-    for (i = 0; i < 1000; i++)
-    {
+    for (i = 0; i < 1000; i++) {
         if ((_read_port(reg_status(d->channel)) & (STA_BSY | STA_DRQ)) == 0)
             return;
         delay(10);
@@ -904,50 +797,40 @@ wait_until_idle(const ata_disk *d)
     printk("%s: idle timeout\n", d->name);
 }
 
-static void select_device_wait(const ata_disk * d)
-{
+static void select_device_wait(const ata_disk* d) {
     channel* c = d->channel;
-    //printk("[hdd] sema reset (to 1)\n");
+    // printk("[hdd] sema reset (to 1)\n");
     sema_reset(&c->sema);
     c->expecting_interrupt = 1;
-    //wait_until_idle (d);
+    // wait_until_idle (d);
     select_device(d);
-    //wait_until_idle (d);
+    // wait_until_idle (d);
 }
 
-static void issue_pio_command(channel * c, unsigned char command)
-{
-
+static void issue_pio_command(channel* c, unsigned char command) {
     _write_port(reg_command(c), command);
 }
 
-static void input_sector(channel * c, void * sector)
-{
+static void input_sector(channel* c, void* sector) {
     _read_dwb(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
-static void output_sector(channel *c, const void *sector)
-{
-
+static void output_sector(channel* c, const void* sector) {
     _write_dwb(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
-
-static char *descramble_ata_string(char * string, int size)
-{
+static char* descramble_ata_string(char* string, int size) {
     int i;
 
     /* Swap all pairs of bytes. */
-    for (i = 0; i + 1 < size; i += 2)
-    {
+    for (i = 0; i + 1 < size; i += 2) {
         char tmp = string[i];
         string[i] = string[i + 1];
         string[i + 1] = tmp;
     }
 
     /* Find the last non-white, non-null character. */
-    for (size--; size > 0; size--)
-    {
+    for (size--; size > 0; size--) {
         int c = string[size - 1];
         if (c != '\0' && !isspace(c))
             break;
@@ -957,21 +840,16 @@ static char *descramble_ata_string(char * string, int size)
     return string;
 }
 
-static void
-select_sector(ata_disk *d, unsigned int sec_no)
-{
-    channel *c = d->channel;
-
+static void select_sector(ata_disk* d, unsigned int sec_no) {
+    channel* c = d->channel;
 
     select_device_wait(d);
     _write_port(reg_nsect(c), 1);
     _write_port(reg_lbal(c), sec_no);
     _write_port(reg_lbam(c), sec_no >> 8);
     _write_port(reg_lbah(c), (sec_no >> 16));
-    _write_port(reg_device(c),
-        DEV_MBS | DEV_LBA | (d->dev_no == 1 ? DEV_DEV : 0) | (sec_no >> 24));
+    _write_port(reg_device(c), DEV_MBS | DEV_LBA | (d->dev_no == 1 ? DEV_DEV : 0) | (sec_no >> 24));
 }
-
 
 static time_t read_select, read_wait, read_io;
 static time_t writ_select, writ_wait, writ_io;
@@ -981,11 +859,9 @@ static unsigned long writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
 
 static unsigned long read_times = 0, write_times = 0;
 
-
-static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
-{
-    ata_disk *d = aux;
-    channel *c = d->channel;
+static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len) {
+    ata_disk* d = aux;
+    channel* c = d->channel;
     sema_wait_for_intr(&c->iolock);
 
     select_sector(d, sec_no);
@@ -1001,19 +877,16 @@ static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len)
     return len;
 }
 
-
-static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
-{
-    ata_disk *d = aux;
-    channel *c = d->channel;
+static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len) {
+    ata_disk* d = aux;
+    channel* c = d->channel;
     sema_wait_for_intr(&c->iolock);
 
     select_sector(d, sec_no);
- 
+
     issue_pio_command(c, CMD_WRITE_SECTOR_RETRY);
 
     output_sector(c, buf);
-
 
     sema_wait_for_intr(&c->sema);
 
@@ -1022,37 +895,26 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len)
     return len;
 }
 
-static void hdd_close(void* aux)
-{
-
+static void hdd_close(void* aux) {
 }
 
-
-static int partition_read(void* aux, unsigned sector, void* buf, unsigned len)
-{
-    partition *p = aux;
+static int partition_read(void* aux, unsigned sector, void* buf, unsigned len) {
+    partition* p = aux;
     return p->block->read(p->block->aux, p->start + sector, buf, len);
-
 }
 
-static int partition_write(void* aux, unsigned sector, void* buf, unsigned len)
-{
-    partition *p = aux;
+static int partition_write(void* aux, unsigned sector, void* buf, unsigned len) {
+    partition* p = aux;
     return p->block->write(p->block->aux, p->start + sector, buf, len);
-
 }
 
-static void partition_close(void* aux)
-{
+static void partition_close(void* aux) {
 #if HDD_CACHE_OPEN
     int i = 0;
     partition* p = aux;
-    if (p->cache_inited)
-    {
+    if (p->cache_inited) {
         flush_partition_cache(aux);
         p->cache_inited = 0;
     }
 #endif
 }
-
-

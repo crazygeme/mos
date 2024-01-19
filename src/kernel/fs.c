@@ -7,33 +7,24 @@
 #include <fcntl.h>
 #include <include/fs.h>
 
-static int block_proxy_open(struct ext4_blockdev *bdev);
-static int block_proxy_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-		     uint32_t blk_cnt);
-static int block_proxy_bwrite(struct ext4_blockdev *bdev, const void *buf,
-		      uint64_t blk_id, uint32_t blk_cnt);
-static int block_proxy_close(struct ext4_blockdev *bdev);
-static int block_proxy_lock(struct ext4_blockdev *bdev);
-static int block_proxy_unlock(struct ext4_blockdev *bdev);
+static int block_proxy_open(struct ext4_blockdev* bdev);
+static int block_proxy_bread(struct ext4_blockdev* bdev, void* buf, uint64_t blk_id, uint32_t blk_cnt);
+static int block_proxy_bwrite(struct ext4_blockdev* bdev, const void* buf, uint64_t blk_id, uint32_t blk_cnt);
+static int block_proxy_close(struct ext4_blockdev* bdev);
+static int block_proxy_lock(struct ext4_blockdev* bdev);
+static int block_proxy_unlock(struct ext4_blockdev* bdev);
 
 static char __first_hdd_name[32];
 
-int ext4_blockdev_register(block* aux, char* name, int sec_size, int sec_cnt)
-{
-    uint8_t *_ph_bbuf = (uint8_t *)kmalloc(sec_size);
-    struct ext4_blockdev *t = (struct ext4_blockdev *)kmalloc(sizeof(*t));
+int ext4_blockdev_register(block* aux, char* name, int sec_size, int sec_cnt) {
+    uint8_t* _ph_bbuf = (uint8_t*)kmalloc(sec_size);
+    struct ext4_blockdev* t = (struct ext4_blockdev*)kmalloc(sizeof(*t));
     struct ext4_blockdev_iface* block_iface = (struct ext4_blockdev_iface*)kmalloc(sizeof(*block_iface));
-    memset((void*)block_iface, 0, sizeof(*block_iface));           
-    block_iface->open = block_proxy_open,
-    block_iface->bread = block_proxy_bread,
-    block_iface->bwrite = block_proxy_bwrite,
-    block_iface->close = block_proxy_close,
-    block_iface->lock = block_proxy_lock,
-    block_iface->unlock = block_proxy_unlock, 
-    block_iface->ph_bsize = sec_size,
-    block_iface->ph_bcnt = sec_cnt,
-    block_iface->ph_bbuf = _ph_bbuf,
-    memset((void *)t, 0, sizeof(*t));
+    memset((void*)block_iface, 0, sizeof(*block_iface));
+    block_iface->open = block_proxy_open, block_iface->bread = block_proxy_bread,
+    block_iface->bwrite = block_proxy_bwrite, block_iface->close = block_proxy_close,
+    block_iface->lock = block_proxy_lock, block_iface->unlock = block_proxy_unlock, block_iface->ph_bsize = sec_size,
+    block_iface->ph_bcnt = sec_cnt, block_iface->ph_bbuf = _ph_bbuf, memset((void*)t, 0, sizeof(*t));
     t->bdif = block_iface;
     t->part_offset = 0;
     t->part_size = (sec_size) * (sec_cnt);
@@ -44,75 +35,63 @@ int ext4_blockdev_register(block* aux, char* name, int sec_size, int sec_cnt)
     return ext4_device_register(t, NULL, name);
 }
 
-static int block_proxy_open(struct ext4_blockdev *bdev)
-{
+static int block_proxy_open(struct ext4_blockdev* bdev) {
     return 0;
 }
 
-static int block_proxy_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-		     uint32_t blk_cnt)
-{
+static int block_proxy_bread(struct ext4_blockdev* bdev, void* buf, uint64_t blk_id, uint32_t blk_cnt) {
     block* b = bdev->aux;
     char* tmp = (char*)buf;
     int i = 0;
-    for (i = 0; i < blk_cnt; i++){
-        b->read(b->aux, blk_id+i, tmp+i*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+    for (i = 0; i < blk_cnt; i++) {
+        b->read(b->aux, blk_id + i, tmp + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
     }
 
     return 0;
 }
 
-static int block_proxy_bwrite(struct ext4_blockdev *bdev, const void *buf,
-		      uint64_t blk_id, uint32_t blk_cnt)
-{
+static int block_proxy_bwrite(struct ext4_blockdev* bdev, const void* buf, uint64_t blk_id, uint32_t blk_cnt) {
     block* b = bdev->aux;
     char* tmp = (char*)buf;
     int i = 0;
-    for (i = 0; i < blk_cnt; i++){
-        b->write(b->aux, blk_id+i, tmp+i*BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+    for (i = 0; i < blk_cnt; i++) {
+        b->write(b->aux, blk_id + i, tmp + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
     }
 
     return 0;
 }
 
-static int block_proxy_close(struct ext4_blockdev *bdev)
-{
+static int block_proxy_close(struct ext4_blockdev* bdev) {
     kfree(bdev->bdif->ph_bbuf);
     kfree(bdev->bdif);
     kfree(bdev);
     return 0;
 }
 
-static int block_proxy_lock(struct ext4_blockdev *bdev)
-{
+static int block_proxy_lock(struct ext4_blockdev* bdev) {
     return 0;
 }
 
-static int block_proxy_unlock(struct ext4_blockdev *bdev)
-{
+static int block_proxy_unlock(struct ext4_blockdev* bdev) {
     return 0;
 }
 
-
-void fs_mount_root()
-{
+void fs_mount_root() {
     ext4_mount(__first_hdd_name, "/", 0);
     ext4_cache_write_back("/", true);
 }
 
 #define UNIMPL() klog("unimplemented: %s\n", __func__)
 
-static int fs_find_empty_fd(file_descriptor* fds)
-{
+static int fs_find_empty_fd(file_descriptor* fds) {
     int i;
-    for (i = 0; i < MAX_FD; i++){
+    for (i = 0; i < MAX_FD; i++) {
         if (fds[i].used == 0)
             return i;
     }
     return -1;
 }
-int fs_read(int fd, unsigned offset, char* buf, unsigned len)
-{
+int fs_read(int fd, unsigned offset, char* buf, unsigned len) {
     task_struct* cur = CURRENT_TASK();
     int ret = -1;
     filep fp = NULL;
@@ -124,7 +103,7 @@ int fs_read(int fd, unsigned offset, char* buf, unsigned len)
     fp = cur->fds[fd].fp;
     if (!fp)
         return -1;
-    
+
     if (!fp->op.read)
         return -1;
 
@@ -140,8 +119,7 @@ int fs_read(int fd, unsigned offset, char* buf, unsigned len)
     return ret;
 }
 
-int fs_write(int fd, unsigned offset, char* buf, unsigned len)
-{
+int fs_write(int fd, unsigned offset, char* buf, unsigned len) {
     task_struct* cur = CURRENT_TASK();
     int ret = -1;
     filep fp = NULL;
@@ -153,7 +131,7 @@ int fs_write(int fd, unsigned offset, char* buf, unsigned len)
     fp = cur->fds[fd].fp;
     if (!fp)
         return -1;
-    
+
     if (!fp->op.write)
         return -1;
 
@@ -169,8 +147,7 @@ int fs_write(int fd, unsigned offset, char* buf, unsigned len)
     return ret;
 }
 
-static int fs_resolve_symlink_path(const char* linkpath, char* linkcontent, size_t name_len)
-{
+static int fs_resolve_symlink_path(const char* linkpath, char* linkcontent, size_t name_len) {
     char* r;
     char* saved = linkcontent + MAX_PATH - name_len - 1;
     if (*linkcontent == '/')
@@ -185,18 +162,16 @@ static int fs_resolve_symlink_path(const char* linkpath, char* linkcontent, size
     strcat(linkcontent, saved);
 }
 
-filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
-{
-    ext4_file *f = NULL;
-    ext4_dir *dir = NULL;
-    char *linkcontent = NULL;
+filep fs_open_file(const char* path, int flag, char* mode, int follow_link) {
+    ext4_file* f = NULL;
+    ext4_dir* dir = NULL;
+    char* linkcontent = NULL;
     size_t name_len;
     filep ret = NULL;
     filep fp = NULL;
     struct stat s;
 
-    if (path[strlen(path) - 1] == '/')
-    {
+    if (path[strlen(path) - 1] == '/') {
         // must be a path
         dir = calloc(1, sizeof(*dir));
         ret = ext4_dir_open(dir, path);
@@ -204,9 +179,7 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
             goto fail;
         fp = fs_alloc_filep_dir(dir);
         fp->mode = S_IFDIR;
-    }
-    else
-    {
+    } else {
         f = calloc(1, sizeof(*f));
         ret = ext4_fopen2(f, path, flag);
         if (ret != EOK)
@@ -216,13 +189,12 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
         if (ret != EOK)
             goto fail;
 
-        if (S_ISLNK(s.st_mode) && follow_link){
+        if (S_ISLNK(s.st_mode) && follow_link) {
             linkcontent = name_get();
             memset(linkcontent, 0, MAX_PATH);
         }
 
-        while (S_ISLNK(s.st_mode) && follow_link)
-        {
+        while (S_ISLNK(s.st_mode) && follow_link) {
             ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
             if (ret != EOK)
                 goto fail;
@@ -238,8 +210,7 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
                 goto fail;
         }
 
-        if (S_ISDIR(s.st_mode))
-        {
+        if (S_ISDIR(s.st_mode)) {
             ret = ext4_fclose(f);
             if (ret != EOK)
                 goto fail;
@@ -252,9 +223,7 @@ filep fs_open_file(const char* path, int flag, char* mode, int follow_link)
                 goto fail;
             ext4_dir_entry_rewind(dir);
             fp = fs_alloc_filep_dir(dir);
-        }
-        else
-        {
+        } else {
             fp = fs_alloc_filep_normal(f);
         }
         fp->mode = s.st_mode;
@@ -277,9 +246,7 @@ done:
     return ret;
 }
 
-int fs_open(const char* path, int flag, char* mode)
-{
-    
+int fs_open(const char* path, int flag, char* mode) {
     task_struct* cur = CURRENT_TASK();
     int fd = -1;
 
@@ -291,7 +258,7 @@ int fs_open(const char* path, int flag, char* mode)
     if (fd < 0)
         goto done;
 
-    if (*path != '/'){
+    if (*path != '/') {
         if (*path == 't')
             fp = fs_alloc_filep_tty();
         else if (*path == 'k')
@@ -299,13 +266,12 @@ int fs_open(const char* path, int flag, char* mode)
         fp->mode = S_IFREG;
         fp->name = strdup(path);
         fs_refrence(fp);
-    }
-    else if (strcmp (path, "/dev/null") == 0) {
+    } else if (strcmp(path, "/dev/null") == 0) {
         fp = fs_alloc_filep_null();
         fp->mode = S_IFREG;
         fp->name = strdup(path);
         fs_refrence(fp);
-    }else {
+    } else {
         fp = fs_open_file(path, flag, mode, 1);
         if (fp == NULL)
             goto fail;
@@ -314,7 +280,7 @@ int fs_open(const char* path, int flag, char* mode)
     cur->fds[fd].fp = fp;
     cur->fds[fd].used = 1;
     cur->fds[fd].file_off = 0;
-    
+
     goto done;
 fail:
     fd = ret;
@@ -323,8 +289,7 @@ done:
     return fd;
 }
 
-int fs_close(int fd)
-{
+int fs_close(int fd) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     if (fd < 0 || fd >= MAX_FD)
@@ -344,8 +309,7 @@ int fs_close(int fd)
     return fs_destroy(fp);
 }
 
-int fs_delete(const char* path)
-{
+int fs_delete(const char* path) {
     // FIXME: before virtual device (/dev etc) only ext4 support
     int ret = ext4_fremove(path);
     if (ret != EOK)
@@ -353,28 +317,27 @@ int fs_delete(const char* path)
     return ret;
 }
 
-int fs_stat(const char* path, struct stat *s)
-{
+int fs_stat(const char* path, struct stat* s) {
     // FIXME: before virtual device (/dev etc) only ext4 support
     ext4_file f;
     ext4_dir dir;
     int isdir = 0;
     int ret = -1;
 
-    if (path[strlen(path)-1] == '/') {
+    if (path[strlen(path) - 1] == '/') {
         ret = ext4_dir_open(&dir, path);
         isdir = 1;
-    }else {
+    } else {
         ret = ext4_fopen(&f, path, "r");
     }
 
     if (ret != EOK)
-        return (0-ret);
+        return (0 - ret);
 
     if (!isdir) {
         ret = ext4_fstat(&f, s);
         ext4_fclose(&f);
-    }else {
+    } else {
         ret = ext4_fstat(&dir.f, s);
         ext4_dir_close(&dir);
     }
@@ -383,8 +346,7 @@ int fs_stat(const char* path, struct stat *s)
     return ret;
 }
 
-int fs_fstat(int fd, struct stat* s)
-{
+int fs_fstat(int fd, struct stat* s) {
     int ret;
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
@@ -405,15 +367,14 @@ int fs_fstat(int fd, struct stat* s)
     return ret;
 }
 
-int fs_pipe(int *pipefd)
-{
+int fs_pipe(int* pipefd) {
     int ret = 0;
     task_struct* cur = CURRENT_TASK();
     int reader, writer;
     filep fp[2] = {0};
     sema_wait(&cur->fd_lock);
     reader = fs_find_empty_fd(cur->fds);
-    if (reader < 0 || reader >= MAX_FD){
+    if (reader < 0 || reader >= MAX_FD) {
         ret = -1;
         goto done;
     }
@@ -421,14 +382,14 @@ int fs_pipe(int *pipefd)
     cur->fds[reader].used = 1;
 
     writer = fs_find_empty_fd(cur->fds);
-    if (writer < 0 || writer >= MAX_FD){
+    if (writer < 0 || writer >= MAX_FD) {
         cur->fds[reader].used = 0;
         ret = -1;
         goto done;
     }
     cur->fds[writer].used = 1;
     ret = fs_alloc_filep_pipe(fp);
-    if (ret != EOK){
+    if (ret != EOK) {
         cur->fds[reader].used = 0;
         cur->fds[writer].used = 0;
         ret = -1;
@@ -449,8 +410,7 @@ done:
     return ret;
 }
 
-int fs_dup(int fd)
-{
+int fs_dup(int fd) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int newfd;
@@ -461,7 +421,7 @@ int fs_dup(int fd)
         return -ENOENT;
     sema_wait(&cur->fd_lock);
     newfd = fs_find_empty_fd(cur->fds);
-    if (newfd < 0 || newfd >= MAX_FD){
+    if (newfd < 0 || newfd >= MAX_FD) {
         ret = -1;
         goto done;
     }
@@ -475,8 +435,7 @@ done:
     return ret;
 }
 
-int fs_dup2(int fd, int newfd)
-{
+int fs_dup2(int fd, int newfd) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int ret;
@@ -490,7 +449,7 @@ int fs_dup2(int fd, int newfd)
         return -ENOENT;
 
     sema_wait(&cur->fd_lock);
-    if (cur->fds[newfd].used){
+    if (cur->fds[newfd].used) {
         fs_destroy(cur->fds[newfd].fp);
     }
     fp = cur->fds[fd].fp;
@@ -502,10 +461,9 @@ int fs_dup2(int fd, int newfd)
     return ret;
 }
 
-int fs_destroy(filep f)
-{
+int fs_destroy(filep f) {
     int ret = 0;
-    if (__sync_add_and_fetch(&f->ref_cnt, -1) == 0){
+    if (__sync_add_and_fetch(&f->ref_cnt, -1) == 0) {
         ret = f->op.close(f->inode);
         free(f->name);
         free(f);
@@ -513,10 +471,7 @@ int fs_destroy(filep f)
     return ret;
 }
 
-int fs_llseek(int fd, unsigned offset_high,
-                   unsigned offset_low, uint64_t *result,
-                   unsigned whence)
-{
+int fs_llseek(int fd, unsigned offset_high, unsigned offset_low, uint64_t* result, unsigned whence) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int ret = -1;
@@ -538,8 +493,7 @@ done:
     return ret;
 }
 
-int fs_seek(int fd, unsigned offset, unsigned whence)
-{
+int fs_seek(int fd, unsigned offset, unsigned whence) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int ret = -EACCES;
@@ -558,12 +512,11 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
     if (ret >= 0 && fp->op.tell)
         cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-    sema_trigger(&cur->fd_lock);    
+    sema_trigger(&cur->fd_lock);
     return ret;
 }
 
-int fs_select(int fd, unsigned type)
-{
+int fs_select(int fd, unsigned type) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int ret = -EACCES;
@@ -584,9 +537,7 @@ done:
     return ret;
 }
 
-
-int fs_ioctl(int fd, unsigned cmd, void* buf)
-{
+int fs_ioctl(int fd, unsigned cmd, void* buf) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int ret = -EACCES;
@@ -607,15 +558,13 @@ done:
     return ret;
 }
 
-int fs_chmod(const char *pathname, uint32_t mode)
-{
+int fs_chmod(const char* pathname, uint32_t mode) {
     int ret;
     ret = ext4_chmod(pathname, mode);
-    return (0-ret);
+    return (0 - ret);
 }
 
-int fs_fchmod(int fd, uint32_t mode)
-{
+int fs_fchmod(int fd, uint32_t mode) {
     task_struct* cur = CURRENT_TASK();
     filep fp = NULL;
     int ret = -EACCES;
@@ -630,5 +579,5 @@ int fs_fchmod(int fd, uint32_t mode)
     sema_trigger(&cur->fd_lock);
 
     ret = ext4_fchmod(fp->inode, mode);
-    return (0-ret);
+    return (0 - ret);
 }

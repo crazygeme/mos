@@ -5,10 +5,7 @@
 extern unsigned TTY_MAX_ROW;
 extern unsigned TTY_MAX_COL;
 #define TTY_MAX_CHARS (TTY_MAX_ROW * TTY_MAX_COL)
-#define ROW_COL_TO_CUR(row, col) \
-	(row * TTY_MAX_COL + col)
-
-
+#define ROW_COL_TO_CUR(row, col) (row * TTY_MAX_COL + col)
 
 void tty_init(void);
 

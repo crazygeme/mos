@@ -5,13 +5,14 @@
 #include <mmap.h>
 #include <phymm.h>
 #include <fs.h>
+#include <klib.h>
+#include <timer.h>
 
 unsigned page_fault_count;
 unsigned page_falut_total_time;
 
 static void pf_process(intr_frame* frame);
-void pf_init()
-{
+void pf_init() {
     page_fault_count = 0;
     page_falut_total_time = 0;
     int_register(0xe, pf_process, 0, 0);
@@ -24,13 +25,12 @@ void pf_init()
 +-----+-...-+-----+-----+-----+-----+-----+-----+
 
 */
-#define PF_MASK_P       0x00000001  // page valid
-#define PF_MASK_RW      0x00000002  // write access
-#define PF_MASK_US      0x00000004  // user mode access
-#define PF_MASK_RSVD    0x00000008
+#define PF_MASK_P 0x00000001   // page valid
+#define PF_MASK_RW 0x00000002  // write access
+#define PF_MASK_US 0x00000004  // user mode access
+#define PF_MASK_RSVD 0x00000008
 extern phymm_page* phymm_pages;
-static void pf_process(intr_frame* frame)
-{
+static void pf_process(intr_frame* frame) {
     unsigned cr2;
     unsigned cr3;
     unsigned error = frame->error_code;
@@ -57,8 +57,7 @@ static void pf_process(intr_frame* frame)
     write_access = ((error & PF_MASK_RW) == PF_MASK_RW);
     user_mode = ((error & PF_MASK_US) == PF_MASK_US);
 
-    if (!page_valid)
-    {
+    if (!page_valid) {
         vm_region* region;
         unsigned this_offset;
         filep f;
@@ -66,59 +65,48 @@ static void pf_process(intr_frame* frame)
 
         this_begin = cr2 & PAGE_SIZE_MASK;
         region = vm_find_map(cur->user.vm, this_begin);
-        if (region)
-        {
+        if (region) {
             f = region->node;
             this_offset = region->offset + (this_begin - region->begin);
             mm_add_dynamic_map(this_begin, 0, PAGE_ENTRY_USER_DATA);
             REFRESH_CACHE();
-            
-            if (f != 0)
-            {
+
+            if (f != 0) {
                 int ret = 0;
                 ff = f->inode;
                 ret = ext4_fseek(ff, this_offset, SEEK_SET);
-                if (ret != EOK){
+                if (ret != EOK) {
                     klog("FAIL: mmap: seek to off %x\n", this_offset);
                 }
                 ret = ext4_fread(ff, this_begin, PAGE_SIZE, NULL);
-                if (ret != EOK){
+                if (ret != EOK) {
                     klog("FAIL: mmap: read to buffer %x, size %x\n", this_begin, PAGE_SIZE);
                 }
-            }
-            else
-            {
+            } else {
                 memset(this_begin, 0, PAGE_SIZE);
             }
             goto Done;
-        }
-        else if (user_mode)
-        {
+        } else if (user_mode) {
             vm_dump(cur->user.vm);
             sys_exit(-1);
-        }
-        else
-        {
+        } else {
             // it must be a kernel bug!
             goto HLT;
         }
-    }
-    else if (write_access)
-    {
+    } else if (write_access) {
         unsigned page_index = mm_get_attached_page_index(cr2);
         task_struct* cur = CURRENT_TASK();
         unsigned cow;
         unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(cr2);
         unsigned int page_table_offset = ADDR_TO_PET_OFFSET(cr2);
-        unsigned int *page_dir = (unsigned int*)mm_get_pagedir();
+        unsigned int* page_dir = (unsigned int*)mm_get_pagedir();
         unsigned flag;
 
         cow = phymm_is_cow(page_index);
         // klog("ps %d write %x fault, cow %d\n", cur->psid, page_index, cow);
-        if (cow)
-        {
+        if (cow) {
             vir = cr2;
-            vir = (vir&PAGE_SIZE_MASK);
+            vir = (vir & PAGE_SIZE_MASK);
             memcpy(cur->user.reserve, vir, PAGE_SIZE);
             flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_PRESENT;
@@ -127,12 +115,10 @@ static void pf_process(intr_frame* frame)
             mm_add_dynamic_map(vir, 0, flag);
             REFRESH_CACHE();
             memcpy(vir, cur->user.reserve, PAGE_SIZE);
-            
-        }
-        else
-        {
+
+        } else {
             vir = cr2;
-            vir = (vir&PAGE_SIZE_MASK);
+            vir = (vir & PAGE_SIZE_MASK);
             flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_WRITABLE;
             mm_set_map_flag(vir, flag);
@@ -140,29 +126,24 @@ static void pf_process(intr_frame* frame)
         }
 
         goto Done;
-    }
-    else
-    {
+    } else {
         goto HLT;
     }
 
 HLT:
-    do{
-       task_struct* cur = CURRENT_TASK();
+    do {
+        task_struct* cur = CURRENT_TASK();
         printk("[%d]page fault! error code %x, address %x, eip %x\n", cur->psid, frame->error_code, cr2, frame->eip);
-    }while(0);
- 
-    for (;;)
-    {
+    } while (0);
+
+    for (;;) {
         __asm__("hlt");
     }
 
 Done:
-    if (oldint)
-    {
+    if (oldint) {
         int_intr_enable();
     }
 
     page_falut_total_time += (time_now() - begin);
 }
-

@@ -4,43 +4,33 @@
 #include <cyclebuf.h>
 #include <fs.h>
 
-typedef struct _pipe_inode
-{
+typedef struct _pipe_inode {
     cy_buf* buf;
     int readonly;
-}pipe_inode;
+} pipe_inode;
 
-
-void pipe_init()
-{
-
+void pipe_init() {
 }
 
-static void* pipe_create_reader(cy_buf* buf)
-{
+static void* pipe_create_reader(cy_buf* buf) {
     pipe_inode* n = calloc(1, sizeof(*n));
     n->buf = buf;
     n->readonly = 1;
     return n;
 }
 
-static void* pipe_create_writer(cy_buf* buf)
-{
+static void* pipe_create_writer(cy_buf* buf) {
     pipe_inode* n = calloc(1, sizeof(*n));
     n->buf = buf;
     n->readonly = 0;
     return n;
 }
 
-
-static int pipe_close(void* n)
-{
+static int pipe_close(void* n) {
     pipe_inode* node = (pipe_inode*)n;
-    if (!node->readonly)
-    {
+    if (!node->readonly) {
         cyb_writer_close(node->buf);
-    }
-    else{
+    } else {
         cyb_reader_close(node->buf);
     }
 
@@ -49,9 +39,7 @@ static int pipe_close(void* n)
     return 0;
 }
 
-
-static int pipe_read(void* inode, const void *buf, size_t len, size_t *wcnt)
-{
+static int pipe_read(void* inode, const void* buf, size_t len, size_t* wcnt) {
     unsigned char c;
     int i = 0;
     int remain = 0;
@@ -61,15 +49,15 @@ static int pipe_read(void* inode, const void *buf, size_t len, size_t *wcnt)
     if (!n->readonly)
         return -1;
 
-    if ((cyb_writer_count(n->buf) == 0)){
-        if (cyb_isempty(n->buf)){
-            if (wcnt) *wcnt = 0;
+    if ((cyb_writer_count(n->buf) == 0)) {
+        if (cyb_isempty(n->buf)) {
+            if (wcnt)
+                *wcnt = 0;
             return 0;
         }
     }
 
-    while (i < len)
-    {
+    while (i < len) {
         c = cyb_getc(n->buf);
         if (c == EOF) {
             break;
@@ -79,12 +67,12 @@ static int pipe_read(void* inode, const void *buf, size_t len, size_t *wcnt)
         tmp++;
     }
 
-    if (wcnt) *wcnt = i;
+    if (wcnt)
+        *wcnt = i;
     return 0;
 }
 
-static int pipe_write(void* inode, const void *buf, size_t len, size_t *wcnt)
-{
+static int pipe_write(void* inode, const void* buf, size_t len, size_t* wcnt) {
     int i = 0;
     pipe_inode* n = (pipe_inode*)inode;
     unsigned char* tmp = buf;
@@ -93,14 +81,13 @@ static int pipe_write(void* inode, const void *buf, size_t len, size_t *wcnt)
         return 0;
 
     cyb_putbuf(n->buf, tmp, len);
-    
+
     if (wcnt)
         *wcnt = len;
     return 0;
 }
 
-static int pipe_stat(void* inode, struct stat* s)
-{
+static int pipe_stat(void* inode, struct stat* s) {
     s->st_atime = time_now();
     s->st_mode = S_IFIFO | S_IRUSR | S_IWUSR;
     s->st_size = 0;
@@ -115,8 +102,7 @@ static int pipe_stat(void* inode, struct stat* s)
     return 0;
 }
 
-static int pipe_select(void* inode, unsigned type)
-{
+static int pipe_select(void* inode, unsigned type) {
     pipe_inode* n = (pipe_inode*)inode;
     if (type == FS_SELECT_EXCEPT)
         return -1;
@@ -130,30 +116,28 @@ static int pipe_select(void* inode, unsigned type)
     return -1;
 }
 
-static int pipe_llseek(void* inode,  unsigned high, unsigned low, uint64_t* result, uint32_t origin)
-{
+static int pipe_llseek(void* inode, unsigned high, unsigned low, uint64_t* result, uint32_t origin) {
     // FIXME
     return 0;
 }
 
 static fileop readop = {
-    .read = pipe_read,
-    .close = pipe_close,
-    .stat = pipe_stat,
-    .llseek = pipe_llseek,
-    .select = pipe_select,
+        .read = pipe_read,
+        .close = pipe_close,
+        .stat = pipe_stat,
+        .llseek = pipe_llseek,
+        .select = pipe_select,
 };
 
 static fileop writeop = {
-    .write = pipe_write,
-    .close = pipe_close,
-    .stat = pipe_stat,
-    .llseek = pipe_llseek,
-    .select = pipe_select,
+        .write = pipe_write,
+        .close = pipe_close,
+        .stat = pipe_stat,
+        .llseek = pipe_llseek,
+        .select = pipe_select,
 };
 
-int fs_alloc_filep_pipe(filep* pipes)
-{
+int fs_alloc_filep_pipe(filep* pipes) {
     cy_buf* buf = cyb_create("pipe");
     filep fp_read = calloc(1, sizeof(*fp_read));
     fp_read->file_type = FILE_TYPE_PIPE;
@@ -174,6 +158,3 @@ int fs_alloc_filep_pipe(filep* pipes)
 
     return 0;
 }
-
-
-

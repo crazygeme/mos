@@ -7,20 +7,17 @@
 
 static int started = 0;
 
-void profiling_start()
-{
+void profiling_start() {
     klog_printf("[profiling]start\n");
     started = 1;
 }
 
-void profiling_stop()
-{
+void profiling_stop() {
     started = 0;
     klog_printf("[profiling]stop\n");
 }
 
-void profiling_add_record(unsigned eip)
-{
+void profiling_add_record(unsigned eip) {
     if (started)
         klog_printf("[profiling]%x\n", eip);
 }

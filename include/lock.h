@@ -17,25 +17,25 @@ void spinlock_lock(spinlock_t lock);
 
 void spinlock_unlock(spinlock_t lock);
 
-// semaphore
+// cond_t
 
-typedef struct _semaphore {
+typedef struct _cond {
     char name[16];
     unsigned int lock;
-    LIST_ENTRY wait_list;
+    list_entry wait_list;
     spinlock wait_lock;
-} semaphore;
+} cond_t;
 
-void sema_init(semaphore* s, const char* name, unsigned int initstat);
+void cond_init(cond_t* s, const char* name, unsigned int initstat);
 
-void sema_wait(semaphore* s);
+void cond_wait(cond_t* s);
 
-void sema_wait_for_intr(semaphore* s);
+void cond_wait_for_intr(cond_t* s);
 
-void sema_reset(semaphore* s);
+void cond_reset(cond_t* s);
 
-void sema_trigger(semaphore* s);
+void cond_trigger(cond_t* s);
 
-void sema_trigger_at_intr(semaphore* s);
+void cond_trigger_at_intr(cond_t* s);
 
 #endif

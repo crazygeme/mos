@@ -9,10 +9,10 @@
 #include <dsr.h>
 
 typedef struct _ps_control {
-    LIST_ENTRY ready_queue[MAX_PRIORITY];
-    LIST_ENTRY dying_queue;
-    LIST_ENTRY wait_queue;
-    LIST_ENTRY mgr_queue;
+    list_entry ready_queue[MAX_PRIORITY];
+    list_entry dying_queue;
+    list_entry wait_queue;
+    list_entry mgr_queue;
     task_struct* ps_dsr;
 } ps_control;
 
@@ -61,7 +61,7 @@ static void unlock_mgr() {
 
 static void ps_add_mgr(task_struct* task) {
     lock_mgr();
-    InsertTailList(&control.mgr_queue, &task->ps_mgr);
+    list_insert_tail(&control.mgr_queue, &task->ps_mgr);
     unlock_mgr();
 }
 
@@ -79,15 +79,15 @@ static void ps_notify_process(unsigned pid) {
 }
 
 task_struct* ps_find_process(unsigned psid) {
-    LIST_ENTRY* head = &control.mgr_queue;
-    LIST_ENTRY* entry;
+    list_entry* head = &control.mgr_queue;
+    list_entry* entry;
     task_struct* task = 0;
 
     lock_mgr();
 
     entry = head->Flink;
     while (entry != head) {
-        task = CONTAINER_OF(entry, task_struct, ps_mgr);
+        task = container_of(entry, task_struct, ps_mgr);
         if (task->psid == psid) {
             break;
         } else {
@@ -107,7 +107,7 @@ void ps_put_to_dying_queue(task_struct* task) {
         RemoveEntryList(&task->ps_list);
     }
     if (task->psid != 0xffffffff)
-        InsertTailList(&control.dying_queue, &task->ps_list);
+        list_insert_tail(&control.dying_queue, &task->ps_list);
 
     // insert into list before put the status into ps_dying
     // because a ps_dying task will not be picked up by
@@ -128,7 +128,7 @@ void ps_put_to_wait_queue(task_struct* task) {
         RemoveEntryList(&task->ps_list);
     }
     if (task->psid != 0xffffffff)
-        InsertTailList(&control.wait_queue, &task->ps_list);
+        list_insert_tail(&control.wait_queue, &task->ps_list);
 
     unlock_waiting();
 }
@@ -144,18 +144,18 @@ void ps_put_to_ready_queue(task_struct* task) {
         }
 
         if (task->psid != 0xffffffff)
-            InsertTailList(&control.ready_queue[task->priority], &task->ps_list);
+            list_insert_tail(&control.ready_queue[task->priority], &task->ps_list);
     }
     unlock_ps();
 }
 
-static task_struct* ps_get_available_ready_task(LIST_ENTRY* ready_queue) {
-    LIST_ENTRY* entry;
+static task_struct* ps_get_available_ready_task(list_entry* ready_queue) {
+    list_entry* entry;
     task_struct* task = 0;
     entry = ready_queue->Flink;
 
     while (entry != ready_queue) {
-        task = CONTAINER_OF(entry, task_struct, ps_list);
+        task = container_of(entry, task_struct, ps_list);
         if (task->status == ps_dying) {
             task = 0;
             entry = entry->Flink;
@@ -168,7 +168,7 @@ static task_struct* ps_get_available_ready_task(LIST_ENTRY* ready_queue) {
     // put it to last, so it will not be picked immediately next time
     if (task) {
         RemoveEntryList(&task->ps_list);
-        InsertTailList(&control.ready_queue[task->priority], &task->ps_list);
+        list_insert_tail(&control.ready_queue[task->priority], &task->ps_list);
     }
     return task;
 }
@@ -176,7 +176,7 @@ static task_struct* ps_get_available_ready_task(LIST_ENTRY* ready_queue) {
 static task_struct* ps_get_next_task() {
     task_struct* task = 0;
     int i = MAX_PRIORITY - 1;
-    LIST_ENTRY* ready_queue;
+    list_entry* ready_queue;
     if (dsr_has_task()) {
         return control.ps_dsr;
     }
@@ -185,7 +185,7 @@ static task_struct* ps_get_next_task() {
 
     for (; i >= 0; i--) {
         ready_queue = &control.ready_queue[i];
-        if (IsListEmpty(ready_queue)) {
+        if (list_is_empty(ready_queue)) {
             continue;
         }
 
@@ -253,11 +253,11 @@ static tss_struct* tss_address = 0;
 
 void ps_init() {
     int i = 0;
-    InitializeListHead(&control.dying_queue);
-    InitializeListHead(&control.wait_queue);
-    InitializeListHead(&control.mgr_queue);
+    list_init(&control.dying_queue);
+    list_init(&control.wait_queue);
+    list_init(&control.mgr_queue);
     for (i = 0; i < MAX_PRIORITY; i++) {
-        InitializeListHead(&control.ready_queue[i]);
+        list_init(&control.ready_queue[i]);
     }
     spinlock_init(&ps_lock);
     spinlock_init(&psid_lock);
@@ -481,7 +481,7 @@ unsigned ps_create(process_fn fn, int priority, ps_type type) {
     memset(task->cwd, 0, MAX_PATH);
     // strcpy(task->cwd, "\0");
 
-    sema_init(&task->fd_lock, "fd_lock", 0);
+    cond_init(&task->fd_lock, "fd_lock", 0);
     task->magic = 0xdeadbeef;
 
     ps_setup_task_frame(task, KERNEL_DATA_SELECTOR, 0, 0, 0, 0, (unsigned)stack_buttom, (unsigned)stack_buttom,
@@ -495,7 +495,7 @@ static void ps_dup_fds(task_struct* cur, task_struct* task) {
     unsigned fd;
     int i = 0;
     memset(task->fds, 0, PAGE_SIZE);
-    sema_wait(&cur->fd_lock);
+    cond_wait(&cur->fd_lock);
     for (i = 0; i < MAX_FD; i++) {
         if (!cur->fds[i].used)
             continue;
@@ -503,7 +503,7 @@ static void ps_dup_fds(task_struct* cur, task_struct* task) {
         task->fds[i] = cur->fds[i];
         fs_refrence(cur->fds[i].fp);
     }
-    sema_trigger(&cur->fd_lock);
+    cond_trigger(&cur->fd_lock);
 }
 
 extern short pgc_entry_count[1024];
@@ -547,7 +547,7 @@ static void ps_enum_for_dup(void* aux, unsigned vir, unsigned phy) {
 static void ps_dup_user_maps(task_struct* cur, task_struct* task) {
     unsigned int* per_ps = 0;
     unsigned int* new_ps = 0;
-    LIST_ENTRY* entry = 0;
+    list_entry* entry = 0;
     int i = 0;
     unsigned int cr3;
 
@@ -577,7 +577,7 @@ int do_fork(unsigned flag) {
     else
         task->remain_ticks = cur->remain_ticks;
     task->psid = ps_id_gen();
-    sema_init(&task->fd_lock, "fd_lock", 0);
+    cond_init(&task->fd_lock, "fd_lock", 0);
 
     // for kernel part
     // when return from intr, those will restored by user mode value
@@ -608,8 +608,8 @@ int do_fork(unsigned flag) {
     ps_put_to_ready_queue(task);
     ps_add_mgr(task);
     if (flag & FORK_FLAG_VFORK) {
-        sema_init(&task->vfork_event, "vfork_event", 1);
-        sema_wait(&task->vfork_event);
+        cond_init(&task->vfork_event, "vfork_event", 1);
+        cond_wait(&task->vfork_event);
     }
     cur_intr_frame->eax = task->psid;
     return task->psid;
@@ -641,7 +641,7 @@ int sys_exit(unsigned status) {
         klog("%d: exit(%d)\n", cur->psid, status);
 
     if (cur->fork_flag & FORK_FLAG_VFORK) {
-        sema_trigger(&cur->vfork_event);
+        cond_trigger(&cur->vfork_event);
     }
 
     if (cur->user.vm) {
@@ -750,7 +750,7 @@ static void sched_call_map_print() {
 #endif
 
 int sys_waitpid(unsigned pid, int* status, int options) {
-    LIST_ENTRY* entry = 0;
+    list_entry* entry = 0;
     task_struct* cur = CURRENT_TASK();
     int ret = 0;
     int can_return = 0;
@@ -763,7 +763,7 @@ int sys_waitpid(unsigned pid, int* status, int options) {
         lock_dying();
         entry = control.dying_queue.Flink;
         while (entry != &control.dying_queue) {
-            task_struct* task = CONTAINER_OF(entry, task_struct, ps_list);
+            task_struct* task = container_of(entry, task_struct, ps_list);
             int match = 0;
             if (task->parent == cur->psid) {
                 if (pid && (pid == task->psid)) {
@@ -959,8 +959,8 @@ int ps_has_ready(int priority) {
     }
 
     for (i = priority; i < MAX_PRIORITY; i++) {
-        LIST_ENTRY* head = &(control.ready_queue[i]);
-        if (!IsListEmpty(head))
+        list_entry* head = &(control.ready_queue[i]);
+        if (!list_is_empty(head))
             return 1;
     }
 
@@ -968,13 +968,13 @@ int ps_has_ready(int priority) {
 }
 
 void ps_enum_all(ps_enum_callback callback) {
-    LIST_ENTRY* head = &control.mgr_queue;
-    LIST_ENTRY* node = head->Flink;
+    list_entry* head = &control.mgr_queue;
+    list_entry* node = head->Flink;
     if (!callback)
         return;
 
     while (node != head) {
-        task_struct* task = (task_struct*)CONTAINER_OF(node, task_struct, ps_mgr);
+        task_struct* task = (task_struct*)container_of(node, task_struct, ps_mgr);
         callback(task);
         node = node->Flink;
     }

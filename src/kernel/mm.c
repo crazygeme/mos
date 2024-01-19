@@ -78,7 +78,7 @@ static void mm_init_page_table_cache() {
 }
 
 typedef struct _name_cache {
-    LIST_ENTRY list;
+    list_entry list;
     void* buf;
 } name_cache;
 
@@ -113,7 +113,7 @@ static void mm_high_memory_fun() {
 
     spinlock_init(&mm_lock);
     spinlock_init(&path_lock);
-    InitializeListHead(&name_cache_head);
+    list_init(&name_cache_head);
 
     extern kmain_startup();
 
@@ -447,10 +447,10 @@ void* name_get() {
     name_cache* node = NULL;
     lock_path_cache();
 
-    if (IsListEmpty(&name_cache_head)) {
+    if (list_is_empty(&name_cache_head)) {
         buf = vm_alloc(pc);
     } else {
-        node = RemoveHeadList(&name_cache_head);
+        node = list_remove_head(&name_cache_head);
         buf = node->buf;
         free(node);
     }
@@ -464,6 +464,6 @@ void name_put(void* buf) {
     lock_path_cache();
     node = calloc(1, sizeof(*node));
     node->buf = buf;
-    InsertHeadList(&name_cache_head, &node->list);
+    list_insert_head(&name_cache_head, &node->list);
     unlock_path_cache();
 }

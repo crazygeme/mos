@@ -66,8 +66,8 @@ typedef struct _channel {
     unsigned char irq;       /* Interrupt in use. */
     int expecting_interrupt; /* True if an interrupt is expected, false if
                                  any interrupt would be spurious. */
-    semaphore iolock;
-    semaphore sema;
+    cond_t iolock;
+    cond_t sema;
     ata_disk devices[2]; /* The devices on this channel. */
 } channel;
 
@@ -84,12 +84,12 @@ typedef struct _block_cache_item {
     unsigned dirty;
     void* buf;
     struct rb_node hash_node;
-    LIST_ENTRY time_list;
+    list_entry time_list;
 } block_cache_item;
 
 typedef struct _block_cache {
     hash_table* hash;
-    LIST_ENTRY timer_list_head;
+    list_entry timer_list_head;
     int count;
 } block_cache;
 
@@ -109,7 +109,7 @@ static block_cache_item* block_cache_item_create() {
     item->dirty = 0;
     item->buf = vm_alloc(buf_size);  // kmalloc(BLOCK_SECTOR_SIZE);
     rb_init_node(&item->hash_node);
-    InitializeListHead(&item->time_list);
+    list_init(&item->time_list);
     return item;
 }
 
@@ -135,7 +135,7 @@ typedef struct _partition {
 #if HDD_CACHE_OPEN
     block_cache cache;
     int cache_inited;
-    semaphore cache_lock;
+    cond_t cache_lock;
 #endif
 } partition;
 
@@ -200,8 +200,8 @@ void hdd_init() {
         printk("channel %d, name %s\n", chan_no, c->name);
 #endif
         c->expecting_interrupt = 0;
-        sema_init(&c->sema, c->name, 1);
-        sema_init(&c->iolock, "iolock", 0);
+        cond_init(&c->sema, c->name, 1);
+        cond_init(&c->iolock, "iolock", 0);
         /* Initialize devices. */
         for (dev_no = 0; dev_no < 2; dev_no++) {
             ata_disk* d = &c->devices[dev_no];
@@ -244,7 +244,7 @@ static void interrupt_handler(intr_frame* f) {
             if (c->expecting_interrupt) {
                 _read_port(reg_status(c)); /* Acknowledge interrupt. */
                 // printk("[hdd] sema set \n");
-                sema_trigger_at_intr(&c->sema); /* Wake up waiter. */
+                cond_trigger_at_intr(&c->sema); /* Wake up waiter. */
 
                 c->expecting_interrupt = 0;
             } else
@@ -373,7 +373,7 @@ static void identify_ata_device(ata_disk* d) {
     issue_pio_command(c, CMD_IDENTIFY_DEVICE);
 
     // printk("[hdd] sema iden wait << \n");
-    sema_wait_for_intr(&c->sema);
+    cond_wait_for_intr(&c->sema);
     // printk("[hdd] sema iden wait >> \n");
 
     if (!wait_while_busy(d)) {
@@ -520,9 +520,9 @@ static void init_partition_cache(partition* p) {
 
     p->cache.count = 0;
     p->cache.hash = hash_create(int_comp);
-    InitializeListHead(&p->cache.timer_list_head);
+    list_init(&p->cache.timer_list_head);
     p->cache_inited = 1;
-    sema_init(&p->cache_lock, "cachelock", 0);
+    cond_init(&p->cache_lock, "cachelock", 0);
 }
 
 static block_cache_item* hdd_cache_lookup(partition* p, int sector) {
@@ -558,7 +558,7 @@ static block_cache_item* hdd_cache_find_empty(partition* p, int sector) {
 
     item = block_cache_item_create();
     item->sector = head_sector;
-    InsertTailList(&p->cache.timer_list_head, &item->time_list);
+    list_insert_tail(&p->cache.timer_list_head, &item->time_list);
     hash_insert(p->cache.hash, head_sector, item);
     p->cache.count++;
     if (max_cache_size < p->cache.count)
@@ -567,14 +567,14 @@ static block_cache_item* hdd_cache_find_empty(partition* p, int sector) {
 }
 
 static block_cache_item* hdd_cache_find_oldest(partition* p) {
-    LIST_ENTRY* node;
+    list_entry* node;
     block_cache_item* item = 0;
 
     if (p->cache.count == 0)
         return 0;
 
     node = p->cache.timer_list_head.Flink;
-    item = CONTAINER_OF(node, block_cache_item, time_list);
+    item = container_of(node, block_cache_item, time_list);
     return item;
 }
 
@@ -608,7 +608,7 @@ static void hdd_cache_update(partition* p, block_cache_item* item, int sector, v
     item->sector = head_sector;
 
     RemoveEntryList(&item->time_list);
-    InsertTailList(&p->cache.timer_list_head, &item->time_list);
+    list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 
     memcpy((char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, buf, BLOCK_SECTOR_SIZE);
 #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
@@ -630,7 +630,7 @@ static void hdd_cache_update_all(void* aux, partition* p, block_cache_item* item
     item->sector = head_sector;
 
     RemoveEntryList(&item->time_list);
-    InsertTailList(&p->cache.timer_list_head, &item->time_list);
+    list_insert_tail(&p->cache.timer_list_head, &item->time_list);
     for (i = 0; i < PREREAD_SECTOR; i++)
         partition_read(aux, head_sector + i, (char*)item->buf + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
 #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
@@ -641,11 +641,11 @@ static void hdd_cache_update_all(void* aux, partition* p, block_cache_item* item
 }
 
 static void flush_partition_cache(partition* p) {
-    LIST_ENTRY* entry = p->cache.timer_list_head.Flink;
-    LIST_ENTRY* next;
+    list_entry* entry = p->cache.timer_list_head.Flink;
+    list_entry* next;
     while (entry != &p->cache.timer_list_head) {
         next = entry->Flink;
-        block_cache_item* item = CONTAINER_OF(entry, block_cache_item, time_list);
+        block_cache_item* item = container_of(entry, block_cache_item, time_list);
         if (item && item->sector != -1 && item->dirty) {
             hdd_cache_flush(p, item);
         }
@@ -663,12 +663,12 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     int sector_off = SECTOR_OFF(sector);
     int head_sector = HEAD_SECTOR(sector);
 
-    sema_wait(&p->cache_lock);
+    cond_wait(&p->cache_lock);
     item = hdd_cache_lookup(p, sector);
     if (item) {
         RemoveEntryList(&item->time_list);
-        InsertTailList(&p->cache.timer_list_head, &item->time_list);
-        sema_trigger(&p->cache_lock);
+        list_insert_tail(&p->cache.timer_list_head, &item->time_list);
+        cond_trigger(&p->cache_lock);
         memcpy(buf, (char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
@@ -686,12 +686,12 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     if (item) {
         total_read += PREREAD_SECTOR;
         hdd_cache_update_all(aux, p, item, head_sector, 0);
-        sema_trigger(&p->cache_lock);
+        cond_trigger(&p->cache_lock);
         memcpy(buf, (char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
 
-    sema_trigger(&p->cache_lock);
+    cond_trigger(&p->cache_lock);
     return -1;
 }
 
@@ -699,18 +699,18 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
     partition* p = aux;
     block_cache_item* item = 0;
 
-    sema_wait(&p->cache_lock);
+    cond_wait(&p->cache_lock);
     item = hdd_cache_lookup(p, sector);
     if (item) {
         hdd_cache_update(p, item, sector, buf, 1);
-        sema_trigger(&p->cache_lock);
+        cond_trigger(&p->cache_lock);
         return BLOCK_SECTOR_SIZE;
     }
 
     item = hdd_cache_find_empty(p, sector);
     if (item) {
         hdd_cache_update(p, item, sector, buf, 1);
-        sema_trigger(&p->cache_lock);
+        cond_trigger(&p->cache_lock);
         return len;
     }
 
@@ -718,11 +718,11 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
     if (item) {
         hdd_cache_flush(p, item);
         hdd_cache_update(p, item, sector, buf, 1);
-        sema_trigger(&p->cache_lock);
+        cond_trigger(&p->cache_lock);
         return len;
     }
 
-    sema_trigger(&p->cache_lock);
+    cond_trigger(&p->cache_lock);
     return -1;
 }
 #else
@@ -800,7 +800,7 @@ static void wait_until_idle(const ata_disk* d) {
 static void select_device_wait(const ata_disk* d) {
     channel* c = d->channel;
     // printk("[hdd] sema reset (to 1)\n");
-    sema_reset(&c->sema);
+    cond_reset(&c->sema);
     c->expecting_interrupt = 1;
     // wait_until_idle (d);
     select_device(d);
@@ -862,17 +862,17 @@ static unsigned long read_times = 0, write_times = 0;
 static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len) {
     ata_disk* d = aux;
     channel* c = d->channel;
-    sema_wait_for_intr(&c->iolock);
+    cond_wait_for_intr(&c->iolock);
 
     select_sector(d, sec_no);
 
     issue_pio_command(c, CMD_READ_SECTOR_RETRY);
 
-    sema_wait_for_intr(&c->sema);
+    cond_wait_for_intr(&c->sema);
 
     input_sector(c, buf);
 
-    sema_trigger_at_intr(&c->iolock);
+    cond_trigger_at_intr(&c->iolock);
 
     return len;
 }
@@ -880,7 +880,7 @@ static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len) {
 static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len) {
     ata_disk* d = aux;
     channel* c = d->channel;
-    sema_wait_for_intr(&c->iolock);
+    cond_wait_for_intr(&c->iolock);
 
     select_sector(d, sec_no);
 
@@ -888,9 +888,9 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len) {
 
     output_sector(c, buf);
 
-    sema_wait_for_intr(&c->sema);
+    cond_wait_for_intr(&c->sema);
 
-    sema_trigger_at_intr(&c->iolock);
+    cond_trigger_at_intr(&c->iolock);
 
     return len;
 }

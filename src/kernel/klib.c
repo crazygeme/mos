@@ -28,7 +28,7 @@ static void klib_cursor_forward(int new_pos);
 
 static spinlock tty_lock;
 static spinlock heap_lock;
-static semaphore klog_lock;
+static cond_t klog_lock;
 
 static void lock_tty() {
     spinlock_lock(&tty_lock);
@@ -50,7 +50,7 @@ static inline void unlock_heap() {
 static int klog_inited = 0;
 void klog_init() {
     klog_inited = 1;
-    sema_init(&klog_lock, "klog", 0);
+    cond_init(&klog_lock, "klog", 0);
 
     klog("\n\n===========================\n");
 }
@@ -91,7 +91,7 @@ void klog_close() {
 
 #else
 void klog_init() {
-    sema_init(&klog_lock, "klog", 0);
+    cond_init(&klog_lock, "klog", 0);
 }
 
 void klog_write(char c) {
@@ -1111,7 +1111,7 @@ void klog(char* str, ...) {
 
     cur = CURRENT_TASK();
 
-    sema_wait(&klog_lock);
+    cond_wait(&klog_lock);
 
     timer_current(&time);
     str_mill = itoa(time.milliseconds, 10, 0);
@@ -1128,7 +1128,7 @@ void klog(char* str, ...) {
     vprintf(klog_write, klog_writestr, str, ap);
     va_end(ap);
 
-    sema_trigger(&klog_lock);
+    cond_trigger(&klog_lock);
 }
 
 void tty_write(const char* buf, unsigned len) {

@@ -8,7 +8,7 @@ typedef struct _cy_buf {
     unsigned length;
     unsigned write_idx;
     unsigned read_idx;
-    semaphore lock;
+    cond_t lock;
     spinlock idx_lock;
     int writer_count;
     int reader_count;
@@ -43,7 +43,7 @@ cy_buf* cyb_create(char* name) {
     ret->length = ret->read_idx = ret->write_idx = 0;
     ret->reader_count = ret->writer_count = 1;
     ret->ref_count = 2;
-    sema_init(&ret->lock, name, 1);
+    cond_init(&ret->lock, name, 1);
     spinlock_init(&ret->idx_lock);
 
     return ret;
@@ -89,7 +89,7 @@ static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite) {
 
     if (notifyOnWrite)
         if (needs_trigger)
-            sema_trigger(&b->lock);
+            cond_trigger(&b->lock);
 }
 
 void cyb_putc(cy_buf* b, unsigned char key) {
@@ -110,7 +110,7 @@ void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len) {
     }
 
     if (needs_trigger)
-        sema_trigger(&b->lock);
+        cond_trigger(&b->lock);
 }
 
 unsigned char cyb_getc(cy_buf* b) {
@@ -123,7 +123,7 @@ unsigned char cyb_getc(cy_buf* b) {
     length = PIPE_LEN(b);
     if (length == 0) {
         if (PIPE_WRITERS(b))
-            sema_wait(&b->lock);
+            cond_wait(&b->lock);
         if ((PIPE_WRITERS(b) == 0) && (PIPE_LEN(b) == 0))
             return EOF;
     }
@@ -139,7 +139,7 @@ unsigned char cyb_getc(cy_buf* b) {
     b->read_idx = read_idx;
     PIPE_LEN_ADD(b, -1);
     if (PIPE_LEN(b) == 0)
-        sema_reset(&b->lock);
+        cond_reset(&b->lock);
 
     spinlock_unlock(&b->idx_lock);
 
@@ -164,7 +164,7 @@ int cyb_reader_count(cy_buf* b) {
 
 int cyb_writer_close(cy_buf* b) {
     PIPE_WRITER_DECREASE(b);
-    sema_trigger(&b->lock);
+    cond_trigger(&b->lock);
     cyb_destroy(b);
 }
 

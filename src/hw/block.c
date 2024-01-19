@@ -4,7 +4,7 @@
 #include <include/fs.h>
 
 static struct _block_control {
-    LIST_ENTRY block_lists[BLOCK_MAX];
+    list_entry block_lists[BLOCK_MAX];
     unsigned int block_count[BLOCK_MAX];
     spinlock lock;
 } control;
@@ -12,20 +12,20 @@ static struct _block_control {
 static unsigned int id;
 
 static void block_add_to_list(block* b, block_type type) {
-    LIST_ENTRY* head = &control.block_lists[type];
+    list_entry* head = &control.block_lists[type];
 
     spinlock_lock(&control.lock);
-    InsertTailList(head, &(b->block_list));
+    list_insert_tail(head, &(b->block_list));
     control.block_count[type] = control.block_count[type] + 1;
     spinlock_unlock(&control.lock);
 }
 
 static block* block_get_first(block_type type) {
-    LIST_ENTRY* head = &control.block_lists[type];
-    PLIST_ENTRY node = 0;
+    list_entry* head = &control.block_lists[type];
+    list_entry* node = 0;
     block* ret = 0;
 
-    if (IsListEmpty(head))
+    if (list_is_empty(head))
         return 0;
 
     spinlock_lock(&control.lock);
@@ -37,12 +37,12 @@ static block* block_get_first(block_type type) {
     if (node == head)
         return 0;
     else
-        return (CONTAINER_OF(node, block, block_list));
+        return (container_of(node, block, block_list));
 }
 
 static block* block_get_next(block* b) {
-    LIST_ENTRY* head = &control.block_lists[b->type];
-    PLIST_ENTRY node = 0;
+    list_entry* head = &control.block_lists[b->type];
+    list_entry* node = 0;
 
     spinlock_lock(&control.lock);
 
@@ -53,7 +53,7 @@ static block* block_get_next(block* b) {
     if (node == head)
         return 0;
     else
-        return (CONTAINER_OF(node, block, block_list));
+        return (container_of(node, block, block_list));
 }
 
 static unsigned int block_id_gen() {
@@ -69,7 +69,7 @@ void block_init() {
     int i = 0;
 
     for (i = 0; i < BLOCK_MAX; i++) {
-        InitializeListHead(&control.block_lists[i]);
+        list_init(&control.block_lists[i]);
         control.block_count[i] = 0;
     }
 

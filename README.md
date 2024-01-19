@@ -1,15 +1,30 @@
-mkernel
-=======
+dependence
+-----------------------------------------------
+i386-elf version of build tools, including gcc, ld, etc
+qemu i386 enumlator
+python for profiling
+i386-elf version of gdb for debugging
 
-Build:   
-  make clean & make
+installation
+------------------------------------------------
+make
+./run.sh 		:for general purpos
+./run.sh debug 		:for debugging
+./run.sh help		:print help info
 
-Run:   
-  ./run.sh
-  
-Debug:   
-  ./run.sh debug // establish a gdb server and wait for remote debug   
-  ./run.sh logtofile // write logs into file krn.log   
+
+
+profiling
+-----------------------------------------------
+1.	Run profiling.sh, it will wait until you start an os instance
+2.	Run "./run.sh debug"
+3.	Press any key in the shell running profiling.sh, then it will
+	wait until you want to profiling
+4.	Run some tasks in mos
+5.	Press any key in the shell running profiling.sh, then it starts
+	to profiling
+6.	Press ctrl-c in the shell running profiling.sh, then it will 
+	generate a profiling result
 
 ![Screen shot: test gui](./screenshot/gui.png)   
 ![Screen shot: versions](./screenshot/versions.png)   

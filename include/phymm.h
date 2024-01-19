@@ -3,12 +3,11 @@
 #include <config.h>
 #define PHYMM_PAGE_COW 0x00000001
 
-typedef struct _phymm_page
-{
+typedef struct _phymm_page {
     unsigned int ref_count;
     unsigned int next_page_index : 20;
     unsigned int reserved : 12;
-}phymm_page;
+} phymm_page;
 
 extern phymm_page* phymm_pages;
 

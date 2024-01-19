@@ -3,75 +3,71 @@
 #include <mm.h>
 #include <config.h>
 
-typedef enum _TTY_COLOR
-{ 
-	clBlack , 
-	clBlue , 
-	clGreen , 
-	clCyan , 
-	clRed , 
-	clMagenta ,
-	clBrown , 
-	clLightGray , 
-	clDarkGray , 
-	clLightBlue , 
-	clLightGreen ,
-	clLightCyan , 
-	clLightRed , 
-	clLightMagenta , 
-	clYellow , 
-	clWhite 
-}TTY_COLOR;
+typedef enum _TTY_COLOR {
+    clBlack,
+    clBlue,
+    clGreen,
+    clCyan,
+    clRed,
+    clMagenta,
+    clBrown,
+    clLightGray,
+    clDarkGray,
+    clLightBlue,
+    clLightGreen,
+    clLightCyan,
+    clLightRed,
+    clLightMagenta,
+    clYellow,
+    clWhite
+} TTY_COLOR;
 
-/// TTY 
-typedef enum _tty_command_id
-{
-	tty_cmd_get_color,
-	tty_cmd_set_color,
-	tty_cmd_get_curse,
-	tty_cmd_set_curse,
-	tty_cmd_is_tty
-}tty_command_id;
+/// TTY
+typedef enum _tty_command_id {
+    tty_cmd_get_color,
+    tty_cmd_set_color,
+    tty_cmd_get_curse,
+    tty_cmd_set_curse,
+    tty_cmd_is_tty
+} tty_command_id;
 
-typedef struct _tty_command
-{
-	tty_command_id cmd_id;
-	union{
-		struct{
-			TTY_COLOR fg_color;
-			TTY_COLOR bg_color;
-		} color;
+typedef struct _tty_command {
+    tty_command_id cmd_id;
+    union {
+        struct {
+            TTY_COLOR fg_color;
+            TTY_COLOR bg_color;
+        } color;
 
-		struct{
-			unsigned cx;
-			unsigned cy;
-		}curse;
+        struct {
+            unsigned cx;
+            unsigned cy;
+        } curse;
 
-		struct{
-			unsigned fd;
-			int is_tty;
-		};
-	};
-}tty_command;
+        struct {
+            unsigned fd;
+            int is_tty;
+        };
+    };
+} tty_command;
 
 /// heap
 #define NULL (void*)0
 
-typedef struct _kblock
-{
-	unsigned int size;
-	struct _kblock *next;
-}kblock;
+typedef struct _kblock {
+    unsigned int size;
+    struct _kblock* next;
+} kblock;
 
-typedef char * va_list;
+typedef char* va_list;
 
-#define _INTSIZEOF(n) ( (sizeof(n) + sizeof(int) - 1) & ~(sizeof(int) - 1) )
+#define _INTSIZEOF(n) ((sizeof(n) + sizeof(int) - 1) & ~(sizeof(int) - 1))
 
-#define va_start(ap,v) ( ap = (va_list)&v + _INTSIZEOF(v) )
+#define va_start(ap, v) (ap = (va_list)&v + _INTSIZEOF(v))
 
-#define va_arg(ap,t) ( *(t *)((ap += _INTSIZEOF(t)) - _INTSIZEOF(t)) )
+#define va_arg(ap, t) (*(t*)((ap += _INTSIZEOF(t)) - _INTSIZEOF(t)))
 
-#define va_end(ap) ( ap = (va_list)0 )
+#define va_end(ap) (ap = (va_list)0)
 
 void* malloc(unsigned int size);
 
@@ -103,16 +99,15 @@ void klib_putchar_update_cursor(char c);
 
 void klib_putint(int num);
 
-void klib_print(char *str);
+void klib_print(char* str);
 
-void klib_info(char *info, int num, char* end);
+void klib_info(char* info, int num, char* end);
 
 void klib_clear();
 
 char* klib_itoa(char* str, int num);
 
 void tty_write(const char* str, unsigned len);
-
 
 #define kmalloc(size) malloc(size)
 
@@ -129,9 +124,7 @@ void shutdown();
 
 void printk(const char* str, ...);
 
-
-typedef struct _TEST_CONTROL
-{
+typedef struct _TEST_CONTROL {
     int test_enable;
     int test_all;
     int test_mmap;
@@ -139,13 +132,13 @@ typedef struct _TEST_CONTROL
     int test_fs_read;
     int test_fs_write;
     int test_ext2;
-	int test_mount;
-	int test_block;
-	int test_pci;
-	int test_nic;
-	int test_socket;
-	int verbos;
-}TEST_CONTROL;
+    int test_mount;
+    int test_block;
+    int test_pci;
+    int test_nic;
+    int test_socket;
+    int verbos;
+} TEST_CONTROL;
 extern TEST_CONTROL TestControl;
 
 void memcpy(void* dst, void* src, unsigned len);
@@ -157,8 +150,8 @@ int memcmp(void* src, void* dst, unsigned len);
 void memset(void* src, char val, int len);
 
 int isspace(const char c);
- 
-unsigned strlen(const char* str); 
+
+unsigned strlen(const char* str);
 
 char* strcpy(char* dst, const char* src);
 
@@ -166,7 +159,7 @@ char* strncpy(char* dst, const char* src, int len);
 
 char* strstr(const char* src, const char* str);
 
-char* strrev(char *src);
+char* strrev(char* src);
 
 int strcmp(char* str, char* dst);
 
@@ -182,16 +175,14 @@ char* strdup(char* str);
 
 void printf(const char* str, ...);
 
-
 typedef void (*fpputc)(unsigned char c);
 typedef void (*fputstr)(char* str);
 
 void vprintf(fpputc _putc, fputstr _putstr, const char* str, va_list ap);
 
-
 char* itoa(int num, int base, int sign);
 
-int atoi(const char *str);
+int atoi(const char* str);
 
 int tolower(int c);
 
@@ -205,5 +196,10 @@ int isprint(int c);
 
 void srand(unsigned _seed);
 
+void* malloc(unsigned size);
+
+void free(void* p);
+
+void* calloc(unsigned nmemb, unsigned size);
 
 #endif

@@ -4,15 +4,13 @@
 #include <fs.h>
 #include <tty.h>
 
-static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt);
+static int console_write(void* inode, const void* buf, size_t size, size_t* wcnt);
 static int console_close(void* inode);
-void console_init()
-{
-    return 0;
+void console_init() {
+    return;
 }
 
-static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt)
-{
+static int console_write(void* inode, const void* buf, size_t size, size_t* wcnt) {
     if (size < 1 || !buf)
         return 0;
 
@@ -22,8 +20,7 @@ static int console_write(void* inode, const void *buf, size_t size, size_t *wcnt
     return 0;
 }
 
-static int console_read(void* inode, const void *buf, size_t size, size_t *wcnt)
-{
+static int console_read(void* inode, const void* buf, size_t size, size_t* wcnt) {
     memset(buf, '?', size);
     if (wcnt)
         *wcnt = size;
@@ -31,16 +28,13 @@ static int console_read(void* inode, const void *buf, size_t size, size_t *wcnt)
     return 0;
 }
 
-static int console_close(void* inode)
-{
+static int console_close(void* inode) {
     return 0;
 }
 
-static int console_llseek(void* inode,  unsigned high, unsigned low, uint64_t* result, uint32_t origin)
-{
+static int console_llseek(void* inode, unsigned high, unsigned low, uint64_t* result, uint32_t origin) {
     unsigned offset = low;
-    switch (origin)
-    {
+    switch (origin) {
         case SEEK_SET:
             klib_update_cursor(offset);
             break;
@@ -50,8 +44,8 @@ static int console_llseek(void* inode,  unsigned high, unsigned low, uint64_t* r
         case SEEK_END:
             klib_update_cursor(TTY_MAX_CHARS - offset);
             break;
-    default:
-        break;
+        default:
+            break;
     }
     klib_flush_cursor();
     if (result)
@@ -59,13 +53,11 @@ static int console_llseek(void* inode,  unsigned high, unsigned low, uint64_t* r
     return 0;
 }
 
-static uint64_t console_tell(void* inode)
-{
+static uint64_t console_tell(void* inode) {
     return (uint64_t)klib_get_pos();
 }
 
-static int console_select(void* inode, unsigned type)
-{
+static int console_select(void* inode, unsigned type) {
     if (type == FS_SELECT_EXCEPT || type == FS_SELECT_READ)
         return -1;
 
@@ -73,8 +65,7 @@ static int console_select(void* inode, unsigned type)
     return 0;
 }
 
-static int console_stat(void* inode, struct stat* s)
-{
+static int console_stat(void* inode, struct stat* s) {
     s->st_atime = time_now();
     s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
     s->st_blksize = PAGE_SIZE;
@@ -92,16 +83,15 @@ static int console_stat(void* inode, struct stat* s)
 }
 
 static fileop ttyop = {
-    .write = console_write,
-    .close = console_close,
-    .stat = console_stat,
-    .llseek = console_llseek,
-    .select = console_select,
-    .ioctl = tty_ioctl,
+        .write = console_write,
+        .close = console_close,
+        .stat = console_stat,
+        .llseek = console_llseek,
+        .select = console_select,
+        .ioctl = tty_ioctl,
 };
 
-filep fs_alloc_filep_tty()
-{
+filep fs_alloc_filep_tty() {
     filep fp = calloc(1, sizeof(*fp));
     fp->file_type = FILE_TYPE_CHAR;
     fp->inode = NULL;

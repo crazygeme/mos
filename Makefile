@@ -2,24 +2,20 @@ MAINPATH = $(shell pwd)
 export MAINPATH
 include $(MAINPATH)/mos.mk
 TARGET	= kernel
-ASMS	= $(wildcard $(MAINPATH)/src/kernel/*.S)
-SRCS	= $(wildcard $(MAINPATH)/src/kernel/*.c)
-HWS		= $(wildcard $(MAINPATH)/src/hw/*.c)
-TESTS	= $(wildcard $(MAINPATH)/src/test/*.c)
+ASMS	= $(wildcard src/asm/*.S)
+SRCS	= $(wildcard src/kernel/*.c)
+SRCS	+= $(wildcard src/hw/*.c)
+SRCS	+= $(wildcard src/test/*.c)
 OBJS	= $(patsubst %.S,%.s.o,$(ASMS))
 OBJS	+= $(patsubst %.c,%.c.o,$(SRCS))
-OBJS	+= $(patsubst %.c,%.c.o,$(HWS))
-OBJS	+= $(patsubst %.c,%.c.o,$(TESTS))
 LIBS	= $(DST)/libext4.a
 
 all: kernel
 
-kernel: dst main.o $(OBJS) $(LIBS)
-	$(LD) $(LDFLAGS)-e 0x100010 -o $(TARGET).dbg main.o $(OBJS) $(LIBS)
-	$(LD) $(LDFLAGS) -s -e 0x100010 -o $(TARGET) main.o $(OBJS) $(LIBS)
-
-main.o: src/kernel.S
-	$(CC) $(CFLAGS) -o main.o src/kernel.S
+$(TARGET): dst $(OBJS) $(LIBS)
+	$(LD) $(LDFLAGS) -e 0x100022 -o $(TARGET) $(OBJS) $(LIBS)
+	cp $(TARGET) $(TARGET).dbg
+	strip $(TARGET)
 
 %.c.o: %.c
 	$(CC) $(CFLAGS) -o $@ $^

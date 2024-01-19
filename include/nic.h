@@ -4,8 +4,7 @@
 
 #define MAX_NETWORK_DEV 12
 
-typedef struct _nic_dev
-{
+typedef struct _nic_dev {
     uint32_t pci_dev;
     uint16_t ven;
     uint16_t dev;
@@ -16,7 +15,7 @@ typedef struct _nic_dev
     int (*up)(void* dev);
     int (*down)(void* dev);
     void* ctx;
-}nic_dev;
+} nic_dev;
 
 void nic_scan_all();
 

@@ -2,21 +2,16 @@
 #include <mm.h>
 #include <config.h>
 
-void InitializeListHead(PLIST_ENTRY ListHead)
-{
-
+void InitializeListHead(PLIST_ENTRY ListHead) {
     ListHead->Flink = ListHead->Blink = ListHead;
     return;
 }
 
-
-int IsListEmpty(LIST_ENTRY * ListHead)
-{
+int IsListEmpty(LIST_ENTRY* ListHead) {
     return (int)(ListHead->Flink == ListHead);
 }
 
-int RemoveEntryList(PLIST_ENTRY Entry)
-{
+int RemoveEntryList(PLIST_ENTRY Entry) {
     PLIST_ENTRY Blink;
     PLIST_ENTRY Flink;
     Flink = Entry->Flink;
@@ -26,8 +21,7 @@ int RemoveEntryList(PLIST_ENTRY Entry)
     return (int)(Flink == Blink);
 }
 
-PLIST_ENTRY RemoveHeadList(PLIST_ENTRY ListHead)
-{
+PLIST_ENTRY RemoveHeadList(PLIST_ENTRY ListHead) {
     PLIST_ENTRY Flink;
     PLIST_ENTRY Entry;
     Entry = ListHead->Flink;
@@ -37,10 +31,7 @@ PLIST_ENTRY RemoveHeadList(PLIST_ENTRY ListHead)
     return Entry;
 }
 
-
-
-PLIST_ENTRY RemoveTailList(PLIST_ENTRY ListHead)
-{
+PLIST_ENTRY RemoveTailList(PLIST_ENTRY ListHead) {
     PLIST_ENTRY Blink;
     PLIST_ENTRY Entry;
     Entry = ListHead->Blink;
@@ -50,8 +41,7 @@ PLIST_ENTRY RemoveTailList(PLIST_ENTRY ListHead)
     return Entry;
 }
 
-void InsertTailList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry)
-{
+void InsertTailList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry) {
     PLIST_ENTRY Blink;
     Blink = ListHead->Blink;
     Entry->Flink = ListHead;
@@ -61,9 +51,7 @@ void InsertTailList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry)
     return;
 }
 
-
-void InsertHeadList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry)
-{
+void InsertHeadList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry) {
     PLIST_ENTRY Flink;
     Flink = ListHead->Flink;
     Entry->Flink = Flink;
@@ -73,8 +61,7 @@ void InsertHeadList(PLIST_ENTRY ListHead, PLIST_ENTRY Entry)
     return;
 }
 
-void AppendTailList(PLIST_ENTRY ListHead, PLIST_ENTRY ListToAppend)
-{
+void AppendTailList(PLIST_ENTRY ListHead, PLIST_ENTRY ListToAppend) {
     PLIST_ENTRY ListEnd = ListHead->Blink;
     ListHead->Blink->Flink = ListToAppend;
     ListHead->Blink = ListToAppend->Blink;
@@ -83,56 +70,43 @@ void AppendTailList(PLIST_ENTRY ListHead, PLIST_ENTRY ListToAppend)
     return;
 }
 
-void InitializeStack(PSTACK stack)
-{
+void InitializeStack(PSTACK stack) {
     int i = 0;
 
-    for (i = 0; i < 1024; i++)
-    {
+    for (i = 0; i < 1024; i++) {
         stack->mem[i] = PAGE_TABLE_CACHE_BEGIN + i * PAGE_SIZE;
     }
     stack->top = 1023;
     stack->count = 1024;
 }
 
-
 unsigned pgc_count;
 unsigned pgc_top;
 
-int PushStack(PSTACK stack, unsigned int val)
-{
-    if (stack->count < 1024)
-    {
+int PushStack(PSTACK stack, unsigned int val) {
+    if (stack->count < 1024) {
         stack->mem[stack->top] = val;
         __sync_add_and_fetch(&(stack->top), 1);
         __sync_add_and_fetch(&(stack->count), 1);
         pgc_count = stack->count;
         pgc_top = stack->top;
         return 1;
-    }
-    else
-    {
+    } else {
         return 0;
     }
 }
 
-unsigned int PopStack(PSTACK stack)
-{
+unsigned int PopStack(PSTACK stack) {
     unsigned ret = 0;
-    if (stack->count > 0)
-    {
+    if (stack->count > 0) {
         __sync_add_and_fetch(&(stack->top), -1);
         ret = stack->mem[stack->top];
         __sync_add_and_fetch(&(stack->count), -1);
         pgc_count = stack->count;
         pgc_top = stack->top;
-    }
-    else
-    {
+    } else {
         ret = 0;
     }
 
     return ret;
 }
-
-

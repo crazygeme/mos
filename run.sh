@@ -10,7 +10,7 @@ _test="0"
 _test_arg=""
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
-_kvm="-no-kvm"
+_kvm=""
 if [ ! -e "kernel" ]; then
 	_rebuild="1"
 fi

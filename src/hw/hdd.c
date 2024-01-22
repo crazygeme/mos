@@ -573,7 +573,7 @@ static block_cache_item* hdd_cache_find_oldest(partition* p) {
     if (p->cache.count == 0)
         return 0;
 
-    node = p->cache.timer_list_head.Flink;
+    node = p->cache.timer_list_head.prev;
     item = container_of(node, block_cache_item, time_list);
     return item;
 }
@@ -641,10 +641,10 @@ static void hdd_cache_update_all(void* aux, partition* p, block_cache_item* item
 }
 
 static void flush_partition_cache(partition* p) {
-    list_entry* entry = p->cache.timer_list_head.Flink;
+    list_entry* entry = p->cache.timer_list_head.prev;
     list_entry* next;
     while (entry != &p->cache.timer_list_head) {
-        next = entry->Flink;
+        next = entry->prev;
         block_cache_item* item = container_of(entry, block_cache_item, time_list);
         if (item && item->sector != -1 && item->dirty) {
             hdd_cache_flush(p, item);

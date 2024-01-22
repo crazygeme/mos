@@ -118,10 +118,6 @@ void tty_write(const char* str, unsigned len);
 
 void klogquota();
 
-// misc
-//
-void shutdown();
-
 void printk(const char* str, ...);
 
 typedef struct _TEST_CONTROL {

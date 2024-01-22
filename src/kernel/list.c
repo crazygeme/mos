@@ -2,111 +2,70 @@
 #include <mm.h>
 #include <config.h>
 
-void list_init(list_entry* ListHead) {
-    ListHead->Flink = ListHead->Blink = ListHead;
+void list_init(list_entry* head) {
+    head->prev = head->next = head;
     return;
 }
 
-int list_is_empty(list_entry* ListHead) {
-    return (int)(ListHead->Flink == ListHead);
+int list_is_empty(list_entry* head) {
+    return (int)(head->prev == head);
 }
 
-int RemoveEntryList(list_entry* Entry) {
-    list_entry* Blink;
-    list_entry* Flink;
-    Flink = Entry->Flink;
-    Blink = Entry->Blink;
-    Blink->Flink = Flink;
-    Flink->Blink = Blink;
-    return (int)(Flink == Blink);
+int RemoveEntryList(list_entry* entry) {
+    list_entry* next;
+    list_entry* prev;
+    prev = entry->prev;
+    next = entry->next;
+    next->prev = prev;
+    prev->next = next;
+    return (int)(prev == next);
 }
 
-list_entry* list_remove_head(list_entry* ListHead) {
-    list_entry* Flink;
-    list_entry* Entry;
-    Entry = ListHead->Flink;
-    Flink = Entry->Flink;
-    ListHead->Flink = Flink;
-    Flink->Blink = ListHead;
-    return Entry;
+list_entry* list_remove_head(list_entry* head) {
+    list_entry* prev;
+    list_entry* entry;
+    entry = head->prev;
+    prev = entry->prev;
+    head->prev = prev;
+    prev->next = head;
+    return entry;
 }
 
-list_entry* list_remove_tail(list_entry* ListHead) {
-    list_entry* Blink;
-    list_entry* Entry;
-    Entry = ListHead->Blink;
-    Blink = Entry->Blink;
-    ListHead->Blink = Blink;
-    Blink->Flink = ListHead;
-    return Entry;
+list_entry* list_remove_tail(list_entry* head) {
+    list_entry* next;
+    list_entry* entry;
+    entry = head->next;
+    next = entry->next;
+    head->next = next;
+    next->prev = head;
+    return entry;
 }
 
-void list_insert_tail(list_entry* ListHead, list_entry* Entry) {
-    list_entry* Blink;
-    Blink = ListHead->Blink;
-    Entry->Flink = ListHead;
-    Entry->Blink = Blink;
-    Blink->Flink = Entry;
-    ListHead->Blink = Entry;
+void list_insert_tail(list_entry* head, list_entry* entry) {
+    list_entry* next;
+    next = head->next;
+    entry->prev = head;
+    entry->next = next;
+    next->prev = entry;
+    head->next = entry;
     return;
 }
 
-void list_insert_head(list_entry* ListHead, list_entry* Entry) {
-    list_entry* Flink;
-    Flink = ListHead->Flink;
-    Entry->Flink = Flink;
-    Entry->Blink = ListHead;
-    Flink->Blink = Entry;
-    ListHead->Flink = Entry;
+void list_insert_head(list_entry* head, list_entry* entry) {
+    list_entry* prev;
+    prev = head->prev;
+    entry->prev = prev;
+    entry->next = head;
+    prev->next = entry;
+    head->prev = entry;
     return;
 }
 
-void list_append_tail(list_entry* ListHead, list_entry* ListToAppend) {
-    list_entry* ListEnd = ListHead->Blink;
-    ListHead->Blink->Flink = ListToAppend;
-    ListHead->Blink = ListToAppend->Blink;
-    ListToAppend->Blink->Flink = ListHead;
-    ListToAppend->Blink = ListEnd;
+void list_append_tail(list_entry* head, list_entry* entry) {
+    list_entry* ListEnd = head->next;
+    head->next->prev = entry;
+    head->next = entry->next;
+    entry->next->prev = head;
+    entry->next = ListEnd;
     return;
-}
-
-void InitializeStack(PSTACK stack) {
-    int i = 0;
-
-    for (i = 0; i < 1024; i++) {
-        stack->mem[i] = PAGE_TABLE_CACHE_BEGIN + i * PAGE_SIZE;
-    }
-    stack->top = 1023;
-    stack->count = 1024;
-}
-
-unsigned pgc_count;
-unsigned pgc_top;
-
-int PushStack(PSTACK stack, unsigned int val) {
-    if (stack->count < 1024) {
-        stack->mem[stack->top] = val;
-        __sync_add_and_fetch(&(stack->top), 1);
-        __sync_add_and_fetch(&(stack->count), 1);
-        pgc_count = stack->count;
-        pgc_top = stack->top;
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
-unsigned int PopStack(PSTACK stack) {
-    unsigned ret = 0;
-    if (stack->count > 0) {
-        __sync_add_and_fetch(&(stack->top), -1);
-        ret = stack->mem[stack->top];
-        __sync_add_and_fetch(&(stack->count), -1);
-        pgc_count = stack->count;
-        pgc_top = stack->top;
-    } else {
-        ret = 0;
-    }
-
-    return ret;
 }

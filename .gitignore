@@ -4,7 +4,8 @@
 *.obj
 *.elf
 *.log
-kernel
+/kernel
+/log
 user/bin/*
 user/lib/*
 user/etc/*

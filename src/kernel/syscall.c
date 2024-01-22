@@ -465,7 +465,7 @@ static int sys_ioctl(int fd, int request, char* buf) {
 static int sys_getpid() {
     task_struct* cur = CURRENT_TASK();
     if (TestControl.verbos) {
-        klog("%d: getpid() = %d\n", CURRENT_TASK()->psid, cur->psid);
+        klog("%d: getpid() = %d\n", cur->psid, cur->psid);
     }
     return cur->psid;
 }

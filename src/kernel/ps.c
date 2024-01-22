@@ -85,7 +85,7 @@ task_struct* ps_find_process(unsigned psid) {
 
     lock_mgr();
 
-    entry = head->Flink;
+    entry = head->prev;
     while (entry != head) {
         task = container_of(entry, task_struct, ps_mgr);
         if (task->psid == psid) {
@@ -93,7 +93,7 @@ task_struct* ps_find_process(unsigned psid) {
         } else {
             task = 0;
         }
-        entry = entry->Flink;
+        entry = entry->prev;
     }
     unlock_mgr();
 
@@ -103,7 +103,7 @@ task_struct* ps_find_process(unsigned psid) {
 void ps_put_to_dying_queue(task_struct* task) {
     // Remove from whatever queue it is, then put into dying queue
     lock_dying();
-    if (task->ps_list.Flink && task->ps_list.Blink) {
+    if (task->ps_list.prev && task->ps_list.next) {
         RemoveEntryList(&task->ps_list);
     }
     if (task->psid != 0xffffffff)
@@ -124,7 +124,7 @@ void ps_put_to_dying_queue(task_struct* task) {
 void ps_put_to_wait_queue(task_struct* task) {
     // Remove from whatever queue it is, then put into wait queue
     lock_waiting();
-    if (task->ps_list.Flink && task->ps_list.Blink) {
+    if (task->ps_list.prev && task->ps_list.next) {
         RemoveEntryList(&task->ps_list);
     }
     if (task->psid != 0xffffffff)
@@ -139,7 +139,7 @@ void ps_put_to_ready_queue(task_struct* task) {
         control.ps_dsr = task;
     } else {
         // Remove from whatever queue it is, then put into ready queue
-        if (task->ps_list.Flink && task->ps_list.Blink) {
+        if (task->ps_list.prev && task->ps_list.next) {
             RemoveEntryList(&task->ps_list);
         }
 
@@ -152,13 +152,13 @@ void ps_put_to_ready_queue(task_struct* task) {
 static task_struct* ps_get_available_ready_task(list_entry* ready_queue) {
     list_entry* entry;
     task_struct* task = 0;
-    entry = ready_queue->Flink;
+    entry = ready_queue->prev;
 
     while (entry != ready_queue) {
         task = container_of(entry, task_struct, ps_list);
         if (task->status == ps_dying) {
             task = 0;
-            entry = entry->Flink;
+            entry = entry->prev;
             continue;
         } else {
             break;
@@ -465,7 +465,7 @@ unsigned ps_create(process_fn fn, int priority, ps_type type) {
 
     stack_buttom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
     LOAD_CR3(task->cr3);
-    task->ps_list.Flink = task->ps_list.Blink = 0;
+    task->ps_list.prev = task->ps_list.next = 0;
     task->fn = fn;
     task->priority = priority;
     task->type = type;
@@ -592,7 +592,7 @@ int do_fork(unsigned flag) {
     task_intr_frame->eax = 0;
     task->parent = cur->psid;
     task->fds = vm_alloc(1);  // kmalloc(MAX_FD*sizeof(fd_type));
-    task->ps_list.Blink = task->ps_list.Flink = 0;
+    task->ps_list.next = task->ps_list.prev = 0;
     task->user.vm = vm_create();
     task->user.reserve = (unsigned)vm_alloc(1);
     task->command = vm_alloc(1);
@@ -761,7 +761,7 @@ int sys_waitpid(unsigned pid, int* status, int options) {
     do {
         task_sched();
         lock_dying();
-        entry = control.dying_queue.Flink;
+        entry = control.dying_queue.prev;
         while (entry != &control.dying_queue) {
             task_struct* task = container_of(entry, task_struct, ps_list);
             int match = 0;
@@ -808,7 +808,7 @@ int sys_waitpid(unsigned pid, int* status, int options) {
                 break;
             }
 
-            entry = entry->Flink;
+            entry = entry->prev;
         }
 
         if (!can_return) {
@@ -840,7 +840,7 @@ void ps_update_tss(unsigned int esp0) {
 void ps_kickoff() {
     task_struct* cur = CURRENT_TASK();
     cur->psid = 0xffffffff;
-    cur->ps_list.Flink = cur->ps_list.Blink = 0;
+    cur->ps_list.prev = cur->ps_list.next = 0;
     _ps_enabled = 1;
     task_sched();
     return;
@@ -969,13 +969,66 @@ int ps_has_ready(int priority) {
 
 void ps_enum_all(ps_enum_callback callback) {
     list_entry* head = &control.mgr_queue;
-    list_entry* node = head->Flink;
+    list_entry* node = head->prev;
     if (!callback)
         return;
 
     while (node != head) {
         task_struct* task = (task_struct*)container_of(node, task_struct, ps_mgr);
         callback(task);
-        node = node->Flink;
+        node = node->prev;
     }
+}
+
+static void close_fp_callback(task_struct* task) {
+    int i = 0;
+    for (i = 0; i < MAX_FD; i++) {
+        if (task->fds == NULL)
+            continue;
+
+        if (task->fds[i].used == 0)
+            continue;
+
+        if (task->fds[i].fp == NULL)
+            continue;
+
+        fs_destroy(task->fds[i].fp);
+    }
+}
+
+static void system_down() {
+    klog_close();
+    ps_enum_all(close_fp_callback);
+    ext4_umount("/");
+    block_close();
+}
+
+void reboot() {
+    __asm__("cli");
+    system_down();
+    _write_port(0x64, 0xfe);
+}
+
+void shutdown() {
+    const char s[] = "Shutdown";
+    const char* p;
+    __asm__("cli");
+    printf("Shutting down system ...\n");
+    system_down();
+
+    /* 	This is a special power-off sequence supported by Bochs and
+          QEMU, but not by physical hardware. */
+    printf("Power off...\n");
+    for (p = s; *p != '\0'; p++)
+        _write_port(0x8900, *p);
+
+    /*  In newer versions of QEMU, you can pass
+        -device isa-debug-exit,iobase=0xf4,iosize=0x04
+        on the command-line, and do: */
+    _write_port(0xf4, 0x00);
+
+    /* None of those works... */
+    printf("still running...\n");
+    for (;;)
+        ;
 }

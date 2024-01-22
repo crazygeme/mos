@@ -30,7 +30,7 @@ static block* block_get_first(block_type type) {
 
     spinlock_lock(&control.lock);
 
-    node = head->Flink;
+    node = head->prev;
 
     spinlock_unlock(&control.lock);
 
@@ -46,7 +46,7 @@ static block* block_get_next(block* b) {
 
     spinlock_lock(&control.lock);
 
-    node = b->block_list.Flink;
+    node = b->block_list.prev;
 
     spinlock_unlock(&control.lock);
 

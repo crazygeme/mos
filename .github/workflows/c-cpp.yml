@@ -13,7 +13,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - name: Install xmllint
+    - name: Install gcc x86 support
       run: sudo apt install gcc-multilib
     - name: make
       run: make

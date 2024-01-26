@@ -16,34 +16,33 @@
 */
 .func intr_entry
 intr_entry:
-/* Save caller's registers. */
-push %ds
-push %es
-push %fs
-push %gs
-pushl %eax
-pushl %ecx
-pushl %edx
-pushl %ebx
-pushl $0
-pushl %ebp
-pushl %esi
-pushl %edi
-        
-/* Set up kernel environment. */
-cld	/* String instructions go upward. */
-pushl %edx
-mov $KERNEL_CODE_SELECTOR, %edx	/* Initialize segment registers. */
-mov %edx, %ds
-mov %edx, %es
-popl %edx
-leal 56(%esp), %ebp	/* Set up frame pointer. */
-
-/* Call interrupt handler. */
-pushl %esp
+    /* Save caller's registers. */
+    push %ds
+    push %es
+    push %fs
+    push %gs
+    pushl %eax
+    pushl %ecx
+    pushl %edx
+    pushl %ebx
+    pushl $0
+    pushl %ebp
+    pushl %esi
+    pushl %edi
+            
+    /* Set up kernel environment. */
+    cld    /* String instructions go upward. */
+    pushl %edx
+    mov $KERNEL_CODE_SELECTOR, %edx    /* Initialize segment registers. */
+    mov %edx, %ds
+    mov %edx, %es
+    popl %edx
+    leal 56(%esp), %ebp    /* Set up frame pointer. */
+    /* Call interrupt handler. */
+    pushl %esp
 .globl intr_handler
-call intr_handler
-addl $4, %esp
+    call intr_handler
+    addl $4, %esp
 .endfunc
 
 /* Interrupt exit.
@@ -57,30 +56,28 @@ addl $4, %esp
 .globl intr_exit
 .func intr_exit
 intr_exit:
-        /* Restore caller's registers. */
-popl %edi
-popl %esi
-popl %ebp
-addl $4, %esp // dummy esp always 0
-popl %ebx
-popl %edx
-popl %ecx
-// for a system call, eax is the return val
-// but for an external interrupt, eax must be restored
-// or else a return value in kernel function will be broken
-/*addl $4, %esp*/ 
-popl %eax
-pop %gs
-pop %fs
-pop %es
-pop %ds
-
-        /* Discard `struct intr_frame' vec_no, error_code,
-           frame_pointer members. */
-addl $12, %esp
-
-        /* Return to caller. */
-iret
+    /* Restore caller's registers. */
+    popl %edi
+    popl %esi
+    popl %ebp
+    addl $4, %esp // dummy esp always 0
+    popl %ebx
+    popl %edx
+    popl %ecx
+    // for a system call, eax is the return val
+    // but for an external interrupt, eax must be restored
+    // or else a return value in kernel function will be broken
+    /*addl $4, %esp*/ 
+    popl %eax
+    pop %gs
+    pop %fs
+    pop %es
+    pop %ds
+    /* Discard `struct intr_frame' vec_no, error_code,
+       frame_pointer members. */
+    addl $12, %esp
+    /* Return to caller. */
+    iret
 .endfunc
 
 /* Interrupt stubs.
@@ -109,38 +106,36 @@ iret
 
         3. Push the interrupt number on the stack. */
 
-.section .startdata;
-.globl intr_stubs
-intr_stubs:
-
 /* This implements steps 1 and 2, described above, in the common
    case where we just push a 0 error code. */
-#define zero \
-pushl %ebp; \
-pushl $0
+#define zero            \
+        pushl %ebp;     \
+        pushl $0
 
 /* This implements steps 1 and 2, described above, in the case
    where the CPU already pushed an error code. */
-#define REAL \
-        pushl (%esp); \
+#define REAL            \
+        pushl (%esp);   \
         movl %ebp, 4(%esp)
 
 /* Emits a stub for interrupt vector NUMBER.
    TYPE is `zero', for the case where we push a 0 error code,
    or `REAL', if the CPU pushes an error code for us. */
-#define STUB(NUMBER, TYPE) \
-.text; \
-.func intr##NUMBER##_stub; \
-intr##NUMBER##_stub: \
-TYPE; \
-push $0x##NUMBER; \
-        jmp intr_entry; \
-.endfunc;	\
-                                                \
-.section .startdata; \
-.long intr##NUMBER##_stub;
+#define STUB(NUMBER, TYPE)              \
+        .text;                          \
+        .func intr##NUMBER##_stub;      \
+                intr##NUMBER##_stub:    \
+                TYPE;                   \
+                push $0x##NUMBER;       \
+                jmp intr_entry;         \
+        .endfunc;                    \
+        .data;                          \
+        .long intr##NUMBER##_stub;
 
 /* All the stubs. */
+.globl intr_stubs
+.section .data; 
+intr_stubs:
 STUB(00, zero) STUB(01, zero) STUB(02, zero) STUB(03, zero)
 STUB(04, zero) STUB(05, zero) STUB(06, zero) STUB(07, zero)
 STUB(08, REAL) STUB(09, zero) STUB(0a, REAL) STUB(0b, REAL)
@@ -222,144 +217,123 @@ STUB(f8, zero) STUB(f9, zero) STUB(fa, zero) STUB(fb, zero)
 STUB(fc, zero) STUB(fd, zero) STUB(fe, zero) STUB(ff, zero)
 
 
-.global RELOAD_KERNEL_CS;
-.global RELOAD_USER_CS;
-
-.section .start;
-.func RELOAD_KERNEL_CS
-RELOAD_KERNEL_CS:
-	ljmp $KERNEL_CODE_SELECTOR, $1f
-1:	nop
-	ret
+.func switch_to_user_mode
+switch_to_user_mode:
+    cli;
+    movl 4(%esp), %ecx
+    movl 8(%esp), %edx
+    mov $USER_DATA_SELECTOR, %ax; 
+    mov %ax, %ds; 
+    mov %ax, %es; 
+    mov %ax, %fs; 
+    mov %ax, %gs; 
+                  
+    mov %esp, %eax; 
+    pushl $USER_DATA_SELECTOR; 
+    pushl %eax; 
+    pushf;
+    pop %ax;
+    or $0x200,%ax 
+    push %ax;
+    push $USER_CODE_SELECTOR; 
+    push $USER; 
+    iret; 
+    // before iret, the stack is like this:
+    //        * user ds
+    //        * kernel esp
+    //        * user cs
+    //        * return eip
+    // after iret, all above are poped automatically
+    // so data segment is user ds, code segment is user cs
+    // next instruction is label user, and stack is still kernel
+    // and right after USER label we setup user stack
+    // usually above stack is setup by system call instruction
+    // but here we are trying to "create" a user routine
+USER: nop;
+    movl %edx, %esp
+    movl %edx, %ebp
+    movl %ecx, %eax
+    jmp *%eax
 .endfunc
 
-.section .start;
-.func RELOAD_USER_CS
-RELOAD_USER_CS:
-	ljmp $USER_CODE_SELECTOR, $1f
-1:	nop
-	ret
+
+.func syscall_handler
+syscall_handler:
+    pushl %ebp
+    pushl $0
+    pushl $0x80
+    /* Save caller's registers. */
+    push %ds
+    push %es
+    push %fs
+    push %gs
+    pushl %eax
+    pushl %ecx
+    pushl %edx
+    pushl %ebx
+    pushl $0
+    pushl %ebp
+    pushl %esi
+    pushl %edi
+        
+    /* Set up kernel environment. */
+    pushl %edx
+    mov $KERNEL_CODE_SELECTOR, %edx    /* Initialize segment registers. */
+    mov %edx, %ds
+    mov %edx, %es
+    popl %edx
+    leal 56(%esp), %ebp    /* Set up frame pointer. */
+
+    /* Call interrupt handler. */
+    pushl %esp
+    .globl intr_syscall_handler
+    call intr_syscall_handler
+    addl $4, %esp
+
+ret_from_syscall:
+    /* Restore caller's registers. */
+    popl %edi
+    popl %esi
+    popl %ebp
+    addl $4, %esp // dummy esp always 0
+    popl %ebx
+    popl %edx
+    popl %ecx
+    // for a system call, eax is the return val
+    // but for an external interrupt, eax must be restored
+    // or else a return value in kernel function will be broken
+    //addl $4, %esp
+    popl %eax
+    pop %gs
+    pop %fs
+    pop %es
+    pop %ds
+
+    /* Discard `struct intr_frame' vec_no, error_code,
+        frame_pointer members. */
+    addl $12, %esp
+        /* Return to caller. */
+    iret
 .endfunc
 
-.global _RELOAD_KERNEL_CS;
-.global _RELOAD_USER_CS;
-
-.section .text;
-.func _RELOAD_KERNEL_CS
-_RELOAD_KERNEL_CS:
-	ljmp $KERNEL_CODE_SELECTOR, $1f
-1:	nop
-	ret
+.func read_port
+read_port:
+    movl  4(%esp), %edx 
+    xor   %eax, %eax  
+    inb   %dx, %al 
+    ret 
 .endfunc
 
-.section .text;
-.func _RELOAD_USER_CS
-_RELOAD_USER_CS:
-	ljmp $USER_CODE_SELECTOR, $1f
-1:	nop
-	ret
+.func write_port
+write_port:
+    movl 4(%esp), %edx
+    mov  8(%esp), %al
+    outb   %al, %dx 
+    ret
 .endfunc
 
 .global switch_to_user_mode;
-.section .text;
-.func switch_to_user_mode
-switch_to_user_mode:
-     cli;
-	 movl 4(%esp), %ecx
-	 movl 8(%esp), %edx
-     mov $USER_DATA_SELECTOR, %ax; 
-     mov %ax, %ds; 
-     mov %ax, %es; 
-     mov %ax, %fs; 
-     mov %ax, %gs; 
-                   
-     mov %esp, %eax; 
-     pushl $USER_DATA_SELECTOR; 
-     pushl %eax; 
-     pushf;
-     pop %ax;
-     or $0x200,%ax 
-     push %ax;
-     push $USER_CODE_SELECTOR; 
-     push $USER; 
-     iret; 
-	 // before iret, the stack is like this:
-	 //		* user ds
-	 //		* kernel esp
-	 //		* user cs
-	 //		* return eip
-	 // after iret, all above are poped automatically
-	 // so data segment is user ds, code segment is user cs
-	 // next instruction is label user, and stack is still kernel
-	 // and right after USER label we setup user stack
-	 // usually above stack is setup by system call instruction
-	 // but here we are trying to "create" a user routine
-USER: nop;
-     movl %edx, %esp
-     movl %edx, %ebp
-     movl %ecx, %eax
-     jmp *%eax
-.endfunc
-
 .global ret_from_syscall;
 .global syscall_handler;
-.section .text
-.func syscall_handler
-syscall_handler:
-	pushl %ebp
-	pushl $0
-	pushl $0x80
-	/* Save caller's registers. */
-	push %ds
-	push %es
-	push %fs
-	push %gs
-	pushl %eax
-	pushl %ecx
-	pushl %edx
-	pushl %ebx
-	pushl $0
-	pushl %ebp
-	pushl %esi
-	pushl %edi
-        
-	/* Set up kernel environment. */
-	pushl %edx
-	mov $KERNEL_CODE_SELECTOR, %edx	/* Initialize segment registers. */
-	mov %edx, %ds
-	mov %edx, %es
-	popl %edx
-	leal 56(%esp), %ebp	/* Set up frame pointer. */
-
-	/* Call interrupt handler. */
-	pushl %esp
-	.globl intr_syscall_handler
-	call intr_syscall_handler
-	addl $4, %esp
-
-ret_from_syscall:
-	/* Restore caller's registers. */
-	popl %edi
-	popl %esi
-	popl %ebp
-	addl $4, %esp // dummy esp always 0
-	popl %ebx
-	popl %edx
-	popl %ecx
-	// for a system call, eax is the return val
-	// but for an external interrupt, eax must be restored
-	// or else a return value in kernel function will be broken
-	//addl $4, %esp
-	popl %eax
-	pop %gs
-	pop %fs
-	pop %es
-	pop %ds
-
-	/* Discard `struct intr_frame' vec_no, error_code,
-		frame_pointer members. */
-	addl $12, %esp
-
-			/* Return to caller. */
-	iret
-.endfunc
+.global write_port
+.global read_port

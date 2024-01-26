@@ -7,6 +7,7 @@
 #include <list.h>
 #include <fs.h>
 #include <dsr.h>
+#include <macro.h>
 
 typedef struct _ps_control {
     list_entry ready_queue[MAX_PRIORITY];
@@ -503,7 +504,7 @@ static void ps_dup_fds(task_struct* cur, task_struct* task) {
         task->fds[i] = cur->fds[i];
         fs_refrence(cur->fds[i].fp);
     }
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
 }
 
 extern short pgc_entry_count[1024];
@@ -641,7 +642,7 @@ int sys_exit(unsigned status) {
         klog("%d: exit(%d)\n", cur->psid, status);
 
     if (cur->fork_flag & FORK_FLAG_VFORK) {
-        cond_trigger(&cur->vfork_event);
+        cond_notify(&cur->vfork_event);
     }
 
     if (cur->user.vm) {
@@ -860,32 +861,37 @@ static void ps_cleanup_enum_callback(void* aux, unsigned vir, unsigned phy) {
 
 void ps_cleanup_all_user_map(task_struct* task) {
     ps_enum_user_map(task, ps_cleanup_enum_callback, 0);
-    REFRESH_CACHE();
+    RELOAD_CR3();
 }
 
 void ps_enum_user_map(task_struct* task, fpuser_map_callback fn, void* aux) {
     unsigned i = 0, j = 0;
+    unsigned int* page_dir = NULL;
 
     if (!fn) {
         return;
     }
 
-    if (task->user.page_dir) {
-        unsigned int* page_dir = (unsigned int*)task->user.page_dir;
-        for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-            unsigned* page_table = (unsigned*)(page_dir[i] & PAGE_SIZE_MASK);
-            if (!page_table) {
+    if (!task->user.page_dir) {
+        return;
+    }
+
+    page_dir = (unsigned int*)task->user.page_dir;
+    for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+        unsigned* page_table = (unsigned*)(page_dir[i] & PAGE_SIZE_MASK);
+        if (!page_table) {
+            continue;
+        }
+
+        page_table = (unsigned*)((unsigned)page_table + KERNEL_OFFSET);
+        for (j = 0; j < 1024; j++) {
+            if ((page_table[j] & PAGE_SIZE_MASK) == 0) {
                 continue;
             }
 
-            page_table = (unsigned*)((unsigned)page_table + KERNEL_OFFSET);
-            for (j = 0; j < 1024; j++) {
-                if ((page_table[j] & PAGE_SIZE_MASK) != 0) {
-                    unsigned vir = (i << 22) + (j << 12);
-                    unsigned phy = page_table[j] & PAGE_SIZE_MASK;
-                    fn(aux, vir, phy);
-                }
-            }
+            unsigned vir = (i << 22) + (j << 12);
+            unsigned phy = page_table[j] & PAGE_SIZE_MASK;
+            fn(aux, vir, phy);
         }
     }
 }
@@ -939,7 +945,7 @@ void _task_sched(const char* func) {
     SAVE_ALL(current);
 
     RESTORE_ALL(task);
-    RELOAD_CR3(next_cr3);
+    SET_CR3(next_cr3);
     current = CURRENT_TASK();
     reset_tss(current);
     JUMP_TO_NEXT_TASK_EIP();
@@ -1006,7 +1012,7 @@ static void system_down() {
 void reboot() {
     __asm__("cli");
     system_down();
-    _write_port(0x64, 0xfe);
+    write_port(0x64, 0xfe);
 }
 
 void shutdown() {
@@ -1020,12 +1026,12 @@ void shutdown() {
           QEMU, but not by physical hardware. */
     printf("Power off...\n");
     for (p = s; *p != '\0'; p++)
-        _write_port(0x8900, *p);
+        write_port(0x8900, *p);
 
     /*  In newer versions of QEMU, you can pass
         -device isa-debug-exit,iobase=0xf4,iosize=0x04
         on the command-line, and do: */
-    _write_port(0xf4, 0x00);
+    write_port(0xf4, 0x00);
 
     /* None of those works... */
     printf("still running...\n");

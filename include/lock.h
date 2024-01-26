@@ -30,12 +30,12 @@ void cond_init(cond_t* s, const char* name, unsigned int initstat);
 
 void cond_wait(cond_t* s);
 
-void cond_wait_for_intr(cond_t* s);
+void cond_wait_at_intr(cond_t* s);
 
 void cond_reset(cond_t* s);
 
-void cond_trigger(cond_t* s);
+void cond_notify(cond_t* s);
 
-void cond_trigger_at_intr(cond_t* s);
+void cond_notify_at_intr(cond_t* s);
 
 #endif

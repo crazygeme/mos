@@ -17,7 +17,7 @@ static void cleanup() {
     int i = 0;
 
     if (cur->fork_flag & FORK_FLAG_VFORK) {
-        cond_trigger(&cur->vfork_event);
+        cond_notify(&cur->vfork_event);
     }
 
     for (i = 0; i < MAX_FD; i++) {

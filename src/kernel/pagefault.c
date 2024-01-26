@@ -7,6 +7,7 @@
 #include <fs.h>
 #include <klib.h>
 #include <timer.h>
+#include <macro.h>
 
 unsigned page_fault_count;
 unsigned page_falut_total_time;
@@ -69,7 +70,7 @@ static void pf_process(intr_frame* frame) {
             f = region->node;
             this_offset = region->offset + (this_begin - region->begin);
             mm_add_dynamic_map(this_begin, 0, PAGE_ENTRY_USER_DATA);
-            REFRESH_CACHE();
+            RELOAD_CR3();
 
             if (f != 0) {
                 int ret = 0;
@@ -113,7 +114,7 @@ static void pf_process(intr_frame* frame) {
             flag |= PAGE_ENTRY_WRITABLE;
             mm_del_dynamic_map(vir);
             mm_add_dynamic_map(vir, 0, flag);
-            REFRESH_CACHE();
+            RELOAD_CR3();
             memcpy(vir, cur->user.reserve, PAGE_SIZE);
 
         } else {
@@ -122,7 +123,7 @@ static void pf_process(intr_frame* frame) {
             flag = mm_get_map_flag(vir);
             flag |= PAGE_ENTRY_WRITABLE;
             mm_set_map_flag(vir, flag);
-            REFRESH_CACHE();
+            RELOAD_CR3();
         }
 
         goto Done;

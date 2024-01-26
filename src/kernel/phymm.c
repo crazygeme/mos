@@ -1,6 +1,9 @@
 #include "phymm.h"
 #include "mm.h"
 #include <ps.h>
+#include <klib.h>
+#include <macro.h>
+
 #define SIZE_TO_FREE_LIST_INDEX(page_count) \
     ((page_count <= 1)               ? 0    \
      : (page_count <= 2)             ? 1    \
@@ -24,9 +27,6 @@
      : (page_count <= (512 * 1024))  ? 19   \
      : (page_count <= (1024 * 1024)) ? 20   \
                                      : -1)
-
-extern unsigned phymm_max;
-extern unsigned phymm_valid;
 
 typedef struct free_page_lists {
     unsigned int head[21];
@@ -125,7 +125,7 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count) {
     int index = SIZE_TO_FREE_LIST_INDEX(page_count);
     int first = 0;
     if (index == -1) {
-        return -1;
+        return;
     }
 
     FREE_PHYMM(kernel_free_list.head[index], page_index);
@@ -150,9 +150,9 @@ void phymm_setup_mgmt_pages(unsigned start_page) {
         addr = i + KERNEL_OFFSET;
         mm_add_direct_map(addr);
     }
-    REFRESH_CACHE();
+    RELOAD_CR3();
     addr = (start_page * PAGE_SIZE) + KERNEL_OFFSET;
-    memset(addr, 0, (phymm_valid - start_page) * PAGE_SIZE);
+    memset((void*)addr, 0, (phymm_valid - start_page) * PAGE_SIZE);
     phymm_pages = (phymm_page*)(addr);
 }
 

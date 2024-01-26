@@ -33,26 +33,20 @@ typedef struct multiboot_info multiboot_info_t;
 #define PAGE_ENTRY_USER_CODE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_DPL_USER)
 #define PAGE_ENTRY_USER_DATA (PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_DPL_USER)
 
-#define RELOAD_CR3(address) __asm__("movl %0, %%cr3" : : "q"(address));
+#define GDT_ADDRESS 0x1C0000
 
-#define REFRESH_CACHE()                             \
-    do {                                            \
-        unsigned __cr3__;                           \
-        __asm__("movl %%cr3, %0" : "=q"(__cr3__));  \
-        __asm__("movl %0, %%cr3" : : "q"(__cr3__)); \
-    } while (0)
+// clang-format on
 
-#define ROUND_UP(X, STEP) (((X) + (STEP)-1) / (STEP) * (STEP))
-
-#define _START __attribute__((section(".start")))
-
-#define _STARTDATA __attribute__((section(".startdata")))
-
-#define _STR __attribute__((section(".startdataro")))
-
-#ifndef WIN32
-_START void mm_init(multiboot_info_t* mb);
-#endif
+extern unsigned phymm_max;
+extern unsigned phymm_valid;
+extern multiboot_info_t* g_mb;
+extern unsigned long long gdt[];
+extern unsigned short gdt_size;
+extern unsigned long intr_stubs[];
+extern unsigned long long idt[];
+extern unsigned short idt_size;
+extern unsigned long long phy_mem_low;
+extern unsigned long long phy_mem_high;
 
 unsigned mm_get_pagedir();
 

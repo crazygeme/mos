@@ -18,26 +18,10 @@
 #include <vga.h>
 #include <tests.h>
 #include <fs.h>
+#include <macro.h>
 
 static void run(void);
-_START static void init(multiboot_info_t* mb);
-_STARTDATA static multiboot_info_t* _g_mb;
-static multiboot_info_t* g_mb;
 TEST_CONTROL TestControl;
-
-_START void kmain(multiboot_info_t* mb, unsigned int magic) {
-    if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
-        return;
-    }
-
-    _g_mb = mb;
-
-    init(mb);
-
-    // never to here
-
-    return;
-}
 
 static void kmain_process(void* param);
 static void idle_process(void* param);
@@ -50,7 +34,6 @@ void kmain_startup() {
 
     fb_enable();
 
-    g_mb = (multiboot_info_t*)((unsigned)_g_mb + KERNEL_OFFSET);
     // after klib_init, kmalloc/kfree/prink/etc are workable
     klib_init();
 
@@ -67,7 +50,7 @@ void kmain_startup() {
     int_enable_all();
 
     mm_del_user_map();
-    REFRESH_CACHE();
+    RELOAD_CR3();
 
     printk("Init serial\n");
     serial_init_queue();
@@ -178,14 +161,6 @@ static void kmain_process(void* param) {
     user_first_process_run();
 
     run();
-}
-
-_START static void init(multiboot_info_t* mb) {
-    int_init();
-
-    mm_init(mb);
-    // never to here
-    return;
 }
 
 static void run() {

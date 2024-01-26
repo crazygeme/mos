@@ -1128,7 +1128,7 @@ void klog(char* str, ...) {
     vprintf(klog_write, klog_writestr, str, ap);
     va_end(ap);
 
-    cond_trigger(&klog_lock);
+    cond_notify(&klog_lock);
 }
 
 void tty_write(const char* buf, unsigned len) {

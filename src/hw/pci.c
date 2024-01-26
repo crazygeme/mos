@@ -7018,7 +7018,7 @@ unsigned pci_read_field(unsigned device, int field, int size) {
         uint16_t t = _read_word(PCI_VALUE_PORT + (field & 2));
         return t;
     } else if (size == 1) {
-        uint8_t t = _read_port(PCI_VALUE_PORT + (field & 3));
+        uint8_t t = read_port(PCI_VALUE_PORT + (field & 3));
         return t;
     }
     return 0xFFFF;

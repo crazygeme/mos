@@ -131,9 +131,9 @@ void timer_init() {
     control.access_mode = ACCESS_MODE_BOTH;
     control.operating_mode = OPERATION_MODE_RATE;
 
-    _write_port(TIMER_CONTROL_MASK, *((unsigned char*)&control));
-    _write_port(TIMER_CHANNEL_0, LATCH & 0xff);
-    _write_port(TIMER_CHANNEL_0, LATCH >> 8);
+    write_port(TIMER_CONTROL_MASK, *((unsigned char*)&control));
+    write_port(TIMER_CHANNEL_0, LATCH & 0xff);
+    write_port(TIMER_CHANNEL_0, LATCH >> 8);
 }
 
 void timer_current(time_t* t) {
@@ -312,6 +312,6 @@ static int bcd_to_bin(unsigned char x) {
 /* Reads a byte from the CMOS register with the given INDEX and
    returns the byte read. */
 static unsigned char cmos_read(unsigned char index) {
-    _write_port(CMOS_REG_SET, index);
-    return _read_port(CMOS_REG_IO);
+    write_port(CMOS_REG_SET, index);
+    return read_port(CMOS_REG_IO);
 }

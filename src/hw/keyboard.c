@@ -110,9 +110,9 @@ static void kb_dsr(void* param) {
 
     const char* special = 0;
     /* Read scancode, including second byte if prefix code. */
-    code = _read_port(KB_DATA);
+    code = read_port(KB_DATA);
     if (code == 0xe0)
-        code = (code << 8) | _read_port(KB_DATA);
+        code = (code << 8) | read_port(KB_DATA);
 
     /* Bit 0x80 distinguishes key press from key release
        (even if there's a prefix). */

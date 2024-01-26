@@ -2,6 +2,7 @@
 #include <mm.h>
 #include <ps.h>
 #include <klib.h>
+#include <macro.h>
 
 static int elf_read(filep fp, unsigned off, void* buf, int len) {
     size_t wcnt;
@@ -89,7 +90,7 @@ static unsigned elf_map_programs(filep fp, unsigned table_offset, unsigned size,
         for (i = 0; i < page_count; i++) {
             mm_add_dynamic_map(elf_bss + i * PAGE_SIZE, 0, PAGE_ENTRY_USER_DATA);
         }
-        REFRESH_CACHE();
+        RELOAD_CR3();
     }
 
     return 1;

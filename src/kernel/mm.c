@@ -8,56 +8,13 @@
 #include <errno.h>
 #include <mmap.h>
 #include <phymm.h>
+#include <macro.h>
 
-#define GDT_ADDRESS 0x1C0000
-_START static void mm_get_phy_mem_bound(multiboot_info_t* mb);
-_START static void mm_setup_beginning_8m();
 static void mm_clear_beginning_user_map();
 
-unsigned long long phy_mem_low;
-unsigned long long phy_mem_high;
-
+short pgc_entry_count[1024];
 unsigned phymm_max = 0;
 unsigned phymm_valid = 0;
-
-_STARTDATA static unsigned long long _phy_mem_low;
-_STARTDATA static unsigned long long _phy_mem_high;
-
-short pgc_entry_count[1024];
-
-_START void mm_init(multiboot_info_t* mb) {
-    mm_get_phy_mem_bound(mb);
-    mm_setup_beginning_8m();
-}
-
-_START static void mm_get_phy_mem_bound(multiboot_info_t* mb) {
-    unsigned int map_addr = mb->mmap_addr;
-    memory_map_t* map;
-
-    if (mb->flags & 0x40) {
-        map = (memory_map_t*)mb->mmap_addr;
-        while ((unsigned int)map < mb->mmap_addr + mb->mmap_length) {
-            if (map->type == 0x1 && (map->base_addr_low != 0 || map->base_addr_high != 0)) {
-                _phy_mem_low = map->base_addr_low + map->base_addr_high << 32;
-                _phy_mem_high = _phy_mem_low + (map->length_low + map->length_high << 32);
-                break;
-            }
-            map = (memory_map_t*)((unsigned int)map + map->size + sizeof(unsigned int));
-        }
-    }
-}
-
-#define ENABLE_PAGING()              \
-    __asm__("movl %cr0,%eax");       \
-    __asm__("orl $0x80000000,%eax"); \
-    __asm__("movl %eax,%cr0");
-
-#define RELOAD_EIP() __asm__("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop");
-
-#define RELOAD_ESP(OFFSET)                     \
-    __asm__("movl %esp, %ecx");                \
-    __asm__("addl %0, %%ecx" : : "i"(OFFSET)); \
-    __asm__("movl %ecx, %esp");
 
 unsigned mm_get_pagedir() {
     unsigned cr3 = 0;
@@ -144,14 +101,8 @@ static void unlock_mm() {
     spinlock_unlock(&mm_lock);
 }
 
-static void mm_high_memory_fun() {
-    // ok now we make eip as virtual address
-    RELOAD_EIP();
-    phy_mem_high = _phy_mem_high;
-    phy_mem_low = _phy_mem_low;
+void boot_stage2() {
     phymm_max = (phy_mem_high) / PAGE_SIZE;
-    // ok now we make esp as virtual address
-    RELOAD_ESP(KERNEL_OFFSET);
 
     phymm_valid = phymm_get_mgmt_pages(phy_mem_high);
     phymm_valid += (phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
@@ -176,36 +127,6 @@ static void mm_clear_beginning_user_map() {
     for (i = 0; i < reserved_page_tables; i++) {
         gdt[i] = 0;
     }
-}
-
-_START static void mm_setup_beginning_8m() {
-    unsigned int phy = PAGE_ENTRY_USER_DATA;
-    unsigned int reserved_page_tables = (RESERVED_PAGES / 1024);
-    unsigned int pg = (GDT_ADDRESS + PAGE_SIZE);
-    unsigned int* pgt;
-    int i = 0, j = 0;
-    unsigned int* gdt = (int*)GDT_ADDRESS;
-
-    for (i = 0; i < PG_TABLE_SIZE; i++) {
-        gdt[i] = 0;
-    }
-    for (i = 0; i < reserved_page_tables; i++) {
-        gdt[i] = (pg + i * PAGE_SIZE) | PAGE_ENTRY_USER_DATA;
-        gdt[i + 768] = (pg + i * PAGE_SIZE) | PAGE_ENTRY_USER_DATA;
-    }
-
-    for (j = 0; j < reserved_page_tables; j++) {
-        pgt = (unsigned int*)(pg + j * PAGE_SIZE);
-        for (i = 0; i < PE_TABLE_SIZE; i++) {
-            pgt[i] = phy;
-            phy += PAGE_SIZE;
-        }
-    }
-
-    RELOAD_CR3(GDT_ADDRESS);
-    ENABLE_PAGING();
-    mm_high_memory_fun();
-    return;
 }
 
 typedef struct _mm_addr_info {
@@ -371,7 +292,7 @@ unsigned int vm_alloc(int page_count) {
         mm_add_direct_map(vir);
     }
 
-    REFRESH_CACHE();
+    RELOAD_CR3();
     vir = page_index * PAGE_SIZE + KERNEL_OFFSET;
     // memset(vir, 0, page_count * PAGE_SIZE);
     unlock_mm();
@@ -389,7 +310,7 @@ void vm_free(unsigned int vm, int page_count) {
         phy = cur - KERNEL_OFFSET;
         mm_del_direct_map(cur);
     }
-    REFRESH_CACHE();
+    RELOAD_CR3();
     phymm_free_kernel((vm - KERNEL_OFFSET) / PAGE_SIZE, page_count);
 
     unlock_mm();

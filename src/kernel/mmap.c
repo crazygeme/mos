@@ -5,6 +5,7 @@
 #include <ps.h>
 #include <errno.h>
 #include <include/fs.h>
+#include <macro.h>
 
 typedef struct _vm_key {
     unsigned begin;
@@ -114,10 +115,10 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void* fd, int offs
             unsigned new_begin = conflict_key->begin;
             unsigned new_offset = conflict_region->offset;
             unsigned new_end = key->begin;
-            unsigned new_fd = conflict_region->node;
+            unsigned new_fd = (unsigned)conflict_region->node;
             vm_del_map(vm, conflict_key->begin);
             vm_add_map(vm, begin, end, fd, offset);
-            vm_add_map(vm, new_begin, new_end, new_fd, new_offset);
+            vm_add_map(vm, new_begin, new_end, (void*)new_fd, new_offset);
         } else if (key->begin <= conflict_key->begin && key->end >= conflict_key->end) {
             // case 5
             // -------|   region1   | ------
@@ -131,15 +132,15 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void* fd, int offs
             unsigned new_begin1 = conflict_key->begin;
             unsigned new_offset1 = conflict_region->offset;
             unsigned new_end1 = key->begin;
-            unsigned new_fd1 = conflict_region->node;
+            unsigned new_fd1 = (unsigned)conflict_region->node;
             unsigned new_begin2 = key->end;
             unsigned new_offset2 = conflict_region->offset + (key->end - conflict_key->begin);
             unsigned new_end2 = conflict_key->end;
-            unsigned new_fd2 = conflict_region->node;
+            unsigned new_fd2 = (unsigned)conflict_region->node;
             vm_del_map(vm, conflict_key->begin);
             vm_add_map(vm, begin, end, fd, offset);
-            vm_add_map(vm, new_begin1, new_end1, new_fd1, new_offset1);
-            vm_add_map(vm, new_begin2, new_end2, new_fd2, new_offset2);
+            vm_add_map(vm, new_begin1, new_end1, (void*)new_fd1, new_offset1);
+            vm_add_map(vm, new_begin2, new_end2, (void*)new_fd2, new_offset2);
         }
 
         kfree(key);
@@ -179,7 +180,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr) {
     for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
         mm_del_dynamic_map(vir);
     }
-    REFRESH_CACHE();
+    RELOAD_CR3();
 
     if (region->node) {
         fs_destroy(region->node);

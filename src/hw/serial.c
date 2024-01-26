@@ -41,8 +41,8 @@
 #define LSR_DR 0x01   /* Data Ready: received data byte is in RBR. */
 #define LSR_THRE 0x20 /* THR Empty. */
 
-#define outb _write_port
-#define inb _read_port
+#define outb write_port
+#define inb read_port
 /* Transmission mode. */
 static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 

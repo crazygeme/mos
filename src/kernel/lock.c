@@ -98,7 +98,7 @@ static int sema_notice_one(cond_t* s) {
     return has;
 }
 
-void cond_trigger(cond_t* s) {
+void cond_notify(cond_t* s) {
     int has = sema_notice_one(s);
 
     __sync_lock_test_and_set(&(s->lock), 0);
@@ -107,12 +107,12 @@ void cond_trigger(cond_t* s) {
         task_sched();
 }
 
-void cond_wait_for_intr(cond_t* s) {
+void cond_wait_at_intr(cond_t* s) {
     while (__sync_lock_test_and_set(&(s->lock), 1) == 1) {
         task_sched();
     }
 }
 
-void cond_trigger_at_intr(cond_t* s) {
+void cond_notify_at_intr(cond_t* s) {
     __sync_lock_test_and_set(&(s->lock), 0);
 }

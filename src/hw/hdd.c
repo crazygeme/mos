@@ -242,9 +242,9 @@ static void interrupt_handler(intr_frame* f) {
     for (c = channels; c < channels + CHANNEL_CNT; c++)
         if (f->vec_no == c->irq) {
             if (c->expecting_interrupt) {
-                _read_port(reg_status(c)); /* Acknowledge interrupt. */
+                read_port(reg_status(c)); /* Acknowledge interrupt. */
                 // printk("[hdd] sema set \n");
-                cond_trigger_at_intr(&c->sema); /* Wake up waiter. */
+                cond_notify_at_intr(&c->sema); /* Wake up waiter. */
 
                 c->expecting_interrupt = 0;
             } else
@@ -264,25 +264,25 @@ static void reset_channel(channel* c) {
 
         select_device(d);
 
-        _write_port(reg_nsect(c), 0x55);
-        _write_port(reg_lbal(c), 0xaa);
+        write_port(reg_nsect(c), 0x55);
+        write_port(reg_lbal(c), 0xaa);
 
-        _write_port(reg_nsect(c), 0xaa);
-        _write_port(reg_lbal(c), 0x55);
+        write_port(reg_nsect(c), 0xaa);
+        write_port(reg_lbal(c), 0x55);
 
-        _write_port(reg_nsect(c), 0x55);
-        _write_port(reg_lbal(c), 0xaa);
+        write_port(reg_nsect(c), 0x55);
+        write_port(reg_lbal(c), 0xaa);
 
-        present[dev_no] = (_read_port(reg_nsect(c)) == 0x55 && _read_port(reg_lbal(c)) == 0xaa);
+        present[dev_no] = (read_port(reg_nsect(c)) == 0x55 && read_port(reg_lbal(c)) == 0xaa);
     }
 
     /* Issue soft reset sequence, which selects device 0 as a side effect.
        Also enable interrupts. */
-    _write_port(reg_ctl(c), 0);
+    write_port(reg_ctl(c), 0);
     usleep(10);
-    _write_port(reg_ctl(c), CTL_SRST);
+    write_port(reg_ctl(c), CTL_SRST);
     usleep(10);
-    _write_port(reg_ctl(c), 0);
+    write_port(reg_ctl(c), 0);
 
     delay(150000);
 
@@ -298,7 +298,7 @@ static void reset_channel(channel* c) {
 
         select_device(&c->devices[1]);
         for (i = 0; i < 3000; i++) {
-            if (_read_port(reg_nsect(c)) == 1 && _read_port(reg_lbal(c)) == 1)
+            if (read_port(reg_nsect(c)) == 1 && read_port(reg_lbal(c)) == 1)
                 break;
             delay(10000);
         }
@@ -314,10 +314,10 @@ static int wait_while_busy(const ata_disk* d) {
     for (i = 0; i < 3000; i++) {
         if (i == 700)
             printk("%s: busy, waiting...", d->name);
-        if (!(_read_port(reg_alt_status(c)) & STA_BSY)) {
+        if (!(read_port(reg_alt_status(c)) & STA_BSY)) {
             if (i >= 700)
                 printk("ok\n");
-            ret = (_read_port(reg_alt_status(c)) & STA_DRQ);
+            ret = (read_port(reg_alt_status(c)) & STA_DRQ);
             if (ret == 0) {
             }
             return 1;
@@ -334,8 +334,8 @@ static void select_device(const ata_disk* d) {
     unsigned char dev = DEV_MBS;
     if (d->dev_no == 1)
         dev |= DEV_DEV;
-    _write_port(reg_device(c), dev);
-    _read_port(reg_alt_status(c));
+    write_port(reg_device(c), dev);
+    read_port(reg_alt_status(c));
 }
 
 static int check_device_type(ata_disk* d) {
@@ -344,10 +344,10 @@ static int check_device_type(ata_disk* d) {
 
     select_device(d);
 
-    error = _read_port(reg_error(c));
-    lbam = _read_port(reg_lbam(c));
-    lbah = _read_port(reg_lbah(c));
-    status = _read_port(reg_status(c));
+    error = read_port(reg_error(c));
+    lbam = read_port(reg_lbam(c));
+    lbah = read_port(reg_lbah(c));
+    status = read_port(reg_status(c));
 
     if ((error != 1 && (error != 0x81 || d->dev_no == 1)) || (status & STA_DRDY) == 0 || (status & STA_BSY) != 0) {
         d->is_ata = 0;
@@ -373,7 +373,7 @@ static void identify_ata_device(ata_disk* d) {
     issue_pio_command(c, CMD_IDENTIFY_DEVICE);
 
     // printk("[hdd] sema iden wait << \n");
-    cond_wait_for_intr(&c->sema);
+    cond_wait_at_intr(&c->sema);
     // printk("[hdd] sema iden wait >> \n");
 
     if (!wait_while_busy(d)) {
@@ -668,7 +668,7 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     if (item) {
         RemoveEntryList(&item->time_list);
         list_insert_tail(&p->cache.timer_list_head, &item->time_list);
-        cond_trigger(&p->cache_lock);
+        cond_notify(&p->cache_lock);
         memcpy(buf, (char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
@@ -686,12 +686,12 @@ static int partition_cache_read(void* aux, unsigned sector, void* buf, unsigned 
     if (item) {
         total_read += PREREAD_SECTOR;
         hdd_cache_update_all(aux, p, item, head_sector, 0);
-        cond_trigger(&p->cache_lock);
+        cond_notify(&p->cache_lock);
         memcpy(buf, (char*)item->buf + sector_off * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
         return BLOCK_SECTOR_SIZE;
     }
 
-    cond_trigger(&p->cache_lock);
+    cond_notify(&p->cache_lock);
     return -1;
 }
 
@@ -703,14 +703,14 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
     item = hdd_cache_lookup(p, sector);
     if (item) {
         hdd_cache_update(p, item, sector, buf, 1);
-        cond_trigger(&p->cache_lock);
+        cond_notify(&p->cache_lock);
         return BLOCK_SECTOR_SIZE;
     }
 
     item = hdd_cache_find_empty(p, sector);
     if (item) {
         hdd_cache_update(p, item, sector, buf, 1);
-        cond_trigger(&p->cache_lock);
+        cond_notify(&p->cache_lock);
         return len;
     }
 
@@ -718,11 +718,11 @@ static int partition_cache_write(void* aux, unsigned sector, void* buf, unsigned
     if (item) {
         hdd_cache_flush(p, item);
         hdd_cache_update(p, item, sector, buf, 1);
-        cond_trigger(&p->cache_lock);
+        cond_notify(&p->cache_lock);
         return len;
     }
 
-    cond_trigger(&p->cache_lock);
+    cond_notify(&p->cache_lock);
     return -1;
 }
 #else
@@ -789,7 +789,7 @@ static void wait_until_idle(const ata_disk* d) {
     int i;
 
     for (i = 0; i < 1000; i++) {
-        if ((_read_port(reg_status(d->channel)) & (STA_BSY | STA_DRQ)) == 0)
+        if ((read_port(reg_status(d->channel)) & (STA_BSY | STA_DRQ)) == 0)
             return;
         delay(10);
     }
@@ -808,7 +808,7 @@ static void select_device_wait(const ata_disk* d) {
 }
 
 static void issue_pio_command(channel* c, unsigned char command) {
-    _write_port(reg_command(c), command);
+    write_port(reg_command(c), command);
 }
 
 static void input_sector(channel* c, void* sector) {
@@ -844,11 +844,11 @@ static void select_sector(ata_disk* d, unsigned int sec_no) {
     channel* c = d->channel;
 
     select_device_wait(d);
-    _write_port(reg_nsect(c), 1);
-    _write_port(reg_lbal(c), sec_no);
-    _write_port(reg_lbam(c), sec_no >> 8);
-    _write_port(reg_lbah(c), (sec_no >> 16));
-    _write_port(reg_device(c), DEV_MBS | DEV_LBA | (d->dev_no == 1 ? DEV_DEV : 0) | (sec_no >> 24));
+    write_port(reg_nsect(c), 1);
+    write_port(reg_lbal(c), sec_no);
+    write_port(reg_lbam(c), sec_no >> 8);
+    write_port(reg_lbah(c), (sec_no >> 16));
+    write_port(reg_device(c), DEV_MBS | DEV_LBA | (d->dev_no == 1 ? DEV_DEV : 0) | (sec_no >> 24));
 }
 
 static time_t read_select, read_wait, read_io;
@@ -862,17 +862,17 @@ static unsigned long read_times = 0, write_times = 0;
 static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len) {
     ata_disk* d = aux;
     channel* c = d->channel;
-    cond_wait_for_intr(&c->iolock);
+    cond_wait_at_intr(&c->iolock);
 
     select_sector(d, sec_no);
 
     issue_pio_command(c, CMD_READ_SECTOR_RETRY);
 
-    cond_wait_for_intr(&c->sema);
+    cond_wait_at_intr(&c->sema);
 
     input_sector(c, buf);
 
-    cond_trigger_at_intr(&c->iolock);
+    cond_notify_at_intr(&c->iolock);
 
     return len;
 }
@@ -880,7 +880,7 @@ static int hdd_read(void* aux, unsigned sec_no, void* buf, unsigned len) {
 static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len) {
     ata_disk* d = aux;
     channel* c = d->channel;
-    cond_wait_for_intr(&c->iolock);
+    cond_wait_at_intr(&c->iolock);
 
     select_sector(d, sec_no);
 
@@ -888,9 +888,9 @@ static int hdd_write(void* aux, unsigned sec_no, void* buf, unsigned len) {
 
     output_sector(c, buf);
 
-    cond_wait_for_intr(&c->sema);
+    cond_wait_at_intr(&c->sema);
 
-    cond_trigger_at_intr(&c->iolock);
+    cond_notify_at_intr(&c->iolock);
 
     return len;
 }

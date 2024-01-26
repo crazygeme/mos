@@ -10,6 +10,7 @@
 #include <multiboot.h>
 #include <pci.h>
 #include <mm.h>
+#include <macro.h>
 
 unsigned resolution_x;
 unsigned resolution_y;
@@ -875,7 +876,7 @@ void fb_enable() {
         for (dma = fb_buffer; dma < (_fb_buffer_phy + mm_size); dma += PAGE_SIZE) {
             mm_add_resource_map(dma);
         }
-        REFRESH_CACHE();
+        RELOAD_CR3();
         _fb_buffer = _fb_buffer_phy;
     }
 }

@@ -89,7 +89,7 @@ static void cyb_putc_internal(cy_buf* b, unsigned char key, int notifyOnWrite) {
 
     if (notifyOnWrite)
         if (needs_trigger)
-            cond_trigger(&b->lock);
+            cond_notify(&b->lock);
 }
 
 void cyb_putc(cy_buf* b, unsigned char key) {
@@ -110,7 +110,7 @@ void cyb_putbuf(cy_buf* b, unsigned char* buf, unsigned len) {
     }
 
     if (needs_trigger)
-        cond_trigger(&b->lock);
+        cond_notify(&b->lock);
 }
 
 unsigned char cyb_getc(cy_buf* b) {
@@ -164,7 +164,7 @@ int cyb_reader_count(cy_buf* b) {
 
 int cyb_writer_close(cy_buf* b) {
     PIPE_WRITER_DECREASE(b);
-    cond_trigger(&b->lock);
+    cond_notify(&b->lock);
     cyb_destroy(b);
 }
 

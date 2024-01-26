@@ -74,12 +74,10 @@ These are the interrupted task's saved registers. */
     unsigned short ss, : 16; /* Data segment for esp. */
 } __attribute__((packed)) intr_frame;
 
-extern unsigned char read_port(unsigned short port);
-extern void write_port(unsigned short port, unsigned char data);
 extern void asm_interrupt_handle_for_keyboard();
 extern void shutdown();
-extern unsigned char _read_port(unsigned short port);
-extern void _write_port(unsigned short port, unsigned char data);
+extern unsigned char read_port(unsigned short port);
+extern void write_port(unsigned short port, unsigned char data);
 void _read_sb(unsigned short port, void* addr, unsigned cnt);
 unsigned short _read_word(unsigned short port);
 void _read_wb(unsigned short port, void* addr, unsigned cnt);
@@ -91,22 +89,7 @@ void _write_wb(unsigned short port, const void* addr, unsigned cnt);
 void _write_dword(unsigned short port, unsigned int data);
 void _write_dwb(unsigned short port, const void* addr, unsigned cnt);
 
-_START void write_word(unsigned short port, unsigned short data);
-
-_START unsigned short read_word(unsigned short port);
-
-_START unsigned int read_dword(unsigned short port);
-
-_START void write_dword(unsigned short port, unsigned int data);
-
-_START void int_init();
-
 void int_update_tss(void* address);
-
-_START unsigned int_get_phymem_size();
-
-_START extern void RELOAD_KERNEL_CS();
-_START extern void RELOAD_USER_CS();
 
 void int_enable_all();
 
@@ -123,32 +106,5 @@ unsigned int_intr_enable();
 unsigned int_intr_disable();
 
 void int_intr_setlevel(unsigned enabled);
-
-#define LOAD_CR3(val) __asm__("movl %%cr3, %0" : "=r"(val))
-
-#define RELOAD_KERNEL_DS()                                  \
-    __asm__("movw %0, %%ax" : : "I"(KERNEL_DATA_SELECTOR)); \
-    __asm__("movw %ax, %ds");                               \
-    __asm__("movw %ax, %es");                               \
-    __asm__("movw %ax, %fs");                               \
-    __asm__("movw %ax, %gs");                               \
-    __asm__("movw %ax, %ss");
-
-#define RELOAD_USER_DS()                                  \
-    __asm__("movw %0, %%ax" : : "I"(USER_DATA_SELECTOR)); \
-    __asm__("movw %ax, %ds");                             \
-    __asm__("movw %ax, %es");                             \
-    __asm__("movw %ax, %fs");                             \
-    __asm__("movw %ax, %gs");                             \
-    __asm__("movw %ax, %ss");
-
-#define SET_ESP(val) __asm__("movl %0, %%esp" : : "m"(val))
-
-#define SET_EBP(val) __asm__("movl %0, %%ebp" : : "q"(val))
-
-#define SET_EIP(val) __asm__("jmp %0" : : "q"(val))
-
-extern void _RELOAD_KERNEL_CS();
-extern void _RELOAD_USER_CS();
 
 #endif

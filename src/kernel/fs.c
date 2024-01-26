@@ -285,7 +285,7 @@ int fs_open(const char* path, int flag, char* mode) {
 fail:
     fd = ret;
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return fd;
 }
 
@@ -301,7 +301,7 @@ int fs_close(int fd) {
     cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
     memset(&cur->fds[fd], 0, sizeof(file_descriptor));
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
 
     if (fp == NULL)
         return -1;
@@ -355,7 +355,7 @@ int fs_fstat(int fd, struct stat* s) {
 
     cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
 
     if (fp == NULL)
         return -1;
@@ -406,7 +406,7 @@ int fs_pipe(int* pipefd) {
     pipefd[1] = writer;
     ret = 0;
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -431,7 +431,7 @@ int fs_dup(int fd) {
     cur->fds[newfd].flag &= ~O_CLOEXEC;
     ret = newfd;
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -457,7 +457,7 @@ int fs_dup2(int fd, int newfd) {
     cur->fds[newfd] = cur->fds[fd];
     cur->fds[newfd].flag &= ~O_CLOEXEC;
     ret = newfd;
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -489,7 +489,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low, uint64_t* resul
     if (ret >= 0 && fp->op.tell)
         cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -512,7 +512,7 @@ int fs_seek(int fd, unsigned offset, unsigned whence) {
     if (ret >= 0 && fp->op.tell)
         cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -533,7 +533,7 @@ int fs_select(int fd, unsigned type) {
 
     ret = fp->op.select(fp->inode, type);
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -554,7 +554,7 @@ int fs_ioctl(int fd, unsigned cmd, void* buf) {
 
     ret = fp->op.ioctl(fp->inode, cmd, buf);
 done:
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
     return ret;
 }
 
@@ -576,7 +576,7 @@ int fs_fchmod(int fd, uint32_t mode) {
 
     cond_wait(&cur->fd_lock);
     fp = cur->fds[fd].fp;
-    cond_trigger(&cur->fd_lock);
+    cond_notify(&cur->fd_lock);
 
     ret = ext4_fchmod(fp->inode, mode);
     return (0 - ret);

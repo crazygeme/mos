@@ -48,8 +48,6 @@ static int elf_find_interp(filep fp, unsigned table_offset, unsigned size, unsig
         elf_read(fp, head_offset, &phdr, sizeof(phdr));
         if (phdr.p_type == PT_INTERP) {
             return elf_read_interp(fp, &phdr, path);
-        } else {
-            continue;
         }
     }
 
@@ -66,20 +64,18 @@ static unsigned elf_map_programs(filep fp, unsigned table_offset, unsigned size,
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
         elf_read(fp, head_offset, &phdr, sizeof(phdr));
-        if (/*phdr.p_type == PT_DYNAMIC ||*/
-            phdr.p_type == PT_LOAD) {
-            elf_map_section(fp, &phdr, 0);
-            k = phdr.p_filesz + phdr.p_vaddr;
-            if (k > elf_bss) {
-                elf_bss = k;
-            }
-            k = phdr.p_memsz + phdr.p_vaddr;
-            if (k > last_bss) {
-                last_bss = k;
-            }
-
-        } else {
+        if (phdr.p_type != PT_LOAD) {
             continue;
+        }
+
+        elf_map_section(fp, &phdr, 0);
+        k = phdr.p_filesz + phdr.p_vaddr;
+        if (k > elf_bss) {
+            elf_bss = k;
+        }
+        k = phdr.p_memsz + phdr.p_vaddr;
+        if (k > last_bss) {
+            last_bss = k;
         }
     }
 
@@ -110,8 +106,6 @@ static unsigned elf_map_elf_hdr(filep fp, unsigned table_offset, unsigned size, 
             fmt->elf_load_addr = (phdr.p_vaddr & PAGE_SIZE_MASK);
         } else if (phdr.p_type == PT_LOAD /* || phdr.p_type == PT_DYNAMIC */) {
             elf_map_section(fp, &phdr, 0);
-        } else {
-            continue;
         }
     }
 
@@ -137,11 +131,8 @@ static unsigned elf_map_programs_at(filep fp, unsigned table_offset, unsigned si
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
         elf_read(fp, head_offset, &phdr, sizeof(phdr));
-        if (/*phdr.p_type == PT_DYNAMIC ||*/
-            phdr.p_type == PT_LOAD) {
+        if (phdr.p_type == PT_LOAD) {
             elf_map_section_at(fp, &phdr, bias);
-        } else {
-            continue;
         }
     }
     return 1;
@@ -156,17 +147,18 @@ static unsigned elf_map_get_dynamic_pages(filep fp, unsigned table_offset, unsig
         unsigned head_offset = table_offset + i * size;
         Elf32_Phdr phdr;
         elf_read(fp, head_offset, &phdr, sizeof(phdr));
-        if (phdr.p_type == PT_LOAD) {
-            unsigned va_begin = phdr.p_vaddr & PAGE_SIZE_MASK;
-            unsigned va_end = (phdr.p_vaddr + phdr.p_memsz - 1) & PAGE_SIZE_MASK;
-            if (va_begin < va_page_start) {
-                va_page_start = va_begin;
-            }
-            if (va_end > va_page_end) {
-                va_page_end = va_end;
-            }
-        } else {
+        if (phdr.p_type != PT_LOAD) {
             continue;
+        }
+
+        unsigned va_begin = phdr.p_vaddr & PAGE_SIZE_MASK;
+        unsigned va_end = (phdr.p_vaddr + phdr.p_memsz - 1) & PAGE_SIZE_MASK;
+        if (va_begin < va_page_start) {
+            va_page_start = va_begin;
+        }
+
+        if (va_end > va_page_end) {
+            va_page_end = va_end;
         }
     }
 
@@ -180,7 +172,6 @@ static unsigned elf_map_dynamic(char* path, mos_binfmt* fmt) {
     Elf32_Ehdr elf;
 
     if (fp == NULL) {
-        klog("!!!!!!!!!!!\n");
         return 0;
     }
     // elf header will at the beginning of va anyway
@@ -223,7 +214,6 @@ unsigned elf_map(char* path, mos_binfmt* fmt) {
     memset(interp, 0, MAX_PATH);
 
     if (fp == NULL) {
-        klog("!!!!!!!!!!!\n");
         name_put(interp);
         return 0;
     }

@@ -3,17 +3,17 @@
 
 #include <list.h>
 
-typedef void (*dsr_callback)(void* param);
+typedef void (*dsr_callback)(void *param);
 
 typedef struct _dsr_node {
-    dsr_callback fn;
-    void* param;
-    list_entry dsr_list;
+	dsr_callback fn;
+	void *param;
+	list_entry dsr_list;
 } dsr_node, *dsr_node_t;
 
 void dsr_init();
 
-void dsr_add(dsr_callback fn, void* param);
+void dsr_add(dsr_callback fn, void *param);
 
 void dsr_process();
 

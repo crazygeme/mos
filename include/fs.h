@@ -54,51 +54,52 @@ typedef struct _block block;
 #define FS_SELECT_EXCEPT 2
 
 typedef struct _fileop {
-    int (*close)(void* inode);
-    int (*read)(void* inode, void* buf, size_t size, size_t* rcnt);
-    int (*write)(void* inode, const void* buf, size_t size, size_t* wcnt);
-    int (*seek)(void* inode, uint64_t offset, uint32_t origin);
-    int (*llseek)(void* inode, unsigned high, unsigned low, uint64_t* result, uint32_t origin);
-    int (*stat)(void* inode, struct stat* s);
-    uint64_t (*tell)(void* inode);
-    int (*select)(void* inode, unsigned type);
-    int (*ioctl)(void* inode, unsigned cmd, void* buf);
+	int (*close)(void *inode);
+	int (*read)(void *inode, void *buf, size_t size, size_t *rcnt);
+	int (*write)(void *inode, const void *buf, size_t size, size_t *wcnt);
+	int (*seek)(void *inode, uint64_t offset, uint32_t origin);
+	int (*llseek)(void *inode, unsigned high, unsigned low,
+		      uint64_t *result, uint32_t origin);
+	int (*stat)(void *inode, struct stat *s);
+	uint64_t (*tell)(void *inode);
+	int (*select)(void *inode, unsigned type);
+	int (*ioctl)(void *inode, unsigned cmd, void *buf);
 } fileop;
 
 typedef struct _file {
-    int file_type;
-    void* inode;
-    unsigned ref_cnt;
-    unsigned mode;
-    int istty;
-    fileop op;
-    char* name;
+	int file_type;
+	void *inode;
+	unsigned ref_cnt;
+	unsigned mode;
+	int istty;
+	fileop op;
+	char *name;
 } file;
-typedef file* filep;
+typedef file *filep;
 
 typedef struct _file_descriptor {
-    filep fp;
-    unsigned flag;
-    unsigned file_off;
-    unsigned used;
+	filep fp;
+	unsigned flag;
+	unsigned file_off;
+	unsigned used;
 } file_descriptor;
 
 struct linux_dirent {
-    unsigned long d_ino;     /* Inode number */
-    unsigned long d_off;     /* Offset to next linux_dirent */
-    unsigned short d_reclen; /* Length of this linux_dirent */
-    char d_name[];           /* Filename (null-terminated) */
+	unsigned long d_ino; /* Inode number */
+	unsigned long d_off; /* Offset to next linux_dirent */
+	unsigned short d_reclen; /* Length of this linux_dirent */
+	char d_name[]; /* Filename (null-terminated) */
 };
 
 #define ROUND_UP(x) (((x) + sizeof(long) - 1) & ~(sizeof(long) - 1))
-#define NAME_OFFSET(de) ((int)((de)->d_name - (char*)(de)))
+#define NAME_OFFSET(de) ((int)((de)->d_name - (char *)(de)))
 
 #define NAME_MAX 255
 struct old_linux_dirent {
-    unsigned long d_ino;       /* inode number */
-    unsigned long d_off;       /* offset to this old_linux_dirent */
-    unsigned short d_reclen;   /* length of this d_name */
-    char d_name[NAME_MAX + 1]; /* filename (null-terminated) */
+	unsigned long d_ino; /* inode number */
+	unsigned long d_off; /* offset to this old_linux_dirent */
+	unsigned short d_reclen; /* length of this d_name */
+	char d_name[NAME_MAX + 1]; /* filename (null-terminated) */
 };
 
 #define MAX_FD ((PAGE_SIZE) / sizeof(file_descriptor))
@@ -106,9 +107,9 @@ struct old_linux_dirent {
 filep fs_alloc_filep_tty();
 filep fs_alloc_filep_kb();
 filep fs_alloc_filep_null();
-int fs_alloc_filep_pipe(filep* pipes);
+int fs_alloc_filep_pipe(filep *pipes);
 
-int ext4_blockdev_register(block* aux, char* name, int sec_size, int sec_cnt);
+int ext4_blockdev_register(block *aux, char *name, int sec_size, int sec_cnt);
 
 void fs_mount_root();
 

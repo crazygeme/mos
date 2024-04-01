@@ -32,43 +32,43 @@ a few have provided the majority of the input and deserve special mention:
 //  definitions should be used for loop control when the table is searched.
 
 typedef struct _PCI_VENTABLE {
-    unsigned short VenId;
-    const char* VenShort;
-    const char* VenFull;
+	unsigned short VenId;
+	const char *VenShort;
+	const char *VenFull;
 } PCI_VENTABLE, *PPCI_VENTABLE;
 
 extern PCI_VENTABLE PciVenTable[];
 extern int PCI_VENTABLE_LEN;
 
 typedef struct _PCI_DEVTABLE {
-    unsigned short VenId;
-    unsigned short DevId;
-    const char* Chip;
-    const char* ChipDesc;
+	unsigned short VenId;
+	unsigned short DevId;
+	const char *Chip;
+	const char *ChipDesc;
 } PCI_DEVTABLE, *PPCI_DEVTABLE;
 
 extern PCI_DEVTABLE PciDevTable[];
 extern int PCI_DEVTABLE_LEN;
 
 typedef struct _PCI_CLASSCODETABLE {
-    unsigned char BaseClass;
-    unsigned char SubClass;
-    unsigned char ProgIf;
-    const char* BaseDesc;
-    const char* SubDesc;
-    const char* ProgDesc;
+	unsigned char BaseClass;
+	unsigned char SubClass;
+	unsigned char ProgIf;
+	const char *BaseDesc;
+	const char *SubDesc;
+	const char *ProgDesc;
 } PCI_CLASSCODETABLE, *PPCI_CLASSCODETABLE;
 
 extern PCI_CLASSCODETABLE PciClassCodeTable[];
 extern int PCI_CLASSCODETABLE_LEN;
 
-extern const char* PciCommandFlags[];
+extern const char *PciCommandFlags[];
 extern int PCI_COMMANDFLAGS_LEN;
 
-extern const char* PciStatusFlags[];
+extern const char *PciStatusFlags[];
 extern int PCI_STATUSFLAGS_LEN;
 
-extern const char* PciDevSelFlags[];
+extern const char *PciDevSelFlags[];
 extern int PCI_DEVSELFLAGS_LEN;
 
 #endif

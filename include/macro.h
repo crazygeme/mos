@@ -3,13 +3,13 @@
 
 #define LOAD_CR3(val) __asm__("movl %%cr3, %0" : "=r"(val))
 
-#define SET_DS(val)                        \
-    __asm__("movw %0, %%ax" : : "I"(val)); \
-    __asm__("movw %ax, %ds");              \
-    __asm__("movw %ax, %es");              \
-    __asm__("movw %ax, %fs");              \
-    __asm__("movw %ax, %gs");              \
-    __asm__("movw %ax, %ss");
+#define SET_DS(val)                            \
+	__asm__("movw %0, %%ax" : : "I"(val)); \
+	__asm__("movw %ax, %ds");              \
+	__asm__("movw %ax, %es");              \
+	__asm__("movw %ax, %fs");              \
+	__asm__("movw %ax, %gs");              \
+	__asm__("movw %ax, %ss");
 
 #define SET_CS(val) __asm__("ljmp %0, $1f \n1:\n\tnop" : : "I"(val));
 
@@ -27,24 +27,25 @@
 
 #define SET_CR3(val) __asm__("movl %0, %%cr3" : : "q"(val));
 
-#define ENABLE_PAGING()              \
-    __asm__("movl %cr0,%eax");       \
-    __asm__("orl $0x80000000,%eax"); \
-    __asm__("movl %eax,%cr0");
+#define ENABLE_PAGING()                  \
+	__asm__("movl %cr0,%eax");       \
+	__asm__("orl $0x80000000,%eax"); \
+	__asm__("movl %eax,%cr0");
 
-#define RELOAD_CR3()                                \
-    do {                                            \
-        unsigned __cr3__;                           \
-        __asm__("movl %%cr3, %0" : "=q"(__cr3__));  \
-        __asm__("movl %0, %%cr3" : : "q"(__cr3__)); \
-    } while (0)
+#define RELOAD_CR3()                                        \
+	do {                                                \
+		unsigned __cr3__;                           \
+		__asm__("movl %%cr3, %0" : "=q"(__cr3__));  \
+		__asm__("movl %0, %%cr3" : : "q"(__cr3__)); \
+	} while (0)
 
-#define RELOAD_EIP() __asm__("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop");
+#define RELOAD_EIP() \
+	__asm__("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop");
 
-#define RELOAD_ESP()                                  \
-    __asm__("movl %esp, %ecx");                       \
-    __asm__("addl %0, %%ecx" : : "i"(KERNEL_OFFSET)); \
-    __asm__("movl %ecx, %esp");
+#define RELOAD_ESP()                                      \
+	__asm__("movl %esp, %ecx");                       \
+	__asm__("addl %0, %%ecx" : : "i"(KERNEL_OFFSET)); \
+	__asm__("movl %ecx, %esp");
 
 #define ROUND_UP(X, STEP) (((X) + (STEP)-1) / (STEP) * (STEP))
 

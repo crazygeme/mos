@@ -203,7 +203,7 @@
 #define __NR_quota 198
 #define NR_syscalls 199
 
-#define _SYS_NAMELEN 65  // in linux 2.1
+#define _SYS_NAMELEN 65 // in linux 2.1
 
 /// TTY
 #define IOCTL_TTY 0
@@ -233,100 +233,100 @@
 #define MOS_REBOOT_CMD_KEXEC 0x45584543
 
 struct utsname {
-    char sysname[_SYS_NAMELEN];  /* [XSI] Name of OS */
-    char nodename[_SYS_NAMELEN]; /* [XSI] Name of this network node */
-    char release[_SYS_NAMELEN];  /* [XSI] Release level */
-    char version[_SYS_NAMELEN];  /* [XSI] Version level */
-    char machine[_SYS_NAMELEN];  /* [XSI] Hardware type */
-    char domain[_SYS_NAMELEN];
+	char sysname[_SYS_NAMELEN]; /* [XSI] Name of OS */
+	char nodename[_SYS_NAMELEN]; /* [XSI] Name of this network node */
+	char release[_SYS_NAMELEN]; /* [XSI] Release level */
+	char version[_SYS_NAMELEN]; /* [XSI] Version level */
+	char machine[_SYS_NAMELEN]; /* [XSI] Hardware type */
+	char domain[_SYS_NAMELEN];
 };
 
 // oldstat
 struct oldstat {
-    unsigned short st_dev;
-    unsigned short st_ino;
-    unsigned short st_mode;
-    unsigned short st_nlink;
-    unsigned short st_uid;
-    unsigned short st_gid;
-    unsigned short st_rdev;
-    unsigned long st_size;
-    unsigned long st_atime;
-    unsigned long st_mtime;
-    unsigned long st_ctime;
+	unsigned short st_dev;
+	unsigned short st_ino;
+	unsigned short st_mode;
+	unsigned short st_nlink;
+	unsigned short st_uid;
+	unsigned short st_gid;
+	unsigned short st_rdev;
+	unsigned long st_size;
+	unsigned long st_atime;
+	unsigned long st_mtime;
+	unsigned long st_ctime;
 };
 
 struct stat {
-    unsigned long st_dev;
-    unsigned long st_ino;
-    unsigned short st_mode;
-    unsigned short st_nlink;
-    unsigned short st_uid;
-    unsigned short st_gid;
-    unsigned long st_rdev;
-    unsigned long st_size;
-    unsigned long st_blksize;
-    unsigned long st_blocks;
-    unsigned long st_atime;
-    unsigned long __unused1;
-    unsigned long st_mtime;
-    unsigned long __unused2;
-    unsigned long st_ctime;
-    unsigned long __unused3;
-    unsigned long __unused4;
-    unsigned long __unused5;
+	unsigned long st_dev;
+	unsigned long st_ino;
+	unsigned short st_mode;
+	unsigned short st_nlink;
+	unsigned short st_uid;
+	unsigned short st_gid;
+	unsigned long st_rdev;
+	unsigned long st_size;
+	unsigned long st_blksize;
+	unsigned long st_blocks;
+	unsigned long st_atime;
+	unsigned long __unused1;
+	unsigned long st_mtime;
+	unsigned long __unused2;
+	unsigned long st_ctime;
+	unsigned long __unused3;
+	unsigned long __unused4;
+	unsigned long __unused5;
 };
 
 struct stat64 {
-    unsigned long long st_dev;
-    unsigned char __pad0[4];
+	unsigned long long st_dev;
+	unsigned char __pad0[4];
 
-    unsigned long __st_ino;
+	unsigned long __st_ino;
 
-    unsigned int st_mode;
-    unsigned int st_nlink;
+	unsigned int st_mode;
+	unsigned int st_nlink;
 
-    unsigned long st_uid;
-    unsigned long st_gid;
+	unsigned long st_uid;
+	unsigned long st_gid;
 
-    unsigned long long st_rdev;
-    unsigned char __pad3[4];
+	unsigned long long st_rdev;
+	unsigned char __pad3[4];
 
-    long long st_size;
-    unsigned long st_blksize;
+	long long st_size;
+	unsigned long st_blksize;
 
-    /* Number 512-byte blocks allocated. */
-    unsigned long long st_blocks;
+	/* Number 512-byte blocks allocated. */
+	unsigned long long st_blocks;
 
-    unsigned long st_atime;
-    unsigned long st_atime_nsec;
+	unsigned long st_atime;
+	unsigned long st_atime_nsec;
 
-    unsigned long st_mtime;
-    unsigned int st_mtime_nsec;
+	unsigned long st_mtime;
+	unsigned int st_mtime_nsec;
 
-    unsigned long st_ctime;
-    unsigned long st_ctime_nsec;
+	unsigned long st_ctime;
+	unsigned long st_ctime_nsec;
 
-    unsigned long long st_ino;
+	unsigned long long st_ino;
 };
 
 struct krnquota {
-    unsigned heap_cur;  // current usage
-    unsigned heap_wm;   // water mask
-    unsigned heap_top;
-    unsigned phymm_max;
-    unsigned phymm_cur;
-    unsigned phymm_wm;
-    unsigned pgc_count;
-    unsigned pgc_top;
-    unsigned sched_spent;
-    unsigned total_spent;
-    unsigned page_fault;
+	unsigned heap_cur; // current usage
+	unsigned heap_wm; // water mask
+	unsigned heap_top;
+	unsigned phymm_max;
+	unsigned phymm_cur;
+	unsigned phymm_wm;
+	unsigned pgc_count;
+	unsigned pgc_top;
+	unsigned sched_spent;
+	unsigned total_spent;
+	unsigned page_fault;
 };
 
-#define R_OK 4  // test read access right
-#define W_OK 2  // test write access right
-#define X_OK 1  // test execution access right
-#define F_OK 0  // test file exist
+#define R_OK 4 // test read access right
+#define W_OK 2 // test write access right
+#define X_OK 1 // test execution access right
+#define F_OK 0 // test file exist
 
 #endif

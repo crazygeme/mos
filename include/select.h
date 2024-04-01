@@ -6,7 +6,7 @@ typedef int __fd_mask;
 #define __FDELT(d) ((d) / __NFDBITS)
 #define __FDMASK(d) ((__fd_mask)1 << ((d) % __NFDBITS))
 typedef struct {
-    __fd_mask __fds_bits[__FD_SETSIZE / __NFDBITS];
+	__fd_mask __fds_bits[__FD_SETSIZE / __NFDBITS];
 #define __FDS_BITS(set) ((set)->__fds_bits)
 
 } fd_set;
@@ -32,7 +32,7 @@ typedef __fd_mask fd_mask;
 #define FD_ISSET(fd, fdsetp) __FD_ISSET(fd, fdsetp)
 #define FD_ZERO(fdsetp) __FD_ZERO(fdsetp)
 
-int do_select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, const struct timespec* timeout,
-              void* sigmask);
+int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+	      const struct timespec *timeout, void *sigmask);
 
 #endif

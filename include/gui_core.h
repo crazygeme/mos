@@ -7,10 +7,12 @@
 void gui_fill_rectangle(int x, int y, int width, int height, unsigned color);
 
 // this is very slow because of float point number is slow
-void gui_fill_rectangle_alpha(int x, int y, int width, int height, unsigned color, double alpha);
+void gui_fill_rectangle_alpha(int x, int y, int width, int height,
+			      unsigned color, double alpha);
 
-void gui_fill_rectange_gradually(int x, int y, int width, int height, unsigned from, unsigned to);
+void gui_fill_rectange_gradually(int x, int y, int width, int height,
+				 unsigned from, unsigned to);
 
-int gui_fill_picture(const char* path);
+int gui_fill_picture(const char *path);
 
 #endif

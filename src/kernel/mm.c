@@ -23,8 +23,6 @@ unsigned mm_get_pagedir()
 	return cr3 + KERNEL_OFFSET;
 }
 
-extern void kmain_startup();
-
 typedef struct _page_table_cache {
 	unsigned int top;
 	unsigned int count;
@@ -77,8 +75,17 @@ static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
 
 page_table_cache_t page_table_cache;
 
+typedef struct _name_cache {
+	list_entry list;
+	void *buf;
+} name_cache;
+
+static name_cache name_cache_head;
+static spinlock mm_lock;
+static spinlock path_lock;
+
 // take 8M ~ 12M as page table cache
-static void mm_init_page_table_cache()
+void mm_init_page_table_cache()
 {
 	int i = 0;
 
@@ -87,17 +94,12 @@ static void mm_init_page_table_cache()
 	for (i = 0; i < 1024; i++) {
 		pgc_entry_count[i] = 0;
 	}
+
+	spinlock_init(&mm_lock);
+	spinlock_init(&path_lock);
+	list_init(&name_cache_head);
 }
 
-typedef struct _name_cache {
-	list_entry list;
-	void *buf;
-} name_cache;
-
-static name_cache name_cache_head;
-
-static spinlock mm_lock;
-static spinlock path_lock;
 static void lock_mm()
 {
 	spinlock_lock(&mm_lock);
@@ -106,25 +108,6 @@ static void lock_mm()
 static void unlock_mm()
 {
 	spinlock_unlock(&mm_lock);
-}
-
-void boot_stage2()
-{
-	phymm_max = (phy_mem_high) / PAGE_SIZE;
-
-	phymm_valid = phymm_get_mgmt_pages(phy_mem_high);
-	phymm_valid += (phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
-
-	mm_init_page_table_cache();
-
-	// physical memory management
-	phymm_setup_mgmt_pages(phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
-
-	spinlock_init(&mm_lock);
-	spinlock_init(&path_lock);
-	list_init(&name_cache_head);
-
-	kmain_startup();
 }
 
 static void mm_clear_beginning_user_map()

@@ -3,12 +3,13 @@
 #include <mm.h>
 #include <int.h>
 #include <macro.h>
+#include <phymm.h>
 
 #define GET_BOOT_ADDR(type, addr) ((type)((unsigned)addr - KERNEL_OFFSET))
 #define _START __attribute__((section(".multiboot")))
 
 extern void syscall_handler();
-extern void boot_stage2();
+extern void kmain_startup();
 
 multiboot_info_t *g_mb;
 unsigned long long gdt[SELECTOR_COUNT];
@@ -167,7 +168,16 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	// ok now we make esp as virtual address
 	RELOAD_ESP();
 
-	boot_stage2();
+	phymm_max = (phy_mem_high) / PAGE_SIZE;
+	phymm_valid = phymm_get_mgmt_pages(phy_mem_high);
+	phymm_valid += (phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
+
+	mm_init_page_table_cache();
+
+	// physical memory management
+	phymm_setup_mgmt_pages(phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
+
+	kmain_startup();
 
 	// never to here
 	return;

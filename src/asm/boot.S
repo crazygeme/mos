@@ -4,7 +4,7 @@
 #define FLAGS (MBALIGN | MEMINFO)       // this is the Multiboot 'flag' field
 #define MAGIC 0x1BADB002                //'magic number' lets bootloader find the header
 #define CHECKSUM (-(MAGIC + FLAGS))     // checksum of above, to prove we are multiboot
-
+.section .note.GNU-stack,"",@progbits
 
 .section              .multiboot
 

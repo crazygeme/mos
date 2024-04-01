@@ -1,13 +1,24 @@
 include $(MAINPATH)/mos.mk
 
-SRCS = $(wildcard *.c ./lwext4/src/*.c)
-OBJS = $(patsubst %.c,%.o,$(SRCS))
+SRC_DIRS = lwext4/src
+SRCS = $(wildcard *.c $(SRC_DIRS)/*.c)
+OBJS = $(patsubst %,$(DST)/lwext4/%,$(notdir $(SRCS:.c=.c.o)))
+DEPS = $(patsubst %.c,%.c.d,$(SRCS))
+
+vpath %.c  $(SRC_DIRS)
 
 all: $(OBJS)
-	$(AR) rcs $(DST)/libext4.a $(OBJS)
+	@echo "AR $(DST)/lwext4/libext4.a"
+	@$(AR) rcs $(DST)/lwext4/libext4.a $(OBJS)
 
-%.o: %.c
-	$(CC) $(CFLAGS) -o $@ $^
+$(DST)/lwext4:
+	@-mkdir -p $(DST)/lwext4
+
+$(DST)/lwext4/%.c.o: %.c | $(DST)/lwext4
+	@echo "CC $<"
+	@$(CC) $(CFLAGS) -MMD -o $@ -c $^
 
 clean:
 	-rm -f $(OBJS)
+
+-include $(DEPS)

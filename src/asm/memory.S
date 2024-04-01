@@ -33,6 +33,8 @@
          * (ov)bcopy (src,dst,cnt)
          *  ws@tools.de     (Wolfgang Solfrank, TooLs GmbH) +49-228-985800
          */
+.section .note.GNU-stack,"",@progbits
+.text
 .global bcopy
 .func bcopy
 bcopy:

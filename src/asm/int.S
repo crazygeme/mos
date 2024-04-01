@@ -1,5 +1,8 @@
 #include "config.h"
-        .text
+
+.section .note.GNU-stack,"",@progbits
+
+.text
 
 /* Main interrupt entry point.
 
@@ -217,6 +220,7 @@ STUB(f8, zero) STUB(f9, zero) STUB(fa, zero) STUB(fb, zero)
 STUB(fc, zero) STUB(fd, zero) STUB(fe, zero) STUB(ff, zero)
 
 
+.text
 .func switch_to_user_mode
 switch_to_user_mode:
     cli;

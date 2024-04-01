@@ -11,4 +11,4 @@ void profiling_stop();
 
 void profiling_add_record(unsigned eip);
 
-#endif  // MOS_PROFILING_H
+#endif // MOS_PROFILING_H

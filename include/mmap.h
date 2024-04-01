@@ -1,12 +1,12 @@
 #ifndef _MMAP_H_
 #define _MMAP_H_
-typedef void* vm_struct_t;
+typedef void *vm_struct_t;
 
 typedef struct _vm_region {
-    unsigned begin;
-    unsigned end;
-    void* node;
-    int offset;
+	unsigned begin;
+	unsigned end;
+	void *node;
+	int offset;
 } vm_region;
 
 vm_struct_t vm_create();
@@ -24,7 +24,8 @@ void vm_destroy(vm_struct_t vm);
  * @param end
  * @param fd
  */
-void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void* node, int offset);
+void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *node,
+		int offset);
 
 /**
  * delete a mapped region which contains addr
@@ -44,7 +45,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr);
  *
  * @return vm_region*
  */
-vm_region* vm_find_map(vm_struct_t vm, unsigned addr);
+vm_region *vm_find_map(vm_struct_t vm, unsigned addr);
 
 /**
  * find a region large enough to contain @size

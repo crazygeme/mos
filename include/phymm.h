@@ -4,12 +4,12 @@
 #define PHYMM_PAGE_COW 0x00000001
 
 typedef struct _phymm_page {
-    unsigned int ref_count;
-    unsigned int next_page_index : 20;
-    unsigned int reserved : 12;
+	unsigned int ref_count;
+	unsigned int next_page_index : 20;
+	unsigned int reserved : 12;
 } phymm_page;
 
-extern phymm_page* phymm_pages;
+extern phymm_page *phymm_pages;
 
 unsigned phymm_get_mgmt_pages(unsigned highest_mm_addr);
 

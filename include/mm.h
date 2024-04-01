@@ -22,16 +22,17 @@ typedef struct multiboot_info multiboot_info_t;
 #define USABLE_PG_INDEX_MIN 2
 #define USABLE_PG_INDEX_MAX 1023
 
-#define PAGE_ENTRY_PRESENT 0x01   // present if set
-#define PAGE_ENTRY_WRITABLE 0x02  // writable if set
-#define PAGE_ENTRY_DPL_USER 0x04  // user can access if set
-#define PAGE_ENTRY_WT 0x08        // write through if set
-#define PAGE_ENTRY_CD 0x10        // cache disable if set
+#define PAGE_ENTRY_PRESENT 0x01 // present if set
+#define PAGE_ENTRY_WRITABLE 0x02 // writable if set
+#define PAGE_ENTRY_DPL_USER 0x04 // user can access if set
+#define PAGE_ENTRY_WT 0x08 // write through if set
+#define PAGE_ENTRY_CD 0x10 // cache disable if set
 
 #define PAGE_ENTRY_KERNEL_CODE (PAGE_ENTRY_PRESENT)
 #define PAGE_ENTRY_KERNEL_DATA (PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE)
 #define PAGE_ENTRY_USER_CODE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_DPL_USER)
-#define PAGE_ENTRY_USER_DATA (PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_DPL_USER)
+#define PAGE_ENTRY_USER_DATA \
+	(PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_DPL_USER)
 
 #define GDT_ADDRESS 0x1C0000
 
@@ -39,7 +40,7 @@ typedef struct multiboot_info multiboot_info_t;
 
 extern unsigned phymm_max;
 extern unsigned phymm_valid;
-extern multiboot_info_t* g_mb;
+extern multiboot_info_t *g_mb;
 extern unsigned long long gdt[];
 extern unsigned short gdt_size;
 extern unsigned long intr_stubs[];
@@ -86,14 +87,15 @@ void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
 unsigned vm_get_usr_zone(unsigned page_count);
 
-int do_mmap(unsigned int addr, unsigned int len, unsigned int prot, unsigned int flags, int fd, unsigned int offset);
+int do_mmap(unsigned int addr, unsigned int len, unsigned int prot,
+	    unsigned int flags, int fd, unsigned int offset);
 
-int do_mmap_kernel(unsigned int addr, unsigned int len, unsigned int prot, unsigned int flags, void* inode,
-                   unsigned int offset);
+int do_mmap_kernel(unsigned int addr, unsigned int len, unsigned int prot,
+		   unsigned int flags, void *inode, unsigned int offset);
 
-int do_munmap(void* addr, unsigned length);
+int do_munmap(void *addr, unsigned length);
 
-void* name_get();
+void *name_get();
 
-void name_put(void* name);
+void name_put(void *name);
 #endif

@@ -38,62 +38,62 @@
 
 /* Interrupt stack frame. */
 typedef struct _intr_frame {
-    /* Pushed by intr_entry in intr-stubs.S.
+	/* Pushed by intr_entry in intr-stubs.S.
 These are the interrupted task's saved registers. */
-    unsigned int edi;        /* Saved EDI. */
-    unsigned int esi;        /* Saved ESI. */
-    unsigned int ebp;        /* Saved EBP. */
-    unsigned int esp_dummy;  /* Not used. */
-    unsigned int ebx;        /* Saved EBX. */
-    unsigned int edx;        /* Saved EDX. */
-    unsigned int ecx;        /* Saved ECX. */
-    unsigned int eax;        /* Saved EAX. */
-    unsigned short gs, : 16; /* Saved GS segment register. */
-    unsigned short fs, : 16; /* Saved FS segment register. */
-    unsigned short es, : 16; /* Saved ES segment register. */
-    unsigned short ds, : 16; /* Saved DS segment register. */
+	unsigned int edi; /* Saved EDI. */
+	unsigned int esi; /* Saved ESI. */
+	unsigned int ebp; /* Saved EBP. */
+	unsigned int esp_dummy; /* Not used. */
+	unsigned int ebx; /* Saved EBX. */
+	unsigned int edx; /* Saved EDX. */
+	unsigned int ecx; /* Saved ECX. */
+	unsigned int eax; /* Saved EAX. */
+	unsigned short gs, : 16; /* Saved GS segment register. */
+	unsigned short fs, : 16; /* Saved FS segment register. */
+	unsigned short es, : 16; /* Saved ES segment register. */
+	unsigned short ds, : 16; /* Saved DS segment register. */
 
-    /* Pushed by intrNN_stub in intr-stubs.S. */
-    unsigned int vec_no; /* Interrupt vector number. */
+	/* Pushed by intrNN_stub in intr-stubs.S. */
+	unsigned int vec_no; /* Interrupt vector number. */
 
-    /* Sometimes pushed by the CPU,
+	/* Sometimes pushed by the CPU,
     otherwise for consistency pushed as 0 by intrNN_stub.
     The CPU puts it just under `eip', but we move it here. */
-    unsigned int error_code; /* Error code. */
+	unsigned int error_code; /* Error code. */
 
-    /* Pushed by intrNN_stub in intr-stubs.S.
+	/* Pushed by intrNN_stub in intr-stubs.S.
     This frame pointer eases interpretation of backtraces. */
-    void* frame_pointer; /* Saved EBP (frame pointer). */
+	void *frame_pointer; /* Saved EBP (frame pointer). */
 
-    /* Pushed by the CPU.
+	/* Pushed by the CPU.
     These are the interrupted task's saved registers. */
-    void (*eip)(void);       /* Next instruction to execute. */
-    unsigned short cs, : 16; /* Code segment for eip. */
-    unsigned int eflags;     /* Saved CPU flags. */
-    void* esp;               /* Saved stack pointer. */
-    unsigned short ss, : 16; /* Data segment for esp. */
+	void (*eip)(void); /* Next instruction to execute. */
+	unsigned short cs, : 16; /* Code segment for eip. */
+	unsigned int eflags; /* Saved CPU flags. */
+	void *esp; /* Saved stack pointer. */
+	unsigned short ss, : 16; /* Data segment for esp. */
 } __attribute__((packed)) intr_frame;
 
 extern void asm_interrupt_handle_for_keyboard();
 extern void shutdown();
 extern unsigned char read_port(unsigned short port);
 extern void write_port(unsigned short port, unsigned char data);
-void _read_sb(unsigned short port, void* addr, unsigned cnt);
+void _read_sb(unsigned short port, void *addr, unsigned cnt);
 unsigned short _read_word(unsigned short port);
-void _read_wb(unsigned short port, void* addr, unsigned cnt);
+void _read_wb(unsigned short port, void *addr, unsigned cnt);
 unsigned int _read_dword(unsigned short port);
-void _read_dwb(unsigned short port, void* addr, unsigned cnt);
-void _write_sb(unsigned short port, const void* addr, unsigned cnt);
+void _read_dwb(unsigned short port, void *addr, unsigned cnt);
+void _write_sb(unsigned short port, const void *addr, unsigned cnt);
 void _write_word(unsigned short port, unsigned short data);
-void _write_wb(unsigned short port, const void* addr, unsigned cnt);
+void _write_wb(unsigned short port, const void *addr, unsigned cnt);
 void _write_dword(unsigned short port, unsigned int data);
-void _write_dwb(unsigned short port, const void* addr, unsigned cnt);
+void _write_dwb(unsigned short port, const void *addr, unsigned cnt);
 
-void int_update_tss(void* address);
+void int_update_tss(void *address);
 
 void int_enable_all();
 
-typedef void (*int_callback)(intr_frame* frame);
+typedef void (*int_callback)(intr_frame *frame);
 
 void int_register(int vec_no, int_callback fn, int is_trap, int dpl);
 

@@ -49,11 +49,11 @@ static void pf_process(intr_frame *frame)
 
 	oldint = int_intr_disable();
 
-	__asm__("movl %cr2, %eax");
-	__asm__("movl %%eax, %0" : "=m"(cr2));
+	asm volatile("movl %cr2, %eax");
+	asm volatile("movl %%eax, %0" : "=m"(cr2));
 
-	__asm__("movl %cr3, %eax");
-	__asm__("movl %%eax, %0" : "=m"(cr3));
+	asm volatile("movl %cr3, %eax");
+	asm volatile("movl %%eax, %0" : "=m"(cr3));
 
 	page_fault_count++;
 	page_valid = ((error & PF_MASK_P) == PF_MASK_P);
@@ -145,7 +145,7 @@ HLT:
 	} while (0);
 
 	for (;;) {
-		__asm__("hlt");
+		asm volatile("hlt");
 	}
 
 Done:

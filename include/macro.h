@@ -1,51 +1,51 @@
 #ifndef _MACRO_H_
 #define _MACRO_H_
 
-#define LOAD_CR3(val) __asm__("movl %%cr3, %0" : "=r"(val))
+#define LOAD_CR3(val) asm volatile("movl %%cr3, %0" : "=r"(val))
 
-#define SET_DS(val)                            \
-	__asm__("movw %0, %%ax" : : "I"(val)); \
-	__asm__("movw %ax, %ds");              \
-	__asm__("movw %ax, %es");              \
-	__asm__("movw %ax, %fs");              \
-	__asm__("movw %ax, %gs");              \
-	__asm__("movw %ax, %ss");
+#define SET_DS(val)                                 \
+	asm volatile("movw %0, %%ax" : : "I"(val)); \
+	asm volatile("movw %ax, %ds");              \
+	asm volatile("movw %ax, %es");              \
+	asm volatile("movw %ax, %fs");              \
+	asm volatile("movw %ax, %gs");              \
+	asm volatile("movw %ax, %ss");
 
-#define SET_CS(val) __asm__("ljmp %0, $1f \n1:\n\tnop" : : "I"(val));
+#define SET_CS(val) asm volatile("ljmp %0, $1f \n1:\n\tnop" : : "I"(val));
 
-#define SET_ESP(val) __asm__("movl %0, %%esp" : : "m"(val))
+#define SET_ESP(val) asm volatile("movl %0, %%esp" : : "m"(val))
 
-#define SET_EBP(val) __asm__("movl %0, %%ebp" : : "q"(val))
+#define SET_EBP(val) asm volatile("movl %0, %%ebp" : : "q"(val))
 
-#define SET_EIP(val) __asm__("jmp %0" : : "q"(val))
+#define SET_EIP(val) asm volatile("jmp %0" : : "q"(val))
 
-#define SET_TSS(val) __asm__("ltr %w0" : : "q"(val));
+#define SET_TSS(val) asm volatile("ltr %w0" : : "q"(val));
 
-#define SET_GDT(val) __asm__("lgdt %0" : : "m"(val));
+#define SET_GDT(val) asm volatile("lgdt %0" : : "m"(val));
 
-#define SET_IDT(val) __asm__("lidt %0\nsti" : : "m"(val));
+#define SET_IDT(val) asm volatile("lidt %0\nsti" : : "m"(val));
 
-#define SET_CR3(val) __asm__("movl %0, %%cr3" : : "q"(val));
+#define SET_CR3(val) asm volatile("movl %0, %%cr3" : : "q"(val));
 
-#define ENABLE_PAGING()                  \
-	__asm__("movl %cr0,%eax");       \
-	__asm__("orl $0x80000000,%eax"); \
-	__asm__("movl %eax,%cr0");
+#define ENABLE_PAGING()                       \
+	asm volatile("movl %cr0,%eax");       \
+	asm volatile("orl $0x80000000,%eax"); \
+	asm volatile("movl %eax,%cr0");
 
-#define RELOAD_CR3()                                        \
-	do {                                                \
-		unsigned __cr3__;                           \
-		__asm__("movl %%cr3, %0" : "=q"(__cr3__));  \
-		__asm__("movl %0, %%cr3" : : "q"(__cr3__)); \
+#define RELOAD_CR3()                                             \
+	do {                                                     \
+		unsigned __cr3__;                                \
+		asm volatile("movl %%cr3, %0" : "=q"(__cr3__));  \
+		asm volatile("movl %0, %%cr3" : : "q"(__cr3__)); \
 	} while (0)
 
 #define RELOAD_EIP() \
-	__asm__("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop");
+	asm volatile("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop");
 
-#define RELOAD_ESP()                                      \
-	__asm__("movl %esp, %ecx");                       \
-	__asm__("addl %0, %%ecx" : : "i"(KERNEL_OFFSET)); \
-	__asm__("movl %ecx, %esp");
+#define RELOAD_ESP()                                           \
+	asm volatile("movl %esp, %ecx");                       \
+	asm volatile("addl %0, %%ecx" : : "i"(KERNEL_OFFSET)); \
+	asm volatile("movl %ecx, %esp");
 
 #define ROUND_UP(X, STEP) (((X) + (STEP)-1) / (STEP) * (STEP))
 

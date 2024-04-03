@@ -256,7 +256,7 @@ static void interrupt_handler(intr_frame *f)
 			if (c->expecting_interrupt) {
 				read_port(reg_status(
 					c)); /* Acknowledge interrupt. */
-				// printk("[hdd] sema set \n");
+				//printk("[hdd] sema set \n");
 				cond_notify_at_intr(
 					&c->sema); /* Wake up waiter. */
 
@@ -660,7 +660,7 @@ static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 	item->dirty |= mark_dirty;
 	item->sector = head_sector;
 
-	RemoveEntryList(&item->time_list);
+	list_remove_entry(&item->time_list);
 	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 
 	memcpy((char *)item->buf + sector_off * BLOCK_SECTOR_SIZE, buf,
@@ -686,7 +686,7 @@ static void hdd_cache_update_all(void *aux, partition *p,
 	item->dirty |= mark_dirty;
 	item->sector = head_sector;
 
-	RemoveEntryList(&item->time_list);
+	list_remove_entry(&item->time_list);
 	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 	for (i = 0; i < PREREAD_SECTOR; i++)
 		partition_read(aux, head_sector + i,
@@ -729,7 +729,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	cond_wait(&p->cache_lock);
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
-		RemoveEntryList(&item->time_list);
+		list_remove_entry(&item->time_list);
 		list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 		cond_notify(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
@@ -878,12 +878,9 @@ static void wait_until_idle(const ata_disk *d)
 static void select_device_wait(const ata_disk *d)
 {
 	channel *c = d->channel;
-	// printk("[hdd] sema reset (to 1)\n");
 	cond_reset(&c->sema);
 	c->expecting_interrupt = 1;
-	// wait_until_idle (d);
 	select_device(d);
-	// wait_until_idle (d);
 }
 
 static void issue_pio_command(channel *c, unsigned char command)

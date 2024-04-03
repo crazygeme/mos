@@ -13,7 +13,7 @@ int list_is_empty(list_entry *head)
 	return (int)(head->prev == head);
 }
 
-int RemoveEntryList(list_entry *entry)
+int list_remove_entry(list_entry *entry)
 {
 	list_entry *next;
 	list_entry *prev;

@@ -6,7 +6,7 @@
 #include <ps.h>
 
 #define SOFTIRQ 0x1
-#define TRIGGER_SOFTIRQ() __asm__("int $1");
+#define TRIGGER_SOFTIRQ() asm volatile("int $1");
 
 static list_entry dsr_head;
 static spinlock dsr_lock;

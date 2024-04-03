@@ -1123,7 +1123,7 @@ static int sys_pause()
 	if (TestControl.verbos) {
 		klog("%d: pause\n", CURRENT_TASK()->psid);
 	}
-	__asm__("hlt");
+	asm volatile("hlt");
 	return -1;
 }
 

@@ -78,7 +78,7 @@ static void ps_add_mgr(task_struct *task)
 static void ps_remove_mgr(task_struct *task)
 {
 	lock_mgr();
-	RemoveEntryList(&task->ps_mgr);
+	list_remove_entry(&task->ps_mgr);
 	unlock_mgr();
 }
 
@@ -118,7 +118,7 @@ void ps_put_to_dying_queue(task_struct *task)
 	// Remove from whatever queue it is, then put into dying queue
 	lock_dying();
 	if (task->ps_list.prev && task->ps_list.next) {
-		RemoveEntryList(&task->ps_list);
+		list_remove_entry(&task->ps_list);
 	}
 	if (task->psid != 0xffffffff)
 		list_insert_tail(&control.dying_queue, &task->ps_list);
@@ -140,7 +140,7 @@ void ps_put_to_wait_queue(task_struct *task)
 	// Remove from whatever queue it is, then put into wait queue
 	lock_waiting();
 	if (task->ps_list.prev && task->ps_list.next) {
-		RemoveEntryList(&task->ps_list);
+		list_remove_entry(&task->ps_list);
 	}
 	if (task->psid != 0xffffffff)
 		list_insert_tail(&control.wait_queue, &task->ps_list);
@@ -156,7 +156,7 @@ void ps_put_to_ready_queue(task_struct *task)
 	} else {
 		// Remove from whatever queue it is, then put into ready queue
 		if (task->ps_list.prev && task->ps_list.next) {
-			RemoveEntryList(&task->ps_list);
+			list_remove_entry(&task->ps_list);
 		}
 
 		if (task->psid != 0xffffffff)
@@ -185,7 +185,7 @@ static task_struct *ps_get_available_ready_task(list_entry *ready_queue)
 
 	// put it to last, so it will not be picked immediately next time
 	if (task) {
-		RemoveEntryList(&task->ps_list);
+		list_remove_entry(&task->ps_list);
 		list_insert_tail(&control.ready_queue[task->priority],
 				 &task->ps_list);
 	}
@@ -371,7 +371,7 @@ static unsigned do_ps_id_gen()
 		// too many processes!!
 		printk("Too many processes");
 		for (;;)
-			__asm__("hlt");
+			asm volatile("hlt");
 	}
 
 	ps_id_mark(ret, 1);
@@ -433,46 +433,46 @@ static void ps_setup_task_frame(task_struct *task, unsigned data_seg,
 	task->tss.eip = eip;
 }
 
-#define SAVE_ALL(task)                                              \
-	({                                                          \
-		__asm__("movl $NEXT, %0" : "=m"(current->tss.eip)); \
-		__asm__("movl %%ebp, %0" : "=m"(current->tss.ebp)); \
-		__asm__("movl %%eax, %0" : "=m"(current->tss.eax)); \
-		__asm__("movl %%ebx, %0" : "=m"(current->tss.ebx)); \
-		__asm__("movl %%ecx, %0" : "=m"(current->tss.ecx)); \
-		__asm__("movl %%edx, %0" : "=m"(current->tss.edx)); \
-		__asm__("movl %%esp, %0" : "=m"(current->tss.esp)); \
-		__asm__("mov %%fs, %0" : "=m"(current->tss.fs));    \
-		__asm__("mov %%gs, %0" : "=m"(current->tss.gs));    \
-		__asm__("mov %%es, %0" : "=m"(current->tss.es));    \
-		__asm__("mov %%ss, %0" : "=m"(current->tss.ss));    \
-		__asm__("mov %%ds, %0" : "=m"(current->tss.ds));    \
+#define SAVE_ALL(task)                                                   \
+	({                                                               \
+		asm volatile("movl $NEXT, %0" : "=m"(current->tss.eip)); \
+		asm volatile("movl %%ebp, %0" : "=m"(current->tss.ebp)); \
+		asm volatile("movl %%eax, %0" : "=m"(current->tss.eax)); \
+		asm volatile("movl %%ebx, %0" : "=m"(current->tss.ebx)); \
+		asm volatile("movl %%ecx, %0" : "=m"(current->tss.ecx)); \
+		asm volatile("movl %%edx, %0" : "=m"(current->tss.edx)); \
+		asm volatile("movl %%esp, %0" : "=m"(current->tss.esp)); \
+		asm volatile("mov %%fs, %0" : "=m"(current->tss.fs));    \
+		asm volatile("mov %%gs, %0" : "=m"(current->tss.gs));    \
+		asm volatile("mov %%es, %0" : "=m"(current->tss.es));    \
+		asm volatile("mov %%ss, %0" : "=m"(current->tss.ss));    \
+		asm volatile("mov %%ds, %0" : "=m"(current->tss.ds));    \
 	})
 
 #define RESTORE_ALL(task)                                                 \
 	({                                                                \
-		__asm__("mov %0, %%ds" : : "m"(task->tss.ds));            \
-		__asm__("mov %0, %%ss" : : "m"(task->tss.ss));            \
-		__asm__("mov %0, %%es" : : "m"(task->tss.es));            \
-		__asm__("mov %0, %%gs" : : "m"(task->tss.gs));            \
-		__asm__("mov %0, %%fs" : : "m"(task->tss.fs));            \
-		__asm__("movl %0, %%edx" : : "m"(task->tss.edx));         \
-		__asm__("movl %0, %%ecx" : : "m"(task->tss.ecx));         \
-		__asm__("movl %0, %%ebx" : : "m"(task->tss.ebx));         \
-		__asm__("movl %0, %%eax" : : "m"(task->tss.eax));         \
+		asm volatile("mov %0, %%ds" : : "m"(task->tss.ds));       \
+		asm volatile("mov %0, %%ss" : : "m"(task->tss.ss));       \
+		asm volatile("mov %0, %%es" : : "m"(task->tss.es));       \
+		asm volatile("mov %0, %%gs" : : "m"(task->tss.gs));       \
+		asm volatile("mov %0, %%fs" : : "m"(task->tss.fs));       \
+		asm volatile("movl %0, %%edx" : : "m"(task->tss.edx));    \
+		asm volatile("movl %0, %%ecx" : : "m"(task->tss.ecx));    \
+		asm volatile("movl %0, %%ebx" : : "m"(task->tss.ebx));    \
+		asm volatile("movl %0, %%eax" : : "m"(task->tss.eax));    \
 		/* after we change ebp, "task" variable will be changed \
          so ebp should be the last one that restored            \
          that's why we have to save eip into edx first          \
          FIXME: we assume edx not used */ \
 		next_eip = task->tss.eip;                                 \
-		__asm__("movl %0, %%esp" : : "m"(task->tss.esp));         \
-		__asm__("movl %0, %%ebp" : : "m"(task->tss.ebp));         \
+		asm volatile("movl %0, %%esp" : : "m"(task->tss.esp));    \
+		asm volatile("movl %0, %%ebp" : : "m"(task->tss.ebp));    \
 	})
 
-#define JUMP_TO_NEXT_TASK_EIP()                              \
-	({                                                   \
-		__asm__("movl %0, %%edx" : : "m"(next_eip)); \
-		__asm__("jmp *%edx");                        \
+#define JUMP_TO_NEXT_TASK_EIP()                                   \
+	({                                                        \
+		asm volatile("movl %0, %%edx" : : "m"(next_eip)); \
+		asm volatile("jmp *%edx");                        \
 	})
 
 // FIXME
@@ -597,7 +597,7 @@ static void ps_dup_user_maps(task_struct *cur, task_struct *task)
 	int i = 0;
 	unsigned int cr3;
 
-	__asm__("movl %%cr3, %0" : "=q"(cr3));
+	asm volatile("movl %%cr3, %0" : "=q"(cr3));
 	per_ps = (unsigned int *)(cr3 + KERNEL_OFFSET);
 	task->user.page_dir = vm_alloc(1);
 
@@ -717,7 +717,7 @@ int sys_exit(unsigned status)
 
 	if (cur->psid == 0) {
 		printk("fatal error! process 0 exit\n");
-		__asm__("hlt");
+		asm volatile("hlt");
 	}
 
 	if (cur->psid == 1) {
@@ -838,7 +838,7 @@ int sys_waitpid(unsigned pid, int *status, int options)
 				if (status) {
 					*status = task->exit_status;
 				}
-				RemoveEntryList(entry);
+				list_remove_entry(entry);
 				if (task->user.reserve) {
 					vm_free(task->user.reserve, 1);
 					task->user.reserve = 0;
@@ -913,7 +913,7 @@ task_struct *CURRENT_TASK()
 {
 	unsigned int esp;
 	task_struct *ret;
-	__asm__("movl %%esp, %0" : "=m"(esp));
+	asm volatile("movl %%esp, %0" : "=m"(esp));
 	ret = (task_struct *)((unsigned int)esp & PAGE_SIZE_MASK);
 	return ret;
 }
@@ -971,7 +971,7 @@ static void ps_save_kernel_map(task_struct *task)
 		unsigned int *per_ps = (unsigned int *)task->user.page_dir;
 		void *src;
 		void *dst;
-		__asm__("movl %%cr3, %0" : "=q"(cr3));
+		asm volatile("movl %%cr3, %0" : "=q"(cr3));
 		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
 
 		src = &in_use[KERNEL_PAGE_DIR_OFFSET];
@@ -998,7 +998,7 @@ void _task_sched(const char *func)
 	task = ps_get_next_task();
 
 	cur_cr3 = current->user.page_dir - KERNEL_OFFSET;
-	__asm__("movl %%cr3, %0" : "=q"(cr3));
+	asm volatile("movl %%cr3, %0" : "=q"(cr3));
 	if (task->psid == current->psid) {
 		goto SELF;
 	}
@@ -1019,7 +1019,7 @@ void _task_sched(const char *func)
 	current = CURRENT_TASK();
 	reset_tss(current);
 	JUMP_TO_NEXT_TASK_EIP();
-	__asm__("NEXT: nop");
+	asm volatile("NEXT: nop");
 SELF:
 	int_intr_enable();
 	current->is_switching = 0;
@@ -1086,7 +1086,7 @@ static void system_down()
 
 void reboot()
 {
-	__asm__("cli");
+	asm volatile("cli");
 	system_down();
 	write_port(0x64, 0xfe);
 }
@@ -1095,7 +1095,7 @@ void shutdown()
 {
 	const char s[] = "Shutdown";
 	const char *p;
-	__asm__("cli");
+	asm volatile("cli");
 	printf("Shutting down system ...\n");
 	system_down();
 

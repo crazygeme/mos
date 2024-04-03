@@ -1,3 +1,4 @@
+#include "klib.h"
 #include <multiboot.h>
 #include <config.h>
 #include <mm.h>
@@ -16,13 +17,11 @@ unsigned long long gdt[SELECTOR_COUNT];
 unsigned short gdt_size = sizeof(gdt);
 unsigned long long idt[IDT_SIZE];
 unsigned short idt_size = sizeof(idt);
-unsigned long long phy_mem_low;
-unsigned long long phy_mem_high;
 
-#define OUT_PORT(port, data)            \
-	__asm__("mov $" #port ", %dx"); \
-	__asm__("mov $" #data ", %al"); \
-	__asm__("outb %al, %dx");
+#define OUT_PORT(port, data)                 \
+	asm volatile("mov $" #port ", %dx"); \
+	asm volatile("mov $" #data ", %al"); \
+	asm volatile("outb %al, %dx");
 
 _START static void init_interrupt()
 {
@@ -109,13 +108,12 @@ _START static void mm_setup_beginning_8m()
 	return;
 }
 
-_START static void mm_get_phy_mem_bound(multiboot_info_t *mb)
+_START void mm_get_phy_mem_bound(multiboot_info_t *mb,
+				 unsigned long long *volatile mem_low,
+				 unsigned long long *volatile mem_high)
 {
 	unsigned int map_addr = mb->mmap_addr;
-	unsigned long long *_phy_mem_low =
-		GET_BOOT_ADDR(unsigned long long *, &phy_mem_low);
-	unsigned long long *_phy_mem_high =
-		GET_BOOT_ADDR(unsigned long long *, &phy_mem_high);
+	unsigned long long low, high;
 	memory_map_t *map;
 
 	if (mb->flags & 0x40) {
@@ -123,13 +121,15 @@ _START static void mm_get_phy_mem_bound(multiboot_info_t *mb)
 		while ((unsigned int)map < mb->mmap_addr + mb->mmap_length) {
 			if (map->type == 0x1 && (map->base_addr_low != 0 ||
 						 map->base_addr_high != 0)) {
-				(*_phy_mem_low) =
-					map->base_addr_low + map->base_addr_high
-					<< 32;
-				(*_phy_mem_high) =
-					(*_phy_mem_low) +
-					(map->length_low + map->length_high
-					 << 32);
+				low = (unsigned long long)map->base_addr_low +
+				      ((unsigned long long)map->base_addr_high
+				       << 32);
+				high = low +
+				       ((unsigned long long)map->length_low +
+					((unsigned long long)map->length_high
+					 << 32));
+				*mem_low = low;
+				*mem_high = high;
 				break;
 			}
 			map = (memory_map_t *)((unsigned int)map + map->size +
@@ -142,6 +142,7 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 {
 	multiboot_info_t **dst = &g_mb;
 	multiboot_info_t **src = &mb;
+	unsigned long long mem_low, mem_high;
 	if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
 		return;
 	}
@@ -155,7 +156,7 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 
 	setup_idt();
 
-	mm_get_phy_mem_bound(mb);
+	mm_get_phy_mem_bound(mb, &mem_low, &mem_high);
 
 	mm_setup_beginning_8m();
 
@@ -168,14 +169,14 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	// ok now we make esp as virtual address
 	RELOAD_ESP();
 
-	phymm_max = (phy_mem_high) / PAGE_SIZE;
-	phymm_valid = phymm_get_mgmt_pages(phy_mem_high);
-	phymm_valid += (phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
+	phymm_max = (mem_high) / PAGE_SIZE;
+	phymm_valid = phymm_get_mgmt_pages(mem_high);
+	phymm_valid += (mem_low / PAGE_SIZE + RESERVED_PAGES);
 
 	mm_init_page_table_cache();
 
 	// physical memory management
-	phymm_setup_mgmt_pages(phy_mem_low / PAGE_SIZE + RESERVED_PAGES);
+	phymm_setup_mgmt_pages(mem_low / PAGE_SIZE + RESERVED_PAGES);
 
 	kmain_startup();
 

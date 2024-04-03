@@ -46,8 +46,6 @@ extern unsigned short gdt_size;
 extern unsigned long intr_stubs[];
 extern unsigned long long idt[];
 extern unsigned short idt_size;
-extern unsigned long long phy_mem_low;
-extern unsigned long long phy_mem_high;
 
 unsigned mm_get_pagedir();
 

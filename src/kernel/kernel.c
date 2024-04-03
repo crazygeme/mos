@@ -87,7 +87,7 @@ static void idle_process(void *param)
 {
 	task_struct *cur = CURRENT_TASK();
 	while (1) {
-		__asm__("hlt");
+		asm volatile("hlt");
 		task_sched();
 	}
 }

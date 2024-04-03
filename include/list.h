@@ -14,6 +14,8 @@ list_entry *list_remove_head(list_entry *head);
 
 list_entry *list_remove_tail(list_entry *head);
 
+int list_remove_entry(list_entry *entry);
+
 void list_insert_tail(list_entry *head, list_entry *entry);
 
 void list_insert_head(list_entry *head, list_entry *entry);

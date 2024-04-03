@@ -11,9 +11,6 @@
 #include <phymm.h>
 #include <klib.h>
 
-extern unsigned long long phy_mem_low;
-extern unsigned long long phy_mem_high;
-
 extern unsigned phymm_cur;
 extern unsigned phymm_high;
 extern unsigned phymm_max;
@@ -64,9 +61,6 @@ void malloc_test()
 
 void mm_test()
 {
-	unsigned int phy_page_low = phy_mem_low / PAGE_SIZE;
-	unsigned int phy_page_high = phy_mem_high / PAGE_SIZE;
-
 	if (1) {
 		int i = 0;
 		unsigned int *table1, *table2;

@@ -19,7 +19,7 @@ unsigned phymm_valid = 0;
 unsigned mm_get_pagedir()
 {
 	unsigned cr3 = 0;
-	asm volatile("movl %%cr3, %0" : "=r"(cr3));
+	LOAD_CR3(cr3);
 	return cr3 + KERNEL_OFFSET;
 }
 

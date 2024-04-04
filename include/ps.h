@@ -248,9 +248,7 @@ int sys_vfork();
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 char *sys_getcwd(char *buf, unsigned size);
-
-// misc
-//
+void reboot();
 void shutdown();
 
 #endif

@@ -75,7 +75,7 @@ void cond_wait(cond_t *s)
 		spinlock_lock(&s->wait_lock);
 		cur->status = ps_waiting;
 		ps_put_to_wait_queue(cur);
-		// then add to sema wait list
+		// then add to cond wait list
 		list_insert_tail(&s->wait_list, &cur->lock_list);
 		spinlock_unlock(&s->wait_lock);
 		task_sched();
@@ -87,7 +87,7 @@ void cond_reset(cond_t *s)
 	__sync_lock_test_and_set(&(s->lock), 1);
 }
 
-static int sema_notice_one(cond_t *s)
+static int cond_notice_one(cond_t *s)
 {
 	task_struct *task = 0;
 	list_entry *entry = 0;
@@ -108,7 +108,7 @@ static int sema_notice_one(cond_t *s)
 
 void cond_notify(cond_t *s)
 {
-	int has = sema_notice_one(s);
+	int has = cond_notice_one(s);
 
 	__sync_lock_test_and_set(&(s->lock), 0);
 

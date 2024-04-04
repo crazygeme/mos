@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <fs.h>
 #include <errno.h>
+#include <macro.h>
 
 static void cleanup()
 {
@@ -299,9 +300,9 @@ int sys_execve(const char *file, char **argv, char **envp)
 	fs_destroy(fp);
 
 	/*
-     * check whether starts with #!,
-     * if it is, assign script interp to file_name
-     */
+	 * check whether starts with #!,
+	 * if it is, assign script interp to file_name
+	 */
 	if (firstline[0] == 0x7f && firstline[1] == 'E' &&
 	    firstline[2] == 'L' && firstline[1] != 'F') {
 		vm_free(firstline, 1);
@@ -347,23 +348,23 @@ int sys_execve(const char *file, char **argv, char **envp)
 	}
 
 	/*
-     * unmap all user vm, and close all fds if O_CLOEXEC set
-     * note that we will trigger vfork event if this task is
-     * created by vfork syscall
-     */
+	 * unmap all user vm, and close all fds if O_CLOEXEC set
+	 * note that we will trigger vfork event if this task is
+	 * created by vfork syscall
+	 */
 	cleanup();
 
 	/*
-     * now we parse and load elf file.
-     * A typical executable file in linux  will have a section
-     * "interp" (usually ld-linux.so), we read that interp and
-     * load PT_LOAD sections into memory, e_entry of interp is
-     * the address we are going to jump in, setup the stack in
-     * proper format and jump to interp, that's all we have to
-     * do in execv syscall. All staffs like dynamic library
-     * loading / symbol resolve / etc will be handled by interp
-     * pretty easy ha?
-     */
+	 * now we parse and load elf file.
+	 * A typical executable file in linux  will have a section
+	 * "interp" (usually ld-linux.so), we read that interp and
+	 * load PT_LOAD sections into memory, e_entry of interp is
+	 * the address we are going to jump in, setup the stack in
+	 * proper format and jump to interp, that's all we have to
+	 * do in execv syscall. All staffs like dynamic library
+	 * loading / symbol resolve / etc will be handled by interp
+	 * pretty easy ha?
+	 */
 	elf_map(file_name, &fmt);
 	eip = fmt.interp_load_addr;
 	if (!eip) {
@@ -397,8 +398,12 @@ static void run_if_exist(char *path)
 	if (fs_stat(path, &s) != -1) {
 		sys_execve(path, argv, 0);
 	}
+
+	printk("%s fails!\n", path);
+	DIE();
 }
-static void user_setup_enviroment()
+
+void user_first_process_run()
 {
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
 	ps_update_tss(esp0);
@@ -408,9 +413,4 @@ static void user_setup_enviroment()
 	fs_open("t", 0, "r");
 
 	run_if_exist("/bin/bash");
-}
-
-void user_first_process_run()
-{
-	user_setup_enviroment();
 }

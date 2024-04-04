@@ -2,6 +2,7 @@
 #include <int.h>
 #include <ps.h>
 #include <dsr.h>
+#include <macro.h>
 
 static unsigned long tickets;
 static unsigned long seconds;
@@ -14,12 +15,6 @@ static unsigned long cycle_per_ticket;
 
 static unsigned long rtc_get_time(void);
 
-/* Optimization barrier.
-
-   The compiler will not reorder operations across an
-   optimization barrier.  See "Optimization Barriers" in the
-   reference guide for more information.*/
-#define barrier() asm volatile("" : : : "memory")
 static int timer_dsr_count = 0;
 
 static void timer_dsr(void *param);
@@ -58,7 +53,7 @@ static void timer_process(intr_frame *frame)
 static void __attribute__((noinline)) busy_wait(unsigned int loops)
 {
 	while (loops-- > 0)
-		barrier();
+		BARRIER();
 }
 
 static int too_many_loops(unsigned loops)
@@ -66,14 +61,14 @@ static int too_many_loops(unsigned loops)
 	/* Wait for a timer tick. */
 	unsigned int start = tickets;
 	while (tickets == start)
-		barrier();
+		BARRIER();
 
 	/* Run LOOPS loops. */
 	start = tickets;
 	busy_wait(loops);
 
 	/* If the tick count changed, we iterated too long. */
-	barrier();
+	BARRIER();
 	return start != tickets;
 }
 

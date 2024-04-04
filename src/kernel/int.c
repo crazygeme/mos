@@ -137,10 +137,6 @@ void int_update_tss(void *address)
 	SET_TSS(TSS_SELECTOR);
 }
 
-#define GET_INTR_FLAG(flag)     \
-	asm volatile("pushfl"); \
-	asm volatile("popl %0" : "=q"(flag));
-
 unsigned int_is_intr_enabled()
 {
 	unsigned int flags;
@@ -154,7 +150,7 @@ unsigned int_intr_enable()
 {
 	unsigned old = int_is_intr_enabled();
 
-	asm volatile("sti");
+	ENABLE_INTR();
 
 	return old;
 }
@@ -163,7 +159,7 @@ unsigned int_intr_disable()
 {
 	unsigned old = int_is_intr_enabled();
 
-	asm volatile("cli" : : : "memory");
+	DISABLE_INTR();
 
 	return old;
 }

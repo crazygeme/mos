@@ -370,8 +370,10 @@ int fs_stat(const char *path, struct stat *s)
 		ret = ext4_fstat(&dir.f, s);
 		ext4_dir_close(&dir);
 	}
+
 	if (ret != EOK)
 		return -1;
+
 	return ret;
 }
 
@@ -621,4 +623,51 @@ int fs_fchmod(int fd, uint32_t mode)
 
 	ret = ext4_fchmod(fp->inode, mode);
 	return (0 - ret);
+}
+
+int resolve_path(const char *old, char *new)
+{
+	char *r;
+	int len = strlen(old);
+	if (!old || !*old)
+		return -1;
+
+	if (!strcmp(old, ".")) {
+		sys_getcwd(new, MAX_PATH);
+		return 0;
+	}
+
+	if (!strcmp(old, "..")) {
+		sys_getcwd(new, MAX_PATH);
+		r = strrchr(new, '/');
+		*r = '\0';
+		if (*new == '\0') {
+			*new ++ = '/';
+			*new ++ = '\0';
+		}
+		return 0;
+	}
+
+	if (old[0] == '/') {
+		strcpy(new, old);
+		if (len >= 2 && new[len - 1] == '.' && new[len - 2] == '.') {
+			r = strrchr(new, '/');
+			if (!r)
+				return -1;
+			r = strrchr(r - 1, '/');
+			if (!r)
+				return -1;
+			r++;
+			*r = '\0';
+		} else if (len >= 1 && new[len - 1] == '.') {
+			new[len - 1] = '\0';
+		}
+		return 0;
+	} else if (len > 1 && old[0] == '.' && old[1] == '/') {
+		old += 2;
+	}
+
+	sys_getcwd(new, MAX_PATH);
+	strcat(new, old);
+	return 0;
 }

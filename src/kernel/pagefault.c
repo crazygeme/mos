@@ -35,7 +35,6 @@ extern phymm_page *phymm_pages;
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
-	unsigned cr3;
 	unsigned error = frame->error_code;
 	task_struct *cur = CURRENT_TASK();
 	unsigned this_begin;
@@ -49,11 +48,7 @@ static void pf_process(intr_frame *frame)
 
 	oldint = int_intr_disable();
 
-	asm volatile("movl %cr2, %eax");
-	asm volatile("movl %%eax, %0" : "=m"(cr2));
-
-	asm volatile("movl %cr3, %eax");
-	asm volatile("movl %%eax, %0" : "=m"(cr3));
+	LOAD_CR2(cr2);
 
 	page_fault_count++;
 	page_valid = ((error & PF_MASK_P) == PF_MASK_P);
@@ -144,9 +139,7 @@ HLT:
 		       cur->psid, frame->error_code, cr2, frame->eip);
 	} while (0);
 
-	for (;;) {
-		asm volatile("hlt");
-	}
+	DIE();
 
 Done:
 	if (oldint) {

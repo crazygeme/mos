@@ -18,11 +18,6 @@ unsigned short gdt_size = sizeof(gdt);
 unsigned long long idt[IDT_SIZE];
 unsigned short idt_size = sizeof(idt);
 
-#define OUT_PORT(port, data)                 \
-	asm volatile("mov $" #port ", %dx"); \
-	asm volatile("mov $" #data ", %al"); \
-	asm volatile("outb %al, %dx");
-
 _START static void init_interrupt()
 {
 	OUT_PORT(0x20, 0x11);

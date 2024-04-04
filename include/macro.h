@@ -1,7 +1,11 @@
 #ifndef _MACRO_H_
 #define _MACRO_H_
 
+#define LOAD_CR2(val) asm volatile("movl %%cr2, %0" : "=r"(val))
+
 #define LOAD_CR3(val) asm volatile("movl %%cr3, %0" : "=r"(val))
+
+#define LOAD_ESP(val) asm volatile("movl %%esp, %0" : "=m"(val));
 
 #define SET_DS(val)                                 \
 	asm volatile("movw %0, %%ax" : : "I"(val)); \
@@ -11,7 +15,7 @@
 	asm volatile("movw %ax, %gs");              \
 	asm volatile("movw %ax, %ss");
 
-#define SET_CS(val) asm volatile("ljmp %0, $1f \n1:\n\tnop" : : "I"(val));
+#define SET_CS(val) asm volatile("ljmp %0, $1f \n1:\n\tnop" : : "I"(val))
 
 #define SET_ESP(val) asm volatile("movl %0, %%esp" : : "m"(val))
 
@@ -19,13 +23,13 @@
 
 #define SET_EIP(val) asm volatile("jmp %0" : : "q"(val))
 
-#define SET_TSS(val) asm volatile("ltr %w0" : : "q"(val));
+#define SET_TSS(val) asm volatile("ltr %w0" : : "q"(val))
 
-#define SET_GDT(val) asm volatile("lgdt %0" : : "m"(val));
+#define SET_GDT(val) asm volatile("lgdt %0" : : "m"(val))
 
-#define SET_IDT(val) asm volatile("lidt %0\nsti" : : "m"(val));
+#define SET_IDT(val) asm volatile("lidt %0\nsti" : : "m"(val))
 
-#define SET_CR3(val) asm volatile("movl %0, %%cr3" : : "q"(val));
+#define SET_CR3(val) asm volatile("movl %0, %%cr3" : : "q"(val))
 
 #define ENABLE_PAGING()                       \
 	asm volatile("movl %cr0,%eax");       \
@@ -40,14 +44,84 @@
 	} while (0)
 
 #define RELOAD_EIP() \
-	asm volatile("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop");
+	asm volatile("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop")
 
 #define RELOAD_ESP()                                           \
 	asm volatile("movl %esp, %ecx");                       \
 	asm volatile("addl %0, %%ecx" : : "i"(KERNEL_OFFSET)); \
 	asm volatile("movl %ecx, %esp");
 
-#define ROUND_UP(X, STEP) (((X) + (STEP)-1) / (STEP) * (STEP))
+#define GET_INTR_FLAG(flag)     \
+	asm volatile("pushfl"); \
+	asm volatile("popl %0" : "=q"(flag))
+
+#define ENABLE_INTR() asm volatile("sti")
+
+#define DISABLE_INTR() asm volatile("cli")
+
+#define HLT() asm volatile("hlt")
+
+#define DIE()          \
+	for (;;) {     \
+		HLT(); \
+	}
+
+#define OUT_PORT(port, data)                 \
+	asm volatile("mov $" #port ", %dx"); \
+	asm volatile("mov $" #data ", %al"); \
+	asm volatile("outb %al, %dx");
+
+/* Optimization barrier.
+
+   The compiler will not reorder operations across an
+   optimization barrier.  See "Optimization Barriers" in the
+   reference guide for more information.*/
+#define BARRIER() asm volatile("" : : : "memory")
+
+#define SAVE_ALL(task, label)                                               \
+	({                                                                  \
+		asm volatile("movl $" #label ", %0" : "=m"(task->tss.eip)); \
+		asm volatile("movl %%ebp, %0" : "=m"(task->tss.ebp));       \
+		asm volatile("movl %%eax, %0" : "=m"(task->tss.eax));       \
+		asm volatile("movl %%ebx, %0" : "=m"(task->tss.ebx));       \
+		asm volatile("movl %%ecx, %0" : "=m"(task->tss.ecx));       \
+		asm volatile("movl %%edx, %0" : "=m"(task->tss.edx));       \
+		asm volatile("movl %%esp, %0" : "=m"(task->tss.esp));       \
+		asm volatile("mov %%fs, %0" : "=m"(task->tss.fs));          \
+		asm volatile("mov %%gs, %0" : "=m"(task->tss.gs));          \
+		asm volatile("mov %%es, %0" : "=m"(task->tss.es));          \
+		asm volatile("mov %%ss, %0" : "=m"(task->tss.ss));          \
+		asm volatile("mov %%ds, %0" : "=m"(task->tss.ds));          \
+	})
+
+#define RESTORE_ALL(task, next)                                             \
+	({                                                                  \
+		asm volatile("mov %0, %%ds" : : "m"(task->tss.ds));         \
+		asm volatile("mov %0, %%ss" : : "m"(task->tss.ss));         \
+		asm volatile("mov %0, %%es" : : "m"(task->tss.es));         \
+		asm volatile("mov %0, %%gs" : : "m"(task->tss.gs));         \
+		asm volatile("mov %0, %%fs" : : "m"(task->tss.fs));         \
+		asm volatile("movl %0, %%edx" : : "m"(task->tss.edx));      \
+		asm volatile("movl %0, %%ecx" : : "m"(task->tss.ecx));      \
+		asm volatile("movl %0, %%ebx" : : "m"(task->tss.ebx));      \
+		asm volatile("movl %0, %%eax" : : "m"(task->tss.eax));      \
+		/* after we change ebp, "task" variable will be changed   \
+		   so ebp should be the last one that restored            \
+		   that's why we have to save eip into edx first          \
+		   FIXME: we assume edx not used */ \
+		next = task->tss.eip;                                       \
+		asm volatile("movl %0, %%esp" : : "m"(task->tss.esp));      \
+		asm volatile("movl %0, %%ebp" : : "m"(task->tss.ebp));      \
+	})
+
+#define JUMP_TO_NEXT_TASK_EIP(next)                           \
+	({                                                    \
+		asm volatile("movl %0, %%edx" : : "m"(next)); \
+		asm volatile("jmp *%edx");                    \
+	})
+
+#define ROUND_UP(X) \
+	(((X) + (sizeof(long)) - 1) / (sizeof(long)) * (sizeof(long)))
 
 // clang-format off
 #define MAKE_SEG_DESC(base,  limit,  class,  type, dpl,  granularity)               \

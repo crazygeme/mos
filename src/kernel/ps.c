@@ -1,3 +1,7 @@
+#include <block.h>
+#include <mmap.h>
+#include <phymm.h>
+#include <timer.h>
 #include <ps.h>
 #include <lock.h>
 #include <mm.h>
@@ -370,8 +374,7 @@ static unsigned do_ps_id_gen()
 	if (ret < 0) {
 		// too many processes!!
 		printk("Too many processes");
-		for (;;)
-			asm volatile("hlt");
+		DIE();
 	}
 
 	ps_id_mark(ret, 1);
@@ -432,48 +435,6 @@ static void ps_setup_task_frame(task_struct *task, unsigned data_seg,
 	task->tss.esp0 = esp0;
 	task->tss.eip = eip;
 }
-
-#define SAVE_ALL(task)                                                   \
-	({                                                               \
-		asm volatile("movl $NEXT, %0" : "=m"(current->tss.eip)); \
-		asm volatile("movl %%ebp, %0" : "=m"(current->tss.ebp)); \
-		asm volatile("movl %%eax, %0" : "=m"(current->tss.eax)); \
-		asm volatile("movl %%ebx, %0" : "=m"(current->tss.ebx)); \
-		asm volatile("movl %%ecx, %0" : "=m"(current->tss.ecx)); \
-		asm volatile("movl %%edx, %0" : "=m"(current->tss.edx)); \
-		asm volatile("movl %%esp, %0" : "=m"(current->tss.esp)); \
-		asm volatile("mov %%fs, %0" : "=m"(current->tss.fs));    \
-		asm volatile("mov %%gs, %0" : "=m"(current->tss.gs));    \
-		asm volatile("mov %%es, %0" : "=m"(current->tss.es));    \
-		asm volatile("mov %%ss, %0" : "=m"(current->tss.ss));    \
-		asm volatile("mov %%ds, %0" : "=m"(current->tss.ds));    \
-	})
-
-#define RESTORE_ALL(task)                                                 \
-	({                                                                \
-		asm volatile("mov %0, %%ds" : : "m"(task->tss.ds));       \
-		asm volatile("mov %0, %%ss" : : "m"(task->tss.ss));       \
-		asm volatile("mov %0, %%es" : : "m"(task->tss.es));       \
-		asm volatile("mov %0, %%gs" : : "m"(task->tss.gs));       \
-		asm volatile("mov %0, %%fs" : : "m"(task->tss.fs));       \
-		asm volatile("movl %0, %%edx" : : "m"(task->tss.edx));    \
-		asm volatile("movl %0, %%ecx" : : "m"(task->tss.ecx));    \
-		asm volatile("movl %0, %%ebx" : : "m"(task->tss.ebx));    \
-		asm volatile("movl %0, %%eax" : : "m"(task->tss.eax));    \
-		/* after we change ebp, "task" variable will be changed \
-         so ebp should be the last one that restored            \
-         that's why we have to save eip into edx first          \
-         FIXME: we assume edx not used */ \
-		next_eip = task->tss.eip;                                 \
-		asm volatile("movl %0, %%esp" : : "m"(task->tss.esp));    \
-		asm volatile("movl %0, %%ebp" : : "m"(task->tss.ebp));    \
-	})
-
-#define JUMP_TO_NEXT_TASK_EIP()                                   \
-	({                                                        \
-		asm volatile("movl %0, %%edx" : : "m"(next_eip)); \
-		asm volatile("jmp *%edx");                        \
-	})
 
 // FIXME
 // now we ignore priority
@@ -597,7 +558,7 @@ static void ps_dup_user_maps(task_struct *cur, task_struct *task)
 	int i = 0;
 	unsigned int cr3;
 
-	asm volatile("movl %%cr3, %0" : "=q"(cr3));
+	LOAD_CR3(cr3);
 	per_ps = (unsigned int *)(cr3 + KERNEL_OFFSET);
 	task->user.page_dir = vm_alloc(1);
 
@@ -717,7 +678,7 @@ int sys_exit(unsigned status)
 
 	if (cur->psid == 0) {
 		printk("fatal error! process 0 exit\n");
-		asm volatile("hlt");
+		DIE();
 	}
 
 	if (cur->psid == 1) {
@@ -912,10 +873,9 @@ void ps_kickoff()
 task_struct *CURRENT_TASK()
 {
 	unsigned int esp;
-	task_struct *ret;
-	asm volatile("movl %%esp, %0" : "=m"(esp));
-	ret = (task_struct *)((unsigned int)esp & PAGE_SIZE_MASK);
-	return ret;
+
+	LOAD_ESP(esp);
+	return (task_struct *)((unsigned int)esp & PAGE_SIZE_MASK);
 }
 
 static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)
@@ -971,9 +931,9 @@ static void ps_save_kernel_map(task_struct *task)
 		unsigned int *per_ps = (unsigned int *)task->user.page_dir;
 		void *src;
 		void *dst;
-		asm volatile("movl %%cr3, %0" : "=q"(cr3));
-		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
 
+		LOAD_CR3(cr3);
+		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
 		src = &in_use[KERNEL_PAGE_DIR_OFFSET];
 		dst = &per_ps[KERNEL_PAGE_DIR_OFFSET];
 		memcpy(dst, src,
@@ -998,7 +958,7 @@ void _task_sched(const char *func)
 	task = ps_get_next_task();
 
 	cur_cr3 = current->user.page_dir - KERNEL_OFFSET;
-	asm volatile("movl %%cr3, %0" : "=q"(cr3));
+	LOAD_CR3(cr3);
 	if (task->psid == current->psid) {
 		goto SELF;
 	}
@@ -1012,13 +972,13 @@ void _task_sched(const char *func)
 	// save page dir entry for kernel space
 	ps_save_kernel_map(task);
 
-	SAVE_ALL(current);
+	SAVE_ALL(current, NEXT);
 
-	RESTORE_ALL(task);
+	RESTORE_ALL(task, next_eip);
 	SET_CR3(next_cr3);
 	current = CURRENT_TASK();
 	reset_tss(current);
-	JUMP_TO_NEXT_TASK_EIP();
+	JUMP_TO_NEXT_TASK_EIP(next_eip);
 	asm volatile("NEXT: nop");
 SELF:
 	int_intr_enable();
@@ -1086,7 +1046,7 @@ static void system_down()
 
 void reboot()
 {
-	asm volatile("cli");
+	DISABLE_INTR();
 	system_down();
 	write_port(0x64, 0xfe);
 }
@@ -1095,7 +1055,7 @@ void shutdown()
 {
 	const char s[] = "Shutdown";
 	const char *p;
-	asm volatile("cli");
+	DISABLE_INTR();
 	printf("Shutting down system ...\n");
 	system_down();
 

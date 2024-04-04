@@ -66,8 +66,8 @@ typedef struct _channel {
 	unsigned char irq; /* Interrupt in use. */
 	int expecting_interrupt; /* True if an interrupt is expected, false if
                                  any interrupt would be spurious. */
-	cond_t iolock;
-	cond_t sema;
+	spinlock_t iolock;
+	cond_t event;
 	ata_disk devices[2]; /* The devices on this channel. */
 } channel;
 
@@ -209,8 +209,8 @@ void hdd_init()
 		printk("channel %d, name %s\n", chan_no, c->name);
 #endif
 		c->expecting_interrupt = 0;
-		cond_init(&c->sema, c->name, 1);
-		cond_init(&c->iolock, "iolock", 0);
+		cond_init(&c->event, c->name, 1);
+		spinlock_init(&c->iolock);
 		/* Initialize devices. */
 		for (dev_no = 0; dev_no < 2; dev_no++) {
 			ata_disk *d = &c->devices[dev_no];
@@ -256,9 +256,9 @@ static void interrupt_handler(intr_frame *f)
 			if (c->expecting_interrupt) {
 				read_port(reg_status(
 					c)); /* Acknowledge interrupt. */
-				//printk("[hdd] sema set \n");
+				//printk("[hdd] event set \n");
 				cond_notify_at_intr(
-					&c->sema); /* Wake up waiter. */
+					&c->event); /* Wake up waiter. */
 
 				c->expecting_interrupt = 0;
 			} else
@@ -395,9 +395,9 @@ static void identify_ata_device(ata_disk *d)
 	select_device_wait(d);
 	issue_pio_command(c, CMD_IDENTIFY_DEVICE);
 
-	// printk("[hdd] sema iden wait << \n");
-	cond_wait_at_intr(&c->sema);
-	// printk("[hdd] sema iden wait >> \n");
+	// printk("[hdd] event iden wait << \n");
+	cond_wait_at_intr(&c->event);
+	// printk("[hdd] event iden wait >> \n");
 
 	if (!wait_while_busy(d)) {
 		d->is_ata = 0;
@@ -878,7 +878,7 @@ static void wait_until_idle(const ata_disk *d)
 static void select_device_wait(const ata_disk *d)
 {
 	channel *c = d->channel;
-	cond_reset(&c->sema);
+	cond_reset(&c->event);
 	c->expecting_interrupt = 1;
 	select_device(d);
 }
@@ -946,17 +946,17 @@ static int hdd_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
 	channel *c = d->channel;
-	cond_wait_at_intr(&c->iolock);
+	spinlock_lock(&c->iolock);
 
 	select_sector(d, sec_no);
 
 	issue_pio_command(c, CMD_READ_SECTOR_RETRY);
 
-	cond_wait_at_intr(&c->sema);
+	cond_wait_at_intr(&c->event);
 
 	input_sector(c, buf);
 
-	cond_notify_at_intr(&c->iolock);
+	spinlock_unlock(&c->iolock);
 
 	return len;
 }
@@ -965,7 +965,7 @@ static int hdd_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
 	channel *c = d->channel;
-	cond_wait_at_intr(&c->iolock);
+	spinlock_lock(&c->iolock);
 
 	select_sector(d, sec_no);
 
@@ -973,9 +973,9 @@ static int hdd_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	output_sector(c, buf);
 
-	cond_wait_at_intr(&c->sema);
+	cond_wait_at_intr(&c->event);
 
-	cond_notify_at_intr(&c->iolock);
+	spinlock_unlock(&c->iolock);
 
 	return len;
 }

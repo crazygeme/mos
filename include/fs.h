@@ -1,8 +1,7 @@
 #ifndef _FS_H_
 #define _FS_H_
 #include <mm.h>
-#include <block.h>
-#include <lwext4/include/ext4.h>
+#include <ext4.h>
 
 typedef struct _block block;
 #define S_IFMT 00170000
@@ -104,6 +103,8 @@ struct old_linux_dirent {
 
 #define MAX_FD ((PAGE_SIZE) / sizeof(file_descriptor))
 
+int resolve_path(const char *old, char *new);
+
 filep fs_alloc_filep_tty();
 filep fs_alloc_filep_kb();
 filep fs_alloc_filep_null();
@@ -112,6 +113,47 @@ int fs_alloc_filep_pipe(filep *pipes);
 int ext4_blockdev_register(block *aux, char *name, int sec_size, int sec_cnt);
 
 void fs_mount_root();
+
+int fs_open(const char *path, int flag, char *mode);
+
+int fs_close(int fd);
+
+int fs_read(int fd, unsigned offset, char *buf, unsigned len);
+
+int fs_write(int fd, unsigned offset, char *buf, unsigned len);
+
+int fs_delete(const char *path);
+
+int fs_stat(const char *path, struct stat *s);
+
+int fs_fstat(int fd, struct stat *s);
+
+int fs_pipe(int *pipefd);
+
+int fs_dup(int fd);
+
+int fs_dup2(int fd, int newfd);
+
+int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
+	      uint64_t *result, unsigned whence);
+
+int fs_seek(int fd, unsigned offset, unsigned whence);
+
+int fs_select(int fd, unsigned type);
+
+int fs_ioctl(int fd, unsigned cmd, void *buf);
+
+int fs_chmod(const char *pathname, uint32_t mode);
+
+int fs_fchmod(int fd, uint32_t mode);
+
+filep fs_open_file(const char *path, int flag, char *mode, int follow_link);
+
+int fs_destroy(filep f);
+
+filep fs_alloc_filep_normal(void *content);
+
+filep fs_alloc_filep_dir(void *content);
 
 #define fs_refrence(f) __sync_add_and_fetch(&(((filep)f)->ref_cnt), 1)
 

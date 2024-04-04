@@ -9,9 +9,10 @@
 #include <rbtree.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <3rdparty/lwext4/include/ext4.h>
-#include <include/fs.h>
+#include <ext4.h>
+#include <fs.h>
 #include <select.h>
+#include <macro.h>
 
 struct utimbuf {
 	unsigned actime; /* access time */
@@ -1123,54 +1124,7 @@ static int sys_pause()
 	if (TestControl.verbos) {
 		klog("%d: pause\n", CURRENT_TASK()->psid);
 	}
-	asm volatile("hlt");
-	return -1;
-}
-
-int resolve_path(const char *old, char *new)
-{
-	char *r;
-	int len = strlen(old);
-	if (!old || !*old)
-		return -1;
-
-	if (!strcmp(old, ".")) {
-		sys_getcwd(new, MAX_PATH);
-		return 0;
-	}
-
-	if (!strcmp(old, "..")) {
-		sys_getcwd(new, MAX_PATH);
-		r = strrchr(new, '/');
-		*r = '\0';
-		if (*new == '\0') {
-			*new ++ = '/';
-			*new ++ = '\0';
-		}
-		return 0;
-	}
-
-	if (old[0] == '/') {
-		strcpy(new, old);
-		if (len >= 2 && new[len - 1] == '.' && new[len - 2] == '.') {
-			r = strrchr(new, '/');
-			if (!r)
-				return -1;
-			r = strrchr(r - 1, '/');
-			if (!r)
-				return -1;
-			r++;
-			*r = '\0';
-		} else if (len >= 1 && new[len - 1] == '.') {
-			new[len - 1] = '\0';
-		}
-		return 0;
-	} else if (len > 1 && old[0] == '.' && old[1] == '/') {
-		old += 2;
-	}
-
-	sys_getcwd(new, MAX_PATH);
-	strcat(new, old);
+	HLT();
 	return 0;
 }
 
@@ -1367,7 +1321,7 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 	int ret = -ENOENT;
 	filep fp = NULL;
 	char modes[11];
-	fp = fs_open_file(name, 0, follow_link);
+	fp = fs_open_file(name, 0, "r", follow_link);
 	if (fp == NULL)
 		goto done;
 	if (!fp->op.stat)

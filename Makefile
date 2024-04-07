@@ -14,7 +14,8 @@ ASM_OBJS = $(patsubst %,$(DST)/%,$(notdir $(ASMS:.S=.s.o)))
 DEPS =	   $(patsubst %,$(DST)/%,$(notdir $(SRCS:.c=.c.d)))
 DEPS +=	   $(patsubst %,$(DST)/%,$(notdir $(ASMS:.S=.s.d)))
 LIBS =	   $(DST)/lwext4/libext4.a
-
+CFLAGS  =  $(COMMON_CFLAGS) -O0
+ASFLAGS	=  $(COMMON_CFLAGS) -O0
 
 vpath %.c $(SRC_DIRS)
 vpath %.S $(ASM_DIRS)
@@ -39,7 +40,7 @@ $(DST)/%.s.o: %.S $(SCRIPTS) | $(DST)
 $(DST):
 	@-mkdir $(DST)
 
-$(DST)/lwext4/libext4.a: $(DST)
+$(DST)/lwext4/libext4.a: | $(DST)
 	@+make -C 3rdparty
 
 clean:

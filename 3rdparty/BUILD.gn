@@ -1,0 +1,3 @@
+group("3rdparty") {
+  deps = [ "lwext4" ]
+}

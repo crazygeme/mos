@@ -1,0 +1,14 @@
+group("src") {
+  deps = [
+    "boot",
+    "elf",
+    "fs",
+    "hw",
+    "int",
+    "kernel",
+    "lib",
+    "mm",
+    "ps",
+    "test",
+  ]
+}

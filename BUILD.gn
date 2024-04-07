@@ -1,0 +1,14 @@
+import("//feature/kernel.gni")
+
+executable("kernel") {
+  deps = [
+    "3rdparty",
+    "src",
+  ]
+  ldflags = [
+    "-m",
+    "elf_i386",
+    "-T",
+    rebase_path("//link.ld"),
+  ]
+}

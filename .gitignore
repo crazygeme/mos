@@ -8,6 +8,7 @@
 /kernel
 /log
 obj
+out
 user/bin/*
 user/lib/*
 user/etc/*
@@ -53,3 +54,5 @@ compile_commands.json
 *.code-workspace
 .cache
 assemble.s
+.gn
+.gnfiles

@@ -1,0 +1,8 @@
+import("//common.gni")
+import("//feature/kernel.gni")
+
+kernel_glob("kernel") {
+  cflags = common_cflags + [ "-O2" ]
+  defines = common_defines
+  include_dirs = common_includes
+}

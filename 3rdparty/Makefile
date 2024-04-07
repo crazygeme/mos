@@ -4,6 +4,8 @@ SRC_DIRS = lwext4/src
 SRCS = 		$(wildcard *.c $(SRC_DIRS)/*.c)
 OBJS = 		$(patsubst %,$(DST)/lwext4/%,$(notdir $(SRCS:.c=.c.o)))
 DEPS = 		$(patsubst %.c,%.c.d,$(SRCS))
+CFLAGS  =  	$(COMMON_CFLAGS) -O2
+ASFLAGS	=  	$(COMMON_CFLAGS) -O2
 SCRIPTS =  	$(MAINPATH)/mos.mk $(MAINPATH)/Makefile Makefile
 
 vpath %.c  $(SRC_DIRS)

@@ -2,6 +2,7 @@ import("//feature/kernel.gni")
 
 config("common") {
   cflags = [
+    "-ggdb3",
     "-fno-pie",
     "-fno-builtin",
     "-nostdlib",

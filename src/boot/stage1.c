@@ -12,7 +12,7 @@
 extern void syscall_handler();
 extern void kmain_startup();
 
-multiboot_info_t *g_mb;
+char g_cmdline[256] = { 0 };
 unsigned long long gdt[SELECTOR_COUNT];
 unsigned short gdt_size = sizeof(gdt);
 unsigned long long idt[IDT_SIZE];
@@ -135,15 +135,16 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 
 _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 {
-	multiboot_info_t **dst = &g_mb;
-	multiboot_info_t **src = &mb;
+	char *cmdline = (g_cmdline - KERNEL_OFFSET);
+	char *cmdline_src = (char *)mb->cmdline;
 	unsigned long long mem_low, mem_high;
 	if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
 		return;
 	}
 
-	*(multiboot_info_t **)((unsigned)dst - KERNEL_OFFSET) =
-		(multiboot_info_t *)((unsigned)src + KERNEL_OFFSET);
+	if (mb->cmdline)
+		while ((*cmdline++ = *cmdline_src++) != '\0')
+			;
 
 	init_interrupt();
 

@@ -5,10 +5,10 @@ group("src") {
     "fs",
     "hw",
     "int",
-    "kernel",
     "lib",
     "mm",
     "ps",
+    "syscall",
     "test",
   ]
 }

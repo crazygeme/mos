@@ -1,6 +1,6 @@
 import("//feature/kernel.gni")
 
-kernel_glob("kernel") {
-  cflags = [ "-O2" ]
+kernel_glob("syscall") {
+  cflags = [ "-O0" ]
   configs = [ "//:common" ]
 }

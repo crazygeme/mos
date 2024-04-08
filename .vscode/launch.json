@@ -5,10 +5,23 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "attach",
+            "name": "attach O2",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceRoot}/kernel.dbg",
+            "program": "${workspaceRoot}/out/linux/x86/release/kernel.sym",
+            "miDebuggerServerAddress": "127.0.0.1:8888",
+            "cwd": "${workspaceRoot}",
+            "externalConsole": true,
+            "stopAtConnect": true,
+            "linux": {
+                "MIMode": "gdb"
+            }
+        },
+        {
+            "name": "attach O0",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/out/linux/x86/make/kernel.dbg",
             "miDebuggerServerAddress": "127.0.0.1:8888",
             "cwd": "${workspaceRoot}",
             "externalConsole": true,

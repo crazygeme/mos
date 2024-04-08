@@ -40,7 +40,7 @@ typedef struct multiboot_info multiboot_info_t;
 
 extern unsigned phymm_max;
 extern unsigned phymm_valid;
-extern multiboot_info_t *g_mb;
+extern char g_cmdline[];
 extern unsigned long long gdt[];
 extern unsigned short gdt_size;
 extern unsigned long intr_stubs[];

@@ -5,6 +5,7 @@ diskfile="ffs.img"
 _rebuild="0"
 _debug="0"
 _curses=""
+_verbose=""
 _logtofile="stdio"
 _test="0"
 _test_arg=""
@@ -23,6 +24,8 @@ elif [ "$arg" == "rebuild" ]; then
 	_rebuild="1"
 elif [ "$arg" == "debug" ]; then
 	_debug="1"
+elif [ "$arg" == "verbose" ]; then
+	_verbose="verbose"
 elif [ "$arg" == "curses" ]; then
 	_curses="-curses"
 	_vga=""
@@ -45,7 +48,8 @@ else
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	echo -e "\t testall: run all tests"
-	echo -e "\t test verbos: run with debug information"
+	echo -e "\t test: run with debug information"
+	echo -e "\t verbose: run with serial log"
 	exit
 fi
 done
@@ -75,15 +79,15 @@ echo "begin enum $kernel_file"
 
 if [ "$_debug" == "0" ]; then
 	if [ "$_test" == "1" ]; then
-		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "test $_test_arg" -serial $_logtofile $_vga $_power $_kvm
+		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose test $_test_arg" -serial $_logtofile $_vga $_power $_kvm
 	else
-		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel $kernel_file -serial $_logtofile $_vga $_power $_kvm
+		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose" -serial $_logtofile $_vga $_power $_kvm
 	fi
 else
 	if [ "$_test" == "1" ]; then
-		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "test $_test_arg" -serial $_logtofile $_vga $_power $_kvm -gdb tcp::8888 -S
+		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose test $_test_arg" -serial $_logtofile $_vga $_power $_kvm -gdb tcp::8888 -S
 	else 
-		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel $kernel_file -serial $_logtofile $_vga $_power $_kvm  -gdb tcp::8888 -S
+		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose" -serial $_logtofile $_vga $_power $_kvm  -gdb tcp::8888 -S
 	fi
 fi
 

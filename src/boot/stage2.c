@@ -169,10 +169,14 @@ static void run()
 
 static void parse_kernel_cmdline()
 {
-	char *cmd = strdup((char *)g_mb->cmdline);
+	char *cmd = g_cmdline;
 	char *token, *end;
 	token = cmd;
 	memset(&TestControl, 0, sizeof(TestControl));
+
+	if (strlen(g_cmdline) == 0) {
+		return;
+	}
 
 #define SKIP_WHILE(t)                           \
 	do {                                    \
@@ -194,6 +198,9 @@ static void parse_kernel_cmdline()
 			break;
 		*end = '\0';
 		end++;
+		if (strcmp(token, "verbose") == 0)
+			TestControl.verbos = 1;
+
 		if (strcmp(token, "test") == 0)
 			TestControl.test_enable = 1;
 
@@ -221,8 +228,6 @@ static void parse_kernel_cmdline()
 		if (strcmp(token, "pci") == 0)
 			TestControl.test_pci = 1;
 
-		if (strcmp(token, "verbos") == 0)
-			TestControl.verbos = 1;
 		token = end;
 	} while (1);
 }

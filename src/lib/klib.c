@@ -1,3 +1,4 @@
+#include <macro.h>
 #include <klib.h>
 #include <tty.h>
 #include <timer.h>
@@ -274,7 +275,7 @@ int klib_putchar(char c)
 
 	if (is_ansi_control_begin()) {
 		ansi_control_add(c);
-		return -1;
+		return cursor;
 	}
 
 	if (c == '\n') {

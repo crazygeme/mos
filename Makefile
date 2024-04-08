@@ -3,7 +3,7 @@ export MAINPATH
 include $(MAINPATH)/mos.mk
 TARGET	= kernel
 
-SRC_DIRS = src/kernel src/boot src/hw src/test src/int src/fs src/lib src/mm src/ps src/elf
+SRC_DIRS = src/syscall src/boot src/hw src/test src/int src/fs src/lib src/mm src/ps src/elf
 
 SCRIPTS =  $(MAINPATH)/mos.mk $(MAINPATH)/Makefile
 SRCS = 	   $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))

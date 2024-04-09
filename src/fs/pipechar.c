@@ -1,3 +1,4 @@
+#include <timer.h>
 #include <pipechar.h>
 #include <unistd.h>
 #include <klib.h>
@@ -43,7 +44,7 @@ static int pipe_close(void *n)
 	return 0;
 }
 
-static int pipe_read(void *inode, const void *buf, size_t len, size_t *wcnt)
+static int pipe_read(void *inode, void *buf, size_t len, size_t *wcnt)
 {
 	unsigned char c;
 	int i = 0;

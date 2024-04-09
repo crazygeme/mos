@@ -1,2 +1,2 @@
 is_clang = false
-raw = true
+use_ld = true

@@ -1,6 +1,6 @@
 import("//feature/kernel.gni")
 
 kernel_glob("ps") {
-  cflags = [ "-O0" ]
+  cflags = [ "-O0" ]  # FIXME(Ender): Can not boot if change to O2
   configs = [ "//:common" ]
 }

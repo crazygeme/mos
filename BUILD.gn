@@ -35,7 +35,7 @@ config("common") {
   ]
 }
 
-executable("kernel") {
+kernel_exec("kernel") {
   deps = [
     "3rdparty",
     "src",

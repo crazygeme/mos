@@ -157,13 +157,15 @@ typedef enum _ps_type { ps_kernel, ps_user, ps_dsr } ps_type;
 
 typedef void (*process_fn)(void *param);
 
-typedef struct _task_frame {
+typedef volatile struct _task_frame {
 	unsigned short ds;
 	unsigned short ss;
 	unsigned short es;
 	unsigned short gs;
 	unsigned short fs;
 	unsigned short cs;
+	unsigned long edi;
+	unsigned long esi;
 	unsigned long edx;
 	unsigned long ecx;
 	unsigned long ebx;

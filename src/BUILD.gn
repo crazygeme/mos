@@ -1,6 +1,7 @@
 group("src") {
   deps = [
     "boot",
+    "debug",
     "elf",
     "fs",
     "hw",
@@ -9,6 +10,5 @@ group("src") {
     "mm",
     "ps",
     "syscall",
-    "test",
   ]
 }

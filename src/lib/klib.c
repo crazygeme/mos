@@ -429,9 +429,6 @@ static unsigned int kblk(unsigned page_count)
 
 	cur_block_top += page_count * PAGE_SIZE;
 
-	if (TestControl.test_mm)
-		klib_info("cur_block_top: ", cur_block_top, "\n");
-
 	return ret;
 }
 

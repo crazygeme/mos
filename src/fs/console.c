@@ -99,7 +99,7 @@ static fileop ttyop = {
 	.ioctl = tty_ioctl,
 };
 
-static filep alloc()
+static filep alloc(mount_point *mp)
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->file_type = FILE_TYPE_CHAR;

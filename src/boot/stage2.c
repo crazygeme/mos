@@ -94,40 +94,8 @@ static void idle_process(void *param)
 	}
 }
 
-extern void test_pci();
-extern void test_block_process();
 extern void nic_scan_all();
 extern void user_first_process_run();
-
-static void run_tests_if_has()
-{
-	if (TestControl.test_pci) {
-		test_pci();
-		run();
-	}
-
-	if (TestControl.test_block) {
-		test_block_process();
-		run();
-	}
-
-	if (TestControl.test_mm) {
-		memcpy_measure();
-		mm_test();
-		malloc_test();
-		run();
-	}
-
-	// if (TestControl.test_fs_read || TestControl.test_fs_write) {
-	//     test_ns();
-	//     run();
-	// }
-
-	if (TestControl.test_mmap) {
-		vm_test();
-		run();
-	}
-}
 
 static void kmain_process(void *param)
 {
@@ -153,8 +121,6 @@ static void kmain_process(void *param)
 
 	// enable network
 	nic_scan_all();
-
-	run_tests_if_has();
 
 	printk("Init system call table\n");
 	syscall_init();
@@ -204,33 +170,6 @@ static void parse_kernel_cmdline()
 		end++;
 		if (strcmp(token, "verbose") == 0)
 			TestControl.verbos = 1;
-
-		if (strcmp(token, "test") == 0)
-			TestControl.test_enable = 1;
-
-		if (strcmp(token, "all") == 0)
-			TestControl.test_all = 1;
-
-		if (strcmp(token, "mmap") == 0)
-			TestControl.test_mmap = 1;
-
-		if (strcmp(token, "block") == 0)
-			TestControl.test_block = 1;
-
-		if (strcmp(token, "mount") == 0)
-			TestControl.test_mount = 1;
-
-		if (strcmp(token, "mm") == 0)
-			TestControl.test_mm = 1;
-
-		if (strcmp(token, "fs_read") == 0)
-			TestControl.test_fs_read = 1;
-
-		if (strcmp(token, "fs_write") == 0)
-			TestControl.test_fs_write = 1;
-
-		if (strcmp(token, "pci") == 0)
-			TestControl.test_pci = 1;
 
 		token = end;
 	} while (1);

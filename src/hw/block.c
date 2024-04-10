@@ -1,7 +1,8 @@
+#include <macro.h>
 #include <block.h>
 #include <lock.h>
 #include <klib.h>
-#include <include/fs.h>
+#include <fs.h>
 
 static struct _block_control {
 	list_entry block_lists[BLOCK_MAX];
@@ -266,7 +267,7 @@ static int dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
 			break;
 		}
 		// entry->name[entry->name_length] = '\0';
-		len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
+		len = ROUND_UP(NAME_OFFSET() + strlen(entry->name) + 1);
 		if (count < len) {
 			if (prev) {
 				prev->d_off = retcount;
@@ -277,7 +278,7 @@ static int dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
 		dirp->d_ino = entry->inode;
 		strncpy(dirp->d_name, entry->name, entry->name_length);
 		dirp->d_reclen =
-			ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
+			ROUND_UP(NAME_OFFSET() + strlen(dirp->d_name) + 1);
 		cur_pos += dirp->d_reclen;
 		dirp->d_off = cur_pos;
 		retcount += dirp->d_reclen;
@@ -327,7 +328,7 @@ static int dir_seek(ext4_dir *dir, uint64_t offset, uint32_t origin)
 		if (entry == NULL) {
 			break;
 		}
-		len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
+		len = ROUND_UP(NAME_OFFSET() + strlen(entry->name) + 1);
 		if (count < len) {
 			return (cur_pos + len);
 		}

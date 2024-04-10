@@ -189,7 +189,8 @@ static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
 	strcat(linkcontent, saved);
 }
 
-filep fs_open_file(const char *path, int flag, char *mode, int follow_link)
+static filep fs_open_file_ext4(const char *path, int flag, char *mode,
+			       int follow_link)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
@@ -274,6 +275,20 @@ done:
 	return ret;
 }
 
+filep fs_open_file(const char *path, int flag, char *mode, int follow_link)
+{
+	filep fp = NULL;
+	task_struct *cur = CURRENT_TASK();
+	if (cur->root)
+		fp = mount_open(cur->root, path, flag, mode);
+
+	if (!fp) {
+		fp = fs_open_file_ext4(path, flag, mode, 1);
+	}
+
+	return fp;
+}
+
 int fs_open(const char *path, int flag, char *mode)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -286,11 +301,9 @@ int fs_open(const char *path, int flag, char *mode)
 	if (fd < 0)
 		goto done;
 
-	fp = mount_open(cur->root, path);
+	fp = fs_open_file(path, flag, mode, 1);
 	if (!fp) {
-		fp = fs_open_file(path, flag, mode, 1);
-		if (fp == NULL)
-			goto fail;
+		goto fail;
 	}
 
 	cur->fds[fd].flag = flag;

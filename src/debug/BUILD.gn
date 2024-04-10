@@ -1,6 +1,6 @@
 import("//feature/kernel.gni")
 
-kernel_glob("test") {
+kernel_glob("debug") {
   cflags = [ "-O2" ]
   configs = [ "//:common" ]
 }

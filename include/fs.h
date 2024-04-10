@@ -92,7 +92,7 @@ struct linux_dirent {
 };
 
 #define ROUND_UP(x) (((x) + sizeof(long) - 1) & ~(sizeof(long) - 1))
-#define NAME_OFFSET(de) ((int)((de)->d_name - (char *)(de)))
+#define NAME_OFFSET() offset_of(struct linux_dirent, d_name)
 
 #define NAME_MAX 255
 struct old_linux_dirent {

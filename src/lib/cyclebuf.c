@@ -9,7 +9,7 @@ typedef struct _cy_buf {
 	unsigned write_idx;
 	unsigned read_idx;
 	cond_t lock;
-	spinlock idx_lock;
+	spinlock_t idx_lock;
 	int writer_count;
 	int reader_count;
 	unsigned ref_count;

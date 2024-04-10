@@ -29,8 +29,8 @@ static int cursor = 0;
 static unsigned int kblk(unsigned page_count);
 static void klib_cursor_forward(int new_pos);
 
-static spinlock tty_lock;
-static spinlock heap_lock;
+static spinlock_t tty_lock;
+static spinlock_t heap_lock;
 static cond_t klog_lock;
 
 static void lock_tty()

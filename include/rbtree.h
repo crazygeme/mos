@@ -198,7 +198,7 @@ typedef int (*hash_comp_fn)(void *my_key, void *in_node);
 struct _hash_table {
 	struct rb_root root;
 	hash_comp_fn comp;
-	spinlock lock;
+	spinlock_t lock;
 };
 
 struct _key_value_pair {

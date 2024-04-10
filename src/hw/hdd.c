@@ -210,7 +210,7 @@ void hdd_init()
 #endif
 		c->expecting_interrupt = 0;
 		cond_init(&c->event, c->name, 1);
-		spinlock_init(&c->iolock);
+		spinlock_init_ex(&c->iolock, 0);
 		/* Initialize devices. */
 		for (dev_no = 0; dev_no < 2; dev_no++) {
 			ata_disk *d = &c->devices[dev_no];

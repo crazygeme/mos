@@ -81,8 +81,8 @@ typedef struct _name_cache {
 } name_cache;
 
 static name_cache name_cache_head;
-static spinlock mm_lock;
-static spinlock path_lock;
+static spinlock_t mm_lock;
+static spinlock_t path_lock;
 
 // take 8M ~ 12M as page table cache
 void mm_init_page_table_cache()

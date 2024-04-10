@@ -44,8 +44,6 @@ $(DST)/lwext4/libext4.a: | $(DST)
 
 clean:
 	@-rm -rf $(DST)
-	@-rm $(TARGET)
-	@-rm $(TARGET).dbg
 
 rebuild:
 	@+make clean

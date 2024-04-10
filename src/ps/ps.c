@@ -25,12 +25,12 @@ static unsigned cur_cr3, cr3, next_cr3;
 static unsigned next_eip;
 
 static ps_control control;
-static spinlock ps_lock;
-static spinlock psid_lock;
-static spinlock dying_queue_lock;
-static spinlock wait_queue_lock;
-static spinlock mgr_queue_lock;
-static spinlock map_lock;
+static spinlock_t ps_lock;
+static spinlock_t psid_lock;
+static spinlock_t dying_queue_lock;
+static spinlock_t wait_queue_lock;
+static spinlock_t mgr_queue_lock;
+static spinlock_t map_lock;
 static unsigned int ps_id;
 static void lock_ps()
 {

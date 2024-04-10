@@ -7,7 +7,7 @@ static void waitable_get(void *waitable);
 
 static void waitable_put(void *waitable);
 
-void spinlock_init(spinlock_t lock)
+void spinlock_init(spinlock_t *lock)
 {
 	lock->lock = 0;
 	lock->inited = 1;
@@ -15,7 +15,13 @@ void spinlock_init(spinlock_t lock)
 	lock->holder = 0;
 }
 
-void spinlock_uninit(spinlock_t lock)
+void spinlock_init_ex(spinlock_t *lock, int disable_intr)
+{
+	spinlock_init(lock);
+	lock->disable_intr = disable_intr;
+}
+
+void spinlock_uninit(spinlock_t *lock)
 {
 	lock->inited = 0;
 	// spinlock_put(&lock->lock);
@@ -27,7 +33,7 @@ void spinlock_uninit(spinlock_t lock)
 	}
 }
 
-void spinlock_lock(spinlock_t lock)
+void spinlock_lock(spinlock_t *lock)
 {
 	task_struct *cur = CURRENT_TASK();
 	if (lock->inited) {
@@ -40,7 +46,7 @@ void spinlock_lock(spinlock_t lock)
 	}
 }
 
-void spinlock_unlock(spinlock_t lock)
+void spinlock_unlock(spinlock_t *lock)
 {
 	task_struct *cur = CURRENT_TASK();
 	if (lock->inited) {

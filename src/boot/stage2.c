@@ -1,3 +1,5 @@
+#include <debugfs.h>
+#include <mount.h>
 #include <klib.h>
 #include <int.h>
 #include <keyboard.h>
@@ -146,6 +148,8 @@ static void kmain_process(void *param)
 	null_init();
 
 	pipe_init();
+
+	debugfs_init();
 
 	// enable network
 	nic_scan_all();

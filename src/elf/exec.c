@@ -408,9 +408,8 @@ void user_first_process_run()
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
 	ps_update_tss(esp0);
 	// fd 0, 1, 2
-	fs_open("k", 0, "r");
-	fs_open("t", 0, "r");
-	fs_open("t", 0, "r");
-
+	fs_open("/dev/kb", 0, "r");
+	fs_open("/dev/tty", 0, "w");
+	fs_open("/dev/tty", 0, "w");
 	run_if_exist("/bin/bash");
 }

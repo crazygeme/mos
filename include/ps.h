@@ -1,6 +1,7 @@
 #ifndef _PS_H_
 #define _PS_H_
 
+#include <mount.h>
 #include <list.h>
 #include <lock.h>
 #include <fs.h>
@@ -202,6 +203,7 @@ typedef struct _task_struct {
 	char *cwd;
 	unsigned fork_flag;
 	cond_t vfork_event;
+	mount_point *root;
 	unsigned umask;
 	unsigned int magic; // to avoid stack overflow
 

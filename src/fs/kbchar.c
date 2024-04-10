@@ -4,13 +4,11 @@
 #include <unistd.h>
 #include <fs.h>
 #include <tty.h>
+#include <mount.h>
+#include <ps.h>
 
 static int kb_read(void *inode, const void *buf, size_t size, size_t *wcnt);
 static int kb_close(struct ext4_blockdev *bdev);
-
-void kbchar_init()
-{
-}
 
 static int kb_read(void *inode, const void *buf, size_t size, size_t *wcnt)
 {
@@ -67,14 +65,23 @@ static fileop kbop = {
 	.ioctl = tty_ioctl,
 };
 
-filep fs_alloc_filep_kb()
+static filep alloc()
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->file_type = FILE_TYPE_CHAR;
 	fp->inode = NULL;
 	fp->ref_cnt = 0;
 	fp->op = kbop;
-	fp->mode = 0;
-	fp->istty = 0;
+	fp->mode = S_IFREG;
 	return fp;
+}
+
+static mount_op mp = {
+	.alloc = alloc,
+};
+
+void kbchar_init()
+{
+	task_struct *cur = CURRENT_TASK();
+	do_mount(cur->root, "/dev/kb", &mp);
 }

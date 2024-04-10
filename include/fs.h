@@ -52,7 +52,10 @@ typedef struct _block block;
 #define FS_SELECT_WRITE 1
 #define FS_SELECT_EXCEPT 2
 
+typedef struct _file *filep;
+
 typedef struct _fileop {
+	filep (*open)(void *inode, const char *path, int flag, char *mode);
 	int (*close)(void *inode);
 	int (*read)(void *inode, void *buf, size_t size, size_t *rcnt);
 	int (*write)(void *inode, const void *buf, size_t size, size_t *wcnt);
@@ -70,11 +73,9 @@ typedef struct _file {
 	void *inode;
 	unsigned ref_cnt;
 	unsigned mode;
-	int istty;
 	fileop op;
 	char *name;
 } file;
-typedef file *filep;
 
 typedef struct _file_descriptor {
 	filep fp;

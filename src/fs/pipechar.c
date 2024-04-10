@@ -4,6 +4,7 @@
 #include <klib.h>
 #include <cyclebuf.h>
 #include <fs.h>
+#include <mount.h>
 
 typedef struct _pipe_inode {
 	cy_buf *buf;
@@ -156,14 +157,12 @@ int fs_alloc_filep_pipe(filep *pipes)
 	fp_read->inode = pipe_create_reader(buf);
 	fp_read->ref_cnt = 0;
 	fp_read->op = readop;
-	fp_read->istty = 0;
 
 	filep fp_write = calloc(1, sizeof(*fp_write));
 	fp_write->file_type = FILE_TYPE_PIPE;
 	fp_write->inode = pipe_create_writer(buf);
 	fp_write->ref_cnt = 0;
 	fp_write->op = writeop;
-	fp_write->istty = 0;
 
 	pipes[0] = fp_read;
 	pipes[1] = fp_write;

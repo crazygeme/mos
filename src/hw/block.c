@@ -245,20 +245,49 @@ static int dir_close(void *inode)
 	return 0;
 }
 
-static int dir_read(ext4_dir *dir, void *buf, size_t size, size_t *rcnt)
+static int dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
 {
 	int ret = 0;
-	ext4_direntry *entry = ext4_dir_entry_next(dir);
-	if (!entry) {
-		ret = 0;
-	} else {
-		// ret = offsetof(ext4_direntry, name) + entry->name_length;
-		ret = sizeof(ext4_direntry);
-		memcpy(buf, entry, ret);
+	struct linux_dirent *dirp = buf;
+	ext4_direntry *entry = NULL;
+	ext4_dir *dir = inode;
+	struct linux_dirent *prev = NULL;
+	int retcount = 0;
+	int len;
+	int cur_pos = 0;
+
+	while (count > 0) {
+		entry = ext4_dir_entry_next(dir);
+		// ret = fs_read(fd, 0, entry, sizeof(*entry));
+		if (entry == NULL) {
+			if (prev) {
+				prev->d_off = retcount;
+			}
+			break;
+		}
+		// entry->name[entry->name_length] = '\0';
+		len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
+		if (count < len) {
+			if (prev) {
+				prev->d_off = retcount;
+			}
+			break;
+		}
+		memset(dirp, 0, len);
+		dirp->d_ino = entry->inode;
+		strncpy(dirp->d_name, entry->name, entry->name_length);
+		dirp->d_reclen =
+			ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
+		cur_pos += dirp->d_reclen;
+		dirp->d_off = cur_pos;
+		retcount += dirp->d_reclen;
+		count -= dirp->d_reclen;
+		prev = dirp;
+		dirp = (char *)dirp + dirp->d_reclen;
 	}
 done:
 	if (rcnt)
-		*rcnt = ret;
+		*rcnt = retcount;
 	return 0;
 }
 
@@ -335,7 +364,6 @@ filep fs_alloc_filep_normal(void *content)
 	fp->inode = content;
 	fp->ref_cnt = 0;
 	fp->op = file_op;
-	fp->istty = 0;
 	return fp;
 }
 

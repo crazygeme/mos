@@ -6,7 +6,7 @@
 static struct _block_control {
 	list_entry block_lists[BLOCK_MAX];
 	unsigned int block_count[BLOCK_MAX];
-	spinlock lock;
+	spinlock_t lock;
 } control;
 
 static unsigned int id;

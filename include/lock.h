@@ -2,28 +2,31 @@
 #define _LOCK_H_
 #include <list.h>
 
-typedef struct _spinlock {
+typedef volatile struct _spinlock {
 	unsigned int lock;
 	int inited;
 	unsigned int int_status;
 	unsigned holder;
-} spinlock, *spinlock_t;
+	unsigned disable_intr;
+} spinlock_t;
 
-void spinlock_init(spinlock_t lock);
+void spinlock_init(spinlock_t *lock);
 
-void spinlock_uninit(spinlock_t lock);
+void spinlock_init_ex(spinlock_t *lock, int disable_intr);
 
-void spinlock_lock(spinlock_t lock);
+void spinlock_uninit(spinlock_t *lock);
 
-void spinlock_unlock(spinlock_t lock);
+void spinlock_lock(spinlock_t *lock);
+
+void spinlock_unlock(spinlock_t *lock);
 
 // cond_t
 
-typedef struct _cond {
+typedef volatile struct _cond {
 	char name[16];
 	unsigned int lock;
 	list_entry wait_list;
-	spinlock wait_lock;
+	spinlock_t wait_lock;
 } cond_t;
 
 void cond_init(cond_t *s, const char *name, unsigned int initstat);

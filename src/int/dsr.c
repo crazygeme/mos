@@ -9,8 +9,8 @@
 #define TRIGGER_SOFTIRQ() asm volatile("int $1");
 
 static list_entry dsr_head;
-static spinlock dsr_lock;
-static spinlock cache_lock;
+static spinlock_t dsr_lock;
+static spinlock_t cache_lock;
 static list_entry dsr_cache;
 
 static void lock_dsr()

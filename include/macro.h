@@ -86,6 +86,8 @@
 		asm volatile("movl %%ebx, %0" : "=m"(task->tss.ebx));       \
 		asm volatile("movl %%ecx, %0" : "=m"(task->tss.ecx));       \
 		asm volatile("movl %%edx, %0" : "=m"(task->tss.edx));       \
+		asm volatile("movl %%edi, %0" : "=m"(task->tss.edi));       \
+		asm volatile("movl %%esi, %0" : "=m"(task->tss.esi));       \
 		asm volatile("movl %%esp, %0" : "=m"(task->tss.esp));       \
 		asm volatile("mov %%fs, %0" : "=m"(task->tss.fs));          \
 		asm volatile("mov %%gs, %0" : "=m"(task->tss.gs));          \
@@ -94,24 +96,22 @@
 		asm volatile("mov %%ds, %0" : "=m"(task->tss.ds));          \
 	})
 
-#define RESTORE_ALL(task, next)                                             \
-	({                                                                  \
-		asm volatile("mov %0, %%ds" : : "m"(task->tss.ds));         \
-		asm volatile("mov %0, %%ss" : : "m"(task->tss.ss));         \
-		asm volatile("mov %0, %%es" : : "m"(task->tss.es));         \
-		asm volatile("mov %0, %%gs" : : "m"(task->tss.gs));         \
-		asm volatile("mov %0, %%fs" : : "m"(task->tss.fs));         \
-		asm volatile("movl %0, %%edx" : : "m"(task->tss.edx));      \
-		asm volatile("movl %0, %%ecx" : : "m"(task->tss.ecx));      \
-		asm volatile("movl %0, %%ebx" : : "m"(task->tss.ebx));      \
-		asm volatile("movl %0, %%eax" : : "m"(task->tss.eax));      \
-		/* after we change ebp, "task" variable will be changed   \
-		   so ebp should be the last one that restored            \
-		   that's why we have to save eip into edx first          \
-		   FIXME: we assume edx not used */ \
-		next = task->tss.eip;                                       \
-		asm volatile("movl %0, %%esp" : : "m"(task->tss.esp));      \
-		asm volatile("movl %0, %%ebp" : : "m"(task->tss.ebp));      \
+#define RESTORE_ALL(task, next)                                        \
+	({                                                             \
+		asm volatile("mov %0, %%ds" : : "m"(task->tss.ds));    \
+		asm volatile("mov %0, %%ss" : : "m"(task->tss.ss));    \
+		asm volatile("mov %0, %%es" : : "m"(task->tss.es));    \
+		asm volatile("mov %0, %%gs" : : "m"(task->tss.gs));    \
+		asm volatile("mov %0, %%fs" : : "m"(task->tss.fs));    \
+		asm volatile("movl %0, %%edi" : : "m"(task->tss.edi)); \
+		asm volatile("movl %0, %%esi" : : "m"(task->tss.esi)); \
+		asm volatile("movl %0, %%edx" : : "m"(task->tss.edx)); \
+		asm volatile("movl %0, %%ecx" : : "m"(task->tss.ecx)); \
+		asm volatile("movl %0, %%ebx" : : "m"(task->tss.ebx)); \
+		asm volatile("movl %0, %%eax" : : "m"(task->tss.eax)); \
+		next = task->tss.eip;                                  \
+		asm volatile("movl %0, %%esp" : : "m"(task->tss.esp)); \
+		asm volatile("movl %0, %%ebp" : : "m"(task->tss.ebp)); \
 	})
 
 #define JUMP_TO_NEXT_TASK_EIP(next)                           \

@@ -1,6 +1,6 @@
 import("//feature/kernel.gni")
 
 kernel_glob("lib") {
-  cflags = [ "-O0" ]  # FIXME(Ender): can not run pipe if change to O2
+  cflags = [ "-O2" ]
   configs = [ "//:common" ]
 }

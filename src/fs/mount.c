@@ -5,18 +5,46 @@
 #include <lock.h>
 #include <fs.h>
 
-typedef struct _mount_point {
-	mount_op op;
-	hash_table *mounts;
-	cond_t lock;
-	unsigned ref;
-} mount_point;
-
 static int mount_path_comp(void *k1, void *k2)
 {
 	const char *left = k1;
 	const char *right = k2;
 	return 0 - strcmp(left, right);
+}
+
+static int mount_path_resolve(mount_point *mp, const char *path,
+			      mount_point **out_mp, char **out_path)
+{
+	key_value_pair *kv = NULL;
+	mount_point *new_mp = NULL;
+	const char *new_path = NULL;
+
+	if (!mp || !path)
+		return 0;
+
+	if (*path == '\0') {
+		goto done;
+	}
+
+	cond_wait(&mp->lock);
+
+	for (kv = hash_first(mp->mounts); kv; kv = hash_next(mp->mounts, kv)) {
+		if (strstr(path, kv->key) == path) {
+			cond_notify(&mp->lock);
+
+			new_path = path + strlen(kv->key);
+			new_mp = kv->val;
+			return mount_path_resolve(new_mp, new_path, out_mp,
+						  out_path);
+		}
+	}
+
+	cond_notify(&mp->lock);
+
+done:
+	*out_mp = mp;
+	*out_path = path;
+	return 1;
 }
 
 mount_point *mount_create()
@@ -57,86 +85,121 @@ void mount_deref(mount_point *mp)
 
 int do_mount(mount_point *mp, const char *path, const mount_op *op)
 {
-	mount_point *new_mp = NULL;
-	char *key = NULL;
-	if (!path || !*path) {
-		return EINVAL;
-	}
-
-	if (*path != '/') {
-		return EINVAL;
-	}
-
-	cond_wait(&mp->lock);
-	if (hash_find(mp->mounts, path)) {
-		cond_notify(&mp->lock);
-		return EEXIST;
-	}
-
-	new_mp = mount_create();
-	new_mp->op = *op;
-	key = strdup(path);
-	hash_insert(mp->mounts, key, new_mp);
-	cond_notify(&mp->lock);
-}
-
-int do_unmount(mount_point *mp, const char *path)
-{
-	key_value_pair *kv = NULL;
-
-	if (!path || !*path) {
-		return EINVAL;
-	}
-
-	if (*path != '/') {
-		return EINVAL;
-	}
-
-	cond_wait(&mp->lock);
-	kv = hash_find(mp->mounts, path);
-
-	if (!kv) {
-		cond_notify(&mp->lock);
-		return EEXIST;
-	}
-
-	hash_remove(mp->mounts, path);
-	mount_deref(kv->val);
-	kfree(kv->key);
-	cond_notify(&mp->lock);
-}
-
-filep mount_open(mount_point *mp, const char *path)
-{
-	key_value_pair *kv = NULL;
 	const char *new_path = NULL;
 	mount_point *new_mp = NULL;
-	filep fp = NULL;
+	mount_point *child_mp = NULL;
+	char *key = NULL;
 
 	if (!mp || !path) {
 		return NULL;
 	}
 
-	cond_wait(&mp->lock);
-
-	for (kv = hash_first(mp->mounts); kv; kv = hash_next(mp->mounts, kv)) {
-		if (strstr(path, kv->key) == path) {
-			new_path = path + strlen(kv->key);
-			new_mp = kv->val;
-			cond_notify(&mp->lock);
-
-			if (strlen(new_path) == 0) {
-				// open self
-				fp = new_mp->op.alloc();
-				fp->name = strdup(path);
-				fs_refrence(fp);
-				return fp;
-			}
-
-			return mount_open(new_mp, new_path);
-		}
+	if (*path != '/') {
+		return EINVAL;
 	}
 
-	cond_notify(&mp->lock);
-	return NULL;
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
+		return NULL;
+	}
+
+	if (new_mp == mp) {
+		if (*new_path == '\0')
+			return EINVAL;
+
+		cond_wait(&new_mp->lock);
+		if (hash_find(new_mp->mounts, path)) {
+			cond_notify(&new_mp->lock);
+			return EEXIST;
+		}
+
+		child_mp = mount_create();
+		child_mp->op = *op;
+		key = strdup(new_path);
+		hash_insert(new_mp->mounts, key, child_mp);
+		cond_notify(&new_mp->lock);
+		return 0;
+	}
+
+	return do_mount(new_mp, new_path, op);
+}
+
+int do_unmount(mount_point *mp, const char *path)
+{
+	const char *new_path = NULL;
+	mount_point *new_mp = NULL;
+	char *key = NULL;
+	key_value_pair *kv = NULL;
+
+	if (!mp || !path) {
+		return NULL;
+	}
+
+	if (*path != '/') {
+		return EINVAL;
+	}
+
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
+		return NULL;
+	}
+
+	if (new_mp == mp) {
+		if (*new_path != '\0') {
+			return EEXIST;
+		}
+
+		cond_wait(&new_mp->lock);
+		kv = hash_find(new_mp->mounts, path);
+
+		if (!kv) {
+			cond_notify(&new_mp->lock);
+			return EEXIST;
+		}
+
+		hash_remove(new_mp->mounts, path);
+		mount_deref(kv->val);
+		kfree(kv->key);
+		cond_notify(&new_mp->lock);
+		return 0;
+	}
+
+	return do_unmount(new_mp, new_path);
+}
+
+filep mount_open(mount_point *mp, const char *path, int flag, const char *mode)
+{
+	const char *new_path = NULL;
+	mount_point *new_mp = NULL;
+	filep fp = NULL;
+	filep newfp = NULL;
+
+	if (!mp || !path) {
+		return NULL;
+	}
+
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
+		return NULL;
+	}
+
+	if (new_mp == mp) {
+		// open self
+		if (!new_mp->op.alloc)
+			return NULL;
+
+		fp = new_mp->op.alloc(new_mp);
+
+		// a path under this mount point, let target mount point decide
+		// how to open the file.
+		if (strlen(new_path) != 0) {
+			newfp = fp->op.open(new_mp, new_path, flag, mode);
+			fs_destroy(fp);
+			return newfp;
+		}
+
+		// open self as a dir
+		fp->name = strdup(path);
+		fs_refrence(fp);
+		return fp;
+	}
+
+	return mount_open(new_mp, new_path, flag, mode);
 }

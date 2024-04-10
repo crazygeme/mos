@@ -121,18 +121,6 @@ void klogquota();
 void printk(const char *str, ...);
 
 typedef struct _TEST_CONTROL {
-	int test_enable;
-	int test_all;
-	int test_mmap;
-	int test_mm;
-	int test_fs_read;
-	int test_fs_write;
-	int test_ext2;
-	int test_mount;
-	int test_block;
-	int test_pci;
-	int test_nic;
-	int test_socket;
 	int verbos;
 } TEST_CONTROL;
 extern TEST_CONTROL TestControl;

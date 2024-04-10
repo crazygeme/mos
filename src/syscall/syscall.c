@@ -877,15 +877,11 @@ static int sys_fcntl(int fd, int cmd, int arg)
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 			unsigned int count)
 {
-	ext4_direntry *entry = NULL;
-	int retcount;
-	int len;
 	int ret = 0;
-	int cur_pos = 0;
-	struct linux_dirent *prev;
 	struct stat s;
 	filep fp;
 	ext4_dir *dir;
+	int retcount = 0;
 
 	if (TestControl.verbos) {
 		klog("%d: getdents(%d, %x, %d)", CURRENT_TASK()->psid, fd, dirp,
@@ -913,37 +909,9 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		}
 		return -22;
 	}
-	retcount = 0;
-	prev = 0;
-	dir = fp->inode;
-	while (count > 0) {
-		entry = ext4_dir_entry_next(fp->inode);
-		// ret = fs_read(fd, 0, entry, sizeof(*entry));
-		if (entry == NULL) {
-			if (prev) {
-				prev->d_off = retcount;
-			}
-			break;
-		}
-		// entry->name[entry->name_length] = '\0';
-		len = ROUND_UP(NAME_OFFSET(dirp) + strlen(entry->name) + 1);
-		if (count < len) {
-			if (prev) {
-				prev->d_off = retcount;
-			}
-			break;
-		}
-		memset(dirp, 0, len);
-		dirp->d_ino = entry->inode;
-		strncpy(dirp->d_name, entry->name, entry->name_length);
-		dirp->d_reclen =
-			ROUND_UP(NAME_OFFSET(dirp) + strlen(dirp->d_name) + 1);
-		cur_pos += dirp->d_reclen;
-		dirp->d_off = cur_pos;
-		retcount += dirp->d_reclen;
-		count -= dirp->d_reclen;
-		prev = dirp;
-		dirp = (char *)dirp + dirp->d_reclen;
+
+	if (fp->op.read(fp->inode, dirp, count, &retcount) != 0) {
+		return -1;
 	}
 
 	if (TestControl.verbos) {

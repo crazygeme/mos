@@ -3,15 +3,12 @@
 #include <unistd.h>
 #include <klib.h>
 #include <fs.h>
-#include <include/fs.h>
+#include <mount.h>
+#include <ps.h>
 
 static int null_read(void *inode, void *buf, size_t size, size_t *rcnt);
 static int null_write(void *inode, const void *buf, size_t size, size_t *wcnt);
 static int null_close(void *inode);
-
-void null_init()
-{
-}
 
 static int null_read(void *inode, void *buf, size_t size, size_t *rcnt)
 {
@@ -67,13 +64,22 @@ static fileop nullop = {
 	.select = null_select,
 };
 
-filep fs_alloc_filep_null()
+static filep alloc()
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->file_type = FILE_TYPE_CHAR;
 	fp->inode = NULL;
 	fp->ref_cnt = 0;
 	fp->op = nullop;
-	fp->istty = 0;
 	return fp;
+}
+
+static mount_op mp = {
+	.alloc = alloc,
+};
+
+void null_init()
+{
+	task_struct *cur = CURRENT_TASK();
+	do_mount(cur->root, "/dev/null", &mp);
 }

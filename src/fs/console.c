@@ -1,3 +1,5 @@
+#include <ps.h>
+#include <mount.h>
 #include <console.h>
 #include <klib.h>
 #include <unistd.h>
@@ -6,11 +8,6 @@
 
 static int console_write(void *inode, const void *buf, size_t size,
 			 size_t *wcnt);
-static int console_close(void *inode);
-void console_init()
-{
-	return;
-}
 
 static int console_write(void *inode, const void *buf, size_t size,
 			 size_t *wcnt)
@@ -102,14 +99,23 @@ static fileop ttyop = {
 	.ioctl = tty_ioctl,
 };
 
-filep fs_alloc_filep_tty()
+static filep alloc()
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->file_type = FILE_TYPE_CHAR;
 	fp->inode = NULL;
 	fp->ref_cnt = 0;
 	fp->op = ttyop;
-	fp->mode = 0;
-	fp->istty = 1;
+	fp->mode = S_IFREG;
 	return fp;
+}
+
+static mount_op mp = {
+	.alloc = alloc,
+};
+
+void console_init()
+{
+	task_struct *cur = CURRENT_TASK();
+	do_mount(cur->root, "/dev/tty", &mp);
 }

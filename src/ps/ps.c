@@ -1,3 +1,4 @@
+#include <mount.h>
 #include <block.h>
 #include <mmap.h>
 #include <phymm.h>
@@ -21,7 +22,7 @@ typedef struct _ps_control {
 	task_struct *ps_dsr;
 } ps_control;
 
-static unsigned cur_cr3, cr3, next_cr3;
+static unsigned next_cr3;
 static unsigned next_eip;
 
 static ps_control control;
@@ -612,6 +613,8 @@ int do_fork(unsigned flag)
 	strcpy(task->command, cur->command);
 	task->cwd = name_get();
 	task->fork_flag = flag;
+	task->root = cur->root;
+	mount_ref(task->root);
 	memset(task->cwd, 0, MAX_PATH);
 	strcpy(task->cwd, cur->cwd);
 	ps_dup_fds(cur, task);
@@ -819,6 +822,11 @@ int sys_waitpid(unsigned pid, int *status, int options)
 					vm_free(task->user.page_dir, 1);
 					task->user.page_dir = 0;
 				}
+
+				if (task->root) {
+					mount_deref(task->root);
+				}
+
 				ps_remove_mgr(task);
 				vm_free(task, 1);
 				can_return = 1;
@@ -957,8 +965,6 @@ void _task_sched(const char *func)
 	current->is_switching = 1;
 	task = ps_get_next_task();
 
-	cur_cr3 = current->user.page_dir - KERNEL_OFFSET;
-	LOAD_CR3(cr3);
 	if (task->psid == current->psid) {
 		goto SELF;
 	}

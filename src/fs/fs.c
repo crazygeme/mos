@@ -1,3 +1,4 @@
+#include <mount.h>
 #include <unistd.h>
 #include <fs.h>
 #include <block.h>
@@ -96,6 +97,8 @@ static int block_proxy_unlock(struct ext4_blockdev *bdev)
 
 void fs_mount_root()
 {
+	task_struct *cur = CURRENT_TASK();
+	cur->root = mount_create();
 	ext4_mount(__first_hdd_name, "/", 0);
 	ext4_cache_write_back("/", true);
 }
@@ -275,7 +278,6 @@ int fs_open(const char *path, int flag, char *mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	int fd = -1;
-
 	filep fp = NULL;
 	int ret = -ENOENT;
 	cond_wait(&cur->fd_lock);
@@ -284,24 +286,13 @@ int fs_open(const char *path, int flag, char *mode)
 	if (fd < 0)
 		goto done;
 
-	if (*path != '/') {
-		if (*path == 't')
-			fp = fs_alloc_filep_tty();
-		else if (*path == 'k')
-			fp = fs_alloc_filep_kb();
-		fp->mode = S_IFREG;
-		fp->name = strdup(path);
-		fs_refrence(fp);
-	} else if (strcmp(path, "/dev/null") == 0) {
-		fp = fs_alloc_filep_null();
-		fp->mode = S_IFREG;
-		fp->name = strdup(path);
-		fs_refrence(fp);
-	} else {
+	fp = mount_open(cur->root, path);
+	if (!fp) {
 		fp = fs_open_file(path, flag, mode, 1);
 		if (fp == NULL)
 			goto fail;
 	}
+
 	cur->fds[fd].flag = flag;
 	cur->fds[fd].fp = fp;
 	cur->fds[fd].used = 1;

@@ -138,7 +138,7 @@ typedef struct _partition {
 #if HDD_CACHE_OPEN
 	block_cache cache;
 	int cache_inited;
-	cond_t cache_lock;
+	mutex_t cache_lock;
 #endif
 } partition;
 
@@ -567,7 +567,7 @@ static void init_partition_cache(partition *p)
 	p->cache.hash = hash_create(int_comp);
 	list_init(&p->cache.timer_list_head);
 	p->cache_inited = 1;
-	cond_init(&p->cache_lock, "cachelock", 0);
+	mutex_init(&p->cache_lock);
 }
 
 static block_cache_item *hdd_cache_lookup(partition *p, int sector)
@@ -726,12 +726,12 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	int sector_off = SECTOR_OFF(sector);
 	int head_sector = HEAD_SECTOR(sector);
 
-	cond_wait(&p->cache_lock);
+	mutex_lock(&p->cache_lock);
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
 		list_remove_entry(&item->time_list);
 		list_insert_tail(&p->cache.timer_list_head, &item->time_list);
-		cond_notify(&p->cache_lock);
+		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
 		return BLOCK_SECTOR_SIZE;
@@ -750,13 +750,13 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	if (item) {
 		total_read += PREREAD_SECTOR;
 		hdd_cache_update_all(aux, p, item, head_sector, 0);
-		cond_notify(&p->cache_lock);
+		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
 		return BLOCK_SECTOR_SIZE;
 	}
 
-	cond_notify(&p->cache_lock);
+	mutex_unlock(&p->cache_lock);
 	return -1;
 }
 
@@ -766,18 +766,18 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	partition *p = aux;
 	block_cache_item *item = 0;
 
-	cond_wait(&p->cache_lock);
+	mutex_lock(&p->cache_lock);
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
 		hdd_cache_update(p, item, sector, buf, 1);
-		cond_notify(&p->cache_lock);
+		mutex_unlock(&p->cache_lock);
 		return BLOCK_SECTOR_SIZE;
 	}
 
 	item = hdd_cache_find_empty(p, sector);
 	if (item) {
 		hdd_cache_update(p, item, sector, buf, 1);
-		cond_notify(&p->cache_lock);
+		mutex_unlock(&p->cache_lock);
 		return len;
 	}
 
@@ -785,11 +785,11 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	if (item) {
 		hdd_cache_flush(p, item);
 		hdd_cache_update(p, item, sector, buf, 1);
-		cond_notify(&p->cache_lock);
+		mutex_unlock(&p->cache_lock);
 		return len;
 	}
 
-	cond_notify(&p->cache_lock);
+	mutex_unlock(&p->cache_lock);
 	return -1;
 }
 #else

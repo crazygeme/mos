@@ -67,19 +67,14 @@ void spinlock_unlock(spinlock_t *lock)
 	}
 }
 
-void cond_init(cond_t *s, const char *name, unsigned int initstat)
+static void lock_init(lock_base *b, unsigned int initstat)
 {
-	if (name && *name)
-		strcpy(s->name, name);
-	else
-		*s->name = '\0';
-
-	s->lock = initstat;
-	list_init(&s->wait_list);
-	spinlock_init(&s->wait_lock);
+	b->lock = initstat;
+	list_init(&b->wait_list);
+	spinlock_init(&b->wait_lock);
 }
 
-void cond_wait(cond_t *s)
+void lock_wait(lock_base *s)
 {
 	task_struct *cur = CURRENT_TASK();
 	while (__sync_lock_test_and_set(&(s->lock), 1) == 1) {
@@ -94,12 +89,7 @@ void cond_wait(cond_t *s)
 	}
 }
 
-void cond_reset(cond_t *s)
-{
-	__sync_lock_test_and_set(&(s->lock), 1);
-}
-
-static int cond_notice_one(cond_t *s)
+static int lock_lease_one(lock_base *s)
 {
 	task_struct *task = 0;
 	list_entry *entry = 0;
@@ -118,11 +108,31 @@ static int cond_notice_one(cond_t *s)
 	return has;
 }
 
+void cond_init(cond_t *s, const char *name, unsigned int initstat)
+{
+	if (name && *name)
+		strcpy(s->name, name);
+	else
+		*s->name = '\0';
+
+	lock_init(&s->base, initstat);
+}
+
+void cond_wait(cond_t *s)
+{
+	lock_wait(&s->base);
+}
+
+void cond_reset(cond_t *s)
+{
+	__sync_lock_test_and_set(&(s->base.lock), 1);
+}
+
 void cond_notify(cond_t *s)
 {
-	int has = cond_notice_one(s);
+	int has = lock_lease_one(&s->base);
 
-	__sync_lock_test_and_set(&(s->lock), 0);
+	__sync_lock_test_and_set(&(s->base.lock), 0);
 
 	if (has)
 		task_sched();
@@ -130,12 +140,36 @@ void cond_notify(cond_t *s)
 
 void cond_wait_at_intr(cond_t *s)
 {
-	while (__sync_lock_test_and_set(&(s->lock), 1) == 1) {
+	while (__sync_lock_test_and_set(&(s->base.lock), 1) == 1) {
 		task_sched();
 	}
 }
 
 void cond_notify_at_intr(cond_t *s)
 {
-	__sync_lock_test_and_set(&(s->lock), 0);
+	__sync_lock_test_and_set(&(s->base.lock), 0);
+}
+
+void mutex_init(mutex_t *m)
+{
+	lock_init(&m->base, 0);
+	m->holder = 0;
+}
+
+void mutex_lock(mutex_t *m)
+{
+	task_struct *cur = CURRENT_TASK();
+	lock_wait(&m->base);
+	m->holder = cur->psid;
+}
+
+void mutex_unlock(mutex_t *m)
+{
+	task_struct *cur = CURRENT_TASK();
+	if (m->holder != cur->psid) {
+		DIE();
+	}
+
+	lock_lease_one(&m->base);
+	__sync_lock_test_and_set(&(m->base.lock), 0);
 }

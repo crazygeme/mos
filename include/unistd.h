@@ -310,20 +310,6 @@ struct stat64 {
 	unsigned long long st_ino;
 };
 
-struct krnquota {
-	unsigned heap_cur; // current usage
-	unsigned heap_wm; // water mask
-	unsigned heap_top;
-	unsigned phymm_max;
-	unsigned phymm_cur;
-	unsigned phymm_wm;
-	unsigned pgc_count;
-	unsigned pgc_top;
-	unsigned sched_spent;
-	unsigned total_spent;
-	unsigned page_fault;
-};
-
 #define R_OK 4 // test read access right
 #define W_OK 2 // test write access right
 #define X_OK 1 // test execution access right

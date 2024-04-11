@@ -13,8 +13,9 @@ typedef struct _mount_op {
 
 struct _mount_point {
 	mount_op op;
-	hash_table *mounts;
-	cond_t lock;
+	hash_table *folders;
+	hash_table *files;
+	mutex_t lock;
 	unsigned ref;
 };
 
@@ -29,5 +30,8 @@ filep mount_open(mount_point *m, const char *path, int flag, const char *mode);
 int do_mount(mount_point *m, const char *path, const mount_op *op);
 
 int do_unmount(mount_point *m, const char *path);
+
+int mount_add_file(mount_point *m, const char *path,
+		   void (*fill)(void *buf, size_t size));
 
 #endif

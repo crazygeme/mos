@@ -153,13 +153,11 @@ int fs_alloc_filep_pipe(filep *pipes)
 {
 	cy_buf *buf = cyb_create("pipe");
 	filep fp_read = calloc(1, sizeof(*fp_read));
-	fp_read->file_type = FILE_TYPE_PIPE;
 	fp_read->inode = pipe_create_reader(buf);
 	fp_read->ref_cnt = 0;
 	fp_read->op = readop;
 
 	filep fp_write = calloc(1, sizeof(*fp_write));
-	fp_write->file_type = FILE_TYPE_PIPE;
 	fp_write->inode = pipe_create_writer(buf);
 	fp_write->ref_cnt = 0;
 	fp_write->op = writeop;

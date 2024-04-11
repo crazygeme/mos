@@ -6,10 +6,6 @@
 #include <mount.h>
 #include <ps.h>
 
-static int null_read(void *inode, void *buf, size_t size, size_t *rcnt);
-static int null_write(void *inode, const void *buf, size_t size, size_t *wcnt);
-static int null_close(void *inode);
-
 static int null_read(void *inode, void *buf, size_t size, size_t *rcnt)
 {
 	memset(buf, 0, size);
@@ -67,7 +63,6 @@ static fileop nullop = {
 static filep alloc(mount_point *mp)
 {
 	filep fp = calloc(1, sizeof(*fp));
-	fp->file_type = FILE_TYPE_CHAR;
 	fp->inode = NULL;
 	fp->ref_cnt = 0;
 	fp->op = nullop;

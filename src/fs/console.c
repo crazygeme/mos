@@ -102,7 +102,6 @@ static fileop ttyop = {
 static filep alloc(mount_point *mp)
 {
 	filep fp = calloc(1, sizeof(*fp));
-	fp->file_type = FILE_TYPE_CHAR;
 	fp->inode = NULL;
 	fp->ref_cnt = 0;
 	fp->op = ttyop;

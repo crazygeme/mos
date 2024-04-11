@@ -22,11 +22,15 @@ void spinlock_unlock(spinlock_t *lock);
 
 // cond_t
 
-typedef volatile struct _cond {
-	char name[16];
+typedef struct _lock_base {
 	unsigned int lock;
 	list_entry wait_list;
 	spinlock_t wait_lock;
+} lock_base;
+
+typedef volatile struct _cond {
+	lock_base base;
+	char name[16];
 } cond_t;
 
 void cond_init(cond_t *s, const char *name, unsigned int initstat);
@@ -40,5 +44,16 @@ void cond_reset(cond_t *s);
 void cond_notify(cond_t *s);
 
 void cond_notify_at_intr(cond_t *s);
+
+typedef volatile struct _mutex {
+	lock_base base;
+	unsigned holder;
+} mutex_t;
+
+void mutex_init(mutex_t *m);
+
+void mutex_lock(mutex_t *m);
+
+void mutex_unlock(mutex_t *m);
 
 #endif

@@ -361,7 +361,6 @@ static fileop dir_op = {
 filep fs_alloc_filep_normal(void *content)
 {
 	filep fp = calloc(1, sizeof(*fp));
-	fp->file_type = FILE_TYPE_NORMAL;
 	fp->inode = content;
 	fp->ref_cnt = 0;
 	fp->op = file_op;
@@ -371,7 +370,6 @@ filep fs_alloc_filep_normal(void *content)
 filep fs_alloc_filep_dir(void *content)
 {
 	filep fp = calloc(1, sizeof(*fp));
-	fp->file_type = FILE_TYPE_DIR;
 	fp->inode = content;
 	fp->ref_cnt = 0;
 	fp->op = dir_op;

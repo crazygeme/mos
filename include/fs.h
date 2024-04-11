@@ -69,12 +69,11 @@ typedef struct _fileop {
 } fileop;
 
 typedef struct _file {
-	int file_type;
 	void *inode;
 	unsigned ref_cnt;
 	unsigned mode;
 	fileop op;
-	char *name;
+	//char *name;
 } file;
 
 typedef struct _file_descriptor {

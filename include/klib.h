@@ -79,8 +79,6 @@ void klib_init();
 
 void klog_init();
 
-void klog_write(char c);
-
 void klog_enable();
 
 void klog_printf(const char *str, ...);
@@ -89,23 +87,11 @@ void klog(char *str, ...);
 
 void klog_close();
 
-int klib_putchar(char c);
-
 void klib_update_cursor(int pos);
 
 void klib_flush_cursor();
 
-void klib_putchar_update_cursor(char c);
-
-void klib_putint(int num);
-
-void klib_print(char *str);
-
-void klib_info(char *info, int num, char *end);
-
 void klib_clear();
-
-char *klib_itoa(char *str, int num);
 
 void tty_write(const char *str, unsigned len);
 
@@ -115,8 +101,6 @@ void tty_write(const char *str, unsigned len);
 
 #define klib_srand srand
 #define klib_rand rand
-
-void klogquota();
 
 void printk(const char *str, ...);
 
@@ -159,10 +143,7 @@ char *strdup(char *str);
 
 void printf(const char *str, ...);
 
-typedef void (*fpputc)(unsigned char c);
-typedef void (*fputstr)(char *str);
-
-void vprintf(fpputc _putc, fputstr _putstr, const char *str, va_list ap);
+void sprintf(char *buf, const char *fmt, ...);
 
 char *itoa(int num, int base, int sign);
 

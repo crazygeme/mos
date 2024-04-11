@@ -227,6 +227,7 @@ static task_struct *ps_get_next_task()
 
 static int _ps_enabled = 0;
 unsigned task_schedule_time = 0;
+unsigned task_schedule_count = 0;
 static unsigned sched_begin = 0;
 static unsigned sched_end = 0;
 
@@ -242,15 +243,7 @@ static void sched_cal_end()
 		task_schedule_time += (sched_end - sched_begin);
 	}
 	sched_begin = sched_end = 0;
-}
-
-void report_sched_time()
-{
-	unsigned total = time_now();
-	unsigned sched = task_schedule_time;
-
-	printk("total time: %d.%d, sched used %d.%d\n", (total / 1000),
-	       (total % 1000), (sched / 1000), (sched % 1000));
+	task_schedule_count++;
 }
 
 static void ps_run()
@@ -481,7 +474,7 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
 	memset(task->cwd, 0, MAX_PATH);
 	// strcpy(task->cwd, "\0");
 
-	cond_init(&task->fd_lock, "fd_lock", 0);
+	mutex_init(&task->fd_lock);
 	task->magic = 0xdeadbeef;
 
 	ps_setup_task_frame(task, KERNEL_DATA_SELECTOR, 0, 0, 0, 0,
@@ -497,7 +490,7 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 	unsigned fd;
 	int i = 0;
 	memset(task->fds, 0, PAGE_SIZE);
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	for (i = 0; i < MAX_FD; i++) {
 		if (!cur->fds[i].used)
 			continue;
@@ -505,7 +498,7 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 		task->fds[i] = cur->fds[i];
 		fs_refrence(cur->fds[i].fp);
 	}
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 }
 
 extern short pgc_entry_count[1024];
@@ -588,7 +581,7 @@ int do_fork(unsigned flag)
 	else
 		task->remain_ticks = cur->remain_ticks;
 	task->psid = ps_id_gen();
-	cond_init(&task->fd_lock, "fd_lock", 0);
+	mutex_init(&task->fd_lock);
 
 	// for kernel part
 	// when return from intr, those will restored by user mode value
@@ -712,65 +705,6 @@ char *sys_getcwd(char *buf, unsigned size)
 	return buf;
 }
 
-#ifdef TRACE_SCHED_CALL
-static struct _sched_call_map {
-	char *func;
-	int times
-} sched_call_map[100] = { 0 };
-
-static void sched_call_map_add(const char *func, int times)
-{
-	int i;
-	int found = 0;
-	spinlock_lock(&map_lock);
-	for (i = 0; i < 100; i++) {
-		if (sched_call_map[i].func != NULL)
-			if (!strcmp(sched_call_map[i].func, func)) {
-				sched_call_map[i].times += times;
-				found = 1;
-				break;
-			}
-	}
-
-	if (!found) {
-		for (i = 0; i < 100; i++)
-			if (sched_call_map[i].func == NULL) {
-				sched_call_map[i].func = strdup(func);
-				sched_call_map[i].times = times;
-				break;
-			}
-	}
-	spinlock_unlock(&map_lock);
-}
-
-static void sched_call_map_clear()
-{
-	int i;
-	spinlock_lock(&map_lock);
-	for (i = 0; i < 100; i++) {
-		if (sched_call_map[i].func != NULL) {
-			kfree(sched_call_map[i].func);
-			sched_call_map[i].func = NULL;
-			sched_call_map[i].times = 0;
-		}
-	}
-	spinlock_unlock(&map_lock);
-}
-
-static void sched_call_map_print()
-{
-	int i;
-	spinlock_lock(&map_lock);
-	for (i = 0; i < 100; i++) {
-		if (sched_call_map[i].func != NULL) {
-			printk("[sched] %s: %d times\n", sched_call_map[i].func,
-			       sched_call_map[i].times);
-		}
-	}
-	spinlock_unlock(&map_lock);
-}
-#endif
-
 int sys_waitpid(unsigned pid, int *status, int options)
 {
 	list_entry *entry = 0;
@@ -830,10 +764,7 @@ int sys_waitpid(unsigned pid, int *status, int options)
 				ps_remove_mgr(task);
 				vm_free(task, 1);
 				can_return = 1;
-#ifdef TRACE_SCHED_CALL
-				sched_call_map_print();
-				sched_call_map_clear();
-#endif
+
 				break;
 			}
 
@@ -968,10 +899,6 @@ void _task_sched(const char *func)
 	if (task->psid == current->psid) {
 		goto SELF;
 	}
-
-#ifdef TRACE_SCHED_CALL
-	sched_call_map_add(func, 1);
-#endif
 
 	task->status = ps_running;
 	next_cr3 = task->user.page_dir - KERNEL_OFFSET;

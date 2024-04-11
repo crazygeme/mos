@@ -50,7 +50,6 @@ static void pf_process(intr_frame *frame)
 
 	LOAD_CR2(cr2);
 
-	page_fault_count++;
 	page_valid = ((error & PF_MASK_P) == PF_MASK_P);
 	write_access = ((error & PF_MASK_RW) == PF_MASK_RW);
 	user_mode = ((error & PF_MASK_US) == PF_MASK_US);
@@ -60,6 +59,8 @@ static void pf_process(intr_frame *frame)
 		unsigned this_offset;
 		filep f;
 		ext4_file *ff;
+
+		page_fault_count++;
 
 		this_begin = cr2 & PAGE_SIZE_MASK;
 		region = vm_find_map(cur->user.vm, this_begin);
@@ -89,7 +90,6 @@ static void pf_process(intr_frame *frame)
 			}
 			goto Done;
 		} else if (user_mode) {
-			vm_dump(cur->user.vm);
 			sys_exit(-1);
 		} else {
 			// it must be a kernel bug!
@@ -104,8 +104,8 @@ static void pf_process(intr_frame *frame)
 		unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
 		unsigned flag;
 
+		page_fault_count++;
 		cow = phymm_is_cow(page_index);
-		// klog("ps %d write %x fault, cow %d\n", cur->psid, page_index, cow);
 		if (cow) {
 			vir = cr2;
 			vir = (vir & PAGE_SIZE_MASK);

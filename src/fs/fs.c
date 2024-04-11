@@ -1,3 +1,4 @@
+#include "lock.h"
 #include <mount.h>
 #include <unistd.h>
 #include <fs.h>
@@ -258,7 +259,6 @@ static filep fs_open_file_ext4(const char *path, int flag, char *mode,
 		fp->mode = s.st_mode;
 	}
 	ret = fp;
-	fp->name = strdup(path);
 	fs_refrence(fp);
 	goto done;
 fail:
@@ -295,7 +295,7 @@ int fs_open(const char *path, int flag, char *mode)
 	int fd = -1;
 	filep fp = NULL;
 	int ret = -ENOENT;
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 
 	fd = fs_find_empty_fd(cur->fds);
 	if (fd < 0)
@@ -315,7 +315,7 @@ int fs_open(const char *path, int flag, char *mode)
 fail:
 	fd = ret;
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return fd;
 }
 
@@ -329,10 +329,10 @@ int fs_close(int fd)
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 	memset(&cur->fds[fd], 0, sizeof(file_descriptor));
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 
 	if (fp == NULL)
 		return -1;
@@ -389,9 +389,9 @@ int fs_fstat(int fd, struct stat *s)
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 
 	if (fp == NULL)
 		return -1;
@@ -409,7 +409,7 @@ int fs_pipe(int *pipefd)
 	task_struct *cur = CURRENT_TASK();
 	int reader, writer;
 	filep fp[2] = { 0 };
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	reader = fs_find_empty_fd(cur->fds);
 	if (reader < 0 || reader >= MAX_FD) {
 		ret = -1;
@@ -443,7 +443,7 @@ int fs_pipe(int *pipefd)
 	pipefd[1] = writer;
 	ret = 0;
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -457,7 +457,7 @@ int fs_dup(int fd)
 		return -ENOENT;
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	newfd = fs_find_empty_fd(cur->fds);
 	if (newfd < 0 || newfd >= MAX_FD) {
 		ret = -1;
@@ -469,7 +469,7 @@ int fs_dup(int fd)
 	cur->fds[newfd].flag &= ~O_CLOEXEC;
 	ret = newfd;
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -487,7 +487,7 @@ int fs_dup2(int fd, int newfd)
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	if (cur->fds[newfd].used) {
 		fs_destroy(cur->fds[newfd].fp);
 	}
@@ -496,7 +496,7 @@ int fs_dup2(int fd, int newfd)
 	cur->fds[newfd] = cur->fds[fd];
 	cur->fds[newfd].flag &= ~O_CLOEXEC;
 	ret = newfd;
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -505,7 +505,6 @@ int fs_destroy(filep f)
 	int ret = 0;
 	if (__sync_add_and_fetch(&f->ref_cnt, -1) == 0) {
 		ret = f->op.close(f->inode);
-		free(f->name);
 		free(f);
 	}
 	return ret;
@@ -523,7 +522,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 	if (!fp || !fp->op.llseek)
 		goto done;
@@ -531,7 +530,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (ret >= 0 && fp->op.tell)
 		cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -546,7 +545,7 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 	if (!fp->op.seek)
 		goto done;
@@ -555,7 +554,7 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
 	if (ret >= 0 && fp->op.tell)
 		cur->fds[fd].file_off = fp->op.tell(fp->inode);
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -570,14 +569,14 @@ int fs_select(int fd, unsigned type)
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 	if (!fp->op.select)
 		goto done;
 
 	ret = fp->op.select(fp->inode, type);
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -592,14 +591,14 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 	if (!fp->op.ioctl)
 		goto done;
 
 	ret = fp->op.ioctl(fp->inode, cmd, buf);
 done:
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 	return ret;
 }
 
@@ -621,9 +620,9 @@ int fs_fchmod(int fd, uint32_t mode)
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;
 
-	cond_wait(&cur->fd_lock);
+	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	cond_notify(&cur->fd_lock);
+	mutex_unlock(&cur->fd_lock);
 
 	ret = ext4_fchmod(fp->inode, mode);
 	return (0 - ret);

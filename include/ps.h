@@ -196,7 +196,7 @@ typedef struct _task_struct {
 	int remain_ticks;
 	int is_switching;
 	file_descriptor *fds;
-	cond_t fd_lock;
+	mutex_t fd_lock;
 	unsigned exit_status;
 	unsigned parent;
 	unsigned group_id;

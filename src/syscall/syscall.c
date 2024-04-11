@@ -129,7 +129,6 @@ static int sys_sigaction(int sig, void *act, void *oact);
 static int sys_sigprocmask(int how, void *set, void *oset);
 static int sys_pause();
 static int sys_utime(const char *filename, const struct utimbuf *times);
-static int sys_quota(struct krnquota *quota);
 static int sys_pipe(int pipefd[2]);
 static int sys_dup(int oldfd);
 static int sys_dup2(int oldfd, int newfd);
@@ -360,7 +359,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_stat64, // 191 ~ 195
 	sys_lstat64,
 	sys_fstat64,
-	sys_quota // 196 ~ 198
+	0 // 196 ~ 198
 };
 
 static int unhandled_syscall(unsigned callno)
@@ -1101,32 +1100,6 @@ static int sys_utime(const char *filename, const struct utimbuf *times)
 	if (TestControl.verbos) {
 		klog("%d: utime\n", CURRENT_TASK()->psid);
 	}
-	return 0;
-}
-
-extern unsigned int heap_quota;
-extern unsigned int heap_quota_high;
-extern unsigned int cur_block_top;
-extern unsigned phymm_cur;
-extern unsigned phymm_high;
-extern unsigned phymm_max;
-extern unsigned pgc_count;
-extern unsigned pgc_top;
-extern unsigned task_schedule_time;
-extern unsigned page_fault_count;
-extern unsigned page_falut_total_time;
-static int sys_quota(struct krnquota *quota)
-{
-	quota->heap_cur = heap_quota;
-	quota->heap_wm = heap_quota_high;
-	quota->heap_top = cur_block_top;
-	quota->phymm_max = phymm_max;
-	quota->pgc_count = pgc_count;
-	quota->pgc_top = pgc_top;
-	quota->sched_spent = task_schedule_time;
-	quota->total_spent = time_now();
-	// printk("page fault count %d, total time %d ms\n", page_fault_count, page_falut_total_time);
-	// quota->page_fault = page_fault_count;
 	return 0;
 }
 

@@ -673,8 +673,8 @@ static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 }
 
 static void hdd_cache_update_all(void *aux, partition *p,
-				 block_cache_item *item, int head_sector,
-				 int mark_dirty)
+				 block_cache_item *volatile item,
+				 int head_sector, int mark_dirty)
 {
 	int i = 0;
 	int same_sector = (item->sector == head_sector);
@@ -722,7 +722,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	int i = 0;
 	partition *p = aux;
 	int index = 0;
-	block_cache_item *item = 0;
+	block_cache_item *volatile item = 0;
 	int sector_off = SECTOR_OFF(sector);
 	int head_sector = HEAD_SECTOR(sector);
 
@@ -944,8 +944,8 @@ static unsigned long read_times = 0, write_times = 0;
 
 static int hdd_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
-	ata_disk *d = aux;
-	channel *c = d->channel;
+	ata_disk *volatile d = aux;
+	channel *volatile c = d->channel;
 	spinlock_lock(&c->iolock);
 
 	select_sector(d, sec_no);

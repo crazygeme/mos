@@ -146,9 +146,15 @@ void timer_current(time_t *t)
 	t->milliseconds = now.time - t->seconds * 1000;
 }
 
-unsigned time_now()
+unsigned time_now_ms()
 {
 	return (total_seconds * 1000 + tickets * 10);
+}
+
+unsigned long long time_now_us()
+{
+	unsigned long long now = time_now_percisely();
+	return cycle_to_us(now);
 }
 
 unsigned long long time_now_percisely()
@@ -166,7 +172,7 @@ unsigned long long time_now_percisely()
 	return cycle;
 }
 
-unsigned long long cycle_to_ms(unsigned long long dur_cycles)
+unsigned long long cycle_to_us(unsigned long long dur_cycles)
 {
 	unsigned long long cycle_per_micro_second;
 	unsigned long long tick;
@@ -175,7 +181,12 @@ unsigned long long cycle_to_ms(unsigned long long dur_cycles)
 		tick = dur_cycles / cycle_per_micro_second;
 	else
 		tick = 0;
-	return tick / 1000;
+	return tick;
+}
+
+unsigned long long cycle_to_ms(unsigned long long dur_cycles)
+{
+	return cycle_to_us(dur_cycles) / 1000;
 }
 
 void msleep(unsigned int ms)

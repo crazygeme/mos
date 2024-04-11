@@ -226,19 +226,19 @@ static task_struct *ps_get_next_task()
 }
 
 static int _ps_enabled = 0;
-unsigned task_schedule_time = 0;
+unsigned long long task_schedule_time = 0;
 unsigned task_schedule_count = 0;
-static unsigned sched_begin = 0;
-static unsigned sched_end = 0;
+static unsigned long long sched_begin = 0;
+static unsigned long long sched_end = 0;
 
 static void sched_cal_begin()
 {
-	sched_begin = time_now();
+	sched_begin = time_now_us();
 }
 
 static void sched_cal_end()
 {
-	sched_end = time_now();
+	sched_end = time_now_us();
 	if (sched_begin) {
 		task_schedule_time += (sched_end - sched_begin);
 	}

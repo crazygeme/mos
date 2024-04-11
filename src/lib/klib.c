@@ -4,6 +4,7 @@
 #include <timer.h>
 #include <lock.h>
 #include <ps.h>
+#include <serial.h>
 // following for malloc/free
 
 static kblock free_list[513] = { 0 };
@@ -347,8 +348,6 @@ int klib_get_pos()
 {
 	return cursor;
 }
-
-int klib_get_pos();
 
 static char *klib_itoa(char *str, int num)
 {

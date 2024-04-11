@@ -4,7 +4,7 @@
 #include <klib.h>
 
 extern unsigned page_fault_count;
-extern unsigned page_falut_total_time;
+extern unsigned long long page_falut_total_time;
 extern unsigned int heap_quota;
 extern unsigned int heap_quota_high;
 extern unsigned int cur_block_top;
@@ -22,13 +22,14 @@ static void fill(void *buf, size_t size)
 		"Page table cache Highest: %h\n"
 		"Page table cache Current: %h\n"
 		"Page fault count:         %d\n"
-		"Page fault spent:         %d ms\n"
+		"Page fault spent:         %d.%d ms\n"
 		"kernel heap quota         %h\n"
 		"kernel heap Highest       %h\n"
 		"\n",
 		phymm_max * PAGE_SIZE, phymm_valid * PAGE_SIZE,
 		pgc_top * PAGE_SIZE, pgc_count * PAGE_SIZE, page_fault_count,
-		page_falut_total_time, heap_quota, heap_quota_high);
+		(int)page_falut_total_time / 1000,
+		(int)page_falut_total_time % 1000, heap_quota, heap_quota_high);
 }
 
 void debugfs_mm_init(mount_point *mp)

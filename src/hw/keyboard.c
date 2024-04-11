@@ -1,3 +1,4 @@
+#include <ps.h>
 #include <keyboard.h>
 #include <klib.h>
 #include <int.h>
@@ -6,7 +7,6 @@
 #include <lock.h>
 #include <config.h>
 #include <cyclebuf.h>
-#include <profiling.h>
 
 static cy_buf *buf;
 

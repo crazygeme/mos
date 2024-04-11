@@ -42,11 +42,11 @@ static int kb_select(void *inode, unsigned type)
 
 static int kb_stat(void *inode, struct stat *s)
 {
-	s->st_atime = time_now();
+	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFCHR | S_IRUSR | S_IRGRP | S_IROTH);
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
-	s->st_ctime = time_now();
+	s->st_ctime = time_now_ms();
 	s->st_dev = 0;
 	s->st_rdev = 5;
 	s->st_gid = 0;

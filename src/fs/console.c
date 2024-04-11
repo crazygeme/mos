@@ -1,3 +1,4 @@
+#include <timer.h>
 #include <ps.h>
 #include <mount.h>
 #include <console.h>
@@ -74,11 +75,11 @@ static int console_select(void *inode, unsigned type)
 
 static int console_stat(void *inode, struct stat *s)
 {
-	s->st_atime = time_now();
+	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
-	s->st_ctime = time_now();
+	s->st_ctime = time_now_ms();
 	s->st_dev = 0xb;
 	s->st_gid = 0;
 	s->st_ino = 0;

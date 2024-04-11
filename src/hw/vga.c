@@ -6,6 +6,7 @@
  * Bochs VBE / QEMU vga=std Graphics Driver
  */
 
+#include <int.h>
 #include <vga.h>
 #include <multiboot.h>
 #include <pci.h>
@@ -867,14 +868,6 @@ void fb_init()
 		_vga_width = 0;
 		_vga_height = 0;
 	}
-
-	/*
-    write_char(0, 0, 'h', 0xFFFFFFFF);
-    write_char(1*char_width, 0, 'e', 0xFFFFFFFF);
-    write_char(2*char_width, 0, 'l', 0xFFFFFFFF);
-    write_char(3*char_width, 0, 'l', 0xFFFFFFFF);
-    write_char(4*char_width, 0, 'o', 0xFFFFFFFF);
-    */
 }
 
 void fb_enable()

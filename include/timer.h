@@ -74,11 +74,15 @@ void timer_calculate_cpu_cycle();
 
 void timer_current(time_t *time);
 
-unsigned time_now();
+unsigned time_now_ms();
+
+unsigned long long time_now_us();
 
 unsigned long long time_now_percisely();
 
 unsigned long long cycle_to_ms(unsigned long long dur_cycles);
+
+unsigned long long cycle_to_us(unsigned long long dur_cycles);
 
 void msleep(unsigned int ms);
 

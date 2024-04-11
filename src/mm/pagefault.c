@@ -10,7 +10,7 @@
 #include <macro.h>
 
 unsigned page_fault_count;
-unsigned page_falut_total_time;
+unsigned long long page_falut_total_time;
 
 static void pf_process(intr_frame *frame);
 void pf_init()
@@ -44,7 +44,7 @@ static void pf_process(intr_frame *frame)
 	int write_access;
 	int user_mode;
 	unsigned oldint;
-	unsigned begin = time_now();
+	unsigned long long begin = time_now_us();
 
 	oldint = int_intr_disable();
 
@@ -146,5 +146,5 @@ Done:
 		int_intr_enable();
 	}
 
-	page_falut_total_time += (time_now() - begin);
+	page_falut_total_time += (time_now_us() - begin);
 }

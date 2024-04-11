@@ -37,13 +37,13 @@ static int null_select(void *inode, unsigned type)
 
 static int null_stat(void *inode, struct stat *s)
 {
-	s->st_atime = time_now();
+	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |
 		      S_IRGRP | S_IROTH);
 	s->st_size = PAGE_SIZE;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
-	s->st_ctime = time_now();
+	s->st_ctime = time_now_ms();
 	s->st_dev = 0;
 	s->st_gid = 0;
 	s->st_ino = 0;

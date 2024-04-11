@@ -543,21 +543,10 @@ static void read_partition_table(block *block, unsigned int sector,
 }
 
 #if HDD_CACHE_OPEN
-static unsigned total_read = 0;
-static unsigned total_writ = 0;
-static unsigned cache_hit = 0;
-static unsigned cache_search_time = 0;
-static unsigned cache_search_count = 0;
-static unsigned max_cache_size = 0;
-void report_cache()
-{
-	printk("cache: %d hit, read hdd %d, write hdd %d\n", cache_hit,
-	       total_read, total_writ);
-	printk("cache search count %d, total time %d ms, max depth %d\n",
-	       cache_search_count, cache_search_time, max_cache_size);
-	total_writ = total_read = cache_hit = 0;
-	cache_search_count = cache_search_time = 0;
-}
+unsigned cache_hit = 0;
+unsigned long long cache_search_time = 0;
+unsigned cache_search_count = 0;
+unsigned max_cache_size = 0;
 
 static void init_partition_cache(partition *p)
 {
@@ -573,7 +562,7 @@ static void init_partition_cache(partition *p)
 static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 {
 	int i = 0;
-	unsigned search_time = 0;
+	unsigned long long search_time = 0;
 	int head_sector = HEAD_SECTOR(sector);
 	key_value_pair *pair = 0;
 	block_cache_item *ret = 0;
@@ -582,9 +571,9 @@ static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 	}
 
 	cache_search_count++;
-	search_time = time_now();
+	search_time = time_now_us();
 	pair = hash_find(p->cache.hash, head_sector);
-	search_time = time_now() - search_time;
+	search_time = time_now_us() - search_time;
 	cache_search_time += search_time;
 	if (!pair)
 		return 0;
@@ -637,7 +626,6 @@ static void hdd_cache_flush(partition *p, block_cache_item *item)
 		return;
 
 	if (item->dirty) {
-		total_writ += PREREAD_SECTOR;
 		for (i = 0; i < PREREAD_SECTOR; i++)
 			partition_write(p, head_sector + i,
 					buf + i * BLOCK_SECTOR_SIZE,
@@ -737,7 +725,6 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 		return BLOCK_SECTOR_SIZE;
 	}
 
-	// total_read++;
 	// partition_read(aux, sector, buf, len);
 	item = hdd_cache_find_empty(p, sector);
 	if (!item) {
@@ -748,7 +735,6 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	}
 
 	if (item) {
-		total_read += PREREAD_SECTOR;
 		hdd_cache_update_all(aux, p, item, head_sector, 0);
 		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
@@ -792,10 +778,7 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	mutex_unlock(&p->cache_lock);
 	return -1;
 }
-#else
-void report_cache()
-{
-}
+
 #endif
 
 static void found_partition(block *block, unsigned char part_type,

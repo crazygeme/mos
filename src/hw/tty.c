@@ -3,6 +3,7 @@
  * Copyright (C) 2014  Ender Zheng
  * License: GPL version 2 or higher http://www.gnu.org/licenses/gpl.html
  */
+#include <int.h>
 #include <tty.h>
 #include <vga.h>
 #include <unistd.h>

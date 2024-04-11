@@ -87,6 +87,8 @@ void klog(char *str, ...);
 
 void klog_close();
 
+int klib_get_pos();
+
 void klib_update_cursor(int pos);
 
 void klib_flush_cursor();

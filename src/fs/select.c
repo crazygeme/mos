@@ -21,7 +21,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	fd_set *reads, *writes, *excepts;
 	int ret = 0;
 	int i = 0;
-	unsigned time_begin = time_now(); // milliseconds
+	unsigned time_begin = time_now_ms(); // milliseconds
 	unsigned time_span = 0;
 	int infinit_wait = 0;
 	int just_test = 0;
@@ -88,7 +88,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 			break;
 		}
 
-		time_span = time_now() - time_begin;
+		time_span = time_now_ms() - time_begin;
 		if (time_span > wait_time) {
 			ret = -ETIMEDOUT;
 			break;

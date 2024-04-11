@@ -59,12 +59,12 @@ static int proc_dir_select(void *inode, unsigned type)
 
 static int proc_dir_stat(void *inode, struct stat *s)
 {
-	s->st_atime = time_now();
+	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR |
 		      S_IWGRP | S_IWOTH);
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
-	s->st_ctime = time_now();
+	s->st_ctime = time_now_ms();
 	s->st_dev = 0xb;
 	s->st_gid = 0;
 	s->st_ino = 0;

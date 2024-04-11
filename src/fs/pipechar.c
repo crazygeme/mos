@@ -97,12 +97,12 @@ static int pipe_write(void *inode, const void *buf, size_t len, size_t *wcnt)
 
 static int pipe_stat(void *inode, struct stat *s)
 {
-	s->st_atime = time_now();
+	s->st_atime = time_now_ms();
 	s->st_mode = S_IFIFO | S_IRUSR | S_IWUSR;
 	s->st_size = 0;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
-	s->st_ctime = time_now();
+	s->st_ctime = time_now_ms();
 	s->st_dev = 0;
 	s->st_gid = 0;
 	s->st_ino = 0;

@@ -1,3 +1,4 @@
+#include <macro.h>
 #include <lock.h>
 #include <ps.h>
 #include <klib.h>
@@ -13,6 +14,7 @@ void spinlock_init(spinlock_t *lock)
 	lock->inited = 1;
 	lock->int_status = 0;
 	lock->holder = 0;
+	lock->disable_intr = 1;
 }
 
 void spinlock_init_ex(spinlock_t *lock, int disable_intr)
@@ -37,10 +39,12 @@ void spinlock_lock(spinlock_t *lock)
 {
 	task_struct *cur = CURRENT_TASK();
 	if (lock->inited) {
-		lock->int_status = int_intr_disable();
+		if (lock->disable_intr)
+			lock->int_status = int_intr_disable();
+
 		// spinlock_get(&lock->lock);
 		while (__sync_lock_test_and_set(&(lock->lock), 1) == 1)
-			;
+			HLT();
 
 		lock->holder = cur->psid;
 	}
@@ -48,15 +52,17 @@ void spinlock_lock(spinlock_t *lock)
 
 void spinlock_unlock(spinlock_t *lock)
 {
-	task_struct *cur = CURRENT_TASK();
 	if (lock->inited) {
 		// spinlock_put(&lock->lock);
 		lock->holder = 0;
 		__sync_lock_test_and_set(&(lock->lock), 0);
-		if (lock->int_status == 1) {
-			int_intr_enable();
-		} else {
-			int_intr_disable();
+
+		if (lock->disable_intr) {
+			if (lock->int_status == 1) {
+				int_intr_enable();
+			} else {
+				int_intr_disable();
+			}
 		}
 	}
 }

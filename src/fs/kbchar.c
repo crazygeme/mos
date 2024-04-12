@@ -1,3 +1,4 @@
+#include <timer.h>
 #include <kbchar.h>
 #include <klib.h>
 #include <keyboard.h>
@@ -7,10 +8,7 @@
 #include <mount.h>
 #include <ps.h>
 
-static int kb_read(void *inode, const void *buf, size_t size, size_t *wcnt);
-static int kb_close(struct ext4_blockdev *bdev);
-
-static int kb_read(void *inode, const void *buf, size_t size, size_t *wcnt)
+static int kb_read(void *inode, void *buf, size_t size, size_t *wcnt)
 {
 	char d;
 	char *tmp = buf;
@@ -24,7 +22,7 @@ static int kb_read(void *inode, const void *buf, size_t size, size_t *wcnt)
 	return 0;
 }
 
-static int kb_close(struct ext4_blockdev *bdev)
+static int kb_close(void *inode)
 {
 	return 0;
 }

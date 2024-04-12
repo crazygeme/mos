@@ -90,7 +90,7 @@ typedef struct _block_cache_item {
 typedef struct _block_cache {
 	hash_table *hash;
 	list_entry timer_list_head;
-	int count;
+	int sectors;
 } block_cache;
 
 static int int_comp(void *key1, void *key2)
@@ -154,9 +154,9 @@ static void input_sector(channel *, void *);
 static void output_sector(channel *c, const void *sector);
 static char *descramble_ata_string(char *, int size);
 static void channel_wait_polling(channel *c);
-static int hdd_read(void *aux, unsigned sector, void *buf, unsigned len);
-static int hdd_write(void *aux, unsigned sector, void *buf, unsigned len);
-static void hdd_close(void *aux);
+static int disk_read(void *aux, unsigned sector, void *buf, unsigned len);
+static int disk_write(void *aux, unsigned sector, void *buf, unsigned len);
+static void disk_close(void *aux);
 static void parse_partition(block *block);
 static void read_partition_table(block *block, unsigned int sector,
 				 unsigned int primary_extended_sector,
@@ -433,7 +433,7 @@ static void identify_ata_device(ata_disk *d)
 		return;
 	}
 
-	block = block_register(d, d->name, hdd_read, hdd_write, hdd_close,
+	block = block_register(d, d->name, disk_read, disk_write, disk_close,
 			       BLOCK_RAW, capacity);
 	parse_partition(block);
 }
@@ -546,13 +546,14 @@ static void read_partition_table(block *block, unsigned int sector,
 unsigned cache_hit = 0;
 unsigned long long cache_search_time = 0;
 unsigned cache_search_count = 0;
-unsigned max_cache_size = 0;
+unsigned fs_cache_size = 0;
+unsigned max_fs_cache_size = 0;
 
 static void init_partition_cache(partition *p)
 {
 	int i = 0;
 
-	p->cache.count = 0;
+	p->cache.sectors = 0;
 	p->cache.hash = hash_create(int_comp);
 	list_init(&p->cache.timer_list_head);
 	p->cache_inited = 1;
@@ -588,7 +589,7 @@ static block_cache_item *hdd_cache_find_empty(partition *p, int sector)
 {
 	block_cache_item *item;
 	int head_sector = HEAD_SECTOR(sector);
-	if (p->cache.count >= CACHE_SECTOR_COUNT) {
+	if (p->cache.sectors >= CACHE_SECTOR_COUNT) {
 		return 0;
 	}
 
@@ -596,9 +597,10 @@ static block_cache_item *hdd_cache_find_empty(partition *p, int sector)
 	item->sector = head_sector;
 	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 	hash_insert(p->cache.hash, head_sector, item);
-	p->cache.count++;
-	if (max_cache_size < p->cache.count)
-		max_cache_size = p->cache.count;
+	p->cache.sectors += PREREAD_SECTOR;
+	fs_cache_size = p->cache.sectors;
+	if (max_fs_cache_size < p->cache.sectors)
+		max_fs_cache_size = p->cache.sectors;
 	return item;
 }
 
@@ -607,7 +609,7 @@ static block_cache_item *hdd_cache_find_oldest(partition *p)
 	list_entry *node;
 	block_cache_item *item = 0;
 
-	if (p->cache.count == 0)
+	if (p->cache.sectors == 0)
 		return 0;
 
 	node = p->cache.timer_list_head.prev;
@@ -699,10 +701,14 @@ static void flush_partition_cache(partition *p)
 			hdd_cache_flush(p, item);
 		}
 		block_cache_item_remove(item);
-		p->cache.count--;
+		p->cache.sectors -= PREREAD_SECTOR;
+		fs_cache_size = p->cache.sectors;
 		entry = next;
 	}
 }
+
+unsigned fs_cache_read_size = 0;
+unsigned fs_cache_write_size = 0;
 
 static int partition_cache_read(void *aux, unsigned sector, void *buf,
 				unsigned len)
@@ -715,6 +721,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	int head_sector = HEAD_SECTOR(sector);
 
 	mutex_lock(&p->cache_lock);
+	/* Find cache */
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
 		list_remove_entry(&item->time_list);
@@ -722,23 +729,27 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
+		fs_cache_read_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
 
-	// partition_read(aux, sector, buf, len);
+	/* Cache not found, try to find an empty slot. */
 	item = hdd_cache_find_empty(p, sector);
 	if (!item) {
+		/* Cache not found, and no more empty slot, flush oldest one */
 		item = hdd_cache_find_oldest(p);
 		if (item) {
 			hdd_cache_flush(p, item);
 		}
 	}
 
+	/* Empty slot or oldest one. */
 	if (item) {
 		hdd_cache_update_all(aux, p, item, head_sector, 0);
 		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
+		fs_cache_read_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
 
@@ -753,25 +764,31 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	block_cache_item *item = 0;
 
 	mutex_lock(&p->cache_lock);
+	/* Find cache */
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
+		fs_cache_write_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
 
+	/* Cache not found, try to find an empty slot. */
 	item = hdd_cache_find_empty(p, sector);
 	if (item) {
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
+		fs_cache_write_size += len;
 		return len;
 	}
 
+	/* Cache not found, and no more empty slot, flush oldest one */
 	item = hdd_cache_find_oldest(p);
 	if (item) {
 		hdd_cache_flush(p, item);
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
+		fs_cache_write_size += len;
 		return len;
 	}
 
@@ -917,15 +934,10 @@ static void select_sector(ata_disk *d, unsigned int sec_no)
 					  (sec_no >> 24));
 }
 
-static time_t read_select, read_wait, read_io;
-static time_t writ_select, writ_wait, writ_io;
+unsigned disk_read_size = 0;
+unsigned disk_write_size = 0;
 
-static unsigned long read_select_t = 0, read_wait_t = 0, read_io_t = 0;
-static unsigned long writ_select_t = 0, writ_wait_t = 0, writ_io_t = 0;
-
-static unsigned long read_times = 0, write_times = 0;
-
-static int hdd_read(void *aux, unsigned sec_no, void *buf, unsigned len)
+static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *volatile d = aux;
 	channel *volatile c = d->channel;
@@ -941,10 +953,12 @@ static int hdd_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	spinlock_unlock(&c->iolock);
 
+	disk_read_size += len;
+
 	return len;
 }
 
-static int hdd_write(void *aux, unsigned sec_no, void *buf, unsigned len)
+static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
 	channel *c = d->channel;
@@ -960,10 +974,12 @@ static int hdd_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	spinlock_unlock(&c->iolock);
 
+	disk_write_size += len;
+
 	return len;
 }
 
-static void hdd_close(void *aux)
+static void disk_close(void *aux)
 {
 }
 

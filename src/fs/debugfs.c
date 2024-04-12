@@ -1,5 +1,5 @@
 #include "mm.h"
-#include <timer.h>
+#include <time.h>
 #include <debugfs.h>
 
 static int debugfs_read(void *inode, void *buf, size_t size, size_t *rcnt)

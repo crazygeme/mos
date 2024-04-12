@@ -215,6 +215,8 @@ int hash_insert(hash_table *table, void *key, void *val);
 
 int hash_remove(hash_table *table, void *key);
 
+int hash_remove_at(hash_table *table, key_value_pair *pair);
+
 key_value_pair *hash_find(hash_table *table, void *key);
 
 int hash_update(hash_table *table, void *key, void *val);

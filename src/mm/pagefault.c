@@ -6,7 +6,7 @@
 #include <phymm.h>
 #include <fs.h>
 #include <klib.h>
-#include <timer.h>
+#include <time.h>
 #include <macro.h>
 
 unsigned page_fault_count;

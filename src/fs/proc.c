@@ -1,5 +1,5 @@
 #include "macro.h"
-#include <timer.h>
+#include <time.h>
 #include <debugfs.h>
 #include <fs.h>
 #include <klib.h>

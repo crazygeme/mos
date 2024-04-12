@@ -4,7 +4,7 @@
 #include <ps.h>
 #include <exec.h>
 #include <config.h>
-#include <timer.h>
+#include <time.h>
 #include <klib.h>
 #include <rbtree.h>
 #include <fcntl.h>

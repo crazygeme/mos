@@ -567,6 +567,14 @@ int hash_remove(hash_table *table, void *key)
 	return 1;
 }
 
+int hash_remove_at(hash_table *table, key_value_pair *pair)
+{
+	spinlock_lock(&table->lock);
+	rb_erase(&pair->node, &table->root);
+	spinlock_unlock(&table->lock);
+	kfree(pair);
+}
+
 key_value_pair *hash_find(hash_table *table, void *key)
 {
 	struct rb_node **p = &table->root.rb_node;

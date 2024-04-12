@@ -2,7 +2,7 @@
 #include <lock.h>
 #include <int.h>
 #include <block.h>
-#include <timer.h>
+#include <time.h>
 #include <config.h>
 #include <klib.h>
 #include <rbtree.h>

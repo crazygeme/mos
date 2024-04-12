@@ -165,9 +165,9 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	// ok now we make esp as virtual address
 	RELOAD_ESP();
 
-	phymm_max = (mem_high) / PAGE_SIZE;
-	phymm_valid = phymm_get_mgmt_pages(mem_high);
-	phymm_valid += (mem_low / PAGE_SIZE + RESERVED_PAGES);
+	phymm_end = (mem_high) / PAGE_SIZE;
+	phymm_begin = phymm_get_mgmt_pages(mem_high);
+	phymm_begin += (mem_low / PAGE_SIZE + RESERVED_PAGES);
 
 	mm_init_page_table_cache();
 

@@ -1,3 +1,4 @@
+#include "ext4.h"
 #include <macro.h>
 #include <block.h>
 #include <lock.h>
@@ -190,7 +191,7 @@ static int file_close(void *inode)
 	return 0;
 }
 
-int file_seek(ext4_file *f, uint64_t offset, uint32_t origin)
+int file_seek(void *f, uint64_t offset, uint32_t origin)
 {
 	int ret = ext4_fseek(f, offset, origin);
 	if (ret != EOK)
@@ -305,7 +306,7 @@ static int dir_stat(ext4_dir *dir, struct stat *s)
 	return ext4_fstat(&dir->f, s);
 }
 
-static int dir_seek(ext4_dir *dir, uint64_t offset, uint32_t origin)
+static int dir_seek(void *dir, uint64_t offset, uint32_t origin)
 {
 	ext4_direntry *entry = NULL;
 	int len;
@@ -339,9 +340,30 @@ static int dir_seek(ext4_dir *dir, uint64_t offset, uint32_t origin)
 	return cur_pos;
 }
 
+unsigned fs_read_size = 0;
+unsigned fs_write_size = 0;
+
+static int ext4_read(void *inode, void *buf, size_t size, size_t *rcnt)
+{
+	int ret = ext4_fread(inode, buf, size, rcnt);
+	if (rcnt)
+		fs_read_size += *rcnt;
+
+	return ret;
+}
+
+static int ext4_write(void *inode, const void *buf, size_t size, size_t *wcnt)
+{
+	int ret = ext4_fwrite(inode, buf, size, wcnt);
+	if (wcnt)
+		fs_write_size += *wcnt;
+
+	return ret;
+}
+
 static fileop file_op = {
-	.read = ext4_fread,
-	.write = ext4_fwrite,
+	.read = ext4_read,
+	.write = ext4_write,
 	.close = file_close,
 	.seek = file_seek,
 	.llseek = file_llseek,

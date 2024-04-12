@@ -59,7 +59,7 @@ static void phymm_reserve_area(unsigned *list, unsigned page_count, int kernel)
 	unsigned first = 0;
 	int match = 0;
 	if (kernel) {
-		for (i = phymm_valid; i < phymm_max; i++) {
+		for (i = phymm_begin; i < phymm_end; i++) {
 			if (!phymm_pages[i].reserved) {
 				match++;
 			} else {
@@ -73,7 +73,7 @@ static void phymm_reserve_area(unsigned *list, unsigned page_count, int kernel)
 			}
 		}
 	} else {
-		for (i = phymm_max - 1; i >= phymm_valid; i--) {
+		for (i = phymm_end - 1; i >= phymm_begin; i--) {
 			if (!phymm_pages[i].reserved) {
 				match++;
 			} else {
@@ -100,6 +100,9 @@ static void phymm_reserve_area(unsigned *list, unsigned page_count, int kernel)
 	*list = first;
 }
 
+unsigned phymm_kernel_used = 0;
+unsigned phymm_user_used = 0;
+
 unsigned phymm_alloc_kernel(unsigned page_count)
 {
 	int index = SIZE_TO_FREE_LIST_INDEX(page_count);
@@ -109,6 +112,8 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 	}
 
 	ALLOCATE_PHYMM(kernel_free_list.head[index], page_count, 1, first);
+
+	phymm_kernel_used += page_count;
 
 	return first;
 }
@@ -120,6 +125,8 @@ unsigned phymm_alloc_user()
 	int first = 0;
 
 	ALLOCATE_PHYMM(user_head, 1, 0, first);
+
+	phymm_user_used += 1;
 
 	return first;
 }
@@ -133,11 +140,15 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count)
 	}
 
 	FREE_PHYMM(kernel_free_list.head[index], page_index);
+
+	phymm_kernel_used -= page_count;
 }
 
 void phymm_free_user(unsigned page_index)
 {
 	FREE_PHYMM(user_head, page_index);
+
+	phymm_user_used -= 1;
 }
 
 phymm_page *phymm_pages;
@@ -153,14 +164,14 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 {
 	unsigned i;
 	unsigned addr;
-	for (i = (start_page * PAGE_SIZE); i < (phymm_valid * PAGE_SIZE);
+	for (i = (start_page * PAGE_SIZE); i < (phymm_begin * PAGE_SIZE);
 	     i += PAGE_SIZE) {
 		addr = i + KERNEL_OFFSET;
 		mm_add_direct_map(addr);
 	}
 	RELOAD_CR3();
 	addr = (start_page * PAGE_SIZE) + KERNEL_OFFSET;
-	memset((void *)addr, 0, (phymm_valid - start_page) * PAGE_SIZE);
+	memset((void *)addr, 0, (phymm_begin - start_page) * PAGE_SIZE);
 	phymm_pages = (phymm_page *)(addr);
 }
 

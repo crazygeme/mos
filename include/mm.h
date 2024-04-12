@@ -38,8 +38,8 @@ typedef struct multiboot_info multiboot_info_t;
 
 // clang-format on
 
-extern unsigned phymm_max;
-extern unsigned phymm_valid;
+extern unsigned phymm_end;
+extern unsigned phymm_begin;
 extern char g_cmdline[];
 extern unsigned long long gdt[];
 extern unsigned short gdt_size;

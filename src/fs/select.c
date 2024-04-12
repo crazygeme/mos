@@ -12,6 +12,7 @@
 #include <fs.h>
 #include <select.h>
 
+unsigned select_loop_times = 0;
 // FIXME
 // no signal at all
 // no except
@@ -64,6 +65,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	}
 
 	do {
+		select_loop_times++;
 		// check read fds
 		int has_set = 0;
 		CHECK_FDS(reads, readfds, FS_SELECT_READ);

@@ -8,23 +8,25 @@
 #define KERNEL_CODE_SELECTOR 0x10
 #define USER_DATA_SELECTOR 0x1b
 #define USER_CODE_SELECTOR 0x23
-#define TSS_SELECTOR \
-    0x28                  // we are not going to use TSS when task switch,
-                          // but we have to make tr register valid or x86 process
-#define SELECTOR_COUNT 6  // kernel 2 + user 2 + tss 1 + empty
+#define TSS_SELECTOR                                          \
+	0x28 // we are not going to use TSS when task switch, \
+		// but we have to make tr register valid or x86 process
+#define SELECTOR_COUNT 6 // kernel 2 + user 2 + tss 1 + empty
 
-#define ADDRESS_LIMIT 0xfffff  //  always 4k bytes algined, so last 0xfffff means 4G space
+#define ADDRESS_LIMIT \
+	0xfffff //  always 4k bytes algined, so last 0xfffff means 4G space
 
 #define SEG_CLASS_DATA 1
-#define SEG_CLASS_SYSTEM 0  // this is for TSS
+#define SEG_CLASS_SYSTEM 0 // this is for TSS
 
-#define SEG_BASE_4K 1  // address count with 4k
-#define SEG_BASE_1 0   // address count with 1 byte
+#define SEG_BASE_4K 1 // address count with 4k
+#define SEG_BASE_1 0 // address count with 1 byte
 #define TSS_SEG_BASE SEG_BASE_1
 
 #define IDT_SIZE 256
 
-#define KHEAP_BEGIN 0xC0700000  // increase by 4M if kernel img is too large for this reserve
+#define KHEAP_BEGIN \
+	0xC0700000 // increase by 4M if kernel img is too large for this reserve
 #define KHEAP_END (KHEAP_BEGIN + 0x004FF000)
 
 #define PAGE_TABLE_CACHE_BEGIN (KHEAP_END + 0x00001000)
@@ -49,7 +51,7 @@
 
 #define SYSCALL_INT_NO 0x80
 
-#define STDIN_FILENO 0  /* Standard input.  */
+#define STDIN_FILENO 0 /* Standard input.  */
 #define STDOUT_FILENO 1 /* Standard output.  */
 #define STDERR_FILENO 2 /* Standard error output.  */
 

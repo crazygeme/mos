@@ -19,7 +19,6 @@
 #include <pipechar.h>
 #include <serial.h>
 #include <vga.h>
-#include <tests.h>
 #include <fs.h>
 #include <macro.h>
 

@@ -13,8 +13,8 @@
 static void mm_clear_beginning_user_map();
 
 short pgc_entry_count[1024];
-unsigned phymm_max = 0;
-unsigned phymm_valid = 0;
+unsigned phymm_end = 0;
+unsigned phymm_begin = 0;
 
 unsigned mm_get_pagedir()
 {
@@ -368,7 +368,7 @@ void mm_del_dynamic_map(unsigned int vir)
 	phy_addr = (*info.entry) & PAGE_SIZE_MASK;
 	page_index = phy_addr / PAGE_SIZE;
 
-	if ((page_index >= phymm_valid) && (page_index < phymm_max)) {
+	if ((page_index >= phymm_begin) && (page_index < phymm_end)) {
 		if (phymm_dereference_page(phy_addr / PAGE_SIZE) == 0) {
 			phymm_free_user(phy_addr / PAGE_SIZE);
 		}

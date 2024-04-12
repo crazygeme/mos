@@ -4,7 +4,7 @@
 #include <list.h>
 #include <lock.h>
 #include <ps.h>
-#include <timer.h>
+#include <time.h>
 #include <errno.h>
 #include <mmap.h>
 #include <phymm.h>

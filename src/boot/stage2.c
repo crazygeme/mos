@@ -1,3 +1,4 @@
+#include <timer.h>
 #include <debugfs.h>
 #include <mount.h>
 #include <klib.h>
@@ -6,7 +7,7 @@
 #include <mm.h>
 #include <multiboot.h>
 #include <dsr.h>
-#include <timer.h>
+#include <time.h>
 #include <ps.h>
 #include <block.h>
 #include <hdd.h>
@@ -26,6 +27,7 @@ static void run(void);
 TEST_CONTROL TestControl;
 
 static void kmain_process(void *param);
+static void timer_process(void *param);
 static void idle_process(void *param);
 static void parse_kernel_cmdline();
 
@@ -62,10 +64,10 @@ void kmain_startup()
 	kb_init();
 
 	printk("Init timer\n");
-	timer_init();
+	time_init();
 
 	printk("Caculate CPU caps\n");
-	timer_calculate_cpu_cycle();
+	time_calculate_cpu_cycle();
 
 	printk("Init page fault\n");
 	pf_init();
@@ -78,11 +80,20 @@ void kmain_startup()
 	// create first process
 	ps_create(kmain_process, 3, ps_kernel);
 
+	// create timer process
+	ps_create(timer_process, 3, ps_kernel);
+
 	ps_create(dsr_process, 4, ps_dsr);
 
 	ps_kickoff();
 
 	run();
+}
+
+static void timer_process(void *param)
+{
+	timer_init();
+	do_timer_loop();
 }
 
 static void idle_process(void *param)

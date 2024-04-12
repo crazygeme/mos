@@ -2,7 +2,7 @@
 #include <block.h>
 #include <mmap.h>
 #include <phymm.h>
-#include <timer.h>
+#include <time.h>
 #include <ps.h>
 #include <lock.h>
 #include <mm.h>
@@ -176,10 +176,11 @@ static task_struct *ps_get_available_ready_task(list_entry *ready_queue)
 	list_entry *entry;
 	task_struct *task = 0;
 	entry = ready_queue->prev;
+	unsigned now = time_now_ms();
 
 	while (entry != ready_queue) {
 		task = container_of(entry, task_struct, ps_list);
-		if (task->status == ps_dying) {
+		if (task->status == ps_dying || task->timeout > now) {
 			task = 0;
 			entry = entry->prev;
 			continue;
@@ -464,6 +465,7 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
 	task->type = type;
 	task->status = ps_ready;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+	task->timeout = 0;
 	task->psid = ps_id_gen();
 	task->is_switching = 0;
 	task->fds = vm_alloc(1);
@@ -580,6 +582,7 @@ int do_fork(unsigned flag)
 		cur->remain_ticks = task->remain_ticks = cur->remain_ticks / 2;
 	else
 		task->remain_ticks = cur->remain_ticks;
+	task->timeout = cur->timeout;
 	task->psid = ps_id_gen();
 	mutex_init(&task->fd_lock);
 

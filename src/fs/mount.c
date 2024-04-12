@@ -51,7 +51,7 @@ done:
 
 mount_point *mount_create()
 {
-	mount_point *ret = kmalloc(sizeof(*ret));
+	mount_point *ret = calloc(1, sizeof(*ret));
 	mutex_init(&ret->lock);
 	ret->folders = hash_create(mount_path_comp);
 	ret->files = hash_create(mount_path_comp);

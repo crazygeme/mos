@@ -2,6 +2,7 @@
 #include <debugfs.h>
 #include <mm.h>
 #include <klib.h>
+#include <timer.h>
 
 extern unsigned page_fault_count;
 extern unsigned long long page_falut_total_time;
@@ -32,7 +33,13 @@ static void fill(void *buf, size_t size)
 		(int)page_falut_total_time % 1000, heap_quota, heap_quota_high);
 }
 
+static void meminfo_timeout(timer_t *timer, void *ctx)
+{
+	page_falut_total_time = page_fault_count = 0;
+}
+
 void debugfs_mm_init(mount_point *mp)
 {
 	mount_add_file(mp, "/proc/meminfo", fill);
+	timer_start(meminfo_timeout, 2000, 1, NULL);
 }

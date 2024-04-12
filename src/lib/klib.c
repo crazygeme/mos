@@ -1,7 +1,7 @@
 #include <macro.h>
 #include <klib.h>
 #include <tty.h>
-#include <timer.h>
+#include <time.h>
 #include <lock.h>
 #include <ps.h>
 #include <serial.h>
@@ -1224,7 +1224,7 @@ void printk(const char *str, ...)
 	int len = 0;
 	int i = 0;
 	time_t time;
-	timer_current(&time);
+	time_current(&time);
 	str_mill = itoa(time.milliseconds, 10, 0);
 	len = strlen(str_mill);
 	len = 3 - len;
@@ -1264,7 +1264,7 @@ void klog(char *str, ...)
 
 	mutex_lock(&klog_lock);
 
-	timer_current(&time);
+	time_current(&time);
 	str_mill = itoa(time.milliseconds, 10, 0);
 	len = strlen(str_mill);
 	len = 3 - len;

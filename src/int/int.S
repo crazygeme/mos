@@ -17,7 +17,7 @@
 
    We "fall through" to intr_exit to return from the interrupt.
 */
-.func intr_entry
+.globl intr_entry
 intr_entry:
     /* Save caller's registers. */
     push %ds
@@ -46,7 +46,6 @@ intr_entry:
 .globl intr_handler
     call intr_handler
     addl $4, %esp
-.endfunc
 
 /* Interrupt exit.
 
@@ -57,7 +56,6 @@ intr_entry:
    we launch a new user process (see start_process() in
    userprog/process.c). */
 .globl intr_exit
-.func intr_exit
 intr_exit:
     /* Restore caller's registers. */
     popl %edi
@@ -81,7 +79,6 @@ intr_exit:
     addl $12, %esp
     /* Return to caller. */
     iret
-.endfunc
 
 /* Interrupt stubs.
 
@@ -126,18 +123,16 @@ intr_exit:
    or `REAL', if the CPU pushes an error code for us. */
 #define STUB(NUMBER, TYPE)              \
         .text;                          \
-        .func intr##NUMBER##_stub;      \
                 intr##NUMBER##_stub:    \
                 TYPE;                   \
                 push $0x##NUMBER;       \
                 jmp intr_entry;         \
-        .endfunc;                    \
         .data;                          \
         .long intr##NUMBER##_stub;
 
 /* All the stubs. */
 .globl intr_stubs
-.section .data; 
+.data
 intr_stubs:
 STUB(00, zero) STUB(01, zero) STUB(02, zero) STUB(03, zero)
 STUB(04, zero) STUB(05, zero) STUB(06, zero) STUB(07, zero)
@@ -221,7 +216,7 @@ STUB(fc, zero) STUB(fd, zero) STUB(fe, zero) STUB(ff, zero)
 
 
 .text
-.func switch_to_user_mode
+.global switch_to_user_mode;
 switch_to_user_mode:
     cli;
     movl 4(%esp), %ecx
@@ -258,10 +253,9 @@ USER: nop;
     movl %edx, %ebp
     movl %ecx, %eax
     jmp *%eax
-.endfunc
 
 
-.func syscall_handler
+.global syscall_handler;
 syscall_handler:
     pushl %ebp
     pushl $0
@@ -294,6 +288,7 @@ syscall_handler:
     call intr_syscall_handler
     addl $4, %esp
 
+.global ret_from_syscall;
 ret_from_syscall:
     /* Restore caller's registers. */
     popl %edi
@@ -318,26 +313,18 @@ ret_from_syscall:
     addl $12, %esp
         /* Return to caller. */
     iret
-.endfunc
 
-.func read_port
+.global read_port
 read_port:
     movl  4(%esp), %edx 
     xor   %eax, %eax  
     inb   %dx, %al 
     ret 
-.endfunc
 
-.func write_port
+.global write_port
 write_port:
     movl 4(%esp), %edx
     mov  8(%esp), %al
     outb   %al, %dx 
     ret
-.endfunc
 
-.global switch_to_user_mode;
-.global ret_from_syscall;
-.global syscall_handler;
-.global write_port
-.global read_port

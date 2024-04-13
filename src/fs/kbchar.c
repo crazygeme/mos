@@ -1,3 +1,4 @@
+#include <time.h>
 #include <timer.h>
 #include <kbchar.h>
 #include <klib.h>

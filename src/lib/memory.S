@@ -36,7 +36,6 @@
 .section .note.GNU-stack,"",@progbits
 .text
 .global bcopy
-.func bcopy
 bcopy:
 
         pushl   %esi
@@ -83,10 +82,8 @@ bcopy:
         popl    %esi
         cld
         ret
-.endfunc
 
 .global memset
-.func memset
 memset:
 	pushl	%edi
 	pushl	%ebx
@@ -126,4 +123,3 @@ L1:	rep
 	popl	%ebx
 	popl	%edi
 	ret
-.endfunc

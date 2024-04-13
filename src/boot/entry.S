@@ -22,7 +22,7 @@ stack_top:            .byte 0
 
 .section              .multiboot
 
-.func __start
+.global __start
 __start:
     movl $stack_top, %ecx
     subl $0XC0000000, %ecx 
@@ -34,6 +34,5 @@ __start:
 hang:
     hlt
     jmp hang
-.endfunc
 
-.global __start
+

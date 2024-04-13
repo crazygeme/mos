@@ -814,10 +814,9 @@ void ps_kickoff()
 
 task_struct *CURRENT_TASK()
 {
-	unsigned int esp;
-
-	LOAD_ESP(esp);
-	return (task_struct *)((unsigned int)esp & PAGE_SIZE_MASK);
+	task_struct *info = NULL;
+	info = (task_struct *)(((unsigned int)&info) & PAGE_SIZE_MASK);
+	return info;
 }
 
 static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)

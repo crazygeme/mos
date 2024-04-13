@@ -6,7 +6,6 @@ typedef volatile struct _spinlock {
 	unsigned int lock;
 	int inited;
 	unsigned int int_status;
-	unsigned holder;
 	int disable_intr;
 } spinlock_t;
 

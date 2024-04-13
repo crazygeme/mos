@@ -40,8 +40,8 @@ static void scan_all_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 		return;
 
 	if (v == 0x8086) { // intel
-		if (memcmp(chip, "8254", 4) == 0)
-			dev = nic_intel_8254x_create(device, v, d);
+		// if (memcmp(chip, "8254", 4) == 0)
+		// 	dev = nic_intel_8254x_create(device, v, d);
 		// TODO: other chip
 	} else {
 		// TODO: other vendor

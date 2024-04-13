@@ -270,7 +270,6 @@ void mm_del_user_map()
 unsigned int mm_alloc_page_table()
 {
 	unsigned int ret = page_table_cache_alloc(&page_table_cache);
-	task_struct *cur = CURRENT_TASK();
 	if (ret == 0)
 		return ret;
 	memset((void *)ret, 0, PAGE_SIZE);

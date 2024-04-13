@@ -12,6 +12,9 @@ config("common") {
     "-w",
     "-Wno-int-conversion",
   ]
+  if (is_clang) {
+    cflags += [ "-Wno-incompatible-function-pointer-types" ]
+  }
   include_dirs = [
     "//",
     "//include",

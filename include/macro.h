@@ -5,8 +5,6 @@
 
 #define LOAD_CR3(val) asm volatile("movl %%cr3, %0" : "=r"(val))
 
-#define LOAD_ESP(val) asm volatile("movl %%esp, %0" : "=m"(val));
-
 #define SET_DS(val)                                 \
 	asm volatile("movw %0, %%ax" : : "I"(val)); \
 	asm volatile("movw %ax, %ds");              \

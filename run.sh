@@ -1,6 +1,6 @@
 #!/bin/bash
 # mak
-_ramsize="48"
+_ramsize="512"
 diskfile="ffs.img"
 _rebuild="0"
 _debug="0"

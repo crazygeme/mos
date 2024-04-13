@@ -175,7 +175,7 @@ static filep proc_dir_alloc(mount_point *mp)
 	inode->mp = mp;
 	proc_dir_gen(mp, inode);
 	fp->inode = inode;
-	fp->ref_cnt = 0;
+	fp->ref_cnt = 1;
 	fp->op = proc_dirop;
 	fp->mode = S_IFDIR;
 	return fp;

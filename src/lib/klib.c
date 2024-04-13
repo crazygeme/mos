@@ -965,6 +965,8 @@ static void print_human_readable_size(fputstr _putstr, unsigned int size,
 				      void *ctx)
 {
 	char *s = 0;
+	char *l = 0;
+	unsigned left = 0;
 
 	if (size == 1)
 		_put_buf_str(_putstr, "1", ctx);
@@ -972,12 +974,18 @@ static void print_human_readable_size(fputstr _putstr, unsigned int size,
 		static const char *factors[] = { "", "k", "M", "G", "T", NULL };
 		const char **fp;
 
-		for (fp = factors; size >= 1024 && fp[1] != NULL; fp++)
+		for (fp = factors; size >= 1024 && fp[1] != NULL; fp++) {
+			left = (size % 1024) / 100;
 			size /= 1024;
+		}
 
 		s = itoa(size, 10, 0);
+		l = itoa(left, 10, 0);
 		_put_buf_str(_putstr, s, ctx);
+		_put_buf_c(_putstr, '.', ctx);
+		_put_buf_str(_putstr, l, ctx);
 		free(s);
+		free(l);
 		_put_buf_str(_putstr, *fp, ctx);
 	}
 }

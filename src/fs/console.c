@@ -104,7 +104,7 @@ static filep alloc(mount_point *mp)
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->inode = NULL;
-	fp->ref_cnt = 0;
+	fp->ref_cnt = 1;
 	fp->op = ttyop;
 	fp->mode = S_IFREG;
 	return fp;

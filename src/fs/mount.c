@@ -208,7 +208,6 @@ filep mount_open(mount_point *mp, const char *path, int flag, const char *mode)
 			return NULL;
 
 		fp = new_mp->op.alloc(new_mp);
-		fs_refrence(fp);
 		return fp;
 	}
 
@@ -218,7 +217,6 @@ filep mount_open(mount_point *mp, const char *path, int flag, const char *mode)
 
 	if (kv) {
 		fp = debugfs_open(kv->val);
-		fs_refrence(fp);
 		return fp;
 	}
 
@@ -226,11 +224,8 @@ filep mount_open(mount_point *mp, const char *path, int flag, const char *mode)
 		return NULL;
 
 	fp = new_mp->op.alloc(new_mp);
-	fs_refrence(fp);
 	newfp = fp->op.open(fp->inode, new_path, flag, mode);
 	fs_destroy(fp);
-	if (newfp)
-		fs_refrence(newfp);
 	return newfp;
 }
 

@@ -138,7 +138,6 @@ typedef void *vm_struct_t;
 
 typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
-	unsigned reserve;
 	unsigned heap_top;
 	// unsigned zone_top;
 	vm_struct_t vm;

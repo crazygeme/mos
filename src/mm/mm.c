@@ -365,12 +365,12 @@ void mm_del_dynamic_map(unsigned int vir)
 		return;
 
 	phy_addr = (*info.entry) & PAGE_SIZE_MASK;
-	page_index = phy_addr / PAGE_SIZE;
+	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
 	if ((page_index >= phymm_begin) && (page_index < phymm_end)) {
-		if (phymm_dereference_page(phy_addr / PAGE_SIZE) == 0) {
-			phymm_free_user(phy_addr / PAGE_SIZE);
-		}
+		if (phymm_is_used(page_index) &&
+		    phymm_dereference_page(page_index) == 0)
+			phymm_free_user(page_index);
 
 		mm_clear_page_table_entry(&info);
 	}

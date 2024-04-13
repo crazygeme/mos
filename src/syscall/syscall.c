@@ -1497,13 +1497,13 @@ static int sys_umask(unsigned mask)
 
 static int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 {
-	time_t now;
+	unsigned long long now = 0;
 	if (!tv)
 		return -EFAULT;
 
-	now = time(NULL);
-	tv->tv_sec = now.time / 1000;
-	tv->tv_usec = (now.time - tv->tv_sec * 1000) * 1000;
+	now = time_now_us();
+	tv->tv_sec = (long)(now / 1000000);
+	tv->tv_usec = (long)(now - (unsigned long long)tv->tv_sec * 1000000);
 	if (tz) {
 		tz->tz_minuteswest = tz->tz_dsttime = 0;
 	}

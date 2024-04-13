@@ -449,7 +449,6 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
 
 	size = sizeof(*task);
 
-	task->user.reserve = (unsigned)vm_alloc(1);
 	task->user.page_dir = (unsigned int)vm_alloc(1);
 	task->command = vm_alloc(1);
 	task->umask = 0;
@@ -602,7 +601,6 @@ int do_fork(unsigned flag)
 	task->fds = vm_alloc(1); // kmalloc(MAX_FD*sizeof(fd_type));
 	task->ps_list.next = task->ps_list.prev = 0;
 	task->user.vm = vm_create();
-	task->user.reserve = (unsigned)vm_alloc(1);
 	task->command = vm_alloc(1);
 	task->umask = cur->umask;
 	task->priority = cur->priority;
@@ -740,10 +738,6 @@ int sys_waitpid(unsigned pid, int *status, int options)
 					*status = task->exit_status;
 				}
 				list_remove_entry(entry);
-				if (task->user.reserve) {
-					vm_free(task->user.reserve, 1);
-					task->user.reserve = 0;
-				}
 
 				if (task->command) {
 					vm_free(task->command, 1);

@@ -9,14 +9,19 @@
 #include <time.h>
 #include <macro.h>
 
-unsigned page_fault_count;
-unsigned long long page_falut_total_time;
+unsigned page_fault_cow = 0;
+unsigned page_fault_invalid = 0;
+unsigned page_fault_file = 0;
+unsigned page_fault_file_read = 0;
+unsigned page_fault_perm = 0;
+unsigned long long page_fault_cow_spent = 0;
+unsigned long long page_fault_invalid_spent = 0;
+unsigned long long page_fault_file_spent = 0;
+unsigned long long page_fault_perm_spent = 0;
 
 static void pf_process(intr_frame *frame);
 void pf_init()
 {
-	page_fault_count = 0;
-	page_falut_total_time = 0;
 	int_register(0xe, pf_process, 0, 0);
 }
 
@@ -59,8 +64,7 @@ static void pf_process(intr_frame *frame)
 		unsigned this_offset;
 		filep f;
 		ext4_file *ff;
-
-		page_fault_count++;
+		size_t rcnt = 0;
 
 		this_begin = cr2 & PAGE_SIZE_MASK;
 		region = vm_find_map(cur->user.vm, this_begin);
@@ -73,6 +77,8 @@ static void pf_process(intr_frame *frame)
 
 			if (f != 0) {
 				int ret = 0;
+
+				page_fault_file++;
 				ff = f->inode;
 				ret = ext4_fseek(ff, this_offset, SEEK_SET);
 				if (ret != EOK) {
@@ -80,14 +86,21 @@ static void pf_process(intr_frame *frame)
 					     this_offset);
 				}
 				ret = ext4_fread(ff, this_begin, PAGE_SIZE,
-						 NULL);
+						 &rcnt);
 				if (ret != EOK) {
 					klog("FAIL: mmap: read to buffer %x, size %x\n",
 					     this_begin, PAGE_SIZE);
 				}
+				page_fault_file_read += rcnt;
+				page_fault_file_spent +=
+					(time_now_us() - begin);
 			} else {
+				page_fault_invalid++;
 				memset(this_begin, 0, PAGE_SIZE);
+				page_fault_invalid_spent +=
+					(time_now_us() - begin);
 			}
+
 			goto Done;
 		} else if (user_mode) {
 			sys_exit(-1);
@@ -97,34 +110,52 @@ static void pf_process(intr_frame *frame)
 		}
 	} else if (write_access) {
 		unsigned page_index = mm_get_attached_page_index(cr2);
-		task_struct *cur = CURRENT_TASK();
 		unsigned cow;
-		unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(cr2);
-		unsigned int page_table_offset = ADDR_TO_PET_OFFSET(cr2);
-		unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
 		unsigned flag;
+		unsigned new_mem = 0;
 
-		page_fault_count++;
 		cow = phymm_is_cow(page_index);
 		if (cow) {
+			page_fault_cow++;
+
 			vir = cr2;
 			vir = (vir & PAGE_SIZE_MASK);
-			memcpy(cur->user.reserve, vir, PAGE_SIZE);
+			// 1. alloc a new physical memory
+			new_mem = vm_alloc(1);
+
+			// 2. copy cow value
+			memcpy(new_mem, vir, PAGE_SIZE);
+
+			// 3. unmap origin address
 			flag = mm_get_map_flag(vir);
+			mm_del_dynamic_map(vir);
+
+			// 4. unmap newly allocated physical memory
+			// note that should ref it first so that on one will use
+			// this physical memory
+			phymm_reference_page(VIRT_TO_PAGE_IDX(new_mem));
+			mm_del_direct_map(new_mem);
+
+			// 5. map newly allocated physical memory to origin virtual address
 			flag |= PAGE_ENTRY_PRESENT;
 			flag |= PAGE_ENTRY_WRITABLE;
-			mm_del_dynamic_map(vir);
-			mm_add_dynamic_map(vir, 0, flag);
-			RELOAD_CR3();
-			memcpy(vir, cur->user.reserve, PAGE_SIZE);
+			mm_add_dynamic_map(vir, VIRT_TO_PHY(new_mem), flag);
 
+			phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
+
+			RELOAD_CR3();
+
+			page_fault_cow_spent += (time_now_us() - begin);
 		} else {
+			page_fault_perm++;
 			vir = cr2;
 			vir = (vir & PAGE_SIZE_MASK);
 			flag = mm_get_map_flag(vir);
 			flag |= PAGE_ENTRY_WRITABLE;
 			mm_set_map_flag(vir, flag);
 			RELOAD_CR3();
+
+			page_fault_perm_spent += (time_now_us() - begin);
 		}
 
 		goto Done;
@@ -145,6 +176,4 @@ Done:
 	if (oldint) {
 		int_intr_enable();
 	}
-
-	page_falut_total_time += (time_now_us() - begin);
 }

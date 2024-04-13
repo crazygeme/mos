@@ -18,6 +18,8 @@ unsigned fs_read_size_total = 0;
 unsigned fs_write_size_total = 0;
 unsigned fs_cache_read_size_total = 0;
 unsigned fs_cache_write_size_total = 0;
+unsigned cache_search_count_total = 0;
+unsigned cache_search_time_total = 0;
 unsigned disk_read_size_total = 0;
 unsigned disk_write_size_total = 0;
 
@@ -39,7 +41,10 @@ static void fill(void *buf, size_t size)
 		"Disk write size:             %h\n"
 		"Disk write size(Total):      %h\n"
 		"FS cache hit rate:           %d%%\n"
+		"FS cache search:             %d\n"
+		"FS cache search(Total):      %d\n"
 		"FS cache spent:              %d.%d ms\n"
+		"FS cache spent(Total):       %d.%d ms\n"
 		"FS cache size(Current):      %h\n"
 		"FS cache size(Max):          %h\n"
 		"\n\n",
@@ -48,10 +53,12 @@ static void fill(void *buf, size_t size)
 		fs_cache_read_size_total, fs_cache_write_size,
 		fs_cache_write_size_total, disk_read_size, disk_read_size_total,
 		disk_write_size, disk_write_size_total, rate,
+		cache_search_count, cache_search_count_total,
 		(int)cache_search_time / 1000, (int)cache_search_time % 1000,
+		(int)cache_search_time_total / 1000,
+		(int)cache_search_time_total % 1000,
 		fs_cache_size * BLOCK_SECTOR_SIZE,
 		max_fs_cache_size * BLOCK_SECTOR_SIZE);
-	cache_hit = cache_search_count = 0;
 }
 
 static void fsinfo_timeout(timer_t *timer, void *ctx)
@@ -62,7 +69,9 @@ static void fsinfo_timeout(timer_t *timer, void *ctx)
 	fs_cache_write_size_total += fs_cache_write_size;
 	disk_read_size_total += disk_read_size;
 	disk_write_size_total += disk_write_size;
-	cache_hit = cache_search_count = 0;
+	cache_search_time_total += cache_search_count;
+	cache_search_count_total += cache_search_count;
+	cache_hit = cache_search_count = cache_search_time = 0;
 	fs_cache_read_size = fs_cache_write_size = fs_read_size =
 		fs_write_size = disk_read_size = disk_write_size = 0;
 }

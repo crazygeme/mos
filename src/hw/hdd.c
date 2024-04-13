@@ -75,7 +75,7 @@ typedef struct _channel {
 
 #define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
-#define PREREAD_SECTOR 16
+#define PREREAD_SECTOR 1
 #define HEAD_SECTOR(sector) (sector / PREREAD_SECTOR * PREREAD_SECTOR)
 #define SECTOR_OFF(sector) (sector - HEAD_SECTOR(sector))
 

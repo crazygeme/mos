@@ -60,7 +60,7 @@ static void phymm_reserve_area(unsigned *list, unsigned page_count, int kernel)
 	int match = 0;
 	if (kernel) {
 		for (i = phymm_begin; i < phymm_end; i++) {
-			if (!phymm_pages[i].reserved) {
+			if (!phymm_pages[i].used) {
 				match++;
 			} else {
 				match = 0;
@@ -74,7 +74,7 @@ static void phymm_reserve_area(unsigned *list, unsigned page_count, int kernel)
 		}
 	} else {
 		for (i = phymm_end - 1; i >= phymm_begin; i--) {
-			if (!phymm_pages[i].reserved) {
+			if (!phymm_pages[i].used) {
 				match++;
 			} else {
 				match = 0;
@@ -93,15 +93,14 @@ static void phymm_reserve_area(unsigned *list, unsigned page_count, int kernel)
 		return;
 
 	for (i = first; i < (first + page_count); i++) {
-		phymm_pages[i].reserved = 1;
+		phymm_pages[i].used = 1;
 	}
 
 	phymm_pages[first].next_page_index = *list;
 	*list = first;
 }
 
-unsigned phymm_kernel_used = 0;
-unsigned phymm_user_used = 0;
+unsigned phymm_used = 0;
 
 unsigned phymm_alloc_kernel(unsigned page_count)
 {
@@ -113,8 +112,6 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 
 	ALLOCATE_PHYMM(kernel_free_list.head[index], page_count, 1, first);
 
-	phymm_kernel_used += page_count;
-
 	return first;
 }
 
@@ -125,8 +122,6 @@ unsigned phymm_alloc_user()
 	int first = 0;
 
 	ALLOCATE_PHYMM(user_head, 1, 0, first);
-
-	phymm_user_used += 1;
 
 	return first;
 }
@@ -140,15 +135,11 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count)
 	}
 
 	FREE_PHYMM(kernel_free_list.head[index], page_index);
-
-	phymm_kernel_used -= page_count;
 }
 
 void phymm_free_user(unsigned page_index)
 {
 	FREE_PHYMM(user_head, page_index);
-
-	phymm_user_used -= 1;
 }
 
 phymm_page *phymm_pages;
@@ -177,12 +168,20 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 
 unsigned phymm_reference_page(unsigned page_index)
 {
-	return __sync_add_and_fetch(&(phymm_pages[page_index].ref_count), 1);
+	unsigned ret =
+		__sync_add_and_fetch(&(phymm_pages[page_index].ref_count), 1);
+	if (ret == 1) {
+		phymm_used++;
+	}
 }
 
 unsigned phymm_dereference_page(unsigned page_index)
 {
-	return __sync_add_and_fetch(&(phymm_pages[page_index].ref_count), -1);
+	unsigned ret =
+		__sync_add_and_fetch(&(phymm_pages[page_index].ref_count), -1);
+	if (ret == 0) {
+		phymm_used--;
+	}
 }
 
 int phymm_is_cow(unsigned page_index)

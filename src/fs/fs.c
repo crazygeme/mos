@@ -259,7 +259,6 @@ static filep fs_open_file_ext4(const char *path, int flag, char *mode,
 		fp->mode = s.st_mode;
 	}
 	ret = fp;
-	fs_refrence(fp);
 	goto done;
 fail:
 	ret = NULL;
@@ -437,8 +436,6 @@ int fs_pipe(int *pipefd)
 	cur->fds[writer].fp = fp[1];
 	cur->fds[reader].flag = O_RDONLY;
 	cur->fds[writer].flag = O_WRONLY;
-	fs_refrence(fp[0]);
-	fs_refrence(fp[1]);
 	pipefd[0] = reader;
 	pipefd[1] = writer;
 	ret = 0;

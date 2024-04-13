@@ -384,7 +384,7 @@ filep fs_alloc_filep_normal(void *content)
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->inode = content;
-	fp->ref_cnt = 0;
+	fp->ref_cnt = 1;
 	fp->op = file_op;
 	return fp;
 }
@@ -393,7 +393,7 @@ filep fs_alloc_filep_dir(void *content)
 {
 	filep fp = calloc(1, sizeof(*fp));
 	fp->inode = content;
-	fp->ref_cnt = 0;
+	fp->ref_cnt = 1;
 	fp->op = dir_op;
 	return fp;
 }

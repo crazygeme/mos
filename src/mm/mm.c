@@ -347,8 +347,9 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	if (!mm_set_page_table_entry(vir, (flag | PAGE_ENTRY_WRITABLE),
 				     phy_page | flag))
 		return -1;
-
+	lock_mm();
 	phymm_reference_page(phy_page / PAGE_SIZE);
+	unlock_mm();
 
 	return 1;
 }
@@ -367,6 +368,7 @@ void mm_del_dynamic_map(unsigned int vir)
 	phy_addr = (*info.entry) & PAGE_SIZE_MASK;
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
+	lock_mm();
 	if ((page_index >= phymm_begin) && (page_index < phymm_end)) {
 		if (phymm_is_used(page_index) &&
 		    phymm_dereference_page(page_index) == 0)
@@ -374,6 +376,7 @@ void mm_del_dynamic_map(unsigned int vir)
 
 		mm_clear_page_table_entry(&info);
 	}
+	unlock_mm();
 }
 
 unsigned mm_get_map_flag(unsigned vir)

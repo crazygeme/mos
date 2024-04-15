@@ -9,8 +9,6 @@
 
 typedef struct _phymm_page {
 	unsigned int ref_count;
-	unsigned int next_page_index : 20;
-	unsigned int used : 12;
 } phymm_page;
 
 extern phymm_page *phymm_pages;

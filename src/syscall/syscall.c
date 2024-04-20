@@ -1,3 +1,4 @@
+#include "mm.h"
 #include <syscall.h>
 #include <int.h>
 #include <unistd.h>
@@ -551,7 +552,8 @@ static int sys_brk(unsigned _top)
 	unsigned ret, top;
 	top = _top;
 	if (task->user.heap_top == USER_HEAP_BEGIN) {
-		do_mmap(task->user.heap_top, PAGE_SIZE, 0, 0, -1, 0);
+		do_mmap(task->user.heap_top, PAGE_SIZE, PROT_READ | PROT_WRITE,
+			0, -1, 0);
 		task->user.heap_top += PAGE_SIZE;
 	}
 
@@ -565,7 +567,8 @@ static int sys_brk(unsigned _top)
 		int i = 0;
 		size = top - task->user.heap_top;
 		pages = (size - 1) / PAGE_SIZE + 1;
-		do_mmap(task->user.heap_top, PAGE_SIZE * pages, 0, 0, -1, 0);
+		do_mmap(task->user.heap_top, PAGE_SIZE * pages,
+			PROT_READ | PROT_WRITE, 0, -1, 0);
 		top = task->user.heap_top + pages * PAGE_SIZE;
 		task->user.heap_top = top;
 		ret = top;

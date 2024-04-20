@@ -73,7 +73,7 @@ typedef struct _file {
 	unsigned ref_cnt;
 	unsigned mode;
 	fileop op;
-	//char *name;
+	char *name;
 } file;
 
 typedef struct _file_descriptor {

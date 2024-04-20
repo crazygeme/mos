@@ -29,10 +29,9 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
-        /*
-         * (ov)bcopy (src,dst,cnt)
-         *  ws@tools.de     (Wolfgang Solfrank, TooLs GmbH) +49-228-985800
-         */
+
+#include <config.h>
+
 .section .note.GNU-stack,"",@progbits
 .text
 .global bcopy
@@ -123,3 +122,41 @@ L1:	rep
 	popl	%ebx
 	popl	%edi
 	ret
+
+.global bzero
+bzero:
+        pushl   %edx /* memory address */
+        pushl   %ecx /* size */
+        pushl   %eax
+        movl    $PAGE_SIZE,%ecx /* memory size always 1 page */
+        movl	16(%esp),%edx
+        xorps   %xmm0,%xmm0
+        movl    %ecx,%eax /* save ecx to eax */
+        andl    $0xFFFFFF80,%ecx /* clear only 128 byte pages */
+        jz      clear
+aligned:
+        movdqa  %xmm0,0x00(%edx)
+        movdqa  %xmm0,0x10(%edx)
+        movdqa  %xmm0,0x20(%edx)
+        movdqa  %xmm0,0x30(%edx)
+        movdqa  %xmm0,0x40(%edx)
+        movdqa  %xmm0,0x50(%edx)
+        movdqa  %xmm0,0x60(%edx)
+        movdqa  %xmm0,0x70(%edx)
+        addl    $128,%edx
+        subl    $128,%ecx
+        jnz     aligned
+clear:
+        andl    $0x7F,%eax /* clear rest*/
+        jz      exit
+rest:
+        movdqa  %xmm0,0(%edx)
+        addl    16,%edx
+        subl    16,%eax
+        jnz     rest
+exit:
+        popl    %eax
+        popl    %ecx
+        popl    %edx
+        ret
+

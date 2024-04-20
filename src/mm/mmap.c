@@ -77,8 +77,8 @@ void vm_destroy(vm_struct_t vm)
 	hash_destroy(table);
 }
 
-void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *fd,
-		int offset)
+void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
+		int flag, void *fd, int offset)
 {
 	hash_table *table = vm;
 	vm_key *key = kmalloc(sizeof(*key));
@@ -91,6 +91,8 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *fd,
 		region->begin = begin;
 		region->end = end;
 		region->node = fd;
+		region->prot = prot;
+		region->flag = flag;
 		if (fd) {
 			fs_refrence(fd);
 		}
@@ -113,8 +115,10 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *fd,
 			unsigned new_end = conflict_key->end;
 			void *new_fd = conflict_region->node;
 			vm_del_map(vm, conflict_key->begin);
-			vm_add_map(vm, begin, end, fd, offset);
-			vm_add_map(vm, new_begin, new_end, new_fd, new_offset);
+			vm_add_map(vm, begin, end, prot, flag, fd, offset);
+			vm_add_map(vm, new_begin, new_end,
+				   conflict_region->prot, conflict_region->flag,
+				   new_fd, new_offset);
 		} else if (key->begin > conflict_key->begin &&
 			   key->begin < conflict_key->end &&
 			   key->end >= conflict_key->end) {
@@ -126,16 +130,17 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *fd,
 			unsigned new_end = key->begin;
 			unsigned new_fd = (unsigned)conflict_region->node;
 			vm_del_map(vm, conflict_key->begin);
-			vm_add_map(vm, begin, end, fd, offset);
-			vm_add_map(vm, new_begin, new_end, (void *)new_fd,
-				   new_offset);
+			vm_add_map(vm, begin, end, prot, flag, fd, offset);
+			vm_add_map(vm, new_begin, new_end,
+				   conflict_region->prot, conflict_region->flag,
+				   (void *)new_fd, new_offset);
 		} else if (key->begin <= conflict_key->begin &&
 			   key->end >= conflict_key->end) {
 			// case 5
 			// -------|   region1   | ------
 			// ---------| region2 | --------
 			vm_del_map(vm, conflict_key->begin);
-			vm_add_map(vm, begin, end, fd, offset);
+			vm_add_map(vm, begin, end, prot, flag, fd, offset);
 		} else if (key->begin > conflict_key->begin &&
 			   key->end < conflict_key->end) {
 			// case 6
@@ -151,11 +156,13 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *fd,
 			unsigned new_end2 = conflict_key->end;
 			unsigned new_fd2 = (unsigned)conflict_region->node;
 			vm_del_map(vm, conflict_key->begin);
-			vm_add_map(vm, begin, end, fd, offset);
-			vm_add_map(vm, new_begin1, new_end1, (void *)new_fd1,
-				   new_offset1);
-			vm_add_map(vm, new_begin2, new_end2, (void *)new_fd2,
-				   new_offset2);
+			vm_add_map(vm, begin, end, prot, flag, fd, offset);
+			vm_add_map(vm, new_begin1, new_end1,
+				   conflict_region->prot, conflict_region->flag,
+				   (void *)new_fd1, new_offset1);
+			vm_add_map(vm, new_begin2, new_end2,
+				   conflict_region->prot, conflict_region->flag,
+				   (void *)new_fd2, new_offset2);
 		}
 
 		kfree(key);
@@ -164,14 +171,12 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *fd,
 
 static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 {
-	vm_key *key = kmalloc(sizeof(*key));
+	vm_key key;
 	key_value_pair *pair = 0;
-	key->begin = (addr & PAGE_SIZE_MASK);
-	key->end = key->begin + PAGE_SIZE;
+	key.begin = (addr & PAGE_SIZE_MASK);
+	key.end = key.begin + PAGE_SIZE;
 
-	pair = hash_find(table, key);
-
-	kfree(key);
+	pair = hash_find(table, &key);
 
 	return pair;
 }
@@ -272,24 +277,12 @@ void vm_dup(vm_struct_t cur, vm_struct_t new)
 
 	while (pair) {
 		region = pair->val;
-		vm_add_map(new, region->begin, region->end, region->node,
-			   region->offset);
+		vm_add_map(new, region->begin, region->end, region->prot,
+			   region->flag, region->node, region->offset);
 
 		pair = hash_next(table, pair);
 	}
 }
-
-#define MAP_SHARED 0x01 /* Share changes */
-#define MAP_PRIVATE 0x02 /* Changes are private */
-#define MAP_TYPE 0x0f /* Mask for type of mapping */
-#define MAP_FIXED 0x10 /* Interpret addr exactly */
-#define MAP_ANONYMOUS 0x20 /* don't use a file */
-#ifdef CONFIG_MMAP_ALLOW_UNINITIALIZED
-#define MAP_UNINITIALIZED \
-	0x4000000 /* For anonymous mmap, memory could be uninitialized */
-#else
-#define MAP_UNINITIALIZED 0x0 /* Don't support this flag */
-#endif
 
 int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   unsigned int flags, void *inode, unsigned int offset)
@@ -304,8 +297,8 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		addr = vm_disc_map(cur->user.vm, page_count * PAGE_SIZE);
 	}
 
-	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, inode,
-		   offset);
+	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, prot,
+		   flags, inode, offset);
 
 	return addr;
 }
@@ -340,17 +333,19 @@ int do_munmap(void *addr, unsigned length)
 
 	if (begin > region->begin && end < region->end) {
 		vm_del_map(cur->user.vm, addr);
-		vm_add_map(cur->user.vm, region->begin, begin, region->node,
-			   region->offset);
-		vm_add_map(cur->user.vm, end, region->end, region->node,
+		vm_add_map(cur->user.vm, region->begin, begin, region->prot,
+			   region->flag, region->node, region->offset);
+		vm_add_map(cur->user.vm, end, region->end, region->prot,
+			   region->flag, region->node,
 			   region->offset + (end - region->begin));
 	} else if (begin > region->begin && end == region->end) {
 		vm_del_map(cur->user.vm, addr);
-		vm_add_map(cur->user.vm, region->begin, begin, region->node,
-			   region->offset);
+		vm_add_map(cur->user.vm, region->begin, begin, region->prot,
+			   region->flag, region->node, region->offset);
 	} else if (begin == region->begin && end < region->end) {
 		vm_del_map(cur->user.vm, addr);
-		vm_add_map(cur->user.vm, end, region->end, region->node,
+		vm_add_map(cur->user.vm, end, region->end, region->prot,
+			   region->flag, region->node,
 			   region->offset + (end - region->begin));
 	} else if (begin == region->begin && end == region->end) {
 		vm_del_map(cur->user.vm, addr);

@@ -333,6 +333,8 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	unsigned int page_index = 0;
 	unsigned int target_phy = 0;
 
+	lock_mm();
+
 	if (phy) {
 		phy = phy & PAGE_SIZE_MASK;
 		page_index = phy / PAGE_SIZE;
@@ -345,9 +347,11 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	phy_page = target_phy & PAGE_SIZE_MASK;
 
 	if (!mm_set_page_table_entry(vir, (flag | PAGE_ENTRY_WRITABLE),
-				     phy_page | flag))
+				     phy_page | flag)) {
+		unlock_mm();
 		return -1;
-	lock_mm();
+	}
+
 	phymm_reference_page(phy_page / PAGE_SIZE);
 	unlock_mm();
 

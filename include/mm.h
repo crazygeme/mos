@@ -1,12 +1,11 @@
 #ifndef _MM_H_
 #define _MM_H_
+#include <config.h>
 
 typedef struct multiboot_info multiboot_info_t;
 
 #define KERNEL_OFFSET 0xC0000000
 #define KERNEL_SIZE 0x40000000
-#define PAGE_SIZE (4 * 1024)
-#define PAGE_SIZE_MASK 0xFFFFF000
 #define PG_TABLE_SIZE 1024
 #define PE_TABLE_SIZE 1024
 #define KERNEL_PAGE_DIR_OFFSET (KERNEL_OFFSET / (4 * 1024 * 1024))
@@ -35,6 +34,23 @@ typedef struct multiboot_info multiboot_info_t;
 	(PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_DPL_USER)
 
 #define GDT_ADDRESS 0x1C0000
+
+#define PROT_READ 0x1 /* Page can be read.  */
+#define PROT_WRITE 0x2 /* Page can be written.  */
+#define PROT_EXEC 0x4 /* Page can be executed.  */
+#define PROT_NONE 0x0 /* Page can not be accessed.  */
+
+#define MAP_SHARED 0x01 /* Share changes */
+#define MAP_PRIVATE 0x02 /* Changes are private */
+#define MAP_TYPE 0x0f /* Mask for type of mapping */
+#define MAP_FIXED 0x10 /* Interpret addr exactly */
+#define MAP_ANONYMOUS 0x20 /* don't use a file */
+#ifdef CONFIG_MMAP_ALLOW_UNINITIALIZED
+#define MAP_UNINITIALIZED \
+	0x4000000 /* For anonymous mmap, memory could be uninitialized */
+#else
+#define MAP_UNINITIALIZED 0x0 /* Don't support this flag */
+#endif
 
 // clang-format on
 

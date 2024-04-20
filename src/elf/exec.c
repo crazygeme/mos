@@ -373,7 +373,8 @@ int sys_execve(const char *file, char **argv, char **envp)
 	}
 
 	/* don't forget to setup a stack for our program... */
-	do_mmap(esp_buttom, USER_STACK_PAGES * PAGE_SIZE, 0, 0, -1, 0);
+	do_mmap(esp_buttom, USER_STACK_PAGES * PAGE_SIZE,
+		PROT_READ | PROT_WRITE, 0, -1, 0);
 
 	/* setup arguments and enviroments in proper way for interp */
 	esp_top = ps_setup_v(file_name, argc, s_argv, envc, s_envp, esp_top,

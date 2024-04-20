@@ -26,11 +26,11 @@ static unsigned elf_map_section(filep fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 	unsigned i = 0;
 
 	if (va_begin == phdr->p_vaddr) {
-		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0,
-			       fp, file_off);
+		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE),
+			       PROT_READ | PROT_EXEC, 0, fp, file_off);
 	} else {
-		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0,
-			       0, 0);
+		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE),
+			       PROT_READ | PROT_EXEC, 0, 0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
 	}
 	return 1;
@@ -133,7 +133,8 @@ static unsigned elf_map_section_at(filep fp, Elf32_Phdr *phdr, unsigned bias)
 	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
 	unsigned i = 0;
 
-	do_mmap(bias + va_begin, (va_end - va_begin + PAGE_SIZE), 0, 0, -1, 0);
+	do_mmap(bias + va_begin, (va_end - va_begin + PAGE_SIZE),
+		PROT_READ | PROT_EXEC, 0, -1, 0);
 	elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
 	return 1;
 }

@@ -5,6 +5,8 @@ typedef void *vm_struct_t;
 typedef struct _vm_region {
 	unsigned begin;
 	unsigned end;
+	int prot;
+	int flag;
 	void *node;
 	int offset;
 } vm_region;
@@ -24,8 +26,8 @@ void vm_destroy(vm_struct_t vm);
  * @param end
  * @param fd
  */
-void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, void *node,
-		int offset);
+void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
+		int flag, void *node, int offset);
 
 /**
  * delete a mapped region which contains addr

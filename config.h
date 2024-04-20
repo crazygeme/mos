@@ -8,7 +8,7 @@
 #define KERNEL_CODE_SELECTOR 0x10
 #define USER_DATA_SELECTOR 0x1b
 #define USER_CODE_SELECTOR 0x23
-#define TSS_SELECTOR                                          \
+#define TSS_SELECTOR \
 	0x28 // we are not going to use TSS when task switch, \
 		// but we have to make tr register valid or x86 process
 #define SELECTOR_COUNT 6 // kernel 2 + user 2 + tss 1 + empty
@@ -70,6 +70,9 @@
 #define VGA_COLOR_DEPTH 32
 
 #define MAX_PATH (4096)
+
+#define PAGE_SIZE (4 * 1024)
+#define PAGE_SIZE_MASK 0xFFFFF000
 
 // FIXME:
 // every bit represent a psid

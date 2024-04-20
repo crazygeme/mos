@@ -655,12 +655,12 @@ static void klib_add_to_free_list(int index, kblock *buf, int force_merge)
 extern void bcopy(void *src, void *dst, unsigned n);
 void memcpy(void *to, void *from, unsigned n)
 {
-	char *src = from;
-	char *dst = to;
-	for (int i = 0; i < n; i++)
-		*dst++ = *src++;
+	// char *src = from;
+	// char *dst = to;
+	// for (int i = 0; i < n; i++)
+	// 	*dst++ = *src++;
 
-	//bcopy(from, to, n);
+	bcopy(from, to, n);
 }
 
 void memmove(void *_src, void *_dst, unsigned len)

@@ -199,6 +199,7 @@ struct _hash_table {
 	struct rb_root root;
 	hash_comp_fn comp;
 	spinlock_t lock;
+	unsigned size;
 };
 
 struct _key_value_pair {
@@ -220,6 +221,8 @@ int hash_remove_at(hash_table *table, key_value_pair *pair);
 key_value_pair *hash_find(hash_table *table, void *key);
 
 int hash_update(hash_table *table, void *key, void *val);
+
+unsigned hash_size(hash_table *table);
 
 key_value_pair *hash_first(hash_table *table);
 

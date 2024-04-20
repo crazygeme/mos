@@ -258,6 +258,7 @@ static filep fs_open_file_ext4(const char *path, int flag, char *mode,
 		}
 		fp->mode = s.st_mode;
 	}
+
 	ret = fp;
 	goto done;
 fail:
@@ -283,6 +284,10 @@ filep fs_open_file(const char *path, int flag, char *mode, int follow_link)
 
 	if (!fp) {
 		fp = fs_open_file_ext4(path, flag, mode, 1);
+	}
+
+	if (fp) {
+		fp->name = strdup(path);
 	}
 
 	return fp;
@@ -502,6 +507,10 @@ int fs_destroy(filep f)
 	int ret = 0;
 	if (__sync_add_and_fetch(&f->ref_cnt, -1) == 0) {
 		ret = f->op.close(f->inode);
+		if (f->name) {
+			free(f->name);
+		}
+
 		free(f);
 	}
 	return ret;

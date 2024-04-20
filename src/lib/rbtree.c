@@ -475,6 +475,7 @@ hash_table *hash_create(hash_comp_fn comp)
 		table->comp = hash_binary_comp;
 
 	spinlock_init(&table->lock);
+	table->size = 0;
 
 	return table;
 }
@@ -544,11 +545,14 @@ int hash_insert(hash_table *table, void *key, void *val)
 
 	spinlock_lock(&table->lock);
 	ret = __hash_insert(table, key, &pair->node);
-	spinlock_unlock(&table->lock);
 	if (ret) {
 		kfree(pair);
+		spinlock_unlock(&table->lock);
 		return 0;
 	}
+
+	table->size++;
+	spinlock_unlock(&table->lock);
 
 	return 1;
 }
@@ -559,8 +563,10 @@ int hash_remove(hash_table *table, void *key)
 
 	if (!pair)
 		return 0;
+
 	spinlock_lock(&table->lock);
 	rb_erase(&pair->node, &table->root);
+	table->size--;
 	spinlock_unlock(&table->lock);
 	kfree(pair);
 
@@ -569,8 +575,12 @@ int hash_remove(hash_table *table, void *key)
 
 int hash_remove_at(hash_table *table, key_value_pair *pair)
 {
+	if (!pair)
+		return 0;
+
 	spinlock_lock(&table->lock);
 	rb_erase(&pair->node, &table->root);
+	table->size--;
 	spinlock_unlock(&table->lock);
 	kfree(pair);
 }
@@ -611,6 +621,16 @@ int hash_update(hash_table *table, void *key, void *val)
 	pair->val = val;
 
 	return 1;
+}
+
+unsigned hash_size(hash_table *table)
+{
+	unsigned ret = 0;
+	spinlock_lock(&table->lock);
+	ret = table->size;
+	spinlock_unlock(&table->lock);
+
+	return ret;
 }
 
 key_value_pair *hash_first(hash_table *table)

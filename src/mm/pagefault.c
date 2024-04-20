@@ -1,3 +1,4 @@
+#include "config.h"
 #include <lock.h>
 #include <int.h>
 #include <pagefault.h>
@@ -23,8 +24,8 @@ unsigned long long page_fault_perm_spent = 0;
 
 static hash_table *mmap_cache = NULL;
 static mutex_t mmap_cache_lock;
-static unsigned zero_page = NULL;
-static mutex_t zero_page_lock;
+static unsigned zero_page = 0;
+static unsigned zero_page_phy = 0;
 
 static void pf_process(intr_frame *frame);
 
@@ -51,7 +52,9 @@ void pf_init()
 	int_register(0xe, pf_process, 0, 0);
 	mmap_cache = hash_create(mmap_key_comp);
 	mutex_init(&mmap_cache_lock);
-	mutex_init(&zero_page_lock);
+	zero_page = vm_alloc(1);
+	memset(zero_page, 0, PAGE_SIZE);
+	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
 static unsigned mmap_cache_find(const char *path, unsigned offset)
@@ -82,29 +85,6 @@ static void mmap_cache_add(const char *path, unsigned offset, unsigned phy)
 	mutex_unlock(&mmap_cache_lock);
 }
 
-static unsigned zero_page_get()
-{
-	unsigned ret = 0;
-
-	mutex_lock(&zero_page_lock);
-	ret = zero_page;
-	mutex_unlock(&zero_page_lock);
-
-	return ret;
-}
-
-static unsigned zero_page_put(unsigned phy)
-{
-	mutex_lock(&zero_page_lock);
-	if (zero_page) {
-		phymm_dereference_page(PHY_TO_PAGE_IDX(zero_page));
-	}
-
-	zero_page = phy;
-	phymm_reference_page(PHY_TO_PAGE_IDX(zero_page));
-	mutex_unlock(&zero_page_lock);
-}
-
 /*
 31                4                             0
 +-----+-...-+-----+-----+-----+-----+-----+-----+
@@ -133,39 +113,49 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 	if (phy != NULL) {
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
 		RELOAD_CR3();
-
-	} else {
-		phy = phymm_alloc_user() * PAGE_SIZE;
-
-		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
-		RELOAD_CR3();
-
-		ff = f->inode;
-		ret = ext4_fseek(ff, offset, SEEK_SET);
-		if (ret != EOK) {
-			klog("FAIL: mmap: seek to off %x\n", offset);
-		}
-
-		ret = ext4_fread(ff, address, PAGE_SIZE, &rcnt);
-		if (ret != EOK) {
-			klog("FAIL: mmap: read to buffer %x, size %x\n",
-			     address, PAGE_SIZE);
-		}
-
-		mmap_cache_add(f->name, offset, phy);
-		page_fault_file_read += rcnt;
+		goto DONE;
 	}
 
+	phy = phymm_alloc_user() * PAGE_SIZE;
+
+	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
+	RELOAD_CR3();
+
+	ff = f->inode;
+	ret = ext4_fseek(ff, offset, SEEK_SET);
+	if (ret != EOK) {
+		memset(address, 0, PAGE_SIZE);
+		goto READ_DONE;
+	}
+
+	ret = ext4_fread(ff, address, PAGE_SIZE, &rcnt);
+	if (ret != EOK) {
+		klog("FAIL: mmap: read to buffer %x, size %x\n", address,
+		     PAGE_SIZE);
+	}
+
+READ_DONE:
+	mmap_cache_add(f->name, offset, phy);
+	page_fault_file_read += rcnt;
+
+DONE:
 	page_fault_file_spent += (time_now_us() - begin);
 }
 
-static int pf_handle_invalid_memory(unsigned address)
+static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 {
 	unsigned long long begin = time_now_us();
 
-	mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
-	RELOAD_CR3();
-	memset(address, 0, PAGE_SIZE);
+	if (prot & PROT_WRITE) {
+		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
+		RELOAD_CR3();
+		if (flag != -1)
+			memset(address, 0, PAGE_SIZE);
+	} else {
+		mm_add_dynamic_map(address, zero_page_phy,
+				   PAGE_ENTRY_USER_CODE);
+		RELOAD_CR3();
+	}
 	page_fault_invalid++;
 	page_fault_invalid_spent += (time_now_us() - begin);
 }
@@ -188,7 +178,8 @@ static int pf_handle_page_invalid(unsigned cr2)
 		pf_handle_invalid_file_map(this_begin, region->node,
 					   this_offset);
 	else
-		pf_handle_invalid_memory(this_begin);
+		pf_handle_invalid_memory(this_begin, region->prot,
+					 region->flag);
 
 	return 1;
 }
@@ -269,21 +260,19 @@ static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
 	unsigned error = frame->error_code;
-	int page_valid;
-	int write_access;
 	unsigned oldint;
 
 	oldint = int_intr_disable();
 	LOAD_CR2(cr2);
-	page_valid = ((error & PF_MASK_P) == PF_MASK_P);
-	write_access = ((error & PF_MASK_RW) == PF_MASK_RW);
 
-	if (!page_valid) {
+	if (!((error & PF_MASK_P) == PF_MASK_P)) {
 		if (pf_handle_page_invalid(cr2))
 			goto Done;
 
 		goto HLT;
-	} else if (write_access) {
+	}
+
+	if ((error & PF_MASK_RW) == PF_MASK_RW) {
 		if (pf_handle_permission(cr2))
 			goto Done;
 

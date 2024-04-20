@@ -652,7 +652,6 @@ static void klib_add_to_free_list(int index, kblock *buf, int force_merge)
 	}
 }
 
-extern void bcopy(void *src, void *dst, unsigned n);
 void memcpy(void *to, void *from, unsigned n)
 {
 	// char *src = from;

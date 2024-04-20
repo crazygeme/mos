@@ -3,27 +3,20 @@
 _ramsize="512"
 diskfile="ffs.img"
 _rebuild="0"
-_debug="0"
+_debug=""
 _curses=""
 _verbose=""
 _logtofile="stdio"
-_test="0"
-_test_arg=""
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 
-_test_arg_need="0"
-
 for arg in $@
 do
-if [ "$_test_arg_need" == "1" ]; then
-	_test_arg="$_test_arg $arg"
-	_test_arg_need="0"
-elif [ "$arg" == "rebuild" ]; then
+if [ "$arg" == "rebuild" ]; then
 	_rebuild="1"
 elif [ "$arg" == "debug" ]; then
-	_debug="1"
+	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
 elif [ "$arg" == "curses" ]; then
@@ -31,15 +24,9 @@ elif [ "$arg" == "curses" ]; then
 	_vga=""
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
-elif [ "$arg" == "" ]; then
-	_rebuild="0"
-	_debug="0"
 elif [ "$arg" == "logtofile" ]; then
 	_logtofile="file:krn.log"
-elif [ "$arg" == "test" ]; then
-	_test="1"
-	_test_arg_need="1"
-else
+elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
 	echo "param:"
@@ -48,8 +35,8 @@ else
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	echo -e "\t testall: run all tests"
-	echo -e "\t test: run with debug information"
 	echo -e "\t verbose: run with serial log"
+	echo -e "\t kvm: enable kvm"
 	exit
 fi
 done
@@ -77,17 +64,17 @@ fi
 
 echo "begin enum $kernel_file"
 
-if [ "$_debug" == "0" ]; then
-	if [ "$_test" == "1" ]; then
-		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose test $_test_arg" -serial $_logtofile $_vga $_power $_kvm
-	else
-		qemu-system-i386 $_curses -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose" -serial $_logtofile $_vga $_power $_kvm
-	fi
-else
-	if [ "$_test" == "1" ]; then
-		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose test $_test_arg" -serial $_logtofile $_vga $_power $_kvm -gdb tcp::8888 -S
-	else 
-		qemu-system-i386 $_curses -no-reboot -m $_ramsize -hda "$diskfile" -kernel $kernel_file -append "$_verbose" -serial $_logtofile $_vga $_power $_kvm  -gdb tcp::8888 -S
-	fi
-fi
+
+qemu-system-i386 -cpu qemu32,+ssse3,+sse4.1,+sse4.2\
+	$_curses \
+	-m $_ramsize \
+	-hda "$diskfile" \
+	-kernel $kernel_file \
+	-append "$_verbose" \
+	-serial $_logtofile \
+	$_vga \
+	$_power \
+	$_kvm \
+	$_debug
+
 

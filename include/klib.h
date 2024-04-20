@@ -111,6 +111,10 @@ typedef struct _TEST_CONTROL {
 } TEST_CONTROL;
 extern TEST_CONTROL TestControl;
 
+void bcopy(void *src, void *dst, unsigned n);
+
+void bzero(void *addr);
+
 void memcpy(void *dst, void *src, unsigned len);
 
 void memmove(void *dst, void *src, unsigned len);

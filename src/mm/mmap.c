@@ -13,23 +13,23 @@ typedef struct _vm_key {
 } vm_key;
 
 // case 1
-// ---| region1 | --------------
-// ---------------| region2 | --
+// ---| now | -----------------
+// ---------------| origin | --
 // case 2
-// ---------------| region1 | --
-// ---| region2 | --------------
+// ---------------| now |------
+// ---| origin | --------------
 // case 3
-// -------| region1 | ----------
-// -----------| region2 | ------
+// -------|  now  |------------
+// -----------| origin | ------
 // case 4
-// -----------| region1 | ------
-// -------| region2 | ----------
+// -----------|  now  | -------
+// -------| origin | ----------
 // case 5
-// -------|   region1   | ------
-// ---------| region2 | --------
+// -------|    now     | ------
+// ---------| origin | --------
 // case 6
-// ---------| region1 | --------
-// -------|   region2   | ------
+// ---------|  now   | --------
+// -------|   origin   | ------
 static INLINE int vm_region_compair(void *region1, void *region2)
 {
 	vm_key *key1 = region1;
@@ -81,10 +81,10 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int flag, void *fd, int offset)
 {
 	hash_table *table = vm;
-	vm_key *key = kmalloc(sizeof(*key));
-	key->begin = begin;
-	key->end = end;
-	key_value_pair *pair = hash_find(table, key);
+	vm_key *now = kmalloc(sizeof(*now));
+	now->begin = begin;
+	now->end = end;
+	key_value_pair *pair = hash_find(table, now);
 
 	if (!pair) {
 		vm_region *region = kmalloc(sizeof(*region));
@@ -97,65 +97,64 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 			fs_refrence(fd);
 		}
 		region->offset = offset;
-		hash_insert(table, key, region);
+		hash_insert(table, now, region);
 	} else {
 		// cases 3, 4, 5, 6
-		vm_key *conflict_key = pair->key;
+		vm_key *origin = pair->key;
 		vm_region *conflict_region = pair->val;
 
-		if (key->end < conflict_key->end &&
-		    key->begin <= conflict_key->begin &&
-		    key->end > conflict_key->begin) {
+		if (now->end < origin->end && now->begin <= origin->begin &&
+		    now->end > origin->begin) {
 			// case 3
-			// -------| region1 | ----------
-			// -----------| region2 | ------
-			unsigned new_begin = key->end;
+			// -------|   now   | ----------
+			// -----------|  origin | ------
+			unsigned new_begin = now->end;
 			unsigned new_offset = conflict_region->offset +
-					      (key->end - conflict_key->begin);
-			unsigned new_end = conflict_key->end;
+					      (now->end - origin->begin);
+			unsigned new_end = origin->end;
 			void *new_fd = conflict_region->node;
-			vm_del_map(vm, conflict_key->begin);
+			vm_del_map(vm, origin->begin);
 			vm_add_map(vm, begin, end, prot, flag, fd, offset);
 			vm_add_map(vm, new_begin, new_end,
 				   conflict_region->prot, conflict_region->flag,
 				   new_fd, new_offset);
-		} else if (key->begin > conflict_key->begin &&
-			   key->begin < conflict_key->end &&
-			   key->end >= conflict_key->end) {
+		} else if (now->begin > origin->begin &&
+			   now->begin < origin->end &&
+			   now->end >= origin->end) {
 			// case 4
-			// -----------| region1 | ------
-			// -------| region2 | ----------
-			unsigned new_begin = conflict_key->begin;
+			// -----------|  now  |--------
+			// -------| origin | ----------
+			unsigned new_begin = origin->begin;
 			unsigned new_offset = conflict_region->offset;
-			unsigned new_end = key->begin;
+			unsigned new_end = now->begin;
 			unsigned new_fd = (unsigned)conflict_region->node;
-			vm_del_map(vm, conflict_key->begin);
+			vm_del_map(vm, origin->begin);
 			vm_add_map(vm, begin, end, prot, flag, fd, offset);
 			vm_add_map(vm, new_begin, new_end,
 				   conflict_region->prot, conflict_region->flag,
 				   (void *)new_fd, new_offset);
-		} else if (key->begin <= conflict_key->begin &&
-			   key->end >= conflict_key->end) {
+		} else if (now->begin <= origin->begin &&
+			   now->end >= origin->end) {
 			// case 5
-			// -------|   region1   | ------
-			// ---------| region2 | --------
-			vm_del_map(vm, conflict_key->begin);
+			// -------|     now    | ------
+			// ---------| origin | --------
+			vm_del_map(vm, origin->begin);
 			vm_add_map(vm, begin, end, prot, flag, fd, offset);
-		} else if (key->begin > conflict_key->begin &&
-			   key->end < conflict_key->end) {
+		} else if (now->begin > origin->begin &&
+			   now->end < origin->end) {
 			// case 6
-			// ---------| region1 | --------
-			// -------|   region2   | ------
-			unsigned new_begin1 = conflict_key->begin;
+			// -----------| now |----------
+			// -------|   origin   | ------
+			unsigned new_begin1 = origin->begin;
 			unsigned new_offset1 = conflict_region->offset;
-			unsigned new_end1 = key->begin;
+			unsigned new_end1 = now->begin;
 			unsigned new_fd1 = (unsigned)conflict_region->node;
-			unsigned new_begin2 = key->end;
+			unsigned new_begin2 = now->end;
 			unsigned new_offset2 = conflict_region->offset +
-					       (key->end - conflict_key->begin);
-			unsigned new_end2 = conflict_key->end;
+					       (now->end - origin->begin);
+			unsigned new_end2 = origin->end;
 			unsigned new_fd2 = (unsigned)conflict_region->node;
-			vm_del_map(vm, conflict_key->begin);
+			vm_del_map(vm, origin->begin);
 			vm_add_map(vm, begin, end, prot, flag, fd, offset);
 			vm_add_map(vm, new_begin1, new_end1,
 				   conflict_region->prot, conflict_region->flag,
@@ -165,7 +164,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 				   (void *)new_fd2, new_offset2);
 		}
 
-		kfree(key);
+		kfree(now);
 	}
 }
 
@@ -269,7 +268,7 @@ unsigned vm_disc_map(vm_struct_t vm, int size)
 	return 0;
 }
 
-void vm_dup(vm_struct_t cur, vm_struct_t new)
+void vm_dup(vm_struct_t cur, vm_struct_t now)
 {
 	hash_table *table = cur;
 	key_value_pair *pair = hash_first(table);
@@ -277,7 +276,7 @@ void vm_dup(vm_struct_t cur, vm_struct_t new)
 
 	while (pair) {
 		region = pair->val;
-		vm_add_map(new, region->begin, region->end, region->prot,
+		vm_add_map(now, region->begin, region->end, region->prot,
 			   region->flag, region->node, region->offset);
 
 		pair = hash_next(table, pair);

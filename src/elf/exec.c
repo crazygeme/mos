@@ -318,8 +318,10 @@ int sys_execve(const char *file, char **argv, char **envp)
 		return -ENOEXEC;
 	}
 
-	/* parse arguments and enviroments */
-	/* note that a #! file needs additional slot */
+	/* 
+	 * parse arguments and enviroments 
+	 * note that a #! file needs additional slot 
+	 */
 	ps_get_argc_envc(file_name, argv, envp, &argc, &envc);
 	s_argv = ps_save_argv(file_name, argv, argc, firstline);
 	if (firstline)

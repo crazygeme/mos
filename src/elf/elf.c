@@ -1,20 +1,31 @@
+#include <time.h>
 #include <elf.h>
 #include <mm.h>
 #include <ps.h>
 #include <klib.h>
 #include <macro.h>
 
+unsigned long long elf_read_time = 0;
+
 static int elf_read(filep fp, unsigned off, void *buf, int len)
 {
-	size_t wcnt;
+	size_t rcnt;
 	int ret = -1;
+	unsigned long long begin = time_now_us();
+
 	ret = ext4_fseek(fp->inode, off, SEEK_SET);
 	if (ret != EOK)
-		return -1;
-	ret = ext4_fread(fp->inode, buf, len, &wcnt);
+		goto DONE;
+
+	ret = ext4_fread(fp->inode, buf, len, &rcnt);
 	if (ret != EOK)
-		return -1;
-	return (int)wcnt;
+		goto DONE;
+
+	ret = (int)rcnt;
+
+DONE:
+	elf_read_time += time_now_us() - begin;
+	return (int)rcnt;
 }
 
 static unsigned elf_map_section(filep fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
@@ -26,12 +37,13 @@ static unsigned elf_map_section(filep fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
 	unsigned i = 0;
 
-	if (va_begin == phdr->p_vaddr) {
+	if (va_begin == phdr->p_vaddr)
 		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE),
 			       PROT_READ | PROT_EXEC, 0, fp, file_off);
-	} else {
+	else {
 		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE),
 			       PROT_READ | PROT_EXEC | PROT_WRITE, 0, 0, 0);
+
 		elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
 	}
 	return 1;
@@ -130,6 +142,7 @@ static unsigned elf_map_section_at(filep fp, Elf32_Phdr *phdr, unsigned bias)
 {
 	unsigned file_off = phdr->p_offset;
 	unsigned va_begin = phdr->p_vaddr & PAGE_SIZE_MASK;
+	unsigned va_diff = phdr->p_vaddr - va_begin;
 	unsigned fileSiz = phdr->p_filesz;
 	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
 	unsigned i = 0;
@@ -137,6 +150,7 @@ static unsigned elf_map_section_at(filep fp, Elf32_Phdr *phdr, unsigned bias)
 	do_mmap_kernel(bias + va_begin, (va_end - va_begin + PAGE_SIZE),
 		       PROT_READ | PROT_EXEC | PROT_WRITE, 0, 0, 0);
 	elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
+
 	return 1;
 }
 

@@ -98,8 +98,11 @@ static void mmap_cache_add(const char *path, unsigned offset, unsigned phy)
 #define PF_MASK_RSVD 0x00000008
 extern phymm_page *phymm_pages;
 
+/*
+ * Handle page fault with fd attached.
+ */
 static int pf_handle_invalid_file_map(unsigned address, filep f,
-				      unsigned offset)
+				      unsigned offset, int prot, int flag)
 {
 	int ret = 0;
 	unsigned phy = NULL;
@@ -109,6 +112,11 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 
 	page_fault_file++;
 
+	/*
+	 * Find a cached map first.
+	 * Some of the file map are globally same, especially those
+	 * runtime libraries.
+	 */
 	phy = mmap_cache_find(f->name, offset);
 	if (phy != NULL) {
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
@@ -116,22 +124,41 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 		goto DONE;
 	}
 
+	/*
+	 * We don't use mm_add_dynamic_map with NULL physical address here
+	 * because we want to know exactly what physical page and cache it.
+	 */
 	phy = phymm_alloc_user() * PAGE_SIZE;
 
 	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
 	RELOAD_CR3();
 
 	ff = f->inode;
+
+	/*
+	 * Some program will map a region larger than file size.
+	 * we return a zero page in this case.
+	 */
 	ret = ext4_fseek(ff, offset, SEEK_SET);
 	if (ret != EOK) {
 		memset(address, 0, PAGE_SIZE);
 		goto READ_DONE;
 	}
 
+	/*
+	 * Read the file. Note that not always PAGE_SIZE bytes read, we
+	 * will fill with zero in this case.
+	 * Usually this "fill zero" operation is not nessasary, but lots
+	 * of program rely on this.
+	 */
 	ret = ext4_fread(ff, address, PAGE_SIZE, &rcnt);
 	if (ret != EOK) {
 		klog("FAIL: mmap: read to buffer %x, size %x\n", address,
 		     PAGE_SIZE);
+	}
+
+	if (rcnt < PAGE_SIZE) {
+		memset(address + rcnt, 0, PAGE_SIZE - rcnt);
 	}
 
 READ_DONE:
@@ -142,6 +169,9 @@ DONE:
 	page_fault_file_spent += (time_now_us() - begin);
 }
 
+/*
+ * Handle page fault which has no physical page attached.
+ */
 static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 {
 	unsigned long long begin = time_now_us();
@@ -149,9 +179,12 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 	if (prot & PROT_WRITE) {
 		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
 		RELOAD_CR3();
-		if (flag != -1)
-			memset(address, 0, PAGE_SIZE);
+		memset(address, 0, PAGE_SIZE);
 	} else {
+		/*
+		 * For read only zero page, we map with a globally shared
+		 * zero page first, and let COW allocate new one if write.
+		 */
 		mm_add_dynamic_map(address, zero_page_phy,
 				   PAGE_ENTRY_USER_CODE);
 		RELOAD_CR3();
@@ -160,6 +193,9 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 	page_fault_invalid_spent += (time_now_us() - begin);
 }
 
+/*
+ * Handle page fault which has no physical page.
+ */
 static int pf_handle_page_invalid(unsigned cr2)
 {
 	vm_region *region;
@@ -168,6 +204,11 @@ static int pf_handle_page_invalid(unsigned cr2)
 	task_struct *cur = CURRENT_TASK();
 
 	this_begin = cr2 & PAGE_SIZE_MASK;
+
+	/*
+	 * Find out the map region first. The `region` structure
+	 * will tell us whether it's file map or not.
+	 */
 	region = vm_find_map(cur->user.vm, this_begin);
 	if (!region)
 		return 0;
@@ -176,7 +217,8 @@ static int pf_handle_page_invalid(unsigned cr2)
 
 	if (region->node != 0)
 		pf_handle_invalid_file_map(this_begin, region->node,
-					   this_offset);
+					   this_offset, region->prot,
+					   region->flag);
 	else
 		pf_handle_invalid_memory(this_begin, region->prot,
 					 region->flag);
@@ -184,6 +226,9 @@ static int pf_handle_page_invalid(unsigned cr2)
 	return 1;
 }
 
+/*
+ * Handle page fault which needs COW treatment.
+ */
 static void pf_handle_cow(unsigned cr2)
 {
 	unsigned vir = 0;
@@ -195,23 +240,33 @@ static void pf_handle_cow(unsigned cr2)
 
 	vir = cr2;
 	vir = (vir & PAGE_SIZE_MASK);
-	// 1. alloc a new physical memory
+	/*
+	 * 1. alloc a new physical memory
+	 */
 	new_mem = vm_alloc(1);
 
-	// 2. copy cow value
+	/*
+	 * 2. copy cow value
+	 */
 	memcpy(new_mem, vir, PAGE_SIZE);
 
-	// 3. unmap origin address
+	/*
+	 * 3. unmap origin address
+	 */
 	flag = mm_get_map_flag(vir);
 	mm_del_dynamic_map(vir);
 
-	// 4. unmap newly allocated physical memory
-	// note that should ref it first so that on one will use
-	// this physical memory
+	/*
+	 * 4. unmap newly allocated physical memory
+	 * note that should ref it first so that on one will use
+	 * this physical memory
+	 */
 	phymm_reference_page(VIRT_TO_PAGE_IDX(new_mem));
 	mm_del_direct_map(new_mem);
 
-	// 5. map newly allocated physical memory to origin virtual address
+	/*
+	 * 5. map newly allocated physical memory to origin virtual address
+	 */
 	flag |= PAGE_ENTRY_PRESENT;
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_add_dynamic_map(vir, VIRT_TO_PHY(new_mem), flag);
@@ -223,6 +278,12 @@ static void pf_handle_cow(unsigned cr2)
 	page_fault_cow_spent += (time_now_us() - begin);
 }
 
+/*
+ * Handle page fault which is originally readonly now writable.
+ * FIXME(Ender): Remove this function.
+ * This is wrong because every page should be managed by mmap and
+ * mprotect system call, but we havn't implement mprotect yet.
+ */
 static void pf_handle_readonly(unsigned cr2)
 {
 	unsigned vir = 0;
@@ -240,6 +301,9 @@ static void pf_handle_readonly(unsigned cr2)
 	page_fault_perm_spent += (time_now_us() - begin);
 }
 
+/*
+ * Handle page fault which is permission deny.
+ */
 static int pf_handle_permission(unsigned cr2)
 {
 	unsigned page_index = mm_get_attached_page_index(cr2);
@@ -262,7 +326,17 @@ static void pf_process(intr_frame *frame)
 	unsigned error = frame->error_code;
 	unsigned oldint;
 
+	/* 
+	 * Save old interrupt state first.
+	 */
 	oldint = int_intr_disable();
+
+	/*
+	 * cr2 tells you which page is invalid.
+	 * frame->error_code tells you what type of error we are handling.
+	 * `error_code` is actually pushed by CPU.
+	 */
+
 	LOAD_CR2(cr2);
 
 	if (!((error & PF_MASK_P) == PF_MASK_P)) {

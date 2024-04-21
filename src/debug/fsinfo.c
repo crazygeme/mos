@@ -14,6 +14,7 @@ extern unsigned fs_cache_read_size;
 extern unsigned fs_cache_write_size;
 extern unsigned disk_read_size;
 extern unsigned disk_write_size;
+extern unsigned long long elf_read_time;
 unsigned fs_read_size_total = 0;
 unsigned fs_write_size_total = 0;
 unsigned fs_cache_read_size_total = 0;
@@ -22,12 +23,16 @@ unsigned cache_search_count_total = 0;
 unsigned cache_search_time_total = 0;
 unsigned disk_read_size_total = 0;
 unsigned disk_write_size_total = 0;
+unsigned long long elf_read_time_total = 0;
 
 static void fill(void *buf, size_t size)
 {
 	unsigned rate = cache_hit * 100 / cache_search_count;
 	memset(buf, 0, size);
 	sprintf(buf,
+		"ELF read spent:              %d.%d ms\n"
+		"ELF read spent(Total):       %d.%d ms\n"
+		"FS read size:                %h\n"
 		"FS read size:                %h\n"
 		"FS read size(Total):         %h\n"
 		"FS write size:               %h\n"
@@ -48,12 +53,14 @@ static void fill(void *buf, size_t size)
 		"FS cache size(Current):      %h\n"
 		"FS cache size(Max):          %h\n"
 		"\n\n",
-		fs_read_size, fs_read_size_total, fs_write_size,
-		fs_write_size_total, fs_cache_read_size,
-		fs_cache_read_size_total, fs_cache_write_size,
-		fs_cache_write_size_total, disk_read_size, disk_read_size_total,
-		disk_write_size, disk_write_size_total, rate,
-		cache_search_count, cache_search_count_total,
+		(int)elf_read_time / 1000, (int)elf_read_time % 1000,
+		(int)elf_read_time_total / 1000,
+		(int)elf_read_time_total % 1000, fs_read_size,
+		fs_read_size_total, fs_write_size, fs_write_size_total,
+		fs_cache_read_size, fs_cache_read_size_total,
+		fs_cache_write_size, fs_cache_write_size_total, disk_read_size,
+		disk_read_size_total, disk_write_size, disk_write_size_total,
+		rate, cache_search_count, cache_search_count_total,
 		(int)cache_search_time / 1000, (int)cache_search_time % 1000,
 		(int)cache_search_time_total / 1000,
 		(int)cache_search_time_total % 1000,
@@ -71,9 +78,11 @@ static void fsinfo_timeout(timer_t *timer, void *ctx)
 	disk_write_size_total += disk_write_size;
 	cache_search_time_total += cache_search_count;
 	cache_search_count_total += cache_search_count;
+	elf_read_time_total += elf_read_time;
 	cache_hit = cache_search_count = cache_search_time = 0;
 	fs_cache_read_size = fs_cache_write_size = fs_read_size =
 		fs_write_size = disk_read_size = disk_write_size = 0;
+	elf_read_time = 0;
 }
 
 void debugfs_fs_init(mount_point *mp)

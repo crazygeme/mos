@@ -124,6 +124,9 @@ void int_enable_all()
 	intr_names[19] = "#XF SIMD Floating-Point Exception";
 	intr_names[32] = "timer";
 	intr_names[33] = "keyboard";
+
+	extern void enable_sse();
+	enable_sse();
 }
 
 /*

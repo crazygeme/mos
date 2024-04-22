@@ -148,7 +148,7 @@ void time_current(time_t *t)
 
 unsigned time_now_ms()
 {
-	return (total_seconds * 1000 + tickets * 10);
+	return time_now_us() / 1000;
 }
 
 unsigned long long time_now_us()

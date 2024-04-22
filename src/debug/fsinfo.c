@@ -27,12 +27,12 @@ unsigned long long elf_read_time_total = 0;
 
 static void fill(void *buf, size_t size)
 {
-	unsigned rate = cache_hit * 100 / cache_search_count;
+	unsigned rate =
+		cache_search_count ? cache_hit * 100 / cache_search_count : 0;
 	memset(buf, 0, size);
 	sprintf(buf,
 		"ELF read spent:              %d.%d ms\n"
 		"ELF read spent(Total):       %d.%d ms\n"
-		"FS read size:                %h\n"
 		"FS read size:                %h\n"
 		"FS read size(Total):         %h\n"
 		"FS write size:               %h\n"

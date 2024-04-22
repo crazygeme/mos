@@ -39,6 +39,9 @@ static int mmap_key_comp(void *k1, void *k2)
 	mmap_cache_key *key1 = k1;
 	mmap_cache_key *key2 = k2;
 
+	/*
+	 * compare path and offset.
+	 */
 	int ret = strcmp(key1->path, key2->path);
 	if (ret == 0) {
 		ret = (int)key1->offset - (int)key2->offset;
@@ -73,13 +76,28 @@ static void mmap_cache_add(const char *path, unsigned offset, unsigned phy)
 {
 	unsigned size = 0;
 	mmap_cache_key *key = malloc(sizeof(*key));
+	key_value_pair *pair = NULL;
+	mmap_cache_key *oldkey = NULL;
+
+	mutex_lock(&mmap_cache_lock);
 
 	/*
-	 * Currently NO cache size limit
+	 * If cache size larger than limit, clear cache.
 	 */
+	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE) {
+		while (!hash_isempty(mmap_cache)) {
+			pair = hash_first(mmap_cache);
+			oldkey = pair->key;
+			free(oldkey->path);
+			free(oldkey);
+			phymm_dereference_page(
+				PHY_TO_PAGE_IDX((unsigned)pair->val));
+			hash_remove_at(mmap_cache, pair);
+		}
+	}
+
 	key->path = strdup(path);
 	key->offset = offset;
-	mutex_lock(&mmap_cache_lock);
 	hash_insert(mmap_cache, key, phy);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 	mutex_unlock(&mmap_cache_lock);
@@ -179,7 +197,8 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 	if (prot & PROT_WRITE) {
 		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
 		RELOAD_CR3();
-		memset(address, 0, PAGE_SIZE);
+		//memset(address, 0, PAGE_SIZE);
+		bzero(address);
 	} else {
 		/*
 		 * For read only zero page, we map with a globally shared

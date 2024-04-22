@@ -74,6 +74,8 @@
 #define PAGE_SIZE (4 * 1024)
 #define PAGE_SIZE_MASK 0xFFFFF000
 
+#define PAGE_CACHE_SIZE 4096 // pages
+
 // FIXME:
 // every bit represent a psid
 // 32 pages can have 1 million process

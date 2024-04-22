@@ -1201,7 +1201,7 @@ static int sys_time(unsigned *t)
 	if (!t)
 		return -1;
 
-	*t = (unsigned)time(0).time;
+	*t = (unsigned)time_now_ms();
 	return 0;
 }
 

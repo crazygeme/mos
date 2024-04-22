@@ -65,7 +65,7 @@ fi
 echo "begin enum $kernel_file"
 
 
-qemu-system-i386 -cpu qemu32,+ssse3,+sse4.1,+sse4.2\
+qemu-system-i386 -cpu coreduo\
 	$_curses \
 	-m $_ramsize \
 	-hda "$diskfile" \

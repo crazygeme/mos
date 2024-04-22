@@ -328,3 +328,22 @@ write_port:
     outb   %al, %dx 
     ret
 
+/*
+ * clear the CR0.EM bit (bit 2) [ CR0 &= ~(1 << 2) ]
+ * set the CR0.MP bit (bit 1) [ CR0 |= (1 << 1) ]
+ * set the CR4.OSFXSR bit (bit 9) [ CR4 |= (1 << 9) ]
+ * set the CR4.OSXMMEXCPT bit (bit 10) [ CR4 |= (1 << 10) ]
+*/
+.global enable_sse
+enable_sse:
+    pushl %eax
+    movl  %cr0,%eax
+    and   $0xfffb,%ax   // clear coprocessor emulation CR0.EM
+    or    $0x2,%ax      // set coprocessor monitoring  CR0.MP
+    movl  %eax,%cr0
+    movl  %cr4,%eax
+    or    $0x600,%ax    // set CR4.OSFXSR and CR4.OSXMMEXCPT at the same time
+    movl  %eax,%cr4
+    popl  %eax
+    ret
+

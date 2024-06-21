@@ -125,14 +125,14 @@ L1:	rep
 
 .global bzero
 bzero:
-        pushl   %edx /* memory address */
-        pushl   %ecx /* size */
+        pushl   %edx			/* memory address */
+        pushl   %ecx			/* size */
         pushl   %eax
-        movl    $PAGE_SIZE,%ecx /* memory size always 1 page */
+        movl    $PAGE_SIZE,%ecx		/* memory size always 1 page */
         movl	16(%esp),%edx
         xorps   %xmm0,%xmm0
-        movl    %ecx,%eax /* save ecx to eax */
-        andl    $0xFFFFFF80,%ecx /* clear only 128 byte pages */
+        movl    %ecx,%eax		/* save ecx to eax */
+        andl    $0xFFFFFF80,%ecx	/* clear only 128 byte pages */
         jz      clear
 aligned:
         movdqa  %xmm0,0x00(%edx)
@@ -147,7 +147,7 @@ aligned:
         subl    $128,%ecx
         jnz     aligned
 clear:
-        andl    $0x7F,%eax /* clear rest*/
+        andl    $0x7F,%eax		/* clear rest*/
         jz      exit
 rest:
         movdqa  %xmm0,0(%edx)

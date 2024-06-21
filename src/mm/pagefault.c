@@ -159,7 +159,8 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 	 */
 	ret = ext4_fseek(ff, offset, SEEK_SET);
 	if (ret != EOK) {
-		memset(address, 0, PAGE_SIZE);
+		bzero(address);
+		// memset(address, 0, PAGE_SIZE);
 		goto READ_DONE;
 	}
 

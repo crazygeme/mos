@@ -235,13 +235,16 @@ static int pf_handle_page_invalid(unsigned cr2)
 
 	this_offset = region->offset + (this_begin - region->begin);
 
-	if (region->node != 0)
+	if (region->node != 0) {
 		pf_handle_invalid_file_map(this_begin, region->node,
 					   this_offset, region->prot,
 					   region->flag);
-	else
+		cur->pf_major++;
+	} else {
 		pf_handle_invalid_memory(this_begin, region->prot,
 					 region->flag);
+		cur->pf_minor++;
+	}
 
 	return 1;
 }

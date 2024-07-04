@@ -706,7 +706,7 @@ char *sys_getcwd(char *buf, unsigned size)
 	return buf;
 }
 
-int sys_waitpid(unsigned pid, int *status, int options)
+int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
 	list_entry *entry = 0;
 	task_struct *cur = CURRENT_TASK();
@@ -716,65 +716,85 @@ int sys_waitpid(unsigned pid, int *status, int options)
 		klog("%d: wait(%d)\n", CURRENT_TASK()->psid, pid);
 	}
 
-	do {
-		task_sched();
-		lock_dying();
-		entry = control.dying_queue.prev;
-		while (entry != &control.dying_queue) {
-			task_struct *task =
-				container_of(entry, task_struct, ps_list);
-			int match = 0;
-			if (task->parent == cur->psid) {
-				if (pid && (pid == task->psid)) {
-					match = 1;
-				} else if (!pid) {
-					match = 1;
-				}
+AGAIN:
+	task_sched();
+	lock_dying();
+	entry = control.dying_queue.prev;
+	while (entry != &control.dying_queue) {
+		task_struct *task = container_of(entry, task_struct, ps_list);
+		int match = 0;
+		if (task->parent == cur->psid) {
+			if (pid && (pid == task->psid)) {
+				match = 1;
+			} else if (!pid) {
+				match = 1;
 			}
+		}
 
-			if (match) {
-				ret = task->psid;
-				if (status) {
-					*status = task->exit_status;
-				}
-				list_remove_entry(entry);
-
-				if (task->command) {
-					vm_free(task->command, 1);
-					task->command = 0;
-				}
-
-				if (task->cwd) {
-					name_put(task->cwd);
-					task->cwd = 0;
-				}
-
-				if (task->user.page_dir) {
-					vm_free(task->user.page_dir, 1);
-					task->user.page_dir = 0;
-				}
-
-				if (task->root) {
-					mount_deref(task->root);
-				}
-
-				ps_remove_mgr(task);
-				vm_free(task, 1);
-				can_return = 1;
-
-				break;
-			}
-
+		if (!match) {
 			entry = entry->prev;
+			continue;
 		}
 
-		if (!can_return) {
-			ps_put_to_wait_queue(cur);
+		ret = task->psid;
+		if (status) {
+			*status = task->exit_status;
 		}
-		unlock_dying();
-	} while (can_return == 0);
+		list_remove_entry(entry);
+
+		if (task->command) {
+			vm_free(task->command, 1);
+			task->command = 0;
+		}
+
+		if (task->cwd) {
+			name_put(task->cwd);
+			task->cwd = 0;
+		}
+
+		if (task->user.page_dir) {
+			vm_free(task->user.page_dir, 1);
+			task->user.page_dir = 0;
+		}
+
+		if (task->root) {
+			mount_deref(task->root);
+		}
+
+		if (rusage) {
+			memset(rusage, 0, sizeof(*rusage));
+			rusage->ru_majflt = task->pf_major;
+			rusage->ru_minflt = task->pf_minor;
+			rusage->ru_nivcsw = task->niv_switches;
+			ms_to_timeval(task->kernel_tickets * 10,
+				      &rusage->ru_stime);
+			ms_to_timeval(task->user_tickets * 10,
+				      &rusage->ru_utime);
+		}
+
+		ps_remove_mgr(task);
+		vm_free(task, 1);
+		can_return = 1;
+
+		break;
+	}
+
+	if (!can_return) {
+		ps_put_to_wait_queue(cur);
+	}
+
+	unlock_dying();
+
+	if (!can_return)
+		goto AGAIN;
+
 	ps_id_free(ret);
 	return ret;
+}
+
+int sys_waitpid(unsigned pid, int *status, int options)
+{
+	return do_waitpid(pid, status, options, NULL);
 }
 
 static void reset_tss(task_struct *task)

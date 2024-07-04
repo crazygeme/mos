@@ -1,6 +1,7 @@
 #ifndef _PS_H_
 #define _PS_H_
 
+#include <time.h>
 #include <mount.h>
 #include <list.h>
 #include <lock.h>
@@ -205,9 +206,33 @@ typedef volatile struct _task_struct {
 	cond_t vfork_event;
 	mount_point *root;
 	unsigned umask;
+	unsigned niv_switches;
+	unsigned user_tickets;
+	unsigned kernel_tickets;
+	unsigned pf_major;
+	unsigned pf_minor;
 	unsigned int magic; // to avoid stack overflow
 
 } task_struct;
+
+typedef struct _rusage {
+	struct timeval ru_utime; /* user CPU time used */
+	struct timeval ru_stime; /* system CPU time used */
+	long ru_maxrss; /* maximum resident set size */
+	long ru_ixrss; /* integral shared memory size */
+	long ru_idrss; /* integral unshared data size */
+	long ru_isrss; /* integral unshared stack size */
+	long ru_minflt; /* page reclaims (soft page faults) */
+	long ru_majflt; /* page faults (hard page faults) */
+	long ru_nswap; /* swaps */
+	long ru_inblock; /* block input operations */
+	long ru_oublock; /* block output operations */
+	long ru_msgsnd; /* IPC messages sent */
+	long ru_msgrcv; /* IPC messages received */
+	long ru_nsignals; /* signals received */
+	long ru_nvcsw; /* voluntary context switches */
+	long ru_nivcsw; /* involuntary context switches */
+} rusage;
 
 #define KERNEL_TASK_SIZE 1 // 1 pages
 #define DEFAULT_TASK_TIME_SLICE 10
@@ -251,6 +276,7 @@ int sys_fork();
 int sys_vfork();
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
+int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 char *sys_getcwd(char *buf, unsigned size);
 void reboot();
 void shutdown();

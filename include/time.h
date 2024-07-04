@@ -27,8 +27,8 @@ typedef struct _time_t {
 } time_t;
 
 struct timeval {
-	long tv_sec; /* seconds */
-	long tv_usec; /* microseconds */
+	int tv_sec; /* seconds */
+	int tv_usec; /* microseconds */
 };
 
 struct timezone {
@@ -37,8 +37,8 @@ struct timezone {
 };
 
 struct timespec {
-	long tv_sec; /* seconds */
-	long tv_nsec; /* nanoseconds */
+	int tv_sec; /* seconds */
+	int tv_nsec; /* nanoseconds */
 };
 
 #define CHANNEL_0 0 //= Channel 0
@@ -77,11 +77,13 @@ unsigned time_now_ms();
 
 unsigned long long time_now_us();
 
-unsigned long long time_now_percisely();
+unsigned long long time_now_precisely();
 
 unsigned long long cycle_to_ms(unsigned long long dur_cycles);
 
 unsigned long long cycle_to_us(unsigned long long dur_cycles);
+
+void ms_to_timeval(unsigned ms, struct timeval *tv);
 
 void msleep(unsigned int ms);
 

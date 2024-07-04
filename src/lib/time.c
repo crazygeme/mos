@@ -1,3 +1,4 @@
+#include "config.h"
 #include <time.h>
 #include <int.h>
 #include <ps.h>
@@ -5,6 +6,7 @@
 #include <macro.h>
 
 static unsigned long tickets;
+static unsigned long total_tickets;
 static unsigned long seconds;
 static unsigned long minutes;
 static unsigned long hourse;
@@ -20,8 +22,8 @@ static int sched_dsr_count = 0;
 static void sched_dsr(void *param);
 static void time_process(intr_frame *frame)
 {
-	// printf("timer process\n");
 	tickets++;
+	total_tickets++;
 
 	if (tickets == HZ) {
 		seconds++;
@@ -44,9 +46,11 @@ static void time_process(intr_frame *frame)
 		hourse = 0;
 	}
 
+	BARRIER();
+
 	if (__sync_add_and_fetch(&(sched_dsr_count), 0) == 0) {
 		__sync_add_and_fetch(&(sched_dsr_count), 1);
-		dsr_add(sched_dsr, 0);
+		dsr_add(sched_dsr, (void *)(int)frame->ds);
 	}
 }
 
@@ -98,6 +102,7 @@ void time_calculate_cpu_cycle()
 
 static void sched_dsr(void *param)
 {
+	short ds = (short)(int)param;
 	task_struct *cur = CURRENT_TASK();
 
 	if (!ps_enabled()) {
@@ -106,9 +111,15 @@ static void sched_dsr(void *param)
 	}
 
 	cur->remain_ticks--;
+	if (ds == KERNEL_DATA_SELECTOR)
+		cur->kernel_tickets++;
+	else
+		cur->user_tickets++;
+
 	if (cur->remain_ticks <= 0) {
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		if ((!cur->is_switching) && (!dsr_running())) {
+			cur->niv_switches++;
 			task_sched();
 		}
 	}
@@ -120,6 +131,7 @@ void time_init()
 	time_control control;
 
 	tickets = 0;
+	total_tickets = 0;
 	seconds = 0;
 	minutes = 0;
 	hourse = 0;
@@ -148,16 +160,23 @@ void time_current(time_t *t)
 
 unsigned time_now_ms()
 {
-	return time_now_us() / 1000;
+	BARRIER();
+	return total_tickets * (1000 / HZ);
+}
+
+void ms_to_timeval(unsigned ms, struct timeval *tv)
+{
+	tv->tv_sec = (long)(ms / 1000);
+	tv->tv_usec = (long)(ms - (unsigned long long)tv->tv_sec * 1000) * 1000;
 }
 
 unsigned long long time_now_us()
 {
-	unsigned long long now = time_now_percisely();
+	unsigned long long now = time_now_precisely();
 	return cycle_to_us(now);
 }
 
-unsigned long long time_now_percisely()
+unsigned long long time_now_precisely()
 {
 	unsigned low, high;
 	unsigned long long cycle;
@@ -236,7 +255,7 @@ void delay(unsigned int us)
 
 time_t time(time_t *t)
 {
-	unsigned long long now = cycle_to_ms(time_now_percisely());
+	unsigned long long now = time_now_ms();
 	time_t ret;
 	ret.time = now;
 	if (t) {

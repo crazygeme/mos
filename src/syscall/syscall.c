@@ -124,7 +124,7 @@ static int sys_munmap(void *addr, unsigned length);
 static int sys_getppid();
 static int sys_getpgrp(unsigned pid);
 static int sys_setpgid(unsigned pid, unsigned pgid);
-static int sys_wait4(int pid, int *status, void *rusage);
+static int sys_wait4(int pid, int *status, int options, void *rusage);
 static int sys_socketcall(int call, unsigned long *args);
 static int sys_sigaction(int sig, void *act, void *oact);
 static int sys_sigprocmask(int how, void *set, void *oset);
@@ -1046,16 +1046,16 @@ static int sys_setpgid(unsigned pid, unsigned pgid)
 	return 0;
 }
 
-static int sys_wait4(int pid, int *status, void *rusage)
+static int sys_wait4(int pid, int *status, int options, void *rusage)
 {
 	if (pid == -1) {
-		return sys_waitpid(0, status, 0);
+		return do_waitpid(0, status, options, rusage);
 	} else if (pid < -1) {
 		// FIXME
 		// wait on group id
 		return 0;
 	} else {
-		return sys_waitpid(pid, status, 0);
+		return do_waitpid(pid, status, options, rusage);
 	}
 }
 
@@ -1073,9 +1073,6 @@ static int sys_sigaction(int sig, void *act, void *oact)
 {
 	// FIXME
 	// no signal at all
-	if (TestControl.verbos) {
-		klog("%d: sigaction\n", CURRENT_TASK()->psid);
-	}
 	return -1;
 }
 
@@ -1083,9 +1080,6 @@ static int sys_sigprocmask(int how, void *set, void *oset)
 {
 	// FIXME
 	// no signal
-	if (TestControl.verbos) {
-		klog("%d: sigprocmask\n", CURRENT_TASK()->psid);
-	}
 	return -1;
 }
 
@@ -1504,16 +1498,16 @@ static int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	if (!tv)
 		return -EFAULT;
 
-	now = time_now_us();
-	tv->tv_sec = (long)(now / 1000000);
-	tv->tv_usec = (long)(now - (unsigned long long)tv->tv_sec * 1000000);
+	now = time_now_ms();
+	ms_to_timeval(now, tv);
+
 	if (tz) {
 		tz->tz_minuteswest = tz->tz_dsttime = 0;
 	}
 
 	if (TestControl.verbos) {
-		klog("%d: gettimeofday() = %d(sec), %d(usec)\n",
-		     CURRENT_TASK()->psid, tv->tv_sec, tv->tv_usec);
+		klog("%d: gettimeofday() = %d(sec), %d(usec), while now is %d(ms)\n",
+		     CURRENT_TASK()->psid, tv->tv_sec, tv->tv_usec, now);
 	}
 	return 0;
 }

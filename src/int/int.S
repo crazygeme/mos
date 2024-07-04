@@ -36,7 +36,7 @@ intr_entry:
     /* Set up kernel environment. */
     cld    /* String instructions go upward. */
     pushl %edx
-    mov $KERNEL_CODE_SELECTOR, %edx    /* Initialize segment registers. */
+    mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
     mov %edx, %es
     popl %edx

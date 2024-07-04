@@ -17,9 +17,9 @@ static unsigned long cycle_per_ticket;
 
 static unsigned long rtc_get_time(void);
 
-static int sched_dsr_count = 0;
+static int force_switch_count = 0;
 
-static void sched_dsr(void *param);
+static void force_switch(short ds);
 static void time_process(intr_frame *frame)
 {
 	tickets++;
@@ -48,9 +48,9 @@ static void time_process(intr_frame *frame)
 
 	BARRIER();
 
-	if (__sync_add_and_fetch(&(sched_dsr_count), 0) == 0) {
-		__sync_add_and_fetch(&(sched_dsr_count), 1);
-		dsr_add(sched_dsr, (void *)(int)frame->ds);
+	if (__sync_add_and_fetch(&(force_switch_count), 0) == 0) {
+		__sync_add_and_fetch(&(force_switch_count), 1);
+		force_switch(frame->ds);
 	}
 }
 
@@ -100,13 +100,12 @@ void time_calculate_cpu_cycle()
 	return time_calibrate();
 }
 
-static void sched_dsr(void *param)
+static void force_switch(short ds)
 {
-	short ds = (short)(int)param;
 	task_struct *cur = CURRENT_TASK();
 
 	if (!ps_enabled()) {
-		__sync_add_and_fetch(&(sched_dsr_count), -1);
+		__sync_add_and_fetch(&(force_switch_count), -1);
 		return;
 	}
 
@@ -123,7 +122,7 @@ static void sched_dsr(void *param)
 			task_sched();
 		}
 	}
-	__sync_add_and_fetch(&(sched_dsr_count), -1);
+	__sync_add_and_fetch(&(force_switch_count), -1);
 }
 
 void time_init()

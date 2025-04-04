@@ -18,7 +18,8 @@ CSTRICT	= 	-Werror=return-type\
 		-Werror=uninitialized\
             	-fno-stack-protector\
 		-w
-CIGNORE	=	-Wno-int-conversion
+CIGNORE	=	-Wno-int-conversion\
+		-Wno-incompatible-pointer-types
 COMMON_CFLAGS = -fno-pie\
 		-fno-builtin\
 		-nostdlib\
@@ -44,5 +45,5 @@ COMMON_CFLAGS = -fno-pie\
         	-DCONFIG_USE_USER_MALLOC=0\
 		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=32
 LDFLAGS	=	-m elf_i386 -T link.ld 
-DST     =	$(MAINPATH)/out/linux/x86/make
+DST     =	$(MAINPATH)/out
 TEST 	=	test

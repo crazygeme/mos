@@ -1,6 +1,0 @@
-import("//feature/kernel.gni")
-
-kernel_glob("syscall") {
-  cflags = [ "-O0" ]  # FIXME(Ender): Can not run vim if change to O2
-  configs = [ "//:common" ]
-}

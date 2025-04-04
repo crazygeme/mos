@@ -4,7 +4,7 @@ _ramsize="512"
 diskfile="ffs.img"
 _rebuild="0"
 _debug=""
-_curses=""
+_window="gtk"
 _verbose=""
 _logtofile="stdio"
 _vga="-vga std"
@@ -20,7 +20,7 @@ elif [ "$arg" == "debug" ]; then
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
 elif [ "$arg" == "curses" ]; then
-	_curses="-curses"
+	_window="curses"
 	_vga=""
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
@@ -41,7 +41,7 @@ elif [ "$arg" == "-h" ]; then
 fi
 done
 
-if [ "$_curses" == "-curses" ]; then
+if [ "$_window" == "curses" ]; then
 	_logtofile="file:krn.log"
 fi
 
@@ -49,24 +49,12 @@ if [ "$_rebuild" == "1" ]; then
 	make
 fi
 
-if [ -f out/linux/x86/make/kernel ]; then
-	kernel_file=out/linux/x86/make/kernel
-elif [ -f out/linux/x64/release/kernel ]; then
-	kernel_file=out/linux/x64/release/kernel
-elif [ -f out/linux/x64/debug/kernel ]; then
-	kernel_file=out/linux/x64/debug/kernel
-elif [ -f out/linux/x86/release/kernel ]; then
-	kernel_file=out/linux/x86/release/kernel
-elif [ -f out/linux/x86/debug/kernel ]; then
-	kernel_file=out/linux/x86/debug/kernel
-fi
-
+kernel_file=out/kernel
 
 echo "begin enum $kernel_file"
 
-
 qemu-system-i386 -cpu coreduo\
-	$_curses \
+	-display $_window \
 	-m $_ramsize \
 	-hda "$diskfile" \
 	-kernel $kernel_file \

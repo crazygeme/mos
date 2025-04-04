@@ -1,3 +1,0 @@
-group("lwext4") {
-  deps = [ "src" ]
-}

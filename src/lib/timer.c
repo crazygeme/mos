@@ -67,8 +67,10 @@ void do_timer_loop()
 			timeout = kv->key;
 			timer_entry = kv->val;
 			now = time_now_ms();
-			wait_time = now > timeout ? 0 : (timeout - now);
-			msleep(wait_time);
+
+			if (now < timeout)
+				msleep(timeout - now);
+
 			if (timer_entry->enabled && timer_entry->callback)
 				timer_entry->callback(timer_entry,
 						      timer_entry->context);

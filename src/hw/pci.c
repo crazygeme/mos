@@ -9,6 +9,7 @@
 #include <int.h>
 #include <pci.h>
 #include <pci_list.h>
+#include <port.h>
 
 PCI_VENTABLE PciVenTable[] = {
 	{ 0x0033, "", "Paradyne Corp." },
@@ -7629,22 +7630,22 @@ int PCI_DEVSELFLAGS_LEN = (sizeof(PciDevSelFlags) / sizeof(char *));
 
 void pci_write_field(unsigned device, int field, int size, unsigned value)
 {
-	_write_dword(PCI_ADDRESS_PORT, pci_get_addr(device, field));
-	_write_dword(PCI_VALUE_PORT, value);
+	port_write_dword(PCI_ADDRESS_PORT, pci_get_addr(device, field));
+	port_write_dword(PCI_VALUE_PORT, value);
 }
 
 unsigned pci_read_field(unsigned device, int field, int size)
 {
-	_write_dword(PCI_ADDRESS_PORT, pci_get_addr(device, field));
+	port_write_dword(PCI_ADDRESS_PORT, pci_get_addr(device, field));
 
 	if (size == 4) {
-		unsigned t = _read_dword(PCI_VALUE_PORT);
+		unsigned t = port_read_dword(PCI_VALUE_PORT);
 		return t;
 	} else if (size == 2) {
-		uint16_t t = _read_word(PCI_VALUE_PORT + (field & 2));
+		uint16_t t = port_read_word(PCI_VALUE_PORT + (field & 2));
 		return t;
 	} else if (size == 1) {
-		uint8_t t = read_port(PCI_VALUE_PORT + (field & 3));
+		uint8_t t = port_read_byte(PCI_VALUE_PORT + (field & 3));
 		return t;
 	}
 	return 0xFFFF;

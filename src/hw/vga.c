@@ -12,6 +12,7 @@
 #include <pci.h>
 #include <mm.h>
 #include <macro.h>
+#include <port.h>
 
 unsigned resolution_x;
 unsigned resolution_y;
@@ -706,14 +707,14 @@ unsigned int *fb_buffer = 0xE0000;
 static void BgaWriteRegister(unsigned short IndexValue,
 			     unsigned short DataValue)
 {
-	_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
-	_write_word(VBE_DISPI_IOPORT_DATA, DataValue);
+	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
+	port_write_word(VBE_DISPI_IOPORT_DATA, DataValue);
 }
 
 static unsigned short BgaReadRegister(unsigned short IndexValue)
 {
-	_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
-	return _read_word(VBE_DISPI_IOPORT_DATA);
+	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
+	return port_read_word(VBE_DISPI_IOPORT_DATA);
 }
 
 static int BgaIsAvailable(void)

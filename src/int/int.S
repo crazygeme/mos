@@ -314,20 +314,6 @@ ret_from_syscall:
         /* Return to caller. */
     iret
 
-.global read_port
-read_port:
-    movl  4(%esp), %edx 
-    xor   %eax, %eax  
-    inb   %dx, %al 
-    ret 
-
-.global write_port
-write_port:
-    movl 4(%esp), %edx
-    mov  8(%esp), %al
-    outb   %al, %dx 
-    ret
-
 /*
  * clear the CR0.EM bit (bit 2) [ CR0 &= ~(1 << 2) ]
  * set the CR0.MP bit (bit 1) [ CR0 |= (1 << 1) ]

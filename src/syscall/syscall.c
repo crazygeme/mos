@@ -99,8 +99,7 @@ static int sys_ioctl(int d, int request, char *buf);
 static int sys_creat(const char *path, unsigned mode);
 static int sys_mkdir(const char *path, unsigned mode);
 static int sys_rmdir(const char *path);
-static int sys_readdir(unsigned fd, struct old_linux_dirent *dirp,
-		       unsigned count);
+static int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count);
 static int sys_reboot(unsigned cmd);
 static int sys_getuid();
 static int sys_getgid();
@@ -1199,8 +1198,7 @@ static int sys_time(unsigned *t)
 	return 0;
 }
 
-static int sys_readdir(unsigned fd, struct old_linux_dirent *dirp,
-		       unsigned count)
+static int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 {
 	int ret = -1;
 	if (TestControl.verbos) {

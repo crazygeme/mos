@@ -13,6 +13,7 @@
 #include <fs.h>
 #include <dsr.h>
 #include <macro.h>
+#include <port.h>
 
 typedef struct _ps_control {
 	list_entry ready_queue[MAX_PRIORITY];
@@ -304,113 +305,11 @@ int ps_enabled()
 	return _ps_enabled;
 }
 
-static void *psid_map[PSID_MAP_SIZE] = { 0 };
-static inline unsigned int __bsr(unsigned int value)
-{
-	int i;
-	for (i = 0; i < 32; i++) {
-		if ((value % 2) == 0)
-			return i;
-		value >>= 1;
-	}
-}
-
-static int ps_id_find(int index, unsigned *page)
-{
-	int i = 0;
-	int begin = index * PAGE_SIZE * 8;
-	int off;
-	for (i = 0; i < (PAGE_SIZE / sizeof(*page)); i++) {
-		if (page[i] == (unsigned)-1)
-			continue;
-		off = __bsr(page[i]);
-		return begin + i * 32 + off;
-	}
-}
-
-static void ps_id_mark(int psid, int used)
-{
-	int cnt_per_pg = PAGE_SIZE * 8;
-	int pg_idx = psid / cnt_per_pg;
-	int pg_off = psid % cnt_per_pg;
-	int bit_idx = pg_off / 32;
-	int bit_off = pg_off % 32;
-	unsigned mask = (unsigned)1 << (bit_off);
-	unsigned *page = (unsigned *)psid_map[pg_idx];
-	if (used)
-		page[bit_idx] |= mask;
-	else
-		page[bit_idx] &= ~mask;
-}
-
-static unsigned do_ps_id_gen()
-{
-	int ret = -1;
-	int i = 0;
-	void *page = NULL;
-
-	spinlock_lock(&psid_lock);
-
-	for (i = 0; i < PSID_MAP_SIZE; i++) {
-		if (psid_map[i] != NULL) {
-			ret = ps_id_find(i, psid_map[i]);
-			if (ret >= 0)
-				break;
-		} else {
-			break;
-		}
-	}
-
-	if (ret < 0 && i < PSID_MAP_SIZE) {
-		psid_map[i] = vm_alloc(1);
-		ret = ps_id_find(i, psid_map[i]);
-	}
-
-	if (ret < 0) {
-		// too many processes!!
-		printk("Too many processes");
-		DIE();
-	}
-
-	ps_id_mark(ret, 1);
-
-	spinlock_unlock(&psid_lock);
-	return (unsigned)ret;
-}
-#ifdef PSID_ALLOC
-static unsigned last_gen_pid = (unsigned)-1;
-#else
 static unsigned last_gen_pid = (unsigned)0;
-#endif
 
 unsigned ps_id_gen()
 {
-#ifdef PSID_ALLOC
-	unsigned ret = do_ps_id_gen();
-	unsigned ret2;
-	unsigned id;
-	if (__sync_add_and_fetch(&last_gen_pid, 0) == ret) {
-		ret2 = do_ps_id_gen();
-		ps_id_free(ret);
-		__sync_lock_test_and_set(&last_gen_pid, ret2);
-		id = ret2;
-	} else {
-		__sync_lock_test_and_set(&last_gen_pid, ret);
-		id = ret;
-	}
-	return id;
-#else
 	return __sync_fetch_and_add(&last_gen_pid, 1);
-#endif
-}
-
-void ps_id_free(unsigned psid)
-{
-#ifdef PSID_ALLOC
-	spinlock_lock(&psid_lock);
-	ps_id_mark(psid, 0);
-	spinlock_unlock(&psid_lock);
-#endif
 }
 
 static void ps_setup_task_frame(task_struct *task, unsigned data_seg,
@@ -788,7 +687,6 @@ AGAIN:
 	if (!can_return)
 		goto AGAIN;
 
-	ps_id_free(ret);
 	return ret;
 }
 
@@ -997,7 +895,7 @@ void reboot()
 {
 	DISABLE_INTR();
 	system_down();
-	write_port(0x64, 0xfe);
+	port_write_byte(0x64, 0xfe);
 }
 
 void shutdown()
@@ -1012,12 +910,12 @@ void shutdown()
           QEMU, but not by physical hardware. */
 	printf("Power off...\n");
 	for (p = s; *p != '\0'; p++)
-		write_port(0x8900, *p);
+		port_write_byte(0x8900, *p);
 
 	/*  In newer versions of QEMU, you can pass
         -device isa-debug-exit,iobase=0xf4,iosize=0x04
         on the command-line, and do: */
-	write_port(0xf4, 0x00);
+	port_write_byte(0xf4, 0x00);
 
 	/* None of those works... */
 	printf("still running...\n");

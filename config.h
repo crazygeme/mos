@@ -76,11 +76,4 @@
 
 #define PAGE_CACHE_SIZE 4096 // pages
 
-// FIXME:
-// every bit represent a psid
-// 32 pages can have 1 million process
-// way too much for this os...
-// but you can enlarge it anyway...
-#define PSID_MAP_SIZE 32
-
 #endif

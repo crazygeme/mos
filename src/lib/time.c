@@ -4,6 +4,7 @@
 #include <ps.h>
 #include <dsr.h>
 #include <macro.h>
+#include <port.h>
 
 static unsigned long tickets;
 static unsigned long total_tickets;
@@ -145,9 +146,9 @@ void time_init()
 	control.access_mode = ACCESS_MODE_BOTH;
 	control.operating_mode = OPERATION_MODE_RATE;
 
-	write_port(TIME_CONTROL_MASK, *((unsigned char *)&control));
-	write_port(TIME_CHANNEL_0, LATCH & 0xff);
-	write_port(TIME_CHANNEL_0, LATCH >> 8);
+	port_write_byte(TIME_CONTROL_MASK, *((unsigned char *)&control));
+	port_write_byte(TIME_CHANNEL_0, LATCH & 0xff);
+	port_write_byte(TIME_CHANNEL_0, LATCH >> 8);
 }
 
 void time_current(time_t *t)
@@ -361,6 +362,6 @@ static int bcd_to_bin(unsigned char x)
    returns the byte read. */
 static unsigned char cmos_read(unsigned char index)
 {
-	write_port(CMOS_REG_SET, index);
-	return read_port(CMOS_REG_IO);
+	port_write_byte(CMOS_REG_SET, index);
+	return port_read_byte(CMOS_REG_IO);
 }

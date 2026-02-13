@@ -7,6 +7,7 @@
 #include <klib.h>
 #include <rbtree.h>
 #include <list.h>
+#include <port.h>
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */
@@ -254,7 +255,7 @@ static void interrupt_handler(intr_frame *f)
 	for (c = channels; c < channels + CHANNEL_CNT; c++)
 		if (f->vec_no == c->irq) {
 			if (c->expecting_interrupt) {
-				read_port(reg_status(
+				port_read_byte(reg_status(
 					c)); /* Acknowledge interrupt. */
 				//printk("[hdd] event set \n");
 				cond_notify_at_intr(
@@ -279,26 +280,26 @@ static void reset_channel(channel *c)
 
 		select_device(d);
 
-		write_port(reg_nsect(c), 0x55);
-		write_port(reg_lbal(c), 0xaa);
+		port_write_byte(reg_nsect(c), 0x55);
+		port_write_byte(reg_lbal(c), 0xaa);
 
-		write_port(reg_nsect(c), 0xaa);
-		write_port(reg_lbal(c), 0x55);
+		port_write_byte(reg_nsect(c), 0xaa);
+		port_write_byte(reg_lbal(c), 0x55);
 
-		write_port(reg_nsect(c), 0x55);
-		write_port(reg_lbal(c), 0xaa);
+		port_write_byte(reg_nsect(c), 0x55);
+		port_write_byte(reg_lbal(c), 0xaa);
 
-		present[dev_no] = (read_port(reg_nsect(c)) == 0x55 &&
-				   read_port(reg_lbal(c)) == 0xaa);
+		present[dev_no] = (port_read_byte(reg_nsect(c)) == 0x55 &&
+				   port_read_byte(reg_lbal(c)) == 0xaa);
 	}
 
 	/* Issue soft reset sequence, which selects device 0 as a side effect.
        Also enable interrupts. */
-	write_port(reg_ctl(c), 0);
+	port_write_byte(reg_ctl(c), 0);
 	usleep(10);
-	write_port(reg_ctl(c), CTL_SRST);
+	port_write_byte(reg_ctl(c), CTL_SRST);
 	usleep(10);
-	write_port(reg_ctl(c), 0);
+	port_write_byte(reg_ctl(c), 0);
 
 	delay(150000);
 
@@ -314,8 +315,8 @@ static void reset_channel(channel *c)
 
 		select_device(&c->devices[1]);
 		for (i = 0; i < 3000; i++) {
-			if (read_port(reg_nsect(c)) == 1 &&
-			    read_port(reg_lbal(c)) == 1)
+			if (port_read_byte(reg_nsect(c)) == 1 &&
+			    port_read_byte(reg_lbal(c)) == 1)
 				break;
 			delay(10000);
 		}
@@ -332,10 +333,10 @@ static int wait_while_busy(const ata_disk *d)
 	for (i = 0; i < 3000; i++) {
 		if (i == 700)
 			printk("%s: busy, waiting...", d->name);
-		if (!(read_port(reg_alt_status(c)) & STA_BSY)) {
+		if (!(port_read_byte(reg_alt_status(c)) & STA_BSY)) {
 			if (i >= 700)
 				printk("ok\n");
-			ret = (read_port(reg_alt_status(c)) & STA_DRQ);
+			ret = (port_read_byte(reg_alt_status(c)) & STA_DRQ);
 			if (ret == 0) {
 			}
 			return 1;
@@ -353,8 +354,8 @@ static void select_device(const ata_disk *d)
 	unsigned char dev = DEV_MBS;
 	if (d->dev_no == 1)
 		dev |= DEV_DEV;
-	write_port(reg_device(c), dev);
-	read_port(reg_alt_status(c));
+	port_write_byte(reg_device(c), dev);
+	port_read_byte(reg_alt_status(c));
 }
 
 static int check_device_type(ata_disk *d)
@@ -364,10 +365,10 @@ static int check_device_type(ata_disk *d)
 
 	select_device(d);
 
-	error = read_port(reg_error(c));
-	lbam = read_port(reg_lbam(c));
-	lbah = read_port(reg_lbah(c));
-	status = read_port(reg_status(c));
+	error = port_read_byte(reg_error(c));
+	lbam = port_read_byte(reg_lbam(c));
+	lbah = port_read_byte(reg_lbah(c));
+	status = port_read_byte(reg_status(c));
 
 	if ((error != 1 && (error != 0x81 || d->dev_no == 1)) ||
 	    (status & STA_DRDY) == 0 || (status & STA_BSY) != 0) {
@@ -866,8 +867,8 @@ static void wait_until_idle(const ata_disk *d)
 	int i;
 
 	for (i = 0; i < 1000; i++) {
-		if ((read_port(reg_status(d->channel)) & (STA_BSY | STA_DRQ)) ==
-		    0)
+		if ((port_read_byte(reg_status(d->channel)) &
+		     (STA_BSY | STA_DRQ)) == 0)
 			return;
 		delay(10);
 	}
@@ -885,17 +886,17 @@ static void select_device_wait(const ata_disk *d)
 
 static void issue_pio_command(channel *c, unsigned char command)
 {
-	write_port(reg_command(c), command);
+	port_write_byte(reg_command(c), command);
 }
 
 static void input_sector(channel *c, void *sector)
 {
-	_read_dwb(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
+	port_read_dwords(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
 static void output_sector(channel *c, const void *sector)
 {
-	_write_dwb(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
+	port_write_dwords(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
 static char *descramble_ata_string(char *string, int size)
@@ -925,13 +926,13 @@ static void select_sector(ata_disk *d, unsigned int sec_no)
 	channel *c = d->channel;
 
 	select_device_wait(d);
-	write_port(reg_nsect(c), 1);
-	write_port(reg_lbal(c), sec_no);
-	write_port(reg_lbam(c), sec_no >> 8);
-	write_port(reg_lbah(c), (sec_no >> 16));
-	write_port(reg_device(c), DEV_MBS | DEV_LBA |
-					  (d->dev_no == 1 ? DEV_DEV : 0) |
-					  (sec_no >> 24));
+	port_write_byte(reg_nsect(c), 1);
+	port_write_byte(reg_lbal(c), sec_no);
+	port_write_byte(reg_lbam(c), sec_no >> 8);
+	port_write_byte(reg_lbah(c), (sec_no >> 16));
+	port_write_byte(reg_device(c), DEV_MBS | DEV_LBA |
+					       (d->dev_no == 1 ? DEV_DEV : 0) |
+					       (sec_no >> 24));
 }
 
 unsigned disk_read_size = 0;

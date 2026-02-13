@@ -8,6 +8,7 @@
 #include <vga.h>
 #include <unistd.h>
 #include <ioctl.h>
+#include <port.h>
 
 static void tty_copy_row(int src, int dst);
 static void tty_clear_row(int row);
@@ -220,8 +221,8 @@ void tty_movecurse(unsigned c)
 {
 	if (!vga_enabled) {
 		unsigned short cp = (unsigned short)c;
-		_write_word(0x3d4, 0x0e | (cp & 0xff00));
-		_write_word(0x3d4, 0x0f | (cp << 8));
+		port_write_word(0x3d4, 0x0e | (cp & 0xff00));
+		port_write_word(0x3d4, 0x0f | (cp << 8));
 	} else {
 		int row = CUR_ROW;
 		int col = CUR_COL;

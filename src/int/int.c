@@ -5,6 +5,7 @@
 #include <dsr.h>
 #include <mm.h>
 #include <macro.h>
+#include <port.h>
 
 /* Sends an end-of-interrupt signal to the PIC for the given IRQ.
 If we don't acknowledge the IRQ, it will never be delivered to
@@ -12,11 +13,11 @@ us again, so this is important. */
 static void pic_end_of_interrupt(int irq)
 {
 	/* Acknowledge master PIC. */
-	write_port(0x20, 0x20);
+	port_write_byte(0x20, 0x20);
 
 	/* Acknowledge slave PIC if this is a slave interrupt. */
 	if (irq >= 0x28)
-		write_port(0xa0, 0x20);
+		port_write_byte(0xa0, 0x20);
 }
 
 static char *intr_names[IDT_SIZE];
@@ -95,8 +96,8 @@ void int_enable_all()
 	SET_CS(KERNEL_CODE_SELECTOR);
 	SET_DS(KERNEL_DATA_SELECTOR);
 
-	write_port(0x21, 0x0);
-	write_port(0xA1, 0x0);
+	port_write_byte(0x21, 0x0);
+	port_write_byte(0xA1, 0x0);
 
 	/* Initialize intr_names. */
 	for (i = 0; i < IDT_SIZE; i++) {
@@ -174,84 +175,4 @@ void int_intr_setlevel(unsigned enabled)
 	} else {
 		int_intr_disable();
 	}
-}
-
-/* Reads CNT bytes from PORT, one after another, and stores them
-   into the buffer starting at ADDR. */
-void _read_sb(unsigned short port, void *addr, unsigned cnt)
-{
-	/* See [IA32-v2a] "INS". */
-	asm volatile("rep insb" : "+D"(addr), "+c"(cnt) : "d"(port) : "memory");
-}
-
-/* Reads and returns 16 bits from PORT. */
-unsigned short _read_word(unsigned short port)
-{
-	unsigned short data;
-	/* See [IA32-v2a] "IN". */
-	asm volatile("inw %w1, %w0" : "=a"(data) : "Nd"(port));
-	return data;
-}
-
-/* Reads CNT 16-bit (halfword) units from PORT, one after
-   another, and stores them into the buffer starting at ADDR. */
-void _read_wb(unsigned short port, void *addr, unsigned cnt)
-{
-	/* See [IA32-v2a] "INS". */
-	asm volatile("rep insw" : "+D"(addr), "+c"(cnt) : "d"(port) : "memory");
-}
-
-/* Reads and returns 32 bits from PORT. */
-unsigned int _read_dword(unsigned short port)
-{
-	/* See [IA32-v2a] "IN". */
-	unsigned int data;
-	asm volatile("inl %w1, %0" : "=a"(data) : "Nd"(port));
-	return data;
-}
-
-/* Reads CNT 32-bit (word) units from PORT, one after another,
-   and stores them into the buffer starting at ADDR. */
-void _read_dwb(unsigned short port, void *addr, unsigned cnt)
-{
-	/* See [IA32-v2a] "INS". */
-	asm volatile("rep insl" : "+D"(addr), "+c"(cnt) : "d"(port) : "memory");
-}
-
-/* Writes to PORT each byte of data in the CNT-byte buffer
-   starting at ADDR. */
-void _write_sb(unsigned short port, const void *addr, unsigned cnt)
-{
-	/* See [IA32-v2b] "OUTS". */
-	asm volatile("rep outsb" : "+S"(addr), "+c"(cnt) : "d"(port));
-}
-
-/* Writes the 16-bit DATA to PORT. */
-void _write_word(unsigned short port, unsigned short data)
-{
-	/* See [IA32-v2b] "OUT". */
-	asm volatile("outw %w0, %w1" : : "a"(data), "Nd"(port));
-}
-
-/* Writes to PORT each 16-bit unit (halfword) of data in the
-   CNT-halfword buffer starting at ADDR. */
-void _write_wb(unsigned short port, const void *addr, unsigned cnt)
-{
-	/* See [IA32-v2b] "OUTS". */
-	asm volatile("rep outsw" : "+S"(addr), "+c"(cnt) : "d"(port));
-}
-
-/* Writes the 32-bit DATA to PORT. */
-void _write_dword(unsigned short port, unsigned int data)
-{
-	/* See [IA32-v2b] "OUT". */
-	asm volatile("outl %0, %w1" : : "a"(data), "Nd"(port));
-}
-
-/* Writes to PORT each 32-bit unit (word) of data in the CNT-word
-   buffer starting at ADDR. */
-void _write_dwb(unsigned short port, const void *addr, unsigned cnt)
-{
-	/* See [IA32-v2b] "OUTS". */
-	asm volatile("rep outsl" : "+S"(addr), "+c"(cnt) : "d"(port));
 }

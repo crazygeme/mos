@@ -1,6 +1,8 @@
 #ifndef _MACRO_H_
 #define _MACRO_H_
 
+#define ROUND_UP(x) (((x) + sizeof(long) - 1) & ~(sizeof(long) - 1))
+
 #define LOAD_CR2(val) asm volatile("movl %%cr2, %0" : "=r"(val))
 
 #define LOAD_CR3(val) asm volatile("movl %%cr3, %0" : "=r"(val))

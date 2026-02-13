@@ -3,7 +3,7 @@ export MAINPATH
 include $(MAINPATH)/mos.mk
 TARGET	= kernel
 
-SRC_DIRS = src/syscall src/boot src/hw src/int src/fs src/lib src/mm src/ps src/elf src/debug
+SRC_DIRS = src/syscall src/boot src/hw src/int src/fs src/lib src/mm src/ps src/elf src/debug src/vfs
 
 SCRIPTS =  $(MAINPATH)/mos.mk $(MAINPATH)/Makefile
 SRCS = 	   $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
@@ -18,7 +18,10 @@ CFLAGS  =  $(COMMON_CFLAGS) -O0
 vpath %.c $(SRC_DIRS)
 vpath %.S $(SRC_DIRS)
 
+.PHONY: all clean rebuild
+
 all: $(DST)/kernel
+	@./run.sh
 
 $(DST)/$(TARGET): $(OBJS) $(LIBS) | $(DST)
 	@echo "LD $@"

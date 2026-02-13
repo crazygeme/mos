@@ -1,6 +1,8 @@
 #include <klib.h>
 #include <cyclebuf.h>
 #include <int.h>
+#include <port.h>
+
 /* Register definitions for the 16550A UART used in PCs.
    The 16550A has a lot more going on than shown here, but this
    is all we need.
@@ -41,8 +43,8 @@
 #define LSR_DR 0x01 /* Data Ready: received data byte is in RBR. */
 #define LSR_THRE 0x20 /* THR Empty. */
 
-#define outb write_port
-#define inb read_port
+#define outb port_write_byte
+#define inb port_read_byte
 /* Transmission mode. */
 static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 

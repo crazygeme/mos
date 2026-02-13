@@ -83,18 +83,6 @@ typedef struct _intr_frame {
 } __attribute__((packed)) intr_frame;
 
 extern void asm_interrupt_handle_for_keyboard();
-extern unsigned char read_port(unsigned short port);
-extern void write_port(unsigned short port, unsigned char data);
-void _read_sb(unsigned short port, void *addr, unsigned cnt);
-unsigned short _read_word(unsigned short port);
-void _read_wb(unsigned short port, void *addr, unsigned cnt);
-unsigned int _read_dword(unsigned short port);
-void _read_dwb(unsigned short port, void *addr, unsigned cnt);
-void _write_sb(unsigned short port, const void *addr, unsigned cnt);
-void _write_word(unsigned short port, unsigned short data);
-void _write_wb(unsigned short port, const void *addr, unsigned cnt);
-void _write_dword(unsigned short port, unsigned int data);
-void _write_dwb(unsigned short port, const void *addr, unsigned cnt);
 
 void int_update_tss(void *address);
 

@@ -7,6 +7,7 @@
 #include <lock.h>
 #include <config.h>
 #include <cyclebuf.h>
+#include <port.h>
 
 static cy_buf *buf;
 
@@ -120,9 +121,9 @@ static void kb_dsr(void *param)
 
 	const char *special = 0;
 	/* Read scancode, including second byte if prefix code. */
-	code = read_port(KB_DATA);
+	code = port_read_byte(KB_DATA);
 	if (code == 0xe0)
-		code = (code << 8) | read_port(KB_DATA);
+		code = (code << 8) | port_read_byte(KB_DATA);
 
 	/* Bit 0x80 distinguishes key press from key release
        (even if there's a prefix). */

@@ -489,7 +489,7 @@ static void read_partition_table(block *block, unsigned int sector,
 		printk("Failed to allocate memory for partition table.");
 		return;
 	}
-	block->read(block->aux, 0, pt, BLOCK_SECTOR_SIZE);
+	block->read(block->aux, sector, pt, BLOCK_SECTOR_SIZE);
 
 	/* Parse partitions. */
 	for (i = 0; i < sizeof pt->partitions / sizeof *pt->partitions; i++) {

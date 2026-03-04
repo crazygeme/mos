@@ -128,7 +128,7 @@ int fs_alloc_filep_pipe(file **pipes)
 	ri->i_fop = &pipe_read_fops;
 	ri->i_private = rn;
 
-	file * fp_read = calloc(1, sizeof(*fp_read));
+	file *fp_read = calloc(1, sizeof(*fp_read));
 	fp_read->f_inode = ri;
 	fp_read->f_op = &pipe_read_fops;
 	fp_read->f_count = 1;
@@ -143,7 +143,7 @@ int fs_alloc_filep_pipe(file **pipes)
 	wi->i_fop = &pipe_write_fops;
 	wi->i_private = wn;
 
-	file * fp_write = calloc(1, sizeof(*fp_write));
+	file *fp_write = calloc(1, sizeof(*fp_write));
 	fp_write->f_inode = wi;
 	fp_write->f_op = &pipe_write_fops;
 	fp_write->f_count = 1;

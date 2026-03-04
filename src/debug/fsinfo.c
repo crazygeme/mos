@@ -85,8 +85,8 @@ static void fsinfo_timeout(timer_t *timer, void *ctx)
 	elf_read_time = 0;
 }
 
-void debugfs_fs_init(mount_point *mp)
+void debugfs_fs_init(super_block *mp)
 {
-	mount_add_file(mp, "/proc/fsinfo", fill);
+	vfs_create_file(mp, "/proc/fsinfo", fill);
 	timer_start(fsinfo_timeout, 2000, 1, NULL);
 }

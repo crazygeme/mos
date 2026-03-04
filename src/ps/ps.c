@@ -507,7 +507,7 @@ int do_fork(unsigned flag)
 	task->cwd = name_get();
 	task->fork_flag = flag;
 	task->root = cur->root;
-	mount_ref(task->root);
+	sb_get(task->root);
 	memset(task->cwd, 0, MAX_PATH);
 	strcpy(task->cwd, cur->cwd);
 	ps_dup_fds(cur, task);
@@ -657,7 +657,7 @@ AGAIN:
 		}
 
 		if (task->root) {
-			mount_deref(task->root);
+			sb_put(task->root);
 		}
 
 		if (rusage) {

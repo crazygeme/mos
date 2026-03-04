@@ -58,7 +58,7 @@ static const file_operations null_fops = {
 	.poll = null_poll,
 };
 
-static inode *null_get_inode(mount_point *mp)
+static inode *null_get_root(super_block *sb)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_mode = S_IFCHR;
@@ -67,12 +67,12 @@ static inode *null_get_inode(mount_point *mp)
 	return node;
 }
 
-static mount_op mp = {
-	.get_inode = null_get_inode,
+static super_operations null_sops = {
+	.get_root = null_get_root,
 };
 
 void null_init()
 {
 	task_struct *cur = CURRENT_TASK();
-	do_mount(cur->root, "/dev/null", &mp);
+	vfs_mount(cur->root, "/dev/null", &null_sops);
 }

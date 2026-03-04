@@ -59,7 +59,7 @@ static const file_operations kb_fops = {
 	.ioctl = tty_ioctl,
 };
 
-static inode *kb_get_inode(mount_point *mp)
+static inode *kb_get_root(super_block *sb)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_mode = S_IFCHR;
@@ -68,12 +68,12 @@ static inode *kb_get_inode(mount_point *mp)
 	return node;
 }
 
-static mount_op mp = {
-	.get_inode = kb_get_inode,
+static super_operations kb_sops = {
+	.get_root = kb_get_root,
 };
 
 void kbchar_init()
 {
 	task_struct *cur = CURRENT_TASK();
-	do_mount(cur->root, "/dev/kb", &mp);
+	vfs_mount(cur->root, "/dev/kb", &kb_sops);
 }

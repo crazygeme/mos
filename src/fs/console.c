@@ -87,7 +87,7 @@ static const file_operations console_fops = {
 	.ioctl = tty_ioctl,
 };
 
-static inode *console_get_inode(mount_point *mp)
+static inode *console_get_root(super_block *sb)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_mode = S_IFCHR;
@@ -96,12 +96,12 @@ static inode *console_get_inode(mount_point *mp)
 	return node;
 }
 
-static mount_op mp = {
-	.get_inode = console_get_inode,
+static super_operations tty_sops = {
+	.get_root = console_get_root,
 };
 
 void console_init()
 {
 	task_struct *cur = CURRENT_TASK();
-	do_mount(cur->root, "/dev/tty", &mp);
+	vfs_mount(cur->root, "/dev/tty", &tty_sops);
 }

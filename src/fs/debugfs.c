@@ -72,7 +72,7 @@ static const file_operations debugfs_fops = {
 	.poll = debugfs_poll,
 };
 
-file * debugfs_open(debug_inode *di)
+file *debugfs_open(debug_inode *di)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_mode = S_IFREG;
@@ -85,7 +85,7 @@ file * debugfs_open(debug_inode *di)
 	di->len = strlen(di->buf);
 	di->offset = 0;
 
-	file * fp = calloc(1, sizeof(*fp));
+	file *fp = calloc(1, sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_op = &debugfs_fops;
 	fp->f_count = 1;

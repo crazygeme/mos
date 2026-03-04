@@ -9,7 +9,7 @@
 #include <ps.h>
 
 typedef struct _proc_inode {
-	mount_point *mp;
+	super_block *sb;
 	unsigned offset;
 	unsigned length;
 	struct linux_dirent *buf;
@@ -78,7 +78,7 @@ static int proc_dir_ioctl(file *fp, unsigned cmd, void *buf)
 	return 0;
 }
 
-static void proc_dir_gen(mount_point *mp, proc_inode *node)
+static void proc_dir_gen(super_block *sb, proc_inode *node)
 {
 	unsigned size = 0;
 	key_value_pair *kv = NULL;
@@ -86,15 +86,16 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 	const char *begin = NULL;
 	struct linux_dirent *dirp = NULL;
 
-	mutex_lock(&mp->lock);
-	for (kv = hash_first(mp->folders); kv;
-	     kv = hash_next(mp->folders, kv)) {
+	mutex_lock(&sb->s_lock);
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
 		size += ROUND_UP(NAME_OFFSET() + strlen(kv->key));
 	}
-	for (kv = hash_first(mp->files); kv; kv = hash_next(mp->files, kv)) {
+	for (kv = hash_first(sb->s_files); kv;
+	     kv = hash_next(sb->s_files, kv)) {
 		size += ROUND_UP(NAME_OFFSET() + strlen(kv->key));
 	}
-	mutex_unlock(&mp->lock);
+	mutex_unlock(&sb->s_lock);
 
 	/* "." and ".." entries */
 	size += ROUND_UP(NAME_OFFSET() + 2);
@@ -120,9 +121,9 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 	dirp->d_off = buf + dirp->d_reclen - begin;
 	buf += dirp->d_reclen;
 
-	mutex_lock(&mp->lock);
-	for (kv = hash_first(mp->folders); kv;
-	     kv = hash_next(mp->folders, kv)) {
+	mutex_lock(&sb->s_lock);
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
 		dirp = (struct linux_dirent *)buf;
 		dirp->d_ino = DBGFS_INODE;
 		strcpy(dirp->d_name, (char *)kv->key + 1);
@@ -130,7 +131,8 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 		dirp->d_off = buf + dirp->d_reclen - begin;
 		buf += dirp->d_reclen;
 	}
-	for (kv = hash_first(mp->files); kv; kv = hash_next(mp->files, kv)) {
+	for (kv = hash_first(sb->s_files); kv;
+	     kv = hash_next(sb->s_files, kv)) {
 		dirp = (struct linux_dirent *)buf;
 		dirp->d_ino = DBGFS_INODE;
 		strcpy(dirp->d_name, (char *)kv->key + 1);
@@ -138,7 +140,7 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 		dirp->d_off = buf + dirp->d_reclen - begin;
 		buf += dirp->d_reclen;
 	}
-	mutex_unlock(&mp->lock);
+	mutex_unlock(&sb->s_lock);
 }
 
 static const inode_operations proc_dir_iops = {
@@ -153,11 +155,11 @@ static const file_operations proc_dir_fops = {
 	.ioctl = proc_dir_ioctl,
 };
 
-static inode *proc_get_inode(mount_point *mp)
+static inode *proc_get_root(super_block *sb)
 {
 	proc_inode *pi = malloc(sizeof(*pi));
-	pi->mp = mp;
-	proc_dir_gen(mp, pi);
+	pi->sb = sb;
+	proc_dir_gen(sb, pi);
 
 	inode *node = calloc(1, sizeof(*node));
 	node->i_mode = S_IFDIR;
@@ -167,14 +169,14 @@ static inode *proc_get_inode(mount_point *mp)
 	return node;
 }
 
-static mount_op proc_dir_mp = {
-	.get_inode = proc_get_inode,
+static super_operations proc_sops = {
+	.get_root = proc_get_root,
 };
 
 void debugfs_init()
 {
 	task_struct *cur = CURRENT_TASK();
-	do_mount(cur->root, "/proc", &proc_dir_mp);
+	vfs_mount(cur->root, "/proc", &proc_sops);
 	debugfs_mm_init(cur->root);
 	debugfs_ps_init(cur->root);
 	debugfs_cpu_init(cur->root);

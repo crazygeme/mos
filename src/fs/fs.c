@@ -96,10 +96,16 @@ static int block_proxy_unlock(struct ext4_blockdev *bdev)
 	return 0;
 }
 
+static file *ext4_sb_open(super_block *sb, const char *path, int flag);
+
+static super_operations ext4_sops = {
+	.open = ext4_sb_open,
+};
+
 void fs_mount_root()
 {
 	task_struct *cur = CURRENT_TASK();
-	cur->root = mount_create();
+	cur->root = sget(&ext4_sops);
 	ext4_mount(__first_hdd_name, "/", 0);
 	ext4_cache_write_back("/", true);
 }
@@ -119,7 +125,7 @@ static int fs_find_empty_fd(file_descriptor *fds)
 int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	ssize_t n;
 
 	if (fd < 0 || fd >= MAX_FD)
@@ -139,7 +145,7 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 int fs_write(int fd, unsigned offset, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	ssize_t n;
 
 	if (fd < 0 || fd >= MAX_FD)
@@ -174,15 +180,14 @@ static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
 	return 0;
 }
 
-static file * fs_open_file_ext4(const char *path, int flag, char *mode,
-			       int follow_link)
+static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
 	char *linkcontent = NULL;
 	size_t name_len;
 	int ret;
-	file * fp = NULL;
+	file *fp = NULL;
 	struct stat s;
 
 	if (path[strlen(path) - 1] == '/') {
@@ -202,12 +207,12 @@ static file * fs_open_file_ext4(const char *path, int flag, char *mode,
 		if (ret != EOK)
 			goto fail;
 
-		if (S_ISLNK(s.st_mode) && follow_link) {
+		if (S_ISLNK(s.st_mode)) {
 			linkcontent = name_get();
 			memset(linkcontent, 0, MAX_PATH);
 		}
 
-		while (S_ISLNK(s.st_mode) && follow_link) {
+		while (S_ISLNK(s.st_mode)) {
 			ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
 			if (ret != EOK)
 				goto fail;
@@ -255,15 +260,13 @@ done:
 	return fp;
 }
 
-file * fs_open_file(const char *path, int flag, char *mode, int follow_link)
+file *fs_open_file(const char *path, int flag, char *mode, int follow_link)
 {
-	file * fp = NULL;
 	task_struct *cur = CURRENT_TASK();
-	if (cur->root)
-		fp = mount_open(cur->root, path, flag, mode);
+	file *fp = NULL;
 
-	if (!fp)
-		fp = fs_open_file_ext4(path, flag, mode, 1);
+	if (cur->root)
+		fp = vfs_open(cur->root, path, flag);
 
 	if (fp)
 		fp->f_name = strdup(path);
@@ -275,7 +278,7 @@ int fs_open(const char *path, int flag, char *mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	int fd = -1;
-	file * fp = NULL;
+	file *fp = NULL;
 	int ret = -ENOENT;
 	mutex_lock(&cur->fd_lock);
 
@@ -302,7 +305,7 @@ done:
 int fs_close(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -364,7 +367,7 @@ int fs_stat(const char *path, struct stat *s)
 int fs_fstat(int fd, struct stat *s)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -386,7 +389,7 @@ int fs_pipe(int *pipefd)
 	int ret = 0;
 	task_struct *cur = CURRENT_TASK();
 	int reader, writer;
-	file * fp[2] = { 0 };
+	file *fp[2] = { 0 };
 	mutex_lock(&cur->fd_lock);
 	reader = fs_find_empty_fd(cur->fds);
 	if (reader < 0 || reader >= MAX_FD) {
@@ -426,7 +429,7 @@ done:
 int fs_dup(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	int newfd;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
@@ -452,7 +455,7 @@ done:
 int fs_dup2(int fd, int newfd)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
 		return -ENOENT;
@@ -475,7 +478,7 @@ int fs_dup2(int fd, int newfd)
 	return ret;
 }
 
-int fs_put_file(file * f)
+int fs_put_file(file *f)
 {
 	if (__sync_add_and_fetch(&f->f_count, -1) == 0) {
 		if (f->f_op && f->f_op->release)
@@ -491,7 +494,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	      uint64_t *result, unsigned whence)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	loff_t offset = (loff_t)offset_high << 32 | (loff_t)offset_low;
 	loff_t pos = -1;
 	if (fd < 0 || fd >= MAX_FD)
@@ -518,7 +521,7 @@ done:
 int fs_seek(int fd, unsigned offset, unsigned whence)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	loff_t pos = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -542,7 +545,7 @@ done:
 int fs_select(int fd, unsigned type)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -564,7 +567,7 @@ done:
 int fs_ioctl(int fd, unsigned cmd, void *buf)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -593,7 +596,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 int fs_fchmod(int fd, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
-	file * fp = NULL;
+	file *fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -630,8 +633,8 @@ int resolve_path(const char *old, char *new)
 		r = strrchr(new, '/');
 		*r = '\0';
 		if (*new == '\0') {
-			*new++ = '/';
-			*new++ = '\0';
+			*new ++ = '/';
+			*new ++ = '\0';
 		}
 		return 0;
 	}

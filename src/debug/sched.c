@@ -42,8 +42,8 @@ static void schedinfo_timeout(timer_t *timer, void *ctx)
 	select_loop_times = 0;
 }
 
-void debugfs_sched_init(mount_point *mp)
+void debugfs_sched_init(super_block *mp)
 {
-	mount_add_file(mp, "/proc/sched", fill);
+	vfs_create_file(mp, "/proc/sched", fill);
 	timer_start(schedinfo_timeout, 2000, 1, NULL);
 }

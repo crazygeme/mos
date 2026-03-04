@@ -874,7 +874,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 {
 	int ret = 0;
 	struct stat s;
-	file * fp;
+	file *fp;
 	ext4_dir *dir;
 	int retcount = 0;
 
@@ -1252,7 +1252,7 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 		   int follow_link)
 {
 	int ret = -ENOENT;
-	file * fp = NULL;
+	file *fp = NULL;
 	char modes[11];
 	fp = fs_open_file(name, 0, "r", follow_link);
 	if (fp == NULL)

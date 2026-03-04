@@ -104,8 +104,8 @@ static void meminfo_timeout(timer_t *timer, void *ctx)
 	phymm_alloc_spent = 0;
 }
 
-void debugfs_mm_init(mount_point *mp)
+void debugfs_mm_init(super_block *mp)
 {
-	mount_add_file(mp, "/proc/meminfo", fill);
+	vfs_create_file(mp, "/proc/meminfo", fill);
 	timer_start(meminfo_timeout, 2000, 1, NULL);
 }

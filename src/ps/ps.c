@@ -1,4 +1,5 @@
 #include <mount.h>
+#include <ptrace.h>
 #include <block.h>
 #include <mmap.h>
 #include <phymm.h>
@@ -678,14 +679,39 @@ AGAIN:
 		break;
 	}
 
-	if (!can_return) {
-		ps_put_to_wait_queue(cur);
-	}
-
 	unlock_dying();
 
-	if (!can_return)
+	if (!can_return) {
+		/* check for ptrace-stopped children */
+		lock_mgr();
+		entry = control.mgr_queue.prev;
+		while (entry != &control.mgr_queue) {
+			task_struct *task =
+				container_of(entry, task_struct, ps_mgr);
+			entry = entry->prev;
+			if (task->parent != cur->psid)
+				continue;
+			if (!(task->ptrace & PT_TRACED) ||
+			    !(task->ptrace & PT_STOPPED))
+				continue;
+			if (task->ptrace & PT_STOP_REPORTED)
+				continue;
+			if (pid && pid != task->psid)
+				continue;
+			ret = task->psid;
+			if (status)
+				*status = (SIGTRAP << 8) | 0x7f;
+			task->ptrace |= PT_STOP_REPORTED;
+			can_return = 1;
+			break;
+		}
+		unlock_mgr();
+	}
+
+	if (!can_return) {
+		ps_put_to_wait_queue(cur);
 		goto AGAIN;
+	}
 
 	return ret;
 }

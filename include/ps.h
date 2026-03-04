@@ -211,6 +211,9 @@ typedef volatile struct _task_struct {
 	unsigned kernel_tickets;
 	unsigned pf_major;
 	unsigned pf_minor;
+	/* ptrace state */
+	unsigned ptrace;         /* PT_TRACED, PT_STOPPED, etc. (see ptrace.h) */
+	unsigned ptrace_tracer;  /* psid of the tracing process, 0 if none */
 	unsigned int magic; // to avoid stack overflow
 
 } task_struct;

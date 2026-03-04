@@ -14,6 +14,7 @@
 #include <fs.h>
 #include <select.h>
 #include <macro.h>
+#include <ptrace.h>
 
 struct utimbuf {
 	unsigned actime; /* access time */
@@ -105,6 +106,8 @@ static int sys_getuid();
 static int sys_getgid();
 static int sys_geteuid();
 static int sys_getegid();
+static int sys_setreuid(unsigned ruid, unsigned euid);
+static int sys_setregid(unsigned pid, unsigned pgid);
 static int sys_mmap(struct mmap_arg_struct32 *arg);
 static int sys_mprotect(void *addr, unsigned len, int prot);
 static int sys_readv(int fildes, const struct iovec *iov, int iovcnt);
@@ -187,7 +190,7 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	sys_getuid,
 	0, // 21 ~ 25
-	0,
+	sys_ptrace,
 	0,
 	0,
 	sys_pause,
@@ -231,8 +234,8 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	0,
 	0,
-	0, // 66 ~ 70
-	0,
+	sys_setreuid, // 66 ~ 70
+	sys_setregid,
 	0,
 	0,
 	0,
@@ -372,6 +375,14 @@ static int unhandled_syscall(unsigned callno)
 
 static void syscall_process(intr_frame *frame)
 {
+	task_struct *cur = CURRENT_TASK();
+
+	/* Syscall-entry stop */
+	if ((cur->ptrace & PT_TRACED) && (cur->ptrace & PT_TRACE_SYSCALL) &&
+	    !(cur->ptrace & PT_STOPPED)) {
+		ptrace_stop(frame);
+	}
+
 	syscall_fn fn = call_table[frame->eax];
 	int ret = 0;
 	if (!fn) {
@@ -1519,5 +1530,22 @@ static int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 
 	total_millisecond = req->tv_sec * 1000 + req->tv_nsec / 1000000;
 	msleep(total_millisecond);
+	return 0;
+}
+
+static int sys_setreuid(unsigned ruid, unsigned euid)
+{
+	if (TestControl.verbos) {
+		klog("%d: setreuid(%d, %d)\n", CURRENT_TASK()->psid, ruid,
+		     euid);
+	}
+	return 0;
+}
+
+static int sys_setregid(unsigned pid, unsigned pgid)
+{
+	if (TestControl.verbos) {
+		klog("%d: setregid(%d, %d)\n", CURRENT_TASK()->psid, pid, pgid);
+	}
 	return 0;
 }

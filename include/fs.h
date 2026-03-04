@@ -48,38 +48,72 @@ typedef struct _block block;
 #define FILE_TYPE_CHAR 3
 #define FILE_TYPE_DIR 4
 
-#define FS_SELECT_READ 0
-#define FS_SELECT_WRITE 1
-#define FS_SELECT_EXCEPT 2
+/* Used by fs_select() and poll op */
+#define FS_POLL_READ 0
+#define FS_POLL_WRITE 1
+#define FS_POLL_EXCEPT 2
 
-typedef struct _file *filep;
+typedef int64_t loff_t;
+typedef int ssize_t;
 
-typedef struct _fileop {
-	filep (*open)(void *inode, const char *path, int flag, char *mode);
-	int (*close)(void *inode);
-	int (*read)(void *inode, void *buf, size_t size, size_t *rcnt);
-	int (*write)(void *inode, const void *buf, size_t size, size_t *wcnt);
-	int (*seek)(void *inode, uint64_t offset, uint32_t origin);
-	int (*llseek)(void *inode, unsigned high, unsigned low,
-		      uint64_t *result, uint32_t origin);
-	int (*stat)(void *inode, struct stat *s);
-	uint64_t (*tell)(void *inode);
-	int (*select)(void *inode, unsigned type);
-	int (*ioctl)(void *inode, unsigned cmd, void *buf);
-} fileop;
+typedef struct _inode inode;
+typedef struct _file file;
 
-typedef struct _file {
-	void *inode;
-	unsigned ref_cnt;
-	unsigned mode;
-	fileop op;
-	char *name;
-} file;
+/*
+ * file_operations - per-open-file operations, analogous to Linux
+ * struct file_operations. All ops receive the open file as first argument.
+ */
+typedef struct _file_operations {
+	/* release: called when the last reference to the file is dropped */
+	int (*release)(inode *inode, file *file);
+	/* read/write: update *pos on success, return bytes transferred or -errno */
+	ssize_t (*read)(file *file, void *buf, size_t size, loff_t *pos);
+	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
+	/* llseek: return new position or -errno */
+	loff_t (*llseek)(file *file, loff_t offset, int whence);
+	/* poll: return 0 if ready, -1 if not ready */
+	int (*poll)(file *file, unsigned type);
+	int (*ioctl)(file *file, unsigned cmd, void *buf);
+} file_operations;
+
+/*
+ * inode_operations - inode-level metadata operations, analogous to Linux
+ * struct inode_operations.
+ */
+typedef struct _inode_operations {
+	int (*getattr)(inode *inode, struct stat *s);
+	int (*setattr)(inode *inode, uint32_t mode);
+} inode_operations;
+
+/*
+ * inode - in-memory representation of a filesystem object.
+ * i_private holds the backend-specific handle (e.g. ext4_file *).
+ */
+struct _inode {
+	uint32_t i_mode;
+	uint64_t i_ino;
+	uint64_t i_size;
+	const inode_operations *i_op;
+	const file_operations *i_fop;
+	void *i_private;
+};
+
+/*
+ * file - open file instance, one per open(). Tracks position (f_pos)
+ * separately from the underlying inode, matching Linux struct file semantics.
+ */
+struct _file {
+	inode *f_inode;
+	const file_operations *f_op;
+	loff_t f_pos;
+	uint32_t f_mode;
+	unsigned f_count;
+	char *f_name;
+};
 
 typedef struct _file_descriptor {
-	filep fp;
+	file * fp;
 	unsigned flag;
-	unsigned file_off;
 	unsigned used;
 } file_descriptor;
 
@@ -96,7 +130,7 @@ struct linux_dirent {
 
 int resolve_path(const char *old, char *new);
 
-int fs_alloc_filep_pipe(filep *pipes);
+int fs_alloc_filep_pipe(file **pipes);
 
 int ext4_blockdev_register(block *aux, char *name, int sec_size, int sec_cnt);
 
@@ -135,14 +169,15 @@ int fs_chmod(const char *pathname, uint32_t mode);
 
 int fs_fchmod(int fd, uint32_t mode);
 
-filep fs_open_file(const char *path, int flag, char *mode, int follow_link);
+file * fs_open_file(const char *path, int flag, char *mode, int follow_link);
 
-int fs_destroy(filep f);
+int fs_put_file(file * f);
 
-filep fs_alloc_filep_normal(void *content);
+file * fs_alloc_filep_normal(void *content);
 
-filep fs_alloc_filep_dir(void *content);
+file * fs_alloc_filep_dir(void *content);
 
-#define fs_refrence(f) __sync_add_and_fetch(&(((filep)f)->ref_cnt), 1)
+/* Increment file reference count (analogous to Linux get_file()) */
+#define fs_get_file(f) __sync_add_and_fetch(&(((file *)f)->f_count), 1)
 
 #endif

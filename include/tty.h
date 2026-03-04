@@ -2,6 +2,7 @@
 #define _TTY_H_
 #include <mm.h>
 #include <klib.h>
+#include <fs.h>
 extern unsigned TTY_MAX_ROW;
 extern unsigned TTY_MAX_COL;
 #define TTY_MAX_CHARS (TTY_MAX_ROW * TTY_MAX_COL)
@@ -25,6 +26,6 @@ void tty_clear();
 
 void tty_movecurse(unsigned cp);
 
-int tty_ioctl(void *inode, unsigned cmd, void *buf);
+int tty_ioctl(file *file, unsigned cmd, void *buf);
 
 #endif

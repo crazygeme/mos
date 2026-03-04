@@ -9,37 +9,29 @@
 #include <mount.h>
 #include <ps.h>
 
-static int kb_read(void *inode, void *buf, size_t size, size_t *wcnt)
+static ssize_t kb_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	char d;
 	char *tmp = buf;
 	if (size < 1 || !buf)
 		return 0;
+	*tmp = kb_buf_get();
+	return 1;
+}
 
-	d = kb_buf_get();
-	*tmp = d;
-	if (wcnt)
-		*wcnt = 1;
+static int kb_release(inode *node, file *fp)
+{
+	free(node);
 	return 0;
 }
 
-static int kb_close(void *inode)
+static int kb_poll(file *fp, unsigned type)
 {
-	return 0;
-}
-
-static int kb_select(void *inode, unsigned type)
-{
-	if (type == FS_SELECT_WRITE || type == FS_SELECT_EXCEPT)
+	if (type == FS_POLL_WRITE || type == FS_POLL_EXCEPT)
 		return -1;
-
-	if (kb_can_read())
-		return 0;
-
-	return 0;
+	return kb_can_read() ? 0 : -1;
 }
 
-static int kb_stat(void *inode, struct stat *s)
+static int kb_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFCHR | S_IRUSR | S_IRGRP | S_IROTH);
@@ -56,26 +48,28 @@ static int kb_stat(void *inode, struct stat *s)
 	return 0;
 }
 
-static fileop kbop = {
+static const inode_operations kb_iops = {
+	.getattr = kb_getattr,
+};
+
+static const file_operations kb_fops = {
+	.release = kb_release,
 	.read = kb_read,
-	.close = kb_close,
-	.stat = kb_stat,
-	.select = kb_select,
+	.poll = kb_poll,
 	.ioctl = tty_ioctl,
 };
 
-static filep alloc(mount_point *mp)
+static inode *kb_get_inode(mount_point *mp)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	fp->inode = NULL;
-	fp->ref_cnt = 1;
-	fp->op = kbop;
-	fp->mode = S_IFREG;
-	return fp;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_mode = S_IFCHR;
+	node->i_op = &kb_iops;
+	node->i_fop = &kb_fops;
+	return node;
 }
 
 static mount_op mp = {
-	.alloc = alloc,
+	.get_inode = kb_get_inode,
 };
 
 void kbchar_init()

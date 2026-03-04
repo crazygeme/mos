@@ -15,87 +15,72 @@ void pipe_init()
 {
 }
 
-static void *pipe_create_reader(cy_buf *buf)
+static int pipe_release(inode *node, file *fp)
 {
-	pipe_inode *n = calloc(1, sizeof(*n));
-	n->buf = buf;
-	n->readonly = 1;
-	return n;
-}
-
-static void *pipe_create_writer(cy_buf *buf)
-{
-	pipe_inode *n = calloc(1, sizeof(*n));
-	n->buf = buf;
-	n->readonly = 0;
-	return n;
-}
-
-static int pipe_close(void *n)
-{
-	pipe_inode *node = (pipe_inode *)n;
-	if (!node->readonly) {
-		cyb_writer_close(node->buf);
-	} else {
-		cyb_reader_close(node->buf);
-	}
-
+	pipe_inode *n = node->i_private;
+	if (!n->readonly)
+		cyb_writer_close(n->buf);
+	else
+		cyb_reader_close(n->buf);
 	free(n);
-
+	free(node);
 	return 0;
 }
 
-static int pipe_read(void *inode, void *buf, size_t len, size_t *wcnt)
+static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
+	pipe_inode *n = fp->f_inode->i_private;
+	unsigned char *tmp = buf;
 	unsigned char c;
 	int i = 0;
-	int remain = 0;
-	pipe_inode *n = (pipe_inode *)inode;
-	unsigned char *tmp = buf;
-	int cache_len;
+
 	if (!n->readonly)
 		return -1;
 
-	if ((cyb_writer_count(n->buf) == 0)) {
-		if (cyb_isempty(n->buf)) {
-			if (wcnt)
-				*wcnt = 0;
-			return 0;
-		}
-	}
+	if (cyb_writer_count(n->buf) == 0 && cyb_isempty(n->buf))
+		return 0;
 
-	while (i < len) {
+	while (i < (int)len) {
 		c = cyb_getc(n->buf);
-		if (c == EOF) {
+		if (c == EOF)
 			break;
-		}
-		*tmp = c;
+		*tmp++ = c;
 		i++;
-		tmp++;
 	}
-
-	if (wcnt)
-		*wcnt = i;
-	return 0;
+	return (ssize_t)i;
 }
 
-static int pipe_write(void *inode, const void *buf, size_t len, size_t *wcnt)
+static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 {
-	int i = 0;
-	pipe_inode *n = (pipe_inode *)inode;
-	unsigned char *tmp = buf;
+	pipe_inode *n = fp->f_inode->i_private;
+	unsigned char *tmp = (unsigned char *)buf;
 
 	if (n->readonly)
 		return 0;
 
 	cyb_putbuf(n->buf, tmp, len);
+	return (ssize_t)len;
+}
 
-	if (wcnt)
-		*wcnt = len;
+static int pipe_poll(file *fp, unsigned type)
+{
+	pipe_inode *n = fp->f_inode->i_private;
+	if (type == FS_POLL_EXCEPT)
+		return -1;
+	if (type == FS_POLL_READ)
+		return cyb_isempty(n->buf) ? -1 : 0;
+	if (type == FS_POLL_WRITE)
+		return cyb_isfull(n->buf) ? -1 : 0;
+	return -1;
+}
+
+static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
+{
+	/* pipes are not seekable */
 	return 0;
 }
 
-static int pipe_stat(void *inode, struct stat *s)
+static int pipe_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
 	s->st_mode = S_IFIFO | S_IRUSR | S_IWUSR;
@@ -111,59 +96,59 @@ static int pipe_stat(void *inode, struct stat *s)
 	return 0;
 }
 
-static int pipe_select(void *inode, unsigned type)
-{
-	pipe_inode *n = (pipe_inode *)inode;
-	if (type == FS_SELECT_EXCEPT)
-		return -1;
+static const inode_operations pipe_iops = {
+	.getattr = pipe_getattr,
+};
 
-	if (type == FS_SELECT_READ)
-		return cyb_isempty(n->buf) ? -1 : 0;
-
-	if (type == FS_SELECT_WRITE)
-		return cyb_isfull(n->buf) ? -1 : 0;
-
-	return -1;
-}
-
-static int pipe_llseek(void *inode, unsigned high, unsigned low,
-		       uint64_t *result, uint32_t origin)
-{
-	// FIXME
-	return 0;
-}
-
-static fileop readop = {
+static const file_operations pipe_read_fops = {
+	.release = pipe_release,
 	.read = pipe_read,
-	.close = pipe_close,
-	.stat = pipe_stat,
+	.poll = pipe_poll,
 	.llseek = pipe_llseek,
-	.select = pipe_select,
 };
 
-static fileop writeop = {
+static const file_operations pipe_write_fops = {
+	.release = pipe_release,
 	.write = pipe_write,
-	.close = pipe_close,
-	.stat = pipe_stat,
+	.poll = pipe_poll,
 	.llseek = pipe_llseek,
-	.select = pipe_select,
 };
 
-int fs_alloc_filep_pipe(filep *pipes)
+int fs_alloc_filep_pipe(file **pipes)
 {
 	cy_buf *buf = cyb_create("pipe");
-	filep fp_read = calloc(1, sizeof(*fp_read));
-	fp_read->inode = pipe_create_reader(buf);
-	fp_read->ref_cnt = 1;
-	fp_read->op = readop;
 
-	filep fp_write = calloc(1, sizeof(*fp_write));
-	fp_write->inode = pipe_create_writer(buf);
-	fp_write->ref_cnt = 1;
-	fp_write->op = writeop;
+	pipe_inode *rn = calloc(1, sizeof(*rn));
+	rn->buf = buf;
+	rn->readonly = 1;
+
+	inode *ri = calloc(1, sizeof(*ri));
+	ri->i_mode = S_IFIFO;
+	ri->i_op = &pipe_iops;
+	ri->i_fop = &pipe_read_fops;
+	ri->i_private = rn;
+
+	file * fp_read = calloc(1, sizeof(*fp_read));
+	fp_read->f_inode = ri;
+	fp_read->f_op = &pipe_read_fops;
+	fp_read->f_count = 1;
+
+	pipe_inode *wn = calloc(1, sizeof(*wn));
+	wn->buf = buf;
+	wn->readonly = 0;
+
+	inode *wi = calloc(1, sizeof(*wi));
+	wi->i_mode = S_IFIFO;
+	wi->i_op = &pipe_iops;
+	wi->i_fop = &pipe_write_fops;
+	wi->i_private = wn;
+
+	file * fp_write = calloc(1, sizeof(*fp_write));
+	fp_write->f_inode = wi;
+	fp_write->f_op = &pipe_write_fops;
+	fp_write->f_count = 1;
 
 	pipes[0] = fp_read;
 	pipes[1] = fp_write;
-
 	return 0;
 }

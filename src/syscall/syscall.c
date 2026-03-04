@@ -407,17 +407,14 @@ static int sys_read(int fd, char *buf, unsigned len)
 	if (cur->fds[fd].used == 0)
 		return -1;
 
-	if (S_ISDIR(cur->fds[fd].fp->mode))
+	if (S_ISDIR(cur->fds[fd].fp->f_mode))
 		return -1;
 
 	if (TestControl.verbos) {
 		klog("%d: read(%d, \"", CURRENT_TASK()->psid, fd);
 	}
 
-	unsigned offset = cur->fds[fd].file_off;
 	ret = fs_read(fd, -1, buf, len);
-	offset += ret;
-	cur->fds[fd].file_off = offset;
 
 	if (TestControl.verbos) {
 		pri_len = (ret > 5) ? 5 : ret;
@@ -459,17 +456,14 @@ static int sys_write(int fd, char *buf, unsigned len)
 		return -1;
 	}
 
-	if (S_ISDIR(cur->fds[fd].fp->mode)) {
+	if (S_ISDIR(cur->fds[fd].fp->f_mode)) {
 		if (TestControl.verbos) {
 			klog_printf("ret -1\n");
 		}
 		return -1;
 	}
 
-	unsigned offset = cur->fds[fd].file_off;
 	_len = fs_write(fd, -1, buf, len);
-	offset += _len;
-	cur->fds[fd].file_off = offset;
 
 	if (TestControl.verbos) {
 		klog_printf("ret %d\n", _len);
@@ -880,7 +874,7 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 {
 	int ret = 0;
 	struct stat s;
-	filep fp;
+	file * fp;
 	ext4_dir *dir;
 	int retcount = 0;
 
@@ -911,9 +905,12 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		return -22;
 	}
 
-	if (fp->op.read(fp->inode, dirp, count, &retcount) != 0) {
+	if (!fp->f_op || !fp->f_op->read)
 		return -1;
-	}
+	ssize_t n = fp->f_op->read(fp, dirp, count, &fp->f_pos);
+	if (n < 0)
+		return -1;
+	retcount = (size_t)n;
 
 	if (TestControl.verbos) {
 		klog_printf(" = %d\n", retcount);
@@ -1255,14 +1252,14 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 		   int follow_link)
 {
 	int ret = -ENOENT;
-	filep fp = NULL;
+	file * fp = NULL;
 	char modes[11];
 	fp = fs_open_file(name, 0, "r", follow_link);
 	if (fp == NULL)
 		goto done;
-	if (!fp->op.stat)
+	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr)
 		goto done;
-	ret = fp->op.stat(fp->inode, buf);
+	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
 	if (TestControl.verbos) {
 		format_modes(buf->st_mode, modes);
 		klog("%d: [%s](%s, %x) = %d, %s, len=%d, blocks = %d\n",
@@ -1272,7 +1269,7 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 
 done:
 	if (fp) {
-		fs_destroy(fp);
+		fs_put_file(fp);
 	}
 	return ret;
 }
@@ -1354,7 +1351,7 @@ static int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (TestControl.verbos) {
 		klog("%d: llseek(%d, %x, %x, %x, %d) = %d, current %d\n",
 		     CURRENT_TASK()->psid, fd, offset_high, offset_low, result,
-		     whence, ret, CURRENT_TASK()->fds[fd].file_off);
+		     whence, ret, (int)CURRENT_TASK()->fds[fd].fp->f_pos);
 	}
 	return ret;
 }

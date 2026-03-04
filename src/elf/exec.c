@@ -241,7 +241,7 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 	return esp;
 }
 
-int sys_execve(const char *file, char **argv, char **envp)
+int sys_execve(const char *f, char **argv, char **envp)
 {
 	unsigned eip = 0;
 	int i = 0;
@@ -254,17 +254,17 @@ int sys_execve(const char *file, char **argv, char **envp)
 	mos_binfmt fmt = { 0 };
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
-	filep fp;
+	file *fp;
 	int len = PAGE_SIZE;
 	char *firstline = NULL;
 	size_t wcnt;
-	if (!file) {
+	if (!f) {
 		return -ENOENT;
 	}
 
 	/* resolve path into full path */
 	file_name = name_get();
-	resolve_path(file, file_name);
+	resolve_path(f, file_name);
 
 	/* make script interp as first argument if file starts with #! */
 
@@ -276,15 +276,15 @@ int sys_execve(const char *file, char **argv, char **envp)
 	}
 
 	/* if file not exist, just return */
-	if (ext4_fstat(fp->inode, &s) != 0) {
-		fs_destroy(fp);
+	if (ext4_fstat(fp->f_inode->i_private, &s) != 0) {
+		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOENT;
 	}
 
 	/* if file not executable, just return */
 	if (!(s.st_mode & S_IXUSR) || (s.st_size < 4)) {
-		fs_destroy(fp);
+		fs_put_file(fp);
 		name_put(file_name);
 		return -EPERM;
 	}
@@ -292,12 +292,12 @@ int sys_execve(const char *file, char **argv, char **envp)
 	/* read first line */
 	len = len > s.st_size ? s.st_size : len;
 	firstline = vm_alloc(1);
-	if (ext4_fread(fp->inode, firstline, len, &wcnt) != EOK) {
-		fs_destroy(fp);
+	if (ext4_fread(fp->f_inode->i_private, firstline, len, &wcnt) != EOK) {
+		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOENT;
 	}
-	fs_destroy(fp);
+	fs_put_file(fp);
 
 	/*
 	 * check whether starts with #!,
@@ -370,7 +370,7 @@ int sys_execve(const char *file, char **argv, char **envp)
 	elf_map(file_name, &fmt);
 	eip = fmt.interp_load_addr;
 	if (!eip) {
-		printk("fatal error: file %s not found!\n", file);
+		printk("fatal error: file %s not found!\n", f);
 		asm("hlt");
 	}
 

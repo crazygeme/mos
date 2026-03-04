@@ -115,62 +115,45 @@ static int fs_find_empty_fd(file_descriptor *fds)
 	}
 	return -1;
 }
+
 int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	int ret = -1;
-	filep fp = NULL;
-	size_t wcnt = 0;
+	file * fp = NULL;
+	ssize_t n;
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
 	fp = cur->fds[fd].fp;
-	if (!fp)
+	if (!fp || !fp->f_op || !fp->f_op->read)
 		return -1;
 
-	if (!fp->op.read)
-		return -1;
+	if (offset != (unsigned)-1)
+		fp->f_pos = offset;
 
-	if (offset != (unsigned)-1) {
-		if (fp->op.seek)
-			fp->op.seek(fp->inode, offset, SEEK_SET);
-	}
-
-	ret = fp->op.read(fp->inode, buf, len, &wcnt);
-	if (ret != EOK)
-		return -1;
-	ret = wcnt;
-	return ret;
+	n = fp->f_op->read(fp, buf, len, &fp->f_pos);
+	return n < 0 ? -1 : (int)n;
 }
 
 int fs_write(int fd, unsigned offset, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	int ret = -1;
-	filep fp = NULL;
-	size_t wcnt = 0;
+	file * fp = NULL;
+	ssize_t n;
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
 	fp = cur->fds[fd].fp;
-	if (!fp)
+	if (!fp || !fp->f_op || !fp->f_op->write)
 		return -1;
 
-	if (!fp->op.write)
-		return -1;
+	if (offset != (unsigned)-1)
+		fp->f_pos = offset;
 
-	if (offset != (unsigned)-1) {
-		if (fp->op.seek)
-			fp->op.seek(fp->inode, offset, SEEK_SET);
-	}
-
-	ret = fp->op.write(fp->inode, buf, len, &wcnt);
-	if (ret != EOK)
-		return -1;
-	ret = wcnt;
-	return ret;
+	n = fp->f_op->write(fp, buf, len, &fp->f_pos);
+	return n < 0 ? -1 : (int)n;
 }
 
 static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
@@ -188,27 +171,27 @@ static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
 	*r = '\0';
 	strcat(linkcontent, "/");
 	strcat(linkcontent, saved);
+	return 0;
 }
 
-static filep fs_open_file_ext4(const char *path, int flag, char *mode,
+static file * fs_open_file_ext4(const char *path, int flag, char *mode,
 			       int follow_link)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
 	char *linkcontent = NULL;
 	size_t name_len;
-	filep ret = NULL;
-	filep fp = NULL;
+	int ret;
+	file * fp = NULL;
 	struct stat s;
 
 	if (path[strlen(path) - 1] == '/') {
-		// must be a path
 		dir = calloc(1, sizeof(*dir));
 		ret = ext4_dir_open(dir, path);
 		if (ret != EOK)
 			goto fail;
 		fp = fs_alloc_filep_dir(dir);
-		fp->mode = S_IFDIR;
+		fp->f_mode = S_IFDIR;
 	} else {
 		f = calloc(1, sizeof(*f));
 		ret = ext4_fopen2(f, path, flag);
@@ -256,39 +239,34 @@ static filep fs_open_file_ext4(const char *path, int flag, char *mode,
 		} else {
 			fp = fs_alloc_filep_normal(f);
 		}
-		fp->mode = s.st_mode;
+		fp->f_mode = s.st_mode;
 	}
 
-	ret = fp;
 	goto done;
 fail:
-	ret = NULL;
+	fp = NULL;
 	if (linkcontent)
 		name_put(linkcontent);
-
 	if (f)
 		free(f);
 	if (dir)
 		free(dir);
-
 done:
-	return ret;
+	return fp;
 }
 
-filep fs_open_file(const char *path, int flag, char *mode, int follow_link)
+file * fs_open_file(const char *path, int flag, char *mode, int follow_link)
 {
-	filep fp = NULL;
+	file * fp = NULL;
 	task_struct *cur = CURRENT_TASK();
 	if (cur->root)
 		fp = mount_open(cur->root, path, flag, mode);
 
-	if (!fp) {
+	if (!fp)
 		fp = fs_open_file_ext4(path, flag, mode, 1);
-	}
 
-	if (fp) {
-		fp->name = strdup(path);
-	}
+	if (fp)
+		fp->f_name = strdup(path);
 
 	return fp;
 }
@@ -297,7 +275,7 @@ int fs_open(const char *path, int flag, char *mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	int fd = -1;
-	filep fp = NULL;
+	file * fp = NULL;
 	int ret = -ENOENT;
 	mutex_lock(&cur->fd_lock);
 
@@ -306,14 +284,12 @@ int fs_open(const char *path, int flag, char *mode)
 		goto done;
 
 	fp = fs_open_file(path, flag, mode, 1);
-	if (!fp) {
+	if (!fp)
 		goto fail;
-	}
 
 	cur->fds[fd].flag = flag;
 	cur->fds[fd].fp = fp;
 	cur->fds[fd].used = 1;
-	cur->fds[fd].file_off = 0;
 
 	goto done;
 fail:
@@ -326,7 +302,7 @@ done:
 int fs_close(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -341,12 +317,12 @@ int fs_close(int fd)
 	if (fp == NULL)
 		return -1;
 
-	return fs_destroy(fp);
+	return fs_put_file(fp);
 }
 
 int fs_delete(const char *path)
 {
-	// FIXME: before virtual device (/dev etc) only ext4 support
+	/* FIXME: before virtual device (/dev etc) only ext4 support */
 	int ret = ext4_fremove(path);
 	if (ret != EOK)
 		return -1;
@@ -355,7 +331,7 @@ int fs_delete(const char *path)
 
 int fs_stat(const char *path, struct stat *s)
 {
-	// FIXME: before virtual device (/dev etc) only ext4 support
+	/* FIXME: before virtual device (/dev etc) only ext4 support */
 	ext4_file f;
 	ext4_dir dir;
 	int isdir = 0;
@@ -387,9 +363,9 @@ int fs_stat(const char *path, struct stat *s)
 
 int fs_fstat(int fd, struct stat *s)
 {
-	int ret;
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
+	int ret;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -397,14 +373,12 @@ int fs_fstat(int fd, struct stat *s)
 	fp = cur->fds[fd].fp;
 	mutex_unlock(&cur->fd_lock);
 
-	if (fp == NULL)
+	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
+	    !fp->f_inode->i_op->getattr)
 		return -1;
-	if (!fp->op.stat)
-		return -1;
-	ret = fp->op.stat(fp->inode, s);
-	if (ret != EOK)
-		return -1;
-	return ret;
+
+	ret = fp->f_inode->i_op->getattr(fp->f_inode, s);
+	return ret == EOK ? 0 : -1;
 }
 
 int fs_pipe(int *pipefd)
@@ -412,14 +386,14 @@ int fs_pipe(int *pipefd)
 	int ret = 0;
 	task_struct *cur = CURRENT_TASK();
 	int reader, writer;
-	filep fp[2] = { 0 };
+	file * fp[2] = { 0 };
 	mutex_lock(&cur->fd_lock);
 	reader = fs_find_empty_fd(cur->fds);
 	if (reader < 0 || reader >= MAX_FD) {
 		ret = -1;
 		goto done;
 	}
-	// hack for writer
+	/* reserve slot for writer search */
 	cur->fds[reader].used = 1;
 
 	writer = fs_find_empty_fd(cur->fds);
@@ -452,7 +426,7 @@ done:
 int fs_dup(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
 	int newfd;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
@@ -467,7 +441,7 @@ int fs_dup(int fd)
 	}
 	cur->fds[newfd] = cur->fds[fd];
 	fp = cur->fds[fd].fp;
-	fs_refrence(fp);
+	fs_get_file(fp);
 	cur->fds[newfd].flag &= ~O_CLOEXEC;
 	ret = newfd;
 done:
@@ -478,7 +452,7 @@ done:
 int fs_dup2(int fd, int newfd)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
 		return -ENOENT;
@@ -490,11 +464,10 @@ int fs_dup2(int fd, int newfd)
 		return -ENOENT;
 
 	mutex_lock(&cur->fd_lock);
-	if (cur->fds[newfd].used) {
-		fs_destroy(cur->fds[newfd].fp);
-	}
+	if (cur->fds[newfd].used)
+		fs_put_file(cur->fds[newfd].fp);
 	fp = cur->fds[fd].fp;
-	fs_refrence(fp);
+	fs_get_file(fp);
 	cur->fds[newfd] = cur->fds[fd];
 	cur->fds[newfd].flag &= ~O_CLOEXEC;
 	ret = newfd;
@@ -502,26 +475,25 @@ int fs_dup2(int fd, int newfd)
 	return ret;
 }
 
-int fs_destroy(filep f)
+int fs_put_file(file * f)
 {
-	int ret = 0;
-	if (__sync_add_and_fetch(&f->ref_cnt, -1) == 0) {
-		ret = f->op.close(f->inode);
-		if (f->name) {
-			free(f->name);
-		}
-
+	if (__sync_add_and_fetch(&f->f_count, -1) == 0) {
+		if (f->f_op && f->f_op->release)
+			f->f_op->release(f->f_inode, f);
+		if (f->f_name)
+			free(f->f_name);
 		free(f);
 	}
-	return ret;
+	return 0;
 }
 
 int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	      uint64_t *result, unsigned whence)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
-	int ret = -1;
+	file * fp = NULL;
+	loff_t offset = (loff_t)offset_high << 32 | (loff_t)offset_low;
+	loff_t pos = -1;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -530,21 +502,24 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->op.llseek)
+	if (!fp || !fp->f_op || !fp->f_op->llseek)
 		goto done;
-	ret = fp->op.llseek(fp->inode, offset_high, offset_low, result, whence);
-	if (ret >= 0 && fp->op.tell)
-		cur->fds[fd].file_off = fp->op.tell(fp->inode);
+	pos = fp->f_op->llseek(fp, offset, whence);
+	if (pos >= 0) {
+		fp->f_pos = pos;
+		if (result)
+			*result = (uint64_t)pos;
+	}
 done:
 	mutex_unlock(&cur->fd_lock);
-	return ret;
+	return pos < 0 ? (int)pos : 0;
 }
 
 int fs_seek(int fd, unsigned offset, unsigned whence)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
-	int ret = -EACCES;
+	file * fp = NULL;
+	loff_t pos = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -553,21 +528,21 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp->op.seek)
+	if (!fp || !fp->f_op || !fp->f_op->llseek)
 		goto done;
 
-	ret = fp->op.seek(fp->inode, offset, whence);
-	if (ret >= 0 && fp->op.tell)
-		cur->fds[fd].file_off = fp->op.tell(fp->inode);
+	pos = fp->f_op->llseek(fp, offset, whence);
+	if (pos >= 0)
+		fp->f_pos = pos;
 done:
 	mutex_unlock(&cur->fd_lock);
-	return ret;
+	return pos < 0 ? (int)pos : 0;
 }
 
 int fs_select(int fd, unsigned type)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -577,10 +552,10 @@ int fs_select(int fd, unsigned type)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp->op.select)
+	if (!fp || !fp->f_op || !fp->f_op->poll)
 		goto done;
 
-	ret = fp->op.select(fp->inode, type);
+	ret = fp->f_op->poll(fp, type);
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;
@@ -589,7 +564,7 @@ done:
 int fs_ioctl(int fd, unsigned cmd, void *buf)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -599,10 +574,10 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp->op.ioctl)
+	if (!fp || !fp->f_op || !fp->f_op->ioctl)
 		goto done;
 
-	ret = fp->op.ioctl(fp->inode, cmd, buf);
+	ret = fp->f_op->ioctl(fp, cmd, buf);
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;
@@ -618,7 +593,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 int fs_fchmod(int fd, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
-	filep fp = NULL;
+	file * fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -630,7 +605,11 @@ int fs_fchmod(int fd, uint32_t mode)
 	fp = cur->fds[fd].fp;
 	mutex_unlock(&cur->fd_lock);
 
-	ret = ext4_fchmod(fp->inode, mode);
+	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
+	    !fp->f_inode->i_op->setattr)
+		return -EACCES;
+
+	ret = fp->f_inode->i_op->setattr(fp->f_inode, mode);
 	return (0 - ret);
 }
 
@@ -651,8 +630,8 @@ int resolve_path(const char *old, char *new)
 		r = strrchr(new, '/');
 		*r = '\0';
 		if (*new == '\0') {
-			*new ++ = '/';
-			*new ++ = '\0';
+			*new++ = '/';
+			*new++ = '\0';
 		}
 		return 0;
 	}

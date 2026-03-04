@@ -13,20 +13,18 @@
 #include <select.h>
 
 unsigned select_loop_times = 0;
-// FIXME
-// no signal at all
-// no except
+
 int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	      const struct timespec *timeout, void *sigmask)
 {
 	fd_set *reads, *writes, *excepts;
 	int ret = 0;
 	int i = 0;
-	unsigned time_begin = time_now_ms(); // milliseconds
+	unsigned time_begin = time_now_ms();
 	unsigned time_span = 0;
 	int infinit_wait = 0;
 	int just_test = 0;
-	unsigned wait_time = 0; // milliseconds
+	unsigned wait_time = 0; /* milliseconds */
 	reads = writes = excepts = NULL;
 
 #define ALLOC_SRC(src, dst)                       \
@@ -47,7 +45,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 			just_test = 1;
 		else
 			wait_time = timeout->tv_sec * 1000 +
-				    timeout->tv_nsec / 1000;
+				    timeout->tv_nsec / 1000000;
 	} else {
 		infinit_wait = 1;
 	}
@@ -66,19 +64,13 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 
 	do {
 		select_loop_times++;
-		// check read fds
 		int has_set = 0;
-		CHECK_FDS(reads, readfds, FS_SELECT_READ);
+		CHECK_FDS(reads, readfds, FS_POLL_READ);
+		CHECK_FDS(writes, writefds, FS_POLL_WRITE);
+		CHECK_FDS(excepts, exceptfds, FS_POLL_EXCEPT);
 
-		// check write fds
-		CHECK_FDS(writes, writefds, FS_SELECT_WRITE);
-
-		// check except fds
-		CHECK_FDS(excepts, exceptfds, FS_SELECT_EXCEPT);
-
-		if (ret > 0) {
+		if (ret > 0)
 			break;
-		}
 
 		if (infinit_wait) {
 			task_sched();
@@ -101,13 +93,10 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 
 #undef CHECK_FDS
 
-done:
 	if (reads)
 		free(reads);
-
 	if (writes)
 		free(writes);
-
 	if (excepts)
 		free(excepts);
 

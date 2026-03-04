@@ -7,40 +7,30 @@
 #include <fs.h>
 #include <tty.h>
 
-static int console_write(void *inode, const void *buf, size_t size,
-			 size_t *wcnt);
-
-static int console_write(void *inode, const void *buf, size_t size,
-			 size_t *wcnt)
+static ssize_t console_write(file *fp, const void *buf, size_t size,
+			     loff_t *pos)
 {
 	if (size < 1 || !buf)
 		return 0;
-
 	tty_write(buf, size);
-	if (wcnt)
-		*wcnt = size;
-	return 0;
+	return (ssize_t)size;
 }
 
-static int console_read(void *inode, const void *buf, size_t size, size_t *wcnt)
+static ssize_t console_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	memset(buf, '?', size);
-	if (wcnt)
-		*wcnt = size;
+	return (ssize_t)size;
+}
 
+static int console_release(inode *node, file *fp)
+{
+	free(node);
 	return 0;
 }
 
-static int console_close(void *inode)
+static loff_t console_llseek(file *fp, loff_t offset, int whence)
 {
-	return 0;
-}
-
-static int console_llseek(void *inode, unsigned high, unsigned low,
-			  uint64_t *result, uint32_t origin)
-{
-	unsigned offset = low;
-	switch (origin) {
+	switch (whence) {
 	case SEEK_SET:
 		klib_update_cursor(offset);
 		break;
@@ -54,26 +44,19 @@ static int console_llseek(void *inode, unsigned high, unsigned low,
 		break;
 	}
 	klib_flush_cursor();
-	if (result)
-		*result = klib_get_pos();
-	return 0;
+	fp->f_pos = klib_get_pos();
+	return fp->f_pos;
 }
 
-static uint64_t console_tell(void *inode)
+static int console_poll(file *fp, unsigned type)
 {
-	return (uint64_t)klib_get_pos();
-}
-
-static int console_select(void *inode, unsigned type)
-{
-	if (type == FS_SELECT_EXCEPT || type == FS_SELECT_READ)
+	if (type == FS_POLL_EXCEPT || type == FS_POLL_READ)
 		return -1;
-
-	// can write any time
+	/* can always write */
 	return 0;
 }
 
-static int console_stat(void *inode, struct stat *s)
+static int console_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
@@ -91,27 +74,30 @@ static int console_stat(void *inode, struct stat *s)
 	return 0;
 }
 
-static fileop ttyop = {
+static const inode_operations console_iops = {
+	.getattr = console_getattr,
+};
+
+static const file_operations console_fops = {
+	.release = console_release,
+	.read = console_read,
 	.write = console_write,
-	.close = console_close,
-	.stat = console_stat,
 	.llseek = console_llseek,
-	.select = console_select,
+	.poll = console_poll,
 	.ioctl = tty_ioctl,
 };
 
-static filep alloc(mount_point *mp)
+static inode *console_get_inode(mount_point *mp)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	fp->inode = NULL;
-	fp->ref_cnt = 1;
-	fp->op = ttyop;
-	fp->mode = S_IFREG;
-	return fp;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_mode = S_IFCHR;
+	node->i_op = &console_iops;
+	node->i_fop = &console_fops;
+	return node;
 }
 
 static mount_op mp = {
-	.alloc = alloc,
+	.get_inode = console_get_inode,
 };
 
 void console_init()

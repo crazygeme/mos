@@ -8,6 +8,7 @@
 #include <config.h>
 #include <unistd.h>
 #include <mmap.h>
+#include <macro.h>
 #include <fcntl.h>
 #include <fs.h>
 #include <errno.h>
@@ -416,3 +417,11 @@ void user_first_process_run()
 	fs_open("/dev/tty", 0, "w");
 	run_if_exist("/bin/bash");
 }
+
+static void kinit_userspace(void)
+{
+	klib_clear();
+	user_first_process_run();
+}
+
+KERNEL_INIT(8, kinit_userspace);

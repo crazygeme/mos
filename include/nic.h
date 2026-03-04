@@ -17,8 +17,6 @@ typedef struct _nic_dev {
 	void *ctx;
 } nic_dev;
 
-void nic_scan_all();
-
 nic_dev *nic_getdev_by_mac(uint8_t *mac);
 
 nic_dev *nic_getdev_by_ip(uint8_t *ip);

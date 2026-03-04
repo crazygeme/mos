@@ -47,3 +47,5 @@ void debugfs_sched_init(super_block *mp)
 	vfs_create_file(mp, "/proc/sched", fill);
 	timer_start(schedinfo_timeout, 2000, 1, NULL);
 }
+
+DEBUGFS_INIT(debugfs_sched_init);

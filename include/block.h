@@ -41,8 +41,6 @@ typedef struct _block {
 	list_entry block_list;
 } block;
 
-void block_init();
-
 block *block_register(void *aux, char *name, fpblock_read read,
 		      fpblock_write write, fpblock_close close, block_type type,
 		      unsigned int sector_size);

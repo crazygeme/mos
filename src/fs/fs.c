@@ -328,14 +328,6 @@ static super_operations ext4_sops = {
 	.open = ext4_sb_open,
 };
 
-void fs_mount_root()
-{
-	task_struct *cur = CURRENT_TASK();
-	cur->root = sget(&ext4_sops);
-	ext4_mount(__first_hdd_name, "/", 0);
-	ext4_cache_write_back("/", true);
-}
-
 #define UNIMPL() klog("unimplemented: %s\n", __func__)
 
 static int fs_find_empty_fd(file_descriptor *fds)
@@ -888,3 +880,13 @@ int resolve_path(const char *old, char *new)
 	strcat(new, old);
 	return 0;
 }
+
+static void fs_mount_root()
+{
+	task_struct *cur = CURRENT_TASK();
+	cur->root = sget(&ext4_sops);
+	ext4_mount(__first_hdd_name, "/", 0);
+	ext4_cache_write_back("/", true);
+}
+
+KERNEL_INIT(3, fs_mount_root);

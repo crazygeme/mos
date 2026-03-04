@@ -90,3 +90,5 @@ void debugfs_fs_init(super_block *mp)
 	vfs_create_file(mp, "/proc/fsinfo", fill);
 	timer_start(fsinfo_timeout, 2000, 1, NULL);
 }
+
+DEBUGFS_INIT(debugfs_fs_init);

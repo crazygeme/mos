@@ -1,6 +1,5 @@
 #include <time.h>
 #include <timer.h>
-#include <kbchar.h>
 #include <klib.h>
 #include <keyboard.h>
 #include <unistd.h>
@@ -8,6 +7,7 @@
 #include <tty.h>
 #include <mount.h>
 #include <ps.h>
+#include <macro.h>
 
 static ssize_t kb_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
@@ -72,8 +72,10 @@ static super_operations kb_sops = {
 	.get_root = kb_get_root,
 };
 
-void kbchar_init()
+static void kbchar_init()
 {
 	task_struct *cur = CURRENT_TASK();
 	vfs_mount(cur->root, "/dev/kb", &kb_sops);
 }
+
+KERNEL_INIT(4, kbchar_init);

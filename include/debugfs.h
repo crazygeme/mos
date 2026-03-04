@@ -14,16 +14,16 @@ typedef struct _debug_inode {
 
 void debugfs_init();
 
-file * debugfs_open(debug_inode *inode);
+file *debugfs_open(debug_inode *inode);
 
-void debugfs_mm_init(mount_point *mp);
+void debugfs_mm_init(super_block *sb);
 
-void debugfs_ps_init(mount_point *mp);
+void debugfs_ps_init(super_block *sb);
 
-void debugfs_cpu_init(mount_point *mp);
+void debugfs_cpu_init(super_block *sb);
 
-void debugfs_sched_init(mount_point *mp);
+void debugfs_sched_init(super_block *sb);
 
-void debugfs_fs_init(mount_point *mp);
+void debugfs_fs_init(super_block *sb);
 
 #endif

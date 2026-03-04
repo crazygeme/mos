@@ -7,173 +7,196 @@
 #include <fs.h>
 #include <debugfs.h>
 
-static int mount_path_comp(void *k1, void *k2)
+static int sb_path_comp(void *k1, void *k2)
 {
 	const char *left = k1;
 	const char *right = k2;
 	return 0 - strcmp(left, right);
 }
 
-static int mount_path_resolve(mount_point *mp, const char *path,
-			      mount_point **out_mp, char **out_path)
+/*
+ * sb_path_resolve - walk the mount tree from sb following path.
+ *
+ * Descends through child mounts whose keys are strict prefixes of path
+ * (prefix must be followed by '/' or '\0' to avoid false matches),
+ * returning the deepest super_block that owns path and the remaining
+ * path suffix relative to that super_block.
+ *
+ * Returns 1 on success, 0 if sb or path are NULL.
+ */
+static int sb_path_resolve(super_block *sb, const char *path,
+			   super_block **out_sb, char **out_path)
 {
-	key_value_pair *kv = NULL;
-	mount_point *new_mp = NULL;
-	const char *new_path = NULL;
+	key_value_pair *kv;
+	super_block *child;
+	const char *rest;
+	size_t klen;
 
-	if (!mp || !path)
+	if (!sb || !path)
 		return 0;
 
-	if (*path == '\0') {
+	if (*path == '\0')
 		goto done;
-	}
 
-	mutex_lock(&mp->lock);
+	mutex_lock(&sb->s_lock);
 
-	for (kv = hash_first(mp->folders); kv;
-	     kv = hash_next(mp->folders, kv)) {
-		if (strstr(path, kv->key) == path) {
-			mutex_unlock(&mp->lock);
-
-			new_path = path + strlen(kv->key);
-			new_mp = kv->val;
-			return mount_path_resolve(new_mp, new_path, out_mp,
-						  out_path);
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
+		klen = strlen(kv->key);
+		if (strncmp(path, kv->key, klen) == 0 &&
+		    (path[klen] == '/' || path[klen] == '\0')) {
+			child = kv->val;
+			rest = path + klen;
+			mutex_unlock(&sb->s_lock);
+			return sb_path_resolve(child, rest, out_sb, out_path);
 		}
 	}
 
-	mutex_unlock(&mp->lock);
+	mutex_unlock(&sb->s_lock);
 
 done:
-	*out_mp = mp;
+	*out_sb = sb;
 	*out_path = (char *)path;
 	return 1;
 }
 
-mount_point *mount_create()
+super_block *sget(const super_operations *s_op)
 {
-	mount_point *ret = calloc(1, sizeof(*ret));
-	mutex_init(&ret->lock);
-	ret->folders = hash_create(mount_path_comp);
-	ret->files = hash_create(mount_path_comp);
-	ret->ref = 1;
-	return ret;
+	super_block *sb = calloc(1, sizeof(*sb));
+	mutex_init(&sb->s_lock);
+	sb->s_mounts = hash_create(sb_path_comp);
+	sb->s_files = hash_create(sb_path_comp);
+	sb->s_op = s_op;
+	sb->s_ref = 1;
+	return sb;
 }
 
-void mount_ref(mount_point *mp)
+void sb_get(super_block *sb)
 {
-	__sync_add_and_fetch(&mp->ref, 1);
+	__sync_add_and_fetch(&sb->s_ref, 1);
 }
 
-void mount_deref(mount_point *mp)
+void sb_put(super_block *sb)
 {
-	key_value_pair *kv = NULL;
-	debug_inode *di = NULL;
+	key_value_pair *kv;
+	debug_inode *di;
 
-	if (__sync_add_and_fetch(&mp->ref, -1) == 0) {
-		mutex_lock(&mp->lock);
+	if (__sync_add_and_fetch(&sb->s_ref, -1) != 0)
+		return;
 
-		for (kv = hash_first(mp->folders); kv;
-		     kv = hash_next(mp->folders, kv)) {
-			kfree(kv->key);
-			mount_deref(kv->val);
-		}
-		hash_destroy(mp->folders);
+	mutex_lock(&sb->s_lock);
 
-		for (kv = hash_first(mp->files); kv;
-		     kv = hash_next(mp->files, kv)) {
-			kfree(kv->key);
-			di = kv->val;
-			vm_free(di->buf, 1);
-			kfree(di);
-		}
-		hash_destroy(mp->files);
-
-		mutex_unlock(&mp->lock);
-		kfree(mp);
-	}
-}
-
-int do_mount(mount_point *mp, const char *path, const mount_op *op)
-{
-	const char *new_path = NULL;
-	mount_point *new_mp = NULL;
-	mount_point *child_mp = NULL;
-	char *key = NULL;
-
-	if (!mp || !path)
-		return -1;
-
-	if (*path != '/')
-		return EINVAL;
-
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
-		return -1;
-
-	if (new_mp == mp) {
-		if (*new_path == '\0')
-			return EINVAL;
-
-		mutex_lock(&new_mp->lock);
-		if (hash_find(new_mp->folders, new_path)) {
-			mutex_unlock(&new_mp->lock);
-			return EEXIST;
-		}
-
-		child_mp = mount_create();
-		child_mp->op = *op;
-		key = strdup(new_path);
-		hash_insert(new_mp->folders, key, child_mp);
-		mutex_unlock(&new_mp->lock);
-		return 0;
-	}
-
-	return do_mount(new_mp, new_path, op);
-}
-
-int do_unmount(mount_point *mp, const char *path)
-{
-	const char *new_path = NULL;
-	mount_point *new_mp = NULL;
-	key_value_pair *kv = NULL;
-
-	if (!mp || !path)
-		return -1;
-
-	if (*path != '/')
-		return EINVAL;
-
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
-		return -1;
-
-	if (new_mp == mp) {
-		if (*new_path != '\0')
-			return EEXIST;
-
-		mutex_lock(&new_mp->lock);
-		kv = hash_find(new_mp->folders, path);
-		if (!kv) {
-			mutex_unlock(&new_mp->lock);
-			return EEXIST;
-		}
-
-		hash_remove(new_mp->folders, path);
-		mount_deref(kv->val);
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
 		kfree(kv->key);
-		mutex_unlock(&new_mp->lock);
+		sb_put(kv->val);
+	}
+	hash_destroy(sb->s_mounts);
+
+	for (kv = hash_first(sb->s_files); kv;
+	     kv = hash_next(sb->s_files, kv)) {
+		kfree(kv->key);
+		di = kv->val;
+		if (di->buf)
+			vm_free(di->buf, 1);
+		kfree(di);
+	}
+	hash_destroy(sb->s_files);
+
+	mutex_unlock(&sb->s_lock);
+
+	if (sb->s_op && sb->s_op->put_super)
+		sb->s_op->put_super(sb);
+
+	kfree(sb);
+}
+
+int vfs_mount(super_block *sb, const char *path, const super_operations *s_op)
+{
+	key_value_pair *kv;
+	super_block *child;
+	char *key;
+	size_t klen;
+
+	if (!sb || !path || !s_op)
+		return -EINVAL;
+
+	if (*path != '/')
+		return -EINVAL;
+
+	mutex_lock(&sb->s_lock);
+
+	/* Reject duplicate direct registration */
+	if (hash_find(sb->s_mounts, path)) {
+		mutex_unlock(&sb->s_lock);
+		return -EEXIST;
+	}
+
+	/* Delegate to an existing child that is a strict prefix of path */
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
+		klen = strlen(kv->key);
+		if (strncmp(path, kv->key, klen) == 0 &&
+		    (path[klen] == '/' || path[klen] == '\0')) {
+			child = kv->val;
+			mutex_unlock(&sb->s_lock);
+			return vfs_mount(child, path + klen, s_op);
+		}
+	}
+
+	/* No prefix match: register as a direct child */
+	child = sget(s_op);
+	key = strdup(path);
+	hash_insert(sb->s_mounts, key, child);
+	mutex_unlock(&sb->s_lock);
+	return 0;
+}
+
+int vfs_umount(super_block *sb, const char *path)
+{
+	key_value_pair *kv;
+	super_block *child;
+	size_t klen;
+
+	if (!sb || !path || *path != '/')
+		return -EINVAL;
+
+	mutex_lock(&sb->s_lock);
+
+	/* Direct child mount? */
+	kv = hash_find(sb->s_mounts, path);
+	if (kv) {
+		child = kv->val;
+		hash_remove_at(sb->s_mounts, kv);
+		mutex_unlock(&sb->s_lock);
+		kfree(kv->key);
+		sb_put(child);
 		return 0;
 	}
 
-	return do_unmount(new_mp, new_path);
+	/* Prefix match: delegate to child */
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
+		klen = strlen(kv->key);
+		if (strncmp(path, kv->key, klen) == 0 &&
+		    (path[klen] == '/' || path[klen] == '\0')) {
+			child = kv->val;
+			mutex_unlock(&sb->s_lock);
+			return vfs_umount(child, path + klen);
+		}
+	}
+
+	mutex_unlock(&sb->s_lock);
+	return -ENOENT;
 }
 
 /*
- * Create a file struct from an inode obtained from a mount point.
- * The file takes ownership of the inode.
+ * sb_open_inode - wrap an inode in a new open file struct.
+ * The returned file takes ownership of the inode (freed via f_op->release).
  */
-static file * mount_inode_open(inode *node, int flag)
+static file *sb_open_inode(inode *node, int flag)
 {
-	file * fp = calloc(1, sizeof(*fp));
+	file *fp = calloc(1, sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_op = node->i_fop;
 	fp->f_count = 1;
@@ -182,96 +205,102 @@ static file * mount_inode_open(inode *node, int flag)
 	return fp;
 }
 
-file * mount_open(mount_point *mp, const char *path, int flag, const char *mode)
+file *vfs_open(super_block *sb, const char *path, int flag)
 {
-	const char *new_path = NULL;
-	mount_point *new_mp = NULL;
-	key_value_pair *kv = NULL;
-	inode *node = NULL;
+	super_block *target_sb;
+	char *rel_path;
+	key_value_pair *kv;
+	inode *node;
 
-	if (!mp || !path)
+	if (!sb || !path)
 		return NULL;
 
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
+	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
 		return NULL;
 
-	/* Delegate to the resolved sub-mount */
-	if (new_mp != mp)
-		return mount_open(new_mp, new_path, flag, mode);
+	/* sb_path_resolve descends into children; if target differs, re-enter */
+	if (target_sb != sb)
+		return vfs_open(target_sb, rel_path, flag);
 
-	/* Open the mount root (empty path or just "/") */
-	if (*new_path == '\0' ||
-	    (*new_path == '/' && *(new_path + 1) == '\0')) {
-		if (!new_mp->op.get_inode)
+	/* Opening the mount root (empty path suffix means we landed here) */
+	if (*rel_path == '\0') {
+		if (!target_sb->s_op || !target_sb->s_op->get_root)
 			return NULL;
-		node = new_mp->op.get_inode(new_mp);
+		node = target_sb->s_op->get_root(target_sb);
 		if (!node)
 			return NULL;
-		return mount_inode_open(node, flag);
+		return sb_open_inode(node, flag);
 	}
 
-	/* Look up a registered debug file */
-	mutex_lock(&new_mp->lock);
-	kv = hash_find(new_mp->files, new_path);
-	mutex_unlock(&new_mp->lock);
+	/* Look up a registered pseudo-file */
+	mutex_lock(&target_sb->s_lock);
+	kv = hash_find(target_sb->s_files, rel_path);
+	mutex_unlock(&target_sb->s_lock);
 
 	if (kv)
 		return debugfs_open(kv->val);
 
-	/* No sub-file match and no sub-mount: try the mount's root inode */
-	if (!new_mp->op.get_inode)
-		return NULL;
-
-	node = new_mp->op.get_inode(new_mp);
-	if (!node)
-		return NULL;
+	/*
+	 * Real filesystem (e.g. ext4): delegate full path resolution to the
+	 * filesystem's own open operation.
+	 */
+	if (target_sb->s_op && target_sb->s_op->open)
+		return target_sb->s_op->open(target_sb, rel_path, flag);
 
 	/*
-	 * For mounts that don't handle sub-paths (devices), discard the inode
-	 * and return NULL since the path wasn't found.
+	 * Pseudo-filesystem fallback: the super_block has a root inode but
+	 * no path-aware open (e.g. a block device mount accessed via a
+	 * trailing slash).
 	 */
-	if (!node->i_fop) {
-		free(node);
-		return NULL;
+	if (target_sb->s_op && target_sb->s_op->get_root) {
+		node = target_sb->s_op->get_root(target_sb);
+		if (!node)
+			return NULL;
+		if (!node->i_fop) {
+			free(node);
+			return NULL;
+		}
+		return sb_open_inode(node, flag);
 	}
 
-	return mount_inode_open(node, flag);
+	return NULL;
 }
 
-int mount_add_file(mount_point *mp, const char *path,
-		   void (*fill)(void *buf, size_t size))
+int vfs_create_file(super_block *sb, const char *path,
+		    void (*fill)(void *buf, size_t size))
 {
-	const char *new_path = NULL;
-	mount_point *new_mp = NULL;
-	key_value_pair *kv = NULL;
-	char *key = NULL;
-	debug_inode *val = NULL;
+	super_block *target_sb;
+	char *rel_path;
+	key_value_pair *kv;
+	char *key;
+	debug_inode *val;
 
-	if (!mp || !path)
-		return -1;
+	if (!sb || !path)
+		return -EINVAL;
 
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
-		return -1;
+	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
+		return -EINVAL;
 
-	if (*new_path != '/')
-		return EINVAL;
+	/* rel_path must be a single filename component, e.g. "/meminfo" */
+	if (*rel_path != '/')
+		return -EINVAL;
 
-	if (strchr(new_path + 1, '/') != NULL)
-		return EINVAL;
+	if (strchr(rel_path + 1, '/') != NULL)
+		return -EINVAL;
 
-	mutex_lock(&new_mp->lock);
-	kv = hash_find(new_mp->files, new_path);
-	if (kv != NULL) {
-		mutex_unlock(&new_mp->lock);
-		return EEXIST;
+	mutex_lock(&target_sb->s_lock);
+	kv = hash_find(target_sb->s_files, rel_path);
+	if (kv) {
+		mutex_unlock(&target_sb->s_lock);
+		return -EEXIST;
 	}
 
-	key = strdup(new_path);
+	key = strdup(rel_path);
 	val = malloc(sizeof(*val));
 	val->buf = NULL;
 	val->fill = fill;
 
-	hash_insert(new_mp->files, key, val);
-	mutex_unlock(&new_mp->lock);
+	hash_insert(target_sb->s_files, key, val);
+	mutex_unlock(&target_sb->s_lock);
 	return 0;
 }

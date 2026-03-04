@@ -376,28 +376,28 @@ static const file_operations ext4_dir_fops = {
 	.poll = ext4_file_poll,
 };
 
-file * fs_alloc_filep_normal(void *content)
+file *fs_alloc_filep_normal(void *content)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_op = &ext4_file_iops;
 	node->i_fop = &ext4_file_fops;
 	node->i_private = content;
 
-	file * fp = calloc(1, sizeof(*fp));
+	file *fp = calloc(1, sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_op = &ext4_file_fops;
 	fp->f_count = 1;
 	return fp;
 }
 
-file * fs_alloc_filep_dir(void *content)
+file *fs_alloc_filep_dir(void *content)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_op = &ext4_dir_iops;
 	node->i_fop = &ext4_dir_fops;
 	node->i_private = content;
 
-	file * fp = calloc(1, sizeof(*fp));
+	file *fp = calloc(1, sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_op = &ext4_dir_fops;
 	fp->f_count = 1;

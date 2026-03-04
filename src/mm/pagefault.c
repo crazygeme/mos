@@ -119,7 +119,7 @@ extern phymm_page *phymm_pages;
 /*
  * Handle page fault with fd attached.
  */
-static int pf_handle_invalid_file_map(unsigned address, file * f,
+static int pf_handle_invalid_file_map(unsigned address, file *f,
 				      unsigned offset, int prot, int flag)
 {
 	int ret = 0;

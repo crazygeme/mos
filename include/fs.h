@@ -16,13 +16,13 @@ typedef struct _block block;
 #define S_ISGID 0002000
 #define S_ISVTX 0001000
 
-#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
-#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
-#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
-#define S_ISCHR(m) (((m) & S_IFMT) == S_IFCHR)
-#define S_ISBLK(m) (((m) & S_IFMT) == S_IFBLK)
-#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)
-#define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
+#define S_ISLNK(m) (((m)&S_IFMT) == S_IFLNK)
+#define S_ISREG(m) (((m)&S_IFMT) == S_IFREG)
+#define S_ISDIR(m) (((m)&S_IFMT) == S_IFDIR)
+#define S_ISCHR(m) (((m)&S_IFMT) == S_IFCHR)
+#define S_ISBLK(m) (((m)&S_IFMT) == S_IFBLK)
+#define S_ISFIFO(m) (((m)&S_IFMT) == S_IFIFO)
+#define S_ISSOCK(m) (((m)&S_IFMT) == S_IFSOCK)
 
 #define S_IRWXU 00700
 #define S_IRUSR 00400
@@ -112,7 +112,7 @@ struct _file {
 };
 
 typedef struct _file_descriptor {
-	file * fp;
+	file *fp;
 	unsigned flag;
 	unsigned used;
 } file_descriptor;
@@ -169,13 +169,13 @@ int fs_chmod(const char *pathname, uint32_t mode);
 
 int fs_fchmod(int fd, uint32_t mode);
 
-file * fs_open_file(const char *path, int flag, char *mode, int follow_link);
+file *fs_open_file(const char *path, int flag, char *mode, int follow_link);
 
-int fs_put_file(file * f);
+int fs_put_file(file *f);
 
-file * fs_alloc_filep_normal(void *content);
+file *fs_alloc_filep_normal(void *content);
 
-file * fs_alloc_filep_dir(void *content);
+file *fs_alloc_filep_dir(void *content);
 
 /* Increment file reference count (analogous to Linux get_file()) */
 #define fs_get_file(f) __sync_add_and_fetch(&(((file *)f)->f_count), 1)

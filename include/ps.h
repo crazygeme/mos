@@ -204,7 +204,7 @@ typedef volatile struct _task_struct {
 	char *cwd;
 	unsigned fork_flag;
 	cond_t vfork_event;
-	mount_point *root;
+	super_block *root;
 	unsigned umask;
 	unsigned niv_switches;
 	unsigned user_tickets;

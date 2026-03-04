@@ -8,9 +8,9 @@ i386-elf version of gdb for debugging
 installation
 ------------------------------------------------
 make
-./run.sh 		:for general purpos
-./run.sh debug 		:for debugging
-./run.sh help		:print help info
+* ./run.sh 			:for general purpos
+* ./run.sh debug 		:for debugging
+* ./run.sh help		:print help info
 
 
 

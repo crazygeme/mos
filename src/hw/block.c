@@ -179,80 +179,124 @@ const char *block_type_name(block *b)
 	}
 }
 
-static int file_close(void *inode)
-{
-	int ret;
-	ext4_file *file = inode;
-	ret = ext4_fclose(file);
-	free(inode);
+unsigned fs_read_size = 0;
+unsigned fs_write_size = 0;
 
-	if (ret != EOK)
-		return -1;
+static int ext4_file_release(inode *node, file *fp)
+{
+	ext4_file *f = node->i_private;
+	ext4_fclose(f);
+	free(f);
+	free(node);
 	return 0;
 }
 
-int file_seek(void *f, uint64_t offset, uint32_t origin)
+static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	int ret = ext4_fseek(f, offset, origin);
+	ext4_file *f = fp->f_inode->i_private;
+	size_t rcnt = 0;
+	/* Sync ext4 cursor with f_pos if they diverged (e.g. after pread) */
+	if ((loff_t)ext4_ftell(f) != *pos)
+		ext4_fseek(f, *pos, SEEK_SET);
+	int ret = ext4_fread(f, buf, size, &rcnt);
+	fs_read_size += rcnt;
 	if (ret != EOK)
-		return (0 - ret);
-
-	return ext4_ftell(f);
+		return -1;
+	*pos += rcnt;
+	return (ssize_t)rcnt;
 }
 
-int file_llseek(ext4_file *f, unsigned high, unsigned low, uint64_t *result,
-		uint32_t origin)
+static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
+			       loff_t *pos)
 {
-	uint64_t offset = (uint64_t)high << 32 | (uint64_t)low;
+	ext4_file *f = fp->f_inode->i_private;
+	size_t wcnt = 0;
+	if ((loff_t)ext4_ftell(f) != *pos)
+		ext4_fseek(f, *pos, SEEK_SET);
+	int ret = ext4_fwrite(f, buf, size, &wcnt);
+	fs_write_size += wcnt;
+	if (ret != EOK)
+		return -1;
+	*pos += wcnt;
+	return (ssize_t)wcnt;
+}
+
+static loff_t ext4_file_llseek(file *fp, loff_t offset, int whence)
+{
+	ext4_file *f = fp->f_inode->i_private;
 	int ret;
-	switch (origin) {
+	switch (whence) {
 	case SEEK_SET:
-		if (offset > f->fsize) {
+		if ((uint64_t)offset > f->fsize) {
 			ret = ext4_fenlarge(f, offset);
 			if (ret != EOK)
-				return (0 - ret);
+				return (loff_t)(0 - ret);
 		}
 		break;
 	case SEEK_CUR:
-		if ((offset + f->fpos) > f->fsize) {
+		if ((uint64_t)(offset + f->fpos) > f->fsize) {
 			ret = ext4_fenlarge(f, offset + f->fpos);
 			if (ret != EOK)
-				return (0 - ret);
+				return (loff_t)(0 - ret);
 		}
 		break;
 	case SEEK_END:
-		if (offset > f->fsize) {
+		if ((uint64_t)offset > f->fsize)
 			return -EINVAL;
-		}
 		break;
 	}
-	ret = ext4_fseek(f, offset, origin);
-
+	ret = ext4_fseek(f, offset, whence);
 	if (ret != EOK)
-		return (0 - ret);
-
-	if (result)
-		*result = ext4_ftell(f);
-	return ext4_ftell(f);
+		return (loff_t)(0 - ret);
+	return (loff_t)ext4_ftell(f);
 }
 
-static int dir_close(void *inode)
+static int ext4_file_poll(file *fp, unsigned type)
 {
-	int ret;
-	ext4_dir *dir = inode;
-	ret = ext4_dir_close(dir);
-	free(inode);
-	if (ret != EOK)
+	if (type == FS_POLL_EXCEPT)
 		return -1;
 	return 0;
 }
 
-static int dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
+static int ext4_file_getattr(inode *node, struct stat *s)
 {
-	int ret = 0;
+	ext4_file *f = node->i_private;
+	return ext4_fstat(f, s);
+}
+
+static int ext4_file_setattr(inode *node, uint32_t mode)
+{
+	ext4_file *f = node->i_private;
+	return ext4_fchmod(f, mode);
+}
+
+static const inode_operations ext4_file_iops = {
+	.getattr = ext4_file_getattr,
+	.setattr = ext4_file_setattr,
+};
+
+static const file_operations ext4_file_fops = {
+	.release = ext4_file_release,
+	.read = ext4_file_read,
+	.write = ext4_file_write,
+	.llseek = ext4_file_llseek,
+	.poll = ext4_file_poll,
+};
+
+static int ext4_dir_release(inode *node, file *fp)
+{
+	ext4_dir *dir = node->i_private;
+	ext4_dir_close(dir);
+	free(dir);
+	free(node);
+	return 0;
+}
+
+static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
+{
+	ext4_dir *dir = fp->f_inode->i_private;
 	struct linux_dirent *dirp = buf;
 	ext4_direntry *entry = NULL;
-	ext4_dir *dir = inode;
 	struct linux_dirent *prev = NULL;
 	int retcount = 0;
 	int len;
@@ -260,19 +304,15 @@ static int dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
 
 	while (count > 0) {
 		entry = ext4_dir_entry_next(dir);
-		// ret = fs_read(fd, 0, entry, sizeof(*entry));
 		if (entry == NULL) {
-			if (prev) {
+			if (prev)
 				prev->d_off = retcount;
-			}
 			break;
 		}
-		// entry->name[entry->name_length] = '\0';
 		len = ROUND_UP(NAME_OFFSET() + strlen(entry->name) + 1);
 		if (count < len) {
-			if (prev) {
+			if (prev)
 				prev->d_off = retcount;
-			}
 			break;
 		}
 		memset(dirp, 0, len);
@@ -287,113 +327,79 @@ static int dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
 		prev = dirp;
 		dirp = (char *)dirp + dirp->d_reclen;
 	}
-done:
-	if (rcnt)
-		*rcnt = retcount;
-	return 0;
+	*pos += retcount;
+	return (ssize_t)retcount;
 }
 
-static int ext4_select(void *inode, unsigned type)
+static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 {
-	if (type == FS_SELECT_EXCEPT)
-		return -1;
-
-	return 0;
-}
-
-static int dir_stat(ext4_dir *dir, struct stat *s)
-{
-	return ext4_fstat(&dir->f, s);
-}
-
-static int dir_seek(void *dir, uint64_t offset, uint32_t origin)
-{
+	ext4_dir *dir = fp->f_inode->i_private;
 	ext4_direntry *entry = NULL;
 	int len;
-	int ret = 0;
 	int cur_pos = 0;
-	struct linux_dirent *dirp;
-	int count = offset;
-	int loops = 0;
-	int i;
-	if (origin != SEEK_SET)
+	int count = (int)offset;
+
+	if (whence != SEEK_SET)
 		return -EACCES;
 
-	if (offset < sizeof(struct linux_dirent)) {
+	if (offset < (loff_t)sizeof(struct linux_dirent))
 		return 0;
-	}
 
 	ext4_dir_entry_rewind(dir);
 	while (count > 0) {
 		entry = ext4_dir_entry_next(dir);
-		if (entry == NULL) {
+		if (entry == NULL)
 			break;
-		}
 		len = ROUND_UP(NAME_OFFSET() + strlen(entry->name) + 1);
-		if (count < len) {
-			return (cur_pos + len);
-		}
-		loops++;
+		if (count < len)
+			return (loff_t)(cur_pos + len);
 		cur_pos += len;
 		count -= len;
 	}
-	return cur_pos;
+	return (loff_t)cur_pos;
 }
 
-unsigned fs_read_size = 0;
-unsigned fs_write_size = 0;
-
-static int ext4_read(void *inode, void *buf, size_t size, size_t *rcnt)
+static int ext4_dir_getattr(inode *node, struct stat *s)
 {
-	int ret = ext4_fread(inode, buf, size, rcnt);
-	if (rcnt)
-		fs_read_size += *rcnt;
-
-	return ret;
+	ext4_dir *dir = node->i_private;
+	return ext4_fstat(&dir->f, s);
 }
 
-static int ext4_write(void *inode, const void *buf, size_t size, size_t *wcnt)
-{
-	int ret = ext4_fwrite(inode, buf, size, wcnt);
-	if (wcnt)
-		fs_write_size += *wcnt;
-
-	return ret;
-}
-
-static fileop file_op = {
-	.read = ext4_read,
-	.write = ext4_write,
-	.close = file_close,
-	.seek = file_seek,
-	.llseek = file_llseek,
-	.stat = ext4_fstat,
-	.tell = ext4_ftell,
-	.select = ext4_select,
+static const inode_operations ext4_dir_iops = {
+	.getattr = ext4_dir_getattr,
 };
 
-static fileop dir_op = {
-	.read = dir_read,
-	.close = dir_close,
-	.seek = dir_seek,
-	.stat = dir_stat,
-	.select = ext4_select,
+static const file_operations ext4_dir_fops = {
+	.release = ext4_dir_release,
+	.read = ext4_dir_read,
+	.llseek = ext4_dir_llseek,
+	.poll = ext4_file_poll,
 };
 
-filep fs_alloc_filep_normal(void *content)
+file * fs_alloc_filep_normal(void *content)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	fp->inode = content;
-	fp->ref_cnt = 1;
-	fp->op = file_op;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_op = &ext4_file_iops;
+	node->i_fop = &ext4_file_fops;
+	node->i_private = content;
+
+	file * fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_op = &ext4_file_fops;
+	fp->f_count = 1;
 	return fp;
 }
 
-filep fs_alloc_filep_dir(void *content)
+file * fs_alloc_filep_dir(void *content)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	fp->inode = content;
-	fp->ref_cnt = 1;
-	fp->op = dir_op;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_op = &ext4_dir_iops;
+	node->i_fop = &ext4_dir_fops;
+	node->i_private = content;
+
+	file * fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_op = &ext4_dir_fops;
+	fp->f_count = 1;
 	return fp;
 }

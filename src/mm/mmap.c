@@ -94,7 +94,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		region->prot = prot;
 		region->flag = flag;
 		if (fd) {
-			fs_refrence(fd);
+			fs_get_file(fd);
 		}
 		region->offset = offset;
 		hash_insert(table, now, region);
@@ -204,7 +204,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 	RELOAD_CR3();
 
 	if (region->node) {
-		fs_destroy(region->node);
+		fs_put_file(region->node);
 	}
 	kfree(region);
 

@@ -6,36 +6,31 @@
 #include <mount.h>
 #include <ps.h>
 
-static int null_read(void *inode, void *buf, size_t size, size_t *rcnt)
+static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	memset(buf, 0, size);
-	if (rcnt)
-		*rcnt = size;
+	return (ssize_t)size;
+}
+
+static ssize_t null_write(file *fp, const void *buf, size_t size, loff_t *pos)
+{
+	return (ssize_t)size;
+}
+
+static int null_release(inode *node, file *fp)
+{
+	free(node);
 	return 0;
 }
 
-static int null_write(void *inode, const void *buf, size_t size, size_t *wcnt)
+static int null_poll(file *fp, unsigned type)
 {
-	// do nothing!
-	if (wcnt)
-		*wcnt = size;
-	return 0;
-}
-
-static int null_close(void *inode)
-{
-	return 0;
-}
-
-static int null_select(void *inode, unsigned type)
-{
-	if (type == FS_SELECT_EXCEPT)
+	if (type == FS_POLL_EXCEPT)
 		return -1;
-
 	return 0;
 }
 
-static int null_stat(void *inode, struct stat *s)
+static int null_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |
@@ -52,25 +47,28 @@ static int null_stat(void *inode, struct stat *s)
 	return 0;
 }
 
-static fileop nullop = {
-	.read = null_read,
-	.write = null_write,
-	.close = null_close,
-	.stat = null_stat,
-	.select = null_select,
+static const inode_operations null_iops = {
+	.getattr = null_getattr,
 };
 
-static filep alloc(mount_point *mp)
+static const file_operations null_fops = {
+	.release = null_release,
+	.read = null_read,
+	.write = null_write,
+	.poll = null_poll,
+};
+
+static inode *null_get_inode(mount_point *mp)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	fp->inode = NULL;
-	fp->ref_cnt = 1;
-	fp->op = nullop;
-	return fp;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_mode = S_IFCHR;
+	node->i_op = &null_iops;
+	node->i_fop = &null_fops;
+	return node;
 }
 
 static mount_op mp = {
-	.alloc = alloc,
+	.get_inode = null_get_inode,
 };
 
 void null_init()

@@ -396,7 +396,7 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 			continue;
 
 		task->fds[i] = cur->fds[i];
-		fs_refrence(cur->fds[i].fp);
+		fs_get_file(cur->fds[i].fp);
 	}
 	mutex_unlock(&cur->fd_lock);
 }
@@ -879,7 +879,7 @@ static void close_fp_callback(task_struct *task)
 		if (task->fds[i].fp == NULL)
 			continue;
 
-		fs_destroy(task->fds[i].fp);
+		fs_put_file(task->fds[i].fp);
 	}
 }
 

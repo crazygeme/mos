@@ -119,7 +119,7 @@ extern phymm_page *phymm_pages;
 /*
  * Handle page fault with fd attached.
  */
-static int pf_handle_invalid_file_map(unsigned address, filep f,
+static int pf_handle_invalid_file_map(unsigned address, file * f,
 				      unsigned offset, int prot, int flag)
 {
 	int ret = 0;
@@ -135,7 +135,7 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 	 * Some of the file map are globally same, especially those
 	 * runtime libraries.
 	 */
-	phy = mmap_cache_find(f->name, offset);
+	phy = mmap_cache_find(f->f_name, offset);
 	if (phy != NULL) {
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
 		RELOAD_CR3();
@@ -151,7 +151,7 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
 	RELOAD_CR3();
 
-	ff = f->inode;
+	ff = f->f_inode->i_private;
 
 	/*
 	 * Some program will map a region larger than file size.
@@ -181,7 +181,7 @@ static int pf_handle_invalid_file_map(unsigned address, filep f,
 	}
 
 READ_DONE:
-	mmap_cache_add(f->name, offset, phy);
+	mmap_cache_add(f->f_name, offset, phy);
 	page_fault_file_read += rcnt;
 
 DONE:

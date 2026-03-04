@@ -15,11 +15,10 @@ typedef struct _proc_inode {
 	struct linux_dirent *buf;
 } proc_inode;
 
-static int proc_dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
+static ssize_t proc_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	proc_inode *node = inode;
-	unsigned left = 0;
-	size_t read_size = 0;
+	proc_inode *node = fp->f_inode->i_private;
+	size_t left, read_size = 0;
 
 	if (!node->buf || !node->length)
 		goto done;
@@ -30,34 +29,32 @@ static int proc_dir_read(void *inode, void *buf, size_t count, size_t *rcnt)
 	node->offset += read_size;
 
 done:
-	if (rcnt)
-		*rcnt = read_size;
+	*pos += read_size;
+	return (ssize_t)read_size;
+}
+
+static int proc_dir_release(inode *node, file *fp)
+{
+	proc_inode *pi = node->i_private;
+	kfree(pi->buf);
+	kfree(pi);
+	free(node);
 	return 0;
 }
 
-static int proc_dir_close(void *inode)
-{
-	proc_inode *node = inode;
-	kfree(node->buf);
-	kfree(inode);
-	return 0;
-}
-
-static int proc_dir_seek(void *inode, uint64_t offset, uint32_t origin)
+static loff_t proc_dir_llseek(file *fp, loff_t offset, int whence)
 {
 	return 0;
 }
 
-static int proc_dir_select(void *inode, unsigned type)
+static int proc_dir_poll(file *fp, unsigned type)
 {
-	if (type == FS_SELECT_EXCEPT || type == FS_SELECT_WRITE)
+	if (type == FS_POLL_EXCEPT || type == FS_POLL_WRITE)
 		return -1;
-
-	// can read any time
 	return 0;
 }
 
-static int proc_dir_stat(void *inode, struct stat *s)
+static int proc_dir_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR |
@@ -76,21 +73,9 @@ static int proc_dir_stat(void *inode, struct stat *s)
 	return 0;
 }
 
-static int proc_dir_ioctl(void *inode, unsigned cmd, void *buf)
+static int proc_dir_ioctl(file *fp, unsigned cmd, void *buf)
 {
 	return 0;
-}
-
-static filep proc_dir_open(void *inode, const char *path, int flag, char *mode)
-{
-	proc_inode *node = inode;
-	mount_point *mp = node->mp;
-
-	if (strcmp(path, "/") == 0) {
-		return mp->op.alloc(mp);
-	}
-
-	return NULL;
 }
 
 static void proc_dir_gen(mount_point *mp, proc_inode *node)
@@ -106,32 +91,29 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 	     kv = hash_next(mp->folders, kv)) {
 		size += ROUND_UP(NAME_OFFSET() + strlen(kv->key));
 	}
-
 	for (kv = hash_first(mp->files); kv; kv = hash_next(mp->files, kv)) {
 		size += ROUND_UP(NAME_OFFSET() + strlen(kv->key));
 	}
-
 	mutex_unlock(&mp->lock);
-	// folder of .
+
+	/* "." and ".." entries */
 	size += ROUND_UP(NAME_OFFSET() + 2);
-	// folder of ..
 	size += ROUND_UP(NAME_OFFSET() + 3);
 
 	buf = kmalloc(size);
 	begin = buf;
 	node->offset = 0;
 	node->length = size;
-	node->buf = buf;
+	node->buf = (struct linux_dirent *)buf;
 
-	// fill content
-	dirp = buf;
+	dirp = (struct linux_dirent *)buf;
 	dirp->d_ino = DBGFS_INODE;
 	strcpy(dirp->d_name, ".");
 	dirp->d_reclen = ROUND_UP(NAME_OFFSET() + 2);
 	dirp->d_off = buf + dirp->d_reclen - begin;
 	buf += dirp->d_reclen;
 
-	dirp = buf;
+	dirp = (struct linux_dirent *)buf;
 	dirp->d_ino = DBGFS_INODE;
 	strcpy(dirp->d_name, "..");
 	dirp->d_reclen = ROUND_UP(NAME_OFFSET() + 3);
@@ -141,7 +123,7 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 	mutex_lock(&mp->lock);
 	for (kv = hash_first(mp->folders); kv;
 	     kv = hash_next(mp->folders, kv)) {
-		dirp = buf;
+		dirp = (struct linux_dirent *)buf;
 		dirp->d_ino = DBGFS_INODE;
 		strcpy(dirp->d_name, (char *)kv->key + 1);
 		dirp->d_reclen = ROUND_UP(NAME_OFFSET() + strlen(kv->key));
@@ -149,7 +131,7 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 		buf += dirp->d_reclen;
 	}
 	for (kv = hash_first(mp->files); kv; kv = hash_next(mp->files, kv)) {
-		dirp = buf;
+		dirp = (struct linux_dirent *)buf;
 		dirp->d_ino = DBGFS_INODE;
 		strcpy(dirp->d_name, (char *)kv->key + 1);
 		dirp->d_reclen = ROUND_UP(NAME_OFFSET() + strlen(kv->key));
@@ -159,30 +141,34 @@ static void proc_dir_gen(mount_point *mp, proc_inode *node)
 	mutex_unlock(&mp->lock);
 }
 
-static fileop proc_dirop = {
-	.open = proc_dir_open,
-	.read = proc_dir_read,
-	.close = proc_dir_close,
-	.seek = proc_dir_seek,
-	.stat = proc_dir_stat,
-	.select = proc_dir_select,
+static const inode_operations proc_dir_iops = {
+	.getattr = proc_dir_getattr,
 };
 
-static filep proc_dir_alloc(mount_point *mp)
+static const file_operations proc_dir_fops = {
+	.release = proc_dir_release,
+	.read = proc_dir_read,
+	.llseek = proc_dir_llseek,
+	.poll = proc_dir_poll,
+	.ioctl = proc_dir_ioctl,
+};
+
+static inode *proc_get_inode(mount_point *mp)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	proc_inode *inode = malloc(sizeof(*inode));
-	inode->mp = mp;
-	proc_dir_gen(mp, inode);
-	fp->inode = inode;
-	fp->ref_cnt = 1;
-	fp->op = proc_dirop;
-	fp->mode = S_IFDIR;
-	return fp;
+	proc_inode *pi = malloc(sizeof(*pi));
+	pi->mp = mp;
+	proc_dir_gen(mp, pi);
+
+	inode *node = calloc(1, sizeof(*node));
+	node->i_mode = S_IFDIR;
+	node->i_op = &proc_dir_iops;
+	node->i_fop = &proc_dir_fops;
+	node->i_private = pi;
+	return node;
 }
 
 static mount_op proc_dir_mp = {
-	.alloc = proc_dir_alloc,
+	.get_inode = proc_get_inode,
 };
 
 void debugfs_init()

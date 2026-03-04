@@ -2,11 +2,10 @@
 #include <time.h>
 #include <debugfs.h>
 
-static int debugfs_read(void *inode, void *buf, size_t size, size_t *rcnt)
+static ssize_t debugfs_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	debug_inode *node = inode;
-	unsigned left = 0;
-	size_t read_size = 0;
+	debug_inode *node = fp->f_inode->i_private;
+	size_t left, read_size = 0;
 
 	if (!node->buf || !node->len)
 		goto done;
@@ -17,40 +16,36 @@ static int debugfs_read(void *inode, void *buf, size_t size, size_t *rcnt)
 	node->offset += read_size;
 
 done:
-	if (rcnt)
-		*rcnt = read_size;
+	*pos += read_size;
+	return (ssize_t)read_size;
+}
+
+static ssize_t debugfs_write(file *fp, const void *buf, size_t size,
+			     loff_t *pos)
+{
+	return (ssize_t)size;
+}
+
+static int debugfs_release(inode *node, file *fp)
+{
+	debug_inode *di = node->i_private;
+	di->len = 0;
+	di->offset = 0;
+	vm_free(di->buf, 1);
+	di->buf = NULL;
+	/* node wraps a hash-table-owned debug_inode; only free the wrapper */
+	free(node);
 	return 0;
 }
 
-static int debugfs_write(void *inode, const void *buf, size_t size,
-			 size_t *wcnt)
+static int debugfs_poll(file *fp, unsigned type)
 {
-	// do nothing!
-	if (wcnt)
-		*wcnt = size;
-
-	return 0;
-}
-
-static int debugfs_close(void *inode)
-{
-	debug_inode *node = inode;
-	node->len = 0;
-	node->offset = 0;
-	vm_free(node->buf, 1);
-	node->buf = NULL;
-	return 0;
-}
-
-static int debugfs_select(void *inode, unsigned type)
-{
-	if (type == FS_SELECT_EXCEPT)
+	if (type == FS_POLL_EXCEPT)
 		return -1;
-
 	return 0;
 }
 
-static int debugfs_stat(void *inode, struct stat *s)
+static int debugfs_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
 	s->st_mode = (S_IFREG | S_IRUSR | S_IRGRP | S_IROTH);
@@ -66,24 +61,34 @@ static int debugfs_stat(void *inode, struct stat *s)
 	return 0;
 }
 
-static fileop debugfs_op = {
-	.read = debugfs_read,
-	.write = debugfs_write,
-	.close = debugfs_close,
-	.stat = debugfs_stat,
-	.select = debugfs_select,
+static const inode_operations debugfs_iops = {
+	.getattr = debugfs_getattr,
 };
 
-filep debugfs_open(debug_inode *inode)
+static const file_operations debugfs_fops = {
+	.release = debugfs_release,
+	.read = debugfs_read,
+	.write = debugfs_write,
+	.poll = debugfs_poll,
+};
+
+file * debugfs_open(debug_inode *di)
 {
-	filep fp = calloc(1, sizeof(*fp));
-	inode->buf = vm_alloc(1);
-	inode->fill(inode->buf, PAGE_SIZE);
-	inode->len = strlen(inode->buf + 1);
-	inode->offset = 0;
-	fp->inode = inode;
-	fp->ref_cnt = 1;
-	fp->op = debugfs_op;
-	fp->mode = S_IFREG;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_mode = S_IFREG;
+	node->i_op = &debugfs_iops;
+	node->i_fop = &debugfs_fops;
+	node->i_private = di;
+
+	di->buf = vm_alloc(1);
+	di->fill(di->buf, PAGE_SIZE);
+	di->len = strlen(di->buf);
+	di->offset = 0;
+
+	file * fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_op = &debugfs_fops;
+	fp->f_count = 1;
+	fp->f_mode = S_IFREG;
 	return fp;
 }

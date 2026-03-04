@@ -14,7 +14,7 @@ typedef struct _debug_inode {
 
 void debugfs_init();
 
-filep debugfs_open(debug_inode *inode);
+file * debugfs_open(debug_inode *inode);
 
 void debugfs_mm_init(mount_point *mp);
 

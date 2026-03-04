@@ -237,7 +237,7 @@ void tty_movecurse(unsigned c)
 	}
 }
 
-int tty_ioctl(void *inode, unsigned cmd, void *buf)
+int tty_ioctl(file *file, unsigned cmd, void *buf)
 {
 	switch (cmd) {
 	case TCGETS: {

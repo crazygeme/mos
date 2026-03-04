@@ -6,6 +6,7 @@
 #include <lock.h>
 #include <fs.h>
 #include <debugfs.h>
+
 static int mount_path_comp(void *k1, void *k2)
 {
 	const char *left = k1;
@@ -45,7 +46,7 @@ static int mount_path_resolve(mount_point *mp, const char *path,
 
 done:
 	*out_mp = mp;
-	*out_path = path;
+	*out_path = (char *)path;
 	return 1;
 }
 
@@ -67,8 +68,7 @@ void mount_ref(mount_point *mp)
 void mount_deref(mount_point *mp)
 {
 	key_value_pair *kv = NULL;
-	key_value_pair *next = NULL;
-	debug_inode *inode = NULL;
+	debug_inode *di = NULL;
 
 	if (__sync_add_and_fetch(&mp->ref, -1) == 0) {
 		mutex_lock(&mp->lock);
@@ -78,21 +78,18 @@ void mount_deref(mount_point *mp)
 			kfree(kv->key);
 			mount_deref(kv->val);
 		}
-
 		hash_destroy(mp->folders);
 
 		for (kv = hash_first(mp->files); kv;
 		     kv = hash_next(mp->files, kv)) {
 			kfree(kv->key);
-			inode = kv->val;
-			vm_free(inode->buf, 1);
-			kfree(inode);
+			di = kv->val;
+			vm_free(di->buf, 1);
+			kfree(di);
 		}
-
 		hash_destroy(mp->files);
 
 		mutex_unlock(&mp->lock);
-
 		kfree(mp);
 	}
 }
@@ -104,24 +101,21 @@ int do_mount(mount_point *mp, const char *path, const mount_op *op)
 	mount_point *child_mp = NULL;
 	char *key = NULL;
 
-	if (!mp || !path) {
-		return NULL;
-	}
+	if (!mp || !path)
+		return -1;
 
-	if (*path != '/') {
+	if (*path != '/')
 		return EINVAL;
-	}
 
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
-		return NULL;
-	}
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
+		return -1;
 
 	if (new_mp == mp) {
 		if (*new_path == '\0')
 			return EINVAL;
 
 		mutex_lock(&new_mp->lock);
-		if (hash_find(new_mp->folders, path)) {
+		if (hash_find(new_mp->folders, new_path)) {
 			mutex_unlock(&new_mp->lock);
 			return EEXIST;
 		}
@@ -141,29 +135,23 @@ int do_unmount(mount_point *mp, const char *path)
 {
 	const char *new_path = NULL;
 	mount_point *new_mp = NULL;
-	char *key = NULL;
 	key_value_pair *kv = NULL;
 
-	if (!mp || !path) {
-		return NULL;
-	}
+	if (!mp || !path)
+		return -1;
 
-	if (*path != '/') {
+	if (*path != '/')
 		return EINVAL;
-	}
 
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
-		return NULL;
-	}
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
+		return -1;
 
 	if (new_mp == mp) {
-		if (*new_path != '\0') {
+		if (*new_path != '\0')
 			return EEXIST;
-		}
 
 		mutex_lock(&new_mp->lock);
 		kv = hash_find(new_mp->folders, path);
-
 		if (!kv) {
 			mutex_unlock(&new_mp->lock);
 			return EEXIST;
@@ -179,54 +167,75 @@ int do_unmount(mount_point *mp, const char *path)
 	return do_unmount(new_mp, new_path);
 }
 
-filep mount_open(mount_point *mp, const char *path, int flag, const char *mode)
+/*
+ * Create a file struct from an inode obtained from a mount point.
+ * The file takes ownership of the inode.
+ */
+static file * mount_inode_open(inode *node, int flag)
+{
+	file * fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_op = node->i_fop;
+	fp->f_count = 1;
+	fp->f_mode = node->i_mode;
+	fp->f_pos = 0;
+	return fp;
+}
+
+file * mount_open(mount_point *mp, const char *path, int flag, const char *mode)
 {
 	const char *new_path = NULL;
 	mount_point *new_mp = NULL;
-	filep fp = NULL;
-	filep newfp = NULL;
 	key_value_pair *kv = NULL;
+	inode *node = NULL;
 
-	if (!mp || !path) {
+	if (!mp || !path)
 		return NULL;
-	}
 
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
 		return NULL;
-	}
 
-	// recursivly open mount point
-	if (new_mp != mp) {
+	/* Delegate to the resolved sub-mount */
+	if (new_mp != mp)
 		return mount_open(new_mp, new_path, flag, mode);
-	}
 
-	// open self
+	/* Open the mount root (empty path or just "/") */
 	if (*new_path == '\0' ||
 	    (*new_path == '/' && *(new_path + 1) == '\0')) {
-		// open self
-		if (!new_mp->op.alloc)
+		if (!new_mp->op.get_inode)
 			return NULL;
-
-		fp = new_mp->op.alloc(new_mp);
-		return fp;
+		node = new_mp->op.get_inode(new_mp);
+		if (!node)
+			return NULL;
+		return mount_inode_open(node, flag);
 	}
 
+	/* Look up a registered debug file */
 	mutex_lock(&new_mp->lock);
 	kv = hash_find(new_mp->files, new_path);
 	mutex_unlock(&new_mp->lock);
 
-	if (kv) {
-		fp = debugfs_open(kv->val);
-		return fp;
-	}
+	if (kv)
+		return debugfs_open(kv->val);
 
-	if (!new_mp->op.alloc)
+	/* No sub-file match and no sub-mount: try the mount's root inode */
+	if (!new_mp->op.get_inode)
 		return NULL;
 
-	fp = new_mp->op.alloc(new_mp);
-	newfp = fp->op.open(fp->inode, new_path, flag, mode);
-	fs_destroy(fp);
-	return newfp;
+	node = new_mp->op.get_inode(new_mp);
+	if (!node)
+		return NULL;
+
+	/*
+	 * For mounts that don't handle sub-paths (devices), discard the inode
+	 * and return NULL since the path wasn't found.
+	 */
+	if (!node->i_fop) {
+		free(node);
+		return NULL;
+	}
+
+	return mount_inode_open(node, flag);
 }
 
 int mount_add_file(mount_point *mp, const char *path,
@@ -238,24 +247,19 @@ int mount_add_file(mount_point *mp, const char *path,
 	char *key = NULL;
 	debug_inode *val = NULL;
 
-	if (!mp || !path) {
+	if (!mp || !path)
 		return -1;
-	}
 
-	if (!mount_path_resolve(mp, path, &new_mp, &new_path)) {
+	if (!mount_path_resolve(mp, path, &new_mp, &new_path))
 		return -1;
-	}
 
-	if (*new_path != '/') {
+	if (*new_path != '/')
 		return EINVAL;
-	}
 
-	if (strchr(new_path + 1, '/') != NULL) {
+	if (strchr(new_path + 1, '/') != NULL)
 		return EINVAL;
-	}
 
 	mutex_lock(&new_mp->lock);
-
 	kv = hash_find(new_mp->files, new_path);
 	if (kv != NULL) {
 		mutex_unlock(&new_mp->lock);
@@ -268,6 +272,6 @@ int mount_add_file(mount_point *mp, const char *path,
 	val->fill = fill;
 
 	hash_insert(new_mp->files, key, val);
-
 	mutex_unlock(&new_mp->lock);
+	return 0;
 }

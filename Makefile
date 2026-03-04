@@ -21,6 +21,8 @@ vpath %.S $(SRC_DIRS)
 .PHONY: all clean rebuild
 
 all: $(DST)/kernel
+	
+run: all
 	@./run.sh
 
 $(DST)/$(TARGET): $(OBJS) $(LIBS) | $(DST)
@@ -45,14 +47,14 @@ $(DST)/obj:
 	@-mkdir -p $(DST)/obj
 
 $(DST)/lwext4/libext4.a: | $(DST)
-	@+make -C 3rdparty
+	@+$(MAKE) -C 3rdparty
 
 clean:
 	@-rm -rf $(DST)
 
 rebuild:
-	@+make clean
-	@+make
+	@+$(MAKE) clean
+	@+$(MAKE)
 
 -include $(DEPS)
 

@@ -37,6 +37,25 @@ SECTIONS
 		*(.rodata)
 	}
 
+	.debugfs_init BLOCK(4K) : AT(ADDR(.debugfs_init)-0xC0000000)
+	{
+		__debugfs_init_start = .;
+		*(.debugfs_init)
+		__debugfs_init_end = .;
+	}
+
+	/*
+	 * Kernel init-call table.  Each KERNEL_INIT(index, fn) declaration
+	 * drops a kinit_fn_t into ".kinit.<index>".  SORT_BY_NAME guarantees
+	 * the sections are laid out in ascending index order.
+	 */
+	.kinit BLOCK(4K) : AT(ADDR(.kinit)-0xC0000000)
+	{
+		__kinit_start = .;
+		*(SORT_BY_NAME(.kinit.*))
+		__kinit_end = .;
+	}
+
 	/* Read-write data (initialized) */
 	.data BLOCK(4K) : AT(ADDR(.data)-0xC0000000)
 	{

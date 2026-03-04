@@ -1,4 +1,3 @@
-#include <hdd.h>
 #include <lock.h>
 #include <int.h>
 #include <block.h>
@@ -8,6 +7,7 @@
 #include <rbtree.h>
 #include <list.h>
 #include <port.h>
+#include <macro.h>
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */
@@ -180,7 +180,7 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 #define CHANNEL_CNT 2
 static channel channels[CHANNEL_CNT];
 
-void hdd_init()
+static void hdd_init()
 {
 	int chan_no;
 
@@ -1007,3 +1007,5 @@ static void partition_close(void *aux)
 	}
 #endif
 }
+
+KERNEL_INIT(2, hdd_init);

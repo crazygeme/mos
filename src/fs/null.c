@@ -1,10 +1,10 @@
 #include <time.h>
-#include <null.h>
 #include <unistd.h>
 #include <klib.h>
 #include <fs.h>
 #include <mount.h>
 #include <ps.h>
+#include <macro.h>
 
 static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
@@ -71,8 +71,10 @@ static super_operations null_sops = {
 	.get_root = null_get_root,
 };
 
-void null_init()
+static void null_init()
 {
 	task_struct *cur = CURRENT_TASK();
 	vfs_mount(cur->root, "/dev/null", &null_sops);
 }
+
+KERNEL_INIT(4, null_init);

@@ -75,7 +75,7 @@ static void klib_print(char *str, void *ctx)
 
 #ifdef __DEBUG__
 static int klog_inited = 0;
-void klog_init()
+static void klog_init()
 {
 	klog_inited = 1;
 	mutex_init(&klog_lock);
@@ -1352,3 +1352,5 @@ uint64_t __udivdi3(uint64_t num, uint64_t den)
 {
 	return __udivmoddi4(num, den, NULL);
 }
+
+KERNEL_INIT(0, klog_init);

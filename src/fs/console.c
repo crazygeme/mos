@@ -1,11 +1,11 @@
 #include <time.h>
 #include <ps.h>
 #include <mount.h>
-#include <console.h>
 #include <klib.h>
 #include <unistd.h>
 #include <fs.h>
 #include <tty.h>
+#include <macro.h>
 
 static ssize_t console_write(file *fp, const void *buf, size_t size,
 			     loff_t *pos)
@@ -100,8 +100,10 @@ static super_operations tty_sops = {
 	.get_root = console_get_root,
 };
 
-void console_init()
+static void console_init()
 {
 	task_struct *cur = CURRENT_TASK();
 	vfs_mount(cur->root, "/dev/tty", &tty_sops);
 }
+
+KERNEL_INIT(4, console_init);

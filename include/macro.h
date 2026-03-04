@@ -164,4 +164,23 @@
     (unsigned long long)                                                        \
      ((unsigned short)limit | ((unsigned long long)(unsigned int)base << 16))
 
+/*
+ * Kernel init call mechanism.
+ *
+ * KERNEL_INIT(index, fn) registers a void (*)(void) function to be called
+ * during kernel startup.  The function pointer is placed in the ELF section
+ * ".kinit.<index>"; the linker script collects all such sections (sorted by
+ * name) between __kinit_start and __kinit_end, and run_kinit() iterates over
+ * them in order.
+ *
+ * Usage:
+ *   static void my_init(void) { ... }
+ *   KERNEL_INIT(3, my_init);
+ */
+typedef void (*kinit_fn_t)(void);
+
+#define KERNEL_INIT(index, fn)                                          \
+	static kinit_fn_t __kinit_##index##_##fn                        \
+		__attribute__((used, section(".kinit." #index))) = (fn)
+
 #endif

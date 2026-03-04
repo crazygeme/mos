@@ -1,4 +1,3 @@
-#include <syscall.h>
 #include <int.h>
 #include <unistd.h>
 #include <ps.h>

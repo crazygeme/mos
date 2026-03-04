@@ -69,20 +69,6 @@ static unsigned int block_id_gen()
 	return ret;
 }
 
-void block_init()
-{
-	int i = 0;
-
-	for (i = 0; i < BLOCK_MAX; i++) {
-		list_init(&control.block_lists[i]);
-		control.block_count[i] = 0;
-	}
-
-	spinlock_init(&control.lock);
-
-	id = 0;
-}
-
 block *block_register(void *aux, char *name, fpblock_read read,
 		      fpblock_write write, fpblock_close close, block_type type,
 		      unsigned int sector_size)
@@ -177,3 +163,18 @@ const char *block_type_name(block *b)
 	}
 }
 
+static void block_init()
+{
+	int i = 0;
+
+	for (i = 0; i < BLOCK_MAX; i++) {
+		list_init(&control.block_lists[i]);
+		control.block_count[i] = 0;
+	}
+
+	spinlock_init(&control.lock);
+
+	id = 0;
+}
+
+KERNEL_INIT(1, block_init);

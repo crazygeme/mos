@@ -1,6 +1,7 @@
 #include <nic.h>
 #include <klib.h>
 #include <pci_list.h>
+#include <macro.h>
 
 static nic_dev network_devices[MAX_NETWORK_DEV] = { 0 };
 
@@ -63,10 +64,12 @@ static void scan_all_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 	}
 }
 
-void nic_scan_all()
+static void nic_scan_all()
 {
 	pci_scan(scan_all_pci, PCI_SCAN_ALL, 0);
 }
+
+KERNEL_INIT(6, nic_scan_all);
 
 nic_dev *nic_getdev_by_mac(uint8_t *mac)
 {

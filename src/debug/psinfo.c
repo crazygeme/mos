@@ -17,3 +17,5 @@ void debugfs_ps_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/self", fill);
 }
+
+DEBUGFS_INIT(debugfs_ps_init);

@@ -173,13 +173,15 @@ static super_operations proc_sops = {
 	.get_root = proc_get_root,
 };
 
-void debugfs_init()
+static void debugfs_init()
 {
 	task_struct *cur = CURRENT_TASK();
-	vfs_mount(cur->root, "/proc", &proc_sops);
-	debugfs_mm_init(cur->root);
-	debugfs_ps_init(cur->root);
-	debugfs_cpu_init(cur->root);
-	debugfs_fs_init(cur->root);
-	debugfs_sched_init(cur->root);
+	super_block *root = cur->root;
+	debugfs_init_fn_t *fn;
+
+	vfs_mount(root, "/proc", &proc_sops);
+	for (fn = __debugfs_init_start; fn < __debugfs_init_end; fn++)
+		(*fn)(root);
 }
+
+KERNEL_INIT(5, debugfs_init);

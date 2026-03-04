@@ -10,13 +10,7 @@
 #include <time.h>
 #include <ps.h>
 #include <block.h>
-#include <hdd.h>
-#include <syscall.h>
 #include <pagefault.h>
-#include <console.h>
-#include <kbchar.h>
-#include <null.h>
-#include <pipechar.h>
 #include <serial.h>
 #include <vga.h>
 #include <fs.h>
@@ -29,6 +23,14 @@ static void kmain_process(void *param);
 static void timer_process(void *param);
 static void idle_process(void *param);
 static void parse_kernel_cmdline();
+
+/* -----------------------------------------------------------------------
+ * Kernel init-call table
+ * Each entry is placed in ".kinit.<index>" by KERNEL_INIT(); the linker
+ * script collects them in order between __kinit_start and __kinit_end.
+ * ----------------------------------------------------------------------- */
+extern kinit_fn_t __kinit_start[];
+extern kinit_fn_t __kinit_end[];
 
 void kmain_startup()
 {
@@ -104,40 +106,11 @@ static void idle_process(void *param)
 	}
 }
 
-extern void nic_scan_all();
-extern void user_first_process_run();
-
 static void kmain_process(void *param)
 {
-	klog_init();
-
-	printk("Init block devices\n");
-	block_init();
-
-	hdd_init();
-
-	printk("Mount root fs to \"/\" \n");
-	fs_mount_root();
-
-	kbchar_init();
-
-	console_init();
-
-	null_init();
-
-	pipe_init();
-
-	debugfs_init();
-
-	// enable network
-	nic_scan_all();
-
-	printk("Init system call table\n");
-	syscall_init();
-
-	klib_clear();
-
-	user_first_process_run();
+	kinit_fn_t *fn;
+	for (fn = __kinit_start; fn < __kinit_end; fn++)
+		(*fn)();
 
 	run();
 }

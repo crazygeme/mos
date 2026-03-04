@@ -1,5 +1,4 @@
 #include "mm.h"
-#include <syscall.h>
 #include <int.h>
 #include <unistd.h>
 #include <ps.h>
@@ -394,11 +393,6 @@ static void syscall_process(intr_frame *frame)
 
 	frame->eax = ret;
 	return;
-}
-
-void syscall_init()
-{
-	int_register(SYSCALL_INT_NO, syscall_process, 1, 3);
 }
 
 static int test_call(unsigned arg0, unsigned arg1, unsigned arg2)
@@ -1549,3 +1543,10 @@ static int sys_setregid(unsigned pid, unsigned pgid)
 	}
 	return 0;
 }
+
+static void syscall_init()
+{
+	int_register(SYSCALL_INT_NO, syscall_process, 1, 3);
+}
+
+KERNEL_INIT(7, syscall_init);

@@ -1,17 +1,17 @@
 #include <time.h>
-#include <pipechar.h>
 #include <unistd.h>
 #include <klib.h>
 #include <cyclebuf.h>
 #include <fs.h>
 #include <mount.h>
+#include <macro.h>
 
 typedef struct _pipe_inode {
 	cy_buf *buf;
 	int readonly;
 } pipe_inode;
 
-void pipe_init()
+static void pipe_init()
 {
 }
 
@@ -152,3 +152,5 @@ int fs_alloc_filep_pipe(file **pipes)
 	pipes[1] = fp_write;
 	return 0;
 }
+
+KERNEL_INIT(4, pipe_init);

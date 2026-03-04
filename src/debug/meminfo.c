@@ -109,3 +109,5 @@ void debugfs_mm_init(super_block *mp)
 	vfs_create_file(mp, "/proc/meminfo", fill);
 	timer_start(meminfo_timeout, 2000, 1, NULL);
 }
+
+DEBUGFS_INIT(debugfs_mm_init);

@@ -1,4 +1,3 @@
-#include "klib.h"
 #include <multiboot.h>
 #include <config.h>
 #include <mm.h>

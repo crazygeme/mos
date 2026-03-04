@@ -16,13 +16,13 @@ typedef struct _block block;
 #define S_ISGID 0002000
 #define S_ISVTX 0001000
 
-#define S_ISLNK(m) (((m)&S_IFMT) == S_IFLNK)
-#define S_ISREG(m) (((m)&S_IFMT) == S_IFREG)
-#define S_ISDIR(m) (((m)&S_IFMT) == S_IFDIR)
-#define S_ISCHR(m) (((m)&S_IFMT) == S_IFCHR)
-#define S_ISBLK(m) (((m)&S_IFMT) == S_IFBLK)
-#define S_ISFIFO(m) (((m)&S_IFMT) == S_IFIFO)
-#define S_ISSOCK(m) (((m)&S_IFMT) == S_IFSOCK)
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#define S_ISCHR(m) (((m) & S_IFMT) == S_IFCHR)
+#define S_ISBLK(m) (((m) & S_IFMT) == S_IFBLK)
+#define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)
+#define S_ISSOCK(m) (((m) & S_IFMT) == S_IFSOCK)
 
 #define S_IRWXU 00700
 #define S_IRUSR 00400
@@ -133,8 +133,6 @@ int resolve_path(const char *old, char *new);
 int fs_alloc_filep_pipe(file **pipes);
 
 int ext4_blockdev_register(block *aux, char *name, int sec_size, int sec_cnt);
-
-void fs_mount_root();
 
 int fs_open(const char *path, int flag, char *mode);
 

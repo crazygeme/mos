@@ -243,10 +243,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 {
 	task_struct *cur = CURRENT_TASK();
 	task_struct *tracee;
-
-	if (TestControl.verbos)
-		klog("%d: ptrace(%d, %d, %x, %x)\n", cur->psid, request, pid,
-		     addr, data);
+	int ret = -1;
 
 	switch (request) {
 	/*
@@ -255,11 +252,15 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 * letting the parent see the process before it does any real work.
 	 */
 	case PTRACE_TRACEME:
-		if (cur->ptrace & PT_TRACED)
-			return -EPERM;
+		if (cur->ptrace & PT_TRACED) {
+			ret = -EPERM;
+			break;
+		}
+
 		cur->ptrace = PT_TRACED | PT_TRACE_SYSCALL;
 		cur->ptrace_tracer = cur->parent;
-		return 0;
+		ret = 0;
+		break;
 
 	/*
 	 * PTRACE_ATTACH: tracer attaches to an already-running process.
@@ -268,26 +269,37 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_ATTACH:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->psid == cur->psid)
-			return -ESRCH;
-		if (tracee->ptrace & PT_TRACED)
-			return -EPERM;
+		if (!tracee || tracee->psid == cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (tracee->ptrace & PT_TRACED) {
+			ret = -EPERM;
+			break;
+		}
+
 		tracee->ptrace = PT_TRACED | PT_STOPPED;
 		tracee->ptrace_tracer = cur->psid;
 		ps_put_to_wait_queue(tracee);
-		return 0;
+		ret = 0;
+		break;
 
 	/*
 	 * PTRACE_DETACH: tracer releases the tracee and resumes it.
 	 */
 	case PTRACE_DETACH:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
 		tracee->ptrace = 0;
 		tracee->ptrace_tracer = 0;
 		ps_put_to_ready_queue(tracee);
-		return 0;
+		ret = 0;
+		break;
 
 	/*
 	 * PTRACE_PEEKTEXT / PTRACE_PEEKDATA: read one word from the tracee's
@@ -298,17 +310,24 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	case PTRACE_PEEKTEXT:
 	case PTRACE_PEEKDATA: {
 		unsigned long word = 0;
-		int ret;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
 		ret = ptrace_peek_mem(tracee, addr, &word);
 		if (ret)
-			return ret;
+			break;
+
 		*(unsigned long *)data = word;
-		return (int)word;
+		ret = (int)word;
+		break;
 	}
 
 	/*
@@ -318,11 +337,18 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	case PTRACE_POKETEXT:
 	case PTRACE_POKEDATA:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
-		return ptrace_poke_mem(tracee, addr, data);
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
+		ret = ptrace_poke_mem(tracee, addr, data);
+		break;
 
 	/*
 	 * PTRACE_PEEKUSER: read one register by its byte offset in the
@@ -330,19 +356,29 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_PEEKUSER: {
 		unsigned long word = 0;
-		int ret;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
-		if (addr >= PT_OFF_MAX)
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
+		if (addr >= PT_OFF_MAX) {
+			ret = -EIO;
+			break;
+		}
+
 		ret = ptrace_get_reg(tracee, addr, &word);
 		if (ret)
-			return ret;
+			break;
+
 		*(unsigned long *)data = word;
-		return (int)word;
+		ret = (int)word;
+		break;
 	}
 
 	/*
@@ -350,13 +386,23 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_POKEUSER:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
-		if (addr >= PT_OFF_MAX)
-			return -EIO;
-		return ptrace_set_reg(tracee, addr, data);
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
+		if (addr >= PT_OFF_MAX) {
+			ret = -EIO;
+			break;
+		}
+
+		ret = ptrace_set_reg(tracee, addr, data);
+		break;
 
 	/*
 	 * PTRACE_GETREGS: copy the full user_regs_struct to *data.
@@ -365,10 +411,16 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		struct user_regs_struct regs;
 		intr_frame *f;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
 		f = TASK_INTR_FRAME(tracee);
 		regs.ebx = f->ebx;
 		regs.ecx = f->ecx;
@@ -388,7 +440,8 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		regs.esp = (unsigned long)f->esp;
 		regs.xss = f->ss;
 		memcpy((void *)data, &regs, sizeof(regs));
-		return 0;
+		ret = 0;
+		break;
 	}
 
 	/*
@@ -400,10 +453,16 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		struct user_regs_struct regs;
 		intr_frame *f;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
 		memcpy(&regs, (const void *)data, sizeof(regs));
 		f = TASK_INTR_FRAME(tracee);
 		f->ebx = regs.ebx;
@@ -422,7 +481,8 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		f->eflags = (f->eflags & ~0x4DD5U) | (regs.eflags & 0x4DD5U);
 		if (regs.esp < KERNEL_OFFSET)
 			f->esp = (void *)regs.esp;
-		return 0;
+		ret = 0;
+		break;
 	}
 
 	/*
@@ -432,10 +492,16 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_CONT:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
 		/* Clear single-step TF if it was set from a prior SINGLESTEP */
 		if (tracee->ptrace & PT_SINGLESTEP) {
 			TASK_INTR_FRAME(tracee)->eflags &= ~EFLAGS_TF;
@@ -444,7 +510,8 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		tracee->ptrace &=
 			~(PT_STOPPED | PT_STOP_REPORTED | PT_TRACE_SYSCALL);
 		ps_put_to_ready_queue(tracee);
-		return 0;
+		ret = 0;
+		break;
 
 	/*
 	 * PTRACE_SINGLESTEP: resume the tracee with the CPU Trap Flag set.
@@ -454,16 +521,23 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_SINGLESTEP:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
 		TASK_INTR_FRAME(tracee)->eflags |= EFLAGS_TF;
 		tracee->ptrace |= PT_SINGLESTEP;
 		tracee->ptrace &=
 			~(PT_STOPPED | PT_STOP_REPORTED | PT_TRACE_SYSCALL);
 		ps_put_to_ready_queue(tracee);
-		return 0;
+		ret = 0;
+		break;
 
 	/*
 	 * PTRACE_SYSCALL: resume the tracee and stop it at the next syscall
@@ -473,10 +547,16 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_SYSCALL:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
-		if (!(tracee->ptrace & PT_STOPPED))
-			return -EIO;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
+		if (!(tracee->ptrace & PT_STOPPED)) {
+			ret = -EIO;
+			break;
+		}
+
 		/* Clear single-step TF if it was set from a prior SINGLESTEP */
 		if (tracee->ptrace & PT_SINGLESTEP) {
 			TASK_INTR_FRAME(tracee)->eflags &= ~EFLAGS_TF;
@@ -485,7 +565,8 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		tracee->ptrace &= ~(PT_STOPPED | PT_STOP_REPORTED);
 		tracee->ptrace |= PT_TRACE_SYSCALL;
 		ps_put_to_ready_queue(tracee);
-		return 0;
+		ret = 0;
+		break;
 
 	/*
 	 * PTRACE_KILL: terminate the tracee by moving it directly to the
@@ -493,14 +574,25 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_KILL:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid)
-			return -ESRCH;
+		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+			ret = -ESRCH;
+			break;
+		}
+
 		tracee->ptrace = 0;
 		tracee->ptrace_tracer = 0;
 		ps_put_to_dying_queue(tracee);
-		return 0;
+		ret = 0;
+		break;
 
 	default:
-		return -EIO;
+		ret = -EIO;
+		break;
 	}
+
+	if (TestControl.verbos)
+		klog("%d: ptrace(%d, %d, %d, %x) = %d\n", cur->psid, request,
+		     pid, addr, data, ret);
+
+	return ret;
 }

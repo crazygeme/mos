@@ -34,13 +34,13 @@
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
-#define HDR_SZ    4u
+#define HDR_SZ 4u
 #define ALLOC_BIT 1u
 /* Free block needs header + two pointers; must be at least 12 bytes total. */
-#define MIN_BLK   12u
+#define MIN_BLK 12u
 /* Round up to nearest 8-byte boundary. */
 #define ALIGN8(n) (((unsigned)(n) + 7u) & ~7u)
-#define NUM_BINS  16
+#define NUM_BINS 16
 
 /* ── Heap state ──────────────────────────────────────────────────────────── */
 

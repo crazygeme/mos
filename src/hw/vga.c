@@ -13,11 +13,7 @@
 #include <mm.h>
 #include <macro.h>
 #include <port.h>
-
-unsigned resolution_x;
-unsigned resolution_y;
-unsigned _vga_width;
-unsigned _vga_height;
+#include <klib.h>
 
 /* Binary Literals */
 #define b(x) ((unsigned char)b_(0##x##uL))
@@ -702,97 +698,37 @@ static unsigned char cursor_font[][12] = {
 	},
 };
 
-unsigned int *fb_buffer = 0xE0000;
+/* Internal framebuffer state (not exported) */
 
-static void BgaWriteRegister(unsigned short IndexValue,
-			     unsigned short DataValue)
-{
-	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
-	port_write_word(VBE_DISPI_IOPORT_DATA, DataValue);
-}
+static unsigned int *fb_buffer = (unsigned int *)0xE0000;
 
-static unsigned short BgaReadRegister(unsigned short IndexValue)
-{
-	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
-	return port_read_word(VBE_DISPI_IOPORT_DATA);
-}
+static unsigned _fb_buffer;
+static unsigned _fb_buffer_phy;
+static unsigned _resolution_x;
+static unsigned _resolution_y;
+static unsigned _hw_resolution_x;
+static unsigned _hw_resolution_y;
+static unsigned _window_char_width;
+static unsigned _window_char_height;
+static unsigned _fb_font_width;
+static unsigned _fb_font_height;
+static char _fb_text[VGA_RESOLUTION_X * VGA_RESOLUTION_Y];
+static unsigned _fb_x_off;
+static unsigned _fb_y_off;
+static unsigned _fb_cursor;
 
-static int BgaIsAvailable(void)
-{
-	unsigned short i = BgaReadRegister(VBE_DISPI_INDEX_ID);
-	int old_version =
-		(BgaReadRegister(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID5);
-	int version;
-
-	if (old_version) {
-		BgaWriteRegister(VBE_DISPI_INDEX_ID, VBE_DISPI_ID5);
-		version = BgaReadRegister(VBE_DISPI_INDEX_ID);
-
-		return (version == VBE_DISPI_ID5);
-	}
-
-	return 1;
-}
-
-static void BgaSetVideoMode(unsigned int Width, unsigned int Height,
-			    unsigned int BitDepth, int UseLinearFrameBuffer,
-			    int ClearVideoMemory)
-{
-	BgaWriteRegister(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
-	BgaWriteRegister(VBE_DISPI_INDEX_XRES, Width);
-	BgaWriteRegister(VBE_DISPI_INDEX_YRES, Height);
-	BgaWriteRegister(VBE_DISPI_INDEX_BPP, BitDepth);
-	BgaWriteRegister(VBE_DISPI_INDEX_ENABLE,
-			 VBE_DISPI_ENABLED |
-				 (UseLinearFrameBuffer ? VBE_DISPI_LFB_ENABLED :
-							 0) |
-				 (ClearVideoMemory ? 0 : VBE_DISPI_NOCLEARMEM));
-}
-
-static void BgaSetBank(unsigned short BankNumber)
-{
-	BgaWriteRegister(VBE_DISPI_INDEX_BANK, BankNumber);
-}
-
-static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
-{
-	if (v == 0x1234 && d == 0x1111) {
-		unsigned t = pci_read_field(device, PCI_BAR0, 4);
-		if (t > 0) {
-			*((uint8_t **)extra) = (uint8_t *)(t & 0xFFFFFFF0);
-		}
-	}
-}
-
-unsigned char **_number_font;
-unsigned _fb_buffer;
-unsigned _fb_buffer_phy;
-unsigned _resolution_x;
-unsigned _resolution_y;
-unsigned _window_char_width;
-unsigned _window_char_height;
-
-unsigned _hw_resolution_x;
-unsigned _hw_resolution_y;
-
-unsigned _fb_font_width;
-unsigned _fb_font_height;
-char _fb_text[VGA_RESOLUTION_X * VGA_RESOLUTION_Y] = { 0 };
-unsigned _fb_x_off;
-unsigned _fb_y_off;
+/* Low-level pixel operations */
 
 void fb_set_point(int x, int y, unsigned value)
 {
 	unsigned *disp = (unsigned *)_fb_buffer;
-	unsigned *cell = &disp[y * _hw_resolution_x + x];
-	*cell = value;
+	disp[y * _hw_resolution_x + x] = value;
 }
 
 unsigned fb_get_point(int x, int y)
 {
 	unsigned *disp = (unsigned *)_fb_buffer;
-	unsigned *cell = &disp[y * _hw_resolution_x + x];
-	return (*cell);
+	return disp[y * _hw_resolution_x + x];
 }
 
 void fb_write_char(int x, int y, int val, unsigned color)
@@ -818,9 +754,6 @@ void fb_write_char(int x, int y, int val, unsigned color)
 
 	back_color = fb_get_point(_fb_x_off + x, _fb_y_off + y);
 
-	// FIXME
-	// will fill all '0' bit into back_color
-	// this will mass a picture, because not all pixel are same
 	for (i = 0; i < char_height; ++i) {
 		for (j = 0; j < char_width; ++j) {
 			if (c[i] & (1 << (8 - j))) {
@@ -848,11 +781,147 @@ void fb_write_color(int x, int y, unsigned color)
 	}
 }
 
+/* Public API */
+
+int fb_is_available(void)
+{
+	return _fb_buffer != 0;
+}
+
+void fb_get_char_dims(unsigned *cols, unsigned *rows)
+{
+	*cols = _window_char_width;
+	*rows = _window_char_height;
+}
+
+char fb_getchar(int col, int row)
+{
+	return _fb_text[row * _window_char_width + col];
+}
+
+void fb_putchar(int col, int row, char c)
+{
+	_fb_text[row * _window_char_width + col] = c;
+	fb_write_char(col, row, c, VGA_COLOR_WHITE);
+}
+
+void fb_update_cursor(unsigned new_pos)
+{
+	unsigned old_col = _fb_cursor % _window_char_width;
+	unsigned old_row = _fb_cursor / _window_char_width;
+	char val = _fb_text[_fb_cursor];
+
+	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
+	    val == '\t')
+		fb_write_char(old_col, old_row, 130, VGA_COLOR_BLACK);
+
+	_fb_cursor = new_pos;
+	fb_write_char(_fb_cursor % _window_char_width,
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE);
+}
+
+void fb_scroll_line(void)
+{
+	unsigned copy_size = VGA_RESOLUTION_X *
+			     (VGA_RESOLUTION_Y - _fb_font_height) *
+			     (VGA_COLOR_DEPTH / 8);
+	unsigned row_pixel_size =
+		VGA_RESOLUTION_X * _fb_font_height * (VGA_COLOR_DEPTH / 8);
+	char *old_row_ptr = (char *)_fb_buffer;
+	char *new_row_ptr = old_row_ptr + VGA_RESOLUTION_X *
+						  (VGA_COLOR_DEPTH / 8) *
+						  _fb_font_height;
+	char *last_row = old_row_ptr + copy_size;
+	char *next_char_row = _fb_text + _window_char_width;
+	unsigned txt_copy_size = _window_char_width * (_window_char_height - 1);
+	char *last_char_row =
+		_fb_text + _window_char_width * (_window_char_height - 1);
+	char val;
+
+	/* clear cursor display before pixel blit */
+	val = _fb_text[_fb_cursor];
+	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
+	    val == '\t' || val == '\b')
+		fb_write_char(_fb_cursor % _window_char_width,
+			      _fb_cursor / _window_char_width, 130,
+			      VGA_COLOR_BLACK);
+
+	memcpy(old_row_ptr, new_row_ptr, copy_size);
+
+	/* restore cursor at new position */
+	fb_write_char(_fb_cursor % _window_char_width,
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE);
+
+	memcpy(_fb_text, next_char_row, txt_copy_size);
+	memset(last_char_row, ' ', _window_char_width);
+	memset(last_row, 0, row_pixel_size);
+}
+
+void fb_clear_screen(void)
+{
+	unsigned len =
+		VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
+	memset((char *)_fb_buffer, 0, len);
+}
+
+/* Bochs VBE / QEMU VGA hardware init */
+
+static void BgaWriteRegister(unsigned short IndexValue,
+			     unsigned short DataValue)
+{
+	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
+	port_write_word(VBE_DISPI_IOPORT_DATA, DataValue);
+}
+
+static unsigned short BgaReadRegister(unsigned short IndexValue)
+{
+	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
+	return port_read_word(VBE_DISPI_IOPORT_DATA);
+}
+
+static int BgaIsAvailable(void)
+{
+	int old_version =
+		(BgaReadRegister(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID5);
+
+	if (old_version) {
+		BgaWriteRegister(VBE_DISPI_INDEX_ID, VBE_DISPI_ID5);
+		return (BgaReadRegister(VBE_DISPI_INDEX_ID) == VBE_DISPI_ID5);
+	}
+
+	return 1;
+}
+
+static void BgaSetVideoMode(unsigned int Width, unsigned int Height,
+			    unsigned int BitDepth, int UseLinearFrameBuffer,
+			    int ClearVideoMemory)
+{
+	BgaWriteRegister(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
+	BgaWriteRegister(VBE_DISPI_INDEX_XRES, Width);
+	BgaWriteRegister(VBE_DISPI_INDEX_YRES, Height);
+	BgaWriteRegister(VBE_DISPI_INDEX_BPP, BitDepth);
+	BgaWriteRegister(VBE_DISPI_INDEX_ENABLE,
+			 VBE_DISPI_ENABLED |
+				 (UseLinearFrameBuffer ? VBE_DISPI_LFB_ENABLED :
+							 0) |
+				 (ClearVideoMemory ? 0 : VBE_DISPI_NOCLEARMEM));
+}
+
+static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
+{
+	if (v == 0x1234 && d == 0x1111) {
+		unsigned t = pci_read_field(device, PCI_BAR0, 4);
+		if (t > 0) {
+			*((uint8_t **)extra) = (uint8_t *)(t & 0xFFFFFFF0);
+		}
+	}
+}
+
 void fb_init()
 {
-	int newest_version = BgaIsAvailable();
+	unsigned resolution_x, resolution_y;
 
-	unsigned bpp = (newest_version) ? VBE_DISPI_BPP_32 : VBE_DISPI_BPP_8;
+	BgaIsAvailable();
 	BgaSetVideoMode(VGA_RESOLUTION_X, VGA_RESOLUTION_Y, VGA_COLOR_DEPTH, 1,
 			1);
 
@@ -861,38 +930,36 @@ void fb_init()
 	if (fb_buffer) {
 		resolution_x = VGA_RESOLUTION_X;
 		resolution_y = VGA_RESOLUTION_Y;
-		_vga_width = resolution_x / char_width;
-		_vga_height = resolution_y / char_height;
 	} else {
 		resolution_x = 0;
 		resolution_y = 0;
-		_vga_width = 0;
-		_vga_height = 0;
 	}
+
+	/* store for fb_enable */
+	_resolution_x = resolution_x;
+	_resolution_y = resolution_y;
 }
 
 void fb_enable()
 {
 	unsigned mm_size = 0;
-	unsigned dma = fb_buffer;
-	_number_font = number_font;
-	_fb_buffer_phy = fb_buffer;
-	_resolution_x = resolution_x;
-	_resolution_y = resolution_y;
+	unsigned dma = (unsigned)fb_buffer;
+
+	_fb_buffer_phy = (unsigned)fb_buffer;
 	_hw_resolution_x = _resolution_x;
 	_hw_resolution_y = _resolution_y;
-	_window_char_width = _vga_width;
-	_window_char_height = _vga_height;
+	_window_char_width = _resolution_x / char_width;
+	_window_char_height = _resolution_y / char_height;
 	_fb_font_width = char_width;
 	_fb_font_height = char_height;
 	_fb_x_off = _fb_y_off = 0;
+	_fb_cursor = 0;
 
-	mm_size = resolution_x * resolution_y * 4;
+	mm_size = _resolution_x * _resolution_y * 4;
 	if (_fb_buffer_phy) {
-		for (dma = fb_buffer; dma < (_fb_buffer_phy + mm_size);
-		     dma += PAGE_SIZE) {
+		unsigned end = _fb_buffer_phy + mm_size;
+		for (dma = _fb_buffer_phy; dma < end; dma += PAGE_SIZE)
 			mm_add_resource_map(dma);
-		}
 		RELOAD_CR3();
 		_fb_buffer = _fb_buffer_phy;
 	}

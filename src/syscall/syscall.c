@@ -121,6 +121,7 @@ static int sys_fstat(int fd, struct stat *s);
 static int sys_stat64(const char *pathname, struct stat64 *s);
 static int sys_lstat64(const char *path, struct stat64 *s);
 static int sys_fstat64(int fd, struct stat64 *s);
+static int sys_fsync(int fd);
 static int sys_munmap(void *addr, unsigned length);
 static int sys_getppid();
 static int sys_getpgrp(unsigned pid);
@@ -281,7 +282,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 111 ~ 115
 	0,
 	0,
-	0,
+	sys_fsync,
 	0,
 	0, // 116 ~ 120
 	0,
@@ -923,6 +924,14 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		klog_printf(" = %d\n", retcount);
 	}
 	return retcount;
+}
+
+static int sys_fsync(int fd)
+{
+	if (TestControl.verbos)
+		klog("%d: sys_fsync(%d)\n", CURRENT_TASK()->psid, fd);
+
+	return fs_sync(fd);
 }
 
 static int sys_fstat(int fd, struct stat *s)

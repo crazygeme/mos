@@ -176,6 +176,12 @@ static int ext4_file_poll(file *fp, unsigned type)
 	return 0;
 }
 
+static int ext4_file_flush(file *fp)
+{
+	/* Now we always flush */
+	return 0;
+}
+
 static int ext4_file_getattr(inode *node, struct stat *s)
 {
 	ext4_file *f = node->i_private;
@@ -292,6 +298,7 @@ static const file_operations ext4_dir_fops = {
 	.read = ext4_dir_read,
 	.llseek = ext4_dir_llseek,
 	.poll = ext4_file_poll,
+	.flush = ext4_file_flush,
 };
 
 file *fs_alloc_filep_normal(void *content)
@@ -733,7 +740,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	}
 done:
 	mutex_unlock(&cur->fd_lock);
-	return pos < 0 ? (int)pos : 0;
+	return (int)pos;
 }
 
 int fs_seek(int fd, unsigned offset, unsigned whence)
@@ -741,6 +748,7 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	loff_t pos = -EACCES;
+	int ret = 0;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -757,7 +765,34 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
 		fp->f_pos = pos;
 done:
 	mutex_unlock(&cur->fd_lock);
-	return pos < 0 ? (int)pos : 0;
+	return (int)pos;
+}
+
+int fs_sync(int fd)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp = NULL;
+	int ret = -ENOENT;
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -1;
+
+	if (cur->fds[fd].used == 0)
+		return -ENOENT;
+
+	mutex_lock(&cur->fd_lock);
+	fp = cur->fds[fd].fp;
+
+	if (!fp || !fp->f_inode || !fp->f_inode->i_fop)
+		goto done;
+
+	if (fp->f_inode->i_fop->flush)
+		ret = fp->f_inode->i_fop->flush(fp);
+	else
+		ret = 0;
+done:
+	mutex_unlock(&cur->fd_lock);
+	return ret;
 }
 
 int fs_select(int fd, unsigned type)

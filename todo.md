@@ -21,4 +21,5 @@
 - [ ] sys_stat, sys_lstat, sys_fstat的正确实现
 - [X] debugfs 文件系统 和 /proc 目录
 - [ ] 正确的 gettimeofday 实现
-- [ ] 重写 vfs
+- [X] 重写 vfs
+- [ ] ptrace

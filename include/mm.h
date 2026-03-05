@@ -115,4 +115,15 @@ void name_put(void *name);
 
 void mm_init_page_table_cache();
 
+/* Callback type invoked when a new kernel page-directory entry is allocated.
+ * Registered by ps.c so the scheduler can propagate the entry to all existing
+ * task page directories without creating a mm→ps dependency. */
+typedef void (*kernel_pde_propagator_t)(unsigned offset, unsigned value);
+void mm_set_kernel_pde_propagator(kernel_pde_propagator_t fn);
+
+/* Copy the kernel portion of the global kernel page directory (entries
+ * KERNEL_PAGE_DIR_OFFSET..1023) into @pgd.  Call this when initialising a
+ * new task's page directory so it inherits all current kernel mappings. */
+void mm_copy_kernel_pgd(unsigned int *pgd);
+
 #endif

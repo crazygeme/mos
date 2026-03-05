@@ -145,6 +145,10 @@ char *strrchr(char *str, char c);
 
 char *strdup(char *str);
 
+void vprintf(const char *fmt, va_list ap);
+
+void vsprintf(char *buf, const char *fmt, va_list ap);
+
 void printf(const char *str, ...);
 
 void sprintf(char *buf, const char *fmt, ...);

@@ -58,7 +58,7 @@ void cyb_destroy(cy_buf *b)
 	}
 }
 
-static void cyb_putc_internal(cy_buf *b, unsigned char key, int notifyOnWrite)
+static void cyb_putc_internal(cy_buf *b, unsigned char key, int notify)
 {
 	unsigned length = 0;
 	unsigned write_idx;
@@ -66,9 +66,8 @@ static void cyb_putc_internal(cy_buf *b, unsigned char key, int notifyOnWrite)
 
 	length = PIPE_LEN(b);
 
-	if (notifyOnWrite)
-		if (length == 0)
-			needs_trigger = 1;
+	if (notify && length == 0)
+		needs_trigger = 1;
 
 	spinlock_lock(&b->idx_lock);
 
@@ -90,9 +89,8 @@ static void cyb_putc_internal(cy_buf *b, unsigned char key, int notifyOnWrite)
 
 	spinlock_unlock(&b->idx_lock);
 
-	if (notifyOnWrite)
-		if (needs_trigger)
-			cond_notify(&b->event);
+	if (needs_trigger)
+		cond_notify(&b->event);
 }
 
 void cyb_putc(cy_buf *b, unsigned char key)

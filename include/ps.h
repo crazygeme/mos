@@ -191,6 +191,8 @@ typedef volatile struct _task_struct {
 	list_entry lock_list;
 	// in all process list
 	list_entry ps_mgr;
+	struct rb_node rb_node;   /* ready-queue RB-tree node */
+	unsigned long sched_seq;  /* insertion sequence for FIFO ordering */
 	ps_status status;
 	ps_type type;
 	int remain_ticks;

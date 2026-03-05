@@ -9,7 +9,7 @@
 
 /* RSDP (Root System Description Pointer) */
 typedef struct __attribute__((packed)) {
-	char signature[8];  /* "RSD PTR " */
+	char signature[8]; /* "RSD PTR " */
 	unsigned char checksum;
 	char oemid[6];
 	unsigned char revision;
@@ -40,7 +40,7 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
 	acpi_header_t header;
 	unsigned int lapic_addr; /* local APIC physical address */
-	unsigned int flags;      /* bit 0: dual 8259 PICs installed */
+	unsigned int flags; /* bit 0: dual 8259 PICs installed */
 } acpi_madt_t;
 
 /* MADT entry header */
@@ -50,7 +50,7 @@ typedef struct __attribute__((packed)) {
 } acpi_madt_entry_t;
 
 /* MADT entry type 0: Processor Local APIC */
-#define ACPI_MADT_LAPIC     0
+#define ACPI_MADT_LAPIC 0
 typedef struct __attribute__((packed)) {
 	acpi_madt_entry_t hdr;
 	unsigned char acpi_proc_id;
@@ -59,22 +59,22 @@ typedef struct __attribute__((packed)) {
 } acpi_madt_lapic_t;
 
 /* MADT entry type 1: I/O APIC */
-#define ACPI_MADT_IOAPIC    1
+#define ACPI_MADT_IOAPIC 1
 typedef struct __attribute__((packed)) {
 	acpi_madt_entry_t hdr;
 	unsigned char ioapic_id;
 	unsigned char reserved;
 	unsigned int ioapic_addr; /* physical address */
-	unsigned int gsi_base;    /* global system interrupt base */
+	unsigned int gsi_base; /* global system interrupt base */
 } acpi_madt_ioapic_t;
 
 /* MADT entry type 2: Interrupt Source Override */
-#define ACPI_MADT_ISO       2
+#define ACPI_MADT_ISO 2
 typedef struct __attribute__((packed)) {
 	acpi_madt_entry_t hdr;
 	unsigned char bus;
-	unsigned char source;    /* IRQ source (ISA IRQ number) */
-	unsigned int gsi;        /* global system interrupt */
+	unsigned char source; /* IRQ source (ISA IRQ number) */
+	unsigned int gsi; /* global system interrupt */
 	unsigned short flags;
 } acpi_madt_iso_t;
 
@@ -83,8 +83,8 @@ typedef struct __attribute__((packed)) {
  * ----------------------------------------------------------------------- */
 typedef struct {
 	unsigned char apic_ids[MAX_CPUS]; /* LAPIC IDs of found CPUs */
-	int ncpus;                        /* number of CPUs found */
-	unsigned ioapic_phys;             /* physical address of first IOAPIC */
+	int ncpus; /* number of CPUs found */
+	unsigned ioapic_phys; /* physical address of first IOAPIC */
 } acpi_info_t;
 
 /* Scan firmware memory for the ACPI RSDP, parse RSDT/MADT, and populate

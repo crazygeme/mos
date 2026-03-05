@@ -183,7 +183,8 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 
 		if (table_addr == 0)
 			return 0;
-		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA | flag;
+		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA |
+		      flag;
 		page_dir[offset] = pde;
 
 		/* Keep the global kernel page directory in sync.  Propagate the

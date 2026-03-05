@@ -80,9 +80,9 @@ static void ipi_sched_handler(intr_frame *frame)
 void intr_handler(intr_frame *frame)
 {
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
-	int is_ipi   = (frame->vec_no == IPI_VECTOR_TLB  ||
-			frame->vec_no == IPI_VECTOR_SCHED ||
-			frame->vec_no == IPI_VECTOR_SPURIOUS);
+	int is_ipi = (frame->vec_no == IPI_VECTOR_TLB ||
+		      frame->vec_no == IPI_VECTOR_SCHED ||
+		      frame->vec_no == IPI_VECTOR_SPURIOUS);
 	int_callback fn = 0;
 
 	if (frame->vec_no < 0 || frame->vec_no >= IDT_SIZE) {
@@ -160,8 +160,8 @@ void int_enable_all(void)
 	intr_names[33] = "keyboard";
 
 	/* Register IPI handlers. */
-	int_register(IPI_VECTOR_TLB,   ipi_tlb_handler,   0, 0);
-	int_register(IPI_VECTOR_SCHED, ipi_sched_handler,  0, 0);
+	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);
+	int_register(IPI_VECTOR_SCHED, ipi_sched_handler, 0, 0);
 
 	extern void enable_sse();
 	enable_sse();

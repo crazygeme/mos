@@ -369,7 +369,7 @@ static int unhandled_syscall(unsigned callno)
 	if (TestControl.verbos)
 		klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid,
 		     callno);
-	return -1;
+	return -ENOSYS;
 }
 
 static void syscall_process(intr_frame *frame)
@@ -379,6 +379,8 @@ static void syscall_process(intr_frame *frame)
 	/* Syscall-entry stop */
 	if ((cur->ptrace & PT_TRACED) && (cur->ptrace & PT_TRACE_SYSCALL) &&
 	    !(cur->ptrace & PT_STOPPED)) {
+		klog("%d: ptrace_stop for syscall %d\n", CURRENT_TASK()->psid,
+		     frame->eax);
 		ptrace_stop(frame);
 	}
 
@@ -441,9 +443,9 @@ static int sys_write(int fd, char *buf, unsigned len)
 	unsigned _len;
 	if (TestControl.verbos) {
 		char *tmp;
-		int pri_len = len > 5 ? 5 : len;
-		tmp = kmalloc(6);
-		memset(tmp, 0, 6);
+		int pri_len = len > 32 ? 32 : len;
+		tmp = kmalloc(33);
+		memset(tmp, 0, 33);
 		memcpy(tmp, buf, pri_len);
 		klog("%d: write(%d, \"%s\", %d) ", CURRENT_TASK()->psid, fd,
 		     tmp, len);

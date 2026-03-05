@@ -191,8 +191,8 @@ typedef volatile struct _task_struct {
 	list_entry lock_list;
 	// in all process list
 	list_entry ps_mgr;
-	struct rb_node rb_node;   /* ready-queue RB-tree node */
-	unsigned long sched_seq;  /* insertion sequence for FIFO ordering */
+	struct rb_node rb_node; /* ready-queue RB-tree node */
+	unsigned long sched_seq; /* insertion sequence for FIFO ordering */
 	ps_status status;
 	ps_type type;
 	int remain_ticks;
@@ -214,8 +214,8 @@ typedef volatile struct _task_struct {
 	unsigned pf_major;
 	unsigned pf_minor;
 	/* ptrace state */
-	unsigned ptrace;         /* PT_TRACED, PT_STOPPED, etc. (see ptrace.h) */
-	unsigned ptrace_tracer;  /* psid of the tracing process, 0 if none */
+	unsigned ptrace; /* PT_TRACED, PT_STOPPED, etc. (see ptrace.h) */
+	unsigned ptrace_tracer; /* psid of the tracing process, 0 if none */
 	unsigned int magic; // to avoid stack overflow
 
 } task_struct;

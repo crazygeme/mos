@@ -23,8 +23,8 @@ typedef void (*debugfs_init_fn_t)(super_block *);
 extern debugfs_init_fn_t __debugfs_init_start[];
 extern debugfs_init_fn_t __debugfs_init_end[];
 
-#define DEBUGFS_INIT(fn)                                                \
-	static debugfs_init_fn_t __debugfs_init_##fn                    \
+#define DEBUGFS_INIT(fn)                             \
+	static debugfs_init_fn_t __debugfs_init_##fn \
 		__attribute__((used, section(".debugfs_init"))) = (fn)
 
 void debugfs_mm_init(super_block *sb);

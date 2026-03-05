@@ -665,7 +665,7 @@ int sys_exit(unsigned status)
 		DIE();
 	}
 	if (cur->psid == 1)
-		reboot();
+		shutdown();
 
 	/* FIXME: reparent orphaned children to cur->parent. */
 	ps_put_to_dying_queue(cur);
@@ -731,9 +731,6 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 	task_struct *cur = CURRENT_TASK();
 	list_entry *entry;
 
-	if (TestControl.verbos)
-		klog("%d: wait(%d)\n", cur->psid, pid);
-
 	for (;;) {
 		task_sched();
 
@@ -755,6 +752,9 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			list_remove_entry(&task->ps_list);
 			spinlock_unlock(&dying_queue_lock);
 			ps_reap_task(task, rusage);
+			if (TestControl.verbos)
+				klog("%d: wait(%d) = %d\n", cur->psid, pid,
+				     ret);
 			return ret;
 		}
 		spinlock_unlock(&dying_queue_lock);
@@ -780,6 +780,9 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 				*status = (SIGTRAP << 8) | 0x7f;
 			task->ptrace |= PT_STOP_REPORTED;
 			spinlock_unlock(&mgr_queue_lock);
+			if (TestControl.verbos)
+				klog("%d: wait(%d) = %d\n", cur->psid, pid,
+				     ret);
 			return ret;
 		}
 		spinlock_unlock(&mgr_queue_lock);

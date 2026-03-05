@@ -870,6 +870,27 @@ void ps_kickoff()
 	task_sched();
 }
 
+/* Idle task body for Application Processors. */
+static void ap_idle_stub(void *param)
+{
+	while (1) {
+		HLT();
+		task_sched();
+	}
+}
+
+/* Called by each AP after per-CPU LAPIC/TSS setup.
+ * Creates a per-CPU idle task and enters the scheduler. */
+void ps_kickoff_ap(void)
+{
+	task_struct *cur = CURRENT_TASK();
+	cur->psid = 0xffffffff;
+	cur->ps_list.prev = cur->ps_list.next = 0;
+	ps_create(ap_idle_stub, 1, ps_kernel);
+	_ps_enabled = 1;
+	task_sched();
+}
+
 /* Return a pointer to the currently running task_struct.
  * Each task occupies exactly KERNEL_TASK_SIZE pages aligned to PAGE_SIZE,
  * and the task_struct sits at the base of that allocation.  Masking the

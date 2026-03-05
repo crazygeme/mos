@@ -101,6 +101,14 @@ void time_calculate_cpu_cycle()
 	return time_calibrate();
 }
 
+/* Return CPU speed in MHz based on the calibrated loops-per-tick value. */
+unsigned time_get_cpu_mhz(void)
+{
+	/* cycle_per_ticket loops per tick, HZ ticks/second:
+	 *   MHz = cycle_per_ticket * HZ / 1_000_000 = cycle_per_ticket / 10_000 */
+	return (unsigned)(cycle_per_ticket / 10000);
+}
+
 static void force_switch(short ds)
 {
 	task_struct *cur = CURRENT_TASK();

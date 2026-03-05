@@ -69,6 +69,10 @@ unsigned mm_get_pagedir();
 // return (is used for page table)
 int mm_add_direct_map(unsigned int vir);
 
+/* Map firmware physical page (ACPI tables, etc.) to virt = phys + KERNEL_OFFSET.
+ * Safe for any physical address; does not touch the physical allocator. */
+int mm_map_phys_page(unsigned int phys);
+
 int mm_add_resource_map(unsigned int phy);
 
 void mm_del_direct_map(unsigned int vir);

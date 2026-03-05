@@ -6,6 +6,18 @@
 #include <mm.h>
 #include <macro.h>
 #include <port.h>
+#include <apic.h>
+
+/*
+ * use_apic: set to 1 after apic_init_bsp() so intr_handler sends APIC EOI
+ * instead of 8259 PIC EOI.
+ */
+static int use_apic = 0;
+
+void int_set_apic_mode(void)
+{
+	use_apic = 1;
+}
 
 /* Sends an end-of-interrupt signal to the PIC for the given IRQ.
 If we don't acknowledge the IRQ, it will never be delivered to
@@ -50,10 +62,27 @@ void int_unregister(int vec_no)
 	idt[vec_no] = 0;
 }
 
+/* IPI: TLB shootdown — flush the entire TLB on this CPU. */
+static void ipi_tlb_handler(intr_frame *frame)
+{
+	RELOAD_CR3();
+}
+
+/* IPI: scheduler kick — wake this CPU from idle so it picks up new work. */
+static void ipi_sched_handler(intr_frame *frame)
+{
+	/* Returning from the interrupt handler will invoke task_sched() via
+	 * the dsr_has_task() path if work is ready; or the next idle HLT
+	 * will simply return due to this interrupt.  No explicit action
+	 * needed beyond unblocking the HLT. */
+}
+
 void intr_handler(intr_frame *frame)
 {
-	// printf("interrupt: [%x] %s\n", frame->vec_no, intr_names[frame->vec_no]);
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
+	int is_ipi   = (frame->vec_no == IPI_VECTOR_TLB  ||
+			frame->vec_no == IPI_VECTOR_SCHED ||
+			frame->vec_no == IPI_VECTOR_SPURIOUS);
 	int_callback fn = 0;
 
 	if (frame->vec_no < 0 || frame->vec_no >= IDT_SIZE) {
@@ -65,8 +94,12 @@ void intr_handler(intr_frame *frame)
 	if (fn)
 		fn(frame);
 
-	if (external)
+	/* Send EOI to whichever interrupt controller is active. */
+	if (is_ipi || (external && use_apic)) {
+		apic_eoi();
+	} else if (external) {
 		pic_end_of_interrupt(frame->vec_no);
+	}
 
 	// if has dsr, call task_sched
 	// task_sched function will pick dsr process first
@@ -83,7 +116,7 @@ void intr_syscall_handler(intr_frame *frame)
 	return;
 }
 
-void int_enable_all()
+void int_enable_all(void)
 {
 	int i = 0;
 	unsigned long long idtr = 0;
@@ -126,8 +159,20 @@ void int_enable_all()
 	intr_names[32] = "timer";
 	intr_names[33] = "keyboard";
 
+	/* Register IPI handlers. */
+	int_register(IPI_VECTOR_TLB,   ipi_tlb_handler,   0, 0);
+	int_register(IPI_VECTOR_SCHED, ipi_sched_handler,  0, 0);
+
 	extern void enable_sse();
 	enable_sse();
+}
+
+/* Called on each AP: load IDT, register IPI handlers, enable interrupts. */
+void int_enable_all_ap(void)
+{
+	unsigned long long idtr = MAKE_IDTR_OPERAND(idt_size - 1, idt);
+	SET_IDT(idtr);
+	ENABLE_INTR();
 }
 
 /*

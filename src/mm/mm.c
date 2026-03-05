@@ -307,6 +307,33 @@ void mm_del_direct_map(unsigned int vir)
 }
 
 /*
+ * Map a firmware physical address (e.g. ACPI tables) into the kernel virtual
+ * address space at virtual = phys + KERNEL_OFFSET.
+ *
+ * Works for any physical address, including those above the initial 8 MB boot
+ * mapping.  Does NOT touch the physical allocator reference counts — firmware
+ * pages are outside the allocator range and must not be ref-counted.
+ *
+ * If the page is already covered by the initial boot mapping the function is
+ * a no-op and returns 1.  Returns -1 on page-table allocation failure.
+ */
+int mm_map_phys_page(unsigned int phys)
+{
+	unsigned int virt = phys + KERNEL_OFFSET;
+	mm_addr_info info;
+
+	/* Initial boot mapping covers phys [0, PAGE_TABLE_CACHE_END - KERNEL_OFFSET). */
+	if (phys < PAGE_TABLE_CACHE_END - KERNEL_OFFSET)
+		return 1;
+
+	if (!mm_get_valid_page_table(virt, 0, &info))
+		return -1;
+
+	*info.entry = (phys & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
+	return 1;
+}
+
+/*
  * Map a high physical address (e.g. MMIO resource) into the kernel address
  * space at the same virtual address.
  */

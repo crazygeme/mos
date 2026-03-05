@@ -250,6 +250,9 @@ unsigned ps_create(process_fn, int priority, ps_type type);
 
 void ps_kickoff();
 
+/* Called by each AP after per-CPU setup to enter the scheduler loop. */
+void ps_kickoff_ap(void);
+
 int ps_enabled();
 
 void ps_update_tss(unsigned int esp0);

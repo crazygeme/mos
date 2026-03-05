@@ -53,7 +53,7 @@ kernel_file=out/kernel
 
 echo "begin enum $kernel_file"
 
-qemu-system-i386 -cpu coreduo\
+qemu-system-i386 -cpu coreduo -smp 2 \
 	-display $_window \
 	-m $_ramsize \
 	-hda "$diskfile" \

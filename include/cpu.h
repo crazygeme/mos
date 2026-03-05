@@ -9,11 +9,11 @@
  * processor that comes online.  cpu_id 0 is always the BSP.
  */
 typedef struct _cpu_struct {
-	int cpu_id;            /* logical CPU index (0 = BSP) */
+	int cpu_id; /* logical CPU index (0 = BSP) */
 	unsigned char apic_id; /* hardware Local APIC ID */
-	volatile int online;   /* set to 1 by AP after initialisation */
-	tss_struct *tss;       /* per-CPU TSS (allocated from kernel heap) */
-	task_struct *idle;     /* per-CPU idle task */
+	volatile int online; /* set to 1 by AP after initialisation */
+	tss_struct *tss; /* per-CPU TSS (allocated from kernel heap) */
+	task_struct *idle; /* per-CPU idle task */
 } cpu_struct;
 
 extern cpu_struct cpus[MAX_CPUS];

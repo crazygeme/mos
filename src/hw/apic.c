@@ -51,10 +51,10 @@ static void lapic_init_common(void)
 	lapic_write(LAPIC_LDR, 0);
 
 	/* Mask all LVT entries except spurious. */
-	lapic_write(LAPIC_LVT_TIMER,  0x00010000); /* masked */
-	lapic_write(LAPIC_LVT_LINT0,  0x00010000); /* masked */
-	lapic_write(LAPIC_LVT_LINT1,  0x00010000); /* masked */
-	lapic_write(LAPIC_LVT_ERROR,  0x00010000); /* masked */
+	lapic_write(LAPIC_LVT_TIMER, 0x00010000); /* masked */
+	lapic_write(LAPIC_LVT_LINT0, 0x00010000); /* masked */
+	lapic_write(LAPIC_LVT_LINT1, 0x00010000); /* masked */
+	lapic_write(LAPIC_LVT_ERROR, 0x00010000); /* masked */
 
 	/* Clear any pending error. */
 	lapic_write(LAPIC_ESR, 0);
@@ -126,7 +126,7 @@ void apic_send_ipi(unsigned dest_apic_id, unsigned vector)
 	apic_wait_ipi_idle();
 	lapic_write(LAPIC_ICR_HI, dest_apic_id << 24);
 	lapic_write(LAPIC_ICR_LO, ICR_FIXED | ICR_ASSERT | ICR_EDGE |
-				       ICR_DEST_FIELD | vector);
+					  ICR_DEST_FIELD | vector);
 	apic_wait_ipi_idle();
 }
 
@@ -154,7 +154,7 @@ void apic_send_sipi(unsigned dest_apic_id, unsigned start_page)
 	apic_wait_ipi_idle();
 	lapic_write(LAPIC_ICR_HI, dest_apic_id << 24);
 	lapic_write(LAPIC_ICR_LO, ICR_SIPI | ICR_ASSERT | ICR_EDGE |
-				       ICR_DEST_FIELD | (start_page & 0xFF));
+					  ICR_DEST_FIELD | (start_page & 0xFF));
 }
 
 /* -----------------------------------------------------------------------

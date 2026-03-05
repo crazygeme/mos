@@ -84,9 +84,9 @@ void kmain_startup()
 	 * --------------------------------------------------------------- */
 	printk("Init ACPI\n");
 	if (acpi_parse(&g_acpi_info) == 0 && g_acpi_info.ncpus > 0) {
-		unsigned ioapic_phys = g_acpi_info.ioapic_phys
-					       ? g_acpi_info.ioapic_phys
-					       : IOAPIC_BASE_PHY;
+		unsigned ioapic_phys = g_acpi_info.ioapic_phys ?
+					       g_acpi_info.ioapic_phys :
+					       IOAPIC_BASE_PHY;
 
 		printk("Init BSP LAPIC\n");
 		apic_init_bsp();
@@ -98,10 +98,10 @@ void kmain_startup()
 		ioapic_init(ioapic_phys);
 
 		/* Route hardware IRQs to BSP (APIC id 0). */
-		ioapic_route(0,  INT_VECTOR_IRQ0,       g_acpi_info.apic_ids[0]);
-		ioapic_route(1,  INT_VECTOR_IRQ0 + 1,   g_acpi_info.apic_ids[0]);
-		ioapic_route(14, INT_VECTOR_IRQ0 + 14,  g_acpi_info.apic_ids[0]);
-		ioapic_route(15, INT_VECTOR_IRQ0 + 15,  g_acpi_info.apic_ids[0]);
+		ioapic_route(0, INT_VECTOR_IRQ0, g_acpi_info.apic_ids[0]);
+		ioapic_route(1, INT_VECTOR_IRQ0 + 1, g_acpi_info.apic_ids[0]);
+		ioapic_route(14, INT_VECTOR_IRQ0 + 14, g_acpi_info.apic_ids[0]);
+		ioapic_route(15, INT_VECTOR_IRQ0 + 15, g_acpi_info.apic_ids[0]);
 
 		printk("Init BSP CPU struct\n");
 		cpu_init_bsp();
@@ -113,9 +113,6 @@ void kmain_startup()
 	}
 
 	printk("Start first process\n");
-
-	// create idle process
-	ps_create(idle_process, 1, ps_kernel);
 
 	// create first process
 	ps_create(kmain_process, 3, ps_kernel);

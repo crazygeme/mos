@@ -39,7 +39,7 @@ void spinlock_lock(spinlock_t *lock)
 			lock->int_status = int_intr_disable();
 
 		while (__sync_lock_test_and_set(&(lock->lock), 1) == 1)
-			HLT();
+			PAUSE(); /* SMP-safe: PAUSE instead of HLT */
 	}
 }
 

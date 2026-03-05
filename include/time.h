@@ -71,6 +71,8 @@ void time_init();
 
 void time_calculate_cpu_cycle();
 
+unsigned time_get_cpu_mhz(void);
+
 void time_current(time_t *time);
 
 unsigned time_now_ms();

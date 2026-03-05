@@ -86,7 +86,13 @@ extern void asm_interrupt_handle_for_keyboard();
 
 void int_update_tss(void *address);
 
-void int_enable_all();
+void int_enable_all(void);
+
+/* Called on each AP to load IDT and enable interrupts (APIC-mode only). */
+void int_enable_all_ap(void);
+
+/* Switch EOI delivery from 8259 PIC to Local APIC. */
+void int_set_apic_mode(void);
 
 typedef void (*int_callback)(intr_frame *frame);
 

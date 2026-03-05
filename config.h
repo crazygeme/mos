@@ -11,7 +11,8 @@
 #define TSS_SELECTOR \
 	0x28 // we are not going to use TSS when task switch, \
 		// but we have to make tr register valid or x86 process
-#define SELECTOR_COUNT 6 // kernel 2 + user 2 + tss 1 + empty
+/* TSS selectors: CPU 0 at TSS_SELECTOR, CPU n at TSS_SELECTOR + n*8 */
+/* SELECTOR_COUNT is now defined after MAX_CPUS below */
 
 #define ADDRESS_LIMIT \
 	0xfffff //  always 4k bytes algined, so last 0xfffff means 4G space
@@ -75,5 +76,16 @@
 #define PAGE_SIZE_MASK 0xFFFFF000
 
 #define PAGE_CACHE_SIZE 4096 // pages
+
+/* SMP configuration */
+#define MAX_CPUS            8
+#define AP_TRAMPOLINE_PHYS  0x8000  /* physical addr for AP startup code */
+#define AP_PARAMS_PHYS      0x9000  /* physical addr for AP params page */
+#define IPI_VECTOR_SCHED    0xF0    /* scheduler kick IPI */
+#define IPI_VECTOR_TLB      0xF1    /* TLB shootdown IPI */
+#define IPI_VECTOR_SPURIOUS 0xFF    /* spurious APIC interrupt */
+
+/* GDT: 5 base entries + one TSS per CPU */
+#define SELECTOR_COUNT      (5 + MAX_CPUS)
 
 #endif

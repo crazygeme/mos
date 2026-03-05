@@ -61,6 +61,11 @@
 
 #define HLT() asm volatile("hlt")
 
+#define PAUSE() asm volatile("pause")
+
+/* Per-CPU TSS selector: CPU 0 → TSS_SELECTOR, CPU n → TSS_SELECTOR + n*8 */
+#define TSS_SELECTOR_FOR(n) (TSS_SELECTOR + (n) * 8)
+
 #define DIE()          \
 	for (;;) {     \
 		HLT(); \

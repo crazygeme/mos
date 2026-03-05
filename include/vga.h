@@ -19,20 +19,44 @@
 #include <mm.h>
 #include <config.h>
 
+/* Lifecycle */
+
 void fb_init();
-
 void fb_enable();
-
 void fb_map_lfb();
-/*
- * terminal bitmap fallback font
- */
 
-/* Binary Literals */
-#define b(x) ((unsigned char)b_(0##x##uL))
-#define b_(x)                                                   \
-	((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | \
-	 (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | (x >> 14 & 128))
+/* Query */
+
+/* Returns non-zero when the framebuffer is initialised and available. */
+int fb_is_available(void);
+
+/* Fill *cols and *rows with the character grid dimensions. */
+void fb_get_char_dims(unsigned *cols, unsigned *rows);
+
+/* Drawing primitives */
+
+void fb_set_point(int x, int y, unsigned value);
+void fb_write_char(int x, int y, int val, unsigned color);
+void fb_write_color(int x, int y, unsigned color);
+
+/* Character cell read/write (also updates the internal text shadow buffer). */
+char fb_getchar(int col, int row);
+void fb_putchar(int col, int row, char c);
+
+/* Cursor */
+
+/* Move the visible cursor to new_pos (linear char index). */
+void fb_update_cursor(unsigned new_pos);
+
+/* Screen operations */
+
+/* Scroll the entire screen up by one character row. */
+void fb_scroll_line(void);
+
+/* Clear the entire framebuffer to black. */
+void fb_clear_screen(void);
+
+/* BGA / VBE register constants */
 
 #define VBE_DISPI_ID5 0xB0C5
 #define VBE_DISPI_IOPORT_INDEX 0x01CE
@@ -59,25 +83,8 @@ void fb_map_lfb();
 #define VBE_DISPI_BPP_24 0x18
 #define VBE_DISPI_BPP_32 0x20
 
-extern unsigned char **_number_font;
-extern unsigned _fb_buffer;
-extern unsigned _resolution_x;
-extern unsigned _resolution_y;
-extern unsigned _hw_resolution_x;
-extern unsigned _hw_resolution_y;
-extern unsigned _window_char_width;
-extern unsigned _window_char_height;
-extern unsigned _fb_font_width;
-extern unsigned _fb_font_height;
-extern char _fb_text[];
-extern unsigned _fb_x_off;
-extern unsigned _fb_y_off;
+/* Colour helpers */
 
-void fb_write_char(int x, int y, int val, unsigned color);
-void fb_write_color(int x, int y, unsigned color);
-void fb_set_point(int x, int y, unsigned value);
-
-// pre defined color
 #define _RED(color) ((color & 0x00FF0000) / 0x10000)
 #define _GRE(color) ((color & 0x0000FF00) / 0x100)
 #define _BLU(color) ((color & 0x000000FF) / 0x1)
@@ -86,6 +93,7 @@ void fb_set_point(int x, int y, unsigned value);
 #define ARGB(a, r, g, b)                                  \
 	((0xFF * 0x1000000ULL) + ((0xFF & r) * 0x10000) + \
 	 ((0xFF & g) * 0x100) + ((0xFF & b) * 0x1))
+
 #define VGA_COLOR_BLACK ARGB(0xff, 0x00, 0x00, 0x00)
 #define VGA_COLOR_WHITE ARGB(0xff, 0xff, 0xff, 0xff)
 #define VGA_COLOR_RED ARGB(0xff, 0xff, 0x00, 0x00)
@@ -94,7 +102,8 @@ void fb_set_point(int x, int y, unsigned value);
 #define VGA_COLOR_GRAY ARGB(0xff, 0xaa, 0xaa, 0xaa)
 #define VGA_COLOR_YELLOW ARGB(0xff, 0xFF, 0xFF, 0x00)
 
+/* Font cell dimensions in pixels. */
 #define char_height 12
 #define char_width 8
 
-#endif /** BOOT_VIDEO_H */
+#endif /* BOOT_VIDEO_H */

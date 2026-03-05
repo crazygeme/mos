@@ -28,7 +28,7 @@ static int kb_poll(file *fp, unsigned type)
 {
 	if (type == FS_POLL_WRITE || type == FS_POLL_EXCEPT)
 		return -1;
-	return kb_can_read() ? 0 : -1;
+	return 0;
 }
 
 static int kb_getattr(inode *node, struct stat *s)

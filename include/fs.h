@@ -74,6 +74,7 @@ typedef struct _file_operations {
 	/* poll: return 0 if ready, -1 if not ready */
 	int (*poll)(file *file, unsigned type);
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
+	int (*flush)(file *file);
 } file_operations;
 
 /*
@@ -147,6 +148,8 @@ int fs_delete(const char *path);
 int fs_stat(const char *path, struct stat *s);
 
 int fs_fstat(int fd, struct stat *s);
+
+int fs_sync(int fd);
 
 int fs_pipe(int *pipefd);
 

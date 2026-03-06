@@ -51,12 +51,10 @@ fi
 
 kernel_file=out/kernel
 
-echo "begin enum $kernel_file"
-
 qemu-system-i386 -cpu coreduo -smp 2 \
 	-display $_window \
 	-m $_ramsize \
-	-hda "$diskfile" \
+	-drive file="$diskfile",format=raw \
 	-kernel $kernel_file \
 	-append "$_verbose" \
 	-serial $_logtofile \

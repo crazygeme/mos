@@ -886,8 +886,8 @@ int resolve_path(const char *old, char *new)
 		r = strrchr(new, '/');
 		*r = '\0';
 		if (*new == '\0') {
-			*new++ = '/';
-			*new++ = '\0';
+			*new ++ = '/';
+			*new ++ = '\0';
 		}
 		return 0;
 	}

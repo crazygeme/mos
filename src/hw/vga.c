@@ -866,14 +866,14 @@ void fb_clear_screen(void)
 
 /* Bochs VBE / QEMU VGA hardware init */
 
-static void BgaWriteRegister(unsigned short IndexValue,
-			     unsigned short DataValue)
+static void bga_write_register(unsigned short IndexValue,
+			       unsigned short DataValue)
 {
 	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
 	port_write_word(VBE_DISPI_IOPORT_DATA, DataValue);
 }
 
-static unsigned short BgaReadRegister(unsigned short IndexValue)
+static unsigned short bga_read_register(unsigned short IndexValue)
 {
 	port_write_word(VBE_DISPI_IOPORT_INDEX, IndexValue);
 	return port_read_word(VBE_DISPI_IOPORT_DATA);
@@ -882,11 +882,11 @@ static unsigned short BgaReadRegister(unsigned short IndexValue)
 static int BgaIsAvailable(void)
 {
 	int old_version =
-		(BgaReadRegister(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID5);
+		(bga_read_register(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID5);
 
 	if (old_version) {
-		BgaWriteRegister(VBE_DISPI_INDEX_ID, VBE_DISPI_ID5);
-		return (BgaReadRegister(VBE_DISPI_INDEX_ID) == VBE_DISPI_ID5);
+		bga_write_register(VBE_DISPI_INDEX_ID, VBE_DISPI_ID5);
+		return (bga_read_register(VBE_DISPI_INDEX_ID) == VBE_DISPI_ID5);
 	}
 
 	return 1;
@@ -896,15 +896,15 @@ static void BgaSetVideoMode(unsigned int Width, unsigned int Height,
 			    unsigned int BitDepth, int UseLinearFrameBuffer,
 			    int ClearVideoMemory)
 {
-	BgaWriteRegister(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
-	BgaWriteRegister(VBE_DISPI_INDEX_XRES, Width);
-	BgaWriteRegister(VBE_DISPI_INDEX_YRES, Height);
-	BgaWriteRegister(VBE_DISPI_INDEX_BPP, BitDepth);
-	BgaWriteRegister(VBE_DISPI_INDEX_ENABLE,
-			 VBE_DISPI_ENABLED |
-				 (UseLinearFrameBuffer ? VBE_DISPI_LFB_ENABLED :
-							 0) |
-				 (ClearVideoMemory ? 0 : VBE_DISPI_NOCLEARMEM));
+	bga_write_register(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
+	bga_write_register(VBE_DISPI_INDEX_XRES, Width);
+	bga_write_register(VBE_DISPI_INDEX_YRES, Height);
+	bga_write_register(VBE_DISPI_INDEX_BPP, BitDepth);
+	bga_write_register(
+		VBE_DISPI_INDEX_ENABLE,
+		VBE_DISPI_ENABLED |
+			(UseLinearFrameBuffer ? VBE_DISPI_LFB_ENABLED : 0) |
+			(ClearVideoMemory ? 0 : VBE_DISPI_NOCLEARMEM));
 }
 
 static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)

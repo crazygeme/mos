@@ -1,22 +1,143 @@
 
 /*
- * Copyright (C) 2014  Ender Zheng
- * License: GPL version 2 or higher http://www.gnu.org/licenses/gpl.html
+ * src/hw/tty.c - TTY driver: VGA/framebuffer primitives, cursor management,
+ * ANSI escape processing, and high-level text output.
  */
+
 #include <int.h>
 #include <tty.h>
 #include <vga.h>
 #include <unistd.h>
 #include <ioctl.h>
 #include <port.h>
+#include <lock.h>
+#include <klib.h>
 
-/* VGA text-mode video buffer (BIOS address, used only when FB is absent). */
+/* ── VGA text-mode video buffer ──────────────────────────────────────────── */
+
 static char *vidptr = (char *)0xC00b8000;
 
 unsigned TTY_MAX_ROW;
 unsigned TTY_MAX_COL;
 
-static void tty_clear_row(int row);
+/* ── Cursor state ────────────────────────────────────────────────────────── */
+
+spinlock_t tty_lock;
+
+static int cursor;
+
+#define CUR_ROW (cursor / (int)TTY_MAX_COL)
+#define CUR_COL (cursor % (int)TTY_MAX_COL)
+
+/* ── ANSI escape state ───────────────────────────────────────────────────── */
+
+static int ansi_flag;
+static char ansi_buf[10];
+static int ansi_idx;
+
+static void ansi_begin(void)
+{
+	memset(ansi_buf, 0, sizeof(ansi_buf));
+	ansi_idx = 0;
+	ansi_flag = 1;
+}
+
+static void ansi_end(void)
+{
+	memset(ansi_buf, 0, sizeof(ansi_buf));
+	ansi_idx = 0;
+	ansi_flag = 0;
+}
+
+/* Forward declaration needed by ansi_feed. */
+static void tty_cursor_set(int pos);
+
+static void ansi_feed(char c)
+{
+	char *arg = ansi_buf + 1;
+	int val, row, col;
+
+	switch (c) {
+	case 'm': /* SGR - colour/attribute (stub) */
+		ansi_end();
+		return;
+	case 'A': /* cursor up n */
+		val = atoi(arg);
+		row = CUR_ROW - val;
+		if (row < 0)
+			row = 0;
+		tty_cursor_set(ROW_COL_TO_CUR(row, CUR_COL));
+		ansi_end();
+		return;
+	case 'B': /* cursor down n */
+		val = atoi(arg);
+		row = CUR_ROW + val;
+		if (row >= (int)TTY_MAX_ROW)
+			row = TTY_MAX_ROW - 1;
+		tty_cursor_set(ROW_COL_TO_CUR(row, CUR_COL));
+		ansi_end();
+		return;
+	case 'C': /* cursor right n */
+		val = atoi(arg);
+		col = CUR_COL + val;
+		if (col >= (int)TTY_MAX_COL)
+			col = TTY_MAX_COL - 1;
+		tty_cursor_set(ROW_COL_TO_CUR(CUR_ROW, col));
+		ansi_end();
+		return;
+	case 'D': /* cursor left n */
+		val = atoi(arg);
+		col = CUR_COL - val;
+		if (col < 0)
+			col = 0;
+		tty_cursor_set(ROW_COL_TO_CUR(CUR_ROW, col));
+		ansi_end();
+		return;
+	case 'H': { /* set cursor position row;col (1-based) */
+		char *str_col = strchr(arg, ';');
+
+		if (!str_col)
+			break;
+		*str_col++ = '\0';
+		row = atoi(arg) - 1;
+		col = atoi(str_col) - 1;
+		if (row < 0)
+			row = 0;
+		if (row >= (int)TTY_MAX_ROW)
+			row = TTY_MAX_ROW - 1;
+		if (col < 0)
+			col = 0;
+		if (col >= (int)TTY_MAX_COL)
+			col = TTY_MAX_COL - 1;
+		tty_cursor_set(ROW_COL_TO_CUR(row, col));
+		ansi_end();
+		return;
+	}
+	case 'J': /* erase display */
+		tty_clear();
+		ansi_end();
+		return;
+	default:
+		break;
+	}
+
+	/* Accumulate non-terminator characters; end on any letter. */
+	if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+		ansi_end();
+	} else if (ansi_idx < (int)sizeof(ansi_buf) - 1) {
+		ansi_buf[ansi_idx++] = c;
+	}
+}
+
+/* ── VGA/FB primitives ───────────────────────────────────────────────────── */
+
+static void tty_clear_row(int row)
+{
+	int col;
+
+	for (col = 0; col < (int)TTY_MAX_COL; col++)
+		tty_putchar(row, col, ' ');
+}
 
 void tty_init(void)
 {
@@ -29,9 +150,12 @@ void tty_init(void)
 		TTY_MAX_COL = 80;
 	}
 
-	for (i = 0; i < TTY_MAX_ROW; i++)
-		for (j = 0; j < TTY_MAX_COL; j++)
+	for (i = 0; i < (int)TTY_MAX_ROW; i++)
+		for (j = 0; j < (int)TTY_MAX_COL; j++)
 			tty_putchar(i, j, ' ');
+
+	cursor = 0;
+	spinlock_init(&tty_lock);
 }
 
 void tty_setcolor(int x, int y, TTY_COLOR front, TTY_COLOR back)
@@ -39,13 +163,13 @@ void tty_setcolor(int x, int y, TTY_COLOR front, TTY_COLOR back)
 	int color_field = (back << 4) | front;
 	int cur = ROW_COL_TO_CUR(x, y);
 
-	if (x < 0 || x >= TTY_MAX_ROW || y < 0 || y >= TTY_MAX_COL)
+	if (x < 0 || x >= (int)TTY_MAX_ROW || y < 0 || y >= (int)TTY_MAX_COL)
 		return;
 
 	if (!fb_is_available()) {
-		vidptr[cur * 2 + 1] = color_field;
+		vidptr[cur * 2 + 1] = (char)color_field;
 	} else {
-		/* FIXME: only solid color supported in FB text mode */
+		/* FIXME: only solid colour supported in FB text mode */
 		fb_write_color(y, x, VGA_COLOR_BLACK);
 	}
 }
@@ -54,35 +178,30 @@ TTY_COLOR tty_get_frontcolor(int x, int y)
 {
 	int cur = ROW_COL_TO_CUR(x, y);
 
-	if (x < 0 || x >= TTY_MAX_ROW || y < 0 || y >= TTY_MAX_COL)
+	if (x < 0 || x >= (int)TTY_MAX_ROW || y < 0 || y >= (int)TTY_MAX_COL)
 		return clBlack;
 
-	if (!fb_is_available()) {
-		return vidptr[cur * 2 + 1] % 8;
-	} else {
-		/* FIXME: only white supported in FB text mode */
-		return clWhite;
-	}
+	if (!fb_is_available())
+		return (TTY_COLOR)((unsigned char)vidptr[cur * 2 + 1] & 0x0f);
+	return clWhite;
 }
 
 TTY_COLOR tty_get_backcolor(int x, int y)
 {
 	int cur = ROW_COL_TO_CUR(x, y);
 
-	if (x < 0 || x >= TTY_MAX_ROW || y < 0 || y >= TTY_MAX_COL)
+	if (x < 0 || x >= (int)TTY_MAX_ROW || y < 0 || y >= (int)TTY_MAX_COL)
 		return clBlack;
 
-	if (!fb_is_available()) {
-		return vidptr[cur * 2 + 1] >> 4;
-	} else {
-		/* FIXME: only black supported in FB text mode */
-		return clBlack;
-	}
+	if (!fb_is_available())
+		return (TTY_COLOR)(((unsigned char)vidptr[cur * 2 + 1] >> 4) &
+				   0x07);
+	return clBlack;
 }
 
 void tty_putchar(int x, int y, char c)
 {
-	if (x < 0 || x >= TTY_MAX_ROW || y < 0 || y >= TTY_MAX_COL)
+	if (x < 0 || x >= (int)TTY_MAX_ROW || y < 0 || y >= (int)TTY_MAX_COL)
 		return;
 
 	if (!fb_is_available()) {
@@ -95,19 +214,15 @@ void tty_putchar(int x, int y, char c)
 
 char tty_getchar(int x, int y)
 {
-	if (x < 0 || x >= TTY_MAX_ROW || y < 0 || y >= TTY_MAX_COL)
+	if (x < 0 || x >= (int)TTY_MAX_ROW || y < 0 || y >= (int)TTY_MAX_COL)
 		return ' ';
 
 	if (!fb_is_available()) {
 		int cur = ROW_COL_TO_CUR(x, y);
 		return vidptr[cur * 2];
-	} else {
-		return fb_getchar(y, x);
 	}
+	return fb_getchar(y, x);
 }
-
-#define CUR_ROW (cursor / TTY_MAX_COL)
-#define CUR_COL (cursor % TTY_MAX_COL)
 
 void tty_roll_one_line(void)
 {
@@ -121,21 +236,15 @@ void tty_roll_one_line(void)
 	}
 }
 
-static void tty_clear_row(int row)
-{
-	int col;
-	for (col = 0; col < TTY_MAX_COL; col++)
-		tty_putchar(row, col, ' ');
-}
-
 void tty_clear(void)
 {
 	if (!fb_is_available()) {
 		int row;
 		char *src = vidptr;
 		unsigned len = TTY_MAX_COL * 2;
+
 		tty_clear_row(0);
-		for (row = 1; row < TTY_MAX_ROW; row++)
+		for (row = 1; row < (int)TTY_MAX_ROW; row++)
 			memcpy(src + row * len, src, len);
 	} else {
 		fb_clear_screen();
@@ -153,25 +262,160 @@ void tty_movecurse(unsigned c)
 	}
 }
 
+/* ── Cursor helpers ──────────────────────────────────────────────────────── */
+
+/*
+ * tty_cursor_set - set cursor position and scroll if past end of screen.
+ * Does NOT update the hardware cursor register.
+ */
+static void tty_cursor_set(int pos)
+{
+	if (pos < 0)
+		return;
+	cursor = pos;
+	while (cursor >= (int)TTY_MAX_CHARS) {
+		tty_roll_one_line();
+		cursor -= TTY_MAX_COL;
+	}
+}
+
+/*
+ * tty_cursor_forward - set cursor and update the hardware cursor register.
+ */
+static void tty_cursor_forward(int pos)
+{
+	tty_cursor_set(pos);
+	tty_movecurse((unsigned)cursor);
+}
+
+/* ── Internal character rendering ────────────────────────────────────────── */
+
+/*
+ * tty_char_to_pos - process one character and return the new cursor position.
+ * Returns -1 if the character is unrecognised. Does NOT update cursor or
+ * the hardware register; the caller decides when to flush.
+ */
+static int tty_char_to_pos(char c)
+{
+	int i, pos, spaces;
+
+	if (ansi_flag) {
+		ansi_feed(c);
+		return cursor;
+	}
+
+	switch ((unsigned char)c) {
+	case '\n':
+		return ROW_COL_TO_CUR(CUR_ROW + 1, 0);
+	case '\r':
+		return ROW_COL_TO_CUR(CUR_ROW, 0);
+	case '\b':
+		return cursor > 0 ? cursor - 1 : 0;
+	case '\t':
+		spaces = 8 - (CUR_COL % 8);
+		pos = cursor;
+		for (i = 0; i < spaces; i++) {
+			tty_putchar(pos / TTY_MAX_COL, pos % TTY_MAX_COL, ' ');
+			pos++;
+		}
+		return pos;
+	case 0x0c: /* form feed: clear screen */
+		tty_clear();
+		return cursor;
+	case 0x1b: /* ESC: begin ANSI sequence */
+		ansi_begin();
+		return cursor;
+	default:
+		if (isprint(c)) {
+			tty_putchar(CUR_ROW, CUR_COL, c);
+			return cursor + 1;
+		}
+		return -1;
+	}
+}
+
+/* ── Public text output ──────────────────────────────────────────────────── */
+
+/*
+ * tty_emit - emit one character, updating cursor and hardware register.
+ * ctx is ignored; present for compatibility with the fputstr callback type.
+ */
+void tty_emit(char c, void *ctx)
+{
+	(void)ctx;
+	tty_cursor_forward(tty_char_to_pos(c));
+}
+
+/*
+ * tty_print - write a NUL-terminated string to the TTY.
+ * ctx is forwarded to tty_emit (always NULL for TTY output).
+ */
+void tty_print(char *str, void *ctx)
+{
+	if (!str || !*str)
+		return;
+	while (*str)
+		tty_emit(*str++, ctx);
+}
+
+void tty_set_cursor(int pos)
+{
+	if (pos >= 0)
+		cursor = pos;
+}
+
+void tty_flush_cursor(void)
+{
+	tty_cursor_forward(cursor);
+}
+
+int tty_get_cursor(void)
+{
+	return cursor;
+}
+
+void tty_clear_locked(void)
+{
+	spinlock_lock(&tty_lock);
+	tty_clear();
+	cursor = 0;
+	spinlock_unlock(&tty_lock);
+}
+
+/*
+ * tty_write - write raw bytes to the TTY under the TTY lock.
+ * Batches hardware cursor updates: the hardware register is written only once
+ * at the end, not per character.
+ */
+void tty_write(const char *buf, unsigned len)
+{
+	unsigned i;
+
+	spinlock_lock(&tty_lock);
+	for (i = 0; i < len; i++)
+		tty_cursor_set(tty_char_to_pos(buf[i]));
+	tty_movecurse((unsigned)cursor);
+	spinlock_unlock(&tty_lock);
+}
+
+/* ── ioctl ───────────────────────────────────────────────────────────────── */
+
 int tty_ioctl(file *file, unsigned cmd, void *buf)
 {
 	switch (cmd) {
 	case TCGETS: {
-		struct termios s = {
-			ICRNL, /* change incoming CR to NL */
-			OPOST | ONLCR, /* change outgoing NL to CRNL */
-			B38400 | CS8,
-			IXON | ISIG | ICANON | ECHO | ECHOCTL | ECHOKE,
-			0, /* console termio */
-			INIT_C_CC
-		};
+		struct termios s = { ICRNL,
+				     OPOST | ONLCR,
+				     B38400 | CS8,
+				     IXON | ISIG | ICANON | ECHO | ECHOCTL |
+					     ECHOKE,
+				     0,
+				     INIT_C_CC };
 		memcpy(buf, &s, sizeof(s));
 		return 0;
 	}
-	case TCSETS: {
-		/* FIXME */
+	case TCSETS:
 		return 0;
-	}
 	case TIOCGWINSZ: {
 		struct winsize *size = (struct winsize *)buf;
 		size->ws_row = TTY_MAX_ROW;

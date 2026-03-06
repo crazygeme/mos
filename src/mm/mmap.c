@@ -7,51 +7,39 @@
 #include <include/fs.h>
 #include <macro.h>
 
+/*
+ * vm_key is the search key for the red-black tree that backs each process's
+ * VM map.  The comparator treats any range overlap as equal (returns 0), so
+ * hash_find() works as an overlap query: it returns any existing region that
+ * intersects the probe key.
+ */
 typedef struct _vm_key {
 	unsigned begin;
 	unsigned end;
 } vm_key;
 
-// case 1
-// ---| now | -----------------
-// ---------------| origin | --
-// case 2
-// ---------------| now |------
-// ---| origin | --------------
-// case 3
-// -------|  now  |------------
-// -----------| origin | ------
-// case 4
-// -----------|  now  | -------
-// -------| origin | ----------
-// case 5
-// -------|    now     | ------
-// ---------| origin | --------
-// case 6
-// ---------|  now   | --------
-// -------|   origin   | ------
-static INLINE int vm_region_compair(void *region1, void *region2)
+/*
+ * vm_region_compare - interval comparator for the VM region tree.
+ *
+ * Returns -1  if region1 ends before region2 starts  (region1 strictly left),
+ *          1  if region1 starts after region2 ends    (region1 strictly right),
+ *          0  if the two ranges overlap in any way.
+ */
+static INLINE int vm_region_compare(void *region1, void *region2)
 {
 	vm_key *key1 = region1;
 	vm_key *key2 = region2;
 
-	if (key1->end <= key2->begin) {
-		// case 1
+	if (key1->end <= key2->begin)
 		return -1;
-	} else if (key1->begin >= key2->end) {
-		// case 2
+	if (key1->begin >= key2->end)
 		return 1;
-	} else {
-		// conflict!
-		// case 3, 4, 5, 6
-		return 0;
-	}
+	return 0; /* overlap */
 }
 
 vm_struct_t vm_create()
 {
-	hash_table *table = hash_create(vm_region_compair);
-	return table;
+	return hash_create(vm_region_compare);
 }
 
 void vm_destroy(vm_struct_t vm)
@@ -63,12 +51,9 @@ void vm_destroy(vm_struct_t vm)
 		key_value_pair *pair = rb_entry(node, key_value_pair, node);
 		vm_region *region = pair->val;
 		vm_key *key = pair->key;
-		unsigned vir = 0;
 
 		hash_remove(table, key);
-
 		kfree(key);
-
 		kfree(region);
 
 		node = rb_first(&table->root);
@@ -77,280 +62,293 @@ void vm_destroy(vm_struct_t vm)
 	hash_destroy(table);
 }
 
+/*
+ * vm_add_map - insert a new mapping [begin, end) into the VM map.
+ *
+ * If the new range overlaps any existing region, the overlapping region is
+ * trimmed: portions outside [begin, end) are preserved as independent regions
+ * and the overlapping portion is replaced by the new mapping.  The loop
+ * handles arbitrarily many pre-existing overlapping regions one at a time
+ * until no conflicts remain, then inserts the new region.
+ */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int flag, void *fd, int offset)
 {
 	hash_table *table = vm;
-	vm_key *now = kmalloc(sizeof(*now));
-	now->begin = begin;
-	now->end = end;
-	key_value_pair *pair = hash_find(table, now);
+	vm_key probe;
+	key_value_pair *pair;
 
-	if (!pair) {
-		vm_region *region = kmalloc(sizeof(*region));
-		region->begin = begin;
-		region->end = end;
-		region->node = fd;
-		region->prot = prot;
-		region->flag = flag;
-		if (fd) {
-			fs_get_file(fd);
-		}
-		region->offset = offset;
-		hash_insert(table, now, region);
-	} else {
-		// cases 3, 4, 5, 6
-		vm_key *origin = pair->key;
-		vm_region *conflict_region = pair->val;
+	/*
+	 * Resolve conflicts iteratively.  Each pass finds one overlapping
+	 * region, saves its extent, removes it, then re-inserts the non-
+	 * overlapping left and right remnants.  Those remnants never conflict
+	 * with [begin, end), so their recursive vm_add_map calls insert
+	 * directly without further iteration.
+	 */
+	probe.begin = begin;
+	probe.end = end;
+	while ((pair = hash_find(table, &probe)) != NULL) {
+		vm_key *okey = pair->key;
+		vm_region *oregion = pair->val;
 
-		if (now->end < origin->end && now->begin <= origin->begin &&
-		    now->end > origin->begin) {
-			// case 3
-			// -------|   now   | ----------
-			// -----------|  origin | ------
-			unsigned new_begin = now->end;
-			unsigned new_offset = conflict_region->offset +
-					      (now->end - origin->begin);
-			unsigned new_end = origin->end;
-			void *new_fd = conflict_region->node;
-			vm_del_map(vm, origin->begin);
-			vm_add_map(vm, begin, end, prot, flag, fd, offset);
-			vm_add_map(vm, new_begin, new_end,
-				   conflict_region->prot, conflict_region->flag,
-				   new_fd, new_offset);
-		} else if (now->begin > origin->begin &&
-			   now->begin < origin->end &&
-			   now->end >= origin->end) {
-			// case 4
-			// -----------|  now  |--------
-			// -------| origin | ----------
-			unsigned new_begin = origin->begin;
-			unsigned new_offset = conflict_region->offset;
-			unsigned new_end = now->begin;
-			unsigned new_fd = (unsigned)conflict_region->node;
-			vm_del_map(vm, origin->begin);
-			vm_add_map(vm, begin, end, prot, flag, fd, offset);
-			vm_add_map(vm, new_begin, new_end,
-				   conflict_region->prot, conflict_region->flag,
-				   (void *)new_fd, new_offset);
-		} else if (now->begin <= origin->begin &&
-			   now->end >= origin->end) {
-			// case 5
-			// -------|     now    | ------
-			// ---------| origin | --------
-			vm_del_map(vm, origin->begin);
-			vm_add_map(vm, begin, end, prot, flag, fd, offset);
-		} else if (now->begin > origin->begin &&
-			   now->end < origin->end) {
-			// case 6
-			// -----------| now |----------
-			// -------|   origin   | ------
-			unsigned new_begin1 = origin->begin;
-			unsigned new_offset1 = conflict_region->offset;
-			unsigned new_end1 = now->begin;
-			unsigned new_fd1 = (unsigned)conflict_region->node;
-			unsigned new_begin2 = now->end;
-			unsigned new_offset2 = conflict_region->offset +
-					       (now->end - origin->begin);
-			unsigned new_end2 = origin->end;
-			unsigned new_fd2 = (unsigned)conflict_region->node;
-			vm_del_map(vm, origin->begin);
-			vm_add_map(vm, begin, end, prot, flag, fd, offset);
-			vm_add_map(vm, new_begin1, new_end1,
-				   conflict_region->prot, conflict_region->flag,
-				   (void *)new_fd1, new_offset1);
-			vm_add_map(vm, new_begin2, new_end2,
-				   conflict_region->prot, conflict_region->flag,
-				   (void *)new_fd2, new_offset2);
-		}
+		/* Snapshot all origin data before vm_del_map frees the structs. */
+		unsigned o_begin  = okey->begin;
+		unsigned o_end    = okey->end;
+		int      o_prot   = oregion->prot;
+		int      o_flag   = oregion->flag;
+		void    *o_node   = oregion->node;
+		int      o_offset = oregion->offset;
 
-		kfree(now);
+		vm_del_map(vm, o_begin);
+
+		/* Re-insert the left remnant [o_begin, begin), if any. */
+		if (o_begin < begin)
+			vm_add_map(vm, o_begin, begin,
+				   o_prot, o_flag, o_node, o_offset);
+
+		/*
+		 * Re-insert the right remnant [end, o_end), if any.
+		 * Its file offset advances by (end - o_begin) bytes.
+		 */
+		if (o_end > end)
+			vm_add_map(vm, end, o_end,
+				   o_prot, o_flag, o_node,
+				   o_offset + (int)(end - o_begin));
 	}
+
+	/* No conflicts remain: insert the new region. */
+	vm_key *key = kmalloc(sizeof(*key));
+	key->begin = begin;
+	key->end   = end;
+
+	vm_region *region = kmalloc(sizeof(*region));
+	region->begin  = begin;
+	region->end    = end;
+	region->prot   = prot;
+	region->flag   = flag;
+	region->node   = fd;
+	region->offset = offset;
+
+	if (fd)
+		fs_get_file(fd);
+
+	hash_insert(table, key, region);
 }
 
+/*
+ * vm_find_pair - return the tree pair whose region contains addr, or NULL.
+ *
+ * addr is rounded down to its page boundary before probing the tree.
+ */
 static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 {
 	vm_key key;
-	key_value_pair *pair = 0;
-	key.begin = (addr & PAGE_SIZE_MASK);
-	key.end = key.begin + PAGE_SIZE;
-
-	pair = hash_find(table, &key);
-
-	return pair;
+	key.begin = addr & PAGE_SIZE_MASK;
+	key.end   = key.begin + PAGE_SIZE;
+	return hash_find(table, &key);
 }
 
+/*
+ * vm_del_map - remove the mapping that contains addr and unmap its pages.
+ *
+ * addr is rounded down to the nearest page boundary.  All hardware page-table
+ * entries for the region are cleared and CR3 is reloaded to flush the TLB.
+ */
 void vm_del_map(vm_struct_t vm, unsigned addr)
 {
 	hash_table *table = vm;
-	vm_region *region = 0;
-	key_value_pair *pair = 0;
-	unsigned vir = 0;
-	vm_key *key = 0;
+	key_value_pair *pair;
+	vm_key *key;
+	vm_region *region;
+	unsigned vir;
 
-	// addr has to be 4K aligned, orelse I will do it for you
-	addr = (addr & PAGE_SIZE_MASK);
+	addr &= PAGE_SIZE_MASK;
 
 	pair = vm_find_pair(table, addr);
-	if (!pair) {
+	if (!pair)
 		return;
-	}
 
-	key = pair->key;
+	key    = pair->key;
 	region = pair->val;
-	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
+
+	/* Unmap every page in the region from the hardware page tables. */
+	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
 		mm_del_dynamic_map(vir);
-	}
 	RELOAD_CR3();
 
-	if (region->node) {
+	if (region->node)
 		fs_put_file(region->node);
-	}
+
 	kfree(region);
-
 	hash_remove(table, key);
-
 	kfree(key);
 }
 
+/*
+ * vm_find_map - find the region that contains addr.
+ *
+ * Returns a pointer to the live vm_region (caller must not free it),
+ * or NULL if no region covers addr.
+ */
 vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 {
-	key_value_pair *pair = 0;
 	hash_table *table = vm;
+	key_value_pair *pair;
 
-	// addr has to be 4K aligned, orelse I will do it for you
-	addr = (addr & PAGE_SIZE_MASK);
-
+	addr &= PAGE_SIZE_MASK;
 	pair = vm_find_pair(table, addr);
-	if (!pair) {
-		return 0;
-	} else {
-		return pair->val;
-	}
+	return pair ? pair->val : 0;
 }
 
+/*
+ * vm_disc_map - find a free virtual address range of at least @size bytes.
+ *
+ * Iterates the sorted region list and returns the start of the first gap
+ * between consecutive regions that is large enough.  If no gap fits below
+ * KERNEL_OFFSET, returns 0.
+ */
 unsigned vm_disc_map(vm_struct_t vm, int size)
 {
-	// size has to be 4K or n*4K, I will algin it for you anyway...
 	hash_table *table = vm;
 	key_value_pair *pair = hash_first(table);
-	unsigned begin = USER_ZONE_BEGIN;
-	unsigned end;
+	key_value_pair *next;
+	vm_key *key;
+	vm_key *next_key;
 
-	if (!pair) {
-		return begin;
-	}
+	/* No existing mappings: the entire user zone is free. */
+	if (!pair)
+		return USER_ZONE_BEGIN;
 
 	while (pair) {
-		vm_key *key = pair->key;
-		key_value_pair *next = hash_next(table, pair);
-		vm_key *next_key;
+		key  = pair->key;
+		next = hash_next(table, pair);
 
 		if (!next) {
-			if ((key->end + size) < KERNEL_OFFSET) {
+			/* Past the last region: check for room above it. */
+			if (key->end + size < KERNEL_OFFSET)
 				return key->end;
-			} else {
-				return 0;
-			}
+			return 0;
 		}
 
 		next_key = next->key;
-		begin = key->end;
-		end = begin + size;
-		if (end <= next_key->begin) {
-			return begin;
-		}
+		if (key->end + size <= next_key->begin)
+			return key->end; /* gap between pair and next fits */
 
 		pair = next;
 	}
 
-	// never to here
-	return 0;
+	return 0; /* unreachable */
 }
 
-void vm_dup(vm_struct_t cur, vm_struct_t now)
+/*
+ * vm_dup - copy all VM mappings from @src into @dst.
+ *
+ * Used during fork() to duplicate the parent's address space descriptor into
+ * the child.  vm_add_map() handles the fs_get_file() reference for each node.
+ */
+void vm_dup(vm_struct_t src, vm_struct_t dst)
 {
-	hash_table *table = cur;
+	hash_table *table = src;
 	key_value_pair *pair = hash_first(table);
-	vm_region *region;
 
 	while (pair) {
-		region = pair->val;
-		vm_add_map(now, region->begin, region->end, region->prot,
+		vm_region *region = pair->val;
+		vm_add_map(dst, region->begin, region->end, region->prot,
 			   region->flag, region->node, region->offset);
-
 		pair = hash_next(table, pair);
 	}
 }
 
+/*
+ * do_mmap_kernel - kernel-internal mmap implementation.
+ *
+ * Maps the page-aligned range covering [_addr, _addr+_len) into the current
+ * task's address space.  If _addr is 0, an appropriate free range is located
+ * automatically via vm_disc_map().  Returns the mapped virtual address.
+ */
 int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   unsigned int flags, void *inode, unsigned int offset)
 {
-	unsigned addr = _addr & PAGE_SIZE_MASK;
-	unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
+	unsigned addr       = _addr & PAGE_SIZE_MASK;
+	unsigned last_addr  = (_addr + _len - 1) & PAGE_SIZE_MASK;
 	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	void *node;
-	task_struct *cur = CURRENT_TASK();
+	task_struct *cur    = CURRENT_TASK();
 
-	if (_addr == 0) {
+	if (_addr == 0)
 		addr = vm_disc_map(cur->user.vm, page_count * PAGE_SIZE);
-	}
 
-	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, prot,
-		   flags, inode, offset);
+	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE,
+		   prot, flags, inode, offset);
 
 	return addr;
 }
 
+/*
+ * do_mmap - syscall handler for mmap(2).
+ *
+ * Resolves the file descriptor to an inode pointer (NULL for anonymous
+ * mappings where fd == -1) and delegates to do_mmap_kernel().
+ */
 int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset)
 {
-	void *node;
 	task_struct *cur = CURRENT_TASK();
-	// FIXME
-	// lots of flags and prot
-	if (fd != -1 && cur->fds[fd].used != 0)
-		node = cur->fds[fd].fp;
-	else
-		node = 0;
+	void *node = (fd != -1 && cur->fds[fd].used != 0) ?
+		     cur->fds[fd].fp : 0;
 
 	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
 }
 
+/*
+ * do_munmap - syscall handler for munmap(2).
+ *
+ * Unmaps the page-aligned range [begin, end) from the current task's address
+ * space.  If the range is a strict subset of an existing region, the region is
+ * split and the portions outside [begin, end) are re-inserted as independent
+ * mappings.
+ *
+ * Returns 0 on success, -EINVAL if no region covers addr or the range extends
+ * beyond the containing region.
+ */
 int do_munmap(void *addr, unsigned length)
 {
 	task_struct *cur = CURRENT_TASK();
-	vm_region *region = vm_find_map(cur->user.vm, addr);
 	unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
-	unsigned end = ((unsigned)addr + length - 1) & PAGE_SIZE_MASK;
-	unsigned page_count = (end - begin) / PAGE_SIZE + 1;
+	unsigned end   = ((unsigned)addr + length + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	vm_region *region;
+	unsigned r_begin, r_end;
+	int r_prot, r_flag;
+	void *r_node;
+	int r_offset;
 
-	end = begin + page_count * PAGE_SIZE;
-	if (!region) {
-		return (-EINVAL);
-	}
+	region = vm_find_map(cur->user.vm, (unsigned)addr);
+	if (!region)
+		return -EINVAL;
 
-	if (begin > region->begin && end < region->end) {
-		vm_del_map(cur->user.vm, addr);
-		vm_add_map(cur->user.vm, region->begin, begin, region->prot,
-			   region->flag, region->node, region->offset);
-		vm_add_map(cur->user.vm, end, region->end, region->prot,
-			   region->flag, region->node,
-			   region->offset + (end - region->begin));
-	} else if (begin > region->begin && end == region->end) {
-		vm_del_map(cur->user.vm, addr);
-		vm_add_map(cur->user.vm, region->begin, begin, region->prot,
-			   region->flag, region->node, region->offset);
-	} else if (begin == region->begin && end < region->end) {
-		vm_del_map(cur->user.vm, addr);
-		vm_add_map(cur->user.vm, end, region->end, region->prot,
-			   region->flag, region->node,
-			   region->offset + (end - region->begin));
-	} else if (begin == region->begin && end == region->end) {
-		vm_del_map(cur->user.vm, addr);
-	} else {
-		return (-EINVAL);
-	}
+	/* The unmap range must be fully contained within one existing region. */
+	if (begin < region->begin || end > region->end)
+		return -EINVAL;
+
+	/* Snapshot region data before vm_del_map() frees the region struct. */
+	r_begin  = region->begin;
+	r_end    = region->end;
+	r_prot   = region->prot;
+	r_flag   = region->flag;
+	r_node   = region->node;
+	r_offset = region->offset;
+
+	vm_del_map(cur->user.vm, (unsigned)addr);
+
+	/* Preserve the left remnant [r_begin, begin), if any. */
+	if (r_begin < begin)
+		vm_add_map(cur->user.vm, r_begin, begin,
+			   r_prot, r_flag, r_node, r_offset);
+
+	/* Preserve the right remnant [end, r_end), if any. */
+	if (end < r_end)
+		vm_add_map(cur->user.vm, end, r_end,
+			   r_prot, r_flag, r_node,
+			   r_offset + (int)(end - r_begin));
 
 	return 0;
 }

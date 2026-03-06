@@ -63,7 +63,7 @@ typedef char *va_list;
 
 #define _INTSIZEOF(n) ((sizeof(n) + sizeof(int) - 1) & ~(sizeof(int) - 1))
 
-#define va_start(ap, v) (ap = (va_list)&v + _INTSIZEOF(v))
+#define va_start(ap, v) (ap = (va_list) & v + _INTSIZEOF(v))
 
 #define va_arg(ap, t) (*(t *)((ap += _INTSIZEOF(t)) - _INTSIZEOF(t)))
 
@@ -93,7 +93,7 @@ void klib_flush_cursor();
 
 void klib_clear();
 
-void tty_write(const char *str, unsigned len);
+int klib_putchar(char c, void *ctx);
 
 #define kmalloc(size) malloc(size)
 

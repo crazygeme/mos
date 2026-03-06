@@ -14,10 +14,6 @@
 #include <time.h>
 #include <lock.h>
 
-/* ── Shared locks (also used by kprint.c) ────────────────────────────────── */
-
-spinlock_t tty_lock;
-
 /* ── TTY cursor state ────────────────────────────────────────────────────── */
 
 static int cursor = 0;
@@ -146,7 +142,7 @@ static void ansi_feed(char c)
  * Write one character to the TTY, returning the new cursor position.
  * Does NOT update the hardware cursor; the caller decides when to flush.
  */
-static int klib_putchar(char c, void *ctx)
+int klib_putchar(char c, void *ctx)
 {
 	int new_pos;
 
@@ -234,37 +230,15 @@ int klib_get_pos(void)
 
 void klib_clear(void)
 {
-	spinlock_lock(&tty_lock);
 	tty_clear();
 	cursor = 0;
-	spinlock_unlock(&tty_lock);
-}
-
-/*
- * tty_write - write raw bytes to the TTY under the TTY lock.
- * Used by the VFS/devfs TTY driver.
- */
-void tty_write(const char *buf, unsigned len)
-{
-	unsigned i;
-
-	spinlock_lock(&tty_lock);
-	for (i = 0; i < len; i++) {
-		if (cursor >= TTY_MAX_CHARS)
-			klib_flush_cursor();
-		klib_update_cursor(klib_putchar(buf[i], NULL));
-	}
-	klib_flush_cursor();
-	spinlock_unlock(&tty_lock);
 }
 
 /* ── Initialisation ──────────────────────────────────────────────────────── */
 
 void klib_init(void)
 {
-	tty_init();
 	cursor = 0;
-	spinlock_init(&tty_lock);
 	kmalloc_init();
 }
 

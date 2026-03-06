@@ -1,3 +1,4 @@
+#include <tty.h>
 #include <timer.h>
 #include <debugfs.h>
 #include <mount.h>
@@ -47,6 +48,7 @@ void kmain_startup()
 	fb_enable();
 
 	// after klib_init, kmalloc/kfree/prink/etc are workable
+	tty_init();
 	klib_init();
 
 	printk("parse kernel command line\n");

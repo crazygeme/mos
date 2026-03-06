@@ -74,6 +74,13 @@ int cpu_current_id(void)
 	return cpu_current()->cpu_id;
 }
 
+int cpu_id(int index)
+{
+	if (index < 0 || index >= ncpus)
+		return -1;
+	return cpus[index].cpu_id;
+}
+
 /* -----------------------------------------------------------------------
  * TLB shootdown IPI
  * ----------------------------------------------------------------------- */

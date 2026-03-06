@@ -91,17 +91,18 @@ void kmain_startup()
 		printk("Init BSP LAPIC\n");
 		apic_init_bsp();
 
-		/* Switch interrupt EOI delivery to APIC (8259 now masked). */
-		int_set_apic_mode();
-
+		/*
+		 * Virtual-wire mode: the 8259A PIC remains active and its INTR
+		 * signal passes through BSP LINT0 (ExtINT).  Do NOT call
+		 * int_set_apic_mode() — that would switch EOI to LAPIC, causing
+		 * the 8259A to never receive its EOI and blocking all future PIC
+		 * interrupts (including the PIT timer at vector 0x20).
+		 *
+		 * The IOAPIC is initialised (all entries masked) for IPI routing
+		 * only; external IRQs stay with the 8259A.
+		 */
 		printk("Init IOAPIC\n");
 		ioapic_init(ioapic_phys);
-
-		/* Route hardware IRQs to BSP (APIC id 0). */
-		ioapic_route(0, INT_VECTOR_IRQ0, g_acpi_info.apic_ids[0]);
-		ioapic_route(1, INT_VECTOR_IRQ0 + 1, g_acpi_info.apic_ids[0]);
-		ioapic_route(14, INT_VECTOR_IRQ0 + 14, g_acpi_info.apic_ids[0]);
-		ioapic_route(15, INT_VECTOR_IRQ0 + 15, g_acpi_info.apic_ids[0]);
 
 		printk("Init BSP CPU struct\n");
 		cpu_init_bsp();

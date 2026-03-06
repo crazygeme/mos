@@ -281,7 +281,7 @@ static void pf_handle_cow(unsigned cr2)
 
 	/*
 	 * 4. unmap newly allocated physical memory
-	 * note that should ref it first so that no one will use
+	 * note that should ref it first so that on one will use
 	 * this physical memory
 	 */
 	phymm_reference_page(VIRT_TO_PAGE_IDX(new_mem));

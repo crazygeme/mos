@@ -41,29 +41,49 @@ static inline void lapic_write(unsigned reg, unsigned val)
  * Shared init sequence (BSP + AP)
  * ----------------------------------------------------------------------- */
 
-static void lapic_init_common(void)
+/*
+ * Virtual-wire mode: the BSP's LAPIC passes the 8259A PIC INTR signal
+ * straight through via LINT0 (ExtINT delivery mode).  The PIC remains
+ * active, so time_process continues to fire at vector 0x20 as before.
+ * The LAPIC is used only for IPIs (TLB shootdown, scheduler kick).
+ *
+ * APs have their LINT0 masked since no PIC is wired to them.
+ */
+static void lapic_init_common(int is_bsp)
 {
-	/* Set the Task Priority Register to 0 to accept all interrupts. */
+	/* Accept all interrupt priorities. */
 	lapic_write(LAPIC_TPR, 0);
 
-	/* Logical destination: not used (we use physical destination). */
+	/* Logical destination not used (physical destination only). */
 	lapic_write(LAPIC_DFR, 0xFFFFFFFF);
 	lapic_write(LAPIC_LDR, 0);
 
-	/* Mask all LVT entries except spurious. */
-	lapic_write(LAPIC_LVT_TIMER, 0x00010000); /* masked */
-	lapic_write(LAPIC_LVT_LINT0, 0x00010000); /* masked */
-	lapic_write(LAPIC_LVT_LINT1, 0x00010000); /* masked */
+	/* LVT timer: masked (no per-CPU LAPIC timer in use). */
+	lapic_write(LAPIC_LVT_TIMER, 0x00010000);
+
+	/*
+	 * LINT0:
+	 *   BSP → ExtINT (delivery mode 7 = 0x700): the LAPIC forwards the
+	 *          8259A PIC's INTR signal to the CPU transparently.
+	 *   AP  → masked (APs are not connected to the 8259A).
+	 */
+	if (is_bsp)
+		lapic_write(LAPIC_LVT_LINT0, 0x00000700); /* ExtINT, unmasked */
+	else
+		lapic_write(LAPIC_LVT_LINT0, 0x00010000); /* masked */
+
+	/* LINT1: NMI on both BSP and APs (standard PC wiring). */
+	lapic_write(LAPIC_LVT_LINT1, 0x00000400); /* NMI, unmasked */
+
 	lapic_write(LAPIC_LVT_ERROR, 0x00010000); /* masked */
 
-	/* Clear any pending error. */
+	/* Clear any pending error status. */
 	lapic_write(LAPIC_ESR, 0);
 	lapic_write(LAPIC_ESR, 0);
 
-	/* Send EOI in case anything is pending. */
 	lapic_write(LAPIC_EOI, 0);
 
-	/* Enable LAPIC, set spurious interrupt vector to IPI_VECTOR_SPURIOUS. */
+	/* Software-enable the LAPIC. */
 	lapic_write(LAPIC_SVR, LAPIC_SVR_ENABLE | IPI_VECTOR_SPURIOUS);
 }
 
@@ -76,14 +96,15 @@ void apic_init_bsp(void)
 	/* Map LAPIC MMIO page into kernel virtual space. */
 	mm_add_resource_map(LAPIC_BASE_PHY);
 
-	/* Disable the legacy 8259 PIC by masking all IRQs.
-	 * PIC1 mask = 0xFF, PIC2 mask = 0xFF. */
-	port_write_byte(0x21, 0xFF);
-	port_write_byte(0xA1, 0xFF);
+	/*
+	 * Virtual-wire mode: do NOT mask the 8259A PIC.  The BSP's LINT0 is
+	 * configured as ExtINT so the PIC's interrupt signal passes through
+	 * the LAPIC transparently.  time_process keeps firing at vector 0x20.
+	 */
+	lapic_init_common(1 /* is_bsp */);
 
-	lapic_init_common();
-
-	printk("apic: BSP LAPIC id=%u enabled\n", apic_id());
+	printk("apic: BSP LAPIC id=%u enabled (virtual-wire mode)\n",
+	       apic_id());
 }
 
 /* -----------------------------------------------------------------------
@@ -92,7 +113,7 @@ void apic_init_bsp(void)
 
 void apic_init_ap(void)
 {
-	lapic_init_common();
+	lapic_init_common(0 /* is_bsp */);
 }
 
 /* -----------------------------------------------------------------------

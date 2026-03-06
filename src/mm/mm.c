@@ -12,36 +12,6 @@
 unsigned phymm_end = 0;
 unsigned phymm_begin = 0;
 
-/* ---------------------------------------------------------------------------
- * Global kernel page directory
- *
- * Entries KERNEL_PAGE_DIR_OFFSET..1023 (the kernel half of the page directory)
- * are the same for every task.  Instead of copying them on every context
- * switch, we maintain a global canonical copy here.
- *
- * - mm_init_page_table_cache() seeds this from the boot page directory.
- * - mm_get_valid_page_table() updates it whenever a new kernel PDE is
- *   allocated, then fires kernel_pde_propagator so ps.c can push the entry
- *   to all existing task page directories (rare: only on first access of a
- *   new 4 MB kernel region).
- * - New task page directories call mm_copy_kernel_pgd() at creation time
- *   and are immediately up-to-date.  No per-switch sync is ever needed.
- * ---------------------------------------------------------------------------*/
-#define KERNEL_PGD_ENTRIES (1024 - KERNEL_PAGE_DIR_OFFSET)
-
-static unsigned int kernel_pgd[KERNEL_PGD_ENTRIES];
-static kernel_pde_propagator_t kernel_pde_propagator;
-
-void mm_set_kernel_pde_propagator(kernel_pde_propagator_t fn)
-{
-	kernel_pde_propagator = fn;
-}
-
-void mm_copy_kernel_pgd(unsigned int *pgd)
-{
-	memcpy(&pgd[KERNEL_PAGE_DIR_OFFSET], kernel_pgd,
-	       KERNEL_PGD_ENTRIES * sizeof(unsigned int));
-}
 unsigned pgc_count = 0;
 unsigned pgc_top = 0;
 
@@ -129,7 +99,6 @@ static name_cache_t name_cache_head;
 void mm_init_page_table_cache()
 {
 	unsigned int cr3;
-	unsigned int *boot_pgd;
 	int i;
 
 	page_table_cache_init(&page_table_cache);
@@ -139,14 +108,6 @@ void mm_init_page_table_cache()
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
 	list_init(&name_cache_head);
-
-	/* Snapshot the boot-time kernel page directory entries.  All task page
-	 * directories will be initialised from this copy so they share the same
-	 * physical page tables for kernel addresses from the very first switch. */
-	LOAD_CR3(cr3);
-	boot_pgd = (unsigned int *)(cr3 + KERNEL_OFFSET);
-	memcpy(kernel_pgd, &boot_pgd[KERNEL_PAGE_DIR_OFFSET],
-	       KERNEL_PGD_ENTRIES * sizeof(unsigned int));
 }
 
 /* ---------------------------------------------------------------------------
@@ -186,17 +147,6 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA |
 		      flag;
 		page_dir[offset] = pde;
-
-		/* Keep the global kernel page directory in sync.  Propagate the
-		 * new entry to all existing task page directories so they share
-		 * the same physical page table immediately.  This path is hit
-		 * only when a brand-new 4 MB kernel region is first accessed —
-		 * an exceedingly rare event compared with per-switch memcpy. */
-		if (offset >= KERNEL_PAGE_DIR_OFFSET) {
-			kernel_pgd[offset - KERNEL_PAGE_DIR_OFFSET] = pde;
-			if (kernel_pde_propagator)
-				kernel_pde_propagator(offset, pde);
-		}
 	}
 	info->dir = &page_dir[offset];
 	info->table =

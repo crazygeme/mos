@@ -328,25 +328,6 @@ static void ps_run()
  * Initialisation
  * ------------------------------------------------------------------------- */
 
-/* Push one updated kernel PDE to every live task's page directory.
- * Called by mm.c (via the registered propagator) when a new kernel PDE is
- * allocated — typically only when a fresh 4 MB kernel region is first used. */
-static void ps_propagate_kernel_pde(unsigned offset, unsigned value)
-{
-	list_entry *head = &control.mgr_queue;
-	list_entry *entry;
-
-	spinlock_lock(&ps_lock);
-	entry = head->prev;
-	while (entry != head) {
-		task_struct *task = container_of(entry, task_struct, ps_mgr);
-		if (task->user.page_dir)
-			((unsigned int *)task->user.page_dir)[offset] = value;
-		entry = entry->prev;
-	}
-	spinlock_unlock(&ps_lock);
-}
-
 void ps_init()
 {
 	int i = 0;
@@ -368,11 +349,6 @@ void ps_init()
 
 	tss_address = kmalloc(sizeof(tss_struct));
 	int_update_tss((unsigned int)tss_address);
-
-	/* Register the kernel PDE propagator so mm.c can notify ps.c when a
-	 * new kernel page-directory entry is created, without a direct
-	 * mm → ps dependency. */
-	mm_set_kernel_pde_propagator(ps_propagate_kernel_pde);
 }
 
 int ps_enabled()
@@ -436,12 +412,9 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
 	task->command = vm_alloc(1);
 	task->umask = 0;
 	strcpy(task->command, "system");
-	/* Zero the user portion; populate the kernel portion from the global
-	 * kernel page directory so this task immediately shares all current
-	 * kernel page tables with no per-switch copy needed. */
-	memset((void *)task->user.page_dir, 0,
-	       KERNEL_PAGE_DIR_OFFSET * sizeof(unsigned int));
-	mm_copy_kernel_pgd((unsigned int *)task->user.page_dir);
+	/* User address space: low entries are per-process, high entries are
+	 * shared kernel mappings copied at each context switch. */
+	memset(task->user.page_dir, 0, PAGE_SIZE);
 
 	stack_buttom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
 	LOAD_CR3(task->cr3);
@@ -554,12 +527,26 @@ static void ps_dup_user_maps(task_struct *cur, task_struct *task)
 	task->user.page_dir = vm_alloc(1);
 	vm_dup(cur->user.vm, task->user.vm);
 	new_ps = (unsigned int *)task->user.page_dir;
-	/* Zero only the user portion; copy the kernel portion from the global
-	 * kernel page directory so the child shares the same physical kernel
-	 * page tables from birth — no per-switch sync required. */
-	memset(new_ps, 0, KERNEL_PAGE_DIR_OFFSET * sizeof(unsigned int));
-	mm_copy_kernel_pgd(new_ps);
+	memset((char *)new_ps, 0, PAGE_SIZE);
 	ps_enum_user_map(cur, ps_enum_for_dup, task);
+}
+
+/* Propagate the current kernel page-directory entries into task's saved
+ * page directory.  Called before switching to task so that any kernel
+ * mappings added since the task last ran become visible to it. */
+static void ps_save_kernel_map(task_struct *task)
+{
+	if (task->user.page_dir) {
+		unsigned int cr3;
+		unsigned int *in_use;
+		unsigned int *per_ps = (unsigned int *)task->user.page_dir;
+
+		LOAD_CR3(cr3);
+		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
+		memcpy(&per_ps[KERNEL_PAGE_DIR_OFFSET],
+		       &in_use[KERNEL_PAGE_DIR_OFFSET],
+		       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
+	}
 }
 
 extern void ret_from_syscall();
@@ -978,6 +965,7 @@ void _task_sched(const char *func)
 		goto SELF;
 
 	task->status = ps_running;
+	ps_save_kernel_map(task);
 	SAVE_ALL(current, NEXT);
 
 	/* RESTORE_ALL loads all registers from task's TSS and switches ESP/EBP

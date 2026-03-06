@@ -102,33 +102,44 @@ _START static void mm_setup_beginning_8m()
 	return;
 }
 
+/*
+ * Scan every type-1 (usable RAM) entry in the multiboot mmap.
+ *   *mem_low  <- base of the first non-zero usable region (for RESERVED_PAGES
+ *                placement; typically the start of the 1 MB+ region).
+ *   *mem_high <- end of the highest usable region (total physical extent).
+ */
 _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 				 unsigned long long *volatile mem_low,
 				 unsigned long long *volatile mem_high)
 {
-	unsigned int map_addr = mb->mmap_addr;
-	unsigned long long low, high;
 	memory_map_t *map;
+	unsigned long long base, top;
 
-	if (mb->flags & 0x40) {
-		map = (memory_map_t *)mb->mmap_addr;
-		while ((unsigned int)map < mb->mmap_addr + mb->mmap_length) {
-			if (map->type == 0x1 && (map->base_addr_low != 0 ||
-						 map->base_addr_high != 0)) {
-				low = (unsigned long long)map->base_addr_low +
-				      ((unsigned long long)map->base_addr_high
-				       << 32);
-				high = low +
-				       ((unsigned long long)map->length_low +
-					((unsigned long long)map->length_high
-					 << 32));
-				*mem_low = low;
-				*mem_high = high;
-				break;
-			}
-			map = (memory_map_t *)((unsigned int)map + map->size +
-					       sizeof(unsigned int));
+	*mem_low  = 0;
+	*mem_high = 0;
+
+	if (!(mb->flags & 0x40))
+		return;
+
+	map = (memory_map_t *)mb->mmap_addr;
+	while ((unsigned int)map < mb->mmap_addr + mb->mmap_length) {
+		if (map->type == 1) {
+			base = (unsigned long long)map->base_addr_low |
+			       ((unsigned long long)map->base_addr_high << 32);
+			top  = base +
+			       ((unsigned long long)map->length_low |
+			        ((unsigned long long)map->length_high << 32));
+
+			/* Track first non-zero region for mem_low */
+			if (base != 0 && *mem_low == 0)
+				*mem_low = base;
+
+			/* Track the highest end address for mem_high */
+			if (top > *mem_high)
+				*mem_high = top;
 		}
+		map = (memory_map_t *)((unsigned int)map + map->size +
+				       sizeof(unsigned int));
 	}
 }
 
@@ -137,44 +148,47 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	char *cmdline = (g_cmdline - KERNEL_OFFSET);
 	char *cmdline_src = (char *)mb->cmdline;
 	unsigned long long mem_low, mem_high;
-	if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
+	unsigned mmap_addr, mmap_len;
+
+	if (magic != MULTIBOOT_BOOTLOADER_MAGIC)
 		return;
-	}
 
 	if (mb->cmdline)
 		while ((*cmdline++ = *cmdline_src++) != '\0')
 			;
 
 	init_interrupt();
-
 	setup_gdt();
-
 	setup_idt();
 
 	mm_get_phy_mem_bound(mb, &mem_low, &mem_high);
+
+	/* Save mmap location before enabling paging; accessible later at
+	 * mmap_addr + KERNEL_OFFSET once the initial 8 MB window is live. */
+	mmap_addr = (mb->flags & 0x40) ? mb->mmap_addr : 0;
+	mmap_len  = (mb->flags & 0x40) ? mb->mmap_length : 0;
 
 	mm_setup_beginning_8m();
 
 	SET_CR3(GDT_ADDRESS);
 	ENABLE_PAGING();
 
-	// ok now we make eip as virtual address
 	RELOAD_EIP();
-
-	// ok now we make esp as virtual address
 	RELOAD_ESP();
 
-	phymm_end = (mem_high) / PAGE_SIZE;
-	phymm_begin = phymm_get_mgmt_pages(mem_high);
-	phymm_begin += (mem_low / PAGE_SIZE + RESERVED_PAGES);
+	phymm_end   = (unsigned)(mem_high / PAGE_SIZE);
+	phymm_begin = phymm_get_mgmt_pages((unsigned)mem_high);
+	phymm_begin += (unsigned)(mem_low / PAGE_SIZE) + RESERVED_PAGES;
 
 	mm_init_page_table_cache();
 
-	// physical memory management
-	phymm_setup_mgmt_pages(mem_low / PAGE_SIZE + RESERVED_PAGES);
+	/* Map management pages and zero the phymm_pages array */
+	phymm_setup_mgmt_pages((unsigned)(mem_low / PAGE_SIZE) + RESERVED_PAGES);
+
+	/* Mark non-RAM holes reserved and build buddy free lists */
+	phymm_init(mmap_addr, mmap_len);
 
 	kmain_startup();
 
-	// never to here
-	return;
+	/* never reached */
 }

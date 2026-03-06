@@ -68,6 +68,6 @@ unsigned vm_disc_map(vm_struct_t vm, int size);
  *
  * @param cur
  */
-void vm_dup(vm_struct_t cur, vm_struct_t new);
+void vm_dup(vm_struct_t src, vm_struct_t dst);
 
 #endif

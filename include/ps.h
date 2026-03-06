@@ -195,6 +195,7 @@ typedef volatile struct _task_struct {
 	unsigned long sched_seq; /* insertion sequence for FIFO ordering */
 	ps_status status;
 	ps_type type;
+	int affinity;
 	int remain_ticks;
 	int is_switching;
 	unsigned timeout;

@@ -26,6 +26,8 @@ cpu_struct *cpu_current(void);
 /* Return logical CPU id of the current CPU (0 = BSP). */
 int cpu_current_id(void);
 
+int cpu_id(int index);
+
 /* Bring all Application Processors online.
  * Must be called after apic_init_bsp() and ioapic_init(). */
 void smp_start_aps(void);

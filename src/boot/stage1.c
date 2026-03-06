@@ -115,7 +115,7 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 	memory_map_t *map;
 	unsigned long long base, top;
 
-	*mem_low  = 0;
+	*mem_low = 0;
 	*mem_high = 0;
 
 	if (!(mb->flags & 0x40))
@@ -126,9 +126,9 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 		if (map->type == 1) {
 			base = (unsigned long long)map->base_addr_low |
 			       ((unsigned long long)map->base_addr_high << 32);
-			top  = base +
-			       ((unsigned long long)map->length_low |
-			        ((unsigned long long)map->length_high << 32));
+			top = base +
+			      ((unsigned long long)map->length_low |
+			       ((unsigned long long)map->length_high << 32));
 
 			/* Track first non-zero region for mem_low */
 			if (base != 0 && *mem_low == 0)
@@ -166,7 +166,7 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	/* Save mmap location before enabling paging; accessible later at
 	 * mmap_addr + KERNEL_OFFSET once the initial 8 MB window is live. */
 	mmap_addr = (mb->flags & 0x40) ? mb->mmap_addr : 0;
-	mmap_len  = (mb->flags & 0x40) ? mb->mmap_length : 0;
+	mmap_len = (mb->flags & 0x40) ? mb->mmap_length : 0;
 
 	mm_setup_beginning_8m();
 
@@ -176,14 +176,15 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	RELOAD_EIP();
 	RELOAD_ESP();
 
-	phymm_end   = (unsigned)(mem_high / PAGE_SIZE);
+	phymm_end = (unsigned)(mem_high / PAGE_SIZE);
 	phymm_begin = phymm_get_mgmt_pages((unsigned)mem_high);
 	phymm_begin += (unsigned)(mem_low / PAGE_SIZE) + RESERVED_PAGES;
 
 	mm_init_page_table_cache();
 
 	/* Map management pages and zero the phymm_pages array */
-	phymm_setup_mgmt_pages((unsigned)(mem_low / PAGE_SIZE) + RESERVED_PAGES);
+	phymm_setup_mgmt_pages((unsigned)(mem_low / PAGE_SIZE) +
+			       RESERVED_PAGES);
 
 	/* Mark non-RAM holes reserved and build buddy free lists */
 	phymm_init(mmap_addr, mmap_len);

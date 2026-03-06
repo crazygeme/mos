@@ -24,10 +24,9 @@
 #include <serial.h>
 #endif
 
-/* ── Forward declarations (implemented in klib.c) ───────────────────────── */
+/* ── Forward declarations (implemented in tty.c) ────────────────────────── */
 
-extern void klib_print(char *str, void *ctx);
-extern void klib_putchar_update_cursor(char c, void *ctx);
+extern void tty_print(char *str, void *ctx);
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */
 
@@ -46,7 +45,6 @@ void klog_init(void)
 {
 	klog_inited = 1;
 	mutex_init(&klog_lock);
-	klog("\n\n===========================\n");
 }
 
 static void klog_write(char c, void *ctx)
@@ -278,7 +276,7 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 
 void vprintf(const char *fmt, va_list ap)
 {
-	kvformat(klib_print, fmt, ap, NULL);
+	kvformat(tty_print, fmt, ap, NULL);
 }
 
 void vsprintf(char *buf, const char *fmt, va_list ap)
@@ -326,13 +324,13 @@ void printk(const char *fmt, ...)
 	spinlock_lock(&tty_lock);
 	printf("[%d.", t.seconds);
 	for (i = 0; i < pad; i++)
-		klib_print("0", NULL);
-	klib_print(ms_str, NULL);
-	klib_print("] ", NULL);
+		tty_print("0", NULL);
+	tty_print(ms_str, NULL);
+	tty_print("] ", NULL);
 	free(ms_str);
 
 	va_start(ap, fmt);
-	kvformat(klib_print, fmt, ap, NULL);
+	kvformat(tty_print, fmt, ap, NULL);
 	va_end(ap);
 	spinlock_unlock(&tty_lock);
 }

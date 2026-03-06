@@ -16,10 +16,10 @@
  * ===========================================================================*/
 
 typedef volatile struct _spinlock {
-	unsigned int lock;       /* 0 = free, 1 = held (TAS word)         */
-	int inited;              /* 1 after spinlock_init                  */
+	unsigned int lock; /* 0 = free, 1 = held (TAS word)         */
+	int inited; /* 1 after spinlock_init                  */
 	unsigned int int_status; /* interrupt flag saved by the holder     */
-	int disable_intr;        /* 1 = disable interrupts while held      */
+	int disable_intr; /* 1 = disable interrupts while held      */
 } spinlock_t;
 
 void spinlock_init(spinlock_t *lock);
@@ -36,9 +36,9 @@ void spinlock_unlock(spinlock_t *lock);
  * ===========================================================================*/
 
 typedef struct _lock_base {
-	unsigned int lock;      /* 0 = available, 1 = taken               */
-	list_entry wait_list;   /* queue of sleeping task_struct entries   */
-	spinlock_t wait_lock;   /* guards wait_list and lock transitions   */
+	unsigned int lock; /* 0 = available, 1 = taken               */
+	list_entry wait_list; /* queue of sleeping task_struct entries   */
+	spinlock_t wait_lock; /* guards wait_list and lock transitions   */
 } lock_base;
 
 /* ===========================================================================
@@ -90,12 +90,12 @@ void mutex_unlock(mutex_t *m);
  * ===========================================================================*/
 
 typedef volatile struct _rwlock {
-	int readers;                 /* number of active readers             */
-	int writer;                  /* 1 = a writer currently holds lock    */
-	int writers_waiting;         /* number of writers queued             */
+	int readers; /* number of active readers             */
+	int writer; /* 1 = a writer currently holds lock    */
+	int writers_waiting; /* number of writers queued             */
 	list_entry reader_wait_list; /* readers blocked on a writer          */
 	list_entry writer_wait_list; /* writers blocked on readers/writer    */
-	spinlock_t wait_lock;        /* guards all fields above              */
+	spinlock_t wait_lock; /* guards all fields above              */
 } rwlock_t;
 
 void rwlock_init(rwlock_t *rw);

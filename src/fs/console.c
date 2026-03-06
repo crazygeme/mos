@@ -32,19 +32,19 @@ static loff_t console_llseek(file *fp, loff_t offset, int whence)
 {
 	switch (whence) {
 	case SEEK_SET:
-		klib_update_cursor(offset);
+		tty_set_cursor(offset);
 		break;
 	case SEEK_CUR:
-		klib_update_cursor(offset + klib_get_pos());
+		tty_set_cursor(offset + tty_get_cursor());
 		break;
 	case SEEK_END:
-		klib_update_cursor(TTY_MAX_CHARS - offset);
+		tty_set_cursor(TTY_MAX_CHARS - offset);
 		break;
 	default:
 		break;
 	}
-	klib_flush_cursor();
-	fp->f_pos = klib_get_pos();
+	tty_flush_cursor();
+	fp->f_pos = tty_get_cursor();
 	return fp->f_pos;
 }
 
@@ -70,7 +70,7 @@ static int console_getattr(inode *node, struct stat *s)
 	s->st_uid = 0;
 	s->st_nlink = 1;
 	s->st_rdev = 8004;
-	s->st_size = TTY_MAX_CHARS - klib_get_pos();
+	s->st_size = TTY_MAX_CHARS - tty_get_cursor();
 	return 0;
 }
 
@@ -100,7 +100,7 @@ static super_operations tty_sops = {
 	.get_root = console_get_root,
 };
 
-static void console_init()
+static void console_init(void)
 {
 	task_struct *cur = CURRENT_TASK();
 	vfs_mount(cur->root, "/dev/tty", &tty_sops);

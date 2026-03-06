@@ -2,6 +2,7 @@
 #include <ps.h>
 #include <int.h>
 #include <klib.h>
+#include <tty.h>
 #include <elf.h>
 #include <lock.h>
 #include <mm.h>
@@ -420,7 +421,7 @@ void user_first_process_run()
 
 static void kinit_userspace(void)
 {
-	klib_clear();
+	tty_clear_locked();
 	user_first_process_run();
 }
 

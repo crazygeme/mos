@@ -119,7 +119,8 @@ static unsigned buddy_alloc(unsigned order)
 		/* Non-head pages within the block are marked PHYMM_ORDER_NONE */
 		for (half = 1; half < (1u << order); half++) {
 			if (idx + half < phymm_end)
-				phymm_pages[idx + half].order = PHYMM_ORDER_NONE;
+				phymm_pages[idx + half].order =
+					PHYMM_ORDER_NONE;
 		}
 		return idx;
 	}
@@ -179,8 +180,8 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count)
 {
 	unsigned order;
 
-	if (page_index == PHYMM_INVALID ||
-	    page_index < phymm_begin || page_index >= phymm_end)
+	if (page_index == PHYMM_INVALID || page_index < phymm_begin ||
+	    page_index >= phymm_end)
 		return;
 
 	/* Recover the order stored by phymm_alloc_kernel */
@@ -195,8 +196,8 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count)
 
 void phymm_free_user(unsigned page_index)
 {
-	if (page_index == PHYMM_INVALID ||
-	    page_index < phymm_begin || page_index >= phymm_end)
+	if (page_index == PHYMM_INVALID || page_index < phymm_begin ||
+	    page_index >= phymm_end)
 		return;
 
 	spinlock_lock(&buddy_lock);
@@ -346,7 +347,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 
 			/* Convert to page indices, clamp to managed range */
 			page_start = (unsigned)(base / PAGE_SIZE);
-			page_end   = (unsigned)(top  / PAGE_SIZE);
+			page_end = (unsigned)(top / PAGE_SIZE);
 
 			if (page_start < phymm_begin)
 				page_start = phymm_begin;

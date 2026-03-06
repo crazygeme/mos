@@ -92,41 +92,40 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		vm_region *oregion = pair->val;
 
 		/* Snapshot all origin data before vm_del_map frees the structs. */
-		unsigned o_begin  = okey->begin;
-		unsigned o_end    = okey->end;
-		int      o_prot   = oregion->prot;
-		int      o_flag   = oregion->flag;
-		void    *o_node   = oregion->node;
-		int      o_offset = oregion->offset;
+		unsigned o_begin = okey->begin;
+		unsigned o_end = okey->end;
+		int o_prot = oregion->prot;
+		int o_flag = oregion->flag;
+		void *o_node = oregion->node;
+		int o_offset = oregion->offset;
 
 		vm_del_map(vm, o_begin);
 
 		/* Re-insert the left remnant [o_begin, begin), if any. */
 		if (o_begin < begin)
-			vm_add_map(vm, o_begin, begin,
-				   o_prot, o_flag, o_node, o_offset);
+			vm_add_map(vm, o_begin, begin, o_prot, o_flag, o_node,
+				   o_offset);
 
 		/*
 		 * Re-insert the right remnant [end, o_end), if any.
 		 * Its file offset advances by (end - o_begin) bytes.
 		 */
 		if (o_end > end)
-			vm_add_map(vm, end, o_end,
-				   o_prot, o_flag, o_node,
+			vm_add_map(vm, end, o_end, o_prot, o_flag, o_node,
 				   o_offset + (int)(end - o_begin));
 	}
 
 	/* No conflicts remain: insert the new region. */
 	vm_key *key = kmalloc(sizeof(*key));
 	key->begin = begin;
-	key->end   = end;
+	key->end = end;
 
 	vm_region *region = kmalloc(sizeof(*region));
-	region->begin  = begin;
-	region->end    = end;
-	region->prot   = prot;
-	region->flag   = flag;
-	region->node   = fd;
+	region->begin = begin;
+	region->end = end;
+	region->prot = prot;
+	region->flag = flag;
+	region->node = fd;
 	region->offset = offset;
 
 	if (fd)
@@ -144,7 +143,7 @@ static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 {
 	vm_key key;
 	key.begin = addr & PAGE_SIZE_MASK;
-	key.end   = key.begin + PAGE_SIZE;
+	key.end = key.begin + PAGE_SIZE;
 	return hash_find(table, &key);
 }
 
@@ -168,7 +167,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 	if (!pair)
 		return;
 
-	key    = pair->key;
+	key = pair->key;
 	region = pair->val;
 
 	/* Unmap every page in the region from the hardware page tables. */
@@ -220,7 +219,7 @@ unsigned vm_disc_map(vm_struct_t vm, int size)
 		return USER_ZONE_BEGIN;
 
 	while (pair) {
-		key  = pair->key;
+		key = pair->key;
 		next = hash_next(table, pair);
 
 		if (!next) {
@@ -269,16 +268,16 @@ void vm_dup(vm_struct_t src, vm_struct_t dst)
 int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   unsigned int flags, void *inode, unsigned int offset)
 {
-	unsigned addr       = _addr & PAGE_SIZE_MASK;
-	unsigned last_addr  = (_addr + _len - 1) & PAGE_SIZE_MASK;
+	unsigned addr = _addr & PAGE_SIZE_MASK;
+	unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
 	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	task_struct *cur    = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
 
 	if (_addr == 0)
 		addr = vm_disc_map(cur->user.vm, page_count * PAGE_SIZE);
 
-	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE,
-		   prot, flags, inode, offset);
+	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, prot,
+		   flags, inode, offset);
 
 	return addr;
 }
@@ -293,8 +292,7 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset)
 {
 	task_struct *cur = CURRENT_TASK();
-	void *node = (fd != -1 && cur->fds[fd].used != 0) ?
-		     cur->fds[fd].fp : 0;
+	void *node = (fd != -1 && cur->fds[fd].used != 0) ? cur->fds[fd].fp : 0;
 
 	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
 }
@@ -314,7 +312,8 @@ int do_munmap(void *addr, unsigned length)
 {
 	task_struct *cur = CURRENT_TASK();
 	unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
-	unsigned end   = ((unsigned)addr + length + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	unsigned end = ((unsigned)addr + length + PAGE_SIZE - 1) &
+		       PAGE_SIZE_MASK;
 	vm_region *region;
 	unsigned r_begin, r_end;
 	int r_prot, r_flag;
@@ -330,24 +329,23 @@ int do_munmap(void *addr, unsigned length)
 		return -EINVAL;
 
 	/* Snapshot region data before vm_del_map() frees the region struct. */
-	r_begin  = region->begin;
-	r_end    = region->end;
-	r_prot   = region->prot;
-	r_flag   = region->flag;
-	r_node   = region->node;
+	r_begin = region->begin;
+	r_end = region->end;
+	r_prot = region->prot;
+	r_flag = region->flag;
+	r_node = region->node;
 	r_offset = region->offset;
 
 	vm_del_map(cur->user.vm, (unsigned)addr);
 
 	/* Preserve the left remnant [r_begin, begin), if any. */
 	if (r_begin < begin)
-		vm_add_map(cur->user.vm, r_begin, begin,
-			   r_prot, r_flag, r_node, r_offset);
+		vm_add_map(cur->user.vm, r_begin, begin, r_prot, r_flag, r_node,
+			   r_offset);
 
 	/* Preserve the right remnant [end, r_end), if any. */
 	if (end < r_end)
-		vm_add_map(cur->user.vm, end, r_end,
-			   r_prot, r_flag, r_node,
+		vm_add_map(cur->user.vm, end, r_end, r_prot, r_flag, r_node,
 			   r_offset + (int)(end - r_begin));
 
 	return 0;

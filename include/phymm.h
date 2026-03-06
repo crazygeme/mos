@@ -5,22 +5,25 @@
 #define PHYMM_PAGE_COW 0x00000001
 #define VIRT_TO_PHY(x) (x - KERNEL_OFFSET)
 #define PHY_TO_VIRT(x) (x + KERNEL_OFFSET)
-#define PHY_TO_PAGE_IDX(x) (((x)&PAGE_SIZE_MASK) / PAGE_SIZE)
+#define PHY_TO_PAGE_IDX(x) (((x) & PAGE_SIZE_MASK) / PAGE_SIZE)
 #define VIRT_TO_PAGE_IDX(x) PHY_TO_PAGE_IDX(VIRT_TO_PHY(x))
 
 /* Sentinel values for ref_count and order fields */
-#define PHYMM_INVALID      0xFFFFFFFFu  /* end-of-list / invalid page index */
-#define PHYMM_RESERVED     0xFFFFFFFEu  /* ref_count: page is non-RAM / firmware */
+#define PHYMM_INVALID 0xFFFFFFFFu /* end-of-list / invalid page index */
+#define PHYMM_RESERVED 0xFFFFFFFEu /* ref_count: page is non-RAM / firmware */
 
 /* Values stored in phymm_page.order */
-#define MAX_BUDDY_ORDER    10           /* largest block = 2^10 = 1024 pages (4 MB) */
-#define PHYMM_ORDER_NONE   0xFE        /* page is part of a larger block (not head) */
+#define MAX_BUDDY_ORDER 10 /* largest block = 2^10 = 1024 pages (4 MB) */
+#define PHYMM_ORDER_NONE 0xFE /* page is part of a larger block (not head) */
 
 typedef struct _phymm_page {
-	unsigned int ref_count; /* 0=free, PHYMM_RESERVED=non-RAM, >0=in use      */
-	unsigned int next_free; /* buddy free list: next page idx, PHYMM_INVALID   */
-	unsigned int prev_free; /* buddy free list: prev page idx, PHYMM_INVALID   */
-	unsigned char order;    /* buddy order of this block (head page only)      */
+	unsigned int
+		ref_count; /* 0=free, PHYMM_RESERVED=non-RAM, >0=in use      */
+	unsigned int
+		next_free; /* buddy free list: next page idx, PHYMM_INVALID   */
+	unsigned int
+		prev_free; /* buddy free list: prev page idx, PHYMM_INVALID   */
+	unsigned char order; /* buddy order of this block (head page only)      */
 	unsigned char _pad[3];
 } phymm_page;
 

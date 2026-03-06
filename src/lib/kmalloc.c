@@ -322,9 +322,3 @@ void kmalloc_init(void)
 	spinlock_init(&heap_lock);
 	bins_init();
 }
-
-void mm_report(void)
-{
-	printk("heap quota: %d bytes (peak: %d bytes)\n", heap_quota,
-	       heap_quota_high);
-}

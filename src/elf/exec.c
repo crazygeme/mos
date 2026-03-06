@@ -305,7 +305,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * if it is, assign script interp to file_name
 	 */
 	if (firstline[0] == 0x7f && firstline[1] == 'E' &&
-	    firstline[2] == 'L' && firstline[1] != 'F') {
+	    firstline[2] == 'L') {
 		vm_free(firstline, 1);
 		firstline = NULL;
 	} else if (firstline[0] == '#' && firstline[1] == '!') {

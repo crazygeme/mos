@@ -52,9 +52,6 @@ static ps_control control;
  * mgr_queue_lock is independent of the others. */
 static spinlock_t ps_lock; /* guards ready_queue */
 static spinlock_t psid_lock; /* guards ps_id counter */
-static spinlock_t dying_queue_lock; /* guards dying_queue */
-static spinlock_t wait_queue_lock; /* guards wait_queue */
-static spinlock_t mgr_queue_lock; /* guards mgr_queue */
 static spinlock_t map_lock; /* guards per-process page-table ops */
 
 static unsigned int ps_id;
@@ -76,16 +73,16 @@ static tss_struct *tss_address = 0;
 
 static void ps_add_mgr(task_struct *task)
 {
-	spinlock_lock(&mgr_queue_lock);
+	spinlock_lock(&ps_lock);
 	list_insert_tail(&control.mgr_queue, &task->ps_mgr);
-	spinlock_unlock(&mgr_queue_lock);
+	spinlock_unlock(&ps_lock);
 }
 
 static void ps_remove_mgr(task_struct *task)
 {
-	spinlock_lock(&mgr_queue_lock);
+	spinlock_lock(&ps_lock);
 	list_remove_entry(&task->ps_mgr);
-	spinlock_unlock(&mgr_queue_lock);
+	spinlock_unlock(&ps_lock);
 }
 
 /* Wake the process with the given pid by moving it to the ready queue.
@@ -106,7 +103,7 @@ task_struct *ps_find_process(unsigned psid)
 	list_entry *entry;
 	task_struct *task = 0;
 
-	spinlock_lock(&mgr_queue_lock);
+	spinlock_lock(&ps_lock);
 
 	entry = head->prev;
 	while (entry != head) {
@@ -118,7 +115,7 @@ task_struct *ps_find_process(unsigned psid)
 		}
 		entry = entry->prev;
 	}
-	spinlock_unlock(&mgr_queue_lock);
+	spinlock_unlock(&ps_lock);
 
 	return task;
 }
@@ -190,14 +187,14 @@ static void ps_remove_from_ready(task_struct *task)
 void ps_put_to_dying_queue(task_struct *task)
 {
 	ps_remove_from_ready(task);
-	spinlock_lock(&dying_queue_lock);
+	spinlock_lock(&ps_lock);
 	if (task->ps_list.prev && task->ps_list.next)
 		list_remove_entry(&task->ps_list);
 	if (task->psid != 0xffffffff)
 		list_insert_tail(&control.dying_queue, &task->ps_list);
 	task->status = ps_dying;
+	spinlock_unlock(&ps_lock);
 	ps_notify_process(task->parent);
-	spinlock_unlock(&dying_queue_lock);
 }
 
 /* Move task to the wait queue (blocked, e.g. waiting on a mutex or waitpid).
@@ -206,12 +203,12 @@ void ps_put_to_dying_queue(task_struct *task)
 void ps_put_to_wait_queue(task_struct *task)
 {
 	ps_remove_from_ready(task);
-	spinlock_lock(&wait_queue_lock);
+	spinlock_lock(&ps_lock);
 	if (task->ps_list.prev && task->ps_list.next)
 		list_remove_entry(&task->ps_list);
 	if (task->psid != 0xffffffff)
 		list_insert_tail(&control.wait_queue, &task->ps_list);
-	spinlock_unlock(&wait_queue_lock);
+	spinlock_unlock(&ps_lock);
 }
 
 /* Enqueue task in the ready queue at its current priority.
@@ -339,7 +336,7 @@ static void ps_propagate_kernel_pde(unsigned offset, unsigned value)
 	list_entry *head = &control.mgr_queue;
 	list_entry *entry;
 
-	spinlock_lock(&mgr_queue_lock);
+	spinlock_lock(&ps_lock);
 	entry = head->prev;
 	while (entry != head) {
 		task_struct *task = container_of(entry, task_struct, ps_mgr);
@@ -347,7 +344,7 @@ static void ps_propagate_kernel_pde(unsigned offset, unsigned value)
 			((unsigned int *)task->user.page_dir)[offset] = value;
 		entry = entry->prev;
 	}
-	spinlock_unlock(&mgr_queue_lock);
+	spinlock_unlock(&ps_lock);
 }
 
 void ps_init()
@@ -361,9 +358,6 @@ void ps_init()
 
 	spinlock_init(&ps_lock);
 	spinlock_init(&psid_lock);
-	spinlock_init(&dying_queue_lock);
-	spinlock_init(&wait_queue_lock);
-	spinlock_init(&mgr_queue_lock);
 	spinlock_init(&map_lock);
 
 	ps_id = 0;
@@ -764,7 +758,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		task_sched();
 
 		/* Phase 1: reap a matching child from the dying queue. */
-		spinlock_lock(&dying_queue_lock);
+		spinlock_lock(&ps_lock);
 		entry = control.dying_queue.prev;
 		while (entry != &control.dying_queue) {
 			task_struct *task =
@@ -779,17 +773,17 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			if (status)
 				*status = task->exit_status;
 			list_remove_entry(&task->ps_list);
-			spinlock_unlock(&dying_queue_lock);
+			spinlock_unlock(&ps_lock);
 			ps_reap_task(task, rusage);
 			if (TestControl.verbos)
 				klog("%d: wait(%d) = %d\n", cur->psid, pid,
 				     ret);
 			return ret;
 		}
-		spinlock_unlock(&dying_queue_lock);
+		spinlock_unlock(&ps_lock);
 
 		/* Phase 2: report a ptrace-stopped child (not yet reaped). */
-		spinlock_lock(&mgr_queue_lock);
+		spinlock_lock(&ps_lock);
 		entry = control.mgr_queue.prev;
 		while (entry != &control.mgr_queue) {
 			task_struct *task =
@@ -808,13 +802,13 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			if (status)
 				*status = (SIGTRAP << 8) | 0x7f;
 			task->ptrace |= PT_STOP_REPORTED;
-			spinlock_unlock(&mgr_queue_lock);
+			spinlock_unlock(&ps_lock);
 			if (TestControl.verbos)
 				klog("%d: wait(%d) = %d\n", cur->psid, pid,
 				     ret);
 			return ret;
 		}
-		spinlock_unlock(&mgr_queue_lock);
+		spinlock_unlock(&ps_lock);
 
 		/* No child ready: block until a child dies and notifies us. */
 		ps_put_to_wait_queue(cur);

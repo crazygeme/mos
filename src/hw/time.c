@@ -1,4 +1,4 @@
-#include "config.h"
+#include <config.h>
 #include <time.h>
 #include <int.h>
 #include <ps.h>

@@ -1,4 +1,4 @@
-#include "config.h"
+#include <config.h>
 #include <lock.h>
 #include <int.h>
 #include <pagefault.h>

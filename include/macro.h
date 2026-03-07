@@ -43,6 +43,9 @@
 		asm volatile("movl %0, %%cr3" : : "q"(__cr3__)); \
 	} while (0)
 
+#define INVLPG(addr) \
+	asm volatile("invlpg (%0)" : : "r"(addr) : "memory")
+
 #define RELOAD_EIP() \
 	asm volatile("jmp 1f \n1:\n\tmovl $1f,%eax\n\tjmp *%eax \n1:\n\tnop")
 

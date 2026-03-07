@@ -13,6 +13,7 @@ extern unsigned page_fault_perm;
 extern unsigned long long page_fault_cow_spent;
 extern unsigned long long page_fault_invalid_spent;
 extern unsigned long long page_fault_file_spent;
+extern unsigned long long page_fault_file_search_spent;
 extern unsigned long long page_fault_perm_spent;
 extern unsigned int heap_quota;
 extern unsigned int heap_quota_high;
@@ -28,6 +29,7 @@ unsigned page_fault_file_read_total = 0;
 unsigned long long page_fault_cow_spent_total = 0;
 unsigned long long page_fault_invalid_spent_total = 0;
 unsigned long long page_fault_file_spent_total = 0;
+unsigned long long page_fault_file_search_spent_total = 0;
 unsigned long long page_fault_perm_spent_total = 0;
 
 static void fill(void *buf, size_t size)
@@ -36,6 +38,7 @@ static void fill(void *buf, size_t size)
 	page_fault_cow_spent_total += page_fault_cow_spent;
 	page_fault_invalid_spent_total += page_fault_invalid_spent;
 	page_fault_file_spent_total += page_fault_file_spent;
+	page_fault_file_search_spent_total += page_fault_file_search_spent;
 	page_fault_perm_spent_total += page_fault_perm_spent;
 	page_fault_file_read_total += page_fault_file_read;
 	page_fault_file_total += page_fault_file;
@@ -59,6 +62,8 @@ static void fill(void *buf, size_t size)
 		"Page fault file cache hit rate:         %d%%\n"
 		"Page fault file spent:                  %d.%d ms\n"
 		"Page fault file spent(Total):           %d.%d ms\n"
+		"Page fault file search spent:           %d.%d ms\n"
+		"Page fault file search spent(Total):    %d.%d ms\n"
 		"Page fault invalid count:               %d\n"
 		"Page fault invalid spent:               %d.%d ms\n"
 		"Page fault invalid spent(Total):        %d.%d ms\n"
@@ -84,8 +89,12 @@ static void fill(void *buf, size_t size)
 		(int)page_fault_file_spent / 1000,
 		(int)page_fault_file_spent % 1000,
 		(int)page_fault_file_spent_total / 1000,
-		(int)page_fault_file_spent_total % 1000, page_fault_invalid,
-		(int)page_fault_invalid_spent / 1000,
+		(int)page_fault_file_spent_total % 1000,
+		(int)page_fault_file_search_spent / 1000,
+		(int)page_fault_file_search_spent % 1000,
+		(int)page_fault_file_search_spent_total / 1000,
+		(int)page_fault_file_search_spent_total % 1000,
+		page_fault_invalid, (int)page_fault_invalid_spent / 1000,
 		(int)page_fault_invalid_spent % 1000,
 		(int)page_fault_invalid_spent_total / 1000,
 		(int)page_fault_invalid_spent_total % 1000, page_fault_cow,
@@ -101,7 +110,8 @@ static void fill(void *buf, size_t size)
 	page_fault_cow = page_fault_invalid = page_fault_file =
 		page_fault_perm = 0;
 	page_fault_cow_spent = page_fault_invalid_spent =
-		page_fault_file_spent = page_fault_perm_spent = 0;
+		page_fault_file_spent = page_fault_perm_spent =
+			page_fault_file_search_spent = 0;
 	page_fault_file_read = 0;
 	page_fault_file_cache_hit = 0;
 }

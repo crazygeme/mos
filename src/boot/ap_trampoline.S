@@ -19,7 +19,7 @@
  *   [+12] uint32  cpu_id      — logical CPU id for this AP
  */
 
-#include "config.h"
+#include <config.h>
 
 #ifndef KERNEL_OFFSET
 #define KERNEL_OFFSET 0xC0000000

@@ -1,5 +1,5 @@
-#include "phymm.h"
-#include "mm.h"
+#include <phymm.h>
+#include <mm.h>
 #include <multiboot.h>
 #include <lock.h>
 #include <klib.h>

@@ -1,4 +1,4 @@
-#include "config.h"
+#include <config.h>
 
 .section .note.GNU-stack,"",@progbits
 

@@ -1,4 +1,4 @@
-#include "lock.h"
+#include <lock.h>
 #include <macro.h>
 #include <mount.h>
 #include <unistd.h>

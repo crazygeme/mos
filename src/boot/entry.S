@@ -1,4 +1,4 @@
-#include "config.h"
+#include <config.h>
 #define MBALIGN (1<<0)                  // align loaded modules on page boundaries
 #define MEMINFO (1<<1)                  // provide memory map
 #define FLAGS (MBALIGN | MEMINFO)       // this is the Multiboot 'flag' field

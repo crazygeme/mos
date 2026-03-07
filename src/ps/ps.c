@@ -10,7 +10,7 @@
  *   - User address-space duplication (COW fork)
  */
 
-#include "cpu.h"
+#include <cpu.h>
 #include <mount.h>
 #include <ptrace.h>
 #include <block.h>

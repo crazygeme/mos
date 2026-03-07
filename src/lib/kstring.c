@@ -89,22 +89,14 @@ char *strcat(char *src, char *msg)
 
 int strcmp(char *src, char *dst)
 {
-	int src_len = strlen(src);
-	int dst_len = strlen(dst);
-	int len = src_len > dst_len ? dst_len : src_len;
-	int i;
+	unsigned char *s = (unsigned char *)src;
+	unsigned char *d = (unsigned char *)dst;
 
-	for (i = 0; i < len; i++) {
-		if (src[i] > dst[i])
-			return 1;
-		if (src[i] < dst[i])
-			return -1;
+	while (*s && *s == *d) {
+		s++;
+		d++;
 	}
-	if (src_len > len)
-		return 1;
-	if (dst_len > len)
-		return -1;
-	return 0;
+	return (*s > *d) - (*s < *d);
 }
 
 int strncmp(char *src, char *dst, int len)

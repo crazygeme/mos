@@ -21,6 +21,7 @@ unsigned page_fault_file_cache_hit = 0;
 unsigned long long page_fault_cow_spent = 0;
 unsigned long long page_fault_invalid_spent = 0;
 unsigned long long page_fault_file_spent = 0;
+unsigned long long page_fault_file_search_spent = 0;
 unsigned long long page_fault_perm_spent = 0;
 
 static hash_table *mmap_cache = NULL;
@@ -137,10 +138,11 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	 * runtime libraries.
 	 */
 	phy = mmap_cache_find(f->f_name, offset);
+	page_fault_file_search_spent += time_now_us() - begin;
 	if (phy != NULL) {
 		page_fault_file_cache_hit++;
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
-		RELOAD_CR3();
+		INVLPG(address);
 		goto DONE;
 	}
 
@@ -151,7 +153,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	phy = phymm_alloc_user() * PAGE_SIZE;
 
 	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
-	RELOAD_CR3();
+	INVLPG(address);
 
 	ff = f->f_inode->i_private;
 
@@ -199,7 +201,7 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 
 	if (prot & PROT_WRITE) {
 		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
-		RELOAD_CR3();
+		INVLPG(address);
 		//memset(address, 0, PAGE_SIZE);
 		bzero(address);
 	} else {
@@ -209,7 +211,7 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 		 */
 		mm_add_dynamic_map(address, zero_page_phy,
 				   PAGE_ENTRY_USER_CODE);
-		RELOAD_CR3();
+		INVLPG(address);
 	}
 	page_fault_invalid++;
 	page_fault_invalid_spent += (time_now_us() - begin);
@@ -321,7 +323,7 @@ static void pf_handle_readonly(unsigned cr2)
 	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_set_map_flag(vir, flag);
-	RELOAD_CR3();
+	INVLPG(vir);
 
 	page_fault_perm_spent += (time_now_us() - begin);
 }

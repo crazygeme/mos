@@ -7,6 +7,7 @@
 extern unsigned page_fault_cow;
 extern unsigned page_fault_invalid;
 extern unsigned page_fault_file;
+extern unsigned page_fault_file_cache_hit;
 extern unsigned page_fault_file_read;
 extern unsigned page_fault_perm;
 extern unsigned long long page_fault_cow_spent;
@@ -22,6 +23,7 @@ extern unsigned pgc_count;
 extern unsigned pgc_top;
 extern unsigned phymm_used;
 unsigned page_fault_file_total = 0;
+unsigned page_fault_file_cache_hit_total = 0;
 unsigned page_fault_file_read_total = 0;
 unsigned long long page_fault_cow_spent_total = 0;
 unsigned long long page_fault_invalid_spent_total = 0;
@@ -30,6 +32,18 @@ unsigned long long page_fault_perm_spent_total = 0;
 
 static void fill(void *buf, size_t size)
 {
+	int hit_rate = 0;
+	page_fault_cow_spent_total += page_fault_cow_spent;
+	page_fault_invalid_spent_total += page_fault_invalid_spent;
+	page_fault_file_spent_total += page_fault_file_spent;
+	page_fault_perm_spent_total += page_fault_perm_spent;
+	page_fault_file_read_total += page_fault_file_read;
+	page_fault_file_total += page_fault_file;
+	page_fault_file_cache_hit_total += page_fault_file_cache_hit;
+	hit_rate = page_fault_file == 0 ?
+			   0 :
+			   page_fault_file_cache_hit * 100 / page_fault_file;
+
 	memset(buf, 0, size);
 	sprintf(buf,
 		"Physical memory Begin:                  %h\n"
@@ -40,6 +54,9 @@ static void fill(void *buf, size_t size)
 		"Page table cache Current:               %h\n"
 		"Page fault file count:                  %d\n"
 		"Page fault file count(Total):           %d,%d\n"
+		"Page fault file cache hit:              %d\n"
+		"Page fault file cache hit(Total):       %d,%d\n"
+		"Page fault file cache hit rate:         %d%%\n"
 		"Page fault file spent:                  %d.%d ms\n"
 		"Page fault file spent(Total):           %d.%d ms\n"
 		"Page fault invalid count:               %d\n"
@@ -61,6 +78,9 @@ static void fill(void *buf, size_t size)
 		pgc_top * PAGE_SIZE, pgc_count * PAGE_SIZE, page_fault_file,
 		(int)page_fault_file_total / 1000,
 		(int)page_fault_file_total % 1000,
+		(int)page_fault_file_cache_hit,
+		(int)page_fault_file_cache_hit_total / 1000,
+		(int)page_fault_file_cache_hit_total % 1000, hit_rate,
 		(int)page_fault_file_spent / 1000,
 		(int)page_fault_file_spent % 1000,
 		(int)page_fault_file_spent_total / 1000,
@@ -78,27 +98,17 @@ static void fill(void *buf, size_t size)
 		(int)page_fault_perm_spent_total / 1000,
 		(int)page_fault_perm_spent_total % 1000, page_fault_file_read,
 		page_fault_file_read_total, heap_quota, heap_quota_high);
-}
-
-static void meminfo_timeout(timer_t *timer, void *ctx)
-{
-	page_fault_cow_spent_total += page_fault_cow_spent;
-	page_fault_invalid_spent_total += page_fault_invalid_spent;
-	page_fault_file_spent_total += page_fault_file_spent;
-	page_fault_perm_spent_total += page_fault_perm_spent;
-	page_fault_file_read_total += page_fault_file_read;
-	page_fault_file_total += page_fault_file;
 	page_fault_cow = page_fault_invalid = page_fault_file =
 		page_fault_perm = 0;
 	page_fault_cow_spent = page_fault_invalid_spent =
 		page_fault_file_spent = page_fault_perm_spent = 0;
 	page_fault_file_read = 0;
+	page_fault_file_cache_hit = 0;
 }
 
 void debugfs_mm_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/meminfo", fill);
-	timer_start(meminfo_timeout, 2000, 1, NULL);
 }
 
 DEBUGFS_INIT(debugfs_mm_init);

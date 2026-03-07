@@ -246,9 +246,7 @@ static task_struct *ps_get_available_ready_task(struct rb_root *root)
 
 	while (node) {
 		task_struct *task = rb_entry(node, task_struct, rb_node);
-		if (task->status != ps_dying &&
-		    task->affinity == cpu_current_id() &&
-		    task->timeout <= now) {
+		if (task->status != ps_dying && task->timeout <= now) {
 			rb_erase(node, root);
 			task->sched_seq = ++sched_clock;
 			RB_CLEAR_NODE(&task->rb_node);
@@ -431,8 +429,6 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->timeout = 0;
 	task->psid = ps_id_gen();
-	/* default affinity: round-robin across CPUs */
-	task->affinity = cpu_id(task->psid % ncpus);
 	task->is_switching = 0;
 	task->fds = vm_alloc(1);
 	task->cwd = name_get();
@@ -580,8 +576,6 @@ int do_fork(unsigned flag)
 		task->remain_ticks = cur->remain_ticks;
 	task->timeout = cur->timeout;
 	task->psid = ps_id_gen();
-	/* default affinity: round-robin across CPUs */
-	task->affinity = cpu_id(task->psid % ncpus);
 	mutex_init(&task->fd_lock);
 
 	/* Kernel registers: set for re-entry via ret_from_syscall. */

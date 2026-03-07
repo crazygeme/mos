@@ -51,7 +51,7 @@ fi
 
 kernel_file=out/kernel
 
-qemu-system-i386 -cpu coreduo -smp 1 \
+qemu-system-i386 -cpu coreduo \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=raw \

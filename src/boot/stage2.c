@@ -39,6 +39,8 @@ extern kinit_fn_t __kinit_end[];
 /* ACPI result: populated during SMP init, used by cpu.c */
 acpi_info_t g_acpi_info;
 
+static void idle_process(void *param);
+
 void kmain_startup()
 {
 	int i = 0;
@@ -117,6 +119,10 @@ void kmain_startup()
 
 	printk("Start first process\n");
 
+	if (ncpus == 1) {
+		// create idle process for single CPU system
+		ps_create(idle_process, 0, ps_kernel);
+	}
 	// create first process
 	ps_create(kmain_process, 3, ps_kernel);
 

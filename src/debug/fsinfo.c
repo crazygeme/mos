@@ -27,8 +27,17 @@ unsigned long long elf_read_time_total = 0;
 
 static void fill(void *buf, size_t size)
 {
-	unsigned rate =
-		cache_search_count ? cache_hit * 100 / cache_search_count : 0;
+	unsigned rate = 0;
+	rate = cache_search_count ? cache_hit * 100 / cache_search_count : 0;
+	fs_read_size_total += fs_read_size;
+	fs_write_size_total += fs_write_size;
+	fs_cache_read_size_total += fs_cache_read_size;
+	fs_cache_write_size_total += fs_cache_write_size;
+	disk_read_size_total += disk_read_size;
+	disk_write_size_total += disk_write_size;
+	cache_search_time_total += cache_search_count;
+	cache_search_count_total += cache_search_count;
+	elf_read_time_total += elf_read_time;
 	memset(buf, 0, size);
 	sprintf(buf,
 		"ELF read spent:              %d.%d ms\n"
@@ -66,19 +75,6 @@ static void fill(void *buf, size_t size)
 		(int)cache_search_time_total % 1000,
 		fs_cache_size * BLOCK_SECTOR_SIZE,
 		max_fs_cache_size * BLOCK_SECTOR_SIZE);
-}
-
-static void fsinfo_timeout(timer_t *timer, void *ctx)
-{
-	fs_read_size_total += fs_read_size;
-	fs_write_size_total += fs_write_size;
-	fs_cache_read_size_total += fs_cache_read_size;
-	fs_cache_write_size_total += fs_cache_write_size;
-	disk_read_size_total += disk_read_size;
-	disk_write_size_total += disk_write_size;
-	cache_search_time_total += cache_search_count;
-	cache_search_count_total += cache_search_count;
-	elf_read_time_total += elf_read_time;
 	cache_hit = cache_search_count = cache_search_time = 0;
 	fs_cache_read_size = fs_cache_write_size = fs_read_size =
 		fs_write_size = disk_read_size = disk_write_size = 0;
@@ -88,7 +84,6 @@ static void fsinfo_timeout(timer_t *timer, void *ctx)
 void debugfs_fs_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/fsinfo", fill);
-	timer_start(fsinfo_timeout, 2000, 1, NULL);
 }
 
 DEBUGFS_INIT(debugfs_fs_init);

@@ -17,6 +17,7 @@ unsigned page_fault_invalid = 0;
 unsigned page_fault_file = 0;
 unsigned page_fault_file_read = 0;
 unsigned page_fault_perm = 0;
+unsigned page_fault_file_cache_hit = 0;
 unsigned long long page_fault_cow_spent = 0;
 unsigned long long page_fault_invalid_spent = 0;
 unsigned long long page_fault_file_spent = 0;
@@ -137,6 +138,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	 */
 	phy = mmap_cache_find(f->f_name, offset);
 	if (phy != NULL) {
+		page_fault_file_cache_hit++;
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
 		RELOAD_CR3();
 		goto DONE;

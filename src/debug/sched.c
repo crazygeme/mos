@@ -13,6 +13,9 @@ unsigned long long task_schedule_time_total = 0;
 
 static void fill(void *buf, size_t size)
 {
+	timer_process_times_total += timer_process_times;
+	select_loop_times_total += select_loop_times;
+	task_schedule_time_total += task_schedule_time;
 	memset(buf, 0, size);
 	sprintf(buf,
 		"Schedule called times:        %d\n"
@@ -30,13 +33,6 @@ static void fill(void *buf, size_t size)
 		(int)task_schedule_time_total % 1000, select_loop_times,
 		select_loop_times_total, timer_wakeup_times,
 		timer_process_times, timer_process_times_total);
-}
-
-static void schedinfo_timeout(timer_t *timer, void *ctx)
-{
-	timer_process_times_total += timer_process_times;
-	select_loop_times_total += select_loop_times;
-	task_schedule_time_total += task_schedule_time;
 	task_schedule_count = task_schedule_time = 0;
 	timer_wakeup_times = timer_process_times = 0;
 	select_loop_times = 0;
@@ -45,7 +41,6 @@ static void schedinfo_timeout(timer_t *timer, void *ctx)
 void debugfs_sched_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/sched", fill);
-	timer_start(schedinfo_timeout, 2000, 1, NULL);
 }
 
 DEBUGFS_INIT(debugfs_sched_init);

@@ -387,34 +387,72 @@ int fs_write(int fd, unsigned offset, char *buf, unsigned len)
 	return n < 0 ? -1 : (int)n;
 }
 
+/*
+ * fs_resolve_symlink_path - make a symlink target into an absolute path.
+ *
+ * @linkpath:    the path of the symlink itself (used to derive its directory)
+ * @linkcontent: buffer (MAX_PATH) holding the raw symlink target; updated
+ *               in-place to the resolved absolute path on return
+ * @name_len:    length of the symlink target string in linkcontent
+ *
+ * If the target is already absolute (starts with '/') it is kept as-is.
+ * For a relative target the directory part of linkpath is prepended.
+ * Returns 0 on success, -1 if the result would exceed MAX_PATH.
+ */
 static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
 				   size_t name_len)
 {
-	char *r;
-	char *saved = linkcontent + MAX_PATH - name_len - 1;
+	const char *r;
+	size_t base_len;
+
+	/* Absolute target: nothing to do */
 	if (*linkcontent == '/')
 		return 0;
 
-	saved[name_len] = '\0';
-	strcpy(saved, linkcontent);
-	strcpy(linkcontent, linkpath);
-	r = strrchr(linkcontent, '/');
-	*r = '\0';
-	strcat(linkcontent, "/");
-	strcat(linkcontent, saved);
+	/* Find the directory component of the path that contained the symlink */
+	r = strrchr(linkpath, '/');
+	if (!r)
+		return -1;
+	base_len = (size_t)(r - linkpath) + 1; /* include the trailing '/' */
+
+	if (base_len + name_len >= MAX_PATH)
+		return -1;
+
+	/* Shift target right to make room for the base prefix, then prepend it.
+	 * memmove handles the overlap that would occur when name_len is large. */
+	memmove(linkcontent + base_len, linkcontent, name_len + 1);
+	memcpy(linkcontent, linkpath, base_len);
 	return 0;
 }
 
+#define MAX_SYMLINK_DEPTH 8
+
+/*
+ * ext4_sb_open - open a path on an ext4 superblock, following symlinks.
+ *
+ * Handles three cases:
+ *   1. Path ending in '/' — open directly as a directory.
+ *   2. Regular file — open with ext4_fopen2, follow symlinks if needed.
+ *   3. Symlink that ultimately resolves to a directory — reopen as dir.
+ *
+ * Populates f_mode and all three inode fields (i_mode, i_ino, i_size)
+ * from the stat of the final target.
+ */
 static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
-	char *linkcontent = NULL;
-	size_t name_len;
+	/* resolved: heap buffer for the current symlink-resolved path */
+	char *resolved = NULL;
+	/* cur_path: points to either the original path or resolved buffer */
+	const char *cur_path = path;
+	size_t link_len;
 	int ret;
+	int depth = 0;
 	file *fp = NULL;
 	struct stat s;
 
+	/* ---- Case 1: caller-supplied trailing '/' means "open as dir" ---- */
 	if (path[strlen(path) - 1] == '/') {
 		dir = calloc(1, sizeof(*dir));
 		ret = ext4_dir_open(dir, path);
@@ -428,69 +466,89 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 		fp->f_inode->i_mode = s.st_mode;
 		fp->f_inode->i_ino = s.st_ino;
 		fp->f_inode->i_size = s.st_size;
-	} else {
-		f = calloc(1, sizeof(*f));
-		ret = ext4_fopen2(f, path, flag);
+		goto done;
+	}
+
+	/* ---- Case 2: regular open, with symlink following ---- */
+	f = calloc(1, sizeof(*f));
+	ret = ext4_fopen2(f, path, flag);
+	if (ret != EOK)
+		goto fail;
+
+	ret = ext4_fstat(f, &s);
+	if (ret != EOK)
+		goto fail;
+
+	/* Allocate a resolution buffer only when we actually encounter a symlink */
+	if (S_ISLNK(s.st_mode)) {
+		resolved = name_get();
+		if (!resolved)
+			goto fail;
+	}
+
+	while (S_ISLNK(s.st_mode)) {
+		/* Guard against symlink loops */
+		if (++depth > MAX_SYMLINK_DEPTH)
+			goto fail;
+
+		/* Read the raw symlink target into the resolution buffer */
+		ret = ext4_fread(f, resolved, MAX_PATH - 1, &link_len);
+		ext4_fclose(f);
+		if (ret != EOK)
+			goto fail;
+		resolved[link_len] = '\0';
+
+		/* For relative targets, resolve against the directory of cur_path.
+		 * On the first iteration cur_path == path; on subsequent iterations
+		 * it equals resolved (the previous loop's output), so chained
+		 * relative symlinks are resolved correctly. */
+		if (fs_resolve_symlink_path(cur_path, resolved, link_len) != 0)
+			goto fail;
+
+		/* resolved now holds the next path to open */
+		cur_path = resolved;
+
+		ret = ext4_fopen2(f, cur_path, flag);
 		if (ret != EOK)
 			goto fail;
 
 		ret = ext4_fstat(f, &s);
 		if (ret != EOK)
 			goto fail;
-
-		if (S_ISLNK(s.st_mode)) {
-			linkcontent = name_get();
-			memset(linkcontent, 0, MAX_PATH);
-		}
-
-		while (S_ISLNK(s.st_mode)) {
-			ret = ext4_fread(f, linkcontent, PAGE_SIZE, &name_len);
-			if (ret != EOK)
-				goto fail;
-			ext4_fclose(f);
-			linkcontent[name_len] = '\0';
-			fs_resolve_symlink_path(path, linkcontent, name_len);
-			ret = ext4_fopen2(f, linkcontent, flag);
-			if (ret != EOK)
-				goto fail;
-
-			ret = ext4_fstat(f, &s);
-			if (ret != EOK)
-				goto fail;
-		}
-
-		if (S_ISDIR(s.st_mode)) {
-			ret = ext4_fclose(f);
-			if (ret != EOK)
-				goto fail;
-
-			free(f);
-			f = NULL;
-			dir = calloc(1, sizeof(*dir));
-			ret = ext4_dir_open(dir, path);
-			if (ret != EOK)
-				goto fail;
-			ext4_dir_entry_rewind(dir);
-			fp = fs_alloc_filep_dir(dir);
-		} else {
-			fp = fs_alloc_filep_normal(f);
-		}
-		fp->f_mode = s.st_mode;
-		fp->f_inode->i_mode = s.st_mode;
-		fp->f_inode->i_ino = s.st_ino;
-		fp->f_inode->i_size = s.st_size;
 	}
 
+	/* ---- Case 3: final target is a directory ---- */
+	if (S_ISDIR(s.st_mode)) {
+		ext4_fclose(f);
+		free(f);
+		f = NULL;
+
+		dir = calloc(1, sizeof(*dir));
+		/* Use cur_path: it holds the resolved target, not the original symlink */
+		ret = ext4_dir_open(dir, cur_path);
+		if (ret != EOK)
+			goto fail;
+		ext4_dir_entry_rewind(dir);
+		fp = fs_alloc_filep_dir(dir);
+	} else {
+		fp = fs_alloc_filep_normal(f);
+	}
+
+	fp->f_mode = s.st_mode;
+	fp->f_inode->i_mode = s.st_mode;
+	fp->f_inode->i_ino = s.st_ino;
+	fp->f_inode->i_size = s.st_size;
 	goto done;
+
 fail:
 	fp = NULL;
-	if (linkcontent)
-		name_put(linkcontent);
 	if (f)
 		free(f);
 	if (dir)
 		free(dir);
 done:
+	if (resolved)
+		name_put(resolved);
 	return fp;
 }
 
@@ -878,50 +936,89 @@ int fs_fchmod(int fd, uint32_t mode)
 	return (0 - ret);
 }
 
+/*
+ * resolve_path - turn a user-supplied path into an absolute path.
+ *
+ * Handles:
+ *   - NULL / empty input                     → error
+ *   - Exact "."  / ".."                      → cwd / parent of cwd
+ *   - Absolute paths (start with '/')        → copy, then strip trailing
+ *                                              "/.." or "/." components
+ *   - Relative paths (including "./" prefix) → prepend cwd
+ *
+ * The result is written into `new` (caller must supply at least MAX_PATH
+ * bytes).  Returns 0 on success, -1 on error.
+ */
 int resolve_path(const char *old, char *new)
 {
 	char *r;
-	int len = strlen(old);
+	int len;
+
+	/* Null check must precede any use of old */
 	if (!old || !*old)
 		return -1;
 
+	len = strlen(old);
+
+	/* "." — current directory */
 	if (!strcmp(old, ".")) {
 		sys_getcwd(new, MAX_PATH);
 		return 0;
 	}
 
+	/* ".." — parent of current directory */
 	if (!strcmp(old, "..")) {
 		sys_getcwd(new, MAX_PATH);
 		r = strrchr(new, '/');
-		*r = '\0';
-		if (*new == '\0') {
-			*new++ = '/';
-			*new++ = '\0';
+		if (r == new) {
+			/* Already at root: stay at "/" */
+			new[0] = '/';
+			new[1] = '\0';
+		} else {
+			*r = '\0';
 		}
 		return 0;
 	}
 
 	if (old[0] == '/') {
+		/* Absolute path: copy verbatim, then normalise trailing component */
 		strcpy(new, old);
-		if (len >= 2 && new[len - 1] == '.' && new[len - 2] == '.') {
+
+		if (len >= 3 && new[len-1] == '.' && new[len-2] == '.' &&
+		    new[len-3] == '/') {
+			/* Trailing "/.." — strip it, then strip the last dir component.
+			 * Two-step: first remove the "/.." suffix to get the parent
+			 * dir string, then find the slash before that dir name. */
+			new[len-3] = '\0';           /* e.g. "/foo/bar"  */
 			r = strrchr(new, '/');
-			if (!r)
-				return -1;
-			r = strrchr(r - 1, '/');
-			if (!r)
-				return -1;
-			r++;
-			*r = '\0';
-		} else if (len >= 1 && new[len - 1] == '.') {
-			new[len - 1] = '\0';
+			if (!r) {
+				/* Path was something like "/bar/.." — result is root */
+				new[0] = '/';
+				new[1] = '\0';
+			} else if (r == new) {
+				/* Parent is root: "/foo/.." → "/" */
+				new[1] = '\0';
+			} else {
+				/* General case: "/foo/bar/.." → "/foo/" */
+				*(r + 1) = '\0';
+			}
+		} else if (len >= 2 && new[len-1] == '.' && new[len-2] == '/') {
+			/* Trailing "/." — strip the dot, keep the slash */
+			new[len-1] = '\0';
 		}
 		return 0;
-	} else if (len > 1 && old[0] == '.' && old[1] == '/') {
-		old += 2;
 	}
 
+	/* Relative path: strip leading "./" if present */
+	if (len > 1 && old[0] == '.' && old[1] == '/')
+		old += 2;
+
+	/* Prepend cwd, ensuring a '/' separator between cwd and old */
 	sys_getcwd(new, MAX_PATH);
-	strcat(new, old);
+	len = strlen(new);
+	if (len > 0 && new[len - 1] != '/')
+		new[len++] = '/';
+	strcat(new + len, old);
 	return 0;
 }
 

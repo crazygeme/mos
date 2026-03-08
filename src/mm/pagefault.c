@@ -32,7 +32,7 @@ static unsigned zero_page_phy = 0;
 static void pf_process(intr_frame *frame);
 
 typedef struct _mmap_cache_key {
-	char *path;
+	unsigned ino;
 	unsigned offset;
 } mmap_cache_key;
 
@@ -44,7 +44,7 @@ static int mmap_key_comp(void *k1, void *k2)
 	/*
 	 * compare path and offset.
 	 */
-	int ret = strcmp(key1->path, key2->path);
+	int ret = key1->ino - key2->ino;
 	if (ret == 0) {
 		ret = (int)key1->offset - (int)key2->offset;
 	}
@@ -62,10 +62,13 @@ void pf_init()
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
-static unsigned mmap_cache_find(const char *path, unsigned offset)
+static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 {
 	key_value_pair *pair = NULL;
-	mmap_cache_key tmp = { .path = path, .offset = offset };
+	mmap_cache_key tmp = { .ino = ino, .offset = offset };
+
+	if (ino == 0)
+		return NULL;
 
 	mutex_lock(&mmap_cache_lock);
 	pair = hash_find(mmap_cache, &tmp);
@@ -74,12 +77,15 @@ static unsigned mmap_cache_find(const char *path, unsigned offset)
 	return pair ? pair->val : NULL;
 }
 
-static void mmap_cache_add(const char *path, unsigned offset, unsigned phy)
+static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 {
 	unsigned size = 0;
 	mmap_cache_key *key = malloc(sizeof(*key));
 	key_value_pair *pair = NULL;
 	mmap_cache_key *oldkey = NULL;
+
+	if (ino == 0 || phy == 0)
+		return;
 
 	mutex_lock(&mmap_cache_lock);
 
@@ -90,7 +96,6 @@ static void mmap_cache_add(const char *path, unsigned offset, unsigned phy)
 		while (!hash_isempty(mmap_cache)) {
 			pair = hash_first(mmap_cache);
 			oldkey = pair->key;
-			free(oldkey->path);
 			free(oldkey);
 			phymm_dereference_page(
 				PHY_TO_PAGE_IDX((unsigned)pair->val));
@@ -98,7 +103,7 @@ static void mmap_cache_add(const char *path, unsigned offset, unsigned phy)
 		}
 	}
 
-	key->path = strdup(path);
+	key->ino = ino;
 	key->offset = offset;
 	hash_insert(mmap_cache, key, phy);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
@@ -137,9 +142,11 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	 * Some of the file map are globally same, especially those
 	 * runtime libraries.
 	 */
-	phy = mmap_cache_find(f->f_name, offset);
+	phy = mmap_cache_find(f->f_inode->i_ino, offset);
+
 	if (TestControl.profiling)
 		page_fault_file_search_spent += time_now_us() - begin;
+
 	if (phy != NULL) {
 		page_fault_file_cache_hit++;
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
@@ -186,7 +193,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	}
 
 READ_DONE:
-	mmap_cache_add(f->f_name, offset, phy);
+	mmap_cache_add(f->f_inode->i_ino, offset, phy);
 	page_fault_file_read += rcnt;
 
 DONE:
@@ -215,6 +222,7 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 				   PAGE_ENTRY_USER_CODE);
 		INVLPG(address);
 	}
+
 	if (TestControl.profiling) {
 		page_fault_invalid++;
 		page_fault_invalid_spent += (time_now_us() - begin);

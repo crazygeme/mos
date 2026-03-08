@@ -26,6 +26,7 @@ static int elf_read(file *fp, unsigned off, void *buf, int len)
 DONE:
 	if (TestControl.profiling)
 		elf_read_time += time_now_us() - begin;
+
 	return (int)rcnt;
 }
 

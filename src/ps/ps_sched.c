@@ -232,6 +232,10 @@ void _task_sched(const char *func)
 		goto SELF;
 
 	task->status = ps_running;
+	/*
+	 * Actually can be optimized by syncing pgd entry when adding/removing kernel mappings, 
+	 * but this is simpler and the overhead should be negligible.
+	 */
 	ps_save_kernel_map(task);
 	SAVE_ALL(current, NEXT);
 

@@ -11,6 +11,7 @@
 #include <time.h>
 #include <macro.h>
 #include <rbtree.h>
+#include <list.h>
 
 unsigned page_fault_cow = 0;
 unsigned page_fault_invalid = 0;
@@ -24,31 +25,41 @@ unsigned long long page_fault_file_spent = 0;
 unsigned long long page_fault_file_search_spent = 0;
 unsigned long long page_fault_perm_spent = 0;
 
-static hash_table *mmap_cache = NULL;
-static mutex_t mmap_cache_lock;
-static unsigned zero_page = 0;
-static unsigned zero_page_phy = 0;
-
-static void pf_process(intr_frame *frame);
+/* -------------------------------------------------------------------------
+ * LRU mmap cache
+ *
+ * Hash table for O(1) lookup keyed by (ino, offset).
+ * Doubly-linked LRU list: head = most recently used, tail = least recently used.
+ * On hit:  move entry to list head.
+ * On miss + full: evict the tail (LRU) entry, insert new entry at head.
+ * ------------------------------------------------------------------------- */
 
 typedef struct _mmap_cache_key {
 	unsigned ino;
 	unsigned offset;
 } mmap_cache_key;
 
+typedef struct _mmap_cache_entry {
+	mmap_cache_key key; /* must be first — hash stores &entry->key */
+	unsigned phy;
+	list_entry lru;
+} mmap_cache_entry;
+
+static hash_table *mmap_cache = NULL;
+static list_entry mmap_lru; /* head = MRU, tail = LRU */
+static mutex_t mmap_cache_lock;
+static unsigned zero_page = 0;
+static unsigned zero_page_phy = 0;
+
+static void pf_process(intr_frame *frame);
+
 static int mmap_key_comp(void *k1, void *k2)
 {
 	mmap_cache_key *key1 = k1;
 	mmap_cache_key *key2 = k2;
-
-	/*
-	 * compare path and offset.
-	 */
 	int ret = key1->ino - key2->ino;
-	if (ret == 0) {
+	if (ret == 0)
 		ret = (int)key1->offset - (int)key2->offset;
-	}
-
 	return ret;
 }
 
@@ -56,57 +67,73 @@ void pf_init()
 {
 	int_register(0xe, pf_process, 0, 0);
 	mmap_cache = hash_create(mmap_key_comp);
+	list_init(&mmap_lru);
 	mutex_init(&mmap_cache_lock);
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
+/* Lookup (ino, offset) in the cache.  On hit, promote to MRU position.
+ * Returns the physical address, or 0 on miss. */
 static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 {
-	key_value_pair *pair = NULL;
 	mmap_cache_key tmp = { .ino = ino, .offset = offset };
+	key_value_pair *pair;
+	mmap_cache_entry *entry;
 
 	if (ino == 0)
-		return NULL;
+		return 0;
 
 	mutex_lock(&mmap_cache_lock);
 	pair = hash_find(mmap_cache, &tmp);
+	if (!pair) {
+		mutex_unlock(&mmap_cache_lock);
+		return 0;
+	}
+	entry = pair->val;
+	/* Promote to MRU (move to head of LRU list). */
+	list_remove_entry(&entry->lru);
+	list_insert_head(&mmap_lru, &entry->lru);
 	mutex_unlock(&mmap_cache_lock);
-
-	return pair ? pair->val : NULL;
+	return entry->phy;
 }
 
+/* Insert (ino, offset, phy) into the cache.
+ * If the cache is full, evict the LRU entry first (single eviction). */
 static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 {
-	unsigned size = 0;
-	mmap_cache_key *key = malloc(sizeof(*key));
-	key_value_pair *pair = NULL;
-	mmap_cache_key *oldkey = NULL;
+	mmap_cache_entry *entry;
+	mmap_cache_key tmp = { .ino = ino, .offset = offset };
 
 	if (ino == 0 || phy == 0)
 		return;
 
 	mutex_lock(&mmap_cache_lock);
 
-	/*
-	 * If cache size larger than limit, clear cache.
-	 */
-	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE) {
-		while (!hash_isempty(mmap_cache)) {
-			pair = hash_first(mmap_cache);
-			oldkey = pair->key;
-			free(oldkey);
-			phymm_dereference_page(
-				PHY_TO_PAGE_IDX((unsigned)pair->val));
-			hash_remove_at(mmap_cache, pair);
-		}
+	/* Skip if already cached (e.g. two faults racing on the same page). */
+	if (hash_find(mmap_cache, &tmp)) {
+		mutex_unlock(&mmap_cache_lock);
+		return;
 	}
 
-	key->ino = ino;
-	key->offset = offset;
-	hash_insert(mmap_cache, key, phy);
+	/* Evict the single LRU entry when the cache is full. */
+	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE) {
+		mmap_cache_entry *evict = container_of(
+			list_remove_tail(&mmap_lru), mmap_cache_entry, lru);
+		hash_remove(mmap_cache, &evict->key);
+		phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
+		free(evict);
+	}
+
+	entry = malloc(sizeof(*entry));
+	entry->key.ino = ino;
+	entry->key.offset = offset;
+	entry->phy = phy;
+	list_insert_head(&mmap_lru, &entry->lru);
+	hash_insert(mmap_cache, &entry->key, entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
+
 	mutex_unlock(&mmap_cache_lock);
 }
 
@@ -130,7 +157,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 				      unsigned offset, int prot, int flag)
 {
 	int ret = 0;
-	unsigned phy = NULL;
+	unsigned phy = 0;
 	ext4_file *ff;
 	size_t rcnt = 0;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;

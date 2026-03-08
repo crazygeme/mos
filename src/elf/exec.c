@@ -408,7 +408,7 @@ static void run_if_exist(char *path)
 	DIE();
 }
 
-void user_first_process_run()
+static void user_first_process_run()
 {
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
 	ps_update_tss(esp0);

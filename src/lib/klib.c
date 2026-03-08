@@ -5,7 +5,6 @@
  *   kmalloc.c  - heap allocator (malloc/free/calloc)
  *   kprint.c   - formatted output (printf/printk/klog)
  *   kstring.c  - string/memory/character functions
- *   tty.c      - TTY output, cursor management, ANSI escape processing
  */
 
 #include <macro.h>

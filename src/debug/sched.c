@@ -18,14 +18,14 @@ static void fill(void *buf, size_t size)
 	task_schedule_time_total += task_schedule_time;
 	memset(buf, 0, size);
 	sprintf(buf,
-		"Schedule called times:        %d\n"
-		"Schedule call spent:          %d.%d ms\n"
-		"Schedule call spent(Total):   %d.%d ms\n"
-		"Select loop times:            %d\n"
-		"Select loop times(Total):     %d\n"
-		"Timer wakeup times:           %d\n"
-		"Timer process times:          %d\n"
-		"Timer process times(Total):   %d\n"
+		"Schedule called times:         %d\n"
+		"Schedule call spent:           %d.%d ms\n"
+		"Schedule call spent(Total):    %d.%d ms\n"
+		"Select loop times:             %d\n"
+		"Select loop times(Total):      %d\n"
+		"Timer wakeup times:            %d\n"
+		"Timer process times:           %d\n"
+		"Timer process times(Total):    %d\n"
 		"\n\n",
 		task_schedule_count, (int)task_schedule_time / 1000,
 		(int)task_schedule_time % 1000,

@@ -573,10 +573,13 @@ static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 	}
 
 	cache_search_count++;
-	search_time = time_now_us();
+	if (TestControl.profiling)
+		search_time = time_now_us();
 	pair = hash_find(p->cache.hash, head_sector);
-	search_time = time_now_us() - search_time;
-	cache_search_time += search_time;
+	if (TestControl.profiling) {
+		search_time = time_now_us() - search_time;
+		cache_search_time += search_time;
+	}
 	if (!pair)
 		return 0;
 

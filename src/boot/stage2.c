@@ -198,6 +198,8 @@ static void parse_kernel_cmdline()
 		end++;
 		if (strcmp(token, "verbose") == 0)
 			TestControl.verbos = 1;
+		else if (strcmp(token, "profile") == 0)
+			TestControl.profiling = 1;
 
 		token = end;
 	} while (1);

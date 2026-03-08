@@ -420,8 +420,14 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 		ret = ext4_dir_open(dir, path);
 		if (ret != EOK)
 			goto fail;
+		ret = ext4_fstat(&dir->f, &s);
+		if (ret != EOK)
+			goto fail;
 		fp = fs_alloc_filep_dir(dir);
-		fp->f_mode = S_IFDIR;
+		fp->f_mode = s.st_mode;
+		fp->f_inode->i_mode = s.st_mode;
+		fp->f_inode->i_ino = s.st_ino;
+		fp->f_inode->i_size = s.st_size;
 	} else {
 		f = calloc(1, sizeof(*f));
 		ret = ext4_fopen2(f, path, flag);
@@ -470,6 +476,9 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 			fp = fs_alloc_filep_normal(f);
 		}
 		fp->f_mode = s.st_mode;
+		fp->f_inode->i_mode = s.st_mode;
+		fp->f_inode->i_ino = s.st_ino;
+		fp->f_inode->i_size = s.st_size;
 	}
 
 	goto done;

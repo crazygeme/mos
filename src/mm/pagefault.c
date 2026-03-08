@@ -128,7 +128,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	unsigned phy = NULL;
 	ext4_file *ff;
 	size_t rcnt = 0;
-	unsigned long long begin = time_now_us();
+	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_file++;
 
@@ -138,7 +138,8 @@ static int pf_handle_invalid_file_map(unsigned address, file *f,
 	 * runtime libraries.
 	 */
 	phy = mmap_cache_find(f->f_name, offset);
-	page_fault_file_search_spent += time_now_us() - begin;
+	if (TestControl.profiling)
+		page_fault_file_search_spent += time_now_us() - begin;
 	if (phy != NULL) {
 		page_fault_file_cache_hit++;
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
@@ -189,7 +190,8 @@ READ_DONE:
 	page_fault_file_read += rcnt;
 
 DONE:
-	page_fault_file_spent += (time_now_us() - begin);
+	if (TestControl.profiling)
+		page_fault_file_spent += (time_now_us() - begin);
 }
 
 /*
@@ -197,7 +199,7 @@ DONE:
  */
 static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 {
-	unsigned long long begin = time_now_us();
+	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	if (prot & PROT_WRITE) {
 		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
@@ -213,8 +215,10 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 				   PAGE_ENTRY_USER_CODE);
 		INVLPG(address);
 	}
-	page_fault_invalid++;
-	page_fault_invalid_spent += (time_now_us() - begin);
+	if (TestControl.profiling) {
+		page_fault_invalid++;
+		page_fault_invalid_spent += (time_now_us() - begin);
+	}
 }
 
 /*
@@ -261,7 +265,7 @@ static void pf_handle_cow(unsigned cr2)
 	unsigned vir = 0;
 	unsigned new_mem = 0;
 	int flag;
-	unsigned long long begin = time_now_us();
+	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_cow++;
 
@@ -302,7 +306,8 @@ static void pf_handle_cow(unsigned cr2)
 
 	RELOAD_CR3();
 
-	page_fault_cow_spent += (time_now_us() - begin);
+	if (TestControl.profiling)
+		page_fault_cow_spent += (time_now_us() - begin);
 }
 
 /*
@@ -315,7 +320,7 @@ static void pf_handle_readonly(unsigned cr2)
 {
 	unsigned vir = 0;
 	int flag;
-	unsigned long long begin = time_now_us();
+	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_perm++;
 	vir = cr2;
@@ -325,7 +330,8 @@ static void pf_handle_readonly(unsigned cr2)
 	mm_set_map_flag(vir, flag);
 	INVLPG(vir);
 
-	page_fault_perm_spent += (time_now_us() - begin);
+	if (TestControl.profiling)
+		page_fault_perm_spent += (time_now_us() - begin);
 }
 
 /*

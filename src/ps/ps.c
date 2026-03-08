@@ -953,9 +953,12 @@ void _task_sched(const char *func)
 {
 	task_struct *task = 0;
 	task_struct *current = 0;
+	unsigned long long now = 0;
 	int intr_enabled = int_is_intr_enabled();
 
-	sched_cal_begin();
+	if (TestControl.profiling)
+		sched_cal_begin();
+
 	int_intr_disable();
 
 	current = CURRENT_TASK();
@@ -985,7 +988,8 @@ void _task_sched(const char *func)
 SELF:
 	int_intr_enable();
 	current->is_switching = 0;
-	sched_cal_end();
+	if (TestControl.profiling)
+		sched_cal_end();
 }
 
 /* -------------------------------------------------------------------------

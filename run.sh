@@ -6,6 +6,7 @@ _rebuild="0"
 _debug=""
 _window="gtk"
 _verbose=""
+_profile=""
 _logtofile="stdio"
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
@@ -19,6 +20,8 @@ elif [ "$arg" == "debug" ]; then
 	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
+elif [ "$arg" == "profile" ]; then
+	_profile="profile"
 elif [ "$arg" == "curses" ]; then
 	_window="curses"
 	_vga=""
@@ -50,13 +53,14 @@ if [ "$_rebuild" == "1" ]; then
 fi
 
 kernel_file=out/kernel
+echo "$_verbose $_profile"
 
 qemu-system-i386 -cpu coreduo \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=raw \
 	-kernel $kernel_file \
-	-append "$_verbose" \
+	-append "$_verbose $_profile" \
 	-serial $_logtofile \
 	$_vga \
 	$_power \

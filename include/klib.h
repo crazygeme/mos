@@ -88,6 +88,7 @@ void srand(unsigned _seed);
 
 typedef struct _TEST_CONTROL {
 	int verbos;
+	int profiling;
 } TEST_CONTROL;
 extern TEST_CONTROL TestControl;
 

@@ -25,8 +25,8 @@ int cyb_writer_count(cy_buf *b);
 
 int cyb_reader_count(cy_buf *b);
 
-int cyb_writer_close(cy_buf *b);
+void cyb_writer_close(cy_buf *b);
 
-int cyb_reader_close(cy_buf *b);
+void cyb_reader_close(cy_buf *b);
 
 #endif

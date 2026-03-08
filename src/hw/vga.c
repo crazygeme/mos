@@ -1,11 +1,3 @@
-/* vim: tabstop=4 shiftwidth=4 noexpandtab
- * This file is part of ToaruOS and is released under the terms
- * of the NCSA / University of Illinois License - see LICENSE.md
- * Copyright (C) 2014 Kevin Lange
- *
- * Bochs VBE / QEMU vga=std Graphics Driver
- */
-
 #include <int.h>
 #include <vga.h>
 #include <multiboot.h>
@@ -879,7 +871,7 @@ static unsigned short bga_read_register(unsigned short IndexValue)
 	return port_read_word(VBE_DISPI_IOPORT_DATA);
 }
 
-static int BgaIsAvailable(void)
+static int bga_is_available(void)
 {
 	int old_version =
 		(bga_read_register(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID5);
@@ -892,9 +884,9 @@ static int BgaIsAvailable(void)
 	return 1;
 }
 
-static void BgaSetVideoMode(unsigned int Width, unsigned int Height,
-			    unsigned int BitDepth, int UseLinearFrameBuffer,
-			    int ClearVideoMemory)
+static void bga_set_video_mode(unsigned int Width, unsigned int Height,
+			       unsigned int BitDepth, int UseLinearFrameBuffer,
+			       int ClearVideoMemory)
 {
 	bga_write_register(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
 	bga_write_register(VBE_DISPI_INDEX_XRES, Width);
@@ -921,9 +913,9 @@ void fb_init()
 {
 	unsigned resolution_x, resolution_y;
 
-	BgaIsAvailable();
-	BgaSetVideoMode(VGA_RESOLUTION_X, VGA_RESOLUTION_Y, VGA_COLOR_DEPTH, 1,
-			1);
+	bga_is_available();
+	bga_set_video_mode(VGA_RESOLUTION_X, VGA_RESOLUTION_Y, VGA_COLOR_DEPTH,
+			   1, 1);
 
 	pci_scan(bochs_scan_pci, -1, &fb_buffer);
 

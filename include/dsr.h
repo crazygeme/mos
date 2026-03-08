@@ -9,16 +9,13 @@ typedef struct _dsr_node {
 	dsr_callback fn;
 	void *param;
 	list_entry dsr_list;
-} dsr_node, *dsr_node_t;
+} dsr_node;
 
 void dsr_init();
 
 void dsr_add(dsr_callback fn, void *param);
 
-void dsr_process();
-
-int dsr_has_task();
-
-int dsr_running();
+/* Drain all pending DSR callbacks inline. Called from _task_sched. */
+void dsr_drain();
 
 #endif

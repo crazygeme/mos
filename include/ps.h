@@ -152,7 +152,7 @@ typedef enum _ps_status {
 	ps_dying
 } ps_status;
 
-typedef enum _ps_type { ps_kernel, ps_user, ps_dsr } ps_type;
+typedef enum _ps_type { ps_kernel, ps_user } ps_type;
 
 #define MAX_PRIORITY 5
 

@@ -1,0 +1,47 @@
+#ifndef _PS_INTERNAL_H_
+#define _PS_INTERNAL_H_
+
+/*
+ * ps_internal.h — state and helpers shared across ps_*.c translation units.
+ * Must NOT be included by code outside src/ps/.
+ */
+
+#include <ps.h>
+#include <lock.h>
+#include <list.h>
+#include <rbtree.h>
+
+/* -------------------------------------------------------------------------
+ * Scheduler control block
+ * ------------------------------------------------------------------------- */
+
+typedef struct _ps_control {
+	struct rb_root ready_queue[MAX_PRIORITY];
+	list_entry dying_queue;
+	list_entry wait_queue;
+	list_entry mgr_queue;
+} ps_control;
+
+/* -------------------------------------------------------------------------
+ * Shared globals (defined in ps.c)
+ * ------------------------------------------------------------------------- */
+
+extern ps_control control;
+extern spinlock_t ps_lock;
+extern spinlock_t map_lock;
+extern int _ps_enabled;
+extern unsigned long long task_schedule_time;
+extern unsigned task_schedule_count;
+extern tss_struct *tss_address;
+
+/* -------------------------------------------------------------------------
+ * Cross-file non-public functions
+ * ------------------------------------------------------------------------- */
+
+/* ps.c */
+void ps_add_mgr(task_struct *task);
+void ps_remove_mgr(task_struct *task);
+void reset_tss(task_struct *task);
+unsigned ps_id_gen();
+
+#endif /* _PS_INTERNAL_H_ */

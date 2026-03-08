@@ -2,7 +2,6 @@
 #include <time.h>
 #include <int.h>
 #include <ps.h>
-#include <dsr.h>
 #include <macro.h>
 #include <port.h>
 
@@ -126,7 +125,7 @@ static void force_switch(short ds)
 
 	if (cur->remain_ticks <= 0) {
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		if ((!cur->is_switching) && (!dsr_running())) {
+		if (!cur->is_switching) {
 			cur->niv_switches++;
 			task_sched();
 		}

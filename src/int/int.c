@@ -2,7 +2,6 @@
 #include <keyboard.h>
 #include <ps.h>
 #include <klib.h>
-#include <dsr.h>
 #include <mm.h>
 #include <macro.h>
 #include <port.h>
@@ -71,10 +70,8 @@ static void ipi_tlb_handler(intr_frame *frame)
 /* IPI: scheduler kick — wake this CPU from idle so it picks up new work. */
 static void ipi_sched_handler(intr_frame *frame)
 {
-	/* Returning from the interrupt handler will invoke task_sched() via
-	 * the dsr_has_task() path if work is ready; or the next idle HLT
-	 * will simply return due to this interrupt.  No explicit action
-	 * needed beyond unblocking the HLT. */
+	/* No explicit action needed; the next idle HLT will return due to
+	 * this interrupt, allowing the scheduler to run. */
 }
 
 void intr_handler(intr_frame *frame)
@@ -100,11 +97,6 @@ void intr_handler(intr_frame *frame)
 	} else if (external) {
 		pic_end_of_interrupt(frame->vec_no);
 	}
-
-	// if has dsr, call task_sched
-	// task_sched function will pick dsr process first
-	if (dsr_has_task() && ps_enabled())
-		task_sched();
 }
 
 void intr_syscall_handler(intr_frame *frame)

@@ -40,7 +40,6 @@ typedef struct _ps_control {
 	list_entry dying_queue; /* tasks that have exited, awaiting waitpid */
 	list_entry wait_queue; /* tasks blocked on a lock or waitpid */
 	list_entry mgr_queue; /* all live tasks (for lookup / enumeration) */
-	task_struct *ps_dsr; /* pending deferred service routine task */
 } ps_control;
 
 static ps_control control;
@@ -213,15 +212,11 @@ void ps_put_to_wait_queue(task_struct *task)
 }
 
 /* Enqueue task in the ready queue at its current priority.
- * If the task was in the wait queue (ps_list linked), remove it first.
- * DSR tasks are handled specially: they are not enqueued but recorded
- * directly so the scheduler can dispatch them immediately. */
+ * If the task was in the wait queue (ps_list linked), remove it first. */
 void ps_put_to_ready_queue(task_struct *task)
 {
 	spinlock_lock(&ps_lock);
-	if (task->type == ps_dsr) {
-		control.ps_dsr = task;
-	} else if (task->psid != 0xffffffff) {
+	if (task->psid != 0xffffffff) {
 		if (task->ps_list.prev && task->ps_list.next)
 			list_remove_entry(&task->ps_list);
 		if (!RB_EMPTY_NODE(&task->rb_node))
@@ -258,16 +253,11 @@ static task_struct *ps_get_available_ready_task(struct rb_root *root)
 	return NULL;
 }
 
-/* Select the next task to run.  Checks DSR first (highest priority),
- * then scans ready levels from highest to lowest. */
+/* Select the next task to run, scanning ready levels from highest to lowest. */
 static task_struct *ps_get_next_task()
 {
 	task_struct *task = NULL;
 	int i = MAX_PRIORITY - 1;
-
-	if (dsr_has_task()) {
-		return control.ps_dsr;
-	}
 
 	spinlock_lock(&ps_lock);
 	for (; i >= 0; i--) {
@@ -960,6 +950,8 @@ void _task_sched(const char *func)
 		sched_cal_begin();
 
 	int_intr_disable();
+
+	dsr_drain();
 
 	current = CURRENT_TASK();
 	current->is_switching = 1;

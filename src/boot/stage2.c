@@ -129,8 +129,6 @@ void kmain_startup()
 	// create timer process
 	ps_create(timer_process, 3, ps_kernel);
 
-	ps_create(dsr_process, 4, ps_dsr);
-
 	ps_kickoff();
 
 	run();

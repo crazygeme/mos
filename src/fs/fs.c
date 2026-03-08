@@ -984,12 +984,12 @@ int resolve_path(const char *old, char *new)
 		/* Absolute path: copy verbatim, then normalise trailing component */
 		strcpy(new, old);
 
-		if (len >= 3 && new[len-1] == '.' && new[len-2] == '.' &&
-		    new[len-3] == '/') {
+		if (len >= 3 && new[len - 1] == '.' && new[len - 2] == '.' &&
+		    new[len - 3] == '/') {
 			/* Trailing "/.." — strip it, then strip the last dir component.
 			 * Two-step: first remove the "/.." suffix to get the parent
 			 * dir string, then find the slash before that dir name. */
-			new[len-3] = '\0';           /* e.g. "/foo/bar"  */
+			new[len - 3] = '\0'; /* e.g. "/foo/bar"  */
 			r = strrchr(new, '/');
 			if (!r) {
 				/* Path was something like "/bar/.." — result is root */
@@ -1002,9 +1002,10 @@ int resolve_path(const char *old, char *new)
 				/* General case: "/foo/bar/.." → "/foo/" */
 				*(r + 1) = '\0';
 			}
-		} else if (len >= 2 && new[len-1] == '.' && new[len-2] == '/') {
+		} else if (len >= 2 && new[len - 1] == '.' &&
+			   new[len - 2] == '/') {
 			/* Trailing "/." — strip the dot, keep the slash */
-			new[len-1] = '\0';
+			new[len - 1] = '\0';
 		}
 		return 0;
 	}

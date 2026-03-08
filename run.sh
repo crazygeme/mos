@@ -37,7 +37,6 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t debug: wait for gdb before running"
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
-	echo -e "\t testall: run all tests"
 	echo -e "\t verbose: run with serial log"
 	echo -e "\t kvm: enable kvm"
 	exit
@@ -49,7 +48,7 @@ if [ "$_window" == "curses" ]; then
 fi
 
 if [ "$_rebuild" == "1" ]; then
-	make
+	make rebuild
 fi
 
 kernel_file=out/kernel

@@ -5,7 +5,7 @@
 
 typedef struct _cy_buf cy_buf;
 
-cy_buf *cyb_create(char *name);
+cy_buf *cyb_create();
 
 void cyb_destroy(cy_buf *cyb);
 

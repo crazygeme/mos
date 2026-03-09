@@ -16,13 +16,13 @@ typedef struct _cy_buf {
 	char *buf;
 } cy_buf;
 
-cy_buf *cyb_create(char *name)
+cy_buf *cyb_create()
 {
 	cy_buf *b = calloc(1, sizeof(*b));
 	b->buf = vm_alloc(PIPE_BUF_LEN / PAGE_SIZE);
 	b->reader_count = b->writer_count = 1;
 	b->ref_count = 2;
-	cond_init(&b->event, name, 1);
+	cond_init(&b->event, 1);
 	spinlock_init(&b->lock);
 	return b;
 }

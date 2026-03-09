@@ -91,7 +91,7 @@ void sb_put(super_block *sb)
 		kfree(kv->key);
 		sb_put(kv->val);
 	}
-	hash_destroy(sb->s_mounts);
+	hash_destroy(sb->s_mounts, 0);
 
 	for (kv = hash_first(sb->s_files); kv;
 	     kv = hash_next(sb->s_files, kv)) {
@@ -101,7 +101,7 @@ void sb_put(super_block *sb)
 			vm_free(di->buf, 1);
 		kfree(di);
 	}
-	hash_destroy(sb->s_files);
+	hash_destroy(sb->s_files, 0);
 
 	mutex_unlock(&sb->s_lock);
 

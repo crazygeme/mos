@@ -66,12 +66,15 @@
 #define PAUSE() asm volatile("pause")
 
 /* Per-CPU TSS selector: CPU 0 → TSS_SELECTOR, CPU n → TSS_SELECTOR + n*8 */
-#define TSS_SELECTOR_FOR(n) (TSS_SELECTOR + (n)*8)
+#define TSS_SELECTOR_FOR(n) (TSS_SELECTOR + (n) * 8)
 
-#define DIE()          \
-	for (;;) {     \
-		HLT(); \
-	}
+#define DIE()                                      \
+	do {                                       \
+		printf("\nDIE at %s\n", __func__); \
+		for (;;) {                         \
+			HLT();                     \
+		}                                  \
+	} while (0);
 
 #define OUT_PORT(port, data)                 \
 	asm volatile("mov $" #port ", %dx"); \

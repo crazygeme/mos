@@ -194,6 +194,7 @@ static INLINE void rb_link_node(struct rb_node *node, struct rb_node *parent,
 typedef struct _hash_table hash_table;
 typedef struct _key_value_pair key_value_pair;
 typedef int (*hash_comp_fn)(void *my_key, void *in_node);
+typedef int (*hash_invalid_fn)(const key_value_pair *pair);
 
 struct _hash_table {
 	struct rb_root root;
@@ -205,12 +206,13 @@ struct _hash_table {
 struct _key_value_pair {
 	void *key;
 	void *val;
+	list_entry list;
 	struct rb_node node;
 };
 
 hash_table *hash_create(hash_comp_fn comp);
 
-int hash_destroy(hash_table *table);
+int hash_destroy(hash_table *table, hash_invalid_fn fn);
 
 int hash_insert(hash_table *table, void *key, void *val);
 

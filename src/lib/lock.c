@@ -1,3 +1,4 @@
+#include "time.h"
 #include <macro.h>
 #include <lock.h>
 #include <ps.h>
@@ -12,14 +13,6 @@ void spinlock_init(spinlock_t *lock)
 {
 	lock->lock = 0;
 	lock->inited = 1;
-	lock->int_status = 0;
-	lock->disable_intr = 1;
-}
-
-void spinlock_init_ex(spinlock_t *lock, int disable_intr)
-{
-	spinlock_init(lock);
-	lock->disable_intr = disable_intr;
 }
 
 void spinlock_uninit(spinlock_t *lock)
@@ -27,32 +20,28 @@ void spinlock_uninit(spinlock_t *lock)
 	lock->inited = 0;
 	/* Release the lock word and restore the saved interrupt level. */
 	__sync_lock_release(&lock->lock);
-	if (lock->int_status)
-		int_intr_enable();
-	else
-		int_intr_disable();
 }
 
-void spinlock_lock(spinlock_t *lock)
+void _spinlock_lock(spinlock_t *lock, const char *func)
 {
 	if (!lock->inited)
 		return;
 
-	/* Disable local interrupts before spinning so that a timer interrupt
-	 * cannot preempt us while we hold the lock. */
-	if (lock->disable_intr)
-		lock->int_status = int_intr_disable();
+	disable_scheduler();
 
 	/* Fast path: optimistically try once before entering the retry loop.
 	 * On an uncontended lock this avoids the PAUSE overhead entirely. */
 	if (__builtin_expect(__sync_lock_test_and_set(&lock->lock, 1) == 0, 1))
-		return;
+		goto locked;
 
 	/* Slow path: spin with PAUSE to yield the CPU pipeline and reduce
 	 * memory bus contention on the lock cache line. */
 	do {
 		PAUSE();
 	} while (__sync_lock_test_and_set(&lock->lock, 1) == 1);
+
+locked:
+	lock->holder = func;
 }
 
 void spinlock_unlock(spinlock_t *lock)
@@ -60,19 +49,13 @@ void spinlock_unlock(spinlock_t *lock)
 	if (!lock->inited)
 		return;
 
+	lock->holder = 0;
 	/* Use a release store so that all prior writes by the holder are
 	 * visible to the next acquirer before the lock word is cleared.
 	 * On x86 TSO this compiles to a plain store + compiler barrier. */
 	__sync_lock_release(&lock->lock);
 
-	/* Restore the interrupt level that was active before the matching
-	 * spinlock_lock call. */
-	if (lock->disable_intr) {
-		if (lock->int_status)
-			int_intr_enable();
-		else
-			int_intr_disable();
-	}
+	enable_scheduler();
 }
 
 /* ===========================================================================
@@ -86,7 +69,7 @@ static void lock_init(lock_base *b, unsigned int initstat)
 	/* The wait_lock itself must not disable interrupts; cond_notify and
 	 * mutex_unlock may be called from contexts where interrupts are
 	 * already managed by an outer spinlock. */
-	spinlock_init_ex(&b->wait_lock, 0);
+	spinlock_init(&b->wait_lock);
 }
 
 /*
@@ -101,7 +84,7 @@ static int lock_wake_one_locked(list_entry *wait_list)
 	if (list_is_empty(wait_list))
 		return 0;
 
-	entry = list_remove_head(wait_list);
+	entry = list_remove_tail(wait_list);
 	task = container_of(entry, task_struct, ps_list);
 	task->status = ps_ready;
 	ps_put_to_ready_queue(task);
@@ -119,7 +102,7 @@ static int lock_wake_one_locked(list_entry *wait_list)
  *   Acquirer sees lock==0 on the inner CAS  -> returns without sleeping
  *   Acquirer enqueues before releaser scans -> releaser wakes acquirer
  */
-static void lock_base_acquire(lock_base *s)
+static void lock_base_acquire(lock_base *s, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
 
@@ -137,8 +120,7 @@ static void lock_base_acquire(lock_base *s)
 			return;
 		}
 
-		cur->status = ps_waiting;
-		ps_put_to_wait_queue(cur, &s->wait_list);
+		ps_put_to_wait_queue(cur, &s->wait_list, func);
 		spinlock_unlock(&s->wait_lock);
 		task_sched();
 		/* After wakeup, retry from the top of the loop. */
@@ -162,20 +144,15 @@ static void lock_base_release_locked(lock_base *s)
  * Condition variable (cond_t)
  * ===========================================================================*/
 
-void cond_init(cond_t *s, const char *name, unsigned int initstat)
+void cond_init(cond_t *s, unsigned int initstat)
 {
-	if (name && *name)
-		strcpy(s->name, name);
-	else
-		*s->name = '\0';
-
 	lock_init(&s->base, initstat);
 }
 
 /* Block until the event fires (lock transitions to 0 via cond_notify). */
-void cond_wait(cond_t *s)
+void _cond_wait(cond_t *s, const char *func)
 {
-	lock_base_acquire(&s->base);
+	lock_base_acquire(&s->base, func);
 }
 
 /* Re-arm the event so the next cond_wait will block (lock = 1). */
@@ -218,11 +195,12 @@ void mutex_init(mutex_t *m)
 	m->holder = 0;
 }
 
-void mutex_lock(mutex_t *m)
+void _mutex_lock(mutex_t *m, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
-	lock_base_acquire(&m->base);
+	lock_base_acquire(&m->base, func);
 	m->holder = cur->psid;
+	m->holder_func = func;
 }
 
 void mutex_unlock(mutex_t *m)
@@ -233,6 +211,7 @@ void mutex_unlock(mutex_t *m)
 		DIE();
 
 	m->holder = 0;
+	m->holder_func = NULL;
 
 	/* Release the lock and wake the next waiter atomically under
 	 * wait_lock so that no wakeup is lost between the two steps. */
@@ -257,10 +236,10 @@ void rwlock_init(rwlock_t *rw)
 	rw->writers_waiting = 0;
 	list_init(&rw->reader_wait_list);
 	list_init(&rw->writer_wait_list);
-	spinlock_init_ex(&rw->wait_lock, 0);
+	spinlock_init(&rw->wait_lock);
 }
 
-void rwlock_read_lock(rwlock_t *rw)
+void _rwlock_read_lock(rwlock_t *rw, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
 
@@ -269,8 +248,7 @@ void rwlock_read_lock(rwlock_t *rw)
 	/* Block if a writer holds the lock or a writer is waiting (write-
 	 * preferring: we queue behind the writer to prevent its starvation). */
 	while (rw->writer || rw->writers_waiting > 0) {
-		cur->status = ps_waiting;
-		ps_put_to_wait_queue(cur, &rw->reader_wait_list);
+		ps_put_to_wait_queue(cur, &rw->reader_wait_list, func);
 		spinlock_unlock(&rw->wait_lock);
 		task_sched();
 		spinlock_lock(&rw->wait_lock);
@@ -293,7 +271,7 @@ void rwlock_read_unlock(rwlock_t *rw)
 	spinlock_unlock(&rw->wait_lock);
 }
 
-void rwlock_write_lock(rwlock_t *rw)
+void _rwlock_write_lock(rwlock_t *rw, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
 
@@ -302,8 +280,7 @@ void rwlock_write_lock(rwlock_t *rw)
 
 	/* Wait until the lock is completely idle (no readers, no other writer). */
 	while (rw->writer || rw->readers > 0) {
-		cur->status = ps_waiting;
-		ps_put_to_wait_queue(cur, &rw->writer_wait_list);
+		ps_put_to_wait_queue(cur, &rw->writer_wait_list, func);
 		spinlock_unlock(&rw->wait_lock);
 		task_sched();
 		spinlock_lock(&rw->wait_lock);

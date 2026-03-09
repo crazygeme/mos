@@ -16,7 +16,7 @@ static void block_add_to_list(block *b, block_type type)
 	list_entry *head = &control.block_lists[type];
 
 	spinlock_lock(&control.lock);
-	list_insert_tail(head, &(b->block_list));
+	list_insert_head(head, &(b->block_list));
 	control.block_count[type] = control.block_count[type] + 1;
 	spinlock_unlock(&control.lock);
 }

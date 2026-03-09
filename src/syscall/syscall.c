@@ -1029,7 +1029,7 @@ static int sys_getppid()
 	if (TestControl.verbos)
 		klog("%d: getppid\n", CURRENT_TASK()->psid);
 
-	return cur->parent;
+	return cur->parent->psid;
 }
 
 static int sys_getpgrp(unsigned pid)

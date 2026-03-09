@@ -35,8 +35,6 @@ void fb_get_char_dims(unsigned *cols, unsigned *rows);
 
 /* Drawing primitives */
 
-void fb_set_point(int x, int y, unsigned value);
-void fb_write_char(int x, int y, int val, unsigned color);
 void fb_write_color(int x, int y, unsigned color);
 
 /* Character cell read/write (also updates the internal text shadow buffer). */

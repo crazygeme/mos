@@ -9,14 +9,13 @@
 #include <ps.h>
 #include <lock.h>
 #include <list.h>
-#include <rbtree.h>
 
 /* -------------------------------------------------------------------------
  * Scheduler control block
  * ------------------------------------------------------------------------- */
 
 typedef struct _ps_control {
-	struct rb_root ready_queue[PS_PRIORITY_MAX];
+	list_entry ready_queue[PS_PRIORITY_MAX];
 	list_entry dying_queue;
 	list_entry wait_queue;
 	struct rb_root mgr_queue;
@@ -39,7 +38,9 @@ extern tss_struct *tss_address;
  * ------------------------------------------------------------------------- */
 
 /* ps.c */
+void ps_add_mgr_unsafe(task_struct *task);
 void ps_add_mgr(task_struct *task);
+void ps_remove_mgr_unsafe(task_struct *task);
 void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
 unsigned ps_id_gen();

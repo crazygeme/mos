@@ -35,7 +35,7 @@ static void fill(void *buf, size_t size)
 	fs_cache_write_size_total += fs_cache_write_size;
 	disk_read_size_total += disk_read_size;
 	disk_write_size_total += disk_write_size;
-	cache_search_time_total += cache_search_count;
+	cache_search_time_total += cache_search_time;
 	cache_search_count_total += cache_search_count;
 	elf_read_time_total += elf_read_time;
 	memset(buf, 0, size);

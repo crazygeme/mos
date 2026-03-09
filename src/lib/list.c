@@ -24,7 +24,7 @@ int list_remove_entry(list_entry *entry)
 	return (int)(prev == next);
 }
 
-list_entry *list_remove_head(list_entry *head)
+list_entry *list_remove_tail(list_entry *head)
 {
 	list_entry *prev;
 	list_entry *entry;
@@ -35,7 +35,7 @@ list_entry *list_remove_head(list_entry *head)
 	return entry;
 }
 
-list_entry *list_remove_tail(list_entry *head)
+list_entry *list_remove_head(list_entry *head)
 {
 	list_entry *next;
 	list_entry *entry;
@@ -46,7 +46,7 @@ list_entry *list_remove_tail(list_entry *head)
 	return entry;
 }
 
-void list_insert_tail(list_entry *head, list_entry *entry)
+void list_insert_head(list_entry *head, list_entry *entry)
 {
 	list_entry *next;
 	next = head->next;
@@ -57,7 +57,7 @@ void list_insert_tail(list_entry *head, list_entry *entry)
 	return;
 }
 
-void list_insert_head(list_entry *head, list_entry *entry)
+void list_insert_tail(list_entry *head, list_entry *entry)
 {
 	list_entry *prev;
 	prev = head->prev;
@@ -65,15 +65,5 @@ void list_insert_head(list_entry *head, list_entry *entry)
 	entry->next = head;
 	prev->next = entry;
 	head->prev = entry;
-	return;
-}
-
-void list_append_tail(list_entry *head, list_entry *entry)
-{
-	list_entry *ListEnd = head->next;
-	head->next->prev = entry;
-	head->next = entry->next;
-	entry->next->prev = head;
-	entry->next = ListEnd;
 	return;
 }

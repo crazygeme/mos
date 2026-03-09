@@ -7,7 +7,6 @@
  *   - Manager queue (all-tasks list) and process lookup
  *   - TSS management
  *   - User address-space enumeration and cleanup
- *   - Scheduler queries (ps_has_ready, ps_enum_all)
  */
 
 #include "ps.h"
@@ -54,14 +53,12 @@ tss_struct *tss_address = 0; /* alias used by reset_tss and ps_sched.c */
 /* -------------------------------------------------------------------------
  * Static helpers — manager queue
  * ------------------------------------------------------------------------- */
-
-void ps_add_mgr(task_struct *task)
+void ps_add_mgr_unsafe(task_struct *task)
 {
 	struct rb_root *root = &control.mgr_queue;
 	struct rb_node **link;
 	struct rb_node *parent = NULL;
 
-	spinlock_lock(&ps_lock);
 	link = &root->rb_node;
 	while (*link) {
 		task_struct *t = rb_entry(*link, task_struct, mgr_rb);
@@ -77,16 +74,27 @@ void ps_add_mgr(task_struct *task)
 	}
 	rb_link_node(&task->mgr_rb, parent, link);
 	rb_insert_color(&task->mgr_rb, root);
+}
+
+void ps_add_mgr(task_struct *task)
+{
+	spinlock_lock(&ps_lock);
+	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock);
+}
+
+void ps_remove_mgr_unsafe(task_struct *task)
+{
+	if (!RB_EMPTY_NODE(&task->mgr_rb)) {
+		rb_erase(&task->mgr_rb, &control.mgr_queue);
+		RB_CLEAR_NODE(&task->mgr_rb);
+	}
 }
 
 void ps_remove_mgr(task_struct *task)
 {
 	spinlock_lock(&ps_lock);
-	if (!RB_EMPTY_NODE(&task->mgr_rb)) {
-		rb_erase(&task->mgr_rb, &control.mgr_queue);
-		RB_CLEAR_NODE(&task->mgr_rb);
-	}
+	ps_remove_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock);
 }
 
@@ -187,7 +195,7 @@ void ps_init()
 	list_init(&control.wait_queue);
 	control.mgr_queue.rb_node = NULL;
 	for (i = 0; i < PS_PRIORITY_MAX; i++)
-		control.ready_queue[i].rb_node = NULL;
+		list_init(&control.ready_queue[i]);
 
 	spinlock_init(&ps_lock);
 	spinlock_init(&psid_lock);
@@ -233,16 +241,15 @@ unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
 
 	stack_bottom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
 	LOAD_CR3(task->cr3);
-	task->ps_list.prev = task->ps_list.next = 0;
+	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);
-	RB_CLEAR_NODE(&task->rb_node);
-	task->sched_seq = 0;
 	task->fn = fn;
 	task->priority = priority;
 	task->status = ps_ready;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->timeout = 0;
 	task->psid = ps_id_gen();
+	task->parent = task;
 	task->is_switching = 0;
 	task->fds = vm_alloc(1);
 	task->cwd = name_get();
@@ -256,8 +263,10 @@ unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
 	ps_setup_task_frame(task, KERNEL_DATA_SELECTOR, 0, 0, 0, 0,
 			    stack_bottom, stack_bottom, stack_bottom,
 			    (unsigned)ps_run);
-	ps_put_to_ready_queue(task);
-	ps_add_mgr(task);
+	spinlock_lock(&ps_lock);
+	ps_put_to_ready_queue_unsafe(task);
+	ps_add_mgr_unsafe(task);
+	spinlock_unlock(&ps_lock);
 	return task->psid;
 }
 
@@ -331,19 +340,6 @@ task_struct *ps_find_process(unsigned psid)
 	}
 	spinlock_unlock(&ps_lock);
 	return task;
-}
-
-/* Return non-zero if any task at or above the given priority level is ready. */
-int ps_has_ready(int priority)
-{
-	int i;
-	if (priority >= PS_PRIORITY_MAX || priority < 0)
-		return 0;
-	for (i = priority; i < PS_PRIORITY_MAX; i++) {
-		if (!RB_EMPTY_ROOT(&control.ready_queue[i]))
-			return 1;
-	}
-	return 0;
 }
 
 /* Invoke callback for every live task (in psid order). */

@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 linux/lib/rbtree.c
 */
 
+#include "list.h"
 #include <rbtree.h>
 
 static void __rb_rotate_left(struct rb_node *node, struct rb_root *root)
@@ -446,21 +447,16 @@ static INLINE int hash_binary_comp(void *key1, void *key2)
 	return (k1 - k2);
 }
 
-static INLINE int hash_free_node(struct rb_node *node)
+static INLINE int hash_get_all_node(struct rb_root *root, list_entry *head)
 {
 	key_value_pair *pair = 0;
-
-	if (!node)
-		return 0;
-
-	if (node->rb_left)
-		hash_free_node(node->rb_left);
-
-	if (node->rb_right)
-		hash_free_node(node->rb_right);
-
-	pair = rb_entry(node, key_value_pair, node);
-	kfree(pair);
+	struct rb_node *node = rb_first(root);
+	while (node) {
+		pair = rb_entry(node, key_value_pair, node);
+		list_init(&pair->list);
+		list_insert_head(head, &pair->list);
+		node = rb_next(node);
+	}
 
 	return 1;
 }
@@ -480,18 +476,35 @@ hash_table *hash_create(hash_comp_fn comp)
 	return table;
 }
 
-int hash_destroy(hash_table *table)
+int hash_destroy(hash_table *table, hash_invalid_fn fn)
 {
 	int ret = 0;
+	list_entry tmp;
+	list_entry *node = 0;
+
+	list_init(&tmp);
 
 	if (!table)
 		return 0;
 
 	spinlock_lock(&table->lock);
 	if (table->root.rb_node) {
-		ret = hash_free_node(table->root.rb_node);
+		ret = hash_get_all_node(&table->root, &tmp);
 	}
+	table->root.rb_node = 0;
+	table->size = 0;
 	spinlock_unlock(&table->lock);
+
+	node = tmp.next;
+	while (node != &tmp) {
+		key_value_pair *pair = container_of(node, key_value_pair, list);
+		node = node->next;
+		if (fn)
+			fn(pair);
+
+		kfree(pair);
+	}
+
 	kfree(table);
 	return 1;
 }
@@ -518,7 +531,6 @@ static INLINE key_value_pair *__rb_insert(hash_table *table, void *key,
 	}
 
 	rb_link_node(node, parent, p);
-
 	return NULL;
 }
 
@@ -566,6 +578,7 @@ int hash_remove(hash_table *table, void *key)
 
 	spinlock_lock(&table->lock);
 	rb_erase(&pair->node, &table->root);
+	RB_CLEAR_NODE(&pair->node);
 	table->size--;
 	spinlock_unlock(&table->lock);
 	kfree(pair);
@@ -635,8 +648,12 @@ unsigned hash_size(hash_table *table)
 
 key_value_pair *hash_first(hash_table *table)
 {
-	struct rb_node *first = rb_first(&table->root);
+	struct rb_node *first = NULL;
 	key_value_pair *pair;
+
+	spinlock_lock(&table->lock);
+	first = rb_first(&table->root);
+	spinlock_unlock(&table->lock);
 
 	if (!first) {
 		return 0;
@@ -648,8 +665,12 @@ key_value_pair *hash_first(hash_table *table)
 
 key_value_pair *hash_next(hash_table *table, key_value_pair *pair)
 {
-	struct rb_node *next = rb_next(&pair->node);
+	struct rb_node *next = NULL;
 	key_value_pair *ret;
+
+	spinlock_lock(&table->lock);
+	next = rb_next(&pair->node);
+	spinlock_unlock(&table->lock);
 
 	if (!next) {
 		return 0;
@@ -661,37 +682,15 @@ key_value_pair *hash_next(hash_table *table, key_value_pair *pair)
 
 int hash_isempty(hash_table *table)
 {
+	int empty = 0;
+
 	if (!table) {
 		return 1;
 	}
 
-	return (table->root.rb_node == NULL);
+	spinlock_lock(&table->lock);
+	empty = (table->root.rb_node == NULL);
+	spinlock_unlock(&table->lock);
+
+	return empty;
 }
-
-#ifdef DEBUG_RB
-
-static void hash_print_depth(char *flag, struct rb_node *node, int depth)
-{
-	int i = 0;
-	key_value_pair *pair = rb_entry(node, key_value_pair, node);
-
-	if (!node)
-		return;
-
-	for (i = 0; i < depth; i++) {
-		printf("\t");
-	}
-
-	printf("[%c:%.4d:%.4d:%.2d]\n", flag, pair->key, pair->val,
-	       rb_color(node));
-
-	hash_print_depth('l', node->rb_left, (depth + 1));
-	hash_print_depth('r', node->rb_right, (depth + 1));
-}
-
-void hash_print(hash_table *table)
-{
-	hash_print_depth('o', table->root.rb_node, 0);
-}
-
-#endif

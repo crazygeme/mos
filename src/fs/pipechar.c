@@ -116,7 +116,7 @@ static const file_operations pipe_write_fops = {
 
 int fs_alloc_filep_pipe(file **pipes)
 {
-	cy_buf *buf = cyb_create("pipe");
+	cy_buf *buf = cyb_create();
 
 	pipe_inode *rn = calloc(1, sizeof(*rn));
 	rn->buf = buf;

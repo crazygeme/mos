@@ -179,11 +179,14 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			FLUSH();        \
 	} while (0)
 
-#define EMITS(s)                      \
-	do {                          \
-		const char *_s = (s); \
-		while (*_s)           \
-			EMIT(*_s++);  \
+#define EMITS(s)                              \
+	do {                                  \
+		const char *_s = (s);         \
+		if (!_s)                      \
+			_putstr(buf, "NULL"); \
+		else                          \
+			while (*_s)           \
+				EMIT(*_s++);  \
 	} while (0)
 
 	while (*p) {

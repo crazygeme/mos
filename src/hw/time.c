@@ -19,6 +19,17 @@ static unsigned long rtc_get_time(void);
 
 static int force_switch_count = 0;
 
+static int scheduler_disabled = 0;
+void enable_scheduler()
+{
+	__sync_lock_test_and_set(&scheduler_disabled, 0);
+}
+
+void disable_scheduler()
+{
+	__sync_lock_test_and_set(&scheduler_disabled, 1);
+}
+
 static void force_switch(short ds);
 static void time_process(intr_frame *frame)
 {
@@ -47,6 +58,9 @@ static void time_process(intr_frame *frame)
 	}
 
 	BARRIER();
+
+	if (__sync_add_and_fetch(&scheduler_disabled, 0) == 1)
+		return;
 
 	if (__sync_add_and_fetch(&(force_switch_count), 0) == 0) {
 		__sync_add_and_fetch(&(force_switch_count), 1);

@@ -8,6 +8,9 @@
  *   - Scheduling instrumentation
  */
 
+#include "list.h"
+#include "misc/queue.h"
+#include "ps.h"
 #include <time.h>
 #include <mm.h>
 #include <klib.h>
@@ -31,51 +34,23 @@ static unsigned long long sched_end = 0;
  * Static helpers — MPRQ algorithm
  * ------------------------------------------------------------------------- */
 
-/* Insert task into a per-priority RB-tree ordered by sched_seq.
- * Must be called with ps_lock held. */
-static void ready_queue_insert(struct rb_root *root, task_struct *task)
-{
-	struct rb_node **link = &root->rb_node, *parent = NULL;
-
-	while (*link) {
-		task_struct *t = rb_entry(*link, task_struct, rb_node);
-		parent = *link;
-		link = (task->sched_seq < t->sched_seq) ? &(*link)->rb_left :
-							  &(*link)->rb_right;
-	}
-	rb_link_node(&task->rb_node, parent, link);
-	rb_insert_color(&task->rb_node, root);
-}
-
-/* Remove task from its priority-level RB-tree if currently enqueued.
- * Must be called with ps_lock held. */
-static void ps_remove_from_ready(task_struct *task)
-{
-	if (!RB_EMPTY_NODE(&task->rb_node)) {
-		rb_erase(&task->rb_node, &control.ready_queue[task->priority]);
-		RB_CLEAR_NODE(&task->rb_node);
-	}
-}
-
 /* Return the first runnable task from the given RB-tree.
  * Skips sleeping (timeout in the future) and dying tasks.
  * Re-inserts the chosen task with a fresh sched_seq for round-robin fairness.
  * Must be called with ps_lock held. */
-static task_struct *ps_get_available_ready_task(struct rb_root *root)
+static task_struct *ps_get_available_ready_task(list_entry *head)
 {
-	struct rb_node *node = rb_first(root);
+	struct rb_node *node = head->next;
 	unsigned now = time_now_ms();
 
-	while (node) {
-		task_struct *task = rb_entry(node, task_struct, rb_node);
+	while (node != head) {
+		task_struct *task = container_of(node, task_struct, ps_list);
 		if (task->status != ps_dying && task->timeout <= now) {
-			rb_erase(node, root);
-			task->sched_seq = ++sched_clock;
-			RB_CLEAR_NODE(&task->rb_node);
-			ready_queue_insert(root, task);
+			list_remove_entry(node);
+			list_insert_tail(head, &task->ps_list);
 			return task;
 		}
-		node = rb_next(node);
+		node = head->next;
 	}
 	return NULL;
 }
@@ -88,7 +63,7 @@ static task_struct *ps_get_next_task()
 
 	spinlock_lock(&ps_lock);
 	for (; i >= 0; i--) {
-		if (RB_EMPTY_ROOT(&control.ready_queue[i]))
+		if (list_is_empty(&control.ready_queue[i]))
 			continue;
 		task = ps_get_available_ready_task(&control.ready_queue[i]);
 		if (task)
@@ -133,14 +108,6 @@ static void ps_save_kernel_map(task_struct *task)
 	}
 }
 
-/* Wake the process with the given pid by moving it to the ready queue. */
-static void ps_notify_process(unsigned pid)
-{
-	task_struct *task = ps_find_process(pid);
-	if (task)
-		ps_put_to_ready_queue(task);
-}
-
 /* -------------------------------------------------------------------------
  * Public — queue transitions
  * ------------------------------------------------------------------------- */
@@ -148,58 +115,66 @@ static void ps_notify_process(unsigned pid)
 /* Move task to the dying queue and notify its parent.
  * Status is set to ps_dying only after enqueueing so a preemption between the
  * two steps cannot lose the task (the scheduler skips ps_dying tasks). */
-void ps_put_to_dying_queue(task_struct *task)
+void ps_put_to_dying_queue_unsafe(task_struct *task)
 {
-	spinlock_lock(&ps_lock);
-
-	ps_remove_from_ready(task);
-
-	if (task->ps_list.prev && task->ps_list.next)
-		list_remove_entry(&task->ps_list);
+	list_remove_entry(&task->ps_list);
 
 	if (task->psid != 0xffffffff)
 		list_insert_tail(&control.dying_queue, &task->ps_list);
 
 	task->status = ps_dying;
-
-	spinlock_unlock(&ps_lock);
-
-	ps_notify_process(task->parent);
+	task->wait_func = NULL;
 }
 
-/* Move task to the wait queue (blocked on a lock or waitpid). */
-void ps_put_to_wait_queue(task_struct *task, list_entry *which_list)
+void ps_put_to_dying_queue(task_struct *task)
 {
 	spinlock_lock(&ps_lock);
+	ps_put_to_dying_queue_unsafe(task);
+	if (task->parent)
+		ps_put_to_ready_queue_unsafe(task->parent);
+	spinlock_unlock(&ps_lock);
+}
 
+void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
+				 const char *func)
+{
 	if (!which_list)
 		which_list = &control.wait_queue;
 
-	ps_remove_from_ready(task);
-
-	if (task->ps_list.prev && task->ps_list.next)
-		list_remove_entry(&task->ps_list);
+	list_remove_entry(&task->ps_list);
 
 	if (task->psid != 0xffffffff)
 		list_insert_tail(which_list, &task->ps_list);
 
+	task->status = ps_waiting;
+	task->wait_func = func;
+}
+
+/* Move task to the wait queue (blocked on a lock or waitpid). */
+void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
+			  const char *func)
+{
+	spinlock_lock(&ps_lock);
+	ps_put_to_wait_queue_unsafe(task, which_list, func);
 	spinlock_unlock(&ps_lock);
+}
+
+void ps_put_to_ready_queue_unsafe(task_struct *task)
+{
+	if (task->psid != 0xffffffff) {
+		list_remove_entry(&task->ps_list);
+		list_insert_tail(&control.ready_queue[task->priority],
+				 &task->ps_list);
+	}
+	task->status = ps_ready;
+	task->wait_func = NULL;
 }
 
 /* Enqueue task in the ready queue at its current priority. */
 void ps_put_to_ready_queue(task_struct *task)
 {
 	spinlock_lock(&ps_lock);
-	if (task->psid != 0xffffffff) {
-		if (task->ps_list.prev && task->ps_list.next)
-			list_remove_entry(&task->ps_list);
-		if (!RB_EMPTY_NODE(&task->rb_node))
-			rb_erase(&task->rb_node,
-				 &control.ready_queue[task->priority]);
-		task->sched_seq = ++sched_clock;
-		RB_CLEAR_NODE(&task->rb_node);
-		ready_queue_insert(&control.ready_queue[task->priority], task);
-	}
+	ps_put_to_ready_queue_unsafe(task);
 	spinlock_unlock(&ps_lock);
 }
 

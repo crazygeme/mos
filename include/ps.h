@@ -180,7 +180,8 @@ typedef volatile struct _task_frame {
 	unsigned long esp; // kernel or user esp
 } task_frame;
 
-typedef volatile struct _task_struct {
+typedef volatile struct _task_struct task_struct;
+struct _task_struct {
 	task_frame tss;
 	unsigned long cr3;
 	unsigned int psid;
@@ -190,16 +191,15 @@ typedef volatile struct _task_struct {
 	int priority;
 	list_entry ps_list; /* dying-queue or wait-queue list node */
 	struct rb_node mgr_rb; /* management-queue RB-tree node */
-	struct rb_node rb_node; /* ready-queue RB-tree node */
-	unsigned long sched_seq; /* insertion sequence for FIFO ordering */
 	ps_status status;
+	const char *wait_func;
 	int remain_ticks;
 	int is_switching;
 	unsigned timeout;
 	file_descriptor *fds;
 	mutex_t fd_lock;
 	unsigned exit_status;
-	unsigned parent;
+	task_struct *parent;
 	unsigned group_id;
 	char *cwd;
 	unsigned fork_flag;
@@ -213,10 +213,9 @@ typedef volatile struct _task_struct {
 	unsigned pf_minor;
 	/* ptrace state */
 	unsigned ptrace; /* PT_TRACED, PT_STOPPED, etc. (see ptrace.h) */
-	unsigned ptrace_tracer; /* psid of the tracing process, 0 if none */
+	task_struct *ptrace_tracer; /* psid of the tracing process, 0 if none */
 	unsigned int magic; // to avoid stack overflow
-
-} task_struct;
+};
 
 typedef struct _rusage {
 	struct timeval ru_utime; /* user CPU time used */
@@ -265,16 +264,19 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
 
 void ps_cleanup_all_user_map(task_struct *task);
 
+void ps_put_to_ready_queue_unsafe(task_struct *task);
 void ps_put_to_ready_queue(task_struct *task);
 
+void ps_put_to_dying_queue_unsafe(task_struct *task);
 void ps_put_to_dying_queue(task_struct *task);
 
-void ps_put_to_wait_queue(task_struct *task, list_entry *which_list);
+void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
+				 const char *func);
+void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
+			  const char *func);
 
 task_struct *ps_find_process(unsigned psid);
 
-// if process that >= priority exist
-int ps_has_ready(int priority);
 typedef void (*ps_enum_callback)(task_struct *task);
 void ps_enum_all(ps_enum_callback callback);
 // syscall handler
@@ -286,5 +288,6 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 char *sys_getcwd(char *buf, unsigned size);
 void reboot();
 void shutdown();
+void ps_print_all();
 
 #endif

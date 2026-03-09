@@ -1,3 +1,4 @@
+#include "list.h"
 #include <mmap.h>
 #include <rbtree.h>
 #include <klib.h>
@@ -42,29 +43,24 @@ vm_struct_t vm_create()
 	return hash_create(vm_region_compare);
 }
 
+static void vm_region_invalid(const key_value_pair *pair)
+{
+	vm_key *key = pair->key;
+	vm_region *region = pair->val;
+
+	if (region->node)
+		fs_put_file(region->node);
+
+	kfree(key);
+	kfree(region);
+}
+
 void vm_destroy(vm_struct_t vm)
 {
 	hash_table *table = vm;
-	struct rb_node *node = NULL;
+	key_value_pair *pair = hash_first(table);
 
-	if (hash_isempty(table))
-		return;
-
-	node = rb_first(&table->root);
-
-	while (node) {
-		key_value_pair *pair = rb_entry(node, key_value_pair, node);
-		vm_region *region = pair->val;
-		vm_key *key = pair->key;
-
-		hash_remove(table, key);
-		kfree(key);
-		kfree(region);
-
-		node = rb_first(&table->root);
-	}
-
-	hash_destroy(table);
+	hash_destroy((hash_table *)vm, vm_region_invalid);
 }
 
 /*

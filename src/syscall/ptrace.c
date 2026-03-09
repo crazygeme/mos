@@ -222,12 +222,12 @@ void ptrace_stop(intr_frame *frame)
 	cur->ptrace &= ~PT_STOP_REPORTED;
 
 	/* Wake the tracer's waitpid() loop */
-	tracer = ps_find_process(cur->ptrace_tracer);
+	tracer = cur->ptrace_tracer;
 	if (tracer)
 		ps_put_to_ready_queue(tracer);
 
 	/* Block until the tracer calls PTRACE_CONT or PTRACE_SINGLESTEP */
-	ps_put_to_wait_queue(cur, NULL);
+	ps_put_to_wait_queue(cur, NULL, __func__);
 	task_sched();
 	/* PT_STOPPED and PT_STOP_REPORTED are cleared by the tracer */
 }
@@ -280,8 +280,8 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		}
 
 		tracee->ptrace = PT_TRACED | PT_STOPPED;
-		tracee->ptrace_tracer = cur->psid;
-		ps_put_to_wait_queue(tracee, NULL);
+		tracee->ptrace_tracer = cur;
+		ps_put_to_wait_queue(tracee, NULL, __func__);
 		ret = 0;
 		break;
 
@@ -290,7 +290,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_DETACH:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -311,7 +311,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	case PTRACE_PEEKDATA: {
 		unsigned long word = 0;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -337,7 +337,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	case PTRACE_POKETEXT:
 	case PTRACE_POKEDATA:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -357,7 +357,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	case PTRACE_PEEKUSER: {
 		unsigned long word = 0;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -386,7 +386,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_POKEUSER:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -411,7 +411,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		struct user_regs_struct regs;
 		intr_frame *f;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -453,7 +453,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 		struct user_regs_struct regs;
 		intr_frame *f;
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -492,7 +492,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_CONT:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -521,7 +521,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_SINGLESTEP:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -547,7 +547,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_SYSCALL:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}
@@ -574,7 +574,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	 */
 	case PTRACE_KILL:
 		tracee = ps_find_process(pid);
-		if (!tracee || tracee->ptrace_tracer != cur->psid) {
+		if (!tracee || tracee->ptrace_tracer != cur) {
 			ret = -ESRCH;
 			break;
 		}

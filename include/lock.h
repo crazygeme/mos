@@ -18,14 +18,13 @@
 typedef volatile struct _spinlock {
 	unsigned int lock; /* 0 = free, 1 = held (TAS word)         */
 	int inited; /* 1 after spinlock_init                  */
-	unsigned int int_status; /* interrupt flag saved by the holder     */
-	int disable_intr; /* 1 = disable interrupts while held      */
+	const char *holder;
 } spinlock_t;
 
 void spinlock_init(spinlock_t *lock);
-void spinlock_init_ex(spinlock_t *lock, int disable_intr);
 void spinlock_uninit(spinlock_t *lock);
-void spinlock_lock(spinlock_t *lock);
+#define spinlock_lock(x) _spinlock_lock((x), __func__)
+void _spinlock_lock(spinlock_t *lock, const char *func);
 void spinlock_unlock(spinlock_t *lock);
 
 /* ===========================================================================
@@ -53,11 +52,11 @@ typedef struct _lock_base {
 
 typedef volatile struct _cond {
 	lock_base base;
-	char name[16];
 } cond_t;
 
-void cond_init(cond_t *s, const char *name, unsigned int initstat);
-void cond_wait(cond_t *s);
+void cond_init(cond_t *s, unsigned int initstat);
+#define cond_wait(x) _cond_wait((x), __func__)
+void _cond_wait(cond_t *s, const char *func);
 void cond_wait_at_intr(cond_t *s);
 void cond_reset(cond_t *s);
 void cond_notify(cond_t *s);
@@ -72,11 +71,14 @@ void cond_notify_at_intr(cond_t *s);
 
 typedef volatile struct _mutex {
 	lock_base base;
-	unsigned holder; /* psid of the holding task, 0 if free     */
+	unsigned holder;
+	const char *holder_func; /* psid of the holding task, 0 if free     */
+
 } mutex_t;
 
 void mutex_init(mutex_t *m);
-void mutex_lock(mutex_t *m);
+#define mutex_lock(x) _mutex_lock((x), __func__)
+void _mutex_lock(mutex_t *m, const char *func);
 void mutex_unlock(mutex_t *m);
 
 /* ===========================================================================
@@ -99,9 +101,11 @@ typedef volatile struct _rwlock {
 } rwlock_t;
 
 void rwlock_init(rwlock_t *rw);
-void rwlock_read_lock(rwlock_t *rw);
+#define rwlock_read_lock(x) _rwlock_read_lock((x), __func__)
+void _rwlock_read_lock(rwlock_t *rw, const char *func);
 void rwlock_read_unlock(rwlock_t *rw);
-void rwlock_write_lock(rwlock_t *rw);
+#define rwlock_write_lock(x) _rwlock_write_lock((x), __func__)
+void _rwlock_write_lock(rwlock_t *rw, const char *func);
 void rwlock_write_unlock(rwlock_t *rw);
 
 #endif

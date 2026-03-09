@@ -94,7 +94,7 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 	entry = pair->val;
 	/* Promote to MRU (move to head of LRU list). */
 	list_remove_entry(&entry->lru);
-	list_insert_head(&mmap_lru, &entry->lru);
+	list_insert_tail(&mmap_lru, &entry->lru);
 	mutex_unlock(&mmap_cache_lock);
 	return entry->phy;
 }
@@ -120,7 +120,7 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	/* Evict the single LRU entry when the cache is full. */
 	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE) {
 		mmap_cache_entry *evict = container_of(
-			list_remove_tail(&mmap_lru), mmap_cache_entry, lru);
+			list_remove_head(&mmap_lru), mmap_cache_entry, lru);
 		hash_remove(mmap_cache, &evict->key);
 		phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
 		free(evict);
@@ -130,7 +130,7 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	entry->key.ino = ino;
 	entry->key.offset = offset;
 	entry->phy = phy;
-	list_insert_head(&mmap_lru, &entry->lru);
+	list_insert_tail(&mmap_lru, &entry->lru);
 	hash_insert(mmap_cache, &entry->key, entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 

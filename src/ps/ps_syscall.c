@@ -135,7 +135,6 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	}
 	if (task->root)
 		sb_put(task->root);
-	ps_remove_mgr(task);
 	vm_free(task, 1);
 }
 
@@ -200,11 +199,9 @@ int do_fork(unsigned flag)
 	task->tss.eip = (unsigned)ret_from_syscall;
 	task_intr_frame->eax = 0;
 
-	task->parent = cur->psid;
+	task->parent = cur;
 	task->fds = vm_alloc(1);
-	task->ps_list.next = task->ps_list.prev = 0;
-	RB_CLEAR_NODE(&task->rb_node);
-	task->sched_seq = 0;
+	list_init(&task->ps_list);
 	task->user.vm = vm_create();
 	task->command = vm_alloc(1);
 	task->umask = cur->umask;
@@ -219,11 +216,13 @@ int do_fork(unsigned flag)
 
 	ps_dup_fds(cur, task);
 	ps_dup_user_maps(cur, task);
-	ps_put_to_ready_queue(task);
-	ps_add_mgr(task);
+	spinlock_lock(&ps_lock);
+	ps_put_to_ready_queue_unsafe(task);
+	ps_add_mgr_unsafe(task);
+	spinlock_unlock(&ps_lock);
 
 	if (flag & FORK_FLAG_VFORK) {
-		cond_init(&task->vfork_event, "vfork_event", 1);
+		cond_init(&task->vfork_event, 1);
 		cond_wait(&task->vfork_event);
 	}
 
@@ -312,12 +311,12 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		task_sched();
 
 		spinlock_lock(&ps_lock);
-		dying_task_entry = control.dying_queue.prev;
+		dying_task_entry = control.dying_queue.next;
 		while (dying_task_entry != &control.dying_queue) {
 			task_struct *task = container_of(dying_task_entry,
 							 task_struct, ps_list);
-			dying_task_entry = dying_task_entry->prev;
-			if (task->parent != cur->psid)
+			dying_task_entry = dying_task_entry->next;
+			if (task->parent->psid != cur->psid)
 				continue;
 
 			if (pid && pid != task->psid)
@@ -328,6 +327,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 				*status = task->exit_status;
 
 			list_remove_entry(&task->ps_list);
+			ps_remove_mgr_unsafe(task);
 			spinlock_unlock(&ps_lock);
 			ps_reap_task(task, rusage);
 			if (TestControl.verbos)
@@ -341,7 +341,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			task_struct *task =
 				rb_entry(task_entry, task_struct, mgr_rb);
 			task_entry = rb_next(task_entry);
-			if (task->parent != cur->psid)
+			if (task->parent->psid != cur->psid)
 				continue;
 
 			if (!(task->ptrace & PT_TRACED) ||
@@ -366,9 +366,9 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			return ret;
 		}
 
-		spinlock_unlock(&ps_lock);
+		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
 
-		ps_put_to_wait_queue(cur, NULL);
+		spinlock_unlock(&ps_lock);
 	}
 }
 
@@ -416,4 +416,18 @@ void shutdown()
 	printf("still running...\n");
 	for (;;)
 		HLT();
+}
+
+void ps_print_all()
+{
+	struct rb_node *task_entry;
+	//spinlock_lock(&ps_lock);
+	task_entry = rb_first(&control.mgr_queue);
+	while (task_entry) {
+		task_struct *task = rb_entry(task_entry, task_struct, mgr_rb);
+		task_entry = rb_next(task_entry);
+		printf("task %d: status %d, wait_func %s\n", task->psid,
+		       task->status, task->wait_func);
+	}
+	//spinlock_unlock(&ps_lock);
 }

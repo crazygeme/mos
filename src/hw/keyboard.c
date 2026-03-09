@@ -94,7 +94,7 @@ static void kb_buf_put(unsigned char key)
 
 void kb_init()
 {
-	buf = cyb_create("keyboard");
+	buf = cyb_create();
 	int_register(0x21, kb_process, 0, 0);
 }
 
@@ -146,6 +146,9 @@ static void kb_dsr(void *param)
 
 			if (c == 'V' && ctrl && alt)
 				shutdown();
+
+			if (c == 'N' && ctrl && alt)
+				ps_print_all();
 
 			/* Handle Ctrl, Shift.
                Note that Ctrl overrides Shift. */

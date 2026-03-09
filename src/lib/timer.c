@@ -109,7 +109,7 @@ void timer_init()
 {
 	control.timers = hash_create(timer_comp);
 	mutex_init(&control.lock);
-	cond_init(&control.event, "timer", 0);
+	cond_init(&control.event, 0);
 }
 
 timer_t *timer_start(timeout_t callback, unsigned period, int repeatly,

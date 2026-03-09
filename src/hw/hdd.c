@@ -235,8 +235,8 @@ static void hdd_init()
 #ifdef DEBUG
 		printk("channel %d, name %s\n", chan_no, c->name);
 #endif
-		cond_init(&c->event, c->name, 1);
-		spinlock_init_ex(&c->iolock, 0);
+		cond_init(&c->event, 1);
+		spinlock_init(&c->iolock);
 		/* Initialize devices. */
 		for (dev_no = 0; dev_no < 2; dev_no++) {
 			ata_disk *d = &c->devices[dev_no];
@@ -624,7 +624,7 @@ static block_cache_item *hdd_cache_find_empty(partition *p, int sector)
 	/* Create new cache item and link into LRU + hash. */
 	item = block_cache_item_create();
 	item->sector = head_sector;
-	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
+	list_insert_head(&p->cache.timer_list_head, &item->time_list);
 	hash_insert(p->cache.hash, head_sector, item);
 	p->cache.sectors += PREREAD_SECTOR;
 	fs_cache_size = p->cache.sectors;
@@ -684,7 +684,7 @@ static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 
 	/* Move to MRU position. */
 	list_remove_entry(&item->time_list);
-	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
+	list_insert_head(&p->cache.timer_list_head, &item->time_list);
 
 	memcpy((char *)item->buf + sector_off * BLOCK_SECTOR_SIZE, buf,
 	       BLOCK_SECTOR_SIZE);
@@ -712,7 +712,7 @@ static void hdd_cache_update_all(void *aux, partition *p,
 
 	/* Move to MRU position before filling data. */
 	list_remove_entry(&item->time_list);
-	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
+	list_insert_head(&p->cache.timer_list_head, &item->time_list);
 	for (i = 0; i < PREREAD_SECTOR; i++)
 		partition_read(aux, head_sector + i,
 			       (char *)item->buf + i * BLOCK_SECTOR_SIZE,
@@ -762,7 +762,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	if (item) {
 		/* Promote to MRU and satisfy from cache. */
 		list_remove_entry(&item->time_list);
-		list_insert_tail(&p->cache.timer_list_head, &item->time_list);
+		list_insert_head(&p->cache.timer_list_head, &item->time_list);
 		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
@@ -1051,7 +1051,7 @@ static void partition_close(void *aux)
 	if (p->cache_inited) {
 		flush_partition_cache(aux);
 		/* Destroy hash to avoid memory leaks; reset LRU head. */
-		hash_destroy(p->cache.hash);
+		hash_destroy(p->cache.hash, 0);
 		p->cache.hash = 0;
 		list_init(&p->cache.timer_list_head);
 		p->cache_inited = 0;

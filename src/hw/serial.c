@@ -66,7 +66,7 @@ static void init_poll(void)
 	outb(FCR_REG, 0); /* Disable FIFO. */
 	set_serial(115200); /* 115.2 kbps, N-8-1. */
 	outb(MCR_REG, MCR_OUT2); /* Required to enable interrupts. */
-	txq = cyb_create("serial");
+	txq = cyb_create();
 	mode = POLL;
 }
 

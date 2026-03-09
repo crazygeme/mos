@@ -461,7 +461,7 @@ void *name_get()
 	if (list_is_empty(&name_cache_head)) {
 		buf = (void *)vm_alloc(MAX_PATH / PAGE_SIZE);
 	} else {
-		node = list_remove_head(&name_cache_head);
+		node = list_remove_tail(&name_cache_head);
 		buf = node->buf;
 		free(node);
 	}
@@ -477,6 +477,6 @@ void name_put(void *buf)
 	spinlock_lock(&path_lock);
 	node = calloc(1, sizeof(*node));
 	node->buf = buf;
-	list_insert_head(&name_cache_head, &node->list);
+	list_insert_tail(&name_cache_head, &node->list);
 	spinlock_unlock(&path_lock);
 }

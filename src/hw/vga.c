@@ -679,9 +679,9 @@ static unsigned char number_font[][12] = {
 
 static unsigned char cursor_font[][12] = {
 	{
-		b(00000000), b(01111110), b(01111110), b(01111110), /* 4 */
-		b(01111110), b(01111110), b(01111110), b(01111110), /* 8 */
-		b(01111110), b(01111110), b(01111110), b(00000000) /* 12 */
+		b(00000000), b(00000000), b(00000000), b(00000000), /* 4 */
+		b(00000000), b(00000000), b(00000000), b(00000000), /* 8 */
+		b(00000000), b(00000000), b(11111111), b(11111111) /* 12 */
 	},
 	{
 		b(00000000), b(00000000), b(00000000), b(00000000), /* 4 */
@@ -689,6 +689,8 @@ static unsigned char cursor_font[][12] = {
 		b(00000000), b(00000000), b(00000000), b(00000000) /* 12 */
 	},
 };
+
+static const unsigned char bit_mask[8] = {128, 64, 32, 16, 8, 4, 2, 1};
 
 /* Internal framebuffer state (not exported) */
 
@@ -711,22 +713,23 @@ static unsigned _fb_cursor;
 
 /* Low-level pixel operations */
 
-void fb_set_point(int x, int y, unsigned value)
+static void fb_set_point(int x, int y, unsigned value)
 {
 	unsigned *disp = (unsigned *)_fb_buffer;
 	disp[y * _hw_resolution_x + x] = value;
 }
 
-unsigned fb_get_point(int x, int y)
+static unsigned fb_get_point(int x, int y)
 {
 	unsigned *disp = (unsigned *)_fb_buffer;
 	return disp[y * _hw_resolution_x + x];
 }
 
-void fb_write_char(int x, int y, int val, unsigned color)
+static void fb_write_char(int x, int y, int val, unsigned color)
 {
 	unsigned char i, j, *c;
-	unsigned back_color;
+	unsigned back_color, base_x, base_y;
+	unsigned *disp = (unsigned *)_fb_buffer;
 
 	x = x * char_width;
 	y = y * char_height;
@@ -744,36 +747,74 @@ void fb_write_char(int x, int y, int val, unsigned color)
 		c = number_font[val];
 	}
 
-	back_color = fb_get_point(_fb_x_off + x, _fb_y_off + y);
+	base_x = _fb_x_off + x;
+	base_y = _fb_y_off + y;
+	back_color = disp[base_y * _hw_resolution_x + base_x];
 
 	for (i = 0; i < char_height; ++i) {
+		unsigned *rowp =
+			disp + (base_y + i) * _hw_resolution_x + base_x;
+		unsigned char row = c[i];
 		for (j = 0; j < char_width; ++j) {
-			if (c[i] & (1 << (8 - j))) {
-				fb_set_point(_fb_x_off + x + j,
-					     _fb_y_off + y + i, color);
-			} else {
-				fb_set_point(_fb_x_off + x + j,
-					     _fb_y_off + y + i, back_color);
-			}
+			rowp[j] = (row & bit_mask[j]) ? color : back_color;
 		}
 	}
 }
 
-void fb_write_color(int x, int y, unsigned color)
+static void fb_write_char_mix_cursor(int x, int y, int val, unsigned val_color,
+				     unsigned cursor_color)
 {
-	unsigned char i, j;
+	unsigned char i, j, *cv, *cc;
+	unsigned back_color, base_x, base_y;
+	unsigned *disp = (unsigned *)_fb_buffer;
+
 	x = x * char_width;
 	y = y * char_height;
 
+	if (val > 128)
+		val = 4;
+
+	cv = number_font[val];
+	cc = cursor_font[0];
+
+	base_x = _fb_x_off + x;
+	base_y = _fb_y_off + y;
+	back_color = disp[base_y * _hw_resolution_x + base_x];
+
 	for (i = 0; i < char_height; ++i) {
+		unsigned *rowp =
+			disp + (base_y + i) * _hw_resolution_x + base_x;
+		unsigned char row_v = cv[i];
+		unsigned char row_c = cc[i];
 		for (j = 0; j < char_width; ++j) {
-			fb_set_point(_fb_x_off + x + j, _fb_y_off + y + i,
-				     color);
+			unsigned char m = bit_mask[j];
+			rowp[j] = (row_v & m) ? val_color
+					  : ((row_c & m) ? cursor_color
+							 : back_color);
 		}
 	}
 }
 
 /* Public API */
+
+void fb_write_color(int x, int y, unsigned color)
+{
+	unsigned char i, j;
+	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned base_x, base_y;
+	x = x * char_width;
+	y = y * char_height;
+
+	base_x = _fb_x_off + x;
+	base_y = _fb_y_off + y;
+	for (i = 0; i < char_height; ++i) {
+		unsigned *rowp =
+			disp + (base_y + i) * _hw_resolution_x + base_x;
+		for (j = 0; j < char_width; ++j) {
+			rowp[j] = color;
+		}
+	}
+}
 
 int fb_is_available(void)
 {
@@ -799,17 +840,27 @@ void fb_putchar(int col, int row, char c)
 
 void fb_update_cursor(unsigned new_pos)
 {
-	unsigned old_col = _fb_cursor % _window_char_width;
-	unsigned old_row = _fb_cursor / _window_char_width;
+	unsigned col = _fb_cursor % _window_char_width;
+	unsigned row = _fb_cursor / _window_char_width;
 	char val = _fb_text[_fb_cursor];
 
 	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
 	    val == '\t')
-		fb_write_char(old_col, old_row, 130, VGA_COLOR_BLACK);
+		fb_write_char(col, row, 130, VGA_COLOR_BLACK);
+	else
+		fb_write_char(col, row, val, VGA_COLOR_WHITE);
 
 	_fb_cursor = new_pos;
-	fb_write_char(_fb_cursor % _window_char_width,
-		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE);
+	val = _fb_text[_fb_cursor];
+	col = _fb_cursor % _window_char_width;
+	row = _fb_cursor / _window_char_width;
+
+	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
+	    val == '\t')
+		fb_write_char(col, row, 129, VGA_COLOR_WHITE);
+	else
+		fb_write_char_mix_cursor(col, row, val, VGA_COLOR_WHITE,
+					 VGA_COLOR_WHITE);
 }
 
 void fb_scroll_line(void)
@@ -854,6 +905,7 @@ void fb_clear_screen(void)
 	unsigned len =
 		VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
 	memset((char *)_fb_buffer, 0, len);
+	memset(_fb_text, 0, sizeof(_fb_text));
 }
 
 /* Bochs VBE / QEMU VGA hardware init */
@@ -926,6 +978,8 @@ void fb_init()
 		resolution_x = 0;
 		resolution_y = 0;
 	}
+
+	memset(_fb_text, 0, sizeof(_fb_text));
 
 	/* store for fb_enable */
 	_resolution_x = resolution_x;

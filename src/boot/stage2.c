@@ -121,13 +121,13 @@ void kmain_startup()
 
 	if (ncpus == 1) {
 		// create idle process for single CPU system
-		ps_create(idle_process, 0, ps_kernel);
+		ps_create(idle_process, ps_idle, ps_kernel);
 	}
 	// create first process
-	ps_create(kmain_process, 3, ps_kernel);
+	ps_create(kmain_process, ps_normal, ps_kernel);
 
 	// create timer process
-	ps_create(timer_process, 3, ps_kernel);
+	ps_create(timer_process, ps_normal, ps_kernel);
 
 	ps_kickoff();
 

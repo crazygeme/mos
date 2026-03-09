@@ -5,7 +5,7 @@
 #define PHYMM_PAGE_COW 0x00000001
 #define VIRT_TO_PHY(x) (x - KERNEL_OFFSET)
 #define PHY_TO_VIRT(x) (x + KERNEL_OFFSET)
-#define PHY_TO_PAGE_IDX(x) (((x) & PAGE_SIZE_MASK) / PAGE_SIZE)
+#define PHY_TO_PAGE_IDX(x) (((x)&PAGE_SIZE_MASK) / PAGE_SIZE)
 #define VIRT_TO_PAGE_IDX(x) PHY_TO_PAGE_IDX(VIRT_TO_PHY(x))
 
 /* Sentinel values for ref_count and order fields */

@@ -57,15 +57,36 @@ tss_struct *tss_address = 0; /* alias used by reset_tss and ps_sched.c */
 
 void ps_add_mgr(task_struct *task)
 {
+	struct rb_root *root = &control.mgr_queue;
+	struct rb_node **link;
+	struct rb_node *parent = NULL;
+
 	spinlock_lock(&ps_lock);
-	list_insert_tail(&control.mgr_queue, &task->ps_mgr);
+	link = &root->rb_node;
+	while (*link) {
+		task_struct *t = rb_entry(*link, task_struct, mgr_rb);
+		parent = *link;
+		if (task->psid < t->psid)
+			link = &(*link)->rb_left;
+		else if (task->psid > t->psid)
+			link = &(*link)->rb_right;
+		else {
+			spinlock_unlock(&ps_lock);
+			return; /* psid already present */
+		}
+	}
+	rb_link_node(&task->mgr_rb, parent, link);
+	rb_insert_color(&task->mgr_rb, root);
 	spinlock_unlock(&ps_lock);
 }
 
 void ps_remove_mgr(task_struct *task)
 {
 	spinlock_lock(&ps_lock);
-	list_remove_entry(&task->ps_mgr);
+	if (!RB_EMPTY_NODE(&task->mgr_rb)) {
+		rb_erase(&task->mgr_rb, &control.mgr_queue);
+		RB_CLEAR_NODE(&task->mgr_rb);
+	}
 	spinlock_unlock(&ps_lock);
 }
 
@@ -164,8 +185,8 @@ void ps_init()
 	int i;
 	list_init(&control.dying_queue);
 	list_init(&control.wait_queue);
-	list_init(&control.mgr_queue);
-	for (i = 0; i < MAX_PRIORITY; i++)
+	control.mgr_queue.rb_node = NULL;
+	for (i = 0; i < PS_PRIORITY_MAX; i++)
 		control.ready_queue[i].rb_node = NULL;
 
 	spinlock_init(&ps_lock);
@@ -192,12 +213,12 @@ int ps_enabled()
 
 /* Allocate and initialise a new kernel task. Returns the new psid, or
  * 0xffffffff on failure. The task is immediately placed in the ready queue. */
-unsigned ps_create(process_fn fn, int priority, ps_type type)
+unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
 {
 	unsigned int stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
 
-	if (priority >= MAX_PRIORITY) {
+	if (priority >= PS_PRIORITY_MAX) {
 		vm_free(task, 1);
 		return 0xffffffff;
 	}
@@ -213,11 +234,11 @@ unsigned ps_create(process_fn fn, int priority, ps_type type)
 	stack_bottom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
 	LOAD_CR3(task->cr3);
 	task->ps_list.prev = task->ps_list.next = 0;
+	RB_CLEAR_NODE(&task->mgr_rb);
 	RB_CLEAR_NODE(&task->rb_node);
 	task->sched_seq = 0;
 	task->fn = fn;
 	task->priority = priority;
-	task->type = type;
 	task->status = ps_ready;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->timeout = 0;
@@ -269,7 +290,7 @@ void ps_kickoff_ap(void)
 	task_struct *cur = CURRENT_TASK();
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
-	ps_create(ap_idle_stub, 1, ps_kernel);
+	ps_create(ap_idle_stub, ps_idle, ps_kernel);
 	_ps_enabled = 1;
 	task_sched();
 }
@@ -289,21 +310,24 @@ void ps_update_tss(unsigned int esp0)
  * Public — process lookup and enumeration
  * ------------------------------------------------------------------------- */
 
-/* Linear search of mgr_queue by psid. Returns NULL if not found. */
+/* RB-tree search of mgr_queue by psid. Returns NULL if not found. */
 task_struct *ps_find_process(unsigned psid)
 {
-	list_entry *head = &control.mgr_queue;
-	list_entry *entry;
-	task_struct *task = 0;
+	struct rb_node *node;
+	task_struct *task = NULL;
 
 	spinlock_lock(&ps_lock);
-	entry = head->prev;
-	while (entry != head) {
-		task = container_of(entry, task_struct, ps_mgr);
-		if (task->psid == psid)
+	node = control.mgr_queue.rb_node;
+	while (node) {
+		task_struct *t = rb_entry(node, task_struct, mgr_rb);
+		if (psid < t->psid)
+			node = node->rb_left;
+		else if (psid > t->psid)
+			node = node->rb_right;
+		else {
+			task = t;
 			break;
-		task = 0;
-		entry = entry->prev;
+		}
 	}
 	spinlock_unlock(&ps_lock);
 	return task;
@@ -313,27 +337,26 @@ task_struct *ps_find_process(unsigned psid)
 int ps_has_ready(int priority)
 {
 	int i;
-	if (priority >= MAX_PRIORITY || priority < 0)
+	if (priority >= PS_PRIORITY_MAX || priority < 0)
 		return 0;
-	for (i = priority; i < MAX_PRIORITY; i++) {
+	for (i = priority; i < PS_PRIORITY_MAX; i++) {
 		if (!RB_EMPTY_ROOT(&control.ready_queue[i]))
 			return 1;
 	}
 	return 0;
 }
 
-/* Invoke callback for every live task (in mgr_queue order). */
+/* Invoke callback for every live task (in psid order). */
 void ps_enum_all(ps_enum_callback callback)
 {
-	list_entry *head = &control.mgr_queue;
-	list_entry *node;
+	struct rb_node *node;
 	if (!callback)
 		return;
-	node = head->prev;
-	while (node != head) {
-		task_struct *task = container_of(node, task_struct, ps_mgr);
+	node = rb_first(&control.mgr_queue);
+	while (node) {
+		task_struct *task = rb_entry(node, task_struct, mgr_rb);
 		callback(task);
-		node = node->prev;
+		node = rb_next(node);
 	}
 }
 

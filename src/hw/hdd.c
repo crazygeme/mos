@@ -65,8 +65,6 @@ typedef struct _channel {
 	char name[8]; /* Name, e.g. "ide0". */
 	unsigned short reg_base; /* Base I/O port. */
 	unsigned char irq; /* Interrupt in use. */
-	int expecting_interrupt; /* True if an interrupt is expected, false if
-                                 any interrupt would be spurious. */
 	spinlock_t iolock;
 	cond_t event;
 	ata_disk devices[2]; /* The devices on this channel. */
@@ -237,7 +235,6 @@ static void hdd_init()
 #ifdef DEBUG
 		printk("channel %d, name %s\n", chan_no, c->name);
 #endif
-		c->expecting_interrupt = 0;
 		cond_init(&c->event, c->name, 1);
 		spinlock_init_ex(&c->iolock, 0);
 		/* Initialize devices. */
@@ -282,16 +279,11 @@ static void interrupt_handler(intr_frame *f)
 
 	for (c = channels; c < channels + CHANNEL_CNT; c++)
 		if (f->vec_no == c->irq) {
-			if (c->expecting_interrupt) {
-				port_read_byte(reg_status(
-					c)); /* Acknowledge interrupt. */
-				//printk("[hdd] event set \n");
-				cond_notify_at_intr(
-					&c->event); /* Wake up waiter. */
+			port_read_byte(
+				reg_status(c)); /* Acknowledge interrupt. */
 
-				c->expecting_interrupt = 0;
-			} else
-				printk("%s: unexpected interrupt\n", c->name);
+			cond_notify_at_intr(&c->event); /* Wake up waiter. */
+
 			return;
 		}
 }
@@ -424,14 +416,13 @@ static void identify_ata_device(ata_disk *d)
 	select_device_wait(d);
 	issue_pio_command(c, CMD_IDENTIFY_DEVICE);
 
-	// printk("[hdd] event iden wait << \n");
 	cond_wait_at_intr(&c->event);
-	// printk("[hdd] event iden wait >> \n");
 
 	if (!wait_while_busy(d)) {
 		d->is_ata = 0;
 		return;
 	}
+
 	input_sector(c, id);
 
 	/* Calculate capacity.
@@ -929,7 +920,6 @@ static void select_device_wait(const ata_disk *d)
 {
 	channel *c = d->channel;
 	cond_reset(&c->event);
-	c->expecting_interrupt = 1;
 	select_device(d);
 }
 

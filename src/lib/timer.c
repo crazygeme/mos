@@ -35,58 +35,73 @@ unsigned timer_process_times = 0;
 
 void do_timer_loop()
 {
-	unsigned now = 0;
-	unsigned wait_time = 0;
-	unsigned timeout = 0;
-	key_value_pair *kv = NULL;
-	timer_t *timer_entry = NULL;
-	int empty = 1;
+	/*
+	 * Timer worker loop:
+	 * - Wait until at least one timer is present.
+	 * - Take the earliest timer (hash_first).
+	 * - Sleep until its due time, then invoke the callback if still enabled.
+	 * - Remove the timer; if periodic and enabled, reschedule it.
+	 *
+	 * Concurrency notes:
+	 * - We take the timer snapshot (key/value) under the lock, then
+	 *   release the lock before sleeping and invoking the callback.
+	 * - Only this loop removes timers; external code only inserts and
+	 *   can disable a timer. We recheck 'enabled' before calling.
+	 *
+	 * Scheduling note:
+	 * - Periodic timers are rescheduled using current time + period.
+	 *   This avoids backlog accumulation if callback/sleep overruns.
+	 */
 	for (;;) {
 		mutex_lock(&control.lock);
-		empty = hash_isempty(control.timers);
+		if (hash_isempty(control.timers)) {
+			mutex_unlock(&control.lock);
+			/* Sleep until a new timer is started */
+			cond_wait(&control.event);
+			timer_wakeup_times++;
+			continue;
+		}
+
+		key_value_pair *kv = hash_first(control.timers);
+		if (!kv) {
+			/* Defensive: queue became empty, clear pending event */
+			cond_reset(&control.event);
+			mutex_unlock(&control.lock);
+			continue;
+		}
+
+		unsigned due_at = (unsigned)kv->key;
+		timer_t *t = (timer_t *)kv->val;
 		mutex_unlock(&control.lock);
 
-		if (empty)
-			cond_wait(&control.event);
+		timer_wakeup_times++;
 
-		for (;;) {
-			timer_wakeup_times++;
-			mutex_lock(&control.lock);
+		/* Wait until the timer expires */
+		unsigned now = time_now_ms();
+		if (now < due_at)
+			msleep(due_at - now);
 
-			kv = hash_first(control.timers);
-			if (!kv)
-				cond_reset(&control.event);
+		/* Invoke callback if timer is still enabled */
+		if (t->enabled && t->callback)
+			t->callback(t, t->context);
 
-			mutex_unlock(&control.lock);
-
-			if (!kv)
-				break;
-
-			timer_process_times++;
-
-			timeout = kv->key;
-			timer_entry = kv->val;
-			now = time_now_ms();
-
-			if (now < timeout)
-				msleep(timeout - now);
-
-			if (timer_entry->enabled && timer_entry->callback)
-				timer_entry->callback(timer_entry,
-						      timer_entry->context);
-
-			mutex_lock(&control.lock);
-
-			hash_remove_at(control.timers, kv);
-			if (timer_entry->enabled && timer_entry->repeatly) {
-				timeout = now + timer_entry->period;
-				hash_insert(control.timers, timeout,
-					    timer_entry);
-			} else
-				free(timer_entry);
-
-			mutex_unlock(&control.lock);
+		/* Remove and optionally reschedule */
+		mutex_lock(&control.lock);
+		hash_remove_at(control.timers, kv);
+		if (t->enabled && t->repeatly) {
+			unsigned next_due = time_now_ms() + t->period;
+			hash_insert(control.timers, next_due, t);
+		} else {
+			free(t);
 		}
+
+		/* If no timers remain, clear the event flag */
+		if (hash_isempty(control.timers))
+			cond_reset(&control.event);
+
+		mutex_unlock(&control.lock);
+
+		timer_process_times++;
 	}
 }
 

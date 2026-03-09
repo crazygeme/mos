@@ -16,7 +16,7 @@
 - [X] fork的时候复制fd
 - [X] unlink
 - [ ] tty ioctl
-- [ ] 文件路径最大值4096
+- [X] 文件路径最大值4096
 - [ ] fcnt
 - [ ] sys_stat, sys_lstat, sys_fstat的正确实现
 - [X] debugfs 文件系统 和 /proc 目录

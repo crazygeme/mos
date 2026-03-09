@@ -227,7 +227,7 @@ void ptrace_stop(intr_frame *frame)
 		ps_put_to_ready_queue(tracer);
 
 	/* Block until the tracer calls PTRACE_CONT or PTRACE_SINGLESTEP */
-	ps_put_to_wait_queue(cur);
+	ps_put_to_wait_queue(cur, NULL);
 	task_sched();
 	/* PT_STOPPED and PT_STOP_REPORTED are cleared by the tracer */
 }
@@ -281,7 +281,7 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 
 		tracee->ptrace = PT_TRACED | PT_STOPPED;
 		tracee->ptrace_tracer = cur->psid;
-		ps_put_to_wait_queue(tracee);
+		ps_put_to_wait_queue(tracee, NULL);
 		ret = 0;
 		break;
 

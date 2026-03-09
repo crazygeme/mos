@@ -87,7 +87,7 @@ void kmain_startup()
 	 * SMP: discover CPUs via ACPI, init LAPIC/IOAPIC, start APs.
 	 * --------------------------------------------------------------- */
 	printk("Init ACPI\n");
-	if (acpi_parse(&g_acpi_info) == 0 && g_acpi_info.ncpus > 0) {
+	if (acpi_parse(&g_acpi_info) == 0 && g_acpi_info.ncpus > 1) {
 		unsigned ioapic_phys = g_acpi_info.ioapic_phys ?
 					       g_acpi_info.ioapic_phys :
 					       IOAPIC_BASE_PHY;
@@ -114,7 +114,7 @@ void kmain_startup()
 		printk("Start Application Processors\n");
 		smp_start_aps();
 	} else {
-		printk("ACPI/SMP not available, running single-CPU\n");
+		printk("SMP not available, running single-CPU\n");
 	}
 
 	printk("Start first process\n");

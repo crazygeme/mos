@@ -45,7 +45,12 @@ vm_struct_t vm_create()
 void vm_destroy(vm_struct_t vm)
 {
 	hash_table *table = vm;
-	struct rb_node *node = rb_first(&table->root);
+	struct rb_node *node = NULL;
+
+	if (hash_isempty(table))
+		return;
+
+	node = rb_first(&table->root);
 
 	while (node) {
 		key_value_pair *pair = rb_entry(node, key_value_pair, node);

@@ -102,7 +102,7 @@ static int lock_wake_one_locked(list_entry *wait_list)
 		return 0;
 
 	entry = list_remove_head(wait_list);
-	task = container_of(entry, task_struct, lock_list);
+	task = container_of(entry, task_struct, ps_list);
 	task->status = ps_ready;
 	ps_put_to_ready_queue(task);
 	return 1;
@@ -138,8 +138,7 @@ static void lock_base_acquire(lock_base *s)
 		}
 
 		cur->status = ps_waiting;
-		ps_put_to_wait_queue(cur);
-		list_insert_tail(&s->wait_list, &cur->lock_list);
+		ps_put_to_wait_queue(cur, &s->wait_list);
 		spinlock_unlock(&s->wait_lock);
 		task_sched();
 		/* After wakeup, retry from the top of the loop. */
@@ -271,8 +270,7 @@ void rwlock_read_lock(rwlock_t *rw)
 	 * preferring: we queue behind the writer to prevent its starvation). */
 	while (rw->writer || rw->writers_waiting > 0) {
 		cur->status = ps_waiting;
-		ps_put_to_wait_queue(cur);
-		list_insert_tail(&rw->reader_wait_list, &cur->lock_list);
+		ps_put_to_wait_queue(cur, &rw->reader_wait_list);
 		spinlock_unlock(&rw->wait_lock);
 		task_sched();
 		spinlock_lock(&rw->wait_lock);
@@ -305,8 +303,7 @@ void rwlock_write_lock(rwlock_t *rw)
 	/* Wait until the lock is completely idle (no readers, no other writer). */
 	while (rw->writer || rw->readers > 0) {
 		cur->status = ps_waiting;
-		ps_put_to_wait_queue(cur);
-		list_insert_tail(&rw->writer_wait_list, &cur->lock_list);
+		ps_put_to_wait_queue(cur, &rw->writer_wait_list);
 		spinlock_unlock(&rw->wait_lock);
 		task_sched();
 		spinlock_lock(&rw->wait_lock);

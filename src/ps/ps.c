@@ -10,6 +10,7 @@
  *   - Scheduler queries (ps_has_ready, ps_enum_all)
  */
 
+#include "ps.h"
 #include <cpu.h>
 #include <mount.h>
 #include <mmap.h>

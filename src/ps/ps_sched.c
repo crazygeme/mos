@@ -48,15 +48,13 @@ static void ready_queue_insert(struct rb_root *root, task_struct *task)
 }
 
 /* Remove task from its priority-level RB-tree if currently enqueued.
- * Must NOT be called with ps_lock held. */
+ * Must be called with ps_lock held. */
 static void ps_remove_from_ready(task_struct *task)
 {
-	spinlock_lock(&ps_lock);
 	if (!RB_EMPTY_NODE(&task->rb_node)) {
 		rb_erase(&task->rb_node, &control.ready_queue[task->priority]);
 		RB_CLEAR_NODE(&task->rb_node);
 	}
-	spinlock_unlock(&ps_lock);
 }
 
 /* Return the first runnable task from the given RB-tree.
@@ -152,26 +150,39 @@ static void ps_notify_process(unsigned pid)
  * two steps cannot lose the task (the scheduler skips ps_dying tasks). */
 void ps_put_to_dying_queue(task_struct *task)
 {
-	ps_remove_from_ready(task);
 	spinlock_lock(&ps_lock);
+
+	ps_remove_from_ready(task);
+
 	if (task->ps_list.prev && task->ps_list.next)
 		list_remove_entry(&task->ps_list);
+
 	if (task->psid != 0xffffffff)
 		list_insert_tail(&control.dying_queue, &task->ps_list);
+
 	task->status = ps_dying;
+
 	spinlock_unlock(&ps_lock);
+
 	ps_notify_process(task->parent);
 }
 
 /* Move task to the wait queue (blocked on a lock or waitpid). */
-void ps_put_to_wait_queue(task_struct *task)
+void ps_put_to_wait_queue(task_struct *task, list_entry *which_list)
 {
-	ps_remove_from_ready(task);
 	spinlock_lock(&ps_lock);
+
+	if (!which_list)
+		which_list = &control.wait_queue;
+
+	ps_remove_from_ready(task);
+
 	if (task->ps_list.prev && task->ps_list.next)
 		list_remove_entry(&task->ps_list);
+
 	if (task->psid != 0xffffffff)
-		list_insert_tail(&control.wait_queue, &task->ps_list);
+		list_insert_tail(which_list, &task->ps_list);
+
 	spinlock_unlock(&ps_lock);
 }
 

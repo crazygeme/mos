@@ -19,21 +19,25 @@ unsigned short idt_size = sizeof(idt);
 
 _START static void init_interrupt()
 {
-	OUT_PORT(0x20, 0x11);
-	OUT_PORT(0xA0, 0x11);
-	OUT_PORT(0x21, 0x20);
-	OUT_PORT(0xA1, 0x28);
+	/* ICW1: Begin initialization; expect ICW4 to follow. (PIC1_CMD/PIC2_CMD, ICW1) */
+	OUT_PORT(0x20, 0x11); /* PIC1_CMD, ICW1 */
+	OUT_PORT(0xA0, 0x11); /* PIC2_CMD, ICW1 */
 
-	OUT_PORT(0x21, 0x4);
-	OUT_PORT(0xA1, 0x2);
+	/* ICW2: Set vector offsets so hardware IRQs map to 0x20..0x2F. (PICx_DATA, ICW2_x_OFFSET) */
+	OUT_PORT(0x21, 0x20); /* PIC1_DATA, ICW2_MASTER_OFFSET */
+	OUT_PORT(0xA1, 0x28); /* PIC2_DATA, ICW2_SLAVE_OFFSET */
 
-	OUT_PORT(0x21, 0x1);
-	OUT_PORT(0xA1, 0x1);
+	/* ICW3: Wire master/slave relationship (slave on master's IR2). (PICx_DATA, ICW3) */
+	OUT_PORT(0x21, 0x04); /* PIC1_DATA, ICW3_MASTER_SLAVE_ON_IR2 */
+	OUT_PORT(0xA1, 0x02); /* PIC2_DATA, ICW3_SLAVE_ID_IR2 */
 
-	// disable all interrupt in this time,
-	// enable them after all setup done
-	OUT_PORT(0x21, 0xFF);
-	OUT_PORT(0xA1, 0xFF);
+	/* ICW4: Set 8086/88 mode (as opposed to 8080/MCS-80 mode). (PICx_DATA, ICW4_8086) */
+	OUT_PORT(0x21, 0x01); /* PIC1_DATA, ICW4_8086 */
+	OUT_PORT(0xA1, 0x01); /* PIC2_DATA, ICW4_8086 */
+
+	/* Mask all IRQ lines for now; unmask later after full setup. (PICx_DATA, IRQ_MASK_ALL) */
+	OUT_PORT(0x21, 0xFF); /* PIC1_DATA, IRQ_MASK_ALL */
+	OUT_PORT(0xA1, 0xFF); /* PIC2_DATA, IRQ_MASK_ALL */
 }
 
 _START static void setup_gdt()

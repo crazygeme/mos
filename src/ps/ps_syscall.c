@@ -9,6 +9,7 @@
  *   - System shutdown (reboot, shutdown)
  */
 
+#include "ps.h"
 #include <cpu.h>
 #include <mount.h>
 #include <mmap.h>
@@ -251,6 +252,7 @@ int sys_vfork()
 int sys_exit(unsigned status)
 {
 	task_struct *cur = CURRENT_TASK();
+	task_struct *parent = NULL;
 	int i;
 
 	cur->exit_status = status;
@@ -283,6 +285,7 @@ int sys_exit(unsigned status)
 
 	/* FIXME: reparent orphaned children to cur->parent. */
 	ps_put_to_dying_queue(cur);
+
 	task_sched();
 	return 0;
 }
@@ -328,9 +331,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 				     ret);
 			return ret;
 		}
-		spinlock_unlock(&ps_lock);
 
-		spinlock_lock(&ps_lock);
 		entry = control.mgr_queue.prev;
 		while (entry != &control.mgr_queue) {
 			task_struct *task =
@@ -357,7 +358,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		}
 		spinlock_unlock(&ps_lock);
 
-		ps_put_to_wait_queue(cur);
+		ps_put_to_wait_queue(cur, NULL);
 	}
 }
 

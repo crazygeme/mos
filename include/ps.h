@@ -187,8 +187,6 @@ typedef volatile struct _task_struct {
 	int priority;
 	// in schedule list
 	list_entry ps_list;
-	// in wait list if waiting a lock
-	list_entry lock_list;
 	// in all process list
 	list_entry ps_mgr;
 	struct rb_node rb_node; /* ready-queue RB-tree node */
@@ -271,7 +269,7 @@ void ps_put_to_ready_queue(task_struct *task);
 
 void ps_put_to_dying_queue(task_struct *task);
 
-void ps_put_to_wait_queue(task_struct *task);
+void ps_put_to_wait_queue(task_struct *task, list_entry *which_list);
 
 task_struct *ps_find_process(unsigned psid);
 

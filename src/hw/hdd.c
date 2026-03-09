@@ -1060,6 +1060,10 @@ static void partition_close(void *aux)
 	partition *p = aux;
 	if (p->cache_inited) {
 		flush_partition_cache(aux);
+		/* Destroy hash to avoid memory leaks; reset LRU head. */
+		hash_destroy(p->cache.hash);
+		p->cache.hash = 0;
+		list_init(&p->cache.timer_list_head);
 		p->cache_inited = 0;
 	}
 #endif

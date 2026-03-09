@@ -73,7 +73,28 @@ typedef struct _channel {
 } channel;
 
 #if HDD_CACHE_OPEN
-
+/*
+ * ---------------------------------------------------------------------------
+ * Filesystem HDD Cache (sector cache)
+ *
+ * Design:
+ * - Keyed by head sector (HEAD_SECTOR) for fixed-size group PREREAD_SECTOR.
+ * - Hash table provides O(log n) lookup via rb-tree-based hash_find().
+ * - Doubly-linked timer_list_head acts as an LRU: head = MRU, tail = LRU.
+ * - Cache hit: move item to MRU (list tail in this file's conventions).
+ * - Cache miss:
+ *     - If under capacity: allocate a new cache item and read from disk.
+ *     - If full: choose LRU (tail), flush it if dirty, reuse it for the
+ *       requested head sector.
+ * - Write policy: controlled by HDD_CACHE_WRITE_POLICY.
+ *     - WRITE_BACK: mark dirty; flush later on eviction.
+ *     - WRITE_THOUGH: flush immediately on updates.
+ * - Accounting:
+ *     - p->cache.sectors tracks total cached sectors.
+ *     - fs_cache_size/max_fs_cache_size expose live/peak sizes.
+ *     - cache_hit/cache_search_time/count track lookup performance.
+ * ---------------------------------------------------------------------------
+ */
 #define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
 #define PREREAD_SECTOR 1
@@ -81,16 +102,22 @@ typedef struct _channel {
 #define SECTOR_OFF(sector) (sector - HEAD_SECTOR(sector))
 
 typedef struct _block_cache_item {
+	/* Starting head sector for this cached extent (size PREREAD_SECTOR). */
 	int sector;
+	/* Dirty flag (WRITE_BACK policy): needs flush before reuse/eviction. */
 	unsigned dirty;
+	/* Virtual memory buffer holding cached sector(s). */
 	void *buf;
 	struct rb_node hash_node;
 	list_entry time_list;
 } block_cache_item;
 
 typedef struct _block_cache {
+	/* Red-black tree hash keyed by head sector for fast lookup. */
 	hash_table *hash;
+	/* LRU queue: tail is most recently used, head is least recently used. */
 	list_entry timer_list_head;
+	/* Number of cached sectors. */
 	int sectors;
 } block_cache;
 
@@ -107,6 +134,7 @@ static block_cache_item *block_cache_item_create()
 	unsigned buf_size = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
 	if (!buf_size)
 		buf_size = 1;
+	/* Allocate metadata and a VM-backed buffer for cache payload. */
 	block_cache_item *item = kmalloc(sizeof(*item));
 	item->sector = -1;
 	item->dirty = 0;
@@ -554,6 +582,7 @@ static void init_partition_cache(partition *p)
 {
 	int i = 0;
 
+	/* Initialize hash + LRU list and per-partition lock. */
 	p->cache.sectors = 0;
 	p->cache.hash = hash_create(int_comp);
 	list_init(&p->cache.timer_list_head);
@@ -576,6 +605,7 @@ static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 	if (TestControl.profiling)
 		search_time = time_now_us();
 
+	/* Hash lookup by head sector. */
 	pair = hash_find(p->cache.hash, head_sector);
 
 	if (TestControl.profiling) {
@@ -600,6 +630,7 @@ static block_cache_item *hdd_cache_find_empty(partition *p, int sector)
 		return 0;
 	}
 
+	/* Create new cache item and link into LRU + hash. */
 	item = block_cache_item_create();
 	item->sector = head_sector;
 	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
@@ -619,6 +650,7 @@ static block_cache_item *hdd_cache_find_oldest(partition *p)
 	if (p->cache.sectors == 0)
 		return 0;
 
+	/* LRU policy: pick the least recently used at list head. */
 	node = p->cache.timer_list_head.prev;
 	item = container_of(node, block_cache_item, time_list);
 	return item;
@@ -634,6 +666,7 @@ static void hdd_cache_flush(partition *p, block_cache_item *item)
 	if (sector < 0)
 		return;
 
+	/* Flush dirty sectors to the underlying device. */
 	if (item->dirty) {
 		for (i = 0; i < PREREAD_SECTOR; i++)
 			partition_write(p, head_sector + i,
@@ -647,6 +680,7 @@ static void hdd_cache_flush(partition *p, block_cache_item *item)
 static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 			     void *buf, int mark_dirty)
 {
+	/* Update cached payload; remap if the head sector changed. */
 	int head_sector = HEAD_SECTOR(sector);
 	int same_sector = (item->sector == head_sector);
 	int sector_off = SECTOR_OFF(sector);
@@ -657,6 +691,7 @@ static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 	item->dirty |= mark_dirty;
 	item->sector = head_sector;
 
+	/* Move to MRU position. */
 	list_remove_entry(&item->time_list);
 	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 
@@ -673,6 +708,7 @@ static void hdd_cache_update_all(void *aux, partition *p,
 				 block_cache_item *volatile item,
 				 int head_sector, int mark_dirty)
 {
+	/* Replace cached extent and pull in PREREAD_SECTOR sectors from disk. */
 	int i = 0;
 	int same_sector = (item->sector == head_sector);
 	if (!same_sector) {
@@ -683,6 +719,7 @@ static void hdd_cache_update_all(void *aux, partition *p,
 	item->dirty |= mark_dirty;
 	item->sector = head_sector;
 
+	/* Move to MRU position before filling data. */
 	list_remove_entry(&item->time_list);
 	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 	for (i = 0; i < PREREAD_SECTOR; i++)
@@ -698,6 +735,7 @@ static void hdd_cache_update_all(void *aux, partition *p,
 
 static void flush_partition_cache(partition *p)
 {
+	/* Drain all cached items in LRU order, flushing dirty ones. */
 	list_entry *entry = p->cache.timer_list_head.prev;
 	list_entry *next;
 	while (entry != &p->cache.timer_list_head) {
@@ -731,6 +769,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	/* Find cache */
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
+		/* Promote to MRU and satisfy from cache. */
 		list_remove_entry(&item->time_list);
 		list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 		mutex_unlock(&p->cache_lock);
@@ -752,6 +791,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 
 	/* Empty slot or oldest one. */
 	if (item) {
+		/* Read through to cache, then return the requested sector. */
 		hdd_cache_update_all(aux, p, item, head_sector, 0);
 		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
@@ -774,6 +814,7 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	/* Find cache */
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
+		/* Update payload and mark dirty; policy controls flush timing. */
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
 		fs_cache_write_size += BLOCK_SECTOR_SIZE;
@@ -792,6 +833,7 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	/* Cache not found, and no more empty slot, flush oldest one */
 	item = hdd_cache_find_oldest(p);
 	if (item) {
+		/* Evict LRU (with flush if dirty) and reuse the entry. */
 		hdd_cache_flush(p, item);
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
@@ -882,6 +924,7 @@ static void wait_until_idle(const ata_disk *d)
 	printk("%s: idle timeout\n", d->name);
 }
 
+/* Wait for the device to be selected and mark that we expect an interrupt. */
 static void select_device_wait(const ata_disk *d)
 {
 	channel *c = d->channel;
@@ -890,21 +933,25 @@ static void select_device_wait(const ata_disk *d)
 	select_device(d);
 }
 
+/* Issue a PIO command to the selected channel. */
 static void issue_pio_command(channel *c, unsigned char command)
 {
 	port_write_byte(reg_command(c), command);
 }
 
+/* Read a single 512-byte sector via PIO into a buffer. */
 static void input_sector(channel *c, void *sector)
 {
 	port_read_dwords(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
+/* Write a single 512-byte sector via PIO from a buffer. */
 static void output_sector(channel *c, const void *sector)
 {
 	port_write_dwords(reg_data(c), sector, BLOCK_SECTOR_SIZE / 4);
 }
 
+/* Decode ATA strings by swapping byte pairs and trimming trailing blanks. */
 static char *descramble_ata_string(char *string, int size)
 {
 	int i;
@@ -927,6 +974,7 @@ static char *descramble_ata_string(char *string, int size)
 	return string;
 }
 
+/* Program LBA registers for a one-sector PIO transfer. */
 static void select_sector(ata_disk *d, unsigned int sec_no)
 {
 	channel *c = d->channel;
@@ -944,6 +992,7 @@ static void select_sector(ata_disk *d, unsigned int sec_no)
 unsigned disk_read_size = 0;
 unsigned disk_write_size = 0;
 
+/* Synchronous single-sector read. Returns bytes read (len on success). */
 static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *volatile d = aux;
@@ -965,6 +1014,7 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 	return len;
 }
 
+/* Synchronous single-sector write. Returns bytes written (len on success). */
 static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
@@ -986,6 +1036,7 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 	return len;
 }
 
+/* Placeholder for disk close; no resources to release here. */
 static void disk_close(void *aux)
 {
 }

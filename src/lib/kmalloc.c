@@ -278,7 +278,7 @@ void *malloc(unsigned size)
 		set_hdr(blk, blk_sz(blk), 1);
 	}
 
-	heap_quota += size;
+	heap_quota += blk_sz(blk);
 	if (heap_quota > heap_quota_high)
 		heap_quota_high = heap_quota;
 
@@ -298,8 +298,7 @@ void free(void *ptr)
 
 	blk = (char *)ptr - HDR_SZ;
 	sz = blk_sz(blk);
-	if (sz > HDR_SZ)
-		heap_quota -= sz - HDR_SZ;
+	heap_quota -= sz;
 
 	set_hdr(blk, sz, 0);
 	blk = coalesce_right(blk);

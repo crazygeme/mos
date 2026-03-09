@@ -140,9 +140,7 @@ typedef void *vm_struct_t;
 typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	unsigned heap_top;
-	// unsigned zone_top;
 	vm_struct_t vm;
-	// region_elem_t region_head;
 } user_enviroment;
 
 typedef enum _ps_status {
@@ -154,7 +152,12 @@ typedef enum _ps_status {
 
 typedef enum _ps_type { ps_kernel, ps_user } ps_type;
 
-#define MAX_PRIORITY 5
+// normal and idle
+typedef enum _ps_priority {
+	ps_idle = 0,
+	ps_normal,
+	PS_PRIORITY_MAX
+} ps_priority;
 
 typedef void (*process_fn)(void *param);
 
@@ -185,14 +188,11 @@ typedef volatile struct _task_struct {
 	void *command;
 	user_enviroment user;
 	int priority;
-	// in schedule list
-	list_entry ps_list;
-	// in all process list
-	list_entry ps_mgr;
+	list_entry ps_list; /* dying-queue or wait-queue list node */
+	struct rb_node mgr_rb; /* management-queue RB-tree node */
 	struct rb_node rb_node; /* ready-queue RB-tree node */
 	unsigned long sched_seq; /* insertion sequence for FIFO ordering */
 	ps_status status;
-	ps_type type;
 	int remain_ticks;
 	int is_switching;
 	unsigned timeout;
@@ -244,7 +244,7 @@ task_struct *CURRENT_TASK();
 
 void ps_init();
 
-unsigned ps_create(process_fn, int priority, ps_type type);
+unsigned ps_create(process_fn, ps_priority priority, ps_type type);
 
 void ps_kickoff();
 

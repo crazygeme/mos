@@ -84,7 +84,7 @@ static task_struct *ps_get_available_ready_task(struct rb_root *root)
 static task_struct *ps_get_next_task()
 {
 	task_struct *task = NULL;
-	int i = MAX_PRIORITY - 1;
+	int i = PS_PRIORITY_MAX - 1;
 
 	spinlock_lock(&ps_lock);
 	for (; i >= 0; i--) {

@@ -305,24 +305,28 @@ int sys_exit(unsigned status)
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
 	task_struct *cur = CURRENT_TASK();
-	list_entry *entry;
+	list_entry *dying_task_entry;
+	struct rb_node *task_entry;
 
 	for (;;) {
 		task_sched();
 
 		spinlock_lock(&ps_lock);
-		entry = control.dying_queue.prev;
-		while (entry != &control.dying_queue) {
-			task_struct *task =
-				container_of(entry, task_struct, ps_list);
-			entry = entry->prev;
+		dying_task_entry = control.dying_queue.prev;
+		while (dying_task_entry != &control.dying_queue) {
+			task_struct *task = container_of(dying_task_entry,
+							 task_struct, ps_list);
+			dying_task_entry = dying_task_entry->prev;
 			if (task->parent != cur->psid)
 				continue;
+
 			if (pid && pid != task->psid)
 				continue;
+
 			int ret = task->psid;
 			if (status)
 				*status = task->exit_status;
+
 			list_remove_entry(&task->ps_list);
 			spinlock_unlock(&ps_lock);
 			ps_reap_task(task, rusage);
@@ -332,23 +336,28 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			return ret;
 		}
 
-		entry = control.mgr_queue.prev;
-		while (entry != &control.mgr_queue) {
+		task_entry = rb_first(&control.mgr_queue);
+		while (task_entry) {
 			task_struct *task =
-				container_of(entry, task_struct, ps_mgr);
-			entry = entry->prev;
+				rb_entry(task_entry, task_struct, mgr_rb);
+			task_entry = rb_next(task_entry);
 			if (task->parent != cur->psid)
 				continue;
+
 			if (!(task->ptrace & PT_TRACED) ||
 			    !(task->ptrace & PT_STOPPED))
 				continue;
+
 			if (task->ptrace & PT_STOP_REPORTED)
 				continue;
+
 			if (pid && pid != task->psid)
 				continue;
+
 			int ret = task->psid;
 			if (status)
 				*status = (SIGTRAP << 8) | 0x7f;
+
 			task->ptrace |= PT_STOP_REPORTED;
 			spinlock_unlock(&ps_lock);
 			if (TestControl.verbos)
@@ -356,6 +365,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 				     ret);
 			return ret;
 		}
+
 		spinlock_unlock(&ps_lock);
 
 		ps_put_to_wait_queue(cur, NULL);
@@ -405,5 +415,5 @@ void shutdown()
 
 	printf("still running...\n");
 	for (;;)
-		;
+		HLT();
 }

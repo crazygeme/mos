@@ -16,10 +16,10 @@
  * ------------------------------------------------------------------------- */
 
 typedef struct _ps_control {
-	struct rb_root ready_queue[MAX_PRIORITY];
+	struct rb_root ready_queue[PS_PRIORITY_MAX];
 	list_entry dying_queue;
 	list_entry wait_queue;
-	list_entry mgr_queue;
+	struct rb_root mgr_queue;
 } ps_control;
 
 /* -------------------------------------------------------------------------

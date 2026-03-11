@@ -10,7 +10,6 @@
 #include <dsr.h>
 #include <time.h>
 #include <ps.h>
-#include <block.h>
 #include <pagefault.h>
 #include <serial.h>
 #include <vga.h>

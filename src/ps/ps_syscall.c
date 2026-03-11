@@ -25,7 +25,7 @@
 #include <macro.h>
 #include <port.h>
 #include <ptrace.h>
-#include <block.h>
+#include <hdd.h> /* BLOCK_SECTOR_SIZE */
 #include "ps_internal.h"
 
 extern void ret_from_syscall();
@@ -159,7 +159,7 @@ static void system_down()
 	klog_close();
 	ps_enum_all(close_fp_callback);
 	ext4_umount("/");
-	block_close();
+	hdd_close();
 }
 
 /* -------------------------------------------------------------------------

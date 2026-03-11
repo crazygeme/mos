@@ -1,6 +1,6 @@
 #include <lock.h>
 #include <int.h>
-#include <block.h>
+#include <hdd.h>
 #include <time.h>
 #include <config.h>
 #include <klib.h>
@@ -159,7 +159,7 @@ static void block_cache_item_remove(block_cache_item *item)
 #endif
 
 typedef struct _partition {
-	block *block; /* Underlying block device. */
+	ata_disk *disk; /* Underlying ATA disk device. */
 	unsigned int start; /* First sector within device. */
 	unsigned char bootable;
 #if HDD_CACHE_OPEN
@@ -183,13 +183,14 @@ static char *descramble_ata_string(char *, int size);
 static void channel_wait_polling(channel *c);
 static int disk_read(void *aux, unsigned sector, void *buf, unsigned len);
 static int disk_write(void *aux, unsigned sector, void *buf, unsigned len);
-static void disk_close(void *aux);
-static void parse_partition(block *block);
-static void read_partition_table(block *block, unsigned int sector,
+static void parse_partition(ata_disk *disk, unsigned capacity);
+static void read_partition_table(ata_disk *disk, unsigned capacity,
+				 unsigned int sector,
 				 unsigned int primary_extended_sector,
 				 int *part_nr);
-static void found_partition(block *block, unsigned char part_type,
-			    unsigned int start, unsigned int size, int part_nr,
+static void found_partition(ata_disk *disk, unsigned capacity,
+			    unsigned char part_type, unsigned int start,
+			    unsigned int size, int part_nr,
 			    unsigned char bootable);
 
 static int partition_read(void *aux, unsigned sector, void *buf, unsigned len);
@@ -408,7 +409,6 @@ static void identify_ata_device(ata_disk *d)
 	unsigned int capacity;
 	char *model, *serial;
 	char extra_info[128];
-	block *block;
 
 	/* Send the IDENTIFY DEVICE command, wait for an interrupt
        indicating the device's response is ready, and read the data
@@ -453,19 +453,109 @@ static void identify_ata_device(ata_disk *d)
 		return;
 	}
 
-	block = block_register(d, d->name, disk_read, disk_write, disk_close,
-			       BLOCK_RAW, capacity);
-	parse_partition(block);
+	parse_partition(d, capacity);
 }
 
-static void parse_partition(block *block)
+/* Name of the first Linux (ext4) partition registered with lwext4.
+ * fs_mount_root() reads this to know which device name to mount. */
+char hdd_first_dev_name[32] = { 0 };
+
+/* ---------------------------------------------------------------------------
+ * lwext4 block device callbacks
+ *
+ * These adapt between lwext4's ext4_blockdev_iface ABI (blk_id / blk_cnt)
+ * and the kernel's block read/write callbacks (sector / len).
+ * bdev->aux points to the block descriptor created by block_create().
+ * ---------------------------------------------------------------------------
+ */
+static int hdd_bdev_open(struct ext4_blockdev *bdev)
+{
+	return 0;
+}
+
+static int hdd_bdev_bread(struct ext4_blockdev *bdev, void *buf,
+			  uint64_t blk_id, uint32_t blk_cnt)
+{
+	partition *p = bdev->aux;
+	char *tmp = (char *)buf;
+	uint32_t i;
+	for (i = 0; i < blk_cnt; i++)
+#if HDD_CACHE_OPEN
+		partition_cache_read(p, (unsigned)(blk_id + i),
+				     tmp + i * BLOCK_SECTOR_SIZE,
+				     BLOCK_SECTOR_SIZE);
+#else
+		partition_read(p, (unsigned)(blk_id + i),
+			       tmp + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+#endif
+	return 0;
+}
+
+static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+			   uint64_t blk_id, uint32_t blk_cnt)
+{
+	partition *p = bdev->aux;
+	char *tmp = (char *)buf;
+	uint32_t i;
+	for (i = 0; i < blk_cnt; i++)
+#if HDD_CACHE_OPEN
+		partition_cache_write(p, (unsigned)(blk_id + i),
+				      tmp + i * BLOCK_SECTOR_SIZE,
+				      BLOCK_SECTOR_SIZE);
+#else
+		partition_write(p, (unsigned)(blk_id + i),
+				tmp + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+#endif
+	return 0;
+}
+
+static int hdd_bdev_close(struct ext4_blockdev *bdev)
+{
+	kfree(bdev->bdif->ph_bbuf);
+	kfree(bdev->bdif);
+	kfree(bdev);
+	return 0;
+}
+
+static int hdd_bdev_lock(struct ext4_blockdev *bdev)
+{
+	return 0;
+}
+
+static int hdd_bdev_unlock(struct ext4_blockdev *bdev)
+{
+	return 0;
+}
+
+/* Track every partition so hdd_close() can flush their caches. */
+#define MAX_HDD_PARTITIONS 16
+static partition *hdd_tracked[MAX_HDD_PARTITIONS];
+static int hdd_tracked_cnt = 0;
+
+/*
+ * hdd_close - flush all partition caches on shutdown
+ *
+ * Called from system_down().  Iterates every partition registered during
+ * found_partition() and calls partition_close() to flush write-back caches.
+ */
+void hdd_close(void)
+{
+	int i;
+	for (i = 0; i < hdd_tracked_cnt; i++) {
+		if (hdd_tracked[i])
+			partition_close(hdd_tracked[i]);
+	}
+}
+
+static void parse_partition(ata_disk *disk, unsigned capacity)
 {
 	int count = 0;
 
-	read_partition_table(block, 0, 0, &count);
+	read_partition_table(disk, capacity, 0, 0, &count);
 }
 
-static void read_partition_table(block *block, unsigned int sector,
+static void read_partition_table(ata_disk *disk, unsigned capacity,
+				 unsigned int sector,
 				 unsigned int primary_extended_sector,
 				 int *part_nr)
 {
@@ -496,9 +586,9 @@ static void read_partition_table(block *block, unsigned int sector,
 	int found = 0;
 
 	/* Check SECTOR validity. */
-	if (sector >= block->sector_size) {
+	if (sector >= capacity) {
 		printk("%s: Partition table at sector %d past end of device.\n",
-		       block->name, sector);
+		       disk->name, sector);
 		return;
 	}
 
@@ -508,7 +598,7 @@ static void read_partition_table(block *block, unsigned int sector,
 		printk("Failed to allocate memory for partition table.");
 		return;
 	}
-	block->read(block->aux, sector, pt, BLOCK_SECTOR_SIZE);
+	disk_read(disk, sector, pt, BLOCK_SECTOR_SIZE);
 
 	/* Parse partitions. */
 	for (i = 0; i < sizeof pt->partitions / sizeof *pt->partitions; i++) {
@@ -526,7 +616,7 @@ static void read_partition_table(block *block, unsigned int sector,
 			   || e->type == 0xc5) /* DR-DOS extended partition. */
 		{
 			printk("%s: Extended partition in sector %d\n",
-			       block->name, sector);
+			       disk->name, sector);
 
 			/* The interpretation of the offset field for extended
                partitions is bizarre.  When the extended partition
@@ -537,18 +627,19 @@ static void read_partition_table(block *block, unsigned int sector,
                is nested, the offset is relative to the start of
                the extended partition that the MBR points to. */
 			if (sector == 0)
-				read_partition_table(block, e->offset,
+				read_partition_table(disk, capacity, e->offset,
 						     e->offset, part_nr);
 			else
 				read_partition_table(
-					block,
+					disk, capacity,
 					e->offset + primary_extended_sector,
 					primary_extended_sector, part_nr);
 		} else {
 			++*part_nr;
 
-			found_partition(block, e->type, e->offset + sector,
-					e->size, *part_nr, e->bootable);
+			found_partition(disk, capacity, e->type,
+					e->offset + sector, e->size, *part_nr,
+					e->bootable);
 		}
 	}
 
@@ -557,7 +648,7 @@ static void read_partition_table(block *block, unsigned int sector,
 		printk("use default\n");
 #endif
 		// no partition table info, assume this disk only has one raw partition
-		found_partition(block, 0x21, sector, block->sector_size, 0, 1);
+		found_partition(disk, capacity, 0x21, sector, capacity, 0, 1);
 	}
 	kfree(pt);
 }
@@ -838,26 +929,19 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 
 #endif
 
-static void found_partition(block *block, unsigned char part_type,
-			    unsigned int start, unsigned int size, int part_nr,
+static void found_partition(ata_disk *disk, unsigned capacity,
+			    unsigned char part_type, unsigned int start,
+			    unsigned int size, int part_nr,
 			    unsigned char bootable)
 {
-	if (start >= block->sector_size)
+	if (start >= capacity)
 		printk("%s%d: Partition starts past end of device (sector %d)\n",
-		       block->name, part_nr, start);
-	else if (start + size < start || start + size > block->sector_size)
+		       disk->name, part_nr, start);
+	else if (start + size < start || start + size > capacity)
 		printk("%s%d: Partition end (%d) past end of device (%d)\n",
-		       block->name, part_nr, start + size, block->sector_size);
+		       disk->name, part_nr, start + size, capacity);
 	else {
-		block_type type = (part_type == 0x20 ? BLOCK_KERNEL :
-				   part_type == 0x21 ? BLOCK_FILESYS :
-				   part_type == 0x83 ? BLOCK_LINUX :
-				   part_type == 0x22 ? BLOCK_SCRATCH :
-				   part_type == 0x23 ? BLOCK_SWAP :
-						       BLOCK_UNKNOW);
 		partition *p;
-		struct _block *b;
-		char extra_info[128];
 		char name[16];
 		char ext[2];
 		unsigned z = sizeof(*p) / PAGE_SIZE + 1;
@@ -866,17 +950,16 @@ static void found_partition(block *block, unsigned char part_type,
 			printk("Failed to allocate memory for partition descriptor");
 			return;
 		}
-		p->block = block;
+		p->disk = disk;
 		p->start = start;
 		p->bootable = bootable;
-		strcpy(name, block->name);
+		strcpy(name, disk->name);
 		ext[0] = '0' + part_nr;
 		ext[1] = '\0';
 		strcat(name, ext);
 
 #if HDD_CACHE_OPEN
 		p->cache_inited = 0;
-
 		init_partition_cache(p);
 #endif
 
@@ -885,18 +968,36 @@ static void found_partition(block *block, unsigned char part_type,
 		       p->start, p->bootable);
 #endif
 
-#if HDD_CACHE_OPEN
-		b = block_register(p, name, partition_cache_read,
-				   partition_cache_write, partition_close, type,
-				   size);
-#else
-		b = block_register(p, name, partition_read, partition_write,
-				   partition_close, type, size);
-#endif
+		if (hdd_tracked_cnt < MAX_HDD_PARTITIONS)
+			hdd_tracked[hdd_tracked_cnt++] = p;
 
-		if (type == BLOCK_LINUX) {
-			ext4_blockdev_register(b, name, BLOCK_SECTOR_SIZE,
-					       size);
+		/* Linux (0x83) partitions are mounted as ext4.
+		 * Build an ext4_blockdev and register it directly with lwext4,
+		 * bypassing the old ext4_blockdev_register() wrapper. */
+		if (part_type == 0x83) {
+			struct ext4_blockdev_iface *bdif =
+				(struct ext4_blockdev_iface *)kmalloc(
+					sizeof(*bdif));
+			struct ext4_blockdev *bdev =
+				(struct ext4_blockdev *)kmalloc(sizeof(*bdev));
+			memset(bdif, 0, sizeof(*bdif));
+			bdif->open = hdd_bdev_open;
+			bdif->bread = hdd_bdev_bread;
+			bdif->bwrite = hdd_bdev_bwrite;
+			bdif->close = hdd_bdev_close;
+			bdif->lock = hdd_bdev_lock;
+			bdif->unlock = hdd_bdev_unlock;
+			bdif->ph_bsize = BLOCK_SECTOR_SIZE;
+			bdif->ph_bcnt = size;
+			bdif->ph_bbuf = (uint8_t *)kmalloc(BLOCK_SECTOR_SIZE);
+			memset(bdev, 0, sizeof(*bdev));
+			bdev->bdif = bdif;
+			bdev->part_offset = 0;
+			bdev->part_size = (uint64_t)BLOCK_SECTOR_SIZE * size;
+			bdev->aux = p;
+			if (!hdd_first_dev_name[0])
+				strcpy(hdd_first_dev_name, name);
+			ext4_device_register(bdev, NULL, name);
 		}
 	}
 }
@@ -1027,21 +1128,16 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 	return len;
 }
 
-/* Placeholder for disk close; no resources to release here. */
-static void disk_close(void *aux)
-{
-}
-
 static int partition_read(void *aux, unsigned sector, void *buf, unsigned len)
 {
 	partition *p = aux;
-	return p->block->read(p->block->aux, p->start + sector, buf, len);
+	return disk_read(p->disk, p->start + sector, buf, len);
 }
 
 static int partition_write(void *aux, unsigned sector, void *buf, unsigned len)
 {
 	partition *p = aux;
-	return p->block->write(p->block->aux, p->start + sector, buf, len);
+	return disk_write(p->disk, p->start + sector, buf, len);
 }
 
 static void partition_close(void *aux)

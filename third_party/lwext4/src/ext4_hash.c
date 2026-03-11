@@ -67,7 +67,7 @@
 #include "ext4_errno.h"
 #include "ext4_debug.h"
 
-#include <klib.h>
+#include <lib/klib.h>
 
 /* F, G, and H are MD4 functions */
 #define F(x, y, z) (((x) & (y)) | ((~x) & (z)))
@@ -81,26 +81,23 @@
  * FF, GG, and HH are transformations for rounds 1, 2, and 3.
  * Rotation is separated from addition to prevent recomputation.
  */
-#define FF(a, b, c, d, x, s)                                                   \
-	{                                                                      \
-		(a) += F((b), (c), (d)) + (x);                                 \
-		(a) = ROTATE_LEFT((a), (s));                                   \
-	\
-}
+#define FF(a, b, c, d, x, s)                   \
+	{                                      \
+		(a) += F((b), (c), (d)) + (x); \
+		(a) = ROTATE_LEFT((a), (s));   \
+	}
 
-#define GG(a, b, c, d, x, s)                                                   \
-	{                                                                      \
-		(a) += G((b), (c), (d)) + (x) + (uint32_t)0x5A827999;          \
-		(a) = ROTATE_LEFT((a), (s));                                   \
-	\
-}
+#define GG(a, b, c, d, x, s)                                          \
+	{                                                             \
+		(a) += G((b), (c), (d)) + (x) + (uint32_t)0x5A827999; \
+		(a) = ROTATE_LEFT((a), (s));                          \
+	}
 
-#define HH(a, b, c, d, x, s)                                                   \
-	{                                                                      \
-		(a) += H((b), (c), (d)) + (x) + (uint32_t)0x6ED9EBA1;          \
-		(a) = ROTATE_LEFT((a), (s));                                   \
-	\
-}
+#define HH(a, b, c, d, x, s)                                          \
+	{                                                             \
+		(a) += H((b), (c), (d)) + (x) + (uint32_t)0x6ED9EBA1; \
+		(a) = ROTATE_LEFT((a), (s));                          \
+	}
 
 /*
  * MD4 basic transformation.  It transforms state based on block.

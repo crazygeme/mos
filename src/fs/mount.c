@@ -1,12 +1,15 @@
-#include <mm.h>
-#include <klib.h>
+#include <mm/mm.h>
+#include <fs/mount.h>
+#include <fs/fs.h>
+#include <fs/super/debugfs.h>
+#include <lib/klib.h>
+#include <lib/rbtree.h>
+#include <lib/lock.h>
 #include <errno.h>
-#include <rbtree.h>
-#include <mount.h>
-#include <lock.h>
-#include <fs.h>
-#include <debugfs.h>
 
+/**
+ * To make sure sorted by path
+ */
 static int sb_path_comp(void *k1, void *k2)
 {
 	const char *left = k1;
@@ -111,14 +114,14 @@ void sb_put(super_block *sb)
 	kfree(sb);
 }
 
-int vfs_mount(super_block *sb, const char *path, const super_operations *s_op)
+int vfs_mount(super_block *sb, const char *path, super_block *next)
 {
 	key_value_pair *kv;
 	super_block *child;
 	char *key;
 	size_t klen;
 
-	if (!sb || !path || !s_op)
+	if (!sb || !path || !next)
 		return -EINVAL;
 
 	if (*path != '/')
@@ -140,12 +143,12 @@ int vfs_mount(super_block *sb, const char *path, const super_operations *s_op)
 		    (path[klen] == '/' || path[klen] == '\0')) {
 			child = kv->val;
 			mutex_unlock(&sb->s_lock);
-			return vfs_mount(child, path + klen, s_op);
+			return vfs_mount(child, path + klen, next);
 		}
 	}
 
 	/* No prefix match: register as a direct child */
-	child = sget(s_op);
+	child = next;
 	key = strdup(path);
 	hash_insert(sb->s_mounts, key, child);
 	mutex_unlock(&sb->s_lock);

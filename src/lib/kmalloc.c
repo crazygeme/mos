@@ -28,9 +28,9 @@
  * Complexity: O(1) free (with right-coalesce), O(k) malloc (k = blocks scanned).
  */
 
-#include <klib.h>
-#include <mm.h>
-#include <lock.h>
+#include <lib/klib.h>
+#include <lib/lock.h>
+#include <mm/mm.h>
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 

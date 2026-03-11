@@ -1,9 +1,9 @@
+#include <hw/time.h>
+#include <int/int.h>
+#include <ps/ps.h>
+#include <lib/port.h>
 #include <config.h>
-#include <time.h>
-#include <int.h>
-#include <ps.h>
 #include <macro.h>
-#include <port.h>
 
 static unsigned long tickets;
 static unsigned long total_tickets;

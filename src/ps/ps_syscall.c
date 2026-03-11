@@ -9,23 +9,25 @@
  *   - System shutdown (reboot, shutdown)
  */
 
-#include <ps.h>
-#include <cpu.h>
-#include <mount.h>
-#include <mmap.h>
-#include <phymm.h>
-#include <time.h>
-#include <lock.h>
-#include <mm.h>
-#include <klib.h>
+#include <ps/ps.h>
+#include <mm/mmap.h>
+#include <mm/phymm.h>
+#include <mm/mm.h>
+#include <int/int.h>
+#include <fs/fs.h>
+#include <fs/mount.h>
+#include <lib/list.h>
+#include <lib/klib.h>
+#include <lib/lock.h>
+#include <lib/port.h>
+#include <hw/time.h>
+#include <hw/cpu.h>
+#include <hw/hdd.h>
+#include <syscall/ptrace.h>
 #include <config.h>
-#include <int.h>
-#include <list.h>
-#include <fs.h>
 #include <macro.h>
-#include <port.h>
-#include <ptrace.h>
-#include <hdd.h> /* BLOCK_SECTOR_SIZE */
+#include <ext4.h>
+
 #include "ps_internal.h"
 
 extern void ret_from_syscall();

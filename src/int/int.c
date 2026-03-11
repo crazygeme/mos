@@ -1,11 +1,10 @@
-#include <int.h>
-#include <keyboard.h>
-#include <ps.h>
-#include <klib.h>
-#include <mm.h>
+#include <int/int.h>
+#include <ps/ps.h>
+#include <mm/mm.h>
+#include <lib/port.h>
+#include <lib/klib.h>
+#include <hw/apic.h>
 #include <macro.h>
-#include <port.h>
-#include <apic.h>
 
 /*
  * use_apic: set to 1 after apic_init_bsp() so intr_handler sends APIC EOI

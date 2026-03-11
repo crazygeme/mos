@@ -1,20 +1,19 @@
-#include <exec.h>
-#include <ps.h>
-#include <int.h>
-#include <klib.h>
-#include <tty.h>
-#include <elf.h>
-#include <lock.h>
-#include <mm.h>
+#include <elf/exec.h>
+#include <elf/elf.h>
+#include <ps/ps.h>
+#include <int/int.h>
+#include <hw/tty.h>
+#include <mm/mm.h>
+#include <mm/mmap.h>
+#include <fs/fcntl.h>
+#include <fs/fs.h>
+#include <lib/klib.h>
+#include <lib/lock.h>
 #include <config.h>
 #include <unistd.h>
-#include <mmap.h>
 #include <macro.h>
-#include <fcntl.h>
-#include <fs.h>
 #include <errno.h>
-#include <macro.h>
-
+#include <ext4.h>
 /*
  * cleanup - tear down the current process's user-space state before exec
  *

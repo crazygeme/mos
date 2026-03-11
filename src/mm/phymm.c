@@ -1,8 +1,8 @@
-#include <phymm.h>
-#include <mm.h>
-#include <multiboot.h>
-#include <lock.h>
-#include <klib.h>
+#include <mm/phymm.h>
+#include <mm/mm.h>
+#include <boot/multiboot.h>
+#include <lib/lock.h>
+#include <lib/klib.h>
 #include <macro.h>
 
 /* ---------------------------------------------------------------------------

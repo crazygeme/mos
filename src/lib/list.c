@@ -1,5 +1,4 @@
-#include <list.h>
-#include <mm.h>
+#include <lib/list.h>
 #include <config.h>
 
 void list_init(list_entry *head)

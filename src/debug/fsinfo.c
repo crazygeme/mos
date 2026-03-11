@@ -1,7 +1,7 @@
-#include <hdd.h>
-#include <mount.h>
-#include <debugfs.h>
-#include <timer.h>
+#include <hw/hdd.h>
+#include <fs/mount.h>
+#include <fs/super/debugfs.h>
+#include <lib/timer.h>
 
 extern unsigned cache_hit;
 extern unsigned long long cache_search_time;

@@ -1,5 +1,5 @@
-#ifndef _MACRO_H_
-#define _MACRO_H_
+#ifndef _MACRO_H
+#define _MACRO_H
 
 #define ROUND_UP(x) (((x) + sizeof(long) - 1) & ~(sizeof(long) - 1))
 

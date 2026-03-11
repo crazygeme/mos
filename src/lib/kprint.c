@@ -14,15 +14,14 @@
  *   %%  literal percent
  */
 
-#include <klib.h>
-#include <tty.h>
-#include <time.h>
-#include <ps.h>
-#include <lock.h>
-
+#include <ps/ps.h>
+#include <lib/lock.h>
+#include <lib/klib.h>
 #ifdef __DEBUG__
-#include <serial.h>
+#include <hw/serial.h>
 #endif
+#include <hw/tty.h>
+#include <hw/time.h>
 
 /* ── Forward declarations (implemented in tty.c) ────────────────────────── */
 

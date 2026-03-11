@@ -3,25 +3,20 @@ export MAINPATH
 include $(MAINPATH)/mos.mk
 TARGET	= kernel
 
-SRC_DIRS = src/syscall src/boot src/hw src/int src/fs src/lib src/mm src/ps src/elf src/debug
-
 SCRIPTS =  $(MAINPATH)/mos.mk $(MAINPATH)/Makefile
-SRCS = 	   $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
-ASMS =	   $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.S))
-OBJS =	   $(patsubst %,$(DST)/obj/%,$(notdir $(SRCS:.c=.c.o)))
-OBJS +=    $(patsubst %,$(DST)/obj/%,$(notdir $(ASMS:.S=.s.o)))
-DEPS =	   $(patsubst %,$(DST)/obj/%,$(notdir $(SRCS:.c=.c.d)))
-DEPS +=	   $(patsubst %,$(DST)/obj/%,$(notdir $(ASMS:.S=.s.d)))
+SRCS =	   $(shell find src/ -name '*.c')
+ASMS =	   $(shell find src/ -name '*.S')
+OBJS =	   $(patsubst %.c,$(DST)/obj/%.c.o,$(SRCS))
+OBJS +=    $(patsubst %.S,$(DST)/obj/%.s.o,$(ASMS))
+DEPS =	   $(patsubst %.c,$(DST)/obj/%.c.d,$(SRCS))
+DEPS +=    $(patsubst %.S,$(DST)/obj/%.s.d,$(ASMS))
 LIBS =	   $(DST)/lwext4/libext4.a
 CFLAGS  =  $(COMMON_CFLAGS) -O0
-
-vpath %.c $(SRC_DIRS)
-vpath %.S $(SRC_DIRS)
 
 .PHONY: all clean rebuild
 
 all: $(DST)/kernel
-	
+
 run: all
 	@./run.sh
 
@@ -32,19 +27,18 @@ $(DST)/$(TARGET): $(OBJS) $(LIBS) | $(DST)
 	@$(SP) $(DST)/$(TARGET)
 	@$(DS) -d $(DST)/$(TARGET).dbg > $(DST)/assemble.s
 
-$(DST)/obj/%.c.o: %.c $(SCRIPTS) | $(DST)/obj
+$(DST)/obj/%.c.o: %.c $(SCRIPTS)
+	@mkdir -p $(dir $@)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -MMD -c $< -o $@
 
-$(DST)/obj/%.s.o: %.S $(SCRIPTS) | $(DST)/obj
+$(DST)/obj/%.s.o: %.S $(SCRIPTS)
+	@mkdir -p $(dir $@)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -MMD -c $< -o $@
 
 $(DST):
 	@-mkdir -p $(DST)
-
-$(DST)/obj:
-	@-mkdir -p $(DST)/obj
 
 $(DST)/lwext4/libext4.a: | $(DST)
 	@+$(MAKE) -C third_party

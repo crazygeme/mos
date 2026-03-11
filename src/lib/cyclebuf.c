@@ -1,8 +1,7 @@
-#include <cyclebuf.h>
-#include <lock.h>
-#include <klib.h>
+#include <lib/cyclebuf.h>
+#include <lib/lock.h>
+#include <lib/klib.h>
 #include <config.h>
-#include <ps.h>
 
 typedef struct _cy_buf {
 	unsigned length;

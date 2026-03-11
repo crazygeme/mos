@@ -1,6 +1,6 @@
-#include <mount.h>
-#include <ps.h>
-#include <debugfs.h>
+#include <fs/mount.h>
+#include <fs/super/debugfs.h>
+#include <ps/ps.h>
 
 static void fill(void *buf, size_t size)
 {

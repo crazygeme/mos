@@ -1,9 +1,10 @@
-#include <time.h>
-#include <elf.h>
-#include <mm.h>
-#include <ps.h>
-#include <klib.h>
+#include <hw/time.h>
+#include <elf/elf.h>
+#include <mm/mm.h>
+#include <ps/ps.h>
+#include <lib/klib.h>
 #include <macro.h>
+#include <ext4.h>
 
 /* Cumulative time (microseconds) spent in elf_read(), used when profiling is
  * enabled via TestControl.profiling. */
@@ -133,8 +134,8 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 {
 	unsigned offset = 0;
 	int i = 0;
-	unsigned elf_bss = 0;   /* end of file-backed data (unaligned) */
-	unsigned last_bss = 0;  /* end of memory image (.bss included) */
+	unsigned elf_bss = 0; /* end of file-backed data (unaligned) */
+	unsigned last_bss = 0; /* end of memory image (.bss included) */
 	unsigned k;
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;

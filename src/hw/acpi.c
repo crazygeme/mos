@@ -10,9 +10,9 @@
  * KERNEL_OFFSET + physical_addr (established by stage1.c).
  */
 
-#include <acpi.h>
-#include <mm.h>
-#include <klib.h>
+#include <hw/acpi.h>
+#include <mm/mm.h>
+#include <lib/klib.h>
 
 /*
  * Map a physical page (if not already mapped) and return its kernel virtual

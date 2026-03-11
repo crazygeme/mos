@@ -1,5 +1,5 @@
-#ifndef _UNISTD_H_
-#define _UNISTD_H_
+#ifndef _UNISTD_H
+#define _UNISTD_H
 
 #define __NR_restart_syscall 0
 #define __NR_exit 1

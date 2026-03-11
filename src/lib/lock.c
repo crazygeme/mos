@@ -1,9 +1,8 @@
-#include <time.h>
+#include <hw/time.h>
+#include <ps/ps.h>
+#include <lib/klib.h>
+#include <lib/lock.h>
 #include <macro.h>
-#include <lock.h>
-#include <ps.h>
-#include <klib.h>
-#include <int.h>
 
 /* ===========================================================================
  * Spinlock

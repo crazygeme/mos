@@ -7,9 +7,9 @@
  *   kstring.c  - string/memory/character functions
  */
 
+#include <lib/klib.h>
+#include <hw/tty.h>
 #include <macro.h>
-#include <klib.h>
-#include <tty.h>
 
 /* Defined in kmalloc.c */
 extern void kmalloc_init(void);

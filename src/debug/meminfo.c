@@ -1,8 +1,8 @@
-#include <mount.h>
-#include <debugfs.h>
-#include <mm.h>
-#include <klib.h>
-#include <timer.h>
+#include <fs/mount.h>
+#include <fs/super/debugfs.h>
+#include <mm/mm.h>
+#include <lib/klib.h>
+#include <lib/timer.h>
 
 extern unsigned page_fault_cow;
 extern unsigned page_fault_invalid;

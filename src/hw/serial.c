@@ -1,7 +1,7 @@
-#include <klib.h>
-#include <cyclebuf.h>
-#include <int.h>
-#include <port.h>
+#include <lib/klib.h>
+#include <lib/cyclebuf.h>
+#include <lib/port.h>
+#include <int/int.h>
 
 /* Register definitions for the 16550A UART used in PCs.
    The 16550A has a lot more going on than shown here, but this

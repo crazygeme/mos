@@ -6,7 +6,7 @@
  *   - strncpy: removed out-of-bounds null write
  */
 
-#include <klib.h>
+#include <lib/klib.h>
 
 /* ── Memory operations ───────────────────────────────────────────────────── */
 

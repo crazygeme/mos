@@ -12,10 +12,10 @@
  * (valid since both addresses are above KERNEL_OFFSET = 0xC0000000).
  */
 
-#include <apic.h>
-#include <mm.h>
-#include <klib.h>
-#include <port.h>
+#include <hw/apic.h>
+#include <mm/mm.h>
+#include <lib/klib.h>
+#include <lib/port.h>
 #include <config.h>
 
 /* -----------------------------------------------------------------------

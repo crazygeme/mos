@@ -1,5 +1,5 @@
-#include <nic.h>
-#include <klib.h>
+#include <hw/nic.h>
+#include <lib/klib.h>
 
 static int nic_intel_8254x_init(nic_dev *dev)
 {

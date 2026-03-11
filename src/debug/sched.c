@@ -1,6 +1,6 @@
-#include <mount.h>
-#include <debugfs.h>
-#include <timer.h>
+#include <fs/mount.h>
+#include <fs/super/debugfs.h>
+#include <lib/timer.h>
 
 extern unsigned long long task_schedule_time;
 extern unsigned task_schedule_count;

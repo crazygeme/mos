@@ -27,10 +27,4 @@ extern debugfs_init_fn_t __debugfs_init_end[];
 	static debugfs_init_fn_t __debugfs_init_##fn \
 		__attribute__((used, section(".debugfs_init"))) = (fn)
 
-void debugfs_mm_init(super_block *sb);
-void debugfs_ps_init(super_block *sb);
-void debugfs_cpu_init(super_block *sb);
-void debugfs_sched_init(super_block *sb);
-void debugfs_fs_init(super_block *sb);
-
 #endif

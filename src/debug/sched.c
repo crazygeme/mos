@@ -38,7 +38,7 @@ static void fill(void *buf, size_t size)
 	select_loop_times = 0;
 }
 
-void debugfs_sched_init(super_block *mp)
+static void debugfs_sched_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/sched", fill);
 }

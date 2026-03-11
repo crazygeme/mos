@@ -395,8 +395,7 @@ char *sys_getcwd(char *buf, unsigned size)
 void reboot()
 {
 	/**
-	 * This is not a corrently reboot but now we just needs a testable
-	 * procedure.
+	 * This is not a correct reboot but now we just needs a testable procedure.
 	 * Force enable interrupt first to make sure fs cache can be flushed.
 	 */
 	int_intr_enable();
@@ -408,8 +407,7 @@ void reboot()
 void shutdown()
 {
 	/**
-	 * This is not a corrently shutdown but now we just needs a testable
-	 * procedure.
+	 * This is not a correct shutdown but now we just needs a testable procedure.
 	 * Force enable interrupt first to make sure fs cache can be flushed.
 	 */
 	const char s[] = "Shutdown";

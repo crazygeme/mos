@@ -1,6 +1,6 @@
 - [X] 物理内存管理
 - [X] 虚拟内存管理
-- [X] ext2的完整实现
+- [X] ext4的完整实现
 - [X] 各级cache (hdd cache, inode cache)
 - [X] mount point
 - [X] 文件权限 
@@ -23,3 +23,5 @@
 - [ ] 正确的 gettimeofday 实现
 - [X] 重写 vfs
 - [ ] ptrace
+- [ ] load kernel module
+- [ ] refile debugfs using kernel module

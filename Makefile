@@ -29,8 +29,8 @@ $(DST)/$(TARGET): $(OBJS) $(LIBS) | $(DST)
 	@echo "LD $@"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 	@cp $(DST)/$(TARGET) $(DST)/$(TARGET).dbg
-	@strip $(DST)/$(TARGET)
-	@objdump -d $(DST)/$(TARGET).dbg > $(DST)/assemble.s
+	@$(SP) $(DST)/$(TARGET)
+	@$(DS) -d $(DST)/$(TARGET).dbg > $(DST)/assemble.s
 
 $(DST)/obj/%.c.o: %.c $(SCRIPTS) | $(DST)/obj
 	@echo "CC $<"

@@ -2,17 +2,23 @@ ifeq ($(shell uname),Linux)
 CC =		gcc
 LD =		ld
 AR = 		ar
+SP =		strip
+DS =		objdump
 OS =		Linux
 else
 ifeq ($(shell uname),Darwin)
 CC =		i686-elf-gcc
 LD =		i686-elf-ld
 AR =		i686-elf-ar
+SP =		i686-elf-strip
+DS =		i686-elf-objdump
 OS =		Darwin
 else
 CC =		i386-elf-gcc
 LD =		i386-elf-ld
 AR =		i386-elf-ar
+SP =		i386-elf-strip
+DS =		i386-elf-objdump
 OS =		Cygwin
 endif
 endif

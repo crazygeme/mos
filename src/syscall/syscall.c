@@ -501,9 +501,9 @@ static int sys_uname(struct utsname *utname)
 
 	strcpy(utname->machine, "i386");
 	strcpy(utname->nodename, "qemu-enum");
-	strcpy(utname->release, "0.9-generic");
+	strcpy(utname->release, "0.91-generic");
 	strcpy(utname->sysname, "Mos");
-	strcpy(utname->version, "Mos Wed Feb 19 10:56:00 UTC 2015");
+	strcpy(utname->version, "Mos Wed Mar 11 15:00:00 UTC 2026");
 	strcpy(utname->domain, "Ender");
 	return 1;
 }

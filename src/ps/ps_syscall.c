@@ -394,18 +394,30 @@ char *sys_getcwd(char *buf, unsigned size)
 
 void reboot()
 {
+	/**
+	 * This is not a corrently reboot but now we just needs a testable
+	 * procedure.
+	 * Force enable interrupt first to make sure fs cache can be flushed.
+	 */
+	int_intr_enable();
 	system_down();
-	DISABLE_INTR();
+	int_intr_disable();
 	port_write_byte(0x64, 0xfe);
 }
 
 void shutdown()
 {
+	/**
+	 * This is not a corrently shutdown but now we just needs a testable
+	 * procedure.
+	 * Force enable interrupt first to make sure fs cache can be flushed.
+	 */
 	const char s[] = "Shutdown";
 	const char *p;
 	printf("Shutting down system ...\n");
+	int_intr_enable();
 	system_down();
-	DISABLE_INTR();
+	int_intr_disable();
 
 	printf("Power off...\n");
 	for (p = s; *p != '\0'; p++)

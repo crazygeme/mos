@@ -13,7 +13,8 @@ static void fill(void *buf, size_t size)
 		"\n\n",
 		cur->psid, cur->command, cur->cwd);
 }
-void debugfs_ps_init(super_block *mp)
+
+static void debugfs_ps_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/self", fill);
 }

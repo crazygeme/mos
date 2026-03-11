@@ -116,7 +116,7 @@ static void fill(void *buf, size_t size)
 	page_fault_file_cache_hit = 0;
 }
 
-void debugfs_mm_init(super_block *mp)
+static void debugfs_mm_init(super_block *mp)
 {
 	vfs_create_file(mp, "/proc/meminfo", fill);
 }

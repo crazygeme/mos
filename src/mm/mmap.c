@@ -57,9 +57,6 @@ static void vm_region_invalid(const key_value_pair *pair)
 
 void vm_destroy(vm_struct_t vm)
 {
-	hash_table *table = vm;
-	key_value_pair *pair = hash_first(table);
-
 	hash_destroy((hash_table *)vm, vm_region_invalid);
 }
 

@@ -335,8 +335,6 @@ static super_operations ext4_sops = {
 	.open = ext4_sb_open,
 };
 
-#define UNIMPL() klog("unimplemented: %s\n", __func__)
-
 static int fs_find_empty_fd(file_descriptor *fds)
 {
 	int i;

@@ -8,15 +8,15 @@
  *   - Scheduling instrumentation
  */
 
-#include "pagefault.h"
-#include <list.h>
-#include <ps.h>
-#include <time.h>
-#include <mm.h>
-#include <klib.h>
-#include <int.h>
+#include <ps/ps.h>
+#include <hw/time.h>
+#include <mm/mm.h>
+#include <int/int.h>
+#include <int/dsr.h>
+#include <lib/list.h>
+#include <lib/klib.h>
 #include <macro.h>
-#include <dsr.h>
+
 #include "ps_internal.h"
 
 /* -------------------------------------------------------------------------

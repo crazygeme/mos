@@ -1,7 +1,7 @@
-#include <list.h>
-#include <dsr.h>
-#include <klib.h>
-#include <lock.h>
+#include <int/dsr.h>
+#include <lib/klib.h>
+#include <lib/lock.h>
+#include <lib/list.h>
 
 static list_entry dsr_head;
 static list_entry dsr_cache;

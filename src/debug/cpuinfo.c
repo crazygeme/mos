@@ -1,8 +1,8 @@
-#include <mount.h>
-#include <debugfs.h>
-#include <klib.h>
-#include <cpu.h>
-#include <time.h>
+#include <fs/mount.h>
+#include <fs/super/debugfs.h>
+#include <lib/klib.h>
+#include <hw/cpu.h>
+#include <hw/time.h>
 
 /* Execute the CPUID instruction. */
 static void do_cpuid(unsigned leaf, unsigned *eax, unsigned *ebx, unsigned *ecx,

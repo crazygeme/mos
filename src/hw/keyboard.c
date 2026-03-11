@@ -1,13 +1,13 @@
-#include <ps.h>
-#include <keyboard.h>
-#include <klib.h>
-#include <int.h>
-#include <keymap.h>
-#include <dsr.h>
-#include <lock.h>
+#include <ps/ps.h>
+#include <int/int.h>
+#include <int/dsr.h>
+#include <lib/cyclebuf.h>
+#include <lib/port.h>
+#include <lib/lock.h>
+#include <lib/klib.h>
+#include <hw/keyboard.h>
+#include <hw/keymap.h>
 #include <config.h>
-#include <cyclebuf.h>
-#include <port.h>
 
 static cy_buf *buf;
 

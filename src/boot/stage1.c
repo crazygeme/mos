@@ -1,9 +1,9 @@
-#include <multiboot.h>
-#include <config.h>
-#include <mm.h>
-#include <int.h>
+#include <boot/multiboot.h>
+#include <mm/mm.h>
+#include <mm/phymm.h>
+#include <int/int.h>
 #include <macro.h>
-#include <phymm.h>
+#include <config.h>
 
 #define GET_BOOT_ADDR(type, addr) ((type)((unsigned)addr - KERNEL_OFFSET))
 #define _START __attribute__((section(".multiboot")))

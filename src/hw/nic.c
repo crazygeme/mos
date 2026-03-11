@@ -1,6 +1,6 @@
-#include <nic.h>
-#include <klib.h>
-#include <pci_list.h>
+#include <hw/nic.h>
+#include <hw/pci_list.h>
+#include <lib/klib.h>
 #include <macro.h>
 
 static nic_dev network_devices[MAX_NETWORK_DEV] = { 0 };

@@ -44,7 +44,7 @@
 #include "ext4_fs.h"
 #include "ext4_journal.h"
 
-#include <klib.h>
+#include <lib/klib.h>
 
 static void ext4_bdif_lock(struct ext4_blockdev *bdev)
 {
@@ -89,10 +89,8 @@ int ext4_block_init(struct ext4_blockdev *bdev)
 	int rc;
 	ext4_assert(bdev);
 	ext4_assert(bdev->bdif);
-	ext4_assert(bdev->bdif->open &&
-		   bdev->bdif->close &&
-		   bdev->bdif->bread &&
-		   bdev->bdif->bwrite);
+	ext4_assert(bdev->bdif->open && bdev->bdif->close &&
+		    bdev->bdif->bread && bdev->bdif->bwrite);
 
 	if (bdev->bdif->ph_refctr) {
 		bdev->bdif->ph_refctr++;
@@ -192,15 +190,13 @@ int ext4_block_cache_shake(struct ext4_blockdev *bdev)
 	bdev->bc->dont_shake = true;
 
 	while (!RB_EMPTY(&bdev->bc->lru_root) &&
-		ext4_bcache_is_full(bdev->bc)) {
-
+	       ext4_bcache_is_full(bdev->bc)) {
 		buf = ext4_buf_lowest_lru(bdev->bc);
 		ext4_assert(buf);
 		if (ext4_bcache_test_flag(buf, BC_DIRTY)) {
 			r = ext4_block_flush_buf(bdev, buf);
 			if (r != EOK)
 				break;
-
 		}
 
 		ext4_bcache_drop_buf(bdev->bc, buf);
@@ -328,10 +324,9 @@ int ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
 	/*OK lets deal with the first possible unaligned block*/
 	unalg = (off & (bdev->bdif->ph_bsize - 1));
 	if (unalg) {
-
-		uint32_t wlen = (bdev->bdif->ph_bsize - unalg) > len
-				    ? len
-				    : (bdev->bdif->ph_bsize - unalg);
+		uint32_t wlen = (bdev->bdif->ph_bsize - unalg) > len ?
+					len :
+					(bdev->bdif->ph_bsize - unalg);
 
 		r = ext4_bdif_bread(bdev, bdev->bdif->ph_bbuf, block_idx, 1);
 		if (r != EOK)
@@ -398,10 +393,9 @@ int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 	/*OK lets deal with the first possible unaligned block*/
 	unalg = (off & (bdev->bdif->ph_bsize - 1));
 	if (unalg) {
-
-		uint32_t rlen = (bdev->bdif->ph_bsize - unalg) > len
-				    ? len
-				    : (bdev->bdif->ph_bsize - unalg);
+		uint32_t rlen = (bdev->bdif->ph_bsize - unalg) > len ?
+					len :
+					(bdev->bdif->ph_bsize - unalg);
 
 		r = ext4_bdif_bread(bdev, bdev->bdif->ph_bbuf, block_idx, 1);
 		if (r != EOK)
@@ -449,7 +443,6 @@ int ext4_block_cache_flush(struct ext4_blockdev *bdev)
 		r = ext4_block_flush_buf(bdev, buf);
 		if (r != EOK)
 			return r;
-
 	}
 	return EOK;
 }

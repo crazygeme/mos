@@ -1,23 +1,22 @@
-#include <tty.h>
-#include <timer.h>
-#include <debugfs.h>
-#include <mount.h>
-#include <klib.h>
-#include <int.h>
-#include <keyboard.h>
-#include <mm.h>
-#include <multiboot.h>
-#include <dsr.h>
-#include <time.h>
-#include <ps.h>
-#include <pagefault.h>
-#include <serial.h>
-#include <vga.h>
-#include <fs.h>
+
+#include <boot/multiboot.h>
+#include <int/int.h>
+#include <int/dsr.h>
+#include <mm/mm.h>
+#include <mm/pagefault.h>
+#include <ps/ps.h>
+#include <hw/apic.h>
+#include <hw/acpi.h>
+#include <hw/cpu.h>
+#include <hw/serial.h>
+#include <hw/vga.h>
+#include <hw/time.h>
+#include <hw/keyboard.h>
+#include <hw/tty.h>
+#include <lib/timer.h>
+#include <lib/klib.h>
+
 #include <macro.h>
-#include <apic.h>
-#include <acpi.h>
-#include <cpu.h>
 
 static void run(void);
 TEST_CONTROL TestControl;

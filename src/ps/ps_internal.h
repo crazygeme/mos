@@ -6,9 +6,9 @@
  * Must NOT be included by code outside src/ps/.
  */
 
-#include <ps.h>
-#include <lock.h>
-#include <list.h>
+#include <ps/ps.h>
+#include <lib/lock.h>
+#include <lib/list.h>
 
 /* -------------------------------------------------------------------------
  * Scheduler control block

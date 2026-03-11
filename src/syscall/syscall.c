@@ -1,19 +1,19 @@
-#include <mm.h>
-#include <int.h>
+#include <mm/mm.h>
+#include <int/int.h>
+#include <ps/ps.h>
+#include <elf/exec.h>
+#include <hw/time.h>
+#include <lib/klib.h>
+#include <lib/rbtree.h>
+#include <fs/fs.h>
+#include <fs/select.h>
+#include <fs/fcntl.h>
+#include <syscall/ptrace.h>
 #include <unistd.h>
-#include <ps.h>
-#include <exec.h>
 #include <config.h>
-#include <time.h>
-#include <klib.h>
-#include <rbtree.h>
-#include <fcntl.h>
 #include <errno.h>
-#include <ext4.h>
-#include <fs.h>
-#include <select.h>
 #include <macro.h>
-#include <ptrace.h>
+#include <ext4.h>
 
 struct utimbuf {
 	unsigned actime; /* access time */

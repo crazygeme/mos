@@ -1,12 +1,12 @@
-#include <list.h>
-#include <mmap.h>
-#include <rbtree.h>
-#include <klib.h>
-#include <config.h>
-#include <ps.h>
-#include <errno.h>
-#include <include/fs.h>
+#include <lib/list.h>
+#include <lib/rbtree.h>
+#include <lib/klib.h>
+#include <mm/mmap.h>
+#include <ps/ps.h>
+#include <fs/fs.h>
 #include <macro.h>
+#include <config.h>
+#include <errno.h>
 
 /*
  * vm_key is the search key for the red-black tree that backs each process's

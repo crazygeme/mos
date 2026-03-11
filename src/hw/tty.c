@@ -4,14 +4,14 @@
  * ANSI escape processing, and high-level text output.
  */
 
-#include <int.h>
-#include <tty.h>
-#include <vga.h>
+#include <int/int.h>
+#include <hw/tty.h>
+#include <hw/vga.h>
+#include <fs/ioctl.h>
+#include <lib/port.h>
+#include <lib/lock.h>
+#include <lib/klib.h>
 #include <unistd.h>
-#include <ioctl.h>
-#include <port.h>
-#include <lock.h>
-#include <klib.h>
 
 /* ── VGA text-mode video buffer ──────────────────────────────────────────── */
 

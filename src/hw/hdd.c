@@ -1,13 +1,14 @@
-#include <lock.h>
-#include <int.h>
-#include <hdd.h>
-#include <time.h>
-#include <config.h>
-#include <klib.h>
-#include <rbtree.h>
-#include <list.h>
-#include <port.h>
+#include <int/int.h>
+#include <hw/hdd.h>
+#include <hw/time.h>
+#include <lib/klib.h>
+#include <lib/rbtree.h>
+#include <lib/list.h>
+#include <lib/port.h>
+#include <lib/lock.h>
 #include <macro.h>
+#include <config.h>
+#include <ext4.h>
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */

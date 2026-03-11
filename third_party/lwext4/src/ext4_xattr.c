@@ -50,7 +50,7 @@
 #include "ext4_trans.h"
 #include "ext4_xattr.h"
 
-#include <klib.h>
+#include <lib/klib.h>
 
 /**
  * @file  ext4_xattr.c
@@ -73,8 +73,8 @@ static inline void ext4_xattr_compute_hash(struct ext4_xattr_header *header,
 	}
 
 	if (entry->e_value_block == 0 && entry->e_value_size != 0) {
-		uint32_t *value =
-		    (uint32_t *)((char *)header + to_le16(entry->e_value_offs));
+		uint32_t *value = (uint32_t *)((char *)header +
+					       to_le16(entry->e_value_offs));
 		for (n = (to_le32(entry->e_value_size) + EXT4_XATTR_ROUND) >>
 			 EXT4_XATTR_PAD_BITS;
 		     n; n--) {
@@ -131,15 +131,15 @@ static uint32_t ext4_xattr_block_checksum(struct ext4_inode_ref *inode_ref,
 		orig_checksum = header->h_checksum;
 		header->h_checksum = 0;
 		/* First calculate crc32 checksum against fs uuid */
-		checksum =
-		    ext4_crc32c(EXT4_CRC32_INIT, sb->uuid, sizeof(sb->uuid));
+		checksum = ext4_crc32c(EXT4_CRC32_INIT, sb->uuid,
+				       sizeof(sb->uuid));
 		/* Then calculate crc32 checksum block number */
-		checksum =
-		    ext4_crc32c(checksum, &le64_blocknr, sizeof(le64_blocknr));
+		checksum = ext4_crc32c(checksum, &le64_blocknr,
+				       sizeof(le64_blocknr));
 		/* Finally calculate crc32 checksum against
 		 * the entire xattr block */
-		checksum =
-		    ext4_crc32c(checksum, header, ext4_sb_get_block_size(sb));
+		checksum = ext4_crc32c(checksum, header,
+				       ext4_sb_get_block_size(sb));
 		header->h_checksum = orig_checksum;
 	}
 	return checksum;
@@ -157,7 +157,7 @@ static void ext4_xattr_set_block_checksum(struct ext4_inode_ref *inode_ref,
 		return;
 
 	header->h_checksum =
-	    ext4_xattr_block_checksum(inode_ref, blocknr, header);
+		ext4_xattr_block_checksum(inode_ref, blocknr, header);
 }
 
 struct xattr_prefix {
@@ -166,14 +166,14 @@ struct xattr_prefix {
 };
 
 static const struct xattr_prefix prefix_tbl[] = {
-    {"user.", EXT4_XATTR_INDEX_USER},
-    {"system.posix_acl_access", EXT4_XATTR_INDEX_POSIX_ACL_ACCESS},
-    {"system.posix_acl_default", EXT4_XATTR_INDEX_POSIX_ACL_DEFAULT},
-    {"trusted.", EXT4_XATTR_INDEX_TRUSTED},
-    {"security.", EXT4_XATTR_INDEX_SECURITY},
-    {"system.", EXT4_XATTR_INDEX_SYSTEM},
-    {"system.richacl", EXT4_XATTR_INDEX_RICHACL},
-    {NULL, 0},
+	{ "user.", EXT4_XATTR_INDEX_USER },
+	{ "system.posix_acl_access", EXT4_XATTR_INDEX_POSIX_ACL_ACCESS },
+	{ "system.posix_acl_default", EXT4_XATTR_INDEX_POSIX_ACL_DEFAULT },
+	{ "trusted.", EXT4_XATTR_INDEX_TRUSTED },
+	{ "security.", EXT4_XATTR_INDEX_SECURITY },
+	{ "system.", EXT4_XATTR_INDEX_SYSTEM },
+	{ "system.richacl", EXT4_XATTR_INDEX_RICHACL },
+	{ NULL, 0 },
 };
 
 const char *ext4_extract_xattr_name(const char *full_name, size_t full_name_len,
@@ -198,7 +198,7 @@ const char *ext4_extract_xattr_name(const char *full_name, size_t full_name_len,
 		if (full_name_len >= prefix_len &&
 		    !memcmp(full_name, prefix_tbl[i].prefix, prefix_len)) {
 			bool require_name =
-			    prefix_tbl[i].prefix[prefix_len - 1] == '.';
+				prefix_tbl[i].prefix[prefix_len - 1] == '.';
 			*name_index = prefix_tbl[i].name_index;
 			if (name_len)
 				*name_len = full_name_len - prefix_len;
@@ -297,7 +297,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 		void *value = (char *)s->base + value_offs;
 		void *first_value = (char *)s->base + min_offs;
 		size_t value_size =
-		    EXT4_XATTR_SIZE(to_le32(s->here->e_value_size));
+			EXT4_XATTR_SIZE(to_le32(s->here->e_value_size));
 
 		if (value_offs) {
 			/* Remove the data part. */
@@ -366,9 +366,10 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 			/* Clear the padding bytes if there is */
 			if (EXT4_XATTR_SIZE(i->value_len) != i->value_len)
 				memset((char *)s->base + value_offs +
-					   i->value_len,
-				       0, EXT4_XATTR_SIZE(i->value_len) -
-					      i->value_len);
+					       i->value_len,
+				       0,
+				       EXT4_XATTR_SIZE(i->value_len) -
+					       i->value_len);
 		}
 	} else {
 		size_t shift_offs;
@@ -377,7 +378,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 		shift_offs = (char *)EXT4_XATTR_NEXT(s->here) - (char *)s->here;
 		memmove(s->here, EXT4_XATTR_NEXT(s->here),
 			(char *)last + sizeof(uint32_t) -
-			    (char *)EXT4_XATTR_NEXT(s->here));
+				(char *)EXT4_XATTR_NEXT(s->here));
 
 		/* Zero the gap created */
 		memset((char *)last - shift_offs + sizeof(uint32_t), 0,
@@ -448,7 +449,6 @@ static void ext4_xattr_find_entry(struct ext4_xattr_info *i,
 static bool ext4_xattr_is_block_valid(struct ext4_inode_ref *inode_ref,
 				      struct ext4_block *block)
 {
-
 	void *base = block->data,
 	     *end = block->data + ext4_sb_get_block_size(&inode_ref->fs->sb);
 	size_t min_offs = (char *)end - (char *)base;
@@ -478,7 +478,7 @@ static bool ext4_xattr_is_block_valid(struct ext4_inode_ref *inode_ref,
 			return false;
 
 		if ((char *)base + to_le16(entry->e_value_offs) +
-			to_le32(entry->e_value_size) >
+			    to_le32(entry->e_value_size) >
 		    (char *)end)
 			return false;
 
@@ -545,7 +545,7 @@ static bool ext4_xattr_is_ibody_valid(struct ext4_inode_ref *inode_ref)
 			return false;
 
 		if ((char *)base + to_le16(entry->e_value_offs) +
-			to_le32(entry->e_value_size) >
+			    to_le32(entry->e_value_size) >
 		    (char *)end)
 			return false;
 
@@ -598,7 +598,7 @@ static void ext4_xattr_ibody_initialize(struct ext4_inode_ref *inode_ref)
 	struct ext4_xattr_ibody_header *header;
 	struct ext4_fs *fs = inode_ref->fs;
 	size_t extra_isize =
-	    ext4_inode_get_extra_isize(&fs->sb, inode_ref->inode);
+		ext4_inode_get_extra_isize(&fs->sb, inode_ref->inode);
 	size_t inode_size = ext4_get16(&fs->sb, inode_size);
 	if (!extra_isize)
 		return;
@@ -693,7 +693,7 @@ static int ext4_xattr_ibody_find_entry(struct ext4_inode_ref *inode_ref,
 	struct ext4_fs *fs = inode_ref->fs;
 	struct ext4_xattr_ibody_header *iheader;
 	size_t extra_isize =
-	    ext4_inode_get_extra_isize(&fs->sb, inode_ref->inode);
+		ext4_inode_get_extra_isize(&fs->sb, inode_ref->inode);
 	size_t inode_size = ext4_get16(&fs->sb, inode_size);
 
 	/* Initialize the caller-given finder */
@@ -734,7 +734,7 @@ static int ext4_xattr_try_alloc_block(struct ext4_inode_ref *inode_ref)
 
 	ext4_fsblk_t xattr_block = 0;
 	xattr_block =
-	    ext4_inode_get_file_acl(inode_ref->inode, &inode_ref->fs->sb);
+		ext4_inode_get_file_acl(inode_ref->inode, &inode_ref->fs->sb);
 
 	/*
 	 * Only allocate a xattr block when there is no xattr block
@@ -766,7 +766,7 @@ static void ext4_xattr_try_free_block(struct ext4_inode_ref *inode_ref)
 {
 	ext4_fsblk_t xattr_block;
 	xattr_block =
-	    ext4_inode_get_file_acl(inode_ref->inode, &inode_ref->fs->sb);
+		ext4_inode_get_file_acl(inode_ref->inode, &inode_ref->fs->sb);
 	/*
 	 * Free the xattr block used by the inode when there is one.
 	 */
@@ -798,7 +798,7 @@ int ext4_xattr_list(struct ext4_inode_ref *inode_ref,
 	struct ext4_fs *fs = inode_ref->fs;
 	struct ext4_xattr_ibody_header *iheader;
 	size_t extra_isize =
-	    ext4_inode_get_extra_isize(&fs->sb, inode_ref->inode);
+		ext4_inode_get_extra_isize(&fs->sb, inode_ref->inode);
 	struct ext4_block block;
 	bool block_loaded = false;
 	ext4_fsblk_t xattr_block = 0;
@@ -838,16 +838,16 @@ int ext4_xattr_list(struct ext4_inode_ref *inode_ref,
 
 				list_prev = list;
 				list = (struct ext4_xattr_list_entry
-					    *)(list->name + name_len + 1);
+						*)(list->name + name_len + 1);
 			}
 
 			/*
 			 * Size calculation by pointer arithmetics.
 			 */
-			buf_len +=
-			    (char *)((struct ext4_xattr_list_entry *)0 + 1) +
-			    name_len + 1 -
-			    (char *)(struct ext4_xattr_list_entry *)0;
+			buf_len += (char *)((struct ext4_xattr_list_entry *)0 +
+					    1) +
+				   name_len + 1 -
+				   (char *)(struct ext4_xattr_list_entry *)0;
 		}
 	}
 
@@ -898,16 +898,16 @@ int ext4_xattr_list(struct ext4_inode_ref *inode_ref,
 
 				list_prev = list;
 				list = (struct ext4_xattr_list_entry
-					    *)(list->name + name_len + 1);
+						*)(list->name + name_len + 1);
 			}
 
 			/*
 			 * Size calculation by pointer arithmetics.
 			 */
-			buf_len +=
-			    (char *)((struct ext4_xattr_list_entry *)0 + 1) +
-			    name_len + 1 -
-			    (char *)(struct ext4_xattr_list_entry *)0;
+			buf_len += (char *)((struct ext4_xattr_list_entry *)0 +
+					    1) +
+				   name_len + 1 -
+				   (char *)(struct ext4_xattr_list_entry *)0;
 		}
 	}
 	if (list_prev)
@@ -967,7 +967,7 @@ int ext4_xattr_get(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 		value_offs = to_le32(ibody_finder.s.here->e_value_offs);
 		if (buf_len && buf) {
 			void *data_loc =
-			    (char *)ibody_finder.s.base + value_offs;
+				(char *)ibody_finder.s.base + value_offs;
 			memcpy(buf, data_loc,
 			       (buf_len < value_len) ? buf_len : value_len);
 		}
@@ -996,7 +996,7 @@ int ext4_xattr_get(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 		value_offs = to_le32(block_finder.s.here->e_value_offs);
 		if (buf_len && buf) {
 			void *data_loc =
-			    (char *)block_finder.s.base + value_offs;
+				(char *)block_finder.s.base + value_offs;
 			memcpy(buf, data_loc,
 			       (buf_len < value_len) ? buf_len : value_len);
 		}
@@ -1084,7 +1084,8 @@ out:
 			/*
 			 * Modify the in-inode pointer to point to the new xattr block
 			 */
-			ext4_inode_set_file_acl(inode_ref->inode, &fs->sb, xattr_block);
+			ext4_inode_set_file_acl(inode_ref->inode, &fs->sb,
+						xattr_block);
 			inode_ref->dirty = true;
 		}
 	}
@@ -1182,12 +1183,11 @@ int ext4_xattr_remove(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 			ext4_xattr_try_free_block(inode_ref);
 		} else {
 			struct ext4_xattr_header *header =
-			    EXT4_XATTR_BHDR(&new_block);
+				EXT4_XATTR_BHDR(&new_block);
 			header = EXT4_XATTR_BHDR(&new_block);
 			ext4_assert(block_finder.s.first);
 			ext4_xattr_rehash(header, block_finder.s.first);
-			ext4_xattr_set_block_checksum(inode_ref,
-						      block.lb_id,
+			ext4_xattr_set_block_checksum(inode_ref, block.lb_id,
 						      header);
 
 			ext4_trans_set_block_dirty(new_block.buf);
@@ -1215,8 +1215,7 @@ out:
  * @return Error code
  */
 static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
-				struct ext4_xattr_info *i,
-				bool no_insert)
+				struct ext4_xattr_info *i, bool no_insert)
 {
 	int ret = EOK;
 	bool allocated = false;
@@ -1242,7 +1241,7 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			goto out;
 
 		orig_xattr_block =
-		    ext4_inode_get_file_acl(inode_ref->inode, &fs->sb);
+			ext4_inode_get_file_acl(inode_ref->inode, &fs->sb);
 		ret = ext4_trans_block_get(fs->bdev, &block, orig_xattr_block);
 		if (ret != EOK) {
 			ext4_xattr_try_free_block(inode_ref);
@@ -1260,8 +1259,7 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			ext4_assert(s.first);
 			ext4_xattr_compute_hash(header, s.here);
 			ext4_xattr_rehash(header, s.first);
-			ext4_xattr_set_block_checksum(inode_ref,
-						      block.lb_id,
+			ext4_xattr_set_block_checksum(inode_ref, block.lb_id,
 						      header);
 			ext4_trans_set_block_dirty(block.buf);
 		}
@@ -1288,7 +1286,8 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			 * There are other people referencing the
 			 * same xattr block
 			 */
-			ret = ext4_xattr_block_find_entry(inode_ref, &finder, &block);
+			ret = ext4_xattr_block_find_entry(inode_ref, &finder,
+							  &block);
 			if (ret != EOK) {
 				ext4_block_set(fs->bdev, &block);
 				goto out;
@@ -1330,8 +1329,7 @@ static int ext4_xattr_block_set(struct ext4_inode_ref *inode_ref,
 			ext4_assert(finder.s.first);
 			ext4_xattr_compute_hash(header, finder.s.here);
 			ext4_xattr_rehash(header, finder.s.first);
-			ext4_xattr_set_block_checksum(inode_ref,
-						      block.lb_id,
+			ext4_xattr_set_block_checksum(inode_ref, block.lb_id,
 						      header);
 			ext4_trans_set_block_dirty(block.buf);
 		}
@@ -1393,9 +1391,7 @@ static int ext4_xattr_block_remove(struct ext4_inode_ref *inode_ref,
 		header = EXT4_XATTR_BHDR(&block);
 		ext4_assert(finder.s.first);
 		ext4_xattr_rehash(header, finder.s.first);
-		ext4_xattr_set_block_checksum(inode_ref,
-					      block.lb_id,
-					      header);
+		ext4_xattr_set_block_checksum(inode_ref, block.lb_id, header);
 		ext4_trans_set_block_dirty(block.buf);
 	}
 
@@ -1462,11 +1458,12 @@ int ext4_xattr_set(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 			goto try_insert;
 
 	} else {
-	try_insert:
+try_insert:
 		ret = ext4_xattr_set_entry(&i, &ibody_finder.s, false);
 		if (ret == ENOSPC) {
 			if (!block_found) {
-				ret = ext4_xattr_block_set(inode_ref, &i, false);
+				ret = ext4_xattr_block_set(inode_ref, &i,
+							   false);
 				ibody_finder.i.value = NULL;
 				ext4_xattr_set_entry(&ibody_finder.i,
 						     &ibody_finder.s, false);

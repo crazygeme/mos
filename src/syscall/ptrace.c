@@ -1,8 +1,8 @@
-#include <ptrace.h>
-#include <ps.h>
-#include <int.h>
-#include <mm.h>
-#include <klib.h>
+#include <syscall/ptrace.h>
+#include <ps/ps.h>
+#include <int/int.h>
+#include <mm/mm.h>
+#include <lib/klib.h>
 #include <errno.h>
 #include <config.h>
 

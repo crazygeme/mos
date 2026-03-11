@@ -1,11 +1,11 @@
-#include <int.h>
-#include <vga.h>
-#include <multiboot.h>
-#include <pci.h>
-#include <mm.h>
+#include <int/int.h>
+#include <boot/multiboot.h>
+#include <hw/pci.h>
+#include <hw/vga.h>
+#include <mm/mm.h>
 #include <macro.h>
-#include <port.h>
-#include <klib.h>
+#include <lib/port.h>
+#include <lib/klib.h>
 
 /* Binary Literals */
 #define b(x) ((unsigned char)b_(0##x##uL))
@@ -690,7 +690,7 @@ static unsigned char cursor_font[][12] = {
 	},
 };
 
-static const unsigned char bit_mask[8] = {128, 64, 32, 16, 8, 4, 2, 1};
+static const unsigned char bit_mask[8] = { 128, 64, 32, 16, 8, 4, 2, 1 };
 
 /* Internal framebuffer state (not exported) */
 
@@ -788,9 +788,9 @@ static void fb_write_char_mix_cursor(int x, int y, int val, unsigned val_color,
 		unsigned char row_c = cc[i];
 		for (j = 0; j < char_width; ++j) {
 			unsigned char m = bit_mask[j];
-			rowp[j] = (row_v & m) ? val_color
-					  : ((row_c & m) ? cursor_color
-							 : back_color);
+			rowp[j] = (row_v & m) ? val_color :
+						((row_c & m) ? cursor_color :
+							       back_color);
 		}
 	}
 }

@@ -9,20 +9,21 @@
  *   - User address-space enumeration and cleanup
  */
 
-#include <ps.h>
-#include <cpu.h>
-#include <mount.h>
-#include <mmap.h>
-#include <phymm.h>
-#include <lock.h>
-#include <mm.h>
-#include <klib.h>
+#include <ps/ps.h>
+#include <hw/cpu.h>
+#include <int/int.h>
+#include <fs/mount.h>
+#include <fs/fs.h>
+#include <mm/mmap.h>
+#include <mm/phymm.h>
+#include <mm/mm.h>
+#include <lib/lock.h>
+#include <lib/klib.h>
+#include <lib/list.h>
+#include <lib/port.h>
 #include <config.h>
-#include <int.h>
-#include <list.h>
 #include <macro.h>
-#include <port.h>
-#include <fs.h>
+
 #include "ps_internal.h"
 
 /* -------------------------------------------------------------------------

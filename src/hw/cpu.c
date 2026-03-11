@@ -11,13 +11,13 @@
  *   - ap_init_c(): the first C function executed on each AP.
  */
 
-#include <cpu.h>
-#include <apic.h>
-#include <acpi.h>
-#include <ps.h>
-#include <mm.h>
-#include <int.h>
-#include <klib.h>
+#include <hw/cpu.h>
+#include <hw/apic.h>
+#include <hw/acpi.h>
+#include <ps/ps.h>
+#include <mm/mm.h>
+#include <int/int.h>
+#include <lib/klib.h>
 #include <macro.h>
 #include <config.h>
 

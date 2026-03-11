@@ -6,10 +6,10 @@
  * ToAruOS PCI Initialization
  */
 
-#include <int.h>
-#include <pci.h>
-#include <pci_list.h>
-#include <port.h>
+#include <int/int.h>
+#include <hw/pci.h>
+#include <hw/pci_list.h>
+#include <lib/port.h>
 
 PCI_VENTABLE PciVenTable[] = {
 	{ 0x0033, "", "Paradyne Corp." },

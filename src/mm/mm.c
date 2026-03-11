@@ -1,11 +1,11 @@
-#include <mm.h>
-#include <klib.h>
-#include <multiboot.h>
-#include <list.h>
-#include <lock.h>
-#include <ps.h>
-#include <mmap.h>
-#include <phymm.h>
+#include <boot/multiboot.h>
+#include <lib/klib.h>
+#include <lib/list.h>
+#include <lib/lock.h>
+#include <ps/ps.h>
+#include <mm/mm.h>
+#include <mm/mmap.h>
+#include <mm/phymm.h>
 #include <macro.h>
 
 /* Physical memory range tracked by the page allocator */

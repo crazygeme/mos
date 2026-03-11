@@ -1,8 +1,8 @@
-#include <ps.h>
-#include <time.h>
-#include <timer.h>
-#include <rbtree.h>
-#include <lock.h>
+#include <ps/ps.h>
+#include <hw/time.h>
+#include <lib/timer.h>
+#include <lib/rbtree.h>
+#include <lib/lock.h>
 
 typedef struct _timer_control {
 	hash_table *timers;

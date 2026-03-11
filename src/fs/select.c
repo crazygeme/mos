@@ -1,15 +1,13 @@
-#include <int.h>
-#include <unistd.h>
-#include <ps.h>
-#include <exec.h>
-#include <config.h>
-#include <time.h>
-#include <klib.h>
-#include <rbtree.h>
-#include <fcntl.h>
+#include <lib/klib.h>
+#include <lib/rbtree.h>
+#include <fs/fcntl.h>
+#include <fs/fs.h>
+#include <fs/select.h>
+#include <int/int.h>
+#include <ps/ps.h>
+#include <elf/exec.h>
 #include <errno.h>
-#include <fs.h>
-#include <select.h>
+#include <config.h>
 
 unsigned select_loop_times = 0;
 /*

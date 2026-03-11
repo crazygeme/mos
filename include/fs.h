@@ -133,8 +133,6 @@ int resolve_path(const char *old, char *new);
 
 int fs_alloc_filep_pipe(file **pipes);
 
-int ext4_blockdev_register(block *aux, char *name, int sec_size, int sec_cnt);
-
 int fs_open(const char *path, int flag, char *mode);
 
 int fs_close(int fd);

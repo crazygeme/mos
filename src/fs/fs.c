@@ -3,99 +3,12 @@
 #include <mount.h>
 #include <unistd.h>
 #include <fs.h>
-#include <block.h>
+#include <hdd.h>
 #include <klib.h>
 #include <ps.h>
-#include <lwext4/include/ext4.h>
+#include <ext4.h>
 #include <fcntl.h>
 #include <include/fs.h>
-
-static int block_proxy_open(struct ext4_blockdev *bdev);
-static int block_proxy_bread(struct ext4_blockdev *bdev, void *buf,
-			     uint64_t blk_id, uint32_t blk_cnt);
-static int block_proxy_bwrite(struct ext4_blockdev *bdev, const void *buf,
-			      uint64_t blk_id, uint32_t blk_cnt);
-static int block_proxy_close(struct ext4_blockdev *bdev);
-static int block_proxy_lock(struct ext4_blockdev *bdev);
-static int block_proxy_unlock(struct ext4_blockdev *bdev);
-
-static char __first_hdd_name[32];
-
-int ext4_blockdev_register(block *aux, char *name, int sec_size, int sec_cnt)
-{
-	uint8_t *_ph_bbuf = (uint8_t *)kmalloc(sec_size);
-	struct ext4_blockdev *t = (struct ext4_blockdev *)kmalloc(sizeof(*t));
-	struct ext4_blockdev_iface *block_iface =
-		(struct ext4_blockdev_iface *)kmalloc(sizeof(*block_iface));
-	memset((void *)block_iface, 0, sizeof(*block_iface));
-	block_iface->open = block_proxy_open,
-	block_iface->bread = block_proxy_bread,
-	block_iface->bwrite = block_proxy_bwrite,
-	block_iface->close = block_proxy_close,
-	block_iface->lock = block_proxy_lock,
-	block_iface->unlock = block_proxy_unlock,
-	block_iface->ph_bsize = sec_size, block_iface->ph_bcnt = sec_cnt,
-	block_iface->ph_bbuf = _ph_bbuf, memset((void *)t, 0, sizeof(*t));
-	t->bdif = block_iface;
-	t->part_offset = 0;
-	t->part_size = (sec_size) * (sec_cnt);
-	t->aux = aux;
-	if (!__first_hdd_name[0])
-		strcpy(__first_hdd_name, name);
-
-	return ext4_device_register(t, NULL, name);
-}
-
-static int block_proxy_open(struct ext4_blockdev *bdev)
-{
-	return 0;
-}
-
-static int block_proxy_bread(struct ext4_blockdev *bdev, void *buf,
-			     uint64_t blk_id, uint32_t blk_cnt)
-{
-	block *b = bdev->aux;
-	char *tmp = (char *)buf;
-	int i = 0;
-	for (i = 0; i < blk_cnt; i++) {
-		b->read(b->aux, blk_id + i, tmp + i * BLOCK_SECTOR_SIZE,
-			BLOCK_SECTOR_SIZE);
-	}
-
-	return 0;
-}
-
-static int block_proxy_bwrite(struct ext4_blockdev *bdev, const void *buf,
-			      uint64_t blk_id, uint32_t blk_cnt)
-{
-	block *b = bdev->aux;
-	char *tmp = (char *)buf;
-	int i = 0;
-	for (i = 0; i < blk_cnt; i++) {
-		b->write(b->aux, blk_id + i, tmp + i * BLOCK_SECTOR_SIZE,
-			 BLOCK_SECTOR_SIZE);
-	}
-
-	return 0;
-}
-
-static int block_proxy_close(struct ext4_blockdev *bdev)
-{
-	kfree(bdev->bdif->ph_bbuf);
-	kfree(bdev->bdif);
-	kfree(bdev);
-	return 0;
-}
-
-static int block_proxy_lock(struct ext4_blockdev *bdev)
-{
-	return 0;
-}
-
-static int block_proxy_unlock(struct ext4_blockdev *bdev)
-{
-	return 0;
-}
 
 unsigned fs_read_size = 0;
 unsigned fs_write_size = 0;
@@ -1025,7 +938,7 @@ static void fs_mount_root()
 {
 	task_struct *cur = CURRENT_TASK();
 	cur->root = sget(&ext4_sops);
-	ext4_mount(__first_hdd_name, "/", 0);
+	ext4_mount(hdd_first_dev_name, "/", 0);
 	ext4_cache_write_back("/", true);
 }
 

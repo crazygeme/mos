@@ -95,7 +95,4 @@ void delay(unsigned int us);
 
 time_t time(time_t *t);
 
-void enable_scheduler();
-void disable_scheduler();
-
 #endif

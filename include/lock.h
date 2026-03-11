@@ -18,6 +18,7 @@
 typedef volatile struct _spinlock {
 	unsigned int lock; /* 0 = free, 1 = held (TAS word)         */
 	int inited; /* 1 after spinlock_init                  */
+	unsigned old_int; /* interrut status before locking */
 	const char *holder;
 } spinlock_t;
 

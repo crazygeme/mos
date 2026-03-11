@@ -1,15 +1,18 @@
 ifeq ($(shell uname),Linux)
 CC =		gcc
 LD =		ld
+AR = 		ar
 OS =		Linux
 else
 ifeq ($(shell uname),Darwin)
-CC =		/opt/local/bin/i386-elf-gcc
-LD =		/opt/local/bin/i386-elf-ld
+CC =		i686-elf-gcc
+LD =		i686-elf-ld
+AR =		i686-elf-ar
 OS =		Darwin
 else
 CC =		i386-elf-gcc
 LD =		i386-elf-ld
+AR =		i386-elf-ar
 OS =		Cygwin
 endif
 endif
@@ -23,6 +26,7 @@ CIGNORE	=	-Wno-int-conversion\
 COMMON_CFLAGS = -fno-pie\
 		-fno-builtin\
 		-nostdlib\
+		-nostdinc\
 		-ggdb3\
 		-march=i686\
         	-m32\
@@ -30,9 +34,10 @@ COMMON_CFLAGS = -fno-pie\
 		${CIGNORE}\
 		-I$(MAINPATH)\
 		-I$(MAINPATH)/include\
-        	-I$(MAINPATH)/3rdparty\
-		-I$(MAINPATH)/3rdparty/lwext4\
-        	-I$(MAINPATH)/3rdparty/lwext4/include\
+        	-I$(MAINPATH)/third_party\
+		-I$(MAINPATH)/third_party/std\
+		-I$(MAINPATH)/third_party/lwext4\
+        	-I$(MAINPATH)/third_party/lwext4/include\
         	-D__DEBUG__\
 		-DCONFIG_EXT_FEATURE_SET_LVL=2\
         	-DCONFIG_JOURNALING_ENABLE=0\

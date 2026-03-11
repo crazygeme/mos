@@ -8,9 +8,9 @@
  *   - Scheduling instrumentation
  */
 
-#include "list.h"
-#include "misc/queue.h"
-#include "ps.h"
+#include "pagefault.h"
+#include <list.h>
+#include <ps.h>
 #include <time.h>
 #include <mm.h>
 #include <klib.h>
@@ -202,16 +202,19 @@ void _task_sched(const char *func)
 {
 	task_struct *task = 0;
 	task_struct *current = 0;
+	unsigned oldint;
 
 	if (TestControl.profiling)
 		sched_cal_begin();
 
-	int_intr_disable();
+	/* 
+	 * Schedule procedure can not be interrupted.
+	 */
+	oldint = int_intr_disable();
 
 	dsr_drain();
 
 	current = CURRENT_TASK();
-	current->is_switching = 1;
 	task = ps_get_next_task();
 
 	if (!task || task->psid == current->psid)
@@ -229,13 +232,30 @@ void _task_sched(const char *func)
 	 * new task from the updated ESP — no globals needed. */
 	RESTORE_ALL(task, task->tss.eip);
 	current = CURRENT_TASK();
-	SET_CR3(current->user.page_dir - KERNEL_OFFSET);
 	reset_tss(current);
+	SET_CR3(current->user.page_dir - KERNEL_OFFSET);
 	JUMP_TO_NEXT_TASK_EIP(current->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:
-	int_intr_enable();
-	current->is_switching = 0;
+	int_intr_setlevel(oldint);
+
 	if (TestControl.profiling)
 		sched_cal_end();
+}
+
+static int scheduler_enabled = 1;
+
+int sched_enable()
+{
+	return __sync_lock_test_and_set(&scheduler_enabled, 1);
+}
+
+int sched_disable()
+{
+	return __sync_lock_test_and_set(&scheduler_enabled, 0);
+}
+
+int sched_is_enabled()
+{
+	return __sync_add_and_fetch(&scheduler_enabled, 0);
 }

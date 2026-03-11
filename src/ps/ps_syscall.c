@@ -9,7 +9,7 @@
  *   - System shutdown (reboot, shutdown)
  */
 
-#include "ps.h"
+#include <ps.h>
 #include <cpu.h>
 #include <mount.h>
 #include <mmap.h>
@@ -394,8 +394,8 @@ char *sys_getcwd(char *buf, unsigned size)
 
 void reboot()
 {
-	DISABLE_INTR();
 	system_down();
+	DISABLE_INTR();
 	port_write_byte(0x64, 0xfe);
 }
 
@@ -403,9 +403,9 @@ void shutdown()
 {
 	const char s[] = "Shutdown";
 	const char *p;
-	DISABLE_INTR();
 	printf("Shutting down system ...\n");
 	system_down();
+	DISABLE_INTR();
 
 	printf("Power off...\n");
 	for (p = s; *p != '\0'; p++)
@@ -416,18 +416,4 @@ void shutdown()
 	printf("still running...\n");
 	for (;;)
 		HLT();
-}
-
-void ps_print_all()
-{
-	struct rb_node *task_entry;
-	//spinlock_lock(&ps_lock);
-	task_entry = rb_first(&control.mgr_queue);
-	while (task_entry) {
-		task_struct *task = rb_entry(task_entry, task_struct, mgr_rb);
-		task_entry = rb_next(task_entry);
-		printf("task %d: status %d, wait_func %s\n", task->psid,
-		       task->status, task->wait_func);
-	}
-	//spinlock_unlock(&ps_lock);
 }

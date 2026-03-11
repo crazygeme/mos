@@ -4,7 +4,7 @@ _ramsize="512"
 diskfile="ffs.img"
 _rebuild="0"
 _debug=""
-_window="gtk"
+_window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _verbose=""
 _profile=""
 _logtofile="stdio"

@@ -147,9 +147,6 @@ static void kb_dsr(void *param)
 			if (c == 'V' && ctrl && alt)
 				shutdown();
 
-			if (c == 'N' && ctrl && alt)
-				ps_print_all();
-
 			/* Handle Ctrl, Shift.
                Note that Ctrl overrides Shift. */
 			if (ctrl && c >= 0x40 && c < 0x60) {

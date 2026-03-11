@@ -15,27 +15,52 @@
 #include <errno.h>
 #include <macro.h>
 
+/*
+ * cleanup - tear down the current process's user-space state before exec
+ *
+ * Called at the start of execve, before the new image is loaded:
+ *   1. If this task was created by vfork(), signal the parent that the
+ *      address space is about to be replaced (wakes the blocked parent).
+ *   2. Close all file descriptors that have O_CLOEXEC set — POSIX requires
+ *      these to be closed across exec.
+ *   3. Unmap all user virtual-memory regions (code, data, stack, heap).
+ *   4. Reset the heap pointer and replace the VM descriptor with a fresh one
+ *      so the new image starts with a clean address space.
+ */
 static void cleanup()
 {
 	task_struct *cur = CURRENT_TASK();
 	int i = 0;
 
+	/* Wake the vfork()-ing parent now that we are replacing the address space. */
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
 		cond_notify(&cur->vfork_event);
 	}
 
+	/* Close all O_CLOEXEC file descriptors. */
 	for (i = 0; i < MAX_FD; i++) {
 		if (cur->fds[i].used && (cur->fds[i].flag & O_CLOEXEC)) {
 			fs_close(i);
 		}
 	}
+
+	/* Unmap every user-space page table entry. */
 	ps_cleanup_all_user_map(cur);
 
+	/* Reset heap and install a fresh VM tracker. */
 	cur->user.heap_top = USER_HEAP_BEGIN;
 	vm_destroy(cur->user.vm);
 	cur->user.vm = vm_create();
 }
 
+/*
+ * ps_get_argc_envc - count argument and environment strings
+ *
+ * Walks the NULL-terminated @argv and @envp arrays (same convention as the
+ * POSIX execve ABI) and writes the counts into *argv_len and *envp_len.
+ * Both pointers must be non-NULL; either array pointer may be NULL (treated
+ * as empty).
+ */
 static void ps_get_argc_envc(const char *file, char **argv, char **envp,
 			     unsigned *argv_len, unsigned *envp_len)
 {
@@ -46,7 +71,6 @@ static void ps_get_argc_envc(const char *file, char **argv, char **envp,
 	}
 
 	*argv_len = *envp_len = 0;
-	//*argv_len = *argv_len + 1;
 	if (argv) {
 		tmp = argv[i];
 		while (argv[i] && *argv[i]) {
@@ -65,6 +89,20 @@ static void ps_get_argc_envc(const char *file, char **argv, char **envp,
 	}
 }
 
+/*
+ * ps_save_argv - deep-copy the argv array into kernel heap memory
+ *
+ * The user-supplied @argv pointers will become invalid after the address
+ * space is torn down in cleanup(), so we strdup() every string here.
+ *
+ * For shell scripts (identified by a non-NULL @script, which holds the
+ * interpreter path extracted from the "#!" line), the interpreter path is
+ * prepended as argv[0] and the original argv is shifted by one, matching
+ * the POSIX execve behaviour for script execution.
+ *
+ * Returns a newly allocated array of @argc (or @argc+1 for scripts) heap
+ * strings, or NULL if @argc is zero.
+ */
 static char **ps_save_argv(const char *file, char **argv, unsigned argc,
 			   char *script)
 {
@@ -75,6 +113,7 @@ static char **ps_save_argv(const char *file, char **argv, unsigned argc,
 	}
 
 	if (script) {
+		/* Prepend interpreter path; original argv follows. */
 		ret = kmalloc((argc + 1) * sizeof(char *));
 		ret[0] = strdup(script);
 		for (i = 0; i < (argc); i++)
@@ -88,6 +127,13 @@ static char **ps_save_argv(const char *file, char **argv, unsigned argc,
 	return ret;
 }
 
+/*
+ * ps_save_envp - deep-copy the envp array into kernel heap memory
+ *
+ * Same rationale as ps_save_argv(): environment strings must be copied
+ * before the user address space is destroyed.  Returns a newly allocated
+ * array of @envc heap strings, or NULL if @envc is zero.
+ */
 static char **ps_save_envp(char **envp, unsigned envc)
 {
 	int i = 0;
@@ -104,6 +150,13 @@ static char **ps_save_envp(char **envp, unsigned envc)
 	return ret;
 }
 
+/*
+ * ps_free_v - free a deep-copied argv/envp array previously made by
+ *             ps_save_argv() or ps_save_envp()
+ *
+ * Frees each individual string and then the pointer array itself.
+ * Safe to call with a NULL @v (no-op).
+ */
 static void ps_free_v(char **v, unsigned size)
 {
 	int i = 0;
@@ -149,6 +202,32 @@ but that could change... */
 #define AT_HWCAP 16 /* arch dependent hints at CPU capabilities */
 #define AT_CLKTCK 17 /* Frequency of times() */
 
+/*
+ * ps_setup_v - build the initial user stack layout required by the ELF ABI
+ *
+ * Constructs the stack that the dynamic linker (or a static binary) expects
+ * when it receives control.  The layout, growing downward from @top, is:
+ *
+ *   [high address = top]
+ *     <4-byte end sentinel (0)>
+ *     <filename string>
+ *     <envp strings>          ← each NUL-terminated
+ *     <argv strings>          ← each NUL-terminated
+ *     <ELF_PLATFORM string>   ("i686")
+ *     <16-byte alignment pad>
+ *     <auxiliary vector>      ← AT_NULL terminator at the top of this block,
+ *                               then AT_PLATFORM, AT_HWCAP/PAGESZ/CLKTCK,
+ *                               and the 10 AT_* entries the linker needs
+ *     <envp pointer array>    ← NULL-terminated array of pointers into strings
+ *     <argv pointer array>    ← NULL-terminated array of pointers into strings
+ *     <argc>                  ← pushed last (lowest address)
+ *   [returned esp]
+ *
+ * NEW_AUX_ENT writes one (type, value) pair into the auxiliary vector.
+ * The macro __put_user writes a single word at a given stack address.
+ *
+ * Returns the new stack pointer (esp) that should be given to the entry point.
+ */
 static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 			   char **envp, unsigned top, mos_binfmt *exec)
 {
@@ -161,16 +240,21 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 	char **tmp_array_env = 0;
 	unsigned argvp, envpp;
 	int len;
+
+	/* Temporary kernel-side pointer arrays; filled while copying strings. */
 	tmp_array_argv = kmalloc(argv_buf_len + 4);
 	tmp_array_env = kmalloc(env_buf_len + 4);
-	// end marker
+
+	/* 4-byte sentinel at the very top of the stack region. */
 	esp -= 4;
 	*((unsigned *)esp) = 0;
-	// file name
+
+	/* Push the executable filename as a string. */
 	len = strlen(file) + 1;
 	esp -= len;
 	strcpy(esp, file);
-	// env strings
+
+	/* Push environment strings in reverse order, recording pointers. */
 	for (i = envc - 1; i >= 0; i--) {
 		int len = strlen(envp[i]) + 1;
 		esp -= len;
@@ -178,8 +262,9 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 		tmp_array_env[i] = esp;
 		esp[len - 1] = '\0';
 	}
-	tmp_array_env[envc] = 0;
-	// argv strings
+	tmp_array_env[envc] = 0; /* NULL terminator for envp array */
+
+	/* Push argument strings in reverse order, recording pointers. */
 	for (i = argc - 1; i >= 0; i--) {
 		int len = strlen(argv[i]) + 1;
 		esp -= len;
@@ -187,35 +272,51 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 		tmp_array_argv[i] = esp;
 		esp[len - 1] = '\0';
 	}
-	tmp_array_argv[argc] = 0;
-	// platform
+	tmp_array_argv[argc] = 0; /* NULL terminator for argv array */
+
+	/* Push the ELF platform string (used by AT_PLATFORM). */
 	len = sizeof(ELF_PLATFORM);
 	esp -= len;
 	strcpy(esp, ELF_PLATFORM);
 	platform = esp;
-	// 16 byte padding
+
+	/* Align stack to 16 bytes (ABI requirement) then step back one slot. */
 	esp = (char *)((~15UL & (unsigned long)(esp)) - 16UL);
 	sp = esp;
 
 #define __put_user(val, addr) (*(unsigned long *)(addr) = (unsigned long)(val))
 
+/* Write one auxiliary vector entry (id, val) at slot @nr relative to sp. */
 #define NEW_AUX_ENT(nr, id, val)         \
 	__put_user((id), sp + (nr * 2)); \
 	__put_user((val), sp + (nr * 2 + 1));
 
+	/* AT_NULL terminates the auxiliary vector. */
 	sp -= 2;
-	NEW_AUX_ENT(0, AT_NULL, 0); // end of vector
+	NEW_AUX_ENT(0, AT_NULL, 0);
+
 	if (platform) {
 		sp -= 2;
 		NEW_AUX_ENT(0, AT_PLATFORM, (unsigned long)platform);
 	}
+
+	/* Hardware capability, page size, and clock-tick frequency. */
 	sp -= 3 * 2;
 	NEW_AUX_ENT(0, AT_HWCAP, ELF_HWCAP);
-	NEW_AUX_ENT(1, AT_PAGESZ, 4096); // 4096
-	NEW_AUX_ENT(2, AT_CLKTCK, 100); // 100
+	NEW_AUX_ENT(1, AT_PAGESZ, 4096);
+	NEW_AUX_ENT(2, AT_CLKTCK, 100);
 
+	/*
+	 * Core auxiliary entries consumed by the dynamic linker:
+	 *   AT_PHDR  — virtual address of the program header table
+	 *   AT_PHENT — size of one program header entry
+	 *   AT_PHNUM — number of program headers
+	 *   AT_BASE  — load bias of the interpreter (ld.so)
+	 *   AT_FLAGS — always 0
+	 *   AT_ENTRY — original entry point of the executable
+	 *   AT_UID/EUID/GID/EGID — all 0 (root) for now
+	 */
 	sp -= 10 * 2;
-
 	NEW_AUX_ENT(0, AT_PHDR, exec->elf_load_addr + exec->e_phoff);
 	NEW_AUX_ENT(1, AT_PHENT, sizeof(Elf32_Phdr));
 	NEW_AUX_ENT(2, AT_PHNUM, exec->e_phnum);
@@ -229,6 +330,7 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 
 #undef NEW_AUX_ENT
 
+	/* Copy the envp and argv pointer arrays onto the stack. */
 	esp = sp;
 	esp -= (env_buf_len + 4);
 	envpp = esp;
@@ -236,8 +338,11 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 	esp -= (argv_buf_len + 4);
 	argvp = esp;
 	memcpy(argvp, tmp_array_argv, argv_buf_len + 4);
+
 	kfree(tmp_array_argv);
 	kfree(tmp_array_env);
+
+	/* Push argc — this is what the entry point (or crt0) reads first. */
 	esp -= 4;
 	*((unsigned *)esp) = argc;
 	return esp;
@@ -394,6 +499,13 @@ int sys_execve(const char *f, char **argv, char **envp)
 	return 0;
 }
 
+/*
+ * run_if_exist - exec @path if the file exists, otherwise panic
+ *
+ * Used during early boot to launch the first user-space program.  If the
+ * file is missing (e.g. the root filesystem is not populated), the kernel
+ * prints a diagnostic and calls DIE() to halt.
+ */
 static void run_if_exist(char *path)
 {
 	struct stat s;
@@ -408,17 +520,39 @@ static void run_if_exist(char *path)
 	DIE();
 }
 
+/*
+ * user_first_process_run - set up and exec the first user-space process
+ *
+ * Called once from kinit_userspace() in the context of the first kernel
+ * thread that will become PID 1.  Responsibilities:
+ *   1. Update TSS.esp0 so the CPU knows where to switch to kernel stack
+ *      when this process takes an interrupt or syscall.
+ *   2. Open the three standard file descriptors (stdin/stdout/stderr):
+ *        fd 0 — /dev/kb  (keyboard input)
+ *        fd 1 — /dev/tty (terminal output)
+ *        fd 2 — /dev/tty (terminal error output)
+ *   3. exec /bin/bash as the init process.
+ */
 static void user_first_process_run()
 {
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
 	ps_update_tss(esp0);
-	// fd 0, 1, 2
+
+	/* Open stdin, stdout, stderr (fds 0, 1, 2). */
 	fs_open("/dev/kb", 0, "r");
 	fs_open("/dev/tty", 0, "w");
 	fs_open("/dev/tty", 0, "w");
+
 	run_if_exist("/bin/bash");
 }
 
+/*
+ * kinit_userspace - kernel init hook that launches the first user process
+ *
+ * Registered with KERNEL_INIT(8, ...) so it runs at init priority 8, after
+ * all lower-numbered drivers and subsystems have initialised.  Clears the
+ * TTY and then hands off to user_first_process_run().
+ */
 static void kinit_userspace(void)
 {
 	tty_clear_locked();

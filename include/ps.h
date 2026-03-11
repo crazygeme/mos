@@ -212,7 +212,7 @@ struct _task_struct {
 	unsigned pf_minor;
 	/* ptrace state */
 	unsigned ptrace; /* PT_TRACED, PT_STOPPED, etc. (see ptrace.h) */
-	task_struct *ptrace_tracer; /* psid of the tracing process, 0 if none */
+	task_struct *ptrace_tracer; /* tracing process, 0 if none */
 	unsigned int magic; // to avoid stack overflow
 };
 

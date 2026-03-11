@@ -12,6 +12,7 @@
 #include <macro.h>
 #include <rbtree.h>
 #include <list.h>
+#include <errno.h>
 
 unsigned page_fault_cow = 0;
 unsigned page_fault_invalid = 0;
@@ -411,17 +412,29 @@ static void pf_process(intr_frame *frame)
 		if (pf_handle_page_invalid(cr2))
 			goto Done;
 
-		goto HLT;
+		goto NOT_HANDLED;
 	}
 
 	if ((error & PF_MASK_RW) == PF_MASK_RW) {
 		if (pf_handle_permission(cr2))
 			goto Done;
 
-		goto HLT;
+		goto NOT_HANDLED;
 	}
 
-HLT:
+NOT_HANDLED:
+
+	if (frame->cs != KERNEL_CODE_SELECTOR) {
+		/* FIXME(Ender): Currently we call process exit(-EFAULT)
+		 * Because we haven't implement signal yet, and it's hard to return
+		 * from page fault handler to user code. We will implement signal
+		 * and return from page fault handler later, and then we can send
+		 * SIGSEGV to user process here.
+		*/
+		sys_exit(-EFAULT);
+		goto Done;
+	}
+
 	do {
 		task_struct *cur = CURRENT_TASK();
 		printk("[%d]page fault! error code %x, address %x, eip %x\n",

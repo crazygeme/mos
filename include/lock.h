@@ -72,8 +72,8 @@ void cond_notify_at_intr(cond_t *s);
 
 typedef volatile struct _mutex {
 	lock_base base;
-	unsigned holder;
-	const char *holder_func; /* psid of the holding task, 0 if free     */
+	unsigned holder; /* psid of the holding task, 0 if free     */
+	const char *holder_func; /* name of the holding task, 0 if free     */
 
 } mutex_t;
 

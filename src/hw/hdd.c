@@ -65,7 +65,7 @@ typedef struct _channel {
 	char name[8]; /* Name, e.g. "ide0". */
 	unsigned short reg_base; /* Base I/O port. */
 	unsigned char irq; /* Interrupt in use. */
-	spinlock_t iolock;
+	mutex_t lock;
 	cond_t event;
 	ata_disk devices[2]; /* The devices on this channel. */
 } channel;
@@ -236,7 +236,7 @@ static void hdd_init()
 		printk("channel %d, name %s\n", chan_no, c->name);
 #endif
 		cond_init(&c->event, 1);
-		spinlock_init(&c->iolock);
+		mutex_init(&c->lock);
 		/* Initialize devices. */
 		for (dev_no = 0; dev_no < 2; dev_no++) {
 			ata_disk *d = &c->devices[dev_no];
@@ -987,7 +987,7 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *volatile d = aux;
 	channel *volatile c = d->channel;
-	spinlock_lock(&c->iolock);
+	mutex_lock(&c->lock);
 
 	select_sector(d, sec_no);
 
@@ -997,7 +997,7 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	input_sector(c, buf);
 
-	spinlock_unlock(&c->iolock);
+	mutex_unlock(&c->lock);
 
 	disk_read_size += len;
 
@@ -1009,7 +1009,8 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
 	channel *c = d->channel;
-	spinlock_lock(&c->iolock);
+
+	mutex_lock(&c->lock);
 
 	select_sector(d, sec_no);
 
@@ -1019,7 +1020,7 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	cond_wait_at_intr(&c->event);
 
-	spinlock_unlock(&c->iolock);
+	mutex_unlock(&c->lock);
 
 	disk_write_size += len;
 

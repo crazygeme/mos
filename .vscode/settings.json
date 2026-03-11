@@ -1,4 +1,8 @@
 {
     "editor.fontFamily": "'Fira Code', 'Droid Sans Mono', 'monospace', monospace",
-    "editor.tabSize": 8
+    "editor.tabSize": 8,
+    "editor.rename.enablePreview": false,
+    "workbench.editor.enablePreview": false,
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "editor.formatOnSave": true
 }

@@ -194,7 +194,6 @@ struct _task_struct {
 	ps_status status;
 	const char *wait_func;
 	int remain_ticks;
-	int is_switching;
 	unsigned timeout;
 	file_descriptor *fds;
 	mutex_t fd_lock;
@@ -258,6 +257,12 @@ void ps_update_tss(unsigned int esp0);
 void _task_sched(const char *func);
 #define task_sched() _task_sched(__func__)
 
+int sched_enable();
+
+int sched_disable();
+
+int sched_is_enabled();
+
 typedef void (*fpuser_map_callback)(void *aux, unsigned vir, unsigned phy);
 
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
@@ -288,6 +293,5 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 char *sys_getcwd(char *buf, unsigned size);
 void reboot();
 void shutdown();
-void ps_print_all();
 
 #endif

@@ -55,7 +55,7 @@
 
 
 #include <klib.h>
-#include <3rdparty/lwext4/include/ext4_types.h>
+#include <ext4_types.h>
 
 /**@brief   Mount point OS dependent lock*/
 #define EXT4_MP_LOCK(_m)                                                       \

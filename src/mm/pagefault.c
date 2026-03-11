@@ -392,12 +392,12 @@ static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
 	unsigned error = frame->error_code;
-	unsigned oldint;
+	int oldint;
 
 	/* 
 	 * Save old interrupt state first.
 	 */
-	oldint = int_intr_disable();
+	oldint = sched_disable();
 
 	/*
 	 * cr2 tells you which page is invalid.
@@ -431,7 +431,8 @@ HLT:
 	DIE();
 
 Done:
-	if (oldint) {
-		int_intr_enable();
-	}
+	if (oldint)
+		sched_enable();
+	else
+		sched_disable();
 }

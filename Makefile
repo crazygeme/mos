@@ -47,7 +47,7 @@ $(DST)/obj:
 	@-mkdir -p $(DST)/obj
 
 $(DST)/lwext4/libext4.a: | $(DST)
-	@+$(MAKE) -C 3rdparty
+	@+$(MAKE) -C third_party
 
 clean:
 	@-rm -rf $(DST)

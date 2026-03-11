@@ -15,6 +15,9 @@
             "stopAtConnect": true,
             "linux": {
                 "MIMode": "gdb"
+            },
+            "osx": {
+                "MIMode": "gdb"
             }
         }
     ]

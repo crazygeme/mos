@@ -53,7 +53,6 @@ void int_register(int vec_no, int_callback fn, int is_trap, int dpl)
 void int_unregister(int vec_no)
 {
 	if (vec_no < 0 || vec_no >= IDT_SIZE) {
-		printf("fatal error: vec number %x invalid!!\n", vec_no);
 		return;
 	}
 
@@ -83,9 +82,11 @@ void intr_handler(intr_frame *frame)
 	int_callback fn = 0;
 
 	if (frame->vec_no < 0 || frame->vec_no >= IDT_SIZE) {
-		printf("fatal error: vec number %x invalid!!\n", frame->vec_no);
 		return;
 	}
+
+	// ack interrupt
+	ENABLE_INTR();
 
 	fn = in_callbacks[frame->vec_no];
 	if (fn)

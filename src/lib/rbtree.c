@@ -20,7 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 linux/lib/rbtree.c
 */
 
-#include "list.h"
+#include <list.h>
 #include <rbtree.h>
 
 static void __rb_rotate_left(struct rb_node *node, struct rb_root *root)

@@ -1,4 +1,4 @@
-#include "time.h"
+#include <time.h>
 #include <macro.h>
 #include <lock.h>
 #include <ps.h>
@@ -27,7 +27,7 @@ void _spinlock_lock(spinlock_t *lock, const char *func)
 	if (!lock->inited)
 		return;
 
-	disable_scheduler();
+	lock->old_int = sched_disable();
 
 	/* Fast path: optimistically try once before entering the retry loop.
 	 * On an uncontended lock this avoids the PAUSE overhead entirely. */
@@ -55,7 +55,10 @@ void spinlock_unlock(spinlock_t *lock)
 	 * On x86 TSO this compiles to a plain store + compiler barrier. */
 	__sync_lock_release(&lock->lock);
 
-	enable_scheduler();
+	if (lock->old_int)
+		sched_enable();
+	else
+		sched_disable();
 }
 
 /* ===========================================================================

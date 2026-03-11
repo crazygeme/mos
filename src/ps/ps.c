@@ -9,7 +9,7 @@
  *   - User address-space enumeration and cleanup
  */
 
-#include "ps.h"
+#include <ps.h>
 #include <cpu.h>
 #include <mount.h>
 #include <mmap.h>
@@ -147,7 +147,6 @@ static void ps_run()
 	int_intr_enable();
 	_ps_enabled = 1;
 	task->status = ps_running;
-	task->is_switching = 0;
 	fn = task->fn;
 	if (fn)
 		fn(0);
@@ -250,7 +249,6 @@ unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
 	task->timeout = 0;
 	task->psid = ps_id_gen();
 	task->parent = task;
-	task->is_switching = 0;
 	task->fds = vm_alloc(1);
 	task->cwd = name_get();
 	memset(task->fds, 0, PAGE_SIZE);

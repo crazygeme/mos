@@ -1,6 +1,5 @@
-#include <fs/mount.h>
-#include <fs/super/debugfs.h>
 #include <ps/ps.h>
+#include "generic.h"
 
 static void fill(void *buf, size_t size)
 {
@@ -14,9 +13,4 @@ static void fill(void *buf, size_t size)
 		cur->psid, cur->command, cur->cwd);
 }
 
-static void debugfs_ps_init(super_block *mp)
-{
-	vfs_create_file(mp, "/proc/self", fill);
-}
-
-DEBUGFS_INIT(debugfs_ps_init);
+DEFINE_DEBUG_FS_FILE(psinfo, fill);

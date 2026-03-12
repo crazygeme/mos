@@ -1,18 +1,8 @@
-#ifndef _FS_SUPER_DEBUGFS_H
-#define _FS_SUPER_DEBUGFS_H
-
+#ifndef _FS_MOUNT_PROC_H
+#define _FS_MOUNT_PROC_H
 #include <fs/mount.h>
 
 #define DBGFS_INODE 0x80
-
-typedef struct _debug_inode {
-	void (*fill)(void *buf, size_t size);
-	void *buf;
-	unsigned len;
-	unsigned offset;
-} debug_inode;
-
-file *debugfs_open(debug_inode *inode);
 
 /*
  * DEBUGFS_INIT(fn) registers a void (*)(super_block *) function to be called

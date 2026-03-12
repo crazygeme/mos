@@ -417,7 +417,7 @@ static int sys_read(int fd, char *buf, unsigned len)
 	if (cur->fds[fd].used == 0)
 		return -1;
 
-	if (S_ISDIR(cur->fds[fd].fp->f_mode))
+	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
 		return -1;
 
 	if (TestControl.verbos)
@@ -465,7 +465,7 @@ static int sys_write(int fd, char *buf, unsigned len)
 		return -1;
 	}
 
-	if (S_ISDIR(cur->fds[fd].fp->f_mode)) {
+	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode)) {
 		if (TestControl.verbos) {
 			klog_printf("ret -1\n");
 		}
@@ -910,9 +910,9 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		return -22;
 	}
 
-	if (!fp->f_op || !fp->f_op->read)
+	if (!fp->f_fop || !fp->f_fop->read)
 		return -1;
-	ssize_t n = fp->f_op->read(fp, dirp, count, &fp->f_pos);
+	ssize_t n = fp->f_fop->read(fp, dirp, count, &fp->f_pos);
 	if (n < 0)
 		return -1;
 	retcount = (size_t)n;

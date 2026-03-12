@@ -1,8 +1,6 @@
-#include <fs/mount.h>
-#include <fs/super/debugfs.h>
-#include <lib/klib.h>
+#include "config.h"
 #include <hw/cpu.h>
-#include <hw/time.h>
+#include "generic.h"
 
 /* Execute the CPUID instruction. */
 static void do_cpuid(unsigned leaf, unsigned *eax, unsigned *ebx, unsigned *ecx,
@@ -178,9 +176,4 @@ static void fill(void *buf, size_t size)
 	}
 }
 
-static void debugfs_cpu_init(super_block *mp)
-{
-	vfs_create_file(mp, "/proc/cpuinfo", fill);
-}
-
-DEBUGFS_INIT(debugfs_cpu_init);
+DEFINE_DEBUG_FS_FILE(cpuinfo, fill);

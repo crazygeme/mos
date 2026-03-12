@@ -24,12 +24,6 @@ static ssize_t console_read(file *fp, void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-static int console_release(inode *node, file *fp)
-{
-	free(node);
-	return 0;
-}
-
 static loff_t console_llseek(file *fp, loff_t offset, int whence)
 {
 	switch (whence) {
@@ -61,7 +55,7 @@ static int console_poll(file *fp, unsigned type)
 static int console_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
-	s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
+	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
 	s->st_ctime = time_now_ms();
@@ -81,7 +75,6 @@ static const inode_operations console_iops = {
 };
 
 static const file_operations console_fops = {
-	.release = console_release,
 	.read = console_read,
 	.write = console_write,
 	.llseek = console_llseek,
@@ -89,17 +82,21 @@ static const file_operations console_fops = {
 	.ioctl = tty_ioctl,
 };
 
-static inode *console_get_root(super_block *sb)
+static file *console_open_root(super_block *sb)
 {
 	inode *node = calloc(1, sizeof(*node));
-	node->i_mode = S_IFCHR;
+	node->i_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR);
 	node->i_op = &console_iops;
-	node->i_fop = &console_fops;
-	return node;
+
+	file *fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &console_fops;
+	return fp;
 }
 
 static super_operations tty_sops = {
-	.get_root = console_get_root,
+	.open_root = console_open_root,
 };
 
 static void console_init(void)

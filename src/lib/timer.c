@@ -107,7 +107,7 @@ void do_timer_loop()
 
 void timer_init()
 {
-	control.timers = hash_create(timer_comp);
+	control.timers = hash_create(timer_comp, NULL);
 	mutex_init(&control.lock);
 	cond_init(&control.event, 0);
 }

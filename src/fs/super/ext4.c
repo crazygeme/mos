@@ -8,12 +8,13 @@
 unsigned fs_read_size = 0;
 unsigned fs_write_size = 0;
 
-static int ext4_file_release(inode *node, file *fp)
+static int ext4_file_release(file *fp)
 {
-	ext4_file *f = node->i_private;
+	ext4_file *f = fp->f_inode->i_private;
 	ext4_fclose(f);
 	free(f);
-	free(node);
+	free(fp->f_inode);
+	free(fp);
 	return 0;
 }
 
@@ -115,12 +116,13 @@ static const file_operations ext4_file_fops = {
 	.poll = ext4_file_poll,
 };
 
-static int ext4_dir_release(inode *node, file *fp)
+static int ext4_dir_release(file *fp)
 {
-	ext4_dir *dir = node->i_private;
+	ext4_dir *dir = fp->f_inode->i_private;
 	ext4_dir_close(dir);
 	free(dir);
-	free(node);
+	free(fp->f_inode);
+	free(fp);
 	return 0;
 }
 
@@ -213,12 +215,11 @@ static file *ext4_alloc_file(void *content)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_op = &ext4_file_iops;
-	node->i_fop = &ext4_file_fops;
 	node->i_private = content;
 
 	file *fp = calloc(1, sizeof(*fp));
+	fp->f_fop = &ext4_file_fops;
 	fp->f_inode = node;
-	fp->f_op = &ext4_file_fops;
 	fp->f_count = 1;
 	return fp;
 }
@@ -227,12 +228,11 @@ static file *ext4_alloc_dir(void *content)
 {
 	inode *node = calloc(1, sizeof(*node));
 	node->i_op = &ext4_dir_iops;
-	node->i_fop = &ext4_dir_fops;
 	node->i_private = content;
 
 	file *fp = calloc(1, sizeof(*fp));
+	fp->f_fop = &ext4_dir_fops;
 	fp->f_inode = node;
-	fp->f_op = &ext4_dir_fops;
 	fp->f_count = 1;
 	return fp;
 }
@@ -312,7 +312,6 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 		if (ret != EOK)
 			goto fail;
 		fp = ext4_alloc_dir(dir);
-		fp->f_mode = s.st_mode;
 		fp->f_inode->i_mode = s.st_mode;
 		fp->f_inode->i_ino = s.st_ino;
 		fp->f_inode->i_size = s.st_size;
@@ -384,7 +383,6 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 		fp = ext4_alloc_file(f);
 	}
 
-	fp->f_mode = s.st_mode;
 	fp->f_inode->i_mode = s.st_mode;
 	fp->f_inode->i_ino = s.st_ino;
 	fp->f_inode->i_size = s.st_size;

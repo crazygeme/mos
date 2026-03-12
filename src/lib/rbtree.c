@@ -461,7 +461,7 @@ static INLINE int hash_get_all_node(struct rb_root *root, list_entry *head)
 	return 1;
 }
 
-hash_table *hash_create(hash_comp_fn comp)
+hash_table *hash_create(hash_comp_fn comp, hash_evict_fn evict)
 {
 	hash_table *table = kmalloc(sizeof(*table));
 	table->root.rb_node = 0;
@@ -470,13 +470,15 @@ hash_table *hash_create(hash_comp_fn comp)
 	else
 		table->comp = hash_binary_comp;
 
+	table->evict = evict;
+
 	spinlock_init(&table->lock);
 	table->size = 0;
 
 	return table;
 }
 
-int hash_destroy(hash_table *table, hash_invalid_fn fn)
+int hash_destroy(hash_table *table)
 {
 	int ret = 0;
 	list_entry tmp;
@@ -499,8 +501,8 @@ int hash_destroy(hash_table *table, hash_invalid_fn fn)
 	while (node != &tmp) {
 		key_value_pair *pair = container_of(node, key_value_pair, list);
 		node = node->next;
-		if (fn)
-			fn(pair);
+		if (table->evict)
+			table->evict(pair);
 
 		kfree(pair);
 	}
@@ -558,8 +560,12 @@ int hash_insert(hash_table *table, void *key, void *val)
 	spinlock_lock(&table->lock);
 	ret = __hash_insert(table, key, &pair->node);
 	if (ret) {
-		kfree(pair);
 		spinlock_unlock(&table->lock);
+
+		if (table->evict)
+			table->evict(pair);
+
+		kfree(pair);
 		return 0;
 	}
 
@@ -581,6 +587,9 @@ int hash_remove(hash_table *table, void *key)
 	RB_CLEAR_NODE(&pair->node);
 	table->size--;
 	spinlock_unlock(&table->lock);
+	if (table->evict)
+		table->evict(pair);
+
 	kfree(pair);
 
 	return 1;
@@ -595,6 +604,9 @@ int hash_remove_at(hash_table *table, key_value_pair *pair)
 	rb_erase(&pair->node, &table->root);
 	table->size--;
 	spinlock_unlock(&table->lock);
+	if (table->evict)
+		table->evict(pair);
+
 	kfree(pair);
 }
 

@@ -30,12 +30,12 @@ $(DST)/$(TARGET): $(OBJS) $(LIBS) | $(DST)
 $(DST)/obj/%.c.o: %.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CC) $(CFLAGS) -MMD -c $< -o $@
+	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(DST)/obj/%.s.o: %.S $(SCRIPTS)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CC) $(CFLAGS) -MMD -c $< -o $@
+	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(DST):
 	@-mkdir -p $(DST)

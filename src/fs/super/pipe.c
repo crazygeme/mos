@@ -11,15 +11,16 @@ typedef struct _pipe_inode {
 	int readonly;
 } pipe_inode;
 
-static int pipe_release(inode *node, file *fp)
+static int pipe_release(file *fp)
 {
-	pipe_inode *n = node->i_private;
+	pipe_inode *n = fp->f_inode->i_private;
 	if (!n->readonly)
 		cyb_writer_close(n->buf);
 	else
 		cyb_reader_close(n->buf);
 	free(n);
-	free(node);
+	free(fp->f_inode);
+	free(fp);
 	return 0;
 }
 
@@ -79,7 +80,7 @@ static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 static int pipe_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
-	s->st_mode = S_IFIFO | S_IRUSR | S_IWUSR;
+	s->st_mode = node->i_mode;
 	s->st_size = 0;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
@@ -119,29 +120,27 @@ int pipe_open(file **pipes)
 	rn->readonly = 1;
 
 	inode *ri = calloc(1, sizeof(*ri));
-	ri->i_mode = S_IFIFO;
+	ri->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
 	ri->i_op = &pipe_iops;
-	ri->i_fop = &pipe_read_fops;
 	ri->i_private = rn;
 
 	file *fp_read = calloc(1, sizeof(*fp_read));
 	fp_read->f_inode = ri;
-	fp_read->f_op = &pipe_read_fops;
 	fp_read->f_count = 1;
+	fp_read->f_fop = &pipe_read_fops;
 
 	pipe_inode *wn = calloc(1, sizeof(*wn));
 	wn->buf = buf;
 	wn->readonly = 0;
 
 	inode *wi = calloc(1, sizeof(*wi));
-	wi->i_mode = S_IFIFO;
+	wi->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
 	wi->i_op = &pipe_iops;
-	wi->i_fop = &pipe_write_fops;
 	wi->i_private = wn;
 
 	file *fp_write = calloc(1, sizeof(*fp_write));
+	fp_write->f_fop = &pipe_write_fops;
 	fp_write->f_inode = wi;
-	fp_write->f_op = &pipe_write_fops;
 	fp_write->f_count = 1;
 
 	pipes[0] = fp_read;

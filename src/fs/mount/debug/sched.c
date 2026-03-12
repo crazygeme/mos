@@ -1,6 +1,4 @@
-#include <fs/mount.h>
-#include <fs/super/debugfs.h>
-#include <lib/timer.h>
+#include "generic.h"
 
 extern unsigned long long task_schedule_time;
 extern unsigned task_schedule_count;
@@ -38,9 +36,4 @@ static void fill(void *buf, size_t size)
 	select_loop_times = 0;
 }
 
-static void debugfs_sched_init(super_block *mp)
-{
-	vfs_create_file(mp, "/proc/sched", fill);
-}
-
-DEBUGFS_INIT(debugfs_sched_init);
+DEFINE_DEBUG_FS_FILE(sched, fill);

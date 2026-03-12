@@ -1,8 +1,5 @@
-#include <fs/mount.h>
-#include <fs/super/debugfs.h>
 #include <mm/mm.h>
-#include <lib/klib.h>
-#include <lib/timer.h>
+#include "generic.h"
 
 extern unsigned page_fault_cow;
 extern unsigned page_fault_invalid;
@@ -116,9 +113,4 @@ static void fill(void *buf, size_t size)
 	page_fault_file_cache_hit = 0;
 }
 
-static void debugfs_mm_init(super_block *mp)
-{
-	vfs_create_file(mp, "/proc/meminfo", fill);
-}
-
-DEBUGFS_INIT(debugfs_mm_init);
+DEFINE_DEBUG_FS_FILE(meminfo, fill);

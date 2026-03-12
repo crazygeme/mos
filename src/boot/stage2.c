@@ -26,11 +26,11 @@ static void timer_process(void *param);
 static void idle_process(void *param);
 static void parse_kernel_cmdline();
 
-/* -----------------------------------------------------------------------
+/*
  * Kernel init-call table
  * Each entry is placed in ".kinit.<index>" by KERNEL_INIT(); the linker
  * script collects them in order between __kinit_start and __kinit_end.
- * ----------------------------------------------------------------------- */
+ */
 extern kinit_fn_t __kinit_start[];
 extern kinit_fn_t __kinit_end[];
 
@@ -81,9 +81,9 @@ void kmain_startup()
 	printk("Init page fault\n");
 	pf_init();
 
-	/* ---------------------------------------------------------------
+	/*
 	 * SMP: discover CPUs via ACPI, init LAPIC/IOAPIC, start APs.
-	 * --------------------------------------------------------------- */
+	 */
 	printk("Init ACPI\n");
 	if (acpi_parse(&g_acpi_info) == 0 && g_acpi_info.ncpus > 1) {
 		unsigned ioapic_phys = g_acpi_info.ioapic_phys ?

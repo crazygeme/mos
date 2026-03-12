@@ -3,9 +3,9 @@
 
 #include <config.h>
 
-/* -----------------------------------------------------------------------
+/*
  * ACPI table structures (packed, as they appear in firmware memory).
- * ----------------------------------------------------------------------- */
+ */
 
 /* RSDP (Root System Description Pointer) */
 typedef struct __attribute__((packed)) {
@@ -78,9 +78,9 @@ typedef struct __attribute__((packed)) {
 	unsigned short flags;
 } acpi_madt_iso_t;
 
-/* -----------------------------------------------------------------------
+/*
  * Result structure filled by acpi_parse()
- * ----------------------------------------------------------------------- */
+ */
 typedef struct {
 	unsigned char apic_ids[MAX_CPUS]; /* LAPIC IDs of found CPUs */
 	int ncpus; /* number of CPUs found */

@@ -31,17 +31,17 @@
 /* Physical address of the AP params page. */
 #define PARAMS_BASE      AP_PARAMS_PHYS
 
-/* -----------------------------------------------------------------------
+/*
  * Temp GDT selector layout mirrors the BSP GDT (stage1.c setup_gdt):
  *   KERNEL_DATA_SELECTOR = 0x08  (entry 1, data read/write)
  *   KERNEL_CODE_SELECTOR = 0x10  (entry 2, code execute/read)
- * ----------------------------------------------------------------------- */
+ */
 #define TMP_GDT_CODE_SEL  0x10   /* code descriptor at index 2 */
 #define TMP_GDT_DATA_SEL  0x08   /* data descriptor at index 1 */
 
-/* -----------------------------------------------------------------------
+/*
  * 16-bit real-mode entry — executed at physical TRAMPOLINE_BASE
- * ----------------------------------------------------------------------- */
+ */
 .section .text.trampoline, "ax"
 .code16
 
@@ -78,9 +78,9 @@ ap_trampoline_start:
         .long   TRAMPOLINE_BASE + (ap_pm32 - ap_trampoline_start)
         .word   TMP_GDT_CODE_SEL
 
-/* -----------------------------------------------------------------------
+/*
  * 32-bit protected mode — paging NOT yet enabled
- * ----------------------------------------------------------------------- */
+ */
 .code32
 .align  4
 ap_pm32:
@@ -117,9 +117,9 @@ ap_pm32:
          */
         ljmp    $KERNEL_CODE_SELECTOR, $ap_trampoline_vmode
 
-/* -----------------------------------------------------------------------
+/*
  * High-virtual-mode continuation — paging enabled, running at kernel VA.
- * ----------------------------------------------------------------------- */
+ */
 .global ap_trampoline_vmode
 ap_trampoline_vmode:
         /* Set up the per-AP kernel stack FIRST — ESP is undefined at this
@@ -170,12 +170,12 @@ ap_trampoline_vmode:
 1:      hlt
         jmp     1b
 
-/* -----------------------------------------------------------------------
+/*
  * Temporary GDT (3 entries; same selector layout as the BSP GDT)
  *   [0] null
  *   [1] kernel data  (sel 0x08) — flat 32-bit R/W
  *   [2] kernel code  (sel 0x10) — flat 32-bit R/X
- * ----------------------------------------------------------------------- */
+ */
 .align  4
 ap_tmp_gdt:
         .quad   0x0000000000000000      /* 0x00: null */

@@ -21,16 +21,16 @@
 #include <macro.h>
 #include <config.h>
 
-/* -----------------------------------------------------------------------
+/* 
  * Global per-CPU state
- * ----------------------------------------------------------------------- */
+ */
 
 cpu_struct cpus[MAX_CPUS];
 volatile int ncpus = 1; /* BSP is CPU 0, counted at boot */
 
-/* -----------------------------------------------------------------------
+/* 
  * AP trampoline and params layout
- * ----------------------------------------------------------------------- */
+ */
 
 /* Symbols exported from ap_trampoline.S */
 extern char ap_trampoline_start[];
@@ -54,9 +54,9 @@ typedef struct __attribute__((packed)) {
 static unsigned char ap_stacks[MAX_CPUS][PAGE_SIZE]
 	__attribute__((aligned(PAGE_SIZE)));
 
-/* -----------------------------------------------------------------------
+/* 
  * cpu_current / cpu_current_id
- * ----------------------------------------------------------------------- */
+ */
 
 cpu_struct *cpu_current(void)
 {
@@ -81,9 +81,9 @@ int cpu_id(int index)
 	return cpus[index].cpu_id;
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * TLB shootdown IPI
- * ----------------------------------------------------------------------- */
+ */
 
 void smp_tlb_shootdown(void)
 {
@@ -96,9 +96,9 @@ void smp_tlb_shootdown(void)
 	}
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * Per-CPU TSS management
- * ----------------------------------------------------------------------- */
+ */
 
 /* Update the GDT entry for cpu_id's TSS and load the TR register. */
 static void cpu_load_tss(int cpu_id, tss_struct *tss)
@@ -113,9 +113,9 @@ static void cpu_load_tss(int cpu_id, tss_struct *tss)
 	SET_TSS(sel);
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * AP C-level initialisation (runs on each AP after paging is on)
- * ----------------------------------------------------------------------- */
+ */
 
 void ap_init_c(int cpu_id)
 {
@@ -144,9 +144,9 @@ void ap_init_c(int cpu_id)
 	ps_kickoff_ap();
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * BSP: bring up all Application Processors
- * ----------------------------------------------------------------------- */
+ */
 
 /* Busy-wait for approximately @ms milliseconds using a simple loop.
  * Calibration not needed for the coarse delays used in APIC start-up. */
@@ -247,9 +247,9 @@ void smp_start_aps(void)
 	printk("smp: %d CPU(s) online\n", ncpus);
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * BSP per-CPU init (called once for CPU 0)
- * ----------------------------------------------------------------------- */
+ */
 
 void cpu_init_bsp(void)
 {

@@ -26,14 +26,14 @@ unsigned long long page_fault_file_spent = 0;
 unsigned long long page_fault_file_search_spent = 0;
 unsigned long long page_fault_perm_spent = 0;
 
-/* -------------------------------------------------------------------------
+/*
  * LRU mmap cache
  *
  * Hash table for O(1) lookup keyed by (ino, offset).
  * Doubly-linked LRU list: head = most recently used, tail = least recently used.
  * On hit:  move entry to list head.
  * On miss + full: evict the tail (LRU) entry, insert new entry at head.
- * ------------------------------------------------------------------------- */
+ */
 
 typedef struct _mmap_cache_key {
 	unsigned ino;
@@ -400,7 +400,7 @@ static void pf_process(intr_frame *frame)
 	unsigned error = frame->error_code;
 	int oldint;
 
-	/* 
+	/*
 	 * Save old interrupt state first.
 	 */
 	oldint = sched_disable();

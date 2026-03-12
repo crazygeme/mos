@@ -15,13 +15,13 @@ unsigned phymm_begin = 0;
 unsigned pgc_count = 0;
 unsigned pgc_top = 0;
 
-/* ---------------------------------------------------------------------------
+/*
  * Page table cache
  *
  * The region PAGE_TABLE_CACHE_BEGIN..PAGE_TABLE_CACHE_END (8 MB – 12 MB) is
  * statically reserved for page tables.  A simple stack-based cache dishes out
  * and reclaims 4 KB entries from that region.
- * ---------------------------------------------------------------------------*/
+ */
 
 /* Live entry counts per cached page table (used to reclaim empty tables) */
 short pgc_entry_count[1024];
@@ -80,9 +80,9 @@ void mm_free_page_table(unsigned int vir)
 	page_table_cache_free(&page_table_cache, vir);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Locks and initialisation
- * ---------------------------------------------------------------------------*/
+ */
 
 static spinlock_t mm_lock;
 static spinlock_t path_lock;
@@ -110,9 +110,9 @@ void mm_init_page_table_cache()
 	list_init(&name_cache_head);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Internal: page directory / page table helpers
- * ---------------------------------------------------------------------------*/
+ */
 
 unsigned mm_get_pagedir()
 {
@@ -200,9 +200,9 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 	}
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Map management
- * ---------------------------------------------------------------------------*/
+ */
 
 /*
  * Add a direct (identity-offset) mapping for a kernel virtual address.
@@ -395,9 +395,9 @@ unsigned mm_get_attached_page_index(unsigned int vir)
 	return (*info.entry & PAGE_SIZE_MASK) / PAGE_SIZE;
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Virtual memory allocator (kernel heap)
- * ---------------------------------------------------------------------------*/
+ */
 
 /* Allocate @page_count contiguous kernel pages; returns virtual base address */
 unsigned int vm_alloc(int page_count)
@@ -444,12 +444,12 @@ unsigned vm_get_usr_zone(unsigned page_count)
 	return vm_disc_map(cur->user.vm, page_count * PAGE_SIZE);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Name / path buffer cache
  *
  * Caches MAX_PATH-sized buffers to avoid repeated vm_alloc/vm_free calls for
  * temporary pathname storage.
- * ---------------------------------------------------------------------------*/
+ */
 
 /* Acquire a pathname buffer (allocates a new one if the cache is empty) */
 void *name_get()

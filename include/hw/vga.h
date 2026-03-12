@@ -6,7 +6,7 @@
  *   This file is part of the Linux kernel, and is made available under
  *   the terms of the GNU General Public License version 2.
  *
- * ----------------------------------------------------------------------- */
+ */
 
 /**
  * Header file for the real-mode video probing code

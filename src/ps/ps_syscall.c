@@ -33,9 +33,9 @@
 extern void ret_from_syscall();
 extern short pgc_entry_count[1024];
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — file-descriptor duplication
- * ------------------------------------------------------------------------- */
+ */
 
 static void ps_dup_fds(task_struct *cur, task_struct *task)
 {
@@ -51,9 +51,9 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 	mutex_unlock(&cur->fd_lock);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — COW user address-space duplication
- * ------------------------------------------------------------------------- */
+ */
 
 /* Map one user page from the parent into the child using COW:
  * - mark parent's page read-only so a write triggers a fault
@@ -109,9 +109,9 @@ static void ps_dup_user_maps(task_struct *cur, task_struct *task)
 	ps_enum_user_map(cur, ps_enum_for_dup, task);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — child reaping
- * ------------------------------------------------------------------------- */
+ */
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
@@ -140,9 +140,9 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	vm_free(task, 1);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — system shutdown
- * ------------------------------------------------------------------------- */
+ */
 
 static void close_fp_callback(task_struct *task)
 {
@@ -164,9 +164,9 @@ static void system_down()
 	hdd_close();
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — fork
- * ------------------------------------------------------------------------- */
+ */
 
 /* Core fork implementation. Creates a copy of the current task with COW
  * user address space. If FORK_FLAG_VFORK, the parent blocks until the
@@ -246,9 +246,9 @@ int sys_vfork()
 	return do_fork(FORK_FLAG_VFORK);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — exit
- * ------------------------------------------------------------------------- */
+ */
 
 int sys_exit(unsigned status)
 {
@@ -291,9 +291,9 @@ int sys_exit(unsigned status)
 	return 0;
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — waitpid
- * ------------------------------------------------------------------------- */
+ */
 
 /*
  * Wait for a child to finish, optionally matching a specific pid.
@@ -379,9 +379,9 @@ int sys_waitpid(unsigned pid, int *status, int options)
 	return do_waitpid(pid, status, options, NULL);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — misc syscalls
- * ------------------------------------------------------------------------- */
+ */
 
 char *sys_getcwd(char *buf, unsigned size)
 {
@@ -390,9 +390,9 @@ char *sys_getcwd(char *buf, unsigned size)
 	return buf;
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — shutdown
- * ------------------------------------------------------------------------- */
+ */
 
 void reboot()
 {

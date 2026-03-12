@@ -18,9 +18,9 @@
 #include <lib/port.h>
 #include <config.h>
 
-/* -----------------------------------------------------------------------
+/*
  * LAPIC MMIO accessors
- * ----------------------------------------------------------------------- */
+ */
 
 /* LAPIC is mapped at virtual == physical (both > 0xFEE00000). */
 static volatile unsigned *lapic_base = (volatile unsigned *)LAPIC_BASE_PHY;
@@ -37,9 +37,9 @@ static inline void lapic_write(unsigned reg, unsigned val)
 	(void)lapic_base[LAPIC_SVR / 4];
 }
 
-/* -----------------------------------------------------------------------
+/*
  * Shared init sequence (BSP + AP)
- * ----------------------------------------------------------------------- */
+ */
 
 /*
  * Virtual-wire mode: the BSP's LAPIC passes the 8259A PIC INTR signal
@@ -87,9 +87,9 @@ static void lapic_init_common(int is_bsp)
 	lapic_write(LAPIC_SVR, LAPIC_SVR_ENABLE | IPI_VECTOR_SPURIOUS);
 }
 
-/* -----------------------------------------------------------------------
+/*
  * BSP initialisation
- * ----------------------------------------------------------------------- */
+ */
 
 void apic_init_bsp(void)
 {
@@ -107,18 +107,18 @@ void apic_init_bsp(void)
 	       apic_id());
 }
 
-/* -----------------------------------------------------------------------
+/*
  * AP initialisation (called from ap_init_c on each AP)
- * ----------------------------------------------------------------------- */
+ */
 
 void apic_init_ap(void)
 {
 	lapic_init_common(0 /* is_bsp */);
 }
 
-/* -----------------------------------------------------------------------
+/*
  * EOI and ID
- * ----------------------------------------------------------------------- */
+ */
 
 void apic_eoi(void)
 {
@@ -130,9 +130,9 @@ unsigned apic_id(void)
 	return (lapic_read(LAPIC_ID) >> 24) & 0xFF;
 }
 
-/* -----------------------------------------------------------------------
+/*
  * IPI helpers
- * ----------------------------------------------------------------------- */
+ */
 
 /* Wait until the ICR delivery status bit clears. */
 static void apic_wait_ipi_idle(void)
@@ -178,9 +178,9 @@ void apic_send_sipi(unsigned dest_apic_id, unsigned start_page)
 					  ICR_DEST_FIELD | (start_page & 0xFF));
 }
 
-/* -----------------------------------------------------------------------
+/*
  * I/O APIC
- * ----------------------------------------------------------------------- */
+ */
 
 static volatile unsigned *ioapic_base;
 

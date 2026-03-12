@@ -5,9 +5,9 @@
 #include <lib/klib.h>
 #include <macro.h>
 
-/* ---------------------------------------------------------------------------
+/*
  * Global state
- * ---------------------------------------------------------------------------*/
+ */
 
 unsigned phymm_used = 0;
 
@@ -20,9 +20,9 @@ phymm_page *phymm_pages;
 static unsigned buddy_lists[MAX_BUDDY_ORDER + 1];
 static spinlock_t buddy_lock;
 
-/* ---------------------------------------------------------------------------
+/*
  * Internal helpers
- * ---------------------------------------------------------------------------*/
+ * */
 
 static unsigned ceil_log2(unsigned n)
 {
@@ -83,9 +83,9 @@ static int buddy_is_free_at_order(unsigned idx, unsigned order)
 		phymm_pages[idx].order == (unsigned char)order);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Core buddy allocator
- * ---------------------------------------------------------------------------*/
+ */
 
 /*
  * Allocate a block of exactly 2^@order pages.
@@ -151,9 +151,9 @@ static void buddy_free_block(unsigned idx, unsigned order)
 	buddy_push(idx, order);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Public allocation / free API
- * ---------------------------------------------------------------------------*/
+ */
 
 unsigned phymm_alloc_kernel(unsigned page_count)
 {
@@ -205,9 +205,9 @@ void phymm_free_user(unsigned page_index)
 	spinlock_unlock(&buddy_lock);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Reference counting (COW / sharing)
- * ---------------------------------------------------------------------------*/
+ */
 
 unsigned phymm_reference_page(unsigned page_index)
 {
@@ -239,9 +239,9 @@ int phymm_is_used(unsigned page_index)
 					  0) > 0);
 }
 
-/* ---------------------------------------------------------------------------
+/*
  * Boot-time setup
- * ---------------------------------------------------------------------------*/
+ */
 
 unsigned phymm_get_mgmt_pages(unsigned highest_mm_addr)
 {

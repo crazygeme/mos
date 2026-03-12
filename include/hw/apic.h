@@ -1,10 +1,10 @@
 #ifndef _HW_APIC_H_
 #define _HW_APIC_H_
 
-/* -----------------------------------------------------------------------
+/*
  * Local APIC (LAPIC) MMIO registers (offset from LAPIC base virtual addr).
  * Default physical base: 0xFEE00000.
- * ----------------------------------------------------------------------- */
+ */
 #define LAPIC_BASE_PHY 0xFEE00000u
 
 #define LAPIC_ID 0x020 /* Local APIC ID (read) */
@@ -51,10 +51,10 @@
 /* ICR status */
 #define ICR_PENDING 0x01000 /* delivery status = send pending */
 
-/* -----------------------------------------------------------------------
+/*
  * I/O APIC MMIO
  * Default physical base: 0xFEC00000.
- * ----------------------------------------------------------------------- */
+ */
 #define IOAPIC_BASE_PHY 0xFEC00000u
 
 #define IOAPIC_REGSEL 0x00 /* Register Select */
@@ -72,9 +72,9 @@
 #define IOREDTBL_LOGICAL 0x00800 /* logical destination */
 #define IOREDTBL_DELIV_FIXED 0x00000 /* fixed delivery */
 
-/* -----------------------------------------------------------------------
+/*
  * API
- * ----------------------------------------------------------------------- */
+ */
 
 /* BSP: initialise the local APIC (disable 8259, enable LAPIC, set up SVR).
  * Must be called with paging enabled and LAPIC MMIO mapped. */

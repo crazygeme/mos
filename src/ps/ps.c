@@ -26,9 +26,9 @@
 
 #include "ps_internal.h"
 
-/* -------------------------------------------------------------------------
+/*
  * Global variables
- * ------------------------------------------------------------------------- */
+ */
 
 ps_control control;
 
@@ -51,9 +51,9 @@ unsigned task_schedule_count = 0;
 static tss_struct *tss_address_storage = 0;
 tss_struct *tss_address = 0; /* alias used by reset_tss and ps_sched.c */
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — manager queue
- * ------------------------------------------------------------------------- */
+ */
 void ps_add_mgr_unsafe(task_struct *task)
 {
 	struct rb_root *root = &control.mgr_queue;
@@ -99,9 +99,9 @@ void ps_remove_mgr(task_struct *task)
 	spinlock_unlock(&ps_lock);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — TSS and context-switch support
- * ------------------------------------------------------------------------- */
+ */
 
 /* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
 void reset_tss(task_struct *task)
@@ -116,9 +116,9 @@ void reset_tss(task_struct *task)
 	int_update_tss((unsigned int)tss_address);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — task setup
- * ------------------------------------------------------------------------- */
+ */
 
 static void ps_setup_task_frame(task_struct *task, unsigned data_seg,
 				unsigned eax, unsigned ebx, unsigned ecx,
@@ -166,27 +166,27 @@ static void ap_idle_stub(void *param)
 	}
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — user address-space enumeration
- * ------------------------------------------------------------------------- */
+ */
 
 static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)
 {
 	mm_del_dynamic_map(vir);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Private — process ID
- * ------------------------------------------------------------------------- */
+ */
 
 unsigned ps_id_gen()
 {
 	return __sync_fetch_and_add(&last_gen_pid, 1);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — initialisation
- * ------------------------------------------------------------------------- */
+ */
 
 void ps_init()
 {
@@ -215,9 +215,9 @@ int ps_enabled()
 	return _ps_enabled;
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — task creation
- * ------------------------------------------------------------------------- */
+ */
 
 /* Allocate and initialise a new kernel task. Returns the new psid, or
  * 0xffffffff on failure. The task is immediately placed in the ready queue. */
@@ -269,9 +269,9 @@ unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
 	return task->psid;
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — current task and bootstrap
- * ------------------------------------------------------------------------- */
+ */
 
 /* Derive the current task_struct from the stack pointer.
  * Each task occupies KERNEL_TASK_SIZE pages aligned to PAGE_SIZE. */
@@ -303,9 +303,9 @@ void ps_kickoff_ap(void)
 	task_sched();
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — TSS management
- * ------------------------------------------------------------------------- */
+ */
 
 void ps_update_tss(unsigned int esp0)
 {
@@ -314,9 +314,9 @@ void ps_update_tss(unsigned int esp0)
 	reset_tss(task);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — process lookup and enumeration
- * ------------------------------------------------------------------------- */
+ */
 
 /* RB-tree search of mgr_queue by psid. Returns NULL if not found. */
 task_struct *ps_find_process(unsigned psid)
@@ -355,9 +355,9 @@ void ps_enum_all(ps_enum_callback callback)
 	}
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — user address-space management
- * ------------------------------------------------------------------------- */
+ */
 
 /* Walk every mapped user page and invoke fn(aux, vir, phy) for each.
  * Only covers the user portion (indices 0..KERNEL_PAGE_DIR_OFFSET-1). */

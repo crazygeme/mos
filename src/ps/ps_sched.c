@@ -19,9 +19,9 @@
 
 #include "ps_internal.h"
 
-/* -------------------------------------------------------------------------
+/*
  * Static globals
- * ------------------------------------------------------------------------- */
+ */
 
 /* Monotonically increasing tick; lower sched_seq = older = runs first. */
 static unsigned long sched_clock = 0;
@@ -30,9 +30,9 @@ static unsigned long sched_clock = 0;
 static unsigned long long sched_begin = 0;
 static unsigned long long sched_end = 0;
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — MPRQ algorithm
- * ------------------------------------------------------------------------- */
+ */
 
 /* Return the first runnable task from the given RB-tree.
  * Skips sleeping (timeout in the future) and dying tasks.
@@ -73,9 +73,9 @@ static task_struct *ps_get_next_task()
 	return task;
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Static helpers — instrumentation and context-switch support
- * ------------------------------------------------------------------------- */
+ */
 
 static void sched_cal_begin()
 {
@@ -108,9 +108,9 @@ static void ps_save_kernel_map(task_struct *task)
 	}
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — queue transitions
- * ------------------------------------------------------------------------- */
+ */
 
 /* Move task to the dying queue and notify its parent.
  * Status is set to ps_dying only after enqueueing so a preemption between the
@@ -178,9 +178,9 @@ void ps_put_to_ready_queue(task_struct *task)
 	spinlock_unlock(&ps_lock);
 }
 
-/* -------------------------------------------------------------------------
+/*
  * Public — context switch
- * ------------------------------------------------------------------------- */
+ */
 
 /*
  * _task_sched — perform a voluntary or preemptive context switch.

@@ -19,12 +19,6 @@ static ssize_t kb_read(file *fp, void *buf, size_t size, loff_t *pos)
 	return 1;
 }
 
-static int kb_release(inode *node, file *fp)
-{
-	free(node);
-	return 0;
-}
-
 static int kb_poll(file *fp, unsigned type)
 {
 	if (type == FS_POLL_WRITE || type == FS_POLL_EXCEPT)
@@ -35,7 +29,7 @@ static int kb_poll(file *fp, unsigned type)
 static int kb_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
-	s->st_mode = (S_IFCHR | S_IRUSR | S_IRGRP | S_IROTH);
+	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
 	s->st_ctime = time_now_ms();
@@ -54,23 +48,26 @@ static const inode_operations kb_iops = {
 };
 
 static const file_operations kb_fops = {
-	.release = kb_release,
 	.read = kb_read,
 	.poll = kb_poll,
 	.ioctl = tty_ioctl,
 };
 
-static inode *kb_get_root(super_block *sb)
+static file *kb_open_root(super_block *sb)
 {
 	inode *node = calloc(1, sizeof(*node));
-	node->i_mode = S_IFCHR;
+	node->i_mode = (S_IFCHR | S_IRUSR | S_IRGRP | S_IROTH);
 	node->i_op = &kb_iops;
-	node->i_fop = &kb_fops;
-	return node;
+
+	file *fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &kb_fops;
+	return fp;
 }
 
 static super_operations kb_sops = {
-	.get_root = kb_get_root,
+	.open_root = kb_open_root,
 };
 
 static void kbchar_init()

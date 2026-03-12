@@ -32,13 +32,13 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 		return -1;
 
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_op || !fp->f_op->read)
+	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -1;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
 
-	n = fp->f_op->read(fp, buf, len, &fp->f_pos);
+	n = fp->f_fop->read(fp, buf, len, &fp->f_pos);
 	return n < 0 ? -1 : (int)n;
 }
 
@@ -52,13 +52,13 @@ int fs_write(int fd, unsigned offset, char *buf, unsigned len)
 		return -1;
 
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_op || !fp->f_op->write)
+	if (!fp || !fp->f_fop || !fp->f_fop->write)
 		return -1;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
 
-	n = fp->f_op->write(fp, buf, len, &fp->f_pos);
+	n = fp->f_fop->write(fp, buf, len, &fp->f_pos);
 	return n < 0 ? -1 : (int)n;
 }
 
@@ -283,11 +283,15 @@ int fs_dup2(int fd, int newfd)
 int fs_put_file(file *f)
 {
 	if (__sync_add_and_fetch(&f->f_count, -1) == 0) {
-		if (f->f_op && f->f_op->release)
-			f->f_op->release(f->f_inode, f);
 		if (f->f_name)
 			free(f->f_name);
-		free(f);
+		if (f->f_fop && f->f_fop->release)
+			f->f_fop->release(f);
+		else {
+			if (f->f_inode)
+				free(f->f_inode);
+			free(f);
+		}
 	}
 	return 0;
 }
@@ -307,9 +311,9 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_op || !fp->f_op->llseek)
+	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
-	pos = fp->f_op->llseek(fp, offset, whence);
+	pos = fp->f_fop->llseek(fp, offset, whence);
 	if (pos >= 0) {
 		fp->f_pos = pos;
 		if (result)
@@ -334,10 +338,10 @@ int fs_seek(int fd, unsigned offset, unsigned whence)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_op || !fp->f_op->llseek)
+	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
 
-	pos = fp->f_op->llseek(fp, offset, whence);
+	pos = fp->f_fop->llseek(fp, offset, whence);
 	if (pos >= 0)
 		fp->f_pos = pos;
 done:
@@ -360,11 +364,11 @@ int fs_sync(int fd)
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 
-	if (!fp || !fp->f_inode || !fp->f_inode->i_fop)
+	if (!fp || !fp->f_fop)
 		goto done;
 
-	if (fp->f_inode->i_fop->flush)
-		ret = fp->f_inode->i_fop->flush(fp);
+	if (fp->f_fop->flush)
+		ret = fp->f_fop->flush(fp);
 	else
 		ret = 0;
 done:
@@ -385,10 +389,10 @@ int fs_select(int fd, unsigned type)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_op || !fp->f_op->poll)
+	if (!fp || !fp->f_fop || !fp->f_fop->poll)
 		goto done;
 
-	ret = fp->f_op->poll(fp, type);
+	ret = fp->f_fop->poll(fp, type);
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;
@@ -407,10 +411,10 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_op || !fp->f_op->ioctl)
+	if (!fp || !fp->f_fop || !fp->f_fop->ioctl)
 		goto done;
 
-	ret = fp->f_op->ioctl(fp, cmd, buf);
+	ret = fp->f_fop->ioctl(fp, cmd, buf);
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;

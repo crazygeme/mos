@@ -67,8 +67,8 @@ typedef struct _file file;
  * struct file_operations. All ops receive the open file as first argument.
  */
 typedef struct _file_operations {
-	/* release: called when the last reference to the file is dropped */
-	int (*release)(inode *inode, file *file);
+	/* Custom dtor of file struct, will call regular kfree if not provided */
+	int (*release)(file *file);
 	/* read/write: update *pos on success, return bytes transferred or -errno */
 	ssize_t (*read)(file *file, void *buf, size_t size, loff_t *pos);
 	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
@@ -98,7 +98,6 @@ struct _inode {
 	uint64_t i_ino;
 	uint64_t i_size;
 	const inode_operations *i_op;
-	const file_operations *i_fop;
 	void *i_private;
 };
 
@@ -108,9 +107,8 @@ struct _inode {
  */
 struct _file {
 	inode *f_inode;
-	const file_operations *f_op;
+	const file_operations *f_fop;
 	loff_t f_pos;
-	uint32_t f_mode;
 	unsigned f_count;
 	char *f_name;
 };

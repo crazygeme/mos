@@ -1,7 +1,5 @@
 #include <hw/hdd.h>
-#include <fs/mount.h>
-#include <fs/super/debugfs.h>
-#include <lib/timer.h>
+#include "generic.h"
 
 extern unsigned cache_hit;
 extern unsigned long long cache_search_time;
@@ -81,9 +79,4 @@ static void fill(void *buf, size_t size)
 	elf_read_time = 0;
 }
 
-static void debugfs_fs_init(super_block *mp)
-{
-	vfs_create_file(mp, "/proc/fsinfo", fill);
-}
-
-DEBUGFS_INIT(debugfs_fs_init);
+DEFINE_DEBUG_FS_FILE(fsinfo, fill);

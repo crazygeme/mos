@@ -64,10 +64,17 @@ static int mmap_key_comp(void *k1, void *k2)
 	return ret;
 }
 
+static void mmap_entry_evict(const key_value_pair *pair)
+{
+	mmap_cache_entry *evict = pair->val;
+	phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
+	free(evict);
+}
+
 void pf_init()
 {
 	int_register(0xe, pf_process, 0, 0);
-	mmap_cache = hash_create(mmap_key_comp);
+	mmap_cache = hash_create(mmap_key_comp, mmap_entry_evict);
 	list_init(&mmap_lru);
 	mutex_init(&mmap_cache_lock);
 	zero_page = vm_alloc(1);
@@ -123,8 +130,6 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 		mmap_cache_entry *evict = container_of(
 			list_remove_head(&mmap_lru), mmap_cache_entry, lru);
 		hash_remove(mmap_cache, &evict->key);
-		phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
-		free(evict);
 	}
 
 	entry = malloc(sizeof(*entry));

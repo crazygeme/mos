@@ -17,12 +17,6 @@ static ssize_t null_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-static int null_release(inode *node, file *fp)
-{
-	free(node);
-	return 0;
-}
-
 static int null_poll(file *fp, unsigned type)
 {
 	if (type == FS_POLL_EXCEPT)
@@ -33,8 +27,7 @@ static int null_poll(file *fp, unsigned type)
 static int null_getattr(inode *node, struct stat *s)
 {
 	s->st_atime = time_now_ms();
-	s->st_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |
-		      S_IRGRP | S_IROTH);
+	s->st_mode = node->i_mode;
 	s->st_size = PAGE_SIZE;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
@@ -52,23 +45,27 @@ static const inode_operations null_iops = {
 };
 
 static const file_operations null_fops = {
-	.release = null_release,
 	.read = null_read,
 	.write = null_write,
 	.poll = null_poll,
 };
 
-static inode *null_get_root(super_block *sb)
+static file *null_open_root(super_block *sb)
 {
 	inode *node = calloc(1, sizeof(*node));
-	node->i_mode = S_IFCHR;
+	node->i_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |
+			S_IRGRP | S_IROTH);
 	node->i_op = &null_iops;
-	node->i_fop = &null_fops;
-	return node;
+
+	file *fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &null_fops;
+	return fp;
 }
 
 static super_operations null_sops = {
-	.get_root = null_get_root,
+	.open_root = null_open_root,
 };
 
 static void null_init()

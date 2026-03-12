@@ -38,11 +38,6 @@ static INLINE int vm_region_compare(void *region1, void *region2)
 	return 0; /* overlap */
 }
 
-vm_struct_t vm_create()
-{
-	return hash_create(vm_region_compare);
-}
-
 static void vm_region_invalid(const key_value_pair *pair)
 {
 	vm_key *key = pair->key;
@@ -55,9 +50,14 @@ static void vm_region_invalid(const key_value_pair *pair)
 	kfree(region);
 }
 
+vm_struct_t vm_create()
+{
+	return hash_create(vm_region_compare, vm_region_invalid);
+}
+
 void vm_destroy(vm_struct_t vm)
 {
-	hash_destroy((hash_table *)vm, vm_region_invalid);
+	hash_destroy((hash_table *)vm);
 }
 
 /*
@@ -173,12 +173,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 		mm_del_dynamic_map(vir);
 	RELOAD_CR3();
 
-	if (region->node)
-		fs_put_file(region->node);
-
-	kfree(region);
 	hash_remove(table, key);
-	kfree(key);
 }
 
 /*

@@ -14,12 +14,12 @@ typedef struct super_operations super_operations;
  */
 struct super_operations {
 	/*
-	 * get_root: allocate and return the root inode for pseudo-filesystem
+	 * get_root: allocate and return the root inode for
 	 * mounts (devices, proc entries).  Called when the mount root or a
 	 * sub-path with no specific match is opened.  The returned inode is
 	 * owned by the caller and freed via i_fop->release.
 	 */
-	inode *(*get_root)(super_block *sb);
+	file *(*open_root)(super_block *sb);
 
 	/*
 	 * open: look up and open a file by path within this filesystem.
@@ -31,11 +31,11 @@ struct super_operations {
 	file *(*open)(super_block *sb, const char *path, int flag);
 
 	/*
-	 * put_super: release any private resources held by the filesystem.
-	 * Called when the super_block's reference count drops to zero,
-	 * just before the super_block itself is freed.
+	 * put_super: Custom dtor of super_block.
+	 * Called when the super_block's reference count drops to zero.
+	 * If zero just system will just call regular kfree.
 	 */
-	void (*put_super)(super_block *sb);
+	void (*release)(super_block *sb);
 };
 
 /*
@@ -49,7 +49,6 @@ struct super_block {
 	unsigned s_ref; /* reference count */
 	mutex_t s_lock;
 	hash_table *s_mounts; /* child mounts: path → super_block */
-	hash_table *s_files; /* pseudo-files: path → debug_inode */
 };
 
 /* Allocate and initialise a new super_block with the given operations. */
@@ -59,7 +58,7 @@ super_block *sget(const super_operations *s_op);
 void sb_get(super_block *sb);
 
 /*
- * Decrement the reference count.  When it reaches zero, s_op->put_super
+ * Decrement the reference count.  When it reaches zero, s_op->release
  * is called (if provided) and the super_block is freed.
  */
 void sb_put(super_block *sb);
@@ -75,12 +74,5 @@ int vfs_umount(super_block *sb, const char *path);
  * Returns an open file * on success, NULL on failure.
  */
 file *vfs_open(super_block *sb, const char *path, int flag);
-
-/*
- * Register a pseudo-file at path under sb.  The fill callback is invoked
- * each time the file is opened to populate its read-only contents.
- */
-int vfs_create_file(super_block *sb, const char *path,
-		    void (*fill)(void *buf, size_t size));
 
 #endif

@@ -152,7 +152,6 @@ static void block_cache_item_remove(block_cache_item *item)
 	if (!item)
 		return;
 
-	// kfree(item->buf);
 	vm_free(item->buf, buf_size);
 	kfree(item);
 }
@@ -667,7 +666,7 @@ static void init_partition_cache(partition *p)
 
 	/* Initialize hash + LRU list and per-partition lock. */
 	p->cache.sectors = 0;
-	p->cache.hash = hash_create(int_comp);
+	p->cache.hash = hash_create(int_comp, NULL);
 	list_init(&p->cache.timer_list_head);
 	p->cache_inited = 1;
 	mutex_init(&p->cache_lock);
@@ -1149,7 +1148,7 @@ static void partition_close(void *aux)
 	if (p->cache_inited) {
 		flush_partition_cache(aux);
 		/* Destroy hash to avoid memory leaks; reset LRU head. */
-		hash_destroy(p->cache.hash, 0);
+		hash_destroy(p->cache.hash);
 		p->cache.hash = 0;
 		list_init(&p->cache.timer_list_head);
 		p->cache_inited = 0;

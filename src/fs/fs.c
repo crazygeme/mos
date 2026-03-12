@@ -2,8 +2,7 @@
 #include <fs/mount.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
-#include <fs/super/pipe.h>
-#include <fs/super/ext4.h>
+#include <fs/pipe.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <ps/ps.h>

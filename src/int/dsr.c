@@ -6,7 +6,6 @@
 static list_entry dsr_head;
 static list_entry dsr_cache;
 static spinlock_t dsr_lock;
-#define MAX_DSR_ENTRY 100
 
 void dsr_init()
 {
@@ -14,7 +13,7 @@ void dsr_init()
 	list_init(&dsr_cache);
 	spinlock_init(&dsr_lock);
 
-	for (int i = 0; i < MAX_DSR_ENTRY; i++) {
+	for (int i = 0; i < DSR_CACHE_DEPTH; i++) {
 		dsr_node *node = kmalloc(sizeof(*node));
 		list_init(&node->dsr_list);
 		list_insert_tail(&dsr_cache, &node->dsr_list);

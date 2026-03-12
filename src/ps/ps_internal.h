@@ -10,9 +10,9 @@
 #include <lib/lock.h>
 #include <lib/list.h>
 
-/* -------------------------------------------------------------------------
+/*
  * Scheduler control block
- * ------------------------------------------------------------------------- */
+ */
 
 typedef struct _ps_control {
 	list_entry ready_queue[PS_PRIORITY_MAX];
@@ -21,9 +21,9 @@ typedef struct _ps_control {
 	struct rb_root mgr_queue;
 } ps_control;
 
-/* -------------------------------------------------------------------------
+/*
  * Shared globals (defined in ps.c)
- * ------------------------------------------------------------------------- */
+ */
 
 extern ps_control control;
 extern spinlock_t ps_lock;
@@ -33,9 +33,9 @@ extern unsigned long long task_schedule_time;
 extern unsigned task_schedule_count;
 extern tss_struct *tss_address;
 
-/* -------------------------------------------------------------------------
+/*
  * Cross-file non-public functions
- * ------------------------------------------------------------------------- */
+ */
 
 /* ps.c */
 void ps_add_mgr_unsafe(task_struct *task);

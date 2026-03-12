@@ -73,7 +73,6 @@ typedef struct _channel {
 
 #if HDD_CACHE_OPEN
 /*
- * ---------------------------------------------------------------------------
  * Filesystem HDD Cache (sector cache)
  *
  * Design:
@@ -92,7 +91,6 @@ typedef struct _channel {
  *     - p->cache.sectors tracks total cached sectors.
  *     - fs_cache_size/max_fs_cache_size expose live/peak sizes.
  *     - cache_hit/cache_search_time/count track lookup performance.
- * ---------------------------------------------------------------------------
  */
 #define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
@@ -460,13 +458,12 @@ static void identify_ata_device(ata_disk *d)
  * fs_mount_root() reads this to know which device name to mount. */
 char hdd_first_dev_name[32] = { 0 };
 
-/* ---------------------------------------------------------------------------
+/*
  * lwext4 block device callbacks
  *
  * These adapt between lwext4's ext4_blockdev_iface ABI (blk_id / blk_cnt)
  * and the kernel's block read/write callbacks (sector / len).
  * bdev->aux points to the block descriptor created by block_create().
- * ---------------------------------------------------------------------------
  */
 static int hdd_bdev_open(struct ext4_blockdev *bdev)
 {

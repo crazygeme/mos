@@ -32,9 +32,9 @@ static void *acpi_phys_to_virt(unsigned phys)
  * always-mapped first-8-MB range (EBDA, BIOS ROM). */
 #define PHYS_TO_VIRT(p) ((void *)((unsigned)(p) + KERNEL_OFFSET))
 
-/* -----------------------------------------------------------------------
+/* 
  * RSDP discovery
- * ----------------------------------------------------------------------- */
+ */
 
 static int acpi_checksum(const void *buf, unsigned len)
 {
@@ -78,9 +78,9 @@ static acpi_rsdp_t *acpi_find_rsdp(void)
 	return r; /* may be NULL */
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * MADT parsing
- * ----------------------------------------------------------------------- */
+ */
 
 static void acpi_parse_madt(acpi_madt_t *madt, acpi_info_t *info)
 {
@@ -109,9 +109,9 @@ static void acpi_parse_madt(acpi_madt_t *madt, acpi_info_t *info)
 	}
 }
 
-/* -----------------------------------------------------------------------
+/* 
  * Public API
- * ----------------------------------------------------------------------- */
+ */
 
 int acpi_parse(acpi_info_t *info)
 {

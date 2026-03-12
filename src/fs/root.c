@@ -1,6 +1,8 @@
 #include <lib/klib.h>
 #include <fs/fs.h>
 #include <fs/mount.h>
+#include <ps/ps.h>
+#include <hw/hdd.h>
 #include <stddef.h>
 #include <macro.h>
 #include <ext4.h>
@@ -408,3 +410,13 @@ super_block *ext4_get()
 {
 	return sget(&ext4_sops);
 }
+
+static void fs_mount_root()
+{
+	task_struct *cur = CURRENT_TASK();
+	cur->root = ext4_get();
+	ext4_mount(hdd_first_dev_name, "/", 0);
+	ext4_cache_write_back("/", true);
+}
+
+KERNEL_INIT(3, fs_mount_root);

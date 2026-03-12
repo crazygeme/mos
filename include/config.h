@@ -28,14 +28,13 @@
 
 #define KHEAP_BEGIN \
 	0xC0700000 // increase by 4M if kernel img is too large for this reserve
+
 #define KHEAP_END (KHEAP_BEGIN + 0x004FF000)
 
 #define PAGE_TABLE_CACHE_BEGIN (KHEAP_END + 0x00001000)
 #define PAGE_TABLE_CACHE_END (PAGE_TABLE_CACHE_BEGIN + 0x0400000)
 
 #define RESERVED_PAGES ((PAGE_TABLE_CACHE_END - KERNEL_OFFSET) / PAGE_SIZE)
-
-#define UNIMPL printk("unimpl function %s\n", __func__)
 
 #define DSR_CACHE_DEPTH 100
 

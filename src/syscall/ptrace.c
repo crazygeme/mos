@@ -591,8 +591,8 @@ int sys_ptrace(unsigned long request, unsigned long pid, unsigned long addr,
 	}
 
 	if (TestControl.verbos)
-		klog("%d: ptrace(%d, %d, %d, %x) = %d\n", cur->psid, request,
-		     pid, addr, data, ret);
+		klog("ptrace(%d, %d, %d, %x) = %d\n", request, pid, addr, data,
+		     ret);
 
 	return ret;
 }

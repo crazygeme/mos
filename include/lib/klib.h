@@ -38,7 +38,6 @@ void klib_init(void);
 
 /* ── Logging ──────────────────────────────────────────────────────────────── */
 
-void klog_printf(const char *str, ...);
 void klog(char *str, ...);
 void klog_close(void);
 

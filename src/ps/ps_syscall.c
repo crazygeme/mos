@@ -235,14 +235,14 @@ int do_fork(unsigned flag)
 int sys_fork()
 {
 	if (TestControl.verbos)
-		klog("%d: fork()\n", CURRENT_TASK()->psid);
+		klog("fork()\n");
 	return do_fork(0);
 }
 
 int sys_vfork()
 {
 	if (TestControl.verbos)
-		klog("%d: vfork()\n", CURRENT_TASK()->psid);
+		klog("vfork()\n");
 	return do_fork(FORK_FLAG_VFORK);
 }
 
@@ -258,7 +258,7 @@ int sys_exit(unsigned status)
 
 	cur->exit_status = status;
 	if (TestControl.verbos)
-		klog("%d: exit(%d)\n", cur->psid, status);
+		klog("exit(%d)\n", status);
 
 	if (cur->fork_flag & FORK_FLAG_VFORK)
 		cond_notify(&cur->vfork_event);
@@ -333,8 +333,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			spinlock_unlock(&ps_lock);
 			ps_reap_task(task, rusage);
 			if (TestControl.verbos)
-				klog("%d: wait(%d) = %d\n", cur->psid, pid,
-				     ret);
+				klog("wait(%d) = %d\n", pid, ret);
 			return ret;
 		}
 
@@ -363,8 +362,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			task->ptrace |= PT_STOP_REPORTED;
 			spinlock_unlock(&ps_lock);
 			if (TestControl.verbos)
-				klog("%d: wait(%d) = %d\n", cur->psid, pid,
-				     ret);
+				klog("wait(%d) = %d\n", pid, ret);
 			return ret;
 		}
 
@@ -377,8 +375,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 int sys_waitpid(unsigned pid, int *status, int options)
 {
 	if (TestControl.verbos)
-		klog("%d: waitpid(%d, %x, %d)\n", CURRENT_TASK()->psid, pid,
-		     status, options);
+		klog("waitpid(%d, %x, %d)\n", pid, status, options);
 
 	return do_waitpid(pid, status, options, NULL);
 }
@@ -393,8 +390,7 @@ char *sys_getcwd(char *buf, unsigned size)
 	strcpy(buf, cur->cwd[0] ? cur->cwd : "/");
 
 	if (TestControl.verbos)
-		klog("%d: getcwd(%s, %d) = %s\n", CURRENT_TASK()->psid, buf,
-		     size, buf);
+		klog("getcwd(%s, %d) = %s\n", buf, size, buf);
 
 	return buf;
 }

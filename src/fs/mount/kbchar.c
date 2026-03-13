@@ -13,7 +13,7 @@
 
 #define CANON_BUF_SIZE 256
 static char canon_buf[CANON_BUF_SIZE];
-static int  canon_len;
+static int canon_len;
 
 /* Apply c_iflag input translations.  Returns the translated character,
  * or -1 if the character should be discarded (IGNCR). */
@@ -41,7 +41,7 @@ static int isig_check(unsigned char c, const struct termios *tc)
 		return 0;
 	if ((tc->c_cc[VINTR] && c == tc->c_cc[VINTR]) || /* TODO: SIGINT  */
 	    (tc->c_cc[VQUIT] && c == tc->c_cc[VQUIT]) || /* TODO: SIGQUIT */
-	    (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP]))   /* TODO: SIGTSTP */
+	    (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP])) /* TODO: SIGTSTP */
 		return 1;
 	return 0;
 }
@@ -90,8 +90,7 @@ static void canon_append(unsigned char c, const struct termios *tc)
 
 static int is_eol(unsigned char c, const struct termios *tc)
 {
-	return c == '\n' ||
-	       (tc->c_cc[VEOL]  && c == tc->c_cc[VEOL]) ||
+	return c == '\n' || (tc->c_cc[VEOL] && c == tc->c_cc[VEOL]) ||
 	       (tc->c_cc[VEOL2] && c == tc->c_cc[VEOL2]);
 }
 
@@ -129,7 +128,8 @@ static int canon_readline(const struct termios *tc)
 /* Copy up to size bytes from canon_buf to dst, consuming what was copied. */
 static ssize_t canon_drain(char *dst, size_t size)
 {
-	ssize_t n = (ssize_t)(size < (size_t)canon_len ? size : (size_t)canon_len);
+	ssize_t n =
+		(ssize_t)(size < (size_t)canon_len ? size : (size_t)canon_len);
 	memcpy(dst, canon_buf, (unsigned)n);
 	canon_len -= (int)n;
 	if (canon_len > 0)

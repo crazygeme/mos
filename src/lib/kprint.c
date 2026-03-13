@@ -41,8 +41,6 @@ static void klog_write(char c, void *ctx)
 		return;
 	if (isprint(c))
 		serial_putc(c);
-	else
-		klog_printf("\\%x", (unsigned char)c);
 }
 
 static void klog_writestr(char *str, void *ctx)
@@ -294,21 +292,9 @@ void sprintf(char *buf, const char *fmt, ...)
 void printk(const char *fmt, ...)
 {
 	va_list ap;
-	time_t t;
-	char *ms_str;
-	int pad, i;
-
-	time_current(&t);
-	ms_str = itoa(t.milliseconds, 10, 0);
-	pad = 3 - (int)strlen(ms_str);
 
 	spinlock_lock(&tty_lock);
-	printf("[%d.", t.seconds);
-	for (i = 0; i < pad; i++)
-		tty_print("0", NULL);
-	tty_print(ms_str, NULL);
-	tty_print("] ", NULL);
-	free(ms_str);
+	printf("[%d]: ", CURRENT_TASK()->psid);
 
 	va_start(ap, fmt);
 	kvformat(tty_print, fmt, ap, NULL);
@@ -319,7 +305,7 @@ void printk(const char *fmt, ...)
 /*
  * klog_printf - formatted output to the serial log (no timestamp).
  */
-void klog_printf(const char *fmt, ...)
+static void klog_printf(const char *fmt, ...)
 {
 	va_list ap;
 
@@ -337,22 +323,9 @@ void klog(char *fmt, ...)
 {
 	va_list ap;
 	task_struct *cur = CURRENT_TASK();
-	time_t t;
-	char *ms_str;
-	int pad, i;
 
 	mutex_lock(&klog_lock);
-
-	time_current(&t);
-	ms_str = itoa(t.milliseconds, 10, 0);
-	pad = 3 - (int)strlen(ms_str);
-	klog_printf("[%d: %d.", cur->psid, t.seconds);
-	for (i = 0; i < pad; i++)
-		klog_writestr("0", NULL);
-	klog_writestr(ms_str, NULL);
-	klog_writestr("] ", NULL);
-	free(ms_str);
-
+	klog_printf("[%d]: ", cur->psid);
 	va_start(ap, fmt);
 	kvformat(klog_writestr, fmt, ap, NULL);
 	va_end(ap);

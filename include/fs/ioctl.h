@@ -216,8 +216,8 @@ struct termios {
 #define TCSADRAIN 1
 #define TCSAFLUSH 2
 
-/*	intr=^C		quit=^|		erase=del	kill=^U
-    eof=^D		vtime=\0	vmin=\1		sxtc=\0
+/*  intr=^C	quit=^|		erase=del	kill=^U
+    eof=^D	vtime=\0	vmin=\1		sxtc=\0
     start=^Q	stop=^S		susp=^Z		eol=\0
     reprint=^R	discard=^U	werase=^W	lnext=^V
     eol2=\0

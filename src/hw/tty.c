@@ -12,6 +12,7 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <unistd.h>
+#include <errno.h>
 
 /* ── VGA text-mode video buffer ──────────────────────────────────────────── */
 
@@ -25,6 +26,24 @@ unsigned TTY_MAX_COL;
 spinlock_t tty_lock;
 
 static int cursor;
+
+/* ── Terminal settings / foreground process group ────────────────────────── */
+
+static struct termios tty_termios = {
+	.c_iflag = ICRNL,
+	.c_oflag = OPOST | ONLCR,
+	.c_cflag = B38400 | CS8,
+	.c_lflag = IXON | ISIG | ICANON | ECHO | ECHOE | ECHOCTL | ECHOKE,
+	.c_line = 0,
+	.c_cc = INIT_C_CC,
+};
+
+static unsigned tty_pgrp;
+
+struct termios *tty_gettermios()
+{
+	return &tty_termios;
+}
 
 #define CUR_ROW (cursor / (int)TTY_MAX_COL)
 #define CUR_COL (cursor % (int)TTY_MAX_COL)
@@ -306,7 +325,7 @@ static int tty_char_to_pos(char c)
 
 	switch ((unsigned char)c) {
 	case '\n':
-		return ROW_COL_TO_CUR(CUR_ROW + 1, 0);
+		return ROW_COL_TO_CUR(CUR_ROW + 1, CUR_COL);
 	case '\r':
 		return ROW_COL_TO_CUR(CUR_ROW, 0);
 	case '\b':
@@ -404,17 +423,12 @@ int tty_ioctl(file *file, unsigned cmd, void *buf)
 {
 	switch (cmd) {
 	case TCGETS: {
-		struct termios s = { ICRNL,
-				     OPOST | ONLCR,
-				     B38400 | CS8,
-				     IXON | ISIG | ICANON | ECHO | ECHOCTL |
-					     ECHOKE,
-				     0,
-				     INIT_C_CC };
-		memcpy(buf, &s, sizeof(s));
+		memcpy(buf, &tty_termios, sizeof(tty_termios));
 		return 0;
 	}
 	case TCSETS:
+	case TCSETSW:
+		memcpy(&tty_termios, buf, sizeof(tty_termios));
 		return 0;
 	case TIOCGWINSZ: {
 		struct winsize *size = (struct winsize *)buf;
@@ -423,6 +437,12 @@ int tty_ioctl(file *file, unsigned cmd, void *buf)
 		size->ws_xpixel = size->ws_ypixel = 0;
 		return 0;
 	}
+	case TIOCGPGRP:
+		*(unsigned *)buf = tty_pgrp;
+		return 0;
+	case TIOCSPGRP:
+		tty_pgrp = *(unsigned *)buf;
+		return 0;
 	}
-	return -1;
+	return -ENOSYS;
 }

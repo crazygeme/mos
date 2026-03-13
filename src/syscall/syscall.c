@@ -482,7 +482,14 @@ static int sys_write(int fd, char *buf, unsigned len)
 
 static int sys_ioctl(int fd, int request, char *buf)
 {
-	return fs_ioctl(fd, request, buf);
+	task_struct *cur = CURRENT_TASK();
+
+	int ret = fs_ioctl(fd, request, buf);
+	if (TestControl.verbos)
+		klog("%d: ioctl(%d, %x, ...) = %d\n", cur->psid, fd, request,
+		     ret);
+
+	return ret;
 }
 
 static int sys_getpid()

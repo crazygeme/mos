@@ -60,4 +60,6 @@ void tty_write(const char *buf, unsigned len);
 /* ioctl */
 int tty_ioctl(file *file, unsigned cmd, void *buf);
 
+struct termios *tty_gettermios();
+
 #endif

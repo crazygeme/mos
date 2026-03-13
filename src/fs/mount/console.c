@@ -2,6 +2,7 @@
 #include <ps/ps.h>
 #include <fs/mount.h>
 #include <fs/fs.h>
+#include <fs/ioctl.h>
 #include <lib/klib.h>
 #include <unistd.h>
 #include <hw/time.h>
@@ -9,12 +10,54 @@
 #include <macro.h>
 #include <ext4.h>
 
+/* Returns 1 if the cursor is currently at column 0. */
+static int at_column_zero(void)
+{
+	return tty_get_cursor() % (int)TTY_MAX_COL == 0;
+}
+
+/* Apply c_oflag output processing and write one character to the TTY.
+ * If OPOST is clear, the character is written raw. */
+static void output_char(unsigned char c, const struct termios *tc)
+{
+	if (!(tc->c_oflag & OPOST)) {
+		tty_write((const char *)&c, 1);
+		return;
+	}
+
+	if (tc->c_oflag & OLCUC)
+		c = (unsigned char)toupper(c);
+
+	if (c == '\n') {
+		if (tc->c_oflag & ONLCR) {
+			tty_write("\r\n", 2);
+			return;
+		}
+	} else if (c == '\r') {
+		if (tc->c_oflag & OCRNL) {
+			tty_write("\n", 1);
+			return;
+		}
+		if ((tc->c_oflag & ONOCR) && at_column_zero())
+			return;
+	}
+
+	tty_write((const char *)&c, 1);
+}
+
 static ssize_t console_write(file *fp, const void *buf, size_t size,
 			     loff_t *pos)
 {
+	const unsigned char *src = buf;
+	struct termios *tc = tty_gettermios();
+	size_t i;
+
 	if (size < 1 || !buf)
 		return 0;
-	tty_write(buf, size);
+
+	for (i = 0; i < size; i++)
+		output_char(src[i], tc);
+
 	return (ssize_t)size;
 }
 

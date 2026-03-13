@@ -365,18 +365,6 @@ void tty_emit(char c, void *ctx)
 	tty_cursor_forward(tty_char_to_pos(c));
 }
 
-/*
- * tty_print - write a NUL-terminated string to the TTY.
- * ctx is forwarded to tty_emit (always NULL for TTY output).
- */
-void tty_print(char *str, void *ctx)
-{
-	if (!str || !*str)
-		return;
-	while (*str)
-		tty_emit(*str++, ctx);
-}
-
 void tty_set_cursor(int pos)
 {
 	if (pos >= 0)

@@ -54,7 +54,6 @@ void tty_clear_locked(void);
 
 /* Text output */
 void tty_emit(char c, void *ctx);
-void tty_print(char *str, void *ctx);
 void tty_write(const char *buf, unsigned len);
 
 /* ioctl */

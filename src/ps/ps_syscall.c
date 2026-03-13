@@ -376,6 +376,10 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 
 int sys_waitpid(unsigned pid, int *status, int options)
 {
+	if (TestControl.verbos)
+		klog("%d: waitpid(%d, %x, %d)\n", CURRENT_TASK()->psid, pid,
+		     status, options);
+
 	return do_waitpid(pid, status, options, NULL);
 }
 
@@ -387,6 +391,11 @@ char *sys_getcwd(char *buf, unsigned size)
 {
 	task_struct *cur = CURRENT_TASK();
 	strcpy(buf, cur->cwd[0] ? cur->cwd : "/");
+
+	if (TestControl.verbos)
+		klog("%d: getcwd(%s, %d) = %s\n", CURRENT_TASK()->psid, buf,
+		     size, buf);
+
 	return buf;
 }
 

@@ -231,9 +231,7 @@ static void hdd_init()
 		default:
 			printk("fatal error\n");
 		}
-#ifdef DEBUG
-		printk("channel %d, name %s\n", chan_no, c->name);
-#endif
+
 		cond_init(&c->event, 1);
 		mutex_init(&c->lock);
 		/* Initialize devices. */
@@ -257,13 +255,6 @@ static void hdd_init()
 		/* Distinguish ATA hard disks from other devices. */
 		if (check_device_type(&c->devices[0]))
 			check_device_type(&c->devices[1]);
-
-#ifdef DEBUG
-		printk("channel %d, dev %d, name %s, is_ata %d\n", chan_no, 0,
-		       c->devices[0].name, c->devices[0].is_ata);
-		printk("channel %d, dev %d, name %s, is_ata %d\n", chan_no, 1,
-		       c->devices[1].name, c->devices[1].is_ata);
-#endif
 
 		/* Read hard disk identity information. */
 		for (dev_no = 0; dev_no < 2; dev_no++)
@@ -433,11 +424,6 @@ static void identify_ata_device(ata_disk *d)
 	strcat(extra_info, "\", serial \"");
 	strcat(extra_info, serial);
 	strcat(extra_info, "\"");
-#ifdef DEBUG
-	printk("%s: capacity %h, model %s, serial %s\n", d->name,
-	       capacity * BLOCK_SECTOR_SIZE, model, serial);
-	printk("%s: extra_info %s\n", d->name, extra_info);
-#endif
 
 	/* Disable access to IDE disks over 1 GB, which are likely
        physical IDE disks rather than virtual ones.  If we don't
@@ -602,9 +588,6 @@ static void read_partition_table(ata_disk *disk, unsigned capacity,
 		struct partition_table_entry *e = &pt->partitions[i];
 
 		if (e->size == 0 || e->type == 0) {
-#ifdef DEBUG
-			printk("empty partition\n");
-#endif
 			/* Ignore empty partition. */
 		} else if (e->type == 0x05 /* Extended partition. */
 			   ||
@@ -641,9 +624,6 @@ static void read_partition_table(ata_disk *disk, unsigned capacity,
 	}
 
 	if (!*part_nr) {
-#ifdef DEBUG
-		printk("use default\n");
-#endif
 		// no partition table info, assume this disk only has one raw partition
 		found_partition(disk, capacity, 0x21, sector, capacity, 0, 1);
 	}
@@ -958,11 +938,6 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 #if HDD_CACHE_OPEN
 		p->cache_inited = 0;
 		init_partition_cache(p);
-#endif
-
-#ifdef DEBUG
-		printk("got a partition, with start %d, bootable %x\n",
-		       p->start, p->bootable);
 #endif
 
 		if (hdd_tracked_cnt < MAX_HDD_PARTITIONS)

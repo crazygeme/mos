@@ -40,11 +40,8 @@ COMMON_CFLAGS = -fno-pie\
 		${CIGNORE}\
 		-I$(MAINPATH)\
 		-I$(MAINPATH)/include\
-        	-I$(MAINPATH)/third_party\
 		-I$(MAINPATH)/third_party/std\
-		-I$(MAINPATH)/third_party/lwext4\
         	-I$(MAINPATH)/third_party/lwext4/include\
-        	-D__DEBUG__\
 		-DCONFIG_EXT_FEATURE_SET_LVL=2\
         	-DCONFIG_JOURNALING_ENABLE=0\
         	-DCONFIG_DIR_INDEX_COMB_SORT=1\
@@ -54,7 +51,7 @@ COMMON_CFLAGS = -fno-pie\
         	-DCONFIG_HAVE_OWN_ASSERT=1\
         	-DCONFIG_HAVE_OWN_OFLAGS=1\
         	-DCONFIG_USE_USER_MALLOC=0\
-		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=32
+		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=1
 LDFLAGS	=	-m elf_i386 -T link.ld 
 DST     =	$(MAINPATH)/out
 TEST 	=	test

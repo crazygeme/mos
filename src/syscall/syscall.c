@@ -367,8 +367,7 @@ static unsigned call_table[NR_syscalls] = {
 static int unhandled_syscall(unsigned callno)
 {
 	if (TestControl.verbos)
-		klog("%d: unhandled syscall %d\n", CURRENT_TASK()->psid,
-		     callno);
+		klog("unhandled syscall %d\n", callno);
 	return -ENOSYS;
 }
 
@@ -380,8 +379,7 @@ static void syscall_process(intr_frame *frame)
 	if ((cur->ptrace & PT_TRACED) && (cur->ptrace & PT_TRACE_SYSCALL) &&
 	    !(cur->ptrace & PT_STOPPED)) {
 		if (TestControl.verbos)
-			klog("%d: ptrace_stop for syscall %d\n",
-			     CURRENT_TASK()->psid, frame->eax);
+			klog("ptrace_stop for syscall %d\n", frame->eax);
 
 		ptrace_stop(frame);
 	}
@@ -420,20 +418,9 @@ static int sys_read(int fd, char *buf, unsigned len)
 		return -1;
 
 	if (TestControl.verbos)
-		klog("%d: read(%d, \"", CURRENT_TASK()->psid, fd);
+		klog("read(%d, %x, %d)\n", fd, buf, len);
 
 	ret = fs_read(fd, -1, buf, len);
-
-	if (TestControl.verbos) {
-		pri_len = (ret > 5) ? 5 : ret;
-		for (i = 0; i < pri_len; i++) {
-			if (isprint(buf[i]))
-				klog_printf("%c", buf[i]);
-			else
-				klog_printf("\\%x", buf[i]);
-		}
-		klog_printf("\", %d) = %d\n", len, ret);
-	}
 
 	return ret;
 }
@@ -441,42 +428,22 @@ static int sys_read(int fd, char *buf, unsigned len)
 static int sys_write(int fd, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned _len;
-	if (TestControl.verbos) {
-		char *tmp;
-		int pri_len = len > 32 ? 32 : len;
-		tmp = kmalloc(33);
-		memset(tmp, 0, 33);
-		memcpy(tmp, buf, pri_len);
-		klog("%d: write(%d, \"%s\", %d) ", CURRENT_TASK()->psid, fd,
-		     tmp, len);
-		kfree(tmp);
-	}
+	if (TestControl.verbos)
+		klog("write(%d, %x, %d)\n", fd, buf, len);
 
 	if (fd < 0 || fd >= MAX_FD) {
 		return -1;
 	}
 
 	if (cur->fds[fd].used == 0) {
-		if (TestControl.verbos) {
-			klog_printf("ret -1\n");
-		}
 		return -1;
 	}
 
 	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode)) {
-		if (TestControl.verbos) {
-			klog_printf("ret -1\n");
-		}
 		return -1;
 	}
 
-	_len = fs_write(fd, -1, buf, len);
-
-	if (TestControl.verbos) {
-		klog_printf("ret %d\n", _len);
-	}
-	return _len;
+	return fs_write(fd, -1, buf, len);
 }
 
 static int sys_ioctl(int fd, int request, char *buf)
@@ -485,8 +452,7 @@ static int sys_ioctl(int fd, int request, char *buf)
 
 	int ret = fs_ioctl(fd, request, buf);
 	if (TestControl.verbos)
-		klog("%d: ioctl(%d, %x, ...) = %d\n", cur->psid, fd, request,
-		     ret);
+		klog("ioctl(%d, %x, ...) = %d\n", fd, request, ret);
 
 	return ret;
 }
@@ -495,7 +461,7 @@ static int sys_getpid()
 {
 	task_struct *cur = CURRENT_TASK();
 	if (TestControl.verbos)
-		klog("%d: getpid() = %d\n", cur->psid, cur->psid);
+		klog("getpid() = %d\n", cur->psid);
 
 	return cur->psid;
 }
@@ -503,7 +469,7 @@ static int sys_getpid()
 static int sys_uname(struct utsname *utname)
 {
 	if (TestControl.verbos)
-		klog("%d: uname\n", CURRENT_TASK()->psid);
+		klog("uname\n");
 
 	strcpy(utname->machine, "i386");
 	strcpy(utname->nodename, "qemu-enum");
@@ -517,7 +483,7 @@ static int sys_uname(struct utsname *utname)
 static int sys_sched_yield()
 {
 	if (TestControl.verbos)
-		klog("%d: yield\n", CURRENT_TASK()->psid);
+		klog("yield\n");
 
 	task_sched();
 	return 0;
@@ -530,14 +496,10 @@ static int sys_open(const char *_name, int flags, char *mode)
 	resolve_path(_name, name);
 
 	if (TestControl.verbos)
-		klog("%d: open(%s, %x, %x)", CURRENT_TASK()->psid, name, flags,
-		     mode);
+		klog("open(%s, %x, %x)\n", name, flags, mode);
 
 	fd = fs_open(name, flags, mode);
 
-	if (TestControl.verbos) {
-		klog_printf("ret %d\n", fd);
-	}
 	name_put(name);
 
 	return fd;
@@ -546,7 +508,7 @@ static int sys_open(const char *_name, int flags, char *mode)
 static int sys_close(unsigned fd)
 {
 	if (TestControl.verbos)
-		klog("%d: close(%d)\n", CURRENT_TASK()->psid, fd);
+		klog("close(%d)\n", fd);
 
 	return fs_close(fd);
 }
@@ -595,7 +557,7 @@ static int sys_brk(unsigned _top)
 	}
 done:
 	if (TestControl.verbos)
-		klog("%d: brk(%x) = %x\n", CURRENT_TASK()->psid, _top, ret);
+		klog("brk(%x) = %x\n", _top, ret);
 
 	return ret;
 }
@@ -614,7 +576,7 @@ static int sys_chdir(const char *path)
 	}
 
 	if (TestControl.verbos)
-		klog("%d: chdir(%s)\n", cur->psid, path);
+		klog("chdir(%s)\n", path);
 
 	/* Seed cwd from root or from the current directory */
 	if (*path == '/') {
@@ -687,7 +649,7 @@ done:
 static int sys_creat(const char *path, unsigned mode)
 {
 	if (TestControl.verbos)
-		klog("%d: creat(%s, %d)\n", CURRENT_TASK()->psid, path, mode);
+		klog("creat(%s, %d)\n", path, mode);
 
 	return -1;
 }
@@ -699,7 +661,7 @@ static int sys_mkdir(const char *path, unsigned mode)
 	resolve_path(path, name);
 	ret = ext4_dir_mk(name);
 	if (TestControl.verbos)
-		klog("%d: mkdir(%s, %d)\n", CURRENT_TASK()->psid, path, mode);
+		klog("mkdir(%s, %d)\n", path, mode);
 
 	name_put(name);
 	return ret;
@@ -712,7 +674,7 @@ static int sys_rmdir(const char *path)
 	resolve_path(path, name);
 	ret = ext4_dir_rm(name);
 	if (TestControl.verbos)
-		klog("%d: rmdir(%s)\n", CURRENT_TASK()->psid, name);
+		klog("rmdir(%s)\n", name);
 
 	name_put(name);
 	return ret;
@@ -736,7 +698,7 @@ static int sys_reboot(unsigned cmd)
 static int sys_getuid()
 {
 	if (TestControl.verbos)
-		klog("%d: getuid\n", CURRENT_TASK()->psid);
+		klog("getuid\n");
 
 	return 0;
 }
@@ -744,7 +706,7 @@ static int sys_getuid()
 static int sys_getgid()
 {
 	if (TestControl.verbos)
-		klog("%d: getgid\n", CURRENT_TASK()->psid);
+		klog("getgid\n");
 
 	return 0;
 }
@@ -752,7 +714,7 @@ static int sys_getgid()
 static int sys_geteuid()
 {
 	if (TestControl.verbos)
-		klog("%d: geteuid\n", CURRENT_TASK()->psid);
+		klog("geteuid\n");
 
 	return 0;
 }
@@ -760,7 +722,7 @@ static int sys_geteuid()
 static int sys_getegid()
 {
 	if (TestControl.verbos)
-		klog("%d: getegid\n", CURRENT_TASK()->psid);
+		klog("getegid\n");
 
 	return 0;
 }
@@ -778,9 +740,8 @@ static int sys_mmap(struct mmap_arg_struct32 *arg)
 		      arg->offset);
 
 	if (TestControl.verbos)
-		klog("%d: mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
-		     CURRENT_TASK()->psid, arg->fd, arg->addr, arg->offset,
-		     arg->len, vir);
+		klog("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
+		     arg->fd, arg->addr, arg->offset, arg->len, vir);
 
 	return vir;
 }
@@ -788,8 +749,7 @@ static int sys_mmap(struct mmap_arg_struct32 *arg)
 static int sys_munmap(void *addr, unsigned length)
 {
 	if (TestControl.verbos)
-		klog("%d: munmap (%x, %x)\n", CURRENT_TASK()->psid, addr,
-		     length);
+		klog("munmap (%x, %x)\n", addr, length);
 
 	return do_munmap(addr, length);
 }
@@ -797,8 +757,7 @@ static int sys_munmap(void *addr, unsigned length)
 static int sys_mprotect(void *addr, unsigned len, int prot)
 {
 	if (TestControl.verbos)
-		klog("%d: mprotect: addr %x, len %x, prot %x\n",
-		     CURRENT_TASK()->psid, addr, len, prot);
+		klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
 
 	return 0;
 }
@@ -818,7 +777,7 @@ static int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
 	if (TestControl.verbos)
-		klog("%d: writev: fd %d\n", CURRENT_TASK()->psid, fildes);
+		klog("writev: fd %d\n", fildes);
 
 	int i = 0;
 	unsigned total = 0;
@@ -831,7 +790,7 @@ static int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 static long sys_personality(unsigned int personality)
 {
 	if (TestControl.verbos)
-		klog("%d: personality\n", CURRENT_TASK()->psid);
+		klog("personality\n");
 
 	return PER_LINUX32_3GB;
 }
@@ -885,16 +844,11 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 	struct stat s;
 	file *fp;
 	ext4_dir *dir;
-	int retcount = 0;
 
 	if (TestControl.verbos)
-		klog("%d: getdents(%d, %x, %d)", CURRENT_TASK()->psid, fd, dirp,
-		     count);
+		klog("getdents(%d, %x, %d)\n", fd, dirp, count);
 
 	if (fd < 0 || fd >= MAX_FD) {
-		if (TestControl.verbos) {
-			klog_printf(" = %d\n", -9);
-		}
 		return -ENOENT;
 	}
 
@@ -907,9 +861,6 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 	fp = CURRENT_TASK()->fds[fd].fp;
 
 	if (count < sizeof(struct linux_dirent)) {
-		if (TestControl.verbos) {
-			klog_printf(" = %d\n", -22);
-		}
 		return -22;
 	}
 
@@ -918,18 +869,13 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 	ssize_t n = fp->f_fop->read(fp, dirp, count, &fp->f_pos);
 	if (n < 0)
 		return -1;
-	retcount = (size_t)n;
-
-	if (TestControl.verbos) {
-		klog_printf(" = %d\n", retcount);
-	}
-	return retcount;
+	return (size_t)n;
 }
 
 static int sys_fsync(int fd)
 {
 	if (TestControl.verbos)
-		klog("%d: sys_fsync(%d)\n", CURRENT_TASK()->psid, fd);
+		klog("sys_fsync(%d)\n", fd);
 
 	return fs_sync(fd);
 }
@@ -938,9 +884,9 @@ static int sys_fstat(int fd, struct stat *s)
 {
 	int ret = fs_fstat(fd, s);
 	if (TestControl.verbos)
-		klog("%d: sys_fstat(%d, %x) size %d isdir %d blksize %d\n",
-		     CURRENT_TASK()->psid, fd, s, s->st_size,
-		     S_ISDIR(s->st_mode), s->st_blksize);
+		klog("fstat(%d, %x) size %d isdir %d blksize %d, i_ino %d\n",
+		     fd, s, s->st_size, S_ISDIR(s->st_mode), s->st_blksize,
+		     s->st_ino);
 
 	return ret;
 }
@@ -969,9 +915,8 @@ static int sys_fstat64(int fd, struct stat64 *s)
 	s->st_ctime = s32.st_ctime;
 
 	if (TestControl.verbos)
-		klog("%d: fstat64(%d, %x) size %d blocks %d blksize %d\n",
-		     CURRENT_TASK()->psid, fd, s, s32.st_size, s32.st_blocks,
-		     s32.st_blksize);
+		klog("fstat64(%d, %x) size %d blocks %d blksize %d\n", fd, s,
+		     s32.st_size, s32.st_blocks, s32.st_blksize);
 
 	return 0;
 }
@@ -1030,7 +975,7 @@ static int sys_getppid()
 {
 	task_struct *cur = CURRENT_TASK();
 	if (TestControl.verbos)
-		klog("%d: getppid\n", CURRENT_TASK()->psid);
+		klog("getppid\n");
 
 	return cur->parent->psid;
 }
@@ -1038,7 +983,7 @@ static int sys_getppid()
 static int sys_getpgrp(unsigned pid)
 {
 	if (TestControl.verbos)
-		klog("%d: getpgrp\n", CURRENT_TASK()->psid);
+		klog("getpgrp\n");
 
 	// FIXME
 	return 0;
@@ -1047,7 +992,7 @@ static int sys_getpgrp(unsigned pid)
 static int sys_setpgid(unsigned pid, unsigned pgid)
 {
 	if (TestControl.verbos)
-		klog("%d: setgpid\n", CURRENT_TASK()->psid);
+		klog("setgpid\n");
 
 	// FIXME
 	if (pid == 0) {
@@ -1075,7 +1020,7 @@ static int sys_socketcall(int call, unsigned long *args)
 	// FIXME
 	// no socket at all right now
 	if (TestControl.verbos)
-		klog("%d: socketcall\n", CURRENT_TASK()->psid);
+		klog("socketcall\n");
 
 	return -1;
 }
@@ -1097,7 +1042,7 @@ static int sys_sigprocmask(int how, void *set, void *oset)
 static int sys_pause()
 {
 	if (TestControl.verbos)
-		klog("%d: pause\n", CURRENT_TASK()->psid);
+		klog("pause\n");
 
 	PAUSE();
 	return 0;
@@ -1106,7 +1051,7 @@ static int sys_pause()
 static int sys_utime(const char *filename, const struct utimbuf *times)
 {
 	if (TestControl.verbos)
-		klog("%d: utime\n", CURRENT_TASK()->psid);
+		klog("utime\n");
 
 	return 0;
 }
@@ -1116,8 +1061,7 @@ static int sys_pipe(int pipefd[2])
 	int ret = fs_pipe(pipefd);
 
 	if (TestControl.verbos)
-		klog("%d: pipe(pipefd[%d,%d]) = %d\n", CURRENT_TASK()->psid,
-		     pipefd[0], pipefd[1], ret);
+		klog("pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
 
 	return ret;
 }
@@ -1126,7 +1070,7 @@ static int sys_dup2(int oldfd, int newfd)
 {
 	int ret = -1;
 	if (TestControl.verbos)
-		klog("%d: dup2(%d, %d)\n", CURRENT_TASK()->psid, oldfd, newfd);
+		klog("dup2(%d, %d)\n", oldfd, newfd);
 
 	if (oldfd == -1 || newfd == -1)
 		return -1;
@@ -1152,7 +1096,7 @@ static int sys_dup(int oldfd)
 	ret = fs_dup(oldfd);
 
 	if (TestControl.verbos)
-		klog("%d: dup(%d) = %d\n", CURRENT_TASK()->psid, oldfd, ret);
+		klog("dup(%d) = %d\n", oldfd, ret);
 
 	return ret;
 }
@@ -1160,7 +1104,7 @@ static int sys_dup(int oldfd)
 static int sys_getrlimit(int resource, void *limit)
 {
 	if (TestControl.verbos)
-		klog("%d: getrlimit\n", CURRENT_TASK()->psid);
+		klog("getrlimit\n");
 
 	return -1;
 }
@@ -1168,7 +1112,7 @@ static int sys_getrlimit(int resource, void *limit)
 static int sys_kill(unsigned pid, int sig)
 {
 	if (TestControl.verbos)
-		klog("%d: kill\n", CURRENT_TASK()->psid);
+		klog("kill\n");
 
 	return -1;
 }
@@ -1193,7 +1137,7 @@ static int sys_unlink(const char *_name)
 done:
 	name_put(name);
 	if (TestControl.verbos)
-		klog("%d: unlink(%s) = %d\n", CURRENT_TASK()->psid, name, ret);
+		klog("unlink(%s) = %d\n", name, ret);
 
 	return ret;
 }
@@ -1211,8 +1155,7 @@ static int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 {
 	int ret = -1;
 	if (TestControl.verbos)
-		klog("%d: readdir(%d, %x, %d) = %d\n", CURRENT_TASK()->psid, fd,
-		     dirp, count, ret);
+		klog("readdir(%d, %x, %d) = %d\n", fd, dirp, count, ret);
 
 	return sys_getdents(fd, dirp, count);
 }
@@ -1273,9 +1216,9 @@ static int do_stat(const char *name, struct stat *buf, int follow_link)
 	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
 	if (TestControl.verbos) {
 		format_modes(buf->st_mode, modes);
-		klog("%d: stat(%s, %x) = %d, %s, len=%d, blocks = %d\n",
-		     CURRENT_TASK()->psid, name, buf, ret, modes, buf->st_size,
-		     buf->st_blocks);
+		klog("stat(%s, %x) = %d, %s, len=%d, blocks = %d, i_ino = %d\n",
+		     name, buf, ret, modes, buf->st_size, buf->st_blocks,
+		     buf->st_ino);
 	}
 
 done:
@@ -1336,8 +1279,7 @@ static int sys_access(const char *path, int mode)
 done:
 	name_put(name);
 	if (TestControl.verbos)
-		klog("%d: access(%s, %x) = %d\n", CURRENT_TASK()->psid, path,
-		     mode, ret);
+		klog("access(%s, %x) = %d\n", path, mode, ret);
 
 	return ret;
 }
@@ -1347,8 +1289,7 @@ static int sys_lseek(int fd, unsigned offset, int whence)
 	int ret;
 	ret = fs_seek(fd, offset, whence);
 	if (TestControl.verbos)
-		klog("%d: lseek(%d, %d, %d) = %d\n", CURRENT_TASK()->psid, fd,
-		     offset, whence, ret);
+		klog("lseek(%d, %d, %d) = %d\n", fd, offset, whence, ret);
 
 	return ret;
 }
@@ -1359,9 +1300,9 @@ static int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	int ret;
 	ret = fs_llseek(fd, offset_high, offset_low, result, whence);
 	if (TestControl.verbos)
-		klog("%d: llseek(%d, %x, %x, %x, %d) = %d, current %d\n",
-		     CURRENT_TASK()->psid, fd, offset_high, offset_low, result,
-		     whence, ret, (int)CURRENT_TASK()->fds[fd].fp->f_pos);
+		klog("llseek(%d, %x, %x, %x, %d) = %d, current %d\n", fd,
+		     offset_high, offset_low, result, whence, ret,
+		     (int)CURRENT_TASK()->fds[fd].fp->f_pos);
 
 	return ret;
 }
@@ -1371,9 +1312,8 @@ static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
 {
 	int ret = do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
 	if (TestControl.verbos)
-		klog("%d: select(%d, %x, %x, %x, %x) = %d\n",
-		     CURRENT_TASK()->psid, nfds, readfds, writefds, exceptfds,
-		     timeout, ret);
+		klog("select(%d, %x, %x, %x, %x) = %d\n", nfds, readfds,
+		     writefds, exceptfds, timeout, ret);
 
 	return ret;
 }
@@ -1385,9 +1325,8 @@ static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 	int ret =
 		do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
 	if (TestControl.verbos)
-		klog("%d: pselect(%d, %x, %x, %x, %x, %x) = %d\n",
-		     CURRENT_TASK()->psid, nfds, readfds, writefds, exceptfds,
-		     timeout, sigmask, ret);
+		klog("pselect(%d, %x, %x, %x, %x, %x) = %d\n", nfds, readfds,
+		     writefds, exceptfds, timeout, sigmask, ret);
 }
 
 static int sys_link(const char *path1, const char *path2)
@@ -1401,8 +1340,7 @@ static int sys_link(const char *path1, const char *path2)
 	ret = ext4_flink(name1, name2);
 
 	if (TestControl.verbos)
-		klog("%d: symlink(%s, %s) = %d\n", CURRENT_TASK()->psid, name1,
-		     name2, ret);
+		klog("symlink(%s, %s) = %d\n", name1, name2, ret);
 
 	name_put(name1);
 	name_put(name2);
@@ -1424,8 +1362,7 @@ static int sys_symlink(const char *path1, const char *path2)
 	ret = ext4_fsymlink(name1, name2);
 
 	if (TestControl.verbos)
-		klog("%d: symlink(%s, %s) = %d\n", CURRENT_TASK()->psid, name1,
-		     name2, ret);
+		klog("symlink(%s, %s) = %d\n", name1, name2, ret);
 
 	name_put(name1);
 	name_put(name2);
@@ -1444,8 +1381,7 @@ static int sys_chmod(const char *pathname, uint32_t mode)
 	ret = fs_chmod(name, mode);
 	name_put(name);
 	if (TestControl.verbos)
-		klog("%d: chmod(%s, %d) = %d\n", CURRENT_TASK()->psid, name,
-		     mode, ret);
+		klog("chmod(%s, %d) = %d\n", name, mode, ret);
 
 	return ret;
 }
@@ -1455,8 +1391,7 @@ static int sys_fchmod(int fd, uint32_t mode)
 	int ret = -1;
 	ret = fs_fchmod(fd, mode);
 	if (TestControl.verbos)
-		klog("%d: chmod(%d, %d) = %d\n", CURRENT_TASK()->psid, fd, mode,
-		     ret);
+		klog("chmod(%d, %d) = %d\n", fd, mode, ret);
 
 	return ret;
 }
@@ -1477,8 +1412,7 @@ static int sys_rename(const char *oldpath, const char *newpath)
 	name_put(name2);
 
 	if (TestControl.verbos)
-		klog("%d: rename(%s, %s) = %d\n", CURRENT_TASK()->psid, name1,
-		     name2, ret);
+		klog("rename(%s, %s) = %d\n", name1, name2, ret);
 
 	return (0 - ret);
 }
@@ -1488,7 +1422,7 @@ static int sys_umask(unsigned mask)
 	task_struct *cur = CURRENT_TASK();
 	int ret = __sync_lock_test_and_set(&cur->umask, (mask & S_IRWXOGU));
 	if (TestControl.verbos)
-		klog("%d: umask(%d) = %d\n", mask, ret);
+		klog("umask(%d) = %d\n", mask, ret);
 
 	return ret;
 }
@@ -1507,8 +1441,8 @@ static int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	}
 
 	if (TestControl.verbos)
-		klog("%d: gettimeofday() = %d(sec), %d(usec), while now is %d(ms)\n",
-		     CURRENT_TASK()->psid, tv->tv_sec, tv->tv_usec, now);
+		klog("gettimeofday() = %d(sec), %d(usec), while now is %d(ms)\n",
+		     tv->tv_sec, tv->tv_usec, now);
 
 	return 0;
 }
@@ -1531,8 +1465,7 @@ static int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 static int sys_setreuid(unsigned ruid, unsigned euid)
 {
 	if (TestControl.verbos)
-		klog("%d: setreuid(%d, %d)\n", CURRENT_TASK()->psid, ruid,
-		     euid);
+		klog("setreuid(%d, %d)\n", ruid, euid);
 
 	return 0;
 }
@@ -1540,7 +1473,7 @@ static int sys_setreuid(unsigned ruid, unsigned euid)
 static int sys_setregid(unsigned pid, unsigned pgid)
 {
 	if (TestControl.verbos)
-		klog("%d: setregid(%d, %d)\n", CURRENT_TASK()->psid, pid, pgid);
+		klog("setregid(%d, %d)\n", pid, pgid);
 
 	return 0;
 }

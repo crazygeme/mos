@@ -2,6 +2,7 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <config.h>
+#include <macro.h>
 
 typedef struct _cy_buf {
 	unsigned length;

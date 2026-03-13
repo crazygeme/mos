@@ -22,7 +22,7 @@ void dsr_init()
 
 void dsr_add(dsr_callback fn, void *param)
 {
-	dsr_node *node = NULL;
+	list_entry *node = NULL;
 
 	spinlock_lock(&dsr_lock);
 
@@ -31,10 +31,11 @@ void dsr_add(dsr_callback fn, void *param)
 	}
 
 	if (node) {
-		list_init(&node->dsr_list);
-		node->fn = fn;
-		node->param = param;
-		list_insert_tail(&dsr_head, &node->dsr_list);
+		dsr_node *dsr = container_of(node, dsr_node, dsr_list);
+		list_init(&dsr->dsr_list);
+		dsr->fn = fn;
+		dsr->param = param;
+		list_insert_tail(&dsr_head, &dsr->dsr_list);
 	}
 
 	spinlock_unlock(&dsr_lock);

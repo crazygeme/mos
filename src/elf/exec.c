@@ -448,11 +448,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 
 	/* log if needed */
 	if (TestControl.verbos) {
-		klog("%d: execve(%s, [", CURRENT_TASK()->psid, file_name);
-		for (i = 0; i < argc; i++) {
-			klog_printf("%s ", s_argv[i]);
-		}
-		klog_printf("]\n");
+		klog("execve(%s, ...)\n", file_name);
 	}
 
 	/*

@@ -390,11 +390,13 @@ void tty_clear_locked(void)
 }
 
 /*
- * tty_write - write raw bytes to the TTY under the TTY lock.
+ * tty_raw_write - write raw bytes to the TTY under the TTY lock.
  * Batches hardware cursor updates: the hardware register is written only once
  * at the end, not per character.
  */
-void tty_write(const char *buf, unsigned len)
+/* Returns 1 if the cursor is currently at column 0. */
+
+static void tty_raw_write(const char *buf, unsigned len)
 {
 	unsigned i;
 
@@ -403,6 +405,47 @@ void tty_write(const char *buf, unsigned len)
 		tty_cursor_set(tty_char_to_pos(buf[i]));
 	tty_movecurse((unsigned)cursor);
 	spinlock_unlock(&tty_lock);
+}
+
+static int at_column_zero(void)
+{
+	return tty_get_cursor() % (int)TTY_MAX_COL == 0;
+}
+
+/* Apply c_oflag output processing and write one character to the TTY.
+ * If OPOST is clear, the character is written raw. */
+static void output_char(unsigned char c)
+{
+	if (!(tty_termios.c_oflag & OPOST)) {
+		tty_raw_write((const char *)&c, 1);
+		return;
+	}
+
+	if (tty_termios.c_oflag & OLCUC)
+		c = (unsigned char)toupper(c);
+
+	if (c == '\n') {
+		if (tty_termios.c_oflag & ONLCR) {
+			tty_raw_write("\r\n", 2);
+			return;
+		}
+	} else if (c == '\r') {
+		if (tty_termios.c_oflag & OCRNL) {
+			tty_raw_write("\n", 1);
+			return;
+		}
+		if ((tty_termios.c_oflag & ONOCR) && at_column_zero())
+			return;
+	}
+
+	tty_raw_write((const char *)&c, 1);
+}
+
+void tty_write(const char *buf, unsigned len)
+{
+	int i;
+	for (i = 0; i < len; i++)
+		output_char(buf[i]);
 }
 
 /* ── ioctl ───────────────────────────────────────────────────────────────── */

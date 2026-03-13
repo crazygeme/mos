@@ -17,29 +17,18 @@
 #include <ps/ps.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
-#ifdef __DEBUG__
 #include <hw/serial.h>
-#endif
 #include <hw/tty.h>
 #include <hw/time.h>
-
-/* ── Forward declarations (implemented in tty.c) ────────────────────────── */
-
-extern void tty_print(char *str, void *ctx);
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */
 
 extern spinlock_t tty_lock;
 
-#ifdef __DEBUG__
 static int klog_inited = 0;
-#endif
 static mutex_t klog_lock;
 
 /* ── klog backend ────────────────────────────────────────────────────────── */
-
-#ifdef __DEBUG__
-
 void klog_init(void)
 {
 	klog_inited = 1;
@@ -69,31 +58,6 @@ void klog_close(void)
 	if (klog_inited)
 		serial_flush();
 }
-
-#else /* !__DEBUG__ */
-
-void klog_init(void)
-{
-	mutex_init(&klog_lock);
-}
-
-static void klog_write(char c, void *ctx)
-{
-	(void)c;
-	(void)ctx;
-}
-
-static void klog_writestr(char *str, void *ctx)
-{
-	(void)str;
-	(void)ctx;
-}
-
-void klog_close(void)
-{
-}
-
-#endif /* __DEBUG__ */
 
 /* ── sprintf helpers ─────────────────────────────────────────────────────── */
 
@@ -275,6 +239,21 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 
 /* vprintf/vsprintf are the standard variadic-list entrypoints; all va_list
  * callers use these so there is no duplication of the format loop. */
+
+static void tty_print(char *str, void *ctx)
+{
+	if (!str || !*str)
+		return;
+	while (*str) {
+		if (*str == '\n') {
+			tty_emit('\r', ctx);
+			tty_emit('\n', ctx);
+		} else
+			tty_emit(*str, ctx);
+
+		str++;
+	}
+}
 
 void vprintf(const char *fmt, va_list ap)
 {

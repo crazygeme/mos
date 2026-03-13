@@ -141,8 +141,7 @@ static int sys_unlink(const char *pathname);
 static int sys_time(unsigned *t);
 int resolve_path(const char *old, char *new);
 static int sys_access(const char *path, int mode);
-static int do_stat(const char *func, const char *_name, struct stat *buf,
-		   int follow_link);
+static int do_stat(const char *_name, struct stat *buf, int follow_link);
 static int sys_lseek(int fd, unsigned offset, int whence);
 static int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 		      uint64_t *result, unsigned int whence);
@@ -601,89 +600,86 @@ done:
 	return ret;
 }
 
-static int _chdir(const char *cwd, const char *path)
-{
-	struct stat s;
-
-	if (!path)
-		return 0;
-
-	if (!*path)
-		return 1;
-
-	if (!strcmp(path, "."))
-		return 1;
-
-	if (!strcmp(path, "..")) {
-		char *tmp;
-		tmp = strrchr(cwd, '/');
-		if (tmp)
-			*tmp = '\0';
-		strcpy(cwd, cwd);
-		return 1;
-	}
-	if (cwd[strlen(cwd) - 1] != '/')
-		strcat(cwd, "/");
-	strcat(cwd, path);
-	strcat(cwd, "/");
-	if (do_stat(__func__, cwd, &s, 1) == -1)
-		return 0;
-
-	if (!S_ISDIR(s.st_mode))
-		return 0;
-
-	strcpy(cwd, cwd);
-	return 1;
-}
-
 static int sys_chdir(const char *path)
 {
-	char *name = name_get();
-	char *slash, *tmp;
-	char *cwd = name_get();
-	int ret = 1;
 	task_struct *cur = CURRENT_TASK();
-	int len;
-	if (!path || !*path)
-		return 0;
+	char *cwd = name_get();
+	const char *p;
+	struct stat s;
+	int ret = 0;
+
+	if (!path || !*path) {
+		ret = -ENOENT;
+		goto done;
+	}
 
 	if (TestControl.verbos)
-		klog("%d: chdir %s\n", CURRENT_TASK()->psid, path);
+		klog("%d: chdir(%s)\n", cur->psid, path);
 
-	if (*path != '/')
+	/* Seed cwd from root or from the current directory */
+	if (*path == '/') {
+		cwd[0] = '/';
+		cwd[1] = '\0';
+		p = path + 1;
+	} else {
+		int len;
 		strcpy(cwd, cur->cwd);
-	else {
-		len = strlen(path);
-		strcpy(cur->cwd, path);
-		if (path[len - 1] != '/')
-			strcat(cur->cwd, "/");
-		ret = 0;
-		goto done;
+		len = strlen(cwd);
+		if (!len || cwd[len - 1] != '/')
+			strcat(cwd, "/");
+		p = path;
 	}
 
-	strcpy(name, path);
-	slash = strchr(name, '/');
-	tmp = name;
-	while (slash) {
-		*slash = '\0';
-		ret = _chdir(cwd, tmp);
-		if (!ret)
-			return -1;
+	/* Walk each path component */
+	while (*p) {
+		const char *end;
+		int comp_len, len;
 
-		slash++;
-		tmp = slash;
-		slash = strchr(tmp, '/');
-	}
+		while (*p == '/') /* skip consecutive slashes */
+			p++;
+		if (!*p)
+			break;
 
-	ret = _chdir(cwd, tmp);
-	if (!ret) {
-		ret = -1;
-		goto done;
+		end = p;
+		while (*end && *end != '/')
+			end++;
+		comp_len = end - p;
+
+		if (comp_len == 1 && p[0] == '.') {
+			/* '.' — stay */
+		} else if (comp_len == 2 && p[0] == '.' && p[1] == '.') {
+			/* '..' — ascend one level */
+			len = strlen(cwd);
+			if (len > 1 && cwd[len - 1] == '/')
+				cwd[--len] = '\0';
+			char *sep = strrchr(cwd, '/');
+			if (sep == cwd)
+				cwd[1] = '\0'; /* already at root */
+			else if (sep)
+				*sep = '\0';
+			len = strlen(cwd);
+			if (!len || cwd[len - 1] != '/')
+				strcat(cwd, "/");
+		} else {
+			/* Regular component — append, then verify */
+			len = strlen(cwd);
+			memcpy(cwd + len, p, comp_len);
+			cwd[len + comp_len] = '/';
+			cwd[len + comp_len + 1] = '\0';
+			if (do_stat(cwd, &s, 1) != EOK) {
+				ret = -ENOENT;
+				goto done;
+			}
+			if (!S_ISDIR(s.st_mode)) {
+				ret = -ENOTDIR;
+				goto done;
+			}
+		}
+		p = end;
 	}
 
 	strcpy(cur->cwd, cwd);
 done:
-	name_put(name);
 	name_put(cwd);
 	return ret;
 }
@@ -703,7 +699,7 @@ static int sys_mkdir(const char *path, unsigned mode)
 	resolve_path(path, name);
 	ret = ext4_dir_mk(name);
 	if (TestControl.verbos)
-		klog("%d: %dmkdir(%s, %d)\n", CURRENT_TASK()->psid, path, mode);
+		klog("%d: mkdir(%s, %d)\n", CURRENT_TASK()->psid, path, mode);
 
 	name_put(name);
 	return ret;
@@ -716,7 +712,7 @@ static int sys_rmdir(const char *path)
 	resolve_path(path, name);
 	ret = ext4_dir_rm(name);
 	if (TestControl.verbos)
-		klog("%d: %drmdir(%s)\n", CURRENT_TASK()->psid, name);
+		klog("%d: rmdir(%s)\n", CURRENT_TASK()->psid, name);
 
 	name_put(name);
 	return ret;
@@ -986,7 +982,7 @@ static int sys_lstat64(const char *path, struct stat64 *s)
 	char *name = name_get();
 	int ret;
 	resolve_path(path, name);
-	ret = do_stat(__func__, name, &s32, 0);
+	ret = do_stat(name, &s32, 0);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
 	s->st_ino = s32.st_ino;
@@ -1011,7 +1007,7 @@ static int sys_stat64(const char *path, struct stat64 *s)
 	char *name = name_get();
 	int ret;
 	resolve_path(path, name);
-	ret = do_stat(__func__, name, &s32, 1);
+	ret = do_stat(name, &s32, 1);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
 	s->st_ino = s32.st_ino;
@@ -1184,7 +1180,7 @@ static int sys_unlink(const char *_name)
 	int ret = -1;
 
 	resolve_path(_name, name);
-	ret = do_stat(__func__, name, &s, 0);
+	ret = do_stat(name, &s, 0);
 	if (ret != EOK)
 		goto done;
 
@@ -1264,8 +1260,7 @@ static int format_modes(unsigned mode, char *str)
 	return 0;
 }
 
-static int do_stat(const char *func, const char *name, struct stat *buf,
-		   int follow_link)
+static int do_stat(const char *name, struct stat *buf, int follow_link)
 {
 	int ret = -ENOENT;
 	file *fp = NULL;
@@ -1278,9 +1273,9 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
 	if (TestControl.verbos) {
 		format_modes(buf->st_mode, modes);
-		klog("%d: [%s](%s, %x) = %d, %s, len=%d, blocks = %d\n",
-		     CURRENT_TASK()->psid, func, name, buf, ret, modes,
-		     buf->st_size, buf->st_blocks);
+		klog("%d: stat(%s, %x) = %d, %s, len=%d, blocks = %d\n",
+		     CURRENT_TASK()->psid, name, buf, ret, modes, buf->st_size,
+		     buf->st_blocks);
 	}
 
 done:
@@ -1295,7 +1290,7 @@ static int sys_stat(const char *_name, struct stat *buf)
 	char *name = name_get();
 	int ret;
 	resolve_path(_name, name);
-	ret = do_stat(__func__, name, buf, 1);
+	ret = do_stat(name, buf, 1);
 	name_put(name);
 	return ret;
 }
@@ -1305,7 +1300,7 @@ static int sys_lstat(const char *_name, struct stat *buf)
 	char *name = name_get();
 	int ret;
 	resolve_path(_name, name);
-	ret = do_stat(__func__, name, buf, 0);
+	ret = do_stat(name, buf, 0);
 	name_put(name);
 	return ret;
 }
@@ -1318,7 +1313,7 @@ static int sys_access(const char *path, int mode)
 	int ret = -EACCES;
 
 	resolve_path(path, name);
-	ret = do_stat(__func__, name, &s, 1);
+	ret = do_stat(name, &s, 1);
 
 	if (ret != EOK) {
 		ret = -ENOENT;

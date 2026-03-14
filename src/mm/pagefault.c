@@ -159,8 +159,8 @@ extern phymm_page *phymm_pages;
 /*
  * Handle page fault with fd attached.
  */
-static int pf_handle_invalid_file_map(unsigned address, file *f,
-				      unsigned offset, int prot, int flag)
+static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
+				      int prot, int flag)
 {
 	int ret = 0;
 	unsigned phy = 0;
@@ -268,7 +268,7 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 static int pf_handle_page_invalid(unsigned cr2)
 {
 	vm_region *region;
-	unsigned this_offset;
+	int this_offset;
 	unsigned this_begin;
 	task_struct *cur = CURRENT_TASK();
 

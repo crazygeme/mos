@@ -115,6 +115,7 @@ static long sys_personality(unsigned int personality);
 static int sys_fcntl(int fd, int cmd, int arg);
 static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 			unsigned int count);
+static int sys_oldstat(const char *filename, struct oldstat *buf);
 static int sys_stat(const char *pathname, struct stat *buf);
 static int sys_lstat(const char *path, struct stat *s);
 static int sys_fstat(int fd, struct stat *s);
@@ -185,7 +186,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_lseek,
 	sys_getpid, // 16 ~ 20
 	0,
-	0,
+	sys_oldstat,
 	0,
 	sys_getuid,
 	0, // 21 ~ 25
@@ -880,18 +881,64 @@ static int sys_fsync(int fd)
 	return fs_sync(fd);
 }
 
-static int sys_fstat(int fd, struct stat *s)
+static int format_modes(unsigned mode, char *str)
 {
-	int ret = fs_fstat(fd, s);
-	if (TestControl.verbos)
-		klog("fstat(%d, %x) size %d isdir %d blksize %d, i_ino %d\n",
-		     fd, s, s->st_size, S_ISDIR(s->st_mode), s->st_blksize,
-		     s->st_ino);
+	memset(str, '-', 11);
+	str[0] = '-';
+	if (S_ISDIR(mode))
+		str[0] = 'd';
+	else if (S_ISCHR(mode))
+		str[0] = 'c';
+	else if (S_ISLNK(mode))
+		str[0] = 'l';
+
+	if (mode & S_IRUSR)
+		str[1] = 'r';
+
+	if (mode & S_IWUSR)
+		str[2] = 'w';
+
+	if (mode & S_IXUSR)
+		str[3] = 'x';
+
+	if (mode & S_IRGRP)
+		str[4] = 'r';
+
+	if (mode & S_IWGRP)
+		str[5] = 'w';
+
+	if (mode & S_IXGRP)
+		str[6] = 'x';
+
+	if (mode & S_IROTH)
+		str[7] = 'r';
+
+	if (mode & S_IWOTH)
+		str[8] = 'w';
+
+	if (mode & S_IXOTH)
+		str[9] = 'x';
+
+	str[10] = '\0';
+
+	return 0;
+}
+
+static int sys_fstat(int fd, struct stat *buf)
+{
+	int ret = fs_fstat(fd, buf);
+	if (TestControl.verbos) {
+		char modes[11];
+		format_modes(buf->st_mode, modes);
+		klog("fstat(%d, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
+		     fd, buf, ret, modes, buf->st_size, buf->st_blocks,
+		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
+	}
 
 	return ret;
 }
 
-static int sys_fstat64(int fd, struct stat64 *s)
+static int sys_fstat64(int fd, struct stat64 *buf)
 {
 	task_struct *cur = CURRENT_TASK();
 	struct stat s32;
@@ -899,26 +946,30 @@ static int sys_fstat64(int fd, struct stat64 *s)
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
-	fs_fstat(fd, &s32);
-	s->st_dev = s32.st_dev;
-	s->st_ino = s32.st_ino;
-	s->st_mode = s32.st_mode;
-	s->st_nlink = s32.st_nlink;
-	s->st_uid = s32.st_uid;
-	s->st_gid = s32.st_gid;
-	s->st_rdev = s32.st_rdev;
-	s->st_size = s32.st_size;
-	s->st_blksize = s32.st_blksize;
-	s->st_blocks = s32.st_blocks;
-	s->st_atime = s32.st_atime;
-	s->st_mtime = s32.st_mtime;
-	s->st_ctime = s32.st_ctime;
+	int ret = fs_fstat(fd, &s32);
+	buf->st_dev = s32.st_dev;
+	buf->st_ino = s32.st_ino;
+	buf->st_mode = s32.st_mode;
+	buf->st_nlink = s32.st_nlink;
+	buf->st_uid = s32.st_uid;
+	buf->st_gid = s32.st_gid;
+	buf->st_rdev = s32.st_rdev;
+	buf->st_size = s32.st_size;
+	buf->st_blksize = s32.st_blksize;
+	buf->st_blocks = s32.st_blocks;
+	buf->st_atime = s32.st_atime;
+	buf->st_mtime = s32.st_mtime;
+	buf->st_ctime = s32.st_ctime;
 
-	if (TestControl.verbos)
-		klog("fstat64(%d, %x) size %d blocks %d blksize %d\n", fd, s,
-		     s32.st_size, s32.st_blocks, s32.st_blksize);
+	if (TestControl.verbos) {
+		char modes[11];
+		format_modes(buf->st_mode, modes);
+		klog("fstat(%d, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
+		     fd, buf, ret, modes, buf->st_size, buf->st_blocks,
+		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
+	}
 
-	return 0;
+	return ret;
 }
 
 static int sys_lstat64(const char *path, struct stat64 *s)
@@ -1160,49 +1211,6 @@ static int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 	return sys_getdents(fd, dirp, count);
 }
 
-static int format_modes(unsigned mode, char *str)
-{
-	memset(str, '-', 11);
-	str[0] = '-';
-	if (S_ISDIR(mode))
-		str[0] = 'd';
-	else if (S_ISCHR(mode))
-		str[0] = 'c';
-	else if (S_ISLNK(mode))
-		str[0] = 'l';
-
-	if (mode & S_IRUSR)
-		str[1] = 'r';
-
-	if (mode & S_IWUSR)
-		str[2] = 'w';
-
-	if (mode & S_IXUSR)
-		str[3] = 'x';
-
-	if (mode & S_IRGRP)
-		str[4] = 'r';
-
-	if (mode & S_IWGRP)
-		str[5] = 'w';
-
-	if (mode & S_IXGRP)
-		str[6] = 'x';
-
-	if (mode & S_IROTH)
-		str[7] = 'r';
-
-	if (mode & S_IWOTH)
-		str[8] = 'w';
-
-	if (mode & S_IXOTH)
-		str[9] = 'x';
-
-	str[10] = '\0';
-
-	return 0;
-}
-
 static int do_stat(const char *name, struct stat *buf, int follow_link)
 {
 	int ret = -ENOENT;
@@ -1216,9 +1224,9 @@ static int do_stat(const char *name, struct stat *buf, int follow_link)
 	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
 	if (TestControl.verbos) {
 		format_modes(buf->st_mode, modes);
-		klog("stat(%s, %x) = %d, %s, len=%d, blocks = %d, i_ino = %d\n",
+		klog("stat(%s, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
 		     name, buf, ret, modes, buf->st_size, buf->st_blocks,
-		     buf->st_ino);
+		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
 	}
 
 done:
@@ -1226,6 +1234,28 @@ done:
 		fs_put_file(fp);
 	}
 	return ret;
+}
+
+static int sys_oldstat(const char *filename, struct oldstat *buf)
+{
+	struct stat s;
+	int ret = sys_stat(filename, &s);
+	if (ret != EOK)
+		return ret;
+
+	buf->st_dev = s.st_dev;
+	buf->st_ino = s.st_ino;
+	buf->st_mode = s.st_mode;
+	buf->st_nlink = s.st_nlink;
+	buf->st_uid = s.st_uid;
+	buf->st_gid = s.st_gid;
+	buf->st_rdev = s.st_rdev;
+	buf->st_size = s.st_size;
+	buf->st_atime = s.st_atime;
+	buf->st_mtime = s.st_mtime;
+	buf->st_ctime = s.st_ctime;
+
+	return 0;
 }
 
 static int sys_stat(const char *_name, struct stat *buf)

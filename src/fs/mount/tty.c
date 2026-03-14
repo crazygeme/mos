@@ -684,14 +684,19 @@ static super_operations tty_sops = {
 static void tty_fs_init(void)
 {
 	char mount_path[16];
+	super_block *sb;
 	task_struct *cur = CURRENT_TASK();
 
 	for (int i = 0; i < TTY_MAX_VDEV; i++) {
-		super_block *sb = sget(&tty_sops);
+		sb = sget(&tty_sops);
 		sb->s_fs_info = &ttys[i];
 		sprintf(mount_path, "/dev/tty%d", i);
 		vfs_mount(cur->root, mount_path, sb);
 	}
+
+	sb = sget(&tty_sops);
+	sb->s_fs_info = &ttys[0];
+	vfs_mount(cur->root, "/dev/tty", sb);
 }
 
 KERNEL_INIT(4, tty_fs_init);

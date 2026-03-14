@@ -46,7 +46,7 @@ fi
 
 kernel_file=out/kernel
 
-make -q -j8
+make -s -j8
 
 if [ ! -f "$diskfile" ]; then
 	unzip redhat.img.zip

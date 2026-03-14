@@ -23,8 +23,6 @@
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */
 
-extern spinlock_t tty_lock;
-
 static int klog_inited = 0;
 static mutex_t klog_lock;
 
@@ -244,10 +242,10 @@ static void tty_print(char *str, void *ctx)
 		return;
 	while (*str) {
 		if (*str == '\n') {
-			tty_emit('\r', ctx);
-			tty_emit('\n', ctx);
+			tty_default_emit_unsafe('\r', ctx);
+			tty_default_emit_unsafe('\n', ctx);
 		} else
-			tty_emit(*str, ctx);
+			tty_default_emit_unsafe(*str, ctx);
 
 		str++;
 	}
@@ -293,13 +291,13 @@ void printk(const char *fmt, ...)
 {
 	va_list ap;
 
-	spinlock_lock(&tty_lock);
+	tty_lock_acquire();
 	printf("[%d]: ", CURRENT_TASK()->psid);
 
 	va_start(ap, fmt);
 	kvformat(tty_print, fmt, ap, NULL);
 	va_end(ap);
-	spinlock_unlock(&tty_lock);
+	tty_lock_release();
 }
 
 /*

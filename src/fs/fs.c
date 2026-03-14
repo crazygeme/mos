@@ -91,6 +91,7 @@ int fs_open(const char *path, int flag, char *mode)
 	if (!fp)
 		goto fail;
 
+	fp->f_mode = (unsigned)(flag & O_ACCMODE);
 	cur->fds[fd].flag = flag;
 	cur->fds[fd].fp = fp;
 	cur->fds[fd].used = 1;

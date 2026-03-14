@@ -523,9 +523,9 @@ static void run_if_exist(char *path)
  *   1. Update TSS.esp0 so the CPU knows where to switch to kernel stack
  *      when this process takes an interrupt or syscall.
  *   2. Open the three standard file descriptors (stdin/stdout/stderr):
- *        fd 0 — /dev/kb  (keyboard input)
- *        fd 1 — /dev/tty (terminal output)
- *        fd 2 — /dev/tty (terminal error output)
+ *        fd 0 — /dev/tty O_RDONLY (keyboard input)
+ *        fd 1 — /dev/tty O_WRONLY (terminal output)
+ *        fd 2 — /dev/tty O_WRONLY (terminal error output)
  *   3. exec /bin/bash as the init process.
  */
 static void user_first_process_run()
@@ -533,10 +533,10 @@ static void user_first_process_run()
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
 	ps_update_tss(esp0);
 
-	/* Open stdin, stdout, stderr (fds 0, 1, 2). */
-	fs_open("/dev/kb", 0, "r");
-	fs_open("/dev/tty", 0, "w");
-	fs_open("/dev/tty", 0, "w");
+	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty. */
+	fs_open("/dev/tty0", O_RDONLY, NULL);
+	fs_open("/dev/tty0", O_WRONLY, NULL);
+	fs_open("/dev/tty0", O_WRONLY, NULL);
 
 	run_if_exist("/bin/bash");
 }
@@ -550,7 +550,7 @@ static void user_first_process_run()
  */
 static void kinit_userspace(void)
 {
-	tty_clear_locked();
+	tty_default_clear();
 	user_first_process_run();
 }
 

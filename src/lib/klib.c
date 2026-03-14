@@ -10,6 +10,7 @@
 #include <lib/klib.h>
 #include <hw/tty.h>
 #include <macro.h>
+#include <stdint.h>
 
 /* Defined in kmalloc.c */
 extern void kmalloc_init(void);

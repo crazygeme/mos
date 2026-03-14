@@ -110,6 +110,7 @@ struct _file {
 	const file_operations *f_fop;
 	loff_t f_pos;
 	unsigned f_count;
+	unsigned f_mode; /* O_RDONLY / O_WRONLY / O_RDWR (set by fs_open) */
 	char *f_name;
 };
 

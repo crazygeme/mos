@@ -361,7 +361,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
 	file *fp;
-	int len = PAGE_SIZE;
+	int len = 256; /* max bytes to read for the first line of a script */
 	char *firstline = NULL;
 	size_t wcnt;
 	if (!f) {
@@ -397,7 +397,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 
 	/* read first line */
 	len = len > s.st_size ? s.st_size : len;
-	firstline = vm_alloc(1);
+	firstline = malloc(256);
 	if (ext4_fread(fp->f_inode->i_private, firstline, len, &wcnt) != EOK) {
 		fs_put_file(fp);
 		name_put(file_name);
@@ -411,7 +411,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 */
 	if (firstline[0] == 0x7f && firstline[1] == 'E' &&
 	    firstline[2] == 'L') {
-		vm_free(firstline, 1);
+		free(firstline);
 		firstline = NULL;
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
 		char *lf = strchr(firstline, '\n');
@@ -419,7 +419,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 			*lf = '\0';
 		strcpy(file_name, firstline + 2);
 	} else {
-		vm_free(firstline, 1);
+		free(firstline);
 		name_put(file_name);
 		return -ENOEXEC;
 	}
@@ -435,7 +435,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	s_envp = ps_save_envp(envp, envc);
 
 	if (firstline) {
-		vm_free(firstline, 1);
+		free(firstline);
 		firstline = NULL;
 	}
 

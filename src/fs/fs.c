@@ -324,7 +324,7 @@ done:
 	return (int)pos;
 }
 
-int fs_seek(int fd, unsigned offset, unsigned whence)
+int fs_seek(int fd, int offset, unsigned whence)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;

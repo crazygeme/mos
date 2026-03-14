@@ -142,7 +142,7 @@ static int sys_time(unsigned *t);
 int resolve_path(const char *old, char *new);
 static int sys_access(const char *path, int mode);
 static int do_stat(const char *_name, struct stat *buf, int follow_link);
-static int sys_lseek(int fd, unsigned offset, int whence);
+static int sys_lseek(int fd, int offset, int whence);
 static int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 		      uint64_t *result, unsigned int whence);
 static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
@@ -1284,7 +1284,7 @@ done:
 	return ret;
 }
 
-static int sys_lseek(int fd, unsigned offset, int whence)
+static int sys_lseek(int fd, int offset, int whence)
 {
 	int ret;
 	ret = fs_seek(fd, offset, whence);

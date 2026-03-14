@@ -2,7 +2,6 @@
 # mak
 _ramsize="512"
 diskfile="ffs.img"
-_rebuild="0"
 _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _verbose=""
@@ -14,9 +13,7 @@ _kvm=""
 
 for arg in $@
 do
-if [ "$arg" == "rebuild" ]; then
-	_rebuild="1"
-elif [ "$arg" == "debug" ]; then
+if [ "$arg" == "debug" ]; then
 	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
@@ -33,7 +30,6 @@ elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
 	echo "param:"
-	echo -e "\t rebuild: rebuild project before running"
 	echo -e "\t debug: wait for gdb before running"
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
@@ -47,12 +43,15 @@ if [ "$_window" == "curses" ]; then
 	_logtofile="file:krn.log"
 fi
 
-if [ "$_rebuild" == "1" ]; then
-	make rebuild
-fi
 
 kernel_file=out/kernel
-echo "$_verbose $_profile"
+
+make -q -j8
+
+if [ ! -f "$diskfile" ]; then
+	unzip redhat.img.zip
+fi
+
 
 qemu-system-i386 -cpu coreduo \
 	-display $_window \

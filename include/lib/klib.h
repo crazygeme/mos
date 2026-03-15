@@ -52,8 +52,6 @@ void sprintf(char *buf, const char *fmt, ...);
 
 /* ── String / memory ──────────────────────────────────────────────────────── */
 
-void bcopy(void *src, void *dst, unsigned n);
-void bzero(void *addr);
 void memcpy(void *dst, void *src, unsigned len);
 void memmove(void *dst, void *src, unsigned len);
 int memcmp(void *src, void *dst, unsigned len);

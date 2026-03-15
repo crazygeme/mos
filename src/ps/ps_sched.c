@@ -255,6 +255,11 @@ int sched_disable()
 	return __sync_lock_test_and_set(&scheduler_enabled, 0);
 }
 
+int sched_set_level(int level)
+{
+	return __sync_lock_test_and_set(&scheduler_enabled, level);
+}
+
 int sched_is_enabled()
 {
 	return __sync_add_and_fetch(&scheduler_enabled, 0);

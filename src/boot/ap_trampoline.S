@@ -39,6 +39,8 @@
 #define TMP_GDT_CODE_SEL  0x10   /* code descriptor at index 2 */
 #define TMP_GDT_DATA_SEL  0x08   /* data descriptor at index 1 */
 
+.section .note.GNU-stack,"",@progbits
+
 /*
  * 16-bit real-mode entry — executed at physical TRAMPOLINE_BASE
  */

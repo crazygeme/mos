@@ -50,6 +50,19 @@ DONE:
  *
  * @fmt is currently unused here (reserved for future bookkeeping).
  */
+/* Translate ELF segment permission flags (PF_R/PF_W/PF_X) to mmap PROT_*. */
+static int elf_pflags_to_prot(unsigned p_flags)
+{
+	int prot = 0;
+	if (p_flags & PF_R)
+		prot |= PROT_READ;
+	if (p_flags & PF_W)
+		prot |= PROT_WRITE;
+	if (p_flags & PF_X)
+		prot |= PROT_EXEC;
+	return prot;
+}
+
 static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 {
 	unsigned file_off = phdr->p_offset;
@@ -57,17 +70,20 @@ static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 	unsigned va_diff = phdr->p_vaddr - va_begin;
 	unsigned fileSiz = phdr->p_filesz;
 	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
-	unsigned i = 0;
+	unsigned map_size = va_end - va_begin + PAGE_SIZE;
+	int prot = elf_pflags_to_prot(phdr->p_flags);
 
 	if (va_begin == phdr->p_vaddr)
 		/* Page-aligned: use a file-backed mapping (lazy load). */
-		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE),
-			       PROT_READ | PROT_EXEC, 0, fp, file_off);
+		do_mmap_kernel(va_begin, map_size, prot, 0, fp, file_off);
 	else {
-		/* Unaligned: allocate anonymous pages and read segment data. */
-		do_mmap_kernel(va_begin, (va_end - va_begin + PAGE_SIZE),
-			       PROT_READ | PROT_EXEC | PROT_WRITE, 0, 0, 0);
-
+		/*
+		 * Unaligned: allocate anonymous pages and eagerly copy data.
+		 * PROT_WRITE is required here so the elf_read below can
+		 * populate the mapping; the final prot still reflects the
+		 * segment flags.
+		 */
+		do_mmap_kernel(va_begin, map_size, prot | PROT_WRITE, 0, 0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
 	}
 	return 1;
@@ -222,6 +238,8 @@ static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
 	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
 	unsigned map_size = va_end - va_begin + PAGE_SIZE;
 
+	int prot = elf_pflags_to_prot(phdr->p_flags);
+
 	if (va_begin == phdr->p_vaddr) {
 		/*
 		 * Page-aligned section: map file-backed with lazy page fault
@@ -231,16 +249,17 @@ static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		 * BSS (memsz > filesz) is zero-filled automatically by the
 		 * page fault handler for pages that fall beyond the file end.
 		 */
-		do_mmap_kernel(bias + va_begin, map_size, PROT_READ | PROT_EXEC,
-			       0, fp, file_off);
+		do_mmap_kernel(bias + va_begin, map_size, prot, 0, fp,
+			       file_off);
 	} else {
 		/*
 		 * Unaligned section: page boundary does not align with a file
 		 * block boundary, so fall back to eager read into a private
-		 * anonymous mapping.
+		 * anonymous mapping.  PROT_WRITE is added temporarily so the
+		 * elf_read below can populate the pages.
 		 */
-		do_mmap_kernel(bias + va_begin, map_size,
-			       PROT_READ | PROT_EXEC | PROT_WRITE, 0, 0, 0);
+		do_mmap_kernel(bias + va_begin, map_size, prot | PROT_WRITE, 0,
+			       0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
 	}
 

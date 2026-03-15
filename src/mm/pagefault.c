@@ -30,9 +30,9 @@ unsigned long long page_fault_perm_spent = 0;
  * LRU mmap cache
  *
  * Hash table for O(1) lookup keyed by (ino, offset).
- * Doubly-linked LRU list: head = most recently used, tail = least recently used.
- * On hit:  move entry to list head.
- * On miss + full: evict the tail (LRU) entry, insert new entry at head.
+ * Doubly-linked LRU list: tail = most recently used, head = least recently used.
+ * On hit:  move entry to list tail (MRU position).
+ * On miss + full: evict the head (LRU) entry, insert new entry at tail.
  */
 
 typedef struct _mmap_cache_key {
@@ -47,7 +47,7 @@ typedef struct _mmap_cache_entry {
 } mmap_cache_entry;
 
 static hash_table *mmap_cache = NULL;
-static list_entry mmap_lru; /* head = MRU, tail = LRU */
+static list_entry mmap_lru; /* tail = MRU, head = LRU */
 static mutex_t mmap_cache_lock;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
@@ -100,7 +100,7 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 		return 0;
 	}
 	entry = pair->val;
-	/* Promote to MRU (move to head of LRU list). */
+	/* Promote to MRU (move to tail of LRU list). */
 	list_remove_entry(&entry->lru);
 	list_insert_tail(&mmap_lru, &entry->lru);
 	mutex_unlock(&mmap_cache_lock);
@@ -158,11 +158,13 @@ extern phymm_page *phymm_pages;
 
 /*
  * Handle page fault with fd attached.
+ * Note that in this function we should map address as readonly
+ * because they will be cached. Another pagefault will handle
+ * the writable thing if we write data into those pages.
  */
-static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
-				      int prot, int flag)
+static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
+				       int prot, int flag)
 {
-	int ret = 0;
 	unsigned phy = 0;
 	ext4_file *ff;
 	size_t rcnt = 0;
@@ -180,7 +182,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	if (TestControl.profiling)
 		page_fault_file_search_spent += time_now_us() - begin;
 
-	if (phy != NULL) {
+	if (phy != 0) {
 		page_fault_file_cache_hit++;
 		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
 		INVLPG(address);
@@ -202,10 +204,8 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * Some program will map a region larger than file size.
 	 * we return a zero page in this case.
 	 */
-	ret = ext4_fseek(ff, offset, SEEK_SET);
-	if (ret != EOK) {
-		bzero(address);
-		// memset(address, 0, PAGE_SIZE);
+	if (ext4_fseek(ff, offset, SEEK_SET) != EOK) {
+		memset(address, 0, PAGE_SIZE);
 		goto READ_DONE;
 	}
 
@@ -215,15 +215,12 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * Usually this "fill zero" operation is not nessasary, but lots
 	 * of program rely on this.
 	 */
-	ret = ext4_fread(ff, address, PAGE_SIZE, &rcnt);
-	if (ret != EOK) {
+	if (ext4_fread(ff, address, PAGE_SIZE, &rcnt) != EOK)
 		klog("FAIL: mmap: read to buffer %x, size %x\n", address,
 		     PAGE_SIZE);
-	}
 
-	if (rcnt < PAGE_SIZE) {
+	if (rcnt < PAGE_SIZE)
 		memset(address + rcnt, 0, PAGE_SIZE - rcnt);
-	}
 
 READ_DONE:
 	mmap_cache_add(f->f_inode->i_ino, offset, phy);
@@ -237,15 +234,16 @@ DONE:
 /*
  * Handle page fault which has no physical page attached.
  */
-static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
+static void pf_handle_invalid_memory(unsigned address, int prot, int flag)
 {
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+
+	page_fault_invalid++;
 
 	if (prot & PROT_WRITE) {
 		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
 		INVLPG(address);
-		//memset(address, 0, PAGE_SIZE);
-		bzero(address);
+		memset(address, 0, PAGE_SIZE);
 	} else {
 		/*
 		 * For read only zero page, we map with a globally shared
@@ -256,10 +254,8 @@ static int pf_handle_invalid_memory(unsigned address, int prot, int flag)
 		INVLPG(address);
 	}
 
-	if (TestControl.profiling) {
-		page_fault_invalid++;
+	if (TestControl.profiling)
 		page_fault_invalid_spent += (time_now_us() - begin);
-	}
 }
 
 /*
@@ -284,7 +280,7 @@ static int pf_handle_page_invalid(unsigned cr2)
 
 	this_offset = region->offset + (this_begin - region->begin);
 
-	if (region->node != 0) {
+	if (region->node != NULL) {
 		pf_handle_invalid_file_map(this_begin, region->node,
 					   this_offset, region->prot,
 					   region->flag);
@@ -310,8 +306,8 @@ static void pf_handle_cow(unsigned cr2)
 
 	page_fault_cow++;
 
-	vir = cr2;
-	vir = (vir & PAGE_SIZE_MASK);
+	vir = cr2 & PAGE_SIZE_MASK;
+
 	/*
 	 * 1. alloc a new physical memory
 	 */
@@ -353,9 +349,6 @@ static void pf_handle_cow(unsigned cr2)
 
 /*
  * Handle page fault which is originally readonly now writable.
- * FIXME(Ender): Remove this function.
- * This is wrong because every page should be managed by mmap and
- * mprotect system call, but we havn't implement mprotect yet.
  */
 static void pf_handle_readonly(unsigned cr2)
 {
@@ -364,8 +357,7 @@ static void pf_handle_readonly(unsigned cr2)
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_perm++;
-	vir = cr2;
-	vir = (vir & PAGE_SIZE_MASK);
+	vir = cr2 & PAGE_SIZE_MASK;
 	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_set_map_flag(vir, flag);
@@ -381,12 +373,8 @@ static void pf_handle_readonly(unsigned cr2)
 static int pf_handle_permission(unsigned cr2)
 {
 	unsigned page_index = mm_get_attached_page_index(cr2);
-	unsigned cow;
-	int flag = 0;
 
-	cow = phymm_is_cow(page_index);
-
-	if (cow)
+	if (phymm_is_cow(page_index))
 		pf_handle_cow(cr2);
 	else
 		pf_handle_readonly(cr2);
@@ -399,6 +387,7 @@ static void pf_process(intr_frame *frame)
 	unsigned cr2;
 	unsigned error = frame->error_code;
 	int oldint;
+	task_struct *cur;
 
 	/*
 	 * Save old interrupt state first.
@@ -413,23 +402,21 @@ static void pf_process(intr_frame *frame)
 
 	LOAD_CR2(cr2);
 
-	if (!((error & PF_MASK_P) == PF_MASK_P)) {
+	if (!(error & PF_MASK_P)) {
 		if (pf_handle_page_invalid(cr2))
 			goto Done;
-
 		goto NOT_HANDLED;
 	}
 
-	if ((error & PF_MASK_RW) == PF_MASK_RW) {
+	if (error & PF_MASK_RW) {
 		if (pf_handle_permission(cr2))
 			goto Done;
-
 		goto NOT_HANDLED;
 	}
 
 NOT_HANDLED:
-
-	if (frame->cs != KERNEL_CODE_SELECTOR) {
+	if (frame->cs != KERNEL_CODE_SELECTOR || frame->eip < KERNEL_OFFSET ||
+	    cr2 < KERNEL_OFFSET) {
 		/* FIXME(Ender): Currently we call process exit(-EFAULT)
 		 * Because we haven't implement signal yet, and it's hard to return
 		 * from page fault handler to user code. We will implement signal
@@ -440,17 +427,12 @@ NOT_HANDLED:
 		goto Done;
 	}
 
-	do {
-		task_struct *cur = CURRENT_TASK();
-		printk("[%d]page fault! error code %x, address %x, eip %x\n",
-		       cur->psid, frame->error_code, cr2, frame->eip);
-	} while (0);
+	cur = CURRENT_TASK();
+	printk("[%d]page fault! error code %x, address %x, eip %x\n", cur->psid,
+	       frame->error_code, cr2, frame->eip);
 
 	DIE();
 
 Done:
-	if (oldint)
-		sched_enable();
-	else
-		sched_disable();
+	sched_set_level(oldint);
 }

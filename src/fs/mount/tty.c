@@ -2,16 +2,23 @@
  * src/fs/mount/tty.c - TTY driver: VGA/framebuffer output, keyboard input,
  * ANSI escape processing, termios, and /dev/tty filesystem device.
  *
- * Merges hw/tty.c + fs/mount/console.c + fs/mount/kbchar.c into a single
- * self-contained driver.  All mutable state lives in the private tty_state
- * struct; this_tty points to the single statically-allocated instance.
+ * Supports up to 10 virtual terminals (TTY 0-9).  The active TTY owns the
+ * real framebuffer; inactive TTYs cache output in a per-TTY text buffer that
+ * is restored to the screen on switch-back.  Each TTY has its own keyboard
+ * input queue; only the active TTY receives keystrokes.
+ *
+ * TTY switching is triggered by the keyboard driver calling tty_switch(n)
+ * (bound to Ctrl+Alt+F1..F10).  If TTY n has no live process, /bin/bash is
+ * spawned with its stdio wired to /dev/ttyn.
  *
  * Public kernel interface (see include/hw/tty.h):
- *   tty_init()          - early VGA/FB init, called before the VM is up
- *   tty_default_emit_unsafe(c, ctx)    - single-char output callback for kprint
- *   tty_lock_acquire()  - acquire the TTY spinlock (for printk batching)
- *   tty_lock_release()  - release the TTY spinlock
- *   tty_default_clear()  - clear screen under the TTY lock (for exec)
+ *   tty_init()                    - early VGA/FB init, called before the VM
+ *   tty_default_emit_unsafe(c,ctx)- single-char output callback for kprint
+ *   tty_lock_acquire()            - acquire the active TTY spinlock
+ *   tty_lock_release()            - release the active TTY spinlock
+ *   tty_default_clear()           - clear screen under the TTY lock
+ *   tty_switch(n)                 - switch active terminal to index n
+ *   tty_active_kb_put(c)          - enqueue a byte into the active TTY's kb buf
  */
 
 #include <int/int.h>
@@ -21,24 +28,24 @@
 #include <fs/ioctl.h>
 #include <hw/tty.h>
 #include <hw/vga.h>
-#include <hw/keyboard.h>
 #include <hw/time.h>
-#include <lib/port.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
+#include <lib/cyclebuf.h>
 #include <ps/ps.h>
+#include <elf/exec.h>
 #include <unistd.h>
 #include <errno.h>
 #include <macro.h>
 #include <ext4.h>
 
 #define CANON_BUF_SIZE 256
+#define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (0-9) */
 
 /* ── Private TTY state ───────────────────────────────────────────────────── */
 
 typedef struct {
-	/* VGA/framebuffer */
-	char *vidptr;
+	/* framebuffer dimensions */
 	unsigned max_row, max_col;
 	/* output lock — also protects cursor */
 	spinlock_t lock;
@@ -54,6 +61,16 @@ typedef struct {
 	/* canonical input line buffer */
 	char canon_buf[CANON_BUF_SIZE];
 	int canon_len;
+	/* per-TTY keyboard input queue */
+	cy_buf *kb_buf;
+	/* screen text buffer for inactive TTYs (also used on switch-away save) */
+	char *saved_text;
+	/* TTY index (0..TTY_MAX_VDEV-1) */
+	int tty_idx;
+	/* PID of the bash process running on this TTY (0 = none) */
+	unsigned bash_pid;
+	/* FS root of this tty */
+	super_block *root;
 } tty_state;
 
 static const struct termios default_termios = {
@@ -66,8 +83,16 @@ static const struct termios default_termios = {
 };
 
 static tty_state ttys[TTY_MAX_VDEV];
-// FIXME(Ender): support multiple TTYs switch with ioctl(TIOCSETD) and friends
 static tty_state *this_ttys = &ttys[0];
+static int active_tty_idx = 0;
+
+/*
+ * tty_switch_lock - global spinlock protecting this_ttys, active_tty_idx,
+ * and the framebuffer save/restore during a TTY switch.  Also acquired by
+ * tty_active_kb_put() so keyboard input is always routed to the correct TTY
+ * even when a switch is in progress on another CPU.
+ */
+static spinlock_t tty_switch_lock;
 
 /* ── Convenience macros ──────────────────────────────────────────────────── */
 
@@ -79,60 +104,54 @@ static tty_state *this_ttys = &ttys[0];
 
 /* ── VGA/framebuffer primitives ──────────────────────────────────────────── */
 
+/*
+ * vga_putchar - write character to either the live framebuffer (active TTY)
+ * or the TTY's saved_text shadow (inactive TTY).
+ */
 static void vga_putchar(tty_state *state, int x, int y, char c)
 {
 	if (x < 0 || x >= (int)MAX_ROW || y < 0 || y >= (int)MAX_COL)
 		return;
-	if (!fb_is_available()) {
-		int pos = x * (int)MAX_COL + y;
-		state->vidptr[pos * 2] = c;
-	} else {
+	if (state->tty_idx == active_tty_idx) {
 		fb_putchar(y, x, c);
+	} else {
+		/* Inactive TTY: write to saved_text only */
+		state->saved_text[x * (int)MAX_COL + y] = c;
 	}
-}
-
-static void vga_clear_row(tty_state *state, int row)
-{
-	int col;
-	for (col = 0; col < (int)MAX_COL; col++)
-		vga_putchar(state, row, col, ' ');
 }
 
 static void tty_do_clear(tty_state *state)
 {
-	if (!fb_is_available()) {
-		int row;
-		char *src = state->vidptr;
-		unsigned len = MAX_COL * 2;
-		vga_clear_row(state, 0);
-		for (row = 1; row < (int)MAX_ROW; row++)
-			memcpy(src + row * len, src, len);
-	} else {
+	if (state->tty_idx == active_tty_idx) {
 		fb_clear_screen();
+	} else {
+		memset(state->saved_text, 0,
+		       (unsigned)(MAX_ROW * (int)MAX_COL));
 	}
 }
 
 static void tty_roll_line(tty_state *state)
 {
-	if (!fb_is_available()) {
-		char *dst = state->vidptr;
-		char *src = dst + MAX_COL * 2;
-		memmove(dst, src, MAX_COL * (MAX_ROW - 1) * 2);
-		vga_clear_row(state, MAX_ROW - 1);
-	} else {
+	if (state->tty_idx == active_tty_idx) {
 		fb_scroll_line();
+	} else {
+		/* Scroll saved_text up one row */
+		unsigned row_bytes = (unsigned)MAX_COL;
+		memmove(state->saved_text, state->saved_text + row_bytes,
+			row_bytes * (unsigned)(MAX_ROW - 1));
+		memset(state->saved_text + row_bytes * (unsigned)(MAX_ROW - 1),
+		       0, row_bytes);
 	}
 }
 
-static void tty_hw_cursor(unsigned pos)
+/*
+ * tty_hw_cursor - update the hardware cursor register (or framebuffer cursor).
+ * Skipped for inactive TTYs — they track cursor in state->cursor only.
+ */
+static void tty_hw_cursor(tty_state *state, unsigned pos)
 {
-	if (!fb_is_available()) {
-		unsigned short cp = (unsigned short)pos;
-		port_write_word(0x3d4, 0x0e | (cp & 0xff00));
-		port_write_word(0x3d4, 0x0f | (cp << 8));
-	} else {
+	if (state->tty_idx == active_tty_idx)
 		fb_update_cursor(pos);
-	}
 }
 
 /* ── Cursor helpers ──────────────────────────────────────────────────────── */
@@ -153,7 +172,7 @@ static void cursor_set(tty_state *state, int pos)
 static void cursor_forward(tty_state *state, int pos)
 {
 	cursor_set(state, pos);
-	tty_hw_cursor((unsigned)state->cursor);
+	tty_hw_cursor(state, (unsigned)state->cursor);
 }
 
 /* ── ANSI escape state ───────────────────────────────────────────────────── */
@@ -306,7 +325,7 @@ static void tty_raw_write(tty_state *state, const char *buf, unsigned len)
 	spinlock_lock(&state->lock);
 	for (i = 0; i < len; i++)
 		cursor_set(state, char_to_pos(state, buf[i]));
-	tty_hw_cursor((unsigned)state->cursor);
+	tty_hw_cursor(state, (unsigned)state->cursor);
 	spinlock_unlock(&state->lock);
 }
 
@@ -426,12 +445,13 @@ static int is_eol(tty_state *state, unsigned char c)
 	       (tc->c_cc[VEOL2] && c == tc->c_cc[VEOL2]);
 }
 
-/* Read one complete line into canon_buf. Returns 1 on line, 0 on EOF. */
+/* Read one complete line into canon_buf. Returns 1 on line, 0 on EOF.
+ * Blocks on this TTY's per-TTY keyboard buffer. */
 static int canon_readline(tty_state *state)
 {
 	const struct termios *tc = &state->termios;
 	while (1) {
-		int ch = input_translate(kb_buf_get(), tc->c_iflag);
+		int ch = input_translate(cyb_getc(state->kb_buf), tc->c_iflag);
 		if (ch < 0)
 			continue;
 		unsigned char c = (unsigned char)ch;
@@ -474,9 +494,9 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 	unsigned vmin = tc->c_cc[VMIN];
 	ssize_t n = 0;
 	while ((size_t)n < size) {
-		if ((unsigned)n >= vmin && !kb_can_read())
+		if ((unsigned)n >= vmin && cyb_isempty(state->kb_buf))
 			break;
-		int ch = input_translate(kb_buf_get(), tc->c_iflag);
+		int ch = input_translate(cyb_getc(state->kb_buf), tc->c_iflag);
 		if (ch < 0)
 			continue;
 		dst[n++] = (char)ch;
@@ -491,22 +511,19 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 void tty_init(void)
 {
 	int i, j, k;
-	for (int i = 0; i < TTY_MAX_VDEV; i++) {
+	for (i = 0; i < TTY_MAX_VDEV; i++) {
 		tty_state *t = &ttys[i];
-		t->vidptr = (char *)0xC00b8000;
-		if (fb_is_available()) {
-			fb_get_char_dims(&t->max_col, &t->max_row);
-		} else {
-			t->max_row = 25;
-			t->max_col = 80;
-		}
+		fb_get_char_dims(&t->max_col, &t->max_row);
 		for (j = 0; j < (int)t->max_row; j++)
 			for (k = 0; k < (int)t->max_col; k++)
 				vga_putchar(t, j, k, ' ');
 		t->cursor = 0;
 		spinlock_init(&t->lock);
 		t->termios = default_termios;
+		t->tty_idx = i;
+		t->bash_pid = 0;
 	}
+	spinlock_init(&tty_switch_lock);
 }
 
 /*
@@ -534,6 +551,126 @@ void tty_default_clear(void)
 	tty_do_clear(this_ttys);
 	this_ttys->cursor = 0;
 	spinlock_unlock(&this_ttys->lock);
+}
+
+/* ── Active TTY keyboard input ───────────────────────────────────────────── */
+
+void tty_active_kb_put(unsigned char c)
+{
+	tty_state *t;
+
+	spinlock_lock(&tty_switch_lock);
+	t = this_ttys;
+	spinlock_unlock(&tty_switch_lock);
+
+	cyb_putc(t->kb_buf, c);
+}
+
+/* ── Bash spawner helpers ────────────────────────────────────────────────── */
+
+/*
+ * tty_bash_spawner_body - kernel-thread body that execs /bin/bash on TTY n.
+ *
+ * Runs as a fresh kernel task created by ps_create().  Sets up the root
+ * filesystem reference, opens stdin/stdout/stderr on /dev/ttyn, then
+ * replaces itself with /bin/bash via sys_execve().
+ */
+static void tty_bash_spawner(void *p)
+{
+	tty_state *state = (tty_state *)p;
+	char tty_path[16];
+	char *argv[] = { "/bin/bash", NULL };
+	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };
+	struct stat st;
+	task_struct *cur = CURRENT_TASK();
+
+	sprintf(tty_path, "/dev/tty%d", state->tty_idx);
+
+	/* Wire this task to the root filesystem. */
+	cur->root = state->root;
+	sb_get(state->root);
+
+	/* Set working directory. */
+	strcpy(cur->cwd, "/");
+
+	/* Set up TSS esp0 for user-mode entry. */
+	ps_update_tss((unsigned)cur + PAGE_SIZE);
+
+	/* Open stdin (0), stdout (1), stderr (2) on this TTY. */
+	fs_open(tty_path, O_RDONLY, NULL);
+	fs_open(tty_path, O_WRONLY, NULL);
+	fs_open(tty_path, O_WRONLY, NULL);
+
+	/* Exec bash if it exists. */
+	if (fs_stat("/bin/bash", &st) == 0)
+		sys_execve("/bin/bash", argv, envp);
+
+	/* bash not found — task will exit naturally. */
+}
+
+/* ── TTY switch ──────────────────────────────────────────────────────────── */
+
+/*
+ * tty_switch - switch the active virtual terminal to index n.
+ *
+ * 1. Save the current TTY's framebuffer text to its saved_text.
+ * 2. Update this_ttys / active_tty_idx.
+ * 3. Restore the new TTY's saved_text to the framebuffer.
+ * 4. Spawn /bin/bash on TTY n if it has no live process.
+ *
+ * Called from the keyboard DSR (interrupts disabled) so all operations
+ * must be non-blocking.
+ */
+void tty_switch(int n)
+{
+	unsigned text_size;
+	tty_state *except_tty;
+
+	if (n < 0 || n >= TTY_SWITCH_COUNT || n == active_tty_idx)
+		return;
+
+	except_tty = &ttys[n];
+
+	spinlock_lock(&tty_switch_lock);
+
+	text_size = this_ttys->max_row * this_ttys->max_col;
+
+	/*
+	 * Hold the outgoing TTY's output lock while saving its framebuffer so
+	 * that a concurrent tty_raw_write on another CPU cannot modify the
+	 * screen or cursor between our save and the pointer flip.
+	 */
+	spinlock_lock(&this_ttys->lock);
+	fb_save_text(this_ttys->saved_text, text_size);
+	spinlock_unlock(&this_ttys->lock);
+
+	/* Flip active TTY — visible to other CPUs only after this point. */
+	active_tty_idx = n;
+	this_ttys = except_tty;
+
+	/* Restore new TTY's cached text to the framebuffer. */
+	fb_restore_screen(this_ttys->saved_text, text_size,
+			  (unsigned)this_ttys->cursor);
+
+	spinlock_unlock(&tty_switch_lock);
+
+	/* Spawn bash on the new TTY if no live process is there yet. */
+	if (n > 0) {
+		int need_spawn = 0;
+
+		if (except_tty->bash_pid == 0) {
+			need_spawn = 1;
+		} else {
+			task_struct *t = ps_find_process(except_tty->bash_pid);
+			if (!t || t->status == ps_dying)
+				need_spawn = 1;
+		}
+
+		if (need_spawn)
+			except_tty->bash_pid = ps_create(tty_bash_spawner,
+							 except_tty, ps_normal,
+							 ps_kernel);
+	}
 }
 
 /* ── VFS file operations ─────────────────────────────────────────────────── */
@@ -586,7 +723,7 @@ static loff_t tty_fs_llseek(file *fp, loff_t offset, int whence)
 	if (pos > MAX_CHARS)
 		pos = MAX_CHARS;
 	state->cursor = pos;
-	tty_hw_cursor((unsigned)state->cursor);
+	tty_hw_cursor(state, (unsigned)state->cursor);
 	fp->f_pos = state->cursor;
 	return fp->f_pos;
 }
@@ -688,8 +825,15 @@ static void tty_fs_init(void)
 	task_struct *cur = CURRENT_TASK();
 
 	for (int i = 0; i < TTY_MAX_VDEV; i++) {
+		tty_state *t = &ttys[i];
+		/* Per-TTY keyboard input queue */
+		t->kb_buf = cyb_create();
+		/* Screen text buffer for save/restore on TTY switch */
+		t->saved_text = (char *)calloc(1, t->max_row * t->max_col);
+		t->root = cur->root; /* set in sget() below */
+		sb_get(t->root);
 		sb = sget(&tty_sops);
-		sb->s_fs_info = &ttys[i];
+		sb->s_fs_info = t;
 		sprintf(mount_path, "/dev/tty%d", i);
 		vfs_mount(cur->root, mount_path, sb);
 	}

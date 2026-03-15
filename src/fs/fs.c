@@ -1,4 +1,5 @@
 
+#include "ext4_errno.h"
 #include <fs/mount.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
@@ -404,7 +405,7 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	file *fp = NULL;
 	int ret = -EACCES;
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EINVAL;
 
 	if (cur->fds[fd].used == 0)
 		return -ENOENT;

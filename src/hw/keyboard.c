@@ -1,15 +1,13 @@
 #include <ps/ps.h>
 #include <int/int.h>
 #include <int/dsr.h>
-#include <lib/cyclebuf.h>
 #include <lib/port.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <hw/keyboard.h>
 #include <hw/keymap.h>
+#include <hw/tty.h>
 #include <config.h>
-
-static cy_buf *buf;
 
 /* Current state of shift keys.
    True if depressed, 0 otherwise. */
@@ -75,26 +73,8 @@ static void kb_dsr(void *param);
 
 static const char *map_special_key(const struct keymap[], unsigned scancode);
 
-// this will wait if empty
-unsigned char kb_buf_get()
-{
-	return cyb_getc(buf);
-}
-
-int kb_can_read()
-{
-	return !cyb_isempty(buf);
-}
-
-// this will drop key if full
-static void kb_buf_put(unsigned char key)
-{
-	return cyb_putc(buf, key);
-}
-
 void kb_init()
 {
-	buf = cyb_create();
 	int_register(0x21, kb_process, 0, 0);
 }
 
@@ -130,6 +110,12 @@ static void kb_dsr(void *param)
 	release = (code & 0x80) != 0;
 	code &= ~0x80u;
 
+	/* Ctrl+Alt+1..0: switch virtual terminal (scancodes 2..11) */
+	if (!release && ctrl && code >= 2 && code <= 11) {
+		tty_switch((int)(code - 2));
+		return;
+	}
+
 	/* Interpret key. */
 	if (code == 0x3a) {
 		/* Caps Lock. */
@@ -161,13 +147,13 @@ static void kb_dsr(void *param)
 			if (alt)
 				c += 0x80;
 
-			/* Append to keyboard buffer. */
-			kb_buf_put(c);
+			/* Route to active TTY's keyboard buffer. */
+			tty_active_kb_put(c);
 		}
 	} else if (special = map_special_key(special_keymap, code)) {
 		if (!release) {
 			while (*special) {
-				kb_buf_put(*special++);
+				tty_active_kb_put((unsigned char)*special++);
 			}
 		}
 	} else {

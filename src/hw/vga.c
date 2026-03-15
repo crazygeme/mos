@@ -816,11 +816,6 @@ void fb_write_color(int x, int y, unsigned color)
 	}
 }
 
-int fb_is_available(void)
-{
-	return _fb_buffer != 0;
-}
-
 void fb_get_char_dims(unsigned *cols, unsigned *rows)
 {
 	*cols = _window_char_width;
@@ -906,6 +901,52 @@ void fb_clear_screen(void)
 		VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
 	memset((char *)_fb_buffer, 0, len);
 	memset(_fb_text, 0, sizeof(_fb_text));
+}
+
+void fb_save_text(char *dst, unsigned size)
+{
+	if (!_fb_buffer)
+		return;
+	memcpy(dst, _fb_text, size);
+}
+
+void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos)
+{
+	unsigned i, pix_len, col, row;
+	char val;
+
+	if (!_fb_buffer)
+		return;
+
+	/* Erase framebuffer pixels */
+	pix_len = _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8);
+	memset((char *)_fb_buffer, 0, pix_len);
+
+	/* Restore text shadow */
+	memcpy(_fb_text, src, size);
+
+	/* Redraw every non-blank character */
+	for (i = 0; i < size; i++) {
+		val = _fb_text[i];
+		if (val == '\0' || val == ' ')
+			continue;
+		col = i % _window_char_width;
+		row = i / _window_char_width;
+		fb_write_char(col, row, (int)(unsigned char)val,
+			      VGA_COLOR_WHITE);
+	}
+
+	/* Draw cursor at saved position */
+	_fb_cursor = cursor_pos;
+	val = _fb_text[cursor_pos];
+	col = cursor_pos % _window_char_width;
+	row = cursor_pos / _window_char_width;
+	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
+	    val == '\t')
+		fb_write_char(col, row, 129, VGA_COLOR_WHITE);
+	else
+		fb_write_char_mix_cursor(col, row, (int)(unsigned char)val,
+					 VGA_COLOR_WHITE, VGA_COLOR_WHITE);
 }
 
 /* Bochs VBE / QEMU VGA hardware init */

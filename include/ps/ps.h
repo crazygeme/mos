@@ -245,7 +245,8 @@ task_struct *CURRENT_TASK();
 
 void ps_init();
 
-unsigned ps_create(process_fn fn, void *param, ps_priority priority, ps_type type);
+unsigned ps_create(process_fn fn, void *param, ps_priority priority,
+		   ps_type type);
 
 void ps_kickoff();
 
@@ -263,6 +264,8 @@ void _task_sched(const char *func);
 int sched_enable();
 
 int sched_disable();
+
+int sched_set_level(int level);
 
 int sched_is_enabled();
 

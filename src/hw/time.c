@@ -115,7 +115,7 @@ static void force_switch(short ds)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (!ps_enabled()) {
+	if (!ps_enabled() || !sched_is_enabled()) {
 		__sync_add_and_fetch(&(force_switch_count), -1);
 		return;
 	}

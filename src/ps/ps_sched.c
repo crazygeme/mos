@@ -40,7 +40,7 @@ static unsigned long long sched_end = 0;
  * Must be called with ps_lock held. */
 static task_struct *ps_get_available_ready_task(list_entry *head)
 {
-	struct rb_node *node = head->next;
+	list_entry *node = head->next;
 	unsigned now = time_now_ms();
 
 	while (node != head) {
@@ -50,7 +50,7 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 			list_insert_tail(head, &task->ps_list);
 			return task;
 		}
-		node = head->next;
+		node = node->next;
 	}
 	return NULL;
 }

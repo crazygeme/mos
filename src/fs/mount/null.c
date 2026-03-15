@@ -37,6 +37,7 @@ static int null_getattr(inode *node, struct stat *s)
 	s->st_ino = 0;
 	s->st_mtime = 0;
 	s->st_uid = 0;
+	s->st_rdev = 0;
 	return 0;
 }
 

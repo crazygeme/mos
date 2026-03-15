@@ -528,7 +528,7 @@ static void run_if_exist(char *path, char *argv[], char *envp[])
 static void user_first_process_run()
 {
 #if 0
-	const char *argv[] = { "/sbin/init", "3", NULL };
+	const char *argv[] = { "/sbin/init", "1", NULL };
 #else
 	const char *argv[] = { "/bin/bash", NULL };
 #endif

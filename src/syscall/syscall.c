@@ -89,6 +89,8 @@ static int test_call(unsigned arg0, unsigned arg1, unsigned arg2);
 static int sys_read(int fd, char *buf, unsigned len);
 static int sys_write(int fd, char *buf, unsigned len);
 static int sys_getpid();
+static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
+		     void *data);
 static int sys_uname(struct utsname *utname);
 static int sys_open(const char *name, int flags, char *mode);
 static int sys_close(unsigned fd);
@@ -160,6 +162,7 @@ static int sys_rename(const char *oldpath, const char *newpath);
 static int sys_umask(unsigned mask);
 static int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
 static int sys_nanosleep(const struct timespec *req, struct timespec *rem);
+static unsigned sys_alarm(unsigned seconds);
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx,
 			  unsigned esi, unsigned edi, unsigned ebp);
@@ -186,13 +189,13 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	sys_lseek,
 	sys_getpid, // 16 ~ 20
-	0,
+	sys_mount,
 	sys_oldstat,
 	0,
 	sys_getuid,
 	0, // 21 ~ 25
 	sys_ptrace,
-	0,
+	sys_alarm,
 	0,
 	sys_pause,
 	sys_utime, // 26 ~ 30
@@ -468,6 +471,19 @@ static int sys_getpid()
 	return cur->psid;
 }
 
+static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
+		     void *data)
+{
+	if (TestControl.verbos)
+		klog("mount(%s, %s, %s, %d, %x)\n", dev, dir_name, type, flag,
+		     data);
+
+	if (strcmp(dev, "/proc") == 0)
+		return 0;
+
+	return -1;
+}
+
 static int sys_uname(struct utsname *utname)
 {
 	if (TestControl.verbos)
@@ -497,10 +513,10 @@ static int sys_open(const char *_name, int flags, char *mode)
 	int fd;
 	resolve_path(_name, name);
 
-	if (TestControl.verbos)
-		klog("open(%s, %x, %x)\n", name, flags, mode);
-
 	fd = fs_open(name, flags, mode);
+
+	if (TestControl.verbos)
+		klog("open(%s, %x, %x) = %d\n", name, flags, mode, fd);
 
 	name_put(name);
 
@@ -1074,7 +1090,7 @@ static int sys_socketcall(int call, unsigned long *args)
 	// FIXME
 	// no socket at all right now
 	if (TestControl.verbos)
-		klog("socketcall\n");
+		klog("socketcall(%d, %x)\n", call, args);
 
 	return -1;
 }
@@ -1108,6 +1124,25 @@ static int sys_utime(const char *filename, const struct utimbuf *times)
 		klog("utime\n");
 
 	return 0;
+}
+
+static unsigned sys_alarm(unsigned seconds)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned long long now = time_now_ms();
+	unsigned remaining = 0;
+
+	if (cur->alarm_expire_ms > now)
+		remaining =
+			(unsigned)((cur->alarm_expire_ms - now + 999) / 1000);
+
+	cur->alarm_expire_ms =
+		seconds ? (now + (unsigned long long)seconds * 1000) : 0;
+
+	if (TestControl.verbos)
+		klog("alarm(%u) = %u\n", seconds, remaining);
+
+	return remaining;
 }
 
 static int sys_pipe(int pipefd[2])
@@ -1344,23 +1379,22 @@ static int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 static int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
 		      fd_set *exceptfds, const struct timespec *timeout)
 {
-	int ret = do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
 	if (TestControl.verbos)
-		klog("select(%d, %x, %x, %x, %x) = %d\n", nfds, readfds,
-		     writefds, exceptfds, timeout, ret);
+		klog("select(%d, %x, %x, %x, %x)\n", nfds, readfds, writefds,
+		     exceptfds, timeout);
 
-	return ret;
+	return do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
 }
 
 static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 			 fd_set *exceptfds, const struct timespec *timeout,
 			 void *sigmask)
 {
-	int ret =
-		do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
 	if (TestControl.verbos)
-		klog("pselect(%d, %x, %x, %x, %x, %x) = %d\n", nfds, readfds,
-		     writefds, exceptfds, timeout, sigmask, ret);
+		klog("pselect(%d, %x, %x, %x, %x, %x)\n", nfds, readfds,
+		     writefds, exceptfds, timeout, sigmask);
+
+	return do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
 }
 
 static int sys_link(const char *path1, const char *path2)

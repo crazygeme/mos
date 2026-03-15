@@ -142,7 +142,8 @@ static int sys_unlink(const char *pathname);
 static int sys_time(unsigned *t);
 int resolve_path(const char *old, char *new);
 static int sys_access(const char *path, int mode);
-static int do_stat(const char *_name, struct stat *buf, int follow_link);
+static int do_stat(const char *func, const char *_name, struct stat *buf,
+		   int follow_link);
 static int sys_lseek(int fd, int offset, int whence);
 static int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 		      uint64_t *result, unsigned int whence);
@@ -629,7 +630,7 @@ static int sys_chdir(const char *path)
 			memcpy(cwd + len, p, comp_len);
 			cwd[len + comp_len] = '/';
 			cwd[len + comp_len + 1] = '\0';
-			if (do_stat(cwd, &s, 1) != EOK) {
+			if (do_stat(NULL, cwd, &s, 1) != EOK) {
 				ret = -ENOENT;
 				goto done;
 			}
@@ -978,9 +979,10 @@ static int sys_lstat64(const char *path, struct stat64 *s)
 	char *name = name_get();
 	int ret;
 	resolve_path(path, name);
-	ret = do_stat(name, &s32, 0);
+	ret = do_stat("lstat64", name, &s32, 0);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
+	s->__pad0 = 0;
 	s->st_ino = s32.st_ino;
 	s->st_mode = s32.st_mode;
 	s->st_nlink = s32.st_nlink;
@@ -1003,9 +1005,10 @@ static int sys_stat64(const char *path, struct stat64 *s)
 	char *name = name_get();
 	int ret;
 	resolve_path(path, name);
-	ret = do_stat(name, &s32, 1);
+	ret = do_stat("stat64", name, &s32, 1);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
+	s->__pad0 = 0;
 	s->st_ino = s32.st_ino;
 	s->st_mode = s32.st_mode;
 	s->st_nlink = s32.st_nlink;
@@ -1175,7 +1178,7 @@ static int sys_unlink(const char *_name)
 	int ret = -1;
 
 	resolve_path(_name, name);
-	ret = do_stat(name, &s, 0);
+	ret = do_stat(NULL, name, &s, 0);
 	if (ret != EOK)
 		goto done;
 
@@ -1211,7 +1214,8 @@ static int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 	return sys_getdents(fd, dirp, count);
 }
 
-static int do_stat(const char *name, struct stat *buf, int follow_link)
+static int do_stat(const char *func, const char *name, struct stat *buf,
+		   int follow_link)
 {
 	int ret = -ENOENT;
 	file *fp = NULL;
@@ -1222,10 +1226,10 @@ static int do_stat(const char *name, struct stat *buf, int follow_link)
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr)
 		goto done;
 	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
-	if (TestControl.verbos) {
+	if (TestControl.verbos && func) {
 		format_modes(buf->st_mode, modes);
-		klog("stat(%s, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
-		     name, buf, ret, modes, buf->st_size, buf->st_blocks,
+		klog("%s(%s, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
+		     func, name, buf, ret, modes, buf->st_size, buf->st_blocks,
 		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
 	}
 
@@ -1263,7 +1267,7 @@ static int sys_stat(const char *_name, struct stat *buf)
 	char *name = name_get();
 	int ret;
 	resolve_path(_name, name);
-	ret = do_stat(name, buf, 1);
+	ret = do_stat("stat", name, buf, 1);
 	name_put(name);
 	return ret;
 }
@@ -1273,7 +1277,7 @@ static int sys_lstat(const char *_name, struct stat *buf)
 	char *name = name_get();
 	int ret;
 	resolve_path(_name, name);
-	ret = do_stat(name, buf, 0);
+	ret = do_stat("lstat", name, buf, 0);
 	name_put(name);
 	return ret;
 }
@@ -1286,7 +1290,7 @@ static int sys_access(const char *path, int mode)
 	int ret = -EACCES;
 
 	resolve_path(path, name);
-	ret = do_stat(name, &s, 1);
+	ret = do_stat(NULL, name, &s, 1);
 
 	if (ret != EOK) {
 		ret = -ENOENT;

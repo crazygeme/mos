@@ -501,14 +501,11 @@ int sys_execve(const char *f, char **argv, char **envp)
  * file is missing (e.g. the root filesystem is not populated), the kernel
  * prints a diagnostic and calls DIE() to halt.
  */
-static void run_if_exist(char *path)
+static void run_if_exist(char *path, char *argv[], char *envp[])
 {
 	struct stat s;
-	char *argv[2];
-	argv[0] = path;
-	argv[1] = 0;
 	if (fs_stat(path, &s) != -1) {
-		sys_execve(path, argv, 0);
+		sys_execve(path, argv, envp);
 	}
 
 	printk("%s fails!\n", path);
@@ -530,7 +527,15 @@ static void run_if_exist(char *path)
  */
 static void user_first_process_run()
 {
+#if 0
+	const char *argv[] = { "/sbin/init", "3", NULL };
+#else
+	const char *argv[] = { "/bin/bash", NULL };
+#endif
+
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
+	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };
+
 	ps_update_tss(esp0);
 
 	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty. */
@@ -538,7 +543,7 @@ static void user_first_process_run()
 	fs_open("/dev/tty0", O_WRONLY, NULL);
 	fs_open("/dev/tty0", O_WRONLY, NULL);
 
-	run_if_exist("/bin/bash");
+	run_if_exist(argv[0], argv, envp);
 }
 
 /*

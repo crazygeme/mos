@@ -57,26 +57,25 @@ void cyb_putc(cy_buf *b, unsigned char c)
 		cond_notify(&b->event);
 }
 
-void cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len)
+unsigned cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len)
 {
 	unsigned i;
 	int notify;
 	if (!len)
-		return;
+		return 0;
 	spinlock_lock(&b->lock);
 	notify = (b->length == 0);
 	for (i = 0; i < len; i++) {
-		if (b->length == PIPE_BUF_LEN) {
-			b->read_idx = (b->read_idx + 1) % PIPE_BUF_LEN;
-			b->length--;
-		}
+		if (b->length == PIPE_BUF_LEN)
+			break;
 		b->buf[b->write_idx] = buf[i];
 		b->write_idx = (b->write_idx + 1) % PIPE_BUF_LEN;
 		b->length++;
 	}
 	spinlock_unlock(&b->lock);
-	if (notify)
+	if (notify && i > 0)
 		cond_notify(&b->event);
+	return i;
 }
 
 /*
@@ -105,6 +104,36 @@ unsigned char cyb_getc(cy_buf *b)
 		cond_reset(&b->event);
 	spinlock_unlock(&b->lock);
 	return ret;
+}
+
+int cyb_getbuf(cy_buf *b, void *buf, int len)
+{
+	unsigned char *dst = (unsigned char *)buf;
+	int n = 0;
+
+	/* Block until at least one byte is available or EOF */
+	for (;;) {
+		spinlock_lock(&b->lock);
+		if (b->length > 0)
+			break;
+		if (__sync_add_and_fetch(&b->writer_count, 0) == 0) {
+			spinlock_unlock(&b->lock);
+			return 0;
+		}
+		spinlock_unlock(&b->lock);
+		cond_wait(&b->event);
+	}
+
+	/* Drain up to len bytes while they are immediately available */
+	while (n < len && b->length > 0) {
+		dst[n++] = b->buf[b->read_idx];
+		b->read_idx = (b->read_idx + 1) % PIPE_BUF_LEN;
+		b->length--;
+	}
+	if (b->length == 0)
+		cond_reset(&b->event);
+	spinlock_unlock(&b->lock);
+	return n;
 }
 
 /*

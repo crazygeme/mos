@@ -211,6 +211,8 @@ struct _task_struct {
 	unsigned kernel_tickets;
 	unsigned pf_major;
 	unsigned pf_minor;
+	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
+	unsigned long long alarm_expire_ms;
 	/* ptrace state */
 	unsigned ptrace; /* PT_TRACED, PT_STOPPED, etc. (see ptrace.h) */
 	task_struct *ptrace_tracer; /* tracing process, 0 if none */

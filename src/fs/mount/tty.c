@@ -815,10 +815,21 @@ static file *tty_open_root(super_block *sb)
 	return fp;
 }
 
+static void tty_sops_release(super_block *sb)
+{
+	tty_state *state = sb->s_fs_info;
+	if (state->kb_buf)
+		cyb_destroy(state->kb_buf);
+	if (state->saved_text)
+		free(state->saved_text);
+	free(sb);
+}
+
 /* ── Filesystem registration ─────────────────────────────────────────────── */
 
 static super_operations tty_sops = {
 	.open_root = tty_open_root,
+	.release = tty_sops_release,
 };
 
 static void tty_fs_init(void)
@@ -833,8 +844,12 @@ static void tty_fs_init(void)
 		t->kb_buf = cyb_create();
 		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)calloc(1, t->max_row * t->max_col);
+		/* 
+		 * All those attached bash should be managed by process 1 
+		 * (/sbin/init) which will call wait on all orphen processes
+		 */
 		if (i > 0)
-			t->parent = cur;
+			t->parent = ps_find_process(1);
 		sb = sget(&tty_sops);
 		sb->s_fs_info = t;
 		sprintf(mount_path, "/dev/tty%d", i);
@@ -844,6 +859,8 @@ static void tty_fs_init(void)
 	sb = sget(&tty_sops);
 	sb->s_fs_info = &ttys[0];
 	vfs_mount(cur->root, "/dev/tty", sb);
+	sb_get(sb);
+	vfs_mount(cur->root, "/dev/console", sb);
 }
 
 KERNEL_INIT(4, tty_fs_init);

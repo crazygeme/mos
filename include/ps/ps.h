@@ -186,6 +186,7 @@ struct _task_struct {
 	unsigned long cr3;
 	unsigned int psid;
 	process_fn fn;
+	void *param;
 	void *command;
 	user_enviroment user;
 	int priority;
@@ -242,7 +243,7 @@ task_struct *CURRENT_TASK();
 
 void ps_init();
 
-unsigned ps_create(process_fn, ps_priority priority, ps_type type);
+unsigned ps_create(process_fn fn, void *param, ps_priority priority, ps_type type);
 
 void ps_kickoff();
 

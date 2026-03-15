@@ -150,7 +150,7 @@ static void ps_run()
 	task->status = ps_running;
 	fn = task->fn;
 	if (fn)
-		fn(0);
+		fn(task->param);
 
 	task->status = ps_dying;
 	ps_put_to_dying_queue(task);
@@ -221,7 +221,7 @@ int ps_enabled()
 
 /* Allocate and initialise a new kernel task. Returns the new psid, or
  * 0xffffffff on failure. The task is immediately placed in the ready queue. */
-unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
+unsigned ps_create(process_fn fn, void *param, ps_priority priority, ps_type type)
 {
 	unsigned int stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
@@ -244,6 +244,7 @@ unsigned ps_create(process_fn fn, ps_priority priority, ps_type type)
 	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);
 	task->fn = fn;
+	task->param = param;
 	task->priority = priority;
 	task->status = ps_ready;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
@@ -298,7 +299,7 @@ void ps_kickoff_ap(void)
 	task_struct *cur = CURRENT_TASK();
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
-	ps_create(ap_idle_stub, ps_idle, ps_kernel);
+	ps_create(ap_idle_stub, NULL, ps_idle, ps_kernel);
 	_ps_enabled = 1;
 	task_sched();
 }

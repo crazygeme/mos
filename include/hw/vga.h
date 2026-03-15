@@ -27,9 +27,6 @@ void fb_map_lfb();
 
 /* Query */
 
-/* Returns non-zero when the framebuffer is initialised and available. */
-int fb_is_available(void);
-
 /* Fill *cols and *rows with the character grid dimensions. */
 void fb_get_char_dims(unsigned *cols, unsigned *rows);
 
@@ -53,6 +50,13 @@ void fb_scroll_line(void);
 
 /* Clear the entire framebuffer to black. */
 void fb_clear_screen(void);
+
+/* Save the text shadow buffer to dst (size = cols*rows bytes). */
+void fb_save_text(char *dst, unsigned size);
+
+/* Restore the text shadow buffer from src, redraw the entire screen,
+ * and place the cursor at cursor_pos. */
+void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos);
 
 /* BGA / VBE register constants */
 

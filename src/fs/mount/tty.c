@@ -69,8 +69,8 @@ typedef struct {
 	int tty_idx;
 	/* PID of the bash process running on this TTY (0 = none) */
 	unsigned bash_pid;
-	/* FS root of this tty */
-	super_block *root;
+	/* Parent task for this TTY, used for setting root and waitpid */
+	task_struct *parent;
 } tty_state;
 
 static const struct termios default_termios = {
@@ -587,8 +587,11 @@ static void tty_bash_spawner(void *p)
 	sprintf(tty_path, "/dev/tty%d", state->tty_idx);
 
 	/* Wire this task to the root filesystem. */
-	cur->root = state->root;
-	sb_get(state->root);
+	cur->root = state->parent->root;
+	sb_get(cur->root);
+
+	/* set parent of current so that wait can work */
+	cur->parent = state->parent;
 
 	/* Set working directory. */
 	strcpy(cur->cwd, "/");
@@ -830,8 +833,8 @@ static void tty_fs_init(void)
 		t->kb_buf = cyb_create();
 		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)calloc(1, t->max_row * t->max_col);
-		t->root = cur->root; /* set in sget() below */
-		sb_get(t->root);
+		if (i > 0)
+			t->parent = cur;
 		sb = sget(&tty_sops);
 		sb->s_fs_info = t;
 		sprintf(mount_path, "/dev/tty%d", i);

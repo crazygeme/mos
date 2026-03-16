@@ -12,12 +12,10 @@ static unsigned long minutes;
 static unsigned long hourse;
 static unsigned long days;
 static unsigned long total_seconds;
-
 static unsigned long cycle_per_ticket;
-
 static unsigned long rtc_get_time(void);
-
-static int force_switch_count = 0;
+static int is_force_switching = 0;
+unsigned force_switch_count = 0;
 
 static void force_switch(short ds);
 static void time_process(intr_frame *frame)
@@ -51,8 +49,8 @@ static void time_process(intr_frame *frame)
 	if (!sched_is_enabled())
 		return;
 
-	if (__sync_add_and_fetch(&(force_switch_count), 0) == 0) {
-		__sync_add_and_fetch(&(force_switch_count), 1);
+	if (__sync_add_and_fetch(&(is_force_switching), 0) == 0) {
+		__sync_add_and_fetch(&(is_force_switching), 1);
 		force_switch(frame->ds);
 	}
 }
@@ -116,7 +114,7 @@ static void force_switch(short ds)
 	task_struct *cur = CURRENT_TASK();
 
 	if (!ps_enabled() || !sched_is_enabled()) {
-		__sync_add_and_fetch(&(force_switch_count), -1);
+		__sync_add_and_fetch(&(is_force_switching), -1);
 		return;
 	}
 
@@ -129,9 +127,10 @@ static void force_switch(short ds)
 	if (cur->remain_ticks <= 0) {
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		cur->niv_switches++;
+		force_switch_count++;
 		task_sched();
 	}
-	__sync_add_and_fetch(&(force_switch_count), -1);
+	__sync_add_and_fetch(&(is_force_switching), -1);
 }
 
 void time_init()

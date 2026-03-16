@@ -5,8 +5,10 @@ extern unsigned task_schedule_count;
 extern unsigned timer_wakeup_times;
 extern unsigned timer_process_times;
 extern unsigned select_loop_times;
+extern unsigned force_switch_count;
 unsigned timer_process_times_total = 0;
 unsigned select_loop_times_total = 0;
+unsigned force_switch_count_total = 0;
 unsigned long long task_schedule_time_total = 0;
 
 static void fill(void *buf, size_t size)
@@ -14,11 +16,14 @@ static void fill(void *buf, size_t size)
 	timer_process_times_total += timer_process_times;
 	select_loop_times_total += select_loop_times;
 	task_schedule_time_total += task_schedule_time;
+	force_switch_count_total += force_switch_count;
 	memset(buf, 0, size);
 	sprintf(buf,
 		"Schedule called times:         %d\n"
 		"Schedule call spent:           %d.%d ms\n"
 		"Schedule call spent(Total):    %d.%d ms\n"
+		"Force switch times:            %d\n"
+		"Force switch times(Total):     %d\n"
 		"Select loop times:             %d\n"
 		"Select loop times(Total):      %d\n"
 		"Timer wakeup times:            %d\n"
@@ -28,7 +33,8 @@ static void fill(void *buf, size_t size)
 		task_schedule_count, (int)task_schedule_time / 1000,
 		(int)task_schedule_time % 1000,
 		(int)task_schedule_time_total / 1000,
-		(int)task_schedule_time_total % 1000, select_loop_times,
+		(int)task_schedule_time_total % 1000, force_switch_count,
+		force_switch_count_total, select_loop_times,
 		select_loop_times_total, timer_wakeup_times,
 		timer_process_times, timer_process_times_total);
 	task_schedule_count = task_schedule_time = 0;

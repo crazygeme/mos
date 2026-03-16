@@ -90,6 +90,9 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 	key_value_pair *pair;
 	mmap_cache_entry *entry;
 
+	if (PAGE_CACHE_SIZE == 0)
+		return 0;
+
 	if (ino == 0)
 		return 0;
 
@@ -115,6 +118,9 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	mmap_cache_key tmp = { .ino = ino, .offset = offset };
 
 	if (ino == 0 || phy == 0)
+		return;
+
+	if (PAGE_CACHE_SIZE == 0)
 		return;
 
 	mutex_lock(&mmap_cache_lock);
@@ -168,6 +174,7 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	unsigned phy = 0;
 	ext4_file *ff;
 	size_t rcnt = 0;
+	int mmflag;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_file++;
@@ -195,7 +202,7 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 */
 	phy = phymm_alloc_user() * PAGE_SIZE;
 
-	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
+	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_DATA);
 	INVLPG(address);
 
 	ff = f->f_inode->i_private;
@@ -223,6 +230,10 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		memset(address + rcnt, 0, PAGE_SIZE - rcnt);
 
 READ_DONE:
+	mmflag = mm_get_map_flag(address);
+	mmflag &= ~PAGE_ENTRY_WRITABLE;
+	mm_set_map_flag(address, mmflag);
+	INVLPG(address);
 	mmap_cache_add(f->f_inode->i_ino, offset, phy);
 	page_fault_file_read += rcnt;
 
@@ -268,7 +279,7 @@ static int pf_handle_page_invalid(unsigned cr2)
 	unsigned this_begin;
 	task_struct *cur = CURRENT_TASK();
 
-	this_begin = cr2 & PAGE_SIZE_MASK;
+	this_begin = cr2;
 
 	/*
 	 * Find out the map region first. The `region` structure
@@ -306,7 +317,7 @@ static void pf_handle_cow(unsigned cr2)
 
 	page_fault_cow++;
 
-	vir = cr2 & PAGE_SIZE_MASK;
+	vir = cr2;
 
 	/*
 	 * 1. alloc a new physical memory
@@ -357,7 +368,7 @@ static void pf_handle_readonly(unsigned cr2)
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_perm++;
-	vir = cr2 & PAGE_SIZE_MASK;
+	vir = cr2;
 	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_set_map_flag(vir, flag);
@@ -401,6 +412,7 @@ static void pf_process(intr_frame *frame)
 	 */
 
 	LOAD_CR2(cr2);
+	cr2 = cr2 & PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {
 		if (pf_handle_page_invalid(cr2))
@@ -423,8 +435,8 @@ NOT_HANDLED:
 		 * and return from page fault handler later, and then we can send
 		 * SIGSEGV to user process here.
 		*/
-		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x\n",
-		     frame->error_code, cr2, frame->eip);
+		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x, cmd %s\n",
+		     frame->error_code, cr2, frame->eip, cur->command);
 		sys_exit(-EFAULT);
 		goto Done;
 	}

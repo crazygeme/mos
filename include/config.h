@@ -57,7 +57,7 @@
 
 #define PIPE_BUF_LEN (4096)
 
-#define USER_HEAP_BEGIN 0x20000000
+#define USER_HEAP_BEGIN 0x60000000
 // left one page (a hole) to protect stack overflow and heap overflow
 #define USER_HEAP_END (KERNEL_OFFSET - (USER_STACK_PAGES + 1) * PAGE_SIZE)
 

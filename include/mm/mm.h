@@ -108,6 +108,8 @@ unsigned vm_get_usr_zone(unsigned page_count);
 int do_mmap(unsigned int addr, unsigned int len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset);
 
+void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags);
+
 int do_mmap_kernel(unsigned int addr, unsigned int len, unsigned int prot,
 		   unsigned int flags, void *inode, unsigned int offset);
 

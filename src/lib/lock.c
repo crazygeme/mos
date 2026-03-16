@@ -26,8 +26,6 @@ void _spinlock_lock(spinlock_t *lock, const char *func)
 	if (!lock->inited)
 		return;
 
-	lock->old_int = sched_disable();
-
 	/* Fast path: optimistically try once before entering the retry loop.
 	 * On an uncontended lock this avoids the PAUSE overhead entirely. */
 	if (__builtin_expect(__sync_lock_test_and_set(&lock->lock, 1) == 0, 1))
@@ -40,6 +38,7 @@ void _spinlock_lock(spinlock_t *lock, const char *func)
 	} while (__sync_lock_test_and_set(&lock->lock, 1) == 1);
 
 locked:
+	lock->old_int = sched_disable();
 	lock->holder = func;
 }
 
@@ -49,15 +48,12 @@ void spinlock_unlock(spinlock_t *lock)
 		return;
 
 	lock->holder = 0;
+	sched_set_level(lock->old_int);
+	lock->old_int = 1;
 	/* Use a release store so that all prior writes by the holder are
 	 * visible to the next acquirer before the lock word is cleared.
 	 * On x86 TSO this compiles to a plain store + compiler barrier. */
 	__sync_lock_release(&lock->lock);
-
-	if (lock->old_int)
-		sched_enable();
-	else
-		sched_disable();
 }
 
 /* ===========================================================================

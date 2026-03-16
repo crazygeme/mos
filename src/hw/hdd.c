@@ -440,9 +440,9 @@ static void identify_ata_device(ata_disk *d)
 	parse_partition(d, capacity);
 }
 
-/* Name of the first Linux (ext4) partition registered with lwext4.
- * fs_mount_root() reads this to know which device name to mount. */
-char hdd_first_dev_name[32] = { 0 };
+/* Public partition table — one entry per discovered partition. */
+hdd_partition_info hdd_partitions[HDD_MAX_PARTITIONS];
+int hdd_partition_count = 0;
 
 /*
  * lwext4 block device callbacks
@@ -510,11 +510,6 @@ static int hdd_bdev_unlock(struct ext4_blockdev *bdev)
 	return 0;
 }
 
-/* Track every partition so hdd_close() can flush their caches. */
-#define MAX_HDD_PARTITIONS 16
-static partition *hdd_tracked[MAX_HDD_PARTITIONS];
-static int hdd_tracked_cnt = 0;
-
 /*
  * hdd_close - flush all partition caches on shutdown
  *
@@ -524,9 +519,9 @@ static int hdd_tracked_cnt = 0;
 void hdd_close(void)
 {
 	int i;
-	for (i = 0; i < hdd_tracked_cnt; i++) {
-		if (hdd_tracked[i])
-			partition_close(hdd_tracked[i]);
+	for (i = 0; i < hdd_partition_count; i++) {
+		if (hdd_partitions[i].aux)
+			partition_close(hdd_partitions[i].aux);
 	}
 }
 
@@ -940,8 +935,17 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 		init_partition_cache(p);
 #endif
 
-		if (hdd_tracked_cnt < MAX_HDD_PARTITIONS)
-			hdd_tracked[hdd_tracked_cnt++] = p;
+		/* Register in the public partition list for /dev/hdXN nodes. */
+		if (hdd_partition_count < HDD_MAX_PARTITIONS) {
+			hdd_partition_info *pi =
+				&hdd_partitions[hdd_partition_count++];
+			strcpy(pi->name, name);
+			pi->size = size;
+			pi->part_type = part_type;
+			pi->aux = p;
+			pi->read = partition_cache_read;
+			pi->write = partition_cache_write;
+		}
 
 		/* Linux (0x83) partitions are mounted as ext4.
 		 * Build an ext4_blockdev and register it directly with lwext4,
@@ -967,8 +971,6 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 			bdev->part_offset = 0;
 			bdev->part_size = (uint64_t)BLOCK_SECTOR_SIZE * size;
 			bdev->aux = p;
-			if (!hdd_first_dev_name[0])
-				strcpy(hdd_first_dev_name, name);
 			ext4_device_register(bdev, NULL, name);
 		}
 	}

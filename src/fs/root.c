@@ -415,7 +415,7 @@ static void fs_mount_root()
 {
 	task_struct *cur = CURRENT_TASK();
 	cur->root = ext4_get();
-	ext4_mount(hdd_first_dev_name, "/", 0);
+	ext4_mount(hdd_partitions[0].name, "/", 0);
 	ext4_cache_write_back("/", true);
 }
 

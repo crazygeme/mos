@@ -126,7 +126,6 @@ static void force_switch(short ds)
 
 	if (cur->remain_ticks <= 0) {
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		cur->niv_switches++;
 		force_switch_count++;
 		task_sched();
 	}

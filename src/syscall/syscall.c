@@ -7,6 +7,7 @@
 #include <lib/rbtree.h>
 #include <fs/fs.h>
 #include <fs/select.h>
+#include <fs/poll.h>
 #include <fs/fcntl.h>
 #include <unistd.h>
 #include <config.h>
@@ -162,6 +163,14 @@ static int sys_umask(unsigned mask);
 static int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
 static int sys_nanosleep(const struct timespec *req, struct timespec *rem);
 static unsigned sys_alarm(unsigned seconds);
+static int sys_poll(struct pollfd *fds, unsigned nfds, int timeout);
+static int sys_sethostname(const char *name, unsigned len);
+static int sys_setsid();
+static int sys_readlink(const char *path, char *buf, unsigned bufsiz);
+/* defined in ps/ps_syscall.c */
+int sys_getrusage(int who, rusage *usage);
+/* defined in fs/syslog.c */
+int sys_syslog(int type, char *buf, int len);
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx,
 			  unsigned esi, unsigned edi, unsigned ebp);
@@ -233,7 +242,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_dup2,
 	sys_getppid,
 	sys_getpgrp, // 61 ~ 65
-	0,
+	sys_setsid,
 	0,
 	0,
 	0,
@@ -241,10 +250,10 @@ static unsigned call_table[NR_syscalls] = {
 	sys_setregid,
 	0,
 	0,
-	0,
+	sys_sethostname,
 	0, // 71 ~ 75
 	sys_getrlimit,
-	0,
+	sys_getrusage,
 	sys_gettimeofday,
 	0,
 	0, // 76 ~ 80
@@ -252,7 +261,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_select,
 	sys_symlink,
 	0,
-	0, // 81 ~ 85
+	sys_readlink, // 81 ~ 85
 	0,
 	0,
 	sys_reboot,
@@ -335,7 +344,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 161 ~ 165
 	0,
 	0,
-	0,
+	sys_poll,
 	0,
 	0, // 165 ~ 170
 	0,
@@ -474,13 +483,15 @@ static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
 	return -1;
 }
 
+static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
+
 static int sys_uname(struct utsname *utname)
 {
 	if (TestControl.verbos)
 		klog("uname\n");
 
 	strcpy(utname->machine, "i386");
-	strcpy(utname->nodename, "qemu-enum");
+	strcpy(utname->nodename, sys_hostname);
 	strcpy(utname->release, "0.91-generic");
 	strcpy(utname->sysname, "Mos");
 	strcpy(utname->version, "Mos Wed Mar 11 15:00:00 UTC 2026");
@@ -1387,6 +1398,14 @@ static int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 	return do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
 }
 
+static int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)
+{
+	if (TestControl.verbos)
+		klog("poll(%x, %d, %d)\n", fds, nfds, timeout);
+
+	return do_poll(fds, nfds, timeout);
+}
+
 static int sys_link(const char *path1, const char *path2)
 {
 	char *name1 = name_get();
@@ -1532,6 +1551,58 @@ static int sys_setregid(unsigned pid, unsigned pgid)
 {
 	if (TestControl.verbos)
 		klog("setregid(%d, %d)\n", pid, pgid);
+
+	return 0;
+}
+
+static int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
+{
+	char *name = name_get();
+	size_t rcnt = 0;
+	int ret;
+
+	if (!buf || bufsiz == 0) {
+		name_put(name);
+		return -EINVAL;
+	}
+
+	resolve_path(_path, name);
+	ret = ext4_readlink(name, buf, bufsiz, &rcnt);
+
+	if (TestControl.verbos)
+		klog("readlink(%s, %x, %d) = %d\n", name, buf, bufsiz,
+		     ret ? -ret : (int)rcnt);
+
+	name_put(name);
+
+	if (ret)
+		return -ret;
+
+	return (int)rcnt;
+}
+
+static int sys_setsid()
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (TestControl.verbos)
+		klog("setsid() = %d\n", cur->psid);
+
+	cur->session_id = cur->psid;
+	cur->group_id = cur->psid;
+	return cur->psid;
+}
+
+static int sys_sethostname(const char *name, unsigned len)
+{
+	if (!name || len > (_SYS_NAMELEN - 1))
+		return -EINVAL;
+
+	memcpy(sys_hostname, name, len);
+	sys_hostname[len] = '\0';
+
+	if (TestControl.verbos)
+		klog("sethostname(%s, %d)\n", sys_hostname, len);
 
 	return 0;
 }

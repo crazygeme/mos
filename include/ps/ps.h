@@ -201,6 +201,7 @@ struct _task_struct {
 	unsigned exit_status;
 	task_struct *parent;
 	unsigned group_id;
+	unsigned session_id;
 	char *cwd;
 	unsigned fork_flag;
 	cond_t vfork_event;
@@ -294,7 +295,11 @@ int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 char *sys_getcwd(char *buf, unsigned size);
+int sys_getrusage(int who, rusage *usage);
 void reboot();
 void shutdown();
+
+#define RUSAGE_SELF     0
+#define RUSAGE_CHILDREN (-1)
 
 #endif

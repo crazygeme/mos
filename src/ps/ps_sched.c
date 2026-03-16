@@ -220,6 +220,8 @@ void _task_sched(const char *func)
 	if (!task || task->psid == current->psid)
 		goto SELF;
 
+	current->niv_switches++;
+
 	task->status = ps_running;
 	/*
 	 * Actually can be optimized by syncing pgd entry when adding/removing kernel mappings, 

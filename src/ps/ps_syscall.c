@@ -366,6 +366,35 @@ char *sys_getcwd(char *buf, unsigned size)
 }
 
 /*
+ * Public — getrusage
+ */
+
+int sys_getrusage(int who, rusage *usage)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (!usage)
+		return -1;
+
+	memset(usage, 0, sizeof(*usage));
+
+	if (who == RUSAGE_SELF) {
+		ms_to_timeval(cur->user_tickets * 10, &usage->ru_utime);
+		ms_to_timeval(cur->kernel_tickets * 10, &usage->ru_stime);
+		usage->ru_majflt = cur->pf_major;
+		usage->ru_minflt = cur->pf_minor;
+		usage->ru_nivcsw = cur->niv_switches;
+	}
+	/* RUSAGE_CHILDREN: no accumulated child stats yet, return zeros */
+
+	if (TestControl.verbos)
+		klog("getrusage(%d) utime=%d stime=%d\n", who,
+		     (int)usage->ru_utime.tv_sec, (int)usage->ru_stime.tv_sec);
+
+	return 0;
+}
+
+/*
  * Public — shutdown
  */
 

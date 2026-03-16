@@ -38,7 +38,7 @@ DONE:
 	if (TestControl.profiling)
 		elf_read_time += time_now_us() - begin;
 
-	return (int)rcnt;
+	return ret;
 }
 
 /*
@@ -63,6 +63,50 @@ static int elf_pflags_to_prot(unsigned p_flags)
 	return prot;
 }
 
+/*
+ * elf_map_bss - zero-fill and map pages for the BSS region
+ *
+ * @elf_bss:  max(p_vaddr + p_filesz) across all PT_LOAD segments — the first
+ *            virtual address past the last byte of file data (unaligned).
+ * @last_bss: max(p_vaddr + p_memsz)  across all PT_LOAD segments — the first
+ *            virtual address past the last byte of the memory image.
+ *
+ * Two distinct regions need handling:
+ *
+ *   1. Partial tail of the last file-backed page [elf_bss, round_up(elf_bss)):
+ *      The file-backed mapping covers up to elf_bss; the remaining bytes on
+ *      that page are not read from disk and must be explicitly zeroed here.
+ *
+ *   2. Full BSS pages [round_up(elf_bss), last_bss):
+ *      These pages lie entirely beyond the file data and are not covered by
+ *      any mapping yet.  Anonymous zero-filled pages are allocated for them,
+ *      the TLB is flushed, then the region is zeroed via memset.
+ *
+ * Correctness assumption: only the PT_LOAD segment with the highest virtual
+ * address is expected to have p_memsz > p_filesz (i.e. contain BSS).  This
+ * holds for every standard compiler/linker output.  If multiple PT_LOAD
+ * segments had BSS, the earlier segments' BSS regions would not be handled
+ * by this function.
+ */
+static void elf_map_bss(unsigned elf_bss, unsigned last_bss)
+{
+	unsigned elf_bss_raw = elf_bss;
+	elf_bss = (elf_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	if (elf_bss_raw < elf_bss)
+		memset((void *)elf_bss_raw, 0, elf_bss - elf_bss_raw);
+	if (last_bss > elf_bss) {
+		unsigned page_count =
+			(last_bss - elf_bss + PAGE_SIZE - 1) / PAGE_SIZE;
+		unsigned i;
+		for (i = 0; i < page_count; i++) {
+			mm_add_dynamic_map(elf_bss + i * PAGE_SIZE, 0,
+					   PAGE_ENTRY_USER_DATA);
+		}
+		RELOAD_CR3();
+		memset((void *)elf_bss, 0, last_bss - elf_bss);
+	}
+}
+
 static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 {
 	unsigned file_off = phdr->p_offset;
@@ -83,8 +127,10 @@ static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 		 * populate the mapping; the final prot still reflects the
 		 * segment flags.
 		 */
-		do_mmap_kernel(va_begin, map_size, prot | PROT_WRITE, 0, 0, 0);
+		unsigned mapped = do_mmap_kernel(va_begin, map_size,
+						 prot | PROT_WRITE, 0, 0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
+		do_mmap_update(mapped, prot, 0);
 	}
 	return 1;
 }
@@ -175,18 +221,7 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 		}
 	}
 
-	/* Round elf_bss up to the next page boundary. */
-	elf_bss = (elf_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
-	if (last_bss > elf_bss) {
-		/* Map anonymous pages for the .bss region not covered by file. */
-		unsigned page_count = (last_bss - elf_bss) / PAGE_SIZE + 1;
-		unsigned i;
-		for (i = 0; i < page_count; i++) {
-			mm_add_dynamic_map(elf_bss + i * PAGE_SIZE, 0,
-					   PAGE_ENTRY_USER_DATA);
-		}
-		RELOAD_CR3();
-	}
+	elf_map_bss(elf_bss, last_bss);
 
 	return 1;
 }
@@ -210,6 +245,8 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 {
 	unsigned offset = 0;
 	int i = 0;
+	unsigned elf_bss = 0;
+	unsigned last_bss = 0;
 
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;
@@ -224,8 +261,17 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 		} else if (phdr.p_type ==
 			   PT_LOAD /* || phdr.p_type == PT_DYNAMIC */) {
 			elf_map_section(fp, &phdr, 0);
+
+			unsigned k = phdr.p_filesz + phdr.p_vaddr;
+			if (k > elf_bss)
+				elf_bss = k;
+			k = phdr.p_memsz + phdr.p_vaddr;
+			if (k > last_bss)
+				last_bss = k;
 		}
 	}
+
+	elf_map_bss(elf_bss, last_bss);
 
 	return 1;
 }
@@ -258,9 +304,10 @@ static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		 * anonymous mapping.  PROT_WRITE is added temporarily so the
 		 * elf_read below can populate the pages.
 		 */
-		do_mmap_kernel(bias + va_begin, map_size, prot | PROT_WRITE, 0,
-			       0, 0);
+		unsigned mapped = do_mmap_kernel(bias + va_begin, map_size,
+						 prot | PROT_WRITE, 0, 0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
+		do_mmap_update(mapped, prot, 0);
 	}
 
 	return 1;

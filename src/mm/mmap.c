@@ -1,3 +1,4 @@
+#include "mm/mm.h"
 #include <lib/list.h>
 #include <lib/rbtree.h>
 #include <lib/klib.h>
@@ -168,6 +169,8 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 	key = pair->key;
 	region = pair->val;
 
+	/* FIXME(Ender:) flush file if has one */
+
 	/* Unmap every page in the region from the hardware page tables. */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
 		mm_del_dynamic_map(vir);
@@ -273,6 +276,33 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   flags, inode, offset);
 
 	return addr;
+}
+
+void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags)
+{
+	unsigned addr = _addr & PAGE_SIZE_MASK;
+	task_struct *cur = CURRENT_TASK();
+	vm_region *region;
+	unsigned vir;
+
+	region = vm_find_map(cur->user.vm, addr);
+	if (region) {
+		region->prot = prot;
+		region->flag = flags;
+	}
+
+	/* Also update actual mmap flag */
+	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
+		unsigned mmflag = mm_get_map_flag(vir);
+		if (prot & PROT_WRITE)
+			mmflag |= PAGE_ENTRY_WRITABLE;
+		else
+			mmflag &= ~PAGE_ENTRY_WRITABLE;
+
+		mm_set_map_flag(vir, mmflag);
+	}
+
+	RELOAD_CR3();
 }
 
 /*

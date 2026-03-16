@@ -733,10 +733,16 @@ static loff_t tty_fs_llseek(file *fp, loff_t offset, int whence)
 
 static int tty_fs_poll(file *fp, unsigned type)
 {
+	tty_state *state = fp->f_inode->i_private;
 	if (type == FS_POLL_WRITE)
 		return (fp->f_mode == O_RDONLY) ? -1 : 0;
-	if (type == FS_POLL_READ)
-		return (fp->f_mode == O_WRONLY) ? -1 : 0;
+	if (type == FS_POLL_READ) {
+		if (fp->f_mode == O_WRONLY)
+			return -1;
+		if (state->termios.c_lflag & ICANON)
+			return (state->canon_len > 0) ? 0 : -1;
+		return cyb_isempty(state->kb_buf) ? -1 : 0;
+	}
 	return -1;
 }
 

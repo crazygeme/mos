@@ -5,6 +5,7 @@
 #include <lib/klib.h>
 #include <hw/apic.h>
 #include <macro.h>
+#include <errno.h>
 
 /*
  * use_apic: set to 1 after apic_init_bsp() so intr_handler sends APIC EOI
@@ -108,6 +109,11 @@ void intr_syscall_handler(intr_frame *frame)
 	return;
 }
 
+static void handle_invalid_opcode(intr_frame *frame)
+{
+	sys_exit(-EFAULT);
+}
+
 void int_enable_all(void)
 {
 	int i = 0;
@@ -154,6 +160,7 @@ void int_enable_all(void)
 	/* Register IPI handlers. */
 	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);
 	int_register(IPI_VECTOR_SCHED, ipi_sched_handler, 0, 0);
+	int_register(6, handle_invalid_opcode, 0, 3);
 
 	extern void enable_sse();
 	enable_sse();

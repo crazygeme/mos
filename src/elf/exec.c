@@ -43,12 +43,14 @@ static void cleanup()
 		}
 	}
 
+	vm_destroy(cur->user.vm);
+
 	/* Unmap every user-space page table entry. */
 	ps_cleanup_all_user_map(cur);
 
 	/* Reset heap and install a fresh VM tracker. */
 	cur->user.heap_top = USER_HEAP_BEGIN;
-	vm_destroy(cur->user.vm);
+
 	cur->user.vm = vm_create();
 }
 
@@ -527,7 +529,7 @@ static void run_if_exist(char *path, char *argv[], char *envp[])
 static void user_first_process_run()
 {
 #if 0
-	const char *argv[] = { "/sbin/init", "1", NULL };
+	const char *argv[] = { "/sbin/init", "1", "fastboot", NULL };
 #else
 	const char *argv[] = { "/bin/bash", NULL };
 #endif

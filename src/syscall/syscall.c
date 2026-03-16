@@ -8,7 +8,6 @@
 #include <fs/fs.h>
 #include <fs/select.h>
 #include <fs/fcntl.h>
-#include <syscall/ptrace.h>
 #include <unistd.h>
 #include <config.h>
 #include <errno.h>
@@ -194,7 +193,7 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	sys_getuid,
 	0, // 21 ~ 25
-	sys_ptrace,
+	0,
 	sys_alarm,
 	0,
 	sys_pause,
@@ -379,15 +378,6 @@ static int unhandled_syscall(unsigned callno)
 static void syscall_process(intr_frame *frame)
 {
 	task_struct *cur = CURRENT_TASK();
-
-	/* Syscall-entry stop */
-	if ((cur->ptrace & PT_TRACED) && (cur->ptrace & PT_TRACE_SYSCALL) &&
-	    !(cur->ptrace & PT_STOPPED)) {
-		if (TestControl.verbos)
-			klog("ptrace_stop for syscall %d\n", frame->eax);
-
-		ptrace_stop(frame);
-	}
 
 	syscall_fn fn = call_table[frame->eax];
 	int ret = 0;

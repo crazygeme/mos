@@ -423,13 +423,15 @@ NOT_HANDLED:
 		 * and return from page fault handler later, and then we can send
 		 * SIGSEGV to user process here.
 		*/
+		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x\n",
+		     frame->error_code, cr2, frame->eip);
 		sys_exit(-EFAULT);
 		goto Done;
 	}
 
 	cur = CURRENT_TASK();
-	printk("[%d]page fault! error code %x, address %x, eip %x\n", cur->psid,
-	       frame->error_code, cr2, frame->eip);
+	klog("FATAL: unhandled kernel page fault! error code %x, address %x, eip %x\n",
+	     frame->error_code, cr2, frame->eip);
 
 	DIE();
 

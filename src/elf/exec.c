@@ -447,9 +447,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 	}
 
 	/* log if needed */
-	if (TestControl.verbos) {
-		klog("execve(%s, ...)\n", file_name);
-	}
+	if (TestControl.verbos)
+		klog("execve(%s)\n", cur->command);
 
 	/*
 	 * unmap all user vm, and close all fds if O_CLOEXEC set
@@ -527,7 +526,7 @@ static void run_if_exist(char *path, char *argv[], char *envp[])
  */
 static void user_first_process_run()
 {
-#if 0
+#if 1
 	const char *argv[] = { "/sbin/init", "1", NULL };
 #else
 	const char *argv[] = { "/bin/bash", NULL };

@@ -194,6 +194,7 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 static int partition_read(void *aux, unsigned sector, void *buf, unsigned len);
 static int partition_write(void *aux, unsigned sector, void *buf, unsigned len);
 static void partition_close(void *aux);
+static void partition_cache_flush(void *aux);
 #if HDD_CACHE_OPEN
 static int partition_cache_read(void *aux, unsigned sector, void *buf,
 				unsigned len);
@@ -525,6 +526,15 @@ void hdd_close(void)
 	}
 }
 
+void hdd_flush()
+{
+	int i;
+	for (i = 0; i < hdd_partition_count; i++) {
+		if (hdd_partitions[i].aux)
+			partition_cache_flush(hdd_partitions[i].aux);
+	}
+}
+
 static void parse_partition(ata_disk *disk, unsigned capacity)
 {
 	int count = 0;
@@ -787,23 +797,22 @@ static void hdd_cache_update_all(void *aux, partition *p,
 #endif
 }
 
-static void flush_partition_cache(partition *p)
+static void partition_cache_evict(partition *p)
 {
 	/* Drain all cached items in LRU order, flushing dirty ones. */
+	mutex_lock(&p->cache_lock);
 	list_entry *entry = p->cache.timer_list_head.prev;
 	list_entry *next;
 	while (entry != &p->cache.timer_list_head) {
 		next = entry->prev;
 		block_cache_item *item =
 			container_of(entry, block_cache_item, time_list);
-		if (item && item->sector != -1 && item->dirty) {
-			hdd_cache_flush(p, item);
-		}
 		block_cache_item_remove(item);
 		p->cache.sectors -= PREREAD_SECTOR;
 		fs_cache_size = p->cache.sectors;
 		entry = next;
 	}
+	mutex_unlock(&p->cache_lock);
 }
 
 unsigned fs_cache_read_size = 0;
@@ -1120,13 +1129,40 @@ static void partition_close(void *aux)
 	int i = 0;
 	partition *p = aux;
 	if (p->cache_inited) {
-		flush_partition_cache(aux);
+		partition_cache_flush(aux);
+		partition_cache_evict(aux);
 		/* Destroy hash to avoid memory leaks; reset LRU head. */
 		hash_destroy(p->cache.hash);
 		p->cache.hash = 0;
 		list_init(&p->cache.timer_list_head);
 		p->cache_inited = 0;
 	}
+#endif
+}
+
+static void partition_cache_flush(void *aux)
+{
+#if HDD_CACHE_OPEN
+	int i = 0;
+	partition *p = aux;
+	if (!p->cache_inited)
+		return;
+
+	mutex_lock(&p->cache_lock);
+	list_entry *entry = p->cache.timer_list_head.prev;
+	list_entry *next;
+	while (entry != &p->cache.timer_list_head) {
+		next = entry->prev;
+		block_cache_item *item =
+			container_of(entry, block_cache_item, time_list);
+		if (item && item->sector != -1 && item->dirty) {
+			hdd_cache_flush(p, item);
+			item->dirty = 0;
+		}
+		entry = next;
+	}
+	mutex_unlock(&p->cache_lock);
+
 #endif
 }
 

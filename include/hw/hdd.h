@@ -29,6 +29,8 @@ typedef struct {
 extern hdd_partition_info hdd_partitions[HDD_MAX_PARTITIONS];
 extern int hdd_partition_count;
 
+void hdd_flush();
+
 /* Flush all partition caches and release block device resources. */
 void hdd_close(void);
 

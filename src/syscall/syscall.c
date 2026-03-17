@@ -3,6 +3,7 @@
 #include <ps/ps.h>
 #include <elf/exec.h>
 #include <hw/time.h>
+#include <hw/hdd.h>
 #include <lib/klib.h>
 #include <lib/rbtree.h>
 #include <fs/fs.h>
@@ -91,6 +92,7 @@ static int sys_write(int fd, char *buf, unsigned len);
 static int sys_getpid();
 static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
 		     void *data);
+static int sys_umount(char *name, int flag);
 static int sys_uname(struct utsname *utname);
 static int sys_open(const char *name, int flags, char *mode);
 static int sys_close(unsigned fd);
@@ -139,6 +141,7 @@ static int sys_pipe(int pipefd[2]);
 static int sys_dup(int oldfd);
 static int sys_dup2(int oldfd, int newfd);
 static int sys_getrlimit(int resource, void *limit);
+static int sys_sync();
 static int sys_kill(unsigned pid, int sig);
 static int sys_unlink(const char *pathname);
 static int sys_time(unsigned *t);
@@ -198,13 +201,13 @@ static unsigned call_table[NR_syscalls] = {
 	sys_lseek,
 	sys_getpid, // 16 ~ 20
 	sys_mount,
-	sys_oldstat,
+	sys_umount,
 	0,
 	sys_getuid,
 	0, // 21 ~ 25
 	0,
 	sys_alarm,
-	0,
+	sys_oldstat,
 	sys_pause,
 	sys_utime, // 26 ~ 30
 	0,
@@ -212,7 +215,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_access,
 	0,
 	0, // 31 ~ 35
-	0,
+	sys_sync,
 	sys_kill,
 	sys_rename,
 	sys_mkdir,
@@ -279,7 +282,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 96 ~ 100
 	0,
 	sys_socketcall,
-	0,
+	sys_syslog,
 	0,
 	0, // 101 ~ 105
 	sys_stat,
@@ -477,10 +480,18 @@ static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
 		klog("mount(%s, %s, %s, %d, %x)\n", dev, dir_name, type, flag,
 		     data);
 
-	if (strcmp(dev, "/proc") == 0)
+	if (strcmp(dir_name, "/proc") == 0)
+		return 0;
+
+	if (strcmp(dir_name, "/") == 0)
 		return 0;
 
 	return -1;
+}
+
+static int sys_umount(char *name, int flag)
+{
+	return 0;
 }
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
@@ -1205,6 +1216,11 @@ static int sys_kill(unsigned pid, int sig)
 		klog("kill\n");
 
 	return -1;
+}
+
+static int sys_sync()
+{
+	hdd_flush();
 }
 
 static int sys_unlink(const char *_name)

@@ -196,6 +196,8 @@ static void parse_kernel_cmdline()
 			TestControl.verbos = 1;
 		else if (strcmp(token, "profile") == 0)
 			TestControl.profiling = 1;
+		else if (strstr(token, "init=") == token)
+			TestControl.init_binary = strdup(token + 5);
 
 		token = end;
 	} while (1);

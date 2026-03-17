@@ -10,6 +10,7 @@ _logtofile="stdio"
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
+_init=""
 
 for arg in $@
 do
@@ -24,6 +25,8 @@ elif [ "$arg" == "curses" ]; then
 	_vga=""
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
+elif [ "$arg" == "bash" ]; then
+	_init="/bin/bash"
 elif [ "$arg" == "logtofile" ]; then
 	_logtofile="file:krn.log"
 elif [ "$arg" == "-h" ]; then
@@ -58,7 +61,7 @@ qemu-system-i386 -cpu coreduo \
 	-m $_ramsize \
 	-drive file="$diskfile",format=raw \
 	-kernel $kernel_file \
-	-append "$_verbose $_profile" \
+	-append "$_verbose $_profile init=$_init" \
 	-serial $_logtofile \
 	$_vga \
 	$_power \

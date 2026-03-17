@@ -528,11 +528,15 @@ static void run_if_exist(char *path, char *argv[], char *envp[])
  */
 static void user_first_process_run()
 {
-#if 0
-	const char *argv[] = { "/sbin/init", "1", "fastboot", NULL };
-#else
-	const char *argv[] = { "/bin/bash", NULL };
-#endif
+	const char *devault_argv[] = { "/sbin/init", "1", "fastboot", NULL };
+	const char *user_argv[] = { "placeholder", NULL };
+
+	const char **argv = devault_argv;
+
+	if (TestControl.init_binary && *TestControl.init_binary) {
+		user_argv[0] = TestControl.init_binary;
+		argv = user_argv;
+	}
 
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
 	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };

@@ -37,11 +37,11 @@ SECTIONS
 		*(.rodata)
 	}
 
-	.debugfs_init BLOCK(4K) : AT(ADDR(.debugfs_init)-0xC0000000)
+	.procfs_init BLOCK(4K) : AT(ADDR(.procfs_init)-0xC0000000)
 	{
-		__debugfs_init_start = .;
-		*(.debugfs_init)
-		__debugfs_init_end = .;
+		__procfs_init_start = .;
+		*(.procfs_init)
+		__procfs_init_end = .;
 	}
 
 	/*

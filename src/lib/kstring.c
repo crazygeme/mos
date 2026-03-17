@@ -13,48 +13,50 @@
 void memcpy(void *to, void *from, unsigned n)
 {
 	unsigned dwords = n / 4;
-	unsigned tail   = n % 4;
+	unsigned tail = n % 4;
 	unsigned char *d = to;
 	unsigned char *s = from;
 
 	/* Copy 4 bytes at a time with rep movsd */
-	__asm__ volatile(
-		"rep movsl"
-		: "+D"(d), "+S"(s), "+c"(dwords)
-		:
-		: "memory"
-	);
+	__asm__ volatile("rep movsl"
+			 : "+D"(d), "+S"(s), "+c"(dwords)
+			 :
+			 : "memory");
 
 	/* Copy remaining 0-3 bytes */
 	switch (tail) {
-	case 3: *d++ = *s++; /* fall through */
-	case 2: *d++ = *s++; /* fall through */
-	case 1: *d++ = *s++;
+	case 3:
+		*d++ = *s++; /* fall through */
+	case 2:
+		*d++ = *s++; /* fall through */
+	case 1:
+		*d++ = *s++;
 	}
 }
 
 void memset(void *src, char val, int len)
 {
-	unsigned char  bval   = (unsigned char)val;
-	unsigned       word   = bval | ((unsigned)bval << 8) |
-	                        ((unsigned)bval << 16) | ((unsigned)bval << 24);
-	unsigned       dwords = (unsigned)len / 4;
-	unsigned       tail   = (unsigned)len % 4;
-	unsigned char *p      = src;
+	unsigned char bval = (unsigned char)val;
+	unsigned word = bval | ((unsigned)bval << 8) | ((unsigned)bval << 16) |
+			((unsigned)bval << 24);
+	unsigned dwords = (unsigned)len / 4;
+	unsigned tail = (unsigned)len % 4;
+	unsigned char *p = src;
 
 	/* Fill 4 bytes at a time with rep stosd */
-	__asm__ volatile(
-		"rep stosl"
-		: "+D"(p), "+c"(dwords)
-		: "a"(word)
-		: "memory"
-	);
+	__asm__ volatile("rep stosl"
+			 : "+D"(p), "+c"(dwords)
+			 : "a"(word)
+			 : "memory");
 
 	/* Fill remaining 0-3 bytes */
 	switch (tail) {
-	case 3: *p++ = bval; /* fall through */
-	case 2: *p++ = bval; /* fall through */
-	case 1: *p++ = bval;
+	case 3:
+		*p++ = bval; /* fall through */
+	case 2:
+		*p++ = bval; /* fall through */
+	case 1:
+		*p++ = bval;
 	}
 }
 

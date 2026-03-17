@@ -70,4 +70,11 @@ unsigned vm_disc_map(vm_struct_t vm, int size);
  */
 void vm_dup(vm_struct_t src, vm_struct_t dst);
 
+/**
+ * vm_enum - invoke fn(region, data) for every mapped region in vm.
+ * Regions are visited in unspecified order.
+ */
+typedef void (*vm_enum_fn)(vm_region *region, void *data);
+void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data);
+
 #endif

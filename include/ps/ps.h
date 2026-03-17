@@ -188,6 +188,7 @@ struct _task_struct {
 	process_fn fn;
 	void *param;
 	void *command;
+	char *environment;
 	user_enviroment user;
 	int priority;
 	list_entry ps_list; /* dying-queue or wait-queue list node */
@@ -299,7 +300,7 @@ int sys_getrusage(int who, rusage *usage);
 void reboot();
 void shutdown();
 
-#define RUSAGE_SELF     0
+#define RUSAGE_SELF 0
 #define RUSAGE_CHILDREN (-1)
 
 #endif

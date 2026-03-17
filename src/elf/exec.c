@@ -448,6 +448,13 @@ int sys_execve(const char *f, char **argv, char **envp)
 		strcat(cur->command, s_argv[i]);
 	}
 
+	if (envc > 0)
+		strcpy(cur->environment, s_envp[0]);
+	for (i = 1; i < envc; i++) {
+		strcat(cur->environment, " ");
+		strcat(cur->environment, s_envp[i]);
+	}
+
 	/* log if needed */
 	if (TestControl.verbos)
 		klog("execve(%s)\n", cur->command);

@@ -254,6 +254,17 @@ void vm_dup(vm_struct_t src, vm_struct_t dst)
 	}
 }
 
+void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
+{
+	hash_table *table = (hash_table *)vm;
+	key_value_pair *kv;
+
+	if (!vm || !fn)
+		return;
+	for (kv = hash_first(table); kv; kv = hash_next(table, kv))
+		fn((vm_region *)kv->val, data);
+}
+
 /*
  * do_mmap_kernel - kernel-internal mmap implementation.
  *

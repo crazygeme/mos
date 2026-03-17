@@ -79,4 +79,4 @@ static void fill(void *buf, size_t size)
 	elf_read_time = 0;
 }
 
-DEFINE_DEBUG_FS_FILE(fsinfo, fill);
+DEFINE_PROC_FILE(fsinfo, fill);

@@ -113,4 +113,4 @@ static void fill(void *buf, size_t size)
 	page_fault_file_cache_hit = 0;
 }
 
-DEFINE_DEBUG_FS_FILE(meminfo, fill);
+DEFINE_PROC_FILE(meminfo, fill);

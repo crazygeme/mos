@@ -483,6 +483,9 @@ static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
 	if (strcmp(dir_name, "/proc") == 0)
 		return 0;
 
+	if (strcmp(dir_name, "/dev/pts") == 0)
+		return 0;
+
 	if (strcmp(dir_name, "/") == 0)
 		return 0;
 

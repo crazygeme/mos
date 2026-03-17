@@ -38,8 +38,8 @@
 #include <errno.h>
 #include <macro.h>
 #include <ext4.h>
+#include "tty_ldisc.h"
 
-#define CANON_BUF_SIZE 256
 #define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (0-9) */
 
 /* ── Private TTY state ───────────────────────────────────────────────────── */
@@ -59,8 +59,7 @@ typedef struct {
 	char ansi_buf[10];
 	int ansi_idx;
 	/* canonical input line buffer */
-	char canon_buf[CANON_BUF_SIZE];
-	int canon_len;
+	tty_canon_t canon;
 	/* per-TTY keyboard input queue */
 	cy_buf *kb_buf;
 	/* screen text buffer for inactive TTYs (also used on switch-away save) */
@@ -72,15 +71,6 @@ typedef struct {
 	/* Parent task for this TTY, used for setting root and waitpid */
 	task_struct *parent;
 } tty_state;
-
-static const struct termios default_termios = {
-	.c_iflag = ICRNL,
-	.c_oflag = OPOST | ONLCR,
-	.c_cflag = B38400 | CS8,
-	.c_lflag = IXON | ISIG | ICANON | ECHO | ECHOE | ECHOCTL | ECHOKE,
-	.c_line = 0,
-	.c_cc = INIT_C_CC,
-};
 
 static tty_state ttys[TTY_MAX_VDEV];
 static tty_state *this_ttys = &ttys[0];
@@ -369,23 +359,6 @@ static void tty_do_write(tty_state *state, const char *buf, unsigned len)
 
 /* ── Canonical / raw input ───────────────────────────────────────────────── */
 
-static int input_translate(unsigned char c, tcflag_t iflag)
-{
-	if (iflag & ISTRIP)
-		c &= 0x7f;
-	if (c == '\r') {
-		if (iflag & IGNCR)
-			return -1;
-		if (iflag & ICRNL)
-			return '\n';
-	} else if (c == '\n' && (iflag & INLCR)) {
-		return '\r';
-	}
-	if (iflag & IUCLC)
-		c = (unsigned char)tolower(c);
-	return (int)c;
-}
-
 static int isig_check(tty_state *state, unsigned char c)
 {
 	const struct termios *tc = &state->termios;
@@ -399,9 +372,9 @@ static int isig_check(tty_state *state, unsigned char c)
 static void canon_erase(tty_state *state)
 {
 	const struct termios *tc = &state->termios;
-	if (state->canon_len == 0)
+	if (state->canon.len == 0)
 		return;
-	state->canon_len--;
+	state->canon.len--;
 	if (!(tc->c_lflag & ECHO))
 		return;
 	if (tc->c_lflag & ECHOE)
@@ -416,33 +389,26 @@ static void canon_kill(tty_state *state)
 	if (tc->c_lflag & ECHO) {
 		if (tc->c_lflag & ECHOK) {
 			int i;
-			for (i = 0; i < state->canon_len; i++)
+			for (i = 0; i < state->canon.len; i++)
 				tty_do_write(state, "\b \b", 3);
 		} else {
 			tty_do_write(state, (const char *)&tc->c_cc[VKILL], 1);
 			tty_do_write(state, "\n", 1);
 		}
 	}
-	state->canon_len = 0;
+	state->canon.len = 0;
 }
 
 static void canon_append(tty_state *state, unsigned char c)
 {
 	const struct termios *tc = &state->termios;
-	if (state->canon_len >= CANON_BUF_SIZE - 1)
+	if (state->canon.len >= TTY_CANON_BUF_SIZE - 1)
 		return;
-	state->canon_buf[state->canon_len++] = (char)c;
+	state->canon.buf[state->canon.len++] = (char)c;
 	if (tc->c_lflag & ECHO)
-		tty_do_write(state, &state->canon_buf[state->canon_len - 1], 1);
+		tty_do_write(state, &state->canon.buf[state->canon.len - 1], 1);
 	else if (c == '\n' && (tc->c_lflag & ECHONL))
 		tty_do_write(state, "\n", 1);
-}
-
-static int is_eol(tty_state *state, unsigned char c)
-{
-	const struct termios *tc = &state->termios;
-	return c == '\n' || (tc->c_cc[VEOL] && c == tc->c_cc[VEOL]) ||
-	       (tc->c_cc[VEOL2] && c == tc->c_cc[VEOL2]);
 }
 
 /* Read one complete line into canon_buf. Returns 1 on line, 0 on EOF.
@@ -451,7 +417,8 @@ static int canon_readline(tty_state *state)
 {
 	const struct termios *tc = &state->termios;
 	while (1) {
-		int ch = input_translate(cyb_getc(state->kb_buf), tc->c_iflag);
+		int ch = tty_input_translate(cyb_getc(state->kb_buf),
+					     tc->c_iflag);
 		if (ch < 0)
 			continue;
 		unsigned char c = (unsigned char)ch;
@@ -466,25 +433,11 @@ static int canon_readline(tty_state *state)
 			continue;
 		}
 		if (tc->c_cc[VEOF] && c == tc->c_cc[VEOF])
-			return state->canon_len > 0;
+			return state->canon.len > 0;
 		canon_append(state, c);
-		if (is_eol(state, c))
+		if (tty_is_eol(c, &state->termios))
 			return 1;
 	}
-}
-
-/* Drain up to size bytes from canon_buf into dst. */
-static ssize_t canon_drain(tty_state *state, char *dst, size_t size)
-{
-	ssize_t n = (ssize_t)(size < (size_t)state->canon_len ?
-				      size :
-				      (size_t)state->canon_len);
-	memcpy(dst, state->canon_buf, (unsigned)n);
-	state->canon_len -= (int)n;
-	if (state->canon_len > 0)
-		memmove(state->canon_buf, state->canon_buf + n,
-			(unsigned)state->canon_len);
-	return n;
 }
 
 /* Raw mode read: block until VMIN chars are available, then drain. */
@@ -496,7 +449,8 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 	while ((size_t)n < size) {
 		if ((unsigned)n >= vmin && cyb_isempty(state->kb_buf))
 			break;
-		int ch = input_translate(cyb_getc(state->kb_buf), tc->c_iflag);
+		int ch = tty_input_translate(cyb_getc(state->kb_buf),
+					     tc->c_iflag);
 		if (ch < 0)
 			continue;
 		dst[n++] = (char)ch;
@@ -519,7 +473,7 @@ void tty_init(void)
 				vga_putchar(t, j, k, ' ');
 		t->cursor = 0;
 		spinlock_init(&t->lock);
-		t->termios = default_termios;
+		t->termios = tty_default_termios;
 		t->tty_idx = i;
 		t->bash_pid = 0;
 	}
@@ -686,9 +640,9 @@ static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 	if (size < 1 || !buf)
 		return 0;
 	if (state->termios.c_lflag & ICANON) {
-		if (state->canon_len == 0 && !canon_readline(state))
+		if (state->canon.len == 0 && !canon_readline(state))
 			return 0;
-		return canon_drain(state, buf, size);
+		return (ssize_t)tty_canon_drain(&state->canon, buf, (int)size);
 	}
 	return raw_read(state, buf, size);
 }
@@ -740,7 +694,7 @@ static int tty_fs_poll(file *fp, unsigned type)
 		if (fp->f_mode == O_WRONLY)
 			return -1;
 		if (state->termios.c_lflag & ICANON)
-			return (state->canon_len > 0) ? 0 : -1;
+			return (state->canon.len > 0) ? 0 : -1;
 		return cyb_isempty(state->kb_buf) ? -1 : 0;
 	}
 	return -1;

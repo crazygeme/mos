@@ -427,6 +427,8 @@ static void pf_process(intr_frame *frame)
 	}
 
 NOT_HANDLED:
+	cur = CURRENT_TASK();
+
 	if (frame->cs != KERNEL_CODE_SELECTOR || frame->eip < KERNEL_OFFSET ||
 	    cr2 < KERNEL_OFFSET) {
 		/* FIXME(Ender): Currently we call process exit(-EFAULT)
@@ -441,7 +443,6 @@ NOT_HANDLED:
 		goto Done;
 	}
 
-	cur = CURRENT_TASK();
 	klog("FATAL: unhandled kernel page fault! error code %x, address %x, eip %x\n",
 	     frame->error_code, cr2, frame->eip);
 

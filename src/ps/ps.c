@@ -221,7 +221,8 @@ int ps_enabled()
 
 /* Allocate and initialise a new kernel task. Returns the new psid, or
  * 0xffffffff on failure. The task is immediately placed in the ready queue. */
-unsigned ps_create(process_fn fn, void *param, ps_priority priority, ps_type type)
+unsigned ps_create(process_fn fn, void *param, ps_priority priority,
+		   ps_type type)
 {
 	unsigned int stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
@@ -235,8 +236,10 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority, ps_type typ
 
 	task->user.page_dir = (unsigned int)vm_alloc(1);
 	task->command = vm_alloc(1);
+	task->environment = vm_alloc(1);
 	task->umask = 0;
 	strcpy(task->command, "system");
+	*((char *)task->environment) = '\0';
 	memset(task->user.page_dir, 0, PAGE_SIZE);
 
 	stack_bottom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
@@ -348,12 +351,16 @@ void ps_enum_all(ps_enum_callback callback)
 	struct rb_node *node;
 	if (!callback)
 		return;
+	spinlock_lock(&ps_lock);
 	node = rb_first(&control.mgr_queue);
 	while (node) {
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		spinlock_unlock(&ps_lock);
 		callback(task);
+		spinlock_lock(&ps_lock);
 		node = rb_next(node);
 	}
+	spinlock_unlock(&ps_lock);
 }
 
 /*

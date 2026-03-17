@@ -126,6 +126,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		vm_free(task->command, 1);
 		task->command = NULL;
 	}
+	if (task->environment) {
+		vm_free(task->environment, 1);
+		task->environment = NULL;
+	}
 	if (task->cwd) {
 		name_put(task->cwd);
 		task->cwd = NULL;
@@ -205,9 +209,11 @@ int do_fork(unsigned flag)
 	list_init(&task->ps_list);
 	task->user.vm = vm_create();
 	task->command = vm_alloc(1);
+	task->environment = vm_alloc(1);
 	task->umask = cur->umask;
 	task->priority = cur->priority;
 	strcpy(task->command, cur->command);
+	strcpy(task->environment, cur->environment);
 	task->cwd = name_get();
 	task->fork_flag = flag;
 	task->root = cur->root;

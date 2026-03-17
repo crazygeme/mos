@@ -12,6 +12,11 @@
  *   %s  string               %c  character
  *   %b  two-digit hex byte   %h  human-readable size (e.g. "1.2M")
  *   %%  literal percent
+ *
+ * Flags and width (subset of C99):
+ *   -    left-align within field width
+ *   0    zero-pad instead of space-pad (numeric types)
+ *   N    minimum field width (e.g. %5d, %02u, %-10s)
  */
 
 #include <ps/ps.h>
@@ -150,6 +155,32 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 				EMIT(*_s++);  \
 	} while (0)
 
+/*
+ * EMIT_PADDED(str, len, width, fill, left_align)
+ *
+ * Emit the string `str` of known byte length `len`, padding to `width`
+ * columns.  `fill` is the pad character (' ' or '0').  When `left_align`
+ * is set the padding goes on the right; otherwise on the left.
+ *
+ * For zero-padding of signed numbers the sign character must be emitted
+ * before the pad — the caller handles that by stripping the '-' and
+ * passing it separately.
+ */
+#define EMIT_PADDED(str, len, width, fill, left_align) \
+	do {                                           \
+		const char *_ep = (str);               \
+		int _elen = (len);                     \
+		int _epad = (width) - _elen;           \
+		if (!(left_align))                     \
+			for (; _epad > 0; _epad--)     \
+				EMIT(fill);            \
+		for (; *_ep; _ep++)                    \
+			EMIT(*_ep);                    \
+		if (left_align)                        \
+			for (; _epad > 0; _epad--)     \
+				EMIT(' ');             \
+	} while (0)
+
 	while (*p) {
 		char cur = *p++;
 
@@ -157,6 +188,27 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			EMIT(cur);
 			continue;
 		}
+
+		/* ---- Parse flags ---- */
+		int flag_zero = 0, flag_left = 0;
+		for (;;) {
+			if (*p == '-') {
+				flag_left = 1;
+				p++;
+			} else if (*p == '0') {
+				flag_zero = 1;
+				p++;
+			} else
+				break;
+		}
+
+		/* ---- Parse width ---- */
+		int width = 0;
+		while (*p >= '1' && *p <= '9')
+			width = width * 10 + (*p++ - '0');
+
+		/* left-align overrides zero-fill */
+		char fill = (flag_zero && !flag_left) ? '0' : ' ';
 
 		cur = *p++;
 		switch (cur) {
@@ -166,8 +218,16 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 		case 'd': {
 			int v = va_arg(ap, int);
 			char *s = itoa(v, 10, 1);
+			char *num = s;
+			int neg = (v < 0 && flag_zero);
 
-			EMITS(s);
+			/* For zero-pad signed: emit '-' first, then pad digits */
+			if (neg) {
+				EMIT('-');
+				num++;
+			}
+			EMIT_PADDED(num, (int)strlen(num), width - neg, fill,
+				    flag_left);
 			free(s);
 			break;
 		}
@@ -175,7 +235,7 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			unsigned v = va_arg(ap, unsigned);
 			char *s = itoa((int)v, 10, 0);
 
-			EMITS(s);
+			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
 			free(s);
 			break;
 		}
@@ -184,27 +244,34 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			unsigned v = va_arg(ap, unsigned);
 			char *s = itoa((int)v, 16, 0);
 
-			EMITS(s);
+			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
 			free(s);
 			break;
 		}
 		case 's': {
 			char *v = va_arg(ap, char *);
 
-			if (v)
-				EMITS(v);
+			if (!v)
+				v = "(null)";
+			EMIT_PADDED(v, (int)strlen(v), width, ' ', flag_left);
 			break;
 		}
 		case 'c': {
 			char v = (char)va_arg(ap, int);
 
+			if (width > 1 && !flag_left)
+				for (int _i = 1; _i < width; _i++)
+					EMIT(' ');
 			EMIT(v);
+			if (width > 1 && flag_left)
+				for (int _i = 1; _i < width; _i++)
+					EMIT(' ');
 			break;
 		}
 		case 'b': {
 			unsigned char v = (unsigned char)va_arg(ap, unsigned);
 			char *s = itoa(v, 16, 0);
-			/* Skip "0x", zero-pad to 2 digits */
+			/* Skip "0x" prefix produced by itoa; zero-pad to 2 hex digits */
 			char *hex = s + 2;
 
 			if (strlen(hex) == 1)
@@ -225,6 +292,8 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			break;
 		}
 	}
+
+#undef EMIT_PADDED
 
 	FLUSH();
 

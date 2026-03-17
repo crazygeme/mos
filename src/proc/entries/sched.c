@@ -42,4 +42,4 @@ static void fill(void *buf, size_t size)
 	select_loop_times = 0;
 }
 
-DEFINE_DEBUG_FS_FILE(sched, fill);
+DEFINE_PROC_FILE(sched, fill);

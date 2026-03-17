@@ -1,4 +1,4 @@
-#include "config.h"
+#include <config.h>
 #include <hw/cpu.h>
 #include "generic.h"
 
@@ -176,4 +176,4 @@ static void fill(void *buf, size_t size)
 	}
 }
 
-DEFINE_DEBUG_FS_FILE(cpuinfo, fill);
+DEFINE_PROC_FILE(cpuinfo, fill);

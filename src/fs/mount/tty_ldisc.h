@@ -12,8 +12,8 @@
 #ifndef _FS_TTY_LDISC_H_
 #define _FS_TTY_LDISC_H_
 
-#include <fs/ioctl.h>   /* struct termios, tcflag_t, ICRNL, VEOL, … */
-#include <lib/klib.h>   /* memcpy, memmove, tolower */
+#include <fs/ioctl.h> /* struct termios, tcflag_t, ICRNL, VEOL, … */
+#include <lib/klib.h> /* memcpy, memmove, tolower */
 
 /* ── Canonical-mode accumulation buffer ──────────────────────────────────── */
 
@@ -21,7 +21,7 @@
 
 typedef struct {
 	char buf[TTY_CANON_BUF_SIZE];
-	int  len;
+	int len;
 } tty_canon_t;
 
 /* ── Shared default termios ───────────────────────────────────────────────── */
@@ -36,8 +36,8 @@ static const struct termios tty_default_termios = {
 	.c_oflag = OPOST | ONLCR,
 	.c_cflag = B38400 | CS8,
 	.c_lflag = IXON | ISIG | ICANON | ECHO | ECHOE | ECHOCTL | ECHOKE,
-	.c_line  = 0,
-	.c_cc    = INIT_C_CC,
+	.c_line = 0,
+	.c_cc = INIT_C_CC,
 };
 
 /* ── Input flag transformation ────────────────────────────────────────────── */
@@ -71,8 +71,7 @@ static inline int tty_input_translate(unsigned char c, tcflag_t iflag)
  */
 static inline int tty_is_eol(unsigned char c, const struct termios *tc)
 {
-	return c == '\n' ||
-	       (tc->c_cc[VEOL]  && c == tc->c_cc[VEOL])  ||
+	return c == '\n' || (tc->c_cc[VEOL] && c == tc->c_cc[VEOL]) ||
 	       (tc->c_cc[VEOL2] && c == tc->c_cc[VEOL2]);
 }
 

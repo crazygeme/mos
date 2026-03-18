@@ -182,6 +182,112 @@ int vfs_umount(super_block *sb, const char *path)
 	return -ENOENT;
 }
 
+/*
+ * VFS_PATH_OP - resolve a single path through the mount tree and dispatch
+ * to the matching super_block's operation.
+ * @fn:        the vfs_* function name (used for the recursive descent call)
+ * @sop_field: field name in super_operations to invoke
+ * @...:       extra arguments forwarded after (sb, path)
+ */
+#define VFS_PATH_OP(fn, sop_field, ...)                                     \
+	do {                                                                \
+		super_block *_tsb;                                          \
+		char *_rp;                                                  \
+		if (!sb || !path)                                           \
+			return -EINVAL;                                     \
+		if (!sb_path_resolve(sb, path, &_tsb, &_rp))               \
+			return -EINVAL;                                     \
+		if (_tsb != sb)                                             \
+			return fn(_tsb, _rp, ##__VA_ARGS__);                \
+		if (!_tsb->s_op || !_tsb->s_op->sop_field)                 \
+			return -ENOSYS;                                     \
+		return _tsb->s_op->sop_field(_tsb, _rp, ##__VA_ARGS__);    \
+	} while (0)
+
+/*
+ * VFS_PATH2_OP - resolve two paths through the mount tree, require them to
+ * land on the same super_block (-EXDEV otherwise), and dispatch.
+ * @sop_field: field name in super_operations to invoke
+ */
+#define VFS_PATH2_OP(sop_field)                                             \
+	do {                                                                \
+		super_block *_osb, *_nsb;                                   \
+		char *_orp, *_nrp;                                          \
+		if (!sb || !oldpath || !newpath)                            \
+			return -EINVAL;                                     \
+		if (!sb_path_resolve(sb, oldpath, &_osb, &_orp))           \
+			return -EINVAL;                                     \
+		if (!sb_path_resolve(sb, newpath, &_nsb, &_nrp))           \
+			return -EINVAL;                                     \
+		if (_osb != _nsb)                                           \
+			return -EXDEV;                                      \
+		if (!_osb->s_op || !_osb->s_op->sop_field)                 \
+			return -ENOSYS;                                     \
+		return _osb->s_op->sop_field(_osb, _orp, _nrp);            \
+	} while (0)
+
+int vfs_mkdir(super_block *sb, const char *path, unsigned mode)
+{
+	VFS_PATH_OP(vfs_mkdir, mkdir, mode);
+}
+
+int vfs_rmdir(super_block *sb, const char *path)
+{
+	VFS_PATH_OP(vfs_rmdir, rmdir);
+}
+
+int vfs_unlink(super_block *sb, const char *path)
+{
+	VFS_PATH_OP(vfs_unlink, unlink);
+}
+
+int vfs_link(super_block *sb, const char *oldpath, const char *newpath)
+{
+	VFS_PATH2_OP(link);
+}
+
+int vfs_rename(super_block *sb, const char *oldpath, const char *newpath)
+{
+	VFS_PATH2_OP(rename);
+}
+
+/*
+ * vfs_symlink: only linkpath is resolved through the mount tree;
+ * target is stored verbatim (caller must not pre-resolve it).
+ */
+int vfs_symlink(super_block *sb, const char *target, const char *linkpath)
+{
+	super_block *target_sb;
+	char *rel_path;
+
+	if (!sb || !target || !linkpath)
+		return -EINVAL;
+	if (!sb_path_resolve(sb, linkpath, &target_sb, &rel_path))
+		return -EINVAL;
+	if (target_sb != sb)
+		return vfs_symlink(target_sb, target, rel_path);
+	if (!target_sb->s_op || !target_sb->s_op->symlink)
+		return -ENOSYS;
+	return target_sb->s_op->symlink(target_sb, target, rel_path);
+}
+
+int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
+		 size_t *rcnt)
+{
+	super_block *target_sb;
+	char *rel_path;
+
+	if (!sb || !path || !buf || !bufsiz)
+		return -EINVAL;
+	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
+		return -EINVAL;
+	if (target_sb != sb)
+		return vfs_readlink(target_sb, rel_path, buf, bufsiz, rcnt);
+	if (!target_sb->s_op || !target_sb->s_op->readlink)
+		return -ENOSYS;
+	return target_sb->s_op->readlink(target_sb, rel_path, buf, bufsiz, rcnt);
+}
+
 file *vfs_open(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;

@@ -36,6 +36,20 @@ struct super_operations {
 	 * If zero just system will just call regular kfree.
 	 */
 	void (*release)(super_block *sb);
+
+	/* Directory and link operations.  path/oldpath/newpath are relative
+	 * to this super_block's mount root.  Return 0 on success, -errno. */
+	int (*mkdir)(super_block *sb, const char *path, unsigned mode);
+	int (*rmdir)(super_block *sb, const char *path);
+	int (*unlink)(super_block *sb, const char *path);
+	/* link: create a hard link from oldpath to newpath (both on same sb) */
+	int (*link)(super_block *sb, const char *oldpath, const char *newpath);
+	/* symlink: create a symlink at linkpath whose content is target */
+	int (*symlink)(super_block *sb, const char *target,
+		       const char *linkpath);
+	int (*rename)(super_block *sb, const char *oldpath, const char *newpath);
+	int (*readlink)(super_block *sb, const char *path, char *buf,
+			size_t bufsiz, size_t *rcnt);
 };
 
 /*
@@ -74,5 +88,18 @@ int vfs_umount(super_block *sb, const char *path);
  * Returns an open file * on success, NULL on failure.
  */
 file *vfs_open(super_block *sb, const char *path, int flag);
+
+/* VFS-level directory and link operations.  All paths are absolute.
+ * Return 0 on success, -errno on failure.
+ * vfs_link and vfs_rename require both paths to be on the same mount (-EXDEV
+ * otherwise).  vfs_symlink stores target verbatim (not resolved). */
+int vfs_mkdir(super_block *sb, const char *path, unsigned mode);
+int vfs_rmdir(super_block *sb, const char *path);
+int vfs_unlink(super_block *sb, const char *path);
+int vfs_link(super_block *sb, const char *oldpath, const char *newpath);
+int vfs_symlink(super_block *sb, const char *target, const char *linkpath);
+int vfs_rename(super_block *sb, const char *oldpath, const char *newpath);
+int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
+		 size_t *rcnt);
 
 #endif

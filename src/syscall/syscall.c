@@ -7,6 +7,7 @@
 #include <lib/klib.h>
 #include <lib/rbtree.h>
 #include <fs/fs.h>
+#include <fs/vfs.h>
 #include <fs/mount.h>
 #include <fs/select.h>
 #include <fs/poll.h>
@@ -689,11 +690,12 @@ static int sys_creat(const char *path, unsigned mode)
 static int sys_mkdir(const char *path, unsigned mode)
 {
 	char *name = name_get();
+	task_struct *cur = CURRENT_TASK();
 	int ret;
 	resolve_path(path, name);
-	ret = ext4_dir_mk(name);
+	ret = vfs_mkdir(cur->root, name, mode);
 	if (TestControl.verbos)
-		klog("mkdir(%s, %d)\n", path, mode);
+		klog("mkdir(%s, %d) = %d\n", name, mode, ret);
 
 	name_put(name);
 	return ret;
@@ -702,11 +704,12 @@ static int sys_mkdir(const char *path, unsigned mode)
 static int sys_rmdir(const char *path)
 {
 	char *name = name_get();
+	task_struct *cur = CURRENT_TASK();
 	int ret;
 	resolve_path(path, name);
-	ret = ext4_dir_rm(name);
+	ret = vfs_rmdir(cur->root, name);
 	if (TestControl.verbos)
-		klog("rmdir(%s)\n", name);
+		klog("rmdir(%s) = %d\n", name, ret);
 
 	name_put(name);
 	return ret;
@@ -875,7 +878,6 @@ static int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 	int ret = 0;
 	struct stat s;
 	file *fp;
-	ext4_dir *dir;
 
 	if (TestControl.verbos)
 		klog("getdents(%d, %x, %d)\n", fd, dirp, count);
@@ -1228,6 +1230,7 @@ static int sys_sync()
 static int sys_unlink(const char *_name)
 {
 	char *name = name_get();
+	task_struct *cur = CURRENT_TASK();
 	struct stat s;
 	int ret = -1;
 
@@ -1241,7 +1244,7 @@ static int sys_unlink(const char *_name)
 		goto done;
 	}
 
-	ret = ext4_fremove(name);
+	ret = vfs_unlink(cur->root, name);
 done:
 	name_put(name);
 	if (TestControl.verbos)
@@ -1428,43 +1431,35 @@ static int sys_link(const char *path1, const char *path2)
 {
 	char *name1 = name_get();
 	char *name2 = name_get();
-	int ret = -1;
+	task_struct *cur = CURRENT_TASK();
+	int ret;
 	resolve_path(path1, name1);
 	resolve_path(path2, name2);
 
-	ret = ext4_flink(name1, name2);
+	ret = vfs_link(cur->root, name1, name2);
 
 	if (TestControl.verbos)
-		klog("symlink(%s, %s) = %d\n", name1, name2, ret);
+		klog("link(%s, %s) = %d\n", name1, name2, ret);
 
 	name_put(name1);
 	name_put(name2);
-
-	if (ret > 0)
-		return (0 - ret);
-
 	return ret;
 }
 
 static int sys_symlink(const char *path1, const char *path2)
 {
-	char *name1 = name_get();
 	char *name2 = name_get();
-	int ret = -1;
-	resolve_path(path1, name1);
+	task_struct *cur = CURRENT_TASK();
+	int ret;
+	/* path1 is the symlink target — store verbatim, do not resolve */
 	resolve_path(path2, name2);
 
-	ret = ext4_fsymlink(name1, name2);
+	ret = vfs_symlink(cur->root, path1, name2);
 
 	if (TestControl.verbos)
-		klog("symlink(%s, %s) = %d\n", name1, name2, ret);
+		klog("symlink(%s, %s) = %d\n", path1, name2, ret);
 
-	name_put(name1);
 	name_put(name2);
-
-	if (ret > 0)
-		return (0 - ret);
-
 	return ret;
 }
 
@@ -1495,21 +1490,25 @@ static int sys_rename(const char *oldpath, const char *newpath)
 {
 	char *name1 = name_get();
 	char *name2 = name_get();
-	int ret = -1;
+	task_struct *cur = CURRENT_TASK();
+	int ret;
 
-	if (!oldpath || !*oldpath || !newpath || !*newpath)
+	if (!oldpath || !*oldpath || !newpath || !*newpath) {
+		name_put(name1);
+		name_put(name2);
 		return -ENOENT;
+	}
 
 	resolve_path(oldpath, name1);
 	resolve_path(newpath, name2);
-	ret = ext4_frename(name1, name2);
-	name_put(name1);
-	name_put(name2);
+	ret = vfs_rename(cur->root, name1, name2);
 
 	if (TestControl.verbos)
 		klog("rename(%s, %s) = %d\n", name1, name2, ret);
 
-	return (0 - ret);
+	name_put(name1);
+	name_put(name2);
+	return ret;
 }
 
 static int sys_umask(unsigned mask)
@@ -1576,11 +1575,9 @@ static int sys_setregid(unsigned pid, unsigned pgid)
 static int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 {
 	char *name = name_get();
+	task_struct *cur = CURRENT_TASK();
 	size_t rcnt = 0;
 	int ret;
-
-	if (TestControl.verbos)
-		klog("readlink(%s, %x, %d)\n", name, buf, bufsiz);
 
 	if (!buf || bufsiz == 0) {
 		name_put(name);
@@ -1588,18 +1585,16 @@ static int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 	}
 
 	resolve_path(_path, name);
-	// FIXME(Ender): impl real syscall
-	if (strcmp(name, "/proc") == 0) {
-		name_put(name);
-		return -EINVAL;
-	}
 
-	ret = ext4_readlink(name, buf, bufsiz, &rcnt);
+	if (TestControl.verbos)
+		klog("readlink(%s, %x, %d)\n", name, buf, bufsiz);
+
+	ret = vfs_readlink(cur->root, name, buf, bufsiz, &rcnt);
 
 	name_put(name);
 
 	if (ret)
-		return -ret;
+		return ret;
 
 	return (int)rcnt;
 }

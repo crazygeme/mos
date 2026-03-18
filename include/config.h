@@ -1,5 +1,12 @@
 #ifndef _CONFIG_H
 #define _CONFIG_H
+
+#define UTS_SYSNAME  "MOS"
+#define UTS_NODENAME "mos"
+#define UTS_RELEASE  "0.1.0"
+#define UTS_VERSION  "#1 SMP"
+#define UTS_MACHINE  "i686"
+
 #define KERNEL_PRIVILEGE 0
 #define USER_PRIVILEGE 3
 

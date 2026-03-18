@@ -445,10 +445,104 @@ static void ext4_release(super_block *sb)
 	kfree(sb);
 }
 
+/* Build the full lwext4 path for an operation on super_block sb. */
+static void ext4_full_path(super_block *sb, const char *path, char *full)
+{
+	ext4_mount_info *mi = sb->s_fs_info;
+	/* mi->mp ends with '/'; path starts with '/' — skip leading '/' */
+	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+}
+
+static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
+{
+	char *full = name_get();
+	int ret;
+	ext4_full_path(sb, path, full);
+	ret = ext4_dir_mk(full);
+	name_put(full);
+	return ret ? -ret : 0;
+}
+
+static int ext4_rmdir(super_block *sb, const char *path)
+{
+	char *full = name_get();
+	int ret;
+	ext4_full_path(sb, path, full);
+	ret = ext4_dir_rm(full);
+	name_put(full);
+	return ret ? -ret : 0;
+}
+
+static int ext4_unlink(super_block *sb, const char *path)
+{
+	char *full = name_get();
+	int ret;
+	ext4_full_path(sb, path, full);
+	ret = ext4_fremove(full);
+	name_put(full);
+	return ret ? -ret : 0;
+}
+
+static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
+{
+	char *full1 = name_get();
+	char *full2 = name_get();
+	int ret;
+	ext4_full_path(sb, oldpath, full1);
+	ext4_full_path(sb, newpath, full2);
+	ret = ext4_flink(full1, full2);
+	name_put(full1);
+	name_put(full2);
+	return ret ? -ret : 0;
+}
+
+static int ext4_symlink_op(super_block *sb, const char *target,
+			   const char *linkpath)
+{
+	char *full = name_get();
+	int ret;
+	ext4_full_path(sb, linkpath, full);
+	ret = ext4_fsymlink(target, full);
+	name_put(full);
+	return ret ? -ret : 0;
+}
+
+static int ext4_rename(super_block *sb, const char *oldpath,
+		       const char *newpath)
+{
+	char *full1 = name_get();
+	char *full2 = name_get();
+	int ret;
+	ext4_full_path(sb, oldpath, full1);
+	ext4_full_path(sb, newpath, full2);
+	ret = ext4_frename(full1, full2);
+	name_put(full1);
+	name_put(full2);
+	return ret ? -ret : 0;
+}
+
+static int ext4_readlink_op(super_block *sb, const char *path, char *buf,
+			    size_t bufsiz, size_t *rcnt)
+{
+	char *full = name_get();
+	int ret;
+	ext4_full_path(sb, path, full);
+	ret = ext4_readlink(full, buf, bufsiz, rcnt);
+	name_put(full);
+	return ret ? -ret : 0;
+}
+
 static super_operations ext4_sops = {
 	.open_root = ext4_open_root,
 	.open = ext4_open,
 	.release = ext4_release,
+	.mkdir = ext4_mkdir,
+	.rmdir = ext4_rmdir,
+	.unlink = ext4_unlink,
+	.link = ext4_link,
+	.symlink = ext4_symlink_op,
+	.rename = ext4_rename,
+	.readlink = ext4_readlink_op,
 };
 
 /* Allocate a super_block bound to the given lwext4 mount point. */

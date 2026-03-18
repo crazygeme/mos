@@ -426,6 +426,36 @@ int fs_chmod(const char *pathname, uint32_t mode)
 	return (0 - ret);
 }
 
+int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
+{
+	int ret;
+	ret = ext4_chown(pathname, uid, gid);
+	return (0 - ret);
+}
+
+int fs_fchown(int fd, uint32_t uid, uint32_t gid)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp = NULL;
+	int ret = -EACCES;
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -1;
+
+	if (cur->fds[fd].used == 0)
+		return -ENOENT;
+
+	mutex_lock(&cur->fd_lock);
+	fp = cur->fds[fd].fp;
+	mutex_unlock(&cur->fd_lock);
+
+	if (!fp || !fp->f_inode)
+		return -EACCES;
+
+	ret = ext4_fchown(fp->f_inode->i_private, uid, gid);
+	return (0 - ret);
+}
+
 int fs_fchmod(int fd, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();

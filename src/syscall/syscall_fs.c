@@ -295,6 +295,57 @@ int sys_fchmod(int fd, uint32_t mode)
 	return ret;
 }
 
+int sys_chown(const char *pathname, uint32_t uid, uint32_t gid)
+{
+	char *name = name_get();
+	int ret;
+
+	resolve_path(pathname, name);
+	ret = fs_chown(name, uid, gid);
+	name_put(name);
+
+	if (TestControl.verbos)
+		klog("chown(%s, %d, %d) = %d\n", pathname, uid, gid, ret);
+
+	return ret;
+}
+
+int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid)
+{
+	char *name = name_get();
+	file *fp;
+	int ret;
+
+	resolve_path(pathname, name);
+
+	/* Open without following the final symlink, then chown the inode. */
+	fp = fs_open_file(name, 0, "r", 0);
+	if (!fp) {
+		name_put(name);
+		return -ENOENT;
+	}
+
+	ret = ext4_fchown(fp->f_inode->i_private, uid, gid);
+	ret = (0 - ret);
+	fs_put_file(fp);
+	name_put(name);
+
+	if (TestControl.verbos)
+		klog("lchown(%s, %d, %d) = %d\n", pathname, uid, gid, ret);
+
+	return ret;
+}
+
+int sys_fchown(int fd, uint32_t uid, uint32_t gid)
+{
+	int ret = fs_fchown(fd, uid, gid);
+
+	if (TestControl.verbos)
+		klog("fchown(%d, %d, %d) = %d\n", fd, uid, gid, ret);
+
+	return ret;
+}
+
 /* ------------------------------------------------------------------ *
  * Directory and link operations                                        *
  * ------------------------------------------------------------------ */

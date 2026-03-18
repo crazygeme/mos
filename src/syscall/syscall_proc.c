@@ -10,8 +10,10 @@
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <hw/time.h>
+#include <int/int.h>
 #include <lib/klib.h>
 #include <config.h>
+#include <signal.h>
 #include <errno.h>
 #include <macro.h>
 #include "syscall_internal.h"
@@ -167,12 +169,40 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 		return do_waitpid(pid, status, options, rusage);
 }
 
+/*
+ * ps_send_signal — deliver signal sig to process pid.
+ * Sets the pending bit and wakes the target if it is blocked.
+ * Called by sys_kill and internally (e.g. SIGCHLD on child exit).
+ */
+int ps_send_signal(unsigned pid, int sig)
+{
+	task_struct *target;
+
+	if (sig <= 0 || sig >= NSIG)
+		return -EINVAL;
+
+	target = ps_find_process(pid);
+	if (!target)
+		return -ESRCH;
+
+	target->sig_pending |= (1UL << (sig - 1));
+
+	/* Wake the target if it is sleeping so it can receive the signal. */
+	if (target->status == ps_waiting)
+		ps_put_to_ready_queue(target);
+
+	return 0;
+}
+
 int sys_kill(unsigned pid, int sig)
 {
 	if (TestControl.verbos)
 		klog("kill(%d, %d)\n", pid, sig);
 
-	return -1;
+	if (sig == 0)
+		return ps_find_process(pid) ? 0 : -ESRCH;
+
+	return ps_send_signal(pid, sig);
 }
 
 int sys_brk(unsigned _top)
@@ -245,21 +275,228 @@ unsigned sys_alarm(unsigned seconds)
 
 int sys_pause()
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TestControl.verbos)
 		klog("pause\n");
 
-	PAUSE();
-	return 0;
+	/* Yield CPU until a signal becomes deliverable. */
+	while (!(cur->sig_pending & ~cur->sig_mask))
+		task_sched();
+
+	return -EINTR;
 }
 
 int sys_sigaction(int sig, void *act, void *oact)
 {
-	return -1; /* FIXME: no signal support */
+	task_struct *cur = CURRENT_TASK();
+	struct sigaction *sa;
+
+	if (sig <= 0 || sig >= NSIG)
+		return -EINVAL;
+	if (sig == SIGKILL || sig == SIGSTOP)
+		return -EINVAL;
+
+	sa = &cur->sig_handlers[sig];
+
+	if (oact)
+		*(struct sigaction *)oact = *sa;
+	if (act)
+		*sa = *(struct sigaction *)act;
+
+	if (TestControl.verbos)
+		klog("sigaction(%d, %x, %x)\n", sig, act, oact);
+
+	return 0;
 }
 
 int sys_sigprocmask(int how, void *set, void *oset)
 {
-	return -1; /* FIXME: no signal support */
+	task_struct *cur = CURRENT_TASK();
+	unsigned long newmask;
+
+	if (oset)
+		*(unsigned long *)oset = cur->sig_mask;
+
+	if (!set)
+		return 0;
+
+	newmask = *(unsigned long *)set;
+
+	switch (how) {
+	case SIG_BLOCK:
+		cur->sig_mask |= newmask;
+		break;
+	case SIG_UNBLOCK:
+		cur->sig_mask &= ~newmask;
+		break;
+	case SIG_SETMASK:
+		cur->sig_mask = newmask;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* SIGKILL and SIGSTOP can never be blocked. */
+	cur->sig_mask &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
+
+	if (TestControl.verbos)
+		klog("sigprocmask(%d)\n", how);
+
+	return 0;
+}
+
+/*
+ * sys_sigreturn — restore user context after a signal handler returns.
+ *
+ * The signal handler's trampoline called "int $0x80" with eax=119 after
+ * the handler's "ret" popped return_addr from the stack.  At that point:
+ *   user ESP = signal_frame_base + 4   (return_addr has been popped)
+ * so the saved frame is at (frame->esp - 4).
+ */
+int sys_sigreturn()
+{
+	task_struct *cur = CURRENT_TASK();
+	intr_frame *frame =
+		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 4);
+
+	/* Restore original user registers and EIP into the interrupt frame. */
+	frame->eip = (void *)sf->saved_eip;
+	frame->eflags = sf->saved_eflags;
+	frame->esp = (void *)sf->saved_esp;
+	frame->eax = sf->saved_eax;
+	frame->ebx = sf->saved_ebx;
+	frame->ecx = sf->saved_ecx;
+	frame->edx = sf->saved_edx;
+	frame->esi = sf->saved_esi;
+	frame->edi = sf->saved_edi;
+	frame->ebp = sf->saved_ebp;
+
+	/* Restore the signal mask saved before delivery. */
+	cur->sig_mask = sf->saved_mask;
+
+	/*
+	 * Return the original eax so that the interrupted syscall's result
+	 * is preserved when execution resumes.  syscall_process will write
+	 * this into frame->eax, but do_signal (called afterwards) will see
+	 * the restored frame and may deliver the next queued signal.
+	 */
+	return (int)sf->saved_eax;
+}
+
+/*
+ * do_signal — check for deliverable signals and redirect the interrupt frame
+ * to the handler before iret returns to user space.
+ *
+ * Called at the end of syscall_process() and from the timer interrupt path.
+ * Only acts when the frame is returning to user mode (cs == USER_CODE_SELECTOR).
+ */
+void do_signal(intr_frame *frame)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned long deliverable;
+	int sig;
+	struct sigaction *sa;
+	signal_frame *sf;
+	unsigned char *new_esp;
+	/* Trampoline: mov $119,%eax (__NR_sigreturn); int $0x80; nop */
+	static const unsigned char tramp[8] = {
+		0xb8, 0x77, 0x00, 0x00, 0x00, /* mov $119, %eax */
+		0xcd, 0x80, /* int $0x80      */
+		0x90 /* nop            */
+	};
+
+	if (cur->type != ps_user)
+		return;
+	/* Only deliver when returning to user mode. */
+	if (frame->cs != USER_CODE_SELECTOR)
+		return;
+
+	/* Fire alarm if it has expired. */
+	if (cur->alarm_expire_ms && time_now_ms() >= cur->alarm_expire_ms) {
+		cur->alarm_expire_ms = 0;
+		cur->sig_pending |= (1UL << (SIGALRM - 1));
+	}
+
+	deliverable = cur->sig_pending & ~cur->sig_mask;
+	if (!deliverable)
+		return;
+
+	/* Pick the lowest-numbered deliverable signal. */
+	for (sig = 1; sig < NSIG; sig++) {
+		if (deliverable & (1UL << (sig - 1)))
+			break;
+	}
+	if (sig >= NSIG)
+		return;
+
+	cur->sig_pending &= ~(1UL << (sig - 1));
+
+	/* SIGKILL / SIGSTOP cannot be caught or ignored. */
+	if (sig == SIGKILL || sig == SIGSTOP) {
+		sys_exit(sig | 0x80);
+		return;
+	}
+
+	sa = &cur->sig_handlers[sig];
+
+	if (sa->sa_handler == SIG_IGN)
+		return;
+
+	if (sa->sa_handler == SIG_DFL) {
+		switch (sig) {
+		/* Signals whose default action is to ignore */
+		case SIGCHLD:
+		case SIGURG:
+		case SIGWINCH:
+		case SIGCONT:
+			return;
+		default:
+			/* Terminate */
+			sys_exit(sig | 0x80);
+			return;
+		}
+	}
+
+	/* ---- User-defined handler: build signal frame on user stack ---- */
+
+	new_esp =
+		(unsigned char *)((unsigned)frame->esp - sizeof(signal_frame));
+	/* 16-byte align */
+	new_esp = (unsigned char *)((unsigned)new_esp & ~0xfU);
+	sf = (signal_frame *)new_esp;
+
+	sf->return_addr = (unsigned int)sf->trampoline;
+	sf->signo = sig;
+	sf->saved_eip = (unsigned int)frame->eip;
+	sf->saved_eflags = frame->eflags;
+	sf->saved_esp = (unsigned int)frame->esp;
+	sf->saved_eax = frame->eax;
+	sf->saved_ebx = frame->ebx;
+	sf->saved_ecx = frame->ecx;
+	sf->saved_edx = frame->edx;
+	sf->saved_esi = frame->esi;
+	sf->saved_edi = frame->edi;
+	sf->saved_ebp = frame->ebp;
+	sf->saved_mask = cur->sig_mask;
+	memcpy(sf->trampoline, tramp, sizeof(tramp));
+
+	/* Block this signal while handler runs (unless SA_NODEFER). */
+	if (!(sa->sa_flags & SA_NODEFER))
+		cur->sig_mask |= (1UL << (sig - 1));
+	cur->sig_mask |= sa->sa_mask;
+
+	/* SA_RESETHAND: reset disposition to SIG_DFL after first delivery. */
+	if (sa->sa_flags & SA_RESETHAND)
+		sa->sa_handler = SIG_DFL;
+
+	/* Redirect iret to the signal handler. */
+	frame->eip = (void *)sa->sa_handler;
+	frame->esp = (void *)new_esp;
+
+	if (TestControl.verbos)
+		klog("sig_deliver(%d, %d)\n", cur->psid, sig);
 }
 
 int sys_getrlimit(int resource, void *limit)

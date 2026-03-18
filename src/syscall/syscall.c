@@ -27,6 +27,10 @@
 int sys_getrusage(int who, rusage *usage);
 int sys_syslog(int type, char *buf, int len);
 
+/* signal handlers defined in syscall_proc.c */
+int sys_sigreturn(void);
+void do_signal(intr_frame *frame);
+
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx,
 			  unsigned esi, unsigned edi, unsigned ebp);
 
@@ -42,172 +46,172 @@ static unsigned call_table[NR_syscalls] = {
 	sys_fork,
 	sys_read,
 	sys_write,
-	sys_open,      // 1  ~ 5
+	sys_open, // 1  ~ 5
 	sys_close,
 	sys_waitpid,
 	sys_creat,
 	sys_link,
-	sys_unlink,    // 6  ~ 10
+	sys_unlink, // 6  ~ 10
 	sys_execve,
 	sys_chdir,
 	sys_time,
 	0,
-	sys_chmod,     // 11 ~ 15
+	sys_chmod, // 11 ~ 15
 	0,
 	0,
 	0,
 	sys_lseek,
-	sys_getpid,    // 16 ~ 20
+	sys_getpid, // 16 ~ 20
 	sys_mount,
 	sys_umount,
 	0,
 	sys_getuid,
-	0,             // 21 ~ 25
+	0, // 21 ~ 25
 	0,
 	sys_alarm,
 	sys_oldstat,
 	sys_pause,
-	sys_utime,     // 26 ~ 30
+	sys_utime, // 26 ~ 30
 	0,
 	0,
 	sys_access,
 	0,
-	0,             // 31 ~ 35
+	0, // 31 ~ 35
 	sys_sync,
 	sys_kill,
 	sys_rename,
 	sys_mkdir,
-	sys_rmdir,     // 36 ~ 40
+	sys_rmdir, // 36 ~ 40
 	sys_dup,
 	sys_pipe,
 	0,
 	0,
-	sys_brk,       // 41 ~ 45
+	sys_brk, // 41 ~ 45
 	0,
 	sys_getgid,
 	0,
 	sys_geteuid,
-	sys_getegid,   // 46 ~ 50
+	sys_getegid, // 46 ~ 50
 	0,
 	0,
 	0,
 	sys_ioctl,
-	sys_fcntl,     // 51 ~ 55
+	sys_fcntl, // 51 ~ 55
 	0,
 	sys_setpgid,
 	0,
 	0,
-	sys_umask,     // 56 ~ 60
+	sys_umask, // 56 ~ 60
 	0,
 	0,
 	sys_dup2,
 	sys_getppid,
-	sys_getpgrp,   // 61 ~ 65
+	sys_getpgrp, // 61 ~ 65
 	sys_setsid,
 	0,
 	0,
 	0,
-	sys_setreuid,  // 66 ~ 70
+	sys_setreuid, // 66 ~ 70
 	sys_setregid,
 	0,
 	0,
 	sys_sethostname,
-	0,             // 71 ~ 75
+	0, // 71 ~ 75
 	sys_getrlimit,
 	sys_getrusage,
 	sys_gettimeofday,
 	0,
-	0,             // 76 ~ 80
+	0, // 76 ~ 80
 	0,
 	sys_select,
 	sys_symlink,
 	0,
-	sys_readlink,  // 81 ~ 85
+	sys_readlink, // 81 ~ 85
 	0,
 	0,
 	sys_reboot,
 	sys_readdir,
-	sys_mmap,      // 86 ~ 90
+	sys_mmap, // 86 ~ 90
 	sys_munmap,
 	0,
 	0,
 	sys_fchmod,
-	0,             // 91 ~ 95
+	0, // 91 ~ 95
 	0,
 	0,
 	0,
 	0,
-	0,             // 96 ~ 100
+	0, // 96 ~ 100
 	0,
 	sys_socketcall,
 	sys_syslog,
 	0,
-	0,             // 101 ~ 105
+	0, // 101 ~ 105
 	sys_stat,
 	sys_lstat,
 	sys_fstat,
 	0,
-	0,             // 106 ~ 110
+	0, // 106 ~ 110
 	0,
 	0,
 	0,
 	sys_wait4,
-	0,             // 111 ~ 115
+	0, // 111 ~ 115
 	0,
 	0,
 	sys_fsync,
-	0,
-	0,             // 116 ~ 120
+	sys_sigreturn,
+	0, // 116 ~ 120
 	0,
 	sys_uname,
 	0,
 	0,
-	sys_mprotect,  // 121 ~ 125
+	sys_mprotect, // 121 ~ 125
 	0,
 	0,
 	0,
 	0,
-	0,             // 126 ~ 130
+	0, // 126 ~ 130
 	0,
 	0,
 	0,
 	0,
-	0,             // 131 ~ 135
+	0, // 131 ~ 135
 	sys_personality,
 	0,
 	0,
 	0,
-	sys_llseek,    // 136 ~ 140
+	sys_llseek, // 136 ~ 140
 	sys_getdents,
 	sys_newselect,
 	0,
 	0,
-	sys_readv,     // 141 ~ 145
+	sys_readv, // 141 ~ 145
 	sys_writev,
 	0,
 	0,
 	0,
-	0,             // 146 ~ 150
+	0, // 146 ~ 150
 	0,
 	0,
 	0,
 	0,
-	0,             // 151 ~ 155
+	0, // 151 ~ 155
 	0,
 	0,
 	sys_sched_yield,
 	0,
-	0,             // 156 ~ 160
+	0, // 156 ~ 160
 	0,
 	sys_nanosleep,
 	0,
 	0,
-	0,             // 161 ~ 165
+	0, // 161 ~ 165
 	0,
 	0,
 	sys_poll,
 	0,
-	0,             // 165 ~ 170
+	0, // 165 ~ 170
 	0,
 	0,
 	0,
@@ -217,25 +221,25 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	0,
 	0,
-	0,             // 175 ~ 180
+	0, // 175 ~ 180
 	0,
 	0,
 	sys_getcwd,
 	0,
-	0,             // 181 ~ 185
+	0, // 181 ~ 185
 	0,
 	0,
 	0,
 	0,
-	sys_vfork,     // 185 ~ 190
+	sys_vfork, // 185 ~ 190
 	0,
 	0,
 	0,
 	0,
-	sys_stat64,    // 191 ~ 195
+	sys_stat64, // 191 ~ 195
 	sys_lstat64,
 	sys_fstat64,
-	0,             // 196 ~ 198
+	0, // 196 ~ 198
 };
 
 static int unhandled_syscall(unsigned callno)
@@ -253,10 +257,13 @@ static void syscall_process(intr_frame *frame)
 	if (!fn)
 		ret = unhandled_syscall(frame->eax);
 	else
-		ret = fn(frame->ebx, frame->ecx, frame->edx,
-			 frame->esi, frame->edi, frame->ebp);
+		ret = fn(frame->ebx, frame->ecx, frame->edx, frame->esi,
+			 frame->edi, frame->ebp);
 
 	frame->eax = ret;
+
+	/* Deliver any pending signals before returning to user space. */
+	do_signal(frame);
 }
 
 static void syscall_init()

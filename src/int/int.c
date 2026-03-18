@@ -161,9 +161,6 @@ void int_enable_all(void)
 	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);
 	int_register(IPI_VECTOR_SCHED, ipi_sched_handler, 0, 0);
 	int_register(6, handle_invalid_opcode, 0, 3);
-
-	extern void enable_sse();
-	enable_sse();
 }
 
 /* Called on each AP: load IDT, register IPI handlers, enable interrupts. */

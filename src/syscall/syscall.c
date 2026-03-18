@@ -494,6 +494,9 @@ static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
 
 static int sys_umount(char *name, int flag)
 {
+	if (TestControl.verbos)
+		klog("umount(%s, %d)\n", name, flag);
+
 	return 0;
 }
 
@@ -1586,6 +1589,13 @@ static int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 	}
 
 	resolve_path(_path, name);
+	// FIXME(Ender): impl real syscall
+	if (strcmp(name, "/proc") == 0 || strcmp(name, "/dev")) {
+		strcpy(buf, name);
+		name_put(name);
+		return 0;
+	}
+
 	ret = ext4_readlink(name, buf, bufsiz, &rcnt);
 
 	if (TestControl.verbos)

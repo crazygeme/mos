@@ -451,7 +451,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	if (envc > 0)
 		strcpy(cur->environment, s_envp[0]);
 	for (i = 1; i < envc; i++) {
-		strcat(cur->environment, " ");
+		strcat(cur->environment, ":");
 		strcat(cur->environment, s_envp[i]);
 	}
 
@@ -496,6 +496,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	ps_free_v(s_argv, argc);
 	ps_free_v(s_envp, envc);
 	name_put(file_name);
+	cur->type = ps_user;
 	extern void switch_to_user_mode(unsigned eip, unsigned esp);
 	switch_to_user_mode(eip, esp_top);
 	// never return here

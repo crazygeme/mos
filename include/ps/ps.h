@@ -191,6 +191,7 @@ struct _task_struct {
 	char *environment;
 	user_enviroment user;
 	int priority;
+	int type;
 	list_entry ps_list; /* dying-queue or wait-queue list node */
 	struct rb_node mgr_rb; /* management-queue RB-tree node */
 	ps_status status;

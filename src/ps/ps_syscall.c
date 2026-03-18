@@ -212,6 +212,7 @@ int do_fork(unsigned flag)
 	task->environment = vm_alloc(1);
 	task->umask = cur->umask;
 	task->priority = cur->priority;
+	task->type = cur->type;
 	strcpy(task->command, cur->command);
 	strcpy(task->environment, cur->environment);
 	task->cwd = name_get();

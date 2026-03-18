@@ -176,11 +176,11 @@ static int create_fs_aux_info(struct fs_aux_info *aux_info,
 		aux_info->len_blocks -= last_group_size;
 	}
 
-	aux_info->sb = ext4_calloc(1, EXT4_SUPERBLOCK_SIZE);
+	aux_info->sb = ext4_zalloc(EXT4_SUPERBLOCK_SIZE);
 	if (!aux_info->sb)
 		return ENOMEM;
 
-	aux_info->bg_desc_blk = ext4_calloc(1, info->block_size);
+	aux_info->bg_desc_blk = ext4_zalloc(info->block_size);
 	if (!aux_info->bg_desc_blk)
 		return ENOMEM;
 

@@ -537,7 +537,7 @@ __unused static int __ext4_recover(const char *mount_point)
 	int r = ENOTSUP;
 	EXT4_MP_LOCK(mp);
 	if (ext4_sb_feature_com(&mp->fs.sb, EXT4_FCOM_HAS_JOURNAL)) {
-		struct jbd_fs *jbd_fs = ext4_calloc(1, sizeof(struct jbd_fs));
+		struct jbd_fs *jbd_fs = ext4_zalloc(sizeof(struct jbd_fs));
 		if (!jbd_fs) {
 			r = ENOMEM;
 			goto Finish;

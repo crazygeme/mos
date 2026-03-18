@@ -53,7 +53,8 @@ static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 	for (i = 0; i < nsectors; i++, src += BLOCK_SECTOR_SIZE) {
 		if (sector + i >= pi->size)
 			break;
-		if (pi->write(pi->aux, sector + i, (char *)src, BLOCK_SECTOR_SIZE) < 0)
+		if (pi->write(pi->aux, sector + i, (char *)src,
+			      BLOCK_SECTOR_SIZE) < 0)
 			break;
 	}
 
@@ -133,12 +134,12 @@ static file *hdd_dev_open_root(super_block *sb)
 {
 	hdd_partition_info *pi = sb->s_fs_info;
 
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFBLK | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 	node->i_op = &hdd_dev_iops;
 	node->i_private = pi;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &hdd_dev_fops;

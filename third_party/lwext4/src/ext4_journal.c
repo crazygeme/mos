@@ -144,7 +144,7 @@ RB_GENERATE_INTERNAL(jbd_block, jbd_block_rec, block_rec_node,
 RB_GENERATE_INTERNAL(jbd_revoke_tree, jbd_revoke_rec, revoke_node,
 		     jbd_revoke_rec_cmp, static inline)
 
-#define jbd_alloc_revoke_entry() ext4_calloc(1, sizeof(struct revoke_entry))
+#define jbd_alloc_revoke_entry() ext4_zalloc(sizeof(struct revoke_entry))
 #define jbd_free_revoke_entry(addr) ext4_free(addr)
 
 static int jbd_has_csum(struct jbd_sb *jbd_sb)
@@ -1410,7 +1410,7 @@ jbd_trans_insert_block_rec(struct jbd_trans *trans, ext4_fsblk_t lba)
 		jbd_trans_change_ownership(block_rec, trans);
 		return block_rec;
 	}
-	block_rec = ext4_calloc(1, sizeof(struct jbd_block_rec));
+	block_rec = ext4_zalloc(sizeof(struct jbd_block_rec));
 	if (!block_rec)
 		return NULL;
 
@@ -1511,7 +1511,7 @@ int jbd_trans_set_block_dirty(struct jbd_trans *trans, struct ext4_block *block)
 		if (jbd_buf && jbd_buf->trans == trans)
 			return EOK;
 	}
-	jbd_buf = ext4_calloc(1, sizeof(struct jbd_buf));
+	jbd_buf = ext4_zalloc(sizeof(struct jbd_buf));
 	if (!jbd_buf)
 		return ENOMEM;
 
@@ -1557,7 +1557,7 @@ int jbd_trans_revoke_block(struct jbd_trans *trans, ext4_fsblk_t lba)
 	if (rec)
 		return EOK;
 
-	rec = ext4_calloc(1, sizeof(struct jbd_revoke_rec));
+	rec = ext4_zalloc(sizeof(struct jbd_revoke_rec));
 	if (!rec)
 		return ENOMEM;
 
@@ -2104,7 +2104,7 @@ Finish:
 struct jbd_trans *jbd_journal_new_trans(struct jbd_journal *journal)
 {
 	struct jbd_trans *trans = NULL;
-	trans = ext4_calloc(1, sizeof(struct jbd_trans));
+	trans = ext4_zalloc(sizeof(struct jbd_trans));
 	if (!trans)
 		return NULL;
 

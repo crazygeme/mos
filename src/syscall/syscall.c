@@ -553,26 +553,26 @@ static int sys_brk(unsigned _top)
 	unsigned pages = 0;
 	unsigned ret, top;
 	top = _top;
-	if (task->user.heap_top == USER_HEAP_BEGIN) {
-		do_mmap(task->user.heap_top, PAGE_SIZE, PROT_READ | PROT_WRITE,
+	if (task->user->heap_top == USER_HEAP_BEGIN) {
+		do_mmap(task->user->heap_top, PAGE_SIZE, PROT_READ | PROT_WRITE,
 			0, -1, 0);
-		task->user.heap_top += PAGE_SIZE;
+		task->user->heap_top += PAGE_SIZE;
 	}
 
 	if (top == 0) {
-		ret = task->user.heap_top;
+		ret = task->user->heap_top;
 		goto done;
 	} else if (top >= USER_HEAP_END) {
-		ret = task->user.heap_top;
+		ret = task->user->heap_top;
 		goto done;
-	} else if (top > task->user.heap_top) {
+	} else if (top > task->user->heap_top) {
 		int i = 0;
-		size = top - task->user.heap_top;
+		size = top - task->user->heap_top;
 		pages = (size - 1) / PAGE_SIZE + 1;
-		do_mmap(task->user.heap_top, PAGE_SIZE * pages,
+		do_mmap(task->user->heap_top, PAGE_SIZE * pages,
 			PROT_READ | PROT_WRITE, 0, -1, 0);
-		top = task->user.heap_top + pages * PAGE_SIZE;
-		task->user.heap_top = top;
+		top = task->user->heap_top + pages * PAGE_SIZE;
+		task->user->heap_top = top;
 		ret = top;
 		goto done;
 	} else {
@@ -581,10 +581,10 @@ static int sys_brk(unsigned _top)
 		if (top < USER_HEAP_BEGIN)
 			top = USER_HEAP_BEGIN;
 
-		size = task->user.heap_top - top;
+		size = task->user->heap_top - top;
 		pages = (size - 1) / PAGE_SIZE + 1;
 		do_munmap(top & PAGE_SIZE_MASK, pages * PAGE_SIZE);
-		task->user.heap_top = top;
+		task->user->heap_top = top;
 		ret = top;
 		goto done;
 	}
@@ -618,7 +618,7 @@ static int sys_chdir(const char *path)
 		p = path + 1;
 	} else {
 		int len;
-		strcpy(cwd, cur->cwd);
+		strcpy(cwd, cur->user->cwd);
 		len = strlen(cwd);
 		if (!len || cwd[len - 1] != '/')
 			strcat(cwd, "/");
@@ -673,7 +673,7 @@ static int sys_chdir(const char *path)
 		p = end;
 	}
 
-	strcpy(cur->cwd, cwd);
+	strcpy(cur->user->cwd, cwd);
 done:
 	name_put(cwd);
 	return ret;
@@ -1083,7 +1083,7 @@ static int sys_setpgid(unsigned pid, unsigned pgid)
 	// FIXME
 	if (pid == 0) {
 		task_struct *cur = CURRENT_TASK();
-		cur->group_id = pgid;
+		cur->user->group_id = pgid;
 	}
 	return 0;
 }
@@ -1606,8 +1606,8 @@ static int sys_setsid()
 	if (TestControl.verbos)
 		klog("setsid() = %d\n", cur->psid);
 
-	cur->session_id = cur->psid;
-	cur->group_id = cur->psid;
+	cur->user->session_id = cur->psid;
+	cur->user->group_id = cur->psid;
 	return cur->psid;
 }
 

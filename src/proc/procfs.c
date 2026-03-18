@@ -210,9 +210,9 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
  */
 static file *proc_open_root(super_block *sb)
 {
-	proc_root_dir *rd = calloc(1, sizeof(*rd));
-	inode *node = calloc(1, sizeof(*node));
-	file *fp = calloc(1, sizeof(*fp));
+	proc_root_dir *rd = zalloc(sizeof(*rd));
+	inode *node = zalloc(sizeof(*node));
+	file *fp = zalloc(sizeof(*fp));
 
 	proc_dir_gen(sb, rd);
 

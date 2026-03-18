@@ -281,9 +281,9 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	task_struct *cur = CURRENT_TASK();
 
 	if (_addr == 0)
-		addr = vm_disc_map(cur->user.vm, page_count * PAGE_SIZE);
+		addr = vm_disc_map(cur->user->vm, page_count * PAGE_SIZE);
 
-	vm_add_map(cur->user.vm, addr, addr + page_count * PAGE_SIZE, prot,
+	vm_add_map(cur->user->vm, addr, addr + page_count * PAGE_SIZE, prot,
 		   flags, inode, offset);
 
 	return addr;
@@ -296,7 +296,7 @@ void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags)
 	vm_region *region;
 	unsigned vir;
 
-	region = vm_find_map(cur->user.vm, addr);
+	region = vm_find_map(cur->user->vm, addr);
 	if (region) {
 		region->prot = prot;
 		region->flag = flags;
@@ -354,7 +354,7 @@ int do_munmap(void *addr, unsigned length)
 	void *r_node;
 	int r_offset;
 
-	region = vm_find_map(cur->user.vm, (unsigned)addr);
+	region = vm_find_map(cur->user->vm, (unsigned)addr);
 	if (!region)
 		return -EINVAL;
 
@@ -370,16 +370,16 @@ int do_munmap(void *addr, unsigned length)
 	r_node = region->node;
 	r_offset = region->offset;
 
-	vm_del_map(cur->user.vm, (unsigned)addr);
+	vm_del_map(cur->user->vm, (unsigned)addr);
 
 	/* Preserve the left remnant [r_begin, begin), if any. */
 	if (r_begin < begin)
-		vm_add_map(cur->user.vm, r_begin, begin, r_prot, r_flag, r_node,
-			   r_offset);
+		vm_add_map(cur->user->vm, r_begin, begin, r_prot, r_flag,
+			   r_node, r_offset);
 
 	/* Preserve the right remnant [end, r_end), if any. */
 	if (end < r_end)
-		vm_add_map(cur->user.vm, end, r_end, r_prot, r_flag, r_node,
+		vm_add_map(cur->user->vm, end, r_end, r_prot, r_flag, r_node,
 			   r_offset + (int)(end - r_begin));
 
 	return 0;

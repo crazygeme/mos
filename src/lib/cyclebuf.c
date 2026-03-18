@@ -18,7 +18,7 @@ typedef struct _cy_buf {
 
 cy_buf *cyb_create()
 {
-	cy_buf *b = calloc(1, sizeof(*b));
+	cy_buf *b = zalloc(sizeof(*b));
 	b->buf = vm_alloc(PIPE_BUF_LEN / PAGE_SIZE);
 	b->reader_count = b->writer_count = 1;
 	b->ref_count = 2;

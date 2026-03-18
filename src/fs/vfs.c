@@ -73,7 +73,7 @@ done:
 
 super_block *sget(const super_operations *s_op)
 {
-	super_block *sb = calloc(1, sizeof(*sb));
+	super_block *sb = zalloc(sizeof(*sb));
 	mutex_init(&sb->s_lock);
 	sb->s_mounts = hash_create(sb_path_comp, sb_entry_evict);
 	sb->s_op = s_op;
@@ -189,19 +189,19 @@ int vfs_umount(super_block *sb, const char *path)
  * @sop_field: field name in super_operations to invoke
  * @...:       extra arguments forwarded after (sb, path)
  */
-#define VFS_PATH_OP(fn, sop_field, ...)                                     \
-	do {                                                                \
-		super_block *_tsb;                                          \
-		char *_rp;                                                  \
-		if (!sb || !path)                                           \
-			return -EINVAL;                                     \
-		if (!sb_path_resolve(sb, path, &_tsb, &_rp))               \
-			return -EINVAL;                                     \
-		if (_tsb != sb)                                             \
-			return fn(_tsb, _rp, ##__VA_ARGS__);                \
-		if (!_tsb->s_op || !_tsb->s_op->sop_field)                 \
-			return -ENOSYS;                                     \
-		return _tsb->s_op->sop_field(_tsb, _rp, ##__VA_ARGS__);    \
+#define VFS_PATH_OP(fn, sop_field, ...)                                 \
+	do {                                                            \
+		super_block *_tsb;                                      \
+		char *_rp;                                              \
+		if (!sb || !path)                                       \
+			return -EINVAL;                                 \
+		if (!sb_path_resolve(sb, path, &_tsb, &_rp))            \
+			return -EINVAL;                                 \
+		if (_tsb != sb)                                         \
+			return fn(_tsb, _rp, ##__VA_ARGS__);            \
+		if (!_tsb->s_op || !_tsb->s_op->sop_field)              \
+			return -ENOSYS;                                 \
+		return _tsb->s_op->sop_field(_tsb, _rp, ##__VA_ARGS__); \
 	} while (0)
 
 /*
@@ -209,21 +209,21 @@ int vfs_umount(super_block *sb, const char *path)
  * land on the same super_block (-EXDEV otherwise), and dispatch.
  * @sop_field: field name in super_operations to invoke
  */
-#define VFS_PATH2_OP(sop_field)                                             \
-	do {                                                                \
-		super_block *_osb, *_nsb;                                   \
-		char *_orp, *_nrp;                                          \
-		if (!sb || !oldpath || !newpath)                            \
-			return -EINVAL;                                     \
-		if (!sb_path_resolve(sb, oldpath, &_osb, &_orp))           \
-			return -EINVAL;                                     \
-		if (!sb_path_resolve(sb, newpath, &_nsb, &_nrp))           \
-			return -EINVAL;                                     \
-		if (_osb != _nsb)                                           \
-			return -EXDEV;                                      \
-		if (!_osb->s_op || !_osb->s_op->sop_field)                 \
-			return -ENOSYS;                                     \
-		return _osb->s_op->sop_field(_osb, _orp, _nrp);            \
+#define VFS_PATH2_OP(sop_field)                                  \
+	do {                                                     \
+		super_block *_osb, *_nsb;                        \
+		char *_orp, *_nrp;                               \
+		if (!sb || !oldpath || !newpath)                 \
+			return -EINVAL;                          \
+		if (!sb_path_resolve(sb, oldpath, &_osb, &_orp)) \
+			return -EINVAL;                          \
+		if (!sb_path_resolve(sb, newpath, &_nsb, &_nrp)) \
+			return -EINVAL;                          \
+		if (_osb != _nsb)                                \
+			return -EXDEV;                           \
+		if (!_osb->s_op || !_osb->s_op->sop_field)       \
+			return -ENOSYS;                          \
+		return _osb->s_op->sop_field(_osb, _orp, _nrp);  \
 	} while (0)
 
 int vfs_mkdir(super_block *sb, const char *path, unsigned mode)
@@ -285,7 +285,8 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 		return vfs_readlink(target_sb, rel_path, buf, bufsiz, rcnt);
 	if (!target_sb->s_op || !target_sb->s_op->readlink)
 		return -ENOSYS;
-	return target_sb->s_op->readlink(target_sb, rel_path, buf, bufsiz, rcnt);
+	return target_sb->s_op->readlink(target_sb, rel_path, buf, bufsiz,
+					 rcnt);
 }
 
 file *vfs_open(super_block *sb, const char *path, int flag)

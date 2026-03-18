@@ -95,10 +95,10 @@ static void sched_cal_end()
  * so that any kernel mappings added since the task last ran become visible. */
 static void ps_save_kernel_map(task_struct *task)
 {
-	if (task->user.page_dir) {
+	if (task->user->page_dir) {
 		unsigned int cr3;
 		unsigned int *in_use;
-		unsigned int *per_ps = (unsigned int *)task->user.page_dir;
+		unsigned int *per_ps = (unsigned int *)task->user->page_dir;
 
 		LOAD_CR3(cr3);
 		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
@@ -235,7 +235,7 @@ void _task_sched(const char *func)
 	RESTORE_ALL(task, task->tss.eip);
 	current = CURRENT_TASK();
 	reset_tss(current);
-	SET_CR3(current->user.page_dir - KERNEL_OFFSET);
+	SET_CR3(current->user->page_dir - KERNEL_OFFSET);
 	JUMP_TO_NEXT_TASK_EIP(current->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:

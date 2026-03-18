@@ -233,15 +233,20 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	}
 
 	memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
-
-	task->user.page_dir = (unsigned int)vm_alloc(1);
-	task->command = vm_alloc(1);
-	task->environment = vm_alloc(1);
+	task->user = zalloc(sizeof(user_enviroment));
+	task->user->page_dir = (unsigned int)vm_alloc(1);
+	task->user->command = vm_alloc(1);
+	task->user->environment = vm_alloc(1);
+	strcpy(task->user->command, "system");
+	task->user->cmd_len = strlen(task->user->command) + 1;
+	*((char *)task->user->environment) = '\0';
+	task->user->env_len = 0;
+	memset(task->user->page_dir, 0, PAGE_SIZE);
+	task->user->cwd = name_get();
+	memset(task->user->cwd, 0, MAX_PATH);
+	task->user->heap_top = USER_HEAP_BEGIN;
+	task->user->vm = vm_create();
 	task->umask = 0;
-	strcpy(task->command, "system");
-	*((char *)task->environment) = '\0';
-	memset(task->user.page_dir, 0, PAGE_SIZE);
-
 	stack_bottom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
 	LOAD_CR3(task->cr3);
 	list_init(&task->ps_list);
@@ -256,11 +261,7 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	task->psid = ps_id_gen();
 	task->parent = task;
 	task->fds = vm_alloc(1);
-	task->cwd = name_get();
 	memset(task->fds, 0, PAGE_SIZE);
-	task->user.heap_top = USER_HEAP_BEGIN;
-	task->user.vm = vm_create();
-	memset(task->cwd, 0, MAX_PATH);
 	mutex_init(&task->fd_lock);
 	task->magic = 0xdeadbeef;
 
@@ -375,10 +376,10 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 	unsigned i, j;
 	unsigned int *page_dir;
 
-	if (!fn || !task->user.page_dir)
+	if (!fn || !task->user->page_dir)
 		return;
 
-	page_dir = (unsigned int *)task->user.page_dir;
+	page_dir = (unsigned int *)task->user->page_dir;
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
 		unsigned *page_table =
 			(unsigned *)(page_dir[i] & PAGE_SIZE_MASK);

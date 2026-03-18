@@ -548,7 +548,7 @@ static void tty_bash_spawner(void *p)
 	cur->parent = state->parent;
 
 	/* Set working directory. */
-	strcpy(cur->cwd, "/");
+	strcpy(cur->user->cwd, "/");
 
 	/* Set up TSS esp0 for user-mode entry. */
 	ps_update_tss((unsigned)cur + PAGE_SIZE);
@@ -761,13 +761,13 @@ static const file_operations tty_fops = {
 
 static file *tty_open_root(super_block *sb)
 {
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
 	node->i_op = &tty_iops;
 	node->i_private = sb->s_fs_info;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &tty_fops;
@@ -803,7 +803,7 @@ static void tty_fs_init(void)
 		/* Per-TTY keyboard input queue */
 		t->kb_buf = cyb_create();
 		/* Screen text buffer for save/restore on TTY switch */
-		t->saved_text = (char *)calloc(1, t->max_row * t->max_col);
+		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
 		/* 
 		 * All those attached bash should be managed by process 1 
 		 * (/sbin/init) which will call wait on all orphen processes

@@ -101,13 +101,13 @@
                                                                           \
 	static file *_open_root_##name(super_block *sb)                   \
 	{                                                                 \
-		inode *node = calloc(1, sizeof(*node));                   \
+		inode *node = zalloc(sizeof(*node));                      \
 		node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;     \
 		node->i_op = &_iops_##name;                               \
 		node->i_private = vm_alloc(1);                            \
 		fill_func(node->i_private, PAGE_SIZE);                    \
 		node->i_size = strlen((char *)node->i_private);           \
-		file *fp = calloc(1, sizeof(*fp));                        \
+		file *fp = zalloc(sizeof(*fp));                           \
 		fp->f_inode = node;                                       \
 		fp->f_count = 1;                                          \
 		fp->f_fop = &_fops_##name;                                \

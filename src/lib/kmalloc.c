@@ -307,12 +307,12 @@ void free(void *ptr)
 	spinlock_unlock(&heap_lock);
 }
 
-void *calloc(unsigned nmemb, unsigned size)
+void *zalloc(unsigned size)
 {
-	void *p = malloc(nmemb * size);
+	void *p = malloc(size);
 
 	if (p)
-		memset(p, 0, nmemb * size);
+		memset(p, 0, size);
 	return p;
 }
 

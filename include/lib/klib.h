@@ -24,13 +24,14 @@ typedef char *va_list;
 
 #define kmalloc(size) malloc(size)
 #define kfree(p) free(p)
+#define kzalloc(size) zalloc(size)
 
 #define klib_srand srand
 #define klib_rand rand
 
 void *malloc(unsigned int size);
 void free(void *buf);
-void *calloc(unsigned nmemb, unsigned size);
+void *zalloc(unsigned size);
 
 /* ── Init ─────────────────────────────────────────────────────────────────── */
 

@@ -53,12 +53,12 @@ static const file_operations null_fops = {
 
 static file *null_open_root(super_block *sb)
 {
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |
 			S_IRGRP | S_IROTH);
 	node->i_op = &null_iops;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &null_fops;

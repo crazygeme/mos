@@ -441,7 +441,7 @@ unsigned vm_get_usr_zone(unsigned page_count)
 	// FIXME: only used in load_elf; refactor when elf loading is reworked
 	task_struct *cur = CURRENT_TASK();
 
-	return vm_disc_map(cur->user.vm, page_count * PAGE_SIZE);
+	return vm_disc_map(cur->user->vm, page_count * PAGE_SIZE);
 }
 
 /*
@@ -475,7 +475,7 @@ void name_put(void *buf)
 	name_cache_t *node;
 
 	spinlock_lock(&path_lock);
-	node = calloc(1, sizeof(*node));
+	node = zalloc(sizeof(*node));
 	node->buf = buf;
 	list_insert_tail(&name_cache_head, &node->list);
 	spinlock_unlock(&path_lock);

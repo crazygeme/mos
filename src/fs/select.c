@@ -27,7 +27,7 @@ unsigned select_loop_times = 0;
 
 #define ALLOC_SRC(src, dst)                       \
 	if (dst) {                                \
-		src = calloc(1, sizeof(fd_set));  \
+		src = zalloc(sizeof(fd_set));     \
 		memcpy(src, dst, sizeof(fd_set)); \
 		FD_ZERO(dst);                     \
 	}

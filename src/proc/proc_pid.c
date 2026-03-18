@@ -150,9 +150,9 @@ static const file_operations pid_dir_fops = {
 /* Wrap a vm_alloc(1) page as a read-only regular file. */
 static file *make_pid_file(char *page, size_t len)
 {
-	pid_buf *pb = calloc(1, sizeof(*pb));
-	inode *nd = calloc(1, sizeof(*nd));
-	file *fp = calloc(1, sizeof(*fp));
+	pid_buf *pb = zalloc(sizeof(*pb));
+	inode *nd = zalloc(sizeof(*nd));
+	file *fp = zalloc(sizeof(*fp));
 
 	pb->buf = page;
 	pb->len = len;
@@ -171,9 +171,9 @@ static file *make_pid_file(char *page, size_t len)
 /* Wrap a kmalloc'd buffer as a directory file. */
 static file *make_pid_dir(char *buf, size_t len)
 {
-	pid_buf *pb = calloc(1, sizeof(*pb));
-	inode *nd = calloc(1, sizeof(*nd));
-	file *fp = calloc(1, sizeof(*fp));
+	pid_buf *pb = zalloc(sizeof(*pb));
+	inode *nd = zalloc(sizeof(*nd));
+	file *fp = zalloc(sizeof(*fp));
 
 	pb->buf = buf;
 	pb->len = len;
@@ -246,10 +246,10 @@ static void fill_status(char *buf, task_struct *task)
 		"MajFlt:\t%u\n"
 		"voluntary_ctxt_switches:\t0\n"
 		"nonvoluntary_ctxt_switches:\t%u\n",
-		task->command ? (char *)task->command : "",
+		task->user->command ? (char *)task->user->command : "",
 		pid_state_char(task->status), pid_state_name(task->status),
 		task->psid, task->parent ? task->parent->psid : task->psid,
-		task->group_id, task->session_id, task->pf_minor,
+		task->user->group_id, task->user->session_id, task->pf_minor,
 		task->pf_major, task->niv_switches);
 }
 
@@ -265,18 +265,19 @@ static void fill_stat(char *buf, task_struct *task)
 		"%u (%s) %c %u %u %u 0 0 0 "
 		"%u 0 %u 0 %u %u 0 0 "
 		"20 0 1 0 0 0 0\n",
-		task->psid, task->command ? (char *)task->command : "",
+		task->psid,
+		task->user->command ? (char *)task->user->command : "",
 		pid_state_char(task->status),
-		task->parent ? task->parent->psid : task->psid, task->group_id,
-		task->session_id, task->pf_minor, task->pf_major,
-		task->user_tickets, task->kernel_tickets);
+		task->parent ? task->parent->psid : task->psid,
+		task->user->group_id, task->user->session_id, task->pf_minor,
+		task->pf_major, task->user_tickets, task->kernel_tickets);
 }
 
 /* /proc/{pid}/cmdline — null-terminated command name */
 static void fill_cmdline(char *buf, task_struct *task)
 {
-	if (task->command)
-		strcpy(buf, (char *)task->command);
+	if (task->user->command && task->user->cmd_len)
+		memcpy(buf, (char *)task->user->command, task->user->cmd_len);
 }
 
 /*
@@ -314,12 +315,12 @@ static void fill_statm(char *buf, task_struct *task)
 	statm_ctx ctx = { 0, 0, 0 };
 	unsigned heap_pages = 0, stack_pages = USER_STACK_PAGES;
 
-	if (task->user.vm)
-		vm_enum(task->user.vm, statm_region_cb, &ctx);
+	if (task->user->vm)
+		vm_enum(task->user->vm, statm_region_cb, &ctx);
 
-	if (task->user.heap_top > USER_HEAP_BEGIN)
+	if (task->user->heap_top > USER_HEAP_BEGIN)
 		heap_pages =
-			(task->user.heap_top - USER_HEAP_BEGIN) / PAGE_SIZE;
+			(task->user->heap_top - USER_HEAP_BEGIN) / PAGE_SIZE;
 
 	ctx.total += heap_pages + stack_pages;
 	ctx.data += heap_pages + stack_pages;
@@ -331,7 +332,8 @@ static void fill_statm(char *buf, task_struct *task)
 /* /proc/{pid}/environ — NUL-separated environment strings */
 static void fill_environ(char *buf, task_struct *task)
 {
-	strcpy(buf, task->environment);
+	if (task->user->environment && task->user->env_len)
+		memcpy(buf, task->user->environment, task->user->env_len);
 }
 
 /* /proc/{pid}/maps — one line per vm_region + stack + heap pseudo-regions */
@@ -367,14 +369,14 @@ static void fill_maps(char *buf, size_t size, task_struct *task)
 	maps_ctx ctx = { buf, 0, size };
 	char *p;
 
-	if (task->user.vm)
-		vm_enum(task->user.vm, maps_region_cb, &ctx);
+	if (task->user->vm)
+		vm_enum(task->user->vm, maps_region_cb, &ctx);
 
 	/* Heap pseudo-region */
-	if (task->user.heap_top > USER_HEAP_BEGIN && ctx.pos + 80 < size) {
+	if (task->user->heap_top > USER_HEAP_BEGIN && ctx.pos + 80 < size) {
 		p = buf + ctx.pos;
 		sprintf(p, "%08x-%08x rw-p 00000000 00:00 0          [heap]\n",
-			USER_HEAP_BEGIN, task->user.heap_top);
+			USER_HEAP_BEGIN, task->user->heap_top);
 		ctx.pos += strlen(p);
 	}
 

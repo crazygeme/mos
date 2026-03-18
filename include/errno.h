@@ -2,6 +2,7 @@
 #ifndef _I386_ERRNO_H
 #define _I386_ERRNO_H
 
+#define EOK 0
 #define EPERM 1 /* Operation not permitted */
 #define ENOENT 2 /* No such file or directory */
 #define ESRCH 3 /* No such process */

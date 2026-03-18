@@ -211,7 +211,6 @@ int do_fork(unsigned flag)
 	task->fds = vm_alloc(1);
 	list_init(&task->ps_list);
 	task->user = zalloc(sizeof(user_enviroment));
-	// memcpy(task->user, cur->user, sizeof(user_enviroment));
 	task->user->vm = vm_create();
 	task->user->command = vm_alloc(1);
 	task->user->cmd_len = cur->user->cmd_len;

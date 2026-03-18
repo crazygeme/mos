@@ -57,9 +57,9 @@ static unsigned call_table[NR_syscalls] = {
 	sys_time,
 	0,
 	sys_chmod, // 11 ~ 15
+	sys_lchown,
 	0,
-	0,
-	0,
+	sys_oldstat,
 	sys_lseek,
 	sys_getpid, // 16 ~ 20
 	sys_mount,
@@ -69,7 +69,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 21 ~ 25
 	0,
 	sys_alarm,
-	sys_oldstat,
+	0,
 	sys_pause,
 	sys_utime, // 26 ~ 30
 	0,
@@ -136,7 +136,7 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	0,
 	sys_fchmod,
-	0, // 91 ~ 95
+	sys_fchown, // 91 ~ 95
 	0,
 	0,
 	0,
@@ -223,7 +223,7 @@ static unsigned call_table[NR_syscalls] = {
 	0,
 	0, // 175 ~ 180
 	0,
-	0,
+	sys_chown,
 	sys_getcwd,
 	0,
 	0, // 181 ~ 185

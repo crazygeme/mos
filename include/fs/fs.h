@@ -166,6 +166,10 @@ int fs_ioctl(int fd, unsigned cmd, void *buf);
 
 int fs_chmod(const char *pathname, uint32_t mode);
 
+int fs_chown(const char *pathname, uint32_t uid, uint32_t gid);
+
+int fs_fchown(int fd, uint32_t uid, uint32_t gid);
+
 int fs_fchmod(int fd, uint32_t mode);
 
 file *fs_open_file(const char *path, int flag, char *mode, int follow_link);

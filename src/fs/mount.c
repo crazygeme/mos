@@ -85,16 +85,16 @@ static super_block *stub_get_sb(const char *dev, const char *target, int flags,
 static fs_type proc_fs_type = { .name = "proc", .get_sb = stub_get_sb };
 static fs_type sysfs_fs_type = { .name = "sysfs", .get_sb = stub_get_sb };
 static fs_type tmpfs_fs_type = { .name = "tmpfs", .get_sb = stub_get_sb };
-static fs_type devpts_fs_type = { .name = "devpts", .get_sb = stub_get_sb };
 static fs_type devtmpfs_fs_type = { .name = "devtmpfs", .get_sb = stub_get_sb };
 static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
+
+/* "devpts" is registered by src/dev/pts.c (KERNEL_INIT 5) with a real get_sb */
 
 static void mount_syscall_init(void)
 {
 	fs_register_type(&proc_fs_type);
 	fs_register_type(&sysfs_fs_type);
 	fs_register_type(&tmpfs_fs_type);
-	fs_register_type(&devpts_fs_type);
 	fs_register_type(&devtmpfs_fs_type);
 	fs_register_type(&none_fs_type);
 }
@@ -138,14 +138,11 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 
 	ret = vfs_mount(cur->root, target, sb);
 	if (ret == -EEXIST) {
-		/*
-		 * Path already mounted (e.g. /dev/pts set up by the kernel at
-		 * boot).  Release the just-allocated super_block and report
-		 * success so that init scripts are not disrupted.
-		 */
+		/* Already mounted (kernel pre-mounted at boot). */
 		sb_put(sb);
-		return 0;
+		ret = 0;
 	}
+
 	return ret;
 }
 

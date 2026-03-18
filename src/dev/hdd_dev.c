@@ -6,8 +6,7 @@
  * translate byte-level read/write requests into sector-granular calls through
  * the partition's read/write callbacks stored in hdd_partition_info.
  *
- * Reads and writes that cross sector boundaries or are not sector-aligned are
- * handled via a one-sector temporary buffer.
+ * Reads and writes are always sector-aligned and sector-sized.
  */
 
 #include <fs/fs.h>
@@ -27,33 +26,19 @@ static ssize_t hdd_dev_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	hdd_partition_info *pi = fp->f_inode->i_private;
 	char *dst = (char *)buf;
-	loff_t off = *pos;
-	size_t remaining = size;
-	char tmp[BLOCK_SECTOR_SIZE];
+	unsigned sector = (unsigned)(*pos / BLOCK_SECTOR_SIZE);
+	unsigned nsectors = (unsigned)(size / BLOCK_SECTOR_SIZE);
+	unsigned i;
 
-	while (remaining > 0) {
-		unsigned sector = (unsigned)(off / BLOCK_SECTOR_SIZE);
-		unsigned sector_off = (unsigned)(off % BLOCK_SECTOR_SIZE);
-		unsigned chunk;
-
-		if (sector >= pi->size)
+	for (i = 0; i < nsectors; i++, dst += BLOCK_SECTOR_SIZE) {
+		if (sector + i >= pi->size)
 			break;
-
-		chunk = BLOCK_SECTOR_SIZE - sector_off;
-		if (chunk > remaining)
-			chunk = (unsigned)remaining;
-
-		if (pi->read(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) < 0)
+		if (pi->read(pi->aux, sector + i, dst, BLOCK_SECTOR_SIZE) < 0)
 			break;
-
-		memcpy(dst, tmp + sector_off, chunk);
-		dst += chunk;
-		off += chunk;
-		remaining -= chunk;
 	}
 
-	*pos = off;
-	return (ssize_t)(size - remaining);
+	*pos += (loff_t)i * BLOCK_SECTOR_SIZE;
+	return (ssize_t)i * BLOCK_SECTOR_SIZE;
 }
 
 static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
@@ -61,41 +46,19 @@ static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 {
 	hdd_partition_info *pi = fp->f_inode->i_private;
 	const char *src = (const char *)buf;
-	loff_t off = *pos;
-	size_t remaining = size;
-	char tmp[BLOCK_SECTOR_SIZE];
+	unsigned sector = (unsigned)(*pos / BLOCK_SECTOR_SIZE);
+	unsigned nsectors = (unsigned)(size / BLOCK_SECTOR_SIZE);
+	unsigned i;
 
-	while (remaining > 0) {
-		unsigned sector = (unsigned)(off / BLOCK_SECTOR_SIZE);
-		unsigned sector_off = (unsigned)(off % BLOCK_SECTOR_SIZE);
-		unsigned chunk;
-
-		if (sector >= pi->size)
+	for (i = 0; i < nsectors; i++, src += BLOCK_SECTOR_SIZE) {
+		if (sector + i >= pi->size)
 			break;
-
-		chunk = BLOCK_SECTOR_SIZE - sector_off;
-		if (chunk > remaining)
-			chunk = (unsigned)remaining;
-
-		/* Read-modify-write for partial sector updates. */
-		if (sector_off != 0 || chunk < BLOCK_SECTOR_SIZE) {
-			if (pi->read(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
-			    0)
-				break;
-		}
-
-		memcpy(tmp + sector_off, src, chunk);
-
-		if (pi->write(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) < 0)
+		if (pi->write(pi->aux, sector + i, (char *)src, BLOCK_SECTOR_SIZE) < 0)
 			break;
-
-		src += chunk;
-		off += chunk;
-		remaining -= chunk;
 	}
 
-	*pos = off;
-	return (ssize_t)(size - remaining);
+	*pos += (loff_t)i * BLOCK_SECTOR_SIZE;
+	return (ssize_t)i * BLOCK_SECTOR_SIZE;
 }
 
 static loff_t hdd_dev_llseek(file *fp, loff_t offset, int whence)

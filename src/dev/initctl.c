@@ -79,12 +79,12 @@ static const file_operations initctl_fops = {
 
 static file *initctl_open_root(super_block *sb)
 {
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
 	node->i_op = &initctl_iops;
 	node->i_private = sb->s_fs_info;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &initctl_fops;

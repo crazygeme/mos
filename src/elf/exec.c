@@ -43,15 +43,15 @@ static void cleanup()
 		}
 	}
 
-	vm_destroy(cur->user.vm);
+	vm_destroy(cur->user->vm);
 
 	/* Unmap every user-space page table entry. */
 	ps_cleanup_all_user_map(cur);
 
 	/* Reset heap and install a fresh VM tracker. */
-	cur->user.heap_top = USER_HEAP_BEGIN;
+	cur->user->heap_top = USER_HEAP_BEGIN;
 
-	cur->user.vm = vm_create();
+	cur->user->vm = vm_create();
 }
 
 /*
@@ -359,6 +359,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	unsigned argc = 0, envc = 0;
 	char **s_argv = 0;
 	char **s_envp = 0;
+	char *tmp;
 	mos_binfmt fmt = { 0 };
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
@@ -442,22 +443,30 @@ int sys_execve(const char *f, char **argv, char **envp)
 	}
 
 	/* save command line into task struct */
-	strcpy(cur->command, file_name);
+	tmp = cur->user->command;
+	strcpy(tmp, file_name);
+	tmp = tmp + strlen(tmp) + 1;
 	for (i = 1; i < argc; i++) {
-		strcat(cur->command, " ");
-		strcat(cur->command, s_argv[i]);
+		strcpy(tmp, s_argv[i]);
+		tmp = tmp + strlen(tmp) + 1;
+	}
+	cur->user->cmd_len = tmp - cur->user->command;
+
+	tmp = cur->user->environment;
+	if (envc > 0) {
+		strcpy(tmp, s_envp[0]);
+		tmp = tmp + strlen(tmp) + 1;
 	}
 
-	if (envc > 0)
-		strcpy(cur->environment, s_envp[0]);
 	for (i = 1; i < envc; i++) {
-		strcat(cur->environment, ":");
-		strcat(cur->environment, s_envp[i]);
+		strcpy(tmp, s_envp[i]);
+		tmp = tmp + strlen(tmp) + 1;
 	}
+	cur->user->env_len = tmp - cur->user->environment;
 
 	/* log if needed */
 	if (TestControl.verbos)
-		klog("execve(%s)\n", cur->command);
+		klog("execve(%s)\n", cur->user->command);
 
 	/*
 	 * unmap all user vm, and close all fds if O_CLOEXEC set

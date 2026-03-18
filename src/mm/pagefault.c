@@ -285,7 +285,7 @@ static int pf_handle_page_invalid(unsigned cr2)
 	 * Find out the map region first. The `region` structure
 	 * will tell us whether it's file map or not.
 	 */
-	region = vm_find_map(cur->user.vm, this_begin);
+	region = vm_find_map(cur->user->vm, this_begin);
 	if (!region)
 		return 0;
 
@@ -438,7 +438,7 @@ NOT_HANDLED:
 		 * SIGSEGV to user process here.
 		*/
 		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x, cmd %s\n",
-		     frame->error_code, cr2, frame->eip, cur->command);
+		     frame->error_code, cr2, frame->eip, cur->user->command);
 		sys_exit(-EFAULT);
 		goto Done;
 	}

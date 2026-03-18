@@ -53,13 +53,13 @@ static const inode_operations stub_iops = {
 
 static file *stub_open_root(super_block *sb)
 {
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFDIR | S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH |
 		       S_IXOTH;
 	node->i_ino = 1;
 	node->i_op = &stub_iops;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	return fp;

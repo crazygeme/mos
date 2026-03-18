@@ -6,6 +6,7 @@
 #include <fs/fs.h>
 #include <lib/list.h>
 #include <lib/lock.h>
+#include <stddef.h>
 
 #define FORK_FLAG_VFORK 1
 /*
@@ -141,6 +142,13 @@ typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	unsigned heap_top;
 	vm_struct_t vm;
+	char *command;
+	size_t cmd_len;
+	char *environment;
+	size_t env_len;
+	unsigned group_id;
+	unsigned session_id;
+	char *cwd;
 } user_enviroment;
 
 typedef enum _ps_status {
@@ -187,9 +195,7 @@ struct _task_struct {
 	unsigned int psid;
 	process_fn fn;
 	void *param;
-	void *command;
-	char *environment;
-	user_enviroment user;
+	user_enviroment *user;
 	int priority;
 	int type;
 	list_entry ps_list; /* dying-queue or wait-queue list node */
@@ -202,9 +208,6 @@ struct _task_struct {
 	mutex_t fd_lock;
 	unsigned exit_status;
 	task_struct *parent;
-	unsigned group_id;
-	unsigned session_id;
-	char *cwd;
 	unsigned fork_flag;
 	cond_t vfork_event;
 	super_block *root;

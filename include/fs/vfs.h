@@ -47,7 +47,8 @@ struct super_operations {
 	/* symlink: create a symlink at linkpath whose content is target */
 	int (*symlink)(super_block *sb, const char *target,
 		       const char *linkpath);
-	int (*rename)(super_block *sb, const char *oldpath, const char *newpath);
+	int (*rename)(super_block *sb, const char *oldpath,
+		      const char *newpath);
 	int (*readlink)(super_block *sb, const char *path, char *buf,
 			size_t bufsiz, size_t *rcnt);
 };

@@ -428,12 +428,12 @@ static file *ptmx_open_root(super_block *sb)
 	if (!p)
 		return NULL;
 
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 	node->i_op = &pts_master_iops;
 	node->i_private = p;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &pts_master_fops;
@@ -471,12 +471,12 @@ static file *pts_sb_open(super_block *sb, const char *path, int flag)
 	__sync_add_and_fetch(&p->slave_count, 1);
 	spinlock_unlock(&pts_alloc_lock);
 
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 	node->i_op = &pts_slave_iops;
 	node->i_private = p;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &pts_slave_fops;

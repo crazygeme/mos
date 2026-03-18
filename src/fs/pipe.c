@@ -115,30 +115,30 @@ int pipe_open(file **pipes)
 {
 	cy_buf *buf = cyb_create();
 
-	pipe_inode *rn = calloc(1, sizeof(*rn));
+	pipe_inode *rn = zalloc(sizeof(*rn));
 	rn->buf = buf;
 	rn->readonly = 1;
 
-	inode *ri = calloc(1, sizeof(*ri));
+	inode *ri = zalloc(sizeof(*ri));
 	ri->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
 	ri->i_op = &pipe_iops;
 	ri->i_private = rn;
 
-	file *fp_read = calloc(1, sizeof(*fp_read));
+	file *fp_read = zalloc(sizeof(*fp_read));
 	fp_read->f_inode = ri;
 	fp_read->f_count = 1;
 	fp_read->f_fop = &pipe_read_fops;
 
-	pipe_inode *wn = calloc(1, sizeof(*wn));
+	pipe_inode *wn = zalloc(sizeof(*wn));
 	wn->buf = buf;
 	wn->readonly = 0;
 
-	inode *wi = calloc(1, sizeof(*wi));
+	inode *wi = zalloc(sizeof(*wi));
 	wi->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
 	wi->i_op = &pipe_iops;
 	wi->i_private = wn;
 
-	file *fp_write = calloc(1, sizeof(*fp_write));
+	file *fp_write = zalloc(sizeof(*fp_write));
 	fp_write->f_fop = &pipe_write_fops;
 	fp_write->f_inode = wi;
 	fp_write->f_count = 1;

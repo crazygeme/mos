@@ -222,11 +222,11 @@ static const file_operations ext4_dir_fops = {
 
 static file *ext4_alloc_file(void *content)
 {
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_op = &ext4_file_iops;
 	node->i_private = content;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_fop = &ext4_file_fops;
 	fp->f_inode = node;
 	fp->f_count = 1;
@@ -235,11 +235,11 @@ static file *ext4_alloc_file(void *content)
 
 static file *ext4_alloc_dir(void *content)
 {
-	inode *node = calloc(1, sizeof(*node));
+	inode *node = zalloc(sizeof(*node));
 	node->i_op = &ext4_dir_iops;
 	node->i_private = content;
 
-	file *fp = calloc(1, sizeof(*fp));
+	file *fp = zalloc(sizeof(*fp));
 	fp->f_fop = &ext4_dir_fops;
 	fp->f_inode = node;
 	fp->f_count = 1;
@@ -310,7 +310,7 @@ static file *ext4_path_open(const char *path, int flag)
 
 	/* ---- Case 1: caller-supplied trailing '/' means "open as dir" ---- */
 	if (path[strlen(path) - 1] == '/') {
-		dir = calloc(1, sizeof(*dir));
+		dir = zalloc(sizeof(*dir));
 		ret = ext4_dir_open(dir, path);
 		if (ret != EOK)
 			goto fail;
@@ -325,7 +325,7 @@ static file *ext4_path_open(const char *path, int flag)
 	}
 
 	/* ---- Case 2: regular open, with symlink following ---- */
-	f = calloc(1, sizeof(*f));
+	f = zalloc(sizeof(*f));
 	ret = ext4_fopen2(f, path, flag);
 	if (ret != EOK)
 		goto fail;
@@ -373,7 +373,7 @@ static file *ext4_path_open(const char *path, int flag)
 		free(f);
 		f = NULL;
 
-		dir = calloc(1, sizeof(*dir));
+		dir = zalloc(sizeof(*dir));
 		ret = ext4_dir_open(dir, cur_path);
 		if (ret != EOK)
 			goto fail;
@@ -548,7 +548,7 @@ static super_operations ext4_sops = {
 /* Allocate a super_block bound to the given lwext4 mount point. */
 static super_block *ext4_new_sb(const char *mp)
 {
-	ext4_mount_info *mi = calloc(1, sizeof(*mi));
+	ext4_mount_info *mi = zalloc(sizeof(*mi));
 	strncpy(mi->mp, mp, sizeof(mi->mp) - 1);
 
 	super_block *sb = sget(&ext4_sops);

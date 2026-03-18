@@ -59,7 +59,7 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
  * - share the physical page with the child (increment refcount) */
 static void ps_dup_user_page(unsigned vir, task_struct *task, unsigned flag)
 {
-	unsigned int *new_ps = (unsigned int *)task->user.page_dir;
+	unsigned int *new_ps = (unsigned int *)task->user->page_dir;
 	unsigned target_page_idx = mm_get_attached_page_index(vir);
 	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
 	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
@@ -101,9 +101,8 @@ static void ps_dup_user_maps(task_struct *cur, task_struct *task)
 {
 	unsigned int *new_ps;
 
-	task->user.page_dir = vm_alloc(1);
-	vm_dup(cur->user.vm, task->user.vm);
-	new_ps = (unsigned int *)task->user.page_dir;
+	vm_dup(cur->user->vm, task->user->vm);
+	new_ps = (unsigned int *)task->user->page_dir;
 	memset((char *)new_ps, 0, PAGE_SIZE);
 	ps_enum_user_map(cur, ps_enum_for_dup, task);
 }
@@ -122,24 +121,28 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		ms_to_timeval(task->kernel_tickets * 10, &rusage->ru_stime);
 		ms_to_timeval(task->user_tickets * 10, &rusage->ru_utime);
 	}
-	if (task->command) {
-		vm_free(task->command, 1);
-		task->command = NULL;
+	if (task->user->command) {
+		vm_free(task->user->command, 1);
+		task->user->command = NULL;
+		task->user->cmd_len = 0;
 	}
-	if (task->environment) {
-		vm_free(task->environment, 1);
-		task->environment = NULL;
+	if (task->user->environment) {
+		vm_free(task->user->environment, 1);
+		task->user->environment = NULL;
+		task->user->env_len = 0;
 	}
-	if (task->cwd) {
-		name_put(task->cwd);
-		task->cwd = NULL;
+	if (task->user->cwd) {
+		name_put(task->user->cwd);
+		task->user->cwd = NULL;
 	}
-	if (task->user.page_dir) {
-		vm_free(task->user.page_dir, 1);
-		task->user.page_dir = 0;
+	if (task->user->page_dir) {
+		vm_free(task->user->page_dir, 1);
+		task->user->page_dir = 0;
 	}
 	if (task->root)
 		sb_put(task->root);
+
+	kfree(task->user);
 	vm_free(task, 1);
 }
 
@@ -207,20 +210,30 @@ int do_fork(unsigned flag)
 	task->parent = cur;
 	task->fds = vm_alloc(1);
 	list_init(&task->ps_list);
-	task->user.vm = vm_create();
-	task->command = vm_alloc(1);
-	task->environment = vm_alloc(1);
+	task->user = zalloc(sizeof(user_enviroment));
+	// memcpy(task->user, cur->user, sizeof(user_enviroment));
+	task->user->vm = vm_create();
+	task->user->command = vm_alloc(1);
+	task->user->cmd_len = cur->user->cmd_len;
+	task->user->environment = vm_alloc(1);
+	task->user->env_len = cur->user->env_len;
+	memcpy(task->user->command, cur->user->command, cur->user->cmd_len);
+	memcpy(task->user->environment, cur->user->environment,
+	       cur->user->env_len);
+	task->user->cwd = name_get();
+	strcpy(task->user->cwd, cur->user->cwd);
+	task->user->heap_top = cur->user->heap_top;
+	task->user->page_dir = vm_alloc(1);
+	task->user->group_id = cur->user->group_id;
+	task->user->session_id = cur->user->session_id;
+
 	task->umask = cur->umask;
 	task->priority = cur->priority;
 	task->type = cur->type;
-	strcpy(task->command, cur->command);
-	strcpy(task->environment, cur->environment);
-	task->cwd = name_get();
+
 	task->fork_flag = flag;
 	task->root = cur->root;
 	sb_get(task->root);
-	memset(task->cwd, 0, MAX_PATH);
-	strcpy(task->cwd, cur->cwd);
 
 	ps_dup_fds(cur, task);
 	ps_dup_user_maps(cur, task);
@@ -264,14 +277,14 @@ int sys_exit(unsigned status)
 
 	cur->exit_status = status;
 	if (TestControl.verbos)
-		klog("exit(%s, %d)\n", cur->command, status);
+		klog("exit(%s, %d)\n", cur->user->command, status);
 
 	if (cur->fork_flag & FORK_FLAG_VFORK)
 		cond_notify(&cur->vfork_event);
 
-	if (cur->user.vm) {
-		vm_destroy(cur->user.vm);
-		cur->user.vm = 0;
+	if (cur->user->vm) {
+		vm_destroy(cur->user->vm);
+		cur->user->vm = 0;
 	}
 
 	for (i = 0; i < MAX_FD; i++) {
@@ -364,7 +377,7 @@ int sys_waitpid(unsigned pid, int *status, int options)
 char *sys_getcwd(char *buf, unsigned size)
 {
 	task_struct *cur = CURRENT_TASK();
-	strcpy(buf, cur->cwd[0] ? cur->cwd : "/");
+	strcpy(buf, cur->user->cwd[0] ? cur->user->cwd : "/");
 
 	if (TestControl.verbos)
 		klog("getcwd(%s, %d) = %s\n", buf, size, buf);

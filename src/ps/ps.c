@@ -249,6 +249,7 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	task->fn = fn;
 	task->param = param;
 	task->priority = priority;
+	task->type = type;
 	task->status = ps_ready;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->timeout = 0;

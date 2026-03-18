@@ -49,7 +49,8 @@ static int proc_pid_count;
 
 static void proc_collect_pid(task_struct *task)
 {
-	if (task->psid != 0xffffffff && proc_pid_count < PROC_MAX_PIDS)
+	if (task->psid != 0xffffffff && task->type != ps_kernel &&
+	    proc_pid_count < PROC_MAX_PIDS)
 		proc_pid_list[proc_pid_count++] = task->psid;
 }
 

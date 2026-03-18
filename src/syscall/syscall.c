@@ -7,6 +7,7 @@
 #include <lib/klib.h>
 #include <lib/rbtree.h>
 #include <fs/fs.h>
+#include <fs/mount.h>
 #include <fs/select.h>
 #include <fs/poll.h>
 #include <fs/fcntl.h>
@@ -476,28 +477,23 @@ static int sys_getpid()
 static int sys_mount(char *dev, char *dir_name, char *type, unsigned flag,
 		     void *data)
 {
+	int ret = fs_do_mount(dev, dir_name, type, flag, data);
+
 	if (TestControl.verbos)
-		klog("mount(%s, %s, %s, %d, %x)\n", dev, dir_name, type, flag,
-		     data);
+		klog("mount(%s, %s, %s, %d, %x) = %d\n", dev, dir_name, type,
+		     flag, data, ret);
 
-	if (strcmp(dir_name, "/proc") == 0)
-		return 0;
-
-	if (strcmp(dir_name, "/dev/pts") == 0)
-		return 0;
-
-	if (strcmp(dir_name, "/") == 0)
-		return 0;
-
-	return -1;
+	return ret;
 }
 
 static int sys_umount(char *name, int flag)
 {
-	if (TestControl.verbos)
-		klog("umount(%s, %d)\n", name, flag);
+	int ret = fs_do_umount(name, flag);
 
-	return 0;
+	if (TestControl.verbos)
+		klog("umount(%s, %d) = %d\n", name, flag, ret);
+
+	return ret;
 }
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";

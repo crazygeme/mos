@@ -12,7 +12,7 @@
 #include <ps/ps.h>
 #include <hw/cpu.h>
 #include <int/int.h>
-#include <fs/mount.h>
+#include <fs/vfs.h>
 #include <fs/fs.h>
 #include <mm/mmap.h>
 #include <mm/phymm.h>

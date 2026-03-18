@@ -1,226 +1,164 @@
-#include <mm/mm.h>
-#include <fs/mount.h>
 #include <fs/fs.h>
+#include <fs/vfs.h>
+#include <fs/mount.h>
+#include <ps/ps.h>
 #include <lib/klib.h>
-#include <lib/rbtree.h>
-#include <lib/lock.h>
+#include <macro.h>
 #include <errno.h>
 
-/**
- * To make sure sorted by path
- */
-static int sb_path_comp(void *k1, void *k2)
+/* =========================================================================
+ * Filesystem type registry
+ * ====================================================================== */
+
+static fs_type *fs_type_list = NULL;
+
+void fs_register_type(fs_type *fst)
 {
-	const char *left = k1;
-	const char *right = k2;
-	return 0 - strcmp(left, right);
+	fst->next = fs_type_list;
+	fs_type_list = fst;
 }
 
-/*
- * Release memory for `key`
- */
-static void sb_entry_evict(const key_value_pair *pair)
+static fs_type *fs_find_type(const char *name)
 {
-	free(pair->key);
-	sb_put(pair->val);
+	fs_type *t;
+
+	for (t = fs_type_list; t; t = t->next) {
+		if (strcmp(t->name, name) == 0)
+			return t;
+	}
+	return NULL;
 }
 
-/*
- * sb_path_resolve - walk the mount tree from sb following path.
+/* =========================================================================
+ * Minimal stub super_block for pseudo-filesystems (proc, sysfs, tmpfs …)
  *
- * Descends through child mounts whose keys are strict prefixes of path
- * (prefix must be followed by '/' or '\0' to avoid false matches),
- * returning the deepest super_block that owns path and the remaining
- * path suffix relative to that super_block.
- *
- * Returns 1 on success, 0 if sb or path are NULL.
- */
-static int sb_path_resolve(super_block *sb, const char *path,
-			   super_block **out_sb, char **out_path)
+ * open_root() returns a directory inode so that stat() on the mount point
+ * succeeds.  Sub-path accesses return NULL (→ ENOENT) because no open()
+ * callback is registered.
+ * ====================================================================== */
+
+static int stub_getattr(inode *node, struct stat *s)
 {
-	key_value_pair *kv;
-	super_block *child;
-	const char *rest;
-	size_t klen;
-
-	if (!sb || !path)
-		return 0;
-
-	if (*path == '\0')
-		goto done;
-
-	mutex_lock(&sb->s_lock);
-
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		klen = strlen(kv->key);
-		if (strncmp(path, kv->key, klen) == 0 &&
-		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = kv->val;
-			rest = path + klen;
-			mutex_unlock(&sb->s_lock);
-			return sb_path_resolve(child, rest, out_sb, out_path);
-		}
-	}
-
-	mutex_unlock(&sb->s_lock);
-
-done:
-	*out_sb = sb;
-	*out_path = (char *)path;
-	return 1;
-}
-
-super_block *sget(const super_operations *s_op)
-{
-	super_block *sb = calloc(1, sizeof(*sb));
-	mutex_init(&sb->s_lock);
-	sb->s_mounts = hash_create(sb_path_comp, sb_entry_evict);
-	sb->s_op = s_op;
-	sb->s_ref = 1;
-	return sb;
-}
-
-void sb_get(super_block *sb)
-{
-	__sync_add_and_fetch(&sb->s_ref, 1);
-}
-
-void sb_put(super_block *sb)
-{
-	key_value_pair *kv;
-
-	if (__sync_add_and_fetch(&sb->s_ref, -1) != 0)
-		return;
-
-	mutex_lock(&sb->s_lock);
-
-	hash_destroy(sb->s_mounts);
-
-	mutex_unlock(&sb->s_lock);
-
-	if (sb->s_op && sb->s_op->release)
-		sb->s_op->release(sb);
-	else
-		kfree(sb);
-}
-
-int vfs_mount(super_block *sb, const char *path, super_block *next)
-{
-	key_value_pair *kv;
-	super_block *child;
-	char *key;
-	size_t klen;
-
-	if (!sb || !path || !next)
-		return -EINVAL;
-
-	if (*path != '/')
-		return -EINVAL;
-
-	mutex_lock(&sb->s_lock);
-
-	/* Reject duplicate direct registration */
-	if (hash_find(sb->s_mounts, path)) {
-		mutex_unlock(&sb->s_lock);
-		return -EEXIST;
-	}
-
-	/* Delegate to an existing child that is a strict prefix of path */
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		klen = strlen(kv->key);
-		if (strncmp(path, kv->key, klen) == 0 &&
-		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = kv->val;
-			mutex_unlock(&sb->s_lock);
-			return vfs_mount(child, path + klen, next);
-		}
-	}
-
-	/* No prefix match: register as a direct child */
-	child = next;
-	key = strdup(path);
-	hash_insert(sb->s_mounts, key, child);
-	mutex_unlock(&sb->s_lock);
+	s->st_mode = node->i_mode;
+	s->st_ino = node->i_ino;
+	s->st_size = 0;
+	s->st_blksize = 0;
+	s->st_blocks = 0;
 	return 0;
 }
 
-int vfs_umount(super_block *sb, const char *path)
+static const inode_operations stub_iops = {
+	.getattr = stub_getattr,
+};
+
+static file *stub_open_root(super_block *sb)
 {
-	key_value_pair *kv;
-	super_block *child;
-	size_t klen;
+	inode *node = calloc(1, sizeof(*node));
+	node->i_mode = S_IFDIR | S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH |
+		       S_IXOTH;
+	node->i_ino = 1;
+	node->i_op = &stub_iops;
 
-	if (!sb || !path || *path != '/')
-		return -EINVAL;
-
-	mutex_lock(&sb->s_lock);
-
-	/* Direct child mount? */
-	kv = hash_find(sb->s_mounts, path);
-	if (kv) {
-		child = kv->val;
-		hash_remove_at(sb->s_mounts, kv);
-		mutex_unlock(&sb->s_lock);
-		return 0;
-	}
-
-	/* Prefix match: delegate to child */
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		klen = strlen(kv->key);
-		if (strncmp(path, kv->key, klen) == 0 &&
-		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = kv->val;
-			mutex_unlock(&sb->s_lock);
-			return vfs_umount(child, path + klen);
-		}
-	}
-
-	mutex_unlock(&sb->s_lock);
-	return -ENOENT;
+	file *fp = calloc(1, sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	return fp;
 }
 
-file *vfs_open(super_block *sb, const char *path, int flag)
+static super_operations stub_sops = {
+	.open_root = stub_open_root,
+};
+
+static super_block *stub_get_sb(const char *dev, const char *target, int flags,
+				void *data)
 {
-	super_block *target_sb;
-	char *rel_path;
-	key_value_pair *kv;
-	inode *node;
+	return sget(&stub_sops);
+}
 
-	if (!sb || !path)
-		return NULL;
+/* =========================================================================
+ * Built-in pseudo-filesystem registrations
+ *
+ * "ext4" is registered by root.c inside fs_mount_root() (KERNEL_INIT 3)
+ * after lwext4 has been set up, so it intentionally does not appear here.
+ * ====================================================================== */
 
-	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
-		return NULL;
+static fs_type proc_fs_type = { .name = "proc", .get_sb = stub_get_sb };
+static fs_type sysfs_fs_type = { .name = "sysfs", .get_sb = stub_get_sb };
+static fs_type tmpfs_fs_type = { .name = "tmpfs", .get_sb = stub_get_sb };
+static fs_type devpts_fs_type = { .name = "devpts", .get_sb = stub_get_sb };
+static fs_type devtmpfs_fs_type = { .name = "devtmpfs", .get_sb = stub_get_sb };
+static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
 
-	/* sb_path_resolve descends into children; if target differs, re-enter */
-	if (target_sb != sb)
-		return vfs_open(target_sb, rel_path, flag);
+static void mount_syscall_init(void)
+{
+	fs_register_type(&proc_fs_type);
+	fs_register_type(&sysfs_fs_type);
+	fs_register_type(&tmpfs_fs_type);
+	fs_register_type(&devpts_fs_type);
+	fs_register_type(&devtmpfs_fs_type);
+	fs_register_type(&none_fs_type);
+}
 
-	/* Opening the mount root (empty path suffix means we landed here) */
-	if (*rel_path == '\0') {
-		if (!target_sb->s_op || !target_sb->s_op->open_root)
-			return NULL;
-		return target_sb->s_op->open_root(target_sb);
-	}
+KERNEL_INIT(2, mount_syscall_init);
+
+/* =========================================================================
+ * fs_do_mount / fs_do_umount — called by sys_mount / sys_umount
+ * ====================================================================== */
+
+int fs_do_mount(const char *dev, const char *target, const char *type,
+		unsigned flags, void *data)
+{
+	task_struct *cur = CURRENT_TASK();
+	fs_type *fst;
+	super_block *sb;
+	int ret;
+
+	if (!target || *target != '/')
+		return -EINVAL;
+
+	if (!type)
+		return -EINVAL;
 
 	/*
-	 * Real filesystem (e.g. ext4): delegate full path resolution to the
-	 * filesystem's own open operation.
+	 * The root filesystem ("/") is set up by the kernel at boot.
+	 * Userspace remount requests (e.g. "mount -o remount,rw /") are
+	 * accepted silently — lwext4 is already live and there is nothing
+	 * meaningful to do at the VFS level.
 	 */
-	if (target_sb->s_op && target_sb->s_op->open)
-		return target_sb->s_op->open(target_sb, rel_path, flag);
+	if (target[1] == '\0') /* target == "/" */
+		return 0;
 
-	/*
-	 * Pseudo-filesystem fallback: the super_block has a root inode but
-	 * no path-aware open (e.g. a block device mount accessed via a
-	 * trailing slash).
-	 */
-	if (target_sb->s_op && target_sb->s_op->open_root) {
-		return target_sb->s_op->open_root(target_sb);
+	fst = fs_find_type(type);
+	if (!fst)
+		return -ENODEV;
+
+	sb = fst->get_sb(dev, target, (int)flags, data);
+	if (!sb)
+		return -ENOMEM;
+
+	ret = vfs_mount(cur->root, target, sb);
+	if (ret == -EEXIST) {
+		/*
+		 * Path already mounted (e.g. /dev/pts set up by the kernel at
+		 * boot).  Release the just-allocated super_block and report
+		 * success so that init scripts are not disrupted.
+		 */
+		sb_put(sb);
+		return 0;
 	}
+	return ret;
+}
 
-	return NULL;
+int fs_do_umount(const char *target, int flags)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (!target || *target != '/')
+		return -EINVAL;
+
+	/* Refuse to unmount the root filesystem. */
+	if (target[1] == '\0') /* target == "/" */
+		return -EBUSY;
+
+	return vfs_umount(cur->root, target);
 }

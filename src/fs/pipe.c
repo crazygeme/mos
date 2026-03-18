@@ -1,5 +1,5 @@
 #include <fs/fs.h>
-#include <fs/mount.h>
+#include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
 #include <hw/time.h>

@@ -1,78 +1,47 @@
-#ifndef _FS_MOUNT_H
-#define _FS_MOUNT_H
+#ifndef _FS_MOUNT_SYSCALL_H
+#define _FS_MOUNT_SYSCALL_H
 
-#include <lib/rbtree.h>
-#include <lib/lock.h>
-#include <fs/fs.h>
+#include <fs/vfs.h>
 
-typedef struct super_block super_block;
-typedef struct super_operations super_operations;
+/* Standard mount flags (subset of Linux MS_* values) */
+#define MS_RDONLY 1
 
 /*
- * super_operations - filesystem-level callbacks, analogous to Linux
- * struct super_operations.  Each mounted filesystem registers one.
+ * fs_type - describes a mountable filesystem.  Each filesystem registers
+ * itself via fs_register_type() so that sys_mount() can look it up by name.
  */
-struct super_operations {
+typedef struct fs_type fs_type;
+struct fs_type {
+	const char *name;
 	/*
-	 * get_root: allocate and return the root inode for
-	 * mounts (devices, proc entries).  Called when the mount root or a
-	 * sub-path with no specific match is opened.  The returned inode is
-	 * owned by the caller and freed via i_fop->release.
+	 * get_sb: allocate and return a new super_block for this filesystem.
+	 * @dev:    source device / image path (may be NULL for pseudo-fs)
+	 * @target: absolute mount point path (e.g. "/mnt")
+	 * @flags:  mount flags (MS_RDONLY etc.)
+	 * @data:   filesystem-specific mount options (may be NULL)
+	 * Returns NULL on failure.
 	 */
-	file *(*open_root)(super_block *sb);
-
-	/*
-	 * open: look up and open a file by path within this filesystem.
-	 * Used by real filesystems (e.g. ext4) that own path traversal
-	 * internally.  path is relative to this super_block's mount root.
-	 * Returns an open file * on success, NULL on failure.
-	 * Mutually exclusive with get_root: use one or the other.
-	 */
-	file *(*open)(super_block *sb, const char *path, int flag);
-
-	/*
-	 * put_super: Custom dtor of super_block.
-	 * Called when the super_block's reference count drops to zero.
-	 * If zero just system will just call regular kfree.
-	 */
-	void (*release)(super_block *sb);
+	super_block *(*get_sb)(const char *dev, const char *target, int flags,
+			       void *data);
+	struct fs_type
+		*next; /* intrusive linked list — set by fs_register_type */
 };
 
-/*
- * super_block - in-memory descriptor of a mounted filesystem, analogous
- * to Linux struct super_block.  The kernel keeps one super_block per
- * mount point; child mounts hang off s_mounts.
- */
-struct super_block {
-	const super_operations *s_op; /* filesystem operations */
-	void *s_fs_info; /* private filesystem data */
-	unsigned s_ref; /* reference count */
-	mutex_t s_lock;
-	hash_table *s_mounts; /* child mounts: path → super_block */
-};
-
-/* Allocate and initialise a new super_block with the given operations. */
-super_block *sget(const super_operations *s_op);
-
-/* Increment the super_block reference count. */
-void sb_get(super_block *sb);
+/* Add a filesystem type to the global registry. */
+void fs_register_type(fs_type *fst);
 
 /*
- * Decrement the reference count.  When it reaches zero, s_op->release
- * is called (if provided) and the super_block is freed.
+ * fs_do_mount - core of sys_mount().
+ * Looks up @type in the registry, instantiates a super_block, and calls
+ * vfs_mount().  If the path is already mounted (-EEXIST), returns 0.
  */
-void sb_put(super_block *sb);
-
-/* Mount a filesystem with operations child at path under sb. */
-int vfs_mount(super_block *sb, const char *path, super_block *child);
-
-/* Unmount the filesystem mounted at path under sb. */
-int vfs_umount(super_block *sb, const char *path);
+int fs_do_mount(const char *dev, const char *target, const char *type,
+		unsigned flags, void *data);
 
 /*
- * Open the file at path, searching from sb downwards.
- * Returns an open file * on success, NULL on failure.
+ * fs_do_umount - core of sys_umount().
+ * Calls vfs_umount() on the current task's root.
  */
-file *vfs_open(super_block *sb, const char *path, int flag);
+int fs_do_umount(const char *target, int flags);
 
 #endif

@@ -25,11 +25,13 @@
 #include <hw/hdd.h>
 #include <config.h>
 #include <macro.h>
+#include <errno.h>
 #include <ext4.h>
 
 #include "ps_internal.h"
 
 extern void ret_from_syscall();
+extern void ret_from_fork();
 extern short pgc_entry_count[1024];
 
 /*
@@ -204,7 +206,7 @@ int do_fork(unsigned flag)
 	task->tss.ebp = (char *)task_intr_frame;
 	task->tss.esp = (char *)task_intr_frame;
 	task->tss.esp0 = (unsigned)task + PAGE_SIZE;
-	task->tss.eip = (unsigned)ret_from_syscall;
+	task->tss.eip = (unsigned)ret_from_fork;
 	task_intr_frame->eax = 0;
 
 	task->parent = cur;
@@ -229,6 +231,12 @@ int do_fork(unsigned flag)
 	task->umask = cur->umask;
 	task->priority = cur->priority;
 	task->type = cur->type;
+
+	/* Inherit signal handlers and mask; child starts with no pending signals. */
+	memcpy(task->sig_handlers, cur->sig_handlers,
+	       sizeof(cur->sig_handlers));
+	task->sig_mask = cur->sig_mask;
+	task->sig_pending = 0;
 
 	task->fork_flag = flag;
 	task->root = cur->root;
@@ -303,6 +311,7 @@ int sys_exit(unsigned status)
 		shutdown();
 
 	/* FIXME: reparent orphaned children to cur->parent. */
+	/* ps_put_to_dying_queue queues SIGCHLD on the parent atomically. */
 	ps_put_to_dying_queue(cur);
 
 	task_sched();
@@ -353,6 +362,13 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			if (TestControl.verbos)
 				klog("wait(%d) = %d\n", pid, ret);
 			return ret;
+		}
+
+		/* Interrupted by a non-SIGCHLD signal: return EINTR. */
+		if (cur->sig_pending & ~cur->sig_mask &
+		    ~(1UL << (SIGCHLD - 1))) {
+			spinlock_unlock(&ps_lock);
+			return -EINTR;
 		}
 
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);

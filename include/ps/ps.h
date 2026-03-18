@@ -6,6 +6,7 @@
 #include <fs/fs.h>
 #include <lib/list.h>
 #include <lib/lock.h>
+#include <signal.h>
 #include <stddef.h>
 
 #define FORK_FLAG_VFORK 1
@@ -219,6 +220,10 @@ struct _task_struct {
 	unsigned pf_minor;
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
 	unsigned long long alarm_expire_ms;
+	/* signal handling */
+	struct sigaction sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
+	sigset_t sig_pending;                /* bitmask: bit (sig-1) set = pending  */
+	sigset_t sig_mask;                   /* bitmask: blocked signals             */
 	unsigned int magic; // to avoid stack overflow
 };
 
@@ -290,6 +295,7 @@ void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 			  const char *func);
 
 task_struct *ps_find_process(unsigned psid);
+int ps_send_signal(unsigned pid, int sig);
 
 typedef void (*ps_enum_callback)(task_struct *task);
 void ps_enum_all(ps_enum_callback callback);

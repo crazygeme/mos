@@ -5,6 +5,8 @@
 #include <config.h>
 #include <macro.h>
 
+extern void do_signal(intr_frame *frame);
+
 static unsigned long tickets;
 static unsigned long total_tickets;
 static unsigned long seconds;
@@ -53,6 +55,10 @@ static void time_process(intr_frame *frame)
 		__sync_add_and_fetch(&(is_force_switching), 1);
 		force_switch(frame->ds);
 	}
+
+	/* Deliver pending signals when returning to user space.
+	 * This ensures alarm() and kill() work even in tight user-space loops. */
+	do_signal(frame);
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

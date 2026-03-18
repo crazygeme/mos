@@ -89,6 +89,13 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 		task_sched();
 		CURRENT_TASK()->timeout = 0;
 
+		/* Return EINTR if an unmasked signal arrived. */
+		{
+			task_struct *cur = CURRENT_TASK();
+			if (cur->sig_pending & ~cur->sig_mask)
+				return -EINTR;
+		}
+
 	} while (1);
 
 	return ret;

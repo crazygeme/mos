@@ -16,6 +16,7 @@
 #include <lib/list.h>
 #include <lib/klib.h>
 #include <macro.h>
+#include <signal.h>
 
 #include "ps_internal.h"
 
@@ -130,8 +131,13 @@ void ps_put_to_dying_queue(task_struct *task)
 {
 	spinlock_lock(&ps_lock);
 	ps_put_to_dying_queue_unsafe(task);
-	if (task->parent)
+	if (task->parent) {
+		/* Queue SIGCHLD before waking the parent so the signal is
+		 * already pending when wait() returns to userspace. */
+		// FIXME(Ender): currently not working
+		//task->parent->sig_pending |= (1UL << (SIGCHLD - 1));
 		ps_put_to_ready_queue_unsafe(task->parent);
+	}
 	spinlock_unlock(&ps_lock);
 }
 

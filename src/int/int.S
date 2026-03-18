@@ -276,7 +276,7 @@ syscall_handler:
         
     /* Set up kernel environment. */
     pushl %edx
-    mov $KERNEL_CODE_SELECTOR, %edx    /* Initialize segment registers. */
+    mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
     mov %edx, %es
     popl %edx
@@ -287,6 +287,16 @@ syscall_handler:
     .globl intr_syscall_handler
     call intr_syscall_handler
     addl $4, %esp
+
+/* Entry point for newly-forked child processes.
+ * The normal syscall path already called do_signal() inside syscall_process;
+ * fork children jump here directly and must call it themselves. */
+.global ret_from_fork;
+ret_from_fork:
+    pushl %esp          /* intr_frame * argument to do_signal */
+    call do_signal
+    addl $4, %esp
+    /* fall through */
 
 .global ret_from_syscall;
 ret_from_syscall:
@@ -314,22 +324,4 @@ ret_from_syscall:
         /* Return to caller. */
     iret
 
-/*
- * clear the CR0.EM bit (bit 2) [ CR0 &= ~(1 << 2) ]
- * set the CR0.MP bit (bit 1) [ CR0 |= (1 << 1) ]
- * set the CR4.OSFXSR bit (bit 9) [ CR4 |= (1 << 9) ]
- * set the CR4.OSXMMEXCPT bit (bit 10) [ CR4 |= (1 << 10) ]
-*/
-.global enable_sse
-enable_sse:
-    pushl %eax
-    movl  %cr0,%eax
-    and   $0xfffb,%ax   // clear coprocessor emulation CR0.EM
-    or    $0x2,%ax      // set coprocessor monitoring  CR0.MP
-    movl  %eax,%cr0
-    movl  %cr4,%eax
-    or    $0x600,%ax    // set CR4.OSFXSR and CR4.OSXMMEXCPT at the same time
-    movl  %eax,%cr4
-    popl  %eax
-    ret
 

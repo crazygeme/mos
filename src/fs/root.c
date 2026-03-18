@@ -1,14 +1,21 @@
+#include <mm/mm.h>
 #include <lib/klib.h>
 #include <fs/fs.h>
+#include <fs/vfs.h>
 #include <fs/mount.h>
 #include <ps/ps.h>
 #include <hw/hdd.h>
 #include <stddef.h>
 #include <macro.h>
+#include <config.h>
 #include <ext4.h>
 
 unsigned fs_read_size = 0;
 unsigned fs_write_size = 0;
+
+/* =========================================================================
+ * ext4 file / directory operations
+ * ====================================================================== */
 
 static int ext4_file_release(file *fp)
 {
@@ -239,6 +246,16 @@ static file *ext4_alloc_dir(void *content)
 	return fp;
 }
 
+/* =========================================================================
+ * ext4_path_open — symlink-aware open on an absolute lwext4 path.
+ *
+ * Shared by the root super_block and all secondary ext4 mounts.
+ * Handles three cases:
+ *   1. Trailing '/'          — open as directory.
+ *   2. Regular file/symlink  — follow symlinks, then open.
+ *   3. Symlink → directory   — reopen final target as directory.
+ * ====================================================================== */
+
 /*
  * fs_resolve_symlink_path - make a symlink target into an absolute path.
  *
@@ -279,24 +296,11 @@ static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
 
 #define MAX_SYMLINK_DEPTH 8
 
-/*
- * ext4_sb_open - open a path on an ext4 superblock, following symlinks.
- *
- * Handles three cases:
- *   1. Path ending in '/' — open directly as a directory.
- *   2. Regular file — open with ext4_fopen2, follow symlinks if needed.
- *   3. Symlink that ultimately resolves to a directory — reopen as dir.
- *
- * Populates f_mode and all three inode fields (i_mode, i_ino, i_size)
- * from the stat of the final target.
- */
-static file *ext4_sb_open(super_block *sb, const char *path, int flag)
+static file *ext4_path_open(const char *path, int flag)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
-	/* resolved: heap buffer for the current symlink-resolved path */
 	char *resolved = NULL;
-	/* cur_path: points to either the original path or resolved buffer */
 	const char *cur_path = path;
 	size_t link_len;
 	int ret;
@@ -349,14 +353,9 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 			goto fail;
 		resolved[link_len] = '\0';
 
-		/* For relative targets, resolve against the directory of cur_path.
-		 * On the first iteration cur_path == path; on subsequent iterations
-		 * it equals resolved (the previous loop's output), so chained
-		 * relative symlinks are resolved correctly. */
 		if (fs_resolve_symlink_path(cur_path, resolved, link_len) != 0)
 			goto fail;
 
-		/* resolved now holds the next path to open */
 		cur_path = resolved;
 
 		ret = ext4_fopen2(f, cur_path, flag);
@@ -375,7 +374,6 @@ static file *ext4_sb_open(super_block *sb, const char *path, int flag)
 		f = NULL;
 
 		dir = calloc(1, sizeof(*dir));
-		/* Use cur_path: it holds the resolved target, not the original symlink */
 		ret = ext4_dir_open(dir, cur_path);
 		if (ret != EOK)
 			goto fail;
@@ -402,18 +400,140 @@ done:
 	return fp;
 }
 
-static super_operations ext4_sops = {
-	.open = ext4_sb_open,
-};
+/* =========================================================================
+ * Unified ext4 super_block
+ *
+ * Both the root mount ("/") and any secondary mount share the same sops.
+ * Each super_block carries an ext4_mount_info in s_fs_info that records its
+ * lwext4 mount point (always ending with '/').  Path construction in
+ * ext4_open is therefore identical for all mounts:
+ *
+ *   root:      mp="/"      path="/etc/hosts" → "/etc/hosts"
+ *   secondary: mp="/mnt/"  path="/etc/hosts" → "/mnt/etc/hosts"
+ * ====================================================================== */
 
-super_block *ext4_get()
+typedef struct {
+	char mp[PAGE_SIZE]; /* lwext4 mount point with trailing '/', e.g. "/mnt/" */
+} ext4_mount_info;
+
+static file *ext4_open(super_block *sb, const char *path, int flag)
 {
-	return sget(&ext4_sops);
+	ext4_mount_info *mi = sb->s_fs_info;
+	char *full = vm_alloc(1);
+
+	/* mp ends with '/'; path starts with '/' — skip path's leading '/' */
+	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+	file *ret = ext4_path_open(full, flag);
+	vm_free(full, 1);
+	return ret;
 }
 
-static void fs_mount_root()
+static file *ext4_open_root(super_block *sb)
+{
+	ext4_mount_info *mi = sb->s_fs_info;
+
+	return ext4_path_open(mi->mp, O_RDONLY);
+}
+
+static void ext4_release(super_block *sb)
+{
+	ext4_mount_info *mi = sb->s_fs_info;
+
+	ext4_cache_write_back(mi->mp, false);
+	ext4_umount(mi->mp);
+	free(mi);
+	kfree(sb);
+}
+
+static super_operations ext4_sops = {
+	.open_root = ext4_open_root,
+	.open = ext4_open,
+	.release = ext4_release,
+};
+
+/* Allocate a super_block bound to the given lwext4 mount point. */
+static super_block *ext4_new_sb(const char *mp)
+{
+	ext4_mount_info *mi = calloc(1, sizeof(*mi));
+	strncpy(mi->mp, mp, sizeof(mi->mp) - 1);
+
+	super_block *sb = sget(&ext4_sops);
+	sb->s_fs_info = mi;
+	return sb;
+}
+
+/* Root factory: wraps the "/" lwext4 mount set up by fs_mount_root(). */
+static super_block *ext4_get(void)
+{
+	return ext4_new_sb("/");
+}
+
+/*
+ * ext4_get_sb — factory called by fs_do_mount() for "ext4" type mounts.
+ *
+ * Calls ext4_mount() on the requested device, then wraps the result in a
+ * super_block using the unified ext4_sops.
+ *
+ * @dev:    block device path, e.g. "/dev/hda1" or bare "hda1"
+ * @target: VFS mount point, e.g. "/mnt"  (must not be "/")
+ * @flags:  MS_RDONLY etc.
+ */
+static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
+				void *data)
+{
+	const char *dev_name;
+	char mp[MAX_PATH];
+	size_t n;
+	bool read_only;
+	int i, ret;
+
+	if (!dev || !target)
+		return NULL;
+
+	/* Strip "/dev/" prefix — lwext4 wants the raw partition name */
+	dev_name = (strncmp(dev, "/dev/", 5) == 0) ? dev + 5 : dev;
+
+	/* Verify the partition is known to the kernel */
+	for (i = 0; i < hdd_partition_count; i++) {
+		if (strcmp(hdd_partitions[i].name, dev_name) == 0)
+			break;
+	}
+	if (i == hdd_partition_count)
+		return NULL;
+
+	/* lwext4 requires the mount point to end with '/' */
+	strncpy(mp, target, sizeof(mp) - 2);
+	mp[sizeof(mp) - 2] = '\0';
+	n = strlen(mp);
+	if (n > 0 && mp[n - 1] != '/') {
+		mp[n] = '/';
+		mp[n + 1] = '\0';
+	}
+
+	read_only = (flags & MS_RDONLY) != 0;
+	ret = ext4_mount(dev_name, mp, read_only);
+	if (ret != EOK)
+		return NULL;
+
+	if (!read_only)
+		ext4_cache_write_back(mp, true);
+
+	return ext4_new_sb(mp);
+}
+
+static fs_type ext4_fs_type = { .name = "ext4", .get_sb = ext4_get_sb };
+
+/* =========================================================================
+ * Boot-time root filesystem init
+ * ====================================================================== */
+
+static void fs_mount_root(void)
 {
 	task_struct *cur = CURRENT_TASK();
+
+	/* Register the ext4 filesystem type so that sys_mount can use it */
+	fs_register_type(&ext4_fs_type);
+
 	cur->root = ext4_get();
 	ext4_mount(hdd_partitions[0].name, "/", 0);
 	ext4_cache_write_back("/", true);

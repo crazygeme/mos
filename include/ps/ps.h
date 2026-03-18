@@ -2,7 +2,7 @@
 #define _PS_PS_H
 
 #include <hw/time.h>
-#include <fs/mount.h>
+#include <fs/vfs.h>
 #include <fs/fs.h>
 #include <lib/list.h>
 #include <lib/lock.h>

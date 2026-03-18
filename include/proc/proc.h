@@ -1,7 +1,7 @@
 #ifndef _PROC_PROC_H
 #define _PROC_PROC_H
 
-#include <fs/mount.h>
+#include <fs/vfs.h>
 
 #define PROC_INODE 0x80
 

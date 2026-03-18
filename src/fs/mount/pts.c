@@ -15,7 +15,7 @@
 
 #include <fs/fs.h>
 #include <fs/fcntl.h>
-#include <fs/mount.h>
+#include <fs/vfs.h>
 #include <fs/ioctl.h>
 #include <lib/lock.h>
 #include <lib/klib.h>

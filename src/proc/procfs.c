@@ -18,7 +18,7 @@
  */
 
 #include <fs/fs.h>
-#include <fs/mount.h>
+#include <fs/vfs.h>
 #include <proc/proc.h>
 #include <ps/ps.h>
 #include <lib/lock.h>

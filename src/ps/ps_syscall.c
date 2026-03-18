@@ -15,7 +15,7 @@
 #include <mm/mm.h>
 #include <int/int.h>
 #include <fs/fs.h>
-#include <fs/mount.h>
+#include <fs/vfs.h>
 #include <lib/list.h>
 #include <lib/klib.h>
 #include <lib/lock.h>

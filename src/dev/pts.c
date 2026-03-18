@@ -1,5 +1,5 @@
 /*
- * src/fs/mount/pts.c - pseudo-terminal slave (pts) filesystem
+ * src/dev/pts.c - pseudo-terminal slave (pts) filesystem
  *
  * Implements /dev/ptmx (master multiplexer) and /dev/pts/N (slave devices).
  *
@@ -11,10 +11,16 @@
  *   fd  = open("/dev/ptmx", O_RDWR)   -- allocate PTY, get master fd
  *   ioctl(fd, TIOCGPTN, &n)           -- get slave index N
  *   sfd = open("/dev/pts/N", O_RDWR)  -- open slave
+ *
+ * /dev/ptmx is mounted at boot (it is a single device node, always present).
+ * /dev/pts  is mounted dynamically: userspace must call
+ *   mount("devpts", "/dev/pts", "devpts", 0, NULL)
+ * which invokes devpts_get_sb() and vfs_mount() via fs_do_mount().
  */
 
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/mount.h>
 #include <fs/vfs.h>
 #include <fs/ioctl.h>
 #include <lib/lock.h>
@@ -481,22 +487,34 @@ static super_operations pts_dir_sops = {
 	.open = pts_sb_open,
 };
 
+/* ── devpts filesystem type ───────────────────────────────────────────────── */
+
+/*
+ * devpts_get_sb — called by fs_do_mount() when userspace mounts "devpts".
+ * Returns a fresh super_block backed by pts_dir_sops so that VFS routes
+ * opens under /dev/pts to pts_sb_open().
+ */
+static super_block *devpts_get_sb(const char *dev, const char *target,
+				  int flags, void *data)
+{
+	return sget(&pts_dir_sops);
+}
+
+static fs_type devpts_fs_type = { .name = "devpts", .get_sb = devpts_get_sb };
+
 /* ── Initialization ───────────────────────────────────────────────────────── */
 
-static void pts_fs_init(void)
+static void pts_dev_init(void)
 {
 	task_struct *cur = CURRENT_TASK();
-	super_block *sb;
 
 	spinlock_init(&pts_alloc_lock);
 
-	/* /dev/ptmx – master multiplexer device */
-	sb = sget(&ptmx_sops);
-	vfs_mount(cur->root, "/dev/ptmx", sb);
+	/* Register devpts so that sys_mount("devpts", "/dev/pts", ...) works */
+	fs_register_type(&devpts_fs_type);
 
-	/* /dev/pts – slave device directory */
-	sb = sget(&pts_dir_sops);
-	vfs_mount(cur->root, "/dev/pts", sb);
+	/* /dev/ptmx is a single device node — mount it unconditionally */
+	vfs_mount(cur->root, "/dev/ptmx", sget(&ptmx_sops));
 }
 
-KERNEL_INIT(5, pts_fs_init);
+KERNEL_INIT(5, pts_dev_init);

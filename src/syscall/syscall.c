@@ -1579,6 +1579,9 @@ static int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 	size_t rcnt = 0;
 	int ret;
 
+	if (TestControl.verbos)
+		klog("readlink(%s, %x, %d)\n", name, buf, bufsiz);
+
 	if (!buf || bufsiz == 0) {
 		name_put(name);
 		return -EINVAL;
@@ -1586,17 +1589,12 @@ static int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 
 	resolve_path(_path, name);
 	// FIXME(Ender): impl real syscall
-	if (strcmp(name, "/proc") == 0 || strcmp(name, "/dev")) {
-		strcpy(buf, name);
+	if (strcmp(name, "/proc") == 0) {
 		name_put(name);
-		return 0;
+		return -EINVAL;
 	}
 
 	ret = ext4_readlink(name, buf, bufsiz, &rcnt);
-
-	if (TestControl.verbos)
-		klog("readlink(%s, %x, %d) = %d\n", name, buf, bufsiz,
-		     ret ? -ret : (int)rcnt);
 
 	name_put(name);
 

@@ -98,7 +98,6 @@ static name_cache_t name_cache_head;
 /* Called once at boot: set up the page-table cache and related state */
 void mm_init_page_table_cache()
 {
-	unsigned int cr3;
 	int i;
 
 	page_table_cache_init(&page_table_cache);
@@ -107,7 +106,7 @@ void mm_init_page_table_cache()
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
-	list_init(&name_cache_head);
+	list_init(&name_cache_head.list);
 }
 
 /*
@@ -458,10 +457,11 @@ void *name_get()
 	name_cache_t *node;
 
 	spinlock_lock(&path_lock);
-	if (list_is_empty(&name_cache_head)) {
+	if (list_is_empty(&name_cache_head.list)) {
 		buf = (void *)vm_alloc(MAX_PATH / PAGE_SIZE);
 	} else {
-		node = list_remove_tail(&name_cache_head);
+		node = container_of(list_remove_tail(&name_cache_head.list),
+				    name_cache_t, list);
 		buf = node->buf;
 		free(node);
 	}
@@ -477,6 +477,6 @@ void name_put(void *buf)
 	spinlock_lock(&path_lock);
 	node = zalloc(sizeof(*node));
 	node->buf = buf;
-	list_insert_tail(&name_cache_head, &node->list);
+	list_insert_tail(&name_cache_head.list, &node->list);
 	spinlock_unlock(&path_lock);
 }

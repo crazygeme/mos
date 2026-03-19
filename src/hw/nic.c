@@ -20,7 +20,7 @@ static void nic_register(nic_dev *dev)
 	}
 }
 
-static char *pci_get_chip_name(uint16_t v, uint16_t d)
+static const char *pci_get_chip_name(uint16_t v, uint16_t d)
 {
 	int i = 0;
 	for (i = 0; i < PCI_DEVTABLE_LEN; i++) {
@@ -33,9 +33,8 @@ static char *pci_get_chip_name(uint16_t v, uint16_t d)
 
 static void scan_all_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 {
-	char *chip;
+	const char *chip;
 	nic_dev *dev = NULL;
-	int ret;
 	chip = pci_get_chip_name(v, d);
 	if (!chip) // unknown chip
 		return;

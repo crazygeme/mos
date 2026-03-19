@@ -25,7 +25,6 @@
  */
 
 /* Monotonically increasing tick; lower sched_seq = older = runs first. */
-static unsigned long sched_clock = 0;
 
 /* Scheduling instrumentation. */
 static unsigned long long sched_begin = 0;

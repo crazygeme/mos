@@ -54,10 +54,10 @@ static unsigned zero_page_phy = 0;
 
 static void pf_process(intr_frame *frame);
 
-static int mmap_key_comp(void *k1, void *k2)
+static int mmap_key_comp(const void *k1, const void *k2)
 {
-	mmap_cache_key *key1 = k1;
-	mmap_cache_key *key2 = k2;
+	const mmap_cache_key *key1 = k1;
+	const mmap_cache_key *key2 = k2;
 	int ret = key1->ino - key2->ino;
 	if (ret == 0)
 		ret = (int)key1->offset - (int)key2->offset;
@@ -429,8 +429,8 @@ static void pf_process(intr_frame *frame)
 NOT_HANDLED:
 	cur = CURRENT_TASK();
 
-	if (frame->cs != KERNEL_CODE_SELECTOR || frame->eip < KERNEL_OFFSET ||
-	    cr2 < KERNEL_OFFSET) {
+	if (frame->cs != KERNEL_CODE_SELECTOR ||
+	    (unsigned)frame->eip < KERNEL_OFFSET || cr2 < KERNEL_OFFSET) {
 		/* FIXME(Ender): Currently we call process exit(-EFAULT)
 		 * Because we haven't implement signal yet, and it's hard to return
 		 * from page fault handler to user code. We will implement signal

@@ -144,13 +144,13 @@ static void lock_base_release_locked(lock_base *s)
 
 void cond_init(cond_t *s, unsigned int initstat)
 {
-	lock_init(&s->base, initstat);
+	lock_init((lock_base *)&s->base, initstat);
 }
 
 /* Block until the event fires (lock transitions to 0 via cond_notify). */
 void _cond_wait(cond_t *s, const char *func)
 {
-	lock_base_acquire(&s->base, func);
+	lock_base_acquire((lock_base *)&s->base, func);
 }
 
 /* Re-arm the event so the next cond_wait will block (lock = 1). */
@@ -164,7 +164,7 @@ void cond_notify(cond_t *s)
 {
 	spinlock_lock(&s->base.wait_lock);
 	/* lock_base_release_locked clears the lock then wakes one waiter. */
-	lock_base_release_locked(&s->base);
+	lock_base_release_locked((lock_base *)&s->base);
 	spinlock_unlock(&s->base.wait_lock);
 
 	/* Yield so the woken task can run without waiting for a timer tick. */
@@ -189,14 +189,14 @@ void cond_notify_at_intr(cond_t *s)
 
 void mutex_init(mutex_t *m)
 {
-	lock_init(&m->base, 0);
+	lock_init((lock_base *)&m->base, 0);
 	m->holder = 0;
 }
 
 void _mutex_lock(mutex_t *m, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
-	lock_base_acquire(&m->base, func);
+	lock_base_acquire((lock_base *)&m->base, func);
 	m->holder = cur->psid;
 	m->holder_func = func;
 }
@@ -214,7 +214,7 @@ void mutex_unlock(mutex_t *m)
 	/* Release the lock and wake the next waiter atomically under
 	 * wait_lock so that no wakeup is lost between the two steps. */
 	spinlock_lock(&m->base.wait_lock);
-	lock_base_release_locked(&m->base);
+	lock_base_release_locked((lock_base *)&m->base);
 	spinlock_unlock(&m->base.wait_lock);
 }
 
@@ -232,8 +232,8 @@ void rwlock_init(rwlock_t *rw)
 	rw->readers = 0;
 	rw->writer = 0;
 	rw->writers_waiting = 0;
-	list_init(&rw->reader_wait_list);
-	list_init(&rw->writer_wait_list);
+	list_init((list_entry *)&rw->reader_wait_list);
+	list_init((list_entry *)&rw->writer_wait_list);
 	spinlock_init(&rw->wait_lock);
 }
 
@@ -246,7 +246,8 @@ void _rwlock_read_lock(rwlock_t *rw, const char *func)
 	/* Block if a writer holds the lock or a writer is waiting (write-
 	 * preferring: we queue behind the writer to prevent its starvation). */
 	while (rw->writer || rw->writers_waiting > 0) {
-		ps_put_to_wait_queue(cur, &rw->reader_wait_list, func);
+		ps_put_to_wait_queue(cur, (list_entry *)&rw->reader_wait_list,
+				     func);
 		spinlock_unlock(&rw->wait_lock);
 		task_sched();
 		spinlock_lock(&rw->wait_lock);
@@ -264,7 +265,7 @@ void rwlock_read_unlock(rwlock_t *rw)
 
 	/* Last reader leaving: hand off to a waiting writer if one exists. */
 	if (rw->readers == 0 && rw->writers_waiting > 0)
-		lock_wake_one_locked(&rw->writer_wait_list);
+		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
 
 	spinlock_unlock(&rw->wait_lock);
 }
@@ -278,7 +279,8 @@ void _rwlock_write_lock(rwlock_t *rw, const char *func)
 
 	/* Wait until the lock is completely idle (no readers, no other writer). */
 	while (rw->writer || rw->readers > 0) {
-		ps_put_to_wait_queue(cur, &rw->writer_wait_list, func);
+		ps_put_to_wait_queue(cur, (list_entry *)&rw->writer_wait_list,
+				     func);
 		spinlock_unlock(&rw->wait_lock);
 		task_sched();
 		spinlock_lock(&rw->wait_lock);
@@ -297,11 +299,12 @@ void rwlock_write_unlock(rwlock_t *rw)
 
 	if (rw->writers_waiting > 0) {
 		/* Prefer waking a waiting writer to avoid writer starvation. */
-		lock_wake_one_locked(&rw->writer_wait_list);
+		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
 	} else {
 		/* No writers pending: release all queued readers simultaneously
 		 * so they can proceed concurrently. */
-		while (lock_wake_one_locked(&rw->reader_wait_list))
+		while (lock_wake_one_locked(
+			(list_entry *)&rw->reader_wait_list))
 			;
 	}
 

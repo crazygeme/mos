@@ -10,12 +10,12 @@
 
 /* ── Memory operations ───────────────────────────────────────────────────── */
 
-void memcpy(void *to, void *from, unsigned n)
+void memcpy(void *to, const void *from, unsigned n)
 {
 	unsigned dwords = n / 4;
 	unsigned tail = n % 4;
 	unsigned char *d = to;
-	unsigned char *s = from;
+	const unsigned char *s = from;
 
 	/* Copy 4 bytes at a time with rep movsd */
 	__asm__ volatile("rep movsl"
@@ -79,9 +79,9 @@ void memmove(void *dst, void *src, unsigned len)
 	}
 }
 
-int memcmp(void *_src, void *_dst, unsigned len)
+int memcmp(const void *_src, const void *_dst, unsigned len)
 {
-	unsigned char *src = _src, *dst = _dst;
+	const unsigned char *src = _src, *dst = _dst;
 	unsigned i;
 
 	for (i = 0; i < len; i++) {
@@ -124,7 +124,7 @@ char *strncpy(char *dst, const char *src, int len)
 	return d;
 }
 
-char *strcat(char *src, char *msg)
+char *strcat(char *src, const char *msg)
 {
 	char *tmp = src + strlen(src);
 
@@ -132,7 +132,7 @@ char *strcat(char *src, char *msg)
 	return src;
 }
 
-int strcmp(char *src, char *dst)
+int strcmp(const char *src, const char *dst)
 {
 	unsigned char *s = (unsigned char *)src;
 	unsigned char *d = (unsigned char *)dst;
@@ -144,7 +144,7 @@ int strcmp(char *src, char *dst)
 	return (*s > *d) - (*s < *d);
 }
 
-int strncmp(char *src, char *dst, int len)
+int strncmp(const char *src, const char *dst, int len)
 {
 	int i;
 
@@ -207,29 +207,29 @@ char *strrev(char *src)
 	return src;
 }
 
-char *strchr(char *str, char c)
+char *strchr(const char *str, char c)
 {
 	int i, len = strlen(str);
 
 	for (i = 0; i < len; i++) {
 		if (str[i] == c)
-			return str + i;
+			return (char *)(str + i);
 	}
 	return NULL;
 }
 
-char *strrchr(char *str, char c)
+char *strrchr(const char *str, char c)
 {
 	int i, len = strlen(str);
 
 	for (i = len - 1; i >= 0; i--) {
 		if (str[i] == c)
-			return str + i;
+			return (char *)(str + i);
 	}
 	return NULL;
 }
 
-char *strdup(char *str)
+char *strdup(const char *str)
 {
 	unsigned len = strlen(str) + 1;
 	char *ret = malloc(len);

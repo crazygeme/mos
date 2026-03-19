@@ -150,30 +150,27 @@
 		asm volatile("jmp *%edx");                    \
 	})
 
-#define ROUND_UP(X) \
-	(((X) + (sizeof(long)) - 1) / (sizeof(long)) * (sizeof(long)))
-
 // clang-format off
-#define MAKE_SEG_DESC(base,  limit,  class,  type, dpl,  granularity)               \
-    (unsigned long long)                                                            \
-    (((unsigned)(((unsigned int)limit & 0xffff) | ((unsigned int )base << 16))) |   \
-    (((unsigned long long)((((unsigned int )base >> 16) & 0xff)                     \
-          | ((unsigned int)type << 8)                                               \ 
-          | ((unsigned int)class << 12)                                             \     
-          | ((unsigned int)dpl << 13)                                               \     
+#define MAKE_SEG_DESC(base, limit, class, type, dpl, granularity)                    \
+    (unsigned long long)                                                             \
+    (((unsigned)(((unsigned int)limit & 0xffff) | ((unsigned int)base << 16))) |    \
+    (((unsigned long long)((((unsigned int)base >> 16) & 0xff)                      \
+          | ((unsigned int)type << 8)                                               \
+          | ((unsigned int)class << 12)                                             \
+          | ((unsigned int)dpl << 13)                                               \
           | (1 << 15)                                                               \
           | ((unsigned int)limit & 0xf0000)                                         \
           | (1 << 22)                                                               \
           | ((unsigned int)granularity << 23)                                       \
-          | ((unsigned int )base & 0xff000000))) << 32))
+          | ((unsigned int)base & 0xff000000))) << 32))
 
 
 #define MAKE_GATE(function, dpl, type)                                                   \
     (unsigned long long)                                                                 \
     (((unsigned int)(((unsigned int)function & 0xffff) | (KERNEL_CODE_SELECTOR << 16))) |\
-    (((unsigned long long)(((unsigned int)function & 0xffff0000) | (1 << 15)             \     
-          | ((unsigned int)dpl << 13)                                                    \     
-          | (0 << 12)                                                                    \ 
+    (((unsigned long long)(((unsigned int)function & 0xffff0000) | (1 << 15)             \
+          | ((unsigned int)dpl << 13)                                                    \
+          | (0 << 12)                                                                    \
           | ((unsigned int)type << 8)))                                                  \
              << 32))
 
@@ -181,7 +178,7 @@
 
 #define MAKE_GDTR_OPERAND(limit, base)                                          \
      (unsigned long long)                                                       \
-     ((unsigned short)limit | ((unsigned long long)(unsigned int)base << 16))
+     (((unsigned short)(limit)) | ((unsigned long long)(unsigned int)(base) << 16))
 
 
 #define MAKE_INTR_GATE(function, dpl) MAKE_GATE(function, dpl, 14)
@@ -192,7 +189,7 @@
 
 #define  MAKE_IDTR_OPERAND(limit, base)                                         \
     (unsigned long long)                                                        \
-     ((unsigned short)limit | ((unsigned long long)(unsigned int)base << 16))
+     (((unsigned short)(limit)) | ((unsigned long long)(unsigned int)(base) << 16))
 
 #define NAKED __attribute__((naked))
 /*

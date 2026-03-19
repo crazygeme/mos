@@ -111,7 +111,6 @@ static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 {
 	unsigned file_off = phdr->p_offset;
 	unsigned va_begin = phdr->p_vaddr & PAGE_SIZE_MASK;
-	unsigned va_diff = phdr->p_vaddr - va_begin;
 	unsigned fileSiz = phdr->p_filesz;
 	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
 	unsigned map_size = va_end - va_begin + PAGE_SIZE;
@@ -160,7 +159,6 @@ static int elf_read_interp(file *fp, Elf32_Phdr *phdr, char *path)
 static int elf_find_interp(file *fp, unsigned table_offset, unsigned size,
 			   unsigned num, char *path)
 {
-	unsigned offset = 0;
 	int i = 0;
 
 	for (i = 0; i < num; i++) {
@@ -194,7 +192,6 @@ static int elf_find_interp(file *fp, unsigned table_offset, unsigned size,
 static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 				 unsigned num)
 {
-	unsigned offset = 0;
 	int i = 0;
 	unsigned elf_bss = 0; /* end of file-backed data (unaligned) */
 	unsigned last_bss = 0; /* end of memory image (.bss included) */
@@ -243,7 +240,6 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 				unsigned num, mos_binfmt *fmt)
 {
-	unsigned offset = 0;
 	int i = 0;
 	unsigned elf_bss = 0;
 	unsigned last_bss = 0;
@@ -323,7 +319,6 @@ static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
 static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
 				    unsigned size, unsigned num, unsigned bias)
 {
-	unsigned offset = 0;
 	int i = 0;
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;
@@ -349,7 +344,6 @@ static unsigned elf_map_get_dynamic_pages(file *fp, unsigned table_offset,
 {
 	unsigned va_page_start = 0xffffffff;
 	unsigned va_page_end = 0;
-	unsigned offset = 0;
 	int i = 0;
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;
@@ -394,8 +388,6 @@ static unsigned elf_map_get_dynamic_pages(file *fp, unsigned table_offset,
 static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 {
 	file *fp = fs_open_file(path, 0, "r", 1);
-	unsigned entry_point = 0;
-	unsigned head_len = 0;
 	Elf32_Ehdr elf;
 
 	if (fp == NULL) {
@@ -403,8 +395,6 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 	}
 	/* ELF header is always at offset 0. */
 	elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
-	entry_point = elf.e_entry;
-	head_len = elf.e_ehsize;
 
 	/* Validate ELF magic number (0x7f 'E' 'L' 'F'). */
 	if (elf.e_ident[0] != 0x7f) {
@@ -466,7 +456,6 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 {
 	file *fp = fs_open_file(path, 0, "r", 1);
 	unsigned entry_point = 0;
-	unsigned head_len = 0;
 	Elf32_Ehdr elf;
 	char *interp = name_get();
 	memset(interp, 0, MAX_PATH);
@@ -478,7 +467,6 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 	/* ELF header is always at offset 0. */
 	elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
 	entry_point = elf.e_entry;
-	head_len = elf.e_ehsize;
 
 	/* Validate ELF magic number (0x7f 'E' 'L' 'F'). */
 	if (elf.e_ident[0] != 0x7f) {

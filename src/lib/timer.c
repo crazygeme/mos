@@ -20,7 +20,7 @@ struct timer_t {
 
 static timer_control_t control;
 
-static int timer_comp(void *k1, void *k2)
+static int timer_comp(const void *k1, const void *k2)
 {
 	int l = (int)k1;
 	int r = (int)k2;

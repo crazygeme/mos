@@ -112,9 +112,16 @@ static int ext4_file_setattr(inode *node, uint32_t mode)
 	return ext4_fchmod(f, mode);
 }
 
+static int ext4_file_chown(inode *node, uint32_t uid, uint32_t gid)
+{
+	ext4_file *f = node->i_private;
+	return ext4_fchown(f, uid, gid);
+}
+
 static const inode_operations ext4_file_iops = {
 	.getattr = ext4_file_getattr,
 	.setattr = ext4_file_setattr,
+	.chown = ext4_file_chown,
 };
 
 static const file_operations ext4_file_fops = {
@@ -208,8 +215,22 @@ static int ext4_dir_getattr(inode *node, struct stat *s)
 	return ext4_fstat(&dir->f, s);
 }
 
+static int ext4_dir_setattr(inode *node, uint32_t mode)
+{
+	ext4_dir *dir = node->i_private;
+	return ext4_fchmod(&dir->f, mode);
+}
+
+static int ext4_dir_chown(inode *node, uint32_t uid, uint32_t gid)
+{
+	ext4_dir *dir = node->i_private;
+	return ext4_fchown(&dir->f, uid, gid);
+}
+
 static const inode_operations ext4_dir_iops = {
 	.getattr = ext4_dir_getattr,
+	.setattr = ext4_dir_setattr,
+	.chown = ext4_dir_chown,
 };
 
 static const file_operations ext4_dir_fops = {

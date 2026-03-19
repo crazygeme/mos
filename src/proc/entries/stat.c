@@ -28,77 +28,65 @@
 /* Externs from ps_sched.c */
 extern unsigned task_schedule_count;
 
-/* ---- Callback accumulator (module-static, written single-threadedly) ---- */
-static unsigned g_user;
-static unsigned g_system;
-static unsigned g_idle;
-static unsigned g_procs_running;
-static unsigned g_procs_blocked;
-static unsigned g_processes;
+typedef struct {
+	unsigned user, system, idle;
+	unsigned procs_running, procs_blocked, processes;
+} stat_ctx_t;
 
-static void stat_collect(task_struct *task)
+static void stat_collect(task_struct *task, void *ctx)
 {
+	stat_ctx_t *c = (stat_ctx_t *)ctx;
 	if (task->psid == 0xffffffff)
 		return;
 
-	g_processes++;
+	c->processes++;
 
 	if (task->priority == ps_idle) {
-		/* idle task: its CPU time counts as idle */
-		g_idle += task->kernel_tickets + task->user_tickets;
+		c->idle += task->kernel_tickets + task->user_tickets;
 	} else {
-		g_user += task->user_tickets;
-		g_system += task->kernel_tickets;
+		c->user += task->user_tickets;
+		c->system += task->kernel_tickets;
 	}
 
 	if (task->status == ps_running || task->status == ps_ready)
-		g_procs_running++;
+		c->procs_running++;
 	else if (task->status == ps_waiting)
-		g_procs_blocked++;
+		c->procs_blocked++;
 }
 
 static void fill(void *buf, size_t size)
 {
 	char *p = buf;
 	int i, ncpu;
+	stat_ctx_t c = { 0, 0, 0, 0, 0, 0 };
 
 	memset(buf, 0, size);
 
-	g_user = g_system = g_idle = 0;
-	g_procs_running = g_procs_blocked = g_processes = 0;
-	ps_enum_all(stat_collect);
+	ps_enum_all(stat_collect, &c);
 
 	ncpu = ncpus > 0 ? ncpus : 1;
 
 	/* ---- aggregate cpu line ---- */
-	sprintf(p, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", g_user, g_system, g_idle);
-	p += strlen(p);
+	p += sprintf(p, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,
+		     c.idle);
 
 	/* ---- per-CPU lines ---- */
 	for (i = 0; i < ncpu; i++) {
 		if (i == 0)
 			/* cpu0 carries the full aggregate */
-			sprintf(p, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i, g_user,
-				g_system, g_idle);
+			p += sprintf(p, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
+				     c.user, c.system, c.idle);
 		else
-			sprintf(p, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
-		p += strlen(p);
+			p += sprintf(p, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
 	}
 
-	sprintf(p, "intr 0\n");
-	p += strlen(p);
-	sprintf(p, "ctxt %u\n", task_schedule_count);
-	p += strlen(p);
-	sprintf(p, "btime 0\n");
-	p += strlen(p);
-	sprintf(p, "processes %u\n", g_processes);
-	p += strlen(p);
-	sprintf(p, "procs_running %u\n", g_procs_running);
-	p += strlen(p);
-	sprintf(p, "procs_blocked %u\n", g_procs_blocked);
-	p += strlen(p);
-	sprintf(p, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
-	p += strlen(p);
+	p += sprintf(p, "intr 0\n");
+	p += sprintf(p, "ctxt %u\n", task_schedule_count);
+	p += sprintf(p, "btime 0\n");
+	p += sprintf(p, "processes %u\n", c.processes);
+	p += sprintf(p, "procs_running %u\n", c.procs_running);
+	p += sprintf(p, "procs_blocked %u\n", c.procs_blocked);
+	p += sprintf(p, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
 }
 
 DEFINE_PROC_FILE(stat, fill);

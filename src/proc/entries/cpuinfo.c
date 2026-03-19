@@ -67,112 +67,70 @@ static void fill(void *buf, size_t size)
 
 	for (i = 0; i < ncpu; i++) {
 		/* Per-processor block — mirrors Linux /proc/cpuinfo layout. */
-		sprintf(p,
-			"processor\t: %d\n"
-			"vendor_id\t: %s\n"
-			"cpu family\t: %d\n"
-			"model\t\t: %d\n"
-			"model name\t: %s\n"
-			"stepping\t: %d\n"
-			"cpu MHz\t\t: %d\n"
-			"cache size\t: unknown\n"
-			"physical id\t: %d\n"
-			"apic id\t\t: %d\n"
-			"online\t\t: %s\n"
-			"bogomips\t: %d\n"
-			"flags\t\t:",
-			i, vendor, family, model, brand, stepping, mhz, i,
-			(i < MAX_CPUS) ? (int)cpus[i].apic_id : i,
-			(i < MAX_CPUS && cpus[i].online) ? "yes" : "no",
-			mhz * 2);
-		p += strlen(p);
+		p += sprintf(p,
+			     "processor\t: %d\n"
+			     "vendor_id\t: %s\n"
+			     "cpu family\t: %d\n"
+			     "model\t\t: %d\n"
+			     "model name\t: %s\n"
+			     "stepping\t: %d\n"
+			     "cpu MHz\t\t: %d\n"
+			     "cache size\t: unknown\n"
+			     "physical id\t: %d\n"
+			     "apic id\t\t: %d\n"
+			     "online\t\t: %s\n"
+			     "bogomips\t: %d\n"
+			     "flags\t\t:",
+			     i, vendor, family, model, brand, stepping, mhz, i,
+			     (i < MAX_CPUS) ? (int)cpus[i].apic_id : i,
+			     (i < MAX_CPUS && cpus[i].online) ? "yes" : "no",
+			     mhz * 2);
 
 		/* Feature flags from CPUID leaf 1 EDX */
-		if (edx & (1u << 0)) {
-			sprintf(p, " fpu");
-			p += strlen(p);
-		}
-		if (edx & (1u << 1)) {
-			sprintf(p, " vme");
-			p += strlen(p);
-		}
-		if (edx & (1u << 4)) {
-			sprintf(p, " tsc");
-			p += strlen(p);
-		}
-		if (edx & (1u << 5)) {
-			sprintf(p, " msr");
-			p += strlen(p);
-		}
-		if (edx & (1u << 8)) {
-			sprintf(p, " cx8");
-			p += strlen(p);
-		}
-		if (edx & (1u << 9)) {
-			sprintf(p, " apic");
-			p += strlen(p);
-		}
-		if (edx & (1u << 11)) {
-			sprintf(p, " sep");
-			p += strlen(p);
-		}
-		if (edx & (1u << 15)) {
-			sprintf(p, " cmov");
-			p += strlen(p);
-		}
-		if (edx & (1u << 19)) {
-			sprintf(p, " clflush");
-			p += strlen(p);
-		}
-		if (edx & (1u << 23)) {
-			sprintf(p, " mmx");
-			p += strlen(p);
-		}
-		if (edx & (1u << 24)) {
-			sprintf(p, " fxsr");
-			p += strlen(p);
-		}
-		if (edx & (1u << 25)) {
-			sprintf(p, " sse");
-			p += strlen(p);
-		}
-		if (edx & (1u << 26)) {
-			sprintf(p, " sse2");
-			p += strlen(p);
-		}
-		if (edx & (1u << 28)) {
-			sprintf(p, " ht");
-			p += strlen(p);
-		}
+		if (edx & (1u << 0))
+			p += sprintf(p, " fpu");
+		if (edx & (1u << 1))
+			p += sprintf(p, " vme");
+		if (edx & (1u << 4))
+			p += sprintf(p, " tsc");
+		if (edx & (1u << 5))
+			p += sprintf(p, " msr");
+		if (edx & (1u << 8))
+			p += sprintf(p, " cx8");
+		if (edx & (1u << 9))
+			p += sprintf(p, " apic");
+		if (edx & (1u << 11))
+			p += sprintf(p, " sep");
+		if (edx & (1u << 15))
+			p += sprintf(p, " cmov");
+		if (edx & (1u << 19))
+			p += sprintf(p, " clflush");
+		if (edx & (1u << 23))
+			p += sprintf(p, " mmx");
+		if (edx & (1u << 24))
+			p += sprintf(p, " fxsr");
+		if (edx & (1u << 25))
+			p += sprintf(p, " sse");
+		if (edx & (1u << 26))
+			p += sprintf(p, " sse2");
+		if (edx & (1u << 28))
+			p += sprintf(p, " ht");
 
 		/* Feature flags from CPUID leaf 1 ECX */
-		if (ecx & (1u << 0)) {
-			sprintf(p, " sse3");
-			p += strlen(p);
-		}
-		if (ecx & (1u << 9)) {
-			sprintf(p, " ssse3");
-			p += strlen(p);
-		}
-		if (ecx & (1u << 19)) {
-			sprintf(p, " sse4_1");
-			p += strlen(p);
-		}
-		if (ecx & (1u << 20)) {
-			sprintf(p, " sse4_2");
-			p += strlen(p);
-		}
-		if (ecx & (1u << 23)) {
-			sprintf(p, " popcnt");
-			p += strlen(p);
-		}
-		if (ecx & (1u << 30)) {
-			sprintf(p, " rdrand");
-			p += strlen(p);
-		}
+		if (ecx & (1u << 0))
+			p += sprintf(p, " sse3");
+		if (ecx & (1u << 9))
+			p += sprintf(p, " ssse3");
+		if (ecx & (1u << 19))
+			p += sprintf(p, " sse4_1");
+		if (ecx & (1u << 20))
+			p += sprintf(p, " sse4_2");
+		if (ecx & (1u << 23))
+			p += sprintf(p, " popcnt");
+		if (ecx & (1u << 30))
+			p += sprintf(p, " rdrand");
 
-		sprintf(p, "\n\n");
-		p += strlen(p);
+		p += sprintf(p, "\n\n");
 	}
 }
 

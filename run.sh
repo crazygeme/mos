@@ -49,10 +49,10 @@ fi
 
 kernel_file=out/kernel
 
-make -s -j8
+make -s -j8 || { echo "Error: build failed" >&2; exit 1; }
 
 if [ ! -f "$diskfile" ]; then
-	unzip redhat.img.zip
+	unzip redhat.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
 fi
 
 

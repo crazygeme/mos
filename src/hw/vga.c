@@ -709,7 +709,8 @@ static void glyph_cache_init(void)
 			unsigned char row = number_font[g][i];
 			for (j = 0; j < char_width; j++)
 				glyph_pixels[g][i * char_width + j] =
-					(row & bit_mask[j]) ? VGA_COLOR_WHITE : 0;
+					(row & bit_mask[j]) ? VGA_COLOR_WHITE :
+							      0;
 		}
 	}
 	for (g = 0; g < 2; g++) {
@@ -717,7 +718,8 @@ static void glyph_cache_init(void)
 			unsigned char row = cursor_font[g][i];
 			for (j = 0; j < char_width; j++)
 				glyph_pixels[128 + g][i * char_width + j] =
-					(row & bit_mask[j]) ? VGA_COLOR_WHITE : 0;
+					(row & bit_mask[j]) ? VGA_COLOR_WHITE :
+							      0;
 		}
 	}
 }
@@ -778,7 +780,8 @@ static void fb_write_char(int x, int y, int val, unsigned color)
 	} else {
 		/* Slow path: arbitrary color, decode on the fly. */
 		unsigned char *font = (glyph_idx < 128) ?
-			number_font[glyph_idx] : cursor_font[glyph_idx - 128];
+					      number_font[glyph_idx] :
+					      cursor_font[glyph_idx - 128];
 		for (i = 0; i < char_height; i++) {
 			unsigned *rowp =
 				disp + (base_y + i) * _hw_resolution_x + base_x;

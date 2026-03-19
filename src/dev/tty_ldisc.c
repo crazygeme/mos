@@ -3,9 +3,9 @@
  */
 
 #include <fs/ioctl.h>
-#include <lib/klib.h>      /* memcpy, memmove, tolower */
+#include <lib/klib.h> /* memcpy, memmove, tolower */
 #include <lib/cyclebuf.h>
-#include <ps/ps.h>         /* ps_send_signal_pgrp */
+#include <ps/ps.h> /* ps_send_signal_pgrp */
 #include "tty_ldisc.h"
 
 /* ── Default termios ─────────────────────────────────────────────────────── */
@@ -15,8 +15,8 @@ const struct termios tty_default_termios = {
 	.c_oflag = OPOST | ONLCR,
 	.c_cflag = B38400 | CS8,
 	.c_lflag = IXON | ISIG | ICANON | ECHO | ECHOE | ECHOCTL | ECHOKE,
-	.c_line  = 0,
-	.c_cc    = INIT_C_CC,
+	.c_line = 0,
+	.c_cc = INIT_C_CC,
 };
 
 /* ── Public: input flag transformation ───────────────────────────────────── */
@@ -66,7 +66,7 @@ static int isig_char(const struct termios *tc, unsigned char c)
 }
 
 static void canon_erase(tty_canon_t *canon, const struct termios *tc,
-			 tty_ldisc_echo_fn echo, void *ctx)
+			tty_ldisc_echo_fn echo, void *ctx)
 {
 	if (canon->len == 0)
 		return;
@@ -96,7 +96,7 @@ static void canon_kill(tty_canon_t *canon, const struct termios *tc,
 }
 
 static void canon_append(tty_canon_t *canon, const struct termios *tc,
-			  unsigned char c, tty_ldisc_echo_fn echo, void *ctx)
+			 unsigned char c, tty_ldisc_echo_fn echo, void *ctx)
 {
 	if (canon->len >= TTY_CANON_BUF_SIZE - 1)
 		return;
@@ -112,8 +112,8 @@ static void canon_append(tty_canon_t *canon, const struct termios *tc,
 /* ── Public: canonical readline ─────────────────────────────────────────── */
 
 int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
-			      cy_buf *buf, int check_eof, unsigned pgrp,
-			      tty_ldisc_echo_fn echo, void *ctx)
+			     cy_buf *buf, int check_eof, unsigned pgrp,
+			     tty_ldisc_echo_fn echo, void *ctx)
 {
 	while (1) {
 		unsigned char raw = cyb_getc(buf);

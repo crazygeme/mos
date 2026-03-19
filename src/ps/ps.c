@@ -347,8 +347,8 @@ task_struct *ps_find_process(unsigned psid)
 	return task;
 }
 
-/* Invoke callback for every live task (in psid order). */
-void ps_enum_all(ps_enum_callback callback)
+/* Invoke callback(task, ctx) for every live task (in psid order). */
+void ps_enum_all(ps_enum_callback callback, void *ctx)
 {
 	struct rb_node *node;
 	if (!callback)
@@ -358,7 +358,7 @@ void ps_enum_all(ps_enum_callback callback)
 	while (node) {
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
 		spinlock_unlock(&ps_lock);
-		callback(task);
+		callback(task, ctx);
 		spinlock_lock(&ps_lock);
 		node = rb_next(node);
 	}

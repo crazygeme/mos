@@ -87,6 +87,7 @@ typedef struct _file_operations {
 typedef struct _inode_operations {
 	int (*getattr)(inode *inode, struct stat *s);
 	int (*setattr)(inode *inode, uint32_t mode);
+	int (*chown)(inode *inode, uint32_t uid, uint32_t gid);
 } inode_operations;
 
 /*
@@ -140,8 +141,6 @@ int fs_close(int fd);
 int fs_read(int fd, unsigned offset, char *buf, unsigned len);
 
 int fs_write(int fd, unsigned offset, char *buf, unsigned len);
-
-int fs_delete(const char *path);
 
 int fs_stat(const char *path, struct stat *s);
 

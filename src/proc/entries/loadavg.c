@@ -10,26 +10,28 @@
 #include "generic.h"
 #include <ps/ps.h>
 
-static unsigned g_total;
-static unsigned g_running;
+typedef struct {
+	unsigned total;
+	unsigned running;
+} loadavg_ctx_t;
 
-static void count_task(task_struct *task)
+static void count_task(task_struct *task, void *ctx)
 {
-	g_total++;
+	loadavg_ctx_t *c = (loadavg_ctx_t *)ctx;
+	c->total++;
 	if (task->status == ps_running)
-		g_running++;
+		c->running++;
 }
 
 static void fill(void *buf, size_t size)
 {
 	task_struct *cur = CURRENT_TASK();
-
-	g_total = g_running = 0;
-	ps_enum_all(count_task);
+	loadavg_ctx_t c = { 0, 0 };
+	ps_enum_all(count_task, &c);
 
 	memset(buf, 0, size);
-	sprintf(buf, "0.00 0.00 0.00 %u/%u %u\n",
-		g_running, g_total, cur->psid);
+	sprintf(buf, "0.00 0.00 0.00 %u/%u %u\n", c.running, c.total,
+		cur->psid);
 }
 
 DEFINE_PROC_FILE(loadavg, fill);

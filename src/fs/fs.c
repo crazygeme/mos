@@ -124,45 +124,23 @@ int fs_close(int fd)
 	return fs_put_file(fp);
 }
 
-int fs_delete(const char *path)
-{
-	/* FIXME: before virtual device (/dev etc) only ext4 support */
-	int ret = ext4_fremove(path);
-	if (ret != EOK)
-		return -1;
-	return ret;
-}
-
 int fs_stat(const char *path, struct stat *s)
 {
-	/* FIXME: before virtual device (/dev etc) only ext4 support */
-	ext4_file f;
-	ext4_dir dir;
-	int isdir = 0;
-	int ret = -1;
+	task_struct *cur = CURRENT_TASK();
+	file *fp = vfs_open(cur->root, path, O_RDONLY);
+	int ret;
 
-	if (path[strlen(path) - 1] == '/') {
-		ret = ext4_dir_open(&dir, path);
-		isdir = 1;
-	} else {
-		ret = ext4_fopen(&f, path, "r");
+	if (!fp)
+		return -ENOENT;
+
+	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr) {
+		fs_put_file(fp);
+		return -EACCES;
 	}
 
-	if (ret != EOK)
-		return (0 - ret);
-
-	if (!isdir) {
-		ret = ext4_fstat(&f, s);
-		ext4_fclose(&f);
-	} else {
-		ret = ext4_fstat(&dir.f, s);
-		ext4_dir_close(&dir);
-	}
-
-	if (ret != EOK)
-		return -1;
-
-	return ret;
+	ret = fp->f_inode->i_op->getattr(fp->f_inode, s);
+	fs_put_file(fp);
+	return ret == EOK ? 0 : -1;
 }
 
 int fs_fstat(int fd, struct stat *s)
@@ -421,15 +399,39 @@ done:
 
 int fs_chmod(const char *pathname, uint32_t mode)
 {
+	task_struct *cur = CURRENT_TASK();
+	file *fp = vfs_open(cur->root, pathname, O_RDONLY);
 	int ret;
-	ret = ext4_chmod(pathname, mode);
+
+	if (!fp)
+		return -ENOENT;
+
+	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->setattr) {
+		fs_put_file(fp);
+		return -EACCES;
+	}
+
+	ret = fp->f_inode->i_op->setattr(fp->f_inode, mode);
+	fs_put_file(fp);
 	return (0 - ret);
 }
 
 int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 {
+	task_struct *cur = CURRENT_TASK();
+	file *fp = vfs_open(cur->root, pathname, O_RDONLY);
 	int ret;
-	ret = ext4_chown(pathname, uid, gid);
+
+	if (!fp)
+		return -ENOENT;
+
+	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->chown) {
+		fs_put_file(fp);
+		return -EACCES;
+	}
+
+	ret = fp->f_inode->i_op->chown(fp->f_inode, uid, gid);
+	fs_put_file(fp);
 	return (0 - ret);
 }
 
@@ -449,10 +451,11 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	fp = cur->fds[fd].fp;
 	mutex_unlock(&cur->fd_lock);
 
-	if (!fp || !fp->f_inode)
+	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
+	    !fp->f_inode->i_op->chown)
 		return -EACCES;
 
-	ret = ext4_fchown(fp->f_inode->i_private, uid, gid);
+	ret = fp->f_inode->i_op->chown(fp->f_inode, uid, gid);
 	return (0 - ret);
 }
 

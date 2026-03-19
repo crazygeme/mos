@@ -306,8 +306,9 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	if (target_sb != sb)
 		return vfs_open(target_sb, rel_path, flag);
 
-	/* Opening the mount root (empty path suffix means we landed here) */
-	if (*rel_path == '\0') {
+	/* Opening the mount root: empty suffix or bare trailing slash */
+	if (*rel_path == '\0' ||
+	    (rel_path[0] == '/' && rel_path[1] == '\0')) {
 		if (!target_sb->s_op || !target_sb->s_op->open_root)
 			return NULL;
 		return target_sb->s_op->open_root(target_sb);

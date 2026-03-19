@@ -80,6 +80,8 @@
 
 #define PAUSE() asm volatile("pause")
 
+#define NOP() asm volatile("nop")
+
 /* Per-CPU TSS selector: CPU 0 → TSS_SELECTOR, CPU n → TSS_SELECTOR + n*8 */
 #define TSS_SELECTOR_FOR(n) (TSS_SELECTOR + (n) * 8)
 
@@ -192,6 +194,7 @@
     (unsigned long long)                                                        \
      ((unsigned short)limit | ((unsigned long long)(unsigned int)base << 16))
 
+#define NAKED __attribute__((naked))
 /*
  * Kernel init call mechanism.
  *

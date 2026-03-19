@@ -5,6 +5,7 @@
 #include <hw/tty.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
+#include <mm/vdso.h>
 #include <fs/fcntl.h>
 #include <fs/fs.h>
 #include <lib/klib.h>
@@ -492,6 +493,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 		printk("fatal error: file %s not found!\n", f);
 		asm("hlt");
 	}
+
+	mm_vdso_init();
 
 	/* don't forget to setup a stack for our program... */
 	do_mmap(esp_buttom, USER_STACK_PAGES * PAGE_SIZE,

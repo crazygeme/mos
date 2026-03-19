@@ -365,6 +365,29 @@ void ps_enum_all(ps_enum_callback callback)
 	spinlock_unlock(&ps_lock);
 }
 
+/* Send signal sig to every user task whose group_id matches pgrp. */
+void ps_send_signal_pgrp(unsigned pgrp, int sig)
+{
+	struct rb_node *node;
+	if (!pgrp || sig <= 0 || sig >= NSIG)
+		return;
+	spinlock_lock(&ps_lock);
+	node = rb_first(&control.mgr_queue);
+	while (node) {
+		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		node = rb_next(node);
+		if (task->type == ps_user && task->user &&
+		    task->user->group_id == pgrp) {
+			spinlock_unlock(&ps_lock);
+			task->sig_pending |= (1UL << (sig - 1));
+			if (task->status == ps_waiting)
+				ps_put_to_ready_queue(task);
+			spinlock_lock(&ps_lock);
+		}
+	}
+	spinlock_unlock(&ps_lock);
+}
+
 /*
  * Public — user address-space management
  */

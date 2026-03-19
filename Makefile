@@ -20,7 +20,7 @@ all: $(DST)/kernel
 run: all
 	@./run.sh
 
-$(DST)/$(TARGET): $(OBJS) $(LIBS) | $(DST)
+$(DST)/$(TARGET): $(OBJS) $(LIBS) $(MAINPATH)/link.ld | $(DST)
 	@echo "LD $@"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 	@cp $(DST)/$(TARGET) $(DST)/$(TARGET).dbg

@@ -21,16 +21,6 @@ SECTIONS
 		*(.text)
 	}
 
-	.user BLOCK(4K): AT(ADDR(.user)-0xC0000000)
-	{
-		*(.user)
-	}
-
-	.userdata BLOCK(4K): AT(ADDR(.userdata)-0xC0000000)
-	{
-		*(.userdata)
-	}
-
 	/* Read-only data. */
 	.rodata BLOCK(4K) : AT(ADDR(.rodata)-0xC0000000)
 	{
@@ -54,6 +44,13 @@ SECTIONS
 		__kinit_start = .;
 		*(SORT_BY_NAME(.kinit.*))
 		__kinit_end = .;
+	}
+
+	.vdso BLOCK(4K): AT(ADDR(.vdso)-0xC0000000)
+	{
+		__vdso_start = .;
+		*(.vdso)
+		__vdso_end = .;
 	}
 
 	/* Read-write data (initialized) */

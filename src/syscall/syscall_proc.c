@@ -4,16 +4,16 @@
  * Covers: getpid/ppid/pgrp, uid/gid, setsid, wait4, kill, brk,
  *         sched_yield, alarm, pause, signals, rlimit, personality.
  */
-
 #include <ps/ps.h>
+#include <ps/signal.h>
 #include <fs/fs.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
+#include <mm/vdso.h>
 #include <hw/time.h>
 #include <int/int.h>
 #include <lib/klib.h>
 #include <config.h>
-#include <signal.h>
 #include <errno.h>
 #include <macro.h>
 #include "syscall_internal.h"
@@ -400,12 +400,6 @@ void do_signal(intr_frame *frame)
 	struct sigaction *sa;
 	signal_frame *sf;
 	unsigned char *new_esp;
-	/* Trampoline: mov $119,%eax (__NR_sigreturn); int $0x80; nop */
-	static const unsigned char tramp[8] = {
-		0xb8, 0x77, 0x00, 0x00, 0x00, /* mov $119, %eax */
-		0xcd, 0x80, /* int $0x80      */
-		0x90 /* nop            */
-	};
 
 	if (cur->type != ps_user)
 		return;
@@ -467,7 +461,9 @@ void do_signal(intr_frame *frame)
 	new_esp = (unsigned char *)((unsigned)new_esp & ~0xfU);
 	sf = (signal_frame *)new_esp;
 
-	sf->return_addr = (unsigned int)sf->trampoline;
+	extern void vdso_sigreturn_tramp();
+
+	sf->return_addr = (unsigned int)mm_vdso_translate(vdso_sigreturn_tramp);
 	sf->signo = sig;
 	sf->saved_eip = (unsigned int)frame->eip;
 	sf->saved_eflags = frame->eflags;
@@ -480,19 +476,21 @@ void do_signal(intr_frame *frame)
 	sf->saved_edi = frame->edi;
 	sf->saved_ebp = frame->ebp;
 	sf->saved_mask = cur->sig_mask;
-	memcpy(sf->trampoline, tramp, sizeof(tramp));
 
 	/* Block this signal while handler runs (unless SA_NODEFER). */
 	if (!(sa->sa_flags & SA_NODEFER))
 		cur->sig_mask |= (1UL << (sig - 1));
 	cur->sig_mask |= sa->sa_mask;
 
+	/* Capture handler before SA_RESETHAND can overwrite it. */
+	void (*handler)(int) = sa->sa_handler;
+
 	/* SA_RESETHAND: reset disposition to SIG_DFL after first delivery. */
 	if (sa->sa_flags & SA_RESETHAND)
 		sa->sa_handler = SIG_DFL;
 
 	/* Redirect iret to the signal handler. */
-	frame->eip = (void *)sa->sa_handler;
+	frame->eip = (void *)handler;
 	frame->esp = (void *)new_esp;
 
 	if (TestControl.verbos)

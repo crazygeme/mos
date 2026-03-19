@@ -140,10 +140,20 @@ static int pts_canon_readline(pts_pair *p)
 			continue;
 		unsigned char c = (unsigned char)ch;
 
-		/* Signals (stub: discard) */
-		if ((tc->c_lflag & ISIG) && tc->c_cc[VINTR] &&
-		    c == tc->c_cc[VINTR])
-			continue;
+		if (tc->c_lflag & ISIG) {
+			int isig = 0;
+			if (tc->c_cc[VINTR] && c == tc->c_cc[VINTR])
+				isig = SIGINT;
+			else if (tc->c_cc[VQUIT] && c == tc->c_cc[VQUIT])
+				isig = SIGQUIT;
+			else if (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP])
+				isig = SIGTSTP;
+			if (isig) {
+				p->canon.len = 0;
+				ps_send_signal_pgrp(p->pgrp, isig);
+				return 0;
+			}
+		}
 
 		if (tc->c_cc[VEOF] && c == tc->c_cc[VEOF])
 			return p->canon.len > 0 ? 1 : 0;

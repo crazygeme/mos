@@ -359,14 +359,19 @@ static void tty_do_write(tty_state *state, const char *buf, unsigned len)
 
 /* ── Canonical / raw input ───────────────────────────────────────────────── */
 
+/* Returns the signal to send for c, or 0 if none. */
 static int isig_check(tty_state *state, unsigned char c)
 {
 	const struct termios *tc = &state->termios;
 	if (!(tc->c_lflag & ISIG))
 		return 0;
-	return (tc->c_cc[VINTR] && c == tc->c_cc[VINTR]) ||
-	       (tc->c_cc[VQUIT] && c == tc->c_cc[VQUIT]) ||
-	       (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP]);
+	if (tc->c_cc[VINTR] && c == tc->c_cc[VINTR])
+		return SIGINT;
+	if (tc->c_cc[VQUIT] && c == tc->c_cc[VQUIT])
+		return SIGQUIT;
+	if (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP])
+		return SIGTSTP;
+	return 0;
 }
 
 static void canon_erase(tty_state *state)
@@ -422,8 +427,14 @@ static int canon_readline(tty_state *state)
 		if (ch < 0)
 			continue;
 		unsigned char c = (unsigned char)ch;
-		if (isig_check(state, c))
-			continue;
+		{
+			int isig = isig_check(state, c);
+			if (isig) {
+				state->canon.len = 0;
+				ps_send_signal_pgrp(state->pgrp, isig);
+				return 0;
+			}
+		}
 		if (tc->c_cc[VERASE] && c == tc->c_cc[VERASE]) {
 			canon_erase(state);
 			continue;

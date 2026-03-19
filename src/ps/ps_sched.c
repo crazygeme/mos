@@ -9,6 +9,7 @@
  */
 
 #include <ps/ps.h>
+#include <ps/signal.h>
 #include <hw/time.h>
 #include <mm/mm.h>
 #include <int/int.h>
@@ -16,7 +17,6 @@
 #include <lib/list.h>
 #include <lib/klib.h>
 #include <macro.h>
-#include <signal.h>
 
 #include "ps_internal.h"
 
@@ -135,7 +135,7 @@ void ps_put_to_dying_queue(task_struct *task)
 		/* Queue SIGCHLD before waking the parent so the signal is
 		 * already pending when wait() returns to userspace. */
 		// FIXME(Ender): currently not working
-		//task->parent->sig_pending |= (1UL << (SIGCHLD - 1));
+		// task->parent->sig_pending |= (1UL << (SIGCHLD - 1));
 		ps_put_to_ready_queue_unsafe(task->parent);
 	}
 	spinlock_unlock(&ps_lock);

@@ -257,8 +257,8 @@ int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 	return sys_getdents(fd, dirp, count);
 }
 
-int sys_select(int nfds, fd_set *readfds, fd_set *writefds,
-	       fd_set *exceptfds, const struct timespec *timeout)
+int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+	       const struct timespec *timeout)
 {
 	if (TestControl.verbos)
 		klog("select(%d, %x, %x, %x, %x)\n", nfds, readfds, writefds,

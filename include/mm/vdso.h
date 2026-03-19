@@ -1,0 +1,8 @@
+#ifndef _MM_VDSO_H
+#define _MM_VDSO_H
+
+void mm_vdso_init();
+
+unsigned mm_vdso_translate(unsigned kernel_code);
+
+#endif

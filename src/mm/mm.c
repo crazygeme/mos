@@ -1,3 +1,4 @@
+#include "config.h"
 #include <boot/multiboot.h>
 #include <lib/klib.h>
 #include <lib/list.h>
@@ -6,6 +7,7 @@
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/phymm.h>
+#include <mm/vdso.h>
 #include <macro.h>
 
 /* Physical memory range tracked by the page allocator */
@@ -341,6 +343,13 @@ int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
 	return 1;
 }
 
+static int mm_dynamic_region(unsigned phy)
+{
+	unsigned begin = phymm_begin * PAGE_SIZE;
+	unsigned end = phymm_end * PAGE_SIZE;
+	return phy >= begin && phy < end;
+}
+
 /* Remove a dynamic user mapping and free the physical page if unreferenced */
 void mm_del_dynamic_map(unsigned int vir)
 {
@@ -355,7 +364,7 @@ void mm_del_dynamic_map(unsigned int vir)
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
 	spinlock_lock(&mm_lock);
-	if (page_index >= phymm_begin && page_index < phymm_end) {
+	if (mm_dynamic_region(phy_addr) || (mm_vdso_region(phy_addr))) {
 		if (phymm_is_used(page_index) &&
 		    phymm_dereference_page(page_index) == 0)
 			phymm_free_user(page_index);

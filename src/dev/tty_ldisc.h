@@ -1,21 +1,15 @@
 /*
- * include/fs/tty_ldisc.h — shared TTY/PTY line discipline helpers
+ * tty_ldisc.h — shared TTY/PTY line discipline interface.
  *
- * Included by both tty.c (virtual consoles) and pts.c (pseudo-terminals).
- * Provides:
- *   - tty_canon_t         canonical-mode line buffer
- *   - tty_default_termios default terminal settings
- *   - tty_input_translate  c_iflag byte transformation
- *   - tty_is_eol           end-of-line detection
- *   - tty_canon_drain      drain bytes from the line buffer
+ * Included by tty.c (virtual consoles) and pts.c (pseudo-terminals).
  */
 #ifndef _FS_TTY_LDISC_H_
 #define _FS_TTY_LDISC_H_
 
-#include <fs/ioctl.h> /* struct termios, tcflag_t, ICRNL, VEOL, … */
-#include <lib/klib.h> /* memcpy, memmove, tolower */
+#include <fs/ioctl.h>      /* struct termios, tcflag_t */
+#include <lib/cyclebuf.h>  /* cy_buf */
 
-/* ── Canonical-mode accumulation buffer ──────────────────────────────────── */
+/* ── Canonical-mode line buffer ──────────────────────────────────────────── */
 
 #define TTY_CANON_BUF_SIZE 256
 
@@ -24,72 +18,37 @@ typedef struct {
 	int len;
 } tty_canon_t;
 
-/* ── Shared default termios ───────────────────────────────────────────────── */
+/* ── Default terminal settings ───────────────────────────────────────────── */
+
+extern const struct termios tty_default_termios;
+
+/* ── Echo callback ───────────────────────────────────────────────────────── */
+
+typedef void (*tty_ldisc_echo_fn)(void *ctx, const char *buf, int len);
+
+/* ── Public functions ────────────────────────────────────────────────────── */
 
 /*
- * tty_default_termios - canonical mode, echo, ONLCR output, 38400-8N1.
- * Declared static const so each translation unit gets its own copy;
- * the compiler/linker will fold identical read-only sections.
+ * tty_input_translate - apply c_iflag transformations to one input byte.
+ * Returns the (possibly modified) byte, or -1 to discard (IGNCR on CR).
  */
-static const struct termios tty_default_termios = {
-	.c_iflag = ICRNL,
-	.c_oflag = OPOST | ONLCR,
-	.c_cflag = B38400 | CS8,
-	.c_lflag = IXON | ISIG | ICANON | ECHO | ECHOE | ECHOCTL | ECHOKE,
-	.c_line = 0,
-	.c_cc = INIT_C_CC,
-};
-
-/* ── Input flag transformation ────────────────────────────────────────────── */
+int tty_input_translate(unsigned char c, tcflag_t iflag);
 
 /*
- * tty_input_translate - apply c_iflag rules to one input byte.
- * Returns the (possibly modified) byte, or -1 if the byte should be
- * silently discarded (IGNCR on a CR).
+ * tty_canon_drain - copy up to size bytes out of canon into dst,
+ * sliding remaining bytes to the front.  Returns bytes copied.
  */
-static inline int tty_input_translate(unsigned char c, tcflag_t iflag)
-{
-	if (iflag & ISTRIP)
-		c &= 0x7f;
-	if (c == '\r') {
-		if (iflag & IGNCR)
-			return -1;
-		if (iflag & ICRNL)
-			return '\n';
-	} else if (c == '\n' && (iflag & INLCR)) {
-		return '\r';
-	}
-	if (iflag & IUCLC)
-		c = (unsigned char)tolower(c);
-	return (int)c;
-}
-
-/* ── End-of-line detection ────────────────────────────────────────────────── */
+int tty_canon_drain(tty_canon_t *canon, char *dst, int size);
 
 /*
- * tty_is_eol - return 1 if c terminates a canonical input line.
+ * tty_ldisc_canon_readline - read one canonical line from buf into canon.
+ *
+ * Returns 1 if a complete line is ready, 0 on EOF or signal delivery.
+ * Set check_eof when the source signals master-closed via the 0xFF sentinel
+ * (pty slave); clear it for keyboard input which never does this.
  */
-static inline int tty_is_eol(unsigned char c, const struct termios *tc)
-{
-	return c == '\n' || (tc->c_cc[VEOL] && c == tc->c_cc[VEOL]) ||
-	       (tc->c_cc[VEOL2] && c == tc->c_cc[VEOL2]);
-}
-
-/* ── Canonical drain ──────────────────────────────────────────────────────── */
-
-/*
- * tty_canon_drain - copy up to size bytes from canon->buf into dst,
- * then shift the remaining unread bytes to the front of the buffer.
- * Returns the number of bytes copied.
- */
-static inline int tty_canon_drain(tty_canon_t *canon, char *dst, int size)
-{
-	int n = size < canon->len ? size : canon->len;
-	memcpy(dst, canon->buf, (unsigned)n);
-	canon->len -= n;
-	if (canon->len > 0)
-		memmove(canon->buf, canon->buf + n, (unsigned)canon->len);
-	return n;
-}
+int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
+			      cy_buf *buf, int check_eof, unsigned pgrp,
+			      tty_ldisc_echo_fn echo, void *ctx);
 
 #endif /* _FS_TTY_LDISC_H_ */

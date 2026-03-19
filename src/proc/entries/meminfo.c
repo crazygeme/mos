@@ -28,7 +28,7 @@ static void fill(void *buf, size_t size)
 	p += sprintf(p, "MemFree:           %8u kB\n", PG_KB(free_pages));
 	p += sprintf(p, "MemAvailable:      %8u kB\n", PG_KB(free_pages));
 	p += sprintf(p, "Buffers:           %8u kB\n", 0u);
-	p += sprintf(p, "Cached:            %8u kB\n", PG_KB(pgc_count));
+	p += sprintf(p, "Cached:            %8u kB\n", PG_KB(1024 - pgc_count));
 	p += sprintf(p, "SwapCached:        %8u kB\n", 0u);
 	p += sprintf(p, "Active:            %8u kB\n", 0u);
 	p += sprintf(p, "Inactive:          %8u kB\n", 0u);

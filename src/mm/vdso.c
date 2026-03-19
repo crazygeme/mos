@@ -23,7 +23,7 @@ _VDSO NAKED void vdso_sigreturn_tramp()
 	NOP();
 }
 
-void mm_vdso_init()
+void mm_vdso_map()
 {
 	unsigned vdso_start = (unsigned)&__vdso_start;
 	unsigned vdso_end = (unsigned)&__vdso_end;
@@ -40,6 +40,14 @@ void mm_vdso_init()
 		mm_add_dynamic_map(vir, phy, PAGE_ENTRY_USER_CODE);
 	}
 	RELOAD_CR3();
+}
+
+int mm_vdso_region(int phy)
+{
+	unsigned vdso_start = (unsigned)&__vdso_start - KERNEL_OFFSET;
+	unsigned vdso_end = (unsigned)&__vdso_end - KERNEL_OFFSET;
+
+	return phy >= vdso_start && phy < vdso_end;
 }
 
 unsigned mm_vdso_translate(unsigned kernel_code)

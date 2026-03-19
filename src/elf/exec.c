@@ -491,7 +491,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 		asm("hlt");
 	}
 
-	mm_vdso_init();
+	mm_vdso_map();
 
 	/* don't forget to setup a stack for our program... */
 	do_mmap(esp_buttom, USER_STACK_PAGES * PAGE_SIZE,

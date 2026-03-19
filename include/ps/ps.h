@@ -152,6 +152,13 @@ typedef struct _user_enviroment {
 	char *cwd;
 } user_enviroment;
 
+typedef struct _signal_context {
+	struct sigaction
+		sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
+	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
+	sigset_t sig_mask; /* bitmask: blocked signals             */
+} signal_context;
+
 typedef enum _ps_status {
 	ps_running,
 	ps_ready,
@@ -197,6 +204,7 @@ struct _task_struct {
 	process_fn fn;
 	void *param;
 	user_enviroment *user;
+	signal_context *signal;
 	int priority;
 	int type;
 	list_entry ps_list; /* dying-queue or wait-queue list node */
@@ -221,10 +229,7 @@ struct _task_struct {
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
 	unsigned long long alarm_expire_ms;
 	/* signal handling */
-	struct sigaction
-		sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
-	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
-	sigset_t sig_mask; /* bitmask: blocked signals             */
+
 	unsigned int magic; // to avoid stack overflow
 };
 

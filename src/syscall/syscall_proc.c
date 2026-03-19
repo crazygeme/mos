@@ -185,7 +185,7 @@ int ps_send_signal(unsigned pid, int sig)
 	if (!target)
 		return -ESRCH;
 
-	target->sig_pending |= (1UL << (sig - 1));
+	target->signal->sig_pending |= (1UL << (sig - 1));
 
 	/* Wake the target if it is sleeping so it can receive the signal. */
 	if (target->status == ps_waiting)
@@ -281,7 +281,7 @@ int sys_pause()
 		klog("pause\n");
 
 	/* Yield CPU until a signal becomes deliverable. */
-	while (!(cur->sig_pending & ~cur->sig_mask))
+	while (!(cur->signal->sig_pending & ~cur->signal->sig_mask))
 		task_sched();
 
 	return -EINTR;
@@ -297,7 +297,7 @@ int sys_sigaction(int sig, void *act, void *oact)
 	if (sig == SIGKILL || sig == SIGSTOP)
 		return -EINVAL;
 
-	sa = &cur->sig_handlers[sig];
+	sa = &cur->signal->sig_handlers[sig];
 
 	if (oact)
 		*(struct sigaction *)oact = *sa;
@@ -316,7 +316,7 @@ int sys_sigprocmask(int how, void *set, void *oset)
 	unsigned long newmask;
 
 	if (oset)
-		*(unsigned long *)oset = cur->sig_mask;
+		*(unsigned long *)oset = cur->signal->sig_mask;
 
 	if (!set)
 		return 0;
@@ -325,20 +325,21 @@ int sys_sigprocmask(int how, void *set, void *oset)
 
 	switch (how) {
 	case SIG_BLOCK:
-		cur->sig_mask |= newmask;
+		cur->signal->sig_mask |= newmask;
 		break;
 	case SIG_UNBLOCK:
-		cur->sig_mask &= ~newmask;
+		cur->signal->sig_mask &= ~newmask;
 		break;
 	case SIG_SETMASK:
-		cur->sig_mask = newmask;
+		cur->signal->sig_mask = newmask;
 		break;
 	default:
 		return -EINVAL;
 	}
 
 	/* SIGKILL and SIGSTOP can never be blocked. */
-	cur->sig_mask &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
+	cur->signal->sig_mask &=
+		~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 
 	if (TestControl.verbos)
 		klog("sigprocmask(%d)\n", how);
@@ -374,7 +375,7 @@ int sys_sigreturn()
 	frame->ebp = sf->saved_ebp;
 
 	/* Restore the signal mask saved before delivery. */
-	cur->sig_mask = sf->saved_mask;
+	cur->signal->sig_mask = sf->saved_mask;
 
 	/*
 	 * Return the original eax so that the interrupted syscall's result
@@ -410,10 +411,10 @@ void do_signal(intr_frame *frame)
 	/* Fire alarm if it has expired. */
 	if (cur->alarm_expire_ms && time_now_ms() >= cur->alarm_expire_ms) {
 		cur->alarm_expire_ms = 0;
-		cur->sig_pending |= (1UL << (SIGALRM - 1));
+		cur->signal->sig_pending |= (1UL << (SIGALRM - 1));
 	}
 
-	deliverable = cur->sig_pending & ~cur->sig_mask;
+	deliverable = cur->signal->sig_pending & ~cur->signal->sig_mask;
 	if (!deliverable)
 		return;
 
@@ -425,7 +426,7 @@ void do_signal(intr_frame *frame)
 	if (sig >= NSIG)
 		return;
 
-	cur->sig_pending &= ~(1UL << (sig - 1));
+	cur->signal->sig_pending &= ~(1UL << (sig - 1));
 
 	/* SIGKILL / SIGSTOP cannot be caught or ignored. */
 	if (sig == SIGKILL || sig == SIGSTOP) {
@@ -433,7 +434,7 @@ void do_signal(intr_frame *frame)
 		return;
 	}
 
-	sa = &cur->sig_handlers[sig];
+	sa = &cur->signal->sig_handlers[sig];
 
 	if (sa->sa_handler == SIG_IGN)
 		return;
@@ -475,12 +476,12 @@ void do_signal(intr_frame *frame)
 	sf->saved_esi = frame->esi;
 	sf->saved_edi = frame->edi;
 	sf->saved_ebp = frame->ebp;
-	sf->saved_mask = cur->sig_mask;
+	sf->saved_mask = cur->signal->sig_mask;
 
 	/* Block this signal while handler runs (unless SA_NODEFER). */
 	if (!(sa->sa_flags & SA_NODEFER))
-		cur->sig_mask |= (1UL << (sig - 1));
-	cur->sig_mask |= sa->sa_mask;
+		cur->signal->sig_mask |= (1UL << (sig - 1));
+	cur->signal->sig_mask |= sa->sa_mask;
 
 	/* Capture handler before SA_RESETHAND can overwrite it. */
 	void (*handler)(int) = sa->sa_handler;

@@ -10,18 +10,19 @@ SCRIPTS =  	$(MAINPATH)/mos.mk $(MAINPATH)/Makefile Makefile
 
 vpath %.c  $(SRC_DIRS)
 
-all: $(OBJS)
-	@echo "AR $(DST)/lwext4/libext4.a"
-	@$(AR) rcs $(DST)/lwext4/libext4.a $(OBJS)
+all: $(DST)/lwext4/libext4.a
+	@:
 
-$(DST)/lwext4:
-	@-mkdir -p $(DST)/lwext4
+$(DST)/lwext4/libext4.a: $(OBJS)
+	@echo "AR $@"
+	@$(AR) rcs $@ $(OBJS)
 
-$(DST)/lwext4/%.c.o: %.c $(SCRIPTS) | $(DST)/lwext4
+$(DST)/lwext4/%.c.o: %.c $(SCRIPTS)
+	@mkdir -p $(dir $@)
 	@echo "CC $<"
-	@$(CC) $(CFLAGS) -MMD -o $@ -c $<
+	@$(CC) $(CFLAGS) -MMD -MP -o $@ -c $<
 
 clean:
-	-rm -f $(OBJS)
+	-@rm -f $(OBJS)
 
 -include $(DEPS)

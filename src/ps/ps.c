@@ -246,6 +246,9 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	memset(task->user->cwd, 0, MAX_PATH);
 	task->user->heap_top = USER_HEAP_BEGIN;
 	task->user->vm = vm_create();
+
+	task->signal = zalloc(sizeof(signal_context));
+
 	task->umask = 0;
 	stack_bottom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
 	LOAD_CR3(task->cr3);
@@ -379,7 +382,7 @@ void ps_send_signal_pgrp(unsigned pgrp, int sig)
 		if (task->type == ps_user && task->user &&
 		    task->user->group_id == pgrp) {
 			spinlock_unlock(&ps_lock);
-			task->sig_pending |= (1UL << (sig - 1));
+			task->signal->sig_pending |= (1UL << (sig - 1));
 			if (task->status == ps_waiting)
 				ps_put_to_ready_queue(task);
 			spinlock_lock(&ps_lock);

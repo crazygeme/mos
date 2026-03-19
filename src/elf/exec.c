@@ -56,15 +56,15 @@ static void cleanup()
 }
 
 /*
- * ps_get_argc_envc - count argument and environment strings
+ * get_argc_envc - count argument and environment strings
  *
  * Walks the NULL-terminated @argv and @envp arrays (same convention as the
  * POSIX execve ABI) and writes the counts into *argv_len and *envp_len.
  * Both pointers must be non-NULL; either array pointer may be NULL (treated
  * as empty).
  */
-static void ps_get_argc_envc(const char *file, char **argv, char **envp,
-			     unsigned *argv_len, unsigned *envp_len)
+static void get_argc_envc(const char *file, char **argv, char **envp,
+			  unsigned *argv_len, unsigned *envp_len)
 {
 	int i = 0;
 	if (!argv_len || !envp_len) {
@@ -89,7 +89,7 @@ static void ps_get_argc_envc(const char *file, char **argv, char **envp,
 }
 
 /*
- * ps_save_argv - deep-copy the argv array into kernel heap memory
+ * save_argv - deep-copy the argv array into kernel heap memory
  *
  * The user-supplied @argv pointers will become invalid after the address
  * space is torn down in cleanup(), so we strdup() every string here.
@@ -102,8 +102,8 @@ static void ps_get_argc_envc(const char *file, char **argv, char **envp,
  * Returns a newly allocated array of @argc (or @argc+1 for scripts) heap
  * strings, or NULL if @argc is zero.
  */
-static char **ps_save_argv(const char *file, char **argv, unsigned argc,
-			   char *script)
+static char **save_argv(const char *file, char **argv, unsigned argc,
+			char *script)
 {
 	char **ret = 0;
 	int i = 0;
@@ -127,13 +127,13 @@ static char **ps_save_argv(const char *file, char **argv, unsigned argc,
 }
 
 /*
- * ps_save_envp - deep-copy the envp array into kernel heap memory
+ * save_envp - deep-copy the envp array into kernel heap memory
  *
- * Same rationale as ps_save_argv(): environment strings must be copied
+ * Same rationale as save_argv(): environment strings must be copied
  * before the user address space is destroyed.  Returns a newly allocated
  * array of @envc heap strings, or NULL if @envc is zero.
  */
-static char **ps_save_envp(char **envp, unsigned envc)
+static char **save_envp(char **envp, unsigned envc)
 {
 	int i = 0;
 	char **ret = 0;
@@ -150,13 +150,13 @@ static char **ps_save_envp(char **envp, unsigned envc)
 }
 
 /*
- * ps_free_v - free a deep-copied argv/envp array previously made by
- *             ps_save_argv() or ps_save_envp()
+ * free_v - free a deep-copied argv/envp array previously made by
+ *             save_argv() or save_envp()
  *
  * Frees each individual string and then the pointer array itself.
  * Safe to call with a NULL @v (no-op).
  */
-static void ps_free_v(char **v, unsigned size)
+static void free_v(char **v, unsigned size)
 {
 	int i = 0;
 	if (!v) {
@@ -202,7 +202,7 @@ but that could change... */
 #define AT_CLKTCK 17 /* Frequency of times() */
 
 /*
- * ps_setup_v - build the initial user stack layout required by the ELF ABI
+ * setup_user_stack - build the initial user stack layout required by the ELF ABI
  *
  * Constructs the stack that the dynamic linker (or a static binary) expects
  * when it receives control.  The layout, growing downward from @top, is:
@@ -227,8 +227,8 @@ but that could change... */
  *
  * Returns the new stack pointer (esp) that should be given to the entry point.
  */
-static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
-			   char **envp, unsigned top, mos_binfmt *exec)
+static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
+				 char **envp, unsigned top, mos_binfmt *exec)
 {
 	int i = 0;
 	char *esp = (char *)(top);
@@ -429,11 +429,11 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * parse arguments and enviroments 
 	 * note that a #! file needs additional slot 
 	 */
-	ps_get_argc_envc(file_name, argv, envp, &argc, &envc);
-	s_argv = ps_save_argv(file_name, argv, argc, firstline);
+	get_argc_envc(file_name, argv, envp, &argc, &envc);
+	s_argv = save_argv(file_name, argv, argc, firstline);
 	if (firstline)
 		argc++;
-	s_envp = ps_save_envp(envp, envc);
+	s_envp = save_envp(envp, envc);
 
 	if (firstline) {
 		free(firstline);
@@ -491,6 +491,10 @@ int sys_execve(const char *f, char **argv, char **envp)
 		asm("hlt");
 	}
 
+	/*
+	 * map a kernel code region into user land, usually used in
+	 * signal deliver and signal return.
+	 */
 	mm_vdso_map();
 
 	/* don't forget to setup a stack for our program... */
@@ -498,12 +502,12 @@ int sys_execve(const char *f, char **argv, char **envp)
 		PROT_READ | PROT_WRITE, 0, -1, 0);
 
 	/* setup arguments and enviroments in proper way for interp */
-	esp_top = ps_setup_v(file_name, argc, s_argv, envc, s_envp, esp_top,
-			     &fmt);
+	esp_top = setup_user_stack(file_name, argc, s_argv, envc, s_envp,
+				   esp_top, &fmt);
 
 	/* that's all */
-	ps_free_v(s_argv, argc);
-	ps_free_v(s_envp, envc);
+	free_v(s_argv, argc);
+	free_v(s_envp, envc);
 	name_put(file_name);
 	cur->type = ps_user;
 	extern void switch_to_user_mode(unsigned eip, unsigned esp);
@@ -532,7 +536,7 @@ static void run_if_exist(const char *path, const char *argv[],
 }
 
 /*
- * user_first_process_run - set up and exec the first user-space process
+ * run_first_user_process - set up and exec the first user-space process
  *
  * Called once from kinit_userspace() in the context of the first kernel
  * thread that will become PID 1.  Responsibilities:
@@ -544,7 +548,7 @@ static void run_if_exist(const char *path, const char *argv[],
  *        fd 2 — /dev/tty O_WRONLY (terminal error output)
  *   3. exec /bin/bash as the init process.
  */
-static void user_first_process_run()
+static void run_first_user_process()
 {
 	const char *devault_argv[] = { "/sbin/init", "1", "fastboot", NULL };
 	const char *user_argv[] = { "placeholder", NULL };
@@ -574,12 +578,12 @@ static void user_first_process_run()
  *
  * Registered with KERNEL_INIT(8, ...) so it runs at init priority 8, after
  * all lower-numbered drivers and subsystems have initialised.  Clears the
- * TTY and then hands off to user_first_process_run().
+ * TTY and then hands off to run_first_user_process().
  */
 static void kinit_userspace(void)
 {
 	tty_default_clear();
-	user_first_process_run();
+	run_first_user_process();
 }
 
 KERNEL_INIT(8, kinit_userspace);

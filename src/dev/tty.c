@@ -651,6 +651,12 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 	case TCSETSW:
 		memcpy(&state->termios, buf, sizeof(state->termios));
 		return 0;
+	case TCSETSF:
+		/* Flush pending input before applying new settings. */
+		state->canon.len = 0;
+		cyb_flush(state->kb_buf);
+		memcpy(&state->termios, buf, sizeof(state->termios));
+		return 0;
 	case TIOCGWINSZ: {
 		struct winsize *ws = (struct winsize *)buf;
 		ws->ws_row = (unsigned short)MAX_ROW;
@@ -663,6 +669,33 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case TIOCSPGRP:
 		state->pgrp = *(unsigned *)buf;
+		return 0;
+	case TIOCSCTTY: {
+		/*
+		 * Make this TTY the controlling terminal for the calling
+		 * process's session.  The process must be a session leader.
+		 * arg==1 allows stealing from another session.
+		 */
+		task_struct *cur = CURRENT_TASK();
+		int steal = buf ? *(int *)buf : 0;
+		if (!cur->user || cur->user->session_id != cur->psid)
+			return -EPERM; /* must be session leader */
+		if (state->pgrp && !steal)
+			return -EPERM; /* already owned, not stealing */
+		state->pgrp = cur->user->group_id;
+		return 0;
+	}
+	case TIOCLINUX: {
+		/*
+		 * Linux virtual-console ioctl; subcommand is the first byte.
+		 * Accept the call silently.
+		 */
+		return 0;
+	}
+	case KDSIGACCEPT:
+		/* Process declares it will handle VT-switch signals itself.
+		 * We do not implement VT switching via signals, so accept
+		 * the call silently. */
 		return 0;
 	}
 	return -ENOSYS;

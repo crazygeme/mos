@@ -174,6 +174,15 @@ int cyb_reader_count(cy_buf *b)
 	return __sync_add_and_fetch(&b->reader_count, 0);
 }
 
+void cyb_flush(cy_buf *b)
+{
+	spinlock_lock(&b->lock);
+	b->read_idx = b->write_idx;
+	b->length = 0;
+	cond_reset(&b->event);
+	spinlock_unlock(&b->lock);
+}
+
 /*
  * Close
  */

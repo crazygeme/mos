@@ -152,9 +152,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
  * Static helpers — system shutdown
  */
 
-static void close_fp_callback(task_struct *task)
+static void close_fp_callback(task_struct *task, void *ctx)
 {
 	int i;
+	(void)ctx;
 	for (i = 0; i < MAX_FD; i++) {
 		if (task->fds == NULL)
 			continue;
@@ -167,7 +168,7 @@ static void close_fp_callback(task_struct *task)
 static void system_down()
 {
 	klog_close();
-	ps_enum_all(close_fp_callback);
+	ps_enum_all(close_fp_callback, NULL);
 	ext4_umount("/");
 	hdd_close();
 }

@@ -44,14 +44,18 @@ typedef struct {
  * ------------------------------------------------------------------ */
 
 #define PROC_MAX_PIDS 512
-static unsigned proc_pid_list[PROC_MAX_PIDS];
-static int proc_pid_count;
 
-static void proc_collect_pid(task_struct *task)
+typedef struct {
+	unsigned *list;
+	int count;
+} pid_ctx_t;
+
+static void proc_collect_pid(task_struct *task, void *ctx)
 {
+	pid_ctx_t *c = (pid_ctx_t *)ctx;
 	if (task->psid != 0xffffffff && task->type != ps_kernel &&
-	    proc_pid_count < PROC_MAX_PIDS)
-		proc_pid_list[proc_pid_count++] = task->psid;
+	    c->count < PROC_MAX_PIDS)
+		c->list[c->count++] = task->psid;
 }
 
 /* ------------------------------------------------------------------ *
@@ -129,7 +133,7 @@ static const file_operations proc_root_fops = {
  * like "/meminfo"; we strip the leading '/' when emitting the dirent name.
  *
  * Live PIDs are collected via ps_enum_all into the module-static array
- * (proc_pid_list / proc_pid_count); acceptable for a single-CPU context.
+ * (proc_pid_list / pid_ctx.count); acceptable for a single-CPU context.
  */
 static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
 {
@@ -142,8 +146,9 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
 	struct linux_dirent *dirp;
 
 	/* Collect live PIDs */
-	proc_pid_count = 0;
-	ps_enum_all(proc_collect_pid);
+	unsigned *proc_pid_list = zalloc(sizeof(unsigned) * PROC_MAX_PIDS);
+	pid_ctx_t pid_ctx = { proc_pid_list, 0 };
+	ps_enum_all(proc_collect_pid, &pid_ctx);
 
 	/* ---- Size calculation ---- */
 	size += ROUND_UP(NAME_OFFSET() + 2); /* "."    strlen=1 +1 */
@@ -159,10 +164,9 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
 	}
 	mutex_unlock(&sb->s_lock);
 
-	for (i = 0; i < proc_pid_count; i++) {
-		sprintf(pidbuf, "%u", proc_pid_list[i]);
-		size += ROUND_UP(NAME_OFFSET() + strlen(pidbuf) + 1);
-	}
+	for (i = 0; i < pid_ctx.count; i++)
+		size += ROUND_UP(NAME_OFFSET() +
+				 sprintf(pidbuf, "%u", pid_ctx.list[i]) + 1);
 
 	/* ---- Allocate and fill ---- */
 	buf = p = kmalloc(size);
@@ -192,10 +196,12 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
 		FILL_ENTRY((char *)kv->key + 1);
 	mutex_unlock(&sb->s_lock);
 
-	for (i = 0; i < proc_pid_count; i++) {
-		sprintf(pidbuf, "%u", proc_pid_list[i]);
+	for (i = 0; i < pid_ctx.count; i++) {
+		sprintf(pidbuf, "%u", pid_ctx.list[i]);
 		FILL_ENTRY(pidbuf);
 	}
+
+	free(proc_pid_list);
 
 #undef FILL_ENTRY
 }

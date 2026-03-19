@@ -327,10 +327,11 @@ void vprintf(const char *fmt, va_list ap)
 	kvformat(tty_print, fmt, ap, NULL);
 }
 
-void vsprintf(char *buf, const char *fmt, va_list ap)
+int vsprintf(char *buf, const char *fmt, va_list ap)
 {
 	buf[0] = '\0';
 	kvformat(putstr_to_str, fmt, ap, buf);
+	return (int)strlen(buf);
 }
 
 /* printf/sprintf are the variadic shims that set up a va_list and delegate. */
@@ -344,13 +345,15 @@ void printf(const char *fmt, ...)
 	va_end(ap);
 }
 
-void sprintf(char *buf, const char *fmt, ...)
+int sprintf(char *buf, const char *fmt, ...)
 {
 	va_list ap;
+	int n;
 
 	va_start(ap, fmt);
-	vsprintf(buf, fmt, ap);
+	n = vsprintf(buf, fmt, ap);
 	va_end(ap);
+	return n;
 }
 
 /*

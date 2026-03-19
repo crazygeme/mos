@@ -129,8 +129,8 @@ static void pts_pair_check_free(pts_pair *p)
  */
 static int pts_canon_readline(pts_pair *p)
 {
-	return tty_ldisc_canon_readline(&p->canon, &p->termios,
-					p->m2s, 1, p->pgrp, NULL, NULL);
+	return tty_ldisc_canon_readline(&p->canon, &p->termios, p->m2s, 1,
+					p->pgrp, NULL, NULL);
 }
 
 /* ── Slave file operations ────────────────────────────────────────────────── */

@@ -47,9 +47,9 @@ void klog_close(void);
 void printk(const char *str, ...);
 
 void vprintf(const char *fmt, va_list ap);
-void vsprintf(char *buf, const char *fmt, va_list ap);
+int vsprintf(char *buf, const char *fmt, va_list ap);
 void printf(const char *str, ...);
-void sprintf(char *buf, const char *fmt, ...);
+int sprintf(char *buf, const char *fmt, ...);
 
 /* ── String / memory ──────────────────────────────────────────────────────── */
 

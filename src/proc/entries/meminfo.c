@@ -1,116 +1,47 @@
+/*
+ * /proc/meminfo — memory statistics.
+ *
+ * Standard fields match the Linux /proc/meminfo format (values in kB).
+ * MOS-specific diagnostics live in /proc/mos.
+ */
 #include <mm/mm.h>
 #include "generic.h"
 
-extern unsigned page_fault_cow;
-extern unsigned page_fault_invalid;
-extern unsigned page_fault_file;
-extern unsigned page_fault_file_cache_hit;
-extern unsigned page_fault_file_read;
-extern unsigned page_fault_perm;
-extern unsigned long long page_fault_cow_spent;
-extern unsigned long long page_fault_invalid_spent;
-extern unsigned long long page_fault_file_spent;
-extern unsigned long long page_fault_file_search_spent;
-extern unsigned long long page_fault_perm_spent;
-extern unsigned int heap_quota;
-extern unsigned int heap_quota_high;
-extern unsigned int cur_block_top;
 extern unsigned phymm_begin;
 extern unsigned phymm_end;
-extern unsigned pgc_count;
-extern unsigned pgc_top;
 extern unsigned phymm_used;
-unsigned page_fault_file_total = 0;
-unsigned page_fault_file_cache_hit_total = 0;
-unsigned page_fault_file_read_total = 0;
-unsigned long long page_fault_cow_spent_total = 0;
-unsigned long long page_fault_invalid_spent_total = 0;
-unsigned long long page_fault_file_spent_total = 0;
-unsigned long long page_fault_file_search_spent_total = 0;
-unsigned long long page_fault_perm_spent_total = 0;
+extern unsigned pgc_count; /* current page-cache pages */
+extern unsigned pgc_top; /* page-table cache pages allocated */
+
+/* Convert pages to kB */
+#define PG_KB(n) (((unsigned long)(n)) * (PAGE_SIZE / 1024))
 
 static void fill(void *buf, size_t size)
 {
-	int hit_rate = 0;
-	page_fault_cow_spent_total += page_fault_cow_spent;
-	page_fault_invalid_spent_total += page_fault_invalid_spent;
-	page_fault_file_spent_total += page_fault_file_spent;
-	page_fault_file_search_spent_total += page_fault_file_search_spent;
-	page_fault_perm_spent_total += page_fault_perm_spent;
-	page_fault_file_read_total += page_fault_file_read;
-	page_fault_file_total += page_fault_file;
-	page_fault_file_cache_hit_total += page_fault_file_cache_hit;
-	hit_rate = page_fault_file == 0 ?
-			   0 :
-			   page_fault_file_cache_hit * 100 / page_fault_file;
+	unsigned total_pages = phymm_end - phymm_begin;
+	unsigned free_pages = total_pages - phymm_used;
 
+	char *p = buf;
 	memset(buf, 0, size);
-	sprintf(buf,
-		"Physical memory Begin:                  %h\n"
-		"Physical memory End:                    %h\n"
-		"Physical memory Total:                  %h\n"
-		"Physical memory Used:                   %h\n"
-		"Page table cache Highest:               %h\n"
-		"Page table cache Current:               %h\n"
-		"Page fault file count:                  %d\n"
-		"Page fault file count(Total):           %d,%d\n"
-		"Page fault file cache hit:              %d\n"
-		"Page fault file cache hit(Total):       %d,%d\n"
-		"Page fault file cache hit rate:         %d%%\n"
-		"Page fault file spent:                  %d.%d ms\n"
-		"Page fault file spent(Total):           %d.%d ms\n"
-		"Page fault file search spent:           %d.%d ms\n"
-		"Page fault file search spent(Total):    %d.%d ms\n"
-		"Page fault invalid count:               %d\n"
-		"Page fault invalid spent:               %d.%d ms\n"
-		"Page fault invalid spent(Total):        %d.%d ms\n"
-		"Page fault cow count:                   %d\n"
-		"Page fault cow spent:                   %d.%d ms\n"
-		"Page fault cow spent(Total):            %d.%d ms\n"
-		"Page fault perm count:                  %d\n"
-		"Page fault perm spent:                  %d.%d ms\n"
-		"Page fault perm spent(Total):           %d.%d ms\n"
-		"Page fault read file:                   %h\n"
-		"Page fault read file(Total):            %h\n"
-		"kernel heap quota                       %h\n"
-		"kernel heap Highest                     %h\n"
-		"\n\n",
-		phymm_begin * PAGE_SIZE, phymm_end * PAGE_SIZE,
-		(phymm_end - phymm_begin) * PAGE_SIZE, phymm_used * PAGE_SIZE,
-		pgc_top * PAGE_SIZE, pgc_count * PAGE_SIZE, page_fault_file,
-		(int)page_fault_file_total / 1000,
-		(int)page_fault_file_total % 1000,
-		(int)page_fault_file_cache_hit,
-		(int)page_fault_file_cache_hit_total / 1000,
-		(int)page_fault_file_cache_hit_total % 1000, hit_rate,
-		(int)page_fault_file_spent / 1000,
-		(int)page_fault_file_spent % 1000,
-		(int)page_fault_file_spent_total / 1000,
-		(int)page_fault_file_spent_total % 1000,
-		(int)page_fault_file_search_spent / 1000,
-		(int)page_fault_file_search_spent % 1000,
-		(int)page_fault_file_search_spent_total / 1000,
-		(int)page_fault_file_search_spent_total % 1000,
-		page_fault_invalid, (int)page_fault_invalid_spent / 1000,
-		(int)page_fault_invalid_spent % 1000,
-		(int)page_fault_invalid_spent_total / 1000,
-		(int)page_fault_invalid_spent_total % 1000, page_fault_cow,
-		(int)page_fault_cow_spent / 1000,
-		(int)page_fault_cow_spent % 1000,
-		(int)page_fault_cow_spent_total / 1000,
-		(int)page_fault_cow_spent_total % 1000, page_fault_perm,
-		(int)page_fault_perm_spent / 1000,
-		(int)page_fault_perm_spent % 1000,
-		(int)page_fault_perm_spent_total / 1000,
-		(int)page_fault_perm_spent_total % 1000, page_fault_file_read,
-		page_fault_file_read_total, heap_quota, heap_quota_high);
-	page_fault_cow = page_fault_invalid = page_fault_file =
-		page_fault_perm = 0;
-	page_fault_cow_spent = page_fault_invalid_spent =
-		page_fault_file_spent = page_fault_perm_spent =
-			page_fault_file_search_spent = 0;
-	page_fault_file_read = 0;
-	page_fault_file_cache_hit = 0;
+
+	p += sprintf(p, "MemTotal:          %8u kB\n", PG_KB(total_pages));
+	p += sprintf(p, "MemFree:           %8u kB\n", PG_KB(free_pages));
+	p += sprintf(p, "MemAvailable:      %8u kB\n", PG_KB(free_pages));
+	p += sprintf(p, "Buffers:           %8u kB\n", 0u);
+	p += sprintf(p, "Cached:            %8u kB\n", PG_KB(pgc_count));
+	p += sprintf(p, "SwapCached:        %8u kB\n", 0u);
+	p += sprintf(p, "Active:            %8u kB\n", 0u);
+	p += sprintf(p, "Inactive:          %8u kB\n", 0u);
+	p += sprintf(p, "SwapTotal:         %8u kB\n", 0u);
+	p += sprintf(p, "SwapFree:          %8u kB\n", 0u);
+	p += sprintf(p, "Dirty:             %8u kB\n", 0u);
+	p += sprintf(p, "Writeback:         %8u kB\n", 0u);
+	p += sprintf(p, "PageTables:        %8u kB\n", PG_KB(pgc_top));
+	p += sprintf(p, "KernelStack:       %8u kB\n", 0u);
+	p += sprintf(p, "CommitLimit:       %8u kB\n", PG_KB(total_pages));
+	p += sprintf(p, "Committed_AS:      %8u kB\n", PG_KB(phymm_used));
+
+	(void)p;
 }
 
 DEFINE_PROC_FILE(meminfo, fill);

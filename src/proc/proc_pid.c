@@ -359,9 +359,8 @@ static void maps_region_cb(vm_region *region, void *data)
 	perms[4] = '\0';
 
 	p = ctx->buf + ctx->pos;
-	sprintf(p, "%08x-%08x %s %08x 00:00 0\n", region->begin, region->end,
-		perms, region->offset);
-	ctx->pos += strlen(p);
+	ctx->pos += sprintf(p, "%08x-%08x %s %08x 00:00 0\n", region->begin,
+			    region->end, perms, region->offset);
 }
 
 static void fill_maps(char *buf, size_t size, task_struct *task)
@@ -375,19 +374,19 @@ static void fill_maps(char *buf, size_t size, task_struct *task)
 	/* Heap pseudo-region */
 	if (task->user->heap_top > USER_HEAP_BEGIN && ctx.pos + 80 < size) {
 		p = buf + ctx.pos;
-		sprintf(p, "%08x-%08x rw-p 00000000 00:00 0          [heap]\n",
+		ctx.pos += sprintf(
+			p, "%08x-%08x rw-p 00000000 00:00 0          [heap]\n",
 			USER_HEAP_BEGIN, task->user->heap_top);
-		ctx.pos += strlen(p);
 	}
 
 	/* Stack pseudo-region */
 	if (ctx.pos + 80 < size) {
 		p = buf + ctx.pos;
-		sprintf(p, "%08x-%08x rw-p 00000000 00:00 0          [stack]\n",
+		ctx.pos += sprintf(
+			p, "%08x-%08x rw-p 00000000 00:00 0          [stack]\n",
 			(unsigned)KERNEL_OFFSET -
 				USER_STACK_PAGES * (unsigned)PAGE_SIZE,
 			(unsigned)KERNEL_OFFSET);
-		ctx.pos += strlen(p);
 	}
 }
 
@@ -446,9 +445,8 @@ static file *pid_fd_dir_open(task_struct *task)
 	if (task->fds) {
 		for (i = 0; i < MAX_FD; i++) {
 			if (task->fds[i].used) {
-				sprintf(name, "%d", i);
-				size += ROUND_UP(NAME_OFFSET() + strlen(name) +
-						 1);
+				size += ROUND_UP(NAME_OFFSET() +
+						 sprintf(name, "%d", i) + 1);
 			}
 		}
 	}

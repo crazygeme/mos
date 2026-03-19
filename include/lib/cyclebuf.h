@@ -29,6 +29,7 @@ int cyb_reader_count(cy_buf *b);
  * Returns the number of bytes read, or 0 on EOF (no writers remain). */
 int cyb_getbuf(cy_buf *b, void *buf, int len);
 
+void cyb_flush(cy_buf *b);
 void cyb_writer_close(cy_buf *b);
 
 void cyb_reader_close(cy_buf *b);

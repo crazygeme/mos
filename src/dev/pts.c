@@ -191,7 +191,11 @@ static int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case TCSETS:
 	case TCSETSW:
+		memcpy(&p->termios, buf, sizeof(p->termios));
+		return 0;
 	case TCSETSF:
+		p->canon.len = 0;
+		cyb_flush(p->m2s);
 		memcpy(&p->termios, buf, sizeof(p->termios));
 		return 0;
 	case TIOCGWINSZ:
@@ -206,6 +210,16 @@ static int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 	case TIOCSPGRP:
 		p->pgrp = *(unsigned *)buf;
 		return 0;
+	case TIOCSCTTY: {
+		task_struct *cur = CURRENT_TASK();
+		int steal = buf ? *(int *)buf : 0;
+		if (!cur->user || cur->user->session_id != cur->psid)
+			return -EPERM;
+		if (p->pgrp && !steal)
+			return -EPERM;
+		p->pgrp = cur->user->group_id;
+		return 0;
+	}
 	}
 	return -ENOSYS;
 }
@@ -316,7 +330,11 @@ static int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case TCSETS:
 	case TCSETSW:
+		memcpy(&p->termios, buf, sizeof(p->termios));
+		return 0;
 	case TCSETSF:
+		p->canon.len = 0;
+		cyb_flush(p->m2s);
 		memcpy(&p->termios, buf, sizeof(p->termios));
 		return 0;
 	case TIOCGWINSZ:
@@ -331,6 +349,16 @@ static int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 	case TIOCSPGRP:
 		p->pgrp = *(unsigned *)buf;
 		return 0;
+	case TIOCSCTTY: {
+		task_struct *cur = CURRENT_TASK();
+		int steal = buf ? *(int *)buf : 0;
+		if (!cur->user || cur->user->session_id != cur->psid)
+			return -EPERM;
+		if (p->pgrp && !steal)
+			return -EPERM;
+		p->pgrp = cur->user->group_id;
+		return 0;
+	}
 	}
 	return -ENOSYS;
 }

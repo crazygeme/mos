@@ -692,6 +692,36 @@ static unsigned char cursor_font[][12] = {
 
 static const unsigned char bit_mask[8] = { 128, 64, 32, 16, 8, 4, 2, 1 };
 
+/*
+ * Glyph pixel cache — each glyph pre-expanded to char_height*char_width
+ * 32-bit pixel values (VGA_COLOR_WHITE for set bits, 0 for clear bits).
+ * Indices 0-127: number_font; 128: cursor_font[0]; 129: cursor_font[1].
+ * Populated once by glyph_cache_init() and never changed afterwards.
+ */
+#define GLYPH_CACHE_COUNT 130
+static unsigned glyph_pixels[GLYPH_CACHE_COUNT][char_height * char_width];
+
+static void glyph_cache_init(void)
+{
+	int g, i, j;
+	for (g = 0; g < 128; g++) {
+		for (i = 0; i < char_height; i++) {
+			unsigned char row = number_font[g][i];
+			for (j = 0; j < char_width; j++)
+				glyph_pixels[g][i * char_width + j] =
+					(row & bit_mask[j]) ? VGA_COLOR_WHITE : 0;
+		}
+	}
+	for (g = 0; g < 2; g++) {
+		for (i = 0; i < char_height; i++) {
+			unsigned char row = cursor_font[g][i];
+			for (j = 0; j < char_width; j++)
+				glyph_pixels[128 + g][i * char_width + j] =
+					(row & bit_mask[j]) ? VGA_COLOR_WHITE : 0;
+		}
+	}
+}
+
 /* Internal framebuffer state (not exported) */
 
 static unsigned int *fb_buffer = (unsigned int *)0xE0000;
@@ -727,36 +757,35 @@ static unsigned fb_get_point(int x, int y)
 
 static void fb_write_char(int x, int y, int val, unsigned color)
 {
-	unsigned char i, j, *c;
-	unsigned back_color, base_x, base_y;
 	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned base_x, base_y;
+	int glyph_idx, i;
 
 	x = x * char_width;
 	y = y * char_height;
-
-	if (val > 128) {
-		if (val == 129) {
-			c = cursor_font[0];
-		} else if (val == 130) {
-			c = cursor_font[1];
-		} else {
-			val = 4;
-			c = number_font[val];
-		}
-	} else {
-		c = number_font[val];
-	}
-
 	base_x = _fb_x_off + x;
 	base_y = _fb_y_off + y;
-	back_color = disp[base_y * _hw_resolution_x + base_x];
 
-	for (i = 0; i < char_height; ++i) {
-		unsigned *rowp =
-			disp + (base_y + i) * _hw_resolution_x + base_x;
-		unsigned char row = c[i];
-		for (j = 0; j < char_width; ++j) {
-			rowp[j] = (row & bit_mask[j]) ? color : back_color;
+	glyph_idx = (val == 129) ? 128 : (val == 130) ? 129 : val;
+
+	if (color == VGA_COLOR_WHITE) {
+		/* Fast path: blit pre-expanded pixel rows directly. */
+		unsigned *glyph = glyph_pixels[glyph_idx];
+		for (i = 0; i < char_height; i++)
+			memcpy(disp + (base_y + i) * _hw_resolution_x + base_x,
+			       glyph + i * char_width,
+			       char_width * sizeof(unsigned));
+	} else {
+		/* Slow path: arbitrary color, decode on the fly. */
+		unsigned char *font = (glyph_idx < 128) ?
+			number_font[glyph_idx] : cursor_font[glyph_idx - 128];
+		for (i = 0; i < char_height; i++) {
+			unsigned *rowp =
+				disp + (base_y + i) * _hw_resolution_x + base_x;
+			unsigned char row = font[i];
+			int j;
+			for (j = 0; j < char_width; j++)
+				rowp[j] = (row & bit_mask[j]) ? color : 0;
 		}
 	}
 }
@@ -1041,6 +1070,7 @@ void fb_enable()
 	_fb_font_height = char_height;
 	_fb_x_off = _fb_y_off = 0;
 	_fb_cursor = 0;
+	glyph_cache_init();
 
 	mm_size = _resolution_x * _resolution_y * 4;
 	if (_fb_buffer_phy) {

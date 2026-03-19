@@ -36,6 +36,8 @@
 #define TIOCCONS 0x541D
 #define TIOCGSERIAL 0x541E
 #define TIOCSSERIAL 0x541F
+/* KD (keyboard/display) ioctls */
+#define KDSIGACCEPT 0x4B4E /* process accepts VT-switch signal */
 
 typedef unsigned char cc_t;
 typedef unsigned int speed_t;

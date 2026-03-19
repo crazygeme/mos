@@ -362,6 +362,9 @@ int sys_sigreturn()
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
 	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 4);
 
+	if (TestControl.verbos)
+		klog("sigreturn\n");
+
 	/* Restore original user registers and EIP into the interrupt frame. */
 	frame->eip = (void *)sf->saved_eip;
 	frame->eflags = sf->saved_eflags;
@@ -495,7 +498,7 @@ void do_signal(intr_frame *frame)
 	frame->esp = (void *)new_esp;
 
 	if (TestControl.verbos)
-		klog("sig_deliver(%d, %d)\n", cur->psid, sig);
+		klog("sig_deliver(%d)\n", sig);
 }
 
 int sys_getrlimit(int resource, void *limit)

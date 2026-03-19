@@ -299,7 +299,7 @@ void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
 				 const char *func);
 void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 			  const char *func);
-
+task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
 int ps_send_signal(unsigned pid, int sig);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);

@@ -161,6 +161,9 @@ static ssize_t pts_slave_write(file *fp, const void *buf, size_t size,
 	unsigned i;
 	if (!buf || size < 1)
 		return 0;
+	/* Master has closed: no reader on s2m. */
+	if (cyb_reader_count(p->s2m) == 0)
+		return -EIO;
 	for (i = 0; i < (unsigned)size; i++) {
 		unsigned char c = src[i];
 		if ((p->termios.c_oflag & OPOST) && c == '\n' &&
@@ -298,6 +301,9 @@ static ssize_t pts_master_write(file *fp, const void *buf, size_t size,
 	pts_pair *p = fp->f_inode->i_private;
 	if (!buf || size < 1)
 		return 0;
+	/* All slaves have closed: no reader on m2s. */
+	if (cyb_reader_count(p->m2s) == 0)
+		return -EIO;
 	cyb_putbuf(p->m2s, (unsigned char *)buf, (unsigned)size);
 	return (ssize_t)size;
 }

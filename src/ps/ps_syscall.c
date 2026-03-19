@@ -363,6 +363,14 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			return ret;
 		}
 
+		if (pid && ps_find_process_unsafe(pid) == NULL) {
+			spinlock_unlock(&ps_lock);
+			if (TestControl.verbos)
+				klog("wait(%d) = %d\n", pid, -ECHILD);
+
+			return -ECHILD;
+		}
+
 		/* Interrupted by a non-SIGCHLD signal: return EINTR. */
 		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
 		    ~(1UL << (SIGCHLD - 1))) {

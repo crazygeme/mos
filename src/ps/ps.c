@@ -328,12 +328,11 @@ void ps_update_tss(unsigned int esp0)
  */
 
 /* RB-tree search of mgr_queue by psid. Returns NULL if not found. */
-task_struct *ps_find_process(unsigned psid)
+task_struct *ps_find_process_unsafe(unsigned psid)
 {
 	struct rb_node *node;
 	task_struct *task = NULL;
 
-	spinlock_lock(&ps_lock);
 	node = control.mgr_queue.rb_node;
 	while (node) {
 		task_struct *t = rb_entry(node, task_struct, mgr_rb);
@@ -346,6 +345,15 @@ task_struct *ps_find_process(unsigned psid)
 			break;
 		}
 	}
+	return task;
+}
+
+task_struct *ps_find_process(unsigned psid)
+{
+	task_struct *task = NULL;
+
+	spinlock_lock(&ps_lock);
+	task = ps_find_process_unsafe(psid);
 	spinlock_unlock(&ps_lock);
 	return task;
 }

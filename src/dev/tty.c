@@ -70,6 +70,10 @@ typedef struct {
 	unsigned bash_pid;
 	/* Parent task for this TTY, used for setting root and waitpid */
 	task_struct *parent;
+	/* number of open file structs referencing this TTY */
+	int open_count;
+	/* set when last fd is closed; guards read/write against stale access */
+	int released;
 } tty_state;
 
 static tty_state ttys[TTY_MAX_VDEV];
@@ -368,7 +372,7 @@ static void tty_echo_cb(void *ctx, const char *buf, int len)
 static int canon_readline(tty_state *state)
 {
 	return tty_ldisc_canon_readline(&state->canon, &state->termios,
-					state->kb_buf, 0, state->pgrp,
+					state->kb_buf, 1, state->pgrp,
 					tty_echo_cb, state);
 }
 
@@ -379,10 +383,14 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 	unsigned vmin = tc->c_cc[VMIN];
 	ssize_t n = 0;
 	while ((size_t)n < size) {
+		if (state->released)
+			break;
 		if ((unsigned)n >= vmin && cyb_isempty(state->kb_buf))
 			break;
-		int ch = tty_input_translate(cyb_getc(state->kb_buf),
-					     tc->c_iflag);
+		unsigned char raw = cyb_getc(state->kb_buf);
+		if (raw == (unsigned char)EOF)
+			break;
+		int ch = tty_input_translate(raw, tc->c_iflag);
 		if (ch < 0)
 			continue;
 		dst[n++] = (char)ch;
@@ -567,6 +575,8 @@ void tty_switch(int n)
 static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	tty_state *state = fp->f_inode->i_private;
+	if (state->released)
+		return -EIO;
 	if (fp->f_mode != O_RDONLY && fp->f_mode != O_RDWR)
 		return -EACCES;
 	if (size < 1 || !buf)
@@ -582,6 +592,8 @@ static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 static ssize_t tty_fs_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
 	tty_state *state = fp->f_inode->i_private;
+	if (state->released)
+		return -EIO;
 	if (fp->f_mode != O_WRONLY && fp->f_mode != O_RDWR)
 		return -EACCES;
 	if (size < 1 || !buf)
@@ -720,11 +732,33 @@ static int tty_fs_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
+static int tty_fs_release(file *fp)
+{
+	tty_state *state = fp->f_inode->i_private;
+
+	if (__sync_add_and_fetch(&state->open_count, -1) == 0) {
+		/*
+		 * Last fd closed: mark the TTY released and wake up any task
+		 * blocked in read().  We put an EOF sentinel (0xFF) into the
+		 * keyboard buffer so that cyb_getc() returns immediately;
+		 * canon_readline (check_eof=1) and raw_read both treat it as
+		 * end-of-file and bail out.
+		 */
+		state->released = 1;
+		cyb_putc(state->kb_buf, (unsigned char)EOF);
+	}
+
+	kfree(fp->f_inode);
+	kfree(fp);
+	return 0;
+}
+
 static const inode_operations tty_iops = {
 	.getattr = tty_fs_getattr,
 };
 
 static const file_operations tty_fops = {
+	.release = tty_fs_release,
 	.read = tty_fs_read,
 	.write = tty_fs_write,
 	.llseek = tty_fs_llseek,
@@ -734,11 +768,17 @@ static const file_operations tty_fops = {
 
 static file *tty_open_root(super_block *sb)
 {
+	tty_state *state = sb->s_fs_info;
+
+	/* Clear released flag and bump open count for this new file struct. */
+	state->released = 0;
+	__sync_add_and_fetch(&state->open_count, 1);
+
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
 	node->i_op = &tty_iops;
-	node->i_private = sb->s_fs_info;
+	node->i_private = state;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;

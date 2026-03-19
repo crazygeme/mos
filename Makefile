@@ -1,5 +1,6 @@
 MAINPATH = $(shell pwd)
 export MAINPATH
+MAKEFLAGS += --no-print-directory
 include $(MAINPATH)/mos.mk
 TARGET	= kernel
 
@@ -13,14 +14,16 @@ DEPS +=    $(patsubst %.S,$(DST)/obj/%.s.d,$(ASMS))
 LIBS =	   $(DST)/lwext4/libext4.a
 CFLAGS  =  $(COMMON_CFLAGS) -O0
 
-.PHONY: all clean rebuild
+.PHONY: all clean rebuild third_party
 
 all: $(DST)/kernel
+	@:
 
 run: all
 	@./run.sh
 
-$(DST)/$(TARGET): $(OBJS) $(LIBS) $(MAINPATH)/link.ld | $(DST)
+$(DST)/$(TARGET): $(OBJS) $(LIBS) $(MAINPATH)/link.ld
+	@mkdir -p $(dir $@)
 	@echo "LD $@"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
 	@cp $(DST)/$(TARGET) $(DST)/$(TARGET).dbg
@@ -37,11 +40,12 @@ $(DST)/obj/%.s.o: %.S $(SCRIPTS)
 	@echo "CC $<"
 	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(DST):
-	@-mkdir -p $(DST)
 
-$(DST)/lwext4/libext4.a: | $(DST)
-	@+$(MAKE) -C third_party
+$(DST)/lwext4/libext4.a: third_party
+
+third_party: $(SCRIPTS)
+	@mkdir -p $(dir $@)
+	@$(MAKE) -C third_party
 
 clean:
 	@-rm -rf $(DST)
@@ -49,6 +53,9 @@ clean:
 rebuild:
 	@+$(MAKE) clean
 	@+$(MAKE)
+
+format:
+	@-find src include -name "*.c" -o -name "*.h" | xargs clang-format -i
 
 -include $(DEPS)
 

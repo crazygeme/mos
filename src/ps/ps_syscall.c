@@ -145,6 +145,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		sb_put(task->root);
 
 	kfree(task->user);
+	kfree(task->signal);
 	vm_free(task, 1);
 }
 
@@ -229,15 +230,14 @@ int do_fork(unsigned flag)
 	task->user->group_id = cur->user->group_id;
 	task->user->session_id = cur->user->session_id;
 
+	task->signal = zalloc(sizeof(signal_context));
+	memcpy(task->signal, cur->signal, sizeof(signal_context));
+	// child starts with no signal pending
+	task->signal->sig_pending = 0;
+
 	task->umask = cur->umask;
 	task->priority = cur->priority;
 	task->type = cur->type;
-
-	/* Inherit signal handlers and mask; child starts with no pending signals. */
-	memcpy(task->sig_handlers, cur->sig_handlers,
-	       sizeof(cur->sig_handlers));
-	task->sig_mask = cur->sig_mask;
-	task->sig_pending = 0;
 
 	task->fork_flag = flag;
 	task->root = cur->root;
@@ -366,7 +366,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		}
 
 		/* Interrupted by a non-SIGCHLD signal: return EINTR. */
-		if (cur->sig_pending & ~cur->sig_mask &
+		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
 		    ~(1UL << (SIGCHLD - 1))) {
 			spinlock_unlock(&ps_lock);
 			return -EINTR;

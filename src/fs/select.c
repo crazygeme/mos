@@ -56,9 +56,9 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	unsigned deadline = 0;
 	reads = writes = excepts = NULL;
 	task_struct *cur = CURRENT_TASK();
-	sigset_t saved_mask = cur->sig_mask;
+	sigset_t saved_mask = cur->signal->sig_mask;
 	if (sigmask)
-		cur->sig_mask = *(sigset_t *)sigmask;
+		cur->signal->sig_mask = *(sigset_t *)sigmask;
 
 	ALLOC_SRC(reads, readfds);
 	ALLOC_SRC(writes, writefds);
@@ -116,7 +116,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 		CURRENT_TASK()->timeout = 0;
 
 		/* Return EINTR if an unmasked signal arrived. */
-		if (cur->sig_pending & ~cur->sig_mask) {
+		if (cur->signal->sig_pending & ~cur->signal->sig_mask) {
 			ret = -EINTR;
 			break;
 		}
@@ -124,7 +124,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	} while (1);
 
 	if (sigmask)
-		cur->sig_mask = saved_mask;
+		cur->signal->sig_mask = saved_mask;
 
 	if (reads)
 		free(reads);

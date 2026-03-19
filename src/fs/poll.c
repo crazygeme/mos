@@ -92,7 +92,7 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 		/* Return EINTR if an unmasked signal arrived. */
 		{
 			task_struct *cur = CURRENT_TASK();
-			if (cur->sig_pending & ~cur->sig_mask)
+			if (cur->signal->sig_pending & ~cur->signal->sig_mask)
 				return -EINTR;
 		}
 

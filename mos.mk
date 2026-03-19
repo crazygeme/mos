@@ -54,4 +54,3 @@ COMMON_CFLAGS = -fno-pie\
 		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=1
 LDFLAGS	=	-m elf_i386 -T link.ld 
 DST     =	$(MAINPATH)/out
-TEST 	=	test

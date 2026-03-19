@@ -37,7 +37,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <macro.h>
-#include <ext4.h>
+#include <ext4_oflags.h>
 #include "tty_ldisc.h"
 
 #define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (0-9) */

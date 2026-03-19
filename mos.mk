@@ -13,22 +13,14 @@ AR =		i686-elf-ar
 SP =		i686-elf-strip
 DS =		i686-elf-objdump
 OS =		Darwin
-else
-CC =		i386-elf-gcc
-LD =		i386-elf-ld
-AR =		i386-elf-ar
-SP =		i386-elf-strip
-DS =		i386-elf-objdump
-OS =		Cygwin
 endif
 endif
 
-CSTRICT	= 	-Werror=return-type\
-		-Werror=uninitialized\
-            	-fno-stack-protector\
-		-w
+CSTRICT	= 	-fno-stack-protector\
+		-Werror\
+		-Wall 
 CIGNORE	=	-Wno-int-conversion\
-		-Wno-incompatible-pointer-types
+		-Wno-unused-function
 COMMON_CFLAGS = -fno-pie\
 		-fno-builtin\
 		-nostdlib\

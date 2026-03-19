@@ -42,12 +42,12 @@ rbtree, if necessary.
 #define NULL ((void *)0)
 #endif
 
-#define INLINE
+#define INLINE __attribute__((unused))
 
 struct rb_node {
 	unsigned long rb_parent_color;
-#define RB_RED 0
-#define RB_BLACK 1
+#define _RBTREE_RED 0
+#define _RBTREE_BLACK 1
 	struct rb_node *rb_right;
 	struct rb_node *rb_left;
 };
@@ -79,10 +79,10 @@ static INLINE void rb_set_color(struct rb_node *rb, int color)
 	rb->rb_parent_color = (rb->rb_parent_color & ~1) | color;
 }
 
-#define RB_ROOT          \
-	(struct rb_root) \
-	{                \
-		NULL,    \
+#define _RBTREE_ROOT_INIT \
+	(struct rb_root)  \
+	{                 \
+		NULL,     \
 	}
 #define rb_entry(ptr, type, member) container_of(ptr, type, member)
 
@@ -134,8 +134,8 @@ static INLINE void rb_link_node(struct rb_node *node, struct rb_node *parent,
 
 typedef struct _hash_table hash_table;
 typedef struct _key_value_pair key_value_pair;
-typedef int (*hash_comp_fn)(void *my_key, void *in_node);
-typedef int (*hash_evict_fn)(const key_value_pair *pair);
+typedef int (*hash_comp_fn)(const void *my_key, const void *in_node);
+typedef void (*hash_evict_fn)(const key_value_pair *pair);
 
 struct _hash_table {
 	struct rb_root root;
@@ -162,7 +162,7 @@ int hash_remove(hash_table *table, void *key);
 
 int hash_remove_at(hash_table *table, key_value_pair *pair);
 
-key_value_pair *hash_find(hash_table *table, void *key);
+key_value_pair *hash_find(hash_table *table, const void *key);
 
 int hash_update(hash_table *table, void *key, void *val);
 

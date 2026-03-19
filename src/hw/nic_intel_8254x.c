@@ -1,20 +1,24 @@
 #include <hw/nic.h>
 #include <lib/klib.h>
 
-static int nic_intel_8254x_init(nic_dev *dev)
+static int nic_intel_8254x_init(void *dev)
 {
+	return 0;
 }
 
-static int nic_intel_8254x_uninit(nic_dev *dev)
+static int nic_intel_8254x_uninit(void *dev)
 {
+	return 0;
 }
 
-static int nic_intel_8254x_up(nic_dev *dev)
+static int nic_intel_8254x_up(void *dev)
 {
+	return 0;
 }
 
-static int nic_intel_8254x_down(nic_dev *dev)
+static int nic_intel_8254x_down(void *dev)
 {
+	return 0;
 }
 
 nic_dev *nic_intel_8254x_create(uint32_t device, uint16_t v, uint16_t d)

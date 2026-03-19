@@ -105,7 +105,6 @@ static void cpu_load_tss(int cpu_id, tss_struct *tss)
 {
 	unsigned base = (unsigned)tss;
 	extern unsigned long long gdt[];
-	extern unsigned short gdt_size;
 	unsigned sel = TSS_SELECTOR_FOR(cpu_id);
 
 	gdt[sel / 8] = MAKE_SEG_DESC(base, 0x67, SEG_CLASS_SYSTEM, 9,
@@ -126,7 +125,7 @@ void ap_init_c(int cpu_id)
 
 	/* Set up per-CPU TSS. */
 	cpu->tss = kmalloc(sizeof(tss_struct));
-	memset(cpu->tss, 0, sizeof(tss_struct));
+	memset((void *)cpu->tss, 0, sizeof(tss_struct));
 	cpu->tss->ss0 = KERNEL_DATA_SELECTOR;
 	cpu->tss->iomap = (unsigned short)sizeof(tss_struct);
 	cpu_load_tss(cpu_id, cpu->tss);

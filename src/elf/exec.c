@@ -66,7 +66,6 @@ static void cleanup()
 static void ps_get_argc_envc(const char *file, char **argv, char **envp,
 			     unsigned *argv_len, unsigned *envp_len)
 {
-	char *tmp = 0;
 	int i = 0;
 	if (!argv_len || !envp_len) {
 		return;
@@ -74,19 +73,17 @@ static void ps_get_argc_envc(const char *file, char **argv, char **envp,
 
 	*argv_len = *envp_len = 0;
 	if (argv) {
-		tmp = argv[i];
 		while (argv[i] && *argv[i]) {
 			*argv_len = *argv_len + 1;
-			tmp = argv[++i];
+			i++;
 		}
 	}
 
 	i = 0;
 	if (envp) {
-		tmp = envp[i];
 		while (envp[i] && *envp[i]) {
 			*envp_len = *envp_len + 1;
-			tmp = envp[++i];
+			i++;
 		}
 	}
 }
@@ -280,11 +277,11 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 	len = sizeof(ELF_PLATFORM);
 	esp -= len;
 	strcpy(esp, ELF_PLATFORM);
-	platform = esp;
+	platform = (unsigned *)esp;
 
 	/* Align stack to 16 bytes (ABI requirement) then step back one slot. */
 	esp = (char *)((~15UL & (unsigned long)(esp)) - 16UL);
-	sp = esp;
+	sp = (unsigned *)esp;
 
 #define __put_user(val, addr) (*(unsigned long *)(addr) = (unsigned long)(val))
 
@@ -333,7 +330,7 @@ static unsigned ps_setup_v(char *file, int argc, char **argv, int envc,
 #undef NEW_AUX_ENT
 
 	/* Copy the envp and argv pointer arrays onto the stack. */
-	esp = sp;
+	esp = (char *)sp;
 	esp -= (env_buf_len + 4);
 	envpp = esp;
 	memcpy(envpp, tmp_array_env, env_buf_len + 4);
@@ -522,11 +519,12 @@ int sys_execve(const char *f, char **argv, char **envp)
  * file is missing (e.g. the root filesystem is not populated), the kernel
  * prints a diagnostic and calls DIE() to halt.
  */
-static void run_if_exist(char *path, char *argv[], char *envp[])
+static void run_if_exist(const char *path, const char *argv[],
+			 const char *envp[])
 {
 	struct stat s;
 	if (fs_stat(path, &s) != -1) {
-		sys_execve(path, argv, envp);
+		sys_execve(path, (char **)argv, (char **)envp);
 	}
 
 	printk("%s fails!\n", path);
@@ -559,7 +557,7 @@ static void user_first_process_run()
 	}
 
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
-	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };
+	const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };
 
 	ps_update_tss(esp0);
 

@@ -27,10 +27,10 @@ typedef struct _vm_key {
  *          1  if region1 starts after region2 ends    (region1 strictly right),
  *          0  if the two ranges overlap in any way.
  */
-static INLINE int vm_region_compare(void *region1, void *region2)
+static INLINE int vm_region_compare(const void *region1, const void *region2)
 {
-	vm_key *key1 = region1;
-	vm_key *key2 = region2;
+	const vm_key *key1 = region1;
+	const vm_key *key2 = region2;
 
 	if (key1->end <= key2->begin)
 		return -1;

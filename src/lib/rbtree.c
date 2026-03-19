@@ -257,7 +257,7 @@ void rb_erase(struct rb_node *node, struct rb_root *root)
 		root->rb_node = child;
 
 color:
-	if (color == RB_BLACK)
+	if (color == _RBTREE_BLACK)
 		__rb_erase_color(child, parent, root);
 }
 // EXPORT_SYMBOL(rb_erase);
@@ -440,10 +440,10 @@ void rb_replace_node(struct rb_node *victim, struct rb_node *new,
 }
 // EXPORT_SYMBOL(rb_replace_node);
 
-static INLINE int hash_binary_comp(void *key1, void *key2)
+static INLINE int hash_binary_comp(const void *key1, const void *key2)
 {
-	char *k1 = (char *)key1;
-	char *k2 = (char *)key2;
+	const char *k1 = (char *)key1;
+	const char *k2 = (char *)key2;
 	return (k1 - k2);
 }
 
@@ -480,7 +480,6 @@ hash_table *hash_create(hash_comp_fn comp, hash_evict_fn evict)
 
 int hash_destroy(hash_table *table)
 {
-	int ret = 0;
 	list_entry tmp;
 	list_entry *node = 0;
 
@@ -491,7 +490,7 @@ int hash_destroy(hash_table *table)
 
 	spinlock_lock(&table->lock);
 	if (table->root.rb_node) {
-		ret = hash_get_all_node(&table->root, &tmp);
+		hash_get_all_node(&table->root, &tmp);
 	}
 	table->root.rb_node = 0;
 	table->size = 0;
@@ -608,9 +607,10 @@ int hash_remove_at(hash_table *table, key_value_pair *pair)
 		table->evict(pair);
 
 	kfree(pair);
+	return 1;
 }
 
-key_value_pair *hash_find(hash_table *table, void *key)
+key_value_pair *hash_find(hash_table *table, const void *key)
 {
 	struct rb_node **p = &table->root.rb_node;
 	struct rb_node *parent;

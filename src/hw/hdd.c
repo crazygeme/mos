@@ -118,7 +118,7 @@ typedef struct _block_cache {
 	int sectors;
 } block_cache;
 
-static int int_comp(void *key1, void *key2)
+static int int_comp(const void *key1, const void *key2)
 {
 	int k1 = (int)key1;
 	int k2 = (int)key2;
@@ -571,7 +571,6 @@ static void read_partition_table(ata_disk *disk, unsigned capacity,
 
 	struct partition_table *pt;
 	unsigned i;
-	int found = 0;
 
 	/* Check SECTOR validity. */
 	if (sector >= capacity) {
@@ -644,8 +643,6 @@ unsigned max_fs_cache_size = 0;
 
 static void init_partition_cache(partition *p)
 {
-	int i = 0;
-
 	/* Initialize hash + LRU list and per-partition lock. */
 	p->cache.sectors = 0;
 	p->cache.hash = hash_create(int_comp, NULL);
@@ -656,7 +653,6 @@ static void init_partition_cache(partition *p)
 
 static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 {
-	int i = 0;
 	unsigned long long search_time = 0;
 	int head_sector = HEAD_SECTOR(sector);
 	key_value_pair *pair = 0;
@@ -821,9 +817,7 @@ unsigned fs_cache_write_size = 0;
 static int partition_cache_read(void *aux, unsigned sector, void *buf,
 				unsigned len)
 {
-	int i = 0;
 	partition *p = aux;
-	int index = 0;
 	block_cache_item *volatile item = 0;
 	int sector_off = SECTOR_OFF(sector);
 	int head_sector = HEAD_SECTOR(sector);
@@ -1126,7 +1120,6 @@ static int partition_write(void *aux, unsigned sector, void *buf, unsigned len)
 static void partition_close(void *aux)
 {
 #if HDD_CACHE_OPEN
-	int i = 0;
 	partition *p = aux;
 	if (p->cache_inited) {
 		partition_cache_flush(aux);
@@ -1143,7 +1136,6 @@ static void partition_close(void *aux)
 static void partition_cache_flush(void *aux)
 {
 #if HDD_CACHE_OPEN
-	int i = 0;
 	partition *p = aux;
 	if (!p->cache_inited)
 		return;

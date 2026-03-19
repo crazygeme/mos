@@ -280,7 +280,6 @@ int sys_vfork()
 int sys_exit(unsigned status)
 {
 	task_struct *cur = CURRENT_TASK();
-	task_struct *parent = NULL;
 	int i;
 
 	cur->exit_status = status;
@@ -335,7 +334,6 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
 	task_struct *cur = CURRENT_TASK();
 	list_entry *dying_task_entry;
-	struct rb_node *task_entry;
 
 	for (;;) {
 		task_sched();

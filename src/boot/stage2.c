@@ -41,8 +41,6 @@ static void idle_process(void *param);
 
 void kmain_startup()
 {
-	int i = 0;
-
 	fb_init();
 
 	fb_enable();
@@ -140,7 +138,6 @@ static void timer_process(void *param)
 
 static void idle_process(void *param)
 {
-	task_struct *cur = CURRENT_TASK();
 	while (1) {
 		HLT();
 		task_sched();

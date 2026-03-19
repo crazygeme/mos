@@ -196,7 +196,7 @@ typedef volatile struct _task_frame {
 	unsigned long esp; // kernel or user esp
 } task_frame;
 
-typedef volatile struct _task_struct task_struct;
+typedef struct _task_struct task_struct;
 struct _task_struct {
 	task_frame tss;
 	unsigned long cr3;

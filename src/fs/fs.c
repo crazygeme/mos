@@ -306,7 +306,6 @@ int fs_seek(int fd, int offset, unsigned whence)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	loff_t pos = -EACCES;
-	int ret = 0;
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 

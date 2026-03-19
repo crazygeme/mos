@@ -42,7 +42,6 @@ _START static void init_interrupt()
 
 _START static void setup_gdt()
 {
-	unsigned short ds = KERNEL_DATA_SELECTOR;
 	unsigned long long *_gdt = GET_BOOT_ADDR(unsigned long long *, gdt);
 	unsigned long long operand = 0;
 	_gdt[0] = 0;
@@ -85,7 +84,7 @@ _START static void mm_setup_beginning_8m()
 	unsigned int pg = (GDT_ADDRESS + PAGE_SIZE);
 	unsigned int *pgt;
 	int i = 0, j = 0;
-	unsigned int *gdt = (int *)GDT_ADDRESS;
+	unsigned int *gdt = (unsigned int *)GDT_ADDRESS;
 
 	for (i = 0; i < PG_TABLE_SIZE; i++) {
 		gdt[i] = 0;

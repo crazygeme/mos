@@ -150,7 +150,7 @@ static void kb_dsr(void *param)
 			/* Route to active TTY's keyboard buffer. */
 			tty_active_kb_put(c);
 		}
-	} else if (special = map_special_key(special_keymap, code)) {
+	} else if ((special = map_special_key(special_keymap, code))) {
 		if (!release) {
 			while (*special) {
 				tty_active_kb_put((unsigned char)*special++);

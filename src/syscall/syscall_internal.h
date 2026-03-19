@@ -3,6 +3,7 @@
 
 #include <fs/vfs.h>
 #include <fs/select.h>
+#include <fs/poll.h>
 #include <stdint.h>
 
 /*

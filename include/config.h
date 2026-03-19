@@ -15,9 +15,8 @@
 #define KERNEL_CODE_SELECTOR 0x10
 #define USER_DATA_SELECTOR 0x1b
 #define USER_CODE_SELECTOR 0x23
-#define TSS_SELECTOR \
-	0x28 // we are not going to use TSS when task switch, \
-		// but we have to make tr register valid or x86 process
+/* TSS_SELECTOR: not used for task switching, but TR must be valid on x86 */
+#define TSS_SELECTOR 0x28
 /* TSS selectors: CPU 0 at TSS_SELECTOR, CPU n at TSS_SELECTOR + n*8 */
 /* SELECTOR_COUNT is now defined after MAX_CPUS below */
 

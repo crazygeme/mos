@@ -146,7 +146,7 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	ext4_dir *dir = fp->f_inode->i_private;
 	struct linux_dirent *dirp = buf;
-	ext4_direntry *entry = NULL;
+	const ext4_direntry *entry = NULL;
 	struct linux_dirent *prev = NULL;
 	int retcount = 0;
 	int len;
@@ -159,7 +159,8 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 				prev->d_off = retcount;
 			break;
 		}
-		len = ROUND_UP(NAME_OFFSET() + strlen(entry->name) + 1);
+		len = ROUND_UP(NAME_OFFSET() +
+			       strlen((const char *)entry->name) + 1);
 		if (count < len) {
 			if (prev)
 				prev->d_off = retcount;
@@ -167,7 +168,8 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		}
 		memset(dirp, 0, len);
 		dirp->d_ino = entry->inode;
-		strncpy(dirp->d_name, entry->name, entry->name_length);
+		strncpy(dirp->d_name, (const char *)entry->name,
+			entry->name_length);
 		dirp->d_reclen =
 			ROUND_UP(NAME_OFFSET() + strlen(dirp->d_name) + 1);
 		cur_pos += dirp->d_reclen;
@@ -175,7 +177,7 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		retcount += dirp->d_reclen;
 		count -= dirp->d_reclen;
 		prev = dirp;
-		dirp = (char *)dirp + dirp->d_reclen;
+		dirp = (struct linux_dirent *)((char *)dirp + dirp->d_reclen);
 	}
 	*pos += retcount;
 	return (ssize_t)retcount;
@@ -184,7 +186,7 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 {
 	ext4_dir *dir = fp->f_inode->i_private;
-	ext4_direntry *entry = NULL;
+	const ext4_direntry *entry = NULL;
 	int len;
 	int cur_pos = 0;
 	int count = (int)offset;
@@ -200,7 +202,8 @@ static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 		entry = ext4_dir_entry_next(dir);
 		if (entry == NULL)
 			break;
-		len = ROUND_UP(NAME_OFFSET() + strlen(entry->name) + 1);
+		len = ROUND_UP(NAME_OFFSET() +
+			       strlen((const char *)entry->name) + 1);
 		if (count < len)
 			return (loff_t)(cur_pos + len);
 		cur_pos += len;

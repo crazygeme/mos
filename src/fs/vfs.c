@@ -9,7 +9,7 @@
 /**
  * To make sure sorted by path
  */
-static int sb_path_comp(void *k1, void *k2)
+static int sb_path_comp(const void *k1, const void *k2)
 {
 	const char *left = k1;
 	const char *right = k2;
@@ -88,8 +88,6 @@ void sb_get(super_block *sb)
 
 void sb_put(super_block *sb)
 {
-	key_value_pair *kv;
-
 	if (__sync_add_and_fetch(&sb->s_ref, -1) != 0)
 		return;
 
@@ -293,8 +291,6 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;
 	char *rel_path;
-	key_value_pair *kv;
-	inode *node;
 
 	if (!sb || !path)
 		return NULL;

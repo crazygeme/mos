@@ -5,7 +5,9 @@
 
 /* ── Heap ─────────────────────────────────────────────────────────────────── */
 
+#ifndef NULL
 #define NULL (void *)0
+#endif
 
 typedef struct _kblock {
 	unsigned int size;
@@ -53,9 +55,9 @@ int sprintf(char *buf, const char *fmt, ...);
 
 /* ── String / memory ──────────────────────────────────────────────────────── */
 
-void memcpy(void *dst, void *src, unsigned len);
+void memcpy(void *dst, const void *src, unsigned len);
 void memmove(void *dst, void *src, unsigned len);
-int memcmp(void *src, void *dst, unsigned len);
+int memcmp(const void *src, const void *dst, unsigned len);
 void memset(void *src, char val, int len);
 
 unsigned strlen(const char *str);
@@ -63,12 +65,12 @@ char *strcpy(char *dst, const char *src);
 char *strncpy(char *dst, const char *src, int len);
 char *strstr(const char *src, const char *str);
 char *strrev(char *src);
-int strcmp(char *str, char *dst);
-int strncmp(char *s1, char *s2, int n);
-char *strcat(char *str, char *msg);
-char *strchr(char *str, char c);
-char *strrchr(char *str, char c);
-char *strdup(char *str);
+int strcmp(const char *str, const char *dst);
+int strncmp(const char *s1, const char *s2, int n);
+char *strcat(char *str, const char *msg);
+char *strchr(const char *str, char c);
+char *strrchr(const char *str, char c);
+char *strdup(const char *str);
 
 /* ── Character / number ───────────────────────────────────────────────────── */
 

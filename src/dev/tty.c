@@ -359,96 +359,17 @@ static void tty_do_write(tty_state *state, const char *buf, unsigned len)
 
 /* ── Canonical / raw input ───────────────────────────────────────────────── */
 
-/* Returns the signal to send for c, or 0 if none. */
-static int isig_check(tty_state *state, unsigned char c)
+static void tty_echo_cb(void *ctx, const char *buf, int len)
 {
-	const struct termios *tc = &state->termios;
-	if (!(tc->c_lflag & ISIG))
-		return 0;
-	if (tc->c_cc[VINTR] && c == tc->c_cc[VINTR])
-		return SIGINT;
-	if (tc->c_cc[VQUIT] && c == tc->c_cc[VQUIT])
-		return SIGQUIT;
-	if (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP])
-		return SIGTSTP;
-	return 0;
+	tty_do_write((tty_state *)ctx, buf, (unsigned)len);
 }
 
-static void canon_erase(tty_state *state)
-{
-	const struct termios *tc = &state->termios;
-	if (state->canon.len == 0)
-		return;
-	state->canon.len--;
-	if (!(tc->c_lflag & ECHO))
-		return;
-	if (tc->c_lflag & ECHOE)
-		tty_do_write(state, "\b \b", 3);
-	else
-		tty_do_write(state, (const char *)&tc->c_cc[VERASE], 1);
-}
-
-static void canon_kill(tty_state *state)
-{
-	const struct termios *tc = &state->termios;
-	if (tc->c_lflag & ECHO) {
-		if (tc->c_lflag & ECHOK) {
-			int i;
-			for (i = 0; i < state->canon.len; i++)
-				tty_do_write(state, "\b \b", 3);
-		} else {
-			tty_do_write(state, (const char *)&tc->c_cc[VKILL], 1);
-			tty_do_write(state, "\n", 1);
-		}
-	}
-	state->canon.len = 0;
-}
-
-static void canon_append(tty_state *state, unsigned char c)
-{
-	const struct termios *tc = &state->termios;
-	if (state->canon.len >= TTY_CANON_BUF_SIZE - 1)
-		return;
-	state->canon.buf[state->canon.len++] = (char)c;
-	if (tc->c_lflag & ECHO)
-		tty_do_write(state, &state->canon.buf[state->canon.len - 1], 1);
-	else if (c == '\n' && (tc->c_lflag & ECHONL))
-		tty_do_write(state, "\n", 1);
-}
-
-/* Read one complete line into canon_buf. Returns 1 on line, 0 on EOF.
- * Blocks on this TTY's per-TTY keyboard buffer. */
+/* Read one complete line into canon. Returns 1 on line, 0 on EOF/signal. */
 static int canon_readline(tty_state *state)
 {
-	const struct termios *tc = &state->termios;
-	while (1) {
-		int ch = tty_input_translate(cyb_getc(state->kb_buf),
-					     tc->c_iflag);
-		if (ch < 0)
-			continue;
-		unsigned char c = (unsigned char)ch;
-		{
-			int isig = isig_check(state, c);
-			if (isig) {
-				state->canon.len = 0;
-				ps_send_signal_pgrp(state->pgrp, isig);
-				return 0;
-			}
-		}
-		if (tc->c_cc[VERASE] && c == tc->c_cc[VERASE]) {
-			canon_erase(state);
-			continue;
-		}
-		if (tc->c_cc[VKILL] && c == tc->c_cc[VKILL]) {
-			canon_kill(state);
-			continue;
-		}
-		if (tc->c_cc[VEOF] && c == tc->c_cc[VEOF])
-			return state->canon.len > 0;
-		canon_append(state, c);
-		if (tty_is_eol(c, &state->termios))
-			return 1;
-	}
+	return tty_ldisc_canon_readline(&state->canon, &state->termios,
+					state->kb_buf, 0, state->pgrp,
+					tty_echo_cb, state);
 }
 
 /* Raw mode read: block until VMIN chars are available, then drain. */
@@ -665,6 +586,14 @@ static ssize_t tty_fs_write(file *fp, const void *buf, size_t size, loff_t *pos)
 		return -EACCES;
 	if (size < 1 || !buf)
 		return 0;
+	/* TOSTOP: if set, background processes get SIGTTOU instead of writing. */
+	if ((state->termios.c_lflag & TOSTOP) && state->pgrp) {
+		task_struct *cur = CURRENT_TASK();
+		if (cur->user && cur->user->group_id != state->pgrp) {
+			ps_send_signal_pgrp(cur->user->group_id, SIGTTOU);
+			return -EINTR;
+		}
+	}
 	tty_do_write(state, (const char *)buf, size);
 	return (ssize_t)size;
 }

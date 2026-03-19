@@ -129,52 +129,8 @@ static void pts_pair_check_free(pts_pair *p)
  */
 static int pts_canon_readline(pts_pair *p)
 {
-	const struct termios *tc = &p->termios;
-	while (1) {
-		unsigned char raw = cyb_getc(p->m2s);
-		if (raw == (unsigned char)EOF)
-			return p->canon.len > 0 ? 1 : 0;
-
-		int ch = tty_input_translate(raw, tc->c_iflag);
-		if (ch < 0)
-			continue;
-		unsigned char c = (unsigned char)ch;
-
-		if (tc->c_lflag & ISIG) {
-			int isig = 0;
-			if (tc->c_cc[VINTR] && c == tc->c_cc[VINTR])
-				isig = SIGINT;
-			else if (tc->c_cc[VQUIT] && c == tc->c_cc[VQUIT])
-				isig = SIGQUIT;
-			else if (tc->c_cc[VSUSP] && c == tc->c_cc[VSUSP])
-				isig = SIGTSTP;
-			if (isig) {
-				p->canon.len = 0;
-				ps_send_signal_pgrp(p->pgrp, isig);
-				return 0;
-			}
-		}
-
-		if (tc->c_cc[VEOF] && c == tc->c_cc[VEOF])
-			return p->canon.len > 0 ? 1 : 0;
-
-		if (tc->c_cc[VERASE] && c == tc->c_cc[VERASE]) {
-			if (p->canon.len > 0)
-				p->canon.len--;
-			continue;
-		}
-
-		if (tc->c_cc[VKILL] && c == tc->c_cc[VKILL]) {
-			p->canon.len = 0;
-			continue;
-		}
-
-		if (p->canon.len < TTY_CANON_BUF_SIZE - 1)
-			p->canon.buf[p->canon.len++] = (char)c;
-
-		if (tty_is_eol(c, tc))
-			return 1;
-	}
+	return tty_ldisc_canon_readline(&p->canon, &p->termios,
+					p->m2s, 1, p->pgrp, NULL, NULL);
 }
 
 /* ── Slave file operations ────────────────────────────────────────────────── */

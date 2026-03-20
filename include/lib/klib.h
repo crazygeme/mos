@@ -34,6 +34,7 @@ typedef char *va_list;
 void *malloc(unsigned int size);
 void free(void *buf);
 void *zalloc(unsigned size);
+extern unsigned int heap_quota; /* current live-allocation byte count */
 
 /* ── Init ─────────────────────────────────────────────────────────────────── */
 

@@ -42,6 +42,18 @@ SECTIONS
 	}
 
 	/*
+	 * Kernel test table.  Each KTEST(name, fn) declaration drops a
+	 * ktest_t into ".ktest".  The /proc/test driver iterates this
+	 * section to discover and run all registered tests.
+	 */
+	.ktest BLOCK(4K) : AT(ADDR(.ktest)-0xC0000000)
+	{
+		__ktest_start = .;
+		*(.ktest)
+		__ktest_end = .;
+	}
+
+	/*
 	 * Kernel init-call table.  Each KERNEL_INIT(index, fn) declaration
 	 * drops a kinit_fn_t into ".kinit.<index>".  SORT_BY_NAME guarantees
 	 * the sections are laid out in ascending index order.

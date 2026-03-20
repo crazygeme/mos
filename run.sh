@@ -2,6 +2,7 @@
 # mak
 _ramsize="512"
 diskfile="ffs.img"
+kernel_file="out/kernel"
 _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _verbose=""
@@ -11,10 +12,14 @@ _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _init=""
+_test=""
 
 for arg in $@
 do
-if [ "$arg" == "debug" ]; then
+if [ "$arg" == "test" ]; then
+	_test="test"
+	kernel_file=out/kernel-test
+elif [ "$arg" == "debug" ]; then
 	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
@@ -33,6 +38,7 @@ elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
 	echo "param:"
+	echo -e "\t test: build and run the test kernel (out/kernel-test)"
 	echo -e "\t debug: wait for gdb before running"
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
@@ -47,9 +53,7 @@ if [ "$_window" == "curses" ]; then
 fi
 
 
-kernel_file=out/kernel
-
-make -s -j8 || { echo "Error: build failed" >&2; exit 1; }
+make -s -j8 $_test || { echo "Error: build failed" >&2; exit 1; }
 
 if [ ! -f "$diskfile" ]; then
 	unzip redhat.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }

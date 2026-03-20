@@ -142,7 +142,7 @@ typedef void *vm_struct_t;
 typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	unsigned start_brk; /* base of heap, set from ELF BSS end at exec time */
-	unsigned brk;       /* current program break (Linux: mm->brk) */
+	unsigned brk; /* current program break (Linux: mm->brk) */
 	vm_struct_t vm;
 	char *command;
 	size_t cmd_len;

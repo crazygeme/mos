@@ -51,7 +51,7 @@ KTEST(kprint, sprintf_x_basic)
 {
 	char buf[32];
 	sprintf(buf, "%x", 0xdead);
-	EXPECT_EQ(strcmp(buf, "0xdead"), 0);
+	EXPECT_EQ(strcmp(buf, "dead"), 0);
 	return 0;
 }
 
@@ -59,7 +59,7 @@ KTEST(kprint, sprintf_x_zero)
 {
 	char buf[32];
 	sprintf(buf, "%x", 0u);
-	EXPECT_EQ(strcmp(buf, "0x0"), 0);
+	EXPECT_EQ(strcmp(buf, "0"), 0);
 	return 0;
 }
 
@@ -242,7 +242,7 @@ KTEST(kprint, sprintf_mixed)
 {
 	char buf[64];
 	sprintf(buf, "val=%d str=%s hex=%x", 10, "ok", 0xff);
-	EXPECT_EQ(strcmp(buf, "val=10 str=ok hex=0xff"), 0);
+	EXPECT_EQ(strcmp(buf, "val=10 str=ok hex=ff"), 0);
 	return 0;
 }
 
@@ -361,6 +361,14 @@ KTEST(kprint, sprintf_lld_zero_pad)
 	char buf[16];
 	sprintf(buf, "%010lld", 42LL);
 	EXPECT_EQ(strcmp(buf, "0000000042"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_lld_space_pad)
+{
+	char buf[16];
+	sprintf(buf, "%10lld", 42LL);
+	EXPECT_EQ(strcmp(buf, "        42"), 0);
 	return 0;
 }
 

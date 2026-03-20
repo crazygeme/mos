@@ -8,15 +8,16 @@
  *
  * Format specifiers supported:
  *   %d  signed decimal       %u  unsigned decimal
- *   %x  hex (0x prefix)      %p  same as %x
+ *   %x  hex (no prefix)      %p  same as %x
  *   %s  string               %c  character
  *   %b  two-digit hex byte   %h  human-readable size (e.g. "1.2M")
  *   %%  literal percent
  *
- * Flags and width (subset of C99):
+ * Flags, width, and precision (subset of C99):
  *   -    left-align within field width
  *   0    zero-pad instead of space-pad (numeric types)
  *   N    minimum field width (e.g. %5d, %02u, %-10s)
+ *   .N   precision: min digits for integers, max chars for %s (e.g. %.8d)
  */
 
 #include <ps/ps.h>
@@ -302,12 +303,11 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 		case 'b': {
 			unsigned char v = (unsigned char)va_arg(ap, unsigned);
 			char *s = itoa(v, 16, 0);
-			/* Skip "0x" prefix produced by itoa; zero-pad to 2 hex digits */
-			char *hex = s + 2;
 
-			if (strlen(hex) == 1)
+			/* Zero-pad to 2 hex digits */
+			if (strlen(s) == 1)
 				EMIT('0');
-			EMITS(hex);
+			EMITS(s);
 			free(s);
 			break;
 		}

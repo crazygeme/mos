@@ -341,6 +341,7 @@ typedef struct {
 	char *buf;
 	size_t pos;
 	size_t size;
+	task_struct *task;
 } maps_ctx;
 
 static void maps_region_cb(vm_region *region, void *data)
@@ -348,6 +349,10 @@ static void maps_region_cb(vm_region *region, void *data)
 	maps_ctx *ctx = data;
 	char perms[5];
 	char *p;
+	const char *name;
+	unsigned stack_begin = KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE;
+	unsigned stack_end = KERNEL_OFFSET;
+	int ino = 0;
 
 	if (ctx->pos + 80 >= ctx->size)
 		return;
@@ -358,36 +363,29 @@ static void maps_region_cb(vm_region *region, void *data)
 	perms[3] = (region->flag & MAP_SHARED) ? 's' : 'p';
 	perms[4] = '\0';
 
+	if (region->fp) {
+		name = region->fp->f_name;
+		ino = region->fp->f_inode->i_ino;
+	} else if (region->begin >= ctx->task->user->start_brk &&
+		   region->end <= ctx->task->user->brk)
+		name = "[heap]";
+	else if (region->begin >= stack_begin && region->end <= stack_end)
+		name = "[stack]";
+	else
+		name = "";
+
 	p = ctx->buf + ctx->pos;
-	ctx->pos += sprintf(p, "%08x-%08x %s %08x 00:00 0\n", region->begin,
-			    region->end, perms, region->offset);
+	ctx->pos += sprintf(p, "%08x-%08x %s %08x 00:00 %-10d %s\n",
+			    region->begin, region->end, perms, region->offset,
+			    ino, name);
 }
 
 static void fill_maps(char *buf, size_t size, task_struct *task)
 {
-	maps_ctx ctx = { buf, 0, size };
-	char *p;
+	maps_ctx ctx = { buf, 0, size, task };
 
 	if (task->user->vm)
 		vm_enum(task->user->vm, maps_region_cb, &ctx);
-
-	/* Heap pseudo-region */
-	if (task->user->brk > task->user->start_brk && ctx.pos + 80 < size) {
-		p = buf + ctx.pos;
-		ctx.pos += sprintf(
-			p, "%08x-%08x rw-p 00000000 00:00 0          [heap]\n",
-			task->user->start_brk, task->user->brk);
-	}
-
-	/* Stack pseudo-region */
-	if (ctx.pos + 80 < size) {
-		p = buf + ctx.pos;
-		ctx.pos += sprintf(
-			p, "%08x-%08x rw-p 00000000 00:00 0          [stack]\n",
-			(unsigned)KERNEL_OFFSET -
-				USER_STACK_PAGES * (unsigned)PAGE_SIZE,
-			(unsigned)KERNEL_OFFSET);
-	}
 }
 
 /* ------------------------------------------------------------------ *

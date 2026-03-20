@@ -148,6 +148,7 @@ static void buddy_free_block(unsigned idx, unsigned order)
 		order++;
 	}
 	phymm_pages[idx].ref_count = 0;
+	phymm_pages[idx].flags = 0;
 	buddy_push(idx, order);
 }
 
@@ -237,6 +238,22 @@ int phymm_is_used(unsigned page_index)
 {
 	return ((int)__sync_add_and_fetch(&phymm_pages[page_index].ref_count,
 					  0) > 0);
+}
+
+void phymm_mark_dirty(unsigned page_index)
+{
+	__sync_fetch_and_or(&phymm_pages[page_index].flags, PHYMM_PAGE_DIRTY);
+}
+
+int phymm_is_dirty(unsigned page_index)
+{
+	return (phymm_pages[page_index].flags & PHYMM_PAGE_DIRTY) != 0;
+}
+
+void phymm_clear_dirty(unsigned page_index)
+{
+	__sync_fetch_and_and(&phymm_pages[page_index].flags,
+			     (unsigned char)(~PHYMM_PAGE_DIRTY));
 }
 
 /*

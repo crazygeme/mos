@@ -257,8 +257,10 @@ static void pf_handle_invalid_memory(unsigned address, int prot, int flag)
 		memset(address, 0, PAGE_SIZE);
 	} else {
 		/*
-		 * For read only zero page, we map with a globally shared
-		 * zero page first, and let COW allocate new one if write.
+		 * For a read-only anonymous page, share the global zero page.
+		 * mm_add_dynamic_map bumps zero_page's ref_count to > 1, so
+		 * phymm_is_cow() fires on the next write fault and COW kicks
+		 * in — the shared zero page is never dirtied.
 		 */
 		mm_add_dynamic_map(address, zero_page_phy,
 				   PAGE_ENTRY_USER_CODE);
@@ -287,6 +289,10 @@ static int pf_handle_page_invalid(unsigned cr2)
 	 */
 	region = vm_find_map(cur->user->vm, this_begin);
 	if (!region)
+		return 0;
+
+	/* PROT_NONE: no access permitted — treat as unmapped. */
+	if (region->prot == PROT_NONE)
 		return 0;
 
 	this_offset = region->offset + (this_begin - region->begin);
@@ -378,12 +384,54 @@ static void pf_handle_readonly(unsigned cr2)
 }
 
 /*
- * Handle page fault which is permission deny.
+ * Handle a write fault on a present but read-only page.
+ *
+ * MAP_SHARED mapping:
+ *   Upgrade the PTE writable in place.  All processes that share the same
+ *   physical page immediately see the write — that is the MAP_SHARED contract.
+ *   No private copy is made.
+ *
+ * MAP_PRIVATE mapping (or fork-COW anonymous page):
+ *   Two sub-cases:
+ *   1. ref_count > 1: page is shared (fork-COW sibling or file-cache entry).
+ *      Allocate a private copy so the sibling / cache is left untouched.
+ *   2. ref_count = 1: sole owner, PTE still read-only after a prior COW
+ *      resolution.  Just flip the writable bit.
+ *
+ * Anything else is a true protection violation → SIGSEGV.
  */
 static int pf_handle_permission(unsigned cr2)
 {
-	unsigned page_index = mm_get_attached_page_index(cr2);
+	task_struct *cur = CURRENT_TASK();
+	vm_region *region;
+	unsigned page_index;
 
+	region = vm_find_map(cur->user->vm, cr2);
+
+	/* No covering region, or region does not permit writes. */
+	if (!region || !(region->prot & PROT_WRITE))
+		return 0;
+
+	/*
+	 * MAP_SHARED: all sharers must see the same physical page, so never
+	 * COW — just make this process's PTE writable.  If the region is
+	 * file-backed, mark the physical page dirty so it gets flushed back
+	 * to the file on munmap / process exit.
+	 */
+	if (region->flag & MAP_SHARED) {
+		pf_handle_readonly(cr2);
+		if (region->fp != NULL) {
+			unsigned page_index = mm_get_attached_page_index(cr2);
+			phymm_mark_dirty(page_index);
+		}
+		return 1;
+	}
+
+	/*
+	 * MAP_PRIVATE: COW if the page is still shared (ref_count > 1),
+	 * otherwise just upgrade the read-only PTE.
+	 */
+	page_index = mm_get_attached_page_index(cr2);
 	if (phymm_is_cow(page_index))
 		pf_handle_cow(cr2);
 	else

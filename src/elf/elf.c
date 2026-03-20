@@ -524,7 +524,8 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 		}
 	} else {
 		/* Static binary: no interpreter, jump directly to e_entry. */
-		elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
+		elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum,
+				 fmt);
 		fmt->interp_load_addr = entry_point;
 	}
 

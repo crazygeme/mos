@@ -285,13 +285,15 @@ void do_exit(unsigned encoded_status)
 
 	cur->exit_status = encoded_status;
 	if (TestControl.verbos)
-		klog("exit(%s, status=0x%x)\n", cur->user->command,
+		klog("exit(%s, status=%x)\n", cur->user->command,
 		     encoded_status);
 
 	if (cur->fork_flag & FORK_FLAG_VFORK)
 		cond_notify(&cur->vfork_event);
 
 	if (cur->user->vm) {
+		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */
+		vm_flush_all_dirty(cur->user->vm);
 		vm_destroy(cur->user->vm);
 		cur->user->vm = 0;
 	}

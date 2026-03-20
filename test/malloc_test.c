@@ -8,14 +8,14 @@
 #include <test/test.h>
 
 /* malloc(0) must return NULL */
-KTEST(MallocTest, Zero)
+KTEST(malloc, zero)
 {
 	ASSERT_NULL(malloc(0));
 	return 0;
 }
 
 /* Basic alloc/free must not crash and must return a non-NULL pointer */
-KTEST(MallocTest, Basic)
+KTEST(malloc, basic)
 {
 	void *p = malloc(64);
 	ASSERT_NONNULL(p);
@@ -24,7 +24,7 @@ KTEST(MallocTest, Basic)
 }
 
 /* Data written into the block must survive until free */
-KTEST(MallocTest, Pattern)
+KTEST(malloc, pattern)
 {
 	unsigned char *p = (unsigned char *)malloc(256);
 	unsigned i;
@@ -39,7 +39,7 @@ KTEST(MallocTest, Pattern)
 }
 
 /* zalloc must return a zeroed block */
-KTEST(MallocTest, Zeroed)
+KTEST(malloc, zeroed)
 {
 	unsigned char *p = (unsigned char *)zalloc(128);
 	unsigned i;
@@ -52,7 +52,7 @@ KTEST(MallocTest, Zeroed)
 }
 
 /* Multiple live allocations must be at distinct addresses */
-KTEST(MallocTest, Multiple)
+KTEST(malloc, multiple)
 {
 #define N 8
 	void *ptrs[N];
@@ -72,27 +72,27 @@ KTEST(MallocTest, Multiple)
 }
 
 /* free(NULL) must be a silent no-op */
-KTEST(MallocTest, FreeNull)
+KTEST(malloc, free_null)
 {
 	free(NULL);
 	return 0;
 }
 
 /* Page-sized allocation: writable end-to-end */
-KTEST(MallocTest, Large)
+KTEST(malloc, large)
 {
 	unsigned char *p = (unsigned char *)malloc(4096);
 
 	ASSERT_NONNULL(p);
 	memset(p, 0xab, 4096);
-	EXPECT_EQ((int)p[0],    0xab);
+	EXPECT_EQ((int)p[0], 0xab);
 	EXPECT_EQ((int)p[4095], 0xab);
 	free(p);
 	return 0;
 }
 
 /* Block must be reusable after free */
-KTEST(MallocTest, Reuse)
+KTEST(malloc, reuse)
 {
 	void *a = malloc(128);
 	ASSERT_NONNULL(a);
@@ -105,7 +105,7 @@ KTEST(MallocTest, Reuse)
 }
 
 /* heap_quota must rise on alloc and return to baseline on free */
-KTEST(MallocTest, Quota)
+KTEST(malloc, quota)
 {
 	unsigned before = heap_quota;
 

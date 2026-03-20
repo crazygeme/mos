@@ -72,6 +72,7 @@ char *strcat(char *str, const char *msg);
 char *strchr(const char *str, char c);
 char *strrchr(const char *str, char c);
 char *strdup(const char *str);
+const char *strglob(const char *pat, const char *str);
 
 /* ── Character / number ───────────────────────────────────────────────────── */
 
@@ -82,6 +83,7 @@ int toupper(int c);
 int islower(int c);
 int isupper(int c);
 char *itoa(int num, int base, int sign);
+char *lltoa(long long num, int base, int sign);
 int atoi(const char *str);
 void srand(unsigned _seed);
 

@@ -88,7 +88,7 @@ static int elf_pflags_to_prot(unsigned p_flags)
  * segments had BSS, the earlier segments' BSS regions would not be handled
  * by this function.
  */
-static void elf_map_bss(unsigned elf_bss, unsigned last_bss)
+static void elf_map_bss(file *fp, unsigned elf_bss, unsigned last_bss)
 {
 	unsigned elf_bss_raw = elf_bss;
 	elf_bss = (elf_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
@@ -104,6 +104,11 @@ static void elf_map_bss(unsigned elf_bss, unsigned last_bss)
 		}
 		RELOAD_CR3();
 		memset((void *)elf_bss, 0, last_bss - elf_bss);
+
+		if (TestControl.verbos)
+			klog("mmap(bss): file %s, addr %x, offset %x, len %x at addr %x\n",
+			     fp ? fp->f_name : "NULL", elf_bss, 0,
+			     last_bss - elf_bss, elf_bss);
 	}
 }
 
@@ -218,7 +223,7 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 		}
 	}
 
-	elf_map_bss(elf_bss, last_bss);
+	elf_map_bss(fp, elf_bss, last_bss);
 
 	return 1;
 }
@@ -267,7 +272,7 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 		}
 	}
 
-	elf_map_bss(elf_bss, last_bss);
+	elf_map_bss(fp, elf_bss, last_bss);
 
 	return 1;
 }

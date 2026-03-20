@@ -39,14 +39,14 @@
 /* ── struct rtc_time — matches Linux uapi ────────────────────────────────── */
 
 struct rtc_time {
-	int tm_sec;   /* 0-59 */
-	int tm_min;   /* 0-59 */
-	int tm_hour;  /* 0-23 */
-	int tm_mday;  /* 1-31 */
-	int tm_mon;   /* 0-11  (Linux convention) */
-	int tm_year;  /* years since 1900 */
-	int tm_wday;  /* 0-6, Sunday = 0 */
-	int tm_yday;  /* 0-365 */
+	int tm_sec; /* 0-59 */
+	int tm_min; /* 0-59 */
+	int tm_hour; /* 0-23 */
+	int tm_mday; /* 1-31 */
+	int tm_mon; /* 0-11  (Linux convention) */
+	int tm_year; /* years since 1900 */
+	int tm_wday; /* 0-6, Sunday = 0 */
+	int tm_yday; /* 0-365 */
 	int tm_isdst;
 };
 
@@ -94,7 +94,7 @@ static void rtc_read_time(struct rtc_time *t)
 	t->tm_hour = hour;
 	t->tm_mday = mday;
 	t->tm_mon = mon - 1; /* CMOS is 1-based; Linux wants 0-based */
-	t->tm_year = year;   /* years since 1900 */
+	t->tm_year = year; /* years since 1900 */
 	t->tm_wday = 0;
 	t->tm_yday = 0;
 	t->tm_isdst = 0;
@@ -135,7 +135,7 @@ static int rtc_getattr(inode *node, struct stat *s)
 {
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_dev = 0xa;            /* misc major */
+	s->st_dev = 0xa; /* misc major */
 	s->st_rdev = (10 << 8) | 135; /* major 10, minor 135 */
 	s->st_nlink = 1;
 	return 0;

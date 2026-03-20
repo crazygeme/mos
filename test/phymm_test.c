@@ -14,7 +14,7 @@ extern unsigned phymm_used;
 /* ── AllocUser ───────────────────────────────────────────────────────────── */
 
 /* Single-page alloc returns a valid in-range index */
-KTEST(PhymmTest, AllocUser)
+KTEST(phymm, alloc_user)
 {
 	unsigned idx = phymm_alloc_user();
 
@@ -27,7 +27,7 @@ KTEST(PhymmTest, AllocUser)
 }
 
 /* Two consecutive allocs return distinct pages */
-KTEST(PhymmTest, AllocUserDistinct)
+KTEST(phymm, alloc_user_distinct)
 {
 	unsigned a = phymm_alloc_user();
 	unsigned b = phymm_alloc_user();
@@ -42,7 +42,7 @@ KTEST(PhymmTest, AllocUserDistinct)
 }
 
 /* After free, the same order-0 slot is immediately reusable (LIFO free list) */
-KTEST(PhymmTest, FreeUserReuse)
+KTEST(phymm, free_user_reuse)
 {
 	unsigned a = phymm_alloc_user();
 	ASSERT_NE(a, PHYMM_INVALID);
@@ -57,7 +57,7 @@ KTEST(PhymmTest, FreeUserReuse)
 }
 
 /* free(PHYMM_INVALID) must be a silent no-op */
-KTEST(PhymmTest, FreeUserInvalid)
+KTEST(phymm, free_user_invalid)
 {
 	phymm_free_user(PHYMM_INVALID);
 	return 0;
@@ -66,7 +66,7 @@ KTEST(PhymmTest, FreeUserInvalid)
 /* ── AllocKernel ─────────────────────────────────────────────────────────── */
 
 /* Allocating a single kernel page returns a valid index */
-KTEST(PhymmTest, AllocKernelSingle)
+KTEST(phymm, alloc_kernel_single)
 {
 	unsigned idx = phymm_alloc_kernel(1);
 
@@ -82,7 +82,7 @@ KTEST(PhymmTest, AllocKernelSingle)
  * phymm_alloc_kernel(3) rounds up to 4 pages (order 2).
  * The returned block must be entirely within [phymm_begin, phymm_end).
  */
-KTEST(PhymmTest, AllocKernelBlock)
+KTEST(phymm, alloc_kernel_block)
 {
 	unsigned idx = phymm_alloc_kernel(3);
 
@@ -99,7 +99,7 @@ KTEST(PhymmTest, AllocKernelBlock)
  * Buddy blocks of 2^k pages must be naturally aligned to 2^k pages.
  * Allocate a 4-page block (order 2) and verify idx % 4 == 0.
  */
-KTEST(PhymmTest, AllocKernelAligned)
+KTEST(phymm, alloc_kernel_aligned)
 {
 	unsigned idx = phymm_alloc_kernel(4);
 
@@ -111,7 +111,7 @@ KTEST(PhymmTest, AllocKernelAligned)
 }
 
 /* An 8-page block must be 8-page aligned */
-KTEST(PhymmTest, AllocKernelAligned8)
+KTEST(phymm, alloc_kernel_aligned8)
 {
 	unsigned idx = phymm_alloc_kernel(8);
 
@@ -123,7 +123,7 @@ KTEST(PhymmTest, AllocKernelAligned8)
 }
 
 /* After freeing a kernel block the pages are available for re-allocation */
-KTEST(PhymmTest, FreeKernelReuse)
+KTEST(phymm, free_kernel_reuse)
 {
 	unsigned a = phymm_alloc_kernel(4);
 	ASSERT_NE(a, PHYMM_INVALID);
@@ -139,7 +139,7 @@ KTEST(PhymmTest, FreeKernelReuse)
 /* ── Reference counting ──────────────────────────────────────────────────── */
 
 /* reference_page raises ref_count; dereference_page lowers it */
-KTEST(PhymmTest, RefCountBasic)
+KTEST(phymm, ref_count_basic)
 {
 	unsigned idx = phymm_alloc_user();
 	ASSERT_NE(idx, PHYMM_INVALID);
@@ -160,7 +160,7 @@ KTEST(PhymmTest, RefCountBasic)
 }
 
 /* is_cow is true when ref_count > 1, false when ref_count <= 1 */
-KTEST(PhymmTest, RefCountIsCow)
+KTEST(phymm, ref_count_is_cow)
 {
 	unsigned idx = phymm_alloc_user();
 	ASSERT_NE(idx, PHYMM_INVALID);
@@ -180,7 +180,7 @@ KTEST(PhymmTest, RefCountIsCow)
 }
 
 /* phymm_used tracks the number of pages with ref_count > 0 */
-KTEST(PhymmTest, UsedCounter)
+KTEST(phymm, used_counter)
 {
 	unsigned before = phymm_used;
 

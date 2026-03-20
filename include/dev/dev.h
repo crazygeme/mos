@@ -20,8 +20,8 @@ typedef void (*dev_init_fn_t)(super_block *);
 extern dev_init_fn_t __devfs_init_start[];
 extern dev_init_fn_t __devfs_init_end[];
 
-#define DEV_INIT(fn)                             \
-	static dev_init_fn_t __devfs_init_##fn   \
+#define DEV_INIT(fn)                           \
+	static dev_init_fn_t __devfs_init_##fn \
 		__attribute__((used, section(".devfs_init"))) = (fn)
 
 #endif /* _DEV_DEV_H */

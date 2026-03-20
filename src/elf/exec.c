@@ -14,7 +14,6 @@
 #include <unistd.h>
 #include <macro.h>
 #include <errno.h>
-#include <ext4.h>
 /*
  * cleanup - tear down the current process's user-space state before exec
  *
@@ -364,7 +363,6 @@ int sys_execve(const char *f, char **argv, char **envp)
 	file *fp;
 	int len = 256; /* max bytes to read for the first line of a script */
 	char *firstline = NULL;
-	size_t wcnt;
 	if (!f) {
 		return -ENOENT;
 	}
@@ -382,8 +380,10 @@ int sys_execve(const char *f, char **argv, char **envp)
 		return -ENOENT;
 	}
 
-	/* if file not exist, just return */
-	if (ext4_fstat(fp->f_inode->i_private, &s) != 0) {
+	/* stat via VFS inode ops */
+	memset(&s, 0, sizeof(s));
+	if (!fp->f_inode->i_op || !fp->f_inode->i_op->getattr ||
+	    fp->f_inode->i_op->getattr(fp->f_inode, &s) != 0) {
 		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOENT;
@@ -396,13 +396,23 @@ int sys_execve(const char *f, char **argv, char **envp)
 		return -EPERM;
 	}
 
-	/* read first line */
-	len = len > s.st_size ? s.st_size : len;
+	/* read first line via VFS file ops */
+	len = len > (int)s.st_size ? (int)s.st_size : len;
 	firstline = malloc(256);
-	if (ext4_fread(fp->f_inode->i_private, firstline, len, &wcnt) != EOK) {
+	if (!fp->f_fop || !fp->f_fop->read) {
+		free(firstline);
 		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOENT;
+	} else {
+		loff_t pos = 0;
+		ssize_t n = fp->f_fop->read(fp, firstline, len, &pos);
+		if (n < 0) {
+			free(firstline);
+			fs_put_file(fp);
+			name_put(file_name);
+			return -ENOENT;
+		}
 	}
 	fs_put_file(fp);
 

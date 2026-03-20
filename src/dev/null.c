@@ -4,6 +4,7 @@
 #include <lib/klib.h>
 #include <hw/time.h>
 #include <macro.h>
+#include <dev/dev.h>
 #include <unistd.h>
 
 static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
@@ -69,10 +70,9 @@ static super_operations null_sops = {
 	.open_root = null_open_root,
 };
 
-static void null_init()
+static void null_dev_register(super_block *dev_sb)
 {
-	task_struct *cur = CURRENT_TASK();
-	vfs_mount(cur->root, "/dev/null", sget(&null_sops));
+	vfs_mount(dev_sb, "/null", sget(&null_sops));
 }
 
-KERNEL_INIT(4, null_init);
+DEV_INIT(null_dev_register);

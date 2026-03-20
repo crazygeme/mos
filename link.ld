@@ -34,6 +34,13 @@ SECTIONS
 		__procfs_init_end = .;
 	}
 
+	.devfs_init BLOCK(4K) : AT(ADDR(.devfs_init)-0xC0000000)
+	{
+		__devfs_init_start = .;
+		*(.devfs_init)
+		__devfs_init_end = .;
+	}
+
 	/*
 	 * Kernel init-call table.  Each KERNEL_INIT(index, fn) declaration
 	 * drops a kinit_fn_t into ".kinit.<index>".  SORT_BY_NAME guarantees

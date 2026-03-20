@@ -16,6 +16,7 @@
 #include <lib/klib.h>
 #include <ps/ps.h>
 #include <macro.h>
+#include <dev/dev.h>
 #include <unistd.h>
 #include <errno.h>
 #include <ext4.h>
@@ -152,9 +153,8 @@ static super_operations hdd_dev_sops = {
 
 /* ── Initialisation ──────────────────────────────────────────────────────── */
 
-static void hdd_dev_init(void)
+static void hdd_dev_register(super_block *dev_sb)
 {
-	task_struct *cur = CURRENT_TASK();
 	int i;
 	char mount_path[48];
 
@@ -162,11 +162,11 @@ static void hdd_dev_init(void)
 		hdd_partition_info *pi = &hdd_partitions[i];
 		super_block *sb = sget(&hdd_dev_sops);
 		sb->s_fs_info = pi;
-		sprintf(mount_path, "/dev/%s", pi->name);
-		vfs_mount(cur->root, mount_path, sb);
-		printk("hdd_dev: mounted %s (%u sectors)\n", mount_path,
+		sprintf(mount_path, "/%s", pi->name);
+		vfs_mount(dev_sb, mount_path, sb);
+		printk("hdd_dev: mounted /dev%s (%u sectors)\n", mount_path,
 		       pi->size);
 	}
 }
 
-KERNEL_INIT(5, hdd_dev_init);
+DEV_INIT(hdd_dev_register);

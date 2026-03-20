@@ -37,6 +37,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <macro.h>
+#include <dev/dev.h>
 #include <ext4_oflags.h>
 #include "tty_ldisc.h"
 
@@ -689,7 +690,7 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		 * arg==1 allows stealing from another session.
 		 */
 		task_struct *cur = CURRENT_TASK();
-		int steal = buf ? *(int *)buf : 0;
+		int steal = (int)buf;
 		if (!cur->user || cur->user->session_id != cur->psid)
 			return -EPERM; /* must be session leader */
 		if (state->pgrp && !steal)
@@ -805,35 +806,45 @@ static super_operations tty_sops = {
 	.release = tty_sops_release,
 };
 
+/*
+ * tty_fs_init — allocate per-TTY resources.
+ * Mounting is done later by tty_dev_register() via DEV_INIT.
+ */
 static void tty_fs_init(void)
 {
-	char mount_path[16];
-	super_block *sb;
-	task_struct *cur = CURRENT_TASK();
-
 	for (int i = 0; i < TTY_MAX_VDEV; i++) {
 		tty_state *t = &ttys[i];
 		/* Per-TTY keyboard input queue */
 		t->kb_buf = cyb_create();
 		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
-		/* 
-		 * All those attached bash should be managed by process 1 
-		 * (/sbin/init) which will call wait on all orphen processes
+		/*
+		 * All those attached bash should be managed by process 1
+		 * (/sbin/init) which will call wait on all orphan processes
 		 */
 		if (i > 0)
 			t->parent = ps_find_process(1);
+	}
+}
+
+static void tty_dev_register(super_block *dev_sb)
+{
+	char mount_path[16];
+	super_block *sb;
+
+	for (int i = 0; i < TTY_MAX_VDEV; i++) {
 		sb = sget(&tty_sops);
-		sb->s_fs_info = t;
-		sprintf(mount_path, "/dev/tty%d", i);
-		vfs_mount(cur->root, mount_path, sb);
+		sb->s_fs_info = &ttys[i];
+		sprintf(mount_path, "/tty%d", i);
+		vfs_mount(dev_sb, mount_path, sb);
 	}
 
 	sb = sget(&tty_sops);
 	sb->s_fs_info = &ttys[0];
-	vfs_mount(cur->root, "/dev/tty", sb);
+	vfs_mount(dev_sb, "/tty", sb);
 	sb_get(sb);
-	vfs_mount(cur->root, "/dev/console", sb);
+	vfs_mount(dev_sb, "/console", sb);
 }
 
 KERNEL_INIT(4, tty_fs_init);
+DEV_INIT(tty_dev_register);

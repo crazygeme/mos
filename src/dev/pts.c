@@ -29,6 +29,7 @@
 #include <hw/time.h>
 #include <ps/ps.h>
 #include <macro.h>
+#include <dev/dev.h>
 #include <errno.h>
 #include <unistd.h>
 #include "tty_ldisc.h"
@@ -506,15 +507,20 @@ static fs_type devpts_fs_type = { .name = "devpts", .get_sb = devpts_get_sb };
 
 static void pts_dev_init(void)
 {
-	task_struct *cur = CURRENT_TASK();
-
 	spinlock_init(&pts_alloc_lock);
 
 	/* Register devpts so that sys_mount("devpts", "/dev/pts", ...) works */
 	fs_register_type(&devpts_fs_type);
+}
 
-	/* /dev/ptmx is a single device node — mount it unconditionally */
-	vfs_mount(cur->root, "/dev/ptmx", sget(&ptmx_sops));
+static void pts_dev_register(super_block *dev_sb)
+{
+	/* /dev/ptmx — master multiplexer */
+	vfs_mount(dev_sb, "/ptmx", sget(&ptmx_sops));
+
+	/* /dev/pts — slave directory, auto-mounted at boot */
+	vfs_mount(dev_sb, "/pts", sget(&pts_dir_sops));
 }
 
 KERNEL_INIT(5, pts_dev_init);
+DEV_INIT(pts_dev_register);

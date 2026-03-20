@@ -211,31 +211,31 @@ int sys_brk(unsigned _top)
 	unsigned size, pages, top, ret;
 
 	top = _top;
-	if (task->user->heap_top == USER_HEAP_BEGIN) {
-		do_mmap(task->user->heap_top, PAGE_SIZE, PROT_READ | PROT_WRITE,
+	if (task->user->brk == task->user->start_brk) {
+		do_mmap(task->user->brk, PAGE_SIZE, PROT_READ | PROT_WRITE,
 			0, -1, 0);
-		task->user->heap_top += PAGE_SIZE;
+		task->user->brk += PAGE_SIZE;
 	}
 
 	if (top == 0) {
-		ret = task->user->heap_top;
+		ret = task->user->brk;
 	} else if (top >= USER_HEAP_END) {
-		ret = task->user->heap_top;
-	} else if (top > task->user->heap_top) {
-		size = top - task->user->heap_top;
+		ret = task->user->brk;
+	} else if (top > task->user->brk) {
+		size = top - task->user->brk;
 		pages = (size - 1) / PAGE_SIZE + 1;
-		do_mmap(task->user->heap_top, PAGE_SIZE * pages,
+		do_mmap(task->user->brk, PAGE_SIZE * pages,
 			PROT_READ | PROT_WRITE, 0, -1, 0);
-		top = task->user->heap_top + pages * PAGE_SIZE;
-		task->user->heap_top = top;
+		top = task->user->brk + pages * PAGE_SIZE;
+		task->user->brk = top;
 		ret = top;
 	} else {
-		if (top < USER_HEAP_BEGIN)
-			top = USER_HEAP_BEGIN;
-		size = task->user->heap_top - top;
+		if (top < task->user->start_brk)
+			top = task->user->start_brk;
+		size = task->user->brk - top;
 		pages = (size - 1) / PAGE_SIZE + 1;
 		do_munmap(top & PAGE_SIZE_MASK, pages * PAGE_SIZE);
-		task->user->heap_top = top;
+		task->user->brk = top;
 		ret = top;
 	}
 
@@ -451,8 +451,8 @@ void do_signal(intr_frame *frame)
 		case SIGCONT:
 			return;
 		default:
-			/* Terminate */
-			sys_exit(sig | 0x80);
+			/* Terminate: signal number in bits 0-6, already POSIX-encoded. */
+			do_exit(sig);
 			return;
 		}
 	}

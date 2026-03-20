@@ -318,9 +318,9 @@ static void fill_statm(char *buf, task_struct *task)
 	if (task->user->vm)
 		vm_enum(task->user->vm, statm_region_cb, &ctx);
 
-	if (task->user->heap_top > USER_HEAP_BEGIN)
+	if (task->user->brk > task->user->start_brk)
 		heap_pages =
-			(task->user->heap_top - USER_HEAP_BEGIN) / PAGE_SIZE;
+			(task->user->brk - task->user->start_brk) / PAGE_SIZE;
 
 	ctx.total += heap_pages + stack_pages;
 	ctx.data += heap_pages + stack_pages;
@@ -372,11 +372,11 @@ static void fill_maps(char *buf, size_t size, task_struct *task)
 		vm_enum(task->user->vm, maps_region_cb, &ctx);
 
 	/* Heap pseudo-region */
-	if (task->user->heap_top > USER_HEAP_BEGIN && ctx.pos + 80 < size) {
+	if (task->user->brk > task->user->start_brk && ctx.pos + 80 < size) {
 		p = buf + ctx.pos;
 		ctx.pos += sprintf(
 			p, "%08x-%08x rw-p 00000000 00:00 0          [heap]\n",
-			USER_HEAP_BEGIN, task->user->heap_top);
+			task->user->start_brk, task->user->brk);
 	}
 
 	/* Stack pseudo-region */

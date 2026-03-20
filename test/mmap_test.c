@@ -31,7 +31,7 @@ KTEST(mmap, anon_auto_addr)
 					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(addr, 0u);
-	EXPECT_GE(addr, USER_ZONE_BEGIN);
+	EXPECT_GE(addr, TASK_UNMAPPED_BASE);
 	EXPECT_LT(addr, USER_ZONE_END);
 
 	do_munmap((void *)addr, PAGE_SIZE);

@@ -129,10 +129,6 @@ int sys_mmap(struct mmap_arg_struct32 *arg)
 	vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd,
 		      arg->offset);
 
-	if (TestControl.verbos)
-		klog("mmap: fd %d, addr %x, offset %x, len %x at addr %x\n",
-		     arg->fd, arg->addr, arg->offset, arg->len, vir);
-
 	return vir;
 }
 

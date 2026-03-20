@@ -229,6 +229,127 @@ char *strrchr(const char *str, char c)
 	return NULL;
 }
 
+/*
+ * match_class - test whether @c is in the bracket expression at @pat.
+ *
+ * @pat points to the first character after the opening '['.
+ * On return *@end points past the closing ']' (or at '\0' if unclosed).
+ *
+ * Supports:
+ *   [abc]   literal set
+ *   [a-z]   range
+ *   [!abc]  negated set  (also [^abc])
+ */
+static int match_class(char c, const char *pat, const char **end)
+{
+	int negate = (*pat == '!' || *pat == '^');
+	int matched = 0;
+
+	if (negate)
+		pat++;
+
+	while (*pat && *pat != ']') {
+		if (pat[1] == '-' && pat[2] && pat[2] != ']') {
+			if ((unsigned char)c >= (unsigned char)pat[0] &&
+			    (unsigned char)c <= (unsigned char)pat[2])
+				matched = 1;
+			pat += 3;
+		} else {
+			if (c == *pat)
+				matched = 1;
+			pat++;
+		}
+	}
+
+	*end = (*pat == ']') ? pat + 1 : pat;
+	return negate ? !matched : matched;
+}
+
+/*
+ * strglob_impl - recursive full-match engine used by strglob().
+ * Returns 1 if @pat matches the entirety of @str, 0 otherwise.
+ */
+static int strglob_impl(const char *pat, const char *str)
+{
+	while (*pat) {
+		switch (*pat) {
+		case '*':
+			/* Collapse consecutive stars. */
+			while (*pat == '*')
+				pat++;
+			/* Trailing star(s) match everything remaining. */
+			if (!*pat)
+				return 1;
+			/* Try anchoring the rest of the pattern at each position. */
+			while (*str) {
+				if (strglob_impl(pat, str))
+					return 1;
+				str++;
+			}
+			/* Also try with an empty suffix. */
+			return strglob_impl(pat, str);
+
+		case '?':
+			if (!*str)
+				return 0;
+			pat++;
+			str++;
+			break;
+
+		case '[': {
+			const char *end;
+
+			if (!*str)
+				return 0;
+			if (!match_class(*str, pat + 1, &end))
+				return 0;
+			pat = end;
+			str++;
+			break;
+		}
+
+		case '\\':
+			/* Escape: next character is literal. */
+			pat++;
+			if (!*pat)
+				return 0;
+			if (*pat != *str)
+				return 0;
+			pat++;
+			str++;
+			break;
+
+		default:
+			if (*pat != *str)
+				return 0;
+			pat++;
+			str++;
+			break;
+		}
+	}
+	return *str == '\0';
+}
+
+/*
+ * strglob - test whether @str fully matches glob pattern @pat.
+ *
+ * Pattern metacharacters (git-style):
+ *   *        any sequence of characters (including empty)
+ *   ?        any single character
+ *   [abc]    any character in the literal set
+ *   [a-z]    any character in the range
+ *   [!abc]   any character NOT in the set  (also [^abc])
+ *   \x       literal character x (escape)
+ *
+ * Returns @str on a successful match, NULL on mismatch.
+ * The non-NULL return acts as a truthy boolean for callers that only
+ * need a yes/no answer.
+ */
+const char *strglob(const char *pat, const char *str)
+{
+	return strglob_impl(pat, str) ? str : NULL;
+}
+
 char *strdup(const char *str)
 {
 	unsigned len = strlen(str) + 1;
@@ -335,6 +456,79 @@ char *itoa(int num, int base, int sign)
 	return ret;
 }
 
+/*
+ * 64-bit unsigned divide: returns quotient, stores remainder in *rem.
+ * Uses shift-and-subtract to avoid __divdi3/__moddi3 runtime helpers
+ * that are not available in a freestanding kernel build.
+ */
+static unsigned long long u64_divmod(unsigned long long n, unsigned long long d,
+				     unsigned long long *rem)
+{
+	unsigned long long q = 0;
+	int i;
+
+	*rem = 0;
+	for (i = 63; i >= 0; i--) {
+		*rem = (*rem << 1) | ((n >> i) & 1ULL);
+		if (*rem >= d) {
+			*rem -= d;
+			q |= (1ULL << i);
+		}
+	}
+	return q;
+}
+
+/*
+ * Convert a 64-bit integer to a heap-allocated string.
+ * sign=1: treat as signed (base 10 only).
+ * Returns a heap-allocated string; caller must free().
+ */
+char *lltoa(long long num, int base, int sign)
+{
+	/* 20 decimal digits + sign + NUL, or "0x" + 16 hex digits + NUL */
+	char *str = malloc(24);
+	char *ret = str;
+	unsigned long long uleft;
+	char *begin;
+
+	if (!str)
+		return NULL;
+	memset(str, 0, 24);
+
+	if (num == 0) {
+		strcpy(str, base == 16 ? "0x0" : "0");
+		return str;
+	}
+	if (base != 10 && base != 16) {
+		free(str);
+		return NULL;
+	}
+
+	uleft = (unsigned long long)num;
+	if (base == 10 && sign && num < 0) {
+		str[0] = '-';
+		str++;
+		uleft = (unsigned long long)(-num);
+	} else if (base == 16) {
+		str[0] = '0';
+		str[1] = 'x';
+		str += 2;
+	}
+
+	begin = str;
+	{
+		unsigned long long rem;
+		unsigned long long ubase = (unsigned long long)base;
+
+		while (uleft) {
+			uleft = u64_divmod(uleft, ubase, &rem);
+			*str++ = _hexdigit((int)rem);
+		}
+	}
+	strrev(begin);
+	return ret;
+}
+
 int atoi(const char *str)
 {
 	int base = 10, neg = 0, ret = 0;
@@ -348,15 +542,18 @@ int atoi(const char *str)
 	if (*str == '0') {
 		neg = 0;
 		str++;
-		if (*str == 'x' || *str == 'X')
+		if (*str == 'x' || *str == 'X') {
 			base = 16;
-		else if (*str == 'b')
+			str++; /* skip 'x' prefix */
+		} else if (*str == 'b') {
 			base = 2;
-		else if (*str >= '0' && *str <= '7')
+			str++; /* skip 'b' prefix */
+		} else if (*str >= '0' && *str <= '7') {
 			base = 8;
-		else
+			/* first octal digit — do not advance */
+		} else {
 			return 0;
-		str++;
+		}
 	}
 
 	while (*str) {

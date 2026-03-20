@@ -1,5 +1,7 @@
 #ifndef _MM_MMAP_H
 #define _MM_MMAP_H
+#include <fs/fs.h>
+
 typedef void *vm_struct_t;
 
 typedef struct _vm_region {
@@ -7,7 +9,7 @@ typedef struct _vm_region {
 	unsigned end;
 	int prot;
 	int flag;
-	void *node;
+	file *fp;
 	int offset;
 } vm_region;
 
@@ -27,7 +29,7 @@ void vm_destroy(vm_struct_t vm);
  * @param fd
  */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
-		int flag, void *node, int offset);
+		int flag, file *fp, int offset);
 
 /**
  * delete a mapped region which contains addr

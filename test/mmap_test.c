@@ -25,10 +25,9 @@ static vm_struct_t cur_vm(void)
 /* ── AnonAutoAddr ─────────────────────────────────────────────────────────
  * do_mmap with addr=0 picks an address inside the user zone.
  */
-KTEST(MmapTest, AnonAutoAddr)
+KTEST(mmap, anon_auto_addr)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE,
-					  PROT_READ | PROT_WRITE,
+	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(addr, 0u);
@@ -42,12 +41,11 @@ KTEST(MmapTest, AnonAutoAddr)
 /* ── AnonFixed ────────────────────────────────────────────────────────────
  * MAP_FIXED returns exactly the requested address.
  */
-KTEST(MmapTest, AnonFixed)
+KTEST(mmap, anon_fixed)
 {
-	unsigned addr = (unsigned)do_mmap(TEST_FIXED_ADDR, PAGE_SIZE,
-					  PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
-					  -1, 0);
+	unsigned addr = (unsigned)do_mmap(
+		TEST_FIXED_ADDR, PAGE_SIZE, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 
 	EXPECT_EQ(addr, TEST_FIXED_ADDR);
 
@@ -58,10 +56,9 @@ KTEST(MmapTest, AnonFixed)
 /* ── RegionTracked ────────────────────────────────────────────────────────
  * After mmap the vm region is findable via vm_find_map.
  */
-KTEST(MmapTest, RegionTracked)
+KTEST(mmap, region_tracked)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE,
-					  PROT_READ | PROT_WRITE,
+	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
@@ -77,7 +74,7 @@ KTEST(MmapTest, RegionTracked)
 /* ── RegionProt ───────────────────────────────────────────────────────────
  * The region remembers the prot flags that were passed to mmap.
  */
-KTEST(MmapTest, RegionProt)
+KTEST(mmap, region_prot)
 {
 	int prot = PROT_READ | PROT_WRITE;
 	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, prot,
@@ -95,16 +92,15 @@ KTEST(MmapTest, RegionProt)
 /* ── RegionAnon ───────────────────────────────────────────────────────────
  * Anonymous mapping: region->node must be NULL (no file backing).
  */
-KTEST(MmapTest, RegionAnon)
+KTEST(mmap, region_anon)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE,
-					  PROT_READ | PROT_WRITE,
+	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
 	ASSERT_NONNULL(r);
-	EXPECT_NULL(r->node);
+	EXPECT_NULL(r->fp);
 
 	do_munmap((void *)addr, PAGE_SIZE);
 	return 0;
@@ -113,12 +109,11 @@ KTEST(MmapTest, RegionAnon)
 /* ── SizeRoundup ──────────────────────────────────────────────────────────
  * Mapping 1 byte still reserves a full page-aligned region.
  */
-KTEST(MmapTest, SizeRoundup)
+KTEST(mmap, size_roundup)
 {
-	unsigned addr = (unsigned)do_mmap(TEST_FIXED_ADDR, 1,
-					  PROT_READ,
-					  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
-					  -1, 0);
+	unsigned addr = (unsigned)do_mmap(
+		TEST_FIXED_ADDR, 1, PROT_READ,
+		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
 	ASSERT_EQ(addr, TEST_FIXED_ADDR);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -134,10 +129,9 @@ KTEST(MmapTest, SizeRoundup)
 /* ── MunmapRemoves ────────────────────────────────────────────────────────
  * After munmap the region is gone from the vm map.
  */
-KTEST(MmapTest, MunmapRemoves)
+KTEST(mmap, munmap_removes)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE,
-					  PROT_READ | PROT_WRITE,
+	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
@@ -152,7 +146,7 @@ KTEST(MmapTest, MunmapRemoves)
 /* ── MunmapInvalid ────────────────────────────────────────────────────────
  * munmap on an address that was never mapped returns -EINVAL.
  */
-KTEST(MmapTest, MunmapInvalid)
+KTEST(mmap, munmap_invalid)
 {
 	/* Use an address we know is not mapped. */
 	unsigned addr = 0x30000000u;
@@ -169,13 +163,11 @@ KTEST(MmapTest, MunmapInvalid)
 /* ── TwoMapsDistinct ──────────────────────────────────────────────────────
  * Two back-to-back anonymous mmaps return different non-overlapping addresses.
  */
-KTEST(MmapTest, TwoMapsDistinct)
+KTEST(mmap, two_maps_distinct)
 {
-	unsigned a = (unsigned)do_mmap(0, PAGE_SIZE,
-				       PROT_READ | PROT_WRITE,
+	unsigned a = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 				       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	unsigned b = (unsigned)do_mmap(0, PAGE_SIZE,
-				       PROT_READ | PROT_WRITE,
+	unsigned b = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 				       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(a, 0u);
@@ -192,17 +184,16 @@ KTEST(MmapTest, TwoMapsDistinct)
 /* ── LargeMapping ─────────────────────────────────────────────────────────
  * A multi-page mapping creates a single contiguous region.
  */
-KTEST(MmapTest, LargeMapping)
+KTEST(mmap, large_mapping)
 {
 	unsigned size = 16 * PAGE_SIZE;
-	unsigned addr = (unsigned)do_mmap(0, size,
-					  PROT_READ | PROT_WRITE,
+	unsigned addr = (unsigned)do_mmap(0, size, PROT_READ | PROT_WRITE,
 					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	/* Check the start and end of the region */
 	vm_region *r_start = vm_find_map(cur_vm(), addr);
-	vm_region *r_end   = vm_find_map(cur_vm(), addr + size - PAGE_SIZE);
+	vm_region *r_end = vm_find_map(cur_vm(), addr + size - PAGE_SIZE);
 
 	ASSERT_NONNULL(r_start);
 	ASSERT_NONNULL(r_end);

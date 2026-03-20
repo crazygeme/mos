@@ -82,11 +82,6 @@ static void print_human_size(fputstr _putstr, unsigned sz, void *ctx)
 	int n = 0;
 	char *s, *f;
 
-	if (sz == 1) {
-		_putstr("1", ctx);
-		return;
-	}
-
 	while (sz >= 1024 && up[1]) {
 		frac = (sz % 1024) / 100;
 		sz /= 1024;
@@ -204,11 +199,21 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 
 		/* ---- Parse width ---- */
 		int width = 0;
-		while (*p >= '1' && *p <= '9')
+		while (*p >= '0' && *p <= '9')
 			width = width * 10 + (*p++ - '0');
 
 		/* left-align overrides zero-fill */
 		char fill = (flag_zero && !flag_left) ? '0' : ' ';
+
+		/* ---- Parse length modifier ---- */
+		int flag_ll = 0;
+		if (*p == 'l') {
+			p++;
+			if (*p == 'l') {
+				flag_ll = 1;
+				p++;
+			}
+		}
 
 		cur = *p++;
 		switch (cur) {
@@ -216,27 +221,53 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			EMIT('%');
 			break;
 		case 'd': {
-			int v = va_arg(ap, int);
-			char *s = itoa(v, 10, 1);
-			char *num = s;
-			int neg = (v < 0 && flag_zero);
+			if (flag_ll) {
+				long long v = va_arg(ap, long long);
+				char *s = lltoa(v, 10, 1);
+				char *num = s;
+				int neg = (v < 0 && flag_zero);
 
-			/* For zero-pad signed: emit '-' first, then pad digits */
-			if (neg) {
-				EMIT('-');
-				num++;
+				if (neg) {
+					EMIT('-');
+					num++;
+				}
+				EMIT_PADDED(num, (int)strlen(num), width - neg,
+					    fill, flag_left);
+				free(s);
+			} else {
+				int v = va_arg(ap, int);
+				char *s = itoa(v, 10, 1);
+				char *num = s;
+				int neg = (v < 0 && flag_zero);
+
+				/* For zero-pad signed: emit '-' first, then pad digits */
+				if (neg) {
+					EMIT('-');
+					num++;
+				}
+				EMIT_PADDED(num, (int)strlen(num), width - neg,
+					    fill, flag_left);
+				free(s);
 			}
-			EMIT_PADDED(num, (int)strlen(num), width - neg, fill,
-				    flag_left);
-			free(s);
 			break;
 		}
 		case 'u': {
-			unsigned v = va_arg(ap, unsigned);
-			char *s = itoa((int)v, 10, 0);
+			if (flag_ll) {
+				unsigned long long v =
+					va_arg(ap, unsigned long long);
+				char *s = lltoa((long long)v, 10, 0);
 
-			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
-			free(s);
+				EMIT_PADDED(s, (int)strlen(s), width, fill,
+					    flag_left);
+				free(s);
+			} else {
+				unsigned v = va_arg(ap, unsigned);
+				char *s = itoa((int)v, 10, 0);
+
+				EMIT_PADDED(s, (int)strlen(s), width, fill,
+					    flag_left);
+				free(s);
+			}
 			break;
 		}
 		case 'x':

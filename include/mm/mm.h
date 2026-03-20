@@ -2,6 +2,7 @@
 #define _MM_MM_H
 #include <config.h>
 
+typedef struct _file file;
 typedef struct multiboot_info multiboot_info_t;
 
 #define KERNEL_OFFSET 0xC0000000
@@ -111,7 +112,7 @@ int do_mmap(unsigned int addr, unsigned int len, unsigned int prot,
 void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags);
 
 int do_mmap_kernel(unsigned int addr, unsigned int len, unsigned int prot,
-		   unsigned int flags, void *inode, unsigned int offset);
+		   unsigned int flags, file *fp, unsigned int offset);
 
 int do_munmap(void *addr, unsigned length);
 

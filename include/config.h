@@ -63,7 +63,8 @@
 
 #define PIPE_BUF_LEN (4096)
 
-#define TASK_UNMAPPED_BASE (KERNEL_OFFSET / 3) /* 0x40000000, matches Linux i386 */
+#define TASK_UNMAPPED_BASE \
+	(KERNEL_OFFSET / 3) /* 0x40000000, matches Linux i386 */
 /* heap is bounded by the mmap zone, matching Linux classic VM layout */
 #define USER_HEAP_END TASK_UNMAPPED_BASE
 /* mmap zone: [TASK_UNMAPPED_BASE, USER_ZONE_END), top is bottom of stack guard */

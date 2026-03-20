@@ -142,9 +142,40 @@ int sys_munmap(void *addr, unsigned length)
 
 int sys_mprotect(void *addr, unsigned len, int prot)
 {
+	task_struct *cur = CURRENT_TASK();
+	unsigned begin = (unsigned)addr;
+	unsigned end, vir;
+
 	if (TestControl.verbos)
 		klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
 
+	/* POSIX: addr must be page-aligned */
+	if (begin & ~PAGE_SIZE_MASK)
+		return -EINVAL;
+
+	if (len == 0)
+		return 0;
+
+	end = (begin + len + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+
+	/* Update VM region descriptors, splitting regions at boundaries. */
+	vm_mprotect(cur->user->vm, begin, end, prot);
+
+	/* Update hardware page-table entries for already-faulted-in pages. */
+	for (vir = begin; vir < end; vir += PAGE_SIZE) {
+		unsigned mmflag = mm_get_map_flag(vir);
+		if (mmflag == 0)
+			continue; /* not yet mapped; vm descriptor update is enough */
+
+		if (prot & PROT_WRITE)
+			mmflag |= PAGE_ENTRY_WRITABLE;
+		else
+			mmflag &= ~PAGE_ENTRY_WRITABLE;
+
+		mm_set_map_flag(vir, mmflag);
+	}
+
+	RELOAD_CR3();
 	return 0;
 }
 

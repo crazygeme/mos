@@ -371,7 +371,7 @@ KTEST(kstring, itoa_hex)
 {
 	char *s = itoa(255, 16, 0);
 	ASSERT_NONNULL(s);
-	EXPECT_EQ(strcmp(s, "0xff"), 0);
+	EXPECT_EQ(strcmp(s, "ff"), 0);
 	free(s);
 	return 0;
 }

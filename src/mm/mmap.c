@@ -1,4 +1,5 @@
 #include <mm/mm.h>
+#include <mm/phymm.h>
 #include <lib/list.h>
 #include <lib/rbtree.h>
 #include <lib/klib.h>
@@ -8,6 +9,7 @@
 #include <macro.h>
 #include <config.h>
 #include <errno.h>
+#include <ext4.h>
 
 /*
  * vm_key is the search key for the red-black tree that backs each process's
@@ -264,6 +266,71 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
 }
 
 /*
+ * vm_mprotect - update protection flags for [begin, end) without unmapping pages.
+ *
+ * Iterates all VM regions that overlap [begin, end).  For each overlapping
+ * region the portion outside [begin, end) is re-inserted with its original
+ * protection, while the overlapping portion is re-inserted with @new_prot.
+ * Physical page mappings are left intact; only the VM descriptors and page-
+ * table permission bits change (done by the caller after this returns).
+ *
+ * File reference counting: we temporarily bump the ref before hash_remove()
+ * drops it via vm_region_invalid(), then release our bump at the end.
+ */
+void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
+{
+	hash_table *table = vm;
+	vm_key probe;
+	key_value_pair *pair;
+
+	probe.begin = begin;
+	probe.end = end;
+
+	while ((pair = hash_find(table, &probe)) != NULL) {
+		vm_key *okey = pair->key;
+		vm_region *oregion = pair->val;
+
+		unsigned r_begin = oregion->begin;
+		unsigned r_end = oregion->end;
+		int r_prot = oregion->prot;
+		int r_flag = oregion->flag;
+		file *r_fp = oregion->fp;
+		int r_offset = oregion->offset;
+
+		/* Intersection of the region with [begin, end) */
+		unsigned upd_begin = r_begin > begin ? r_begin : begin;
+		unsigned upd_end = r_end < end ? r_end : end;
+
+		/* Temporarily hold a file ref across the hash_remove() drop. */
+		if (r_fp)
+			fs_get_file(r_fp);
+
+		/* Remove descriptor only — physical pages stay mapped. */
+		hash_remove(table, okey);
+
+		/* Preserve left remnant [r_begin, upd_begin) at original prot. */
+		if (r_begin < upd_begin)
+			vm_add_map(vm, r_begin, upd_begin, r_prot, r_flag, r_fp,
+				   r_offset);
+
+		/* Re-insert updated portion [upd_begin, upd_end) with new prot. */
+		vm_add_map(vm, upd_begin, upd_end, new_prot, r_flag, r_fp,
+			   r_offset + (int)(upd_begin - r_begin));
+
+		/* Preserve right remnant [upd_end, r_end) at original prot. */
+		if (upd_end < r_end)
+			vm_add_map(vm, upd_end, r_end, r_prot, r_flag, r_fp,
+				   r_offset + (int)(upd_end - r_begin));
+
+		if (r_fp)
+			fs_put_file(r_fp);
+
+		/* Advance probe past the portion we just handled. */
+		probe.begin = upd_end;
+	}
+}
+
+/*
  * do_mmap_kernel - kernel-internal mmap implementation.
  *
  * Maps the page-aligned range covering [_addr, _addr+_len) into the current
@@ -335,6 +402,68 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 }
 
 /*
+ * vm_flush_dirty_region - write dirty MAP_SHARED pages in [begin, end) back
+ * to the underlying file.
+ *
+ * Only acts on regions that are both MAP_SHARED and file-backed.  Pages that
+ * were never faulted in (not present in the page table) are skipped.  The
+ * dirty flag is cleared after a successful write so that a repeated flush
+ * (e.g. partial unmap followed by exit) does not re-write clean pages.
+ *
+ * Called with the user's page tables still active so that (void *)vir is a
+ * valid kernel-readable address.
+ */
+static void vm_flush_dirty_region(vm_region *region, unsigned begin,
+				  unsigned end)
+{
+	ext4_file *ff;
+	unsigned vir;
+
+	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
+		return;
+
+	ff = region->fp->f_inode->i_private;
+
+	for (vir = begin; vir < end; vir += PAGE_SIZE) {
+		unsigned page_index;
+		int file_offset;
+		size_t wcnt = 0;
+
+		/* Skip pages that were never faulted in. */
+		if (mm_get_map_flag(vir) == 0)
+			continue;
+
+		page_index = mm_get_attached_page_index(vir);
+		if (!phymm_is_dirty(page_index))
+			continue;
+
+		file_offset = region->offset + (int)(vir - region->begin);
+		if (ext4_fseek(ff, file_offset, SEEK_SET) != EOK)
+			continue;
+
+		if (ext4_fwrite(ff, (void *)vir, PAGE_SIZE, &wcnt) == EOK)
+			phymm_clear_dirty(page_index);
+	}
+}
+
+/* vm_enum callback wrapper for vm_flush_all_dirty. */
+static void vm_flush_region_cb(vm_region *region, void *data)
+{
+	(void)data;
+	vm_flush_dirty_region(region, region->begin, region->end);
+}
+
+/*
+ * vm_flush_all_dirty - flush every dirty MAP_SHARED page in the VM map.
+ *
+ * Called on process exit before the VM is torn down.
+ */
+void vm_flush_all_dirty(vm_struct_t vm)
+{
+	vm_enum(vm, vm_flush_region_cb, NULL);
+}
+
+/*
  * do_munmap - syscall handler for munmap(2).
  *
  * Unmaps the page-aligned range [begin, end) from the current task's address
@@ -364,6 +493,10 @@ int do_munmap(void *addr, unsigned length)
 	/* The unmap range must be fully contained within one existing region. */
 	if (begin < region->begin || end > region->end)
 		return -EINVAL;
+
+	/* Flush dirty MAP_SHARED pages in the unmapped range while they are
+	 * still accessible at their virtual addresses. */
+	vm_flush_dirty_region(region, begin, end);
 
 	/* Snapshot region data before vm_del_map() frees the region struct. */
 	r_begin = region->begin;

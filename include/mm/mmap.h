@@ -40,6 +40,9 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
  */
 void vm_del_map(vm_struct_t vm, unsigned addr);
 
+/* Update protection of [begin, end) without unmapping physical pages. */
+void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot);
+
 /**
  * find the region that contains addr
  *
@@ -78,5 +81,11 @@ void vm_dup(vm_struct_t src, vm_struct_t dst);
  */
 typedef void (*vm_enum_fn)(vm_region *region, void *data);
 void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data);
+
+/**
+ * vm_flush_all_dirty - write back all dirty MAP_SHARED file-backed pages.
+ * Called on process exit before the VM is torn down.
+ */
+void vm_flush_all_dirty(vm_struct_t vm);
 
 #endif

@@ -2,7 +2,8 @@
 #define _MM_PHYMM_H
 #include <config.h>
 
-#define PHYMM_PAGE_COW 0x00000001
+#define PHYMM_PAGE_COW 0x00000001 /* kept for legacy compat (unused) */
+#define PHYMM_PAGE_DIRTY 0x01 /* page written via MAP_SHARED mapping */
 #define VIRT_TO_PHY(x) (x - KERNEL_OFFSET)
 #define PHY_TO_VIRT(x) (x + KERNEL_OFFSET)
 #define PHY_TO_PAGE_IDX(x) (((x) & PAGE_SIZE_MASK) / PAGE_SIZE)
@@ -24,7 +25,8 @@ typedef struct _phymm_page {
 	unsigned int
 		prev_free; /* buddy free list: prev page idx, PHYMM_INVALID   */
 	unsigned char order; /* buddy order of this block (head page only)      */
-	unsigned char _pad[3];
+	unsigned char flags; /* PHYMM_PAGE_* flags                              */
+	unsigned char _pad[2];
 } phymm_page;
 
 extern phymm_page *phymm_pages;
@@ -59,5 +61,10 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count);
 void phymm_free_user(unsigned page_index);
 
 int phymm_is_used(unsigned page_index);
+
+/* Dirty-page tracking for MAP_SHARED file-backed mappings. */
+void phymm_mark_dirty(unsigned page_index);
+int phymm_is_dirty(unsigned page_index);
+void phymm_clear_dirty(unsigned page_index);
 
 #endif

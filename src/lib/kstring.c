@@ -418,11 +418,11 @@ char *itoa(int num, int base, int sign)
 
 	/* Special-case INT_MIN: x == -x in two's complement */
 	if (uleft == 0x80000000u) {
-		strcpy(str, "0x80000000");
+		strcpy(str, base == 16 ? "80000000" : "-2147483648");
 		return str;
 	}
 	if (num == 0) {
-		strcpy(str, base == 16 ? "0x0" : "0");
+		strcpy(str, "0");
 		return str;
 	}
 	if (base != 10 && base != 16) {
@@ -434,10 +434,6 @@ char *itoa(int num, int base, int sign)
 		str[0] = '-';
 		str++;
 		left = -left;
-	} else if (base == 16) {
-		str[0] = '0';
-		str[1] = 'x';
-		str += 2;
 	}
 
 	begin = str;
@@ -496,7 +492,7 @@ char *lltoa(long long num, int base, int sign)
 	memset(str, 0, 24);
 
 	if (num == 0) {
-		strcpy(str, base == 16 ? "0x0" : "0");
+		strcpy(str, "0");
 		return str;
 	}
 	if (base != 10 && base != 16) {
@@ -509,10 +505,6 @@ char *lltoa(long long num, int base, int sign)
 		str[0] = '-';
 		str++;
 		uleft = (unsigned long long)(-num);
-	} else if (base == 16) {
-		str[0] = '0';
-		str[1] = 'x';
-		str += 2;
 	}
 
 	begin = str;

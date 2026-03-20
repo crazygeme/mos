@@ -13,9 +13,8 @@
 #include <ps/ps.h>
 #include <hw/time.h>
 #include <macro.h>
+#include <dev/dev.h>
 #include <unistd.h>
-
-/* Single shared buffer backing /dev/initctl */
 
 static ssize_t initctl_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
@@ -103,12 +102,11 @@ static super_operations initctl_sops = {
 	.release = initctl_release_super,
 };
 
-static void initctl_init(void)
+static void initctl_dev_register(super_block *dev_sb)
 {
-	task_struct *cur = CURRENT_TASK();
 	super_block *sb = sget(&initctl_sops);
 	sb->s_fs_info = cyb_create();
-	vfs_mount(cur->root, "/dev/initctl", sb);
+	vfs_mount(dev_sb, "/initctl", sb);
 }
 
-KERNEL_INIT(4, initctl_init);
+DEV_INIT(initctl_dev_register);

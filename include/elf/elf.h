@@ -414,7 +414,7 @@ typedef struct _mos_binfmt {
 	unsigned interp_load_addr;
 	unsigned e_entry;
 	unsigned interp_bias;
-
+	unsigned start_brk; /* PAGE_ALIGN(end of BSS) — initial brk value */
 } mos_binfmt;
 
 unsigned elf_map(char *path, mos_binfmt *fmt);

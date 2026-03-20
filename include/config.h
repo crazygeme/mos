@@ -63,12 +63,11 @@
 
 #define PIPE_BUF_LEN (4096)
 
-#define USER_HEAP_BEGIN 0x60000000
-// left one page (a hole) to protect stack overflow and heap overflow
-#define USER_HEAP_END (KERNEL_OFFSET - (USER_STACK_PAGES + 1) * PAGE_SIZE)
-
-#define USER_ZONE_BEGIN 0x10000000
-#define USER_ZONE_END (USER_HEAP_BEGIN - PAGE_SIZE)
+#define TASK_UNMAPPED_BASE (KERNEL_OFFSET / 3) /* 0x40000000, matches Linux i386 */
+/* heap is bounded by the mmap zone, matching Linux classic VM layout */
+#define USER_HEAP_END TASK_UNMAPPED_BASE
+/* mmap zone: [TASK_UNMAPPED_BASE, USER_ZONE_END), top is bottom of stack guard */
+#define USER_ZONE_END (KERNEL_OFFSET - (USER_STACK_PAGES + 1) * PAGE_SIZE)
 
 // supported resolution
 #define VGA_RESOLUTION_X 768

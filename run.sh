@@ -33,7 +33,7 @@ elif [ "$arg" == "kvm" ]; then
 elif [ "$arg" == "bash" ]; then
 	_init="/bin/bash"
 elif [ "$arg" == "logtofile" ]; then
-	_logtofile="file:krn.log"
+	_logtofile="file:out/krn.log"
 elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
@@ -49,7 +49,7 @@ fi
 done
 
 if [ "$_window" == "curses" ]; then
-	_logtofile="file:krn.log"
+	_logtofile="file:out/krn.log"
 fi
 
 

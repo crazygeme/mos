@@ -141,7 +141,8 @@ typedef void *vm_struct_t;
 
 typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
-	unsigned heap_top;
+	unsigned start_brk; /* base of heap, set from ELF BSS end at exec time */
+	unsigned brk;       /* current program break (Linux: mm->brk) */
 	vm_struct_t vm;
 	char *command;
 	size_t cmd_len;
@@ -309,6 +310,7 @@ void ps_enum_all(ps_enum_callback callback, void *ctx);
 // syscall handler
 int sys_fork();
 int sys_vfork();
+void do_exit(unsigned encoded_status);
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);

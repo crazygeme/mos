@@ -195,7 +195,7 @@ static int elf_find_interp(file *fp, unsigned table_offset, unsigned size,
  * the TLB is flushed with RELOAD_CR3().
  */
 static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
-				 unsigned num)
+				 unsigned num, mos_binfmt *fmt)
 {
 	int i = 0;
 	unsigned elf_bss = 0; /* end of file-backed data (unaligned) */
@@ -224,6 +224,9 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 	}
 
 	elf_map_bss(fp, elf_bss, last_bss);
+
+	if (fmt)
+		fmt->start_brk = (last_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 
 	return 1;
 }
@@ -273,6 +276,8 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 	}
 
 	elf_map_bss(fp, elf_bss, last_bss);
+
+	fmt->start_brk = (last_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 
 	return 1;
 }
@@ -504,7 +509,7 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 			 * plain static binary and jump straight to its entry.
 			 */
 			elf_map_programs(fp, elf.e_phoff, elf.e_phentsize,
-					 elf.e_phnum);
+					 elf.e_phnum, fmt);
 			fmt->interp_load_addr = entry_point;
 		} else {
 			/*
@@ -519,7 +524,7 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 		}
 	} else {
 		/* Static binary: no interpreter, jump directly to e_entry. */
-		elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum);
+		elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum, fmt);
 		fmt->interp_load_addr = entry_point;
 	}
 

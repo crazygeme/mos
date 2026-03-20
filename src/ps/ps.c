@@ -244,7 +244,8 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	memset(task->user->page_dir, 0, PAGE_SIZE);
 	task->user->cwd = name_get();
 	memset(task->user->cwd, 0, MAX_PATH);
-	task->user->heap_top = USER_HEAP_BEGIN;
+	task->user->start_brk = 0;
+	task->user->brk = 0;
 	task->user->vm = vm_create();
 
 	task->signal = zalloc(sizeof(signal_context));

@@ -197,11 +197,11 @@ vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 
 /*
  * vm_disc_map - find a free virtual address range of at least @size bytes
- *               within [USER_ZONE_BEGIN, KERNEL_OFFSET).
+ *               within [TASK_UNMAPPED_BASE, KERNEL_OFFSET).
  *
  * Iterates the sorted region list and returns the start of the first gap
  * that is large enough.  The candidate start is always clamped to at least
- * USER_ZONE_BEGIN so that existing mappings below the user zone (text,
+ * TASK_UNMAPPED_BASE so that existing mappings below the user zone (text,
  * stack set up by the process loader) are skipped over.  Returns 0 if no
  * suitable gap exists.
  */
@@ -209,7 +209,7 @@ unsigned vm_disc_map(vm_struct_t vm, int size)
 {
 	hash_table *table = vm;
 	key_value_pair *pair = hash_first(table);
-	unsigned candidate = USER_ZONE_BEGIN;
+	unsigned candidate = TASK_UNMAPPED_BASE;
 	vm_key *key;
 
 	while (pair) {

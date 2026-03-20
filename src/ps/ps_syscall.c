@@ -225,7 +225,7 @@ int do_fork(unsigned flag)
 	       cur->user->env_len);
 	task->user->cwd = name_get();
 	strcpy(task->user->cwd, cur->user->cwd);
-	task->user->heap_top = cur->user->heap_top;
+	task->user->brk = cur->user->brk;
 	task->user->page_dir = vm_alloc(1);
 	task->user->group_id = cur->user->group_id;
 	task->user->session_id = cur->user->session_id;
@@ -277,14 +277,16 @@ int sys_vfork()
  * Public — exit
  */
 
-int sys_exit(unsigned status)
+/* Internal: exit with an already-encoded waitpid status word. */
+void do_exit(unsigned encoded_status)
 {
 	task_struct *cur = CURRENT_TASK();
 	int i;
 
-	cur->exit_status = status;
+	cur->exit_status = encoded_status;
 	if (TestControl.verbos)
-		klog("exit(%s, %d)\n", cur->user->command, status);
+		klog("exit(%s, status=0x%x)\n", cur->user->command,
+		     encoded_status);
 
 	if (cur->fork_flag & FORK_FLAG_VFORK)
 		cond_notify(&cur->vfork_event);
@@ -315,6 +317,11 @@ int sys_exit(unsigned status)
 	ps_put_to_dying_queue(cur);
 
 	task_sched();
+}
+
+int sys_exit(unsigned status)
+{
+	do_exit(status << 8);
 	return 0;
 }
 

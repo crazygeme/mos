@@ -48,8 +48,9 @@ static void cleanup()
 	/* Unmap every user-space page table entry. */
 	ps_cleanup_all_user_map(cur);
 
-	/* Reset heap and install a fresh VM tracker. */
-	cur->user->heap_top = USER_HEAP_BEGIN;
+	/* Reset heap; start_brk/brk will be set after elf_map(). */
+	cur->user->start_brk = 0;
+	cur->user->brk = 0;
 
 	cur->user->vm = vm_create();
 }
@@ -496,8 +497,10 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 */
 	elf_map(file_name, &fmt);
 	eip = fmt.interp_load_addr;
+	cur->user->start_brk = fmt.start_brk;
+	cur->user->brk = fmt.start_brk;
 	if (!eip) {
-		printk("fatal error: file %s not found!\n", f);
+		printk("fatal error: file %s not found!\n", file_name);
 		asm("hlt");
 	}
 

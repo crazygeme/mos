@@ -212,6 +212,7 @@ int do_fork(unsigned flag)
 	task_intr_frame->eax = 0;
 
 	task->parent = cur;
+	task->nchildren = 0;
 	task->fds = vm_alloc(1);
 	list_init(&task->ps_list);
 	task->user = zalloc(sizeof(user_enviroment));
@@ -246,6 +247,7 @@ int do_fork(unsigned flag)
 	ps_dup_fds(cur, task);
 	ps_dup_user_maps(cur, task);
 	spinlock_lock(&ps_lock);
+	cur->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock);
@@ -278,6 +280,36 @@ int sys_vfork()
  */
 
 /* Internal: exit with an already-encoded waitpid status word. */
+/* Reparent all children of cur to init (pid 1). Must be called without
+ * ps_lock held. Living children get a new parent; zombie children also
+ * send SIGCHLD to init so it can reap them. */
+static void ps_reparent_children(task_struct *cur)
+{
+	struct rb_node *node;
+	int notify_init = 0;
+
+	spinlock_lock(&ps_lock);
+	task_struct *init_task = ps_find_process_unsafe(1);
+	if (!init_task || init_task == cur)
+		goto out;
+
+	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+		task_struct *t = rb_entry(node, task_struct, mgr_rb);
+		if (t->parent != cur)
+			continue;
+		t->parent = init_task;
+		init_task->nchildren++;
+		if (t->status == ps_dying)
+			notify_init = 1;
+	}
+	if (notify_init) {
+		init_task->signal->sig_pending |= (1UL << (SIGCHLD - 1));
+		ps_put_to_ready_queue_unsafe(init_task);
+	}
+out:
+	spinlock_unlock(&ps_lock);
+}
+
 void do_exit(unsigned encoded_status)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -314,8 +346,8 @@ void do_exit(unsigned encoded_status)
 	if (cur->psid == 1)
 		shutdown();
 
-	/* FIXME: reparent orphaned children to cur->parent. */
 	/* ps_put_to_dying_queue queues SIGCHLD on the parent atomically. */
+	ps_reparent_children(cur);
 	ps_put_to_dying_queue(cur);
 
 	task_sched();
@@ -343,6 +375,8 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
 	task_struct *cur = CURRENT_TASK();
 	list_entry *dying_task_entry;
+	if (TestControl.verbos)
+		klog("wait(%d, %x, %x, %x)\n", pid, status, options, rusage);
 
 	for (;;) {
 		task_sched();
@@ -365,18 +399,27 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 
 			list_remove_entry(&task->ps_list);
 			ps_remove_mgr_unsafe(task);
+			cur->nchildren--;
 			spinlock_unlock(&ps_lock);
 			ps_reap_task(task, rusage);
 			if (TestControl.verbos)
-				klog("wait(%d) = %d\n", pid, ret);
+				klog("wait(%d) returns %d\n", pid, ret);
 			return ret;
 		}
 
 		if (pid && ps_find_process_unsafe(pid) == NULL) {
 			spinlock_unlock(&ps_lock);
 			if (TestControl.verbos)
-				klog("wait(%d) = %d\n", pid, -ECHILD);
+				klog("wait(%d) returns %d\n", pid, -ECHILD);
 
+			return -ECHILD;
+		}
+
+		/* No specific pid requested and no children at all. */
+		if (!pid && cur->nchildren == 0) {
+			spinlock_unlock(&ps_lock);
+			if (TestControl.verbos)
+				klog("wait(%d) returns %d\n", pid, -ECHILD);
 			return -ECHILD;
 		}
 

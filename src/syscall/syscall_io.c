@@ -113,6 +113,9 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 	int i;
 	unsigned total = 0;
 
+	if (TestControl.verbos)
+		klog("readv(%d, %x, %d)\n", fildes, iov, iovcnt);
+
 	for (i = 0; i < iovcnt; i++) {
 		total += iov[i].iov_len;
 		memset(iov[i].iov_base, 0, iov[i].iov_len);
@@ -217,6 +220,10 @@ int sys_fcntl(int fd, int cmd, int arg)
 		ret = 0;
 		break;
 	}
+
+	if (TestControl.verbos)
+		klog("fcntl(%d, %d, %d) = %d\n", fd, cmd, arg, ret);
+
 	return ret;
 }
 

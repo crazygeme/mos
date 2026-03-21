@@ -68,6 +68,10 @@ int sys_time(unsigned *t)
 		return -1;
 
 	*t = (unsigned)(((long long)time_now_ms() + g_wall_offset_ms) / 1000);
+
+	if (TestControl.verbos)
+		klog("time() = %u\n", *t);
+
 	return 0;
 }
 
@@ -117,13 +121,37 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 		return -EINVAL;
 
 	total_millisecond = req->tv_sec * 1000 + req->tv_nsec / 1000000;
+
+	if (TestControl.verbos)
+		klog("nanosleep(%d.%09d) = %ums\n", req->tv_sec, req->tv_nsec,
+		     total_millisecond);
+
 	msleep(total_millisecond);
 	return 0;
 }
 
-int sys_reboot(unsigned cmd)
+/* Linux reboot(2) magic numbers */
+#define LINUX_REBOOT_MAGIC1 0xfee1dead
+#define LINUX_REBOOT_MAGIC2 0x28121969
+
+int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 {
 	task_struct *cur = CURRENT_TASK();
+
+	if (TestControl.verbos)
+		klog("reboot(magic1=%x, magic2=%x, cmd=%x) from pid %d\n",
+		     magic1, magic2, cmd, cur->psid);
+
+	/* Reject calls that don't carry the Linux magic numbers. */
+	if (magic1 != LINUX_REBOOT_MAGIC1)
+		return -EINVAL;
+
+	/*
+	 * CAD_ON / CAD_OFF: enable or disable Ctrl-Alt-Delete.
+	 * We have no hardware CAD support, so both are no-ops.
+	 */
+	if (cmd == MOS_REBOOT_CMD_CAD_ON || cmd == MOS_REBOOT_CMD_CAD_OFF)
+		return 0;
 
 	/*
 	 * PID 1 (init) calls us after completing an orderly shutdown —
@@ -186,15 +214,11 @@ int sys_socketcall(int call, unsigned long *args)
 
 int sys_mmap(struct mmap_arg_struct32 *arg)
 {
-	int vir;
-
 	if (arg->len > (10 * 1024 * 1024))
 		return -1;
 
-	vir = do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd,
-		      arg->offset);
-
-	return vir;
+	return do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd,
+		       arg->offset);
 }
 
 int sys_munmap(void *addr, unsigned length)

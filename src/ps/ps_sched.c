@@ -224,7 +224,7 @@ void _task_sched(const char *func)
 	if (!task || task->psid == current->psid)
 		goto SELF;
 
-	current->niv_switches++;
+	current->total_switches++;
 
 	task->status = ps_running;
 	/*

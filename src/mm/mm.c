@@ -14,7 +14,8 @@
 unsigned phymm_end = 0;
 unsigned phymm_begin = 0;
 
-unsigned pgc_count = 0;
+unsigned cache_count = 0;
+unsigned buffer_count = 0;
 unsigned pgc_top = 0;
 
 /*
@@ -52,9 +53,10 @@ static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
 
 	if (cache->count == 0)
 		return 0;
-	pgc_top = __sync_add_and_fetch(&cache->top, -1);
+	__sync_add_and_fetch(&cache->top, -1);
 	ret = cache->mem[cache->top];
-	pgc_count = __sync_add_and_fetch(&cache->count, -1);
+	pgc_top = __sync_add_and_fetch(&cache->count, -1);
+	cache_count++;
 	return ret;
 }
 
@@ -63,8 +65,9 @@ static void page_table_cache_free(page_table_cache_t *cache, unsigned int val)
 	if (cache->count >= 1024)
 		return;
 	cache->mem[cache->top] = val;
-	pgc_top = __sync_add_and_fetch(&cache->top, 1);
-	pgc_count = __sync_add_and_fetch(&cache->count, 1);
+	__sync_add_and_fetch(&cache->top, 1);
+	pgc_top = __sync_add_and_fetch(&cache->count, 1);
+	cache_count--;
 }
 
 unsigned int mm_alloc_page_table()
@@ -134,12 +137,17 @@ typedef struct {
  * Returns 1 on success; 0 if a new page table was needed but allocation failed.
  */
 static int mm_get_valid_page_table(unsigned addr, unsigned flag,
-				   mm_addr_info *info)
+				   mm_addr_info *info, int alloc_if_none)
 {
 	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
 	unsigned offset = ADDR_TO_PGT_OFFSET(addr);
 
+	info->dir = info->table = info->entry = NULL;
+
 	if ((page_dir[offset] & PAGE_SIZE_MASK) == 0) {
+		if (!alloc_if_none)
+			return 0;
+
 		unsigned int table_addr = mm_alloc_page_table();
 		unsigned int pde;
 
@@ -150,10 +158,13 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 		page_dir[offset] = pde;
 	}
 	info->dir = &page_dir[offset];
-	info->table =
-		(unsigned int *)((*info->dir & PAGE_SIZE_MASK) + KERNEL_OFFSET);
-	info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
-	return 1;
+	if (*info->dir)
+		info->table = (unsigned int *)((*info->dir & PAGE_SIZE_MASK) +
+					       KERNEL_OFFSET);
+	if (info->table)
+		info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
+
+	return info->entry != NULL;
 }
 
 /*
@@ -165,7 +176,7 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table(addr, flag, &info))
+	if (!mm_get_valid_page_table(addr, flag, &info, 1))
 		return 0;
 
 	/* Track live entries so we know when to reclaim the page table */
@@ -251,7 +262,7 @@ void mm_del_direct_map(unsigned int vir)
 	if (vir >= KERNEL_OFFSET)
 		phy_addr -= KERNEL_OFFSET;
 
-	if (!mm_get_valid_page_table(vir, 0, &info))
+	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 
 	mm_clear_page_table_entry(&info);
@@ -278,7 +289,7 @@ int mm_map_phys_page(unsigned int phys)
 	if (phys < PAGE_TABLE_CACHE_END - KERNEL_OFFSET)
 		return 1;
 
-	if (!mm_get_valid_page_table(virt, 0, &info))
+	if (!mm_get_valid_page_table(virt, 0, &info, 1))
 		return -1;
 
 	*info.entry = (phys & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
@@ -296,7 +307,7 @@ int mm_add_resource_map(unsigned int phy)
 	if (phy < KERNEL_OFFSET)
 		return -1;
 
-	if (!mm_get_valid_page_table(phy, 0, &info))
+	if (!mm_get_valid_page_table(phy, 0, &info, 1))
 		return -1;
 
 	*info.entry = (phy & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
@@ -357,7 +368,7 @@ void mm_del_dynamic_map(unsigned int vir)
 	unsigned int phy_addr;
 	int page_index;
 
-	if (!mm_get_valid_page_table(vir, 0, &info))
+	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 
 	phy_addr = *info.entry & PAGE_SIZE_MASK;
@@ -378,7 +389,7 @@ unsigned mm_get_map_flag(unsigned vir)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table(vir, 0, &info))
+	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return 0;
 	return *info.entry & ~PAGE_SIZE_MASK;
 }
@@ -388,7 +399,7 @@ void mm_set_map_flag(unsigned vir, unsigned flag)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table(vir, 0, &info))
+	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
 }
@@ -398,7 +409,7 @@ unsigned mm_get_attached_page_index(unsigned int vir)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table(vir, 0, &info))
+	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return 0;
 	return (*info.entry & PAGE_SIZE_MASK) / PAGE_SIZE;
 }
@@ -426,6 +437,8 @@ unsigned int vm_alloc(int page_count)
 
 	RELOAD_CR3();
 	spinlock_unlock(&mm_lock);
+
+	buffer_count += page_count;
 	return page_index * PAGE_SIZE + KERNEL_OFFSET;
 }
 
@@ -441,6 +454,8 @@ void vm_free(unsigned int vm, int page_count)
 	RELOAD_CR3();
 	phymm_free_kernel((vm - KERNEL_OFFSET) / PAGE_SIZE, page_count);
 	spinlock_unlock(&mm_lock);
+
+	buffer_count -= page_count;
 }
 
 /* Reserve a user virtual address range of @page_count pages for the current task */
@@ -475,6 +490,8 @@ void *name_get()
 		free(node);
 	}
 	spinlock_unlock(&path_lock);
+	memset(buf, 0, MAX_PATH);
+	cache_count++;
 	return buf;
 }
 
@@ -488,4 +505,5 @@ void name_put(void *buf)
 	node->buf = buf;
 	list_insert_tail(&name_cache_head.list, &node->list);
 	spinlock_unlock(&path_lock);
+	cache_count--;
 }

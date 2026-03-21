@@ -1,3 +1,4 @@
+#include "ps/ps.h"
 #include <int/int.h>
 #include <hw/hdd.h>
 #include <hw/time.h>
@@ -9,6 +10,8 @@
 #include <macro.h>
 #include <config.h>
 #include <ext4.h>
+
+extern unsigned cache_count;
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */
@@ -67,7 +70,8 @@ typedef struct _channel {
 	unsigned short reg_base; /* Base I/O port. */
 	unsigned char irq; /* Interrupt in use. */
 	mutex_t lock;
-	cond_t event;
+	unsigned req_seq;
+	unsigned resp_seq;
 	ata_disk devices[2]; /* The devices on this channel. */
 } channel;
 
@@ -136,6 +140,7 @@ static block_cache_item *block_cache_item_create()
 	item->sector = -1;
 	item->dirty = 0;
 	item->buf = vm_alloc(buf_size); // kmalloc(BLOCK_SECTOR_SIZE);
+	cache_count += buf_size;
 	rb_init_node(&item->hash_node);
 	list_init(&item->time_list);
 	return item;
@@ -151,6 +156,7 @@ static void block_cache_item_remove(block_cache_item *item)
 		return;
 
 	vm_free(item->buf, buf_size);
+	cache_count -= buf_size;
 	kfree(item);
 }
 
@@ -173,7 +179,6 @@ static int check_device_type(ata_disk *);
 static void identify_ata_device(ata_disk *);
 static int wait_while_busy(const ata_disk *);
 static void select_device(const ata_disk *);
-static void select_device_wait(const ata_disk *);
 static void issue_pio_command(channel *, unsigned char command);
 static void input_sector(channel *, void *);
 static void output_sector(channel *c, const void *sector);
@@ -233,8 +238,8 @@ static void hdd_init()
 			printk("fatal error\n");
 		}
 
-		cond_init(&c->event, 1);
 		mutex_init(&c->lock);
+		c->req_seq = c->resp_seq = 0;
 		/* Initialize devices. */
 		for (dev_no = 0; dev_no < 2; dev_no++) {
 			ata_disk *d = &c->devices[dev_no];
@@ -270,11 +275,10 @@ static void interrupt_handler(intr_frame *f)
 
 	for (c = channels; c < channels + CHANNEL_CNT; c++)
 		if (f->vec_no == c->irq) {
-			port_read_byte(
-				reg_status(c)); /* Acknowledge interrupt. */
-
-			cond_notify_at_intr(&c->event); /* Wake up waiter. */
-
+			/* Acknowledge interrupt. */
+			port_read_byte(reg_status(c));
+			/* Wake up waiter. */
+			__sync_fetch_and_add(&c->resp_seq, 1);
 			return;
 		}
 }
@@ -323,7 +327,6 @@ static void reset_channel(channel *c)
 	/* Wait for device 1 to clear BSY. */
 	if (present[1]) {
 		int i;
-
 		select_device(&c->devices[1]);
 		for (i = 0; i < 3000; i++) {
 			if (port_read_byte(reg_nsect(c)) == 1 &&
@@ -333,6 +336,9 @@ static void reset_channel(channel *c)
 		}
 		wait_while_busy(&c->devices[1]);
 	}
+
+	/* whatever resp seq is, we treate it acked */
+	c->req_seq = c->resp_seq;
 }
 
 static int wait_while_busy(const ata_disk *d)
@@ -363,6 +369,7 @@ static void select_device(const ata_disk *d)
 {
 	channel *c = d->channel;
 	unsigned char dev = DEV_MBS;
+
 	if (d->dev_no == 1)
 		dev |= DEV_DEV;
 	port_write_byte(reg_device(c), dev);
@@ -392,6 +399,13 @@ static int check_device_type(ata_disk *d)
 	}
 }
 
+static void wait_resp(channel *c)
+{
+	while (__sync_fetch_and_add(&c->resp_seq, 0) <
+	       __sync_fetch_and_add(&c->req_seq, 0))
+		task_sched();
+}
+
 static void identify_ata_device(ata_disk *d)
 {
 	channel *c = d->channel;
@@ -403,10 +417,13 @@ static void identify_ata_device(ata_disk *d)
 	/* Send the IDENTIFY DEVICE command, wait for an interrupt
        indicating the device's response is ready, and read the data
        into our buffer. */
-	select_device_wait(d);
+	__sync_fetch_and_add(&c->req_seq, 1);
+
+	select_device(d);
+
 	issue_pio_command(c, CMD_IDENTIFY_DEVICE);
 
-	cond_wait_at_intr(&c->event);
+	wait_resp(c);
 
 	if (!wait_while_busy(d)) {
 		d->is_ata = 0;
@@ -993,14 +1010,6 @@ static void wait_until_idle(const ata_disk *d)
 	printk("%s: idle timeout\n", d->name);
 }
 
-/* Wait for the device to be selected and mark that we expect an interrupt. */
-static void select_device_wait(const ata_disk *d)
-{
-	channel *c = d->channel;
-	cond_reset(&c->event);
-	select_device(d);
-}
-
 /* Issue a PIO command to the selected channel. */
 static void issue_pio_command(channel *c, unsigned char command)
 {
@@ -1047,7 +1056,9 @@ static void select_sector(ata_disk *d, unsigned int sec_no)
 {
 	channel *c = d->channel;
 
-	select_device_wait(d);
+	__sync_fetch_and_add(&c->req_seq, 1);
+
+	select_device(d);
 	port_write_byte(reg_nsect(c), 1);
 	port_write_byte(reg_lbal(c), sec_no);
 	port_write_byte(reg_lbam(c), sec_no >> 8);
@@ -1071,7 +1082,7 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	issue_pio_command(c, CMD_READ_SECTOR_RETRY);
 
-	cond_wait_at_intr(&c->event);
+	wait_resp(c);
 
 	input_sector(c, buf);
 
@@ -1096,7 +1107,7 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	output_sector(c, buf);
 
-	cond_wait_at_intr(&c->event);
+	wait_resp(c);
 
 	mutex_unlock(&c->lock);
 

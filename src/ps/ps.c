@@ -75,6 +75,7 @@ void ps_add_mgr_unsafe(task_struct *task)
 	}
 	rb_link_node(&task->mgr_rb, parent, link);
 	rb_insert_color(&task->mgr_rb, root);
+	control.ps_count++;
 }
 
 void ps_add_mgr(task_struct *task)
@@ -90,6 +91,7 @@ void ps_remove_mgr_unsafe(task_struct *task)
 		rb_erase(&task->mgr_rb, &control.mgr_queue);
 		RB_CLEAR_NODE(&task->mgr_rb);
 	}
+	control.ps_count--;
 }
 
 void ps_remove_mgr(task_struct *task)
@@ -97,6 +99,15 @@ void ps_remove_mgr(task_struct *task)
 	spinlock_lock(&ps_lock);
 	ps_remove_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock);
+}
+
+int ps_total_count()
+{
+	int ret = 0;
+	spinlock_lock(&ps_lock);
+	ret = control.ps_count;
+	spinlock_unlock(&ps_lock);
+	return ret;
 }
 
 /*
@@ -194,6 +205,7 @@ void ps_init()
 	list_init(&control.dying_queue);
 	list_init(&control.wait_queue);
 	control.mgr_queue.rb_node = NULL;
+	control.ps_count = 0;
 	for (i = 0; i < PS_PRIORITY_MAX; i++)
 		list_init(&control.ready_queue[i]);
 

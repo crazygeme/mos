@@ -280,22 +280,23 @@ static const char *pid_state_name(ps_status st)
 static void fill_status(char *buf, task_struct *task)
 {
 	sprintf(buf,
-		"Name:\t%s\n"
-		"State:\t%c (%s)\n"
-		"Pid:\t%u\n"
-		"PPid:\t%u\n"
-		"Pgrp:\t%u\n"
-		"Session:\t%u\n"
-		"Threads:\t1\n"
-		"MinFlt:\t%u\n"
-		"MajFlt:\t%u\n"
-		"voluntary_ctxt_switches:\t0\n"
-		"nonvoluntary_ctxt_switches:\t%u\n",
+		"Name:      %s\n"
+		"State:     %c (%s)\n"
+		"Pid:       %u\n"
+		"PPid:      %u\n"
+		"Pgrp:      %u\n"
+		"Session:   %u\n"
+		"Threads:   1\n"
+		"MinFlt:    %u\n"
+		"MajFlt:    %u\n"
+		"nvcsw:     %u\n"
+		"nivcsw:    %u\n",
 		task->user->command ? (char *)task->user->command : "",
 		pid_state_char(task->status), pid_state_name(task->status),
 		task->psid, task->parent ? task->parent->psid : task->psid,
 		task->user->group_id, task->user->session_id, task->pf_minor,
-		task->pf_major, task->niv_switches);
+		task->pf_major, task->total_switches - task->niv_switches,
+		task->niv_switches);
 }
 
 /*

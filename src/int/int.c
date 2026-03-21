@@ -85,8 +85,13 @@ void intr_handler(intr_frame *frame)
 		return;
 	}
 
-	// ack interrupt
-	ENABLE_INTR();
+	/* For CPU exceptions (0–31) re-enable interrupts: they hold no IRQ
+	 * line and need no EOI, so it's safe — and necessary for handlers
+	 * (e.g. page fault) that may block waiting for a disk IRQ.
+	 * For hardware IRQs and IPIs, leave interrupts disabled until after
+	 * EOI; iret will restore IF from the saved eflags on return. */
+	if (!external && !is_ipi)
+		ENABLE_INTR();
 
 	fn = in_callbacks[frame->vec_no];
 	if (fn)

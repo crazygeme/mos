@@ -46,7 +46,6 @@ extern unsigned task_schedule_count;
 extern unsigned timer_wakeup_times;
 extern unsigned timer_process_times;
 extern unsigned select_loop_times;
-extern unsigned force_switch_count;
 
 static void fill(void *buf, size_t size)
 {
@@ -106,7 +105,6 @@ static void fill(void *buf, size_t size)
 	p += sprintf(p, "SchedCalls:            %8u\n", task_schedule_count);
 	p += sprintf(p, "SchedTimeUs:           %8u\n",
 		     (unsigned)task_schedule_time);
-	p += sprintf(p, "SchedForceSwitch:      %8u\n", force_switch_count);
 	p += sprintf(p, "SchedSelectLoop:       %8u\n", select_loop_times);
 	p += sprintf(p, "TimerWakeups:          %8u\n", timer_wakeup_times);
 	p += sprintf(p, "TimerProcessed:        %8u\n", timer_process_times);

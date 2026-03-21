@@ -224,6 +224,7 @@ struct _task_struct {
 	super_block *root;
 	unsigned umask;
 	unsigned niv_switches;
+	unsigned total_switches;
 	unsigned user_tickets;
 	unsigned kernel_tickets;
 	unsigned pf_major;
@@ -303,6 +304,7 @@ void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 			  const char *func);
 task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
+int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);
 

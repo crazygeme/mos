@@ -57,7 +57,7 @@ void do_timer_loop()
 		if (hash_isempty(control.timers)) {
 			mutex_unlock(&control.lock);
 			/* Sleep until a new timer is started */
-			cond_wait(&control.event);
+			cond_wait(&control.event, 0);
 			timer_wakeup_times++;
 			continue;
 		}

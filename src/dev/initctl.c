@@ -20,7 +20,7 @@ static ssize_t initctl_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
 	cy_buf *initctl_buf = fp->f_inode->i_private;
 
-	return cyb_getbuf(initctl_buf, (unsigned char *)buf, (unsigned)len);
+	return cyb_getbuf(initctl_buf, (unsigned char *)buf, (unsigned)len, 1);
 }
 
 static ssize_t initctl_write(file *fp, const void *buf, size_t len, loff_t *pos)

@@ -388,7 +388,10 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 			break;
 		if ((unsigned)n >= vmin && cyb_isempty(state->kb_buf))
 			break;
-		unsigned char raw = cyb_getc(state->kb_buf);
+		int raw_int = cyb_getc(state->kb_buf, 1);
+		if (raw_int < 0)
+			return n > 0 ? n : -EINTR;
+		unsigned char raw = (unsigned char)raw_int;
 		if (raw == (unsigned char)EOF)
 			break;
 		int ch = tty_input_translate(raw, tc->c_iflag);
@@ -583,8 +586,13 @@ static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 	if (size < 1 || !buf)
 		return 0;
 	if (state->termios.c_lflag & ICANON) {
-		if (state->canon.len == 0 && !canon_readline(state))
-			return 0;
+		if (state->canon.len == 0) {
+			int r = canon_readline(state);
+			if (r < 0)
+				return -EINTR;
+			if (r == 0)
+				return 0;
+		}
 		return (ssize_t)tty_canon_drain(&state->canon, buf, (int)size);
 	}
 	return raw_read(state, buf, size);

@@ -270,7 +270,7 @@ KTEST(lock, cond_wait_on_free_event)
 	 * and sets lock to 1 (consumed). */
 	cond_t c;
 	cond_init(&c, 0);
-	cond_wait(&c);
+	cond_wait(&c, 0);
 	EXPECT_EQ((int)c.base.lock, 1);
 	return 0;
 }
@@ -300,7 +300,7 @@ KTEST(lock, cond_notify_then_wait)
 	cond_t c;
 	cond_init(&c, 1); /* armed; wait would block */
 	cond_notify(&c); /* fires event: lock→0 */
-	cond_wait(&c); /* consumes it: lock→1 */
+	cond_wait(&c, 0); /* consumes it: lock→1 */
 	EXPECT_EQ((int)c.base.lock, 1);
 	return 0;
 }

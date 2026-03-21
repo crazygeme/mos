@@ -82,22 +82,22 @@ unsigned cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len)
  * Read path
  */
 
-unsigned char cyb_getc(cy_buf *b)
+int cyb_getc(cy_buf *b, int interruptible)
 {
-	unsigned char ret;
+	int ret;
 	for (;;) {
 		spinlock_lock(&b->lock);
 		if (b->length > 0)
 			break;
-		/* Buffer empty: return EOF if no writers will ever add data. */
 		if (__sync_add_and_fetch(&b->writer_count, 0) == 0) {
 			spinlock_unlock(&b->lock);
-			return EOF;
+			return (int)(unsigned char)EOF;
 		}
 		spinlock_unlock(&b->lock);
-		cond_wait(&b->event);
+		if (cond_wait(&b->event, interruptible) < 0)
+			return -1; /* EINTR */
 	}
-	ret = b->buf[b->read_idx];
+	ret = (unsigned char)b->buf[b->read_idx];
 	b->read_idx = (b->read_idx + 1) % PIPE_BUF_LEN;
 	b->length--;
 	if (b->length == 0)
@@ -106,7 +106,7 @@ unsigned char cyb_getc(cy_buf *b)
 	return ret;
 }
 
-int cyb_getbuf(cy_buf *b, void *buf, int len)
+int cyb_getbuf(cy_buf *b, void *buf, int len, int interruptible)
 {
 	unsigned char *dst = (unsigned char *)buf;
 	int n = 0;
@@ -121,7 +121,8 @@ int cyb_getbuf(cy_buf *b, void *buf, int len)
 			return 0;
 		}
 		spinlock_unlock(&b->lock);
-		cond_wait(&b->event);
+		if (cond_wait(&b->event, interruptible) < 0)
+			return -1; /* EINTR */
 	}
 
 	/* Drain up to len bytes while they are immediately available */

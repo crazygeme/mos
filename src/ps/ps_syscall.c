@@ -252,7 +252,7 @@ int do_fork(unsigned flag)
 
 	if (flag & FORK_FLAG_VFORK) {
 		cond_init(&task->vfork_event, 1);
-		cond_wait(&task->vfork_event);
+		cond_wait(&task->vfork_event, 0);
 	}
 
 	cur_intr_frame->eax = task->psid;

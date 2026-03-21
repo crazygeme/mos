@@ -61,8 +61,6 @@
 #define STDOUT_FILENO 1 /* Standard output.  */
 #define STDERR_FILENO 2 /* Standard error output.  */
 
-#define PIPE_BUF_LEN (4096)
-
 #define TASK_UNMAPPED_BASE \
 	(KERNEL_OFFSET / 3) /* 0x40000000, matches Linux i386 */
 /* heap is bounded by the mmap zone, matching Linux classic VM layout */

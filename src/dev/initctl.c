@@ -105,7 +105,7 @@ static super_operations initctl_sops = {
 static void initctl_dev_register(super_block *dev_sb)
 {
 	super_block *sb = sget(&initctl_sops);
-	sb->s_fs_info = cyb_create();
+	sb->s_fs_info = cyb_create(1);
 	vfs_mount(dev_sb, "/initctl", sb);
 }
 

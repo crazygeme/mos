@@ -823,7 +823,7 @@ static void tty_fs_init(void)
 	for (int i = 0; i < TTY_MAX_VDEV; i++) {
 		tty_state *t = &ttys[i];
 		/* Per-TTY keyboard input queue */
-		t->kb_buf = cyb_create();
+		t->kb_buf = cyb_create(1);
 		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
 		/*

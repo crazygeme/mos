@@ -4,6 +4,8 @@
 #include <config.h>
 #include <macro.h>
 
+#define DEFAULT_BUF_PAGES (1)
+
 typedef struct _cy_buf {
 	unsigned length;
 	unsigned write_idx;
@@ -14,12 +16,16 @@ typedef struct _cy_buf {
 	int reader_count;
 	unsigned ref_count;
 	char *buf;
+	unsigned buf_size;
 } cy_buf;
 
-cy_buf *cyb_create()
+cy_buf *cyb_create(int pages)
 {
 	cy_buf *b = zalloc(sizeof(*b));
-	b->buf = vm_alloc(PIPE_BUF_LEN / PAGE_SIZE);
+	if (pages == 0)
+		pages = DEFAULT_BUF_PAGES;
+	b->buf = vm_alloc(pages);
+	b->buf_size = pages * PAGE_SIZE;
 	b->reader_count = b->writer_count = 1;
 	b->ref_count = 2;
 	cond_init(&b->event, 1);
@@ -30,7 +36,7 @@ cy_buf *cyb_create()
 void cyb_destroy(cy_buf *b)
 {
 	if (__sync_add_and_fetch(&b->ref_count, -1) == 0) {
-		vm_free(b->buf, PIPE_BUF_LEN / PAGE_SIZE);
+		vm_free(b->buf, b->buf_size / PAGE_SIZE);
 		kfree(b);
 	}
 }
@@ -44,13 +50,13 @@ void cyb_putc(cy_buf *b, unsigned char c)
 	int notify;
 	spinlock_lock(&b->lock);
 	notify = (b->length == 0);
-	if (b->length == PIPE_BUF_LEN) {
+	if (b->length == b->buf_size) {
 		/* Full: drop oldest byte to make room */
-		b->read_idx = (b->read_idx + 1) % PIPE_BUF_LEN;
+		b->read_idx = (b->read_idx + 1) % b->buf_size;
 		b->length--;
 	}
 	b->buf[b->write_idx] = c;
-	b->write_idx = (b->write_idx + 1) % PIPE_BUF_LEN;
+	b->write_idx = (b->write_idx + 1) % b->buf_size;
 	b->length++;
 	spinlock_unlock(&b->lock);
 	if (notify)
@@ -66,10 +72,10 @@ unsigned cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len)
 	spinlock_lock(&b->lock);
 	notify = (b->length == 0);
 	for (i = 0; i < len; i++) {
-		if (b->length == PIPE_BUF_LEN)
+		if (b->length == b->buf_size)
 			break;
 		b->buf[b->write_idx] = buf[i];
-		b->write_idx = (b->write_idx + 1) % PIPE_BUF_LEN;
+		b->write_idx = (b->write_idx + 1) % b->buf_size;
 		b->length++;
 	}
 	spinlock_unlock(&b->lock);
@@ -98,7 +104,7 @@ int cyb_getc(cy_buf *b, int interruptible)
 			return -1; /* EINTR */
 	}
 	ret = (unsigned char)b->buf[b->read_idx];
-	b->read_idx = (b->read_idx + 1) % PIPE_BUF_LEN;
+	b->read_idx = (b->read_idx + 1) % b->buf_size;
 	b->length--;
 	if (b->length == 0)
 		cond_reset(&b->event);
@@ -128,7 +134,7 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int interruptible)
 	/* Drain up to len bytes while they are immediately available */
 	while (n < len && b->length > 0) {
 		dst[n++] = b->buf[b->read_idx];
-		b->read_idx = (b->read_idx + 1) % PIPE_BUF_LEN;
+		b->read_idx = (b->read_idx + 1) % b->buf_size;
 		b->length--;
 	}
 	if (b->length == 0)
@@ -152,7 +158,7 @@ int cyb_isempty(cy_buf *b)
 int cyb_isfull(cy_buf *b)
 {
 	spinlock_lock(&b->lock);
-	int full = (b->length == PIPE_BUF_LEN);
+	int full = (b->length == b->buf_size);
 	spinlock_unlock(&b->lock);
 	return full;
 }

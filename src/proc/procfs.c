@@ -278,9 +278,73 @@ static void proc_release_super(super_block *sb)
 	free(sb);
 }
 
+/*
+ * proc_readlink — resolve /proc/{pid}/fd/{N} or /proc/self/fd/{N} to the
+ * path of the underlying open file, matching Linux /proc/<pid>/fd behaviour.
+ */
+static int proc_readlink(super_block *sb, const char *path, char *buf,
+			 size_t bufsiz, size_t *rcnt)
+{
+	const char *p = path;
+	unsigned pid;
+	int fdno;
+	task_struct *task;
+	const char *fname;
+	char anon[32];
+	size_t n;
+
+	if (*p != '/')
+		return -1;
+	p++;
+
+	if (strncmp(p, "self", 4) == 0 && p[4] == '/') {
+		pid = CURRENT_TASK()->psid;
+		p += 4;
+	} else if (*p >= '0' && *p <= '9') {
+		pid = 0;
+		while (*p >= '0' && *p <= '9')
+			pid = pid * 10 + (unsigned)(*p++ - '0');
+	} else {
+		return -1;
+	}
+
+	if (strncmp(p, "/fd/", 4) != 0)
+		return -1;
+	p += 4;
+
+	fdno = 0;
+	while (*p >= '0' && *p <= '9')
+		fdno = fdno * 10 + (*p++ - '0');
+	if (*p != '\0')
+		return -1;
+
+	task = ps_find_process(pid);
+	if (!task || !task->fds)
+		return -1;
+	if (fdno >= MAX_FD || !task->fds[fdno].used)
+		return -1;
+
+	fname = (task->fds[fdno].fp && task->fds[fdno].fp->f_name) ?
+			task->fds[fdno].fp->f_name :
+			NULL;
+	if (!fname || !fname[0]) {
+		sprintf(anon, "pipe:[%d]", fdno);
+		fname = anon;
+	}
+
+	n = strlen(fname);
+	if (n > bufsiz)
+		n = bufsiz;
+	memcpy(buf, fname, n);
+	if (rcnt)
+		*rcnt = n;
+	return 0;
+}
+
 static super_operations proc_sops = {
 	.open_root = proc_open_root,
 	.open = proc_open,
+	.readlink = proc_readlink,
 	.release = proc_release_super,
 };
 

@@ -69,4 +69,34 @@ uint64_t __udivdi3(uint64_t num, uint64_t den)
 	return __udivmoddi4(num, den, NULL);
 }
 
+/*
+ * __divdi3 / __moddi3 — signed 64-bit divide and modulo.
+ *
+ * The result sign follows C rules:
+ *   quotient  : negative iff operands have opposite signs
+ *   remainder : same sign as the dividend
+ */
+typedef signed long long int64_t;
+
+int64_t __divdi3(int64_t a, int64_t b)
+{
+	int neg = (a < 0) ^ (b < 0);
+	uint64_t ua = (a < 0) ? -(uint64_t)a : (uint64_t)a;
+	uint64_t ub = (b < 0) ? -(uint64_t)b : (uint64_t)b;
+	uint64_t q = __udivmoddi4(ua, ub, NULL);
+
+	return neg ? -(int64_t)q : (int64_t)q;
+}
+
+int64_t __moddi3(int64_t a, int64_t b)
+{
+	uint64_t ua = (a < 0) ? -(uint64_t)a : (uint64_t)a;
+	uint64_t ub = (b < 0) ? -(uint64_t)b : (uint64_t)b;
+	uint64_t r;
+
+	(void)__udivmoddi4(ua, ub, &r);
+
+	return (a < 0) ? -(int64_t)r : (int64_t)r;
+}
+
 KERNEL_INIT(0, klog_init);

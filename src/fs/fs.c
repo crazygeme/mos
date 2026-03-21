@@ -65,8 +65,25 @@ file *fs_open_file(const char *path, int flag, char *mode, int follow_link)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 
-	if (cur->root)
-		fp = vfs_open(cur->root, path, flag);
+	if (!cur->root)
+		return NULL;
+
+	fp = vfs_open(cur->root, path, flag);
+
+	/* Follow symlinks (e.g. /proc/{pid}/fd/{N}) unless O_NOFOLLOW. */
+	if (fp && follow_link && !(flag & O_NOFOLLOW) && fp->f_inode &&
+	    S_ISLNK(fp->f_inode->i_mode)) {
+		const char *target = (const char *)fp->f_inode->i_private;
+		if (target && target[0] == '/') {
+			char *t = strdup(target);
+			fs_put_file(fp);
+			fp = vfs_open(cur->root, t, flag);
+			free(t);
+		} else {
+			fs_put_file(fp);
+			fp = NULL;
+		}
+	}
 
 	if (fp)
 		fp->f_name = strdup(path);

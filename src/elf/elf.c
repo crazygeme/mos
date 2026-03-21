@@ -1,6 +1,7 @@
 #include <hw/time.h>
 #include <elf/elf.h>
 #include <mm/mm.h>
+#include <mm/mmap.h>
 #include <ps/ps.h>
 #include <lib/klib.h>
 #include <macro.h>
@@ -61,55 +62,6 @@ static int elf_pflags_to_prot(unsigned p_flags)
 	if (p_flags & PF_X)
 		prot |= PROT_EXEC;
 	return prot;
-}
-
-/*
- * elf_map_bss - zero-fill and map pages for the BSS region
- *
- * @elf_bss:  max(p_vaddr + p_filesz) across all PT_LOAD segments — the first
- *            virtual address past the last byte of file data (unaligned).
- * @last_bss: max(p_vaddr + p_memsz)  across all PT_LOAD segments — the first
- *            virtual address past the last byte of the memory image.
- *
- * Two distinct regions need handling:
- *
- *   1. Partial tail of the last file-backed page [elf_bss, round_up(elf_bss)):
- *      The file-backed mapping covers up to elf_bss; the remaining bytes on
- *      that page are not read from disk and must be explicitly zeroed here.
- *
- *   2. Full BSS pages [round_up(elf_bss), last_bss):
- *      These pages lie entirely beyond the file data and are not covered by
- *      any mapping yet.  Anonymous zero-filled pages are allocated for them,
- *      the TLB is flushed, then the region is zeroed via memset.
- *
- * Correctness assumption: only the PT_LOAD segment with the highest virtual
- * address is expected to have p_memsz > p_filesz (i.e. contain BSS).  This
- * holds for every standard compiler/linker output.  If multiple PT_LOAD
- * segments had BSS, the earlier segments' BSS regions would not be handled
- * by this function.
- */
-static void elf_map_bss(file *fp, unsigned elf_bss, unsigned last_bss)
-{
-	unsigned elf_bss_raw = elf_bss;
-	elf_bss = (elf_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
-	if (elf_bss_raw < elf_bss)
-		memset((void *)elf_bss_raw, 0, elf_bss - elf_bss_raw);
-	if (last_bss > elf_bss) {
-		unsigned page_count =
-			(last_bss - elf_bss + PAGE_SIZE - 1) / PAGE_SIZE;
-		unsigned i;
-		for (i = 0; i < page_count; i++) {
-			mm_add_dynamic_map(elf_bss + i * PAGE_SIZE, 0,
-					   PAGE_ENTRY_USER_DATA);
-		}
-		RELOAD_CR3();
-		memset((void *)elf_bss, 0, last_bss - elf_bss);
-
-		if (TestControl.verbos)
-			klog("mmap(bss): file %s, addr %x, offset %x, len %x at addr %x\n",
-			     fp ? fp->f_name : "NULL", elf_bss, 0,
-			     last_bss - elf_bss, elf_bss);
-	}
 }
 
 static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
@@ -223,8 +175,6 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 		}
 	}
 
-	elf_map_bss(fp, elf_bss, last_bss);
-
 	if (fmt)
 		fmt->start_brk = (last_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 
@@ -274,8 +224,6 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 				last_bss = k;
 		}
 	}
-
-	elf_map_bss(fp, elf_bss, last_bss);
 
 	fmt->start_brk = (last_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 

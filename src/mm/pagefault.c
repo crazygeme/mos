@@ -25,6 +25,7 @@ unsigned long long page_fault_invalid_spent = 0;
 unsigned long long page_fault_file_spent = 0;
 unsigned long long page_fault_file_search_spent = 0;
 unsigned long long page_fault_perm_spent = 0;
+extern unsigned cache_count;
 
 /*
  * LRU mmap cache
@@ -136,6 +137,7 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 		mmap_cache_entry *evict = container_of(
 			list_remove_head(&mmap_lru), mmap_cache_entry, lru);
 		hash_remove(mmap_cache, &evict->key);
+		cache_count--;
 	}
 
 	entry = malloc(sizeof(*entry));
@@ -145,6 +147,7 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	list_insert_tail(&mmap_lru, &entry->lru);
 	hash_insert(mmap_cache, &entry->key, entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
+	cache_count++;
 
 	mutex_unlock(&mmap_cache_lock);
 }
@@ -446,6 +449,8 @@ static void pf_process(intr_frame *frame)
 	unsigned error = frame->error_code;
 	int oldint;
 	task_struct *cur;
+	int int_enable = int_is_intr_enabled();
+	(void)int_enable;
 
 	/*
 	 * Save old interrupt state first.
@@ -479,10 +484,7 @@ NOT_HANDLED:
 	if (frame->cs != KERNEL_CODE_SELECTOR ||
 	    (unsigned)frame->eip < KERNEL_OFFSET || cr2 < KERNEL_OFFSET) {
 		/* FIXME(Ender): Currently we call process exit(-EFAULT)
-		 * Because we haven't implement signal yet, and it's hard to return
-		 * from page fault handler to user code. We will implement signal
-		 * and return from page fault handler later, and then we can send
-		 * SIGSEGV to user process here.
+		 * Unknown bugs cause user mode process r/w an unmaped page
 		*/
 		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x, cmd %s\n",
 		     frame->error_code, cr2, frame->eip, cur->user->command);

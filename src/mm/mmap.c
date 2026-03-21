@@ -352,8 +352,9 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   flags, fp, offset);
 
 	if (TestControl.verbos) {
-		klog("mmap: file %s, addr %x, offset %x, len %x at addr %x\n",
-		     fp ? fp->f_name : "ANON", _addr, offset, _len, addr);
+		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",
+		     fp ? fp->f_name : "ANON", _addr, offset, prot, flags, _len,
+		     addr);
 	}
 
 	return addr;

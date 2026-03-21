@@ -119,6 +119,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		memset(rusage, 0, sizeof(*rusage));
 		rusage->ru_majflt = task->pf_major;
 		rusage->ru_minflt = task->pf_minor;
+		rusage->ru_nvcsw = task->total_switches - task->niv_switches;
 		rusage->ru_nivcsw = task->niv_switches;
 		ms_to_timeval(task->kernel_tickets * 10, &rusage->ru_stime);
 		ms_to_timeval(task->user_tickets * 10, &rusage->ru_utime);

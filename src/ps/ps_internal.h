@@ -19,6 +19,7 @@ typedef struct _ps_control {
 	list_entry dying_queue;
 	list_entry wait_queue;
 	struct rb_root mgr_queue;
+	int ps_count;
 } ps_control;
 
 /*

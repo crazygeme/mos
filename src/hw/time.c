@@ -17,7 +17,6 @@ static unsigned long total_seconds;
 static unsigned long cycle_per_ticket;
 static unsigned long rtc_get_time(void);
 static int is_force_switching = 0;
-unsigned force_switch_count = 0;
 
 static void force_switch(short ds);
 static void time_process(intr_frame *frame)
@@ -132,7 +131,7 @@ static void force_switch(short ds)
 
 	if (cur->remain_ticks <= 0) {
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		force_switch_count++;
+		cur->niv_switches++;
 		task_sched();
 	}
 	__sync_add_and_fetch(&(is_force_switching), -1);

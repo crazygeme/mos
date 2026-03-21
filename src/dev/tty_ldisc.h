@@ -43,9 +43,9 @@ int tty_canon_drain(tty_canon_t *canon, char *dst, int size);
 /*
  * tty_ldisc_canon_readline - read one canonical line from buf into canon.
  *
- * Returns 1 if a complete line is ready, 0 on EOF or signal delivery.
- * Set check_eof when the source signals master-closed via the 0xFF sentinel
- * (pty slave); clear it for keyboard input which never does this.
+ * Returns 1 if a complete line is ready, 0 on EOF, -1 if interrupted by a
+ * signal (EINTR).  Set check_eof when the source signals master-closed via
+ * the 0xFF sentinel (pty slave); clear it for keyboard input.
  */
 int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
 			     cy_buf *buf, int check_eof, unsigned pgrp,

@@ -107,7 +107,7 @@ void serial_putc(unsigned char byte)
                we'd have to reenable interrupts.
                That's impolite, so we'll send a character via
                polling instead. */
-			putc_poll(cyb_getc(txq));
+			putc_poll((unsigned char)cyb_getc(txq, 0));
 		}
 
 		if (byte == '\n') {
@@ -126,7 +126,7 @@ void serial_flush(void)
 {
 	unsigned old_level = int_intr_disable();
 	while (!cyb_isempty(txq))
-		putc_poll(cyb_getc(txq));
+		putc_poll((unsigned char)cyb_getc(txq, 0));
 	int_intr_setlevel(old_level);
 }
 
@@ -199,7 +199,7 @@ static void serial_interrupt(intr_frame *f)
 	/* As long as we have a byte to transmit, and the hardware is
        ready to accept a byte for transmission, transmit a byte. */
 	while (!cyb_isempty(txq) && (inb(LSR_REG) & LSR_THRE) != 0)
-		outb(THR_REG, cyb_getc(txq));
+		outb(THR_REG, (unsigned char)cyb_getc(txq, 0));
 
 	/* Update interrupt enable register based on queue status. */
 	write_ier();

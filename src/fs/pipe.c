@@ -5,6 +5,7 @@
 #include <hw/time.h>
 #include <macro.h>
 #include <unistd.h>
+#include <errno.h>
 
 typedef struct _pipe_inode {
 	cy_buf *buf;
@@ -28,7 +29,6 @@ static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
 	pipe_inode *n = fp->f_inode->i_private;
 	unsigned char *tmp = buf;
-	unsigned char c;
 	int i = 0;
 
 	if (!n->readonly)
@@ -38,10 +38,12 @@ static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 		return 0;
 
 	while (i < (int)len) {
-		c = cyb_getc(n->buf);
-		if (c == EOF)
+		int c = cyb_getc(n->buf, 1);
+		if (c < 0)
+			return i > 0 ? (ssize_t)i : -EINTR;
+		if ((unsigned char)c == (unsigned char)EOF)
 			break;
-		*tmp++ = c;
+		*tmp++ = (unsigned char)c;
 		i++;
 	}
 	return (ssize_t)i;

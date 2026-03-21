@@ -56,8 +56,10 @@ typedef volatile struct _cond {
 } cond_t;
 
 void cond_init(cond_t *s, unsigned int initstat);
-#define cond_wait(x) _cond_wait((x), __func__)
-void _cond_wait(cond_t *s, const char *func);
+/* Block until the event fires.  If interruptible is non-zero, returns -1
+ * immediately when a deliverable signal is pending; returns 0 on success. */
+#define cond_wait(x, intr) _cond_wait((x), __func__, (intr))
+int _cond_wait(cond_t *s, const char *func, int interruptible);
 void cond_wait_at_intr(cond_t *s);
 void cond_reset(cond_t *s);
 void cond_notify(cond_t *s);

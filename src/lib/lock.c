@@ -147,10 +147,33 @@ void cond_init(cond_t *s, unsigned int initstat)
 	lock_init((lock_base *)&s->base, initstat);
 }
 
-/* Block until the event fires (lock transitions to 0 via cond_notify). */
-void _cond_wait(cond_t *s, const char *func)
+/*
+ * Block until the event fires (lock transitions to 0 via cond_notify).
+ * If interruptible is non-zero, returns -1 when a deliverable signal wakes
+ * the task instead of re-blocking; returns 0 on normal acquisition.
+ */
+int _cond_wait(cond_t *s, const char *func, int interruptible)
 {
-	lock_base_acquire((lock_base *)&s->base, func);
+	task_struct *cur = CURRENT_TASK();
+	lock_base *b = (lock_base *)&s->base;
+
+	while (1) {
+		if (__sync_lock_test_and_set(&b->lock, 1) == 0)
+			return 0;
+
+		spinlock_lock(&b->wait_lock);
+		if (__sync_lock_test_and_set(&b->lock, 1) == 0) {
+			spinlock_unlock(&b->wait_lock);
+			return 0;
+		}
+		ps_put_to_wait_queue(cur, &b->wait_list, func);
+		spinlock_unlock(&b->wait_lock);
+		task_sched();
+
+		if (interruptible &&
+		    (cur->signal->sig_pending & ~cur->signal->sig_mask))
+			return -1;
+	}
 }
 
 /* Re-arm the event so the next cond_wait will block (lock = 1). */

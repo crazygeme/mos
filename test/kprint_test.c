@@ -1,9 +1,9 @@
 /*
  * test/kprint_test.c — unit tests for sprintf / vsprintf (src/lib/kprint.c)
  *
- * Covers: %d, %u, %x/%p, %s, %c, %b, %%, field width, zero-pad, left-align,
- *         negative numbers, NULL string, vsprintf return value,
- *         %h (human-readable size), %lld/%llu (64-bit integers).
+ * Covers: %d, %u, %x/%p, %s, %c, %b, %%, field width (right/left/zero-pad)
+ *         for all integer types including negative and hex, NULL string,
+ *         vsprintf return value, %h (human-readable size), %lld/%llu.
  */
 
 #include <lib/klib.h>
@@ -178,6 +178,47 @@ KTEST(kprint, sprintf_zero_pad_unsigned)
 	char buf[16];
 	sprintf(buf, "%04u", 9u);
 	EXPECT_EQ(strcmp(buf, "0009"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_width_d_negative)
+{
+	/* sign + digits together must fit inside the field */
+	char buf[16];
+	sprintf(buf, "%5d", -7);
+	EXPECT_EQ(strcmp(buf, "   -7"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_width_u_right)
+{
+	char buf[16];
+	sprintf(buf, "%6u", 42u);
+	EXPECT_EQ(strcmp(buf, "    42"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_width_x_right)
+{
+	char buf[16];
+	sprintf(buf, "%8x", 0xffu);
+	EXPECT_EQ(strcmp(buf, "      ff"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_zero_pad_x)
+{
+	char buf[16];
+	sprintf(buf, "%08x", 0xffu);
+	EXPECT_EQ(strcmp(buf, "000000ff"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_left_align_u)
+{
+	char buf[16];
+	sprintf(buf, "%-6u|", 42u);
+	EXPECT_EQ(strcmp(buf, "42    |"), 0);
 	return 0;
 }
 

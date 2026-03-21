@@ -116,7 +116,10 @@ int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
 			     tty_ldisc_echo_fn echo, void *ctx)
 {
 	while (1) {
-		unsigned char raw = cyb_getc(buf);
+		int raw_int = cyb_getc(buf, 1);
+		if (raw_int < 0)
+			return -1; /* EINTR */
+		unsigned char raw = (unsigned char)raw_int;
 		if (check_eof && raw == (unsigned char)EOF)
 			return canon->len > 0 ? 1 : 0;
 

@@ -147,7 +147,7 @@ static ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos)
 		return (ssize_t)tty_canon_drain(&p->canon, (char *)buf,
 						(int)size);
 	}
-	return (ssize_t)cyb_getbuf(p->m2s, buf, (int)size);
+	return (ssize_t)cyb_getbuf(p->m2s, buf, (int)size, 1);
 }
 
 /*
@@ -289,7 +289,7 @@ static ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 	pts_pair *p = fp->f_inode->i_private;
 	if (!buf || size < 1)
 		return 0;
-	return (ssize_t)cyb_getbuf(p->s2m, buf, (int)size);
+	return (ssize_t)cyb_getbuf(p->s2m, buf, (int)size, 1);
 }
 
 /*

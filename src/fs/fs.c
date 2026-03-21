@@ -37,7 +37,7 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 		fp->f_pos = offset;
 
 	n = fp->f_fop->read(fp, buf, len, &fp->f_pos);
-	return n < 0 ? -1 : (int)n;
+	return (int)n;
 }
 
 int fs_write(int fd, unsigned offset, char *buf, unsigned len)

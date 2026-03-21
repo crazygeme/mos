@@ -37,7 +37,7 @@ KTEST(cyclebuf, putc_getc)
 	EXPECT_FALSE(cyb_isempty(b));
 	EXPECT_EQ(cyb_get_buf_len(b), 1);
 
-	unsigned char c = cyb_getc(b);
+	unsigned char c = (unsigned char)cyb_getc(b, 0);
 	EXPECT_EQ(c, (unsigned char)'A');
 	EXPECT_TRUE(cyb_isempty(b));
 
@@ -57,7 +57,7 @@ KTEST(cyclebuf, putc_getc_order)
 	EXPECT_EQ(cyb_get_buf_len(b), 5);
 
 	for (i = 0; i < 5; i++) {
-		unsigned char c = cyb_getc(b);
+		unsigned char c = cyb_getc(b, 0);
 		EXPECT_EQ(c, (unsigned char)('a' + i));
 	}
 
@@ -79,7 +79,7 @@ KTEST(cyclebuf, putbuf_getbuf)
 	EXPECT_EQ((int)written, 5);
 	EXPECT_EQ(cyb_get_buf_len(b), 5);
 
-	int n = cyb_getbuf(b, dst, 5);
+	int n = cyb_getbuf(b, dst, 5, 0);
 	EXPECT_EQ(n, 5);
 	EXPECT_EQ(memcmp(dst, src, 5), 0);
 	EXPECT_TRUE(cyb_isempty(b));
@@ -142,9 +142,9 @@ KTEST(cyclebuf, buf_len_tracking)
 	EXPECT_EQ(cyb_get_buf_len(b), 1);
 	cyb_putc(b, 'y');
 	EXPECT_EQ(cyb_get_buf_len(b), 2);
-	cyb_getc(b);
+	cyb_getc(b, 0);
 	EXPECT_EQ(cyb_get_buf_len(b), 1);
-	cyb_getc(b);
+	cyb_getc(b, 0);
 	EXPECT_EQ(cyb_get_buf_len(b), 0);
 
 	cyb_writer_close(b);
@@ -201,15 +201,15 @@ KTEST(cyclebuf, putc_overflow_drops_oldest)
 	EXPECT_TRUE(cyb_isfull(b));
 
 	/* First byte is now 1 (0 was evicted) */
-	unsigned char first = cyb_getc(b);
+	unsigned char first = cyb_getc(b, 0);
 	EXPECT_EQ(first, 1);
 
 	/* Drain remaining PIPE_BUF_LEN - 2 bytes */
 	for (i = 0; i < PIPE_BUF_LEN - 2; i++)
-		cyb_getc(b);
+		cyb_getc(b, 0);
 
 	/* Last byte is 0xAB */
-	unsigned char last = cyb_getc(b);
+	unsigned char last = cyb_getc(b, 0);
 	EXPECT_EQ(last, 0xAB);
 
 	EXPECT_TRUE(cyb_isempty(b));
@@ -254,7 +254,7 @@ KTEST(cyclebuf, getc_eof_after_writer_close)
 
 	/* Close writer side; buffer is empty → getc must return EOF */
 	cyb_writer_close(b); /* decrements writer_count to 0 */
-	unsigned char c = cyb_getc(b);
+	unsigned char c = cyb_getc(b, 0);
 	EXPECT_EQ(c, EOF);
 
 	cyb_reader_close(b);
@@ -267,7 +267,7 @@ KTEST(cyclebuf, getbuf_eof_after_writer_close)
 	unsigned char dst[8];
 
 	cyb_writer_close(b);
-	int n = cyb_getbuf(b, dst, sizeof(dst));
+	int n = cyb_getbuf(b, dst, sizeof(dst), 0);
 	EXPECT_EQ(n, 0); /* 0 = EOF */
 
 	cyb_reader_close(b);
@@ -285,7 +285,7 @@ KTEST(cyclebuf, getbuf_partial_read)
 	cyb_putbuf(b, src, 5);
 
 	/* Request more than available — should get only what is there */
-	int n = cyb_getbuf(b, dst, 8);
+	int n = cyb_getbuf(b, dst, 8, 0);
 	EXPECT_EQ(n, 5);
 	EXPECT_EQ(memcmp(dst, src, 5), 0);
 	EXPECT_TRUE(cyb_isempty(b));

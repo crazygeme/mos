@@ -133,8 +133,7 @@ void ps_put_to_dying_queue(task_struct *task)
 	if (task->parent) {
 		/* Queue SIGCHLD before waking the parent so the signal is
 		 * already pending when wait() returns to userspace. */
-		// FIXME(Ender): currently not working
-		// task->parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
+		task->parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
 		ps_put_to_ready_queue_unsafe(task->parent);
 	}
 	spinlock_unlock(&ps_lock);

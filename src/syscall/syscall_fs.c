@@ -529,6 +529,9 @@ int sys_umount(char *name, int flag)
 
 int sys_sync()
 {
+	if (TestControl.verbos)
+		klog("sync()\n");
+
 	hdd_flush();
 	return 0;
 }

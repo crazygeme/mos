@@ -103,8 +103,8 @@ static pts_pair *pts_alloc(void)
 			p->winsize.ws_row = 24;
 			p->winsize.ws_col = 80;
 			spinlock_init(&p->lock);
-			p->m2s = cyb_create();
-			p->s2m = cyb_create();
+			p->m2s = cyb_create(1);
+			p->s2m = cyb_create(1);
 			spinlock_unlock(&pts_alloc_lock);
 			return p;
 		}

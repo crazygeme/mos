@@ -18,7 +18,7 @@
 
 KTEST(cyclebuf, create_destroy)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	ASSERT_NONNULL(b);
 	EXPECT_TRUE(cyb_isempty(b));
 	EXPECT_EQ(cyb_get_buf_len(b), 0);
@@ -31,7 +31,7 @@ KTEST(cyclebuf, create_destroy)
 
 KTEST(cyclebuf, putc_getc)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 
 	cyb_putc(b, 'A');
 	EXPECT_FALSE(cyb_isempty(b));
@@ -48,7 +48,7 @@ KTEST(cyclebuf, putc_getc)
 
 KTEST(cyclebuf, putc_getc_order)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	int i;
 
 	for (i = 0; i < 5; i++)
@@ -71,7 +71,7 @@ KTEST(cyclebuf, putc_getc_order)
 
 KTEST(cyclebuf, putbuf_getbuf)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	unsigned char src[] = "hello";
 	unsigned char dst[8] = { 0 };
 
@@ -91,7 +91,7 @@ KTEST(cyclebuf, putbuf_getbuf)
 
 KTEST(cyclebuf, putbuf_zero_len)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	unsigned char buf[4] = { 1, 2, 3, 4 };
 
 	unsigned written = cyb_putbuf(b, buf, 0);
@@ -107,7 +107,7 @@ KTEST(cyclebuf, putbuf_zero_len)
 
 KTEST(cyclebuf, isempty_after_create)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	EXPECT_TRUE(cyb_isempty(b));
 	EXPECT_FALSE(cyb_isfull(b));
 	cyb_writer_close(b);
@@ -117,14 +117,14 @@ KTEST(cyclebuf, isempty_after_create)
 
 KTEST(cyclebuf, isfull)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	int i;
 
-	for (i = 0; i < PIPE_BUF_LEN; i++)
+	for (i = 0; i < PAGE_SIZE; i++)
 		cyb_putc(b, (unsigned char)(i & 0xff));
 
 	EXPECT_TRUE(cyb_isfull(b));
-	EXPECT_EQ(cyb_get_buf_len(b), PIPE_BUF_LEN);
+	EXPECT_EQ(cyb_get_buf_len(b), PAGE_SIZE);
 
 	cyb_writer_close(b);
 	cyb_reader_close(b);
@@ -135,7 +135,7 @@ KTEST(cyclebuf, isfull)
 
 KTEST(cyclebuf, buf_len_tracking)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 
 	EXPECT_EQ(cyb_get_buf_len(b), 0);
 	cyb_putc(b, 'x');
@@ -156,7 +156,7 @@ KTEST(cyclebuf, buf_len_tracking)
 
 KTEST(cyclebuf, initial_counts)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	EXPECT_EQ(cyb_writer_count(b), 1);
 	EXPECT_EQ(cyb_reader_count(b), 1);
 	cyb_writer_close(b);
@@ -168,7 +168,7 @@ KTEST(cyclebuf, initial_counts)
 
 KTEST(cyclebuf, flush)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	int i;
 
 	for (i = 0; i < 8; i++)
@@ -188,11 +188,11 @@ KTEST(cyclebuf, flush)
 
 KTEST(cyclebuf, putc_overflow_drops_oldest)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	int i;
 
 	/* Fill to capacity with bytes 0x00..0xff repeating */
-	for (i = 0; i < PIPE_BUF_LEN; i++)
+	for (i = 0; i < PAGE_SIZE; i++)
 		cyb_putc(b, (unsigned char)(i & 0xff));
 
 	/* One more write — oldest byte (value 0) is dropped */
@@ -204,8 +204,8 @@ KTEST(cyclebuf, putc_overflow_drops_oldest)
 	unsigned char first = cyb_getc(b, 0);
 	EXPECT_EQ(first, 1);
 
-	/* Drain remaining PIPE_BUF_LEN - 2 bytes */
-	for (i = 0; i < PIPE_BUF_LEN - 2; i++)
+	/* Drain remaining PAGE_SIZE - 2 bytes */
+	for (i = 0; i < PAGE_SIZE - 2; i++)
 		cyb_getc(b, 0);
 
 	/* Last byte is 0xAB */
@@ -222,7 +222,7 @@ KTEST(cyclebuf, putc_overflow_drops_oldest)
 
 KTEST(cyclebuf, putbuf_stops_at_full)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	unsigned char chunk[64];
 	int i;
 	unsigned total = 0, written;
@@ -235,7 +235,7 @@ KTEST(cyclebuf, putbuf_stops_at_full)
 		written = cyb_putbuf(b, chunk, sizeof(chunk));
 		total += written;
 	}
-	EXPECT_EQ((int)total, PIPE_BUF_LEN);
+	EXPECT_EQ((int)total, PAGE_SIZE);
 
 	/* Another write on a full buffer must return 0 */
 	written = cyb_putbuf(b, chunk, sizeof(chunk));
@@ -250,7 +250,7 @@ KTEST(cyclebuf, putbuf_stops_at_full)
 
 KTEST(cyclebuf, getc_eof_after_writer_close)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 
 	/* Close writer side; buffer is empty → getc must return EOF */
 	cyb_writer_close(b); /* decrements writer_count to 0 */
@@ -263,7 +263,7 @@ KTEST(cyclebuf, getc_eof_after_writer_close)
 
 KTEST(cyclebuf, getbuf_eof_after_writer_close)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	unsigned char dst[8];
 
 	cyb_writer_close(b);
@@ -278,7 +278,7 @@ KTEST(cyclebuf, getbuf_eof_after_writer_close)
 
 KTEST(cyclebuf, getbuf_partial_read)
 {
-	cy_buf *b = cyb_create();
+	cy_buf *b = cyb_create(1);
 	unsigned char src[] = { 10, 20, 30, 40, 50 };
 	unsigned char dst[8] = { 0 };
 

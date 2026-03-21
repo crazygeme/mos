@@ -66,7 +66,7 @@ static void init_poll(void)
 	outb(FCR_REG, 0); /* Disable FIFO. */
 	set_serial(115200); /* 115.2 kbps, N-8-1. */
 	outb(MCR_REG, MCR_OUT2); /* Required to enable interrupts. */
-	txq = cyb_create();
+	txq = cyb_create(3);
 	mode = POLL;
 }
 
@@ -94,26 +94,23 @@ void serial_putc(unsigned char byte)
 
 	if (mode != QUEUE) {
 		/* If we're not set up for interrupt-driven I/O yet,
-           use dumb polling to transmit a byte. */
+           	   use dumb polling to transmit a byte. */
 		if (mode == UNINIT)
 			init_poll();
 		putc_poll(byte);
 	} else {
 		/* Otherwise, queue a byte and update the interrupt enable
-           register. */
-		if (old_level == 0 && cyb_isfull(txq)) {
-			/* Interrupts are off and the transmit queue is full.
-               If we wanted to wait for the queue to empty,
-               we'd have to reenable interrupts.
-               That's impolite, so we'll send a character via
-               polling instead. */
-			putc_poll((unsigned char)cyb_getc(txq, 0));
-		}
-
+           	   register. */
+		/* Interrupts are now off (disabled above), so the TX interrupt
+		   cannot drain the queue.  If the queue is full we drop rather
+		   than poll — polling with interrupts off for each character
+		   would delay other IRQs long enough to miss them. */
 		if (byte == '\n') {
-			cyb_putc(txq, '\r');
+			if (!cyb_isfull(txq))
+				cyb_putc(txq, '\r');
 		}
-		cyb_putc(txq, byte);
+		if (!cyb_isfull(txq))
+			cyb_putc(txq, byte);
 		write_ier();
 	}
 
@@ -163,12 +160,12 @@ static void write_ier(void)
 	unsigned char ier = 0;
 
 	/* Enable transmit interrupt if we have any characters to
-       transmit. */
+           transmit. */
 	if (!cyb_isempty(txq))
 		ier |= IER_XMIT;
 
 	/* Enable receive interrupt if we have room to store any
-       characters we receive. */
+           characters we receive. */
 	if (!cyb_isfull(txq))
 		ier |= IER_RECV;
 
@@ -188,16 +185,16 @@ static void putc_poll(unsigned char byte)
 static void serial_interrupt(intr_frame *f)
 {
 	/* Inquire about interrupt in UART.  Without this, we can
-       occasionally miss an interrupt running under QEMU. */
+           occasionally miss an interrupt running under QEMU. */
 	inb(IIR_REG);
 
 	/* As long as we have room to receive a byte, and the hardware
-       has a byte for us, receive a byte.  */
+           has a byte for us, receive a byte.  */
 	while (!cyb_isfull(txq) && (inb(LSR_REG) & LSR_DR) != 0)
 		cyb_putc(txq, inb(RBR_REG));
 
 	/* As long as we have a byte to transmit, and the hardware is
-       ready to accept a byte for transmission, transmit a byte. */
+           ready to accept a byte for transmission, transmit a byte. */
 	while (!cyb_isempty(txq) && (inb(LSR_REG) & LSR_THRE) != 0)
 		outb(THR_REG, (unsigned char)cyb_getc(txq, 0));
 

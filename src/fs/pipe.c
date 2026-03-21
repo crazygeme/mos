@@ -115,7 +115,7 @@ static const file_operations pipe_write_fops = {
 
 int pipe_open(file **pipes)
 {
-	cy_buf *buf = cyb_create();
+	cy_buf *buf = cyb_create(3);
 
 	pipe_inode *rn = zalloc(sizeof(*rn));
 	rn->buf = buf;

@@ -143,6 +143,51 @@ static const file_operations pid_dir_fops = {
 	.release = pid_release,
 };
 
+/* ── Symlink ops for /proc/{pid}/fd/{N} ──────────────────────────── */
+
+static int pid_symlink_getattr(inode *node, struct stat *s)
+{
+	const char *target = (const char *)node->i_private;
+	memset(s, 0, sizeof(*s));
+	s->st_mode = node->i_mode;
+	s->st_size = target ? (loff_t)strlen(target) : 0;
+	s->st_nlink = 1;
+	s->st_dev = 0xb;
+	s->st_ino = PROC_INODE;
+	return 0;
+}
+
+static int pid_symlink_release(file *fp)
+{
+	free(fp->f_inode->i_private); /* strdup'd target */
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+
+static const inode_operations pid_symlink_iops = {
+	.getattr = pid_symlink_getattr,
+};
+static const file_operations pid_symlink_fops = {
+	.release = pid_symlink_release,
+};
+
+/* Build a symlink file whose target is strdup'd from target. */
+static file *make_pid_symlink(const char *target)
+{
+	inode *nd = zalloc(sizeof(*nd));
+	file *fp = zalloc(sizeof(*fp));
+
+	nd->i_mode = S_IFLNK | S_IRWXU | S_IRWXG | S_IRWXO;
+	nd->i_op = &pid_symlink_iops;
+	nd->i_private = strdup(target ? target : "(unknown)");
+
+	fp->f_inode = nd;
+	fp->f_count = 1;
+	fp->f_fop = &pid_symlink_fops;
+	return fp;
+}
+
 /* ------------------------------------------------------------------ *
  * Constructor helpers                                                  *
  * ------------------------------------------------------------------ */
@@ -545,6 +590,33 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 	/* /fd or /fd/ → fd directory listing */
 	if (strcmp(rest, "/fd") == 0 || strcmp(rest, "/fd/") == 0)
 		return pid_fd_dir_open(task);
+
+	/* /fd/{N} → symlink to the fd's file path */
+	if (strncmp(rest, "/fd/", 4) == 0) {
+		const char *p = rest + 4;
+		int fdno = 0;
+		char anon[32];
+		const char *target;
+
+		if (*p < '0' || *p > '9')
+			return NULL;
+		while (*p >= '0' && *p <= '9')
+			fdno = fdno * 10 + (*p++ - '0');
+		if (*p != '\0')
+			return NULL; /* trailing garbage */
+
+		if (!task->fds || fdno >= MAX_FD || !task->fds[fdno].used)
+			return NULL;
+
+		target = (task->fds[fdno].fp && task->fds[fdno].fp->f_name) ?
+				 task->fds[fdno].fp->f_name :
+				 NULL;
+		if (!target || !target[0]) {
+			sprintf(anon, "pipe:[%d]", fdno);
+			target = anon;
+		}
+		return make_pid_symlink(target);
+	}
 
 	return NULL;
 }

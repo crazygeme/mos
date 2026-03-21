@@ -232,6 +232,23 @@
 #define MOS_REBOOT_CMD_SW_SUSPEND 0xD000FCE2
 #define MOS_REBOOT_CMD_KEXEC 0x45584543
 
+/* /dev/initctl protocol — matches sysvinit init_request */
+#define INIT_MAGIC 0x03091969
+#define INIT_CMD_START 0
+#define INIT_CMD_RUNLVL 1
+#define INIT_CMD_POWEROK 2
+#define INIT_CMD_DEL 3
+#define INIT_CMD_SETENV 4
+#define INIT_CMD_UNSETENV 5
+
+struct init_request {
+	int magic;
+	int cmd;
+	int runlevel;
+	int sleeptime;
+	char data[368];
+};
+
 struct utsname {
 	char sysname[_SYS_NAMELEN]; /* [XSI] Name of OS */
 	char nodename[_SYS_NAMELEN]; /* [XSI] Name of this network node */

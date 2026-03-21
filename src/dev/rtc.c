@@ -20,6 +20,8 @@
 /* ── Linux-compatible RTC ioctls ─────────────────────────────────────────── */
 
 #define RTC_RD_TIME 0x80247009 /* read time */
+#define RTC_UIE_ON 0x7003 /* update interrupt enable on  */
+#define RTC_UIE_OFF 0x7004 /* update interrupt enable off */
 
 /* ── CMOS / MC146818A register map ───────────────────────────────────────── */
 
@@ -102,10 +104,21 @@ static void rtc_read_time(struct rtc_time *t)
 
 /* ── VFS file operations ─────────────────────────────────────────────────── */
 
+/* Set to 1 while UIE is active; rtc_read delivers one synthetic tick. */
+static int rtc_uie_enabled;
+
 static ssize_t rtc_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	/* No interrupt-based event counter implemented; behave like
-	 * a non-blocking read with nothing available. */
+	/*
+	 * When UIE is on, hwclock reads an unsigned long interrupt-count word
+	 * to synchronise to the next 1 Hz boundary.  Return a count of 1 so
+	 * the read completes immediately rather than blocking indefinitely.
+	 */
+	if (rtc_uie_enabled && size >= sizeof(unsigned long)) {
+		unsigned long cnt = 1;
+		memcpy(buf, &cnt, sizeof(cnt));
+		return (ssize_t)sizeof(cnt);
+	}
 	return 0;
 }
 
@@ -126,6 +139,12 @@ static int rtc_ioctl(file *fp, unsigned cmd, void *buf)
 	case RTC_RD_TIME:
 		rtc_read_time(&t);
 		memcpy(buf, &t, sizeof(t));
+		return 0;
+	case RTC_UIE_ON:
+		rtc_uie_enabled = 1;
+		return 0;
+	case RTC_UIE_OFF:
+		rtc_uie_enabled = 0;
 		return 0;
 	}
 	return -ENOSYS;

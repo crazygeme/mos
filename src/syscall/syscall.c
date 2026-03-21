@@ -120,7 +120,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getrlimit,
 	sys_getrusage,
 	sys_gettimeofday,
-	0,
+	sys_settimeofday,
 	0, // 76 ~ 80
 	0,
 	sys_select,

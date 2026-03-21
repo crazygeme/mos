@@ -119,6 +119,7 @@ int sys_sethostname(const char *name, unsigned len);
 int sys_utime(const char *filename, const struct utimbuf *times);
 int sys_time(unsigned *t);
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
+int sys_settimeofday(const struct timeval *tv, const struct timezone *tz);
 int sys_nanosleep(const struct timespec *req, struct timespec *rem);
 int sys_reboot(unsigned cmd);
 int sys_socketcall(int call, unsigned long *args);

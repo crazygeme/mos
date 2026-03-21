@@ -13,9 +13,18 @@
 #include <errno.h>
 #include <macro.h>
 #include <unistd.h>
+#include <fs/fs.h>
+#include <fs/fcntl.h>
 #include "syscall_internal.h"
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
+
+/*
+ * Wall-clock offset: difference (in ms) between the real-world epoch and
+ * the kernel's PIT tick counter.  Set by sys_settimeofday (syscall 79) and
+ * read back by sys_gettimeofday / sys_time.
+ */
+static long long g_wall_offset_ms;
 
 int sys_uname(struct utsname *utname)
 {
@@ -58,19 +67,21 @@ int sys_time(unsigned *t)
 	if (!t)
 		return -1;
 
-	*t = (unsigned)time_now_ms();
+	*t = (unsigned)(((long long)time_now_ms() + g_wall_offset_ms) / 1000);
 	return 0;
 }
 
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 {
-	unsigned long long now;
+	long long now;
 
 	if (!tv)
 		return -EFAULT;
 
-	now = time_now_ms();
-	ms_to_timeval(now, tv);
+	now = (long long)time_now_ms() + g_wall_offset_ms;
+	if (now < 0)
+		now = 0;
+	ms_to_timeval((unsigned)now, tv);
 
 	if (tz)
 		tz->tz_minuteswest = tz->tz_dsttime = 0;
@@ -79,6 +90,20 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 		klog("gettimeofday() = %d(sec), %d(usec), while now is %d(ms)\n",
 		     tv->tv_sec, tv->tv_usec, now);
 
+	return 0;
+}
+
+int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
+{
+	if (tv) {
+		long long wall_ms =
+			(long long)tv->tv_sec * 1000 + tv->tv_usec / 1000;
+		g_wall_offset_ms = wall_ms - (long long)time_now_ms();
+
+		if (TestControl.verbos)
+			klog("settimeofday(%d.%06d) offset=%d ms\n", tv->tv_sec,
+			     tv->tv_usec, (int)g_wall_offset_ms);
+	}
 	return 0;
 }
 
@@ -98,15 +123,55 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 
 int sys_reboot(unsigned cmd)
 {
-	switch (cmd) {
-	case MOS_REBOOT_CMD_RESTART:
-		reboot();
-		break;
-	case MOS_REBOOT_CMD_POWER_OFF:
-		shutdown();
-		break;
-	default:
-		break;
+	task_struct *cur = CURRENT_TASK();
+
+	/*
+	 * PID 1 (init) calls us after completing an orderly shutdown —
+	 * perform the hardware action directly.
+	 */
+	if (cur->psid == 1) {
+		switch (cmd) {
+		case MOS_REBOOT_CMD_RESTART:
+			reboot();
+			break;
+		case MOS_REBOOT_CMD_POWER_OFF:
+		case MOS_REBOOT_CMD_HALT:
+			shutdown();
+			break;
+		}
+		return 0;
+	}
+
+	/*
+	 * All other callers signal init via /dev/initctl so it can perform
+	 * an orderly shutdown before invoking the hardware action.
+	 */
+	{
+		struct init_request req;
+		file *fp;
+
+		memset(&req, 0, sizeof(req));
+		req.magic = INIT_MAGIC;
+		req.cmd = INIT_CMD_RUNLVL;
+
+		switch (cmd) {
+		case MOS_REBOOT_CMD_RESTART:
+			req.runlevel = '6';
+			break;
+		case MOS_REBOOT_CMD_POWER_OFF:
+		case MOS_REBOOT_CMD_HALT:
+			req.runlevel = '0';
+			break;
+		default:
+			return -EINVAL;
+		}
+
+		fp = fs_open_file("/dev/initctl", O_WRONLY, NULL, 0);
+		if (!fp)
+			return -EIO;
+
+		fp->f_fop->write(fp, &req, sizeof(req), &fp->f_pos);
+		fs_put_file(fp);
 	}
 	return 0;
 }

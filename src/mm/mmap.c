@@ -343,13 +343,34 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	unsigned addr = _addr & PAGE_SIZE_MASK;
 	unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
 	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
+	unsigned size = page_count * PAGE_SIZE;
 	task_struct *cur = CURRENT_TASK();
+	hash_table *table = cur->user->vm;
+	vm_key probe;
 
-	if (_addr == 0)
-		addr = vm_disc_map(cur->user->vm, page_count * PAGE_SIZE);
+	if (flags & MAP_FIXED) {
+		/*
+		 * POSIX MAP_FIXED: map at addr exactly.  Any existing mappings
+		 * that overlap [addr, addr+size) are silently discarded and
+		 * replaced.  vm_add_map() handles this via its conflict-
+		 * resolution loop, so no pre-processing is needed here.
+		 */
+	} else {
+		/*
+		 * addr is a hint.  If addr == 0 or the hinted range overlaps an
+		 * existing region, pick a free range automatically.
+		 */
+		if (addr != 0) {
+			probe.begin = addr;
+			probe.end = addr + size;
+			if (hash_find(table, &probe) != NULL)
+				addr = 0; /* fall through to vm_disc_map */
+		}
+		if (addr == 0)
+			addr = vm_disc_map(cur->user->vm, size);
+	}
 
-	vm_add_map(cur->user->vm, addr, addr + page_count * PAGE_SIZE, prot,
-		   flags, fp, offset);
+	vm_add_map(cur->user->vm, addr, addr + size, prot, flags, fp, offset);
 
 	if (TestControl.verbos) {
 		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",

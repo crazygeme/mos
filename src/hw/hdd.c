@@ -345,23 +345,14 @@ static int wait_while_busy(const ata_disk *d)
 {
 	channel *c = d->channel;
 	int i;
-	int ret;
 
 	for (i = 0; i < 3000; i++) {
-		if (i == 700)
-			printk("%s: busy, waiting...", d->name);
-		if (!(port_read_byte(reg_alt_status(c)) & STA_BSY)) {
-			if (i >= 700)
-				printk("ok\n");
-			ret = (port_read_byte(reg_alt_status(c)) & STA_DRQ);
-			if (ret == 0) {
-			}
-			return 1;
-		}
+		if (!(port_read_byte(reg_alt_status(c)) & STA_BSY))
+			return (port_read_byte(reg_alt_status(c)) & STA_DRQ);
+
 		delay(10000);
 	}
 
-	printf("failed\n");
 	return 0;
 }
 
@@ -1056,8 +1047,6 @@ static void select_sector(ata_disk *d, unsigned int sec_no)
 {
 	channel *c = d->channel;
 
-	__sync_fetch_and_add(&c->req_seq, 1);
-
 	select_device(d);
 	port_write_byte(reg_nsect(c), 1);
 	port_write_byte(reg_lbal(c), sec_no);
@@ -1077,6 +1066,8 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 	ata_disk *volatile d = aux;
 	channel *volatile c = d->channel;
 	mutex_lock(&c->lock);
+
+	__sync_fetch_and_add(&c->req_seq, 1);
 
 	select_sector(d, sec_no);
 
@@ -1100,6 +1091,8 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 	channel *c = d->channel;
 
 	mutex_lock(&c->lock);
+
+	__sync_fetch_and_add(&c->req_seq, 1);
 
 	select_sector(d, sec_no);
 

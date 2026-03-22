@@ -122,14 +122,14 @@
 /*
  * DEFINE_PROC_FILE(name, fill_func) — register at /proc/<name>
  */
-#define DEFINE_PROC_FILE(name, fill_func)                                 \
-	_DEFINE_PROC_FILE_IMPL(name, fill_func)                           \
-                                                                          \
-	static void _proc_register_##name(super_block *proc_sb)           \
-	{                                                                 \
-		vfs_mount(proc_sb, "/" #name, sget(&_sops_##name));       \
-	}                                                                 \
-                                                                          \
+#define DEFINE_PROC_FILE(name, fill_func)                           \
+	_DEFINE_PROC_FILE_IMPL(name, fill_func)                     \
+                                                                    \
+	static void _proc_register_##name(super_block *proc_sb)     \
+	{                                                           \
+		vfs_mount(proc_sb, "/" #name, sget(&_sops_##name)); \
+	}                                                           \
+                                                                    \
 	PROC_INIT(_proc_register_##name)
 
 /*
@@ -138,14 +138,14 @@
  * Like DEFINE_PROC_FILE but registers at an explicit path under /proc
  * (e.g. "/sys/kernel/osrelease") instead of "/<name>".
  */
-#define DEFINE_PROC_FILE_AT(mount_path, name, fill_func)                  \
-	_DEFINE_PROC_FILE_IMPL(name, fill_func)                           \
-                                                                          \
-	static void _proc_register_##name(super_block *proc_sb)           \
-	{                                                                 \
-		vfs_mount(proc_sb, mount_path, sget(&_sops_##name));      \
-	}                                                                 \
-                                                                          \
+#define DEFINE_PROC_FILE_AT(mount_path, name, fill_func)             \
+	_DEFINE_PROC_FILE_IMPL(name, fill_func)                      \
+                                                                     \
+	static void _proc_register_##name(super_block *proc_sb)      \
+	{                                                            \
+		vfs_mount(proc_sb, mount_path, sget(&_sops_##name)); \
+	}                                                            \
+                                                                     \
 	PROC_INIT(_proc_register_##name)
 
 #endif /* _PROC_ENTRIES_GENERIC_H */

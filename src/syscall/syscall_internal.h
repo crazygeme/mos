@@ -47,6 +47,7 @@ int sys_dup(int oldfd);
 int sys_dup2(int oldfd, int newfd);
 int sys_pipe(int pipefd[2]);
 int sys_fcntl(int fd, int cmd, int arg);
+int sys_fcntl64(int fd, int cmd, int arg);
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	       const struct timespec *timeout);
 int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,

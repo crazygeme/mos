@@ -9,6 +9,7 @@
  * Format specifiers supported:
  *   %d  signed decimal       %u  unsigned decimal
  *   %x  hex (no prefix)      %p  same as %x
+ *   %o  unsigned octal
  *   %s  string               %c  character
  *   %b  two-digit hex byte   %h  human-readable size (e.g. "1.2M")
  *   %%  literal percent
@@ -269,6 +270,14 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 					    flag_left);
 				free(s);
 			}
+			break;
+		}
+		case 'o': {
+			unsigned v = va_arg(ap, unsigned);
+			char *s = itoa((int)v, 8, 0);
+
+			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
+			free(s);
 			break;
 		}
 		case 'x':

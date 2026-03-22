@@ -40,7 +40,7 @@ int sys_write(int fd, char *buf, unsigned len)
 	task_struct *cur = CURRENT_TASK();
 
 	if (TestControl.verbos)
-		klog("write(%d, %x, %d)\n", fd, buf, len);
+		klog("write(%d, %s, %d)\n", fd, buf, len);
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;

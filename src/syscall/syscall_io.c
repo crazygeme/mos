@@ -227,6 +227,18 @@ int sys_fcntl(int fd, int cmd, int arg)
 	return ret;
 }
 
+int sys_fcntl64(int fd, int cmd, int arg)
+{
+	switch (cmd) {
+	case F_GETLK64:
+	case F_SETLK64:
+	case F_SETLKW64:
+		return 0;
+	default:
+		return sys_fcntl(fd, cmd, arg);
+	}
+}
+
 int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 {
 	struct stat s;

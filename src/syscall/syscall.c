@@ -239,7 +239,30 @@ static unsigned call_table[NR_syscalls] = {
 	sys_stat64, // 191 ~ 195
 	sys_lstat64,
 	sys_fstat64,
-	0, // 196 ~ 198
+	0,
+	0,
+	0, // 196 ~ 200
+	0,
+	0,
+	0,
+	0,
+	0, // 201 ~ 205
+	0,
+	0,
+	0,
+	0,
+	0, // 206 ~ 210
+	0,
+	0,
+	0,
+	0,
+	0, // 211 ~ 215
+	0,
+	0,
+	0,
+	0,
+	0, // 216 ~ 220
+	sys_fcntl64,
 };
 
 static int unhandled_syscall(unsigned callno)

@@ -201,7 +201,9 @@
 #define __NR_fstat64 197
 
 #define __NR_quota 198
-#define NR_syscalls 199
+
+#define __NR_fcntl64 221
+#define NR_syscalls 222
 
 #define _SYS_NAMELEN 65 // in linux 2.1
 

@@ -1,9 +1,9 @@
 #ifndef _CONFIG_H
 #define _CONFIG_H
 
-#define UTS_SYSNAME "MOS"
+#define UTS_SYSNAME "Linux"
 #define UTS_NODENAME "mos"
-#define UTS_RELEASE "0.1.0"
+#define UTS_RELEASE "2.4.20-8"
 #define UTS_VERSION "#1 SMP"
 #define UTS_MACHINE "i686"
 

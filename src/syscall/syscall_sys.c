@@ -31,12 +31,12 @@ int sys_uname(struct utsname *utname)
 	if (TestControl.verbos)
 		klog("uname\n");
 
-	strcpy(utname->machine, "i386");
+	strcpy(utname->sysname, UTS_SYSNAME);
 	strcpy(utname->nodename, sys_hostname);
-	strcpy(utname->release, "0.91-generic");
-	strcpy(utname->sysname, "Mos");
-	strcpy(utname->version, "Mos Wed Mar 11 15:00:00 UTC 2026");
-	strcpy(utname->domain, "Ender");
+	strcpy(utname->release, UTS_RELEASE);
+	strcpy(utname->version, UTS_VERSION);
+	strcpy(utname->machine, UTS_MACHINE);
+	strcpy(utname->domain, UTS_NODENAME);
 	return 1;
 }
 

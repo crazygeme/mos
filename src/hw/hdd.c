@@ -425,7 +425,7 @@ static void identify_ata_device(ata_disk *d)
 
 	/* Calculate capacity.
        Read model name and serial number. */
-	capacity = *(unsigned int *)&id[60 * 2];
+	capacity = *(unsigned long *)&id[60 * 2];
 	model = descramble_ata_string(&id[10 * 2], 20);
 	serial = descramble_ata_string(&id[27 * 2], 40);
 	strcpy(extra_info, "model \"");
@@ -433,18 +433,6 @@ static void identify_ata_device(ata_disk *d)
 	strcat(extra_info, "\", serial \"");
 	strcat(extra_info, serial);
 	strcat(extra_info, "\"");
-
-	/* Disable access to IDE disks over 1 GB, which are likely
-       physical IDE disks rather than virtual ones.  If we don't
-       allow access to those, we're less likely to scribble on
-       someone's important data.  You can disable this check by
-       hand if you really want to do so. */
-	if (capacity >= 1024 * 1024 * 1024 / BLOCK_SECTOR_SIZE) {
-		printk("%s: ignoring %h disk for safety\n", d->name,
-		       capacity * BLOCK_SECTOR_SIZE);
-		d->is_ata = 0;
-		return;
-	}
 
 	parse_partition(d, capacity);
 }

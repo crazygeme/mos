@@ -56,7 +56,7 @@ fi
 make -s -j8 $_test || { echo "Error: build failed" >&2; exit 1; }
 
 if [ ! -f "$diskfile" ]; then
-	unzip redhat.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
+	unzip redhat6.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
 fi
 
 

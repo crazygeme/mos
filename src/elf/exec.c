@@ -464,12 +464,12 @@ int sys_execve(const char *f, char **argv, char **envp)
 	tmp = cur->user->environment;
 	if (envc > 0) {
 		strcpy(tmp, s_envp[0]);
-		tmp = tmp + strlen(tmp) + 1;
+		tmp = tmp + strlen(tmp);
 	}
 
 	for (i = 1; i < envc; i++) {
 		strcpy(tmp, s_envp[i]);
-		tmp = tmp + strlen(tmp) + 1;
+		tmp = tmp + strlen(tmp);
 	}
 	cur->user->env_len = tmp - cur->user->environment;
 

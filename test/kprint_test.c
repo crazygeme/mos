@@ -3,7 +3,7 @@
  *
  * Covers: %d, %u, %x/%p, %s, %c, %b, %%, field width (right/left/zero-pad)
  *         for all integer types including negative and hex, NULL string,
- *         vsprintf return value, %h (human-readable size), %lld/%llu.
+ *         vsprintf return value, %h (human-readable size), %lld/%llu, %o.
  */
 
 #include <lib/klib.h>
@@ -453,5 +453,69 @@ KTEST(kprint, sprintf_llu_zero_pad)
 	char buf[16];
 	sprintf(buf, "%08llu", 5ULL);
 	EXPECT_EQ(strcmp(buf, "00000005"), 0);
+	return 0;
+}
+
+/* ── %o (unsigned octal) ─────────────────────────────────────────────────── */
+
+KTEST(kprint, sprintf_o_zero)
+{
+	char buf[16];
+	sprintf(buf, "%o", 0u);
+	EXPECT_EQ(strcmp(buf, "0"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_o_basic)
+{
+	/* 8 decimal == 10 octal */
+	char buf[16];
+	sprintf(buf, "%o", 8u);
+	EXPECT_EQ(strcmp(buf, "10"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_o_755)
+{
+	/* 0755 octal == 493 decimal; %o must print "755" */
+	char buf[16];
+	sprintf(buf, "%o", 0755u);
+	EXPECT_EQ(strcmp(buf, "755"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_o_zero_pad_umask)
+{
+	/* typical umask 022 with %04o → "0022" */
+	char buf[16];
+	sprintf(buf, "%04o", 022u);
+	EXPECT_EQ(strcmp(buf, "0022"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_o_zero_pad_755)
+{
+	/* %04o of 0755 → "0755" */
+	char buf[16];
+	sprintf(buf, "%04o", 0755u);
+	EXPECT_EQ(strcmp(buf, "0755"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_o_space_pad)
+{
+	/* %10o of 0755 → "       755" (7 spaces + 3 digits) */
+	char buf[16];
+	sprintf(buf, "%10o", 0755u);
+	EXPECT_EQ(strcmp(buf, "       755"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_o_left_align)
+{
+	/* %-10o of 0755 → "755       " */
+	char buf[16];
+	sprintf(buf, "%-10o|", 0755u);
+	EXPECT_EQ(strcmp(buf, "755       |"), 0);
 	return 0;
 }

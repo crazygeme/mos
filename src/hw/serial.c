@@ -53,10 +53,16 @@ static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 static unsigned char txq_buf[TXQ_SIZE];
 static unsigned txq_head = 0; /* read index */
 static unsigned txq_tail = 0; /* write index */
-static unsigned txq_len  = 0;
+static unsigned txq_len = 0;
 
-static int txq_isempty(void) { return txq_len == 0; }
-static int txq_isfull(void)  { return txq_len == TXQ_SIZE; }
+static int txq_isempty(void)
+{
+	return txq_len == 0;
+}
+static int txq_isfull(void)
+{
+	return txq_len == TXQ_SIZE;
+}
 
 static void txq_putc(unsigned char c)
 {
@@ -84,9 +90,9 @@ static void serial_interrupt(intr_frame *frame);
    been initialized it's all we can do. */
 static void init_poll(void)
 {
-	outb(IER_REG, 0);        /* Turn off all interrupts. */
-	outb(FCR_REG, 0);        /* Disable FIFO. */
-	set_serial(115200);      /* 115.2 kbps, N-8-1. */
+	outb(IER_REG, 0); /* Turn off all interrupts. */
+	outb(FCR_REG, 0); /* Disable FIFO. */
+	set_serial(115200); /* 115.2 kbps, N-8-1. */
 	outb(MCR_REG, MCR_OUT2); /* Required to enable interrupts. */
 	mode = POLL;
 }

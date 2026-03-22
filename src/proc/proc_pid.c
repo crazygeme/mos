@@ -271,6 +271,18 @@ static const char *pid_state_name(ps_status st)
 	}
 }
 
+typedef struct {
+	unsigned total_kb;
+	unsigned text_kb;
+	unsigned data_kb;
+	unsigned stk_kb;
+	unsigned rss_file_kb;
+	unsigned rss_anon_kb;
+} vm_stats_t;
+
+static void vm_get_stats(task_struct *task,
+			 vm_stats_t *out); /* defined after statm_ctx */
+
 /*
  * /proc/{pid}/status — human-readable, Linux-compatible.
  *
@@ -279,22 +291,57 @@ static const char *pid_state_name(ps_status st)
  */
 static void fill_status(char *buf, task_struct *task)
 {
+	const char *cmd =
+		task->user->command ? (const char *)task->user->command : "";
+	const char *slash = strrchr(cmd, '/');
+	const char *name = slash ? slash + 1 : cmd;
+	vm_stats_t vm;
+	unsigned fdsize = task->fds ? MAX_FD : 0;
+
+	vm_get_stats(task, &vm);
+
 	sprintf(buf,
 		"Name:      %s\n"
 		"State:     %c (%s)\n"
 		"Pid:       %u\n"
 		"PPid:      %u\n"
 		"Pgrp:      %u\n"
+		"Tgid:      0\n"
+		"Ngid:      0\n"
+		"TracerPid: 0\n"
 		"Session:   %u\n"
+		"Uid:       0 0 0 0\n"
+		"Gid:       0 0 0 0\n"
+		"Umask:     %04o\n"
+		"FDSize:    %u\n"
+		"Groups:\n"
+		"NStgid:    1\n"
+		"NSpid:     1\n"
+		"NSpgid:    0\n"
+		"NSsid:     0\n"
+		"Kthread:   1\n"
 		"Threads:   1\n"
+		"VmPeak:    %u kB\n"
+		"VmSize:    %u kB\n"
+		"VmExe:     %u kB\n"
+		"VmData:    %u kB\n"
+		"VmStk:     %u kB\n"
+		"RssAnon:   %u kB\n"
+		"RssFile:   %u kB\n"
+		"Threads:   1\n"
+		"KThreads:  1\n"
 		"MinFlt:    %u\n"
 		"MajFlt:    %u\n"
-		"nvcsw:     %u\n"
-		"nivcsw:    %u\n",
-		task->user->command ? (char *)task->user->command : "",
-		pid_state_char(task->status), pid_state_name(task->status),
-		task->psid, task->parent ? task->parent->psid : task->psid,
-		task->user->group_id, task->user->session_id, task->pf_minor,
+		"Cpus_allowed:      ffffffff\n"
+		"Cpus_allowed_list: 0-31\n"
+		"voluntary_ctxt_switches::       %u\n"
+		"nonvoluntary_ctxt_switches::    %u\n",
+		name, pid_state_char(task->status),
+		pid_state_name(task->status), task->psid,
+		task->parent ? task->parent->psid : task->psid,
+		task->user->group_id, task->user->session_id, task->umask,
+		fdsize, vm.total_kb, vm.total_kb, vm.text_kb, vm.data_kb,
+		vm.stk_kb, vm.rss_anon_kb, vm.rss_file_kb, task->pf_minor,
 		task->pf_major, task->total_switches - task->niv_switches,
 		task->niv_switches);
 }
@@ -342,6 +389,8 @@ typedef struct {
 	unsigned total;
 	unsigned text;
 	unsigned data;
+	unsigned file; /* pages backed by a file (fp != NULL) */
+	unsigned anon; /* pages with no file backing */
 } statm_ctx;
 
 static void statm_region_cb(vm_region *region, void *arg)
@@ -354,11 +403,36 @@ static void statm_region_cb(vm_region *region, void *arg)
 		ctx->text += pages;
 	else if (region->prot & PROT_WRITE)
 		ctx->data += pages;
+	if (region->fp)
+		ctx->file += pages;
+	else
+		ctx->anon += pages;
+}
+
+/* Populate vm_stats_t for a task (vm regions + heap + stack). */
+static void vm_get_stats(task_struct *task, vm_stats_t *out)
+{
+	statm_ctx ctx = { 0, 0, 0, 0, 0 };
+	unsigned heap_pages = 0;
+
+	if (task->user->vm)
+		vm_enum(task->user->vm, statm_region_cb, &ctx);
+	if (task->user->brk > task->user->start_brk)
+		heap_pages =
+			(task->user->brk - task->user->start_brk) / PAGE_SIZE;
+	out->stk_kb = USER_STACK_PAGES * (PAGE_SIZE / 1024);
+	out->text_kb = ctx.text * (PAGE_SIZE / 1024);
+	out->data_kb = (ctx.data + heap_pages) * (PAGE_SIZE / 1024);
+	out->total_kb = (ctx.total + heap_pages + USER_STACK_PAGES) *
+			(PAGE_SIZE / 1024);
+	out->rss_file_kb = ctx.file * (PAGE_SIZE / 1024);
+	out->rss_anon_kb =
+		(ctx.anon + heap_pages + USER_STACK_PAGES) * (PAGE_SIZE / 1024);
 }
 
 static void fill_statm(char *buf, task_struct *task)
 {
-	statm_ctx ctx = { 0, 0, 0 };
+	statm_ctx ctx = { 0, 0, 0, 0, 0 };
 	unsigned heap_pages = 0, stack_pages = USER_STACK_PAGES;
 
 	if (task->user->vm)

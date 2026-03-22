@@ -1,58 +1,12 @@
 # Object files
-*.o
-*.d
-*.ko
-*.obj
-*.elf
-*.log
-/kernel
-/log
-obj
 out
-user/bin/*
-user/lib/*
-user/etc/*
-user/rh6/*
-*.dbg
-# Libraries
-*.lib
-*.a
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
 
 # not a code
-*.txt
-tags
-*.taghl
-*.swp
+# stupid macOS garbage
 .DS_Store
-*.vtg
 *.img
-*.vpwhist
-*/*.vpwhist
-*/*.vtg
-*.opensdf
-*/*.opensdf
-*.suo
-*/*/suo
-*.sdf
-*/*.sdf
-*klocwork*
+*.qcow2
 compile_commands.json
 *.code-workspace
 .cache
-assemble.s
-.gn
-.gnfiles

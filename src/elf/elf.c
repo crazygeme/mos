@@ -75,7 +75,8 @@ static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 
 	if (va_begin == phdr->p_vaddr)
 		/* Page-aligned: use a file-backed mapping (lazy load). */
-		do_mmap_kernel(va_begin, map_size, prot, 0, fp, file_off);
+		do_mmap_kernel(va_begin, map_size, prot, MAP_FIXED, fp,
+			       file_off);
 	else {
 		/*
 		 * Unaligned: allocate anonymous pages and eagerly copy data.
@@ -83,8 +84,8 @@ static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
 		 * populate the mapping; the final prot still reflects the
 		 * segment flags.
 		 */
-		unsigned mapped = do_mmap_kernel(va_begin, map_size,
-						 prot | PROT_WRITE, 0, 0, 0);
+		unsigned mapped = do_mmap_kernel(
+			va_begin, map_size, prot | PROT_WRITE, MAP_FIXED, 0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
 		do_mmap_update(mapped, prot, 0);
 	}
@@ -249,7 +250,7 @@ static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		 * BSS (memsz > filesz) is zero-filled automatically by the
 		 * page fault handler for pages that fall beyond the file end.
 		 */
-		do_mmap_kernel(bias + va_begin, map_size, prot, 0, fp,
+		do_mmap_kernel(bias + va_begin, map_size, prot, MAP_FIXED, fp,
 			       file_off);
 	} else {
 		/*
@@ -259,7 +260,8 @@ static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		 * elf_read below can populate the pages.
 		 */
 		unsigned mapped = do_mmap_kernel(bias + va_begin, map_size,
-						 prot | PROT_WRITE, 0, 0, 0);
+						 prot | PROT_WRITE, MAP_FIXED,
+						 0, 0);
 		elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
 		do_mmap_update(mapped, prot, 0);
 	}

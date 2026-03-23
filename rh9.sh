@@ -32,7 +32,7 @@ elif [ "$arg" == "curses" ]; then
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
 elif [ "$arg" == "tap" ]; then
-	_netdev="bridge,id=net0,br=br0"
+	_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
 elif [ "$arg" == "bash" ]; then
 	_init="/bin/bash"
 elif [ "$arg" == "logtofile" ]; then
@@ -47,7 +47,7 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	echo -e "\t verbose: run with serial log"
 	echo -e "\t kvm: enable kvm"
-	echo -e "\t tap: bridge VM onto real LAN via br0 (gets real DHCP address)"
+	echo -e "\t tap: TAP+NAT (10.0.2.0/24, VM gets DHCP from host dnsmasq)"
 	exit
 fi
 done
@@ -56,95 +56,64 @@ if [ "$_window" == "curses" ]; then
 	_logtofile="file:out/krn.log"
 fi
 
-# ── Bridge state (shared between setup and teardown) ──────────────────────────
-_bridge_was_setup=0
-_host_nic=""
-_host_ip=""
-_host_gw=""
+# ── TAP/NAT state (shared between setup and teardown) ─────────────────────────
+_tap_was_setup=0
+_tap_dnsmasq_pid=""
+_TAP_IF="tap0"
+_TAP_GW="10.0.2.1"
+_TAP_NET="10.0.2.0/24"
+_TAP_RANGE="10.0.2.2,10.0.2.20,1h"
 
-setup_bridge() {
-	# Detect the NIC that carries the default route
-	_host_nic=$(ip route show default | awk '/default/ { print $5; exit }')
-	if [ -z "$_host_nic" ]; then
-		echo "Error: cannot detect default NIC for bridge setup" >&2
-		exit 1
-	fi
-	echo "tap: using host NIC '$_host_nic' for bridge br0"
+setup_nat() {
+	# Create the TAP interface owned by the current user (no root for QEMU)
+	sudo ip tuntap add "$_TAP_IF" mode tap user "$USER"
+	sudo ip addr add "$_TAP_GW/24" dev "$_TAP_IF"
+	sudo ip link set "$_TAP_IF" up
+	echo "tap: $_TAP_IF up ($_TAP_GW/24)"
 
-	# Create br0 and attach the host NIC (idempotent)
-	if ! ip link show br0 &>/dev/null; then
-		sudo ip link add br0 type bridge
-	fi
-	if ! ip link show "$_host_nic" | grep -q "master br0"; then
-		# Move the host IP/routes to the bridge before enslaving the NIC
-		_host_ip=$(ip -4 addr show "$_host_nic" | awk '/inet / { print $2; exit }')
-		_host_gw=$(ip route show default dev "$_host_nic" | awk '{ print $3; exit }')
+	# Enable IPv4 forwarding and masquerade outbound traffic
+	sudo sysctl -qw net.ipv4.ip_forward=1
+	sudo iptables -t nat -A POSTROUTING -s "$_TAP_NET" -j MASQUERADE
+	echo "tap: NAT masquerade for $_TAP_NET"
 
-		sudo ip addr flush dev "$_host_nic"
-		sudo ip link set "$_host_nic" master br0
-		sudo ip link set br0 up
+	# Start dnsmasq to hand the VM a DHCP lease
+	sudo dnsmasq \
+		--interface="$_TAP_IF" \
+		--bind-interfaces \
+		--dhcp-range="$_TAP_RANGE" \
+		--except-interface=lo \
+		--pid-file=/tmp/mos-dnsmasq.pid \
+		--log-facility=/dev/null
+	_tap_dnsmasq_pid=$(cat /tmp/mos-dnsmasq.pid 2>/dev/null)
+	echo "tap: dnsmasq started (pid $_tap_dnsmasq_pid)"
 
-		# Restore connectivity on the bridge
-		if [ -n "$_host_ip" ]; then
-			sudo ip addr add "$_host_ip" dev br0
-		fi
-		if [ -n "$_host_gw" ]; then
-			sudo ip route add default via "$_host_gw" dev br0 || true
-		fi
-	else
-		# NIC already enslaved; capture current bridge IP/gw for teardown
-		_host_ip=$(ip -4 addr show br0 | awk '/inet / { print $2; exit }')
-		_host_gw=$(ip route show default dev br0 | awk '{ print $3; exit }')
-		sudo ip link set br0 up
-	fi
-
-	# Allow qemu-bridge-helper to use br0
-	_bridge_conf="/etc/qemu/bridge.conf"
-	if ! grep -qs "allow br0" "$_bridge_conf" 2>/dev/null; then
-		sudo mkdir -p /etc/qemu
-		echo "allow br0" | sudo tee -a "$_bridge_conf" > /dev/null
-		echo "tap: added 'allow br0' to $_bridge_conf"
-	fi
-
-	# Ensure qemu-bridge-helper is setuid so we don't need to run qemu as root
-	_helper=$(command -v qemu-bridge-helper 2>/dev/null \
-	          || echo /usr/lib/qemu/qemu-bridge-helper)
-	if [ -f "$_helper" ] && [ ! -u "$_helper" ]; then
-		sudo chmod u+s "$_helper"
-		echo "tap: set setuid on $_helper"
-	fi
-
-	_bridge_was_setup=1
-	trap 'cleanup_bridge' EXIT INT TERM
+	_tap_was_setup=1
+	trap 'cleanup_nat' EXIT INT TERM
 }
 
-cleanup_bridge() {
-	[ "$_bridge_was_setup" -eq 0 ] && return
-	echo "tap: tearing down bridge br0"
+cleanup_nat() {
+	[ "$_tap_was_setup" -eq 0 ] && return
+	echo "tap: tearing down NAT"
 
-	# Bring bridge down and release the NIC from it
-	sudo ip link set br0 down 2>/dev/null
-	sudo ip link set "$_host_nic" nomaster 2>/dev/null
-
-	# Restore the host IP and gateway on the physical NIC
-	if [ -n "$_host_ip" ]; then
-		sudo ip addr flush dev "$_host_nic" 2>/dev/null
-		sudo ip addr add "$_host_ip" dev "$_host_nic"
+	# Stop dnsmasq
+	if [ -n "$_tap_dnsmasq_pid" ]; then
+		sudo kill "$_tap_dnsmasq_pid" 2>/dev/null
 	fi
-	sudo ip link set "$_host_nic" up
-	if [ -n "$_host_gw" ]; then
-		sudo ip route add default via "$_host_gw" dev "$_host_nic" 2>/dev/null || true
-	fi
+	sudo rm -f /tmp/mos-dnsmasq.pid
 
-	# Delete the bridge
-	sudo ip link delete br0 type bridge 2>/dev/null
+	# Remove iptables masquerade rule
+	sudo iptables -t nat -D POSTROUTING -s "$_TAP_NET" -j MASQUERADE 2>/dev/null
 
-	echo "tap: br0 removed, '$_host_nic' restored"
+	# Remove the TAP interface
+	sudo ip link set "$_TAP_IF" down 2>/dev/null
+	sudo ip tuntap del "$_TAP_IF" mode tap 2>/dev/null
+
+	echo "tap: $_TAP_IF removed"
 }
 
-# ── Bridge setup (only when tap flag is set) ──────────────────────────────────
-if [ "$_netdev" = "bridge,id=net0,br=br0" ]; then
-	setup_bridge
+# ── TAP/NAT setup (only when tap flag is set) ──────────────────────────────────
+if [ "$_netdev" = "tap,id=net0,ifname=tap0,script=no,downscript=no" ]; then
+	setup_nat
 fi
 
 make -s -j8 $_test || { echo "Error: build failed" >&2; exit 1; }

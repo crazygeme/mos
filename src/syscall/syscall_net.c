@@ -24,10 +24,13 @@
 
 #include <lwip/tcp.h>
 #include <lwip/udp.h>
+#include <lwip/raw.h>
 #include <lwip/netif.h>
+#include <lwip/ip.h>
 #include <lwip/ip4_addr.h>
 #include <lwip/pbuf.h>
-#include <lwip/ip4_addr.h>
+#include <lwip/prot/ip4.h>
+#include <lwip/prot/ip.h>
 #include <lwip/timeouts.h>
 
 /* ── Ring-buffer helpers ────────────────────────────────────────────────────── */
@@ -70,6 +73,46 @@ static unsigned rx_read(mos_sock *sk, void *dst, unsigned len)
 	return n;
 }
 
+/* ── Blocking helpers ───────────────────────────────────────────────────────── */
+
+/* Wake the task currently blocked on sk, if any.
+ * Safe to call from lwIP callbacks (NIC IRQ context) and timer callbacks. */
+static void sock_wakeup(mos_sock *sk)
+{
+	task_struct *t = sk->waiter;
+	if (t) {
+		sk->waiter = NULL;
+		ps_put_to_ready_queue(t);
+	}
+}
+
+/* One-shot timer callback: fires at the deadline and unblocks the waiter. */
+static void sock_timeout_cb(timer_t *t, void *ctx)
+{
+	(void)t;
+	sock_wakeup((mos_sock *)ctx);
+}
+
+/* Block the current task on sk until woken by sock_wakeup or the deadline.
+ * Starts a one-shot timer so the task is guaranteed to wake at the deadline.
+ * Returns immediately if already past the deadline.
+ * Caller must re-check the actual condition after this returns. */
+static void sock_wait(mos_sock *sk, unsigned long deadline)
+{
+	unsigned long now = time_now_ms();
+	if (now >= deadline)
+		return;
+
+	task_struct *cur = CURRENT_TASK();
+	/* One-shot timer wakes us if no network event arrives first */
+	timer_start(sock_timeout_cb, (unsigned)(deadline - now), 0, sk);
+	sk->waiter = cur;
+	ps_put_to_wait_queue(cur, NULL, __func__);
+	task_sched();
+	sk->waiter = NULL;
+	/* Let the timer fire naturally — sock_wakeup is a no-op when waiter==NULL */
+}
+
 /* ── lwIP TCP callbacks ─────────────────────────────────────────────────────── */
 
 static err_t tcp_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
@@ -81,6 +124,7 @@ static err_t tcp_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
 	if (!p) {
 		/* Remote closed the connection */
 		sk->state = SS_DISCONNECTING;
+		sock_wakeup(sk);
 		return ERR_OK;
 	}
 
@@ -95,6 +139,7 @@ static err_t tcp_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
 	}
 	tcp_recved(pcb, acked);
 	pbuf_free(p);
+	sock_wakeup(sk);
 	return ERR_OK;
 }
 
@@ -108,6 +153,7 @@ static err_t tcp_on_connected(void *arg, struct tcp_pcb *pcb, err_t err)
 	} else {
 		sk->state = SS_CONNECTED;
 	}
+	sock_wakeup(sk);
 	return ERR_OK;
 }
 
@@ -119,6 +165,7 @@ static void tcp_on_err(void *arg, err_t err)
 	sk->tcp = NULL;
 	sk->err = -ECONNREFUSED;
 	sk->state = SS_UNCONNECTED;
+	sock_wakeup(sk);
 }
 
 static err_t tcp_on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
@@ -133,6 +180,7 @@ static err_t tcp_on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 
 	sk->accept_queue[sk->accept_tail] = newpcb;
 	sk->accept_tail = next;
+	sock_wakeup(sk);
 	return ERR_OK;
 }
 
@@ -161,6 +209,47 @@ static void udp_on_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p,
 			rx_write(sk, q->payload, (unsigned)q->len);
 	}
 	pbuf_free(p);
+	sock_wakeup(sk);
+}
+
+/* ── lwIP raw (ICMP) callback ───────────────────────────────────────────────── */
+
+/*
+ * Called by lwIP for every incoming packet matching the raw PCB's protocol.
+ * p->payload points to the transport header (ICMP header) — the IP header
+ * has already been consumed but is still accessible via ip4_current_header().
+ * We prepend the IP header so userspace receives IP hdr + ICMP data, matching
+ * Linux SOCK_RAW semantics.
+ */
+static u8_t raw_on_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p,
+			const ip_addr_t *addr)
+{
+	mos_sock *sk = (mos_sock *)arg;
+	(void)pcb;
+
+	if (!p)
+		return 0;
+
+	/* Store source for recvfrom */
+	sk->rx_src.sin_family = AF_INET;
+	sk->rx_src.sin_port = 0;
+	sk->rx_src.sin_addr.s_addr = ip4_addr_get_u32(ip_2_ip4(addr));
+
+	/* Prepend the IP header (still valid during input callback) */
+	const struct ip_hdr *iph = ip4_current_header();
+	u16_t iphlen = IPH_HL_BYTES(iph);
+	u16_t totlen = iphlen + p->tot_len;
+
+	if (rx_free(sk) >= (unsigned)(sizeof(totlen) + totlen)) {
+		rx_write(sk, &totlen, sizeof(totlen));
+		rx_write(sk, iph, iphlen);
+		struct pbuf *q;
+		for (q = p; q; q = q->next)
+			rx_write(sk, q->payload, (unsigned)q->len);
+	}
+	pbuf_free(p);
+	sock_wakeup(sk);
+	return 1; /* consumed */
 }
 
 /* ── Socket file operations ─────────────────────────────────────────────────── */
@@ -170,16 +259,15 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
-	if (sk->type == SOCK_DGRAM) {
-		/* UDP: block until a datagram arrives */
+	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
+		/* UDP/RAW: block until a datagram arrives */
 		unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
 				return sk->err;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
-			sys_check_timeouts();
-			task_sched();
+			sock_wait(sk, deadline);
 		}
 		u16_t dlen;
 		rx_read(sk, &dlen, sizeof(dlen));
@@ -208,8 +296,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 			return -ENOTCONN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sys_check_timeouts();
-		task_sched();
+		sock_wait(sk, deadline);
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
 	return (ssize_t)n;
@@ -222,6 +309,20 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 
 	if (sk->err)
 		return sk->err;
+
+	if (sk->type == SOCK_RAW) {
+		if (sk->state != SS_CONNECTED || !sk->raw)
+			return -ENOTCONN;
+		ip_addr_t ip;
+		ip4_addr_set_u32(ip_2_ip4(&ip), sk->peer.sin_addr.s_addr);
+		struct pbuf *p = pbuf_alloc(PBUF_IP, (u16_t)count, PBUF_RAM);
+		if (!p)
+			return -ENOBUFS;
+		memcpy(p->payload, buf, count);
+		err_t e = raw_sendto(sk->raw, p, &ip);
+		pbuf_free(p);
+		return e == ERR_OK ? (ssize_t)count : -EIO;
+	}
 
 	if (sk->type == SOCK_DGRAM) {
 		if (!sk->udp)
@@ -251,7 +352,10 @@ static int sock_release(file *fp)
 {
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
-	if (sk->type == SOCK_DGRAM) {
+	if (sk->type == SOCK_RAW) {
+		if (sk->raw)
+			raw_remove(sk->raw);
+	} else if (sk->type == SOCK_DGRAM) {
 		if (sk->udp)
 			udp_remove(sk->udp);
 	} else {
@@ -506,7 +610,9 @@ static int do_socket(int domain, int type, int protocol)
 {
 	if (domain != AF_INET)
 		return -EAFNOSUPPORT;
-	if (type != SOCK_STREAM && type != SOCK_DGRAM)
+	if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_RAW)
+		return -EPROTONOSUPPORT;
+	if (type == SOCK_RAW && protocol != IPPROTO_ICMP)
 		return -EPROTONOSUPPORT;
 
 	mos_sock *sk = zalloc(sizeof(*sk));
@@ -525,6 +631,13 @@ static int do_socket(int domain, int type, int protocol)
 			return -ENOMEM;
 		}
 		tcp_setup_callbacks(sk->tcp, sk);
+	} else if (type == SOCK_RAW) {
+		sk->raw = raw_new(IP_PROTO_ICMP);
+		if (!sk->raw) {
+			free(sk);
+			return -ENOMEM;
+		}
+		raw_recv(sk->raw, raw_on_recv, sk);
 	} else {
 		sk->udp = udp_new();
 		if (!sk->udp) {
@@ -538,6 +651,8 @@ static int do_socket(int domain, int type, int protocol)
 	if (fd < 0) {
 		if (type == SOCK_STREAM)
 			tcp_abort(sk->tcp);
+		else if (type == SOCK_RAW)
+			raw_remove(sk->raw);
 		else
 			udp_remove(sk->udp);
 		free(sk);
@@ -560,6 +675,8 @@ static int do_bind(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 	err_t e;
 	if (sk->type == SOCK_STREAM)
 		e = tcp_bind(sk->tcp, &ip, port);
+	else if (sk->type == SOCK_RAW)
+		e = raw_bind(sk->raw, &ip);
 	else
 		e = udp_bind(sk->udp, &ip, port);
 
@@ -580,6 +697,15 @@ static int do_connect(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 	ip_addr_t ip;
 	ip4_addr_set_u32(ip_2_ip4(&ip), addr->sin_addr.s_addr);
 	u16_t port = lwip_ntohs(addr->sin_port);
+
+	if (sk->type == SOCK_RAW) {
+		err_t e = raw_connect(sk->raw, &ip);
+		if (e != ERR_OK)
+			return -EINVAL;
+		sk->peer = *addr;
+		sk->state = SS_CONNECTED;
+		return 0;
+	}
 
 	if (sk->type == SOCK_DGRAM) {
 		err_t e = udp_connect(sk->udp, &ip, port);
@@ -605,8 +731,7 @@ static int do_connect(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 			return sk->err;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sys_check_timeouts();
-		task_sched();
+		sock_wait(sk, deadline);
 	}
 	if (sk->state != SS_CONNECTED)
 		return sk->err ? sk->err : -ECONNREFUSED;
@@ -651,8 +776,7 @@ static int do_accept(int fd, struct sockaddr_in *addr, unsigned *addrlen)
 			return sk->err;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sys_check_timeouts();
-		task_sched();
+		sock_wait(sk, deadline);
 	}
 
 	struct tcp_pcb *newpcb = sk->accept_queue[sk->accept_head];
@@ -756,6 +880,18 @@ static int do_sendto(int fd, const void *buf, unsigned len, int flags,
 		return (int)sock_write(cur->fds[fd].fp, buf, len, &pos);
 	}
 
+	if (sk->type == SOCK_RAW) {
+		ip_addr_t ip;
+		ip4_addr_set_u32(ip_2_ip4(&ip), to->sin_addr.s_addr);
+		struct pbuf *p = pbuf_alloc(PBUF_IP, (u16_t)len, PBUF_RAM);
+		if (!p)
+			return -ENOBUFS;
+		memcpy(p->payload, buf, len);
+		err_t e = raw_sendto(sk->raw, p, &ip);
+		pbuf_free(p);
+		return e == ERR_OK ? (int)len : -EIO;
+	}
+
 	/* UDP with explicit destination */
 	ip_addr_t ip;
 	ip4_addr_set_u32(ip_2_ip4(&ip), to->sin_addr.s_addr);
@@ -781,14 +917,13 @@ static int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 	/* Block until data */
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 
-	if (sk->type == SOCK_DGRAM) {
+	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
 				return sk->err;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
-			sys_check_timeouts();
-			task_sched();
+			sock_wait(sk, deadline);
 		}
 		u16_t dlen;
 		rx_read(sk, &dlen, sizeof(dlen));
@@ -819,8 +954,7 @@ static int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 			return -ENOTCONN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sys_check_timeouts();
-		task_sched();
+		sock_wait(sk, deadline);
 	}
 	unsigned n = rx_read(sk, buf, len);
 	if (from && fromlen) {
@@ -837,6 +971,11 @@ static int do_shutdown(int fd, int how)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->type == SOCK_RAW) {
+		raw_disconnect(sk->raw);
+		sk->state = SS_UNCONNECTED;
+		return 0;
+	}
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
 	if (!sk->tcp)
@@ -876,6 +1015,152 @@ static int do_getsockopt(int fd, int level, int optname, void *optval,
 		*optlen = sizeof(int);
 	}
 	return 0;
+}
+
+/* ── sendmsg / recvmsg ──────────────────────────────────────────────────────── */
+
+static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
+{
+	(void)flags;
+	mos_sock *sk = fd_to_sock(fd);
+	if (!sk)
+		return -ENOTSOCK;
+	if (sk->err)
+		return sk->err;
+
+	/* Compute total payload length */
+	size_t totlen = 0;
+	size_t i;
+	for (i = 0; i < msg->msg_iovlen; i++)
+		totlen += msg->msg_iov[i].iov_len;
+
+	const struct sockaddr_in *to =
+		(const struct sockaddr_in *)msg->msg_name;
+
+	/* TCP: write each iov segment directly into the send buffer */
+	if (sk->type == SOCK_STREAM) {
+		if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
+			return -ENOTCONN;
+		size_t sent = 0;
+		for (i = 0; i < msg->msg_iovlen; i++) {
+			err_t e = tcp_write(sk->tcp, msg->msg_iov[i].iov_base,
+					    (u16_t)msg->msg_iov[i].iov_len,
+					    TCP_WRITE_FLAG_COPY);
+			if (e != ERR_OK)
+				return sent > 0 ? (int)sent : -EIO;
+			sent += msg->msg_iov[i].iov_len;
+		}
+		tcp_output(sk->tcp);
+		return (int)sent;
+	}
+
+	/* UDP / RAW: gather all iov segments into one pbuf */
+	pbuf_layer layer = (sk->type == SOCK_RAW) ? PBUF_IP : PBUF_TRANSPORT;
+	struct pbuf *p = pbuf_alloc(layer, (u16_t)totlen, PBUF_RAM);
+	if (!p)
+		return -ENOBUFS;
+	u16_t off = 0;
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		memcpy((char *)p->payload + off, msg->msg_iov[i].iov_base,
+		       msg->msg_iov[i].iov_len);
+		off += (u16_t)msg->msg_iov[i].iov_len;
+	}
+
+	err_t e;
+	if (sk->type == SOCK_RAW) {
+		ip_addr_t ip;
+		const struct sockaddr_in *dst = to ? to : &sk->peer;
+		ip4_addr_set_u32(ip_2_ip4(&ip), dst->sin_addr.s_addr);
+		e = raw_sendto(sk->raw, p, &ip);
+	} else if (to) {
+		ip_addr_t ip;
+		ip4_addr_set_u32(ip_2_ip4(&ip), to->sin_addr.s_addr);
+		u16_t port = lwip_ntohs(to->sin_port);
+		e = udp_sendto(sk->udp, p, &ip, port);
+	} else {
+		e = udp_send(sk->udp, p);
+	}
+	pbuf_free(p);
+	return e == ERR_OK ? (int)totlen : -EIO;
+}
+
+static int do_recvmsg(int fd, struct msghdr *msg, int flags)
+{
+	(void)flags;
+	mos_sock *sk = fd_to_sock(fd);
+	size_t i;
+	unsigned delivered;
+	if (!sk)
+		return -ENOTSOCK;
+
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+
+	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
+		/* Block until a length-prefixed datagram is in the ring */
+		while (rx_used(sk) < sizeof(u16_t)) {
+			if (sk->err)
+				return sk->err;
+			if (time_now_ms() > deadline)
+				return -ETIMEDOUT;
+			sock_wait(sk, deadline);
+		}
+		u16_t dlen;
+		rx_read(sk, &dlen, sizeof(dlen));
+
+		/* Scatter into iov */
+		unsigned remaining = (unsigned)dlen;
+		delivered = 0;
+		for (i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
+			unsigned n = (unsigned)msg->msg_iov[i].iov_len <
+						     remaining ?
+					     (unsigned)msg->msg_iov[i].iov_len :
+					     remaining;
+			rx_read(sk, msg->msg_iov[i].iov_base, n);
+			delivered += n;
+			remaining -= n;
+		}
+		/* Discard bytes that didn't fit */
+		while (remaining--) {
+			char tmp;
+			rx_read(sk, &tmp, 1);
+		}
+
+		if (msg->msg_name &&
+		    msg->msg_namelen >= sizeof(struct sockaddr_in)) {
+			memcpy(msg->msg_name, &sk->rx_src,
+			       sizeof(struct sockaddr_in));
+			msg->msg_namelen = sizeof(struct sockaddr_in);
+		}
+		msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
+		return (int)delivered;
+	}
+
+	/* TCP: stream scatter-read */
+	while (rx_used(sk) == 0) {
+		if (sk->err)
+			return sk->err;
+		if (sk->state == SS_DISCONNECTING)
+			return 0;
+		if (sk->state == SS_UNCONNECTED)
+			return -ENOTCONN;
+		if (time_now_ms() > deadline)
+			return -ETIMEDOUT;
+		sock_wait(sk, deadline);
+	}
+	delivered = 0;
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		unsigned n = rx_read(sk, msg->msg_iov[i].iov_base,
+				     (unsigned)msg->msg_iov[i].iov_len);
+		delivered += n;
+		if (n < (unsigned)msg->msg_iov[i].iov_len)
+			break; /* ring exhausted */
+	}
+	if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)) {
+		memcpy(msg->msg_name, &sk->peer, sizeof(struct sockaddr_in));
+		msg->msg_namelen = sizeof(struct sockaddr_in);
+	}
+	msg->msg_flags = 0;
+	return (int)delivered;
 }
 
 /* ── sys_socketcall dispatcher ──────────────────────────────────────────────── */
@@ -944,6 +1229,14 @@ int sys_socketcall(int call, unsigned long *args)
 	case SYS_GETSOCKOPT:
 		return do_getsockopt((int)args[0], (int)args[1], (int)args[2],
 				     (void *)args[3], (unsigned *)args[4]);
+
+	case SYS_SENDMSG:
+		return do_sendmsg((int)args[0], (const struct msghdr *)args[1],
+				  (int)args[2]);
+
+	case SYS_RECVMSG:
+		return do_recvmsg((int)args[0], (struct msghdr *)args[1],
+				  (int)args[2]);
 
 	default:
 		return -ENOSYS;

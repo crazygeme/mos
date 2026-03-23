@@ -3,21 +3,24 @@
 #include <lib/klib.h>
 #include <macro.h>
 
+nic_dev *nic_intel_8254x_create(uint32_t device, uint16_t v, uint16_t d);
+
 static nic_dev network_devices[MAX_NETWORK_DEV] = { 0 };
 
-static void nic_register(nic_dev *dev)
+static nic_dev *nic_register(nic_dev *dev)
 {
 	int i = 0;
 	if (dev == NULL)
-		return;
+		return NULL;
 
 	for (i = 0; i < MAX_NETWORK_DEV; i++) {
 		if (network_devices[i].ven == 0 &&
 		    network_devices[i].dev == 0) {
 			network_devices[i] = *dev;
-			return;
+			return &network_devices[i];
 		}
 	}
+	return NULL;
 }
 
 static const char *pci_get_chip_name(uint16_t v, uint16_t d)
@@ -39,12 +42,9 @@ static void scan_all_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 	if (!chip) // unknown chip
 		return;
 
-	if (v == 0x8086) { // intel
-		// if (memcmp(chip, "8254", 4) == 0)
-		// 	dev = nic_intel_8254x_create(device, v, d);
-		// TODO: other chip
-	} else {
-		// TODO: other vendor
+	if (v == 0x8086) {
+		if (d == 0x100E || d == 0x100F || d == 0x1000 || d == 0x1001)
+			dev = nic_intel_8254x_create(device, v, d);
 	}
 
 	if (dev) {
@@ -58,17 +58,21 @@ static void scan_all_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 			return;
 		}
 
-		nic_register(dev);
+		nic_dev *registered = nic_register(dev);
+		if (registered && registered->on_register)
+			registered->on_register(registered);
 		free(dev);
 	}
 }
 
-static void nic_scan_all()
+nic_dev *nic_getdev(int index)
 {
-	pci_scan(scan_all_pci, PCI_SCAN_ALL, 0);
+	if (index < 0 || index >= MAX_NETWORK_DEV)
+		return NULL;
+	if (network_devices[index].ven == 0 && network_devices[index].dev == 0)
+		return NULL;
+	return &network_devices[index];
 }
-
-KERNEL_INIT(6, nic_scan_all);
 
 nic_dev *nic_getdev_by_mac(uint8_t *mac)
 {
@@ -91,3 +95,10 @@ nic_dev *nic_getdev_by_ip(uint8_t *ip)
 	}
 	return NULL;
 }
+
+static void nic_scan_all()
+{
+	pci_scan(scan_all_pci, PCI_SCAN_ALL, 0);
+}
+
+KERNEL_INIT(6, nic_scan_all);

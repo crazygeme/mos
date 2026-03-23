@@ -34,6 +34,7 @@ COMMON_CFLAGS = -fno-pie\
 		-I$(MAINPATH)/include\
 		-I$(MAINPATH)/third_party/std\
         	-I$(MAINPATH)/third_party/lwext4/include\
+		-I$(MAINPATH)/third_party/lwip/src/include\
 		-DCONFIG_EXT_FEATURE_SET_LVL=2\
         	-DCONFIG_JOURNALING_ENABLE=0\
         	-DCONFIG_DIR_INDEX_COMB_SORT=1\

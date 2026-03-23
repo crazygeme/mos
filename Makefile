@@ -17,7 +17,7 @@ DEPS      = $(patsubst %.c,$(DST)/obj/%.c.d,$(SRCS))
 DEPS     += $(patsubst %.S,$(DST)/obj/%.s.d,$(ASMS))
 TEST_DEPS = $(patsubst %.c,$(DST)/obj/%.c.d,$(TEST_SRCS))
 
-LIBS    = $(DST)/lwext4/libext4.a
+LIBS    = $(DST)/lwext4/libext4.a $(DST)/lwip/liblwip.a
 CFLAGS  = $(COMMON_CFLAGS) -O0
 
 .PHONY: all test run run-test clean rebuild third_party format
@@ -70,10 +70,9 @@ $(DST)/obj/%.s.o: %.S $(SCRIPTS)
 
 # ── Third-party ──────────────────────────────────────────────────────────────
 
-$(DST)/lwext4/libext4.a: third_party
+$(DST)/lwext4/libext4.a $(DST)/lwip/liblwip.a: third_party
 
 third_party: $(SCRIPTS)
-	@mkdir -p $(dir $@)
 	@$(MAKE) -C third_party
 
 # ── Utility ──────────────────────────────────────────────────────────────────

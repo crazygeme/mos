@@ -1,4 +1,4 @@
-#include "generic.h"
+#include "common.h"
 
 static void fill(void *buf, size_t size)
 {

@@ -25,8 +25,23 @@ u32_t sys_now(void)
 	return (u32_t)time_now_ms();
 }
 
-/* ── Single eth0 netif ──────────────────────────────────────────────────────── */
+/* ── Single eth0 netif + counters ───────────────────────────────────────────── */
 static struct netif eth0;
+static unsigned long g_rx_bytes, g_rx_packets;
+static unsigned long g_tx_bytes, g_tx_packets;
+
+struct netif *net_get_default_netif(void)
+{
+	return &eth0;
+}
+
+void net_get_stats(net_stats_t *s)
+{
+	s->rx_bytes = g_rx_bytes;
+	s->rx_packets = g_rx_packets;
+	s->tx_bytes = g_tx_bytes;
+	s->tx_packets = g_tx_packets;
+}
 
 /* Called by lwIP to transmit a packet. */
 static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
@@ -37,7 +52,12 @@ static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 
 	if (!nic->send)
 		return ERR_IF;
-	return nic->send(nic, buf, (uint16_t)len) >= 0 ? ERR_OK : ERR_IF;
+	if (nic->send(nic, buf, (uint16_t)len) >= 0) {
+		g_tx_bytes += len;
+		g_tx_packets += 1;
+		return ERR_OK;
+	}
+	return ERR_IF;
 }
 
 /* lwIP netif init callback — fills in hwaddr, mtu, flags, output functions. */
@@ -66,6 +86,9 @@ static void eth0_rx(void *ctx, const uint8_t *data, uint16_t len)
 	p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
 	if (!p)
 		return;
+
+	g_rx_bytes += len;
+	g_rx_packets += 1;
 
 	pbuf_take(p, data, len);
 	if (netif->input(p, netif) != ERR_OK)

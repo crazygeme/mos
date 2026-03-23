@@ -23,7 +23,7 @@
 
 #include <ps/ps.h>
 #include <hw/cpu.h>
-#include "generic.h"
+#include "common.h"
 
 /* Externs from ps_sched.c */
 extern unsigned task_schedule_count;

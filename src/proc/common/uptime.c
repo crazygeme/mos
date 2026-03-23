@@ -7,7 +7,7 @@
  * Uptime is derived from time_now_ms() which counts milliseconds since boot.
  * Idle time is not separately tracked; reported as 0.00.
  */
-#include "generic.h"
+#include "common.h"
 
 static void fill(void *buf, size_t size)
 {

@@ -137,6 +137,7 @@ int resolve_path(const char *old, char *new);
 int fs_open(const char *path, int flag, char *mode);
 file *fs_open_file(const char *path, int flag, char *mode, int follow_link);
 int fs_put_file(file *f);
+int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
 
 int fs_close(int fd);
 

@@ -204,14 +204,6 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 	return 0;
 }
 
-int sys_socketcall(int call, unsigned long *args)
-{
-	if (TestControl.verbos)
-		klog("socketcall(%d, %x)\n", call, args);
-
-	return -1; /* FIXME: no socket support */
-}
-
 int sys_mmap(struct mmap_arg_struct32 *arg)
 {
 	if (arg->len > (10 * 1024 * 1024))

@@ -149,10 +149,12 @@ int strncmp(const char *src, const char *dst, int len)
 	int i;
 
 	for (i = 0; i < len; i++) {
-		if (src[i] > dst[i])
-			return 1;
-		if (src[i] < dst[i])
-			return -1;
+		unsigned char a = (unsigned char)src[i];
+		unsigned char b = (unsigned char)dst[i];
+		if (a != b)
+			return (a > b) - (a < b);
+		if (a == 0)
+			return 0;
 	}
 	return 0;
 }

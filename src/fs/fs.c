@@ -91,33 +91,33 @@ file *fs_open_file(const char *path, int flag, char *mode, int follow_link)
 	return fp;
 }
 
-int fs_open(const char *path, int flag, char *mode)
+int fs_install_fd(file *fp, int flag)
 {
 	task_struct *cur = CURRENT_TASK();
-	int fd = -1;
-	file *fp = NULL;
-	int ret = -ENOENT;
+	int fd;
 	mutex_lock(&cur->fd_lock);
-
 	fd = fs_find_empty_fd(cur->fds);
-	if (fd < 0)
-		goto done;
-
-	fp = fs_open_file(path, flag, mode, 1);
-	if (!fp)
-		goto fail;
-
-	fp->f_mode = (unsigned)(flag & O_ACCMODE);
-	cur->fds[fd].flag = flag;
-	cur->fds[fd].fp = fp;
-	cur->fds[fd].used = 1;
-
-	goto done;
-fail:
-	fd = ret;
-done:
+	if (fd >= 0) {
+		cur->fds[fd].fp = fp;
+		cur->fds[fd].flag = flag;
+		cur->fds[fd].used = 1;
+	}
 	mutex_unlock(&cur->fd_lock);
 	return fd;
+}
+
+int fs_open(const char *path, int flag, char *mode)
+{
+	file *fp = fs_open_file(path, flag, mode, 1);
+	if (!fp)
+		return -ENOENT;
+
+	fp->f_mode = (unsigned)(flag & O_ACCMODE);
+
+	int fd = fs_install_fd(fp, flag);
+	if (fd < 0)
+		fs_put_file(fp);
+	return fd < 0 ? -ENOENT : fd;
 }
 
 int fs_close(int fd)
@@ -182,70 +182,45 @@ int fs_fstat(int fd, struct stat *s)
 
 int fs_pipe(int *pipefd)
 {
-	int ret = 0;
-	task_struct *cur = CURRENT_TASK();
+	file *fp[2] = { NULL, NULL };
 	int reader, writer;
-	file *fp[2] = { 0 };
-	mutex_lock(&cur->fd_lock);
-	reader = fs_find_empty_fd(cur->fds);
-	if (reader < 0 || reader >= MAX_FD) {
-		ret = -1;
-		goto done;
-	}
-	/* reserve slot for writer search */
-	cur->fds[reader].used = 1;
 
-	writer = fs_find_empty_fd(cur->fds);
-	if (writer < 0 || writer >= MAX_FD) {
-		cur->fds[reader].used = 0;
-		ret = -1;
-		goto done;
-	}
-	cur->fds[writer].used = 1;
-	ret = pipe_open(fp);
-	if (ret != EOK) {
-		cur->fds[reader].used = 0;
-		cur->fds[writer].used = 0;
-		ret = -1;
-		goto done;
+	if (pipe_open(fp) != EOK)
+		return -1;
+
+	reader = fs_install_fd(fp[0], O_RDONLY);
+	if (reader < 0) {
+		fs_put_file(fp[0]);
+		fs_put_file(fp[1]);
+		return -1;
 	}
 
-	cur->fds[reader].fp = fp[0];
-	cur->fds[writer].fp = fp[1];
-	cur->fds[reader].flag = O_RDONLY;
-	cur->fds[writer].flag = O_WRONLY;
+	writer = fs_install_fd(fp[1], O_WRONLY);
+	if (writer < 0) {
+		fs_close(reader);
+		fs_put_file(fp[1]);
+		return -1;
+	}
+
 	pipefd[0] = reader;
 	pipefd[1] = writer;
-	ret = 0;
-done:
-	mutex_unlock(&cur->fd_lock);
-	return ret;
+	return 0;
 }
 
 int fs_dup(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
-	int newfd;
-	int ret;
-	if (fd < 0 || fd >= MAX_FD)
+	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
 		return -ENOENT;
-	if (cur->fds[fd].used == 0)
-		return -ENOENT;
-	mutex_lock(&cur->fd_lock);
-	newfd = fs_find_empty_fd(cur->fds);
-	if (newfd < 0 || newfd >= MAX_FD) {
-		ret = -1;
-		goto done;
-	}
-	cur->fds[newfd] = cur->fds[fd];
-	fp = cur->fds[fd].fp;
+
+	file *fp = cur->fds[fd].fp;
+	int flag = cur->fds[fd].flag & ~O_CLOEXEC;
 	fs_get_file(fp);
-	cur->fds[newfd].flag &= ~O_CLOEXEC;
-	ret = newfd;
-done:
-	mutex_unlock(&cur->fd_lock);
-	return ret;
+
+	int newfd = fs_install_fd(fp, flag);
+	if (newfd < 0)
+		fs_put_file(fp);
+	return newfd < 0 ? -1 : newfd;
 }
 
 int fs_dup2(int fd, int newfd)

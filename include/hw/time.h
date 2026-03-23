@@ -86,6 +86,7 @@ unsigned long long cycle_to_ms(unsigned long long dur_cycles);
 unsigned long long cycle_to_us(unsigned long long dur_cycles);
 
 void ms_to_timeval(unsigned ms, struct timeval *tv);
+void us_to_timeval(unsigned long long us, struct timeval *tv);
 
 void msleep(unsigned int ms);
 

@@ -50,16 +50,21 @@ void net_get_stats(net_stats_t *s)
 static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 {
 	nic_dev *nic = (nic_dev *)netif->state;
-	uint8_t buf[1600];
-	u16_t len = pbuf_copy_partial(p, buf, sizeof(buf), 0);
+	uint8_t *buf = zalloc(1600);
+	u16_t len = pbuf_copy_partial(p, buf, 1600, 0);
 
 	if (!nic->send)
-		return ERR_IF;
+		goto err;
+
 	if (nic->send(nic, buf, (uint16_t)len) >= 0) {
 		g_tx_bytes += len;
 		g_tx_packets += 1;
+		free(buf);
 		return ERR_OK;
 	}
+
+err:
+	free(buf);
 	return ERR_IF;
 }
 

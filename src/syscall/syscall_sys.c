@@ -24,7 +24,7 @@ static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
  * the kernel's PIT tick counter.  Set by sys_settimeofday (syscall 79) and
  * read back by sys_gettimeofday / sys_time.
  */
-static long long g_wall_offset_ms;
+static long long g_wall_offset_us;
 
 int sys_uname(struct utsname *utname)
 {
@@ -67,7 +67,8 @@ int sys_time(unsigned *t)
 	if (!t)
 		return -1;
 
-	*t = (unsigned)(((long long)time_now_ms() + g_wall_offset_ms) / 1000);
+	*t = (unsigned)(((long long)time_now_us() + g_wall_offset_us) /
+			1000000ULL);
 
 	if (TestControl.verbos)
 		klog("time() = %u\n", *t);
@@ -82,16 +83,16 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	if (!tv)
 		return -EFAULT;
 
-	now = (long long)time_now_ms() + g_wall_offset_ms;
+	now = (long long)time_now_us() + g_wall_offset_us;
 	if (now < 0)
 		now = 0;
-	ms_to_timeval((unsigned)now, tv);
+	us_to_timeval((unsigned long long)now, tv);
 
 	if (tz)
 		tz->tz_minuteswest = tz->tz_dsttime = 0;
 
 	if (TestControl.verbos)
-		klog("gettimeofday() = %d(sec), %d(usec), while now is %d(ms)\n",
+		klog("gettimeofday() = %d(sec), %d(usec), while now is %lld(us)\n",
 		     tv->tv_sec, tv->tv_usec, now);
 
 	return 0;
@@ -100,13 +101,13 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
 	if (tv) {
-		long long wall_ms =
-			(long long)tv->tv_sec * 1000 + tv->tv_usec / 1000;
-		g_wall_offset_ms = wall_ms - (long long)time_now_ms();
+		long long wall_us =
+			(long long)tv->tv_sec * 1000000 + tv->tv_usec;
+		g_wall_offset_us = wall_us - (long long)time_now_us();
 
 		if (TestControl.verbos)
-			klog("settimeofday(%d.%06d) offset=%d ms\n", tv->tv_sec,
-			     tv->tv_usec, (int)g_wall_offset_ms);
+			klog("settimeofday(%d.%06d) offset=%lld us\n",
+			     tv->tv_sec, tv->tv_usec, g_wall_offset_us);
 	}
 	return 0;
 }

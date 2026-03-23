@@ -13,7 +13,7 @@ _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _init=""
 _test=""
-_netdev="user,id=net0"
+_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
 
 for arg in $@
 do
@@ -31,8 +31,6 @@ elif [ "$arg" == "curses" ]; then
 	_vga=""
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
-elif [ "$arg" == "tap" ]; then
-	_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
 elif [ "$arg" == "bash" ]; then
 	_init="/bin/bash"
 elif [ "$arg" == "logtofile" ]; then
@@ -47,7 +45,6 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
 	echo -e "\t verbose: run with serial log"
 	echo -e "\t kvm: enable kvm"
-	echo -e "\t tap: TAP+NAT (10.0.2.0/24, VM gets DHCP from host dnsmasq)"
 	exit
 fi
 done
@@ -60,9 +57,9 @@ fi
 _tap_was_setup=0
 _tap_dnsmasq_pid=""
 _TAP_IF="tap0"
-_TAP_GW="10.0.2.1"
-_TAP_NET="10.0.2.0/24"
-_TAP_RANGE="10.0.2.2,10.0.2.20,1h"
+_TAP_GW="10.0.4.1"
+_TAP_NET="10.0.4.0/24"
+_TAP_RANGE="10.0.4.2,10.0.4.20,1h"
 
 setup_nat() {
 	# Create the TAP interface owned by the current user (no root for QEMU)
@@ -111,10 +108,7 @@ cleanup_nat() {
 	echo "tap: $_TAP_IF removed"
 }
 
-# ── TAP/NAT setup (only when tap flag is set) ──────────────────────────────────
-if [ "$_netdev" = "tap,id=net0,ifname=tap0,script=no,downscript=no" ]; then
-	setup_nat
-fi
+setup_nat
 
 make -s -j8 $_test || { echo "Error: build failed" >&2; exit 1; }
 

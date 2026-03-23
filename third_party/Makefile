@@ -20,11 +20,11 @@ LWIP_DEPS     = $(patsubst $(DST)/lwip/%.c.o,$(DST)/lwip/%.c.d,$(LWIP_OBJS))
 
 # ── Compiler flags ────────────────────────────────────────────────────────
 
-LWEXT4_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) -O2 \
+LWEXT4_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
               -Wno-pointer-bool-conversion
-ASFLAGS     = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) -O2 \
+ASFLAGS     = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
               -Wno-pointer-bool-conversion
-LWIP_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) -O2 \
+LWIP_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
               -Wno-address \
               -Wno-unused-variable \
               -Wno-unused-function \

@@ -14,6 +14,7 @@ typedef struct _kblock {
 	struct _kblock *next;
 } kblock;
 
+#ifndef _STDARG_H
 typedef char *va_list;
 
 #define _INTSIZEOF(n) ((sizeof(n) + sizeof(int) - 1) & ~(sizeof(int) - 1))
@@ -23,6 +24,7 @@ typedef char *va_list;
 #define va_arg(ap, t) (*(t *)((ap += _INTSIZEOF(t)) - _INTSIZEOF(t)))
 
 #define va_end(ap) (ap = (va_list)0)
+#endif /* _STDARG_H */
 
 #define kmalloc(size) malloc(size)
 #define kfree(p) free(p)

@@ -561,7 +561,7 @@ static void run_if_exist(const char *path, const char *argv[],
  *        fd 2 — /dev/tty O_WRONLY (terminal error output)
  *   3. exec /bin/bash as the init process.
  */
-static void run_first_user_process()
+static void kinit_userspace()
 {
 	const char *devault_argv[] = { "/sbin/init", "1", "fastboot", NULL };
 	const char *user_argv[] = { "placeholder", NULL };
@@ -584,19 +584,6 @@ static void run_first_user_process()
 	fs_open("/dev/tty0", O_WRONLY, NULL);
 
 	run_if_exist(argv[0], argv, envp);
-}
-
-/*
- * kinit_userspace - kernel init hook that launches the first user process
- *
- * Registered with KERNEL_INIT(8, ...) so it runs at init priority 8, after
- * all lower-numbered drivers and subsystems have initialised.  Clears the
- * TTY and then hands off to run_first_user_process().
- */
-static void kinit_userspace(void)
-{
-	tty_default_clear();
-	run_first_user_process();
 }
 
 KERNEL_INIT(8, kinit_userspace);

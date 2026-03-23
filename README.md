@@ -26,7 +26,6 @@ profiling
 6.	Press ctrl-c in the shell running profiling.sh, then it will 
 	generate a profiling result
 
-![Screen shot: test gui](./screenshot/gui.png)   
 ![Screen shot: versions](./screenshot/versions.png)   
 ![Screen shot: vim](./screenshot/vim.png)   
 ![Screen shot: ls](./screenshot/ls.png)   

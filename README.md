@@ -5,12 +5,15 @@ qemu i386 enumlator
 python for profiling
 i386-elf version of gdb for debugging
 
-installation
+instalation
 ------------------------------------------------
-make
-* ./run.sh 			:for general purpos
-* ./run.sh debug 		:for debugging
-* ./run.sh help		:print help info
+No other instalations required.
+
+* ./rh9.sh bash			:for general purpos
+* ./rh9.sh bash debug 		:for debugging
+* ./rh9.sh tap bash		:with NAT networks
+* ./rh9.sh			:experimental system V init procedure
+* ./run.sh help			:print help info
 
 
 
@@ -26,7 +29,21 @@ profiling
 6.	Press ctrl-c in the shell running profiling.sh, then it will 
 	generate a profiling result
 
-![Screen shot: versions](./screenshot/versions.png)   
-![Screen shot: vim](./screenshot/vim.png)   
-![Screen shot: ls](./screenshot/ls.png)   
-![Screen shot: pipe](./screenshot/pipe.png)   
+Version:
+![Screen shot: versions](./screenshot/versions.png)
+
+Vim:
+![Screen shot: vim](./screenshot/vim.png)
+
+List
+![Screen shot: ls](./screenshot/ls.png)
+
+/proc file system
+![Screen shot: ls](./screenshot/proc.png)
+
+Signals
+![Screen shot: send](./screenshot/send_signal.png)
+![Screen shot: recv](./screenshot/handle_signal.png)
+
+Network
+![Screen shot: network](./screenshot/network.png)

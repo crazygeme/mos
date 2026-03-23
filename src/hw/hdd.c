@@ -390,11 +390,17 @@ static int check_device_type(ata_disk *d)
 	}
 }
 
-static void wait_resp(channel *c)
+static int wait_resp(channel *c)
 {
+	unsigned timeout = time_now_ms() + 10;
 	while (__sync_fetch_and_add(&c->resp_seq, 0) <
-	       __sync_fetch_and_add(&c->req_seq, 0))
+	       __sync_fetch_and_add(&c->req_seq, 0)) {
 		task_sched();
+		if (time_now_ms() >= timeout)
+			return 0;
+	}
+
+	return 1;
 }
 
 static void identify_ata_device(ata_disk *d)
@@ -1057,11 +1063,12 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	__sync_fetch_and_add(&c->req_seq, 1);
 
-	select_sector(d, sec_no);
+	do {
+		select_sector(d, sec_no);
 
-	issue_pio_command(c, CMD_READ_SECTOR_RETRY);
+		issue_pio_command(c, CMD_READ_SECTOR_RETRY);
 
-	wait_resp(c);
+	} while (!wait_resp(c));
 
 	input_sector(c, buf);
 
@@ -1082,13 +1089,14 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	__sync_fetch_and_add(&c->req_seq, 1);
 
-	select_sector(d, sec_no);
+	do {
+		select_sector(d, sec_no);
 
-	issue_pio_command(c, CMD_WRITE_SECTOR_RETRY);
+		issue_pio_command(c, CMD_WRITE_SECTOR_RETRY);
 
-	output_sector(c, buf);
+		output_sector(c, buf);
 
-	wait_resp(c);
+	} while (!wait_resp(c));
 
 	mutex_unlock(&c->lock);
 

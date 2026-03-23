@@ -9,7 +9,7 @@
  */
 #include <mm/mm.h>
 #include <hw/hdd.h>
-#include "generic.h"
+#include "common.h"
 
 /* ---- mm/fault ---- */
 extern unsigned page_fault_cow;

@@ -7,7 +7,7 @@
  * Load averages require an EWMA updated on a timer; we report 0.00 for all
  * three.  Running and total task counts are derived from ps_enum_all().
  */
-#include "generic.h"
+#include "common.h"
 #include <ps/ps.h>
 
 typedef struct {

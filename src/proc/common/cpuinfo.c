@@ -1,6 +1,6 @@
 #include <config.h>
 #include <hw/cpu.h>
-#include "generic.h"
+#include "common.h"
 
 /* Execute the CPUID instruction. */
 static void do_cpuid(unsigned leaf, unsigned *eax, unsigned *ebx, unsigned *ecx,

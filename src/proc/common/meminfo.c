@@ -6,7 +6,7 @@
  */
 #include <ps/ps.h>
 #include <mm/mm.h>
-#include "generic.h"
+#include "common.h"
 
 extern unsigned phymm_begin;
 extern unsigned phymm_end;

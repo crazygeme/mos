@@ -67,7 +67,7 @@ _TAP_RANGE="10.0.2.2,10.0.2.20,1h"
 setup_nat() {
 	# Create the TAP interface owned by the current user (no root for QEMU)
 	sudo ip tuntap add "$_TAP_IF" mode tap user "$USER"
-	sudo ip addr add "$_TAP_GW/24" dev "$_TAP_IF"
+	sudo ip addr add "$_TAP_GW/24" brd + dev "$_TAP_IF"
 	sudo ip link set "$_TAP_IF" up
 	echo "tap: $_TAP_IF up ($_TAP_GW/24)"
 

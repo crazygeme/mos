@@ -250,6 +250,25 @@ static void ansi_feed(tty_state *state, char c)
 		tty_do_clear(state);
 		ansi_end(state);
 		return;
+	case 'K': { /* erase line: 0=to end, 1=to start, 2=whole line */
+		val = atoi(arg);
+		int start_col, end_col, r;
+		r = CUR_ROW;
+		if (val == 1) {
+			start_col = 0;
+			end_col = CUR_COL;
+		} else if (val == 2) {
+			start_col = 0;
+			end_col = (int)MAX_COL - 1;
+		} else { /* 0: cursor to end */
+			start_col = CUR_COL;
+			end_col = (int)MAX_COL - 1;
+		}
+		for (int c2 = start_col; c2 <= end_col; c2++)
+			vga_putchar(state, r, c2, ' ');
+		ansi_end(state);
+		return;
+	}
 	default:
 		break;
 	}

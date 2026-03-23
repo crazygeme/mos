@@ -8,7 +8,7 @@
 - [ ] syscall的返回值 1%
 - [ ] 内存权限
 - [X] scheduler的效率
-- [ ] 网络和socket接口
+- [X] 网络和socket接口
 - [X] 源代码的分类整理 (至少把include单独列出来)
 - [X] 真正的page fault handler (可以读写文件的)
 - [ ] IPC机制 50% ( pipe done)

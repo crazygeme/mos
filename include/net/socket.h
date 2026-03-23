@@ -2,6 +2,7 @@
 #define _NET_SOCKET_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* ── Address families ───────────────────────────────────────────────────────── */
 #define AF_UNSPEC 0
@@ -12,6 +13,12 @@
 #define SOCK_STREAM 1
 #define SOCK_DGRAM 2
 #define SOCK_RAW 3
+
+/* ── IP protocols ───────────────────────────────────────────────────────────── */
+#define IPPROTO_IP 0
+#define IPPROTO_ICMP 1
+#define IPPROTO_TCP 6
+#define IPPROTO_UDP 17
 
 /* ── socketcall sub-call numbers (Linux i386) ───────────────────────────────── */
 #define SYS_SOCKET 1
@@ -108,6 +115,31 @@ struct ifconf {
 	};
 };
 
+/* ── Scatter/gather I/O ─────────────────────────────────────────────────────── */
+struct iovec {
+	void *iov_base;
+	size_t iov_len;
+};
+
+/* ── Message header (sendmsg / recvmsg) ─────────────────────────────────────── */
+struct msghdr {
+	void *msg_name; /* optional peer address          */
+	unsigned msg_namelen; /* size of msg_name               */
+	struct iovec *msg_iov; /* scatter/gather array           */
+	size_t msg_iovlen; /* # of elements in msg_iov       */
+	void *msg_control; /* ancillary data (unused)        */
+	size_t msg_controllen; /* ancillary data length (unused) */
+	int msg_flags; /* flags on received message      */
+};
+
+/* ── Message flags ───────────────────────────────────────────────────────────── */
+#define MSG_OOB 0x01
+#define MSG_PEEK 0x02
+#define MSG_DONTROUTE 0x04
+#define MSG_DONTWAIT 0x40
+#define MSG_TRUNC 0x20
+#define MSG_CTRUNC 0x08
+
 /* ── Socket state ───────────────────────────────────────────────────────────── */
 #define SS_UNCONNECTED 0
 #define SS_CONNECTING 1
@@ -122,6 +154,8 @@ struct ifconf {
 /* ── Per-socket object ──────────────────────────────────────────────────────── */
 struct tcp_pcb;
 struct udp_pcb;
+struct raw_pcb;
+struct _task_struct;
 
 typedef struct _mos_sock {
 	int domain;
@@ -133,6 +167,7 @@ typedef struct _mos_sock {
 	union {
 		struct tcp_pcb *tcp;
 		struct udp_pcb *udp;
+		struct raw_pcb *raw;
 	};
 
 	/* Circular receive buffer (TCP stream or UDP datagrams) */
@@ -150,6 +185,9 @@ typedef struct _mos_sock {
 
 	struct sockaddr_in local;
 	struct sockaddr_in peer;
+
+	/* Task currently blocked waiting for data or state change, or NULL */
+	struct _task_struct *waiter;
 } mos_sock;
 
 #endif /* _NET_SOCKET_H */

@@ -3,7 +3,7 @@
 - [X] ext4的完整实现
 - [X] 各级cache (hdd cache, inode cache)
 - [X] mount point
-- [X] 文件权限 
+- [X] 文件权限
 - [ ] 用户
 - [ ] syscall的返回值 1%
 - [ ] 内存权限
@@ -20,9 +20,8 @@
 - [ ] fcnt
 - [X] sys_stat, sys_lstat, sys_fstat的正确实现
 - [X] debugfs 文件系统 和 /proc 目录
-- [ ] 正确的 gettimeofday 实现
+- [X] 正确的 gettimeofday 实现
 - [X] 重写 vfs
 - [ ] ptrace
 - [ ] load kernel module
-- [ ] refile debugfs using kernel module
 - [X] Signal

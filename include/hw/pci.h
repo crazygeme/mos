@@ -1,6 +1,7 @@
 #ifndef _HW_PCI_H_
 #define _HW_PCI_H_
 #include <mm/mm.h>
+#include <stdint.h>
 
 #define PCI_VENDOR_ID 0x00 // 2
 #define PCI_DEVICE_ID 0x02 // 2
@@ -39,10 +40,6 @@
 #define PCI_NONE 0xFFFF
 
 #define PCI_SCAN_ALL (-1)
-
-typedef unsigned uint32_t;
-typedef unsigned short uint16_t;
-typedef unsigned char uint8_t;
 
 typedef void (*pci_func_t)(uint32_t device, uint16_t vendor_id,
 			   uint16_t device_id, void *extra);

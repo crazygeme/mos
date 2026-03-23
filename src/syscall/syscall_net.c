@@ -237,14 +237,12 @@ static u8_t raw_on_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p,
 	sk->rx_src.sin_port = 0;
 	sk->rx_src.sin_addr.s_addr = ip4_addr_get_u32(ip_2_ip4(addr));
 
-	/* Prepend the IP header (still valid during input callback) */
-	const struct ip_hdr *iph = ip4_current_header();
-	u16_t iphlen = IPH_HL_BYTES(iph);
-	u16_t totlen = iphlen + p->tot_len;
+	/* p->payload already points to the IP header (lwIP does not strip it
+	 * before calling the raw callback), so store the pbuf directly. */
+	u16_t totlen = p->tot_len;
 
 	if (rx_free(sk) >= (unsigned)(sizeof(totlen) + totlen)) {
 		rx_write(sk, &totlen, sizeof(totlen));
-		rx_write(sk, iph, iphlen);
 		struct pbuf *q;
 		for (q = p; q; q = q->next)
 			rx_write(sk, q->payload, (unsigned)q->len);
@@ -1195,19 +1193,66 @@ static int do_getsockopt(int fd, int level, int optname, void *optval,
 	return -ENOPROTOOPT;
 }
 
+/* ── strace-style log helpers ───────────────────────────────────────────────── */
+
+static void fmt_msg_flags(char *buf, int flags)
+{
+	if (flags == 0) {
+		buf[0] = '0';
+		buf[1] = '\0';
+		return;
+	}
+	buf[0] = '\0';
+	if (flags & MSG_DONTWAIT) strcat(buf, "MSG_DONTWAIT|");
+	if (flags & MSG_PEEK)     strcat(buf, "MSG_PEEK|");
+	if (flags & MSG_TRUNC)    strcat(buf, "MSG_TRUNC|");
+	if (flags & MSG_OOB)      strcat(buf, "MSG_OOB|");
+	int len = (int)strlen(buf);
+	if (len > 0 && buf[len - 1] == '|')
+		buf[len - 1] = '\0';
+}
+
+static void fmt_sockaddr(char *buf, const struct sockaddr_in *sa)
+{
+	if (!sa) {
+		strcpy(buf, "NULL");
+		return;
+	}
+	const unsigned char *ip = (const unsigned char *)&sa->sin_addr.s_addr;
+	unsigned port = (unsigned)(((unsigned char *)&sa->sin_port)[0] << 8 |
+				   ((unsigned char *)&sa->sin_port)[1]);
+	sprintf(buf,
+		"{sa_family=AF_INET, sin_port=htons(%u), sin_addr=inet_addr(\"%u.%u.%u.%u\")}",
+		port, ip[0], ip[1], ip[2], ip[3]);
+}
+
+static void fmt_iov(char *buf, const struct iovec *iov, size_t iovlen)
+{
+	if (!iov || iovlen == 0) {
+		strcpy(buf, "[]");
+		return;
+	}
+	sprintf(buf, "[{iov_base=%p, iov_len=%u}%s]",
+		iov[0].iov_base, (unsigned)iov[0].iov_len,
+		iovlen > 1 ? ", ..." : "");
+}
+
 /* ── sendmsg / recvmsg ──────────────────────────────────────────────────────── */
 
 static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 {
 	(void)flags;
 	mos_sock *sk = fd_to_sock(fd);
-	if (!sk)
-		return -ENOTSOCK;
-	if (sk->err)
-		return sk->err;
+	int ret;
 
-	if (TestControl.verbos)
-		klog("sendmsg(%d, %x, %d)\n", fd, msg, flags);
+	if (!sk) {
+		ret = -ENOTSOCK;
+		goto log;
+	}
+	if (sk->err) {
+		ret = sk->err;
+		goto log;
+	}
 
 	/* Compute total payload length */
 	size_t totlen = 0;
@@ -1220,26 +1265,33 @@ static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 
 	/* TCP: write each iov segment directly into the send buffer */
 	if (sk->type == SOCK_STREAM) {
-		if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
-			return -ENOTCONN;
+		if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING) {
+			ret = -ENOTCONN;
+			goto log;
+		}
 		size_t sent = 0;
 		for (i = 0; i < msg->msg_iovlen; i++) {
 			err_t e = tcp_write(sk->tcp, msg->msg_iov[i].iov_base,
 					    (u16_t)msg->msg_iov[i].iov_len,
 					    TCP_WRITE_FLAG_COPY);
-			if (e != ERR_OK)
-				return sent > 0 ? (int)sent : -EIO;
+			if (e != ERR_OK) {
+				ret = sent > 0 ? (int)sent : -EIO;
+				goto log;
+			}
 			sent += msg->msg_iov[i].iov_len;
 		}
 		tcp_output(sk->tcp);
-		return (int)sent;
+		ret = (int)sent;
+		goto log;
 	}
 
 	/* UDP / RAW: gather all iov segments into one pbuf */
 	pbuf_layer layer = (sk->type == SOCK_RAW) ? PBUF_IP : PBUF_TRANSPORT;
 	struct pbuf *p = pbuf_alloc(layer, (u16_t)totlen, PBUF_RAM);
-	if (!p)
-		return -ENOBUFS;
+	if (!p) {
+		ret = -ENOBUFS;
+		goto log;
+	}
 	u16_t off = 0;
 	for (i = 0; i < msg->msg_iovlen; i++) {
 		memcpy((char *)p->payload + off, msg->msg_iov[i].iov_base,
@@ -1262,7 +1314,20 @@ static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 		e = udp_send(sk->udp, p);
 	}
 	pbuf_free(p);
-	return e == ERR_OK ? (int)totlen : -EIO;
+	ret = e == ERR_OK ? (int)totlen : -EIO;
+
+log:
+	if (TestControl.verbos) {
+		char addr_buf[80], iov_buf[64], flag_buf[64];
+		fmt_sockaddr(addr_buf, (const struct sockaddr_in *)msg->msg_name);
+		fmt_iov(iov_buf, msg->msg_iov, msg->msg_iovlen);
+		fmt_msg_flags(flag_buf, flags);
+		klog("sendmsg(%d, {msg_name=%s, msg_namelen=%d, msg_iov=%s, msg_iovlen=%u, msg_controllen=0, msg_flags=0}, %s) = %d\n",
+		     fd, addr_buf, msg->msg_namelen,
+		     iov_buf, (unsigned)msg->msg_iovlen,
+		     flag_buf, ret);
+	}
+	return ret;
 }
 
 static int do_recvmsg(int fd, struct msghdr *msg, int flags)
@@ -1384,9 +1449,20 @@ static int do_recvmsg(int fd, struct msghdr *msg, int flags)
 	msg->msg_flags = 0;
 
 done:
-	if (TestControl.verbos)
-		klog("recvmsg(%d, %x, %d) = %d\n", fd, msg, flags, delivered);
-
+	if (TestControl.verbos) {
+		char addr_buf[80], iov_buf[64], flag_buf[64], rflg_buf[64];
+		const struct sockaddr_in *peer =
+			msg->msg_name ? (const struct sockaddr_in *)msg->msg_name
+				      : (sk ? &sk->rx_src : NULL);
+		fmt_sockaddr(addr_buf, peer);
+		fmt_iov(iov_buf, msg->msg_iov, msg->msg_iovlen);
+		fmt_msg_flags(flag_buf, flags);
+		fmt_msg_flags(rflg_buf, msg->msg_flags);
+		klog("recvmsg(%d, {msg_name=%s, msg_namelen=%d, msg_iov=%s, msg_iovlen=%u, msg_controllen=0, msg_flags=%s}, %s) = %d\n",
+		     fd, addr_buf, msg->msg_namelen,
+		     iov_buf, (unsigned)msg->msg_iovlen,
+		     rflg_buf, flag_buf, (int)delivered);
+	}
 	return (int)delivered;
 }
 

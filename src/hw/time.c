@@ -187,10 +187,38 @@ void us_to_timeval(unsigned long long us, struct timeval *tv)
 	tv->tv_usec = (int)(us - (unsigned long long)tv->tv_sec * 1000000ULL);
 }
 
+/* Read the current PIT channel-0 countdown value (LATCH..0). */
+static unsigned pit_read_count(void)
+{
+	port_write_byte(TIME_CONTROL_MASK, 0x00); /* latch channel 0 */
+	unsigned lo = port_read_byte(TIME_CHANNEL_0);
+	unsigned hi = port_read_byte(TIME_CHANNEL_0);
+	return (hi << 8) | lo;
+}
+
 unsigned long long time_now_us()
 {
-	unsigned long long now = time_now_precisely();
-	return cycle_to_us(now);
+#define TICK_US (1000000ULL / HZ)   /* microseconds per PIT tick (10000) */
+	unsigned long t1, t2;
+	unsigned count;
+
+	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
+	do {
+		BARRIER();
+		t1 = total_tickets;
+		count = pit_read_count();
+		BARRIER();
+		t2 = total_tickets;
+	} while (t1 != t2);
+
+	/* PIT counts DOWN from LATCH to 0; convert remaining count to elapsed us.
+	 * Resolution: 1 / CLOCK_TICK_RATE ≈ 0.84 μs, no calibration needed. */
+	unsigned elapsed = (count <= LATCH) ? (LATCH - count) : 0;
+	unsigned long long frac = (unsigned long long)elapsed * 1000000ULL
+				  / CLOCK_TICK_RATE;
+
+	return (unsigned long long)t1 * TICK_US + frac;
+#undef TICK_US
 }
 
 unsigned long long time_now_precisely()

@@ -57,9 +57,9 @@ fi
 _tap_was_setup=0
 _tap_dnsmasq_pid=""
 _TAP_IF="tap0"
-_TAP_GW="10.0.4.1"
-_TAP_NET="10.0.4.0/24"
-_TAP_RANGE="10.0.4.2,10.0.4.20,1h"
+_TAP_GW="10.0.5.1"
+_TAP_NET="10.0.5.0/24"
+_TAP_RANGE="10.0.5.2,10.0.5.20,1h"
 
 setup_nat() {
 	# Create the TAP interface owned by the current user (no root for QEMU)

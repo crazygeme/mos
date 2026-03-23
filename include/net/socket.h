@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <hw/time.h>
 
 /* ── Address families ───────────────────────────────────────────────────────── */
 #define AF_UNSPEC 0
@@ -70,6 +71,7 @@ struct sockaddr_in {
 #define FIONREAD 0x541B /* bytes available to read            */
 #define FIONBIO 0x5421 /* set/clear non-blocking             */
 
+#define SIOCGSTAMP 0x8906 /* get timestamp of last received pkt */
 #define SIOCGIFCONF 0x8912 /* get interface list                 */
 #define SIOCGIFFLAGS 0x8913 /* get interface flags                */
 #define SIOCGIFADDR 0x8915 /* get interface address              */
@@ -113,6 +115,29 @@ struct ifconf {
 		char *ifc_buf;
 		struct ifreq *ifc_req;
 	};
+};
+
+/* ── Socket option levels ───────────────────────────────────────────────────── */
+#define SOL_SOCKET 0xfff /* options for socket level */
+
+/* ── SOL_SOCKET option names ─────────────────────────────────────────────────── */
+#define SO_REUSEADDR 0x0004 /* allow local address reuse */
+#define SO_KEEPALIVE 0x0008 /* keep connections alive */
+#define SO_SNDBUF 0x1001 /* send buffer size */
+#define SO_RCVBUF 0x1002 /* receive buffer size */
+#define SO_ERROR 0x1007 /* get error status and clear */
+#define SO_TYPE 0x1008 /* get socket type */
+#define SO_LINGER 0x0080 /* linger on close if data present */
+
+/* ── IPPROTO_TCP option names ───────────────────────────────────────────────── */
+#define TCP_NODELAY 0x01 /* disable Nagle algorithm */
+#define TCP_MAXSEG 0x02 /* maximum segment size */
+#define TCP_KEEPIDLE 0x04 /* keepalive idle time (seconds) */
+
+/* ── linger structure (for SO_LINGER) ───────────────────────────────────────── */
+struct linger {
+	int l_onoff; /* linger active */
+	int l_linger; /* linger time in seconds */
 };
 
 /* ── Scatter/gather I/O ─────────────────────────────────────────────────────── */
@@ -185,6 +210,9 @@ typedef struct _mos_sock {
 
 	struct sockaddr_in local;
 	struct sockaddr_in peer;
+
+	/* Timestamp of the last received packet (SIOCGSTAMP) */
+	struct timeval rx_stamp;
 
 	/* Task currently blocked waiting for data or state change, or NULL */
 	struct _task_struct *waiter;

@@ -56,6 +56,8 @@ static unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
 		sk->rxbuf[sk->rx_tail & (SOCK_RXBUF_SIZE - 1)] = s[i];
 		sk->rx_tail++;
 	}
+	if (n > 0)
+		us_to_timeval(time_now_us(), &sk->rx_stamp);
 	return n;
 }
 
@@ -485,6 +487,10 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
 	switch (cmd) {
+	case SIOCGSTAMP:
+		*(struct timeval *)arg = sk->rx_stamp;
+		return 0;
+
 	case FIONREAD: {
 		*(int *)arg = (int)rx_used(sk);
 		return 0;
@@ -552,10 +558,40 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 	}
 }
 
+static int sock_poll(file *fp, unsigned type)
+{
+	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+
+	switch (type) {
+	case FS_POLL_READ:
+		if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW)
+			return rx_used(sk) >= sizeof(u16_t) ? 0 : -1;
+		/* TCP: data available, EOF, or a new connection queued */
+		if (rx_used(sk) > 0)
+			return 0;
+		if (sk->state == SS_DISCONNECTING)
+			return 0;
+		if (sk->accept_tail != sk->accept_head)
+			return 0;
+		return -1;
+
+	case FS_POLL_WRITE:
+		/* Always writable unless TCP is not yet connected */
+		if (sk->type == SOCK_STREAM)
+			return sk->state == SS_CONNECTED ? 0 : -1;
+		return 0;
+
+	case FS_POLL_EXCEPT:
+		return sk->err ? 0 : -1;
+	}
+	return -1;
+}
+
 static const file_operations sock_fops = {
 	.read = sock_read,
 	.write = sock_write,
 	.ioctl = sock_ioctl,
+	.poll = sock_poll,
 	.release = sock_release,
 };
 
@@ -851,17 +887,6 @@ static int do_send(int fd, const void *buf, unsigned len, int flags)
 	return (int)sock_write(cur->fds[fd].fp, buf, (size_t)len, &pos);
 }
 
-static int do_recv(int fd, void *buf, unsigned len, int flags)
-{
-	(void)flags;
-	mos_sock *sk = fd_to_sock(fd);
-	if (!sk)
-		return -ENOTSOCK;
-	loff_t pos = 0;
-	task_struct *cur = CURRENT_TASK();
-	return (int)sock_read(cur->fds[fd].fp, buf, (size_t)len, &pos);
-}
-
 static int do_sendto(int fd, const void *buf, unsigned len, int flags,
 		     const struct sockaddr_in *to, unsigned tolen)
 {
@@ -909,7 +934,6 @@ static int do_sendto(int fd, const void *buf, unsigned len, int flags,
 static int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		       struct sockaddr_in *from, unsigned *fromlen)
 {
-	(void)flags;
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -921,6 +945,8 @@ static int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
 				return sk->err;
+			if (flags & MSG_DONTWAIT)
+				return -EAGAIN;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
 			sock_wait(sk, deadline);
@@ -952,6 +978,8 @@ static int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 			return 0;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;
+		if (flags & MSG_DONTWAIT)
+			return -EAGAIN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
 		sock_wait(sk, deadline);
@@ -964,6 +992,11 @@ static int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		*fromlen = sizeof(*from);
 	}
 	return (int)n;
+}
+
+static int do_recv(int fd, void *buf, unsigned len, int flags)
+{
+	return do_recvfrom(fd, buf, len, flags, NULL, NULL);
 }
 
 static int do_shutdown(int fd, int how)
@@ -986,35 +1019,180 @@ static int do_shutdown(int fd, int how)
 	return 0;
 }
 
+/* Helper: get int optval, returns -EFAULT/-EINVAL on bad args */
+static int sockopt_get_int(const void *optval, unsigned optlen, int *out)
+{
+	if (!optval || optlen < sizeof(int))
+		return -EINVAL;
+	*out = *(const int *)optval;
+	return 0;
+}
+
+/* Helper: put int result into optval/optlen */
+static int sockopt_put_int(void *optval, unsigned *optlen, int val)
+{
+	if (!optval || !optlen)
+		return -EFAULT;
+	unsigned copy = *optlen < sizeof(int) ? *optlen : sizeof(int);
+	__builtin_memcpy(optval, &val, copy);
+	*optlen = sizeof(int);
+	return 0;
+}
+
 static int do_setsockopt(int fd, int level, int optname, const void *optval,
 			 unsigned optlen)
 {
-	(void)level;
-	(void)optname;
-	(void)optval;
-	(void)optlen;
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
-	/* Accept but ignore all socket options for now */
+
+	int ival = 0;
+
+	if (level == SOL_SOCKET) {
+		switch (optname) {
+		case SO_REUSEADDR:
+			if (sockopt_get_int(optval, optlen, &ival) < 0)
+				return -EINVAL;
+			if (sk->tcp) {
+				if (ival)
+					ip_set_option(sk->tcp, SOF_REUSEADDR);
+				else
+					ip_reset_option(sk->tcp, SOF_REUSEADDR);
+			} else if (sk->udp) {
+				if (ival)
+					ip_set_option(sk->udp, SOF_REUSEADDR);
+				else
+					ip_reset_option(sk->udp, SOF_REUSEADDR);
+			}
+			return 0;
+
+		case SO_KEEPALIVE:
+			if (sockopt_get_int(optval, optlen, &ival) < 0)
+				return -EINVAL;
+			if (sk->type != SOCK_STREAM)
+				return -ENOPROTOOPT;
+			if (sk->tcp) {
+				if (ival)
+					ip_set_option(sk->tcp, SOF_KEEPALIVE);
+				else
+					ip_reset_option(sk->tcp, SOF_KEEPALIVE);
+			}
+			return 0;
+
+		case SO_RCVBUF:
+		case SO_SNDBUF:
+			/* Accept silently; we use a fixed-size ring buffer */
+			return 0;
+
+		case SO_LINGER:
+			/* Accept silently; close always flushes */
+			return 0;
+
+		case SO_ERROR:
+			return -ENOPROTOOPT; /* read-only */
+
+		default:
+			return -ENOPROTOOPT;
+		}
+	}
+
+	if (level == IPPROTO_TCP) {
+		if (sk->type != SOCK_STREAM)
+			return -ENOPROTOOPT;
+		switch (optname) {
+		case TCP_NODELAY:
+			if (sockopt_get_int(optval, optlen, &ival) < 0)
+				return -EINVAL;
+			if (sk->tcp) {
+				if (ival)
+					tcp_nagle_disable(sk->tcp);
+				else
+					tcp_nagle_enable(sk->tcp);
+			}
+			return 0;
+
+		case TCP_KEEPIDLE:
+			/* Accept silently (lwIP uses compile-time keepalive interval) */
+			return 0;
+
+		default:
+			return -ENOPROTOOPT;
+		}
+	}
+
+	/* Unknown level — accept silently */
 	return 0;
 }
 
 static int do_getsockopt(int fd, int level, int optname, void *optval,
 			 unsigned *optlen)
 {
-	(void)level;
-	(void)optname;
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 
-	/* Return 0 (no error) for SO_ERROR; reject everything else */
-	if (optval && optlen && *optlen >= sizeof(int)) {
-		*(int *)optval = 0;
-		*optlen = sizeof(int);
+	if (level == SOL_SOCKET) {
+		switch (optname) {
+		case SO_ERROR: {
+			int err = sk->err ? -sk->err : 0;
+			sk->err = 0;
+			return sockopt_put_int(optval, optlen, err);
+		}
+		case SO_TYPE:
+			return sockopt_put_int(optval, optlen, sk->type);
+
+		case SO_REUSEADDR: {
+			int val = 0;
+			if (sk->tcp)
+				val = ip_get_option(sk->tcp, SOF_REUSEADDR) ?
+					      1 :
+					      0;
+			else if (sk->udp)
+				val = ip_get_option(sk->udp, SOF_REUSEADDR) ?
+					      1 :
+					      0;
+			return sockopt_put_int(optval, optlen, val);
+		}
+		case SO_KEEPALIVE: {
+			int val = 0;
+			if (sk->tcp)
+				val = ip_get_option(sk->tcp, SOF_KEEPALIVE) ?
+					      1 :
+					      0;
+			return sockopt_put_int(optval, optlen, val);
+		}
+		case SO_RCVBUF:
+			return sockopt_put_int(optval, optlen, SOCK_RXBUF_SIZE);
+
+		case SO_SNDBUF: {
+			int val = sk->tcp ? (int)tcp_sndbuf(sk->tcp) : 0;
+			return sockopt_put_int(optval, optlen, val);
+		}
+		default:
+			return -ENOPROTOOPT;
+		}
 	}
-	return 0;
+
+	if (level == IPPROTO_TCP) {
+		if (sk->type != SOCK_STREAM)
+			return -ENOPROTOOPT;
+		switch (optname) {
+		case TCP_NODELAY: {
+			int val = sk->tcp ? (tcp_nagle_disabled(sk->tcp) ? 1 :
+									   0) :
+					    0;
+			return sockopt_put_int(optval, optlen, val);
+		}
+		case TCP_MAXSEG: {
+			int val = sk->tcp ? (int)sk->tcp->mss : 536;
+			return sockopt_put_int(optval, optlen, val);
+		}
+		default:
+			return -ENOPROTOOPT;
+		}
+	}
+
+	return -ENOPROTOOPT;
 }
 
 /* ── sendmsg / recvmsg ──────────────────────────────────────────────────────── */
@@ -1027,6 +1205,9 @@ static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 		return -ENOTSOCK;
 	if (sk->err)
 		return sk->err;
+
+	if (TestControl.verbos)
+		klog("sendmsg(%d, %x, %d)\n", fd, msg, flags);
 
 	/* Compute total payload length */
 	size_t totlen = 0;
@@ -1086,22 +1267,45 @@ static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 
 static int do_recvmsg(int fd, struct msghdr *msg, int flags)
 {
-	(void)flags;
 	mos_sock *sk = fd_to_sock(fd);
 	size_t i;
 	unsigned delivered;
-	if (!sk)
-		return -ENOTSOCK;
+	if (!sk) {
+		delivered = -ENOTSOCK;
+		goto done;
+	}
+
+	/* Zero-length recv: just refresh the timestamp and return. */
+	size_t total_len = 0;
+	for (i = 0; i < msg->msg_iovlen; i++)
+		total_len += msg->msg_iov[i].iov_len;
+	if (total_len == 0) {
+		us_to_timeval(time_now_us(), &sk->rx_stamp);
+
+		delivered = 0;
+		goto done;
+	}
 
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		/* Block until a length-prefixed datagram is in the ring */
 		while (rx_used(sk) < sizeof(u16_t)) {
-			if (sk->err)
-				return sk->err;
-			if (time_now_ms() > deadline)
-				return -ETIMEDOUT;
+			if (sk->err) {
+				delivered = sk->err;
+				goto done;
+			}
+
+			if (flags & MSG_DONTWAIT) {
+				delivered = -EAGAIN;
+				goto done;
+			}
+
+			if (time_now_ms() > deadline) {
+				delivered = -ETIMEDOUT;
+				goto done;
+			}
+
 			sock_wait(sk, deadline);
 		}
 		u16_t dlen;
@@ -1132,19 +1336,37 @@ static int do_recvmsg(int fd, struct msghdr *msg, int flags)
 			msg->msg_namelen = sizeof(struct sockaddr_in);
 		}
 		msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
-		return (int)delivered;
+
+		goto done;
 	}
 
 	/* TCP: stream scatter-read */
 	while (rx_used(sk) == 0) {
-		if (sk->err)
-			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
-			return 0;
-		if (sk->state == SS_UNCONNECTED)
-			return -ENOTCONN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (sk->err) {
+			delivered = sk->err;
+			goto done;
+		}
+
+		if (sk->state == SS_DISCONNECTING) {
+			delivered = 0;
+			goto done;
+		}
+
+		if (sk->state == SS_UNCONNECTED) {
+			delivered = -ENOTCONN;
+			goto done;
+		}
+
+		if (flags & MSG_DONTWAIT) {
+			delivered = -EAGAIN;
+			goto done;
+		}
+
+		if (time_now_ms() > deadline) {
+			delivered = -ETIMEDOUT;
+			goto done;
+		}
+
 		sock_wait(sk, deadline);
 	}
 	delivered = 0;
@@ -1160,6 +1382,11 @@ static int do_recvmsg(int fd, struct msghdr *msg, int flags)
 		msg->msg_namelen = sizeof(struct sockaddr_in);
 	}
 	msg->msg_flags = 0;
+
+done:
+	if (TestControl.verbos)
+		klog("recvmsg(%d, %x, %d) = %d\n", fd, msg, flags, delivered);
+
 	return (int)delivered;
 }
 

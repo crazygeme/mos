@@ -181,6 +181,12 @@ void ms_to_timeval(unsigned ms, struct timeval *tv)
 	tv->tv_usec = (long)(ms - (unsigned long long)tv->tv_sec * 1000) * 1000;
 }
 
+void us_to_timeval(unsigned long long us, struct timeval *tv)
+{
+	tv->tv_sec = (int)(us / 1000000ULL);
+	tv->tv_usec = (int)(us - (unsigned long long)tv->tv_sec * 1000000ULL);
+}
+
 unsigned long long time_now_us()
 {
 	unsigned long long now = time_now_precisely();

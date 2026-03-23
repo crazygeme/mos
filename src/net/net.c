@@ -11,10 +11,13 @@
 #include <hw/time.h>
 #include <macro.h>
 
+#include <ps/ps.h>
+
 #include <lwip/init.h>
 #include <lwip/netif.h>
 #include <lwip/etharp.h>
 #include <lwip/dhcp.h>
+#include <lwip/ip4_addr.h>
 #include <lwip/timeouts.h>
 #include <lwip/pbuf.h>
 #include <netif/ethernet.h>

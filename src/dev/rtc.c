@@ -180,7 +180,7 @@ static const file_operations rtc_fops = {
 
 /* ── Superblock ──────────────────────────────────────────────────────────── */
 
-static file *rtc_open_root(super_block *sb)
+static file *rtc_open_root(super_block *sb, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;

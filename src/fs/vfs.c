@@ -306,7 +306,7 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	if (*rel_path == '\0' || (rel_path[0] == '/' && rel_path[1] == '\0')) {
 		if (!target_sb->s_op || !target_sb->s_op->open_root)
 			return NULL;
-		return target_sb->s_op->open_root(target_sb);
+		return target_sb->s_op->open_root(target_sb, flag);
 	}
 
 	/*
@@ -322,7 +322,7 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	 * trailing slash).
 	 */
 	if (target_sb->s_op && target_sb->s_op->open_root) {
-		return target_sb->s_op->open_root(target_sb);
+		return target_sb->s_op->open_root(target_sb, flag);
 	}
 
 	return NULL;

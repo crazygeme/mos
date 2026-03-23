@@ -241,9 +241,9 @@ static unsigned call_table[NR_syscalls] = {
 	sys_fstat64, // 197 __NR_fstat64
 	0, // 198 __NR_lchown32
 	sys_getuid32, // 199 __NR_getuid32
-	sys_getgid32,    // 200 __NR_getgid32
-	sys_geteuid32,   // 201 __NR_geteuid32
-	sys_getegid32,   // 202 __NR_getegid32
+	sys_getgid32, // 200 __NR_getgid32
+	sys_geteuid32, // 201 __NR_geteuid32
+	sys_getegid32, // 202 __NR_getegid32
 	0, // 203 __NR_setreuid32
 	0, // 204 __NR_setregid32
 	sys_getgroups32, // 205 __NR_getgroups32

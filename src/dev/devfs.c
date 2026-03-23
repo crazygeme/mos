@@ -159,7 +159,7 @@ static void dev_dir_gen(super_block *sb, dev_root_dir *rd)
  * super_operations for /dev                                            *
  * ------------------------------------------------------------------ */
 
-static file *dev_open_root(super_block *sb)
+static file *dev_open_root(super_block *sb, int flag)
 {
 	dev_root_dir *rd = zalloc(sizeof(*rd));
 	inode *node = zalloc(sizeof(*node));

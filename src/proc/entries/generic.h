@@ -100,7 +100,7 @@
 		.llseek = _llseek_##name,                                 \
 	};                                                                \
                                                                           \
-	static file *_open_root_##name(super_block *sb)                   \
+	static file *_open_root_##name(super_block *sb, int flag)         \
 	{                                                                 \
 		inode *node = zalloc(sizeof(*node));                      \
 		node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;     \

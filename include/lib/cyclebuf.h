@@ -7,6 +7,11 @@ typedef struct _cy_buf cy_buf;
 
 cy_buf *cyb_create(int pages);
 
+/* Create a cyclebuf for a named FIFO.  Starts with reader_count = 0 and
+ * writer_count = 0.  The caller (device) holds one reference; call
+ * cyb_destroy() when the device is unregistered to release it. */
+cy_buf *cyb_create_named(int pages);
+
 void cyb_destroy(cy_buf *cyb);
 
 void cyb_putc(cy_buf *b, unsigned char c);
@@ -35,8 +40,12 @@ int cyb_reader_count(cy_buf *b);
 int cyb_getbuf(cy_buf *b, void *buf, int len, int interruptible);
 
 void cyb_flush(cy_buf *b);
-void cyb_writer_close(cy_buf *b);
 
+/* Increment reference counts on open; paired with cyb_writer/reader_close(). */
+void cyb_writer_open(cy_buf *b);
+void cyb_reader_open(cy_buf *b);
+
+void cyb_writer_close(cy_buf *b);
 void cyb_reader_close(cy_buf *b);
 
 #endif

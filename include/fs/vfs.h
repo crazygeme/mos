@@ -19,7 +19,7 @@ struct super_operations {
 	 * sub-path with no specific match is opened.  The returned inode is
 	 * owned by the caller and freed via i_fop->release.
 	 */
-	file *(*open_root)(super_block *sb);
+	file *(*open_root)(super_block *sb, int flag);
 
 	/*
 	 * open: look up and open a file by path within this filesystem.

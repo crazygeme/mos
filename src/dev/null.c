@@ -52,7 +52,7 @@ static const file_operations null_fops = {
 	.poll = null_poll,
 };
 
-static file *null_open_root(super_block *sb)
+static file *null_open_root(super_block *sb, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |

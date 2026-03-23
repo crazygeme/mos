@@ -131,7 +131,7 @@ static const file_operations hdd_dev_fops = {
 
 /* ── Superblock operations ───────────────────────────────────────────────── */
 
-static file *hdd_dev_open_root(super_block *sb)
+static file *hdd_dev_open_root(super_block *sb, int flag)
 {
 	hdd_partition_info *pi = sb->s_fs_info;
 

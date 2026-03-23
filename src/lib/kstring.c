@@ -406,47 +406,39 @@ static char _hexdigit(int i)
  */
 char *itoa(int num, int base, int sign)
 {
-	char *str = malloc(12);
+	/* 32 binary digits + sign + NUL */
+	char *str = malloc(34);
 	char *ret = str;
-	int left = num;
-	unsigned uleft = (unsigned)num;
+	unsigned uleft;
 	char *begin;
 
 	if (!str)
 		return NULL;
-	memset(str, 0, 12);
+	memset(str, 0, 34);
 
-	/* Special-case INT_MIN: x == -x in two's complement */
-	if (uleft == 0x80000000u) {
-		strcpy(str, base == 16 ? "80000000" : "-2147483648");
-		return str;
-	}
-	if (num == 0) {
-		strcpy(str, "0");
-		return str;
-	}
-	if (base != 10 && base != 16) {
+	if (base < 2 || base > 36) {
 		free(str);
 		return NULL;
 	}
 
-	if (base == 10 && sign && left < 0) {
+	if (num == 0) {
+		strcpy(str, "0");
+		return str;
+	}
+
+	if (sign && base == 10 && num < 0) {
 		str[0] = '-';
 		str++;
-		left = -left;
+		/* 0u - (unsigned)num handles INT_MIN without overflow */
+		uleft = 0u - (unsigned)num;
+	} else {
+		uleft = (unsigned)num;
 	}
 
 	begin = str;
-	if (sign && base != 16) {
-		while (left) {
-			*str++ = _hexdigit(left % base);
-			left /= base;
-		}
-	} else {
-		while (uleft) {
-			*str++ = _hexdigit(uleft % base);
-			uleft /= base;
-		}
+	while (uleft) {
+		*str++ = _hexdigit(uleft % (unsigned)base);
+		uleft /= (unsigned)base;
 	}
 	strrev(begin);
 	return ret;

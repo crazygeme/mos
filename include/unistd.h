@@ -203,7 +203,10 @@
 #define __NR_quota 198
 
 #define __NR_fcntl64 221
-#define NR_syscalls 222
+#define __NR_getuid32 199
+#define __NR_geteuid32 201
+#define __NR_exit_group 252
+#define NR_syscalls 253
 
 #define _SYS_NAMELEN 65 // in linux 2.1
 

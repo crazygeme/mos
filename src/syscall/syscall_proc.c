@@ -516,3 +516,76 @@ long sys_personality(unsigned int personality)
 
 	return PER_LINUX32_3GB;
 }
+
+int sys_getgroups(int size, unsigned *list)
+{
+	if (TestControl.verbos)
+		klog("getgroups(%d)\n", size);
+
+	/* No supplementary groups — always root. */
+	return 0;
+}
+
+int sys_getgroups32(int size, unsigned *list)
+{
+	if (TestControl.verbos)
+		klog("getgroups32(%d)\n", size);
+
+	/* No supplementary groups — always root. */
+	return 0;
+}
+
+int sys_ugetrlimit(int resource, void *limit)
+{
+	unsigned long *rl = (unsigned long *)limit;
+
+	if (TestControl.verbos)
+		klog("ugetrlimit(%d)\n", resource);
+
+	if (rl) {
+		rl[0] = 0xFFFFFFFFu; /* rlim_cur = RLIM_INFINITY */
+		rl[1] = 0xFFFFFFFFu; /* rlim_max = RLIM_INFINITY */
+	}
+	return 0;
+}
+
+int sys_getuid32(void)
+{
+	if (TestControl.verbos)
+		klog("getuid32\n");
+
+	return 0;
+}
+
+int sys_getgid32(void)
+{
+	if (TestControl.verbos)
+		klog("getgid32\n");
+
+	return 0;
+}
+
+int sys_geteuid32(void)
+{
+	if (TestControl.verbos)
+		klog("geteuid32\n");
+
+	return 0;
+}
+
+int sys_getegid32(void)
+{
+	if (TestControl.verbos)
+		klog("getegid32\n");
+
+	return 0;
+}
+
+int sys_exit_group(int status)
+{
+	if (TestControl.verbos)
+		klog("exit_group(%d)\n", status);
+
+	sys_exit((unsigned)status);
+	return 0; /* unreachable */
+}

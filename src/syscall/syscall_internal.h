@@ -111,6 +111,14 @@ int sys_sigaction(int sig, void *act, void *oact);
 int sys_sigprocmask(int how, void *set, void *oset);
 int sys_getrlimit(int resource, void *limit);
 long sys_personality(unsigned int personality);
+int sys_getgroups(int size, unsigned *list);
+int sys_getgroups32(int size, unsigned *list);
+int sys_ugetrlimit(int resource, void *limit);
+int sys_getuid32(void);
+int sys_getgid32(void);
+int sys_geteuid32(void);
+int sys_getegid32(void);
+int sys_exit_group(int status);
 
 /*
  * syscall_sys.c

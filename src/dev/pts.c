@@ -423,7 +423,7 @@ static const file_operations pts_master_fops = {
 
 /* ── /dev/ptmx super_block: allocates master on open ─────────────────────── */
 
-static file *ptmx_open_root(super_block *sb)
+static file *ptmx_open_root(super_block *sb, int flag)
 {
 	pts_pair *p = pts_alloc();
 	if (!p)

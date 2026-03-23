@@ -7,6 +7,9 @@
 #include <macro.h>
 #include <ext4.h>
 
+/* Round x up to the nearest page boundary. */
+#define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & PAGE_SIZE_MASK)
+
 /* Cumulative time (microseconds) spent in elf_read(), used when profiling is
  * enabled via TestControl.profiling. */
 unsigned long long elf_read_time = 0;
@@ -42,15 +45,6 @@ DONE:
 	return ret;
 }
 
-/*
- * elf_map_section - map one PT_LOAD segment of the main executable
- *
- * If the segment's virtual address is already page-aligned, create a
- * file-backed mapping so pages are loaded lazily on fault.  Otherwise fall
- * back to an anonymous read-write mapping and eagerly copy the segment data.
- *
- * @fmt is currently unused here (reserved for future bookkeeping).
- */
 /* Translate ELF segment permission flags (PF_R/PF_W/PF_X) to mmap PROT_*. */
 static int elf_pflags_to_prot(unsigned p_flags)
 {
@@ -64,32 +58,143 @@ static int elf_pflags_to_prot(unsigned p_flags)
 	return prot;
 }
 
-static unsigned elf_map_section(file *fp, Elf32_Phdr *phdr, mos_binfmt *fmt)
+/*
+ * elf_load_segment - map one PT_LOAD segment into the current address space.
+ *
+ * @bias is added to p_vaddr before mapping; pass 0 for ET_EXEC executables or
+ * the load bias returned by vm_get_usr_zone() for shared objects.
+ *
+ * BSS handling (memsz > filesz):
+ * --------------------------------
+ * A naive file-backed mapping over the full memsz range is wrong for static
+ * binaries: the page fault handler reads a full PAGE_SIZE from the file, but
+ * bytes beyond p_filesz may contain section headers, debug info, etc., which
+ * would silently corrupt the BSS.  The correct approach splits the segment:
+ *
+ *  Region 1  [va_begin, file_page_end)
+ *    Whole pages fully covered by file data.  Mapped lazily file-backed;
+ *    the page fault handler loads them on demand.
+ *
+ *  Region 2  [file_page_end, file_pages_end)  — the "boundary page"
+ *    Exists only when filesz is not page-aligned.  The page contains file
+ *    data in [file_page_end, elf_bss) and BSS in [elf_bss, file_pages_end).
+ *    Mapped anonymous+writable; the file portion is read eagerly; the BSS
+ *    tail is left zero from the anonymous zero-fill.
+ *
+ *  Region 3  [file_pages_end, mem_pages_end)
+ *    Whole pages fully in the BSS.  Mapped anonymous; the page fault handler
+ *    zero-fills them on demand.
+ *
+ * No-BSS fast path (filesz == memsz):
+ * ------------------------------------
+ * The entire segment is mapped lazily file-backed.  The page fault handler
+ * already zeros any sub-page trailing bytes when the file read comes up short,
+ * which is correct because there is no BSS to protect.
+ *
+ * Unaligned vaddr (uncommon):
+ * ----------------------------
+ * The whole page range is mapped anonymous and file data is copied eagerly.
+ * BSS bytes are left zero by the anonymous page-fault zero-fill.
+ */
+static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 {
 	unsigned file_off = phdr->p_offset;
-	unsigned va_begin = phdr->p_vaddr & PAGE_SIZE_MASK;
-	unsigned fileSiz = phdr->p_filesz;
-	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
-	unsigned map_size = va_end - va_begin + PAGE_SIZE;
+	unsigned vaddr = phdr->p_vaddr + bias;
+	unsigned filesz = phdr->p_filesz;
+	unsigned memsz = phdr->p_memsz;
 	int prot = elf_pflags_to_prot(phdr->p_flags);
 
-	if (va_begin == phdr->p_vaddr)
-		/* Page-aligned: use a file-backed mapping (lazy load). */
-		do_mmap_kernel(va_begin, map_size, prot, MAP_FIXED, fp,
-			       file_off);
-	else {
+	unsigned va_begin = vaddr & PAGE_SIZE_MASK;
+	unsigned elf_bss = vaddr + filesz; /* first byte of BSS */
+	unsigned last_bss = vaddr + memsz; /* one past last BSS byte */
+	unsigned file_pages_end =
+		PAGE_ALIGN_UP(elf_bss); /* page ceiling of file data */
+	unsigned mem_pages_end =
+		PAGE_ALIGN_UP(last_bss); /* page ceiling of memory image */
+
+	if (memsz == 0)
+		return;
+
+	if (va_begin == vaddr) {
+		if (filesz == memsz) {
+			/*
+			 * No BSS: map the entire segment lazily from the file.
+			 * The page fault handler zeros any sub-page trailing
+			 * bytes when the file read comes up short.
+			 */
+			do_mmap_kernel(va_begin, mem_pages_end - va_begin, prot,
+				       MAP_FIXED, fp, file_off);
+		} else {
+			/*
+			 * BSS present (memsz > filesz).
+			 *
+			 * file_page_end: floor(elf_bss) — start of the boundary
+			 *   page; also the end of the whole-file-pages region.
+			 */
+			unsigned file_page_end = elf_bss & PAGE_SIZE_MASK;
+
+			/* Region 1: whole file-data pages, lazy file-backed. */
+			if (file_page_end > va_begin)
+				do_mmap_kernel(va_begin,
+					       file_page_end - va_begin, prot,
+					       MAP_FIXED, fp, file_off);
+
+			/*
+			 * Region 2: boundary page — only when filesz is not
+			 * page-aligned (elf_bss is strictly inside the page).
+			 *
+			 * We allocate an anonymous page, read only the valid
+			 * file bytes into the lower portion, and leave the BSS
+			 * tail zero (anonymous pages are zero-filled on fault).
+			 */
+			if (elf_bss > file_page_end) {
+				unsigned mapped;
+				unsigned page_file_off;
+				unsigned bytes;
+
+				mapped = do_mmap_kernel(file_page_end,
+							PAGE_SIZE,
+							prot | PROT_WRITE,
+							MAP_FIXED, 0, 0);
+
+				page_file_off =
+					file_off + (file_page_end - va_begin);
+				bytes = elf_bss - file_page_end;
+				elf_read(fp, page_file_off,
+					 (void *)file_page_end, bytes);
+
+				/*
+				 * Restore the segment's true protection if it
+				 * does not include PROT_WRITE (e.g. read-only
+				 * segment with a trailing BSS — unusual, but
+				 * handle it correctly).
+				 */
+				if (!(prot & PROT_WRITE))
+					do_mmap_update(mapped, prot, 0);
+			}
+
+			/* Region 3: pure BSS pages, anonymous zero-filled. */
+			if (mem_pages_end > file_pages_end)
+				do_mmap_kernel(file_pages_end,
+					       mem_pages_end - file_pages_end,
+					       prot | PROT_WRITE, MAP_FIXED, 0,
+					       0);
+		}
+	} else {
 		/*
-		 * Unaligned: allocate anonymous pages and eagerly copy data.
-		 * PROT_WRITE is required here so the elf_read below can
-		 * populate the mapping; the final prot still reflects the
-		 * segment flags.
+		 * vaddr is not page-aligned (uncommon — only produced by some
+		 * older or hand-crafted linker scripts).  Fall back to a single
+		 * anonymous mapping over the full page range and copy the file
+		 * data eagerly.  BSS bytes (vaddr+filesz .. last_bss) are left
+		 * zero by the anonymous page-fault zero-fill.
 		 */
+		unsigned map_size = mem_pages_end - va_begin;
 		unsigned mapped = do_mmap_kernel(
 			va_begin, map_size, prot | PROT_WRITE, MAP_FIXED, 0, 0);
-		elf_read(fp, file_off, phdr->p_vaddr, fileSiz);
+		if (filesz > 0)
+			elf_read(fp, file_off, (void *)vaddr, filesz);
 		do_mmap_update(mapped, prot, 0);
 	}
-	return 1;
 }
 
 /*
@@ -117,72 +222,53 @@ static int elf_read_interp(file *fp, Elf32_Phdr *phdr, char *path)
 static int elf_find_interp(file *fp, unsigned table_offset, unsigned size,
 			   unsigned num, char *path)
 {
-	int i = 0;
-
+	int i;
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;
 		Elf32_Phdr phdr;
 		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type == PT_INTERP) {
+		if (phdr.p_type == PT_INTERP)
 			return elf_read_interp(fp, &phdr, path);
-		}
 	}
-
 	return 0;
 }
 
 /*
- * elf_map_programs - map all PT_LOAD segments of the main executable
+ * elf_map_programs - map all PT_LOAD segments of a static/plain executable.
  *
- * In addition to mapping each loadable segment via elf_map_section(), this
- * function takes care of the BSS region that lies beyond the end of the
- * file image:
- *
- *   elf_bss  — first virtual address past the last byte of file data
- *              (aligned up to the next page boundary)
- *   last_bss — first virtual address past the last byte of memory image
- *              (memsz, which includes .bss)
- *
- * Any pages in [elf_bss, last_bss) are not covered by the file-backed
- * mapping, so they are mapped as anonymous zero-filled user-data pages and
- * the TLB is flushed with RELOAD_CR3().
+ * Each PT_LOAD segment is loaded via elf_load_segment(), which correctly
+ * handles the file/BSS split.  fmt->start_brk is set to the page-aligned
+ * ceiling of the highest BSS address so the process's initial brk is just
+ * past the BSS.
  */
 static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 				 unsigned num, mos_binfmt *fmt)
 {
-	int i = 0;
-	unsigned elf_bss = 0; /* end of file-backed data (unaligned) */
-	unsigned last_bss = 0; /* end of memory image (.bss included) */
-	unsigned k;
+	int i;
+	unsigned last_bss = 0;
+
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;
 		Elf32_Phdr phdr;
 		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type != PT_LOAD) {
+		if (phdr.p_type != PT_LOAD)
 			continue;
-		}
 
-		elf_map_section(fp, &phdr, 0);
+		elf_load_segment(fp, &phdr, 0);
 
-		/* Track the highest virtual address covered by file data. */
-		k = phdr.p_filesz + phdr.p_vaddr;
-		if (k > elf_bss) {
-			elf_bss = k;
-		}
-		/* Track the highest virtual address covered by memory image. */
-		k = phdr.p_memsz + phdr.p_vaddr;
-		if (k > last_bss) {
+		unsigned k = phdr.p_vaddr + phdr.p_memsz;
+		if (k > last_bss)
 			last_bss = k;
-		}
 	}
 
 	if (fmt)
-		fmt->start_brk = (last_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+		fmt->start_brk = PAGE_ALIGN_UP(last_bss);
 
 	return 1;
 }
+
 /*
- * elf_map_elf_hdr - map segments and record auxiliary info for the dynamic case
+ * elf_map_elf_hdr - map segments and record auxiliary info for the dynamic case.
  *
  * When the executable has a dynamic linker (PT_INTERP), the kernel must pass
  * certain ELF metadata to the dynamic linker via the auxiliary vector.  This
@@ -191,7 +277,7 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
  *     the phdr table (e_phoff), and the load address of the first page
  *     (elf_load_addr) into @fmt — the dynamic linker reads these via AT_PHDR,
  *     AT_PHNUM, etc.
- *   - Maps every PT_LOAD segment via elf_map_section().
+ *   - Maps every PT_LOAD segment via elf_load_segment().
  *
  * PT_PHDR, when present, describes where the program header table itself is
  * mapped, which is how we derive the base load address.
@@ -199,8 +285,7 @@ static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
 static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 				unsigned num, mos_binfmt *fmt)
 {
-	int i = 0;
-	unsigned elf_bss = 0;
+	int i;
 	unsigned last_bss = 0;
 
 	for (i = 0; i < num; i++) {
@@ -211,88 +296,23 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
 		if (phdr.p_type == PT_PHDR) {
 			/* Save phdr metadata for the auxiliary vector. */
 			fmt->e_phnum = num;
-			fmt->e_phoff = (phdr.p_vaddr & ~PAGE_SIZE_MASK);
-			fmt->elf_load_addr = (phdr.p_vaddr & PAGE_SIZE_MASK);
-		} else if (phdr.p_type ==
-			   PT_LOAD /* || phdr.p_type == PT_DYNAMIC */) {
-			elf_map_section(fp, &phdr, 0);
+			fmt->e_phoff = phdr.p_vaddr & ~PAGE_SIZE_MASK;
+			fmt->elf_load_addr = phdr.p_vaddr & PAGE_SIZE_MASK;
+		} else if (phdr.p_type == PT_LOAD) {
+			elf_load_segment(fp, &phdr, 0);
 
-			unsigned k = phdr.p_filesz + phdr.p_vaddr;
-			if (k > elf_bss)
-				elf_bss = k;
-			k = phdr.p_memsz + phdr.p_vaddr;
+			unsigned k = phdr.p_vaddr + phdr.p_memsz;
 			if (k > last_bss)
 				last_bss = k;
 		}
 	}
 
-	fmt->start_brk = (last_bss + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
-
-	return 1;
-}
-
-static unsigned elf_map_section_at(file *fp, Elf32_Phdr *phdr, unsigned bias)
-{
-	unsigned file_off = phdr->p_offset;
-	unsigned va_begin = phdr->p_vaddr & PAGE_SIZE_MASK;
-	unsigned fileSiz = phdr->p_filesz;
-	unsigned va_end = (phdr->p_vaddr + phdr->p_memsz - 1) & PAGE_SIZE_MASK;
-	unsigned map_size = va_end - va_begin + PAGE_SIZE;
-
-	int prot = elf_pflags_to_prot(phdr->p_flags);
-
-	if (va_begin == phdr->p_vaddr) {
-		/*
-		 * Page-aligned section: map file-backed with lazy page fault
-		 * loading.  The mmap cache in the page fault handler shares
-		 * physical pages across processes loading the same .so,
-		 * eliminating redundant disk reads on every execve.
-		 * BSS (memsz > filesz) is zero-filled automatically by the
-		 * page fault handler for pages that fall beyond the file end.
-		 */
-		do_mmap_kernel(bias + va_begin, map_size, prot, MAP_FIXED, fp,
-			       file_off);
-	} else {
-		/*
-		 * Unaligned section: page boundary does not align with a file
-		 * block boundary, so fall back to eager read into a private
-		 * anonymous mapping.  PROT_WRITE is added temporarily so the
-		 * elf_read below can populate the pages.
-		 */
-		unsigned mapped = do_mmap_kernel(bias + va_begin, map_size,
-						 prot | PROT_WRITE, MAP_FIXED,
-						 0, 0);
-		elf_read(fp, file_off, phdr->p_vaddr + bias, fileSiz);
-		do_mmap_update(mapped, prot, 0);
-	}
-
+	fmt->start_brk = PAGE_ALIGN_UP(last_bss);
 	return 1;
 }
 
 /*
- * elf_map_programs_at - map all PT_LOAD segments of a shared object at @bias
- *
- * Works like elf_map_programs() but applies a load-address @bias so the
- * shared object can be placed at an arbitrary virtual address chosen by
- * vm_get_usr_zone().  Used when loading the dynamic linker (interpreter).
- */
-static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
-				    unsigned size, unsigned num, unsigned bias)
-{
-	int i = 0;
-	for (i = 0; i < num; i++) {
-		unsigned head_offset = table_offset + i * size;
-		Elf32_Phdr phdr;
-		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type == PT_LOAD) {
-			elf_map_section_at(fp, &phdr, bias);
-		}
-	}
-	return 1;
-}
-
-/*
- * elf_map_get_dynamic_pages - calculate the total page span of a shared object
+ * elf_map_get_dynamic_pages - calculate the total page span of a shared object.
  *
  * Scans all PT_LOAD segments and returns the number of pages spanned from the
  * lowest to the highest virtual address.  This is used to reserve a
@@ -304,32 +324,50 @@ static unsigned elf_map_get_dynamic_pages(file *fp, unsigned table_offset,
 {
 	unsigned va_page_start = 0xffffffff;
 	unsigned va_page_end = 0;
-	int i = 0;
+	int i;
+
 	for (i = 0; i < num; i++) {
 		unsigned head_offset = table_offset + i * size;
 		Elf32_Phdr phdr;
 		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type != PT_LOAD) {
+		if (phdr.p_type != PT_LOAD)
 			continue;
-		}
 
 		unsigned va_begin = phdr.p_vaddr & PAGE_SIZE_MASK;
-		unsigned va_end = (phdr.p_vaddr + phdr.p_memsz - 1) &
-				  PAGE_SIZE_MASK;
-		if (va_begin < va_page_start) {
-			va_page_start = va_begin;
-		}
+		unsigned va_end = PAGE_ALIGN_UP(phdr.p_vaddr + phdr.p_memsz);
 
-		if (va_end > va_page_end) {
+		if (va_begin < va_page_start)
+			va_page_start = va_begin;
+		if (va_end > va_page_end)
 			va_page_end = va_end;
-		}
 	}
 
-	return (va_page_end - va_page_start) / PAGE_SIZE + 1;
+	return (va_page_end - va_page_start) / PAGE_SIZE;
 }
 
 /*
- * elf_map_dynamic - load the dynamic linker (interpreter) into user space
+ * elf_map_programs_at - map all PT_LOAD segments of a shared object at @bias.
+ *
+ * Works like elf_map_programs() but applies a load-address @bias so the
+ * shared object can be placed at an arbitrary virtual address chosen by
+ * vm_get_usr_zone().  Used when loading the dynamic linker (interpreter).
+ */
+static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
+				    unsigned size, unsigned num, unsigned bias)
+{
+	int i;
+	for (i = 0; i < num; i++) {
+		unsigned head_offset = table_offset + i * size;
+		Elf32_Phdr phdr;
+		elf_read(fp, head_offset, &phdr, sizeof(phdr));
+		if (phdr.p_type == PT_LOAD)
+			elf_load_segment(fp, &phdr, bias);
+	}
+	return 1;
+}
+
+/*
+ * elf_map_dynamic - load the dynamic linker (interpreter) into user space.
  *
  * Opens the ELF shared object at @path (typically "/lib/ld-linux.so.2"),
  * validates its header (must be a 32-bit ET_DYN), then:
@@ -350,9 +388,9 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 	file *fp = fs_open_file(path, 0, "r", 1);
 	Elf32_Ehdr elf;
 
-	if (fp == NULL) {
+	if (fp == NULL)
 		return 0;
-	}
+
 	/* ELF header is always at offset 0. */
 	elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
 
@@ -382,12 +420,11 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 			    fmt->interp_bias);
 
 	fs_put_file(fp);
-
 	return 1;
 }
 
 /*
- * elf_map - top-level ELF loader: map an executable into the current process
+ * elf_map - top-level ELF loader: map an executable into the current process.
  *
  * Opens the ELF at @path, validates it (32-bit ET_EXEC only), and maps its
  * segments.  The behaviour depends on whether the executable has a PT_INTERP
@@ -424,6 +461,7 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 		name_put(interp);
 		return 0;
 	}
+
 	/* ELF header is always at offset 0. */
 	elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
 	entry_point = elf.e_entry;

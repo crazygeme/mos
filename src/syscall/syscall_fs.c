@@ -32,6 +32,8 @@ static int format_modes(unsigned mode, char *str)
 		str[0] = 'c';
 	else if (S_ISLNK(mode))
 		str[0] = 'l';
+	else if (S_ISFIFO(mode))
+		str[0] = 'p';
 
 	if (mode & S_IRUSR)
 		str[1] = 'r';

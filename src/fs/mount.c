@@ -51,7 +51,7 @@ static const inode_operations stub_iops = {
 	.getattr = stub_getattr,
 };
 
-static file *stub_open_root(super_block *sb)
+static file *stub_open_root(super_block *sb, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFDIR | S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH |

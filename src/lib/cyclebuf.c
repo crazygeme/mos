@@ -33,6 +33,20 @@ cy_buf *cyb_create(int pages)
 	return b;
 }
 
+cy_buf *cyb_create_named(int pages)
+{
+	cy_buf *b = zalloc(sizeof(*b));
+	if (pages == 0)
+		pages = DEFAULT_BUF_PAGES;
+	b->buf = vm_alloc(pages);
+	b->buf_size = pages * PAGE_SIZE;
+	b->reader_count = b->writer_count = 0;
+	b->ref_count = 1; /* device holds one reference */
+	cond_init(&b->event, 1);
+	spinlock_init(&b->lock);
+	return b;
+}
+
 void cyb_destroy(cy_buf *b)
 {
 	if (__sync_add_and_fetch(&b->ref_count, -1) == 0) {
@@ -193,6 +207,18 @@ void cyb_flush(cy_buf *b)
 /*
  * Close
  */
+
+void cyb_writer_open(cy_buf *b)
+{
+	__sync_add_and_fetch(&b->writer_count, 1);
+	__sync_add_and_fetch(&b->ref_count, 1);
+}
+
+void cyb_reader_open(cy_buf *b)
+{
+	__sync_add_and_fetch(&b->reader_count, 1);
+	__sync_add_and_fetch(&b->ref_count, 1);
+}
 
 void cyb_writer_close(cy_buf *b)
 {

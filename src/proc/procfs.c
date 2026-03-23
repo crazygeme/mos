@@ -214,7 +214,7 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
  * proc_open_root — called when /proc itself is opened.
  * Generates a fresh directory listing and returns a file backed by it.
  */
-static file *proc_open_root(super_block *sb)
+static file *proc_open_root(super_block *sb, int flag)
 {
 	proc_root_dir *rd = zalloc(sizeof(*rd));
 	inode *node = zalloc(sizeof(*node));

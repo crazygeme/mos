@@ -775,7 +775,7 @@ static const file_operations tty_fops = {
 	.ioctl = tty_fs_ioctl,
 };
 
-static file *tty_open_root(super_block *sb)
+static file *tty_open_root(super_block *sb, int flag)
 {
 	tty_state *state = sb->s_fs_info;
 

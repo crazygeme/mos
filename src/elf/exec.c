@@ -574,7 +574,7 @@ static void run_first_user_process()
 	}
 
 	unsigned esp0 = (unsigned)CURRENT_TASK() + PAGE_SIZE;
-	const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };
+	const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", NULL };
 
 	ps_update_tss(esp0);
 

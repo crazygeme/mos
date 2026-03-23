@@ -336,7 +336,7 @@ static const file_operations tests_dir_fops = {
 	.release = tests_dir_release,
 };
 
-static file *tests_open_root(super_block *sb)
+static file *tests_open_root(super_block *sb, int flag)
 {
 	ktest_t *t;
 	unsigned size = 0;

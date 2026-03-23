@@ -452,7 +452,7 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 	return ret;
 }
 
-static file *ext4_open_root(super_block *sb)
+static file *ext4_open_root(super_block *sb, int flag)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
 

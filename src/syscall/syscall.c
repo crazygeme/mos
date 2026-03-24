@@ -64,7 +64,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getpid, // 20  __NR_getpid
 	sys_mount, // 21  __NR_mount
 	sys_umount, // 22  __NR_umount
-	0, // 23  __NR_setuid
+	sys_setuid, // 23  __NR_setuid
 	sys_getuid, // 24  __NR_getuid
 	0, // 25  __NR_stime
 	0, // 26  __NR_ptrace
@@ -254,7 +254,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 210 __NR_setresgid32
 	0, // 211 __NR_getresgid32
 	0, // 212 __NR_chown32
-	0, // 213 __NR_setuid32
+	sys_setuid32, // 213 __NR_setuid32
 	0, // 214 __NR_setgid32
 	0, // 215 __NR_setfsuid32
 	0, // 216 __NR_setfsgid32

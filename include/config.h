@@ -33,7 +33,7 @@
 #define IDT_SIZE 256
 
 #define KHEAP_BEGIN \
-	0xC0700000 // increase by 4M if kernel img is too large for this reserve
+	0xC0B00000 // increase by 4M if kernel img is too large for this reserve
 
 #define KHEAP_END (KHEAP_BEGIN + 0x004FF000)
 

@@ -118,6 +118,8 @@ int sys_getuid32(void);
 int sys_getgid32(void);
 int sys_geteuid32(void);
 int sys_getegid32(void);
+int sys_setuid(unsigned uid);
+int sys_setuid32(unsigned uid);
 int sys_exit_group(int status);
 
 /*

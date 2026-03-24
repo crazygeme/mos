@@ -1,25 +1,28 @@
 - [X] 物理内存管理
 - [X] 虚拟内存管理
-- [X] ext4的完整实现
-- [X] 各级cache (hdd cache, inode cache)
+- [X] ext4 的完整实现
+- [X] 各级 cache (hdd cache, inode cache)
 - [X] mount point
 - [X] 文件权限
 - [ ] 用户
-- [ ] syscall的返回值 1%
+- [ ] syscall 的返回值: 80%
 - [ ] 内存权限
-- [X] scheduler的效率
-- [X] 网络和socket接口
-- [X] 源代码的分类整理 (至少把include单独列出来)
-- [X] 真正的page fault handler (可以读写文件的)
-- [ ] IPC机制 50% ( pipe done)
-- [X] INODE的引用计数
-- [X] fork的时候复制fd
+- [X] scheduler 的效率
+- [X] 网络和 socket 接口
+- [X] 源代码的分类整理 (至少把 include 单独列出来)
+- [X] 真正的 page fault handler (可以读写文件的)
+- [ ] IPC 机制
+  * [X] pipe
+  * [X] sockpair
+  * [ ] shm
+- [X] INODE 的引用计数
+- [X] fork 的时候复制fd
 - [X] unlink
 - [X] tty ioctl
-- [X] 文件路径最大值4096
+- [X] 文件路径最大值 4096
 - [ ] fcnt
 - [X] sys_stat, sys_lstat, sys_fstat的正确实现
-- [X] debugfs 文件系统 和 /proc 目录
+- [X] /dev 目录 和 /proc 目录
 - [X] 正确的 gettimeofday 实现
 - [X] 重写 vfs
 - [ ] ptrace

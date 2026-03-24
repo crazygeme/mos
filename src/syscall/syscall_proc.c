@@ -581,6 +581,23 @@ int sys_getegid32(void)
 	return 0;
 }
 
+int sys_setuid(unsigned uid)
+{
+	if (TestControl.verbos)
+		klog("setuid(%d)\n", uid);
+
+	/* Kernel always runs as uid 0; only uid 0 is permitted. */
+	return (uid == 0) ? 0 : -EPERM;
+}
+
+int sys_setuid32(unsigned uid)
+{
+	if (TestControl.verbos)
+		klog("setuid32(%d)\n", uid);
+
+	return (uid == 0) ? 0 : -EPERM;
+}
+
 int sys_exit_group(int status)
 {
 	if (TestControl.verbos)

@@ -1,7 +1,7 @@
 # Network Stack
 
-**Source:** `src/hw/nic_intel_8254x.c`, `src/hw/nic.c`, `src/net/net.c`, `src/syscall/syscall_net.c`
-**Headers:** `include/hw/nic.h`, `include/net/net.h`, `include/net/socket.h`
+**Source:** `src/hw/nic_intel_8254x.c`, `src/hw/nic.c`, `src/net/net.c`, `src/net/sock.c`, `src/net/sock_ops.c`, `src/net/sock_cb.c`, `src/net/sock_msg.c`, `src/net/sock_opt.c`, `src/syscall/syscall_net.c`
+**Headers:** `include/hw/nic.h`, `include/net/net.h`, `include/net/socket.h`, `include/net/sock.h`
 
 ---
 
@@ -154,19 +154,19 @@ Called every 100 ms via the kernel timer subsystem. Calls `sys_check_timeouts()`
 
 ```c
 typedef struct _mos_sock {
-    int domain;     // AF_INET
+    int domain;     // AF_INET or AF_UNIX
     int type;       // SOCK_STREAM | SOCK_DGRAM | SOCK_RAW
     int protocol;   // IPPROTO_TCP | IPPROTO_UDP | IPPROTO_ICMP
     int state;      // SS_UNCONNECTED | SS_CONNECTING | SS_CONNECTED | SS_DISCONNECTING
     int err;        // pending negative errno (0 = OK)
 
     union {
-        struct tcp_pcb *tcp;
-        struct udp_pcb *udp;
-        struct raw_pcb *raw;
+        struct tcp_pcb *tcp;   // AF_INET SOCK_STREAM
+        struct udp_pcb *udp;   // AF_INET SOCK_DGRAM
+        struct raw_pcb *raw;   // AF_INET SOCK_RAW
     };
 
-    /* Circular receive ring (TCP: byte stream; UDP/RAW: length-prefixed datagrams) */
+    /* Circular receive ring (TCP/UNIX-STREAM: byte stream; UDP/RAW/UNIX-DGRAM: length-prefixed) */
     char     rxbuf[SOCK_RXBUF_SIZE];   // 8 KB
     unsigned rx_head;   // consumer index
     unsigned rx_tail;   // producer index
@@ -179,6 +179,10 @@ typedef struct _mos_sock {
     struct sockaddr_in local, peer;
     struct timeval     rx_stamp;       // timestamp of last received packet (SIOCGSTAMP)
     struct _task_struct *waiter;       // task blocked waiting for data
+
+    struct _mos_sock  *unix_peer;      // AF_UNIX: other end of socketpair, or NULL if closed
+    spinlock_t         rxbuf_lock;     // AF_UNIX: protects rx_head/rx_tail/rxbuf against
+                                       // concurrent access after fork (see § AF_UNIX)
 } mos_sock;
 ```
 
@@ -256,7 +260,7 @@ lwIP callbacks (`tcp_on_recv`, `udp_on_recv`, etc.) call `sock_wakeup(sk)` which
 
 ### `do_socket`
 
-Supported combinations:
+Supported combinations (`domain = AF_INET`):
 
 | `type` | `protocol` | lwIP PCB |
 |--------|-----------|---------|
@@ -264,7 +268,28 @@ Supported combinations:
 | `SOCK_DGRAM` | `IPPROTO_UDP` | `udp_new()` |
 | `SOCK_RAW` | `IPPROTO_ICMP` | `raw_new(IP_PROTO_ICMP)` |
 
-Wraps `mos_sock` in a VFS `file`, installs as fd, returns fd number.
+Returns `-EAFNOSUPPORT` for any domain other than `AF_INET`. Wraps `mos_sock` in a VFS `file`, installs as fd, returns fd number.
+
+### `do_socketpair`
+
+Creates a pair of connected `AF_UNIX` sockets and returns two file descriptors:
+
+```c
+int do_socketpair(int domain, int type, int protocol, int sv[2]);
+```
+
+Constraints:
+- `domain` must be `AF_UNIX`; other values return `-EAFNOSUPPORT`
+- `type` must be `SOCK_STREAM` or `SOCK_DGRAM`; other values return `-EPROTONOSUPPORT`
+- `protocol` must be `0`
+
+Two `mos_sock` objects `a` and `b` are allocated and cross-linked (`a->unix_peer = b`, `b->unix_peer = a`). Both start in `SS_CONNECTED` state. No lwIP PCB is created. `rxbuf_lock` is initialised on both ends.
+
+Data flow:
+- `write(sv[0])` → `sock_unix_write(a)` → locked `rx_write` into `b->rxbuf` → `sock_wakeup(b)`
+- `read(sv[1])` → `sock_unix_read(b)` → locked `rx_read` from `b->rxbuf`
+
+Closing one end sets `unix_peer->unix_peer = NULL`, transitions the peer to `SS_DISCONNECTING`, and wakes any blocked reader (which then returns 0 / EOF).
 
 ### `do_bind`
 
@@ -300,25 +325,107 @@ Blocks until `rxbuf` has data (or `MSG_DONTWAIT` → `-EAGAIN`). For UDP/RAW, re
 
 ---
 
-## 6. Socket options
+## 6. AF_UNIX socketpair
+
+### Why no lock is needed for AF_INET sockets
+
+`rx_write` for TCP/UDP/raw is called exclusively from the NIC IRQ handler (`e1000_irq_handler` → `rx_notify` → lwIP → protocol callback). This is a strict **SPSC** discipline: one ISR producer writes to `rxbuf`, one task consumer reads from it. On a uniprocessor, the ISR can preempt the task but a task can never preempt an ISR, so `rx_head` and `rx_tail` are never modified concurrently — no lock required.
+
+### Why AF_UNIX needs a lock
+
+After `fork()`, both the parent and child hold the same fd, which points to the same `mos_sock *`. Both can call `sock_write(sv[0], ...)` from syscall context, both calling `rx_write` on `peer->rxbuf`. On a uniprocessor with preemptive scheduling a timer interrupt between any two iterations of the byte-copy loop can switch to the other task, which also enters `rx_write` — both increment `rx_tail` over the same region, corrupting the buffer and interleaving bytes.
+
+`rxbuf_lock` is a `spinlock_t` that disables interrupts while held, preventing preemption for the duration of every ring-buffer access on the AF_UNIX path.
+
+### Read path with lock (`sock_unix_read`)
+
+The lock cannot be held across `sock_wait()` (which sleeps), so the pattern is: acquire, check condition, release before sleeping, re-acquire on wake, re-check:
+
+```
+spinlock_lock(&sk->rxbuf_lock)
+while rx_used == 0:
+    spinlock_unlock(...)
+    check err / state / timeout
+    sock_wait(...)        ← sleeps here, lock not held
+    spinlock_lock(...)
+rx_read(...)              ← under lock
+spinlock_unlock(...)
+```
+
+### Write path (`sock_unix_write`)
+
+No sleeping required. The lock wraps the entire write into the peer's buffer:
+
+```
+spinlock_lock(&peer->rxbuf_lock)
+[SOCK_DGRAM: write 2-byte length prefix]
+rx_write(peer, buf, n)
+spinlock_unlock(...)
+sock_wakeup(peer)         ← outside lock (safe)
+```
+
+### SOCK_STREAM vs SOCK_DGRAM
+
+| | SOCK_STREAM | SOCK_DGRAM |
+|-|-------------|------------|
+| Ring buffer encoding | raw bytes | 2-byte length prefix + payload (same as UDP) |
+| EOF on peer close | `state → SS_DISCONNECTING`, read returns 0 | timeout (`-ETIMEDOUT`) |
+| `sock_poll` write-ready | `unix_peer != NULL` | `unix_peer != NULL` |
+
+---
+
+## 8. Socket options
+
+**Source:** `src/net/sock_opt.c`
+
+Both `setsockopt` and `getsockopt` are dispatched through `do_setsockopt` / `do_getsockopt`. Unknown options log a warning and return `-ENOPROTOOPT`. Unrecognised `level` values also return `-ENOPROTOOPT`.
 
 ### `SOL_SOCKET`
 
-| Option | Behaviour |
-|--------|-----------|
-| `SO_REUSEADDR` | `ip_set_option(SOF_REUSEADDR)` on TCP/UDP PCB |
-| `SO_KEEPALIVE` | `ip_set_option(SOF_KEEPALIVE)` on TCP PCB |
-| `SO_RCVBUF` / `SO_SNDBUF` | silently accepted (fixed 8 KB ring) |
-| `SO_LINGER` | silently accepted |
-| `SO_ERROR` | returns and clears `sk->err` |
-| `SO_TYPE` | returns `sk->type` |
+| Option | set | get | Notes |
+|--------|-----|-----|-------|
+| `SO_REUSEADDR` | ✓ | ✓ | `ip_set/reset_option(SOF_REUSEADDR)` on TCP or UDP PCB |
+| `SO_KEEPALIVE` | ✓ | ✓ | `ip_set/reset_option(SOF_KEEPALIVE)` on TCP PCB; `-ENOPROTOOPT` for non-STREAM |
+| `SO_ERROR` | — | ✓ | Returns `sk->err` (positive errno) and clears it to 0; `set` returns `-ENOPROTOOPT` |
+| `SO_TYPE` | — | ✓ | Returns `sk->type` (`SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW`) |
+| `SO_RCVBUF` | ignored | ✓ | `get` always returns `SOCK_RXBUF_SIZE` (8192); `set` is silently accepted |
+| `SO_SNDBUF` | ignored | ✓ | `get` returns `tcp_sndbuf(sk->tcp)` for TCP, 0 otherwise; `set` is silently accepted |
+| `SO_LINGER` | ignored | — | silently accepted |
+| `SO_RCVTIMEO` | ignored | — | silently accepted |
+| `SO_SNDTIMEO` | ignored | — | silently accepted |
+| `SO_TIMESTAMP` | ✓ | ✓ | Enables/disables `SOCK_CMSG_TIMESTAMP` flag; causes `recvmsg` to attach a `struct timeval` cmsg (`SOL_SOCKET / SCM_TIMESTAMP`) to each received message |
+
+### `IPPROTO_IP` / `IPPROTO_ICMP` / `IPPROTO_RAW`
+
+All three level values are handled by the same branch.
+
+| Option | set | get | Notes |
+|--------|-----|-----|-------|
+| `IP_HDRINCL` | ✓ | ✓ | `SOCK_RAW` only; application supplies the full IP header on `send`; `-ENOPROTOOPT` for other types |
+| `IP_TTL` | ✓ | ✓ | Enables/disables `SOCK_CMSG_TTL` flag; causes `recvmsg` to attach an `int` TTL cmsg (`IPPROTO_IP / IP_TTL`) |
+| `IP_PKTINFO` | ✓ | ✓ | Enables/disables `SOCK_CMSG_PKTINFO` flag; causes `recvmsg` to attach a `struct in_pktinfo` cmsg (`IPPROTO_IP / IP_PKTINFO`) with destination address and interface index |
+| `ICMP_FILTER` | ✓ | ✓ | `SOCK_RAW + IPPROTO_ICMP` only; `set` stores a `struct icmp_filter` bitmask in `sk->icmp_filter` (bit N set → drop ICMP type N); `get` returns current bitmask |
+| `IP_RECVERR` | ignored | — | silently accepted |
 
 ### `IPPROTO_TCP`
 
-| Option | Behaviour |
-|--------|-----------|
-| `TCP_NODELAY` | `tcp_nagle_disable` / `tcp_nagle_enable` |
-| `TCP_KEEPIDLE` | silently accepted |
+Only valid on `SOCK_STREAM` sockets; other types return `-ENOPROTOOPT`.
+
+| Option | set | get | Notes |
+|--------|-----|-----|-------|
+| `TCP_NODELAY` | ✓ | ✓ | `tcp_nagle_disable` / `tcp_nagle_enable` on lwIP PCB |
+| `TCP_KEEPIDLE` | ignored | — | silently accepted |
+| `TCP_MAXSEG` | — | ✓ | Returns `sk->tcp->mss`; falls back to 536 if PCB is not yet connected |
+
+### Ancillary data (cmsg) produced by `recvmsg`
+
+When enabled via `setsockopt`, the following control messages are appended to the `msg_control` buffer on each `recvmsg` call:
+
+| Flag | `cmsg_level` | `cmsg_type` | Data type | Source |
+|------|-------------|-------------|-----------|--------|
+| `SOCK_CMSG_TIMESTAMP` | `SOL_SOCKET` | `SO_TIMESTAMP` | `struct timeval` | `sk->rx_stamp` (set in `rx_write`) |
+| `SOCK_CMSG_TTL` | `IPPROTO_IP` | `IP_TTL` | `int` | `sk->rx_ttl` (set in RAW/UDP callbacks) |
+| `SOCK_CMSG_PKTINFO` | `IPPROTO_IP` | `IP_PKTINFO` | `struct in_pktinfo` | `sk->rx_dst` / `sk->rx_ifindex` (set in callbacks) |
 
 ---
 
@@ -346,7 +453,7 @@ The loopback interface (`lo`) is a real lwIP `netif` (127.0.0.1/8, name `"lo0"`)
 
 ---
 
-## 8. `sys_socketcall` dispatch
+## 9. `sys_socketcall` dispatch
 
 User space invokes socket operations via a single `sys_socketcall` (Linux i386 syscall 102). The first argument is the sub-call number:
 
@@ -359,6 +466,7 @@ User space invokes socket operations via a single `sys_socketcall` (Linux i386 s
 | `SYS_ACCEPT` | 5 | `do_accept` |
 | `SYS_GETSOCKNAME` | 6 | `do_getsockname` |
 | `SYS_GETPEERNAME` | 7 | `do_getpeername` |
+| `SYS_SOCKETPAIR` | 8 | `do_socketpair` |
 | `SYS_SEND` | 9 | `do_send` |
 | `SYS_RECV` | 10 | `do_recv` |
 | `SYS_SENDTO` | 11 | `do_sendto` |
@@ -372,7 +480,7 @@ User space invokes socket operations via a single `sys_socketcall` (Linux i386 s
 
 ---
 
-## 9. Lifecycle summary
+## 10. Lifecycle summary
 
 ```
 KERNEL_INIT 6: nic_scan_all
@@ -415,6 +523,20 @@ recv(fd, buf, len)
 
 close(fd)
   └─ fs_close → fs_put_file → sock_release
-  └─ tcp_close / udp_remove / raw_remove
+  └─ AF_INET: tcp_close / udp_remove / raw_remove
+  └─ AF_UNIX: peer->unix_peer = NULL, peer->state = SS_DISCONNECTING, sock_wakeup(peer)
   └─ free(sk)
+
+socketpair(AF_UNIX, SOCK_STREAM, 0, sv)
+  └─ do_socketpair → alloc mos_sock a, b; cross-link unix_peer; spinlock_init
+  └─ sock_to_fd(a) → sv[0], sock_to_fd(b) → sv[1]
+
+write(sv[0], buf, len)   [parent or child after fork]
+  └─ sock_unix_write(a) → spinlock_lock(b->rxbuf_lock)
+  └─ rx_write(b, buf, len) → spinlock_unlock → sock_wakeup(b)
+
+read(sv[1], buf, len)
+  └─ sock_unix_read(b) → spinlock_lock(b->rxbuf_lock)
+  └─ [if empty] spinlock_unlock → sock_wait → spinlock_lock [on wake]
+  └─ rx_read(b, buf, len) → spinlock_unlock → return n
 ```

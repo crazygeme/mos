@@ -927,6 +927,111 @@ void fb_scroll_line(void)
 	memset(last_row, 0, row_pixel_size);
 }
 
+void fb_scroll_region(unsigned top_row, unsigned bot_row)
+{
+	unsigned region_rows = bot_row - top_row;
+	unsigned bytes_per_row =
+		VGA_RESOLUTION_X * _fb_font_height * (VGA_COLOR_DEPTH / 8);
+	unsigned copy_px_bytes = region_rows * bytes_per_row;
+	char *fb = (char *)_fb_buffer;
+	char val;
+
+	/* clear cursor display before pixel blit */
+	val = _fb_text[_fb_cursor];
+	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
+	    val == '\t' || val == '\b')
+		fb_write_char(_fb_cursor % _window_char_width,
+			      _fb_cursor / _window_char_width, 130,
+			      VGA_COLOR_BLACK);
+
+	/* scroll pixel rows up by one within [top_row, bot_row] */
+	memmove(fb + top_row * bytes_per_row,
+		fb + (top_row + 1) * bytes_per_row, copy_px_bytes);
+	memset(fb + bot_row * bytes_per_row, 0, bytes_per_row);
+
+	/* restore cursor display */
+	fb_write_char(_fb_cursor % _window_char_width,
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE);
+
+	/* scroll text shadow */
+	memmove(_fb_text + top_row * _window_char_width,
+		_fb_text + (top_row + 1) * _window_char_width,
+		region_rows * _window_char_width);
+	memset(_fb_text + bot_row * _window_char_width, ' ',
+	       _window_char_width);
+}
+
+/* Helper: clear cursor block / restore cursor block around a pixel blit. */
+#define FB_CURSOR_HIDE()                                                    \
+	do {                                                                \
+		char _v = _fb_text[_fb_cursor];                             \
+		if (_v == ' ' || _v == '\0' || _v == '\n' || _v == '\r' ||  \
+		    _v == '\t' || _v == '\b')                               \
+			fb_write_char(_fb_cursor % _window_char_width,      \
+				      _fb_cursor / _window_char_width, 130, \
+				      VGA_COLOR_BLACK);                     \
+	} while (0)
+#define FB_CURSOR_SHOW()                               \
+	fb_write_char(_fb_cursor % _window_char_width, \
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE)
+
+void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n)
+{
+	unsigned bpr =
+		VGA_RESOLUTION_X * _fb_font_height * (VGA_COLOR_DEPTH / 8);
+	char *fb = (char *)_fb_buffer;
+	unsigned move_rows;
+
+	if (n >= bot_row - row + 1) {
+		/* n covers the whole region — just clear it */
+		FB_CURSOR_HIDE();
+		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
+		memset(_fb_text + row * _window_char_width, ' ',
+		       (bot_row - row + 1) * _window_char_width);
+		FB_CURSOR_SHOW();
+		return;
+	}
+	move_rows = bot_row - row + 1 - n;
+	FB_CURSOR_HIDE();
+	/* shift rows [row .. bot_row-n] down by n */
+	memmove(fb + (row + n) * bpr, fb + row * bpr, move_rows * bpr);
+	memset(fb + row * bpr, 0, n * bpr);
+	memmove(_fb_text + (row + n) * _window_char_width,
+		_fb_text + row * _window_char_width,
+		move_rows * _window_char_width);
+	memset(_fb_text + row * _window_char_width, ' ',
+	       n * _window_char_width);
+	FB_CURSOR_SHOW();
+}
+
+void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n)
+{
+	unsigned bpr =
+		VGA_RESOLUTION_X * _fb_font_height * (VGA_COLOR_DEPTH / 8);
+	char *fb = (char *)_fb_buffer;
+	unsigned move_rows;
+
+	if (n >= bot_row - row + 1) {
+		FB_CURSOR_HIDE();
+		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
+		memset(_fb_text + row * _window_char_width, ' ',
+		       (bot_row - row + 1) * _window_char_width);
+		FB_CURSOR_SHOW();
+		return;
+	}
+	move_rows = bot_row - row + 1 - n;
+	FB_CURSOR_HIDE();
+	/* shift rows [row+n .. bot_row] up by n */
+	memmove(fb + row * bpr, fb + (row + n) * bpr, move_rows * bpr);
+	memset(fb + (bot_row - n + 1) * bpr, 0, n * bpr);
+	memmove(_fb_text + row * _window_char_width,
+		_fb_text + (row + n) * _window_char_width,
+		move_rows * _window_char_width);
+	memset(_fb_text + (bot_row - n + 1) * _window_char_width, ' ',
+	       n * _window_char_width);
+	FB_CURSOR_SHOW();
+}
+
 void fb_clear_screen(void)
 {
 	unsigned len =

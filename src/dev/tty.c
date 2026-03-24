@@ -75,6 +75,15 @@ typedef struct {
 	int open_count;
 	/* set when last fd is closed; guards read/write against stale access */
 	int released;
+	int saved_cursor;
+	int scroll_top;
+	int scroll_bot;
+	/* DEC private mode flags */
+	int cursor_hidden; /* ?25l: do not draw hardware cursor */
+	int no_wrap; /* ?7l: disable auto-wrap at line end */
+	/* alternate screen buffer for ?1049h/l */
+	char *alt_text;
+	int alt_cursor;
 } tty_state;
 
 static tty_state ttys[TTY_MAX_VDEV];
@@ -139,12 +148,33 @@ static void tty_roll_line(tty_state *state)
 	}
 }
 
+static void tty_roll_region(tty_state *state)
+{
+	unsigned top = (unsigned)state->scroll_top;
+	unsigned bot = (unsigned)state->scroll_bot;
+
+	if (top == 0 && bot == state->max_row - 1) {
+		tty_roll_line(state);
+		return;
+	}
+	if (state->tty_idx == active_tty_idx) {
+		fb_scroll_region(top, bot);
+	} else {
+		unsigned col = (unsigned)MAX_COL;
+		char *t = state->saved_text + top * col;
+		memmove(t, t + col, (bot - top) * col);
+		memset(state->saved_text + bot * col, 0, col);
+	}
+}
+
 /*
  * tty_hw_cursor - update the hardware cursor register (or framebuffer cursor).
  * Skipped for inactive TTYs — they track cursor in state->cursor only.
  */
 static void tty_hw_cursor(tty_state *state, unsigned pos)
 {
+	if (state->cursor_hidden)
+		return;
 	if (state->tty_idx == active_tty_idx)
 		fb_update_cursor(pos);
 }
@@ -167,6 +197,90 @@ static void cursor_set(tty_state *state, int pos)
 static void cursor_forward(tty_state *state, int pos)
 {
 	cursor_set(state, pos);
+	tty_hw_cursor(state, (unsigned)state->cursor);
+}
+
+/* ── Insert / delete lines ───────────────────────────────────────────────── */
+
+static void tty_insert_lines(tty_state *state, int n)
+{
+	int row = CUR_ROW;
+	int bot = state->scroll_bot;
+	if (n < 1)
+		n = 1;
+	if (row > bot)
+		return;
+	if (n > bot - row + 1)
+		n = bot - row + 1;
+	if (state->tty_idx == active_tty_idx) {
+		fb_insert_lines((unsigned)row, (unsigned)bot, (unsigned)n);
+	} else {
+		unsigned col = (unsigned)MAX_COL;
+		unsigned move = (unsigned)(bot - row + 1 - n);
+		if (move)
+			memmove(state->saved_text + (unsigned)(row + n) * col,
+				state->saved_text + (unsigned)row * col,
+				move * col);
+		memset(state->saved_text + (unsigned)row * col, ' ',
+		       (unsigned)n * col);
+	}
+}
+
+static void tty_delete_lines(tty_state *state, int n)
+{
+	int row = CUR_ROW;
+	int bot = state->scroll_bot;
+	if (n < 1)
+		n = 1;
+	if (row > bot)
+		return;
+	if (n > bot - row + 1)
+		n = bot - row + 1;
+	if (state->tty_idx == active_tty_idx) {
+		fb_delete_lines((unsigned)row, (unsigned)bot, (unsigned)n);
+	} else {
+		unsigned col = (unsigned)MAX_COL;
+		unsigned move = (unsigned)(bot - row + 1 - n);
+		if (move)
+			memmove(state->saved_text + (unsigned)row * col,
+				state->saved_text + (unsigned)(row + n) * col,
+				move * col);
+		memset(state->saved_text + (unsigned)(bot - n + 1) * col, ' ',
+		       (unsigned)n * col);
+	}
+}
+
+/* ── Alternate screen ────────────────────────────────────────────────────── */
+
+static void tty_enter_alt_screen(tty_state *state)
+{
+	unsigned sz = state->max_row * state->max_col;
+	if (!state->alt_text)
+		return;
+	state->alt_cursor = state->cursor;
+	if (state->tty_idx == active_tty_idx) {
+		fb_save_text(state->alt_text, sz);
+		fb_clear_screen();
+	} else {
+		memcpy(state->alt_text, state->saved_text, sz);
+		memset(state->saved_text, 0, sz);
+	}
+	state->cursor = 0;
+	tty_hw_cursor(state, 0);
+}
+
+static void tty_exit_alt_screen(tty_state *state)
+{
+	unsigned sz = state->max_row * state->max_col;
+	if (!state->alt_text)
+		return;
+	if (state->tty_idx == active_tty_idx) {
+		fb_restore_screen(state->alt_text, sz,
+				  (unsigned)state->alt_cursor);
+	} else {
+		memcpy(state->saved_text, state->alt_text, sz);
+	}
+	state->cursor = state->alt_cursor;
 	tty_hw_cursor(state, (unsigned)state->cursor);
 }
 
@@ -197,6 +311,8 @@ static void ansi_feed(tty_state *state, char c)
 		return;
 	case 'A': /* cursor up n */
 		val = atoi(arg);
+		if (val < 1)
+			val = 1;
 		row = CUR_ROW - val;
 		if (row < 0)
 			row = 0;
@@ -205,6 +321,8 @@ static void ansi_feed(tty_state *state, char c)
 		return;
 	case 'B': /* cursor down n */
 		val = atoi(arg);
+		if (val < 1)
+			val = 1;
 		row = CUR_ROW + val;
 		if (row >= (int)MAX_ROW)
 			row = (int)MAX_ROW - 1;
@@ -213,6 +331,8 @@ static void ansi_feed(tty_state *state, char c)
 		return;
 	case 'C': /* cursor right n */
 		val = atoi(arg);
+		if (val < 1)
+			val = 1;
 		col = CUR_COL + val;
 		if (col >= (int)MAX_COL)
 			col = (int)MAX_COL - 1;
@@ -221,19 +341,56 @@ static void ansi_feed(tty_state *state, char c)
 		return;
 	case 'D': /* cursor left n */
 		val = atoi(arg);
+		if (val < 1)
+			val = 1;
 		col = CUR_COL - val;
 		if (col < 0)
 			col = 0;
 		cursor_set(state, CUR_ROW * (int)MAX_COL + col);
 		ansi_end(state);
 		return;
-	case 'H': { /* set cursor position row;col (1-based) */
+	case 'E': { /* cursor next N lines (to column 0) */
+		val = atoi(arg);
+		if (val < 1)
+			val = 1;
+		row = CUR_ROW + val;
+		if (row >= (int)MAX_ROW)
+			row = (int)MAX_ROW - 1;
+		cursor_set(state, row * (int)MAX_COL);
+		ansi_end(state);
+		return;
+	}
+	case 'F': { /* cursor prev N lines (to column 0) */
+		val = atoi(arg);
+		if (val < 1)
+			val = 1;
+		row = CUR_ROW - val;
+		if (row < 0)
+			row = 0;
+		cursor_set(state, row * (int)MAX_COL);
+		ansi_end(state);
+		return;
+	}
+	case 'G': { /* cursor horizontal absolute (1-based column) */
+		val = atoi(arg);
+		col = (val > 0 ? val - 1 : 0);
+		if (col >= (int)MAX_COL)
+			col = (int)MAX_COL - 1;
+		cursor_set(state, CUR_ROW * (int)MAX_COL + col);
+		ansi_end(state);
+		return;
+	}
+	case 'H': /* set cursor position row;col (1-based) */
+	case 'f': { /* same as H */
 		char *str_col = strchr(arg, ';');
-		if (!str_col)
-			break;
-		*str_col++ = '\0';
-		row = atoi(arg) - 1;
-		col = atoi(str_col) - 1;
+		if (!str_col) {
+			row = 0;
+			col = 0;
+		} else {
+			*str_col++ = '\0';
+			row = atoi(arg) - 1;
+			col = atoi(str_col) - 1;
+		}
 		if (row < 0)
 			row = 0;
 		if (row >= (int)MAX_ROW)
@@ -246,10 +403,22 @@ static void ansi_feed(tty_state *state, char c)
 		ansi_end(state);
 		return;
 	}
-	case 'J': /* erase display */
-		tty_do_clear(state);
+	case 'J': { /* erase display: 0=cursor to end, 1=start to cursor, 2=full */
+		val = atoi(arg);
+		if (val == 1) {
+			for (int i = 0; i <= state->cursor; i++)
+				vga_putchar(state, i / (int)MAX_COL,
+					    i % (int)MAX_COL, ' ');
+		} else if (val == 2 || val == 3) {
+			tty_do_clear(state);
+		} else { /* 0 or default: cursor to end */
+			for (int i = state->cursor; i < MAX_CHARS; i++)
+				vga_putchar(state, i / (int)MAX_COL,
+					    i % (int)MAX_COL, ' ');
+		}
 		ansi_end(state);
 		return;
+	}
 	case 'K': { /* erase line: 0=to end, 1=to start, 2=whole line */
 		val = atoi(arg);
 		int start_col, end_col, r;
@@ -266,6 +435,90 @@ static void ansi_feed(tty_state *state, char c)
 		}
 		for (int c2 = start_col; c2 <= end_col; c2++)
 			vga_putchar(state, r, c2, ' ');
+		ansi_end(state);
+		return;
+	}
+	case 'L': { /* IL - insert N blank lines at cursor row */
+		val = atoi(arg);
+		tty_insert_lines(state, val);
+		ansi_end(state);
+		return;
+	}
+	case 'M': { /* DL - delete N lines at cursor row */
+		val = atoi(arg);
+		tty_delete_lines(state, val);
+		ansi_end(state);
+		return;
+	}
+	case 'c': /* DA / cursor-shape — stub (no-op) */
+		ansi_end(state);
+		return;
+	case 'd': { /* cursor vertical absolute (1-based row) */
+		val = atoi(arg);
+		row = (val > 0 ? val - 1 : 0);
+		if (row >= (int)MAX_ROW)
+			row = (int)MAX_ROW - 1;
+		cursor_set(state, row * (int)MAX_COL + CUR_COL);
+		ansi_end(state);
+		return;
+	}
+	case 'r': { /* DECSTBM - set scrolling region (1-based top;bot) */
+		char *str_bot = strchr(arg, ';');
+		if (!str_bot) {
+			state->scroll_top = 0;
+			state->scroll_bot = (int)MAX_ROW - 1;
+		} else {
+			*str_bot++ = '\0';
+			int top = atoi(arg) - 1;
+			int bot = atoi(str_bot) - 1;
+			if (top < 0)
+				top = 0;
+			if (bot >= (int)MAX_ROW)
+				bot = (int)MAX_ROW - 1;
+			if (top < bot) {
+				state->scroll_top = top;
+				state->scroll_bot = bot;
+			}
+		}
+		/* DECSTBM moves cursor to home */
+		cursor_set(state, 0);
+		ansi_end(state);
+		return;
+	}
+	case 's': /* save cursor position */
+		state->saved_cursor = state->cursor;
+		ansi_end(state);
+		return;
+	case 'u': /* restore cursor position */
+		if (state->saved_cursor >= 0)
+			cursor_set(state, state->saved_cursor);
+		ansi_end(state);
+		return;
+	case 'h': /* mode set */
+	case 'l': { /* mode reset */
+		int set = (c == 'h');
+		if (arg[0] == '?') {
+			int mode = atoi(arg + 1);
+			switch (mode) {
+			case 7: /* auto-wrap */
+				state->no_wrap = !set;
+				break;
+			case 25: /* cursor visibility */
+				state->cursor_hidden = !set;
+				if (set)
+					tty_hw_cursor(state,
+						      (unsigned)state->cursor);
+				break;
+			case 1049: /* alternate screen buffer */
+				if (set)
+					tty_enter_alt_screen(state);
+				else
+					tty_exit_alt_screen(state);
+				break;
+			default:
+				break;
+			}
+		}
 		ansi_end(state);
 		return;
 	}
@@ -298,6 +551,10 @@ static int char_to_pos(tty_state *state, char c)
 
 	switch ((unsigned char)c) {
 	case '\n':
+		if (CUR_ROW == state->scroll_bot) {
+			tty_roll_region(state);
+			return state->scroll_bot * (int)MAX_COL + CUR_COL;
+		}
 		return (CUR_ROW + 1) * (int)MAX_COL + CUR_COL;
 	case '\r':
 		return CUR_ROW * (int)MAX_COL;
@@ -321,6 +578,8 @@ static int char_to_pos(tty_state *state, char c)
 	default:
 		if (isprint(c)) {
 			vga_putchar(state, CUR_ROW, CUR_COL, c);
+			if (state->no_wrap && CUR_COL == (int)MAX_COL - 1)
+				return state->cursor; /* stay at last column */
 			return state->cursor + 1;
 		}
 		return state->cursor;
@@ -439,6 +698,9 @@ void tty_init(void)
 		t->termios = tty_default_termios;
 		t->tty_idx = i;
 		t->bash_pid = 0;
+		t->scroll_top = 0;
+		t->scroll_bot = (int)t->max_row - 1;
+		t->saved_cursor = 0;
 	}
 	spinlock_init(&tty_switch_lock);
 }
@@ -823,6 +1085,8 @@ static void tty_sops_release(super_block *sb)
 		cyb_destroy(state->kb_buf);
 	if (state->saved_text)
 		free(state->saved_text);
+	if (state->alt_text)
+		free(state->alt_text);
 	free(sb);
 }
 
@@ -845,6 +1109,8 @@ static void tty_fs_init(void)
 		t->kb_buf = cyb_create(1);
 		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
+		/* Alternate screen buffer for ESC[?1049h/l */
+		t->alt_text = (char *)zalloc(t->max_row * t->max_col);
 		/*
 		 * All those attached bash should be managed by process 1
 		 * (/sbin/init) which will call wait on all orphan processes

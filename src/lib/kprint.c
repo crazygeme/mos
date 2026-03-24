@@ -171,7 +171,7 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 	do {                                           \
 		const char *_ep = (str);               \
 		int _elen = (len);                     \
-		int _epad = (width) - _elen;           \
+		int _epad = (width)-_elen;             \
 		if (!(left_align))                     \
 			for (; _epad > 0; _epad--)     \
 				EMIT(fill);            \

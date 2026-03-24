@@ -164,6 +164,53 @@ Both `rwlock_read_lock` and `rwlock_write_lock` are macros that pass `__func__`.
 
 ---
 
+---
+
+## 5. Semaphore (`sem_t`)
+
+A **counting semaphore**. `sem_wait` decrements the count and blocks when the count reaches zero; `sem_post` increments the count and wakes one waiter.
+
+### When to use
+
+Signalling a fixed number of available resources, or synchronising a producer with a consumer when the consumer must not miss posts (unlike `cond_t`, each `sem_post` is "remembered" in the count).
+
+The `_at_intr` variants allow an **interrupt handler to post** while a normal task waits — the primary use case is interrupt-driven I/O completion (e.g. the ATA/IDE disk driver).
+
+### API
+
+```c
+sem_t s;
+sem_init(&s, 0);      // initial count; 0 means caller blocks on first sem_wait
+
+// ── consumer (process context) ────────────────────────────────
+sem_wait(&s);         // decrement count; block if count == 0
+
+// ── producer (process context) ────────────────────────────────
+sem_post(&s);         // increment count; wake one waiter
+
+// ── interrupt-compatible pair ─────────────────────────────────
+sem_wait_at_intr(&s); // poll via task_sched — does NOT sleep; for use inside
+                      // an interrupt handler or where sleeping is forbidden
+sem_post_at_intr(&s); // atomic increment only; no task_sched call
+```
+
+`sem_wait` is a macro that passes `__func__` to the underlying implementation.
+
+### Behaviour
+
+- `count`, `wait_list`, and `wait_lock` (a `spinlock_t`) are the only state.
+- **`sem_wait`**: acquires `wait_lock`, checks `count`; if > 0 decrements and returns; otherwise enqueues the current task and sleeps.
+- **`sem_post`**: acquires `wait_lock`, increments `count`; if a waiter exists, decrements `count` back, removes the waiter from the queue, makes it runnable, then calls `task_sched()`.
+- **`sem_wait_at_intr` / `sem_post_at_intr`**: interrupt-compatible pair. The waiter stays in the ready queue and yields via `task_sched` instead of sleeping. The poster does an atomic increment and no scheduling call. **Both sides must use the `_at_intr` variants together**; mixing with `sem_wait`/`sem_post` is unsafe.
+
+### Rules
+
+- Do not call `sem_wait` from interrupt context (it may sleep); use `sem_wait_at_intr` instead.
+- `sem_wait_at_intr` and `sem_post_at_intr` must always be used as a pair — never mix with the non-`_at_intr` variants on the same semaphore instance.
+- The semaphore is not recursive: a task calling `sem_wait` twice on a semaphore with count 1 will deadlock.
+
+---
+
 ## Quick-reference table
 
 | Primitive | Sleeps? | Interrupt-safe? | Recursive? | Multiple holders? |
@@ -172,6 +219,7 @@ Both `rwlock_read_lock` and `rwlock_write_lock` are macros that pass `__func__`.
 | `cond_t` | Yes (`_at_intr` no) | `_at_intr` only | N/A | No |
 | `mutex_t` | Yes | No | No | No |
 | `rwlock_t` | Yes | No | No | Yes (readers) |
+| `sem_t` | Yes (`_at_intr` no) | `_at_intr` only | No | No (per count) |
 
 ## Internal building block: `lock_base`
 

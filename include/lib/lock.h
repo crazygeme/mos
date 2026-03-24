@@ -111,4 +111,28 @@ void rwlock_read_unlock(rwlock_t *rw);
 void _rwlock_write_lock(rwlock_t *rw, const char *func);
 void rwlock_write_unlock(rwlock_t *rw);
 
+/* ===========================================================================
+ * Semaphore (sem_t)
+ *
+ * Counting semaphore.  sem_wait decrements the count and blocks when the
+ * count is zero; sem_post increments the count and wakes one waiter.
+ * ===========================================================================*/
+
+typedef volatile struct _sem {
+	int count; /* available resource count               */
+	list_entry wait_list; /* tasks sleeping in sem_wait             */
+	spinlock_t wait_lock; /* guards count and wait_list             */
+} sem_t;
+
+void sem_init(sem_t *s, int count);
+#define sem_wait(x) _sem_wait((x), __func__)
+void _sem_wait(sem_t *s, const char *func);
+void sem_post(sem_t *s);
+
+/* Interrupt-compatible pair: the waiter stays in the ready queue (polls via
+ * task_sched) so the poster only needs an atomic increment.  Both sides must
+ * use the _at_intr variants together; mixing with sem_wait/sem_post is unsafe. */
+void sem_wait_at_intr(sem_t *s);
+void sem_post_at_intr(sem_t *s);
+
 #endif

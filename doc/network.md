@@ -25,7 +25,7 @@ net.c            ← netif glue, DHCP, lwIP timer pump
 nic_intel_8254x.c  ← Intel e1000 driver (MMIO, DMA, interrupt-driven RX)
 ```
 
-lwIP runs in **NO_SYS mode** — no internal threads. All protocol processing happens synchronously inside interrupt handlers or explicit `sys_check_timeouts()` calls.
+lwIP runs in **NO_SYS mode** — no internal threads. All protocol processing happens synchronously inside DSR callbacks (deferred from the NIC IRQ) or explicit `sys_check_timeouts()` calls.
 
 ---
 
@@ -54,7 +54,7 @@ DMA buffers live in the kernel heap. Physical address = virtual − `KERNEL_OFFS
 
 **TX:** polled — `send()` writes a descriptor, bumps the tail register, and polls the `DD` (descriptor done) bit to confirm completion before returning.
 
-**RX:** interrupt-driven — the ISR fires on `E1000_ICR_RXT0` (packet received). For each completed descriptor the ISR calls `nic->rx_notify(nic->rx_ctx, buf, len)`, which is wired to the lwIP receive path.
+**RX:** interrupt-driven — the ISR fires on `E1000_ICR_RXT0` (packet received). For each completed descriptor the ISR calls `nic->rx_notify(nic->rx_ctx, buf, len)`, which enqueues the raw frame into a packet ring (no malloc). A DSR then drains the ring and feeds frames into lwIP outside of IRQ context.
 
 ### `nic_dev` abstraction
 
@@ -67,7 +67,7 @@ typedef struct _nic_dev {
     int    (*init)(void *dev);
     void   (*on_register)(struct _nic_dev *permanent);
     int    (*send)(void *dev, const void *buf, uint16_t len);
-    nic_rx_fn rx_notify;   // set by net.c: eth0_rx
+    nic_rx_fn rx_notify;   // set by net.c: eth0_rx_enqueue (IRQ-safe, no malloc)
     void     *rx_ctx;      // set by net.c: &eth0 (lwIP netif)
     void     *ctx;         // driver-private (e1000 state)
 } nic_dev;
@@ -93,8 +93,8 @@ void net_init(void)
     netif_set_default(&eth0);
     netif_set_up(&eth0);
 
-    // wire NIC RX → lwIP
-    nic->rx_notify = eth0_rx;
+    // wire NIC RX → packet ring enqueue
+    nic->rx_notify = eth0_rx_enqueue;
     nic->rx_ctx    = &eth0;
 
     dhcp_start(&eth0);              // start DHCP on eth0
@@ -117,18 +117,47 @@ Sets the lwIP netif fields from the `nic_dev`:
 | `output` | `etharp_output` (ARP → IP) |
 | `linkoutput` | `eth0_linkoutput` (kernel → NIC) |
 
-### `eth0_rx` — RX path (called from NIC ISR)
+### RX path — two-phase deferred design
+
+The NIC ISR must not call `malloc` or lwIP directly: it may preempt a process that is itself inside `malloc`, causing a deadlock on the heap lock. The receive path is therefore split into two phases.
+
+**Phase 1 — `eth0_rx_enqueue` (runs in NIC IRQ context, no malloc):**
 
 ```c
-static void eth0_rx(void *ctx, const uint8_t *data, uint16_t len)
+static void eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len)
 {
-    p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
-    pbuf_take(p, data, len);
-    netif->input(p, netif);    // → ethernet_input → IP → TCP/UDP/ICMP
+    // drop if ring full
+    if (g_rx_wr - g_rx_rd >= NET_RX_RING_SIZE) return;
+    slot = &g_rx_ring[g_rx_wr % NET_RX_RING_SIZE];
+    memcpy(slot->data, data, len);   // only a memcpy — no malloc
+    slot->len = len;
+    g_rx_wr++;
+    if (!g_rx_dsr_armed) {
+        g_rx_dsr_armed = 1;
+        dsr_add(eth0_rx_dsr, NULL);  // schedule phase 2
+    }
 }
 ```
 
-Runs in interrupt context. `netif->input` is `ethernet_input` (lwIP), which processes the frame up through the protocol stack synchronously.
+Ring capacity: `NET_RX_RING_SIZE = 32` slots × `NET_RX_MAX_FRAME = 1600` bytes = 51 KB (BSS).
+
+**Phase 2 — `eth0_rx_dsr` (runs as a DSR from `_task_sched`, malloc is safe):**
+
+```c
+static void eth0_rx_dsr(void *param)
+{
+    g_rx_dsr_armed = 0;   // clear first so concurrent IRQs can re-arm
+    while (g_rx_rd != g_rx_wr) {
+        slot = &g_rx_ring[g_rx_rd % NET_RX_RING_SIZE];
+        p = pbuf_alloc(PBUF_RAW, slot->len, PBUF_POOL);   // malloc safe here
+        pbuf_take(p, slot->data, slot->len);
+        eth0.input(p, &eth0);   // → ethernet_input → IP → TCP/UDP/ICMP
+        g_rx_rd++;
+    }
+}
+```
+
+DSRs are drained by `dsr_drain()` at the top of `_task_sched()` (before every context switch), so frames are processed promptly without polling.
 
 ### `eth0_linkoutput` — TX path
 
@@ -228,7 +257,7 @@ static void sock_wait(mos_sock *sk, unsigned long deadline)
 }
 ```
 
-lwIP callbacks (`tcp_on_recv`, `udp_on_recv`, etc.) call `sock_wakeup(sk)` which calls `ps_put_to_ready_queue(sk->waiter)`. The blocked task resumes and re-checks the condition. Timeout: `SOCK_TIMEOUT_MS = 30000` ms.
+lwIP callbacks (`tcp_on_recv`, `udp_on_recv`, etc.) call `sock_wakeup(sk)` which calls `ps_put_to_ready_queue(sk->waiter)`. These callbacks run from `eth0_rx_dsr` (DSR context, interrupts disabled), so `ps_put_to_ready_queue` marks the task runnable but the actual context switch happens when `_task_sched` selects the next task after `dsr_drain` returns. The blocked task resumes and re-checks the condition. Timeout: `SOCK_TIMEOUT_MS = 30000` ms.
 
 `MSG_DONTWAIT` flag: checked before calling `sock_wait`; returns `-EAGAIN` immediately if no data.
 
@@ -329,7 +358,13 @@ Blocks until `rxbuf` has data (or `MSG_DONTWAIT` → `-EAGAIN`). For UDP/RAW, re
 
 ### Why no lock is needed for AF_INET sockets
 
-`rx_write` for TCP/UDP/raw is called exclusively from the NIC IRQ handler (`e1000_irq_handler` → `rx_notify` → lwIP → protocol callback). This is a strict **SPSC** discipline: one ISR producer writes to `rxbuf`, one task consumer reads from it. On a uniprocessor, the ISR can preempt the task but a task can never preempt an ISR, so `rx_head` and `rx_tail` are never modified concurrently — no lock required.
+`rx_write` for TCP/UDP/raw is called exclusively from `eth0_rx_dsr`, which runs as a DSR inside `_task_sched()` with interrupts disabled. This is a strict **SPSC** discipline: one DSR producer writes to `rxbuf` (advancing `rx_tail`), one task consumer reads from it (advancing `rx_head`). On a uniprocessor:
+
+- The DSR can preempt the reader task (via timer IRQ → `_task_sched` → `dsr_drain`).
+- The reader task cannot preempt the DSR (interrupts are disabled during `dsr_drain`).
+- `rx_head` and `rx_tail` are 32-bit `unsigned` values; x86 guarantees atomic 32-bit loads/stores.
+
+If the DSR fires mid-read, the reader's already-computed byte count (based on a stale `rx_tail` snapshot) causes it to read slightly fewer bytes than available — no corruption occurs. No lock required.
 
 ### Why AF_UNIX needs a lock
 
@@ -492,17 +527,20 @@ KERNEL_INIT 6: nic_scan_all
 KERNEL_INIT 7: net_init
   └─ lwip_init()
   └─ netif_add(eth0, ..., eth0_init_fn, ethernet_input)
-  └─ nic->rx_notify = eth0_rx; nic->rx_ctx = &eth0
+  └─ nic->rx_notify = eth0_rx_enqueue; nic->rx_ctx = &eth0
   └─ dhcp_start(eth0)
   └─ timer_start(lwip_timer_cb, 100ms, repeating)
 
 NIC receives Ethernet frame
   └─ e1000 IRQ → ISR → nic->rx_notify(ctx, buf, len)
-  └─ eth0_rx: pbuf_alloc + pbuf_take + netif->input
-  └─ ethernet_input → IP → TCP/UDP/ICMP dispatch
-  └─ lwIP callback (tcp_on_recv / udp_on_recv / raw_on_recv)
-       └─ rx_write → rxbuf ring
-       └─ sock_wakeup → ps_put_to_ready_queue(waiter)
+  └─ eth0_rx_enqueue: memcpy into g_rx_ring slot; dsr_add(eth0_rx_dsr) [if not armed]
+  └─ (IRQ returns)
+  └─ next _task_sched() → dsr_drain() → eth0_rx_dsr
+       └─ pbuf_alloc + pbuf_take + eth0.input
+       └─ ethernet_input → IP → TCP/UDP/ICMP dispatch
+       └─ lwIP callback (tcp_on_recv / udp_on_recv / raw_on_recv)
+            └─ rx_write → rxbuf ring
+            └─ sock_wakeup → ps_put_to_ready_queue(waiter)
 
 socket(AF_INET, SOCK_STREAM, 0)
   └─ do_socket → tcp_new, tcp_setup_callbacks, sock_to_fd → fd

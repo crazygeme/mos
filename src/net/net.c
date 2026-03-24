@@ -21,12 +21,32 @@
 #include <lwip/timeouts.h>
 #include <lwip/pbuf.h>
 #include <netif/ethernet.h>
+#include <int/dsr.h>
 
 /* ── sys_now() required by lwIP in NO_SYS mode ─────────────────────────────── */
 u32_t sys_now(void)
 {
 	return (u32_t)time_now_ms();
 }
+
+/* ── RX ring buffer (IRQ → DSR context) ─────────────────────────────────────
+ * The NIC ISR must not call malloc/lwIP directly — it may preempt a malloc
+ * caller and deadlock.  Instead the ISR enqueues raw frames here (memcpy
+ * only, no malloc) and schedules a DSR.  The DSR runs from _task_sched()
+ * with interrupts disabled but outside IRQ context, where malloc is safe.
+ */
+#define NET_RX_RING_SIZE 32
+#define NET_RX_MAX_FRAME 1600
+
+typedef struct {
+	uint8_t data[NET_RX_MAX_FRAME];
+	uint16_t len;
+} net_rx_slot_t;
+
+static net_rx_slot_t g_rx_ring[NET_RX_RING_SIZE];
+static volatile unsigned g_rx_wr; /* written by IRQ   */
+static volatile unsigned g_rx_rd; /* read by DSR      */
+static volatile int g_rx_dsr_armed; /* 1 = DSR queued   */
 
 /* ── Single eth0 netif + counters ───────────────────────────────────────────── */
 static struct netif eth0;
@@ -85,22 +105,46 @@ static err_t eth0_init_fn(struct netif *netif)
 	return ERR_OK;
 }
 
-/* RX callback — called by the NIC driver ISR with a raw Ethernet frame. */
-static void eth0_rx(void *ctx, const uint8_t *data, uint16_t len)
+/* DSR: drain queued frames into lwIP (runs from _task_sched, malloc is safe). */
+static void eth0_rx_dsr(void *param)
 {
-	struct netif *netif = (struct netif *)ctx;
-	struct pbuf *p;
+	(void)param;
+	/* Clear armed flag first so new IRQs that fire during drain will
+	 * re-arm and not lose the notification. */
+	g_rx_dsr_armed = 0;
 
-	p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
-	if (!p)
+	while (g_rx_rd != g_rx_wr) {
+		net_rx_slot_t *slot = &g_rx_ring[g_rx_rd % NET_RX_RING_SIZE];
+		uint16_t len = slot->len;
+		struct pbuf *p = pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
+		if (p) {
+			pbuf_take(p, slot->data, len);
+			g_rx_bytes += len;
+			g_rx_packets += 1;
+			if (eth0.input(p, &eth0) != ERR_OK)
+				pbuf_free(p);
+		}
+		g_rx_rd++;
+	}
+}
+
+/* RX enqueue — called by the NIC driver ISR.  Must not call malloc. */
+static void eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len)
+{
+	(void)ctx;
+	/* Drop if ring is full. */
+	if (g_rx_wr - g_rx_rd >= NET_RX_RING_SIZE)
 		return;
-
-	g_rx_bytes += len;
-	g_rx_packets += 1;
-
-	pbuf_take(p, data, len);
-	if (netif->input(p, netif) != ERR_OK)
-		pbuf_free(p);
+	net_rx_slot_t *slot = &g_rx_ring[g_rx_wr % NET_RX_RING_SIZE];
+	if (len > NET_RX_MAX_FRAME)
+		len = NET_RX_MAX_FRAME;
+	memcpy(slot->data, data, len);
+	slot->len = len;
+	g_rx_wr++;
+	if (!g_rx_dsr_armed) {
+		g_rx_dsr_armed = 1;
+		dsr_add(eth0_rx_dsr, NULL);
+	}
 }
 
 /* Periodic timer: drive all lwIP internal timers (DHCP, ARP, TCP, …). */
@@ -142,7 +186,7 @@ void net_init(void)
 	netif_set_up(&eth0);
 
 	/* Wire NIC → lwIP receive path */
-	nic->rx_notify = eth0_rx;
+	nic->rx_notify = eth0_rx_enqueue;
 	nic->rx_ctx = &eth0;
 
 	dhcp_start(&eth0);

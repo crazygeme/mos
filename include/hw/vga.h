@@ -47,6 +47,9 @@ void fb_update_cursor(unsigned new_pos);
 
 /* Scroll the entire screen up by one character row. */
 void fb_scroll_line(void);
+void fb_scroll_region(unsigned top_row, unsigned bot_row);
+void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n);
+void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n);
 
 /* Clear the entire framebuffer to black. */
 void fb_clear_screen(void);

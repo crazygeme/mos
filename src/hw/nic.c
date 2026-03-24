@@ -23,24 +23,9 @@ static nic_dev *nic_register(nic_dev *dev)
 	return NULL;
 }
 
-static const char *pci_get_chip_name(uint16_t v, uint16_t d)
-{
-	int i = 0;
-	for (i = 0; i < PCI_DEVTABLE_LEN; i++) {
-		if (PciDevTable[i].VenId == v && PciDevTable[i].DevId == d) {
-			return PciDevTable[i].Chip;
-		}
-	}
-	return "";
-}
-
 static void scan_all_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 {
-	const char *chip;
 	nic_dev *dev = NULL;
-	chip = pci_get_chip_name(v, d);
-	if (!chip) // unknown chip
-		return;
 
 	if (v == 0x8086) {
 		if (d == 0x100E || d == 0x100F || d == 0x1000 || d == 0x1001)

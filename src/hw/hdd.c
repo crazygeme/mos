@@ -414,7 +414,7 @@ static void identify_ata_device(ata_disk *d)
 	/* Send the IDENTIFY DEVICE command, wait for an interrupt
        indicating the device's response is ready, and read the data
        into our buffer. */
-	__sync_fetch_and_add(&c->req_seq, 1);
+	c->req_seq = c->resp_seq + 1;
 
 	select_device(d);
 
@@ -428,6 +428,8 @@ static void identify_ata_device(ata_disk *d)
 	}
 
 	input_sector(c, id);
+
+	c->req_seq = c->resp_seq;
 
 	/* Calculate capacity.
        Read model name and serial number. */
@@ -1061,7 +1063,7 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 	channel *volatile c = d->channel;
 	mutex_lock(&c->lock);
 
-	__sync_fetch_and_add(&c->req_seq, 1);
+	c->req_seq = c->resp_seq + 1;
 
 	do {
 		select_sector(d, sec_no);
@@ -1071,6 +1073,8 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 	} while (!wait_resp(c));
 
 	input_sector(c, buf);
+
+	c->req_seq = c->resp_seq;
 
 	mutex_unlock(&c->lock);
 
@@ -1087,7 +1091,7 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 	mutex_lock(&c->lock);
 
-	__sync_fetch_and_add(&c->req_seq, 1);
+	c->req_seq = c->resp_seq + 1;
 
 	do {
 		select_sector(d, sec_no);
@@ -1097,6 +1101,8 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 		output_sector(c, buf);
 
 	} while (!wait_resp(c));
+
+	c->req_seq = c->resp_seq;
 
 	mutex_unlock(&c->lock);
 

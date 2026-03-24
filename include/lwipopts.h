@@ -44,6 +44,12 @@
 /* ── Ethernet ───────────────────────────────────────────────────────────── */
 #define LWIP_ETHERNET 1
 
+/* ── Loopback ───────────────────────────────────────────────────────────── */
+/* Enables per-netif loopback queue and the dedicated lo netif (127.0.0.1). */
+/* LWIP_HAVE_LOOPIF is derived as (LWIP_NETIF_LOOPBACK && !LWIP_SINGLE_NETIF). */
+/* In NO_SYS mode, LWIP_NETIF_LOOPBACK_MULTITHREADING defaults to 0 (poll). */
+#define LWIP_NETIF_LOOPBACK 1
+
 /* ── Disable heavyweight optional features ──────────────────────────────── */
 #define LWIP_NETIF_API 0
 #define LWIP_SLIP 0

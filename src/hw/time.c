@@ -198,7 +198,7 @@ static unsigned pit_read_count(void)
 
 unsigned long long time_now_us()
 {
-#define TICK_US (1000000ULL / HZ)   /* microseconds per PIT tick (10000) */
+#define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
 	unsigned long t1, t2;
 	unsigned count;
 
@@ -214,8 +214,8 @@ unsigned long long time_now_us()
 	/* PIT counts DOWN from LATCH to 0; convert remaining count to elapsed us.
 	 * Resolution: 1 / CLOCK_TICK_RATE ≈ 0.84 μs, no calibration needed. */
 	unsigned elapsed = (count <= LATCH) ? (LATCH - count) : 0;
-	unsigned long long frac = (unsigned long long)elapsed * 1000000ULL
-				  / CLOCK_TICK_RATE;
+	unsigned long long frac =
+		(unsigned long long)elapsed * 1000000ULL / CLOCK_TICK_RATE;
 
 	return (unsigned long long)t1 * TICK_US + frac;
 #undef TICK_US

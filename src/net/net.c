@@ -109,18 +109,28 @@ static void lwip_timer_cb(timer_t *t, void *ctx)
 	(void)t;
 	(void)ctx;
 	sys_check_timeouts();
+	/* In NO_SYS mode, drain loopback queues on all netifs. */
+	netif_poll_all();
 }
 
 /* ── KERNEL_INIT entry point ────────────────────────────────────────────────── */
 void net_init(void)
 {
+	/*
+	 * lwip_init() creates the loopback netif (127.0.0.1) unconditionally
+	 * inside netif_init().  Do this first so that loopback is always
+	 * available, even when no physical NIC is present.
+	 */
+	lwip_init();
+
+	/* Poll lwIP timers every 100 ms — required for loopback delivery. */
+	timer_start(lwip_timer_cb, 100, 1, NULL);
+
 	nic_dev *nic = nic_getdev(0);
 	if (!nic) {
-		printk("net: no NIC found, skipping network init\n");
+		printk("net: no NIC found, loopback only\n");
 		return;
 	}
-
-	lwip_init();
 
 	ip4_addr_t ip, mask, gw;
 	IP4_ADDR(&ip, 0, 0, 0, 0);
@@ -136,9 +146,6 @@ void net_init(void)
 	nic->rx_ctx = &eth0;
 
 	dhcp_start(&eth0);
-
-	/* Poll lwIP timers every 100 ms */
-	timer_start(lwip_timer_cb, 100, 1, NULL);
 
 	printk("net: eth0 up, DHCP started\n");
 }

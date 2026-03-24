@@ -14,6 +14,10 @@
  *   %b  two-digit hex byte   %h  human-readable size (e.g. "1.2M")
  *   %%  literal percent
  *
+ * Length modifiers:
+ *   l    long / unsigned long  (%ld, %lu, %lx, %lo) — same as Linux i386
+ *   ll   long long             (%lld, %llu)
+ *
  * Flags, width, and precision (subset of C99):
  *   -    left-align within field width
  *   0    zero-pad instead of space-pad (numeric types)
@@ -208,12 +212,14 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 		char fill = (flag_zero && !flag_left) ? '0' : ' ';
 
 		/* ---- Parse length modifier ---- */
-		int flag_ll = 0;
+		int flag_l = 0, flag_ll = 0;
 		if (*p == 'l') {
 			p++;
 			if (*p == 'l') {
 				flag_ll = 1;
 				p++;
+			} else {
+				flag_l = 1;
 			}
 		}
 
@@ -226,6 +232,19 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			if (flag_ll) {
 				long long v = va_arg(ap, long long);
 				char *s = lltoa(v, 10, 1);
+				char *num = s;
+				int neg = (v < 0 && flag_zero);
+
+				if (neg) {
+					EMIT('-');
+					num++;
+				}
+				EMIT_PADDED(num, (int)strlen(num), width - neg,
+					    fill, flag_left);
+				free(s);
+			} else if (flag_l) {
+				long v = va_arg(ap, long);
+				char *s = itoa((int)v, 10, 1);
 				char *num = s;
 				int neg = (v < 0 && flag_zero);
 
@@ -262,6 +281,13 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 				EMIT_PADDED(s, (int)strlen(s), width, fill,
 					    flag_left);
 				free(s);
+			} else if (flag_l) {
+				unsigned long v = va_arg(ap, unsigned long);
+				char *s = itoa((int)v, 10, 0);
+
+				EMIT_PADDED(s, (int)strlen(s), width, fill,
+					    flag_left);
+				free(s);
 			} else {
 				unsigned v = va_arg(ap, unsigned);
 				char *s = itoa((int)v, 10, 0);
@@ -273,7 +299,8 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			break;
 		}
 		case 'o': {
-			unsigned v = va_arg(ap, unsigned);
+			unsigned long v = flag_l ? va_arg(ap, unsigned long) :
+						   va_arg(ap, unsigned);
 			char *s = itoa((int)v, 8, 0);
 
 			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
@@ -282,7 +309,8 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 		}
 		case 'x':
 		case 'p': {
-			unsigned v = va_arg(ap, unsigned);
+			unsigned long v = flag_l ? va_arg(ap, unsigned long) :
+						   va_arg(ap, unsigned);
 			char *s = itoa((int)v, 16, 0);
 
 			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);

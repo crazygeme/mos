@@ -52,12 +52,14 @@ static unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
 	unsigned n = len < avail ? len : avail;
 	unsigned i;
 	const char *s = (const char *)src;
+	unsigned long long now = time_now_us();
 	for (i = 0; i < n; i++) {
 		sk->rxbuf[sk->rx_tail & (SOCK_RXBUF_SIZE - 1)] = s[i];
 		sk->rx_tail++;
 	}
 	if (n > 0)
-		us_to_timeval(time_now_us(), &sk->rx_stamp);
+		us_to_timeval(now, &sk->rx_stamp);
+
 	return n;
 }
 
@@ -422,7 +424,7 @@ static void fill_eth0_ifreq(struct ifreq *ifr, struct netif *nif, unsigned cmd)
 		ifr->ifr_mtu = nif->mtu;
 		break;
 	case SIOCGIFINDEX:
-		ifr->ifr_ifindex = 1;
+		ifr->ifr_ifindex = (int)(nif->num + 1);
 		break;
 	case SIOCGIFMETRIC:
 		ifr->ifr_metric = 0;
@@ -437,24 +439,27 @@ static void fill_lo_ifreq(struct ifreq *ifr, unsigned cmd)
 {
 	strncpy(ifr->ifr_name, "lo", IFNAMSIZ);
 
+	/* Use the real lwIP loopback netif when available. */
+	struct netif *lo = netif_find("lo0");
+
 	switch (cmd) {
 	case SIOCGIFFLAGS:
 		ifr->ifr_flags = IFF_UP | IFF_RUNNING | IFF_LOOPBACK;
 		break;
 	case SIOCGIFADDR:
 	case SIOCGIFCONF: {
-		/* 127.0.0.1 */
-		struct sockaddr_in *sin = (struct sockaddr_in *)&ifr->ifr_addr;
-		memset(sin, 0, sizeof(*sin));
-		sin->sin_family = AF_INET;
-		sin->sin_addr.s_addr = lwip_htonl(0x7F000001UL);
+		uint32_t addr = lo ? ip4_addr_get_u32(netif_ip4_addr(lo)) :
+				     lwip_htonl(0x7F000001UL);
+		fill_ifr_sin(ifr, addr);
 		break;
 	}
 	case SIOCGIFNETMASK: {
+		uint32_t mask = lo ? ip4_addr_get_u32(netif_ip4_netmask(lo)) :
+				     lwip_htonl(0xFF000000UL);
 		struct sockaddr_in *sin = (struct sockaddr_in *)&ifr->ifr_addr;
 		memset(sin, 0, sizeof(*sin));
 		sin->sin_family = AF_INET;
-		sin->sin_addr.s_addr = lwip_htonl(0xFF000000UL);
+		sin->sin_addr.s_addr = mask;
 		break;
 	}
 	case SIOCGIFBRDADDR:
@@ -468,7 +473,7 @@ static void fill_lo_ifreq(struct ifreq *ifr, unsigned cmd)
 		ifr->ifr_mtu = 65536;
 		break;
 	case SIOCGIFINDEX:
-		ifr->ifr_ifindex = 2;
+		ifr->ifr_ifindex = lo ? (int)(lo->num + 1) : 1;
 		break;
 	case SIOCGIFMETRIC:
 		ifr->ifr_metric = 0;
@@ -1203,10 +1208,14 @@ static void fmt_msg_flags(char *buf, int flags)
 		return;
 	}
 	buf[0] = '\0';
-	if (flags & MSG_DONTWAIT) strcat(buf, "MSG_DONTWAIT|");
-	if (flags & MSG_PEEK)     strcat(buf, "MSG_PEEK|");
-	if (flags & MSG_TRUNC)    strcat(buf, "MSG_TRUNC|");
-	if (flags & MSG_OOB)      strcat(buf, "MSG_OOB|");
+	if (flags & MSG_DONTWAIT)
+		strcat(buf, "MSG_DONTWAIT|");
+	if (flags & MSG_PEEK)
+		strcat(buf, "MSG_PEEK|");
+	if (flags & MSG_TRUNC)
+		strcat(buf, "MSG_TRUNC|");
+	if (flags & MSG_OOB)
+		strcat(buf, "MSG_OOB|");
 	int len = (int)strlen(buf);
 	if (len > 0 && buf[len - 1] == '|')
 		buf[len - 1] = '\0';
@@ -1232,9 +1241,8 @@ static void fmt_iov(char *buf, const struct iovec *iov, size_t iovlen)
 		strcpy(buf, "[]");
 		return;
 	}
-	sprintf(buf, "[{iov_base=%p, iov_len=%u}%s]",
-		iov[0].iov_base, (unsigned)iov[0].iov_len,
-		iovlen > 1 ? ", ..." : "");
+	sprintf(buf, "[{iov_base=%p, iov_len=%u}%s]", iov[0].iov_base,
+		(unsigned)iov[0].iov_len, iovlen > 1 ? ", ..." : "");
 }
 
 /* ── sendmsg / recvmsg ──────────────────────────────────────────────────────── */
@@ -1265,7 +1273,8 @@ static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 
 	/* TCP: write each iov segment directly into the send buffer */
 	if (sk->type == SOCK_STREAM) {
-		if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING) {
+		if (sk->state != SS_CONNECTED &&
+		    sk->state != SS_DISCONNECTING) {
 			ret = -ENOTCONN;
 			goto log;
 		}
@@ -1319,13 +1328,13 @@ static int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 log:
 	if (TestControl.verbos) {
 		char addr_buf[80], iov_buf[64], flag_buf[64];
-		fmt_sockaddr(addr_buf, (const struct sockaddr_in *)msg->msg_name);
+		fmt_sockaddr(addr_buf,
+			     (const struct sockaddr_in *)msg->msg_name);
 		fmt_iov(iov_buf, msg->msg_iov, msg->msg_iovlen);
 		fmt_msg_flags(flag_buf, flags);
 		klog("sendmsg(%d, {msg_name=%s, msg_namelen=%d, msg_iov=%s, msg_iovlen=%u, msg_controllen=0, msg_flags=0}, %s) = %d\n",
-		     fd, addr_buf, msg->msg_namelen,
-		     iov_buf, (unsigned)msg->msg_iovlen,
-		     flag_buf, ret);
+		     time_now_us(), fd, addr_buf, msg->msg_namelen, iov_buf,
+		     (unsigned)msg->msg_iovlen, flag_buf, ret);
 	}
 	return ret;
 }
@@ -1452,16 +1461,17 @@ done:
 	if (TestControl.verbos) {
 		char addr_buf[80], iov_buf[64], flag_buf[64], rflg_buf[64];
 		const struct sockaddr_in *peer =
-			msg->msg_name ? (const struct sockaddr_in *)msg->msg_name
-				      : (sk ? &sk->rx_src : NULL);
+			msg->msg_name ?
+				(const struct sockaddr_in *)msg->msg_name :
+				(sk ? &sk->rx_src : NULL);
 		fmt_sockaddr(addr_buf, peer);
 		fmt_iov(iov_buf, msg->msg_iov, msg->msg_iovlen);
 		fmt_msg_flags(flag_buf, flags);
 		fmt_msg_flags(rflg_buf, msg->msg_flags);
 		klog("recvmsg(%d, {msg_name=%s, msg_namelen=%d, msg_iov=%s, msg_iovlen=%u, msg_controllen=0, msg_flags=%s}, %s) = %d\n",
-		     fd, addr_buf, msg->msg_namelen,
-		     iov_buf, (unsigned)msg->msg_iovlen,
-		     rflg_buf, flag_buf, (int)delivered);
+		     time_now_us(), fd, addr_buf, msg->msg_namelen, iov_buf,
+		     (unsigned)msg->msg_iovlen, rflg_buf, flag_buf,
+		     (int)delivered);
 	}
 	return (int)delivered;
 }

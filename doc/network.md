@@ -338,9 +338,11 @@ Blocks until `rxbuf` has data (or `MSG_DONTWAIT` → `-EAGAIN`). For UDP/RAW, re
 | `SIOCGIFBRDADDR` | broadcast address (`ip | ~mask`) |
 | `SIOCGIFHWADDR` | MAC address (`sa_family = ARPHRD_ETHER`) |
 | `SIOCGIFMTU` | MTU (1500 for eth0, 65536 for lo) |
-| `SIOCGIFINDEX` | interface index (1 = eth0, 2 = lo) |
+| `SIOCGIFINDEX` | interface index (dynamic: `netif->num + 1`; lo = 1, eth0 = 2) |
 
 Interface names are lwIP-derived: `"e00"` for eth0 (matches `nif->name[0..1] + num`), `"lo"` for loopback.
+
+The loopback interface (`lo`) is a real lwIP `netif` (127.0.0.1/8, name `"lo0"`) created automatically by `lwip_init()` when `LWIP_NETIF_LOOPBACK=1`. Because it is the first netif added, it gets `num=0` (index 1); eth0 gets `num=1` (index 2). In NO_SYS mode, loopback packets are delivered synchronously during the 100 ms periodic timer via `netif_poll_all()`.
 
 ---
 

@@ -20,4 +20,7 @@ Network
 ![Screen shot: network](screenshot/network.png)
 
 Ping actually works
-![Screen shot: network](screenshot/ping.png)
+![Screen shot: ping](screenshot/ping.png)
+
+Dns actually works
+![Screen shot: dns](screenshot/dns.png)

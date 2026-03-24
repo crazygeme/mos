@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <hw/time.h>
+#include <lib/lock.h>
 
 /* ── Address families ───────────────────────────────────────────────────────── */
 #define AF_UNSPEC 0
@@ -20,6 +21,7 @@
 #define IPPROTO_ICMP 1
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
+#define IPPROTO_RAW 255 /* raw socket with IP_HDRINCL */
 
 /* ── socketcall sub-call numbers (Linux i386) ───────────────────────────────── */
 #define SYS_SOCKET 1
@@ -117,28 +119,72 @@ struct ifconf {
 	};
 };
 
-/* ── Socket option levels ───────────────────────────────────────────────────── */
-#define SOL_SOCKET 0xfff /* options for socket level */
+/* ── Socket option levels (Linux i386 values) ───────────────────────────────── */
+#define SOL_SOCKET 1 /* options for socket level */
 
-/* ── SOL_SOCKET option names ─────────────────────────────────────────────────── */
-#define SO_REUSEADDR 0x0004 /* allow local address reuse */
-#define SO_KEEPALIVE 0x0008 /* keep connections alive */
-#define SO_SNDBUF 0x1001 /* send buffer size */
-#define SO_RCVBUF 0x1002 /* receive buffer size */
-#define SO_ERROR 0x1007 /* get error status and clear */
-#define SO_TYPE 0x1008 /* get socket type */
-#define SO_LINGER 0x0080 /* linger on close if data present */
+/* ── SOL_SOCKET option names (Linux i386 values) ────────────────────────────── */
+#define SO_REUSEADDR 2 /* allow local address reuse */
+#define SO_TYPE 3 /* get socket type */
+#define SO_ERROR 4 /* get error status and clear */
+#define SO_SNDBUF 7 /* send buffer size */
+#define SO_RCVBUF 8 /* receive buffer size */
+#define SO_KEEPALIVE 9 /* keep connections alive */
+#define SO_LINGER 13 /* linger on close if data present */
+#define SO_RCVTIMEO 20 /* receive timeout */
+#define SO_SNDTIMEO 21 /* send timeout */
+#define SO_TIMESTAMP 29 /* receive SW timestamp as cmsg (struct timeval) */
 
-/* ── IPPROTO_TCP option names ───────────────────────────────────────────────── */
-#define TCP_NODELAY 0x01 /* disable Nagle algorithm */
-#define TCP_MAXSEG 0x02 /* maximum segment size */
-#define TCP_KEEPIDLE 0x04 /* keepalive idle time (seconds) */
+/* ── IPPROTO_IP option names (Linux values) ─────────────────────────────────── */
+#define IP_TTL 2 /* receive TTL as cmsg (int)                */
+#define IP_HDRINCL 3 /* application provides the IP header (SOCK_RAW) */
+#define IP_PKTINFO 8 /* receive pktinfo as cmsg (struct in_pktinfo) */
+#define IP_RECVERR 11 /* receive ICMP errors via error queue      */
+
+/* ── IPPROTO_ICMP option names ──────────────────────────────────────────────── */
+#define ICMP_FILTER \
+	1 /* set/get ICMP type filter bitmask (struct icmp_filter) */
+
+/* ICMP_FILTER bitmask: bit N set → drop incoming ICMP messages of type N */
+struct icmp_filter {
+	uint32_t data;
+};
+
+/* ── IPPROTO_TCP option names (Linux values) ────────────────────────────────── */
+#define TCP_NODELAY 1 /* disable Nagle algorithm */
+#define TCP_MAXSEG 2 /* maximum segment size */
+#define TCP_KEEPIDLE 4 /* keepalive idle time (seconds) */
 
 /* ── linger structure (for SO_LINGER) ───────────────────────────────────────── */
 struct linger {
 	int l_onoff; /* linger active */
 	int l_linger; /* linger time in seconds */
 };
+
+/* ── Ancillary data (cmsg) ──────────────────────────────────────────────────── */
+
+struct cmsghdr {
+	size_t cmsg_len; /* byte count including this header */
+	int cmsg_level; /* protocol level */
+	int cmsg_type; /* protocol-specific type */
+	/* followed by unsigned char cmsg_data[] */
+};
+
+/* Destination address and incoming interface for IP_PKTINFO */
+struct in_pktinfo {
+	int ipi_ifindex; /* incoming interface index */
+	struct in_addr ipi_spec_dst; /* local address (same as ipi_addr for rx) */
+	struct in_addr ipi_addr; /* header destination address */
+};
+
+#define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
+#define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
+#define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
+#define CMSG_DATA(cmsg) \
+	((void *)((char *)(cmsg) + CMSG_ALIGN(sizeof(struct cmsghdr))))
+#define CMSG_FIRSTHDR(mhdr)                                         \
+	((size_t)(mhdr)->msg_controllen >= sizeof(struct cmsghdr) ? \
+		 (struct cmsghdr *)(mhdr)->msg_control :            \
+		 (struct cmsghdr *)0)
 
 /* ── Scatter/gather I/O ─────────────────────────────────────────────────────── */
 struct iovec {
@@ -176,6 +222,11 @@ struct msghdr {
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
 #define SOCK_TIMEOUT_MS 30000 /* blocking-op timeout (ms) */
 
+/* ── Per-socket cmsg option flags (stored in mos_sock::cmsg_flags) ─────────── */
+#define SOCK_CMSG_TIMESTAMP (1u << 0) /* SO_TIMESTAMP  */
+#define SOCK_CMSG_PKTINFO (1u << 1) /* IP_PKTINFO    */
+#define SOCK_CMSG_TTL (1u << 2) /* IP_TTL        */
+
 /* ── Per-socket object ──────────────────────────────────────────────────────── */
 struct tcp_pcb;
 struct udp_pcb;
@@ -211,11 +262,47 @@ typedef struct _mos_sock {
 	struct sockaddr_in local;
 	struct sockaddr_in peer;
 
-	/* Timestamp of the last received packet (SIOCGSTAMP) */
+	/* Timestamp of the last received packet (SIOCGSTAMP / SO_TIMESTAMP) */
 	struct timeval rx_stamp;
+
+	/* IP_HDRINCL: application provides the full IP header on send */
+	int hdrincl;
+
+	/* Per-datagram metadata captured in the lwIP recv callbacks */
+	struct in_addr rx_dst; /* IP_PKTINFO: destination address */
+	int rx_ifindex; /* IP_PKTINFO: incoming interface index */
+	int rx_ttl; /* IP_TTL: hop limit of received packet */
+
+	/* Bitmask of enabled cmsg options (SOCK_CMSG_*) */
+	unsigned int cmsg_flags;
+
+	/* ICMP_FILTER: bitmask of ICMP types to drop (bit N → block type N) */
+	struct icmp_filter icmp_filter;
 
 	/* Task currently blocked waiting for data or state change, or NULL */
 	struct _task_struct *waiter;
+
+	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
+	struct _mos_sock *unix_peer;
+
+	/*
+	 * Protects rx_head, rx_tail, and rxbuf for AF_UNIX sockets.
+	 *
+	 * Network sockets (AF_INET) are safe without this lock because their
+	 * ring buffer follows a strict SPSC discipline: rx_write is only ever
+	 * called from the NIC IRQ handler (single producer) and rx_read from
+	 * a single task (single consumer).  A uniprocessor guarantee means
+	 * the ISR cannot be re-entered, so no concurrent modification occurs.
+	 *
+	 * AF_UNIX sockets break that assumption: after fork() both the parent
+	 * and the child hold a reference to the same mos_sock.  Either task
+	 * can call sock_write concurrently, making rx_write a multi-producer
+	 * operation.  A preemption mid-loop in rx_write would corrupt rx_tail
+	 * and interleave bytes from the two callers.  The spinlock prevents
+	 * that by disabling interrupts (and thus preemption) for the duration
+	 * of every ring-buffer access on the AF_UNIX path.
+	 */
+	spinlock_t rxbuf_lock;
 } mos_sock;
 
 #endif /* _NET_SOCKET_H */

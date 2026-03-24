@@ -61,7 +61,7 @@ static inline uint32_t pci_get_addr(uint32_t device, int field)
 {
 	return 0x80000000 | (pci_extract_bus(device) << 16) |
 	       (pci_extract_slot(device) << 11) |
-	       (pci_extract_func(device) << 8) | ((field) & 0xFC);
+	       (pci_extract_func(device) << 8) | ((field)&0xFC);
 }
 
 static inline uint32_t pci_box_device(int bus, int slot, int func)

@@ -13,7 +13,12 @@ _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _init=""
 _test=""
-_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
+_IS_MACOS=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
+if [ "$_IS_MACOS" -eq 1 ]; then
+	_netdev="vmnet-shared,id=net0"
+else
+	_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
+fi
 
 for arg in $@
 do
@@ -62,7 +67,15 @@ _TAP_NET="10.0.5.0/24"
 _TAP_RANGE="10.0.5.2,10.0.5.20,1h"
 
 setup_nat() {
-	# Create the TAP interface owned by the current user (no root for QEMU)
+	if [ "$_IS_MACOS" -eq 1 ]; then
+		# macOS: vmnet-shared provides TAP + DHCP + NAT automatically; nothing to set up.
+		echo "tap: using vmnet-shared (macOS) — no host setup required"
+		_tap_was_setup=1
+		trap 'cleanup_nat' EXIT INT TERM
+		return
+	fi
+
+	# Linux: Create the TAP interface owned by the current user (no root for QEMU)
 	sudo ip tuntap add "$_TAP_IF" mode tap user "$USER"
 	sudo ip addr add "$_TAP_GW/24" brd + dev "$_TAP_IF"
 	sudo ip link set "$_TAP_IF" up
@@ -90,6 +103,11 @@ setup_nat() {
 
 cleanup_nat() {
 	[ "$_tap_was_setup" -eq 0 ] && return
+
+	if [ "$_IS_MACOS" -eq 1 ]; then
+		return  # vmnet-shared tears itself down when QEMU exits
+	fi
+
 	echo "tap: tearing down NAT"
 
 	# Stop dnsmasq
@@ -120,7 +138,7 @@ fi
 qemu-system-i386 -cpu coreduo \
 	-display $_window \
 	-m $_ramsize \
-	-drive file="$diskfile",format=qcow2 \
+	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
 	-kernel $kernel_file \
 	-append "$_verbose $_profile init=$_init" \
 	-serial $_logtofile \

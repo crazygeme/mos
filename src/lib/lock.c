@@ -118,7 +118,7 @@ static void lock_base_acquire(lock_base *s, const char *func)
 			return;
 		}
 
-		ps_put_to_wait_queue(cur, &s->wait_list, func);
+		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
 		spinlock_unlock(&s->wait_lock);
 		task_sched();
 		/* After wakeup, retry from the top of the loop. */
@@ -198,7 +198,7 @@ void cond_notify(cond_t *s)
 void cond_wait_at_intr(cond_t *s)
 {
 	while (__sync_lock_test_and_set(&s->base.lock, 1) == 1)
-		task_sched();
+		;
 }
 
 void cond_notify_at_intr(cond_t *s)
@@ -334,4 +334,77 @@ void rwlock_write_unlock(rwlock_t *rw)
 	spinlock_unlock(&rw->wait_lock);
 	/* Yield so newly woken tasks get CPU time without waiting for a tick. */
 	task_sched();
+}
+
+/* ===========================================================================
+ * Semaphore (sem_t)
+ * ===========================================================================*/
+
+void sem_init(sem_t *s, int count)
+{
+	s->count = count;
+	list_init((list_entry *)&s->wait_list);
+	spinlock_init((spinlock_t *)&s->wait_lock);
+}
+
+/*
+ * Decrement the semaphore count.  If the count is already zero, sleep
+ * until sem_post increments it.
+ *
+ * Lost-wakeup fix: count is re-checked under wait_lock before sleeping,
+ * mirroring the same pattern used in lock_base_acquire.
+ */
+void _sem_wait(sem_t *s, const char *func)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	while (1) {
+		spinlock_lock((spinlock_t *)&s->wait_lock);
+
+		if (s->count > 0) {
+			s->count--;
+			spinlock_unlock((spinlock_t *)&s->wait_lock);
+			return;
+		}
+
+		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
+		spinlock_unlock((spinlock_t *)&s->wait_lock);
+		task_sched();
+	}
+}
+
+/*
+ * Increment the semaphore count.  Wake one sleeper if any are queued.
+ */
+void sem_post(sem_t *s)
+{
+	spinlock_lock((spinlock_t *)&s->wait_lock);
+	s->count++;
+	lock_wake_one_locked((list_entry *)&s->wait_list);
+	spinlock_unlock((spinlock_t *)&s->wait_lock);
+}
+
+/*
+ * Interrupt-compatible pair.
+ *
+ * sem_wait_at_intr: poll by yielding via task_sched() without entering the
+ * wait queue.  The task stays in the ready queue so sem_post_at_intr's
+ * atomic increment is sufficient to unblock it on the next reschedule.
+ *
+ * sem_post_at_intr: only atomically increment the count.  Safe in interrupt
+ * context because it never touches the wait queue or the spinlock.
+ *
+ * These two must always be used together; mixing with sem_wait/sem_post is
+ * unsafe.
+ */
+void sem_wait_at_intr(sem_t *s)
+{
+	while (__sync_fetch_and_add(&s->count, 0) == 0)
+		;
+	__sync_fetch_and_sub(&s->count, 1);
+}
+
+void sem_post_at_intr(sem_t *s)
+{
+	__sync_fetch_and_add(&s->count, 1);
 }

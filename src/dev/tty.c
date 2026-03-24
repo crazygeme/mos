@@ -759,7 +759,8 @@ static void tty_bash_spawner(void *p)
 	tty_state *state = (tty_state *)p;
 	char tty_path[16];
 	char *argv[] = { "/bin/bash", NULL };
-	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", NULL };
+	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "HOME=/root",
+			 NULL };
 	struct stat st;
 	task_struct *cur = CURRENT_TASK();
 
@@ -773,7 +774,7 @@ static void tty_bash_spawner(void *p)
 	cur->parent = state->parent;
 
 	/* Set working directory. */
-	strcpy(cur->user->cwd, "/");
+	strcpy(cur->user->cwd, "/root");
 
 	/* Set up TSS esp0 for user-mode entry. */
 	ps_update_tss((unsigned)cur + PAGE_SIZE);

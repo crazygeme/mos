@@ -11,7 +11,7 @@
 extern unsigned phymm_begin;
 extern unsigned phymm_end;
 extern unsigned phymm_used;
-extern unsigned cache_count; /* current page-cache pages */
+extern unsigned cache_count;
 extern unsigned pgc_top; /* page-table cache pages allocated */
 extern unsigned buffer_count;
 

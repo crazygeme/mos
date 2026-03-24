@@ -23,7 +23,8 @@
 | [Signal Handling](doc/signals.md)       | Delivery engine, vDSO trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, alarm, process group signals          |
 | [Network Stack](doc/network.md)         | e1000 NIC driver, lwIP integration, socket layer, TCP/UDP/RAW operations, ioctl, blocking model                               |
 | [Kernel Heap Allocator](doc/malloc.md)  | Segregated free-lists, block layout, coalescing, heap extension, user-space sys_brk                                           |
-| [Locking Primitives](doc/locks.md)      | Spinlock, condition variable, mutex, readers-writer lock                                                                      |
+| [Locking Primitives](doc/locks.md)      | Spinlock, condition variable, mutex, readers-writer lock, semaphore                                                           |
+| [ATA/IDE Disk Driver](doc/hdd.md)       | Bus Master DMA + PIO modes, PRDT layout, IRQ sync, LRU write-back block cache, partition discovery                            |
 
 ### Reference
 

@@ -63,7 +63,7 @@ fi
 qemu-system-i386 -cpu coreduo \
 	-display $_window \
 	-m $_ramsize \
-	-drive file="$diskfile",format=raw \
+	-drive file="$diskfile",format=raw,if=ide,index=0,media=disk \
 	-kernel $kernel_file \
 	-append "$_verbose $_profile init=$_init" \
 	-serial $_logtofile \

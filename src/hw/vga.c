@@ -255,8 +255,8 @@ static unsigned char number_font[][12] = {
 		b(11000000), b(10000000), b(00000000), b(00000000) /* 12 */
 	},
 	{
-		b(00000000), b(01111100), b(11000110), b(11001110), /* 4 */
-		b(11011110), b(11010110), b(11110110), b(11100110), /* 8 */
+		b(00000000), b(01111100), b(11000110), b(11000110), /* 4 */
+		b(11000110), b(11010110), b(11000110), b(11000110), /* 8 */
 		b(11000110), b(01111100), b(00000000), b(00000000) /* 12 */
 	},
 	{
@@ -739,6 +739,7 @@ static unsigned _window_char_height;
 static unsigned _fb_font_width;
 static unsigned _fb_font_height;
 static char _fb_text[VGA_RESOLUTION_X * VGA_RESOLUTION_Y];
+static unsigned _fb_color[VGA_RESOLUTION_X * VGA_RESOLUTION_Y];
 static unsigned _fb_x_off;
 static unsigned _fb_y_off;
 static unsigned _fb_cursor;
@@ -862,7 +863,15 @@ char fb_getchar(int col, int row)
 void fb_putchar(int col, int row, char c)
 {
 	_fb_text[row * _window_char_width + col] = c;
+	_fb_color[row * _window_char_width + col] = VGA_COLOR_WHITE;
 	fb_write_char(col, row, c, VGA_COLOR_WHITE);
+}
+
+void fb_putchar_color(int col, int row, char c, unsigned color)
+{
+	_fb_text[row * _window_char_width + col] = c;
+	_fb_color[row * _window_char_width + col] = color;
+	fb_write_char(col, row, c, color);
 }
 
 void fb_update_cursor(unsigned new_pos)
@@ -875,7 +884,7 @@ void fb_update_cursor(unsigned new_pos)
 	    val == '\t')
 		fb_write_char(col, row, 130, VGA_COLOR_BLACK);
 	else
-		fb_write_char(col, row, val, VGA_COLOR_WHITE);
+		fb_write_char(col, row, val, _fb_color[_fb_cursor]);
 
 	_fb_cursor = new_pos;
 	val = _fb_text[_fb_cursor];
@@ -886,7 +895,7 @@ void fb_update_cursor(unsigned new_pos)
 	    val == '\t')
 		fb_write_char(col, row, 129, VGA_COLOR_WHITE);
 	else
-		fb_write_char_mix_cursor(col, row, val, VGA_COLOR_WHITE,
+		fb_write_char_mix_cursor(col, row, val, _fb_color[_fb_cursor],
 					 VGA_COLOR_WHITE);
 }
 
@@ -925,6 +934,10 @@ void fb_scroll_line(void)
 	memcpy(_fb_text, next_char_row, txt_copy_size);
 	memset(last_char_row, ' ', _window_char_width);
 	memset(last_row, 0, row_pixel_size);
+	memcpy(_fb_color, _fb_color + _window_char_width,
+	       txt_copy_size * sizeof(unsigned));
+	memset(_fb_color + _window_char_width * (_window_char_height - 1), 0xFF,
+	       _window_char_width * sizeof(unsigned));
 }
 
 void fb_scroll_region(unsigned top_row, unsigned bot_row)
@@ -959,6 +972,11 @@ void fb_scroll_region(unsigned top_row, unsigned bot_row)
 		region_rows * _window_char_width);
 	memset(_fb_text + bot_row * _window_char_width, ' ',
 	       _window_char_width);
+	memmove(_fb_color + top_row * _window_char_width,
+		_fb_color + (top_row + 1) * _window_char_width,
+		region_rows * _window_char_width * sizeof(unsigned));
+	memset(_fb_color + bot_row * _window_char_width, 0xFF,
+	       _window_char_width * sizeof(unsigned));
 }
 
 /* Helper: clear cursor block / restore cursor block around a pixel blit. */
@@ -988,6 +1006,9 @@ void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n)
 		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
 		memset(_fb_text + row * _window_char_width, ' ',
 		       (bot_row - row + 1) * _window_char_width);
+		memset(_fb_color + row * _window_char_width, 0xFF,
+		       (bot_row - row + 1) * _window_char_width *
+			       sizeof(unsigned));
 		FB_CURSOR_SHOW();
 		return;
 	}
@@ -1001,6 +1022,11 @@ void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n)
 		move_rows * _window_char_width);
 	memset(_fb_text + row * _window_char_width, ' ',
 	       n * _window_char_width);
+	memmove(_fb_color + (row + n) * _window_char_width,
+		_fb_color + row * _window_char_width,
+		move_rows * _window_char_width * sizeof(unsigned));
+	memset(_fb_color + row * _window_char_width, 0xFF,
+	       n * _window_char_width * sizeof(unsigned));
 	FB_CURSOR_SHOW();
 }
 
@@ -1016,6 +1042,9 @@ void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n)
 		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
 		memset(_fb_text + row * _window_char_width, ' ',
 		       (bot_row - row + 1) * _window_char_width);
+		memset(_fb_color + row * _window_char_width, 0xFF,
+		       (bot_row - row + 1) * _window_char_width *
+			       sizeof(unsigned));
 		FB_CURSOR_SHOW();
 		return;
 	}
@@ -1029,6 +1058,11 @@ void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n)
 		move_rows * _window_char_width);
 	memset(_fb_text + (bot_row - n + 1) * _window_char_width, ' ',
 	       n * _window_char_width);
+	memmove(_fb_color + row * _window_char_width,
+		_fb_color + (row + n) * _window_char_width,
+		move_rows * _window_char_width * sizeof(unsigned));
+	memset(_fb_color + (bot_row - n + 1) * _window_char_width, 0xFF,
+	       n * _window_char_width * sizeof(unsigned));
 	FB_CURSOR_SHOW();
 }
 
@@ -1038,6 +1072,7 @@ void fb_clear_screen(void)
 		VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
 	memset((char *)_fb_buffer, 0, len);
 	memset(_fb_text, 0, sizeof(_fb_text));
+	memset(_fb_color, 0xFF, sizeof(_fb_color));
 }
 
 void fb_save_text(char *dst, unsigned size)
@@ -1069,8 +1104,7 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos)
 			continue;
 		col = i % _window_char_width;
 		row = i / _window_char_width;
-		fb_write_char(col, row, (int)(unsigned char)val,
-			      VGA_COLOR_WHITE);
+		fb_write_char(col, row, (int)(unsigned char)val, _fb_color[i]);
 	}
 
 	/* Draw cursor at saved position */
@@ -1083,7 +1117,8 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos)
 		fb_write_char(col, row, 129, VGA_COLOR_WHITE);
 	else
 		fb_write_char_mix_cursor(col, row, (int)(unsigned char)val,
-					 VGA_COLOR_WHITE, VGA_COLOR_WHITE);
+					 _fb_color[cursor_pos],
+					 VGA_COLOR_WHITE);
 }
 
 /* Bochs VBE / QEMU VGA hardware init */
@@ -1179,6 +1214,7 @@ void fb_enable()
 	_fb_x_off = _fb_y_off = 0;
 	_fb_cursor = 0;
 	glyph_cache_init();
+	memset(_fb_color, 0xFF, sizeof(_fb_color));
 
 	mm_size = _resolution_x * _resolution_y * 4;
 	if (_fb_buffer_phy) {

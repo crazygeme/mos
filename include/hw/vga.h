@@ -37,6 +37,7 @@ void fb_write_color(int x, int y, unsigned color);
 /* Character cell read/write (also updates the internal text shadow buffer). */
 char fb_getchar(int col, int row);
 void fb_putchar(int col, int row, char c);
+void fb_putchar_color(int col, int row, char c, unsigned color);
 
 /* Cursor */
 
@@ -103,9 +104,11 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos);
 #define VGA_COLOR_WHITE ARGB(0xff, 0xff, 0xff, 0xff)
 #define VGA_COLOR_RED ARGB(0xff, 0xff, 0x00, 0x00)
 #define VGA_COLOR_GREEN ARGB(0xff, 0x00, 0xff, 0x00)
-#define VGA_COLOR_BLUE ARGB(0xff, 0x00, 0x00, 0xFF)
+#define VGA_COLOR_BLUE ARGB(0xff, 0x00, 0x00, 0xff)
 #define VGA_COLOR_GRAY ARGB(0xff, 0xaa, 0xaa, 0xaa)
-#define VGA_COLOR_YELLOW ARGB(0xff, 0xFF, 0xFF, 0x00)
+#define VGA_COLOR_YELLOW ARGB(0xff, 0xff, 0xff, 0x00)
+#define VGA_COLOR_CYAN ARGB(0xff, 0x00, 0xff, 0xff)
+#define VGA_COLOR_MAGENTA ARGB(0xff, 0xff, 0x00, 0xff)
 
 /* Font cell dimensions in pixels. */
 #define char_height 12

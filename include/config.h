@@ -4,7 +4,7 @@
 #define UTS_SYSNAME "Linux"
 #define UTS_NODENAME "mos"
 #define UTS_RELEASE "2.4.20-8"
-#define UTS_VERSION "#1 SMP"
+#define UTS_VERSION "#1 Thu Mar 13 17:54:28 EST 2003"
 #define UTS_MACHINE "i686"
 
 #define KERNEL_PRIVILEGE 0

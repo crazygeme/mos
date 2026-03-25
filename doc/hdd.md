@@ -13,7 +13,7 @@ The ATA/IDE driver provides sector-level access to IDE disks with two transfer m
 | Mode | Trigger | Transfer mechanism |
 |---|---|---|
 | **Bus Master DMA** | PCI IDE controller BAR4 found | PRDT → hardware DMA → bounce buffer → caller |
-| **PIO fallback** | No DMA available | Interrupt-driven `REP INSD`/`REP OUTSD` |
+| **PIO fallback** | No DMA available | Busy-loop `REP INSD`/`REP OUTSD` |
 
 Above the raw disk layer sits a **write-back LRU block cache** (enabled by `HDD_CACHE_OPEN=1`) and an **lwext4 block device interface** for mounting ext4 partitions.
 
@@ -30,9 +30,9 @@ Above the raw disk layer sits a **write-back LRU block cache** (enabled by `HDD_
         │
  partition_read / partition_write               ← adds partition start offset
         │
- disk_read / disk_write                         ← DMA or PIO, one sector
+ disk_read / disk_write                         ← DMA or PIO, one sector (busy-loop)
         │
- ATA channel hardware (IRQ 14 / IRQ 15)
+ ATA channel hardware (IRQ 14 / IRQ 15 — registered but not used for sync)
 ```
 
 ---
@@ -98,8 +98,9 @@ Each transfer uses a single-entry PRDT covering exactly 512 bytes (one sector).
 ```
 select_sector → clear BM_STATUS → write PRDT phys addr →
 BM_CMD = READ → issue CMD_READ_DMA → BM_CMD = READ|START →
-sem_wait_at_intr (wait for IRQ) →
-check BM_STATUS for error → memcpy dma_buf → caller
+poll BM_STATUS bit 0 until clear → BM_CMD = 0 (stop) →
+read reg_status (ack IRQ) → check BM_STATUS for error →
+memcpy dma_buf → caller
 ```
 
 ### DMA write sequence
@@ -108,7 +109,8 @@ check BM_STATUS for error → memcpy dma_buf → caller
 select_sector → memcpy caller → dma_buf →
 clear BM_STATUS → write PRDT phys addr → BM_CMD = WRITE →
 issue CMD_WRITE_DMA → BM_CMD = WRITE|START →
-sem_wait_at_intr (wait for IRQ) → check BM_STATUS for error
+poll BM_STATUS bit 0 until clear → BM_CMD = 0 (stop) →
+read reg_status (ack IRQ) → check BM_STATUS for error
 ```
 
 ---
@@ -117,23 +119,18 @@ sem_wait_at_intr (wait for IRQ) → check BM_STATUS for error
 
 Used when `bm_base == 0` (DMA not available).
 
-**Read:** issue `CMD_READ_SECTORS` → wait IRQ (`sem_wait_at_intr`) → poll DRQ → `REP INSD`
-**Write:** issue `CMD_WRITE_SECTORS` → poll DRQ → `REP OUTSD` → wait IRQ (`sem_wait_at_intr`)
-
-The write path explicitly waits for the completion IRQ to ensure the channel lock is not released before the drive finishes writing.
+**Read:** issue `CMD_READ_SECTORS` → `wait_while_busy` (poll `alt_status`) → read `reg_status` (ack IRQ) → `REP INSD`
+**Write:** issue `CMD_WRITE_SECTORS` → `wait_while_busy` (poll DRQ) → `REP OUTSD` → `wait_while_busy` (poll BSY) → read `reg_status` (ack IRQ)
 
 ---
 
 ## Interrupt Handling
 
-IRQ 14 (primary, vector `0x2E`) and IRQ 15 (secondary, vector `0x2F`) both route to `interrupt_handler`.
+IRQ 14 (primary, vector `0x2E`) and IRQ 15 (secondary, vector `0x2F`) are registered but play no role in I/O synchronisation.
 
-On IRQ:
-1. Stop the DMA engine: `BM_CMD = 0` (if DMA active).
-2. Acknowledge the ATA interrupt by reading the status register.
-3. Post the completion semaphore: `sem_post_at_intr(&c->completion_wait)`.
+All transfers use **busy-loop polling** — `wait_while_busy` polls `reg_alt_status` until BSY clears, and DMA completion polls `BM_STATUS` bit 0. After polling confirms completion, `reg_status` is read to ack the IRQ line before the interrupt handler can fire.
 
-The `expecting_interrupt` flag prevents spurious interrupts from posting the semaphore unexpectedly.
+The registered `interrupt_handler` is a no-op and exists only to prevent unhandled-IRQ faults from spurious asserts.
 
 ---
 
@@ -141,19 +138,17 @@ The `expecting_interrupt` flag prevents spurious interrupts from posting the sem
 
 ```c
 typedef struct _channel {
-    char           name[8];             // "ide0" / "ide1"
-    unsigned short reg_base;            // ATA I/O base (0x1F0 / 0x170)
-    unsigned char  irq;                 // IRQ vector (0x2E / 0x2F)
-    mutex_t        lock;                // serialises all I/O on this channel
-    volatile int   expecting_interrupt; // set before command, cleared in ISR
-    sem_t          completion_wait;     // ISR posts; disk_read/write waits
-    ata_disk       devices[2];          // [0]=master, [1]=slave
+    char           name[8];        // "ide0" / "ide1"
+    unsigned short reg_base;       // ATA I/O base (0x1F0 / 0x170)
+    unsigned char  irq;            // IRQ vector (0x2E / 0x2F)
+    mutex_t        lock;           // serialises all I/O on this channel
+    ata_disk       devices[2];     // [0]=master, [1]=slave
 
     /* DMA fields (all zero when DMA unavailable) */
-    unsigned short bm_base;             // Bus Master I/O base
-    prdt_entry_t  *prdt;                // PRDT table (kernel virtual address)
-    void          *dma_buf;             // 512-byte bounce buffer (virtual)
-    unsigned int   dma_buf_phys;        // physical address of dma_buf
+    unsigned short bm_base;        // Bus Master I/O base
+    prdt_entry_t  *prdt;           // PRDT table (kernel virtual address)
+    void          *dma_buf;        // 512-byte bounce buffer (virtual)
+    unsigned int   dma_buf_phys;   // physical address of dma_buf
 } channel;
 ```
 
@@ -218,8 +213,8 @@ Registered at boot priority 2 via `KERNEL_INIT(2, hdd_init)`.
 pci_scan → detect IDE Bus Master (g_bm_base)
 enable PCI Bus Master bit on IDE controller
 for each channel (ide0, ide1):
-    mutex_init, sem_init(completion_wait, 0)
-    int_register(irq, interrupt_handler)
+    mutex_init
+    int_register(irq, interrupt_handler)  ← no-op handler, prevents unhandled-IRQ fault
     reset_channel  →  check_device_type  →  identify_ata_device
     dma_init_channel  →  allocate PRDT + bounce buffer
 ```

@@ -103,8 +103,6 @@ typedef struct _channel {
 	unsigned short reg_base; /* ATA command block base I/O port  */
 	unsigned char irq; /* IRQ vector (PIC-remapped)        */
 	mutex_t lock;
-	volatile int expecting_interrupt;
-	sem_t completion_wait;
 	ata_disk devices[2];
 
 	/* Bus Master DMA (all zero when DMA unavailable) */
@@ -120,7 +118,7 @@ typedef struct _channel {
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
 #define PREREAD_SECTOR 8
 #define HEAD_SECTOR(s) ((s) / PREREAD_SECTOR * PREREAD_SECTOR)
-#define SECTOR_OFF(s) ((s)-HEAD_SECTOR(s))
+#define SECTOR_OFF(s) ((s) - HEAD_SECTOR(s))
 
 typedef struct _block_cache_item {
 	int sector; /* head sector of this cached extent        */
@@ -289,8 +287,6 @@ static void hdd_init(void)
 		}
 
 		mutex_init(&c->lock);
-		c->expecting_interrupt = 0;
-		sem_init(&c->completion_wait, 0);
 		c->bm_base = 0;
 		c->prdt = NULL;
 		c->dma_buf = NULL;
@@ -325,23 +321,8 @@ static void hdd_init(void)
 /* ── Interrupt handler ────────────────────────────────────────────────────────── */
 static void interrupt_handler(intr_frame *f)
 {
-	channel *c;
-	for (c = channels; c < channels + CHANNEL_CNT; c++) {
-		if (f->vec_no != c->irq)
-			continue;
-		if (c->expecting_interrupt) {
-			c->expecting_interrupt = 0;
-			/* Stop DMA engine if active. */
-			if (c->bm_base)
-				port_write_byte(c->bm_base + BM_CMD, 0);
-			/* Acknowledge ATA interrupt by reading status. */
-			port_read_byte(reg_status(c));
-			sem_post_at_intr(&c->completion_wait);
-		} else {
-			klog("%s: unexpected interrupt\n", c->name);
-		}
-		return;
-	}
+	(void)f;
+	/* ACK is done in the polling path; nothing to do here. */
 }
 
 /* ── Channel reset and device detection ──────────────────────────────────────── */
@@ -414,15 +395,14 @@ static void identify_ata_device(ata_disk *d)
 	unsigned int capacity;
 
 	select_device(d);
-	c->expecting_interrupt = 1;
 	port_write_byte(reg_command(c), CMD_IDENTIFY_DEVICE);
 
-	sem_wait_at_intr(&c->completion_wait);
-
 	if (!wait_while_busy(d)) {
+		port_read_byte(reg_status(c)); /* ack */
 		d->is_ata = 0;
 		return;
 	}
+	port_read_byte(reg_status(c)); /* ack */
 	input_sector(c, id);
 
 	capacity = *(unsigned int *)&id[60 * 2];
@@ -485,10 +465,8 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *volatile d = aux;
 	channel *volatile c = d->channel;
-	unsigned flag;
 
 	mutex_lock(&c->lock);
-	flag = int_intr_enable();
 
 	select_sector(d, sec_no);
 
@@ -507,15 +485,18 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 		/* Set transfer direction: device → memory. */
 		port_write_byte(c->bm_base + BM_CMD, BM_CMD_READ);
 		/* Issue ATA DMA read command. */
-		c->expecting_interrupt = 1;
 		port_write_byte(reg_command(c), CMD_READ_DMA);
 		/* Start bus master. */
 		port_write_byte(c->bm_base + BM_CMD,
 				BM_CMD_READ | BM_CMD_START);
 
-		sem_wait_at_intr(&c->completion_wait);
+		/* Poll until DMA engine finishes (active bit clears). */
+		while (port_read_byte(c->bm_base + BM_STATUS) & 0x01)
+			;
+		port_write_byte(c->bm_base + BM_CMD, 0);
 
-		/* Read and clear BM status. */
+		/* Ack ATA interrupt, then read and clear BM status. */
+		port_read_byte(reg_status(c));
 		{
 			unsigned char bm_sta =
 				port_read_byte(c->bm_base + BM_STATUS);
@@ -528,19 +509,16 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 		memcpy(buf, c->dma_buf, BLOCK_SECTOR_SIZE);
 	} else {
 		/* ── PIO path ── */
-		c->expecting_interrupt = 1;
 		port_write_byte(reg_command(c), CMD_READ_SECTORS);
-
-		sem_wait_at_intr(&c->completion_wait);
 
 		if (!wait_while_busy(d))
 			klog("%s: PIO read timeout sector=%u\n", d->name,
 			     sec_no);
 
+		port_read_byte(reg_status(c)); /* ack */
 		input_sector(c, buf);
 	}
 
-	int_intr_setlevel(flag);
 	mutex_unlock(&c->lock);
 	disk_read_size += len;
 	return len;
@@ -550,10 +528,8 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
 	channel *c = d->channel;
-	unsigned flag;
 
 	mutex_lock(&c->lock);
-	flag = int_intr_enable();
 
 	select_sector(d, sec_no);
 
@@ -572,14 +548,18 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 		/* Set transfer direction: memory → device. */
 		port_write_byte(c->bm_base + BM_CMD, BM_CMD_WRITE);
 		/* Issue ATA DMA write command. */
-		c->expecting_interrupt = 1;
 		port_write_byte(reg_command(c), CMD_WRITE_DMA);
 		/* Start bus master. */
 		port_write_byte(c->bm_base + BM_CMD,
 				BM_CMD_WRITE | BM_CMD_START);
 
-		sem_wait_at_intr(&c->completion_wait);
+		/* Poll until DMA engine finishes (active bit clears). */
+		while (port_read_byte(c->bm_base + BM_STATUS) & 0x01)
+			;
+		port_write_byte(c->bm_base + BM_CMD, 0);
 
+		/* Ack ATA interrupt, then read and clear BM status. */
+		port_read_byte(reg_status(c));
 		{
 			unsigned char bm_sta =
 				port_read_byte(c->bm_base + BM_STATUS);
@@ -593,9 +573,8 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 		/*
 		 * ── PIO path ──
 		 * After CMD_WRITE_SECTORS the device asserts DRQ when ready
-		 * for data.  Write the sector, then wait for the completion IRQ.
+		 * for data.  Write the sector, then poll for completion.
 		 */
-		c->expecting_interrupt = 1;
 		port_write_byte(reg_command(c), CMD_WRITE_SECTORS);
 
 		if (!wait_while_busy(d))
@@ -604,10 +583,11 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 
 		output_sector(c, buf);
 
-		sem_wait_at_intr(&c->completion_wait);
+		/* Poll for write completion (BSY clears), then ack. */
+		wait_while_busy(d);
+		port_read_byte(reg_status(c)); /* ack */
 	}
 
-	int_intr_setlevel(flag);
 	mutex_unlock(&c->lock);
 	disk_write_size += len;
 	return len;

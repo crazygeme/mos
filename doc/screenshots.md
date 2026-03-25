@@ -38,3 +38,7 @@ Dns actually works
 `wget` actually works
 ---
 ![Screen shot: dns](screenshot/wget.png)
+
+Throughput is very poor rightnow
+---
+![Screen shot: throughput](screenshot/throughput.png)

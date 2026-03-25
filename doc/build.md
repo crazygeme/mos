@@ -42,20 +42,20 @@ make clean      # remove build artifacts
 
 ## Running
 
-All run modes go through `rh9.sh`:
+All run modes go through `run.sh`:
 
-- `./rh9.sh` — Boot into SysV init (`/sbin/init`)
-- `./rh9.sh bash` — Boot directly into `/bin/bash`
-- `./rh9.sh bash debug` — Boot into bash, wait for GDB on `tcp::8888`
-- `./rh9.sh tap bash` — Boot into bash with TAP/NAT networking
-- `./rh9.sh verbose` — Boot with serial log output
-- `./rh9.sh kvm` — Enable KVM acceleration (Linux only)
-- `./rh9.sh curses` — Use current terminal as VM console (no GUI window)
-- `./rh9.sh logtofile` — Write kernel log to `out/krn.log` instead of stdio
+- `./run.sh` — Boot into SysV init (`/sbin/init`)
+- `./run.sh bash` — Boot directly into `/bin/bash`
+- `./run.sh bash debug` — Boot into bash, wait for GDB on `tcp::8888`
+- `./run.sh tap bash` — Boot into bash with TAP/NAT networking
+- `./run.sh verbose` — Boot with serial log output
+- `./run.sh kvm` — Enable KVM acceleration (Linux only)
+- `./run.sh curses` — Use current terminal as VM console (no GUI window)
+- `./run.sh logtofile` — Write kernel log to `out/krn.log` instead of stdio
 
 ### TAP networking
 
-`./rh9.sh tap` creates a `tap0` interface (`10.0.5.1/24`), enables IP
+`./run.sh tap` creates a `tap0` interface (`10.0.5.1/24`), enables IP
 forwarding, sets up iptables masquerade, and starts `dnsmasq` for DHCP.
 Requires `sudo` for the network setup steps.
 
@@ -64,7 +64,7 @@ Requires `sudo` for the network setup steps.
 ## Debugging
 
 ```sh
-./rh9.sh bash debug        # start QEMU paused, listening on tcp::8888
+./run.sh bash debug        # start QEMU paused, listening on tcp::8888
 
 # in another terminal:
 gdb-multiarch out/kernel   # Linux
@@ -79,7 +79,7 @@ i386-elf-gdb out/kernel    # macOS
 ## Profiling
 
 1. Run `profiling.sh` — it waits for an OS instance to attach to.
-2. In another terminal: `./rh9.sh profile`
+2. In another terminal: `./run.sh profile`
 3. Press any key in the `profiling.sh` terminal to arm the profiler.
 4. Run workloads inside MOS.
 5. Press any key again to capture, then Ctrl-C to generate the report.

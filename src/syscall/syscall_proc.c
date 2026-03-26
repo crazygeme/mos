@@ -212,8 +212,8 @@ int sys_brk(unsigned _top)
 
 	top = _top;
 	if (task->user->brk == task->user->start_brk) {
-		do_mmap(task->user->brk, PAGE_SIZE, PROT_READ | PROT_WRITE,
-			MAP_FIXED, -1, 0);
+		do_mmap(task->user->brk, PAGE_SIZE,
+			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
 		task->user->brk += PAGE_SIZE;
 	}
 

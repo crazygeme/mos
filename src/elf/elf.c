@@ -129,56 +129,84 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 			 * BSS present (memsz > filesz).
 			 *
 			 * file_page_end: floor(elf_bss) — start of the boundary
-			 *   page; also the end of the whole-file-pages region.
+			 *   page (the page that straddles file data and BSS).
 			 */
 			unsigned file_page_end = elf_bss & PAGE_SIZE_MASK;
 
-			/* Region 1: whole file-data pages, lazy file-backed. */
-			if (file_page_end > va_begin)
+			/*
+			 * Region 1: file-data pages INCLUDING the boundary page,
+			 * all registered as lazy file-backed.
+			 *
+			 * Unlike the old approach (which stopped at file_page_end
+			 * and mapped the boundary page anonymous), we extend the
+			 * file-backed region to file_pages_end.  This matches
+			 * Linux: /proc/maps shows one contiguous file-backed entry
+			 * [va_begin, file_pages_end) instead of stopping one page
+			 * short.
+			 *
+			 * The boundary page's BSS tail is corrected below by
+			 * eagerly installing its PTE before writing, which avoids
+			 * the kernel-mode page-fault problem (the fault handler
+			 * calls sys_exit for kernel faults on unmapped user VAs).
+			 */
+			if (file_pages_end > va_begin)
 				do_mmap_kernel(va_begin,
-					       file_page_end - va_begin, prot,
+					       file_pages_end - va_begin, prot,
 					       MAP_FIXED, fp, file_off);
 
 			/*
-			 * Region 2: boundary page — only when filesz is not
-			 * page-aligned (elf_bss is strictly inside the page).
+			 * Boundary page — only when filesz is not page-aligned
+			 * (elf_bss falls strictly inside the page).
 			 *
-			 * We allocate an anonymous page, read only the valid
-			 * file bytes into the lower portion, and leave the BSS
-			 * tail zero (anonymous pages are zero-filled on fault).
+			 * Install the PTE eagerly so that the user VA is
+			 * accessible from kernel mode without triggering a fault.
+			 * Then zero the whole page and overwrite the lower
+			 * [file_page_end, elf_bss) bytes with the actual file
+			 * content.  Result: file data in [file_page_end, elf_bss),
+			 * zeros in [elf_bss, file_pages_end) — exactly correct.
+			 *
+			 * The vm_region stays file-backed (registered above), so
+			 * /proc/maps is accurate.  Because the PTE is present the
+			 * page-fault handler will never reload this page from file,
+			 * so the zeroed BSS tail is permanent.
 			 */
 			if (elf_bss > file_page_end) {
-				unsigned mapped;
-				unsigned page_file_off;
-				unsigned bytes;
-
-				mapped = do_mmap_kernel(file_page_end,
-							PAGE_SIZE,
-							prot | PROT_WRITE,
-							MAP_FIXED, 0, 0);
-
-				page_file_off =
+				unsigned page_file_off =
 					file_off + (file_page_end - va_begin);
-				bytes = elf_bss - file_page_end;
+				unsigned bytes = elf_bss - file_page_end;
+
+				mm_map_page(file_page_end, 0,
+					    PAGE_ENTRY_USER_DATA);
+				INVLPG(file_page_end);
+				memset((void *)file_page_end, 0, PAGE_SIZE);
 				elf_read(fp, page_file_off,
 					 (void *)file_page_end, bytes);
 
-				/*
-				 * Restore the segment's true protection if it
-				 * does not include PROT_WRITE (e.g. read-only
-				 * segment with a trailing BSS — unusual, but
-				 * handle it correctly).
-				 */
-				if (!(prot & PROT_WRITE))
-					do_mmap_update(mapped, prot, 0);
+				/* Restore read-only protection if needed. */
+				if (!(prot & PROT_WRITE)) {
+					mm_set_map_flag(file_page_end,
+							PAGE_ENTRY_USER_CODE);
+					INVLPG(file_page_end);
+				}
 			}
 
-			/* Region 3: pure BSS pages, anonymous zero-filled. */
+			/*
+			 * Region 2: pure BSS pages beyond the boundary page,
+			 * anonymous zero-filled on demand.
+			 *
+			 * PROT_EXEC is added unconditionally: on Linux 2.4 x86
+			 * there is no NX bit, so any readable page is implicitly
+			 * executable.  The kernel always set VM_EXEC on anonymous
+			 * writable regions, which is why /proc/maps shows "rwxp"
+			 * for BSS/heap on RH9.  Matching this prot lets the merge
+			 * logic coalesce the BSS region with the heap (brk pages)
+			 * into a single "rwxp" entry.
+			 */
 			if (mem_pages_end > file_pages_end)
 				do_mmap_kernel(file_pages_end,
 					       mem_pages_end - file_pages_end,
-					       prot | PROT_WRITE, MAP_FIXED, 0,
-					       0);
+					       prot | PROT_WRITE | PROT_EXEC,
+					       MAP_FIXED, 0, 0);
 		}
 	} else {
 		/*

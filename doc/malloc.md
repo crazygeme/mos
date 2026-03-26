@@ -183,7 +183,8 @@ top == 0:
     Return current brk.
 
 top > current brk:
-    Expand: do_mmap(brk, ceil_pages * PAGE_SIZE, PROT_READ|PROT_WRITE, anon)
+    Expand: do_mmap(brk, ceil_pages * PAGE_SIZE, PROT_READ|PROT_WRITE,
+                    MAP_FIXED | MAP_ANONYMOUS)
     brk += pages * PAGE_SIZE
     Return new brk.
 
@@ -198,7 +199,20 @@ top >= USER_HEAP_END:
 
 `USER_HEAP_END = TASK_UNMAPPED_BASE` — the same ceiling that limits mmap growth.
 
-Glibc calls `sys_brk(0)` at startup to discover the initial break, then extends it in page-sized increments via repeated `sys_brk` calls.
+**`MAP_FIXED` on expansion:** the growth `do_mmap` uses `MAP_FIXED` to guarantee
+the mapping lands exactly at `brk`.  Without it, if a prior shrink left stale
+regions in the heap range (e.g. due to a multi-region unmap), `do_mmap_kernel`
+would silently fall back to `vm_disc_map` and place the mapping elsewhere —
+advancing `brk` into an unmapped region and causing a page fault on the next
+heap access.
+
+**Multi-region shrink:** `do_munmap` correctly handles the case where the shrink
+range spans several vm_regions (common when glibc re-grows the heap after a
+partial release).  Each overlapping region is split at the unmap boundary;
+physical pages outside `[top, old_brk)` are left intact.
+
+Glibc calls `sys_brk(0)` at startup to discover the initial break, then extends
+it in page-sized increments via repeated `sys_brk` calls.
 
 ---
 

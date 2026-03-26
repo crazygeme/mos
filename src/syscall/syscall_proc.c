@@ -212,8 +212,8 @@ int sys_brk(unsigned _top)
 
 	top = _top;
 	if (task->user->brk == task->user->start_brk) {
-		do_mmap(task->user->brk, PAGE_SIZE, PROT_READ | PROT_WRITE, 0,
-			-1, 0);
+		do_mmap(task->user->brk, PAGE_SIZE, PROT_READ | PROT_WRITE,
+			MAP_FIXED, -1, 0);
 		task->user->brk += PAGE_SIZE;
 	}
 
@@ -224,8 +224,11 @@ int sys_brk(unsigned _top)
 	} else if (top > task->user->brk) {
 		size = top - task->user->brk;
 		pages = (size - 1) / PAGE_SIZE + 1;
+		/* MAP_FIXED ensures the mapping lands at exactly brk, preventing
+		 * silent fallback to a different address if the range is still
+		 * partially occupied after a shrink. */
 		do_mmap(task->user->brk, PAGE_SIZE * pages,
-			PROT_READ | PROT_WRITE, 0, -1, 0);
+			PROT_READ | PROT_WRITE, MAP_FIXED, -1, 0);
 		top = task->user->brk + pages * PAGE_SIZE;
 		task->user->brk = top;
 		ret = top;

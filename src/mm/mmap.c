@@ -489,56 +489,77 @@ void vm_flush_all_dirty(vm_struct_t vm)
  * do_munmap - syscall handler for munmap(2).
  *
  * Unmaps the page-aligned range [begin, end) from the current task's address
- * space.  If the range is a strict subset of an existing region, the region is
- * split and the portions outside [begin, end) are re-inserted as independent
- * mappings.
+ * space.  Handles ranges that span multiple vm_regions by iterating over all
+ * overlapping regions.  For each region the intersection with [begin, end) is
+ * physically unmapped; portions outside [begin, end) are re-inserted as
+ * independent mappings with their physical pages left intact.
  *
- * Returns 0 on success, -EINVAL if no region covers addr or the range extends
- * beyond the containing region.
+ * Returns 0 on success.
  */
 int do_munmap(void *addr, unsigned length)
 {
 	task_struct *cur = CURRENT_TASK();
 	unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
-	unsigned end = ((unsigned)addr + length + PAGE_SIZE - 1) &
-		       PAGE_SIZE_MASK;
-	vm_region *region;
-	unsigned r_begin, r_end;
-	int r_prot, r_flag;
-	void *r_fp;
-	int r_offset;
+	/* Round length up to a page count, then compute end — avoids the
+	 * off-by-one that (addr+length+PAGE_SIZE-1)&PAGE_MASK produces when
+	 * length is already a multiple of PAGE_SIZE. */
+	unsigned pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+	unsigned end = begin + pages * PAGE_SIZE;
+	vm_key probe;
+	key_value_pair *pair;
+	unsigned vir;
 
-	region = vm_find_map(cur->user->vm, (unsigned)addr);
-	if (!region)
-		return -EINVAL;
+	if (length == 0)
+		return 0;
 
-	/* The unmap range must be fully contained within one existing region. */
-	if (begin < region->begin || end > region->end)
-		return -EINVAL;
+	probe.begin = begin;
+	probe.end = end;
 
-	/* Flush dirty MAP_SHARED pages in the unmapped range while they are
-	 * still accessible at their virtual addresses. */
-	vm_flush_dirty_region(region, begin, end);
+	while ((pair = hash_find(cur->user->vm, &probe)) != NULL) {
+		vm_region *region = pair->val;
+		vm_key *key = pair->key;
+		unsigned r_begin = region->begin;
+		unsigned r_end = region->end;
+		int r_prot = region->prot;
+		int r_flag = region->flag;
+		file *r_fp = region->fp;
+		int r_offset = region->offset;
 
-	/* Snapshot region data before vm_del_map() frees the region struct. */
-	r_begin = region->begin;
-	r_end = region->end;
-	r_prot = region->prot;
-	r_flag = region->flag;
-	r_fp = region->fp;
-	r_offset = region->offset;
+		/* Intersection of this region with the unmap range. */
+		unsigned unmap_begin = r_begin > begin ? r_begin : begin;
+		unsigned unmap_end = r_end < end ? r_end : end;
 
-	vm_del_map(cur->user->vm, (unsigned)addr);
+		/* Flush dirty MAP_SHARED pages before physical unmap. */
+		vm_flush_dirty_region(region, unmap_begin, unmap_end);
 
-	/* Preserve the left remnant [r_begin, begin), if any. */
-	if (r_begin < begin)
-		vm_add_map(cur->user->vm, r_begin, begin, r_prot, r_flag, r_fp,
-			   r_offset);
+		/* Unmap physical pages only in the intersection [unmap_begin, unmap_end).
+		 * Pages in remnant portions are left untouched in the page tables. */
+		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
+			mm_del_dynamic_map(vir);
 
-	/* Preserve the right remnant [end, r_end), if any. */
-	if (end < r_end)
-		vm_add_map(cur->user->vm, end, r_end, r_prot, r_flag, r_fp,
-			   r_offset + (int)(end - r_begin));
+		/* Hold a file ref across the evict() drop inside hash_remove(). */
+		if (r_fp)
+			fs_get_file(r_fp);
 
+		/* Remove this vm_region descriptor from the tree. */
+		hash_remove(cur->user->vm, key);
+
+		/* Preserve the left remnant [r_begin, unmap_begin) if any.
+		 * Its physical pages were not unmapped above. */
+		if (r_begin < unmap_begin)
+			vm_add_map(cur->user->vm, r_begin, unmap_begin, r_prot,
+				   r_flag, r_fp, r_offset);
+
+		/* Preserve the right remnant [unmap_end, r_end) if any. */
+		if (r_end > unmap_end)
+			vm_add_map(cur->user->vm, unmap_end, r_end, r_prot,
+				   r_flag, r_fp,
+				   r_offset + (int)(unmap_end - r_begin));
+
+		if (r_fp)
+			fs_put_file(r_fp);
+	}
+
+	RELOAD_CR3();
 	return 0;
 }

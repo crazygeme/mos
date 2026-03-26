@@ -215,12 +215,30 @@ Used by `do_mmap_kernel` when no hint address is given.
 
 ### `do_munmap` — unmap a range
 
-Supports partial unmap (unmapping a sub-range of an existing region). The
-containing region is split: portions outside the unmapped range are
-re-inserted as independent regions.
+Unmaps `[begin, end)` where `end = begin + ceil(length/PAGE_SIZE)*PAGE_SIZE`.
+Handles ranges that span **multiple vm_regions** by iterating over all
+overlapping regions until none remain:
 
-Before removing pages, `vm_flush_dirty_region` writes back any dirty
-`MAP_SHARED` pages to the backing file.
+```
+For each overlapping region R:
+  intersection = [max(R.begin, begin), min(R.end, end))
+  1. vm_flush_dirty_region(intersection)        — write back dirty MAP_SHARED pages
+  2. mm_del_dynamic_map() for each page in intersection — release physical pages
+  3. hash_remove(R)                             — drop the vm_region descriptor
+  4. re-insert left  remnant [R.begin, intersection.begin) if any
+  5. re-insert right remnant [intersection.end, R.end)     if any
+RELOAD_CR3()
+```
+
+Remnant portions are re-inserted as new vm_region descriptors; their physical
+pages were **not** unmapped in step 2 so they remain live in the page tables.
+File references are bumped before `hash_remove` and released after re-insert
+(same pattern as `vm_mprotect`) to prevent use-after-free.
+
+**Note on end calculation:** `end` is computed as
+`begin + ceil(length / PAGE_SIZE) * PAGE_SIZE` rather than
+`(begin + length + PAGE_SIZE - 1) & PAGE_MASK` — the latter incorrectly rounds
+an already page-aligned sum up by one extra page.
 
 ### `vm_mprotect` — change protection
 
@@ -363,9 +381,11 @@ first access to mapped page
 
 munmap(addr, length)
   └─ do_munmap
-       ├─ vm_flush_dirty_region  [write back dirty MAP_SHARED pages]
-       ├─ vm_del_map             [unmap PTEs, deref physical pages]
-       └─ re-insert remnants     [split if partial unmap]
+       └─ for each overlapping vm_region:
+            ├─ vm_flush_dirty_region  [write back dirty MAP_SHARED pages]
+            ├─ mm_del_dynamic_map     [unmap PTEs in intersection only]
+            ├─ hash_remove            [drop vm_region descriptor]
+            └─ re-insert remnants     [split; remnant pages stay live]
 
 fork()
   └─ vm_dup   [copy vm_region descriptors to child]

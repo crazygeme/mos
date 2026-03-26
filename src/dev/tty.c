@@ -89,9 +89,10 @@ typedef struct {
 	unsigned bg_color;
 } tty_state;
 
+#define DEFAULT_TTY 0
 static tty_state ttys[TTY_MAX_VDEV];
-static tty_state *this_ttys = &ttys[0];
-static int active_tty_idx = 0;
+static int active_tty_idx = DEFAULT_TTY;
+static tty_state *this_ttys = &ttys[DEFAULT_TTY];
 
 /*
  * tty_switch_lock - global spinlock protecting this_ttys, active_tty_idx,
@@ -1300,7 +1301,7 @@ static void tty_dev_register(super_block *dev_sb)
 	}
 
 	sb = sget(&tty_sops);
-	sb->s_fs_info = &ttys[0];
+	sb->s_fs_info = &ttys[DEFAULT_TTY];
 	vfs_mount(dev_sb, "/tty", sb);
 	sb_get(sb);
 	vfs_mount(dev_sb, "/console", sb);

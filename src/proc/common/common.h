@@ -49,17 +49,19 @@ void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 #define _DEFINE_PROC_FILE_IMPL(name, fill_func)                           \
 	static int _getattr_##name(inode *inode, struct stat *s)          \
 	{                                                                 \
-		s->st_atime = time_now_ms();                              \
+		unsigned long _now = time_unix_sec();                     \
+		s->st_atime = _now;                                       \
 		s->st_mode = inode->i_mode;                               \
 		s->st_size = (loff_t)inode->i_size;                       \
 		s->st_blksize = PAGE_SIZE;                                \
 		s->st_blocks = 0;                                         \
-		s->st_ctime = time_now_ms();                              \
-		s->st_dev = 0;                                            \
+		s->st_ctime = _now;                                       \
+		s->st_dev = 5;                                            \
 		s->st_gid = 0;                                            \
-		s->st_ino = 0;                                            \
-		s->st_mtime = 0;                                          \
+		s->st_ino = (unsigned long)inode;                         \
+		s->st_mtime = _now;                                       \
 		s->st_uid = 0;                                            \
+		s->st_nlink = 1;                                          \
 		return 0;                                                 \
 	}                                                                 \
                                                                           \

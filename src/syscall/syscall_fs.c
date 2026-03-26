@@ -136,8 +136,7 @@ int sys_stat64(const char *path, struct stat64 *s)
 	ret = do_stat("stat64", name, &s32, 1);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
-	s->__pad0 = 0;
-	s->st_ino = s32.st_ino;
+	s->__st_ino = s32.st_ino;
 	s->st_mode = s32.st_mode;
 	s->st_nlink = s32.st_nlink;
 	s->st_uid = s32.st_uid;
@@ -149,6 +148,7 @@ int sys_stat64(const char *path, struct stat64 *s)
 	s->st_atime = s32.st_atime;
 	s->st_mtime = s32.st_mtime;
 	s->st_ctime = s32.st_ctime;
+	s->st_ino = s32.st_ino;
 	name_put(name);
 	return ret;
 }
@@ -163,8 +163,7 @@ int sys_lstat64(const char *path, struct stat64 *s)
 	ret = do_stat("lstat64", name, &s32, 0);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
-	s->__pad0 = 0;
-	s->st_ino = s32.st_ino;
+	s->__st_ino = s32.st_ino;
 	s->st_mode = s32.st_mode;
 	s->st_nlink = s32.st_nlink;
 	s->st_uid = s32.st_uid;
@@ -176,6 +175,7 @@ int sys_lstat64(const char *path, struct stat64 *s)
 	s->st_atime = s32.st_atime;
 	s->st_mtime = s32.st_mtime;
 	s->st_ctime = s32.st_ctime;
+	s->st_ino = s32.st_ino;
 	name_put(name);
 	return ret;
 }
@@ -190,7 +190,7 @@ int sys_fstat64(int fd, struct stat64 *buf)
 
 	ret = fs_fstat(fd, &s32);
 	buf->st_dev = s32.st_dev;
-	buf->st_ino = s32.st_ino;
+	buf->__st_ino = s32.st_ino;
 	buf->st_mode = s32.st_mode;
 	buf->st_nlink = s32.st_nlink;
 	buf->st_uid = s32.st_uid;
@@ -202,6 +202,7 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	buf->st_atime = s32.st_atime;
 	buf->st_mtime = s32.st_mtime;
 	buf->st_ctime = s32.st_ctime;
+	buf->st_ino = s32.st_ino;
 
 	if (TestControl.verbos) {
 		char modes[11];
@@ -492,10 +493,11 @@ int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 
 	resolve_path(_path, name);
 
-	if (TestControl.verbos)
-		klog("readlink(%s, %x, %d)\n", name, buf, bufsiz);
-
 	ret = vfs_readlink(cur->root, name, buf, bufsiz, &rcnt);
+	if (TestControl.verbos)
+		klog("readlink(%s, %s, %d) = %d\n", name, buf, bufsiz,
+		     ret ? ret : rcnt);
+
 	name_put(name);
 
 	if (ret)

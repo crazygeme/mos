@@ -77,6 +77,8 @@ void time_current(time_t *time);
 
 unsigned time_now_ms();
 
+unsigned long time_unix_sec(void);
+
 unsigned long long time_now_us();
 
 unsigned long long time_now_precisely();

@@ -410,6 +410,7 @@ static file *ext4_path_open(const char *path, int flag)
 	fp->f_inode->i_mode = s.st_mode;
 	fp->f_inode->i_ino = s.st_ino;
 	fp->f_inode->i_size = s.st_size;
+	fp->f_name = strdup(cur_path);
 	goto done;
 
 fail:

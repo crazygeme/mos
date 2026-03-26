@@ -567,7 +567,7 @@ static void kinit_userspace()
 	const char *default_envp[] = { NULL };
 	const char *user_argv[] = { "placeholder", NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
-				    "HOME=/root", NULL };
+				    "HOME=/root", "LANG=en_US.UTF-8", NULL };
 	task_struct *cur = CURRENT_TASK();
 
 	const char **argv = devault_argv;

@@ -137,6 +137,8 @@ int sys_settimeofday(const struct timeval *tv, const struct timezone *tz);
 int sys_nanosleep(const struct timespec *req, struct timespec *rem);
 int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg);
 int sys_mmap(struct mmap_arg_struct32 *arg);
+int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
+	      int fd, unsigned pgoffset);
 int sys_munmap(void *addr, unsigned length);
 int sys_mprotect(void *addr, unsigned len, int prot);
 int sys_umask(unsigned mask);

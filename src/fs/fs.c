@@ -85,7 +85,7 @@ file *fs_open_file(const char *path, int flag, char *mode, int follow_link)
 		}
 	}
 
-	if (fp)
+	if (fp && !fp->f_name)
 		fp->f_name = strdup(path);
 
 	return fp;

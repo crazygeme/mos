@@ -214,6 +214,12 @@ int sys_mmap(struct mmap_arg_struct32 *arg)
 		       arg->offset);
 }
 
+int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
+	      int fd, unsigned pgoffset)
+{
+	return do_mmap(addr, len, prot, flags, fd, pgoffset * PAGE_SIZE);
+}
+
 int sys_munmap(void *addr, unsigned length)
 {
 	if (TestControl.verbos)

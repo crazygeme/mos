@@ -990,7 +990,7 @@ static void tty_bash_spawner(void *p)
 	char tty_path[16];
 	char *argv[] = { "/bin/bash", NULL };
 	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "HOME=/root",
-			 NULL };
+			 "LANG=en_US.UTF-8", NULL };
 	struct stat st;
 	task_struct *cur = CURRENT_TASK();
 

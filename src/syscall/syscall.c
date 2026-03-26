@@ -233,7 +233,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 189 __NR_putpmsg
 	sys_vfork, // 190 __NR_vfork
 	sys_ugetrlimit, // 191 __NR_ugetrlimit
-	0, // 192 __NR_mmap2
+	sys_mmap2, // 192 __NR_mmap2
 	0, // 193 __NR_truncate64
 	0, // 194 __NR_ftruncate64
 	sys_stat64, // 195 __NR_stat64

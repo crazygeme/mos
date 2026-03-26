@@ -442,6 +442,14 @@ static int pf_handle_permission(unsigned cr2)
 	return 1;
 }
 
+static void pf_dump_region(vm_region *region, void *data)
+{
+	(void)data;
+	klog("    %08x-%08x prot=%x flag=%x %s\n",
+	     region->begin, region->end, region->prot, region->flag,
+	     region->fp ? region->fp->f_name : "anon");
+}
+
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
@@ -487,6 +495,10 @@ NOT_HANDLED:
 		*/
 		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x, cmd %s\n",
 		     frame->error_code, cr2, frame->eip, cur->user->command);
+		if (cur->user->vm) {
+			klog("  vm regions:\n");
+			vm_enum(cur->user->vm, pf_dump_region, NULL);
+		}
 		sys_exit(-EFAULT);
 		goto Done;
 	}

@@ -228,7 +228,7 @@ int sys_brk(unsigned _top)
 		 * silent fallback to a different address if the range is still
 		 * partially occupied after a shrink. */
 		do_mmap(task->user->brk, PAGE_SIZE * pages,
-			PROT_READ | PROT_WRITE, MAP_FIXED, -1, 0);
+			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
 		top = task->user->brk + pages * PAGE_SIZE;
 		task->user->brk = top;
 		ret = top;

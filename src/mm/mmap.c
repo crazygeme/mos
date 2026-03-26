@@ -41,6 +41,25 @@ static INLINE int vm_region_compare(const void *region1, const void *region2)
 	return 0; /* overlap */
 }
 
+/*
+ * vm_can_merge - true if two adjacent regions can be folded into one.
+ *
+ * Anonymous regions (fp == NULL) only need matching prot and flag.
+ * File-backed regions additionally require the same fp and contiguous
+ * file offsets (right.offset == left.offset + left_size).
+ */
+static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
+{
+	if (left->prot != right->prot || left->flag != right->flag)
+		return 0;
+	if (left->fp != right->fp)
+		return 0;
+	if (left->fp != NULL &&
+	    left->offset + (int)(left->end - left->begin) != right->offset)
+		return 0;
+	return 1;
+}
+
 static void vm_region_invalid(const key_value_pair *pair)
 {
 	vm_key *key = pair->key;
@@ -61,6 +80,101 @@ vm_struct_t vm_create()
 void vm_destroy(vm_struct_t vm)
 {
 	hash_destroy((hash_table *)vm);
+}
+
+/*
+ * vm_find_pair - return the tree pair whose region contains addr, or NULL.
+ *
+ * addr is rounded down to its page boundary before probing the tree.
+ */
+static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
+{
+	vm_key key;
+	key.begin = addr & PAGE_SIZE_MASK;
+	key.end = key.begin + PAGE_SIZE;
+	return hash_find(table, &key);
+}
+
+/*
+ * vm_coalesce - try to merge the region at @addr with its immediate neighbors.
+ *
+ * After inserting a new region, check whether the left neighbor (whose end
+ * equals our begin) or the right neighbor (whose begin equals our end) can be
+ * folded in.  If so, both are removed and vm_add_map() is called for the
+ * combined range; that recursive call will coalesce further if needed.
+ *
+ * File ref-counting mirrors the vm_mprotect() pattern: bump once before
+ * hash_remove() so the invalidator's fs_put_file() does not drop to zero,
+ * then release after vm_add_map() has taken its own reference.
+ */
+static void vm_coalesce(hash_table *table, unsigned addr)
+{
+	key_value_pair *pair = vm_find_pair(table, addr);
+	vm_key probe;
+
+	if (!pair)
+		return;
+
+	vm_region *region = pair->val;
+	vm_key    *rkey   = pair->key;
+
+	/* --- left neighbor: probe [begin-1, begin) ---------------------- */
+	if (region->begin > 0) {
+		probe.begin = region->begin - 1;
+		probe.end   = region->begin;
+		key_value_pair *lpair = hash_find(table, &probe);
+		if (lpair) {
+			vm_region *lregion = lpair->val;
+			if (lregion->end == region->begin &&
+			    vm_can_merge(lregion, region)) {
+				unsigned new_begin  = lregion->begin;
+				unsigned new_end    = region->end;
+				int      new_prot   = region->prot;
+				int      new_flag   = region->flag;
+				file    *new_fp     = region->fp;
+				int      new_offset = lregion->offset;
+
+				if (new_fp)
+					fs_get_file(new_fp);
+				hash_remove(table, lpair->key);
+				hash_remove(table, rkey);
+				vm_add_map(table, new_begin, new_end, new_prot,
+					   new_flag, new_fp, new_offset);
+				if (new_fp)
+					fs_put_file(new_fp);
+				return;
+			}
+		}
+	}
+
+	/* --- right neighbor: probe [end, end+1) ------------------------- */
+	probe.begin = region->end;
+	probe.end   = region->end + 1;
+	{
+		key_value_pair *rpair = hash_find(table, &probe);
+		if (rpair) {
+			vm_region *rregion = rpair->val;
+			if (rregion->begin == region->end &&
+			    vm_can_merge(region, rregion)) {
+				unsigned new_begin  = region->begin;
+				unsigned new_end    = rregion->end;
+				int      new_prot   = region->prot;
+				int      new_flag   = region->flag;
+				file    *new_fp     = region->fp;
+				int      new_offset = region->offset;
+
+				if (new_fp)
+					fs_get_file(new_fp);
+				hash_remove(table, rkey);
+				hash_remove(table, rpair->key);
+				vm_add_map(table, new_begin, new_end, new_prot,
+					   new_flag, new_fp, new_offset);
+				if (new_fp)
+					fs_put_file(new_fp);
+				return;
+			}
+		}
+	}
 }
 
 /*
@@ -133,19 +247,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		fs_get_file(fp);
 
 	hash_insert(table, key, region);
-}
-
-/*
- * vm_find_pair - return the tree pair whose region contains addr, or NULL.
- *
- * addr is rounded down to its page boundary before probing the tree.
- */
-static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
-{
-	vm_key key;
-	key.begin = addr & PAGE_SIZE_MASK;
-	key.end = key.begin + PAGE_SIZE;
-	return hash_find(table, &key);
+	vm_coalesce(table, begin);
 }
 
 /*

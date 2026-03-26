@@ -324,5 +324,6 @@ void shutdown();
 
 #define RUSAGE_SELF 0
 #define RUSAGE_CHILDREN (-1)
+#define WNOHANG 1
 
 #endif

@@ -375,18 +375,22 @@ int sys_exit(unsigned status)
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
 	task_struct *cur = CURRENT_TASK();
+	task_struct *task = NULL;
 	list_entry *dying_task_entry;
+	int ret = -1;
+
 	if (TestControl.verbos)
 		klog("wait(%d, %x, %x, %x)\n", pid, status, options, rusage);
 
 	for (;;) {
 		task_sched();
 
+		task = NULL;
 		spinlock_lock(&ps_lock);
 		dying_task_entry = control.dying_queue.next;
 		while (dying_task_entry != &control.dying_queue) {
-			task_struct *task = container_of(dying_task_entry,
-							 task_struct, ps_list);
+			task = container_of(dying_task_entry, task_struct,
+					    ps_list);
 			dying_task_entry = dying_task_entry->next;
 			if (task->parent->psid != cur->psid)
 				continue;
@@ -394,47 +398,60 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			if (pid && pid != task->psid)
 				continue;
 
-			int ret = task->psid;
+			ret = task->psid;
 			if (status)
 				*status = task->exit_status;
 
 			list_remove_entry(&task->ps_list);
 			ps_remove_mgr_unsafe(task);
 			cur->nchildren--;
-			spinlock_unlock(&ps_lock);
-			ps_reap_task(task, rusage);
-			if (TestControl.verbos)
-				klog("wait(%d) returns %d\n", pid, ret);
-			return ret;
+			goto done;
 		}
 
-		if (pid && ps_find_process_unsafe(pid) == NULL) {
-			spinlock_unlock(&ps_lock);
-			if (TestControl.verbos)
-				klog("wait(%d) returns %d\n", pid, -ECHILD);
+		task = NULL;
 
-			return -ECHILD;
+		if (pid && ps_find_process_unsafe(pid) == NULL) {
+			ret = -ECHILD;
+			goto done;
 		}
 
 		/* No specific pid requested and no children at all. */
 		if (!pid && cur->nchildren == 0) {
-			spinlock_unlock(&ps_lock);
-			if (TestControl.verbos)
-				klog("wait(%d) returns %d\n", pid, -ECHILD);
-			return -ECHILD;
+			ret = -ECHILD;
+			goto done;
 		}
 
 		/* Interrupted by a non-SIGCHLD signal: return EINTR. */
 		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
 		    ~(1UL << (SIGCHLD - 1))) {
-			spinlock_unlock(&ps_lock);
-			return -EINTR;
+			ret = -EINTR;
+			goto done;
+		}
+
+		/*
+		 * returns immediately if no child process has exited or changed state,
+		 * preventing the caller from blocking
+		 */
+		if (options == WNOHANG) {
+			ret = 0;
+			goto done;
 		}
 
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
 
 		spinlock_unlock(&ps_lock);
 	}
+
+done:
+	spinlock_unlock(&ps_lock);
+
+	if (task)
+		ps_reap_task(task, rusage);
+
+	if (TestControl.verbos)
+		klog("wait(%d) returns %d\n", pid, ret);
+
+	return ret;
 }
 
 int sys_waitpid(unsigned pid, int *status, int options)

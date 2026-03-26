@@ -1106,6 +1106,23 @@ void fb_save_text(char *dst, unsigned size)
 	memcpy(dst, _fb_text, size);
 }
 
+void fb_save_colors(unsigned *fg_dst, unsigned *bg_dst, unsigned size)
+{
+	if (!_fb_buffer)
+		return;
+	memcpy(fg_dst, _fb_color, size * sizeof(unsigned));
+	memcpy(bg_dst, _fb_bg_color, size * sizeof(unsigned));
+}
+
+void fb_restore_colors(const unsigned *fg_src, const unsigned *bg_src,
+		       unsigned size)
+{
+	if (!_fb_buffer)
+		return;
+	memcpy(_fb_color, fg_src, size * sizeof(unsigned));
+	memcpy(_fb_bg_color, bg_src, size * sizeof(unsigned));
+}
+
 void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos)
 {
 	unsigned i, pix_len, col, row;

@@ -65,6 +65,9 @@ typedef struct {
 	cy_buf *kb_buf;
 	/* screen text buffer for inactive TTYs (also used on switch-away save) */
 	char *saved_text;
+	/* per-cell fg/bg color arrays matching saved_text */
+	unsigned *saved_fg;
+	unsigned *saved_bg;
 	/* TTY index (0..TTY_MAX_VDEV-1) */
 	int tty_idx;
 	/* PID of the bash process running on this TTY (0 = none) */
@@ -123,8 +126,11 @@ static void vga_putchar(tty_state *state, int x, int y, char c)
 	if (state->tty_idx == active_tty_idx) {
 		fb_putchar(y, x, c, state->fg_color, state->bg_color);
 	} else {
-		/* Inactive TTY: write to saved_text only */
-		state->saved_text[x * (int)MAX_COL + y] = c;
+		/* Inactive TTY: write to saved_text and color arrays */
+		int idx = x * (int)MAX_COL + y;
+		state->saved_text[idx] = c;
+		state->saved_fg[idx] = state->fg_color;
+		state->saved_bg[idx] = state->bg_color;
 	}
 }
 
@@ -133,8 +139,10 @@ static void tty_do_clear(tty_state *state)
 	if (state->tty_idx == active_tty_idx) {
 		fb_clear_screen();
 	} else {
-		memset(state->saved_text, 0,
-		       (unsigned)(MAX_ROW * (int)MAX_COL));
+		unsigned sz = (unsigned)(MAX_ROW * (int)MAX_COL);
+		memset(state->saved_text, 0, sz);
+		memset(state->saved_fg, 0xFF, sz * sizeof(unsigned));
+		memset(state->saved_bg, 0, sz * sizeof(unsigned));
 	}
 }
 
@@ -143,12 +151,18 @@ static void tty_roll_line(tty_state *state)
 	if (state->tty_idx == active_tty_idx) {
 		fb_scroll_line();
 	} else {
-		/* Scroll saved_text up one row */
+		/* Scroll saved_text and color arrays up one row */
 		unsigned row_bytes = (unsigned)MAX_COL;
-		memmove(state->saved_text, state->saved_text + row_bytes,
-			row_bytes * (unsigned)(MAX_ROW - 1));
-		memset(state->saved_text + row_bytes * (unsigned)(MAX_ROW - 1),
-		       0, row_bytes);
+		unsigned last = row_bytes * (unsigned)(MAX_ROW - 1);
+		memmove(state->saved_text, state->saved_text + row_bytes, last);
+		memset(state->saved_text + last, 0, row_bytes);
+		memmove(state->saved_fg, state->saved_fg + row_bytes,
+			last * sizeof(unsigned));
+		memset(state->saved_fg + last, 0xFF,
+		       row_bytes * sizeof(unsigned));
+		memmove(state->saved_bg, state->saved_bg + row_bytes,
+			last * sizeof(unsigned));
+		memset(state->saved_bg + last, 0, row_bytes * sizeof(unsigned));
 	}
 }
 
@@ -168,6 +182,15 @@ static void tty_roll_region(tty_state *state)
 		char *t = state->saved_text + top * col;
 		memmove(t, t + col, (bot - top) * col);
 		memset(state->saved_text + bot * col, 0, col);
+		memmove(state->saved_fg + top * col,
+			state->saved_fg + (top + 1) * col,
+			(bot - top) * col * sizeof(unsigned));
+		memset(state->saved_fg + bot * col, 0xFF,
+		       col * sizeof(unsigned));
+		memmove(state->saved_bg + top * col,
+			state->saved_bg + (top + 1) * col,
+			(bot - top) * col * sizeof(unsigned));
+		memset(state->saved_bg + bot * col, 0, col * sizeof(unsigned));
 	}
 }
 
@@ -221,12 +244,23 @@ static void tty_insert_lines(tty_state *state, int n)
 	} else {
 		unsigned col = (unsigned)MAX_COL;
 		unsigned move = (unsigned)(bot - row + 1 - n);
-		if (move)
+		if (move) {
 			memmove(state->saved_text + (unsigned)(row + n) * col,
 				state->saved_text + (unsigned)row * col,
 				move * col);
+			memmove(state->saved_fg + (unsigned)(row + n) * col,
+				state->saved_fg + (unsigned)row * col,
+				move * col * sizeof(unsigned));
+			memmove(state->saved_bg + (unsigned)(row + n) * col,
+				state->saved_bg + (unsigned)row * col,
+				move * col * sizeof(unsigned));
+		}
 		memset(state->saved_text + (unsigned)row * col, ' ',
 		       (unsigned)n * col);
+		memset(state->saved_fg + (unsigned)row * col, 0xFF,
+		       (unsigned)n * col * sizeof(unsigned));
+		memset(state->saved_bg + (unsigned)row * col, 0,
+		       (unsigned)n * col * sizeof(unsigned));
 	}
 }
 
@@ -245,12 +279,23 @@ static void tty_delete_lines(tty_state *state, int n)
 	} else {
 		unsigned col = (unsigned)MAX_COL;
 		unsigned move = (unsigned)(bot - row + 1 - n);
-		if (move)
+		if (move) {
 			memmove(state->saved_text + (unsigned)row * col,
 				state->saved_text + (unsigned)(row + n) * col,
 				move * col);
+			memmove(state->saved_fg + (unsigned)row * col,
+				state->saved_fg + (unsigned)(row + n) * col,
+				move * col * sizeof(unsigned));
+			memmove(state->saved_bg + (unsigned)row * col,
+				state->saved_bg + (unsigned)(row + n) * col,
+				move * col * sizeof(unsigned));
+		}
 		memset(state->saved_text + (unsigned)(bot - n + 1) * col, ' ',
 		       (unsigned)n * col);
+		memset(state->saved_fg + (unsigned)(bot - n + 1) * col, 0xFF,
+		       (unsigned)n * col * sizeof(unsigned));
+		memset(state->saved_bg + (unsigned)(bot - n + 1) * col, 0,
+		       (unsigned)n * col * sizeof(unsigned));
 	}
 }
 
@@ -272,9 +317,19 @@ static void tty_delete_chars(tty_state *state, int n)
 			vga_putchar(state, row, i, ' ');
 	} else {
 		char *line = state->saved_text + row * max_col;
+		unsigned *fg_line = state->saved_fg + row * max_col;
+		unsigned *bg_line = state->saved_bg + row * max_col;
 		memmove(line + col, line + col + n,
 			(unsigned)(max_col - col - n));
 		memset(line + max_col - n, ' ', (unsigned)n);
+		memmove(fg_line + col, fg_line + col + n,
+			(unsigned)(max_col - col - n) * sizeof(unsigned));
+		memset(fg_line + max_col - n, 0xFF,
+		       (unsigned)n * sizeof(unsigned));
+		memmove(bg_line + col, bg_line + col + n,
+			(unsigned)(max_col - col - n) * sizeof(unsigned));
+		memset(bg_line + max_col - n, 0,
+		       (unsigned)n * sizeof(unsigned));
 	}
 }
 
@@ -296,9 +351,17 @@ static void tty_insert_chars(tty_state *state, int n)
 			vga_putchar(state, row, i, ' ');
 	} else {
 		char *line = state->saved_text + row * max_col;
+		unsigned *fg_line = state->saved_fg + row * max_col;
+		unsigned *bg_line = state->saved_bg + row * max_col;
 		memmove(line + col + n, line + col,
 			(unsigned)(max_col - col - n));
 		memset(line + col, ' ', (unsigned)n);
+		memmove(fg_line + col + n, fg_line + col,
+			(unsigned)(max_col - col - n) * sizeof(unsigned));
+		memset(fg_line + col, 0xFF, (unsigned)n * sizeof(unsigned));
+		memmove(bg_line + col + n, bg_line + col,
+			(unsigned)(max_col - col - n) * sizeof(unsigned));
+		memset(bg_line + col, 0, (unsigned)n * sizeof(unsigned));
 	}
 }
 
@@ -992,13 +1055,15 @@ void tty_switch(int n)
 	 */
 	spinlock_lock(&this_ttys->lock);
 	fb_save_text(this_ttys->saved_text, text_size);
+	fb_save_colors(this_ttys->saved_fg, this_ttys->saved_bg, text_size);
 	spinlock_unlock(&this_ttys->lock);
 
 	/* Flip active TTY — visible to other CPUs only after this point. */
 	active_tty_idx = n;
 	this_ttys = except_tty;
 
-	/* Restore new TTY's cached text to the framebuffer. */
+	/* Restore new TTY's cached text and colors to the framebuffer. */
+	fb_restore_colors(this_ttys->saved_fg, this_ttys->saved_bg, text_size);
 	fb_restore_screen(this_ttys->saved_text, text_size,
 			  (unsigned)this_ttys->cursor);
 
@@ -1253,6 +1318,10 @@ static void tty_sops_release(super_block *sb)
 		cyb_destroy(state->kb_buf);
 	if (state->saved_text)
 		free(state->saved_text);
+	if (state->saved_fg)
+		free(state->saved_fg);
+	if (state->saved_bg)
+		free(state->saved_bg);
 	if (state->alt_text)
 		free(state->alt_text);
 	free(sb);
@@ -1277,6 +1346,11 @@ static void tty_fs_init(void)
 		t->kb_buf = cyb_create(1);
 		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
+		/* Per-cell color buffers matching saved_text */
+		unsigned color_sz = t->max_row * t->max_col * sizeof(unsigned);
+		t->saved_fg = (unsigned *)zalloc(color_sz);
+		t->saved_bg = (unsigned *)zalloc(color_sz);
+		memset(t->saved_fg, 0xFF, color_sz);
 		/* Alternate screen buffer for ESC[?1049h/l */
 		t->alt_text = (char *)zalloc(t->max_row * t->max_col);
 		/*

@@ -39,6 +39,9 @@ static void stat_collect(task_struct *task, void *ctx)
 	if (task->psid == 0xffffffff)
 		return;
 
+	if (task->type == ps_kernel)
+		return;
+
 	c->processes++;
 
 	if (task->priority == ps_idle) {

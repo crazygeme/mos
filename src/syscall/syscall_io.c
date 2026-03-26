@@ -68,6 +68,7 @@ static char *format_buffer(char *buf, unsigned len)
 int sys_read(int fd, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
+	int ret = -1;
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
@@ -76,13 +77,16 @@ int sys_read(int fd, char *buf, unsigned len)
 	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
 		return -1;
 
+	ret = fs_read(fd, -1, buf, len);
+
 	if (TestControl.verbos) {
 		char *tmp = format_buffer(buf, len);
-		klog("read(%d, %s, %d)\n", fd, tmp, len);
+		klog("read(%d, %s, %d) = %d\n", fd, tmp, len,
+		     ret > 0 ? ret : 0);
 		free(tmp);
 	}
 
-	return fs_read(fd, -1, buf, len);
+	return ret;
 }
 
 int sys_write(int fd, char *buf, unsigned len)

@@ -253,6 +253,54 @@ static void tty_delete_lines(tty_state *state, int n)
 	}
 }
 
+static void tty_delete_chars(tty_state *state, int n)
+{
+	int row = CUR_ROW;
+	int col = CUR_COL;
+	int max_col = (int)MAX_COL;
+	int i;
+
+	if (n < 1)
+		n = 1;
+	if (n > max_col - col)
+		n = max_col - col;
+	if (state->tty_idx == active_tty_idx) {
+		for (i = col; i < max_col - n; i++)
+			vga_putchar(state, row, i, fb_getchar(i + n, row));
+		for (i = max_col - n; i < max_col; i++)
+			vga_putchar(state, row, i, ' ');
+	} else {
+		char *line = state->saved_text + row * max_col;
+		memmove(line + col, line + col + n,
+			(unsigned)(max_col - col - n));
+		memset(line + max_col - n, ' ', (unsigned)n);
+	}
+}
+
+static void tty_insert_chars(tty_state *state, int n)
+{
+	int row = CUR_ROW;
+	int col = CUR_COL;
+	int max_col = (int)MAX_COL;
+	int i;
+
+	if (n < 1)
+		n = 1;
+	if (n > max_col - col)
+		n = max_col - col;
+	if (state->tty_idx == active_tty_idx) {
+		for (i = max_col - 1; i >= col + n; i--)
+			vga_putchar(state, row, i, fb_getchar(i - n, row));
+		for (i = col; i < col + n; i++)
+			vga_putchar(state, row, i, ' ');
+	} else {
+		char *line = state->saved_text + row * max_col;
+		memmove(line + col + n, line + col,
+			(unsigned)(max_col - col - n));
+		memset(line + col, ' ', (unsigned)n);
+	}
+}
+
 /* ── Alternate screen ────────────────────────────────────────────────────── */
 
 static void tty_enter_alt_screen(tty_state *state)
@@ -551,6 +599,18 @@ static void ansi_feed(tty_state *state, char c)
 	case 'M': { /* DL - delete N lines at cursor row */
 		val = atoi(arg);
 		tty_delete_lines(state, val);
+		ansi_end(state);
+		return;
+	}
+	case 'P': { /* DCH - delete N characters at cursor column */
+		val = atoi(arg);
+		tty_delete_chars(state, val);
+		ansi_end(state);
+		return;
+	}
+	case '@': { /* ICH - insert N blank characters at cursor column */
+		val = atoi(arg);
+		tty_insert_chars(state, val);
 		ansi_end(state);
 		return;
 	}

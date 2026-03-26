@@ -37,7 +37,7 @@ void mm_vdso_map()
 	for (i = 0; i < page_count; i++) {
 		unsigned vir = VDSO_MM_REGION + i * PAGE_SIZE;
 		unsigned phy = vdso_start + i * PAGE_SIZE - KERNEL_OFFSET;
-		mm_add_dynamic_map(vir, phy, PAGE_ENTRY_USER_CODE);
+		mm_map_page(vir, phy, PAGE_ENTRY_USER_CODE);
 	}
 	RELOAD_CR3();
 }

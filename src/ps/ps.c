@@ -183,7 +183,7 @@ static void ap_idle_stub(void *param)
 
 static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)
 {
-	mm_del_dynamic_map(vir);
+	mm_unmap_page(vir);
 }
 
 /*

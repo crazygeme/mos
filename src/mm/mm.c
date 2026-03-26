@@ -221,7 +221,7 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
  * Only valid for KERNEL_OFFSET..KERNEL_OFFSET+KERNEL_SIZE.
  * The page-table cache region is permanently mapped and needs no work.
  */
-int mm_add_direct_map(unsigned int vir)
+int mm_kmap_page(unsigned int vir)
 {
 	unsigned int page_index;
 
@@ -249,7 +249,7 @@ int mm_add_direct_map(unsigned int vir)
 }
 
 /* Remove a direct kernel mapping and dereference the backing physical page */
-void mm_del_direct_map(unsigned int vir)
+void mm_kunmap_page(unsigned int vir)
 {
 	mm_addr_info info;
 	unsigned int phy_addr;
@@ -280,7 +280,7 @@ void mm_del_direct_map(unsigned int vir)
  * If the page is already covered by the initial boot mapping the function is
  * a no-op and returns 1.  Returns -1 on page-table allocation failure.
  */
-int mm_map_phys_page(unsigned int phys)
+int mm_kmap_phys(unsigned int phys)
 {
 	unsigned int virt = phys + KERNEL_OFFSET;
 	mm_addr_info info;
@@ -300,7 +300,7 @@ int mm_map_phys_page(unsigned int phys)
  * Map a high physical address (e.g. MMIO resource) into the kernel address
  * space at the same virtual address.
  */
-int mm_add_resource_map(unsigned int phy)
+int mm_map_io(unsigned int phy)
 {
 	mm_addr_info info;
 
@@ -328,7 +328,7 @@ void mm_del_user_map()
  * otherwise the caller-supplied physical address is used.
  * Returns 1 on success, -1 on failure.
  */
-int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag)
+int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 {
 	unsigned int target_phy;
 	unsigned int page_index;
@@ -362,7 +362,7 @@ static int mm_dynamic_region(unsigned phy)
 }
 
 /* Remove a dynamic user mapping and free the physical page if unreferenced */
-void mm_del_dynamic_map(unsigned int vir)
+void mm_unmap_page(unsigned int vir)
 {
 	mm_addr_info info;
 	unsigned int phy_addr;
@@ -433,7 +433,7 @@ unsigned int vm_alloc(int page_count)
 	}
 
 	for (i = 0; i < page_count; i++)
-		mm_add_direct_map((page_index + i) * PAGE_SIZE + KERNEL_OFFSET);
+		mm_kmap_page((page_index + i) * PAGE_SIZE + KERNEL_OFFSET);
 
 	RELOAD_CR3();
 	spinlock_unlock(&mm_lock);
@@ -450,7 +450,7 @@ void vm_free(unsigned int vm, int page_count)
 	spinlock_lock(&mm_lock);
 	vm &= PAGE_SIZE_MASK;
 	for (i = 0; i < page_count; i++)
-		mm_del_direct_map(vm + i * PAGE_SIZE);
+		mm_kunmap_page(vm + i * PAGE_SIZE);
 	RELOAD_CR3();
 	phymm_free_kernel((vm - KERNEL_OFFSET) / PAGE_SIZE, page_count);
 	spinlock_unlock(&mm_lock);

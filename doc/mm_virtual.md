@@ -114,12 +114,12 @@ typedef struct {
 
 | Function | Description |
 |----------|-------------|
-| `mm_add_direct_map(vir)` | Map kernel vaddr → phys = vir − KERNEL_OFFSET; ref-counts the page |
-| `mm_del_direct_map(vir)` | Unmap and deref |
-| `mm_add_dynamic_map(vir, phy, flag)` | Map user vaddr → phy (allocates a new page if phy=0); ref-counts |
-| `mm_del_dynamic_map(vir)` | Unmap user page; frees physical page when ref_count reaches 0 |
-| `mm_map_phys_page(phys)` | Map firmware/MMIO phys → virt = phys + KERNEL_OFFSET; no ref-counting |
-| `mm_add_resource_map(phy)` | Map high MMIO address (virt = phy) directly |
+| `mm_kmap_page(vir)` | Map kernel vaddr → phys = vir − KERNEL_OFFSET; ref-counts the page |
+| `mm_kunmap_page(vir)` | Unmap and deref |
+| `mm_map_page(vir, phy, flag)` | Map user vaddr → phy (allocates a new page if phy=0); ref-counts |
+| `mm_unmap_page(vir)` | Unmap user page; frees physical page when ref_count reaches 0 |
+| `mm_kmap_phys(phys)` | Map firmware/MMIO phys → virt = phys + KERNEL_OFFSET; no ref-counting |
+| `mm_map_io(phy)` | Map high MMIO address (virt = phy) directly |
 | `mm_del_user_map()` | Clears PDE[0] and PDE[1] (removes the boot identity map) |
 | `mm_get_map_flag(vir)` | Return PTE flags for vaddr |
 | `mm_set_map_flag(vir, flag)` | Overwrite PTE flags |
@@ -132,7 +132,7 @@ unsigned vm_alloc(int page_count);   // alloc contiguous kernel pages; returns v
 void     vm_free(unsigned vm, int page_count);
 ```
 
-`vm_alloc` calls `phymm_alloc_kernel`, maps each page with `mm_add_direct_map`,
+`vm_alloc` calls `phymm_alloc_kernel`, maps each page with `mm_kmap_page`,
 flushes the TLB, and returns `page_index * PAGE_SIZE + KERNEL_OFFSET`.
 
 ### Pathname buffer cache: `name_get` / `name_put`
@@ -186,7 +186,7 @@ region.
 
 ### `vm_del_map` — remove a region
 
-Finds the region containing `addr`, unmaps every page via `mm_del_dynamic_map`,
+Finds the region containing `addr`, unmaps every page via `mm_unmap_page`,
 reloads CR3, and removes the descriptor. Calls `fs_put_file` on the backing
 file.
 
@@ -223,7 +223,7 @@ overlapping regions until none remain:
 For each overlapping region R:
   intersection = [max(R.begin, begin), min(R.end, end))
   1. vm_flush_dirty_region(intersection)        — write back dirty MAP_SHARED pages
-  2. mm_del_dynamic_map() for each page in intersection — release physical pages
+  2. mm_unmap_page() for each page in intersection — release physical pages
   3. hash_remove(R)                             — drop the vm_region descriptor
   4. re-insert left  remnant [R.begin, intersection.begin) if any
   5. re-insert right remnant [intersection.end, R.end)     if any
@@ -325,10 +325,10 @@ Dispatches based on region flags:
 ```
 1. vm_alloc(1)            → allocate new kernel-mapped page
 2. memcpy(new, cr2, 4KB)  → copy the page contents
-3. mm_del_dynamic_map(cr2) → release old physical page (deref; may free it)
+3. mm_unmap_page(cr2) → release old physical page (deref; may free it)
 4. phymm_reference_page    → pin new page so it isn't freed before remapping
-5. mm_del_direct_map       → unmap new page from kernel window
-6. mm_add_dynamic_map(cr2, new_phy, writable) → install private copy
+5. mm_kunmap_page       → unmap new page from kernel window
+6. mm_map_page(cr2, new_phy, writable) → install private copy
 7. phymm_dereference_page  → release the extra pin
 8. RELOAD_CR3              → flush TLB
 ```
@@ -383,7 +383,7 @@ munmap(addr, length)
   └─ do_munmap
        └─ for each overlapping vm_region:
             ├─ vm_flush_dirty_region  [write back dirty MAP_SHARED pages]
-            ├─ mm_del_dynamic_map     [unmap PTEs in intersection only]
+            ├─ mm_unmap_page     [unmap PTEs in intersection only]
             ├─ hash_remove            [drop vm_region descriptor]
             └─ re-insert remnants     [split; remnant pages stay live]
 

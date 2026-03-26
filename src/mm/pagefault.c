@@ -194,18 +194,18 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 
 	if (phy != 0) {
 		page_fault_file_cache_hit++;
-		mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_CODE);
+		mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
 		INVLPG(address);
 		goto DONE;
 	}
 
 	/*
-	 * We don't use mm_add_dynamic_map with NULL physical address here
+	 * We don't use mm_map_page with NULL physical address here
 	 * because we want to know exactly what physical page and cache it.
 	 */
 	phy = phymm_alloc_user() * PAGE_SIZE;
 
-	mm_add_dynamic_map(address, phy, PAGE_ENTRY_USER_DATA);
+	mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
 	INVLPG(address);
 
 	ff = f->f_inode->i_private;
@@ -255,18 +255,17 @@ static void pf_handle_invalid_memory(unsigned address, int prot, int flag)
 	page_fault_invalid++;
 
 	if (prot & PROT_WRITE) {
-		mm_add_dynamic_map(address, 0, PAGE_ENTRY_USER_DATA);
+		mm_map_page(address, 0, PAGE_ENTRY_USER_DATA);
 		INVLPG(address);
 		memset(address, 0, PAGE_SIZE);
 	} else {
 		/*
 		 * For a read-only anonymous page, share the global zero page.
-		 * mm_add_dynamic_map bumps zero_page's ref_count to > 1, so
+		 * mm_map_page bumps zero_page's ref_count to > 1, so
 		 * phymm_is_cow() fires on the next write fault and COW kicks
 		 * in — the shared zero page is never dirtied.
 		 */
-		mm_add_dynamic_map(address, zero_page_phy,
-				   PAGE_ENTRY_USER_CODE);
+		mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE);
 		INVLPG(address);
 	}
 
@@ -341,7 +340,7 @@ static void pf_handle_cow(unsigned cr2)
 	 * 3. unmap origin address
 	 */
 	flag = mm_get_map_flag(vir);
-	mm_del_dynamic_map(vir);
+	mm_unmap_page(vir);
 
 	/*
 	 * 4. unmap newly allocated physical memory
@@ -349,14 +348,14 @@ static void pf_handle_cow(unsigned cr2)
 	 * this physical memory
 	 */
 	phymm_reference_page(VIRT_TO_PAGE_IDX(new_mem));
-	mm_del_direct_map(new_mem);
+	mm_kunmap_page(new_mem);
 
 	/*
 	 * 5. map newly allocated physical memory to origin virtual address
 	 */
 	flag |= PAGE_ENTRY_PRESENT;
 	flag |= PAGE_ENTRY_WRITABLE;
-	mm_add_dynamic_map(vir, VIRT_TO_PHY(new_mem), flag);
+	mm_map_page(vir, VIRT_TO_PHY(new_mem), flag);
 
 	phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
 

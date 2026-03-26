@@ -48,7 +48,7 @@ Accessed via MMIO at BAR0. Key register groups:
 | `TDBAL/H/LEN/H/T` | 0x3800… | TX descriptor ring base, length, head, tail |
 | `RAL0` / `RAH0` | 0x5400/04 | Receive address (MAC) filter |
 
-DMA buffers live in the kernel heap. Physical address = virtual − `KERNEL_OFFSET`. MMIO base is mapped via `mm_add_resource_map` (high physical address mapped directly).
+DMA buffers live in the kernel heap. Physical address = virtual − `KERNEL_OFFSET`. MMIO base is mapped via `mm_map_io` (high physical address mapped directly).
 
 ### Descriptor rings
 

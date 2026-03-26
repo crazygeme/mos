@@ -68,19 +68,17 @@ unsigned mm_get_pagedir();
 
 // map 0xCxxxxxxxx to xxxxxxx
 // return (is used for page table)
-int mm_add_direct_map(unsigned int vir);
+int mm_kmap_page(unsigned int vir);
 
 /* Map firmware physical page (ACPI tables, etc.) to virt = phys + KERNEL_OFFSET.
  * Safe for any physical address; does not touch the physical allocator. */
-int mm_map_phys_page(unsigned int phys);
+int mm_kmap_phys(unsigned int phys);
 
-int mm_add_resource_map(unsigned int phy);
+int mm_map_io(unsigned int phy);
 
-void mm_del_direct_map(unsigned int vir);
+void mm_kunmap_page(unsigned int vir);
 
 void mm_del_user_map();
-
-extern void vm_page_inval();
 
 unsigned int mm_alloc_page_table();
 
@@ -90,9 +88,9 @@ unsigned int vm_alloc(int page_count);
 
 void vm_free(unsigned int vm, int page_count);
 
-int mm_add_dynamic_map(unsigned int vir, unsigned int phy, unsigned flag);
+int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag);
 
-void mm_del_dynamic_map(unsigned int vir);
+void mm_unmap_page(unsigned int vir);
 
 unsigned mm_get_attached_page_index(unsigned int vir);
 

@@ -43,6 +43,9 @@ static void cleanup()
 		}
 	}
 
+	/* Close all signals */
+	memset(cur->signal, 0, sizeof(signal_context));
+
 	vm_destroy(cur->user->vm);
 
 	/* Unmap every user-space page table entry. */

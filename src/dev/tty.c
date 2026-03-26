@@ -84,8 +84,9 @@ typedef struct {
 	/* alternate screen buffer for ?1049h/l */
 	char *alt_text;
 	int alt_cursor;
-	/* current foreground color (set by SGR escape sequences) */
+	/* current foreground/background colors (set by SGR escape sequences) */
 	unsigned fg_color;
+	unsigned bg_color;
 } tty_state;
 
 static tty_state ttys[TTY_MAX_VDEV];
@@ -119,7 +120,7 @@ static void vga_putchar(tty_state *state, int x, int y, char c)
 	if (x < 0 || x >= (int)MAX_ROW || y < 0 || y >= (int)MAX_COL)
 		return;
 	if (state->tty_idx == active_tty_idx) {
-		fb_putchar_color(y, x, c, state->fg_color);
+		fb_putchar(y, x, c, state->fg_color, state->bg_color);
 	} else {
 		/* Inactive TTY: write to saved_text only */
 		state->saved_text[x * (int)MAX_COL + y] = c;
@@ -320,6 +321,7 @@ static void ansi_feed(tty_state *state, char c)
 			switch (atoi(p)) {
 			case 0:
 				state->fg_color = VGA_COLOR_WHITE;
+				state->bg_color = VGA_COLOR_BLACK;
 				break;
 			case 30:
 				state->fg_color = VGA_COLOR_BLACK;
@@ -347,6 +349,34 @@ static void ansi_feed(tty_state *state, char c)
 				break;
 			case 39:
 				state->fg_color = VGA_COLOR_WHITE;
+				break;
+			/* background colors */
+			case 40:
+				state->bg_color = VGA_COLOR_BLACK;
+				break;
+			case 41:
+				state->bg_color = VGA_COLOR_RED;
+				break;
+			case 42:
+				state->bg_color = VGA_COLOR_GREEN;
+				break;
+			case 43:
+				state->bg_color = VGA_COLOR_YELLOW;
+				break;
+			case 44:
+				state->bg_color = VGA_COLOR_BLUE;
+				break;
+			case 45:
+				state->bg_color = VGA_COLOR_MAGENTA;
+				break;
+			case 46:
+				state->bg_color = VGA_COLOR_CYAN;
+				break;
+			case 47:
+				state->bg_color = VGA_COLOR_WHITE;
+				break;
+			case 49:
+				state->bg_color = VGA_COLOR_BLACK;
 				break;
 			/* bright/intense variants */
 			case 90:
@@ -776,6 +806,7 @@ void tty_init(void)
 		t->scroll_bot = (int)t->max_row - 1;
 		t->saved_cursor = 0;
 		t->fg_color = VGA_COLOR_WHITE;
+		t->bg_color = VGA_COLOR_BLACK;
 	}
 	spinlock_init(&tty_switch_lock);
 }

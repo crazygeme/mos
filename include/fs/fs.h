@@ -130,6 +130,16 @@ struct linux_dirent {
 
 #define NAME_OFFSET() offset_of(struct linux_dirent, d_name)
 
+struct linux_dirent64 {
+	unsigned long long d_ino; /* 64-bit inode number */
+	unsigned long long d_off; /* Offset to next entry */
+	unsigned short d_reclen; /* Length of this entry */
+	unsigned char d_type; /* File type */
+	char d_name[]; /* Filename (null-terminated) */
+};
+
+#define NAME64_OFFSET() offset_of(struct linux_dirent64, d_name)
+
 #define MAX_FD ((PAGE_SIZE) / sizeof(file_descriptor))
 
 int resolve_path(const char *old, char *new);

@@ -57,6 +57,8 @@ int sys_poll(struct pollfd *fds, unsigned nfds, int timeout);
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count);
 int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		 unsigned int count);
+int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
+		   unsigned int count);
 
 /*
  * syscall_fs.c
@@ -86,6 +88,7 @@ int sys_umount(char *name, int flag);
 int sys_readlink(const char *path, char *buf, unsigned bufsiz);
 int sys_sync();
 int sys_chdir(const char *path);
+int sys_fchdir(int fd);
 
 /*
  * syscall_proc.c

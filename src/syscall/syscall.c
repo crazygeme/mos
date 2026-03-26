@@ -174,7 +174,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 130 __NR_get_kernel_syms
 	0, // 131 __NR_quotactl
 	0, // 132 __NR_getpgid
-	0, // 133 __NR_fchdir
+	sys_fchdir, // 133 __NR_fchdir
 	0, // 134 __NR_bdflush
 	0, // 135 __NR_sysfs
 	sys_personality, // 136 __NR_personality
@@ -261,7 +261,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 217 __NR_pivot_root
 	0, // 218 __NR_mincore
 	0, // 219 __NR_madvise
-	0, // 220 __NR_getdents64
+	sys_getdents64, // 220 __NR_getdents64
 	sys_fcntl64, // 221 __NR_fcntl64
 	0, // 222
 	0, // 223

@@ -199,7 +199,9 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 
 log:
 	if (TestControl.verbos) {
-		char addr_buf[80], iov_buf[64], flag_buf[64];
+		char *addr_buf = malloc(80);
+		char *iov_buf = malloc(64);
+		char *flag_buf = malloc(64);
 		fmt_sockaddr(addr_buf,
 			     (const struct sockaddr_in *)msg->msg_name);
 		fmt_iov(iov_buf, msg->msg_iov, msg->msg_iovlen);
@@ -207,6 +209,9 @@ log:
 		klog("sendmsg(%d, {msg_name=%s, msg_namelen=%d, msg_iov=%s, msg_iovlen=%u, msg_controllen=0, msg_flags=0}, %s) = %d\n",
 		     fd, addr_buf, msg->msg_namelen, iov_buf,
 		     (unsigned)msg->msg_iovlen, flag_buf, ret);
+		free(flag_buf);
+		free(iov_buf);
+		free(addr_buf);
 	}
 	return ret;
 }
@@ -324,7 +329,10 @@ done:
 		msg->msg_controllen = 0;
 
 	if (TestControl.verbos) {
-		char addr_buf[80], iov_buf[64], flag_buf[64], rflg_buf[64];
+		char *addr_buf = malloc(80);
+		char *iov_buf = malloc(64);
+		char *flag_buf = malloc(64);
+		char *rflg_buf = malloc(64);
 		const struct sockaddr_in *peer =
 			msg->msg_name ?
 				(const struct sockaddr_in *)msg->msg_name :
@@ -337,6 +345,10 @@ done:
 		     fd, addr_buf, msg->msg_namelen, iov_buf,
 		     (unsigned)msg->msg_iovlen, (unsigned)msg->msg_controllen,
 		     rflg_buf, flag_buf, (int)delivered);
+		free(rflg_buf);
+		free(flag_buf);
+		free(iov_buf);
+		free(addr_buf);
 	}
 	return (int)delivered;
 }

@@ -18,6 +18,53 @@
 #include <macro.h>
 #include "syscall_internal.h"
 
+static char *format_buffer(char *buf, unsigned len)
+{
+	/* Format like strace: at most 32 chars, escape non-printables */
+	static const char hex[] = "0123456789abcdef";
+	char *tmp = malloc(4 * 32 + 6); /* '"' + 32*4 + '"' + "..." + NUL */
+	unsigned i, n = len < 32 ? len : 32;
+	char *p = tmp;
+	*p++ = '"';
+	for (i = 0; buf && i < n; i++) {
+		unsigned char c = (unsigned char)buf[i];
+		if (c == '\n') {
+			*p++ = '\\';
+			*p++ = 'n';
+		} else if (c == '\t') {
+			*p++ = '\\';
+			*p++ = 't';
+		} else if (c == '\r') {
+			*p++ = '\\';
+			*p++ = 'r';
+		} else if (c == '\\') {
+			*p++ = '\\';
+			*p++ = '\\';
+		} else if (c == '"') {
+			*p++ = '\\';
+			*p++ = '"';
+		} else if (c == '\0') {
+			*p++ = '\\';
+			*p++ = '0';
+		} else if (c >= 32 && c < 127) {
+			*p++ = (char)c;
+		} else {
+			*p++ = '\\';
+			*p++ = 'x';
+			*p++ = hex[c >> 4];
+			*p++ = hex[c & 0xf];
+		}
+	}
+	*p++ = '"';
+	if (len > 32) {
+		*p++ = '.';
+		*p++ = '.';
+		*p++ = '.';
+	}
+	*p = '\0';
+	return tmp;
+}
+
 int sys_read(int fd, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -29,8 +76,11 @@ int sys_read(int fd, char *buf, unsigned len)
 	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
 		return -1;
 
-	if (TestControl.verbos)
-		klog("read(%d, %x, %d)\n", fd, buf, len);
+	if (TestControl.verbos) {
+		char *tmp = format_buffer(buf, len);
+		klog("read(%d, %s, %d)\n", fd, tmp, len);
+		free(tmp);
+	}
 
 	return fs_read(fd, -1, buf, len);
 }
@@ -39,8 +89,11 @@ int sys_write(int fd, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
-		klog("write(%d, %s, %d)\n", fd, buf, len);
+	if (TestControl.verbos) {
+		char *tmp = format_buffer(buf, len);
+		klog("write(%d, %s, %d)\n", fd, tmp, len);
+		free(tmp);
+	}
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;

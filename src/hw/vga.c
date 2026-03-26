@@ -694,7 +694,8 @@ static const unsigned char bit_mask[8] = { 128, 64, 32, 16, 8, 4, 2, 1 };
 
 /*
  * Glyph pixel cache — each glyph pre-expanded to char_height*char_width
- * 32-bit pixel values (VGA_COLOR_WHITE for set bits, 0 for clear bits).
+ * 32-bit mask values (0xFFFFFFFF for set bits, 0 for clear bits).
+ * Blit with any color via: pixel = mask & color.
  * Indices 0-127: number_font; 128: cursor_font[0]; 129: cursor_font[1].
  * Populated once by glyph_cache_init() and never changed afterwards.
  */
@@ -740,6 +741,7 @@ static unsigned _fb_font_width;
 static unsigned _fb_font_height;
 static char _fb_text[VGA_RESOLUTION_X * VGA_RESOLUTION_Y];
 static unsigned _fb_color[VGA_RESOLUTION_X * VGA_RESOLUTION_Y];
+static unsigned _fb_bg_color[VGA_RESOLUTION_X * VGA_RESOLUTION_Y];
 static unsigned _fb_x_off;
 static unsigned _fb_y_off;
 static unsigned _fb_cursor;
@@ -758,7 +760,8 @@ static unsigned fb_get_point(int x, int y)
 	return disp[y * _hw_resolution_x + x];
 }
 
-static void fb_write_char(int x, int y, int val, unsigned color)
+static void fb_write_char(int x, int y, int val, unsigned color,
+			  unsigned bg_color)
 {
 	unsigned *disp = (unsigned *)_fb_buffer;
 	unsigned base_x, base_y;
@@ -771,25 +774,18 @@ static void fb_write_char(int x, int y, int val, unsigned color)
 
 	glyph_idx = (val == 129) ? 128 : (val == 130) ? 129 : val;
 
-	if (color == VGA_COLOR_WHITE) {
-		/* Fast path: blit pre-expanded pixel rows directly. */
+	{
+		/* glyph_pixels stores 0xFFFFFFFF for set bits, 0 for clear.
+		 * Blend fg and bg: set pixels -> color, clear pixels -> bg_color. */
 		unsigned *glyph = glyph_pixels[glyph_idx];
-		for (i = 0; i < char_height; i++)
-			memcpy(disp + (base_y + i) * _hw_resolution_x + base_x,
-			       glyph + i * char_width,
-			       char_width * sizeof(unsigned));
-	} else {
-		/* Slow path: arbitrary color, decode on the fly. */
-		unsigned char *font = (glyph_idx < 128) ?
-					      number_font[glyph_idx] :
-					      cursor_font[glyph_idx - 128];
 		for (i = 0; i < char_height; i++) {
 			unsigned *rowp =
 				disp + (base_y + i) * _hw_resolution_x + base_x;
-			unsigned char row = font[i];
+			unsigned *grow = glyph + i * char_width;
 			int j;
 			for (j = 0; j < char_width; j++)
-				rowp[j] = (row & bit_mask[j]) ? color : 0;
+				rowp[j] = (grow[j] & color) |
+					  (~grow[j] & bg_color);
 		}
 	}
 }
@@ -860,18 +856,13 @@ char fb_getchar(int col, int row)
 	return _fb_text[row * _window_char_width + col];
 }
 
-void fb_putchar(int col, int row, char c)
+void fb_putchar(int col, int row, char c, unsigned fg, unsigned bg)
 {
-	_fb_text[row * _window_char_width + col] = c;
-	_fb_color[row * _window_char_width + col] = VGA_COLOR_WHITE;
-	fb_write_char(col, row, c, VGA_COLOR_WHITE);
-}
-
-void fb_putchar_color(int col, int row, char c, unsigned color)
-{
-	_fb_text[row * _window_char_width + col] = c;
-	_fb_color[row * _window_char_width + col] = color;
-	fb_write_char(col, row, c, color);
+	int idx = row * _window_char_width + col;
+	_fb_text[idx] = c;
+	_fb_color[idx] = fg;
+	_fb_bg_color[idx] = bg;
+	fb_write_char(col, row, c, fg, bg);
 }
 
 void fb_update_cursor(unsigned new_pos)
@@ -882,9 +873,11 @@ void fb_update_cursor(unsigned new_pos)
 
 	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
 	    val == '\t')
-		fb_write_char(col, row, 130, VGA_COLOR_BLACK);
+		fb_write_char(col, row, 130, VGA_COLOR_BLACK,
+			      _fb_bg_color[_fb_cursor]);
 	else
-		fb_write_char(col, row, val, _fb_color[_fb_cursor]);
+		fb_write_char(col, row, val, _fb_color[_fb_cursor],
+			      _fb_bg_color[_fb_cursor]);
 
 	_fb_cursor = new_pos;
 	val = _fb_text[_fb_cursor];
@@ -893,7 +886,8 @@ void fb_update_cursor(unsigned new_pos)
 
 	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
 	    val == '\t')
-		fb_write_char(col, row, 129, VGA_COLOR_WHITE);
+		fb_write_char(col, row, 129, VGA_COLOR_WHITE,
+			      _fb_bg_color[_fb_cursor]);
 	else
 		fb_write_char_mix_cursor(col, row, val, _fb_color[_fb_cursor],
 					 VGA_COLOR_WHITE);
@@ -923,13 +917,14 @@ void fb_scroll_line(void)
 	    val == '\t' || val == '\b')
 		fb_write_char(_fb_cursor % _window_char_width,
 			      _fb_cursor / _window_char_width, 130,
-			      VGA_COLOR_BLACK);
+			      VGA_COLOR_BLACK, _fb_bg_color[_fb_cursor]);
 
 	memcpy(old_row_ptr, new_row_ptr, copy_size);
 
 	/* restore cursor at new position */
 	fb_write_char(_fb_cursor % _window_char_width,
-		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE);
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE,
+		      _fb_bg_color[_fb_cursor]);
 
 	memcpy(_fb_text, next_char_row, txt_copy_size);
 	memset(last_char_row, ' ', _window_char_width);
@@ -937,6 +932,10 @@ void fb_scroll_line(void)
 	memcpy(_fb_color, _fb_color + _window_char_width,
 	       txt_copy_size * sizeof(unsigned));
 	memset(_fb_color + _window_char_width * (_window_char_height - 1), 0xFF,
+	       _window_char_width * sizeof(unsigned));
+	memcpy(_fb_bg_color, _fb_bg_color + _window_char_width,
+	       txt_copy_size * sizeof(unsigned));
+	memset(_fb_bg_color + _window_char_width * (_window_char_height - 1), 0,
 	       _window_char_width * sizeof(unsigned));
 }
 
@@ -955,7 +954,7 @@ void fb_scroll_region(unsigned top_row, unsigned bot_row)
 	    val == '\t' || val == '\b')
 		fb_write_char(_fb_cursor % _window_char_width,
 			      _fb_cursor / _window_char_width, 130,
-			      VGA_COLOR_BLACK);
+			      VGA_COLOR_BLACK, _fb_bg_color[_fb_cursor]);
 
 	/* scroll pixel rows up by one within [top_row, bot_row] */
 	memmove(fb + top_row * bytes_per_row,
@@ -964,7 +963,8 @@ void fb_scroll_region(unsigned top_row, unsigned bot_row)
 
 	/* restore cursor display */
 	fb_write_char(_fb_cursor % _window_char_width,
-		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE);
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE,
+		      _fb_bg_color[_fb_cursor]);
 
 	/* scroll text shadow */
 	memmove(_fb_text + top_row * _window_char_width,
@@ -977,6 +977,11 @@ void fb_scroll_region(unsigned top_row, unsigned bot_row)
 		region_rows * _window_char_width * sizeof(unsigned));
 	memset(_fb_color + bot_row * _window_char_width, 0xFF,
 	       _window_char_width * sizeof(unsigned));
+	memmove(_fb_bg_color + top_row * _window_char_width,
+		_fb_bg_color + (top_row + 1) * _window_char_width,
+		region_rows * _window_char_width * sizeof(unsigned));
+	memset(_fb_bg_color + bot_row * _window_char_width, 0,
+	       _window_char_width * sizeof(unsigned));
 }
 
 /* Helper: clear cursor block / restore cursor block around a pixel blit. */
@@ -987,11 +992,13 @@ void fb_scroll_region(unsigned top_row, unsigned bot_row)
 		    _v == '\t' || _v == '\b')                               \
 			fb_write_char(_fb_cursor % _window_char_width,      \
 				      _fb_cursor / _window_char_width, 130, \
-				      VGA_COLOR_BLACK);                     \
+				      VGA_COLOR_BLACK,                      \
+				      _fb_bg_color[_fb_cursor]);            \
 	} while (0)
-#define FB_CURSOR_SHOW()                               \
-	fb_write_char(_fb_cursor % _window_char_width, \
-		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE)
+#define FB_CURSOR_SHOW()                                                     \
+	fb_write_char(_fb_cursor % _window_char_width,                       \
+		      _fb_cursor / _window_char_width, 129, VGA_COLOR_WHITE, \
+		      _fb_bg_color[_fb_cursor])
 
 void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n)
 {
@@ -1007,6 +1014,9 @@ void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n)
 		memset(_fb_text + row * _window_char_width, ' ',
 		       (bot_row - row + 1) * _window_char_width);
 		memset(_fb_color + row * _window_char_width, 0xFF,
+		       (bot_row - row + 1) * _window_char_width *
+			       sizeof(unsigned));
+		memset(_fb_bg_color + row * _window_char_width, 0,
 		       (bot_row - row + 1) * _window_char_width *
 			       sizeof(unsigned));
 		FB_CURSOR_SHOW();
@@ -1027,6 +1037,11 @@ void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n)
 		move_rows * _window_char_width * sizeof(unsigned));
 	memset(_fb_color + row * _window_char_width, 0xFF,
 	       n * _window_char_width * sizeof(unsigned));
+	memmove(_fb_bg_color + (row + n) * _window_char_width,
+		_fb_bg_color + row * _window_char_width,
+		move_rows * _window_char_width * sizeof(unsigned));
+	memset(_fb_bg_color + row * _window_char_width, 0,
+	       n * _window_char_width * sizeof(unsigned));
 	FB_CURSOR_SHOW();
 }
 
@@ -1043,6 +1058,9 @@ void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n)
 		memset(_fb_text + row * _window_char_width, ' ',
 		       (bot_row - row + 1) * _window_char_width);
 		memset(_fb_color + row * _window_char_width, 0xFF,
+		       (bot_row - row + 1) * _window_char_width *
+			       sizeof(unsigned));
+		memset(_fb_bg_color + row * _window_char_width, 0,
 		       (bot_row - row + 1) * _window_char_width *
 			       sizeof(unsigned));
 		FB_CURSOR_SHOW();
@@ -1063,6 +1081,11 @@ void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n)
 		move_rows * _window_char_width * sizeof(unsigned));
 	memset(_fb_color + (bot_row - n + 1) * _window_char_width, 0xFF,
 	       n * _window_char_width * sizeof(unsigned));
+	memmove(_fb_bg_color + row * _window_char_width,
+		_fb_bg_color + (row + n) * _window_char_width,
+		move_rows * _window_char_width * sizeof(unsigned));
+	memset(_fb_bg_color + (bot_row - n + 1) * _window_char_width, 0,
+	       n * _window_char_width * sizeof(unsigned));
 	FB_CURSOR_SHOW();
 }
 
@@ -1073,6 +1096,7 @@ void fb_clear_screen(void)
 	memset((char *)_fb_buffer, 0, len);
 	memset(_fb_text, 0, sizeof(_fb_text));
 	memset(_fb_color, 0xFF, sizeof(_fb_color));
+	memset(_fb_bg_color, 0, sizeof(_fb_bg_color));
 }
 
 void fb_save_text(char *dst, unsigned size)
@@ -1104,7 +1128,8 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos)
 			continue;
 		col = i % _window_char_width;
 		row = i / _window_char_width;
-		fb_write_char(col, row, (int)(unsigned char)val, _fb_color[i]);
+		fb_write_char(col, row, (int)(unsigned char)val, _fb_color[i],
+			      _fb_bg_color[i]);
 	}
 
 	/* Draw cursor at saved position */
@@ -1114,7 +1139,8 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos)
 	row = cursor_pos / _window_char_width;
 	if (val == ' ' || val == '\0' || val == '\n' || val == '\r' ||
 	    val == '\t')
-		fb_write_char(col, row, 129, VGA_COLOR_WHITE);
+		fb_write_char(col, row, 129, VGA_COLOR_WHITE,
+			      _fb_bg_color[cursor_pos]);
 	else
 		fb_write_char_mix_cursor(col, row, (int)(unsigned char)val,
 					 _fb_color[cursor_pos],
@@ -1215,6 +1241,7 @@ void fb_enable()
 	_fb_cursor = 0;
 	glyph_cache_init();
 	memset(_fb_color, 0xFF, sizeof(_fb_color));
+	memset(_fb_bg_color, 0, sizeof(_fb_bg_color));
 
 	mm_size = _resolution_x * _resolution_y * 4;
 	if (_fb_buffer_phy) {

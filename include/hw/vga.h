@@ -36,8 +36,7 @@ void fb_write_color(int x, int y, unsigned color);
 
 /* Character cell read/write (also updates the internal text shadow buffer). */
 char fb_getchar(int col, int row);
-void fb_putchar(int col, int row, char c);
-void fb_putchar_color(int col, int row, char c, unsigned color);
+void fb_putchar(int col, int row, char c, unsigned fg, unsigned bg);
 
 /* Cursor */
 

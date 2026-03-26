@@ -196,6 +196,17 @@ static unsigned pit_read_count(void)
 	return (hi << 8) | lo;
 }
 
+/* Return non-zero if IRQ0 (timer) is pending in the PIC IRR but not yet
+ * serviced.  This detects the race where the PIT has fired and reloaded
+ * but total_tickets has not been incremented yet. */
+static int pic_timer_irq_pending(void)
+{
+#define PIC1_CMD 0x20
+	port_write_byte(PIC1_CMD, 0x0A); /* OCW3: read IRR */
+	return port_read_byte(PIC1_CMD) & 0x01; /* bit 0 = IRQ0 */
+#undef PIC1_CMD
+}
+
 unsigned long long time_now_us()
 {
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
@@ -210,6 +221,13 @@ unsigned long long time_now_us()
 		BARRIER();
 		t2 = total_tickets;
 	} while (t1 != t2);
+
+	/* Handle the race where the PIT has already fired and reloaded (so count
+	 * is from the new period) but the IRQ has not been serviced yet, leaving
+	 * total_tickets un-incremented.  If IRQ0 is pending we must add the
+	 * missing tick; the count we read already belongs to the next interval. */
+	if (pic_timer_irq_pending())
+		t1++;
 
 	/* PIT counts DOWN from LATCH to 0; convert remaining count to elapsed us.
 	 * Resolution: 1 / CLOCK_TICK_RATE ≈ 0.84 μs, no calibration needed. */

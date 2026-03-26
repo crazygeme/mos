@@ -15,6 +15,7 @@ static unsigned long hourse;
 static unsigned long days;
 static unsigned long total_seconds;
 static unsigned long cycle_per_ticket;
+static unsigned long boot_epoch;
 static unsigned long rtc_get_time(void);
 static int is_force_switching = 0;
 
@@ -149,6 +150,7 @@ void time_init()
 	days = 0;
 	cycle_per_ticket = 0;
 	total_seconds = 0;
+	boot_epoch = rtc_get_time();
 
 	int_register(0x20, time_process, 0, 0);
 
@@ -316,6 +318,11 @@ void delay(unsigned int us)
 	busy_wait(cycles);
 }
 
+unsigned long time_unix_sec(void)
+{
+	return boot_epoch + total_seconds;
+}
+
 time_t time(time_t *t)
 {
 	unsigned long long now = time_now_ms();
@@ -403,7 +410,7 @@ static unsigned long rtc_get_time(void)
 
 	/* Break down all components into seconds. */
 	time = (year * 365 + (year - 1) / 4) * 24 * 60 * 60;
-	for (i = 1; i <= mon; i++)
+	for (i = 1; i < mon; i++)
 		time += days_per_month[i - 1] * 24 * 60 * 60;
 	if (mon > 2 && year % 4 == 0)
 		time += 24 * 60 * 60;

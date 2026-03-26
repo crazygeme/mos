@@ -325,6 +325,70 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 	return (size_t)n;
 }
 
+int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
+		   unsigned int count)
+{
+	struct stat s;
+	file *fp;
+	char *tmp;
+	ssize_t n;
+	char *src, *dst;
+	int out;
+
+	if (TestControl.verbos)
+		klog("getdents64(%d, %x, %d)\n", fd, dirp, count);
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -ENOENT;
+	if (fs_fstat(fd, &s) != EOK)
+		return -ENOENT;
+	if (!S_ISDIR(s.st_mode))
+		return -EISDIR;
+
+	fp = CURRENT_TASK()->fds[fd].fp;
+
+	if (count < sizeof(struct linux_dirent64))
+		return -22;
+	if (!fp->f_fop || !fp->f_fop->read)
+		return -1;
+
+	tmp = malloc(count);
+	if (!tmp)
+		return -ENOMEM;
+
+	n = fp->f_fop->read(fp, tmp, count, &fp->f_pos);
+	if (n < 0) {
+		free(tmp);
+		return -1;
+	}
+
+	src = tmp;
+	dst = (char *)dirp;
+	out = 0;
+	while (src < tmp + n) {
+		struct linux_dirent *d = (struct linux_dirent *)src;
+		struct linux_dirent64 *d64 = (struct linux_dirent64 *)dst;
+		unsigned namelen = strlen(d->d_name);
+		unsigned reclen64 = ROUND_UP(NAME64_OFFSET() + namelen + 1);
+
+		if (out + (int)reclen64 > (int)count)
+			break;
+
+		d64->d_ino = d->d_ino;
+		d64->d_off = d->d_off;
+		d64->d_reclen = reclen64;
+		d64->d_type = 0; /* DT_UNKNOWN */
+		memcpy(d64->d_name, d->d_name, namelen + 1);
+
+		src += d->d_reclen;
+		dst += reclen64;
+		out += reclen64;
+	}
+
+	free(tmp);
+	return out;
+}
+
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 {
 	if (TestControl.verbos)

@@ -62,7 +62,7 @@ static int elf_pflags_to_prot(unsigned p_flags)
  * elf_load_segment - map one PT_LOAD segment into the current address space.
  *
  * @bias is added to p_vaddr before mapping; pass 0 for ET_EXEC executables or
- * the load bias returned by vm_get_usr_zone() for shared objects.
+ * the load bias returned by vm_disc_map for shared objects.
  *
  * BSS handling (memsz > filesz):
  * --------------------------------
@@ -316,7 +316,7 @@ static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
  *
  * Scans all PT_LOAD segments and returns the number of pages spanned from the
  * lowest to the highest virtual address.  This is used to reserve a
- * contiguous virtual-address region via vm_get_usr_zone() before mapping the
+ * contiguous virtual-address region via vm_disc_map before mapping the
  * interpreter, so that all its segments land in a single coherent window.
  */
 static unsigned elf_map_get_dynamic_pages(file *fp, unsigned table_offset,
@@ -350,7 +350,7 @@ static unsigned elf_map_get_dynamic_pages(file *fp, unsigned table_offset,
  *
  * Works like elf_map_programs() but applies a load-address @bias so the
  * shared object can be placed at an arbitrary virtual address chosen by
- * vm_get_usr_zone().  Used when loading the dynamic linker (interpreter).
+ * vm_disc_map.  Used when loading the dynamic linker (interpreter).
  */
 static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
 				    unsigned size, unsigned num, unsigned bias)
@@ -372,7 +372,7 @@ static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
  * Opens the ELF shared object at @path (typically "/lib/ld-linux.so.2"),
  * validates its header (must be a 32-bit ET_DYN), then:
  *   1. Computes the total page span of its PT_LOAD segments.
- *   2. Reserves a contiguous virtual-address window via vm_get_usr_zone()
+ *   2. Reserves a contiguous virtual-address window via vm_disc_map
  *      and stores the base in fmt->interp_bias.
  *   3. Maps all PT_LOAD segments relative to interp_bias.
  *   4. Records the interpreter's entry point as interp_bias + e_entry so
@@ -387,6 +387,8 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 {
 	file *fp = fs_open_file(path, 0, "r", 1);
 	Elf32_Ehdr elf;
+	task_struct *cur = CURRENT_TASK();
+	unsigned pages = 0;
 
 	if (fp == NULL)
 		return 0;
@@ -413,8 +415,9 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 	}
 
 	/* Reserve virtual address space and map interpreter segments. */
-	fmt->interp_bias = vm_get_usr_zone(elf_map_get_dynamic_pages(
-		fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum));
+	pages = elf_map_get_dynamic_pages(fp, elf.e_phoff, elf.e_phentsize,
+					  elf.e_phnum);
+	fmt->interp_bias = vm_disc_map(cur->user->vm, pages * PAGE_SIZE);
 	fmt->interp_load_addr = fmt->interp_bias + elf.e_entry;
 	elf_map_programs_at(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum,
 			    fmt->interp_bias);

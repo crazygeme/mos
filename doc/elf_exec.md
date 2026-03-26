@@ -7,9 +7,9 @@
 
 ## Overview
 
-| File | Responsibility |
-|------|---------------|
-| `elf.c` | Parse ELF headers, map `PT_LOAD` segments, handle BSS, load dynamic linker |
+| File     | Responsibility                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| `elf.c`  | Parse ELF headers, map `PT_LOAD` segments, handle BSS, load dynamic linker                         |
 | `exec.c` | `sys_execve`: full exec lifecycle — pre-exec cleanup, script detection, stack setup, jump to entry |
 
 Only 32-bit (`ELFCLASS32`) ET_EXEC executables are supported as the main binary. The dynamic linker must be `ET_DYN`.
@@ -51,20 +51,20 @@ typedef struct elf32_phdr {
 
 Segment types used by the loader:
 
-| `p_type` | Value | Meaning |
-|----------|-------|---------|
-| `PT_LOAD` | 1 | Loadable segment (code / data / BSS) |
-| `PT_INTERP` | 3 | Path to the dynamic linker |
-| `PT_PHDR` | 6 | Location of the program header table itself |
-| `PT_GNU_STACK` | `0x6474e551` | Stack executable flag (not enforced) |
+| `p_type`       | Value        | Meaning                                     |
+| -------------- | ------------ | ------------------------------------------- |
+| `PT_LOAD`      | 1            | Loadable segment (code / data / BSS)        |
+| `PT_INTERP`    | 3            | Path to the dynamic linker                  |
+| `PT_PHDR`      | 6            | Location of the program header table itself |
+| `PT_GNU_STACK` | `0x6474e551` | Stack executable flag (not enforced)        |
 
 Permission flags (`p_flags`):
 
-| Flag | Bit | `mmap` prot |
-|------|-----|------------|
-| `PF_X` | 0 | `PROT_EXEC` |
-| `PF_W` | 1 | `PROT_WRITE` |
-| `PF_R` | 2 | `PROT_READ` |
+| Flag   | Bit | `mmap` prot  |
+| ------ | --- | ------------ |
+| `PF_X` | 0   | `PROT_EXEC`  |
+| `PF_W` | 1   | `PROT_WRITE` |
+| `PF_R` | 2   | `PROT_READ`  |
 
 ### `mos_binfmt` — loader output record
 
@@ -194,7 +194,7 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt);
 
 1. Open `path` (e.g. `/lib/ld-linux.so.2`); validate as `ELFCLASS32` + `ET_DYN`.
 2. `elf_map_get_dynamic_pages()` — scan `PT_LOAD` segments to find the total page span (`max_va - min_va`).
-3. `vm_get_usr_zone(page_count)` — reserve a contiguous virtual-address window in the mmap zone. Stored in `fmt->interp_bias`.
+3. `vm_disc_map(page_count)` — reserve a contiguous virtual-address window in the mmap zone. Stored in `fmt->interp_bias`.
 4. `elf_map_programs_at(bias)` — map all `PT_LOAD` segments at `p_vaddr + interp_bias`.
 5. `fmt->interp_load_addr = interp_bias + e_entry`.
 
@@ -220,11 +220,11 @@ stat → check S_IXUSR and st_size >= 4
 
 Reads the first 256 bytes of the file:
 
-| First bytes | Action |
-|-------------|--------|
-| `0x7f 'E' 'L'` | ELF binary — proceed normally |
-| `#!` | Script: extract interpreter path from the first line; prepend it as argv[0] |
-| Anything else | Return `-ENOEXEC` |
+| First bytes    | Action                                                                      |
+| -------------- | --------------------------------------------------------------------------- |
+| `0x7f 'E' 'L'` | ELF binary — proceed normally                                               |
+| `#!`           | Script: extract interpreter path from the first line; prepend it as argv[0] |
+| Anything else  | Return `-ENOEXEC`                                                           |
 
 For a script `#!/bin/bash`, `file_name` is replaced with `/bin/bash` and the original `argv` is shifted by one (POSIX behaviour).
 
@@ -296,19 +296,19 @@ Lays out the stack in the System V i386 ABI format, growing downward from `KERNE
 
 Auxiliary vector entries written by `NEW_AUX_ENT`:
 
-| Entry | Value |
-|-------|-------|
-| `AT_PHDR` | `fmt.elf_load_addr + fmt.e_phoff` (VA of phdr table) |
-| `AT_PHENT` | `sizeof(Elf32_Phdr)` |
-| `AT_PHNUM` | `fmt.e_phnum` |
-| `AT_BASE` | `fmt.interp_bias` (ld.so load bias) |
-| `AT_FLAGS` | 0 |
-| `AT_ENTRY` | `fmt.e_entry` (executable's raw entry point) |
-| `AT_UID/EUID/GID/EGID` | 0 (root) |
-| `AT_HWCAP` | `0x0183FBFF` (i686 capability mask) |
-| `AT_PAGESZ` | 4096 |
-| `AT_CLKTCK` | 100 |
-| `AT_PLATFORM` | pointer to `"i686"` string on stack |
+| Entry                  | Value                                                |
+| ---------------------- | ---------------------------------------------------- |
+| `AT_PHDR`              | `fmt.elf_load_addr + fmt.e_phoff` (VA of phdr table) |
+| `AT_PHENT`             | `sizeof(Elf32_Phdr)`                                 |
+| `AT_PHNUM`             | `fmt.e_phnum`                                        |
+| `AT_BASE`              | `fmt.interp_bias` (ld.so load bias)                  |
+| `AT_FLAGS`             | 0                                                    |
+| `AT_ENTRY`             | `fmt.e_entry` (executable's raw entry point)         |
+| `AT_UID/EUID/GID/EGID` | 0 (root)                                             |
+| `AT_HWCAP`             | `0x0183FBFF` (i686 capability mask)                  |
+| `AT_PAGESZ`            | 4096                                                 |
+| `AT_CLKTCK`            | 100                                                  |
+| `AT_PLATFORM`          | pointer to `"i686"` string on stack                  |
 
 ### Step 9 — Transfer control to user space
 
@@ -361,7 +361,7 @@ sys_execve("/bin/ls", argv, envp)
   │    │    PT_LOAD → elf_load_segment (lazy file-backed or anon BSS)
   │    └─ elf_map_dynamic("/lib/ld-linux.so.2"):
   │         ET_DYN validation
-  │         vm_get_usr_zone → fmt.interp_bias
+  │         vm_disc_map → fmt.interp_bias
   │         elf_map_programs_at(bias)
   │         fmt.interp_load_addr = bias + ld.so.e_entry
   │

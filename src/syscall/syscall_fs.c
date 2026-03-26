@@ -619,3 +619,22 @@ done:
 	name_put(cwd);
 	return ret;
 }
+
+int sys_fchdir(int fd)
+{
+	task_struct *cur = CURRENT_TASK();
+	struct stat s;
+	file *fp;
+
+	if (fd < 0 || fd >= (int)MAX_FD)
+		return -EBADF;
+	if (!cur->fds[fd].used)
+		return -EBADF;
+	if (fs_fstat(fd, &s) != EOK)
+		return -EBADF;
+	if (!S_ISDIR(s.st_mode))
+		return -ENOTDIR;
+
+	fp = cur->fds[fd].fp;
+	return sys_chdir(fp->f_name);
+}

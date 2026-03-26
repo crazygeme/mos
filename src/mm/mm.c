@@ -458,15 +458,6 @@ void vm_free(unsigned int vm, int page_count)
 	buffer_count -= page_count;
 }
 
-/* Reserve a user virtual address range of @page_count pages for the current task */
-unsigned vm_get_usr_zone(unsigned page_count)
-{
-	// FIXME: only used in load_elf; refactor when elf loading is reworked
-	task_struct *cur = CURRENT_TASK();
-
-	return vm_disc_map(cur->user->vm, page_count * PAGE_SIZE);
-}
-
 /*
  * Name / path buffer cache
  *

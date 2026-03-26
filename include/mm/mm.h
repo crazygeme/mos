@@ -102,8 +102,6 @@ void mm_set_map_flag(unsigned vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
-unsigned vm_get_usr_zone(unsigned page_count);
-
 int do_mmap(unsigned int addr, unsigned int len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset);
 

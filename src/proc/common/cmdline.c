@@ -1,8 +1,8 @@
 #include "common.h"
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
-	strcpy(buf, "fsck.mode=skip fastboot");
+	proc_buf_printf(pb, "fsck.mode=skip fastboot");
 }
 
 DEFINE_PROC_FILE(cmdline, fill);

@@ -22,8 +22,28 @@
 #include <proc/proc.h>
 #include <hw/time.h>
 #include <lib/klib.h>
-#include <errno.h>
 #include <ext4.h>
+#include <stddef.h>
+
+/*
+ * proc_buf_t — dynamic string buffer for proc file fill functions.
+ *
+ * Fill functions write content via proc_buf_printf(); the buffer grows
+ * automatically.  The caller owns pb.buf and must kfree() it when done.
+ */
+typedef struct {
+	char *buf;
+	size_t len;
+	size_t cap;
+} proc_buf_t;
+
+proc_buf_t *proc_buf_new(void);
+
+void proc_buf_free(proc_buf_t *pb);
+
+void proc_buf_printf(proc_buf_t *pb, const char *fmt, ...);
+
+void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 
 /* _DEFINE_PROC_FILE_IMPL — all boilerplate except the PROC_INIT registration */
 #define _DEFINE_PROC_FILE_IMPL(name, fill_func)                           \
@@ -45,7 +65,7 @@
                                                                           \
 	static int _release_##name(file *file)                            \
 	{                                                                 \
-		vm_free(file->f_inode->i_private, 1);                     \
+		proc_buf_free(file->f_inode->i_private);                  \
 		free(file->f_inode);                                      \
 		free(file);                                               \
 		return 0;                                                 \
@@ -59,10 +79,10 @@
 		ssize_t left = (ssize_t)(fsize - offset);                 \
 		ssize_t read_size = (ssize_t)size > left ? left :         \
 							   (ssize_t)size; \
+		proc_buf_t *pb = file->f_inode->i_private;                \
 		if (read_size <= 0)                                       \
 			return 0;                                         \
-		memcpy(buf, (char *)file->f_inode->i_private + offset,    \
-		       (size_t)read_size);                                \
+		memcpy(buf, (char *)pb->buf + offset, (size_t)read_size); \
 		*pos = offset + read_size;                                \
 		return read_size;                                         \
 	}                                                                 \
@@ -102,12 +122,13 @@
                                                                           \
 	static file *_open_root_##name(super_block *sb, int flag)         \
 	{                                                                 \
+		proc_buf_t *_pb = proc_buf_new();                         \
+		fill_func(_pb);                                           \
 		inode *node = zalloc(sizeof(*node));                      \
 		node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;     \
 		node->i_op = &_iops_##name;                               \
-		node->i_private = vm_alloc(1);                            \
-		fill_func(node->i_private, PAGE_SIZE);                    \
-		node->i_size = strlen((char *)node->i_private);           \
+		node->i_private = _pb;                                    \
+		node->i_size = _pb->len;                                  \
 		file *fp = zalloc(sizeof(*fp));                           \
 		fp->f_inode = node;                                       \
 		fp->f_count = 1;                                          \

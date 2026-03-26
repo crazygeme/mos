@@ -23,15 +23,14 @@ static void count_task(task_struct *task, void *ctx)
 		c->running++;
 }
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
 	task_struct *cur = CURRENT_TASK();
 	loadavg_ctx_t c = { 0, 0 };
 	ps_enum_all(count_task, &c);
 
-	memset(buf, 0, size);
-	sprintf(buf, "0.00 0.00 0.00 %u/%u %u\n", c.running, c.total,
-		cur->psid);
+	proc_buf_printf(pb, "0.00 0.00 0.00 %u/%u %u\n", c.running, c.total,
+			cur->psid);
 }
 
 DEFINE_PROC_FILE(loadavg, fill);

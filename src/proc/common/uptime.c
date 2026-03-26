@@ -9,14 +9,13 @@
  */
 #include "common.h"
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
 	unsigned long long now_ms = time_now_ms();
 	unsigned secs = (unsigned)(now_ms / 1000);
 	unsigned csecs = (unsigned)((now_ms % 1000) / 10);
 
-	memset(buf, 0, size);
-	sprintf(buf, "%u.%02u 0.00\n", secs, csecs);
+	proc_buf_printf(pb, "%u.%02u 0.00\n", secs, csecs);
 }
 
 DEFINE_PROC_FILE(uptime, fill);

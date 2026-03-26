@@ -54,39 +54,36 @@ static void stat_collect(task_struct *task, void *ctx)
 		c->procs_blocked++;
 }
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
-	char *p = buf;
 	int i, ncpu;
 	stat_ctx_t c = { 0, 0, 0, 0, 0, 0 };
-
-	memset(buf, 0, size);
 
 	ps_enum_all(stat_collect, &c);
 
 	ncpu = ncpus > 0 ? ncpus : 1;
 
 	/* ---- aggregate cpu line ---- */
-	p += sprintf(p, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,
-		     c.idle);
+	proc_buf_printf(pb, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,
+			c.idle);
 
 	/* ---- per-CPU lines ---- */
 	for (i = 0; i < ncpu; i++) {
 		if (i == 0)
 			/* cpu0 carries the full aggregate */
-			p += sprintf(p, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
-				     c.user, c.system, c.idle);
+			proc_buf_printf(pb, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
+					c.user, c.system, c.idle);
 		else
-			p += sprintf(p, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
+			proc_buf_printf(pb, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
 	}
 
-	p += sprintf(p, "intr 0\n");
-	p += sprintf(p, "ctxt %u\n", task_schedule_count);
-	p += sprintf(p, "btime 0\n");
-	p += sprintf(p, "processes %u\n", c.processes);
-	p += sprintf(p, "procs_running %u\n", c.procs_running);
-	p += sprintf(p, "procs_blocked %u\n", c.procs_blocked);
-	p += sprintf(p, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
+	proc_buf_printf(pb, "intr 0\n");
+	proc_buf_printf(pb, "ctxt %u\n", task_schedule_count);
+	proc_buf_printf(pb, "btime 0\n");
+	proc_buf_printf(pb, "processes %u\n", c.processes);
+	proc_buf_printf(pb, "procs_running %u\n", c.procs_running);
+	proc_buf_printf(pb, "procs_blocked %u\n", c.procs_blocked);
+	proc_buf_printf(pb, "softirq 0 0 0 0 0 0 0 0 0 0 0\n");
 }
 
 DEFINE_PROC_FILE(stat, fill);

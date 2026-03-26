@@ -47,9 +47,8 @@ extern unsigned timer_wakeup_times;
 extern unsigned timer_process_times;
 extern unsigned select_loop_times;
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
-	char *p = buf;
 	unsigned pf_cache_rate =
 		page_fault_file ?
 			page_fault_file_cache_hit * 100 / page_fault_file :
@@ -57,59 +56,59 @@ static void fill(void *buf, size_t size)
 	unsigned fs_cache_rate =
 		cache_search_count ? cache_hit * 100 / cache_search_count : 0;
 
-	memset(buf, 0, size);
-
 	/* ---- Memory / kernel heap ---- */
-	p += sprintf(p, "KernelHeapBytes:       %8u\n", heap_quota);
-	p += sprintf(p, "KernelHeapPeakBytes:   %8u\n", heap_quota_high);
+	proc_buf_printf(pb, "KernelHeapBytes:       %8u\n", heap_quota);
+	proc_buf_printf(pb, "KernelHeapPeakBytes:   %8u\n", heap_quota_high);
 
 	/* ---- Page fault counters ---- */
-	p += sprintf(p, "PfCow:                 %8u\n", page_fault_cow);
-	p += sprintf(p, "PfCowTimeUs:           %8u\n",
-		     (unsigned)page_fault_cow_spent);
-	p += sprintf(p, "PfInvalid:             %8u\n", page_fault_invalid);
-	p += sprintf(p, "PfInvalidTimeUs:       %8u\n",
-		     (unsigned)page_fault_invalid_spent);
-	p += sprintf(p, "PfFile:                %8u\n", page_fault_file);
-	p += sprintf(p, "PfFileTimeUs:          %8u\n",
-		     (unsigned)page_fault_file_spent);
-	p += sprintf(p, "PfFileSearchTimeUs:    %8u\n",
-		     (unsigned)page_fault_file_search_spent);
-	p += sprintf(p, "PfFileCacheHit:        %8u (%u%%)\n",
-		     page_fault_file_cache_hit, pf_cache_rate);
-	p += sprintf(p, "PfFileRead:            %8u\n", page_fault_file_read);
-	p += sprintf(p, "PfPerm:                %8u\n", page_fault_perm);
-	p += sprintf(p, "PfPermTimeUs:          %8u\n",
-		     (unsigned)page_fault_perm_spent);
+	proc_buf_printf(pb, "PfCow:                 %8u\n", page_fault_cow);
+	proc_buf_printf(pb, "PfCowTimeUs:           %8u\n",
+			(unsigned)page_fault_cow_spent);
+	proc_buf_printf(pb, "PfInvalid:             %8u\n", page_fault_invalid);
+	proc_buf_printf(pb, "PfInvalidTimeUs:       %8u\n",
+			(unsigned)page_fault_invalid_spent);
+	proc_buf_printf(pb, "PfFile:                %8u\n", page_fault_file);
+	proc_buf_printf(pb, "PfFileTimeUs:          %8u\n",
+			(unsigned)page_fault_file_spent);
+	proc_buf_printf(pb, "PfFileSearchTimeUs:    %8u\n",
+			(unsigned)page_fault_file_search_spent);
+	proc_buf_printf(pb, "PfFileCacheHit:        %8u (%u%%)\n",
+			page_fault_file_cache_hit, pf_cache_rate);
+	proc_buf_printf(pb, "PfFileRead:            %8u\n",
+			page_fault_file_read);
+	proc_buf_printf(pb, "PfPerm:                %8u\n", page_fault_perm);
+	proc_buf_printf(pb, "PfPermTimeUs:          %8u\n",
+			(unsigned)page_fault_perm_spent);
 
 	/* ---- Filesystem I/O ---- */
-	p += sprintf(p, "FsReadBytes:           %8u\n", fs_read_size);
-	p += sprintf(p, "FsWriteBytes:          %8u\n", fs_write_size);
-	p += sprintf(p, "FsCacheReadBytes:      %8u\n", fs_cache_read_size);
-	p += sprintf(p, "FsCacheWriteBytes:     %8u\n", fs_cache_write_size);
-	p += sprintf(p, "FsCacheBytes:          %8u\n",
-		     fs_cache_size * BLOCK_SECTOR_SIZE);
-	p += sprintf(p, "FsCacheMaxBytes:       %8u\n",
-		     max_fs_cache_size * BLOCK_SECTOR_SIZE);
-	p += sprintf(p, "FsCacheSearches:       %8u\n", cache_search_count);
-	p += sprintf(p, "FsCacheHits:           %8u (%u%%)\n", cache_hit,
-		     fs_cache_rate);
-	p += sprintf(p, "FsCacheSearchTimeUs:   %8u\n",
-		     (unsigned)cache_search_time);
-	p += sprintf(p, "DiskReadBytes:         %8u\n", disk_read_size);
-	p += sprintf(p, "DiskWriteBytes:        %8u\n", disk_write_size);
-	p += sprintf(p, "ElfLoadTimeUs:         %8u\n",
-		     (unsigned)elf_read_time);
+	proc_buf_printf(pb, "FsReadBytes:           %8u\n", fs_read_size);
+	proc_buf_printf(pb, "FsWriteBytes:          %8u\n", fs_write_size);
+	proc_buf_printf(pb, "FsCacheReadBytes:      %8u\n", fs_cache_read_size);
+	proc_buf_printf(pb, "FsCacheWriteBytes:     %8u\n",
+			fs_cache_write_size);
+	proc_buf_printf(pb, "FsCacheBytes:          %8u\n",
+			fs_cache_size * BLOCK_SECTOR_SIZE);
+	proc_buf_printf(pb, "FsCacheMaxBytes:       %8u\n",
+			max_fs_cache_size * BLOCK_SECTOR_SIZE);
+	proc_buf_printf(pb, "FsCacheSearches:       %8u\n", cache_search_count);
+	proc_buf_printf(pb, "FsCacheHits:           %8u (%u%%)\n", cache_hit,
+			fs_cache_rate);
+	proc_buf_printf(pb, "FsCacheSearchTimeUs:   %8u\n",
+			(unsigned)cache_search_time);
+	proc_buf_printf(pb, "DiskReadBytes:         %8u\n", disk_read_size);
+	proc_buf_printf(pb, "DiskWriteBytes:        %8u\n", disk_write_size);
+	proc_buf_printf(pb, "ElfLoadTimeUs:         %8u\n",
+			(unsigned)elf_read_time);
 
 	/* ---- Scheduler ---- */
-	p += sprintf(p, "SchedCalls:            %8u\n", task_schedule_count);
-	p += sprintf(p, "SchedTimeUs:           %8u\n",
-		     (unsigned)task_schedule_time);
-	p += sprintf(p, "SchedSelectLoop:       %8u\n", select_loop_times);
-	p += sprintf(p, "TimerWakeups:          %8u\n", timer_wakeup_times);
-	p += sprintf(p, "TimerProcessed:        %8u\n", timer_process_times);
-
-	(void)p;
+	proc_buf_printf(pb, "SchedCalls:            %8u\n",
+			task_schedule_count);
+	proc_buf_printf(pb, "SchedTimeUs:           %8u\n",
+			(unsigned)task_schedule_time);
+	proc_buf_printf(pb, "SchedSelectLoop:       %8u\n", select_loop_times);
+	proc_buf_printf(pb, "TimerWakeups:          %8u\n", timer_wakeup_times);
+	proc_buf_printf(pb, "TimerProcessed:        %8u\n",
+			timer_process_times);
 }
 
 DEFINE_PROC_FILE(mos, fill);

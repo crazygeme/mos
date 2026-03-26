@@ -19,12 +19,12 @@
  * address.  ACPI tables may live anywhere in physical RAM — including above
  * the initial 8 MB boot mapping — so we must ensure the page is mapped before
  * dereferencing.  Physical pages below PAGE_TABLE_CACHE_END - KERNEL_OFFSET
- * are already covered by the boot mapping; mm_map_phys_page() is a no-op for
+ * are already covered by the boot mapping; mm_kmap_phys() is a no-op for
  * those.
  */
 static void *acpi_phys_to_virt(unsigned phys)
 {
-	mm_map_phys_page(phys & PAGE_SIZE_MASK);
+	mm_kmap_phys(phys & PAGE_SIZE_MASK);
 	return (void *)(phys + KERNEL_OFFSET);
 }
 

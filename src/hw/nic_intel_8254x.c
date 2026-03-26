@@ -4,7 +4,7 @@
  *
  * Uses legacy descriptor format, polled TX, interrupt-driven RX.
  * MMIO is at BAR0 (memory-mapped, >= 0xC0000000 in QEMU → mapped with
- * mm_add_resource_map).  DMA buffers live in kernel heap; PA = VA - KERNEL_OFFSET.
+ * mm_map_io).  DMA buffers live in kernel heap; PA = VA - KERNEL_OFFSET.
  */
 #include <hw/nic.h>
 #include <hw/pci.h>
@@ -146,7 +146,7 @@ static uint32_t e1000_map_mmio(uint32_t bar0)
 	unsigned i;
 	/* 82540EM BAR0 = 128 KB = 32 pages */
 	for (i = 0; i < 32; i++)
-		mm_add_resource_map(phys + i * PAGE_SIZE);
+		mm_map_io(phys + i * PAGE_SIZE);
 	return phys;
 }
 

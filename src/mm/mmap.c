@@ -175,7 +175,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 
 	/* Unmap every page in the region from the hardware page tables. */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
-		mm_del_dynamic_map(vir);
+		mm_unmap_page(vir);
 	RELOAD_CR3();
 
 	hash_remove(table, key);
@@ -535,7 +535,7 @@ int do_munmap(void *addr, unsigned length)
 		/* Unmap physical pages only in the intersection [unmap_begin, unmap_end).
 		 * Pages in remnant portions are left untouched in the page tables. */
 		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
-			mm_del_dynamic_map(vir);
+			mm_unmap_page(vir);
 
 		/* Hold a file ref across the evict() drop inside hash_remove(). */
 		if (r_fp)

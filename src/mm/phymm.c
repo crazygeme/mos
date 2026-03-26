@@ -275,7 +275,7 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 	for (i = (start_page * PAGE_SIZE); i < (phymm_begin * PAGE_SIZE);
 	     i += PAGE_SIZE) {
 		addr = i + KERNEL_OFFSET;
-		mm_add_direct_map(addr);
+		mm_kmap_page(addr);
 	}
 	RELOAD_CR3();
 	addr = (start_page * PAGE_SIZE) + KERNEL_OFFSET;

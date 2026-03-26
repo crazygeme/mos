@@ -33,7 +33,7 @@ KHEAP_END   = KHEAP_BEGIN + 0x004FF000  (~5 MB static window)
 The allocator maintains `cur_block_top` starting at `KHEAP_BEGIN`.  When a new chunk is needed:
 
 - **Within the static window** (`cur_block_top + pages < KHEAP_END`): bump `cur_block_top` by `pages * PAGE_SIZE`; the physical pages backing this range are already identity-mapped by the boot page tables.
-- **Beyond the static window**: call `vm_alloc(pages)` — allocates physical pages via `phymm_alloc_kernel`, maps them with `mm_add_direct_map` at `phys + KERNEL_OFFSET`, and returns the virtual address.
+- **Beyond the static window**: call `vm_alloc(pages)` — allocates physical pages via `phymm_alloc_kernel`, maps them with `mm_kmap_page` at `phys + KERNEL_OFFSET`, and returns the virtual address.
 
 Each call to `extend_heap(min_sz)` allocates the ceiling number of 4 KB pages that covers `min_sz + HDR_SZ`.
 

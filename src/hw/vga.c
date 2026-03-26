@@ -1264,7 +1264,7 @@ void fb_enable()
 	if (_fb_buffer_phy) {
 		unsigned end = _fb_buffer_phy + mm_size;
 		for (dma = _fb_buffer_phy; dma < end; dma += PAGE_SIZE)
-			mm_add_resource_map(dma);
+			mm_map_io(dma);
 		RELOAD_CR3();
 		_fb_buffer = _fb_buffer_phy;
 	}

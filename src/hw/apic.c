@@ -8,7 +8,7 @@
  * is discovered from the ACPI MADT (usually physical 0xFEC00000).
  *
  * We map the LAPIC and IOAPIC MMIO pages into the kernel virtual address
- * space using mm_add_resource_map(), which maps physical P to virtual P
+ * space using mm_map_io(), which maps physical P to virtual P
  * (valid since both addresses are above KERNEL_OFFSET = 0xC0000000).
  */
 
@@ -94,7 +94,7 @@ static void lapic_init_common(int is_bsp)
 void apic_init_bsp(void)
 {
 	/* Map LAPIC MMIO page into kernel virtual space. */
-	mm_add_resource_map(LAPIC_BASE_PHY);
+	mm_map_io(LAPIC_BASE_PHY);
 
 	/*
 	 * Virtual-wire mode: do NOT mask the 8259A PIC.  The BSP's LINT0 is
@@ -201,7 +201,7 @@ void ioapic_init(unsigned ioapic_phys)
 	unsigned ver, max_redir, i;
 
 	/* Map the IOAPIC MMIO page. */
-	mm_add_resource_map(ioapic_phys);
+	mm_map_io(ioapic_phys);
 	ioapic_base = (volatile unsigned *)ioapic_phys;
 
 	ver = ioapic_read(IOAPIC_REG_VER);

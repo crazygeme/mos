@@ -22,22 +22,20 @@
 #include <macro.h>
 #include <config.h>
 #include <ext4.h>
+#include "common/common.h"
 
 /* ------------------------------------------------------------------ *
  * Shared buffer descriptor                                             *
  * ------------------------------------------------------------------ */
 
 /*
- * pid_buf — backing store for a per-PID file or directory.
- *
- * Text files  (status, stat, cmdline, maps): buf = vm_alloc(1), is_page = 1.
- * Directories (fd/, per-PID dir):            buf = kmalloc(),   is_page = 0.
+ * Text files use proc_buf_t (dynamic, no size limit).
+ * Directories use a kmalloc'd buffer wrapped in a plain {buf,len} struct.
  */
 typedef struct {
 	char *buf;
 	size_t len;
-	int is_page; /* 1 = vm_alloc'd page, 0 = kmalloc'd */
-} pid_buf;
+} pid_dir_buf;
 
 /* ------------------------------------------------------------------ *
  * Shared file operations                                               *
@@ -45,7 +43,7 @@ typedef struct {
 
 static ssize_t pid_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	pid_buf *pb = fp->f_inode->i_private;
+	proc_buf_t *pb = fp->f_inode->i_private;
 	loff_t off = *pos;
 	ssize_t left = (ssize_t)pb->len - (ssize_t)off;
 	ssize_t n = (ssize_t)count < left ? (ssize_t)count : left;
@@ -59,7 +57,7 @@ static ssize_t pid_read(file *fp, void *buf, size_t count, loff_t *pos)
 
 static loff_t pid_llseek(file *fp, loff_t offset, int whence)
 {
-	pid_buf *pb = fp->f_inode->i_private;
+	proc_buf_t *pb = fp->f_inode->i_private;
 	loff_t fsize = (loff_t)pb->len;
 	loff_t newpos;
 
@@ -91,12 +89,7 @@ static int pid_poll(file *fp, unsigned type)
 
 static int pid_release(file *fp)
 {
-	pid_buf *pb = fp->f_inode->i_private;
-	if (pb->is_page)
-		vm_free(pb->buf, 1);
-	else
-		kfree(pb->buf);
-	free(pb);
+	proc_buf_free(fp->f_inode->i_private);
 	free(fp->f_inode);
 	free(fp);
 	return 0;
@@ -104,7 +97,7 @@ static int pid_release(file *fp)
 
 static int pid_file_getattr(inode *node, struct stat *s)
 {
-	pid_buf *pb = node->i_private;
+	proc_buf_t *pb = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_size = (loff_t)pb->len;
@@ -192,16 +185,11 @@ static file *make_pid_symlink(const char *target)
  * Constructor helpers                                                  *
  * ------------------------------------------------------------------ */
 
-/* Wrap a vm_alloc(1) page as a read-only regular file. */
-static file *make_pid_file(char *page, size_t len)
+/* Wrap a proc_buf_t as a read-only regular file. Ownership transfers. */
+static file *make_pid_file(proc_buf_t *pb)
 {
-	pid_buf *pb = zalloc(sizeof(*pb));
 	inode *nd = zalloc(sizeof(*nd));
 	file *fp = zalloc(sizeof(*fp));
-
-	pb->buf = page;
-	pb->len = len;
-	pb->is_page = 1;
 
 	nd->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
 	nd->i_op = &pid_file_iops;
@@ -213,16 +201,11 @@ static file *make_pid_file(char *page, size_t len)
 	return fp;
 }
 
-/* Wrap a kmalloc'd buffer as a directory file. */
-static file *make_pid_dir(char *buf, size_t len)
+/* Wrap a proc_buf_t as a directory file. Ownership transfers. */
+static file *make_pid_dir(proc_buf_t *pb)
 {
-	pid_buf *pb = zalloc(sizeof(*pb));
 	inode *nd = zalloc(sizeof(*nd));
 	file *fp = zalloc(sizeof(*fp));
-
-	pb->buf = buf;
-	pb->len = len;
-	pb->is_page = 0;
 
 	nd->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR | S_IXGRP |
 		     S_IXOTH;
@@ -289,7 +272,7 @@ static void vm_get_stats(task_struct *task,
  * Fields: Name State Pid PPid Pgrp Session Threads MinFlt MajFlt
  *         voluntary_ctxt_switches nonvoluntary_ctxt_switches
  */
-static void fill_status(char *buf, task_struct *task)
+static void fill_status(proc_buf_t *pb, task_struct *task)
 {
 	const char *cmd =
 		task->user->command ? (const char *)task->user->command : "";
@@ -300,50 +283,38 @@ static void fill_status(char *buf, task_struct *task)
 
 	vm_get_stats(task, &vm);
 
-	sprintf(buf,
-		"Name:      %s\n"
-		"State:     %c (%s)\n"
-		"Pid:       %u\n"
-		"PPid:      %u\n"
-		"Pgrp:      %u\n"
-		"Tgid:      0\n"
-		"Ngid:      0\n"
-		"TracerPid: 0\n"
-		"Session:   %u\n"
-		"Uid:       0 0 0 0\n"
-		"Gid:       0 0 0 0\n"
-		"Umask:     %04o\n"
-		"FDSize:    %u\n"
-		"Groups:\n"
-		"NStgid:    1\n"
-		"NSpid:     1\n"
-		"NSpgid:    0\n"
-		"NSsid:     0\n"
-		"Kthread:   1\n"
-		"Threads:   1\n"
-		"VmPeak:    %u kB\n"
-		"VmSize:    %u kB\n"
-		"VmExe:     %u kB\n"
-		"VmData:    %u kB\n"
-		"VmStk:     %u kB\n"
-		"RssAnon:   %u kB\n"
-		"RssFile:   %u kB\n"
-		"Threads:   1\n"
-		"KThreads:  1\n"
-		"MinFlt:    %u\n"
-		"MajFlt:    %u\n"
-		"Cpus_allowed:      ffffffff\n"
-		"Cpus_allowed_list: 0-31\n"
-		"voluntary_ctxt_switches::       %u\n"
-		"nonvoluntary_ctxt_switches::    %u\n",
-		name, pid_state_char(task->status),
-		pid_state_name(task->status), task->psid,
-		task->parent ? task->parent->psid : task->psid,
-		task->user->group_id, task->user->session_id, task->umask,
-		fdsize, vm.total_kb, vm.total_kb, vm.text_kb, vm.data_kb,
-		vm.stk_kb, vm.rss_anon_kb, vm.rss_file_kb, task->pf_minor,
-		task->pf_major, task->total_switches - task->niv_switches,
-		task->niv_switches);
+	proc_buf_printf(pb, "Name:      %s\n", name);
+	proc_buf_printf(pb, "State:     %c (%s)\n",
+			pid_state_char(task->status),
+			pid_state_name(task->status));
+	proc_buf_printf(pb, "Pid:       %u\n", task->psid);
+	proc_buf_printf(pb, "PPid:      %u\n",
+			task->parent ? task->parent->psid : task->psid);
+	proc_buf_printf(pb, "Pgrp:      %u\n", task->user->group_id);
+	proc_buf_printf(pb, "Tgid:      0\nNgid:      0\nTracerPid: 0\n");
+	proc_buf_printf(pb, "Session:   %u\n", task->user->session_id);
+	proc_buf_printf(pb, "Uid:       0 0 0 0\nGid:       0 0 0 0\n");
+	proc_buf_printf(pb, "Umask:     %04o\n", task->umask);
+	proc_buf_printf(pb, "FDSize:    %u\n", fdsize);
+	proc_buf_printf(pb, "Groups:\nNStgid:    1\nNSpid:     1\n"
+			    "NSpgid:    0\nNSsid:     0\n"
+			    "Kthread:   1\nThreads:   1\n");
+	proc_buf_printf(pb, "VmPeak:    %u kB\n", vm.total_kb);
+	proc_buf_printf(pb, "VmSize:    %u kB\n", vm.total_kb);
+	proc_buf_printf(pb, "VmExe:     %u kB\n", vm.text_kb);
+	proc_buf_printf(pb, "VmData:    %u kB\n", vm.data_kb);
+	proc_buf_printf(pb, "VmStk:     %u kB\n", vm.stk_kb);
+	proc_buf_printf(pb, "RssAnon:   %u kB\n", vm.rss_anon_kb);
+	proc_buf_printf(pb, "RssFile:   %u kB\n", vm.rss_file_kb);
+	proc_buf_printf(pb, "Threads:   1\nKThreads:  1\n");
+	proc_buf_printf(pb, "MinFlt:    %u\n", task->pf_minor);
+	proc_buf_printf(pb, "MajFlt:    %u\n", task->pf_major);
+	proc_buf_printf(pb, "Cpus_allowed:      ffffffff\n"
+			    "Cpus_allowed_list: 0-31\n");
+	proc_buf_printf(pb, "voluntary_ctxt_switches::       %u\n",
+			task->total_switches - task->niv_switches);
+	proc_buf_printf(pb, "nonvoluntary_ctxt_switches::    %u\n",
+			task->niv_switches);
 }
 
 /*
@@ -352,25 +323,27 @@ static void fill_status(char *buf, task_struct *task)
  *   minflt cminflt majflt cmajflt utime stime cutime cstime
  *   priority nice num_threads itrealvalue starttime vsize rss
  */
-static void fill_stat(char *buf, task_struct *task)
+static void fill_stat(proc_buf_t *pb, task_struct *task)
 {
-	sprintf(buf,
-		"%u (%s) %c %u %u %u 0 0 0 "
-		"%u 0 %u 0 %u %u 0 0 "
-		"20 0 1 0 0 0 0\n",
-		task->psid,
-		task->user->command ? (char *)task->user->command : "",
-		pid_state_char(task->status),
-		task->parent ? task->parent->psid : task->psid,
-		task->user->group_id, task->user->session_id, task->pf_minor,
-		task->pf_major, task->user_tickets, task->kernel_tickets);
+	proc_buf_printf(pb,
+			"%u (%s) %c %u %u %u 0 0 0 "
+			"%u 0 %u 0 %u %u 0 0 "
+			"20 0 1 0 0 0 0\n",
+			task->psid,
+			task->user->command ? (char *)task->user->command : "",
+			pid_state_char(task->status),
+			task->parent ? task->parent->psid : task->psid,
+			task->user->group_id, task->user->session_id,
+			task->pf_minor, task->pf_major, task->user_tickets,
+			task->kernel_tickets);
 }
 
 /* /proc/{pid}/cmdline — null-terminated command name */
-static void fill_cmdline(char *buf, task_struct *task)
+static void fill_cmdline(proc_buf_t *pb, task_struct *task)
 {
 	if (task->user->command && task->user->cmd_len)
-		memcpy(buf, (char *)task->user->command, task->user->cmd_len);
+		proc_buf_copy(pb, (char *)task->user->command,
+			      task->user->cmd_len);
 }
 
 /*
@@ -430,7 +403,7 @@ static void vm_get_stats(task_struct *task, vm_stats_t *out)
 		(ctx.anon + heap_pages + USER_STACK_PAGES) * (PAGE_SIZE / 1024);
 }
 
-static void fill_statm(char *buf, task_struct *task)
+static void fill_statm(proc_buf_t *pb, task_struct *task)
 {
 	statm_ctx ctx = { 0, 0, 0, 0, 0 };
 	unsigned heap_pages = 0, stack_pages = USER_STACK_PAGES;
@@ -445,22 +418,20 @@ static void fill_statm(char *buf, task_struct *task)
 	ctx.total += heap_pages + stack_pages;
 	ctx.data += heap_pages + stack_pages;
 
-	sprintf(buf, "%u %u 0 %u 0 %u 0\n", ctx.total, ctx.total, ctx.text,
-		ctx.data);
+	proc_buf_printf(pb, "%u %u 0 %u 0 %u 0\n", ctx.total, ctx.total,
+			ctx.text, ctx.data);
 }
 
 /* /proc/{pid}/environ — NUL-separated environment strings */
-static void fill_environ(char *buf, task_struct *task)
+static void fill_environ(proc_buf_t *pb, task_struct *task)
 {
 	if (task->user->environment && task->user->env_len)
-		memcpy(buf, task->user->environment, task->user->env_len);
+		proc_buf_copy(pb, task->user->environment, task->user->env_len);
 }
 
 /* /proc/{pid}/maps — one line per vm_region + stack + heap pseudo-regions */
 typedef struct {
-	char *buf;
-	size_t pos;
-	size_t size;
+	proc_buf_t *pb;
 	task_struct *task;
 } maps_ctx;
 
@@ -468,14 +439,10 @@ static void maps_region_cb(vm_region *region, void *data)
 {
 	maps_ctx *ctx = data;
 	char perms[5];
-	char *p;
 	const char *name;
 	unsigned stack_begin = KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE;
 	unsigned stack_end = KERNEL_OFFSET;
 	int ino = 0;
-
-	if (ctx->pos + 80 >= ctx->size)
-		return;
 
 	perms[0] = (region->prot & PROT_READ) ? 'r' : '-';
 	perms[1] = (region->prot & PROT_WRITE) ? 'w' : '-';
@@ -494,15 +461,14 @@ static void maps_region_cb(vm_region *region, void *data)
 	else
 		name = "";
 
-	p = ctx->buf + ctx->pos;
-	ctx->pos += sprintf(p, "%08x-%08x %s %08x 00:00 %-10d %s\n",
-			    region->begin, region->end, perms, region->offset,
-			    ino, name);
+	proc_buf_printf(ctx->pb, "%08x-%08x %s %08x 00:00 %-10d %s\n",
+			region->begin, region->end, perms, region->offset, ino,
+			name);
 }
 
-static void fill_maps(char *buf, size_t size, task_struct *task)
+static void fill_maps(proc_buf_t *pb, task_struct *task)
 {
-	maps_ctx ctx = { buf, 0, size, task };
+	maps_ctx ctx = { pb, task };
 
 	if (task->user->vm)
 		vm_enum(task->user->vm, maps_region_cb, &ctx);
@@ -535,6 +501,7 @@ static file *pid_dir_open(task_struct *task)
 	unsigned size = 0;
 	int i;
 	char *buf, *p;
+	proc_buf_t *pb;
 
 	for (i = 0; pid_dir_entries[i]; i++)
 		size += ROUND_UP(NAME_OFFSET() + strlen(pid_dir_entries[i]) +
@@ -546,7 +513,10 @@ static file *pid_dir_open(task_struct *task)
 	for (i = 0; pid_dir_entries[i]; i++)
 		PID_FILL_DIRENT(&p, buf, pid_dir_entries[i]);
 
-	return make_pid_dir(buf, size);
+	pb = proc_buf_new();
+	proc_buf_copy(pb, buf, size);
+	free(buf);
+	return make_pid_dir(pb);
 }
 
 /* /proc/{pid}/fd/ directory — lists open file descriptor numbers. */
@@ -555,6 +525,7 @@ static file *pid_fd_dir_open(task_struct *task)
 	unsigned size = 0;
 	char name[12];
 	char *buf, *p;
+	proc_buf_t *pb;
 	int i;
 
 	size += ROUND_UP(NAME_OFFSET() + 2); /* "."  */
@@ -584,7 +555,10 @@ static file *pid_fd_dir_open(task_struct *task)
 		}
 	}
 
-	return make_pid_dir(buf, size);
+	pb = proc_buf_new();
+	proc_buf_copy(pb, buf, size);
+	free(buf);
+	return make_pid_dir(pb);
 }
 
 #undef PID_FILL_DIRENT
@@ -605,7 +579,7 @@ static file *pid_fd_dir_open(task_struct *task)
 file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 {
 	task_struct *task = ps_find_process(pid);
-	char *page;
+	proc_buf_t *pb;
 
 	if (!task)
 		return NULL;
@@ -614,53 +588,27 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 	if (rest[0] == '\0' || (rest[0] == '/' && rest[1] == '\0'))
 		return pid_dir_open(task);
 
-	/* /status */
-	if (strcmp(rest, "/status") == 0) {
-		page = vm_alloc(1);
-		memset(page, 0, PAGE_SIZE);
-		fill_status(page, task);
-		return make_pid_file(page, strlen(page));
-	}
+#define OPEN_TEXT_FILE(fill_fn)           \
+	do {                              \
+		pb = proc_buf_new();      \
+		fill_fn(pb, task);        \
+		return make_pid_file(pb); \
+	} while (0)
 
-	/* /stat */
-	if (strcmp(rest, "/stat") == 0) {
-		page = vm_alloc(1);
-		memset(page, 0, PAGE_SIZE);
-		fill_stat(page, task);
-		return make_pid_file(page, strlen(page));
-	}
+	if (strcmp(rest, "/status") == 0)
+		OPEN_TEXT_FILE(fill_status);
+	if (strcmp(rest, "/stat") == 0)
+		OPEN_TEXT_FILE(fill_stat);
+	if (strcmp(rest, "/statm") == 0)
+		OPEN_TEXT_FILE(fill_statm);
+	if (strcmp(rest, "/cmdline") == 0)
+		OPEN_TEXT_FILE(fill_cmdline);
+	if (strcmp(rest, "/environ") == 0)
+		OPEN_TEXT_FILE(fill_environ);
+	if (strcmp(rest, "/maps") == 0)
+		OPEN_TEXT_FILE(fill_maps);
 
-	/* /statm */
-	if (strcmp(rest, "/statm") == 0) {
-		page = vm_alloc(1);
-		memset(page, 0, PAGE_SIZE);
-		fill_statm(page, task);
-		return make_pid_file(page, strlen(page));
-	}
-
-	/* /cmdline */
-	if (strcmp(rest, "/cmdline") == 0) {
-		page = vm_alloc(1);
-		memset(page, 0, PAGE_SIZE);
-		fill_cmdline(page, task);
-		return make_pid_file(page, strlen(page));
-	}
-
-	/* /environ */
-	if (strcmp(rest, "/environ") == 0) {
-		page = vm_alloc(1);
-		memset(page, 0, PAGE_SIZE);
-		fill_environ(page, task);
-		return make_pid_file(page, strlen(page));
-	}
-
-	/* /maps */
-	if (strcmp(rest, "/maps") == 0) {
-		page = vm_alloc(1);
-		memset(page, 0, PAGE_SIZE);
-		fill_maps(page, PAGE_SIZE, task);
-		return make_pid_file(page, strlen(page));
-	}
+#undef OPEN_TEXT_FILE
 
 	/* /fd or /fd/ → fd directory listing */
 	if (strcmp(rest, "/fd") == 0 || strcmp(rest, "/fd/") == 0)

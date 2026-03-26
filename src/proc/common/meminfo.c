@@ -18,32 +18,29 @@ extern unsigned buffer_count;
 /* Convert pages to kB */
 #define PG_KB(n) (((unsigned long)(n)) * (PAGE_SIZE / 1024))
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
 	unsigned total_pages = phymm_end - phymm_begin;
 	unsigned free_pages = total_pages - phymm_used;
 
-	char *p = buf;
-	memset(buf, 0, size);
-
-	p += sprintf(p, "MemTotal:          %8u kB\n", PG_KB(total_pages));
-	p += sprintf(p, "MemFree:           %8u kB\n", PG_KB(free_pages));
-	p += sprintf(p, "MemAvailable:      %8u kB\n", PG_KB(free_pages));
-	p += sprintf(p, "Buffers:           %8u kB\n", PG_KB(buffer_count));
-	p += sprintf(p, "Cached:            %8u kB\n", PG_KB(cache_count));
-	p += sprintf(p, "SwapCached:        %8u kB\n", 0u);
-	p += sprintf(p, "Active:            %8u kB\n", 0u);
-	p += sprintf(p, "Inactive:          %8u kB\n", 0u);
-	p += sprintf(p, "SwapTotal:         %8u kB\n", 0u);
-	p += sprintf(p, "SwapFree:          %8u kB\n", 0u);
-	p += sprintf(p, "Dirty:             %8u kB\n", 0u);
-	p += sprintf(p, "Writeback:         %8u kB\n", 0u);
-	p += sprintf(p, "PageTables:        %8u kB\n", PG_KB(1024 - pgc_top));
-	p += sprintf(p, "KernelStack:       %8u kB\n", PG_KB(ps_total_count()));
-	p += sprintf(p, "CommitLimit:       %8u kB\n", PG_KB(total_pages));
-	p += sprintf(p, "Committed_AS:      %8u kB\n", PG_KB(phymm_used));
-
-	(void)p;
+	proc_buf_printf(pb, "MemTotal:          %8u kB\n", PG_KB(total_pages));
+	proc_buf_printf(pb, "MemFree:           %8u kB\n", PG_KB(free_pages));
+	proc_buf_printf(pb, "MemAvailable:      %8u kB\n", PG_KB(free_pages));
+	proc_buf_printf(pb, "Buffers:           %8u kB\n", PG_KB(buffer_count));
+	proc_buf_printf(pb, "Cached:            %8u kB\n", PG_KB(cache_count));
+	proc_buf_printf(pb, "SwapCached:        %8u kB\n", 0u);
+	proc_buf_printf(pb, "Active:            %8u kB\n", 0u);
+	proc_buf_printf(pb, "Inactive:          %8u kB\n", 0u);
+	proc_buf_printf(pb, "SwapTotal:         %8u kB\n", 0u);
+	proc_buf_printf(pb, "SwapFree:          %8u kB\n", 0u);
+	proc_buf_printf(pb, "Dirty:             %8u kB\n", 0u);
+	proc_buf_printf(pb, "Writeback:         %8u kB\n", 0u);
+	proc_buf_printf(pb, "PageTables:        %8u kB\n",
+			PG_KB(1024 - pgc_top));
+	proc_buf_printf(pb, "KernelStack:       %8u kB\n",
+			PG_KB(ps_total_count()));
+	proc_buf_printf(pb, "CommitLimit:       %8u kB\n", PG_KB(total_pages));
+	proc_buf_printf(pb, "Committed_AS:      %8u kB\n", PG_KB(phymm_used));
 }
 
 DEFINE_PROC_FILE(meminfo, fill);

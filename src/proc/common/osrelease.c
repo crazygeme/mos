@@ -1,9 +1,9 @@
 #include <config.h>
 #include "common.h"
 
-static void fill(void *buf, size_t size)
+static void fill(proc_buf_t *pb)
 {
-	sprintf(buf, "%s\n", UTS_RELEASE);
+	proc_buf_printf(pb, "%s\n", UTS_RELEASE);
 }
 
 DEFINE_PROC_FILE_AT("/sys/kernel/osrelease", osrelease, fill);

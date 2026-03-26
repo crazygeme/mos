@@ -1250,7 +1250,8 @@ static int tty_fs_getattr(inode *node, struct stat *s)
 	s->st_mtime = 0;
 	s->st_uid = 0;
 	s->st_nlink = 1;
-	s->st_rdev = 8004;
+	s->st_rdev = (4 << 8) |
+		     (unsigned)state->tty_idx; /* major 4 = virtual console */
 	s->st_size = (loff_t)(MAX_CHARS - state->cursor);
 	return 0;
 }

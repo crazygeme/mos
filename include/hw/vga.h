@@ -57,6 +57,13 @@ void fb_clear_screen(void);
 /* Save the text shadow buffer to dst (size = cols*rows bytes). */
 void fb_save_text(char *dst, unsigned size);
 
+/* Save the fg/bg color arrays to dst buffers (size = cols*rows elements). */
+void fb_save_colors(unsigned *fg_dst, unsigned *bg_dst, unsigned size);
+
+/* Restore the fg/bg color arrays from src buffers before redrawing. */
+void fb_restore_colors(const unsigned *fg_src, const unsigned *bg_src,
+		       unsigned size);
+
 /* Restore the text shadow buffer from src, redraw the entire screen,
  * and place the cursor at cursor_pos. */
 void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos);

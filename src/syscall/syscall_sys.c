@@ -7,6 +7,8 @@
 
 #include <ps/ps.h>
 #include <mm/mmap.h>
+#include <mm/mm.h>
+#include <mm/phymm.h>
 #include <hw/time.h>
 #include <lib/klib.h>
 #include <config.h>
@@ -16,6 +18,24 @@
 #include <fs/fs.h>
 #include <fs/fcntl.h>
 #include "syscall_internal.h"
+
+extern unsigned phymm_used;
+
+struct sysinfo {
+	long uptime;
+	unsigned long loads[3];
+	unsigned long totalram;
+	unsigned long freeram;
+	unsigned long sharedram;
+	unsigned long bufferram;
+	unsigned long totalswap;
+	unsigned long freeswap;
+	unsigned short procs;
+	unsigned long totalhigh;
+	unsigned long freehigh;
+	unsigned int mem_unit;
+	char _f[8];
+};
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
 
@@ -276,4 +296,26 @@ int sys_umask(unsigned mask)
 		klog("umask(%d) = %d\n", mask, ret);
 
 	return ret;
+}
+
+int sys_sysinfo(void *buf)
+{
+	struct sysinfo *info = (struct sysinfo *)buf;
+	unsigned total_pages = phymm_end - phymm_begin;
+	unsigned free_pages = total_pages > phymm_used ? total_pages - phymm_used : 0;
+
+	if (!info)
+		return -EFAULT;
+
+	memset(info, 0, sizeof(*info));
+	info->uptime = (long)(time_now_us() / 1000000ULL);
+	info->totalram = (unsigned long)total_pages * PAGE_SIZE;
+	info->freeram = (unsigned long)free_pages * PAGE_SIZE;
+	info->mem_unit = 1;
+
+	if (TestControl.verbos)
+		klog("sysinfo: total=%luKB free=%luKB\n",
+		     info->totalram / 1024, info->freeram / 1024);
+
+	return 0;
 }

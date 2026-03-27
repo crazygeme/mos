@@ -384,6 +384,21 @@ int sys_sigreturn()
 	cur->signal->sig_mask = sf->saved_mask;
 
 	/*
+	 * If we delivered on the altstack, check whether the restored esp
+	 * falls outside the altstack range; if so we're leaving it.
+	 */
+	{
+		stack_t *alt = &cur->signal->altstack;
+		if (alt->ss_flags & SS_ONSTACK) {
+			unsigned alt_base = (unsigned)alt->ss_sp;
+			unsigned alt_top = alt_base + alt->ss_size;
+			unsigned restored = sf->saved_esp;
+			if (restored < alt_base || restored >= alt_top)
+				alt->ss_flags &= ~SS_ONSTACK;
+		}
+	}
+
+	/*
 	 * Return the original eax so that the interrupted syscall's result
 	 * is preserved when execution resumes.  syscall_process will write
 	 * this into frame->eax, but do_signal (called afterwards) will see
@@ -462,8 +477,21 @@ void do_signal(intr_frame *frame)
 
 	/* ---- User-defined handler: build signal frame on user stack ---- */
 
-	new_esp =
-		(unsigned char *)((unsigned)frame->esp - sizeof(signal_frame));
+	/*
+	 * SA_ONSTACK: deliver on the alternate signal stack if one is
+	 * registered, enabled, and we are not already running on it.
+	 */
+	if ((sa->sa_flags & SA_ONSTACK) &&
+	    cur->signal->altstack.ss_sp &&
+	    !(cur->signal->altstack.ss_flags & SS_DISABLE) &&
+	    !(cur->signal->altstack.ss_flags & SS_ONSTACK)) {
+		new_esp = (unsigned char *)cur->signal->altstack.ss_sp +
+			  cur->signal->altstack.ss_size;
+		cur->signal->altstack.ss_flags |= SS_ONSTACK;
+	} else {
+		new_esp = (unsigned char *)((unsigned)frame->esp -
+					    sizeof(signal_frame));
+	}
 	/* 16-byte align */
 	new_esp = (unsigned char *)((unsigned)new_esp & ~0xfU);
 	sf = (signal_frame *)new_esp;
@@ -549,6 +577,47 @@ int sys_ugetrlimit(int resource, void *limit)
 		rl[0] = 0xFFFFFFFFu; /* rlim_cur = RLIM_INFINITY */
 		rl[1] = 0xFFFFFFFFu; /* rlim_max = RLIM_INFINITY */
 	}
+	return 0;
+}
+
+int sys_setrlimit(int resource, void *limit)
+{
+	if (TestControl.verbos)
+		klog("setrlimit(%d)\n", resource);
+
+	/* We don't enforce resource limits; silently accept any value. */
+	return 0;
+}
+
+int sys_sigaltstack(const stack_t *ss, stack_t *old_ss)
+{
+	task_struct *cur = CURRENT_TASK();
+	stack_t *alt = &cur->signal->altstack;
+
+	if (TestControl.verbos)
+		klog("sigaltstack\n");
+
+	if (old_ss)
+		*old_ss = *alt;
+
+	if (ss) {
+		/* Cannot change altstack while executing on it. */
+		if (alt->ss_flags & SS_ONSTACK)
+			return -EPERM;
+
+		if (ss->ss_flags & SS_DISABLE) {
+			alt->ss_sp = 0;
+			alt->ss_size = 0;
+			alt->ss_flags = SS_DISABLE;
+		} else {
+			if (ss->ss_size < MINSIGSTKSZ)
+				return -ENOMEM;
+			alt->ss_sp = ss->ss_sp;
+			alt->ss_size = ss->ss_size;
+			alt->ss_flags = 0;
+		}
+	}
+
 	return 0;
 }
 

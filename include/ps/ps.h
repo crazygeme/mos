@@ -158,6 +158,7 @@ typedef struct _signal_context {
 		sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
 	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
 	sigset_t sig_mask; /* bitmask: blocked signals             */
+	stack_t altstack; /* alternate signal stack (sigaltstack)  */
 } signal_context;
 
 typedef enum _ps_status {

@@ -116,7 +116,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 72  __NR_sigsuspend
 	0, // 73  __NR_sigpending
 	sys_sethostname, // 74  __NR_sethostname
-	0, // 75  __NR_setrlimit
+	sys_setrlimit, // 75  __NR_setrlimit
 	sys_getrlimit, // 76  __NR_getrlimit
 	sys_getrusage, // 77  __NR_getrusage
 	sys_gettimeofday, // 78  __NR_gettimeofday
@@ -157,7 +157,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 113 __NR_vm86old
 	sys_wait4, // 114 __NR_wait4
 	0, // 115 __NR_swapoff
-	0, // 116 __NR_sysinfo
+	sys_sysinfo, // 116 __NR_sysinfo
 	0, // 117 __NR_ipc
 	sys_fsync, // 118 __NR_fsync
 	sys_sigreturn, // 119 __NR_sigreturn
@@ -227,7 +227,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getcwd, // 183 __NR_getcwd
 	0, // 184 __NR_capget
 	0, // 185 __NR_capset
-	0, // 186 __NR_sigaltstack
+	sys_sigaltstack, // 186 __NR_sigaltstack
 	0, // 187 __NR_sendfile
 	0, // 188 __NR_getpmsg
 	0, // 189 __NR_putpmsg
@@ -253,7 +253,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 209 __NR_getresuid32
 	0, // 210 __NR_setresgid32
 	0, // 211 __NR_getresgid32
-	0, // 212 __NR_chown32
+	sys_chown, // 212 __NR_chown32
 	sys_setuid32, // 213 __NR_setuid32
 	0, // 214 __NR_setgid32
 	0, // 215 __NR_setfsuid32

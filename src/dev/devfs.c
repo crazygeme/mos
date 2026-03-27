@@ -189,10 +189,20 @@ static file *dev_open(super_block *sb, const char *path, int flag)
 	return NULL;
 }
 
+static int dev_statfs(super_block *sb, struct statfs *buf)
+{
+	memset(buf, 0, sizeof(*buf));
+	buf->f_type = 0x1373; /* DEVFS_SUPER_MAGIC */
+	buf->f_bsize = PAGE_SIZE;
+	buf->f_namelen = 255;
+	return 0;
+}
+
 static super_operations dev_sops = {
 	.open_root = dev_open_root,
 	.open = dev_open,
 	.release = dev_release_super,
+	.statfs = dev_statfs,
 };
 
 /* ------------------------------------------------------------------ *

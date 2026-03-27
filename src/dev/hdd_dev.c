@@ -18,7 +18,6 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <unistd.h>
-#include <errno.h>
 #include <ext4.h>
 
 #define HDD_MAJOR 3

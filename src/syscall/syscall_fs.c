@@ -9,6 +9,7 @@
 #include <ps/ps.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
+#include <fs/fcntl.h>
 #include <fs/mount.h>
 #include <hw/hdd.h>
 #include <lib/klib.h>
@@ -61,25 +62,26 @@ static int format_modes(unsigned mode, char *str)
 static int do_stat(const char *func, const char *name, struct stat *buf,
 		   int follow_link)
 {
-	file *fp;
+	file *fp = NULL;
 	char modes[11];
 	int ret = -ENOENT;
 
-	fp = fs_open_file(name, 0, "r", follow_link);
+	/* Use O_PATH to avoid device side-effects (e.g. incrementing PTY
+	 * slave_count) when we only need metadata. */
+	fp = fs_open_file(name, O_PATH, "r", follow_link);
 	if (!fp)
-		goto done;
+		goto log;
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr)
-		goto done;
-
+		goto log;
 	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
+
+log:
 	if (TestControl.verbos && func) {
 		format_modes(buf->st_mode, modes);
 		klog("%s(%s, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
 		     func, name, buf, ret, modes, buf->st_size, buf->st_blocks,
 		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
 	}
-
-done:
 	if (fp)
 		fs_put_file(fp);
 	return ret;
@@ -235,6 +237,41 @@ int sys_oldstat(const char *filename, struct oldstat *buf)
 	buf->st_mtime = s.st_mtime;
 	buf->st_ctime = s.st_ctime;
 	return 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * statfs / fstatfs                                                     *
+ * ------------------------------------------------------------------ */
+
+int sys_statfs(const char *_path, struct statfs *buf)
+{
+	char *name = name_get();
+	int ret;
+
+	resolve_path(_path, name);
+	ret = vfs_statfs(CURRENT_TASK()->root, name, buf);
+	name_put(name);
+	return ret;
+}
+
+int sys_fstatfs(int fd, struct statfs *buf)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+
+	if (fd < 0 || fd >= (int)MAX_FD)
+		return -EBADF;
+
+	mutex_lock(&cur->fd_lock);
+	fp = cur->fds[fd].fp;
+	mutex_unlock(&cur->fd_lock);
+
+	if (!fp)
+		return -EBADF;
+	if (!fp->f_name)
+		return -ENOSYS;
+
+	return vfs_statfs(cur->root, fp->f_name, buf);
 }
 
 /* ------------------------------------------------------------------ *

@@ -322,6 +322,20 @@ struct stat64 {
 	unsigned long long st_ino; /* 64-bit inode */
 };
 
+struct statfs {
+	long f_type; /* filesystem type (e.g. 0xEF53 for ext4) */
+	long f_bsize; /* optimal transfer block size */
+	long f_blocks; /* total data blocks in filesystem */
+	long f_bfree; /* free blocks in filesystem */
+	long f_bavail; /* free blocks available to unprivileged user */
+	long f_files; /* total file nodes in filesystem */
+	long f_ffree; /* free file nodes in filesystem */
+	int f_fsid[2]; /* filesystem id */
+	long f_namelen; /* maximum length of filenames */
+	long f_frsize; /* fragment size */
+	long f_spare[5];
+};
+
 #define R_OK 4 // test read access right
 #define W_OK 2 // test write access right
 #define X_OK 1 // test execution access right

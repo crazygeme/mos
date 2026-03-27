@@ -140,8 +140,8 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 96  __NR_getpriority
 	0, // 97  __NR_setpriority
 	0, // 98  __NR_profil
-	0, // 99  __NR_statfs
-	0, // 100 __NR_fstatfs
+	sys_statfs, // 99  __NR_statfs
+	sys_fstatfs, // 100 __NR_fstatfs
 	0, // 101 __NR_ioperm
 	sys_socketcall, // 102 __NR_socketcall
 	sys_syslog, // 103 __NR_syslog

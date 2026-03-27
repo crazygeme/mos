@@ -4,6 +4,7 @@
 #include <lib/rbtree.h>
 #include <lib/lock.h>
 #include <fs/fs.h>
+#include <unistd.h>
 
 typedef struct super_block super_block;
 typedef struct super_operations super_operations;
@@ -51,6 +52,7 @@ struct super_operations {
 		      const char *newpath);
 	int (*readlink)(super_block *sb, const char *path, char *buf,
 			size_t bufsiz, size_t *rcnt);
+	int (*statfs)(super_block *sb, struct statfs *buf);
 };
 
 /*
@@ -110,5 +112,8 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
  * dev:  encoded major/minor (ignored for S_IFIFO / S_IFSOCK).
  */
 int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev);
+
+/* Fill buf with filesystem statistics for the filesystem owning path. */
+int vfs_statfs(super_block *sb, const char *path, struct statfs *buf);
 
 #endif

@@ -309,6 +309,20 @@ int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
 	return ret;
 }
 
+int vfs_statfs(super_block *sb, const char *path, struct statfs *buf)
+{
+	super_block *target_sb;
+	char *rel_path;
+
+	if (!sb || !path || !buf)
+		return -EINVAL;
+	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
+		return -EINVAL;
+	if (!target_sb->s_op || !target_sb->s_op->statfs)
+		return -ENOSYS;
+	return target_sb->s_op->statfs(target_sb, buf);
+}
+
 file *vfs_open(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;

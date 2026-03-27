@@ -596,6 +596,9 @@ static void pf_dump_region(vm_region *region, void *data)
 	     region->fp ? region->fp->f_name : "anon");
 }
 
+extern void do_signal(intr_frame *frame);
+extern void do_exit(unsigned encoded_status);
+
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
@@ -634,18 +637,21 @@ static void pf_process(intr_frame *frame)
 NOT_HANDLED:
 	cur = CURRENT_TASK();
 
-	if (frame->cs != KERNEL_CODE_SELECTOR ||
-	    (unsigned)frame->eip < KERNEL_OFFSET || cr2 < KERNEL_OFFSET) {
-		/* FIXME(Ender): Currently we call process exit(-EFAULT)
-		 * Unknown bugs cause user mode process r/w an unmaped page
-		*/
-		klog("FATAL: unhandled user page fault! error code %x, address %x, eip %x, cmd %s\n",
-		     frame->error_code, cr2, frame->eip, cur->user->command);
-		if (cur->user->vm) {
-			klog("  vm regions:\n");
-			vm_enum(cur->user->vm, pf_dump_region, NULL);
+	if ((unsigned)frame->eip < KERNEL_OFFSET || cr2 < KERNEL_OFFSET) {
+		if (TestControl.verbos) {
+			klog("segfault: error code %x, address %x, eip %x, cmd %s\n",
+			     frame->error_code, cr2, frame->eip,
+			     cur->user->command);
+			if (cur->user->vm) {
+				klog("  vm regions:\n");
+				vm_enum(cur->user->vm, pf_dump_region, NULL);
+			}
 		}
-		sys_exit(-EFAULT);
+
+		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
+		do_signal(frame);
+		/* Falls through only if SIGSEGV is masked or SIG_IGN; force-terminate. */
+		do_exit(SIGSEGV);
 		goto Done;
 	}
 

@@ -81,70 +81,68 @@ int sys_getppid()
 
 int sys_getpgrp(unsigned pid)
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TestControl.verbos)
 		klog("getpgrp\n");
 
-	return 0; /* FIXME */
+	return cur->user->group_id;
+}
+
+int sys_getpgid(unsigned pid)
+{
+	task_struct *t;
+
+	if (TestControl.verbos)
+		klog("getpgid(%d)\n", pid);
+
+	if (pid == 0)
+		return CURRENT_TASK()->user->group_id;
+
+	t = ps_find_process(pid);
+	if (!t)
+		return -ESRCH;
+	return t->user->group_id;
 }
 
 int sys_setpgid(unsigned pid, unsigned pgid)
 {
-	if (TestControl.verbos)
-		klog("setpgid\n");
+	task_struct *cur = CURRENT_TASK();
+	task_struct *t;
 
-	if (pid == 0) {
-		task_struct *cur = CURRENT_TASK();
-		cur->user->group_id = pgid;
+	if (TestControl.verbos)
+		klog("setpgid(%d, %d)\n", pid, pgid);
+
+	if (pid == 0)
+		t = cur;
+	else {
+		t = ps_find_process(pid);
+		if (!t)
+			return -ESRCH;
 	}
-	return 0; /* FIXME */
-}
 
-int sys_getuid()
-{
-	if (TestControl.verbos)
-		klog("getuid\n");
+	/* pgid 0 means use the target process's own pid as pgid */
+	if (pgid == 0)
+		pgid = t->psid;
 
+	t->user->group_id = pgid;
 	return 0;
 }
 
-int sys_getgid()
+int sys_getsid(unsigned pid)
 {
+	task_struct *t;
+
 	if (TestControl.verbos)
-		klog("getgid\n");
+		klog("getsid(%d)\n", pid);
 
-	return 0;
-}
+	if (pid == 0)
+		return CURRENT_TASK()->user->session_id;
 
-int sys_geteuid()
-{
-	if (TestControl.verbos)
-		klog("geteuid\n");
-
-	return 0;
-}
-
-int sys_getegid()
-{
-	if (TestControl.verbos)
-		klog("getegid\n");
-
-	return 0;
-}
-
-int sys_setreuid(unsigned ruid, unsigned euid)
-{
-	if (TestControl.verbos)
-		klog("setreuid(%d, %d)\n", ruid, euid);
-
-	return 0;
-}
-
-int sys_setregid(unsigned pid, unsigned pgid)
-{
-	if (TestControl.verbos)
-		klog("setregid(%d, %d)\n", pid, pgid);
-
-	return 0;
+	t = ps_find_process(pid);
+	if (!t)
+		return -ESRCH;
+	return t->user->session_id;
 }
 
 int sys_setsid()
@@ -157,6 +155,289 @@ int sys_setsid()
 	cur->user->session_id = cur->psid;
 	cur->user->group_id = cur->psid;
 	return cur->psid;
+}
+
+int sys_getuid()
+{
+	if (TestControl.verbos)
+		klog("getuid\n");
+
+	return CURRENT_TASK()->user->uid;
+}
+
+int sys_getgid()
+{
+	if (TestControl.verbos)
+		klog("getgid\n");
+
+	return CURRENT_TASK()->user->gid;
+}
+
+int sys_geteuid()
+{
+	if (TestControl.verbos)
+		klog("geteuid\n");
+
+	return CURRENT_TASK()->user->euid;
+}
+
+int sys_getegid()
+{
+	if (TestControl.verbos)
+		klog("getegid\n");
+
+	return CURRENT_TASK()->user->egid;
+}
+
+/*
+ * setuid — Linux semantics:
+ *   euid==0: sets ruid=euid=suid=uid (privilege drop)
+ *   euid!=0: can only set euid to current ruid or suid
+ */
+int sys_setuid(unsigned uid)
+{
+	task_struct *cur = CURRENT_TASK();
+	user_enviroment *u = cur->user;
+
+	if (TestControl.verbos)
+		klog("setuid(%d)\n", uid);
+
+	if (u->euid == 0) {
+		u->uid = uid;
+		u->euid = uid;
+		u->suid = uid;
+		u->fsuid = uid;
+	} else if (uid == u->uid || uid == u->suid) {
+		u->euid = uid;
+		u->fsuid = uid;
+	} else {
+		return -EPERM;
+	}
+	return 0;
+}
+
+/*
+ * setgid — Linux semantics:
+ *   euid==0: sets rgid=egid=sgid=gid
+ *   euid!=0: can only set egid to current rgid or sgid
+ */
+int sys_setgid(unsigned gid)
+{
+	task_struct *cur = CURRENT_TASK();
+	user_enviroment *u = cur->user;
+
+	if (TestControl.verbos)
+		klog("setgid(%d)\n", gid);
+
+	if (u->euid == 0) {
+		u->gid = gid;
+		u->egid = gid;
+		u->sgid = gid;
+		u->fsgid = gid;
+	} else if (gid == u->gid || gid == u->sgid) {
+		u->egid = gid;
+		u->fsgid = gid;
+	} else {
+		return -EPERM;
+	}
+	return 0;
+}
+
+/*
+ * setreuid — set real and/or effective uid.
+ * -1 means "leave unchanged".
+ */
+int sys_setreuid(unsigned ruid, unsigned euid)
+{
+	task_struct *cur = CURRENT_TASK();
+	user_enviroment *u = cur->user;
+	unsigned new_ruid = (ruid == (unsigned)-1) ? u->uid : ruid;
+	unsigned new_euid = (euid == (unsigned)-1) ? u->euid : euid;
+
+	if (TestControl.verbos)
+		klog("setreuid(%d, %d)\n", ruid, euid);
+
+	if (u->euid != 0) {
+		/* unprivileged: ruid must be current ruid or euid */
+		if (ruid != (unsigned)-1 && ruid != u->uid && ruid != u->euid)
+			return -EPERM;
+		/* euid must be current ruid, euid, or suid */
+		if (euid != (unsigned)-1 && euid != u->uid &&
+		    euid != u->euid && euid != u->suid)
+			return -EPERM;
+	}
+
+	/* If euid changes, update suid to new euid */
+	if (euid != (unsigned)-1 && new_euid != u->euid)
+		u->suid = new_euid;
+
+	u->uid = new_ruid;
+	u->euid = new_euid;
+	u->fsuid = new_euid;
+	return 0;
+}
+
+/*
+ * setregid — set real and/or effective gid.
+ * -1 means "leave unchanged".
+ */
+int sys_setregid(unsigned rgid, unsigned egid)
+{
+	task_struct *cur = CURRENT_TASK();
+	user_enviroment *u = cur->user;
+	unsigned new_rgid = (rgid == (unsigned)-1) ? u->gid : rgid;
+	unsigned new_egid = (egid == (unsigned)-1) ? u->egid : egid;
+
+	if (TestControl.verbos)
+		klog("setregid(%d, %d)\n", rgid, egid);
+
+	if (u->euid != 0) {
+		if (rgid != (unsigned)-1 && rgid != u->gid && rgid != u->egid)
+			return -EPERM;
+		if (egid != (unsigned)-1 && egid != u->gid &&
+		    egid != u->egid && egid != u->sgid)
+			return -EPERM;
+	}
+
+	if (egid != (unsigned)-1 && new_egid != u->egid)
+		u->sgid = new_egid;
+
+	u->gid = new_rgid;
+	u->egid = new_egid;
+	u->fsgid = new_egid;
+	return 0;
+}
+
+/*
+ * setresuid — set real, effective, and saved-set uid.
+ * -1 means "leave unchanged".
+ */
+int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
+{
+	task_struct *cur = CURRENT_TASK();
+	user_enviroment *u = cur->user;
+
+	if (TestControl.verbos)
+		klog("setresuid(%d, %d, %d)\n", ruid, euid, suid);
+
+	if (u->euid != 0) {
+		/* unprivileged: each value must be current ruid, euid, or suid */
+		if (ruid != (unsigned)-1 && ruid != u->uid &&
+		    ruid != u->euid && ruid != u->suid)
+			return -EPERM;
+		if (euid != (unsigned)-1 && euid != u->uid &&
+		    euid != u->euid && euid != u->suid)
+			return -EPERM;
+		if (suid != (unsigned)-1 && suid != u->uid &&
+		    suid != u->euid && suid != u->suid)
+			return -EPERM;
+	}
+
+	if (ruid != (unsigned)-1)
+		u->uid = ruid;
+	if (euid != (unsigned)-1) {
+		u->euid = euid;
+		u->fsuid = euid;
+	}
+	if (suid != (unsigned)-1)
+		u->suid = suid;
+	return 0;
+}
+
+int sys_getresuid(unsigned *ruid, unsigned *euid, unsigned *suid)
+{
+	user_enviroment *u = CURRENT_TASK()->user;
+
+	if (TestControl.verbos)
+		klog("getresuid\n");
+
+	if (ruid) *ruid = u->uid;
+	if (euid) *euid = u->euid;
+	if (suid) *suid = u->suid;
+	return 0;
+}
+
+/*
+ * setresgid — set real, effective, and saved-set gid.
+ * -1 means "leave unchanged".
+ */
+int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
+{
+	task_struct *cur = CURRENT_TASK();
+	user_enviroment *u = cur->user;
+
+	if (TestControl.verbos)
+		klog("setresgid(%d, %d, %d)\n", rgid, egid, sgid);
+
+	if (u->euid != 0) {
+		if (rgid != (unsigned)-1 && rgid != u->gid &&
+		    rgid != u->egid && rgid != u->sgid)
+			return -EPERM;
+		if (egid != (unsigned)-1 && egid != u->gid &&
+		    egid != u->egid && egid != u->sgid)
+			return -EPERM;
+		if (sgid != (unsigned)-1 && sgid != u->gid &&
+		    sgid != u->egid && sgid != u->sgid)
+			return -EPERM;
+	}
+
+	if (rgid != (unsigned)-1)
+		u->gid = rgid;
+	if (egid != (unsigned)-1) {
+		u->egid = egid;
+		u->fsgid = egid;
+	}
+	if (sgid != (unsigned)-1)
+		u->sgid = sgid;
+	return 0;
+}
+
+int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
+{
+	user_enviroment *u = CURRENT_TASK()->user;
+
+	if (TestControl.verbos)
+		klog("getresgid\n");
+
+	if (rgid) *rgid = u->gid;
+	if (egid) *egid = u->egid;
+	if (sgid) *sgid = u->sgid;
+	return 0;
+}
+
+/*
+ * setfsuid/setfsgid — set filesystem uid/gid.
+ * Returns the previous value (always succeeds unless out-of-range).
+ */
+int sys_setfsuid(unsigned fsuid)
+{
+	user_enviroment *u = CURRENT_TASK()->user;
+	unsigned old = u->fsuid;
+
+	if (TestControl.verbos)
+		klog("setfsuid(%d)\n", fsuid);
+
+	/* Only root or matching uid/euid/suid can change fsuid */
+	if (u->euid == 0 || fsuid == u->uid || fsuid == u->euid ||
+	    fsuid == u->suid || fsuid == u->fsuid)
+		u->fsuid = fsuid;
+
+	return old;
+}
+
+int sys_setfsgid(unsigned fsgid)
+{
+	user_enviroment *u = CURRENT_TASK()->user;
+	unsigned old = u->fsgid;
+
+	if (TestControl.verbos)
+		klog("setfsgid(%d)\n", fsgid);
+
+	if (u->euid == 0 || fsgid == u->gid || fsgid == u->egid ||
+	    fsgid == u->sgid || fsgid == u->fsgid)
+		u->fsgid = fsgid;
+
+	return old;
 }
 
 int sys_wait4(int pid, int *status, int options, void *rusage)
@@ -621,54 +902,21 @@ int sys_sigaltstack(const stack_t *ss, stack_t *old_ss)
 	return 0;
 }
 
-int sys_getuid32(void)
-{
-	if (TestControl.verbos)
-		klog("getuid32\n");
-
-	return 0;
-}
-
-int sys_getgid32(void)
-{
-	if (TestControl.verbos)
-		klog("getgid32\n");
-
-	return 0;
-}
-
-int sys_geteuid32(void)
-{
-	if (TestControl.verbos)
-		klog("geteuid32\n");
-
-	return 0;
-}
-
-int sys_getegid32(void)
-{
-	if (TestControl.verbos)
-		klog("getegid32\n");
-
-	return 0;
-}
-
-int sys_setuid(unsigned uid)
-{
-	if (TestControl.verbos)
-		klog("setuid(%d)\n", uid);
-
-	/* Kernel always runs as uid 0; only uid 0 is permitted. */
-	return (uid == 0) ? 0 : -EPERM;
-}
-
-int sys_setuid32(unsigned uid)
-{
-	if (TestControl.verbos)
-		klog("setuid32(%d)\n", uid);
-
-	return (uid == 0) ? 0 : -EPERM;
-}
+/* 32-bit variants — same semantics, just delegate */
+int sys_getuid32(void)   { return sys_getuid(); }
+int sys_getgid32(void)   { return sys_getgid(); }
+int sys_geteuid32(void)  { return sys_geteuid(); }
+int sys_getegid32(void)  { return sys_getegid(); }
+int sys_setuid32(unsigned uid)  { return sys_setuid(uid); }
+int sys_setgid32(unsigned gid)  { return sys_setgid(gid); }
+int sys_setreuid32(unsigned ruid, unsigned euid) { return sys_setreuid(ruid, euid); }
+int sys_setregid32(unsigned rgid, unsigned egid) { return sys_setregid(rgid, egid); }
+int sys_setresuid32(unsigned r, unsigned e, unsigned s) { return sys_setresuid(r, e, s); }
+int sys_getresuid32(unsigned *r, unsigned *e, unsigned *s) { return sys_getresuid(r, e, s); }
+int sys_setresgid32(unsigned r, unsigned e, unsigned s) { return sys_setresgid(r, e, s); }
+int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s) { return sys_getresgid(r, e, s); }
+int sys_setfsuid32(unsigned fsuid) { return sys_setfsuid(fsuid); }
+int sys_setfsgid32(unsigned fsgid) { return sys_setfsgid(fsgid); }
 
 int sys_exit_group(int status)
 {

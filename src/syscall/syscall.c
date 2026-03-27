@@ -87,7 +87,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 43  __NR_times
 	0, // 44  __NR_prof
 	sys_brk, // 45  __NR_brk
-	0, // 46  __NR_setgid
+	sys_setgid, // 46  __NR_setgid
 	sys_getgid, // 47  __NR_getgid
 	0, // 48  __NR_signal
 	sys_geteuid, // 49  __NR_geteuid
@@ -173,14 +173,14 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 129 __NR_delete_module
 	0, // 130 __NR_get_kernel_syms
 	0, // 131 __NR_quotactl
-	0, // 132 __NR_getpgid
+	sys_getpgid, // 132 __NR_getpgid
 	sys_fchdir, // 133 __NR_fchdir
 	0, // 134 __NR_bdflush
 	0, // 135 __NR_sysfs
 	sys_personality, // 136 __NR_personality
 	0, // 137 __NR_afs_syscall
-	0, // 138 __NR_setfsuid
-	0, // 139 __NR_setfsgid
+	sys_setfsuid, // 138 __NR_setfsuid
+	sys_setfsgid, // 139 __NR_setfsgid
 	sys_llseek, // 140 __NR__llseek
 	sys_getdents, // 141 __NR_getdents
 	sys_newselect, // 142 __NR__newselect
@@ -188,7 +188,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 144 __NR_msync
 	sys_readv, // 145 __NR_readv
 	sys_writev, // 146 __NR_writev
-	0, // 147 __NR_getsid
+	sys_getsid, // 147 __NR_getsid
 	0, // 148 __NR_fdatasync
 	0, // 149 __NR__sysctl
 	0, // 150 __NR_mlock
@@ -205,14 +205,14 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 161 __NR_sched_rr_get_interval
 	sys_nanosleep, // 162 __NR_nanosleep
 	0, // 163 __NR_mremap
-	0, // 164 __NR_setresuid
-	0, // 165 __NR_getresuid
+	sys_setresuid, // 164 __NR_setresuid
+	sys_getresuid, // 165 __NR_getresuid
 	0, // 166 __NR_vm86
 	0, // 167 __NR_query_module
 	sys_poll, // 168 __NR_poll
 	0, // 169 __NR_nfsservctl
-	0, // 170 __NR_setresgid
-	0, // 171 __NR_getresgid
+	sys_setresgid, // 170 __NR_setresgid
+	sys_getresgid, // 171 __NR_getresgid
 	0, // 172 __NR_prctl
 	0, // 173 __NR_rt_sigreturn
 	sys_sigaction, // 174 __NR_rt_sigaction
@@ -244,20 +244,20 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getgid32, // 200 __NR_getgid32
 	sys_geteuid32, // 201 __NR_geteuid32
 	sys_getegid32, // 202 __NR_getegid32
-	0, // 203 __NR_setreuid32
-	0, // 204 __NR_setregid32
+	sys_setreuid32, // 203 __NR_setreuid32
+	sys_setregid32, // 204 __NR_setregid32
 	sys_getgroups32, // 205 __NR_getgroups32
 	0, // 206 __NR_setgroups32
 	0, // 207 __NR_fchown32
-	0, // 208 __NR_setresuid32
-	0, // 209 __NR_getresuid32
-	0, // 210 __NR_setresgid32
-	0, // 211 __NR_getresgid32
+	sys_setresuid32, // 208 __NR_setresuid32
+	sys_getresuid32, // 209 __NR_getresuid32
+	sys_setresgid32, // 210 __NR_setresgid32
+	sys_getresgid32, // 211 __NR_getresgid32
 	sys_chown, // 212 __NR_chown32
 	sys_setuid32, // 213 __NR_setuid32
-	0, // 214 __NR_setgid32
-	0, // 215 __NR_setfsuid32
-	0, // 216 __NR_setfsgid32
+	sys_setgid32, // 214 __NR_setgid32
+	sys_setfsuid32, // 215 __NR_setfsuid32
+	sys_setfsgid32, // 216 __NR_setfsgid32
 	0, // 217 __NR_pivot_root
 	0, // 218 __NR_mincore
 	0, // 219 __NR_madvise

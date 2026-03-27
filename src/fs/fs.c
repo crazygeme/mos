@@ -9,6 +9,54 @@
 #include <ext4.h>
 #include <unistd.h>
 #include <macro.h>
+#include <errno.h>
+
+/*
+ * fs_check_perm — check whether the current process may access a file.
+ *
+ * @s:    stat of the target file
+ * @mask: requested access: R_OK (4), W_OK (2), X_OK (1), or 0 for existence
+ *
+ * Returns 0 if allowed, -EACCES if denied.
+ * Root (euid == 0) bypasses DAC checks, except execute on a file requires
+ * at least one execute bit to be set.
+ */
+int fs_check_perm(const struct stat *s, int mask)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned euid, egid, mode;
+	int shift;
+
+	if (!cur->user)
+		return 0; /* kernel task — always allowed */
+
+	euid = cur->user->euid;
+	egid = cur->user->egid;
+	mode = s->st_mode;
+
+	if (euid == 0) {
+		/* Root may read/write anything; execute only if some x bit set */
+		if ((mask & X_OK) && !(mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
+			return -EACCES;
+		return 0;
+	}
+
+	if (euid == s->st_uid)
+		shift = 6; /* use owner bits */
+	else if (egid == s->st_gid)
+		shift = 3; /* use group bits */
+	else
+		shift = 0; /* use other bits */
+
+	if ((mask & R_OK) && !((mode >> shift) & S_IROTH))
+		return -EACCES;
+	if ((mask & W_OK) && !((mode >> shift) & S_IWOTH))
+		return -EACCES;
+	if ((mask & X_OK) && !((mode >> shift) & S_IXOTH))
+		return -EACCES;
+
+	return 0;
+}
 
 static int fs_find_empty_fd(file_descriptor *fds)
 {
@@ -109,8 +157,26 @@ int fs_install_fd(file *fp, int flag)
 int fs_open(const char *path, int flag, char *mode)
 {
 	file *fp = fs_open_file(path, flag, mode, 1);
+	struct stat s;
+	int acc, ret;
+
 	if (!fp)
 		return -ENOENT;
+
+	/* Check DAC permissions based on requested access mode. */
+	if (fp->f_inode && fp->f_inode->i_op && fp->f_inode->i_op->getattr &&
+	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+		acc = 0;
+		if ((flag & O_ACCMODE) != O_WRONLY)
+			acc |= R_OK;
+		if ((flag & O_ACCMODE) != O_RDONLY)
+			acc |= W_OK;
+		ret = fs_check_perm(&s, acc);
+		if (ret) {
+			fs_put_file(fp);
+			return ret;
+		}
+	}
 
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
 
@@ -392,6 +458,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = vfs_open(cur->root, pathname, O_RDONLY);
+	struct stat s;
 	int ret;
 
 	if (!fp)
@@ -400,6 +467,16 @@ int fs_chmod(const char *pathname, uint32_t mode)
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->setattr) {
 		fs_put_file(fp);
 		return -EACCES;
+	}
+
+	/* Only file owner or root may chmod */
+	if (fp->f_inode->i_op->getattr &&
+	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+		if (cur->user && cur->user->euid != 0 &&
+		    cur->user->euid != s.st_uid) {
+			fs_put_file(fp);
+			return -EPERM;
+		}
 	}
 
 	ret = fp->f_inode->i_op->setattr(fp->f_inode, mode);
@@ -411,6 +488,7 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = vfs_open(cur->root, pathname, O_RDONLY);
+	struct stat s;
 	int ret;
 
 	if (!fp)
@@ -419,6 +497,30 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->chown) {
 		fs_put_file(fp);
 		return -EACCES;
+	}
+
+	/* Only root may change owner; owner may change group to own group */
+	if (cur->user) {
+		if (cur->user->euid != 0) {
+			/* non-root: may only change group, not owner */
+			if (uid != (uint32_t)-1 && uid != s.st_uid) {
+				fs_put_file(fp);
+				return -EPERM;
+			}
+			if (fp->f_inode->i_op->getattr &&
+			    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+				if (cur->user->euid != s.st_uid) {
+					fs_put_file(fp);
+					return -EPERM;
+				}
+				if (gid != (uint32_t)-1 &&
+				    gid != cur->user->egid &&
+				    gid != cur->user->gid) {
+					fs_put_file(fp);
+					return -EPERM;
+				}
+			}
+		}
 	}
 
 	ret = fp->f_inode->i_op->chown(fp->f_inode, uid, gid);
@@ -430,6 +532,7 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
+	struct stat s;
 	int ret = -EACCES;
 
 	if (fd < 0 || fd >= MAX_FD)
@@ -446,6 +549,20 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	    !fp->f_inode->i_op->chown)
 		return -EACCES;
 
+	/* Only root may change owner; owner may change group to own group */
+	if (cur->user && cur->user->euid != 0) {
+		if (fp->f_inode->i_op->getattr &&
+		    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+			if (uid != (uint32_t)-1 && uid != s.st_uid)
+				return -EPERM;
+			if (cur->user->euid != s.st_uid)
+				return -EPERM;
+			if (gid != (uint32_t)-1 && gid != cur->user->egid &&
+			    gid != cur->user->gid)
+				return -EPERM;
+		}
+	}
+
 	ret = fp->f_inode->i_op->chown(fp->f_inode, uid, gid);
 	return (0 - ret);
 }
@@ -454,7 +571,9 @@ int fs_fchmod(int fd, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
+	struct stat s;
 	int ret = -EACCES;
+
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
 
@@ -468,6 +587,14 @@ int fs_fchmod(int fd, uint32_t mode)
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
 	    !fp->f_inode->i_op->setattr)
 		return -EACCES;
+
+	/* Only file owner or root may fchmod */
+	if (cur->user && cur->user->euid != 0 &&
+	    fp->f_inode->i_op->getattr &&
+	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+		if (cur->user->euid != s.st_uid)
+			return -EPERM;
+	}
 
 	ret = fp->f_inode->i_op->setattr(fp->f_inode, mode);
 	return (0 - ret);

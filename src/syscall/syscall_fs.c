@@ -258,13 +258,7 @@ int sys_access(const char *path, int mode)
 	if (mode == F_OK)
 		goto done;
 
-	ret = EOK;
-	if (mode & R_OK)
-		ret |= ((s.st_mode & S_IRUSR) == S_IRUSR) ? EOK : (-EACCES);
-	if (mode & W_OK)
-		ret |= ((s.st_mode & S_IWUSR) == S_IWUSR) ? EOK : (-EACCES);
-	if (mode & X_OK)
-		ret |= ((s.st_mode & S_IXUSR) == S_IXUSR) ? EOK : (-EACCES);
+	ret = fs_check_perm(&s, mode);
 
 done:
 	name_put(name);

@@ -8,6 +8,10 @@ Vim:
 ---
 ![Screen shot: vim](screenshot/vim.png)
 
+Emacs:
+---
+![Screen shot: vim](screenshot/emacs.png)
+
 List
 ---
 ![Screen shot: ls](screenshot/ls.png)

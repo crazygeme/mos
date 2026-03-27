@@ -1,12 +1,12 @@
 /*
- * src/fs/mount/hdd_dev.c - /dev/hdXN block device nodes
+ * src/dev/hdd_dev.c - /dev/hdXN block device nodes
  *
- * For every partition discovered by hdd.c a character-like block device is
- * mounted at /dev/<name> (e.g. /dev/hda1, /dev/hda2).  The file operations
- * translate byte-level read/write requests into sector-granular calls through
- * the partition's read/write callbacks stored in hdd_partition_info.
+ * For every partition discovered by hdd.c a block device node is created at
+ * /dev/<name> via vfs_mknod.  The cdev dispatch table maps MKDEV(3, index)
+ * to hdd_cdev_open(), which wires up the partition's read/write callbacks.
  *
- * Reads and writes are always sector-aligned and sector-sized.
+ * Device numbering (Linux-compatible IDE):
+ *   major 3, minor 1 = first partition (hda1), minor 2 = hda2, …
  */
 
 #include <fs/fs.h>
@@ -20,6 +20,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <ext4.h>
+
+#define HDD_MAJOR 3
 
 /* ── File operations ─────────────────────────────────────────────────────── */
 
@@ -102,19 +104,24 @@ static int hdd_dev_poll(file *fp, unsigned type)
 static int hdd_dev_getattr(inode *node, struct stat *s)
 {
 	hdd_partition_info *pi = node->i_private;
+	unsigned idx = (unsigned)(pi - hdd_partitions);
+
+	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
 	s->st_blksize = BLOCK_SECTOR_SIZE;
 	s->st_blocks = (loff_t)pi->size;
-	s->st_dev = 0x8; /* major 8 = sd/hd */
-	s->st_rdev = 0x8;
-	s->st_ino = 0;
+	s->st_dev = MKDEV(HDD_MAJOR, 0);
+	s->st_rdev = MKDEV(HDD_MAJOR, idx + 1);
 	s->st_nlink = 1;
-	s->st_uid = 0;
-	s->st_gid = 0;
 	s->st_atime = time_now_ms();
-	s->st_mtime = 0;
-	s->st_ctime = 0;
+	return 0;
+}
+
+static int hdd_dev_release(file *fp)
+{
+	free(fp->f_inode);
+	free(fp);
 	return 0;
 }
 
@@ -123,17 +130,23 @@ static const inode_operations hdd_dev_iops = {
 };
 
 static const file_operations hdd_dev_fops = {
+	.release = hdd_dev_release,
 	.read = hdd_dev_read,
 	.write = hdd_dev_write,
 	.llseek = hdd_dev_llseek,
 	.poll = hdd_dev_poll,
 };
 
-/* ── Superblock operations ───────────────────────────────────────────────── */
+/* ── cdev dispatch ───────────────────────────────────────────────────────── */
 
-static file *hdd_dev_open_root(super_block *sb, int flag)
+static file *hdd_cdev_open(unsigned rdev, int flag)
 {
-	hdd_partition_info *pi = sb->s_fs_info;
+	unsigned idx = MINOR(rdev) - 1; /* minor 1 = hda1, minor 2 = hda2, … */
+
+	if ((int)idx >= hdd_partition_count)
+		return NULL;
+
+	hdd_partition_info *pi = &hdd_partitions[idx];
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFBLK | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
@@ -147,24 +160,22 @@ static file *hdd_dev_open_root(super_block *sb, int flag)
 	return fp;
 }
 
-static super_operations hdd_dev_sops = {
-	.open_root = hdd_dev_open_root,
-};
-
 /* ── Initialisation ──────────────────────────────────────────────────────── */
 
 static void hdd_dev_register(super_block *dev_sb)
 {
+	char path[48];
 	int i;
-	char mount_path[48];
+
+	cdev_register(S_IFBLK, HDD_MAJOR, 1, (unsigned)hdd_partition_count,
+		      hdd_cdev_open);
 
 	for (i = 0; i < hdd_partition_count; i++) {
 		hdd_partition_info *pi = &hdd_partitions[i];
-		super_block *sb = sget(&hdd_dev_sops);
-		sb->s_fs_info = pi;
-		sprintf(mount_path, "/%s", pi->name);
-		vfs_mount(dev_sb, mount_path, sb);
-		printk("hdd_dev: mounted /dev%s (%u sectors)\n", mount_path,
+		sprintf(path, "/%s", pi->name);
+		vfs_mknod(dev_sb, path, S_IFBLK | 0660,
+			  MKDEV(HDD_MAJOR, i + 1));
+		printk("hdd_dev: registered /dev%s (%u sectors)\n", path,
 		       pi->size);
 	}
 }

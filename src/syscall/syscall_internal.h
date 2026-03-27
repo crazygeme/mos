@@ -81,6 +81,7 @@ int sys_link(const char *path1, const char *path2);
 int sys_symlink(const char *path1, const char *path2);
 int sys_unlink(const char *pathname);
 int sys_rename(const char *oldpath, const char *newpath);
+int sys_mknod(const char *path, unsigned mode, unsigned dev);
 int sys_mkdir(const char *path, unsigned mode);
 int sys_rmdir(const char *path);
 int sys_creat(const char *path, unsigned mode);

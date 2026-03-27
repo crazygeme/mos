@@ -1291,11 +1291,14 @@ static const file_operations tty_fops = {
 	.ioctl = tty_fs_ioctl,
 };
 
-static file *tty_open_root(super_block *sb, int flag)
-{
-	tty_state *state = sb->s_fs_info;
+/* ── Filesystem registration ─────────────────────────────────────────────── */
 
-	/* Clear released flag and bump open count for this new file struct. */
+/*
+ * tty_open_state — open a file struct backed by the given tty_state.
+ * Called from tty_cdev_open().
+ */
+static file *tty_open_state(tty_state *state, int flag)
+{
 	state->released = 0;
 	__sync_add_and_fetch(&state->open_count, 1);
 
@@ -1309,32 +1312,30 @@ static file *tty_open_root(super_block *sb, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &tty_fops;
-	/* f_mode is set by fs_open() after open_root returns */
 	return fp;
 }
 
-static void tty_sops_release(super_block *sb)
+/*
+ * tty_cdev_open — cdev dispatch callback.
+ *   major 4, minor 0-9 → tty0..tty9
+ *   major 5, minor 0   → /dev/tty  (controlling terminal, mapped to tty0)
+ *   major 5, minor 1   → /dev/console (system console, mapped to tty0)
+ */
+static file *tty_cdev_open(unsigned rdev, int flag)
 {
-	tty_state *state = sb->s_fs_info;
-	if (state->kb_buf)
-		cyb_destroy(state->kb_buf);
-	if (state->saved_text)
-		free(state->saved_text);
-	if (state->saved_fg)
-		free(state->saved_fg);
-	if (state->saved_bg)
-		free(state->saved_bg);
-	if (state->alt_text)
-		free(state->alt_text);
-	free(sb);
+	unsigned major = MAJOR(rdev);
+	unsigned minor = MINOR(rdev);
+	tty_state *state;
+
+	if (major == 4) {
+		if (minor >= TTY_MAX_VDEV)
+			return NULL;
+		state = &ttys[minor];
+	} else { /* major == 5: /dev/tty and /dev/console */
+		state = &ttys[DEFAULT_TTY];
+	}
+	return tty_open_state(state, flag);
 }
-
-/* ── Filesystem registration ─────────────────────────────────────────────── */
-
-static super_operations tty_sops = {
-	.open_root = tty_open_root,
-	.release = tty_sops_release,
-};
 
 /*
  * tty_fs_init — allocate per-TTY resources.
@@ -1344,21 +1345,13 @@ static void tty_fs_init(void)
 {
 	for (int i = 0; i < TTY_MAX_VDEV; i++) {
 		tty_state *t = &ttys[i];
-		/* Per-TTY keyboard input queue */
 		t->kb_buf = cyb_create(1);
-		/* Screen text buffer for save/restore on TTY switch */
 		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
-		/* Per-cell color buffers matching saved_text */
 		unsigned color_sz = t->max_row * t->max_col * sizeof(unsigned);
 		t->saved_fg = (unsigned *)zalloc(color_sz);
 		t->saved_bg = (unsigned *)zalloc(color_sz);
 		memset(t->saved_fg, 0xFF, color_sz);
-		/* Alternate screen buffer for ESC[?1049h/l */
 		t->alt_text = (char *)zalloc(t->max_row * t->max_col);
-		/*
-		 * All those attached bash should be managed by process 1
-		 * (/sbin/init) which will call wait on all orphan processes
-		 */
 		if (i > 0)
 			t->parent = ps_find_process(1);
 	}
@@ -1366,21 +1359,20 @@ static void tty_fs_init(void)
 
 static void tty_dev_register(super_block *dev_sb)
 {
-	char mount_path[16];
-	super_block *sb;
+	char path[16];
+	int i;
 
-	for (int i = 0; i < TTY_MAX_VDEV; i++) {
-		sb = sget(&tty_sops);
-		sb->s_fs_info = &ttys[i];
-		sprintf(mount_path, "/tty%d", i);
-		vfs_mount(dev_sb, mount_path, sb);
+	/* major 4: tty0..tty9 */
+	cdev_register(S_IFCHR, 4, 0, TTY_MAX_VDEV, tty_cdev_open);
+	for (i = 0; i < TTY_MAX_VDEV; i++) {
+		sprintf(path, "/tty%d", i);
+		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(4, i));
 	}
 
-	sb = sget(&tty_sops);
-	sb->s_fs_info = &ttys[DEFAULT_TTY];
-	vfs_mount(dev_sb, "/tty", sb);
-	sb_get(sb);
-	vfs_mount(dev_sb, "/console", sb);
+	/* major 5: /dev/tty (minor 0) and /dev/console (minor 1) */
+	cdev_register(S_IFCHR, 5, 0, 2, tty_cdev_open);
+	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 0));
+	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
 }
 
 KERNEL_INIT(4, tty_fs_init);

@@ -679,7 +679,19 @@ static void ansi_feed(tty_state *state, char c)
 		ansi_end(state);
 		return;
 	}
-	case 'c': /* DA / cursor-shape — stub (no-op) */
+	case 'c': /* ESC c = RIS (full reset); ESC [ c = DA (no-op) */
+		if (state->ansi_buf[0] == '\0') {
+			/* RIS: reset terminal state and clear screen */
+			state->fg_color = VGA_COLOR_WHITE;
+			state->bg_color = VGA_COLOR_BLACK;
+			state->scroll_top = 0;
+			state->scroll_bot = (int)MAX_ROW - 1;
+			state->no_wrap = 0;
+			state->cursor_hidden = 0;
+			tty_do_clear(state);
+			cursor_set(state, 0);
+			tty_hw_cursor(state, 0);
+		}
 		ansi_end(state);
 		return;
 	case 'd': { /* cursor vertical absolute (1-based row) */

@@ -147,8 +147,8 @@ int resolve_path(const char *old, char *new);
 /* DAC permission check: returns 0 if allowed, -EACCES if denied */
 int fs_check_perm(const struct stat *s, int mask);
 
-int fs_open(const char *path, int flag, char *mode);
-file *fs_open_file(const char *path, int flag, char *mode, int follow_link);
+int fs_open(const char *path, int flag, umode_t mode);
+file *fs_open_file(const char *path, int flag, umode_t mode, int follow_link);
 int fs_put_file(file *f);
 int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
 
@@ -186,8 +186,6 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid);
 int fs_fchown(int fd, uint32_t uid, uint32_t gid);
 
 int fs_fchmod(int fd, uint32_t mode);
-
-file *fs_open_file(const char *path, int flag, char *mode, int follow_link);
 
 int fs_put_file(file *f);
 

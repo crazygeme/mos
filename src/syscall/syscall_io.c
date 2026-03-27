@@ -119,12 +119,13 @@ int sys_ioctl(int fd, int request, char *buf)
 	return ret;
 }
 
-int sys_open(const char *_name, int flags, char *mode)
+int sys_open(const char *_name, int flags, umode_t mode)
 {
 	char *name = name_get();
 	int fd;
 
 	resolve_path(_name, name);
+
 	fd = fs_open(name, flags, mode);
 
 	if (TestControl.verbos)

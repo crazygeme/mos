@@ -1,3 +1,4 @@
+#include "errno.h"
 #include <ps/ps.h>
 #include <int/int.h>
 #include <int/dsr.h>
@@ -204,7 +205,7 @@ static void kbd_init_keymaps(void)
 int kbd_get_kbentry(struct kbentry *kbe)
 {
 	if (kbe->kb_table >= NR_KEYMAPS || kbe->kb_index >= NR_KEYS)
-		return -22; /* -EINVAL */
+		return -EINVAL;
 	kbe->kb_value = key_maps[kbe->kb_table][kbe->kb_index];
 	return 0;
 }
@@ -212,7 +213,7 @@ int kbd_get_kbentry(struct kbentry *kbe)
 int kbd_set_kbentry(const struct kbentry *kbe)
 {
 	if (kbe->kb_table >= NR_KEYMAPS || kbe->kb_index >= NR_KEYS)
-		return -22; /* -EINVAL */
+		return -EINVAL;
 	key_maps[kbe->kb_table][kbe->kb_index] = kbe->kb_value;
 	return 0;
 }
@@ -231,8 +232,8 @@ static int caps_lock;
 struct keymap {
 	unsigned short first_scancode; /* First scancode. */
 	const char *chars; /* chars[0] has scancode first_scancode,
-                                      chars[1] has scancode first_scancode + 1,
-                                      and so on to the end of the string. */
+			      chars[1] has scancode first_scancode + 1,
+			      and so on to the end of the string. */
 };
 
 /* Keys that produce the same characters regardless of whether
@@ -344,7 +345,7 @@ static void kb_dsr(void *param)
 				shutdown();
 
 			/* Handle Ctrl, Shift.
-               Note that Ctrl overrides Shift. */
+               		 * Note that Ctrl overrides Shift. */
 			if (ctrl && c >= 0x40 && c < 0x60) {
 				/* A is 0x41, Ctrl+A is 0x01, etc. */
 				c -= 0x40;
@@ -352,8 +353,8 @@ static void kb_dsr(void *param)
 				c = tolower(c);
 
 			/* Handle Alt by setting the high bit.
-               This 0x80 is unrelated to the one used to
-               distinguish key press from key release. */
+               		 * This 0x80 is unrelated to the one used to
+              		 * distinguish key press from key release. */
 			if (alt)
 				c += 0x80;
 
@@ -393,8 +394,7 @@ static void kb_dsr(void *param)
 }
 
 /* Scans the array of keymaps K for SCANCODE.
-   If found, sets *C to the corresponding character and returns
-   1.
+   If found, sets *C to the corresponding character and returns 1.
    If not found, returns 0 and C is ignored. */
 static int map_key(const struct keymap k[], unsigned scancode, unsigned char *c)
 {

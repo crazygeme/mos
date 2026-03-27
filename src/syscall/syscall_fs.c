@@ -16,7 +16,6 @@
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
-#include <ext4.h>
 #include "syscall_internal.h"
 
 /* ------------------------------------------------------------------ *
@@ -68,7 +67,7 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 
 	/* Use O_PATH to avoid device side-effects (e.g. incrementing PTY
 	 * slave_count) when we only need metadata. */
-	fp = fs_open_file(name, O_PATH, "r", follow_link);
+	fp = fs_open_file(name, O_PATH, 0, follow_link);
 	if (!fp)
 		goto log;
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr)
@@ -335,7 +334,9 @@ int sys_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	int ret;
 
 	resolve_path(pathname, name);
+
 	ret = fs_chown(name, uid, gid);
+
 	name_put(name);
 
 	if (TestControl.verbos)
@@ -347,21 +348,12 @@ int sys_chown(const char *pathname, uint32_t uid, uint32_t gid)
 int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid)
 {
 	char *name = name_get();
-	file *fp;
 	int ret;
 
 	resolve_path(pathname, name);
 
-	/* Open without following the final symlink, then chown the inode. */
-	fp = fs_open_file(name, 0, "r", 0);
-	if (!fp) {
-		name_put(name);
-		return -ENOENT;
-	}
+	ret = fs_chown(name, uid, gid);
 
-	ret = ext4_fchown(fp->f_inode->i_private, uid, gid);
-	ret = (0 - ret);
-	fs_put_file(fp);
 	name_put(name);
 
 	if (TestControl.verbos)
@@ -647,8 +639,8 @@ int sys_chdir(const char *path)
 		} else {
 			len = strlen(cwd);
 			memcpy(cwd + len, p, comp_len);
-			cwd[len + comp_len] = '/';
-			cwd[len + comp_len + 1] = '\0';
+			cwd[len + comp_len] =
+				'\0'; /* no trailing slash: allows symlink following */
 			if (do_stat(NULL, cwd, &s, 1) != EOK) {
 				ret = -ENOENT;
 				goto done;
@@ -657,6 +649,8 @@ int sys_chdir(const char *path)
 				ret = -ENOTDIR;
 				goto done;
 			}
+			cwd[len + comp_len] = '/';
+			cwd[len + comp_len + 1] = '\0';
 		}
 		p = end;
 	}

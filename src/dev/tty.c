@@ -1027,9 +1027,9 @@ static void tty_bash_spawner(void *p)
 	ps_update_tss((unsigned)cur + PAGE_SIZE);
 
 	/* Open stdin (0), stdout (1), stderr (2) on this TTY. */
-	fs_open(tty_path, O_RDONLY, NULL);
-	fs_open(tty_path, O_WRONLY, NULL);
-	fs_open(tty_path, O_WRONLY, NULL);
+	fs_open(tty_path, O_RDONLY, 0);
+	fs_open(tty_path, O_WRONLY, 0);
+	fs_open(tty_path, O_WRONLY, 0);
 
 	/* Exec bash if it exists. */
 	if (fs_stat("/bin/bash", &st) == 0)

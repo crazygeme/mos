@@ -341,4 +341,6 @@ struct statfs {
 #define X_OK 1 // test execution access right
 #define F_OK 0 // test file exist
 
+typedef unsigned short umode_t;
+
 #endif

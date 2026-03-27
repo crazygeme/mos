@@ -36,7 +36,7 @@ struct iovec {
 int sys_read(int fd, char *buf, unsigned len);
 int sys_write(int fd, char *buf, unsigned len);
 int sys_ioctl(int d, int request, char *buf);
-int sys_open(const char *name, int flags, char *mode);
+int sys_open(const char *name, int flags, umode_t mode);
 int sys_close(unsigned fd);
 int sys_lseek(int fd, int offset, int whence);
 int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,

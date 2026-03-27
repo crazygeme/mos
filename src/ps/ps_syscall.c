@@ -258,6 +258,7 @@ int do_fork(unsigned flag)
 	spinlock_lock(&ps_lock);
 	cur->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
+	RB_CLEAR_NODE(&task->mgr_rb);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock);
 

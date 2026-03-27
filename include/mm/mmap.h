@@ -11,6 +11,7 @@ typedef struct _vm_region {
 	int flag;
 	file *fp;
 	int offset;
+	unsigned anon_id; /* non-zero for MAP_SHARED|MAP_ANONYMOUS; shared across fork */
 } vm_region;
 
 vm_struct_t vm_create();
@@ -29,7 +30,7 @@ void vm_destroy(vm_struct_t vm);
  * @param fd
  */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
-		int flag, file *fp, int offset);
+		int flag, file *fp, int offset, unsigned anon_id);
 
 /**
  * delete a mapped region which contains addr

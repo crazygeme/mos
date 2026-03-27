@@ -93,7 +93,7 @@ static void sched_cal_end()
 
 /* Propagate kernel page-directory entries into task's saved page directory
  * so that any kernel mappings added since the task last ran become visible. */
-static void ps_save_kernel_map(task_struct *task)
+static void ps_copy_kernel_map(task_struct *task)
 {
 	if (task->user->page_dir) {
 		unsigned int cr3;
@@ -228,10 +228,10 @@ void _task_sched(const char *func)
 
 	task->status = ps_running;
 	/*
-	 * Actually can be optimized by syncing pgd entry when adding/removing kernel mappings,
+	 * Can be optimized by syncing pgd entry when adding/removing kernel mappings,
 	 * but this is simpler and the overhead should be negligible.
 	 */
-	ps_save_kernel_map(task);
+	ps_copy_kernel_map(task);
 
 	SAVE_ALL(current, NEXT);
 

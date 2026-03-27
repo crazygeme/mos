@@ -4,6 +4,7 @@
 #include <fs/vfs.h>
 #include <fs/select.h>
 #include <fs/poll.h>
+#include <ps/signal.h>
 #include <stdint.h>
 
 /*
@@ -113,6 +114,8 @@ int sys_pause();
 int sys_sigaction(int sig, void *act, void *oact);
 int sys_sigprocmask(int how, void *set, void *oset);
 int sys_getrlimit(int resource, void *limit);
+int sys_setrlimit(int resource, void *limit);
+int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
 long sys_personality(unsigned int personality);
 int sys_getgroups(int size, unsigned *list);
 int sys_getgroups32(int size, unsigned *list);
@@ -142,6 +145,7 @@ int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 int sys_munmap(void *addr, unsigned length);
 int sys_mprotect(void *addr, unsigned len, int prot);
 int sys_umask(unsigned mask);
+int sys_sysinfo(void *info);
 
 /*
  * syscall_net.c

@@ -241,7 +241,7 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	task->signal = zalloc(sizeof(signal_context));
 
 	task->umask = 0;
-	stack_bottom = (unsigned int)task + KERNEL_TASK_SIZE * PAGE_SIZE - 4;
+	stack_bottom = (unsigned int)task + PAGE_SIZE;
 	LOAD_CR3(task->cr3);
 	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);

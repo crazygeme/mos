@@ -236,8 +236,6 @@ struct _task_struct {
 	unsigned pf_minor;
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
 	unsigned long long alarm_expire_ms;
-	/* signal handling */
-
 	unsigned int magic; // to avoid stack overflow
 };
 

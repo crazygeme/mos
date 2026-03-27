@@ -47,6 +47,7 @@ static INLINE int vm_region_compare(const void *region1, const void *region2)
  * Anonymous regions (fp == NULL) only need matching prot and flag.
  * File-backed regions additionally require the same fp and contiguous
  * file offsets (right.offset == left.offset + left_size).
+ * MAP_SHARED anonymous regions with different anon_ids must never merge.
  */
 static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
 {
@@ -57,8 +58,13 @@ static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
 	if (left->fp != NULL &&
 	    left->offset + (int)(left->end - left->begin) != right->offset)
 		return 0;
+	if (left->anon_id != right->anon_id)
+		return 0;
 	return 1;
 }
+
+/* Counter for unique anonymous MAP_SHARED region identifiers. */
+static unsigned g_anon_id_next = 0;
 
 static void vm_region_invalid(const key_value_pair *pair)
 {
@@ -133,13 +139,15 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 				int new_flag = region->flag;
 				file *new_fp = region->fp;
 				int new_offset = lregion->offset;
+				unsigned new_anon_id = lregion->anon_id;
 
 				if (new_fp)
 					fs_get_file(new_fp);
 				hash_remove(table, lpair->key);
 				hash_remove(table, rkey);
 				vm_add_map(table, new_begin, new_end, new_prot,
-					   new_flag, new_fp, new_offset);
+					   new_flag, new_fp, new_offset,
+					   new_anon_id);
 				if (new_fp)
 					fs_put_file(new_fp);
 				return;
@@ -162,13 +170,15 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 				int new_flag = region->flag;
 				file *new_fp = region->fp;
 				int new_offset = region->offset;
+				unsigned new_anon_id = region->anon_id;
 
 				if (new_fp)
 					fs_get_file(new_fp);
 				hash_remove(table, rkey);
 				hash_remove(table, rpair->key);
 				vm_add_map(table, new_begin, new_end, new_prot,
-					   new_flag, new_fp, new_offset);
+					   new_flag, new_fp, new_offset,
+					   new_anon_id);
 				if (new_fp)
 					fs_put_file(new_fp);
 				return;
@@ -187,7 +197,7 @@ static void vm_coalesce(hash_table *table, unsigned addr)
  * until no conflicts remain, then inserts the new region.
  */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
-		int flag, file *fp, int offset)
+		int flag, file *fp, int offset, unsigned anon_id)
 {
 	hash_table *table = vm;
 	vm_key probe;
@@ -213,13 +223,14 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int o_flag = oregion->flag;
 		file *o_fp = oregion->fp;
 		int o_offset = oregion->offset;
+		unsigned o_anon_id = oregion->anon_id;
 
 		vm_del_map(vm, o_begin);
 
 		/* Re-insert the left remnant [o_begin, begin), if any. */
 		if (o_begin < begin)
 			vm_add_map(vm, o_begin, begin, o_prot, o_flag, o_fp,
-				   o_offset);
+				   o_offset, o_anon_id);
 
 		/*
 		 * Re-insert the right remnant [end, o_end), if any.
@@ -227,7 +238,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		 */
 		if (o_end > end)
 			vm_add_map(vm, end, o_end, o_prot, o_flag, o_fp,
-				   o_offset + (int)(end - o_begin));
+				   o_offset + (int)(end - o_begin), o_anon_id);
 	}
 
 	/* No conflicts remain: insert the new region. */
@@ -242,6 +253,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 	region->flag = flag;
 	region->fp = fp;
 	region->offset = offset;
+	region->anon_id = anon_id;
 
 	if (fp)
 		fs_get_file(fp);
@@ -342,6 +354,7 @@ unsigned vm_disc_map(vm_struct_t vm, int size)
  *
  * Used during fork() to duplicate the parent's address space descriptor into
  * the child.  vm_add_map() handles the fs_get_file() reference for each node.
+ * anon_id is preserved so MAP_SHARED anonymous pages are shared across fork.
  */
 void vm_dup(vm_struct_t src, vm_struct_t dst)
 {
@@ -351,7 +364,8 @@ void vm_dup(vm_struct_t src, vm_struct_t dst)
 	while (pair) {
 		vm_region *region = pair->val;
 		vm_add_map(dst, region->begin, region->end, region->prot,
-			   region->flag, region->fp, region->offset);
+			   region->flag, region->fp, region->offset,
+			   region->anon_id);
 		pair = hash_next(table, pair);
 	}
 }
@@ -398,6 +412,7 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		int r_flag = oregion->flag;
 		file *r_fp = oregion->fp;
 		int r_offset = oregion->offset;
+		unsigned r_anon_id = oregion->anon_id;
 
 		/* Intersection of the region with [begin, end) */
 		unsigned upd_begin = r_begin > begin ? r_begin : begin;
@@ -413,16 +428,17 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		/* Preserve left remnant [r_begin, upd_begin) at original prot. */
 		if (r_begin < upd_begin)
 			vm_add_map(vm, r_begin, upd_begin, r_prot, r_flag, r_fp,
-				   r_offset);
+				   r_offset, r_anon_id);
 
 		/* Re-insert updated portion [upd_begin, upd_end) with new prot. */
 		vm_add_map(vm, upd_begin, upd_end, new_prot, r_flag, r_fp,
-			   r_offset + (int)(upd_begin - r_begin));
+			   r_offset + (int)(upd_begin - r_begin), r_anon_id);
 
 		/* Preserve right remnant [upd_end, r_end) at original prot. */
 		if (upd_end < r_end)
 			vm_add_map(vm, upd_end, r_end, r_prot, r_flag, r_fp,
-				   r_offset + (int)(upd_end - r_begin));
+				   r_offset + (int)(upd_end - r_begin),
+				   r_anon_id);
 
 		if (r_fp)
 			fs_put_file(r_fp);
@@ -438,6 +454,9 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
  * Maps the page-aligned range covering [_addr, _addr+_len) into the current
  * task's address space.  If _addr is 0, an appropriate free range is located
  * automatically via vm_disc_map().  Returns the mapped virtual address.
+ *
+ * For MAP_SHARED|MAP_ANONYMOUS, assigns a unique anon_id so that the region
+ * is identifiable across fork() for shared-page lookup.
  */
 int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   unsigned int flags, file *fp, unsigned int offset)
@@ -449,6 +468,7 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	task_struct *cur = CURRENT_TASK();
 	hash_table *table = cur->user->vm;
 	vm_key probe;
+	unsigned anon_id = 0;
 
 	if (flags & MAP_FIXED) {
 		/*
@@ -472,7 +492,16 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 			addr = vm_disc_map(cur->user->vm, size);
 	}
 
-	vm_add_map(cur->user->vm, addr, addr + size, prot, flags, fp, offset);
+	/*
+	 * Assign a unique ID for anonymous MAP_SHARED regions so that all
+	 * processes sharing this mapping (e.g. after fork) can locate the
+	 * same physical pages via the shared_map in pagefault.c.
+	 */
+	if ((flags & MAP_SHARED) && fp == NULL)
+		anon_id = ++g_anon_id_next;
+
+	vm_add_map(cur->user->vm, addr, addr + size, prot, flags, fp, offset,
+		   anon_id);
 
 	if (TestControl.verbos) {
 		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",
@@ -626,6 +655,7 @@ int do_munmap(void *addr, unsigned length)
 		int r_flag = region->flag;
 		file *r_fp = region->fp;
 		int r_offset = region->offset;
+		unsigned r_anon_id = region->anon_id;
 
 		/* Intersection of this region with the unmap range. */
 		unsigned unmap_begin = r_begin > begin ? r_begin : begin;
@@ -650,13 +680,14 @@ int do_munmap(void *addr, unsigned length)
 		 * Its physical pages were not unmapped above. */
 		if (r_begin < unmap_begin)
 			vm_add_map(cur->user->vm, r_begin, unmap_begin, r_prot,
-				   r_flag, r_fp, r_offset);
+				   r_flag, r_fp, r_offset, r_anon_id);
 
 		/* Preserve the right remnant [unmap_end, r_end) if any. */
 		if (r_end > unmap_end)
 			vm_add_map(cur->user->vm, unmap_end, r_end, r_prot,
 				   r_flag, r_fp,
-				   r_offset + (int)(unmap_end - r_begin));
+				   r_offset + (int)(unmap_end - r_begin),
+				   r_anon_id);
 
 		if (r_fp)
 			fs_put_file(r_fp);

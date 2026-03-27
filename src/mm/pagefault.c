@@ -28,7 +28,7 @@ unsigned long long page_fault_perm_spent = 0;
 extern unsigned cache_count;
 
 /*
- * LRU mmap cache
+ * LRU mmap cache — for read-only MAP_PRIVATE file-backed pages only.
  *
  * Hash table for O(1) lookup keyed by (ino, offset).
  * Doubly-linked LRU list: tail = most recently used, head = least recently used.
@@ -53,6 +53,26 @@ static mutex_t mmap_cache_lock;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
+/*
+ * shared_map — non-evicting cache for MAP_SHARED pages.
+ *
+ * Keyed by (id, offset) where:
+ *   - File-backed MAP_SHARED: id = inode number, offset = file offset
+ *   - Anonymous MAP_SHARED:  id = anon_id | ANON_SHARED_BIT, offset = offset within mapping
+ *
+ * Entries are never evicted; the map holds a permanent reference to each page.
+ * This ensures all processes sharing a region always see the same physical page.
+ */
+#define ANON_SHARED_BIT 0x80000000U
+
+typedef struct _shared_map_entry {
+	mmap_cache_key key; /* must be first */
+	unsigned phy;
+} shared_map_entry;
+
+static hash_table *shared_map = NULL;
+static mutex_t shared_map_lock;
+
 static void pf_process(intr_frame *frame);
 
 static int mmap_key_comp(const void *k1, const void *k2)
@@ -72,18 +92,27 @@ static void mmap_entry_evict(const key_value_pair *pair)
 	free(evict);
 }
 
+static void shared_map_evict(const key_value_pair *pair)
+{
+	shared_map_entry *evict = pair->val;
+	phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
+	free(evict);
+}
+
 void pf_init()
 {
 	int_register(0xe, pf_process, 0, 0);
 	mmap_cache = hash_create(mmap_key_comp, mmap_entry_evict);
 	list_init(&mmap_lru);
 	mutex_init(&mmap_cache_lock);
+	shared_map = hash_create(mmap_key_comp, shared_map_evict);
+	mutex_init(&shared_map_lock);
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
-/* Lookup (ino, offset) in the cache.  On hit, promote to MRU position.
+/* Lookup (ino, offset) in the LRU cache.  On hit, promote to MRU position.
  * Returns the physical address, or 0 on miss. */
 static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 {
@@ -111,7 +140,7 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 	return entry->phy;
 }
 
-/* Insert (ino, offset, phy) into the cache.
+/* Insert (ino, offset, phy) into the LRU cache.
  * If the cache is full, evict the LRU entry first (single eviction). */
 static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 {
@@ -152,6 +181,53 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	mutex_unlock(&mmap_cache_lock);
 }
 
+/* Lookup (id, offset) in the shared map.
+ * Returns the physical address, or 0 on miss. */
+static unsigned shared_map_find(unsigned id, unsigned offset)
+{
+	mmap_cache_key tmp = { .ino = id, .offset = offset };
+	key_value_pair *pair;
+	shared_map_entry *entry;
+
+	mutex_lock(&shared_map_lock);
+	pair = hash_find(shared_map, &tmp);
+	if (!pair) {
+		mutex_unlock(&shared_map_lock);
+		return 0;
+	}
+	entry = pair->val;
+	mutex_unlock(&shared_map_lock);
+	return entry->phy;
+}
+
+/* Insert (id, offset, phy) into the shared map.
+ * Bumps the page ref count so the page cannot be freed while in the map. */
+static void shared_map_add(unsigned id, unsigned offset, unsigned phy)
+{
+	shared_map_entry *entry;
+	mmap_cache_key tmp = { .ino = id, .offset = offset };
+
+	if (id == 0 || phy == 0)
+		return;
+
+	mutex_lock(&shared_map_lock);
+
+	/* Skip if already present (two faults on the same page before first one completes). */
+	if (hash_find(shared_map, &tmp)) {
+		mutex_unlock(&shared_map_lock);
+		return;
+	}
+
+	entry = malloc(sizeof(*entry));
+	entry->key.ino = id;
+	entry->key.offset = offset;
+	entry->phy = phy;
+	hash_insert(shared_map, &entry->key, entry);
+	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
+
+	mutex_unlock(&shared_map_lock);
+}
+
 /*
 31                4                             0
 +-----+-...-+-----+-----+-----+-----+-----+-----+
@@ -167,9 +243,16 @@ extern phymm_page *phymm_pages;
 
 /*
  * Handle page fault with fd attached.
- * Note that in this function we should map address as readonly
- * because they will be cached. Another pagefault will handle
- * the writable thing if we write data into those pages.
+ *
+ * MAP_SHARED: pages are placed in shared_map (non-evicting) so every process
+ * that faults the same (ino, offset) pair maps the same physical page.
+ * Pages are mapped read-only; a subsequent write fault goes through
+ * pf_handle_permission which flips the PTE writable and marks the page dirty.
+ *
+ * MAP_PRIVATE readonly: pages are placed in the LRU mmap_cache and mapped
+ * read-only.  A write fault triggers COW.
+ *
+ * MAP_PRIVATE writable: each process gets its own private copy immediately.
  */
 static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 				       int prot, int flag)
@@ -181,35 +264,37 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 	int readonly = !(prot & PROT_WRITE);
 	int shared = flag & MAP_SHARED;
+	unsigned ino = f->f_inode->i_ino;
 
 	page_fault_file++;
 
-	/*
-	 * Find a cached map first.
-	 * Some of the file map are globally same, especially those
-	 * runtime libraries.
-	 * We only cache readonly pages, unless an explicit SHARED flag
-	 */
-	if (readonly || shared) {
-		phy = mmap_cache_find(f->f_inode->i_ino, offset);
+	/* Try the appropriate cache first. */
+	if (shared) {
+		phy = shared_map_find(ino, offset);
+		if (phy != 0) {
+			page_fault_file_cache_hit++;
+			/* Read-only: write fault handled by pf_handle_permission. */
+			mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
+			INVLPG(address);
+			goto DONE;
+		}
+	} else if (readonly) {
+		phy = mmap_cache_find(ino, offset);
 
 		if (TestControl.profiling)
 			page_fault_file_search_spent += time_now_us() - begin;
 
 		if (phy != 0) {
 			page_fault_file_cache_hit++;
-			mmflag = shared	  ? PAGE_ENTRY_USER_DATA :
-				 readonly ? PAGE_ENTRY_USER_CODE :
-					    PAGE_ENTRY_USER_DATA;
-			mm_map_page(address, phy, mmflag);
+			mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
 			INVLPG(address);
 			goto DONE;
 		}
 	}
 
 	/*
-	 * We don't use mm_map_page with NULL physical address here
-	 * because we want to know exactly what physical page and cache it.
+	 * Cache miss — allocate a fresh page, map it writable so we can fill it,
+	 * then read the file content into it.
 	 */
 	phy = phymm_alloc_user() * PAGE_SIZE;
 
@@ -219,8 +304,8 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	ff = f->f_inode->i_private;
 
 	/*
-	 * Some program will map a region larger than file size.
-	 * we return a zero page in this case.
+	 * Some programs map a region larger than the file size;
+	 * return a zero page in that case.
 	 */
 	if (ext4_fseek(ff, offset, SEEK_SET) != EOK) {
 		memset(address, 0, PAGE_SIZE);
@@ -228,10 +313,8 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	}
 
 	/*
-	 * Read the file. Note that not always PAGE_SIZE bytes read, we
-	 * will fill with zero in this case.
-	 * Usually this "fill zero" operation is not nessasary, but lots
-	 * of program rely on this.
+	 * Read the file.  If fewer than PAGE_SIZE bytes are returned, zero the
+	 * remainder (many programs depend on this).
 	 */
 	if (ext4_fread(ff, address, PAGE_SIZE, &rcnt) != EOK)
 		klog("FAIL: mmap: read to buffer %x, size %x\n", address,
@@ -241,18 +324,27 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		memset(address + rcnt, 0, PAGE_SIZE - rcnt);
 
 READ_DONE:
-	if (readonly && !shared) {
+	page_fault_file_read += rcnt;
+
+	if (shared) {
+		/*
+		 * Strip the writable bit so the first write goes through
+		 * pf_handle_permission, which marks the page dirty for
+		 * writeback and then flips the PTE writable.
+		 */
 		mmflag = mm_get_map_flag(address);
 		mmflag &= ~PAGE_ENTRY_WRITABLE;
 		mm_set_map_flag(address, mmflag);
 		INVLPG(address);
+		shared_map_add(ino, offset, phy);
+	} else if (readonly) {
+		mmflag = mm_get_map_flag(address);
+		mmflag &= ~PAGE_ENTRY_WRITABLE;
+		mm_set_map_flag(address, mmflag);
+		INVLPG(address);
+		mmap_cache_add(ino, offset, phy);
 	}
-
-	if (readonly || shared) {
-		mmap_cache_add(f->f_inode->i_ino, offset, phy);
-	}
-
-	page_fault_file_read += rcnt;
+	/* else: writable MAP_PRIVATE — leave the PTE writable, no cache. */
 
 DONE:
 	if (TestControl.profiling)
@@ -261,12 +353,52 @@ DONE:
 
 /*
  * Handle page fault which has no physical page attached.
+ *
+ * MAP_SHARED anonymous (anon_id != 0):
+ *   All processes sharing the same anon_id must map the same physical page.
+ *   Use shared_map keyed by (anon_id | ANON_SHARED_BIT, offset).
+ *   Pages are mapped read-only; write faults go through pf_handle_permission.
+ *
+ * MAP_PRIVATE writable: allocate a fresh zero page per fault.
+ *
+ * MAP_PRIVATE read-only: map the global zero page read-only; a write fault
+ *   triggers COW.
  */
-static void pf_handle_invalid_memory(unsigned address, int prot, int flag)
+static void pf_handle_invalid_memory(unsigned address, vm_region *region,
+				     int offset)
 {
+	int prot = region->prot;
+	int flag = region->flag;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	int mmflag;
 
 	page_fault_invalid++;
+
+	if ((flag & MAP_SHARED) && region->anon_id != 0) {
+		unsigned id = region->anon_id | ANON_SHARED_BIT;
+		unsigned phy = shared_map_find(id, offset);
+
+		if (phy != 0) {
+			/* Hit — map read-only so writes go through pf_handle_permission. */
+			mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
+			INVLPG(address);
+			goto DONE;
+		}
+
+		/* Miss — allocate, zero, strip writable, and register in shared_map. */
+		phy = phymm_alloc_user() * PAGE_SIZE;
+		mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
+		INVLPG(address);
+		memset(address, 0, PAGE_SIZE);
+
+		mmflag = mm_get_map_flag(address);
+		mmflag &= ~PAGE_ENTRY_WRITABLE;
+		mm_set_map_flag(address, mmflag);
+		INVLPG(address);
+
+		shared_map_add(id, offset, phy);
+		goto DONE;
+	}
 
 	if (prot & PROT_WRITE) {
 		mm_map_page(address, 0, PAGE_ENTRY_USER_DATA);
@@ -283,6 +415,7 @@ static void pf_handle_invalid_memory(unsigned address, int prot, int flag)
 		INVLPG(address);
 	}
 
+DONE:
 	if (TestControl.profiling)
 		page_fault_invalid_spent += (time_now_us() - begin);
 }
@@ -318,8 +451,7 @@ static int pf_handle_page_invalid(unsigned cr2)
 					   region->prot, region->flag);
 		cur->pf_major++;
 	} else {
-		pf_handle_invalid_memory(this_begin, region->prot,
-					 region->flag);
+		pf_handle_invalid_memory(this_begin, region, this_offset);
 		cur->pf_minor++;
 	}
 

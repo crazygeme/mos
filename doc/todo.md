@@ -4,7 +4,7 @@
 - [X] 各级 cache (hdd cache, inode cache)
 - [X] mount point
 - [X] 文件权限
-- [ ] 用户
+- [X] 用户
 - [ ] syscall 的返回值: 80%
 - [ ] 内存权限
 - [X] scheduler 的效率
@@ -14,13 +14,14 @@
 - [ ] IPC 机制
   * [X] pipe
   * [X] sockpair
+  * [X] shared mmap
   * [ ] shm
 - [X] INODE 的引用计数
 - [X] fork 的时候复制fd
 - [X] unlink
 - [X] tty ioctl
 - [X] 文件路径最大值 4096
-- [ ] fcnt
+- [ ] fcntl
 - [X] sys_stat, sys_lstat, sys_fstat的正确实现
 - [X] /dev 目录 和 /proc 目录
 - [X] 正确的 gettimeofday 实现

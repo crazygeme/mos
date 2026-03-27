@@ -97,7 +97,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 			unsigned sleep_ms;
 
 			if (now >= deadline) {
-				ret = -ETIMEDOUT;
+				ret = 0;
 				break;
 			}
 

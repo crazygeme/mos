@@ -445,8 +445,10 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_fop || !fp->f_fop->ioctl)
+	if (!fp || !fp->f_fop || !fp->f_fop->ioctl) {
+		ret = -ENOTTY;
 		goto done;
+	}
 
 	ret = fp->f_fop->ioctl(fp, cmd, buf);
 done:

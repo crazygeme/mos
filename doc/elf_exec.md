@@ -329,7 +329,7 @@ Called via `KERNEL_INIT(8, kinit_userspace)` — the last kernel initialisation 
 1. `ps_update_tss(esp0)` — set TSS esp0 to this task's kernel stack top.
 2. Open fds 0, 1, 2 on `/dev/tty0` (stdin/stdout/stderr).
 3. `run_if_exist("/sbin/init", …)` — exec init with `PATH=/bin:/usr/bin:/sbin` and `TERM=linux`.
-   - If `TestControl.init_binary` is set (e.g. `bash` from the kernel cmdline), exec that instead.
+   - If `TestControl.bash` is set (e.g. `bash` from the kernel cmdline), exec that instead.
    - If the binary is missing, `DIE()`.
 
 ---

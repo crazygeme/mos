@@ -568,7 +568,7 @@ static void kinit_userspace()
 {
 	const char *devault_argv[] = { "/sbin/init", "1", "fastboot", NULL };
 	const char *default_envp[] = { NULL };
-	const char *user_argv[] = { "placeholder", NULL };
+	const char *user_argv[] = { "/bin/bash", "-l", NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
 				    "HOME=/root", "LANG=en_US.UTF-8", NULL };
 	task_struct *cur = CURRENT_TASK();
@@ -576,8 +576,7 @@ static void kinit_userspace()
 	const char **argv = devault_argv;
 	const char **envp = default_envp;
 
-	if (TestControl.init_binary && *TestControl.init_binary) {
-		user_argv[0] = TestControl.init_binary;
+	if (TestControl.bash) {
 		argv = user_argv;
 		envp = user_envp;
 		strcpy(cur->user->cwd, "/root");

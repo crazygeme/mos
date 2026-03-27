@@ -37,6 +37,63 @@
 #define TIOCGSERIAL 0x541E
 #define TIOCSSERIAL 0x541F
 /* KD (keyboard/display) ioctls */
+#define KDGKBTYPE 0x4B33 /* get keyboard type */
+#define KDGKBMODE 0x4B44 /* get keyboard mode */
+#define KDSKBMODE 0x4B45 /* set keyboard mode */
+#define KDGKBENT 0x4B46 /* get one entry in keysym translation table */
+#define KDSKBENT 0x4B47 /* set one entry in keysym translation table */
+#define KDGKBSENT 0x4B48 /* get one entry in function-key string table */
+#define KDSKBSENT 0x4B49 /* set one entry in function-key string table */
+#define KDGKBDIACR 0x4B4A /* get kernel diacriticals table */
+#define KDSKBDIACR 0x4B4B /* set kernel diacriticals table */
+#define K_NOSUCHMAP 0x0080 /* no such translation table */
+
+/* Keysym type / value encoding (matching Linux keyboard.h) */
+#define KT_LATIN 0x00 /* printable latin characters */
+#define KT_FN 0x01 /* function keys */
+#define KT_SPEC 0x0f /* special: K_HOLE, K_ENTER, … */
+#define KS(t, v) ((unsigned short)(((unsigned)(t) << 8) | (unsigned char)(v)))
+#define K_HOLE KS(KT_SPEC, 0) /* unmapped key */
+#define K_ENTER KS(KT_SPEC, 13) /* Return */
+
+#define NR_KEYMAPS 8 /* modifier layers: plain,shift,altgr,… */
+#define NR_KEYS 128 /* keycodes 0–127 */
+
+#define MAX_NR_FUNC 256 /* number of function-key string slots */
+#define MAX_FUNC_STR 32 /* max bytes per function-key string (incl. NUL) */
+
+struct kbdiacr {
+	unsigned char diacr; /* the dead key */
+	unsigned char base; /* the base character */
+	unsigned char result; /* the combined character */
+};
+
+#define MAX_DIACR 256
+
+struct kbdiacrs {
+	unsigned int kb_cnt; /* number of valid entries */
+	struct kbdiacr kbdiacr[MAX_DIACR]; /* table */
+};
+
+struct kbsentry {
+	unsigned char kb_func; /* function-key index */
+	unsigned char
+		kb_string[MAX_FUNC_STR]; /* NUL-terminated escape sequence */
+};
+
+struct kbentry {
+	unsigned char
+		kb_table; /* modifier-layer index (0 = plain, 1 = shift, …) */
+	unsigned char kb_index; /* keycode */
+	unsigned short kb_value; /* keysym (KS(type, value)) */
+};
+#define K_RAW 0x00
+#define K_XLATE 0x01
+#define K_MEDIUMRAW 0x02
+#define K_UNICODE 0x03
+#define KB_84 0x01 /* 84-key keyboard */
+#define KB_101 0x02 /* 101-key PC/AT keyboard */
+#define KB_OTHER 0x03
 #define KDSIGACCEPT 0x4B4E /* process accepts VT-switch signal */
 
 typedef unsigned char cc_t;

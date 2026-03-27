@@ -34,11 +34,11 @@ Tokenises the `g_cmdline` string (copied from Multiboot in stage 1) into
 space/tab-separated tokens. Recognised options populate the global
 `TestControl` struct:
 
-| Token | Effect |
-|-------|--------|
-| `verbose` | `TestControl.verbos = 1` — enables extra `klog` output |
-| `profile` | `TestControl.profiling = 1` — enables scheduler profiling |
-| `init=<path>` | `TestControl.init_binary = path` — overrides `/sbin/init` |
+| Token         | Effect                                                    |
+| ------------- | --------------------------------------------------------- |
+| `verbose`     | `TestControl.verbos = 1` — enables extra `klog` output    |
+| `profile`     | `TestControl.profiling = 1` — enables scheduler profiling |
+| `init=<path>` | `TestControl.bash = 1` — overrides `/sbin/init`           |
 
 ### 3. Process subsystem (`ps_init`)
 
@@ -129,11 +129,11 @@ ps_create(kmain_process,  NULL, ps_normal, ps_kernel);
 ps_create(timer_process,  NULL, ps_normal, ps_kernel);
 ```
 
-| Thread | Priority | Purpose |
-|--------|----------|---------|
-| `idle_process` | `ps_idle` | Executes `HLT` in a loop; created only on single-CPU systems (SMP APs have their own idle loops) |
-| `kmain_process` | `ps_normal` | Runs the `KERNEL_INIT` table then becomes idle |
-| `timer_process` | `ps_normal` | Runs software timers (`timer_init` + `do_timer_loop`) |
+| Thread          | Priority    | Purpose                                                                                          |
+| --------------- | ----------- | ------------------------------------------------------------------------------------------------ |
+| `idle_process`  | `ps_idle`   | Executes `HLT` in a loop; created only on single-CPU systems (SMP APs have their own idle loops) |
+| `kmain_process` | `ps_normal` | Runs the `KERNEL_INIT` table then becomes idle                                                   |
+| `timer_process` | `ps_normal` | Runs software timers (`timer_init` + `do_timer_loop`)                                            |
 
 ### 13. Start the scheduler (`ps_kickoff`)
 
@@ -154,21 +154,21 @@ Runs as a scheduled kernel thread. Iterates `__kinit_start[]` →
 `__kinit_end[]`, a linker-collected array of function pointers ordered by the
 index argument of each `KERNEL_INIT(index, fn)` macro.
 
-| Index | Function | What it does |
-|-------|----------|-------------|
-| 0 | `klog_init` | Opens the kernel log file (`/var/log/kmsg`) |
-| 1 | `syslog_init` | Initialises the in-memory syslog ring buffer |
-| 2 | `hdd_init` | Scans PCI for IDE controllers, initialises ATA driver and 4096-page write-back disk cache |
-| 2 | `mount_syscall_init` | Registers `mount`/`umount` syscall handlers |
-| 3 | `fs_mount_root` | Registers the ext2/4 filesystem driver and mounts the root partition (`/dev/hda`) at `/` |
-| 4 | `tty_fs_init` | Mounts the TTY filesystem, creates `/dev/tty`, `/dev/console` |
-| 5 | `pts_dev_init` | Mounts devpts at `/dev/pts`; creates PTY master/slave devices |
-| 5 | `procfs_init` | Mounts procfs at `/proc`; exposes `/proc/<pid>/`, `/proc/meminfo`, etc. |
-| 6 | `devfs_init` | Mounts devfs at `/dev`; populates static device nodes |
-| 6 | `nic_scan_all` | PCI scan for Intel 82540EM (e1000) NIC; calls `nic_init` per device |
-| 7 | `net_init` | Initialises lwIP, configures the NIC interface, brings up IP |
-| 7 | `syscall_init` | Installs the `int 0x80` syscall dispatch table |
-| 8 | `kinit_userspace` | Loads and `exec`s the first userspace binary (`/sbin/init` or `init=` override) |
+| Index | Function             | What it does                                                                              |
+| ----- | -------------------- | ----------------------------------------------------------------------------------------- |
+| 0     | `klog_init`          | Opens the kernel log file (`/var/log/kmsg`)                                               |
+| 1     | `syslog_init`        | Initialises the in-memory syslog ring buffer                                              |
+| 2     | `hdd_init`           | Scans PCI for IDE controllers, initialises ATA driver and 4096-page write-back disk cache |
+| 2     | `mount_syscall_init` | Registers `mount`/`umount` syscall handlers                                               |
+| 3     | `fs_mount_root`      | Registers the ext2/4 filesystem driver and mounts the root partition (`/dev/hda`) at `/`  |
+| 4     | `tty_fs_init`        | Mounts the TTY filesystem, creates `/dev/tty`, `/dev/console`                             |
+| 5     | `pts_dev_init`       | Mounts devpts at `/dev/pts`; creates PTY master/slave devices                             |
+| 5     | `procfs_init`        | Mounts procfs at `/proc`; exposes `/proc/<pid>/`, `/proc/meminfo`, etc.                   |
+| 6     | `devfs_init`         | Mounts devfs at `/dev`; populates static device nodes                                     |
+| 6     | `nic_scan_all`       | PCI scan for Intel 82540EM (e1000) NIC; calls `nic_init` per device                       |
+| 7     | `net_init`           | Initialises lwIP, configures the NIC interface, brings up IP                              |
+| 7     | `syscall_init`       | Installs the `int 0x80` syscall dispatch table                                            |
+| 8     | `kinit_userspace`    | Loads and `exec`s the first userspace binary (`/sbin/init` or `init=` override)           |
 
 After `kinit_userspace` returns (it shouldn't — init runs forever), `kmain_process`
 falls into `run()` → `idle_process()`.

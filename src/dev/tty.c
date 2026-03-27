@@ -41,6 +41,7 @@
 #include <dev/dev.h>
 #include <ext4_oflags.h>
 #include "tty_ldisc.h"
+#include <hw/keyboard.h>
 
 #define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (0-9) */
 
@@ -91,6 +92,8 @@ typedef struct {
 	/* current foreground/background colors (set by SGR escape sequences) */
 	unsigned fg_color;
 	unsigned bg_color;
+	/* keyboard translation mode (K_XLATE, K_RAW, etc.) */
+	int kb_mode;
 } tty_state;
 
 #define DEFAULT_TTY 0
@@ -944,6 +947,7 @@ void tty_init(void)
 		t->saved_cursor = 0;
 		t->fg_color = VGA_COLOR_WHITE;
 		t->bg_color = VGA_COLOR_BLACK;
+		t->kb_mode = K_XLATE;
 	}
 	spinlock_init(&tty_switch_lock);
 }
@@ -1212,6 +1216,9 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		ws->ws_xpixel = ws->ws_ypixel = 0;
 		return 0;
 	}
+	case TIOCSWINSZ:
+		/* window size is hardware-fixed; accept silently */
+		return 0;
 	case TIOCGPGRP:
 		*(unsigned *)buf = state->pgrp;
 		return 0;
@@ -1233,6 +1240,30 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		state->pgrp = cur->user->group_id;
 		return 0;
 	}
+	case KDGKBTYPE:
+		*(unsigned char *)buf = KB_101;
+		return 0;
+	case KDGKBMODE:
+		*(int *)buf = state->kb_mode;
+		return 0;
+	case KDSKBMODE:
+		state->kb_mode = (int)buf;
+		return 0;
+	case KDGKBENT:
+		return kbd_get_kbentry((struct kbentry *)buf);
+	case KDSKBENT:
+		return kbd_set_kbentry((const struct kbentry *)buf);
+	case KDGKBSENT:
+		return kbd_get_kbsentry((struct kbsentry *)buf);
+	case KDSKBSENT:
+		return kbd_set_kbsentry((const struct kbsentry *)buf);
+	case KDGKBDIACR: {
+		struct kbdiacrs *d = (struct kbdiacrs *)buf;
+		d->kb_cnt = 0;
+		return 0;
+	}
+	case KDSKBDIACR:
+		return 0;
 	case TIOCLINUX: {
 		/*
 		 * Linux virtual-console ioctl; subcommand is the first byte.

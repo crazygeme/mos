@@ -11,7 +11,7 @@ _logtofile="stdio"
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
-_init=""
+_bash=""
 _test=""
 _IS_MACOS=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
 if [ "$_IS_MACOS" -eq 1 ]; then
@@ -37,7 +37,7 @@ elif [ "$arg" == "curses" ]; then
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
 elif [ "$arg" == "bash" ]; then
-	_init="/bin/bash"
+	_bash="bash"
 elif [ "$arg" == "logtofile" ]; then
 	_logtofile="file:out/krn.log"
 elif [ "$arg" == "-h" ]; then
@@ -140,7 +140,7 @@ qemu-system-i386 -cpu coreduo \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
 	-kernel $kernel_file \
-	-append "$_verbose $_profile init=$_init" \
+	-append "$_verbose $_profile $_bash" \
 	-serial $_logtofile \
 	$_vga \
 	$_power \

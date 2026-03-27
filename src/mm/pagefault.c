@@ -637,7 +637,8 @@ static void pf_process(intr_frame *frame)
 NOT_HANDLED:
 	cur = CURRENT_TASK();
 
-	if ((unsigned)frame->eip < KERNEL_OFFSET || cr2 < KERNEL_OFFSET) {
+	if ((unsigned)frame->eip < KERNEL_OFFSET ||
+	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
 		if (TestControl.verbos) {
 			klog("segfault: error code %x, address %x, eip %x, cmd %s\n",
 			     frame->error_code, cr2, frame->eip,

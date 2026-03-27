@@ -341,11 +341,21 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	return 0;
 }
 
+static int proc_statfs(super_block *sb, struct statfs *buf)
+{
+	memset(buf, 0, sizeof(*buf));
+	buf->f_type = 0x9FA0; /* PROC_SUPER_MAGIC */
+	buf->f_bsize = PAGE_SIZE;
+	buf->f_namelen = 255;
+	return 0;
+}
+
 static super_operations proc_sops = {
 	.open_root = proc_open_root,
 	.open = proc_open,
 	.readlink = proc_readlink,
 	.release = proc_release_super,
+	.statfs = proc_statfs,
 };
 
 /* ------------------------------------------------------------------ *

@@ -231,7 +231,7 @@ static file *devnode_open_root(super_block *sb, int flag)
 		return fp;
 	}
 
-	/* Char / block: dispatch to registered handler first. */
+	/* Char / block: dispatch to registered handler. */
 	if (S_ISCHR(dn->mode) || S_ISBLK(dn->mode)) {
 		file *dispatched = cdev_dispatch(dn->mode, dn->rdev, flag);
 		if (dispatched)

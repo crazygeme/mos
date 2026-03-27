@@ -15,6 +15,7 @@
  *   s2m: slave writes  → master reads (raw)
  */
 
+#include "config.h"
 #include <fs/fs.h>
 #include <fs/fcntl.h>
 #include <fs/vfs.h>
@@ -42,6 +43,7 @@
 #define TIOCGPTN 0x80045430 /* get pty number */
 #define TIOCSPTLCK 0x40045431 /* lock/unlock slave */
 #define TIOCGPTLCK 0x80045439 /* query slave lock state */
+#define PTS_INO_MASK 0x00040000
 
 /* ── Per-PTY state ────────────────────────────────────────────────────────── */
 
@@ -74,10 +76,23 @@ static spinlock_t pts_alloc_lock;
 
 static void pts_pair_check_free(pts_pair *p)
 {
+	cy_buf *m2s = NULL, *s2m = NULL;
+
 	spinlock_lock(&pts_alloc_lock);
-	if (!p->master_open && p->slave_count == 0)
+	if (!p->master_open && p->slave_count == 0) {
 		p->used = 0;
+		/* Drop the slave-side refs that were pre-allocated by cyb_create
+		 * but never consumed (no slave ever opened this pair). */
+		m2s = p->m2s;
+		s2m = p->s2m;
+		p->m2s = p->s2m = NULL;
+	}
 	spinlock_unlock(&pts_alloc_lock);
+
+	if (m2s) {
+		cyb_reader_close(m2s);
+		cyb_writer_close(s2m);
+	}
 }
 
 /* ── Slave line discipline helpers ────────────────────────────────────────── */
@@ -198,11 +213,13 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_dev = MKDEV(PTS_MAJOR, 0);
 	s->st_rdev = MKDEV(PTS_MAJOR, p->idx);
-	s->st_ino = (uint64_t)p->idx;
+	s->st_ino = PTS_INO_MASK | (uint64_t)p->idx;
 	s->st_nlink = 1;
 	s->st_atime = time_now_ms();
 	s->st_ctime = time_now_ms();
 	s->st_blksize = PAGE_SIZE;
+	s->st_size = PAGE_SIZE;
+	s->st_blocks = 1;
 	return 0;
 }
 
@@ -216,6 +233,18 @@ static const file_operations pts_slave_fops = {
 	.write = pts_slave_write,
 	.poll = pts_slave_poll,
 	.ioctl = pts_slave_ioctl,
+};
+
+/* O_PATH open: metadata only, no cycbuf refs taken. */
+static int pts_slave_path_release(file *fp)
+{
+	kfree(fp->f_inode);
+	kfree(fp);
+	return 0;
+}
+
+static const file_operations pts_slave_path_fops = {
+	.release = pts_slave_path_release,
 };
 
 /* ── Master file operations ───────────────────────────────────────────────── */
@@ -323,11 +352,13 @@ static int pts_master_getattr(inode *node, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_dev = MKDEV(PTM_MAJOR, 0);
 	s->st_rdev = MKDEV(PTM_MAJOR, p->idx);
-	s->st_ino = (uint64_t)(MAX_PTS + p->idx);
+	s->st_ino = PTS_INO_MASK | (uint64_t)(MAX_PTS + p->idx);
 	s->st_nlink = 1;
 	s->st_atime = time_now_ms();
 	s->st_ctime = time_now_ms();
 	s->st_blksize = PAGE_SIZE;
+	s->st_size = PAGE_SIZE;
+	s->st_blocks = 1;
 	return 0;
 }
 
@@ -441,7 +472,8 @@ static file *pts_cdev_open(unsigned rdev, int flag)
 		spinlock_unlock(&pts_alloc_lock);
 		return NULL;
 	}
-	__sync_add_and_fetch(&p->slave_count, 1);
+	if (!(flag & O_PATH))
+		__sync_add_and_fetch(&p->slave_count, 1);
 	spinlock_unlock(&pts_alloc_lock);
 
 	inode *node = zalloc(sizeof(*node));
@@ -452,9 +484,70 @@ static file *pts_cdev_open(unsigned rdev, int flag)
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
-	fp->f_fop = &pts_slave_fops;
+	fp->f_fop = (flag & O_PATH) ? &pts_slave_path_fops : &pts_slave_fops;
 	return fp;
 }
+
+/* ── /dev/pts directory superblock ───────────────────────────────────────── */
+
+/*
+ * Unix98 PTY slaves are accessed via /dev/pts/N.
+ * grantpt(3) calls ptsname_r() -> TIOCGPTN to get N, then stat("/dev/pts/N")
+ * to verify ownership.  We provide a minimal directory superblock mounted at
+ * /dev/pts with pre-created slave device nodes /dev/pts/0 .. /dev/pts/15.
+ */
+
+static int ptsdir_getattr(inode *node, struct stat *s)
+{
+	memset(s, 0, sizeof(*s));
+	s->st_mode = S_IFDIR | 0755;
+	s->st_nlink = 2;
+	s->st_ino = PTS_INO_MASK | (MAX_PTS * 2 + 1);
+	s->st_atime = time_now_ms();
+	s->st_ctime = time_now_ms();
+	s->st_blksize = PAGE_SIZE;
+	s->st_size = PAGE_SIZE;
+	s->st_blocks = 1;
+	return 0;
+}
+
+static int ptsdir_release(file *fp)
+{
+	kfree(fp->f_inode);
+	kfree(fp);
+	return 0;
+}
+
+static const inode_operations ptsdir_iops = {
+	.getattr = ptsdir_getattr,
+};
+
+static const file_operations ptsdir_fops = {
+	.release = ptsdir_release,
+};
+
+static file *ptsdir_open_root(super_block *sb, int flag)
+{
+	inode *node = zalloc(sizeof(*node));
+	file *fp = zalloc(sizeof(*fp));
+
+	node->i_mode = S_IFDIR | 0755;
+	node->i_op = &ptsdir_iops;
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &ptsdir_fops;
+	return fp;
+}
+
+static void ptsdir_release_super(super_block *sb)
+{
+	kfree(sb);
+}
+
+static const super_operations ptsdir_sops = {
+	.open_root = ptsdir_open_root,
+	.release = ptsdir_release_super,
+};
 
 /* ── Initialization ───────────────────────────────────────────────────────── */
 
@@ -467,12 +560,17 @@ static void pts_dev_init(void)
  * RH9 BSD-style PTY nodes:
  *   /dev/ptyp0 … /dev/ptypf  (masters, major 2, minor 0-15)
  *   /dev/ttyp0 … /dev/ttypf  (slaves,  major 3, minor 0-15)
+ *
+ * Unix98 PTY nodes:
+ *   /dev/ptmx            (multiplexor master)
+ *   /dev/pts/0 … /dev/pts/15  (slaves, major 3, minor 0-15)
  */
 static const char pty_hex[] = "0123456789abcdef";
 
 static void pts_dev_register(super_block *dev_sb)
 {
 	char path[16];
+	super_block *ptsdir_sb;
 	int i;
 
 	cdev_register(S_IFCHR, PTM_MAJOR, 0, MAX_PTS, ptm_cdev_open);
@@ -488,6 +586,14 @@ static void pts_dev_register(super_block *dev_sb)
 
 		sprintf(path, "/ttyp%c", pty_hex[i]);
 		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(PTS_MAJOR, i));
+	}
+
+	/* Unix98 /dev/pts/N slave nodes */
+	ptsdir_sb = sget(&ptsdir_sops);
+	vfs_mount(dev_sb, "/pts", ptsdir_sb);
+	for (i = 0; i < MAX_PTS; i++) {
+		sprintf(path, "/%d", i);
+		vfs_mknod(ptsdir_sb, path, S_IFCHR | 0620, MKDEV(PTS_MAJOR, i));
 	}
 }
 

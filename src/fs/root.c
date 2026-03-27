@@ -557,6 +557,28 @@ static int ext4_readlink_op(super_block *sb, const char *path, char *buf,
 	return ret ? -ret : 0;
 }
 
+static int ext4_statfs_op(super_block *sb, struct statfs *buf)
+{
+	ext4_mount_info *mi = sb->s_fs_info;
+	struct ext4_mount_stats stats;
+	int ret = ext4_mount_point_stats(mi->mp, &stats);
+
+	if (ret != EOK)
+		return -EIO;
+
+	memset(buf, 0, sizeof(*buf));
+	buf->f_type = 0xEF53; /* EXT4_SUPER_MAGIC */
+	buf->f_bsize = stats.block_size;
+	buf->f_blocks = stats.blocks_count;
+	buf->f_bfree = stats.free_blocks_count;
+	buf->f_bavail = stats.free_blocks_count;
+	buf->f_files = stats.inodes_count;
+	buf->f_ffree = stats.free_inodes_count;
+	buf->f_namelen = 255;
+	buf->f_frsize = stats.block_size;
+	return 0;
+}
+
 static super_operations ext4_sops = {
 	.open_root = ext4_open_root,
 	.open = ext4_open,
@@ -568,6 +590,7 @@ static super_operations ext4_sops = {
 	.symlink = ext4_symlink_op,
 	.rename = ext4_rename,
 	.readlink = ext4_readlink_op,
+	.statfs = ext4_statfs_op,
 };
 
 /* Allocate a super_block bound to the given lwext4 mount point. */

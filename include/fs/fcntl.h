@@ -21,6 +21,7 @@
 #define O_DIRECTORY 0200000 /* must be a directory */
 #define O_NOFOLLOW 0400000 /* don't follow links */
 #define O_CLOEXEC 02000000 /* set close_on_exec */
+#define O_PATH 010000000 /* path-only open — no device side-effects */
 
 #define F_DUPFD 0 /* dup */
 #define F_GETFD 1 /* get f_flags */

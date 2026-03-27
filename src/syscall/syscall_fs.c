@@ -347,6 +347,22 @@ int sys_fchown(int fd, uint32_t uid, uint32_t gid)
  * Directory and link operations                                        *
  * ------------------------------------------------------------------ */
 
+int sys_mknod(const char *_path, unsigned mode, unsigned dev)
+{
+	task_struct *cur = CURRENT_TASK();
+	char *path = name_get();
+	int ret;
+
+	resolve_path(_path, path);
+	ret = vfs_mknod(cur->root, path, mode, dev);
+
+	if (TestControl.verbos)
+		klog("mknod(%s, %o, %x) = %d\n", _path, mode, dev, ret);
+
+	name_put(path);
+	return ret;
+}
+
 int sys_mkdir(const char *path, unsigned mode)
 {
 	char *name = name_get();

@@ -1,11 +1,14 @@
 #include <fs/fs.h>
 #include <fs/vfs.h>
-#include <ps/ps.h>
 #include <lib/klib.h>
 #include <hw/time.h>
 #include <macro.h>
 #include <dev/dev.h>
 #include <unistd.h>
+
+/* /dev/null — major 1, minor 3 (Linux-compatible) */
+#define NULL_MAJOR 1
+#define NULL_MINOR 3
 
 static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
@@ -27,18 +30,20 @@ static int null_poll(file *fp, unsigned type)
 
 static int null_getattr(inode *node, struct stat *s)
 {
-	s->st_atime = time_now_ms();
+	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_size = PAGE_SIZE;
+	s->st_rdev = MKDEV(NULL_MAJOR, NULL_MINOR);
 	s->st_blksize = PAGE_SIZE;
-	s->st_blocks = 0;
+	s->st_atime = time_now_ms();
 	s->st_ctime = time_now_ms();
-	s->st_dev = 0;
-	s->st_gid = 0;
-	s->st_ino = 0;
-	s->st_mtime = 0;
-	s->st_uid = 0;
-	s->st_rdev = 0;
+	s->st_nlink = 1;
+	return 0;
+}
+
+static int null_release(file *fp)
+{
+	free(fp->f_inode);
+	free(fp);
 	return 0;
 }
 
@@ -47,16 +52,17 @@ static const inode_operations null_iops = {
 };
 
 static const file_operations null_fops = {
+	.release = null_release,
 	.read = null_read,
 	.write = null_write,
 	.poll = null_poll,
 };
 
-static file *null_open_root(super_block *sb, int flag)
+static file *null_cdev_open(unsigned rdev, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
-	node->i_mode = (S_IFCHR | S_IWUSR | S_IWGRP | S_IWOTH | S_IRUSR |
-			S_IRGRP | S_IROTH);
+	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
+		       S_IROTH | S_IWOTH;
 	node->i_op = &null_iops;
 
 	file *fp = zalloc(sizeof(*fp));
@@ -66,13 +72,11 @@ static file *null_open_root(super_block *sb, int flag)
 	return fp;
 }
 
-static super_operations null_sops = {
-	.open_root = null_open_root,
-};
-
 static void null_dev_register(super_block *dev_sb)
 {
-	vfs_mount(dev_sb, "/null", sget(&null_sops));
+	cdev_register(S_IFCHR, NULL_MAJOR, NULL_MINOR, 1, null_cdev_open);
+	vfs_mknod(dev_sb, "/null", S_IFCHR | 0666,
+		  MKDEV(NULL_MAJOR, NULL_MINOR));
 }
 
 DEV_INIT(null_dev_register);

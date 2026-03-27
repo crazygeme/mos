@@ -2,8 +2,29 @@
 #define _DEV_DEV_H
 
 #include <fs/vfs.h>
+#include <fs/fs.h>
 
 #define DEV_INODE 0x90
+
+/* Device number encoding (Linux-compatible 8-bit major/minor). */
+#define MKDEV(major, minor) \
+	(((unsigned)(major) << 8) | ((unsigned)(minor) & 0xFF))
+#define MAJOR(dev) ((unsigned)(dev) >> 8)
+#define MINOR(dev) ((unsigned)(dev) & 0xFF)
+
+/*
+ * cdev_register - register a character or block device handler.
+ *
+ * mode_type:   S_IFCHR or S_IFBLK
+ * major:       device major number
+ * minor_base:  first minor handled
+ * minor_count: number of consecutive minors handled
+ * open:        called on open(); rdev = MKDEV(major, minor)
+ *              returns a new open file* on success, NULL on error.
+ */
+void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
+		   unsigned minor_count,
+		   file *(*open)(unsigned rdev, int flag));
 
 /*
  * DEV_INIT(fn) registers a void (*)(super_block *) function to be called

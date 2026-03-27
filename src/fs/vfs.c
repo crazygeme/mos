@@ -287,6 +287,28 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 					 rcnt);
 }
 
+/* Defined in src/dev/devnode.c */
+super_block *devnode_create(unsigned mode, unsigned rdev);
+
+int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
+{
+	super_block *node_sb;
+	int ret;
+
+	if (!sb || !path || !*path)
+		return -EINVAL;
+
+	node_sb = devnode_create(mode, dev);
+	if (!node_sb)
+		return -ENOMEM;
+
+	ret = vfs_mount(sb, path, node_sb);
+	if (ret != 0)
+		sb_put(node_sb);
+
+	return ret;
+}
+
 file *vfs_open(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;

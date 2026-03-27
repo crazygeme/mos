@@ -183,8 +183,15 @@ static void dev_release_super(super_block *sb)
 	free(sb);
 }
 
+static file *dev_open(super_block *sb, const char *path, int flag)
+{
+	// Everything should be added by mount
+	return NULL;
+}
+
 static super_operations dev_sops = {
 	.open_root = dev_open_root,
+	.open = dev_open,
 	.release = dev_release_super,
 };
 

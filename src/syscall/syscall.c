@@ -55,7 +55,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_execve, // 11  __NR_execve
 	sys_chdir, // 12  __NR_chdir
 	sys_time, // 13  __NR_time
-	0, // 14  __NR_mknod
+	sys_mknod, // 14  __NR_mknod
 	sys_chmod, // 15  __NR_chmod
 	sys_lchown, // 16  __NR_lchown
 	0, // 17  __NR_break

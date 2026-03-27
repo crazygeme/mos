@@ -154,8 +154,8 @@ static int rtc_getattr(inode *node, struct stat *s)
 {
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_dev = 0xa; /* misc major */
-	s->st_rdev = (10 << 8) | 135; /* major 10, minor 135 */
+	s->st_dev = MKDEV(10, 0);
+	s->st_rdev = MKDEV(10, 135);
 	s->st_nlink = 1;
 	return 0;
 }
@@ -178,9 +178,12 @@ static const file_operations rtc_fops = {
 	.release = rtc_release,
 };
 
-/* ── Superblock ──────────────────────────────────────────────────────────── */
+/* ── cdev dispatch ───────────────────────────────────────────────────────── */
 
-static file *rtc_open_root(super_block *sb, int flag)
+#define RTC_MAJOR 10
+#define RTC_MINOR 135
+
+static file *rtc_cdev_open(unsigned rdev, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
@@ -193,15 +196,12 @@ static file *rtc_open_root(super_block *sb, int flag)
 	return fp;
 }
 
-static super_operations rtc_sops = {
-	.open_root = rtc_open_root,
-};
-
 /* ── Registration ────────────────────────────────────────────────────────── */
 
 static void rtc_dev_register(super_block *dev_sb)
 {
-	vfs_mount(dev_sb, "/rtc", sget(&rtc_sops));
+	cdev_register(S_IFCHR, RTC_MAJOR, RTC_MINOR, 1, rtc_cdev_open);
+	vfs_mknod(dev_sb, "/rtc", S_IFCHR | 0660, MKDEV(RTC_MAJOR, RTC_MINOR));
 }
 
 DEV_INIT(rtc_dev_register);

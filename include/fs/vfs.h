@@ -103,4 +103,12 @@ int vfs_rename(super_block *sb, const char *oldpath, const char *newpath);
 int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 		 size_t *rcnt);
 
+/*
+ * vfs_mknod - create a special file (device node, named FIFO, socket) at
+ * path by mounting an in-memory devnode super_block there.
+ * mode: full mode bits (e.g. S_IFCHR | 0666).
+ * dev:  encoded major/minor (ignored for S_IFIFO / S_IFSOCK).
+ */
+int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev);
+
 #endif

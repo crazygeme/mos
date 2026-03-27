@@ -116,23 +116,23 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 		return;
 
 	vm_region *region = pair->val;
-	vm_key    *rkey   = pair->key;
+	vm_key *rkey = pair->key;
 
 	/* --- left neighbor: probe [begin-1, begin) ---------------------- */
 	if (region->begin > 0) {
 		probe.begin = region->begin - 1;
-		probe.end   = region->begin;
+		probe.end = region->begin;
 		key_value_pair *lpair = hash_find(table, &probe);
 		if (lpair) {
 			vm_region *lregion = lpair->val;
 			if (lregion->end == region->begin &&
 			    vm_can_merge(lregion, region)) {
-				unsigned new_begin  = lregion->begin;
-				unsigned new_end    = region->end;
-				int      new_prot   = region->prot;
-				int      new_flag   = region->flag;
-				file    *new_fp     = region->fp;
-				int      new_offset = lregion->offset;
+				unsigned new_begin = lregion->begin;
+				unsigned new_end = region->end;
+				int new_prot = region->prot;
+				int new_flag = region->flag;
+				file *new_fp = region->fp;
+				int new_offset = lregion->offset;
 
 				if (new_fp)
 					fs_get_file(new_fp);
@@ -149,19 +149,19 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 
 	/* --- right neighbor: probe [end, end+1) ------------------------- */
 	probe.begin = region->end;
-	probe.end   = region->end + 1;
+	probe.end = region->end + 1;
 	{
 		key_value_pair *rpair = hash_find(table, &probe);
 		if (rpair) {
 			vm_region *rregion = rpair->val;
 			if (rregion->begin == region->end &&
 			    vm_can_merge(region, rregion)) {
-				unsigned new_begin  = region->begin;
-				unsigned new_end    = rregion->end;
-				int      new_prot   = region->prot;
-				int      new_flag   = region->flag;
-				file    *new_fp     = region->fp;
-				int      new_offset = region->offset;
+				unsigned new_begin = region->begin;
+				unsigned new_end = rregion->end;
+				int new_prot = region->prot;
+				int new_flag = region->flag;
+				file *new_fp = region->fp;
+				int new_offset = region->offset;
 
 				if (new_fp)
 					fs_get_file(new_fp);

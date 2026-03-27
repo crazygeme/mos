@@ -279,10 +279,31 @@ bit 2  U/S — 0 = kernel mode, 1 = user mode
 error & P == 0  (not present)  → pf_handle_page_invalid(cr2)
 error & P == 1  (present)
   error & W == 1  (write fault) → pf_handle_permission(cr2)
-  otherwise                     → unhandled (SIGSEGV / kernel panic)
+  otherwise                     → unhandled → SIGSEGV (user) / kernel panic (kernel)
 ```
 
 `cr2` is masked to the page boundary before dispatch.
+
+### Unhandled faults — SIGSEGV delivery
+
+If no handler claims the fault (both `pf_handle_page_invalid` and
+`pf_handle_permission` return 0), `pf_process` falls through to
+`NOT_HANDLED`:
+
+- **User-mode fault** (`eip < KERNEL_OFFSET` or `cr2 < KERNEL_OFFSET`):
+  1. `SIGSEGV` is posted to the current task (`sig_pending |= 1 << (SIGSEGV-1)`).
+  2. `do_signal(frame)` is called immediately so the signal is delivered
+     before returning to user space.
+  3. If SIGSEGV is masked or set to `SIG_IGN`, `do_exit(SIGSEGV)` force-terminates
+     the process.
+  4. When `TestControl.verbos` is set, a diagnostic log line is emitted with
+     the error code, faulting address, EIP, command name, and VM region dump.
+
+- **Kernel-mode fault**: triggers a kernel panic (unreachable from user space).
+
+This replaces the previous behaviour of directly calling `sys_exit(-EFAULT)`,
+which bypassed signal semantics and prevented tools like shells from
+distinguishing a segfault exit from a clean failure.
 
 ### `pf_handle_page_invalid` — demand paging
 
@@ -309,6 +330,68 @@ error & P == 1  (present)
    CoW or `MAP_SHARED` write-back, not silent corruption of the cache).
 4. Insert the page into the cache via `mmap_cache_add`.
 
+### MAP_SHARED implementation
+
+`MAP_SHARED` pages must be shared across all processes that map the same
+backing (file or anonymous region).  A separate **`shared_map`** hash table
+(distinct from the LRU `mmap_cache`) stores these pages permanently — entries
+are never evicted.
+
+#### `shared_map` — non-evicting page registry
+
+```
+Key:  (id, offset)
+        id = inode number          for file-backed MAP_SHARED
+        id = anon_id | 0x80000000  for anonymous MAP_SHARED
+Value: physical address of the shared page
+```
+
+Both `shared_map` and `mmap_cache` use the same `mmap_cache_key { ino, offset }`
+struct and comparator; the ANON_SHARED_BIT (`0x80000000`) in `id` ensures
+anonymous entries never collide with real inodes.
+
+#### File-backed MAP_SHARED fault sequence
+
+1. **Demand fault** (`pf_handle_invalid_file_map`, `flag & MAP_SHARED`):
+   - Look up `(ino, offset)` in `shared_map`.
+   - **Hit**: map the existing physical page as `PAGE_ENTRY_USER_CODE`
+     (read-only). No disk I/O, no new page.
+   - **Miss**: allocate a page, map writable, read from ext4, strip the
+     writable bit, register in `shared_map`.
+   - Result: page is **read-only** in every process's PTE.
+2. **Write fault** → `pf_handle_permission` → `pf_handle_readonly`:
+   - Flip PTE writable **in-place** (no CoW — all sharers see the same page).
+   - If file-backed: call `phymm_mark_dirty(page_index)` to schedule writeback.
+3. **Writeback** (`vm_flush_dirty_region`):
+   - Iterates pages in `[begin, end)`, skips clean pages, writes dirty pages
+     via `ext4_fwrite`, then clears the dirty flag.
+   - Called on `munmap` (for the unmapped interval) and on process exit
+     (`vm_flush_all_dirty`).
+
+#### Anonymous MAP_SHARED fault sequence
+
+A unique `anon_id` is assigned by `do_mmap_kernel` at `mmap` time
+(`++g_anon_id_next`).  The `vm_region` stores this ID and it is **preserved
+across `fork()`** (via `vm_dup`), so parent and child share the same
+`shared_map` entries.
+
+1. **Demand fault** (`pf_handle_invalid_memory`, `flag & MAP_SHARED`):
+   - Key = `(anon_id | ANON_SHARED_BIT, offset)`.
+   - **Hit**: map read-only.
+   - **Miss**: allocate, zero, strip writable, register in `shared_map`.
+2. **Write fault** → `pf_handle_permission` → `pf_handle_readonly`:
+   - Flip PTE writable in-place (no dirty tracking; anonymous pages are not
+     written back to disk).
+
+#### Comparison: MAP_SHARED vs MAP_PRIVATE
+
+| | MAP_SHARED | MAP_PRIVATE |
+|---|---|---|
+| Cache | `shared_map` (non-evicting) | `mmap_cache` (LRU, read-only) or no cache (writable) |
+| Write fault | Flip PTE writable in-place; mark dirty if file-backed | CoW if `ref_count > 1`; else flip PTE |
+| Fork | Child maps same physical page (same `shared_map` entry) | Child gets CoW copy on first write |
+| Writeback | `vm_flush_dirty_region` on munmap / exit | Never |
+
 ### `pf_handle_permission` — write fault on a present page
 
 Dispatches based on region flags:
@@ -333,7 +416,11 @@ Dispatches based on region flags:
 8. RELOAD_CR3              → flush TLB
 ```
 
-### Page cache: LRU hash table
+### Page caches
+
+Two separate caches are maintained at `pf_init` time:
+
+#### `mmap_cache` — LRU evicting cache (MAP_PRIVATE read-only file pages)
 
 ```c
 static hash_table *mmap_cache;   // keyed by (ino, offset)
@@ -344,9 +431,24 @@ Capacity: `PAGE_CACHE_SIZE` = 4096 entries.
 On miss + full: evict the LRU entry (head of `mmap_lru`), call
 `phymm_dereference_page` on its physical page.
 On hit: promote entry to tail (MRU position).
+Not used for MAP_SHARED (those pages live in `shared_map` instead).
+
+#### `shared_map` — non-evicting registry (MAP_SHARED pages)
+
+```c
+static hash_table *shared_map;   // keyed by (id, offset), see MAP_SHARED section
+```
+
+Entries are never evicted; the table holds a permanent reference (`phymm_reference_page`)
+to each page for the lifetime of any mapping that covers it.
+Released only when the entry is destroyed (`shared_map_evict`).
+
+#### Zero page
 
 A global **zero page** is allocated at `pf_init` time and reused for all
-anonymous read-only faults to avoid allocating a new page per `mmap` region.
+anonymous MAP_PRIVATE read-only faults.  Because `mm_map_page` bumps the
+page's `ref_count` above 1, a write fault triggers CoW rather than silently
+dirtying the shared zero page.
 
 ### Instrumentation counters
 
@@ -375,9 +477,11 @@ first access to mapped page
        ├─ page not present → pf_handle_page_invalid
        │    ├─ anonymous  → allocate page, zero, map writable (or share zero page)
        │    └─ file-backed → cache lookup → read from ext4 → map read-only → cache insert
-       └─ write to read-only page → pf_handle_permission
-            ├─ MAP_SHARED  → flip PTE writable; mark dirty if file-backed
-            └─ MAP_PRIVATE → CoW if shared, else flip PTE writable
+       ├─ write to read-only page → pf_handle_permission
+       │    ├─ MAP_SHARED  → flip PTE writable; mark dirty if file-backed
+       │    └─ MAP_PRIVATE → CoW if shared, else flip PTE writable
+       └─ unhandled (no covering region / bad prot)
+            └─ user mode → post SIGSEGV → do_signal → [do_exit if ignored]
 
 munmap(addr, length)
   └─ do_munmap

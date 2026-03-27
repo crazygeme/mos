@@ -583,7 +583,7 @@ static void kinit_userspace()
 		strcpy(cur->user->cwd, "/root");
 	}
 
-	unsigned esp0 = (unsigned)cur + (unsigned)+PAGE_SIZE;
+	unsigned esp0 = (unsigned)cur + (unsigned)PAGE_SIZE;
 
 	ps_update_tss(esp0);
 

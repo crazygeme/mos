@@ -234,13 +234,19 @@ void _task_sched(const char *func)
 	ps_save_kernel_map(task);
 	SAVE_ALL(current, NEXT);
 
-	/* After RESTORE_ALL the old stack is gone; CURRENT_TASK() reads the
-	 * new task from the updated ESP — no globals needed. */
+	/* Do TSS and CR3 setup on the current stack, before switching.
+	 * Kernel mappings are shared across all page directories so SET_CR3
+	 * here is safe — code and the current stack remain accessible. */
+	reset_tss(task);
+	SET_CR3(task->user->page_dir - KERNEL_OFFSET);
+
+	/* Switch to the new task's kernel stack.  After this point no local
+	 * variable may be written: CURRENT_TASK() derives the task from the
+	 * updated ESP and the only stack write is the 4-byte return address
+	 * pushed by the call below, at [new_esp - 4], which is within the
+	 * task's page even when new_esp == task + PAGE_SIZE. */
 	RESTORE_ALL(task, task->tss.eip);
-	current = CURRENT_TASK();
-	reset_tss(current);
-	SET_CR3(current->user->page_dir - KERNEL_OFFSET);
-	JUMP_TO_NEXT_TASK_EIP(current->tss.eip);
+	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:
 	int_intr_setlevel(oldint);

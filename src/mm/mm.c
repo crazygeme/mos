@@ -321,6 +321,7 @@ void mm_del_user_map()
 
 	page_dir[0] = 0;
 	page_dir[1] = 0;
+	RELOAD_CR3();
 }
 
 /*

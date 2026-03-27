@@ -62,7 +62,6 @@ void kmain_startup()
 	int_enable_all();
 
 	mm_del_user_map();
-	RELOAD_CR3();
 
 	printk("Init serial\n");
 	serial_init_queue();
@@ -113,6 +112,9 @@ void kmain_startup()
 		printk("SMP not available, running single-CPU\n");
 	}
 
+	printk("Init timer\n");
+	timer_init();
+
 	printk("Start first process\n");
 
 	if (ncpus == 1) {
@@ -132,7 +134,6 @@ void kmain_startup()
 
 static void timer_process(void *param)
 {
-	timer_init();
 	do_timer_loop();
 }
 

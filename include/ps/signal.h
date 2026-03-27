@@ -66,8 +66,8 @@ typedef unsigned long sigset_t;
 #define SIG_SETMASK 2
 
 /* sigaltstack ss_flags */
-#define SS_ONSTACK  1 /* process is executing on the altstack */
-#define SS_DISABLE  2 /* altstack is disabled */
+#define SS_ONSTACK 1 /* process is executing on the altstack */
+#define SS_DISABLE 2 /* altstack is disabled */
 #define MINSIGSTKSZ 2048
 
 typedef struct {

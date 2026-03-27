@@ -589,8 +589,7 @@ int fs_fchmod(int fd, uint32_t mode)
 		return -EACCES;
 
 	/* Only file owner or root may fchmod */
-	if (cur->user && cur->user->euid != 0 &&
-	    fp->f_inode->i_op->getattr &&
+	if (cur->user && cur->user->euid != 0 && fp->f_inode->i_op->getattr &&
 	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
 		if (cur->user->euid != s.st_uid)
 			return -EPERM;

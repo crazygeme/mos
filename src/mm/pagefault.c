@@ -179,6 +179,8 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	size_t rcnt = 0;
 	int mmflag;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	int readonly = !(prot & PROT_WRITE);
+	int shared = flag & MAP_SHARED;
 
 	page_fault_file++;
 
@@ -186,17 +188,23 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * Find a cached map first.
 	 * Some of the file map are globally same, especially those
 	 * runtime libraries.
+	 * We only cache readonly pages, unless an explicit SHARED flag
 	 */
-	phy = mmap_cache_find(f->f_inode->i_ino, offset);
+	if (readonly || shared) {
+		phy = mmap_cache_find(f->f_inode->i_ino, offset);
 
-	if (TestControl.profiling)
-		page_fault_file_search_spent += time_now_us() - begin;
+		if (TestControl.profiling)
+			page_fault_file_search_spent += time_now_us() - begin;
 
-	if (phy != 0) {
-		page_fault_file_cache_hit++;
-		mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
-		INVLPG(address);
-		goto DONE;
+		if (phy != 0) {
+			page_fault_file_cache_hit++;
+			mmflag = shared	  ? PAGE_ENTRY_USER_DATA :
+				 readonly ? PAGE_ENTRY_USER_CODE :
+					    PAGE_ENTRY_USER_DATA;
+			mm_map_page(address, phy, mmflag);
+			INVLPG(address);
+			goto DONE;
+		}
 	}
 
 	/*
@@ -233,11 +241,17 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		memset(address + rcnt, 0, PAGE_SIZE - rcnt);
 
 READ_DONE:
-	mmflag = mm_get_map_flag(address);
-	mmflag &= ~PAGE_ENTRY_WRITABLE;
-	mm_set_map_flag(address, mmflag);
-	INVLPG(address);
-	mmap_cache_add(f->f_inode->i_ino, offset, phy);
+	if (readonly && !shared) {
+		mmflag = mm_get_map_flag(address);
+		mmflag &= ~PAGE_ENTRY_WRITABLE;
+		mm_set_map_flag(address, mmflag);
+		INVLPG(address);
+	}
+
+	if (readonly || shared) {
+		mmap_cache_add(f->f_inode->i_ino, offset, phy);
+	}
+
 	page_fault_file_read += rcnt;
 
 DONE:
@@ -445,8 +459,8 @@ static int pf_handle_permission(unsigned cr2)
 static void pf_dump_region(vm_region *region, void *data)
 {
 	(void)data;
-	klog("    %08x-%08x prot=%x flag=%x %s\n",
-	     region->begin, region->end, region->prot, region->flag,
+	klog("    %08x-%08x prot=%x flag=%x %s\n", region->begin, region->end,
+	     region->prot, region->flag,
 	     region->fp ? region->fp->f_name : "anon");
 }
 

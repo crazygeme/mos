@@ -302,7 +302,8 @@ int sys_sysinfo(void *buf)
 {
 	struct sysinfo *info = (struct sysinfo *)buf;
 	unsigned total_pages = phymm_end - phymm_begin;
-	unsigned free_pages = total_pages > phymm_used ? total_pages - phymm_used : 0;
+	unsigned free_pages =
+		total_pages > phymm_used ? total_pages - phymm_used : 0;
 
 	if (!info)
 		return -EFAULT;
@@ -314,8 +315,8 @@ int sys_sysinfo(void *buf)
 	info->mem_unit = 1;
 
 	if (TestControl.verbos)
-		klog("sysinfo: total=%luKB free=%luKB\n",
-		     info->totalram / 1024, info->freeram / 1024);
+		klog("sysinfo: total=%luKB free=%luKB\n", info->totalram / 1024,
+		     info->freeram / 1024);
 
 	return 0;
 }

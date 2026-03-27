@@ -262,8 +262,8 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 		if (ruid != (unsigned)-1 && ruid != u->uid && ruid != u->euid)
 			return -EPERM;
 		/* euid must be current ruid, euid, or suid */
-		if (euid != (unsigned)-1 && euid != u->uid &&
-		    euid != u->euid && euid != u->suid)
+		if (euid != (unsigned)-1 && euid != u->uid && euid != u->euid &&
+		    euid != u->suid)
 			return -EPERM;
 	}
 
@@ -294,8 +294,8 @@ int sys_setregid(unsigned rgid, unsigned egid)
 	if (u->euid != 0) {
 		if (rgid != (unsigned)-1 && rgid != u->gid && rgid != u->egid)
 			return -EPERM;
-		if (egid != (unsigned)-1 && egid != u->gid &&
-		    egid != u->egid && egid != u->sgid)
+		if (egid != (unsigned)-1 && egid != u->gid && egid != u->egid &&
+		    egid != u->sgid)
 			return -EPERM;
 	}
 
@@ -322,14 +322,14 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 
 	if (u->euid != 0) {
 		/* unprivileged: each value must be current ruid, euid, or suid */
-		if (ruid != (unsigned)-1 && ruid != u->uid &&
-		    ruid != u->euid && ruid != u->suid)
+		if (ruid != (unsigned)-1 && ruid != u->uid && ruid != u->euid &&
+		    ruid != u->suid)
 			return -EPERM;
-		if (euid != (unsigned)-1 && euid != u->uid &&
-		    euid != u->euid && euid != u->suid)
+		if (euid != (unsigned)-1 && euid != u->uid && euid != u->euid &&
+		    euid != u->suid)
 			return -EPERM;
-		if (suid != (unsigned)-1 && suid != u->uid &&
-		    suid != u->euid && suid != u->suid)
+		if (suid != (unsigned)-1 && suid != u->uid && suid != u->euid &&
+		    suid != u->suid)
 			return -EPERM;
 	}
 
@@ -351,9 +351,12 @@ int sys_getresuid(unsigned *ruid, unsigned *euid, unsigned *suid)
 	if (TestControl.verbos)
 		klog("getresuid\n");
 
-	if (ruid) *ruid = u->uid;
-	if (euid) *euid = u->euid;
-	if (suid) *suid = u->suid;
+	if (ruid)
+		*ruid = u->uid;
+	if (euid)
+		*euid = u->euid;
+	if (suid)
+		*suid = u->suid;
 	return 0;
 }
 
@@ -370,14 +373,14 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 		klog("setresgid(%d, %d, %d)\n", rgid, egid, sgid);
 
 	if (u->euid != 0) {
-		if (rgid != (unsigned)-1 && rgid != u->gid &&
-		    rgid != u->egid && rgid != u->sgid)
+		if (rgid != (unsigned)-1 && rgid != u->gid && rgid != u->egid &&
+		    rgid != u->sgid)
 			return -EPERM;
-		if (egid != (unsigned)-1 && egid != u->gid &&
-		    egid != u->egid && egid != u->sgid)
+		if (egid != (unsigned)-1 && egid != u->gid && egid != u->egid &&
+		    egid != u->sgid)
 			return -EPERM;
-		if (sgid != (unsigned)-1 && sgid != u->gid &&
-		    sgid != u->egid && sgid != u->sgid)
+		if (sgid != (unsigned)-1 && sgid != u->gid && sgid != u->egid &&
+		    sgid != u->sgid)
 			return -EPERM;
 	}
 
@@ -399,9 +402,12 @@ int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
 	if (TestControl.verbos)
 		klog("getresgid\n");
 
-	if (rgid) *rgid = u->gid;
-	if (egid) *egid = u->egid;
-	if (sgid) *sgid = u->sgid;
+	if (rgid)
+		*rgid = u->gid;
+	if (egid)
+		*egid = u->egid;
+	if (sgid)
+		*sgid = u->sgid;
 	return 0;
 }
 
@@ -762,8 +768,7 @@ void do_signal(intr_frame *frame)
 	 * SA_ONSTACK: deliver on the alternate signal stack if one is
 	 * registered, enabled, and we are not already running on it.
 	 */
-	if ((sa->sa_flags & SA_ONSTACK) &&
-	    cur->signal->altstack.ss_sp &&
+	if ((sa->sa_flags & SA_ONSTACK) && cur->signal->altstack.ss_sp &&
 	    !(cur->signal->altstack.ss_flags & SS_DISABLE) &&
 	    !(cur->signal->altstack.ss_flags & SS_ONSTACK)) {
 		new_esp = (unsigned char *)cur->signal->altstack.ss_sp +
@@ -903,20 +908,62 @@ int sys_sigaltstack(const stack_t *ss, stack_t *old_ss)
 }
 
 /* 32-bit variants — same semantics, just delegate */
-int sys_getuid32(void)   { return sys_getuid(); }
-int sys_getgid32(void)   { return sys_getgid(); }
-int sys_geteuid32(void)  { return sys_geteuid(); }
-int sys_getegid32(void)  { return sys_getegid(); }
-int sys_setuid32(unsigned uid)  { return sys_setuid(uid); }
-int sys_setgid32(unsigned gid)  { return sys_setgid(gid); }
-int sys_setreuid32(unsigned ruid, unsigned euid) { return sys_setreuid(ruid, euid); }
-int sys_setregid32(unsigned rgid, unsigned egid) { return sys_setregid(rgid, egid); }
-int sys_setresuid32(unsigned r, unsigned e, unsigned s) { return sys_setresuid(r, e, s); }
-int sys_getresuid32(unsigned *r, unsigned *e, unsigned *s) { return sys_getresuid(r, e, s); }
-int sys_setresgid32(unsigned r, unsigned e, unsigned s) { return sys_setresgid(r, e, s); }
-int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s) { return sys_getresgid(r, e, s); }
-int sys_setfsuid32(unsigned fsuid) { return sys_setfsuid(fsuid); }
-int sys_setfsgid32(unsigned fsgid) { return sys_setfsgid(fsgid); }
+int sys_getuid32(void)
+{
+	return sys_getuid();
+}
+int sys_getgid32(void)
+{
+	return sys_getgid();
+}
+int sys_geteuid32(void)
+{
+	return sys_geteuid();
+}
+int sys_getegid32(void)
+{
+	return sys_getegid();
+}
+int sys_setuid32(unsigned uid)
+{
+	return sys_setuid(uid);
+}
+int sys_setgid32(unsigned gid)
+{
+	return sys_setgid(gid);
+}
+int sys_setreuid32(unsigned ruid, unsigned euid)
+{
+	return sys_setreuid(ruid, euid);
+}
+int sys_setregid32(unsigned rgid, unsigned egid)
+{
+	return sys_setregid(rgid, egid);
+}
+int sys_setresuid32(unsigned r, unsigned e, unsigned s)
+{
+	return sys_setresuid(r, e, s);
+}
+int sys_getresuid32(unsigned *r, unsigned *e, unsigned *s)
+{
+	return sys_getresuid(r, e, s);
+}
+int sys_setresgid32(unsigned r, unsigned e, unsigned s)
+{
+	return sys_setresgid(r, e, s);
+}
+int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s)
+{
+	return sys_getresgid(r, e, s);
+}
+int sys_setfsuid32(unsigned fsuid)
+{
+	return sys_setfsuid(fsuid);
+}
+int sys_setfsgid32(unsigned fsgid)
+{
+	return sys_setfsgid(fsgid);
+}
 
 int sys_exit_group(int status)
 {

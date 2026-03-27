@@ -2086,8 +2086,8 @@ int ext4_fstat(ext4_file *f, struct stat *stat)
 	stat->st_ino = ino;
 	stat->st_mode = ext4_inode_get_mode(sb, inode_ref.inode);
 	stat->st_nlink = ext4_inode_get_links_cnt(inode_ref.inode);
-	stat->st_uid = 0; // ext4_inode_get_uid(inode_ref.inode);
-	stat->st_gid = 0; // ext4_inode_get_gid(inode_ref.inode);
+	stat->st_uid = ext4_inode_get_uid(inode_ref.inode);
+	stat->st_gid = ext4_inode_get_gid(inode_ref.inode);
 	stat->st_rdev = 0;
 	stat->st_size = ext4_inode_get_size(sb, inode_ref.inode);
 	stat->st_blocks = ext4_inode_get_blocks_count(sb, inode_ref.inode);

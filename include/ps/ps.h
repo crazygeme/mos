@@ -148,9 +148,13 @@ typedef struct _user_enviroment {
 	size_t cmd_len;
 	char *environment;
 	size_t env_len;
-	unsigned group_id;
-	unsigned session_id;
+	unsigned group_id;   /* process group id (pgid) */
+	unsigned session_id; /* session id (sid) */
 	char *cwd;
+	/* process credentials */
+	unsigned uid, euid, suid;   /* real, effective, saved-set user id */
+	unsigned gid, egid, sgid;   /* real, effective, saved-set group id */
+	unsigned fsuid, fsgid;       /* filesystem uid/gid */
 } user_enviroment;
 
 typedef struct _signal_context {

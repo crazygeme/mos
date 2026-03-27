@@ -231,6 +231,14 @@ int do_fork(unsigned flag)
 	task->user->page_dir = vm_alloc(1);
 	task->user->group_id = cur->user->group_id;
 	task->user->session_id = cur->user->session_id;
+	task->user->uid = cur->user->uid;
+	task->user->euid = cur->user->euid;
+	task->user->suid = cur->user->suid;
+	task->user->gid = cur->user->gid;
+	task->user->egid = cur->user->egid;
+	task->user->sgid = cur->user->sgid;
+	task->user->fsuid = cur->user->fsuid;
+	task->user->fsgid = cur->user->fsgid;
 
 	task->signal = zalloc(sizeof(signal_context));
 	memcpy(task->signal, cur->signal, sizeof(signal_context));

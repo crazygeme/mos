@@ -2,6 +2,7 @@
 #include <lib/klib.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
+#include <fs/fcntl.h>
 #include <fs/mount.h>
 #include <ps/ps.h>
 #include <hw/hdd.h>
@@ -320,11 +321,127 @@ static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
 
 #define MAX_SYMLINK_DEPTH 8
 
+/*
+ * ext4_resolve_prefix - resolve symlinks in all intermediate (non-final)
+ * path components so that lwext4 can traverse them.
+ *
+ * lwext4's ext4_generic_open2 rejects any non-final component that is not
+ * a directory (error: "expected directory").  Symlinks in intermediate
+ * positions therefore cause ENOENT.  This helper walks left-to-right,
+ * opening each component as the *goal* (which works for symlinks via the
+ * EXT4_DE_SYMLINK filetype), and substitutes any symlink with its target
+ * before continuing.  Because each step only extends an already-resolved
+ * prefix, ext4_fopen2 can always traverse the accumulated path.
+ *
+ * The final component is left verbatim; the caller is responsible for
+ * following it (or not) based on flags such as O_NOFOLLOW.
+ *
+ * @path: absolute lwext4 path, must start with '/'
+ * @out:  output buffer, at least MAX_PATH bytes
+ *
+ * Returns 0 on success, -1 on error.  `out` is unchanged on error.
+ */
+static int ext4_resolve_prefix(const char *path, char *out)
+{
+	const char *last_slash, *p, *end;
+	char *work, *tgt;
+	size_t comp_len, work_len, link_len;
+	ext4_file f;
+	struct stat s;
+	int depth = 0, ret;
+
+	last_slash = strrchr(path, '/');
+	/* Nothing intermediate to resolve when there is no directory prefix. */
+	if (!last_slash || last_slash == path) {
+		if (strlen(path) < MAX_PATH) {
+			strcpy(out, path);
+			return 0;
+		}
+		return -1;
+	}
+
+	work = name_get();
+	work[0] = '\0';
+	p = path + 1; /* skip leading '/' */
+
+	while (p < last_slash) {
+		/* Isolate the next component (up to but not past last_slash). */
+		end = strchr(p, '/');
+		if (!end || end >= last_slash)
+			end = last_slash;
+		comp_len = (size_t)(end - p);
+		work_len = strlen(work);
+
+		if (work_len + 1 + comp_len + 1 >= MAX_PATH)
+			goto err;
+
+		work[work_len] = '/';
+		memcpy(work + work_len + 1, p, comp_len);
+		work[work_len + 1 + comp_len] = '\0';
+
+		/*
+		 * Open `work` with the current component as the goal.
+		 * All prior components in `work` are already-resolved real
+		 * directories, so lwext4 can traverse them.  ext4_fopen2 also
+		 * tries EXT4_DE_SYMLINK, so it succeeds even for symlinks.
+		 */
+		memset(&f, 0, sizeof(f));
+		ret = ext4_fopen2(&f, work, O_RDONLY);
+		if (ret != EOK)
+			goto err;
+
+		ret = ext4_fstat(&f, &s);
+		if (ret != EOK) {
+			ext4_fclose(&f);
+			goto err;
+		}
+
+		if (S_ISLNK(s.st_mode)) {
+			if (++depth > MAX_SYMLINK_DEPTH) {
+				ext4_fclose(&f);
+				goto err;
+			}
+			tgt = name_get();
+			ret = ext4_fread(&f, tgt, MAX_PATH - 1, &link_len);
+			ext4_fclose(&f);
+			if (ret != EOK) {
+				name_put(tgt);
+				goto err;
+			}
+			tgt[link_len] = '\0';
+			if (fs_resolve_symlink_path(work, tgt, link_len) != 0 ||
+			    strlen(tgt) >= MAX_PATH) {
+				name_put(tgt);
+				goto err;
+			}
+			strcpy(work, tgt);
+			name_put(tgt);
+		} else {
+			ext4_fclose(&f);
+		}
+
+		p = end + 1;
+	}
+
+	/* Append the final component verbatim (last_slash starts with '/'). */
+	work_len = strlen(work);
+	if (work_len + strlen(last_slash) >= MAX_PATH)
+		goto err;
+	strcpy(out, work);
+	strcat(out, last_slash);
+	name_put(work);
+	return 0;
+err:
+	name_put(work);
+	return -1;
+}
+
 static file *ext4_path_open(const char *path, int flag)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
-	char *resolved = NULL;
+	char *pre_res = NULL; /* buffer for intermediate symlink resolution */
+	char *resolved = NULL; /* buffer for final symlink following */
 	const char *cur_path = path;
 	size_t link_len;
 	int ret;
@@ -332,10 +449,20 @@ static file *ext4_path_open(const char *path, int flag)
 	file *fp = NULL;
 	struct stat s;
 
-	/* ---- Case 1: caller-supplied trailing '/' means "open as dir" ---- */
-	if (path[strlen(path) - 1] == '/') {
+	/*
+	 * Resolve symlinks in all intermediate path components.
+	 * lwext4 does not follow symlinks in non-final components; without
+	 * this step, paths like "/var/mail/foo" (where "mail" is a symlink)
+	 * return ENOENT from lwext4.
+	 */
+	pre_res = name_get();
+	if (pre_res && ext4_resolve_prefix(path, pre_res) == 0)
+		cur_path = pre_res;
+
+	/* ---- Case 1: trailing '/' means "open as dir" ---- */
+	if (cur_path[strlen(cur_path) - 1] == '/') {
 		dir = zalloc(sizeof(*dir));
-		ret = ext4_dir_open(dir, path);
+		ret = ext4_dir_open(dir, cur_path);
 		if (ret != EOK)
 			goto fail;
 		ret = ext4_fstat(&dir->f, &s);
@@ -348,15 +475,25 @@ static file *ext4_path_open(const char *path, int flag)
 		goto done;
 	}
 
-	/* ---- Case 2: regular open, with symlink following ---- */
+	/* ---- Case 2: regular open, with final symlink following ---- */
 	f = zalloc(sizeof(*f));
-	ret = ext4_fopen2(f, path, flag);
+	ret = ext4_fopen2(f, cur_path, flag);
 	if (ret != EOK)
 		goto fail;
 
 	ret = ext4_fstat(f, &s);
 	if (ret != EOK)
 		goto fail;
+
+	/* O_NOFOLLOW: return the symlink itself without following it. */
+	if (S_ISLNK(s.st_mode) && (flag & O_NOFOLLOW)) {
+		fp = ext4_alloc_file(f);
+		fp->f_inode->i_mode = s.st_mode;
+		fp->f_inode->i_ino = s.st_ino;
+		fp->f_inode->i_size = s.st_size;
+		fp->f_name = strdup(path); /* original (pre-resolution) path */
+		goto done;
+	}
 
 	/* Allocate a resolution buffer only when we actually encounter a symlink */
 	if (S_ISLNK(s.st_mode)) {
@@ -370,7 +507,11 @@ static file *ext4_path_open(const char *path, int flag)
 		if (++depth > MAX_SYMLINK_DEPTH)
 			goto fail;
 
-		/* Read the raw symlink target into the resolution buffer */
+		/*
+		 * Read the symlink target into `resolved`.  Note: `resolved`
+		 * and `pre_res` are distinct buffers, so cur_path (which may
+		 * point into pre_res) remains valid for fs_resolve_symlink_path.
+		 */
 		ret = ext4_fread(f, resolved, MAX_PATH - 1, &link_len);
 		ext4_fclose(f);
 		if (ret != EOK)
@@ -420,6 +561,8 @@ fail:
 	if (dir)
 		free(dir);
 done:
+	if (pre_res)
+		name_put(pre_res);
 	if (resolved)
 		name_put(resolved);
 	return fp;

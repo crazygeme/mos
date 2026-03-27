@@ -108,7 +108,7 @@ int fs_write(int fd, unsigned offset, char *buf, unsigned len)
 	return n < 0 ? -1 : (int)n;
 }
 
-file *fs_open_file(const char *path, int flag, char *mode, int follow_link)
+file *fs_open_file(const char *path, int flag, umode_t mode, int follow_link)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
@@ -116,7 +116,12 @@ file *fs_open_file(const char *path, int flag, char *mode, int follow_link)
 	if (!cur->root)
 		return NULL;
 
-	fp = vfs_open(cur->root, path, flag);
+	/*
+	 * When follow_link=0 (lstat), tell vfs/ext4 not to follow the final
+	 * symlink by adding O_NOFOLLOW internally.
+	 */
+	fp = vfs_open(cur->root, path,
+		      follow_link ? flag : (flag | O_NOFOLLOW));
 
 	/* Follow symlinks (e.g. /proc/{pid}/fd/{N}) unless O_NOFOLLOW. */
 	if (fp && follow_link && !(flag & O_NOFOLLOW) && fp->f_inode &&
@@ -154,12 +159,22 @@ int fs_install_fd(file *fp, int flag)
 	return fd;
 }
 
-int fs_open(const char *path, int flag, char *mode)
+int fs_open(const char *path, int flag, umode_t mode)
 {
-	file *fp = fs_open_file(path, flag, mode, 1);
+	file *fp;
 	struct stat s;
 	int acc, ret;
 
+	/* O_CREAT|O_EXCL: fail with EEXIST if the file already exists. */
+	if ((flag & O_CREAT) && (flag & O_EXCL)) {
+		file *check = fs_open_file(path, O_PATH, NULL, 1);
+		if (check) {
+			fs_put_file(check);
+			return -EEXIST;
+		}
+	}
+
+	fp = fs_open_file(path, flag, mode, 1);
 	if (!fp)
 		return -ENOENT;
 
@@ -646,7 +661,6 @@ int resolve_path(const char *old, char *new)
 	}
 
 	if (old[0] == '/') {
-		/* Absolute path: copy verbatim, then normalise trailing component */
 		strcpy(new, old);
 
 		if (len >= 3 && new[len - 1] == '.' && new[len - 2] == '.' &&

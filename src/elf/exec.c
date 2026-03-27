@@ -587,9 +587,9 @@ static void kinit_userspace()
 	ps_update_tss(esp0);
 
 	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty. */
-	fs_open("/dev/tty0", O_RDONLY, NULL);
-	fs_open("/dev/tty0", O_WRONLY, NULL);
-	fs_open("/dev/tty0", O_WRONLY, NULL);
+	fs_open("/dev/tty0", O_RDONLY, 0);
+	fs_open("/dev/tty0", O_WRONLY, 0);
+	fs_open("/dev/tty0", O_WRONLY, 0);
 
 	run_if_exist(argv[0], argv, envp);
 }

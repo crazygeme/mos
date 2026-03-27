@@ -413,7 +413,7 @@ static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
  */
 static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
 {
-	file *fp = fs_open_file(path, 0, "r", 1);
+	file *fp = fs_open_file(path, 0, 0, 1);
 	Elf32_Ehdr elf;
 	task_struct *cur = CURRENT_TASK();
 	unsigned pages = 0;
@@ -482,7 +482,7 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
  */
 unsigned elf_map(char *path, mos_binfmt *fmt)
 {
-	file *fp = fs_open_file(path, 0, "r", 1);
+	file *fp = fs_open_file(path, 0, 0, 1);
 	unsigned entry_point = 0;
 	Elf32_Ehdr elf;
 	char *interp = name_get();

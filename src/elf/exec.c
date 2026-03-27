@@ -513,7 +513,11 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 */
 	mm_vdso_map();
 
-	/* don't forget to setup a stack for our program... */
+	/* don't forget to setup a stack for our program...
+	 * TODO(Ender): real linux will increase stack size automatically
+	 * by appending a "guard page" and detect page fault at this
+	 * special page.
+	 */
 	do_mmap(esp_buttom, USER_STACK_PAGES * PAGE_SIZE,
 		PROT_READ | PROT_WRITE, 0, -1, 0);
 

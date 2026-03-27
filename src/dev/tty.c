@@ -1196,6 +1196,9 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 {
 	tty_state *state = fp->f_inode->i_private;
 	switch (cmd) {
+	case FIONREAD:
+		*(int *)buf = cyb_get_buf_len(state->kb_buf);
+		return 0;
 	case TCGETS:
 		memcpy(buf, &state->termios, sizeof(state->termios));
 		return 0;

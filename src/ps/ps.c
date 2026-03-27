@@ -127,28 +127,6 @@ void reset_tss(task_struct *task)
 	int_update_tss((unsigned int)tss_address);
 }
 
-/*
- * Static helpers — task setup
- */
-
-static void ps_setup_task_frame(task_struct *task, unsigned data_seg,
-				unsigned eax, unsigned ebx, unsigned ecx,
-				unsigned edx, unsigned ebp, unsigned esp,
-				unsigned esp0, unsigned eip)
-{
-	task->tss.fs = task->tss.gs = task->tss.es = task->tss.ss =
-		task->tss.ds = data_seg;
-	task->tss.cs = KERNEL_CODE_SELECTOR;
-	task->tss.eax = eax;
-	task->tss.ebx = ebx;
-	task->tss.ecx = ecx;
-	task->tss.edx = edx;
-	task->tss.ebp = ebp;
-	task->tss.esp = esp;
-	task->tss.esp0 = esp0;
-	task->tss.eip = eip;
-}
-
 /* Every kernel task begins here. Enables interrupts, runs the task function,
  * then moves the task to the dying queue and yields. */
 static void ps_run()
@@ -272,6 +250,7 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	task->priority = priority;
 	task->type = type;
 	task->status = ps_ready;
+	task->umask = 0;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->timeout = 0;
 	task->psid = ps_id_gen();
@@ -281,9 +260,18 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	mutex_init(&task->fd_lock);
 	task->magic = 0xdeadbeef;
 
-	ps_setup_task_frame(task, KERNEL_DATA_SELECTOR, 0, 0, 0, 0,
-			    stack_bottom, stack_bottom, stack_bottom,
-			    (unsigned)ps_run);
+	task->tss.fs = task->tss.gs = task->tss.es = task->tss.ss =
+		task->tss.ds = KERNEL_DATA_SELECTOR;
+	task->tss.cs = KERNEL_CODE_SELECTOR;
+	task->tss.eax = 0;
+	task->tss.ebx = 0;
+	task->tss.ecx = 0;
+	task->tss.edx = 0;
+	task->tss.ebp = stack_bottom;
+	task->tss.esp = stack_bottom;
+	task->tss.esp0 = stack_bottom;
+	task->tss.eip = ps_run;
+
 	spinlock_lock(&ps_lock);
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);

@@ -43,6 +43,22 @@ Dns actually works
 ---
 ![Screen shot: dns](screenshot/wget.png)
 
-Throughput is very poor rightnow
+Throughput (poor right now)
 ---
 ![Screen shot: throughput](screenshot/throughput.png)
+
+`ps` command for session 0
+---
+![Screen shot: throughput](screenshot/ps_session0.png)
+
+`ps` command for session 1
+---
+![Screen shot: throughput](screenshot/ps_session1.png)
+
+`ps` command for all processes
+---
+![Screen shot: throughput](screenshot/ps_all.png)
+
+`top` command actually works
+---
+![Screen shot: throughput](screenshot/top.png)

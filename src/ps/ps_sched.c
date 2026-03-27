@@ -206,19 +206,19 @@ void _task_sched(const char *func)
 {
 	task_struct *task = 0;
 	task_struct *current = 0;
-	unsigned oldint;
 
 	if (TestControl.profiling)
 		sched_cal_begin();
 
-	/* 
-	 * Schedule procedure can not be interrupted.
-	 */
-	oldint = int_intr_disable();
+	current = CURRENT_TASK();
 
 	dsr_drain();
 
-	current = CURRENT_TASK();
+	/* 
+	 * Schedule procedure can not be interrupted.
+	 */
+	int_intr_disable();
+
 	task = ps_get_next_task();
 
 	if (!task || task->psid == current->psid)
@@ -228,10 +228,11 @@ void _task_sched(const char *func)
 
 	task->status = ps_running;
 	/*
-	 * Actually can be optimized by syncing pgd entry when adding/removing kernel mappings, 
+	 * Actually can be optimized by syncing pgd entry when adding/removing kernel mappings,
 	 * but this is simpler and the overhead should be negligible.
 	 */
 	ps_save_kernel_map(task);
+
 	SAVE_ALL(current, NEXT);
 
 	/* Do TSS and CR3 setup on the current stack, before switching.
@@ -249,7 +250,7 @@ void _task_sched(const char *func)
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:
-	int_intr_setlevel(oldint);
+	int_intr_enable();
 
 	if (TestControl.profiling)
 		sched_cal_end();

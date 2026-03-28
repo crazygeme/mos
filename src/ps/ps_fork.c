@@ -136,59 +136,136 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 
 /*
  * Static helpers — COW user address-space duplication
+ *
+ * Mirrors Linux's copy_page_range() / copy_pte_range() / copy_one_pte().
+ * VMAs are walked first; for each VMA the page-table entries in its address
+ * range are copied with appropriate COW semantics:
+ *
+ *   MAP_PRIVATE + writable  →  write-protect in parent AND child (COW)
+ *   MAP_SHARED  or read-only →  copy PTE as-is (no write-protection)
+ *
+ * This avoids the spurious write fault that the old flat walk caused for
+ * MAP_SHARED writable pages (which it write-protected unconditionally).
  */
 
-/* Map one user page from the parent into the child using COW:
- * - mark parent's page read-only so a write triggers a fault
- * - share the physical page with the child (increment refcount) */
-static void ps_dup_user_page(unsigned vir, task_struct *task, unsigned flag)
+/*
+ * copy_one_pte — share a single PTE from parent to child.
+ *
+ * For MAP_PRIVATE writable pages the parent's PTE is cleared of WRITABLE
+ * so that the first write by either process triggers a #PF → wp_page_copy().
+ * The child inherits the (now read-only) PTE and the page ref_count is bumped.
+ */
+static void copy_one_pte(unsigned *src_pte, unsigned *dst_pte, vm_region *vma,
+			 short *pt_count)
 {
-	unsigned int *new_ps = (unsigned int *)task->user->page_dir;
-	unsigned target_page_idx = mm_get_attached_page_index(vir);
-	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-	unsigned int *cur_page_dir = mm_get_pagedir();
-	unsigned int *page_table;
-	unsigned int *cur_page_table;
-	unsigned int phy;
-	int idx;
+	unsigned pte = *src_pte;
+	unsigned page_index;
 
-	if (!(new_ps[page_dir_offset] & PAGE_SIZE_MASK)) {
-		new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
-		new_ps[page_dir_offset] |= flag;
+	if (!(pte & PAGE_ENTRY_PRESENT))
+		return;
+
+	page_index = (pte & PAGE_SIZE_MASK) / PAGE_SIZE;
+
+	if (!(vma->flag & MAP_SHARED) && (pte & PAGE_ENTRY_WRITABLE)) {
+		pte &= ~PAGE_ENTRY_WRITABLE;
+		*src_pte = pte; /* write-protect parent */
 	}
 
-	page_table = (new_ps[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET;
-	cur_page_table = (cur_page_dir[page_dir_offset] & PAGE_SIZE_MASK) +
-			 KERNEL_OFFSET;
+	if ((*dst_pte & PAGE_SIZE_MASK) == 0)
+		(*pt_count)++;
 
-	cur_page_table[page_table_offset] &= ~PAGE_ENTRY_WRITABLE;
+	*dst_pte = pte;
+	phymm_reference_page(page_index);
+}
 
-	phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
-	if (!phy) {
-		idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) /
-			      PAGE_SIZE -
-		      1;
-		pgc_entry_count[idx]++;
+/*
+ * copy_pte_range — copy all present PTEs within [vma->begin, vma->end)
+ * that reside in the page table at src_pd[pde_idx].
+ */
+static void copy_pte_range(unsigned *src_pd, unsigned *dst_pd, vm_region *vma,
+			   unsigned pde_idx)
+{
+	unsigned *src_pt;
+	unsigned *dst_pt;
+	unsigned pde_base = pde_idx << 22;
+	unsigned pde_end = pde_base + (1u << 22);
+	unsigned pt_start =
+		(vma->begin > pde_base) ? ADDR_TO_PET_OFFSET(vma->begin) : 0;
+	unsigned pt_end =
+		(vma->end >= pde_end) ?
+			1024 :
+			ADDR_TO_PET_OFFSET((vma->end - PAGE_SIZE)) + 1;
+	unsigned pde_flag = src_pd[pde_idx] & ~PAGE_SIZE_MASK;
+	int cache_idx;
+	unsigned i;
+
+	src_pt = (unsigned *)((src_pd[pde_idx] & PAGE_SIZE_MASK) +
+			      KERNEL_OFFSET);
+
+	if (!(dst_pd[pde_idx] & PAGE_SIZE_MASK))
+		dst_pd[pde_idx] = (mm_alloc_page_table() - KERNEL_OFFSET) |
+				  pde_flag;
+
+	dst_pt = (unsigned *)((dst_pd[pde_idx] & PAGE_SIZE_MASK) +
+			      KERNEL_OFFSET);
+	cache_idx = (PAGE_TABLE_CACHE_END - (unsigned)dst_pt) / PAGE_SIZE - 1;
+
+	for (i = pt_start; i < pt_end; i++) {
+		if (!(src_pt[i] & PAGE_ENTRY_PRESENT))
+			continue;
+		copy_one_pte(&src_pt[i], &dst_pt[i], vma,
+			     &pgc_entry_count[cache_idx]);
 	}
-
-	page_table[page_table_offset] = cur_page_table[page_table_offset];
-	phymm_reference_page(target_page_idx);
 }
 
-static void ps_enum_for_dup(void *aux, unsigned vir, unsigned phy)
+/*
+ * copy_vma_pages — copy all PTEs for one VMA.
+ *
+ * Iterates only the PDE indices covered by the VMA; entries that are not
+ * present (pages never faulted in) are skipped without descending.
+ */
+static void copy_vma_pages(unsigned *src_pd, unsigned *dst_pd, vm_region *vma)
 {
-	ps_dup_user_page(vir, (task_struct *)aux, PAGE_ENTRY_USER_DATA);
+	unsigned pde_first = ADDR_TO_PGT_OFFSET(vma->begin);
+	unsigned pde_last = ADDR_TO_PGT_OFFSET((vma->end - PAGE_SIZE));
+	unsigned pde_idx;
+
+	for (pde_idx = pde_first; pde_idx <= pde_last; pde_idx++) {
+		if (!(src_pd[pde_idx] & PAGE_SIZE_MASK))
+			continue;
+		copy_pte_range(src_pd, dst_pd, vma, pde_idx);
+	}
 }
 
-static void ps_dup_user_maps(task_struct *cur, task_struct *task)
-{
-	unsigned int *new_ps;
+struct copy_page_range_ctx {
+	unsigned *src_pd;
+	unsigned *dst_pd;
+};
 
-	vm_dup(cur->user->vm, task->user->vm);
-	new_ps = (unsigned int *)task->user->page_dir;
-	memset((char *)new_ps, 0, PAGE_SIZE);
-	ps_enum_user_map(cur, ps_enum_for_dup, task);
+static void copy_vma_callback(vm_region *vma, void *data)
+{
+	struct copy_page_range_ctx *ctx = data;
+	copy_vma_pages(ctx->src_pd, ctx->dst_pd, vma);
+}
+
+/*
+ * copy_page_range — set up the child's page tables from the parent.
+ *
+ * VMAs are duplicated into the child first, then each VMA's PTEs are walked
+ * and copied with COW semantics.  A full TLB flush is issued at the end
+ * because parent PTEs that were writable may now be read-only in the TLB.
+ */
+static void copy_page_range(task_struct *parent, task_struct *child)
+{
+	struct copy_page_range_ctx ctx = {
+		.src_pd = (unsigned *)mm_get_pagedir(),
+		.dst_pd = (unsigned *)child->user->page_dir,
+	};
+
+	memset(ctx.dst_pd, 0, PAGE_SIZE);
+	vm_dup(parent->user->vm, child->user->vm);
+	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
+	RELOAD_CR3();
 }
 
 /*
@@ -313,7 +390,7 @@ static int do_fork(void)
 
 	task->fds = vm_alloc(1);
 	ps_dup_fds(cur, task);
-	ps_dup_user_maps(cur, task);
+	copy_page_range(cur, task);
 	fork_enqueue(cur, task);
 
 	cur_intr_frame->eax = task->psid;

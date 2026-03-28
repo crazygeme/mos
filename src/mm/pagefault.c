@@ -480,48 +480,37 @@ found:
 }
 
 /*
- * Handle page fault which needs COW treatment.
+ * wp_page_copy — COW resolution: allocate a private page and copy content.
+ *
+ * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
+ * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
  */
-static void pf_handle_cow(unsigned cr2)
+static void wp_page_copy(unsigned cr2)
 {
-	unsigned vir = 0;
-	unsigned new_mem = 0;
+	unsigned vir = cr2;
+	unsigned new_mem;
 	int flag;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_cow++;
 
-	vir = cr2;
-
-	/*
-	 * 1. alloc a new physical memory
-	 */
+	/* Allocate a new page mapped into kernel space for the copy. */
 	new_mem = vm_alloc(1);
-
-	/*
-	 * 2. copy cow value
-	 */
 	memcpy(new_mem, vir, PAGE_SIZE);
 
-	/*
-	 * 3. unmap origin address
-	 */
+	/* Unmap the shared page from this process. */
 	flag = mm_get_map_flag(vir);
 	mm_unmap_page(vir);
 
 	/*
-	 * 4. unmap newly allocated physical memory
-	 * note that should ref it first so that on one will use
-	 * this physical memory
+	 * Pin the new page before removing its kernel mapping so the physical
+	 * page cannot be reclaimed between mm_kunmap_page and mm_map_page.
 	 */
 	phymm_reference_page(VIRT_TO_PAGE_IDX(new_mem));
 	mm_kunmap_page(new_mem);
 
-	/*
-	 * 5. map newly allocated physical memory to origin virtual address
-	 */
-	flag |= PAGE_ENTRY_PRESENT;
-	flag |= PAGE_ENTRY_WRITABLE;
+	/* Install the private writable PTE. */
+	flag |= PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
 	mm_map_page(vir, VIRT_TO_PHY(new_mem), flag);
 
 	phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
@@ -533,43 +522,43 @@ static void pf_handle_cow(unsigned cr2)
 }
 
 /*
- * Handle page fault which is originally readonly now writable.
+ * wp_page_reuse — sole owner: upgrade a read-only PTE to writable in place.
+ *
+ * Called when ref_count == 1 (this process is the only user of the page).
+ * Mirrors Linux's wp_page_reuse(): no copy needed, just flip the PTE bit.
  */
-static void pf_handle_readonly(unsigned cr2)
+static void wp_page_reuse(unsigned cr2)
 {
-	unsigned vir = 0;
 	int flag;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
 
 	page_fault_perm++;
-	vir = cr2;
-	flag = mm_get_map_flag(vir);
+	flag = mm_get_map_flag(cr2);
 	flag |= PAGE_ENTRY_WRITABLE;
-	mm_set_map_flag(vir, flag);
-	INVLPG(vir);
+	mm_set_map_flag(cr2, flag);
+	INVLPG(cr2);
 
 	if (TestControl.profiling)
 		page_fault_perm_spent += (time_now_us() - begin);
 }
 
 /*
- * Handle a write fault on a present but read-only page.
+ * do_wp_page — handle a write fault on a present but read-only PTE.
  *
- * MAP_SHARED mapping:
- *   Upgrade the PTE writable in place.  All processes that share the same
- *   physical page immediately see the write — that is the MAP_SHARED contract.
- *   No private copy is made.
+ * Mirrors Linux's do_wp_page():
  *
- * MAP_PRIVATE mapping (or fork-COW anonymous page):
- *   Two sub-cases:
- *   1. ref_count > 1: page is shared (fork-COW sibling or file-cache entry).
- *      Allocate a private copy so the sibling / cache is left untouched.
- *   2. ref_count = 1: sole owner, PTE still read-only after a prior COW
- *      resolution.  Just flip the writable bit.
+ * MAP_SHARED: upgrade the PTE writable in place — all sharers see the same
+ *   physical page (MAP_SHARED contract).  Mark dirty for file-backed regions.
  *
- * Anything else is a true protection violation → SIGSEGV.
+ * MAP_PRIVATE (ref_count > 1): page is still shared with a fork sibling or
+ *   the file cache.  Call wp_page_copy() to get a private copy.
+ *
+ * MAP_PRIVATE (ref_count == 1): sole owner; the PTE was left read-only by
+ *   fork but the sibling has since broken away.  Call wp_page_reuse().
+ *
+ * No VMA or VMA without PROT_WRITE → SIGSEGV.
  */
-static int pf_handle_permission(unsigned cr2)
+static int do_wp_page(unsigned cr2)
 {
 	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
@@ -577,18 +566,11 @@ static int pf_handle_permission(unsigned cr2)
 
 	region = vm_find_map(cur->user->vm, cr2);
 
-	/* No covering region, or region does not permit writes. */
 	if (!region || !(region->prot & PROT_WRITE))
 		return 0;
 
-	/*
-	 * MAP_SHARED: all sharers must see the same physical page, so never
-	 * COW — just make this process's PTE writable.  If the region is
-	 * file-backed, mark the physical page dirty so it gets flushed back
-	 * to the file on munmap / process exit.
-	 */
 	if (region->flag & MAP_SHARED) {
-		pf_handle_readonly(cr2);
+		wp_page_reuse(cr2);
 		if (region->fp != NULL) {
 			unsigned page_index = mm_get_attached_page_index(cr2);
 			phymm_mark_dirty(page_index);
@@ -596,15 +578,11 @@ static int pf_handle_permission(unsigned cr2)
 		return 1;
 	}
 
-	/*
-	 * MAP_PRIVATE: COW if the page is still shared (ref_count > 1),
-	 * otherwise just upgrade the read-only PTE.
-	 */
 	page_index = mm_get_attached_page_index(cr2);
 	if (phymm_is_cow(page_index))
-		pf_handle_cow(cr2);
+		wp_page_copy(cr2);
 	else
-		pf_handle_readonly(cr2);
+		wp_page_reuse(cr2);
 
 	return 1;
 }
@@ -650,7 +628,7 @@ static void pf_process(intr_frame *frame)
 	}
 
 	if (error & PF_MASK_RW) {
-		if (pf_handle_permission(cr2))
+		if (do_wp_page(cr2))
 			goto Done;
 		goto NOT_HANDLED;
 	}

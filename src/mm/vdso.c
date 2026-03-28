@@ -1,6 +1,8 @@
 #include <mm/vdso.h>
 #include <mm/mm.h>
+#include <mm/mmap.h>
 #include <mm/phymm.h>
+#include <ps/ps.h>
 #include <macro.h>
 
 #define _VDSO __attribute__((used, section(".vdso")))
@@ -40,6 +42,15 @@ void mm_vdso_map()
 		mm_map_page(vir, phy, PAGE_ENTRY_USER_CODE);
 	}
 	RELOAD_CR3();
+
+	/* Register a VMA so fork's copy_page_range includes these pages. */
+	{
+		task_struct *cur = CURRENT_TASK();
+		vm_add_map(cur->user->vm, VDSO_MM_REGION,
+			   VDSO_MM_REGION + page_count * PAGE_SIZE,
+			   PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS,
+			   NULL, 0, 0);
+	}
 }
 
 int mm_vdso_region(int phy)

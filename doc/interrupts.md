@@ -24,13 +24,13 @@ All 256 entries are created as **interrupt gates** (type 14) with **DPL 0** (ker
 
 Two entries are updated later during kernel init:
 
-| Vector | Gate type | DPL | Handler | When registered |
-|--------|-----------|-----|---------|-----------------|
-| `0x06` | interrupt | 3   | `handle_invalid_opcode` | `int.c` init |
-| `0x0E` | interrupt | 0   | `pf_process` | `pagefault.c` init |
-| `0x80` | **trap**  | 3   | `syscall_process` | `syscall.c` KERNEL_INIT 7 |
-| `0xF0` | interrupt | 0   | `ipi_sched_handler` | `int.c` init |
-| `0xF1` | interrupt | 0   | `ipi_tlb_handler` | `int.c` init |
+| Vector | Gate type | DPL | Handler                 | When registered           |
+| ------ | --------- | --- | ----------------------- | ------------------------- |
+| `0x06` | interrupt | 3   | `handle_invalid_opcode` | `int.c` init              |
+| `0x0E` | interrupt | 0   | `pf_process`            | `pagefault.c` init        |
+| `0x80` | **trap**  | 3   | `syscall_process`       | `syscall.c` KERNEL_INIT 7 |
+| `0xF0` | interrupt | 0   | `ipi_sched_handler`     | `int.c` init              |
+| `0xF1` | interrupt | 0   | `ipi_tlb_handler`       | `int.c` init              |
 
 The critical difference between gates:
 - **Interrupt gate (type 14):** CPU clears IF on entry → hardware interrupts disabled.
@@ -253,13 +253,13 @@ void intr_handler(intr_frame *frame)
 
 ### Interrupt enable/disable at each vector class
 
-| Vector range | Gate type | CPU clears IF? | Dispatcher action | EOI |
-|---|---|---|---|---|
-| 0x00–0x1F (exceptions) | interrupt | yes → disabled | `sti` immediately | none |
-| 0x20–0x2F (hardware IRQ, PIC) | interrupt | yes → disabled | stays disabled | PIC OCW2 |
-| 0x20–0x2F (hardware IRQ, APIC) | interrupt | yes → disabled | stays disabled | LAPIC EOI |
-| 0x80 (syscall) | **trap** | **no → enabled** | stays enabled | none |
-| 0xF0–0xFF (IPI) | interrupt | yes → disabled | stays disabled | LAPIC EOI |
+| Vector range                   | Gate type | CPU clears IF?   | Dispatcher action | EOI       |
+| ------------------------------ | --------- | ---------------- | ----------------- | --------- |
+| 0x00–0x1F (exceptions)         | interrupt | yes → disabled   | `sti` immediately | none      |
+| 0x20–0x2F (hardware IRQ, PIC)  | interrupt | yes → disabled   | stays disabled    | PIC OCW2  |
+| 0x20–0x2F (hardware IRQ, APIC) | interrupt | yes → disabled   | stays disabled    | LAPIC EOI |
+| 0x80 (syscall)                 | **trap**  | **no → enabled** | stays enabled     | none      |
+| 0xF0–0xFF (IPI)                | interrupt | yes → disabled   | stays disabled    | LAPIC EOI |
 
 `iret` at the end of every path restores `EFLAGS` from the saved copy on the stack, which naturally restores IF to whatever it was in the interrupted context.
 
@@ -398,11 +398,11 @@ static void pf_process(intr_frame *frame)
 
 **Error code bits:**
 
-| Bit | Name | 0 | 1 |
-|-----|------|---|---|
-| 0 | P | page not present | protection violation |
-| 1 | W/R | read | write |
-| 2 | U/S | kernel | user |
+| Bit | Name | 0                | 1                    |
+| --- | ---- | ---------------- | -------------------- |
+| 0   | P    | page not present | protection violation |
+| 1   | W/R  | read             | write                |
+| 2   | U/S  | kernel           | user                 |
 
 **Interrupt state during page fault:**
 
@@ -450,11 +450,11 @@ Interrupts remain disabled for the entire ISR to avoid re-entrancy on the same I
 
 Inter-processor interrupts are sent via the local APIC ICR. Two are defined:
 
-| Vector | Macro | Purpose |
-|--------|-------|---------|
-| `0xF0` | `IPI_VECTOR_SCHED` | Kick a CPU out of `hlt` so it re-checks the run queue |
-| `0xF1` | `IPI_VECTOR_TLB` | TLB shootdown after a page table change |
-| `0xFF` | `IPI_VECTOR_SPURIOUS` | APIC spurious interrupt (no-op) |
+| Vector | Macro                 | Purpose                                               |
+| ------ | --------------------- | ----------------------------------------------------- |
+| `0xF0` | `IPI_VECTOR_SCHED`    | Kick a CPU out of `hlt` so it re-checks the run queue |
+| `0xF1` | `IPI_VECTOR_TLB`      | TLB shootdown after a page table change               |
+| `0xFF` | `IPI_VECTOR_SPURIOUS` | APIC spurious interrupt (no-op)                       |
 
 Treated identically to hardware IRQs: interrupts stay disabled, APIC EOI is sent before return.
 
@@ -494,10 +494,10 @@ intr_entry runs (IF same as after stub)
 
 ## 13. Summary
 
-| Event | IF at CPU entry | IF in handler | IF at iret |
-|---|---|---|---|
-| Exception (0x00–0x1F) | 0 (cleared by interrupt gate) | 1 (dispatcher does `sti`) | restored from EFLAGS |
-| Page fault (0x0E) | 0 | 1 (dispatcher does `sti`) | restored |
-| Hardware IRQ (0x20–0x2F) | 0 | 0 (stays disabled) | restored |
-| Syscall (0x80) | 1 (trap gate, no change) | 1 | restored |
-| IPI (0xF0–0xFF) | 0 | 0 | restored |
+| Event                    | IF at CPU entry               | IF in handler             | IF at iret           |
+| ------------------------ | ----------------------------- | ------------------------- | -------------------- |
+| Exception (0x00–0x1F)    | 0 (cleared by interrupt gate) | 1 (dispatcher does `sti`) | restored from EFLAGS |
+| Page fault (0x0E)        | 0                             | 1 (dispatcher does `sti`) | restored             |
+| Hardware IRQ (0x20–0x2F) | 0                             | 0 (stays disabled)        | restored             |
+| Syscall (0x80)           | 1 (trap gate, no change)      | 1                         | restored             |
+| IPI (0xF0–0xFF)          | 0                             | 0                         | restored             |

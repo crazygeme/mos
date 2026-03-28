@@ -7,11 +7,11 @@
 
 ## Overview
 
-| Component | Responsibility |
-|-----------|---------------|
-| `malloc(size)` | Allocate `size` bytes from the kernel heap; 8-byte aligned |
-| `free(ptr)` | Return allocation to the heap; right-coalesce with neighbour |
-| `zalloc(size)` | `malloc` + `memset` to zero |
+| Component        | Responsibility                                                |
+| ---------------- | ------------------------------------------------------------- |
+| `malloc(size)`   | Allocate `size` bytes from the kernel heap; 8-byte aligned    |
+| `free(ptr)`      | Return allocation to the heap; right-coalesce with neighbour  |
+| `zalloc(size)`   | `malloc` + `memset` to zero                                   |
 | `kmalloc_init()` | Initialize spinlock + bin sentinels (called from `klib_init`) |
 
 Aliases in `klib.h`:
@@ -91,13 +91,13 @@ The sentinel's `next`/`prev` fields are at the same offsets as a real free block
 ### Bin assignment (`size_to_bin`)
 
 | bin index | holds blocks of total size |
-|-----------|---------------------------|
-| 0 | ≤ 12 (MIN_BLK) |
-| 1 | ≤ 24 |
-| 2 | ≤ 48 |
-| … | (double each step) |
-| 14 | ≤ 98304 |
-| 15 | > 98304 (catch-all) |
+| --------- | -------------------------- |
+| 0         | ≤ 12 (MIN_BLK)             |
+| 1         | ≤ 24                       |
+| 2         | ≤ 48                       |
+| …         | (double each step)         |
+| 14        | ≤ 98304                    |
+| 15        | > 98304 (catch-all)        |
 
 ---
 
@@ -170,10 +170,10 @@ int sys_brk(unsigned _top);
 
 The kernel tracks two per-task values:
 
-| Field | Meaning |
-|-------|---------|
+| Field                   | Meaning                                                               |
+| ----------------------- | --------------------------------------------------------------------- |
 | `task->user->start_brk` | Base of the heap segment (set by `elf_map`, = PAGE_ALIGN_UP(BSS end)) |
-| `task->user->brk` | Current heap break (top of the mapped heap) |
+| `task->user->brk`       | Current heap break (top of the mapped heap)                           |
 
 **`sys_brk` behaviour:**
 

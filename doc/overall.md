@@ -67,13 +67,13 @@ GRUB/Multiboot
 
 ### GDT selectors
 
-| Selector | Description      |
-|----------|-----------------|
-| 0x00     | Null            |
-| 0x08     | Kernel data     |
-| 0x10     | Kernel code     |
-| 0x1B     | User data (RPL3)|
-| 0x23     | User code (RPL3)|
+| Selector | Description                         |
+| -------- | ----------------------------------- |
+| 0x00     | Null                                |
+| 0x08     | Kernel data                         |
+| 0x10     | Kernel code                         |
+| 0x1B     | User data (RPL3)                    |
+| 0x23     | User code (RPL3)                    |
 | 0x28+    | TSS per CPU (one per CPU, stride 8) |
 
 ---
@@ -115,13 +115,13 @@ the PIT ISR). Supports `kill()`, `sigaction()`, `alarm()`.
 
 ## 5. Memory Management (`src/mm/`)
 
-| File | Responsibility |
-|------|---------------|
-| `phymm.c` | Physical page allocator (bitmap, tracks `phymm_begin`–`phymm_end`) |
-| `mm.c` | Page directory/table management, `kmalloc`/`kfree`, page table cache |
-| `mmap.c` | `mmap`/`munmap`/`brk` — user virtual address space management |
-| `pagefault.c` | `#PF` handler — demand paging, copy-on-write, stack growth |
-| `vdso.c` | Maps a virtual DSO page (vDSO) into each process |
+| File          | Responsibility                                                       |
+| ------------- | -------------------------------------------------------------------- |
+| `phymm.c`     | Physical page allocator (bitmap, tracks `phymm_begin`–`phymm_end`)   |
+| `mm.c`        | Page directory/table management, `kmalloc`/`kfree`, page table cache |
+| `mmap.c`      | `mmap`/`munmap`/`brk` — user virtual address space management        |
+| `pagefault.c` | `#PF` handler — demand paging, copy-on-write, stack growth           |
+| `vdso.c`      | Maps a virtual DSO page (vDSO) into each process                     |
 
 **Page table cache:** a 1024-entry stack pre-allocates page tables from the
 reserved region `[PAGE_TABLE_CACHE_BEGIN, PAGE_TABLE_CACHE_END)` to avoid
@@ -157,13 +157,13 @@ Mount points are stored in a red-black tree keyed by path for O(log n) lookup.
 
 ### Concrete filesystems
 
-| FS | Mount point | Source |
-|----|-------------|--------|
-| ext2/4 | `/` | `src/fs/root.c` + `src/hw/hdd.c` |
-| devfs | `/dev` | `src/dev/devfs.c` |
-| devpts | `/dev/pts` | `src/dev/pts.c` |
-| procfs | `/proc` | `src/proc/procfs.c` |
-| pipefs | (internal) | `src/fs/pipe.c` |
+| FS     | Mount point | Source                           |
+| ------ | ----------- | -------------------------------- |
+| ext2/4 | `/`         | `src/fs/root.c` + `src/hw/hdd.c` |
+| devfs  | `/dev`      | `src/dev/devfs.c`                |
+| devpts | `/dev/pts`  | `src/dev/pts.c`                  |
+| procfs | `/proc`     | `src/proc/procfs.c`              |
+| pipefs | (internal)  | `src/fs/pipe.c`                  |
 
 ### Disk cache
 
@@ -183,13 +183,13 @@ Each `file_operations` struct has a `.poll` hook returning readiness.
 Dispatched from `syscall.c` via the `int 0x80` handler. The syscall table
 follows Linux 2.4 numbering (`include/unistd.h`).
 
-| File | Syscalls |
-|------|---------|
-| `syscall_proc.c` | fork, exec, exit, wait, clone, getpid, signal family, mmap/brk |
-| `syscall_fs.c` | open, read, write, close, stat, lseek, ioctl, getdents, readdir |
-| `syscall_net.c` | socket, bind, connect, listen, accept, send/recv family, ioctl |
-| `syscall_io.c` | read/write on tty/pipe, ioctl on terminal (TIOCGWINSZ etc.) |
-| `syscall_sys.c` | uname, gettimeofday, getrlimit, sysinfo, times |
+| File             | Syscalls                                                        |
+| ---------------- | --------------------------------------------------------------- |
+| `syscall_proc.c` | fork, exec, exit, wait, clone, getpid, signal family, mmap/brk  |
+| `syscall_fs.c`   | open, read, write, close, stat, lseek, ioctl, getdents, readdir |
+| `syscall_net.c`  | socket, bind, connect, listen, accept, send/recv family, ioctl  |
+| `syscall_io.c`   | read/write on tty/pipe, ioctl on terminal (TIOCGWINSZ etc.)     |
+| `syscall_sys.c`  | uname, gettimeofday, getrlimit, sysinfo, times                  |
 
 ---
 
@@ -205,11 +205,11 @@ MOS integrates **lwIP** (third_party/lwip) in NO_SYS callback mode.
 
 ### Socket types
 
-| Type | Protocol | lwIP PCB |
-|------|----------|---------|
+| Type        | Protocol    | lwIP PCB  |
+| ----------- | ----------- | --------- |
 | SOCK_STREAM | IPPROTO_TCP | `tcp_pcb` |
-| SOCK_DGRAM | IPPROTO_UDP | `udp_pcb` |
-| SOCK_RAW | any | `raw_pcb` |
+| SOCK_DGRAM  | IPPROTO_UDP | `udp_pcb` |
+| SOCK_RAW    | any         | `raw_pcb` |
 
 ### Raw socket receive layout
 
@@ -222,27 +222,27 @@ Doing so causes double-counting (e.g. 104 bytes instead of 84 for a ping reply).
 
 Common socket ioctls handled in `sock_ioctl()`:
 
-| Code | Name | Description |
-|------|------|-------------|
-| 0x8906 | `SIOCGSTAMP` | Timestamp of last received packet (`struct timeval`) |
+| Code          | Name         | Description                                              |
+| ------------- | ------------ | -------------------------------------------------------- |
+| 0x8906        | `SIOCGSTAMP` | Timestamp of last received packet (`struct timeval`)     |
 | 0x8910–0x8935 | `SIOCGIFxxx` | Interface info: flags, addr, netmask, hwaddr, MTU, index |
 
 ---
 
 ## 10. Hardware Drivers (`src/hw/`)
 
-| File | Device |
-|------|--------|
-| `hdd.c` | IDE hard disk (ATA PIO) with 4096-page write-back cache |
-| `nic.c` / `nic_intel_8254x.c` | Intel 82540EM (e1000) NIC |
-| `pci.c` | PCI bus enumeration |
-| `keyboard.c` | PS/2 keyboard (IRQ1) |
-| `vga.c` | VGA framebuffer (768×512×32bpp) |
-| `serial.c` | COM1 serial port (debug output) |
-| `time.c` | PIT (8253/8254) timer driver + `time_now_us` |
-| `apic.c` | LAPIC / IOAPIC (SMP) |
-| `acpi.c` | ACPI MADT parser (CPU and IOAPIC discovery) |
-| `cpu.c` | Per-CPU struct init, AP startup |
+| File                          | Device                                                  |
+| ----------------------------- | ------------------------------------------------------- |
+| `hdd.c`                       | IDE hard disk (ATA PIO) with 4096-page write-back cache |
+| `nic.c` / `nic_intel_8254x.c` | Intel 82540EM (e1000) NIC                               |
+| `pci.c`                       | PCI bus enumeration                                     |
+| `keyboard.c`                  | PS/2 keyboard (IRQ1)                                    |
+| `vga.c`                       | VGA framebuffer (768×512×32bpp)                         |
+| `serial.c`                    | COM1 serial port (debug output)                         |
+| `time.c`                      | PIT (8253/8254) timer driver + `time_now_us`            |
+| `apic.c`                      | LAPIC / IOAPIC (SMP)                                    |
+| `acpi.c`                      | ACPI MADT parser (CPU and IOAPIC discovery)             |
+| `cpu.c`                       | Per-CPU struct init, AP startup                         |
 
 ### Timer (`time.c`)
 
@@ -281,15 +281,15 @@ IRQs; the IOAPIC is used only for IPI delivery.
 
 ## 13. Key Constants
 
-| Constant | Value | Meaning |
-|----------|-------|---------|
-| `KERNEL_OFFSET` | 0xC0000000 | Kernel virtual base |
-| `HZ` | 100 | PIT interrupts per second |
-| `CLOCK_TICK_RATE` | 1193180 | PIT oscillator frequency (Hz) |
-| `LATCH` | 11932 | PIT reload value |
-| `PAGE_SIZE` | 4096 | Page size |
-| `KHEAP_BEGIN` | 0xC0700000 | Start of kernel heap |
-| `MAX_CPUS` | 8 | Maximum SMP CPUs |
-| `USER_STACK_PAGES` | 128 | User stack size (512 KB) |
-| `TASK_UNMAPPED_BASE` | 0x40000000 | Base of mmap zone |
-| `HDD_CACHE_SIZE` | 4096 pages | Block cache capacity |
+| Constant             | Value      | Meaning                       |
+| -------------------- | ---------- | ----------------------------- |
+| `KERNEL_OFFSET`      | 0xC0000000 | Kernel virtual base           |
+| `HZ`                 | 100        | PIT interrupts per second     |
+| `CLOCK_TICK_RATE`    | 1193180    | PIT oscillator frequency (Hz) |
+| `LATCH`              | 11932      | PIT reload value              |
+| `PAGE_SIZE`          | 4096       | Page size                     |
+| `KHEAP_BEGIN`        | 0xC0700000 | Start of kernel heap          |
+| `MAX_CPUS`           | 8          | Maximum SMP CPUs              |
+| `USER_STACK_PAGES`   | 128        | User stack size (512 KB)      |
+| `TASK_UNMAPPED_BASE` | 0x40000000 | Base of mmap zone             |
+| `HDD_CACHE_SIZE`     | 4096 pages | Block cache capacity          |

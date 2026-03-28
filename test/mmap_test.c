@@ -9,7 +9,6 @@
 #include <mm/mmap.h>
 #include <ps/ps.h>
 #include <config.h>
-#include <errno.h>
 #include <test/test.h>
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -144,7 +143,8 @@ KTEST(mmap, munmap_removes)
 }
 
 /* ── MunmapInvalid ────────────────────────────────────────────────────────
- * munmap on an address that was never mapped returns -EINVAL.
+ * munmap on an address that was never mapped is a no-op and returns 0,
+ * matching Linux behaviour (POSIX does not require EINVAL here).
  */
 KTEST(mmap, munmap_invalid)
 {
@@ -156,7 +156,7 @@ KTEST(mmap, munmap_invalid)
 	ASSERT_NULL(r);
 
 	int ret = do_munmap((void *)addr, PAGE_SIZE);
-	EXPECT_EQ(ret, -EINVAL);
+	EXPECT_EQ(ret, 0);
 	return 0;
 }
 
@@ -181,6 +181,9 @@ KTEST(mmap, two_maps_distinct)
 	return 0;
 }
 
+/* A fixed address for merge/split tests — distinct from TEST_FIXED_ADDR. */
+#define TEST_MERGE_BASE 0x21000000u
+
 /* ── LargeMapping ─────────────────────────────────────────────────────────
  * A multi-page mapping creates a single contiguous region.
  */
@@ -202,5 +205,191 @@ KTEST(mmap, large_mapping)
 	EXPECT_GE(r_start->end - r_start->begin, size);
 
 	do_munmap((void *)addr, size);
+	return 0;
+}
+
+/* ── MergeAdjacent ────────────────────────────────────────────────────────
+ * Two adjacent anonymous regions with identical prot/flags are coalesced
+ * into one by vm_coalesce() after the second mmap.
+ */
+KTEST(mmap, merge_adjacent)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, PAGE_SIZE, prot, flags, -1, 0);
+	do_mmap(base + PAGE_SIZE, PAGE_SIZE, prot, flags, -1, 0);
+
+	vm_region *r = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base);
+	EXPECT_EQ(r->end, base + 2 * PAGE_SIZE);
+
+	/* Both pages must fall in the same region. */
+	vm_region *r2 = vm_find_map(cur_vm(), base + PAGE_SIZE);
+	ASSERT_NONNULL(r2);
+	EXPECT_EQ(r2->begin, r->begin);
+
+	do_munmap((void *)base, 2 * PAGE_SIZE);
+	return 0;
+}
+
+/* ── MergeNoDiffProt ──────────────────────────────────────────────────────
+ * Adjacent regions with different prot must NOT be merged.
+ */
+KTEST(mmap, merge_no_diff_prot)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, PAGE_SIZE, PROT_READ, flags, -1, 0);
+	do_mmap(base + PAGE_SIZE, PAGE_SIZE, PROT_READ | PROT_WRITE, flags, -1,
+		0);
+
+	vm_region *r = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base);
+	EXPECT_EQ(r->end,
+		  base + PAGE_SIZE); /* must not extend into next page */
+
+	do_munmap((void *)base, 2 * PAGE_SIZE);
+	return 0;
+}
+
+/* ── MergeThreeWay ────────────────────────────────────────────────────────
+ * Mapping the gap between two same-prot regions triggers a three-way merge.
+ */
+KTEST(mmap, merge_three_way)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, PAGE_SIZE, prot, flags, -1, 0);
+	do_mmap(base + 2 * PAGE_SIZE, PAGE_SIZE, prot, flags, -1, 0);
+	/* Fill the gap — should coalesce all three into one. */
+	do_mmap(base + PAGE_SIZE, PAGE_SIZE, prot, flags, -1, 0);
+
+	vm_region *r = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base);
+	EXPECT_EQ(r->end, base + 3 * PAGE_SIZE);
+
+	do_munmap((void *)base, 3 * PAGE_SIZE);
+	return 0;
+}
+
+/* ── SplitMiddle ──────────────────────────────────────────────────────────
+ * munmap of the middle of a region leaves two separate remnants.
+ */
+KTEST(mmap, split_middle)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, 4 * PAGE_SIZE, prot, flags, -1, 0);
+	do_munmap((void *)(base + PAGE_SIZE), 2 * PAGE_SIZE);
+
+	vm_region *rl = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(rl);
+	EXPECT_EQ(rl->begin, base);
+	EXPECT_EQ(rl->end, base + PAGE_SIZE);
+
+	vm_region *rr = vm_find_map(cur_vm(), base + 3 * PAGE_SIZE);
+	ASSERT_NONNULL(rr);
+	EXPECT_EQ(rr->begin, base + 3 * PAGE_SIZE);
+	EXPECT_EQ(rr->end, base + 4 * PAGE_SIZE);
+
+	EXPECT_NULL(vm_find_map(cur_vm(), base + PAGE_SIZE));
+	EXPECT_NULL(vm_find_map(cur_vm(), base + 2 * PAGE_SIZE));
+
+	do_munmap((void *)base, PAGE_SIZE);
+	do_munmap((void *)(base + 3 * PAGE_SIZE), PAGE_SIZE);
+	return 0;
+}
+
+/* ── SplitLeftTrim ────────────────────────────────────────────────────────
+ * munmap of the left portion leaves only the right remnant.
+ */
+KTEST(mmap, split_left_trim)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, 4 * PAGE_SIZE, prot, flags, -1, 0);
+	do_munmap((void *)base, 2 * PAGE_SIZE);
+
+	EXPECT_NULL(vm_find_map(cur_vm(), base));
+	EXPECT_NULL(vm_find_map(cur_vm(), base + PAGE_SIZE));
+
+	vm_region *r = vm_find_map(cur_vm(), base + 2 * PAGE_SIZE);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base + 2 * PAGE_SIZE);
+	EXPECT_EQ(r->end, base + 4 * PAGE_SIZE);
+
+	do_munmap((void *)(base + 2 * PAGE_SIZE), 2 * PAGE_SIZE);
+	return 0;
+}
+
+/* ── SplitRightTrim ───────────────────────────────────────────────────────
+ * munmap of the right portion leaves only the left remnant.
+ */
+KTEST(mmap, split_right_trim)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, 4 * PAGE_SIZE, prot, flags, -1, 0);
+	do_munmap((void *)(base + 2 * PAGE_SIZE), 2 * PAGE_SIZE);
+
+	vm_region *r = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base);
+	EXPECT_EQ(r->end, base + 2 * PAGE_SIZE);
+
+	EXPECT_NULL(vm_find_map(cur_vm(), base + 2 * PAGE_SIZE));
+	EXPECT_NULL(vm_find_map(cur_vm(), base + 3 * PAGE_SIZE));
+
+	do_munmap((void *)base, 2 * PAGE_SIZE);
+	return 0;
+}
+
+/* ── SplitByFixed ─────────────────────────────────────────────────────────
+ * MAP_FIXED over the middle with a different prot splits the original
+ * region into three: left remnant | new middle | right remnant.
+ */
+KTEST(mmap, split_by_fixed)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, 4 * PAGE_SIZE, PROT_READ, flags, -1, 0);
+	/* Overwrite middle 2 pages with a different prot. */
+	do_mmap(base + PAGE_SIZE, 2 * PAGE_SIZE, PROT_READ | PROT_WRITE, flags,
+		-1, 0);
+
+	vm_region *rl = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(rl);
+	EXPECT_EQ(rl->begin, base);
+	EXPECT_EQ(rl->end, base + PAGE_SIZE);
+	EXPECT_EQ(rl->prot, PROT_READ);
+
+	vm_region *rm = vm_find_map(cur_vm(), base + PAGE_SIZE);
+	ASSERT_NONNULL(rm);
+	EXPECT_EQ(rm->begin, base + PAGE_SIZE);
+	EXPECT_EQ(rm->end, base + 3 * PAGE_SIZE);
+	EXPECT_EQ(rm->prot, PROT_READ | PROT_WRITE);
+
+	vm_region *rr = vm_find_map(cur_vm(), base + 3 * PAGE_SIZE);
+	ASSERT_NONNULL(rr);
+	EXPECT_EQ(rr->begin, base + 3 * PAGE_SIZE);
+	EXPECT_EQ(rr->end, base + 4 * PAGE_SIZE);
+	EXPECT_EQ(rr->prot, PROT_READ);
+
+	do_munmap((void *)base, 4 * PAGE_SIZE);
 	return 0;
 }

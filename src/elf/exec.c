@@ -400,7 +400,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	/* make script interp as first argument if file starts with #! */
 
 	/* open file for state checking and first line reading */
-	fp = fs_open_file(file_name, O_RDONLY, 0, 1);
+	fp = fs_open_file(file_name, O_RDONLY, 0);
 	if (!fp) {
 		name_put(file_name);
 		return -ENOENT;

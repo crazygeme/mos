@@ -59,15 +59,13 @@ static int format_modes(unsigned mode, char *str)
 }
 
 static int do_stat(const char *func, const char *name, struct stat *buf,
-		   int follow_link)
+		   int flag)
 {
 	file *fp = NULL;
 	char modes[11];
 	int ret = -ENOENT;
 
-	/* Use O_PATH to avoid device side-effects (e.g. incrementing PTY
-	 * slave_count) when we only need metadata. */
-	fp = fs_open_file(name, O_PATH, 0, follow_link);
+	fp = fs_open_file(name, flag, 0);
 	if (!fp)
 		goto log;
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr)
@@ -96,7 +94,7 @@ int sys_stat(const char *_name, struct stat *buf)
 	int ret;
 
 	resolve_path(_name, name);
-	ret = do_stat("stat", name, buf, 1);
+	ret = do_stat("stat", name, buf, O_PATH);
 	name_put(name);
 	return ret;
 }
@@ -107,7 +105,7 @@ int sys_lstat(const char *_name, struct stat *buf)
 	int ret;
 
 	resolve_path(_name, name);
-	ret = do_stat("lstat", name, buf, 0);
+	ret = do_stat("lstat", name, buf, O_PATH | O_NOFOLLOW);
 	name_put(name);
 	return ret;
 }
@@ -134,7 +132,7 @@ int sys_stat64(const char *path, struct stat64 *s)
 	int ret;
 
 	resolve_path(path, name);
-	ret = do_stat("stat64", name, &s32, 1);
+	ret = do_stat("stat64", name, &s32, O_PATH);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
 	s->__st_ino = s32.st_ino;
@@ -161,7 +159,7 @@ int sys_lstat64(const char *path, struct stat64 *s)
 	int ret;
 
 	resolve_path(path, name);
-	ret = do_stat("lstat64", name, &s32, 0);
+	ret = do_stat("lstat64", name, &s32, O_PATH | O_NOFOLLOW);
 	memset(s, 0, sizeof(*s));
 	s->st_dev = s32.st_dev;
 	s->__st_ino = s32.st_ino;
@@ -284,7 +282,7 @@ int sys_access(const char *path, int mode)
 	int ret = -EACCES;
 
 	resolve_path(path, name);
-	ret = do_stat(NULL, name, &s, 1);
+	ret = do_stat(NULL, name, &s, O_PATH);
 
 	if (ret != EOK) {
 		ret = -ENOENT;
@@ -476,7 +474,7 @@ int sys_unlink(const char *_name)
 	int ret;
 
 	resolve_path(_name, name);
-	ret = do_stat(NULL, name, &s, 0);
+	ret = do_stat(NULL, name, &s, O_PATH | O_NOFOLLOW);
 	if (ret != EOK)
 		goto done;
 
@@ -641,7 +639,7 @@ int sys_chdir(const char *path)
 			memcpy(cwd + len, p, comp_len);
 			cwd[len + comp_len] =
 				'\0'; /* no trailing slash: allows symlink following */
-			if (do_stat(NULL, cwd, &s, 1) != EOK) {
+			if (do_stat(NULL, cwd, &s, O_PATH) != EOK) {
 				ret = -ENOENT;
 				goto done;
 			}

@@ -2,21 +2,19 @@ include $(MAINPATH)/mos.mk
 
 # ── lwext4 ────────────────────────────────────────────────────────────────
 
-EXT4_SRC_DIRS = lwext4/src
-EXT4_SRCS     = $(wildcard *.c $(EXT4_SRC_DIRS)/*.c)
-EXT4_OBJS     = $(patsubst %,$(DST)/lwext4/%,$(notdir $(EXT4_SRCS:.c=.c.o)))
-EXT4_DEPS     = $(patsubst %.c,%.c.d,$(EXT4_SRCS))
-
-vpath %.c $(EXT4_SRC_DIRS)
+EXT4_DIR      = lwext4/src
+EXT4_SRCS     = $(wildcard $(EXT4_DIR)/*.c)
+EXT4_OBJS     = $(patsubst $(EXT4_DIR)/%.c,$(DST)/obj/third_party/lwext4/%.c.o,$(EXT4_SRCS))
+EXT4_DEPS     = $(patsubst %.c.o,%.c.d,$(EXT4_OBJS))
 
 # ── lwip ──────────────────────────────────────────────────────────────────
 
 LWIPDIR       = $(MAINPATH)/third_party/lwip/src
 include $(LWIPDIR)/Filelists.mk
 
-LWIP_SRCS     = $(LWIPNOAPPSFILES)
-LWIP_OBJS     = $(patsubst $(LWIPDIR)/%.c,$(DST)/lwip/%.c.o,$(LWIP_SRCS))
-LWIP_DEPS     = $(patsubst $(DST)/lwip/%.c.o,$(DST)/lwip/%.c.d,$(LWIP_OBJS))
+LWIP_SRCS     = $(patsubst $(LWIPDIR)/%,%,$(LWIPNOAPPSFILES))
+LWIP_OBJS     = $(patsubst %.c,$(DST)/obj/third_party/lwip/%.c.o,$(LWIP_SRCS))
+LWIP_DEPS     = $(patsubst %.c.o,%.c.d,$(LWIP_OBJS))
 
 # ── Compiler flags ────────────────────────────────────────────────────────
 
@@ -34,27 +32,29 @@ SCRIPTS     = $(MAINPATH)/mos.mk $(MAINPATH)/Makefile Makefile
 
 # ── Targets ───────────────────────────────────────────────────────────────
 
-all: $(DST)/lwext4/libext4.a $(DST)/lwip/liblwip.a
+all: $(DST)/obj/third_party/lwext4/libext4.a $(DST)/obj/third_party/lwip/liblwip.a
 	@:
 
-$(DST)/lwext4/libext4.a: $(EXT4_OBJS)
+$(DST)/obj/third_party/lwext4/libext4.a: $(EXT4_OBJS)
+	@mkdir -p $(dir $@)
 	@echo "AR $@"
 	@$(AR) rcs $@ $(EXT4_OBJS)
 
-$(DST)/lwip/liblwip.a: $(LWIP_OBJS)
+$(DST)/obj/third_party/lwip/liblwip.a: $(LWIP_OBJS)
+	@mkdir -p $(dir $@)
 	@echo "AR $@"
 	@$(AR) rcs $@ $(LWIP_OBJS)
 
 # ── Compile rules ─────────────────────────────────────────────────────────
 
-$(DST)/lwext4/%.c.o: %.c $(SCRIPTS)
+$(DST)/obj/third_party/lwext4/%.c.o: $(EXT4_DIR)/%.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
 	@echo "CC $<"
 	@$(CC) $(LWEXT4_CFLAGS) -MMD -MP -o $@ -c $<
 
-$(DST)/lwip/%.c.o: $(LWIPDIR)/%.c $(SCRIPTS)
+$(DST)/obj/third_party/lwip/%.c.o: $(LWIPDIR)/%.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
-	@echo "CC $<"
+	@echo "CC lwip/$*.c"
 	@$(CC) $(LWIP_CFLAGS) -MMD -MP -o $@ -c $<
 
 clean:

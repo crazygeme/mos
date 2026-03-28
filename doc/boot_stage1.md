@@ -19,23 +19,23 @@ start of the kernel image at physical address **0x100000**.
 
 GRUB hands control to the kernel entry point with the following guaranteed CPU state (Multiboot specification):
 
-| Register / Resource | Value / Requirement |
-|---|---|
-| `EAX` | `0x2BADB002` — Multiboot magic; confirms a compliant boot loader |
-| `EBX` | Physical address of the `multiboot_info_t` structure |
-| `CS` | 32-bit read/execute code segment, base 0, limit 0xFFFFFFFF (exact selector undefined) |
+| Register / Resource      | Value / Requirement                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `EAX`                    | `0x2BADB002` — Multiboot magic; confirms a compliant boot loader                      |
+| `EBX`                    | Physical address of the `multiboot_info_t` structure                                  |
+| `CS`                     | 32-bit read/execute code segment, base 0, limit 0xFFFFFFFF (exact selector undefined) |
 | `DS` `ES` `FS` `GS` `SS` | 32-bit read/write data segments, base 0, limit 0xFFFFFFFF (exact selectors undefined) |
-| `CR0` | PG (bit 31) = **0** (paging off); PE (bit 0) = **1** (protected mode on) |
-| `EFLAGS` | VM (bit 17) = **0**; IF (bit 9) = **0** (interrupts disabled) |
-| A20 gate | Enabled |
+| `CR0`                    | PG (bit 31) = **0** (paging off); PE (bit 0) = **1** (protected mode on)              |
+| `EFLAGS`                 | VM (bit 17) = **0**; IF (bit 9) = **0** (interrupts disabled)                         |
+| A20 gate                 | Enabled                                                                               |
 
 The following are explicitly **undefined** and must be set up by the kernel before use:
 
-| Resource | Constraint |
-|---|---|
-| `ESP` | No valid stack — kernel must establish one immediately |
-| `GDTR` | May point to a transient GRUB GDT; kernel must not reload any segment register until it installs its own GDT |
-| `IDTR` | Invalid — interrupts must remain disabled until the kernel loads its own IDT |
+| Resource | Constraint                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------ |
+| `ESP`    | No valid stack — kernel must establish one immediately                                                       |
+| `GDTR`   | May point to a transient GRUB GDT; kernel must not reload any segment register until it installs its own GDT |
+| `IDTR`   | Invalid — interrupts must remain disabled until the kernel loads its own IDT                                 |
 
 All other registers (EDI, ESI, EBP, EDX, ECX, general flags) are undefined.
 The PIC is left in the BIOS/DOS state (IRQ0 → vector 8), which the kernel must remap before enabling any IRQ.
@@ -90,13 +90,13 @@ addresses.
 The BIOS leaves PIC vector offsets conflicting with CPU exception vectors
 (IRQ0 maps to vector 8 = double fault). The PIC is reinitialised:
 
-| ICW | Master (0x20/0x21) | Slave (0xA0/0xA1) |
-|-----|--------------------|-------------------|
-| ICW1 | 0x11 — init + expect ICW4 | same |
+| ICW  | Master (0x20/0x21)                      | Slave (0xA0/0xA1)          |
+| ---- | --------------------------------------- | -------------------------- |
+| ICW1 | 0x11 — init + expect ICW4               | same                       |
 | ICW2 | 0x20 — remap IRQ0–7 → vectors 0x20–0x27 | 0x28 — IRQ8–15 → 0x28–0x2F |
-| ICW3 | 0x04 — slave on IR2 | 0x02 — slave ID = 2 |
-| ICW4 | 0x01 — 8086 mode | same |
-| mask | 0xFF — mask all IRQs | 0xFF — mask all IRQs |
+| ICW3 | 0x04 — slave on IR2                     | 0x02 — slave ID = 2        |
+| ICW4 | 0x01 — 8086 mode                        | same                       |
+| mask | 0xFF — mask all IRQs                    | 0xFF — mask all IRQs       |
 
 All IRQ lines stay masked until `int_enable_all()` is called later in
 `kmain_startup()`.
@@ -105,14 +105,14 @@ All IRQ lines stay masked until `int_enable_all()` is called later in
 
 A flat 32-bit GDT is written to the physical address of the `gdt[]` array:
 
-| Index | Selector | Descriptor |
-|-------|----------|-----------|
-| 0 | 0x00 | Null |
-| 1 | 0x08 | Kernel data — base 0, limit 4 GB, DPL 0 |
-| 2 | 0x10 | Kernel code — base 0, limit 4 GB, DPL 0 |
-| 3 | 0x1B | User data — base 0, limit 4 GB, DPL 3 |
-| 4 | 0x23 | User code — base 0, limit 4 GB, DPL 3 |
-| 5 | 0x28 | TSS (temporary, limit 0x67, DPL 0) |
+| Index | Selector | Descriptor                              |
+| ----- | -------- | --------------------------------------- |
+| 0     | 0x00     | Null                                    |
+| 1     | 0x08     | Kernel data — base 0, limit 4 GB, DPL 0 |
+| 2     | 0x10     | Kernel code — base 0, limit 4 GB, DPL 0 |
+| 3     | 0x1B     | User data — base 0, limit 4 GB, DPL 3   |
+| 4     | 0x23     | User code — base 0, limit 4 GB, DPL 3   |
+| 5     | 0x28     | TSS (temporary, limit 0x67, DPL 0)      |
 
 `SET_GDT` loads the GDTR. `SET_CS(0x10)` far-jumps to reload CS.
 `SET_DS(0x08)` reloads DS/ES/FS/GS/SS.
@@ -148,10 +148,10 @@ tables are laid out contiguously (one per 4 MB of mapped space).
 The mapping covers the physical range **0x000000 – 8 MB** and is installed
 at **two** virtual regions simultaneously:
 
-| PDE index | Virtual range | Maps to |
-|-----------|---------------|---------|
-| 0 | 0x00000000 – 0x007FFFFF | phys 0x000000 – 0x7FFFFF (identity map) |
-| 768 | 0xC0000000 – 0xC07FFFFF | phys 0x000000 – 0x7FFFFF (kernel high map) |
+| PDE index | Virtual range           | Maps to                                    |
+| --------- | ----------------------- | ------------------------------------------ |
+| 0         | 0x00000000 – 0x007FFFFF | phys 0x000000 – 0x7FFFFF (identity map)    |
+| 768       | 0xC0000000 – 0xC07FFFFF | phys 0x000000 – 0x7FFFFF (kernel high map) |
 
 The identity mapping (PDE[0]) allows stage-1 code to keep running after
 paging is enabled before EIP is redirected to the high address. It is removed

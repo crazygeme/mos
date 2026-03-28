@@ -7,11 +7,11 @@
 
 ## Overview
 
-| Layer | File | Responsibility |
-|-------|------|---------------|
-| Task management | `ps.c` | Create/destroy tasks, queue management, PID lookup |
-| Scheduler | `ps_sched.c` | Context switch, MPRQ, sleep/wake |
-| Syscalls | `ps_syscall.c` | `fork`, `vfork`, `exit`, `waitpid`, signal delivery |
+| Layer           | File           | Responsibility                                      |
+| --------------- | -------------- | --------------------------------------------------- |
+| Task management | `ps.c`         | Create/destroy tasks, queue management, PID lookup  |
+| Scheduler       | `ps_sched.c`   | Context switch, MPRQ, sleep/wake                    |
+| Syscalls        | `ps_syscall.c` | `fork`, `vfork`, `exit`, `waitpid`, signal delivery |
 
 ---
 
@@ -99,11 +99,11 @@ typedef struct _ps_control {
 
 Global locks:
 
-| Lock | Protects |
-|------|---------|
-| `ps_lock` (spinlock) | ready / wait / dying / mgr queues |
-| `map_lock` (spinlock) | per-process page-table operations |
-| `psid_lock` (spinlock) | PID counter |
+| Lock                   | Protects                          |
+| ---------------------- | --------------------------------- |
+| `ps_lock` (spinlock)   | ready / wait / dying / mgr queues |
+| `map_lock` (spinlock)  | per-process page-table operations |
+| `psid_lock` (spinlock) | PID counter                       |
 
 ---
 
@@ -146,11 +146,11 @@ _task_sched(func_name)
 
 Macros in `include/macro.h`:
 
-| Macro | Effect |
-|-------|--------|
-| `SAVE_ALL(task, label)` | Stores all registers to `task->tss`; sets `tss.eip = &label` |
-| `RESTORE_ALL(task)` | Loads all registers from `task->tss` |
-| `JUMP_TO_NEXT_TASK_EIP(eip)` | `jmp *eip` — indirect jump to resume point |
+| Macro                        | Effect                                                       |
+| ---------------------------- | ------------------------------------------------------------ |
+| `SAVE_ALL(task, label)`      | Stores all registers to `task->tss`; sets `tss.eip = &label` |
+| `RESTORE_ALL(task)`          | Loads all registers from `task->tss`                         |
+| `JUMP_TO_NEXT_TASK_EIP(eip)` | `jmp *eip` — indirect jump to resume point                   |
 
 ### Time slices
 
@@ -175,13 +175,13 @@ ps_create()
 
 State transitions:
 
-| Transition | Function |
-|-----------|---------|
-| → ready | `ps_put_to_ready_queue` |
-| → waiting | `ps_put_to_wait_queue` |
-| → dying | `ps_put_to_dying_queue` (sets status, sends SIGCHLD to parent) |
-| waiting → ready (lock released) | caller invokes `ps_put_to_ready_queue` |
-| waiting → ready (timeout) | scheduler skips sleeping tasks until `timeout <= now` |
+| Transition                      | Function                                                       |
+| ------------------------------- | -------------------------------------------------------------- |
+| → ready                         | `ps_put_to_ready_queue`                                        |
+| → waiting                       | `ps_put_to_wait_queue`                                         |
+| → dying                         | `ps_put_to_dying_queue` (sets status, sends SIGCHLD to parent) |
+| waiting → ready (lock released) | caller invokes `ps_put_to_ready_queue`                         |
+| waiting → ready (timeout)       | scheduler skips sleeping tasks until `timeout <= now`          |
 
 ---
 

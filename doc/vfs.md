@@ -9,13 +9,13 @@
 
 The VFS is split into three layers:
 
-| Layer | File | Responsibility |
-|-------|------|---------------|
-| Object model | `fs.h` | `inode`, `file`, `file_descriptor`, operation tables |
-| Mount tree | `vfs.c` | `super_block`, path resolution, mount/umount |
-| File descriptor API | `fs.c` | Per-process fd table, `open`/`read`/`write`/… |
-| Filesystem registry | `mount.c` | `fs_type` list, `sys_mount`/`sys_umount` dispatch |
-| ext4 backend | `root.c` | lwext4 wrapper, root mount, symlink following |
+| Layer               | File      | Responsibility                                       |
+| ------------------- | --------- | ---------------------------------------------------- |
+| Object model        | `fs.h`    | `inode`, `file`, `file_descriptor`, operation tables |
+| Mount tree          | `vfs.c`   | `super_block`, path resolution, mount/umount         |
+| File descriptor API | `fs.c`    | Per-process fd table, `open`/`read`/`write`/…        |
+| Filesystem registry | `mount.c` | `fs_type` list, `sys_mount`/`sys_umount` dispatch    |
+| ext4 backend        | `root.c`  | lwext4 wrapper, root mount, symlink following        |
 
 ---
 
@@ -93,15 +93,15 @@ Each `task_struct` carries a flat array of `MAX_FD` (= `PAGE_SIZE / sizeof(file_
 
 ### File type constants
 
-| Constant | `i_mode` bits | Meaning |
-|----------|--------------|---------|
-| `S_IFREG` | `0100000` | Regular file |
-| `S_IFDIR` | `0040000` | Directory |
-| `S_IFLNK` | `0120000` | Symbolic link |
-| `S_IFCHR` | `0020000` | Character device |
-| `S_IFBLK` | `0060000` | Block device |
-| `S_IFIFO` | `0010000` | Named pipe |
-| `S_IFSOCK`| `0140000` | Socket |
+| Constant   | `i_mode` bits | Meaning          |
+| ---------- | ------------- | ---------------- |
+| `S_IFREG`  | `0100000`     | Regular file     |
+| `S_IFDIR`  | `0040000`     | Directory        |
+| `S_IFLNK`  | `0120000`     | Symbolic link    |
+| `S_IFCHR`  | `0020000`     | Character device |
+| `S_IFBLK`  | `0060000`     | Block device     |
+| `S_IFIFO`  | `0010000`     | Named pipe       |
+| `S_IFSOCK` | `0140000`     | Socket           |
 
 ---
 
@@ -221,15 +221,15 @@ void fs_register_type(fs_type *fst);  // prepend to fs_type_list
 
 ### Built-in filesystem types
 
-| Type | Registered by | `get_sb` |
-|------|--------------|---------|
-| `ext4` | `root.c` (`KERNEL_INIT 3`) | lwext4 `ext4_mount`, wraps in `ext4_mount_info` |
-| `proc` | `mount.c` (`KERNEL_INIT 2`) | stub (directory inode only) |
-| `sysfs` | `mount.c` (`KERNEL_INIT 2`) | stub |
-| `tmpfs` | `mount.c` (`KERNEL_INIT 2`) | stub |
-| `devtmpfs` | `mount.c` (`KERNEL_INIT 2`) | stub |
-| `none` | `mount.c` (`KERNEL_INIT 2`) | stub |
-| `devpts` | `src/dev/pts.c` (`KERNEL_INIT 5`) | real get_sb |
+| Type       | Registered by                     | `get_sb`                                        |
+| ---------- | --------------------------------- | ----------------------------------------------- |
+| `ext4`     | `root.c` (`KERNEL_INIT 3`)        | lwext4 `ext4_mount`, wraps in `ext4_mount_info` |
+| `proc`     | `mount.c` (`KERNEL_INIT 2`)       | stub (directory inode only)                     |
+| `sysfs`    | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
+| `tmpfs`    | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
+| `devtmpfs` | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
+| `none`     | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
+| `devpts`   | `src/dev/pts.c` (`KERNEL_INIT 5`) | real get_sb                                     |
 
 Stub filesystems return a `super_block` whose `open_root` returns a directory inode (so `stat` on the mount point works). Sub-path opens return `NULL` (`ENOENT`).
 
@@ -274,30 +274,30 @@ int fs_open(const char *path, int flag, char *mode);
 
 Converts user-supplied paths to absolute paths before passing to `vfs_open`:
 
-| Input | Output |
-|-------|--------|
-| `"."` | cwd |
-| `".."` | parent of cwd |
-| `"/foo/bar/.."` | `/foo/` |
-| `"./rel"` | `cwd + "/" + "rel"` |
-| Absolute path | copy verbatim, normalise trailing `/.` or `/..` |
+| Input           | Output                                          |
+| --------------- | ----------------------------------------------- |
+| `"."`           | cwd                                             |
+| `".."`          | parent of cwd                                   |
+| `"/foo/bar/.."` | `/foo/`                                         |
+| `"./rel"`       | `cwd + "/" + "rel"`                             |
+| Absolute path   | copy verbatim, normalise trailing `/.` or `/..` |
 
 ### Core operations
 
-| Function | Behaviour |
-|----------|----------|
-| `fs_read(fd, offset, buf, len)` | If `offset != -1`: set `f_pos = offset`; call `f_fop->read` |
-| `fs_write(fd, offset, buf, len)` | Same for write |
-| `fs_seek(fd, offset, whence)` | `f_fop->llseek`; updates `f_pos` |
-| `fs_llseek(fd, hi, lo, result, whence)` | 64-bit seek; writes new pos to `*result` |
-| `fs_close(fd)` | Clears fd slot; calls `fs_put_file` (may trigger `release`) |
-| `fs_stat(path, s)` | `vfs_open` + `i_op->getattr` + `fs_put_file` |
-| `fs_fstat(fd, s)` | `i_op->getattr` on already-open fd |
-| `fs_ioctl(fd, cmd, buf)` | `f_fop->ioctl` |
-| `fs_select(fd, type)` | `f_fop->poll` — returns 0 if ready, -1 if not |
-| `fs_sync(fd)` | `f_fop->flush` |
-| `fs_chmod(path, mode)` | `vfs_open` + `i_op->setattr` |
-| `fs_chown(path, uid, gid)` | `vfs_open` + `i_op->chown` |
+| Function                                | Behaviour                                                   |
+| --------------------------------------- | ----------------------------------------------------------- |
+| `fs_read(fd, offset, buf, len)`         | If `offset != -1`: set `f_pos = offset`; call `f_fop->read` |
+| `fs_write(fd, offset, buf, len)`        | Same for write                                              |
+| `fs_seek(fd, offset, whence)`           | `f_fop->llseek`; updates `f_pos`                            |
+| `fs_llseek(fd, hi, lo, result, whence)` | 64-bit seek; writes new pos to `*result`                    |
+| `fs_close(fd)`                          | Clears fd slot; calls `fs_put_file` (may trigger `release`) |
+| `fs_stat(path, s)`                      | `vfs_open` + `i_op->getattr` + `fs_put_file`                |
+| `fs_fstat(fd, s)`                       | `i_op->getattr` on already-open fd                          |
+| `fs_ioctl(fd, cmd, buf)`                | `f_fop->ioctl`                                              |
+| `fs_select(fd, type)`                   | `f_fop->poll` — returns 0 if ready, -1 if not               |
+| `fs_sync(fd)`                           | `f_fop->flush`                                              |
+| `fs_chmod(path, mode)`                  | `vfs_open` + `i_op->setattr`                                |
+| `fs_chown(path, uid, gid)`              | `vfs_open` + `i_op->chown`                                  |
 
 ### `fs_dup` / `fs_dup2`
 
@@ -348,10 +348,10 @@ Symlink resolution (`fs_resolve_symlink_path`):
 
 ### File vs directory objects
 
-| Backend | `file_operations` | `inode_operations` |
-|---------|-------------------|-------------------|
-| `ext4_file` | read, write, llseek, poll, release | getattr, setattr, chown |
-| `ext4_dir` | read (returns `linux_dirent` records), llseek, poll, flush, release | getattr, setattr, chown |
+| Backend     | `file_operations`                                                   | `inode_operations`      |
+| ----------- | ------------------------------------------------------------------- | ----------------------- |
+| `ext4_file` | read, write, llseek, poll, release                                  | getattr, setattr, chown |
+| `ext4_dir`  | read (returns `linux_dirent` records), llseek, poll, flush, release | getattr, setattr, chown |
 
 Directory `read` fills a buffer with `linux_dirent` structs (compatible with `getdents` syscall):
 

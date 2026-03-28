@@ -7,13 +7,13 @@
 
 ## Overview
 
-| Component | File | Responsibility |
-|-----------|------|---------------|
-| Signal data structures | `signal.h` | `sigaction`, `signal_frame`, signal numbers, masks |
-| Delivery engine | `syscall_proc.c` | `do_signal` — builds frame, redirects `iret` |
-| Return trampoline | `vdso.c` | `vdso_sigreturn_tramp` — user-space `sys_sigreturn` stub |
-| vDSO mapping | `vdso.c` | `mm_vdso_map` — maps kernel trampoline code into user space |
-| Syscall interface | `syscall_proc.c` | `sys_kill`, `sys_sigaction`, `sys_sigprocmask`, `sys_sigreturn`, `sys_alarm`, `sys_pause` |
+| Component              | File             | Responsibility                                                                            |
+| ---------------------- | ---------------- | ----------------------------------------------------------------------------------------- |
+| Signal data structures | `signal.h`       | `sigaction`, `signal_frame`, signal numbers, masks                                        |
+| Delivery engine        | `syscall_proc.c` | `do_signal` — builds frame, redirects `iret`                                              |
+| Return trampoline      | `vdso.c`         | `vdso_sigreturn_tramp` — user-space `sys_sigreturn` stub                                  |
+| vDSO mapping           | `vdso.c`         | `mm_vdso_map` — maps kernel trampoline code into user space                               |
+| Syscall interface      | `syscall_proc.c` | `sys_kill`, `sys_sigaction`, `sys_sigprocmask`, `sys_sigreturn`, `sys_alarm`, `sys_pause` |
 
 ---
 
@@ -46,21 +46,21 @@ struct sigaction {
 
 Linux/i386 ABI (1–31, `NSIG = 32`):
 
-| Signal | Number | Default action |
-|--------|--------|---------------|
-| `SIGHUP` | 1 | terminate |
-| `SIGINT` | 2 | terminate |
-| `SIGILL` | 4 | terminate |
-| `SIGKILL` | 9 | terminate (cannot be caught/ignored/blocked) |
-| `SIGSEGV` | 11 | terminate |
-| `SIGALRM` | 14 | terminate |
-| `SIGTERM` | 15 | terminate |
-| `SIGCHLD` | 17 | **ignore** |
-| `SIGCONT` | 18 | **ignore** |
-| `SIGSTOP` | 19 | stop (cannot be caught/ignored/blocked) |
-| `SIGWINCH` | 28 | **ignore** |
-| `SIGURG` | 23 | **ignore** |
-| all others | — | terminate |
+| Signal     | Number | Default action                               |
+| ---------- | ------ | -------------------------------------------- |
+| `SIGHUP`   | 1      | terminate                                    |
+| `SIGINT`   | 2      | terminate                                    |
+| `SIGILL`   | 4      | terminate                                    |
+| `SIGKILL`  | 9      | terminate (cannot be caught/ignored/blocked) |
+| `SIGSEGV`  | 11     | terminate                                    |
+| `SIGALRM`  | 14     | terminate                                    |
+| `SIGTERM`  | 15     | terminate                                    |
+| `SIGCHLD`  | 17     | **ignore**                                   |
+| `SIGCONT`  | 18     | **ignore**                                   |
+| `SIGSTOP`  | 19     | stop (cannot be caught/ignored/blocked)      |
+| `SIGWINCH` | 28     | **ignore**                                   |
+| `SIGURG`   | 23     | **ignore**                                   |
+| all others | —      | terminate                                    |
 
 `SIGKILL` and `SIGSTOP` always call `sys_exit(sig | 0x80)` / stop — they can never be caught, ignored, or blocked.
 
@@ -293,16 +293,16 @@ Thin wrapper: `sig == 0` → existence check only; otherwise calls `ps_send_sign
 
 ## 8. Signal-related syscalls
 
-| Syscall | Number | Description |
-|---------|--------|-------------|
-| `sys_kill` | 37 | Send signal to process |
-| `sys_sigaction` | 67 | Get/set `sigaction` for a signal |
-| `sys_sigprocmask` | 126 | Block/unblock/replace signal mask |
-| `sys_sigreturn` | 119 | Restore context after handler |
-| `sys_alarm` | 27 | Set `SIGALRM` timer (seconds) |
-| `sys_pause` | 29 | Block until any signal is deliverable |
-| `sys_sigaction` (rt) | 174 | `rt_sigaction` alias |
-| `sys_sigprocmask` (rt) | 175 | `rt_sigprocmask` alias |
+| Syscall                | Number | Description                           |
+| ---------------------- | ------ | ------------------------------------- |
+| `sys_kill`             | 37     | Send signal to process                |
+| `sys_sigaction`        | 67     | Get/set `sigaction` for a signal      |
+| `sys_sigprocmask`      | 126    | Block/unblock/replace signal mask     |
+| `sys_sigreturn`        | 119    | Restore context after handler         |
+| `sys_alarm`            | 27     | Set `SIGALRM` timer (seconds)         |
+| `sys_pause`            | 29     | Block until any signal is deliverable |
+| `sys_sigaction` (rt)   | 174    | `rt_sigaction` alias                  |
+| `sys_sigprocmask` (rt) | 175    | `rt_sigprocmask` alias                |
 
 ### `sys_sigaction`
 

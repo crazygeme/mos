@@ -45,10 +45,10 @@ spinlock_uninit(&lock);     // tear down (e.g. on device removal)
 
 A **binary event** (not a counting semaphore). The event starts in one of two states:
 
-| `initstat` passed to `cond_init` | Meaning |
-|---|---|
-| `0` (available) | `cond_wait` returns immediately on first call |
-| `1` (taken) | `cond_wait` blocks until `cond_notify` fires |
+| `initstat` passed to `cond_init` | Meaning                                       |
+| -------------------------------- | --------------------------------------------- |
+| `0` (available)                  | `cond_wait` returns immediately on first call |
+| `1` (taken)                      | `cond_wait` blocks until `cond_notify` fires  |
 
 ### When to use
 
@@ -213,13 +213,13 @@ sem_post_at_intr(&s); // atomic increment only; no task_sched call
 
 ## Quick-reference table
 
-| Primitive | Sleeps? | Interrupt-safe? | Recursive? | Multiple holders? |
-|---|---|---|---|---|
-| `spinlock_t` | No (busy-wait) | Yes | No | No |
-| `cond_t` | Yes (`_at_intr` no) | `_at_intr` only | N/A | No |
-| `mutex_t` | Yes | No | No | No |
-| `rwlock_t` | Yes | No | No | Yes (readers) |
-| `sem_t` | Yes (`_at_intr` no) | `_at_intr` only | No | No (per count) |
+| Primitive    | Sleeps?             | Interrupt-safe? | Recursive? | Multiple holders? |
+| ------------ | ------------------- | --------------- | ---------- | ----------------- |
+| `spinlock_t` | No (busy-wait)      | Yes             | No         | No                |
+| `cond_t`     | Yes (`_at_intr` no) | `_at_intr` only | N/A        | No                |
+| `mutex_t`    | Yes                 | No              | No         | No                |
+| `rwlock_t`   | Yes                 | No              | No         | Yes (readers)     |
+| `sem_t`      | Yes (`_at_intr` no) | `_at_intr` only | No         | No (per count)    |
 
 ## Internal building block: `lock_base`
 

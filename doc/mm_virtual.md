@@ -9,11 +9,11 @@
 
 Virtual memory is managed across three layers:
 
-| Layer | File | Responsibility |
-|-------|------|---------------|
-| Page table management | `mm.c` | PDE/PTE manipulation, kernel heap, mapping primitives |
-| VM region map | `mmap.c` | Per-process address space descriptor, `mmap`/`munmap` |
-| Page fault handler | `pagefault.c` | Demand paging, CoW, file-backed faults, page cache |
+| Layer                 | File          | Responsibility                                        |
+| --------------------- | ------------- | ----------------------------------------------------- |
+| Page table management | `mm.c`        | PDE/PTE manipulation, kernel heap, mapping primitives |
+| VM region map         | `mmap.c`      | Per-process address space descriptor, `mmap`/`munmap` |
+| Page fault handler    | `pagefault.c` | Demand paging, CoW, file-backed faults, page cache    |
 
 ---
 
@@ -54,13 +54,13 @@ ADDR_TO_PET_OFFSET(addr)  // bits [21:12] → PTE index (0-1023)
 
 ### PTE flag bits
 
-| Flag | Bit | Meaning |
-|------|-----|---------|
-| `PAGE_ENTRY_PRESENT` | 0 | Page is valid |
-| `PAGE_ENTRY_WRITABLE` | 1 | Writable |
-| `PAGE_ENTRY_DPL_USER` | 2 | User-accessible |
-| `PAGE_ENTRY_WT` | 3 | Write-through cache |
-| `PAGE_ENTRY_CD` | 4 | Cache disable |
+| Flag                  | Bit | Meaning             |
+| --------------------- | --- | ------------------- |
+| `PAGE_ENTRY_PRESENT`  | 0   | Page is valid       |
+| `PAGE_ENTRY_WRITABLE` | 1   | Writable            |
+| `PAGE_ENTRY_DPL_USER` | 2   | User-accessible     |
+| `PAGE_ENTRY_WT`       | 3   | Write-through cache |
+| `PAGE_ENTRY_CD`       | 4   | Cache disable       |
 
 Composite flags:
 
@@ -112,18 +112,18 @@ typedef struct {
 
 ### Mapping primitives
 
-| Function | Description |
-|----------|-------------|
-| `mm_kmap_page(vir)` | Map kernel vaddr → phys = vir − KERNEL_OFFSET; ref-counts the page |
-| `mm_kunmap_page(vir)` | Unmap and deref |
-| `mm_map_page(vir, phy, flag)` | Map user vaddr → phy (allocates a new page if phy=0); ref-counts |
-| `mm_unmap_page(vir)` | Unmap user page; frees physical page when ref_count reaches 0 |
-| `mm_kmap_phys(phys)` | Map firmware/MMIO phys → virt = phys + KERNEL_OFFSET; no ref-counting |
-| `mm_map_io(phy)` | Map high MMIO address (virt = phy) directly |
-| `mm_del_user_map()` | Clears PDE[0] and PDE[1] (removes the boot identity map) |
-| `mm_get_map_flag(vir)` | Return PTE flags for vaddr |
-| `mm_set_map_flag(vir, flag)` | Overwrite PTE flags |
-| `mm_get_attached_page_index(vir)` | Return physical page index for vaddr |
+| Function                          | Description                                                           |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `mm_kmap_page(vir)`               | Map kernel vaddr → phys = vir − KERNEL_OFFSET; ref-counts the page    |
+| `mm_kunmap_page(vir)`             | Unmap and deref                                                       |
+| `mm_map_page(vir, phy, flag)`     | Map user vaddr → phy (allocates a new page if phy=0); ref-counts      |
+| `mm_unmap_page(vir)`              | Unmap user page; frees physical page when ref_count reaches 0         |
+| `mm_kmap_phys(phys)`              | Map firmware/MMIO phys → virt = phys + KERNEL_OFFSET; no ref-counting |
+| `mm_map_io(phy)`                  | Map high MMIO address (virt = phy) directly                           |
+| `mm_del_user_map()`               | Clears PDE[0] and PDE[1] (removes the boot identity map)              |
+| `mm_get_map_flag(vir)`            | Return PTE flags for vaddr                                            |
+| `mm_set_map_flag(vir, flag)`      | Overwrite PTE flags                                                   |
+| `mm_get_attached_page_index(vir)` | Return physical page index for vaddr                                  |
 
 ### Kernel heap: `vm_alloc` / `vm_free`
 
@@ -385,23 +385,23 @@ across `fork()`** (via `vm_dup`), so parent and child share the same
 
 #### Comparison: MAP_SHARED vs MAP_PRIVATE
 
-| | MAP_SHARED | MAP_PRIVATE |
-|---|---|---|
-| Cache | `shared_map` (non-evicting) | `mmap_cache` (LRU, read-only) or no cache (writable) |
-| Write fault | Flip PTE writable in-place; mark dirty if file-backed | CoW if `ref_count > 1`; else flip PTE |
-| Fork | Child maps same physical page (same `shared_map` entry) | Child gets CoW copy on first write |
-| Writeback | `vm_flush_dirty_region` on munmap / exit | Never |
+|             | MAP_SHARED                                              | MAP_PRIVATE                                          |
+| ----------- | ------------------------------------------------------- | ---------------------------------------------------- |
+| Cache       | `shared_map` (non-evicting)                             | `mmap_cache` (LRU, read-only) or no cache (writable) |
+| Write fault | Flip PTE writable in-place; mark dirty if file-backed   | CoW if `ref_count > 1`; else flip PTE                |
+| Fork        | Child maps same physical page (same `shared_map` entry) | Child gets CoW copy on first write                   |
+| Writeback   | `vm_flush_dirty_region` on munmap / exit                | Never                                                |
 
 ### `pf_handle_permission` — write fault on a present page
 
 Dispatches based on region flags:
 
-| Condition | Action |
-|-----------|--------|
-| `MAP_SHARED` | Flip PTE writable in-place (`pf_handle_readonly`). If file-backed, mark physical page dirty (`phymm_mark_dirty`). |
-| `MAP_PRIVATE`, `ref_count > 1` | CoW: allocate a private copy (`pf_handle_cow`). |
-| `MAP_PRIVATE`, `ref_count == 1` | Sole owner; just flip PTE writable (`pf_handle_readonly`). |
-| No covering region, or `PROT_WRITE` not set | Return 0 → SIGSEGV. |
+| Condition                                   | Action                                                                                                            |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `MAP_SHARED`                                | Flip PTE writable in-place (`pf_handle_readonly`). If file-backed, mark physical page dirty (`phymm_mark_dirty`). |
+| `MAP_PRIVATE`, `ref_count > 1`              | CoW: allocate a private copy (`pf_handle_cow`).                                                                   |
+| `MAP_PRIVATE`, `ref_count == 1`             | Sole owner; just flip PTE writable (`pf_handle_readonly`).                                                        |
+| No covering region, or `PROT_WRITE` not set | Return 0 → SIGSEGV.                                                                                               |
 
 #### CoW sequence: `pf_handle_cow`
 
@@ -452,14 +452,14 @@ dirtying the shared zero page.
 
 ### Instrumentation counters
 
-| Counter | Meaning |
-|---------|---------|
-| `page_fault_cow` | CoW faults |
-| `page_fault_invalid` | Anonymous demand-page faults |
-| `page_fault_file` | File-backed demand-page faults |
-| `page_fault_file_cache_hit` | File faults served from page cache |
-| `page_fault_perm` | Permission-upgrade (read-only → writable) faults |
-| `page_fault_file_read` | Total bytes read from disk for file faults |
+| Counter                     | Meaning                                          |
+| --------------------------- | ------------------------------------------------ |
+| `page_fault_cow`            | CoW faults                                       |
+| `page_fault_invalid`        | Anonymous demand-page faults                     |
+| `page_fault_file`           | File-backed demand-page faults                   |
+| `page_fault_file_cache_hit` | File faults served from page cache               |
+| `page_fault_perm`           | Permission-upgrade (read-only → writable) faults |
+| `page_fault_file_read`      | Total bytes read from disk for file faults       |
 
 Cycle-accurate timing is collected when `TestControl.profiling == 1`.
 

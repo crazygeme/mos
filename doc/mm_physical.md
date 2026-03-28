@@ -29,11 +29,11 @@ typedef struct _phymm_page {
 
 Special sentinel values:
 
-| Value | Meaning |
-|-------|---------|
-| `PHYMM_INVALID` (0xFFFFFFFF) | End-of-list / invalid page index |
-| `PHYMM_RESERVED` (0xFFFFFFFE) | `ref_count`: page is a non-RAM hole |
-| `PHYMM_ORDER_NONE` (0xFE) | `order`: non-head page inside a multi-page block |
+| Value                         | Meaning                                          |
+| ----------------------------- | ------------------------------------------------ |
+| `PHYMM_INVALID` (0xFFFFFFFF)  | End-of-list / invalid page index                 |
+| `PHYMM_RESERVED` (0xFFFFFFFE) | `ref_count`: page is a non-RAM hole              |
+| `PHYMM_ORDER_NONE` (0xFE)     | `order`: non-head page inside a multi-page block |
 
 `phymm_pages` is a global pointer to the array, mapped into the kernel
 virtual window during boot by `phymm_setup_mgmt_pages`.
@@ -42,11 +42,11 @@ virtual window during boot by `phymm_setup_mgmt_pages`.
 
 ## Global bounds
 
-| Variable | Meaning |
-|----------|---------|
-| `phymm_begin` | First page index the allocator may hand out |
-| `phymm_end` | Exclusive upper bound (highest physical page) |
-| `phymm_used` | Count of pages currently with `ref_count > 0` |
+| Variable      | Meaning                                       |
+| ------------- | --------------------------------------------- |
+| `phymm_begin` | First page index the allocator may hand out   |
+| `phymm_end`   | Exclusive upper bound (highest physical page) |
+| `phymm_used`  | Count of pages currently with `ref_count > 0` |
 
 `phymm_begin` is set in `boot_stage1` to skip:
 1. Pages below the first usable RAM region (`mem_low / PAGE_SIZE`)

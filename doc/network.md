@@ -38,15 +38,15 @@ lwIP runs in **NO_SYS mode** — no internal threads. All protocol processing ha
 
 Accessed via MMIO at BAR0. Key register groups:
 
-| Register | Offset | Purpose |
-|----------|--------|---------|
-| `CTRL` | 0x0000 | Control (reset, link-up) |
-| `ICR` / `IMS` / `IMC` | 0x00C0/D0/D8 | Interrupt cause / mask set / mask clear |
-| `RCTL` | 0x0100 | Receive control (enable, buffer size, promiscuous) |
-| `TCTL` / `TIPG` | 0x0400/10 | Transmit control / inter-packet gap |
-| `RDBAL/H/LEN/H/T` | 0x2800… | RX descriptor ring base, length, head, tail |
-| `TDBAL/H/LEN/H/T` | 0x3800… | TX descriptor ring base, length, head, tail |
-| `RAL0` / `RAH0` | 0x5400/04 | Receive address (MAC) filter |
+| Register              | Offset       | Purpose                                            |
+| --------------------- | ------------ | -------------------------------------------------- |
+| `CTRL`                | 0x0000       | Control (reset, link-up)                           |
+| `ICR` / `IMS` / `IMC` | 0x00C0/D0/D8 | Interrupt cause / mask set / mask clear            |
+| `RCTL`                | 0x0100       | Receive control (enable, buffer size, promiscuous) |
+| `TCTL` / `TIPG`       | 0x0400/10    | Transmit control / inter-packet gap                |
+| `RDBAL/H/LEN/H/T`     | 0x2800…      | RX descriptor ring base, length, head, tail        |
+| `TDBAL/H/LEN/H/T`     | 0x3800…      | TX descriptor ring base, length, head, tail        |
+| `RAL0` / `RAH0`       | 0x5400/04    | Receive address (MAC) filter                       |
 
 DMA buffers live in the kernel heap. Physical address = virtual − `KERNEL_OFFSET`. MMIO base is mapped via `mm_map_io` (high physical address mapped directly).
 
@@ -108,13 +108,13 @@ void net_init(void)
 
 Sets the lwIP netif fields from the `nic_dev`:
 
-| Field | Value |
-|-------|-------|
-| `hwaddr` | copied from `nic->mac_addr` |
-| `mtu` | 1500 |
-| `flags` | `BROADCAST | ETHARP | LINK_UP` |
-| `name` | `"e0"` |
-| `output` | `etharp_output` (ARP → IP) |
+| Field        | Value                            |
+| ------------ | -------------------------------- |
+| `hwaddr`     | copied from `nic->mac_addr`      |
+| `mtu`        | 1500                             |
+| `flags`      | `BROADCAST                       | ETHARP | LINK_UP` |
+| `name`       | `"e0"`                           |
+| `output`     | `etharp_output` (ARP → IP)       |
 | `linkoutput` | `eth0_linkoutput` (kernel → NIC) |
 
 ### RX path — two-phase deferred design
@@ -267,13 +267,13 @@ lwIP callbacks (`tcp_on_recv`, `udp_on_recv`, etc.) call `sock_wakeup(sk)` which
 
 ### TCP callbacks
 
-| Callback | Trigger | Action |
-|----------|---------|--------|
-| `tcp_on_recv` | data received | copy pbuf chain → `rxbuf`; `tcp_recved(acked)`; `sock_wakeup` |
-| `tcp_on_recv` (p=NULL) | remote FIN | `state = SS_DISCONNECTING`; `sock_wakeup` |
-| `tcp_on_connected` | connect completed | `state = SS_CONNECTED`; `sock_wakeup` |
-| `tcp_on_err` | connection reset/aborted | `tcp = NULL`; `err = -ECONNREFUSED`; `sock_wakeup` |
-| `tcp_on_accept` | new connection | push `newpcb` onto `accept_queue`; `sock_wakeup` |
+| Callback               | Trigger                  | Action                                                        |
+| ---------------------- | ------------------------ | ------------------------------------------------------------- |
+| `tcp_on_recv`          | data received            | copy pbuf chain → `rxbuf`; `tcp_recved(acked)`; `sock_wakeup` |
+| `tcp_on_recv` (p=NULL) | remote FIN               | `state = SS_DISCONNECTING`; `sock_wakeup`                     |
+| `tcp_on_connected`     | connect completed        | `state = SS_CONNECTED`; `sock_wakeup`                         |
+| `tcp_on_err`           | connection reset/aborted | `tcp = NULL`; `err = -ECONNREFUSED`; `sock_wakeup`            |
+| `tcp_on_accept`        | new connection           | push `newpcb` onto `accept_queue`; `sock_wakeup`              |
 
 ### UDP callback
 
@@ -291,11 +291,11 @@ lwIP callbacks (`tcp_on_recv`, `udp_on_recv`, etc.) call `sock_wakeup(sk)` which
 
 Supported combinations (`domain = AF_INET`):
 
-| `type` | `protocol` | lwIP PCB |
-|--------|-----------|---------|
-| `SOCK_STREAM` | `IPPROTO_TCP` | `tcp_new()` |
-| `SOCK_DGRAM` | `IPPROTO_UDP` | `udp_new()` |
-| `SOCK_RAW` | `IPPROTO_ICMP` | `raw_new(IP_PROTO_ICMP)` |
+| `type`        | `protocol`     | lwIP PCB                 |
+| ------------- | -------------- | ------------------------ |
+| `SOCK_STREAM` | `IPPROTO_TCP`  | `tcp_new()`              |
+| `SOCK_DGRAM`  | `IPPROTO_UDP`  | `udp_new()`              |
+| `SOCK_RAW`    | `IPPROTO_ICMP` | `raw_new(IP_PROTO_ICMP)` |
 
 Returns `-EAFNOSUPPORT` for any domain other than `AF_INET`. Wraps `mos_sock` in a VFS `file`, installs as fd, returns fd number.
 
@@ -401,11 +401,11 @@ sock_wakeup(peer)         ← outside lock (safe)
 
 ### SOCK_STREAM vs SOCK_DGRAM
 
-| | SOCK_STREAM | SOCK_DGRAM |
-|-|-------------|------------|
-| Ring buffer encoding | raw bytes | 2-byte length prefix + payload (same as UDP) |
-| EOF on peer close | `state → SS_DISCONNECTING`, read returns 0 | timeout (`-ETIMEDOUT`) |
-| `sock_poll` write-ready | `unix_peer != NULL` | `unix_peer != NULL` |
+|                         | SOCK_STREAM                                | SOCK_DGRAM                                   |
+| ----------------------- | ------------------------------------------ | -------------------------------------------- |
+| Ring buffer encoding    | raw bytes                                  | 2-byte length prefix + payload (same as UDP) |
+| EOF on peer close       | `state → SS_DISCONNECTING`, read returns 0 | timeout (`-ETIMEDOUT`)                       |
+| `sock_poll` write-ready | `unix_peer != NULL`                        | `unix_peer != NULL`                          |
 
 ---
 
@@ -417,50 +417,50 @@ Both `setsockopt` and `getsockopt` are dispatched through `do_setsockopt` / `do_
 
 ### `SOL_SOCKET`
 
-| Option | set | get | Notes |
-|--------|-----|-----|-------|
-| `SO_REUSEADDR` | ✓ | ✓ | `ip_set/reset_option(SOF_REUSEADDR)` on TCP or UDP PCB |
-| `SO_KEEPALIVE` | ✓ | ✓ | `ip_set/reset_option(SOF_KEEPALIVE)` on TCP PCB; `-ENOPROTOOPT` for non-STREAM |
-| `SO_ERROR` | — | ✓ | Returns `sk->err` (positive errno) and clears it to 0; `set` returns `-ENOPROTOOPT` |
-| `SO_TYPE` | — | ✓ | Returns `sk->type` (`SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW`) |
-| `SO_RCVBUF` | ignored | ✓ | `get` always returns `SOCK_RXBUF_SIZE` (8192); `set` is silently accepted |
-| `SO_SNDBUF` | ignored | ✓ | `get` returns `tcp_sndbuf(sk->tcp)` for TCP, 0 otherwise; `set` is silently accepted |
-| `SO_LINGER` | ignored | — | silently accepted |
-| `SO_RCVTIMEO` | ignored | — | silently accepted |
-| `SO_SNDTIMEO` | ignored | — | silently accepted |
-| `SO_TIMESTAMP` | ✓ | ✓ | Enables/disables `SOCK_CMSG_TIMESTAMP` flag; causes `recvmsg` to attach a `struct timeval` cmsg (`SOL_SOCKET / SCM_TIMESTAMP`) to each received message |
+| Option         | set     | get | Notes                                                                                                                                                   |
+| -------------- | ------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SO_REUSEADDR` | ✓       | ✓   | `ip_set/reset_option(SOF_REUSEADDR)` on TCP or UDP PCB                                                                                                  |
+| `SO_KEEPALIVE` | ✓       | ✓   | `ip_set/reset_option(SOF_KEEPALIVE)` on TCP PCB; `-ENOPROTOOPT` for non-STREAM                                                                          |
+| `SO_ERROR`     | —       | ✓   | Returns `sk->err` (positive errno) and clears it to 0; `set` returns `-ENOPROTOOPT`                                                                     |
+| `SO_TYPE`      | —       | ✓   | Returns `sk->type` (`SOCK_STREAM` / `SOCK_DGRAM` / `SOCK_RAW`)                                                                                          |
+| `SO_RCVBUF`    | ignored | ✓   | `get` always returns `SOCK_RXBUF_SIZE` (8192); `set` is silently accepted                                                                               |
+| `SO_SNDBUF`    | ignored | ✓   | `get` returns `tcp_sndbuf(sk->tcp)` for TCP, 0 otherwise; `set` is silently accepted                                                                    |
+| `SO_LINGER`    | ignored | —   | silently accepted                                                                                                                                       |
+| `SO_RCVTIMEO`  | ignored | —   | silently accepted                                                                                                                                       |
+| `SO_SNDTIMEO`  | ignored | —   | silently accepted                                                                                                                                       |
+| `SO_TIMESTAMP` | ✓       | ✓   | Enables/disables `SOCK_CMSG_TIMESTAMP` flag; causes `recvmsg` to attach a `struct timeval` cmsg (`SOL_SOCKET / SCM_TIMESTAMP`) to each received message |
 
 ### `IPPROTO_IP` / `IPPROTO_ICMP` / `IPPROTO_RAW`
 
 All three level values are handled by the same branch.
 
-| Option | set | get | Notes |
-|--------|-----|-----|-------|
-| `IP_HDRINCL` | ✓ | ✓ | `SOCK_RAW` only; application supplies the full IP header on `send`; `-ENOPROTOOPT` for other types |
-| `IP_TTL` | ✓ | ✓ | Enables/disables `SOCK_CMSG_TTL` flag; causes `recvmsg` to attach an `int` TTL cmsg (`IPPROTO_IP / IP_TTL`) |
-| `IP_PKTINFO` | ✓ | ✓ | Enables/disables `SOCK_CMSG_PKTINFO` flag; causes `recvmsg` to attach a `struct in_pktinfo` cmsg (`IPPROTO_IP / IP_PKTINFO`) with destination address and interface index |
-| `ICMP_FILTER` | ✓ | ✓ | `SOCK_RAW + IPPROTO_ICMP` only; `set` stores a `struct icmp_filter` bitmask in `sk->icmp_filter` (bit N set → drop ICMP type N); `get` returns current bitmask |
-| `IP_RECVERR` | ignored | — | silently accepted |
+| Option        | set     | get | Notes                                                                                                                                                                     |
+| ------------- | ------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IP_HDRINCL`  | ✓       | ✓   | `SOCK_RAW` only; application supplies the full IP header on `send`; `-ENOPROTOOPT` for other types                                                                        |
+| `IP_TTL`      | ✓       | ✓   | Enables/disables `SOCK_CMSG_TTL` flag; causes `recvmsg` to attach an `int` TTL cmsg (`IPPROTO_IP / IP_TTL`)                                                               |
+| `IP_PKTINFO`  | ✓       | ✓   | Enables/disables `SOCK_CMSG_PKTINFO` flag; causes `recvmsg` to attach a `struct in_pktinfo` cmsg (`IPPROTO_IP / IP_PKTINFO`) with destination address and interface index |
+| `ICMP_FILTER` | ✓       | ✓   | `SOCK_RAW + IPPROTO_ICMP` only; `set` stores a `struct icmp_filter` bitmask in `sk->icmp_filter` (bit N set → drop ICMP type N); `get` returns current bitmask            |
+| `IP_RECVERR`  | ignored | —   | silently accepted                                                                                                                                                         |
 
 ### `IPPROTO_TCP`
 
 Only valid on `SOCK_STREAM` sockets; other types return `-ENOPROTOOPT`.
 
-| Option | set | get | Notes |
-|--------|-----|-----|-------|
-| `TCP_NODELAY` | ✓ | ✓ | `tcp_nagle_disable` / `tcp_nagle_enable` on lwIP PCB |
-| `TCP_KEEPIDLE` | ignored | — | silently accepted |
-| `TCP_MAXSEG` | — | ✓ | Returns `sk->tcp->mss`; falls back to 536 if PCB is not yet connected |
+| Option         | set     | get | Notes                                                                 |
+| -------------- | ------- | --- | --------------------------------------------------------------------- |
+| `TCP_NODELAY`  | ✓       | ✓   | `tcp_nagle_disable` / `tcp_nagle_enable` on lwIP PCB                  |
+| `TCP_KEEPIDLE` | ignored | —   | silently accepted                                                     |
+| `TCP_MAXSEG`   | —       | ✓   | Returns `sk->tcp->mss`; falls back to 536 if PCB is not yet connected |
 
 ### Ancillary data (cmsg) produced by `recvmsg`
 
 When enabled via `setsockopt`, the following control messages are appended to the `msg_control` buffer on each `recvmsg` call:
 
-| Flag | `cmsg_level` | `cmsg_type` | Data type | Source |
-|------|-------------|-------------|-----------|--------|
-| `SOCK_CMSG_TIMESTAMP` | `SOL_SOCKET` | `SO_TIMESTAMP` | `struct timeval` | `sk->rx_stamp` (set in `rx_write`) |
-| `SOCK_CMSG_TTL` | `IPPROTO_IP` | `IP_TTL` | `int` | `sk->rx_ttl` (set in RAW/UDP callbacks) |
-| `SOCK_CMSG_PKTINFO` | `IPPROTO_IP` | `IP_PKTINFO` | `struct in_pktinfo` | `sk->rx_dst` / `sk->rx_ifindex` (set in callbacks) |
+| Flag                  | `cmsg_level` | `cmsg_type`    | Data type           | Source                                             |
+| --------------------- | ------------ | -------------- | ------------------- | -------------------------------------------------- |
+| `SOCK_CMSG_TIMESTAMP` | `SOL_SOCKET` | `SO_TIMESTAMP` | `struct timeval`    | `sk->rx_stamp` (set in `rx_write`)                 |
+| `SOCK_CMSG_TTL`       | `IPPROTO_IP` | `IP_TTL`       | `int`               | `sk->rx_ttl` (set in RAW/UDP callbacks)            |
+| `SOCK_CMSG_PKTINFO`   | `IPPROTO_IP` | `IP_PKTINFO`   | `struct in_pktinfo` | `sk->rx_dst` / `sk->rx_ifindex` (set in callbacks) |
 
 ---
 
@@ -468,19 +468,19 @@ When enabled via `setsockopt`, the following control messages are appended to th
 
 `sock_ioctl` handles:
 
-| `cmd` | Behaviour |
-|-------|-----------|
-| `SIOCGSTAMP` | copy `sk->rx_stamp` to user — timestamp of last received packet |
-| `FIONREAD` | return `rx_used(sk)` — bytes available |
-| `FIONBIO` | silently accepted |
-| `SIOCGIFCONF` | fill `ifconf` with `eth0` and `lo` entries |
-| `SIOCGIFFLAGS` | `IFF_UP | IFF_RUNNING | IFF_BROADCAST | IFF_MULTICAST` for eth0; `IFF_LOOPBACK` for lo |
-| `SIOCGIFADDR` | interface IPv4 address |
-| `SIOCGIFNETMASK` | network mask |
-| `SIOCGIFBRDADDR` | broadcast address (`ip | ~mask`) |
-| `SIOCGIFHWADDR` | MAC address (`sa_family = ARPHRD_ETHER`) |
-| `SIOCGIFMTU` | MTU (1500 for eth0, 65536 for lo) |
-| `SIOCGIFINDEX` | interface index (dynamic: `netif->num + 1`; lo = 1, eth0 = 2) |
+| `cmd`            | Behaviour                                                       |
+| ---------------- | --------------------------------------------------------------- |
+| `SIOCGSTAMP`     | copy `sk->rx_stamp` to user — timestamp of last received packet |
+| `FIONREAD`       | return `rx_used(sk)` — bytes available                          |
+| `FIONBIO`        | silently accepted                                               |
+| `SIOCGIFCONF`    | fill `ifconf` with `eth0` and `lo` entries                      |
+| `SIOCGIFFLAGS`   | `IFF_UP                                                         | IFF_RUNNING | IFF_BROADCAST | IFF_MULTICAST` for eth0; `IFF_LOOPBACK` for lo |
+| `SIOCGIFADDR`    | interface IPv4 address                                          |
+| `SIOCGIFNETMASK` | network mask                                                    |
+| `SIOCGIFBRDADDR` | broadcast address (`ip                                          | ~mask`)     |
+| `SIOCGIFHWADDR`  | MAC address (`sa_family = ARPHRD_ETHER`)                        |
+| `SIOCGIFMTU`     | MTU (1500 for eth0, 65536 for lo)                               |
+| `SIOCGIFINDEX`   | interface index (dynamic: `netif->num + 1`; lo = 1, eth0 = 2)   |
 
 Interface names are lwIP-derived: `"e00"` for eth0 (matches `nif->name[0..1] + num`), `"lo"` for loopback.
 
@@ -492,26 +492,26 @@ The loopback interface (`lo`) is a real lwIP `netif` (127.0.0.1/8, name `"lo0"`)
 
 User space invokes socket operations via a single `sys_socketcall` (Linux i386 syscall 102). The first argument is the sub-call number:
 
-| Sub-call | Number | Function |
-|----------|--------|----------|
-| `SYS_SOCKET` | 1 | `do_socket` |
-| `SYS_BIND` | 2 | `do_bind` |
-| `SYS_CONNECT` | 3 | `do_connect` |
-| `SYS_LISTEN` | 4 | `do_listen` |
-| `SYS_ACCEPT` | 5 | `do_accept` |
-| `SYS_GETSOCKNAME` | 6 | `do_getsockname` |
-| `SYS_GETPEERNAME` | 7 | `do_getpeername` |
-| `SYS_SOCKETPAIR` | 8 | `do_socketpair` |
-| `SYS_SEND` | 9 | `do_send` |
-| `SYS_RECV` | 10 | `do_recv` |
-| `SYS_SENDTO` | 11 | `do_sendto` |
-| `SYS_RECVFROM` | 12 | `do_recvfrom` |
-| `SYS_SHUTDOWN` | 13 | `do_shutdown` |
-| `SYS_SETSOCKOPT` | 14 | `do_setsockopt` |
-| `SYS_GETSOCKOPT` | 15 | `do_getsockopt` |
-| `SYS_SENDMSG` | 16 | `do_sendmsg` |
-| `SYS_RECVMSG` | 17 | `do_recvmsg` |
-| `SYS_ACCEPT4` | 18 | `do_accept` (flags ignored) |
+| Sub-call          | Number | Function                    |
+| ----------------- | ------ | --------------------------- |
+| `SYS_SOCKET`      | 1      | `do_socket`                 |
+| `SYS_BIND`        | 2      | `do_bind`                   |
+| `SYS_CONNECT`     | 3      | `do_connect`                |
+| `SYS_LISTEN`      | 4      | `do_listen`                 |
+| `SYS_ACCEPT`      | 5      | `do_accept`                 |
+| `SYS_GETSOCKNAME` | 6      | `do_getsockname`            |
+| `SYS_GETPEERNAME` | 7      | `do_getpeername`            |
+| `SYS_SOCKETPAIR`  | 8      | `do_socketpair`             |
+| `SYS_SEND`        | 9      | `do_send`                   |
+| `SYS_RECV`        | 10     | `do_recv`                   |
+| `SYS_SENDTO`      | 11     | `do_sendto`                 |
+| `SYS_RECVFROM`    | 12     | `do_recvfrom`               |
+| `SYS_SHUTDOWN`    | 13     | `do_shutdown`               |
+| `SYS_SETSOCKOPT`  | 14     | `do_setsockopt`             |
+| `SYS_GETSOCKOPT`  | 15     | `do_getsockopt`             |
+| `SYS_SENDMSG`     | 16     | `do_sendmsg`                |
+| `SYS_RECVMSG`     | 17     | `do_recvmsg`                |
+| `SYS_ACCEPT4`     | 18     | `do_accept` (flags ignored) |
 
 ---
 

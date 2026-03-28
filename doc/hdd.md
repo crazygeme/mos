@@ -10,10 +10,10 @@
 
 The ATA/IDE driver provides sector-level access to IDE disks with two transfer modes:
 
-| Mode | Trigger | Transfer mechanism |
-|---|---|---|
+| Mode               | Trigger                       | Transfer mechanism                           |
+| ------------------ | ----------------------------- | -------------------------------------------- |
 | **Bus Master DMA** | PCI IDE controller BAR4 found | PRDT → hardware DMA → bounce buffer → caller |
-| **PIO fallback** | No DMA available | Busy-loop `REP INSD`/`REP OUTSD` |
+| **PIO fallback**   | No DMA available              | Busy-loop `REP INSD`/`REP OUTSD`             |
 
 Above the raw disk layer sits a **write-back LRU block cache** (enabled by `HDD_CACHE_OPEN=1`) and an **lwext4 block device interface** for mounting ext4 partitions.
 
@@ -61,16 +61,16 @@ The PCI Command register is then updated to enable both **I/O space** (bit 0) an
 
 `dma_init_channel` runs after device identification and allocates:
 
-| Resource | Size | Notes |
-|---|---|---|
-| `prdt` (PRDT entry) | 8 bytes | Heap-allocated; phys = virt − `KERNEL_OFFSET` |
+| Resource                  | Size           | Notes                                                      |
+| ------------------------- | -------------- | ---------------------------------------------------------- |
+| `prdt` (PRDT entry)       | 8 bytes        | Heap-allocated; phys = virt − `KERNEL_OFFSET`              |
 | `dma_buf` (bounce buffer) | 4 KiB (1 page) | `vm_alloc(1)`; page-aligned, never crosses 64 KiB boundary |
 
 Channel BM base offsets:
 
-| Channel | BM base |
-|---|---|
-| Primary (ide0) | `g_bm_base + 0` |
+| Channel          | BM base         |
+| ---------------- | --------------- |
+| Primary (ide0)   | `g_bm_base + 0` |
 | Secondary (ide1) | `g_bm_base + 8` |
 
 ### Physical Region Descriptor Table (PRDT)
@@ -87,11 +87,11 @@ Each transfer uses a single-entry PRDT covering exactly 512 bytes (one sector).
 
 ### Bus Master registers
 
-| Offset | Name | Direction | Purpose |
-|---|---|---|---|
-| +0 | `BM_CMD` | W | bit 0 = start, bit 3 = direction (1=read, 0=write) |
-| +2 | `BM_STATUS` | R/W | bit 0 = active, bit 1 = error, bit 2 = IRQ (W1C) |
-| +4 | `BM_PRDT` | W | physical address of PRDT |
+| Offset | Name        | Direction | Purpose                                            |
+| ------ | ----------- | --------- | -------------------------------------------------- |
+| +0     | `BM_CMD`    | W         | bit 0 = start, bit 3 = direction (1=read, 0=write) |
+| +2     | `BM_STATUS` | R/W       | bit 0 = active, bit 1 = error, bit 2 = IRQ (W1C)   |
+| +4     | `BM_PRDT`   | W         | physical address of PRDT                           |
 
 ### DMA read sequence
 
@@ -160,11 +160,11 @@ Enabled by `HDD_CACHE_OPEN 1` in `config.h`.
 
 ### Parameters
 
-| Constant | Value | Meaning |
-|---|---|---|
-| `HDD_CACHE_SIZE` | 40960 pages | Maximum cache memory |
-| `CACHE_SECTOR_COUNT` | `HDD_CACHE_SIZE * 4096 / 512` | Max cached sectors |
-| `PREREAD_SECTOR` | 8 | Read-ahead group size (sectors) |
+| Constant             | Value                         | Meaning                         |
+| -------------------- | ----------------------------- | ------------------------------- |
+| `HDD_CACHE_SIZE`     | 40960 pages                   | Maximum cache memory            |
+| `CACHE_SECTOR_COUNT` | `HDD_CACHE_SIZE * 4096 / 512` | Max cached sectors              |
+| `PREREAD_SECTOR`     | 8                             | Read-ahead group size (sectors) |
 
 ### Organisation
 
@@ -177,21 +177,21 @@ Cache entries are keyed on the **head sector** of each 8-sector group (`HEAD_SEC
 
 Controlled by `HDD_CACHE_WRITE_POLICY`:
 
-| Policy | Constant | Behaviour |
-|---|---|---|
-| Write-back (default) | `HDD_CACHE_WRITE_BACK` | Writes update cache + dirty bit; flushed on eviction or `hdd_flush()` |
-| Write-through | `HDD_CACHE_WRITE_THOUGH` | Every write immediately calls `partition_write` |
+| Policy               | Constant                 | Behaviour                                                             |
+| -------------------- | ------------------------ | --------------------------------------------------------------------- |
+| Write-back (default) | `HDD_CACHE_WRITE_BACK`   | Writes update cache + dirty bit; flushed on eviction or `hdd_flush()` |
+| Write-through        | `HDD_CACHE_WRITE_THOUGH` | Every write immediately calls `partition_write`                       |
 
 ### Cache operations
 
-| Function | Description |
-|---|---|
-| `partition_cache_read` | Hit: copy from cache, promote to MRU. Miss: allocate/evict, read-ahead 8 sectors |
-| `partition_cache_write` | Hit: update cache, mark dirty. Miss: allocate/evict, write into new slot |
-| `partition_cache_flush` | Walk LRU list and write all dirty entries to disk |
-| `partition_cache_evict` | Free all cache entries for a partition (called on close) |
-| `hdd_flush()` | Flush all partitions (called on graceful shutdown) |
-| `hdd_close()` | Flush + evict all partitions |
+| Function                | Description                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `partition_cache_read`  | Hit: copy from cache, promote to MRU. Miss: allocate/evict, read-ahead 8 sectors |
+| `partition_cache_write` | Hit: update cache, mark dirty. Miss: allocate/evict, write into new slot         |
+| `partition_cache_flush` | Walk LRU list and write all dirty entries to disk                                |
+| `partition_cache_evict` | Free all cache entries for a partition (called on close)                         |
+| `hdd_flush()`           | Flush all partitions (called on graceful shutdown)                               |
+| `hdd_close()`           | Flush + evict all partitions                                                     |
 
 ---
 

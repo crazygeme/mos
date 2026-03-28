@@ -46,4 +46,13 @@ void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
 unsigned ps_id_gen();
 
+/* Set the kernel-mode segment selectors in a task's saved TSS.
+ * Used by both ps_create and the fork helpers. */
+static inline void task_init_selectors(task_struct *task)
+{
+	task->tss.fs = task->tss.gs = task->tss.ds = task->tss.es =
+		task->tss.ss = KERNEL_DATA_SELECTOR;
+	task->tss.cs = KERNEL_CODE_SELECTOR;
+}
+
 #endif /* _PS_INTERNAL_H_ */

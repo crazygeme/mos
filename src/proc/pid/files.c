@@ -35,7 +35,7 @@ static void maps_region_cb(vm_region *region, void *data)
 	maps_ctx *ctx = data;
 	char perms[5];
 	const char *name;
-	unsigned stack_begin = KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE;
+	unsigned stack_begin = ctx->task->user->stack_bottom;
 	unsigned stack_end = KERNEL_OFFSET;
 	int ino = 0;
 

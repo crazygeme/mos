@@ -448,10 +448,14 @@ static int pf_handle_page_invalid(unsigned cr2)
 	if (cur->user->stack_bottom > USER_ZONE_END &&
 	    this_begin >= USER_ZONE_END &&
 	    this_begin < cur->user->stack_bottom) {
-		unsigned new_bottom = this_begin;
-		do_mmap_kernel(new_bottom, cur->user->stack_bottom - new_bottom,
+		unsigned minimal_growse = USER_STACK_INIT_PAGES * PAGE_SIZE;
+		unsigned required_grow = cur->user->stack_bottom - this_begin;
+		unsigned grow_size = required_grow > minimal_growse ?
+					     required_grow :
+					     minimal_growse;
+		cur->user->stack_bottom = cur->user->stack_bottom - grow_size;
+		do_mmap_kernel(cur->user->stack_bottom, grow_size,
 			       PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0);
-		cur->user->stack_bottom = new_bottom;
 		region = vm_find_map(cur->user->vm, this_begin);
 	}
 

@@ -6,7 +6,6 @@ kernel_file="out/kernel"
 _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _verbose=""
-_profile=""
 _logtofile="stdio"
 _vga="-vga std"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
@@ -30,7 +29,8 @@ elif [ "$arg" == "debug" ]; then
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
 elif [ "$arg" == "profile" ]; then
-	_profile="profile"
+	kernel_file="out/kernel.dbg"
+	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "curses" ]; then
 	_window="curses"
 	_vga=""
@@ -140,7 +140,7 @@ qemu-system-i386 -cpu coreduo \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
 	-kernel $kernel_file \
-	-append "$_verbose $_profile $_bash" \
+	-append "$_verbose $_bash" \
 	-serial $_logtofile \
 	$_vga \
 	$_power \

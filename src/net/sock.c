@@ -93,10 +93,13 @@ void sock_wait(mos_sock *sk, unsigned long deadline)
 		return;
 
 	task_struct *cur = CURRENT_TASK();
-	timer_start(sock_timeout_cb, (unsigned)(deadline - now), 0, sk);
+	timer_t *t =
+		timer_start(sock_timeout_cb, (unsigned)(deadline - now), 0, sk);
 	sk->waiter = cur;
 	ps_put_to_wait_queue(cur, NULL, __func__);
 	task_sched();
+	// ok we wakeup
+	timer_stop(t);
 	sk->waiter = NULL;
 }
 

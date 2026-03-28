@@ -39,8 +39,11 @@ ps_control control;
 spinlock_t ps_lock; /* guards ready_queue, dying_queue, wait_queue, mgr_queue */
 spinlock_t map_lock; /* guards per-process page-table operations */
 
-static spinlock_t psid_lock; /* guards last_gen_pid counter */
-static unsigned last_gen_pid = 0;
+#define PID_MAX_DEFAULT 32768
+
+static spinlock_t psid_lock;
+static unsigned char pid_bitmap[PID_MAX_DEFAULT / 8]; /* 1 bit per PID */
+static unsigned last_pid = (unsigned)-1; /* last successfully allocated PID */
 
 int _ps_enabled = 0;
 
@@ -92,6 +95,7 @@ void ps_remove_mgr_unsafe(task_struct *task)
 		RB_CLEAR_NODE(&task->mgr_rb);
 	}
 	control.ps_count--;
+	ps_id_free(task->psid);
 }
 
 void ps_remove_mgr(task_struct *task)
@@ -150,7 +154,36 @@ static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)
 
 unsigned ps_id_gen()
 {
-	return __sync_fetch_and_add(&last_gen_pid, 1);
+	unsigned pid, start;
+
+	spinlock_lock(&psid_lock);
+	start = last_pid;
+	pid = start + 1;
+	if (pid >= PID_MAX_DEFAULT)
+		pid = 1;
+
+	while (pid != start) {
+		if (!(pid_bitmap[pid / 8] & (1 << (pid % 8)))) {
+			pid_bitmap[pid / 8] |= (1 << (pid % 8));
+			last_pid = pid;
+			spinlock_unlock(&psid_lock);
+			return pid;
+		}
+		if (++pid >= PID_MAX_DEFAULT)
+			pid = 0;
+	}
+
+	spinlock_unlock(&psid_lock);
+	return (unsigned)-1; /* PID space exhausted */
+}
+
+void ps_id_free(unsigned pid)
+{
+	if (pid >= PID_MAX_DEFAULT)
+		return;
+	spinlock_lock(&psid_lock);
+	pid_bitmap[pid / 8] &= ~(1 << (pid % 8));
+	spinlock_unlock(&psid_lock);
 }
 
 /*

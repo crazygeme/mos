@@ -3,6 +3,7 @@
 #include <lib/klib.h>
 #include <config.h>
 #include <macro.h>
+#include <errno.h>
 
 #define DEFAULT_BUF_PAGES (1)
 
@@ -10,7 +11,8 @@ typedef struct _cy_buf {
 	unsigned length;
 	unsigned write_idx;
 	unsigned read_idx;
-	cond_t event;
+	cond_t read_event; /* readers wait here: fires when data is available */
+	cond_t write_event; /* writers wait here: fires when space is available */
 	spinlock_t lock;
 	int writer_count;
 	int reader_count;
@@ -28,7 +30,8 @@ cy_buf *cyb_create(int pages)
 	b->buf_size = pages * PAGE_SIZE;
 	b->reader_count = b->writer_count = 1;
 	b->ref_count = 2;
-	cond_init(&b->event, 1);
+	cond_init(&b->read_event, 1);
+	cond_init(&b->write_event, 0); /* space available initially */
 	spinlock_init(&b->lock);
 	return b;
 }
@@ -42,7 +45,8 @@ cy_buf *cyb_create_named(int pages)
 	b->buf_size = pages * PAGE_SIZE;
 	b->reader_count = b->writer_count = 0;
 	b->ref_count = 1; /* device holds one reference */
-	cond_init(&b->event, 1);
+	cond_init(&b->read_event, 1);
+	cond_init(&b->write_event, 0); /* space available initially */
 	spinlock_init(&b->lock);
 	return b;
 }
@@ -59,74 +63,45 @@ void cyb_destroy(cy_buf *b)
  * Write path
  */
 
-void cyb_putc(cy_buf *b, unsigned char c)
+int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
+	       int interruptible)
 {
-	int notify;
-	spinlock_lock(&b->lock);
-	notify = (b->length == 0);
-	if (b->length == b->buf_size) {
-		/* Full: drop oldest byte to make room */
-		b->read_idx = (b->read_idx + 1) % b->buf_size;
-		b->length--;
-	}
-	b->buf[b->write_idx] = c;
-	b->write_idx = (b->write_idx + 1) % b->buf_size;
-	b->length++;
-	spinlock_unlock(&b->lock);
-	if (notify)
-		cond_notify(&b->event);
-}
-
-unsigned cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len)
-{
-	unsigned i;
-	int notify;
-	if (!len)
-		return 0;
-	spinlock_lock(&b->lock);
-	notify = (b->length == 0);
-	for (i = 0; i < len; i++) {
+	unsigned written = 0;
+	do {
+		unsigned i;
+		int notify;
+		if (!len)
+			return 0;
+		spinlock_lock(&b->lock);
+		notify = (b->length == 0);
+		for (i = 0; i < len - written; i++) {
+			if (b->length == b->buf_size)
+				break;
+			b->buf[b->write_idx] = buf[written + i];
+			b->write_idx = (b->write_idx + 1) % b->buf_size;
+			b->length++;
+		}
 		if (b->length == b->buf_size)
+			cond_reset(&b->write_event);
+		spinlock_unlock(&b->lock);
+		if (notify && i > 0)
+			cond_notify(&b->read_event);
+		written += i;
+		if (!blocking || written == len)
 			break;
-		b->buf[b->write_idx] = buf[i];
-		b->write_idx = (b->write_idx + 1) % b->buf_size;
-		b->length++;
-	}
-	spinlock_unlock(&b->lock);
-	if (notify && i > 0)
-		cond_notify(&b->event);
-	return i;
+		if (cyb_reader_count(b) == 0)
+			return written > 0 ? (int)written : -EPIPE;
+		if (cond_wait(&b->write_event, interruptible) < 0)
+			return written > 0 ? (int)written : -EINTR;
+	} while (written < len);
+	return (int)written;
 }
 
 /*
  * Read path
  */
 
-int cyb_getc(cy_buf *b, int interruptible)
-{
-	int ret;
-	for (;;) {
-		spinlock_lock(&b->lock);
-		if (b->length > 0)
-			break;
-		if (__sync_add_and_fetch(&b->writer_count, 0) == 0) {
-			spinlock_unlock(&b->lock);
-			return (int)(unsigned char)EOF;
-		}
-		spinlock_unlock(&b->lock);
-		if (cond_wait(&b->event, interruptible) < 0)
-			return -1; /* EINTR */
-	}
-	ret = (unsigned char)b->buf[b->read_idx];
-	b->read_idx = (b->read_idx + 1) % b->buf_size;
-	b->length--;
-	if (b->length == 0)
-		cond_reset(&b->event);
-	spinlock_unlock(&b->lock);
-	return ret;
-}
-
-int cyb_getbuf(cy_buf *b, void *buf, int len, int interruptible)
+int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 {
 	unsigned char *dst = (unsigned char *)buf;
 	int n = 0;
@@ -140,20 +115,27 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int interruptible)
 			spinlock_unlock(&b->lock);
 			return 0;
 		}
+		if (!blocking) {
+			spinlock_unlock(&b->lock);
+			return 0;
+		}
 		spinlock_unlock(&b->lock);
-		if (cond_wait(&b->event, interruptible) < 0)
+		if (cond_wait(&b->read_event, interruptible) < 0)
 			return -1; /* EINTR */
 	}
 
 	/* Drain up to len bytes while they are immediately available */
+	int was_full = (b->length == b->buf_size);
 	while (n < len && b->length > 0) {
 		dst[n++] = b->buf[b->read_idx];
 		b->read_idx = (b->read_idx + 1) % b->buf_size;
 		b->length--;
 	}
 	if (b->length == 0)
-		cond_reset(&b->event);
+		cond_reset(&b->read_event);
 	spinlock_unlock(&b->lock);
+	if (was_full)
+		cond_notify(&b->write_event); /* wake any blocked writer */
 	return n;
 }
 
@@ -200,7 +182,7 @@ void cyb_flush(cy_buf *b)
 	spinlock_lock(&b->lock);
 	b->read_idx = b->write_idx;
 	b->length = 0;
-	cond_reset(&b->event);
+	cond_reset(&b->read_event);
 	spinlock_unlock(&b->lock);
 }
 
@@ -223,12 +205,14 @@ void cyb_reader_open(cy_buf *b)
 void cyb_writer_close(cy_buf *b)
 {
 	__sync_add_and_fetch(&b->writer_count, -1);
-	cond_notify(&b->event);
+	cond_notify(&b->read_event);
 	cyb_destroy(b);
 }
 
 void cyb_reader_close(cy_buf *b)
 {
 	__sync_add_and_fetch(&b->reader_count, -1);
+	cond_notify(
+		&b->write_event); /* wake any writer blocked on full buffer */
 	cyb_destroy(b);
 }

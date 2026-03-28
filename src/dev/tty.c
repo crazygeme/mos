@@ -910,11 +910,11 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 			break;
 		if ((unsigned)n >= vmin && cyb_isempty(state->kb_buf))
 			break;
-		int raw_int = cyb_getc(state->kb_buf, 1);
-		if (raw_int < 0)
+		unsigned char raw;
+		int _ret = cyb_getbuf(state->kb_buf, &raw, 1, 1, 1);
+		if (_ret < 0)
 			return n > 0 ? n : -EINTR;
-		unsigned char raw = (unsigned char)raw_int;
-		if (raw == (unsigned char)EOF)
+		if (_ret == 0 || raw == (unsigned char)EOF)
 			break;
 		int ch = tty_input_translate(raw, tc->c_iflag);
 		if (ch < 0)
@@ -989,7 +989,7 @@ void tty_active_kb_put(unsigned char c)
 	t = this_ttys;
 	spinlock_unlock(&tty_switch_lock);
 
-	cyb_putc(t->kb_buf, c);
+	cyb_putbuf(t->kb_buf, &c, 1, 0, 0);
 }
 
 /* ── Bash spawner helpers ────────────────────────────────────────────────── */
@@ -1311,12 +1311,13 @@ static int tty_fs_release(file *fp)
 		/*
 		 * Last fd closed: mark the TTY released and wake up any task
 		 * blocked in read().  We put an EOF sentinel (0xFF) into the
-		 * keyboard buffer so that cyb_getc() returns immediately;
+		 * keyboard buffer so that cyb_getbuf() returns immediately;
 		 * canon_readline (check_eof=1) and raw_read both treat it as
 		 * end-of-file and bail out.
 		 */
 		state->released = 1;
-		cyb_putc(state->kb_buf, (unsigned char)EOF);
+		unsigned char eof_byte = (unsigned char)EOF;
+		cyb_putbuf(state->kb_buf, &eof_byte, 1, 0, 0);
 	}
 
 	kfree(fp->f_inode);

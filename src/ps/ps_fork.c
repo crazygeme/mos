@@ -54,8 +54,8 @@ static void ps_run()
 
 /* Allocate and initialise a new kernel task. Returns the new psid, or
  * 0xffffffff on failure. The task is immediately placed in the ready queue. */
-unsigned ps_create(process_fn fn, void *param, ps_priority priority,
-		   ps_type type)
+unsigned _ps_create(process_fn fn, const char *name, void *param,
+		    ps_priority priority, ps_type type)
 {
 	unsigned int stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
@@ -70,7 +70,7 @@ unsigned ps_create(process_fn fn, void *param, ps_priority priority,
 	task->user->page_dir = (unsigned int)vm_alloc(1);
 	task->user->command = vm_alloc(1);
 	task->user->environment = vm_alloc(1);
-	strcpy(task->user->command, "system");
+	sprintf(task->user->command, "sys-%s", name);
 	task->user->cmd_len = strlen(task->user->command) + 1;
 	*((char *)task->user->environment) = '\0';
 	task->user->env_len = 0;

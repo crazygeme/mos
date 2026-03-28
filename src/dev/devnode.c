@@ -140,7 +140,7 @@ static int fifonode_getattr(inode *node, struct stat *s)
 static ssize_t fifonode_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
 	cy_buf *b = fp->f_inode->i_private;
-	return (ssize_t)cyb_getbuf(b, buf, (int)len, 1);
+	return (ssize_t)cyb_getbuf(b, buf, (int)len, 1, 1);
 }
 
 static ssize_t fifonode_write(file *fp, const void *buf, size_t len,
@@ -149,7 +149,8 @@ static ssize_t fifonode_write(file *fp, const void *buf, size_t len,
 	cy_buf *b = fp->f_inode->i_private;
 	if (cyb_reader_count(b) == 0)
 		return -EPIPE;
-	return (ssize_t)cyb_putbuf(b, (unsigned char *)buf, (unsigned)len);
+	return (ssize_t)cyb_putbuf(b, (unsigned char *)buf, (unsigned)len, 0,
+				   0);
 }
 
 static int fifonode_poll(file *fp, unsigned type)

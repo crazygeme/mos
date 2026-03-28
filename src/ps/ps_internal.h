@@ -45,6 +45,7 @@ void ps_remove_mgr_unsafe(task_struct *task);
 void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
 unsigned ps_id_gen();
+void ps_id_free(unsigned pid);
 
 /* Set the kernel-mode segment selectors in a task's saved TSS.
  * Used by both ps_create and the fork helpers. */

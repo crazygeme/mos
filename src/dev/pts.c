@@ -116,7 +116,7 @@ static ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos)
 		return (ssize_t)tty_canon_drain(&p->canon, (char *)buf,
 						(int)size);
 	}
-	return (ssize_t)cyb_getbuf(p->m2s, buf, (int)size, 1);
+	return (ssize_t)cyb_getbuf(p->m2s, buf, (int)size, 1, 1);
 }
 
 static ssize_t pts_slave_write(file *fp, const void *buf, size_t size,
@@ -124,17 +124,29 @@ static ssize_t pts_slave_write(file *fp, const void *buf, size_t size,
 {
 	pts_pair *p = fp->f_inode->i_private;
 	const unsigned char *src = (const unsigned char *)buf;
-	unsigned i;
 	if (!buf || size < 1)
 		return 0;
 	if (cyb_reader_count(p->s2m) == 0)
 		return -EIO;
-	for (i = 0; i < (unsigned)size; i++) {
-		unsigned char c = src[i];
-		if ((p->termios.c_oflag & OPOST) && c == '\n' &&
-		    (p->termios.c_oflag & ONLCR))
-			cyb_putc(p->s2m, '\r');
-		cyb_putc(p->s2m, c);
+	if ((p->termios.c_oflag & OPOST) && (p->termios.c_oflag & ONLCR)) {
+		/* Translate \n → \r\n: write spans between newlines in bulk */
+		unsigned char crnl[2] = { '\r', '\n' };
+		unsigned i = 0;
+		while (i < (unsigned)size) {
+			unsigned j = i;
+			while (j < (unsigned)size && src[j] != '\n')
+				j++;
+			if (j > i)
+				cyb_putbuf(p->s2m, (unsigned char *)src + i,
+					   j - i, 0, 0);
+			if (j < (unsigned)size) {
+				cyb_putbuf(p->s2m, crnl, 2, 0, 0);
+				j++;
+			}
+			i = j;
+		}
+	} else {
+		cyb_putbuf(p->s2m, (unsigned char *)src, (unsigned)size, 0, 0);
 	}
 	return (ssize_t)size;
 }
@@ -254,7 +266,7 @@ static ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 	pts_pair *p = fp->f_inode->i_private;
 	if (!buf || size < 1)
 		return 0;
-	return (ssize_t)cyb_getbuf(p->s2m, buf, (int)size, 1);
+	return (ssize_t)cyb_getbuf(p->s2m, buf, (int)size, 1, 1);
 }
 
 static ssize_t pts_master_write(file *fp, const void *buf, size_t size,
@@ -265,7 +277,7 @@ static ssize_t pts_master_write(file *fp, const void *buf, size_t size,
 		return 0;
 	if (cyb_reader_count(p->m2s) == 0)
 		return -EIO;
-	cyb_putbuf(p->m2s, (unsigned char *)buf, (unsigned)size);
+	cyb_putbuf(p->m2s, (unsigned char *)buf, (unsigned)size, 0, 0);
 	return (ssize_t)size;
 }
 

@@ -231,8 +231,10 @@ struct _task_struct {
 	unsigned umask;
 	unsigned niv_switches;
 	unsigned total_switches;
-	unsigned user_tickets;
+	unsigned long long start_tickets;
 	unsigned kernel_tickets;
+	unsigned long long idle;
+	unsigned idle_tickets;
 	unsigned pf_major;
 	unsigned pf_minor;
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */

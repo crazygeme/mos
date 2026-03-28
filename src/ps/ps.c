@@ -48,7 +48,6 @@ static unsigned last_pid = (unsigned)-1; /* last successfully allocated PID */
 int _ps_enabled = 0;
 
 /* Scheduling instrumentation (updated by ps_sched.c). */
-unsigned long long task_schedule_time = 0;
 unsigned task_schedule_count = 0;
 
 static tss_struct *tss_address_storage = 0;
@@ -205,7 +204,6 @@ void ps_init()
 	spinlock_init(&map_lock);
 
 	_ps_enabled = 0;
-	task_schedule_time = 0;
 	task_schedule_count = 0;
 
 	tss_address_storage = kmalloc(sizeof(tss_struct));

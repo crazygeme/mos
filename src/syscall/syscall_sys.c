@@ -155,6 +155,37 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 #define LINUX_REBOOT_MAGIC1 0xfee1dead
 #define LINUX_REBOOT_MAGIC2 0x28121969
 
+static unsigned notify_initctl(unsigned cmd)
+{
+	struct init_request req;
+	file *fp;
+
+	memset(&req, 0, sizeof(req));
+	req.magic = INIT_MAGIC;
+	req.cmd = INIT_CMD_RUNLVL;
+
+	switch (cmd) {
+	case MOS_REBOOT_CMD_RESTART:
+		req.runlevel = '6';
+		break;
+	case MOS_REBOOT_CMD_POWER_OFF:
+	case MOS_REBOOT_CMD_HALT:
+		req.runlevel = '0';
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	fp = fs_open_file("/dev/initctl", O_WRONLY | O_NOFOLLOW, NULL);
+	if (!fp)
+		return -EIO;
+
+	fp->f_fop->write(fp, &req, sizeof(req), &fp->f_pos);
+	fs_put_file(fp);
+
+	return 0;
+}
+
 int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -195,34 +226,7 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 	 * All other callers signal init via /dev/initctl so it can perform
 	 * an orderly shutdown before invoking the hardware action.
 	 */
-	{
-		struct init_request req;
-		file *fp;
-
-		memset(&req, 0, sizeof(req));
-		req.magic = INIT_MAGIC;
-		req.cmd = INIT_CMD_RUNLVL;
-
-		switch (cmd) {
-		case MOS_REBOOT_CMD_RESTART:
-			req.runlevel = '6';
-			break;
-		case MOS_REBOOT_CMD_POWER_OFF:
-		case MOS_REBOOT_CMD_HALT:
-			req.runlevel = '0';
-			break;
-		default:
-			return -EINVAL;
-		}
-
-		fp = fs_open_file("/dev/initctl", O_WRONLY | O_NOFOLLOW, NULL);
-		if (!fp)
-			return -EIO;
-
-		fp->f_fop->write(fp, &req, sizeof(req), &fp->f_pos);
-		fs_put_file(fp);
-	}
-	return 0;
+	return notify_initctl(cmd);
 }
 
 int sys_mmap(struct mmap_arg_struct32 *arg)

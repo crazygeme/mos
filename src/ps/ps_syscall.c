@@ -40,7 +40,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		rusage->ru_nvcsw = task->total_switches - task->niv_switches;
 		rusage->ru_nivcsw = task->niv_switches;
 		ms_to_timeval(task->kernel_tickets * 10, &rusage->ru_stime);
-		ms_to_timeval(task->user_tickets * 10, &rusage->ru_utime);
+		ms_to_timeval((time_now_tickets() - task->start_tickets -
+			       task->kernel_tickets - task->idle_tickets) *
+				      10,
+			      &rusage->ru_utime);
 	}
 	if (task->user->command) {
 		vm_free(task->user->command, 1);
@@ -310,7 +313,10 @@ int sys_getrusage(int who, rusage *usage)
 	memset(usage, 0, sizeof(*usage));
 
 	if (who == RUSAGE_SELF) {
-		ms_to_timeval(cur->user_tickets * 10, &usage->ru_utime);
+		ms_to_timeval((time_now_tickets() - cur->start_tickets -
+			       cur->kernel_tickets - cur->idle_tickets) *
+				      10,
+			      &usage->ru_utime);
 		ms_to_timeval(cur->kernel_tickets * 10, &usage->ru_stime);
 		usage->ru_majflt = cur->pf_major;
 		usage->ru_minflt = cur->pf_minor;

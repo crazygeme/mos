@@ -1,6 +1,7 @@
 /*
  * status.c — /proc/{pid}/status, /proc/{pid}/stat, /proc/{pid}/statm.
  */
+#include "hw/time.h"
 #include "proc_pid.h"
 #include <config.h>
 #include <macro.h>
@@ -143,7 +144,9 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		/* 11 cminflt     */ (unsigned long)0,
 		/* 12 majflt      */ (unsigned long)task->pf_major,
 		/* 13 cmajflt     */ (unsigned long)0,
-		/* 14 utime       */ (unsigned long)task->user_tickets,
+		/* 14 utime       */
+		(unsigned long)(time_now_tickets() - task->start_tickets -
+				task->kernel_tickets - task->idle_tickets),
 		/* 15 stime       */ (unsigned long)task->kernel_tickets,
 		/* 16 cutime      */ (long)0,
 		/* 17 cstime      */ (long)0,

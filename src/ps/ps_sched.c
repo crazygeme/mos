@@ -26,10 +26,6 @@
 
 /* Monotonically increasing tick; lower sched_seq = older = runs first. */
 
-/* Scheduling instrumentation. */
-static unsigned long long sched_begin = 0;
-static unsigned long long sched_end = 0;
-
 /*
  * Static helpers — MPRQ algorithm
  */
@@ -71,24 +67,6 @@ static task_struct *ps_get_next_task()
 	}
 	spinlock_unlock(&ps_lock);
 	return task;
-}
-
-/*
- * Static helpers — instrumentation and context-switch support
- */
-
-static void sched_cal_begin()
-{
-	sched_begin = time_now_us();
-}
-
-static void sched_cal_end()
-{
-	sched_end = time_now_us();
-	if (sched_begin)
-		task_schedule_time += sched_end - sched_begin;
-	sched_begin = sched_end = 0;
-	task_schedule_count++;
 }
 
 /* Propagate kernel page-directory entries into task's saved page directory
@@ -205,12 +183,10 @@ void ps_put_to_ready_queue(task_struct *task)
 void _task_sched(const char *func)
 {
 	task_struct *task = 0;
-	task_struct *current = 0;
 
-	if (TestControl.profiling)
-		sched_cal_begin();
+	task_schedule_count++;
 
-	current = CURRENT_TASK();
+	CURRENT_TASK()->idle = time_now_tickets();
 
 	dsr_drain();
 
@@ -221,10 +197,10 @@ void _task_sched(const char *func)
 
 	task = ps_get_next_task();
 
-	if (!task || task->psid == current->psid)
+	if (!task || task->psid == CURRENT_TASK()->psid)
 		goto SELF;
 
-	current->total_switches++;
+	CURRENT_TASK()->total_switches++;
 
 	task->status = ps_running;
 	/*
@@ -233,7 +209,7 @@ void _task_sched(const char *func)
 	 */
 	ps_copy_kernel_map(task);
 
-	SAVE_ALL(current, NEXT);
+	SAVE_ALL(CURRENT_TASK(), NEXT);
 
 	/* Do TSS and CR3 setup on the current stack, before switching.
 	 * Kernel mappings are shared across all page directories so SET_CR3
@@ -252,8 +228,8 @@ void _task_sched(const char *func)
 SELF:
 	int_intr_enable();
 
-	if (TestControl.profiling)
-		sched_cal_end();
+	CURRENT_TASK()->idle_tickets +=
+		time_now_tickets() - CURRENT_TASK()->idle;
 }
 
 static int scheduler_enabled = 1;

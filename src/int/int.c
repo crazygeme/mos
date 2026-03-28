@@ -4,6 +4,7 @@
 #include <lib/port.h>
 #include <lib/klib.h>
 #include <hw/apic.h>
+#include <hw/time.h>
 #include <macro.h>
 #include <errno.h>
 
@@ -108,9 +109,17 @@ void intr_handler(intr_frame *frame)
 void intr_syscall_handler(intr_frame *frame)
 {
 	int_callback fn = 0;
+	task_struct *cur = CURRENT_TASK();
+	unsigned long long start = 0;
+	unsigned long long idle_start = cur->idle_tickets;
 	fn = in_callbacks[frame->vec_no];
-	if (fn)
+	if (fn) {
+		start = time_now_tickets();
 		fn(frame);
+		cur->kernel_tickets += time_now_tickets() - start -
+				       (cur->idle_tickets - idle_start);
+	}
+
 	return;
 }
 

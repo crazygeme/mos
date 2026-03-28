@@ -30,7 +30,6 @@ extern ps_control control;
 extern spinlock_t ps_lock;
 extern spinlock_t map_lock;
 extern int _ps_enabled;
-extern unsigned long long task_schedule_time;
 extern unsigned task_schedule_count;
 extern tss_struct *tss_address;
 

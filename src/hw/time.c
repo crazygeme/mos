@@ -8,7 +8,7 @@
 extern void do_signal(intr_frame *frame);
 
 static unsigned long tickets;
-static unsigned long total_tickets;
+static unsigned long long total_tickets;
 static unsigned long seconds;
 static unsigned long minutes;
 static unsigned long hourse;
@@ -125,11 +125,6 @@ static void force_switch(short ds)
 	}
 
 	cur->remain_ticks--;
-	if (ds == KERNEL_DATA_SELECTOR)
-		cur->kernel_tickets++;
-	else
-		cur->user_tickets++;
-
 	if (cur->remain_ticks <= 0) {
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		cur->niv_switches++;
@@ -174,7 +169,12 @@ void time_current(time_t *t)
 unsigned time_now_ms()
 {
 	BARRIER();
-	return total_tickets * (1000 / HZ);
+	return (unsigned)(total_tickets * (1000ULL / HZ));
+}
+
+unsigned long long time_now_tickets()
+{
+	return total_tickets;
 }
 
 void ms_to_timeval(unsigned ms, struct timeval *tv)
@@ -212,7 +212,7 @@ static int pic_timer_irq_pending(void)
 unsigned long long time_now_us()
 {
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
-	unsigned long t1, t2;
+	unsigned long long t1, t2;
 	unsigned count;
 
 	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
@@ -237,7 +237,7 @@ unsigned long long time_now_us()
 	unsigned long long frac =
 		(unsigned long long)elapsed * 1000000ULL / CLOCK_TICK_RATE;
 
-	return (unsigned long long)t1 * TICK_US + frac;
+	return t1 * TICK_US + frac;
 #undef TICK_US
 }
 

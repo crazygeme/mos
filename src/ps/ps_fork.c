@@ -7,6 +7,7 @@
  *   - Real vfork (do_vfork, sys_vfork)
  */
 
+#include "hw/time.h"
 #include <ps/ps.h>
 #include <int/int.h>
 #include <mm/mmap.h>
@@ -108,6 +109,8 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->tss.esp = stack_bottom;
 	task->tss.esp0 = stack_bottom;
 	task->tss.eip = ps_run;
+
+	task->start_tickets = time_now_tickets();
 
 	spinlock_lock(&ps_lock);
 	ps_put_to_ready_queue_unsafe(task);
@@ -355,6 +358,7 @@ static void fork_set_meta(task_struct *cur, task_struct *task,
 	task->type = cur->type;
 	task->fork_flag = fork_flag;
 	task->root = cur->root;
+	task->start_tickets = time_now_tickets();
 	sb_get(task->root);
 }
 
@@ -392,7 +396,6 @@ static int do_fork(void)
 	ps_dup_fds(cur, task);
 	copy_page_range(cur, task);
 	fork_enqueue(cur, task);
-
 	cur_intr_frame->eax = task->psid;
 	return task->psid;
 }

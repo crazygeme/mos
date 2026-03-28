@@ -21,6 +21,7 @@
  * aggregate and cpu1..N are reported as all-zero.
  */
 
+#include "hw/time.h"
 #include <ps/ps.h>
 #include <hw/cpu.h>
 #include "common.h"
@@ -45,9 +46,10 @@ static void stat_collect(task_struct *task, void *ctx)
 	c->processes++;
 
 	if (task->priority == ps_idle) {
-		c->idle += task->kernel_tickets + task->user_tickets;
+		c->idle += task->total_switches;
 	} else {
-		c->user += task->user_tickets;
+		c->user += time_now_tickets() - task->start_tickets -
+			   task->kernel_tickets - task->idle_tickets;
 		c->system += task->kernel_tickets;
 	}
 

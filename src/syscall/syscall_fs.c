@@ -65,6 +65,7 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 	char modes[11];
 	int ret = -ENOENT;
 
+	memset(buf, 0, sizeof(*buf));
 	fp = fs_open_file(name, flag, 0);
 	if (!fp)
 		goto log;
@@ -134,20 +135,22 @@ int sys_stat64(const char *path, struct stat64 *s)
 	resolve_path(path, name);
 	ret = do_stat("stat64", name, &s32, O_PATH);
 	memset(s, 0, sizeof(*s));
-	s->st_dev = s32.st_dev;
-	s->__st_ino = s32.st_ino;
-	s->st_mode = s32.st_mode;
-	s->st_nlink = s32.st_nlink;
-	s->st_uid = s32.st_uid;
-	s->st_gid = s32.st_gid;
-	s->st_rdev = s32.st_rdev;
-	s->st_size = s32.st_size;
-	s->st_blksize = s32.st_blksize;
-	s->st_blocks = s32.st_blocks;
-	s->st_atime = s32.st_atime;
-	s->st_mtime = s32.st_mtime;
-	s->st_ctime = s32.st_ctime;
-	s->st_ino = s32.st_ino;
+	if (ret == 0) {
+		s->st_dev = s32.st_dev;
+		s->__st_ino = s32.st_ino;
+		s->st_mode = s32.st_mode;
+		s->st_nlink = s32.st_nlink;
+		s->st_uid = s32.st_uid;
+		s->st_gid = s32.st_gid;
+		s->st_rdev = s32.st_rdev;
+		s->st_size = s32.st_size;
+		s->st_blksize = s32.st_blksize;
+		s->st_blocks = s32.st_blocks;
+		s->st_atime = s32.st_atime;
+		s->st_mtime = s32.st_mtime;
+		s->st_ctime = s32.st_ctime;
+		s->st_ino = s32.st_ino;
+	}
 	name_put(name);
 	return ret;
 }
@@ -161,20 +164,22 @@ int sys_lstat64(const char *path, struct stat64 *s)
 	resolve_path(path, name);
 	ret = do_stat("lstat64", name, &s32, O_PATH | O_NOFOLLOW);
 	memset(s, 0, sizeof(*s));
-	s->st_dev = s32.st_dev;
-	s->__st_ino = s32.st_ino;
-	s->st_mode = s32.st_mode;
-	s->st_nlink = s32.st_nlink;
-	s->st_uid = s32.st_uid;
-	s->st_gid = s32.st_gid;
-	s->st_rdev = s32.st_rdev;
-	s->st_size = s32.st_size;
-	s->st_blksize = s32.st_blksize;
-	s->st_blocks = s32.st_blocks;
-	s->st_atime = s32.st_atime;
-	s->st_mtime = s32.st_mtime;
-	s->st_ctime = s32.st_ctime;
-	s->st_ino = s32.st_ino;
+	if (ret == 0) {
+		s->st_dev = s32.st_dev;
+		s->__st_ino = s32.st_ino;
+		s->st_mode = s32.st_mode;
+		s->st_nlink = s32.st_nlink;
+		s->st_uid = s32.st_uid;
+		s->st_gid = s32.st_gid;
+		s->st_rdev = s32.st_rdev;
+		s->st_size = s32.st_size;
+		s->st_blksize = s32.st_blksize;
+		s->st_blocks = s32.st_blocks;
+		s->st_atime = s32.st_atime;
+		s->st_mtime = s32.st_mtime;
+		s->st_ctime = s32.st_ctime;
+		s->st_ino = s32.st_ino;
+	}
 	name_put(name);
 	return ret;
 }

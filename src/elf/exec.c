@@ -20,6 +20,9 @@
  * Called at the start of execve, before the new image is loaded:
  *   1. If this task was created by vfork(), signal the parent that the
  *      address space is about to be replaced (wakes the blocked parent).
+ *      For vfork: allocate a fresh page directory for the child (copying
+ *      only kernel mappings) and switch CR3 — the parent's page directory
+ *      and vm are left untouched.
  *   2. Close all file descriptors that have O_CLOEXEC set — POSIX requires
  *      these to be closed across exec.
  *   3. Unmap all user virtual-memory regions (code, data, stack, heap).
@@ -31,9 +34,36 @@ static void cleanup()
 	task_struct *cur = CURRENT_TASK();
 	int i = 0;
 
-	/* Wake the vfork()-ing parent now that we are replacing the address space. */
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
+		unsigned int *new_pd;
+		unsigned int *cur_pd;
+		unsigned cr3;
+
+		/* Wake the blocked parent. */
 		cond_notify(&cur->vfork_event);
+		cur->fork_flag &= ~FORK_FLAG_VFORK;
+
+		/*
+		 * The child borrowed the parent's page_dir and vm.  Give the
+		 * child its own empty page directory now, copying only the
+		 * kernel half so kernel code remains reachable after SET_CR3.
+		 * The parent's page directory and vm are untouched.
+		 */
+		new_pd = vm_alloc(1);
+		memset(new_pd, 0, PAGE_SIZE);
+		LOAD_CR3(cr3);
+		cur_pd = (unsigned int *)(cr3 + KERNEL_OFFSET);
+		memcpy(&new_pd[KERNEL_PAGE_DIR_OFFSET],
+		       &cur_pd[KERNEL_PAGE_DIR_OFFSET],
+		       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
+		cur->user->page_dir = (unsigned int)new_pd;
+		SET_CR3((unsigned)new_pd - KERNEL_OFFSET);
+		cur->user->vm = vm_create();
+	} else {
+		vm_destroy(cur->user->vm);
+		/* Unmap every user-space page table entry. */
+		ps_cleanup_all_user_map(cur);
+		cur->user->vm = vm_create();
 	}
 
 	/* Close all O_CLOEXEC file descriptors. */
@@ -43,19 +73,12 @@ static void cleanup()
 		}
 	}
 
-	/* Close all signals */
+	/* Reset signal handlers. */
 	memset(cur->signal, 0, sizeof(signal_context));
-
-	vm_destroy(cur->user->vm);
-
-	/* Unmap every user-space page table entry. */
-	ps_cleanup_all_user_map(cur);
 
 	/* Reset heap; start_brk/brk will be set after elf_map(). */
 	cur->user->start_brk = 0;
 	cur->user->brk = 0;
-
-	cur->user->vm = vm_create();
 }
 
 /*
@@ -354,7 +377,6 @@ int sys_execve(const char *f, char **argv, char **envp)
 {
 	unsigned eip = 0;
 	int i = 0;
-	unsigned esp_buttom = KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE;
 	unsigned esp_top = KERNEL_OFFSET;
 	char *file_name;
 	unsigned argc = 0, envc = 0;
@@ -513,13 +535,16 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 */
 	mm_vdso_map();
 
-	/* don't forget to setup a stack for our program...
-	 * TODO(Ender): real linux will increase stack size automatically
-	 * by appending a "guard page" and detect page fault at this
-	 * special page.
+	/* Map only the top USER_STACK_INIT_PAGES pages initially.
+	 * The stack grows downward automatically via the page fault handler.
 	 */
-	do_mmap(esp_buttom, USER_STACK_PAGES * PAGE_SIZE,
-		PROT_READ | PROT_WRITE, 0, -1, 0);
+	{
+		unsigned stack_init_bottom =
+			KERNEL_OFFSET - USER_STACK_INIT_PAGES * PAGE_SIZE;
+		do_mmap(stack_init_bottom, USER_STACK_INIT_PAGES * PAGE_SIZE,
+			PROT_READ | PROT_WRITE, MAP_FIXED, -1, 0);
+		cur->user->stack_bottom = stack_init_bottom;
+	}
 
 	/* setup arguments and enviroments in proper way for interp */
 	esp_top = setup_user_stack(file_name, argc, s_argv, envc, s_envp,

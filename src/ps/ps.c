@@ -3,7 +3,7 @@
  *
  * Owns:
  *   - Global scheduler state (control block, locks)
- *   - ps_init / ps_create / CURRENT_TASK / ps_kickoff
+ *   - ps_init / CURRENT_TASK / ps_kickoff
  *   - Manager queue (all-tasks list) and process lookup
  *   - TSS management
  *   - User address-space enumeration and cleanup
@@ -127,26 +127,6 @@ void reset_tss(task_struct *task)
 	int_update_tss((unsigned int)tss_address);
 }
 
-/* Every kernel task begins here. Enables interrupts, runs the task function,
- * then moves the task to the dying queue and yields. */
-static void ps_run()
-{
-	task_struct *task = CURRENT_TASK();
-	process_fn fn;
-
-	int_intr_enable();
-	_ps_enabled = 1;
-	task->status = ps_running;
-	fn = task->fn;
-	if (fn)
-		fn(task->param);
-
-	task->status = ps_dying;
-	ps_put_to_dying_queue(task);
-	ps_remove_mgr(task);
-	task_sched();
-}
-
 static void ap_idle_stub(void *param)
 {
 	while (1) {
@@ -203,80 +183,6 @@ void ps_init()
 int ps_enabled()
 {
 	return _ps_enabled;
-}
-
-/*
- * Public — task creation
- */
-
-/* Allocate and initialise a new kernel task. Returns the new psid, or
- * 0xffffffff on failure. The task is immediately placed in the ready queue. */
-unsigned ps_create(process_fn fn, void *param, ps_priority priority,
-		   ps_type type)
-{
-	unsigned int stack_bottom;
-	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
-
-	if (priority >= PS_PRIORITY_MAX) {
-		vm_free(task, 1);
-		return 0xffffffff;
-	}
-
-	memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
-	task->user = zalloc(sizeof(user_enviroment));
-	task->user->page_dir = (unsigned int)vm_alloc(1);
-	task->user->command = vm_alloc(1);
-	task->user->environment = vm_alloc(1);
-	strcpy(task->user->command, "system");
-	task->user->cmd_len = strlen(task->user->command) + 1;
-	*((char *)task->user->environment) = '\0';
-	task->user->env_len = 0;
-	memset(task->user->page_dir, 0, PAGE_SIZE);
-	task->user->cwd = name_get();
-	memset(task->user->cwd, 0, MAX_PATH);
-	task->user->start_brk = 0;
-	task->user->brk = 0;
-	task->user->vm = vm_create();
-
-	task->signal = zalloc(sizeof(signal_context));
-
-	task->umask = 0;
-	stack_bottom = (unsigned int)task + PAGE_SIZE;
-	LOAD_CR3(task->cr3);
-	list_init(&task->ps_list);
-	RB_CLEAR_NODE(&task->mgr_rb);
-	task->fn = fn;
-	task->param = param;
-	task->priority = priority;
-	task->type = type;
-	task->status = ps_ready;
-	task->umask = 0;
-	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-	task->timeout = 0;
-	task->psid = ps_id_gen();
-	task->parent = task;
-	task->fds = vm_alloc(1);
-	memset(task->fds, 0, PAGE_SIZE);
-	mutex_init(&task->fd_lock);
-	task->magic = 0xdeadbeef;
-
-	task->tss.fs = task->tss.gs = task->tss.es = task->tss.ss =
-		task->tss.ds = KERNEL_DATA_SELECTOR;
-	task->tss.cs = KERNEL_CODE_SELECTOR;
-	task->tss.eax = 0;
-	task->tss.ebx = 0;
-	task->tss.ecx = 0;
-	task->tss.edx = 0;
-	task->tss.ebp = stack_bottom;
-	task->tss.esp = stack_bottom;
-	task->tss.esp0 = stack_bottom;
-	task->tss.eip = ps_run;
-
-	spinlock_lock(&ps_lock);
-	ps_put_to_ready_queue_unsafe(task);
-	ps_add_mgr_unsafe(task);
-	spinlock_unlock(&ps_lock);
-	return task->psid;
 }
 
 /*

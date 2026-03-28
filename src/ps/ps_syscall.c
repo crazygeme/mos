@@ -1,9 +1,8 @@
 /*
- * ps_syscall.c — process syscalls: fork, exit, wait, getcwd; and shutdown.
+ * ps_syscall.c — process syscalls: exit, wait, getcwd; and shutdown.
  *
  * Owns:
- *   - COW fork (do_fork, sys_fork, sys_vfork)
- *   - Process exit (sys_exit)
+ *   - Process exit (do_exit, sys_exit)
  *   - Child reaping (do_waitpid, sys_waitpid)
  *   - sys_getcwd
  *   - System shutdown (reboot, shutdown)
@@ -11,7 +10,6 @@
 
 #include <ps/ps.h>
 #include <mm/mmap.h>
-#include <mm/phymm.h>
 #include <mm/mm.h>
 #include <int/int.h>
 #include <fs/fs.h>
@@ -21,7 +19,6 @@
 #include <lib/lock.h>
 #include <lib/port.h>
 #include <hw/time.h>
-#include <hw/cpu.h>
 #include <hw/hdd.h>
 #include <config.h>
 #include <macro.h>
@@ -29,85 +26,6 @@
 #include <ext4.h>
 
 #include "ps_internal.h"
-
-extern void ret_from_syscall();
-extern void ret_from_fork();
-extern short pgc_entry_count[1024];
-
-/*
- * Static helpers — file-descriptor duplication
- */
-
-static void ps_dup_fds(task_struct *cur, task_struct *task)
-{
-	int i;
-	memset(task->fds, 0, PAGE_SIZE);
-	mutex_lock(&cur->fd_lock);
-	for (i = 0; i < MAX_FD; i++) {
-		if (!cur->fds[i].used)
-			continue;
-		task->fds[i] = cur->fds[i];
-		fs_get_file(cur->fds[i].fp);
-	}
-	mutex_unlock(&cur->fd_lock);
-}
-
-/*
- * Static helpers — COW user address-space duplication
- */
-
-/* Map one user page from the parent into the child using COW:
- * - mark parent's page read-only so a write triggers a fault
- * - share the physical page with the child (increment refcount) */
-static void ps_dup_user_page(unsigned vir, task_struct *task, unsigned flag)
-{
-	unsigned int *new_ps = (unsigned int *)task->user->page_dir;
-	unsigned target_page_idx = mm_get_attached_page_index(vir);
-	unsigned int page_dir_offset = ADDR_TO_PGT_OFFSET(vir);
-	unsigned int page_table_offset = ADDR_TO_PET_OFFSET(vir);
-	unsigned int *cur_page_dir = mm_get_pagedir();
-	unsigned int *page_table;
-	unsigned int *cur_page_table;
-	unsigned int phy;
-	int idx;
-
-	if (!(new_ps[page_dir_offset] & PAGE_SIZE_MASK)) {
-		new_ps[page_dir_offset] = mm_alloc_page_table() - KERNEL_OFFSET;
-		new_ps[page_dir_offset] |= flag;
-	}
-
-	page_table = (new_ps[page_dir_offset] & PAGE_SIZE_MASK) + KERNEL_OFFSET;
-	cur_page_table = (cur_page_dir[page_dir_offset] & PAGE_SIZE_MASK) +
-			 KERNEL_OFFSET;
-
-	cur_page_table[page_table_offset] &= ~PAGE_ENTRY_WRITABLE;
-
-	phy = page_table[page_table_offset] & PAGE_SIZE_MASK;
-	if (!phy) {
-		idx = (PAGE_TABLE_CACHE_END - (unsigned)page_table) /
-			      PAGE_SIZE -
-		      1;
-		pgc_entry_count[idx]++;
-	}
-
-	page_table[page_table_offset] = cur_page_table[page_table_offset];
-	phymm_reference_page(target_page_idx);
-}
-
-static void ps_enum_for_dup(void *aux, unsigned vir, unsigned phy)
-{
-	ps_dup_user_page(vir, (task_struct *)aux, PAGE_ENTRY_USER_DATA);
-}
-
-static void ps_dup_user_maps(task_struct *cur, task_struct *task)
-{
-	unsigned int *new_ps;
-
-	vm_dup(cur->user->vm, task->user->vm);
-	new_ps = (unsigned int *)task->user->page_dir;
-	memset((char *)new_ps, 0, PAGE_SIZE);
-	ps_enum_user_map(cur, ps_enum_for_dup, task);
-}
 
 /*
  * Static helpers — child reaping
@@ -175,120 +93,6 @@ static void system_down()
 	hdd_close();
 }
 
-/*
- * Public — fork
- */
-
-/* Core fork implementation. Creates a copy of the current task with COW
- * user address space. If FORK_FLAG_VFORK, the parent blocks until the
- * child calls exec or exit. */
-int do_fork(unsigned flag)
-{
-	task_struct *cur = CURRENT_TASK();
-	task_struct *task = vm_alloc(KERNEL_TASK_SIZE);
-	intr_frame *cur_intr_frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
-	intr_frame *task_intr_frame =
-		(intr_frame *)((char *)task + PAGE_SIZE - sizeof(intr_frame));
-
-	*task = *cur;
-	*task_intr_frame = *cur_intr_frame;
-
-	if (cur->remain_ticks > DEFAULT_TASK_TIME_SLICE / 2)
-		cur->remain_ticks = task->remain_ticks = cur->remain_ticks / 2;
-	else
-		task->remain_ticks = cur->remain_ticks;
-	task->timeout = cur->timeout;
-	task->psid = ps_id_gen();
-	mutex_init(&task->fd_lock);
-
-	task->tss.fs = task->tss.gs = task->tss.ds = task->tss.es =
-		task->tss.ss = KERNEL_DATA_SELECTOR;
-	task->tss.cs = KERNEL_CODE_SELECTOR;
-	task->tss.eax = 0;
-	task->tss.ebp = (char *)task_intr_frame;
-	task->tss.esp = (char *)task_intr_frame;
-	task->tss.esp0 = (unsigned)task + PAGE_SIZE;
-	task->tss.eip = (unsigned)ret_from_fork;
-	task_intr_frame->eax = 0;
-
-	task->parent = cur;
-	task->nchildren = 0;
-	task->fds = vm_alloc(1);
-	list_init(&task->ps_list);
-	task->user = zalloc(sizeof(user_enviroment));
-	task->user->vm = vm_create();
-	task->user->command = vm_alloc(1);
-	task->user->cmd_len = cur->user->cmd_len;
-	task->user->environment = vm_alloc(1);
-	task->user->env_len = cur->user->env_len;
-	memcpy(task->user->command, cur->user->command, cur->user->cmd_len);
-	memcpy(task->user->environment, cur->user->environment,
-	       cur->user->env_len);
-	task->user->cwd = name_get();
-	strcpy(task->user->cwd, cur->user->cwd);
-	task->user->brk = cur->user->brk;
-	task->user->page_dir = vm_alloc(1);
-	task->user->group_id = cur->user->group_id;
-	task->user->session_id = cur->user->session_id;
-	task->user->uid = cur->user->uid;
-	task->user->euid = cur->user->euid;
-	task->user->suid = cur->user->suid;
-	task->user->gid = cur->user->gid;
-	task->user->egid = cur->user->egid;
-	task->user->sgid = cur->user->sgid;
-	task->user->fsuid = cur->user->fsuid;
-	task->user->fsgid = cur->user->fsgid;
-
-	task->signal = zalloc(sizeof(signal_context));
-	memcpy(task->signal, cur->signal, sizeof(signal_context));
-	// child starts with no signal pending
-	task->signal->sig_pending = 0;
-
-	task->umask = cur->umask;
-	task->priority = cur->priority;
-	task->type = cur->type;
-
-	task->fork_flag = flag;
-	task->root = cur->root;
-	sb_get(task->root);
-
-	ps_dup_fds(cur, task);
-	ps_dup_user_maps(cur, task);
-	spinlock_lock(&ps_lock);
-	cur->nchildren++;
-	ps_put_to_ready_queue_unsafe(task);
-	RB_CLEAR_NODE(&task->mgr_rb);
-	ps_add_mgr_unsafe(task);
-	spinlock_unlock(&ps_lock);
-
-	if (flag & FORK_FLAG_VFORK) {
-		cond_init(&task->vfork_event, 1);
-		cond_wait(&task->vfork_event, 0);
-	}
-
-	cur_intr_frame->eax = task->psid;
-	return task->psid;
-}
-
-int sys_fork()
-{
-	if (TestControl.verbos)
-		klog("fork()\n");
-	return do_fork(0);
-}
-
-int sys_vfork()
-{
-	if (TestControl.verbos)
-		klog("vfork()\n");
-	return do_fork(FORK_FLAG_VFORK);
-}
-
-/*
- * Public — exit
- */
-
 /* Internal: exit with an already-encoded waitpid status word. */
 /* Reparent all children of cur to init (pid 1). Must be called without
  * ps_lock held. Living children get a new parent; zombie children also
@@ -330,8 +134,14 @@ void do_exit(unsigned encoded_status)
 		klog("exit(%s, status=%x)\n", cur->user->command,
 		     encoded_status);
 
-	if (cur->fork_flag & FORK_FLAG_VFORK)
+	if (cur->fork_flag & FORK_FLAG_VFORK) {
 		cond_notify(&cur->vfork_event);
+		/* Borrowed page_dir and vm from parent — detach without freeing.
+		 * ps_cleanup_all_user_map becomes a no-op with page_dir == 0,
+		 * and ps_reap_task skips the vm_free check. */
+		cur->user->page_dir = 0;
+		cur->user->vm = NULL;
+	}
 
 	if (cur->user->vm) {
 		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */

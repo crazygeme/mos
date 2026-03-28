@@ -46,21 +46,25 @@ void vm_get_stats(task_struct *task, vm_stats_t *out)
 		heap_pages =
 			(task->user->brk - task->user->start_brk) / PAGE_SIZE;
 
-	out->stk_kb = USER_STACK_PAGES * (PAGE_SIZE / 1024);
+	unsigned stack_pages =
+		(KERNEL_OFFSET - task->user->stack_bottom) / PAGE_SIZE;
+	out->stk_kb = stack_pages * (PAGE_SIZE / 1024);
 	out->text_kb = ctx.text * (PAGE_SIZE / 1024);
 	out->data_kb = (ctx.data + heap_pages) * (PAGE_SIZE / 1024);
-	out->total_kb = (ctx.total + heap_pages + USER_STACK_PAGES) *
-			(PAGE_SIZE / 1024);
+	out->total_kb =
+		(ctx.total + heap_pages + stack_pages) * (PAGE_SIZE / 1024);
 	out->rss_file_kb = ctx.file * (PAGE_SIZE / 1024);
 	out->rss_anon_kb =
-		(ctx.anon + heap_pages + USER_STACK_PAGES) * (PAGE_SIZE / 1024);
+		(ctx.anon + heap_pages + stack_pages) * (PAGE_SIZE / 1024);
 }
 
 /* Also expose statm_ctx/statm_region_cb for fill_statm in status.c */
 void vm_fill_statm(proc_buf_t *pb, task_struct *task)
 {
 	statm_ctx ctx = { 0, 0, 0, 0, 0 };
-	unsigned heap_pages = 0, stack_pages = USER_STACK_PAGES;
+	unsigned heap_pages = 0;
+	unsigned stack_pages =
+		(KERNEL_OFFSET - task->user->stack_bottom) / PAGE_SIZE;
 
 	if (task->user->vm)
 		vm_enum(task->user->vm, statm_region_cb, &ctx);

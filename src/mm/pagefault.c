@@ -437,9 +437,30 @@ static int pf_handle_page_invalid(unsigned cr2)
 	 * will tell us whether it's file map or not.
 	 */
 	region = vm_find_map(cur->user->vm, this_begin);
-	if (!region)
-		return 0;
+	if (region)
+		goto found;
 
+	/*
+	 * Stack auto-grow: if the fault is just below the current
+	 * stack bottom and within the allowed stack zone, extend the
+	 * stack mapping downward to cover the faulting page.
+	 */
+	if (cur->user->stack_bottom > USER_ZONE_END &&
+	    this_begin >= USER_ZONE_END &&
+	    this_begin < cur->user->stack_bottom) {
+		unsigned new_bottom = this_begin;
+		do_mmap_kernel(new_bottom, cur->user->stack_bottom - new_bottom,
+			       PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0);
+		cur->user->stack_bottom = new_bottom;
+		region = vm_find_map(cur->user->vm, this_begin);
+	}
+
+	if (region)
+		goto found;
+
+	return 0;
+
+found:
 	/* PROT_NONE: no access permitted — treat as unmapped. */
 	if (region->prot == PROT_NONE)
 		return 0;

@@ -120,7 +120,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 	vm_get_stats(task, &vm);
 	vsize = vm.total_kb * 1024u;
 	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) * 1024u / PAGE_SIZE;
-	stack_start = KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE;
+	stack_start = task->user->stack_bottom;
 
 	proc_buf_printf(
 		pb,

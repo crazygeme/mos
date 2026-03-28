@@ -143,6 +143,7 @@ typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	unsigned start_brk; /* base of heap, set from ELF BSS end at exec time */
 	unsigned brk; /* current program break (Linux: mm->brk) */
+	unsigned stack_bottom; /* lowest mapped stack page (grows down on fault) */
 	vm_struct_t vm;
 	char *command;
 	size_t cmd_len;

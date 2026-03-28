@@ -266,8 +266,10 @@ task_struct *CURRENT_TASK();
 
 void ps_init();
 
-unsigned ps_create(process_fn fn, void *param, ps_priority priority,
-		   ps_type type);
+#define ps_create(fn, param, priority, type) \
+	_ps_create(fn, #fn, param, priority, type)
+unsigned _ps_create(process_fn fn, const char *name, void *param,
+		    ps_priority priority, ps_type type);
 
 void ps_kickoff();
 

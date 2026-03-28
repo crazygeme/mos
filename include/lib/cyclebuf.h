@@ -14,14 +14,12 @@ cy_buf *cyb_create_named(int pages);
 
 void cyb_destroy(cy_buf *cyb);
 
-void cyb_putc(cy_buf *b, unsigned char c);
-
-unsigned cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len);
-
-/* Returns the byte value as int (0-255) on success.
- * If interruptible is non-zero, returns -1 when a signal wakes the task.
- * 255 == (int)(unsigned char)EOF means writer-closed / no more data. */
-int cyb_getc(cy_buf *b, int interruptible);
+/* Write up to @len bytes into the buffer.
+ * blocking=0: non-blocking, returns bytes actually written (may be < len).
+ * blocking=1: blocks when full until all bytes are written or a signal
+ *             interrupts; returns bytes written, or -EPIPE/-EINTR on error. */
+int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
+	       int interruptible);
 
 int cyb_isempty(cy_buf *b);
 
@@ -37,7 +35,7 @@ int cyb_reader_count(cy_buf *b);
  * Returns the number of bytes read, or 0 on EOF (no writers remain).
  * If interruptible is non-zero, returns -1 (EINTR) when a signal wakes the
  * task before any bytes are read; returns bytes read so far if some were. */
-int cyb_getbuf(cy_buf *b, void *buf, int len, int interruptible);
+int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible);
 
 void cyb_flush(cy_buf *b);
 

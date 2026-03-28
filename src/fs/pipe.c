@@ -28,37 +28,24 @@ static int pipe_release(file *fp)
 static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	unsigned char *tmp = buf;
-	int i = 0;
 
 	if (!n->readonly)
 		return -1;
 
-	if (cyb_writer_count(n->buf) == 0 && cyb_isempty(n->buf))
-		return 0;
-
-	while (i < (int)len) {
-		int c = cyb_getc(n->buf, 1);
-		if (c < 0)
-			return i > 0 ? (ssize_t)i : -EINTR;
-		if ((unsigned char)c == (unsigned char)EOF)
-			break;
-		*tmp++ = (unsigned char)c;
-		i++;
-	}
-	return (ssize_t)i;
+	int ret = cyb_getbuf(n->buf, buf, (int)len, 1, 1);
+	if (ret < 0)
+		return -EINTR;
+	return (ssize_t)ret;
 }
 
 static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	unsigned char *tmp = (unsigned char *)buf;
-
 	if (n->readonly)
 		return 0;
 
-	cyb_putbuf(n->buf, tmp, len);
-	return (ssize_t)len;
+	int ret = cyb_putbuf(n->buf, (unsigned char *)buf, len, 1, 1);
+	return (ssize_t)ret;
 }
 
 static int pipe_poll(file *fp, unsigned type)
@@ -115,7 +102,8 @@ static const file_operations pipe_write_fops = {
 
 int pipe_open(file **pipes)
 {
-	cy_buf *buf = cyb_create(3);
+	cy_buf *buf =
+		cyb_create(16); /* 16 pages = 64 KB, matching Linux default */
 
 	pipe_inode *rn = zalloc(sizeof(*rn));
 	rn->buf = buf;

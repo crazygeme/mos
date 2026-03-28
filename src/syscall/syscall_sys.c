@@ -215,7 +215,7 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 			return -EINVAL;
 		}
 
-		fp = fs_open_file("/dev/initctl", O_WRONLY, NULL, 0);
+		fp = fs_open_file("/dev/initctl", O_WRONLY | O_NOFOLLOW, NULL);
 		if (!fp)
 			return -EIO;
 

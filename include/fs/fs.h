@@ -148,7 +148,7 @@ int resolve_path(const char *old, char *new);
 int fs_check_perm(const struct stat *s, int mask);
 
 int fs_open(const char *path, int flag, umode_t mode);
-file *fs_open_file(const char *path, int flag, umode_t mode, int follow_link);
+file *fs_open_file(const char *path, int flag, umode_t mode);
 int fs_put_file(file *f);
 int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
 

@@ -188,11 +188,10 @@ int sys_exit(unsigned status)
 
 /*
  * Wait for a child to finish, optionally matching a specific pid.
- * Loops until a child is available:
- *   1. Yield the CPU.
- *   2. Scan the dying queue; reap and return if a match is found.
- *   3. Scan mgr_queue for a ptrace-stopped child; report and return if found.
- *   4. No child ready: block on the wait queue and retry.
+ * Blocks until a child is available:
+ *   1. Scan the dying queue; reap and return if a match is found.
+ *   2. If no child ready: block on the wait queue.
+ *   3. ps_put_to_dying_queue() wakes the parent; re-check on wakeup.
  */
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
@@ -205,8 +204,6 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		klog("wait(%d, %x, %x, %x)\n", pid, status, options, rusage);
 
 	for (;;) {
-		task_sched();
-
 		task = NULL;
 		spinlock_lock(&ps_lock);
 		dying_task_entry = control.dying_queue.next;
@@ -251,17 +248,18 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		}
 
 		/*
-		 * returns immediately if no child process has exited or changed state,
-		 * preventing the caller from blocking
+		 * Returns immediately if no child has exited yet.
 		 */
 		if (options == WNOHANG) {
 			ret = 0;
 			goto done;
 		}
 
+		/* Block until a child exits. ps_put_to_dying_queue() will call
+		 * ps_put_to_ready_queue_unsafe(parent) to wake us. */
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-
 		spinlock_unlock(&ps_lock);
+		task_sched();
 	}
 
 done:

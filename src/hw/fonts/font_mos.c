@@ -7,7 +7,7 @@
 	((x & 1) | (x >> 2 & 2) | (x >> 4 & 4) | (x >> 6 & 8) | \
 	 (x >> 8 & 16) | (x >> 10 & 32) | (x >> 12 & 64) | (x >> 14 & 128))
 
-static unsigned char _default_glyphs[][12] = {
+static unsigned char _mos_glyphs[][12] = {
 	{
 		b(00000000), b(00000000), b(00000000), b(00000000), /* 4 */
 		b(00000000), b(00000000), b(00000000), b(00000000), /* 8 */
@@ -671,7 +671,7 @@ static unsigned char _default_glyphs[][12] = {
 
 };
 
-static unsigned char _default_cursor_glyphs[][12] = {
+static unsigned char _mos_cursor_glyphs[][12] = {
 	{
 		b(00000000), b(00000000), b(00000000), b(00000000), /* 4 */
 		b(00000000), b(00000000), b(00000000), b(00000000), /* 8 */
@@ -685,10 +685,10 @@ static unsigned char _default_cursor_glyphs[][12] = {
 };
 
 const fb_font_t font_default = {
-	.name = "default",
+	.name = "mos",
 	.width = 8,
 	.height = 12,
 	.charcount = 132,
-	.glyphs = (const unsigned char *)_default_glyphs,
-	.cursor_glyphs = (const unsigned char *)_default_cursor_glyphs,
+	.glyphs = (const unsigned char *)_mos_glyphs,
+	.cursor_glyphs = (const unsigned char *)_mos_cursor_glyphs,
 };

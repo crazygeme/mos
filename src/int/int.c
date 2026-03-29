@@ -32,7 +32,6 @@ static void pic_end_of_interrupt(int irq)
 		port_write_byte(0xa0, 0x20);
 }
 
-static char *intr_names[IDT_SIZE];
 static int_callback in_callbacks[IDT_SIZE];
 
 void int_register(int vec_no, int_callback fn, int is_trap, int dpl)
@@ -144,32 +143,9 @@ void int_enable_all(void)
 	port_write_byte(0x21, 0x0);
 	port_write_byte(0xA1, 0x0);
 
-	/* Initialize intr_names. */
 	for (i = 0; i < IDT_SIZE; i++) {
-		intr_names[i] = "unknown";
 		in_callbacks[i] = 0;
 	}
-	intr_names[0] = "#DE Divide Error";
-	intr_names[1] = "#DB Debug Exception";
-	intr_names[2] = "NMI Interrupt";
-	intr_names[3] = "#BP Breakpoint Exception";
-	intr_names[4] = "#OF Overflow Exception";
-	intr_names[5] = "#BR BOUND Range Exceeded Exception";
-	intr_names[6] = "#UD Invalid Opcode Exception";
-	intr_names[7] = "#NM Device Not Available Exception";
-	intr_names[8] = "#DF Double Fault Exception";
-	intr_names[9] = "Coprocessor Segment Overrun";
-	intr_names[10] = "#TS Invalid TSS Exception";
-	intr_names[11] = "#NP Segment Not Present";
-	intr_names[12] = "#SS Stack Fault Exception";
-	intr_names[13] = "#GP General Protection Exception";
-	intr_names[14] = "#PF Page-Fault Exception";
-	intr_names[16] = "#MF x87 FPU Floating-Point Error";
-	intr_names[17] = "#AC Alignment Check Exception";
-	intr_names[18] = "#MC Machine-Check Exception";
-	intr_names[19] = "#XF SIMD Floating-Point Exception";
-	intr_names[32] = "timer";
-	intr_names[33] = "keyboard";
 
 	/* Register IPI handlers. */
 	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);

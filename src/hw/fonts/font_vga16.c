@@ -4400,6 +4400,7 @@ const fb_font_t font_vga16 = {
 	.name = "vga16",
 	.width = 8,
 	.height = 16,
+	.charcount = 256,
 	.glyphs = _vga16_glyphs,
 	.cursor_glyphs = _vga16_cursor_glyphs,
 };

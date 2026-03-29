@@ -150,6 +150,9 @@ static void tty_roll_line(tty_state *state)
 	unsigned total = (unsigned)(MAX_ROW * (int)MAX_COL);
 	unsigned i;
 
+	if (state->tty_idx == active_tty_idx)
+		fb_cursor_erase(_displayed_cursor, state->cells, col);
+
 	memmove(state->cells, state->cells + col,
 		(total - col) * sizeof(tty_cell_t));
 	for (i = total - col; i < total; i++) {
@@ -157,6 +160,7 @@ static void tty_roll_line(tty_state *state)
 		state->cells[i].fg = VGA_COLOR_WHITE;
 		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
+
 	if (state->tty_idx == active_tty_idx)
 		fb_scroll_line_px();
 }
@@ -172,6 +176,10 @@ static void tty_roll_region(tty_state *state)
 		tty_roll_line(state);
 		return;
 	}
+
+	if (state->tty_idx == active_tty_idx)
+		fb_cursor_erase(_displayed_cursor, state->cells, col);
+
 	memmove(state->cells + top * col, state->cells + (top + 1) * col,
 		(bot - top) * col * sizeof(tty_cell_t));
 	for (i = bot * col; i < (bot + 1) * col; i++) {
@@ -627,9 +635,19 @@ static void ansi_feed(tty_state *state, char c)
 		ansi_end(state);
 		return;
 	}
-	case 'M': { /* DL - delete N lines at cursor row */
-		val = atoi(arg);
-		tty_delete_lines(state, val);
+	case 'M': {
+		if (state->ansi_buf[0] == '\0') {
+			/* ESC M = RI: reverse index — cursor up, scroll if at top */
+			if (CUR_ROW == state->scroll_top)
+				tty_insert_lines(state, 1);
+			else if (CUR_ROW > 0)
+				cursor_set(state, (CUR_ROW - 1) * (int)MAX_COL +
+							  CUR_COL);
+		} else {
+			/* CSI M = DL: delete N lines at cursor row */
+			val = atoi(arg);
+			tty_delete_lines(state, val);
+		}
 		ansi_end(state);
 		return;
 	}
@@ -743,11 +761,11 @@ static void ansi_feed(tty_state *state, char c)
 /* ── Character rendering ─────────────────────────────────────────────────── */
 
 /*
- * char_to_pos - process one character and return new cursor position.
+ * process_one_char - process one character and return new cursor position.
  * Returns current cursor unchanged for unrecognised characters.
  * Does NOT update cursor or hardware register.
  */
-static int char_to_pos(tty_state *state, char c)
+static int process_one_char(tty_state *state, char c)
 {
 	int i, pos, spaces;
 
@@ -783,7 +801,7 @@ static int char_to_pos(tty_state *state, char c)
 		ansi_begin(state);
 		return state->cursor;
 	default:
-		if (isprint(c)) {
+		if (fb_is_char_visiable(c)) {
 			vga_putchar(state, CUR_ROW, CUR_COL, c);
 			if (state->no_wrap && CUR_COL == (int)MAX_COL - 1)
 				return state->cursor; /* stay at last column */
@@ -802,9 +820,13 @@ static int char_to_pos(tty_state *state, char c)
 static void tty_raw_write(tty_state *state, const char *buf, unsigned len)
 {
 	unsigned i;
+	int cur_pos;
 	spinlock_lock(&state->lock);
-	for (i = 0; i < len; i++)
-		cursor_set(state, char_to_pos(state, buf[i]));
+	for (i = 0; i < len; i++) {
+		cur_pos = process_one_char(state, buf[i]);
+		cursor_set(state, cur_pos);
+	}
+
 	tty_hw_cursor(state, (unsigned)state->cursor);
 	spinlock_unlock(&state->lock);
 }
@@ -918,10 +940,13 @@ void tty_init(void)
  */
 void tty_default_emit_unsafe(char c, void *ctx)
 {
+	int cur_pos;
+
 	if (!this_ttys)
 		return;
 
-	cursor_forward(this_ttys, char_to_pos(this_ttys, c));
+	cur_pos = process_one_char(this_ttys, c);
+	cursor_forward(this_ttys, cur_pos);
 }
 
 void tty_lock_acquire(void)

@@ -309,9 +309,22 @@ void fb_init(void)
 	_window_char_height = _hw_resolution_y / (unsigned)_font->height;
 }
 
+void fb_cursor_erase(unsigned pos, const tty_cell_t *cells, unsigned cols)
+{
+	fb_render_cell(&cells[pos], (int)(pos % cols), (int)(pos / cols));
+}
+
 void fb_change_font(const char *name)
 {
 	const fb_font_t *f = font_get(name);
 	if (f)
 		_font = f;
+}
+
+int fb_is_char_visiable(unsigned char c)
+{
+	if (!_font)
+		return 0;
+
+	return (unsigned)c < (unsigned)_font->charcount;
 }

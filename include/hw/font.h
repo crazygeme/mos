@@ -7,6 +7,7 @@ typedef struct {
 	const char *name;
 	int width;
 	int height;
+	int charcount;
 	const unsigned char *
 		glyphs; /* indexed by char value, row-major: [ch * height + row] */
 	const unsigned char

@@ -50,6 +50,11 @@ void fb_clear_screen(void);
 /* Change font */
 void fb_change_font(const char *name);
 
+int fb_is_char_visiable(unsigned char c);
+
+/* Erase the cursor underline at pos before a pixel-level scroll */
+void fb_cursor_erase(unsigned pos, const tty_cell_t *cells, unsigned cols);
+
 /* BGA / VBE register constants */
 #define VBE_DISPI_ID5 0xB0C5
 #define VBE_DISPI_IOPORT_INDEX 0x01CE

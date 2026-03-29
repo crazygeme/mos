@@ -7,9 +7,10 @@ typedef struct {
 	const char *name;
 	int width;
 	int height;
-	const unsigned char (*glyphs)[12]; /* indexed by char value */
-	const unsigned char (
-		*cursor_glyphs)[12]; /* index 0 = cursor block, 1 = blank */
+	const unsigned char *
+		glyphs; /* indexed by char value, row-major: [ch * height + row] */
+	const unsigned char
+		*cursor_glyphs; /* index 0 = cursor block, 1 = blank */
 	list_entry node;
 } fb_font_t;
 

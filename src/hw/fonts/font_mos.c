@@ -688,6 +688,6 @@ const fb_font_t font_default = {
 	.name = "default",
 	.width = 8,
 	.height = 12,
-	.glyphs = _default_glyphs,
-	.cursor_glyphs = _default_cursor_glyphs,
+	.glyphs = (const unsigned char *)_default_glyphs,
+	.cursor_glyphs = (const unsigned char *)_default_cursor_glyphs,
 };

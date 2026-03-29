@@ -37,7 +37,9 @@ static void fb_render_cell(const tty_cell_t *cell, int col, int row)
 	int i, j;
 
 	for (i = 0; i < _font->height; i++) {
-		unsigned char bits = _font->glyphs[(unsigned char)cell->ch][i];
+		unsigned char bits =
+			_font->glyphs[(unsigned char)cell->ch * _font->height +
+				      i];
 		unsigned *rowp = disp + (py + i) * (int)_hw_resolution_x + px;
 		for (j = 0; j < _font->width; j++)
 			rowp[j] = (bits & bit_mask[j]) ? cell->fg : cell->bg;
@@ -56,8 +58,9 @@ static void fb_render_cursor_cell(int col, int row, char ch, unsigned fg,
 	int i, j;
 
 	for (i = 0; i < _font->height; i++) {
-		unsigned char bits_ch = _font->glyphs[(unsigned char)ch][i];
-		unsigned char bits_cur = _font->cursor_glyphs[0][i];
+		unsigned char bits_ch =
+			_font->glyphs[(unsigned char)ch * _font->height + i];
+		unsigned char bits_cur = _font->cursor_glyphs[i];
 		unsigned *rowp = disp + (py + i) * (int)_hw_resolution_x + px;
 		for (j = 0; j < _font->width; j++) {
 			unsigned char m = bit_mask[j];
@@ -300,7 +303,7 @@ void fb_init(void)
 		_fb_buffer = _fb_buffer_phy;
 	}
 
-	fb_change_font("default");
+	fb_change_font("vga16");
 
 	_window_char_width = _hw_resolution_x / (unsigned)_font->width;
 	_window_char_height = _hw_resolution_y / (unsigned)_font->height;

@@ -282,6 +282,9 @@ typedef struct _mos_sock {
 	/* Task currently blocked waiting for data or state change, or NULL */
 	struct _task_struct *waiter;
 
+	/* poll/select wakeup task, woken alongside waiter wakeups */
+	struct _task_struct *poll_task;
+
 	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
 	struct _mos_sock *unix_peer;
 

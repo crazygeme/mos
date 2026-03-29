@@ -1329,12 +1329,27 @@ static const inode_operations tty_iops = {
 	.getattr = tty_fs_getattr,
 };
 
+static void tty_poll_wait(file *fp, task_struct *task)
+{
+	tty_state *state = fp->f_inode->i_private;
+	cyb_set_poll_read(state->kb_buf, task);
+}
+
+static void tty_poll_wait_remove(file *fp, task_struct *task)
+{
+	tty_state *state = fp->f_inode->i_private;
+	(void)task;
+	cyb_clear_poll_read(state->kb_buf);
+}
+
 static const file_operations tty_fops = {
 	.release = tty_fs_release,
 	.read = tty_fs_read,
 	.write = tty_fs_write,
 	.llseek = tty_fs_llseek,
 	.poll = tty_fs_poll,
+	.poll_wait = tty_poll_wait,
+	.poll_wait_remove = tty_poll_wait_remove,
 	.ioctl = tty_fs_ioctl,
 };
 

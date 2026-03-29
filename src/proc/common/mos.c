@@ -42,9 +42,6 @@ extern unsigned long long elf_read_time;
 
 /* ---- scheduler ---- */
 extern unsigned task_schedule_count;
-extern unsigned timer_wakeup_times;
-extern unsigned timer_process_times;
-extern unsigned select_loop_times;
 
 static void fill(proc_buf_t *pb)
 {
@@ -102,10 +99,6 @@ static void fill(proc_buf_t *pb)
 	/* ---- Scheduler ---- */
 	proc_buf_printf(pb, "SchedCalls:            %8u\n",
 			task_schedule_count);
-	proc_buf_printf(pb, "SchedSelectLoop:       %8u\n", select_loop_times);
-	proc_buf_printf(pb, "TimerWakeups:          %8u\n", timer_wakeup_times);
-	proc_buf_printf(pb, "TimerProcessed:        %8u\n",
-			timer_process_times);
 }
 
 DEFINE_PROC_FILE(mos, fill);

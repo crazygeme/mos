@@ -13,7 +13,6 @@
 #include <hw/time.h>
 #include <hw/keyboard.h>
 #include <hw/tty.h>
-#include <lib/timer.h>
 #include <lib/klib.h>
 
 #include <macro.h>
@@ -22,7 +21,6 @@ static void run(void);
 TEST_CONTROL TestControl;
 
 static void kmain_process(void *param);
-static void timer_process(void *param);
 static void idle_process(void *param);
 static void parse_kernel_cmdline();
 
@@ -112,9 +110,6 @@ void kmain_startup()
 		printk("SMP not available, running single-CPU\n");
 	}
 
-	printk("Init timer\n");
-	timer_init();
-
 	printk("Start first process\n");
 
 	if (ncpus == 1) {
@@ -124,17 +119,9 @@ void kmain_startup()
 	// create first process
 	ps_create(kmain_process, NULL, ps_normal, ps_kernel);
 
-	// create timer process
-	ps_create(timer_process, NULL, ps_normal, ps_kernel);
-
 	ps_kickoff();
 
 	run();
-}
-
-static void timer_process(void *param)
-{
-	do_timer_loop();
 }
 
 static void idle_process(void *param)

@@ -89,6 +89,8 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	LOAD_CR3(task->cr3);
 	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);
+	RB_CLEAR_NODE(&task->timer_rb);
+	task->timer_due_ms = 0;
 	task->fn = fn;
 	task->param = param;
 	task->priority = priority;
@@ -308,6 +310,8 @@ static task_struct *fork_alloc_child(task_struct *cur)
 	task->nchildren = 0;
 	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);
+	RB_CLEAR_NODE(&task->timer_rb);
+	task->timer_due_ms = 0;
 	return task;
 }
 

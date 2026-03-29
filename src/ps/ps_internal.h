@@ -20,6 +20,8 @@ typedef struct _ps_control {
 	list_entry wait_queue;
 	struct rb_root mgr_queue;
 	int ps_count;
+	struct rb_root
+		timer_queue; /* tasks sleeping in time_wait(), ordered by timer_due_ms */
 } ps_control;
 
 /*
@@ -45,6 +47,11 @@ void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
 unsigned ps_id_gen();
 void ps_id_free(unsigned pid);
+
+/* ps_sched.c — timer helpers (called under ps_lock) */
+void timer_arm_unsafe(task_struct *task, unsigned ms);
+void timer_disarm_unsafe(task_struct *task);
+void ps_fire_timers_unsafe(void);
 
 /* Set the kernel-mode segment selectors in a task's saved TSS.
  * Used by both ps_create and the fork helpers. */

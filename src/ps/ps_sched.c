@@ -51,6 +51,64 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 	return NULL;
 }
 
+/*
+ * Timer queue helpers — all called with ps_lock held.
+ *
+ * timer_arm_unsafe: insert @task into the per-CPU timer RB-tree with
+ *   expiry = now + ms.  Duplicate due times go to the right so that
+ *   rb_first() always returns the earliest entry.
+ *
+ * timer_disarm_unsafe: remove @task from the timer tree if it is present.
+ *
+ * ps_fire_timers_unsafe: move every expired task (due_ms <= now) to the
+ *   ready queue.  Called once per scheduling decision to avoid idle spinning.
+ */
+void timer_arm_unsafe(task_struct *task, unsigned ms)
+{
+	struct rb_root *root = &control.timer_queue;
+	struct rb_node **link = &root->rb_node;
+	struct rb_node *parent = NULL;
+	unsigned due = time_now_ms() + ms;
+
+	task->timer_due_ms = due;
+	while (*link) {
+		task_struct *t = rb_entry(*link, task_struct, timer_rb);
+		parent = *link;
+		if (due < t->timer_due_ms)
+			link = &(*link)->rb_left;
+		else
+			link = &(*link)->rb_right;
+	}
+	rb_link_node(&task->timer_rb, parent, link);
+	rb_insert_color(&task->timer_rb, root);
+}
+
+void timer_disarm_unsafe(task_struct *task)
+{
+	if (!RB_EMPTY_NODE(&task->timer_rb)) {
+		rb_erase(&task->timer_rb, &control.timer_queue);
+		RB_CLEAR_NODE(&task->timer_rb);
+		task->timer_due_ms = 0;
+	}
+}
+
+void ps_fire_timers_unsafe(void)
+{
+	unsigned now = time_now_ms();
+	struct rb_node *n = rb_first(&control.timer_queue);
+
+	while (n) {
+		task_struct *t = rb_entry(n, task_struct, timer_rb);
+		if (t->timer_due_ms > now)
+			break;
+		n = rb_next(n);
+		rb_erase(&t->timer_rb, &control.timer_queue);
+		RB_CLEAR_NODE(&t->timer_rb);
+		t->timer_due_ms = 0;
+		ps_put_to_ready_queue_unsafe(t);
+	}
+}
+
 /* Scan ready levels from highest to lowest and return the next task to run. */
 static task_struct *ps_get_next_task()
 {
@@ -58,6 +116,7 @@ static task_struct *ps_get_next_task()
 	int i = PS_PRIORITY_MAX - 1;
 
 	spinlock_lock(&ps_lock);
+	ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
 		if (list_is_empty(&control.ready_queue[i]))
 			continue;
@@ -252,4 +311,30 @@ int sched_set_level(int level)
 int sched_is_enabled()
 {
 	return __sync_add_and_fetch(&scheduler_enabled, 0);
+}
+
+/*
+ * time_wait — sleep the current task for up to @ms milliseconds.
+ *
+ * If ms == 0 the task blocks indefinitely (no timer is armed); it can
+ * only be woken by an external ps_put_to_ready_queue() call.
+ *
+ * The task is placed in the global wait queue.  Any caller that wants to
+ * wake it early (e.g. an fd becoming readable) simply calls
+ * ps_put_to_ready_queue(task).  The timer fires via ps_fire_timers_unsafe
+ * on the next scheduling decision and does the same thing.
+ */
+void time_wait(unsigned ms)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	spinlock_lock(&ps_lock);
+	if (ms > 0)
+		timer_arm_unsafe(cur, ms);
+	ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+	spinlock_unlock(&ps_lock);
+	task_sched();
+	spinlock_lock(&ps_lock);
+	timer_disarm_unsafe(cur);
+	spinlock_unlock(&ps_lock);
 }

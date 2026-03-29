@@ -2,6 +2,7 @@
 #define _FS_FS_H_
 
 #include <mm/mm.h>
+#include <lib/lock.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <unistd.h>
@@ -62,6 +63,9 @@ typedef int ssize_t;
 typedef struct _inode inode;
 typedef struct _file file;
 
+/* Forward declaration for poll_wait hooks */
+typedef struct _task_struct task_struct;
+
 /*
  * file_operations - per-open-file operations, analogous to Linux
  * struct file_operations. All ops receive the open file as first argument.
@@ -76,6 +80,14 @@ typedef struct _file_operations {
 	loff_t (*llseek)(file *file, loff_t offset, int whence);
 	/* poll: return 0 if ready, -1 if not ready */
 	int (*poll)(file *file, unsigned type);
+	/*
+	 * poll_wait / poll_wait_remove: register / deregister the calling
+	 * task to be woken (via ps_put_to_ready_queue) when this file becomes
+	 * ready.  NULL means always-ready (no registration needed).  The task
+	 * pointer remains valid until poll_wait_remove is called.
+	 */
+	void (*poll_wait)(file *fp, task_struct *task);
+	void (*poll_wait_remove)(file *fp, task_struct *task);
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
 	int (*flush)(file *file);
 } file_operations;

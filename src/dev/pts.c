@@ -239,11 +239,26 @@ static const inode_operations pts_slave_iops = {
 	.getattr = pts_slave_getattr,
 };
 
+static void pts_slave_poll_wait(file *fp, task_struct *task)
+{
+	pts_pair *p = fp->f_inode->i_private;
+	cyb_set_poll_read(p->m2s, task);
+}
+
+static void pts_slave_poll_wait_remove(file *fp, task_struct *task)
+{
+	pts_pair *p = fp->f_inode->i_private;
+	(void)task;
+	cyb_clear_poll_read(p->m2s);
+}
+
 static const file_operations pts_slave_fops = {
 	.release = pts_slave_release,
 	.read = pts_slave_read,
 	.write = pts_slave_write,
 	.poll = pts_slave_poll,
+	.poll_wait = pts_slave_poll_wait,
+	.poll_wait_remove = pts_slave_poll_wait_remove,
 	.ioctl = pts_slave_ioctl,
 };
 
@@ -378,11 +393,26 @@ static const inode_operations pts_master_iops = {
 	.getattr = pts_master_getattr,
 };
 
+static void pts_master_poll_wait(file *fp, task_struct *task)
+{
+	pts_pair *p = fp->f_inode->i_private;
+	cyb_set_poll_read(p->s2m, task);
+}
+
+static void pts_master_poll_wait_remove(file *fp, task_struct *task)
+{
+	pts_pair *p = fp->f_inode->i_private;
+	(void)task;
+	cyb_clear_poll_read(p->s2m);
+}
+
 static const file_operations pts_master_fops = {
 	.release = pts_master_release,
 	.read = pts_master_read,
 	.write = pts_master_write,
 	.poll = pts_master_poll,
+	.poll_wait = pts_master_poll_wait,
+	.poll_wait_remove = pts_master_poll_wait_remove,
 	.ioctl = pts_master_ioctl,
 };
 

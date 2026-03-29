@@ -19,57 +19,38 @@
 #include <mm/mm.h>
 #include <config.h>
 
+typedef struct {
+	char ch;
+	unsigned fg;
+	unsigned bg;
+} tty_cell_t;
+
 /* Lifecycle */
-
-void fb_init();
-void fb_enable();
-void fb_map_lfb();
-
-/* Query */
-
-/* Fill *cols and *rows with the character grid dimensions. */
+void fb_init(void);
 void fb_get_char_dims(unsigned *cols, unsigned *rows);
 
-/* Drawing primitives */
+/* Render one cell to the hardware framebuffer */
+void fb_putcell(const tty_cell_t *cell, int col, int row);
 
-void fb_write_color(int x, int y, unsigned color);
+/* Repaint the entire screen from a cell buffer and place the cursor */
+void fb_redraw(const tty_cell_t *cells, unsigned cols, unsigned rows,
+	       unsigned cursor_pos);
 
-/* Character cell read/write (also updates the internal text shadow buffer). */
-char fb_getchar(int col, int row);
-void fb_putchar(int col, int row, char c, unsigned fg, unsigned bg);
+/* Move the visible cursor: restore cell at old_pos, draw cursor at new_pos */
+void fb_cursor_update(unsigned old_pos, unsigned new_pos,
+		      const tty_cell_t *cells, unsigned cols);
 
-/* Cursor */
-
-/* Move the visible cursor to new_pos (linear char index). */
-void fb_update_cursor(unsigned new_pos);
-
-/* Screen operations */
-
-/* Scroll the entire screen up by one character row. */
-void fb_scroll_line(void);
-void fb_scroll_region(unsigned top_row, unsigned bot_row);
-void fb_insert_lines(unsigned row, unsigned bot_row, unsigned n);
-void fb_delete_lines(unsigned row, unsigned bot_row, unsigned n);
-
-/* Clear the entire framebuffer to black. */
+/* Pixel-only scroll/insert/delete — cell buffer is managed by tty.c */
+void fb_scroll_line_px(void);
+void fb_scroll_region_px(unsigned top_row, unsigned bot_row);
+void fb_insert_lines_px(unsigned row, unsigned bot_row, unsigned n);
+void fb_delete_lines_px(unsigned row, unsigned bot_row, unsigned n);
 void fb_clear_screen(void);
 
-/* Save the text shadow buffer to dst (size = cols*rows bytes). */
-void fb_save_text(char *dst, unsigned size);
-
-/* Save the fg/bg color arrays to dst buffers (size = cols*rows elements). */
-void fb_save_colors(unsigned *fg_dst, unsigned *bg_dst, unsigned size);
-
-/* Restore the fg/bg color arrays from src buffers before redrawing. */
-void fb_restore_colors(const unsigned *fg_src, const unsigned *bg_src,
-		       unsigned size);
-
-/* Restore the text shadow buffer from src, redraw the entire screen,
- * and place the cursor at cursor_pos. */
-void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos);
+/* Change font */
+void fb_change_font(const char *name);
 
 /* BGA / VBE register constants */
-
 #define VBE_DISPI_ID5 0xB0C5
 #define VBE_DISPI_IOPORT_INDEX 0x01CE
 #define VBE_DISPI_IOPORT_DATA 0x01CF
@@ -96,7 +77,6 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos);
 #define VBE_DISPI_BPP_32 0x20
 
 /* Colour helpers */
-
 #define _RED(color) ((color & 0x00FF0000) / 0x10000)
 #define _GRE(color) ((color & 0x0000FF00) / 0x100)
 #define _BLU(color) ((color & 0x000000FF) / 0x1)
@@ -116,8 +96,4 @@ void fb_restore_screen(const char *src, unsigned size, unsigned cursor_pos);
 #define VGA_COLOR_CYAN ARGB(0xff, 0x00, 0xff, 0xff)
 #define VGA_COLOR_MAGENTA ARGB(0xff, 0xff, 0x00, 0xff)
 
-/* Font cell dimensions in pixels. */
-#define char_height 12
-#define char_width 8
-
-#endif /* BOOT_VIDEO_H */
+#endif /* _HW_BOOT_VIDEO_H */

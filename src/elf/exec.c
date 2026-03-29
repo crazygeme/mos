@@ -601,9 +601,9 @@ static void kinit_userspace()
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
 				    "HOME=/root", "LANG=en_US", NULL };
 	task_struct *cur = CURRENT_TASK();
-
 	const char **argv = devault_argv;
 	const char **envp = default_envp;
+	unsigned esp0 = (unsigned)cur + (unsigned)PAGE_SIZE;
 
 	if (TestControl.bash) {
 		argv = user_argv;
@@ -611,7 +611,7 @@ static void kinit_userspace()
 		strcpy(cur->user->cwd, "/root");
 	}
 
-	unsigned esp0 = (unsigned)cur + (unsigned)PAGE_SIZE;
+	printk("Now Bringup first user process %s\n", argv[0]);
 
 	ps_update_tss(esp0);
 

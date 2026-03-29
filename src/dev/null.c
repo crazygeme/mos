@@ -143,6 +143,7 @@ static file *zero_cdev_open(unsigned rdev, int flag)
 
 static void zero_dev_register(super_block *dev_sb)
 {
+	printk("dev: registered /dev/zero\n");
 	cdev_register(S_IFCHR, ZERO_MAJOR, ZERO_MINOR, 1, zero_cdev_open);
 	vfs_mknod(dev_sb, "/zero", S_IFCHR | 0666,
 		  MKDEV(ZERO_MAJOR, ZERO_MINOR));

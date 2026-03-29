@@ -13,6 +13,7 @@
 #include <hw/time.h>
 #include <hw/keyboard.h>
 #include <hw/tty.h>
+#include <hw/font.h>
 #include <lib/klib.h>
 
 #include <macro.h>
@@ -39,53 +40,43 @@ static void idle_process(void *param);
 
 void kmain_startup()
 {
-	fb_init();
+	font_init();
 
-	fb_enable();
+	fb_init();
 
 	// after klib_init, kmalloc/kfree/prink/etc are workable
 	tty_init();
+
 	klib_init();
 
-	printk("parse kernel command line\n");
 	parse_kernel_cmdline();
 
-	printk("Init process\n");
 	ps_init();
 
-	printk("Init dsr\n");
 	dsr_init();
 
-	printk("Enable interrupts\n");
 	int_enable_all();
 
 	mm_del_user_map();
 
-	printk("Init serial\n");
 	serial_init_queue();
 
-	printk("Init keyboard\n");
 	kb_init();
 
-	printk("Init timer\n");
 	time_init();
 
-	printk("Caculate CPU caps\n");
 	time_calculate_cpu_cycle();
 
-	printk("Init page fault\n");
 	pf_init();
 
 	/*
 	 * SMP: discover CPUs via ACPI, init LAPIC/IOAPIC, start APs.
 	 */
-	printk("Init ACPI\n");
 	if (acpi_parse(&g_acpi_info) == 0 && g_acpi_info.ncpus > 1) {
 		unsigned ioapic_phys = g_acpi_info.ioapic_phys ?
 					       g_acpi_info.ioapic_phys :
 					       IOAPIC_BASE_PHY;
 
-		printk("Init BSP LAPIC\n");
 		apic_init_bsp();
 
 		/*
@@ -98,19 +89,12 @@ void kmain_startup()
 		 * The IOAPIC is initialised (all entries masked) for IPI routing
 		 * only; external IRQs stay with the 8259A.
 		 */
-		printk("Init IOAPIC\n");
 		ioapic_init(ioapic_phys);
 
-		printk("Init BSP CPU struct\n");
 		cpu_init_bsp();
 
-		printk("Start Application Processors\n");
 		smp_start_aps();
-	} else {
-		printk("SMP not available, running single-CPU\n");
 	}
-
-	printk("Start first process\n");
 
 	if (ncpus == 1) {
 		// create idle process for single CPU system

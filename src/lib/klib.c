@@ -20,7 +20,6 @@ extern void klog_init(void);
 
 void klib_init(void)
 {
-	tty_init();
 	kmalloc_init();
 }
 

@@ -92,6 +92,7 @@ static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
 
 static void mount_syscall_init(void)
 {
+	printk("mnt: Register mount fs types\n");
 	fs_register_type(&proc_fs_type);
 	fs_register_type(&sysfs_fs_type);
 	fs_register_type(&tmpfs_fs_type);

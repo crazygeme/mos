@@ -126,6 +126,25 @@ int sys_fstat(int fd, struct stat *buf)
 	return ret;
 }
 
+static void stat_to_stat64(const struct stat *s32, struct stat64 *s)
+{
+	memset(s, 0, sizeof(*s));
+	s->st_dev = s32->st_dev;
+	s->__st_ino = s32->st_ino;
+	s->st_mode = s32->st_mode;
+	s->st_nlink = s32->st_nlink;
+	s->st_uid = s32->st_uid;
+	s->st_gid = s32->st_gid;
+	s->st_rdev = s32->st_rdev;
+	s->st_size = s32->st_size;
+	s->st_blksize = s32->st_blksize;
+	s->st_blocks = s32->st_blocks;
+	s->st_atime = s32->st_atime;
+	s->st_mtime = s32->st_mtime;
+	s->st_ctime = s32->st_ctime;
+	s->st_ino = s32->st_ino;
+}
+
 int sys_stat64(const char *path, struct stat64 *s)
 {
 	struct stat s32;
@@ -134,23 +153,10 @@ int sys_stat64(const char *path, struct stat64 *s)
 
 	resolve_path(path, name);
 	ret = do_stat("stat64", name, &s32, O_PATH);
-	memset(s, 0, sizeof(*s));
-	if (ret == 0) {
-		s->st_dev = s32.st_dev;
-		s->__st_ino = s32.st_ino;
-		s->st_mode = s32.st_mode;
-		s->st_nlink = s32.st_nlink;
-		s->st_uid = s32.st_uid;
-		s->st_gid = s32.st_gid;
-		s->st_rdev = s32.st_rdev;
-		s->st_size = s32.st_size;
-		s->st_blksize = s32.st_blksize;
-		s->st_blocks = s32.st_blocks;
-		s->st_atime = s32.st_atime;
-		s->st_mtime = s32.st_mtime;
-		s->st_ctime = s32.st_ctime;
-		s->st_ino = s32.st_ino;
-	}
+	if (ret == 0)
+		stat_to_stat64(&s32, s);
+	else
+		memset(s, 0, sizeof(*s));
 	name_put(name);
 	return ret;
 }
@@ -163,23 +169,10 @@ int sys_lstat64(const char *path, struct stat64 *s)
 
 	resolve_path(path, name);
 	ret = do_stat("lstat64", name, &s32, O_PATH | O_NOFOLLOW);
-	memset(s, 0, sizeof(*s));
-	if (ret == 0) {
-		s->st_dev = s32.st_dev;
-		s->__st_ino = s32.st_ino;
-		s->st_mode = s32.st_mode;
-		s->st_nlink = s32.st_nlink;
-		s->st_uid = s32.st_uid;
-		s->st_gid = s32.st_gid;
-		s->st_rdev = s32.st_rdev;
-		s->st_size = s32.st_size;
-		s->st_blksize = s32.st_blksize;
-		s->st_blocks = s32.st_blocks;
-		s->st_atime = s32.st_atime;
-		s->st_mtime = s32.st_mtime;
-		s->st_ctime = s32.st_ctime;
-		s->st_ino = s32.st_ino;
-	}
+	if (ret == 0)
+		stat_to_stat64(&s32, s);
+	else
+		memset(s, 0, sizeof(*s));
 	name_put(name);
 	return ret;
 }
@@ -190,23 +183,13 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	int ret;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	ret = fs_fstat(fd, &s32);
-	buf->st_dev = s32.st_dev;
-	buf->__st_ino = s32.st_ino;
-	buf->st_mode = s32.st_mode;
-	buf->st_nlink = s32.st_nlink;
-	buf->st_uid = s32.st_uid;
-	buf->st_gid = s32.st_gid;
-	buf->st_rdev = s32.st_rdev;
-	buf->st_size = s32.st_size;
-	buf->st_blksize = s32.st_blksize;
-	buf->st_blocks = s32.st_blocks;
-	buf->st_atime = s32.st_atime;
-	buf->st_mtime = s32.st_mtime;
-	buf->st_ctime = s32.st_ctime;
-	buf->st_ino = s32.st_ino;
+	if (ret == 0)
+		stat_to_stat64(&s32, buf);
+	else
+		memset(buf, 0, sizeof(*buf));
 
 	if (TestControl.verbos) {
 		char modes[11];

@@ -2,7 +2,7 @@
 #include <hw/font.h>
 #include <macro.h>
 
-static const unsigned char _vga16_glyphs[256 * 16] = {
+static const unsigned char _vga16_glyphs[] = {
 	/* 0x00 */
 	0x00,
 	0x00,
@@ -4359,7 +4359,7 @@ static const unsigned char _vga16_glyphs[256 * 16] = {
 };
 
 /* Cursor: underline (rows 14-15) and blank */
-static const unsigned char _vga16_cursor_glyphs[2 * 16] = {
+static const unsigned char _vga16_cursor_glyphs[] = {
 	/* index 0: underline cursor */
 	0x00,
 	0x00,

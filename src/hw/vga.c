@@ -323,6 +323,9 @@ void fb_change_font(const char *name)
 
 int fb_is_char_visiable(unsigned char c)
 {
+	if (c < 127)
+		return isprint(c);
+
 	if (!_font)
 		return 0;
 

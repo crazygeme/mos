@@ -52,7 +52,7 @@ typedef struct _block block;
 #define FILE_TYPE_CHAR 3
 #define FILE_TYPE_DIR 4
 
-/* Used by fs_select() and poll op */
+/* Used by fs_fd_ready() and poll op */
 #define FS_POLL_READ 0
 #define FS_POLL_WRITE 1
 #define FS_POLL_EXCEPT 2
@@ -79,7 +79,7 @@ typedef struct _file_operations {
 	/* llseek: return new position or -errno */
 	loff_t (*llseek)(file *file, loff_t offset, int whence);
 	/* poll: return 0 if ready, -1 if not ready */
-	int (*poll)(file *file, unsigned type);
+	int (*is_ready)(file *file, unsigned type);
 	/*
 	 * poll_wait / poll_wait_remove: register / deregister the calling
 	 * task to be woken (via ps_put_to_ready_queue) when this file becomes
@@ -187,7 +187,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 
 int fs_seek(int fd, int offset, unsigned whence);
 
-int fs_select(int fd, unsigned type);
+int fs_fd_ready(int fd, unsigned type);
 
 int fs_ioctl(int fd, unsigned cmd, void *buf);
 

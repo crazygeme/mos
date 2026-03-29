@@ -420,7 +420,7 @@ done:
 	return ret;
 }
 
-int fs_select(int fd, unsigned type)
+int fs_fd_ready(int fd, unsigned type)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
@@ -433,10 +433,10 @@ int fs_select(int fd, unsigned type)
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_fop || !fp->f_fop->poll)
+	if (!fp || !fp->f_fop || !fp->f_fop->is_ready)
 		goto done;
 
-	ret = fp->f_fop->poll(fp, type);
+	ret = fp->f_fop->is_ready(fp, type);
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;

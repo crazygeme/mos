@@ -28,17 +28,17 @@ static int select_check(int nfds, fd_set *reads, fd_set *writes,
 
 	for (i = 0; i < nfds; i++) {
 		if (reads && FD_ISSET(i, reads) &&
-		    fs_select(i, FS_POLL_READ) == 0) {
+		    fs_fd_ready(i, FS_POLL_READ) == 0) {
 			FD_SET(i, readfds);
 			ready++;
 		}
 		if (writes && FD_ISSET(i, writes) &&
-		    fs_select(i, FS_POLL_WRITE) == 0) {
+		    fs_fd_ready(i, FS_POLL_WRITE) == 0) {
 			FD_SET(i, writefds);
 			ready++;
 		}
 		if (excepts && FD_ISSET(i, excepts) &&
-		    fs_select(i, FS_POLL_EXCEPT) == 0) {
+		    fs_fd_ready(i, FS_POLL_EXCEPT) == 0) {
 			FD_SET(i, exceptfds);
 			ready++;
 		}

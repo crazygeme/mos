@@ -133,7 +133,7 @@ static const file_operations hdd_dev_fops = {
 	.read = hdd_dev_read,
 	.write = hdd_dev_write,
 	.llseek = hdd_dev_llseek,
-	.poll = hdd_dev_poll,
+	.is_ready = hdd_dev_poll,
 };
 
 /* ── cdev dispatch ───────────────────────────────────────────────────────── */

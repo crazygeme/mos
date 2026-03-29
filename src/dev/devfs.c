@@ -90,7 +90,7 @@ static const inode_operations dev_root_iops = {
 
 static const file_operations dev_root_fops = {
 	.read = dev_root_read,
-	.poll = dev_root_poll,
+	.is_ready = dev_root_poll,
 	.release = dev_root_release,
 };
 

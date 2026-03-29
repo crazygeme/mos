@@ -128,7 +128,6 @@ int sys_fstat(int fd, struct stat *buf)
 
 static void stat_to_stat64(const struct stat *s32, struct stat64 *s)
 {
-	memset(s, 0, sizeof(*s));
 	s->st_dev = s32->st_dev;
 	s->__st_ino = s32->st_ino;
 	s->st_mode = s32->st_mode;
@@ -153,10 +152,10 @@ int sys_stat64(const char *path, struct stat64 *s)
 
 	resolve_path(path, name);
 	ret = do_stat("stat64", name, &s32, O_PATH);
+	memset(s, 0, sizeof(*s));
 	if (ret == 0)
 		stat_to_stat64(&s32, s);
-	else
-		memset(s, 0, sizeof(*s));
+
 	name_put(name);
 	return ret;
 }
@@ -169,10 +168,10 @@ int sys_lstat64(const char *path, struct stat64 *s)
 
 	resolve_path(path, name);
 	ret = do_stat("lstat64", name, &s32, O_PATH | O_NOFOLLOW);
+	memset(s, 0, sizeof(*s));
 	if (ret == 0)
 		stat_to_stat64(&s32, s);
-	else
-		memset(s, 0, sizeof(*s));
+
 	name_put(name);
 	return ret;
 }
@@ -186,10 +185,9 @@ int sys_fstat64(int fd, struct stat64 *buf)
 		return -EBADF;
 
 	ret = fs_fstat(fd, &s32);
+	memset(buf, 0, sizeof(*buf));
 	if (ret == 0)
 		stat_to_stat64(&s32, buf);
-	else
-		memset(buf, 0, sizeof(*buf));
 
 	if (TestControl.verbos) {
 		char modes[11];

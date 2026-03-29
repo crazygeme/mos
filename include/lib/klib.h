@@ -88,6 +88,7 @@ char *itoa(int num, int base, int sign);
 char *lltoa(long long num, int base, int sign);
 int atoi(const char *str);
 void srand(unsigned _seed);
+unsigned int rand(void);
 
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 

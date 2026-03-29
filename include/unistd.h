@@ -272,7 +272,7 @@ struct oldstat {
 	unsigned short st_uid;
 	unsigned short st_gid;
 	unsigned short st_rdev;
-	unsigned long st_size;
+	long st_size;
 	unsigned long st_atime;
 	unsigned long st_mtime;
 	unsigned long st_ctime;
@@ -286,7 +286,7 @@ struct stat {
 	unsigned short st_uid;
 	unsigned short st_gid;
 	unsigned long st_rdev;
-	unsigned long st_size;
+	long st_size;
 	unsigned long st_blksize;
 	unsigned long st_blocks;
 	unsigned long st_atime;

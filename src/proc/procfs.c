@@ -369,6 +369,7 @@ static void procfs_init(void)
 	proc_init_fn_t *fn;
 	super_block *sb = sget(&proc_sops);
 
+	printk("mnt: Mounting procfs on /proc\n");
 	vfs_mount(root, "/proc", sb);
 
 	/* Let each static entry self-register under the procfs superblock. */

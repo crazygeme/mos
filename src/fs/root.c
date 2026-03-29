@@ -816,6 +816,8 @@ static void fs_mount_root(void)
 {
 	task_struct *cur = CURRENT_TASK();
 
+	printk("mnt: Mount rootfs\n");
+
 	/* Register the ext4 filesystem type so that sys_mount can use it */
 	fs_register_type(&ext4_fs_type);
 

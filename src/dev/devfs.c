@@ -215,6 +215,8 @@ static void devfs_init(void)
 	dev_init_fn_t *fn;
 	super_block *sb = sget(&dev_sops);
 
+	printk("mnt: Mounting devfs on /dev\n");
+
 	vfs_mount(cur->root, "/dev", sb);
 
 	/* Let each device self-register under the devfs superblock. */

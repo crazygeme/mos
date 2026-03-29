@@ -10,3 +10,4 @@ out
 compile_commands.json
 *.code-workspace
 .cache
+.claude

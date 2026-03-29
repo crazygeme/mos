@@ -16,6 +16,7 @@
 
 static void initctl_dev_register(super_block *dev_sb)
 {
+	printk("dev: registered /dev/initctl\n");
 	vfs_mknod(dev_sb, "/initctl", S_IFIFO | 0600, 0);
 }
 

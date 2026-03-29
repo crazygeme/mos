@@ -65,11 +65,8 @@ typedef struct {
 	tty_canon_t canon;
 	/* per-TTY keyboard input queue */
 	cy_buf *kb_buf;
-	/* screen text buffer for inactive TTYs (also used on switch-away save) */
-	char *saved_text;
-	/* per-cell fg/bg color arrays matching saved_text */
-	unsigned *saved_fg;
-	unsigned *saved_bg;
+	/* unified cell buffer (character + fg/bg per cell) */
+	tty_cell_t *cells;
 	/* TTY index (0..TTY_MAX_VDEV-1) */
 	int tty_idx;
 	/* PID of the bash process running on this TTY (0 = none) */
@@ -87,7 +84,7 @@ typedef struct {
 	int cursor_hidden; /* ?25l: do not draw hardware cursor */
 	int no_wrap; /* ?7l: disable auto-wrap at line end */
 	/* alternate screen buffer for ?1049h/l */
-	char *alt_text;
+	tty_cell_t *alt_cells;
 	int alt_cursor;
 	/* current foreground/background colors (set by SGR escape sequences) */
 	unsigned fg_color;
@@ -99,7 +96,8 @@ typedef struct {
 #define DEFAULT_TTY 0
 static tty_state ttys[TTY_MAX_VDEV];
 static int active_tty_idx = DEFAULT_TTY;
-static tty_state *this_ttys = &ttys[DEFAULT_TTY];
+static tty_state *this_ttys = NULL;
+static unsigned _displayed_cursor; /* linear position of cursor drawn on screen */
 
 /*
  * tty_switch_lock - global spinlock protecting this_ttys, active_tty_idx,
@@ -119,95 +117,79 @@ static spinlock_t tty_switch_lock;
 
 /* ── VGA/framebuffer primitives ──────────────────────────────────────────── */
 
-/*
- * vga_putchar - write character to either the live framebuffer (active TTY)
- * or the TTY's saved_text shadow (inactive TTY).
- */
-static void vga_putchar(tty_state *state, int x, int y, char c)
+static void vga_putchar(tty_state *state, int row, int col, char c)
 {
-	if (x < 0 || x >= (int)MAX_ROW || y < 0 || y >= (int)MAX_COL)
+	int idx = row * (int)MAX_COL + col;
+
+	if (col < 0 || col >= (int)MAX_COL || row < 0 || row >= (int)MAX_ROW)
 		return;
-	if (state->tty_idx == active_tty_idx) {
-		fb_putchar(y, x, c, state->fg_color, state->bg_color);
-	} else {
-		/* Inactive TTY: write to saved_text and color arrays */
-		int idx = x * (int)MAX_COL + y;
-		state->saved_text[idx] = c;
-		state->saved_fg[idx] = state->fg_color;
-		state->saved_bg[idx] = state->bg_color;
-	}
+	state->cells[idx].ch = c;
+	state->cells[idx].fg = state->fg_color;
+	state->cells[idx].bg = state->bg_color;
+	if (state->tty_idx == active_tty_idx)
+		fb_putcell(&state->cells[idx], col, row);
 }
 
 static void tty_do_clear(tty_state *state)
 {
-	if (state->tty_idx == active_tty_idx) {
-		fb_clear_screen();
-	} else {
-		unsigned sz = (unsigned)(MAX_ROW * (int)MAX_COL);
-		memset(state->saved_text, 0, sz);
-		memset(state->saved_fg, 0xFF, sz * sizeof(unsigned));
-		memset(state->saved_bg, 0, sz * sizeof(unsigned));
+	unsigned sz = (unsigned)(MAX_ROW * (int)MAX_COL);
+	unsigned i;
+
+	for (i = 0; i < sz; i++) {
+		state->cells[i].ch = ' ';
+		state->cells[i].fg = VGA_COLOR_WHITE;
+		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
+	if (state->tty_idx == active_tty_idx)
+		fb_clear_screen();
 }
 
 static void tty_roll_line(tty_state *state)
 {
-	if (state->tty_idx == active_tty_idx) {
-		fb_scroll_line();
-	} else {
-		/* Scroll saved_text and color arrays up one row */
-		unsigned row_bytes = (unsigned)MAX_COL;
-		unsigned last = row_bytes * (unsigned)(MAX_ROW - 1);
-		memmove(state->saved_text, state->saved_text + row_bytes, last);
-		memset(state->saved_text + last, 0, row_bytes);
-		memmove(state->saved_fg, state->saved_fg + row_bytes,
-			last * sizeof(unsigned));
-		memset(state->saved_fg + last, 0xFF,
-		       row_bytes * sizeof(unsigned));
-		memmove(state->saved_bg, state->saved_bg + row_bytes,
-			last * sizeof(unsigned));
-		memset(state->saved_bg + last, 0, row_bytes * sizeof(unsigned));
+	unsigned col = (unsigned)MAX_COL;
+	unsigned total = (unsigned)(MAX_ROW * (int)MAX_COL);
+	unsigned i;
+
+	memmove(state->cells, state->cells + col,
+		(total - col) * sizeof(tty_cell_t));
+	for (i = total - col; i < total; i++) {
+		state->cells[i].ch = ' ';
+		state->cells[i].fg = VGA_COLOR_WHITE;
+		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
+	if (state->tty_idx == active_tty_idx)
+		fb_scroll_line_px();
 }
 
 static void tty_roll_region(tty_state *state)
 {
 	unsigned top = (unsigned)state->scroll_top;
 	unsigned bot = (unsigned)state->scroll_bot;
+	unsigned col = (unsigned)MAX_COL;
+	unsigned i;
 
-	if (top == 0 && bot == state->max_row - 1) {
+	if (top == 0 && bot == (unsigned)MAX_ROW - 1) {
 		tty_roll_line(state);
 		return;
 	}
-	if (state->tty_idx == active_tty_idx) {
-		fb_scroll_region(top, bot);
-	} else {
-		unsigned col = (unsigned)MAX_COL;
-		char *t = state->saved_text + top * col;
-		memmove(t, t + col, (bot - top) * col);
-		memset(state->saved_text + bot * col, 0, col);
-		memmove(state->saved_fg + top * col,
-			state->saved_fg + (top + 1) * col,
-			(bot - top) * col * sizeof(unsigned));
-		memset(state->saved_fg + bot * col, 0xFF,
-		       col * sizeof(unsigned));
-		memmove(state->saved_bg + top * col,
-			state->saved_bg + (top + 1) * col,
-			(bot - top) * col * sizeof(unsigned));
-		memset(state->saved_bg + bot * col, 0, col * sizeof(unsigned));
+	memmove(state->cells + top * col, state->cells + (top + 1) * col,
+		(bot - top) * col * sizeof(tty_cell_t));
+	for (i = bot * col; i < (bot + 1) * col; i++) {
+		state->cells[i].ch = ' ';
+		state->cells[i].fg = VGA_COLOR_WHITE;
+		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
+	if (state->tty_idx == active_tty_idx)
+		fb_scroll_region_px(top, bot);
 }
 
-/*
- * tty_hw_cursor - update the hardware cursor register (or framebuffer cursor).
- * Skipped for inactive TTYs — they track cursor in state->cursor only.
- */
 static void tty_hw_cursor(tty_state *state, unsigned pos)
 {
-	if (state->cursor_hidden)
+	if (state->cursor_hidden || state->tty_idx != active_tty_idx)
 		return;
-	if (state->tty_idx == active_tty_idx)
-		fb_update_cursor(pos);
+	fb_cursor_update(_displayed_cursor, pos, state->cells,
+			 (unsigned)MAX_COL);
+	_displayed_cursor = pos;
 }
 
 /* ── Cursor helpers ──────────────────────────────────────────────────────── */
@@ -237,70 +219,59 @@ static void tty_insert_lines(tty_state *state, int n)
 {
 	int row = CUR_ROW;
 	int bot = state->scroll_bot;
+	unsigned col = (unsigned)MAX_COL;
+	unsigned move, i;
+
 	if (n < 1)
 		n = 1;
 	if (row > bot)
 		return;
 	if (n > bot - row + 1)
 		n = bot - row + 1;
-	if (state->tty_idx == active_tty_idx) {
-		fb_insert_lines((unsigned)row, (unsigned)bot, (unsigned)n);
-	} else {
-		unsigned col = (unsigned)MAX_COL;
-		unsigned move = (unsigned)(bot - row + 1 - n);
-		if (move) {
-			memmove(state->saved_text + (unsigned)(row + n) * col,
-				state->saved_text + (unsigned)row * col,
-				move * col);
-			memmove(state->saved_fg + (unsigned)(row + n) * col,
-				state->saved_fg + (unsigned)row * col,
-				move * col * sizeof(unsigned));
-			memmove(state->saved_bg + (unsigned)(row + n) * col,
-				state->saved_bg + (unsigned)row * col,
-				move * col * sizeof(unsigned));
-		}
-		memset(state->saved_text + (unsigned)row * col, ' ',
-		       (unsigned)n * col);
-		memset(state->saved_fg + (unsigned)row * col, 0xFF,
-		       (unsigned)n * col * sizeof(unsigned));
-		memset(state->saved_bg + (unsigned)row * col, 0,
-		       (unsigned)n * col * sizeof(unsigned));
+
+	move = (unsigned)(bot - row + 1 - n);
+	if (move) {
+		memmove(state->cells + (unsigned)(row + n) * col,
+			state->cells + (unsigned)row * col,
+			move * col * sizeof(tty_cell_t));
 	}
+	for (i = (unsigned)row * col; i < (unsigned)(row + n) * col; i++) {
+		state->cells[i].ch = ' ';
+		state->cells[i].fg = VGA_COLOR_WHITE;
+		state->cells[i].bg = VGA_COLOR_BLACK;
+	}
+	if (state->tty_idx == active_tty_idx)
+		fb_insert_lines_px((unsigned)row, (unsigned)bot, (unsigned)n);
 }
 
 static void tty_delete_lines(tty_state *state, int n)
 {
 	int row = CUR_ROW;
 	int bot = state->scroll_bot;
+	unsigned col = (unsigned)MAX_COL;
+	unsigned move, clear_start, i;
+
 	if (n < 1)
 		n = 1;
 	if (row > bot)
 		return;
 	if (n > bot - row + 1)
 		n = bot - row + 1;
-	if (state->tty_idx == active_tty_idx) {
-		fb_delete_lines((unsigned)row, (unsigned)bot, (unsigned)n);
-	} else {
-		unsigned col = (unsigned)MAX_COL;
-		unsigned move = (unsigned)(bot - row + 1 - n);
-		if (move) {
-			memmove(state->saved_text + (unsigned)row * col,
-				state->saved_text + (unsigned)(row + n) * col,
-				move * col);
-			memmove(state->saved_fg + (unsigned)row * col,
-				state->saved_fg + (unsigned)(row + n) * col,
-				move * col * sizeof(unsigned));
-			memmove(state->saved_bg + (unsigned)row * col,
-				state->saved_bg + (unsigned)(row + n) * col,
-				move * col * sizeof(unsigned));
-		}
-		memset(state->saved_text + (unsigned)(bot - n + 1) * col, ' ',
-		       (unsigned)n * col);
-		memset(state->saved_fg + (unsigned)(bot - n + 1) * col, 0xFF,
-		       (unsigned)n * col * sizeof(unsigned));
-		memset(state->saved_bg + (unsigned)(bot - n + 1) * col, 0,
-		       (unsigned)n * col * sizeof(unsigned));
+
+	move = (unsigned)(bot - row + 1 - n);
+	if (move) {
+		memmove(state->cells + (unsigned)row * col,
+			state->cells + (unsigned)(row + n) * col,
+			move * col * sizeof(tty_cell_t));
 	}
+	clear_start = (unsigned)(bot - n + 1) * col;
+	for (i = clear_start; i < clear_start + (unsigned)n * col; i++) {
+		state->cells[i].ch = ' ';
+		state->cells[i].fg = VGA_COLOR_WHITE;
+		state->cells[i].bg = VGA_COLOR_BLACK;
+	}
+	if (state->tty_idx == active_tty_idx)
+		fb_delete_lines_px((unsigned)row, (unsigned)bot, (unsigned)n);
 }
 
 static void tty_delete_chars(tty_state *state, int n)
@@ -314,26 +285,20 @@ static void tty_delete_chars(tty_state *state, int n)
 		n = 1;
 	if (n > max_col - col)
 		n = max_col - col;
+
+	memmove(state->cells + row * max_col + col,
+		state->cells + row * max_col + col + n,
+		(unsigned)(max_col - col - n) * sizeof(tty_cell_t));
+	for (i = max_col - n; i < max_col; i++) {
+		state->cells[row * max_col + i].ch = ' ';
+		state->cells[row * max_col + i].fg = VGA_COLOR_WHITE;
+		state->cells[row * max_col + i].bg = VGA_COLOR_BLACK;
+	}
 	if (state->tty_idx == active_tty_idx) {
-		for (i = col; i < max_col - n; i++)
-			vga_putchar(state, row, i, fb_getchar(i + n, row));
-		for (i = max_col - n; i < max_col; i++)
-			vga_putchar(state, row, i, ' ');
-	} else {
-		char *line = state->saved_text + row * max_col;
-		unsigned *fg_line = state->saved_fg + row * max_col;
-		unsigned *bg_line = state->saved_bg + row * max_col;
-		memmove(line + col, line + col + n,
-			(unsigned)(max_col - col - n));
-		memset(line + max_col - n, ' ', (unsigned)n);
-		memmove(fg_line + col, fg_line + col + n,
-			(unsigned)(max_col - col - n) * sizeof(unsigned));
-		memset(fg_line + max_col - n, 0xFF,
-		       (unsigned)n * sizeof(unsigned));
-		memmove(bg_line + col, bg_line + col + n,
-			(unsigned)(max_col - col - n) * sizeof(unsigned));
-		memset(bg_line + max_col - n, 0,
-		       (unsigned)n * sizeof(unsigned));
+		for (i = col; i < max_col; i++) {
+			tty_cell_t *c = &state->cells[row * max_col + i];
+			fb_putcell(c, i, row);
+		}
 	}
 }
 
@@ -348,24 +313,20 @@ static void tty_insert_chars(tty_state *state, int n)
 		n = 1;
 	if (n > max_col - col)
 		n = max_col - col;
+
+	memmove(state->cells + row * max_col + col + n,
+		state->cells + row * max_col + col,
+		(unsigned)(max_col - col - n) * sizeof(tty_cell_t));
+	for (i = col; i < col + n; i++) {
+		state->cells[row * max_col + i].ch = ' ';
+		state->cells[row * max_col + i].fg = VGA_COLOR_WHITE;
+		state->cells[row * max_col + i].bg = VGA_COLOR_BLACK;
+	}
 	if (state->tty_idx == active_tty_idx) {
-		for (i = max_col - 1; i >= col + n; i--)
-			vga_putchar(state, row, i, fb_getchar(i - n, row));
-		for (i = col; i < col + n; i++)
-			vga_putchar(state, row, i, ' ');
-	} else {
-		char *line = state->saved_text + row * max_col;
-		unsigned *fg_line = state->saved_fg + row * max_col;
-		unsigned *bg_line = state->saved_bg + row * max_col;
-		memmove(line + col + n, line + col,
-			(unsigned)(max_col - col - n));
-		memset(line + col, ' ', (unsigned)n);
-		memmove(fg_line + col + n, fg_line + col,
-			(unsigned)(max_col - col - n) * sizeof(unsigned));
-		memset(fg_line + col, 0xFF, (unsigned)n * sizeof(unsigned));
-		memmove(bg_line + col + n, bg_line + col,
-			(unsigned)(max_col - col - n) * sizeof(unsigned));
-		memset(bg_line + col, 0, (unsigned)n * sizeof(unsigned));
+		for (i = col; i < max_col; i++) {
+			tty_cell_t *c = &state->cells[row * max_col + i];
+			fb_putcell(c, i, row);
+		}
 	}
 }
 
@@ -374,32 +335,34 @@ static void tty_insert_chars(tty_state *state, int n)
 static void tty_enter_alt_screen(tty_state *state)
 {
 	unsigned sz = state->max_row * state->max_col;
-	if (!state->alt_text)
+	unsigned i;
+
+	if (!state->alt_cells)
 		return;
 	state->alt_cursor = state->cursor;
-	if (state->tty_idx == active_tty_idx) {
-		fb_save_text(state->alt_text, sz);
-		fb_clear_screen();
-	} else {
-		memcpy(state->alt_text, state->saved_text, sz);
-		memset(state->saved_text, 0, sz);
+	memcpy(state->alt_cells, state->cells, sz * sizeof(tty_cell_t));
+	for (i = 0; i < sz; i++) {
+		state->cells[i].ch = ' ';
+		state->cells[i].fg = VGA_COLOR_WHITE;
+		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
 	state->cursor = 0;
+	if (state->tty_idx == active_tty_idx)
+		fb_clear_screen();
 	tty_hw_cursor(state, 0);
 }
 
 static void tty_exit_alt_screen(tty_state *state)
 {
 	unsigned sz = state->max_row * state->max_col;
-	if (!state->alt_text)
+
+	if (!state->alt_cells)
 		return;
-	if (state->tty_idx == active_tty_idx) {
-		fb_restore_screen(state->alt_text, sz,
-				  (unsigned)state->alt_cursor);
-	} else {
-		memcpy(state->saved_text, state->alt_text, sz);
-	}
+	memcpy(state->cells, state->alt_cells, sz * sizeof(tty_cell_t));
 	state->cursor = state->alt_cursor;
+	if (state->tty_idx == active_tty_idx)
+		fb_redraw(state->cells, state->max_col, state->max_row,
+			  (unsigned)state->cursor);
 	tty_hw_cursor(state, (unsigned)state->cursor);
 }
 
@@ -930,13 +893,10 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 
 void tty_init(void)
 {
-	int i, j, k;
+	int i;
 	for (i = 0; i < TTY_MAX_VDEV; i++) {
 		tty_state *t = &ttys[i];
 		fb_get_char_dims(&t->max_col, &t->max_row);
-		for (j = 0; j < (int)t->max_row; j++)
-			for (k = 0; k < (int)t->max_col; k++)
-				vga_putchar(t, j, k, ' ');
 		t->cursor = 0;
 		spinlock_init(&t->lock);
 		t->termios = tty_default_termios;
@@ -958,21 +918,33 @@ void tty_init(void)
  */
 void tty_default_emit_unsafe(char c, void *ctx)
 {
+	if (!this_ttys)
+		return;
+
 	cursor_forward(this_ttys, char_to_pos(this_ttys, c));
 }
 
 void tty_lock_acquire(void)
 {
+	if (!this_ttys)
+		return;
+
 	spinlock_lock(&this_ttys->lock);
 }
 
 void tty_lock_release(void)
 {
+	if (!this_ttys)
+		return;
+
 	spinlock_unlock(&this_ttys->lock);
 }
 
 void tty_default_clear(void)
 {
+	if (!this_ttys)
+		return;
+
 	spinlock_lock(&this_ttys->lock);
 	tty_do_clear(this_ttys);
 	this_ttys->cursor = 0;
@@ -984,6 +956,9 @@ void tty_default_clear(void)
 void tty_active_kb_put(unsigned char c)
 {
 	tty_state *t;
+
+	if (!this_ttys)
+		return;
 
 	spinlock_lock(&tty_switch_lock);
 	t = this_ttys;
@@ -1053,7 +1028,6 @@ static void tty_bash_spawner(void *p)
  */
 void tty_switch(int n)
 {
-	unsigned text_size;
 	tty_state *except_tty;
 
 	if (n < 0 || n >= TTY_SWITCH_COUNT || n == active_tty_idx)
@@ -1063,26 +1037,14 @@ void tty_switch(int n)
 
 	spinlock_lock(&tty_switch_lock);
 
-	text_size = this_ttys->max_row * this_ttys->max_col;
-
-	/*
-	 * Hold the outgoing TTY's output lock while saving its framebuffer so
-	 * that a concurrent tty_raw_write on another CPU cannot modify the
-	 * screen or cursor between our save and the pointer flip.
-	 */
-	spinlock_lock(&this_ttys->lock);
-	fb_save_text(this_ttys->saved_text, text_size);
-	fb_save_colors(this_ttys->saved_fg, this_ttys->saved_bg, text_size);
-	spinlock_unlock(&this_ttys->lock);
-
-	/* Flip active TTY — visible to other CPUs only after this point. */
+	/* Flip active TTY */
 	active_tty_idx = n;
 	this_ttys = except_tty;
 
-	/* Restore new TTY's cached text and colors to the framebuffer. */
-	fb_restore_colors(this_ttys->saved_fg, this_ttys->saved_bg, text_size);
-	fb_restore_screen(this_ttys->saved_text, text_size,
-			  (unsigned)this_ttys->cursor);
+	/* Restore new TTY's cell buffer to the framebuffer */
+	_displayed_cursor = (unsigned)this_ttys->cursor;
+	fb_redraw(this_ttys->cells, this_ttys->max_col, this_ttys->max_row,
+		  (unsigned)this_ttys->cursor);
 
 	spinlock_unlock(&tty_switch_lock);
 
@@ -1407,16 +1369,22 @@ static void tty_fs_init(void)
 {
 	for (int i = 0; i < TTY_MAX_VDEV; i++) {
 		tty_state *t = &ttys[i];
+		unsigned sz = t->max_row * t->max_col;
+		unsigned j;
+
 		t->kb_buf = cyb_create(1);
-		t->saved_text = (char *)zalloc(t->max_row * t->max_col);
-		unsigned color_sz = t->max_row * t->max_col * sizeof(unsigned);
-		t->saved_fg = (unsigned *)zalloc(color_sz);
-		t->saved_bg = (unsigned *)zalloc(color_sz);
-		memset(t->saved_fg, 0xFF, color_sz);
-		t->alt_text = (char *)zalloc(t->max_row * t->max_col);
+		t->cells = (tty_cell_t *)zalloc(sz * sizeof(tty_cell_t));
+		t->alt_cells = (tty_cell_t *)zalloc(sz * sizeof(tty_cell_t));
+		for (j = 0; j < sz; j++) {
+			t->cells[j].ch = ' ';
+			t->cells[j].fg = VGA_COLOR_WHITE;
+			t->cells[j].bg = VGA_COLOR_BLACK;
+		}
 		if (i > 0)
 			t->parent = ps_find_process(1);
 	}
+
+	this_ttys = &ttys[DEFAULT_TTY];
 }
 
 static void tty_dev_register(super_block *dev_sb)
@@ -1437,5 +1405,5 @@ static void tty_dev_register(super_block *dev_sb)
 	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
 }
 
-KERNEL_INIT(4, tty_fs_init);
+KERNEL_INIT(0, tty_fs_init);
 DEV_INIT(tty_dev_register);

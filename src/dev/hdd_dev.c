@@ -174,8 +174,7 @@ static void hdd_dev_register(super_block *dev_sb)
 		sprintf(path, "/%s", pi->name);
 		vfs_mknod(dev_sb, path, S_IFBLK | 0660,
 			  MKDEV(HDD_MAJOR, i + 1));
-		printk("hdd_dev: registered /dev%s (%u sectors)\n", path,
-		       pi->size);
+		printk("dev: registered /dev%s (%u sectors)\n", path, pi->size);
 	}
 }
 

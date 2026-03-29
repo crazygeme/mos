@@ -591,13 +591,6 @@ static const super_operations ptsdir_sops = {
 	.release = ptsdir_release_super,
 };
 
-/* ── Initialization ───────────────────────────────────────────────────────── */
-
-static void pts_dev_init(void)
-{
-	spinlock_init(&pts_alloc_lock);
-}
-
 /*
  * RH9 BSD-style PTY nodes:
  *   /dev/ptyp0 … /dev/ptypf  (masters, major 2, minor 0-15)
@@ -614,6 +607,10 @@ static void pts_dev_register(super_block *dev_sb)
 	char path[16];
 	super_block *ptsdir_sb;
 	int i;
+
+	printk("dev: registered /dev/pts master and slavers\n");
+
+	spinlock_init(&pts_alloc_lock);
 
 	cdev_register(S_IFCHR, PTM_MAJOR, 0, MAX_PTS, ptm_cdev_open);
 	cdev_register(S_IFCHR, PTS_MAJOR, 0, MAX_PTS, pts_cdev_open);
@@ -639,5 +636,4 @@ static void pts_dev_register(super_block *dev_sb)
 	}
 }
 
-KERNEL_INIT(5, pts_dev_init);
 DEV_INIT(pts_dev_register);

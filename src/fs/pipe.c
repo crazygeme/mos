@@ -60,6 +60,32 @@ static int pipe_poll(file *fp, unsigned type)
 	return -1;
 }
 
+static void pipe_read_poll_wait(file *fp, task_struct *task)
+{
+	pipe_inode *n = fp->f_inode->i_private;
+	cyb_set_poll_read(n->buf, task);
+}
+
+static void pipe_read_poll_wait_remove(file *fp, task_struct *task)
+{
+	pipe_inode *n = fp->f_inode->i_private;
+	(void)task;
+	cyb_clear_poll_read(n->buf);
+}
+
+static void pipe_write_poll_wait(file *fp, task_struct *task)
+{
+	pipe_inode *n = fp->f_inode->i_private;
+	cyb_set_poll_write(n->buf, task);
+}
+
+static void pipe_write_poll_wait_remove(file *fp, task_struct *task)
+{
+	pipe_inode *n = fp->f_inode->i_private;
+	(void)task;
+	cyb_clear_poll_write(n->buf);
+}
+
 static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 {
 	/* pipes are not seekable */
@@ -90,6 +116,8 @@ static const file_operations pipe_read_fops = {
 	.release = pipe_release,
 	.read = pipe_read,
 	.poll = pipe_poll,
+	.poll_wait = pipe_read_poll_wait,
+	.poll_wait_remove = pipe_read_poll_wait_remove,
 	.llseek = pipe_llseek,
 };
 
@@ -97,6 +125,8 @@ static const file_operations pipe_write_fops = {
 	.release = pipe_release,
 	.write = pipe_write,
 	.poll = pipe_poll,
+	.poll_wait = pipe_write_poll_wait,
+	.poll_wait_remove = pipe_write_poll_wait_remove,
 	.llseek = pipe_llseek,
 };
 

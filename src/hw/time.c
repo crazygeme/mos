@@ -275,29 +275,13 @@ unsigned long long cycle_to_ms(unsigned long long dur_cycles)
 
 void msleep(unsigned int ms)
 {
-	task_struct *cur = CURRENT_TASK();
-	unsigned timeout = time_now_ms() + ms;
-	unsigned now = 0;
-
-	if (ms == 0) {
+	if (ms == 0)
 		return;
-	}
-
 	if (ms < (1000 / HZ)) {
 		usleep(ms * 1000);
 		return;
 	}
-
-	do {
-		now = time_now_ms();
-		if (now >= timeout)
-			break;
-
-		cur->timeout = timeout;
-		task_sched();
-		cur->timeout = 0;
-
-	} while (1);
+	time_wait(ms);
 }
 
 void usleep(unsigned int us)

@@ -195,6 +195,7 @@ void ps_init()
 	list_init(&control.dying_queue);
 	list_init(&control.wait_queue);
 	control.mgr_queue.rb_node = NULL;
+	control.timer_queue.rb_node = NULL;
 	control.ps_count = 0;
 	for (i = 0; i < PS_PRIORITY_MAX; i++)
 		list_init(&control.ready_queue[i]);

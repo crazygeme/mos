@@ -7,7 +7,6 @@
 #include <net/net.h>
 #include <hw/nic.h>
 #include <lib/klib.h>
-#include <lib/timer.h>
 #include <hw/time.h>
 #include <macro.h>
 
@@ -66,25 +65,23 @@ void net_get_stats(net_stats_t *s)
 	s->tx_packets = g_tx_packets;
 }
 
-/* Called by lwIP to transmit a packet. */
+/* Called by lwIP to transmit a packet.
+ * Uses a static bounce buffer to linearise the pbuf chain — safe because
+ * eth0_linkoutput is only called from DSR/task context (no SMP, no reentry). */
 static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 {
+	static uint8_t txbounce[NET_RX_MAX_FRAME];
 	nic_dev *nic = (nic_dev *)netif->state;
-	uint8_t *buf = zalloc(1600);
-	u16_t len = pbuf_copy_partial(p, buf, 1600, 0);
 
 	if (!nic->send)
-		goto err;
+		return ERR_IF;
 
-	if (nic->send(nic, buf, (uint16_t)len) >= 0) {
+	u16_t len = pbuf_copy_partial(p, txbounce, sizeof(txbounce), 0);
+	if (nic->send(nic, txbounce, len) >= 0) {
 		g_tx_bytes += len;
 		g_tx_packets += 1;
-		free(buf);
 		return ERR_OK;
 	}
-
-err:
-	free(buf);
 	return ERR_IF;
 }
 
@@ -147,14 +144,15 @@ static void eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len)
 	}
 }
 
-/* Periodic timer: drive all lwIP internal timers (DHCP, ARP, TCP, …). */
-static void lwip_timer_cb(timer_t *t, void *ctx)
+/* Kernel task: drive all lwIP internal timers every 100 ms. */
+static void lwip_timer_task(void *param)
 {
-	(void)t;
-	(void)ctx;
-	sys_check_timeouts();
-	/* In NO_SYS mode, drain loopback queues on all netifs. */
-	netif_poll_all();
+	(void)param;
+	for (;;) {
+		time_wait(100);
+		sys_check_timeouts();
+		netif_poll_all();
+	}
 }
 
 /* ── KERNEL_INIT entry point ────────────────────────────────────────────────── */
@@ -168,7 +166,7 @@ void net_init(void)
 	lwip_init();
 
 	/* Poll lwIP timers every 100 ms — required for loopback delivery. */
-	timer_start(lwip_timer_cb, 100, 1, NULL);
+	ps_create(lwip_timer_task, NULL, ps_normal, ps_kernel);
 
 	nic_dev *nic = nic_getdev(0);
 	if (!nic) {

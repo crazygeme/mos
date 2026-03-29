@@ -239,6 +239,8 @@ struct _task_struct {
 	unsigned pf_minor;
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
 	unsigned long long alarm_expire_ms;
+	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
+	unsigned timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
 	unsigned int magic; // to avoid stack overflow
 };
 
@@ -329,6 +331,8 @@ char *sys_getcwd(char *buf, unsigned size);
 int sys_getrusage(int who, rusage *usage);
 void reboot();
 void shutdown();
+
+void time_wait(unsigned ms);
 
 #define RUSAGE_SELF 0
 #define RUSAGE_CHILDREN (-1)

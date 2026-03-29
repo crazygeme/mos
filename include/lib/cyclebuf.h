@@ -1,6 +1,10 @@
 #ifndef _LIB_CYCLEBUF_H
 #define _LIB_CYCLEBUF_H
 
+#include <lib/lock.h>
+
+typedef struct _task_struct task_struct;
+
 #define EOF ((unsigned char)(-1))
 
 typedef struct _cy_buf cy_buf;
@@ -45,5 +49,16 @@ void cyb_reader_open(cy_buf *b);
 
 void cyb_writer_close(cy_buf *b);
 void cyb_reader_close(cy_buf *b);
+
+/*
+ * Poll wakeup registration.  Call cyb_set_poll_read/write to register a
+ * task_struct that will be woken (via ps_put_to_ready_queue) when data
+ * arrives or space becomes available.  Call cyb_clear_poll_read/write to
+ * deregister before the task exits.  Only one task per direction is supported.
+ */
+void cyb_set_poll_read(cy_buf *b, task_struct *task);
+void cyb_clear_poll_read(cy_buf *b);
+void cyb_set_poll_write(cy_buf *b, task_struct *task);
+void cyb_clear_poll_write(cy_buf *b);
 
 #endif

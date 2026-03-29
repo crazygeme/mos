@@ -8,7 +8,6 @@
 #include <fs/fcntl.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <lib/timer.h>
 #include <hw/time.h>
 #include <ps/ps.h>
 #include <errno.h>
@@ -33,34 +32,44 @@ unsigned rx_free(const mos_sock *sk)
 	return (SOCK_RXBUF_SIZE - 1) - rx_used(sk);
 }
 
-/* Write up to len bytes from src; returns bytes actually written. */
+/* Write up to len bytes from src; returns bytes actually written.
+ * Split into at most two memcpy calls to handle the ring wrap. */
 unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
 {
 	unsigned avail = rx_free(sk);
 	unsigned n = len < avail ? len : avail;
-	unsigned i;
-	const char *s = (const char *)src;
-	unsigned long long now = time_now_us();
-	for (i = 0; i < n; i++) {
-		sk->rxbuf[sk->rx_tail & (SOCK_RXBUF_SIZE - 1)] = s[i];
-		sk->rx_tail++;
-	}
-	if (n > 0)
-		us_to_timeval(now, &sk->rx_stamp);
 
+	if (n > 0) {
+		unsigned pos = sk->rx_tail & (SOCK_RXBUF_SIZE - 1);
+		unsigned first = SOCK_RXBUF_SIZE - pos;
+		if (first > n)
+			first = n;
+		memcpy(sk->rxbuf + pos, src, first);
+		if (first < n)
+			memcpy(sk->rxbuf, (const char *)src + first, n - first);
+		sk->rx_tail += n;
+		unsigned long long now = time_now_us();
+		us_to_timeval(now, &sk->rx_stamp);
+	}
 	return n;
 }
 
-/* Read up to len bytes into dst; returns bytes actually read. */
+/* Read up to len bytes into dst; returns bytes actually read.
+ * Split into at most two memcpy calls to handle the ring wrap. */
 unsigned rx_read(mos_sock *sk, void *dst, unsigned len)
 {
 	unsigned avail = rx_used(sk);
 	unsigned n = len < avail ? len : avail;
-	unsigned i;
-	char *d = (char *)dst;
-	for (i = 0; i < n; i++) {
-		d[i] = sk->rxbuf[sk->rx_head & (SOCK_RXBUF_SIZE - 1)];
-		sk->rx_head++;
+
+	if (n > 0) {
+		unsigned pos = sk->rx_head & (SOCK_RXBUF_SIZE - 1);
+		unsigned first = SOCK_RXBUF_SIZE - pos;
+		if (first > n)
+			first = n;
+		memcpy(dst, sk->rxbuf + pos, first);
+		if (first < n)
+			memcpy((char *)dst + first, sk->rxbuf, n - first);
+		sk->rx_head += n;
 	}
 	return n;
 }
@@ -68,7 +77,8 @@ unsigned rx_read(mos_sock *sk, void *dst, unsigned len)
 /* ── Blocking helpers ────────────────────────────────────────────────────── */
 
 /* Wake the task currently blocked on sk, if any.
- * Safe to call from lwIP callbacks (NIC IRQ context) and timer callbacks. */
+ * Also wakes any poll/select waiter registered via poll_wait.
+ * Safe to call from lwIP callbacks (NIC IRQ context). */
 void sock_wakeup(mos_sock *sk)
 {
 	task_struct *t = sk->waiter;
@@ -76,13 +86,8 @@ void sock_wakeup(mos_sock *sk)
 		sk->waiter = NULL;
 		ps_put_to_ready_queue(t);
 	}
-}
-
-/* One-shot timer callback: fires at the deadline and unblocks the waiter. */
-static void sock_timeout_cb(timer_t *t, void *ctx)
-{
-	(void)t;
-	sock_wakeup((mos_sock *)ctx);
+	if (sk->poll_task)
+		ps_put_to_ready_queue(sk->poll_task);
 }
 
 /* Block the current task on sk until woken by sock_wakeup or the deadline. */
@@ -91,15 +96,9 @@ void sock_wait(mos_sock *sk, unsigned long deadline)
 	unsigned long now = time_now_ms();
 	if (now >= deadline)
 		return;
-
 	task_struct *cur = CURRENT_TASK();
-	timer_t *t =
-		timer_start(sock_timeout_cb, (unsigned)(deadline - now), 0, sk);
 	sk->waiter = cur;
-	ps_put_to_wait_queue(cur, NULL, __func__);
-	task_sched();
-	// ok we wakeup
-	timer_stop(t);
+	time_wait((unsigned)(deadline - now));
 	sk->waiter = NULL;
 }
 
@@ -515,11 +514,26 @@ static int sock_poll(file *fp, unsigned type)
 	return -1;
 }
 
+static void sock_poll_wait(file *fp, task_struct *task)
+{
+	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	sk->poll_task = task;
+}
+
+static void sock_poll_wait_remove(file *fp, task_struct *task)
+{
+	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	if (sk->poll_task == task)
+		sk->poll_task = NULL;
+}
+
 static const file_operations sock_fops = {
 	.read = sock_read,
 	.write = sock_write,
 	.ioctl = sock_ioctl,
 	.poll = sock_poll,
+	.poll_wait = sock_poll_wait,
+	.poll_wait_remove = sock_poll_wait_remove,
 	.release = sock_release,
 };
 

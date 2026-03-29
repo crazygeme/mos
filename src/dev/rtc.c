@@ -173,7 +173,7 @@ static const inode_operations rtc_iops = {
 
 static const file_operations rtc_fops = {
 	.read = rtc_read,
-	.poll = rtc_poll,
+	.is_ready = rtc_poll,
 	.ioctl = rtc_ioctl,
 	.release = rtc_release,
 };

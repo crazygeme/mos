@@ -98,14 +98,14 @@ static const inode_operations pid_dir_iops = { .getattr = pid_dir_getattr };
 static const file_operations pid_file_fops = {
 	.read = pid_read,
 	.llseek = pid_llseek,
-	.poll = pid_poll,
+	.is_ready = pid_poll,
 	.release = pid_release,
 };
 
 static const file_operations pid_dir_fops = {
 	.read = pid_read,
 	.llseek = pid_llseek,
-	.poll = pid_poll,
+	.is_ready = pid_poll,
 	.release = pid_release,
 };
 

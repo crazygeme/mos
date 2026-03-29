@@ -217,7 +217,7 @@ static void fifonode_write_poll_wait_remove(file *fp, task_struct *task)
 static const file_operations fifonode_reader_fops = {
 	.release = fifonode_release_reader,
 	.read = fifonode_read,
-	.poll = fifonode_poll,
+	.is_ready = fifonode_poll,
 	.poll_wait = fifonode_read_poll_wait,
 	.poll_wait_remove = fifonode_read_poll_wait_remove,
 };
@@ -225,7 +225,7 @@ static const file_operations fifonode_reader_fops = {
 static const file_operations fifonode_writer_fops = {
 	.release = fifonode_release_writer,
 	.write = fifonode_write,
-	.poll = fifonode_poll,
+	.is_ready = fifonode_poll,
 	.poll_wait = fifonode_write_poll_wait,
 	.poll_wait_remove = fifonode_write_poll_wait_remove,
 };

@@ -130,7 +130,7 @@ static const file_operations ext4_file_fops = {
 	.read = ext4_file_read,
 	.write = ext4_file_write,
 	.llseek = ext4_file_llseek,
-	.poll = ext4_file_poll,
+	.is_ready = ext4_file_poll,
 };
 
 static int ext4_dir_release(file *fp)
@@ -241,7 +241,7 @@ static const file_operations ext4_dir_fops = {
 	.release = ext4_dir_release,
 	.read = ext4_dir_read,
 	.llseek = ext4_dir_llseek,
-	.poll = ext4_file_poll,
+	.is_ready = ext4_file_poll,
 	.flush = ext4_file_flush,
 };
 

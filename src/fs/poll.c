@@ -24,12 +24,12 @@ static int poll_check(struct pollfd *fds, unsigned nfds)
 			continue;
 		}
 		if (events & (POLLIN | POLLPRI))
-			if (fs_select(fd, FS_POLL_READ) == 0)
+			if (fs_fd_ready(fd, FS_POLL_READ) == 0)
 				revents |= POLLIN;
 		if (events & POLLOUT)
-			if (fs_select(fd, FS_POLL_WRITE) == 0)
+			if (fs_fd_ready(fd, FS_POLL_WRITE) == 0)
 				revents |= POLLOUT;
-		if (fs_select(fd, FS_POLL_EXCEPT) == 0)
+		if (fs_fd_ready(fd, FS_POLL_EXCEPT) == 0)
 			revents |= POLLERR;
 		fds[i].revents = revents;
 		if (revents)

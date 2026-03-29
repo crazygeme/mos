@@ -118,7 +118,7 @@ static const inode_operations proc_root_iops = {
 
 static const file_operations proc_root_fops = {
 	.read = proc_root_read,
-	.poll = proc_root_poll,
+	.is_ready = proc_root_poll,
 	.release = proc_root_release,
 };
 

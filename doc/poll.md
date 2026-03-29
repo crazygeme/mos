@@ -78,11 +78,11 @@ void (*poll_wait)       (file *fp, task_struct *task);
 void (*poll_wait_remove)(file *fp, task_struct *task);
 ```
 
-| Hook               | Called by             | Purpose                                                                |
-| ------------------ | --------------------- | ---------------------------------------------------------------------- |
-| `poll`             | `fs_select(fd, type)` | Returns 0 if ready, -1 if not                                          |
-| `poll_wait`        | Phase 2               | Store `task` so the driver can call `ps_put_to_ready_queue` when ready |
-| `poll_wait_remove` | Phase 4 / early exit  | Clear the stored pointer; prevents stale wakeups                       |
+| Hook               | Called by               | Purpose                                                                |
+| ------------------ | ----------------------- | ---------------------------------------------------------------------- |
+| `poll`             | `fs_fd_ready(fd, type)` | Returns 0 if ready, -1 if not                                          |
+| `poll_wait`        | Phase 2                 | Store `task` so the driver can call `ps_put_to_ready_queue` when ready |
+| `poll_wait_remove` | Phase 4 / early exit    | Clear the stored pointer; prevents stale wakeups                       |
 
 `type` is one of `FS_POLL_READ` (0), `FS_POLL_WRITE` (1), `FS_POLL_EXCEPT` (2).
 

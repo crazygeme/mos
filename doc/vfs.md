@@ -294,7 +294,7 @@ Converts user-supplied paths to absolute paths before passing to `vfs_open`:
 | `fs_stat(path, s)`                      | `vfs_open` + `i_op->getattr` + `fs_put_file`                |
 | `fs_fstat(fd, s)`                       | `i_op->getattr` on already-open fd                          |
 | `fs_ioctl(fd, cmd, buf)`                | `f_fop->ioctl`                                              |
-| `fs_select(fd, type)`                   | `f_fop->poll` — returns 0 if ready, -1 if not               |
+| `fs_fd_ready(fd, type)`                 | `f_fop->poll` — returns 0 if ready, -1 if not               |
 | `fs_sync(fd)`                           | `f_fop->flush`                                              |
 | `fs_chmod(path, mode)`                  | `vfs_open` + `i_op->setattr`                                |
 | `fs_chown(path, uid, gid)`              | `vfs_open` + `i_op->chown`                                  |

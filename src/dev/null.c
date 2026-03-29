@@ -55,7 +55,7 @@ static const file_operations null_fops = {
 	.release = null_release,
 	.read = null_read,
 	.write = null_write,
-	.poll = null_poll,
+	.is_ready = null_poll,
 };
 
 static file *null_cdev_open(unsigned rdev, int flag)

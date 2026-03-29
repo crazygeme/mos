@@ -173,8 +173,26 @@ emulated IDE controller (`src/hw/hdd.c`).
 
 ### Poll / select
 
-`src/fs/poll.c` and `src/fs/select.c` implement `poll(2)` and `select(2)`.
-Each `file_operations` struct has a `.poll` hook returning readiness.
+`src/fs/poll.c` (`do_poll`) and `src/fs/select.c` (`do_select`) implement
+`poll(2)` and `select(2)` using the same four-phase loop:
+
+1. **Check** — query `.poll` on every watched fd; return immediately if any ready.
+2. **Register** — call `.poll_wait(fp, task)` on each fd to store the caller's
+   task pointer so the driver can wake it.
+3. **Re-check** — query `.poll` again to close the lost-wakeup race window.
+4. **Sleep** — `time_wait(sleep_ms)`; woken either by a driver calling
+   `ps_put_to_ready_queue` or by the deadline expiring.
+
+After waking, `.poll_wait_remove` is called on every fd to clear stale
+task pointers, then the loop repeats.
+
+Fds without `.poll_wait` (no event-driven wakeup) force `sleep_ms` to be
+capped at `TICK_MS` (10 ms) so they are polled periodically as a fallback.
+
+`do_select` additionally snapshots the input fd_sets at entry and supports
+atomic signal-mask swap for `pselect6`.
+
+See [doc/poll.md](poll.md) for the full algorithm and race-condition analysis.
 
 ---
 

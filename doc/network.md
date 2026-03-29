@@ -222,7 +222,8 @@ static const file_operations sock_fops = {
     .read    = sock_read,
     .write   = sock_write,
     .ioctl   = sock_ioctl,
-    .poll    = sock_poll,
+    .poll_wait = sock_poll_wait,
+	  .poll_wait_remove = sock_poll_wait_remove,
     .release = sock_release,
 };
 ```

@@ -51,9 +51,9 @@ static int random_getattr(inode *node, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_rdev = (unsigned)(uintptr_t)node->i_private;
 	s->st_blksize = PAGE_SIZE;
-	s->st_atime = time_unix_sec();
-	s->st_ctime = time_unix_sec();
-	s->st_mtime = time_unix_sec();
+	s->st_atime = time_now_sec();
+	s->st_ctime = time_now_sec();
+	s->st_mtime = time_now_sec();
 	s->st_nlink = 1;
 	return 0;
 }

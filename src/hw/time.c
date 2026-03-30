@@ -8,13 +8,6 @@
 extern void do_signal(intr_frame *frame);
 
 static unsigned long tickets;
-static unsigned long long total_tickets;
-static unsigned long seconds;
-static unsigned long minutes;
-static unsigned long hourse;
-static unsigned long days;
-static unsigned long total_seconds;
-static unsigned long total_millseconds;
 static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
 static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
@@ -25,29 +18,6 @@ static void force_switch(short ds);
 static void time_process(intr_frame *frame)
 {
 	tickets++;
-	total_tickets++;
-	total_millseconds += 1000 / HZ;
-
-	if (tickets == HZ) {
-		seconds++;
-		total_seconds++;
-		tickets = 0;
-	}
-
-	if (seconds == 60) {
-		minutes++;
-		seconds = 0;
-	}
-
-	if (minutes == 60) {
-		hourse++;
-		minutes = 0;
-	}
-
-	if (hourse == 24) {
-		days++;
-		hourse = 0;
-	}
 
 	BARRIER();
 
@@ -141,14 +111,7 @@ void time_init()
 	time_control control;
 
 	tickets = 0;
-	total_tickets = 0;
-	seconds = 0;
-	minutes = 0;
-	hourse = 0;
-	days = 0;
 	cycle_per_ticket = 0;
-	total_seconds = 0;
-	total_millseconds = 0;
 	boot_epoch = rtc_get_time();
 
 	int_register(0x20, time_process, 0, 0);
@@ -161,16 +124,6 @@ void time_init()
 	port_write_byte(TIME_CONTROL_MASK, *((unsigned char *)&control));
 	port_write_byte(TIME_CHANNEL_0, LATCH & 0xff);
 	port_write_byte(TIME_CHANNEL_0, LATCH >> 8);
-}
-
-unsigned time_now_ms()
-{
-	return time_now_us() / 1000;
-}
-
-unsigned long long time_now_tickets()
-{
-	return total_tickets;
 }
 
 void ms_to_timeval(unsigned ms, struct timeval *tv)
@@ -205,6 +158,27 @@ static int pic_timer_irq_pending(void)
 #undef PIC1_CMD
 }
 
+unsigned time_now_ms()
+{
+	return time_wall_us() / 1000;
+}
+
+unsigned long long time_now_tickets()
+{
+	return tickets;
+}
+
+unsigned long time_now_sec(void)
+{
+	return (unsigned long)(time_wall_us() / 1000000ULL);
+}
+
+unsigned long long time_wall_us(void)
+{
+	return (unsigned long long)((long long)time_now_us() +
+				    g_wall_offset_us);
+}
+
 unsigned long long time_now_us()
 {
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
@@ -214,10 +188,10 @@ unsigned long long time_now_us()
 	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
 	do {
 		BARRIER();
-		t1 = total_tickets;
+		t1 = tickets;
 		count = pit_read_count();
 		BARRIER();
-		t2 = total_tickets;
+		t2 = tickets;
 	} while (t1 != t2);
 
 	/* Handle the race where the PIT has already fired and reloaded (so count
@@ -235,21 +209,6 @@ unsigned long long time_now_us()
 
 	return t1 * TICK_US + frac;
 #undef TICK_US
-}
-
-unsigned long long time_now_precisely()
-{
-	unsigned low, high;
-	unsigned long long cycle;
-	__asm("pushl %eax");
-	__asm("pushl %edx");
-	__asm("rdtsc");
-	__asm("movl %%eax, %0" : "=r"(low));
-	__asm("movl %%edx, %0" : "=r"(high));
-	__asm("popl %eax");
-	__asm("popl %edx");
-	cycle = ((unsigned long long)high) << 32 | low;
-	return cycle;
 }
 
 unsigned long long cycle_to_us(unsigned long long dur_cycles)
@@ -301,21 +260,6 @@ void delay(unsigned int us)
 void time_set_wall_offset(long long offset_us)
 {
 	g_wall_offset_us = offset_us;
-}
-
-unsigned long long time_wall_us(void)
-{
-	if (g_wall_offset_us != 0)
-		return (unsigned long long)((long long)time_now_us() +
-					    g_wall_offset_us);
-	/* settimeofday not yet called — fall back to RTC boot epoch + uptime */
-	return (unsigned long long)(boot_epoch * 1000000ULL +
-				    total_millseconds * 1000ULL);
-}
-
-unsigned long time_unix_sec(void)
-{
-	return (unsigned long)(time_wall_us() / 1000000ULL);
 }
 
 /* This code is an interface to the MC146818A-compatible real

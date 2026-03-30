@@ -113,9 +113,9 @@ static int hdd_dev_getattr(inode *node, struct stat *s)
 	s->st_dev = MKDEV(HDD_MAJOR, 0);
 	s->st_rdev = MKDEV(HDD_MAJOR, idx + 1);
 	s->st_nlink = 1;
-	s->st_atime = time_unix_sec();
-	s->st_mtime = time_unix_sec();
-	s->st_ctime = time_unix_sec();
+	s->st_atime = time_now_sec();
+	s->st_mtime = time_now_sec();
+	s->st_ctime = time_now_sec();
 	return 0;
 }
 

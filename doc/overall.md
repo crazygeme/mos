@@ -270,8 +270,6 @@ Common socket ioctls handled in `sock_ioctl()`:
 - **`time_now_us()`:** high-resolution — reads the live PIT countdown register
   to interpolate within the current tick. Resolution ≈ 0.84 μs. Guards against
   tick-boundary races with a `do { } while (t1 != t2)` retry loop.
-- **`time_now_precisely()`:** raw TSC via `rdtsc` (used for profiling).
-
 ---
 
 ## 11. ELF Loader (`src/elf/`)

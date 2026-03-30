@@ -77,15 +77,13 @@ unsigned time_now_ms();
 
 unsigned long long time_now_tickets();
 
-unsigned long time_unix_sec(void);
+unsigned long time_now_sec(void);
 
 void time_set_wall_offset(long long offset_us);
 
 unsigned long long time_wall_us(void);
 
 unsigned long long time_now_us();
-
-unsigned long long time_now_precisely();
 
 unsigned long long cycle_to_ms(unsigned long long dur_cycles);
 

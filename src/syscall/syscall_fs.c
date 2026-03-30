@@ -410,7 +410,7 @@ int sys_rmdir(const char *path)
 
 int sys_creat(const char *path, unsigned mode)
 {
-	file* fp = NULL;
+	file *fp = NULL;
 	if (TestControl.verbos)
 		klog("creat(%s, %d)\n", path, mode);
 
@@ -420,7 +420,6 @@ int sys_creat(const char *path, unsigned mode)
 
 	fs_put_file(fp);
 	return 0;
-
 }
 
 int sys_link(const char *path1, const char *path2)
@@ -498,7 +497,7 @@ int sys_utime(const char *filename, const struct utimbuf *times)
 		atime = times->actime;
 		mtime = times->modtime;
 	} else {
-		atime = mtime = (unsigned)time_unix_sec();
+		atime = mtime = (unsigned)time_now_sec();
 	}
 
 	name = name_get();

@@ -53,6 +53,8 @@ struct super_operations {
 	int (*readlink)(super_block *sb, const char *path, char *buf,
 			size_t bufsiz, size_t *rcnt);
 	int (*statfs)(super_block *sb, struct statfs *buf);
+	int (*utime)(super_block *sb, const char *path, unsigned atime,
+		     unsigned mtime);
 };
 
 /*
@@ -115,5 +117,7 @@ int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev);
 
 /* Fill buf with filesystem statistics for the filesystem owning path. */
 int vfs_statfs(super_block *sb, const char *path, struct statfs *buf);
+int vfs_utime(super_block *sb, const char *path, unsigned atime,
+	      unsigned mtime);
 
 #endif

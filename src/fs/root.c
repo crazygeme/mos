@@ -6,6 +6,7 @@
 #include <fs/mount.h>
 #include <ps/ps.h>
 #include <hw/hdd.h>
+#include <hw/time.h>
 #include <stddef.h>
 #include <macro.h>
 #include <config.h>
@@ -40,6 +41,8 @@ static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 	if (ret != EOK)
 		return -1;
 	*pos += rcnt;
+	if (fp->f_name)
+		ext4_file_set_atime(fp->f_name, (uint32_t)time_unix_sec());
 	return (ssize_t)rcnt;
 }
 
@@ -55,6 +58,11 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	if (ret != EOK)
 		return -1;
 	*pos += wcnt;
+	if (fp->f_name) {
+		uint32_t t = (uint32_t)time_unix_sec();
+		ext4_file_set_mtime(fp->f_name, t);
+		ext4_file_set_ctime(fp->f_name, t);
+	}
 	return (ssize_t)wcnt;
 }
 
@@ -627,6 +635,11 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 	int ret;
 	ext4_full_path(sb, path, full);
 	ret = ext4_dir_mk(full);
+	if (ret == EOK) {
+		uint32_t t = (uint32_t)time_unix_sec();
+		ext4_file_set_mtime(full, t);
+		ext4_file_set_ctime(full, t);
+	}
 	name_put(full);
 	return ret ? -ret : 0;
 }
@@ -651,6 +664,17 @@ static int ext4_unlink(super_block *sb, const char *path)
 	return ret ? -ret : 0;
 }
 
+static int ext4_utime(super_block *sb, const char *path, unsigned atime,
+		      unsigned mtime)
+{
+	char *full = name_get();
+	ext4_full_path(sb, path, full);
+	ext4_file_set_atime(full, atime);
+	ext4_file_set_mtime(full, mtime);
+	name_put(full);
+	return 0;
+}
+
 static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
 {
 	char *full1 = name_get();
@@ -659,6 +683,8 @@ static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
 	ret = ext4_flink(full1, full2);
+	if (ret == EOK)
+		ext4_file_set_ctime(full1, (uint32_t)time_unix_sec());
 	name_put(full1);
 	name_put(full2);
 	return ret ? -ret : 0;
@@ -671,6 +697,11 @@ static int ext4_symlink_op(super_block *sb, const char *target,
 	int ret;
 	ext4_full_path(sb, linkpath, full);
 	ret = ext4_fsymlink(target, full);
+	if (ret == EOK) {
+		uint32_t t = (uint32_t)time_unix_sec();
+		ext4_file_set_mtime(full, t);
+		ext4_file_set_ctime(full, t);
+	}
 	name_put(full);
 	return ret ? -ret : 0;
 }
@@ -688,6 +719,11 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 		/* POSIX rename(2) must replace the destination if it exists */
 		ext4_fremove(full2);
 		ret = ext4_frename(full1, full2);
+	}
+	if (ret == EOK) {
+		uint32_t t = (uint32_t)time_unix_sec();
+		ext4_file_set_mtime(full2, t);
+		ext4_file_set_ctime(full2, t);
 	}
 	name_put(full1);
 	name_put(full2);
@@ -739,6 +775,7 @@ static super_operations ext4_sops = {
 	.rename = ext4_rename,
 	.readlink = ext4_readlink_op,
 	.statfs = ext4_statfs_op,
+	.utime = ext4_utime,
 };
 
 /* Allocate a super_block bound to the given lwext4 mount point. */

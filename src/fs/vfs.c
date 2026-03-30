@@ -323,6 +323,11 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs *buf)
 	return target_sb->s_op->statfs(target_sb, buf);
 }
 
+int vfs_utime(super_block *sb, const char *path, unsigned atime, unsigned mtime)
+{
+	VFS_PATH_OP(vfs_utime, utime, atime, mtime);
+}
+
 file *vfs_open(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;

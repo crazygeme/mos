@@ -89,8 +89,9 @@ static int devnode_getattr(inode *node, struct stat *s)
 	s->st_mode = dn->mode;
 	s->st_rdev = dn->rdev;
 	s->st_nlink = 1;
-	s->st_atime = time_now_ms();
-	s->st_ctime = time_now_ms();
+	s->st_atime = time_unix_sec();
+	s->st_ctime = time_unix_sec();
+	s->st_mtime = time_unix_sec();
 	s->st_blksize = PAGE_SIZE;
 	return 0;
 }
@@ -131,8 +132,9 @@ static int fifonode_getattr(inode *node, struct stat *s)
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode; /* mode was copied into i_mode at open */
 	s->st_nlink = 1;
-	s->st_atime = time_now_ms();
-	s->st_ctime = time_now_ms();
+	s->st_atime = time_unix_sec();
+	s->st_ctime = time_unix_sec();
+	s->st_mtime = time_unix_sec();
 	s->st_blksize = PAGE_SIZE;
 	return 0;
 }

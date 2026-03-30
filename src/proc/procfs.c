@@ -92,10 +92,11 @@ static int proc_root_poll(file *fp, unsigned type)
 static int proc_root_getattr(inode *node, struct stat *s)
 {
 	memset(s, 0, sizeof(*s));
-	s->st_atime = time_now_ms();
+	s->st_atime = time_unix_sec();
+	s->st_mtime = time_unix_sec();
+	s->st_ctime = time_unix_sec();
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
-	s->st_ctime = time_now_ms();
 	s->st_dev = 0xb;
 	s->st_nlink = 2;
 	s->st_ino = PROC_INODE;

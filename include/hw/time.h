@@ -73,13 +73,15 @@ void time_calculate_cpu_cycle();
 
 unsigned time_get_cpu_mhz(void);
 
-void time_current(time_t *time);
-
 unsigned time_now_ms();
 
 unsigned long long time_now_tickets();
 
 unsigned long time_unix_sec(void);
+
+void time_set_wall_offset(long long offset_us);
+
+unsigned long long time_wall_us(void);
 
 unsigned long long time_now_us();
 
@@ -97,7 +99,5 @@ void msleep(unsigned int ms);
 void usleep(unsigned int us);
 
 void delay(unsigned int us);
-
-time_t time(time_t *t);
 
 #endif

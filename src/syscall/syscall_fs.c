@@ -477,6 +477,35 @@ done:
 	return ret;
 }
 
+int sys_utime(const char *filename, const struct utimbuf *times)
+{
+	unsigned atime, mtime;
+	char *name;
+	task_struct *cur;
+	int ret;
+
+	if (!filename)
+		return -EFAULT;
+
+	if (times) {
+		atime = times->actime;
+		mtime = times->modtime;
+	} else {
+		atime = mtime = (unsigned)time_unix_sec();
+	}
+
+	name = name_get();
+	cur = CURRENT_TASK();
+	resolve_path(filename, name);
+
+	if (TestControl.verbos)
+		klog("utime(%s, atime=%u mtime=%u)\n", name, atime, mtime);
+
+	ret = vfs_utime(cur->root, name, atime, mtime);
+	name_put(name);
+	return ret;
+}
+
 int sys_rename(const char *oldpath, const char *newpath)
 {
 	char *name1 = name_get();

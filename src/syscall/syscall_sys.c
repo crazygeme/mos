@@ -39,25 +39,6 @@ struct sysinfo {
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
 
-/*
- * Wall-clock offset: difference (in us) between the real-world epoch and
- * the kernel's PIT tick counter.  Set by sys_settimeofday (syscall 79) and
- * read back by sys_gettimeofday / sys_time.
- *
- * 0 means "not set by userspace" — fall back to the RTC-derived boot epoch.
- */
-static long long g_wall_offset_us;
-
-/* Return current wall-clock time in microseconds since Unix epoch. */
-static unsigned long long wall_clock_us(void)
-{
-	if (g_wall_offset_us != 0)
-		return (unsigned long long)((long long)time_now_us() +
-					    g_wall_offset_us);
-	/* settimeofday never called: use RTC boot epoch + uptime. */
-	return (unsigned long long)time_unix_sec() * 1000000ULL;
-}
-
 int sys_uname(struct utsname *utname)
 {
 	if (TestControl.verbos)
@@ -86,20 +67,12 @@ int sys_sethostname(const char *name, unsigned len)
 	return 0;
 }
 
-int sys_utime(const char *filename, const struct utimbuf *times)
-{
-	if (TestControl.verbos)
-		klog("utime\n");
-
-	return 0;
-}
-
 int sys_time(unsigned *t)
 {
 	if (!t)
 		return -1;
 
-	*t = (unsigned)(wall_clock_us() / 1000000ULL);
+	*t = (unsigned)(time_wall_us() / 1000000ULL);
 
 	if (TestControl.verbos)
 		klog("time() = %u\n", *t);
@@ -114,7 +87,7 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	if (!tv)
 		return -EFAULT;
 
-	now = (long long)wall_clock_us();
+	now = (long long)time_wall_us();
 	us_to_timeval((unsigned long long)now, tv);
 
 	if (tz)
@@ -132,11 +105,12 @@ int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 	if (tv) {
 		long long wall_us =
 			(long long)tv->tv_sec * 1000000 + tv->tv_usec;
-		g_wall_offset_us = wall_us - (long long)time_now_us();
+		long long offset_us = wall_us - (long long)time_now_us();
+		time_set_wall_offset(offset_us);
 
 		if (TestControl.verbos)
 			klog("settimeofday(%d.%06d) offset=%lld us\n",
-			     tv->tv_sec, tv->tv_usec, g_wall_offset_us);
+			     tv->tv_sec, tv->tv_usec, offset_us);
 	}
 	return 0;
 }

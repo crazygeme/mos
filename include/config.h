@@ -55,7 +55,7 @@
 
 #define USER_STACK_PAGES 4096
 /* Initial stack pages allocated at exec; stack grows down to USER_STACK_PAGES max. */
-#define USER_STACK_INIT_PAGES 7
+#define USER_STACK_INIT_PAGES 16
 
 #define SYSCALL_INT_NO 0x80
 

@@ -49,7 +49,7 @@
 static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 
 /* TX ring buffer. All accesses occur with interrupts disabled. */
-#define TXQ_SIZE 1024
+#define TXQ_SIZE 4096
 static unsigned char txq_buf[TXQ_SIZE];
 static unsigned txq_head = 0; /* read index */
 static unsigned txq_tail = 0; /* write index */

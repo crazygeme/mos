@@ -311,6 +311,39 @@ int sys_umask(unsigned mask)
 	return ret;
 }
 
+long sys_times(struct tms *buf)
+{
+	if (TestControl.verbos)
+		klog("times\n");
+
+	if (buf) {
+		buf->tms_utime = 0;
+		buf->tms_stime = 0;
+		buf->tms_cutime = 0;
+		buf->tms_cstime = 0;
+	}
+	/* Return clock ticks since boot; HZ=100 → divide µs by 10000. */
+	return (long)(time_now_us() / (1000000ULL / HZ));
+}
+
+int sys_setpriority(int which, int who, int prio)
+{
+	if (TestControl.verbos)
+		klog("setpriority(%d, %d, %d)\n", which, who, prio);
+
+	/* No real scheduling priority support; silently accept. */
+	return 0;
+}
+
+int sys_vhangup(void)
+{
+	if (TestControl.verbos)
+		klog("vhangup\n");
+
+	/* Virtual hangup on the controlling terminal — no-op. */
+	return 0;
+}
+
 int sys_sysinfo(void *buf)
 {
 	struct sysinfo *info = (struct sysinfo *)buf;

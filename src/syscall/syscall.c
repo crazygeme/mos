@@ -84,7 +84,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_rmdir, // 40  __NR_rmdir
 	sys_dup, // 41  __NR_dup
 	sys_pipe, // 42  __NR_pipe
-	0, // 43  __NR_times
+	sys_times, // 43  __NR_times
 	0, // 44  __NR_prof
 	sys_brk, // 45  __NR_brk
 	sys_setgid, // 46  __NR_setgid
@@ -122,7 +122,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_gettimeofday, // 78  __NR_gettimeofday
 	sys_settimeofday, // 79  __NR_settimeofday
 	sys_getgroups, // 80  __NR_getgroups
-	0, // 81  __NR_setgroups
+	sys_setgroups, // 81  __NR_setgroups
 	sys_select, // 82  __NR_select
 	sys_symlink, // 83  __NR_symlink
 	0, // 84  __NR_oldlstat
@@ -138,7 +138,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_fchmod, // 94  __NR_fchmod
 	sys_fchown, // 95  __NR_fchown
 	0, // 96  __NR_getpriority
-	0, // 97  __NR_setpriority
+	sys_setpriority, // 97  __NR_setpriority
 	0, // 98  __NR_profil
 	sys_statfs, // 99  __NR_statfs
 	sys_fstatfs, // 100 __NR_fstatfs
@@ -152,7 +152,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_fstat, // 108 __NR_fstat
 	0, // 109 __NR_olduname
 	0, // 110 __NR_iopl
-	0, // 111 __NR_vhangup
+	sys_vhangup, // 111 __NR_vhangup
 	0, // 112 __NR_idle
 	0, // 113 __NR_vm86old
 	sys_wait4, // 114 __NR_wait4
@@ -247,7 +247,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_setreuid32, // 203 __NR_setreuid32
 	sys_setregid32, // 204 __NR_setregid32
 	sys_getgroups32, // 205 __NR_getgroups32
-	0, // 206 __NR_setgroups32
+	sys_setgroups32, // 206 __NR_setgroups32
 	sys_fchmod, // 207 __NR_fchown32
 	sys_setresuid32, // 208 __NR_setresuid32
 	sys_getresuid32, // 209 __NR_getresuid32

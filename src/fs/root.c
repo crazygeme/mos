@@ -42,7 +42,7 @@ static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 		return -1;
 	*pos += rcnt;
 	if (fp->f_name)
-		ext4_file_set_atime(fp->f_name, (uint32_t)time_unix_sec());
+		ext4_file_set_atime(fp->f_name, (uint32_t)time_now_sec());
 	return (ssize_t)rcnt;
 }
 
@@ -59,7 +59,7 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 		return -1;
 	*pos += wcnt;
 	if (fp->f_name) {
-		uint32_t t = (uint32_t)time_unix_sec();
+		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(fp->f_name, t);
 	}
 	return (ssize_t)wcnt;
@@ -490,7 +490,7 @@ static file *ext4_path_open(const char *path, int flag)
 	ret = ext4_fopen2(f, cur_path, flag);
 	if (check != EOK && ret == EOK) {
 		ext4_fchown(f, uid, gid);
-		ext4_file_set_ctime(cur_path, time_unix_sec());
+		ext4_file_set_ctime(cur_path, time_now_sec());
 	}
 
 	if (ret != EOK)
@@ -645,7 +645,7 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 	ext4_full_path(sb, path, full);
 	ret = ext4_dir_mk(full);
 	if (ret == EOK) {
-		uint32_t t = (uint32_t)time_unix_sec();
+		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
 		ext4_chown(full, uid, gid);
@@ -696,7 +696,7 @@ static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
 	ext4_full_path(sb, newpath, full2);
 	ret = ext4_flink(full1, full2);
 	if (ret == EOK) {
-		ext4_file_set_ctime(full1, (uint32_t)time_unix_sec());
+		ext4_file_set_ctime(full1, (uint32_t)time_now_sec());
 		ext4_chown(full2, uid, gid);
 	}
 	name_put(full1);
@@ -714,7 +714,7 @@ static int ext4_symlink_op(super_block *sb, const char *target,
 	ext4_full_path(sb, linkpath, full);
 	ret = ext4_fsymlink(target, full);
 	if (ret == EOK) {
-		uint32_t t = (uint32_t)time_unix_sec();
+		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
 		ext4_chown(full, uid, gid);
@@ -740,7 +740,7 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 		ret = ext4_frename(full1, full2);
 	}
 	if (ret == EOK) {
-		uint32_t t = (uint32_t)time_unix_sec();
+		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(full2, t);
 		ext4_file_set_ctime(full2, t);
 		ext4_chown(full2, uid, gid);

@@ -94,9 +94,9 @@ static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 
 static int pipe_getattr(inode *node, struct stat *s)
 {
-	s->st_atime = time_unix_sec();
-	s->st_ctime = time_unix_sec();
-	s->st_mtime = time_unix_sec();
+	s->st_atime = time_now_sec();
+	s->st_ctime = time_now_sec();
+	s->st_mtime = time_now_sec();
 	s->st_mode = node->i_mode;
 	s->st_size = 0;
 	s->st_blksize = PAGE_SIZE;

@@ -153,7 +153,7 @@ static int rtc_ioctl(file *fp, unsigned cmd, void *buf)
 static int rtc_getattr(inode *node, struct stat *s)
 {
 	memset(s, 0, sizeof(*s));
-	s->st_atime = s->st_mtime = s->st_ctime = time_unix_sec();
+	s->st_atime = s->st_mtime = s->st_ctime = time_now_sec();
 	s->st_mode = node->i_mode;
 	s->st_dev = MKDEV(10, 0);
 	s->st_rdev = MKDEV(10, 135);

@@ -12,9 +12,11 @@ _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _bash=""
 _test=""
+_priviledge=""
 _IS_MACOS=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
 if [ "$_IS_MACOS" -eq 1 ]; then
 	_netdev="vmnet-shared,id=net0"
+	_priviledge="sudo"
 else
 	_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
 fi
@@ -135,7 +137,7 @@ if [ ! -f "$diskfile" ]; then
 fi
 
 
-qemu-system-i386 -cpu coreduo \
+$_priviledge qemu-system-i386 -cpu coreduo \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \

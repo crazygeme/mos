@@ -40,11 +40,23 @@ struct sysinfo {
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
 
 /*
- * Wall-clock offset: difference (in ms) between the real-world epoch and
+ * Wall-clock offset: difference (in us) between the real-world epoch and
  * the kernel's PIT tick counter.  Set by sys_settimeofday (syscall 79) and
  * read back by sys_gettimeofday / sys_time.
+ *
+ * 0 means "not set by userspace" — fall back to the RTC-derived boot epoch.
  */
 static long long g_wall_offset_us;
+
+/* Return current wall-clock time in microseconds since Unix epoch. */
+static unsigned long long wall_clock_us(void)
+{
+	if (g_wall_offset_us != 0)
+		return (unsigned long long)((long long)time_now_us() +
+					    g_wall_offset_us);
+	/* settimeofday never called: use RTC boot epoch + uptime. */
+	return (unsigned long long)time_unix_sec() * 1000000ULL;
+}
 
 int sys_uname(struct utsname *utname)
 {
@@ -87,8 +99,7 @@ int sys_time(unsigned *t)
 	if (!t)
 		return -1;
 
-	*t = (unsigned)(((long long)time_now_us() + g_wall_offset_us) /
-			1000000ULL);
+	*t = (unsigned)(wall_clock_us() / 1000000ULL);
 
 	if (TestControl.verbos)
 		klog("time() = %u\n", *t);
@@ -103,9 +114,7 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	if (!tv)
 		return -EFAULT;
 
-	now = (long long)time_now_us() + g_wall_offset_us;
-	if (now < 0)
-		now = 0;
+	now = (long long)wall_clock_us();
 	us_to_timeval((unsigned long long)now, tv);
 
 	if (tz)

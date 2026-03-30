@@ -340,3 +340,21 @@ int sys_sysinfo(void *buf)
 
 	return 0;
 }
+
+int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
+		     size_t *ret)
+{
+	// No module support, always return success
+	if (TestControl.verbos)
+		klog("query_module\n");
+
+	if (buf && bufsize > 0) {
+		char *p = (char *)buf;
+		*p = '\0';
+	}
+
+	if (ret)
+		*ret = 0;
+
+	return 0;
+}

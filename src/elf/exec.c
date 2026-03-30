@@ -452,9 +452,14 @@ int sys_execve(const char *f, char **argv, char **envp)
 		firstline = NULL;
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
 		char *lf = strchr(firstline, '\n');
+		char *interp = NULL;
 		if (lf)
 			*lf = '\0';
-		strcpy(file_name, firstline + 2);
+		interp = firstline + 2;
+		while (*interp == ' ' || *interp == '\t')
+			interp++;
+
+		strcpy(file_name, interp);
 	} else {
 		free(firstline);
 		name_put(file_name);

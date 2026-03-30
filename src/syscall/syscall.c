@@ -208,7 +208,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_setresuid, // 164 __NR_setresuid
 	sys_getresuid, // 165 __NR_getresuid
 	0, // 166 __NR_vm86
-	0, // 167 __NR_query_module
+	sys_query_module, // 167 __NR_query_module
 	sys_poll, // 168 __NR_poll
 	0, // 169 __NR_nfsservctl
 	sys_setresgid, // 170 __NR_setresgid

@@ -801,7 +801,7 @@ static int process_one_char(tty_state *state, char c)
 		ansi_begin(state);
 		return state->cursor;
 	default:
-		if (fb_is_char_visiable(c)) {
+		if (isprint(c)) {
 			vga_putchar(state, CUR_ROW, CUR_COL, c);
 			if (state->no_wrap && CUR_COL == (int)MAX_COL - 1)
 				return state->cursor; /* stay at last column */

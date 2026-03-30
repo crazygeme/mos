@@ -151,6 +151,8 @@ int sys_getgroups32(int size, unsigned *list);
 int sys_setgroups32(int size, unsigned *list);
 int sys_ugetrlimit(int resource, void *limit);
 int sys_exit_group(int status);
+int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
+		     size_t *ret);
 
 /*
  * syscall_sys.c

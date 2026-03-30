@@ -633,6 +633,13 @@ int resolve_path(const char *old, char *new)
 	if (!old || !*old)
 		return -1;
 
+	/* stat("#!/bin/bash") will also be called */
+	if (strncmp(old, "#!", 2) == 0) {
+		old += 2;
+		while (*old == ' ' || *old == '\t')
+			old++;
+	}
+
 	len = strlen(old);
 
 	/* "." — current directory */

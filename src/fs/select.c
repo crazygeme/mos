@@ -1,65 +1,64 @@
 #include <lib/klib.h>
 #include <fs/fcntl.h>
 #include <fs/fs.h>
+#include <fs/poll.h>
 #include <fs/select.h>
 #include <ps/ps.h>
 #include <hw/time.h>
-#include <errno.h>
 #include <config.h>
 
-#define TICK_MS (1000 / HZ)
+/* ---- select(2) implementation ---- */
 
-/*
- * Check readiness of all watched fds and fill the output fd_sets.
- * The output sets are zeroed before filling.  Returns number of ready fds.
- */
-static int select_check(int nfds, fd_set *reads, fd_set *writes,
-			fd_set *excepts, fd_set *readfds, fd_set *writefds,
-			fd_set *exceptfds)
+struct select_ctx {
+	int nfds;
+	/* Snapshots of the caller's input sets (never modified after setup). */
+	fd_set *reads, *writes, *excepts;
+	/* Pointers to the caller's output sets (zeroed and filled each check). */
+	fd_set *readfds, *writefds, *exceptfds;
+};
+
+static int select_ctx_check(void *arg)
 {
+	struct select_ctx *ctx = arg;
 	int i, ready = 0;
 
-	if (readfds)
-		FD_ZERO(readfds);
-	if (writefds)
-		FD_ZERO(writefds);
-	if (exceptfds)
-		FD_ZERO(exceptfds);
+	if (ctx->readfds)
+		FD_ZERO(ctx->readfds);
+	if (ctx->writefds)
+		FD_ZERO(ctx->writefds);
+	if (ctx->exceptfds)
+		FD_ZERO(ctx->exceptfds);
 
-	for (i = 0; i < nfds; i++) {
-		if (reads && FD_ISSET(i, reads) &&
+	for (i = 0; i < ctx->nfds; i++) {
+		if (ctx->reads && FD_ISSET(i, ctx->reads) &&
 		    fs_fd_ready(i, FS_POLL_READ) == 0) {
-			FD_SET(i, readfds);
+			FD_SET(i, ctx->readfds);
 			ready++;
 		}
-		if (writes && FD_ISSET(i, writes) &&
+		if (ctx->writes && FD_ISSET(i, ctx->writes) &&
 		    fs_fd_ready(i, FS_POLL_WRITE) == 0) {
-			FD_SET(i, writefds);
+			FD_SET(i, ctx->writefds);
 			ready++;
 		}
-		if (excepts && FD_ISSET(i, excepts) &&
+		if (ctx->excepts && FD_ISSET(i, ctx->excepts) &&
 		    fs_fd_ready(i, FS_POLL_EXCEPT) == 0) {
-			FD_SET(i, exceptfds);
+			FD_SET(i, ctx->exceptfds);
 			ready++;
 		}
 	}
 	return ready;
 }
 
-/*
- * Register task on every watched fd that supports poll_wait.
- * Returns 1 if any fd lacks poll_wait support (needs fallback timer).
- */
-static int select_reg(int nfds, fd_set *reads, fd_set *writes, fd_set *excepts,
-		      task_struct *task)
+static int select_ctx_reg(void *arg)
 {
+	struct select_ctx *ctx = arg;
 	task_struct *cur = CURRENT_TASK();
 	int i, has_unsupported = 0;
 
-	for (i = 0; i < nfds; i++) {
-		int any = ((reads && FD_ISSET(i, reads)) ||
-			   (writes && FD_ISSET(i, writes)) ||
-			   (excepts && FD_ISSET(i, excepts)));
+	for (i = 0; i < ctx->nfds; i++) {
+		int any = ((ctx->reads && FD_ISSET(i, ctx->reads)) ||
+			   (ctx->writes && FD_ISSET(i, ctx->writes)) ||
+			   (ctx->excepts && FD_ISSET(i, ctx->excepts)));
 		if (!any)
 			continue;
 		if (i >= (int)MAX_FD || !cur->fds[i].used)
@@ -68,59 +67,70 @@ static int select_reg(int nfds, fd_set *reads, fd_set *writes, fd_set *excepts,
 		if (!fp || !fp->f_fop)
 			continue;
 		if (fp->f_fop->poll_wait)
-			fp->f_fop->poll_wait(fp, task);
+			fp->f_fop->poll_wait(fp, cur);
 		else
 			has_unsupported = 1;
 	}
 	return has_unsupported;
 }
 
-/* Deregister task from every watched fd. */
-static void select_dereg(int nfds, fd_set *reads, fd_set *writes,
-			 fd_set *excepts, task_struct *task)
+static void select_ctx_dereg(void *arg)
 {
+	struct select_ctx *ctx = arg;
 	task_struct *cur = CURRENT_TASK();
 	int i;
 
-	for (i = 0; i < nfds; i++) {
-		int any = ((reads && FD_ISSET(i, reads)) ||
-			   (writes && FD_ISSET(i, writes)) ||
-			   (excepts && FD_ISSET(i, excepts)));
+	for (i = 0; i < ctx->nfds; i++) {
+		int any = ((ctx->reads && FD_ISSET(i, ctx->reads)) ||
+			   (ctx->writes && FD_ISSET(i, ctx->writes)) ||
+			   (ctx->excepts && FD_ISSET(i, ctx->excepts)));
 		if (!any)
 			continue;
 		if (i >= (int)MAX_FD || !cur->fds[i].used)
 			continue;
 		file *fp = cur->fds[i].fp;
 		if (fp && fp->f_fop && fp->f_fop->poll_wait_remove)
-			fp->f_fop->poll_wait_remove(fp, task);
+			fp->f_fop->poll_wait_remove(fp, cur);
 	}
 }
+
+static const struct poll_ops select_fops = {
+	.check = select_ctx_check,
+	.reg = select_ctx_reg,
+	.dereg = select_ctx_dereg,
+};
 
 int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	      const struct timespec *timeout, void *sigmask)
 {
-	fd_set *reads = NULL, *writes = NULL, *excepts = NULL;
-	int ret = 0;
+	int ret;
 	int just_test = 0, infinite = 0;
 	unsigned deadline = 0;
 	task_struct *cur = CURRENT_TASK();
 	sigset_t saved_mask = cur->signal->sig_mask;
+	struct select_ctx ctx;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.nfds = nfds;
 
 	if (sigmask)
 		cur->signal->sig_mask = *(sigset_t *)sigmask;
 
-	/* Snapshot the input sets; the output sets are filled on each check. */
+	/* Snapshot the input sets; output sets are filled on each check. */
 	if (readfds) {
-		reads = zalloc(sizeof(fd_set));
-		memcpy(reads, readfds, sizeof(fd_set));
+		ctx.reads = zalloc(sizeof(fd_set));
+		memcpy(ctx.reads, readfds, sizeof(fd_set));
+		ctx.readfds = readfds;
 	}
 	if (writefds) {
-		writes = zalloc(sizeof(fd_set));
-		memcpy(writes, writefds, sizeof(fd_set));
+		ctx.writes = zalloc(sizeof(fd_set));
+		memcpy(ctx.writes, writefds, sizeof(fd_set));
+		ctx.writefds = writefds;
 	}
 	if (exceptfds) {
-		excepts = zalloc(sizeof(fd_set));
-		memcpy(excepts, exceptfds, sizeof(fd_set));
+		ctx.excepts = zalloc(sizeof(fd_set));
+		memcpy(ctx.excepts, exceptfds, sizeof(fd_set));
+		ctx.exceptfds = exceptfds;
 	}
 
 	if (timeout) {
@@ -134,66 +144,17 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 		infinite = 1;
 	}
 
-	for (;;) {
-		/* Phase 1: check current readiness */
-		ret = select_check(nfds, reads, writes, excepts, readfds,
-				   writefds, exceptfds);
-		if (ret > 0)
-			break;
-
-		if (just_test)
-			break;
-
-		if (!infinite && time_now_ms() >= deadline)
-			break;
-
-		/* Phase 2: register wakeup on each fd */
-		int has_unsupported =
-			select_reg(nfds, reads, writes, excepts, cur);
-
-		/* Phase 3: re-check to close the lost-wakeup window */
-		ret = select_check(nfds, reads, writes, excepts, readfds,
-				   writefds, exceptfds);
-		if (ret > 0) {
-			select_dereg(nfds, reads, writes, excepts, cur);
-			break;
-		}
-
-		/* Phase 4: sleep */
-		unsigned sleep_ms = 0;
-		if (!infinite) {
-			unsigned now = time_now_ms();
-			if (now >= deadline) {
-				select_dereg(nfds, reads, writes, excepts, cur);
-				ret = 0;
-				break;
-			}
-			sleep_ms = deadline - now;
-			if (has_unsupported && sleep_ms > TICK_MS)
-				sleep_ms = TICK_MS;
-		} else if (has_unsupported) {
-			sleep_ms = TICK_MS;
-		}
-
-		time_wait(sleep_ms);
-		select_dereg(nfds, reads, writes, excepts, cur);
-
-		cur = CURRENT_TASK();
-		if (cur->signal->sig_pending & ~cur->signal->sig_mask) {
-			ret = -EINTR;
-			break;
-		}
-	}
+	ret = poll_wait_loop(&select_fops, &ctx, just_test, infinite, deadline);
 
 	if (sigmask)
 		cur->signal->sig_mask = saved_mask;
 
-	if (reads)
-		free(reads);
-	if (writes)
-		free(writes);
-	if (excepts)
-		free(excepts);
+	if (ctx.reads)
+		free(ctx.reads);
+	if (ctx.writes)
+		free(ctx.writes);
+	if (ctx.excepts)
+		free(ctx.excepts);
 
 	return ret;
 }

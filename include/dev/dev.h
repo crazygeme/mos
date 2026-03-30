@@ -8,9 +8,9 @@
 
 /* Device number encoding (Linux-compatible 8-bit major/minor). */
 #define MKDEV(major, minor) \
-	(((unsigned)(major) << 8) | ((unsigned)(minor) & 0xFF))
+	(((unsigned)(major) << 8) | ((unsigned)(minor)&0xFF))
 #define MAJOR(dev) ((unsigned)(dev) >> 8)
-#define MINOR(dev) ((unsigned)(dev) & 0xFF)
+#define MINOR(dev) ((unsigned)(dev)&0xFF)
 
 /*
  * cdev_register - register a character or block device handler.

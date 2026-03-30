@@ -8,94 +8,22 @@
 
 #define TICK_MS (1000 / HZ)
 
-/* Check all fds, fill revents, return count of ready fds. */
-static int poll_check(struct pollfd *fds, unsigned nfds)
-{
-	unsigned i;
-	int ready = 0;
-
-	for (i = 0; i < nfds; i++) {
-		short revents = 0;
-		int fd = fds[i].fd;
-		short events = fds[i].events;
-
-		if (fd < 0) {
-			fds[i].revents = 0;
-			continue;
-		}
-		if (events & (POLLIN | POLLPRI))
-			if (fs_fd_ready(fd, FS_POLL_READ) == 0)
-				revents |= POLLIN;
-		if (events & POLLOUT)
-			if (fs_fd_ready(fd, FS_POLL_WRITE) == 0)
-				revents |= POLLOUT;
-		if (fs_fd_ready(fd, FS_POLL_EXCEPT) == 0)
-			revents |= POLLERR;
-		fds[i].revents = revents;
-		if (revents)
-			ready++;
-	}
-	return ready;
-}
-
 /*
- * Register task on every polled fd that supports poll_wait.
- * Returns 1 if at least one fd lacks poll_wait support (needs fallback timer).
+ * Generic 4-phase wait loop used by both poll and select.
+ *
+ * Phase 1: check readiness immediately.
+ * Phase 2: register the current task for wakeup on every watched fd.
+ * Phase 3: re-check to close the lost-wakeup window between phases 1 and 2.
+ * Phase 4: sleep; after waking, deregister and check for signals.
  */
-static int poll_reg(struct pollfd *fds, unsigned nfds, task_struct *task)
+int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
+		   int infinite, unsigned deadline)
 {
-	task_struct *cur = CURRENT_TASK();
-	unsigned i;
-	int has_unsupported = 0;
-
-	for (i = 0; i < nfds; i++) {
-		int fd = fds[i].fd;
-		if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
-			continue;
-		file *fp = cur->fds[fd].fp;
-		if (!fp || !fp->f_fop)
-			continue;
-		if (fp->f_fop->poll_wait)
-			fp->f_fop->poll_wait(fp, task);
-		else
-			has_unsupported = 1;
-	}
-	return has_unsupported;
-}
-
-/* Deregister task from every polled fd. */
-static void poll_dereg(struct pollfd *fds, unsigned nfds, task_struct *task)
-{
-	task_struct *cur = CURRENT_TASK();
-	unsigned i;
-
-	for (i = 0; i < nfds; i++) {
-		int fd = fds[i].fd;
-		if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
-			continue;
-		file *fp = cur->fds[fd].fp;
-		if (fp && fp->f_fop && fp->f_fop->poll_wait_remove)
-			fp->f_fop->poll_wait_remove(fp, task);
-	}
-}
-
-int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
-{
-	int ret = 0;
-	int just_test = (timeout == 0);
-	int infinite = (timeout < 0);
-	unsigned deadline = 0;
-	task_struct *cur = CURRENT_TASK();
-
-	if (!fds && nfds > 0)
-		return -EFAULT;
-
-	if (!just_test && !infinite)
-		deadline = time_now_ms() + (unsigned)timeout;
+	task_struct *cur;
+	int ret;
 
 	for (;;) {
-		/* Phase 1: check current readiness */
-		ret = poll_check(fds, nfds);
+		ret = ops->check(ctx);
 		if (ret > 0)
 			break;
 
@@ -105,25 +33,19 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 		if (!infinite && time_now_ms() >= deadline)
 			break;
 
-		/* Phase 2: register wakeup on each fd */
-		int has_unsupported = poll_reg(fds, nfds, cur);
+		int has_unsupported = ops->reg(ctx);
 
-		/* Phase 3: re-check to close the lost-wakeup window */
-		ret = poll_check(fds, nfds);
+		ret = ops->check(ctx);
 		if (ret > 0) {
-			poll_dereg(fds, nfds, cur);
+			ops->dereg(ctx);
 			break;
 		}
 
-		/* Phase 4: sleep until an fd wakes us or the deadline expires.
-		 * time_wait(0) blocks indefinitely — only an fd wakeup will
-		 * unblock us.  For unsupported fds or finite timeouts we arm a
-		 * timer so we periodically re-check. */
 		unsigned sleep_ms = 0;
 		if (!infinite) {
 			unsigned now = time_now_ms();
 			if (now >= deadline) {
-				poll_dereg(fds, nfds, cur);
+				ops->dereg(ctx);
 				ret = 0;
 				break;
 			}
@@ -135,9 +57,9 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 		}
 
 		time_wait(sleep_ms);
-		poll_dereg(fds, nfds, cur);
+		ops->dereg(ctx);
 
-		/* Signal check */
+		cur = CURRENT_TASK();
 		if (cur->signal->sig_pending & ~cur->signal->sig_mask) {
 			ret = -EINTR;
 			break;
@@ -145,4 +67,101 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 	}
 
 	return ret;
+}
+
+/* ---- poll(2) implementation ---- */
+
+struct poll_ctx {
+	struct pollfd *fds;
+	unsigned nfds;
+};
+
+static int poll_ctx_check(void *arg)
+{
+	struct poll_ctx *ctx = arg;
+	unsigned i;
+	int ready = 0;
+
+	for (i = 0; i < ctx->nfds; i++) {
+		short revents = 0;
+		int fd = ctx->fds[i].fd;
+		short events = ctx->fds[i].events;
+
+		if (fd < 0) {
+			ctx->fds[i].revents = 0;
+			continue;
+		}
+		if (events & (POLLIN | POLLPRI))
+			if (fs_fd_ready(fd, FS_POLL_READ) == 0)
+				revents |= POLLIN;
+		if (events & POLLOUT)
+			if (fs_fd_ready(fd, FS_POLL_WRITE) == 0)
+				revents |= POLLOUT;
+		if (fs_fd_ready(fd, FS_POLL_EXCEPT) == 0)
+			revents |= POLLERR;
+		ctx->fds[i].revents = revents;
+		if (revents)
+			ready++;
+	}
+	return ready;
+}
+
+static int poll_ctx_reg(void *arg)
+{
+	struct poll_ctx *ctx = arg;
+	task_struct *cur = CURRENT_TASK();
+	unsigned i;
+	int has_unsupported = 0;
+
+	for (i = 0; i < ctx->nfds; i++) {
+		int fd = ctx->fds[i].fd;
+		if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
+			continue;
+		file *fp = cur->fds[fd].fp;
+		if (!fp || !fp->f_fop)
+			continue;
+		if (fp->f_fop->poll_wait)
+			fp->f_fop->poll_wait(fp, cur);
+		else
+			has_unsupported = 1;
+	}
+	return has_unsupported;
+}
+
+static void poll_ctx_dereg(void *arg)
+{
+	struct poll_ctx *ctx = arg;
+	task_struct *cur = CURRENT_TASK();
+	unsigned i;
+
+	for (i = 0; i < ctx->nfds; i++) {
+		int fd = ctx->fds[i].fd;
+		if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
+			continue;
+		file *fp = cur->fds[fd].fp;
+		if (fp && fp->f_fop && fp->f_fop->poll_wait_remove)
+			fp->f_fop->poll_wait_remove(fp, cur);
+	}
+}
+
+static const struct poll_ops poll_fops = {
+	.check = poll_ctx_check,
+	.reg = poll_ctx_reg,
+	.dereg = poll_ctx_dereg,
+};
+
+int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
+{
+	int just_test = (timeout == 0);
+	int infinite = (timeout < 0);
+	unsigned deadline = 0;
+	struct poll_ctx ctx = { fds, nfds };
+
+	if (!fds && nfds > 0)
+		return -EFAULT;
+
+	if (!just_test && !infinite)
+		deadline = time_now_ms() + (unsigned)timeout;
+
+	return poll_wait_loop(&poll_fops, &ctx, just_test, infinite, deadline);
 }

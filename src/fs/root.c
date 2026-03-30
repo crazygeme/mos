@@ -684,6 +684,11 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
 	ret = ext4_frename(full1, full2);
+	if (ret == EEXIST) {
+		/* POSIX rename(2) must replace the destination if it exists */
+		ext4_fremove(full2);
+		ret = ext4_frename(full1, full2);
+	}
 	name_put(full1);
 	name_put(full2);
 	return ret ? -ret : 0;

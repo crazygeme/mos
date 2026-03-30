@@ -118,7 +118,7 @@ typedef struct _channel {
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
 #define PREREAD_SECTOR 8
 #define HEAD_SECTOR(s) ((s) / PREREAD_SECTOR * PREREAD_SECTOR)
-#define SECTOR_OFF(s) ((s)-HEAD_SECTOR(s))
+#define SECTOR_OFF(s) ((s) - HEAD_SECTOR(s))
 
 typedef struct _block_cache_item {
 	int sector; /* head sector of this cached extent        */

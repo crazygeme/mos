@@ -61,7 +61,6 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	if (fp->f_name) {
 		uint32_t t = (uint32_t)time_unix_sec();
 		ext4_file_set_mtime(fp->f_name, t);
-		ext4_file_set_ctime(fp->f_name, t);
 	}
 	return (ssize_t)wcnt;
 }
@@ -448,11 +447,13 @@ static file *ext4_path_open(const char *path, int flag)
 {
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
+	unsigned uid = current->user->uid;
+	unsigned gid = current->user->gid;
 	char *pre_res = NULL; /* buffer for intermediate symlink resolution */
 	char *resolved = NULL; /* buffer for final symlink following */
 	const char *cur_path = path;
 	size_t link_len;
-	int ret;
+	int ret, check;
 	int depth = 0;
 	file *fp = NULL;
 	struct stat s;
@@ -485,7 +486,13 @@ static file *ext4_path_open(const char *path, int flag)
 
 	/* ---- Case 2: regular open, with final symlink following ---- */
 	f = zalloc(sizeof(*f));
+	check = ext4_fopen2(f, cur_path, (flag & ~O_CREAT));
 	ret = ext4_fopen2(f, cur_path, flag);
+	if (check != EOK && ret == EOK) {
+		ext4_fchown(f, uid, gid);
+		ext4_file_set_ctime(cur_path, time_unix_sec());
+	}
+
 	if (ret != EOK)
 		goto fail;
 
@@ -632,6 +639,8 @@ static void ext4_full_path(super_block *sb, const char *path, char *full)
 static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 {
 	char *full = name_get();
+	unsigned uid = current->user->uid;
+	unsigned gid = current->user->gid;
 	int ret;
 	ext4_full_path(sb, path, full);
 	ret = ext4_dir_mk(full);
@@ -639,6 +648,7 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 		uint32_t t = (uint32_t)time_unix_sec();
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
+		ext4_chown(full, uid, gid);
 	}
 	name_put(full);
 	return ret ? -ret : 0;
@@ -679,12 +689,16 @@ static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
 {
 	char *full1 = name_get();
 	char *full2 = name_get();
+	unsigned uid = current->user->uid;
+	unsigned gid = current->user->gid;
 	int ret;
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
 	ret = ext4_flink(full1, full2);
-	if (ret == EOK)
+	if (ret == EOK) {
 		ext4_file_set_ctime(full1, (uint32_t)time_unix_sec());
+		ext4_chown(full2, uid, gid);
+	}
 	name_put(full1);
 	name_put(full2);
 	return ret ? -ret : 0;
@@ -694,6 +708,8 @@ static int ext4_symlink_op(super_block *sb, const char *target,
 			   const char *linkpath)
 {
 	char *full = name_get();
+	unsigned uid = current->user->uid;
+	unsigned gid = current->user->gid;
 	int ret;
 	ext4_full_path(sb, linkpath, full);
 	ret = ext4_fsymlink(target, full);
@@ -701,6 +717,7 @@ static int ext4_symlink_op(super_block *sb, const char *target,
 		uint32_t t = (uint32_t)time_unix_sec();
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
+		ext4_chown(full, uid, gid);
 	}
 	name_put(full);
 	return ret ? -ret : 0;
@@ -711,6 +728,8 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 {
 	char *full1 = name_get();
 	char *full2 = name_get();
+	unsigned uid = current->user->uid;
+	unsigned gid = current->user->gid;
 	int ret;
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
@@ -724,6 +743,7 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 		uint32_t t = (uint32_t)time_unix_sec();
 		ext4_file_set_mtime(full2, t);
 		ext4_file_set_ctime(full2, t);
+		ext4_chown(full2, uid, gid);
 	}
 	name_put(full1);
 	name_put(full2);

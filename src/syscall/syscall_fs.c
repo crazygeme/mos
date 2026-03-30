@@ -410,10 +410,17 @@ int sys_rmdir(const char *path)
 
 int sys_creat(const char *path, unsigned mode)
 {
+	file* fp = NULL;
 	if (TestControl.verbos)
 		klog("creat(%s, %d)\n", path, mode);
 
-	return -1;
+	fp = vfs_open(current->root, path, O_CREAT | O_WRONLY | O_TRUNC);
+	if (!fp)
+		return -ENOENT;
+
+	fs_put_file(fp);
+	return 0;
+
 }
 
 int sys_link(const char *path1, const char *path2)

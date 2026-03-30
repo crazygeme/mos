@@ -266,6 +266,7 @@ typedef struct _rusage {
 #define KERNEL_TASK_SIZE 1 // 1 pages
 #define DEFAULT_TASK_TIME_SLICE 10
 
+#define current CURRENT_TASK()
 task_struct *CURRENT_TASK();
 
 void ps_init();

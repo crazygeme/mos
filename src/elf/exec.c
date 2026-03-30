@@ -595,7 +595,7 @@ static void run_if_exist(const char *path, const char *argv[],
  */
 static void kinit_userspace()
 {
-	const char *devault_argv[] = { "/sbin/init", "1", "fastboot", NULL };
+	const char *devault_argv[] = { "/sbin/init", "3", "fastboot", NULL };
 	const char *default_envp[] = { NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",

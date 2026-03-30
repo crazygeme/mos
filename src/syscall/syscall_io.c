@@ -22,8 +22,8 @@ static char *format_buffer(char *buf, unsigned len)
 {
 	/* Format like strace: at most 128 chars, escape non-printables */
 	static const char hex[] = "0123456789abcdef";
-	char *tmp = malloc(4 * 128 + 6); /* '"' + 128*4 + '"' + "..." + NUL */
-	unsigned i, n = len < 128 ? len : 128;
+	char *tmp = malloc(4 * 32 + 6); /* '"' + 128*4 + '"' + "..." + NUL */
+	unsigned i, n = len < 32 ? len : 32;
 	char *p = tmp;
 	*p++ = '"';
 	for (i = 0; buf && i < n; i++) {

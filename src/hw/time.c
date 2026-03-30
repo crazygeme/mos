@@ -14,6 +14,7 @@ static unsigned long minutes;
 static unsigned long hourse;
 static unsigned long days;
 static unsigned long total_seconds;
+static unsigned long total_millseconds;
 static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
 static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
@@ -25,6 +26,7 @@ static void time_process(intr_frame *frame)
 {
 	tickets++;
 	total_tickets++;
+	total_millseconds += 1000 / HZ;
 
 	if (tickets == HZ) {
 		seconds++;
@@ -146,6 +148,7 @@ void time_init()
 	days = 0;
 	cycle_per_ticket = 0;
 	total_seconds = 0;
+	total_millseconds = 0;
 	boot_epoch = rtc_get_time();
 
 	int_register(0x20, time_process, 0, 0);
@@ -162,8 +165,7 @@ void time_init()
 
 unsigned time_now_ms()
 {
-	BARRIER();
-	return (unsigned)(total_tickets * (1000ULL / HZ));
+	return time_now_us() / 1000;
 }
 
 unsigned long long time_now_tickets()
@@ -307,7 +309,8 @@ unsigned long long time_wall_us(void)
 		return (unsigned long long)((long long)time_now_us() +
 					    g_wall_offset_us);
 	/* settimeofday not yet called — fall back to RTC boot epoch + uptime */
-	return (unsigned long long)(boot_epoch + total_seconds) * 1000000ULL;
+	return (unsigned long long)(boot_epoch * 1000000ULL +
+				    total_millseconds * 1000ULL);
 }
 
 unsigned long time_unix_sec(void)

@@ -843,12 +843,38 @@ int sys_getgroups(int size, unsigned *list)
 	return 0;
 }
 
+int sys_setgroups(int size, unsigned short *list)
+{
+	user_enviroment *u = CURRENT_TASK()->user;
+
+	if (TestControl.verbos)
+		klog("setgroups(%d)\n", size);
+
+	if (u->euid != 0)
+		return -EPERM;
+	/* We don't track supplementary groups; silently accept. */
+	return 0;
+}
+
 int sys_getgroups32(int size, unsigned *list)
 {
 	if (TestControl.verbos)
 		klog("getgroups32(%d)\n", size);
 
 	/* No supplementary groups — always root. */
+	return 0;
+}
+
+int sys_setgroups32(int size, unsigned *list)
+{
+	user_enviroment *u = CURRENT_TASK()->user;
+
+	if (TestControl.verbos)
+		klog("setgroups32(%d)\n", size);
+
+	if (u->euid != 0)
+		return -EPERM;
+	/* We don't track supplementary groups; silently accept. */
 	return 0;
 }
 

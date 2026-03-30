@@ -146,13 +146,24 @@ int sys_setrlimit(int resource, void *limit);
 int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
 long sys_personality(unsigned int personality);
 int sys_getgroups(int size, unsigned *list);
+int sys_setgroups(int size, unsigned short *list);
 int sys_getgroups32(int size, unsigned *list);
+int sys_setgroups32(int size, unsigned *list);
 int sys_ugetrlimit(int resource, void *limit);
 int sys_exit_group(int status);
 
 /*
  * syscall_sys.c
  */
+struct tms {
+	long tms_utime;
+	long tms_stime;
+	long tms_cutime;
+	long tms_cstime;
+};
+long sys_times(struct tms *buf);
+int sys_setpriority(int which, int who, int prio);
+int sys_vhangup(void);
 int sys_uname(struct utsname *utname);
 int sys_sethostname(const char *name, unsigned len);
 int sys_utime(const char *filename, const struct utimbuf *times);

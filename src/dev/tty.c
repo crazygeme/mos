@@ -1273,15 +1273,15 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 static int tty_fs_getattr(inode *node, struct stat *s)
 {
 	tty_state *state = node->i_private;
-	s->st_atime = time_now_ms();
+	s->st_atime = time_unix_sec();
+	s->st_mtime = time_unix_sec();
+	s->st_ctime = time_unix_sec();
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
-	s->st_ctime = time_now_ms();
 	s->st_dev = 0xb;
 	s->st_gid = 0;
 	s->st_ino = 0;
-	s->st_mtime = 0;
 	s->st_uid = 0;
 	s->st_nlink = 1;
 	s->st_rdev = (4 << 8) |

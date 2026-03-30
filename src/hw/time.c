@@ -16,6 +16,7 @@ static unsigned long days;
 static unsigned long total_seconds;
 static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
+static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
 static unsigned long rtc_get_time(void);
 static int is_force_switching = 0;
 
@@ -159,13 +160,6 @@ void time_init()
 	port_write_byte(TIME_CHANNEL_0, LATCH >> 8);
 }
 
-void time_current(time_t *t)
-{
-	time_t now = time(0);
-	t->seconds = now.time / 1000;
-	t->milliseconds = now.time - t->seconds * 1000;
-}
-
 unsigned time_now_ms()
 {
 	BARRIER();
@@ -302,20 +296,23 @@ void delay(unsigned int us)
 	busy_wait(cycles);
 }
 
-unsigned long time_unix_sec(void)
+void time_set_wall_offset(long long offset_us)
 {
-	return boot_epoch + total_seconds;
+	g_wall_offset_us = offset_us;
 }
 
-time_t time(time_t *t)
+unsigned long long time_wall_us(void)
 {
-	unsigned long long now = time_now_ms();
-	time_t ret;
-	ret.time = now;
-	if (t) {
-		t->time = now;
-	}
-	return ret;
+	if (g_wall_offset_us != 0)
+		return (unsigned long long)((long long)time_now_us() +
+					    g_wall_offset_us);
+	/* settimeofday not yet called — fall back to RTC boot epoch + uptime */
+	return (unsigned long long)(boot_epoch + total_seconds) * 1000000ULL;
+}
+
+unsigned long time_unix_sec(void)
+{
+	return (unsigned long)(time_wall_us() / 1000000ULL);
 }
 
 /* This code is an interface to the MC146818A-compatible real

@@ -82,10 +82,10 @@ static void intr_check_point(intr_frame *frame)
 
 	if (sched_is_enabled() && cur->remain_ticks <= 0) {
 		cur->niv_switches++;
+		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		int_intr_enable();
 		task_sched();
 		int_intr_disable();
-		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	}
 
 	/* Deliver pending signals when returning to user space.

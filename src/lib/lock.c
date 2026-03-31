@@ -12,13 +12,15 @@ void spinlock_init(spinlock_t *lock)
 {
 	lock->lock = 0;
 	lock->inited = 1;
+	lock->holder = 0;
 }
 
 void spinlock_uninit(spinlock_t *lock)
 {
 	lock->inited = 0;
+	lock->holder = 0;
 	/* Release the lock word and restore the saved interrupt level. */
-	__sync_lock_release(&lock->lock);
+	__sync_lock_test_and_set(&lock->lock, 0);
 }
 
 void _spinlock_lock(spinlock_t *lock, const char *func)
@@ -48,9 +50,9 @@ void spinlock_unlock(spinlock_t *lock)
 		return;
 
 	lock->holder = 0xff;
-	sched_enable();
 	lock->old_int = 1;
 	__sync_lock_test_and_set(&lock->lock, 0);
+	sched_enable();
 }
 
 /* ===========================================================================

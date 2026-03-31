@@ -255,8 +255,10 @@ void _task_sched(const char *func)
 
 	task = ps_get_next_task();
 
-	if (!task || task->psid == CURRENT_TASK()->psid)
+	if (!task || task->psid == CURRENT_TASK()->psid) {
+		sched_enable();
 		goto SELF;
+	}
 
 	CURRENT_TASK()->total_switches++;
 
@@ -281,10 +283,10 @@ void _task_sched(const char *func)
 	 * pushed by the call below, at [new_esp - 4], which is within the
 	 * task's page even when new_esp == task + PAGE_SIZE. */
 	RESTORE_ALL(task, task->tss.eip);
+	sched_enable();
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:
-	sched_enable();
 
 	CURRENT_TASK()->idle_tickets +=
 		time_now_tickets() - CURRENT_TASK()->idle;

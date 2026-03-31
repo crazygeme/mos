@@ -116,6 +116,7 @@ static spinlock_t tty_switch_lock;
 #define CUR_COL (state->cursor % (int)MAX_COL)
 
 /* ── VGA/framebuffer primitives ──────────────────────────────────────────── */
+static const tty_cell_t blank = { ' ', VGA_COLOR_WHITE, VGA_COLOR_BLACK };
 
 static void vga_putchar(tty_state *state, int row, int col, char c)
 {
@@ -135,11 +136,9 @@ static void tty_do_clear(tty_state *state)
 	unsigned sz = (unsigned)(MAX_ROW * (int)MAX_COL);
 	unsigned i;
 
-	for (i = 0; i < sz; i++) {
-		state->cells[i].ch = ' ';
-		state->cells[i].fg = VGA_COLOR_WHITE;
-		state->cells[i].bg = VGA_COLOR_BLACK;
-	}
+	for (i = 0; i < sz; i++)
+		memcpy(&state->cells[i], &blank, sizeof(tty_cell_t));
+
 	if (state->tty_idx == active_tty_idx)
 		fb_clear_screen();
 }
@@ -155,11 +154,8 @@ static void tty_roll_line(tty_state *state)
 
 	memmove(state->cells, state->cells + col,
 		(total - col) * sizeof(tty_cell_t));
-	for (i = total - col; i < total; i++) {
-		state->cells[i].ch = ' ';
-		state->cells[i].fg = VGA_COLOR_WHITE;
-		state->cells[i].bg = VGA_COLOR_BLACK;
-	}
+	for (i = total - col; i < total; i++)
+		memcpy(&state->cells[i], &blank, sizeof(tty_cell_t));
 
 	if (state->tty_idx == active_tty_idx)
 		fb_scroll_line_px();
@@ -182,11 +178,9 @@ static void tty_roll_region(tty_state *state)
 
 	memmove(state->cells + top * col, state->cells + (top + 1) * col,
 		(bot - top) * col * sizeof(tty_cell_t));
-	for (i = bot * col; i < (bot + 1) * col; i++) {
-		state->cells[i].ch = ' ';
-		state->cells[i].fg = VGA_COLOR_WHITE;
-		state->cells[i].bg = VGA_COLOR_BLACK;
-	}
+	for (i = bot * col; i < (bot + 1) * col; i++)
+		memcpy(&state->cells[i], &blank, sizeof(tty_cell_t));
+
 	if (state->tty_idx == active_tty_idx)
 		fb_scroll_region_px(top, bot);
 }

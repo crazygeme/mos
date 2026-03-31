@@ -219,7 +219,6 @@ struct _task_struct {
 	ps_status status;
 	const char *wait_func;
 	int remain_ticks;
-	unsigned timeout;
 	file_descriptor *fds;
 	mutex_t fd_lock;
 	unsigned exit_status;

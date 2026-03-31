@@ -12,21 +12,21 @@ static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
 static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
 static unsigned long rtc_get_time(void);
-static int is_force_switching = 0;
 
-static void force_switch(short ds);
 static void time_process(intr_frame *frame)
 {
+	task_struct *cur = CURRENT_TASK();
+
 	tickets++;
 
-	BARRIER();
-
-	if (!sched_is_enabled())
+	if (!ps_enabled() || !sched_is_enabled())
 		return;
 
-	if (__sync_add_and_fetch(&(is_force_switching), 0) == 0) {
-		__sync_add_and_fetch(&(is_force_switching), 1);
-		force_switch(frame->ds);
+	cur->remain_ticks--;
+	if (cur->remain_ticks <= 0) {
+		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+		cur->niv_switches++;
+		task_sched();
 	}
 
 	/* Deliver pending signals when returning to user space.
@@ -86,24 +86,6 @@ unsigned time_get_cpu_mhz(void)
 	/* cycle_per_ticket loops per tick, HZ ticks/second:
 	 *   MHz = cycle_per_ticket * HZ / 1_000_000 = cycle_per_ticket / 10_000 */
 	return (unsigned)(cycle_per_ticket / 10000);
-}
-
-static void force_switch(short ds)
-{
-	task_struct *cur = CURRENT_TASK();
-
-	if (!ps_enabled() || !sched_is_enabled()) {
-		__sync_add_and_fetch(&(is_force_switching), -1);
-		return;
-	}
-
-	cur->remain_ticks--;
-	if (cur->remain_ticks <= 0) {
-		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		cur->niv_switches++;
-		task_sched();
-	}
-	__sync_add_and_fetch(&(is_force_switching), -1);
 }
 
 void time_init()

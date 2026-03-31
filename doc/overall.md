@@ -91,7 +91,7 @@ GRUB/Multiboot
   queue structure.
 - **Context switch:** `_task_sched()` in `ps_sched.c` — saves/restores
   registers via `intr_frame`, switches CR3 (page directory), reloads TSS ESP0.
-- **Wait / sleep:** tasks set `task->timeout = time_now_ms() + ms` and call
+- **Wait / sleep:** tasks set `task->timer_due_ms = time_now_ms() + ms` and call
   `task_sched()`; the scheduler skips tasks whose timeout is in the future.
 
 ### Process lifecycle

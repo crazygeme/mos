@@ -115,6 +115,66 @@ static void get_argc_envc(const char *file, char **argv, char **envp,
 }
 
 /*
+ * get_script_interpreter - check if the file is a script and extract the interpreter
+ */
+
+static char **parse_script_line(const char *script, int *argc)
+{
+	const char *token_begin = script;
+	const char *token_end = script;
+	int total_args = 0;
+
+	if (!script || !argc) {
+		return -1;
+	}
+
+	while (*token_end && *token_end != '\n') {
+		if (*token_end == ' ') {
+			if (token_begin != token_end)
+				total_args++;
+
+			token_end++;
+			token_begin = token_end;
+		} else {
+			token_end++;
+		}
+	}
+	if (token_begin != token_end)
+		total_args++;
+
+	if (total_args == 0)
+		return NULL;
+
+	token_begin = script;
+	token_end = script;
+	char **args = kmalloc((total_args + 1) * sizeof(char *));
+	while (*token_end && *token_end != '\n') {
+		if (*token_end == ' ') {
+			if (token_begin != token_end) {
+				int len = token_end - token_begin;
+				char *arg = kmalloc(len + 1);
+				strncpy(arg, token_begin, len);
+				arg[len] = '\0';
+				args[(*argc)++] = arg;
+			}
+			token_end++;
+			token_begin = token_end;
+		} else {
+			token_end++;
+		}
+	}
+	if (token_begin != token_end) {
+		int len = token_end - token_begin;
+		char *arg = kmalloc(len + 1);
+		strncpy(arg, token_begin, len);
+		arg[len] = '\0';
+		args[(*argc)++] = arg;
+	}
+
+	return args;
+}
+
+/*
  * save_argv - deep-copy the argv array into kernel heap memory
  *
  * The user-supplied @argv pointers will become invalid after the address
@@ -132,17 +192,33 @@ static char **save_argv(const char *file, char **argv, unsigned argc,
 			char *script)
 {
 	char **ret = 0;
+	char **script_args = 0;
+	int script_argc = 0;
+
 	int i = 0;
 	if (!argc) {
 		return 0;
 	}
 
 	if (script) {
+		script_args = parse_script_line(file, &script_argc);
+		if (script_argc > 0)
+			argc += script_argc;
+
 		/* Prepend interpreter path; original argv follows. */
-		ret = kmalloc((argc + 1) * sizeof(char *));
-		ret[0] = strdup(script);
-		for (i = 0; i < (argc); i++)
-			ret[i + 1] = strdup(argv[i]);
+		ret = kmalloc(argc * sizeof(char *));
+		for (i = 0; i < script_argc; i++)
+			ret[i] = strdup(script_args[i]);
+
+		for (i = script_argc; i < (argc); i++)
+			ret[i] = strdup(argv[i - script_argc]);
+
+		if (script_args) {
+			for (i = 0; i < script_argc; i++)
+				kfree(script_args[i]);
+			kfree(script_args);
+		}
+
 	} else {
 		ret = kmalloc(argc * sizeof(char *));
 		for (i = 0; i < (argc); i++)

@@ -56,7 +56,7 @@ extern "C" {
 struct ext4_lock {
 
 	/**@brief   Lock access to mount point*/
-	void (*lock)(void);
+	void (*lock)(const char* func);
 
 	/**@brief   Unlock access to mount point*/
 	void (*unlock)(void);

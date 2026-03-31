@@ -874,16 +874,16 @@ static fs_type ext4_fs_type = { .name = "ext4", .get_sb = ext4_get_sb };
 /* =========================================================================
  * Boot-time root filesystem init
  * ====================================================================== */
-static mutex_t root_mutex;
+static mutex_t root_lock_;
 
-static void root_lock_lock(void)
+static void root_lock_lock(const char *func)
 {
-	mutex_lock(&root_mutex);
+	_mutex_lock(&root_lock_, func);
 }
 
 static void root_lock_unlock(void)
 {
-	mutex_unlock(&root_mutex);
+	mutex_unlock(&root_lock_);
 }
 
 static struct ext4_lock root_lock = {
@@ -899,7 +899,7 @@ static void fs_mount_root(void)
 
 	/* Register the ext4 filesystem type so that sys_mount can use it */
 	fs_register_type(&ext4_fs_type);
-	mutex_init(&root_mutex);
+	mutex_init(&root_lock_);
 	cur->root = ext4_get();
 	ext4_mount(hdd_partitions[0].name, "/", 0);
 	ext4_mount_setup_locks("/", &root_lock);

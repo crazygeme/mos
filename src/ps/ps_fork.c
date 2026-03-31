@@ -98,7 +98,6 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->status = ps_ready;
 	task->umask = 0;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-	task->timeout = 0;
 	task->psid = ps_id_gen();
 	task->parent = task;
 	task->fds = vm_alloc(1);
@@ -294,7 +293,6 @@ static task_struct *fork_alloc_child(task_struct *cur)
 		cur->remain_ticks = task->remain_ticks = cur->remain_ticks / 2;
 	else
 		task->remain_ticks = cur->remain_ticks;
-	task->timeout = cur->timeout;
 	task->psid = ps_id_gen();
 	mutex_init(&task->fd_lock);
 

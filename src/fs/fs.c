@@ -627,17 +627,28 @@ int fs_fchmod(int fd, uint32_t mode)
 int resolve_path(const char *old, char *new)
 {
 	char *r;
+	char *plain_old = NULL;
+	const char *end;
 	int len;
 
 	/* Null check must precede any use of old */
 	if (!old || !*old)
 		return -1;
 
+	plain_old = strdup(old);
+
 	/* stat("#!/bin/bash") will also be called */
 	if (strncmp(old, "#!", 2) == 0) {
 		old += 2;
 		while (*old == ' ' || *old == '\t')
 			old++;
+		end = old;
+		while (*end && *end != ' ' && *end != '\t' && *end != '\n')
+			end++;
+		len = end - old;
+		strncpy(plain_old, old, len);
+		plain_old[len] = '\0';
+		old = plain_old;
 	}
 
 	len = strlen(old);
@@ -645,7 +656,7 @@ int resolve_path(const char *old, char *new)
 	/* "." — current directory */
 	if (!strcmp(old, ".")) {
 		sys_getcwd(new, MAX_PATH);
-		return 0;
+		goto done;
 	}
 
 	/* ".." — parent of current directory */
@@ -659,7 +670,7 @@ int resolve_path(const char *old, char *new)
 		} else {
 			*r = '\0';
 		}
-		return 0;
+		goto done;
 	}
 
 	if (old[0] == '/') {
@@ -688,7 +699,7 @@ int resolve_path(const char *old, char *new)
 			/* Trailing "/." — strip the dot, keep the slash */
 			new[len - 1] = '\0';
 		}
-		return 0;
+		goto done;
 	}
 
 	/* Relative path: strip leading "./" if present */
@@ -701,5 +712,10 @@ int resolve_path(const char *old, char *new)
 	if (len > 0 && new[len - 1] != '/')
 		new[len++] = '/';
 	strcat(new + len, old);
+
+done:
+	if (plain_old)
+		free(plain_old);
+
 	return 0;
 }

@@ -47,13 +47,10 @@ void spinlock_unlock(spinlock_t *lock)
 	if (!lock->inited)
 		return;
 
-	lock->holder = 0;
+	lock->holder = 0xff;
 	sched_set_level(lock->old_int);
 	lock->old_int = 1;
-	/* Use a release store so that all prior writes by the holder are
-	 * visible to the next acquirer before the lock word is cleared.
-	 * On x86 TSO this compiles to a plain store + compiler barrier. */
-	__sync_lock_release(&lock->lock);
+	__sync_lock_test_and_set(&lock->lock, 0);
 }
 
 /* ===========================================================================

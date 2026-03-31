@@ -190,6 +190,18 @@ void net_init(void)
 	dhcp_start(&eth0);
 
 	printk("net: eth0 up, DHCP started\n");
+
+	/* Wait until the interface has a non-zero IP (required for TCP bind). */
+	uint32_t deadline = (uint32_t)time_now_ms() + 10000;
+	while (ip4_addr_isany(netif_ip4_addr(&eth0)) &&
+	       (uint32_t)time_now_ms() < deadline)
+		time_wait(10);
+
+	if (!ip4_addr_isany(netif_ip4_addr(&eth0)))
+		printk("net: address: %s\n",
+		       ip4addr_ntoa(netif_ip4_addr(&eth0)));
+	else
+		printk("net: address timeout\n");
 }
 
 KERNEL_INIT(7, net_init);

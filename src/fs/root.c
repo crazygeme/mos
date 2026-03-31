@@ -1,5 +1,6 @@
 #include <mm/mm.h>
 #include <lib/klib.h>
+#include <lib/lock.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <fs/fcntl.h>
@@ -873,6 +874,22 @@ static fs_type ext4_fs_type = { .name = "ext4", .get_sb = ext4_get_sb };
 /* =========================================================================
  * Boot-time root filesystem init
  * ====================================================================== */
+static mutex_t root_mutex;
+
+static void root_lock_lock(void)
+{
+	mutex_lock(&root_mutex);
+}
+
+static void root_lock_unlock(void)
+{
+	mutex_unlock(&root_mutex);
+}
+
+static struct ext4_lock root_lock = {
+	.lock = root_lock_lock,
+	.unlock = root_lock_unlock,
+};
 
 static void fs_mount_root(void)
 {
@@ -882,9 +899,10 @@ static void fs_mount_root(void)
 
 	/* Register the ext4 filesystem type so that sys_mount can use it */
 	fs_register_type(&ext4_fs_type);
-
+	mutex_init(&root_mutex);
 	cur->root = ext4_get();
 	ext4_mount(hdd_partitions[0].name, "/", 0);
+	ext4_mount_setup_locks("/", &root_lock);
 	ext4_cache_write_back("/", true);
 }
 

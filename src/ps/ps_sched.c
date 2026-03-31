@@ -37,11 +37,10 @@
 static task_struct *ps_get_available_ready_task(list_entry *head)
 {
 	list_entry *node = head->next;
-	unsigned now = time_now_ms();
 
 	while (node != head) {
 		task_struct *task = container_of(node, task_struct, ps_list);
-		if (task->status != ps_dying && task->timeout <= now) {
+		if (task->status != ps_dying) {
 			list_remove_entry(node);
 			list_insert_tail(head, &task->ps_list);
 			return task;

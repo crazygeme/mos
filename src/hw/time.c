@@ -5,8 +5,6 @@
 #include <config.h>
 #include <macro.h>
 
-extern void do_signal(intr_frame *frame);
-
 static unsigned long tickets;
 static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
@@ -15,23 +13,9 @@ static unsigned long rtc_get_time(void);
 
 static void time_process(intr_frame *frame)
 {
-	task_struct *cur = CURRENT_TASK();
-
 	tickets++;
-
-	if (!ps_enabled() || !sched_is_enabled())
-		return;
-
-	cur->remain_ticks--;
-	if (cur->remain_ticks <= 0) {
-		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		cur->niv_switches++;
-		task_sched();
-	}
-
-	/* Deliver pending signals when returning to user space.
-	 * This ensures alarm() and kill() work even in tight user-space loops. */
-	do_signal(frame);
+	if (ps_enabled())
+		current->remain_ticks--;
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

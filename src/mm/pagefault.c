@@ -606,7 +606,6 @@ static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
 	unsigned error = frame->error_code;
-	int oldint;
 	task_struct *cur;
 	int int_enable = int_is_intr_enabled();
 	(void)int_enable;
@@ -614,7 +613,7 @@ static void pf_process(intr_frame *frame)
 	/*
 	 * Save old interrupt state first.
 	 */
-	oldint = sched_disable();
+	sched_disable();
 
 	/*
 	 * cr2 tells you which page is invalid.
@@ -665,5 +664,5 @@ NOT_HANDLED:
 	DIE();
 
 Done:
-	sched_set_level(oldint);
+	sched_enable();
 }

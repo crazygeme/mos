@@ -251,7 +251,7 @@ void _task_sched(const char *func)
 	/* 
 	 * Schedule procedure can not be interrupted.
 	 */
-	int_intr_disable();
+	sched_disable();
 
 	task = ps_get_next_task();
 
@@ -284,7 +284,7 @@ void _task_sched(const char *func)
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:
-	int_intr_enable();
+	sched_enable();
 
 	CURRENT_TASK()->idle_tickets +=
 		time_now_tickets() - CURRENT_TASK()->idle;
@@ -294,22 +294,17 @@ static int scheduler_enabled = 1;
 
 int sched_enable()
 {
-	return __sync_lock_test_and_set(&scheduler_enabled, 1);
+	return __sync_add_and_fetch(&scheduler_enabled, 1);
 }
 
 int sched_disable()
 {
-	return __sync_lock_test_and_set(&scheduler_enabled, 0);
-}
-
-int sched_set_level(int level)
-{
-	return __sync_lock_test_and_set(&scheduler_enabled, level);
+	return __sync_add_and_fetch(&scheduler_enabled, -1);
 }
 
 int sched_is_enabled()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 0);
+	return __sync_add_and_fetch(&scheduler_enabled, 0) > 0;
 }
 
 /*

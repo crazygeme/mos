@@ -13,6 +13,7 @@
  * instead of 8259 PIC EOI.
  */
 static int use_apic = 0;
+extern void do_signal(intr_frame *frame);
 
 void int_set_apic_mode(void)
 {
@@ -73,6 +74,25 @@ static void ipi_sched_handler(intr_frame *frame)
 	 * this interrupt, allowing the scheduler to run. */
 }
 
+static void intr_check_point(intr_frame *frame)
+{
+	task_struct *cur = CURRENT_TASK();
+	if (!ps_enabled())
+		return;
+
+	if (sched_is_enabled() && cur->remain_ticks <= 0) {
+		cur->niv_switches++;
+		int_intr_enable();
+		task_sched();
+		int_intr_disable();
+		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+	}
+
+	/* Deliver pending signals when returning to user space.
+	 * This ensures alarm() and kill() work even in tight user-space loops. */
+	do_signal(frame);
+}
+
 void intr_handler(intr_frame *frame)
 {
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
@@ -103,6 +123,8 @@ void intr_handler(intr_frame *frame)
 	} else if (external) {
 		pic_end_of_interrupt(frame->vec_no);
 	}
+
+	intr_check_point(frame);
 }
 
 void intr_syscall_handler(intr_frame *frame)
@@ -119,7 +141,7 @@ void intr_syscall_handler(intr_frame *frame)
 				       (cur->idle_tickets - idle_start);
 	}
 
-	return;
+	intr_check_point(frame);
 }
 
 static void handle_invalid_opcode(intr_frame *frame)

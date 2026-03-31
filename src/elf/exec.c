@@ -463,7 +463,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
 	file *fp;
-	int len = 256; /* max bytes to read for the first line of a script */
+	int len = 64; /* max bytes to read for the first line of a script */
 	char *firstline = NULL;
 	if (!f) {
 		return -ENOENT;
@@ -500,7 +500,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 
 	/* read first line via VFS file ops */
 	len = len > (int)s.st_size ? (int)s.st_size : len;
-	firstline = malloc(256);
+	firstline = malloc(64);
 	if (!fp->f_fop || !fp->f_fop->read) {
 		free(firstline);
 		fs_put_file(fp);

@@ -263,7 +263,6 @@ typedef struct _rusage {
 } rusage;
 
 #define KERNEL_TASK_SIZE 1 // 1 pages
-#define DEFAULT_TASK_TIME_SLICE 10
 
 #define current CURRENT_TASK()
 task_struct *CURRENT_TASK();
@@ -291,8 +290,6 @@ void _task_sched(const char *func);
 int sched_enable();
 
 int sched_disable();
-
-int sched_set_level(int level);
 
 int sched_is_enabled();
 

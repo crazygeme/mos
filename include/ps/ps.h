@@ -293,6 +293,8 @@ int sched_disable();
 
 int sched_is_enabled();
 
+int sched_set_level(int level);
+
 typedef void (*fpuser_map_callback)(void *aux, unsigned vir, unsigned phy);
 
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);

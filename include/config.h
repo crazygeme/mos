@@ -75,7 +75,7 @@
 #define VGA_RESOLUTION_Y 540
 #define VGA_COLOR_DEPTH 32
 
-#define MAX_PATH (4096)
+#define MAX_PATH (4096 - sizeof(list_entry))
 
 #define PAGE_SIZE (4 * 1024)
 #define PAGE_SIZE_MASK 0xFFFFF000

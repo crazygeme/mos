@@ -28,19 +28,20 @@ void _spinlock_lock(spinlock_t *lock, const char *func)
 	if (!lock->inited)
 		return;
 
+	sched_disable();
+
 	/* Fast path: optimistically try once before entering the retry loop.
-	 * On an uncontended lock this avoids the PAUSE overhead entirely. */
+	 * On an uncontended lock this avoids the HLT overhead entirely. */
 	if (__builtin_expect(__sync_lock_test_and_set(&lock->lock, 1) == 0, 1))
 		goto locked;
 
-	/* Slow path: spin with PAUSE to yield the CPU pipeline and reduce
+	/* Slow path: spin with HLT to yield the CPU pipeline and reduce
 	 * memory bus contention on the lock cache line. */
 	do {
-		PAUSE();
+		HLT();
 	} while (__sync_lock_test_and_set(&lock->lock, 1) == 1);
 
 locked:
-	sched_disable();
 	lock->holder = func;
 }
 
@@ -50,7 +51,6 @@ void spinlock_unlock(spinlock_t *lock)
 		return;
 
 	lock->holder = 0xff;
-	lock->old_int = 1;
 	__sync_lock_test_and_set(&lock->lock, 0);
 	sched_enable();
 }

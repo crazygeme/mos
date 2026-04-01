@@ -195,7 +195,7 @@ static int nic_intel_8254x_send(void *_dev, const void *buf, uint16_t len)
 
 	/* wait for previous descriptor to be reclaimed */
 	while (!(desc->status & E1000_TXD_STAT_DD))
-		PAUSE();
+		HLT();
 
 	uint8_t *txbuf = (uint8_t *)(ctx->tx_bufs_va +
 				     (uint32_t)tail * E1000_TX_BUF_SIZE);
@@ -248,7 +248,7 @@ static int nic_intel_8254x_init(void *_dev)
 	e1000_wr(ctx, E1000_CTRL, e1000_rd(ctx, E1000_CTRL) | E1000_CTRL_RST);
 	/* spin until reset clears */
 	while (e1000_rd(ctx, E1000_CTRL) & E1000_CTRL_RST)
-		PAUSE();
+		HLT();
 
 	/* ── Set Link Up ── */
 	e1000_wr(ctx, E1000_CTRL, e1000_rd(ctx, E1000_CTRL) | E1000_CTRL_SLU);

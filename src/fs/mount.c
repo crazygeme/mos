@@ -144,6 +144,11 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 		ret = 0;
 	}
 
+	if (ret == 0)
+		vfs_mount_record(dev ? dev : type, target, type,
+				 (flags & MS_RDONLY) ? "ro,relatime" :
+						       "rw,relatime");
+
 	return ret;
 }
 
@@ -158,5 +163,8 @@ int fs_do_umount(const char *target, int flags)
 	if (target[1] == '\0') /* target == "/" */
 		return -EBUSY;
 
-	return vfs_umount(cur->root, target);
+	int ret = vfs_umount(cur->root, target);
+	if (ret == 0)
+		vfs_umount_record(target);
+	return ret;
 }

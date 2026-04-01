@@ -4,7 +4,70 @@
 #include <lib/klib.h>
 #include <lib/rbtree.h>
 #include <lib/lock.h>
+#include <macro.h>
 #include <errno.h>
+
+/* =========================================================================
+ * Global mount table — used by /proc/mounts
+ * ====================================================================== */
+
+static mount_record *mount_list_head;
+static mount_record *mount_list_tail;
+static mutex_t mount_list_lock;
+
+static void vfs_mount_table_init(void)
+{
+	mutex_init(&mount_list_lock);
+}
+KERNEL_INIT(1, vfs_mount_table_init);
+
+void vfs_mount_record(const char *devname, const char *mountpoint,
+		      const char *fstype, const char *options)
+{
+	mount_record *r = zalloc(sizeof(*r));
+	sprintf(r->devname, "%s", devname ? devname : "none");
+	sprintf(r->mountpoint, "%s", mountpoint ? mountpoint : "/");
+	sprintf(r->fstype, "%s", fstype ? fstype : "none");
+	sprintf(r->options, "%s", options ? options : "rw,relatime");
+
+	mutex_lock(&mount_list_lock);
+	if (!mount_list_tail) {
+		mount_list_head = mount_list_tail = r;
+	} else {
+		mount_list_tail->next = r;
+		mount_list_tail = r;
+	}
+	mutex_unlock(&mount_list_lock);
+}
+
+void vfs_umount_record(const char *mountpoint)
+{
+	mount_record *prev = NULL;
+	mount_record *r;
+
+	if (!mountpoint)
+		return;
+
+	mutex_lock(&mount_list_lock);
+	for (r = mount_list_head; r; prev = r, r = r->next) {
+		if (strcmp(r->mountpoint, mountpoint) == 0) {
+			if (prev)
+				prev->next = r->next;
+			else
+				mount_list_head = r->next;
+			if (r == mount_list_tail)
+				mount_list_tail = prev;
+			kfree(r);
+			break;
+		}
+	}
+	mutex_unlock(&mount_list_lock);
+}
+
+const mount_record *vfs_mount_list(void)
+{
+	return mount_list_head;
+}
 
 /**
  * To make sure sorted by path

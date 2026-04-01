@@ -904,6 +904,7 @@ static void fs_mount_root(void)
 	ext4_mount(hdd_partitions[0].name, "/", 0);
 	ext4_mount_setup_locks("/", &root_lock);
 	ext4_cache_write_back("/", true);
+	vfs_mount_record(hdd_partitions[0].name, "/", "ext4", "rw,relatime");
 }
 
 KERNEL_INIT(3, fs_mount_root);

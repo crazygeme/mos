@@ -482,19 +482,20 @@ int hash_destroy(hash_table *table)
 {
 	list_entry tmp;
 	list_entry *node = 0;
+	int irq;
 
 	list_init(&tmp);
 
 	if (!table)
 		return 0;
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	if (table->root.rb_node) {
 		hash_get_all_node(&table->root, &tmp);
 	}
 	table->root.rb_node = 0;
 	table->size = 0;
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	node = tmp.next;
 	while (node != &tmp) {
@@ -551,15 +552,16 @@ int hash_insert(hash_table *table, void *key, void *val)
 {
 	key_value_pair *pair = kmalloc(sizeof(*pair));
 	key_value_pair *ret = 0;
+	int irq;
 
 	pair->key = key;
 	pair->val = val;
 	rb_init_node(&pair->node);
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	ret = __hash_insert(table, key, &pair->node);
 	if (ret) {
-		spinlock_unlock(&table->lock);
+		spinlock_unlock(&table->lock, irq);
 
 		if (table->evict)
 			table->evict(pair);
@@ -569,7 +571,7 @@ int hash_insert(hash_table *table, void *key, void *val)
 	}
 
 	table->size++;
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	return 1;
 }
@@ -577,15 +579,16 @@ int hash_insert(hash_table *table, void *key, void *val)
 int hash_remove(hash_table *table, void *key)
 {
 	key_value_pair *pair = hash_find(table, key);
+	int irq;
 
 	if (!pair)
 		return 0;
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	rb_erase(&pair->node, &table->root);
 	RB_CLEAR_NODE(&pair->node);
 	table->size--;
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 	if (table->evict)
 		table->evict(pair);
 
@@ -596,13 +599,14 @@ int hash_remove(hash_table *table, void *key)
 
 int hash_remove_at(hash_table *table, key_value_pair *pair)
 {
+	int irq;
 	if (!pair)
 		return 0;
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	rb_erase(&pair->node, &table->root);
 	table->size--;
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 	if (table->evict)
 		table->evict(pair);
 
@@ -616,8 +620,9 @@ key_value_pair *hash_find(hash_table *table, const void *key)
 	struct rb_node *parent;
 	struct _key_value_pair *pair;
 	int comp = 0;
+	int irq;
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	while (*p) {
 		parent = *p;
 		pair = rb_entry(parent, key_value_pair, node);
@@ -627,11 +632,11 @@ key_value_pair *hash_find(hash_table *table, const void *key)
 		else if (comp > 0)
 			p = &(*p)->rb_right;
 		else {
-			spinlock_unlock(&table->lock);
+			spinlock_unlock(&table->lock, irq);
 			return pair;
 		}
 	}
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	return 0;
 }
@@ -650,10 +655,11 @@ int hash_update(hash_table *table, void *key, void *val)
 
 unsigned hash_size(hash_table *table)
 {
+	int irq;
 	unsigned ret = 0;
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	ret = table->size;
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	return ret;
 }
@@ -662,10 +668,11 @@ key_value_pair *hash_first(hash_table *table)
 {
 	struct rb_node *first = NULL;
 	key_value_pair *pair;
+	int irq;
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	first = rb_first(&table->root);
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	if (!first) {
 		return 0;
@@ -679,10 +686,11 @@ key_value_pair *hash_next(hash_table *table, key_value_pair *pair)
 {
 	struct rb_node *next = NULL;
 	key_value_pair *ret;
+	int irq;
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	next = rb_next(&pair->node);
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	if (!next) {
 		return 0;
@@ -695,14 +703,15 @@ key_value_pair *hash_next(hash_table *table, key_value_pair *pair)
 int hash_isempty(hash_table *table)
 {
 	int empty = 0;
+	int irq;
 
 	if (!table) {
 		return 1;
 	}
 
-	spinlock_lock(&table->lock);
+	spinlock_lock(&table->lock, &irq);
 	empty = (table->root.rb_node == NULL);
-	spinlock_unlock(&table->lock);
+	spinlock_unlock(&table->lock, irq);
 
 	return empty;
 }

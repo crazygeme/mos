@@ -23,9 +23,10 @@ typedef volatile struct _spinlock {
 
 void spinlock_init(spinlock_t *lock);
 void spinlock_uninit(spinlock_t *lock);
-#define spinlock_lock(x) _spinlock_lock((x), __func__)
-void _spinlock_lock(spinlock_t *lock, const char *func);
-void spinlock_unlock(spinlock_t *lock);
+#define spinlock_lock(x, irq) _spinlock_lock((x), irq, __func__)
+void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq,
+		    const char *func);
+void spinlock_unlock(spinlock_t *lock, int irq);
 
 /* ===========================================================================
  * lock_base  (internal)

@@ -160,26 +160,29 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 {
 	unsigned order = ceil_log2(page_count ? page_count : 1);
 	unsigned idx;
+	int irq;
 
-	spinlock_lock(&buddy_lock);
+	spinlock_lock(&buddy_lock, &irq);
 	idx = buddy_alloc(order);
-	spinlock_unlock(&buddy_lock);
+	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
 
 unsigned phymm_alloc_user(void)
 {
 	unsigned idx;
+	int irq;
 
-	spinlock_lock(&buddy_lock);
+	spinlock_lock(&buddy_lock, &irq);
 	idx = buddy_alloc(0);
-	spinlock_unlock(&buddy_lock);
+	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
 
 void phymm_free_kernel(unsigned page_index, unsigned page_count)
 {
 	unsigned order;
+	int irq;
 
 	if (page_index == PHYMM_INVALID || page_index < phymm_begin ||
 	    page_index >= phymm_end)
@@ -190,20 +193,22 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count)
 	if (order > MAX_BUDDY_ORDER)
 		order = ceil_log2(page_count ? page_count : 1);
 
-	spinlock_lock(&buddy_lock);
+	spinlock_lock(&buddy_lock, &irq);
 	buddy_free_block(page_index, order);
-	spinlock_unlock(&buddy_lock);
+	spinlock_unlock(&buddy_lock, irq);
 }
 
 void phymm_free_user(unsigned page_index)
 {
+	int irq;
+
 	if (page_index == PHYMM_INVALID || page_index < phymm_begin ||
 	    page_index >= phymm_end)
 		return;
 
-	spinlock_lock(&buddy_lock);
+	spinlock_lock(&buddy_lock, &irq);
 	buddy_free_block(page_index, 0);
-	spinlock_unlock(&buddy_lock);
+	spinlock_unlock(&buddy_lock, irq);
 }
 
 /*

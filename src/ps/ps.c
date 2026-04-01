@@ -71,7 +71,6 @@ void ps_add_mgr_unsafe(task_struct *task)
 		else if (task->psid > t->psid)
 			link = &(*link)->rb_right;
 		else {
-			spinlock_unlock(&ps_lock);
 			return; /* psid already present */
 		}
 	}
@@ -82,9 +81,10 @@ void ps_add_mgr_unsafe(task_struct *task)
 
 void ps_add_mgr(task_struct *task)
 {
-	spinlock_lock(&ps_lock);
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
 	ps_add_mgr_unsafe(task);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 void ps_remove_mgr_unsafe(task_struct *task)
@@ -99,17 +99,21 @@ void ps_remove_mgr_unsafe(task_struct *task)
 
 void ps_remove_mgr(task_struct *task)
 {
-	spinlock_lock(&ps_lock);
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
 	ps_remove_mgr_unsafe(task);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 int ps_total_count()
 {
 	int ret = 0;
-	spinlock_lock(&ps_lock);
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
 	ret = control.ps_count;
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 	return ret;
 }
 
@@ -154,8 +158,9 @@ static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)
 unsigned ps_id_gen()
 {
 	unsigned pid, start;
+	int irq;
 
-	spinlock_lock(&psid_lock);
+	spinlock_lock(&psid_lock, &irq);
 	start = last_pid;
 	pid = start + 1;
 	if (pid >= PID_MAX_DEFAULT)
@@ -165,24 +170,26 @@ unsigned ps_id_gen()
 		if (!(pid_bitmap[pid / 8] & (1 << (pid % 8)))) {
 			pid_bitmap[pid / 8] |= (1 << (pid % 8));
 			last_pid = pid;
-			spinlock_unlock(&psid_lock);
+			spinlock_unlock(&psid_lock, irq);
 			return pid;
 		}
 		if (++pid >= PID_MAX_DEFAULT)
 			pid = 0;
 	}
 
-	spinlock_unlock(&psid_lock);
+	spinlock_unlock(&psid_lock, irq);
 	return (unsigned)-1; /* PID space exhausted */
 }
 
 void ps_id_free(unsigned pid)
 {
+	int irq;
+
 	if (pid >= PID_MAX_DEFAULT)
 		return;
-	spinlock_lock(&psid_lock);
+	spinlock_lock(&psid_lock, &irq);
 	pid_bitmap[pid / 8] &= ~(1 << (pid % 8));
-	spinlock_unlock(&psid_lock);
+	spinlock_unlock(&psid_lock, irq);
 }
 
 /*
@@ -290,10 +297,11 @@ task_struct *ps_find_process_unsafe(unsigned psid)
 task_struct *ps_find_process(unsigned psid)
 {
 	task_struct *task = NULL;
+	int irq;
 
-	spinlock_lock(&ps_lock);
+	spinlock_lock(&ps_lock, &irq);
 	task = ps_find_process_unsafe(psid);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 	return task;
 }
 
@@ -301,41 +309,47 @@ task_struct *ps_find_process(unsigned psid)
 void ps_enum_all(ps_enum_callback callback, void *ctx)
 {
 	struct rb_node *node;
+	int irq;
+
 	if (!callback)
 		return;
-	spinlock_lock(&ps_lock);
+
+	spinlock_lock(&ps_lock, &irq);
 	node = rb_first(&control.mgr_queue);
 	while (node) {
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
-		spinlock_unlock(&ps_lock);
+		spinlock_unlock(&ps_lock, irq);
 		callback(task, ctx);
-		spinlock_lock(&ps_lock);
+		spinlock_lock(&ps_lock, &irq);
 		node = rb_next(node);
 	}
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 /* Send signal sig to every user task whose group_id matches pgrp. */
 void ps_send_signal_pgrp(unsigned pgrp, int sig)
 {
 	struct rb_node *node;
+	int irq;
+
 	if (!pgrp || sig <= 0 || sig >= NSIG)
 		return;
-	spinlock_lock(&ps_lock);
+
+	spinlock_lock(&ps_lock, &irq);
 	node = rb_first(&control.mgr_queue);
 	while (node) {
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
 		node = rb_next(node);
 		if (task->type == ps_user && task->user &&
 		    task->user->group_id == pgrp) {
-			spinlock_unlock(&ps_lock);
+			spinlock_unlock(&ps_lock, irq);
 			task->signal->sig_pending |= (1UL << (sig - 1));
 			if (task->status == ps_waiting)
 				ps_put_to_ready_queue(task);
-			spinlock_lock(&ps_lock);
+			spinlock_lock(&ps_lock, &irq);
 		}
 	}
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 /*

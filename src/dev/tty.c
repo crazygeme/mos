@@ -815,14 +815,15 @@ static void tty_raw_write(tty_state *state, const char *buf, unsigned len)
 {
 	unsigned i;
 	int cur_pos;
-	spinlock_lock(&state->lock);
+	int irq;
+	spinlock_lock(&state->lock, &irq);
 	for (i = 0; i < len; i++) {
 		cur_pos = process_one_char(state, buf[i]);
 		cursor_set(state, cur_pos);
 	}
 
 	tty_hw_cursor(state, (unsigned)state->cursor);
-	spinlock_unlock(&state->lock);
+	spinlock_unlock(&state->lock, irq);
 }
 
 static int at_col_zero(tty_state *state)
@@ -943,31 +944,33 @@ void tty_default_emit_unsafe(char c, void *ctx)
 	cursor_forward(this_ttys, cur_pos);
 }
 
-void tty_lock_acquire(void)
+void tty_lock_acquire(int *irq)
 {
 	if (!this_ttys)
 		return;
 
-	spinlock_lock(&this_ttys->lock);
+	spinlock_lock(&this_ttys->lock, irq);
 }
 
-void tty_lock_release(void)
+void tty_lock_release(int irq)
 {
 	if (!this_ttys)
 		return;
 
-	spinlock_unlock(&this_ttys->lock);
+	spinlock_unlock(&this_ttys->lock, irq);
 }
 
 void tty_default_clear(void)
 {
+	int irq;
+
 	if (!this_ttys)
 		return;
 
-	spinlock_lock(&this_ttys->lock);
+	spinlock_lock(&this_ttys->lock, &irq);
 	tty_do_clear(this_ttys);
 	this_ttys->cursor = 0;
-	spinlock_unlock(&this_ttys->lock);
+	spinlock_unlock(&this_ttys->lock, irq);
 }
 
 /* ── Active TTY keyboard input ───────────────────────────────────────────── */
@@ -975,13 +978,14 @@ void tty_default_clear(void)
 void tty_active_kb_put(unsigned char c)
 {
 	tty_state *t;
+	int irq;
 
 	if (!this_ttys)
 		return;
 
-	spinlock_lock(&tty_switch_lock);
+	spinlock_lock(&tty_switch_lock, &irq);
 	t = this_ttys;
-	spinlock_unlock(&tty_switch_lock);
+	spinlock_unlock(&tty_switch_lock, irq);
 
 	cyb_putbuf(t->kb_buf, &c, 1, 0, 0);
 }
@@ -1048,13 +1052,14 @@ static void tty_bash_spawner(void *p)
 void tty_switch(int n)
 {
 	tty_state *except_tty;
+	int irq;
 
 	if (n < 0 || n >= TTY_SWITCH_COUNT || n == active_tty_idx)
 		return;
 
 	except_tty = &ttys[n];
 
-	spinlock_lock(&tty_switch_lock);
+	spinlock_lock(&tty_switch_lock, &irq);
 
 	/* Flip active TTY */
 	active_tty_idx = n;
@@ -1065,7 +1070,7 @@ void tty_switch(int n)
 	fb_redraw(this_ttys->cells, this_ttys->max_col, this_ttys->max_row,
 		  (unsigned)this_ttys->cursor);
 
-	spinlock_unlock(&tty_switch_lock);
+	spinlock_unlock(&tty_switch_lock, irq);
 
 	/* Spawn bash on the new TTY if no live process is there yet. */
 	if (n > 0) {

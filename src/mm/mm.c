@@ -329,8 +329,9 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 {
 	unsigned int target_phy;
 	unsigned int page_index;
+	int irq;
 
-	spinlock_lock(&mm_lock);
+	spinlock_lock(&mm_lock, &irq);
 
 	if (phy) {
 		page_index = (phy & PAGE_SIZE_MASK) / PAGE_SIZE;
@@ -342,12 +343,12 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 
 	if (!mm_set_page_table_entry(vir, flag | PAGE_ENTRY_WRITABLE,
 				     target_phy | flag)) {
-		spinlock_unlock(&mm_lock);
+		spinlock_unlock(&mm_lock, irq);
 		return -1;
 	}
 
 	phymm_reference_page(page_index);
-	spinlock_unlock(&mm_lock);
+	spinlock_unlock(&mm_lock, irq);
 	return 1;
 }
 
@@ -364,6 +365,7 @@ void mm_unmap_page(unsigned int vir)
 	mm_addr_info info;
 	unsigned int phy_addr;
 	int page_index;
+	int irq;
 
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
@@ -371,14 +373,14 @@ void mm_unmap_page(unsigned int vir)
 	phy_addr = *info.entry & PAGE_SIZE_MASK;
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
-	spinlock_lock(&mm_lock);
+	spinlock_lock(&mm_lock, &irq);
 	if (mm_dynamic_region(phy_addr) || (mm_vdso_region(phy_addr))) {
 		if (phymm_is_used(page_index) &&
 		    phymm_dereference_page(page_index) == 0)
 			phymm_free_user(page_index);
 		mm_clear_page_table_entry(&info);
 	}
-	spinlock_unlock(&mm_lock);
+	spinlock_unlock(&mm_lock, irq);
 }
 
 /* Return the page-table flags (low 12 bits) for the mapping at @vir */
@@ -420,12 +422,13 @@ unsigned int vm_alloc(int page_count)
 {
 	int page_index;
 	int i;
+	int irq;
 
-	spinlock_lock(&mm_lock);
+	spinlock_lock(&mm_lock, &irq);
 
 	page_index = phymm_alloc_kernel(page_count);
 	if (page_index < 0) {
-		spinlock_unlock(&mm_lock);
+		spinlock_unlock(&mm_lock, irq);
 		return 0;
 	}
 
@@ -433,7 +436,7 @@ unsigned int vm_alloc(int page_count)
 		mm_kmap_page((page_index + i) * PAGE_SIZE + KERNEL_OFFSET);
 
 	RELOAD_CR3();
-	spinlock_unlock(&mm_lock);
+	spinlock_unlock(&mm_lock, irq);
 
 	buffer_count += page_count;
 	return page_index * PAGE_SIZE + KERNEL_OFFSET;
@@ -443,14 +446,15 @@ unsigned int vm_alloc(int page_count)
 void vm_free(unsigned int vm, int page_count)
 {
 	int i;
+	int irq;
 
-	spinlock_lock(&mm_lock);
+	spinlock_lock(&mm_lock, &irq);
 	vm &= PAGE_SIZE_MASK;
 	for (i = 0; i < page_count; i++)
 		mm_kunmap_page(vm + i * PAGE_SIZE);
 	RELOAD_CR3();
 	phymm_free_kernel((vm - KERNEL_OFFSET) / PAGE_SIZE, page_count);
-	spinlock_unlock(&mm_lock);
+	spinlock_unlock(&mm_lock, irq);
 
 	buffer_count -= page_count;
 }
@@ -466,7 +470,9 @@ void vm_free(unsigned int vm, int page_count)
 void *name_get()
 {
 	char *buf, *region;
-	spinlock_lock(&path_lock);
+	int irq;
+
+	spinlock_lock(&path_lock, &irq);
 	if (list_is_empty(&name_cache_head)) {
 		region = (void *)vm_alloc(1);
 		buf = region + sizeof(list_entry);
@@ -474,7 +480,7 @@ void *name_get()
 		region = (char *)list_remove_tail(&name_cache_head);
 		buf = region + sizeof(list_entry);
 	}
-	spinlock_unlock(&path_lock);
+	spinlock_unlock(&path_lock, irq);
 	memset(buf, 0, MAX_PATH);
 	cache_count++;
 	return buf;
@@ -484,9 +490,11 @@ void *name_get()
 void name_put(void *buf)
 {
 	list_entry *region;
-	spinlock_lock(&path_lock);
+	int irq;
+
+	spinlock_lock(&path_lock, &irq);
 	region = (list_entry *)((char *)buf - sizeof(list_entry));
 	list_insert_tail(&name_cache_head, region);
-	spinlock_unlock(&path_lock);
+	spinlock_unlock(&path_lock, irq);
 	cache_count--;
 }

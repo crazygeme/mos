@@ -18,7 +18,7 @@
 #include <macro.h>
 #include "syscall_internal.h"
 
-static char *format_buffer(char *buf, unsigned len)
+static char *format_buffer(const char *buf, unsigned len)
 {
 	/* Format like strace: at most 128 chars, escape non-printables */
 	static const char hex[] = "0123456789abcdef";
@@ -89,7 +89,7 @@ int sys_read(int fd, char *buf, unsigned len)
 	return ret;
 }
 
-int sys_write(int fd, char *buf, unsigned len)
+int sys_write(int fd, const char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
 
@@ -107,6 +107,50 @@ int sys_write(int fd, char *buf, unsigned len)
 		return -1;
 
 	return fs_write(fd, -1, buf, len);
+}
+
+int sys_pread64(int fd, void *buf, unsigned count, int offset)
+{
+	task_struct *cur = CURRENT_TASK();
+	int ret = -1;
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -1;
+	if (cur->fds[fd].used == 0)
+		return -1;
+	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
+		return -1;
+
+	ret = fs_pread(fd, offset, buf, count);
+
+	if (TestControl.verbos) {
+		char *tmp = format_buffer(buf, count);
+		klog("pread(%d, %s, %d, %d) = %d\n", fd, tmp, count, offset,
+		     ret > 0 ? ret : 0);
+		free(tmp);
+	}
+
+	return ret;
+}
+
+int sys_pwrite64(int fd, const void *buf, unsigned count, int offset)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (TestControl.verbos) {
+		char *tmp = format_buffer(buf, count);
+		klog("write(%d, %s, %d, %d)\n", fd, tmp, count, offset);
+		free(tmp);
+	}
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -1;
+	if (cur->fds[fd].used == 0)
+		return -1;
+	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
+		return -1;
+
+	return fs_pwrite(fd, offset, buf, count);
 }
 
 int sys_ioctl(int fd, int request, char *buf)

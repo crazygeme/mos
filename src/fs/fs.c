@@ -88,7 +88,7 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 	return (int)n;
 }
 
-int fs_write(int fd, unsigned offset, char *buf, unsigned len)
+int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
@@ -105,6 +105,50 @@ int fs_write(int fd, unsigned offset, char *buf, unsigned len)
 		fp->f_pos = offset;
 
 	n = fp->f_fop->write(fp, buf, len, &fp->f_pos);
+	return n < 0 ? -1 : (int)n;
+}
+
+int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp = NULL;
+	ssize_t n;
+	unsigned saved_pos;
+	loff_t new_pos;
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -1;
+
+	fp = cur->fds[fd].fp;
+	if (!fp || !fp->f_fop || !fp->f_fop->read)
+		return -1;
+
+	saved_pos = fp->f_pos;
+	fp->f_pos = offset;
+	n = fp->f_fop->read(fp, buf, len, &new_pos);
+	fp->f_pos = saved_pos;
+	return (int)n;
+}
+
+int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp = NULL;
+	ssize_t n;
+	unsigned saved_pos;
+	loff_t new_pos;
+
+	if (fd < 0 || fd >= MAX_FD)
+		return -1;
+
+	fp = cur->fds[fd].fp;
+	if (!fp || !fp->f_fop || !fp->f_fop->write)
+		return -1;
+
+	saved_pos = fp->f_pos;
+	fp->f_pos = offset;
+	n = fp->f_fop->write(fp, buf, len, &new_pos);
+	fp->f_pos = saved_pos;
 	return n < 0 ? -1 : (int)n;
 }
 

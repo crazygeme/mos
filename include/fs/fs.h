@@ -58,6 +58,7 @@ typedef struct _block block;
 #define FS_POLL_EXCEPT 2
 
 typedef int64_t loff_t;
+typedef int off_t;
 typedef int ssize_t;
 
 typedef struct _inode inode;
@@ -168,7 +169,11 @@ int fs_close(int fd);
 
 int fs_read(int fd, unsigned offset, char *buf, unsigned len);
 
-int fs_write(int fd, unsigned offset, char *buf, unsigned len);
+int fs_write(int fd, unsigned offset, const char *buf, unsigned len);
+
+int fs_pread(int fd, unsigned offset, char *buf, unsigned len);
+
+int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len);
 
 int fs_stat(const char *path, struct stat *s);
 

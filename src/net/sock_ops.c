@@ -137,12 +137,17 @@ int do_bind(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 	u16_t port = lwip_ntohs(addr->sin_port);
 
 	err_t e;
-	if (sk->type == SOCK_STREAM)
+	if (sk->type == SOCK_STREAM) {
+		if (sk->tcp->local_port != 0)
+			return -EINVAL;
 		e = tcp_bind(sk->tcp, &ip, port);
-	else if (sk->type == SOCK_RAW)
+	} else if (sk->type == SOCK_RAW) {
 		e = raw_bind(sk->raw, &ip);
-	else
+	} else {
+		if (sk->udp->local_port != 0)
+			return -EINVAL;
 		e = udp_bind(sk->udp, &ip, port);
+	}
 
 	if (e != ERR_OK)
 		return (e == ERR_USE) ? -EADDRINUSE : -EINVAL;

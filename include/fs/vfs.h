@@ -120,4 +120,31 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs *buf);
 int vfs_utime(super_block *sb, const char *path, unsigned atime,
 	      unsigned mtime);
 
+/* -------------------------------------------------------------------------
+ * Mount table — one record per mounted filesystem, in mount order.
+ * Used by /proc/mounts.
+ * ---------------------------------------------------------------------- */
+
+typedef struct mount_record mount_record;
+struct mount_record {
+	char devname[64]; /* source device, e.g. "/dev/hda1" or "proc" */
+	char mountpoint[256]; /* absolute mount path, e.g. "/" or "/proc" */
+	char fstype[32]; /* filesystem type name, e.g. "ext4" */
+	char options[64]; /* mount options string, e.g. "rw,relatime" */
+	mount_record *next;
+};
+
+/*
+ * vfs_mount_record - add an entry to the global mount table.
+ * Safe to call from any KERNEL_INIT or syscall context.
+ */
+void vfs_mount_record(const char *devname, const char *mountpoint,
+		      const char *fstype, const char *options);
+
+/* Remove the entry for mountpoint (called on umount). */
+void vfs_umount_record(const char *mountpoint);
+
+/* Return the head of the mount record list for iteration. */
+const mount_record *vfs_mount_list(void);
+
 #endif

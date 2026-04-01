@@ -219,6 +219,7 @@ static void devfs_init(void)
 	printk("mnt: Mounting devfs on /dev\n");
 
 	vfs_mount(cur->root, "/dev", sb);
+	vfs_mount_record("devtmpfs", "/dev", "devtmpfs", "rw,relatime");
 
 	/* Let each device self-register under the devfs superblock. */
 	for (fn = __devfs_init_start; fn < __devfs_init_end; fn++)

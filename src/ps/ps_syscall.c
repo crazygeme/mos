@@ -104,8 +104,9 @@ static void ps_reparent_children(task_struct *cur)
 {
 	struct rb_node *node;
 	int notify_init = 0;
+	int irq;
 
-	spinlock_lock(&ps_lock);
+	spinlock_lock(&ps_lock, &irq);
 	task_struct *init_task = ps_find_process_unsafe(1);
 	if (!init_task || init_task == cur)
 		goto out;
@@ -124,7 +125,7 @@ static void ps_reparent_children(task_struct *cur)
 		ps_put_to_ready_queue_unsafe(init_task);
 	}
 out:
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 void do_exit(unsigned encoded_status)
@@ -199,13 +200,14 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 	task_struct *task = NULL;
 	list_entry *dying_task_entry;
 	int ret = -1;
+	int irq;
 
 	if (TestControl.verbos)
 		klog("wait(%d, %x, %x, %x)\n", pid, status, options, rusage);
 
 	for (;;) {
 		task = NULL;
-		spinlock_lock(&ps_lock);
+		spinlock_lock(&ps_lock, &irq);
 		dying_task_entry = control.dying_queue.next;
 		while (dying_task_entry != &control.dying_queue) {
 			task = container_of(dying_task_entry, task_struct,
@@ -258,12 +260,12 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		/* Block until a child exits. ps_put_to_dying_queue() will call
 		 * ps_put_to_ready_queue_unsafe(parent) to wake us. */
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-		spinlock_unlock(&ps_lock);
+		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}
 
 done:
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 
 	if (task)
 		ps_reap_task(task, rusage);

@@ -289,9 +289,13 @@ void kb_init()
 	int_register(0x21, kb_process, 0, 0);
 }
 
+static int kb_dsr_armed = 0;
 void kb_process(intr_frame *frame)
 {
-	dsr_add(kb_dsr, 0);
+	if (!kb_dsr_armed) {
+		kb_dsr_armed = 1;
+		dsr_add(kb_dsr, 0);
+	}
 }
 
 static void kb_dsr(void *param)
@@ -311,6 +315,9 @@ static void kb_dsr(void *param)
 	unsigned char c;
 
 	const char *special = 0;
+
+	kb_dsr_armed = 0;
+
 	/* Read scancode, including second byte if prefix code. */
 	code = port_read_byte(KB_DATA);
 	if (code == 0xe0)

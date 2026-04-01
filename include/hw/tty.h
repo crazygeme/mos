@@ -14,8 +14,8 @@ void tty_init(void);
 void tty_default_emit_unsafe(char c, void *ctx);
 
 /* Acquire / release the TTY spinlock.  Used by printk to batch output. */
-void tty_lock_acquire(void);
-void tty_lock_release(void);
+void tty_lock_acquire(int *saved_irq);
+void tty_lock_release(int irq);
 
 /* Clear the screen under the TTY lock.  Called by exec before launching
  * the first user process. */

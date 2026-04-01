@@ -113,8 +113,9 @@ static task_struct *ps_get_next_task()
 {
 	task_struct *task = NULL;
 	int i = PS_PRIORITY_MAX - 1;
+	int irq;
 
-	spinlock_lock(&ps_lock);
+	spinlock_lock(&ps_lock, &irq);
 	ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
 		if (list_is_empty(&control.ready_queue[i]))
@@ -123,7 +124,7 @@ static task_struct *ps_get_next_task()
 		if (task)
 			break;
 	}
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 	return task;
 }
 
@@ -164,7 +165,9 @@ void ps_put_to_dying_queue_unsafe(task_struct *task)
 
 void ps_put_to_dying_queue(task_struct *task)
 {
-	spinlock_lock(&ps_lock);
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_dying_queue_unsafe(task);
 	if (task->parent) {
 		/* Queue SIGCHLD before waking the parent so the signal is
@@ -172,7 +175,7 @@ void ps_put_to_dying_queue(task_struct *task)
 		task->parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
 		ps_put_to_ready_queue_unsafe(task->parent);
 	}
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
@@ -194,9 +197,11 @@ void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
 void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 			  const char *func)
 {
-	spinlock_lock(&ps_lock);
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_wait_queue_unsafe(task, which_list, func);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 void ps_put_to_ready_queue_unsafe(task_struct *task)
@@ -213,9 +218,11 @@ void ps_put_to_ready_queue_unsafe(task_struct *task)
 /* Enqueue task in the ready queue at its current priority. */
 void ps_put_to_ready_queue(task_struct *task)
 {
-	spinlock_lock(&ps_lock);
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 /*
@@ -323,14 +330,15 @@ int sched_is_enabled()
 void time_wait(unsigned ms)
 {
 	task_struct *cur = CURRENT_TASK();
+	int irq;
 
-	spinlock_lock(&ps_lock);
+	spinlock_lock(&ps_lock, &irq);
 	if (ms > 0)
 		timer_arm_unsafe(cur, ms);
 	ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 	task_sched();
-	spinlock_lock(&ps_lock);
+	spinlock_lock(&ps_lock, &irq);
 	timer_disarm_unsafe(cur);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }

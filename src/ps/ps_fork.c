@@ -60,6 +60,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 {
 	unsigned int stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
+	int irq;
 
 	if (priority >= PS_PRIORITY_MAX) {
 		vm_free(task, 1);
@@ -113,10 +114,10 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 
 	task->start_tickets = time_now_tickets();
 
-	spinlock_lock(&ps_lock);
+	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 	return task->psid;
 }
 
@@ -367,11 +368,13 @@ static void fork_set_meta(task_struct *cur, task_struct *task,
 /* Enqueue the child: increment parent's child count and add to ready+mgr. */
 static void fork_enqueue(task_struct *cur, task_struct *task)
 {
-	spinlock_lock(&ps_lock);
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
 	cur->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
-	spinlock_unlock(&ps_lock);
+	spinlock_unlock(&ps_lock, irq);
 }
 
 /*

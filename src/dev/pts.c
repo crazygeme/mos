@@ -77,8 +77,9 @@ static spinlock_t pts_alloc_lock;
 static void pts_pair_check_free(pts_pair *p)
 {
 	cy_buf *m2s = NULL, *s2m = NULL;
+	int irq;
 
-	spinlock_lock(&pts_alloc_lock);
+	spinlock_lock(&pts_alloc_lock, &irq);
 	if (!p->master_open && p->slave_count == 0) {
 		p->used = 0;
 		/* Drop the slave-side refs that were pre-allocated by cyb_create
@@ -87,7 +88,7 @@ static void pts_pair_check_free(pts_pair *p)
 		s2m = p->s2m;
 		p->m2s = p->s2m = NULL;
 	}
-	spinlock_unlock(&pts_alloc_lock);
+	spinlock_unlock(&pts_alloc_lock, irq);
 
 	if (m2s) {
 		cyb_reader_close(m2s);
@@ -428,10 +429,11 @@ static file *ptm_cdev_open(unsigned rdev, int flag)
 {
 	int idx = (int)MINOR(rdev);
 	pts_pair *p = &pts_pairs[idx];
+	int irq;
 
-	spinlock_lock(&pts_alloc_lock);
+	spinlock_lock(&pts_alloc_lock, &irq);
 	if (p->used) {
-		spinlock_unlock(&pts_alloc_lock);
+		spinlock_unlock(&pts_alloc_lock, irq);
 		return NULL; /* -EBUSY */
 	}
 	memset(p, 0, sizeof(*p));
@@ -444,7 +446,7 @@ static file *ptm_cdev_open(unsigned rdev, int flag)
 	spinlock_init(&p->lock);
 	p->m2s = cyb_create(1);
 	p->s2m = cyb_create(1);
-	spinlock_unlock(&pts_alloc_lock);
+	spinlock_unlock(&pts_alloc_lock, irq);
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
@@ -466,8 +468,9 @@ static file *ptmx_cdev_open(unsigned rdev, int flag)
 {
 	int i;
 	pts_pair *p = NULL;
+	int irq;
 
-	spinlock_lock(&pts_alloc_lock);
+	spinlock_lock(&pts_alloc_lock, &irq);
 	for (i = 0; i < MAX_PTS; i++) {
 		if (!pts_pairs[i].used) {
 			p = &pts_pairs[i];
@@ -475,7 +478,7 @@ static file *ptmx_cdev_open(unsigned rdev, int flag)
 		}
 	}
 	if (!p) {
-		spinlock_unlock(&pts_alloc_lock);
+		spinlock_unlock(&pts_alloc_lock, irq);
 		return NULL; /* -EAGAIN: no free pairs */
 	}
 	memset(p, 0, sizeof(*p));
@@ -488,7 +491,7 @@ static file *ptmx_cdev_open(unsigned rdev, int flag)
 	spinlock_init(&p->lock);
 	p->m2s = cyb_create(1);
 	p->s2m = cyb_create(1);
-	spinlock_unlock(&pts_alloc_lock);
+	spinlock_unlock(&pts_alloc_lock, irq);
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
@@ -510,15 +513,16 @@ static file *pts_cdev_open(unsigned rdev, int flag)
 {
 	int idx = (int)MINOR(rdev);
 	pts_pair *p = &pts_pairs[idx];
+	int irq;
 
-	spinlock_lock(&pts_alloc_lock);
+	spinlock_lock(&pts_alloc_lock, &irq);
 	if (!p->used || !p->master_open) {
-		spinlock_unlock(&pts_alloc_lock);
+		spinlock_unlock(&pts_alloc_lock, irq);
 		return NULL;
 	}
 	if (!(flag & O_PATH))
 		__sync_add_and_fetch(&p->slave_count, 1);
-	spinlock_unlock(&pts_alloc_lock);
+	spinlock_unlock(&pts_alloc_lock, irq);
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;

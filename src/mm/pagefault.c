@@ -641,14 +641,11 @@ NOT_HANDLED:
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
 	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
-		if (TestControl.verbos) {
-			klog("segfault: error code %x, address %x, eip %x, cmd %s\n",
-			     frame->error_code, cr2, frame->eip,
-			     cur->user->command);
-			if (cur->user->vm) {
-				klog("  vm regions:\n");
-				vm_enum(cur->user->vm, pf_dump_region, NULL);
-			}
+		klog("segfault: error code %x, address %x, eip %x, cmd %s\n",
+		     frame->error_code, cr2, frame->eip, cur->user->command);
+		if (cur->user->vm) {
+			klog("  vm regions:\n");
+			vm_enum(cur->user->vm, pf_dump_region, NULL);
 		}
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
@@ -658,8 +655,8 @@ NOT_HANDLED:
 		goto Done;
 	}
 
-	klog("FATAL: unhandled kernel page fault! error code %x, address %x, eip %x\n",
-	     frame->error_code, cr2, frame->eip);
+	klog("segfault: error code %x, address %x, eip %x\n", frame->error_code,
+	     cr2, frame->eip);
 
 	DIE();
 

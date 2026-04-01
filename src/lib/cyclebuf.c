@@ -71,9 +71,11 @@ void cyb_destroy(cy_buf *b)
 static void cyb_notify_poll(cy_buf *b, int read)
 {
 	task_struct *t;
-	spinlock_lock(&b->poll_lock);
+	int irq;
+
+	spinlock_lock(&b->poll_lock, &irq);
 	t = read ? b->poll_read_task : b->poll_write_task;
-	spinlock_unlock(&b->poll_lock);
+	spinlock_unlock(&b->poll_lock, irq);
 	if (t)
 		ps_put_to_ready_queue(t);
 }
@@ -86,12 +88,14 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 	       int interruptible)
 {
 	unsigned written = 0;
+	int irq;
+
 	do {
 		unsigned i;
 		int notify;
 		if (!len)
 			return 0;
-		spinlock_lock(&b->lock);
+		spinlock_lock(&b->lock, &irq);
 		notify = (b->length == 0);
 		for (i = 0; i < len - written; i++) {
 			if (b->length == b->buf_size)
@@ -102,7 +106,7 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 		}
 		if (b->length == b->buf_size)
 			cond_reset(&b->write_event);
-		spinlock_unlock(&b->lock);
+		spinlock_unlock(&b->lock, irq);
 		if (notify && i > 0) {
 			cond_notify(&b->read_event);
 			cyb_notify_poll(b, 1);
@@ -126,21 +130,22 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 {
 	unsigned char *dst = (unsigned char *)buf;
 	int n = 0;
+	int irq;
 
 	/* Block until at least one byte is available or EOF */
 	for (;;) {
-		spinlock_lock(&b->lock);
+		spinlock_lock(&b->lock, &irq);
 		if (b->length > 0)
 			break;
 		if (__sync_add_and_fetch(&b->writer_count, 0) == 0) {
-			spinlock_unlock(&b->lock);
+			spinlock_unlock(&b->lock, irq);
 			return 0;
 		}
 		if (!blocking) {
-			spinlock_unlock(&b->lock);
+			spinlock_unlock(&b->lock, irq);
 			return 0;
 		}
-		spinlock_unlock(&b->lock);
+		spinlock_unlock(&b->lock, irq);
 		if (cond_wait(&b->read_event, interruptible) < 0)
 			return -1; /* EINTR */
 	}
@@ -154,7 +159,7 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 	}
 	if (b->length == 0)
 		cond_reset(&b->read_event);
-	spinlock_unlock(&b->lock);
+	spinlock_unlock(&b->lock, irq);
 	if (was_full) {
 		cond_notify(&b->write_event); /* wake any blocked writer */
 		cyb_notify_poll(b, 0);
@@ -168,25 +173,28 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 
 int cyb_isempty(cy_buf *b)
 {
-	spinlock_lock(&b->lock);
+	int irq;
+	spinlock_lock(&b->lock, &irq);
 	int empty = (b->length == 0);
-	spinlock_unlock(&b->lock);
+	spinlock_unlock(&b->lock, irq);
 	return empty;
 }
 
 int cyb_isfull(cy_buf *b)
 {
-	spinlock_lock(&b->lock);
+	int irq;
+	spinlock_lock(&b->lock, &irq);
 	int full = (b->length == b->buf_size);
-	spinlock_unlock(&b->lock);
+	spinlock_unlock(&b->lock, irq);
 	return full;
 }
 
 int cyb_get_buf_len(cy_buf *b)
 {
-	spinlock_lock(&b->lock);
+	int irq;
+	spinlock_lock(&b->lock, &irq);
 	int len = (int)b->length;
-	spinlock_unlock(&b->lock);
+	spinlock_unlock(&b->lock, irq);
 	return len;
 }
 
@@ -202,11 +210,12 @@ int cyb_reader_count(cy_buf *b)
 
 void cyb_flush(cy_buf *b)
 {
-	spinlock_lock(&b->lock);
+	int irq;
+	spinlock_lock(&b->lock, &irq);
 	b->read_idx = b->write_idx;
 	b->length = 0;
 	cond_reset(&b->read_event);
-	spinlock_unlock(&b->lock);
+	spinlock_unlock(&b->lock, irq);
 }
 
 /*
@@ -248,28 +257,32 @@ void cyb_reader_close(cy_buf *b)
 
 void cyb_set_poll_read(cy_buf *b, task_struct *task)
 {
-	spinlock_lock(&b->poll_lock);
+	int irq;
+	spinlock_lock(&b->poll_lock, &irq);
 	b->poll_read_task = task;
-	spinlock_unlock(&b->poll_lock);
+	spinlock_unlock(&b->poll_lock, irq);
 }
 
 void cyb_clear_poll_read(cy_buf *b)
 {
-	spinlock_lock(&b->poll_lock);
+	int irq;
+	spinlock_lock(&b->poll_lock, &irq);
 	b->poll_read_task = NULL;
-	spinlock_unlock(&b->poll_lock);
+	spinlock_unlock(&b->poll_lock, irq);
 }
 
 void cyb_set_poll_write(cy_buf *b, task_struct *task)
 {
-	spinlock_lock(&b->poll_lock);
+	int irq;
+	spinlock_lock(&b->poll_lock, &irq);
 	b->poll_write_task = task;
-	spinlock_unlock(&b->poll_lock);
+	spinlock_unlock(&b->poll_lock, irq);
 }
 
 void cyb_clear_poll_write(cy_buf *b)
 {
-	spinlock_lock(&b->poll_lock);
+	int irq;
+	spinlock_lock(&b->poll_lock, &irq);
 	b->poll_write_task = NULL;
-	spinlock_unlock(&b->poll_lock);
+	spinlock_unlock(&b->poll_lock, irq);
 }

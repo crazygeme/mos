@@ -48,11 +48,12 @@ KERNEL_INIT(1, syslog_init);
 void syslog_write(const char *str, unsigned len)
 {
 	unsigned i;
+	int irq;
 
 	if (!syslog_inited || !str || !len)
 		return;
 
-	spinlock_lock(&syslog_lock);
+	spinlock_lock(&syslog_lock, &irq);
 	for (i = 0; i < len; i++) {
 		syslog_buf[syslog_head] = str[i];
 		syslog_head = (syslog_head + 1) % SYSLOG_BUF_SIZE;
@@ -63,7 +64,7 @@ void syslog_write(const char *str, unsigned len)
 			syslog_tail = (syslog_tail + 1) % SYSLOG_BUF_SIZE;
 		}
 	}
-	spinlock_unlock(&syslog_lock);
+	spinlock_unlock(&syslog_lock, irq);
 }
 
 /* ── Internal helpers ────────────────────────────────────────────────────── */
@@ -86,6 +87,7 @@ static int syslog_copy_locked(char *buf, int n)
 int sys_syslog(int type, char *buf, int len)
 {
 	int ret = 0;
+	int irq;
 
 	switch (type) {
 	case SYSLOG_ACTION_CLOSE:
@@ -95,34 +97,34 @@ int sys_syslog(int type, char *buf, int len)
 	case SYSLOG_ACTION_READ:
 		if (!buf || len < 0)
 			return -EINVAL;
-		spinlock_lock(&syslog_lock);
+		spinlock_lock(&syslog_lock, &irq);
 		ret = syslog_copy_locked(buf, len);
 		syslog_tail = (syslog_tail + ret) % SYSLOG_BUF_SIZE;
 		syslog_used -= ret;
-		spinlock_unlock(&syslog_lock);
+		spinlock_unlock(&syslog_lock, irq);
 		break;
 
 	case SYSLOG_ACTION_READ_ALL:
 		if (!buf || len < 0)
 			return -EINVAL;
-		spinlock_lock(&syslog_lock);
+		spinlock_lock(&syslog_lock, &irq);
 		ret = syslog_copy_locked(buf, len);
-		spinlock_unlock(&syslog_lock);
+		spinlock_unlock(&syslog_lock, irq);
 		break;
 
 	case SYSLOG_ACTION_READ_CLEAR:
 		if (!buf || len < 0)
 			return -EINVAL;
-		spinlock_lock(&syslog_lock);
+		spinlock_lock(&syslog_lock, &irq);
 		ret = syslog_copy_locked(buf, len);
 		syslog_head = syslog_tail = syslog_used = 0;
-		spinlock_unlock(&syslog_lock);
+		spinlock_unlock(&syslog_lock, irq);
 		break;
 
 	case SYSLOG_ACTION_CLEAR:
-		spinlock_lock(&syslog_lock);
+		spinlock_lock(&syslog_lock, &irq);
 		syslog_head = syslog_tail = syslog_used = 0;
-		spinlock_unlock(&syslog_lock);
+		spinlock_unlock(&syslog_lock, irq);
 		break;
 
 	case SYSLOG_ACTION_CONSOLE_OFF:
@@ -131,9 +133,9 @@ int sys_syslog(int type, char *buf, int len)
 		break;
 
 	case SYSLOG_ACTION_SIZE_UNREAD:
-		spinlock_lock(&syslog_lock);
+		spinlock_lock(&syslog_lock, &irq);
 		ret = (int)syslog_used;
-		spinlock_unlock(&syslog_lock);
+		spinlock_unlock(&syslog_lock, irq);
 		break;
 
 	case SYSLOG_ACTION_SIZE_BUFFER:

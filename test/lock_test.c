@@ -27,19 +27,23 @@ KTEST(lock, spinlock_init_state)
 KTEST(lock, spinlock_lock_sets_word)
 {
 	spinlock_t s;
+	int irq;
+
 	spinlock_init(&s);
-	spinlock_lock(&s);
+	spinlock_lock(&s, &irq);
 	EXPECT_EQ((int)s.lock, 1);
-	spinlock_unlock(&s);
+	spinlock_unlock(&s, irq);
 	return 0;
 }
 
 KTEST(lock, spinlock_unlock_clears_word)
 {
 	spinlock_t s;
+	int irq;
+
 	spinlock_init(&s);
-	spinlock_lock(&s);
-	spinlock_unlock(&s);
+	spinlock_lock(&s, &irq);
+	spinlock_unlock(&s, irq);
 	EXPECT_EQ((int)s.lock, 0);
 	return 0;
 }
@@ -47,19 +51,23 @@ KTEST(lock, spinlock_unlock_clears_word)
 KTEST(lock, spinlock_holder_set_on_lock)
 {
 	spinlock_t s;
+	int irq;
+
 	spinlock_init(&s);
-	spinlock_lock(&s);
+	spinlock_lock(&s, &irq);
 	EXPECT_NONNULL(s.holder);
-	spinlock_unlock(&s);
+	spinlock_unlock(&s, irq);
 	return 0;
 }
 
 KTEST(lock, spinlock_holder_cleared_on_unlock)
 {
 	spinlock_t s;
+	int irq;
+
 	spinlock_init(&s);
-	spinlock_lock(&s);
-	spinlock_unlock(&s);
+	spinlock_lock(&s, &irq);
+	spinlock_unlock(&s, irq);
 	EXPECT_NULL(s.holder);
 	return 0;
 }
@@ -68,13 +76,14 @@ KTEST(lock, spinlock_reacquire)
 {
 	/* Lock can be taken again after unlock. */
 	spinlock_t s;
-	spinlock_init(&s);
+	int irq;
 
-	spinlock_lock(&s);
-	spinlock_unlock(&s);
-	spinlock_lock(&s);
+	spinlock_init(&s);
+	spinlock_lock(&s, &irq);
+	spinlock_unlock(&s, irq);
+	spinlock_lock(&s, &irq);
 	EXPECT_EQ((int)s.lock, 1);
-	spinlock_unlock(&s);
+	spinlock_unlock(&s, irq);
 	EXPECT_EQ((int)s.lock, 0);
 	return 0;
 }

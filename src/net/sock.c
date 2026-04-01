@@ -112,17 +112,18 @@ void sock_wait(mos_sock *sk, unsigned long deadline)
 static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
 {
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	int irq;
 
 	if (sk->type == SOCK_DGRAM) {
-		spinlock_lock(&sk->rxbuf_lock);
+		spinlock_lock(&sk->rxbuf_lock, &irq);
 		while (rx_used(sk) < sizeof(u16_t)) {
-			spinlock_unlock(&sk->rxbuf_lock);
+			spinlock_unlock(&sk->rxbuf_lock, irq);
 			if (sk->err)
 				return sk->err;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
 			sock_wait(sk, deadline);
-			spinlock_lock(&sk->rxbuf_lock);
+			spinlock_lock(&sk->rxbuf_lock, &irq);
 		}
 		u16_t dlen;
 		rx_read(sk, &dlen, sizeof(dlen));
@@ -136,14 +137,14 @@ static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
 			while (rem--)
 				rx_read(sk, &tmp, 1);
 		}
-		spinlock_unlock(&sk->rxbuf_lock);
+		spinlock_unlock(&sk->rxbuf_lock, irq);
 		return (ssize_t)n;
 	}
 
 	/* SOCK_STREAM */
-	spinlock_lock(&sk->rxbuf_lock);
+	spinlock_lock(&sk->rxbuf_lock, &irq);
 	while (rx_used(sk) == 0) {
-		spinlock_unlock(&sk->rxbuf_lock);
+		spinlock_unlock(&sk->rxbuf_lock, irq);
 		if (sk->err)
 			return sk->err;
 		if (sk->state == SS_DISCONNECTING)
@@ -151,10 +152,10 @@ static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
 		sock_wait(sk, deadline);
-		spinlock_lock(&sk->rxbuf_lock);
+		spinlock_lock(&sk->rxbuf_lock, &irq);
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
-	spinlock_unlock(&sk->rxbuf_lock);
+	spinlock_unlock(&sk->rxbuf_lock, irq);
 	return (ssize_t)n;
 }
 
@@ -210,19 +211,21 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 static ssize_t sock_unix_write(mos_sock *sk, const void *buf, size_t count)
 {
 	mos_sock *unix_peer = sk->unix_peer;
+	int irq;
+
 	if (!unix_peer)
 		return -EPIPE;
-	spinlock_lock(&unix_peer->rxbuf_lock);
+	spinlock_lock(&unix_peer->rxbuf_lock, &irq);
 	if (sk->type == SOCK_DGRAM) {
 		u16_t dlen = (u16_t)count;
 		if (rx_free(unix_peer) < sizeof(dlen) + (unsigned)count) {
-			spinlock_unlock(&unix_peer->rxbuf_lock);
+			spinlock_unlock(&unix_peer->rxbuf_lock, irq);
 			return -ENOBUFS;
 		}
 		rx_write(unix_peer, &dlen, sizeof(dlen));
 	}
 	unsigned n = rx_write(unix_peer, buf, (unsigned)count);
-	spinlock_unlock(&unix_peer->rxbuf_lock);
+	spinlock_unlock(&unix_peer->rxbuf_lock, irq);
 	sock_wakeup(unix_peer);
 	return (ssize_t)n;
 }

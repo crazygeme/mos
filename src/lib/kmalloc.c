@@ -246,6 +246,7 @@ void *malloc(unsigned size)
 {
 	unsigned need;
 	void *blk;
+	int irq;
 
 	if (!size)
 		return NULL;
@@ -254,13 +255,13 @@ void *malloc(unsigned size)
 	if (need < MIN_BLK)
 		need = MIN_BLK;
 
-	spinlock_lock(&heap_lock);
+	spinlock_lock(&heap_lock, &irq);
 
 	blk = find_free(need);
 	if (!blk) {
 		blk = extend_heap(need);
 		if (!blk) {
-			spinlock_unlock(&heap_lock);
+			spinlock_unlock(&heap_lock, irq);
 			return NULL;
 		}
 	}
@@ -282,7 +283,7 @@ void *malloc(unsigned size)
 	if (heap_quota > heap_quota_high)
 		heap_quota_high = heap_quota;
 
-	spinlock_unlock(&heap_lock);
+	spinlock_unlock(&heap_lock, irq);
 	return (char *)blk + HDR_SZ;
 }
 
@@ -290,11 +291,12 @@ void free(void *ptr)
 {
 	void *blk;
 	unsigned sz;
+	int irq;
 
 	if (!ptr)
 		return;
 
-	spinlock_lock(&heap_lock);
+	spinlock_lock(&heap_lock, &irq);
 
 	blk = (char *)ptr - HDR_SZ;
 	sz = blk_sz(blk);
@@ -304,7 +306,7 @@ void free(void *ptr)
 	blk = coalesce_right(blk);
 	fl_insert(blk);
 
-	spinlock_unlock(&heap_lock);
+	spinlock_unlock(&heap_lock, irq);
 }
 
 void *zalloc(unsigned size)

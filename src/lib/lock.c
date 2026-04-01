@@ -1,3 +1,4 @@
+#include "int/int.h"
 #include <hw/time.h>
 #include <ps/ps.h>
 #include <lib/klib.h>
@@ -23,12 +24,12 @@ void spinlock_uninit(spinlock_t *lock)
 	__sync_lock_test_and_set(&lock->lock, 0);
 }
 
-void _spinlock_lock(spinlock_t *lock, const char *func)
+void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 {
 	if (!lock->inited)
 		return;
 
-	sched_disable();
+	__sync_lock_test_and_set(saved_irq, int_intr_disable());
 
 	/* Fast path: optimistically try once before entering the retry loop.
 	 * On an uncontended lock this avoids the HLT overhead entirely. */
@@ -45,14 +46,14 @@ locked:
 	lock->holder = func;
 }
 
-void spinlock_unlock(spinlock_t *lock)
+void spinlock_unlock(spinlock_t *lock, int irq)
 {
 	if (!lock->inited)
 		return;
 
 	lock->holder = 0xff;
 	__sync_lock_test_and_set(&lock->lock, 0);
-	sched_enable();
+	int_intr_setlevel(irq);
 }
 
 /* ===========================================================================
@@ -102,6 +103,7 @@ static int lock_wake_one_locked(list_entry *wait_list)
 static void lock_base_acquire(lock_base *s, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
+	int irq;
 
 	while (1) {
 		/* Fast path: uncontended. */
@@ -109,16 +111,16 @@ static void lock_base_acquire(lock_base *s, const char *func)
 			return;
 
 		/* Slow path: take wait_lock to avoid a lost wakeup. */
-		spinlock_lock(&s->wait_lock);
+		spinlock_lock(&s->wait_lock, &irq);
 
 		/* Re-check: lock may have been released while we took wait_lock. */
 		if (__sync_lock_test_and_set(&s->lock, 1) == 0) {
-			spinlock_unlock(&s->wait_lock);
+			spinlock_unlock(&s->wait_lock, irq);
 			return;
 		}
 
 		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
-		spinlock_unlock(&s->wait_lock);
+		spinlock_unlock(&s->wait_lock, irq);
 		task_sched();
 		/* After wakeup, retry from the top of the loop. */
 	}
@@ -155,18 +157,19 @@ int _cond_wait(cond_t *s, const char *func, int interruptible)
 {
 	task_struct *cur = CURRENT_TASK();
 	lock_base *b = (lock_base *)&s->base;
+	int irq;
 
 	while (1) {
 		if (__sync_lock_test_and_set(&b->lock, 1) == 0)
 			return 0;
 
-		spinlock_lock(&b->wait_lock);
+		spinlock_lock(&b->wait_lock, &irq);
 		if (__sync_lock_test_and_set(&b->lock, 1) == 0) {
-			spinlock_unlock(&b->wait_lock);
+			spinlock_unlock(&b->wait_lock, irq);
 			return 0;
 		}
 		ps_put_to_wait_queue(cur, &b->wait_list, func);
-		spinlock_unlock(&b->wait_lock);
+		spinlock_unlock(&b->wait_lock, irq);
 		task_sched();
 
 		if (interruptible &&
@@ -184,10 +187,11 @@ void cond_reset(cond_t *s)
 /* Fire the event: clear the lock and wake one sleeping waiter. */
 void cond_notify(cond_t *s)
 {
-	spinlock_lock(&s->base.wait_lock);
+	int irq;
+	spinlock_lock(&s->base.wait_lock, &irq);
 	/* lock_base_release_locked clears the lock then wakes one waiter. */
 	lock_base_release_locked((lock_base *)&s->base);
-	spinlock_unlock(&s->base.wait_lock);
+	spinlock_unlock(&s->base.wait_lock, irq);
 
 	/* Yield so the woken task can run without waiting for a timer tick. */
 	task_sched();
@@ -226,6 +230,7 @@ void _mutex_lock(mutex_t *m, const char *func)
 void mutex_unlock(mutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
+	int irq;
 
 	if (m->holder != cur->psid)
 		DIE();
@@ -235,9 +240,9 @@ void mutex_unlock(mutex_t *m)
 
 	/* Release the lock and wake the next waiter atomically under
 	 * wait_lock so that no wakeup is lost between the two steps. */
-	spinlock_lock(&m->base.wait_lock);
+	spinlock_lock(&m->base.wait_lock, &irq);
 	lock_base_release_locked((lock_base *)&m->base);
-	spinlock_unlock(&m->base.wait_lock);
+	spinlock_unlock(&m->base.wait_lock, irq);
 }
 
 /* ===========================================================================
@@ -262,26 +267,28 @@ void rwlock_init(rwlock_t *rw)
 void _rwlock_read_lock(rwlock_t *rw, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
+	int irq;
 
-	spinlock_lock(&rw->wait_lock);
+	spinlock_lock(&rw->wait_lock, &irq);
 
 	/* Block if a writer holds the lock or a writer is waiting (write-
 	 * preferring: we queue behind the writer to prevent its starvation). */
 	while (rw->writer || rw->writers_waiting > 0) {
 		ps_put_to_wait_queue(cur, (list_entry *)&rw->reader_wait_list,
 				     func);
-		spinlock_unlock(&rw->wait_lock);
+		spinlock_unlock(&rw->wait_lock, irq);
 		task_sched();
-		spinlock_lock(&rw->wait_lock);
+		spinlock_lock(&rw->wait_lock, &irq);
 	}
 
 	rw->readers++;
-	spinlock_unlock(&rw->wait_lock);
+	spinlock_unlock(&rw->wait_lock, irq);
 }
 
 void rwlock_read_unlock(rwlock_t *rw)
 {
-	spinlock_lock(&rw->wait_lock);
+	int irq;
+	spinlock_lock(&rw->wait_lock, &irq);
 
 	rw->readers--;
 
@@ -289,33 +296,36 @@ void rwlock_read_unlock(rwlock_t *rw)
 	if (rw->readers == 0 && rw->writers_waiting > 0)
 		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
 
-	spinlock_unlock(&rw->wait_lock);
+	spinlock_unlock(&rw->wait_lock, irq);
 }
 
 void _rwlock_write_lock(rwlock_t *rw, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
+	int irq;
 
-	spinlock_lock(&rw->wait_lock);
+	spinlock_lock(&rw->wait_lock, &irq);
 	rw->writers_waiting++;
 
 	/* Wait until the lock is completely idle (no readers, no other writer). */
 	while (rw->writer || rw->readers > 0) {
 		ps_put_to_wait_queue(cur, (list_entry *)&rw->writer_wait_list,
 				     func);
-		spinlock_unlock(&rw->wait_lock);
+		spinlock_unlock(&rw->wait_lock, irq);
 		task_sched();
-		spinlock_lock(&rw->wait_lock);
+		spinlock_lock(&rw->wait_lock, &irq);
 	}
 
 	rw->writers_waiting--;
 	rw->writer = 1;
-	spinlock_unlock(&rw->wait_lock);
+	spinlock_unlock(&rw->wait_lock, irq);
 }
 
 void rwlock_write_unlock(rwlock_t *rw)
 {
-	spinlock_lock(&rw->wait_lock);
+	int irq;
+
+	spinlock_lock(&rw->wait_lock, &irq);
 
 	rw->writer = 0;
 
@@ -330,7 +340,7 @@ void rwlock_write_unlock(rwlock_t *rw)
 			;
 	}
 
-	spinlock_unlock(&rw->wait_lock);
+	spinlock_unlock(&rw->wait_lock, irq);
 	/* Yield so newly woken tasks get CPU time without waiting for a tick. */
 	task_sched();
 }
@@ -356,18 +366,19 @@ void sem_init(sem_t *s, int count)
 void _sem_wait(sem_t *s, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
+	int irq;
 
 	while (1) {
-		spinlock_lock((spinlock_t *)&s->wait_lock);
+		spinlock_lock((spinlock_t *)&s->wait_lock, &irq);
 
 		if (s->count > 0) {
 			s->count--;
-			spinlock_unlock((spinlock_t *)&s->wait_lock);
+			spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 			return;
 		}
 
 		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
-		spinlock_unlock((spinlock_t *)&s->wait_lock);
+		spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 		task_sched();
 	}
 }
@@ -377,10 +388,11 @@ void _sem_wait(sem_t *s, const char *func)
  */
 void sem_post(sem_t *s)
 {
-	spinlock_lock((spinlock_t *)&s->wait_lock);
+	int irq;
+	spinlock_lock((spinlock_t *)&s->wait_lock, &irq);
 	s->count++;
 	lock_wake_one_locked((list_entry *)&s->wait_list);
-	spinlock_unlock((spinlock_t *)&s->wait_lock);
+	spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 }
 
 /*

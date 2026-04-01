@@ -432,14 +432,15 @@ int sprintf(char *buf, const char *fmt, ...)
 void printk(const char *fmt, ...)
 {
 	va_list ap;
+	int irq;
 
-	tty_lock_acquire();
+	tty_lock_acquire(&irq);
 	printf("[%d]: ", CURRENT_TASK()->psid);
 
 	va_start(ap, fmt);
 	kvformat(tty_print, fmt, ap, NULL);
 	va_end(ap);
-	tty_lock_release();
+	tty_lock_release(irq);
 }
 
 /*

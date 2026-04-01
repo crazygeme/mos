@@ -1,6 +1,5 @@
 #ifndef _SYSCALL_INTERNAL_H
 #define _SYSCALL_INTERNAL_H
-
 #include <fs/vfs.h>
 #include <fs/select.h>
 #include <fs/poll.h>
@@ -34,7 +33,9 @@ struct iovec {
  * syscall_io.c
  */
 int sys_read(int fd, char *buf, unsigned len);
-int sys_write(int fd, char *buf, unsigned len);
+int sys_write(int fd, const char *buf, unsigned len);
+int sys_pread64(int fd, void *buf, unsigned count, int offset);
+int sys_pwrite64(int fd, const void *buf, unsigned count, int offset);
 int sys_ioctl(int d, int request, char *buf);
 int sys_open(const char *name, int flags, umode_t mode);
 int sys_close(unsigned fd);

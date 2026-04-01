@@ -221,8 +221,8 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 177 __NR_rt_sigtimedwait
 	0, // 178 __NR_rt_sigqueueinfo
 	0, // 179 __NR_rt_sigsuspend
-	0, // 180 __NR_pread64
-	0, // 181 __NR_pwrite64
+	sys_pread64, // 180 __NR_pread64
+	sys_pwrite64, // 181 __NR_pwrite64
 	sys_chown, // 182 __NR_chown
 	sys_getcwd, // 183 __NR_getcwd
 	0, // 184 __NR_capget

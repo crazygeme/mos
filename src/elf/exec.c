@@ -82,173 +82,82 @@ static void cleanup()
 }
 
 /*
- * get_argc_envc - count argument and environment strings
+ * count_strv - count entries in a NULL-terminated string array
  *
- * Walks the NULL-terminated @argv and @envp arrays (same convention as the
- * POSIX execve ABI) and writes the counts into *argv_len and *envp_len.
- * Both pointers must be non-NULL; either array pointer may be NULL (treated
- * as empty).
+ * Stops at a NULL pointer or an empty string, matching execve ABI convention.
  */
-static void get_argc_envc(const char *file, char **argv, char **envp,
-			  unsigned *argv_len, unsigned *envp_len)
+static unsigned count_strv(char **v)
 {
-	int i = 0;
-	if (!argv_len || !envp_len) {
-		return;
-	}
-
-	*argv_len = *envp_len = 0;
-	if (argv) {
-		while (argv[i] && *argv[i]) {
-			*argv_len = *argv_len + 1;
-			i++;
-		}
-	}
-
-	i = 0;
-	if (envp) {
-		while (envp[i] && *envp[i]) {
-			*envp_len = *envp_len + 1;
-			i++;
-		}
-	}
+	unsigned n = 0;
+	if (v)
+		while (v[n] && v[n][0])
+			n++;
+	return n;
 }
 
 /*
- * get_script_interpreter - check if the file is a script and extract the interpreter
+ * dup_strv - deep-copy @n strings from @v into kernel heap memory
+ *
+ * User-supplied pointers become invalid after cleanup() tears down the
+ * address space, so every string is strdup()'d here.  Returns a
+ * heap-allocated array of @n strings, or NULL if @n is zero.
+ * Free with free_v().
  */
-
-static char **parse_script_line(const char *script, int *argc)
+static char **dup_strv(char **v, unsigned n)
 {
-	const char *token_begin = script;
-	const char *token_end = script;
-	int total_args = 0;
-
-	if (!script || !argc) {
-		return -1;
-	}
-
-	while (*token_end && *token_end != '\n') {
-		if (*token_end == ' ') {
-			if (token_begin != token_end)
-				total_args++;
-
-			token_end++;
-			token_begin = token_end;
-		} else {
-			token_end++;
-		}
-	}
-	if (token_begin != token_end)
-		total_args++;
-
-	if (total_args == 0)
+	unsigned i;
+	char **ret;
+	if (!n)
 		return NULL;
-
-	token_begin = script;
-	token_end = script;
-	char **args = kmalloc((total_args + 1) * sizeof(char *));
-	while (*token_end && *token_end != '\n') {
-		if (*token_end == ' ') {
-			if (token_begin != token_end) {
-				int len = token_end - token_begin;
-				char *arg = kmalloc(len + 1);
-				strncpy(arg, token_begin, len);
-				arg[len] = '\0';
-				args[(*argc)++] = arg;
-			}
-			token_end++;
-			token_begin = token_end;
-		} else {
-			token_end++;
-		}
-	}
-	if (token_begin != token_end) {
-		int len = token_end - token_begin;
-		char *arg = kmalloc(len + 1);
-		strncpy(arg, token_begin, len);
-		arg[len] = '\0';
-		args[(*argc)++] = arg;
-	}
-
-	return args;
-}
-
-/*
- * save_argv - deep-copy the argv array into kernel heap memory
- *
- * The user-supplied @argv pointers will become invalid after the address
- * space is torn down in cleanup(), so we strdup() every string here.
- *
- * For shell scripts (identified by a non-NULL @script, which holds the
- * interpreter path extracted from the "#!" line), the interpreter path is
- * prepended as argv[0] and the original argv is shifted by one, matching
- * the POSIX execve behaviour for script execution.
- *
- * Returns a newly allocated array of @argc (or @argc+1 for scripts) heap
- * strings, or NULL if @argc is zero.
- */
-static char **save_argv(const char *file, char **argv, unsigned argc,
-			char *script)
-{
-	char **ret = 0;
-	char **script_args = 0;
-	int script_argc = 0;
-
-	int i = 0;
-	if (!argc) {
-		return 0;
-	}
-
-	if (script) {
-		script_args = parse_script_line(file, &script_argc);
-		if (script_argc > 0)
-			argc += script_argc;
-
-		/* Prepend interpreter path; original argv follows. */
-		ret = kmalloc(argc * sizeof(char *));
-		for (i = 0; i < script_argc; i++)
-			ret[i] = strdup(script_args[i]);
-
-		for (i = script_argc; i < (argc); i++)
-			ret[i] = strdup(argv[i - script_argc]);
-
-		if (script_args) {
-			for (i = 0; i < script_argc; i++)
-				kfree(script_args[i]);
-			kfree(script_args);
-		}
-
-	} else {
-		ret = kmalloc(argc * sizeof(char *));
-		for (i = 0; i < (argc); i++)
-			ret[i] = strdup(argv[i]);
-	}
-
+	ret = kmalloc(n * sizeof(char *));
+	for (i = 0; i < n; i++)
+		ret[i] = strdup(v[i]);
 	return ret;
 }
 
 /*
- * save_envp - deep-copy the envp array into kernel heap memory
+ * parse_shebang - parse a "#!" interpreter directive in-place
  *
- * Same rationale as save_argv(): environment strings must be copied
- * before the user address space is destroyed.  Returns a newly allocated
- * array of @envc heap strings, or NULL if @envc is zero.
+ * Terminates @line at the first newline or carriage-return, then extracts
+ * two tokens from "#!/path/to/interp[ arg...]":
+ *   *@interp     — the interpreter path
+ *   *@interp_arg — everything after the first whitespace gap, as one string
+ *                  (NULL if absent)
+ *
+ * The entire remainder after the interpreter is treated as a single argument,
+ * matching Linux kernel behaviour (unlike FreeBSD which splits it).  So
+ * "#!/usr/bin/python -u -O" yields interp_arg = "-u -O", not two tokens.
+ *
+ * Caller must copy the results (e.g. with strdup) before freeing @line.
  */
-static char **save_envp(char **envp, unsigned envc)
+static void parse_shebang(char *line, const char **interp,
+			  const char **interp_arg)
 {
-	int i = 0;
-	char **ret = 0;
-	if (!envc) {
-		return 0;
-	}
+	char *p, *lf, *cr;
 
-	ret = kmalloc(envc * sizeof(char *));
-	for (i = 0; i < envc; i++) {
-		ret[i] = strdup(envp[i]);
-	}
+	lf = strchr(line, '\n');
+	if (lf)
+		*lf = '\0';
+	cr = strchr(line, '\r');
+	if (cr)
+		*cr = '\0';
 
-	return ret;
+	p = line + 2;
+	while (*p == ' ' || *p == '\t')
+		p++;
+	*interp = p;
+
+	while (*p && *p != ' ' && *p != '\t')
+		p++;
+
+	*interp_arg = NULL;
+	if (*p) {
+		*p++ = '\0';
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p)
+			*interp_arg = p;
+	}
 }
 
 /*
@@ -519,49 +428,61 @@ int sys_execve(const char *f, char **argv, char **envp)
 	fs_put_file(fp);
 
 	/*
-	 * check whether starts with #!,
-	 * if it is, assign script interp to file_name
+	 * Determine binary type and build the final argc/argv/envp.
+	 *
+	 * ELF: file_name unchanged, argv/envp deep-copied as-is.
+	 *
+	 * #!: parse "#!/path/to/interp[ optional_arg]", update file_name
+	 *     to the interpreter, and prepend [interp, optional_arg?] ahead
+	 *     of the original argv so the final layout is:
+	 *       [interp, optional_arg?, argv[0], argv[1], ...]
+	 *
+	 * After this block: file_name is the executable to load; argc/s_argv
+	 * and envc/s_envp are fully set and ready for setup_user_stack().
 	 */
 	if (firstline[0] == 0x7f && firstline[1] == 'E' &&
-	    firstline[2] == 'L') {
+	    firstline[2] == 'L' && firstline[3] == 'F') {
 		free(firstline);
 		firstline = NULL;
+		argc = count_strv(argv);
+		envc = count_strv(envp);
+		s_argv = dup_strv(argv, argc);
+		s_envp = dup_strv(envp, envc);
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
-		char *lf = strchr(firstline, '\n');
-		char *interp = NULL;
-		if (lf)
-			*lf = '\0';
-		interp = firstline + 2;
-		while (*interp == ' ' || *interp == '\t')
-			interp++;
+		const char *interp, *interp_arg;
+		unsigned shebang_argc, user_argc, j;
+
+		parse_shebang(firstline, &interp, &interp_arg);
+
+		user_argc = count_strv(argv);
+		envc = count_strv(envp);
+
+		shebang_argc = 1 + (interp_arg ? 1 : 0);
+		argc = shebang_argc + user_argc;
+
+		s_argv = kmalloc(argc * sizeof(char *));
+		s_argv[0] = strdup(interp);
+		if (interp_arg)
+			s_argv[1] = strdup(interp_arg);
+		for (j = 0; j < user_argc; j++)
+			s_argv[shebang_argc + j] = strdup(argv[j]);
 
 		strcpy(file_name, interp);
+
+		free(firstline);
+		firstline = NULL;
+		s_envp = dup_strv(envp, envc);
 	} else {
 		free(firstline);
 		name_put(file_name);
 		return -ENOEXEC;
 	}
 
-	/* 
-	 * parse arguments and enviroments 
-	 * note that a #! file needs additional slot 
-	 */
-	get_argc_envc(file_name, argv, envp, &argc, &envc);
-	s_argv = save_argv(file_name, argv, argc, firstline);
-	if (firstline)
-		argc++;
-	s_envp = save_envp(envp, envc);
-
-	if (firstline) {
-		free(firstline);
-		firstline = NULL;
-	}
-
 	/* save command line into task struct */
 	tmp = cur->user->command;
 	strcpy(tmp, file_name);
 	tmp = tmp + strlen(tmp) + 1;
-	for (i = 1; i < argc; i++) {
+	for (i = 1; i < (int)argc; i++) {
 		strcpy(tmp, s_argv[i]);
 		tmp = tmp + strlen(tmp) + 1;
 	}
@@ -572,8 +493,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 		strcpy(tmp, s_envp[0]);
 		tmp = tmp + strlen(tmp);
 	}
-
-	for (i = 1; i < envc; i++) {
+	for (i = 1; i < (int)envc; i++) {
 		strcpy(tmp, s_envp[i]);
 		tmp = tmp + strlen(tmp);
 	}

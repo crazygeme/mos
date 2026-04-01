@@ -698,3 +698,20 @@ int sys_fchdir(int fd)
 	fp = cur->fds[fd].fp;
 	return sys_chdir(fp->f_name);
 }
+
+int sys_flock(int fd, int operation)
+{
+	if (TestControl.verbos)
+		klog("flock(%d, %d)\n", fd, operation);
+
+	/* No real flock infrastructure; pretend all locks succeed. */
+	return 0;
+}
+
+int sys__sysctl(void *args)
+{
+	if (TestControl.verbos)
+		klog("_sysctl\n");
+
+	return -ENOSYS;
+}

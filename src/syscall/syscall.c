@@ -137,12 +137,12 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 93  __NR_ftruncate
 	sys_fchmod, // 94  __NR_fchmod
 	sys_fchown, // 95  __NR_fchown
-	0, // 96  __NR_getpriority
+	sys_getpriority, // 96  __NR_getpriority
 	sys_setpriority, // 97  __NR_setpriority
 	0, // 98  __NR_profil
 	sys_statfs, // 99  __NR_statfs
 	sys_fstatfs, // 100 __NR_fstatfs
-	0, // 101 __NR_ioperm
+	sys_ioperm, // 101 __NR_ioperm
 	sys_socketcall, // 102 __NR_socketcall
 	sys_syslog, // 103 __NR_syslog
 	0, // 104 __NR_setitimer
@@ -151,7 +151,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_lstat, // 107 __NR_lstat
 	sys_fstat, // 108 __NR_fstat
 	0, // 109 __NR_olduname
-	0, // 110 __NR_iopl
+	sys_iopl, // 110 __NR_iopl
 	sys_vhangup, // 111 __NR_vhangup
 	0, // 112 __NR_idle
 	0, // 113 __NR_vm86old
@@ -172,7 +172,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 128 __NR_init_module
 	0, // 129 __NR_delete_module
 	0, // 130 __NR_get_kernel_syms
-	0, // 131 __NR_quotactl
+	sys_quotactl, // 131 __NR_quotactl
 	sys_getpgid, // 132 __NR_getpgid
 	sys_fchdir, // 133 __NR_fchdir
 	0, // 134 __NR_bdflush
@@ -184,13 +184,13 @@ static unsigned call_table[NR_syscalls] = {
 	sys_llseek, // 140 __NR__llseek
 	sys_getdents, // 141 __NR_getdents
 	sys_newselect, // 142 __NR__newselect
-	0, // 143 __NR_flock
+	sys_flock, // 143 __NR_flock
 	0, // 144 __NR_msync
 	sys_readv, // 145 __NR_readv
 	sys_writev, // 146 __NR_writev
 	sys_getsid, // 147 __NR_getsid
 	0, // 148 __NR_fdatasync
-	0, // 149 __NR__sysctl
+	sys__sysctl, // 149 __NR__sysctl
 	0, // 150 __NR_mlock
 	0, // 151 __NR_munlock
 	0, // 152 __NR_mlockall
@@ -204,7 +204,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 160 __NR_sched_get_priority_min
 	0, // 161 __NR_sched_rr_get_interval
 	sys_nanosleep, // 162 __NR_nanosleep
-	0, // 163 __NR_mremap
+	sys_mremap, // 163 __NR_mremap
 	sys_setresuid, // 164 __NR_setresuid
 	sys_getresuid, // 165 __NR_getresuid
 	0, // 166 __NR_vm86
@@ -315,9 +315,6 @@ static void syscall_process(intr_frame *frame)
 			 frame->edi, frame->ebp);
 
 	frame->eax = ret;
-
-	/* Deliver any pending signals before returning to user space. */
-	do_signal(frame);
 }
 
 static void syscall_init()

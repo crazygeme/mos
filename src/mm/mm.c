@@ -93,12 +93,8 @@ static spinlock_t mm_lock;
 static spinlock_t path_lock;
 
 /* Name-buffer cache node */
-typedef struct {
-	list_entry list;
-	void *buf;
-} name_cache_t;
 
-static name_cache_t name_cache_head;
+static list_entry name_cache_head;
 
 /* Called once at boot: set up the page-table cache and related state */
 void mm_init_page_table_cache()
@@ -111,7 +107,7 @@ void mm_init_page_table_cache()
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
-	list_init(&name_cache_head.list);
+	list_init(&name_cache_head);
 }
 
 /*
@@ -469,17 +465,14 @@ void vm_free(unsigned int vm, int page_count)
 /* Acquire a pathname buffer (allocates a new one if the cache is empty) */
 void *name_get()
 {
-	void *buf;
-	name_cache_t *node;
-
+	char *buf, *region;
 	spinlock_lock(&path_lock);
-	if (list_is_empty(&name_cache_head.list)) {
-		buf = (void *)vm_alloc(MAX_PATH / PAGE_SIZE);
+	if (list_is_empty(&name_cache_head)) {
+		region = (void *)vm_alloc(1);
+		buf = region + sizeof(list_entry);
 	} else {
-		node = container_of(list_remove_tail(&name_cache_head.list),
-				    name_cache_t, list);
-		buf = node->buf;
-		free(node);
+		region = (char *)list_remove_tail(&name_cache_head);
+		buf = region + sizeof(list_entry);
 	}
 	spinlock_unlock(&path_lock);
 	memset(buf, 0, MAX_PATH);
@@ -490,12 +483,10 @@ void *name_get()
 /* Return a pathname buffer to the cache */
 void name_put(void *buf)
 {
-	name_cache_t *node;
-
+	list_entry *region;
 	spinlock_lock(&path_lock);
-	node = zalloc(sizeof(*node));
-	node->buf = buf;
-	list_insert_tail(&name_cache_head.list, &node->list);
+	region = (list_entry *)((char *)buf - sizeof(list_entry));
+	list_insert_tail(&name_cache_head, region);
 	spinlock_unlock(&path_lock);
 	cache_count--;
 }

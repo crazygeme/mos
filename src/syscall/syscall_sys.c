@@ -341,6 +341,101 @@ int sys_sysinfo(void *buf)
 	return 0;
 }
 
+int sys_getpriority(int which, int who)
+{
+	if (TestControl.verbos)
+		klog("getpriority(%d, %d)\n", which, who);
+
+	/* No real priority; return 0 (maps to nice 0). */
+	return 0;
+}
+
+int sys_ioperm(unsigned long from, unsigned long num, int turn_on)
+{
+	if (TestControl.verbos)
+		klog("ioperm(%lx, %lx, %d)\n", from, num, turn_on);
+
+	return -EPERM;
+}
+
+int sys_iopl(int level)
+{
+	if (TestControl.verbos)
+		klog("iopl(%d)\n", level);
+
+	return -EPERM;
+}
+
+int sys_quotactl(int cmd, const char *special, int id, void *addr)
+{
+	if (TestControl.verbos)
+		klog("quotactl\n");
+
+	return -ENOSYS;
+}
+
+#define MREMAP_MAYMOVE 1
+
+int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
+	       int flags, unsigned new_addr)
+{
+#if 0
+	task_struct *cur = CURRENT_TASK();
+	vm_region *region;
+	unsigned old_size_pg, new_size_pg, old_end;
+	int ret;
+
+	if (TestControl.verbos)
+		klog("mremap(%x, %x, %x, flags=%x)\n", old_addr, old_size,
+		     new_size, flags);
+
+	if (old_addr & (PAGE_SIZE - 1))
+		return -EINVAL;
+
+	old_size_pg = (old_size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	new_size_pg = (new_size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+
+	if (!new_size_pg)
+		return -EINVAL;
+
+	region = vm_find_map(cur->user->vm, old_addr);
+	if (!region)
+		return -EFAULT;
+
+	if (new_size_pg == old_size_pg)
+		return (int)old_addr;
+
+	if (new_size_pg < old_size_pg) {
+		do_munmap((void *)(old_addr + new_size_pg),
+			  old_size_pg - new_size_pg);
+		return (int)old_addr;
+	}
+
+	/* Grow: try in-place if space after the region is free. */
+	old_end = old_addr + old_size_pg;
+	if (!vm_find_map(cur->user->vm, old_end)) {
+		ret = do_mmap(old_end, new_size_pg - old_size_pg, region->prot,
+			      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+		if (ret >= 0)
+			return (int)old_addr;
+	}
+
+	if (!(flags & MREMAP_MAYMOVE))
+		return -ENOMEM;
+
+	/* Move: allocate a new region, copy, free the old one. */
+	ret = do_mmap(0, new_size_pg, region->prot, MAP_PRIVATE | MAP_ANONYMOUS,
+		      -1, 0);
+	if (ret < 0)
+		return ret;
+
+	memcpy((void *)ret, (void *)old_addr, old_size_pg);
+	do_munmap((void *)old_addr, old_size_pg);
+	return ret;
+#endif
+	return -ENOSYS;
+}
+
 int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 		     size_t *ret)
 {

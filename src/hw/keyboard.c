@@ -294,7 +294,13 @@ void kb_process(intr_frame *frame)
 {
 	if (!kb_dsr_armed) {
 		kb_dsr_armed = 1;
-		dsr_add(kb_dsr, 0);
+		if (!dsr_add(kb_dsr, 0)) {
+			/* DSR dropped: drain the data port now so the PS/2
+			 * controller can generate the next interrupt, then
+			 * clear the armed flag so the next keypress retries. */
+			port_read_byte(KB_DATA);
+			kb_dsr_armed = 0;
+		}
 	}
 }
 

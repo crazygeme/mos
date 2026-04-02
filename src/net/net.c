@@ -140,7 +140,8 @@ static void eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len)
 	g_rx_wr++;
 	if (!g_rx_dsr_armed) {
 		g_rx_dsr_armed = 1;
-		dsr_add(eth0_rx_dsr, NULL);
+		if (!dsr_add(eth0_rx_dsr, NULL))
+			g_rx_dsr_armed = 0;
 	}
 }
 

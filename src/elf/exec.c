@@ -3,11 +3,13 @@
 #include <ps/ps.h>
 #include <int/int.h>
 #include <hw/tty.h>
+#include <hw/hdd.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/vdso.h>
 #include <fs/fcntl.h>
 #include <fs/fs.h>
+#include <fs/mount.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <config.h>
@@ -610,6 +612,13 @@ static void kinit_userspace()
 		argv = user_argv;
 		envp = user_envp;
 		strcpy(cur->user->cwd, "/root");
+
+		/* Remount root read-write (was mounted ro at boot). */
+		fs_do_mount(hdd_partitions[0].name, "/", "ext4", MS_REMOUNT,
+			    NULL);
+
+		/* Mount /proc — userspace expects it to be present. */
+		fs_do_mount("proc", "/proc", "proc", 0, NULL);
 	}
 
 	printk("Now Bringup first user process %s\n", argv[0]);

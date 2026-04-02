@@ -55,6 +55,9 @@ struct super_operations {
 	int (*statfs)(super_block *sb, struct statfs *buf);
 	int (*utime)(super_block *sb, const char *path, unsigned atime,
 		     unsigned mtime);
+	/* remount: change mount flags on an already-mounted filesystem.
+	 * Called by fs_do_mount() when MS_REMOUNT is set. */
+	int (*remount)(super_block *sb, int flags);
 };
 
 /*
@@ -66,6 +69,10 @@ struct super_block {
 	const super_operations *s_op; /* filesystem operations */
 	void *s_fs_info; /* private filesystem data */
 	unsigned s_ref; /* reference count */
+	int s_flags; /* mount flags (MS_RDONLY etc.) */
+	char s_devname[64]; /* source device, e.g. "hda1" or "proc" */
+	char s_fstype[32]; /* filesystem type, e.g. "ext4"; empty = not a real mount */
+	char s_mountpoint[256]; /* absolute mountpoint, set by vfs_mount() */
 	mutex_t s_lock;
 	hash_table *s_mounts; /* child mounts: path → super_block */
 };
@@ -120,31 +127,13 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs *buf);
 int vfs_utime(super_block *sb, const char *path, unsigned atime,
 	      unsigned mtime);
 
-/* -------------------------------------------------------------------------
- * Mount table — one record per mounted filesystem, in mount order.
- * Used by /proc/mounts.
- * ---------------------------------------------------------------------- */
-
-typedef struct mount_record mount_record;
-struct mount_record {
-	char devname[64]; /* source device, e.g. "/dev/hda1" or "proc" */
-	char mountpoint[256]; /* absolute mount path, e.g. "/" or "/proc" */
-	char fstype[32]; /* filesystem type name, e.g. "ext4" */
-	char options[64]; /* mount options string, e.g. "rw,relatime" */
-	mount_record *next;
-};
-
 /*
- * vfs_mount_record - add an entry to the global mount table.
- * Safe to call from any KERNEL_INIT or syscall context.
+ * vfs_mount_walk - walk every mounted super_block in DFS order, calling cb
+ * for each one that has s_fstype set (i.e. a real/pseudo filesystem mount,
+ * not an internal devnode or proc-entry super_block).
+ * Used by /proc/mounts.
  */
-void vfs_mount_record(const char *devname, const char *mountpoint,
-		      const char *fstype, const char *options);
-
-/* Remove the entry for mountpoint (called on umount). */
-void vfs_umount_record(const char *mountpoint);
-
-/* Return the head of the mount record list for iteration. */
-const mount_record *vfs_mount_list(void);
+void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
+		    void *arg);
 
 #endif

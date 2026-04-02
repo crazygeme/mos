@@ -115,6 +115,14 @@ typedef struct ext4_dir {
 int ext4_device_register(struct ext4_blockdev *bd, struct ext4_bcache *bc,
 			 const char *dev_name);
 
+/**@brief   Unregister a block device previously registered with
+ *          ext4_device_register().  Must be called after ext4_umount() to
+ *          clear the stale bdev pointer from the internal table before
+ *          re-mounting.
+ * @param   dev_name name passed to ext4_device_register
+ * @return  EOK or ENODEV if not found */
+int ext4_device_unregister(const char *dev_name);
+
 /**@brief   Mount a block device with EXT4 partition to the mount point.
  * @param   dev_name block device name (@ref ext4_device_register)
  * @param   mount_point mount point, for example

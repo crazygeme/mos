@@ -2,6 +2,8 @@
 #define _HW_HDD_H_
 #include <fs/fs.h>
 
+struct ext4_blockdev; /* forward declaration for hdd_bdev_create */
+
 /* Size of a block device sector in bytes.
    All IDE disks use this sector size, as do most USB and SCSI
    disks.  It's not worth it to try to cater to other sector
@@ -33,5 +35,13 @@ void hdd_flush();
 
 /* Flush all partition caches and release block device resources. */
 void hdd_close(void);
+
+/*
+ * hdd_bdev_create - allocate a fresh ext4_blockdev for devname (e.g. "hda1").
+ * Must be followed by ext4_device_register() before ext4_mount().
+ * After ext4_umount(), call ext4_device_unregister() to clear the stale slot.
+ * Returns NULL if devname is unknown.
+ */
+struct ext4_blockdev *hdd_bdev_create(const char *devname);
 
 #endif

@@ -82,18 +82,18 @@ static super_block *stub_get_sb(const char *dev, const char *target, int flags,
  * after lwext4 has been set up, so it intentionally does not appear here.
  * ====================================================================== */
 
-static fs_type proc_fs_type = { .name = "proc", .get_sb = stub_get_sb };
+/* "proc" is registered by src/proc/procfs.c (KERNEL_INIT 4) with a real get_sb */
+/* "ext4"/"ext3" are registered by src/fs/root.c (KERNEL_INIT 3) */
+/* "devpts" is registered by src/dev/pts.c (KERNEL_INIT 5) with a real get_sb */
+
 static fs_type sysfs_fs_type = { .name = "sysfs", .get_sb = stub_get_sb };
 static fs_type tmpfs_fs_type = { .name = "tmpfs", .get_sb = stub_get_sb };
 static fs_type devtmpfs_fs_type = { .name = "devtmpfs", .get_sb = stub_get_sb };
 static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
 
-/* "devpts" is registered by src/dev/pts.c (KERNEL_INIT 5) with a real get_sb */
-
 static void mount_syscall_init(void)
 {
 	printk("mnt: Register mount fs types\n");
-	fs_register_type(&proc_fs_type);
 	fs_register_type(&sysfs_fs_type);
 	fs_register_type(&tmpfs_fs_type);
 	fs_register_type(&devtmpfs_fs_type);
@@ -120,13 +120,15 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	if (!type)
 		return -EINVAL;
 
-	/*
-	 * The root filesystem ("/") is set up by the kernel at boot.
-	 * Userspace remount requests (e.g. "mount -o remount,rw /") are
-	 * accepted silently — lwext4 is already live and there is nothing
-	 * meaningful to do at the VFS level.
-	 */
-	if (target[1] == '\0') /* target == "/" */
+	/* Remount of "/" — change flags on the existing root superblock. */
+	if (target[1] == '\0' && (flags & MS_REMOUNT)) {
+		if (!cur->root->s_op || !cur->root->s_op->remount)
+			return -ENOSYS;
+		return cur->root->s_op->remount(cur->root, (int)flags);
+	}
+
+	/* Non-remount mount of "/" is a no-op (already mounted at boot). */
+	if (target[1] == '\0')
 		return 0;
 
 	fst = fs_find_type(type);
@@ -139,15 +141,18 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 
 	ret = vfs_mount(cur->root, target, sb);
 	if (ret == -EEXIST) {
-		/* Already mounted (kernel pre-mounted at boot). */
 		sb_put(sb);
 		ret = 0;
+		return ret;
 	}
 
-	if (ret == 0)
-		vfs_mount_record(dev ? dev : type, target, type,
-				 (flags & MS_RDONLY) ? "ro,relatime" :
-						       "rw,relatime");
+	if (ret == 0) {
+		/* Record mount metadata on the superblock for /proc/mounts. */
+		strncpy(sb->s_devname, dev ? dev : type,
+			sizeof(sb->s_devname) - 1);
+		strncpy(sb->s_fstype, type, sizeof(sb->s_fstype) - 1);
+		sb->s_flags = (int)flags;
+	}
 
 	return ret;
 }
@@ -159,12 +164,8 @@ int fs_do_umount(const char *target, int flags)
 	if (!target || *target != '/')
 		return -EINVAL;
 
-	/* Refuse to unmount the root filesystem. */
-	if (target[1] == '\0') /* target == "/" */
+	if (target[1] == '\0')
 		return -EBUSY;
 
-	int ret = vfs_umount(cur->root, target);
-	if (ret == 0)
-		vfs_umount_record(target);
-	return ret;
+	return vfs_umount(cur->root, target);
 }

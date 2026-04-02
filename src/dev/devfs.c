@@ -216,10 +216,12 @@ static void devfs_init(void)
 	dev_init_fn_t *fn;
 	super_block *sb = sget(&dev_sops);
 
-	printk("mnt: Mounting devfs on /dev\n");
+	/* Set mount metadata before mounting so vfs_mount_walk can emit it. */
+	strncpy(sb->s_devname, "devtmpfs", sizeof(sb->s_devname) - 1);
+	strncpy(sb->s_fstype, "devtmpfs", sizeof(sb->s_fstype) - 1);
 
+	printk("mnt: Mounting devfs on /dev\n");
 	vfs_mount(cur->root, "/dev", sb);
-	vfs_mount_record("devtmpfs", "/dev", "devtmpfs", "rw,relatime");
 
 	/* Let each device self-register under the devfs superblock. */
 	for (fn = __devfs_init_start; fn < __devfs_init_end; fn++)

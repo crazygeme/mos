@@ -12,6 +12,7 @@
 #include <macro.h>
 #include <config.h>
 #include <ext4.h>
+#include <ext4_blockdev.h>
 
 unsigned fs_read_size = 0;
 unsigned fs_write_size = 0;
@@ -598,6 +599,7 @@ done:
 
 typedef struct {
 	char mp[PAGE_SIZE]; /* lwext4 mount point with trailing '/', e.g. "/mnt/" */
+	char devname[64]; /* partition name, e.g. "hda1" — used for remount */
 } ext4_mount_info;
 
 static file *ext4_open(super_block *sb, const char *path, int flag)
@@ -624,7 +626,9 @@ static void ext4_release(super_block *sb)
 	ext4_mount_info *mi = sb->s_fs_info;
 
 	ext4_cache_write_back(mi->mp, false);
-	ext4_umount(mi->mp);
+	ext4_umount(mi->mp); /* calls hdd_bdev_close → frees bdev+bdif */
+	if (mi->devname[0])
+		ext4_device_unregister(mi->devname); /* clear dangling slot */
 	free(mi);
 	kfree(sb);
 }
@@ -784,6 +788,9 @@ static int ext4_statfs_op(super_block *sb, struct statfs *buf)
 	return 0;
 }
 
+/* Forward declaration — defined after root_lock below. */
+static int ext4_remount(super_block *sb, int flags);
+
 static super_operations ext4_sops = {
 	.open_root = ext4_open_root,
 	.open = ext4_open,
@@ -797,13 +804,16 @@ static super_operations ext4_sops = {
 	.readlink = ext4_readlink_op,
 	.statfs = ext4_statfs_op,
 	.utime = ext4_utime,
+	.remount = ext4_remount,
 };
 
 /* Allocate a super_block bound to the given lwext4 mount point. */
-static super_block *ext4_new_sb(const char *mp)
+static super_block *ext4_new_sb(const char *mp, const char *devname)
 {
 	ext4_mount_info *mi = zalloc(sizeof(*mi));
 	strncpy(mi->mp, mp, sizeof(mi->mp) - 1);
+	if (devname)
+		strncpy(mi->devname, devname, sizeof(mi->devname) - 1);
 
 	super_block *sb = sget(&ext4_sops);
 	sb->s_fs_info = mi;
@@ -811,9 +821,9 @@ static super_block *ext4_new_sb(const char *mp)
 }
 
 /* Root factory: wraps the "/" lwext4 mount set up by fs_mount_root(). */
-static super_block *ext4_get(void)
+static super_block *ext4_get(const char *devname)
 {
-	return ext4_new_sb("/");
+	return ext4_new_sb("/", devname);
 }
 
 /*
@@ -859,6 +869,18 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	}
 
 	read_only = (flags & MS_RDONLY) != 0;
+
+	/* Allocate a fresh bdev — always unregister first to clear any stale
+	 * slot left by a previous umount (hdd_bdev_close frees the bdev but
+	 * lwext4 keeps the dangling pointer until we clear it). */
+	{
+		struct ext4_blockdev *bdev = hdd_bdev_create(dev_name);
+		if (!bdev)
+			return NULL;
+		ext4_device_unregister(dev_name);
+		ext4_device_register(bdev, NULL, dev_name);
+	}
+
 	ret = ext4_mount(dev_name, mp, read_only);
 	if (ret != EOK)
 		return NULL;
@@ -866,10 +888,11 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	if (!read_only)
 		ext4_cache_write_back(mp, true);
 
-	return ext4_new_sb(mp);
+	return ext4_new_sb(mp, dev_name);
 }
 
 static fs_type ext4_fs_type = { .name = "ext4", .get_sb = ext4_get_sb };
+static fs_type ext3_fs_type = { .name = "ext3", .get_sb = ext4_get_sb };
 
 /* =========================================================================
  * Boot-time root filesystem init
@@ -891,20 +914,59 @@ static struct ext4_lock root_lock = {
 	.unlock = root_lock_unlock,
 };
 
+static int ext4_remount(super_block *sb, int flags)
+{
+	ext4_mount_info *mi = sb->s_fs_info;
+	bool rdonly = (flags & MS_RDONLY) != 0;
+	struct ext4_blockdev *bdev;
+	int ret;
+
+	ext4_cache_write_back(mi->mp, false);
+	ext4_umount(mi->mp); /* calls hdd_bdev_close → frees old bdev+bdif */
+	ext4_device_unregister(mi->devname); /* clear dangling slot */
+
+	bdev = hdd_bdev_create(mi->devname);
+	if (!bdev)
+		return -ENOMEM;
+	ext4_device_register(bdev, NULL, mi->devname);
+
+	ret = ext4_mount(mi->devname, mi->mp, rdonly);
+	if (ret != EOK)
+		return -EIO;
+
+	ext4_mount_setup_locks(mi->mp, &root_lock);
+	if (!rdonly)
+		ext4_cache_write_back(mi->mp, true);
+
+	sb->s_flags = (sb->s_flags & ~MS_RDONLY) | (rdonly ? MS_RDONLY : 0);
+	return 0;
+}
+
 static void fs_mount_root(void)
 {
 	task_struct *cur = CURRENT_TASK();
+	const char *devname = hdd_partitions[0].name;
+	struct ext4_blockdev *bdev;
 
-	printk("mnt: Mount rootfs\n");
+	printk("mnt: Mount rootfs (ro)\n");
 
-	/* Register the ext4 filesystem type so that sys_mount can use it */
 	fs_register_type(&ext4_fs_type);
+	fs_register_type(&ext3_fs_type);
 	rmutex_init(&root_lock_);
-	cur->root = ext4_get();
-	ext4_mount(hdd_partitions[0].name, "/", 0);
+	cur->root = ext4_get(devname);
+
+	bdev = hdd_bdev_create(devname);
+	ext4_device_register(bdev, NULL, devname);
+	ext4_mount(devname, "/", true); /* read-only until init remounts rw */
 	ext4_mount_setup_locks("/", &root_lock);
-	ext4_cache_write_back("/", true);
-	vfs_mount_record(hdd_partitions[0].name, "/", "ext4", "rw,relatime");
+
+	/* Populate root sb metadata for /proc/mounts. */
+	strncpy(cur->root->s_devname, devname,
+		sizeof(cur->root->s_devname) - 1);
+	strncpy(cur->root->s_fstype, "ext3", sizeof(cur->root->s_fstype) - 1);
+	strncpy(cur->root->s_mountpoint, "/",
+		sizeof(cur->root->s_mountpoint) - 1);
+	cur->root->s_flags = MS_RDONLY;
 }
 
 KERNEL_INIT(3, fs_mount_root);

@@ -129,6 +129,21 @@ int ext4_device_register(struct ext4_blockdev *bd, struct ext4_bcache *bc,
 	return ENOSPC;
 }
 
+int ext4_device_unregister(const char *dev_name)
+{
+	uint32_t i;
+	ext4_assert(dev_name);
+
+	for (i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; ++i) {
+		if (_bdevices[i].bd &&
+		    !strcmp(_bdevices[i].name, dev_name)) {
+			memset(&_bdevices[i], 0, sizeof(_bdevices[i]));
+			return EOK;
+		}
+	}
+	return ENODEV;
+}
+
 /****************************************************************************/
 
 static bool ext4_is_dots(const uint8_t *name, size_t name_size)

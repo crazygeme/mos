@@ -19,6 +19,7 @@
 
 #include <fs/fs.h>
 #include <fs/vfs.h>
+#include <fs/mount.h>
 #include <proc/proc.h>
 #include <ps/ps.h>
 #include <lib/lock.h>
@@ -360,23 +361,31 @@ static super_operations proc_sops = {
 };
 
 /* ------------------------------------------------------------------ *
- * Initialisation                                                       *
+ * Filesystem type registration                                         *
  * ------------------------------------------------------------------ */
 
-static void procfs_init(void)
+/*
+ * proc_get_sb — called by fs_do_mount() when "proc" is requested.
+ * Creates a real procfs superblock with proc_sops and registers all
+ * static entries (meminfo, cpuinfo, ...) via PROC_INIT callbacks.
+ */
+static super_block *proc_get_sb(const char *dev, const char *target, int flags,
+				void *data)
 {
-	task_struct *cur = CURRENT_TASK();
-	super_block *root = cur->root;
 	proc_init_fn_t *fn;
 	super_block *sb = sget(&proc_sops);
 
-	printk("mnt: Mounting procfs on /proc\n");
-	vfs_mount(root, "/proc", sb);
-	vfs_mount_record("proc", "/proc", "proc", "rw,relatime");
-
-	/* Let each static entry self-register under the procfs superblock. */
 	for (fn = __procfs_init_start; fn < __procfs_init_end; fn++)
 		(*fn)(sb);
+
+	return sb;
 }
 
-KERNEL_INIT(5, procfs_init);
+static fs_type proc_fs_type = { .name = "proc", .get_sb = proc_get_sb };
+
+static void proc_type_register(void)
+{
+	fs_register_type(&proc_fs_type);
+}
+
+KERNEL_INIT(4, proc_type_register);

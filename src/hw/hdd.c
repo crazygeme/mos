@@ -12,7 +12,6 @@
  * Partition discovery: MBR + recursive extended partition tables.
  * Block cache: LRU write-back, indexed by 8-sector head groups.
  */
-#include "ps/ps.h"
 #include <int/int.h>
 #include <hw/hdd.h>
 #include <hw/pci.h>
@@ -1056,30 +1055,51 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 		pi->write = partition_write;
 #endif
 	}
+}
 
-	/* Linux ext4 partitions are mounted directly via lwext4. */
-	if (part_type == 0x83) {
-		struct ext4_blockdev_iface *bdif =
-			(struct ext4_blockdev_iface *)kmalloc(sizeof(*bdif));
-		struct ext4_blockdev *bdev =
-			(struct ext4_blockdev *)kmalloc(sizeof(*bdev));
-		memset(bdif, 0, sizeof(*bdif));
-		bdif->open = hdd_bdev_open;
-		bdif->bread = hdd_bdev_bread;
-		bdif->bwrite = hdd_bdev_bwrite;
-		bdif->close = hdd_bdev_close;
-		bdif->lock = hdd_bdev_lock;
-		bdif->unlock = hdd_bdev_unlock;
-		bdif->ph_bsize = BLOCK_SECTOR_SIZE;
-		bdif->ph_bcnt = size;
-		bdif->ph_bbuf = (uint8_t *)kmalloc(BLOCK_SECTOR_SIZE);
-		memset(bdev, 0, sizeof(*bdev));
-		bdev->bdif = bdif;
-		bdev->part_offset = 0;
-		bdev->part_size = (uint64_t)BLOCK_SECTOR_SIZE * size;
-		bdev->aux = p;
-		ext4_device_register(bdev, NULL, name);
+/*
+ * hdd_bdev_create - allocate and initialise a fresh ext4_blockdev for the
+ * named partition.  The caller must call ext4_device_register() and
+ * ext4_mount() afterwards.  On unmount, lwext4 calls hdd_bdev_close() which
+ * frees the bdev; the caller must then call ext4_device_unregister() to clear
+ * the stale pointer before re-mounting.
+ *
+ * Returns NULL if devname is not a known partition.
+ */
+struct ext4_blockdev *hdd_bdev_create(const char *devname)
+{
+	int i;
+	hdd_partition_info *pi = NULL;
+	struct ext4_blockdev_iface *bdif;
+	struct ext4_blockdev *bdev;
+
+	for (i = 0; i < hdd_partition_count; i++) {
+		if (strcmp(hdd_partitions[i].name, devname) == 0) {
+			pi = &hdd_partitions[i];
+			break;
+		}
 	}
+	if (!pi)
+		return NULL;
+
+	bdif = (struct ext4_blockdev_iface *)kmalloc(sizeof(*bdif));
+	bdev = (struct ext4_blockdev *)kmalloc(sizeof(*bdev));
+	memset(bdif, 0, sizeof(*bdif));
+	bdif->open = hdd_bdev_open;
+	bdif->bread = hdd_bdev_bread;
+	bdif->bwrite = hdd_bdev_bwrite;
+	bdif->close = hdd_bdev_close;
+	bdif->lock = hdd_bdev_lock;
+	bdif->unlock = hdd_bdev_unlock;
+	bdif->ph_bsize = BLOCK_SECTOR_SIZE;
+	bdif->ph_bcnt = pi->size;
+	bdif->ph_bbuf = (uint8_t *)kmalloc(BLOCK_SECTOR_SIZE);
+	memset(bdev, 0, sizeof(*bdev));
+	bdev->bdif = bdif;
+	bdev->part_offset = 0;
+	bdev->part_size = (uint64_t)BLOCK_SECTOR_SIZE * pi->size;
+	bdev->aux = pi->aux;
+	return bdev;
 }
 
 static void read_partition_table(ata_disk *disk, unsigned capacity,

@@ -43,7 +43,6 @@ static void ps_run()
 	if (fn)
 		fn(task->param);
 
-	task->status = ps_dying;
 	ps_put_to_dying_queue(task);
 	ps_remove_mgr(task);
 	task_sched();

@@ -378,7 +378,6 @@ void flock_wake_all_locked(inode *in)
 	while (!list_is_empty(&in->i_flock_wait)) {
 		list_entry *e = list_remove_tail(&in->i_flock_wait);
 		task_struct *t = container_of(e, task_struct, ps_list);
-		t->status = ps_ready;
 		ps_put_to_ready_queue_unsafe(t);
 	}
 }

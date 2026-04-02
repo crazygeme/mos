@@ -224,6 +224,59 @@ static file *make_runner_file(void)
 	return fp;
 }
 
+/* ── /proc/tests/loopdev — bash integration test ─────────────────────────── */
+
+static const char loopdev_script[] =
+	"#!/bin/sh\n"
+	"# loopdev integration test — runs entirely inside MOS\n"
+	"# requires: dd, mkfs.ext3, mount, umount\n"
+	"\n"
+	"set -e\n"
+	"IMG=/root/test.img\n"
+	"MNT=/root/mnt\n"
+	"\n"
+	"echo '--- loopdev test ---'\n"
+	"\n"
+	"echo '[1] create 16 MiB image'\n"
+	"rm -rf \"$IMG\" \"$MNT\"\n"
+	"dd if=/dev/zero of=\"$IMG\" bs=1M count=16\n"
+	"\n"
+	"echo '[2] format as ext3'\n"
+	"mkfs.ext3 -F \"$IMG\"\n"
+	"\n"
+	"echo '[3] mount (auto-loop)'\n"
+	"mkdir -p \"$MNT\"\n"
+	"mount -o loop \"$IMG\" \"$MNT\"\n"
+	"\n"
+	"echo '[4] /proc/partitions (expect loop0):'\n"
+	"cat /proc/partitions\n"
+	"\n"
+	"echo '[5] /proc/mounts (expect /dev/loop0):'\n"
+	"cat /proc/mounts\n"
+	"\n"
+	"echo '[6] write and read back a file'\n"
+	"echo 'loop_ok' > \"$MNT/hello.txt\"\n"
+	"cat \"$MNT/hello.txt\"\n"
+	"\n"
+	"echo '[7] umount'\n"
+	"umount \"$MNT\"\n"
+	"\n"
+	"echo '[8] /proc/partitions (loop0 gone):'\n"
+	"cat /proc/partitions\n"
+	"\n"
+	"echo '[9] check hello.txt is gone from $MNT'\n"
+	"if [ -e \"$MNT/hello.txt\" ]; then\n"
+	"  echo 'ERROR: hello.txt still exists after umount'\n"
+	"  exit 1\n"
+	"fi\n"
+	"\n"
+	"echo '[10] remount and verify persistence'\n"
+	"mount -o loop \"$IMG\" \"$MNT\"\n"
+	"cat \"$MNT/hello.txt\"\n"
+	"umount \"$MNT\"\n"
+	"\n"
+	"echo '--- PASS ---'\n";
+
 /* ── /proc/tests/<SuiteName> — read-only script ──────────────────────────── */
 
 /*
@@ -266,6 +319,29 @@ static const file_operations suite_fops = {
 	.read = suite_read,
 	.release = suite_release,
 };
+
+/* make_static_file — file whose content is a read-only string literal */
+static file *make_static_file(const char *content)
+{
+	unsigned length = strlen(content);
+	suite_script_t *ss = zalloc(sizeof(*ss));
+	ss->content = kmalloc(length + 1);
+	memcpy(ss->content, content, length + 1);
+	ss->length = length;
+
+	inode *node = zalloc(sizeof(*node));
+	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
+		       S_IXGRP | S_IXOTH;
+	node->i_size = length;
+	node->i_op = &tests_iops;
+	node->i_private = ss;
+
+	file *fp = zalloc(sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &suite_fops;
+	return fp;
+}
 
 static file *make_suite_file(const char *suite_name)
 {
@@ -349,10 +425,11 @@ static file *tests_open_root(super_block *sb, int flag)
 	file *fp;
 
 	/* ── Size calculation ── */
-	size += ROUND_UP(NAME_OFFSET() + 2); /* "."      (1 + NUL) */
-	size += ROUND_UP(NAME_OFFSET() + 3); /* ".."     (2 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 2); /* "."       (1 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 3); /* ".."      (2 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 7); /* ".runner" (6 + NUL) */
-	size += ROUND_UP(NAME_OFFSET() + 4); /* "all"    (3 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 4); /* "all"     (3 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 8); /* "loopdev" (7 + NUL) */
 
 	t = __ktest_start;
 	while (t < __ktest_end) {
@@ -380,6 +457,7 @@ static file *tests_open_root(super_block *sb, int flag)
 	FILL_ENTRY("..");
 	FILL_ENTRY(".runner");
 	FILL_ENTRY("all");
+	FILL_ENTRY("loopdev");
 
 	t = __ktest_start;
 	while (t < __ktest_end) {
@@ -423,6 +501,9 @@ static file *tests_open(super_block *sb, const char *path, int flag)
 
 	if (strcmp(name, ".runner") == 0)
 		return make_runner_file();
+
+	if (strcmp(name, "loopdev") == 0)
+		return make_static_file(loopdev_script);
 
 	if (strcmp(name, "all") == 0)
 		return make_suite_file("all");

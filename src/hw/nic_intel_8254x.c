@@ -225,7 +225,7 @@ static int nic_intel_8254x_init(void *_dev)
 	/* ── Read BAR0 ── */
 	uint32_t bar0 = pci_read_field(dev->pci_dev, PCI_BAR0, 4);
 	if (bar0 & 1) {
-		printk("e1000: BAR0 is I/O space — not supported\n");
+		printk("net: BAR0 is I/O space — not supported\n");
 		return -1;
 	}
 
@@ -259,7 +259,7 @@ static int nic_intel_8254x_init(void *_dev)
 		dev->mac_addr[i * 2] = (uint8_t)(w & 0xFF);
 		dev->mac_addr[i * 2 + 1] = (uint8_t)(w >> 8);
 	}
-	printk("e1000: MAC %02x:%02x:%02x:%02x:%02x:%02x\n", dev->mac_addr[0],
+	printk("net: MAC %02x:%02x:%02x:%02x:%02x:%02x\n", dev->mac_addr[0],
 	       dev->mac_addr[1], dev->mac_addr[2], dev->mac_addr[3],
 	       dev->mac_addr[4], dev->mac_addr[5]);
 
@@ -345,7 +345,7 @@ static int nic_intel_8254x_init(void *_dev)
 	e1000_wr(ctx, E1000_IMS, E1000_ICR_RXT0 | E1000_ICR_LSC);
 
 	g_e1000_ctx = ctx;
-	printk("e1000: initialized (BAR0=0x%x IRQ=%d)\n", ctx->mmio_base,
+	printk("net: initialized (BAR0=0x%x IRQ=%d)\n", ctx->mmio_base,
 	       ctx->irq_line);
 	return 0;
 }

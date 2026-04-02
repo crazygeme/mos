@@ -7,12 +7,12 @@
 #include <fs/mount.h>
 #include <ps/ps.h>
 #include <hw/hdd.h>
+#include <dev/loopdev.h>
 #include <hw/time.h>
 #include <stddef.h>
 #include <macro.h>
 #include <config.h>
 #include <ext4.h>
-#include <ext4_blockdev.h>
 
 unsigned fs_read_size = 0;
 unsigned fs_write_size = 0;
@@ -600,6 +600,7 @@ done:
 typedef struct {
 	char mp[PAGE_SIZE]; /* lwext4 mount point with trailing '/', e.g. "/mnt/" */
 	char devname[64]; /* partition name, e.g. "hda1" — used for remount */
+	char loop_name[16]; /* non-empty if mount auto-attached a loop device */
 } ext4_mount_info;
 
 static file *ext4_open(super_block *sb, const char *path, int flag)
@@ -626,9 +627,9 @@ static void ext4_release(super_block *sb)
 	ext4_mount_info *mi = sb->s_fs_info;
 
 	ext4_cache_write_back(mi->mp, false);
-	ext4_umount(mi->mp); /* calls hdd_bdev_close → frees bdev+bdif */
-	if (mi->devname[0])
-		ext4_device_unregister(mi->devname); /* clear dangling slot */
+	ext4_umount(mi->mp);
+	if (mi->loop_name[0])
+		loop_teardown(mi->loop_name);
 	free(mi);
 	kfree(sb);
 }
@@ -840,25 +841,44 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 				void *data)
 {
 	const char *dev_name;
+	char loop_auto[16]; /* non-empty if we auto-attached a loop device */
 	char mp[MAX_PATH];
 	size_t n;
 	bool read_only;
 	int i, ret;
+	super_block *sb;
 
 	if (!dev || !target)
 		return NULL;
 
-	/* Strip "/dev/" prefix — lwext4 wants the raw partition name */
+	memset(loop_auto, 0, sizeof(loop_auto));
+
+	/* Strip "/dev/" prefix — lwext4 wants the raw device name */
 	dev_name = (strncmp(dev, "/dev/", 5) == 0) ? dev + 5 : dev;
 
-	/* Verify the partition is known to the kernel */
+	/* 1. Check HDD partitions */
 	for (i = 0; i < hdd_partition_count; i++) {
 		if (strcmp(hdd_partitions[i].name, dev_name) == 0)
-			break;
+			goto dev_found;
 	}
-	if (i == hdd_partition_count)
-		return NULL;
 
+	/* 2. Check already-registered loop devices */
+	for (i = 0; i < LOOP_MAX_DEVS; i++) {
+		if (loop_devs[i].backing[0] &&
+		    strcmp(loop_devs[i].name, dev_name) == 0)
+			goto dev_found;
+	}
+
+	/* 3. Not a known block device — treat dev as a file path and auto-loop */
+	{
+		const char *ln = loop_setup(dev);
+		if (!ln)
+			return NULL;
+		strncpy(loop_auto, ln, sizeof(loop_auto) - 1);
+		dev_name = loop_auto;
+	}
+
+dev_found:
 	/* lwext4 requires the mount point to end with '/' */
 	strncpy(mp, target, sizeof(mp) - 2);
 	mp[sizeof(mp) - 2] = '\0';
@@ -870,29 +890,32 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 
 	read_only = (flags & MS_RDONLY) != 0;
 
-	/* Allocate a fresh bdev — always unregister first to clear any stale
-	 * slot left by a previous umount (hdd_bdev_close frees the bdev but
-	 * lwext4 keeps the dangling pointer until we clear it). */
-	{
-		struct ext4_blockdev *bdev = hdd_bdev_create(dev_name);
-		if (!bdev)
-			return NULL;
-		ext4_device_unregister(dev_name);
-		ext4_device_register(bdev, NULL, dev_name);
-	}
-
 	ret = ext4_mount(dev_name, mp, read_only);
-	if (ret != EOK)
+	if (ret != EOK) {
+		if (loop_auto[0])
+			loop_teardown(loop_auto);
 		return NULL;
+	}
 
 	if (!read_only)
 		ext4_cache_write_back(mp, true);
 
-	return ext4_new_sb(mp, dev_name);
+	sb = ext4_new_sb(mp, dev_name);
+
+	/* For auto-looped mounts: record for teardown and show /dev/loopN
+	 * in /proc/mounts (fs_do_mount won't overwrite a pre-set s_devname). */
+	if (loop_auto[0]) {
+		ext4_mount_info *mi = sb->s_fs_info;
+		strncpy(mi->loop_name, loop_auto, sizeof(mi->loop_name) - 1);
+		sprintf(sb->s_devname, "/dev/%s", loop_auto);
+	}
+
+	return sb;
 }
 
 static fs_type ext4_fs_type = { .name = "ext4", .get_sb = ext4_get_sb };
 static fs_type ext3_fs_type = { .name = "ext3", .get_sb = ext4_get_sb };
+static fs_type vfat_fs_type = { .name = "vfat", .get_sb = ext4_get_sb };
 
 /* =========================================================================
  * Boot-time root filesystem init
@@ -918,17 +941,10 @@ static int ext4_remount(super_block *sb, int flags)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
 	bool rdonly = (flags & MS_RDONLY) != 0;
-	struct ext4_blockdev *bdev;
 	int ret;
 
 	ext4_cache_write_back(mi->mp, false);
-	ext4_umount(mi->mp); /* calls hdd_bdev_close → frees old bdev+bdif */
-	ext4_device_unregister(mi->devname); /* clear dangling slot */
-
-	bdev = hdd_bdev_create(mi->devname);
-	if (!bdev)
-		return -ENOMEM;
-	ext4_device_register(bdev, NULL, mi->devname);
+	ext4_umount(mi->mp);
 
 	ret = ext4_mount(mi->devname, mi->mp, rdonly);
 	if (ret != EOK)
@@ -946,17 +962,16 @@ static void fs_mount_root(void)
 {
 	task_struct *cur = CURRENT_TASK();
 	const char *devname = hdd_partitions[0].name;
-	struct ext4_blockdev *bdev;
 
 	printk("mnt: Mount rootfs (ro)\n");
 
 	fs_register_type(&ext4_fs_type);
 	fs_register_type(&ext3_fs_type);
+	fs_register_type(&vfat_fs_type);
 	rmutex_init(&root_lock_);
 	cur->root = ext4_get(devname);
 
-	bdev = hdd_bdev_create(devname);
-	ext4_device_register(bdev, NULL, devname);
+	/* bdev already registered by found_partition at discovery time */
 	ext4_mount(devname, "/", true); /* read-only until init remounts rw */
 	ext4_mount_setup_locks("/", &root_lock);
 

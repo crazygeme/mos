@@ -14,6 +14,7 @@
 
 #include <mm/mm.h>
 #include <lib/klib.h>
+#include <lib/list.h>
 #include <config.h>
 #include <test/test.h>
 

@@ -613,15 +613,17 @@ static void kinit_userspace()
 		envp = user_envp;
 		strcpy(cur->user->cwd, "/root");
 
+		printk("mnt: Re-mount rootfs (rw)\n");
 		/* Remount root read-write (was mounted ro at boot). */
 		fs_do_mount(hdd_partitions[0].name, "/", "ext4", MS_REMOUNT,
 			    NULL);
 
 		/* Mount /proc — userspace expects it to be present. */
+		printk("mnt: Mounting proc on /proc\n");
 		fs_do_mount("proc", "/proc", "proc", 0, NULL);
 	}
 
-	printk("Now Bringup first user process %s\n", argv[0]);
+	printk("\033[32mNow bringup first user process %s\033[0m\n", argv[0]);
 
 	ps_update_tss(esp0);
 

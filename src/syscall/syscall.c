@@ -191,10 +191,10 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getsid, // 147 __NR_getsid
 	0, // 148 __NR_fdatasync
 	sys__sysctl, // 149 __NR__sysctl
-	0, // 150 __NR_mlock
-	0, // 151 __NR_munlock
-	0, // 152 __NR_mlockall
-	0, // 153 __NR_munlockall
+	sys_mlock, // 150 __NR_mlock
+	sys_munlock, // 151 __NR_munlock
+	sys_mlockall, // 152 __NR_mlockall
+	sys_munlockall, // 153 __NR_munlockall
 	0, // 154 __NR_sched_setparam
 	0, // 155 __NR_sched_getparam
 	0, // 156 __NR_sched_setscheduler

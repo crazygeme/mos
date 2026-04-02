@@ -45,4 +45,14 @@ extern dev_init_fn_t __devfs_init_end[];
 	static dev_init_fn_t __devfs_init_##fn \
 		__attribute__((used, section(".devfs_init"))) = (fn)
 
+/*
+ * dev_node_add   — create /dev/<name> as a device node (block or char).
+ * dev_node_remove — remove /dev/<name>.
+ *
+ * Can be called after devfs is initialised (KERNEL_INIT >= 6).
+ * Used by drivers that hotplug devices (e.g. loop devices).
+ */
+void dev_node_add(const char *name, unsigned mode, unsigned devno);
+void dev_node_remove(const char *name);
+
 #endif /* _DEV_DEV_H */

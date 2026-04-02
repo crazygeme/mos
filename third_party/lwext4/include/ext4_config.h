@@ -121,12 +121,12 @@ extern "C" {
 
 /**@brief   Maximum block device count*/
 #ifndef CONFIG_EXT4_BLOCKDEVS_COUNT
-#define CONFIG_EXT4_BLOCKDEVS_COUNT 2
+#define CONFIG_EXT4_BLOCKDEVS_COUNT 16
 #endif
 
 /**@brief   Maximum mountpoint count*/
 #ifndef CONFIG_EXT4_MOUNTPOINTS_COUNT
-#define CONFIG_EXT4_MOUNTPOINTS_COUNT 2
+#define CONFIG_EXT4_MOUNTPOINTS_COUNT 16
 #endif
 
 /**@brief   Include open flags from ext4_errno or standard library.*/

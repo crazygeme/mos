@@ -26,6 +26,7 @@ typedef struct {
 	void *aux; /* opaque handle passed to read/write */
 	int (*read)(void *aux, unsigned sector, void *buf, unsigned len);
 	int (*write)(void *aux, unsigned sector, void *buf, unsigned len);
+	struct ext4_blockdev *bdev; /* registered once at discovery, permanent */
 } hdd_partition_info;
 
 extern hdd_partition_info hdd_partitions[HDD_MAX_PARTITIONS];
@@ -35,13 +36,5 @@ void hdd_flush();
 
 /* Flush all partition caches and release block device resources. */
 void hdd_close(void);
-
-/*
- * hdd_bdev_create - allocate a fresh ext4_blockdev for devname (e.g. "hda1").
- * Must be followed by ext4_device_register() before ext4_mount().
- * After ext4_umount(), call ext4_device_unregister() to clear the stale slot.
- * Returns NULL if devname is unknown.
- */
-struct ext4_blockdev *hdd_bdev_create(const char *devname);
 
 #endif

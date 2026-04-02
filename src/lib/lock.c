@@ -84,7 +84,6 @@ static int lock_wake_one_locked(list_entry *wait_list)
 
 	entry = list_remove_tail(wait_list);
 	task = container_of(entry, task_struct, ps_list);
-	task->status = ps_ready;
 	ps_put_to_ready_queue(task);
 	return 1;
 }

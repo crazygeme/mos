@@ -50,7 +50,7 @@ int sys_uname(struct utsname *utname)
 	strcpy(utname->version, UTS_VERSION);
 	strcpy(utname->machine, UTS_MACHINE);
 	strcpy(utname->domain, UTS_NODENAME);
-	return 1;
+	return 0;
 }
 
 int sys_sethostname(const char *name, unsigned len)
@@ -434,6 +434,32 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	return ret;
 #endif
 	return -ENOSYS;
+}
+
+/* mlock/munlock/mlockall/munlockall — no-ops: we never swap, all pages resident */
+int sys_mlock(const void *addr, size_t len)
+{
+	(void)addr;
+	(void)len;
+	return 0;
+}
+
+int sys_munlock(const void *addr, size_t len)
+{
+	(void)addr;
+	(void)len;
+	return 0;
+}
+
+int sys_mlockall(int flags)
+{
+	(void)flags;
+	return 0;
+}
+
+int sys_munlockall(void)
+{
+	return 0;
 }
 
 int sys_query_module(const char *name, int which, void *buf, size_t bufsize,

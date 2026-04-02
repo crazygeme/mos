@@ -471,14 +471,22 @@ Finish:
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
 {
 	int i;
+	struct ext4_mountpoint *best = NULL;
+	size_t best_len = 0;
+
 	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT; ++i) {
+		size_t len;
 		if (!_mp[i].mounted)
 			continue;
 
-		if (!strncmp(_mp[i].name, path, strlen(_mp[i].name)))
-			return &_mp[i];
+		len = strlen(_mp[i].name);
+		if (len <= best_len)
+			continue;
+
+		if (!strncmp(_mp[i].name, path, len))
+			best = &_mp[i], best_len = len;
 	}
-	return NULL;
+	return best;
 }
 
 __unused static int __ext4_journal_start(const char *mount_point)

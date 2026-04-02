@@ -210,6 +210,26 @@ static super_operations dev_sops = {
  * Initialisation                                                       *
  * ------------------------------------------------------------------ */
 
+static super_block *devfs_sb;
+
+void dev_node_add(const char *name, unsigned mode, unsigned devno)
+{
+	char path[32];
+	if (!devfs_sb)
+		return;
+	sprintf(path, "/%s", name);
+	vfs_mknod(devfs_sb, path, mode, devno);
+}
+
+void dev_node_remove(const char *name)
+{
+	char path[32];
+	if (!devfs_sb)
+		return;
+	sprintf(path, "/%s", name);
+	vfs_umount(devfs_sb, path);
+}
+
 static void devfs_init(void)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -220,6 +240,7 @@ static void devfs_init(void)
 	strncpy(sb->s_devname, "devtmpfs", sizeof(sb->s_devname) - 1);
 	strncpy(sb->s_fstype, "devtmpfs", sizeof(sb->s_fstype) - 1);
 
+	devfs_sb = sb;
 	printk("mnt: Mounting devfs on /dev\n");
 	vfs_mount(cur->root, "/dev", sb);
 

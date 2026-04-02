@@ -13,7 +13,10 @@ typedef struct _dsr_node {
 
 void dsr_init();
 
-void dsr_add(dsr_callback fn, void *param);
+/* Returns 1 on success, 0 if the cache was exhausted and the DSR was dropped.
+ * Callers that perform hardware I/O must handle the 0 case to avoid leaving
+ * the device in a state where it will not generate further interrupts. */
+int dsr_add(dsr_callback fn, void *param);
 
 /* Drain all pending DSR callbacks inline. Called from _task_sched. */
 void dsr_drain();

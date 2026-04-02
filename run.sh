@@ -7,7 +7,7 @@ _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _verbose=""
 _logtofile="stdio"
-_vga="-vga std"
+_vga="-vga vmware"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _bash=""

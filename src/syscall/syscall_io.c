@@ -18,12 +18,15 @@
 #include <macro.h>
 #include "syscall_internal.h"
 
+#define SHOW_CHARS 128 /* how many chars to show in strace logs */
+
 static char *format_buffer(const char *buf, unsigned len)
 {
-	/* Format like strace: at most 128 chars, escape non-printables */
+	/* Format like strace: at most SHOW_CHARS chars, escape non-printables */
 	static const char hex[] = "0123456789abcdef";
-	char *tmp = malloc(4 * 32 + 6); /* '"' + 128*4 + '"' + "..." + NUL */
-	unsigned i, n = len < 32 ? len : 32;
+	char *tmp = malloc(4 * SHOW_CHARS +
+			   6); /* '"' + SHOW_CHARS*4 + '"' + "..." + NUL */
+	unsigned i, n = len < SHOW_CHARS ? len : SHOW_CHARS;
 	char *p = tmp;
 	*p++ = '"';
 	for (i = 0; buf && i < n; i++) {
@@ -56,7 +59,7 @@ static char *format_buffer(const char *buf, unsigned len)
 		}
 	}
 	*p++ = '"';
-	if (len > 32) {
+	if (len > SHOW_CHARS) {
 		*p++ = '.';
 		*p++ = '.';
 		*p++ = '.';

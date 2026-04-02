@@ -10,9 +10,11 @@
  * Sector → 1 KiB-block conversion: blocks = sectors / 2.
  */
 #include <hw/hdd.h>
+#include <dev/loopdev.h>
 #include "common.h"
 
 #define HDD_MAJOR 3
+#define LOOP_MAJOR 7
 
 /*
  * Disk-to-minor-base mapping (Linux IDE convention):
@@ -94,6 +96,15 @@ static void fill(proc_buf_t *pb)
 		proc_buf_printf(pb, "%4d %5d %9u %s\n", HDD_MAJOR,
 				base + part_number(pi->name), pi->size / 2,
 				pi->name);
+	}
+
+	/* Loop devices — one row each (no synthetic whole-disk row) */
+	for (i = 0; i < LOOP_MAX_DEVS; i++) {
+		if (!loop_devs[i].name[0])
+			continue;
+		proc_buf_printf(pb, "%4d %5d %9llu %s\n", LOOP_MAJOR, i,
+				loop_devs[i].size_bytes / 1024,
+				loop_devs[i].name);
 	}
 }
 

@@ -147,9 +147,12 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	}
 
 	if (ret == 0) {
-		/* Record mount metadata on the superblock for /proc/mounts. */
-		strncpy(sb->s_devname, dev ? dev : type,
-			sizeof(sb->s_devname) - 1);
+		/* Record mount metadata on the superblock for /proc/mounts.
+		 * Don't overwrite s_devname if get_sb already set it
+		 * (e.g. auto-looped mounts set it to "/dev/loopN"). */
+		if (!sb->s_devname[0])
+			strncpy(sb->s_devname, dev ? dev : type,
+				sizeof(sb->s_devname) - 1);
 		strncpy(sb->s_fstype, type, sizeof(sb->s_fstype) - 1);
 		sb->s_flags = (int)flags;
 	}

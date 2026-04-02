@@ -78,6 +78,7 @@ static file *null_cdev_open(unsigned rdev, int flag)
 
 static void null_dev_register(super_block *dev_sb)
 {
+	printk("dev: registered /dev/null\n");
 	cdev_register(S_IFCHR, NULL_MAJOR, NULL_MINOR, 1, null_cdev_open);
 	vfs_mknod(dev_sb, "/null", S_IFCHR | 0666,
 		  MKDEV(NULL_MAJOR, NULL_MINOR));

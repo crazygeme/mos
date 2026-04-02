@@ -96,6 +96,10 @@ int sys_statfs(const char *path, struct statfs *buf);
 int sys_fstatfs(int fd, struct statfs *buf);
 int sys_flock(int fd, int operation);
 int sys__sysctl(void *args);
+int sys_mlock(const void *addr, size_t len);
+int sys_munlock(const void *addr, size_t len);
+int sys_mlockall(int flags);
+int sys_munlockall(void);
 
 /*
  * syscall_proc.c

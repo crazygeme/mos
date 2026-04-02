@@ -966,9 +966,11 @@ static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 
 static int hdd_bdev_close(struct ext4_blockdev *bdev)
 {
-	kfree(bdev->bdif->ph_bbuf);
-	kfree(bdev->bdif);
-	kfree(bdev);
+	/* No-op: bdev+bdif are owned by hdd_partition_info and live
+	 * for the lifetime of the partition, like Linux's block_device.
+	 * lwext4 calls this via ph_refctr; we simply allow remount by
+	 * letting ph_refctr drop to 0 without freeing anything. */
+	(void)bdev;
 	return 0;
 }
 
@@ -1043,6 +1045,9 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 
 	if (hdd_partition_count < HDD_MAX_PARTITIONS) {
 		hdd_partition_info *pi = &hdd_partitions[hdd_partition_count++];
+		struct ext4_blockdev_iface *bdif;
+		struct ext4_blockdev *bdev;
+
 		strcpy(pi->name, name);
 		pi->size = size;
 		pi->part_type = part_type;
@@ -1054,52 +1059,31 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 		pi->read = partition_read;
 		pi->write = partition_write;
 #endif
+
+		/* Allocate and register the block device once, permanently.
+		 * Like Linux drivers/block: the block_device lives as long as
+		 * the partition.  hdd_bdev_close is a no-op so lwext4's
+		 * ph_refctr cycles without ever freeing this struct. */
+		bdif = (struct ext4_blockdev_iface *)kmalloc(sizeof(*bdif));
+		bdev = (struct ext4_blockdev *)kmalloc(sizeof(*bdev));
+		memset(bdif, 0, sizeof(*bdif));
+		bdif->open = hdd_bdev_open;
+		bdif->bread = hdd_bdev_bread;
+		bdif->bwrite = hdd_bdev_bwrite;
+		bdif->close = hdd_bdev_close;
+		bdif->lock = hdd_bdev_lock;
+		bdif->unlock = hdd_bdev_unlock;
+		bdif->ph_bsize = BLOCK_SECTOR_SIZE;
+		bdif->ph_bcnt = pi->size;
+		bdif->ph_bbuf = (uint8_t *)kmalloc(BLOCK_SECTOR_SIZE);
+		memset(bdev, 0, sizeof(*bdev));
+		bdev->bdif = bdif;
+		bdev->part_offset = 0;
+		bdev->part_size = (uint64_t)BLOCK_SECTOR_SIZE * pi->size;
+		bdev->aux = pi->aux;
+		pi->bdev = bdev;
+		ext4_device_register(bdev, NULL, name);
 	}
-}
-
-/*
- * hdd_bdev_create - allocate and initialise a fresh ext4_blockdev for the
- * named partition.  The caller must call ext4_device_register() and
- * ext4_mount() afterwards.  On unmount, lwext4 calls hdd_bdev_close() which
- * frees the bdev; the caller must then call ext4_device_unregister() to clear
- * the stale pointer before re-mounting.
- *
- * Returns NULL if devname is not a known partition.
- */
-struct ext4_blockdev *hdd_bdev_create(const char *devname)
-{
-	int i;
-	hdd_partition_info *pi = NULL;
-	struct ext4_blockdev_iface *bdif;
-	struct ext4_blockdev *bdev;
-
-	for (i = 0; i < hdd_partition_count; i++) {
-		if (strcmp(hdd_partitions[i].name, devname) == 0) {
-			pi = &hdd_partitions[i];
-			break;
-		}
-	}
-	if (!pi)
-		return NULL;
-
-	bdif = (struct ext4_blockdev_iface *)kmalloc(sizeof(*bdif));
-	bdev = (struct ext4_blockdev *)kmalloc(sizeof(*bdev));
-	memset(bdif, 0, sizeof(*bdif));
-	bdif->open = hdd_bdev_open;
-	bdif->bread = hdd_bdev_bread;
-	bdif->bwrite = hdd_bdev_bwrite;
-	bdif->close = hdd_bdev_close;
-	bdif->lock = hdd_bdev_lock;
-	bdif->unlock = hdd_bdev_unlock;
-	bdif->ph_bsize = BLOCK_SECTOR_SIZE;
-	bdif->ph_bcnt = pi->size;
-	bdif->ph_bbuf = (uint8_t *)kmalloc(BLOCK_SECTOR_SIZE);
-	memset(bdev, 0, sizeof(*bdev));
-	bdev->bdif = bdif;
-	bdev->part_offset = 0;
-	bdev->part_size = (uint64_t)BLOCK_SECTOR_SIZE * pi->size;
-	bdev->aux = pi->aux;
-	return bdev;
 }
 
 static void read_partition_table(ata_disk *disk, unsigned capacity,

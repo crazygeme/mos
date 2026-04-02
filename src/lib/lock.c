@@ -246,6 +246,53 @@ void mutex_unlock(mutex_t *m)
 }
 
 /* ===========================================================================
+ * Recursive mutex (rmutex_t)
+ * ===========================================================================*/
+
+void rmutex_init(rmutex_t *m)
+{
+	lock_init((lock_base *)&m->base, 0);
+	m->holder = 0;
+	m->depth = 0;
+	m->holder_func = NULL;
+}
+
+void _rmutex_lock(rmutex_t *m, const char *func)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	/* Re-entrant: same task locks again, just deepen. */
+	if (m->holder == cur->psid) {
+		m->depth++;
+		return;
+	}
+
+	lock_base_acquire((lock_base *)&m->base, func);
+	m->holder = cur->psid;
+	m->depth = 1;
+	m->holder_func = func;
+}
+
+void rmutex_unlock(rmutex_t *m)
+{
+	task_struct *cur = CURRENT_TASK();
+	int irq;
+
+	if (m->holder != cur->psid)
+		DIE();
+
+	if (--m->depth > 0)
+		return;
+
+	m->holder = 0;
+	m->holder_func = NULL;
+
+	spinlock_lock(&m->base.wait_lock, &irq);
+	lock_base_release_locked((lock_base *)&m->base);
+	spinlock_unlock(&m->base.wait_lock, irq);
+}
+
+/* ===========================================================================
  * Readers-writer lock (rwlock_t)
  *
  * Write-preferring policy:

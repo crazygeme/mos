@@ -701,11 +701,94 @@ int sys_fchdir(int fd)
 
 int sys_flock(int fd, int operation)
 {
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+	inode *in;
+	int op_type = operation & ~LOCK_NB;
+	int nonblock = operation & LOCK_NB;
+	int irq, ret = 0;
+	int conflict;
+	int other_sh;
+
 	if (TestControl.verbos)
 		klog("flock(%d, %d)\n", fd, operation);
 
-	/* No real flock infrastructure; pretend all locks succeed. */
-	return 0;
+	if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
+		return -EBADF;
+
+	fp = cur->fds[fd].fp;
+	in = fp->f_inode;
+
+	if (!in)
+		return -EINVAL;
+
+	/* Lazy-init: first caller initialises the inode's flock fields. */
+	if (!in->i_flock_inited) {
+		spinlock_init(&in->i_flock_lock);
+		list_init(&in->i_flock_wait);
+		in->i_flock_inited = 1;
+	}
+
+	spinlock_lock(&in->i_flock_lock, &irq);
+
+	if (op_type == LOCK_UN) {
+		if (fp->f_flock == LOCK_SH)
+			in->i_flock_sh--;
+		else if (fp->f_flock == LOCK_EX)
+			in->i_flock_ex_owner = NULL;
+		fp->f_flock = 0;
+		flock_wake_all_locked(in);
+		goto out;
+	}
+
+	if (op_type != LOCK_SH && op_type != LOCK_EX) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+retry:
+	if (op_type == LOCK_SH) {
+		/* Conflict: someone else holds EX */
+		conflict = (in->i_flock_ex_owner != NULL &&
+			    in->i_flock_ex_owner != fp);
+	} else {
+		/* Conflict: someone else holds EX, or other SH holders exist */
+		other_sh = in->i_flock_sh - (fp->f_flock == LOCK_SH ? 1 : 0);
+		conflict = (in->i_flock_ex_owner != NULL &&
+			    in->i_flock_ex_owner != fp) ||
+			   (other_sh > 0);
+	}
+
+	if (conflict) {
+		if (nonblock) {
+			ret = -EWOULDBLOCK;
+			goto out;
+		}
+		ps_put_to_wait_queue(cur, &in->i_flock_wait, __func__);
+		spinlock_unlock(&in->i_flock_lock, irq);
+		task_sched();
+		spinlock_lock(&in->i_flock_lock, &irq);
+		goto retry;
+	}
+
+	/* Release whatever lock we currently hold before acquiring the new one. */
+	if (fp->f_flock == LOCK_SH)
+		in->i_flock_sh--;
+	else if (fp->f_flock == LOCK_EX)
+		in->i_flock_ex_owner = NULL;
+
+	/* Acquire the requested lock. */
+	if (op_type == LOCK_SH) {
+		in->i_flock_sh++;
+		fp->f_flock = LOCK_SH;
+	} else {
+		in->i_flock_ex_owner = fp;
+		fp->f_flock = LOCK_EX;
+	}
+
+out:
+	spinlock_unlock(&in->i_flock_lock, irq);
+	return ret;
 }
 
 int sys__sysctl(void *args)

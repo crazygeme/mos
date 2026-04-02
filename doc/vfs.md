@@ -380,7 +380,77 @@ After this, `cur->root` is the root `super_block` for the `kmain_process` task. 
 
 ---
 
-## 6. Lifecycle summary
+## 6. Loop block device (`src/dev/loop.c`)
+
+**Source:** `src/dev/loop.c`  
+**Header:** `include/dev/loopdev.h`
+
+The loop device wraps a regular file as a lwext4 block device, enabling image files to be mounted as if they were physical partitions. Up to `LOOP_MAX_DEVS = 8` slots are supported (`/dev/loop0`..`/dev/loop7`), registered at boot with major number 7.
+
+### Data structures
+
+```c
+/* Public descriptor (one per slot) — exposed via loop_devs[] */
+typedef struct {
+    char     name[16];      /* "loop0" … "loop7"; empty = slot free */
+    char     backing[256];  /* absolute path of backing file        */
+    uint64_t size_bytes;
+} loop_dev_info;
+
+/* Internal per-slot state */
+typedef struct {
+    file                    *fp;    /* open file backing the device  */
+    struct ext4_blockdev_iface bdif; /* lwext4 block interface       */
+    struct ext4_blockdev    bdev;   /* lwext4 block device           */
+} loop_device;
+```
+
+The lwext4 bread/bwrite callbacks translate block-number requests into `f_fop->read`/`f_fop->write` calls on the backing `file *`, using `blk_id * 512` as the byte offset.
+
+### Public API
+
+| Function              | Description                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `loop_setup(path)`    | Open `path`, attach it to the first free slot, register with lwext4. Returns the device name (e.g. `"loop0"`) or `NULL`. |
+| `loop_teardown(name)` | Unregister from lwext4, close the backing file, free the ph_bbuf. Must not be called while the device is still mounted.  |
+
+### Usage modes
+
+**Auto-loop (via `mount`):**
+
+When `ext4_get_sb` is called with a `dev` path that is neither a known HDD partition nor an already-registered loop device, it treats `dev` as a file path and calls `loop_setup(dev)` automatically:
+
+```
+mount("/path/to/img", "/mnt", "ext3", 0, NULL)
+  └─ ext4_get_sb: dev not found in hdd_partitions or loop_devs
+       └─ loop_setup("/path/to/img") → "loop0"
+       └─ ext4_mount("loop0", "/mnt/", false)
+       └─ sb->s_devname = "/dev/loop0"   (shown in /proc/mounts)
+       └─ mi->loop_name = "loop0"        (for teardown on umount)
+```
+
+On umount, `ext4_mount_info.loop_name` is checked and `loop_teardown` is called automatically.
+
+**Manual (`losetup`-compatible):**
+
+```
+open("/dev/loop0", O_RDWR)          → loop_cdev_open (major=7)
+ioctl(fd, LOOP_SET_FD, img_fd)      → loop_attach(minor, img_fp, NULL)
+mount("/dev/loop0", "/mnt", "ext3") → ext4_get_sb finds loop_devs[0]
+ioctl(fd, LOOP_CLR_FD, 0)          → loop_detach(minor)
+```
+
+Supported ioctls: `LOOP_SET_FD`, `LOOP_CLR_FD`, `LOOP_GET_STATUS`, `LOOP_SET_STATUS`, `LOOP_GET_STATUS64`, `LOOP_SET_STATUS64`.
+
+### Boot registration
+
+`loop_dev_register` runs via `DEV_INIT`:
+1. Calls `cdev_register(S_IFBLK, 7, 0, LOOP_MAX_DEVS, loop_cdev_open)` to register the character device handler.
+2. Creates `/dev/loop0`..`/dev/loop7` in devtmpfs via `vfs_mknod`.
+
+---
+
+## 7. Lifecycle summary
 
 ```
 boot (KERNEL_INIT 2)

@@ -6,8 +6,6 @@
 #include <errno.h>
 #include <config.h>
 
-#define TICK_MS (1000 / HZ)
-
 /*
  * Generic 4-phase wait loop used by both poll and select.
  *

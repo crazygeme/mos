@@ -458,6 +458,9 @@ int sys_symlink(const char *path1, const char *path2)
 	return ret;
 }
 
+/* defined in src/net/sock_un.c */
+void unix_ns_remove_path(const char *path);
+
 int sys_unlink(const char *_name)
 {
 	char *name = name_get();
@@ -472,6 +475,12 @@ int sys_unlink(const char *_name)
 
 	if (S_ISDIR(s.st_mode)) {
 		ret = -EISDIR;
+		goto done;
+	}
+
+	if (S_ISSOCK(s.st_mode)) {
+		unix_ns_remove_path(name);
+		ret = vfs_umount(cur->root, name);
 		goto done;
 	}
 

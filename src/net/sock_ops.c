@@ -20,6 +20,26 @@
 
 int do_socket(int domain, int type, int protocol)
 {
+	if (domain == AF_UNIX) {
+		if (type != SOCK_STREAM && type != SOCK_DGRAM)
+			return -EPROTONOSUPPORT;
+		if (protocol != 0)
+			return -EPROTONOSUPPORT;
+		mos_sock *sk = zalloc(sizeof(*sk));
+		if (!sk)
+			return -ENOMEM;
+		sk->domain = AF_UNIX;
+		sk->type = type;
+		sk->state = SS_UNCONNECTED;
+		spinlock_init(&sk->rxbuf_lock);
+		int fd = sock_to_fd(sk);
+		if (fd < 0) {
+			free(sk);
+			return -ENOMEM;
+		}
+		return fd;
+	}
+
 	if (domain != AF_INET)
 		return -EAFNOSUPPORT;
 	if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_RAW)
@@ -76,65 +96,22 @@ int do_socket(int domain, int type, int protocol)
 	return fd;
 }
 
-/* ── do_socketpair ───────────────────────────────────────────────────────── */
-
-int do_socketpair(int domain, int type, int protocol, int sv[2])
-{
-	if (domain != AF_UNIX)
-		return -EAFNOSUPPORT;
-	if (type != SOCK_STREAM && type != SOCK_DGRAM)
-		return -EPROTONOSUPPORT;
-	if (protocol != 0)
-		return -EPROTONOSUPPORT;
-
-	mos_sock *a = zalloc(sizeof(*a));
-	mos_sock *b = zalloc(sizeof(*b));
-	if (!a || !b) {
-		free(a);
-		free(b);
-		return -ENOMEM;
-	}
-
-	a->domain = b->domain = domain;
-	a->type = b->type = type;
-	a->protocol = b->protocol = 0;
-	a->state = b->state = SS_CONNECTED;
-	a->unix_peer = b;
-	b->unix_peer = a;
-	spinlock_init(&a->rxbuf_lock);
-	spinlock_init(&b->rxbuf_lock);
-
-	int fd0 = sock_to_fd(a);
-	if (fd0 < 0) {
-		free(a);
-		free(b);
-		return -ENOMEM;
-	}
-
-	int fd1 = sock_to_fd(b);
-	if (fd1 < 0) {
-		fs_close(fd0); /* releases a; also clears b->unix_peer */
-		free(b);
-		return -ENOMEM;
-	}
-
-	sv[0] = fd0;
-	sv[1] = fd1;
-	return 0;
-}
-
 /* ── do_bind ─────────────────────────────────────────────────────────────── */
 
-int do_bind(int fd, const struct sockaddr_in *addr, unsigned addrlen)
+int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
-	(void)addrlen;
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 
+	if (addr->sa_family == AF_UNIX)
+		return unix_bind(sk, (const struct sockaddr_un *)addr, addrlen);
+
+	/* AF_INET */
+	const struct sockaddr_in *in = (const struct sockaddr_in *)addr;
 	ip_addr_t ip;
-	ip4_addr_set_u32(ip_2_ip4(&ip), addr->sin_addr.s_addr);
-	u16_t port = lwip_ntohs(addr->sin_port);
+	ip4_addr_set_u32(ip_2_ip4(&ip), in->sin_addr.s_addr);
+	u16_t port = lwip_ntohs(in->sin_port);
 
 	err_t e;
 	if (sk->type == SOCK_STREAM) {
@@ -152,28 +129,32 @@ int do_bind(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 	if (e != ERR_OK)
 		return (e == ERR_USE) ? -EADDRINUSE : -EINVAL;
 
-	sk->local = *addr;
+	sk->local = *in;
 	return 0;
 }
 
 /* ── do_connect ──────────────────────────────────────────────────────────── */
 
-int do_connect(int fd, const struct sockaddr_in *addr, unsigned addrlen)
+int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
-	(void)addrlen;
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 
+	if (addr->sa_family == AF_UNIX)
+		return unix_connect(sk, (const struct sockaddr_un *)addr,
+				    addrlen);
+
+	const struct sockaddr_in *in = (const struct sockaddr_in *)addr;
 	ip_addr_t ip;
-	ip4_addr_set_u32(ip_2_ip4(&ip), addr->sin_addr.s_addr);
-	u16_t port = lwip_ntohs(addr->sin_port);
+	ip4_addr_set_u32(ip_2_ip4(&ip), in->sin_addr.s_addr);
+	u16_t port = lwip_ntohs(in->sin_port);
 
 	if (sk->type == SOCK_RAW) {
 		err_t e = raw_connect(sk->raw, &ip);
 		if (e != ERR_OK)
 			return -EINVAL;
-		sk->peer = *addr;
+		sk->peer = *in;
 		sk->state = SS_CONNECTED;
 		return 0;
 	}
@@ -182,7 +163,7 @@ int do_connect(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 		err_t e = udp_connect(sk->udp, &ip, port);
 		if (e != ERR_OK)
 			return -EINVAL;
-		sk->peer = *addr;
+		sk->peer = *in;
 		sk->state = SS_CONNECTED;
 		return 0;
 	}
@@ -207,7 +188,7 @@ int do_connect(int fd, const struct sockaddr_in *addr, unsigned addrlen)
 	if (sk->state != SS_CONNECTED)
 		return sk->err ? sk->err : -ECONNREFUSED;
 
-	sk->peer = *addr;
+	sk->peer = *in;
 	return 0;
 }
 
@@ -218,6 +199,8 @@ int do_listen(int fd, int backlog)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_UNIX)
+		return unix_listen(sk, backlog);
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
 
@@ -236,11 +219,13 @@ int do_listen(int fd, int backlog)
 
 /* ── do_accept ───────────────────────────────────────────────────────────── */
 
-int do_accept(int fd, struct sockaddr_in *addr, unsigned *addrlen)
+int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_UNIX)
+		return unix_accept(sk, addr, addrlen);
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
 
@@ -273,10 +258,11 @@ int do_accept(int fd, struct sockaddr_in *addr, unsigned *addrlen)
 	nsk->peer.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->remote_ip);
 
 	if (addr && addrlen) {
-		unsigned copy = *addrlen < sizeof(*addr) ? *addrlen :
-							   sizeof(*addr);
+		unsigned copy = *addrlen < sizeof(nsk->peer) ?
+					*addrlen :
+					sizeof(nsk->peer);
 		memcpy(addr, &nsk->peer, copy);
-		*addrlen = sizeof(*addr);
+		*addrlen = sizeof(nsk->peer);
 	}
 
 	int nfd = sock_to_fd(nsk);
@@ -290,27 +276,53 @@ int do_accept(int fd, struct sockaddr_in *addr, unsigned *addrlen)
 
 /* ── do_getsockname / do_getpeername ─────────────────────────────────────── */
 
-int do_getsockname(int fd, struct sockaddr_in *addr, unsigned *addrlen)
+int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
-	unsigned copy = *addrlen < sizeof(*addr) ? *addrlen : sizeof(*addr);
+
+	if (sk->domain == AF_UNIX) {
+		struct sockaddr_un *un = (struct sockaddr_un *)addr;
+		unsigned copy = *addrlen < sizeof(*un) ? *addrlen : sizeof(*un);
+		un->sun_family = AF_UNIX;
+		strncpy(un->sun_path, sk->unix_path, UNIX_PATH_MAX - 1);
+		memcpy(addr, un, copy);
+		*addrlen = sizeof(*un);
+		return 0;
+	}
+
+	unsigned copy = *addrlen < sizeof(sk->local) ? *addrlen :
+						       sizeof(sk->local);
 	memcpy(addr, &sk->local, copy);
-	*addrlen = sizeof(*addr);
+	*addrlen = sizeof(sk->local);
 	return 0;
 }
 
-int do_getpeername(int fd, struct sockaddr_in *addr, unsigned *addrlen)
+int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
 		return -ENOTCONN;
-	unsigned copy = *addrlen < sizeof(*addr) ? *addrlen : sizeof(*addr);
+
+	if (sk->domain == AF_UNIX) {
+		struct sockaddr_un *un = (struct sockaddr_un *)addr;
+		unsigned copy = *addrlen < sizeof(*un) ? *addrlen : sizeof(*un);
+		un->sun_family = AF_UNIX;
+		strncpy(un->sun_path,
+			sk->unix_peer ? sk->unix_peer->unix_path : "",
+			UNIX_PATH_MAX - 1);
+		memcpy(addr, un, copy);
+		*addrlen = sizeof(*un);
+		return 0;
+	}
+
+	unsigned copy = *addrlen < sizeof(sk->peer) ? *addrlen :
+						      sizeof(sk->peer);
 	memcpy(addr, &sk->peer, copy);
-	*addrlen = sizeof(*addr);
+	*addrlen = sizeof(sk->peer);
 	return 0;
 }
 
@@ -452,6 +464,19 @@ int do_shutdown(int fd, int how)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+
+	if (sk->domain == AF_UNIX) {
+		(void)how;
+		mos_sock *peer = sk->unix_peer;
+		if (peer) {
+			peer->unix_peer = NULL;
+			peer->state = SS_DISCONNECTING;
+			sock_wakeup(peer);
+		}
+		sk->state = SS_DISCONNECTING;
+		return 0;
+	}
+
 	if (sk->type == SOCK_RAW) {
 		raw_disconnect(sk->raw);
 		sk->state = SS_UNCONNECTED;

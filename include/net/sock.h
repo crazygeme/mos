@@ -39,12 +39,12 @@ void sock_raw_recv_setup(struct raw_pcb *pcb, mos_sock *sk);
 
 int do_socket(int domain, int type, int protocol);
 int do_socketpair(int domain, int type, int protocol, int sv[2]);
-int do_bind(int fd, const struct sockaddr_in *addr, unsigned addrlen);
-int do_connect(int fd, const struct sockaddr_in *addr, unsigned addrlen);
+int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen);
+int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen);
 int do_listen(int fd, int backlog);
-int do_accept(int fd, struct sockaddr_in *addr, unsigned *addrlen);
-int do_getsockname(int fd, struct sockaddr_in *addr, unsigned *addrlen);
-int do_getpeername(int fd, struct sockaddr_in *addr, unsigned *addrlen);
+int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen);
+int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen);
+int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen);
 int do_send(int fd, const void *buf, unsigned len, int flags);
 int do_recv(int fd, void *buf, unsigned len, int flags);
 int do_sendto(int fd, const void *buf, unsigned len, int flags,
@@ -61,5 +61,18 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 int do_sendmsg(int fd, const struct msghdr *msg, int flags);
 int do_recvmsg(int fd, struct msghdr *msg, int flags);
+
+/* ── AF_UNIX operations (sock_un.c) ─────────────────────────────────────── */
+
+struct super_block;
+
+int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen);
+int unix_listen(mos_sock *sk, int backlog);
+int unix_connect(mos_sock *sk, const struct sockaddr_un *addr,
+		 unsigned addrlen);
+int unix_accept(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen);
+void unix_release(mos_sock *sk);
+/* Remove a path from the Unix namespace; called by sys_unlink on socket files */
+void unix_ns_remove_path(const char *path);
 
 #endif /* _NET_SOCK_H */

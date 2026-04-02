@@ -286,12 +286,7 @@ static int sock_release(file *fp)
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
 	if (sk->domain == AF_UNIX) {
-		mos_sock *unix_peer = sk->unix_peer;
-		if (unix_peer) {
-			unix_peer->unix_peer = NULL;
-			unix_peer->state = SS_DISCONNECTING;
-			sock_wakeup(unix_peer);
-		}
+		unix_release(sk);
 	} else if (sk->type == SOCK_RAW) {
 		if (sk->raw)
 			raw_remove(sk->raw);

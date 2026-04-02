@@ -14,13 +14,12 @@ int sys_socketcall(int call, unsigned long *args)
 		return do_socket((int)args[0], (int)args[1], (int)args[2]);
 
 	case SYS_BIND:
-		return do_bind((int)args[0],
-			       (const struct sockaddr_in *)args[1],
+		return do_bind((int)args[0], (const struct sockaddr *)args[1],
 			       (unsigned)args[2]);
 
 	case SYS_CONNECT:
 		return do_connect((int)args[0],
-				  (const struct sockaddr_in *)args[1],
+				  (const struct sockaddr *)args[1],
 				  (unsigned)args[2]);
 
 	case SYS_LISTEN:
@@ -28,17 +27,15 @@ int sys_socketcall(int call, unsigned long *args)
 
 	case SYS_ACCEPT:
 	case SYS_ACCEPT4:
-		return do_accept((int)args[0], (struct sockaddr_in *)args[1],
+		return do_accept((int)args[0], (struct sockaddr *)args[1],
 				 (unsigned *)args[2]);
 
 	case SYS_GETSOCKNAME:
-		return do_getsockname((int)args[0],
-				      (struct sockaddr_in *)args[1],
+		return do_getsockname((int)args[0], (struct sockaddr *)args[1],
 				      (unsigned *)args[2]);
 
 	case SYS_GETPEERNAME:
-		return do_getpeername((int)args[0],
-				      (struct sockaddr_in *)args[1],
+		return do_getpeername((int)args[0], (struct sockaddr *)args[1],
 				      (unsigned *)args[2]);
 
 	case SYS_SOCKETPAIR:

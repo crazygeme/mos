@@ -69,6 +69,13 @@ struct sockaddr_in {
 	uint8_t sin_zero[8];
 };
 
+#define UNIX_PATH_MAX 108
+
+struct sockaddr_un {
+	sa_family_t sun_family; /* AF_UNIX */
+	char sun_path[UNIX_PATH_MAX]; /* pathname */
+};
+
 /* ── ioctl request codes ────────────────────────────────────────────────────── */
 #define FIONREAD 0x541B /* bytes available to read            */
 #define FIONBIO 0x5421 /* set/clear non-blocking             */
@@ -287,6 +294,21 @@ typedef struct _mos_sock {
 
 	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
 	struct _mos_sock *unix_peer;
+
+	/*
+	 * AF_UNIX named socket: filesystem path this socket is bound to.
+	 * Empty string for anonymous sockets (socketpair, accepted sockets
+	 * where only the server side carries the listener's name for getpeer).
+	 */
+	char unix_path[UNIX_PATH_MAX];
+
+	/*
+	 * AF_UNIX listen: queue of server-side mos_sock* ready for accept().
+	 * Filled by unix_connect(), drained by unix_accept().
+	 */
+	struct _mos_sock *unix_accept_queue[SOCK_ACCEPT_BACKLOG];
+	int unix_accept_head;
+	int unix_accept_tail;
 
 	/*
 	 * Protects rx_head, rx_tail, and rxbuf for AF_UNIX sockets.

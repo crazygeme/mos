@@ -113,6 +113,13 @@ struct _inode {
 	uint64_t i_size;
 	const inode_operations *i_op;
 	void *i_private;
+
+	/* flock state — lazily initialised on first sys_flock call */
+	int i_flock_inited;
+	file *i_flock_ex_owner; /* file * holding LOCK_EX, NULL if none */
+	int i_flock_sh; /* number of LOCK_SH holders */
+	list_entry i_flock_wait; /* tasks sleeping in sys_flock */
+	spinlock_t i_flock_lock; /* guards all i_flock_* fields */
 };
 
 /*
@@ -126,6 +133,7 @@ struct _file {
 	unsigned f_count;
 	unsigned f_mode; /* O_RDONLY / O_WRONLY / O_RDWR (set by fs_open) */
 	char *f_name;
+	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
 
 typedef struct _file_descriptor {
@@ -156,6 +164,12 @@ struct linux_dirent64 {
 #define MAX_FD ((PAGE_SIZE) / sizeof(file_descriptor))
 
 int resolve_path(const char *old, char *new);
+
+/* Wake all tasks sleeping on @in's flock wait queue.  Caller holds i_flock_lock. */
+void flock_wake_all_locked(inode *in);
+/* Release any flock held by @f; wakes blocked waiters.  Called by fs_put_file
+ * when the last reference to an open file description is dropped. */
+void fs_flock_release(file *f);
 
 /* DAC permission check: returns 0 if allowed, -EACCES if denied */
 int fs_check_perm(const struct stat *s, int mask);

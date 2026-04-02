@@ -369,9 +369,49 @@ int fs_dup2(int fd, int newfd)
 	return ret;
 }
 
+/*
+ * Wake every task waiting on @in's flock queue.
+ * Caller must hold in->i_flock_lock.
+ */
+void flock_wake_all_locked(inode *in)
+{
+	while (!list_is_empty(&in->i_flock_wait)) {
+		list_entry *e = list_remove_tail(&in->i_flock_wait);
+		task_struct *t = container_of(e, task_struct, ps_list);
+		t->status = ps_ready;
+		ps_put_to_ready_queue_unsafe(t);
+	}
+}
+
+/*
+ * Release the flock held by @f (if any) and wake all waiters.
+ * Safe to call with f->f_flock == 0 (no-op).
+ * Called by fs_put_file when the last fd referencing @f is closed.
+ */
+void fs_flock_release(file *f)
+{
+	inode *in = f->f_inode;
+	int irq;
+
+	if (!f->f_flock || !in)
+		return;
+
+	/* i_flock_lock is guaranteed initialised: sys_flock ran first. */
+	spinlock_lock(&in->i_flock_lock, &irq);
+	if (f->f_flock == LOCK_SH) {
+		in->i_flock_sh--;
+	} else { /* LOCK_EX */
+		in->i_flock_ex_owner = NULL;
+	}
+	f->f_flock = 0;
+	flock_wake_all_locked(in);
+	spinlock_unlock(&in->i_flock_lock, irq);
+}
+
 int fs_put_file(file *f)
 {
 	if (__sync_add_and_fetch(&f->f_count, -1) == 0) {
+		fs_flock_release(f);
 		if (f->f_name)
 			free(f->f_name);
 		if (f->f_fop && f->f_fop->release)

@@ -253,7 +253,10 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 				delivered = -ETIMEDOUT;
 				goto done;
 			}
-			sock_wait(sk, deadline);
+			if (sock_wait(sk, deadline) < 0) {
+				delivered = -EINTR;
+				goto done;
+			}
 		}
 		u16_t dlen;
 		rx_read(sk, &dlen, sizeof(dlen));
@@ -306,7 +309,10 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 			delivered = -ETIMEDOUT;
 			goto done;
 		}
-		sock_wait(sk, deadline);
+		if (sock_wait(sk, deadline) < 0) {
+			delivered = -EINTR;
+			goto done;
+		}
 	}
 	delivered = 0;
 	for (i = 0; i < msg->msg_iovlen; i++) {

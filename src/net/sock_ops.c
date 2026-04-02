@@ -183,7 +183,8 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 			return sk->err;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sock_wait(sk, deadline);
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
 	}
 	if (sk->state != SS_CONNECTED)
 		return sk->err ? sk->err : -ECONNREFUSED;
@@ -235,7 +236,8 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 			return sk->err;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sock_wait(sk, deadline);
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
 	}
 
 	struct tcp_pcb *newpcb = sk->accept_queue[sk->accept_head];
@@ -412,7 +414,8 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 				return -EAGAIN;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
-			sock_wait(sk, deadline);
+			if (sock_wait(sk, deadline) < 0)
+				return -EINTR;
 		}
 		u16_t dlen;
 		rx_read(sk, &dlen, sizeof(dlen));
@@ -445,7 +448,8 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 			return -EAGAIN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sock_wait(sk, deadline);
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
 	}
 	unsigned n = rx_read(sk, buf, len);
 	if (from && fromlen) {

@@ -19,7 +19,8 @@ unsigned rx_read(mos_sock *sk, void *dst, unsigned len);
 /* ── Blocking helpers (sock.c) ──────────────────────────────────────────── */
 
 void sock_wakeup(mos_sock *sk);
-void sock_wait(mos_sock *sk, unsigned long deadline);
+/* Returns 0 normally, -1 if a deliverable signal is pending. */
+int sock_wait(mos_sock *sk, unsigned long deadline);
 
 /* ── FD helpers (sock.c) ────────────────────────────────────────────────── */
 

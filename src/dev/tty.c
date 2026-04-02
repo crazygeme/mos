@@ -242,8 +242,11 @@ static void tty_insert_lines(tty_state *state, int n)
 		state->cells[i].fg = VGA_COLOR_WHITE;
 		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
-	if (state->tty_idx == active_tty_idx)
+	if (state->tty_idx == active_tty_idx) {
+		fb_cursor_erase(_displayed_cursor, state->cells,
+				(unsigned)MAX_COL);
 		fb_insert_lines_px((unsigned)row, (unsigned)bot, (unsigned)n);
+	}
 }
 
 static void tty_delete_lines(tty_state *state, int n)
@@ -272,8 +275,11 @@ static void tty_delete_lines(tty_state *state, int n)
 		state->cells[i].fg = VGA_COLOR_WHITE;
 		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
-	if (state->tty_idx == active_tty_idx)
+	if (state->tty_idx == active_tty_idx) {
+		fb_cursor_erase(_displayed_cursor, state->cells,
+				(unsigned)MAX_COL);
 		fb_delete_lines_px((unsigned)row, (unsigned)bot, (unsigned)n);
+	}
 }
 
 static void tty_delete_chars(tty_state *state, int n)
@@ -808,22 +814,18 @@ static int process_one_char(tty_state *state, char c)
 /* ── Output with locking ─────────────────────────────────────────────────── */
 
 /*
- * tty_raw_write - write bytes to the TTY under the spinlock.
- * Batches hardware cursor updates: one tty_hw_cursor call per write.
+ * tty_raw_write - write bytes to the TTY (caller must hold state->lock).
+ * Does NOT update the hardware cursor; the caller is responsible for
+ * calling tty_hw_cursor once after all characters have been processed.
  */
 static void tty_raw_write(tty_state *state, const char *buf, unsigned len)
 {
 	unsigned i;
 	int cur_pos;
-	int irq;
-	spinlock_lock(&state->lock, &irq);
 	for (i = 0; i < len; i++) {
 		cur_pos = process_one_char(state, buf[i]);
 		cursor_set(state, cur_pos);
 	}
-
-	tty_hw_cursor(state, (unsigned)state->cursor);
-	spinlock_unlock(&state->lock, irq);
 }
 
 static int at_col_zero(tty_state *state)
@@ -860,8 +862,12 @@ static void output_char(tty_state *state, unsigned char c)
 static void tty_do_write(tty_state *state, const char *buf, unsigned len)
 {
 	unsigned i;
+	int irq;
+	spinlock_lock(&state->lock, &irq);
 	for (i = 0; i < len; i++)
 		output_char(state, (unsigned char)buf[i]);
+	tty_hw_cursor(state, (unsigned)state->cursor);
+	spinlock_unlock(&state->lock, irq);
 }
 
 /* ── Canonical / raw input ───────────────────────────────────────────────── */

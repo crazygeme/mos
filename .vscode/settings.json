@@ -4,7 +4,7 @@
     "editor.rename.enablePreview": false,
     "workbench.editor.enablePreview": false,
     "C_Cpp.intelliSenseEngine": "disabled",
-    "editor.formatOnSave": true,
+    "editor.formatOnSave": false,
     "cmake.sourceDirectory": "/home/zhengjia/project/mos/third_party/lwip",
     "workbench.colorTheme": "Dark Modern"
 }

@@ -112,6 +112,26 @@ void _rwlock_write_lock(rwlock_t *rw, const char *func);
 void rwlock_write_unlock(rwlock_t *rw);
 
 /* ===========================================================================
+ * Recursive mutex (rmutex_t)
+ *
+ * Like mutex_t but the holder may lock it again without deadlocking.
+ * Each lock() call increments the depth; only when depth reaches zero on
+ * unlock() is the lock released and a waiter woken.
+ * ===========================================================================*/
+
+typedef volatile struct _rmutex {
+	lock_base base;
+	unsigned holder; /* psid of the holding task, 0 if free     */
+	unsigned depth; /* re-lock depth, 0 when free              */
+	const char *holder_func;
+} rmutex_t;
+
+void rmutex_init(rmutex_t *m);
+#define rmutex_lock(x) _rmutex_lock((x), __func__)
+void _rmutex_lock(rmutex_t *m, const char *func);
+void rmutex_unlock(rmutex_t *m);
+
+/* ===========================================================================
  * Semaphore (sem_t)
  *
  * Counting semaphore.  sem_wait decrements the count and blocks when the

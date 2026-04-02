@@ -60,7 +60,7 @@
 #define EXT4_MP_LOCK(_m)                                \
 	do {                                            \
 		if ((_m)->os_locks)                     \
-			(_m)->os_locks->lock(__func__); \
+			(_m)->os_locks->lock(); 	\
 	} while (0)
 
 /**@brief   Mount point OS dependent unlock*/
@@ -1658,9 +1658,7 @@ int ext4_fenlarge(ext4_file *f, uint64_t size)
 
 	zero[0] = '\0';
 	for (i = 0; i < (size - fpos); i++) {
-		EXT4_MP_UNLOCK(f->mp);
 		r = ext4_fwrite(f, zero, 1, NULL);
-		EXT4_MP_LOCK(f->mp);
 		if (r != EOK)
 			goto finish;
 	}
@@ -2546,9 +2544,7 @@ int ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *rcnt)
 	ext4_block_cache_write_back(mp->fs.bdev, 1);
 	r = ext4_generic_open2(&f, path, O_RDONLY, filetype, NULL, NULL);
 	if (r == EOK) {
-		EXT4_MP_UNLOCK(mp);
 		r = ext4_fread(&f, buf, bufsize, rcnt);
-		EXT4_MP_LOCK(mp);
 	} else
 		goto Finish;
 

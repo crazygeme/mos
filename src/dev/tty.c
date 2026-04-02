@@ -993,6 +993,22 @@ void tty_active_kb_put(unsigned char c)
 	t = this_ttys;
 	spinlock_unlock(&tty_switch_lock, irq);
 
+	/* Process signal characters immediately (ISIG) so that foreground
+	 * processes blocked on socket I/O are also interrupted. */
+	if ((t->termios.c_lflag & ISIG) && t->pgrp) {
+		int sig = 0;
+		if (t->termios.c_cc[VINTR] && c == t->termios.c_cc[VINTR])
+			sig = SIGINT;
+		else if (t->termios.c_cc[VQUIT] && c == t->termios.c_cc[VQUIT])
+			sig = SIGQUIT;
+		else if (t->termios.c_cc[VSUSP] && c == t->termios.c_cc[VSUSP])
+			sig = SIGTSTP;
+		if (sig) {
+			ps_send_signal_pgrp(t->pgrp, sig);
+			return;
+		}
+	}
+
 	cyb_putbuf(t->kb_buf, &c, 1, 0, 0);
 }
 

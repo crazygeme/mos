@@ -236,7 +236,8 @@ int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen)
 			return listener->err;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sock_wait(listener, deadline);
+		if (sock_wait(listener, deadline) < 0)
+			return -EINTR;
 	}
 
 	server_sk = listener->unix_accept_queue[listener->unix_accept_head];

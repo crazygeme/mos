@@ -90,16 +90,20 @@ void sock_wakeup(mos_sock *sk)
 		ps_put_to_ready_queue(sk->poll_task);
 }
 
-/* Block the current task on sk until woken by sock_wakeup or the deadline. */
-void sock_wait(mos_sock *sk, unsigned long deadline)
+/* Block the current task on sk until woken by sock_wakeup or the deadline.
+ * Returns -1 if a deliverable signal is pending after waking, 0 otherwise. */
+int sock_wait(mos_sock *sk, unsigned long deadline)
 {
 	unsigned long now = time_now_ms();
 	if (now >= deadline)
-		return;
+		return 0;
 	task_struct *cur = CURRENT_TASK();
 	sk->waiter = cur;
 	time_wait((unsigned)(deadline - now));
 	sk->waiter = NULL;
+	if (cur->signal && (cur->signal->sig_pending & ~cur->signal->sig_mask))
+		return -1;
+	return 0;
 }
 
 /* ── Socket file operations ──────────────────────────────────────────────── */
@@ -122,7 +126,8 @@ static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
 				return sk->err;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
-			sock_wait(sk, deadline);
+			if (sock_wait(sk, deadline) < 0)
+				return -EINTR;
 			spinlock_lock(&sk->rxbuf_lock, &irq);
 		}
 		u16_t dlen;
@@ -151,7 +156,8 @@ static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
 			return 0;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sock_wait(sk, deadline);
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
 		spinlock_lock(&sk->rxbuf_lock, &irq);
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
@@ -174,7 +180,8 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 				return sk->err;
 			if (time_now_ms() > deadline)
 				return -ETIMEDOUT;
-			sock_wait(sk, deadline);
+			if (sock_wait(sk, deadline) < 0)
+				return -EINTR;
 		}
 		u16_t dlen;
 		rx_read(sk, &dlen, sizeof(dlen));
@@ -202,7 +209,8 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 			return -ENOTCONN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
-		sock_wait(sk, deadline);
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
 	return (ssize_t)n;

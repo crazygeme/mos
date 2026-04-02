@@ -5,17 +5,28 @@
  *   device mountpoint fstype options dump pass
  *
  * "dump" and "pass" are always 0 (not used by MOS).
+ *
+ * The mount table is derived by walking the live VFS mount tree, so it always
+ * reflects the current state without a separate tracking list.
  */
 #include <fs/vfs.h>
+#include <fs/mount.h>
+#include <ps/ps.h>
 #include "common.h"
+
+static void emit_mount(const super_block *sb, void *arg)
+{
+	proc_buf_t *pb = (proc_buf_t *)arg;
+	const char *opts = (sb->s_flags & MS_RDONLY) ? "ro,relatime" :
+						       "rw,relatime";
+
+	proc_buf_printf(pb, "%s %s %s %s 0 0\n", sb->s_devname,
+			sb->s_mountpoint, sb->s_fstype, opts);
+}
 
 static void fill(proc_buf_t *pb)
 {
-	const mount_record *r;
-
-	for (r = vfs_mount_list(); r; r = r->next)
-		proc_buf_printf(pb, "%s %s %s %s 0 0\n", r->devname,
-				r->mountpoint, r->fstype, r->options);
+	vfs_mount_walk(CURRENT_TASK()->root, emit_mount, pb);
 }
 
 DEFINE_PROC_FILE(mounts, fill);

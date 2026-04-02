@@ -7,68 +7,6 @@
 #include <macro.h>
 #include <errno.h>
 
-/* =========================================================================
- * Global mount table — used by /proc/mounts
- * ====================================================================== */
-
-static mount_record *mount_list_head;
-static mount_record *mount_list_tail;
-static mutex_t mount_list_lock;
-
-static void vfs_mount_table_init(void)
-{
-	mutex_init(&mount_list_lock);
-}
-KERNEL_INIT(1, vfs_mount_table_init);
-
-void vfs_mount_record(const char *devname, const char *mountpoint,
-		      const char *fstype, const char *options)
-{
-	mount_record *r = zalloc(sizeof(*r));
-	sprintf(r->devname, "%s", devname ? devname : "none");
-	sprintf(r->mountpoint, "%s", mountpoint ? mountpoint : "/");
-	sprintf(r->fstype, "%s", fstype ? fstype : "none");
-	sprintf(r->options, "%s", options ? options : "rw,relatime");
-
-	mutex_lock(&mount_list_lock);
-	if (!mount_list_tail) {
-		mount_list_head = mount_list_tail = r;
-	} else {
-		mount_list_tail->next = r;
-		mount_list_tail = r;
-	}
-	mutex_unlock(&mount_list_lock);
-}
-
-void vfs_umount_record(const char *mountpoint)
-{
-	mount_record *prev = NULL;
-	mount_record *r;
-
-	if (!mountpoint)
-		return;
-
-	mutex_lock(&mount_list_lock);
-	for (r = mount_list_head; r; prev = r, r = r->next) {
-		if (strcmp(r->mountpoint, mountpoint) == 0) {
-			if (prev)
-				prev->next = r->next;
-			else
-				mount_list_head = r->next;
-			if (r == mount_list_tail)
-				mount_list_tail = prev;
-			kfree(r);
-			break;
-		}
-	}
-	mutex_unlock(&mount_list_lock);
-}
-
-const mount_record *vfs_mount_list(void)
-{
-	return mount_list_head;
-}
-
 /**
  * To make sure sorted by path
  */
@@ -201,10 +139,45 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 
 	/* No prefix match: register as a direct child */
 	child = next;
+
+	/* Compute child's absolute mountpoint from parent's mountpoint + path.
+	 * Parent mountpoint "/" is a special case: child mountpoint = path. */
+	if (!sb->s_mountpoint[0] || strcmp(sb->s_mountpoint, "/") == 0) {
+		strncpy(child->s_mountpoint, path,
+			sizeof(child->s_mountpoint) - 1);
+	} else {
+		sprintf(child->s_mountpoint, "%s%s", sb->s_mountpoint, path);
+	}
+
 	key = strdup(path);
 	hash_insert(sb->s_mounts, key, child);
 	mutex_unlock(&sb->s_lock);
 	return 0;
+}
+
+void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
+		    void *arg)
+{
+	key_value_pair *kv;
+
+	if (!sb)
+		return;
+
+	/* Emit this superblock if it is a real/pseudo-fs mount. */
+	if (sb->s_fstype[0])
+		cb(sb, arg);
+
+	/* Recurse into children — release lock while calling back to avoid
+	 * deadlock; single-CPU so no structural changes will happen. */
+	mutex_lock(&sb->s_lock);
+	for (kv = hash_first(sb->s_mounts); kv;
+	     kv = hash_next(sb->s_mounts, kv)) {
+		super_block *child = kv->val;
+		mutex_unlock(&sb->s_lock);
+		vfs_mount_walk(child, cb, arg);
+		mutex_lock(&sb->s_lock);
+	}
+	mutex_unlock(&sb->s_lock);
 }
 
 int vfs_umount(super_block *sb, const char *path)

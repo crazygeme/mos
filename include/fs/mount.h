@@ -5,6 +5,7 @@
 
 /* Standard mount flags (subset of Linux MS_* values) */
 #define MS_RDONLY 1
+#define MS_REMOUNT 32
 
 /*
  * fs_type - describes a mountable filesystem.  Each filesystem registers

@@ -1,6 +1,6 @@
 # Network Stack
 
-**Source:** `src/hw/nic_intel_8254x.c`, `src/hw/nic.c`, `src/net/net.c`, `src/net/sock.c`, `src/net/sock_ops.c`, `src/net/sock_cb.c`, `src/net/sock_msg.c`, `src/net/sock_opt.c`, `src/syscall/syscall_net.c`
+**Source:** `src/hw/nic_intel_8254x.c`, `src/hw/nic.c`, `src/net/net.c`, `src/net/sock.c`, `src/net/sock_ops.c`, `src/net/sock_cb.c`, `src/net/sock_msg.c`, `src/net/sock_opt.c`, `src/net/sock_un.c`, `src/syscall/syscall_net.c`
 **Headers:** `include/hw/nic.h`, `include/net/net.h`, `include/net/socket.h`, `include/net/sock.h`
 
 ---
@@ -355,58 +355,209 @@ Blocks until `rxbuf` has data (or `MSG_DONTWAIT` → `-EAGAIN`). For UDP/RAW, re
 
 ---
 
-## 6. AF_UNIX socketpair
+## 6. AF_UNIX domain sockets
 
-### Why no lock is needed for AF_INET sockets
+**Source:** `src/net/sock_un.c`, `src/net/sock.c`, `src/net/sock_ops.c`
 
-`rx_write` for TCP/UDP/raw is called exclusively from `eth0_rx_dsr`, which runs as a DSR inside `_task_sched()` with interrupts disabled. This is a strict **SPSC** discipline: one DSR producer writes to `rxbuf` (advancing `rx_tail`), one task consumer reads from it (advancing `rx_head`). On a uniprocessor:
+AF_UNIX sockets bypass the NIC and lwIP entirely. Data moves directly through an in-kernel ring buffer from writer to reader via the `unix_peer` pointer.
 
-- The DSR can preempt the reader task (via timer IRQ → `_task_sched` → `dsr_drain`).
-- The reader task cannot preempt the DSR (interrupts are disabled during `dsr_drain`).
-- `rx_head` and `rx_tail` are 32-bit `unsigned` values; x86 guarantees atomic 32-bit loads/stores.
+### Relevant `mos_sock` fields
 
-If the DSR fires mid-read, the reader's already-computed byte count (based on a stale `rx_tail` snapshot) causes it to read slightly fewer bytes than available — no corruption occurs. No lock required.
+```c
+char      unix_path[UNIX_PATH_MAX];          // bound filesystem path (or "" if unbound)
+mos_sock *unix_peer;                         // pointer to the other side's mos_sock
+mos_sock *unix_accept_queue[SOCK_ACCEPT_BACKLOG]; // pending server sockets (listener)
+int       unix_accept_head, unix_accept_tail;
+spinlock_t rxbuf_lock;                       // protects rxbuf on the AF_UNIX path
+```
 
-### Why AF_UNIX needs a lock
+`UNIX_PATH_MAX = 108`, `SOCK_ACCEPT_BACKLOG = 8`.
 
-After `fork()`, both the parent and child hold the same fd, which points to the same `mos_sock *`. Both can call `sock_write(sv[0], ...)` from syscall context, both calling `rx_write` on `peer->rxbuf`. On a uniprocessor with preemptive scheduling a timer interrupt between any two iterations of the byte-copy loop can switch to the other task, which also enters `rx_write` — both increment `rx_tail` over the same region, corrupting the buffer and interleaving bytes.
+### Unix socket namespace
 
-`rxbuf_lock` is a `spinlock_t` that disables interrupts while held, preventing preemption for the duration of every ring-buffer access on the AF_UNIX path.
+A flat array of 64 `{path, mos_sock*}` entries, protected by `unix_ns_lock` (mutex). The namespace maps resolved filesystem paths to the `mos_sock` that bound them.
 
-### Read path with lock (`sock_unix_read`)
+```c
+#define UNIX_NS_MAX 64
+typedef struct { char path[UNIX_PATH_MAX]; mos_sock *sk; } unix_ns_entry;
+static unix_ns_entry unix_ns[UNIX_NS_MAX];
+static mutex_t       unix_ns_lock;
+```
 
-The lock cannot be held across `sock_wait()` (which sleeps), so the pattern is: acquire, check condition, release before sleeping, re-acquire on wake, re-check:
+Paths are resolved via `resolve_path` (cwd-relative → absolute) before lookup/insert, so the same socket is always found regardless of how the caller spelled the path.
+
+Unlink integration: `sys_unlink` calls `unix_ns_remove_path(path)` when a socket file is unlinked while the socket is still open. This clears `unix_ns[i].sk->unix_path` so `unix_release` will not attempt a second `vfs_umount` on the already-removed file.
+
+### Named socket lifecycle
+
+**Server side:**
 
 ```
-spinlock_lock(&sk->rxbuf_lock)
-while rx_used == 0:
-    spinlock_unlock(...)
-    check err / state / timeout
-    sock_wait(...)        ← sleeps here, lock not held
-    spinlock_lock(...)
-rx_read(...)              ← under lock
+socket(AF_UNIX, SOCK_STREAM, 0)
+  └─ do_socket: alloc mos_sock, domain=AF_UNIX, state=SS_UNCONNECTED
+
+bind(fd, {sun_family=AF_UNIX, sun_path="/tmp/foo"}, sizeof)
+  └─ unix_bind:
+       resolve_path("/tmp/foo") → abs_path
+       mutex_lock(unix_ns_lock)
+         unix_ns_lookup(abs_path) → must not exist (else EADDRINUSE)
+         vfs_mknod(cur->root, abs_path, S_IFSOCK|0777, 0)   // create socket file
+         strncpy(sk->unix_path, abs_path)
+         unix_ns_register(abs_path, sk)
+       mutex_unlock
+
+listen(fd, backlog)
+  └─ unix_listen: checks unix_path set; sk->state = SS_CONNECTED (reuses listening state)
+
+accept(fd, addr, addrlen)            // blocks until connect() enqueues a server_sk
+  └─ unix_accept:
+       while unix_accept_head == unix_accept_tail:
+           sock_wait(listener, deadline)  // sleep until woken by unix_connect
+       server_sk = unix_accept_queue[head++]
+       if addr: fill sockaddr_un with client's unix_path
+       sock_to_fd(server_sk) → new fd
+```
+
+**Client side:**
+
+```
+socket(AF_UNIX, SOCK_STREAM, 0)
+  └─ do_socket: alloc mos_sock, domain=AF_UNIX, state=SS_UNCONNECTED
+
+connect(fd, {sun_family=AF_UNIX, sun_path="/tmp/foo"}, sizeof)
+  └─ unix_connect:
+       resolve_path("/tmp/foo") → abs_path
+       mutex_lock(unix_ns_lock)
+         listener = unix_ns_lookup(abs_path)
+         check: listener exists, state==SS_CONNECTED, type==SOCK_STREAM
+         check: accept queue not full (next_tail != head → else ECONNREFUSED)
+
+         server_sk = zalloc(mos_sock)   // pre-create the server side
+         server_sk->domain  = AF_UNIX
+         server_sk->type    = client->type
+         server_sk->state   = SS_CONNECTED
+         server_sk->unix_peer = client
+         strncpy(server_sk->unix_path, abs_path)  // copy listener path
+                                                   // NOT registered in unix_ns
+
+         client->unix_peer = server_sk
+         client->state     = SS_CONNECTED
+
+         listener->unix_accept_queue[tail] = server_sk
+         listener->unix_accept_tail = next_tail
+       mutex_unlock
+       sock_wakeup(listener)            // wake accept()
+```
+
+`unix_connect` is **synchronous from the caller's perspective**: it never blocks. The server-side `mos_sock` is fully constructed and cross-linked inside the mutex, then enqueued. The accept-side task is woken up. No handshake occurs.
+
+### `socketpair` (unnamed)
+
+```
+socketpair(AF_UNIX, SOCK_STREAM|SOCK_DGRAM, 0, sv)
+  └─ do_socketpair:
+       alloc mos_sock a, b
+       a->unix_peer = b;  b->unix_peer = a   // cross-link immediately
+       a->state = b->state = SS_CONNECTED
+       spinlock_init(&a->rxbuf_lock)
+       spinlock_init(&b->rxbuf_lock)
+       sv[0] = sock_to_fd(a)
+       sv[1] = sock_to_fd(b)
+```
+
+Neither socket has a `unix_path` or namespace entry. Works for both `SOCK_STREAM` and `SOCK_DGRAM`.
+
+### Data flow (read / write)
+
+All data travels through the **receiver's** `rxbuf` ring (8 KB, `SOCK_RXBUF_SIZE`).
+
+**Write** (`sock_unix_write`):
+
+```
+peer = sk->unix_peer
+if peer == NULL: return -EPIPE
+
+spinlock_lock(&peer->rxbuf_lock)         // IRQs disabled — prevent preemption
+if SOCK_DGRAM:
+    rx_write(peer, &dlen, 2)             // 2-byte length prefix
+rx_write(peer, buf, count)               // copy into peer's rxbuf
 spinlock_unlock(...)
+sock_wakeup(peer)                        // wake peer's read() if blocked
 ```
 
-### Write path (`sock_unix_write`)
+Write is non-blocking — returns `-ENOBUFS` if the peer ring is full (DGRAM) or writes as many bytes as fit (STREAM). No sleep.
 
-No sleeping required. The lock wraps the entire write into the peer's buffer:
+**Read** (`sock_unix_read`):
 
 ```
-spinlock_lock(&peer->rxbuf_lock)
-[SOCK_DGRAM: write 2-byte length prefix]
-rx_write(peer, buf, n)
-spinlock_unlock(...)
-sock_wakeup(peer)         ← outside lock (safe)
+SOCK_STREAM:
+  spinlock_lock(&sk->rxbuf_lock)
+  while rx_used == 0:
+      spinlock_unlock(...)
+      if state == SS_DISCONNECTING: return 0    // EOF
+      sock_wait(sk, deadline)                   // sleep here, lock not held
+      spinlock_lock(...)
+  rx_read(sk, buf, count)
+  spinlock_unlock(...)
+  return n
+
+SOCK_DGRAM:
+  spinlock_lock(&sk->rxbuf_lock)
+  while rx_used < 2:                            // wait for at least a length prefix
+      spinlock_unlock(...)
+      sock_wait(sk, deadline)
+      spinlock_lock(...)
+  rx_read(sk, &dlen, 2)                         // read 2-byte length
+  n = min(count, dlen)
+  rx_read(sk, buf, n)
+  discard remaining (dlen - n) bytes if buf too small
+  spinlock_unlock(...)
+  return n
 ```
 
-### SOCK_STREAM vs SOCK_DGRAM
+### Peer close / shutdown
 
-|                         | SOCK_STREAM                                | SOCK_DGRAM                                   |
-| ----------------------- | ------------------------------------------ | -------------------------------------------- |
-| Ring buffer encoding    | raw bytes                                  | 2-byte length prefix + payload (same as UDP) |
-| EOF on peer close       | `state → SS_DISCONNECTING`, read returns 0 | timeout (`-ETIMEDOUT`)                       |
-| `sock_poll` write-ready | `unix_peer != NULL`                        | `unix_peer != NULL`                          |
+```
+close(fd)
+  └─ unix_release(sk):
+       peer = sk->unix_peer
+       if peer:
+           peer->unix_peer = NULL
+           peer->state = SS_DISCONNECTING
+           sock_wakeup(peer)            // unblocks peer's read → returns 0
+
+       if sk->unix_path set AND registered in unix_ns:
+           unix_ns_unregister(sk)
+           vfs_umount(cur->root, sk->unix_path)  // remove socket file
+
+       drain accept_queue:              // for listener: free pending server_sks
+           for each pending server_sk:
+               pending->unix_peer->state = SS_DISCONNECTING
+               sock_wakeup(pending->unix_peer)
+               free(pending)
+
+shutdown(fd, how)
+  └─ same as close for AF_UNIX: disconnects peer immediately, ignores how
+```
+
+### Why AF_UNIX needs a spinlock (but AF_INET does not)
+
+For AF_INET, `rx_write` is called exclusively from `eth0_rx_dsr` (DSR context, interrupts disabled) — a strict SPSC relationship with the reader task. No concurrent producers are possible.
+
+For AF_UNIX, after `fork()` both the parent and child hold the same fd pointing to the same `mos_sock *`. Both can call `sock_unix_write` concurrently from syscall context (preemptive, different tasks). Without a lock, a timer interrupt between iterations of the byte-copy loop can switch tasks, causing two concurrent `rx_write` calls to both advance `rx_tail` over the same region — corrupting the ring and interleaving bytes.
+
+`rxbuf_lock` is a spinlock (disables IRQs while held) so a single lock simultaneously prevents both task preemption and DSR re-entry for the duration of each ring-buffer access.
+
+### SOCK_STREAM vs SOCK_DGRAM comparison
+
+|                      | SOCK_STREAM                                | SOCK_DGRAM                                          |
+| -------------------- | ------------------------------------------ | --------------------------------------------------- |
+| Ring encoding        | raw byte stream                            | 2-byte length prefix + payload per message          |
+| Message boundaries   | none (byte stream)                         | preserved (length-prefixed framing)                 |
+| EOF on peer close    | `state → SS_DISCONNECTING`, read returns 0 | peer close not signalled; read blocks until timeout |
+| connect required     | yes (`unix_connect` cross-links peers)     | no (but only `socketpair` is usable without bind)   |
+| Write if peer closed | `-EPIPE`                                   | `-EPIPE`                                            |
+| poll write-ready     | `unix_peer != NULL`                        | `unix_peer != NULL`                                 |
 
 ---
 

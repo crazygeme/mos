@@ -18,7 +18,9 @@
 | [Physical Memory](doc/mm_physical.md)   | Buddy allocator, page descriptors, reference counting, CoW, dirty tracking                                                    |
 | [Virtual Memory](doc/mm_virtual.md)     | Page table management, VM region map, mmap/munmap, demand paging, CoW, page cache                                             |
 | [Process & Scheduler](doc/ps.md)        | MPRQ, context switch, fork/exit/waitpid, signals, synchronization primitives                                                  |
-| [Virtual File System](doc/vfs.md)       | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend                                                   |
+| [Virtual File System](doc/vfs.md)       | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend, loop device                                      |
+| [TTY / PTY](doc/tty.md)                 | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, bash spawner                                       |
+| [Framebuffer / VGA](doc/vga.md)         | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                                        |
 | [Poll / Select](doc/poll.md)            | Four-phase wait loop, lost-wakeup prevention, poll_wait driver interface, socket integration, fallback timer                  |
 | [ELF Loader](doc/elf_exec.md)           | Segment mapping, BSS handling, dynamic linker loading, execve lifecycle, initial stack layout                                 |
 | [Signal Handling](doc/signals.md)       | Delivery engine, vDSO trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, alarm, process group signals          |

@@ -64,7 +64,8 @@ struct timespec {
 #define BCD_FOUR_DIGIT_BCD 1
 
 #define HZ 100 /* HZ interrupts per second */
-#define DEFAULT_TASK_TIME_SLICE (100 /*ms*/ / (1000 / HZ))
+#define TICK_MS (1000 / HZ)
+#define DEFAULT_TASK_TIME_SLICE (100 /*ms*/ / TICK_MS)
 #define CLOCK_TICK_RATE 1193180
 #define LATCH ((CLOCK_TICK_RATE + HZ / 2) / HZ)
 

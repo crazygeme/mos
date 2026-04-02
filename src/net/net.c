@@ -145,12 +145,12 @@ static void eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len)
 	}
 }
 
-/* Kernel task: drive all lwIP internal timers every 10 ms (same as tickets). */
+/* Kernel task: drive all lwIP internal timers every TICK_MS ms */
 static void lwip_timer_task(void *param)
 {
 	(void)param;
 	for (;;) {
-		time_wait(10);
+		time_wait(TICK_MS);
 		sys_check_timeouts();
 		netif_poll_all();
 	}

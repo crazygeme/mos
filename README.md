@@ -4,7 +4,7 @@
 
 With some features we are never goting to implement (like swap or kernel module) the booting procesure will show lots of error, but it can <font color="green">**successfully**</font> boot Red Hat 9 system!
 
-![Screen shot: login](doc/screenshot/booting.png)
+![Screen shot: login](doc/screenshot/boot.png)
 ![Screen shot: login](doc/screenshot/login_prompt.png)
 ![Screen shot: login](doc/screenshot/final.png)
 
@@ -37,10 +37,10 @@ With some features we are never goting to implement (like swap or kernel module)
 
 ### Reference
 
-| Section                           | Summary                                                                         |
-| --------------------------------- | ------------------------------------------------------------------------------- |
-| [Build Guide](doc/build.md)       | Build dependencies, compiler setup, run modes, debugging, profiling, disk image |
-| [Disk Image](doc/ffs_img.md)      | Mount `ffs.img`, copy binaries into it, create a new image from scratch         |
-| [Todo](doc/todo.md)               | Feature checklist                                                               |
-| [Screenshots](doc/screenshots.md) | Some screen shots about mos running                                             |
-| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                   |
+| Section                                  | Summary                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image |
+| [Disk Image](doc/ffs_img.md)             | Mount `ffs.img`, copy binaries into it, create a new image from scratch         |
+| [Todo](doc/todo.md)                      | Feature checklist                                                               |
+| [Screenshots](doc/screenshots.md)        | Some screen shots about mos running                                             |
+| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                          |

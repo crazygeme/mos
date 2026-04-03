@@ -6,6 +6,13 @@
 #include <macro.h>
 #include <errno.h>
 
+/* Defined in src/dev/pts.c — returns the pre-built /dev/pts superblock. */
+extern super_block *pts_get_devpts_sb(void);
+
+/* Defined in src/fs/tmpfs.c */
+extern super_block *tmpfs_get_sb(const char *dev, const char *target,
+				  int flags, void *data);
+
 /* =========================================================================
  * Filesystem type registry
  * ====================================================================== */
@@ -84,12 +91,18 @@ static super_block *stub_get_sb(const char *dev, const char *target, int flags,
 
 /* "proc" is registered by src/proc/procfs.c (KERNEL_INIT 4) with a real get_sb */
 /* "ext4"/"ext3" are registered by src/fs/root.c (KERNEL_INIT 3) */
-/* "devpts" is registered by src/dev/pts.c (KERNEL_INIT 5) with a real get_sb */
+
+static super_block *devpts_get_sb(const char *dev, const char *target,
+				   int flags, void *data)
+{
+	return pts_get_devpts_sb();
+}
 
 static fs_type sysfs_fs_type = { .name = "sysfs", .get_sb = stub_get_sb };
-static fs_type tmpfs_fs_type = { .name = "tmpfs", .get_sb = stub_get_sb };
+static fs_type tmpfs_fs_type = { .name = "tmpfs", .get_sb = tmpfs_get_sb };
 static fs_type devtmpfs_fs_type = { .name = "devtmpfs", .get_sb = stub_get_sb };
 static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
+static fs_type devpts_fs_type = { .name = "devpts", .get_sb = devpts_get_sb };
 
 static void mount_syscall_init(void)
 {
@@ -98,6 +111,7 @@ static void mount_syscall_init(void)
 	fs_register_type(&tmpfs_fs_type);
 	fs_register_type(&devtmpfs_fs_type);
 	fs_register_type(&none_fs_type);
+	fs_register_type(&devpts_fs_type);
 }
 
 KERNEL_INIT(2, mount_syscall_init);

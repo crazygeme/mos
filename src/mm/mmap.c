@@ -569,18 +569,17 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 				  unsigned end)
 {
-	ext4_file *ff;
 	unsigned vir;
+	inode *node;
 
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
 		return;
 
-	ff = region->fp->f_inode->i_private;
+	node = region->fp->f_inode;
 
 	for (vir = begin; vir < end; vir += PAGE_SIZE) {
 		unsigned page_index;
 		int file_offset;
-		size_t wcnt = 0;
 
 		/* Skip pages that were never faulted in. */
 		if (mm_get_map_flag(vir) == 0)
@@ -591,11 +590,21 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 			continue;
 
 		file_offset = region->offset + (int)(vir - region->begin);
-		if (ext4_fseek(ff, file_offset, SEEK_SET) != EOK)
-			continue;
 
-		if (ext4_fwrite(ff, (void *)vir, PAGE_SIZE, &wcnt) == EOK)
-			phymm_clear_dirty(page_index);
+		if (node->i_op && node->i_op->write_page) {
+			if (node->i_op->write_page(node, file_offset,
+						   (void *)vir) == 0)
+				phymm_clear_dirty(page_index);
+		} else {
+			ext4_file *ff = node->i_private;
+			size_t wcnt = 0;
+
+			if (ext4_fseek(ff, file_offset, SEEK_SET) != EOK)
+				continue;
+			if (ext4_fwrite(ff, (void *)vir, PAGE_SIZE, &wcnt) ==
+			    EOK)
+				phymm_clear_dirty(page_index);
+		}
 	}
 }
 

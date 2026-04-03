@@ -800,6 +800,50 @@ out:
 	return ret;
 }
 
+int sys_ftruncate(int fd, unsigned long length)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+	int ret;
+
+	if (TestControl.verbos)
+		klog("ftruncate(%d, %lu)\n", fd, length);
+
+	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
+		return -EBADF;
+
+	fp = cur->fds[fd].fp;
+	if (!fp->f_inode->i_op || !fp->f_inode->i_op->ftruncate)
+		return -EINVAL;
+
+	ret = fp->f_inode->i_op->ftruncate(fp->f_inode, (loff_t)length);
+	if (ret == 0)
+		fp->f_inode->i_size = length;
+	return ret;
+}
+
+int sys_ftruncate64(int fd, uint64_t length)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+	int ret;
+
+	if (TestControl.verbos)
+		klog("ftruncate64(%d, %llu)\n", fd, length);
+
+	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
+		return -EBADF;
+
+	fp = cur->fds[fd].fp;
+	if (!fp->f_inode->i_op || !fp->f_inode->i_op->ftruncate)
+		return -EINVAL;
+
+	ret = fp->f_inode->i_op->ftruncate(fp->f_inode, (loff_t)length);
+	if (ret == 0)
+		fp->f_inode->i_size = length;
+	return ret;
+}
+
 int sys__sysctl(void *args)
 {
 	if (TestControl.verbos)

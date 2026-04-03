@@ -95,6 +95,8 @@ int sys_fchdir(int fd);
 int sys_statfs(const char *path, struct statfs *buf);
 int sys_fstatfs(int fd, struct statfs *buf);
 int sys_flock(int fd, int operation);
+int sys_ftruncate(int fd, unsigned long length);
+int sys_ftruncate64(int fd, uint64_t length);
 int sys__sysctl(void *args);
 int sys_mlock(const void *addr, size_t len);
 int sys_munlock(const void *addr, size_t len);

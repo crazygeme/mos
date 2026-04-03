@@ -89,6 +89,9 @@ int sys_syslog(int type, char *buf, int len)
 	int ret = 0;
 	int irq;
 
+	if (TestControl.verbos)
+		klog("syslog: type=%d, buf=%x, len=%d\n", type, buf, len);
+
 	switch (type) {
 	case SYSLOG_ACTION_CLOSE:
 	case SYSLOG_ACTION_OPEN:

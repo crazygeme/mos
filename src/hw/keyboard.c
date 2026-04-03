@@ -204,7 +204,7 @@ static void kbd_init_keymaps(void)
 
 int kbd_get_kbentry(struct kbentry *kbe)
 {
-	if (kbe->kb_table >= NR_KEYMAPS || kbe->kb_index >= NR_KEYS)
+	if (kbe->kb_index >= NR_KEYS)
 		return -EINVAL;
 	kbe->kb_value = key_maps[kbe->kb_table][kbe->kb_index];
 	return 0;
@@ -212,8 +212,16 @@ int kbd_get_kbentry(struct kbentry *kbe)
 
 int kbd_set_kbentry(const struct kbentry *kbe)
 {
-	if (kbe->kb_table >= NR_KEYMAPS || kbe->kb_index >= NR_KEYS)
+	if (kbe->kb_index >= NR_KEYS)
 		return -EINVAL;
+	/* K_NOSUCHMAP: loadkeys requests deallocation of this table.
+	 * We have a flat array so just clear the whole row to K_HOLE. */
+	if (kbe->kb_value == K_NOSUCHMAP) {
+		int k;
+		for (k = 0; k < NR_KEYS; k++)
+			key_maps[kbe->kb_table][k] = K_HOLE;
+		return 0;
+	}
 	key_maps[kbe->kb_table][kbe->kb_index] = kbe->kb_value;
 	return 0;
 }

@@ -89,7 +89,7 @@ static void pipe_write_poll_wait_remove(file *fp, task_struct *task)
 static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 {
 	/* pipes are not seekable */
-	return 0;
+	return -ESPIPE;
 }
 
 static int pipe_getattr(inode *node, struct stat *s)

@@ -1284,10 +1284,56 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	}
 	case KDSIGACCEPT:
-		/* Process declares it will handle VT-switch signals itself.
-		 * We do not implement VT switching via signals, so accept
-		 * the call silently. */
 		return 0;
+	case KDGETMODE:
+		*(int *)buf = KD_TEXT;
+		return 0;
+	case KDSETMODE:
+		return 0;
+	case GIO_FONT:
+		memset(buf, 0, 256 * 8); /* 256 chars, 8 bytes each */
+		return 0;
+	case PIO_FONT:
+		return 0;
+	case GIO_FONTX: {
+		struct consolefontdesc *cfd = (struct consolefontdesc *)buf;
+		if (cfd->chardata)
+			memset(cfd->chardata, 0,
+			       (size_t)cfd->charcount * cfd->charheight);
+		cfd->charcount = 256;
+		cfd->charheight = 16;
+		return 0;
+	}
+	case PIO_FONTX:
+		return 0;
+	case KDFONTOP: {
+		struct console_font_op *cfo = (struct console_font_op *)buf;
+		switch (cfo->op) {
+		case KD_FONT_OP_SET:
+		case KD_FONT_OP_SET_DEFAULT:
+		case KD_FONT_OP_COPY:
+			return 0;
+		case KD_FONT_OP_GET:
+			cfo->width = 8;
+			cfo->height = 16;
+			cfo->charcount = 256;
+			if (cfo->data)
+				memset(cfo->data, 0,
+				       cfo->charcount * ((cfo->width + 7) / 8) *
+					       cfo->height);
+			return 0;
+		}
+		return -EINVAL;
+	}
+	case PIO_UNIMAPCLR:
+		return 0;
+	case PIO_UNIMAP:
+		return 0;
+	case GIO_UNIMAP: {
+		struct unimapdesc *ud = (struct unimapdesc *)buf;
+		ud->entry_ct = 0;
+		return 0;
+	}
 	}
 	return -ENOSYS;
 }
@@ -1450,7 +1496,7 @@ static void tty_dev_register(super_block *dev_sb)
 
 	/* major 5: /dev/tty (minor 0) and /dev/console (minor 1) */
 	cdev_register(S_IFCHR, 5, 0, 2, tty_cdev_open);
-	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 0));
+	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(5, 0));
 	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
 }
 

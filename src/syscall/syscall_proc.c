@@ -904,8 +904,13 @@ int sys_ugetrlimit(int resource, void *limit)
 		klog("ugetrlimit(%d)\n", resource);
 
 	if (rl) {
-		rl[0] = 0xFFFFFFFFu; /* rlim_cur = RLIM_INFINITY */
-		rl[1] = 0xFFFFFFFFu; /* rlim_max = RLIM_INFINITY */
+		if (resource == 7 /* RLIMIT_NOFILE */) {
+			rl[0] = MAX_FD;
+			rl[1] = MAX_FD;
+		} else {
+			rl[0] = 0xFFFFFFFFu; /* rlim_cur = RLIM_INFINITY */
+			rl[1] = 0xFFFFFFFFu; /* rlim_max = RLIM_INFINITY */
+		}
 	}
 	return 0;
 }

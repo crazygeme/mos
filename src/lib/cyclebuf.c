@@ -146,8 +146,16 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 			return 0;
 		}
 		spinlock_unlock(&b->lock, irq);
-		if (cond_wait(&b->read_event, interruptible) < 0)
-			return -1; /* EINTR */
+		if (cond_wait(&b->read_event, interruptible) < 0) {
+			/* Interrupted by a signal. Re-check whether the writer
+			 * closed while we slept (common race: SIGCHLD arrives
+			 * just before writer_count is decremented to 0).
+			 * If so, loop back so the EOF check at the top fires
+			 * cleanly instead of returning -EINTR. */
+			if (__sync_add_and_fetch(&b->writer_count, 0) == 0)
+				continue;
+			return -1; /* genuine EINTR */
+		}
 	}
 
 	/* Drain up to len bytes while they are immediately available */

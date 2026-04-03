@@ -43,7 +43,7 @@
 #include "tty_ldisc.h"
 #include <hw/keyboard.h>
 
-#define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (0-9) */
+#define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (1-10) */
 
 /* ── Private TTY state ───────────────────────────────────────────────────── */
 
@@ -67,7 +67,7 @@ typedef struct {
 	cy_buf *kb_buf;
 	/* unified cell buffer (character + fg/bg per cell) */
 	tty_cell_t *cells;
-	/* TTY index (0..TTY_MAX_VDEV-1) */
+	/* TTY index (1..TTY_MAX_VDEV) */
 	int tty_idx;
 	/* PID of the bash process running on this TTY (0 = none) */
 	unsigned bash_pid;
@@ -93,7 +93,7 @@ typedef struct {
 	int kb_mode;
 } tty_state;
 
-#define DEFAULT_TTY 0
+#define DEFAULT_TTY 1
 static tty_state ttys[TTY_MAX_VDEV];
 static int active_tty_idx = DEFAULT_TTY;
 static tty_state *this_ttys = NULL;
@@ -923,7 +923,7 @@ void tty_init(void)
 		t->cursor = 0;
 		spinlock_init(&t->lock);
 		t->termios = tty_default_termios;
-		t->tty_idx = i;
+		t->tty_idx = i + 1;
 		t->bash_pid = 0;
 		t->scroll_top = 0;
 		t->scroll_bot = (int)t->max_row - 1;
@@ -1076,10 +1076,10 @@ void tty_switch(int n)
 	tty_state *except_tty;
 	int irq;
 
-	if (n < 0 || n >= TTY_SWITCH_COUNT || n == active_tty_idx)
+	if (n < 1 || n > TTY_SWITCH_COUNT || n == active_tty_idx)
 		return;
 
-	except_tty = &ttys[n];
+	except_tty = &ttys[n - 1];
 
 	spinlock_lock(&tty_switch_lock, &irq);
 
@@ -1094,8 +1094,9 @@ void tty_switch(int n)
 
 	spinlock_unlock(&tty_switch_lock, irq);
 
-	/* Spawn bash on the new TTY if no live process is there yet. */
-	if (n > 0) {
+	/* Spawn bash on the new TTY if no live process is there yet.
+	 * TTY 1 is managed by init/getty; only auto-spawn bash on TTY 2+. */
+	if (n > 1) {
 		int need_spawn = 0;
 
 		if (except_tty->bash_pid == 0) {
@@ -1370,6 +1371,7 @@ static const file_operations tty_fops = {
 static file *tty_open_state(tty_state *state, int flag)
 {
 	state->released = 0;
+	cyb_flush(state->kb_buf);
 	__sync_add_and_fetch(&state->open_count, 1);
 
 	inode *node = zalloc(sizeof(*node));
@@ -1387,9 +1389,9 @@ static file *tty_open_state(tty_state *state, int flag)
 
 /*
  * tty_cdev_open — cdev dispatch callback.
- *   major 4, minor 0-9 → tty0..tty9
- *   major 5, minor 0   → /dev/tty  (controlling terminal, mapped to tty0)
- *   major 5, minor 1   → /dev/console (system console, mapped to tty0)
+ *   major 4, minor 1-10 → tty1..tty10 (1-based; minor maps to ttys[minor-1])
+ *   major 5, minor 0    → /dev/tty  (controlling terminal, mapped to tty1)
+ *   major 5, minor 1    → /dev/console (system console, mapped to tty1)
  */
 static file *tty_cdev_open(unsigned rdev, int flag)
 {
@@ -1398,11 +1400,12 @@ static file *tty_cdev_open(unsigned rdev, int flag)
 	tty_state *state;
 
 	if (major == 4) {
-		if (minor >= TTY_MAX_VDEV)
+		/* /dev/ttyN uses 1-based minor: tty1→ttys[0] (active), tty2→ttys[1], … */
+		if (minor < 1 || minor - 1 >= TTY_MAX_VDEV)
 			return NULL;
-		state = &ttys[minor];
+		state = &ttys[minor - 1];
 	} else { /* major == 5: /dev/tty and /dev/console */
-		state = &ttys[DEFAULT_TTY];
+		state = &ttys[DEFAULT_TTY - 1];
 	}
 	return tty_open_state(state, flag);
 }
@@ -1430,7 +1433,7 @@ static void tty_fs_init(void)
 			t->parent = ps_find_process(1);
 	}
 
-	this_ttys = &ttys[DEFAULT_TTY];
+	this_ttys = &ttys[DEFAULT_TTY - 1];
 }
 
 static void tty_dev_register(super_block *dev_sb)
@@ -1438,9 +1441,9 @@ static void tty_dev_register(super_block *dev_sb)
 	char path[16];
 	int i;
 
-	/* major 4: tty0..tty9 */
-	cdev_register(S_IFCHR, 4, 0, TTY_MAX_VDEV, tty_cdev_open);
-	for (i = 0; i < TTY_MAX_VDEV; i++) {
+	/* major 4: tty1..tty10 (1-based minors matching tty_idx) */
+	cdev_register(S_IFCHR, 4, 1, TTY_MAX_VDEV, tty_cdev_open);
+	for (i = 1; i <= TTY_MAX_VDEV; i++) {
 		sprintf(path, "/tty%d", i);
 		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(4, i));
 	}

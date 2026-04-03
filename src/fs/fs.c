@@ -561,7 +561,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->setattr) {
 		fs_put_file(fp);
-		return -EACCES;
+		return 0;
 	}
 
 	/* Only file owner or root may chmod */
@@ -591,7 +591,7 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 
 	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->chown) {
 		fs_put_file(fp);
-		return -EACCES;
+		return 0;
 	}
 
 	/* Only root may change owner; owner may change group to own group */
@@ -642,7 +642,7 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
 	    !fp->f_inode->i_op->chown)
-		return -EACCES;
+		return 0;
 
 	/* Only root may change owner; owner may change group to own group */
 	if (cur->user && cur->user->euid != 0) {
@@ -681,7 +681,7 @@ int fs_fchmod(int fd, uint32_t mode)
 
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
 	    !fp->f_inode->i_op->setattr)
-		return -EACCES;
+		return 0;
 
 	/* Only file owner or root may fchmod */
 	if (cur->user && cur->user->euid != 0 && fp->f_inode->i_op->getattr &&

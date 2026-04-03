@@ -342,3 +342,28 @@ void time_wait(unsigned ms)
 	timer_disarm_unsafe(cur);
 	spinlock_unlock(&ps_lock, irq);
 }
+
+/*
+ * ps_signal_wait — atomically block until an unmasked signal is pending.
+ *
+ * Checks cur->signal->sig_pending & ~sig_mask under ps_lock so there is no
+ * window between the test and the sleep where a signal can arrive and be lost.
+ * Returns immediately if an unmasked signal is already pending.
+ *
+ * The caller is responsible for installing the desired mask in sig_mask before
+ * calling and restoring the old mask after returning.
+ */
+void ps_signal_wait(void)
+{
+	task_struct *cur = CURRENT_TASK();
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
+	if (!(cur->signal->sig_pending & ~cur->signal->sig_mask)) {
+		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		spinlock_unlock(&ps_lock, irq);
+		task_sched();
+	} else {
+		spinlock_unlock(&ps_lock, irq);
+	}
+}

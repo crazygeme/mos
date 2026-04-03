@@ -474,8 +474,10 @@ int ps_send_signal(unsigned pid, int sig)
 
 	target->signal->sig_pending |= (1UL << (sig - 1));
 
-	/* Wake the target if it is sleeping so it can receive the signal. */
-	if (target->status == ps_waiting)
+	/* Wake the target only if the signal is not blocked by its current mask.
+	 * A masked signal stays pending but must not interrupt a sleeping task. */
+	if (target->status == ps_waiting &&
+	    !(target->signal->sig_mask & (1UL << (sig - 1))))
 		ps_put_to_ready_queue(target);
 
 	return 0;
@@ -743,8 +745,13 @@ void do_signal(intr_frame *frame)
 
 	sa = &cur->signal->sig_handlers[sig];
 
-	if (sa->sa_handler == SIG_IGN)
+	if (sa->sa_handler == SIG_IGN) {
+		if (cur->signal->restore_sigmask) {
+			cur->signal->sig_mask = cur->signal->saved_sigmask;
+			cur->signal->restore_sigmask = 0;
+		}
 		return;
+	}
 
 	if (sa->sa_handler == SIG_DFL) {
 		switch (sig) {
@@ -753,6 +760,11 @@ void do_signal(intr_frame *frame)
 		case SIGURG:
 		case SIGWINCH:
 		case SIGCONT:
+			if (cur->signal->restore_sigmask) {
+				cur->signal->sig_mask =
+					cur->signal->saved_sigmask;
+				cur->signal->restore_sigmask = 0;
+			}
 			return;
 		default:
 			/* Terminate: signal number in bits 0-6, already POSIX-encoded. */
@@ -795,7 +807,14 @@ void do_signal(intr_frame *frame)
 	sf->saved_esi = frame->esi;
 	sf->saved_edi = frame->edi;
 	sf->saved_ebp = frame->ebp;
-	sf->saved_mask = cur->signal->sig_mask;
+	/*
+	 * If inside sigsuspend, save the pre-sigsuspend mask so sigreturn
+	 * restores it (not the temporary sigsuspend mask).
+	 */
+	sf->saved_mask = cur->signal->restore_sigmask ?
+				 cur->signal->saved_sigmask :
+				 cur->signal->sig_mask;
+	cur->signal->restore_sigmask = 0;
 
 	/* Block this signal while handler runs (unless SA_NODEFER). */
 	if (!(sa->sa_flags & SA_NODEFER))
@@ -1125,9 +1144,21 @@ int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize)
 	new_mask &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 	cur->signal->sig_mask = new_mask;
 
-	while (!(cur->signal->sig_pending & ~cur->signal->sig_mask))
-		time_wait(0);
+	/*
+	 * ps_signal_wait() checks the condition under ps_lock before sleeping,
+	 * closing the race where a signal arrives after the check but before the
+	 * task enters the wait queue.  ps_send_signal() now skips waking tasks
+	 * whose mask blocks the arriving signal, so we are only woken when an
+	 * unmasked signal is pending — no loop needed.
+	 */
+	ps_signal_wait();
 
-	cur->signal->sig_mask = saved_mask;
+	/*
+	 * Do NOT restore sig_mask here.  Leave the sigsuspend mask active so
+	 * do_signal() can clear/deliver the pending signal under the correct
+	 * mask.  do_signal() will restore saved_mask after handling the signal.
+	 */
+	cur->signal->saved_sigmask = saved_mask;
+	cur->signal->restore_sigmask = 1;
 	return -EINTR;
 }

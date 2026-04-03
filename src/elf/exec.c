@@ -621,6 +621,14 @@ static void kinit_userspace()
 		/* Mount /proc — userspace expects it to be present. */
 		printk("mnt: Mounting proc on /proc\n");
 		fs_do_mount("proc", "/proc", "proc", 0, NULL);
+
+		/* Mount Unix98 PTY slave directory. */
+		printk("mnt: Mounting devpts on /dev/pts\n");
+		fs_do_mount("devpts", "/dev/pts", "devpts", 0, NULL);
+
+		/* Mount shared-memory tmpfs. */
+		printk("mnt: Mounting tmpfs on /dev/shm\n");
+		fs_do_mount("tmpfs", "/dev/shm", "tmpfs", 0, NULL);
 	}
 
 	printk("\033[32mNow bringup first user process %s\033[0m\n", argv[0]);

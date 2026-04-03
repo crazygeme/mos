@@ -134,7 +134,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_mmap, // 90  __NR_mmap
 	sys_munmap, // 91  __NR_munmap
 	0, // 92  __NR_truncate
-	0, // 93  __NR_ftruncate
+	sys_ftruncate, // 93  __NR_ftruncate
 	sys_fchmod, // 94  __NR_fchmod
 	sys_fchown, // 95  __NR_fchown
 	sys_getpriority, // 96  __NR_getpriority
@@ -235,7 +235,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_ugetrlimit, // 191 __NR_ugetrlimit
 	sys_mmap2, // 192 __NR_mmap2
 	0, // 193 __NR_truncate64
-	0, // 194 __NR_ftruncate64
+	sys_ftruncate64, // 194 __NR_ftruncate64
 	sys_stat64, // 195 __NR_stat64
 	sys_lstat64, // 196 __NR_lstat64
 	sys_fstat64, // 197 __NR_fstat64

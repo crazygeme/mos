@@ -258,7 +258,6 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 				       int prot, int flag)
 {
 	unsigned phy = 0;
-	ext4_file *ff;
 	size_t rcnt = 0;
 	int mmflag;
 	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
@@ -301,27 +300,32 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
 	INVLPG(address);
 
-	ff = f->f_inode->i_private;
+	if (f->f_inode->i_op && f->f_inode->i_op->read_page) {
+		f->f_inode->i_op->read_page(f->f_inode, offset, address);
+		rcnt = PAGE_SIZE;
+	} else {
+		ext4_file *ff = f->f_inode->i_private;
 
-	/*
-	 * Some programs map a region larger than the file size;
-	 * return a zero page in that case.
-	 */
-	if (ext4_fseek(ff, offset, SEEK_SET) != EOK) {
-		memset(address, 0, PAGE_SIZE);
-		goto READ_DONE;
+		/*
+		 * Some programs map a region larger than the file size;
+		 * return a zero page in that case.
+		 */
+		if (ext4_fseek(ff, offset, SEEK_SET) != EOK) {
+			memset(address, 0, PAGE_SIZE);
+			goto READ_DONE;
+		}
+
+		/*
+		 * Read the file.  If fewer than PAGE_SIZE bytes are returned, zero the
+		 * remainder (many programs depend on this).
+		 */
+		if (ext4_fread(ff, address, PAGE_SIZE, &rcnt) != EOK)
+			klog("FAIL: mmap: read to buffer %x, size %x\n", address,
+			     PAGE_SIZE);
+
+		if (rcnt < PAGE_SIZE)
+			memset(address + rcnt, 0, PAGE_SIZE - rcnt);
 	}
-
-	/*
-	 * Read the file.  If fewer than PAGE_SIZE bytes are returned, zero the
-	 * remainder (many programs depend on this).
-	 */
-	if (ext4_fread(ff, address, PAGE_SIZE, &rcnt) != EOK)
-		klog("FAIL: mmap: read to buffer %x, size %x\n", address,
-		     PAGE_SIZE);
-
-	if (rcnt < PAGE_SIZE)
-		memset(address + rcnt, 0, PAGE_SIZE - rcnt);
 
 READ_DONE:
 	page_fault_file_read += rcnt;

@@ -71,6 +71,7 @@ typedef struct {
 
 static pts_pair pts_pairs[MAX_PTS];
 static spinlock_t pts_alloc_lock;
+static super_block *ptsdir_sb_global;
 
 /* ── Pair lifecycle ───────────────────────────────────────────────────────── */
 
@@ -612,7 +613,6 @@ static const char pty_hex[] = "0123456789abcdef";
 static void pts_dev_register(super_block *dev_sb)
 {
 	char path[16];
-	super_block *ptsdir_sb;
 	int i;
 
 	printk("dev: registered /dev/pts master and slavers\n");
@@ -634,13 +634,28 @@ static void pts_dev_register(super_block *dev_sb)
 		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(PTS_MAJOR, i));
 	}
 
-	/* Unix98 /dev/pts/N slave nodes */
-	ptsdir_sb = sget(&ptsdir_sops);
-	vfs_mount(dev_sb, "/pts", ptsdir_sb);
+	/* Unix98 /dev/pts/N slave nodes — sb is exposed via pts_get_devpts_sb(). */
+	ptsdir_sb_global = sget(&ptsdir_sops);
 	for (i = 0; i < MAX_PTS; i++) {
 		sprintf(path, "/%d", i);
-		vfs_mknod(ptsdir_sb, path, S_IFCHR | 0620, MKDEV(PTS_MAJOR, i));
+		vfs_mknod(ptsdir_sb_global, path, S_IFCHR | 0620,
+			  MKDEV(PTS_MAJOR, i));
 	}
 }
 
 DEV_INIT(pts_dev_register);
+
+/*
+ * pts_get_devpts_sb — return the pre-built /dev/pts superblock.
+ *
+ * Called by devpts_get_sb() in mount.c when userspace (or kinit_userspace)
+ * mounts "devpts" on "/dev/pts".  The superblock is created once by
+ * pts_dev_register() at DEV_INIT time; this just hands back a reference.
+ */
+super_block *pts_get_devpts_sb(void)
+{
+	if (!ptsdir_sb_global)
+		return NULL;
+	sb_get(ptsdir_sb_global);
+	return ptsdir_sb_global;
+}

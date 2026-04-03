@@ -28,19 +28,48 @@ static ssize_t hdd_dev_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	hdd_partition_info *pi = fp->f_inode->i_private;
 	char *dst = (char *)buf;
-	unsigned sector = (unsigned)(*pos / BLOCK_SECTOR_SIZE);
-	unsigned nsectors = (unsigned)(size / BLOCK_SECTOR_SIZE);
-	unsigned i;
+	loff_t dev_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
+	char *tmp;
+	ssize_t transferred = 0;
 
-	for (i = 0; i < nsectors; i++, dst += BLOCK_SECTOR_SIZE) {
-		if (sector + i >= pi->size)
+	if (*pos >= dev_size || size == 0)
+		return 0;
+	if (*pos + (loff_t)size > dev_size)
+		size = (size_t)(dev_size - *pos);
+
+	tmp = malloc(BLOCK_SECTOR_SIZE);
+	if (!tmp)
+		return -ENOMEM;
+
+	while ((size_t)transferred < size) {
+		unsigned sector =
+			(unsigned)((*pos + transferred) / BLOCK_SECTOR_SIZE);
+		unsigned byte_off =
+			(unsigned)((*pos + transferred) % BLOCK_SECTOR_SIZE);
+		unsigned avail = BLOCK_SECTOR_SIZE - byte_off;
+		unsigned want = (unsigned)(size - (size_t)transferred);
+		unsigned copy = avail < want ? avail : want;
+
+		if (sector >= pi->size)
 			break;
-		if (pi->read(pi->aux, sector + i, dst, BLOCK_SECTOR_SIZE) < 0)
-			break;
+
+		/* Aligned full-sector: read directly into dst. */
+		if (byte_off == 0 && copy == BLOCK_SECTOR_SIZE) {
+			if (pi->read(pi->aux, sector, dst + transferred,
+				     BLOCK_SECTOR_SIZE) < 0)
+				break;
+		} else {
+			if (pi->read(pi->aux, sector, tmp,
+				     BLOCK_SECTOR_SIZE) < 0)
+				break;
+			memcpy(dst + transferred, tmp + byte_off, copy);
+		}
+		transferred += (ssize_t)copy;
 	}
 
-	*pos += (loff_t)i * BLOCK_SECTOR_SIZE;
-	return (ssize_t)i * BLOCK_SECTOR_SIZE;
+	free(tmp);
+	*pos += transferred;
+	return transferred;
 }
 
 static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
@@ -48,20 +77,52 @@ static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 {
 	hdd_partition_info *pi = fp->f_inode->i_private;
 	const char *src = (const char *)buf;
-	unsigned sector = (unsigned)(*pos / BLOCK_SECTOR_SIZE);
-	unsigned nsectors = (unsigned)(size / BLOCK_SECTOR_SIZE);
-	unsigned i;
+	loff_t dev_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
+	char *tmp;
+	ssize_t transferred = 0;
 
-	for (i = 0; i < nsectors; i++, src += BLOCK_SECTOR_SIZE) {
-		if (sector + i >= pi->size)
+	if (*pos >= dev_size || size == 0)
+		return 0;
+	if (*pos + (loff_t)size > dev_size)
+		size = (size_t)(dev_size - *pos);
+
+	tmp = malloc(BLOCK_SECTOR_SIZE);
+	if (!tmp)
+		return -ENOMEM;
+
+	while ((size_t)transferred < size) {
+		unsigned sector =
+			(unsigned)((*pos + transferred) / BLOCK_SECTOR_SIZE);
+		unsigned byte_off =
+			(unsigned)((*pos + transferred) % BLOCK_SECTOR_SIZE);
+		unsigned avail = BLOCK_SECTOR_SIZE - byte_off;
+		unsigned want = (unsigned)(size - (size_t)transferred);
+		unsigned copy = avail < want ? avail : want;
+
+		if (sector >= pi->size)
 			break;
-		if (pi->write(pi->aux, sector + i, (char *)src,
-			      BLOCK_SECTOR_SIZE) < 0)
-			break;
+
+		/* Aligned full-sector: write directly from src. */
+		if (byte_off == 0 && copy == BLOCK_SECTOR_SIZE) {
+			if (pi->write(pi->aux, sector, (char *)src + transferred,
+				      BLOCK_SECTOR_SIZE) < 0)
+				break;
+		} else {
+			/* Read-modify-write for partial sectors. */
+			if (pi->read(pi->aux, sector, tmp,
+				     BLOCK_SECTOR_SIZE) < 0)
+				break;
+			memcpy(tmp + byte_off, src + transferred, copy);
+			if (pi->write(pi->aux, sector, tmp,
+				      BLOCK_SECTOR_SIZE) < 0)
+				break;
+		}
+		transferred += (ssize_t)copy;
 	}
 
-	*pos += (loff_t)i * BLOCK_SECTOR_SIZE;
-	return (ssize_t)i * BLOCK_SECTOR_SIZE;
+	free(tmp);
+	*pos += transferred;
+	return transferred;
 }
 
 static loff_t hdd_dev_llseek(file *fp, loff_t offset, int whence)
@@ -107,7 +168,7 @@ static int hdd_dev_getattr(inode *node, struct stat *s)
 
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
+	s->st_size = 0; /* block devices report 0 in stat; use llseek(SEEK_END) */
 	s->st_blksize = BLOCK_SECTOR_SIZE;
 	s->st_blocks = (loff_t)pi->size;
 	s->st_dev = MKDEV(HDD_MAJOR, 0);

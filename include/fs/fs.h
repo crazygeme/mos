@@ -101,6 +101,10 @@ typedef struct _inode_operations {
 	int (*getattr)(inode *inode, struct stat *s);
 	int (*setattr)(inode *inode, uint32_t mode);
 	int (*chown)(inode *inode, uint32_t uid, uint32_t gid);
+	/* read_page/write_page: transfer one PAGE_SIZE chunk at file offset @offset */
+	int (*read_page)(inode *inode, unsigned offset, void *buf);
+	int (*write_page)(inode *inode, unsigned offset, const void *buf);
+	int (*ftruncate)(inode *inode, loff_t size);
 } inode_operations;
 
 /*

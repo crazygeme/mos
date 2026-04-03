@@ -128,10 +128,37 @@ static int ext4_file_chown(inode *node, uint32_t uid, uint32_t gid)
 	return ext4_fchown(f, uid, gid);
 }
 
+static int ext4_file_read_page(inode *node, unsigned offset, void *buf)
+{
+	ext4_file *ff = node->i_private;
+	size_t rcnt = 0;
+
+	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
+		return -EIO;
+	ext4_fread(ff, buf, PAGE_SIZE, &rcnt);
+	if (rcnt < PAGE_SIZE)
+		memset((char *)buf + rcnt, 0, PAGE_SIZE - rcnt);
+	return 0;
+}
+
+static int ext4_file_write_page(inode *node, unsigned offset, const void *buf)
+{
+	ext4_file *ff = node->i_private;
+	size_t wcnt = 0;
+
+	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
+		return -EIO;
+	if (ext4_fwrite(ff, buf, PAGE_SIZE, &wcnt) != EOK)
+		return -EIO;
+	return 0;
+}
+
 static const inode_operations ext4_file_iops = {
 	.getattr = ext4_file_getattr,
 	.setattr = ext4_file_setattr,
 	.chown = ext4_file_chown,
+	.read_page = ext4_file_read_page,
+	.write_page = ext4_file_write_page,
 };
 
 static const file_operations ext4_file_fops = {

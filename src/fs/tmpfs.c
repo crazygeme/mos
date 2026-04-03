@@ -708,7 +708,7 @@ static void tmpfs_free_tree(tmpfs_node *n)
 	list_entry *e;
 
 	if (S_ISDIR(n->mode)) {
-		for (e = n->children.next; e != &n->children; ) {
+		for (e = n->children.next; e != &n->children;) {
 			tmpfs_dirent *de = container_of(e, tmpfs_dirent, list);
 
 			e = e->next;
@@ -745,7 +745,7 @@ static super_operations tmpfs_sops = {
 /* ── get_sb — called from mount.c ────────────────────────────────────────── */
 
 super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
-			   void *data)
+			  void *data)
 {
 	super_block *sb = sget(&tmpfs_sops);
 	tmpfs_sb_info *sbi = zalloc(sizeof(*sbi));

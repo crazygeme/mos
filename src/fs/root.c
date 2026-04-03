@@ -1003,8 +1003,7 @@ static void fs_mount_root(void)
 	ext4_mount_setup_locks("/", &root_lock);
 
 	/* Populate root sb metadata for /proc/mounts. */
-	strncpy(cur->root->s_devname, devname,
-		sizeof(cur->root->s_devname) - 1);
+	sprintf(cur->root->s_devname, "/dev/%s", devname);
 	strncpy(cur->root->s_fstype, "ext3", sizeof(cur->root->s_fstype) - 1);
 	strncpy(cur->root->s_mountpoint, "/",
 		sizeof(cur->root->s_mountpoint) - 1);

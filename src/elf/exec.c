@@ -480,26 +480,46 @@ int sys_execve(const char *f, char **argv, char **envp)
 		return -ENOEXEC;
 	}
 
-	/* save command line into task struct */
-	tmp = cur->user->command;
-	strcpy(tmp, file_name);
-	tmp = tmp + strlen(tmp) + 1;
-	for (i = 1; i < (int)argc; i++) {
-		strcpy(tmp, s_argv[i]);
-		tmp = tmp + strlen(tmp) + 1;
-	}
-	cur->user->cmd_len = tmp - cur->user->command;
+	/* save command line into task struct (bounded to one page) */
+	{
+		char *end = cur->user->command + PAGE_SIZE - 1;
+		unsigned len;
 
-	tmp = cur->user->environment;
-	if (envc > 0) {
-		strcpy(tmp, s_envp[0]);
-		tmp = tmp + strlen(tmp);
+		tmp = cur->user->command;
+		len = strlen(file_name);
+		if (len > (unsigned)(end - tmp))
+			len = (unsigned)(end - tmp);
+		memcpy(tmp, file_name, len);
+		tmp[len] = '\0';
+		tmp += len + 1;
+
+		for (i = 1; i < (int)argc && tmp < end; i++) {
+			len = strlen(s_argv[i]);
+			if (len > (unsigned)(end - tmp))
+				len = (unsigned)(end - tmp);
+			memcpy(tmp, s_argv[i], len);
+			tmp[len] = '\0';
+			tmp += len + 1;
+		}
+		cur->user->cmd_len = tmp - cur->user->command;
 	}
-	for (i = 1; i < (int)envc; i++) {
-		strcpy(tmp, s_envp[i]);
-		tmp = tmp + strlen(tmp);
+
+	/* save environment into task struct (bounded to one page) */
+	{
+		char *end = cur->user->environment + PAGE_SIZE - 1;
+		unsigned len;
+
+		tmp = cur->user->environment;
+		for (i = 0; i < (int)envc && tmp < end; i++) {
+			len = strlen(s_envp[i]);
+			if (len > (unsigned)(end - tmp))
+				len = (unsigned)(end - tmp);
+			memcpy(tmp, s_envp[i], len);
+			tmp[len] = '\0';
+			tmp += len + 1;
+		}
+		cur->user->env_len = tmp - cur->user->environment;
 	}
-	cur->user->env_len = tmp - cur->user->environment;
 
 	/* log if needed */
 	if (TestControl.verbos)
@@ -598,7 +618,7 @@ static void run_if_exist(const char *path, const char *argv[],
  */
 static void kinit_userspace()
 {
-	const char *devault_argv[] = { "/sbin/init", "3", "fastboot", NULL };
+	const char *devault_argv[] = { "/sbin/init", NULL };
 	const char *default_envp[] = { NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",

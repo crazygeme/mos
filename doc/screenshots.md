@@ -2,7 +2,7 @@
 
 Booting
 ---
-![Screen shot: login](screenshot/booting.png)
+![Screen shot: login](screenshot/boot.png)
 
 Login prompt
 ---

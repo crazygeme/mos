@@ -18,6 +18,8 @@
 #include <ps/ps.h>
 #include <elf/exec.h>
 #include <lib/klib.h>
+#include <ps/signal.h>
+#include <hw/time.h>
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
@@ -30,6 +32,11 @@ int sys_syslog(int type, char *buf, int len);
 /* signal handlers defined in syscall_proc.c */
 int sys_sigreturn(void);
 void do_signal(intr_frame *frame);
+int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize);
+int sys_rt_sigtimedwait(const sigset_t *set, void *info,
+			const struct timespec *timeout, unsigned sigsetsize);
+int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo);
+int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize);
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx,
 			  unsigned esi, unsigned edi, unsigned ebp);
@@ -217,10 +224,10 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 173 __NR_rt_sigreturn
 	sys_sigaction, // 174 __NR_rt_sigaction
 	sys_sigprocmask, // 175 __NR_rt_sigprocmask
-	0, // 176 __NR_rt_sigpending
-	0, // 177 __NR_rt_sigtimedwait
-	0, // 178 __NR_rt_sigqueueinfo
-	0, // 179 __NR_rt_sigsuspend
+	sys_rt_sigpending, // 176 __NR_rt_sigpending
+	sys_rt_sigtimedwait, // 177 __NR_rt_sigtimedwait
+	sys_rt_sigqueueinfo, // 178 __NR_rt_sigqueueinfo
+	sys_rt_sigsuspend, // 179 __NR_rt_sigsuspend
 	sys_pread64, // 180 __NR_pread64
 	sys_pwrite64, // 181 __NR_pwrite64
 	sys_chown, // 182 __NR_chown

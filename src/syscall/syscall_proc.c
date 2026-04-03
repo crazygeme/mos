@@ -570,9 +570,8 @@ int sys_pause()
 	if (TestControl.verbos)
 		klog("pause\n");
 
-	/* Yield CPU until a signal becomes deliverable. */
 	while (!(cur->signal->sig_pending & ~cur->signal->sig_mask))
-		task_sched();
+		time_wait(0);
 
 	return -EINTR;
 }
@@ -998,4 +997,137 @@ int sys_exit_group(int status)
 
 	sys_exit((unsigned)status);
 	return 0; /* unreachable */
+}
+
+/*
+ * rt_sigpending (176) — return the set of pending blocked signals.
+ *
+ * Only signals that are both pending and blocked are returned; a pending but
+ * unblocked signal would have already been delivered.
+ */
+int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (TestControl.verbos)
+		klog("rt_sigpending\n");
+
+	if (!set)
+		return -EFAULT;
+
+	*set = cur->signal->sig_pending & cur->signal->sig_mask;
+	return 0;
+}
+
+/*
+ * rt_sigtimedwait (177) — wait for a signal from @set to become pending.
+ *
+ * Signals in @set should normally be blocked by the caller so they queue
+ * rather than being delivered asynchronously.  When a signal in @set
+ * becomes pending it is consumed and its number is returned.
+ *
+ * If @timeout is non-NULL the call returns -EAGAIN after the deadline.
+ * Returns -EINTR if a signal not in @set and not blocked becomes deliverable.
+ */
+int sys_rt_sigtimedwait(const sigset_t *set, void *info,
+			const struct timespec *timeout, unsigned sigsetsize)
+{
+	task_struct *cur = CURRENT_TASK();
+	sigset_t wait_set;
+	unsigned long long deadline = 0;
+	int has_timeout = 0;
+
+	if (TestControl.verbos)
+		klog("rt_sigtimedwait\n");
+
+	if (!set)
+		return -EFAULT;
+
+	wait_set = *set;
+	wait_set &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
+
+	if (timeout) {
+		deadline = time_now_ms() +
+			   (unsigned long long)timeout->tv_sec * 1000 +
+			   (unsigned long long)timeout->tv_nsec / 1000000;
+		has_timeout = 1;
+	}
+
+	for (;;) {
+		sigset_t pending = cur->signal->sig_pending & wait_set;
+
+		if (pending) {
+			int sig;
+
+			for (sig = 1; sig < NSIG; sig++) {
+				if (pending & (1UL << (sig - 1))) {
+					cur->signal->sig_pending &=
+						~(1UL << (sig - 1));
+					if (info)
+						memset(info, 0, sigsetsize);
+					return sig;
+				}
+			}
+		}
+
+		/* A non-waited, unblocked signal interrupts the wait. */
+		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
+		    ~wait_set)
+			return -EINTR;
+
+		if (has_timeout) {
+			unsigned long long now = time_now_ms();
+
+			if (now >= deadline)
+				return -EAGAIN;
+			time_wait((unsigned)(deadline - now));
+		} else {
+			time_wait(0);
+		}
+	}
+}
+
+/*
+ * rt_sigqueueinfo (178) — send a signal with siginfo to a process.
+ *
+ * We don't queue siginfo payloads; just deliver the signal.
+ */
+int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo)
+{
+	if (TestControl.verbos)
+		klog("rt_sigqueueinfo(%d, %d)\n", pid, sig);
+
+	if (sig == 0)
+		return ps_find_process(pid) ? 0 : -ESRCH;
+
+	return ps_send_signal(pid, sig);
+}
+
+/*
+ * rt_sigsuspend (179) — atomically set signal mask and suspend until a signal.
+ *
+ * Replaces sig_mask with @mask, sleeps until a signal becomes deliverable,
+ * then restores the old mask.  Always returns -EINTR.
+ */
+int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize)
+{
+	task_struct *cur = CURRENT_TASK();
+	sigset_t saved_mask, new_mask;
+
+	if (TestControl.verbos)
+		klog("rt_sigsuspend\n");
+
+	if (!mask)
+		return -EFAULT;
+
+	saved_mask = cur->signal->sig_mask;
+	new_mask = *mask;
+	new_mask &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
+	cur->signal->sig_mask = new_mask;
+
+	while (!(cur->signal->sig_pending & ~cur->signal->sig_mask))
+		time_wait(0);
+
+	cur->signal->sig_mask = saved_mask;
+	return -EINTR;
 }

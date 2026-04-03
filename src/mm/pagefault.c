@@ -320,8 +320,8 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		 * remainder (many programs depend on this).
 		 */
 		if (ext4_fread(ff, address, PAGE_SIZE, &rcnt) != EOK)
-			klog("FAIL: mmap: read to buffer %x, size %x\n", address,
-			     PAGE_SIZE);
+			klog("FAIL: mmap: read to buffer %x, size %x\n",
+			     address, PAGE_SIZE);
 
 		if (rcnt < PAGE_SIZE)
 			memset(address + rcnt, 0, PAGE_SIZE - rcnt);

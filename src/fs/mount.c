@@ -10,8 +10,8 @@
 extern super_block *pts_get_devpts_sb(void);
 
 /* Defined in src/fs/tmpfs.c */
-extern super_block *tmpfs_get_sb(const char *dev, const char *target,
-				  int flags, void *data);
+extern super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
+				 void *data);
 
 /* =========================================================================
  * Filesystem type registry
@@ -93,7 +93,7 @@ static super_block *stub_get_sb(const char *dev, const char *target, int flags,
 /* "ext4"/"ext3" are registered by src/fs/root.c (KERNEL_INIT 3) */
 
 static super_block *devpts_get_sb(const char *dev, const char *target,
-				   int flags, void *data)
+				  int flags, void *data)
 {
 	return pts_get_devpts_sb();
 }

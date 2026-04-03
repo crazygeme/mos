@@ -59,8 +59,8 @@ static ssize_t hdd_dev_read(file *fp, void *buf, size_t size, loff_t *pos)
 				     BLOCK_SECTOR_SIZE) < 0)
 				break;
 		} else {
-			if (pi->read(pi->aux, sector, tmp,
-				     BLOCK_SECTOR_SIZE) < 0)
+			if (pi->read(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
+			    0)
 				break;
 			memcpy(dst + transferred, tmp + byte_off, copy);
 		}
@@ -104,17 +104,18 @@ static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 
 		/* Aligned full-sector: write directly from src. */
 		if (byte_off == 0 && copy == BLOCK_SECTOR_SIZE) {
-			if (pi->write(pi->aux, sector, (char *)src + transferred,
+			if (pi->write(pi->aux, sector,
+				      (char *)src + transferred,
 				      BLOCK_SECTOR_SIZE) < 0)
 				break;
 		} else {
 			/* Read-modify-write for partial sectors. */
-			if (pi->read(pi->aux, sector, tmp,
-				     BLOCK_SECTOR_SIZE) < 0)
+			if (pi->read(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
+			    0)
 				break;
 			memcpy(tmp + byte_off, src + transferred, copy);
-			if (pi->write(pi->aux, sector, tmp,
-				      BLOCK_SECTOR_SIZE) < 0)
+			if (pi->write(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
+			    0)
 				break;
 		}
 		transferred += (ssize_t)copy;
@@ -168,7 +169,8 @@ static int hdd_dev_getattr(inode *node, struct stat *s)
 
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_size = 0; /* block devices report 0 in stat; use llseek(SEEK_END) */
+	s->st_size =
+		0; /* block devices report 0 in stat; use llseek(SEEK_END) */
 	s->st_blksize = BLOCK_SECTOR_SIZE;
 	s->st_blocks = (loff_t)pi->size;
 	s->st_dev = MKDEV(HDD_MAJOR, 0);

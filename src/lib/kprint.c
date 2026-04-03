@@ -31,7 +31,6 @@
 #include <hw/serial.h>
 #include <hw/tty.h>
 #include <hw/time.h>
-#include <fs/syslog.h>
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */
 
@@ -57,7 +56,6 @@ static void klog_writestr(char *str, void *ctx)
 {
 	if (!klog_inited || !str || !*str)
 		return;
-	syslog_write(str, strlen(str));
 	while (*str)
 		klog_write(*str++, ctx);
 }

@@ -43,3 +43,4 @@ With some features we are never goting to implement (like swap or kernel module)
 | [Disk Image](doc/ffs_img.md)      | Mount `ffs.img`, copy binaries into it, create a new image from scratch         |
 | [Todo](doc/todo.md)               | Feature checklist                                                               |
 | [Screenshots](doc/screenshots.md) | Some screen shots about mos running                                             |
+| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                   |

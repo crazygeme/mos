@@ -56,7 +56,8 @@
 #define K_HOLE KS(KT_SPEC, 0) /* unmapped key */
 #define K_ENTER KS(KT_SPEC, 13) /* Return */
 
-#define NR_KEYMAPS 8 /* modifier layers: plain,shift,altgr,… */
+#define NR_KEYMAPS \
+	256 /* modifier layers (8-bit modifier mask, matches Linux) */
 #define NR_KEYS 128 /* keycodes 0–127 */
 
 #define MAX_NR_FUNC 256 /* number of function-key string slots */
@@ -95,6 +96,52 @@ struct kbentry {
 #define KB_101 0x02 /* 101-key PC/AT keyboard */
 #define KB_OTHER 0x03
 #define KDSIGACCEPT 0x4B4E /* process accepts VT-switch signal */
+#define KDGETMODE 0x4B3B /* get text/graphics mode */
+#define KDSETMODE 0x4B3A /* set text/graphics mode */
+#define KD_TEXT 0
+#define KD_GRAPHICS 1
+
+/* Font ioctls */
+#define GIO_FONT 0x4B60 /* get 256-char 8x8 font (raw bitmap) */
+#define PIO_FONT 0x4B61 /* set 256-char 8x8 font */
+#define GIO_FONTX 0x4B6B /* get font with header */
+#define PIO_FONTX 0x4B6C /* set font with header */
+#define KDFONTOP 0x4B72 /* font op (preferred, Linux 2.4+) */
+
+#define KD_FONT_OP_SET 0
+#define KD_FONT_OP_GET 1
+#define KD_FONT_OP_SET_DEFAULT 2
+#define KD_FONT_OP_COPY 3
+
+struct console_font_op {
+	unsigned int op;
+	unsigned int flags;
+	unsigned int width;
+	unsigned int height;
+	unsigned int charcount;
+	unsigned char *data; /* glyph bitmap pointer */
+};
+
+struct consolefontdesc {
+	unsigned short charcount;
+	unsigned short charheight;
+	char *chardata;
+};
+
+/* Unicode map ioctls */
+#define GIO_UNIMAP 0x4B66
+#define PIO_UNIMAP 0x4B67
+#define PIO_UNIMAPCLR 0x4B68
+
+struct unipair {
+	unsigned short unicode;
+	unsigned short fontpos;
+};
+
+struct unimapdesc {
+	unsigned short entry_ct;
+	struct unipair *entries;
+};
 
 typedef unsigned char cc_t;
 typedef unsigned int speed_t;

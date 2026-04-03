@@ -133,6 +133,7 @@ struct ifconf {
 #define SO_REUSEADDR 2 /* allow local address reuse */
 #define SO_TYPE 3 /* get socket type */
 #define SO_ERROR 4 /* get error status and clear */
+#define SO_BROADCAST 6 /* permit sending of broadcast msgs */
 #define SO_SNDBUF 7 /* send buffer size */
 #define SO_RCVBUF 8 /* receive buffer size */
 #define SO_KEEPALIVE 9 /* keep connections alive */

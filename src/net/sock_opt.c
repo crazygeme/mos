@@ -80,6 +80,19 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 			}
 			break;
 
+		case SO_BROADCAST:
+			if (sockopt_get_int(optval, optlen, &ival) < 0) {
+				ret = -EINVAL;
+				goto done;
+			}
+			if (sk->udp) {
+				if (ival)
+					ip_set_option(sk->udp, SOF_BROADCAST);
+				else
+					ip_reset_option(sk->udp, SOF_BROADCAST);
+			}
+			break;
+
 		case SO_RCVBUF:
 		case SO_SNDBUF:
 		case SO_LINGER:
@@ -258,6 +271,16 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 		case SO_SNDBUF: {
 			int val = sk->tcp ? (int)tcp_sndbuf(sk->tcp) : 0;
+			ret = sockopt_put_int(optval, optlen, val);
+			goto done;
+		}
+		case SO_BROADCAST: {
+			int val =
+				sk->udp ?
+					(ip_get_option(sk->udp, SOF_BROADCAST) ?
+						 1 :
+						 0) :
+					0;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}

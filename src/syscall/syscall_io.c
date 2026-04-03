@@ -83,9 +83,8 @@ int sys_read(int fd, char *buf, unsigned len)
 	ret = fs_read(fd, -1, buf, len);
 
 	if (TestControl.verbos) {
-		char *tmp = format_buffer(buf, len);
-		klog("read(%d, %s, %d) = %d\n", fd, tmp, len,
-		     ret > 0 ? ret : 0);
+		char *tmp = format_buffer(buf, ret > 0 ? ret : 0);
+		klog("read(%d, %s, %d) = %d\n", fd, tmp, len, ret);
 		free(tmp);
 	}
 

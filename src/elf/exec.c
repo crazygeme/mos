@@ -92,7 +92,7 @@ static unsigned count_strv(char **v)
 {
 	unsigned n = 0;
 	if (v)
-		while (v[n] && v[n][0])
+		while (v[n])
 			n++;
 	return n;
 }
@@ -619,7 +619,7 @@ static void run_if_exist(const char *path, const char *argv[],
 static void kinit_userspace()
 {
 	const char *devault_argv[] = { "/sbin/init", NULL };
-	const char *default_envp[] = { NULL };
+	const char *default_envp[] = { "TERM=linux", NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
 				    "HOME=/root", "LANG=en_US", NULL };

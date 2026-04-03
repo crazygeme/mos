@@ -797,6 +797,19 @@ int resolve_path(const char *old, char *new)
 	strcat(new + len, old);
 
 done:
+	/* Collapse consecutive '/' (e.g. "//lib/kbd" → "/lib/kbd") */
+	{
+		char *src = new, *dst = new;
+		while (*src) {
+			*dst++ = *src;
+			if (*src == '/')
+				while (src[1] == '/')
+					src++;
+			src++;
+		}
+		*dst = '\0';
+	}
+
 	if (plain_old)
 		free(plain_old);
 

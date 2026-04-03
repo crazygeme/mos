@@ -334,9 +334,9 @@ static void kb_dsr(void *param)
 	release = (code & 0x80) != 0;
 	code &= ~0x80u;
 
-	/* Ctrl+Alt+1..0: switch virtual terminal (scancodes 2..11) */
+	/* Ctrl+1..0: switch virtual terminal (scancodes 2..11 → tty 1..10) */
 	if (!release && ctrl && code >= 2 && code <= 11) {
-		tty_switch((int)(code - 2));
+		tty_switch((int)(code - 1));
 		return;
 	}
 

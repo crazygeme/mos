@@ -611,9 +611,9 @@ static void run_if_exist(const char *path, const char *argv[],
  *   1. Update TSS.esp0 so the CPU knows where to switch to kernel stack
  *      when this process takes an interrupt or syscall.
  *   2. Open the three standard file descriptors (stdin/stdout/stderr):
- *        fd 0 — /dev/tty O_RDONLY (keyboard input)
- *        fd 1 — /dev/tty O_WRONLY (terminal output)
- *        fd 2 — /dev/tty O_WRONLY (terminal error output)
+ *        fd 0 — /dev/tty1 O_RDONLY (keyboard input)
+ *        fd 1 — /dev/tty1 O_WRONLY (terminal output)
+ *        fd 2 — /dev/tty1 O_WRONLY (terminal error output)
  *   3. exec /bin/bash as the init process.
  */
 static void kinit_userspace()
@@ -655,10 +655,10 @@ static void kinit_userspace()
 
 	ps_update_tss(esp0);
 
-	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty. */
-	fs_open("/dev/tty0", O_RDONLY, 0);
-	fs_open("/dev/tty0", O_WRONLY, 0);
-	fs_open("/dev/tty0", O_WRONLY, 0);
+	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty1. */
+	fs_open("/dev/tty1", O_RDONLY, 0);
+	fs_open("/dev/tty1", O_WRONLY, 0);
+	fs_open("/dev/tty1", O_WRONLY, 0);
 
 	run_if_exist(argv[0], argv, envp);
 }

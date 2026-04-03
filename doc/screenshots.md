@@ -1,5 +1,22 @@
 # Screenshots
 
+Booting
+---
+![Screen shot: login](screenshot/booting.png)
+
+Login prompt
+---
+![Screen shot: login](screenshot/login_prompt.png)
+
+Login success
+---
+![Screen shot: login](screenshot/login_succ.png)
+
+All processes
+---
+![Screen shot: login](screenshot/final.png)
+
+
 Version:
 ---
 ![Screen shot: versions](screenshot/versions.png)

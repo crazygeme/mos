@@ -163,6 +163,8 @@ typedef struct _signal_context {
 		sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
 	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
 	sigset_t sig_mask; /* bitmask: blocked signals             */
+	sigset_t saved_sigmask; /* mask to restore after sigsuspend     */
+	int restore_sigmask; /* if set, restore saved_sigmask after signal delivery */
 	stack_t altstack; /* alternate signal stack (sigaltstack)  */
 } signal_context;
 
@@ -332,6 +334,7 @@ void reboot();
 void shutdown();
 
 void time_wait(unsigned ms);
+void ps_signal_wait(void);
 
 #define RUSAGE_SELF 0
 #define RUSAGE_CHILDREN (-1)

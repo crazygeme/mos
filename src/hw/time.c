@@ -79,6 +79,7 @@ void time_init()
 	tickets = 0;
 	cycle_per_ticket = 0;
 	boot_epoch = rtc_get_time();
+	g_wall_offset_us = (long long)boot_epoch * 1000000LL;
 
 	int_register(0x20, time_process, 0, 0);
 

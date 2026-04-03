@@ -2,6 +2,12 @@
 
 32-bit x86 (i686) educational OS kernel targeting Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility. Runs in QEMU via GRUB/Multiboot.
 
+With some features we are never goting to implement (like swap or kernel module) the booting procesure will show lots of error, but it can <font color="green">**successfully**</font> boot Red Hat 9 system!
+
+![Screen shot: login](doc/screenshot/booting.png)
+![Screen shot: login](doc/screenshot/login_prompt.png)
+![Screen shot: login](doc/screenshot/final.png)
+
 **Build:** `make` / `make rebuild` / `make run`
 
 ---
@@ -20,7 +26,7 @@
 | [Process & Scheduler](doc/ps.md)        | MPRQ, context switch, fork/exit/waitpid, signals, synchronization primitives                                                  |
 | [Virtual File System](doc/vfs.md)       | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend, loop device                                      |
 | [TTY / PTY](doc/tty.md)                 | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, bash spawner                                       |
-| [Framebuffer / VGA](doc/vga.md)         | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                                        |
+| [Framebuffer / VGA](doc/vga.md)         | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                                         |
 | [Poll / Select](doc/poll.md)            | Four-phase wait loop, lost-wakeup prevention, poll_wait driver interface, socket integration, fallback timer                  |
 | [ELF Loader](doc/elf_exec.md)           | Segment mapping, BSS handling, dynamic linker loading, execve lifecycle, initial stack layout                                 |
 | [Signal Handling](doc/signals.md)       | Delivery engine, vDSO trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, alarm, process group signals          |

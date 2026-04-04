@@ -20,6 +20,10 @@
 
 int do_socket(int domain, int type, int protocol)
 {
+	if (TestControl.verbos)
+		klog("socket(domain=%d, type=%d, protocol=%d)\n", domain, type,
+		     protocol);
+
 	if (domain == AF_UNIX) {
 		if (type != SOCK_STREAM && type != SOCK_DGRAM)
 			return -EPROTONOSUPPORT;
@@ -100,6 +104,9 @@ int do_socket(int domain, int type, int protocol)
 
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
+	if (TestControl.verbos)
+		klog("bind(fd=%d, addr=%x, addrlen=%u)\n", fd, addr, addrlen);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -137,6 +144,10 @@ int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
+	if (TestControl.verbos)
+		klog("connect(fd=%d, addr=%x, addrlen=%u)\n", fd, addr,
+		     addrlen);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -197,6 +208,9 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_listen(int fd, int backlog)
 {
+	if (TestControl.verbos)
+		klog("listen(fd=%d, backlog=%d)\n", fd, backlog);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -222,6 +236,9 @@ int do_listen(int fd, int backlog)
 
 int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	if (TestControl.verbos)
+		klog("accept(fd=%d, addr=%x, addrlen=%x)\n", fd, addr, addrlen);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -280,6 +297,10 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	if (TestControl.verbos)
+		klog("getsockname(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
+		     addrlen);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -303,6 +324,10 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	if (TestControl.verbos)
+		klog("getpeername(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
+		     addrlen);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -332,6 +357,10 @@ int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_send(int fd, const void *buf, unsigned len, int flags)
 {
+	if (TestControl.verbos)
+		klog("send(fd=%d, buf=%x, len=%u, flags=%d)\n", fd, buf, len,
+		     flags);
+
 	(void)flags;
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
@@ -344,6 +373,10 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 
 int do_recv(int fd, void *buf, unsigned len, int flags)
 {
+	if (TestControl.verbos)
+		klog("recv(fd=%d, buf=%x, len=%u, flags=%d)\n", fd, buf, len,
+		     flags);
+
 	return do_recvfrom(fd, buf, len, flags, NULL, NULL);
 }
 
@@ -352,6 +385,10 @@ int do_recv(int fd, void *buf, unsigned len, int flags)
 int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	      const struct sockaddr_in *to, unsigned tolen)
 {
+	if (TestControl.verbos)
+		klog("sendto(fd=%d, buf=%x, len=%u, flags=%d, to=%x, tolen=%u)\n",
+		     fd, buf, len, flags, to, tolen);
+
 	(void)flags;
 	(void)tolen;
 	mos_sock *sk = fd_to_sock(fd);
@@ -400,6 +437,10 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		struct sockaddr_in *from, unsigned *fromlen)
 {
+	if (TestControl.verbos)
+		klog("recvfrom(fd=%d, buf=%x, len=%u, flags=%d, from=%x, fromlen=%x)\n",
+		     fd, buf, len, flags, from, fromlen);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
@@ -465,6 +506,9 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 
 int do_shutdown(int fd, int how)
 {
+	if (TestControl.verbos)
+		klog("shutdown(fd=%d, how=%d)\n", fd, how);
+
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;

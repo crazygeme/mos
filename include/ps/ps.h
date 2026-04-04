@@ -8,6 +8,7 @@
 #include <lib/lock.h>
 #include <ps/signal.h>
 #include <stddef.h>
+#include <config.h>
 
 #define FORK_FLAG_VFORK 1
 /*
@@ -156,6 +157,8 @@ typedef struct _user_enviroment {
 	unsigned uid, euid, suid; /* real, effective, saved-set user id */
 	unsigned gid, egid, sgid; /* real, effective, saved-set group id */
 	unsigned fsuid, fsgid; /* filesystem uid/gid */
+	/* Per-process TLS GDT descriptors (GDT_ENTRY_TLS_MIN .. GDT_ENTRY_TLS_MAX) */
+	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
 } user_enviroment;
 
 typedef struct _signal_context {

@@ -341,6 +341,8 @@ static void fork_dup_user_env(task_struct *cur, task_struct *task)
 	task->user->sgid = cur->user->sgid;
 	task->user->fsuid = cur->user->fsuid;
 	task->user->fsgid = cur->user->fsgid;
+	memcpy(task->user->tls_desc, cur->user->tls_desc,
+	       sizeof(cur->user->tls_desc));
 }
 
 /* Duplicate the signal context; child starts with no pending signals. */

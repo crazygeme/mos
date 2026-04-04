@@ -149,7 +149,9 @@ int sys_sched_yield();
 unsigned sys_alarm(unsigned seconds);
 int sys_pause();
 int sys_sigaction(int sig, void *act, void *oact);
+int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize);
 int sys_sigprocmask(int how, void *set, void *oset);
+int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize);
 int sys_getrlimit(int resource, void *limit);
 int sys_setrlimit(int resource, void *limit);
 int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
@@ -162,6 +164,7 @@ int sys_ugetrlimit(int resource, void *limit);
 int sys_exit_group(int status);
 int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 		     size_t *ret);
+int sys_set_thread_area(void *u_info);
 
 /*
  * syscall_sys.c

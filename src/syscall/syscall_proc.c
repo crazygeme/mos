@@ -18,6 +18,8 @@
 #include <macro.h>
 #include "syscall_internal.h"
 
+extern unsigned long long gdt[];
+
 /* personality flags */
 enum {
 	UNAME26 = 0x0020000,
@@ -601,6 +603,53 @@ int sys_sigaction(int sig, void *act, void *oact)
 	return 0;
 }
 
+/*
+ * rt_sigaction user-space struct (syscall 174).
+ * Field order differs from old sigaction: flags and restorer come before mask,
+ * and the mask is 8 bytes (64 signals).  We only use the low 32 bits of the
+ * mask since we support signals 1-31.
+ */
+struct rt_sigaction_user {
+	void (*sa_handler)(int);
+	unsigned long sa_flags;
+	void (*sa_restorer)(void);
+	unsigned long sa_mask[2];
+};
+
+int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
+{
+	task_struct *cur = CURRENT_TASK();
+	struct sigaction *sa;
+
+	if (sig <= 0 || sig >= NSIG)
+		return -EINVAL;
+	if (sig == SIGKILL || sig == SIGSTOP)
+		return -EINVAL;
+
+	sa = &cur->signal->sig_handlers[sig];
+
+	if (oact) {
+		struct rt_sigaction_user *u = (struct rt_sigaction_user *)oact;
+		u->sa_handler = sa->sa_handler;
+		u->sa_flags = sa->sa_flags;
+		u->sa_restorer = sa->sa_restorer;
+		u->sa_mask[0] = sa->sa_mask;
+		u->sa_mask[1] = 0;
+	}
+	if (act) {
+		struct rt_sigaction_user *u = (struct rt_sigaction_user *)act;
+		sa->sa_handler = u->sa_handler;
+		sa->sa_flags = u->sa_flags;
+		sa->sa_restorer = u->sa_restorer;
+		sa->sa_mask = (unsigned long)u->sa_mask[0];
+	}
+
+	if (TestControl.verbos)
+		klog("rt_sigaction(%d, %x, %x)\n", sig, act, oact);
+
+	return 0;
+}
+
 int sys_sigprocmask(int how, void *set, void *oset)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -634,6 +683,51 @@ int sys_sigprocmask(int how, void *set, void *oset)
 
 	if (TestControl.verbos)
 		klog("sigprocmask(%d)\n", how);
+
+	return 0;
+}
+
+/*
+ * rt_sigprocmask (syscall 175).
+ * The mask pointer points to an 8-byte (64-signal) kernel sigset_t.
+ * We only use the low 32 bits; write 8 bytes to oset so glibc sees
+ * a fully initialised mask (upper 4 bytes = 0).
+ */
+int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned long newmask;
+
+	if (oset) {
+		((unsigned long *)oset)[0] = cur->signal->sig_mask;
+		((unsigned long *)oset)[1] = 0;
+	}
+
+	if (!set)
+		return 0;
+
+	newmask = ((unsigned long *)set)[0];
+
+	switch (how) {
+	case SIG_BLOCK:
+		cur->signal->sig_mask |= newmask;
+		break;
+	case SIG_UNBLOCK:
+		cur->signal->sig_mask &= ~newmask;
+		break;
+	case SIG_SETMASK:
+		cur->signal->sig_mask = newmask;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* SIGKILL and SIGSTOP can never be blocked. */
+	cur->signal->sig_mask &=
+		~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
+
+	if (TestControl.verbos)
+		klog("rt_sigprocmask(%d)\n", how);
 
 	return 0;
 }
@@ -1166,4 +1260,71 @@ int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize)
 	cur->signal->saved_sigmask = saved_mask;
 	cur->signal->restore_sigmask = 1;
 	return -EINTR;
+}
+
+/* ── sys_set_thread_area ─────────────────────────────────────────────────── */
+
+struct user_desc {
+	unsigned int entry_number;
+	unsigned int base_addr;
+	unsigned int limit;
+	unsigned int seg_32bit : 1;
+	unsigned int contents : 2;
+	unsigned int read_exec_only : 1;
+	unsigned int limit_in_pages : 1;
+	unsigned int seg_not_present : 1;
+	unsigned int useable : 1;
+	unsigned int empty : 25;
+};
+
+static unsigned long long build_tls_desc(struct user_desc *u)
+{
+	unsigned int type;
+
+	if (u->contents >= 2)
+		type = 8 | ((u->contents & 1) << 2) |
+		       (u->read_exec_only ? 0 : 2);
+	else
+		type = (u->contents << 2) | (u->read_exec_only ? 0 : 2);
+
+	return MAKE_SEG_DESC(u->base_addr, u->limit, SEG_CLASS_DATA, type,
+			     USER_PRIVILEGE,
+			     u->limit_in_pages ? SEG_BASE_4K : SEG_BASE_1);
+}
+
+int sys_set_thread_area(void *info)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned int entry;
+	unsigned long long desc;
+	struct user_desc *u_info = (struct user_desc *)info;
+
+	if (!u_info)
+		return -EFAULT;
+
+	if (TestControl.verbos)
+		klog("set_thread_area(entry=%d, base=%x)\n",
+		     u_info->entry_number, u_info->base_addr);
+
+	entry = u_info->entry_number;
+
+	if (entry == (unsigned int)-1) {
+		for (entry = GDT_ENTRY_TLS_MIN; entry <= GDT_ENTRY_TLS_MAX;
+		     entry++) {
+			if (!cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
+				break;
+		}
+		if (entry > GDT_ENTRY_TLS_MAX)
+			return -ESRCH;
+		u_info->entry_number = entry;
+	}
+
+	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
+		return -EINVAL;
+
+	desc = build_tls_desc(u_info);
+	cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = desc;
+	gdt[entry] = desc;
+
+	return 0;
 }

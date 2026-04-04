@@ -32,7 +32,7 @@ elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
 elif [ "$arg" == "profile" ]; then
 	kernel_file="out/kernel.dbg"
-	_debug="-gdb tcp::8888 -S"
+	_debug="-monitor unix:/tmp/qemu-profiler.sock,server,nowait"
 elif [ "$arg" == "curses" ]; then
 	_window="curses"
 	_vga=""

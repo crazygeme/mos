@@ -8,6 +8,8 @@ With some features we are never goting to implement (like swap or kernel module)
 ![Screen shot: login](doc/screenshot/login_prompt.png)
 ![Screen shot: login](doc/screenshot/final.png)
 
+The `root` user has no password. Enjoy.
+
 **Build:** `make` / `make rebuild` / `make run`
 
 ---
@@ -40,7 +42,7 @@ With some features we are never goting to implement (like swap or kernel module)
 | Section                                  | Summary                                                                         |
 | ---------------------------------------- | ------------------------------------------------------------------------------- |
 | [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image |
-| [Disk Image](doc/ffs_img.md)             | Mount `ffs.img`, copy binaries into it, create a new image from scratch         |
+| [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch    |
 | [Todo](doc/todo.md)                      | Feature checklist                                                               |
 | [Screenshots](doc/screenshots.md)        | Some screen shots about mos running                                             |
 | [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                          |

@@ -78,29 +78,43 @@ i386-elf-gdb out/kernel    # macOS
 
 ## Profiling
 
-1. Run `profiling.sh` — it waits for an OS instance to attach to.
-2. In another terminal: `./run.sh profile`
-3. Press any key in the `profiling.sh` terminal to arm the profiler.
-4. Run workloads inside MOS.
-5. Press any key again to capture, then Ctrl-C to generate the report.
+Profiling uses QEMU's HMP monitor to sample EIP and maps it to kernel symbols.
 
-The `profile` kernel command-line flag enables scheduler instrumentation
-(`TestControl.profiling = 1`) which records per-task cycle counts.
+```sh
+# Terminal 1 — start kernel with monitor socket exposed
+./run.sh profile
+
+# Terminal 2 — attach profiler (waits for your signal before sampling)
+./tools/profile.py
+```
+
+`profile.py` loads symbols from `out/kernel.dbg`, connects to the QEMU monitor
+socket at `/tmp/qemu-profiler.sock`, then waits for you to press Enter. Start
+your workload in the guest first, then press Enter to begin sampling. Press
+Ctrl-C at any time to stop early and print the report.
+
+Options:
+
+```sh
+./tools/profile.py --samples 1000   # number of EIP samples (default: 500)
+./tools/profile.py --delay 2        # ms between samples (default: 5)
+```
 
 ---
 
 ## Disk image
 
 The RH9 userspace lives in `rh9.qcow2`. A pre-built image is provided as
-`redhat9.img.zip`. To mount and modify it:
+`redhat9.img.zip`. Use the helper scripts to mount and modify it:
 
 ```sh
-sudo modprobe nbd
-sudo qemu-nbd -c /dev/nbd0 rh9.qcow2
-sudo mount /dev/nbd0p1 mnt/
-
-# make changes...
-
-sudo umount mnt/
-sudo qemu-nbd -d /dev/nbd0
+./tools/mountdisk.sh    # mount rh9.qcow2 → mnt/
+# make changes (sudo cp ... mnt/bin/, etc.)
+./tools/umountdisk.sh   # unmount and disconnect NBD
 ```
+
+Always unmount before launching QEMU — the kernel flushes dirty pages on
+unmount, so skipping this step can leave the image in an inconsistent state.
+
+`mountdisk.sh` uses `qemu-nbd` to attach the qcow2 image to `/dev/nbd0` and
+mounts partition 1 at `mnt/`. Requires `qemu-utils` (Linux) or `qemu` (macOS).

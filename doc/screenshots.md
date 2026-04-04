@@ -39,10 +39,15 @@ List
 
 Signals
 ---
-Send signal
-![Screen shot: send](screenshot/send_signal.png)
-Receive signal
-![Screen shot: recv](screenshot/handle_signal.png)
+<table>
+  <tr>
+    <td>Send signal</td>
+    <td>Receive signal</td>
+  <tr>
+    <td><img src="screenshot/send_signal.png"></td>
+    <td><img src="screenshot/handle_signal.png"></td>
+  </tr>
+</table>
 
 Network
 ---
@@ -52,7 +57,7 @@ Network
 ---
 ![Screen shot: ping](screenshot/ping.png)
 
-Dns actually works
+DNS actually works
 ---
 ![Screen shot: dns](screenshot/dns.png)
 

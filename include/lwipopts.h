@@ -23,8 +23,12 @@
 #define MEM_LIBC_MALLOC 0
 #define MEMP_MEM_MALLOC 0
 #define MEM_SIZE (64 * 1024)
-#define PBUF_POOL_SIZE 32
+#define PBUF_POOL_SIZE 64
 #define PBUF_POOL_BUFSIZE 1600
+
+/* ── TCP tuning ──────────────────────────────────────────────────────────── */
+#define TCP_MSS 1460
+#define TCP_WND (32 * 1024)
 
 /* ── Netconn / Socket API (require OS threading) ────────────────────────── */
 #define LWIP_NETCONN 0

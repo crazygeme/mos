@@ -60,7 +60,17 @@ Dns actually works
 ---
 ![Screen shot: dns](screenshot/wget.png)
 
-Throughput (poor right now)
+Throughput ()
+---
+32K TCP_WND size has maximum 210KB/s, so the os is not bottleneck.
+
+| Window                      | Maxthroughput |
+| --------------------------- | ------------- |
+| 2 KB                        | ~13 KB/s      |
+| 32 KB                       | ~213 KB/s     |
+| 212 KB (Linux default rmem) | ~1.4 MB/s     |
+| 6 MB (Linux auto-tuned)     | ~40 MB/s      |
+
 ---
 ![Screen shot: throughput](screenshot/throughput.png)
 

@@ -69,15 +69,15 @@ int sys_sethostname(const char *name, unsigned len)
 
 int sys_time(unsigned *t)
 {
-	if (!t)
-		return -1;
+	unsigned now = (unsigned)(time_wall_us() / 1000000ULL);
 
-	*t = (unsigned)(time_wall_us() / 1000000ULL);
+	if (t)
+		*t = now;
 
 	if (TestControl.verbos)
-		klog("time() = %u\n", *t);
+		klog("time() = %u\n", now);
 
-	return 0;
+	return (int)now;
 }
 
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
@@ -102,6 +102,11 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
+	if (tv) {
+		long long wall_us = (long long)tv->tv_sec * 1000000LL +
+				    (long long)tv->tv_usec;
+		time_set_wall_offset(wall_us);
+	}
 	return 0;
 }
 

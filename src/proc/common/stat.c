@@ -30,7 +30,7 @@
 extern unsigned task_schedule_count;
 
 typedef struct {
-	unsigned user, system, idle;
+	unsigned user, system;
 	unsigned procs_running, procs_blocked, processes;
 } stat_ctx_t;
 
@@ -45,12 +45,9 @@ static void stat_collect(task_struct *task, void *ctx)
 
 	c->processes++;
 
-	if (task->priority == ps_idle) {
-		c->idle += task->total_switches;
-	} else {
-		c->user += time_now_tickets() - task->start_tickets -
-			   task->kernel_tickets - task->idle_tickets;
-		c->system += task->kernel_tickets;
+	if (task->priority != ps_idle) {
+		c->user += task_utime(task);
+		c->system += task->stats->kernel_tickets;
 	}
 
 	if (task->status == ps_running || task->status == ps_ready)
@@ -62,22 +59,27 @@ static void stat_collect(task_struct *task, void *ctx)
 static void fill(proc_buf_t *pb)
 {
 	int i, ncpu;
-	stat_ctx_t c = { 0, 0, 0, 0, 0, 0 };
+	stat_ctx_t c = { 0, 0, 0, 0, 0 };
+	unsigned wall, idle;
 
 	ps_enum_all(stat_collect, &c);
+
+	/* Idle = wall-clock jiffies since boot minus all busy (user+system) time. */
+	wall = (unsigned)time_now_tickets();
+	idle = (wall > c.user + c.system) ? wall - c.user - c.system : 0;
 
 	ncpu = ncpus > 0 ? ncpus : 1;
 
 	/* ---- aggregate cpu line ---- */
 	proc_buf_printf(pb, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,
-			c.idle);
+			idle);
 
 	/* ---- per-CPU lines ---- */
 	for (i = 0; i < ncpu; i++) {
 		if (i == 0)
 			/* cpu0 carries the full aggregate */
 			proc_buf_printf(pb, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
-					c.user, c.system, c.idle);
+					c.user, c.system, idle);
 		else
 			proc_buf_printf(pb, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
 	}

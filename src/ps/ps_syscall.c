@@ -33,18 +33,29 @@
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
+	task_struct *parent = task->parent;
+	unsigned long long child_utime =
+		time_now_tickets() - task->stats->start_tickets -
+		task->stats->kernel_tickets - task->stats->idle_tickets;
+
 	if (rusage) {
 		memset(rusage, 0, sizeof(*rusage));
-		rusage->ru_majflt = task->pf_major;
-		rusage->ru_minflt = task->pf_minor;
-		rusage->ru_nvcsw = task->total_switches - task->niv_switches;
-		rusage->ru_nivcsw = task->niv_switches;
-		ms_to_timeval(task->kernel_tickets * 10, &rusage->ru_stime);
-		ms_to_timeval((time_now_tickets() - task->start_tickets -
-			       task->kernel_tickets - task->idle_tickets) *
-				      10,
-			      &rusage->ru_utime);
+		rusage->ru_majflt = task->stats->pf_major;
+		rusage->ru_minflt = task->stats->pf_minor;
+		rusage->ru_nvcsw =
+			task->stats->total_switches - task->stats->niv_switches;
+		rusage->ru_nivcsw = task->stats->niv_switches;
+		ms_to_timeval(task->stats->kernel_tickets * 10,
+			      &rusage->ru_stime);
+		ms_to_timeval(child_utime * 10, &rusage->ru_utime);
 	}
+
+	/* Accumulate child CPU time into parent for cutime/cstime. */
+	if (parent && parent->stats) {
+		parent->stats->child_utime += child_utime;
+		parent->stats->child_stime += task->stats->kernel_tickets;
+	}
+
 	if (task->user->command) {
 		vm_free(task->user->command, 1);
 		task->user->command = NULL;
@@ -68,6 +79,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 
 	kfree(task->user);
 	kfree(task->signal);
+	kfree(task->stats);
 	vm_free(task, 1);
 }
 
@@ -313,16 +325,22 @@ int sys_getrusage(int who, rusage *usage)
 	memset(usage, 0, sizeof(*usage));
 
 	if (who == RUSAGE_SELF) {
-		ms_to_timeval((time_now_tickets() - cur->start_tickets -
-			       cur->kernel_tickets - cur->idle_tickets) *
+		ms_to_timeval((time_now_tickets() - cur->stats->start_tickets -
+			       cur->stats->kernel_tickets -
+			       cur->stats->idle_tickets) *
 				      10,
 			      &usage->ru_utime);
-		ms_to_timeval(cur->kernel_tickets * 10, &usage->ru_stime);
-		usage->ru_majflt = cur->pf_major;
-		usage->ru_minflt = cur->pf_minor;
-		usage->ru_nivcsw = cur->niv_switches;
+		ms_to_timeval(cur->stats->kernel_tickets * 10,
+			      &usage->ru_stime);
+		usage->ru_majflt = cur->stats->pf_major;
+		usage->ru_minflt = cur->stats->pf_minor;
+		usage->ru_nvcsw =
+			cur->stats->total_switches - cur->stats->niv_switches;
+		usage->ru_nivcsw = cur->stats->niv_switches;
+	} else if (who == RUSAGE_CHILDREN) {
+		ms_to_timeval(cur->stats->child_utime * 10, &usage->ru_utime);
+		ms_to_timeval(cur->stats->child_stime * 10, &usage->ru_stime);
 	}
-	/* RUSAGE_CHILDREN: no accumulated child stats yet, return zeros */
 
 	if (TestControl.verbos)
 		klog("getrusage(%d) utime=%d stime=%d\n", who,

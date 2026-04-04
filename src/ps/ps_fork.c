@@ -111,7 +111,8 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->tss.esp0 = stack_bottom;
 	task->tss.eip = ps_run;
 
-	task->start_tickets = time_now_tickets();
+	task->stats = zalloc(sizeof(task_stats_t));
+	task->stats->start_tickets = time_now_tickets();
 
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
@@ -362,7 +363,8 @@ static void fork_set_meta(task_struct *cur, task_struct *task,
 	task->type = cur->type;
 	task->fork_flag = fork_flag;
 	task->root = cur->root;
-	task->start_tickets = time_now_tickets();
+	task->stats = zalloc(sizeof(task_stats_t));
+	task->stats->start_tickets = time_now_tickets();
 	sb_get(task->root);
 }
 

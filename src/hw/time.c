@@ -178,6 +178,24 @@ unsigned long long time_wall_us(void)
 				    g_wall_offset_us);
 }
 
+/*
+ * Set the wall clock to the given absolute time (microseconds since epoch).
+ * Adjusts g_wall_offset_us so that time_wall_us() immediately returns wall_us.
+ */
+void time_set_wall_offset(long long wall_us)
+{
+	g_wall_offset_us = wall_us - (long long)time_now_us();
+}
+
+/* Re-read the RTC and sync the wall clock. Called at exec time for PID 1
+ * so that bash-as-init gets the correct time without calling settimeofday. */
+void time_sync_rtc(void)
+{
+	unsigned long epoch = rtc_get_time();
+	g_wall_offset_us =
+		(long long)epoch * 1000000LL - (long long)time_now_us();
+}
+
 unsigned long long cycle_to_us(unsigned long long dur_cycles)
 {
 	unsigned long long cycle_per_micro_second;

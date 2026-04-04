@@ -254,7 +254,8 @@ void _task_sched(const char *func)
 
 	task_schedule_count++;
 
-	CURRENT_TASK()->idle = time_now_tickets();
+	if (CURRENT_TASK()->stats)
+		CURRENT_TASK()->stats->idle = time_now_tickets();
 
 	dsr_drain();
 
@@ -270,7 +271,8 @@ void _task_sched(const char *func)
 		goto SELF;
 	}
 
-	CURRENT_TASK()->total_switches++;
+	if (CURRENT_TASK()->stats)
+		CURRENT_TASK()->stats->total_switches++;
 
 	task->status = ps_running;
 	/*
@@ -304,8 +306,9 @@ void _task_sched(const char *func)
 	asm volatile("NEXT: nop");
 SELF:
 
-	CURRENT_TASK()->idle_tickets +=
-		time_now_tickets() - CURRENT_TASK()->idle;
+	if (CURRENT_TASK()->stats)
+		CURRENT_TASK()->stats->idle_tickets +=
+			time_now_tickets() - CURRENT_TASK()->stats->idle;
 }
 
 static int scheduler_enabled = 1;

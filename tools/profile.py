@@ -138,12 +138,14 @@ def main():
                 counts["(userspace)"] += 1
             n += 1
             if n % 100 == 0:
-                print(f"  {n}/{args.samples} samples ...", flush=True)
+                sys.stdout.write(f"\r  {n}/{args.samples} samples ...")
+                sys.stdout.flush()
             time.sleep(delay_s)
     except KeyboardInterrupt:
         print(f"\nInterrupted — {n} samples collected.")
 
     s.close()
+    sys.stdout.write("\n")
 
     if n == 0:
         print("No samples collected.")

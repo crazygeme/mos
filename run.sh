@@ -148,6 +148,7 @@ $_priviledge qemu-system-i386 -cpu coreduo \
 	$_power \
 	$_kvm \
 	$_debug \
+	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56
 

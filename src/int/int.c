@@ -81,7 +81,7 @@ static void intr_check_point(intr_frame *frame)
 		return;
 
 	if (sched_is_enabled() && cur->remain_ticks <= 0) {
-		cur->niv_switches++;
+		cur->stats->niv_switches++;
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		int_intr_enable();
 		task_sched();
@@ -124,13 +124,14 @@ void intr_syscall_handler(intr_frame *frame)
 	int_callback fn = 0;
 	task_struct *cur = CURRENT_TASK();
 	unsigned long long start = 0;
-	unsigned long long idle_start = cur->idle_tickets;
+	unsigned long long idle_start = cur->stats->idle_tickets;
 	fn = in_callbacks[frame->vec_no];
 	if (fn) {
 		start = time_now_tickets();
 		fn(frame);
-		cur->kernel_tickets += time_now_tickets() - start -
-				       (cur->idle_tickets - idle_start);
+		cur->stats->kernel_tickets +=
+			time_now_tickets() - start -
+			(cur->stats->idle_tickets - idle_start);
 	}
 
 	intr_check_point(frame);

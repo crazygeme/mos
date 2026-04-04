@@ -81,7 +81,8 @@ unsigned long long time_now_tickets();
 
 unsigned long time_now_sec(void);
 
-void time_set_wall_offset(long long offset_us);
+void time_set_wall_offset(long long wall_us);
+void time_sync_rtc(void);
 
 unsigned long long time_wall_us(void);
 

@@ -1,4 +1,5 @@
 #include <elf/exec.h>
+#include <hw/time.h>
 #include <elf/elf.h>
 #include <ps/ps.h>
 #include <int/int.h>
@@ -649,6 +650,10 @@ static void kinit_userspace()
 		/* Mount shared-memory tmpfs. */
 		printk("mnt: Mounting tmpfs on /dev/shm\n");
 		fs_do_mount("tmpfs", "/dev/shm", "tmpfs", 0, NULL);
+
+		/* Sync wall time */
+		printk("rtc: Sync local time\n");
+		time_sync_rtc();
 	}
 
 	printk("\033[32mNow bringup first user process %s\033[0m\n", argv[0]);

@@ -1487,6 +1487,7 @@ static void tty_dev_register(super_block *dev_sb)
 	char path[16];
 	int i;
 
+	printk("dev: registered /dev/tty[1-%d]\n", TTY_MAX_VDEV);
 	/* major 4: tty1..tty10 (1-based minors matching tty_idx) */
 	cdev_register(S_IFCHR, 4, 1, TTY_MAX_VDEV, tty_cdev_open);
 	for (i = 1; i <= TTY_MAX_VDEV; i++) {
@@ -1494,6 +1495,8 @@ static void tty_dev_register(super_block *dev_sb)
 		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(4, i));
 	}
 
+	printk("dev: registered /dev/tty0\n");
+	printk("dev: registered /dev/console\n");
 	/* major 5: /dev/tty (minor 0) and /dev/console (minor 1) */
 	cdev_register(S_IFCHR, 5, 0, 2, tty_cdev_open);
 	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(5, 0));

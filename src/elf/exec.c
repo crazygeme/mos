@@ -663,7 +663,7 @@ static void kinit_userspace()
 	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty1. */
 	fs_open("/dev/tty1", O_RDONLY, 0);
 	fs_open("/dev/tty1", O_WRONLY, 0);
-	fs_open("/dev/tty1", O_WRONLY, 0);
+	fs_open("/dev/tty1", O_RDWR, 0);
 
 	run_if_exist(argv[0], argv, envp);
 }

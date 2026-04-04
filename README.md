@@ -2,15 +2,21 @@
 
 32-bit x86 (i686) educational OS kernel targeting Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility. Runs in QEMU via GRUB/Multiboot.
 
-With some features we are never goting to implement (like swap or kernel module) the booting procesure will show lots of error, but it can <font color="green">**successfully**</font> boot Red Hat 9 system!
+With some features we are never going to implement (like kernel module), the booting process will show lots of errors, but it can $\color{green}{\textbf{successfully}}$ boot the Red Hat 9 system!
 
-![Screen shot: login](doc/screenshot/boot.png)
-![Screen shot: login](doc/screenshot/login_prompt.png)
-![Screen shot: login](doc/screenshot/final.png)
+> [!NOTE]
+> The `root` user has no password. Enjoy.
 
-The `root` user has no password. Enjoy.
+<table>
+  <tr>
+    <td><img src="doc/screenshot/boot.png"></td>
+    <td><img src="doc/screenshot/login_prompt.png"></td>
+  </tr>
+</table>
 
 **Build:** `make` / `make rebuild` / `make run`
+> [!NOTE]
+> The first time rum `make` will setup the system image for you.
 
 ---
 

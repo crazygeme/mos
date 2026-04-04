@@ -140,6 +140,19 @@ struct _region_elem {
 
 typedef void *vm_struct_t;
 
+typedef struct _task_stats {
+	unsigned niv_switches; /* involuntary context switches */
+	unsigned total_switches; /* total context switches       */
+	unsigned long long start_tickets; /* start time (jiffies)        */
+	unsigned kernel_tickets; /* jiffies in kernel (stime)    */
+	unsigned long long idle; /* temp: tick when sched began  */
+	unsigned idle_tickets; /* jiffies off-CPU              */
+	unsigned pf_major; /* major page faults            */
+	unsigned pf_minor; /* minor page faults            */
+	unsigned long long child_utime; /* reaped children user ticks   */
+	unsigned child_stime; /* reaped children system ticks */
+} task_stats_t;
+
 typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	unsigned start_brk; /* base of heap, set from ELF BSS end at exec time */
@@ -233,14 +246,7 @@ struct _task_struct {
 	cond_t vfork_event;
 	super_block *root;
 	unsigned umask;
-	unsigned niv_switches;
-	unsigned total_switches;
-	unsigned long long start_tickets;
-	unsigned kernel_tickets;
-	unsigned long long idle;
-	unsigned idle_tickets;
-	unsigned pf_major;
-	unsigned pf_minor;
+	task_stats_t *stats;
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
 	unsigned long long alarm_expire_ms;
 	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
@@ -268,6 +274,32 @@ typedef struct _rusage {
 } rusage;
 
 #define KERNEL_TASK_SIZE 1 // 1 pages
+
+/*
+ * task_utime — corrected user-mode CPU time for a task (in jiffies).
+ *
+ * idle_tickets is only flushed at the SELF label in _task_sched(), i.e. when
+ * the task is rescheduled back in.  For a sleeping or ready task the current
+ * off-CPU period has NOT yet been added to idle_tickets.  We correct for that
+ * by adding (now - stats->idle), where stats->idle was stamped at the top of
+ * _task_sched() when the task last yielded.
+ *
+ * Guard stats->idle > 0: a newly created task that has never called
+ * _task_sched() has stats->idle == 0 (from zalloc); adding (now - 0) would
+ * wildly overcount.
+ */
+static inline unsigned long long task_utime(task_struct *task)
+{
+	task_stats_t *s = task->stats;
+	unsigned long long eff_idle = s->idle_tickets;
+
+	if (task->status != ps_running && s->idle > 0)
+		eff_idle += time_now_tickets() - s->idle;
+
+	unsigned long long elapsed = time_now_tickets() - s->start_tickets;
+	unsigned long long busy = s->kernel_tickets + eff_idle;
+	return elapsed > busy ? elapsed - busy : 0;
+}
 
 static __attribute__((always_inline)) inline task_struct *CURRENT_TASK(void)
 {

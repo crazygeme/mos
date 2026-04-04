@@ -572,13 +572,13 @@ found:
 	if (region->fp != NULL) {
 		pf_handle_invalid_file_map(this_begin, region->fp, this_offset,
 					   region->prot, region->flag);
-		cur->pf_major++;
+		cur->stats->pf_major++;
 		if (PAGE_PREFETCH_N > 0 && !(region->prot & PROT_WRITE) &&
 		    !(region->flag & MAP_SHARED))
 			pf_prefetch_pages(this_begin, region->fp, region);
 	} else {
 		pf_handle_invalid_memory(this_begin, region, this_offset);
-		cur->pf_minor++;
+		cur->stats->pf_minor++;
 	}
 
 	return 1;

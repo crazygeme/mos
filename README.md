@@ -42,6 +42,7 @@ The `root` user has no password. Enjoy.
 | Section                                  | Summary                                                                         |
 | ---------------------------------------- | ------------------------------------------------------------------------------- |
 | [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image |
+| [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis |
 | [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch    |
 | [Todo](doc/todo.md)                      | Feature checklist                                                               |
 | [Screenshots](doc/screenshots.md)        | Some screen shots about mos running                                             |

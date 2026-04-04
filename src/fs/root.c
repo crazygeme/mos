@@ -515,7 +515,17 @@ static file *ext4_path_open(const char *path, int flag)
 
 	/* ---- Case 2: regular open, with final symlink following ---- */
 	f = zalloc(sizeof(*f));
-	check = ext4_fopen2(f, cur_path, (flag & ~O_CREAT));
+	/*
+	 * The pre-check (open without O_CREAT) is only needed when O_CREAT is
+	 * set, to detect whether the file was just created so we can assign
+	 * ownership.  Skipping it for non-O_CREAT opens halves the number of
+	 * ext4_dir_find_entry calls on the hot path.
+	 */
+	if (flag & O_CREAT) {
+		check = ext4_fopen2(f, cur_path, (flag & ~O_CREAT));
+	} else {
+		check = EOK;
+	}
 	ret = ext4_fopen2(f, cur_path, flag);
 	if (check != EOK && ret == EOK) {
 		ext4_fchown(f, uid, gid);

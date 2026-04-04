@@ -312,6 +312,11 @@ def main():
             time.sleep(delay_s)
     except KeyboardInterrupt:
         print(f"\nInterrupted — {n} samples collected.")
+        try:
+            s.sendall(b"cont\n")
+            _recv(s)
+        except Exception:
+            pass
 
     s.close()
 

@@ -140,13 +140,7 @@ unsigned long time_now_sec(void)
 	return (unsigned long)(time_wall_us() / 1000000ULL);
 }
 
-unsigned long long time_wall_us(void)
-{
-	return (unsigned long long)((long long)time_now_us() +
-				    g_wall_offset_us);
-}
-
-unsigned long long time_now_us()
+static unsigned long long time_now_us()
 {
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
 	unsigned long long t1, t2;
@@ -176,6 +170,12 @@ unsigned long long time_now_us()
 
 	return t1 * TICK_US + frac;
 #undef TICK_US
+}
+
+unsigned long long time_wall_us(void)
+{
+	return (unsigned long long)((long long)time_now_us() +
+				    g_wall_offset_us);
 }
 
 unsigned long long cycle_to_us(unsigned long long dur_cycles)
@@ -222,11 +222,6 @@ void delay(unsigned int us)
 				HZ * us);
 	// printk("usleep %d us equals %d cycles\n", us, cycles);
 	busy_wait(cycles);
-}
-
-void time_set_wall_offset(long long offset_us)
-{
-	g_wall_offset_us = offset_us;
 }
 
 /* This code is an interface to the MC146818A-compatible real

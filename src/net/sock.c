@@ -48,8 +48,7 @@ unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
 		if (first < n)
 			memcpy(sk->rxbuf, (const char *)src + first, n - first);
 		sk->rx_tail += n;
-		unsigned long long now = time_now_us();
-		us_to_timeval(now, &sk->rx_stamp);
+		us_to_timeval(time_wall_us(), &sk->rx_stamp);
 	}
 	return n;
 }

@@ -3,6 +3,7 @@
 #define _INT_INT_H
 
 #include <config.h>
+#include <macro.h>
 #include <mm/mm.h>
 
 #define INT_M_CTL 0x20
@@ -100,12 +101,33 @@ void int_register(int vec_no, int_callback fn, int is_trap, int dpl);
 
 void int_unregister(int vec_no);
 
-unsigned int_is_intr_enabled();
+static __attribute__((always_inline)) inline unsigned int_is_intr_enabled(void)
+{
+	unsigned flags;
+	GET_INTR_FLAG(flags);
+	return (flags & 0x00000200) == 0x00000200;
+}
 
-unsigned int_intr_enable();
+static __attribute__((always_inline)) inline unsigned int_intr_enable(void)
+{
+	unsigned old = int_is_intr_enabled();
+	ENABLE_INTR();
+	return old;
+}
 
-unsigned int_intr_disable();
+static __attribute__((always_inline)) inline unsigned int_intr_disable(void)
+{
+	unsigned old = int_is_intr_enabled();
+	DISABLE_INTR();
+	return old;
+}
 
-void int_intr_setlevel(unsigned enabled);
+static __attribute__((always_inline)) inline void int_intr_setlevel(unsigned enabled)
+{
+	if (enabled)
+		int_intr_enable();
+	else
+		int_intr_disable();
+}
 
 #endif

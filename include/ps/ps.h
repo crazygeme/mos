@@ -269,8 +269,13 @@ typedef struct _rusage {
 
 #define KERNEL_TASK_SIZE 1 // 1 pages
 
+static __attribute__((always_inline)) inline task_struct *CURRENT_TASK(void)
+{
+	task_struct *info = NULL;
+	info = (task_struct *)(((unsigned int)&info) & PAGE_SIZE_MASK);
+	return info;
+}
 #define current CURRENT_TASK()
-task_struct *CURRENT_TASK();
 
 void ps_init();
 

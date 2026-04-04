@@ -85,8 +85,6 @@ void time_set_wall_offset(long long offset_us);
 
 unsigned long long time_wall_us(void);
 
-unsigned long long time_now_us();
-
 unsigned long long cycle_to_ms(unsigned long long dur_cycles);
 
 unsigned long long cycle_to_us(unsigned long long dur_cycles);

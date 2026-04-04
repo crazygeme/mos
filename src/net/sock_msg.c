@@ -232,7 +232,7 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 	for (i = 0; i < msg->msg_iovlen; i++)
 		total_len += msg->msg_iov[i].iov_len;
 	if (total_len == 0) {
-		us_to_timeval(time_now_us(), &sk->rx_stamp);
+		us_to_timeval(time_wall_us(), &sk->rx_stamp);
 		delivered = 0;
 		goto done;
 	}

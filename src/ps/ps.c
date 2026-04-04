@@ -228,15 +228,6 @@ int ps_enabled()
  * Public — current task and bootstrap
  */
 
-/* Derive the current task_struct from the stack pointer.
- * Each task occupies KERNEL_TASK_SIZE pages aligned to PAGE_SIZE. */
-task_struct *CURRENT_TASK()
-{
-	task_struct *info = NULL;
-	info = (task_struct *)(((unsigned int)&info) & PAGE_SIZE_MASK);
-	return info;
-}
-
 /* Mark the bootstrap task as non-schedulable and enter the task queue. */
 void ps_kickoff()
 {

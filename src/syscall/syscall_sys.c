@@ -102,16 +102,6 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
-	if (tv) {
-		long long wall_us =
-			(long long)tv->tv_sec * 1000000 + tv->tv_usec;
-		long long offset_us = wall_us - (long long)time_now_us();
-		time_set_wall_offset(offset_us);
-
-		if (TestControl.verbos)
-			klog("settimeofday(%d.%06d) offset=%lld us\n",
-			     tv->tv_sec, tv->tv_usec, offset_us);
-	}
 	return 0;
 }
 
@@ -297,7 +287,7 @@ long sys_times(struct tms *buf)
 		buf->tms_cstime = 0;
 	}
 	/* Return clock ticks since boot; HZ=100 → divide µs by 10000. */
-	return (long)(time_now_us() / (1000000ULL / HZ));
+	return (long)(time_wall_us() / (1000000ULL / HZ));
 }
 
 int sys_setpriority(int which, int who, int prio)
@@ -329,7 +319,7 @@ int sys_sysinfo(void *buf)
 		return -EFAULT;
 
 	memset(info, 0, sizeof(*info));
-	info->uptime = (long)(time_now_us() / 1000000ULL);
+	info->uptime = (long)(time_wall_us() / 1000000ULL);
 	info->totalram = (unsigned long)total_pages * PAGE_SIZE;
 	info->freeram = (unsigned long)free_pages * PAGE_SIZE;
 	info->mem_unit = 1;

@@ -26,7 +26,7 @@ static int elf_read(file *fp, unsigned off, void *buf, int len)
 {
 	size_t rcnt;
 	int ret = -1;
-	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	ret = ext4_fseek(fp->f_inode->i_private, off, SEEK_SET);
 	if (ret != EOK)
@@ -40,7 +40,7 @@ static int elf_read(file *fp, unsigned off, void *buf, int len)
 
 DONE:
 	if (TestControl.profiling)
-		elf_read_time += time_now_us() - begin;
+		elf_read_time += time_wall_us() - begin;
 
 	return ret;
 }

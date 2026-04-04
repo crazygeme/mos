@@ -186,38 +186,3 @@ void int_update_tss(void *address)
 	SET_TSS(TSS_SELECTOR);
 }
 
-unsigned int_is_intr_enabled()
-{
-	unsigned int flags;
-
-	GET_INTR_FLAG(flags);
-
-	return (flags & 0x00000200) == 0x00000200;
-}
-
-unsigned int_intr_enable()
-{
-	unsigned old = int_is_intr_enabled();
-
-	ENABLE_INTR();
-
-	return old;
-}
-
-unsigned int_intr_disable()
-{
-	unsigned old = int_is_intr_enabled();
-
-	DISABLE_INTR();
-
-	return old;
-}
-
-void int_intr_setlevel(unsigned enabled)
-{
-	if (enabled) {
-		int_intr_enable();
-	} else {
-		int_intr_disable();
-	}
-}

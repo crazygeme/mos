@@ -260,7 +260,7 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	unsigned phy = 0;
 	size_t rcnt = 0;
 	int mmflag;
-	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 	int readonly = !(prot & PROT_WRITE);
 	int shared = flag & MAP_SHARED;
 	unsigned ino = f->f_inode->i_ino;
@@ -281,7 +281,7 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		phy = mmap_cache_find(ino, offset);
 
 		if (TestControl.profiling)
-			page_fault_file_search_spent += time_now_us() - begin;
+			page_fault_file_search_spent += time_wall_us() - begin;
 
 		if (phy != 0) {
 			page_fault_file_cache_hit++;
@@ -352,7 +352,7 @@ READ_DONE:
 
 DONE:
 	if (TestControl.profiling)
-		page_fault_file_spent += (time_now_us() - begin);
+		page_fault_file_spent += (time_wall_us() - begin);
 }
 
 /*
@@ -373,7 +373,7 @@ static void pf_handle_invalid_memory(unsigned address, vm_region *region,
 {
 	int prot = region->prot;
 	int flag = region->flag;
-	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 	int mmflag;
 
 	page_fault_invalid++;
@@ -421,7 +421,7 @@ static void pf_handle_invalid_memory(unsigned address, vm_region *region,
 
 DONE:
 	if (TestControl.profiling)
-		page_fault_invalid_spent += (time_now_us() - begin);
+		page_fault_invalid_spent += (time_wall_us() - begin);
 }
 
 /*
@@ -498,7 +498,7 @@ static void wp_page_copy(unsigned cr2)
 	unsigned vir = cr2;
 	unsigned new_mem;
 	int flag;
-	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_cow++;
 
@@ -526,7 +526,7 @@ static void wp_page_copy(unsigned cr2)
 	RELOAD_CR3();
 
 	if (TestControl.profiling)
-		page_fault_cow_spent += (time_now_us() - begin);
+		page_fault_cow_spent += (time_wall_us() - begin);
 }
 
 /*
@@ -538,7 +538,7 @@ static void wp_page_copy(unsigned cr2)
 static void wp_page_reuse(unsigned cr2)
 {
 	int flag;
-	unsigned long long begin = TestControl.profiling ? time_now_us() : 0;
+	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_perm++;
 	flag = mm_get_map_flag(cr2);
@@ -547,7 +547,7 @@ static void wp_page_reuse(unsigned cr2)
 	INVLPG(cr2);
 
 	if (TestControl.profiling)
-		page_fault_perm_spent += (time_now_us() - begin);
+		page_fault_perm_spent += (time_wall_us() - begin);
 }
 
 /*

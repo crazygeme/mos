@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-profile.py — QEMU monitor-based kernel profiler
+profile.py — QEMU monitor-based kernel profiler (flat EIP histogram)
 
 Samples EIP by pausing the VM through QEMU's HMP monitor, reading registers,
-then resuming. Builds a function-level histogram from the kernel symbol table.
+then resuming. Prints a function-level histogram to stdout.
+
+For full call-stack sampling and flamegraph output use profile_stack.py.
 
 Usage:
-    ./tools/profile.py [--samples N] [--delay MS] [--sock PATH] [--kernel PATH]
+    ./tools/profile.py [--delay MS] [--sock PATH] [--kernel PATH]
 
 Requires QEMU running with:
     ./run.sh profile
@@ -97,10 +99,9 @@ def addr_to_func(addr, syms):
 
 def main():
     p = argparse.ArgumentParser(description="QEMU monitor-based kernel profiler")
-    p.add_argument("--samples", type=int,   default=500,       help="samples to collect (default: 500)")
-    p.add_argument("--delay",   type=float, default=5.0,       help="ms between samples (default: 5)")
-    p.add_argument("--sock",    default=DEFAULT_SOCK,           help=f"monitor socket (default: {DEFAULT_SOCK})")
-    p.add_argument("--kernel",  default=DEFAULT_KERNEL,         help=f"debug binary   (default: {DEFAULT_KERNEL})")
+    p.add_argument("--delay",  type=float, default=5.0,       help="ms between samples (default: 5)")
+    p.add_argument("--sock",   default=DEFAULT_SOCK,           help=f"monitor socket (default: {DEFAULT_SOCK})")
+    p.add_argument("--kernel", default=DEFAULT_KERNEL,         help=f"debug binary   (default: {DEFAULT_KERNEL})")
     args = p.parse_args()
 
     print(f"Loading symbols from {args.kernel} ...", flush=True)
@@ -124,11 +125,10 @@ def main():
     n       = 0
 
     input("Start your workload in the guest, then press Enter to begin sampling ...")
-    print(f"Sampling {args.samples}x every {args.delay:.1f} ms — Ctrl-C to stop early.\n",
-          flush=True)
+    print(f"Sampling every {args.delay:.1f} ms — Ctrl-C to stop.\n", flush=True)
 
     try:
-        while n < args.samples:
+        while True:
             eip = sample_eip(s)
             if eip is None:
                 continue
@@ -138,14 +138,13 @@ def main():
                 counts["(userspace)"] += 1
             n += 1
             if n % 100 == 0:
-                sys.stdout.write(f"\r  {n}/{args.samples} samples ...")
+                sys.stdout.write(f"\r  {n} samples ...")
                 sys.stdout.flush()
             time.sleep(delay_s)
     except KeyboardInterrupt:
         print(f"\nInterrupted — {n} samples collected.")
 
     s.close()
-    sys.stdout.write("\n")
 
     if n == 0:
         print("No samples collected.")
@@ -154,6 +153,7 @@ def main():
     kernel_total = sum(v for k, v in counts.items() if k != "(userspace)")
     user_total   = counts.get("(userspace)", 0)
 
+    # ── Console histogram ─────────────────────────────────────────────────────
     print(f"\n{'='*65}")
     print(f"  Profiling results  ({n} samples)")
     print(f"{'='*65}")
@@ -166,6 +166,7 @@ def main():
 
     print(f"\n  kernel: {kernel_total:>6} samples  ({100.0 * kernel_total / n:.1f}%)")
     print(f"  user  : {user_total:>6} samples  ({100.0 * user_total   / n:.1f}%)")
+
 
 
 if __name__ == "__main__":

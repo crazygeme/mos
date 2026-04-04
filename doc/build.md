@@ -78,27 +78,23 @@ i386-elf-gdb out/kernel    # macOS
 
 ## Profiling
 
-Profiling uses QEMU's HMP monitor to sample EIP and maps it to kernel symbols.
+See **[Profiling](profiling.md)** for full documentation, including flamegraph
+usage and an annotated example.
+
+Quick start:
 
 ```sh
 # Terminal 1 — start kernel with monitor socket exposed
 ./run.sh profile
 
-# Terminal 2 — attach profiler (waits for your signal before sampling)
+# Terminal 2 — flat EIP histogram
 ./tools/profile.py
+
+# Terminal 2 — call-stack flamegraph (SVG written to out/)
+./tools/profile_stack.py
 ```
 
-`profile.py` loads symbols from `out/kernel.dbg`, connects to the QEMU monitor
-socket at `/tmp/qemu-profiler.sock`, then waits for you to press Enter. Start
-your workload in the guest first, then press Enter to begin sampling. Press
-Ctrl-C at any time to stop early and print the report.
-
-Options:
-
-```sh
-./tools/profile.py --samples 1000   # number of EIP samples (default: 500)
-./tools/profile.py --delay 2        # ms between samples (default: 5)
-```
+Press **Ctrl-C** to stop sampling; the guest resumes automatically.
 
 ---
 

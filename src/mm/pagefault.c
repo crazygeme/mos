@@ -425,6 +425,100 @@ DONE:
 }
 
 /*
+ * pf_prefetch_pages — read-ahead for readonly MAP_PRIVATE file-backed pages.
+ *
+ * After a demand fault on 'fault_addr', prefetch up to (PAGE_PREFETCH_N - 1)
+ * pages before and PAGE_PREFETCH_N pages after it.  Each prefetched page is:
+ *   - mapped into the current process's page table (no future fault needed), and
+ *   - inserted into the LRU page cache at the MRU end.
+ *
+ * LRU policy: MRU insertion.  For sequential workloads this is optimal —
+ * prefetched pages will be accessed soon and should stay hot.  Pages that are
+ * never accessed drift naturally to the LRU head and are evicted first.
+ */
+static void pf_prefetch_pages(unsigned fault_addr, file *f, vm_region *region)
+{
+	unsigned ino = f->f_inode->i_ino;
+	uint64_t file_size = f->f_inode->i_size;
+	int i;
+
+	for (i = -(PAGE_PREFETCH_N - 1); i <= (int)PAGE_PREFETCH_N; i++) {
+		unsigned addr;
+		int file_offset;
+		unsigned phy;
+		unsigned page_idx;
+		size_t rcnt;
+		int mmflag;
+
+		if (i == 0)
+			continue;
+
+		/* Guard against unsigned underflow when scanning backwards. */
+		if (i < 0 && fault_addr < (unsigned)((-i) * (int)PAGE_SIZE))
+			continue;
+
+		addr = fault_addr + (unsigned)(i * (int)PAGE_SIZE);
+
+		/* Clamp to vm_region bounds. */
+		if (addr < region->begin || addr >= region->end)
+			continue;
+
+		/* Skip pages beyond the end of the file. */
+		file_offset = region->offset + (int)(addr - region->begin);
+		if ((uint64_t)file_offset >= file_size)
+			continue;
+
+		/* Skip if already present in the current page table. */
+		if (mm_get_map_flag(addr) != 0)
+			continue;
+
+		/* Cache hit: map read-only without touching the disk. */
+		phy = mmap_cache_find(ino, file_offset);
+		if (phy != 0) {
+			mm_map_page(addr, phy, PAGE_ENTRY_USER_CODE);
+			INVLPG(addr);
+			continue;
+		}
+
+		/* Cache miss: allocate a page, read from disk, cache, and map. */
+		page_idx = phymm_alloc_user();
+		if (page_idx == PHYMM_INVALID)
+			break; /* OOM — stop prefetching */
+		phy = page_idx * PAGE_SIZE;
+
+		mm_map_page(addr, phy, PAGE_ENTRY_USER_DATA);
+		INVLPG(addr);
+
+		if (f->f_inode->i_op && f->f_inode->i_op->read_page) {
+			f->f_inode->i_op->read_page(f->f_inode, file_offset,
+						    (void *)addr);
+		} else {
+			ext4_file *ff = f->f_inode->i_private;
+			if (ext4_fseek(ff, file_offset, SEEK_SET) != EOK) {
+				mm_unmap_page(addr);
+				INVLPG(addr);
+				continue;
+			}
+			rcnt = 0;
+			if (ext4_fread(ff, (void *)addr, PAGE_SIZE, &rcnt) !=
+			    EOK)
+				klog("prefetch: read fail ino=%u off=%d\n", ino,
+				     file_offset);
+			if (rcnt < PAGE_SIZE)
+				memset((void *)(addr + rcnt), 0,
+				       PAGE_SIZE - rcnt);
+		}
+
+		/* Strip writable bit, then insert into LRU cache. */
+		mmflag = mm_get_map_flag(addr);
+		mmflag &= ~PAGE_ENTRY_WRITABLE;
+		mm_set_map_flag(addr, mmflag);
+		INVLPG(addr);
+		mmap_cache_add(ino, file_offset, phy);
+	}
+}
+
+/*
  * Handle page fault which has no physical page.
  */
 static int pf_handle_page_invalid(unsigned cr2)
@@ -479,6 +573,9 @@ found:
 		pf_handle_invalid_file_map(this_begin, region->fp, this_offset,
 					   region->prot, region->flag);
 		cur->pf_major++;
+		if (PAGE_PREFETCH_N > 0 && !(region->prot & PROT_WRITE) &&
+		    !(region->flag & MAP_SHARED))
+			pf_prefetch_pages(this_begin, region->fp, region);
 	} else {
 		pf_handle_invalid_memory(this_begin, region, this_offset);
 		cur->pf_minor++;

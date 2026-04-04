@@ -4,8 +4,6 @@
 
 Some kernel modules are intentionally unimplemented, so the boot log will show errors — but MOS **successfully boots to a Red Hat 9 login prompt**.
 
-> [!NOTE]
-> The `root` user has no password.
 
 | Boot                             | Login Prompt                              |
 | -------------------------------- | ----------------------------------------- |
@@ -15,14 +13,38 @@ Some kernel modules are intentionally unimplemented, so the boot log will show e
 
 ## Quick Start
 
+### Prerequisites
+
+**Ubuntu / Debian**
 ```sh
-make        # build (sets up disk image on first run)
-make run    # launch in QEMU
-make rebuild
+sudo apt install build-essential gcc-multilib qemu-system-x86 python3
+```
+
+**macOS**
+```sh
+brew install qemu python
+brew tap nativeos/i386-elf-toolchain && brew install i386-elf-gcc i386-elf-binutils
+```
+
+### Build & Run
+
+```sh
+make -j$(nproc)   # build kernel (sets up disk image on first run)
+./run.sh          # boot into Red Hat 9 (SysV init → login prompt)
+./run.sh bash     # boot directly into bash
 ```
 
 > [!NOTE]
-> The first `make` will set up the system image automatically.
+> The `root` user has no password.
+
+> [!TIP]
+> On Linux with KVM support, add `kvm` for **10×** faster emulation:
+> ```sh
+> ./run.sh kvm
+> ./run.sh bash kvm
+> ```
+
+See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and disk image management.
 
 ---
 

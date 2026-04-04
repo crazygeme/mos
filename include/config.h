@@ -26,6 +26,11 @@
 #define SEG_CLASS_DATA 1
 #define SEG_CLASS_SYSTEM 0 // this is for TSS
 
+/* GDT entries reserved for per-process TLS (set_thread_area / Linux compat) */
+#define GDT_ENTRY_TLS_MIN 6
+#define GDT_ENTRY_TLS_MAX 8
+#define GDT_ENTRY_TLS_COUNT 3
+
 #define SEG_BASE_4K 1 // address count with 4k
 #define SEG_BASE_1 0 // address count with 1 byte
 #define TSS_SEG_BASE SEG_BASE_1

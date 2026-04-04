@@ -115,7 +115,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getppid, // 64  __NR_getppid
 	sys_getpgrp, // 65  __NR_getpgrp
 	sys_setsid, // 66  __NR_setsid
-	0, // 67  __NR_sigaction
+	sys_sigaction, // 67  __NR_sigaction
 	0, // 68  __NR_sgetmask
 	0, // 69  __NR_ssetmask
 	sys_setreuid, // 70  __NR_setreuid
@@ -222,8 +222,8 @@ static unsigned call_table[NR_syscalls] = {
 	sys_getresgid, // 171 __NR_getresgid
 	0, // 172 __NR_prctl
 	0, // 173 __NR_rt_sigreturn
-	sys_sigaction, // 174 __NR_rt_sigaction
-	sys_sigprocmask, // 175 __NR_rt_sigprocmask
+	sys_rt_sigaction, // 174 __NR_rt_sigaction
+	sys_rt_sigprocmask, // 175 __NR_rt_sigprocmask
 	sys_rt_sigpending, // 176 __NR_rt_sigpending
 	sys_rt_sigtimedwait, // 177 __NR_rt_sigtimedwait
 	sys_rt_sigqueueinfo, // 178 __NR_rt_sigqueueinfo
@@ -291,7 +291,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 240 __NR_futex
 	0, // 241 __NR_sched_setaffinity
 	0, // 242 __NR_sched_getaffinity
-	0, // 243 __NR_set_thread_area
+	sys_set_thread_area, // 243 __NR_set_thread_area
 	0, // 244 __NR_get_thread_area
 	0, // 245 __NR_io_setup
 	0, // 246 __NR_io_destroy

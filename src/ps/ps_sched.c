@@ -17,6 +17,9 @@
 #include <lib/list.h>
 #include <lib/klib.h>
 #include <macro.h>
+#include <config.h>
+
+extern unsigned long long gdt[];
 
 #include "ps_internal.h"
 
@@ -283,6 +286,12 @@ void _task_sched(const char *func)
 	 * here is safe — code and the current stack remain accessible. */
 	reset_tss(task);
 	SET_CR3(task->user->page_dir - KERNEL_OFFSET);
+
+	/* Reload per-process TLS descriptors so that when RESTORE_ALL
+	 * loads GS the CPU finds the correct segment descriptor. */
+	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
+	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
+	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
 
 	/* Switch to the new task's kernel stack.  After this point no local
 	 * variable may be written: CURRENT_TASK() derives the task from the

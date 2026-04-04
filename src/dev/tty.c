@@ -1025,9 +1025,9 @@ static void tty_bash_spawner(void *p)
 {
 	tty_state *state = (tty_state *)p;
 	char tty_path[16];
-	char *argv[] = { "/bin/bash", "-l", NULL };
-	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "HOME=/root",
-			 "LANG=en_US", NULL };
+	char *argv[] = { "/bin/login", NULL };
+	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "LANG=en_US",
+			 NULL };
 	struct stat st;
 	task_struct *cur = CURRENT_TASK();
 

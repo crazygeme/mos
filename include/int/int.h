@@ -122,7 +122,8 @@ static __attribute__((always_inline)) inline unsigned int_intr_disable(void)
 	return old;
 }
 
-static __attribute__((always_inline)) inline void int_intr_setlevel(unsigned enabled)
+static __attribute__((always_inline)) inline void
+int_intr_setlevel(unsigned enabled)
 {
 	if (enabled)
 		int_intr_enable();

@@ -185,4 +185,3 @@ void int_update_tss(void *address)
 					      KERNEL_PRIVILEGE, SEG_BASE_1);
 	SET_TSS(TSS_SELECTOR);
 }
-

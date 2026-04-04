@@ -212,6 +212,8 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 			return -EINTR;
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
+	if (n > 0 && sk->tcp)
+		tcp_recved(sk->tcp, n);
 	return (ssize_t)n;
 }
 

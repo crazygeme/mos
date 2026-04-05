@@ -75,11 +75,11 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 	ssize_t n;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	fp = cur->fds[fd].fp;
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
-		return -1;
+		return -EBADF;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
@@ -95,17 +95,17 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	ssize_t n;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	fp = cur->fds[fd].fp;
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
-		return -1;
+		return -EBADF;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
 
 	n = fp->f_fop->write(fp, buf, len, &fp->f_pos);
-	return n < 0 ? -1 : (int)n;
+	return (int)n;
 }
 
 int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
@@ -117,11 +117,11 @@ int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
 	loff_t new_pos;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	fp = cur->fds[fd].fp;
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
-		return -1;
+		return -EBADF;
 
 	saved_pos = fp->f_pos;
 	fp->f_pos = offset;
@@ -139,17 +139,17 @@ int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
 	loff_t new_pos;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	fp = cur->fds[fd].fp;
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
-		return -1;
+		return -EBADF;
 
 	saved_pos = fp->f_pos;
 	fp->f_pos = offset;
 	n = fp->f_fop->write(fp, buf, len, &new_pos);
 	fp->f_pos = saved_pos;
-	return n < 0 ? -1 : (int)n;
+	return (int)n;
 }
 
 file *fs_open_file(const char *path, int flag, umode_t mode)
@@ -237,7 +237,7 @@ int fs_open(const char *path, int flag, umode_t mode)
 	int fd = fs_install_fd(fp, flag);
 	if (fd < 0)
 		fs_put_file(fp);
-	return fd < 0 ? -ENOENT : fd;
+	return fd < 0 ? -EMFILE : fd;
 }
 
 int fs_close(int fd)
@@ -245,10 +245,10 @@ int fs_close(int fd)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -256,7 +256,7 @@ int fs_close(int fd)
 	mutex_unlock(&cur->fd_lock);
 
 	if (fp == NULL)
-		return -1;
+		return 0; /* used==1 but fp==NULL: already cleaned up */
 
 	return fs_put_file(fp);
 }
@@ -286,7 +286,7 @@ int fs_fstat(int fd, struct stat *s)
 	file *fp = NULL;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -294,10 +294,10 @@ int fs_fstat(int fd, struct stat *s)
 
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
 	    !fp->f_inode->i_op->getattr)
-		return -1;
+		return -EBADF;
 
 	ret = fp->f_inode->i_op->getattr(fp->f_inode, s);
-	return ret == EOK ? 0 : -1;
+	return ret == EOK ? 0 : -EIO;
 }
 
 int fs_pipe(int *pipefd)
@@ -306,20 +306,20 @@ int fs_pipe(int *pipefd)
 	int reader, writer;
 
 	if (pipe_open(fp) != EOK)
-		return -1;
+		return -EIO;
 
 	reader = fs_install_fd(fp[0], O_RDONLY);
 	if (reader < 0) {
 		fs_put_file(fp[0]);
 		fs_put_file(fp[1]);
-		return -1;
+		return -EMFILE;
 	}
 
 	writer = fs_install_fd(fp[1], O_WRONLY);
 	if (writer < 0) {
 		fs_close(reader);
 		fs_put_file(fp[1]);
-		return -1;
+		return -EMFILE;
 	}
 
 	pipefd[0] = reader;
@@ -331,7 +331,7 @@ int fs_dup(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
 	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
-		return -ENOENT;
+		return -EBADF;
 
 	file *fp = cur->fds[fd].fp;
 	int flag = cur->fds[fd].flag & ~O_CLOEXEC;
@@ -340,7 +340,7 @@ int fs_dup(int fd)
 	int newfd = fs_install_fd(fp, flag);
 	if (newfd < 0)
 		fs_put_file(fp);
-	return newfd < 0 ? -1 : newfd;
+	return newfd < 0 ? -EMFILE : newfd;
 }
 
 int fs_dup2(int fd, int newfd)
@@ -349,13 +349,13 @@ int fs_dup2(int fd, int newfd)
 	file *fp = NULL;
 	int ret;
 	if (fd < 0 || fd >= MAX_FD)
-		return -ENOENT;
+		return -EBADF;
 
 	if (newfd < 0 || newfd >= MAX_FD)
-		return -EACCES;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	if (cur->fds[newfd].used)
@@ -430,12 +430,12 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	loff_t offset = (loff_t)offset_high << 32 | (loff_t)offset_low;
-	loff_t pos = -1;
+	loff_t pos = -ESPIPE;
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -456,12 +456,12 @@ int fs_seek(int fd, int offset, unsigned whence)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
-	loff_t pos = -EACCES;
+	loff_t pos = -ESPIPE;
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -480,13 +480,13 @@ int fs_sync(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
-	int ret = -ENOENT;
+	int ret = -EBADF;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -507,12 +507,12 @@ int fs_fd_ready(int fd, unsigned type)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
-	int ret = -EACCES;
+	int ret = -EBADF;
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -529,12 +529,12 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
-	int ret = -EACCES;
+	int ret = -EBADF;
 	if (fd < 0 || fd >= MAX_FD)
-		return -EINVAL;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -631,10 +631,10 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	int ret = -EACCES;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
@@ -670,10 +670,10 @@ int fs_fchmod(int fd, uint32_t mode)
 	int ret = -EACCES;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 
 	if (cur->fds[fd].used == 0)
-		return -ENOENT;
+		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;

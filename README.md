@@ -80,5 +80,6 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis |
 | [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch      |
 | [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                            |
+| [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes      |
 | [Screenshots](doc/screenshots.md)        | Screenshots of MOS running                                                        |
 | [Todo](doc/todo.md)                      | Feature checklist                                                                 |

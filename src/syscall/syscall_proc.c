@@ -992,29 +992,38 @@ int sys_setgroups32(int size, unsigned *list)
 
 int sys_ugetrlimit(int resource, void *limit)
 {
+	task_struct *cur = CURRENT_TASK();
 	unsigned long *rl = (unsigned long *)limit;
+	if (!rl)
+		return -EFAULT;
+
+	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
+		rl[0] = cur->rlimits[resource].rlim_cur;
+		rl[1] = cur->rlimits[resource].rlim_max;
+	}
 
 	if (TestControl.verbos)
-		klog("ugetrlimit(%d)\n", resource);
+		klog("ugetrlimit(%d, rl[0]=%x, rl[1]=%x)\n", resource,
+		     rl ? rl[0] : 0, rl ? rl[1] : 0);
 
-	if (rl) {
-		if (resource == 7 /* RLIMIT_NOFILE */) {
-			rl[0] = MAX_FD;
-			rl[1] = MAX_FD;
-		} else {
-			rl[0] = 0xFFFFFFFFu; /* rlim_cur = RLIM_INFINITY */
-			rl[1] = 0xFFFFFFFFu; /* rlim_max = RLIM_INFINITY */
-		}
-	}
 	return 0;
 }
 
 int sys_setrlimit(int resource, void *limit)
 {
-	if (TestControl.verbos)
-		klog("setrlimit(%d)\n", resource);
+	task_struct *cur = CURRENT_TASK();
+	unsigned long *rl = (unsigned long *)limit;
+	if (!rl)
+		return -EFAULT;
 
-	/* We don't enforce resource limits; silently accept any value. */
+	if (TestControl.verbos)
+		klog("setrlimit(%d, rl[0]=%x, rl[1]=%x)\n", resource,
+		     rl ? rl[0] : 0, rl ? rl[1] : 0);
+
+	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
+		cur->rlimits[resource].rlim_cur = rl[0];
+		cur->rlimits[resource].rlim_max = rl[1];
+	}
 	return 0;
 }
 

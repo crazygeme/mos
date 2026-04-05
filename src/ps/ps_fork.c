@@ -67,6 +67,23 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	}
 
 	memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
+
+	/* Default rlimits: RLIM_INFINITY for all, except known constraints. */
+	for (int i = 0; i < RLIM_NLIMITS; i++) {
+		task->rlimits[i].rlim_cur = RLIM_INFINITY;
+		task->rlimits[i].rlim_max = RLIM_INFINITY;
+	}
+	task->rlimits[3].rlim_cur =
+		USER_STACK_PAGES * PAGE_SIZE; /* RLIMIT_STACK */
+	task->rlimits[3].rlim_max = USER_STACK_PAGES * PAGE_SIZE;
+	task->rlimits[4].rlim_cur = 0; /* RLIMIT_CORE: no core dumps */
+	task->rlimits[4].rlim_max = 0;
+	/* RLIMIT_NOFILE: match Linux default of 1024/1024.  Services that do
+	 * malloc(rl_cur * ...) won't OOM, and glibc sizes its fd table to 1024
+	 * which matches xinetd's max_descriptors after its setrlimit call. */
+	task->rlimits[7].rlim_cur = 1024;
+	task->rlimits[7].rlim_max = 1024;
+
 	task->user = zalloc(sizeof(user_enviroment));
 	task->user->page_dir = (unsigned int)vm_alloc(1);
 	task->user->command = vm_alloc(1);

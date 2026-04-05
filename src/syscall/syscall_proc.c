@@ -998,8 +998,8 @@ int sys_ugetrlimit(int resource, void *limit)
 		return -EFAULT;
 
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-		rl[0] = cur->rlimits[resource].rlim_cur;
-		rl[1] = cur->rlimits[resource].rlim_max;
+		rl[0] = cur->user->rlimits[resource].rlim_cur;
+		rl[1] = cur->user->rlimits[resource].rlim_max;
 	}
 
 	if (TestControl.verbos)
@@ -1021,8 +1021,8 @@ int sys_setrlimit(int resource, void *limit)
 		     rl ? rl[0] : 0, rl ? rl[1] : 0);
 
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-		cur->rlimits[resource].rlim_cur = rl[0];
-		cur->rlimits[resource].rlim_max = rl[1];
+		cur->user->rlimits[resource].rlim_cur = rl[0];
+		cur->user->rlimits[resource].rlim_max = rl[1];
 	}
 	return 0;
 }

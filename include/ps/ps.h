@@ -221,6 +221,14 @@ typedef volatile struct _task_frame {
 	unsigned long esp; // kernel or user esp
 } task_frame;
 
+#define RLIM_NLIMITS 16
+#define RLIM_INFINITY 0xFFFFFFFFu
+
+typedef struct {
+	unsigned long rlim_cur;
+	unsigned long rlim_max;
+} rlimit_t;
+
 typedef struct _task_struct task_struct;
 struct _task_struct {
 	task_frame tss;
@@ -251,6 +259,7 @@ struct _task_struct {
 	unsigned long long alarm_expire_ms;
 	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
 	unsigned timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
+	rlimit_t rlimits[RLIM_NLIMITS];
 	unsigned int magic; // to avoid stack overflow
 };
 

@@ -49,7 +49,7 @@
 
 #define DSR_CACHE_DEPTH 4096
 
-#define HDD_CACHE_SIZE (4096 * 4) /* pages */
+#define HDD_CACHE_SIZE (4096) /* pages */
 
 #define HDD_CACHE_OPEN 1
 

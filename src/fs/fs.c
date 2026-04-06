@@ -503,23 +503,61 @@ done:
 	return ret;
 }
 
-int fs_fd_ready(int fd, unsigned type)
+void poll_table_init(poll_table *pt, task_struct *task,
+		     poll_table_entry *entries, unsigned cap)
+{
+	pt->task = task;
+	pt->nr = 0;
+	pt->cap = cap;
+	pt->unsupported = 0;
+	pt->entries = entries;
+}
+
+void poll_table_cleanup(poll_table *pt)
+{
+	while (pt->nr > 0) {
+		poll_table_entry *ent = &pt->entries[--pt->nr];
+		ent->dereg(ent->opaque, pt->task);
+	}
+}
+
+int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg)
+{
+	if (!pt)
+		return 0;
+	if (pt->nr >= pt->cap) {
+		pt->unsupported = 1;
+		return -1;
+	}
+	pt->entries[pt->nr].opaque = opaque;
+	pt->entries[pt->nr].dereg = dereg;
+	pt->nr++;
+	return 0;
+}
+
+void poll_table_note_unsupported(poll_table *pt)
+{
+	if (pt)
+		pt->unsupported = 1;
+}
+
+unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
-	int ret = -EBADF;
+	unsigned ret = 0;
 	if (fd < 0 || fd >= MAX_FD)
-		return -EBADF;
+		return 0;
 
 	if (cur->fds[fd].used == 0)
-		return -EBADF;
+		return 0;
 
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
-	if (!fp || !fp->f_fop || !fp->f_fop->is_ready)
+	if (!fp || !fp->f_fop || !fp->f_fop->poll)
 		goto done;
 
-	ret = fp->f_fop->is_ready(fp, type);
+	ret = fp->f_fop->poll(fp, events, pt);
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;

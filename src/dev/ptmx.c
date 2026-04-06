@@ -99,9 +99,7 @@ static const file_operations pts_slave_fops = {
 	.release = pts_slave_release,
 	.read = pts_slave_read,
 	.write = pts_slave_write,
-	.is_ready = pts_slave_poll,
-	.poll_wait = pts_slave_poll_wait,
-	.poll_wait_remove = pts_slave_poll_wait_remove,
+	.poll = pts_slave_poll,
 	.ioctl = pts_slave_ioctl,
 };
 
@@ -171,9 +169,7 @@ static const file_operations ptmx_master_fops = {
 	.release = pts_master_release,
 	.read = pts_master_read,
 	.write = pts_master_write,
-	.is_ready = pts_master_poll,
-	.poll_wait = pts_master_poll_wait,
-	.poll_wait_remove = pts_master_poll_wait_remove,
+	.poll = pts_master_poll,
 	.ioctl = pts_master_ioctl,
 };
 
@@ -208,11 +204,11 @@ done:
 	return read_size;
 }
 
-static int ptmx_dir_poll(file *fp, unsigned type)
+static unsigned ptmx_dir_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT || type == FS_POLL_WRITE)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return (events & FS_POLL_READ) ? FS_POLL_READ : 0;
 }
 
 static int ptmx_dir_release(file *fp)
@@ -232,7 +228,7 @@ static const inode_operations ptmx_dir_iops = {
 static const file_operations ptmx_dir_fops = {
 	.release = ptmx_dir_release,
 	.read = ptmx_dir_read,
-	.is_ready = ptmx_dir_poll,
+	.poll = ptmx_dir_poll,
 };
 
 static int ptmx_statfs(super_block *sb, struct statfs *buf)

@@ -48,42 +48,32 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 	return (ssize_t)ret;
 }
 
-static int pipe_poll(file *fp, unsigned type)
+static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 {
-	pipe_inode *n = fp->f_inode->i_private;
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	if (type == FS_POLL_READ)
-		return cyb_isempty(n->buf) ? -1 : 0;
-	if (type == FS_POLL_WRITE)
-		return cyb_isfull(n->buf) ? -1 : 0;
-	return -1;
+	unsigned ready = 0;
+	if ((events & FS_POLL_READ) && !cyb_isempty(n->buf))
+		ready |= FS_POLL_READ;
+	if ((events & FS_POLL_WRITE) && !cyb_isfull(n->buf))
+		ready |= FS_POLL_WRITE;
+	if (!ready && pt) {
+		if (events & FS_POLL_READ)
+			cyb_poll_read(n->buf, pt);
+		if (events & FS_POLL_WRITE)
+			cyb_poll_write(n->buf, pt);
+	}
+	return ready;
 }
 
-static void pipe_read_poll_wait(file *fp, task_struct *task)
+static unsigned pipe_read_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	cyb_set_poll_read(n->buf, task);
+	return pipe_poll_common(n, events & FS_POLL_READ, pt);
 }
 
-static void pipe_read_poll_wait_remove(file *fp, task_struct *task)
+static unsigned pipe_write_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	(void)task;
-	cyb_clear_poll_read(n->buf);
-}
-
-static void pipe_write_poll_wait(file *fp, task_struct *task)
-{
-	pipe_inode *n = fp->f_inode->i_private;
-	cyb_set_poll_write(n->buf, task);
-}
-
-static void pipe_write_poll_wait_remove(file *fp, task_struct *task)
-{
-	pipe_inode *n = fp->f_inode->i_private;
-	(void)task;
-	cyb_clear_poll_write(n->buf);
+	return pipe_poll_common(n, events & FS_POLL_WRITE, pt);
 }
 
 static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
@@ -116,18 +106,14 @@ static const inode_operations pipe_iops = {
 static const file_operations pipe_read_fops = {
 	.release = pipe_release,
 	.read = pipe_read,
-	.is_ready = pipe_poll,
-	.poll_wait = pipe_read_poll_wait,
-	.poll_wait_remove = pipe_read_poll_wait_remove,
+	.poll = pipe_read_poll,
 	.llseek = pipe_llseek,
 };
 
 static const file_operations pipe_write_fops = {
 	.release = pipe_release,
 	.write = pipe_write,
-	.is_ready = pipe_poll,
-	.poll_wait = pipe_write_poll_wait,
-	.poll_wait_remove = pipe_write_poll_wait_remove,
+	.poll = pipe_write_poll,
 	.llseek = pipe_llseek,
 };
 

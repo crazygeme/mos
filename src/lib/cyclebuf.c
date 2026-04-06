@@ -263,7 +263,7 @@ void cyb_reader_close(cy_buf *b)
  * Poll registration helpers.
  */
 
-void cyb_set_poll_read(cy_buf *b, task_struct *task)
+static void cyb_set_poll_read(cy_buf *b, task_struct *task)
 {
 	int irq;
 	spinlock_lock(&b->poll_lock, &irq);
@@ -271,7 +271,7 @@ void cyb_set_poll_read(cy_buf *b, task_struct *task)
 	spinlock_unlock(&b->poll_lock, irq);
 }
 
-void cyb_clear_poll_read(cy_buf *b)
+static void cyb_clear_poll_read(cy_buf *b)
 {
 	int irq;
 	spinlock_lock(&b->poll_lock, &irq);
@@ -279,7 +279,7 @@ void cyb_clear_poll_read(cy_buf *b)
 	spinlock_unlock(&b->poll_lock, irq);
 }
 
-void cyb_set_poll_write(cy_buf *b, task_struct *task)
+static void cyb_set_poll_write(cy_buf *b, task_struct *task)
 {
 	int irq;
 	spinlock_lock(&b->poll_lock, &irq);
@@ -287,10 +287,40 @@ void cyb_set_poll_write(cy_buf *b, task_struct *task)
 	spinlock_unlock(&b->poll_lock, irq);
 }
 
-void cyb_clear_poll_write(cy_buf *b)
+static void cyb_clear_poll_write(cy_buf *b)
 {
 	int irq;
 	spinlock_lock(&b->poll_lock, &irq);
 	b->poll_write_task = NULL;
 	spinlock_unlock(&b->poll_lock, irq);
+}
+
+static void cyb_poll_read_dereg(void *opaque, task_struct *task)
+{
+	(void)task;
+	cyb_clear_poll_read(opaque);
+}
+
+static void cyb_poll_write_dereg(void *opaque, task_struct *task)
+{
+	(void)task;
+	cyb_clear_poll_write(opaque);
+}
+
+void cyb_poll_read(cy_buf *b, poll_table *pt)
+{
+	if (!pt)
+		return;
+	cyb_set_poll_read(b, pt->task);
+	if (poll_table_add(pt, b, cyb_poll_read_dereg) < 0)
+		cyb_clear_poll_read(b);
+}
+
+void cyb_poll_write(cy_buf *b, poll_table *pt)
+{
+	if (!pt)
+		return;
+	cyb_set_poll_write(b, pt->task);
+	if (poll_table_add(pt, b, cyb_poll_write_dereg) < 0)
+		cyb_clear_poll_write(b);
 }

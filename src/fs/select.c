@@ -17,6 +17,7 @@ struct select_ctx {
 	fd_set *reads, *writes, *excepts;
 	/* Pointers to the caller's output sets (zeroed and filled each check). */
 	fd_set *readfds, *writefds, *exceptfds;
+	poll_table wait;
 };
 
 static int select_ctx_check(void *arg)
@@ -32,18 +33,25 @@ static int select_ctx_check(void *arg)
 		memset(ctx->exceptfds, 0, ctx->set_bytes);
 
 	for (i = 0; i < ctx->nfds; i++) {
-		if (ctx->reads && FD_ISSET(i, ctx->reads) &&
-		    fs_fd_ready(i, FS_POLL_READ) == 0) {
+		unsigned want = 0;
+		if (ctx->reads && FD_ISSET(i, ctx->reads))
+			want |= FS_POLL_READ;
+		if (ctx->writes && FD_ISSET(i, ctx->writes))
+			want |= FS_POLL_WRITE;
+		if (ctx->excepts && FD_ISSET(i, ctx->excepts))
+			want |= FS_POLL_EXCEPT;
+		if (!want)
+			continue;
+		unsigned ready_mask = fs_fd_poll(i, want, NULL);
+		if ((want & FS_POLL_READ) && (ready_mask & FS_POLL_READ)) {
 			FD_SET(i, ctx->readfds);
 			ready++;
 		}
-		if (ctx->writes && FD_ISSET(i, ctx->writes) &&
-		    fs_fd_ready(i, FS_POLL_WRITE) == 0) {
+		if ((want & FS_POLL_WRITE) && (ready_mask & FS_POLL_WRITE)) {
 			FD_SET(i, ctx->writefds);
 			ready++;
 		}
-		if (ctx->excepts && FD_ISSET(i, ctx->excepts) &&
-		    fs_fd_ready(i, FS_POLL_EXCEPT) == 0) {
+		if ((want & FS_POLL_EXCEPT) && (ready_mask & FS_POLL_EXCEPT)) {
 			FD_SET(i, ctx->exceptfds);
 			ready++;
 		}
@@ -54,46 +62,28 @@ static int select_ctx_check(void *arg)
 static int select_ctx_reg(void *arg)
 {
 	struct select_ctx *ctx = arg;
-	task_struct *cur = CURRENT_TASK();
-	int i, has_unsupported = 0;
+	int i;
+	poll_table *pt = &ctx->wait;
 
 	for (i = 0; i < ctx->nfds; i++) {
-		int any = ((ctx->reads && FD_ISSET(i, ctx->reads)) ||
-			   (ctx->writes && FD_ISSET(i, ctx->writes)) ||
-			   (ctx->excepts && FD_ISSET(i, ctx->excepts)));
-		if (!any)
+		unsigned want = 0;
+		if (ctx->reads && FD_ISSET(i, ctx->reads))
+			want |= FS_POLL_READ;
+		if (ctx->writes && FD_ISSET(i, ctx->writes))
+			want |= FS_POLL_WRITE;
+		if (ctx->excepts && FD_ISSET(i, ctx->excepts))
+			want |= FS_POLL_EXCEPT;
+		if (!want)
 			continue;
-		if (i >= (int)MAX_FD || !cur->fds[i].used)
-			continue;
-		file *fp = cur->fds[i].fp;
-		if (!fp || !fp->f_fop)
-			continue;
-		if (fp->f_fop->poll_wait)
-			fp->f_fop->poll_wait(fp, cur);
-		else
-			has_unsupported = 1;
+		fs_fd_poll(i, want, pt);
 	}
-	return has_unsupported;
+	return pt->unsupported;
 }
 
 static void select_ctx_dereg(void *arg)
 {
 	struct select_ctx *ctx = arg;
-	task_struct *cur = CURRENT_TASK();
-	int i;
-
-	for (i = 0; i < ctx->nfds; i++) {
-		int any = ((ctx->reads && FD_ISSET(i, ctx->reads)) ||
-			   (ctx->writes && FD_ISSET(i, ctx->writes)) ||
-			   (ctx->excepts && FD_ISSET(i, ctx->excepts)));
-		if (!any)
-			continue;
-		if (i >= (int)MAX_FD || !cur->fds[i].used)
-			continue;
-		file *fp = cur->fds[i].fp;
-		if (fp && fp->f_fop && fp->f_fop->poll_wait_remove)
-			fp->f_fop->poll_wait_remove(fp, cur);
-	}
+	poll_table_cleanup(&ctx->wait);
 }
 
 static const struct poll_ops select_fops = {
@@ -112,6 +102,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	task_struct *cur = CURRENT_TASK();
 	sigset_t saved_mask = cur->signal->sig_mask;
 	struct select_ctx ctx;
+	poll_table_entry *entries = NULL;
 
 	if (nfds < 0 || nfds > FD_SETSIZE)
 		return -EINVAL;
@@ -122,6 +113,12 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.nfds = nfds;
 	ctx.set_bytes = set_bytes;
+	if (nfds > 0) {
+		entries = zalloc(sizeof(*entries) * nfds * 2);
+		poll_table_init(&ctx.wait, cur, entries, nfds * 2);
+	} else {
+		poll_table_init(&ctx.wait, cur, NULL, 0);
+	}
 
 	if (sigmask)
 		cur->signal->sig_mask = *(sigset_t *)sigmask;
@@ -168,6 +165,8 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 		free(ctx.writes);
 	if (ctx.excepts)
 		free(ctx.excepts);
+	if (entries)
+		free(entries);
 
 	return ret;
 }

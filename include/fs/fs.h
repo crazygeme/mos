@@ -167,6 +167,24 @@ struct linux_dirent64 {
 
 #define MAX_FD ((PAGE_SIZE) / sizeof(file_descriptor))
 
+typedef struct {
+	struct linux_dirent *buf;
+	unsigned length;
+	int node_count;
+	size_t total_size;
+} memory_dir;
+
+#define FILL_ENTRY(name_str, inode)                                        \
+	do {                                                               \
+		dirp = (struct linux_dirent *)p;                           \
+		dirp->d_ino = inode;                                       \
+		strcpy(dirp->d_name, (name_str));                          \
+		dirp->d_reclen =                                           \
+			ROUND_UP(NAME_OFFSET() + strlen(name_str) + 1);    \
+		dirp->d_off = (unsigned long)(p + dirp->d_reclen - begin); \
+		p += dirp->d_reclen;                                       \
+	} while (0)
+
 int resolve_path(const char *old, char *new);
 
 /* Wake all tasks sleeping on @in's flock wait queue.  Caller holds i_flock_lock. */

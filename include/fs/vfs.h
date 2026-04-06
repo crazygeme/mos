@@ -122,6 +122,11 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
  */
 int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev);
 
+/*
+ * vfs_rmmode - remove a special file (device node)
+ */
+int vfs_rmnod(super_block *sb, const char *path);
+
 /* Fill buf with filesystem statistics for the filesystem owning path. */
 int vfs_statfs(super_block *sb, const char *path, struct statfs *buf);
 int vfs_utime(super_block *sb, const char *path, unsigned atime,

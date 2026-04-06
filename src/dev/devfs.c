@@ -25,18 +25,13 @@
  * Root-directory private state (one per open(2) call on /dev)         *
  * ------------------------------------------------------------------ */
 
-typedef struct {
-	struct linux_dirent *buf;
-	unsigned length;
-} dev_root_dir;
-
 /* ------------------------------------------------------------------ *
  * inode/file operations for the /dev root directory                   *
  * ------------------------------------------------------------------ */
 
 static ssize_t dev_root_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	dev_root_dir *rd = fp->f_inode->i_private;
+	memory_dir *rd = fp->f_inode->i_private;
 	loff_t offset = *pos;
 	ssize_t left, read_size = 0;
 
@@ -63,12 +58,15 @@ static int dev_root_poll(file *fp, unsigned type)
 
 static int dev_root_getattr(inode *node, struct stat *s)
 {
+	memory_dir *rd = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_atime = time_now_sec();
 	s->st_mtime = time_now_sec();
 	s->st_ctime = time_now_sec();
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
+	s->st_blocks = rd->node_count;
+	s->st_size = rd->total_size;
 	s->st_dev = 0xc;
 	s->st_nlink = 2;
 	s->st_ino = DEV_INODE;
@@ -77,7 +75,7 @@ static int dev_root_getattr(inode *node, struct stat *s)
 
 static int dev_root_release(file *fp)
 {
-	dev_root_dir *rd = fp->f_inode->i_private;
+	memory_dir *rd = fp->f_inode->i_private;
 	kfree(rd->buf);
 	free(rd);
 	free(fp->f_inode);
@@ -105,7 +103,7 @@ static const file_operations dev_root_fops = {
  * The child mounts come from sb->s_mounts whose keys are paths like "/tty";
  * we strip the leading '/' when emitting the dirent name.
  */
-static void dev_dir_gen(super_block *sb, dev_root_dir *rd)
+static void dev_dir_gen(super_block *sb, memory_dir *rd)
 {
 	key_value_pair *kv;
 	unsigned size = 0;
@@ -113,6 +111,7 @@ static void dev_dir_gen(super_block *sb, dev_root_dir *rd)
 	const char *begin;
 	struct linux_dirent *dirp;
 
+	rd->node_count = 0;
 	/* ---- Size calculation ---- */
 	size += ROUND_UP(NAME_OFFSET() + 2); /* "."  strlen=1 +1 */
 	size += ROUND_UP(NAME_OFFSET() + 3); /* ".." strlen=2 +1 */
@@ -123,6 +122,8 @@ static void dev_dir_gen(super_block *sb, dev_root_dir *rd)
 		/* key is "/name"; display "name" (key+1) */
 		size += ROUND_UP(NAME_OFFSET() + strlen((char *)kv->key + 1) +
 				 1);
+		rd->node_count++;
+		rd->total_size += 1024;
 	}
 	mutex_unlock(&sb->s_lock);
 
@@ -133,27 +134,14 @@ static void dev_dir_gen(super_block *sb, dev_root_dir *rd)
 	rd->buf = (struct linux_dirent *)buf;
 	rd->length = size;
 
-#define FILL_ENTRY(name_str)                                               \
-	do {                                                               \
-		dirp = (struct linux_dirent *)p;                           \
-		dirp->d_ino = DEV_INODE;                                   \
-		strcpy(dirp->d_name, (name_str));                          \
-		dirp->d_reclen =                                           \
-			ROUND_UP(NAME_OFFSET() + strlen(name_str) + 1);    \
-		dirp->d_off = (unsigned long)(p + dirp->d_reclen - begin); \
-		p += dirp->d_reclen;                                       \
-	} while (0)
-
-	FILL_ENTRY(".");
-	FILL_ENTRY("..");
+	FILL_ENTRY(".", DEV_INODE);
+	FILL_ENTRY("..", DEV_INODE);
 
 	mutex_lock(&sb->s_lock);
 	for (kv = hash_first(sb->s_mounts); kv;
 	     kv = hash_next(sb->s_mounts, kv))
-		FILL_ENTRY((char *)kv->key + 1);
+		FILL_ENTRY((char *)kv->key + 1, DEV_INODE);
 	mutex_unlock(&sb->s_lock);
-
-#undef FILL_ENTRY
 }
 
 /* ------------------------------------------------------------------ *
@@ -162,7 +150,7 @@ static void dev_dir_gen(super_block *sb, dev_root_dir *rd)
 
 static file *dev_open_root(super_block *sb, int flag)
 {
-	dev_root_dir *rd = zalloc(sizeof(*rd));
+	memory_dir *rd = zalloc(sizeof(*rd));
 	inode *node = zalloc(sizeof(*node));
 	file *fp = zalloc(sizeof(*fp));
 

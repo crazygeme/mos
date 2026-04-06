@@ -56,4 +56,9 @@ set -e
 [ "$rc" -eq 7 ] || fail "Expected: script exit status 7
 Actual: ${rc}"
 
-expect_success sh "$FILE"
+set +e
+sh "$FILE" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 7 ] || fail "Expected: 'sh $FILE' exit status 7
+Actual: ${rc}"

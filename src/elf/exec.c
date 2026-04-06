@@ -553,6 +553,12 @@ int sys_execve(const char *f, char **argv, char **envp)
 		asm("hlt");
 	}
 
+	if (cur->user->start_brk > 0 && cur->user->start_brk < USER_HEAP_END) {
+		do_mmap(cur->user->start_brk, PAGE_SIZE,
+			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
+		cur->user->brk = cur->user->start_brk + PAGE_SIZE;
+	}
+
 	/*
 	 * map a kernel code region into user land, usually used in
 	 * signal deliver and signal return.
@@ -604,6 +610,26 @@ static void run_if_exist(const char *path, const char *argv[],
 	DIE();
 }
 
+static void prepare_interactive_userspace(task_struct *cur)
+{
+	strcpy(cur->user->cwd, "/root");
+
+	printk("rtc: Sync local time\n");
+	time_sync_rtc();
+
+	printk("mnt: Re-mount rootfs (rw)\n");
+	fs_do_mount(hdd_partitions[0].name, "/", "ext4", MS_REMOUNT, NULL);
+
+	printk("mnt: Mounting proc on /proc\n");
+	fs_do_mount("proc", "/proc", "proc", 0, NULL);
+
+	printk("mnt: Mounting devpts on /dev/pts\n");
+	fs_do_mount("devpts", "/dev/pts", "devpts", 0, NULL);
+
+	printk("mnt: Mounting tmpfs on /dev/shm\n");
+	fs_do_mount("tmpfs", "/dev/shm", "tmpfs", 0, NULL);
+}
+
 /*
  * run_first_user_process - set up and exec the first user-space process
  *
@@ -622,6 +648,10 @@ static void kinit_userspace()
 	const char *devault_argv[] = { "/sbin/init", NULL };
 	const char *default_envp[] = { "TERM=linux", NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
+	const char *test_sh_argv[] = { "/bin/sh", "/proc/tests/all_script",
+				       NULL };
+	const char *test_bash_argv[] = { "/bin/bash", "/proc/tests/all_script",
+					 NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
 				    "HOME=/root", "LANG=en_US", NULL };
 	task_struct *cur = CURRENT_TASK();
@@ -632,28 +662,18 @@ static void kinit_userspace()
 	if (TestControl.bash) {
 		argv = user_argv;
 		envp = user_envp;
-		strcpy(cur->user->cwd, "/root");
+		prepare_interactive_userspace(cur);
+	}
 
-		/* Sync wall time */
-		printk("rtc: Sync local time\n");
-		time_sync_rtc();
+	if (TestControl.test) {
+		struct stat st;
 
-		printk("mnt: Re-mount rootfs (rw)\n");
-		/* Remount root read-write (was mounted ro at boot). */
-		fs_do_mount(hdd_partitions[0].name, "/", "ext4", MS_REMOUNT,
-			    NULL);
+		argv = test_sh_argv;
+		envp = user_envp;
+		prepare_interactive_userspace(cur);
 
-		/* Mount /proc — userspace expects it to be present. */
-		printk("mnt: Mounting proc on /proc\n");
-		fs_do_mount("proc", "/proc", "proc", 0, NULL);
-
-		/* Mount Unix98 PTY slave directory. */
-		printk("mnt: Mounting devpts on /dev/pts\n");
-		fs_do_mount("devpts", "/dev/pts", "devpts", 0, NULL);
-
-		/* Mount shared-memory tmpfs. */
-		printk("mnt: Mounting tmpfs on /dev/shm\n");
-		fs_do_mount("tmpfs", "/dev/shm", "tmpfs", 0, NULL);
+		if (fs_stat("/bin/sh", &st) != 0)
+			argv = test_bash_argv;
 	}
 
 	printk("Now bringup first user process %s\n", argv[0]);

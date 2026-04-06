@@ -308,8 +308,8 @@ static task_struct *fork_alloc_child(task_struct *cur)
 	if (!task)
 		return NULL;
 
-	task_intr_frame = (intr_frame *)((char *)task + PAGE_SIZE -
-					 sizeof(intr_frame));
+	task_intr_frame =
+		(intr_frame *)((char *)task + PAGE_SIZE - sizeof(intr_frame));
 
 	*task = *cur;
 	*task_intr_frame = *cur_intr_frame;

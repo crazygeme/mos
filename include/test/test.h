@@ -67,12 +67,12 @@ extern ktest_script_t __ktest_script_end[];
 
 #define KTEST_SCRIPT(name, content) KTEST_SCRIPT_NAMED(#name, content)
 
-#define KTEST_SCRIPT_NAMED(name_literal, content)                           \
-	static const ktest_script_t                                         \
-		__KTEST_SCRIPT_CAT(_ktest_script_entry_, __LINE__)           \
-			__attribute__((used, section(".ktest_script"))) = { \
-				name_literal, content                        \
-			}
+#define KTEST_SCRIPT_NAMED(name_literal, content)                            \
+	static const ktest_script_t __KTEST_SCRIPT_CAT(_ktest_script_entry_, \
+						       __LINE__)             \
+		__attribute__((used, section(".ktest_script"))) = {          \
+			name_literal, content                                \
+		}
 
 /* ── Non-fatal failure accumulator (set by EXPECT_*, read by .runner) ─────── */
 

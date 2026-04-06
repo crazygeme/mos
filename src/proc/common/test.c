@@ -248,8 +248,7 @@ static ssize_t result_write(file *fp, const void *buf, size_t size, loff_t *pos)
 
 	for (i = 0; i < len; i++)
 		line[i] = ((const char *)buf)[i];
-	while (len > 0 &&
-	       (line[len - 1] == '\n' || line[len - 1] == '\r'))
+	while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
 		len--;
 	line[len] = '\0';
 
@@ -401,44 +400,46 @@ static file *make_wrapped_script_file(const char *script_name, const char *body)
 {
 	proc_buf_t *pb = proc_buf_new();
 
-	proc_buf_printf(pb,
-			"#!/bin/sh\n"
-			"__ktest_name='%s'\n"
-			"__ktest_result(){ printf '%%s\n' \"$1\" > /proc/tests/.result; }\n"
-			"read __ktest_up _ < /proc/uptime\n"
-			"__ktest_start_s=${__ktest_up%%.*}\n"
-			"__ktest_start_cs=${__ktest_up#*.}\n"
-			"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
-			"__ktest_result \"[ RUN      ] script.${__ktest_name}\"\n"
-			"(\n",
-			script_name);
+	proc_buf_printf(
+		pb,
+		"#!/bin/sh\n"
+		"__ktest_name='%s'\n"
+		"__ktest_result(){ printf '%%s\n' \"$1\" > /proc/tests/.result; }\n"
+		"read __ktest_up _ < /proc/uptime\n"
+		"__ktest_start_s=${__ktest_up%%.*}\n"
+		"__ktest_start_cs=${__ktest_up#*.}\n"
+		"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
+		"__ktest_result \"[ RUN      ] script.${__ktest_name}\"\n"
+		"(\n",
+		script_name);
 	proc_buf_printf(pb, "%s", body);
-	proc_buf_printf(pb,
-			"\n"
-			") > \"$__ktest_log\" 2>&1\n"
-			"__ktest_rc=$?\n"
-			"read __ktest_up _ < /proc/uptime\n"
-			"__ktest_end_s=${__ktest_up%%.*}\n"
-			"__ktest_end_cs=${__ktest_up#*.}\n"
-			"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
-			"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
-			"if [ \"$__ktest_rc\" -eq 0 ]; then\n"
-			"  __ktest_result \"[       OK ] script.${__ktest_name} "
-			"(${__ktest_elapsed_ms} ms)\"\n"
-			"else\n"
-			"  __ktest_result \"script.${__ktest_name}: Failure\"\n"
-			"  if [ -s \"$__ktest_log\" ]; then\n"
-			"    while IFS= read -r __ktest_line; do\n"
-			"      __ktest_result \"  $__ktest_line\"\n"
-			"    done < \"$__ktest_log\"\n"
-			"  else\n"
-			"    __ktest_result \"  script exited with status $__ktest_rc\"\n"
-			"  fi\n"
-			"  __ktest_result \"[  FAILED  ] script.${__ktest_name} "
-			"(${__ktest_elapsed_ms} ms)\"\n"
-			"fi\n"
-			"rm -f \"$__ktest_log\"\n"
-			"exit $__ktest_rc\n");
+	proc_buf_printf(
+		pb,
+		"\n"
+		") > \"$__ktest_log\" 2>&1\n"
+		"__ktest_rc=$?\n"
+		"read __ktest_up _ < /proc/uptime\n"
+		"__ktest_end_s=${__ktest_up%%.*}\n"
+		"__ktest_end_cs=${__ktest_up#*.}\n"
+		"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
+		"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
+		"if [ \"$__ktest_rc\" -eq 0 ]; then\n"
+		"  __ktest_result \"[       OK ] script.${__ktest_name} "
+		"(${__ktest_elapsed_ms} ms)\"\n"
+		"else\n"
+		"  __ktest_result \"script.${__ktest_name}: Failure\"\n"
+		"  if [ -s \"$__ktest_log\" ]; then\n"
+		"    while IFS= read -r __ktest_line; do\n"
+		"      __ktest_result \"  $__ktest_line\"\n"
+		"    done < \"$__ktest_log\"\n"
+		"  else\n"
+		"    __ktest_result \"  script exited with status $__ktest_rc\"\n"
+		"  fi\n"
+		"  __ktest_result \"[  FAILED  ] script.${__ktest_name} "
+		"(${__ktest_elapsed_ms} ms)\"\n"
+		"fi\n"
+		"rm -f \"$__ktest_log\"\n"
+		"exit $__ktest_rc\n");
 	return make_proc_buf_file(pb);
 }
 
@@ -461,33 +462,36 @@ static file *make_all_script_file(void)
 	     script++)
 		script_count++;
 
-	proc_buf_printf(pb,
-			"#!/bin/sh\n"
-			"__ktest_result(){ printf '%%s\n' \"$1\" > /proc/tests/.result; }\n"
-			"__ktest_fail_count=0\n");
+	proc_buf_printf(
+		pb,
+		"#!/bin/sh\n"
+		"__ktest_result(){ printf '%%s\n' \"$1\" > /proc/tests/.result; }\n"
+		"__ktest_fail_count=0\n");
 
 	for (script = __ktest_script_start; script < __ktest_script_end;
 	     script++) {
-		proc_buf_printf(pb,
-				"if /proc/tests/%s; then\n"
-				":\n"
-				"else\n"
-				"__ktest_rc=$?\n"
-				"__ktest_result \"[  FAILED  ] script.%s "
-				"(exit ${__ktest_rc})\"\n"
-				"__ktest_fail_count=$((__ktest_fail_count + 1))\n"
-				"fi\n",
-				script->name, script->name);
-	}
-	proc_buf_printf(pb,
-			"__ktest_result \"Total %u Cases, ${__ktest_fail_count} Failed\"\n"
-			"if [ \"$__ktest_fail_count\" -eq 0 ]; then\n"
-			"  __ktest_result \"[==========] all_script finished: PASS\"\n"
+		proc_buf_printf(
+			pb,
+			"if /proc/tests/%s; then\n"
+			":\n"
 			"else\n"
-			"  __ktest_result \"[==========] all_script finished: FAIL\"\n"
-			"fi\n"
-			"exit $__ktest_fail_count\n",
-			script_count);
+			"__ktest_rc=$?\n"
+			"__ktest_result \"[  FAILED  ] script.%s "
+			"(exit ${__ktest_rc})\"\n"
+			"__ktest_fail_count=$((__ktest_fail_count + 1))\n"
+			"fi\n",
+			script->name, script->name);
+	}
+	proc_buf_printf(
+		pb,
+		"__ktest_result \"Total %u Cases, ${__ktest_fail_count} Failed\"\n"
+		"if [ \"$__ktest_fail_count\" -eq 0 ]; then\n"
+		"  __ktest_result \"[==========] all_script finished: PASS\"\n"
+		"else\n"
+		"  __ktest_result \"[==========] all_script finished: FAIL\"\n"
+		"fi\n"
+		"exit $__ktest_fail_count\n",
+		script_count);
 	return make_proc_buf_file(pb);
 }
 
@@ -553,7 +557,8 @@ static file *tests_open_root(super_block *sb, int flag)
 
 		for (script = __ktest_script_start; script < __ktest_script_end;
 		     script++)
-			size += ROUND_UP(NAME_OFFSET() + strlen(script->name) + 1);
+			size += ROUND_UP(NAME_OFFSET() + strlen(script->name) +
+					 1);
 	}
 
 	/* ── Allocate and fill ── */
@@ -635,7 +640,7 @@ static file *tests_open(super_block *sb, const char *path, int flag)
 
 		if (script != NULL)
 			return make_wrapped_script_file(script->name,
-						      script->content);
+							script->content);
 	}
 
 	t = __ktest_start;

@@ -5,6 +5,127 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-07 — Bugs flushed out by the new `/proc/tests` script suite
+
+After moving guest tests into `test/*.sh` and wiring them into
+`/proc/tests/all_script`, the expanded script coverage started finding a
+different class of bugs: not just kernel panics, but quiet POSIX-visible
+semantic mismatches.  This section is a compact summary of the issues the new
+script suite exposed and the fixes that landed.
+
+### 1. Existing-directory `mkdir` succeeded instead of failing
+
+- **Caught by:** `test/ret_fs.sh`
+- **Symptom:** `mkdir existing-dir` succeeded silently instead of failing with
+  the usual `EEXIST` behaviour.
+- **Root cause:** `lwext4` directory creation checked whether the path already
+  existed, but returned success instead of `EEXIST`.
+- **Fix:** Return `EEXIST` from `ext4_dir_mk()` for the already-existing case.
+
+### 2. `mkdir` with a missing parent incorrectly succeeded
+
+- **Caught by:** `test/posix_mkdir.sh`
+- **Symptom:** creating `/a/missing/child` worked when the parent directory did
+  not exist.
+- **Root cause:** the root filesystem `mkdir` path delegated too early into the
+  ext4 layer without first validating the parent directory.
+- **Fix:** validate the parent in `src/fs/root.c` before issuing the create.
+
+### 3. `rmdir` allowed non-empty directories
+
+- **Caught by:** `test/posix_dirs.sh`
+- **Symptom:** removing a non-empty directory succeeded.
+- **Root cause:** the removal path did not enforce the standard
+  `ENOTEMPTY` check before unlinking the directory entry.
+- **Fix:** reject `rmdir()` on non-empty directories in the root filesystem.
+
+### 4. `O_APPEND` opens did not actually append
+
+- **Caught by:** `test/posix_io.sh`
+- **Symptom:** writes to an `O_APPEND` descriptor could overwrite existing
+  contents instead of always landing at EOF.
+- **Root cause:** open/write handling did not consistently move the file
+  position to the current end of file for append-mode descriptors.
+- **Fix:** honor `O_APPEND` in the file path so append writes are serialized at
+  EOF.
+
+### 5. Re-mounting an image as a loop device could crash the kernel
+
+- **Caught by:** `test/loopdev.sh` and `test/ret_mount.sh`
+- **Symptom:** mounting the same image again, or exercising duplicate-mount
+  paths, could crash partway through the guest test run.
+- **Root cause:** loop-device and mount-state handling did not reject duplicate
+  mounts cleanly and had unsafe assumptions in the remount path.
+- **Fix:** make duplicate mounts return `-EBUSY`, tighten loop-device handling,
+  and remove the crash path.
+
+### 6. Renaming a directory into its own descendant was not rejected
+
+- **Caught by:** `test/posix_rename.sh`
+- **Symptom:** invalid rename patterns that should fail could corrupt the tree
+  or behave unpredictably.
+- **Root cause:** the rename path did not detect the ancestor/descendant case.
+- **Fix:** reject attempts to move a directory into its own subtree.
+
+### 7. `/dev/pts` names were generated in hexadecimal
+
+- **Caught by:** `test/dev_pts.sh`
+- **Symptom:** PTY paths under `/dev/pts` used hex-like names instead of the
+  normal decimal numbering expected by userspace.
+- **Root cause:** `src/dev/ptmx.c` formatted PTY indices with `%x`.
+- **Fix:** emit PTY names with `%d` so `/dev/pts/0`, `/dev/pts/1`, ... match
+  normal Unix behaviour.
+
+### 8. Read-only mmap cache eviction leaked pages and later caused crashes
+
+- **Caught by:** heavy userspace tests such as
+  `test/dev_subsystem.sh`, `test/emacs_smoke.sh`, and `test/gcc_hello.sh`
+- **Symptom:** long script runs would eventually die in unrelated places after
+  enough exec/mmap churn.
+- **Root cause:** cached file-backed pages were dereferenced on eviction but not
+  physically freed when the last reference disappeared.
+- **Fix:** free the physical pages when the readonly file-cache refcount drops
+  to zero, and keep cache invalidation coherent on file changes.
+
+### 9. `proc_buf_printf()` silently truncated large generated `/proc/tests` files
+
+- **Caught by:** the generated script infrastructure itself
+- **Symptom:** larger synthetic files such as the combined test wrappers could
+  hang or produce incomplete content once formatting exceeded the old 512-byte
+  scratch space.
+- **Root cause:** `proc_buf_printf()` relied on a fixed-size temporary buffer
+  and had no way to ask `vsprintf()` for the true output length first.
+- **Fix:** teach `vsprintf(NULL, ...)` / `sprintf(NULL, ...)` to return the
+  exact size, then grow `proc_buf_t` accordingly before formatting.
+
+### 10. tmpfs had several quiet POSIX mismatches
+
+- **Caught by:** `test/posix_tmpfs.sh`
+- **Symptoms:**
+  - `ftruncate()` shrink/regrow could expose stale bytes
+  - sparse writes past EOF could leave uninitialized data in the gap
+  - `chmod`, `chown`, and `utime` on tmpfs objects were incomplete
+  - directory enumeration omitted `.` and `..`
+  - `unlink(dir)` / `rmdir(dir)` semantics were wrong
+- **Root cause:** the initial tmpfs implementation was a narrow `/dev/shm`
+  vehicle and had not been brought up to normal POSIX-visible directory and
+  metadata semantics.
+- **Fix:** add proper zero-fill on shrink/regrow and sparse extension, implement
+  metadata updates, report `.` / `..`, compute directory link counts more
+  accurately, reject directory unlink, and make `rmdir()` remove directories
+  through the correct path.
+
+### Key Lesson
+
+Guest shell-script coverage is excellent at finding the "boring" bugs that are
+easy to miss during kernel bring-up: wrong errno values, stale data exposure
+after truncate, malformed `/dev` naming, directory edge cases, and metadata
+operations that quietly return success without doing the right thing.  These
+are precisely the bugs that make a system feel non-POSIX even when the big
+features already work.
+
+---
+
 ## 2026-04-06 — OpenSSH 3.5p1 `sshd` crash / privilege-separation bring-up
 
 ### Symptoms

@@ -49,6 +49,7 @@ struct _tmpfs_node {
 	/* Files: lazily-allocated PAGE_SIZE blocks */
 	char **pages;
 	unsigned n_pages;
+	tmpfs_node *parent;
 	/* Dirs: sentinel head of child dirent list */
 	list_entry children;
 	unsigned ref;
@@ -79,6 +80,19 @@ static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 	n->atime = n->mtime = n->ctime = now;
 	list_init(&n->children);
 	return n;
+}
+
+static void tmpfs_touch_mctime(tmpfs_node *n)
+{
+	unsigned now = time_now_sec();
+
+	n->mtime = now;
+	n->ctime = now;
+}
+
+static void tmpfs_touch_ctime(tmpfs_node *n)
+{
+	n->ctime = time_now_sec();
 }
 
 static void tmpfs_node_get(tmpfs_node *n)
@@ -122,8 +136,10 @@ static void tmpfs_dir_add(tmpfs_node *dir, const char *name, tmpfs_node *node)
 
 	de->name = strdup(name);
 	de->node = node;
+	node->parent = dir;
 	tmpfs_node_get(node);
 	list_insert_tail(&dir->children, &de->list);
+	tmpfs_touch_mctime(dir);
 }
 
 static int tmpfs_dir_remove(tmpfs_node *dir, const char *name)
@@ -138,6 +154,7 @@ static int tmpfs_dir_remove(tmpfs_node *dir, const char *name)
 			tmpfs_node_put(de->node);
 			free(de->name);
 			free(de);
+			tmpfs_touch_mctime(dir);
 			return 0;
 		}
 	}
@@ -259,6 +276,28 @@ static int tmpfs_file_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
+static int tmpfs_inode_setattr(inode *node, uint32_t mode)
+{
+	tmpfs_node *tn = node->i_private;
+
+	tn->mode = (tn->mode & S_IFMT) | (mode & 07777);
+	tmpfs_touch_ctime(tn);
+	node->i_mode = tn->mode;
+	return 0;
+}
+
+static int tmpfs_inode_chown(inode *node, uint32_t uid, uint32_t gid)
+{
+	tmpfs_node *tn = node->i_private;
+
+	if (uid != (uint32_t)-1)
+		tn->uid = uid;
+	if (gid != (uint32_t)-1)
+		tn->gid = gid;
+	tmpfs_touch_ctime(tn);
+	return 0;
+}
+
 static int tmpfs_ensure_page(tmpfs_node *tn, unsigned offset)
 {
 	unsigned page_idx = offset / PAGE_SIZE;
@@ -320,15 +359,27 @@ static int tmpfs_file_write_page(inode *node, unsigned offset, const void *buf)
 	memcpy(tn->pages[page_idx], buf, PAGE_SIZE);
 	if (page_idx * PAGE_SIZE + PAGE_SIZE > tn->size)
 		tn->size = page_idx * PAGE_SIZE + PAGE_SIZE;
-	tn->mtime = time_now_sec();
+	tmpfs_touch_mctime(tn);
+	node->i_size = tn->size;
 	return 0;
 }
 
 static int tmpfs_file_ftruncate(inode *node, loff_t size)
 {
 	tmpfs_node *tn = node->i_private;
+	unsigned old_size = tn->size;
 	unsigned new_size = (unsigned)size;
 	unsigned new_npages = (new_size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	if (size < 0)
+		return -EINVAL;
+
+	if (new_size < old_size && new_npages > 0 &&
+	    (new_size % PAGE_SIZE) != 0 && new_npages <= tn->n_pages &&
+	    tn->pages[new_npages - 1]) {
+		memset(tn->pages[new_npages - 1] + (new_size % PAGE_SIZE), 0,
+		       PAGE_SIZE - (new_size % PAGE_SIZE));
+	}
 
 	if (new_npages < tn->n_pages) {
 		unsigned i;
@@ -353,13 +404,25 @@ static int tmpfs_file_ftruncate(inode *node, loff_t size)
 		tn->n_pages = new_npages;
 	}
 
+	if (new_size > old_size && old_size > 0 &&
+	    (old_size / PAGE_SIZE) == ((new_size - 1) / PAGE_SIZE) &&
+	    (old_size % PAGE_SIZE) != 0 &&
+	    (old_size / PAGE_SIZE) < tn->n_pages &&
+	    tn->pages[old_size / PAGE_SIZE]) {
+		memset(tn->pages[old_size / PAGE_SIZE] + (old_size % PAGE_SIZE),
+		       0, new_size - old_size);
+	}
+
 	tn->size = new_size;
-	tn->mtime = time_now_sec();
+	tmpfs_touch_mctime(tn);
+	node->i_size = tn->size;
 	return 0;
 }
 
 static const inode_operations tmpfs_file_iops = {
 	.getattr = tmpfs_file_getattr,
+	.setattr = tmpfs_inode_setattr,
+	.chown = tmpfs_inode_chown,
 	.read_page = tmpfs_file_read_page,
 	.write_page = tmpfs_file_write_page,
 	.ftruncate = tmpfs_file_ftruncate,
@@ -418,6 +481,23 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 		if (tmpfs_ensure_page(tn, cur_off) < 0)
 			break;
 
+		if (cur_off > tn->size) {
+			unsigned old_size = tn->size;
+			unsigned old_page = old_size / PAGE_SIZE;
+			unsigned old_off = old_size % PAGE_SIZE;
+
+			if (old_off != 0 && old_page < tn->n_pages &&
+			    tn->pages[old_page]) {
+				unsigned zero_end = cur_off;
+
+				if (zero_end > (old_page + 1) * PAGE_SIZE)
+					zero_end = (old_page + 1) * PAGE_SIZE;
+				if (zero_end > old_size)
+					memset(tn->pages[old_page] + old_off, 0,
+					       zero_end - old_size);
+			}
+		}
+
 		memcpy(tn->pages[page_idx] + byte_off, src + transferred, copy);
 		transferred += (ssize_t)copy;
 	}
@@ -428,7 +508,8 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 	*pos += transferred;
 	if ((unsigned)*pos > tn->size)
 		tn->size = (unsigned)*pos;
-	tn->mtime = time_now_sec();
+	tmpfs_touch_mctime(tn);
+	fp->f_inode->i_size = tn->size;
 	return transferred;
 }
 
@@ -478,6 +559,15 @@ static const file_operations tmpfs_file_fops = {
 static int tmpfs_dir_getattr(inode *node, struct stat *s)
 {
 	tmpfs_node *tn = node->i_private;
+	unsigned nlink = 2;
+	list_entry *e;
+
+	for (e = tn->children.next; e != &tn->children; e = e->next) {
+		tmpfs_dirent *de = container_of(e, tmpfs_dirent, list);
+
+		if (S_ISDIR(de->node->mode))
+			nlink++;
+	}
 
 	memset(s, 0, sizeof(*s));
 	s->st_mode = tn->mode;
@@ -485,7 +575,7 @@ static int tmpfs_dir_getattr(inode *node, struct stat *s)
 	s->st_size = PAGE_SIZE;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 1;
-	s->st_nlink = 2;
+	s->st_nlink = nlink;
 	s->st_uid = tn->uid;
 	s->st_gid = tn->gid;
 	s->st_atime = tn->atime;
@@ -496,16 +586,57 @@ static int tmpfs_dir_getattr(inode *node, struct stat *s)
 
 static const inode_operations tmpfs_dir_iops = {
 	.getattr = tmpfs_dir_getattr,
+	.setattr = tmpfs_inode_setattr,
+	.chown = tmpfs_inode_chown,
 };
 
 static ssize_t tmpfs_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	tmpfs_node *dir = fp->f_inode->i_private;
 	struct linux_dirent *out = (struct linux_dirent *)buf;
+	const char *dot_name;
+	unsigned long dot_ino;
+	unsigned reclen;
 	list_entry *e;
 	unsigned off = 0;
 	unsigned idx = 0;
 	unsigned skip = (unsigned)*pos;
+
+	dot_name = ".";
+	dot_ino = (unsigned long)dir->ino;
+	reclen = ROUND_UP(NAME_OFFSET() + 2);
+	if (skip == 0 && off + reclen <= (unsigned)count) {
+		out->d_ino = dot_ino;
+		out->d_off = 1;
+		out->d_reclen = (unsigned short)reclen;
+		memcpy(out->d_name, dot_name, 2);
+		out = (struct linux_dirent *)((char *)out + reclen);
+		off += reclen;
+		idx = 1;
+	} else if (skip == 0) {
+		*pos = 0;
+		return 0;
+	} else {
+		idx = 1;
+	}
+
+	dot_name = "..";
+	dot_ino = (unsigned long)(dir->parent ? dir->parent->ino : dir->ino);
+	reclen = ROUND_UP(NAME_OFFSET() + 3);
+	if (skip <= 1 && off + reclen <= (unsigned)count) {
+		out->d_ino = dot_ino;
+		out->d_off = 2;
+		out->d_reclen = (unsigned short)reclen;
+		memcpy(out->d_name, dot_name, 3);
+		out = (struct linux_dirent *)((char *)out + reclen);
+		off += reclen;
+		idx = 2;
+	} else if (skip <= 1) {
+		*pos = 1;
+		return off;
+	} else {
+		idx = 2;
+	}
 
 	for (e = dir->children.next; e != &dir->children; e = e->next) {
 		tmpfs_dirent *de = container_of(e, tmpfs_dirent, list);
@@ -529,6 +660,7 @@ static ssize_t tmpfs_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 	}
 
 	*pos = idx;
+	dir->atime = time_now_sec();
 	return (ssize_t)off;
 }
 
@@ -606,7 +738,12 @@ static file *tmpfs_open(super_block *sb, const char *path, int flag)
 			if (!last)
 				return NULL;
 			parent = tmpfs_walk_parent(sbi->root, path, last);
-			if (!parent || !S_ISDIR(parent->mode)) {
+			if (!parent || !S_ISDIR(parent->mode) || !last[0] ||
+			    strcmp(last, ".") == 0 || strcmp(last, "..") == 0) {
+				free(last);
+				return NULL;
+			}
+			if (tmpfs_dir_lookup(parent, last)) {
 				free(last);
 				return NULL;
 			}
@@ -643,7 +780,8 @@ static int tmpfs_mkdir_op(super_block *sb, const char *path, unsigned mode)
 		return -ENOMEM;
 
 	parent = tmpfs_walk_parent(sbi->root, path, last);
-	if (!parent || !S_ISDIR(parent->mode)) {
+	if (!parent || !S_ISDIR(parent->mode) || !last[0] ||
+	    strcmp(last, ".") == 0 || strcmp(last, "..") == 0) {
 		free(last);
 		return -ENOENT;
 	}
@@ -674,6 +812,22 @@ static int tmpfs_unlink_op(super_block *sb, const char *path)
 		free(last);
 		return -ENOENT;
 	}
+	if (!last[0] || strcmp(last, ".") == 0 || strcmp(last, "..") == 0) {
+		free(last);
+		return -EISDIR;
+	}
+	{
+		tmpfs_node *victim = tmpfs_dir_lookup(parent, last);
+
+		if (!victim) {
+			free(last);
+			return -ENOENT;
+		}
+		if (S_ISDIR(victim->mode)) {
+			free(last);
+			return -EISDIR;
+		}
+	}
 	ret = tmpfs_dir_remove(parent, last);
 	free(last);
 	return ret;
@@ -682,16 +836,56 @@ static int tmpfs_unlink_op(super_block *sb, const char *path)
 static int tmpfs_rmdir_op(super_block *sb, const char *path)
 {
 	tmpfs_sb_info *sbi = sb->s_fs_info;
+	char *last = malloc(256);
+	tmpfs_node *tn = tmpfs_walk(sbi->root, path);
+	tmpfs_node *parent;
+	int ret;
+
+	if (!last)
+		return -ENOMEM;
+
+	if (!tn) {
+		free(last);
+		return -ENOENT;
+	}
+	if (tn == sbi->root || strcmp(path, ".") == 0 ||
+	    strcmp(path, "..") == 0) {
+		free(last);
+		return -EBUSY;
+	}
+	if (!S_ISDIR(tn->mode)) {
+		free(last);
+		return -ENOTDIR;
+	}
+	if (!list_is_empty(&tn->children)) {
+		free(last);
+		return -ENOTEMPTY;
+	}
+
+	parent = tmpfs_walk_parent(sbi->root, path, last);
+	if (!parent || !last[0] || strcmp(last, ".") == 0 ||
+	    strcmp(last, "..") == 0) {
+		free(last);
+		return -ENOENT;
+	}
+
+	ret = tmpfs_dir_remove(parent, last);
+	free(last);
+	return ret;
+}
+
+static int tmpfs_utime_op(super_block *sb, const char *path, unsigned atime,
+			  unsigned mtime)
+{
+	tmpfs_sb_info *sbi = sb->s_fs_info;
 	tmpfs_node *tn = tmpfs_walk(sbi->root, path);
 
 	if (!tn)
 		return -ENOENT;
-	if (!S_ISDIR(tn->mode))
-		return -ENOTDIR;
-	if (!list_is_empty(&tn->children))
-		return -ENOTEMPTY;
-
-	return tmpfs_unlink_op(sb, path);
+	tn->atime = atime;
+	tn->mtime = mtime;
+	tmpfs_touch_ctime(tn);
+	return 0;
 }
 
 static int tmpfs_statfs_op(super_block *sb, struct statfs *buf)
@@ -739,6 +933,7 @@ static super_operations tmpfs_sops = {
 	.rmdir = tmpfs_rmdir_op,
 	.unlink = tmpfs_unlink_op,
 	.statfs = tmpfs_statfs_op,
+	.utime = tmpfs_utime_op,
 	.release = tmpfs_release_super,
 };
 
@@ -753,6 +948,7 @@ static super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
 	sbi->next_ino = 1;
 	spinlock_init(&sbi->lock);
 	sbi->root = tmpfs_node_alloc(sbi, S_IFDIR | 0777);
+	sbi->root->parent = sbi->root;
 	sb->s_fs_info = sbi;
 	return sb;
 }

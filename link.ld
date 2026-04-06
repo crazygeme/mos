@@ -53,6 +53,13 @@ SECTIONS
 		__ktest_end = .;
 	}
 
+	.ktest_script BLOCK(4K) : AT(ADDR(.ktest_script)-0xC0000000)
+	{
+		__ktest_script_start = .;
+		*(.ktest_script)
+		__ktest_script_end = .;
+	}
+
 	/*
 	 * Kernel init-call table.  Each KERNEL_INIT(index, fn) declaration
 	 * drops a kinit_fn_t into ".kinit.<index>".  SORT_BY_NAME guarantees

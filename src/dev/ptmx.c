@@ -8,7 +8,6 @@
 #include <lib/klib.h>
 #include <hw/time.h>
 #include <macro.h>
-#include <errno.h>
 #include "pts_internal.h"
 
 #define MAX_PTS 16

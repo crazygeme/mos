@@ -1044,10 +1044,9 @@ char *tty_test_snapshot(unsigned *len_out)
 	for (r = 0; r < rows; r++) {
 		for (c = 0; c < cols; c++) {
 			tty_cell_t *cell = &cells[r * cols + c];
-			p += sprintf(p,
-				     "cell %u %u ch=%02x fg=%x bg=%x\n",
-				     r, c, (unsigned char)cell->ch,
-				     cell->fg, cell->bg);
+			p += sprintf(p, "cell %u %u ch=%02x fg=%x bg=%x\n", r,
+				     c, (unsigned char)cell->ch, cell->fg,
+				     cell->bg);
 		}
 	}
 

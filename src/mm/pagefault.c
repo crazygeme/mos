@@ -30,7 +30,7 @@ extern unsigned cache_count;
 /*
  * LRU mmap cache — for read-only MAP_PRIVATE file-backed pages only.
  *
- * Hash table for O(1) lookup keyed by (ino, offset).
+ * Hash table for O(1) lookup keyed by (ino, generation, offset).
  * Doubly-linked LRU list: tail = most recently used, head = least recently used.
  * On hit:  move entry to list tail (MRU position).
  * On miss + full: evict the head (LRU) entry, insert new entry at tail.
@@ -38,6 +38,7 @@ extern unsigned cache_count;
 
 typedef struct _mmap_cache_key {
 	unsigned ino;
+	unsigned generation;
 	unsigned offset;
 } mmap_cache_key;
 
@@ -50,8 +51,11 @@ typedef struct _mmap_cache_entry {
 static hash_table *mmap_cache = NULL;
 static list_entry mmap_lru; /* tail = MRU, head = LRU */
 static mutex_t mmap_cache_lock;
+static hash_table *mmap_versions = NULL;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
+
+#define MMAP_CACHE_MAX_ENTRIES 4096
 
 /*
  * shared_map — non-evicting cache for MAP_SHARED pages.
@@ -81,21 +85,49 @@ static int mmap_key_comp(const void *k1, const void *k2)
 	const mmap_cache_key *key2 = k2;
 	int ret = key1->ino - key2->ino;
 	if (ret == 0)
+		ret = (int)key1->generation - (int)key2->generation;
+	if (ret == 0)
 		ret = (int)key1->offset - (int)key2->offset;
 	return ret;
+}
+
+typedef struct _mmap_version_key {
+	unsigned ino;
+} mmap_version_key;
+
+typedef struct _mmap_version_entry {
+	mmap_version_key key; /* must be first */
+	unsigned generation;
+} mmap_version_entry;
+
+static int mmap_version_key_comp(const void *k1, const void *k2)
+{
+	const mmap_version_key *key1 = k1;
+	const mmap_version_key *key2 = k2;
+	return (int)key1->ino - (int)key2->ino;
 }
 
 static void mmap_entry_evict(const key_value_pair *pair)
 {
 	mmap_cache_entry *evict = pair->val;
-	phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
+	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
+	if (phymm_dereference_page(page_index) == 0)
+		phymm_free_user(page_index);
+	free(evict);
+}
+
+static void mmap_version_entry_evict(const key_value_pair *pair)
+{
+	mmap_version_entry *evict = pair->val;
 	free(evict);
 }
 
 static void shared_map_evict(const key_value_pair *pair)
 {
 	shared_map_entry *evict = pair->val;
-	phymm_dereference_page(PHY_TO_PAGE_IDX(evict->phy));
+	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
+	if (phymm_dereference_page(page_index) == 0)
+		phymm_free_user(page_index);
 	free(evict);
 }
 
@@ -105,11 +137,64 @@ void pf_init()
 	mmap_cache = hash_create(mmap_key_comp, mmap_entry_evict);
 	list_init(&mmap_lru);
 	mutex_init(&mmap_cache_lock);
+	mmap_versions =
+		hash_create(mmap_version_key_comp, mmap_version_entry_evict);
 	shared_map = hash_create(mmap_key_comp, shared_map_evict);
 	mutex_init(&shared_map_lock);
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
+}
+
+static unsigned mmap_cache_generation_locked(unsigned ino)
+{
+	mmap_version_key tmp = { .ino = ino };
+	key_value_pair *pair;
+
+	if (ino == 0)
+		return 0;
+
+	pair = hash_find(mmap_versions, &tmp);
+	if (!pair)
+		return 0;
+	return ((mmap_version_entry *)pair->val)->generation;
+}
+
+static void mmap_cache_bump_generation_locked(unsigned ino)
+{
+	mmap_version_key tmp = { .ino = ino };
+	key_value_pair *pair;
+	mmap_version_entry *entry;
+
+	if (ino == 0)
+		return;
+
+	pair = hash_find(mmap_versions, &tmp);
+	if (pair) {
+		entry = pair->val;
+		entry->generation++;
+		if (entry->generation == 0)
+			entry->generation = 1;
+		return;
+	}
+
+	entry = malloc(sizeof(*entry));
+	entry->key.ino = ino;
+	entry->generation = 1;
+	hash_insert(mmap_versions, &entry->key, entry);
+}
+
+static void mmap_cache_evict_one_locked(void)
+{
+	mmap_cache_entry *evict;
+
+	if (hash_size(mmap_cache) == 0 || list_is_empty(&mmap_lru))
+		return;
+
+	evict = container_of(list_remove_head(&mmap_lru), mmap_cache_entry,
+			     lru);
+	hash_remove(mmap_cache, &evict->key);
+	cache_count--;
 }
 
 /* Lookup (ino, offset) in the LRU cache.  On hit, promote to MRU position.
@@ -120,12 +205,6 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 	key_value_pair *pair;
 	mmap_cache_entry *entry;
 
-	/*
-	 * Disabled for correctness: guest-side rewrites and heavier userspace
-	 * workloads still expose stale/unsafe reuse in this cache path.
-	 */
-	return 0;
-
 	if (PAGE_CACHE_SIZE == 0)
 		return 0;
 
@@ -133,6 +212,7 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 		return 0;
 
 	mutex_lock(&mmap_cache_lock);
+	tmp.generation = mmap_cache_generation_locked(ino);
 	pair = hash_find(mmap_cache, &tmp);
 	if (!pair) {
 		mutex_unlock(&mmap_cache_lock);
@@ -153,12 +233,6 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	mmap_cache_entry *entry;
 	mmap_cache_key tmp = { .ino = ino, .offset = offset };
 
-	/*
-	 * Keep the readonly file-page cache off until invalidation/reuse is
-	 * fully correct across exec-heavy workloads.
-	 */
-	return;
-
 	if (ino == 0 || phy == 0)
 		return;
 
@@ -166,6 +240,7 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 		return;
 
 	mutex_lock(&mmap_cache_lock);
+	tmp.generation = mmap_cache_generation_locked(ino);
 
 	/* Skip if already cached (e.g. two faults racing on the same page). */
 	if (hash_find(mmap_cache, &tmp)) {
@@ -173,16 +248,14 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 		return;
 	}
 
-	/* Evict the single LRU entry when the cache is full. */
-	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE) {
-		mmap_cache_entry *evict = container_of(
-			list_remove_head(&mmap_lru), mmap_cache_entry, lru);
-		hash_remove(mmap_cache, &evict->key);
-		cache_count--;
-	}
+	/* Evict the LRU entry when the cache is full. */
+	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE ||
+	    hash_size(mmap_cache) >= MMAP_CACHE_MAX_ENTRIES)
+		mmap_cache_evict_one_locked();
 
 	entry = malloc(sizeof(*entry));
 	entry->key.ino = ino;
+	entry->key.generation = tmp.generation;
 	entry->key.offset = offset;
 	entry->phy = phy;
 	list_insert_tail(&mmap_lru, &entry->lru);
@@ -202,6 +275,7 @@ void pf_invalidate_file_cache(unsigned ino)
 		return;
 
 	mutex_lock(&mmap_cache_lock);
+	mmap_cache_bump_generation_locked(ino);
 	for (node = mmap_lru.next; node != &mmap_lru; node = next) {
 		mmap_cache_entry *entry;
 
@@ -221,7 +295,7 @@ void pf_invalidate_file_cache(unsigned ino)
  * Returns the physical address, or 0 on miss. */
 static unsigned shared_map_find(unsigned id, unsigned offset)
 {
-	mmap_cache_key tmp = { .ino = id, .offset = offset };
+	mmap_cache_key tmp = { .ino = id, .generation = 0, .offset = offset };
 	key_value_pair *pair;
 	shared_map_entry *entry;
 
@@ -241,7 +315,7 @@ static unsigned shared_map_find(unsigned id, unsigned offset)
 static void shared_map_add(unsigned id, unsigned offset, unsigned phy)
 {
 	shared_map_entry *entry;
-	mmap_cache_key tmp = { .ino = id, .offset = offset };
+	mmap_cache_key tmp = { .ino = id, .generation = 0, .offset = offset };
 
 	if (id == 0 || phy == 0)
 		return;
@@ -256,6 +330,7 @@ static void shared_map_add(unsigned id, unsigned offset, unsigned phy)
 
 	entry = malloc(sizeof(*entry));
 	entry->key.ino = id;
+	entry->key.generation = 0;
 	entry->key.offset = offset;
 	entry->phy = phy;
 	hash_insert(shared_map, &entry->key, entry);
@@ -294,6 +369,7 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 				       int prot, int flag)
 {
 	unsigned phy = 0;
+	unsigned page_idx;
 	size_t rcnt = 0;
 	int mmflag;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
@@ -331,7 +407,10 @@ static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * Cache miss — allocate a fresh page, map it writable so we can fill it,
 	 * then read the file content into it.
 	 */
-	phy = phymm_alloc_user() * PAGE_SIZE;
+	page_idx = phymm_alloc_user();
+	if (page_idx == PHYMM_INVALID)
+		goto DONE;
+	phy = page_idx * PAGE_SIZE;
 
 	mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
 	INVLPG(address);
@@ -411,6 +490,7 @@ static void pf_handle_invalid_memory(unsigned address, vm_region *region,
 	int flag = region->flag;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 	int mmflag;
+	unsigned page_idx;
 
 	page_fault_invalid++;
 
@@ -426,7 +506,10 @@ static void pf_handle_invalid_memory(unsigned address, vm_region *region,
 		}
 
 		/* Miss — allocate, zero, strip writable, and register in shared_map. */
-		phy = phymm_alloc_user() * PAGE_SIZE;
+		page_idx = phymm_alloc_user();
+		if (page_idx == PHYMM_INVALID)
+			goto DONE;
+		phy = page_idx * PAGE_SIZE;
 		mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
 		INVLPG(address);
 		memset(address, 0, PAGE_SIZE);
@@ -545,7 +628,7 @@ static void pf_prefetch_pages(unsigned fault_addr, file *f, vm_region *region)
 				       PAGE_SIZE - rcnt);
 		}
 
-		/* Strip writable bit, then insert into LRU cache. */
+		/* Strip writable bit before exposing the prefetched page. */
 		mmflag = mm_get_map_flag(addr);
 		mmflag &= ~PAGE_ENTRY_WRITABLE;
 		mm_set_map_flag(addr, mmflag);

@@ -503,30 +503,38 @@ int sys_kill(unsigned pid, int sig)
 int sys_brk(unsigned _top)
 {
 	task_struct *task = CURRENT_TASK();
-	unsigned size, pages, top, ret;
+	unsigned top, ret;
+	unsigned old_brk = task->user->brk;
+	unsigned old_page_end;
+	unsigned new_page_end;
 
 	top = _top;
 	if (top == 0) {
 		ret = task->user->brk;
 	} else if (top >= USER_HEAP_END) {
 		ret = task->user->brk;
-	} else if (top > task->user->brk) {
-		size = top - task->user->brk;
-		pages = (size - 1) / PAGE_SIZE + 1;
-		/* MAP_FIXED ensures the mapping lands at exactly brk, preventing
-		 * silent fallback to a different address if the range is still
-		 * partially occupied after a shrink. */
-		do_mmap(task->user->brk, PAGE_SIZE * pages,
-			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
-		top = task->user->brk + pages * PAGE_SIZE;
-		task->user->brk = top;
-		ret = top;
 	} else {
 		if (top < task->user->start_brk)
 			top = task->user->start_brk;
-		size = task->user->brk - top;
-		pages = (size - 1) / PAGE_SIZE + 1;
-		do_munmap(top & PAGE_SIZE_MASK, pages * PAGE_SIZE);
+
+		old_page_end =
+			(old_brk + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+		new_page_end = (top + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+
+		if (top > old_brk) {
+			if (new_page_end > old_page_end) {
+				do_mmap(old_page_end,
+					new_page_end - old_page_end,
+					PROT_READ | PROT_WRITE | PROT_EXEC,
+					MAP_FIXED, -1, 0);
+			}
+		} else if (top < old_brk) {
+			if (new_page_end < old_page_end) {
+				do_munmap(new_page_end,
+					  old_page_end - new_page_end);
+			}
+		}
+
 		task->user->brk = top;
 		ret = top;
 	}

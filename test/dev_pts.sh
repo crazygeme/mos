@@ -1,0 +1,217 @@
+#!/bin/sh
+
+set -e
+BASE=/root/dev_pts
+SRC="$BASE/dev_pts.c"
+BIN="$BASE/dev_pts"
+
+fail()
+{
+	echo "dev_pts: $1" >&2
+	exit 1
+}
+
+expect_success()
+{
+	set +e
+	output=$("$@" 2>&1)
+	rc=$?
+	set -e
+	[ "$rc" -eq 0 ] && return 0
+	fail "Expected: success from '$*'
+Actual: exit status $rc
+Output: ${output:-<none>}"
+}
+
+expect_success_sh()
+{
+	set +e
+	output=$(sh -c "$1" 2>&1)
+	rc=$?
+	set -e
+	[ "$rc" -eq 0 ] && return 0
+	fail "Expected: success from '$1'
+Actual: exit status $rc
+Output: ${output:-<none>}"
+}
+
+require_cmd()
+{
+	command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
+}
+
+cleanup()
+{
+	rm -rf "$BASE" >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT
+cleanup
+
+require_cmd gcc
+require_cmd grep
+
+expect_success_sh "grep -q '^devpts /dev/pts ' /proc/mounts"
+
+mkdir -p "$BASE" >/dev/null 2>&1 || fail "mkdir failed"
+printf '%s\n' '#include <sys/stat.h>' > "$SRC"
+printf '%s\n' '#include <fcntl.h>' >> "$SRC"
+printf '%s\n' '#include <unistd.h>' >> "$SRC"
+printf '%s\n' '#include <stdio.h>' >> "$SRC"
+printf '%s\n' '#include <errno.h>' >> "$SRC"
+printf '%s\n' '#include <string.h>' >> "$SRC"
+printf '%s\n' '#include <stdlib.h>' >> "$SRC"
+printf '%s\n' '#include <sys/ioctl.h>' >> "$SRC"
+printf '%s\n' '#include <termios.h>' >> "$SRC"
+printf '%s\n' '#ifndef TIOCGPTN' >> "$SRC"
+printf '%s\n' '#define TIOCGPTN 0x80045430' >> "$SRC"
+printf '%s\n' '#endif' >> "$SRC"
+printf '%s\n' '#ifndef TIOCSPTLCK' >> "$SRC"
+printf '%s\n' '#define TIOCSPTLCK 0x40045431' >> "$SRC"
+printf '%s\n' '#endif' >> "$SRC"
+printf '%s\n' '#ifndef TIOCGPTLCK' >> "$SRC"
+printf '%s\n' '#define TIOCGPTLCK 0x80045439' >> "$SRC"
+printf '%s\n' '#endif' >> "$SRC"
+printf '%s\n' '' >> "$SRC"
+printf '%s\n' 'static int expect(int cond, const char *msg)' >> "$SRC"
+printf '%s\n' '{' >> "$SRC"
+printf '%s\n' '	if (!cond) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "%s\n", msg);' >> "$SRC"
+printf '%s\n' '		return 1;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	return 0;' >> "$SRC"
+printf '%s\n' '}' >> "$SRC"
+printf '%s\n' '' >> "$SRC"
+printf '%s\n' 'int main(void)' >> "$SRC"
+printf '%s\n' '{' >> "$SRC"
+printf '%s\n' '	struct termios tio;' >> "$SRC"
+printf '%s\n' '	struct winsize ws;' >> "$SRC"
+printf '%s\n' '	struct stat st;' >> "$SRC"
+printf '%s\n' '	char path[64];' >> "$SRC"
+printf '%s\n' '	char buf[32];' >> "$SRC"
+printf '%s\n' '	char c;' >> "$SRC"
+printf '%s\n' '	int master, slave, idx, lock, rc;' >> "$SRC"
+printf '%s\n' '' >> "$SRC"
+printf '%s\n' '	master = open("/dev/ptmx", O_RDWR);' >> "$SRC"
+printf '%s\n' '	if (master < 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "open /dev/ptmx: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		return 2;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (ioctl(master, TIOCGPTN, &idx) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TIOCGPTN: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 3;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	sprintf(path, "/dev/pts/%d", idx);' >> "$SRC"
+printf '%s\n' '	if (stat(path, &st) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "stat %s: %s\n", path, strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 4;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	rc = expect(S_ISCHR(st.st_mode), "pts slave is not char device");' >> "$SRC"
+printf '%s\n' '	if (rc) {' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 5;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (ioctl(master, TIOCGPTLCK, &lock) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TIOCGPTLCK: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 6;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	rc = expect(lock == 1, "new ptmx should start locked");' >> "$SRC"
+printf '%s\n' '	if (rc) {' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 7;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	lock = 0;' >> "$SRC"
+printf '%s\n' '	if (ioctl(master, TIOCSPTLCK, &lock) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TIOCSPTLCK: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 8;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (ioctl(master, TIOCGPTLCK, &lock) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TIOCGPTLCK verify: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 9;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	rc = expect(lock == 0, "ptmx unlock did not stick");' >> "$SRC"
+printf '%s\n' '	if (rc) {' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 10;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	slave = open(path, O_RDWR);' >> "$SRC"
+printf '%s\n' '	if (slave < 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "open %s: %s\n", path, strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(master);' >> "$SRC"
+printf '%s\n' '		return 11;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (ioctl(slave, TCGETS, &tio) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TCGETS slave: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 12;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	tio.c_iflag = 0;' >> "$SRC"
+printf '%s\n' '	tio.c_oflag = 0;' >> "$SRC"
+printf '%s\n' '	tio.c_lflag = 0;' >> "$SRC"
+printf '%s\n' '	tio.c_cc[VMIN] = 1;' >> "$SRC"
+printf '%s\n' '	tio.c_cc[VTIME] = 0;' >> "$SRC"
+printf '%s\n' '	if (ioctl(slave, TCSETS, &tio) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TCSETS slave: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 13;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (ioctl(slave, TIOCGWINSZ, &ws) != 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "TIOCGWINSZ slave: %s\n", strerror(errno));' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 14;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	rc = expect(ws.ws_row == 24 && ws.ws_col == 80, "unexpected ptmx winsize");' >> "$SRC"
+printf '%s\n' '	if (rc) {' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 15;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (write(master, "ping", 4) != 4) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "write master failed\n");' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 16;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	memset(buf, 0, sizeof(buf));' >> "$SRC"
+printf '%s\n' '	if (read(slave, buf, 4) != 4) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "read slave failed\n");' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 17;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	rc = expect(memcmp(buf, "ping", 4) == 0, "master to slave payload mismatch");' >> "$SRC"
+printf '%s\n' '	if (rc) {' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 18;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	if (write(slave, "pong", 4) != 4) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "write slave failed\n");' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 19;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	memset(buf, 0, sizeof(buf));' >> "$SRC"
+printf '%s\n' '	if (read(master, buf, 4) != 4) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "read master failed\n");' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 20;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	rc = expect(memcmp(buf, "pong", 4) == 0, "slave to master payload mismatch");' >> "$SRC"
+printf '%s\n' '	if (rc) {' >> "$SRC"
+printf '%s\n' '		close(slave); close(master);' >> "$SRC"
+printf '%s\n' '		return 21;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	close(slave);' >> "$SRC"
+printf '%s\n' '	close(master);' >> "$SRC"
+printf '%s\n' '	if (stat(path, &st) == 0) {' >> "$SRC"
+printf '%s\n' '		fprintf(stderr, "%s still exists after closing ptmx pair\n", path);' >> "$SRC"
+printf '%s\n' '		return 22;' >> "$SRC"
+printf '%s\n' '	}' >> "$SRC"
+printf '%s\n' '	c = 0;' >> "$SRC"
+printf '%s\n' '	return c;' >> "$SRC"
+printf '%s\n' '}' >> "$SRC"
+
+expect_success gcc -o "$BIN" "$SRC"
+[ -x "$BIN" ] || fail "compiled helper missing"
+expect_success "$BIN"

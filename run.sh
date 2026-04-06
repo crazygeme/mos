@@ -60,6 +60,11 @@ if [ "$_window" == "curses" ]; then
 	_logtofile="file:out/krn.log"
 fi
 
+if [ "$_test" == "test" ]; then
+	_netdev="user,id=net0"
+	_priviledge=""
+fi
+
 # ── TAP/NAT state (shared between setup and teardown) ─────────────────────────
 _tap_was_setup=0
 _tap_dnsmasq_pid=""
@@ -128,7 +133,9 @@ cleanup_nat() {
 	echo "tap: $_TAP_IF removed"
 }
 
-setup_nat
+if [ "$_test" != "test" ]; then
+	setup_nat
+fi
 
 make -s -j8 $_test || { echo "Error: build failed" >&2; exit 1; }
 
@@ -142,14 +149,19 @@ $_priviledge qemu-system-i386 -cpu coreduo \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
 	-kernel $kernel_file \
-	-append "$_verbose $_bash" \
+	-append "$_verbose $_bash $_test" \
 	-serial $_logtofile \
 	$_vga \
 	$_power \
 	$_kvm \
 	$_debug \
+	-no-reboot \
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56
 
-
+rc=$?
+if [ "$_test" == "test" ] && [ $((rc & 1)) -eq 1 ]; then
+	exit $(((rc - 1) / 2))
+fi
+exit "$rc"

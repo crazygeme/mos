@@ -233,6 +233,8 @@ int fs_open(const char *path, int flag, umode_t mode)
 	}
 
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
+	if ((flag & O_APPEND) && fp->f_inode)
+		fp->f_pos = fp->f_inode->i_size;
 
 	int fd = fs_install_fd(fp, flag);
 	if (fd < 0)

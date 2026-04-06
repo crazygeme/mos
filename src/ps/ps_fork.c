@@ -15,6 +15,7 @@
 #include <mm/mm.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
+#include <errno.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <config.h>
@@ -302,8 +303,13 @@ static task_struct *fork_alloc_child(task_struct *cur)
 	task_struct *task = vm_alloc(KERNEL_TASK_SIZE);
 	intr_frame *cur_intr_frame =
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
-	intr_frame *task_intr_frame =
-		(intr_frame *)((char *)task + PAGE_SIZE - sizeof(intr_frame));
+	intr_frame *task_intr_frame;
+
+	if (!task)
+		return NULL;
+
+	task_intr_frame = (intr_frame *)((char *)task + PAGE_SIZE -
+					 sizeof(intr_frame));
 
 	*task = *cur;
 	*task_intr_frame = *cur_intr_frame;
@@ -415,7 +421,12 @@ static int do_fork(void)
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
 	task_struct *task = fork_alloc_child(cur);
 
+	if (!task)
+		return -ENOMEM;
+
 	task->user = zalloc(sizeof(user_enviroment));
+	if (!task->user)
+		return -ENOMEM;
 	task->user->vm = vm_create();
 	task->user->page_dir = vm_alloc(1);
 	fork_dup_user_env(cur, task);
@@ -444,7 +455,12 @@ static int do_vfork(void)
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
 	task_struct *task = fork_alloc_child(cur);
 
+	if (!task)
+		return -ENOMEM;
+
 	task->user = zalloc(sizeof(user_enviroment));
+	if (!task->user)
+		return -ENOMEM;
 	/* Borrow parent's address space — child does not own these. */
 	task->user->page_dir = cur->user->page_dir;
 	task->user->vm = cur->user->vm;

@@ -32,6 +32,7 @@
 #include <macro.h>
 #include <errno.h>
 #include <ext4.h>
+#include "common.h"
 
 /* ── Non-fatal failure accumulator ──────────────────────────────────────── */
 
@@ -389,165 +390,105 @@ static file *make_static_file(const char *content)
 	return fp;
 }
 
+static file *make_proc_buf_file(proc_buf_t *pb)
+{
+	file *fp = make_static_file(pb->buf);
+	proc_buf_free(pb);
+	return fp;
+}
+
 static file *make_wrapped_script_file(const char *script_name, const char *body)
 {
-	static const char prefix[] =
-		"#!/bin/sh\n"
-		"__ktest_name='";
-	static const char middle[] =
-		"'\n"
-		"__ktest_result(){ printf '%s\n' \"$1\" > /proc/tests/.result; }\n"
-		"read __ktest_up _ < /proc/uptime\n"
-		"__ktest_start_s=${__ktest_up%%.*}\n"
-		"__ktest_start_cs=${__ktest_up#*.}\n"
-		"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
-		"__ktest_result \"[ RUN      ] script.${__ktest_name}\"\n"
-		"(\n";
-	static const char suffix[] =
-		"\n"
-		") > \"$__ktest_log\" 2>&1\n"
-		"__ktest_rc=$?\n"
-		"read __ktest_up _ < /proc/uptime\n"
-		"__ktest_end_s=${__ktest_up%%.*}\n"
-		"__ktest_end_cs=${__ktest_up#*.}\n"
-		"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
-		"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
-		"if [ \"$__ktest_rc\" -eq 0 ]; then\n"
-		"  __ktest_result \"[       OK ] script.${__ktest_name} "
-		"(${__ktest_elapsed_ms} ms)\"\n"
-		"else\n"
-		"  __ktest_result \"script.${__ktest_name}: Failure\"\n"
-		"  if [ -s \"$__ktest_log\" ]; then\n"
-		"    while IFS= read -r __ktest_line; do\n"
-		"      __ktest_result \"  $__ktest_line\"\n"
-		"    done < \"$__ktest_log\"\n"
-		"  else\n"
-		"    __ktest_result \"  script exited with status $__ktest_rc\"\n"
-		"  fi\n"
-		"  __ktest_result \"[  FAILED  ] script.${__ktest_name} "
-		"(${__ktest_elapsed_ms} ms)\"\n"
-		"fi\n"
-		"rm -f \"$__ktest_log\"\n"
-		"exit $__ktest_rc\n";
-	unsigned name_len = strlen(script_name);
-	unsigned body_len = strlen(body);
-	unsigned total = sizeof(prefix) - 1 + name_len + sizeof(middle) - 1 +
-			 body_len + sizeof(suffix) - 1;
-	char *content = kmalloc(total + 1);
+	proc_buf_t *pb = proc_buf_new();
 
-	strcpy(content, prefix);
-	strcat(content, script_name);
-	strcat(content, middle);
-	strcat(content, body);
-	strcat(content, suffix);
-
-	file *fp = make_static_file(content);
-	kfree(content);
-	return fp;
+	proc_buf_printf(pb,
+			"#!/bin/sh\n"
+			"__ktest_name='%s'\n"
+			"__ktest_result(){ printf '%%s\n' \"$1\" > /proc/tests/.result; }\n"
+			"read __ktest_up _ < /proc/uptime\n"
+			"__ktest_start_s=${__ktest_up%%.*}\n"
+			"__ktest_start_cs=${__ktest_up#*.}\n"
+			"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
+			"__ktest_result \"[ RUN      ] script.${__ktest_name}\"\n"
+			"(\n",
+			script_name);
+	proc_buf_printf(pb, "%s", body);
+	proc_buf_printf(pb,
+			"\n"
+			") > \"$__ktest_log\" 2>&1\n"
+			"__ktest_rc=$?\n"
+			"read __ktest_up _ < /proc/uptime\n"
+			"__ktest_end_s=${__ktest_up%%.*}\n"
+			"__ktest_end_cs=${__ktest_up#*.}\n"
+			"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
+			"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
+			"if [ \"$__ktest_rc\" -eq 0 ]; then\n"
+			"  __ktest_result \"[       OK ] script.${__ktest_name} "
+			"(${__ktest_elapsed_ms} ms)\"\n"
+			"else\n"
+			"  __ktest_result \"script.${__ktest_name}: Failure\"\n"
+			"  if [ -s \"$__ktest_log\" ]; then\n"
+			"    while IFS= read -r __ktest_line; do\n"
+			"      __ktest_result \"  $__ktest_line\"\n"
+			"    done < \"$__ktest_log\"\n"
+			"  else\n"
+			"    __ktest_result \"  script exited with status $__ktest_rc\"\n"
+			"  fi\n"
+			"  __ktest_result \"[  FAILED  ] script.${__ktest_name} "
+			"(${__ktest_elapsed_ms} ms)\"\n"
+			"fi\n"
+			"rm -f \"$__ktest_log\"\n"
+			"exit $__ktest_rc\n");
+	return make_proc_buf_file(pb);
 }
 
 static file *make_suite_file(const char *suite_name)
 {
-	/* "#!/bin/sh\necho <name> > /proc/tests/.runner\n" */
-	static const char shebang[] = "#!/bin/sh\n";
-	static const char prefix[] = "echo ";
-	static const char suffix[] = " > /proc/tests/.runner\n";
-	unsigned name_len = strlen(suite_name);
-	unsigned total = sizeof(shebang) - 1 + sizeof(prefix) - 1 + name_len +
-			 sizeof(suffix) - 1;
+	proc_buf_t *pb = proc_buf_new();
 
-	char *content = kmalloc(total + 1);
-	strcpy(content, shebang);
-	strcat(content, prefix);
-	strcat(content, suite_name);
-	strcat(content, suffix);
-
-	suite_script_t *ss = zalloc(sizeof(*ss));
-	ss->content = content;
-	ss->length = total;
-
-	inode *node = zalloc(sizeof(*node));
-	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
-		       S_IXGRP | S_IXOTH;
-	node->i_size = total;
-	node->i_op = &tests_iops;
-	node->i_private = ss;
-
-	file *fp = zalloc(sizeof(*fp));
-	fp->f_inode = node;
-	fp->f_count = 1;
-	fp->f_fop = &suite_fops;
-	return fp;
+	proc_buf_printf(pb, "#!/bin/sh\n");
+	proc_buf_printf(pb, "echo %s > /proc/tests/.runner\n", suite_name);
+	return make_proc_buf_file(pb);
 }
 
 static file *make_all_script_file(void)
 {
-	static const char shebang[] = "#!/bin/sh\n";
 	ktest_script_t *script;
-	unsigned total = sizeof(shebang) - 1;
-	char *content;
-	suite_script_t *ss;
-	inode *node;
-	file *fp;
+	unsigned script_count = 0;
+	proc_buf_t *pb = proc_buf_new();
+
+	for (script = __ktest_script_start; script < __ktest_script_end;
+	     script++)
+		script_count++;
+
+	proc_buf_printf(pb,
+			"#!/bin/sh\n"
+			"__ktest_result(){ printf '%%s\n' \"$1\" > /proc/tests/.result; }\n"
+			"__ktest_fail_count=0\n");
 
 	for (script = __ktest_script_start; script < __ktest_script_end;
 	     script++) {
-		total += sizeof("if /proc/tests/; then\nelse\n__ktest_fail=1\nfi\n") -
-			 1;
-		total += sizeof("/proc/tests/") - 1;
-		total += strlen(script->name);
+		proc_buf_printf(pb,
+				"if /proc/tests/%s; then\n"
+				":\n"
+				"else\n"
+				"__ktest_rc=$?\n"
+				"__ktest_result \"[  FAILED  ] script.%s "
+				"(exit ${__ktest_rc})\"\n"
+				"__ktest_fail_count=$((__ktest_fail_count + 1))\n"
+				"fi\n",
+				script->name, script->name);
 	}
-	total += sizeof("__ktest_result(){ printf '%s\n' \"$1\" > /proc/tests/.result; }\n"
-			"__ktest_fail=0\n"
-			"if [ \"$__ktest_fail\" -eq 0 ]; then\n"
+	proc_buf_printf(pb,
+			"__ktest_result \"Total %u Cases, ${__ktest_fail_count} Failed\"\n"
+			"if [ \"$__ktest_fail_count\" -eq 0 ]; then\n"
 			"  __ktest_result \"[==========] all_script finished: PASS\"\n"
 			"else\n"
 			"  __ktest_result \"[==========] all_script finished: FAIL\"\n"
 			"fi\n"
-			"exit $__ktest_fail\n") -
-		 1;
-
-	content = kmalloc(total + 1);
-	strcpy(content, shebang);
-	strcat(content,
-	       "__ktest_result(){ printf '%s\n' \"$1\" > /proc/tests/.result; }\n");
-	strcat(content, "__ktest_fail=0\n");
-
-	for (script = __ktest_script_start; script < __ktest_script_end;
-	     script++) {
-		strcat(content, "if /proc/tests/");
-		strcat(content, script->name);
-		strcat(content, "; then\n");
-		strcat(content, ":\n");
-		strcat(content, "else\n");
-		strcat(content, "__ktest_fail=1\n");
-		strcat(content, "fi\n");
-	}
-	strcat(content, "if [ \"$__ktest_fail\" -eq 0 ]; then\n");
-	strcat(content,
-	       "  __ktest_result \"[==========] all_script finished: PASS\"\n");
-	strcat(content, "else\n");
-	strcat(content,
-	       "  __ktest_result \"[==========] all_script finished: FAIL\"\n");
-	strcat(content, "fi\n");
-	strcat(content, "exit $__ktest_fail\n");
-
-	ss = zalloc(sizeof(*ss));
-	ss->content = content;
-	ss->length = total;
-
-	node = zalloc(sizeof(*node));
-	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
-		       S_IXGRP | S_IXOTH;
-	node->i_size = total;
-	node->i_op = &tests_iops;
-	node->i_private = ss;
-
-	fp = zalloc(sizeof(*fp));
-	fp->f_inode = node;
-	fp->f_count = 1;
-	fp->f_fop = &suite_fops;
-	return fp;
+			"exit $__ktest_fail_count\n",
+			script_count);
+	return make_proc_buf_file(pb);
 }
 
 /* ── /proc/tests/ — directory ────────────────────────────────────────────── */

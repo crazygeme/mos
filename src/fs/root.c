@@ -671,6 +671,67 @@ static void ext4_release(super_block *sb)
 	kfree(sb);
 }
 
+static int fs_sync_super_one(const super_block *sb)
+{
+	ext4_mount_info *mi;
+	int ret;
+
+	if (!sb || !sb->s_fs_info)
+		return 0;
+
+	if (strcmp(sb->s_fstype, "ext4") != 0 && strcmp(sb->s_fstype, "ext3") != 0
+	    && strcmp(sb->s_fstype, "vfat") != 0)
+		return 0;
+
+	mi = sb->s_fs_info;
+
+	/*
+	 * rw lwext4 mounts keep write-back mode enabled persistently.
+	 * Drop it once to force dirty buffers out, then restore the mount's
+	 * previous delayed-write policy.
+	 */
+	ret = ext4_cache_write_back(mi->mp, false);
+	if (ret != EOK)
+		return -EIO;
+
+	if (!(sb->s_flags & MS_RDONLY)) {
+		ret = ext4_cache_write_back(mi->mp, true);
+		if (ret != EOK)
+			return -EIO;
+	}
+
+	return 0;
+}
+
+int fs_sync_super(const super_block *sb)
+{
+	super_block *cur = (super_block *)sb;
+	key_value_pair *kv;
+	int ret;
+
+	if (!sb)
+		return 0;
+
+	ret = fs_sync_super_one(sb);
+	if (ret)
+		return ret;
+
+	mutex_lock(&cur->s_lock);
+	for (kv = hash_first(cur->s_mounts); kv;
+	     kv = hash_next(cur->s_mounts, kv)) {
+		super_block *child = kv->val;
+
+		mutex_unlock(&cur->s_lock);
+		ret = fs_sync_super(child);
+		if (ret)
+			return ret;
+		mutex_lock(&cur->s_lock);
+	}
+	mutex_unlock(&cur->s_lock);
+
+	return 0;
+}
+
 /* Build the full lwext4 path for an operation on super_block sb. */
 static void ext4_full_path(super_block *sb, const char *path, char *full)
 {

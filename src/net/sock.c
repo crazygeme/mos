@@ -492,55 +492,55 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 	}
 }
 
-static int sock_poll(file *fp, unsigned type)
+static void sock_poll_dereg(void *opaque, task_struct *task)
 {
-	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-
-	switch (type) {
-	case FS_POLL_READ:
-		if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW)
-			return rx_used(sk) >= sizeof(u16_t) ? 0 : -1;
-		if (rx_used(sk) > 0)
-			return 0;
-		if (sk->state == SS_DISCONNECTING)
-			return 0;
-		if (sk->accept_tail != sk->accept_head)
-			return 0;
-		return -1;
-
-	case FS_POLL_WRITE:
-		if (sk->domain == AF_UNIX)
-			return sk->unix_peer ? 0 : -1;
-		if (sk->type == SOCK_STREAM)
-			return sk->state == SS_CONNECTED ? 0 : -1;
-		return 0;
-
-	case FS_POLL_EXCEPT:
-		return sk->err ? 0 : -1;
-	}
-	return -1;
-}
-
-static void sock_poll_wait(file *fp, task_struct *task)
-{
-	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-	sk->poll_task = task;
-}
-
-static void sock_poll_wait_remove(file *fp, task_struct *task)
-{
-	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	mos_sock *sk = opaque;
 	if (sk->poll_task == task)
 		sk->poll_task = NULL;
+}
+
+static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
+{
+	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	unsigned ready = 0;
+
+	if (events & FS_POLL_READ) {
+		if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW)
+			ready |= rx_used(sk) >= sizeof(u16_t) ? FS_POLL_READ :
+								0;
+		if (rx_used(sk) > 0)
+			ready |= FS_POLL_READ;
+		if (sk->state == SS_DISCONNECTING)
+			ready |= FS_POLL_READ;
+		if (sk->accept_tail != sk->accept_head)
+			ready |= FS_POLL_READ;
+	}
+
+	if (events & FS_POLL_WRITE) {
+		if (sk->domain == AF_UNIX)
+			ready |= sk->unix_peer ? FS_POLL_WRITE : 0;
+		if (sk->type == SOCK_STREAM)
+			ready |= sk->state == SS_CONNECTED ? FS_POLL_WRITE : 0;
+		else
+			ready |= FS_POLL_WRITE;
+	}
+
+	if ((events & FS_POLL_EXCEPT) && sk->err)
+		ready |= FS_POLL_EXCEPT;
+
+	if (!ready && pt) {
+		sk->poll_task = pt->task;
+		if (poll_table_add(pt, sk, sock_poll_dereg) < 0)
+			sk->poll_task = NULL;
+	}
+	return ready;
 }
 
 static const file_operations sock_fops = {
 	.read = sock_read,
 	.write = sock_write,
 	.ioctl = sock_ioctl,
-	.is_ready = sock_poll,
-	.poll_wait = sock_poll_wait,
-	.poll_wait_remove = sock_poll_wait_remove,
+	.poll = sock_poll,
 	.release = sock_release,
 };
 

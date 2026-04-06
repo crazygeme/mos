@@ -88,9 +88,7 @@ static const file_operations pts_slave_fops = {
 	.release = pts_slave_release,
 	.read = pts_slave_read,
 	.write = pts_slave_write,
-	.is_ready = pts_slave_poll,
-	.poll_wait = pts_slave_poll_wait,
-	.poll_wait_remove = pts_slave_poll_wait_remove,
+	.poll = pts_slave_poll,
 	.ioctl = pts_slave_ioctl,
 };
 
@@ -119,9 +117,7 @@ static const file_operations pts_master_fops = {
 	.release = pts_master_release,
 	.read = pts_master_read,
 	.write = pts_master_write,
-	.is_ready = pts_master_poll,
-	.poll_wait = pts_master_poll_wait,
-	.poll_wait_remove = pts_master_poll_wait_remove,
+	.poll = pts_master_poll,
 	.ioctl = pts_master_ioctl,
 };
 

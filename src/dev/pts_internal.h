@@ -52,11 +52,7 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos);
 
 ssize_t pts_master_write(file *fp, const void *buf, size_t size, loff_t *pos);
 
-int pts_master_poll(file *fp, unsigned type);
-
-void pts_master_poll_wait(file *fp, task_struct *task);
-
-void pts_master_poll_wait_remove(file *fp, task_struct *task);
+unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt);
 
 int pts_slave_ioctl(file *fp, unsigned cmd, void *buf);
 
@@ -66,11 +62,7 @@ ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos);
 
 ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos);
 
-int pts_slave_poll(file *fp, unsigned type);
-
-void pts_slave_poll_wait(file *fp, task_struct *task);
-
-void pts_slave_poll_wait_remove(file *fp, task_struct *task);
+unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt);
 
 int pts_canon_readline(pts_pair *p);
 

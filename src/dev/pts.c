@@ -181,27 +181,17 @@ ssize_t pts_master_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-int pts_master_poll(file *fp, unsigned type)
+unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pts_pair *p = fp->f_inode->i_private;
-	if (type == FS_POLL_READ)
-		return (p->pkt_status || !cyb_isempty(p->s2m)) ? 0 : -1;
-	if (type == FS_POLL_WRITE)
-		return 0;
-	return -1;
-}
-
-void pts_master_poll_wait(file *fp, task_struct *task)
-{
-	pts_pair *p = fp->f_inode->i_private;
-	cyb_set_poll_read(p->s2m, task);
-}
-
-void pts_master_poll_wait_remove(file *fp, task_struct *task)
-{
-	pts_pair *p = fp->f_inode->i_private;
-	(void)task;
-	cyb_clear_poll_read(p->s2m);
+	unsigned ready = 0;
+	if ((events & FS_POLL_READ) && (p->pkt_status || !cyb_isempty(p->s2m)))
+		ready |= FS_POLL_READ;
+	if (events & FS_POLL_WRITE)
+		ready |= FS_POLL_WRITE;
+	if (!ready && pt && (events & FS_POLL_READ))
+		cyb_poll_read(p->s2m, pt);
+	return ready;
 }
 
 int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
@@ -363,25 +353,15 @@ ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-int pts_slave_poll(file *fp, unsigned type)
+unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pts_pair *p = fp->f_inode->i_private;
-	if (type == FS_POLL_READ)
-		return cyb_isempty(p->m2s) ? -1 : 0;
-	if (type == FS_POLL_WRITE)
-		return 0;
-	return -1;
-}
-
-void pts_slave_poll_wait(file *fp, task_struct *task)
-{
-	pts_pair *p = fp->f_inode->i_private;
-	cyb_set_poll_read(p->m2s, task);
-}
-
-void pts_slave_poll_wait_remove(file *fp, task_struct *task)
-{
-	pts_pair *p = fp->f_inode->i_private;
-	(void)task;
-	cyb_clear_poll_read(p->m2s);
+	unsigned ready = 0;
+	if ((events & FS_POLL_READ) && !cyb_isempty(p->m2s))
+		ready |= FS_POLL_READ;
+	if (events & FS_POLL_WRITE)
+		ready |= FS_POLL_WRITE;
+	if (!ready && pt && (events & FS_POLL_READ))
+		cyb_poll_read(p->m2s, pt);
+	return ready;
 }

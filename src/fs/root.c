@@ -97,11 +97,11 @@ static loff_t ext4_file_llseek(file *fp, loff_t offset, int whence)
 	return (loff_t)ext4_ftell(f);
 }
 
-static int ext4_file_poll(file *fp, unsigned type)
+static unsigned ext4_file_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
 static int ext4_file_flush(file *fp)
@@ -166,7 +166,7 @@ static const file_operations ext4_file_fops = {
 	.read = ext4_file_read,
 	.write = ext4_file_write,
 	.llseek = ext4_file_llseek,
-	.is_ready = ext4_file_poll,
+	.poll = ext4_file_poll,
 };
 
 static int ext4_dir_release(file *fp)
@@ -277,7 +277,7 @@ static const file_operations ext4_dir_fops = {
 	.release = ext4_dir_release,
 	.read = ext4_dir_read,
 	.llseek = ext4_dir_llseek,
-	.is_ready = ext4_file_poll,
+	.poll = ext4_file_poll,
 	.flush = ext4_file_flush,
 };
 
@@ -679,8 +679,9 @@ static int fs_sync_super_one(const super_block *sb)
 	if (!sb || !sb->s_fs_info)
 		return 0;
 
-	if (strcmp(sb->s_fstype, "ext4") != 0 && strcmp(sb->s_fstype, "ext3") != 0
-	    && strcmp(sb->s_fstype, "vfat") != 0)
+	if (strcmp(sb->s_fstype, "ext4") != 0 &&
+	    strcmp(sb->s_fstype, "ext3") != 0 &&
+	    strcmp(sb->s_fstype, "vfat") != 0)
 		return 0;
 
 	mi = sb->s_fs_info;

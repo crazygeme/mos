@@ -122,13 +122,11 @@ static ssize_t rtc_read(file *fp, void *buf, size_t size, loff_t *pos)
 	return 0;
 }
 
-static int rtc_poll(file *fp, unsigned type)
+static unsigned rtc_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_READ)
-		return -1; /* no RTC interrupt events */
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return (events & FS_POLL_WRITE) ? FS_POLL_WRITE : 0;
 }
 
 static int rtc_ioctl(file *fp, unsigned cmd, void *buf)
@@ -174,7 +172,7 @@ static const inode_operations rtc_iops = {
 
 static const file_operations rtc_fops = {
 	.read = rtc_read,
-	.is_ready = rtc_poll,
+	.poll = rtc_poll,
 	.ioctl = rtc_ioctl,
 	.release = rtc_release,
 };

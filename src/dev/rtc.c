@@ -184,7 +184,7 @@ static const file_operations rtc_fops = {
 #define RTC_MAJOR 10
 #define RTC_MINOR 135
 
-static file *rtc_cdev_open(unsigned rdev, int flag)
+static file *rtc_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;

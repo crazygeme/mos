@@ -345,6 +345,11 @@ int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
 	return ret;
 }
 
+int vfs_rmnod(super_block *sb, const char *path)
+{
+	return vfs_umount(sb, path);
+}
+
 int vfs_statfs(super_block *sb, const char *path, struct statfs *buf)
 {
 	super_block *target_sb;

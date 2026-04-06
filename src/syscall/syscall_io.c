@@ -159,7 +159,8 @@ int sys_ioctl(int fd, int request, char *buf)
 {
 	int ret = fs_ioctl(fd, request, buf);
 
-	if (TestControl.verbos)
+	if (TestControl.verbos && request != 0x4b46 && request != 0x4b47 &&
+	    request != 0x4b48 && request != 0x4b49)
 		klog("ioctl(%d, %x, ...) = %d\n", fd, request, ret);
 
 	return ret;

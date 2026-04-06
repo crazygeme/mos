@@ -1001,13 +1001,7 @@ static void fs_mount_root(void)
 	const char *devname = hdd_partitions[0].name;
 
 	printk("mnt: Mount rootfs (ro)\n");
-
-	fs_register_type(&ext4_fs_type);
-	fs_register_type(&ext3_fs_type);
-	fs_register_type(&vfat_fs_type);
-	rmutex_init(&root_lock_);
 	cur->root = ext4_get(devname);
-
 	/* bdev already registered by found_partition at discovery time */
 	ext4_mount(devname, "/", true); /* read-only until init remounts rw */
 	ext4_mount_setup_locks("/", &root_lock);
@@ -1020,4 +1014,18 @@ static void fs_mount_root(void)
 	cur->root->s_flags = MS_RDONLY;
 }
 
+static void ext_fs_type_init()
+{
+	printk("mnt: registered ext3 file type\n");
+	fs_register_type(&ext3_fs_type);
+
+	printk("mnt: registered ext4 file type\n");
+	fs_register_type(&ext4_fs_type);
+
+	printk("mnt: registered vfat file type\n");
+	fs_register_type(&vfat_fs_type);
+	rmutex_init(&root_lock_);
+}
+
+KERNEL_INIT(2, ext_fs_type_init);
 KERNEL_INIT(3, fs_mount_root);

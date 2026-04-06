@@ -37,24 +37,24 @@ all: $(DST)/obj/third_party/lwext4/libext4.a $(DST)/obj/third_party/lwip/liblwip
 
 $(DST)/obj/third_party/lwext4/libext4.a: $(EXT4_OBJS)
 	@mkdir -p $(dir $@)
-	@echo "AR $@"
+	@echo "AR  $@"
 	@$(AR) rcs $@ $(EXT4_OBJS)
 
 $(DST)/obj/third_party/lwip/liblwip.a: $(LWIP_OBJS)
 	@mkdir -p $(dir $@)
-	@echo "AR $@"
+	@echo "AR  $@"
 	@$(AR) rcs $@ $(LWIP_OBJS)
 
 # ── Compile rules ─────────────────────────────────────────────────────────
 
 $(DST)/obj/third_party/lwext4/%.c.o: $(EXT4_DIR)/%.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
-	@echo "CC $<"
+	@echo "CC  $<"
 	@$(CC) $(LWEXT4_CFLAGS) -MMD -MP -o $@ -c $<
 
 $(DST)/obj/third_party/lwip/%.c.o: $(LWIPDIR)/%.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
-	@echo "CC lwip/$*.c"
+	@echo "CC  lwip/$*.c"
 	@$(CC) $(LWIP_CFLAGS) -MMD -MP -o $@ -c $<
 
 clean:

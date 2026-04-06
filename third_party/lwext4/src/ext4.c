@@ -3137,9 +3137,10 @@ int ext4_dir_mk(const char *path)
 	r = ext4_generic_open(&f, path, "r", false, 0, 0);
 	if (r == EOK) {
 		/*Directory already created*/
+		ext4_fclose(&f);
 		ext4_trans_stop(mp);
 		EXT4_MP_UNLOCK(mp);
-		return r;
+		return EEXIST;
 	}
 
 	/*Create new dir*/

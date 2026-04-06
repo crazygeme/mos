@@ -254,13 +254,13 @@ static void ptmx_dir_gen(super_block *sb, memory_dir *rd)
 	size += ROUND_UP(NAME_OFFSET() + 3); /* ".."   strlen=2 +1 */
 
 	spinlock_lock(&pts_alloc_lock, &irq);
-		for (i = 0; i < MAX_PTS; i++) {
-			if (pts_pairs[i].used) {
-				size += ROUND_UP(
-					NAME_OFFSET() +
-					sprintf(tty_buf, "%d", pts_pairs[i].idx) + 1);
-			}
+	for (i = 0; i < MAX_PTS; i++) {
+		if (pts_pairs[i].used) {
+			size += ROUND_UP(
+				NAME_OFFSET() +
+				sprintf(tty_buf, "%d", pts_pairs[i].idx) + 1);
 		}
+	}
 	spinlock_unlock(&pts_alloc_lock, irq);
 
 	/* ---- Allocate and fill ---- */
@@ -274,12 +274,12 @@ static void ptmx_dir_gen(super_block *sb, memory_dir *rd)
 	FILL_ENTRY("..", 1);
 
 	spinlock_lock(&pts_alloc_lock, &irq);
-		for (i = 0; i < MAX_PTS; i++) {
-			if (pts_pairs[i].used) {
-				sprintf(tty_buf, "%d", pts_pairs[i].idx);
-				FILL_ENTRY(tty_buf, 1);
-			}
+	for (i = 0; i < MAX_PTS; i++) {
+		if (pts_pairs[i].used) {
+			sprintf(tty_buf, "%d", pts_pairs[i].idx);
+			FILL_ENTRY(tty_buf, 1);
 		}
+	}
 	spinlock_unlock(&pts_alloc_lock, irq);
 }
 

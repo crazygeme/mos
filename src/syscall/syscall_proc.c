@@ -517,8 +517,7 @@ int sys_brk(unsigned _top)
 		if (top < task->user->start_brk)
 			top = task->user->start_brk;
 
-		old_page_end =
-			(old_brk + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+		old_page_end = (old_brk + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 		new_page_end = (top + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 
 		if (top > old_brk) {

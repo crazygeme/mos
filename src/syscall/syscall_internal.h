@@ -92,6 +92,7 @@ int sys_readlink(const char *path, char *buf, unsigned bufsiz);
 int sys_sync();
 int sys_chdir(const char *path);
 int sys_fchdir(int fd);
+int sys_chroot(const char *path);
 int sys_statfs(const char *path, struct statfs *buf);
 int sys_fstatfs(int fd, struct statfs *buf);
 int sys_flock(int fd, int operation);

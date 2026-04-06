@@ -709,10 +709,13 @@ int fs_fchmod(int fd, uint32_t mode)
  */
 int resolve_path(const char *old, char *new)
 {
+	task_struct *cur = CURRENT_TASK();
+	const char *root_path = "/";
 	char *r;
 	char *plain_old = NULL;
 	const char *end;
 	int len;
+	size_t out_len;
 
 	/* Null check must precede any use of old */
 	if (!old || !*old)
@@ -757,6 +760,10 @@ int resolve_path(const char *old, char *new)
 	}
 
 	if (old[0] == '/') {
+		if (len >= MAX_PATH) {
+			new[0] = '\0';
+			goto fail;
+		}
 		strcpy(new, old);
 
 		if (len >= 3 && new[len - 1] == '.' && new[len - 2] == '.' &&
@@ -794,7 +801,11 @@ int resolve_path(const char *old, char *new)
 	len = strlen(new);
 	if (len > 0 && new[len - 1] != '/')
 		new[len++] = '/';
-	strcat(new + len, old);
+	if (len + strlen(old) >= MAX_PATH) {
+		new[0] = '\0';
+		goto fail;
+	}
+	strcpy(new + len, old);
 
 done:
 	/* Collapse consecutive '/' (e.g. "//lib/kbd" → "/lib/kbd") */
@@ -810,8 +821,38 @@ done:
 		*dst = '\0';
 	}
 
+	if (cur && cur->user && cur->user->root_path && cur->user->root_path[0])
+		root_path = cur->user->root_path;
+
+	if (strcmp(root_path, "/") != 0) {
+		size_t root_len = strlen(root_path);
+
+		if (!strcmp(new, "/")) {
+			if (root_len >= MAX_PATH) {
+				new[0] = '\0';
+				goto fail;
+			}
+			strcpy(new, root_path);
+		} else {
+			if (root_path[root_len - 1] == '/')
+				root_len--;
+			out_len = root_len + strlen(new);
+			if (out_len >= MAX_PATH) {
+				new[0] = '\0';
+				goto fail;
+			}
+			memmove(new + root_len, new, strlen(new) + 1);
+			memcpy(new, root_path, root_len);
+		}
+	}
+
 	if (plain_old)
 		free(plain_old);
 
 	return 0;
+
+fail:
+	if (plain_old)
+		free(plain_old);
+	return -1;
 }

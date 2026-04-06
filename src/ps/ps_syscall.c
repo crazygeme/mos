@@ -70,6 +70,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		name_put(task->user->cwd);
 		task->user->cwd = NULL;
 	}
+	if (task->user->root_path) {
+		name_put(task->user->root_path);
+		task->user->root_path = NULL;
+	}
 	if (task->user->page_dir) {
 		vm_free(task->user->page_dir, 1);
 		task->user->page_dir = 0;
@@ -303,7 +307,12 @@ int sys_waitpid(unsigned pid, int *status, int options)
 char *sys_getcwd(char *buf, unsigned size)
 {
 	task_struct *cur = CURRENT_TASK();
-	strcpy(buf, cur->user->cwd[0] ? cur->user->cwd : "/");
+	const char *cwd = "/";
+
+	if (cur && cur->user && cur->user->cwd && cur->user->cwd[0])
+		cwd = cur->user->cwd;
+
+	strcpy(buf, cwd);
 
 	if (TestControl.verbos)
 		klog("getcwd(%s, %d) = %s\n", buf, size, buf);

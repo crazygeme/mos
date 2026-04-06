@@ -506,12 +506,6 @@ int sys_brk(unsigned _top)
 	unsigned size, pages, top, ret;
 
 	top = _top;
-	if (task->user->brk == task->user->start_brk) {
-		do_mmap(task->user->brk, PAGE_SIZE,
-			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
-		task->user->brk += PAGE_SIZE;
-	}
-
 	if (top == 0) {
 		ret = task->user->brk;
 	} else if (top >= USER_HEAP_END) {
@@ -608,16 +602,23 @@ int sys_sigaction(int sig, void *act, void *oact)
 }
 
 /*
- * rt_sigaction user-space struct (syscall 174).
- * Field order differs from old sigaction: flags and restorer come before mask,
- * and the mask is 8 bytes (64 signals).  We only use the low 32 bits of the
- * mask since we support signals 1-31.
+ * glibc 2.3.2 on Linux/i386 uses a kernel_sigaction whose mask field is a
+ * full user-space sigset_t: 1024 bits = 32 unsigned longs.
+ *
+ * The rt_sigaction syscall's sigsetsize argument is still passed as 8 by
+ * glibc on this vintage ABI, but the in-memory structure layout on the user
+ * stack is:
+ *   handler, flags, restorer, sigset_t mask[32]
+ *
+ * We only support signals 1..31, so we translate the low word and zero the
+ * remaining words on writeback.
  */
+#define RT_SIGSET_WORDS 32
 struct rt_sigaction_user {
 	void (*sa_handler)(int);
 	unsigned long sa_flags;
 	void (*sa_restorer)(void);
-	unsigned long sa_mask[2];
+	unsigned long sa_mask[RT_SIGSET_WORDS];
 };
 
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
@@ -634,11 +635,13 @@ int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 
 	if (oact) {
 		struct rt_sigaction_user *u = (struct rt_sigaction_user *)oact;
+		int i;
 		u->sa_handler = sa->sa_handler;
 		u->sa_flags = sa->sa_flags;
 		u->sa_restorer = sa->sa_restorer;
+		for (i = 0; i < RT_SIGSET_WORDS; i++)
+			u->sa_mask[i] = 0;
 		u->sa_mask[0] = sa->sa_mask;
-		u->sa_mask[1] = 0;
 	}
 	if (act) {
 		struct rt_sigaction_user *u = (struct rt_sigaction_user *)act;

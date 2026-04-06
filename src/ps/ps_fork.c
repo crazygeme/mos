@@ -79,6 +79,8 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	memset(task->user->page_dir, 0, PAGE_SIZE);
 	task->user->cwd = name_get();
 	memset(task->user->cwd, 0, MAX_PATH);
+	task->user->root_path = name_get();
+	strcpy(task->user->root_path, "/");
 	task->user->start_brk = 0;
 	task->user->brk = 0;
 	task->user->vm = vm_create();
@@ -348,6 +350,8 @@ static void fork_dup_user_env(task_struct *cur, task_struct *task)
 	       cur->user->env_len);
 	task->user->cwd = name_get();
 	strcpy(task->user->cwd, cur->user->cwd);
+	task->user->root_path = name_get();
+	strcpy(task->user->root_path, cur->user->root_path);
 	task->user->group_id = cur->user->group_id;
 	task->user->session_id = cur->user->session_id;
 	task->user->uid = cur->user->uid;

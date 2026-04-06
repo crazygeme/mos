@@ -5,6 +5,290 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-06 — OpenSSH 3.5p1 `sshd` crash / privilege-separation bring-up
+
+### Symptoms
+
+- Connecting to the guest with `ssh root@10.0.5.18` initially crashed the
+  per-connection `sshd` child immediately after `fork()`.
+- The kernel log showed the child resetting signal handlers with
+  `rt_sigaction(...)` and then dying in libc.
+- After the crash was fixed, `sshd` still rejected connections because
+  privilege separation reached an unimplemented `chroot(2)`.
+
+### Root Causes
+
+#### 1. `select(2)` overflowed heap-allocated `fd_set` buffers
+
+MOS `do_select()` copied and cleared a full `sizeof(fd_set)` regardless of the
+caller's `nfds`.  OpenSSH 3.5p1 heap-allocates only the number of bytes needed
+for the requested descriptor range.  The kernel therefore wrote past the end of
+that heap buffer on every `pselect()`, corrupting malloc metadata and causing
+later crashes inside glibc.
+
+#### 2. `sys_brk(0)` was not query-only
+
+On the first call, `sys_brk()` force-mapped one page and advanced `brk` even
+when userspace only wanted to query the current break.  That is not Linux
+behaviour and confuses allocators that expect `brk(0)` to be side-effect free.
+
+#### 3. `rt_sigaction` used the wrong userspace layout
+
+glibc 2.3.2 on Linux/i386 uses a `kernel_sigaction` layout with a full
+1024-bit userspace `sigset_t` in memory.  MOS had modeled the structure as only
+two words of mask storage, so the kernel and glibc disagreed about the stack
+object layout.
+
+#### 4. Privilege separation required `chroot(2)` plus jail-aware path lookup
+
+After the memory corruption issues were fixed, OpenSSH reached its privsep
+preauth child and attempted to:
+
+```text
+chroot(/var/empty/sshd)
+chdir(/)
+setgid(...)
+setuid(...)
+```
+
+`__NR_chroot` was unimplemented, and path resolution only understood the
+process CWD, not a per-process jailed root.
+
+### Fixes
+
+**`src/fs/select.c`**
+
+- Reject `nfds > FD_SETSIZE`
+- Size all snapshots and zeroing by the actual bitset size:
+
+```c
+set_bytes = (((unsigned)(nfds ? nfds : 1) + NFDBITS - 1) / NFDBITS) *
+            sizeof(fd_mask);
+```
+
+- Replace `FD_ZERO()` on output buffers with `memset(..., set_bytes)` so the
+  kernel never clears beyond the caller's allocation
+
+**`src/syscall/syscall_proc.c`**
+
+- Make `sys_brk(0)` a pure query again
+- Model `rt_sigaction` using a 32-word userspace mask (`1024 / 32`)
+- Zero all returned mask words and copy only the low word that MOS currently
+  implements
+
+**`include/ps/ps.h`, `src/ps/ps_fork.c`, `src/ps/ps_syscall.c`, `src/dev/tty.c`**
+
+- Add per-process `root_path`
+- Initialize it to `"/"` for new tasks
+- Copy it across `fork()`
+- Free it on task reap
+
+**`src/fs/fs.c` and `src/syscall/syscall_fs.c`**
+
+- Teach `resolve_path()` to prepend `root_path`
+- Keep `cwd` jail-relative while VFS lookups use the rooted absolute path
+- Add `sys_chroot()`
+- Make `chdir()` and `fchdir()` update `cwd` within the jail
+- Add overflow checks so rooted path prepends cannot scribble past `MAX_PATH`
+
+### Result
+
+- `sshd` no longer crashes on incoming connections
+- OpenSSH privilege separation now completes its `chroot()` + UID/GID drop path
+- SSH negotiation proceeds normally until modern-client compatibility checks
+  reject old KEX / host-key / cipher algorithms
+
+At this point the remaining interoperability issues are protocol-age policy
+differences in the client, not kernel crashes in MOS.
+
+### Key Lesson
+
+When a legacy daemon crashes "later" inside libc, look for earlier kernel
+overwrites of user-owned variable-length buffers.  Here the visible crash was
+inside malloc, but the first real bug was a kernel `select()` implementation
+that assumed every userspace `fd_set` was a full `FD_SETSIZE` object.  Once the
+memory corruption was gone, the next blockers were ordinary ABI completeness
+items (`chroot`, path-root semantics, legacy `rt_sigaction` layout).
+
+
+---
+
+## 2026-04-06 — GNU `screen` failed with `"No more PTYs"` and later hung blank
+
+### Symptoms
+
+- `screen` initially failed immediately with:
+  ```text
+  No more PTYs.
+  ```
+- After the first PTY fixes, `screen` got further but stopped with:
+  ```text
+  TIOCPKT ioctl: Function not implemented
+  ```
+- After that, `screen` started and cleared the display, but the UI stayed
+  blank and keyboard input appeared dead.
+
+### Investigation
+
+#### Step 1 — `"No more PTYs"` did not mean PTY allocation failed
+
+The kernel log showed:
+
+- `open("/dev/ptmx")` succeeded
+- `ioctl(TIOCGPTN)` succeeded
+- `stat64("/dev/pts/0")` succeeded
+
+Old `screen` reports `"No more PTYs"` whenever its `OpenPTY()` helper fails:
+
+```c
+if ((m = ptsname(f)) == NULL || grantpt(f) || unlockpt(f)) {
+    close(f);
+    return -1;
+}
+```
+
+So the message was just a generic userspace error path, not evidence that the
+kernel had run out of PTY slots.
+
+#### Step 2 — `grantpt()` was falling back because `/dev/pts` did not look like `devpts`
+
+Guest `glibc-2.3.2` `grantpt()` does:
+
+1. `ptsname()`
+2. `statfs("/dev/pts/N")`
+3. If `f_type` is `DEVPTS_SUPER_MAGIC` (`0x1cd1`) or `DEVFS_SUPER_MAGIC`,
+   return success
+4. Otherwise fall back to old legacy PTY ownership code
+
+Our `/dev/pts` implementation had no `statfs` callback, so glibc could not
+recognize it as a real `devpts` mount. That kept `screen` on the wrong
+compatibility path.
+
+#### Step 3 — slave inode metadata also had to be persistent
+
+`/dev/pts/N` metadata was synthesized from the current task doing `stat()`
+instead of stored per PTY pair. That broke the Linux/Unix98 expectation that
+the slave node has stable owner/mode state after `grantpt()`.
+
+The PTY pair needed persistent:
+
+- slave mode
+- slave uid
+- slave gid
+- PTY lock state
+
+#### Step 4 — `screen` requires packet mode on the PTY master
+
+Once `grantpt()` and `unlockpt()` worked, `screen` failed on:
+
+```text
+ioctl(fd, TIOCPKT, ...) = -ENOSYS
+```
+
+`screen` enables `TIOCPKT` on the master and aborts if it is unsupported.
+So basic Unix98 PTY allocation was not enough; packet mode support was also
+required.
+
+#### Step 5 — the first `TIOCPKT` implementation was too eager
+
+After adding `TIOCPKT`, the trace showed:
+
+```text
+write(3, "\x1b[H\x1b[J...", 12)
+read(6, "\x03", 4096) = 1
+pselect(...)
+```
+
+That `0x03` was generated by our own PTY code as a synthetic
+`TIOCPKT_FLUSHREAD | TIOCPKT_FLUSHWRITE` control packet after `TCFLSH`.
+`screen` then sat in its event loop waiting for real PTY traffic.
+
+Removing those fabricated flush packets let startup progress further.
+
+#### Step 6 — the final hang was a PTY buffer lifetime bug
+
+The remaining blank-screen hang turned out not to be packet mode at all.
+The real bug was PTY buffer ownership.
+
+The original PTY pair lifecycle used `cyb_create()` and then tried to infer
+when to drop hidden reader/writer references later in `pts_pair_check_free()`.
+That was incorrect:
+
+- `pts_slave_release()` closed `p->s2m` and `p->m2s` only when
+  `slave_count` reached zero
+- `pts_master_release()` also closed its side
+- `pts_pair_check_free()` then closed additional implicit refs again
+
+This created two problems:
+
+1. **Double-close / premature free**
+   The shared `cy_buf` objects could be freed while pointers remained stored
+   in `p->s2m` / `p->m2s`.
+
+2. **Use-after-free in poll/read paths**
+   Later code such as:
+   ```c
+   cyb_isempty(p->s2m)
+   cyb_set_poll_read(p->s2m, task)
+   ```
+   could touch a freed `cy_buf`, which explained the observed hang inside the
+   lock path.
+
+### Root Causes
+
+1. **`/dev/pts` did not implement `statfs()` with `DEVPTS_SUPER_MAGIC`**, so
+   old glibc `grantpt()` took the wrong path.
+
+2. **Unix98 slave metadata was not stored per PTY pair**, so ownership/mode
+   checks did not behave like Linux `devpts`.
+
+3. **`TIOCPKT` support was missing**, but `screen` requires it.
+
+4. **The first packet-mode implementation injected fake flush packets**, which
+   confused `screen` during startup.
+
+5. **PTY buffer ownership was wrong**, causing freed `cy_buf` pointers to be
+   reused from `p->s2m` / `p->m2s`.
+
+### Fixes
+
+**`src/dev/ptmx.c`**
+
+- Added `statfs()` for `/dev/pts` returning `0x1cd1`
+- Fixed `/dev/pts` directory entries to use the real PTY index
+- Stored persistent slave metadata in each PTY pair
+- Made slave open take explicit `cy_buf` endpoint refs
+- Switched Unix98 PTY buffer allocation to `cyb_create_named()`
+
+**`src/dev/pty.c`**
+
+- Mirrored the same buffer lifetime fixes for BSD PTYs
+
+**`src/dev/pts.c`**
+
+- Added persistent slave `chmod` / `chown` support
+- Implemented `TIOCSPTLCK`, `TIOCGPTLCK`, `TCFLSH`, and `TIOCPKT`
+- Removed synthetic packet-mode flush notifications
+- Changed `pts_pair_check_free()` to destroy only the pair-owned named buffers,
+  instead of closing imaginary hidden slave refs
+
+**`include/fs/ioctl.h`**
+
+- Added missing `TIOCPKT` constants
+
+### Key Lesson
+
+PTY bugs are often two layers deep: the first visible error may be a libc
+compatibility check (`grantpt`, `statfs`, ownership metadata), but once that
+is fixed, interactive programs like `screen` also depend on Linux-specific
+TTY behavior such as `TIOCPKT`. Most importantly, shared PTY transport objects
+must have explicit ownership. If buffer lifetime is inferred indirectly from
+`master_open` / `slave_count`, it is very easy to free the transport while a
+poll or read path still holds the raw pointer.
+
+
+---
+
 ## 2026-04-05 — `man` doesn't work (stderr opened O_WRONLY)
 
 ### Symptom
@@ -232,178 +516,3 @@ glibc uses from `ugetrlimit` at startup — glibc sizes internal tables from
 `setrlimit` call does not resize the already-allocated table. The kernel's
 default must match the real Linux default (`{1024, 1024}` for RLIMIT_NOFILE)
 so all userspace assumptions are met from the start.
-
----
-
-## 2026-04-06 — GNU `screen` failed with `"No more PTYs"` and later hung blank
-
-### Symptoms
-
-- `screen` initially failed immediately with:
-  ```text
-  No more PTYs.
-  ```
-- After the first PTY fixes, `screen` got further but stopped with:
-  ```text
-  TIOCPKT ioctl: Function not implemented
-  ```
-- After that, `screen` started and cleared the display, but the UI stayed
-  blank and keyboard input appeared dead.
-
-### Investigation
-
-#### Step 1 — `"No more PTYs"` did not mean PTY allocation failed
-
-The kernel log showed:
-
-- `open("/dev/ptmx")` succeeded
-- `ioctl(TIOCGPTN)` succeeded
-- `stat64("/dev/pts/0")` succeeded
-
-Old `screen` reports `"No more PTYs"` whenever its `OpenPTY()` helper fails:
-
-```c
-if ((m = ptsname(f)) == NULL || grantpt(f) || unlockpt(f)) {
-    close(f);
-    return -1;
-}
-```
-
-So the message was just a generic userspace error path, not evidence that the
-kernel had run out of PTY slots.
-
-#### Step 2 — `grantpt()` was falling back because `/dev/pts` did not look like `devpts`
-
-Guest `glibc-2.3.2` `grantpt()` does:
-
-1. `ptsname()`
-2. `statfs("/dev/pts/N")`
-3. If `f_type` is `DEVPTS_SUPER_MAGIC` (`0x1cd1`) or `DEVFS_SUPER_MAGIC`,
-   return success
-4. Otherwise fall back to old legacy PTY ownership code
-
-Our `/dev/pts` implementation had no `statfs` callback, so glibc could not
-recognize it as a real `devpts` mount. That kept `screen` on the wrong
-compatibility path.
-
-#### Step 3 — slave inode metadata also had to be persistent
-
-`/dev/pts/N` metadata was synthesized from the current task doing `stat()`
-instead of stored per PTY pair. That broke the Linux/Unix98 expectation that
-the slave node has stable owner/mode state after `grantpt()`.
-
-The PTY pair needed persistent:
-
-- slave mode
-- slave uid
-- slave gid
-- PTY lock state
-
-#### Step 4 — `screen` requires packet mode on the PTY master
-
-Once `grantpt()` and `unlockpt()` worked, `screen` failed on:
-
-```text
-ioctl(fd, TIOCPKT, ...) = -ENOSYS
-```
-
-`screen` enables `TIOCPKT` on the master and aborts if it is unsupported.
-So basic Unix98 PTY allocation was not enough; packet mode support was also
-required.
-
-#### Step 5 — the first `TIOCPKT` implementation was too eager
-
-After adding `TIOCPKT`, the trace showed:
-
-```text
-write(3, "\x1b[H\x1b[J...", 12)
-read(6, "\x03", 4096) = 1
-pselect(...)
-```
-
-That `0x03` was generated by our own PTY code as a synthetic
-`TIOCPKT_FLUSHREAD | TIOCPKT_FLUSHWRITE` control packet after `TCFLSH`.
-`screen` then sat in its event loop waiting for real PTY traffic.
-
-Removing those fabricated flush packets let startup progress further.
-
-#### Step 6 — the final hang was a PTY buffer lifetime bug
-
-The remaining blank-screen hang turned out not to be packet mode at all.
-The real bug was PTY buffer ownership.
-
-The original PTY pair lifecycle used `cyb_create()` and then tried to infer
-when to drop hidden reader/writer references later in `pts_pair_check_free()`.
-That was incorrect:
-
-- `pts_slave_release()` closed `p->s2m` and `p->m2s` only when
-  `slave_count` reached zero
-- `pts_master_release()` also closed its side
-- `pts_pair_check_free()` then closed additional implicit refs again
-
-This created two problems:
-
-1. **Double-close / premature free**
-   The shared `cy_buf` objects could be freed while pointers remained stored
-   in `p->s2m` / `p->m2s`.
-
-2. **Use-after-free in poll/read paths**
-   Later code such as:
-   ```c
-   cyb_isempty(p->s2m)
-   cyb_set_poll_read(p->s2m, task)
-   ```
-   could touch a freed `cy_buf`, which explained the observed hang inside the
-   lock path.
-
-### Root Causes
-
-1. **`/dev/pts` did not implement `statfs()` with `DEVPTS_SUPER_MAGIC`**, so
-   old glibc `grantpt()` took the wrong path.
-
-2. **Unix98 slave metadata was not stored per PTY pair**, so ownership/mode
-   checks did not behave like Linux `devpts`.
-
-3. **`TIOCPKT` support was missing**, but `screen` requires it.
-
-4. **The first packet-mode implementation injected fake flush packets**, which
-   confused `screen` during startup.
-
-5. **PTY buffer ownership was wrong**, causing freed `cy_buf` pointers to be
-   reused from `p->s2m` / `p->m2s`.
-
-### Fixes
-
-**`src/dev/ptmx.c`**
-
-- Added `statfs()` for `/dev/pts` returning `0x1cd1`
-- Fixed `/dev/pts` directory entries to use the real PTY index
-- Stored persistent slave metadata in each PTY pair
-- Made slave open take explicit `cy_buf` endpoint refs
-- Switched Unix98 PTY buffer allocation to `cyb_create_named()`
-
-**`src/dev/pty.c`**
-
-- Mirrored the same buffer lifetime fixes for BSD PTYs
-
-**`src/dev/pts.c`**
-
-- Added persistent slave `chmod` / `chown` support
-- Implemented `TIOCSPTLCK`, `TIOCGPTLCK`, `TCFLSH`, and `TIOCPKT`
-- Removed synthetic packet-mode flush notifications
-- Changed `pts_pair_check_free()` to destroy only the pair-owned named buffers,
-  instead of closing imaginary hidden slave refs
-
-**`include/fs/ioctl.h`**
-
-- Added missing `TIOCPKT` constants
-
-### Key Lesson
-
-PTY bugs are often two layers deep: the first visible error may be a libc
-compatibility check (`grantpt`, `statfs`, ownership metadata), but once that
-is fixed, interactive programs like `screen` also depend on Linux-specific
-TTY behavior such as `TIOCPKT`. Most importantly, shared PTY transport objects
-must have explicit ownership. If buffer lifetime is inferred indirectly from
-`master_open` / `slave_count`, it is very easy to free the transport while a
-poll or read path still holds the raw pointer.

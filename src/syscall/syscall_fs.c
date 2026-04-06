@@ -380,7 +380,6 @@ int sys_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	resolve_path(pathname, name);
 
 	ret = fs_chown(name, uid, gid);
-
 	name_put(name);
 
 	if (TestControl.verbos)
@@ -397,7 +396,6 @@ int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid)
 	resolve_path(pathname, name);
 
 	ret = fs_chown(name, uid, gid);
-
 	name_put(name);
 
 	if (TestControl.verbos)
@@ -662,6 +660,9 @@ int sys_sync()
 {
 	if (TestControl.verbos)
 		klog("sync()\n");
+
+	if (TestControl.test)
+		return 0;
 
 	fs_sync_super(current->root);
 	hdd_flush();

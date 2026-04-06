@@ -56,7 +56,7 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 {
 	pts_pair *p = node->i_private;
 	memset(s, 0, sizeof(*s));
-	s->st_mode = node->i_mode;
+	s->st_mode = p->slave_mode;
 	s->st_dev = MKDEV(0, 6);
 	s->st_rdev = MKDEV(PTS_MAJOR, p->idx);
 	s->st_ino = (uint64_t)p->idx + 2;
@@ -64,8 +64,8 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 	s->st_atime = time_now_sec();
 	s->st_ctime = time_now_sec();
 	s->st_mtime = time_now_sec();
-	s->st_uid = current->user->uid;
-	s->st_gid = current->user->gid;
+	s->st_uid = p->slave_uid;
+	s->st_gid = p->slave_gid;
 	s->st_blksize = 1024;
 	s->st_size = 0;
 	s->st_blocks = 0;
@@ -80,9 +80,9 @@ static int pts_slave_release(file *fp)
 {
 	pts_pair *p = fp->f_inode->i_private;
 
+	cyb_writer_close(p->s2m);
+	cyb_reader_close(p->m2s);
 	if (__sync_add_and_fetch(&p->slave_count, -1) == 0) {
-		cyb_writer_close(p->s2m);
-		cyb_reader_close(p->m2s);
 		pts_pair_check_free(p, &pts_alloc_lock);
 	}
 
@@ -107,6 +107,8 @@ static const file_operations pts_slave_fops = {
 
 static const inode_operations pts_slave_iops = {
 	.getattr = pts_slave_getattr,
+	.setattr = pts_slave_setattr,
+	.chown = pts_slave_chown,
 };
 
 file *ptmx_slave_open(super_block *sb, const char *path, int flag)
@@ -134,7 +136,7 @@ file *ptmx_slave_open(super_block *sb, const char *path, int flag)
 	spinlock_unlock(&pts_alloc_lock, irq);
 
 	inode *node = zalloc(sizeof(*node));
-	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IWGRP;
+	node->i_mode = p->slave_mode;
 	node->i_op = &pts_slave_iops;
 	node->i_private = p;
 
@@ -142,6 +144,10 @@ file *ptmx_slave_open(super_block *sb, const char *path, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = (flag & O_PATH) ? &pts_slave_path_fops : &pts_slave_fops;
+	if (!(flag & O_PATH)) {
+		cyb_reader_open(p->m2s);
+		cyb_writer_open(p->s2m);
+	}
 	return fp;
 }
 
@@ -229,6 +235,15 @@ static const file_operations ptmx_dir_fops = {
 	.is_ready = ptmx_dir_poll,
 };
 
+static int ptmx_statfs(super_block *sb, struct statfs *buf)
+{
+	memset(buf, 0, sizeof(*buf));
+	buf->f_type = 0x1cd1; /* DEVPTS_SUPER_MAGIC */
+	buf->f_bsize = PAGE_SIZE;
+	buf->f_namelen = 255;
+	return 0;
+}
+
 static void ptmx_dir_gen(super_block *sb, memory_dir *rd)
 {
 	unsigned size = 0;
@@ -266,7 +281,7 @@ static void ptmx_dir_gen(super_block *sb, memory_dir *rd)
 	spinlock_lock(&pts_alloc_lock, &irq);
 	for (i = 0; i < MAX_PTS; i++) {
 		if (pts_pairs[i].used) {
-			sprintf(tty_buf, "%x", pts_pairs[i].idx + 2);
+			sprintf(tty_buf, "%x", pts_pairs[i].idx);
 			FILL_ENTRY(tty_buf, 1);
 		}
 	}
@@ -321,13 +336,21 @@ static file *ptmx_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	p->idx = i;
 	p->used = 1;
 	p->master_open = 1;
+	p->pt_locked = 1;
+	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IWGRP;
+	if (current->user) {
+		p->slave_uid = current->user->uid;
+		p->slave_gid = current->user->gid;
+	}
 	p->termios = tty_default_termios;
 	p->winsize.ws_row = 24;
 	p->winsize.ws_col = 80;
 	spinlock_init(&p->lock);
-	p->m2s = cyb_create(1);
-	p->s2m = cyb_create(1);
+	p->m2s = cyb_create_named(1);
+	p->s2m = cyb_create_named(1);
 	spinlock_unlock(&pts_alloc_lock, irq);
+	cyb_writer_open(p->m2s);
+	cyb_reader_open(p->s2m);
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
@@ -347,6 +370,7 @@ static const super_operations ptmxdir_sops = {
 	.open_root = ptmx_dir_open_root,
 	.open = ptmx_slave_open,
 	.release = ptmx_dir_release_super,
+	.statfs = ptmx_statfs,
 };
 
 static super_block *ptmx_get_sb(const char *dev, const char *target, int flags,

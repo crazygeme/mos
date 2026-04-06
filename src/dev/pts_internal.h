@@ -16,6 +16,12 @@ typedef struct {
 	int idx;
 	int used;
 	spinlock_t lock;
+	uint32_t slave_mode;
+	uint32_t slave_uid;
+	uint32_t slave_gid;
+	int pt_locked;
+	int pkt_mode;
+	unsigned char pkt_status;
 
 	struct termios termios;
 	struct winsize winsize;
@@ -35,6 +41,10 @@ typedef struct {
 } pts_pair;
 
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock);
+
+int pts_slave_setattr(inode *node, uint32_t mode);
+
+int pts_slave_chown(inode *node, uint32_t uid, uint32_t gid);
 
 int pts_master_ioctl(file *fp, unsigned type, void *buf);
 

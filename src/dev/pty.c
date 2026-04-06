@@ -6,6 +6,7 @@
 #include <lib/cyclebuf.h>
 #include <hw/time.h>
 #include <dev/dev.h>
+#include <ps/ps.h>
 #include "pts_internal.h"
 
 #define MAX_PTS 16
@@ -40,7 +41,7 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 {
 	pts_pair *p = node->i_private;
 	memset(s, 0, sizeof(*s));
-	s->st_mode = node->i_mode;
+	s->st_mode = p->slave_mode;
 	s->st_dev = MKDEV(PTS_MAJOR, 0);
 	s->st_rdev = MKDEV(PTS_MAJOR, p->idx + 2);
 	s->st_ino = (uint64_t)p->idx + 2;
@@ -48,6 +49,8 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 	s->st_atime = time_now_sec();
 	s->st_ctime = time_now_sec();
 	s->st_mtime = time_now_sec();
+	s->st_uid = p->slave_uid;
+	s->st_gid = p->slave_gid;
 	s->st_blksize = PAGE_SIZE;
 	s->st_size = PAGE_SIZE;
 	s->st_blocks = 1;
@@ -60,9 +63,9 @@ static int pts_slave_release(file *fp)
 {
 	pts_pair *p = fp->f_inode->i_private;
 
+	cyb_writer_close(p->s2m);
+	cyb_reader_close(p->m2s);
 	if (__sync_add_and_fetch(&p->slave_count, -1) == 0) {
-		cyb_writer_close(p->s2m);
-		cyb_reader_close(p->m2s);
 		pts_pair_check_free(p, &pts_alloc_lock);
 	}
 
@@ -73,6 +76,8 @@ static int pts_slave_release(file *fp)
 
 static const inode_operations pts_slave_iops = {
 	.getattr = pts_slave_getattr,
+	.setattr = pts_slave_setattr,
+	.chown = pts_slave_chown,
 };
 
 static const file_operations pts_slave_path_fops = {
@@ -139,13 +144,20 @@ static file *ptm_cdev_open(super_block *sb, unsigned rdev, int flag)
 	p->idx = idx;
 	p->used = 1;
 	p->master_open = 1;
+	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+	if (current->user) {
+		p->slave_uid = current->user->uid;
+		p->slave_gid = current->user->gid;
+	}
 	p->termios = tty_default_termios;
 	p->winsize.ws_row = 24;
 	p->winsize.ws_col = 80;
 	spinlock_init(&p->lock);
-	p->m2s = cyb_create(1);
-	p->s2m = cyb_create(1);
+	p->m2s = cyb_create_named(1);
+	p->s2m = cyb_create_named(1);
 	spinlock_unlock(&pts_alloc_lock, irq);
+	cyb_writer_open(p->m2s);
+	cyb_reader_open(p->s2m);
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
@@ -175,7 +187,7 @@ static file *pts_cdev_open(super_block *sb, unsigned rdev, int flag)
 	spinlock_unlock(&pts_alloc_lock, irq);
 
 	inode *node = zalloc(sizeof(*node));
-	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
+	node->i_mode = p->slave_mode;
 	node->i_op = &pts_slave_iops;
 	node->i_private = p;
 
@@ -183,6 +195,10 @@ static file *pts_cdev_open(super_block *sb, unsigned rdev, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = (flag & O_PATH) ? &pts_slave_path_fops : &pts_slave_fops;
+	if (!(flag & O_PATH)) {
+		cyb_reader_open(p->m2s);
+		cyb_writer_open(p->s2m);
+	}
 	return fp;
 }
 

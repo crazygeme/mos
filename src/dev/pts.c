@@ -39,8 +39,6 @@ void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 	spinlock_lock(lock, &irq);
 	if (!p->master_open && p->slave_count == 0) {
 		p->used = 0;
-		/* Drop the slave-side refs that were pre-allocated by cyb_create
-		 * but never consumed (no slave ever opened this pair). */
 		m2s = p->m2s;
 		s2m = p->s2m;
 		p->m2s = p->s2m = NULL;
@@ -48,9 +46,35 @@ void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 	spinlock_unlock(lock, irq);
 
 	if (m2s) {
-		cyb_reader_close(m2s);
-		cyb_writer_close(s2m);
+		cyb_destroy(m2s);
+		cyb_destroy(s2m);
 	}
+}
+
+int pts_slave_setattr(inode *node, uint32_t mode)
+{
+	pts_pair *p = node->i_private;
+	int irq;
+
+	spinlock_lock(&p->lock, &irq);
+	p->slave_mode = (p->slave_mode & S_IFMT) | (mode & ~S_IFMT);
+	node->i_mode = p->slave_mode;
+	spinlock_unlock(&p->lock, irq);
+	return 0;
+}
+
+int pts_slave_chown(inode *node, uint32_t uid, uint32_t gid)
+{
+	pts_pair *p = node->i_private;
+	int irq;
+
+	spinlock_lock(&p->lock, &irq);
+	if (uid != (uint32_t)-1)
+		p->slave_uid = uid;
+	if (gid != (uint32_t)-1)
+		p->slave_gid = gid;
+	spinlock_unlock(&p->lock, irq);
+	return 0;
 }
 
 int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
@@ -61,10 +85,24 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 		*(unsigned *)buf = (unsigned)p->idx;
 		return 0;
 	case TIOCSPTLCK:
-		/* lock field not stored in BSD mode; accept silently */
+		p->pt_locked = buf ? (*(int *)buf != 0) : 0;
 		return 0;
 	case TIOCGPTLCK:
-		*(int *)buf = 0;
+		*(int *)buf = p->pt_locked;
+		return 0;
+	case TCFLSH: {
+		int sel = (int)(uintptr_t)buf;
+		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+			sel = TCIOFLUSH;
+		if (sel == TCIFLUSH || sel == TCIOFLUSH)
+			cyb_flush(p->s2m);
+		if (sel == TCOFLUSH || sel == TCIOFLUSH)
+			cyb_flush(p->m2s);
+		return 0;
+	}
+	case TIOCPKT:
+		p->pkt_mode = buf ? (*(int *)buf != 0) : 0;
+		p->pkt_status = 0;
 		return 0;
 	case TCGETS:
 		memcpy(buf, &p->termios, sizeof(p->termios));
@@ -107,8 +145,28 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
+	unsigned char hdr = TIOCPKT_DATA;
+	int n;
+
 	if (!buf || size < 1)
 		return 0;
+
+	if (p->pkt_mode) {
+		if (p->pkt_status) {
+			*(unsigned char *)buf = p->pkt_status;
+			p->pkt_status = 0;
+			return 1;
+		}
+		if (size < 2)
+			return -EINVAL;
+		n = cyb_getbuf(p->s2m, (unsigned char *)buf + 1, (int)size - 1,
+			       1, 1);
+		if (n <= 0)
+			return (ssize_t)n;
+		*(unsigned char *)buf = hdr;
+		return (ssize_t)(n + 1);
+	}
+
 	return (ssize_t)cyb_getbuf(p->s2m, buf, (int)size, 1, 1);
 }
 
@@ -127,7 +185,7 @@ int pts_master_poll(file *fp, unsigned type)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	if (type == FS_POLL_READ)
-		return cyb_isempty(p->s2m) ? -1 : 0;
+		return (p->pkt_status || !cyb_isempty(p->s2m)) ? 0 : -1;
 	if (type == FS_POLL_WRITE)
 		return 0;
 	return -1;
@@ -153,6 +211,16 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 	case TCGETS:
 		memcpy(buf, &p->termios, sizeof(p->termios));
 		return 0;
+	case TCFLSH: {
+		int sel = (int)(uintptr_t)buf;
+		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+			sel = TCIOFLUSH;
+		if (sel == TCIFLUSH || sel == TCIOFLUSH)
+			cyb_flush(p->m2s);
+		if (sel == TCOFLUSH || sel == TCIOFLUSH)
+			cyb_flush(p->s2m);
+		return 0;
+	}
 	case TCSETS:
 	case TCSETSW:
 		memcpy(&p->termios, buf, sizeof(p->termios));

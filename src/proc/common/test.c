@@ -379,14 +379,9 @@ static file *make_suite_file(const char *suite_name)
 
 /* ── /proc/tests/ — directory ────────────────────────────────────────────── */
 
-typedef struct {
-	struct linux_dirent *buf;
-	unsigned length;
-} tests_dir_t;
-
 static ssize_t tests_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	tests_dir_t *td = fp->f_inode->i_private;
+	memory_dir *td = fp->f_inode->i_private;
 	loff_t off = *pos;
 	ssize_t left = (ssize_t)td->length - (ssize_t)off;
 	ssize_t n = (ssize_t)count < left ? (ssize_t)count : left;
@@ -400,7 +395,7 @@ static ssize_t tests_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 
 static int tests_dir_release(file *fp)
 {
-	tests_dir_t *td = fp->f_inode->i_private;
+	memory_dir *td = fp->f_inode->i_private;
 	kfree(td->buf);
 	free(td);
 	free(fp->f_inode);
@@ -420,7 +415,7 @@ static file *tests_open_root(super_block *sb, int flag)
 	char *buf, *p;
 	const char *begin;
 	struct linux_dirent *dirp;
-	tests_dir_t *td;
+	memory_dir *td;
 	inode *node;
 	file *fp;
 
@@ -442,30 +437,17 @@ static file *tests_open_root(super_block *sb, int flag)
 	begin = buf;
 	memset(buf, 0, size);
 
-#define FILL_ENTRY(name_str)                                               \
-	do {                                                               \
-		dirp = (struct linux_dirent *)p;                           \
-		dirp->d_ino = PROC_INODE;                                  \
-		strcpy(dirp->d_name, (name_str));                          \
-		dirp->d_reclen =                                           \
-			ROUND_UP(NAME_OFFSET() + strlen(name_str) + 1);    \
-		dirp->d_off = (unsigned long)(p + dirp->d_reclen - begin); \
-		p += dirp->d_reclen;                                       \
-	} while (0)
-
-	FILL_ENTRY(".");
-	FILL_ENTRY("..");
-	FILL_ENTRY(".runner");
-	FILL_ENTRY("all");
-	FILL_ENTRY("loopdev");
+	FILL_ENTRY(".", PROC_INODE);
+	FILL_ENTRY("..", PROC_INODE);
+	FILL_ENTRY(".runner", PROC_INODE);
+	FILL_ENTRY("all", PROC_INODE);
+	FILL_ENTRY("loopdev", PROC_INODE);
 
 	t = __ktest_start;
 	while (t < __ktest_end) {
-		FILL_ENTRY(t->suite);
+		FILL_ENTRY(t->suite, PROC_INODE);
 		t += count_suite(t);
 	}
-
-#undef FILL_ENTRY
 
 	td = zalloc(sizeof(*td));
 	td->buf = (struct linux_dirent *)buf;

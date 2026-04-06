@@ -24,7 +24,7 @@
  */
 void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
 		   unsigned minor_count,
-		   file *(*open)(unsigned rdev, int flag));
+		   file *(*open)(super_block *sb, unsigned rdev, int flag));
 
 /*
  * DEV_INIT(fn) registers a void (*)(super_block *) function to be called

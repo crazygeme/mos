@@ -744,8 +744,8 @@ static super_operations tmpfs_sops = {
 
 /* ── get_sb — called from mount.c ────────────────────────────────────────── */
 
-super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
-			  void *data)
+static super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
+				 void *data)
 {
 	super_block *sb = sget(&tmpfs_sops);
 	tmpfs_sb_info *sbi = zalloc(sizeof(*sbi));
@@ -756,3 +756,13 @@ super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
 	sb->s_fs_info = sbi;
 	return sb;
 }
+
+static fs_type tmpfs_fs_type = { .name = "tmpfs", .get_sb = tmpfs_get_sb };
+
+static void tmpfs_fs_type_init(void)
+{
+	printk("mnt: registered tmpfs file type\n");
+	fs_register_type(&tmpfs_fs_type);
+}
+
+KERNEL_INIT(2, tmpfs_fs_type_init);

@@ -357,7 +357,7 @@ static const file_operations loop_cdev_fops = {
 	.release = loop_cdev_release,
 };
 
-static file *loop_cdev_open(unsigned rdev, int flag)
+static file *loop_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 {
 	int minor = (int)MINOR(rdev);
 	inode *node;

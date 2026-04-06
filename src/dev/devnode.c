@@ -35,14 +35,15 @@ typedef struct {
 	unsigned major;
 	unsigned minor_base;
 	unsigned minor_count;
-	file *(*open)(unsigned rdev, int flag);
+	file *(*open)(super_block *sb, unsigned rdev, int flag);
 } cdev_entry;
 
 static cdev_entry cdev_table[MAX_CDEVS];
 static int cdev_count;
 
 void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
-		   unsigned minor_count, file *(*open)(unsigned rdev, int flag))
+		   unsigned minor_count,
+		   file *(*open)(super_block *sb, unsigned rdev, int flag))
 {
 	if (cdev_count >= MAX_CDEVS)
 		return;
@@ -54,7 +55,8 @@ void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
 	cdev_count++;
 }
 
-static file *cdev_dispatch(unsigned mode, unsigned rdev, int flag)
+static file *cdev_dispatch(super_block *sb, unsigned mode, unsigned rdev,
+			   int flag)
 {
 	unsigned mt = mode & S_IFMT;
 	unsigned major = MAJOR(rdev);
@@ -66,7 +68,7 @@ static file *cdev_dispatch(unsigned mode, unsigned rdev, int flag)
 		if (e->mode_type == mt && e->major == major &&
 		    minor >= e->minor_base &&
 		    minor < e->minor_base + e->minor_count)
-			return e->open(rdev, flag);
+			return e->open(sb, rdev, flag);
 	}
 	return NULL;
 }
@@ -266,7 +268,7 @@ static file *devnode_open_root(super_block *sb, int flag)
 
 	/* Char / block: dispatch to registered handler. */
 	if (S_ISCHR(dn->mode) || S_ISBLK(dn->mode)) {
-		file *dispatched = cdev_dispatch(dn->mode, dn->rdev, flag);
+		file *dispatched = cdev_dispatch(sb, dn->mode, dn->rdev, flag);
 		if (dispatched)
 			return dispatched;
 	}

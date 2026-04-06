@@ -35,11 +35,6 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag);
  * Root-directory private state (one per open(2) call on /proc)        *
  * ------------------------------------------------------------------ */
 
-typedef struct {
-	struct linux_dirent *buf;
-	unsigned length;
-} proc_root_dir;
-
 /* ------------------------------------------------------------------ *
  * PID collection for directory generation                              *
  * ------------------------------------------------------------------ */
@@ -65,7 +60,7 @@ static void proc_collect_pid(task_struct *task, void *ctx)
 
 static ssize_t proc_root_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	proc_root_dir *rd = fp->f_inode->i_private;
+	memory_dir *rd = fp->f_inode->i_private;
 	loff_t offset = *pos;
 	ssize_t left, read_size = 0;
 
@@ -106,7 +101,7 @@ static int proc_root_getattr(inode *node, struct stat *s)
 
 static int proc_root_release(file *fp)
 {
-	proc_root_dir *rd = fp->f_inode->i_private;
+	memory_dir *rd = fp->f_inode->i_private;
 	kfree(rd->buf);
 	free(rd);
 	free(fp->f_inode);
@@ -137,7 +132,7 @@ static const file_operations proc_root_fops = {
  * Live PIDs are collected via ps_enum_all into the module-static array
  * (proc_pid_list / pid_ctx.count); acceptable for a single-CPU context.
  */
-static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
+static void proc_dir_gen(super_block *sb, memory_dir *rd)
 {
 	key_value_pair *kv;
 	unsigned size = 0;
@@ -177,35 +172,21 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
 	rd->buf = (struct linux_dirent *)buf;
 	rd->length = size;
 
-#define FILL_ENTRY(name_str)                                               \
-	do {                                                               \
-		dirp = (struct linux_dirent *)p;                           \
-		dirp->d_ino = PROC_INODE;                                  \
-		strcpy(dirp->d_name, (name_str));                          \
-		dirp->d_reclen =                                           \
-			ROUND_UP(NAME_OFFSET() + strlen(name_str) + 1);    \
-		dirp->d_off = (unsigned long)(p + dirp->d_reclen - begin); \
-		p += dirp->d_reclen;                                       \
-	} while (0)
-
-	FILL_ENTRY(".");
-	FILL_ENTRY("..");
-	FILL_ENTRY("self");
+	FILL_ENTRY(".", PROC_INODE);
+	FILL_ENTRY("..", PROC_INODE);
 
 	mutex_lock(&sb->s_lock);
 	for (kv = hash_first(sb->s_mounts); kv;
 	     kv = hash_next(sb->s_mounts, kv))
-		FILL_ENTRY((char *)kv->key + 1);
+		FILL_ENTRY((char *)kv->key + 1, PROC_INODE);
 	mutex_unlock(&sb->s_lock);
 
 	for (i = 0; i < pid_ctx.count; i++) {
 		sprintf(pidbuf, "%u", pid_ctx.list[i]);
-		FILL_ENTRY(pidbuf);
+		FILL_ENTRY(pidbuf, PROC_INODE);
 	}
 
 	free(proc_pid_list);
-
-#undef FILL_ENTRY
 }
 
 /* ------------------------------------------------------------------ *
@@ -218,7 +199,7 @@ static void proc_dir_gen(super_block *sb, proc_root_dir *rd)
  */
 static file *proc_open_root(super_block *sb, int flag)
 {
-	proc_root_dir *rd = zalloc(sizeof(*rd));
+	memory_dir *rd = zalloc(sizeof(*rd));
 	inode *node = zalloc(sizeof(*node));
 	file *fp = zalloc(sizeof(*fp));
 

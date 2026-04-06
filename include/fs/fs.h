@@ -52,10 +52,10 @@ typedef struct _block block;
 #define FILE_TYPE_CHAR 3
 #define FILE_TYPE_DIR 4
 
-/* Used by fs_fd_ready() and poll op */
-#define FS_POLL_READ 0
-#define FS_POLL_WRITE 1
-#define FS_POLL_EXCEPT 2
+/* Poll/select event mask bits used by file_operations::poll(). */
+#define FS_POLL_READ (1U << 0)
+#define FS_POLL_WRITE (1U << 1)
+#define FS_POLL_EXCEPT (1U << 2)
 
 typedef int64_t loff_t;
 typedef int off_t;
@@ -64,8 +64,22 @@ typedef int ssize_t;
 typedef struct _inode inode;
 typedef struct _file file;
 
-/* Forward declaration for poll_wait hooks */
+/* Forward declarations for poll/select hooks */
 typedef struct _task_struct task_struct;
+typedef void (*poll_dereg_fn)(void *opaque, task_struct *task);
+
+typedef struct _poll_table_entry {
+	void *opaque;
+	poll_dereg_fn dereg;
+} poll_table_entry;
+
+typedef struct _poll_table {
+	task_struct *task;
+	unsigned nr;
+	unsigned cap;
+	int unsupported;
+	poll_table_entry *entries;
+} poll_table;
 
 /*
  * file_operations - per-open-file operations, analogous to Linux
@@ -79,16 +93,13 @@ typedef struct _file_operations {
 	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
 	/* llseek: return new position or -errno */
 	loff_t (*llseek)(file *file, loff_t offset, int whence);
-	/* poll: return 0 if ready, -1 if not ready */
-	int (*is_ready)(file *file, unsigned type);
 	/*
-	 * poll_wait / poll_wait_remove: register / deregister the calling
-	 * task to be woken (via ps_put_to_ready_queue) when this file becomes
-	 * ready.  NULL means always-ready (no registration needed).  The task
-	 * pointer remains valid until poll_wait_remove is called.
+	 * poll: return an FS_POLL_* readiness bitmask for the requested @events.
+	 * If @pt is non-NULL, the implementation may register wakeups for the
+	 * current task through poll_table helpers; deregistration is handled by
+	 * the generic poll/select layer.
 	 */
-	void (*poll_wait)(file *fp, task_struct *task);
-	void (*poll_wait_remove)(file *fp, task_struct *task);
+	unsigned (*poll)(file *file, unsigned events, poll_table *pt);
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
 	int (*flush)(file *file);
 } file_operations;
@@ -228,9 +239,15 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 
 int fs_seek(int fd, int offset, unsigned whence);
 
-int fs_fd_ready(int fd, unsigned type);
+unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt);
 
 int fs_ioctl(int fd, unsigned cmd, void *buf);
+
+void poll_table_init(poll_table *pt, task_struct *task,
+		     poll_table_entry *entries, unsigned cap);
+void poll_table_cleanup(poll_table *pt);
+int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg);
+void poll_table_note_unsupported(poll_table *pt);
 
 int fs_chmod(const char *pathname, uint32_t mode);
 

@@ -38,11 +38,11 @@ static ssize_t random_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-static int random_poll(file *fp, unsigned type)
+static unsigned random_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
 static int random_getattr(inode *node, struct stat *s)
@@ -73,7 +73,7 @@ static const file_operations random_fops = {
 	.release = random_release,
 	.read = random_read,
 	.write = random_write,
-	.is_ready = random_poll,
+	.poll = random_poll,
 };
 
 static file *random_cdev_open(super_block *dev_sb, unsigned rdev, int flag)

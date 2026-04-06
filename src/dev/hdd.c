@@ -155,11 +155,11 @@ static loff_t hdd_dev_llseek(file *fp, loff_t offset, int whence)
 	return fp->f_pos;
 }
 
-static int hdd_dev_poll(file *fp, unsigned type)
+static unsigned hdd_dev_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
 static int hdd_dev_getattr(inode *node, struct stat *s)
@@ -198,7 +198,7 @@ static const file_operations hdd_dev_fops = {
 	.read = hdd_dev_read,
 	.write = hdd_dev_write,
 	.llseek = hdd_dev_llseek,
-	.is_ready = hdd_dev_poll,
+	.poll = hdd_dev_poll,
 };
 
 /* ── cdev dispatch ───────────────────────────────────────────────────────── */

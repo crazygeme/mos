@@ -72,6 +72,7 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 struct poll_ctx {
 	struct pollfd *fds;
 	unsigned nfds;
+	poll_table wait;
 };
 
 static int poll_ctx_check(void *arg)
@@ -89,13 +90,18 @@ static int poll_ctx_check(void *arg)
 			ctx->fds[i].revents = 0;
 			continue;
 		}
+		unsigned want = 0;
 		if (events & (POLLIN | POLLPRI))
-			if (fs_fd_ready(fd, FS_POLL_READ) == 0)
-				revents |= POLLIN;
+			want |= FS_POLL_READ;
 		if (events & POLLOUT)
-			if (fs_fd_ready(fd, FS_POLL_WRITE) == 0)
-				revents |= POLLOUT;
-		if (fs_fd_ready(fd, FS_POLL_EXCEPT) == 0)
+			want |= FS_POLL_WRITE;
+		want |= FS_POLL_EXCEPT;
+		unsigned ready_mask = fs_fd_poll(fd, want, NULL);
+		if (ready_mask & FS_POLL_READ)
+			revents |= POLLIN;
+		if (ready_mask & FS_POLL_WRITE)
+			revents |= POLLOUT;
+		if (ready_mask & FS_POLL_EXCEPT)
 			revents |= POLLERR;
 		ctx->fds[i].revents = revents;
 		if (revents)
@@ -107,39 +113,29 @@ static int poll_ctx_check(void *arg)
 static int poll_ctx_reg(void *arg)
 {
 	struct poll_ctx *ctx = arg;
-	task_struct *cur = CURRENT_TASK();
 	unsigned i;
-	int has_unsupported = 0;
+	poll_table *pt = &ctx->wait;
 
 	for (i = 0; i < ctx->nfds; i++) {
 		int fd = ctx->fds[i].fd;
-		if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
+		short events = ctx->fds[i].events;
+		unsigned want = 0;
+		if (fd < 0)
 			continue;
-		file *fp = cur->fds[fd].fp;
-		if (!fp || !fp->f_fop)
-			continue;
-		if (fp->f_fop->poll_wait)
-			fp->f_fop->poll_wait(fp, cur);
-		else
-			has_unsupported = 1;
+		if (events & (POLLIN | POLLPRI))
+			want |= FS_POLL_READ;
+		if (events & POLLOUT)
+			want |= FS_POLL_WRITE;
+		want |= FS_POLL_EXCEPT;
+		fs_fd_poll(fd, want, pt);
 	}
-	return has_unsupported;
+	return pt->unsupported;
 }
 
 static void poll_ctx_dereg(void *arg)
 {
 	struct poll_ctx *ctx = arg;
-	task_struct *cur = CURRENT_TASK();
-	unsigned i;
-
-	for (i = 0; i < ctx->nfds; i++) {
-		int fd = ctx->fds[i].fd;
-		if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
-			continue;
-		file *fp = cur->fds[fd].fp;
-		if (fp && fp->f_fop && fp->f_fop->poll_wait_remove)
-			fp->f_fop->poll_wait_remove(fp, cur);
-	}
+	poll_table_cleanup(&ctx->wait);
 }
 
 static const struct poll_ops poll_fops = {
@@ -154,12 +150,24 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 	int infinite = (timeout < 0);
 	unsigned deadline = 0;
 	struct poll_ctx ctx = { fds, nfds };
+	poll_table_entry *entries = NULL;
 
 	if (!fds && nfds > 0)
 		return -EFAULT;
 
+	if (nfds > 0) {
+		entries = zalloc(sizeof(*entries) * nfds * 2);
+		poll_table_init(&ctx.wait, CURRENT_TASK(), entries, nfds * 2);
+	} else {
+		poll_table_init(&ctx.wait, CURRENT_TASK(), NULL, 0);
+	}
+
 	if (!just_test && !infinite)
 		deadline = time_now_ms() + (unsigned)timeout;
 
-	return poll_wait_loop(&poll_fops, &ctx, just_test, infinite, deadline);
+	int ret =
+		poll_wait_loop(&poll_fops, &ctx, just_test, infinite, deadline);
+	if (entries)
+		free(entries);
+	return ret;
 }

@@ -53,11 +53,11 @@ static loff_t pid_llseek(file *fp, loff_t offset, int whence)
 	return newpos;
 }
 
-static int pid_poll(file *fp, unsigned type)
+static unsigned pid_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT || type == FS_POLL_WRITE)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return (events & FS_POLL_READ) ? FS_POLL_READ : 0;
 }
 
 static int pid_release(file *fp)
@@ -98,14 +98,14 @@ static const inode_operations pid_dir_iops = { .getattr = pid_dir_getattr };
 static const file_operations pid_file_fops = {
 	.read = pid_read,
 	.llseek = pid_llseek,
-	.is_ready = pid_poll,
+	.poll = pid_poll,
 	.release = pid_release,
 };
 
 static const file_operations pid_dir_fops = {
 	.read = pid_read,
 	.llseek = pid_llseek,
-	.is_ready = pid_poll,
+	.poll = pid_poll,
 	.release = pid_release,
 };
 

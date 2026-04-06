@@ -13,6 +13,7 @@
 #include <fs/mount.h>
 #include <hw/hdd.h>
 #include <lib/klib.h>
+#include <dev/dev.h>
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
@@ -76,9 +77,11 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 log:
 	if (TestControl.verbos && func) {
 		format_modes(buf->st_mode, modes);
-		klog("%s(%s, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
-		     func, name, buf, ret, modes, buf->st_size, buf->st_blocks,
-		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
+		klog("%s(%s, %x) = %d, %s, uid=%d, gid=%d, size=%d, blocks = %d, ino = %d, rdev = %d (%d:%d), dev = %d (%d:%d), nlink = %d\n",
+		     func, name, buf, ret, modes, buf->st_uid, buf->st_gid,
+		     buf->st_size, buf->st_blocks, buf->st_ino, buf->st_rdev,
+		     MAJOR(buf->st_rdev), MINOR(buf->st_rdev), buf->st_dev,
+		     MAJOR(buf->st_dev), MINOR(buf->st_dev), buf->st_nlink);
 	}
 	if (fp)
 		fs_put_file(fp);
@@ -118,9 +121,11 @@ int sys_fstat(int fd, struct stat *buf)
 	if (TestControl.verbos) {
 		char modes[11];
 		format_modes(buf->st_mode, modes);
-		klog("fstat(%d, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
-		     fd, buf, ret, modes, buf->st_size, buf->st_blocks,
-		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
+		klog("fstat(%d, %x) = %d, %s, uid=%d, gid=%d, size=%d, blocks = %d, ino = %d, rdev = %d (%d:%d), dev = %d (%d:%d), nlink = %d\n",
+		     fd, buf, ret, modes, buf->st_uid, buf->st_gid,
+		     buf->st_size, buf->st_blocks, buf->st_ino, buf->st_rdev,
+		     MAJOR(buf->st_rdev), MINOR(buf->st_rdev), buf->st_dev,
+		     MAJOR(buf->st_dev), MINOR(buf->st_dev), buf->st_nlink);
 	}
 
 	return ret;
@@ -192,9 +197,11 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	if (TestControl.verbos) {
 		char modes[11];
 		format_modes(buf->st_mode, modes);
-		klog("fstat64(%d, %x) = %d, %s, size=%d, blocks = %d, ino = %d, rdev = %d, dev = %d, nlink = %d\n",
-		     fd, buf, ret, modes, buf->st_size, buf->st_blocks,
-		     buf->st_ino, buf->st_rdev, buf->st_dev, buf->st_nlink);
+		klog("fstat64(%d, %x) = %d, %s, uid=%d, gid=%d, size=%d, blocks = %d, ino = %d, rdev = %d (%d:%d), dev = %d (%d:%d), nlink = %d\n",
+		     fd, buf, ret, modes, buf->st_uid, buf->st_gid,
+		     buf->st_size, buf->st_blocks, buf->st_ino, buf->st_rdev,
+		     MAJOR(buf->st_rdev), MINOR(buf->st_rdev), buf->st_dev,
+		     MAJOR(buf->st_dev), MINOR(buf->st_dev), buf->st_nlink);
 	}
 
 	return ret;
@@ -233,6 +240,11 @@ int sys_statfs(const char *_path, struct statfs *buf)
 
 	resolve_path(_path, name);
 	ret = vfs_statfs(CURRENT_TASK()->root, name, buf);
+
+	if (TestControl.verbos)
+		klog("statfs(%s, %x) = %d, type=%x, bsize=%d, namelen=%d\n",
+		     name, buf, ret, buf->f_type, buf->f_bsize, buf->f_namelen);
+
 	name_put(name);
 	return ret;
 }
@@ -241,6 +253,7 @@ int sys_fstatfs(int fd, struct statfs *buf)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp;
+	int ret;
 
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
@@ -254,7 +267,14 @@ int sys_fstatfs(int fd, struct statfs *buf)
 	if (!fp->f_name)
 		return -ENOSYS;
 
-	return vfs_statfs(cur->root, fp->f_name, buf);
+	ret = vfs_statfs(cur->root, fp->f_name, buf);
+
+	if (TestControl.verbos)
+		klog("fstatfs(%d, %x) = %d, path=%s, type=%x, bsize=%d, namelen=%d\n",
+		     fd, buf, ret, fp->f_name, buf->f_type, buf->f_bsize,
+		     buf->f_namelen);
+
+	return ret;
 }
 
 /* ------------------------------------------------------------------ *

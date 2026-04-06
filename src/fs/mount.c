@@ -143,8 +143,7 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	ret = vfs_mount(cur->root, target, sb);
 	if (ret == -EEXIST) {
 		sb_put(sb);
-		ret = 0;
-		return ret;
+		return -EBUSY;
 	}
 
 	if (ret == 0) {

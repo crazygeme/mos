@@ -336,9 +336,67 @@ static int loop_cdev_getattr(inode *node, struct stat *s)
 	int minor = (int)(uintptr_t)node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = S_IFBLK | 0660;
+	s->st_size = 0;
+	s->st_blksize = 512;
+	s->st_blocks = (loff_t)(loop_devs[minor].size_bytes / 512);
 	s->st_rdev = MKDEV(7, minor);
 	s->st_nlink = 1;
 	return 0;
+}
+
+static ssize_t loop_cdev_read(file *fp, void *buf, size_t count, loff_t *pos)
+{
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+	loop_device *ld = &loop_devices[minor];
+
+	if (!ld->fp || !ld->fp->f_fop || !ld->fp->f_fop->read)
+		return -ENXIO;
+
+	return ld->fp->f_fop->read(ld->fp, buf, count, pos);
+}
+
+static ssize_t loop_cdev_write(file *fp, const void *buf, size_t count,
+			       loff_t *pos)
+{
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+	loop_device *ld = &loop_devices[minor];
+
+	if (!ld->fp || !ld->fp->f_fop || !ld->fp->f_fop->write)
+		return -ENXIO;
+
+	return ld->fp->f_fop->write(ld->fp, (void *)buf, count, pos);
+}
+
+static loff_t loop_cdev_llseek(file *fp, loff_t offset, int whence)
+{
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+	loff_t dev_size = (loff_t)loop_devs[minor].size_bytes;
+	loff_t new_pos;
+
+	if (!loop_devices[minor].fp)
+		return -ENXIO;
+
+	switch (whence) {
+	case SEEK_SET:
+		new_pos = offset;
+		break;
+	case SEEK_CUR:
+		new_pos = fp->f_pos + offset;
+		break;
+	case SEEK_END:
+		new_pos = dev_size + offset;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (new_pos < 0)
+		new_pos = 0;
+	if (new_pos > dev_size)
+		new_pos = dev_size;
+
+	fp->f_pos = new_pos;
+	return fp->f_pos;
 }
 
 static const inode_operations loop_cdev_iops = {
@@ -354,6 +412,9 @@ static int loop_cdev_release(file *fp)
 
 static const file_operations loop_cdev_fops = {
 	.ioctl = loop_ioctl,
+	.read = loop_cdev_read,
+	.write = loop_cdev_write,
+	.llseek = loop_cdev_llseek,
 	.release = loop_cdev_release,
 };
 

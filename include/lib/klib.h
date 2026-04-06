@@ -96,6 +96,7 @@ typedef struct _TEST_CONTROL {
 	int verbos;
 	int profiling;
 	int bash;
+	int test;
 } TEST_CONTROL;
 extern TEST_CONTROL TestControl;
 

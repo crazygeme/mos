@@ -28,6 +28,7 @@
 #include <test/test.h>
 #include <lib/klib.h>
 #include <hw/time.h>
+#include <hw/tty.h>
 #include <macro.h>
 #include <errno.h>
 #include <ext4.h>
@@ -92,14 +93,22 @@ static void run_all_tests(const char *suite_pat)
 {
 	ktest_t *t;
 	int pass = 0, fail = 0, total, num_suites;
-
-#define MAX_FAIL 64
-	const char *fail_suite[MAX_FAIL];
-	const char *fail_name[MAX_FAIL];
+	const char **fail_suite = NULL;
+	const char **fail_name = NULL;
 	int nfail = 0;
 
 	total = count_tests(suite_pat);
 	num_suites = count_suites(suite_pat);
+	if (total > 0) {
+		fail_suite = kmalloc((size_t)total * sizeof(*fail_suite));
+		fail_name = kmalloc((size_t)total * sizeof(*fail_name));
+		if (!fail_suite || !fail_name) {
+			kfree(fail_suite);
+			kfree(fail_name);
+			fail_suite = NULL;
+			fail_name = NULL;
+		}
+	}
 
 	klog("[==========] Running %d %s from %d test %s.\n", total,
 	     total == 1 ? "test" : "tests", num_suites,
@@ -136,7 +145,7 @@ static void run_all_tests(const char *suite_pat)
 			} else {
 				klog("[  FAILED  ] %s.%s (%u ms)\n", t->suite,
 				     t->name, t_ms);
-				if (nfail < MAX_FAIL) {
+				if (fail_suite && fail_name) {
 					fail_suite[nfail] = t->suite;
 					fail_name[nfail] = t->name;
 					nfail++;
@@ -163,7 +172,8 @@ static void run_all_tests(const char *suite_pat)
 			     fail_name[i]);
 		klog("\n %d FAILED %s\n", fail, fail == 1 ? "TEST" : "TESTS");
 	}
-#undef MAX_FAIL
+	kfree(fail_suite);
+	kfree(fail_name);
 }
 
 /* ── Shared getattr ──────────────────────────────────────────────────────── */
@@ -190,11 +200,17 @@ static const inode_operations tests_iops = {
 
 static ssize_t runner_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
-	char filter[128];
-	unsigned len = (unsigned)size < sizeof(filter) - 1 ? (unsigned)size :
-							     sizeof(filter) - 1;
+	char *filter;
+	unsigned len = (unsigned)size;
 	unsigned i;
 	const char *suite_pat;
+
+	(void)fp;
+	(void)pos;
+
+	filter = kmalloc((size_t)len + 1);
+	if (!filter)
+		return -ENOMEM;
 
 	for (i = 0; i < len; i++)
 		filter[i] = ((const char *)buf)[i];
@@ -204,12 +220,42 @@ static ssize_t runner_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	filter[len] = '\0';
 
 	if (len == 0)
-		return (ssize_t)size;
+		goto out;
 
 	suite_pat = (strcmp(filter, "1") == 0 || strcmp(filter, "all") == 0) ?
 			    "*" :
 			    filter;
 	run_all_tests(suite_pat);
+
+out:
+	kfree(filter);
+	return (ssize_t)size;
+}
+
+static ssize_t result_write(file *fp, const void *buf, size_t size, loff_t *pos)
+{
+	char *line;
+	unsigned len = (unsigned)size;
+	unsigned i;
+
+	(void)fp;
+	(void)pos;
+
+	line = kmalloc((size_t)len + 1);
+	if (!line)
+		return -ENOMEM;
+
+	for (i = 0; i < len; i++)
+		line[i] = ((const char *)buf)[i];
+	while (len > 0 &&
+	       (line[len - 1] == '\n' || line[len - 1] == '\r'))
+		len--;
+	line[len] = '\0';
+
+	if (len > 0)
+		klog("%s\n", line);
+
+	kfree(line);
 	return (ssize_t)size;
 }
 
@@ -225,6 +271,11 @@ static const file_operations runner_fops = {
 	.release = runner_release,
 };
 
+static const file_operations result_fops = {
+	.write = result_write,
+	.release = runner_release,
+};
+
 static file *make_runner_file(void)
 {
 	inode *node = zalloc(sizeof(*node));
@@ -235,6 +286,40 @@ static file *make_runner_file(void)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &runner_fops;
+	return fp;
+}
+
+static file *make_result_file(void)
+{
+	inode *node = zalloc(sizeof(*node));
+	node->i_mode = S_IFREG | S_IWUSR | S_IWGRP | S_IWOTH;
+	node->i_op = &tests_iops;
+
+	file *fp = zalloc(sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &result_fops;
+	return fp;
+}
+
+static file *make_static_file(const char *content);
+
+static file *make_tty_state_file(void)
+{
+	char *content;
+	unsigned length;
+	file *fp;
+
+	content = tty_test_snapshot(&length);
+	if (!content)
+		content = strdup("meta unavailable=1\n");
+	if (!content)
+		return NULL;
+	if (length == 0)
+		length = strlen(content);
+
+	fp = make_static_file(content);
+	kfree(content);
 	return fp;
 }
 
@@ -311,11 +396,12 @@ static file *make_wrapped_script_file(const char *script_name, const char *body)
 		"__ktest_name='";
 	static const char middle[] =
 		"'\n"
+		"__ktest_result(){ printf '%s\n' \"$1\" > /proc/tests/.result; }\n"
 		"read __ktest_up _ < /proc/uptime\n"
 		"__ktest_start_s=${__ktest_up%%.*}\n"
 		"__ktest_start_cs=${__ktest_up#*.}\n"
 		"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
-		"echo \"[ RUN      ] script.${__ktest_name}\"\n"
+		"__ktest_result \"[ RUN      ] script.${__ktest_name}\"\n"
 		"(\n";
 	static const char suffix[] =
 		"\n"
@@ -327,18 +413,18 @@ static file *make_wrapped_script_file(const char *script_name, const char *body)
 		"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
 		"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
 		"if [ \"$__ktest_rc\" -eq 0 ]; then\n"
-		"  echo \"[       OK ] script.${__ktest_name} "
+		"  __ktest_result \"[       OK ] script.${__ktest_name} "
 		"(${__ktest_elapsed_ms} ms)\"\n"
 		"else\n"
-		"  echo \"script.${__ktest_name}: Failure\"\n"
+		"  __ktest_result \"script.${__ktest_name}: Failure\"\n"
 		"  if [ -s \"$__ktest_log\" ]; then\n"
 		"    while IFS= read -r __ktest_line; do\n"
-		"      echo \"  $__ktest_line\"\n"
+		"      __ktest_result \"  $__ktest_line\"\n"
 		"    done < \"$__ktest_log\"\n"
 		"  else\n"
-		"    echo \"  script exited with status $__ktest_rc\"\n"
+		"    __ktest_result \"  script exited with status $__ktest_rc\"\n"
 		"  fi\n"
-		"  echo \"[  FAILED  ] script.${__ktest_name} "
+		"  __ktest_result \"[  FAILED  ] script.${__ktest_name} "
 		"(${__ktest_elapsed_ms} ms)\"\n"
 		"fi\n"
 		"rm -f \"$__ktest_log\"\n"
@@ -411,10 +497,20 @@ static file *make_all_script_file(void)
 		total += sizeof("/proc/tests/") - 1;
 		total += strlen(script->name);
 	}
-	total += sizeof("__ktest_fail=0\nexit $__ktest_fail\n") - 1;
+	total += sizeof("__ktest_result(){ printf '%s\n' \"$1\" > /proc/tests/.result; }\n"
+			"__ktest_fail=0\n"
+			"if [ \"$__ktest_fail\" -eq 0 ]; then\n"
+			"  __ktest_result \"[==========] all_script finished: PASS\"\n"
+			"else\n"
+			"  __ktest_result \"[==========] all_script finished: FAIL\"\n"
+			"fi\n"
+			"exit $__ktest_fail\n") -
+		 1;
 
 	content = kmalloc(total + 1);
 	strcpy(content, shebang);
+	strcat(content,
+	       "__ktest_result(){ printf '%s\n' \"$1\" > /proc/tests/.result; }\n");
 	strcat(content, "__ktest_fail=0\n");
 
 	for (script = __ktest_script_start; script < __ktest_script_end;
@@ -427,6 +523,13 @@ static file *make_all_script_file(void)
 		strcat(content, "__ktest_fail=1\n");
 		strcat(content, "fi\n");
 	}
+	strcat(content, "if [ \"$__ktest_fail\" -eq 0 ]; then\n");
+	strcat(content,
+	       "  __ktest_result \"[==========] all_script finished: PASS\"\n");
+	strcat(content, "else\n");
+	strcat(content,
+	       "  __ktest_result \"[==========] all_script finished: FAIL\"\n");
+	strcat(content, "fi\n");
 	strcat(content, "exit $__ktest_fail\n");
 
 	ss = zalloc(sizeof(*ss));
@@ -493,6 +596,8 @@ static file *tests_open_root(super_block *sb, int flag)
 	size += ROUND_UP(NAME_OFFSET() + 2); /* "."       (1 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 3); /* ".."      (2 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 7); /* ".runner" (6 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 7); /* ".result" (6 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 11); /* ".tty_state" (10 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 4); /* "all"     (3 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 11); /* "all_script" (10 + NUL) */
 
@@ -518,6 +623,8 @@ static file *tests_open_root(super_block *sb, int flag)
 	FILL_ENTRY(".", PROC_INODE);
 	FILL_ENTRY("..", PROC_INODE);
 	FILL_ENTRY(".runner", PROC_INODE);
+	FILL_ENTRY(".result", PROC_INODE);
+	FILL_ENTRY(".tty_state", PROC_INODE);
 	FILL_ENTRY("all", PROC_INODE);
 	FILL_ENTRY("all_script", PROC_INODE);
 
@@ -569,6 +676,12 @@ static file *tests_open(super_block *sb, const char *path, int flag)
 
 	if (strcmp(name, ".runner") == 0)
 		return make_runner_file();
+
+	if (strcmp(name, ".result") == 0)
+		return make_result_file();
+
+	if (strcmp(name, ".tty_state") == 0)
+		return make_tty_state_file();
 
 	if (strcmp(name, "all") == 0)
 		return make_suite_file("all");

@@ -29,4 +29,8 @@ void tty_switch(int n);
  * Called from the keyboard driver interrupt handler. */
 void tty_active_kb_put(unsigned char c);
 
+/* Allocate a text snapshot of the active TTY for test introspection.
+ * The caller owns the returned buffer and must free it with kfree(). */
+char *tty_test_snapshot(unsigned *len_out);
+
 #endif

@@ -120,6 +120,12 @@ static unsigned mmap_cache_find(unsigned ino, unsigned offset)
 	key_value_pair *pair;
 	mmap_cache_entry *entry;
 
+	/*
+	 * Disabled for correctness: guest-side rewrites and heavier userspace
+	 * workloads still expose stale/unsafe reuse in this cache path.
+	 */
+	return 0;
+
 	if (PAGE_CACHE_SIZE == 0)
 		return 0;
 
@@ -146,6 +152,12 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 {
 	mmap_cache_entry *entry;
 	mmap_cache_key tmp = { .ino = ino, .offset = offset };
+
+	/*
+	 * Keep the readonly file-page cache off until invalidation/reuse is
+	 * fully correct across exec-heavy workloads.
+	 */
+	return;
 
 	if (ino == 0 || phy == 0)
 		return;
@@ -178,6 +190,30 @@ static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 	cache_count++;
 
+	mutex_unlock(&mmap_cache_lock);
+}
+
+void pf_invalidate_file_cache(unsigned ino)
+{
+	list_entry *node;
+	list_entry *next;
+
+	if (ino == 0 || PAGE_CACHE_SIZE == 0)
+		return;
+
+	mutex_lock(&mmap_cache_lock);
+	for (node = mmap_lru.next; node != &mmap_lru; node = next) {
+		mmap_cache_entry *entry;
+
+		next = node->next;
+		entry = container_of(node, mmap_cache_entry, lru);
+		if (entry->key.ino != ino)
+			continue;
+
+		list_remove_entry(&entry->lru);
+		hash_remove(mmap_cache, &entry->key);
+		cache_count--;
+	}
 	mutex_unlock(&mmap_cache_lock);
 }
 

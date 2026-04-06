@@ -1,4 +1,5 @@
 #include <mm/mm.h>
+#include <mm/pagefault.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <fs/fs.h>
@@ -53,6 +54,9 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 {
 	ext4_file *f = fp->f_inode->i_private;
 	size_t wcnt = 0;
+
+	if (fp->f_inode)
+		pf_invalidate_file_cache(fp->f_inode->i_ino);
 	if ((loff_t)ext4_ftell(f) != *pos)
 		ext4_fseek(f, *pos, SEEK_SET);
 	int ret = ext4_fwrite(f, buf, size, &wcnt);
@@ -146,6 +150,7 @@ static int ext4_file_write_page(inode *node, unsigned offset, const void *buf)
 	ext4_file *ff = node->i_private;
 	size_t wcnt = 0;
 
+	pf_invalidate_file_cache(node->i_ino);
 	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
 		return -EIO;
 	if (ext4_fwrite(ff, buf, PAGE_SIZE, &wcnt) != EOK)
@@ -538,6 +543,8 @@ static file *ext4_path_open(const char *path, int flag)
 	ret = ext4_fstat(f, &s);
 	if (ret != EOK)
 		goto fail;
+	if (flag & O_TRUNC)
+		pf_invalidate_file_cache(s.st_ino);
 
 	/* O_NOFOLLOW: return the symlink itself without following it. */
 	if (S_ISLNK(s.st_mode) && (flag & O_NOFOLLOW)) {
@@ -741,6 +748,69 @@ static void ext4_full_path(super_block *sb, const char *path, char *full)
 	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
 }
 
+static int ext4_path_is_descendant(const char *parent, const char *path)
+{
+	size_t parent_len = strlen(parent);
+
+	while (parent_len > 1 && parent[parent_len - 1] == '/')
+		parent_len--;
+
+	return strncmp(parent, path, parent_len) == 0 &&
+	       path[parent_len] == '/';
+}
+
+static int ext4_dir_check_empty(const char *full)
+{
+	ext4_dir dir;
+	const ext4_direntry *entry;
+	int ret;
+
+	ret = ext4_dir_open(&dir, full);
+	if (ret != EOK)
+		return ret;
+
+	ext4_dir_entry_rewind(&dir);
+	while ((entry = ext4_dir_entry_next(&dir)) != NULL) {
+		if (entry->name_length == 1 && entry->name[0] == '.')
+			continue;
+		if (entry->name_length == 2 && entry->name[0] == '.' &&
+		    entry->name[1] == '.')
+			continue;
+		ext4_dir_close(&dir);
+		return ENOTEMPTY;
+	}
+
+	ext4_dir_close(&dir);
+	return EOK;
+}
+
+static int ext4_parent_dir_check(const char *full)
+{
+	char *parent = name_get();
+	char *slash;
+	ext4_dir dir;
+	int ret;
+
+	strcpy(parent, full);
+	slash = strrchr(parent, '/');
+	if (!slash) {
+		name_put(parent);
+		return ENOENT;
+	}
+
+	if (slash == parent)
+		parent[1] = '\0';
+	else
+		*slash = '\0';
+
+	ret = ext4_dir_open(&dir, parent);
+	if (ret == EOK)
+		ext4_dir_close(&dir);
+
+	name_put(parent);
+	return ret;
+}
+
 static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 {
 	char *full = name_get();
@@ -748,7 +818,9 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 	unsigned gid = current->user->gid;
 	int ret;
 	ext4_full_path(sb, path, full);
-	ret = ext4_dir_mk(full);
+	ret = ext4_parent_dir_check(full);
+	if (ret == EOK)
+		ret = ext4_dir_mk(full);
 	if (ret == EOK) {
 		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(full, t);
@@ -764,7 +836,9 @@ static int ext4_rmdir(super_block *sb, const char *path)
 	char *full = name_get();
 	int ret;
 	ext4_full_path(sb, path, full);
-	ret = ext4_dir_rm(full);
+	ret = ext4_dir_check_empty(full);
+	if (ret == EOK)
+		ret = ext4_dir_rm(full);
 	name_put(full);
 	return ret ? -ret : 0;
 }
@@ -838,6 +912,11 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 	int ret;
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
+	if (ext4_path_is_descendant(full1, full2)) {
+		name_put(full1);
+		name_put(full2);
+		return -EINVAL;
+	}
 	ret = ext4_frename(full1, full2);
 	if (ret == EEXIST) {
 		/* POSIX rename(2) must replace the destination if it exists */
@@ -941,13 +1020,17 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 {
 	const char *dev_name;
 	char loop_auto[16]; /* non-empty if we auto-attached a loop device */
-	char mp[MAX_PATH];
+	char *mp;
 	size_t n;
 	bool read_only;
 	int i, ret;
 	super_block *sb;
 
 	if (!dev || !target)
+		return NULL;
+
+	mp = name_get();
+	if (!mp)
 		return NULL;
 
 	memset(loop_auto, 0, sizeof(loop_auto));
@@ -971,8 +1054,10 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	/* 3. Not a known block device — treat dev as a file path and auto-loop */
 	{
 		const char *ln = loop_setup(dev);
-		if (!ln)
+		if (!ln) {
+			name_put(mp);
 			return NULL;
+		}
 		strncpy(loop_auto, ln, sizeof(loop_auto) - 1);
 		dev_name = loop_auto;
 	}
@@ -993,6 +1078,7 @@ dev_found:
 	if (ret != EOK) {
 		if (loop_auto[0])
 			loop_teardown(loop_auto);
+		name_put(mp);
 		return NULL;
 	}
 
@@ -1000,6 +1086,7 @@ dev_found:
 		ext4_cache_write_back(mp, true);
 
 	sb = ext4_new_sb(mp, dev_name);
+	name_put(mp);
 
 	/* For auto-looped mounts: record for teardown and show /dev/loopN
 	 * in /proc/mounts (fs_do_mount won't overwrite a pre-set s_devname). */

@@ -51,5 +51,4 @@ data=$(cat "$DST" 2>/dev/null) || fail "cat destination after replace failed"
 expect_eq "src" "$data" "destination contents after replace"
 
 mkdir "$SUB" >/dev/null 2>&1 || fail "mkdir sub failed"
-printf 'x\n' > "$DIR/file.txt"
-expect_failure mv "$DIR/file.txt" "$SUB"
+expect_failure mv "$DIR" "$SUB/child"

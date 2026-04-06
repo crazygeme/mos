@@ -167,6 +167,8 @@ static void parse_kernel_cmdline()
 			TestControl.profiling = 1;
 		else if (strcmp(token, "bash") == 0)
 			TestControl.bash = 1;
+		else if (strcmp(token, "test") == 0)
+			TestControl.test = 1;
 
 		token = end;
 	} while (1);

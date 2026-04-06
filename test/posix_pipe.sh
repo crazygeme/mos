@@ -29,6 +29,7 @@ mkdir -p "$BASE" >/dev/null 2>&1 || fail "mkdir failed"
 printf 'alpha\nbeta\n' > "$FILE"
 
 count=$(cat "$FILE" | wc -l 2>/dev/null) || fail "pipeline cat|wc failed"
+count=$(printf '%s\n' "$count" | tr -d ' ') || fail "trim wc output failed"
 expect_eq "2" "$count" "line count through pipe"
 
 first=$(cat "$FILE" | head -n 1 2>/dev/null) || fail "pipeline cat|head failed"

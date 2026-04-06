@@ -88,9 +88,10 @@
 #define DIE()                                      \
 	({                                         \
 		printf("\nDIE at %s\n", __func__); \
-		for (;;) {                         \
-			HLT();                     \
-		}                                  \
+		OUT_PORT(0xf4, 0x7f);            \
+		for (;;) {                        \
+			HLT();                    \
+		}                                 \
 	})
 
 /* In .multiboot section we can not call port_write_xxx functions */

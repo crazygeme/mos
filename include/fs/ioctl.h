@@ -36,6 +36,15 @@
 #define TIOCCONS 0x541D
 #define TIOCGSERIAL 0x541E
 #define TIOCSSERIAL 0x541F
+#define TIOCPKT 0x5420
+
+#define TIOCPKT_DATA 0x00
+#define TIOCPKT_FLUSHREAD 0x01
+#define TIOCPKT_FLUSHWRITE 0x02
+#define TIOCPKT_STOP 0x04
+#define TIOCPKT_START 0x08
+#define TIOCPKT_NOSTOP 0x10
+#define TIOCPKT_DOSTOP 0x20
 /* KD (keyboard/display) ioctls */
 #define KDGKBTYPE 0x4B33 /* get keyboard type */
 #define KDGKBMODE 0x4B44 /* get keyboard mode */

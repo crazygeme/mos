@@ -7,4 +7,6 @@ void pf_enable();
 
 void pf_disable();
 
+void pf_invalidate_file_cache(unsigned ino);
+
 #endif

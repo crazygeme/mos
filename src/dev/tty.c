@@ -86,6 +86,7 @@ typedef struct {
 	/* alternate screen buffer for ?1049h/l */
 	tty_cell_t *alt_cells;
 	int alt_cursor;
+	int alt_active;
 	/* current foreground/background colors (set by SGR escape sequences) */
 	unsigned fg_color;
 	unsigned bg_color;
@@ -355,6 +356,7 @@ static void tty_enter_alt_screen(tty_state *state)
 		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
 	state->cursor = 0;
+	state->alt_active = 1;
 	if (state->tty_idx == active_tty_idx)
 		fb_clear_screen();
 	tty_hw_cursor(state, 0);
@@ -368,6 +370,7 @@ static void tty_exit_alt_screen(tty_state *state)
 		return;
 	memcpy(state->cells, state->alt_cells, sz * sizeof(tty_cell_t));
 	state->cursor = state->alt_cursor;
+	state->alt_active = 0;
 	if (state->tty_idx == active_tty_idx)
 		fb_redraw(state->cells, state->max_col, state->max_row,
 			  (unsigned)state->cursor);
@@ -928,6 +931,7 @@ void tty_init(void)
 		t->scroll_top = 0;
 		t->scroll_bot = (int)t->max_row - 1;
 		t->saved_cursor = 0;
+		t->alt_active = 0;
 		t->fg_color = VGA_COLOR_WHITE;
 		t->bg_color = VGA_COLOR_BLACK;
 		t->kb_mode = K_XLATE;
@@ -977,6 +981,80 @@ void tty_default_clear(void)
 	tty_do_clear(this_ttys);
 	this_ttys->cursor = 0;
 	spinlock_unlock(&this_ttys->lock, irq);
+}
+
+char *tty_test_snapshot(unsigned *len_out)
+{
+	tty_state *state;
+	tty_cell_t *cells;
+	char *buf;
+	char *p;
+	unsigned rows, cols, cell_count;
+	unsigned size;
+	int irq;
+	int cursor, saved_cursor, scroll_top, scroll_bot;
+	int cursor_hidden, no_wrap, alt_active;
+	unsigned fg, bg;
+	unsigned r, c;
+
+	if (len_out)
+		*len_out = 0;
+
+	state = this_ttys;
+	if (!state)
+		return NULL;
+
+	rows = state->max_row;
+	cols = state->max_col;
+	cell_count = rows * cols;
+	cells = kmalloc(cell_count * sizeof(*cells));
+	if (!cells)
+		return NULL;
+
+	spinlock_lock(&state->lock, &irq);
+	memcpy(cells, state->cells, cell_count * sizeof(*cells));
+	cursor = state->cursor;
+	saved_cursor = state->saved_cursor;
+	scroll_top = state->scroll_top;
+	scroll_bot = state->scroll_bot;
+	cursor_hidden = state->cursor_hidden;
+	no_wrap = state->no_wrap;
+	alt_active = state->alt_active;
+	fg = state->fg_color;
+	bg = state->bg_color;
+	spinlock_unlock(&state->lock, irq);
+
+	size = 256 + cell_count * 48;
+	buf = kmalloc(size);
+	if (!buf) {
+		kfree(cells);
+		return NULL;
+	}
+
+	p = buf;
+	p += sprintf(p,
+		     "meta rows=%u cols=%u cursor_row=%u cursor_col=%u "
+		     "saved_row=%u saved_col=%u scroll_top=%d scroll_bot=%d "
+		     "cursor_hidden=%d no_wrap=%d alt_active=%d fg=%x bg=%x\n",
+		     rows, cols, (unsigned)(cursor / (int)cols),
+		     (unsigned)(cursor % (int)cols),
+		     (unsigned)(saved_cursor / (int)cols),
+		     (unsigned)(saved_cursor % (int)cols), scroll_top,
+		     scroll_bot, cursor_hidden, no_wrap, alt_active, fg, bg);
+	for (r = 0; r < rows; r++) {
+		for (c = 0; c < cols; c++) {
+			tty_cell_t *cell = &cells[r * cols + c];
+			p += sprintf(p,
+				     "cell %u %u ch=%02x fg=%x bg=%x\n",
+				     r, c, (unsigned char)cell->ch,
+				     cell->fg, cell->bg);
+		}
+	}
+
+	if (len_out)
+		*len_out = (unsigned)(p - buf);
+	kfree(cells);
+	return buf;
 }
 
 /* ── Active TTY keyboard input ───────────────────────────────────────────── */

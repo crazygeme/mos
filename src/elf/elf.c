@@ -213,14 +213,35 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		 * vaddr is not page-aligned (uncommon — only produced by some
 		 * older or hand-crafted linker scripts).  Fall back to a single
 		 * anonymous mapping over the full page range and copy the file
-		 * data eagerly.  BSS bytes (vaddr+filesz .. last_bss) are left
-		 * zero by the anonymous page-fault zero-fill.
+		 * data eagerly.
+		 *
+		 * The aligned file offset must match the aligned virtual address:
+		 * bytes in the leading partial page [va_begin, vaddr) still come
+		 * from the file page that contains p_offset, even though they sit
+		 * below the segment's nominal start address.  Some dynamic
+		 * linkers dereference through page-aligned views of this segment,
+		 * so dropping that leading file fragment breaks small ET_EXEC
+		 * binaries whose RW PT_LOAD begins mid-page.
+		 *
+		 * BSS bytes beyond the copied file image remain zero because the
+		 * backing mapping is anonymous zero-fill.
 		 */
 		unsigned map_size = mem_pages_end - va_begin;
-		unsigned mapped = do_mmap_kernel(
-			va_begin, map_size, prot | PROT_WRITE, MAP_FIXED, 0, 0);
-		if (filesz > 0)
-			elf_read(fp, file_off, (void *)vaddr, filesz);
+		unsigned file_begin = file_off & PAGE_SIZE_MASK;
+		unsigned copy_size = filesz + (vaddr - va_begin);
+		unsigned mapped;
+		unsigned page;
+
+		mapped = do_mmap_kernel(va_begin, map_size, prot | PROT_WRITE,
+					MAP_FIXED, 0, 0);
+		for (page = va_begin; page < va_begin + map_size;
+		     page += PAGE_SIZE) {
+			mm_map_page(page, 0, PAGE_ENTRY_USER_DATA);
+			INVLPG(page);
+			memset((void *)page, 0, PAGE_SIZE);
+		}
+		if (copy_size > 0)
+			elf_read(fp, file_begin, (void *)va_begin, copy_size);
 		do_mmap_update(mapped, prot, 0);
 	}
 }

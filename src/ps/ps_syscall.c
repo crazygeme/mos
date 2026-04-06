@@ -112,6 +112,11 @@ static void system_down()
 	hdd_close();
 }
 
+void qemu_exit(unsigned char code)
+{
+	port_write_byte(0xf4, code);
+}
+
 /* Internal: exit with an already-encoded waitpid status word. */
 /* Reparent all children of cur to init (pid 1). Must be called without
  * ps_lock held. Living children get a new parent; zombie children also
@@ -183,8 +188,20 @@ void do_exit(unsigned encoded_status)
 		printk("fatal error! process 0 exit\n");
 		DIE();
 	}
-	if (cur->psid == 1)
+	if (cur->psid == 1) {
+		if (TestControl.test) {
+			unsigned char code =
+				(unsigned char)((encoded_status >> 8) & 0xff);
+			printf("test mode: init exited with status %u\n", code);
+			int_intr_enable();
+			system_down();
+			int_intr_disable();
+			qemu_exit(code);
+			for (;;)
+				HLT();
+		}
 		shutdown();
+	}
 
 	/* ps_put_to_dying_queue queues SIGCHLD on the parent atomically. */
 	ps_reparent_children(cur);
@@ -391,7 +408,7 @@ void shutdown()
 	for (p = s; *p != '\0'; p++)
 		port_write_byte(0x8900, *p);
 
-	port_write_byte(0xf4, 0x00);
+	qemu_exit(0x00);
 
 	printf("still running...\n");
 	for (;;)

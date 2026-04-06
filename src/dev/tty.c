@@ -1042,6 +1042,7 @@ static void tty_bash_spawner(void *p)
 
 	/* Set working directory. */
 	strcpy(cur->user->cwd, "/root");
+	strcpy(cur->user->root_path, "/");
 
 	/* Set up TSS esp0 for user-mode entry. */
 	ps_update_tss((unsigned)cur + PAGE_SIZE);

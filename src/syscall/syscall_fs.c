@@ -59,6 +59,46 @@ static int format_modes(unsigned mode, char *str)
 	return 0;
 }
 
+static void trim_trailing_slash(char *path)
+{
+	int len = strlen(path);
+
+	while (len > 1 && path[len - 1] == '/') {
+		path[len - 1] = '\0';
+		len--;
+	}
+}
+
+static int rooted_path_to_cwd(task_struct *cur, const char *path, char *cwd)
+{
+	const char *root_path = "/";
+	int root_len;
+
+	if (cur && cur->user && cur->user->root_path && cur->user->root_path[0])
+		root_path = cur->user->root_path;
+
+	if (!strcmp(root_path, "/")) {
+		strcpy(cwd, path);
+		trim_trailing_slash(cwd);
+		return 0;
+	}
+
+	root_len = strlen(root_path);
+	if (strncmp(path, root_path, root_len) != 0)
+		return -ENOENT;
+
+	if (path[root_len] == '\0') {
+		strcpy(cwd, "/");
+		return 0;
+	}
+	if (path[root_len] != '/')
+		return -ENOENT;
+
+	strcpy(cwd, path + root_len);
+	trim_trailing_slash(cwd);
+	return 0;
+}
+
 static int do_stat(const char *func, const char *name, struct stat *buf,
 		   int flag)
 {
@@ -631,12 +671,17 @@ int sys_chdir(const char *path)
 {
 	task_struct *cur = CURRENT_TASK();
 	char *cwd = name_get();
+	char *full = name_get();
 	const char *p;
 	struct stat s;
 	int ret = 0;
 
 	if (!path || !*path) {
 		ret = -ENOENT;
+		goto done;
+	}
+	if (!cur || !cur->user || !cur->user->cwd) {
+		ret = -EINVAL;
 		goto done;
 	}
 
@@ -689,7 +734,8 @@ int sys_chdir(const char *path)
 			memcpy(cwd + len, p, comp_len);
 			cwd[len + comp_len] =
 				'\0'; /* no trailing slash: allows symlink following */
-			if (do_stat(NULL, cwd, &s, O_PATH) != EOK) {
+			resolve_path(cwd, full);
+			if (do_stat(NULL, full, &s, O_PATH) != EOK) {
 				ret = -ENOENT;
 				goto done;
 			}
@@ -703,8 +749,10 @@ int sys_chdir(const char *path)
 		p = end;
 	}
 
+	trim_trailing_slash(cwd);
 	strcpy(cur->user->cwd, cwd);
 done:
+	name_put(full);
 	name_put(cwd);
 	return ret;
 }
@@ -714,6 +762,9 @@ int sys_fchdir(int fd)
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
 	file *fp;
+
+	if (!cur || !cur->user || !cur->user->cwd)
+		return -EINVAL;
 
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
@@ -725,7 +776,61 @@ int sys_fchdir(int fd)
 		return -ENOTDIR;
 
 	fp = cur->fds[fd].fp;
-	return sys_chdir(fp->f_name);
+	if (!fp || !fp->f_name)
+		return -EBADF;
+	{
+		char *cwd = name_get();
+		int ret = rooted_path_to_cwd(cur, fp->f_name, cwd);
+		if (ret == 0)
+			strcpy(cur->user->cwd, cwd);
+		name_put(cwd);
+		return ret;
+	}
+}
+
+int sys_chroot(const char *path)
+{
+	task_struct *cur = CURRENT_TASK();
+	char *name = name_get();
+	struct stat s;
+	int ret;
+
+	if (!path || !*path) {
+		ret = -ENOENT;
+		goto done;
+	}
+	if (!cur || !cur->user || !cur->user->cwd || !cur->user->root_path) {
+		ret = -EINVAL;
+		goto done;
+	}
+
+	if (cur->user->euid != 0) {
+		ret = -EPERM;
+		goto done;
+	}
+
+	if (TestControl.verbos)
+		klog("chroot(%s)\n", path);
+
+	resolve_path(path, name);
+	ret = do_stat(NULL, name, &s, O_PATH);
+	if (ret != EOK) {
+		ret = -ENOENT;
+		goto done;
+	}
+	if (!S_ISDIR(s.st_mode)) {
+		ret = -ENOTDIR;
+		goto done;
+	}
+
+	trim_trailing_slash(name);
+	strcpy(cur->user->root_path, name[0] ? name : "/");
+	strcpy(cur->user->cwd, "/");
+	ret = 0;
+
+done:
+	name_put(name);
+	return ret;
 }
 
 int sys_flock(int fd, int operation)

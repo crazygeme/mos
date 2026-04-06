@@ -45,4 +45,10 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
  */
 int fs_do_umount(const char *target, int flags);
 
+/*
+ * fs_sync_super - flush filesystem-managed dirty state for one mounted
+ * super_block. Filesystems without explicit sync support may return 0.
+ */
+int fs_sync_super(const super_block *sb);
+
 #endif

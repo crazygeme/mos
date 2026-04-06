@@ -663,6 +663,7 @@ int sys_sync()
 	if (TestControl.verbos)
 		klog("sync()\n");
 
+	fs_sync_super(current->root);
 	hdd_flush();
 	return 0;
 }

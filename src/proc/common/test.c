@@ -3,17 +3,18 @@
  *
  * Provides three virtual filesystem objects:
  *
- *   /proc/tests/              — directory listing all suites + ".runner"
- *   /proc/tests/.runner        — write a filter to run matching tests
- *   /proc/tests/<SuiteName>   — read to get a one-line runnable script
+ *   /proc/tests/             - directory listing all suites, scripts, ".runner"
+ *   /proc/tests/.runner      - write a filter to run matching tests
+ *   /proc/tests/<name>       - read a runnable shell script
  *
  * Filter syntax for /proc/tests/.runner (same as old /proc/test):
  *
- *   echo all         > /proc/tests/.runner   # run everything  (also: "1")
- *   echo MallocTest  > /proc/tests/.runner   # exact suite name
- *   echo Malloc*     > /proc/tests/.runner   # glob pattern
+ *   echo all        > /proc/tests/.runner   # run everything  (also: "1")
+ *   echo MallocTest > /proc/tests/.runner   # exact suite name
+ *   echo Malloc*    > /proc/tests/.runner   # glob pattern
  *
- * Each per-suite file contains the shell command that would run it:
+ * Each suite file contains the shell command that would run it. Extra shell
+ * scripts can also be registered via KTEST_SCRIPT and appear here directly.
  *
  *   $ cat /proc/tests/MallocTest
  *   echo MallocTest > /proc/tests/.runner
@@ -70,6 +71,19 @@ static int count_tests(const char *suite_pat)
 		if (strglob(suite_pat, t->suite))
 			n++;
 	return n;
+}
+
+static ktest_script_t *find_script(const char *name)
+{
+	ktest_script_t *script;
+
+	for (script = __ktest_script_start; script < __ktest_script_end;
+	     script++) {
+		if (strcmp(script->name, name) == 0)
+			return script;
+	}
+
+	return NULL;
 }
 
 /* ── Test .runner ─────────────────────────────────────────────────────────── */
@@ -224,59 +238,6 @@ static file *make_runner_file(void)
 	return fp;
 }
 
-/* ── /proc/tests/loopdev — bash integration test ─────────────────────────── */
-
-static const char loopdev_script[] =
-	"#!/bin/sh\n"
-	"# loopdev integration test — runs entirely inside MOS\n"
-	"# requires: dd, mkfs.ext3, mount, umount\n"
-	"\n"
-	"set -e\n"
-	"IMG=/root/test.img\n"
-	"MNT=/root/mnt\n"
-	"\n"
-	"echo '--- loopdev test ---'\n"
-	"\n"
-	"echo '[1] create 16 MiB image'\n"
-	"rm -rf \"$IMG\" \"$MNT\"\n"
-	"dd if=/dev/zero of=\"$IMG\" bs=1M count=16\n"
-	"\n"
-	"echo '[2] format as ext3'\n"
-	"mkfs.ext3 -F \"$IMG\"\n"
-	"\n"
-	"echo '[3] mount (auto-loop)'\n"
-	"mkdir -p \"$MNT\"\n"
-	"mount -o loop \"$IMG\" \"$MNT\"\n"
-	"\n"
-	"echo '[4] /proc/partitions (expect loop0):'\n"
-	"cat /proc/partitions\n"
-	"\n"
-	"echo '[5] /proc/mounts (expect /dev/loop0):'\n"
-	"cat /proc/mounts\n"
-	"\n"
-	"echo '[6] write and read back a file'\n"
-	"echo 'loop_ok' > \"$MNT/hello.txt\"\n"
-	"cat \"$MNT/hello.txt\"\n"
-	"\n"
-	"echo '[7] umount'\n"
-	"umount \"$MNT\"\n"
-	"\n"
-	"echo '[8] /proc/partitions (loop0 gone):'\n"
-	"cat /proc/partitions\n"
-	"\n"
-	"echo '[9] check hello.txt is gone from $MNT'\n"
-	"if [ -e \"$MNT/hello.txt\" ]; then\n"
-	"  echo 'ERROR: hello.txt still exists after umount'\n"
-	"  exit 1\n"
-	"fi\n"
-	"\n"
-	"echo '[10] remount and verify persistence'\n"
-	"mount -o loop \"$IMG\" \"$MNT\"\n"
-	"cat \"$MNT/hello.txt\"\n"
-	"umount \"$MNT\"\n"
-	"\n"
-	"echo '--- PASS ---'\n";
-
 /* ── /proc/tests/<SuiteName> — read-only script ──────────────────────────── */
 
 /*
@@ -343,6 +304,62 @@ static file *make_static_file(const char *content)
 	return fp;
 }
 
+static file *make_wrapped_script_file(const char *script_name, const char *body)
+{
+	static const char prefix[] =
+		"#!/bin/sh\n"
+		"__ktest_name='";
+	static const char middle[] =
+		"'\n"
+		"read __ktest_up _ < /proc/uptime\n"
+		"__ktest_start_s=${__ktest_up%%.*}\n"
+		"__ktest_start_cs=${__ktest_up#*.}\n"
+		"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
+		"echo \"[ RUN      ] script.${__ktest_name}\"\n"
+		"(\n";
+	static const char suffix[] =
+		"\n"
+		") > \"$__ktest_log\" 2>&1\n"
+		"__ktest_rc=$?\n"
+		"read __ktest_up _ < /proc/uptime\n"
+		"__ktest_end_s=${__ktest_up%%.*}\n"
+		"__ktest_end_cs=${__ktest_up#*.}\n"
+		"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
+		"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
+		"if [ \"$__ktest_rc\" -eq 0 ]; then\n"
+		"  echo \"[       OK ] script.${__ktest_name} "
+		"(${__ktest_elapsed_ms} ms)\"\n"
+		"else\n"
+		"  echo \"script.${__ktest_name}: Failure\"\n"
+		"  if [ -s \"$__ktest_log\" ]; then\n"
+		"    while IFS= read -r __ktest_line; do\n"
+		"      echo \"  $__ktest_line\"\n"
+		"    done < \"$__ktest_log\"\n"
+		"  else\n"
+		"    echo \"  script exited with status $__ktest_rc\"\n"
+		"  fi\n"
+		"  echo \"[  FAILED  ] script.${__ktest_name} "
+		"(${__ktest_elapsed_ms} ms)\"\n"
+		"fi\n"
+		"rm -f \"$__ktest_log\"\n"
+		"exit $__ktest_rc\n";
+	unsigned name_len = strlen(script_name);
+	unsigned body_len = strlen(body);
+	unsigned total = sizeof(prefix) - 1 + name_len + sizeof(middle) - 1 +
+			 body_len + sizeof(suffix) - 1;
+	char *content = kmalloc(total + 1);
+
+	strcpy(content, prefix);
+	strcat(content, script_name);
+	strcat(content, middle);
+	strcat(content, body);
+	strcat(content, suffix);
+
+	file *fp = make_static_file(content);
+	kfree(content);
+	return fp;
+}
+
 static file *make_suite_file(const char *suite_name)
 {
 	/* "#!/bin/sh\necho <name> > /proc/tests/.runner\n" */
@@ -371,6 +388,59 @@ static file *make_suite_file(const char *suite_name)
 	node->i_private = ss;
 
 	file *fp = zalloc(sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &suite_fops;
+	return fp;
+}
+
+static file *make_all_script_file(void)
+{
+	static const char shebang[] = "#!/bin/sh\n";
+	ktest_script_t *script;
+	unsigned total = sizeof(shebang) - 1;
+	char *content;
+	suite_script_t *ss;
+	inode *node;
+	file *fp;
+
+	for (script = __ktest_script_start; script < __ktest_script_end;
+	     script++) {
+		total += sizeof("if /proc/tests/; then\nelse\n__ktest_fail=1\nfi\n") -
+			 1;
+		total += sizeof("/proc/tests/") - 1;
+		total += strlen(script->name);
+	}
+	total += sizeof("__ktest_fail=0\nexit $__ktest_fail\n") - 1;
+
+	content = kmalloc(total + 1);
+	strcpy(content, shebang);
+	strcat(content, "__ktest_fail=0\n");
+
+	for (script = __ktest_script_start; script < __ktest_script_end;
+	     script++) {
+		strcat(content, "if /proc/tests/");
+		strcat(content, script->name);
+		strcat(content, "; then\n");
+		strcat(content, ":\n");
+		strcat(content, "else\n");
+		strcat(content, "__ktest_fail=1\n");
+		strcat(content, "fi\n");
+	}
+	strcat(content, "exit $__ktest_fail\n");
+
+	ss = zalloc(sizeof(*ss));
+	ss->content = content;
+	ss->length = total;
+
+	node = zalloc(sizeof(*node));
+	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
+		       S_IXGRP | S_IXOTH;
+	node->i_size = total;
+	node->i_op = &tests_iops;
+	node->i_private = ss;
+
+	fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &suite_fops;
@@ -424,12 +494,20 @@ static file *tests_open_root(super_block *sb, int flag)
 	size += ROUND_UP(NAME_OFFSET() + 3); /* ".."      (2 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 7); /* ".runner" (6 + NUL) */
 	size += ROUND_UP(NAME_OFFSET() + 4); /* "all"     (3 + NUL) */
-	size += ROUND_UP(NAME_OFFSET() + 8); /* "loopdev" (7 + NUL) */
+	size += ROUND_UP(NAME_OFFSET() + 11); /* "all_script" (10 + NUL) */
 
 	t = __ktest_start;
 	while (t < __ktest_end) {
 		size += ROUND_UP(NAME_OFFSET() + strlen(t->suite) + 1);
 		t += count_suite(t);
+	}
+
+	{
+		ktest_script_t *script;
+
+		for (script = __ktest_script_start; script < __ktest_script_end;
+		     script++)
+			size += ROUND_UP(NAME_OFFSET() + strlen(script->name) + 1);
 	}
 
 	/* ── Allocate and fill ── */
@@ -441,12 +519,20 @@ static file *tests_open_root(super_block *sb, int flag)
 	FILL_ENTRY("..", PROC_INODE);
 	FILL_ENTRY(".runner", PROC_INODE);
 	FILL_ENTRY("all", PROC_INODE);
-	FILL_ENTRY("loopdev", PROC_INODE);
+	FILL_ENTRY("all_script", PROC_INODE);
 
 	t = __ktest_start;
 	while (t < __ktest_end) {
 		FILL_ENTRY(t->suite, PROC_INODE);
 		t += count_suite(t);
+	}
+
+	{
+		ktest_script_t *script;
+
+		for (script = __ktest_script_start; script < __ktest_script_end;
+		     script++)
+			FILL_ENTRY(script->name, PROC_INODE);
 	}
 
 	td = zalloc(sizeof(*td));
@@ -484,11 +570,19 @@ static file *tests_open(super_block *sb, const char *path, int flag)
 	if (strcmp(name, ".runner") == 0)
 		return make_runner_file();
 
-	if (strcmp(name, "loopdev") == 0)
-		return make_static_file(loopdev_script);
-
 	if (strcmp(name, "all") == 0)
 		return make_suite_file("all");
+
+	if (strcmp(name, "all_script") == 0)
+		return make_all_script_file();
+
+	{
+		ktest_script_t *script = find_script(name);
+
+		if (script != NULL)
+			return make_wrapped_script_file(script->name,
+						      script->content);
+	}
 
 	t = __ktest_start;
 	while (t < __ktest_end) {
@@ -509,7 +603,8 @@ static const super_operations tests_sops = {
 
 static void tests_proc_register(super_block *proc_sb)
 {
-	if ((unsigned)__ktest_start != (unsigned)__ktest_end)
+	if ((unsigned)__ktest_start != (unsigned)__ktest_end ||
+	    (unsigned)__ktest_script_start != (unsigned)__ktest_script_end)
 		vfs_mount(proc_sb, "/tests", sget(&tests_sops));
 }
 

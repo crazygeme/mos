@@ -37,6 +37,14 @@ typedef struct {
 extern ktest_t __ktest_start[];
 extern ktest_t __ktest_end[];
 
+typedef struct {
+	const char *name;
+	const char *content;
+} ktest_script_t;
+
+extern ktest_script_t __ktest_script_start[];
+extern ktest_script_t __ktest_script_end[];
+
 /* ── KTEST(Suite, Name) — defines and registers a test ───────────────────── *
  *
  * Expands to a forward declaration, a section-placed ktest_t, and the
@@ -53,6 +61,18 @@ extern ktest_t __ktest_end[];
 			#suite, #name, _ktest_fn_##suite##_##name \
 		};                                                \
 	static int _ktest_fn_##suite##_##name(void)
+
+#define __KTEST_SCRIPT_CAT2(a, b) a##b
+#define __KTEST_SCRIPT_CAT(a, b) __KTEST_SCRIPT_CAT2(a, b)
+
+#define KTEST_SCRIPT(name, content) KTEST_SCRIPT_NAMED(#name, content)
+
+#define KTEST_SCRIPT_NAMED(name_literal, content)                           \
+	static const ktest_script_t                                         \
+		__KTEST_SCRIPT_CAT(_ktest_script_entry_, __LINE__)           \
+			__attribute__((used, section(".ktest_script"))) = { \
+				name_literal, content                        \
+			}
 
 /* ── Non-fatal failure accumulator (set by EXPECT_*, read by .runner) ─────── */
 

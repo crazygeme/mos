@@ -70,7 +70,29 @@ void klog_close(void)
 
 static void putstr_to_str(char *str, void *ctx)
 {
-	strcat(ctx, str);
+	struct {
+		char *buf;
+		unsigned len;
+	} *out = ctx;
+	unsigned n;
+
+	if (!str || !*str)
+		return;
+
+	n = strlen(str);
+	if (out->buf)
+		memcpy(out->buf + out->len, str, n);
+	out->len += n;
+}
+
+static void putstr_count(char *str, void *ctx)
+{
+	unsigned *count = ctx;
+
+	if (!str || !*str)
+		return;
+
+	*count += strlen(str);
 }
 
 /* ── Human-readable size (%h specifier) ─────────────────────────────────── */
@@ -395,9 +417,19 @@ void vprintf(const char *fmt, va_list ap)
 
 int vsprintf(char *buf, const char *fmt, va_list ap)
 {
-	buf[0] = '\0';
-	kvformat(putstr_to_str, fmt, ap, buf);
-	return (int)strlen(buf);
+	if (!buf) {
+		unsigned len = 0;
+		kvformat(putstr_count, fmt, ap, &len);
+		return (int)len;
+	} else {
+		struct {
+			char *buf;
+			unsigned len;
+		} out = { .buf = buf, .len = 0 };
+		kvformat(putstr_to_str, fmt, ap, &out);
+		out.buf[out.len] = '\0';
+		return (int)out.len;
+	}
 }
 
 /* printf/sprintf are the variadic shims that set up a va_list and delegate. */

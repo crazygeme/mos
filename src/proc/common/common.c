@@ -20,7 +20,7 @@ proc_buf_t *proc_buf_new(void)
 	proc_buf_t *pb = malloc(sizeof(*pb));
 	pb->cap = 512;
 	pb->len = 0;
-	pb->buf = (char *)malloc(pb->cap);
+	pb->buf = (char *)kmalloc(pb->cap);
 	pb->buf[0] = '\0';
 	return pb;
 }
@@ -31,29 +31,30 @@ void proc_buf_free(proc_buf_t *pb)
 		return;
 
 	if (pb->buf)
-		free(pb->buf);
+		kfree(pb->buf);
 
 	free(pb);
 }
 
 void proc_buf_printf(proc_buf_t *pb, const char *fmt, ...)
 {
-	char *tmp = malloc(512);
 	va_list ap;
+	va_list ap_copy;
 	int n;
 
 	va_start(ap, fmt);
-	n = vsprintf(tmp, fmt, ap);
+	ap_copy = ap;
+	n = vsprintf(NULL, fmt, ap);
 	va_end(ap);
 
 	if (n <= 0)
 		goto done;
 
 	proc_buf_ensure(pb, (size_t)n);
-	memcpy(pb->buf + pb->len, tmp, (size_t)n + 1);
+	vsprintf(pb->buf + pb->len, fmt, ap_copy);
 	pb->len += (size_t)n;
 done:
-	free(tmp);
+	va_end(ap_copy);
 }
 
 void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len)

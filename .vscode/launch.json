@@ -19,6 +19,22 @@
             "osx": {
                 "MIMode": "gdb"
             }
+        },
+        {
+            "name": "attach-test",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/out/kernel-test.dbg",
+            "miDebuggerServerAddress": "127.0.0.1:8888",
+            "cwd": "${workspaceRoot}",
+            "externalConsole": true,
+            "stopAtConnect": false,
+            "linux": {
+                "MIMode": "gdb"
+            },
+            "osx": {
+                "MIMode": "gdb"
+            }
         }
     ]
 }

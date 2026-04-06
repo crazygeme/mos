@@ -203,7 +203,7 @@ static const file_operations hdd_dev_fops = {
 
 /* ── cdev dispatch ───────────────────────────────────────────────────────── */
 
-static file *hdd_cdev_open(unsigned rdev, int flag)
+static file *hdd_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 {
 	unsigned idx = MINOR(rdev) - 1; /* minor 1 = hda1, minor 2 = hda2, … */
 

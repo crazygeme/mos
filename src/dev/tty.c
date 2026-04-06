@@ -1439,7 +1439,7 @@ static file *tty_open_state(tty_state *state, int flag)
  *   major 5, minor 0    → /dev/tty  (controlling terminal, mapped to tty1)
  *   major 5, minor 1    → /dev/console (system console, mapped to tty1)
  */
-static file *tty_cdev_open(unsigned rdev, int flag)
+static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 {
 	unsigned major = MAJOR(rdev);
 	unsigned minor = MINOR(rdev);

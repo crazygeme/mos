@@ -76,7 +76,7 @@ int sys_getppid()
 	task_struct *cur = CURRENT_TASK();
 
 	if (TestControl.verbos)
-		klog("getppid\n");
+		klog("getppid() = %d\n", cur->parent->psid);
 
 	return cur->parent->psid;
 }
@@ -86,7 +86,7 @@ int sys_getpgrp(unsigned pid)
 	task_struct *cur = CURRENT_TASK();
 
 	if (TestControl.verbos)
-		klog("getpgrp\n");
+		klog("getpgrp() = %d\n", cur->user->group_id);
 
 	return cur->user->group_id;
 }
@@ -161,34 +161,38 @@ int sys_setsid()
 
 int sys_getuid()
 {
+	task_struct *cur = CURRENT_TASK();
 	if (TestControl.verbos)
-		klog("getuid\n");
+		klog("getuid() = %d\n", cur->user->uid);
 
-	return CURRENT_TASK()->user->uid;
+	return cur->user->uid;
 }
 
 int sys_getgid()
 {
+	task_struct *cur = CURRENT_TASK();
 	if (TestControl.verbos)
-		klog("getgid\n");
+		klog("getgid() = %d\n", cur->user->gid);
 
-	return CURRENT_TASK()->user->gid;
+	return cur->user->gid;
 }
 
 int sys_geteuid()
 {
+	task_struct *cur = CURRENT_TASK();
 	if (TestControl.verbos)
-		klog("geteuid\n");
+		klog("geteuid() = %d\n", cur->user->euid);
 
-	return CURRENT_TASK()->user->euid;
+	return cur->user->euid;
 }
 
 int sys_getegid()
 {
+	task_struct *cur = CURRENT_TASK();
 	if (TestControl.verbos)
-		klog("getegid\n");
+		klog("getegid() = %d\n", cur->user->egid);
 
-	return CURRENT_TASK()->user->egid;
+	return cur->user->egid;
 }
 
 /*

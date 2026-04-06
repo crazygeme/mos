@@ -634,6 +634,10 @@ static void kinit_userspace()
 		envp = user_envp;
 		strcpy(cur->user->cwd, "/root");
 
+		/* Sync wall time */
+		printk("rtc: Sync local time\n");
+		time_sync_rtc();
+
 		printk("mnt: Re-mount rootfs (rw)\n");
 		/* Remount root read-write (was mounted ro at boot). */
 		fs_do_mount(hdd_partitions[0].name, "/", "ext4", MS_REMOUNT,
@@ -650,13 +654,9 @@ static void kinit_userspace()
 		/* Mount shared-memory tmpfs. */
 		printk("mnt: Mounting tmpfs on /dev/shm\n");
 		fs_do_mount("tmpfs", "/dev/shm", "tmpfs", 0, NULL);
-
-		/* Sync wall time */
-		printk("rtc: Sync local time\n");
-		time_sync_rtc();
 	}
 
-	printk("\033[32mNow bringup first user process %s\033[0m\n", argv[0]);
+	printk("Now bringup first user process %s\n", argv[0]);
 
 	ps_update_tss(esp0);
 

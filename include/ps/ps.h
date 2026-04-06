@@ -174,6 +174,7 @@ typedef struct _user_enviroment {
 	unsigned group_id; /* process group id (pgid) */
 	unsigned session_id; /* session id (sid) */
 	char *cwd;
+	char *root_path; /* absolute chroot prefix within cur->root */
 	/* process credentials */
 	unsigned uid, euid, suid; /* real, effective, saved-set user id */
 	unsigned gid, egid, sgid; /* real, effective, saved-set group id */

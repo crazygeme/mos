@@ -6,11 +6,13 @@
 #include <ps/ps.h>
 #include <hw/time.h>
 #include <config.h>
+#include <errno.h>
 
 /* ---- select(2) implementation ---- */
 
 struct select_ctx {
 	int nfds;
+	size_t set_bytes;
 	/* Snapshots of the caller's input sets (never modified after setup). */
 	fd_set *reads, *writes, *excepts;
 	/* Pointers to the caller's output sets (zeroed and filled each check). */
@@ -23,11 +25,11 @@ static int select_ctx_check(void *arg)
 	int i, ready = 0;
 
 	if (ctx->readfds)
-		FD_ZERO(ctx->readfds);
+		memset(ctx->readfds, 0, ctx->set_bytes);
 	if (ctx->writefds)
-		FD_ZERO(ctx->writefds);
+		memset(ctx->writefds, 0, ctx->set_bytes);
 	if (ctx->exceptfds)
-		FD_ZERO(ctx->exceptfds);
+		memset(ctx->exceptfds, 0, ctx->set_bytes);
 
 	for (i = 0; i < ctx->nfds; i++) {
 		if (ctx->reads && FD_ISSET(i, ctx->reads) &&
@@ -106,31 +108,42 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	int ret;
 	int just_test = 0, infinite = 0;
 	unsigned deadline = 0;
+	size_t set_bytes;
 	task_struct *cur = CURRENT_TASK();
 	sigset_t saved_mask = cur->signal->sig_mask;
 	struct select_ctx ctx;
 
+	if (nfds < 0 || nfds > FD_SETSIZE)
+		return -EINVAL;
+
+	set_bytes = (((unsigned)(nfds ? nfds : 1) + NFDBITS - 1) / NFDBITS) *
+		    sizeof(fd_mask);
+
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.nfds = nfds;
+	ctx.set_bytes = set_bytes;
 
 	if (sigmask)
 		cur->signal->sig_mask = *(sigset_t *)sigmask;
 
 	/* Snapshot the input sets; output sets are filled on each check. */
 	if (readfds) {
-		ctx.reads = zalloc(sizeof(fd_set));
-		memcpy(ctx.reads, readfds, sizeof(fd_set));
+		ctx.reads = zalloc(set_bytes);
+		memcpy(ctx.reads, readfds, set_bytes);
 		ctx.readfds = readfds;
+		memset(ctx.readfds, 0, set_bytes);
 	}
 	if (writefds) {
-		ctx.writes = zalloc(sizeof(fd_set));
-		memcpy(ctx.writes, writefds, sizeof(fd_set));
+		ctx.writes = zalloc(set_bytes);
+		memcpy(ctx.writes, writefds, set_bytes);
 		ctx.writefds = writefds;
+		memset(ctx.writefds, 0, set_bytes);
 	}
 	if (exceptfds) {
-		ctx.excepts = zalloc(sizeof(fd_set));
-		memcpy(ctx.excepts, exceptfds, sizeof(fd_set));
+		ctx.excepts = zalloc(set_bytes);
+		memcpy(ctx.excepts, exceptfds, set_bytes);
 		ctx.exceptfds = exceptfds;
+		memset(ctx.exceptfds, 0, set_bytes);
 	}
 
 	if (timeout) {

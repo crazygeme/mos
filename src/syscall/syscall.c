@@ -109,7 +109,7 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 58  __NR_ulimit
 	0, // 59  __NR_oldolduname
 	sys_umask, // 60  __NR_umask
-	0, // 61  __NR_chroot
+	sys_chroot, // 61  __NR_chroot
 	0, // 62  __NR_ustat
 	sys_dup2, // 63  __NR_dup2
 	sys_getppid, // 64  __NR_getppid

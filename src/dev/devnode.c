@@ -157,17 +157,33 @@ static ssize_t fifonode_write(file *fp, const void *buf, size_t len,
 				   0);
 }
 
-static int fifonode_poll(file *fp, unsigned type)
+static unsigned fifonode_poll_common(cy_buf *b, unsigned events, poll_table *pt)
+{
+	unsigned ready = 0;
+
+	if ((events & FS_POLL_READ) && !cyb_isempty(b))
+		ready |= FS_POLL_READ;
+	if ((events & FS_POLL_WRITE) && !cyb_isfull(b))
+		ready |= FS_POLL_WRITE;
+	if (!ready && pt) {
+		if (events & FS_POLL_READ)
+			cyb_poll_read(b, pt);
+		if (events & FS_POLL_WRITE)
+			cyb_poll_write(b, pt);
+	}
+	return ready;
+}
+
+static unsigned fifonode_read_poll(file *fp, unsigned events, poll_table *pt)
 {
 	cy_buf *b = fp->f_inode->i_private;
+	return fifonode_poll_common(b, events & FS_POLL_READ, pt);
+}
 
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	if (type == FS_POLL_READ)
-		return cyb_isempty(b) ? -1 : 0;
-	if (type == FS_POLL_WRITE)
-		return cyb_isfull(b) ? -1 : 0;
-	return -1;
+static unsigned fifonode_write_poll(file *fp, unsigned events, poll_table *pt)
+{
+	cy_buf *b = fp->f_inode->i_private;
+	return fifonode_poll_common(b, events & FS_POLL_WRITE, pt);
 }
 
 static int fifonode_release_reader(file *fp)
@@ -192,46 +208,16 @@ static const inode_operations fifonode_iops = {
 	.getattr = fifonode_getattr,
 };
 
-static void fifonode_read_poll_wait(file *fp, task_struct *task)
-{
-	cy_buf *b = fp->f_inode->i_private;
-	cyb_set_poll_read(b, task);
-}
-
-static void fifonode_read_poll_wait_remove(file *fp, task_struct *task)
-{
-	cy_buf *b = fp->f_inode->i_private;
-	(void)task;
-	cyb_clear_poll_read(b);
-}
-
-static void fifonode_write_poll_wait(file *fp, task_struct *task)
-{
-	cy_buf *b = fp->f_inode->i_private;
-	cyb_set_poll_write(b, task);
-}
-
-static void fifonode_write_poll_wait_remove(file *fp, task_struct *task)
-{
-	cy_buf *b = fp->f_inode->i_private;
-	(void)task;
-	cyb_clear_poll_write(b);
-}
-
 static const file_operations fifonode_reader_fops = {
 	.release = fifonode_release_reader,
 	.read = fifonode_read,
-	.is_ready = fifonode_poll,
-	.poll_wait = fifonode_read_poll_wait,
-	.poll_wait_remove = fifonode_read_poll_wait_remove,
+	.poll = fifonode_read_poll,
 };
 
 static const file_operations fifonode_writer_fops = {
 	.release = fifonode_release_writer,
 	.write = fifonode_write,
-	.is_ready = fifonode_poll,
-	.poll_wait = fifonode_write_poll_wait,
-	.poll_wait_remove = fifonode_write_poll_wait_remove,
+	.poll = fifonode_write_poll,
 };
 
 /* ------------------------------------------------------------------ *

@@ -49,11 +49,11 @@ done:
 	return read_size;
 }
 
-static int dev_root_poll(file *fp, unsigned type)
+static unsigned dev_root_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT || type == FS_POLL_WRITE)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return (events & FS_POLL_READ) ? FS_POLL_READ : 0;
 }
 
 static int dev_root_getattr(inode *node, struct stat *s)
@@ -89,7 +89,7 @@ static const inode_operations dev_root_iops = {
 
 static const file_operations dev_root_fops = {
 	.read = dev_root_read,
-	.is_ready = dev_root_poll,
+	.poll = dev_root_poll,
 	.release = dev_root_release,
 };
 

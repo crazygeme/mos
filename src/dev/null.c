@@ -24,11 +24,11 @@ static ssize_t null_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-static int null_poll(file *fp, unsigned type)
+static unsigned null_poll(file *fp, unsigned events, poll_table *pt)
 {
-	if (type == FS_POLL_EXCEPT)
-		return -1;
-	return 0;
+	(void)fp;
+	(void)pt;
+	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
 static int null_getattr(inode *node, struct stat *s)
@@ -59,7 +59,7 @@ static const file_operations null_fops = {
 	.release = null_release,
 	.read = null_read,
 	.write = null_write,
-	.is_ready = null_poll,
+	.poll = null_poll,
 };
 
 static file *null_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
@@ -127,7 +127,7 @@ static const file_operations zero_fops = {
 	.release = zero_release,
 	.read = zero_read,
 	.write = zero_write,
-	.is_ready = null_poll,
+	.poll = null_poll,
 };
 
 static file *zero_cdev_open(super_block *dev_sb, unsigned rdev, int flag)

@@ -69,22 +69,23 @@ static void fill(proc_buf_t *pb)
 
 	proc_buf_printf(pb, "major minor  #blocks  name\n\n");
 
-	for (i = 0; i < hdd_partition_count; i++) {
-		hdd_partition_info *pi = &hdd_partitions[i];
+	for (i = 0; i < hdd_partition_total(); i++) {
+		const char *part_name = hdd_partition_name(i);
+		unsigned part_size = hdd_partition_size_sectors(i);
 
-		part_to_disk(pi->name, disk, sizeof(disk));
+		part_to_disk(part_name, disk, sizeof(disk));
 
 		/* Emit whole-disk row when the disk name changes. */
 		if (strcmp(disk, prev_disk) != 0) {
 			int j;
 			disk_sectors = 0;
-			for (j = i; j < hdd_partition_count; j++) {
+			for (j = i; j < hdd_partition_total(); j++) {
 				char d2[32];
-				part_to_disk(hdd_partitions[j].name, d2,
+				part_to_disk(hdd_partition_name(j), d2,
 					     sizeof(d2));
 				if (strcmp(d2, disk) != 0)
 					break;
-				disk_sectors += hdd_partitions[j].size;
+				disk_sectors += hdd_partition_size_sectors(j);
 			}
 			base = disk_minor_base(disk);
 			proc_buf_printf(pb, "%4d %5d %9u %s\n", HDD_MAJOR, base,
@@ -94,8 +95,8 @@ static void fill(proc_buf_t *pb)
 
 		base = disk_minor_base(disk);
 		proc_buf_printf(pb, "%4d %5d %9u %s\n", HDD_MAJOR,
-				base + part_number(pi->name), pi->size / 2,
-				pi->name);
+				base + part_number(part_name), part_size / 2,
+				part_name);
 	}
 
 	/* Loop devices — one row each (no synthetic whole-disk row) */

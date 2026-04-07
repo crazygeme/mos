@@ -13,6 +13,7 @@
  * Block cache: LRU write-back, indexed by 8-sector head groups.
  */
 #include <int/int.h>
+#include <dev/blockdev.h>
 #include <hw/hdd.h>
 #include <hw/pci.h>
 #include <hw/time.h>
@@ -190,9 +191,58 @@ static int hdd_bdev_unlock(struct ext4_blockdev *bdev);
 #define CHANNEL_CNT 2
 static channel channels[CHANNEL_CNT];
 
-/* ── Public partition table ───────────────────────────────────────────────────── */
-hdd_partition_info hdd_partitions[HDD_MAX_PARTITIONS];
-int hdd_partition_count = 0;
+typedef struct {
+	char name[32];
+	unsigned int size;
+	unsigned char part_type;
+	void *aux;
+	int (*read)(void *aux, unsigned sector, void *buf, unsigned len);
+	int (*write)(void *aux, unsigned sector, void *buf, unsigned len);
+	struct ext4_blockdev *bdev;
+} hdd_partition_info;
+
+/* ── Private partition table ─────────────────────────────────────────────────── */
+static hdd_partition_info hdd_partitions[HDD_MAX_PARTITIONS];
+static int hdd_partition_count = 0;
+
+int hdd_partition_total(void)
+{
+	return hdd_partition_count;
+}
+
+const char *hdd_partition_name(unsigned idx)
+{
+	if ((int)idx >= hdd_partition_count)
+		return NULL;
+	return hdd_partitions[idx].name;
+}
+
+unsigned hdd_partition_size_sectors(unsigned idx)
+{
+	if ((int)idx >= hdd_partition_count)
+		return 0;
+	return hdd_partitions[idx].size;
+}
+
+int hdd_partition_read(unsigned idx, unsigned sector, void *buf, unsigned len)
+{
+	hdd_partition_info *pi;
+
+	if ((int)idx >= hdd_partition_count)
+		return -1;
+	pi = &hdd_partitions[idx];
+	return pi->read(pi->aux, sector, buf, len);
+}
+
+int hdd_partition_write(unsigned idx, unsigned sector, void *buf, unsigned len)
+{
+	hdd_partition_info *pi;
+
+	if ((int)idx >= hdd_partition_count)
+		return -1;
+	pi = &hdd_partitions[idx];
+	return pi->write(pi->aux, sector, buf, len);
+}
 
 /* ── I/O statistics ───────────────────────────────────────────────────────────── */
 unsigned disk_read_size = 0;
@@ -1083,6 +1133,9 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 		bdev->aux = pi->aux;
 		pi->bdev = bdev;
 		ext4_device_register(bdev, NULL, name);
+		blockdev_register(name, 3, hdd_partition_count,
+				 (uint64_t)pi->size * BLOCK_SECTOR_SIZE,
+				 BLOCKDEV_FLAG_MOUNTABLE);
 	}
 }
 

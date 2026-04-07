@@ -1,10 +1,10 @@
 #include <elf/exec.h>
 #include <hw/time.h>
 #include <elf/elf.h>
+#include <dev/blockdev.h>
 #include <ps/ps.h>
 #include <int/int.h>
 #include <hw/tty.h>
-#include <hw/hdd.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/vdso.h>
@@ -620,7 +620,12 @@ static void prepare_interactive_userspace(task_struct *cur)
 	time_sync_rtc();
 
 	printk("mnt: Re-mount rootfs (rw)\n");
-	fs_do_mount(hdd_partitions[0].name, "/", "ext4", MS_REMOUNT, NULL);
+	{
+		blockdev_info rootdev;
+		if (blockdev_first_mountable(&rootdev))
+			fs_do_mount(rootdev.name, "/", "ext4", MS_REMOUNT,
+				    NULL);
+	}
 
 	printk("mnt: Mounting proc on /proc\n");
 	fs_do_mount("proc", "/proc", "proc", 0, NULL);

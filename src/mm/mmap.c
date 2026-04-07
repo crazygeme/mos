@@ -102,6 +102,46 @@ static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 }
 
 /*
+ * vm_find_vma_pair - find the region containing @addr, or the next one above.
+ *
+ * The VM tree is ordered by non-overlapping ranges, so a manual rb walk can
+ * mirror Linux's find_vma(): walk left when @addr is below the current region,
+ * walk right when it is at/above the current region's end, and remember the
+ * left-most candidate that begins above @addr.
+ */
+static key_value_pair *vm_find_vma_pair(hash_table *table, unsigned addr)
+{
+	struct rb_node *node = table->root.rb_node;
+	key_value_pair *best = NULL;
+	int irq;
+
+	addr &= PAGE_SIZE_MASK;
+	spinlock_lock(&table->lock, &irq);
+
+	while (node) {
+		key_value_pair *pair = rb_entry(node, key_value_pair, node);
+		vm_region *region = pair->val;
+
+		if (addr < region->begin) {
+			best = pair;
+			node = node->rb_left;
+			continue;
+		}
+
+		if (addr >= region->end) {
+			node = node->rb_right;
+			continue;
+		}
+
+		spinlock_unlock(&table->lock, irq);
+		return pair;
+	}
+
+	spinlock_unlock(&table->lock, irq);
+	return best;
+}
+
+/*
  * vm_coalesce - try to merge the region at @addr with its immediate neighbors.
  *
  * After inserting a new region, check whether the left neighbor (whose end
@@ -311,6 +351,51 @@ vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 	return pair ? pair->val : 0;
 }
 
+vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
+{
+	hash_table *table = vm;
+	key_value_pair *pair;
+
+	addr &= PAGE_SIZE_MASK;
+	pair = vm_find_vma_pair(table, addr);
+	return pair ? pair->val : 0;
+}
+
+void vm_invalidate_user_cache(user_enviroment *user)
+{
+	if (!user)
+		return;
+
+	user->mmap_cache = NULL;
+}
+
+vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
+{
+	vm_region *region;
+
+	if (!user || !user->vm)
+		return NULL;
+
+	addr &= PAGE_SIZE_MASK;
+	region = user->mmap_cache;
+	if (region && region->begin <= addr && addr < region->end)
+		return region;
+
+	region = vm_find_vma(user->vm, addr);
+	user->mmap_cache = region;
+	return region;
+}
+
+vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)
+{
+	vm_region *region = vm_find_vma_cached(user, addr);
+
+	addr &= PAGE_SIZE_MASK;
+	if (region && region->begin <= addr && addr < region->end)
+		return region;
+	return NULL;
+}
+
 /*
  * vm_disc_map - find a free virtual address range of at least @size bytes
  *               within [TASK_UNMAPPED_BASE, KERNEL_OFFSET).
@@ -495,13 +580,14 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	/*
 	 * Assign a unique ID for anonymous MAP_SHARED regions so that all
 	 * processes sharing this mapping (e.g. after fork) can locate the
-	 * same physical pages via the shared_map in pagefault.c.
+	 * same physical pages via the anon_shared_map in pagefault.c.
 	 */
 	if ((flags & MAP_SHARED) && fp == NULL)
 		anon_id = ++g_anon_id_next;
 
 	vm_add_map(cur->user->vm, addr, addr + size, prot, flags, fp, offset,
 		   anon_id);
+	vm_invalidate_user_cache(cur->user);
 
 	if (TestControl.verbos) {
 		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",
@@ -537,6 +623,7 @@ void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags)
 	}
 
 	RELOAD_CR3();
+	vm_invalidate_user_cache(cur->user);
 }
 
 /*
@@ -703,5 +790,6 @@ int do_munmap(void *addr, unsigned length)
 	}
 
 	RELOAD_CR3();
+	vm_invalidate_user_cache(cur->user);
 	return 0;
 }

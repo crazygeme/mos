@@ -6,7 +6,6 @@
 #include <lib/lock.h>
 #include <ps/ps.h>
 #include <hw/hdd.h>
-#include <ext4.h>
 #include <unistd.h>
 #include <macro.h>
 #include <errno.h>

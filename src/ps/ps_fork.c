@@ -346,6 +346,7 @@ static void fork_dup_user_env(task_struct *cur, task_struct *task)
 	task->user->brk = cur->user->brk;
 	task->user->start_brk = cur->user->start_brk;
 	task->user->stack_bottom = cur->user->stack_bottom;
+	task->user->mmap_cache = NULL;
 
 	task->user->command = vm_alloc(1);
 	task->user->cmd_len = cur->user->cmd_len;

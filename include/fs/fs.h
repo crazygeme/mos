@@ -128,6 +128,7 @@ struct _inode {
 	uint64_t i_size;
 	const inode_operations *i_op;
 	void *i_private;
+	void *i_pgcache_tag; /* stable address_space-style identity for page cache */
 
 	/* flock state — lazily initialised on first sys_flock call */
 	int i_flock_inited;

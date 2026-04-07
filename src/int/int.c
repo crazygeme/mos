@@ -4,6 +4,7 @@
 #include <lib/port.h>
 #include <lib/klib.h>
 #include <hw/apic.h>
+#include <hw/cpu.h>
 #include <hw/time.h>
 #include <macro.h>
 #include <errno.h>
@@ -65,6 +66,12 @@ void int_unregister(int vec_no)
 static void ipi_tlb_handler(intr_frame *frame)
 {
 	RELOAD_CR3();
+}
+
+static void ipi_timer_handler(intr_frame *frame)
+{
+	if (ps_enabled() && CURRENT_TASK()->psid != 0xffffffff)
+		CURRENT_TASK()->remain_ticks--;
 }
 
 /* IPI: scheduler kick — wake this CPU from idle so it picks up new work. */
@@ -129,7 +136,8 @@ static void intr_prepare_user_return(intr_frame *frame)
 void intr_handler(intr_frame *frame)
 {
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
-	int is_ipi = (frame->vec_no == IPI_VECTOR_TLB ||
+	int is_ipi = (frame->vec_no == IPI_VECTOR_TIMER ||
+		      frame->vec_no == IPI_VECTOR_TLB ||
 		      frame->vec_no == IPI_VECTOR_SCHED ||
 		      frame->vec_no == IPI_VECTOR_SPURIOUS);
 	int_callback fn = 0;
@@ -218,6 +226,7 @@ void int_enable_all(void)
 	}
 
 	/* Register IPI handlers. */
+	int_register(IPI_VECTOR_TIMER, ipi_timer_handler, 0, 0);
 	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);
 	int_register(IPI_VECTOR_SCHED, ipi_sched_handler, 0, 0);
 	int_register(6, handle_invalid_opcode, 0, 3);

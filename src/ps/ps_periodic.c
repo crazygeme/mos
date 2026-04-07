@@ -64,5 +64,5 @@ void ps_start_system_services(void)
 	if (started)
 		return;
 	started = 1;
-	ps_create(ps_system_service_task, NULL, ps_normal, ps_kernel);
+	ps_create_affine(ps_system_service_task, NULL, ps_normal, ps_kernel, 0);
 }

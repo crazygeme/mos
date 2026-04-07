@@ -1,5 +1,7 @@
 #include <hw/time.h>
 #include <hw/tty.h>
+#include <hw/apic.h>
+#include <hw/cpu.h>
 #include <int/int.h>
 #include <ps/ps.h>
 #include <lib/port.h>
@@ -12,11 +14,33 @@ static unsigned long boot_epoch;
 static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
 static unsigned long rtc_get_time(void);
 
+static void time_tick_current(void)
+{
+	if (ps_enabled() && current->psid != 0xffffffff)
+		current->remain_ticks--;
+}
+
+static void time_broadcast_tick(void)
+{
+	int i;
+	unsigned my_apic;
+
+	if (ncpus <= 1)
+		return;
+
+	my_apic = apic_id();
+	for (i = 0; i < ncpus; i++) {
+		if (!cpus[i].online || cpus[i].apic_id == my_apic)
+			continue;
+		apic_send_ipi(cpus[i].apic_id, IPI_VECTOR_TIMER);
+	}
+}
+
 static void time_process(intr_frame *frame)
 {
 	tickets++;
-	if (ps_enabled())
-		current->remain_ticks--;
+	time_tick_current();
+	time_broadcast_tick();
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

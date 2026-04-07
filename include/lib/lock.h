@@ -9,10 +9,9 @@
  * held so that interrupt handlers on the same CPU cannot dead-lock against
  * kernel code that is spinning.
  *
- * NOTE: on SMP the int_status field is stored in the lock struct, so only
- * one CPU may use spinlock_lock/spinlock_unlock on the same lock instance
- * at a time (which is trivially true because only the holder calls unlock).
- * Contending CPUs spin with interrupts already disabled.
+ * On SMP the caller supplies the per-acquire saved interrupt state, so the
+ * lock object itself remains shareable across CPUs. Contending CPUs spin with
+ * local interrupts disabled until the current holder releases the lock.
  * ===========================================================================*/
 
 typedef volatile struct _spinlock {

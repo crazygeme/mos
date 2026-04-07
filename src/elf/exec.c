@@ -54,7 +54,7 @@ static void cleanup()
 		 * The parent's page directory and vm are untouched.
 		 */
 		new_pd = vm_alloc(1);
-		mm_init_process_page_dir((unsigned int)new_pd);
+		mm_init_task_pagedir(new_pd);
 		cur->user->page_dir = (unsigned int)new_pd;
 		SET_CR3((unsigned)new_pd - KERNEL_OFFSET);
 		cur->user->vm = vm_create();

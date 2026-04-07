@@ -5,6 +5,7 @@
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <ps/ps.h>
+#include <hw/cpu.h>
 #include <fs/cache.h>
 #include <fs/fs.h>
 #include <dev/dev.h>
@@ -529,13 +530,14 @@ static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
 	unsigned error = frame->error_code;
+	unsigned cpu = ps_task_cpu(CURRENT_TASK());
 	task_struct *cur;
 	int int_enable = 0;
 
 	/*
 	 * Save old interrupt state first.
 	 */
-	sched_disable();
+	sched_disable(cpu);
 	int_enable = int_intr_enable();
 
 	/*
@@ -579,7 +581,7 @@ NOT_HANDLED:
 
 	DIE();
 
-Done:
+	Done:
 	int_intr_setlevel(int_enable);
-	sched_enable();
+	sched_enable(cpu);
 }

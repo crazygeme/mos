@@ -19,7 +19,6 @@
 
 #include <macro.h>
 
-static void run(void);
 TEST_CONTROL TestControl;
 
 static void kmain_process(void *param);
@@ -99,22 +98,30 @@ void kmain_startup()
 		smp_start_aps();
 	}
 
-	if (ncpus == 1) {
-		// create idle process for single CPU system
-		ps_create(idle_process, NULL, ps_idle, ps_kernel);
+	// create idle process for cpu0, must have psid == 0
+	ps_create_affine(idle_process, NULL, ps_idle, ps_kernel, 0);
+
+	// create first process, must have psid == 1
+	ps_create_affine(kmain_process, NULL, ps_normal, ps_kernel, 0);
+
+	if (ncpus > 1) {
+		for (int i = 1; i < ncpus; i++) {
+			ps_create_affine(idle_process, NULL, ps_idle, ps_kernel,
+					 i);
+		}
+
+		smp_scheduler_start();
 	}
-	// create first process
-	ps_create(kmain_process, NULL, ps_normal, ps_kernel);
 
 	ps_kickoff();
 
-	run();
+	idle_process(0);
 }
 
 static void idle_process(void *param)
 {
 	while (1) {
-		HLT();
+		PAUSE();
 		task_sched();
 	}
 }
@@ -125,11 +132,6 @@ static void kmain_process(void *param)
 	for (fn = __kinit_start; fn < __kinit_end; fn++)
 		(*fn)();
 
-	run();
-}
-
-static void run()
-{
 	idle_process(0);
 }
 

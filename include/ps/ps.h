@@ -285,6 +285,7 @@ struct _task_struct {
 	signal_context *signal;
 	int priority;
 	int type;
+	unsigned affinity; /* home CPU for scheduler placement */
 	list_entry ps_list; /* dying-queue or wait-queue list node */
 	struct rb_node mgr_rb; /* management-queue RB-tree node */
 	ps_status status;
@@ -382,12 +383,16 @@ void ps_init();
 	_ps_create(fn, #fn, param, priority, type)
 unsigned _ps_create(process_fn fn, const char *name, void *param,
 		    ps_priority priority, ps_type type);
+#define ps_create_affine(fn, param, priority, type, affinity) \
+	_ps_create_affine(fn, #fn, param, priority, type, affinity)
+unsigned _ps_create_affine(process_fn fn, const char *name, void *param,
+			   ps_priority priority, ps_type type, int affinity);
 void ps_start_system_services(void);
 
 void ps_kickoff();
 
 /* Called by each AP after per-CPU setup to enter the scheduler loop. */
-void ps_kickoff_ap(void);
+void ps_kickoff_ap(int cpu_id);
 
 int ps_enabled();
 
@@ -400,19 +405,21 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 void _task_sched(const char *func);
 #define task_sched() _task_sched(__func__)
 
-int sched_enable();
+int sched_enable(unsigned cpu);
 
-int sched_disable();
+int sched_disable(unsigned cpu);
 
-int sched_is_enabled();
+int sched_is_enabled(unsigned cpu);
 
-int sched_set_level(int level);
+int sched_set_level(unsigned cpu, int level);
 
 typedef void (*fpuser_map_callback)(void *aux, unsigned vir, unsigned phy);
 
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
 
 void ps_cleanup_all_user_map(task_struct *task);
+unsigned ps_task_cpu(const task_struct *task);
+unsigned ps_sched_cpu(void);
 
 void ps_put_to_ready_queue_unsafe(task_struct *task);
 void ps_put_to_ready_queue(task_struct *task);

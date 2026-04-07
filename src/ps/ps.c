@@ -11,6 +11,7 @@
 
 #include <ps/ps.h>
 #include <hw/cpu.h>
+#include <hw/apic.h>
 #include <int/int.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
@@ -47,13 +48,23 @@ static spinlock_t psid_lock;
 static unsigned char pid_bitmap[PID_MAX_DEFAULT / 8]; /* 1 bit per PID */
 static unsigned last_pid = (unsigned)-1; /* last successfully allocated PID */
 
-int _ps_enabled = 0;
+int _ps_enabled[MAX_CPUS];
 
 /* Scheduling instrumentation (updated by ps_sched.c). */
 unsigned task_schedule_count = 0;
 
 static tss_io_struct *tss_address_storage = 0;
 tss_struct *tss_address = 0; /* alias used by reset_tss and ps_sched.c */
+
+static tss_struct *ps_current_tss(int id)
+{
+	if (ncpus > 1) {
+		cpu_struct *cpu = &cpus[id];
+		if (cpu && cpu->tss)
+			return cpu->tss;
+	}
+	return (tss_struct *)tss_address_storage;
+}
 
 /*
  * Static helpers — manager queue
@@ -153,11 +164,12 @@ int ps_total_count()
 /* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
 void reset_tss(task_struct *task)
 {
-	tss_io_struct *io_tss = (tss_io_struct *)tss_address;
+	tss_struct *cur_tss = ps_current_tss(ps_task_cpu(task));
+	tss_io_struct *io_tss = (tss_io_struct *)cur_tss;
 
-	tss_address->cr3 = task->cr3;
-	tss_address->esp0 = task->tss.esp0;
-	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
+	cur_tss->cr3 = task->cr3;
+	cur_tss->esp0 = task->tss.esp0;
+	cur_tss->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
 	if (task->io_allow_all) {
 		memset(io_tss->io_bitmap, 0x00, TSS_IO_BITMAP_BYTES);
 	} else if (task->io_bitmap) {
@@ -166,11 +178,15 @@ void reset_tss(task_struct *task)
 		memset(io_tss->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
 	}
 	io_tss->io_bitmap[TSS_IO_BITMAP_BYTES] = 0xff;
-	tss_address->ss0 = KERNEL_DATA_SELECTOR;
-	tss_address->ss = tss_address->gs = tss_address->fs = tss_address->ds =
-		tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
-	tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
-	int_update_tss((unsigned int)tss_address);
+
+	cur_tss->cr3 = task->cr3;
+	cur_tss->esp0 = task->tss.esp0;
+	cur_tss->ss0 = KERNEL_DATA_SELECTOR;
+	cur_tss->ss = cur_tss->gs = cur_tss->fs = cur_tss->ds = cur_tss->es =
+		KERNEL_DATA_SELECTOR | 0x3;
+	cur_tss->cs = KERNEL_CODE_SELECTOR | 0x3;
+	if (ncpus == 1)
+		int_update_tss((unsigned int)cur_tss);
 }
 
 int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
@@ -208,7 +224,7 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 static void ap_idle_stub(void *param)
 {
 	while (1) {
-		HLT();
+		PAUSE();
 		task_sched();
 	}
 }
@@ -258,6 +274,36 @@ void ps_id_free(unsigned pid)
 	spinlock_unlock(&psid_lock, irq);
 }
 
+unsigned ps_assign_affinity(unsigned psid)
+{
+	unsigned cpu_count = ncpus > 0 ? (unsigned)ncpus : 1;
+	return cpu_count ? ((psid - 1) % cpu_count) : 0;
+}
+
+unsigned ps_task_cpu(const task_struct *task)
+{
+	unsigned cpu_count = ncpus > 0 ? (unsigned)ncpus : 1;
+
+	if (!task)
+		return 0;
+	if (cpu_count == 0)
+		return 0;
+	return task->affinity % cpu_count;
+}
+
+void ps_kick_cpu_if_needed(unsigned dst_cpu, unsigned src_cpu)
+{
+	if (ncpus <= 1)
+		return;
+	if (dst_cpu == src_cpu)
+		return;
+	if (dst_cpu >= (unsigned)ncpus)
+		return;
+	if (!cpus[dst_cpu].online)
+		return;
+	apic_send_ipi(cpus[dst_cpu].apic_id, IPI_VECTOR_SCHED);
+}
+
 /*
  * Public — initialisation
  */
@@ -268,16 +314,19 @@ void ps_init()
 	list_init(&control.dying_queue);
 	list_init(&control.wait_queue);
 	control.mgr_queue.rb_node = NULL;
-	control.timer_queue.rb_node = NULL;
 	control.ps_count = 0;
-	for (i = 0; i < PS_PRIORITY_MAX; i++)
-		list_init(&control.ready_queue[i]);
+	for (i = 0; i < MAX_CPUS; i++) {
+		int prio;
+		_ps_enabled[i] = 0;
+		control.cpu[i].timer_queue.rb_node = NULL;
+		for (prio = 0; prio < PS_PRIORITY_MAX; prio++)
+			list_init(&control.cpu[i].ready_queue[prio]);
+	}
 
 	spinlock_init(&ps_lock);
 	spinlock_init(&psid_lock);
 	spinlock_init(&map_lock);
 
-	_ps_enabled = 0;
 	task_schedule_count = 0;
 
 	tss_address_storage = kmalloc(sizeof(tss_io_struct));
@@ -289,7 +338,7 @@ void ps_init()
 
 int ps_enabled()
 {
-	return _ps_enabled;
+	return _ps_enabled[ps_sched_cpu()];
 }
 
 /*
@@ -302,21 +351,19 @@ void ps_kickoff()
 	task_struct *cur = CURRENT_TASK();
 	memset(cur, 0, sizeof(*cur));
 	cur->psid = 0xffffffff;
-	cur->ps_list.prev = cur->ps_list.next = 0;
-	cur->stats = NULL;
-	_ps_enabled = 1;
+	cur->affinity = 0;
+	_ps_enabled[0] = 1;
 	task_sched();
 }
 
 /* Called by each AP after per-CPU LAPIC/TSS setup. */
-void ps_kickoff_ap(void)
+void ps_kickoff_ap(int cpu_id)
 {
 	task_struct *cur = CURRENT_TASK();
 	memset(cur, 0, sizeof(*cur));
 	cur->psid = 0xffffffff;
-	cur->ps_list.prev = cur->ps_list.next = 0;
-	ps_create(ap_idle_stub, NULL, ps_idle, ps_kernel);
-	_ps_enabled = 1;
+	cur->affinity = cpu_id;
+	_ps_enabled[cpu_id] = 1;
 	task_sched();
 }
 

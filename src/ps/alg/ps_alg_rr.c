@@ -10,6 +10,7 @@
 
 #include <ps/ps.h>
 #include <ps/signal.h>
+#include <hw/cpu.h>
 #include <hw/time.h>
 #include <mm/mm.h>
 #include <int/int.h>
@@ -37,6 +38,21 @@ extern unsigned long long gdt[];
  * Skips sleeping (timeout in the future) and dying tasks.
  * Re-inserts the chosen task with a fresh sched_seq for round-robin fairness.
  * Must be called with ps_lock held. */
+static list_entry *ps_ready_queue_head(unsigned cpu, int priority)
+{
+	return &control.cpu[cpu].ready_queue[priority];
+}
+
+static struct rb_root *ps_timer_queue_root(unsigned cpu)
+{
+	return &control.cpu[cpu].timer_queue;
+}
+
+unsigned ps_sched_cpu(void)
+{
+	return ps_task_cpu(CURRENT_TASK());
+}
+
 static task_struct *ps_get_available_ready_task(list_entry *head)
 {
 	list_entry *node = head->next;
@@ -67,7 +83,8 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
  */
 void timer_arm_unsafe(task_struct *task, unsigned ms)
 {
-	struct rb_root *root = &control.timer_queue;
+	unsigned cpu = ps_task_cpu(task);
+	struct rb_root *root = ps_timer_queue_root(cpu);
 	struct rb_node **link = &root->rb_node;
 	struct rb_node *parent = NULL;
 	unsigned due = time_now_ms() + ms;
@@ -87,8 +104,10 @@ void timer_arm_unsafe(task_struct *task, unsigned ms)
 
 void timer_disarm_unsafe(task_struct *task)
 {
+	unsigned cpu = ps_task_cpu(task);
+
 	if (!RB_EMPTY_NODE(&task->timer_rb)) {
-		rb_erase(&task->timer_rb, &control.timer_queue);
+		rb_erase(&task->timer_rb, ps_timer_queue_root(cpu));
 		RB_CLEAR_NODE(&task->timer_rb);
 		task->timer_due_ms = 0;
 	}
@@ -96,15 +115,16 @@ void timer_disarm_unsafe(task_struct *task)
 
 void ps_fire_timers_unsafe(void)
 {
+	unsigned cpu = ps_sched_cpu();
 	unsigned now = time_now_ms();
-	struct rb_node *n = rb_first(&control.timer_queue);
+	struct rb_node *n = rb_first(ps_timer_queue_root(cpu));
 
 	while (n) {
 		task_struct *t = rb_entry(n, task_struct, timer_rb);
 		if (t->timer_due_ms > now)
 			break;
 		n = rb_next(n);
-		rb_erase(&t->timer_rb, &control.timer_queue);
+		rb_erase(&t->timer_rb, ps_timer_queue_root(cpu));
 		RB_CLEAR_NODE(&t->timer_rb);
 		t->timer_due_ms = 0;
 		ps_put_to_ready_queue_unsafe(t);
@@ -115,6 +135,7 @@ void ps_fire_timers_unsafe(void)
 task_struct *ps_get_next_task()
 {
 	task_struct *task = NULL;
+	unsigned cpu = ps_sched_cpu();
 	int i = PS_PRIORITY_MAX - 1;
 	int irq;
 
@@ -122,9 +143,10 @@ task_struct *ps_get_next_task()
 	if (current->psid != 0xffffffff)
 		ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
-		if (list_is_empty(&control.ready_queue[i]))
+		list_entry *head = ps_ready_queue_head(cpu, i);
+		if (list_is_empty(head))
 			continue;
-		task = ps_get_available_ready_task(&control.ready_queue[i]);
+		task = ps_get_available_ready_task(head);
 		if (task)
 			break;
 	}
@@ -198,13 +220,17 @@ void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 
 void ps_put_to_ready_queue_unsafe(task_struct *task)
 {
+	unsigned dst_cpu = ps_task_cpu(task);
+	unsigned src_cpu = ps_task_cpu(CURRENT_TASK());
+
 	if (task->psid != 0xffffffff) {
 		list_remove_entry(&task->ps_list);
-		list_insert_tail(&control.ready_queue[task->priority],
+		list_insert_tail(ps_ready_queue_head(dst_cpu, task->priority),
 				 &task->ps_list);
 	}
 	task->status = ps_ready;
 	task->wait_func = NULL;
+	ps_kick_cpu_if_needed(dst_cpu, src_cpu);
 }
 
 /* Enqueue task in the ready queue at its current priority. */
@@ -223,21 +249,27 @@ void ps_put_to_ready_queue(task_struct *task)
 	spinlock_unlock(&ps_lock, irq);
 }
 
-static int scheduler_enabled = 1;
+static int scheduler_enabled[MAX_CPUS] = { [0 ... MAX_CPUS - 1] = 1 };
 
-int sched_enable()
+int sched_enable(unsigned cpu)
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 1);
+	return __sync_add_and_fetch(&scheduler_enabled[cpu], 1);
 }
 
-int sched_disable()
+int sched_disable(unsigned cpu)
 {
-	return __sync_add_and_fetch(&scheduler_enabled, -1);
+	return __sync_add_and_fetch(&scheduler_enabled[cpu], -1);
 }
 
-int sched_is_enabled()
+int sched_is_enabled(unsigned cpu)
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 0) > 0;
+	return __sync_add_and_fetch(&scheduler_enabled[cpu], 0) > 0;
+}
+
+int sched_set_level(unsigned cpu, int level)
+{
+	scheduler_enabled[cpu] = level;
+	return level;
 }
 
 /*

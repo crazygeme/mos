@@ -161,7 +161,7 @@ if [ ! -f "$diskfile" ]; then
 fi
 
 
-$_priviledge qemu-system-i386 -cpu coreduo \
+$_priviledge qemu-system-i386 -cpu coreduo -smp 2\
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
@@ -175,7 +175,8 @@ $_priviledge qemu-system-i386 -cpu coreduo \
 	-no-reboot \
 	-rtc base=localtime \
 	-netdev $_netdev \
-	-device e1000,netdev=net0,mac=52:54:00:12:34:56
+	-device e1000,netdev=net0,mac=52:54:00:12:34:56\
+	-no-reboot
 
 rc=$?
 if [ "$_test" == "test" ] && [ $((rc & 1)) -eq 1 ]; then

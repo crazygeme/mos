@@ -99,6 +99,7 @@
 	((5 + GDT_ENTRY_TLS_COUNT + MAX_CPUS) << 3)
 #define AP_TRAMPOLINE_PHYS 0x8000 /* physical addr for AP startup code */
 #define AP_PARAMS_PHYS 0x9000 /* physical addr for AP params page */
+#define IPI_VECTOR_TIMER 0xEF /* per-CPU scheduling tick */
 #define IPI_VECTOR_SCHED 0xF0 /* scheduler kick IPI */
 #define IPI_VECTOR_TLB 0xF1 /* TLB shootdown IPI */
 #define IPI_VECTOR_SPURIOUS 0xFF /* spurious APIC interrupt */

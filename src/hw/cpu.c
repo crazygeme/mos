@@ -27,6 +27,7 @@
 
 cpu_struct cpus[MAX_CPUS];
 volatile int ncpus = 1; /* BSP is CPU 0, counted at boot */
+static volatile int smp_sched_go = 0;
 
 /* 
  * AP trampoline and params layout
@@ -137,10 +138,11 @@ void ap_init_c(int cpu_id)
 	cpu->online = 1;
 	__sync_synchronize();
 
-	printk("cpu%d: online (APIC id %d)\n", cpu_id, cpu->apic_id);
+	while (!smp_sched_go)
+		PAUSE();
 
-	/* Create this CPU's idle task and kick off scheduling. */
-	ps_kickoff_ap();
+	/* Join the scheduler on this AP and create its pinned idle task. */
+	ps_kickoff_ap(cpu_id);
 }
 
 /* 
@@ -173,7 +175,6 @@ void smp_start_aps(void)
 	unsigned *pde;
 
 	if (g_acpi_info.ncpus <= 1) {
-		printk("smp: single CPU, skipping AP bring-up\n");
 		return;
 	}
 
@@ -211,8 +212,6 @@ void smp_start_aps(void)
 		params->cpu_id = i;
 		__sync_synchronize();
 
-		printk("smp: starting CPU %d (APIC id %d)\n", i, apic);
-
 		/* INIT IPI */
 		apic_send_init(apic);
 		cpu_mdelay(10);
@@ -233,7 +232,6 @@ void smp_start_aps(void)
 			cpu_mdelay(1);
 
 		if (!cpus[i].online) {
-			printk("smp: CPU %d did not start\n", i);
 			continue;
 		}
 		__sync_fetch_and_add(&ncpus, 1);
@@ -242,8 +240,6 @@ void smp_start_aps(void)
 	/* Remove the identity mapping now that all APs are in high virtual. */
 	pde[0] = 0;
 	RELOAD_CR3();
-
-	printk("smp: %d CPU(s) online\n", ncpus);
 }
 
 /* 
@@ -257,4 +253,11 @@ void cpu_init_bsp(void)
 	cpus[0].online = 1;
 	cpus[0].tss = NULL; /* TSS for BSP is managed by ps_init() */
 	cpus[0].idle = NULL;
+}
+
+void smp_scheduler_start(void)
+{
+	__sync_synchronize();
+	smp_sched_go = 1;
+	__sync_synchronize();
 }

@@ -115,6 +115,7 @@ static void mm_init_kernel_page_dir_template(void)
 static spinlock_t mm_lock;
 static spinlock_t path_lock;
 static int mm_dynamic_region(unsigned phy);
+static unsigned int kernel_pde_template[PG_TABLE_SIZE];
 
 /* Name-buffer cache node */
 
@@ -124,12 +125,17 @@ static list_entry name_cache_head;
 void mm_init_page_table_cache()
 {
 	int i;
+	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
 
 	page_table_cache_init(&page_table_cache);
 	memset(kernel_pde_tables, 0, sizeof(kernel_pde_tables));
 	mm_init_kernel_page_dir_template();
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
+	memset(kernel_pde_template, 0, sizeof(kernel_pde_template));
+	memcpy(&kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
+	       &page_dir[KERNEL_PAGE_DIR_OFFSET],
+	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
@@ -156,6 +162,34 @@ unsigned mm_get_pagedir()
 
 	LOAD_CR3(cr3);
 	return cr3 + KERNEL_OFFSET;
+}
+
+static void mm_copy_kernel_pagedir_locked(unsigned int *page_dir)
+{
+	memcpy(&page_dir[KERNEL_PAGE_DIR_OFFSET],
+	       &kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
+	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
+}
+
+void mm_sync_task_kernel_pagedir(unsigned int *page_dir)
+{
+	int irq;
+
+	if (!page_dir)
+		return;
+
+	spinlock_lock(&mm_lock, &irq);
+	mm_copy_kernel_pagedir_locked(page_dir);
+	spinlock_unlock(&mm_lock, irq);
+}
+
+void mm_init_task_pagedir(unsigned int *page_dir)
+{
+	if (!page_dir)
+		return;
+
+	memset(page_dir, 0, PAGE_SIZE);
+	mm_sync_task_kernel_pagedir(page_dir);
 }
 
 typedef struct {
@@ -188,6 +222,8 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA |
 		      flag;
 		page_dir[offset] = pde;
+		if (addr >= KERNEL_OFFSET)
+			kernel_pde_template[offset] = pde;
 	}
 	info->dir = &page_dir[offset];
 	if (*info->dir)
@@ -227,7 +263,7 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
  * Zero the page-table entry and decrement the live-entry counter.
  * Reclaims the page table itself when the last entry is removed.
  */
-static void mm_clear_page_table_entry(mm_addr_info *info)
+static void mm_clear_page_table_entry(unsigned addr, mm_addr_info *info)
 {
 	unsigned phy = *info->entry & PAGE_SIZE_MASK;
 
@@ -304,7 +340,7 @@ void mm_kunmap_page(unsigned int vir)
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 
-	mm_clear_page_table_entry(&info);
+	mm_clear_page_table_entry(vir, &info);
 	phymm_dereference_page(phy_addr / PAGE_SIZE);
 }
 

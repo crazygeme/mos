@@ -9,6 +9,7 @@
 #include <ps/ps.h>
 #include <lib/lock.h>
 #include <lib/list.h>
+#include <config.h>
 
 typedef struct _intr_frame intr_frame;
 
@@ -16,14 +17,18 @@ typedef struct _intr_frame intr_frame;
  * Scheduler control block
  */
 
-typedef struct _ps_control {
+typedef struct _ps_cpu_control {
 	list_entry ready_queue[PS_PRIORITY_MAX];
+	struct rb_root
+		timer_queue; /* sleeping tasks for this CPU, ordered by due_ms */
+} ps_cpu_control;
+
+typedef struct _ps_control {
+	ps_cpu_control cpu[MAX_CPUS];
 	list_entry dying_queue;
 	list_entry wait_queue;
 	struct rb_root mgr_queue;
 	int ps_count;
-	struct rb_root
-		timer_queue; /* tasks sleeping in time_wait(), ordered by timer_due_ms */
 } ps_control;
 
 /*
@@ -33,7 +38,7 @@ typedef struct _ps_control {
 extern ps_control control;
 extern spinlock_t ps_lock;
 extern spinlock_t map_lock;
-extern int _ps_enabled;
+extern int _ps_enabled[MAX_CPUS];
 extern unsigned task_schedule_count;
 extern tss_struct *tss_address;
 
@@ -53,6 +58,9 @@ unsigned ps_id_gen();
 void ps_id_free(unsigned pid);
 user_enviroment *ps_alloc_user_env(void);
 void ps_share_heap_state(user_enviroment *dst, user_enviroment *src);
+unsigned ps_assign_affinity(unsigned psid);
+unsigned ps_task_cpu(const task_struct *task);
+void ps_kick_cpu_if_needed(unsigned dst_cpu, unsigned src_cpu);
 
 /* ps_sched.c — timer helpers (called under ps_lock) */
 void timer_arm_unsafe(task_struct *task, unsigned ms);

@@ -8,6 +8,7 @@
  */
 
 #include "hw/time.h"
+#include <hw/cpu.h>
 #include <ps/ps.h>
 #include <int/int.h>
 #include <mm/mmap.h>
@@ -39,7 +40,7 @@ static void ps_run()
 	process_fn fn;
 
 	int_intr_enable();
-	_ps_enabled = 1;
+	_ps_enabled[ps_sched_cpu()] = 1;
 	task->status = ps_running;
 	fn = task->fn;
 	if (fn)
@@ -56,8 +57,8 @@ static void ps_run()
 
 /* Allocate and initialise a new kernel task. Returns the new psid, or
  * 0xffffffff on failure. The task is immediately placed in the ready queue. */
-unsigned _ps_create(process_fn fn, const char *name, void *param,
-		    ps_priority priority, ps_type type)
+unsigned _ps_create_affine(process_fn fn, const char *name, void *param,
+			   ps_priority priority, ps_type type, int affinity)
 {
 	unsigned int stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
@@ -82,7 +83,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->user->cmd_len = strlen(task->user->command) + 1;
 	*((char *)task->user->environment) = '\0';
 	task->user->env_len = 0;
-	mm_init_process_page_dir(task->user->page_dir);
+	mm_init_task_pagedir((unsigned int *)task->user->page_dir);
 	task->user->cwd = name_get();
 	memset(task->user->cwd, 0, MAX_PATH);
 	task->user->root_path = name_get();
@@ -127,6 +128,8 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->tgid = task->psid;
 	task->ppid = task->psid;
 	task->exit_signal = SIGCHLD;
+	task->affinity = affinity >= 0 ? (unsigned)affinity :
+					 ps_assign_affinity(task->psid);
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	memset(task->fds, 0, PAGE_SIZE);
@@ -142,11 +145,20 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->stats = zalloc(sizeof(task_stats_t));
 	task->stats->start_tickets = time_now_tickets();
 
+	if (task->priority == ps_idle && task->affinity < MAX_CPUS)
+		cpus[task->affinity].idle = task;
+
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
 	return task->psid;
+}
+
+unsigned _ps_create(process_fn fn, const char *name, void *param,
+		    ps_priority priority, ps_type type)
+{
+	return _ps_create_affine(fn, name, param, priority, type, -1);
 }
 
 /*
@@ -327,7 +339,7 @@ void copy_page_range(task_struct *parent, task_struct *child)
 		.dst_pd = (unsigned *)child->user->page_dir,
 	};
 
-	mm_init_process_page_dir((unsigned int)ctx.dst_pd);
+	mm_init_task_pagedir(ctx.dst_pd);
 	vm_dup(parent->user->vm, child->user->vm);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
 	RELOAD_CR3();
@@ -361,6 +373,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 		task->remain_ticks = cur->remain_ticks;
 	task->psid = ps_id_gen();
 	task->tgid = cur->tgid;
+	task->affinity = ps_assign_affinity(task->psid);
 	mutex_init(&task->fd_lock);
 
 	task_init_selectors(task);

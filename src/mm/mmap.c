@@ -1,4 +1,5 @@
 #include <mm/mm.h>
+#include <mm/cache.h>
 #include <mm/phymm.h>
 #include <lib/list.h>
 #include <lib/rbtree.h>
@@ -73,6 +74,8 @@ static void vm_region_invalid(const key_value_pair *pair)
 
 	if (region->fp)
 		fs_put_file(region->fp);
+	if ((region->flag & MAP_SHARED) && region->fp == NULL && region->anon_id)
+		mm_anon_shared_put(region->anon_id);
 
 	kfree(key);
 	kfree(region);
@@ -99,46 +102,6 @@ static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 	key.begin = addr & PAGE_SIZE_MASK;
 	key.end = key.begin + PAGE_SIZE;
 	return hash_find(table, &key);
-}
-
-/*
- * vm_find_vma_pair - find the region containing @addr, or the next one above.
- *
- * The VM tree is ordered by non-overlapping ranges, so a manual rb walk can
- * mirror Linux's find_vma(): walk left when @addr is below the current region,
- * walk right when it is at/above the current region's end, and remember the
- * left-most candidate that begins above @addr.
- */
-static key_value_pair *vm_find_vma_pair(hash_table *table, unsigned addr)
-{
-	struct rb_node *node = table->root.rb_node;
-	key_value_pair *best = NULL;
-	int irq;
-
-	addr &= PAGE_SIZE_MASK;
-	spinlock_lock(&table->lock, &irq);
-
-	while (node) {
-		key_value_pair *pair = rb_entry(node, key_value_pair, node);
-		vm_region *region = pair->val;
-
-		if (addr < region->begin) {
-			best = pair;
-			node = node->rb_left;
-			continue;
-		}
-
-		if (addr >= region->end) {
-			node = node->rb_right;
-			continue;
-		}
-
-		spinlock_unlock(&table->lock, irq);
-		return pair;
-	}
-
-	spinlock_unlock(&table->lock, irq);
-	return best;
 }
 
 /*
@@ -183,6 +146,9 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 
 				if (new_fp)
 					fs_get_file(new_fp);
+				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
+				    new_anon_id)
+					mm_anon_shared_get(new_anon_id);
 				hash_remove(table, lpair->key);
 				hash_remove(table, rkey);
 				vm_add_map(table, new_begin, new_end, new_prot,
@@ -190,6 +156,9 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 					   new_anon_id);
 				if (new_fp)
 					fs_put_file(new_fp);
+				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
+				    new_anon_id)
+					mm_anon_shared_put(new_anon_id);
 				return;
 			}
 		}
@@ -214,6 +183,9 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 
 				if (new_fp)
 					fs_get_file(new_fp);
+				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
+				    new_anon_id)
+					mm_anon_shared_get(new_anon_id);
 				hash_remove(table, rkey);
 				hash_remove(table, rpair->key);
 				vm_add_map(table, new_begin, new_end, new_prot,
@@ -221,6 +193,9 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 					   new_anon_id);
 				if (new_fp)
 					fs_put_file(new_fp);
+				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
+				    new_anon_id)
+					mm_anon_shared_put(new_anon_id);
 				return;
 			}
 		}
@@ -265,6 +240,11 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int o_offset = oregion->offset;
 		unsigned o_anon_id = oregion->anon_id;
 
+		if (o_fp)
+			fs_get_file(o_fp);
+		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
+			mm_anon_shared_get(o_anon_id);
+
 		vm_del_map(vm, o_begin);
 
 		/* Re-insert the left remnant [o_begin, begin), if any. */
@@ -279,6 +259,11 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		if (o_end > end)
 			vm_add_map(vm, end, o_end, o_prot, o_flag, o_fp,
 				   o_offset + (int)(end - o_begin), o_anon_id);
+
+		if (o_fp)
+			fs_put_file(o_fp);
+		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
+			mm_anon_shared_put(o_anon_id);
 	}
 
 	/* No conflicts remain: insert the new region. */
@@ -297,6 +282,8 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 
 	if (fp)
 		fs_get_file(fp);
+	if ((flag & MAP_SHARED) && fp == NULL && anon_id)
+		mm_anon_shared_get(anon_id);
 
 	hash_insert(table, key, region);
 	vm_coalesce(table, begin);
@@ -357,8 +344,13 @@ vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 	key_value_pair *pair;
 
 	addr &= PAGE_SIZE_MASK;
-	pair = vm_find_vma_pair(table, addr);
-	return pair ? pair->val : 0;
+	for (pair = hash_first(table); pair; pair = hash_next(table, pair)) {
+		vm_region *region = pair->val;
+
+		if (addr < region->end)
+			return region;
+	}
+	return 0;
 }
 
 void vm_invalidate_user_cache(user_enviroment *user)
@@ -506,6 +498,8 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		/* Temporarily hold a file ref across the hash_remove() drop. */
 		if (r_fp)
 			fs_get_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_get(r_anon_id);
 
 		/* Remove descriptor only — physical pages stay mapped. */
 		hash_remove(table, okey);
@@ -527,6 +521,8 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 
 		if (r_fp)
 			fs_put_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_put(r_anon_id);
 
 		/* Advance probe past the portion we just handled. */
 		probe.begin = upd_end;
@@ -580,7 +576,7 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	/*
 	 * Assign a unique ID for anonymous MAP_SHARED regions so that all
 	 * processes sharing this mapping (e.g. after fork) can locate the
-	 * same physical pages via the anon_shared_map in pagefault.c.
+	 * same physical pages via the anonymous shared-page cache in mm/cache.c.
 	 */
 	if ((flags & MAP_SHARED) && fp == NULL)
 		anon_id = ++g_anon_id_next;
@@ -768,6 +764,8 @@ int do_munmap(void *addr, unsigned length)
 		/* Hold a file ref across the evict() drop inside hash_remove(). */
 		if (r_fp)
 			fs_get_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_get(r_anon_id);
 
 		/* Remove this vm_region descriptor from the tree. */
 		hash_remove(cur->user->vm, key);
@@ -787,6 +785,8 @@ int do_munmap(void *addr, unsigned length)
 
 		if (r_fp)
 			fs_put_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_put(r_anon_id);
 	}
 
 	RELOAD_CR3();

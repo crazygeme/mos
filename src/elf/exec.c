@@ -78,8 +78,12 @@ static void cleanup()
 		}
 	}
 
-	/* Reset signal handlers. */
-	memset(cur->signal, 0, sizeof(signal_context));
+	/*
+	 * Signal state is handled by execve() itself using Linux semantics:
+	 * caught handlers reset to SIG_DFL, ignored handlers stay SIG_IGN,
+	 * pending signals are cleared, and the altstack is disabled.
+	 * Do not wipe the whole signal context here or we'd lose SIG_IGN.
+	 */
 
 	/* Reset heap; start_brk/brk will be set after elf_map(). */
 	cur->user->start_brk = 0;
@@ -527,6 +531,31 @@ int sys_execve(const char *f, char **argv, char **envp)
 	/* log if needed */
 	if (TestControl.verbos)
 		klog("execve(%s)\n", cur->user->command);
+
+	/*
+	 * Linux execve semantics for signal state:
+	 * caught handlers reset to SIG_DFL, ignored handlers stay ignored,
+	 * pending signals are cleared, and the alt signal stack is disabled.
+	 */
+	{
+		int sig;
+
+		for (sig = 1; sig < NSIG; sig++) {
+			struct sigaction *sa = &cur->signal->sig_handlers[sig];
+
+			if (sa->sa_handler != SIG_IGN)
+				sa->sa_handler = SIG_DFL;
+			sa->sa_flags = 0;
+			sa->sa_restorer = NULL;
+			sa->sa_mask = 0;
+		}
+		cur->signal->sig_pending = 0;
+		cur->signal->restore_sigmask = 0;
+		cur->signal->saved_sigmask = 0;
+		cur->signal->altstack.ss_sp = NULL;
+		cur->signal->altstack.ss_size = 0;
+		cur->signal->altstack.ss_flags = SS_DISABLE;
+	}
 
 	/*
 	 * unmap all user vm, and close all fds if O_CLOEXEC set

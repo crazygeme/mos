@@ -32,6 +32,28 @@ unsigned rx_free(const mos_sock *sk)
 	return (SOCK_RXBUF_SIZE - 1) - rx_used(sk);
 }
 
+static int sock_file_nonblock(file *fp)
+{
+	task_struct *cur = CURRENT_TASK();
+	int i;
+	int nonblock = 0;
+
+	mutex_lock(&cur->fd_lock);
+	for (i = 0; i < MAX_FD; i++) {
+		if (!cur->fds[i].used)
+			continue;
+		if (cur->fds[i].fp != fp)
+			continue;
+		if (cur->fds[i].flag & O_NONBLOCK) {
+			nonblock = 1;
+			break;
+		}
+	}
+	mutex_unlock(&cur->fd_lock);
+
+	return nonblock;
+}
+
 /* Write up to len bytes from src; returns bytes actually written.
  * Split into at most two memcpy calls to handle the ring wrap. */
 unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
@@ -112,10 +134,11 @@ int sock_wait(mos_sock *sk, unsigned long deadline)
  * (e.g. parent and child after fork both draining the same rxbuf).  The lock
  * must be released before calling sock_wait() because sock_wait() sleeps.
  */
-static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
+static ssize_t sock_unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 {
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	int irq;
+	int nonblock = sock_file_nonblock(fp);
 
 	if (sk->type == SOCK_DGRAM) {
 		spinlock_lock(&sk->rxbuf_lock, &irq);
@@ -153,6 +176,8 @@ static ssize_t sock_unix_read(mos_sock *sk, void *buf, size_t count)
 			return sk->err;
 		if (sk->state == SS_DISCONNECTING)
 			return 0;
+		if (nonblock)
+			return -EAGAIN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
 		if (sock_wait(sk, deadline) < 0)
@@ -168,9 +193,10 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	int nonblock = sock_file_nonblock(fp);
 
 	if (sk->domain == AF_UNIX)
-		return sock_unix_read(sk, buf, count);
+		return sock_unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
@@ -206,6 +232,8 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 			return 0;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;
+		if (nonblock)
+			return -EAGAIN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
 		if (sock_wait(sk, deadline) < 0)
@@ -512,8 +540,12 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 			ready |= FS_POLL_READ;
 		if (sk->state == SS_DISCONNECTING)
 			ready |= FS_POLL_READ;
-		if (sk->accept_tail != sk->accept_head)
+		if (sk->domain == AF_UNIX) {
+			if (sk->unix_accept_tail != sk->unix_accept_head)
+				ready |= FS_POLL_READ;
+		} else if (sk->accept_tail != sk->accept_head) {
 			ready |= FS_POLL_READ;
+		}
 	}
 
 	if (events & FS_POLL_WRITE) {
@@ -532,6 +564,13 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 		sk->poll_task = pt->task;
 		if (poll_table_add(pt, sk, sock_poll_dereg) < 0)
 			sk->poll_task = NULL;
+	}
+	if (TestControl.verbos && sk->domain == AF_UNIX &&
+	    (events & FS_POLL_READ) &&
+	    (sk->unix_accept_tail != sk->unix_accept_head || ready)) {
+		klog("sock_poll unix sk=%p ready=%x head=%d tail=%d rx=%u state=%d\n",
+		     sk, ready, sk->unix_accept_head, sk->unix_accept_tail,
+		     rx_used(sk), sk->state);
 	}
 	return ready;
 }

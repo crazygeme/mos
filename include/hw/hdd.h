@@ -15,8 +15,7 @@ int hdd_partition_total(void);
 const char *hdd_partition_name(unsigned idx);
 unsigned hdd_partition_size_sectors(unsigned idx);
 int hdd_partition_read(unsigned idx, unsigned sector, void *buf, unsigned len);
-int hdd_partition_write(unsigned idx, unsigned sector, void *buf,
-			unsigned len);
+int hdd_partition_write(unsigned idx, unsigned sector, void *buf, unsigned len);
 
 void hdd_flush();
 

@@ -61,6 +61,20 @@ enum {
 	PER_MASK = 0x00ff,
 };
 
+struct kill_all_ctx {
+	task_struct *self;
+	int sig;
+};
+
+static void send_if_other(task_struct *task, void *opaque)
+{
+	struct kill_all_ctx *c = opaque;
+
+	if (task->type != ps_user || task->psid == c->self->psid)
+		return;
+	ps_send_signal(task->psid, c->sig);
+}
+
 int sys_getpid()
 {
 	task_struct *cur = CURRENT_TASK();
@@ -489,15 +503,37 @@ int ps_send_signal(unsigned pid, int sig)
 	return 0;
 }
 
-int sys_kill(unsigned pid, int sig)
+int sys_kill(int pid, int sig)
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TestControl.verbos)
 		klog("kill(%d, %d)\n", pid, sig);
 
 	if (sig == 0)
-		return ps_find_process(pid) ? 0 : -ESRCH;
+		return pid > 0 ? (ps_find_process((unsigned)pid) ? 0 : -ESRCH) :
+				 0;
 
-	return ps_send_signal(pid, sig);
+	if (pid > 0)
+		return ps_send_signal((unsigned)pid, sig);
+
+	if (pid == 0) {
+		if (!cur->user)
+			return -ESRCH;
+		ps_send_signal_pgrp(cur->user->group_id, sig);
+		return 0;
+	}
+
+	if (pid == -1) {
+		struct kill_all_ctx ctx;
+		ctx.self = cur;
+		ctx.sig = sig;
+		ps_enum_all(send_if_other, &ctx);
+		return 0;
+	}
+
+	ps_send_signal_pgrp((unsigned)(-pid), sig);
+	return 0;
 }
 
 int sys_brk(unsigned _top)
@@ -565,11 +601,92 @@ unsigned sys_alarm(unsigned seconds)
 
 	cur->alarm_expire_ms =
 		seconds ? (now + (unsigned long long)seconds * 1000) : 0;
+	cur->alarm_interval_ms = 0;
 
 	if (TestControl.verbos)
 		klog("alarm(%u) = %u\n", seconds, remaining);
 
 	return remaining;
+}
+
+static unsigned long long timeval_to_ms(const struct timeval *tv)
+{
+	unsigned long long ms;
+
+	if (!tv)
+		return 0;
+	if (tv->tv_sec < 0 || tv->tv_usec < 0)
+		return 0;
+
+	ms = (unsigned long long)tv->tv_sec * 1000;
+	ms += (unsigned long long)tv->tv_usec / 1000;
+	if (tv->tv_usec > 0 && ms == 0)
+		ms = 1;
+	return ms;
+}
+
+static void ms_to_itimeval(unsigned long long ms, struct timeval *tv)
+{
+	if (!tv)
+		return;
+	tv->tv_sec = (int)(ms / 1000);
+	tv->tv_usec = (int)((ms % 1000) * 1000);
+}
+
+int sys_setitimer(int which, const struct itimerval *new_value,
+		  struct itimerval *old_value)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned long long now = time_now_ms();
+
+	if (TestControl.verbos)
+		klog("setitimer(%d, %x, %x)\n", which, new_value, old_value);
+
+	if (which != 0)
+		return -EINVAL;
+
+	if (old_value) {
+		unsigned long long remaining = 0;
+
+		if (cur->alarm_expire_ms > now)
+			remaining = cur->alarm_expire_ms - now;
+		ms_to_itimeval(cur->alarm_interval_ms, &old_value->it_interval);
+		ms_to_itimeval(remaining, &old_value->it_value);
+	}
+
+	if (!new_value)
+		return 0;
+
+	cur->alarm_interval_ms = timeval_to_ms(&new_value->it_interval);
+	if (timeval_to_ms(&new_value->it_value))
+		cur->alarm_expire_ms =
+			now + timeval_to_ms(&new_value->it_value);
+	else
+		cur->alarm_expire_ms = 0;
+
+	return 0;
+}
+
+int sys_getitimer(int which, struct itimerval *value)
+{
+	task_struct *cur = CURRENT_TASK();
+	unsigned long long now = time_now_ms();
+	unsigned long long remaining = 0;
+
+	if (TestControl.verbos)
+		klog("getitimer(%d, %x)\n", which, value);
+
+	if (which != 0)
+		return -EINVAL;
+	if (!value)
+		return -EFAULT;
+
+	if (cur->alarm_expire_ms > now)
+		remaining = cur->alarm_expire_ms - now;
+
+	ms_to_itimeval(cur->alarm_interval_ms, &value->it_interval);
+	ms_to_itimeval(remaining, &value->it_value);
+	return 0;
 }
 
 int sys_pause()
@@ -615,7 +732,7 @@ int sys_sigaction(int sig, void *act, void *oact)
  * The rt_sigaction syscall's sigsetsize argument is still passed as 8 by
  * glibc on this vintage ABI, but the in-memory structure layout on the user
  * stack is:
- *   handler, flags, restorer, sigset_t mask[32]
+ *   handler, sigset_t mask[32], flags, restorer
  *
  * We only support signals 1..31, so we translate the low word and zero the
  * remaining words on writeback.
@@ -623,9 +740,9 @@ int sys_sigaction(int sig, void *act, void *oact)
 #define RT_SIGSET_WORDS 32
 struct rt_sigaction_user {
 	void (*sa_handler)(int);
+	unsigned long sa_mask[RT_SIGSET_WORDS];
 	unsigned long sa_flags;
 	void (*sa_restorer)(void);
-	unsigned long sa_mask[RT_SIGSET_WORDS];
 };
 
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
@@ -827,7 +944,11 @@ void do_signal(intr_frame *frame)
 
 	/* Fire alarm if it has expired. */
 	if (cur->alarm_expire_ms && time_now_ms() >= cur->alarm_expire_ms) {
-		cur->alarm_expire_ms = 0;
+		if (cur->alarm_interval_ms)
+			cur->alarm_expire_ms =
+				time_now_ms() + cur->alarm_interval_ms;
+		else
+			cur->alarm_expire_ms = 0;
 		cur->signal->sig_pending |= (1UL << (SIGALRM - 1));
 	}
 

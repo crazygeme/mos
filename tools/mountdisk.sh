@@ -4,7 +4,7 @@ set -e
 
 DISK="rh9.qcow2"
 NBD_DEV="/dev/nbd0"
-MNT="mnt"
+MNT="out/mnt"
 
 if [ ! -f "$DISK" ]; then
     echo "Error: $DISK not found"

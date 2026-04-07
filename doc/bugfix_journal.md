@@ -5,6 +5,91 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+
+## 2026-04-07 — Page-fault VMA lookup now uses a Linux-style `mmap_cache`
+
+### Symptom
+
+- The old page-fault path did a full VM-tree lookup for every fault and mixed
+  two unrelated ideas under the same name: a file-page cache in
+  `src/mm/pagefault.c` and Linux's actual `mmap_cache`, which is a per-task
+  cache of the last `find_vma()` result.
+
+### Root cause
+
+- MOS had no Linux-style VMA cache at all, so repeated faults in the same VMA
+  kept rewalking the interval tree.
+- Stack growth logic was separate from VMA lookup instead of following the
+  Linux pattern: `find_vma()`, then if the fault lands in a hole immediately
+  below the grow-down stack VMA, expand that VMA and retry.
+- The old in-file "mmap cache" name made the code harder to reason about,
+  because it was really a custom readonly private-file page cache rather than
+  a VMA cache.
+
+### Fix
+
+- Add `user->mmap_cache` as a Linux-style cache of the last `find_vma()`
+  result.
+- Add `vm_find_vma()` plus cached helpers so the fault path can distinguish
+  "address is inside this VMA" from "address is in a hole but this is the next
+  VMA above it".
+- Rework `src/mm/pagefault.c` to use that flow for demand faults and stack
+  growth.
+- Remove the custom readonly `MAP_PRIVATE` file-page cache from the page-fault
+  layer and move file-backed caching down into the filesystem page-cache path,
+  so `read()` and mmap faults share cached file pages.
+- Keep that shared file-backed cache in `src/fs/cache.c`, separate from the
+  generic fs descriptor code in `src/fs/fs.c`.
+- Invalidate the per-task VMA cache on `mmap`, `munmap`, `mprotect`, `fork`,
+  and `exec`.
+
+### Why this is better
+
+- It matches the real Linux mechanism more closely, so the fault path is easier
+  to compare against upstream behaviour.
+- It removes both the naming collision and the extra fault-layer cache that was
+  hiding the real design issue.
+- It gives repeated faults in the same mapping a fast path without changing the
+  existing VMA lookup, on-demand paging, and COW model, while also making file
+  reads and mmap faults converge on one cache.
+
+## 2026-04-07 — Shared-mapping cleanup after the boot/MM fixes
+
+### Symptom
+
+- After the boot fix, anonymous `MAP_SHARED` pages still lived forever once
+  faulted in, and the emergency file-backed `MAP_SHARED` fallback in
+  `src/mm/pagefault.c` was broader than intended.
+
+### Root cause
+
+- `anon_shared_map` had no lifetime tracking tied to VM-region teardown, so
+  `munmap`, VMA splits/merges, and process exit never reclaimed the cached
+  pages when the last sharer disappeared.
+- The file-backed fallback path would also activate for files that already had
+  a proper filesystem page-cache identity, even though those faults should be
+  satisfied by the fs page cache or fail cleanly.
+
+### Fix
+
+- Add `mm_anon_shared_get()` / `mm_anon_shared_put()` and a small
+  `anon_shared_refs` table in `src/mm/cache.c`.
+- Wire those refs through `vm_add_map`, `vm_region_invalid`, `vm_mprotect`,
+  `do_munmap`, and VMA coalescing so shared anonymous objects survive transient
+  descriptor surgery but are reclaimed when the last live mapping goes away.
+- Narrow the MM-cache-layer `file_shared_map` fallback so it is only used for
+  `MAP_SHARED` files that cannot participate in the filesystem page cache.
+
+### Why this is better
+
+- Shared anonymous pages now have a real lifetime tied to live VM mappings
+  instead of kernel uptime.
+- The file fault path is closer to Linux: use the filesystem page cache when
+  available, and keep the local fallback strictly as a compatibility escape
+  hatch rather than a shadow cache.
+
+---
+
 ## 2026-04-07 — Bugs flushed out by the new `/proc/tests` script suite
 
 After moving guest tests into `test/*.sh` and wiring them into
@@ -126,54 +211,6 @@ features already work.
 
 ---
 
-## 2026-04-07 — Page-fault VMA lookup now uses a Linux-style `mmap_cache`
-
-### Symptom
-
-- The old page-fault path did a full VM-tree lookup for every fault and mixed
-  two unrelated ideas under the same name: a file-page cache in
-  `src/mm/pagefault.c` and Linux's actual `mmap_cache`, which is a per-task
-  cache of the last `find_vma()` result.
-
-### Root cause
-
-- MOS had no Linux-style VMA cache at all, so repeated faults in the same VMA
-  kept rewalking the interval tree.
-- Stack growth logic was separate from VMA lookup instead of following the
-  Linux pattern: `find_vma()`, then if the fault lands in a hole immediately
-  below the grow-down stack VMA, expand that VMA and retry.
-- The old in-file "mmap cache" name made the code harder to reason about,
-  because it was really a custom readonly private-file page cache rather than
-  a VMA cache.
-
-### Fix
-
-- Add `user->mmap_cache` as a Linux-style cache of the last `find_vma()`
-  result.
-- Add `vm_find_vma()` plus cached helpers so the fault path can distinguish
-  "address is inside this VMA" from "address is in a hole but this is the next
-  VMA above it".
-- Rework `src/mm/pagefault.c` to use that flow for demand faults and stack
-  growth.
-- Remove the custom readonly `MAP_PRIVATE` file-page cache from the page-fault
-  layer and move file-backed caching down into the filesystem page-cache path,
-  so `read()` and mmap faults share cached file pages.
-- Keep that shared file-backed cache in `src/fs/cache.c`, separate from the
-  generic fs descriptor code in `src/fs/fs.c`.
-- Invalidate the per-task VMA cache on `mmap`, `munmap`, `mprotect`, `fork`,
-  and `exec`.
-
-### Why this is better
-
-- It matches the real Linux mechanism more closely, so the fault path is easier
-  to compare against upstream behaviour.
-- It removes both the naming collision and the extra fault-layer cache that was
-  hiding the real design issue.
-- It gives repeated faults in the same mapping a fast path without changing the
-  existing VMA lookup, on-demand paging, and COW model, while also making file
-  reads and mmap faults converge on one cache.
-
----
 
 ## 2026-04-06 — OpenSSH 3.5p1 `sshd` crash / privilege-separation bring-up
 

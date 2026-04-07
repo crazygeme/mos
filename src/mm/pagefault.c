@@ -1,4 +1,5 @@
 #include <int/int.h>
+#include <mm/cache.h>
 #include <mm/pagefault.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
@@ -7,9 +8,6 @@
 #include <fs/cache.h>
 #include <fs/fs.h>
 #include <lib/klib.h>
-#include <lib/rbtree.h>
-#include <lib/list.h>
-#include <lib/lock.h>
 #include <hw/time.h>
 #include <config.h>
 #include <macro.h>
@@ -28,105 +26,84 @@ unsigned long long page_fault_perm_spent = 0;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
-/*
- * anon_shared_map — non-evicting shared-page registry for anonymous MAP_SHARED.
- *
- * Keyed by (anon_id | ANON_SHARED_BIT, offset). Entries are never evicted;
- * the map holds a permanent reference to each page so all processes sharing
- * the region observe the same physical page.
- */
-#define ANON_SHARED_BIT 0x80000000U
-
-typedef struct _anon_shared_map_key {
-	unsigned id;
-	unsigned offset;
-} anon_shared_map_key;
-
-typedef struct _anon_shared_map_entry {
-	anon_shared_map_key key; /* must be first */
-	unsigned phy;
-} anon_shared_map_entry;
-
-static hash_table *anon_shared_map = NULL;
-static mutex_t anon_shared_map_lock;
-
 static void pf_process(intr_frame *frame);
-
-static int anon_shared_map_key_comp(const void *k1, const void *k2)
-{
-	const anon_shared_map_key *key1 = k1;
-	const anon_shared_map_key *key2 = k2;
-	int ret = (int)key1->id - (int)key2->id;
-	if (ret == 0)
-		ret = (int)key1->offset - (int)key2->offset;
-	return ret;
-}
-
-static void anon_shared_map_evict(const key_value_pair *pair)
-{
-	anon_shared_map_entry *evict = pair->val;
-	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
-	if (phymm_dereference_page(page_index) == 0)
-		phymm_free_user(page_index);
-	free(evict);
-}
 
 void pf_init()
 {
 	int_register(0xe, pf_process, 0, 0);
-	anon_shared_map =
-		hash_create(anon_shared_map_key_comp, anon_shared_map_evict);
-	mutex_init(&anon_shared_map_lock);
+	mm_cache_init();
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
-/* Lookup (id, offset) in the shared map.
- * Returns the physical address, or 0 on miss. */
-static unsigned anon_shared_map_find(unsigned id, unsigned offset)
+static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 {
-	anon_shared_map_key tmp = { .id = id, .offset = offset };
-	key_value_pair *pair;
-	anon_shared_map_entry *entry;
+	unsigned page_idx;
+	unsigned phy;
 
-	mutex_lock(&anon_shared_map_lock);
-	pair = hash_find(anon_shared_map, &tmp);
-	if (!pair) {
-		mutex_unlock(&anon_shared_map_lock);
+	if (!f || !f->f_inode || !f->f_inode->i_op || !f->f_inode->i_op->read_page)
+		return 0;
+
+	page_idx = phymm_alloc_user();
+	if (page_idx == PHYMM_INVALID)
+		return 0;
+
+	phy = page_idx * PAGE_SIZE;
+	if (mm_kmap_phys(phy) != 1) {
+		phymm_free_user(page_idx);
 		return 0;
 	}
-	entry = pair->val;
-	mutex_unlock(&anon_shared_map_lock);
-	return entry->phy;
-}
 
-/* Insert (id, offset, phy) into the anonymous shared map.
- * Bumps the page ref count so the page cannot be freed while in the map. */
-static void anon_shared_map_add(unsigned id, unsigned offset, unsigned phy)
-{
-	anon_shared_map_entry *entry;
-	anon_shared_map_key tmp = { .id = id, .offset = offset };
-
-	if (id == 0 || phy == 0)
-		return;
-
-	mutex_lock(&anon_shared_map_lock);
-
-	/* Skip if already present (two faults on the same page before first one completes). */
-	if (hash_find(anon_shared_map, &tmp)) {
-		mutex_unlock(&anon_shared_map_lock);
-		return;
+	if (f->f_inode->i_op->read_page(f->f_inode, offset,
+					(void *)PHY_TO_VIRT(phy)) != 0) {
+		phymm_free_user(page_idx);
+		return 0;
 	}
 
-	entry = malloc(sizeof(*entry));
-	entry->key.id = id;
-	entry->key.offset = offset;
-	entry->phy = phy;
-	hash_insert(anon_shared_map, &entry->key, entry);
-	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
+	return phy;
+}
 
-	mutex_unlock(&anon_shared_map_lock);
+static int pf_file_uses_fs_page_cache(file *f)
+{
+	inode *node;
+
+	if (!f)
+		return 0;
+	node = f->f_inode;
+	return node && node->i_pgcache_tag && node->i_op &&
+	       node->i_op->read_page;
+}
+
+typedef struct _pf_file_page_result {
+	unsigned phy;
+	int cache_hit;
+	int needs_shared_registration;
+} pf_file_page_result;
+
+static pf_file_page_result pf_get_file_page(file *f, int offset, int flag)
+{
+	pf_file_page_result result = { 0 };
+	int shared = (flag & MAP_SHARED) != 0;
+
+	if (pf_file_uses_fs_page_cache(f)) {
+		result.phy = fs_page_cache_get(f->f_inode, offset,
+					       &result.cache_hit);
+		return result;
+	}
+
+	if (shared) {
+		result.phy = mm_file_shared_find(f, offset);
+		if (result.phy != 0) {
+			result.needs_shared_registration = 1;
+			return result;
+		}
+	}
+
+	result.phy = pf_read_file_page_direct(f, offset);
+	if (result.phy != 0 && shared)
+		result.needs_shared_registration = 1;
+	return result;
 }
 
 /*
@@ -152,10 +129,8 @@ extern phymm_page *phymm_pages;
 static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 				      int prot, int flag)
 {
-	unsigned phy = 0;
-	int cache_hit = 0;
+	pf_file_page_result page;
 	int mmflag;
-	int handled = 0;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_file++;
@@ -165,19 +140,19 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * the same at the fs layer: the returned page is shared across readers and
 	 * private mappings fault COW on the first write.
 	 */
-	phy = fs_page_cache_get(f->f_inode, offset, &cache_hit);
+	page = pf_get_file_page(f, offset, flag);
 	if (TestControl.profiling)
 		page_fault_file_search_spent += time_wall_us() - begin;
 
-	if (phy == 0)
-		goto DONE;
-	if (cache_hit)
+	if (page.phy == 0)
+		goto FAIL;
+	if (page.cache_hit)
 		page_fault_file_cache_hit++;
 	else
 		page_fault_file_read += PAGE_SIZE;
 
-	if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE) != 1)
-		goto DONE;
+	if (mm_map_page(address, page.phy, PAGE_ENTRY_USER_CODE) != 1)
+		goto FAIL;
 	INVLPG(address);
 
 	if ((flag & MAP_SHARED) || !(prot & PROT_WRITE)) {
@@ -186,12 +161,17 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		mm_set_map_flag(address, mmflag);
 		INVLPG(address);
 	}
-	handled = 1;
+	if ((flag & MAP_SHARED) && page.needs_shared_registration)
+		mm_file_shared_add(f, offset, page.phy);
 
-DONE:
 	if (TestControl.profiling)
 		page_fault_file_spent += (time_wall_us() - begin);
-	return handled;
+	return 1;
+
+FAIL:
+	if (TestControl.profiling)
+		page_fault_file_spent += (time_wall_us() - begin);
+	return 0;
 }
 
 /*
@@ -220,8 +200,8 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 	page_fault_invalid++;
 
 	if ((flag & MAP_SHARED) && region->anon_id != 0) {
-		unsigned id = region->anon_id | ANON_SHARED_BIT;
-		unsigned phy = anon_shared_map_find(id, offset);
+		unsigned phy =
+			mm_anon_shared_find(region->anon_id, offset);
 
 		if (phy != 0) {
 			/* Hit — map read-only so writes go through pf_handle_permission. */
@@ -250,7 +230,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 		mm_set_map_flag(address, mmflag);
 		INVLPG(address);
 
-		anon_shared_map_add(id, offset, phy);
+		mm_anon_shared_add(region->anon_id, offset, phy);
 		handled = 1;
 		goto DONE;
 	}
@@ -389,7 +369,9 @@ static int pf_handle_page_invalid(unsigned cr2)
 	int this_offset;
 	task_struct *cur = CURRENT_TASK();
 
-	region = pf_find_vma(cur, cr2);
+	region = vm_find_map_cached(cur->user, cr2);
+	if (!region)
+		region = pf_find_vma(cur, cr2);
 	if (!region || cr2 < region->begin || cr2 >= region->end)
 		return 0;
 

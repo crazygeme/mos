@@ -9,6 +9,7 @@
  */
 
 #include <fs/fs.h>
+#include <fs/cache.h>
 #include <fs/vfs.h>
 #include <fs/mount.h>
 #include <fs/fcntl.h>
@@ -352,6 +353,7 @@ static int tmpfs_file_write_page(inode *node, unsigned offset, const void *buf)
 	unsigned page_idx = offset / PAGE_SIZE;
 	int ret;
 
+	fs_page_cache_invalidate(node);
 	ret = tmpfs_ensure_page(tn, page_idx * PAGE_SIZE);
 	if (ret < 0)
 		return ret;
@@ -373,6 +375,8 @@ static int tmpfs_file_ftruncate(inode *node, loff_t size)
 
 	if (size < 0)
 		return -EINVAL;
+
+	fs_page_cache_invalidate(node);
 
 	if (new_size < old_size && new_npages > 0 &&
 	    (new_size % PAGE_SIZE) != 0 && new_npages <= tn->n_pages &&
@@ -469,6 +473,8 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 	tmpfs_node *tn = fp->f_inode->i_private;
 	const char *src = (const char *)buf;
 	ssize_t transferred = 0;
+
+	fs_page_cache_invalidate(fp->f_inode);
 
 	while ((size_t)transferred < size) {
 		unsigned cur_off = (unsigned)*pos + (unsigned)transferred;
@@ -689,6 +695,7 @@ static file *tmpfs_make_file(tmpfs_node *tn)
 	node->i_ino = tn->ino;
 	node->i_size = tn->size;
 	node->i_op = &tmpfs_file_iops;
+	node->i_pgcache_tag = tn;
 	node->i_private = tn;
 	fp->f_inode = node;
 	fp->f_count = 1;

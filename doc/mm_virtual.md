@@ -336,10 +336,10 @@ distinguishing a segfault exit from a clean failure.
 
 `MAP_SHARED` pages must be shared across all processes that map the same
 backing. File-backed sharing now comes from the filesystem page cache.
-Anonymous shared mappings still need a dedicated page-fault-side registry,
-because they have no inode-backed cache to attach to.
+Anonymous shared mappings still need a dedicated MM-side registry, because
+they have no inode-backed cache to attach to.
 
-#### `anon_shared_map` — non-evicting registry for anonymous `MAP_SHARED`
+#### `anon_shared_map` — shared-page registry for anonymous `MAP_SHARED`
 
 ```
 Key:  (id, offset)
@@ -370,7 +370,10 @@ Value: physical address of the shared page
 A unique `anon_id` is assigned by `do_mmap_kernel` at `mmap` time
 (`++g_anon_id_next`).  The `vm_region` stores this ID and it is **preserved
 across `fork()`** (via `vm_dup`), so parent and child share the same
-`anon_shared_map` entries.
+`anon_shared_map` entries now live in `src/mm/cache.c`. A separate
+`anon_shared_refs` table tracks how many live VM regions still refer to each
+`anon_id`; when the last one disappears, all cached pages for that shared
+anonymous object are dropped.
 
 1. **Demand fault** (`pf_handle_invalid_memory`, `flag & MAP_SHARED`):
    - Key = `(anon_id | ANON_SHARED_BIT, offset)`.
@@ -431,9 +434,20 @@ There are now two distinct caching layers:
 static hash_table *anon_shared_map;   // keyed by (anon_id | ANON_SHARED_BIT, offset)
 ```
 
-Entries are never evicted; the table holds a permanent reference
-(`phymm_reference_page`) to each anonymous shared page for the lifetime of the
-registry entry.
+Entries hold a reference (`phymm_reference_page`) to each anonymous shared
+page while its `anon_id` still has live VM-region references. `munmap`,
+splits/merges, and process exit update the refcount through the VM layer, and
+the last `mm_anon_shared_put()` removes the object's cached pages.
+
+#### `file_shared_map`
+
+```c
+static hash_table *file_shared_map;   // keyed by (tag, ino, page_offset)
+```
+
+This lives in `src/mm/cache.c` too, but only as a narrow fallback for
+file-backed `MAP_SHARED` objects that cannot use the filesystem page cache.
+Normal file-backed faults should still be satisfied through `src/fs/cache.c`.
 
 #### Zero page
 

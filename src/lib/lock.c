@@ -36,10 +36,10 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 	if (__builtin_expect(__sync_lock_test_and_set(&lock->lock, 1) == 0, 1))
 		goto locked;
 
-	/* Slow path: spin with HLT to yield the CPU pipeline and reduce
-	 * memory bus contention on the lock cache line. */
+	/* Slow path: stay in a true spin loop. We already disabled interrupts
+	 * above, so HLT here can deadlock the CPU forever if IF stays clear. */
 	do {
-		HLT();
+		PAUSE();
 	} while (__sync_lock_test_and_set(&lock->lock, 1) == 1);
 
 locked:

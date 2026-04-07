@@ -42,7 +42,8 @@ static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 	unsigned page_idx;
 	unsigned phy;
 
-	if (!f || !f->f_inode || !f->f_inode->i_op || !f->f_inode->i_op->read_page)
+	if (!f || !f->f_inode || !f->f_inode->i_op ||
+	    !f->f_inode->i_op->read_page)
 		return 0;
 
 	page_idx = phymm_alloc_user();
@@ -200,8 +201,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 	page_fault_invalid++;
 
 	if ((flag & MAP_SHARED) && region->anon_id != 0) {
-		unsigned phy =
-			mm_anon_shared_find(region->anon_id, offset);
+		unsigned phy = mm_anon_shared_find(region->anon_id, offset);
 
 		if (phy != 0) {
 			/* Hit — map read-only so writes go through pf_handle_permission. */
@@ -520,6 +520,7 @@ extern void do_exit(unsigned encoded_status);
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
+	unsigned fault_addr;
 	unsigned error = frame->error_code;
 	task_struct *cur;
 	int int_enable = 0;
@@ -537,6 +538,7 @@ static void pf_process(intr_frame *frame)
 	 */
 
 	LOAD_CR2(cr2);
+	fault_addr = cr2;
 	cr2 = cr2 & PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {
@@ -556,12 +558,9 @@ NOT_HANDLED:
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
 	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
-		klog("segfault: error code %x, address %x, eip %x, cmd %s\n",
-		     frame->error_code, cr2, frame->eip, cur->user->command);
-		if (cur->user->vm) {
-			klog("  vm regions:\n");
-			vm_enum(cur->user->vm, pf_dump_region, NULL);
-		}
+		klog("segfault: error code %x, address %x, page %x, eip %x, cmd %s\n",
+		     frame->error_code, fault_addr, cr2, frame->eip,
+		     cur->user->command);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);

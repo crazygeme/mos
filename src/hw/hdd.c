@@ -1134,8 +1134,8 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 		pi->bdev = bdev;
 		ext4_device_register(bdev, NULL, name);
 		blockdev_register(name, 3, hdd_partition_count,
-				 (uint64_t)pi->size * BLOCK_SECTOR_SIZE,
-				 BLOCKDEV_FLAG_MOUNTABLE);
+				  (uint64_t)pi->size * BLOCK_SECTOR_SIZE,
+				  BLOCKDEV_FLAG_MOUNTABLE);
 	}
 }
 

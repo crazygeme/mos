@@ -92,6 +92,14 @@ typedef struct {
 	unsigned bg_color;
 	/* keyboard translation mode (K_XLATE, K_RAW, etc.) */
 	int kb_mode;
+	/* keyboard LED bitmap from KDSETLED/KDGETLED */
+	int kb_leds;
+	/* keyboard repeat settings returned by KDKBDREP */
+	struct kbd_repeat kb_repeat;
+	/* console display mode selected through KDSETMODE */
+	int kd_mode;
+	/* virtual-terminal mode configured via VT_SETMODE */
+	struct vt_mode vt_mode;
 } tty_state;
 
 #define DEFAULT_TTY 1
@@ -107,6 +115,82 @@ static unsigned _displayed_cursor; /* linear position of cursor drawn on screen 
  * even when a switch is in progress on another CPU.
  */
 static spinlock_t tty_switch_lock;
+
+static int tty_fb_text_is_visible(const tty_state *state)
+{
+	return state->tty_idx == active_tty_idx && state->kd_mode == KD_TEXT;
+}
+
+static int tty_vt_is_available(int tty_idx)
+{
+	tty_state *state;
+	task_struct *task;
+
+	if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
+		return 0;
+	if (tty_idx == active_tty_idx)
+		return 0;
+
+	state = &ttys[tty_idx - 1];
+	if (state->open_count > 0)
+		return 0;
+	if (state->bash_pid == 0)
+		return 1;
+
+	task = ps_find_process(state->bash_pid);
+	return !task || task->status == ps_dying;
+}
+
+static int tty_vt_find_free(void)
+{
+	int tty_idx;
+
+	for (tty_idx = 2; tty_idx <= TTY_MAX_VDEV; tty_idx++) {
+		if (tty_vt_is_available(tty_idx))
+			return tty_idx;
+	}
+
+	return -1;
+}
+
+static tty_state *tty_find_controlling(task_struct *task)
+{
+	int tty_idx;
+
+	if (!task || !task->user)
+		return NULL;
+
+	for (tty_idx = 1; tty_idx <= TTY_MAX_VDEV; tty_idx++) {
+		tty_state *state = &ttys[tty_idx - 1];
+
+		if (state->pgrp == task->user->group_id)
+			return state;
+	}
+
+	return NULL;
+}
+
+static unsigned short tty_vt_state_mask(void)
+{
+	unsigned short mask = 0;
+	int tty_idx;
+
+	for (tty_idx = 1; tty_idx <= TTY_MAX_VDEV; tty_idx++) {
+		tty_state *state = &ttys[tty_idx - 1];
+		task_struct *task = state->bash_pid ?
+					    ps_find_process(state->bash_pid) :
+					    NULL;
+		int allocated = (tty_idx == active_tty_idx) ||
+				(state->open_count > 0) ||
+				(state->bash_pid != 0 && task &&
+				 task->status != ps_dying);
+
+		if (allocated)
+			mask |= (unsigned short)(1U << (tty_idx - 1));
+	}
+
+	return mask;
+}
 
 /* ── Convenience macros ──────────────────────────────────────────────────── */
 
@@ -128,7 +212,7 @@ static void vga_putchar(tty_state *state, int row, int col, char c)
 	state->cells[idx].ch = c;
 	state->cells[idx].fg = state->fg_color;
 	state->cells[idx].bg = state->bg_color;
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_putcell(&state->cells[idx], col, row);
 }
 
@@ -140,7 +224,7 @@ static void tty_do_clear(tty_state *state)
 	for (i = 0; i < sz; i++)
 		memcpy(&state->cells[i], &blank, sizeof(tty_cell_t));
 
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_clear_screen();
 }
 
@@ -150,7 +234,7 @@ static void tty_roll_line(tty_state *state)
 	unsigned total = (unsigned)(MAX_ROW * (int)MAX_COL);
 	unsigned i;
 
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_cursor_erase(_displayed_cursor, state->cells, col);
 
 	memmove(state->cells, state->cells + col,
@@ -158,7 +242,7 @@ static void tty_roll_line(tty_state *state)
 	for (i = total - col; i < total; i++)
 		memcpy(&state->cells[i], &blank, sizeof(tty_cell_t));
 
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_scroll_line_px();
 }
 
@@ -174,7 +258,7 @@ static void tty_roll_region(tty_state *state)
 		return;
 	}
 
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_cursor_erase(_displayed_cursor, state->cells, col);
 
 	memmove(state->cells + top * col, state->cells + (top + 1) * col,
@@ -182,13 +266,13 @@ static void tty_roll_region(tty_state *state)
 	for (i = bot * col; i < (bot + 1) * col; i++)
 		memcpy(&state->cells[i], &blank, sizeof(tty_cell_t));
 
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_scroll_region_px(top, bot);
 }
 
 static void tty_hw_cursor(tty_state *state, unsigned pos)
 {
-	if (state->cursor_hidden || state->tty_idx != active_tty_idx)
+	if (state->cursor_hidden || !tty_fb_text_is_visible(state))
 		return;
 	fb_cursor_update(_displayed_cursor, pos, state->cells,
 			 (unsigned)MAX_COL);
@@ -243,7 +327,7 @@ static void tty_insert_lines(tty_state *state, int n)
 		state->cells[i].fg = VGA_COLOR_WHITE;
 		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
-	if (state->tty_idx == active_tty_idx) {
+	if (tty_fb_text_is_visible(state)) {
 		fb_cursor_erase(_displayed_cursor, state->cells,
 				(unsigned)MAX_COL);
 		fb_insert_lines_px((unsigned)row, (unsigned)bot, (unsigned)n);
@@ -276,7 +360,7 @@ static void tty_delete_lines(tty_state *state, int n)
 		state->cells[i].fg = VGA_COLOR_WHITE;
 		state->cells[i].bg = VGA_COLOR_BLACK;
 	}
-	if (state->tty_idx == active_tty_idx) {
+	if (tty_fb_text_is_visible(state)) {
 		fb_cursor_erase(_displayed_cursor, state->cells,
 				(unsigned)MAX_COL);
 		fb_delete_lines_px((unsigned)row, (unsigned)bot, (unsigned)n);
@@ -303,7 +387,7 @@ static void tty_delete_chars(tty_state *state, int n)
 		state->cells[row * max_col + i].fg = VGA_COLOR_WHITE;
 		state->cells[row * max_col + i].bg = VGA_COLOR_BLACK;
 	}
-	if (state->tty_idx == active_tty_idx) {
+	if (tty_fb_text_is_visible(state)) {
 		for (i = col; i < max_col; i++) {
 			tty_cell_t *c = &state->cells[row * max_col + i];
 			fb_putcell(c, i, row);
@@ -331,7 +415,7 @@ static void tty_insert_chars(tty_state *state, int n)
 		state->cells[row * max_col + i].fg = VGA_COLOR_WHITE;
 		state->cells[row * max_col + i].bg = VGA_COLOR_BLACK;
 	}
-	if (state->tty_idx == active_tty_idx) {
+	if (tty_fb_text_is_visible(state)) {
 		for (i = col; i < max_col; i++) {
 			tty_cell_t *c = &state->cells[row * max_col + i];
 			fb_putcell(c, i, row);
@@ -357,7 +441,7 @@ static void tty_enter_alt_screen(tty_state *state)
 	}
 	state->cursor = 0;
 	state->alt_active = 1;
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_clear_screen();
 	tty_hw_cursor(state, 0);
 }
@@ -371,7 +455,7 @@ static void tty_exit_alt_screen(tty_state *state)
 	memcpy(state->cells, state->alt_cells, sz * sizeof(tty_cell_t));
 	state->cursor = state->alt_cursor;
 	state->alt_active = 0;
-	if (state->tty_idx == active_tty_idx)
+	if (tty_fb_text_is_visible(state))
 		fb_redraw(state->cells, state->max_col, state->max_row,
 			  (unsigned)state->cursor);
 	tty_hw_cursor(state, (unsigned)state->cursor);
@@ -935,6 +1019,15 @@ void tty_init(void)
 		t->fg_color = VGA_COLOR_WHITE;
 		t->bg_color = VGA_COLOR_BLACK;
 		t->kb_mode = K_XLATE;
+		t->kb_leds = 0;
+		t->kb_repeat.delay = 250;
+		t->kb_repeat.period = 33;
+		t->kd_mode = KD_TEXT;
+		t->vt_mode.mode = VT_AUTO;
+		t->vt_mode.waitv = 0;
+		t->vt_mode.relsig = 0;
+		t->vt_mode.acqsig = 0;
+		t->vt_mode.frsig = 0;
 	}
 	spinlock_init(&tty_switch_lock);
 }
@@ -1149,7 +1242,7 @@ static void tty_bash_spawner(void *p)
  * Called from the keyboard DSR (interrupts disabled) so all operations
  * must be non-blocking.
  */
-void tty_switch(int n)
+static void tty_switch_internal(int n, int spawn_shell)
 {
 	tty_state *except_tty;
 	int irq;
@@ -1165,16 +1258,17 @@ void tty_switch(int n)
 	active_tty_idx = n;
 	this_ttys = except_tty;
 
-	/* Restore new TTY's cell buffer to the framebuffer */
+	/* Restore text consoles, but leave graphics VTs in control of the FB. */
 	_displayed_cursor = (unsigned)this_ttys->cursor;
-	fb_redraw(this_ttys->cells, this_ttys->max_col, this_ttys->max_row,
-		  (unsigned)this_ttys->cursor);
+	if (tty_fb_text_is_visible(this_ttys))
+		fb_redraw(this_ttys->cells, this_ttys->max_col,
+			  this_ttys->max_row, (unsigned)this_ttys->cursor);
 
 	spinlock_unlock(&tty_switch_lock, irq);
 
 	/* Spawn bash on the new TTY if no live process is there yet.
 	 * TTY 1 is managed by init/getty; only auto-spawn bash on TTY 2+. */
-	if (n > 1) {
+	if (spawn_shell && n > 1) {
 		int need_spawn = 0;
 
 		if (except_tty->bash_pid == 0) {
@@ -1190,6 +1284,11 @@ void tty_switch(int n)
 							 except_tty, ps_normal,
 							 ps_kernel);
 	}
+}
+
+void tty_switch(int n)
+{
+	tty_switch_internal(n, 1);
 }
 
 /* ── VFS file operations ─────────────────────────────────────────────────── */
@@ -1329,7 +1428,7 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		 * arg==1 allows stealing from another session.
 		 */
 		task_struct *cur = CURRENT_TASK();
-		int steal = (int)buf;
+		int steal = (int)(uintptr_t)buf;
 		if (!cur->user || cur->user->session_id != cur->psid)
 			return -EPERM; /* must be session leader */
 		if (state->pgrp && !steal)
@@ -1337,14 +1436,27 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		state->pgrp = cur->user->group_id;
 		return 0;
 	}
+	case TIOCNOTTY: {
+		task_struct *cur = CURRENT_TASK();
+
+		if (cur->user && state->pgrp == cur->user->group_id)
+			state->pgrp = 0;
+		return 0;
+	}
 	case KDGKBTYPE:
 		*(unsigned char *)buf = KB_101;
+		return 0;
+	case KDGETLED:
+		*(int *)buf = state->kb_leds;
+		return 0;
+	case KDSETLED:
+		state->kb_leds = (int)(uintptr_t)buf;
 		return 0;
 	case KDGKBMODE:
 		*(int *)buf = state->kb_mode;
 		return 0;
 	case KDSKBMODE:
-		state->kb_mode = (int)buf;
+		state->kb_mode = (int)(uintptr_t)buf;
 		return 0;
 	case KDGKBENT:
 		return kbd_get_kbentry((struct kbentry *)buf);
@@ -1361,6 +1473,17 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 	}
 	case KDSKBDIACR:
 		return 0;
+	case KDKBDREP: {
+		struct kbd_repeat *rep = (struct kbd_repeat *)buf;
+
+		if (rep->delay > 0)
+			state->kb_repeat.delay = rep->delay;
+		if (rep->period > 0)
+			state->kb_repeat.period = rep->period;
+		rep->delay = state->kb_repeat.delay;
+		rep->period = state->kb_repeat.period;
+		return 0;
+	}
 	case TIOCLINUX: {
 		/*
 		 * Linux virtual-console ioctl; subcommand is the first byte.
@@ -1371,9 +1494,57 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 	case KDSIGACCEPT:
 		return 0;
 	case KDGETMODE:
-		*(int *)buf = KD_TEXT;
+		*(int *)buf = state->kd_mode;
 		return 0;
-	case KDSETMODE:
+	case KDSETMODE: {
+		int mode = (int)(uintptr_t)buf;
+
+		if (mode != KD_TEXT && mode != KD_GRAPHICS)
+			return -EINVAL;
+		state->kd_mode = mode;
+		if (tty_fb_text_is_visible(state))
+			fb_redraw(state->cells, state->max_col, state->max_row,
+				  (unsigned)state->cursor);
+		return 0;
+	}
+	case VT_OPENQRY:
+		*(int *)buf = tty_vt_find_free();
+		return 0;
+	case VT_GETMODE:
+		memcpy(buf, &state->vt_mode, sizeof(state->vt_mode));
+		return 0;
+	case VT_SETMODE: {
+		const struct vt_mode *mode = (const struct vt_mode *)buf;
+
+		if (mode->mode != VT_AUTO && mode->mode != VT_PROCESS)
+			return -EINVAL;
+		memcpy(&state->vt_mode, mode, sizeof(state->vt_mode));
+		return 0;
+	}
+	case VT_GETSTATE: {
+		struct vt_stat *stat = (struct vt_stat *)buf;
+
+		stat->v_active = (unsigned short)active_tty_idx;
+		stat->v_signal = 0;
+		stat->v_state = tty_vt_state_mask();
+		return 0;
+	}
+	case VT_ACTIVATE: {
+		int tty_idx = (int)(uintptr_t)buf;
+
+		if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
+			return -EINVAL;
+		tty_switch_internal(tty_idx, 0);
+		return 0;
+	}
+	case VT_WAITACTIVE: {
+		int tty_idx = (int)(uintptr_t)buf;
+
+		if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
+			return -EINVAL;
+		return active_tty_idx == tty_idx ? 0 : -EAGAIN;
+	}
+	case VT_DISALLOCATE:
 		return 0;
 	case GIO_FONT:
 		memset(buf, 0, 256 * 8); /* 256 chars, 8 bytes each */
@@ -1506,22 +1677,32 @@ static file *tty_open_state(tty_state *state, int flag)
 /*
  * tty_cdev_open — cdev dispatch callback.
  *   major 4, minor 1-10 → tty1..tty10 (1-based; minor maps to ttys[minor-1])
- *   major 5, minor 0    → /dev/tty  (controlling terminal, mapped to tty1)
- *   major 5, minor 1    → /dev/console (system console, mapped to tty1)
+ *   major 5, minor 0    → /dev/tty0   (active virtual console)
+ *   major 5, minor 1    → /dev/tty    (calling task's controlling terminal)
+ *   major 5, minor 2    → /dev/console (system console, mapped to tty1)
  */
 static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 {
 	unsigned major = MAJOR(rdev);
 	unsigned minor = MINOR(rdev);
 	tty_state *state;
+	task_struct *cur = CURRENT_TASK();
 
 	if (major == 4) {
 		/* /dev/ttyN uses 1-based minor: tty1→ttys[0] (active), tty2→ttys[1], … */
 		if (minor < 1 || minor - 1 >= TTY_MAX_VDEV)
 			return NULL;
 		state = &ttys[minor - 1];
-	} else { /* major == 5: /dev/tty and /dev/console */
+	} else if (minor == 0) {
+		state = &ttys[active_tty_idx - 1];
+	} else if (minor == 1) {
+		state = tty_find_controlling(cur);
+		if (!state)
+			return NULL;
+	} else if (minor == 2) {
 		state = &ttys[DEFAULT_TTY - 1];
+	} else {
+		return NULL;
 	}
 	return tty_open_state(state, flag);
 }
@@ -1566,11 +1747,13 @@ static void tty_dev_register(super_block *dev_sb)
 	}
 
 	printk("dev: registered /dev/tty0\n");
+	printk("dev: registered /dev/tty\n");
 	printk("dev: registered /dev/console\n");
-	/* major 5: /dev/tty (minor 0) and /dev/console (minor 1) */
-	cdev_register(S_IFCHR, 5, 0, 2, tty_cdev_open);
+	/* major 5: /dev/tty0, /dev/tty, /dev/console */
+	cdev_register(S_IFCHR, 5, 0, 3, tty_cdev_open);
 	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(5, 0));
-	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
+	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 1));
+	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 2));
 }
 
 KERNEL_INIT(0, tty_fs_init);

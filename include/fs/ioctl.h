@@ -37,6 +37,7 @@
 #define TIOCGSERIAL 0x541E
 #define TIOCSSERIAL 0x541F
 #define TIOCPKT 0x5420
+#define TIOCNOTTY 0x5422
 
 #define TIOCPKT_DATA 0x00
 #define TIOCPKT_FLUSHREAD 0x01
@@ -46,6 +47,8 @@
 #define TIOCPKT_NOSTOP 0x10
 #define TIOCPKT_DOSTOP 0x20
 /* KD (keyboard/display) ioctls */
+#define KDGETLED 0x4B31 /* return current led state */
+#define KDSETLED 0x4B32 /* set led state [lights, not flags] */
 #define KDGKBTYPE 0x4B33 /* get keyboard type */
 #define KDGKBMODE 0x4B44 /* get keyboard mode */
 #define KDSKBMODE 0x4B45 /* set keyboard mode */
@@ -105,10 +108,46 @@ struct kbentry {
 #define KB_101 0x02 /* 101-key PC/AT keyboard */
 #define KB_OTHER 0x03
 #define KDSIGACCEPT 0x4B4E /* process accepts VT-switch signal */
+
+struct kbd_repeat {
+	int delay; /* msec; <= 0 means unchanged */
+	int period; /* msec; <= 0 means unchanged */
+};
+
+#define KDKBDREP 0x4B52 /* set keyboard delay/repeat rate */
 #define KDGETMODE 0x4B3B /* get text/graphics mode */
 #define KDSETMODE 0x4B3A /* set text/graphics mode */
 #define KD_TEXT 0
 #define KD_GRAPHICS 1
+
+/* Virtual-terminal ioctls */
+#define VT_OPENQRY 0x5600
+#define VT_GETMODE 0x5601
+#define VT_SETMODE 0x5602
+#define VT_GETSTATE 0x5603
+#define VT_SENDSIG 0x5604
+#define VT_RELDISP 0x5605
+#define VT_ACTIVATE 0x5606
+#define VT_WAITACTIVE 0x5607
+#define VT_DISALLOCATE 0x5608
+
+#define VT_AUTO 0x00
+#define VT_PROCESS 0x01
+#define VT_ACKACQ 0x02
+
+struct vt_mode {
+	char mode;
+	char waitv;
+	short relsig;
+	short acqsig;
+	short frsig;
+};
+
+struct vt_stat {
+	unsigned short v_active;
+	unsigned short v_signal;
+	unsigned short v_state;
+};
 
 /* Font ioctls */
 #define GIO_FONT 0x4B60 /* get 256-char 8x8 font (raw bitmap) */

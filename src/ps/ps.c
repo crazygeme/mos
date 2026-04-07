@@ -50,7 +50,7 @@ int _ps_enabled = 0;
 /* Scheduling instrumentation (updated by ps_sched.c). */
 unsigned task_schedule_count = 0;
 
-static tss_struct *tss_address_storage = 0;
+static tss_io_struct *tss_address_storage = 0;
 tss_struct *tss_address = 0; /* alias used by reset_tss and ps_sched.c */
 
 /*
@@ -124,9 +124,14 @@ int ps_total_count()
 /* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
 void reset_tss(task_struct *task)
 {
+	tss_io_struct *io_tss = (tss_io_struct *)tss_address;
+
 	tss_address->cr3 = task->cr3;
 	tss_address->esp0 = task->tss.esp0;
-	tss_address->iomap = (unsigned short)sizeof(tss_struct);
+	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
+	memset(io_tss->io_bitmap, task->io_allow_all ? 0x00 : 0xff,
+	       TSS_IO_BITMAP_BYTES);
+	io_tss->io_bitmap[TSS_IO_BITMAP_BYTES] = 0xff;
 	tss_address->ss0 = KERNEL_DATA_SELECTOR;
 	tss_address->ss = tss_address->gs = tss_address->fs = tss_address->ds =
 		tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
@@ -214,8 +219,10 @@ void ps_init()
 	_ps_enabled = 0;
 	task_schedule_count = 0;
 
-	tss_address_storage = kmalloc(sizeof(tss_struct));
-	tss_address = tss_address_storage;
+	tss_address_storage = kmalloc(sizeof(tss_io_struct));
+	memset(tss_address_storage, 0xff, sizeof(tss_io_struct));
+	tss_address = &tss_address_storage->tss;
+	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
 	int_update_tss((unsigned int)tss_address);
 }
 

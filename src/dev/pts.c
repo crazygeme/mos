@@ -138,6 +138,13 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 		p->pgrp = cur->user->group_id;
 		return 0;
 	}
+	case TIOCNOTTY: {
+		task_struct *cur = CURRENT_TASK();
+
+		if (cur->user && p->pgrp == cur->user->group_id)
+			p->pgrp = 0;
+		return 0;
+	}
 	}
 	return -ENOSYS;
 }
@@ -240,6 +247,13 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 		if (p->pgrp && !steal)
 			return -EPERM;
 		p->pgrp = cur->user->group_id;
+		return 0;
+	}
+	case TIOCNOTTY: {
+		task_struct *cur = CURRENT_TASK();
+
+		if (cur->user && p->pgrp == cur->user->group_id)
+			p->pgrp = 0;
 		return 0;
 	}
 	case KDGETMODE:

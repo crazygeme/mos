@@ -152,8 +152,8 @@ static unsigned call_table[NR_syscalls] = {
 	sys_ioperm, // 101 __NR_ioperm
 	sys_socketcall, // 102 __NR_socketcall
 	sys_syslog, // 103 __NR_syslog
-	0, // 104 __NR_setitimer
-	0, // 105 __NR_getitimer
+	sys_setitimer, // 104 __NR_setitimer
+	sys_getitimer, // 105 __NR_getitimer
 	sys_stat, // 106 __NR_stat
 	sys_lstat, // 107 __NR_lstat
 	sys_fstat, // 108 __NR_fstat
@@ -161,11 +161,11 @@ static unsigned call_table[NR_syscalls] = {
 	sys_iopl, // 110 __NR_iopl
 	sys_vhangup, // 111 __NR_vhangup
 	0, // 112 __NR_idle
-	0, // 113 __NR_vm86old
+	sys_vm86old, // 113 __NR_vm86old
 	sys_wait4, // 114 __NR_wait4
 	0, // 115 __NR_swapoff
 	sys_sysinfo, // 116 __NR_sysinfo
-	0, // 117 __NR_ipc
+	sys_ipc, // 117 __NR_ipc
 	sys_fsync, // 118 __NR_fsync
 	sys_sigreturn, // 119 __NR_sigreturn
 	0, // 120 __NR_clone
@@ -214,7 +214,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_mremap, // 163 __NR_mremap
 	sys_setresuid, // 164 __NR_setresuid
 	sys_getresuid, // 165 __NR_getresuid
-	0, // 166 __NR_vm86
+	sys_vm86, // 166 __NR_vm86
 	sys_query_module, // 167 __NR_query_module
 	sys_poll, // 168 __NR_poll
 	0, // 169 __NR_nfsservctl

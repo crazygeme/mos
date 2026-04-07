@@ -74,7 +74,8 @@ static void vm_region_invalid(const key_value_pair *pair)
 
 	if (region->fp)
 		fs_put_file(region->fp);
-	if ((region->flag & MAP_SHARED) && region->fp == NULL && region->anon_id)
+	if ((region->flag & MAP_SHARED) && region->fp == NULL &&
+	    region->anon_id)
 		mm_anon_shared_put(region->anon_id);
 
 	kfree(key);

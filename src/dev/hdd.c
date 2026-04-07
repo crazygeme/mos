@@ -26,9 +26,10 @@
 
 static ssize_t hdd_dev_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	hdd_partition_info *pi = fp->f_inode->i_private;
+	unsigned idx = (unsigned)(uintptr_t)fp->f_inode->i_private;
 	char *dst = (char *)buf;
-	loff_t dev_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
+	loff_t dev_size =
+		(loff_t)hdd_partition_size_sectors(idx) * BLOCK_SECTOR_SIZE;
 	char *tmp;
 	ssize_t transferred = 0;
 
@@ -50,17 +51,17 @@ static ssize_t hdd_dev_read(file *fp, void *buf, size_t size, loff_t *pos)
 		unsigned want = (unsigned)(size - (size_t)transferred);
 		unsigned copy = avail < want ? avail : want;
 
-		if (sector >= pi->size)
+		if (sector >= hdd_partition_size_sectors(idx))
 			break;
 
 		/* Aligned full-sector: read directly into dst. */
 		if (byte_off == 0 && copy == BLOCK_SECTOR_SIZE) {
-			if (pi->read(pi->aux, sector, dst + transferred,
-				     BLOCK_SECTOR_SIZE) < 0)
+			if (hdd_partition_read(idx, sector, dst + transferred,
+					       BLOCK_SECTOR_SIZE) < 0)
 				break;
 		} else {
-			if (pi->read(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
-			    0)
+			if (hdd_partition_read(idx, sector, tmp,
+					       BLOCK_SECTOR_SIZE) < 0)
 				break;
 			memcpy(dst + transferred, tmp + byte_off, copy);
 		}
@@ -75,9 +76,10 @@ static ssize_t hdd_dev_read(file *fp, void *buf, size_t size, loff_t *pos)
 static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 			     loff_t *pos)
 {
-	hdd_partition_info *pi = fp->f_inode->i_private;
+	unsigned idx = (unsigned)(uintptr_t)fp->f_inode->i_private;
 	const char *src = (const char *)buf;
-	loff_t dev_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
+	loff_t dev_size =
+		(loff_t)hdd_partition_size_sectors(idx) * BLOCK_SECTOR_SIZE;
 	char *tmp;
 	ssize_t transferred = 0;
 
@@ -99,23 +101,23 @@ static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 		unsigned want = (unsigned)(size - (size_t)transferred);
 		unsigned copy = avail < want ? avail : want;
 
-		if (sector >= pi->size)
+		if (sector >= hdd_partition_size_sectors(idx))
 			break;
 
 		/* Aligned full-sector: write directly from src. */
 		if (byte_off == 0 && copy == BLOCK_SECTOR_SIZE) {
-			if (pi->write(pi->aux, sector,
-				      (char *)src + transferred,
-				      BLOCK_SECTOR_SIZE) < 0)
+			if (hdd_partition_write(idx, sector,
+						(char *)src + transferred,
+						BLOCK_SECTOR_SIZE) < 0)
 				break;
 		} else {
 			/* Read-modify-write for partial sectors. */
-			if (pi->read(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
-			    0)
+			if (hdd_partition_read(idx, sector, tmp,
+					       BLOCK_SECTOR_SIZE) < 0)
 				break;
 			memcpy(tmp + byte_off, src + transferred, copy);
-			if (pi->write(pi->aux, sector, tmp, BLOCK_SECTOR_SIZE) <
-			    0)
+			if (hdd_partition_write(idx, sector, tmp,
+						BLOCK_SECTOR_SIZE) < 0)
 				break;
 		}
 		transferred += (ssize_t)copy;
@@ -128,8 +130,9 @@ static ssize_t hdd_dev_write(file *fp, const void *buf, size_t size,
 
 static loff_t hdd_dev_llseek(file *fp, loff_t offset, int whence)
 {
-	hdd_partition_info *pi = fp->f_inode->i_private;
-	loff_t dev_size = (loff_t)pi->size * BLOCK_SECTOR_SIZE;
+	unsigned idx = (unsigned)(uintptr_t)fp->f_inode->i_private;
+	loff_t dev_size =
+		(loff_t)hdd_partition_size_sectors(idx) * BLOCK_SECTOR_SIZE;
 	loff_t new_pos;
 
 	switch (whence) {
@@ -164,15 +167,14 @@ static unsigned hdd_dev_poll(file *fp, unsigned events, poll_table *pt)
 
 static int hdd_dev_getattr(inode *node, struct stat *s)
 {
-	hdd_partition_info *pi = node->i_private;
-	unsigned idx = (unsigned)(pi - hdd_partitions);
+	unsigned idx = (unsigned)(uintptr_t)node->i_private;
 
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_size =
 		0; /* block devices report 0 in stat; use llseek(SEEK_END) */
 	s->st_blksize = BLOCK_SECTOR_SIZE;
-	s->st_blocks = (loff_t)pi->size;
+	s->st_blocks = (loff_t)hdd_partition_size_sectors(idx);
 	s->st_dev = MKDEV(HDD_MAJOR, 0);
 	s->st_rdev = MKDEV(HDD_MAJOR, idx + 1);
 	s->st_nlink = 1;
@@ -207,15 +209,13 @@ static file *hdd_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 {
 	unsigned idx = MINOR(rdev) - 1; /* minor 1 = hda1, minor 2 = hda2, … */
 
-	if ((int)idx >= hdd_partition_count)
+	if ((int)idx >= hdd_partition_total())
 		return NULL;
-
-	hdd_partition_info *pi = &hdd_partitions[idx];
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFBLK | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 	node->i_op = &hdd_dev_iops;
-	node->i_private = pi;
+	node->i_private = (void *)(uintptr_t)idx;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
@@ -231,15 +231,15 @@ static void hdd_dev_register(super_block *dev_sb)
 	char path[48];
 	int i;
 
-	cdev_register(S_IFBLK, HDD_MAJOR, 1, (unsigned)hdd_partition_count,
+	cdev_register(S_IFBLK, HDD_MAJOR, 1, (unsigned)hdd_partition_total(),
 		      hdd_cdev_open);
 
-	for (i = 0; i < hdd_partition_count; i++) {
-		hdd_partition_info *pi = &hdd_partitions[i];
-		sprintf(path, "/%s", pi->name);
+	for (i = 0; i < hdd_partition_total(); i++) {
+		sprintf(path, "/%s", hdd_partition_name(i));
 		vfs_mknod(dev_sb, path, S_IFBLK | 0660,
 			  MKDEV(HDD_MAJOR, i + 1));
-		printk("dev: registered /dev%s (%u sectors)\n", path, pi->size);
+		printk("dev: registered /dev%s (%u sectors)\n", path,
+		       hdd_partition_size_sectors(i));
 	}
 }
 

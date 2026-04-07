@@ -18,6 +18,7 @@
  * /dev/loop0..7 are pre-created at boot by loop_dev_register (DEV_INIT).
  */
 #include <dev/loopdev.h>
+#include <dev/blockdev.h>
 #include <dev/dev.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
@@ -172,6 +173,7 @@ static int loop_attach(int i, file *fp, const char *path_hint)
 	info->size_bytes = size;
 
 	ext4_device_register(&ld->bdev, NULL, info->name);
+	blockdev_update(info->name, size, BLOCKDEV_FLAG_MOUNTABLE);
 	return 0;
 }
 
@@ -190,6 +192,7 @@ static void loop_detach(int i)
 	/* Keep name[] so /dev/loop0 still shows in directory; clear backing. */
 	info->backing[0] = '\0';
 	info->size_bytes = 0;
+	blockdev_update(info->name, 0, 0);
 }
 
 /* ── Public API ─────────────────────────────────────────────────────────────── */
@@ -452,6 +455,7 @@ static void loop_dev_register(super_block *dev_sb)
 
 	for (i = 0; i < LOOP_MAX_DEVS; i++) {
 		sprintf(loop_devs[i].name, "loop%d", i);
+		blockdev_register(loop_devs[i].name, 7, i, 0, 0);
 		sprintf(path, "/loop%d", i);
 		vfs_mknod(dev_sb, path, S_IFBLK | 0660, MKDEV(7, i));
 	}

@@ -41,6 +41,12 @@ typedef struct {
 static cdev_entry cdev_table[MAX_CDEVS];
 static int cdev_count;
 
+static const inode_operations devnode_iops;
+static const file_operations devnode_fops;
+static const inode_operations fifonode_iops;
+static const file_operations fifonode_reader_fops;
+static const file_operations fifonode_writer_fops;
+
 void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
 		   unsigned minor_count,
 		   file *(*open)(super_block *sb, unsigned rdev, int flag))
@@ -55,22 +61,22 @@ void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
 	cdev_count++;
 }
 
-static file *cdev_dispatch(super_block *sb, unsigned mode, unsigned rdev,
-			   int flag)
+static file *devnode_open_stub(super_block *sb, unsigned mode)
 {
-	unsigned mt = mode & S_IFMT;
-	unsigned major = MAJOR(rdev);
-	unsigned minor = MINOR(rdev);
-	int i;
+	file *fp;
+	inode *node;
 
-	for (i = 0; i < cdev_count; i++) {
-		cdev_entry *e = &cdev_table[i];
-		if (e->mode_type == mt && e->major == major &&
-		    minor >= e->minor_base &&
-		    minor < e->minor_base + e->minor_count)
-			return e->open(sb, rdev, flag);
-	}
-	return NULL;
+	node = zalloc(sizeof(*node));
+	node->i_mode = mode;
+	node->i_op = &devnode_iops;
+	node->i_private =
+		sb->s_fs_info; /* owned by super_block; not freed here */
+
+	fp = zalloc(sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &devnode_fops;
+	return fp;
 }
 
 typedef struct {
@@ -220,6 +226,54 @@ static const file_operations fifonode_writer_fops = {
 	.poll = fifonode_write_poll,
 };
 
+static file *devnode_open_fifo(devnode_info *dn, int flag)
+{
+	cy_buf *b = dn->fifo;
+	inode *node = zalloc(sizeof(*node));
+	file *fp = zalloc(sizeof(*fp));
+
+	node->i_mode = dn->mode;
+	node->i_op = &fifonode_iops;
+	node->i_private = b;
+
+	fp->f_inode = node;
+	fp->f_count = 1;
+
+	if ((flag & 3) == O_WRONLY) {
+		cyb_writer_open(b);
+		fp->f_fop = &fifonode_writer_fops;
+	} else {
+		cyb_reader_open(b);
+		fp->f_fop = &fifonode_reader_fops;
+	}
+
+	return fp;
+}
+
+static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
+{
+	file *fp = NULL;
+	unsigned mt = dn->mode & S_IFMT;
+	unsigned major = MAJOR(dn->rdev);
+	unsigned minor = MINOR(dn->rdev);
+	int i;
+
+	for (i = 0; i < cdev_count; i++) {
+		cdev_entry *e = &cdev_table[i];
+		if (e->mode_type == mt && e->major == major &&
+		    minor >= e->minor_base &&
+		    minor < e->minor_base + e->minor_count) {
+			fp = e->open(sb, dn->rdev, flag);
+			break;
+		}
+	}
+
+	if (fp)
+		return fp;
+
+	return devnode_open_stub(sb, dn->mode);
+}
+
 /* ------------------------------------------------------------------ *
  * super_operations                                                     *
  * ------------------------------------------------------------------ */
@@ -227,49 +281,13 @@ static const file_operations fifonode_writer_fops = {
 static file *devnode_open_root(super_block *sb, int flag)
 {
 	devnode_info *dn = sb->s_fs_info;
-	inode *node;
-	file *fp;
 
-	if (S_ISFIFO(dn->mode)) {
-		cy_buf *b = dn->fifo;
+	if (S_ISFIFO(dn->mode))
+		return devnode_open_fifo(dn, flag);
+	else if (S_ISCHR(dn->mode) || S_ISBLK(dn->mode))
+		return devnode_open_node(sb, dn, flag);
 
-		node = zalloc(sizeof(*node));
-		node->i_mode = dn->mode;
-		node->i_op = &fifonode_iops;
-		node->i_private = b;
-
-		fp = zalloc(sizeof(*fp));
-		fp->f_inode = node;
-		fp->f_count = 1;
-
-		if ((flag & 3) == O_WRONLY) {
-			cyb_writer_open(b);
-			fp->f_fop = &fifonode_writer_fops;
-		} else {
-			cyb_reader_open(b);
-			fp->f_fop = &fifonode_reader_fops;
-		}
-		return fp;
-	}
-
-	/* Char / block: dispatch to registered handler. */
-	if (S_ISCHR(dn->mode) || S_ISBLK(dn->mode)) {
-		file *dispatched = cdev_dispatch(sb, dn->mode, dn->rdev, flag);
-		if (dispatched)
-			return dispatched;
-	}
-
-	/* No handler (or socket): stat works; I/O returns ENXIO. */
-	node = zalloc(sizeof(*node));
-	node->i_mode = dn->mode;
-	node->i_op = &devnode_iops;
-	node->i_private = dn; /* owned by super_block; not freed here */
-
-	fp = zalloc(sizeof(*fp));
-	fp->f_inode = node;
-	fp->f_count = 1;
-	fp->f_fop = &devnode_fops;
-	return fp;
+	return devnode_open_stub(sb, dn->mode);
 }
 
 static void devnode_release_super(super_block *sb)

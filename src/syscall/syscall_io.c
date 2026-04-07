@@ -216,15 +216,41 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i;
-	unsigned total = 0;
+	int total = 0;
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
 
 	if (TestControl.verbos)
 		klog("readv(%d, %x, %d)\n", fildes, iov, iovcnt);
 
+	if (fildes < 0 || fildes >= MAX_FD)
+		return -EBADF;
+	if (iovcnt < 0)
+		return -EINVAL;
+	if (cur->fds[fildes].used == 0)
+		return -EBADF;
+
+	fp = cur->fds[fildes].fp;
+	if (!fp || !fp->f_fop || !fp->f_fop->read)
+		return -EBADF;
+	if (S_ISDIR(fp->f_inode->i_mode))
+		return -EISDIR;
+
 	for (i = 0; i < iovcnt; i++) {
-		total += iov[i].iov_len;
-		memset(iov[i].iov_base, 0, iov[i].iov_len);
+		ssize_t n;
+
+		if (iov[i].iov_len == 0)
+			continue;
+
+		n = fp->f_fop->read(fp, iov[i].iov_base, iov[i].iov_len,
+				    &fp->f_pos);
+		if (n < 0)
+			return total > 0 ? total : (int)n;
+		total += (int)n;
+		if ((size_t)n < iov[i].iov_len)
+			break;
 	}
+
 	return total;
 }
 
@@ -460,10 +486,16 @@ int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 		  void *sigmask)
 {
 	if (TestControl.verbos)
-		klog("pselect(%d, %x, %x, %x, %x, %x)\n", nfds, readfds,
-		     writefds, exceptfds, timeout, sigmask);
+		klog("_newselect(%d, %x, %x, %x, %x)\n", nfds, readfds,
+		     writefds, exceptfds, timeout);
 
-	return do_select(nfds, readfds, writefds, exceptfds, timeout, sigmask);
+	/*
+	 * Linux i386 __NR__newselect (142) is plain select(2), not pselect(2).
+	 * The kernel entry gets only the five select arguments; any extra
+	 * register value here is not a user-provided sigmask and must be ignored.
+	 */
+	(void)sigmask;
+	return do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
 }
 
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)

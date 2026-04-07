@@ -125,6 +125,15 @@ typedef volatile struct __tss_struct {
 
 } tss_struct;
 
+#define TSS_IO_BITMAP_BYTES 8192
+
+typedef struct _tss_io_struct {
+	tss_struct tss;
+	unsigned char io_bitmap[TSS_IO_BITMAP_BYTES + 1];
+} tss_io_struct;
+
+#define TSS_SEG_LIMIT ((unsigned)(sizeof(tss_io_struct) - 1))
+
 typedef struct _vm_region vm_region;
 
 typedef struct _page_table_list_entry {
@@ -262,8 +271,14 @@ struct _task_struct {
 	task_stats_t *stats;
 	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
 	unsigned long long alarm_expire_ms;
+	/* interval for ITIMER_REAL in ms (0 = one-shot) */
+	unsigned long long alarm_interval_ms;
 	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
 	unsigned timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
+	unsigned char
+		io_priv_level; /* requested iopl(2) level for compatibility */
+	unsigned char
+		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
 	unsigned int magic; // to avoid stack overflow
 };
 

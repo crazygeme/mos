@@ -3,7 +3,7 @@
 set -e
 
 NBD_DEV="/dev/nbd0"
-MNT="mnt"
+MNT="out/mnt"
 
 sudo umount "$MNT"
 sudo qemu-nbd -d "$NBD_DEV"

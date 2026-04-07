@@ -2,6 +2,7 @@
 #define _MM_MMAP_H
 #include <fs/fs.h>
 
+typedef struct _user_enviroment user_enviroment;
 typedef void *vm_struct_t;
 
 typedef struct _vm_region {
@@ -54,6 +55,21 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot);
  * @return vm_region*
  */
 vm_region *vm_find_map(vm_struct_t vm, unsigned addr);
+
+/*
+ * vm_find_vma - return the mapping containing @addr, or the next mapping above
+ * it if @addr is in a hole. Returns NULL when no VMA exists at or above @addr.
+ */
+vm_region *vm_find_vma(vm_struct_t vm, unsigned addr);
+
+/*
+ * Linux-style per-task last-hit cache around vm_find_vma/vm_find_map.
+ * The cache stores the last vm_find_vma() result, which may be a containing
+ * VMA or the next VMA above the probed address.
+ */
+vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr);
+vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr);
+void vm_invalidate_user_cache(user_enviroment *user);
 
 /**
  * find a region large enough to contain @size

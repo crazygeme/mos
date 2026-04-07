@@ -322,42 +322,39 @@ distinguishing a segfault exit from a clean failure.
 
 #### File-backed fault: `pf_handle_invalid_file_map`
 
-1. **Page cache lookup** `mmap_cache_find(ino, offset)` — O(1) hash lookup.
-   - Hit: map the cached physical page directly (read-only). No disk I/O.
-2. **Cache miss**: allocate a physical page, map it writable, read `PAGE_SIZE`
-   bytes from the file via `ext4_fread`. Zero-fill any short read.
-3. Downgrade the PTE to **read-only** after the read (so write faults trigger
-   CoW or `MAP_SHARED` write-back, not silent corruption of the cache).
-4. Insert the page into the cache via `mmap_cache_add`.
+1. **Filesystem page-cache lookup** `fs_page_cache_get(inode, offset)`.
+   - The cache lives in `src/fs/cache.c`, not in the page-fault layer.
+   - Hits return the same physical file page used by buffered `read()`.
+2. **Cache miss**: allocate and fill one page through
+   `inode->i_op->read_page()`, then insert it into the filesystem cache.
+3. Map that physical page into the faulting process.
+4. Keep the PTE read-only for `MAP_SHARED` mappings and for non-writable
+   private mappings. Writable `MAP_PRIVATE` mappings start from the cached file
+   page and take CoW on the first write, which is closer to Linux.
 
 ### MAP_SHARED implementation
 
 `MAP_SHARED` pages must be shared across all processes that map the same
-backing (file or anonymous region).  A separate **`shared_map`** hash table
-(distinct from the LRU `mmap_cache`) stores these pages permanently — entries
-are never evicted.
+backing. File-backed sharing now comes from the filesystem page cache.
+Anonymous shared mappings still need a dedicated page-fault-side registry,
+because they have no inode-backed cache to attach to.
 
-#### `shared_map` — non-evicting page registry
+#### `anon_shared_map` — non-evicting registry for anonymous `MAP_SHARED`
 
 ```
 Key:  (id, offset)
-        id = inode number          for file-backed MAP_SHARED
-        id = anon_id | 0x80000000  for anonymous MAP_SHARED
+        id = anon_id | 0x80000000
 Value: physical address of the shared page
 ```
-
-Both `shared_map` and `mmap_cache` use the same `mmap_cache_key { ino, offset }`
-struct and comparator; the ANON_SHARED_BIT (`0x80000000`) in `id` ensures
-anonymous entries never collide with real inodes.
 
 #### File-backed MAP_SHARED fault sequence
 
 1. **Demand fault** (`pf_handle_invalid_file_map`, `flag & MAP_SHARED`):
-   - Look up `(ino, offset)` in `shared_map`.
-   - **Hit**: map the existing physical page as `PAGE_ENTRY_USER_CODE`
-     (read-only). No disk I/O, no new page.
-   - **Miss**: allocate a page, map writable, read from ext4, strip the
-     writable bit, register in `shared_map`.
+   - Look up `(sb, ino, offset)` in the filesystem page cache.
+   - **Hit**: map the cached physical page as `PAGE_ENTRY_USER_CODE`
+     (read-only).
+   - **Miss**: allocate and fill one page through `read_page`, then cache it
+     in the filesystem page cache.
    - Result: page is **read-only** in every process's PTE.
 2. **Write fault** → `pf_handle_permission` → `pf_handle_readonly`:
    - Flip PTE writable **in-place** (no CoW — all sharers see the same page).
@@ -373,12 +370,12 @@ anonymous entries never collide with real inodes.
 A unique `anon_id` is assigned by `do_mmap_kernel` at `mmap` time
 (`++g_anon_id_next`).  The `vm_region` stores this ID and it is **preserved
 across `fork()`** (via `vm_dup`), so parent and child share the same
-`shared_map` entries.
+`anon_shared_map` entries.
 
 1. **Demand fault** (`pf_handle_invalid_memory`, `flag & MAP_SHARED`):
    - Key = `(anon_id | ANON_SHARED_BIT, offset)`.
    - **Hit**: map read-only.
-   - **Miss**: allocate, zero, strip writable, register in `shared_map`.
+   - **Miss**: allocate, zero, strip writable, register in `anon_shared_map`.
 2. **Write fault** → `pf_handle_permission` → `pf_handle_readonly`:
    - Flip PTE writable in-place (no dirty tracking; anonymous pages are not
      written back to disk).
@@ -387,9 +384,9 @@ across `fork()`** (via `vm_dup`), so parent and child share the same
 
 |             | MAP_SHARED                                              | MAP_PRIVATE                                          |
 | ----------- | ------------------------------------------------------- | ---------------------------------------------------- |
-| Cache       | `shared_map` (non-evicting)                             | `mmap_cache` (LRU, read-only) or no cache (writable) |
+| Cache       | File: fs page cache. Anonymous: `anon_shared_map`       | File: fs page cache plus CoW. Anonymous: zero/fresh pages |
 | Write fault | Flip PTE writable in-place; mark dirty if file-backed   | CoW if `ref_count > 1`; else flip PTE                |
-| Fork        | Child maps same physical page (same `shared_map` entry) | Child gets CoW copy on first write                   |
+| Fork        | Child maps same physical page                           | Child gets CoW copy on first write                   |
 | Writeback   | `vm_flush_dirty_region` on munmap / exit                | Never                                                |
 
 ### `pf_handle_permission` — write fault on a present page
@@ -418,30 +415,25 @@ Dispatches based on region flags:
 
 ### Page caches
 
-Two separate caches are maintained at `pf_init` time:
+There are now two distinct caching layers:
 
-#### `mmap_cache` — LRU evicting cache (MAP_PRIVATE read-only file pages)
+#### Filesystem page cache
 
-```c
-static hash_table *mmap_cache;   // keyed by (ino, offset)
-static list_entry  mmap_lru;     // tail = MRU, head = LRU
-```
+- Implemented in `src/fs/cache.c`.
+- Keyed by `(i_pgcache_tag, i_ino, page_offset)` so repeated opens on the same
+  mounted filesystem share cached file pages.
+- Used by both buffered `read()` and file-backed mmap faults.
+- This is the Linux-like replacement for the old pagefault-local readonly file cache.
 
-Capacity: `PAGE_CACHE_SIZE` = 4096 entries.
-On miss + full: evict the LRU entry (head of `mmap_lru`), call
-`phymm_dereference_page` on its physical page.
-On hit: promote entry to tail (MRU position).
-Not used for MAP_SHARED (those pages live in `shared_map` instead).
-
-#### `shared_map` — non-evicting registry (MAP_SHARED pages)
+#### `anon_shared_map`
 
 ```c
-static hash_table *shared_map;   // keyed by (id, offset), see MAP_SHARED section
+static hash_table *anon_shared_map;   // keyed by (anon_id | ANON_SHARED_BIT, offset)
 ```
 
-Entries are never evicted; the table holds a permanent reference (`phymm_reference_page`)
-to each page for the lifetime of any mapping that covers it.
-Released only when the entry is destroyed (`shared_map_evict`).
+Entries are never evicted; the table holds a permanent reference
+(`phymm_reference_page`) to each anonymous shared page for the lifetime of the
+registry entry.
 
 #### Zero page
 

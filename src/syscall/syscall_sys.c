@@ -266,6 +266,7 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 	}
 
 	RELOAD_CR3();
+	vm_invalidate_user_cache(cur->user);
 	return 0;
 }
 

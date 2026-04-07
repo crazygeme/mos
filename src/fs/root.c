@@ -1,4 +1,5 @@
 #include <mm/mm.h>
+#include <dev/blockdev.h>
 #include <fs/cache.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
@@ -1037,12 +1038,13 @@ static super_block *ext4_get(const char *devname)
 static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 				void *data)
 {
+	blockdev_info bdev;
 	const char *dev_name;
 	char loop_auto[16]; /* non-empty if we auto-attached a loop device */
 	char *mp;
 	size_t n;
 	bool read_only;
-	int i, ret;
+	int ret;
 	super_block *sb;
 
 	if (!dev || !target)
@@ -1054,34 +1056,22 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 
 	memset(loop_auto, 0, sizeof(loop_auto));
 
-	/* Strip "/dev/" prefix — lwext4 wants the raw device name */
-	dev_name = (strncmp(dev, "/dev/", 5) == 0) ? dev + 5 : dev;
-
-	/* 1. Check HDD partitions */
-	for (i = 0; i < hdd_partition_count; i++) {
-		if (strcmp(hdd_partitions[i].name, dev_name) == 0)
-			goto dev_found;
-	}
-
-	/* 2. Check already-registered loop devices */
-	for (i = 0; i < LOOP_MAX_DEVS; i++) {
-		if (loop_devs[i].backing[0] &&
-		    strcmp(loop_devs[i].name, dev_name) == 0)
-			goto dev_found;
-	}
-
-	/* 3. Not a known block device — treat dev as a file path and auto-loop */
-	{
+	if (blockdev_lookup_mountable(dev, &bdev)) {
+		dev_name = bdev.name;
+	} else {
 		const char *ln = loop_setup(dev);
 		if (!ln) {
 			name_put(mp);
 			return NULL;
 		}
 		strncpy(loop_auto, ln, sizeof(loop_auto) - 1);
-		dev_name = loop_auto;
+		if (!blockdev_lookup_mountable(loop_auto, &bdev)) {
+			loop_teardown(loop_auto);
+			name_put(mp);
+			return NULL;
+		}
+		dev_name = bdev.name;
 	}
-
-dev_found:
 	/* lwext4 requires the mount point to end with '/' */
 	strncpy(mp, target, sizeof(mp) - 2);
 	mp[sizeof(mp) - 2] = '\0';
@@ -1166,7 +1156,14 @@ static int ext4_remount(super_block *sb, int flags)
 static void fs_mount_root(void)
 {
 	task_struct *cur = CURRENT_TASK();
-	const char *devname = hdd_partitions[0].name;
+	blockdev_info rootdev;
+	const char *devname;
+
+	if (!blockdev_first_mountable(&rootdev)) {
+		printk("ext4: no discovered root device\n");
+		return;
+	}
+	devname = rootdev.name;
 
 	printk("mnt: Mount rootfs (ro)\n");
 	cur->root = ext4_get(devname);

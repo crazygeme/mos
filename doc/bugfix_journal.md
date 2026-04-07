@@ -88,6 +88,39 @@ Each entry explains the reasoning so the same mistake is not repeated.
   available, and keep the local fallback strictly as a compatibility escape
   hatch rather than a shadow cache.
 
+## 2026-04-07 — Generic block-device lookup for ext mounts
+
+### Symptom
+
+- `ext4_get_sb()` in `src/fs/root.c` knew too much about storage internals: it
+  stripped `/dev/` by hand, walked `hdd_partitions`, checked loop-device state
+  directly, and special-cased root-device selection with `hdd_partitions[0]`.
+
+### Root cause
+
+- MOS had no generic block-device registry, so the ext mount path had to know
+  where HDD partitions and loop devices each stored their bookkeeping.
+- The public HDD partition array leaked hardware-driver internals into the fs,
+  exec, proc, and `/dev` layers.
+
+### Fix
+
+- Add a small generic block-device registry in `src/dev/blockdev.c`.
+- Register discovered HDD partitions and loop slots there, marking only
+  attached/usable devices as mountable.
+- Switch `ext4_get_sb()`, root mount, and exec-time remount to resolve devices
+  through that registry instead of peeking at `hdd_partitions` / `loop_devs`.
+- Make the HDD partition table private to `src/hw/hdd.c` and expose only
+  accessors used by `/dev/hdd` and `/proc/partitions`.
+
+### Why this is better
+
+- The ext mount path is closer to Linux: filesystems consume a generic block
+  device abstraction instead of parsing driver-private tables.
+- HDD bookkeeping is no longer exported as a global array.
+- Future block devices can become mount sources by registering once, without
+  editing ext4 mount code again.
+
 ---
 
 ## 2026-04-07 — Bugs flushed out by the new `/proc/tests` script suite

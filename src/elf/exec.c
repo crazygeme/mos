@@ -62,11 +62,13 @@ static void cleanup()
 		cur->user->page_dir = (unsigned int)new_pd;
 		SET_CR3((unsigned)new_pd - KERNEL_OFFSET);
 		cur->user->vm = vm_create();
+		cur->user->mmap_cache = NULL;
 	} else {
 		vm_destroy(cur->user->vm);
 		/* Unmap every user-space page table entry. */
 		ps_cleanup_all_user_map(cur);
 		cur->user->vm = vm_create();
+		cur->user->mmap_cache = NULL;
 	}
 
 	/* Close all O_CLOEXEC file descriptors. */

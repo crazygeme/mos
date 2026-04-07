@@ -4,6 +4,7 @@
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <ps/ps.h>
+#include <fs/cache.h>
 #include <fs/fs.h>
 #include <lib/klib.h>
 #include <lib/rbtree.h>
@@ -12,7 +13,6 @@
 #include <hw/time.h>
 #include <config.h>
 #include <macro.h>
-#include <ext4.h>
 
 unsigned page_fault_cow = 0;
 unsigned page_fault_invalid = 0;
@@ -25,106 +25,46 @@ unsigned long long page_fault_invalid_spent = 0;
 unsigned long long page_fault_file_spent = 0;
 unsigned long long page_fault_file_search_spent = 0;
 unsigned long long page_fault_perm_spent = 0;
-extern unsigned cache_count;
-
-/*
- * LRU mmap cache — for read-only MAP_PRIVATE file-backed pages only.
- *
- * Hash table for O(1) lookup keyed by (ino, generation, offset).
- * Doubly-linked LRU list: tail = most recently used, head = least recently used.
- * On hit:  move entry to list tail (MRU position).
- * On miss + full: evict the head (LRU) entry, insert new entry at tail.
- */
-
-typedef struct _mmap_cache_key {
-	unsigned ino;
-	unsigned generation;
-	unsigned offset;
-} mmap_cache_key;
-
-typedef struct _mmap_cache_entry {
-	mmap_cache_key key; /* must be first — hash stores &entry->key */
-	unsigned phy;
-	list_entry lru;
-} mmap_cache_entry;
-
-static hash_table *mmap_cache = NULL;
-static list_entry mmap_lru; /* tail = MRU, head = LRU */
-static mutex_t mmap_cache_lock;
-static hash_table *mmap_versions = NULL;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
-#define MMAP_CACHE_MAX_ENTRIES 4096
-
 /*
- * shared_map — non-evicting cache for MAP_SHARED pages.
+ * anon_shared_map — non-evicting shared-page registry for anonymous MAP_SHARED.
  *
- * Keyed by (id, offset) where:
- *   - File-backed MAP_SHARED: id = inode number, offset = file offset
- *   - Anonymous MAP_SHARED:  id = anon_id | ANON_SHARED_BIT, offset = offset within mapping
- *
- * Entries are never evicted; the map holds a permanent reference to each page.
- * This ensures all processes sharing a region always see the same physical page.
+ * Keyed by (anon_id | ANON_SHARED_BIT, offset). Entries are never evicted;
+ * the map holds a permanent reference to each page so all processes sharing
+ * the region observe the same physical page.
  */
 #define ANON_SHARED_BIT 0x80000000U
 
-typedef struct _shared_map_entry {
-	mmap_cache_key key; /* must be first */
-	unsigned phy;
-} shared_map_entry;
+typedef struct _anon_shared_map_key {
+	unsigned id;
+	unsigned offset;
+} anon_shared_map_key;
 
-static hash_table *shared_map = NULL;
-static mutex_t shared_map_lock;
+typedef struct _anon_shared_map_entry {
+	anon_shared_map_key key; /* must be first */
+	unsigned phy;
+} anon_shared_map_entry;
+
+static hash_table *anon_shared_map = NULL;
+static mutex_t anon_shared_map_lock;
 
 static void pf_process(intr_frame *frame);
 
-static int mmap_key_comp(const void *k1, const void *k2)
+static int anon_shared_map_key_comp(const void *k1, const void *k2)
 {
-	const mmap_cache_key *key1 = k1;
-	const mmap_cache_key *key2 = k2;
-	int ret = key1->ino - key2->ino;
-	if (ret == 0)
-		ret = (int)key1->generation - (int)key2->generation;
+	const anon_shared_map_key *key1 = k1;
+	const anon_shared_map_key *key2 = k2;
+	int ret = (int)key1->id - (int)key2->id;
 	if (ret == 0)
 		ret = (int)key1->offset - (int)key2->offset;
 	return ret;
 }
 
-typedef struct _mmap_version_key {
-	unsigned ino;
-} mmap_version_key;
-
-typedef struct _mmap_version_entry {
-	mmap_version_key key; /* must be first */
-	unsigned generation;
-} mmap_version_entry;
-
-static int mmap_version_key_comp(const void *k1, const void *k2)
+static void anon_shared_map_evict(const key_value_pair *pair)
 {
-	const mmap_version_key *key1 = k1;
-	const mmap_version_key *key2 = k2;
-	return (int)key1->ino - (int)key2->ino;
-}
-
-static void mmap_entry_evict(const key_value_pair *pair)
-{
-	mmap_cache_entry *evict = pair->val;
-	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
-	if (phymm_dereference_page(page_index) == 0)
-		phymm_free_user(page_index);
-	free(evict);
-}
-
-static void mmap_version_entry_evict(const key_value_pair *pair)
-{
-	mmap_version_entry *evict = pair->val;
-	free(evict);
-}
-
-static void shared_map_evict(const key_value_pair *pair)
-{
-	shared_map_entry *evict = pair->val;
+	anon_shared_map_entry *evict = pair->val;
 	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
 	if (phymm_dereference_page(page_index) == 0)
 		phymm_free_user(page_index);
@@ -134,209 +74,59 @@ static void shared_map_evict(const key_value_pair *pair)
 void pf_init()
 {
 	int_register(0xe, pf_process, 0, 0);
-	mmap_cache = hash_create(mmap_key_comp, mmap_entry_evict);
-	list_init(&mmap_lru);
-	mutex_init(&mmap_cache_lock);
-	mmap_versions =
-		hash_create(mmap_version_key_comp, mmap_version_entry_evict);
-	shared_map = hash_create(mmap_key_comp, shared_map_evict);
-	mutex_init(&shared_map_lock);
+	anon_shared_map =
+		hash_create(anon_shared_map_key_comp, anon_shared_map_evict);
+	mutex_init(&anon_shared_map_lock);
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
-static unsigned mmap_cache_generation_locked(unsigned ino)
-{
-	mmap_version_key tmp = { .ino = ino };
-	key_value_pair *pair;
-
-	if (ino == 0)
-		return 0;
-
-	pair = hash_find(mmap_versions, &tmp);
-	if (!pair)
-		return 0;
-	return ((mmap_version_entry *)pair->val)->generation;
-}
-
-static void mmap_cache_bump_generation_locked(unsigned ino)
-{
-	mmap_version_key tmp = { .ino = ino };
-	key_value_pair *pair;
-	mmap_version_entry *entry;
-
-	if (ino == 0)
-		return;
-
-	pair = hash_find(mmap_versions, &tmp);
-	if (pair) {
-		entry = pair->val;
-		entry->generation++;
-		if (entry->generation == 0)
-			entry->generation = 1;
-		return;
-	}
-
-	entry = malloc(sizeof(*entry));
-	entry->key.ino = ino;
-	entry->generation = 1;
-	hash_insert(mmap_versions, &entry->key, entry);
-}
-
-static void mmap_cache_evict_one_locked(void)
-{
-	mmap_cache_entry *evict;
-
-	if (hash_size(mmap_cache) == 0 || list_is_empty(&mmap_lru))
-		return;
-
-	evict = container_of(list_remove_head(&mmap_lru), mmap_cache_entry,
-			     lru);
-	hash_remove(mmap_cache, &evict->key);
-	cache_count--;
-}
-
-/* Lookup (ino, offset) in the LRU cache.  On hit, promote to MRU position.
- * Returns the physical address, or 0 on miss. */
-static unsigned mmap_cache_find(unsigned ino, unsigned offset)
-{
-	mmap_cache_key tmp = { .ino = ino, .offset = offset };
-	key_value_pair *pair;
-	mmap_cache_entry *entry;
-
-	if (PAGE_CACHE_SIZE == 0)
-		return 0;
-
-	if (ino == 0)
-		return 0;
-
-	mutex_lock(&mmap_cache_lock);
-	tmp.generation = mmap_cache_generation_locked(ino);
-	pair = hash_find(mmap_cache, &tmp);
-	if (!pair) {
-		mutex_unlock(&mmap_cache_lock);
-		return 0;
-	}
-	entry = pair->val;
-	/* Promote to MRU (move to tail of LRU list). */
-	list_remove_entry(&entry->lru);
-	list_insert_tail(&mmap_lru, &entry->lru);
-	mutex_unlock(&mmap_cache_lock);
-	return entry->phy;
-}
-
-/* Insert (ino, offset, phy) into the LRU cache.
- * If the cache is full, evict the LRU entry first (single eviction). */
-static void mmap_cache_add(unsigned ino, unsigned offset, unsigned phy)
-{
-	mmap_cache_entry *entry;
-	mmap_cache_key tmp = { .ino = ino, .offset = offset };
-
-	if (ino == 0 || phy == 0)
-		return;
-
-	if (PAGE_CACHE_SIZE == 0)
-		return;
-
-	mutex_lock(&mmap_cache_lock);
-	tmp.generation = mmap_cache_generation_locked(ino);
-
-	/* Skip if already cached (e.g. two faults racing on the same page). */
-	if (hash_find(mmap_cache, &tmp)) {
-		mutex_unlock(&mmap_cache_lock);
-		return;
-	}
-
-	/* Evict the LRU entry when the cache is full. */
-	if (hash_size(mmap_cache) >= PAGE_CACHE_SIZE ||
-	    hash_size(mmap_cache) >= MMAP_CACHE_MAX_ENTRIES)
-		mmap_cache_evict_one_locked();
-
-	entry = malloc(sizeof(*entry));
-	entry->key.ino = ino;
-	entry->key.generation = tmp.generation;
-	entry->key.offset = offset;
-	entry->phy = phy;
-	list_insert_tail(&mmap_lru, &entry->lru);
-	hash_insert(mmap_cache, &entry->key, entry);
-	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
-	cache_count++;
-
-	mutex_unlock(&mmap_cache_lock);
-}
-
-void pf_invalidate_file_cache(unsigned ino)
-{
-	list_entry *node;
-	list_entry *next;
-
-	if (ino == 0 || PAGE_CACHE_SIZE == 0)
-		return;
-
-	mutex_lock(&mmap_cache_lock);
-	mmap_cache_bump_generation_locked(ino);
-	for (node = mmap_lru.next; node != &mmap_lru; node = next) {
-		mmap_cache_entry *entry;
-
-		next = node->next;
-		entry = container_of(node, mmap_cache_entry, lru);
-		if (entry->key.ino != ino)
-			continue;
-
-		list_remove_entry(&entry->lru);
-		hash_remove(mmap_cache, &entry->key);
-		cache_count--;
-	}
-	mutex_unlock(&mmap_cache_lock);
-}
-
 /* Lookup (id, offset) in the shared map.
  * Returns the physical address, or 0 on miss. */
-static unsigned shared_map_find(unsigned id, unsigned offset)
+static unsigned anon_shared_map_find(unsigned id, unsigned offset)
 {
-	mmap_cache_key tmp = { .ino = id, .generation = 0, .offset = offset };
+	anon_shared_map_key tmp = { .id = id, .offset = offset };
 	key_value_pair *pair;
-	shared_map_entry *entry;
+	anon_shared_map_entry *entry;
 
-	mutex_lock(&shared_map_lock);
-	pair = hash_find(shared_map, &tmp);
+	mutex_lock(&anon_shared_map_lock);
+	pair = hash_find(anon_shared_map, &tmp);
 	if (!pair) {
-		mutex_unlock(&shared_map_lock);
+		mutex_unlock(&anon_shared_map_lock);
 		return 0;
 	}
 	entry = pair->val;
-	mutex_unlock(&shared_map_lock);
+	mutex_unlock(&anon_shared_map_lock);
 	return entry->phy;
 }
 
-/* Insert (id, offset, phy) into the shared map.
+/* Insert (id, offset, phy) into the anonymous shared map.
  * Bumps the page ref count so the page cannot be freed while in the map. */
-static void shared_map_add(unsigned id, unsigned offset, unsigned phy)
+static void anon_shared_map_add(unsigned id, unsigned offset, unsigned phy)
 {
-	shared_map_entry *entry;
-	mmap_cache_key tmp = { .ino = id, .generation = 0, .offset = offset };
+	anon_shared_map_entry *entry;
+	anon_shared_map_key tmp = { .id = id, .offset = offset };
 
 	if (id == 0 || phy == 0)
 		return;
 
-	mutex_lock(&shared_map_lock);
+	mutex_lock(&anon_shared_map_lock);
 
 	/* Skip if already present (two faults on the same page before first one completes). */
-	if (hash_find(shared_map, &tmp)) {
-		mutex_unlock(&shared_map_lock);
+	if (hash_find(anon_shared_map, &tmp)) {
+		mutex_unlock(&anon_shared_map_lock);
 		return;
 	}
 
 	entry = malloc(sizeof(*entry));
-	entry->key.ino = id;
-	entry->key.generation = 0;
+	entry->key.id = id;
 	entry->key.offset = offset;
 	entry->phy = phy;
-	hash_insert(shared_map, &entry->key, entry);
+	hash_insert(anon_shared_map, &entry->key, entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 
-	mutex_unlock(&shared_map_lock);
+	mutex_unlock(&anon_shared_map_lock);
 }
 
 /*
@@ -355,119 +145,53 @@ extern phymm_page *phymm_pages;
 /*
  * Handle page fault with fd attached.
  *
- * MAP_SHARED: pages are placed in shared_map (non-evicting) so every process
- * that faults the same (ino, offset) pair maps the same physical page.
- * Pages are mapped read-only; a subsequent write fault goes through
- * pf_handle_permission which flips the PTE writable and marks the page dirty.
- *
- * MAP_PRIVATE readonly: pages are placed in the LRU mmap_cache and mapped
- * read-only.  A write fault triggers COW.
- *
- * MAP_PRIVATE writable: each process gets its own private copy immediately.
+ * File-backed faults are served from the filesystem page cache. This is closer
+ * to Linux than the old pagefault-local cache: MAP_SHARED and MAP_PRIVATE both
+ * start from the cached file page, and the semantic split happens on write.
  */
-static void pf_handle_invalid_file_map(unsigned address, file *f, int offset,
-				       int prot, int flag)
+static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
+				      int prot, int flag)
 {
 	unsigned phy = 0;
-	unsigned page_idx;
-	size_t rcnt = 0;
+	int cache_hit = 0;
 	int mmflag;
+	int handled = 0;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
-	int readonly = !(prot & PROT_WRITE);
-	int shared = flag & MAP_SHARED;
-	unsigned ino = f->f_inode->i_ino;
 
 	page_fault_file++;
 
-	/* Try the appropriate cache first. */
-	if (shared) {
-		phy = shared_map_find(ino, offset);
-		if (phy != 0) {
-			page_fault_file_cache_hit++;
-			/* Read-only: write fault handled by pf_handle_permission. */
-			mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
-			INVLPG(address);
-			goto DONE;
-		}
-	} else if (readonly) {
-		phy = mmap_cache_find(ino, offset);
-
-		if (TestControl.profiling)
-			page_fault_file_search_spent += time_wall_us() - begin;
-
-		if (phy != 0) {
-			page_fault_file_cache_hit++;
-			mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
-			INVLPG(address);
-			goto DONE;
-		}
-	}
-
 	/*
-	 * Cache miss — allocate a fresh page, map it writable so we can fill it,
-	 * then read the file content into it.
+	 * Linux would populate from the filesystem page cache here. MOS now does
+	 * the same at the fs layer: the returned page is shared across readers and
+	 * private mappings fault COW on the first write.
 	 */
-	page_idx = phymm_alloc_user();
-	if (page_idx == PHYMM_INVALID)
-		goto DONE;
-	phy = page_idx * PAGE_SIZE;
+	phy = fs_page_cache_get(f->f_inode, offset, &cache_hit);
+	if (TestControl.profiling)
+		page_fault_file_search_spent += time_wall_us() - begin;
 
-	mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
+	if (phy == 0)
+		goto DONE;
+	if (cache_hit)
+		page_fault_file_cache_hit++;
+	else
+		page_fault_file_read += PAGE_SIZE;
+
+	if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE) != 1)
+		goto DONE;
 	INVLPG(address);
 
-	if (f->f_inode->i_op && f->f_inode->i_op->read_page) {
-		f->f_inode->i_op->read_page(f->f_inode, offset, address);
-		rcnt = PAGE_SIZE;
-	} else {
-		ext4_file *ff = f->f_inode->i_private;
-
-		/*
-		 * Some programs map a region larger than the file size;
-		 * return a zero page in that case.
-		 */
-		if (ext4_fseek(ff, offset, SEEK_SET) != EOK) {
-			memset(address, 0, PAGE_SIZE);
-			goto READ_DONE;
-		}
-
-		/*
-		 * Read the file.  If fewer than PAGE_SIZE bytes are returned, zero the
-		 * remainder (many programs depend on this).
-		 */
-		if (ext4_fread(ff, address, PAGE_SIZE, &rcnt) != EOK)
-			klog("FAIL: mmap: read to buffer %x, size %x\n",
-			     address, PAGE_SIZE);
-
-		if (rcnt < PAGE_SIZE)
-			memset(address + rcnt, 0, PAGE_SIZE - rcnt);
-	}
-
-READ_DONE:
-	page_fault_file_read += rcnt;
-
-	if (shared) {
-		/*
-		 * Strip the writable bit so the first write goes through
-		 * pf_handle_permission, which marks the page dirty for
-		 * writeback and then flips the PTE writable.
-		 */
+	if ((flag & MAP_SHARED) || !(prot & PROT_WRITE)) {
 		mmflag = mm_get_map_flag(address);
 		mmflag &= ~PAGE_ENTRY_WRITABLE;
 		mm_set_map_flag(address, mmflag);
 		INVLPG(address);
-		shared_map_add(ino, offset, phy);
-	} else if (readonly) {
-		mmflag = mm_get_map_flag(address);
-		mmflag &= ~PAGE_ENTRY_WRITABLE;
-		mm_set_map_flag(address, mmflag);
-		INVLPG(address);
-		mmap_cache_add(ino, offset, phy);
 	}
-	/* else: writable MAP_PRIVATE — leave the PTE writable, no cache. */
+	handled = 1;
 
 DONE:
 	if (TestControl.profiling)
 		page_fault_file_spent += (time_wall_us() - begin);
+	return handled;
 }
 
 /*
@@ -475,7 +199,7 @@ DONE:
  *
  * MAP_SHARED anonymous (anon_id != 0):
  *   All processes sharing the same anon_id must map the same physical page.
- *   Use shared_map keyed by (anon_id | ANON_SHARED_BIT, offset).
+ *   Use anon_shared_map keyed by (anon_id | ANON_SHARED_BIT, offset).
  *   Pages are mapped read-only; write faults go through pf_handle_permission.
  *
  * MAP_PRIVATE writable: allocate a fresh zero page per fault.
@@ -483,34 +207,41 @@ DONE:
  * MAP_PRIVATE read-only: map the global zero page read-only; a write fault
  *   triggers COW.
  */
-static void pf_handle_invalid_memory(unsigned address, vm_region *region,
-				     int offset)
+static int pf_handle_invalid_memory(unsigned address, vm_region *region,
+				    int offset)
 {
 	int prot = region->prot;
 	int flag = region->flag;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 	int mmflag;
 	unsigned page_idx;
+	int handled = 0;
 
 	page_fault_invalid++;
 
 	if ((flag & MAP_SHARED) && region->anon_id != 0) {
 		unsigned id = region->anon_id | ANON_SHARED_BIT;
-		unsigned phy = shared_map_find(id, offset);
+		unsigned phy = anon_shared_map_find(id, offset);
 
 		if (phy != 0) {
 			/* Hit — map read-only so writes go through pf_handle_permission. */
-			mm_map_page(address, phy, PAGE_ENTRY_USER_CODE);
+			if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE) !=
+			    1)
+				goto DONE;
 			INVLPG(address);
+			handled = 1;
 			goto DONE;
 		}
 
-		/* Miss — allocate, zero, strip writable, and register in shared_map. */
+		/* Miss — allocate, zero, strip writable, and register in anon_shared_map. */
 		page_idx = phymm_alloc_user();
 		if (page_idx == PHYMM_INVALID)
 			goto DONE;
 		phy = page_idx * PAGE_SIZE;
-		mm_map_page(address, phy, PAGE_ENTRY_USER_DATA);
+		if (mm_map_page(address, phy, PAGE_ENTRY_USER_DATA) != 1) {
+			phymm_free_user(page_idx);
+			goto DONE;
+		}
 		INVLPG(address);
 		memset(address, 0, PAGE_SIZE);
 
@@ -519,12 +250,14 @@ static void pf_handle_invalid_memory(unsigned address, vm_region *region,
 		mm_set_map_flag(address, mmflag);
 		INVLPG(address);
 
-		shared_map_add(id, offset, phy);
+		anon_shared_map_add(id, offset, phy);
+		handled = 1;
 		goto DONE;
 	}
 
 	if (prot & PROT_WRITE) {
-		mm_map_page(address, 0, PAGE_ENTRY_USER_DATA);
+		if (mm_map_page(address, 0, PAGE_ENTRY_USER_DATA) != 1)
+			goto DONE;
 		INVLPG(address);
 		memset(address, 0, PAGE_SIZE);
 	} else {
@@ -534,30 +267,28 @@ static void pf_handle_invalid_memory(unsigned address, vm_region *region,
 		 * phymm_is_cow() fires on the next write fault and COW kicks
 		 * in — the shared zero page is never dirtied.
 		 */
-		mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE);
+		if (mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE) !=
+		    1)
+			goto DONE;
 		INVLPG(address);
 	}
+	handled = 1;
 
 DONE:
 	if (TestControl.profiling)
 		page_fault_invalid_spent += (time_wall_us() - begin);
+	return handled;
 }
 
 /*
  * pf_prefetch_pages — read-ahead for readonly MAP_PRIVATE file-backed pages.
  *
  * After a demand fault on 'fault_addr', prefetch up to (PAGE_PREFETCH_N - 1)
- * pages before and PAGE_PREFETCH_N pages after it.  Each prefetched page is:
- *   - mapped into the current process's page table (no future fault needed), and
- *   - inserted into the LRU page cache at the MRU end.
- *
- * LRU policy: MRU insertion.  For sequential workloads this is optimal —
- * prefetched pages will be accessed soon and should stay hot.  Pages that are
- * never accessed drift naturally to the LRU head and are evicted first.
+ * pages before and PAGE_PREFETCH_N pages after it into the current process's
+ * page tables via the filesystem page cache.
  */
 static void pf_prefetch_pages(unsigned fault_addr, file *f, vm_region *region)
 {
-	unsigned ino = f->f_inode->i_ino;
 	uint64_t file_size = f->f_inode->i_size;
 	int i;
 
@@ -565,9 +296,7 @@ static void pf_prefetch_pages(unsigned fault_addr, file *f, vm_region *region)
 		unsigned addr;
 		int file_offset;
 		unsigned phy;
-		unsigned page_idx;
-		size_t rcnt;
-		int mmflag;
+		int cache_hit;
 
 		if (i == 0)
 			continue;
@@ -591,50 +320,64 @@ static void pf_prefetch_pages(unsigned fault_addr, file *f, vm_region *region)
 		if (mm_get_map_flag(addr) != 0)
 			continue;
 
-		/* Cache hit: map read-only without touching the disk. */
-		phy = mmap_cache_find(ino, file_offset);
-		if (phy != 0) {
-			mm_map_page(addr, phy, PAGE_ENTRY_USER_CODE);
-			INVLPG(addr);
-			continue;
-		}
+		phy = fs_page_cache_get(f->f_inode, file_offset, &cache_hit);
+		if (phy == 0)
+			break;
+		if (cache_hit)
+			page_fault_file_cache_hit++;
+		else
+			page_fault_file_read += PAGE_SIZE;
 
-		/* Cache miss: allocate a page, read from disk, cache, and map. */
-		page_idx = phymm_alloc_user();
-		if (page_idx == PHYMM_INVALID)
-			break; /* OOM — stop prefetching */
-		phy = page_idx * PAGE_SIZE;
-
-		mm_map_page(addr, phy, PAGE_ENTRY_USER_DATA);
+		mm_map_page(addr, phy, PAGE_ENTRY_USER_CODE);
 		INVLPG(addr);
-
-		if (f->f_inode->i_op && f->f_inode->i_op->read_page) {
-			f->f_inode->i_op->read_page(f->f_inode, file_offset,
-						    (void *)addr);
-		} else {
-			ext4_file *ff = f->f_inode->i_private;
-			if (ext4_fseek(ff, file_offset, SEEK_SET) != EOK) {
-				mm_unmap_page(addr);
-				INVLPG(addr);
-				continue;
-			}
-			rcnt = 0;
-			if (ext4_fread(ff, (void *)addr, PAGE_SIZE, &rcnt) !=
-			    EOK)
-				klog("prefetch: read fail ino=%u off=%d\n", ino,
-				     file_offset);
-			if (rcnt < PAGE_SIZE)
-				memset((void *)(addr + rcnt), 0,
-				       PAGE_SIZE - rcnt);
-		}
-
-		/* Strip writable bit before exposing the prefetched page. */
-		mmflag = mm_get_map_flag(addr);
-		mmflag &= ~PAGE_ENTRY_WRITABLE;
-		mm_set_map_flag(addr, mmflag);
-		INVLPG(addr);
-		mmap_cache_add(ino, file_offset, phy);
 	}
+}
+
+static int pf_vma_is_stack(task_struct *task, vm_region *region)
+{
+	return region != NULL && region->fp == NULL &&
+	       !(region->flag & MAP_SHARED) &&
+	       region->begin == task->user->stack_bottom &&
+	       region->end == KERNEL_OFFSET && (region->prot & PROT_WRITE);
+}
+
+/*
+ * pf_find_vma - Linux-style fault lookup.
+ *
+ * First consult the task-local mmap_cache via vm_find_vma_cached(). If the
+ * address falls in a hole and the next VMA is the grow-down stack mapping,
+ * extend that mapping downward to cover the faulting page.
+ */
+static vm_region *pf_find_vma(task_struct *task, unsigned address)
+{
+	vm_region *region;
+
+	region = vm_find_vma_cached(task->user, address);
+	if (!region)
+		return NULL;
+
+	if (region->begin <= address && address < region->end)
+		return region;
+
+	if (!pf_vma_is_stack(task, region))
+		return NULL;
+
+	if (address < USER_ZONE_END || address >= task->user->stack_bottom)
+		return NULL;
+
+	{
+		unsigned minimal_grow = USER_STACK_INIT_PAGES * PAGE_SIZE;
+		unsigned required_grow = task->user->stack_bottom - address;
+		unsigned grow_size = required_grow > minimal_grow ?
+					     required_grow :
+					     minimal_grow;
+
+		task->user->stack_bottom -= grow_size;
+		do_mmap_kernel(task->user->stack_bottom, grow_size,
+			       PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0);
+	}
+
+	return vm_find_map_cached(task->user, address);
 }
 
 /*
@@ -644,59 +387,29 @@ static int pf_handle_page_invalid(unsigned cr2)
 {
 	vm_region *region;
 	int this_offset;
-	unsigned this_begin;
 	task_struct *cur = CURRENT_TASK();
 
-	this_begin = cr2;
+	region = pf_find_vma(cur, cr2);
+	if (!region || cr2 < region->begin || cr2 >= region->end)
+		return 0;
 
-	/*
-	 * Find out the map region first. The `region` structure
-	 * will tell us whether it's file map or not.
-	 */
-	region = vm_find_map(cur->user->vm, this_begin);
-	if (region)
-		goto found;
-
-	/*
-	 * Stack auto-grow: if the fault is just below the current
-	 * stack bottom and within the allowed stack zone, extend the
-	 * stack mapping downward to cover the faulting page.
-	 */
-	if (cur->user->stack_bottom > USER_ZONE_END &&
-	    this_begin >= USER_ZONE_END &&
-	    this_begin < cur->user->stack_bottom) {
-		unsigned minimal_growse = USER_STACK_INIT_PAGES * PAGE_SIZE;
-		unsigned required_grow = cur->user->stack_bottom - this_begin;
-		unsigned grow_size = required_grow > minimal_growse ?
-					     required_grow :
-					     minimal_growse;
-		cur->user->stack_bottom = cur->user->stack_bottom - grow_size;
-		do_mmap_kernel(cur->user->stack_bottom, grow_size,
-			       PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0);
-		region = vm_find_map(cur->user->vm, this_begin);
-	}
-
-	if (region)
-		goto found;
-
-	return 0;
-
-found:
 	/* PROT_NONE: no access permitted — treat as unmapped. */
 	if (region->prot == PROT_NONE)
 		return 0;
 
-	this_offset = region->offset + (this_begin - region->begin);
+	this_offset = region->offset + (cr2 - region->begin);
 
 	if (region->fp != NULL) {
-		pf_handle_invalid_file_map(this_begin, region->fp, this_offset,
-					   region->prot, region->flag);
+		if (!pf_handle_invalid_file_map(cr2, region->fp, this_offset,
+						region->prot, region->flag))
+			return 0;
 		cur->stats->pf_major++;
 		if (PAGE_PREFETCH_N > 0 && !(region->prot & PROT_WRITE) &&
 		    !(region->flag & MAP_SHARED))
-			pf_prefetch_pages(this_begin, region->fp, region);
+			pf_prefetch_pages(cr2, region->fp, region);
 	} else {
-		pf_handle_invalid_memory(this_begin, region, this_offset);
+		if (!pf_handle_invalid_memory(cr2, region, this_offset))
+			return 0;
 		cur->stats->pf_minor++;
 	}
 
@@ -788,7 +501,7 @@ static int do_wp_page(unsigned cr2)
 	vm_region *region;
 	unsigned page_index;
 
-	region = vm_find_map(cur->user->vm, cr2);
+	region = vm_find_map_cached(cur->user, cr2);
 
 	if (!region || !(region->prot & PROT_WRITE))
 		return 0;

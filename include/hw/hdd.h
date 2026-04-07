@@ -2,8 +2,6 @@
 #define _HW_HDD_H_
 #include <fs/fs.h>
 
-struct ext4_blockdev; /* forward declaration for hdd_bdev_create */
-
 /* Size of a block device sector in bytes.
    All IDE disks use this sector size, as do most USB and SCSI
    disks.  It's not worth it to try to cater to other sector
@@ -13,24 +11,12 @@ struct ext4_blockdev; /* forward declaration for hdd_bdev_create */
 /* Maximum number of partitions tracked across all disks. */
 #define HDD_MAX_PARTITIONS 16
 
-/*
- * hdd_partition_info - public descriptor for one disk partition.
- *
- * Filled by hdd.c during partition scanning and consumed by hdd_dev.c to
- * create /dev/hdXN block device nodes.
- */
-typedef struct {
-	char name[32]; /* e.g. "hda1", "hdb2" */
-	unsigned int size; /* partition size in sectors */
-	unsigned char part_type; /* MBR partition type byte */
-	void *aux; /* opaque handle passed to read/write */
-	int (*read)(void *aux, unsigned sector, void *buf, unsigned len);
-	int (*write)(void *aux, unsigned sector, void *buf, unsigned len);
-	struct ext4_blockdev *bdev; /* registered once at discovery, permanent */
-} hdd_partition_info;
-
-extern hdd_partition_info hdd_partitions[HDD_MAX_PARTITIONS];
-extern int hdd_partition_count;
+int hdd_partition_total(void);
+const char *hdd_partition_name(unsigned idx);
+unsigned hdd_partition_size_sectors(unsigned idx);
+int hdd_partition_read(unsigned idx, unsigned sector, void *buf, unsigned len);
+int hdd_partition_write(unsigned idx, unsigned sector, void *buf,
+			unsigned len);
 
 void hdd_flush();
 

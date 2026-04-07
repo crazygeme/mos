@@ -251,11 +251,12 @@ void ps_put_to_ready_queue(task_struct *task)
 void _task_sched(const char *func)
 {
 	task_struct *task = 0;
+	task_struct *cur = CURRENT_TASK();
 
 	task_schedule_count++;
 
-	if (CURRENT_TASK()->stats)
-		CURRENT_TASK()->stats->idle = time_now_tickets();
+	if (cur->stats)
+		cur->stats->idle = time_now_tickets();
 
 	dsr_drain();
 
@@ -266,7 +267,26 @@ void _task_sched(const char *func)
 
 	task = ps_get_next_task();
 
-	if (!task || task->psid == CURRENT_TASK()->psid) {
+	if (!task) {
+		/*
+		 * If the current task just blocked itself (for example in
+		 * time_wait/select/poll), we must not fall straight back into
+		 * it. Park the CPU until the next interrupt, then retry so
+		 * expired timers can be promoted by ps_get_next_task().
+		 */
+		if (CURRENT_TASK()->status != ps_running) {
+			sched_enable();
+			int_intr_enable();
+			HLT();
+			int_intr_disable();
+			goto SELF;
+		}
+
+		sched_enable();
+		goto SELF;
+	}
+
+	if (task->psid == CURRENT_TASK()->psid) {
 		sched_enable();
 		goto SELF;
 	}

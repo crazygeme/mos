@@ -112,7 +112,9 @@ int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 
 int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 {
+	task_struct *cur = CURRENT_TASK();
 	unsigned int total_millisecond;
+	unsigned long long start_ms, end_ms, slept_ms;
 
 	if (!req)
 		return -EFAULT;
@@ -125,7 +127,32 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 		klog("nanosleep(%d.%09d) = %ums\n", req->tv_sec, req->tv_nsec,
 		     total_millisecond);
 
-	msleep(total_millisecond);
+	start_ms = time_now_ms();
+	time_wait(total_millisecond);
+	end_ms = time_now_ms();
+
+	if (cur->signal &&
+	    (cur->signal->sig_pending & ~cur->signal->sig_mask)) {
+		if (rem) {
+			slept_ms = end_ms > start_ms ? end_ms - start_ms : 0;
+			if (slept_ms >= total_millisecond) {
+				rem->tv_sec = 0;
+				rem->tv_nsec = 0;
+			} else {
+				unsigned long long left_ms =
+					total_millisecond - slept_ms;
+				rem->tv_sec = (int)(left_ms / 1000);
+				rem->tv_nsec =
+					(int)((left_ms % 1000) * 1000000);
+			}
+		}
+		return -EINTR;
+	}
+
+	if (rem) {
+		rem->tv_sec = 0;
+		rem->tv_nsec = 0;
+	}
 	return 0;
 }
 
@@ -209,9 +236,6 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 
 int sys_mmap(struct mmap_arg_struct32 *arg)
 {
-	if (arg->len > (10 * 1024 * 1024))
-		return -1;
-
 	return do_mmap(arg->addr, arg->len, arg->prot, arg->flags, arg->fd,
 		       arg->offset);
 }
@@ -348,18 +372,43 @@ int sys_getpriority(int which, int who)
 
 int sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TestControl.verbos)
 		klog("ioperm(%lx, %lx, %d)\n", from, num, turn_on);
 
-	return -EPERM;
+	if (!cur->user || cur->user->euid != 0)
+		return -EPERM;
+
+	/*
+	 * Minimal x86 compatibility: grant root tasks port-I/O access through
+	 * the hardware TSS I/O bitmap without giving them ring-3 cli/sti via
+	 * IOPL. Selective "turn off" requests are still treated as no-ops.
+	 */
+	if (turn_on) {
+		if (from != 0 || num < 0x400)
+			return -EINVAL;
+		cur->io_allow_all = 1;
+	}
+
+	return 0;
 }
 
 int sys_iopl(int level)
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TestControl.verbos)
 		klog("iopl(%d)\n", level);
 
-	return -EPERM;
+	if (!cur->user || cur->user->euid != 0)
+		return -EPERM;
+	if (level < 0 || level > 3)
+		return -EINVAL;
+
+	cur->io_priv_level = (unsigned char)level;
+	cur->io_allow_all = level ? 1 : 0;
+	return 0;
 }
 
 int sys_quotactl(int cmd, const char *special, int id, void *addr)

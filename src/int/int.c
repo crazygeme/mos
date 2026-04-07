@@ -80,6 +80,9 @@ static void intr_check_point(intr_frame *frame)
 	if (!ps_enabled())
 		return;
 
+	/* Keep user IOPL at 0 so ring-3 code cannot execute cli/sti. */
+	frame->eflags &= ~0x3000U;
+
 	if (sched_is_enabled() && cur->remain_ticks <= 0) {
 		cur->stats->niv_switches++;
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
@@ -142,6 +145,18 @@ static void handle_invalid_opcode(intr_frame *frame)
 	sys_exit(-EFAULT);
 }
 
+static void handle_general_protection(intr_frame *frame)
+{
+	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
+	if ((frame->cs & 0x3) == 0x3) {
+		sys_exit(-EFAULT);
+		return;
+	}
+
+	while (1)
+		HLT();
+}
+
 void int_enable_all(void)
 {
 	int i = 0;
@@ -166,6 +181,7 @@ void int_enable_all(void)
 	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);
 	int_register(IPI_VECTOR_SCHED, ipi_sched_handler, 0, 0);
 	int_register(6, handle_invalid_opcode, 0, 3);
+	int_register(INT_VECTOR_PROTECTION, handle_general_protection, 0, 0);
 }
 
 /* Called on each AP: load IDT, register IPI handlers, enable interrupts. */
@@ -182,7 +198,8 @@ void int_enable_all_ap(void)
 void int_update_tss(void *address)
 {
 	unsigned int base = (unsigned int)address;
-	gdt[TSS_SELECTOR / 8] = MAKE_SEG_DESC(base, 0x67, SEG_CLASS_SYSTEM, 9,
+	gdt[TSS_SELECTOR / 8] = MAKE_SEG_DESC(base, TSS_SEG_LIMIT,
+					      SEG_CLASS_SYSTEM, 9,
 					      KERNEL_PRIVILEGE, SEG_BASE_1);
 	SET_TSS(TSS_SELECTOR);
 }

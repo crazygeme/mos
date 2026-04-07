@@ -74,12 +74,13 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 
 ### Reference
 
-| Document                                 | Summary                                                                           |
-| ---------------------------------------- | --------------------------------------------------------------------------------- |
-| [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image   |
-| [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis |
-| [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch      |
-| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                            |
-| [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes      |
-| [Screenshots](doc/screenshots.md)        | Screenshots of MOS running                                                        |
-| [Todo](doc/todo.md)                      | Feature checklist                                                                 |
+| Document                                 | Summary                                                                            |
+| ---------------------------------------- | ---------------------------------------------------------------------------------- |
+| [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image    |
+| [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis  |
+| [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch       |
+| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                             |
+| [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes       |
+| [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status |
+| [Screenshots](doc/screenshots.md)        | Screenshots of MOS running                                                         |
+| [Todo](doc/todo.md)                      | Feature checklist                                                                  |

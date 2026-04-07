@@ -15,6 +15,11 @@ struct utimbuf {
 	unsigned modtime;
 };
 
+struct itimerval {
+	struct timeval it_interval;
+	struct timeval it_value;
+};
+
 struct mmap_arg_struct32 {
 	unsigned int addr;
 	unsigned int len;
@@ -144,7 +149,7 @@ int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s);
 int sys_setfsuid32(unsigned fsuid);
 int sys_setfsgid32(unsigned fsgid);
 int sys_wait4(int pid, int *status, int options, void *rusage);
-int sys_kill(unsigned pid, int sig);
+int sys_kill(int pid, int sig);
 int sys_brk(unsigned top);
 int sys_sched_yield();
 unsigned sys_alarm(unsigned seconds);
@@ -166,6 +171,9 @@ int sys_exit_group(int status);
 int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 		     size_t *ret);
 int sys_set_thread_area(void *u_info);
+int sys_setitimer(int which, const struct itimerval *new_value,
+		  struct itimerval *old_value);
+int sys_getitimer(int which, struct itimerval *value);
 
 /*
  * syscall_sys.c
@@ -190,6 +198,8 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg);
 int sys_getpriority(int which, int who);
 int sys_ioperm(unsigned long from, unsigned long num, int turn_on);
 int sys_iopl(int level);
+int sys_vm86old(void *user_vm86);
+int sys_vm86(unsigned long fn, void *user_vm86plus);
 int sys_quotactl(int cmd, const char *special, int id, void *addr);
 int sys_mmap(struct mmap_arg_struct32 *arg);
 int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
@@ -200,6 +210,8 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	       int flags, unsigned new_addr);
 int sys_umask(unsigned mask);
 int sys_sysinfo(void *info);
+int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
+	    long fifth);
 
 /*
  * syscall_net.c

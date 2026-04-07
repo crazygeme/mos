@@ -1,6 +1,7 @@
 #include <fs/vfs.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/ioctl.h>
 #include <fs/pipe.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
@@ -578,11 +579,13 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	mutex_lock(&cur->fd_lock);
 	fp = cur->fds[fd].fp;
 	if (!fp || !fp->f_fop || !fp->f_fop->ioctl) {
-		ret = -ENOTTY;
+		ret = (cmd == KDKBDREP) ? 0 : -ENOTTY;
 		goto done;
 	}
 
 	ret = fp->f_fop->ioctl(fp, cmd, buf);
+	if (cmd == KDKBDREP && ret == -ENOTTY)
+		ret = 0;
 done:
 	mutex_unlock(&cur->fd_lock);
 	return ret;

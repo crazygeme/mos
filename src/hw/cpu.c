@@ -107,7 +107,7 @@ static void cpu_load_tss(int cpu_id, tss_struct *tss)
 	extern unsigned long long gdt[];
 	unsigned sel = TSS_SELECTOR_FOR(cpu_id);
 
-	gdt[sel / 8] = MAKE_SEG_DESC(base, 0x67, SEG_CLASS_SYSTEM, 9,
+	gdt[sel / 8] = MAKE_SEG_DESC(base, TSS_SEG_LIMIT, SEG_CLASS_SYSTEM, 9,
 				     KERNEL_PRIVILEGE, SEG_BASE_1);
 	SET_TSS(sel);
 }
@@ -124,10 +124,10 @@ void ap_init_c(int cpu_id)
 	apic_init_ap();
 
 	/* Set up per-CPU TSS. */
-	cpu->tss = kmalloc(sizeof(tss_struct));
-	memset((void *)cpu->tss, 0, sizeof(tss_struct));
+	cpu->tss = kmalloc(sizeof(tss_io_struct));
+	memset((void *)cpu->tss, 0xff, sizeof(tss_io_struct));
 	cpu->tss->ss0 = KERNEL_DATA_SELECTOR;
-	cpu->tss->iomap = (unsigned short)sizeof(tss_struct);
+	cpu->tss->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
 	cpu_load_tss(cpu_id, cpu->tss);
 
 	/* Enable interrupts so the scheduler can run. */

@@ -1,5 +1,5 @@
 #include <mm/mm.h>
-#include <mm/pagefault.h>
+#include <fs/cache.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <fs/fs.h>
@@ -35,18 +35,23 @@ static int ext4_file_release(file *fp)
 static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	ext4_file *f = fp->f_inode->i_private;
-	size_t rcnt = 0;
-	/* Sync ext4 cursor with f_pos if they diverged (e.g. after pread) */
+	ssize_t rcnt = fs_page_cache_read(fp, buf, size, pos);
+
+	if (rcnt < 0)
+		return rcnt;
+
+	/*
+	 * Keep the underlying ext4 cursor coherent with f_pos even though the
+	 * data path now goes through the shared fs page cache. Callers such as
+	 * llseek(SEEK_CUR) still consult ext4_ftell().
+	 */
 	if ((loff_t)ext4_ftell(f) != *pos)
 		ext4_fseek(f, *pos, SEEK_SET);
-	int ret = ext4_fread(f, buf, size, &rcnt);
-	fs_read_size += rcnt;
-	if (ret != EOK)
-		return -1;
-	*pos += rcnt;
+
+	fs_read_size += (unsigned)rcnt;
 	if (fp->f_name)
 		ext4_file_set_atime(fp->f_name, (uint32_t)time_now_sec());
-	return (ssize_t)rcnt;
+	return rcnt;
 }
 
 static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
@@ -56,7 +61,7 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	size_t wcnt = 0;
 
 	if (fp->f_inode)
-		pf_invalidate_file_cache(fp->f_inode->i_ino);
+		fs_page_cache_invalidate(fp->f_inode);
 	if ((loff_t)ext4_ftell(f) != *pos)
 		ext4_fseek(f, *pos, SEEK_SET);
 	int ret = ext4_fwrite(f, buf, size, &wcnt);
@@ -135,25 +140,34 @@ static int ext4_file_chown(inode *node, uint32_t uid, uint32_t gid)
 static int ext4_file_read_page(inode *node, unsigned offset, void *buf)
 {
 	ext4_file *ff = node->i_private;
+	loff_t saved_pos = (loff_t)ext4_ftell(ff);
 	size_t rcnt = 0;
+	int ret;
 
 	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
 		return -EIO;
-	ext4_fread(ff, buf, PAGE_SIZE, &rcnt);
+	ret = ext4_fread(ff, buf, PAGE_SIZE, &rcnt);
 	if (rcnt < PAGE_SIZE)
 		memset((char *)buf + rcnt, 0, PAGE_SIZE - rcnt);
+	ext4_fseek(ff, saved_pos, SEEK_SET);
+	if (ret != EOK)
+		return -EIO;
 	return 0;
 }
 
 static int ext4_file_write_page(inode *node, unsigned offset, const void *buf)
 {
 	ext4_file *ff = node->i_private;
+	loff_t saved_pos = (loff_t)ext4_ftell(ff);
 	size_t wcnt = 0;
+	int ret;
 
-	pf_invalidate_file_cache(node->i_ino);
+	fs_page_cache_invalidate(node);
 	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
 		return -EIO;
-	if (ext4_fwrite(ff, buf, PAGE_SIZE, &wcnt) != EOK)
+	ret = ext4_fwrite(ff, buf, PAGE_SIZE, &wcnt);
+	ext4_fseek(ff, saved_pos, SEEK_SET);
+	if (ret != EOK)
 		return -EIO;
 	return 0;
 }
@@ -543,9 +557,6 @@ static file *ext4_path_open(const char *path, int flag)
 	ret = ext4_fstat(f, &s);
 	if (ret != EOK)
 		goto fail;
-	if (flag & O_TRUNC)
-		pf_invalidate_file_cache(s.st_ino);
-
 	/* O_NOFOLLOW: return the symlink itself without following it. */
 	if (S_ISLNK(s.st_mode) && (flag & O_NOFOLLOW)) {
 		fp = ext4_alloc_file(f);
@@ -655,6 +666,11 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 	/* mp ends with '/'; path starts with '/' — skip path's leading '/' */
 	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
 	file *ret = ext4_path_open(full, flag);
+	if (ret && ret->f_inode) {
+		ret->f_inode->i_pgcache_tag = sb;
+		if (flag & O_TRUNC)
+			fs_page_cache_invalidate(ret->f_inode);
+	}
 	vm_free(full, 1);
 	return ret;
 }
@@ -662,8 +678,11 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 static file *ext4_open_root(super_block *sb, int flag)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
+	file *ret = ext4_path_open(mi->mp, O_RDONLY);
 
-	return ext4_path_open(mi->mp, O_RDONLY);
+	if (ret && ret->f_inode)
+		ret->f_inode->i_pgcache_tag = sb;
+	return ret;
 }
 
 static void ext4_release(super_block *sb)

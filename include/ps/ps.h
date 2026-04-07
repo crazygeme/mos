@@ -125,6 +125,8 @@ typedef volatile struct __tss_struct {
 
 } tss_struct;
 
+typedef struct _vm_region vm_region;
+
 typedef struct _page_table_list_entry {
 	unsigned int addr;
 	list_entry list;
@@ -167,6 +169,7 @@ typedef struct _user_enviroment {
 	unsigned brk; /* current program break (Linux: mm->brk) */
 	unsigned stack_bottom; /* lowest mapped stack page (grows down on fault) */
 	vm_struct_t vm;
+	vm_region *mmap_cache; /* Linux-style last find_vma() result cache */
 	char *command;
 	size_t cmd_len;
 	char *environment;

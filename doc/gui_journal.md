@@ -72,3 +72,33 @@ Refined conclusion:
 
 Suggested next step:
 - Resume by identifying what user-mode operation in `/usr/X11R6/bin/X` triggers the `#GP` shortly after the late XKB/keyboard path, now that the framebuffer/MMIO crashes in the VM layer are covered.
+
+## 2026-04-09
+
+Status at stop:
+- `startx` now reaches a visible X screen.
+- X, `twm`, and `xterm` can all start under the current kernel.
+- A large black X cursor is visible, which confirms the graphics VT and framebuffer present path are alive.
+- A remaining short X watchdog timeout still exists in the non-debug path and needs a real performance or behavior fix rather than a debug timer stretch.
+
+Fixes completed in this round:
+- Fixed `fork()` so child tasks do not inherit an already-armed real-time alarm from the parent.
+- Corrected the `rt_sigaction` userspace ABI layout to decode `handler, flags, restorer, mask` in the order Linux userspace expects.
+- Extended `/dev/input/mice` compatibility:
+  - added tty-style ioctls used by X mouse probe paths
+  - implemented basic PS/2 command responses for reset, identify, sample-rate, resolution, enable, disable, and poll traffic
+  - seeded initial mouse packets so X sees a live device instead of an inert endpoint
+- Fixed `/dev/tty` and PTY startup behavior enough for `xterm` to open its controlling terminal, allocate `/dev/ptmx`, and use `/dev/pts/0`.
+- Re-enabled periodic graphics presentation from the timer path so framebuffer writes on graphics VTs are pushed to the visible display.
+- Tightened AF_UNIX readiness handling:
+  - write readiness for connected Unix sockets now depends on actual peer receive space
+  - readers wake blocked writers after draining data
+  - socket wakeups now avoid re-queueing tasks that are not actually sleeping
+- Added verbose levels so heavy syscall tracing can be separated from lighter informational logging while debugging GUI startup.
+
+Working conclusion:
+- The project moved from early startup failures into late X startup and interactive-session behavior.
+- The biggest remaining functional issue is a real short watchdog timeout in the X server startup path when running without the temporary timer stretch used during investigation.
+
+Suggested next step:
+- Fix the remaining X startup watchdog path by reducing the guarded helper latency or by matching Linux signal/timer behavior more closely in that window.

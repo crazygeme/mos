@@ -17,6 +17,35 @@
 #define INPUT_MOUSE_MINOR 63
 
 static cy_buf *mouse_rxbuf;
+static int mouse_expect_param;
+
+#define PS2_ACK 0xfa
+#define PS2_BAT_OK 0xaa
+#define PS2_ID_STANDARD 0x00
+
+static void mouse_queue_bytes(const unsigned char *buf, unsigned len)
+{
+	if (!mouse_rxbuf || !buf || len == 0)
+		return;
+	cyb_putbuf(mouse_rxbuf, (unsigned char *)buf, len, 0, 0);
+}
+
+static void mouse_queue_byte(unsigned char b)
+{
+	mouse_queue_bytes(&b, 1);
+}
+
+static void mouse_queue_idle_packet(void)
+{
+	static const unsigned char idle_packet[] = {
+		0x08, /* sync bit set, no buttons */
+		0x00,
+		0x00,
+		0x00, /* wheel delta for IMPS/2-style readers */
+	};
+
+	mouse_queue_bytes(idle_packet, sizeof(idle_packet));
+}
 
 static int mouse_file_nonblock(file *fp)
 {
@@ -43,11 +72,83 @@ static ssize_t mouse_read(file *fp, void *buf, size_t size, loff_t *pos)
 
 static ssize_t mouse_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
+	const unsigned char *src = buf;
+	size_t i;
+
 	(void)fp;
 	(void)pos;
 
 	if (!buf || size < 1)
 		return 0;
+
+	for (i = 0; i < size; i++) {
+		unsigned char cmd = src[i];
+
+		if (mouse_expect_param) {
+			mouse_expect_param = 0;
+			mouse_queue_byte(PS2_ACK);
+			continue;
+		}
+
+		switch (cmd) {
+		case 0xff: {
+			static const unsigned char reset_reply[] = {
+				PS2_ACK,
+				PS2_BAT_OK,
+				PS2_ID_STANDARD,
+			};
+
+			if (mouse_rxbuf)
+				cyb_flush(mouse_rxbuf);
+			mouse_queue_bytes(reset_reply, sizeof(reset_reply));
+			break;
+		}
+		case 0xf2: {
+			static const unsigned char id_reply[] = {
+				PS2_ACK,
+				PS2_ID_STANDARD,
+			};
+
+			mouse_queue_bytes(id_reply, sizeof(id_reply));
+			break;
+		}
+		case 0xeb: {
+			static const unsigned char poll_reply[] = {
+				PS2_ACK,
+				0x08, /* always-present sync bit, no buttons */
+				0x00,
+				0x00,
+			};
+
+			mouse_queue_bytes(poll_reply, sizeof(poll_reply));
+			break;
+		}
+		case 0xf3: /* set sample rate */
+		case 0xe8: /* set resolution */
+			mouse_queue_byte(PS2_ACK);
+			mouse_expect_param = 1;
+			break;
+		case 0xe6: /* scaling 1:1 */
+		case 0xe7: /* scaling 2:1 */
+		case 0xea: /* stream mode */
+		case 0xf0: /* remote mode */
+		case 0xf5: /* disable data reporting */
+		case 0xf6: /* set defaults */
+			mouse_queue_byte(PS2_ACK);
+			break;
+		case 0xf4: /* enable data reporting */
+			mouse_queue_byte(PS2_ACK);
+			mouse_queue_idle_packet();
+			break;
+		default:
+			/*
+			 * Be permissive for probe traffic we don't emulate in
+			 * detail yet; an ACK keeps X moving forward.
+			 */
+			mouse_queue_byte(PS2_ACK);
+			break;
+		}
+	}
 
 	return (ssize_t)size;
 }
@@ -84,6 +185,19 @@ static int mouse_ioctl(file *fp, unsigned cmd, void *buf)
 	(void)fp;
 
 	switch (cmd) {
+	case TCSBRK:
+	case TCXONC:
+		/* PS/2 probe code expects tty-style flow-control ioctls to exist. */
+		return 0;
+	case TCFLSH: {
+		int sel = (int)(uintptr_t)buf;
+
+		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+			sel = TCIOFLUSH;
+		if ((sel == TCIFLUSH || sel == TCIOFLUSH) && mouse_rxbuf)
+			cyb_flush(mouse_rxbuf);
+		return 0;
+	}
 	case TCGETS:
 		memcpy(buf, &tty_default_termios, sizeof(struct termios));
 		return 0;
@@ -107,6 +221,14 @@ static int mouse_ioctl(file *fp, unsigned cmd, void *buf)
 	case TCSETAW:
 	case TCSETAF:
 		return 0;
+	case TIOCGWINSZ: {
+		struct winsize *ws = (struct winsize *)buf;
+
+		memset(ws, 0, sizeof(*ws));
+		return 0;
+	}
+	case TIOCSWINSZ:
+		return 0;
 	case TIOCMGET:
 		*(int *)buf = 0;
 		return 0;
@@ -122,6 +244,7 @@ static int mouse_release(file *fp)
 {
 	if (mouse_rxbuf)
 		cyb_reader_close(mouse_rxbuf);
+	mouse_expect_param = 0;
 	free(fp->f_inode);
 	free(fp);
 	return 0;
@@ -156,8 +279,11 @@ static file *mouse_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	fp->f_fop = &mouse_fops;
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
 	fp->f_flag = (unsigned)flag;
+	if (TestControl.verbos)
+		klog("mouse_open(rdev=%x, flag=%x)\n", rdev, flag);
 	if (mouse_rxbuf)
 		cyb_reader_open(mouse_rxbuf);
+	mouse_queue_idle_packet();
 	return fp;
 }
 

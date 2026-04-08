@@ -158,7 +158,7 @@ int sys_fstat(int fd, struct stat *buf)
 {
 	int ret = fs_fstat(fd, buf);
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		char modes[11];
 		format_modes(buf->st_mode, modes);
 		klog("fstat(%d, %x) = %d, %s, uid=%d, gid=%d, size=%d, blocks = %d, ino = %d, rdev = %d (%d:%d), dev = %d (%d:%d), nlink = %d\n",
@@ -234,7 +234,7 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	if (ret == 0)
 		stat_to_stat64(&s32, buf);
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		char modes[11];
 		format_modes(buf->st_mode, modes);
 		klog("fstat64(%d, %x) = %d, %s, uid=%d, gid=%d, size=%d, blocks = %d, ino = %d, rdev = %d (%d:%d), dev = %d (%d:%d), nlink = %d\n",

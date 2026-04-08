@@ -30,6 +30,12 @@ elif [ "$arg" == "debug" ]; then
 	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
+elif [ "$arg" == "verbose=0" ]; then
+	_verbose="verbose=0"
+elif [ "$arg" == "verbose=1" ]; then
+	_verbose="verbose=1"
+elif [ "$arg" == "verbose=2" ]; then
+	_verbose="verbose=2"
 elif [ "$arg" == "profile" ]; then
 	kernel_file="out/kernel.dbg"
 	_debug="-monitor unix:/tmp/qemu-profiler.sock,server,nowait"
@@ -50,7 +56,10 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t debug: wait for gdb before running"
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
-	echo -e "\t verbose: run with serial log"
+	echo -e "\t verbose: run with focused diagnostic logging (level 2)"
+	echo -e "\t verbose=0: disable verbose logging"
+	echo -e "\t verbose=1: run with full syscall trace logging"
+	echo -e "\t verbose=2: run with focused diagnostic logging"
 	echo -e "\t kvm: enable kvm"
 	exit
 fi

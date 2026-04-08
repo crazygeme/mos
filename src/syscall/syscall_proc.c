@@ -82,8 +82,8 @@ static int can_send_signal(task_struct *sender, task_struct *target)
 	if (su->euid == 0)
 		return 1;
 
-	return su->uid == tu->uid || su->uid == tu->suid || su->euid == tu->uid ||
-	       su->euid == tu->suid;
+	return su->uid == tu->uid || su->uid == tu->suid ||
+	       su->euid == tu->uid || su->euid == tu->suid;
 }
 
 static void send_if_other(task_struct *task, void *opaque)
@@ -112,7 +112,7 @@ int sys_getpid()
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getpid() = %d\n", cur->psid);
 
 	return cur->psid;
@@ -122,7 +122,7 @@ int sys_getppid()
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getppid() = %d\n", cur->parent->psid);
 
 	return cur->parent->psid;
@@ -132,7 +132,7 @@ int sys_getpgrp(unsigned pid)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getpgrp() = %d\n", cur->user->group_id);
 
 	return cur->user->group_id;
@@ -142,7 +142,7 @@ int sys_getpgid(unsigned pid)
 {
 	task_struct *t;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getpgid(%d)\n", pid);
 
 	if (pid == 0)
@@ -159,7 +159,7 @@ int sys_setpgid(unsigned pid, unsigned pgid)
 	task_struct *cur = CURRENT_TASK();
 	task_struct *t;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setpgid(%d, %d)\n", pid, pgid);
 
 	if (pid == 0)
@@ -182,7 +182,7 @@ int sys_getsid(unsigned pid)
 {
 	task_struct *t;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getsid(%d)\n", pid);
 
 	if (pid == 0)
@@ -198,7 +198,7 @@ int sys_setsid()
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setsid() = %d\n", cur->psid);
 
 	cur->user->session_id = cur->psid;
@@ -209,7 +209,7 @@ int sys_setsid()
 int sys_getuid()
 {
 	task_struct *cur = CURRENT_TASK();
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getuid() = %d\n", cur->user->uid);
 
 	return cur->user->uid;
@@ -218,7 +218,7 @@ int sys_getuid()
 int sys_getgid()
 {
 	task_struct *cur = CURRENT_TASK();
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getgid() = %d\n", cur->user->gid);
 
 	return cur->user->gid;
@@ -227,7 +227,7 @@ int sys_getgid()
 int sys_geteuid()
 {
 	task_struct *cur = CURRENT_TASK();
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("geteuid() = %d\n", cur->user->euid);
 
 	return cur->user->euid;
@@ -236,7 +236,7 @@ int sys_geteuid()
 int sys_getegid()
 {
 	task_struct *cur = CURRENT_TASK();
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getegid() = %d\n", cur->user->egid);
 
 	return cur->user->egid;
@@ -252,7 +252,7 @@ int sys_setuid(unsigned uid)
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setuid(%d)\n", uid);
 
 	if (u->euid == 0) {
@@ -279,7 +279,7 @@ int sys_setgid(unsigned gid)
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgid(%d)\n", gid);
 
 	if (u->euid == 0) {
@@ -307,7 +307,7 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	unsigned new_ruid = (ruid == (unsigned)-1) ? u->uid : ruid;
 	unsigned new_euid = (euid == (unsigned)-1) ? u->euid : euid;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setreuid(%d, %d)\n", ruid, euid);
 
 	if (u->euid != 0) {
@@ -341,7 +341,7 @@ int sys_setregid(unsigned rgid, unsigned egid)
 	unsigned new_rgid = (rgid == (unsigned)-1) ? u->gid : rgid;
 	unsigned new_egid = (egid == (unsigned)-1) ? u->egid : egid;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setregid(%d, %d)\n", rgid, egid);
 
 	if (u->euid != 0) {
@@ -370,7 +370,7 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setresuid(%d, %d, %d)\n", ruid, euid, suid);
 
 	if (u->euid != 0) {
@@ -401,7 +401,7 @@ int sys_getresuid(unsigned *ruid, unsigned *euid, unsigned *suid)
 {
 	user_enviroment *u = CURRENT_TASK()->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getresuid\n");
 
 	if (ruid)
@@ -422,7 +422,7 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setresgid(%d, %d, %d)\n", rgid, egid, sgid);
 
 	if (u->euid != 0) {
@@ -452,7 +452,7 @@ int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
 {
 	user_enviroment *u = CURRENT_TASK()->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getresgid\n");
 
 	if (rgid)
@@ -473,7 +473,7 @@ int sys_setfsuid(unsigned fsuid)
 	user_enviroment *u = CURRENT_TASK()->user;
 	unsigned old = u->fsuid;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setfsuid(%d)\n", fsuid);
 
 	/* Only root or matching uid/euid/suid can change fsuid */
@@ -489,7 +489,7 @@ int sys_setfsgid(unsigned fsgid)
 	user_enviroment *u = CURRENT_TASK()->user;
 	unsigned old = u->fsgid;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setfsgid(%d)\n", fsgid);
 
 	if (u->euid == 0 || fsgid == u->gid || fsgid == u->egid ||
@@ -504,7 +504,8 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 	if (pid == -1)
 		return do_waitpid(0, status, options, rusage);
 	else if (pid < -1)
-		return do_waitpid_pgrp((unsigned)(-pid), status, options, rusage);
+		return do_waitpid_pgrp((unsigned)(-pid), status, options,
+				       rusage);
 	else
 		return do_waitpid(pid, status, options, rusage);
 }
@@ -546,7 +547,7 @@ int sys_kill(int pid, int sig)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("kill(%d, %d)\n", pid, sig);
 
 	if (sig == 0)
@@ -627,7 +628,7 @@ int sys_brk(unsigned _top)
 		ret = top;
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("brk(%x) = %x\n", _top, ret);
 
 	return ret;
@@ -635,7 +636,7 @@ int sys_brk(unsigned _top)
 
 int sys_sched_yield()
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("yield\n");
 
 	task_sched();
@@ -656,7 +657,7 @@ unsigned sys_alarm(unsigned seconds)
 		seconds ? (now + (unsigned long long)seconds * 1000) : 0;
 	cur->alarm_interval_ms = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("alarm(%u) = %u\n", seconds, remaining);
 
 	return remaining;
@@ -691,8 +692,11 @@ int sys_setitimer(int which, const struct itimerval *new_value,
 {
 	task_struct *cur = CURRENT_TASK();
 	unsigned long long now = time_now_ms();
+	unsigned long long new_interval_ms = 0;
+	unsigned long long new_value_ms = 0;
+	unsigned long long effective_value_ms = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setitimer(%d, %x, %x)\n", which, new_value, old_value);
 
 	if (which != 0)
@@ -710,10 +714,13 @@ int sys_setitimer(int which, const struct itimerval *new_value,
 	if (!new_value)
 		return 0;
 
-	cur->alarm_interval_ms = timeval_to_ms(&new_value->it_interval);
-	if (timeval_to_ms(&new_value->it_value))
-		cur->alarm_expire_ms =
-			now + timeval_to_ms(&new_value->it_value);
+	new_interval_ms = timeval_to_ms(&new_value->it_interval);
+	new_value_ms = timeval_to_ms(&new_value->it_value);
+	effective_value_ms = new_value_ms;
+
+	cur->alarm_interval_ms = new_interval_ms;
+	if (effective_value_ms)
+		cur->alarm_expire_ms = now + effective_value_ms;
 	else
 		cur->alarm_expire_ms = 0;
 
@@ -726,7 +733,7 @@ int sys_getitimer(int which, struct itimerval *value)
 	unsigned long long now = time_now_ms();
 	unsigned long long remaining = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getitimer(%d, %x)\n", which, value);
 
 	if (which != 0)
@@ -746,7 +753,7 @@ int sys_pause()
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("pause\n");
 
 	while (!(cur->signal->sig_pending & ~cur->signal->sig_mask))
@@ -772,30 +779,27 @@ int sys_sigaction(int sig, void *act, void *oact)
 	if (act)
 		*sa = *(struct sigaction *)act;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sigaction(%d, %x, %x)\n", sig, act, oact);
 
 	return 0;
 }
 
 /*
- * glibc 2.3.2 on Linux/i386 uses a kernel_sigaction whose mask field is a
- * full user-space sigset_t: 1024 bits = 32 unsigned longs.
+ * glibc 2.3.2 on Linux/i386 passes rt_sigaction using the kernel ABI layout:
+ *   handler, flags, restorer, sigset_t mask[]
  *
- * The rt_sigaction syscall's sigsetsize argument is still passed as 8 by
- * glibc on this vintage ABI, but the in-memory structure layout on the user
- * stack is:
- *   handler, sigset_t mask[32], flags, restorer
- *
- * We only support signals 1..31, so we translate the low word and zero the
- * remaining words on writeback.
+ * The sigsetsize argument is still 8 on this ABI, but glibc's in-memory
+ * buffer contains a larger user-space sigset_t.  We only support signals
+ * 1..31, so we translate the low word and zero the remaining words on
+ * writeback.
  */
 #define RT_SIGSET_WORDS 32
 struct rt_sigaction_user {
 	void (*sa_handler)(int);
-	unsigned long sa_mask[RT_SIGSET_WORDS];
 	unsigned long sa_flags;
 	void (*sa_restorer)(void);
+	unsigned long sa_mask[RT_SIGSET_WORDS];
 };
 
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
@@ -828,7 +832,7 @@ int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 		sa->sa_mask = (unsigned long)u->sa_mask[0];
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("rt_sigaction(%d, %x, %x)\n", sig, act, oact);
 
 	return 0;
@@ -865,7 +869,7 @@ int sys_sigprocmask(int how, void *set, void *oset)
 	cur->signal->sig_mask &=
 		~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sigprocmask(%d)\n", how);
 
 	return 0;
@@ -910,7 +914,7 @@ int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 	cur->signal->sig_mask &=
 		~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("rt_sigprocmask(%d)\n", how);
 
 	return 0;
@@ -931,7 +935,7 @@ int sys_sigreturn()
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
 	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 4);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sigreturn\n");
 
 	/* Restore original user registers and EIP into the interrupt frame. */
@@ -1114,13 +1118,13 @@ void do_signal(intr_frame *frame)
 	frame->eip = (void *)handler;
 	frame->esp = (void *)new_esp;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sig_deliver(%d)\n", sig);
 }
 
 int sys_getrlimit(int resource, void *limit)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getrlimit\n");
 
 	return -1;
@@ -1128,7 +1132,7 @@ int sys_getrlimit(int resource, void *limit)
 
 long sys_personality(unsigned int personality)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("personality\n");
 
 	return PER_LINUX32_3GB;
@@ -1136,7 +1140,7 @@ long sys_personality(unsigned int personality)
 
 int sys_getgroups(int size, unsigned *list)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getgroups(%d)\n", size);
 
 	/* No supplementary groups — always root. */
@@ -1147,7 +1151,7 @@ int sys_setgroups(int size, unsigned short *list)
 {
 	user_enviroment *u = CURRENT_TASK()->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgroups(%d)\n", size);
 
 	if (u->euid != 0)
@@ -1158,7 +1162,7 @@ int sys_setgroups(int size, unsigned short *list)
 
 int sys_getgroups32(int size, unsigned *list)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getgroups32(%d)\n", size);
 
 	/* No supplementary groups — always root. */
@@ -1169,7 +1173,7 @@ int sys_setgroups32(int size, unsigned *list)
 {
 	user_enviroment *u = CURRENT_TASK()->user;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgroups32(%d)\n", size);
 
 	if (u->euid != 0)
@@ -1190,7 +1194,7 @@ int sys_ugetrlimit(int resource, void *limit)
 		rl[1] = cur->user->rlimits[resource].rlim_max;
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("ugetrlimit(%d, rl[0]=%x, rl[1]=%x)\n", resource,
 		     rl ? rl[0] : 0, rl ? rl[1] : 0);
 
@@ -1204,7 +1208,7 @@ int sys_setrlimit(int resource, void *limit)
 	if (!rl)
 		return -EFAULT;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setrlimit(%d, rl[0]=%x, rl[1]=%x)\n", resource,
 		     rl ? rl[0] : 0, rl ? rl[1] : 0);
 
@@ -1220,7 +1224,7 @@ int sys_sigaltstack(const stack_t *ss, stack_t *old_ss)
 	task_struct *cur = CURRENT_TASK();
 	stack_t *alt = &cur->signal->altstack;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sigaltstack\n");
 
 	if (old_ss)
@@ -1307,7 +1311,7 @@ int sys_setfsgid32(unsigned fsgid)
 
 int sys_exit_group(int status)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("exit_group(%d)\n", status);
 
 	sys_exit((unsigned)status);
@@ -1324,7 +1328,7 @@ int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("rt_sigpending\n");
 
 	if (!set)
@@ -1352,7 +1356,7 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 	unsigned long long deadline = 0;
 	int has_timeout = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("rt_sigtimedwait\n");
 
 	if (!set)
@@ -1409,7 +1413,7 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
  */
 int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("rt_sigqueueinfo(%d, %d)\n", pid, sig);
 
 	if (sig == 0)
@@ -1429,7 +1433,7 @@ int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize)
 	task_struct *cur = CURRENT_TASK();
 	sigset_t saved_mask, new_mask;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("rt_sigsuspend\n");
 
 	if (!mask)
@@ -1499,7 +1503,7 @@ int sys_set_thread_area(void *info)
 	if (!u_info)
 		return -EFAULT;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("set_thread_area(entry=%d, base=%x)\n",
 		     u_info->entry_number, u_info->base_addr);
 

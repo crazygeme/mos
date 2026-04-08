@@ -122,6 +122,7 @@ static ssize_t sock_unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	int irq;
 	int nonblock = sock_file_nonblock(fp);
+	mos_sock *peer;
 
 	if (sk->type == SOCK_DGRAM) {
 		spinlock_lock(&sk->rxbuf_lock, &irq);
@@ -147,7 +148,10 @@ static ssize_t sock_unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 			while (rem--)
 				rx_read(sk, &tmp, 1);
 		}
+		peer = sk->unix_peer;
 		spinlock_unlock(&sk->rxbuf_lock, irq);
+		if (peer)
+			sock_wakeup(peer);
 		return (ssize_t)n;
 	}
 
@@ -168,7 +172,10 @@ static ssize_t sock_unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 		spinlock_lock(&sk->rxbuf_lock, &irq);
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
+	peer = sk->unix_peer;
 	spinlock_unlock(&sk->rxbuf_lock, irq);
+	if (peer)
+		sock_wakeup(peer);
 	return (ssize_t)n;
 }
 
@@ -547,13 +554,6 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 		sk->poll_task = pt->task;
 		if (poll_table_add(pt, sk, sock_poll_dereg) < 0)
 			sk->poll_task = NULL;
-	}
-	if (TestControl.verbos && sk->domain == AF_UNIX &&
-	    (events & FS_POLL_READ) &&
-	    (sk->unix_accept_tail != sk->unix_accept_head || ready)) {
-		klog("sock_poll unix sk=%p ready=%x head=%d tail=%d rx=%u state=%d\n",
-		     sk, ready, sk->unix_accept_head, sk->unix_accept_tail,
-		     rx_used(sk), sk->state);
 	}
 	return ready;
 }

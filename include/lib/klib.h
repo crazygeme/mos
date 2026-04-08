@@ -93,11 +93,17 @@ unsigned int rand(void);
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 
 typedef struct _TEST_CONTROL {
-	int verbos;
+	int verbos; /* verbose level: 0=off, 1=trace, 2=info */
 	int profiling;
 	int bash;
 	int test;
 } TEST_CONTROL;
 extern TEST_CONTROL TestControl;
+
+#define TEST_LOG_OFF 0
+#define TEST_LOG_TRACE 1
+#define TEST_LOG_INFO 2
+
+#define TEST_LOG(level) (TestControl.verbos >= (level))
 
 #endif

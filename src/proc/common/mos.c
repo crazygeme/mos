@@ -3,8 +3,8 @@
  *
  * Reads return the same kernel counters snapshot as before.
  * Writes accept:
- *   "1"  -> TestControl.test = 1
- *   "-1" -> TestControl.test = 0
+ *   "verbose"    -> TestControl.verbos = TEST_LOG_INFO
+ *   "verbose=N"  -> TestControl.verbos = N
  */
 #include <errno.h>
 #include <mm/mm.h>
@@ -162,12 +162,20 @@ static ssize_t mos_write(file *file, const void *buf, size_t size, loff_t *pos)
 		len--;
 	value[len] = '\0';
 
-	if (strcmp(value, "1") == 0)
-		TestControl.verbos = 1;
-	else if (strcmp(value, "-1") == 0)
-		TestControl.verbos = 0;
-	else
-		return -EINVAL;
+	{
+		int level;
+
+		if (strcmp(value, "verbose") == 0)
+			level = TEST_LOG_INFO;
+		else if (strncmp(value, "verbose=", 8) == 0)
+			level = atoi(value + 8);
+		else
+			return -EINVAL;
+
+		if (level < TEST_LOG_OFF || level > TEST_LOG_INFO)
+			return -EINVAL;
+		TestControl.verbos = level;
+	}
 
 	return (ssize_t)size;
 }

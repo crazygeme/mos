@@ -17,7 +17,6 @@ static void time_process(intr_frame *frame)
 	tickets++;
 	if (ps_enabled())
 		current->remain_ticks--;
-	// tty_refresh_graphics();
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

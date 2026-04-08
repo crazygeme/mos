@@ -81,7 +81,7 @@ int sys_read(int fd, char *buf, unsigned len)
 
 	ret = fs_read(fd, -1, buf, len);
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		char *tmp = format_buffer(buf, ret > 0 ? ret : 0);
 		klog("read(%d, %s, %d) = %d\n", fd, tmp, len, ret);
 		free(tmp);
@@ -93,7 +93,7 @@ int sys_write(int fd, const char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		char *tmp = format_buffer(buf, len);
 		klog("write(%d, %s, %d)\n", fd, tmp, len);
 		free(tmp);
@@ -123,7 +123,7 @@ int sys_pread64(int fd, void *buf, unsigned count, int offset)
 
 	ret = fs_pread(fd, offset, buf, count);
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_TRACE)) {
 		char *tmp = format_buffer(buf, count);
 		klog("pread(%d, %s, %d, %d) = %d\n", fd, tmp, count, offset,
 		     ret > 0 ? ret : 0);
@@ -137,7 +137,7 @@ int sys_pwrite64(int fd, const void *buf, unsigned count, int offset)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_TRACE)) {
 		char *tmp = format_buffer(buf, count);
 		klog("write(%d, %s, %d, %d)\n", fd, tmp, count, offset);
 		free(tmp);
@@ -157,8 +157,8 @@ int sys_ioctl(int fd, int request, char *buf)
 {
 	int ret = fs_ioctl(fd, request, buf);
 
-	if (TestControl.verbos && request != 0x4b46 && request != 0x4b47 &&
-	    request != 0x4b48 && request != 0x4b49)
+	if (TEST_LOG(TEST_LOG_TRACE) && request != 0x4b46 &&
+	    request != 0x4b47 && request != 0x4b48 && request != 0x4b49)
 		klog("ioctl(%d, %x, ...) = %d\n", fd, request, ret);
 
 	return ret;
@@ -173,7 +173,7 @@ int sys_open(const char *_name, int flags, umode_t mode)
 
 	fd = fs_open(name, flags, mode);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("open(%s, %x, %x) = %d\n", name, flags, mode, fd);
 
 	name_put(name);
@@ -182,7 +182,7 @@ int sys_open(const char *_name, int flags, umode_t mode)
 
 int sys_close(unsigned fd)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("close(%d)\n", fd);
 
 	return fs_close(fd);
@@ -192,7 +192,7 @@ int sys_lseek(int fd, int offset, int whence)
 {
 	int ret = fs_seek(fd, offset, whence);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("lseek(%d, %d, %d) = %d\n", fd, offset, whence, ret);
 
 	return ret;
@@ -203,7 +203,7 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 {
 	int ret = fs_llseek(fd, offset_high, offset_low, result, whence);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("llseek(%d, %x, %x, %x, %d) = %d, current %d\n", fd,
 		     offset_high, offset_low, result, whence, ret,
 		     (int)CURRENT_TASK()->fds[fd]->f_pos);
@@ -218,7 +218,7 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 	task_struct *cur = CURRENT_TASK();
 	file *fp;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("readv(%d, %x, %d)\n", fildes, iov, iovcnt);
 
 	if (fildes < 0 || fildes >= MAX_FD)
@@ -257,7 +257,7 @@ int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 	int i;
 	unsigned total = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("writev: fd %d\n", fildes);
 
 	for (i = 0; i < iovcnt; i++)
@@ -268,7 +268,7 @@ int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 
 int sys_fsync(int fd)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sys_fsync(%d)\n", fd);
 
 	return fs_sync(fd);
@@ -283,7 +283,7 @@ int sys_dup(int oldfd)
 
 	ret = fs_dup(oldfd);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("dup(%d) = %d\n", oldfd, ret);
 
 	return ret;
@@ -291,7 +291,7 @@ int sys_dup(int oldfd)
 
 int sys_dup2(int oldfd, int newfd)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("dup2(%d, %d)\n", oldfd, newfd);
 
 	if (oldfd == -1 || newfd == -1)
@@ -308,7 +308,7 @@ int sys_pipe(int pipefd[2])
 {
 	int ret = fs_pipe(pipefd);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
 
 	return ret;
@@ -351,7 +351,7 @@ int sys_fcntl(int fd, int cmd, int arg)
 		break;
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("fcntl(%d, %d, %d) = %d\n", fd, cmd, arg, ret);
 
 	return ret;
@@ -375,7 +375,7 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 	file *fp;
 	ssize_t n;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getdents(%d, %x, %d)\n", fd, dirp, count);
 
 	if (fd < 0 || fd >= MAX_FD)
@@ -408,7 +408,7 @@ int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
 	char *src, *dst;
 	int out;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getdents64(%d, %x, %d)\n", fd, dirp, count);
 
 	if (fd < 0 || fd >= MAX_FD)
@@ -464,7 +464,7 @@ int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
 
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("readdir(%d, %x, %d)\n", fd, dirp, count);
 
 	return sys_getdents(fd, dirp, count);
@@ -473,7 +473,7 @@ int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	       const struct timespec *timeout)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("select(%d, %x, %x, %x, %x)\n", nfds, readfds, writefds,
 		     exceptfds, timeout);
 
@@ -484,7 +484,7 @@ int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 		  fd_set *exceptfds, const struct timespec *timeout,
 		  void *sigmask)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("_newselect(%d, %x, %x, %x, %x)\n", nfds, readfds,
 		     writefds, exceptfds, timeout);
 
@@ -499,7 +499,7 @@ int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("poll(%x, %d, %d)\n", fds, nfds, timeout);
 
 	return do_poll(fds, nfds, timeout);

@@ -198,7 +198,7 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 	ret = e == ERR_OK ? (int)totlen : -EIO;
 
 log:
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		char *addr_buf = malloc(80);
 		char *iov_buf = malloc(64);
 		char *flag_buf = malloc(64);
@@ -334,7 +334,7 @@ done:
 	else if (msg->msg_control)
 		msg->msg_controllen = 0;
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		char *addr_buf = malloc(80);
 		char *iov_buf = malloc(64);
 		char *flag_buf = malloc(64);

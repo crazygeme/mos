@@ -34,11 +34,14 @@ Tokenises the `g_cmdline` string (copied from Multiboot in stage 1) into
 space/tab-separated tokens. Recognised options populate the global
 `TestControl` struct:
 
-| Token         | Effect                                                    |
-| ------------- | --------------------------------------------------------- |
-| `verbose`     | `TestControl.verbos = 1` — enables extra `klog` output    |
-| `profile`     | `TestControl.profiling = 1` — enables scheduler profiling |
-| `init=<path>` | `TestControl.bash = 1` — overrides `/sbin/init`           |
+| Token         | Effect                                                                     |
+| ------------- | -------------------------------------------------------------------------- |
+| `verbose`     | `TestControl.verbos = 2` — enables focused diagnostic `klog` output        |
+| `verbose=0`   | `TestControl.verbos = 0` — disables verbose logging                        |
+| `verbose=1`   | `TestControl.verbos = 1` — enables the noisiest syscall trace logging      |
+| `verbose=2`   | `TestControl.verbos = 2` — same as `verbose`                               |
+| `profile`     | `TestControl.profiling = 1` — enables scheduler profiling                  |
+| `init=<path>` | `TestControl.bash = 1` — overrides `/sbin/init`                            |
 
 ### 3. Process subsystem (`ps_init`)
 

@@ -345,6 +345,7 @@ void ps_init();
 	_ps_create(fn, #fn, param, priority, type)
 unsigned _ps_create(process_fn fn, const char *name, void *param,
 		    ps_priority priority, ps_type type);
+void ps_start_system_services(void);
 
 void ps_kickoff();
 

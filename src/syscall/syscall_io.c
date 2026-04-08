@@ -342,9 +342,8 @@ int sys_fcntl(int fd, int cmd, int arg)
 		ret = cur->fds[fd]->f_flag;
 		break;
 	case F_SETFL:
-		cur->fds[fd]->f_flag =
-			(cur->fds[fd]->f_flag & O_ACCMODE) |
-			(arg & ~(O_ACCMODE | O_CLOEXEC));
+		cur->fds[fd]->f_flag = (cur->fds[fd]->f_flag & O_ACCMODE) |
+				       (arg & ~(O_ACCMODE | O_CLOEXEC));
 		ret = 0;
 		break;
 	default:

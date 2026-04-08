@@ -1598,7 +1598,8 @@ static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 				return nonblock ? -EAGAIN : 0;
 			state->canon_ready = 1;
 		}
-		ssize_t n = (ssize_t)tty_canon_drain(&state->canon, buf, (int)size);
+		ssize_t n =
+			(ssize_t)tty_canon_drain(&state->canon, buf, (int)size);
 		if (state->canon.len == 0)
 			state->canon_ready = 0;
 		return n;
@@ -1985,7 +1986,8 @@ static int tty_fs_release(file *fp)
 			cyb_putbuf(state->kb_buf, &eof_byte, 1, 0, 0);
 		}
 
-		if (state->kd_mode == KD_GRAPHICS && state->kd_owner_pid == owner_pid) {
+		if (state->kd_mode == KD_GRAPHICS &&
+		    state->kd_owner_pid == owner_pid) {
 			int irq;
 
 			spinlock_lock(&state->lock, &irq);
@@ -2050,8 +2052,8 @@ static file *tty_open_state(tty_state *state, int flag)
  * tty_cdev_open — cdev dispatch callback.
  *   major 4, minor 1-10 → tty1..tty10 (1-based; minor maps to ttys[minor-1])
  *   major 5, minor 0    → /dev/tty0   (active virtual console)
- *   major 5, minor 1    → /dev/tty    (calling task's controlling terminal)
- *   major 5, minor 2    → /dev/console (system console, mapped to tty1)
+ *   major 5, minor 1    → /dev/console (system console, mapped to tty1)
+ *   major 5, minor 2    → /dev/tty    (calling task's controlling terminal)
  */
 static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 {
@@ -2068,11 +2070,11 @@ static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 	} else if (minor == 0) {
 		state = &ttys[active_tty_idx - 1];
 	} else if (minor == 1) {
+		state = &ttys[DEFAULT_TTY - 1];
+	} else if (minor == 2) {
 		state = tty_find_controlling(cur);
 		if (!state)
 			return NULL;
-	} else if (minor == 2) {
-		state = &ttys[DEFAULT_TTY - 1];
 	} else {
 		return NULL;
 	}
@@ -2119,13 +2121,13 @@ static void tty_dev_register(super_block *dev_sb)
 	}
 
 	printk("dev: registered /dev/tty0\n");
-	printk("dev: registered /dev/tty\n");
 	printk("dev: registered /dev/console\n");
-	/* major 5: /dev/tty0, /dev/tty, /dev/console */
+	printk("dev: registered /dev/tty\n");
+	/* major 5: /dev/tty0, /dev/console, /dev/tty */
 	cdev_register(S_IFCHR, 5, 0, 3, tty_cdev_open);
 	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(5, 0));
-	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 1));
-	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 2));
+	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
+	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 2));
 }
 
 KERNEL_INIT(0, tty_fs_init);

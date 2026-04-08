@@ -362,7 +362,8 @@ int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag)
 	int irq;
 
 	spinlock_lock(&mm_lock, &irq);
-	if (!mm_set_page_table_entry(vir, flag, (phy & PAGE_SIZE_MASK) | flag)) {
+	if (!mm_set_page_table_entry(vir, flag,
+				     (phy & PAGE_SIZE_MASK) | flag)) {
 		spinlock_unlock(&mm_lock, irq);
 		return -1;
 	}

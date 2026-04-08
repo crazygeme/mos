@@ -5,14 +5,7 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <unistd.h>
-
-/* /dev/null — major 1, minor 3 (Linux-compatible) */
-#define NULL_MAJOR 1
-#define NULL_MINOR 3
-
-/* /dev/zero — major 1, minor 5 (Linux-compatible) */
-#define ZERO_MAJOR 1
-#define ZERO_MINOR 5
+#include "devnums.h"
 
 static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
 {

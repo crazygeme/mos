@@ -7,12 +7,10 @@
 #include <hw/time.h>
 #include <dev/dev.h>
 #include <ps/ps.h>
+#include "devnums.h"
 #include "pts_internal.h"
 
 #define MAX_PTS 16
-#define PTM_MAJOR 2 /* BSD pty master */
-#define PTM_MINOR 2 /* BSD pty master */
-#define PTS_MAJOR 3 /* BSD pty slave  */
 #define PTS_INO_MASK 0x00050000
 
 static pts_pair pts_pairs[MAX_PTS];
@@ -24,8 +22,8 @@ static int pts_master_getattr(inode *node, struct stat *s)
 
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_dev = MKDEV(PTM_MAJOR, 0);
-	s->st_rdev = MKDEV(PTM_MAJOR, PTM_MINOR + p->idx);
+	s->st_dev = MKDEV(BSD_PTM_MAJOR, 0);
+	s->st_rdev = MKDEV(BSD_PTM_MAJOR, BSD_PTM_MINOR + p->idx);
 	s->st_ino = PTS_INO_MASK | MAX_PTS;
 	s->st_nlink = 1;
 	s->st_atime = time_now_sec();
@@ -42,8 +40,8 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 	pts_pair *p = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = p->slave_mode;
-	s->st_dev = MKDEV(PTS_MAJOR, 0);
-	s->st_rdev = MKDEV(PTS_MAJOR, p->idx + 2);
+	s->st_dev = MKDEV(BSD_PTS_MAJOR, 0);
+	s->st_rdev = MKDEV(BSD_PTS_MAJOR, p->idx + 2);
 	s->st_ino = (uint64_t)p->idx + 2;
 	s->st_nlink = 1;
 	s->st_atime = time_now_sec();
@@ -205,15 +203,17 @@ static void pty_dev_register(super_block *dev_sb)
 	int i;
 	char path[16];
 
-	cdev_register(S_IFCHR, PTM_MAJOR, 0, MAX_PTS, ptm_cdev_open);
-	cdev_register(S_IFCHR, PTS_MAJOR, 0, MAX_PTS, pts_cdev_open);
+	cdev_register(S_IFCHR, BSD_PTM_MAJOR, 0, MAX_PTS, ptm_cdev_open);
+	cdev_register(S_IFCHR, BSD_PTS_MAJOR, 0, MAX_PTS, pts_cdev_open);
 
 	for (i = 0; i < MAX_PTS; i++) {
 		sprintf(path, "/ptyp%c", pty_hex[i]);
-		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(PTM_MAJOR, i));
+		vfs_mknod(dev_sb, path, S_IFCHR | 0620,
+			  MKDEV(BSD_PTM_MAJOR, i));
 
 		sprintf(path, "/ttyp%c", pty_hex[i]);
-		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(PTS_MAJOR, i));
+		vfs_mknod(dev_sb, path, S_IFCHR | 0620,
+			  MKDEV(BSD_PTS_MAJOR, i));
 	}
 }
 

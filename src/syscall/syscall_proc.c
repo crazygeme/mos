@@ -64,7 +64,27 @@ enum {
 struct kill_all_ctx {
 	task_struct *self;
 	int sig;
+	unsigned pgrp;
+	int sent;
 };
+
+static int can_send_signal(task_struct *sender, task_struct *target)
+{
+	user_enviroment *su, *tu;
+
+	if (!sender || !target || !target->user)
+		return 0;
+
+	su = sender->user;
+	tu = target->user;
+	if (!su)
+		return 0;
+	if (su->euid == 0)
+		return 1;
+
+	return su->uid == tu->uid || su->uid == tu->suid || su->euid == tu->uid ||
+	       su->euid == tu->suid;
+}
 
 static void send_if_other(task_struct *task, void *opaque)
 {
@@ -72,7 +92,20 @@ static void send_if_other(task_struct *task, void *opaque)
 
 	if (task->type != ps_user || task->psid == c->self->psid)
 		return;
-	ps_send_signal(task->psid, c->sig);
+	if (ps_send_signal(task->psid, c->sig) == 0)
+		c->sent++;
+}
+
+static void send_if_pgrp(task_struct *task, void *opaque)
+{
+	struct kill_all_ctx *c = opaque;
+
+	if (task->type != ps_user || !task->user || task->psid == c->self->psid)
+		return;
+	if (task->user->group_id != c->pgrp)
+		return;
+	if (ps_send_signal(task->psid, c->sig) == 0)
+		c->sent++;
 }
 
 int sys_getpid()
@@ -471,7 +504,7 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 	if (pid == -1)
 		return do_waitpid(0, status, options, rusage);
 	else if (pid < -1)
-		return 0; /* FIXME: wait on group id */
+		return do_waitpid_pgrp((unsigned)(-pid), status, options, rusage);
 	else
 		return do_waitpid(pid, status, options, rusage);
 }
@@ -483,6 +516,7 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
  */
 int ps_send_signal(unsigned pid, int sig)
 {
+	task_struct *sender = CURRENT_TASK();
 	task_struct *target;
 
 	if (sig <= 0 || sig >= NSIG)
@@ -492,10 +526,15 @@ int ps_send_signal(unsigned pid, int sig)
 	if (!target)
 		return -ESRCH;
 
+	if (target->type != ps_user || !target->user || !target->signal) {
+		return -ESRCH;
+	}
+
+	if (!can_send_signal(sender, target))
+		return -EPERM;
+
 	target->signal->sig_pending |= (1UL << (sig - 1));
 
-	/* Wake the target only if the signal is not blocked by its current mask.
-	 * A masked signal stays pending but must not interrupt a sleeping task. */
 	if (target->status == ps_waiting &&
 	    !(target->signal->sig_mask & (1UL << (sig - 1))))
 		ps_put_to_ready_queue(target);
@@ -518,22 +557,36 @@ int sys_kill(int pid, int sig)
 		return ps_send_signal((unsigned)pid, sig);
 
 	if (pid == 0) {
+		struct kill_all_ctx ctx;
 		if (!cur->user)
 			return -ESRCH;
-		ps_send_signal_pgrp(cur->user->group_id, sig);
-		return 0;
+		ctx.self = cur;
+		ctx.sig = sig;
+		ctx.pgrp = cur->user->group_id;
+		ctx.sent = 0;
+		ps_enum_all(send_if_pgrp, &ctx);
+		return ctx.sent ? 0 : -ESRCH;
 	}
 
 	if (pid == -1) {
 		struct kill_all_ctx ctx;
 		ctx.self = cur;
 		ctx.sig = sig;
+		ctx.pgrp = 0;
+		ctx.sent = 0;
 		ps_enum_all(send_if_other, &ctx);
-		return 0;
+		return ctx.sent ? 0 : -ESRCH;
 	}
 
-	ps_send_signal_pgrp((unsigned)(-pid), sig);
-	return 0;
+	{
+		struct kill_all_ctx ctx;
+		ctx.self = cur;
+		ctx.sig = sig;
+		ctx.pgrp = (unsigned)(-pid);
+		ctx.sent = 0;
+		ps_enum_all(send_if_pgrp, &ctx);
+		return ctx.sent ? 0 : -ESRCH;
+	}
 }
 
 int sys_brk(unsigned _top)

@@ -23,6 +23,7 @@
 #include <lib/port.h>
 #include <config.h>
 #include <macro.h>
+#include <errno.h>
 
 #include "ps_internal.h"
 
@@ -129,14 +130,51 @@ void reset_tss(task_struct *task)
 	tss_address->cr3 = task->cr3;
 	tss_address->esp0 = task->tss.esp0;
 	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
-	memset(io_tss->io_bitmap, task->io_allow_all ? 0x00 : 0xff,
-	       TSS_IO_BITMAP_BYTES);
+	if (task->io_allow_all) {
+		memset(io_tss->io_bitmap, 0x00, TSS_IO_BITMAP_BYTES);
+	} else if (task->io_bitmap) {
+		memcpy(io_tss->io_bitmap, task->io_bitmap, TSS_IO_BITMAP_BYTES);
+	} else {
+		memset(io_tss->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
+	}
 	io_tss->io_bitmap[TSS_IO_BITMAP_BYTES] = 0xff;
 	tss_address->ss0 = KERNEL_DATA_SELECTOR;
 	tss_address->ss = tss_address->gs = tss_address->fs = tss_address->ds =
 		tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
 	tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
 	int_update_tss((unsigned int)tss_address);
+}
+
+int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
+		  int turn_on)
+{
+	unsigned long end;
+	unsigned long port;
+
+	if (!task)
+		return -EINVAL;
+	if (num == 0)
+		return 0;
+
+	end = from + num;
+	if (end <= from || end > (TSS_IO_BITMAP_BYTES * 8))
+		return -EINVAL;
+	if (!task->io_bitmap)
+		return -ENOMEM;
+
+	task->io_allow_all = 0;
+	for (port = from; port < end; port++) {
+		unsigned long byte = port >> 3;
+		unsigned char bit = (unsigned char)(1U << (port & 0x7));
+
+		if (turn_on)
+			task->io_bitmap[byte] &= (unsigned char)~bit;
+		else
+			task->io_bitmap[byte] |= bit;
+	}
+
+	reset_tss(task);
+	return 0;
 }
 
 static void ap_idle_stub(void *param)

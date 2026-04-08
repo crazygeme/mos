@@ -80,8 +80,14 @@ static void intr_check_point(intr_frame *frame)
 	if (!ps_enabled())
 		return;
 
-	/* Keep user IOPL at 0 so ring-3 code cannot execute cli/sti. */
+	/*
+	 * Restore the task's requested IOPL on every return to user mode.
+	 * XFree86 uses iopl(3) on i386 to reach PCI config ports such as
+	 * 0xcf8/0xcfc. We still recompute the flags here so preemption,
+	 * signals, and nested syscalls do not silently drop that request.
+	 */
 	frame->eflags &= ~0x3000U;
+	frame->eflags |= ((unsigned)(cur->io_priv_level & 0x3) << 12);
 
 	if (sched_is_enabled() && cur->remain_ticks <= 0) {
 		cur->stats->niv_switches++;
@@ -149,6 +155,10 @@ static void handle_general_protection(intr_frame *frame)
 {
 	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
 	if ((frame->cs & 0x3) == 0x3) {
+		klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %d, cs %d\n",
+		     current->psid, current->user->command, frame->eip,
+		     frame->esp, frame->ebp, frame->eax, frame->ebx, frame->ecx,
+		     frame->edx, frame->ds, frame->cs);
 		sys_exit(-EFAULT);
 		return;
 	}

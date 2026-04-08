@@ -53,11 +53,58 @@ static uint32_t *_fifo;
 static uint32_t _caps;
 
 static unsigned _fb_buffer;
+static unsigned _fb_phys;
+static unsigned _fb_mapped_bytes;
 static unsigned _hw_resolution_x;
 static unsigned _hw_resolution_y;
 static unsigned _window_char_width;
 static unsigned _window_char_height;
 static const fb_font_t *_font = NULL;
+
+static void svga_update(unsigned x, unsigned y, unsigned w, unsigned h);
+
+static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
+{
+	unsigned need_bytes;
+	unsigned a;
+
+	if (width == 0 || height == 0)
+		return;
+
+	need_bytes = width * height * (VGA_COLOR_DEPTH / 8);
+	if (need_bytes <= _fb_mapped_bytes)
+		return;
+
+	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
+	     a += PAGE_SIZE)
+		mm_map_io(a);
+	RELOAD_CR3();
+	_fb_mapped_bytes = need_bytes;
+}
+
+static unsigned vmsvga_snapshot_size(void)
+{
+	return _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8);
+}
+
+static void vmsvga_snapshot_save(void *dst, unsigned size)
+{
+	unsigned need = vmsvga_snapshot_size();
+
+	if (!dst || size < need)
+		return;
+	memcpy(dst, (const void *)_fb_buffer, need);
+}
+
+static void vmsvga_snapshot_restore(const void *src, unsigned size)
+{
+	unsigned need = vmsvga_snapshot_size();
+
+	if (!src || size < need)
+		return;
+	memcpy((void *)_fb_buffer, src, need);
+	svga_update(0, 0, _hw_resolution_x, _hw_resolution_y);
+}
 
 /* ── Register I/O ─────────────────────────────────────────────────────────── */
 
@@ -348,6 +395,31 @@ static void vmsvga_change_font(const char *name)
 		_font = f;
 }
 
+static void vmsvga_sync_mode(void)
+{
+	unsigned width;
+	unsigned height;
+
+	width = svga_read_reg(SVGA_REG_WIDTH);
+	height = svga_read_reg(SVGA_REG_HEIGHT);
+	if (width > 0 && height > 0)
+		vmsvga_ensure_fb_mapping(width, height);
+	if (width > 0)
+		_hw_resolution_x = width;
+	if (height > 0)
+		_hw_resolution_y = height;
+	if (_font) {
+		_window_char_width = _hw_resolution_x / (unsigned)_font->width;
+		_window_char_height =
+			_hw_resolution_y / (unsigned)_font->height;
+	}
+}
+
+static void vmsvga_flush(void)
+{
+	svga_update(0, 0, _hw_resolution_x, _hw_resolution_y);
+}
+
 static int vmsvga_is_char_visible(unsigned char c)
 {
 	if (isprint(c))
@@ -417,7 +489,9 @@ static int vmsvga_probe(void)
 	for (a = pci.fb_phys; a < pci.fb_phys + fb_size; a += PAGE_SIZE)
 		mm_map_io(a);
 	RELOAD_CR3();
+	_fb_phys = pci.fb_phys;
 	_fb_buffer = pci.fb_phys;
+	_fb_mapped_bytes = fb_size;
 
 	memset((char *)_fb_buffer, 0, fb_size);
 
@@ -446,6 +520,11 @@ const fb_drv_t vmsvga_drv = {
 	.delete_lines_px = vmsvga_delete_lines_px,
 	.clear_screen = vmsvga_clear_screen,
 	.change_font = vmsvga_change_font,
+	.sync_mode = vmsvga_sync_mode,
+	.flush = vmsvga_flush,
+	.snapshot_size = vmsvga_snapshot_size,
+	.snapshot_save = vmsvga_snapshot_save,
+	.snapshot_restore = vmsvga_snapshot_restore,
 	.is_char_visible = vmsvga_is_char_visible,
 	.cursor_erase = vmsvga_cursor_erase,
 };

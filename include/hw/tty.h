@@ -29,6 +29,10 @@ void tty_switch(int n);
  * Called from the keyboard driver interrupt handler. */
 void tty_active_kb_put(unsigned char c);
 
+/* If the visible VT is in KD_GRAPHICS mode, push any driver-specific display
+ * update needed to make user-space framebuffer writes visible. */
+void tty_refresh_graphics(void);
+
 /* Allocate a text snapshot of the active TTY for test introspection.
  * The caller owns the returned buffer and must free it with kfree(). */
 char *tty_test_snapshot(unsigned *len_out);

@@ -82,6 +82,37 @@ void fb_change_font(const char *name)
 		_drv->change_font(name);
 }
 
+void fb_sync_mode(void)
+{
+	if (_drv && _drv->sync_mode)
+		_drv->sync_mode();
+}
+
+void fb_flush(void)
+{
+	if (_drv && _drv->flush)
+		_drv->flush();
+}
+
+unsigned fb_snapshot_size(void)
+{
+	if (_drv && _drv->snapshot_size)
+		return _drv->snapshot_size();
+	return 0;
+}
+
+void fb_snapshot_save(void *dst, unsigned size)
+{
+	if (_drv && _drv->snapshot_save)
+		_drv->snapshot_save(dst, size);
+}
+
+void fb_snapshot_restore(const void *src, unsigned size)
+{
+	if (_drv && _drv->snapshot_restore)
+		_drv->snapshot_restore(src, size);
+}
+
 int fb_is_char_visiable(unsigned char c)
 {
 	if (_drv)

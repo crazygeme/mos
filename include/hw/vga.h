@@ -32,6 +32,11 @@ typedef struct {
 	void (*delete_lines_px)(unsigned row, unsigned bot_row, unsigned n);
 	void (*clear_screen)(void);
 	void (*change_font)(const char *name);
+	void (*sync_mode)(void);
+	void (*flush)(void);
+	unsigned (*snapshot_size)(void);
+	void (*snapshot_save)(void *dst, unsigned size);
+	void (*snapshot_restore)(const void *src, unsigned size);
 	int (*is_char_visible)(unsigned char c);
 	void (*cursor_erase)(unsigned pos, const tty_cell_t *cells,
 			     unsigned cols);
@@ -55,6 +60,11 @@ void fb_insert_lines_px(unsigned row, unsigned bot_row, unsigned n);
 void fb_delete_lines_px(unsigned row, unsigned bot_row, unsigned n);
 void fb_clear_screen(void);
 void fb_change_font(const char *name);
+void fb_sync_mode(void);
+void fb_flush(void);
+unsigned fb_snapshot_size(void);
+void fb_snapshot_save(void *dst, unsigned size);
+void fb_snapshot_restore(const void *src, unsigned size);
 int fb_is_char_visiable(unsigned char c);
 void fb_cursor_erase(unsigned pos, const tty_cell_t *cells, unsigned cols);
 

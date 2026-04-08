@@ -14,6 +14,13 @@
 #define MEM_MAJOR 1
 #define MEM_MINOR 1
 
+int dev_mem_is_file(const file *fp)
+{
+	return fp && fp->f_inode &&
+	       (unsigned)(uintptr_t)fp->f_inode->i_private ==
+		       MKDEV(MEM_MAJOR, MEM_MINOR);
+}
+
 static unsigned mem_dev_limit(void)
 {
 	return phymm_end * PAGE_SIZE;
@@ -146,7 +153,7 @@ static int mem_getattr(inode *node, struct stat *s)
 {
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
-	s->st_rdev = MKDEV(MEM_MAJOR, MEM_MINOR);
+	s->st_rdev = (unsigned)(uintptr_t)node->i_private;
 	s->st_size = (loff_t)mem_dev_limit();
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = (loff_t)((mem_dev_limit() + 511) / 512);
@@ -210,6 +217,7 @@ static file *mem_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	(void)flag;
 
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR;
+	node->i_private = (void *)(uintptr_t)MKDEV(MEM_MAJOR, MEM_MINOR);
 	node->i_op = &mem_iops;
 
 	fp->f_inode = node;

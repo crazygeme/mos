@@ -1,4 +1,5 @@
 #include <hw/time.h>
+#include <hw/tty.h>
 #include <int/int.h>
 #include <ps/ps.h>
 #include <lib/port.h>
@@ -16,6 +17,7 @@ static void time_process(intr_frame *frame)
 	tickets++;
 	if (ps_enabled())
 		current->remain_ticks--;
+	// tty_refresh_graphics();
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

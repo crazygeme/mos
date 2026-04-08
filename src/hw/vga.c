@@ -1,4 +1,5 @@
 #include <hw/vga.h>
+#include <string.h>
 
 /*
  * Dispatcher layer.  fb_init() probes each known driver in priority order
@@ -111,6 +112,15 @@ void fb_snapshot_restore(const void *src, unsigned size)
 {
 	if (_drv && _drv->snapshot_restore)
 		_drv->snapshot_restore(src, size);
+}
+
+void fb_get_debug_stats(fb_debug_stats_t *stats)
+{
+	if (!stats)
+		return;
+	memset(stats, 0, sizeof(*stats));
+	if (_drv && _drv->get_debug_stats)
+		_drv->get_debug_stats(stats);
 }
 
 int fb_is_char_visiable(unsigned char c)

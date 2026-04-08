@@ -12,11 +12,11 @@
 #include <fs/fs.h>
 #include <fs/mount.h>
 #include <lib/klib.h>
-#include <lib/lock.h>
 #include <config.h>
 #include <unistd.h>
 #include <macro.h>
 #include <errno.h>
+
 /*
  * cleanup - tear down the current process's user-space state before exec
  *
@@ -73,7 +73,7 @@ static void cleanup()
 
 	/* Close all O_CLOEXEC file descriptors. */
 	for (i = 0; i < MAX_FD; i++) {
-		if (cur->fds[i].used && (cur->fds[i].flag & O_CLOEXEC)) {
+		if (cur->fds[i] && fd_bitmap_test(cur->fd_cloexec, i)) {
 			fs_close(i);
 		}
 	}

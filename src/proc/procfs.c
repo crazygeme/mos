@@ -304,11 +304,11 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	task = ps_find_process(pid);
 	if (!task || !task->fds)
 		return -1;
-	if (fdno >= MAX_FD || !task->fds[fdno].used)
+	if (fdno >= MAX_FD || !task->fds[fdno])
 		return -1;
 
-	fname = (task->fds[fdno].fp && task->fds[fdno].fp->f_name) ?
-			task->fds[fdno].fp->f_name :
+	fname = (task->fds[fdno] && task->fds[fdno]->f_name) ?
+			task->fds[fdno]->f_name :
 			NULL;
 	if (!fname || !fname[0]) {
 		sprintf(anon, "pipe:[%d]", fdno);

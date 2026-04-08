@@ -84,6 +84,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	kfree(task->user);
 	kfree(task->signal);
 	kfree(task->stats);
+	kfree(task->fd_cloexec);
 	kfree(task->io_bitmap);
 	vm_free(task, 1);
 }
@@ -99,9 +100,9 @@ static void close_fp_callback(task_struct *task, void *ctx)
 	for (i = 0; i < MAX_FD; i++) {
 		if (task->fds == NULL)
 			continue;
-		if (task->fds[i].used == 0 || task->fds[i].fp == NULL)
+		if (task->fds[i] == NULL)
 			continue;
-		fs_put_file(task->fds[i].fp);
+		fs_put_file(task->fds[i]);
 	}
 }
 
@@ -177,11 +178,13 @@ void do_exit(unsigned encoded_status)
 	}
 
 	for (i = 0; i < MAX_FD; i++) {
-		if (cur->fds[i].used)
+		if (cur->fds[i])
 			fs_close(i);
 	}
 	vm_free(cur->fds, 1);
 	cur->fds = NULL;
+	kfree(cur->fd_cloexec);
+	cur->fd_cloexec = NULL;
 
 	ps_cleanup_all_user_map(cur);
 

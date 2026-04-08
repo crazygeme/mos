@@ -1,4 +1,5 @@
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
@@ -135,6 +136,8 @@ int pipe_open(file **pipes)
 	fp_read->f_inode = ri;
 	fp_read->f_count = 1;
 	fp_read->f_fop = &pipe_read_fops;
+	fp_read->f_mode = O_RDONLY;
+	fp_read->f_flag = O_RDONLY;
 
 	pipe_inode *wn = zalloc(sizeof(*wn));
 	wn->buf = buf;
@@ -149,6 +152,8 @@ int pipe_open(file **pipes)
 	fp_write->f_fop = &pipe_write_fops;
 	fp_write->f_inode = wi;
 	fp_write->f_count = 1;
+	fp_write->f_mode = O_WRONLY;
+	fp_write->f_flag = O_WRONLY;
 
 	pipes[0] = fp_read;
 	pipes[1] = fp_write;

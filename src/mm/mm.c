@@ -352,6 +352,24 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 	return 1;
 }
 
+/*
+ * Map @vir directly to an MMIO/physical page without touching the physical
+ * allocator reference counts.  This is for /dev/mem-style mappings of device
+ * BARs or firmware regions, not normal RAM-backed user pages.
+ */
+int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag)
+{
+	int irq;
+
+	spinlock_lock(&mm_lock, &irq);
+	if (!mm_set_page_table_entry(vir, flag, (phy & PAGE_SIZE_MASK) | flag)) {
+		spinlock_unlock(&mm_lock, irq);
+		return -1;
+	}
+	spinlock_unlock(&mm_lock, irq);
+	return 1;
+}
+
 static int mm_dynamic_region(unsigned phy)
 {
 	unsigned begin = phymm_begin * PAGE_SIZE;

@@ -23,9 +23,9 @@ static unsigned get_tty_nr(task_struct *task)
 		const char *p;
 		int idx;
 
-		if (!task->fds[i].used || !task->fds[i].fp)
+		if (!task->fds[i])
 			continue;
-		name = task->fds[i].fp->f_name;
+		name = task->fds[i]->f_name;
 		if (!name || strncmp(name, "/dev/tty", 8) != 0)
 			continue;
 		p = name + 8;

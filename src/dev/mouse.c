@@ -1,9 +1,11 @@
 #include <dev/dev.h>
 #include <errno.h>
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <fs/ioctl.h>
 #include <fs/vfs.h>
 #include <hw/time.h>
+#include <lib/cyclebuf.h>
 #include <lib/klib.h>
 #include <macro.h>
 #include <unistd.h>
@@ -14,28 +16,54 @@
 #define INPUT_MOUSE_MAJOR 13
 #define INPUT_MOUSE_MINOR 63
 
+static cy_buf *mouse_rxbuf;
+
+static int mouse_file_nonblock(file *fp)
+{
+	return (fp->f_flag & O_NONBLOCK) != 0;
+}
+
 static ssize_t mouse_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	(void)fp;
-	(void)buf;
-	(void)size;
 	(void)pos;
-	return -EAGAIN;
+
+	if (!buf || size < 1)
+		return 0;
+	if (!mouse_rxbuf)
+		return -EIO;
+
+	int ret =
+		cyb_getbuf(mouse_rxbuf, buf, (int)size, !mouse_file_nonblock(fp), 1);
+	if (ret < 0)
+		return -EINTR;
+	if (ret == 0 && mouse_file_nonblock(fp))
+		return -EAGAIN;
+	return ret;
 }
 
 static ssize_t mouse_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
 	(void)fp;
-	(void)buf;
 	(void)pos;
+
+	if (!buf || size < 1)
+		return 0;
+
 	return (ssize_t)size;
 }
 
 static unsigned mouse_poll(file *fp, unsigned events, poll_table *pt)
 {
+	unsigned ready = 0;
+
 	(void)fp;
-	(void)pt;
-	return events & FS_POLL_WRITE;
+	if ((events & FS_POLL_READ) && mouse_rxbuf && !cyb_isempty(mouse_rxbuf))
+		ready |= FS_POLL_READ;
+	if (events & FS_POLL_WRITE)
+		ready |= FS_POLL_WRITE;
+	if (!ready && pt && (events & FS_POLL_READ) && mouse_rxbuf)
+		cyb_poll_read(mouse_rxbuf, pt);
+	return ready;
 }
 
 static int mouse_getattr(inode *node, struct stat *s)
@@ -80,8 +108,10 @@ static int mouse_ioctl(file *fp, unsigned cmd, void *buf)
 	case TCSETAF:
 		return 0;
 	case TIOCMGET:
-	case FIONREAD:
 		*(int *)buf = 0;
+		return 0;
+	case FIONREAD:
+		*(int *)buf = mouse_rxbuf ? cyb_get_buf_len(mouse_rxbuf) : 0;
 		return 0;
 	default:
 		return -ENOTTY;
@@ -90,6 +120,8 @@ static int mouse_ioctl(file *fp, unsigned cmd, void *buf)
 
 static int mouse_release(file *fp)
 {
+	if (mouse_rxbuf)
+		cyb_reader_close(mouse_rxbuf);
 	free(fp->f_inode);
 	free(fp);
 	return 0;
@@ -122,11 +154,18 @@ static file *mouse_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &mouse_fops;
+	fp->f_mode = (unsigned)(flag & O_ACCMODE);
+	fp->f_flag = (unsigned)flag;
+	if (mouse_rxbuf)
+		cyb_reader_open(mouse_rxbuf);
 	return fp;
 }
 
 static void mouse_dev_register(super_block *dev_sb)
 {
+	mouse_rxbuf = cyb_create_named(1);
+	if (mouse_rxbuf)
+		cyb_writer_open(mouse_rxbuf);
 	printk("dev: registered /dev/input/mice\n");
 	cdev_register(S_IFCHR, INPUT_MOUSE_MAJOR, INPUT_MOUSE_MINOR, 1,
 		      mouse_cdev_open);

@@ -30,6 +30,7 @@
 #include <hw/tty.h>
 #include <hw/vga.h>
 #include <hw/time.h>
+#include <int/dsr.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
@@ -63,6 +64,7 @@ typedef struct {
 	int ansi_idx;
 	/* canonical input line buffer */
 	tty_canon_t canon;
+	int canon_ready;
 	/* per-TTY keyboard input queue */
 	cy_buf *kb_buf;
 	/* unified cell buffer (character + fg/bg per cell) */
@@ -121,6 +123,7 @@ static unsigned _displayed_cursor; /* linear position of cursor drawn on screen 
  * even when a switch is in progress on another CPU.
  */
 static spinlock_t tty_switch_lock;
+static volatile int tty_graphics_refresh_pending;
 
 static int tty_fb_text_is_visible(const tty_state *state);
 static void tty_exit_alt_screen(tty_state *state);
@@ -130,10 +133,16 @@ static void tty_switch_internal(int n, int spawn_shell);
 static void tty_complete_switch_locked(int n, int spawn_shell);
 static void tty_capture_graphics_locked(tty_state *state);
 static void tty_restore_graphics_locked(tty_state *state);
+static void tty_graphics_refresh_dsr(void *unused);
 
 #define VGA_IO_FIRST 0x3b4
 #define VGA_IO_LAST 0x3df
 #define VGA_IO_COUNT (VGA_IO_LAST - VGA_IO_FIRST + 1)
+
+static int tty_file_nonblock(file *fp)
+{
+	return (fp->f_flag & O_NONBLOCK) != 0;
+}
 
 /*
  * tty_restore_text_console_locked - bring one VT back to normal text-console
@@ -261,6 +270,25 @@ static void tty_restore_graphics_locked(tty_state *state)
 	if (fb_snapshot_size() > state->graphics_fb_size)
 		return;
 	fb_snapshot_restore(state->graphics_fb, state->graphics_fb_size);
+}
+
+/*
+ * Run the expensive "present graphics VT" step outside hard interrupt
+ * context. The VESA X driver writes straight into the mmap'd linear
+ * framebuffer and expects scanout to reflect those writes automatically.
+ * VMware SVGA instead needs an explicit UPDATE command, so we queue a DSR
+ * that flushes the visible graphics VT from scheduler/task context.
+ */
+static void tty_graphics_refresh_dsr(void *unused)
+{
+	int irq;
+
+	(void)unused;
+	spinlock_lock(&tty_switch_lock, &irq);
+	tty_graphics_refresh_pending = 0;
+	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS)
+		fb_flush();
+	spinlock_unlock(&tty_switch_lock, irq);
 }
 
 static int tty_vt_is_available(int tty_idx)
@@ -1110,12 +1138,12 @@ static void tty_echo_cb(void *ctx, const char *buf, int len)
 static int canon_readline(tty_state *state)
 {
 	return tty_ldisc_canon_readline(&state->canon, &state->termios,
-					state->kb_buf, 1, state->pgrp,
+					state->kb_buf, 1, 1, state->pgrp,
 					tty_echo_cb, state);
 }
 
 /* Raw mode read: block until VMIN chars are available, then drain. */
-static ssize_t raw_read(tty_state *state, char *dst, size_t size)
+static ssize_t raw_read(tty_state *state, char *dst, size_t size, int blocking)
 {
 	const struct termios *tc = &state->termios;
 	unsigned vmin = tc->c_cc[VMIN];
@@ -1126,10 +1154,15 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size)
 		if ((unsigned)n >= vmin && cyb_isempty(state->kb_buf))
 			break;
 		unsigned char raw;
-		int _ret = cyb_getbuf(state->kb_buf, &raw, 1, 1, 1);
+		int _ret = cyb_getbuf(state->kb_buf, &raw, 1, blocking, 1);
 		if (_ret < 0)
 			return n > 0 ? n : -EINTR;
-		if (_ret == 0 || raw == (unsigned char)EOF)
+		if (_ret == 0) {
+			if (!blocking && n == 0)
+				return -EAGAIN;
+			break;
+		}
+		if (raw == (unsigned char)EOF)
 			break;
 		int ch = tty_input_translate(raw, tc->c_iflag);
 		if (ch < 0)
@@ -1152,6 +1185,7 @@ void tty_init(void)
 		t->cursor = 0;
 		spinlock_init(&t->lock);
 		t->termios = tty_default_termios;
+		t->canon_ready = 0;
 		t->tty_idx = i + 1;
 		t->bash_pid = 0;
 		t->scroll_top = 0;
@@ -1494,13 +1528,15 @@ static void tty_switch_internal(int n, int spawn_shell)
 {
 	int irq;
 	tty_state *old_tty;
+	int old_graphics;
 
 	if (n < 1 || n > TTY_SWITCH_COUNT || n == active_tty_idx)
 		return;
 
 	spinlock_lock(&tty_switch_lock, &irq);
 	old_tty = this_ttys;
-	if (old_tty && old_tty->kd_mode == KD_GRAPHICS)
+	old_graphics = old_tty && old_tty->kd_mode == KD_GRAPHICS;
+	if (old_graphics)
 		tty_capture_graphics_locked(old_tty);
 	tty_complete_switch_locked(n, spawn_shell);
 
@@ -1515,11 +1551,21 @@ void tty_switch(int n)
 void tty_refresh_graphics(void)
 {
 	int irq;
+	int need_queue = 0;
 
 	spinlock_lock(&tty_switch_lock, &irq);
-	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS)
-		fb_flush();
+	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS &&
+	    !tty_graphics_refresh_pending) {
+		tty_graphics_refresh_pending = 1;
+		need_queue = 1;
+	}
 	spinlock_unlock(&tty_switch_lock, irq);
+
+	if (need_queue && !dsr_add(tty_graphics_refresh_dsr, NULL)) {
+		spinlock_lock(&tty_switch_lock, &irq);
+		tty_graphics_refresh_pending = 0;
+		spinlock_unlock(&tty_switch_lock, irq);
+	}
 }
 
 /* ── VFS file operations ─────────────────────────────────────────────────── */
@@ -1527,6 +1573,8 @@ void tty_refresh_graphics(void)
 static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	tty_state *state = fp->f_inode->i_private;
+	int nonblock = tty_file_nonblock(fp);
+
 	if (state->released)
 		return -EIO;
 	if (fp->f_mode != O_RDONLY && fp->f_mode != O_RDWR)
@@ -1534,16 +1582,28 @@ static ssize_t tty_fs_read(file *fp, void *buf, size_t size, loff_t *pos)
 	if (size < 1 || !buf)
 		return 0;
 	if (state->termios.c_lflag & ICANON) {
-		if (state->canon.len == 0) {
-			int r = canon_readline(state);
+		if (!state->canon_ready) {
+			int r;
+
+			if (nonblock)
+				r = tty_ldisc_canon_readline(
+					&state->canon, &state->termios,
+					state->kb_buf, 0, 1, state->pgrp,
+					tty_echo_cb, state);
+			else
+				r = canon_readline(state);
 			if (r < 0)
 				return -EINTR;
 			if (r == 0)
-				return 0;
+				return nonblock ? -EAGAIN : 0;
+			state->canon_ready = 1;
 		}
-		return (ssize_t)tty_canon_drain(&state->canon, buf, (int)size);
+		ssize_t n = (ssize_t)tty_canon_drain(&state->canon, buf, (int)size);
+		if (state->canon.len == 0)
+			state->canon_ready = 0;
+		return n;
 	}
-	return raw_read(state, buf, size);
+	return raw_read(state, buf, size, !nonblock);
 }
 
 static ssize_t tty_fs_write(file *fp, const void *buf, size_t size, loff_t *pos)
@@ -1605,7 +1665,7 @@ static unsigned tty_fs_poll(file *fp, unsigned events, poll_table *pt)
 		if (fp->f_mode == O_WRONLY)
 			return ready;
 		if (state->termios.c_lflag & ICANON) {
-			if (state->canon.len > 0)
+			if (state->canon_ready)
 				ready |= FS_POLL_READ;
 		} else if (!cyb_isempty(state->kb_buf)) {
 			ready |= FS_POLL_READ;
@@ -1633,6 +1693,7 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 	case TCSETSF:
 		/* Flush pending input before applying new settings. */
 		state->canon.len = 0;
+		state->canon_ready = 0;
 		cyb_flush(state->kb_buf);
 		memcpy(&state->termios, buf, sizeof(state->termios));
 		return 0;
@@ -1980,6 +2041,8 @@ static file *tty_open_state(tty_state *state, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = &tty_fops;
+	fp->f_mode = (unsigned)(flag & O_ACCMODE);
+	fp->f_flag = (unsigned)flag;
 	return fp;
 }
 

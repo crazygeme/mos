@@ -34,24 +34,7 @@ unsigned rx_free(const mos_sock *sk)
 
 static int sock_file_nonblock(file *fp)
 {
-	task_struct *cur = CURRENT_TASK();
-	int i;
-	int nonblock = 0;
-
-	mutex_lock(&cur->fd_lock);
-	for (i = 0; i < MAX_FD; i++) {
-		if (!cur->fds[i].used)
-			continue;
-		if (cur->fds[i].fp != fp)
-			continue;
-		if (cur->fds[i].flag & O_NONBLOCK) {
-			nonblock = 1;
-			break;
-		}
-	}
-	mutex_unlock(&cur->fd_lock);
-
-	return nonblock;
+	return (fp->f_flag & O_NONBLOCK) != 0;
 }
 
 /* Write up to len bytes from src; returns bytes actually written.
@@ -596,6 +579,7 @@ int sock_to_fd(mos_sock *sk)
 	fp->f_count = 1;
 	fp->f_fop = &sock_fops;
 	fp->f_mode = O_RDWR;
+	fp->f_flag = O_RDWR;
 
 	int fd = fs_install_fd(fp, O_RDWR);
 	if (fd < 0) {
@@ -610,9 +594,9 @@ mos_sock *fd_to_sock(int fd)
 	task_struct *cur = CURRENT_TASK();
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return NULL;
-	if (!cur->fds[fd].used)
+	if (!cur->fds[fd])
 		return NULL;
-	file *fp = cur->fds[fd].fp;
+	file *fp = cur->fds[fd];
 	if (!fp || !fp->f_inode || !S_ISSOCK(fp->f_inode->i_mode))
 		return NULL;
 	return (mos_sock *)fp->f_inode->i_private;

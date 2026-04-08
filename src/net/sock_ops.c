@@ -4,7 +4,6 @@
  */
 #include <net/sock.h>
 #include <lib/klib.h>
-#include <lib/lock.h>
 #include <hw/time.h>
 #include <ps/ps.h>
 #include <fs/fs.h>
@@ -367,7 +366,7 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 		return -ENOTSOCK;
 	loff_t pos = 0;
 	task_struct *cur = CURRENT_TASK();
-	return (int)cur->fds[fd].fp->f_fop->write(cur->fds[fd].fp, buf,
+	return (int)cur->fds[fd]->f_fop->write(cur->fds[fd], buf,
 						  (size_t)len, &pos);
 }
 
@@ -400,7 +399,7 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	if (sk->type == SOCK_STREAM) {
 		loff_t pos = 0;
 		task_struct *cur = CURRENT_TASK();
-		return (int)cur->fds[fd].fp->f_fop->write(cur->fds[fd].fp, buf,
+		return (int)cur->fds[fd]->f_fop->write(cur->fds[fd], buf,
 							  len, &pos);
 	}
 

@@ -60,6 +60,7 @@ static unsigned _hw_resolution_y;
 static unsigned _window_char_width;
 static unsigned _window_char_height;
 static const fb_font_t *_font = NULL;
+static fb_debug_stats_t _dbg;
 
 static void svga_update(unsigned x, unsigned y, unsigned w, unsigned h);
 
@@ -93,6 +94,7 @@ static void vmsvga_snapshot_save(void *dst, unsigned size)
 
 	if (!dst || size < need)
 		return;
+	_dbg.snapshot_save_count++;
 	memcpy(dst, (const void *)_fb_buffer, need);
 }
 
@@ -102,6 +104,7 @@ static void vmsvga_snapshot_restore(const void *src, unsigned size)
 
 	if (!src || size < need)
 		return;
+	_dbg.snapshot_restore_count++;
 	memcpy((void *)_fb_buffer, src, need);
 	svga_update(0, 0, _hw_resolution_x, _hw_resolution_y);
 }
@@ -151,6 +154,11 @@ static void fifo_sync(void)
 
 static void svga_update(unsigned x, unsigned y, unsigned w, unsigned h)
 {
+	_dbg.update_count++;
+	_dbg.last_update_x = x;
+	_dbg.last_update_y = y;
+	_dbg.last_update_w = w;
+	_dbg.last_update_h = h;
 	fifo_write(SVGA_CMD_UPDATE);
 	fifo_write(x);
 	fifo_write(y);
@@ -400,6 +408,7 @@ static void vmsvga_sync_mode(void)
 	unsigned width;
 	unsigned height;
 
+	_dbg.sync_count++;
 	width = svga_read_reg(SVGA_REG_WIDTH);
 	height = svga_read_reg(SVGA_REG_HEIGHT);
 	if (width > 0 && height > 0)
@@ -413,11 +422,22 @@ static void vmsvga_sync_mode(void)
 		_window_char_height =
 			_hw_resolution_y / (unsigned)_font->height;
 	}
+	_dbg.width = _hw_resolution_x;
+	_dbg.height = _hw_resolution_y;
+	_dbg.mapped_bytes = _fb_mapped_bytes;
 }
 
 static void vmsvga_flush(void)
 {
+	_dbg.flush_count++;
 	svga_update(0, 0, _hw_resolution_x, _hw_resolution_y);
+}
+
+static void vmsvga_get_debug_stats(fb_debug_stats_t *stats)
+{
+	if (!stats)
+		return;
+	*stats = _dbg;
 }
 
 static int vmsvga_is_char_visible(unsigned char c)
@@ -492,11 +512,15 @@ static int vmsvga_probe(void)
 	_fb_phys = pci.fb_phys;
 	_fb_buffer = pci.fb_phys;
 	_fb_mapped_bytes = fb_size;
+	memset(&_dbg, 0, sizeof(_dbg));
 
 	memset((char *)_fb_buffer, 0, fb_size);
 
 	_hw_resolution_x = VGA_RESOLUTION_X;
 	_hw_resolution_y = VGA_RESOLUTION_Y;
+	_dbg.width = _hw_resolution_x;
+	_dbg.height = _hw_resolution_y;
+	_dbg.mapped_bytes = _fb_mapped_bytes;
 
 	vmsvga_change_font("vga16");
 
@@ -525,6 +549,7 @@ const fb_drv_t vmsvga_drv = {
 	.snapshot_size = vmsvga_snapshot_size,
 	.snapshot_save = vmsvga_snapshot_save,
 	.snapshot_restore = vmsvga_snapshot_restore,
+	.get_debug_stats = vmsvga_get_debug_stats,
 	.is_char_visible = vmsvga_is_char_visible,
 	.cursor_erase = vmsvga_cursor_erase,
 };

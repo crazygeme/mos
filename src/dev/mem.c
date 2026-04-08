@@ -9,10 +9,7 @@
 #include <unistd.h>
 #include <ext4_oflags.h>
 #include <errno.h>
-
-/* /dev/mem — major 1, minor 1 (Linux-compatible) */
-#define MEM_MAJOR 1
-#define MEM_MINOR 1
+#include "devnums.h"
 
 int dev_mem_is_file(const file *fp)
 {

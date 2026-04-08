@@ -113,8 +113,7 @@ static void canon_append(tty_canon_t *canon, const struct termios *tc,
 
 int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
 			     cy_buf *buf, int blocking, int check_eof,
-			     unsigned pgrp, tty_ldisc_echo_fn echo,
-			     void *ctx)
+			     unsigned pgrp, tty_ldisc_echo_fn echo, void *ctx)
 {
 	while (1) {
 		unsigned char raw;

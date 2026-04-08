@@ -41,6 +41,7 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <ext4_oflags.h>
+#include "devnums.h"
 #include "tty_ldisc.h"
 #include <hw/keyboard.h>
 
@@ -2050,10 +2051,10 @@ static file *tty_open_state(tty_state *state, int flag)
 
 /*
  * tty_cdev_open — cdev dispatch callback.
- *   major 4, minor 1-10 → tty1..tty10 (1-based; minor maps to ttys[minor-1])
- *   major 5, minor 0    → /dev/tty0   (active virtual console)
- *   major 5, minor 1    → /dev/console (system console, mapped to tty1)
- *   major 5, minor 2    → /dev/tty    (calling task's controlling terminal)
+ *   major 4, minor 1-10  → tty1..tty10 (1-based; minor maps to ttys[minor-1])
+ *   major 11, minor 0    → /dev/tty0   (active virtual console)
+ *   major 11, minor 1    → /dev/console (system console, mapped to tty1)
+ *   major 11, minor 2    → /dev/tty    (calling task's controlling terminal)
  */
 static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 {
@@ -2062,11 +2063,13 @@ static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 	tty_state *state;
 	task_struct *cur = CURRENT_TASK();
 
-	if (major == 4) {
+	if (major == TTY_VC_MAJOR) {
 		/* /dev/ttyN uses 1-based minor: tty1→ttys[0] (active), tty2→ttys[1], … */
 		if (minor < 1 || minor - 1 >= TTY_MAX_VDEV)
 			return NULL;
 		state = &ttys[minor - 1];
+	} else if (major != TTY_AUX_MAJOR) {
+		return NULL;
 	} else if (minor == 0) {
 		state = &ttys[active_tty_idx - 1];
 	} else if (minor == 1) {
@@ -2114,20 +2117,20 @@ static void tty_dev_register(super_block *dev_sb)
 
 	printk("dev: registered /dev/tty[1-%d]\n", TTY_MAX_VDEV);
 	/* major 4: tty1..tty10 (1-based minors matching tty_idx) */
-	cdev_register(S_IFCHR, 4, 1, TTY_MAX_VDEV, tty_cdev_open);
+	cdev_register(S_IFCHR, TTY_VC_MAJOR, 1, TTY_MAX_VDEV, tty_cdev_open);
 	for (i = 1; i <= TTY_MAX_VDEV; i++) {
 		sprintf(path, "/tty%d", i);
-		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(4, i));
+		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(TTY_VC_MAJOR, i));
 	}
 
 	printk("dev: registered /dev/tty0\n");
 	printk("dev: registered /dev/console\n");
 	printk("dev: registered /dev/tty\n");
-	/* major 5: /dev/tty0, /dev/console, /dev/tty */
-	cdev_register(S_IFCHR, 5, 0, 3, tty_cdev_open);
-	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(5, 0));
-	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
-	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 2));
+	/* major 11: /dev/tty0, /dev/console, /dev/tty */
+	cdev_register(S_IFCHR, TTY_AUX_MAJOR, 0, 3, tty_cdev_open);
+	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(TTY_AUX_MAJOR, 0));
+	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(TTY_AUX_MAJOR, 1));
+	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(TTY_AUX_MAJOR, 2));
 }
 
 KERNEL_INIT(0, tty_fs_init);

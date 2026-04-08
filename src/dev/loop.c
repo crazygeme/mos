@@ -28,6 +28,7 @@
 #include <ext4_blockdev.h>
 #include <ext4.h>
 #include <errno.h>
+#include "devnums.h"
 
 /* ── Loop ioctl numbers (linux/loop.h) ──────────────────────────────────────── */
 #define LOOP_SET_FD 0x4C00
@@ -257,8 +258,7 @@ static int loop_ioctl(file *fp, unsigned cmd, void *buf)
 
 		if (loop_devs[minor].backing[0])
 			return -EBUSY;
-		if (img_fd < 0 || img_fd >= (int)MAX_FD ||
-		    !cur->fds[img_fd])
+		if (img_fd < 0 || img_fd >= (int)MAX_FD || !cur->fds[img_fd])
 			return -EBADF;
 
 		img_fp = cur->fds[img_fd];
@@ -297,7 +297,7 @@ static int loop_ioctl(file *fp, unsigned cmd, void *buf)
 		memset(li, 0, sizeof(*li));
 		li->lo_number = minor;
 		li->lo_device = (unsigned short)MKDEV(3, 1); /* hda1 */
-		li->lo_rdevice = (unsigned short)MKDEV(7, minor);
+		li->lo_rdevice = (unsigned short)MKDEV(LOOP_MAJOR, minor);
 		strncpy(li->lo_name, loop_devs[minor].backing,
 			LO_NAME_SIZE - 1);
 		return 0;
@@ -322,7 +322,7 @@ static int loop_ioctl(file *fp, unsigned cmd, void *buf)
 			return -ENXIO;
 		memset(li, 0, sizeof(*li));
 		li->lo_number = (uint32_t)minor;
-		li->lo_rdevice = MKDEV(7, minor);
+		li->lo_rdevice = MKDEV(LOOP_MAJOR, minor);
 		li->lo_sizelimit = loop_devs[minor].size_bytes;
 		strncpy((char *)li->lo_file_name, loop_devs[minor].backing,
 			LO_NAME_SIZE - 1);
@@ -342,7 +342,7 @@ static int loop_cdev_getattr(inode *node, struct stat *s)
 	s->st_size = 0;
 	s->st_blksize = 512;
 	s->st_blocks = (loff_t)(loop_devs[minor].size_bytes / 512);
-	s->st_rdev = MKDEV(7, minor);
+	s->st_rdev = MKDEV(LOOP_MAJOR, minor);
 	s->st_nlink = 1;
 	return 0;
 }
@@ -451,13 +451,13 @@ static void loop_dev_register(super_block *dev_sb)
 
 	printk("dev: registered /dev/loop[0-%d]\n", LOOP_MAX_DEVS - 1);
 
-	cdev_register(S_IFBLK, 7, 0, LOOP_MAX_DEVS, loop_cdev_open);
+	cdev_register(S_IFBLK, LOOP_MAJOR, 0, LOOP_MAX_DEVS, loop_cdev_open);
 
 	for (i = 0; i < LOOP_MAX_DEVS; i++) {
 		sprintf(loop_devs[i].name, "loop%d", i);
 		blockdev_register(loop_devs[i].name, 7, i, 0, 0);
 		sprintf(path, "/loop%d", i);
-		vfs_mknod(dev_sb, path, S_IFBLK | 0660, MKDEV(7, i));
+		vfs_mknod(dev_sb, path, S_IFBLK | 0660, MKDEV(LOOP_MAJOR, i));
 	}
 }
 

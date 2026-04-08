@@ -49,7 +49,6 @@ int tty_canon_drain(tty_canon_t *canon, char *dst, int size);
  */
 int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
 			     cy_buf *buf, int blocking, int check_eof,
-			     unsigned pgrp, tty_ldisc_echo_fn echo,
-			     void *ctx);
+			     unsigned pgrp, tty_ldisc_echo_fn echo, void *ctx);
 
 #endif /* _FS_TTY_LDISC_H_ */

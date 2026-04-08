@@ -9,11 +9,9 @@
 #include <hw/time.h>
 #include <macro.h>
 #include "pts_internal.h"
+#include "devnums.h"
 
 #define MAX_PTS 16
-#define PTMX_MAJOR 5 /* Unix98 /dev/ptmx */
-#define PTMX_MINOR 2
-#define PTS_MAJOR 0x88
 #define PTS_INO_MASK 0x00040000
 
 static spinlock_t pts_alloc_lock;
@@ -39,7 +37,7 @@ static int ptmx_master_getattr(inode *node, struct stat *s)
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_dev = MKDEV(3, 1);
-	s->st_rdev = MKDEV(PTMX_MAJOR, PTMX_MINOR);
+	s->st_rdev = MKDEV(UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR);
 	s->st_ino = PTS_INO_MASK | MAX_PTS;
 	s->st_nlink = 1;
 	s->st_atime = time_now_sec();
@@ -57,7 +55,7 @@ static int pts_slave_getattr(inode *node, struct stat *s)
 	memset(s, 0, sizeof(*s));
 	s->st_mode = p->slave_mode;
 	s->st_dev = MKDEV(0, 6);
-	s->st_rdev = MKDEV(PTS_MAJOR, p->idx);
+	s->st_rdev = MKDEV(UNIX98_PTS_MAJOR, p->idx);
 	s->st_ino = (uint64_t)p->idx + 2;
 	s->st_nlink = 1;
 	s->st_atime = time_now_sec();
@@ -390,9 +388,10 @@ static void ptmx_fs_type_init(void)
 static void ptmx_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/ptmx\n");
-	cdev_register(S_IFCHR, PTMX_MAJOR, PTMX_MINOR, 1, ptmx_cdev_open);
+	cdev_register(S_IFCHR, UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR, 1,
+		      ptmx_cdev_open);
 	vfs_mknod(dev_sb, "/ptmx", S_IFCHR | 0666,
-		  MKDEV(PTMX_MAJOR, PTMX_MINOR));
+		  MKDEV(UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR));
 }
 
 KERNEL_INIT(2, ptmx_fs_type_init);

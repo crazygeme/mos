@@ -5,12 +5,7 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <unistd.h>
-
-/* /dev/random  — major 1, minor 8 (Linux-compatible) */
-/* /dev/urandom — major 1, minor 9 (Linux-compatible) */
-#define RANDOM_MAJOR 1
-#define RANDOM_MINOR 8
-#define URANDOM_MINOR 9
+#include "devnums.h"
 
 static int random_seeded = 0;
 

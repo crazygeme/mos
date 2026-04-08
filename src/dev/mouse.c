@@ -9,12 +9,9 @@
 #include <lib/klib.h>
 #include <macro.h>
 #include <unistd.h>
+#include "devnums.h"
 
 #include "tty_ldisc.h"
-
-/* /dev/input/mice — Linux-compatible aggregate PS/2 mouse node */
-#define INPUT_MOUSE_MAJOR 13
-#define INPUT_MOUSE_MINOR 63
 
 static cy_buf *mouse_rxbuf;
 static int mouse_expect_param;
@@ -39,9 +36,7 @@ static void mouse_queue_idle_packet(void)
 {
 	static const unsigned char idle_packet[] = {
 		0x08, /* sync bit set, no buttons */
-		0x00,
-		0x00,
-		0x00, /* wheel delta for IMPS/2-style readers */
+		0x00, 0x00, 0x00, /* wheel delta for IMPS/2-style readers */
 	};
 
 	mouse_queue_bytes(idle_packet, sizeof(idle_packet));
@@ -61,8 +56,8 @@ static ssize_t mouse_read(file *fp, void *buf, size_t size, loff_t *pos)
 	if (!mouse_rxbuf)
 		return -EIO;
 
-	int ret =
-		cyb_getbuf(mouse_rxbuf, buf, (int)size, !mouse_file_nonblock(fp), 1);
+	int ret = cyb_getbuf(mouse_rxbuf, buf, (int)size,
+			     !mouse_file_nonblock(fp), 1);
 	if (ret < 0)
 		return -EINTR;
 	if (ret == 0 && mouse_file_nonblock(fp))

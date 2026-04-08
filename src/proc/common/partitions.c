@@ -11,10 +11,8 @@
  */
 #include <hw/hdd.h>
 #include <dev/loopdev.h>
+#include "../../dev/devnums.h"
 #include "common.h"
-
-#define HDD_MAJOR 3
-#define LOOP_MAJOR 7
 
 /*
  * Disk-to-minor-base mapping (Linux IDE convention):

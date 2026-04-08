@@ -16,6 +16,7 @@
 #include <macro.h>
 #include <errno.h>
 #include <unistd.h>
+#include "devnums.h"
 
 /* ── Linux-compatible RTC ioctls ─────────────────────────────────────────── */
 
@@ -178,9 +179,6 @@ static const file_operations rtc_fops = {
 };
 
 /* ── cdev dispatch ───────────────────────────────────────────────────────── */
-
-#define RTC_MAJOR 10
-#define RTC_MINOR 135
 
 static file *rtc_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 {

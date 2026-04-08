@@ -19,8 +19,7 @@
 #include <dev/dev.h>
 #include <unistd.h>
 #include <ext4.h>
-
-#define HDD_MAJOR 3
+#include "devnums.h"
 
 /* ── File operations ─────────────────────────────────────────────────────── */
 

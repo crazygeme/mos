@@ -258,10 +258,10 @@ static int loop_ioctl(file *fp, unsigned cmd, void *buf)
 		if (loop_devs[minor].backing[0])
 			return -EBUSY;
 		if (img_fd < 0 || img_fd >= (int)MAX_FD ||
-		    !cur->fds[img_fd].used)
+		    !cur->fds[img_fd])
 			return -EBADF;
 
-		img_fp = cur->fds[img_fd].fp;
+		img_fp = cur->fds[img_fd];
 		fs_get_file(img_fp);
 		if (loop_attach(minor, img_fp, NULL) < 0) {
 			fs_put_file(img_fp);

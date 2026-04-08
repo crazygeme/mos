@@ -11,6 +11,21 @@ typedef struct {
 	unsigned bg;
 } tty_cell_t;
 
+typedef struct {
+	unsigned width;
+	unsigned height;
+	unsigned mapped_bytes;
+	unsigned update_count;
+	unsigned flush_count;
+	unsigned sync_count;
+	unsigned snapshot_save_count;
+	unsigned snapshot_restore_count;
+	unsigned last_update_x;
+	unsigned last_update_y;
+	unsigned last_update_w;
+	unsigned last_update_h;
+} fb_debug_stats_t;
+
 /* ── Driver ops ───────────────────────────────────────────────────────────── */
 
 /*
@@ -37,6 +52,7 @@ typedef struct {
 	unsigned (*snapshot_size)(void);
 	void (*snapshot_save)(void *dst, unsigned size);
 	void (*snapshot_restore)(const void *src, unsigned size);
+	void (*get_debug_stats)(fb_debug_stats_t *stats);
 	int (*is_char_visible)(unsigned char c);
 	void (*cursor_erase)(unsigned pos, const tty_cell_t *cells,
 			     unsigned cols);
@@ -65,6 +81,7 @@ void fb_flush(void);
 unsigned fb_snapshot_size(void);
 void fb_snapshot_save(void *dst, unsigned size);
 void fb_snapshot_restore(const void *src, unsigned size);
+void fb_get_debug_stats(fb_debug_stats_t *stats);
 int fb_is_char_visiable(unsigned char c);
 void fb_cursor_erase(unsigned pos, const tty_cell_t *cells, unsigned cols);
 

@@ -148,15 +148,10 @@ struct _file {
 	loff_t f_pos;
 	unsigned f_count;
 	unsigned f_mode; /* O_RDONLY / O_WRONLY / O_RDWR (set by fs_open) */
+	unsigned f_flag; /* file status flags, including O_NONBLOCK */
 	char *f_name;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
-
-typedef struct _file_descriptor {
-	file *fp;
-	unsigned flag;
-	unsigned used;
-} file_descriptor;
 
 struct linux_dirent {
 	unsigned long d_ino; /* Inode number */
@@ -177,7 +172,27 @@ struct linux_dirent64 {
 
 #define NAME64_OFFSET() offset_of(struct linux_dirent64, d_name)
 
-#define MAX_FD ((PAGE_SIZE) / sizeof(file_descriptor))
+#define MAX_FD ((PAGE_SIZE) / sizeof(file *))
+#define FD_BITMAP_BITS (8 * sizeof(unsigned long))
+#define FD_BITMAP_WORDS ((MAX_FD + FD_BITMAP_BITS - 1) / FD_BITMAP_BITS)
+
+static inline int fd_bitmap_test(const unsigned long *map, int fd)
+{
+	return map && fd >= 0 && fd < MAX_FD &&
+	       ((map[fd / FD_BITMAP_BITS] >> (fd % FD_BITMAP_BITS)) & 1UL);
+}
+
+static inline void fd_bitmap_set(unsigned long *map, int fd)
+{
+	if (map && fd >= 0 && fd < MAX_FD)
+		map[fd / FD_BITMAP_BITS] |= 1UL << (fd % FD_BITMAP_BITS);
+}
+
+static inline void fd_bitmap_clear(unsigned long *map, int fd)
+{
+	if (map && fd >= 0 && fd < MAX_FD)
+		map[fd / FD_BITMAP_BITS] &= ~(1UL << (fd % FD_BITMAP_BITS));
+}
 
 typedef struct {
 	struct linux_dirent *buf;

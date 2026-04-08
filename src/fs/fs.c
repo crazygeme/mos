@@ -58,11 +58,11 @@ int fs_check_perm(const struct stat *s, int mask)
 	return 0;
 }
 
-static int fs_find_empty_fd(file_descriptor *fds)
+static int fs_find_empty_fd(file **fds)
 {
 	int i;
 	for (i = 0; i < MAX_FD; i++) {
-		if (fds[i].used == 0)
+		if (fds[i] == NULL)
 			return i;
 	}
 	return -1;
@@ -77,7 +77,7 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -EBADF;
 
@@ -97,7 +97,7 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
 		return -EBADF;
 
@@ -119,7 +119,7 @@ int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -EBADF;
 
@@ -141,7 +141,7 @@ int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
 		return -EBADF;
 
@@ -190,9 +190,11 @@ int fs_install_fd(file *fp, int flag)
 	mutex_lock(&cur->fd_lock);
 	fd = fs_find_empty_fd(cur->fds);
 	if (fd >= 0) {
-		cur->fds[fd].fp = fp;
-		cur->fds[fd].flag = flag;
-		cur->fds[fd].used = 1;
+		cur->fds[fd] = fp;
+		if (flag & O_CLOEXEC)
+			fd_bitmap_set(cur->fd_cloexec, fd);
+		else
+			fd_bitmap_clear(cur->fd_cloexec, fd);
 	}
 	mutex_unlock(&cur->fd_lock);
 	return fd;
@@ -233,10 +235,11 @@ int fs_open(const char *path, int flag, umode_t mode)
 	}
 
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
+	fp->f_flag = (unsigned)flag;
 	if ((flag & O_APPEND) && fp->f_inode)
 		fp->f_pos = fp->f_inode->i_size;
 
-	int fd = fs_install_fd(fp, flag);
+	int fd = fs_install_fd(fp, flag & O_CLOEXEC);
 	if (fd < 0)
 		fs_put_file(fp);
 	return fd < 0 ? -EMFILE : fd;
@@ -249,12 +252,13 @@ int fs_close(int fd)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
-	memset(&cur->fds[fd], 0, sizeof(file_descriptor));
+	fp = cur->fds[fd];
+	cur->fds[fd] = NULL;
+	fd_bitmap_clear(cur->fd_cloexec, fd);
 	mutex_unlock(&cur->fd_lock);
 
 	if (fp == NULL)
@@ -291,7 +295,7 @@ int fs_fstat(int fd, struct stat *s)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
@@ -332,14 +336,13 @@ int fs_pipe(int *pipefd)
 int fs_dup(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
-	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
+	if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
 		return -EBADF;
 
-	file *fp = cur->fds[fd].fp;
-	int flag = cur->fds[fd].flag & ~O_CLOEXEC;
+	file *fp = cur->fds[fd];
 	fs_get_file(fp);
 
-	int newfd = fs_install_fd(fp, flag);
+	int newfd = fs_install_fd(fp, 0);
 	if (newfd < 0)
 		fs_put_file(fp);
 	return newfd < 0 ? -EMFILE : newfd;
@@ -356,16 +359,16 @@ int fs_dup2(int fd, int newfd)
 	if (newfd < 0 || newfd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	if (cur->fds[newfd].used)
-		fs_put_file(cur->fds[newfd].fp);
-	fp = cur->fds[fd].fp;
+	if (cur->fds[newfd])
+		fs_put_file(cur->fds[newfd]);
+	fp = cur->fds[fd];
 	fs_get_file(fp);
-	cur->fds[newfd] = cur->fds[fd];
-	cur->fds[newfd].flag &= ~O_CLOEXEC;
+	cur->fds[newfd] = fp;
+	fd_bitmap_clear(cur->fd_cloexec, newfd);
 	ret = newfd;
 	mutex_unlock(&cur->fd_lock);
 	return ret;
@@ -436,11 +439,11 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
 	pos = fp->f_fop->llseek(fp, offset, whence);
@@ -462,11 +465,11 @@ int fs_seek(int fd, int offset, unsigned whence)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
 
@@ -487,11 +490,11 @@ int fs_sync(int fd)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 
 	if (!fp || !fp->f_fop)
 		goto done;
@@ -551,11 +554,11 @@ unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt)
 	if (fd < 0 || fd >= MAX_FD)
 		return 0;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return 0;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->poll)
 		goto done;
 
@@ -573,11 +576,11 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->ioctl) {
 		ret = (cmd == KDKBDREP) ? 0 : -ENOTTY;
 		goto done;
@@ -675,11 +678,11 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
@@ -714,11 +717,11 @@ int fs_fchmod(int fd, uint32_t mode)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
 	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||

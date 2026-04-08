@@ -310,7 +310,7 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 
 int pts_canon_readline(pts_pair *p)
 {
-	return tty_ldisc_canon_readline(&p->canon, &p->termios, p->m2s, 1,
+	return tty_ldisc_canon_readline(&p->canon, &p->termios, p->m2s, 1, 1,
 					p->pgrp, NULL, NULL);
 }
 

@@ -122,11 +122,11 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		if (*p != '\0')
 			return NULL; /* trailing garbage */
 
-		if (!task->fds || fdno >= MAX_FD || !task->fds[fdno].used)
+		if (!task->fds || fdno >= MAX_FD || !task->fds[fdno])
 			return NULL;
 
-		target = (task->fds[fdno].fp && task->fds[fdno].fp->f_name) ?
-				 task->fds[fdno].fp->f_name :
+		target = (task->fds[fdno] && task->fds[fdno]->f_name) ?
+				 task->fds[fdno]->f_name :
 				 NULL;
 		if (!target || !target[0]) {
 			sprintf(anon, "pipe:[%d]", fdno);

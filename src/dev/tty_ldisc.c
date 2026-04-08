@@ -112,16 +112,17 @@ static void canon_append(tty_canon_t *canon, const struct termios *tc,
 /* ── Public: canonical readline ─────────────────────────────────────────── */
 
 int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
-			     cy_buf *buf, int check_eof, unsigned pgrp,
-			     tty_ldisc_echo_fn echo, void *ctx)
+			     cy_buf *buf, int blocking, int check_eof,
+			     unsigned pgrp, tty_ldisc_echo_fn echo,
+			     void *ctx)
 {
 	while (1) {
 		unsigned char raw;
-		int _ret = cyb_getbuf(buf, &raw, 1, 1, 1);
+		int _ret = cyb_getbuf(buf, &raw, 1, blocking, 1);
 		if (_ret < 0)
 			return -1; /* EINTR */
 		if (_ret == 0)
-			return canon->len > 0 ? 1 : 0;
+			return 0;
 		if (check_eof && raw == (unsigned char)EOF)
 			return canon->len > 0 ? 1 : 0;
 

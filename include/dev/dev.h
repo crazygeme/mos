@@ -55,4 +55,7 @@ extern dev_init_fn_t __devfs_init_end[];
 void dev_node_add(const char *name, unsigned mode, unsigned devno);
 void dev_node_remove(const char *name);
 
+/* /dev/mem helpers used by the VM/page-fault layer. */
+int dev_mem_is_file(const file *fp);
+
 #endif /* _DEV_DEV_H */

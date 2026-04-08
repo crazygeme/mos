@@ -344,7 +344,13 @@ static int mos_vm86_vbe_get_mode_info(struct mos_vm86_struct *vm)
 		hw.fb_size > visible_bytes ? hw.fb_size - visible_bytes : 0;
 
 	memset(info, 0, sizeof(*info));
-	info->attributes = 0x009b;
+	/*
+	 * Present these as normal VBE 2.0+ packed-pixel graphics modes with
+	 * BIOS output support, VGA compatibility, and a linear framebuffer.
+	 * Old XFree86 vesa code is picky about these capability bits when
+	 * deciding whether to use the LFB path or fall back to banked VGA.
+	 */
+	info->attributes = 0x00bf;
 	info->winA = 0x07;
 	info->winB = 0x00;
 	info->granularity = 64;
@@ -370,7 +376,11 @@ static int mos_vm86_vbe_get_mode_info(struct mos_vm86_struct *vm)
 	info->blue_position = 0;
 	info->rsv_mask = 8;
 	info->rsv_position = 24;
-	info->directcolor_attributes = 0x08;
+	/*
+	 * 32bpp x8r8g8b8-style direct color: programmable color ramp and the
+	 * high 8 "reserved" bits are usable by the application.
+	 */
+	info->directcolor_attributes = 0x03;
 	info->physbase = hw.fb_phys;
 	info->offscreen_mem_offset = visible_bytes;
 	info->offscreen_mem_size = offscreen_bytes / 1024;
@@ -386,7 +396,6 @@ static int mos_vm86_vbe_get_mode_info(struct mos_vm86_struct *vm)
 	info->lin_rsv_mask = info->rsv_mask;
 	info->lin_rsv_position = info->rsv_position;
 	info->max_pixel_clock = 230000000;
-
 	mos_vm86_finish(vm, 0x004f);
 	return 1;
 }

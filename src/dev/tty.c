@@ -2122,12 +2122,12 @@ static void tty_dev_register(super_block *dev_sb)
 
 	printk("dev: registered /dev/tty0\n");
 	printk("dev: registered /dev/console\n");
-	printk("dev: registered /dev/tty\n");
+	// printk("dev: registered /dev/tty\n");
 	/* major 5: /dev/tty0, /dev/console, /dev/tty */
 	cdev_register(S_IFCHR, 5, 0, 3, tty_cdev_open);
 	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(5, 0));
 	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(5, 1));
-	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 2));
+	// vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(5, 2));
 }
 
 KERNEL_INIT(0, tty_fs_init);

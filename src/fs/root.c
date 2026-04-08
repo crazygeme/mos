@@ -662,7 +662,7 @@ typedef struct {
 static file *ext4_open(super_block *sb, const char *path, int flag)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
-	char *full = vm_alloc(1);
+	char *full = name_get();
 
 	/* mp ends with '/'; path starts with '/' — skip path's leading '/' */
 	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
@@ -672,7 +672,7 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 		if (flag & O_TRUNC)
 			fs_page_cache_invalidate(ret->f_inode);
 	}
-	vm_free(full, 1);
+	name_put(full);
 	return ret;
 }
 

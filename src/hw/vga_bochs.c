@@ -25,11 +25,57 @@
 static const unsigned char bit_mask[8] = { 128, 64, 32, 16, 8, 4, 2, 1 };
 
 static unsigned _fb_buffer;
+static unsigned _fb_phys;
+static unsigned _fb_mapped_bytes;
 static unsigned _hw_resolution_x;
 static unsigned _hw_resolution_y;
 static unsigned _window_char_width;
 static unsigned _window_char_height;
 static const fb_font_t *_font = NULL;
+
+static void bochs_ensure_fb_mapping(unsigned width, unsigned height)
+{
+	unsigned need_bytes;
+	unsigned a;
+
+	if (width == 0 || height == 0)
+		return;
+
+	need_bytes = width * height * (VGA_COLOR_DEPTH / 8);
+	if (need_bytes <= _fb_mapped_bytes)
+		return;
+
+	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
+	     a += PAGE_SIZE)
+		mm_map_io(a);
+	RELOAD_CR3();
+	_fb_mapped_bytes = need_bytes;
+}
+
+static unsigned bochs_snapshot_size(void)
+{
+	return _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8);
+}
+
+static void bochs_snapshot_save(void *dst, unsigned size)
+{
+	unsigned need = bochs_snapshot_size();
+
+	if (!dst || size < need)
+		return;
+	memcpy(dst, (const void *)_fb_buffer, need);
+}
+
+static void bochs_snapshot_restore(const void *src, unsigned size)
+{
+	unsigned need = bochs_snapshot_size();
+
+	if (!src || size < need)
+		return;
+	memcpy((void *)_fb_buffer, src, need);
+}
+
+static unsigned short bga_read_register(unsigned short idx);
 
 /* ── Pixel rendering ──────────────────────────────────────────────────────── */
 
@@ -222,6 +268,30 @@ static void bochs_change_font(const char *name)
 		_font = f;
 }
 
+static void bochs_sync_mode(void)
+{
+	unsigned width;
+	unsigned height;
+
+	width = bga_read_register(VBE_DISPI_INDEX_XRES);
+	height = bga_read_register(VBE_DISPI_INDEX_YRES);
+	if (width > 0 && height > 0)
+		bochs_ensure_fb_mapping(width, height);
+	if (width > 0)
+		_hw_resolution_x = width;
+	if (height > 0)
+		_hw_resolution_y = height;
+	if (_font) {
+		_window_char_width = _hw_resolution_x / (unsigned)_font->width;
+		_window_char_height =
+			_hw_resolution_y / (unsigned)_font->height;
+	}
+}
+
+static void bochs_flush(void)
+{
+}
+
 static int bochs_is_char_visible(unsigned char c)
 {
 	if (isprint(c))
@@ -300,7 +370,9 @@ static int bochs_probe(void)
 	for (a = fb_phys; a < fb_phys + fb_size; a += PAGE_SIZE)
 		mm_map_io(a);
 	RELOAD_CR3();
+	_fb_phys = fb_phys;
 	_fb_buffer = fb_phys;
+	_fb_mapped_bytes = fb_size;
 
 	_hw_resolution_x = VGA_RESOLUTION_X;
 	_hw_resolution_y = VGA_RESOLUTION_Y;
@@ -327,6 +399,11 @@ const fb_drv_t bochs_drv = {
 	.delete_lines_px = bochs_delete_lines_px,
 	.clear_screen = bochs_clear_screen,
 	.change_font = bochs_change_font,
+	.sync_mode = bochs_sync_mode,
+	.flush = bochs_flush,
+	.snapshot_size = bochs_snapshot_size,
+	.snapshot_save = bochs_snapshot_save,
+	.snapshot_restore = bochs_snapshot_restore,
 	.is_char_visible = bochs_is_char_visible,
 	.cursor_erase = bochs_cursor_erase,
 };

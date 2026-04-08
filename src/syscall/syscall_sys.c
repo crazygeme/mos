@@ -379,19 +379,7 @@ int sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 
 	if (!cur->user || cur->user->euid != 0)
 		return -EPERM;
-
-	/*
-	 * Minimal x86 compatibility: grant root tasks port-I/O access through
-	 * the hardware TSS I/O bitmap without giving them ring-3 cli/sti via
-	 * IOPL. Selective "turn off" requests are still treated as no-ops.
-	 */
-	if (turn_on) {
-		if (from != 0 || num < 0x400)
-			return -EINVAL;
-		cur->io_allow_all = 1;
-	}
-
-	return 0;
+	return ps_set_ioperm(cur, from, num, turn_on);
 }
 
 int sys_iopl(int level)
@@ -408,6 +396,7 @@ int sys_iopl(int level)
 
 	cur->io_priv_level = (unsigned char)level;
 	cur->io_allow_all = level ? 1 : 0;
+	reset_tss(cur);
 	return 0;
 }
 

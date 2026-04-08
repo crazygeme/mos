@@ -340,12 +340,10 @@ void ps_send_signal_pgrp(unsigned pgrp, int sig)
 		node = rb_next(node);
 		if (task->type == ps_user && task->user &&
 		    task->user->group_id == pgrp) {
-			spinlock_unlock(&ps_lock, irq);
 			task->signal->sig_pending |= (1UL << (sig - 1));
 			if (task->status == ps_waiting &&
 			    !(task->signal->sig_mask & (1UL << (sig - 1))))
-				ps_put_to_ready_queue(task);
-			spinlock_lock(&ps_lock, &irq);
+				ps_put_to_ready_queue_unsafe(task);
 		}
 	}
 	spinlock_unlock(&ps_lock, irq);

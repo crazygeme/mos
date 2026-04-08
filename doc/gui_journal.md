@@ -44,19 +44,31 @@ Suggested next step:
 
 ## 2026-04-08
 
-Checkpoint for next session:
+Observed behavior today:
 - The earlier AF_UNIX theory was refined. `unix_ns` being empty is now believed to be a consequence, not the root cause.
 - `out/krn.log` shows `/usr/X11R6/bin/X` does create the local X socket:
   - `socket(domain=1, type=1, protocol=0)`
   - `bind(fd=3, addr=..., addrlen=19)`
   - `listen(fd=3, backlog=128)`
-- So the local pathname listener for `/tmp/.X11-unix/X0` is created at least briefly.
-- The stronger finding is that process `/usr/X11R6/bin/X` exits through the user-mode general-protection path in [int.c](/home/zhengjia/project/mos/src/int/int.c) at line 151.
+- So the pathname listener for `/tmp/.X11-unix/X0` exists at least briefly.
+- The stronger finding is that `/usr/X11R6/bin/X` exits through the user-mode general-protection path in [int.c](src/int/int.c) line 151.
 - That means X takes a user-space `#GP`, MOS kills it with `sys_exit(-EFAULT)`, and only after that do later client `connect()` attempts see `unix_ns` empty and return `ECONNREFUSED`.
 
-Current working conclusion:
-- Root cause is likely the user-mode `#GP` in X, not AF_UNIX namespace lookup itself.
-- The empty `/tmp/.X11-unix/X0` listener state is likely post-crash cleanup after X exits.
+Startx-related VM/MMIO bugs found and fixed today:
+- The framebuffer mapping path was confirmed to be `/dev/mem` MMIO, not normal RAM-backed file cache. The relevant fault path in [pagefault.c](src/mm/pagefault.c#L140) already maps `/dev/mem` directly with `mm_map_page_io()` and `PAGE_ENTRY_CD`, which is correct for VRAM/MMIO.
+- A later `fork()` crash showed a child PTE value of `0xFD000077` in [ps_fork.c](src/ps/ps_fork.c#L190). That decodes to physical `0xFD000000` with present, writable, user, and cache-disabled bits, i.e. the VESA/VMware linear framebuffer BAR.
+- The bug in `copy_one_pte()` was that it assumed every present user PTE belonged to allocator-managed RAM and unconditionally fed the derived page index into `phymm_reference_page()`.
+- Fixed [ps_fork.c](src/ps/ps_fork.c#L200) so `copy_one_pte()` clones `/dev/mem` mappings directly, and more defensively skips `phymm_reference_page()` for any attached physical page outside `[phymm_begin, phymm_end)` or marked `PHYMM_RESERVED`.
+- A second crash appeared later in `vm_flush_region_cb()` / `vm_flush_dirty_region()` while tearing down or flushing X mappings. The failing virtual address was `0x4028A000`, but its attached page index again resolved to `1036288`, which is physical `0xFD000000`.
+- The bug in `vm_flush_dirty_region()` was the same assumption in a different place: it treated every `MAP_SHARED` file-backed mapped page as if it had a valid `phymm` page and could be checked with `phymm_is_dirty()` and written back like normal cache-backed file data.
+- Fixed [mmap.c](src/mm/mmap.c#L654) so `vm_flush_dirty_region()` skips `/dev/mem` mappings entirely and also ignores attached pages that are outside allocator-managed RAM or marked `PHYMM_RESERVED`.
+
+Refined conclusion:
+- Today exposed two separate VM-layer assumptions that were invalid for `startx` framebuffer mappings.
+- `fork()` assumed every present user PTE was backed by `phymm`.
+- shared-file dirty flush assumed every attached mapped page was backed by `phymm`.
+- Both assumptions were false for the X framebuffer mapping at physical `0xFD000000`.
+- The AF_UNIX `ECONNREFUSED` symptom still looks downstream of X crashing, but the MMIO/framebuffer crashes in fork and dirty-flush paths are now guarded and should no longer take the kernel down during `startx`.
 
 Suggested next step:
-- Resume by identifying what user-mode operation in `/usr/X11R6/bin/X` triggers the `#GP` shortly after the late XKB/keyboard path.
+- Resume by identifying what user-mode operation in `/usr/X11R6/bin/X` triggers the `#GP` shortly after the late XKB/keyboard path, now that the framebuffer/MMIO crashes in the VM layer are covered.

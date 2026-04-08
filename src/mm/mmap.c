@@ -5,6 +5,7 @@
 #include <lib/rbtree.h>
 #include <lib/klib.h>
 #include <mm/mmap.h>
+#include <dev/dev.h>
 #include <ps/ps.h>
 #include <fs/fs.h>
 #include <macro.h>
@@ -658,6 +659,8 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
 		return;
+	if (dev_mem_is_file(region->fp))
+		return;
 
 	node = region->fp->f_inode;
 
@@ -670,6 +673,9 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 			continue;
 
 		page_index = mm_get_attached_page_index(vir);
+		if (page_index < phymm_begin || page_index >= phymm_end ||
+		    phymm_pages[page_index].ref_count == PHYMM_RESERVED)
+			continue;
 		if (!phymm_is_dirty(page_index))
 			continue;
 

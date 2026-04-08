@@ -13,6 +13,7 @@
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <mm/mm.h>
+#include <dev/dev.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <errno.h>
@@ -190,12 +191,39 @@ static void copy_one_pte(unsigned *src_pte, unsigned *dst_pte, vm_region *vma,
 			 short *pt_count)
 {
 	unsigned pte = *src_pte;
+	unsigned phy = pte & PAGE_SIZE_MASK;
 	unsigned page_index;
 
 	if (!(pte & PAGE_ENTRY_PRESENT))
 		return;
 
-	page_index = (pte & PAGE_SIZE_MASK) / PAGE_SIZE;
+	/*
+	 * /dev/mem mappings may point at MMIO or reserved physical ranges such
+	 * as the linear framebuffer BAR at 0xFD000000.  Those pages are not
+	 * owned by phymm, so fork must clone the PTE without taking a RAM page
+	 * reference or forcing COW semantics.
+	 */
+	if (dev_mem_is_file(vma->fp)) {
+		if ((*dst_pte & PAGE_SIZE_MASK) == 0)
+			(*pt_count)++;
+		*dst_pte = pte;
+		return;
+	}
+
+	page_index = phy / PAGE_SIZE;
+
+	/*
+	 * Be defensive for any PTE that points outside allocator-managed RAM or
+	 * into a reserved hole.  Those mappings behave like MMIO/firmware pages:
+	 * clone the PTE, but never feed the address into phymm reference counts.
+	 */
+	if (page_index < phymm_begin || page_index >= phymm_end ||
+	    phymm_pages[page_index].ref_count == PHYMM_RESERVED) {
+		if ((*dst_pte & PAGE_SIZE_MASK) == 0)
+			(*pt_count)++;
+		*dst_pte = pte;
+		return;
+	}
 
 	if (!(vma->flag & MAP_SHARED) && (pte & PAGE_ENTRY_WRITABLE)) {
 		pte &= ~PAGE_ENTRY_WRITABLE;

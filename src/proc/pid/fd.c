@@ -31,7 +31,7 @@ file *pid_fd_dir_open(task_struct *task)
 
 	if (task->fds) {
 		for (i = 0; i < MAX_FD; i++) {
-			if (task->fds[i].used)
+			if (task->fds[i])
 				size += ROUND_UP(NAME_OFFSET() +
 						 sprintf(name, "%d", i) + 1);
 		}
@@ -45,7 +45,7 @@ file *pid_fd_dir_open(task_struct *task)
 
 	if (task->fds) {
 		for (i = 0; i < MAX_FD; i++) {
-			if (task->fds[i].used) {
+			if (task->fds[i]) {
 				sprintf(name, "%d", i);
 				PID_FILL_DIRENT(&p, buf, name);
 			}

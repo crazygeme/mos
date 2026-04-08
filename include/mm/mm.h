@@ -90,6 +90,8 @@ void vm_free(unsigned int vm, int page_count);
 
 int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag);
 
+int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag);
+
 void mm_unmap_page(unsigned int vir);
 
 unsigned mm_get_attached_page_index(unsigned int vir);

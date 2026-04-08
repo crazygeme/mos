@@ -123,6 +123,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->psid = ps_id_gen();
 	task->parent = task;
 	task->fds = vm_alloc(1);
+	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	memset(task->fds, 0, PAGE_SIZE);
 	mutex_init(&task->fd_lock);
 	task->magic = 0xdeadbeef;
@@ -151,12 +152,15 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 {
 	int i;
 	memset(task->fds, 0, PAGE_SIZE);
+	memset(task->fd_cloexec, 0, FD_BITMAP_WORDS * sizeof(unsigned long));
 	mutex_lock(&cur->fd_lock);
 	for (i = 0; i < MAX_FD; i++) {
-		if (!cur->fds[i].used)
+		if (!cur->fds[i])
 			continue;
 		task->fds[i] = cur->fds[i];
-		fs_get_file(cur->fds[i].fp);
+		fs_get_file(cur->fds[i]);
+		if (fd_bitmap_test(cur->fd_cloexec, i))
+			fd_bitmap_set(task->fd_cloexec, i);
 	}
 	mutex_unlock(&cur->fd_lock);
 }
@@ -334,6 +338,7 @@ static task_struct *fork_alloc_child(task_struct *cur)
 
 	task->parent = cur;
 	task->nchildren = 0;
+	task->fd_cloexec = NULL;
 	task->io_bitmap = NULL;
 	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);
@@ -450,6 +455,7 @@ static int do_fork(void)
 	fork_set_meta(cur, task, 0);
 
 	task->fds = vm_alloc(1);
+	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	ps_dup_fds(cur, task);
 	copy_page_range(cur, task);
 	fork_enqueue(cur, task);
@@ -487,9 +493,9 @@ static int do_vfork(void)
 	fork_set_meta(cur, task, FORK_FLAG_VFORK);
 
 	task->fds = vm_alloc(1);
+	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	ps_dup_fds(cur, task);
 	fork_enqueue(cur, task);
-
 	cond_init(&task->vfork_event, 1);
 	cond_wait(&task->vfork_event, 0);
 

@@ -19,7 +19,6 @@
 #include "syscall_internal.h"
 
 #define SHOW_CHARS 128 /* how many chars to show in strace logs */
-
 static char *format_buffer(const char *buf, unsigned len)
 {
 	/* Format like strace: at most SHOW_CHARS chars, escape non-printables */
@@ -70,14 +69,14 @@ static char *format_buffer(const char *buf, unsigned len)
 
 int sys_read(int fd, char *buf, unsigned len)
 {
-	task_struct *cur = CURRENT_TASK();
 	int ret = -1;
+	task_struct *cur = CURRENT_TASK();
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -1;
-	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
+	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
 		return -1;
 
 	ret = fs_read(fd, -1, buf, len);
@@ -87,7 +86,6 @@ int sys_read(int fd, char *buf, unsigned len)
 		klog("read(%d, %s, %d) = %d\n", fd, tmp, len, ret);
 		free(tmp);
 	}
-
 	return ret;
 }
 
@@ -103,9 +101,9 @@ int sys_write(int fd, const char *buf, unsigned len)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -1;
-	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
+	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
 		return -1;
 
 	return fs_write(fd, -1, buf, len);
@@ -118,9 +116,9 @@ int sys_pread64(int fd, void *buf, unsigned count, int offset)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -1;
-	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
+	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
 		return -1;
 
 	ret = fs_pread(fd, offset, buf, count);
@@ -147,9 +145,9 @@ int sys_pwrite64(int fd, const void *buf, unsigned count, int offset)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -1;
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -1;
-	if (S_ISDIR(cur->fds[fd].fp->f_inode->i_mode))
+	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
 		return -1;
 
 	return fs_pwrite(fd, offset, buf, count);
@@ -208,7 +206,7 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (TestControl.verbos)
 		klog("llseek(%d, %x, %x, %x, %d) = %d, current %d\n", fd,
 		     offset_high, offset_low, result, whence, ret,
-		     (int)CURRENT_TASK()->fds[fd].fp->f_pos);
+		     (int)CURRENT_TASK()->fds[fd]->f_pos);
 
 	return ret;
 }
@@ -227,10 +225,10 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 		return -EBADF;
 	if (iovcnt < 0)
 		return -EINVAL;
-	if (cur->fds[fildes].used == 0)
+	if (cur->fds[fildes] == NULL)
 		return -EBADF;
 
-	fp = cur->fds[fildes].fp;
+	fp = cur->fds[fildes];
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -EBADF;
 	if (S_ISDIR(fp->f_inode->i_mode))
@@ -323,7 +321,7 @@ int sys_fcntl(int fd, int cmd, int arg)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -ENOENT;
-	if (cur->fds[fd].used == 0)
+	if (cur->fds[fd] == NULL)
 		return -ENOENT;
 
 	switch (cmd) {
@@ -331,20 +329,22 @@ int sys_fcntl(int fd, int cmd, int arg)
 		ret = fs_dup(fd);
 		break;
 	case F_GETFD:
-		ret = (cur->fds[fd].flag & O_CLOEXEC) ? FD_CLOEXEC : 0;
+		ret = fd_bitmap_test(cur->fd_cloexec, fd) ? FD_CLOEXEC : 0;
 		break;
 	case F_SETFD:
 		if (arg & FD_CLOEXEC)
-			cur->fds[fd].flag |= O_CLOEXEC;
+			fd_bitmap_set(cur->fd_cloexec, fd);
 		else
-			cur->fds[fd].flag &= ~O_CLOEXEC;
+			fd_bitmap_clear(cur->fd_cloexec, fd);
 		ret = 0;
 		break;
 	case F_GETFL:
-		ret = cur->fds[fd].flag;
+		ret = cur->fds[fd]->f_flag;
 		break;
 	case F_SETFL:
-		cur->fds[fd].flag = arg;
+		cur->fds[fd]->f_flag =
+			(cur->fds[fd]->f_flag & O_ACCMODE) |
+			(arg & ~(O_ACCMODE | O_CLOEXEC));
 		ret = 0;
 		break;
 	default:
@@ -386,7 +386,7 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 	if (!S_ISDIR(s.st_mode))
 		return -EISDIR;
 
-	fp = CURRENT_TASK()->fds[fd].fp;
+	fp = CURRENT_TASK()->fds[fd];
 
 	if (count < sizeof(struct linux_dirent))
 		return -22;
@@ -419,7 +419,7 @@ int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
 	if (!S_ISDIR(s.st_mode))
 		return -EISDIR;
 
-	fp = CURRENT_TASK()->fds[fd].fp;
+	fp = CURRENT_TASK()->fds[fd];
 
 	if (count < sizeof(struct linux_dirent64))
 		return -22;

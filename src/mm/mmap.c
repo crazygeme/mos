@@ -633,7 +633,7 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset)
 {
 	task_struct *cur = CURRENT_TASK();
-	void *node = (fd != -1 && cur->fds[fd].used != 0) ? cur->fds[fd].fp : 0;
+	void *node = (fd != -1 && cur->fds[fd] != NULL) ? cur->fds[fd] : 0;
 
 	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
 }

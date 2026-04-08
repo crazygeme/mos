@@ -75,6 +75,16 @@ static void bochs_snapshot_restore(const void *src, unsigned size)
 	memcpy((void *)_fb_buffer, src, need);
 }
 
+static void bochs_get_debug_stats(fb_debug_stats_t *stats)
+{
+	if (!stats)
+		return;
+	memset(stats, 0, sizeof(*stats));
+	stats->width = _hw_resolution_x;
+	stats->height = _hw_resolution_y;
+	stats->mapped_bytes = _fb_mapped_bytes;
+}
+
 static unsigned short bga_read_register(unsigned short idx);
 
 /* ── Pixel rendering ──────────────────────────────────────────────────────── */
@@ -404,6 +414,7 @@ const fb_drv_t bochs_drv = {
 	.snapshot_size = bochs_snapshot_size,
 	.snapshot_save = bochs_snapshot_save,
 	.snapshot_restore = bochs_snapshot_restore,
+	.get_debug_stats = bochs_get_debug_stats,
 	.is_char_visible = bochs_is_char_visible,
 	.cursor_erase = bochs_cursor_erase,
 };

@@ -7,6 +7,7 @@
 #include <ps/ps.h>
 #include <fs/cache.h>
 #include <fs/fs.h>
+#include <dev/dev.h>
 #include <lib/klib.h>
 #include <hw/time.h>
 #include <config.h>
@@ -135,6 +136,27 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_file++;
+
+	/*
+	 * /dev/mem must map the requested physical page directly.  Treating it
+	 * like an ordinary file-backed mapping would populate a cached RAM page
+	 * and only write it back on msync/munmap, which is wrong for MMIO/VRAM.
+	 * XFree86's VESA driver mmaps the linear framebuffer through /dev/mem and
+	 * expects stores to hit the BAR immediately.
+	 */
+	if (dev_mem_is_file(f)) {
+		unsigned phy = (unsigned)offset & PAGE_SIZE_MASK;
+		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_CD;
+
+		if (prot & PROT_WRITE)
+			pte |= PAGE_ENTRY_WRITABLE;
+		if (mm_map_page_io(address, phy, pte) != 1)
+			goto FAIL;
+		INVLPG(address);
+		if (TestControl.profiling)
+			page_fault_file_spent += (time_wall_us() - begin);
+		return 1;
+	}
 
 	/*
 	 * Linux would populate from the filesystem page cache here. MOS now does

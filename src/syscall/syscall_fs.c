@@ -299,7 +299,7 @@ int sys_fstatfs(int fd, struct statfs *buf)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
 	if (!fp)
@@ -770,14 +770,14 @@ int sys_fchdir(int fd)
 
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
-	if (!cur->fds[fd].used)
+	if (!cur->fds[fd])
 		return -EBADF;
 	if (fs_fstat(fd, &s) != EOK)
 		return -EBADF;
 	if (!S_ISDIR(s.st_mode))
 		return -ENOTDIR;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp || !fp->f_name)
 		return -EBADF;
 	{
@@ -849,10 +849,10 @@ int sys_flock(int fd, int operation)
 	if (TestControl.verbos)
 		klog("flock(%d, %d)\n", fd, operation);
 
-	if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd].used)
+	if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd])
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	in = fp->f_inode;
 
 	if (!in)
@@ -936,10 +936,10 @@ int sys_ftruncate(int fd, unsigned long length)
 	if (TestControl.verbos)
 		klog("ftruncate(%d, %lu)\n", fd, length);
 
-	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
+	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp->f_inode->i_op || !fp->f_inode->i_op->ftruncate)
 		return -EINVAL;
 
@@ -958,10 +958,10 @@ int sys_ftruncate64(int fd, uint64_t length)
 	if (TestControl.verbos)
 		klog("ftruncate64(%d, %llu)\n", fd, length);
 
-	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd].used)
+	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
 		return -EBADF;
 
-	fp = cur->fds[fd].fp;
+	fp = cur->fds[fd];
 	if (!fp->f_inode->i_op || !fp->f_inode->i_op->ftruncate)
 		return -EINVAL;
 

@@ -396,6 +396,7 @@ void do_exit(unsigned encoded_status);
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
+int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage);
 void qemu_exit(unsigned char code);
 char *sys_getcwd(char *buf, unsigned size);
 int sys_getrusage(int who, rusage *usage);

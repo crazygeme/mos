@@ -34,6 +34,7 @@ static int select_ctx_check(void *arg)
 
 	for (i = 0; i < ctx->nfds; i++) {
 		unsigned want = 0;
+		unsigned fd_ready = 0;
 		if (ctx->reads && FD_ISSET(i, ctx->reads))
 			want |= FS_POLL_READ;
 		if (ctx->writes && FD_ISSET(i, ctx->writes))
@@ -45,16 +46,17 @@ static int select_ctx_check(void *arg)
 		unsigned ready_mask = fs_fd_poll(i, want, NULL);
 		if ((want & FS_POLL_READ) && (ready_mask & FS_POLL_READ)) {
 			FD_SET(i, ctx->readfds);
-			ready++;
+			fd_ready = 1;
 		}
 		if ((want & FS_POLL_WRITE) && (ready_mask & FS_POLL_WRITE)) {
 			FD_SET(i, ctx->writefds);
-			ready++;
+			fd_ready = 1;
 		}
 		if ((want & FS_POLL_EXCEPT) && (ready_mask & FS_POLL_EXCEPT)) {
 			FD_SET(i, ctx->exceptfds);
-			ready++;
+			fd_ready = 1;
 		}
+		ready += fd_ready;
 	}
 	return ready;
 }

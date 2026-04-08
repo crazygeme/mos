@@ -102,6 +102,9 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->user->rlimits[7].rlim_max = 1024;
 
 	task->signal = zalloc(sizeof(signal_context));
+	task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
+	if (task->io_bitmap)
+		memset(task->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
 
 	task->umask = 0;
 	stack_bottom = (unsigned int)task + PAGE_SIZE;
@@ -331,6 +334,7 @@ static task_struct *fork_alloc_child(task_struct *cur)
 
 	task->parent = cur;
 	task->nchildren = 0;
+	task->io_bitmap = NULL;
 	list_init(&task->ps_list);
 	RB_CLEAR_NODE(&task->mgr_rb);
 	RB_CLEAR_NODE(&task->timer_rb);
@@ -383,6 +387,15 @@ static void fork_dup_signal(task_struct *cur, task_struct *task)
 	task->signal->sig_pending = 0;
 }
 
+static int fork_dup_io(task_struct *cur, task_struct *task)
+{
+	task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
+	if (!task->io_bitmap)
+		return -ENOMEM;
+	memcpy(task->io_bitmap, cur->io_bitmap, TSS_IO_BITMAP_BYTES);
+	return 0;
+}
+
 /* Copy scheduling metadata and ownership fields from parent to child. */
 static void fork_set_meta(task_struct *cur, task_struct *task,
 			  unsigned fork_flag)
@@ -432,6 +445,8 @@ static int do_fork(void)
 	task->user->page_dir = vm_alloc(1);
 	fork_dup_user_env(cur, task);
 	fork_dup_signal(cur, task);
+	if (fork_dup_io(cur, task) != 0)
+		return -ENOMEM;
 	fork_set_meta(cur, task, 0);
 
 	task->fds = vm_alloc(1);
@@ -467,6 +482,8 @@ static int do_vfork(void)
 	task->user->vm = cur->user->vm;
 	fork_dup_user_env(cur, task);
 	fork_dup_signal(cur, task);
+	if (fork_dup_io(cur, task) != 0)
+		return -ENOMEM;
 	fork_set_meta(cur, task, FORK_FLAG_VFORK);
 
 	task->fds = vm_alloc(1);

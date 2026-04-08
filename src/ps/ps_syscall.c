@@ -84,6 +84,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	kfree(task->user);
 	kfree(task->signal);
 	kfree(task->stats);
+	kfree(task->io_bitmap);
 	vm_free(task, 1);
 }
 

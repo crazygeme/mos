@@ -279,6 +279,7 @@ struct _task_struct {
 		io_priv_level; /* requested iopl(2) level for compatibility */
 	unsigned char
 		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
+	unsigned char *io_bitmap; /* per-task I/O-permission bitmap */
 	unsigned int magic; // to avoid stack overflow
 };
 
@@ -352,6 +353,9 @@ void ps_kickoff_ap(void);
 int ps_enabled();
 
 void ps_update_tss(unsigned int esp0);
+void reset_tss(task_struct *task);
+int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
+		  int turn_on);
 
 // task functions
 void _task_sched(const char *func);

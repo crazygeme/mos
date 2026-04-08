@@ -87,6 +87,9 @@ typedef struct {
 	tty_cell_t *alt_cells;
 	int alt_cursor;
 	int alt_active;
+	/* saved raw graphics framebuffer while another VT is visible */
+	void *graphics_fb;
+	unsigned graphics_fb_size;
 	/* current foreground/background colors (set by SGR escape sequences) */
 	unsigned fg_color;
 	unsigned bg_color;
@@ -98,6 +101,8 @@ typedef struct {
 	struct kbd_repeat kb_repeat;
 	/* console display mode selected through KDSETMODE */
 	int kd_mode;
+	/* process that most recently switched this VT into KD_GRAPHICS */
+	unsigned kd_owner_pid;
 	/* virtual-terminal mode configured via VT_SETMODE */
 	struct vt_mode vt_mode;
 } tty_state;
@@ -107,6 +112,7 @@ static tty_state ttys[TTY_MAX_VDEV];
 static int active_tty_idx = DEFAULT_TTY;
 static tty_state *this_ttys = NULL;
 static unsigned _displayed_cursor; /* linear position of cursor drawn on screen */
+/* Deferred VT target while a VT_PROCESS owner is deciding whether to release. */
 
 /*
  * tty_switch_lock - global spinlock protecting this_ttys, active_tty_idx,
@@ -116,9 +122,145 @@ static unsigned _displayed_cursor; /* linear position of cursor drawn on screen 
  */
 static spinlock_t tty_switch_lock;
 
+static int tty_fb_text_is_visible(const tty_state *state);
+static void tty_exit_alt_screen(tty_state *state);
+static void tty_bash_spawner(void *p);
+static void tty_sync_fb_mode_all(void);
+static void tty_switch_internal(int n, int spawn_shell);
+static void tty_complete_switch_locked(int n, int spawn_shell);
+static void tty_capture_graphics_locked(tty_state *state);
+static void tty_restore_graphics_locked(tty_state *state);
+
+#define VGA_IO_FIRST 0x3b4
+#define VGA_IO_LAST 0x3df
+#define VGA_IO_COUNT (VGA_IO_LAST - VGA_IO_FIRST + 1)
+
+/*
+ * tty_restore_text_console_locked - bring one VT back to normal text-console
+ * semantics after a graphics user (typically X) is done with it.
+ *
+ * This function intentionally restores only VT/TTY state. It does not redraw
+ * the screen and it does not switch VTs by itself. Callers decide whether the
+ * VT is currently visible and, if it is, whether the framebuffer mode must be
+ * resynchronized before issuing fb_redraw().
+ *
+ * Important details:
+ * - KD_TEXT means text rendering is again allowed on this VT.
+ * - kd_owner_pid is cleared so later close/exit paths do not think an old
+ *   graphics owner is still responsible for cleanup.
+ * - kb_mode is reset to K_XLATE because X often leaves the console in a raw
+ *   keyboard mode that would make the shell unusable.
+ * - The alternate screen is exited so shell text uses the normal saved buffer.
+ */
+static void tty_restore_text_console_locked(tty_state *state)
+{
+	state->kd_mode = KD_TEXT;
+	state->kd_owner_pid = 0;
+	state->kb_mode = K_XLATE;
+	state->cursor_hidden = 0;
+	state->vt_mode.mode = VT_AUTO;
+	if (state->alt_active)
+		tty_exit_alt_screen(state);
+}
+
+/*
+ * tty_complete_switch_locked - commit a VT switch once the kernel has
+ * permission to do so.
+ *
+ * There are two ways to reach here:
+ * 1. Immediate switch: the current VT is VT_AUTO, so the kernel can move to
+ *    the target right away.
+ * This helper does every side effect that should happen exactly once for a
+ * completed switch:
+ * - update active_tty_idx / this_ttys
+ * - reconcile tty geometry with the live framebuffer mode if the destination
+ *   VT is a text VT
+ * - redraw the destination text console if text is visible there
+ * - lazily spawn the default shell on unopened text VTs when requested
+ *
+ * Keeping this in one helper is important because every switch path must
+ * perform the exact same state transition.
+ */
+static void tty_complete_switch_locked(int n, int spawn_shell)
+{
+	tty_state *except_tty = &ttys[n - 1];
+
+	/* Finalize the visible VT change after either an immediate switch or a
+	 * later VT_RELDISP(1) from the old VT's userspace owner. */
+	active_tty_idx = n;
+	this_ttys = except_tty;
+	/*
+	 * A text VT must follow the current hardware mode, not the boot-time
+	 * VGA_RESOLUTION_* constants. If X changed the real resolution while it
+	 * owned another VT, sync all tty buffers before redrawing this one.
+	 */
+	if (tty_fb_text_is_visible(this_ttys))
+		tty_sync_fb_mode_all();
+
+	_displayed_cursor = (unsigned)this_ttys->cursor;
+	/* Graphics VTs intentionally skip fb_redraw(); only text VTs restore the
+	 * saved console buffer through the framebuffer text renderer. */
+	if (tty_fb_text_is_visible(this_ttys))
+		fb_redraw(this_ttys->cells, this_ttys->max_col,
+			  this_ttys->max_row, (unsigned)this_ttys->cursor);
+	else if (this_ttys->kd_mode == KD_GRAPHICS)
+		tty_restore_graphics_locked(this_ttys);
+
+	if (spawn_shell && n > 1) {
+		int need_spawn = 0;
+
+		if (except_tty->bash_pid == 0) {
+			need_spawn = 1;
+		} else {
+			task_struct *t = ps_find_process(except_tty->bash_pid);
+			if (!t || t->status == ps_dying)
+				need_spawn = 1;
+		}
+
+		if (need_spawn)
+			except_tty->bash_pid = ps_create(tty_bash_spawner,
+							 except_tty, ps_normal,
+							 ps_kernel);
+	}
+}
+
 static int tty_fb_text_is_visible(const tty_state *state)
 {
 	return state->tty_idx == active_tty_idx && state->kd_mode == KD_TEXT;
+}
+
+static void tty_capture_graphics_locked(tty_state *state)
+{
+	unsigned need;
+	void *newbuf;
+
+	if (!state || state->kd_mode != KD_GRAPHICS)
+		return;
+
+	fb_sync_mode();
+	need = fb_snapshot_size();
+	if (need == 0)
+		return;
+	if (!state->graphics_fb || state->graphics_fb_size < need) {
+		newbuf = kmalloc(need);
+		if (!newbuf)
+			return;
+		kfree(state->graphics_fb);
+		state->graphics_fb = newbuf;
+		state->graphics_fb_size = need;
+	}
+	fb_snapshot_save(state->graphics_fb, state->graphics_fb_size);
+}
+
+static void tty_restore_graphics_locked(tty_state *state)
+{
+	if (!state || state->kd_mode != KD_GRAPHICS || !state->graphics_fb)
+		return;
+
+	fb_sync_mode();
+	if (fb_snapshot_size() > state->graphics_fb_size)
+		return;
+	fb_snapshot_restore(state->graphics_fb, state->graphics_fb_size);
 }
 
 static int tty_vt_is_available(int tty_idx)
@@ -1016,6 +1158,8 @@ void tty_init(void)
 		t->scroll_bot = (int)t->max_row - 1;
 		t->saved_cursor = 0;
 		t->alt_active = 0;
+		t->graphics_fb = NULL;
+		t->graphics_fb_size = 0;
 		t->fg_color = VGA_COLOR_WHITE;
 		t->bg_color = VGA_COLOR_BLACK;
 		t->kb_mode = K_XLATE;
@@ -1023,6 +1167,7 @@ void tty_init(void)
 		t->kb_repeat.delay = 250;
 		t->kb_repeat.period = 33;
 		t->kd_mode = KD_TEXT;
+		t->kd_owner_pid = 0;
 		t->vt_mode.mode = VT_AUTO;
 		t->vt_mode.waitv = 0;
 		t->vt_mode.relsig = 0;
@@ -1229,66 +1374,152 @@ static void tty_bash_spawner(void *p)
 	/* bash not found — task will exit naturally. */
 }
 
+/*
+ * tty_resize_one - resize one VT's saved text buffers to a new character grid.
+ *
+ * The framebuffer drivers expose dimensions in character cells, not pixels.
+ * Whenever the real display mode changes, every VT's saved text state must be
+ * reshaped so switching later does not redraw with stale geometry.
+ *
+ * We preserve the overlapping top-left region of both the normal and alternate
+ * screen buffers and blank-fill any newly created space. This mirrors the
+ * practical behavior expected by shells: old text survives where it still fits,
+ * while newly visible areas start empty.
+ *
+ * Cursor and scroll-region metadata are then clamped into the new bounds. That
+ * prevents later cursor updates or scrolling from indexing outside the resized
+ * buffers after a mode change.
+ */
+static void tty_resize_one(tty_state *state, unsigned new_col, unsigned new_row)
+{
+	tty_cell_t *new_cells;
+	tty_cell_t *new_alt_cells;
+	unsigned old_col = state->max_col;
+	unsigned old_row = state->max_row;
+	unsigned copy_col;
+	unsigned copy_row;
+	unsigned r;
+
+	if (!state->cells || !state->alt_cells)
+		return;
+	if (old_col == new_col && old_row == new_row)
+		return;
+
+	new_cells = zalloc(new_col * new_row * sizeof(*new_cells));
+	new_alt_cells = zalloc(new_col * new_row * sizeof(*new_alt_cells));
+	if (!new_cells || !new_alt_cells) {
+		kfree(new_cells);
+		kfree(new_alt_cells);
+		return;
+	}
+
+	for (r = 0; r < new_row * new_col; r++) {
+		new_cells[r] = blank;
+		new_alt_cells[r] = blank;
+	}
+
+	copy_col = old_col < new_col ? old_col : new_col;
+	copy_row = old_row < new_row ? old_row : new_row;
+	for (r = 0; r < copy_row; r++) {
+		memcpy(new_cells + r * new_col, state->cells + r * old_col,
+		       copy_col * sizeof(*new_cells));
+		memcpy(new_alt_cells + r * new_col,
+		       state->alt_cells + r * old_col,
+		       copy_col * sizeof(*new_alt_cells));
+	}
+
+	kfree(state->cells);
+	kfree(state->alt_cells);
+	state->cells = new_cells;
+	state->alt_cells = new_alt_cells;
+	state->max_col = new_col;
+	state->max_row = new_row;
+	if (state->cursor >= (int)(new_col * new_row))
+		state->cursor = (int)(new_col * new_row) - 1;
+	if (state->cursor < 0)
+		state->cursor = 0;
+	if (state->saved_cursor >= (int)(new_col * new_row))
+		state->saved_cursor = state->cursor;
+	state->scroll_top = 0;
+	state->scroll_bot = (int)new_row - 1;
+}
+
+/*
+ * tty_sync_fb_mode_all - synchronize tty geometry with the framebuffer's live
+ * hardware mode.
+ *
+ * This is the bridge between the graphics drivers and the VT layer:
+ * - fb_sync_mode() asks the active framebuffer driver to reread the current
+ *   hardware mode. For example, after startx, the device may now be running at
+ *   a larger resolution than the kernel's init-time mode.
+ * - fb_get_char_dims() converts that pixel mode into a text grid using the
+ *   current font metrics.
+ * - every VT is resized to that grid so future VT switches remain safe and all
+ *   saved text buffers agree on the same geometry.
+ *
+ * We intentionally resize every VT, not only the visible one. Otherwise a
+ * later switch to an inactive VT could redraw with stale rows/cols and either
+ * truncate text or walk past buffer boundaries.
+ */
+static void tty_sync_fb_mode_all(void)
+{
+	unsigned new_col, new_row;
+	int i;
+
+	fb_sync_mode();
+	fb_get_char_dims(&new_col, &new_row);
+	if (new_col == 0 || new_row == 0)
+		return;
+	if (this_ttys && this_ttys->max_col == new_col &&
+	    this_ttys->max_row == new_row)
+		return;
+
+	for (i = 0; i < TTY_MAX_VDEV; i++)
+		tty_resize_one(&ttys[i], new_col, new_row);
+}
+
 /* ── TTY switch ──────────────────────────────────────────────────────────── */
 
 /*
  * tty_switch - switch the active virtual terminal to index n.
  *
- * 1. Save the current TTY's framebuffer text to its saved_text.
- * 2. Update this_ttys / active_tty_idx.
- * 3. Restore the new TTY's saved_text to the framebuffer.
- * 4. Spawn /bin/bash on TTY n if it has no live process.
+ * VT switch protocol used here:
+ * 1. Keyboard hotkey or VT_ACTIVATE asks to move from the current VT to n.
+ * 2. The kernel always completes the visible switch immediately.
  *
- * Called from the keyboard DSR (interrupts disabled) so all operations
- * must be non-blocking.
+ * The function is called from keyboard-triggered switching paths, so it must
+ * not sleep while holding tty_switch_lock.
  */
 static void tty_switch_internal(int n, int spawn_shell)
 {
-	tty_state *except_tty;
 	int irq;
+	tty_state *old_tty;
 
 	if (n < 1 || n > TTY_SWITCH_COUNT || n == active_tty_idx)
 		return;
 
-	except_tty = &ttys[n - 1];
-
 	spinlock_lock(&tty_switch_lock, &irq);
-
-	/* Flip active TTY */
-	active_tty_idx = n;
-	this_ttys = except_tty;
-
-	/* Restore text consoles, but leave graphics VTs in control of the FB. */
-	_displayed_cursor = (unsigned)this_ttys->cursor;
-	if (tty_fb_text_is_visible(this_ttys))
-		fb_redraw(this_ttys->cells, this_ttys->max_col,
-			  this_ttys->max_row, (unsigned)this_ttys->cursor);
+	old_tty = this_ttys;
+	if (old_tty && old_tty->kd_mode == KD_GRAPHICS)
+		tty_capture_graphics_locked(old_tty);
+	tty_complete_switch_locked(n, spawn_shell);
 
 	spinlock_unlock(&tty_switch_lock, irq);
-
-	/* Spawn bash on the new TTY if no live process is there yet.
-	 * TTY 1 is managed by init/getty; only auto-spawn bash on TTY 2+. */
-	if (spawn_shell && n > 1) {
-		int need_spawn = 0;
-
-		if (except_tty->bash_pid == 0) {
-			need_spawn = 1;
-		} else {
-			task_struct *t = ps_find_process(except_tty->bash_pid);
-			if (!t || t->status == ps_dying)
-				need_spawn = 1;
-		}
-
-		if (need_spawn)
-			except_tty->bash_pid = ps_create(tty_bash_spawner,
-							 except_tty, ps_normal,
-							 ps_kernel);
-	}
 }
 
 void tty_switch(int n)
 {
 	tty_switch_internal(n, 1);
+}
+
+void tty_refresh_graphics(void)
+{
+	int irq;
+
+	spinlock_lock(&tty_switch_lock, &irq);
+	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS)
+		fb_flush();
+	spinlock_unlock(&tty_switch_lock, irq);
 }
 
 /* ── VFS file operations ─────────────────────────────────────────────────── */
@@ -1493,18 +1724,53 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 	}
 	case KDSIGACCEPT:
 		return 0;
+	case KDADDIO:
+	case KDDELIO: {
+		unsigned long port = (unsigned long)(uintptr_t)buf;
+		int rc;
+
+		if (port < VGA_IO_FIRST || port > VGA_IO_LAST)
+			return -EINVAL;
+		rc = ps_set_ioperm(CURRENT_TASK(), port, 1, cmd == KDADDIO);
+		return rc ? -ENXIO : 0;
+	}
+	case KDENABIO:
+	case KDDISABIO: {
+		int rc = ps_set_ioperm(CURRENT_TASK(), VGA_IO_FIRST,
+				       VGA_IO_COUNT, cmd == KDENABIO);
+		return rc ? -ENXIO : 0;
+	}
 	case KDGETMODE:
 		*(int *)buf = state->kd_mode;
 		return 0;
 	case KDSETMODE: {
 		int mode = (int)(uintptr_t)buf;
+		task_struct *cur = CURRENT_TASK();
 
 		if (mode != KD_TEXT && mode != KD_GRAPHICS)
 			return -EINVAL;
-		state->kd_mode = mode;
-		if (tty_fb_text_is_visible(state))
-			fb_redraw(state->cells, state->max_col, state->max_row,
-				  (unsigned)state->cursor);
+		if (mode == KD_GRAPHICS) {
+			/*
+			 * Record who entered graphics mode so close/exit cleanup can
+			 * restore the VT later if that same graphics owner dies.
+			 */
+			state->kd_mode = KD_GRAPHICS;
+			state->kd_owner_pid = cur ? cur->psid : 0;
+		} else {
+			tty_restore_text_console_locked(state);
+			if (tty_fb_text_is_visible(state)) {
+				/*
+				 * Returning to KD_TEXT may happen after X changed the
+				 * hardware resolution. Resync geometry before we draw the
+				 * saved console buffer back onto the visible screen.
+				 */
+				tty_sync_fb_mode_all();
+				_displayed_cursor = (unsigned)state->cursor;
+				fb_redraw(state->cells, state->max_col,
+					  state->max_row,
+					  (unsigned)state->cursor);
+			}
+		}
 		return 0;
 	}
 	case VT_OPENQRY:
@@ -1515,7 +1781,6 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case VT_SETMODE: {
 		const struct vt_mode *mode = (const struct vt_mode *)buf;
-
 		if (mode->mode != VT_AUTO && mode->mode != VT_PROCESS)
 			return -EINVAL;
 		memcpy(&state->vt_mode, mode, sizeof(state->vt_mode));
@@ -1534,6 +1799,7 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 
 		if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
 			return -EINVAL;
+		/* This starts and completes a visible VT switch immediately. */
 		tty_switch_internal(tty_idx, 0);
 		return 0;
 	}
@@ -1542,7 +1808,28 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 
 		if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
 			return -EINVAL;
-		return active_tty_idx == tty_idx ? 0 : -EAGAIN;
+		while (active_tty_idx != tty_idx)
+			time_wait(10);
+		return 0;
+	}
+	case VT_RELDISP: {
+		int arg = (int)(uintptr_t)buf;
+
+		if (arg == VT_ACKACQ)
+			/* Linux uses VT_ACKACQ as a post-acquire acknowledgement.
+			 * We do not gate any further state on it yet, so accept it. */
+			return 0;
+		if (arg == 0) {
+			/* Linux allows userspace to refuse a deferred switch. We do
+			 * not defer visibility anymore, so this is just an ack. */
+			return 0;
+		}
+		if (arg == 1) {
+			/* Completion acknowledgement from userspace; the visible switch
+			 * already happened, so there is nothing further to do here. */
+			return 0;
+		}
+		return -EINVAL;
 	}
 	case VT_DISALLOCATE:
 		return 0;
@@ -1617,18 +1904,40 @@ static int tty_fs_getattr(inode *node, struct stat *s)
 static int tty_fs_release(file *fp)
 {
 	tty_state *state = fp->f_inode->i_private;
+	task_struct *cur = CURRENT_TASK();
+	unsigned owner_pid = cur ? cur->psid : 0;
+	int new_count = __sync_add_and_fetch(&state->open_count, -1);
 
-	if (__sync_add_and_fetch(&state->open_count, -1) == 0) {
-		/*
-		 * Last fd closed: mark the TTY released and wake up any task
-		 * blocked in read().  We put an EOF sentinel (0xFF) into the
-		 * keyboard buffer so that cyb_getbuf() returns immediately;
-		 * canon_readline (check_eof=1) and raw_read both treat it as
-		 * end-of-file and bail out.
-		 */
-		state->released = 1;
-		unsigned char eof_byte = (unsigned char)EOF;
-		cyb_putbuf(state->kb_buf, &eof_byte, 1, 0, 0);
+	if (new_count == 0 || (state->kd_mode == KD_GRAPHICS &&
+			       state->kd_owner_pid == owner_pid)) {
+		if (new_count == 0) {
+			/*
+			 * Last fd closed: mark the TTY released and wake up any task
+			 * blocked in read().  We put an EOF sentinel (0xFF) into the
+			 * keyboard buffer so that cyb_getbuf() returns immediately;
+			 * canon_readline (check_eof=1) and raw_read both treat it as
+			 * end-of-file and bail out.
+			 */
+			if (new_count == 0)
+				state->released = 1;
+			unsigned char eof_byte = (unsigned char)EOF;
+			cyb_putbuf(state->kb_buf, &eof_byte, 1, 0, 0);
+		}
+
+		if (state->kd_mode == KD_GRAPHICS && state->kd_owner_pid == owner_pid) {
+			int irq;
+
+			spinlock_lock(&state->lock, &irq);
+			tty_restore_text_console_locked(state);
+			if (tty_fb_text_is_visible(state)) {
+				tty_sync_fb_mode_all();
+				_displayed_cursor = (unsigned)state->cursor;
+				fb_redraw(state->cells, state->max_col,
+					  state->max_row,
+					  (unsigned)state->cursor);
+			}
+			spinlock_unlock(&state->lock, irq);
+		}
 	}
 
 	kfree(fp->f_inode);

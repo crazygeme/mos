@@ -50,6 +50,10 @@
 #define KDGETLED 0x4B31 /* return current led state */
 #define KDSETLED 0x4B32 /* set led state [lights, not flags] */
 #define KDGKBTYPE 0x4B33 /* get keyboard type */
+#define KDADDIO 0x4B34 /* add i/o port as valid */
+#define KDDELIO 0x4B35 /* del i/o port as valid */
+#define KDENABIO 0x4B36 /* enable i/o to video board */
+#define KDDISABIO 0x4B37 /* disable i/o to video board */
 #define KDGKBMODE 0x4B44 /* get keyboard mode */
 #define KDSKBMODE 0x4B45 /* set keyboard mode */
 #define KDGKBENT 0x4B46 /* get one entry in keysym translation table */

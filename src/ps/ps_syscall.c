@@ -309,6 +309,90 @@ done:
 	return ret;
 }
 
+int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
+{
+	task_struct *cur = CURRENT_TASK();
+	task_struct *task = NULL;
+	list_entry *dying_task_entry;
+	struct rb_node *node;
+	int ret = -1;
+	int irq;
+	int has_group_child = 0;
+
+	if (TestControl.verbos)
+		klog("wait4(pgrp=%u, %x, %x, %x)\n", pgrp, status, options,
+		     rusage);
+
+	for (;;) {
+		task = NULL;
+		has_group_child = 0;
+		spinlock_lock(&ps_lock, &irq);
+
+		dying_task_entry = control.dying_queue.next;
+		while (dying_task_entry != &control.dying_queue) {
+			task = container_of(dying_task_entry, task_struct,
+					    ps_list);
+			dying_task_entry = dying_task_entry->next;
+			if (task->parent->psid != cur->psid || !task->user ||
+			    task->user->group_id != pgrp)
+				continue;
+
+			has_group_child = 1;
+			ret = task->psid;
+			if (status)
+				*status = task->exit_status;
+
+			list_remove_entry(&task->ps_list);
+			ps_remove_mgr_unsafe(task);
+			cur->nchildren--;
+			goto done;
+		}
+
+		task = NULL;
+		node = rb_first(&control.mgr_queue);
+		while (node) {
+			task_struct *t = rb_entry(node, task_struct, mgr_rb);
+			node = rb_next(node);
+			if (t->parent->psid == cur->psid && t->user &&
+			    t->user->group_id == pgrp) {
+				has_group_child = 1;
+				break;
+			}
+		}
+
+		if (!has_group_child) {
+			ret = -ECHILD;
+			goto done;
+		}
+
+		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
+		    ~(1UL << (SIGCHLD - 1))) {
+			ret = -EINTR;
+			goto done;
+		}
+
+		if (options == WNOHANG) {
+			ret = 0;
+			goto done;
+		}
+
+		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		spinlock_unlock(&ps_lock, irq);
+		task_sched();
+	}
+
+done:
+	spinlock_unlock(&ps_lock, irq);
+
+	if (task)
+		ps_reap_task(task, rusage);
+
+	if (TestControl.verbos)
+		klog("wait4(pgrp=%u) returns %d\n", pgrp, ret);
+
+	return ret;
+}
+
 int sys_waitpid(unsigned pid, int *status, int options)
 {
 	if (TestControl.verbos)

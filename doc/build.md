@@ -48,7 +48,9 @@ All run modes go through `run.sh`:
 - `./run.sh bash` — Boot directly into `/bin/bash`
 - `./run.sh bash debug` — Boot into bash, wait for GDB on `tcp::8888`
 - `./run.sh tap bash` — Boot into bash with TAP/NAT networking
-- `./run.sh verbose` — Boot with serial log output
+- `./run.sh verbose` — Boot with focused serial diagnostics (`verbose=2`)
+- `./run.sh verbose=1` — Boot with full syscall trace logging
+- `./run.sh verbose=0` — Boot with verbose logging disabled
 - `./run.sh kvm` — Enable KVM acceleration (Linux only)
 - `./run.sh curses` — Use current terminal as VM console (no GUI window)
 - `./run.sh logtofile` — Write kernel log to `out/krn.log` instead of stdio

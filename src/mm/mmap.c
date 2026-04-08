@@ -587,7 +587,7 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		   anon_id);
 	vm_invalidate_user_cache(cur->user);
 
-	if (TestControl.verbos) {
+	if (TEST_LOG(TEST_LOG_INFO)) {
 		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",
 		     fp ? fp->f_name : "ANON", _addr, offset, prot, flags, _len,
 		     addr);

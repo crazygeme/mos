@@ -437,6 +437,13 @@ static void fork_set_meta(task_struct *cur, task_struct *task,
 	task->priority = cur->priority;
 	task->type = cur->type;
 	task->fork_flag = fork_flag;
+	/*
+	 * Interval timers are per-process and must not survive into the child.
+	 * We clone the full task_struct up front, so reset the inherited alarm
+	 * state here before the task becomes runnable.
+	 */
+	task->alarm_expire_ms = 0;
+	task->alarm_interval_ms = 0;
 	task->root = cur->root;
 	task->stats = zalloc(sizeof(task_stats_t));
 	task->stats->start_tickets = time_now_tickets();

@@ -1,8 +1,7 @@
 /*
  * net.c — lwIP network stack initialisation for MOS.
  *
- * Wraps the first registered NIC (eth0) in a lwIP netif, starts DHCP,
- * and drives lwIP's NO_SYS timer machinery via a kernel periodic timer.
+ * Wraps the first registered NIC (eth0) in a lwIP netif and starts DHCP.
  */
 #include <net/net.h>
 #include <hw/nic.h>
@@ -145,17 +144,6 @@ static void eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len)
 	}
 }
 
-/* Kernel task: drive all lwIP internal timers every TICK_MS ms */
-static void lwip_timer_task(void *param)
-{
-	(void)param;
-	for (;;) {
-		time_wait(TICK_MS);
-		sys_check_timeouts();
-		netif_poll_all();
-	}
-}
-
 /* ── KERNEL_INIT entry point ────────────────────────────────────────────────── */
 void net_init(void)
 {
@@ -166,8 +154,8 @@ void net_init(void)
 	 */
 	lwip_init();
 
-	/* Poll lwIP timers every 100 ms — required for loopback delivery. */
-	ps_create(lwip_timer_task, NULL, ps_normal, ps_kernel);
+	/* Start shared periodic services after lwIP is initialized. */
+	ps_start_system_services();
 
 	nic_dev *nic = nic_getdev(0);
 	if (!nic) {

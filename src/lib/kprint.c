@@ -496,7 +496,7 @@ void klog(char *fmt, ...)
 	task_struct *cur = CURRENT_TASK();
 
 	mutex_lock(&klog_lock);
-	klog_printf("[%d]: ", cur->psid);
+	klog_printf("[%lld][%d]: ", time_now_tickets(), cur->psid);
 	va_start(ap, fmt);
 	kvformat(klog_writestr, fmt, ap, NULL);
 	va_end(ap);

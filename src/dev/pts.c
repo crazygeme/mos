@@ -130,7 +130,7 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case TIOCSCTTY: {
 		task_struct *cur = CURRENT_TASK();
-		int steal = buf ? *(int *)buf : 0;
+		int steal = (int)(uintptr_t)buf;
 		if (!cur->user || cur->user->session_id != cur->psid)
 			return -EPERM;
 		if (p->pgrp && !steal)
@@ -241,7 +241,7 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case TIOCSCTTY: {
 		task_struct *cur = CURRENT_TASK();
-		int steal = buf ? *(int *)buf : 0;
+		int steal = (int)(uintptr_t)buf;
 		if (!cur->user || cur->user->session_id != cur->psid)
 			return -EPERM;
 		if (p->pgrp && !steal)

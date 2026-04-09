@@ -105,4 +105,10 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data);
  */
 void vm_flush_all_dirty(vm_struct_t vm);
 
+/*
+ * vm_flush_file_dirty - write back dirty MAP_SHARED file-backed pages for one
+ * file identity within a VM map.
+ */
+void vm_flush_file_dirty(vm_struct_t vm, file *fp);
+
 #endif

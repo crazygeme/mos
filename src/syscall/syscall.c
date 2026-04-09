@@ -221,7 +221,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_setresgid, // 170 __NR_setresgid
 	sys_getresgid, // 171 __NR_getresgid
 	0, // 172 __NR_prctl
-	0, // 173 __NR_rt_sigreturn
+	sys_rt_sigreturn, // 173 __NR_rt_sigreturn
 	sys_rt_sigaction, // 174 __NR_rt_sigaction
 	sys_rt_sigprocmask, // 175 __NR_rt_sigprocmask
 	sys_rt_sigpending, // 176 __NR_rt_sigpending

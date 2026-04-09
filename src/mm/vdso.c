@@ -10,21 +10,6 @@
 extern const unsigned __vdso_start;
 extern const unsigned __vdso_end;
 
-_VDSO void test_sig_handler(int signo)
-{
-	asm volatile("mov $102, %eax");
-	asm volatile("mov %0, %%ebx" : : "m"(signo));
-	asm volatile("int $0x80");
-	return;
-}
-
-_VDSO NAKED void vdso_sigreturn_tramp()
-{
-	asm volatile("mov $119, %eax");
-	asm volatile("int $0x80");
-	NOP();
-}
-
 void mm_vdso_map()
 {
 	unsigned vdso_start = (unsigned)&__vdso_start;
@@ -59,9 +44,4 @@ int mm_vdso_region(int phy)
 	unsigned vdso_end = (unsigned)&__vdso_end - KERNEL_OFFSET;
 
 	return phy >= vdso_start && phy < vdso_end;
-}
-
-unsigned mm_vdso_translate(unsigned kernel_code)
-{
-	return VDSO_MM_REGION + (kernel_code - (unsigned)&__vdso_start);
 }

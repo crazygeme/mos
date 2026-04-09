@@ -705,6 +705,43 @@ static void vm_flush_region_cb(vm_region *region, void *data)
 	vm_flush_dirty_region(region, region->begin, region->end);
 }
 
+static int vm_same_file_identity(file *left, file *right)
+{
+	void *left_tag;
+	void *right_tag;
+	inode *left_inode;
+	inode *right_inode;
+
+	if (!left || !right)
+		return 0;
+
+	left_inode = left->f_inode;
+	right_inode = right->f_inode;
+	if (!left_inode || !right_inode)
+		return 0;
+
+	left_tag = left_inode->i_pgcache_tag ? left_inode->i_pgcache_tag :
+					       left_inode->i_private;
+	right_tag = right_inode->i_pgcache_tag ? right_inode->i_pgcache_tag :
+						right_inode->i_private;
+
+	return left_tag == right_tag && left_inode->i_ino == right_inode->i_ino;
+}
+
+typedef struct _vm_flush_file_ctx {
+	file *fp;
+} vm_flush_file_ctx;
+
+static void vm_flush_file_region_cb(vm_region *region, void *data)
+{
+	vm_flush_file_ctx *ctx = data;
+
+	if (!ctx || !vm_same_file_identity(region->fp, ctx->fp))
+		return;
+
+	vm_flush_dirty_region(region, region->begin, region->end);
+}
+
 /*
  * vm_flush_all_dirty - flush every dirty MAP_SHARED page in the VM map.
  *
@@ -713,6 +750,17 @@ static void vm_flush_region_cb(vm_region *region, void *data)
 void vm_flush_all_dirty(vm_struct_t vm)
 {
 	vm_enum(vm, vm_flush_region_cb, NULL);
+}
+
+void vm_flush_file_dirty(vm_struct_t vm, file *fp)
+{
+	vm_flush_file_ctx ctx;
+
+	if (!vm || !fp)
+		return;
+
+	ctx.fp = fp;
+	vm_enum(vm, vm_flush_file_region_cb, &ctx);
 }
 
 /*

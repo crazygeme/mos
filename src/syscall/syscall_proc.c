@@ -786,21 +786,88 @@ int sys_sigaction(int sig, void *act, void *oact)
 }
 
 /*
- * glibc 2.3.2 on Linux/i386 passes rt_sigaction using the kernel ABI layout:
- *   handler, flags, restorer, sigset_t mask[]
+ * glibc 2.3.2 on Linux/i386 passes rt_sigaction using the userspace layout:
+ *   handler, sigset_t mask, flags, restorer
  *
- * The sigsetsize argument is still 8 on this ABI, but glibc's in-memory
- * buffer contains a larger user-space sigset_t.  We only support signals
+ * The sigsetsize argument is still 8 on this ABI.  We only support signals
  * 1..31, so we translate the low word and zero the remaining words on
  * writeback.
  */
 #define RT_SIGSET_WORDS 32
 struct rt_sigaction_user {
 	void (*sa_handler)(int);
+	unsigned long sa_mask[RT_SIGSET_WORDS];
 	unsigned long sa_flags;
 	void (*sa_restorer)(void);
-	unsigned long sa_mask[RT_SIGSET_WORDS];
 };
+
+typedef struct _rt_siginfo_user {
+	int si_signo;
+	int si_errno;
+	int si_code;
+	int _pad[(128 / sizeof(int)) - 3];
+} rt_siginfo_user;
+
+typedef struct _rt_sigcontext_user {
+	unsigned short gs, __gsh;
+	unsigned short fs, __fsh;
+	unsigned short es, __esh;
+	unsigned short ds, __dsh;
+	unsigned long edi;
+	unsigned long esi;
+	unsigned long ebp;
+	unsigned long esp;
+	unsigned long ebx;
+	unsigned long edx;
+	unsigned long ecx;
+	unsigned long eax;
+	unsigned long trapno;
+	unsigned long err;
+	unsigned long eip;
+	unsigned short cs, __csh;
+	unsigned long eflags;
+	unsigned long esp_at_signal;
+	unsigned short ss, __ssh;
+	void *fpstate;
+	unsigned long oldmask;
+	unsigned long cr2;
+} rt_sigcontext_user;
+
+typedef struct _rt_ucontext_user {
+	unsigned long uc_flags;
+	struct _rt_ucontext_user *uc_link;
+	stack_t uc_stack;
+	rt_sigcontext_user uc_mcontext;
+	sigset_t uc_sigmask;
+} rt_ucontext_user;
+
+typedef struct _rt_fpreg_user {
+	unsigned short significand[4];
+	unsigned short exponent;
+} rt_fpreg_user;
+
+typedef struct _rt_fpstate_user {
+	unsigned long cw;
+	unsigned long sw;
+	unsigned long tag;
+	unsigned long ipoff;
+	unsigned long cssel;
+	unsigned long dataoff;
+	unsigned long datasel;
+	rt_fpreg_user _st[8];
+	unsigned long status;
+} rt_fpstate_user;
+
+typedef struct _rt_signal_frame {
+	unsigned int pretcode;
+	int sig;
+	unsigned int pinfo;
+	unsigned int puc;
+	rt_siginfo_user info;
+	rt_ucontext_user uc;
+	rt_fpstate_user fpstate;
+	unsigned char retcode[8];
+} rt_signal_frame;
 
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 {
@@ -935,9 +1002,6 @@ int sys_sigreturn()
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
 	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 4);
 
-	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("sigreturn\n");
-
 	/* Restore original user registers and EIP into the interrupt frame. */
 	frame->eip = (void *)sf->saved_eip;
 	frame->eflags = sf->saved_eflags;
@@ -977,6 +1041,62 @@ int sys_sigreturn()
 	return (int)sf->saved_eax;
 }
 
+int sys_rt_sigreturn()
+{
+	task_struct *cur = CURRENT_TASK();
+	intr_frame *frame =
+		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+	rt_signal_frame *sf = (rt_signal_frame *)((unsigned char *)frame->esp - 4);
+	rt_sigcontext_user *sc = &sf->uc.uc_mcontext;
+
+	frame->eip = (void *)sc->eip;
+	frame->eflags = sc->eflags;
+	frame->esp = (void *)sc->esp_at_signal;
+	frame->eax = sc->eax;
+	frame->ebx = sc->ebx;
+	frame->ecx = sc->ecx;
+	frame->edx = sc->edx;
+	frame->esi = sc->esi;
+	frame->edi = sc->edi;
+	frame->ebp = sc->ebp;
+	frame->ds = sc->ds;
+	frame->es = sc->es;
+	frame->fs = sc->fs;
+	frame->gs = sc->gs;
+	cur->signal->sig_mask = sf->uc.uc_sigmask;
+
+	{
+		stack_t *alt = &cur->signal->altstack;
+		if (alt->ss_flags & SS_ONSTACK) {
+			unsigned alt_base = (unsigned)alt->ss_sp;
+			unsigned alt_top = alt_base + alt->ss_size;
+			unsigned restored = sc->esp_at_signal;
+			if (restored < alt_base || restored >= alt_top)
+				alt->ss_flags &= ~SS_ONSTACK;
+		}
+	}
+
+	return (int)sc->eax;
+}
+
+static void build_rt_sigreturn_code(unsigned char retcode[8])
+{
+	retcode[0] = 0xb8; /* mov imm32,%eax */
+	*(unsigned int *)&retcode[1] = 173;
+	retcode[5] = 0xcd; /* int $0x80 */
+	retcode[6] = 0x80;
+	retcode[7] = 0x90; /* nop */
+}
+
+static void build_sigreturn_code(unsigned char retcode[8])
+{
+	retcode[0] = 0xb8; /* mov imm32,%eax */
+	*(unsigned int *)&retcode[1] = 119;
+	retcode[5] = 0xcd; /* int $0x80 */
+	retcode[6] = 0x80;
+	retcode[7] = 0x90; /* nop */
+}
+
 /*
  * do_signal — check for deliverable signals and redirect the interrupt frame
  * to the handler before iret returns to user space.
@@ -989,8 +1109,10 @@ void do_signal(intr_frame *frame)
 	task_struct *cur = CURRENT_TASK();
 	unsigned long deliverable;
 	int sig;
+	int is_rt;
 	struct sigaction *sa;
 	signal_frame *sf;
+	rt_signal_frame *rt_sf;
 	unsigned char *new_esp;
 
 	if (cur->type != ps_user)
@@ -1030,6 +1152,13 @@ void do_signal(intr_frame *frame)
 	}
 
 	sa = &cur->signal->sig_handlers[sig];
+	/*
+	 * Linux/i386 chooses the rt signal frame based on SA_SIGINFO, not on
+	 * whether the handler was installed via rt_sigaction().  A plain
+	 * one-argument handler installed through rt_sigaction still receives
+	 * the legacy frame/sigreturn ABI.
+	 */
+	is_rt = (sa->sa_flags & SA_SIGINFO) != 0;
 
 	if (sa->sa_handler == SIG_IGN) {
 		if (cur->signal->restore_sigmask) {
@@ -1072,35 +1201,83 @@ void do_signal(intr_frame *frame)
 			  cur->signal->altstack.ss_size;
 		cur->signal->altstack.ss_flags |= SS_ONSTACK;
 	} else {
-		new_esp = (unsigned char *)((unsigned)frame->esp -
-					    sizeof(signal_frame));
+		new_esp = (unsigned char *)frame->esp;
 	}
+	new_esp -= is_rt ? sizeof(rt_signal_frame) : sizeof(signal_frame);
 	/* 16-byte align */
 	new_esp = (unsigned char *)((unsigned)new_esp & ~0xfU);
 	sf = (signal_frame *)new_esp;
+	rt_sf = (rt_signal_frame *)new_esp;
 
-	extern void vdso_sigreturn_tramp();
+	if (is_rt) {
+		rt_sigcontext_user *sc = &rt_sf->uc.uc_mcontext;
+		unsigned long saved_mask = cur->signal->restore_sigmask ?
+						   cur->signal->saved_sigmask :
+						   cur->signal->sig_mask;
 
-	sf->return_addr = (unsigned int)mm_vdso_translate(vdso_sigreturn_tramp);
-	sf->signo = sig;
-	sf->saved_eip = (unsigned int)frame->eip;
-	sf->saved_eflags = frame->eflags;
-	sf->saved_esp = (unsigned int)frame->esp;
-	sf->saved_eax = frame->eax;
-	sf->saved_ebx = frame->ebx;
-	sf->saved_ecx = frame->ecx;
-	sf->saved_edx = frame->edx;
-	sf->saved_esi = frame->esi;
-	sf->saved_edi = frame->edi;
-	sf->saved_ebp = frame->ebp;
-	/*
-	 * If inside sigsuspend, save the pre-sigsuspend mask so sigreturn
-	 * restores it (not the temporary sigsuspend mask).
-	 */
-	sf->saved_mask = cur->signal->restore_sigmask ?
-				 cur->signal->saved_sigmask :
-				 cur->signal->sig_mask;
-	cur->signal->restore_sigmask = 0;
+		if ((sa->sa_flags & SA_RESTORER) && sa->sa_restorer) {
+			rt_sf->pretcode = (unsigned int)sa->sa_restorer;
+		} else {
+			build_rt_sigreturn_code(rt_sf->retcode);
+			rt_sf->pretcode = (unsigned int)&rt_sf->retcode[0];
+		}
+		rt_sf->sig = sig;
+		rt_sf->pinfo = (unsigned int)&rt_sf->info;
+		rt_sf->puc = (unsigned int)&rt_sf->uc;
+		memset(&rt_sf->info, 0, sizeof(rt_sf->info));
+		rt_sf->info.si_signo = sig;
+		rt_sf->uc.uc_flags = 0;
+		rt_sf->uc.uc_link = NULL;
+		rt_sf->uc.uc_stack = cur->signal->altstack;
+		rt_sf->uc.uc_sigmask = saved_mask;
+		memset(&rt_sf->fpstate, 0, sizeof(rt_sf->fpstate));
+		memset(sc, 0, sizeof(*sc));
+		sc->gs = frame->gs;
+		sc->fs = frame->fs;
+		sc->es = frame->es;
+		sc->ds = frame->ds;
+		sc->edi = frame->edi;
+		sc->esi = frame->esi;
+		sc->ebp = frame->ebp;
+		sc->esp = (unsigned long)frame->esp;
+		sc->ebx = frame->ebx;
+		sc->edx = frame->edx;
+		sc->ecx = frame->ecx;
+		sc->eax = frame->eax;
+		sc->trapno = 0;
+		sc->err = frame->error_code;
+		sc->eip = (unsigned long)frame->eip;
+		sc->cs = frame->cs;
+		sc->eflags = frame->eflags;
+		sc->esp_at_signal = (unsigned long)frame->esp;
+		sc->ss = frame->ss;
+		sc->fpstate = &rt_sf->fpstate;
+		sc->oldmask = saved_mask;
+		sc->cr2 = 0;
+		cur->signal->restore_sigmask = 0;
+	} else {
+		build_sigreturn_code(sf->trampoline);
+		sf->return_addr = (unsigned int)&sf->trampoline[0];
+		sf->signo = sig;
+		sf->saved_eip = (unsigned int)frame->eip;
+		sf->saved_eflags = frame->eflags;
+		sf->saved_esp = (unsigned int)frame->esp;
+		sf->saved_eax = frame->eax;
+		sf->saved_ebx = frame->ebx;
+		sf->saved_ecx = frame->ecx;
+		sf->saved_edx = frame->edx;
+		sf->saved_esi = frame->esi;
+		sf->saved_edi = frame->edi;
+		sf->saved_ebp = frame->ebp;
+		/*
+		 * If inside sigsuspend, save the pre-sigsuspend mask so sigreturn
+		 * restores it (not the temporary sigsuspend mask).
+		 */
+		sf->saved_mask = cur->signal->restore_sigmask ?
+					 cur->signal->saved_sigmask :
+					 cur->signal->sig_mask;
+		cur->signal->restore_sigmask = 0;
+	}
 
 	/* Block this signal while handler runs (unless SA_NODEFER). */
 	if (!(sa->sa_flags & SA_NODEFER))

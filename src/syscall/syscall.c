@@ -10,6 +10,7 @@
  * Handlers defined outside the syscall layer:
  *   ps/ps_syscall.c — sys_exit, sys_fork, sys_vfork, sys_waitpid, sys_getcwd,
  *                     sys_getrusage
+ *   ps/ps_signal.c  — signal delivery and signal-related syscalls
  *   elf/exec.c      — sys_execve
  *   fs/syslog.c     — sys_syslog
  */
@@ -28,15 +29,6 @@
 /* handlers defined in other subsystems */
 int sys_getrusage(int who, rusage *usage);
 int sys_syslog(int type, char *buf, int len);
-
-/* signal handlers defined in syscall_proc.c */
-int sys_sigreturn(void);
-void do_signal(intr_frame *frame);
-int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize);
-int sys_rt_sigtimedwait(const sigset_t *set, void *info,
-			const struct timespec *timeout, unsigned sigsetsize);
-int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo);
-int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize);
 
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx,
 			  unsigned esi, unsigned edi, unsigned ebp);

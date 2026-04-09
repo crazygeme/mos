@@ -77,8 +77,16 @@ static void ipi_sched_handler(intr_frame *frame)
 static void intr_check_point(intr_frame *frame)
 {
 	task_struct *cur = CURRENT_TASK();
+	const unsigned user_eflags_clear = 0x00054000U;
 	if (!ps_enabled())
 		return;
+
+	/*
+	 * Never reflect privileged/special control bits back into ring 3.
+	 * RF/NT/AC/VM are not part of normal user execution for MOS and can
+	 * produce hard-to-explain traps in freshly exec'd helper processes.
+	 */
+	frame->eflags &= ~user_eflags_clear;
 
 	/*
 	 * Restore the task's requested IOPL on every return to user mode.
@@ -155,7 +163,7 @@ static void handle_general_protection(intr_frame *frame)
 {
 	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
 	if ((frame->cs & 0x3) == 0x3) {
-		klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %d, cs %d\n",
+		klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x\n",
 		     current->psid, current->user->command, frame->eip,
 		     frame->esp, frame->ebp, frame->eax, frame->ebx, frame->ecx,
 		     frame->edx, frame->ds, frame->cs);

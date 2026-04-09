@@ -155,6 +155,7 @@ int sys_sched_yield();
 unsigned sys_alarm(unsigned seconds);
 int sys_pause();
 int sys_sigaction(int sig, void *act, void *oact);
+int sys_rt_sigreturn(void);
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize);
 int sys_sigprocmask(int how, void *set, void *oset);
 int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize);

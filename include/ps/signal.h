@@ -101,7 +101,7 @@ struct sigaction {
  *   [ESP+40]  saved_edi      |
  *   [ESP+44]  saved_ebp     /
  *   [ESP+48]  saved_mask    — saved signal mask (restored by sys_sigreturn)
- *   [ESP+52]  trampoline[8] — "mov $119,%eax; int $0x80; nop" (__NR_sigreturn)
+ *   [ESP+52]  trampoline[8] — inline __NR_sigreturn stub
  *
  * On handler return, "ret" pops return_addr and jumps into trampoline[].
  * At that point ESP = signal_frame_base + 4; trampoline calls sys_sigreturn
@@ -121,6 +121,7 @@ typedef struct _signal_frame {
 	unsigned int saved_edi;
 	unsigned int saved_ebp;
 	unsigned long saved_mask;
+	unsigned char trampoline[8];
 } signal_frame;
 
 #endif /* _SIGNAL_H */

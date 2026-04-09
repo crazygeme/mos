@@ -1,4 +1,5 @@
 #include <mm/mm.h>
+#include <mm/mmap.h>
 #include <dev/blockdev.h>
 #include <fs/cache.h>
 #include <lib/klib.h>
@@ -116,7 +117,43 @@ static unsigned ext4_file_poll(file *fp, unsigned events, poll_table *pt)
 
 static int ext4_file_flush(file *fp)
 {
-	/* Now we always flush */
+	super_block *sb = NULL;
+	const char *path = NULL;
+	int ret;
+
+	if (!fp)
+		return -EINVAL;
+
+	if (fp->f_inode && fp->f_inode->i_pgcache_tag)
+		sb = fp->f_inode->i_pgcache_tag;
+
+	if (fp->f_name)
+		path = fp->f_name;
+	else if (sb)
+		path = sb->s_mountpoint;
+
+	if (!path)
+		return 0;
+
+	if (CURRENT_TASK() && CURRENT_TASK()->user)
+		vm_flush_file_dirty(CURRENT_TASK()->user->vm, fp);
+
+	/*
+	 * rw lwext4 mounts keep delayed write-back enabled. Toggle it off once
+	 * to force pending filesystem buffers out, then restore the mount's
+	 * previous policy so subsequent writes keep the same behavior.
+	 */
+	ret = ext4_cache_write_back(path, false);
+	if (ret != EOK)
+		return -EIO;
+
+	if (sb && !(sb->s_flags & MS_RDONLY)) {
+		ret = ext4_cache_write_back(path, true);
+		if (ret != EOK)
+			return -EIO;
+	}
+
+	hdd_flush();
 	return 0;
 }
 
@@ -187,6 +224,7 @@ static const file_operations ext4_file_fops = {
 	.write = ext4_file_write,
 	.llseek = ext4_file_llseek,
 	.poll = ext4_file_poll,
+	.flush = ext4_file_flush,
 };
 
 static int ext4_dir_release(file *fp)

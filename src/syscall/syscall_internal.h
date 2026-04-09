@@ -149,19 +149,11 @@ int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s);
 int sys_setfsuid32(unsigned fsuid);
 int sys_setfsgid32(unsigned fsgid);
 int sys_wait4(int pid, int *status, int options, void *rusage);
-int sys_kill(int pid, int sig);
 int sys_brk(unsigned top);
 int sys_sched_yield();
 unsigned sys_alarm(unsigned seconds);
-int sys_pause();
-int sys_sigaction(int sig, void *act, void *oact);
-int sys_rt_sigreturn(void);
-int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize);
-int sys_sigprocmask(int how, void *set, void *oset);
-int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize);
 int sys_getrlimit(int resource, void *limit);
 int sys_setrlimit(int resource, void *limit);
-int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
 long sys_personality(unsigned int personality);
 int sys_getgroups(int size, unsigned *list);
 int sys_setgroups(int size, unsigned short *list);
@@ -175,6 +167,24 @@ int sys_set_thread_area(void *u_info);
 int sys_setitimer(int which, const struct itimerval *new_value,
 		  struct itimerval *old_value);
 int sys_getitimer(int which, struct itimerval *value);
+
+/*
+ * ps/ps_signal.c
+ */
+int sys_kill(int pid, int sig);
+int sys_pause();
+int sys_sigaction(int sig, void *act, void *oact);
+int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize);
+int sys_sigprocmask(int how, void *set, void *oset);
+int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize);
+int sys_sigreturn(void);
+int sys_rt_sigreturn(void);
+int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
+int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize);
+int sys_rt_sigtimedwait(const sigset_t *set, void *info,
+			const struct timespec *timeout, unsigned sigsetsize);
+int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo);
+int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize);
 
 /*
  * syscall_sys.c

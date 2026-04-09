@@ -219,6 +219,7 @@ STUB(fc, zero) STUB(fd, zero) STUB(fe, zero) STUB(ff, zero)
 .global switch_to_user_mode;
 switch_to_user_mode:
     cli;
+    cld;
     movl 4(%esp), %ecx
     movl 8(%esp), %edx
     mov $USER_DATA_SELECTOR, %ax; 
@@ -230,10 +231,12 @@ switch_to_user_mode:
     mov %esp, %eax; 
     pushl $USER_DATA_SELECTOR; 
     pushl %eax; 
-    pushf;
-    pop %ax;
-    or $0x200,%ax 
-    push %ax;
+    /*
+     * Start a freshly exec'd task with a clean user EFLAGS image.
+     * Inheriting the kernel's current flags can leak RF/NT/AC and other
+     * privileged state into ring 3, which userland does not expect.
+     */
+    pushl $0x202;
     push $USER_CODE_SELECTOR; 
     push $USER; 
     iret; 
@@ -275,6 +278,7 @@ syscall_handler:
     pushl %edi
         
     /* Set up kernel environment. */
+    cld    /* User mode may enter with DF set; kernel string ops require DF=0. */
     pushl %edx
     mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
@@ -323,5 +327,3 @@ ret_from_syscall:
     addl $12, %esp
         /* Return to caller. */
     iret
-
-

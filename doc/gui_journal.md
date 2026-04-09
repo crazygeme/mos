@@ -79,11 +79,17 @@ Status at stop:
 - `startx` now reaches a visible X screen.
 - X, `twm`, and `xterm` can all start under the current kernel.
 - A large black X cursor is visible, which confirms the graphics VT and framebuffer present path are alive.
-- A remaining short X watchdog timeout still exists in the non-debug path and needs a real performance or behavior fix rather than a debug timer stretch.
+- The original X server death on `SIGALRM` is fixed.
+- The remaining blockers are helper-process crashes in `xkbcomp` and `tradcpp0`/`cpp`, which degrade XKB and `xrdb` resource loading but do not prevent the X session itself from coming up.
 
 Fixes completed in this round:
 - Fixed `fork()` so child tasks do not inherit an already-armed real-time alarm from the parent.
-- Corrected the `rt_sigaction` userspace ABI layout to decode `handler, flags, restorer, mask` in the order Linux userspace expects.
+- Corrected the `rt_sigaction` userspace ABI layout to decode `handler, mask, flags, restorer` in the order Linux/i386 userspace expects.
+- Implemented `rt_sigreturn` support and an RT signal frame path for `SA_SIGINFO` handlers.
+- Fixed Linux/i386 signal delivery selection so MOS uses the RT frame only for `SA_SIGINFO`, not merely because a handler was installed via `rt_sigaction`.
+- Replaced the earlier synthetic VDSO-only legacy signal return path with the classic Linux/i386 inline on-stack `sigreturn` trampoline, which stopped X from returning into invalid code after `SIGALRM`.
+- Fixed legacy `sigreturn` context restore so the saved user data segments are restored alongside the general-purpose registers.
+- Moved signal delivery and signal-related syscalls into `src/ps/ps_signal.c`, leaving `syscall_proc.c` for non-signal process syscalls.
 - Extended `/dev/input/mice` compatibility:
   - added tty-style ioctls used by X mouse probe paths
   - implemented basic PS/2 command responses for reset, identify, sample-rate, resolution, enable, disable, and poll traffic
@@ -95,10 +101,17 @@ Fixes completed in this round:
   - readers wake blocked writers after draining data
   - socket wakeups now avoid re-queueing tasks that are not actually sleeping
 - Added verbose levels so heavy syscall tracing can be separated from lighter informational logging while debugging GUI startup.
+- Cleared the direction flag on syscall entry and on the fresh exec-to-user path so kernel/user string operations do not inherit a stale `DF=1`.
+- Stopped fresh `execve` entry from inheriting arbitrary kernel `EFLAGS`, and sanitized special control bits such as `RF`/`NT`/`AC`/`VM` before returning to ring 3 while still restoring the task's requested IOPL.
 
 Working conclusion:
-- The project moved from early startup failures into late X startup and interactive-session behavior.
-- The biggest remaining functional issue is a real short watchdog timeout in the X server startup path when running without the temporary timer stretch used during investigation.
+- The project moved from early startup failures into a working X session with remaining helper-process incompatibilities.
+- `xinit` is no longer blocked waiting for the X server; it is attached to a live session whose clients keep running normally.
+- The old X crash was caused by MOS signal ABI mismatches in the `SIGALRM` path used by the X server smart scheduler.
+- The current unresolved failures are:
+  - `xkbcomp`, which now crashes during early Xlib/glibc locale setup before it reaches its real keymap compilation logic
+  - `tradcpp0`/`cpp`, which still fail under `xrdb`, leaving `.Xresources` preprocessing incomplete
+- Current evidence rules out missing user stack mappings and bad user segment selectors for those helper crashes; the remaining issue appears to be lower-level user execution-state corruption on some helper process paths.
 
 Suggested next step:
-- Fix the remaining X startup watchdog path by reducing the guarded helper latency or by matching Linux signal/timer behavior more closely in that window.
+- Resume from the helper-process crash path rather than the old X-server timeout path, starting with `xkbcomp`'s early `XkbOpenDisplay` / glibc locale initialization and the corresponding low-level user-context restore/return machinery in MOS.

@@ -684,8 +684,6 @@ static void kinit_userspace()
 	const char *devault_argv[] = { "/sbin/init", NULL };
 	const char *default_envp[] = { "TERM=linux", NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
-	const char *test_sh_argv[] = { "/bin/sh", "/proc/tests/all_script",
-				       NULL };
 	const char *test_bash_argv[] = { "/bin/bash", "/proc/tests/all_script",
 					 NULL };
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
@@ -702,14 +700,9 @@ static void kinit_userspace()
 	}
 
 	if (TestControl.test) {
-		struct stat st;
-
-		argv = test_sh_argv;
+		argv = test_bash_argv;
 		envp = user_envp;
 		prepare_interactive_userspace(cur);
-
-		if (fs_stat("/bin/sh", &st) != 0)
-			argv = test_bash_argv;
 	}
 
 	printk("Now bringup first user process %s\n", argv[0]);

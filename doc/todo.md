@@ -5,7 +5,7 @@
 - [X] mount point
 - [X] 文件权限
 - [X] 用户
-- [ ] syscall 的返回值: 80%
+- [X] Posix alignment
 - [X] 内存权限
 - [X] scheduler 的效率
 - [X] 网络和 socket 接口
@@ -21,7 +21,7 @@
 - [X] unlink
 - [X] tty ioctl
 - [X] 文件路径最大值 4096
-- [ ] fcntl
+- [X] fcntl
 - [X] sys_stat, sys_lstat, sys_fstat的正确实现
 - [X] /dev 目录 和 /proc 目录
 - [X] 正确的 gettimeofday 实现

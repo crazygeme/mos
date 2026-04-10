@@ -71,11 +71,12 @@ static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 {
 	static uint8_t txbounce[NET_RX_MAX_FRAME];
 	nic_dev *nic = (nic_dev *)netif->state;
+	u16_t len;
 
 	if (!nic->send)
 		return ERR_IF;
 
-	u16_t len = pbuf_copy_partial(p, txbounce, sizeof(txbounce), 0);
+	len = pbuf_copy_partial(p, txbounce, sizeof(txbounce), 0);
 	if (nic->send(nic, txbounce, len) >= 0) {
 		g_tx_bytes += len;
 		g_tx_packets += 1;

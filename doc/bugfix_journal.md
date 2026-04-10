@@ -5,6 +5,98 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-10 — SSH `vim` burst, SSH `exit` hang, and nonblocking IPC semantics
+
+This round started with `vim` disconnecting over SSH and ended up exposing two
+separate POSIX-visible bugs: stream sockets treated temporary TCP backpressure
+as a hard write failure, and nonblocking anonymous pipes/PTYs reported EOF too
+eagerly instead of `EAGAIN`. The visible symptoms looked unrelated at first,
+but both surfaced through OpenSSH.
+
+### 1. `vim` over SSH failed on the first full-screen redraw
+
+- **Caught by:** manual SSH session using `vim`
+- **Symptom:** interactive shell traffic worked, but starting `vim` caused the
+  SSH session to drop during the first large terminal repaint.
+- **Root cause:** the TCP stream send path tried to enqueue one large write at
+  a time and treated lwIP `ERR_MEM` as a fatal send error. Under screen-sized
+  SSH packets, `tcp_write()` could temporarily reject the request because the
+  send buffer had less space than the whole payload.
+- **Fix:** in [sock.c](/home/zhengjia/project/mos/src/net/sock.c) and
+  [sock_msg.c](/home/zhengjia/project/mos/src/net/sock_msg.c), split TCP stream
+  writes into `tcp_sndbuf()`-sized chunks and retry blocking sends until space
+  is available instead of failing immediately. Keep the `tcp_sent` wakeup path
+  in `sock_cb.c` so blocked writers resume once ACKs free buffer space.
+
+### 2. SSH `exit` hung because OpenSSH's self-pipe saw false EOF
+
+- **Caught by:** manual SSH session exiting the remote shell
+- **Symptom:** the shell exited, but the SSH connection stayed open and the
+  server spun inside OpenSSH's `notify_done()` loop.
+- **Root cause:** MOS anonymous pipe reads returned `0` for an empty
+  nonblocking pipe even while writers were still open. OpenSSH drains its
+  SIGCHLD self-pipe with `while (read(...) != -1)`, so receiving `0` instead of
+  `-EAGAIN` made it loop forever on what looked like EOF.
+- **Fix:** in [pipe.c](/home/zhengjia/project/mos/src/fs/pipe.c), make
+  nonblocking reads return `-EAGAIN` when the pipe is empty but has live
+  writers, and reserve `0` for true EOF only. Also update pipe poll readiness
+  to report readable on buffered data or real EOF.
+
+### 3. PTYs had the same nonblocking-read mismatch
+
+- **Caught by:** follow-up review after fixing anonymous pipes
+- **Symptom:** PTY reads ignored `O_NONBLOCK`, and empty PTYs could not cleanly
+  distinguish "try again later" from real EOF.
+- **Root cause:** PTY master/slave read paths always called `cyb_getbuf(..., 1,
+  1)`, which forced blocking behavior and collapsed nonblocking semantics.
+- **Fix:** in [pts.c](/home/zhengjia/project/mos/src/dev/pts.c), teach both
+  master and slave read paths to honor `O_NONBLOCK`, return `-EAGAIN` on empty
+  PTYs with a live peer, and preserve `0` for peer-close EOF. PTY poll
+  readiness was also updated to treat EOF as readable.
+
+### 4. `sendmsg()` / `recvmsg()` had duplicated logic across AF_INET and AF_UNIX
+
+- **Caught by:** refactor after the bug fixes stabilized
+- **Symptom:** the generic and AF_UNIX message paths each had their own copies
+  of iovec sizing, scatter/gather ring-buffer copies, `MSG_DONTWAIT` checks,
+  and cmsg append logic, which made the bug fixes easy to apply inconsistently.
+- **Root cause:** message-socket helpers had grown independently in
+  `sock_msg.c` and `sock_un.c`.
+- **Fix:** factor shared helpers into the socket layer:
+  - in [sock.h](/home/zhengjia/project/mos/include/net/sock.h) and
+    [sock.c](/home/zhengjia/project/mos/src/net/sock.c), add `rx_iov_write()`,
+    `rx_iov_read()`, and `rx_discard()`
+  - in [sock_msg.c](/home/zhengjia/project/mos/src/net/sock_msg.c), expose
+    shared helpers for iovec total length, nonblocking flag handling, and cmsg
+    append
+  - in [sock_un.c](/home/zhengjia/project/mos/src/net/sock_un.c), reuse those
+    helpers instead of maintaining local duplicates
+
+### 5. Regression coverage was missing for this exact class of bug
+
+- **Caught by:** the need to make the SSH fixes stick
+- **Symptom:** nothing in the script suite directly checked the crucial
+  `-EAGAIN` versus EOF distinction for nonblocking pipes and PTYs.
+- **Root cause:** existing tests covered basic pipes and PTYs, but not the
+  OpenSSH-triggering edge case where an empty nonblocking endpoint must not
+  look like EOF while the writer side is still alive.
+- **Fix:** add [posix_nonblock_ipc.sh](/home/zhengjia/project/mos/test/posix_nonblock_ipc.sh),
+  which verifies:
+  - anonymous pipe nonblocking reads return `-EAGAIN` while the writer is open
+  - anonymous pipe reads return `0` only after writer close
+  - PTY master/slave reads follow the same rule
+
+### Result
+
+- Manual verification:
+  - `vim` now works over SSH
+  - remote `exit` now closes the SSH session correctly
+- Regression verification:
+  - `./run.sh kvm test logtofile`
+  - result: `rc=0`
+
+---
+
 ## 2026-04-10 — POSIX script-suite fixes from the long `./run.sh test` loop
 
 This round started as a hang in `posix_wait.sh` and ended with a full green

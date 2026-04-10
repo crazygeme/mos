@@ -16,6 +16,10 @@ unsigned rx_used(const mos_sock *sk);
 unsigned rx_free(const mos_sock *sk);
 unsigned rx_write(mos_sock *sk, const void *src, unsigned len);
 unsigned rx_read(mos_sock *sk, void *dst, unsigned len);
+unsigned rx_iov_write(mos_sock *sk, const struct iovec *iov, size_t iovlen);
+unsigned rx_iov_read(mos_sock *sk, const struct iovec *iov, size_t iovlen,
+		     unsigned limit);
+void rx_discard(mos_sock *sk, unsigned len);
 
 /* ── Blocking helpers (sock.c) ──────────────────────────────────────────── */
 
@@ -61,6 +65,10 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 /* ── Message operations (sock_msg.c) ────────────────────────────────────── */
 
+size_t sock_msg_iov_total_len(const struct msghdr *msg);
+int sock_msg_is_nonblock(int flags);
+void sock_msg_cmsg_append(struct msghdr *msg, size_t *off, int level, int type,
+			  const void *data, size_t dlen);
 int do_sendmsg(int fd, const struct msghdr *msg, int flags);
 int do_recvmsg(int fd, struct msghdr *msg, int flags);
 

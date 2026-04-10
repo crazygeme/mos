@@ -30,13 +30,18 @@ static int pipe_release(file *fp)
 static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
 	pipe_inode *n = fp->f_inode->i_private;
+	int blocking, nonblock;
 
 	if (!n->readonly)
 		return -1;
 
-	int ret = cyb_getbuf(n->buf, buf, (int)len, 1, 1);
+	nonblock = (fp->f_flag & O_NONBLOCK) != 0;
+	blocking = nonblock ? 0 : 1;
+	int ret = cyb_getbuf(n->buf, buf, (int)len, blocking, 1);
 	if (ret < 0)
 		return -EINTR;
+	if (nonblock && ret == 0 && cyb_writer_count(n->buf) > 0)
+		return -EAGAIN;
 	return (ssize_t)ret;
 }
 
@@ -56,7 +61,8 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 {
 	unsigned ready = 0;
-	if ((events & FS_POLL_READ) && !cyb_isempty(n->buf))
+	if ((events & FS_POLL_READ) &&
+	    (!cyb_isempty(n->buf) || cyb_writer_count(n->buf) == 0))
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_WRITE) && !cyb_isfull(n->buf))
 		ready |= FS_POLL_WRITE;

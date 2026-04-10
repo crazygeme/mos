@@ -60,8 +60,8 @@ static void fmt_iov(char *buf, const struct iovec *iov, size_t iovlen)
 
 /* ── Ancillary data (cmsg) helpers ───────────────────────────────────────── */
 
-static void cmsg_append(struct msghdr *msg, size_t *off, int level, int type,
-			const void *data, size_t dlen)
+void sock_msg_cmsg_append(struct msghdr *msg, size_t *off, int level, int type,
+			  const void *data, size_t dlen)
 {
 	size_t space = CMSG_SPACE(dlen);
 	if (*off + space > (size_t)msg->msg_controllen) {
@@ -85,22 +85,242 @@ static void cmsg_write(struct msghdr *msg, const mos_sock *sk)
 	size_t off = 0;
 
 	if (sk->cmsg_flags & SOCK_CMSG_TIMESTAMP)
-		cmsg_append(msg, &off, SOL_SOCKET, SO_TIMESTAMP, &sk->rx_stamp,
-			    sizeof(sk->rx_stamp));
+		sock_msg_cmsg_append(msg, &off, SOL_SOCKET, SO_TIMESTAMP,
+				     &sk->rx_stamp, sizeof(sk->rx_stamp));
 
 	if (sk->cmsg_flags & SOCK_CMSG_TTL)
-		cmsg_append(msg, &off, IPPROTO_IP, IP_TTL, &sk->rx_ttl,
-			    sizeof(int));
+		sock_msg_cmsg_append(msg, &off, IPPROTO_IP, IP_TTL,
+				     &sk->rx_ttl, sizeof(int));
 
 	if (sk->cmsg_flags & SOCK_CMSG_PKTINFO) {
 		struct in_pktinfo pi;
 		pi.ipi_ifindex = sk->rx_ifindex;
 		pi.ipi_spec_dst = sk->rx_dst;
 		pi.ipi_addr = sk->rx_dst;
-		cmsg_append(msg, &off, IPPROTO_IP, IP_PKTINFO, &pi, sizeof(pi));
+		sock_msg_cmsg_append(msg, &off, IPPROTO_IP, IP_PKTINFO, &pi,
+				     sizeof(pi));
 	}
 
 	msg->msg_controllen = off;
+}
+
+/* ── Message send/recv helpers ──────────────────────────────────────────── */
+
+size_t sock_msg_iov_total_len(const struct msghdr *msg)
+{
+	size_t i;
+	size_t total = 0;
+
+	for (i = 0; i < msg->msg_iovlen; i++)
+		total += msg->msg_iov[i].iov_len;
+	return total;
+}
+
+int sock_msg_is_nonblock(int flags)
+{
+	return (flags & MSG_DONTWAIT) != 0;
+}
+
+static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
+{
+	size_t sent = 0;
+	size_t i;
+	int nonblock = sock_msg_is_nonblock(flags);
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+
+	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
+		return -ENOTCONN;
+
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		const char *base = (const char *)msg->msg_iov[i].iov_base;
+		size_t left = msg->msg_iov[i].iov_len;
+
+		while (left > 0) {
+			u16_t avail = sk->tcp ? tcp_sndbuf(sk->tcp) : 0;
+			u16_t chunk;
+			err_t e;
+
+			if (sk->err)
+				return sent > 0 ? (int)sent : sk->err;
+			if (sk->state != SS_CONNECTED &&
+			    sk->state != SS_DISCONNECTING)
+				return sent > 0 ? (int)sent : -ENOTCONN;
+
+			if (avail == 0) {
+				if (nonblock)
+					return sent > 0 ? (int)sent : -EAGAIN;
+				if (time_now_ms() > deadline)
+					return sent > 0 ? (int)sent :
+							 -ETIMEDOUT;
+				tcp_output(sk->tcp);
+				if (sock_wait(sk, deadline) < 0)
+					return sent > 0 ? (int)sent : -EINTR;
+				continue;
+			}
+
+			chunk = avail;
+			if (chunk > left)
+				chunk = (u16_t)left;
+			e = tcp_write(sk->tcp, base, chunk,
+				      TCP_WRITE_FLAG_COPY);
+			if (e == ERR_OK) {
+				base += chunk;
+				left -= chunk;
+				sent += chunk;
+				tcp_output(sk->tcp);
+				continue;
+			}
+			if (e != ERR_MEM)
+				return sent > 0 ? (int)sent : -EIO;
+			if (nonblock)
+				return sent > 0 ? (int)sent : -EAGAIN;
+			if (time_now_ms() > deadline)
+				return sent > 0 ? (int)sent : -ETIMEDOUT;
+			tcp_output(sk->tcp);
+			if (sock_wait(sk, deadline) < 0)
+				return sent > 0 ? (int)sent : -EINTR;
+		}
+	}
+
+	return (int)sent;
+}
+
+static struct pbuf *msg_alloc_payload(pbuf_layer layer,
+				      const struct msghdr *msg, size_t totlen)
+{
+	struct pbuf *p;
+	size_t i;
+	u16_t off = 0;
+
+	p = pbuf_alloc(layer, (u16_t)totlen, PBUF_RAM);
+	if (!p)
+		return NULL;
+
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		memcpy((char *)p->payload + off, msg->msg_iov[i].iov_base,
+		       msg->msg_iov[i].iov_len);
+		off += (u16_t)msg->msg_iov[i].iov_len;
+	}
+	return p;
+}
+
+static int sock_raw_send_hdrincl_msg(const struct msghdr *msg, size_t totlen)
+{
+	char *flat;
+	size_t i;
+	size_t off = 0;
+	int ret;
+
+	flat = zalloc(totlen);
+	if (!flat)
+		return -ENOBUFS;
+
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		memcpy(flat + off, msg->msg_iov[i].iov_base,
+		       msg->msg_iov[i].iov_len);
+		off += msg->msg_iov[i].iov_len;
+	}
+	ret = raw_send_hdrincl(flat, (unsigned)totlen);
+	free(flat);
+	return ret;
+}
+
+static int sock_send_datagram(mos_sock *sk, const struct msghdr *msg,
+			      const struct sockaddr_in *to, size_t totlen)
+{
+	pbuf_layer layer = (sk->type == SOCK_RAW) ? PBUF_IP : PBUF_TRANSPORT;
+	struct pbuf *p;
+	err_t e;
+
+	if (sk->type == SOCK_RAW && sk->hdrincl)
+		return sock_raw_send_hdrincl_msg(msg, totlen);
+
+	p = msg_alloc_payload(layer, msg, totlen);
+	if (!p)
+		return -ENOBUFS;
+
+	if (sk->type == SOCK_RAW) {
+		ip_addr_t ip;
+		const struct sockaddr_in *dst = to ? to : &sk->peer;
+		ip4_addr_set_u32(ip_2_ip4(&ip), dst->sin_addr.s_addr);
+		e = raw_sendto(sk->raw, p, &ip);
+	} else if (to) {
+		ip_addr_t ip;
+		ip4_addr_set_u32(ip_2_ip4(&ip), to->sin_addr.s_addr);
+		e = udp_sendto(sk->udp, p, &ip, lwip_ntohs(to->sin_port));
+	} else {
+		e = udp_send(sk->udp, p);
+	}
+
+	pbuf_free(p);
+	return e == ERR_OK ? (int)totlen : -EIO;
+}
+
+static int sock_recv_wait_dgram(mos_sock *sk, int flags, unsigned long deadline)
+{
+	while (rx_used(sk) < sizeof(u16_t)) {
+		if (sk->err)
+			return sk->err;
+		if (sock_msg_is_nonblock(flags))
+			return -EAGAIN;
+		if (time_now_ms() > deadline)
+			return -ETIMEDOUT;
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
+	}
+	return 0;
+}
+
+static int sock_recv_wait_stream(mos_sock *sk, int flags,
+				 unsigned long deadline)
+{
+	while (rx_used(sk) == 0) {
+		if (sk->err)
+			return sk->err;
+		if (sk->state == SS_DISCONNECTING)
+			return 0;
+		if (sk->state == SS_UNCONNECTED)
+			return -ENOTCONN;
+		if (sock_msg_is_nonblock(flags))
+			return -EAGAIN;
+		if (time_now_ms() > deadline)
+			return -ETIMEDOUT;
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
+	}
+	return 1;
+}
+
+static unsigned sock_recvmsg_dgram(mos_sock *sk, struct msghdr *msg)
+{
+	u16_t dlen;
+	unsigned delivered;
+	unsigned remaining;
+
+	rx_read(sk, &dlen, sizeof(dlen));
+	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen,
+				(unsigned)dlen);
+	remaining = (unsigned)dlen - delivered;
+	rx_discard(sk, remaining);
+
+	if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)) {
+		memcpy(msg->msg_name, &sk->rx_src, sizeof(struct sockaddr_in));
+		msg->msg_namelen = sizeof(struct sockaddr_in);
+	}
+	msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
+	return delivered;
+}
+
+static unsigned sock_recvmsg_stream(mos_sock *sk, struct msghdr *msg)
+{
+	unsigned delivered =
+		rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, rx_used(sk));
+	if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)) {
+		memcpy(msg->msg_name, &sk->peer, sizeof(struct sockaddr_in));
+		msg->msg_namelen = sizeof(struct sockaddr_in);
+	}
+	msg->msg_flags = 0;
+	return delivered;
 }
 
 /* ── do_sendmsg ──────────────────────────────────────────────────────────── */
@@ -110,6 +330,8 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 	(void)flags;
 	mos_sock *sk = fd_to_sock(fd);
 	int ret;
+	size_t totlen;
+	const struct sockaddr_in *to;
 
 	if (!sk) {
 		ret = -ENOTSOCK;
@@ -124,82 +346,15 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 		goto log;
 	}
 
-	size_t totlen = 0;
-	size_t i;
-	for (i = 0; i < msg->msg_iovlen; i++)
-		totlen += msg->msg_iov[i].iov_len;
-
-	const struct sockaddr_in *to =
-		(const struct sockaddr_in *)msg->msg_name;
+	totlen = sock_msg_iov_total_len(msg);
+	to = (const struct sockaddr_in *)msg->msg_name;
 
 	if (sk->type == SOCK_STREAM) {
-		if (sk->state != SS_CONNECTED &&
-		    sk->state != SS_DISCONNECTING) {
-			ret = -ENOTCONN;
-			goto log;
-		}
-		size_t sent = 0;
-		for (i = 0; i < msg->msg_iovlen; i++) {
-			err_t e = tcp_write(sk->tcp, msg->msg_iov[i].iov_base,
-					    (u16_t)msg->msg_iov[i].iov_len,
-					    TCP_WRITE_FLAG_COPY);
-			if (e != ERR_OK) {
-				ret = sent > 0 ? (int)sent : -EIO;
-				goto log;
-			}
-			sent += msg->msg_iov[i].iov_len;
-		}
-		tcp_output(sk->tcp);
-		ret = (int)sent;
+		ret = sock_tcp_send_iov(sk, msg, flags);
 		goto log;
 	}
 
-	/* UDP / RAW */
-	pbuf_layer layer = (sk->type == SOCK_RAW) ? PBUF_IP : PBUF_TRANSPORT;
-	struct pbuf *p = pbuf_alloc(layer, (u16_t)totlen, PBUF_RAM);
-	if (!p) {
-		ret = -ENOBUFS;
-		goto log;
-	}
-	u16_t off = 0;
-	for (i = 0; i < msg->msg_iovlen; i++) {
-		memcpy((char *)p->payload + off, msg->msg_iov[i].iov_base,
-		       msg->msg_iov[i].iov_len);
-		off += (u16_t)msg->msg_iov[i].iov_len;
-	}
-
-	err_t e;
-	if (sk->type == SOCK_RAW && sk->hdrincl) {
-		pbuf_free(p);
-		char *flat = zalloc(totlen);
-		if (!flat) {
-			ret = -ENOBUFS;
-			goto log;
-		}
-		size_t foff = 0;
-		for (i = 0; i < msg->msg_iovlen; i++) {
-			memcpy(flat + foff, msg->msg_iov[i].iov_base,
-			       msg->msg_iov[i].iov_len);
-			foff += msg->msg_iov[i].iov_len;
-		}
-		ret = raw_send_hdrincl(flat, (unsigned)totlen);
-		free(flat);
-		goto log;
-	} else if (sk->type == SOCK_RAW) {
-		ip_addr_t ip;
-		const struct sockaddr_in *dst = to ? to : &sk->peer;
-		ip4_addr_set_u32(ip_2_ip4(&ip), dst->sin_addr.s_addr);
-		e = raw_sendto(sk->raw, p, &ip);
-	} else if (to) {
-		ip_addr_t ip;
-		ip4_addr_set_u32(ip_2_ip4(&ip), to->sin_addr.s_addr);
-		u16_t port = lwip_ntohs(to->sin_port);
-		e = udp_sendto(sk->udp, p, &ip, port);
-	} else {
-		e = udp_send(sk->udp, p);
-	}
-	pbuf_free(p);
-	ret = e == ERR_OK ? (int)totlen : -EIO;
+	ret = sock_send_datagram(sk, msg, to, totlen);
 
 log:
 	if (TEST_LOG(TEST_LOG_INFO)) {
@@ -225,8 +380,11 @@ log:
 int do_recvmsg(int fd, struct msghdr *msg, int flags)
 {
 	mos_sock *sk = fd_to_sock(fd);
-	size_t i;
 	unsigned delivered;
+	size_t total_len;
+	unsigned long deadline;
+	int wait_ret;
+
 	if (!sk) {
 		delivered = -ENOTSOCK;
 		goto done;
@@ -236,105 +394,31 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 		goto done;
 	}
 
-	size_t total_len = 0;
-	for (i = 0; i < msg->msg_iovlen; i++)
-		total_len += msg->msg_iov[i].iov_len;
+	total_len = sock_msg_iov_total_len(msg);
 	if (total_len == 0) {
 		us_to_timeval(time_wall_us(), &sk->rx_stamp);
 		delivered = 0;
 		goto done;
 	}
 
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
-		while (rx_used(sk) < sizeof(u16_t)) {
-			if (sk->err) {
-				delivered = sk->err;
-				goto done;
-			}
-			if (flags & MSG_DONTWAIT) {
-				delivered = -EAGAIN;
-				goto done;
-			}
-			if (time_now_ms() > deadline) {
-				delivered = -ETIMEDOUT;
-				goto done;
-			}
-			if (sock_wait(sk, deadline) < 0) {
-				delivered = -EINTR;
-				goto done;
-			}
+		wait_ret = sock_recv_wait_dgram(sk, flags, deadline);
+		if (wait_ret < 0) {
+			delivered = (unsigned)wait_ret;
+			goto done;
 		}
-		u16_t dlen;
-		rx_read(sk, &dlen, sizeof(dlen));
-
-		unsigned remaining = (unsigned)dlen;
-		delivered = 0;
-		for (i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
-			unsigned n = (unsigned)msg->msg_iov[i].iov_len <
-						     remaining ?
-					     (unsigned)msg->msg_iov[i].iov_len :
-					     remaining;
-			rx_read(sk, msg->msg_iov[i].iov_base, n);
-			delivered += n;
-			remaining -= n;
-		}
-		while (remaining--) {
-			char tmp;
-			rx_read(sk, &tmp, 1);
-		}
-
-		if (msg->msg_name &&
-		    msg->msg_namelen >= sizeof(struct sockaddr_in)) {
-			memcpy(msg->msg_name, &sk->rx_src,
-			       sizeof(struct sockaddr_in));
-			msg->msg_namelen = sizeof(struct sockaddr_in);
-		}
-		msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
+		delivered = sock_recvmsg_dgram(sk, msg);
 		goto done;
 	}
 
-	/* TCP: stream scatter-read */
-	while (rx_used(sk) == 0) {
-		if (sk->err) {
-			delivered = sk->err;
-			goto done;
-		}
-		if (sk->state == SS_DISCONNECTING) {
-			delivered = 0;
-			goto done;
-		}
-		if (sk->state == SS_UNCONNECTED) {
-			delivered = -ENOTCONN;
-			goto done;
-		}
-		if (flags & MSG_DONTWAIT) {
-			delivered = -EAGAIN;
-			goto done;
-		}
-		if (time_now_ms() > deadline) {
-			delivered = -ETIMEDOUT;
-			goto done;
-		}
-		if (sock_wait(sk, deadline) < 0) {
-			delivered = -EINTR;
-			goto done;
-		}
+	wait_ret = sock_recv_wait_stream(sk, flags, deadline);
+	if (wait_ret <= 0) {
+		delivered = (unsigned)(wait_ret < 0 ? wait_ret : 0);
+		goto done;
 	}
-	delivered = 0;
-	for (i = 0; i < msg->msg_iovlen; i++) {
-		unsigned n = rx_read(sk, msg->msg_iov[i].iov_base,
-				     (unsigned)msg->msg_iov[i].iov_len);
-		delivered += n;
-		if (n < (unsigned)msg->msg_iov[i].iov_len)
-			break;
-	}
-	if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_in)) {
-		memcpy(msg->msg_name, &sk->peer, sizeof(struct sockaddr_in));
-		msg->msg_namelen = sizeof(struct sockaddr_in);
-	}
-	msg->msg_flags = 0;
+	delivered = sock_recvmsg_stream(sk, msg);
 
 done:
 	if (sk && (int)delivered >= 0 && sk->domain != AF_UNIX)

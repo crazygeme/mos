@@ -179,19 +179,19 @@ int sys_sigaction(int sig, void *act, void *oact)
 }
 
 /*
- * glibc 2.3.2 on Linux/i386 passes rt_sigaction using the userspace layout:
- *   handler, sigset_t mask, flags, restorer
+ * Linux/i386 rt_sigaction uses the kernel layout:
+ *   handler, flags, restorer, mask
  *
- * The sigsetsize argument is still 8 on this ABI.  We only support signals
- * 1..31, so we translate the low word and zero the remaining words on
- * writeback.
+ * glibc 2.3.2 passes sigsetsize = 8 on this ABI, so the kernel-visible mask
+ * payload is just two 32-bit words even though libc's userspace sigset_t is
+ * larger. We only support signals 1..31, so we preserve the low word and
+ * clear the high word on writeback.
  */
-#define RT_SIGSET_WORDS 32
 struct rt_sigaction_user {
 	void (*sa_handler)(int);
 	unsigned long sa_flags;
 	void (*sa_restorer)(void);
-	unsigned long sa_mask[RT_SIGSET_WORDS];
+	unsigned long sa_mask[2];
 };
 
 typedef struct _rt_siginfo_user {
@@ -271,18 +271,18 @@ int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 		return -EINVAL;
 	if (sig == SIGKILL || sig == SIGSTOP)
 		return -EINVAL;
+	if (sigsetsize != 8)
+		return -EINVAL;
 
 	sa = &cur->signal->sig_handlers[sig];
 
 	if (oact) {
 		struct rt_sigaction_user *u = (struct rt_sigaction_user *)oact;
-		int i;
 		u->sa_handler = sa->sa_handler;
 		u->sa_flags = sa->sa_flags;
 		u->sa_restorer = sa->sa_restorer;
-		for (i = 0; i < RT_SIGSET_WORDS; i++)
-			u->sa_mask[i] = 0;
 		u->sa_mask[0] = sa->sa_mask;
+		u->sa_mask[1] = 0;
 	}
 	if (act) {
 		struct rt_sigaction_user *u = (struct rt_sigaction_user *)act;

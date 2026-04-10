@@ -5,6 +5,118 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-10 — POSIX script-suite fixes from the long `./run.sh test` loop
+
+This round started as a hang in `posix_wait.sh` and ended with a full green
+run of the `/proc/tests/all_script` suite. The failures were mostly not hard
+crashes; they were quiet POSIX-visible mismatches that only became obvious once
+ the script suite was run continuously.
+
+### 1. `waitpid()` and `sleep 0` combined into a false hang
+
+- **Caught by:** `test/posix_wait.sh`
+- **Symptom:** the suite could get stuck forever in the wait test.
+- **Root cause:** two issues compounded:
+  - `waitpid(..., WNOHANG)` treated `WNOHANG` like an exact option value
+    instead of a bit flag
+  - `nanosleep()` with zero duration blocked instead of returning immediately
+- **Fix:** in `src/ps/ps_syscall.c`, make `WNOHANG` checks use
+  `options & WNOHANG` and replace stale child-count checks with live scans of
+  the parent/child tree; in `src/syscall/syscall_sys.c`, make zero-length
+  `nanosleep()` return immediately.
+
+### 2. Unlinking an open file broke active file descriptors
+
+- **Caught by:** `test/posix_fcntl.sh`, `test/posix_proc.sh`,
+  `test/posix_fd_pass.sh`, and related shell heredoc/temp-file use
+- **Symptom:** userspace saw `Input/output error` when a temp file was unlinked
+  while still open.
+- **Root cause:** the ext4-backed path removed the live file immediately even
+  when processes still held open descriptors to it.
+- **Fix:** add delayed unlink semantics:
+  - add `f_state` plus `FS_FILE_UNLINK_ON_CLOSE` in `include/fs/fs.h`
+  - in `src/syscall/syscall_fs.c`, rename open unlinked files to a hidden
+    tombstone and retarget all matching open file objects
+  - in `src/fs/root.c`, remove the tombstone during final file release
+
+### 3. Append, positional I/O, and inode size tracking were incomplete
+
+- **Caught by:** `test/posix_fcntl.sh`
+- **Symptom:** append writes could overwrite existing bytes, and positional I/O
+  could disturb the live file cursor or backend cursor.
+- **Root cause:** `pread()` / `pwrite()` used the file position incorrectly,
+  and ext4 writes did not fully honor `O_APPEND` or refresh inode size.
+- **Fix:** in `src/fs/fs.c`, make `pread()` and `pwrite()` operate on a
+  temporary position and restore the underlying seek position; in
+  `src/fs/root.c`, make append writes use EOF and update inode size on growth.
+
+### 4. `RLIMIT_FSIZE`, `umask`, and `creat()` semantics were too weak
+
+- **Caught by:** `test/posix_rlimit.sh` and `test/posix_umask.sh`
+- **Symptom:**
+  - writes past `RLIMIT_FSIZE` succeeded instead of failing with `EFBIG`
+  - files and directories ignored the process umask on creation
+  - `creat()` bypassed the normal open/create path
+- **Root cause:** those paths were either stubs or incomplete shortcuts.
+- **Fix:**
+  - in `src/fs/fs.c`, enforce `RLIMIT_FSIZE` in write paths
+  - in `src/syscall/syscall_proc.c`, implement `getrlimit()` by delegating to
+    `ugetrlimit()`
+  - in `src/fs/fs.c` and `src/syscall/syscall_fs.c`, apply umask to newly
+    created files and directories
+  - in `src/syscall/syscall_fs.c`, route `creat()` through the normal
+    `fs_open(..., O_CREAT | O_TRUNC, mode)` path
+  - in `src/fs/root.c`, explicitly fix ext4 directory mode after creation
+
+### 5. Legacy `signal(2)` and self-signal delivery were missing edge behavior
+
+- **Caught by:** `test/posix_signal.sh`
+- **Symptom:** shell trap/self-signal cases did not behave like normal Unix
+  signal delivery.
+- **Root cause:**
+  - syscall 48 (`signal`) was still unimplemented
+  - self-directed `kill(getpid(), sig)` did not reliably deliver soon enough
+    for the shell trap expectations used by the test harness
+- **Fix:**
+  - implement `signal(2)` in `src/ps/ps_signal.c` and register it in
+    `src/syscall/syscall.c`
+  - for self-directed unmasked signals, trigger delivery immediately on the
+    current user return frame in `src/ps/ps_signal.c`
+  - update `test/posix_signal.sh` to signal the current shell via a helper
+    process using `PPID`, which is stable under the wrapper script model
+
+### 6. Broken pipes returned `EPIPE` but did not raise `SIGPIPE`
+
+- **Caught by:** `test/posix_pipe.sh`
+- **Symptom:** shell pipelines such as `cat file | head -n 1` failed even
+  though the pipe buffer code detected the broken-pipe condition.
+- **Root cause:** pipe writes returned `-EPIPE` but never queued `SIGPIPE` for
+  the writer.
+- **Fix:** in `src/fs/pipe.c`, when `cyb_putbuf()` reports `-EPIPE`, queue
+  `SIGPIPE` for the current user task.
+
+### 7. A couple of test scripts were asserting the wrong shell semantics
+
+- **Caught by:** `test/posix_environ.sh` and `test/posix_signal.sh`
+- **Symptom:** some failures were in the tests themselves rather than the
+  kernel.
+- **Root cause:**
+  - `${EMPTY_EXPORT:-notset}` treats an empty variable as defaulted, so it was
+    not a valid check for "exported but empty"
+  - `$$` under the wrapped script execution model was not the right stable way
+    to target the shell process under test
+- **Fix:**
+  - in `test/posix_environ.sh`, check the actual variable value directly
+  - in `test/posix_signal.sh`, use a helper shell that signals `PPID`
+
+### Result
+
+- Final verification command:
+  - `./run.sh test curses logtofile`
+- Final result:
+  - `Total 40 Cases, 0 Failed`
+
+---
 
 ## 2026-04-07 — Page-fault VMA lookup now uses a Linux-style `mmap_cache`
 
@@ -53,6 +165,8 @@ Each entry explains the reasoning so the same mistake is not repeated.
   existing VMA lookup, on-demand paging, and COW model, while also making file
   reads and mmap faults converge on one cache.
 
+---
+
 ## 2026-04-07 — Shared-mapping cleanup after the boot/MM fixes
 
 ### Symptom
@@ -87,6 +201,8 @@ Each entry explains the reasoning so the same mistake is not repeated.
 - The file fault path is closer to Linux: use the filesystem page cache when
   available, and keep the local fallback strictly as a compatibility escape
   hatch rather than a shadow cache.
+
+---
 
 ## 2026-04-07 — Generic block-device lookup for ext mounts
 

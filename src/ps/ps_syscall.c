@@ -89,6 +89,40 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	vm_free(task, 1);
 }
 
+static int has_child_unsafe(task_struct *parent, unsigned pid)
+{
+	struct rb_node *node;
+
+	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+
+		if (task->parent != parent)
+			continue;
+		if (pid && task->psid != pid)
+			continue;
+		return 1;
+	}
+
+	return 0;
+}
+
+static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
+{
+	struct rb_node *node;
+
+	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+
+		if (task->parent != parent || !task->user)
+			continue;
+		if (task->user->group_id != pgrp)
+			continue;
+		return 1;
+	}
+
+	return 0;
+}
+
 /*
  * Static helpers — system shutdown
  */
@@ -268,13 +302,13 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 
 		task = NULL;
 
-		if (pid && ps_find_process_unsafe(pid) == NULL) {
+		if (pid && !has_child_unsafe(cur, pid)) {
 			ret = -ECHILD;
 			goto done;
 		}
 
 		/* No specific pid requested and no children at all. */
-		if (!pid && cur->nchildren == 0) {
+		if (!pid && !has_child_unsafe(cur, 0)) {
 			ret = -ECHILD;
 			goto done;
 		}
@@ -289,7 +323,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		/*
 		 * Returns immediately if no child has exited yet.
 		 */
-		if (options == WNOHANG) {
+		if (options & WNOHANG) {
 			ret = 0;
 			goto done;
 		}
@@ -318,7 +352,6 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 	task_struct *cur = CURRENT_TASK();
 	task_struct *task = NULL;
 	list_entry *dying_task_entry;
-	struct rb_node *node;
 	int ret = -1;
 	int irq;
 	int has_group_child = 0;
@@ -353,16 +386,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		}
 
 		task = NULL;
-		node = rb_first(&control.mgr_queue);
-		while (node) {
-			task_struct *t = rb_entry(node, task_struct, mgr_rb);
-			node = rb_next(node);
-			if (t->parent->psid == cur->psid && t->user &&
-			    t->user->group_id == pgrp) {
-				has_group_child = 1;
-				break;
-			}
-		}
+		has_group_child = has_pgrp_child_unsafe(cur, pgrp);
 
 		if (!has_group_child) {
 			ret = -ECHILD;
@@ -375,7 +399,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			goto done;
 		}
 
-		if (options == WNOHANG) {
+		if (options & WNOHANG) {
 			ret = 0;
 			goto done;
 		}

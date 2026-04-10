@@ -27,6 +27,9 @@ unsigned fs_write_size = 0;
 static int ext4_file_release(file *fp)
 {
 	ext4_file *f = fp->f_inode->i_private;
+
+	if ((fp->f_state & FS_FILE_UNLINK_ON_CLOSE) && fp->f_name)
+		ext4_fremove(fp->f_name);
 	ext4_fclose(f);
 	free(f);
 	free(fp->f_inode);
@@ -61,16 +64,21 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 {
 	ext4_file *f = fp->f_inode->i_private;
 	size_t wcnt = 0;
+	loff_t write_pos = *pos;
 
 	if (fp->f_inode)
 		fs_page_cache_invalidate(fp->f_inode);
-	if ((loff_t)ext4_ftell(f) != *pos)
-		ext4_fseek(f, *pos, SEEK_SET);
+	if (fp->f_flag & O_APPEND)
+		write_pos = (loff_t)f->fsize;
+	if ((loff_t)ext4_ftell(f) != write_pos)
+		ext4_fseek(f, write_pos, SEEK_SET);
 	int ret = ext4_fwrite(f, buf, size, &wcnt);
 	fs_write_size += wcnt;
 	if (ret != EOK)
 		return -1;
-	*pos += wcnt;
+	*pos = write_pos + (loff_t)wcnt;
+	if (fp->f_inode && (uint64_t)(*pos) > fp->f_inode->i_size)
+		fp->f_inode->i_size = (uint64_t)(*pos);
 	if (fp->f_name) {
 		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(fp->f_name, t);
@@ -875,6 +883,7 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 	unsigned uid = current->user->uid;
 	unsigned gid = current->user->gid;
 	int ret;
+	ext4_dir dir;
 	ext4_full_path(sb, path, full);
 	ret = ext4_parent_dir_check(full);
 	if (ret == EOK)
@@ -884,6 +893,10 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
 		ext4_chown(full, uid, gid);
+		if (ext4_dir_open(&dir, full) == EOK) {
+			ext4_fchmod(&dir.f, S_IFDIR | (mode & 0777));
+			ext4_dir_close(&dir);
+		}
 	}
 	name_put(full);
 	return ret ? -ret : 0;

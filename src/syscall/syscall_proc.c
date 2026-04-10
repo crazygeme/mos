@@ -627,7 +627,7 @@ int sys_getrlimit(int resource, void *limit)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getrlimit\n");
 
-	return -1;
+	return sys_ugetrlimit(resource, limit);
 }
 
 long sys_personality(unsigned int personality)

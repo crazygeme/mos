@@ -61,13 +61,14 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 {
 	unsigned ready = 0;
-	if ((events & FS_POLL_READ) &&
-	    (!cyb_isempty(n->buf) || cyb_writer_count(n->buf) == 0))
+	if ((events & FS_POLL_READ) && !cyb_isempty(n->buf))
 		ready |= FS_POLL_READ;
+	if ((events & FS_POLL_HUP) && cyb_writer_count(n->buf) == 0)
+		ready |= FS_POLL_HUP;
 	if ((events & FS_POLL_WRITE) && !cyb_isfull(n->buf))
 		ready |= FS_POLL_WRITE;
 	if (!ready && pt) {
-		if (events & FS_POLL_READ)
+		if (events & (FS_POLL_READ | FS_POLL_HUP))
 			cyb_poll_read(n->buf, pt);
 		if (events & FS_POLL_WRITE)
 			cyb_poll_write(n->buf, pt);
@@ -78,7 +79,7 @@ static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 static unsigned pipe_read_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	return pipe_poll_common(n, events & FS_POLL_READ, pt);
+	return pipe_poll_common(n, events & (FS_POLL_READ | FS_POLL_HUP), pt);
 }
 
 static unsigned pipe_write_poll(file *fp, unsigned events, poll_table *pt)

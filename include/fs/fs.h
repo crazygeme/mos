@@ -149,9 +149,12 @@ struct _file {
 	unsigned f_count;
 	unsigned f_mode; /* O_RDONLY / O_WRONLY / O_RDWR (set by fs_open) */
 	unsigned f_flag; /* file status flags, including O_NONBLOCK */
+	unsigned f_state;
 	char *f_name;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
+
+#define FS_FILE_UNLINK_ON_CLOSE 0x1u
 
 struct linux_dirent {
 	unsigned long d_ino; /* Inode number */

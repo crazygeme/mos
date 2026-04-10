@@ -12,6 +12,7 @@
 #include <fs/fcntl.h>
 #include <fs/mount.h>
 #include <hw/hdd.h>
+#include <hw/time.h>
 #include <lib/klib.h>
 #include <dev/dev.h>
 #include <config.h>
@@ -97,6 +98,75 @@ static int rooted_path_to_cwd(task_struct *cur, const char *path, char *cwd)
 	strcpy(cwd, path + root_len);
 	trim_trailing_slash(cwd);
 	return 0;
+}
+
+typedef struct {
+	const char *path;
+	const char *newpath;
+	int found;
+} open_path_ctx;
+
+static void mark_open_unlinked_files(task_struct *task, void *opaque)
+{
+	open_path_ctx *ctx = opaque;
+	int i;
+
+	if (!task || !task->fds)
+		return;
+
+	for (i = 0; i < MAX_FD; i++) {
+		file *fp = task->fds[i];
+
+		if (!fp || !fp->f_name || strcmp(fp->f_name, ctx->path) != 0)
+			continue;
+		ctx->found = 1;
+		if (ctx->newpath) {
+			free(fp->f_name);
+			fp->f_name = strdup(ctx->newpath);
+			fp->f_state |= FS_FILE_UNLINK_ON_CLOSE;
+		}
+	}
+}
+
+static int unlink_open_file(task_struct *cur, const char *path)
+{
+	static unsigned tombstone_seq;
+	open_path_ctx ctx;
+	char *newpath;
+	const char *slash;
+	unsigned seq;
+	int ret;
+
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.path = path;
+	ps_enum_all(mark_open_unlinked_files, &ctx);
+	if (!ctx.found)
+		return -ENOENT;
+
+	newpath = name_get();
+	slash = strrchr(path, '/');
+	seq = ++tombstone_seq;
+
+	if (!slash || slash == path) {
+		sprintf(newpath, "/.mos-unlinked-%u-%u", CURRENT_TASK()->psid,
+			seq);
+	} else {
+		unsigned dir_len = (unsigned)(slash - path);
+
+		memcpy(newpath, path, dir_len);
+		newpath[dir_len] = '\0';
+		sprintf(newpath + dir_len, "/.mos-unlinked-%u-%u",
+			CURRENT_TASK()->psid, seq);
+	}
+
+	ret = vfs_rename(cur->root, path, newpath);
+	if (ret == 0) {
+		ctx.newpath = newpath;
+		ps_enum_all(mark_open_unlinked_files, &ctx);
+	}
+
+	name_put(newpath);
+	return ret;
 }
 
 static int do_stat(const char *func, const char *name, struct stat *buf,
@@ -439,9 +509,11 @@ int sys_mkdir(const char *path, unsigned mode)
 	char *name = name_get();
 	task_struct *cur = CURRENT_TASK();
 	int ret;
+	unsigned masked_mode;
 
 	resolve_path(path, name);
-	ret = vfs_mkdir(cur->root, name, mode);
+	masked_mode = mode & ~(cur->umask & 0777U);
+	ret = vfs_mkdir(cur->root, name, masked_mode);
 
 	if (TestControl.verbos)
 		klog("mkdir(%s, %d) = %d\n", name, mode, ret);
@@ -468,16 +540,14 @@ int sys_rmdir(const char *path)
 
 int sys_creat(const char *path, unsigned mode)
 {
-	file *fp = NULL;
+	int fd;
 	if (TestControl.verbos)
 		klog("creat(%s, %d)\n", path, mode);
 
-	fp = vfs_open(current->root, path, O_CREAT | O_WRONLY | O_TRUNC);
-	if (!fp)
-		return -ENOENT;
-
-	fs_put_file(fp);
-	return 0;
+	fd = fs_open(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
+	if (fd < 0)
+		return fd;
+	return fs_close(fd);
 }
 
 int sys_link(const char *path1, const char *path2)
@@ -542,7 +612,9 @@ int sys_unlink(const char *_name)
 		goto done;
 	}
 
-	ret = vfs_unlink(cur->root, name);
+	ret = unlink_open_file(cur, name);
+	if (ret == -ENOENT)
+		ret = vfs_unlink(cur->root, name);
 done:
 	if (TestControl.verbos)
 		klog("unlink(%s) = %d\n", name, ret);

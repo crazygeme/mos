@@ -15,6 +15,8 @@
 #include <errno.h>
 #include <macro.h>
 
+void do_signal(intr_frame *frame);
+
 struct kill_all_ctx {
 	task_struct *self;
 	int sig;
@@ -98,6 +100,7 @@ int ps_send_signal(unsigned pid, int sig)
 int sys_kill(int pid, int sig)
 {
 	task_struct *cur = CURRENT_TASK();
+	int ret;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("kill(%d, %d)\n", pid, sig);
@@ -106,8 +109,17 @@ int sys_kill(int pid, int sig)
 		return pid > 0 ? (ps_find_process((unsigned)pid) ? 0 : -ESRCH) :
 				 0;
 
-	if (pid > 0)
-		return ps_send_signal((unsigned)pid, sig);
+	if (pid > 0) {
+		ret = ps_send_signal((unsigned)pid, sig);
+		if (ret == 0 && cur->type == ps_user && (unsigned)pid == cur->psid &&
+		    cur->signal && !(cur->signal->sig_mask & (1UL << (sig - 1)))) {
+			intr_frame *frame = (intr_frame *)((char *)cur + PAGE_SIZE -
+							   sizeof(intr_frame));
+			frame->eax = 0;
+			do_signal(frame);
+		}
+		return ret;
+	}
 
 	if (pid == 0) {
 		struct kill_all_ctx ctx;
@@ -176,6 +188,22 @@ int sys_sigaction(int sig, void *act, void *oact)
 		klog("sigaction(%d, %x, %x)\n", sig, act, oact);
 
 	return 0;
+}
+
+void *sys_signal(int sig, void *handler)
+{
+	struct sigaction sa;
+	struct sigaction old_sa;
+
+	sa.sa_handler = handler;
+	sa.sa_mask = 0;
+	sa.sa_flags = SA_RESTART;
+	sa.sa_restorer = NULL;
+
+	if (sys_sigaction(sig, &sa, &old_sa) < 0)
+		return SIG_ERR;
+
+	return old_sa.sa_handler;
 }
 
 /*

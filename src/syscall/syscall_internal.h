@@ -173,6 +173,7 @@ int sys_getitimer(int which, struct itimerval *value);
  */
 int sys_kill(int pid, int sig);
 int sys_pause();
+void *sys_signal(int sig, void *handler);
 int sys_sigaction(int sig, void *act, void *oact);
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize);
 int sys_sigprocmask(int how, void *set, void *oset);

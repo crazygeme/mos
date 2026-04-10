@@ -29,7 +29,6 @@
 /* handlers defined in other subsystems */
 int sys_getrusage(int who, rusage *usage);
 int sys_syslog(int type, char *buf, int len);
-
 typedef int (*syscall_fn)(unsigned ebx, unsigned ecx, unsigned edx,
 			  unsigned esi, unsigned edi, unsigned ebp);
 
@@ -88,7 +87,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_brk, // 45  __NR_brk
 	sys_setgid, // 46  __NR_setgid
 	sys_getgid, // 47  __NR_getgid
-	0, // 48  __NR_signal
+	sys_signal, // 48  __NR_signal
 	sys_geteuid, // 49  __NR_geteuid
 	sys_getegid, // 50  __NR_getegid
 	0, // 51  __NR_acct

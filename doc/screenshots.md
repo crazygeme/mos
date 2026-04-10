@@ -49,12 +49,10 @@
 
 ![Network](screenshot/network.png)
 
-| `ping`                       | DNS                        |
-| ---------------------------- | -------------------------- |
-| ![ping](screenshot/ping.png) | ![dns](screenshot/dns.png) |
-
-| `wget`                       | `ssh`                            |
+| `ping`                       | DNS                              |
 | ---------------------------- | -------------------------------- |
+| ![ping](screenshot/ping.png) | ![dns](screenshot/dns.png)       |
+| `wget`                       | `ssh`                            |
 | ![wget](screenshot/wget.png) | ![ssh](screenshot/ssh_login.png) |
 
 **TCP Throughput**

@@ -5,6 +5,7 @@
 #include <lib/cyclebuf.h>
 #include <hw/time.h>
 #include <macro.h>
+#include <ps/ps.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -42,10 +43,13 @@ static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 {
 	pipe_inode *n = fp->f_inode->i_private;
+	task_struct *cur = CURRENT_TASK();
 	if (n->readonly)
 		return 0;
 
 	int ret = cyb_putbuf(n->buf, (unsigned char *)buf, len, 1, 1);
+	if (ret == -EPIPE && cur && cur->type == ps_user)
+		cur->signal->sig_pending |= (1UL << (SIGPIPE - 1));
 	return (ssize_t)ret;
 }
 

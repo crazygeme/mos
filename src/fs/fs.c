@@ -11,6 +11,8 @@
 #include <macro.h>
 #include <errno.h>
 
+#define RLIMIT_FSIZE_RESOURCE 1
+
 /*
  * fs_check_perm — check whether the current process may access a file.
  *
@@ -93,6 +95,9 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	ssize_t n;
+	size_t size = len;
+	unsigned long limit;
+	loff_t pos;
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
@@ -104,7 +109,20 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
 
-	n = fp->f_fop->write(fp, buf, len, &fp->f_pos);
+	pos = fp->f_pos;
+	if (cur->user) {
+		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
+		if (limit != RLIM_INFINITY) {
+			if ((uint64_t)pos >= limit)
+				return -EFBIG;
+			if ((uint64_t)pos + size > limit)
+				size = (size_t)(limit - (uint64_t)pos);
+			if (!size)
+				return -EFBIG;
+		}
+	}
+
+	n = fp->f_fop->write(fp, buf, size, &fp->f_pos);
 	return (int)n;
 }
 
@@ -113,8 +131,8 @@ int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	ssize_t n;
-	unsigned saved_pos;
-	loff_t new_pos;
+	loff_t saved_pos;
+	loff_t pos;
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
@@ -124,9 +142,11 @@ int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
 		return -EBADF;
 
 	saved_pos = fp->f_pos;
-	fp->f_pos = offset;
-	n = fp->f_fop->read(fp, buf, len, &new_pos);
+	pos = (loff_t)offset;
+	n = fp->f_fop->read(fp, buf, len, &pos);
 	fp->f_pos = saved_pos;
+	if (fp->f_fop->llseek)
+		fp->f_fop->llseek(fp, saved_pos, 0);
 	return (int)n;
 }
 
@@ -135,8 +155,10 @@ int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 	ssize_t n;
-	unsigned saved_pos;
-	loff_t new_pos;
+	loff_t saved_pos;
+	loff_t pos;
+	size_t size = len;
+	unsigned long limit;
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
@@ -146,9 +168,22 @@ int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
 		return -EBADF;
 
 	saved_pos = fp->f_pos;
-	fp->f_pos = offset;
-	n = fp->f_fop->write(fp, buf, len, &new_pos);
+	pos = (loff_t)offset;
+	if (cur->user) {
+		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
+		if (limit != RLIM_INFINITY) {
+			if ((uint64_t)pos >= limit)
+				return -EFBIG;
+			if ((uint64_t)pos + size > limit)
+				size = (size_t)(limit - (uint64_t)pos);
+			if (!size)
+				return -EFBIG;
+		}
+	}
+	n = fp->f_fop->write(fp, buf, size, &pos);
 	fp->f_pos = saved_pos;
+	if (fp->f_fop->llseek)
+		fp->f_fop->llseek(fp, saved_pos, 0);
 	return (int)n;
 }
 
@@ -202,9 +237,11 @@ int fs_install_fd(file *fp, int flag)
 
 int fs_open(const char *path, int flag, umode_t mode)
 {
+	task_struct *cur = CURRENT_TASK();
 	file *fp;
 	struct stat s;
 	int acc, ret;
+	int created = 0;
 
 	/* O_CREAT|O_EXCL: fail with EEXIST if the file already exists. */
 	if ((flag & O_CREAT) && (flag & O_EXCL)) {
@@ -213,6 +250,13 @@ int fs_open(const char *path, int flag, umode_t mode)
 			fs_put_file(check);
 			return -EEXIST;
 		}
+		created = 1;
+	} else if (flag & O_CREAT) {
+		file *check = fs_open_file(path, O_PATH, 0);
+		if (!check)
+			created = 1;
+		else
+			fs_put_file(check);
 	}
 
 	fp = fs_open_file(path, flag, mode);
@@ -238,6 +282,19 @@ int fs_open(const char *path, int flag, umode_t mode)
 	fp->f_flag = (unsigned)flag;
 	if ((flag & O_APPEND) && fp->f_inode)
 		fp->f_pos = fp->f_inode->i_size;
+	if (created) {
+		unsigned create_mode;
+
+		create_mode = (mode & 0777U) & ~(cur->umask & 0777U);
+		ret = fs_chmod(path, create_mode);
+		if (ret) {
+			fs_put_file(fp);
+			return ret;
+		}
+		if (fp->f_inode)
+			fp->f_inode->i_mode =
+				(fp->f_inode->i_mode & S_IFMT) | create_mode;
+	}
 
 	int fd = fs_install_fd(fp, flag & O_CLOEXEC);
 	if (fd < 0)

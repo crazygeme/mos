@@ -415,5 +415,9 @@ void ps_signal_wait(void);
 #define RUSAGE_SELF 0
 #define RUSAGE_CHILDREN (-1)
 #define WNOHANG 1
+#define WUNTRACED 2
+#define WSTOPPED WUNTRACED
+#define WEXITED 4
+#define WCONTINUED 8
 
 #endif

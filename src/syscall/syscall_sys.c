@@ -127,6 +127,14 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 		klog("nanosleep(%d.%09d) = %ums\n", req->tv_sec, req->tv_nsec,
 		     total_millisecond);
 
+	if (total_millisecond == 0) {
+		if (rem) {
+			rem->tv_sec = 0;
+			rem->tv_nsec = 0;
+		}
+		return 0;
+	}
+
 	start_ms = time_now_ms();
 	time_wait(total_millisecond);
 	end_ms = time_now_ms();

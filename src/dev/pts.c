@@ -31,6 +31,11 @@
 #include "tty_ldisc.h"
 #include "pts_internal.h"
 
+static int pts_file_nonblock(file *fp)
+{
+	return (fp->f_flag & O_NONBLOCK) != 0;
+}
+
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 {
 	cy_buf *m2s = NULL, *s2m = NULL;
@@ -153,6 +158,7 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	unsigned char hdr = TIOCPKT_DATA;
+	int nonblock = pts_file_nonblock(fp);
 	int n;
 
 	if (!buf || size < 1)
@@ -167,14 +173,19 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 		if (size < 2)
 			return -EINVAL;
 		n = cyb_getbuf(p->s2m, (unsigned char *)buf + 1, (int)size - 1,
-			       1, 1);
+			       !nonblock, 1);
+		if (nonblock && n == 0 && cyb_writer_count(p->s2m) > 0)
+			return -EAGAIN;
 		if (n <= 0)
 			return (ssize_t)n;
 		*(unsigned char *)buf = hdr;
 		return (ssize_t)(n + 1);
 	}
 
-	return (ssize_t)cyb_getbuf(p->s2m, buf, (int)size, 1, 1);
+	n = cyb_getbuf(p->s2m, buf, (int)size, !nonblock, 1);
+	if (nonblock && n == 0 && cyb_writer_count(p->s2m) > 0)
+		return -EAGAIN;
+	return (ssize_t)n;
 }
 
 ssize_t pts_master_write(file *fp, const void *buf, size_t size, loff_t *pos)
@@ -192,7 +203,9 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	unsigned ready = 0;
-	if ((events & FS_POLL_READ) && (p->pkt_status || !cyb_isempty(p->s2m)))
+	if ((events & FS_POLL_READ) &&
+	    (p->pkt_status || !cyb_isempty(p->s2m) ||
+	     cyb_writer_count(p->s2m) == 0))
 		ready |= FS_POLL_READ;
 	if (events & FS_POLL_WRITE)
 		ready |= FS_POLL_WRITE;
@@ -308,12 +321,6 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 	return -ENOSYS;
 }
 
-int pts_canon_readline(pts_pair *p)
-{
-	return tty_ldisc_canon_readline(&p->canon, &p->termios, p->m2s, 1, 1,
-					p->pgrp, NULL, NULL);
-}
-
 /* O_PATH open: metadata only, no cycbuf refs taken. */
 int pts_slave_path_release(file *fp)
 {
@@ -325,15 +332,32 @@ int pts_slave_path_release(file *fp)
 ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
+	int nonblock = pts_file_nonblock(fp);
+	int n;
 	if (!buf || size < 1)
 		return 0;
 	if (p->termios.c_lflag & ICANON) {
-		if (p->canon.len == 0 && !pts_canon_readline(p))
-			return 0;
+		if (p->canon.len == 0) {
+			n = tty_ldisc_canon_readline(&p->canon, &p->termios,
+						     p->m2s, !nonblock, 1,
+						     p->pgrp, NULL, NULL);
+			if (n < 0)
+				return -EINTR;
+			if (n == 0) {
+				if (nonblock && cyb_writer_count(p->m2s) > 0)
+					return -EAGAIN;
+				return 0;
+			}
+		}
 		return (ssize_t)tty_canon_drain(&p->canon, (char *)buf,
 						(int)size);
 	}
-	return (ssize_t)cyb_getbuf(p->m2s, buf, (int)size, 1, 1);
+	n = cyb_getbuf(p->m2s, buf, (int)size, !nonblock, 1);
+	if (n < 0)
+		return -EINTR;
+	if (nonblock && n == 0 && cyb_writer_count(p->m2s) > 0)
+		return -EAGAIN;
+	return (ssize_t)n;
 }
 
 ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos)
@@ -371,7 +395,8 @@ unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	unsigned ready = 0;
-	if ((events & FS_POLL_READ) && !cyb_isempty(p->m2s))
+	if ((events & FS_POLL_READ) &&
+	    (!cyb_isempty(p->m2s) || cyb_writer_count(p->m2s) == 0))
 		ready |= FS_POLL_READ;
 	if (events & FS_POLL_WRITE)
 		ready |= FS_POLL_WRITE;

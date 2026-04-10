@@ -64,6 +64,4 @@ ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos);
 
 unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt);
 
-int pts_canon_readline(pts_pair *p);
-
 #endif

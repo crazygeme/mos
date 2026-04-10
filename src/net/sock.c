@@ -37,6 +37,62 @@ static int sock_file_nonblock(file *fp)
 	return (fp->f_flag & O_NONBLOCK) != 0;
 }
 
+static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
+				     size_t count)
+{
+	const char *p = (const char *)buf;
+	size_t done = 0;
+	int nonblock = sock_file_nonblock(fp);
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+
+	while (done < count) {
+		size_t remain = count - done;
+		u16_t avail;
+		u16_t chunk;
+		err_t e;
+
+		if (sk->err)
+			return done ? (ssize_t)done : sk->err;
+		if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
+			return done ? (ssize_t)done : -ENOTCONN;
+
+		avail = sk->tcp ? tcp_sndbuf(sk->tcp) : 0;
+		if (avail == 0) {
+			if (nonblock)
+				return done ? (ssize_t)done : -EAGAIN;
+			if (time_now_ms() > deadline)
+				return done ? (ssize_t)done : -ETIMEDOUT;
+			tcp_output(sk->tcp);
+			if (sock_wait(sk, deadline) < 0)
+				return done ? (ssize_t)done : -EINTR;
+			continue;
+		}
+
+		chunk = avail;
+		if (chunk > remain)
+			chunk = (u16_t)remain;
+		e = tcp_write(sk->tcp, p + done, chunk, TCP_WRITE_FLAG_COPY);
+		if (e == ERR_OK) {
+			done += chunk;
+			tcp_output(sk->tcp);
+			continue;
+		}
+
+		if (e != ERR_MEM)
+			return done ? (ssize_t)done : -EIO;
+		if (nonblock)
+			return done ? (ssize_t)done : -EAGAIN;
+		if (time_now_ms() > deadline)
+			return done ? (ssize_t)done : -ETIMEDOUT;
+
+		tcp_output(sk->tcp);
+		if (sock_wait(sk, deadline) < 0)
+			return done ? (ssize_t)done : -EINTR;
+	}
+
+	return (ssize_t)done;
+}
+
 /* Write up to len bytes from src; returns bytes actually written.
  * Split into at most two memcpy calls to handle the ring wrap. */
 unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
@@ -76,6 +132,44 @@ unsigned rx_read(mos_sock *sk, void *dst, unsigned len)
 		sk->rx_head += n;
 	}
 	return n;
+}
+
+unsigned rx_iov_write(mos_sock *sk, const struct iovec *iov, size_t iovlen)
+{
+	size_t i;
+	unsigned written = 0;
+
+	for (i = 0; i < iovlen; i++)
+		written += rx_write(sk, iov[i].iov_base,
+				    (unsigned)iov[i].iov_len);
+	return written;
+}
+
+unsigned rx_iov_read(mos_sock *sk, const struct iovec *iov, size_t iovlen,
+		     unsigned limit)
+{
+	size_t i;
+	unsigned delivered = 0;
+	unsigned remaining = limit;
+
+	for (i = 0; i < iovlen && remaining > 0; i++) {
+		unsigned n = (unsigned)iov[i].iov_len < remaining ?
+				     (unsigned)iov[i].iov_len :
+				     remaining;
+		rx_read(sk, iov[i].iov_base, n);
+		delivered += n;
+		remaining -= n;
+	}
+	return delivered;
+}
+
+void rx_discard(mos_sock *sk, unsigned len)
+{
+	while (len > 0) {
+		char tmp;
+		rx_read(sk, &tmp, 1);
+		len--;
+	}
 }
 
 /* ── Blocking helpers ────────────────────────────────────────────────────── */
@@ -211,12 +305,7 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 	/* TCP */
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
 		return -ENOTCONN;
-
-	err_t e = tcp_write(sk->tcp, buf, (u16_t)count, TCP_WRITE_FLAG_COPY);
-	if (e != ERR_OK)
-		return (e == ERR_MEM) ? -ENOBUFS : -EIO;
-	tcp_output(sk->tcp);
-	return (ssize_t)count;
+	return sock_tcp_stream_write(fp, sk, buf, count);
 }
 
 static int sock_release(file *fp)
@@ -237,10 +326,17 @@ static int sock_release(file *fp)
 			udp_remove(sk->udp);
 	} else {
 		if (sk->tcp) {
-			tcp_arg(sk->tcp, NULL);
-			tcp_recv(sk->tcp, NULL);
-			tcp_err(sk->tcp, NULL);
-			tcp_close(sk->tcp);
+			struct tcp_pcb *pcb = sk->tcp;
+			err_t err;
+
+			sk->tcp = NULL;
+			tcp_arg(pcb, NULL);
+			tcp_recv(pcb, NULL);
+			tcp_sent(pcb, NULL);
+			tcp_err(pcb, NULL);
+			err = tcp_close(pcb);
+			if (err != ERR_OK)
+				tcp_abort(pcb);
 		}
 	}
 

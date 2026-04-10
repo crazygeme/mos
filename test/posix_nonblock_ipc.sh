@@ -65,6 +65,8 @@ cat > "$SRC" <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
+#include <poll.h>
 
 #ifndef TIOCGPTN
 #define TIOCGPTN 0x80045430
@@ -103,6 +105,42 @@ static void expect_eof(int fd, const char *label)
 	}
 }
 
+static void expect_select_readable(int fd, const char *label)
+{
+	fd_set rfds;
+	struct timeval tv;
+	int rc;
+
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	tv.tv_sec = 0;
+	tv.tv_usec = 0;
+	rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+	if (rc != 1 || !FD_ISSET(fd, &rfds)) {
+		fprintf(stderr,
+			"%s: expected select readability, got rc=%d isset=%d errno=%d\n",
+			label, rc, FD_ISSET(fd, &rfds), errno);
+		exit(1);
+	}
+}
+
+static void expect_poll_hup_only(int fd, const char *label)
+{
+	struct pollfd pfd;
+	int rc;
+
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	pfd.revents = 0;
+	rc = poll(&pfd, 1, 0);
+	if (rc != 1 || !(pfd.revents & POLLHUP) || (pfd.revents & POLLIN)) {
+		fprintf(stderr,
+			"%s: expected POLLHUP without POLLIN, got rc=%d revents=%#x errno=%d\n",
+			label, rc, pfd.revents, errno);
+		exit(1);
+	}
+}
+
 static void test_pipe_nonblock(void)
 {
 	int p[2];
@@ -136,6 +174,8 @@ static void test_pipe_nonblock(void)
 
 	if (close(p[1]) < 0)
 		die("close pipe writer");
+	expect_select_readable(p[0], "pipe select readable on writer EOF");
+	expect_poll_hup_only(p[0], "pipe poll hup-only on writer EOF");
 	expect_eof(p[0], "pipe EOF after writer close");
 	if (close(p[0]) < 0)
 		die("close pipe reader");
@@ -226,6 +266,8 @@ static void test_pts_nonblock(void)
 
 	if (close(slave) < 0)
 		die("close slave");
+	expect_select_readable(master, "pty master select readable on slave EOF");
+	expect_poll_hup_only(master, "pty master poll hup-only on slave EOF");
 	expect_eof(master, "pty master EOF after slave close");
 	if (close(master) < 0)
 		die("close master");
@@ -235,6 +277,8 @@ static void test_pts_nonblock(void)
 	set_raw_mode(slave);
 	if (close(master) < 0)
 		die("close master reopen");
+	expect_select_readable(slave, "pty slave select readable on master EOF");
+	expect_poll_hup_only(slave, "pty slave poll hup-only on master EOF");
 	expect_eof(slave, "pty slave EOF after master close");
 	if (close(slave) < 0)
 		die("close slave reopen");

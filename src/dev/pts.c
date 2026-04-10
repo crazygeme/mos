@@ -204,12 +204,13 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 	pts_pair *p = fp->f_inode->i_private;
 	unsigned ready = 0;
 	if ((events & FS_POLL_READ) &&
-	    (p->pkt_status || !cyb_isempty(p->s2m) ||
-	     cyb_writer_count(p->s2m) == 0))
+	    (p->pkt_status || !cyb_isempty(p->s2m)))
 		ready |= FS_POLL_READ;
+	if ((events & FS_POLL_HUP) && cyb_writer_count(p->s2m) == 0)
+		ready |= FS_POLL_HUP;
 	if (events & FS_POLL_WRITE)
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt && (events & FS_POLL_READ))
+	if (!ready && pt && (events & (FS_POLL_READ | FS_POLL_HUP)))
 		cyb_poll_read(p->s2m, pt);
 	return ready;
 }
@@ -395,12 +396,13 @@ unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	unsigned ready = 0;
-	if ((events & FS_POLL_READ) &&
-	    (!cyb_isempty(p->m2s) || cyb_writer_count(p->m2s) == 0))
+	if ((events & FS_POLL_READ) && !cyb_isempty(p->m2s))
 		ready |= FS_POLL_READ;
+	if ((events & FS_POLL_HUP) && cyb_writer_count(p->m2s) == 0)
+		ready |= FS_POLL_HUP;
 	if (events & FS_POLL_WRITE)
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt && (events & FS_POLL_READ))
+	if (!ready && pt && (events & (FS_POLL_READ | FS_POLL_HUP)))
 		cyb_poll_read(p->m2s, pt);
 	return ready;
 }

@@ -56,6 +56,7 @@ typedef struct _block block;
 #define FS_POLL_READ (1U << 0)
 #define FS_POLL_WRITE (1U << 1)
 #define FS_POLL_EXCEPT (1U << 2)
+#define FS_POLL_HUP (1U << 3)
 
 typedef int64_t loff_t;
 typedef int off_t;

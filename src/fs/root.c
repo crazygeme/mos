@@ -50,7 +50,7 @@ static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 	 * data path now goes through the shared fs page cache. Callers such as
 	 * llseek(SEEK_CUR) still consult ext4_ftell().
 	 */
-	if ((loff_t)ext4_ftell(f) != *pos)
+	if (*pos <= (loff_t)f->fsize && (loff_t)ext4_ftell(f) != *pos)
 		ext4_fseek(f, *pos, SEEK_SET);
 
 	fs_read_size += (unsigned)rcnt;
@@ -65,20 +65,26 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	ext4_file *f = fp->f_inode->i_private;
 	size_t wcnt = 0;
 	loff_t write_pos = *pos;
+	int ret;
 
 	if (fp->f_inode)
 		fs_page_cache_invalidate(fp->f_inode);
 	if (fp->f_flag & O_APPEND)
 		write_pos = (loff_t)f->fsize;
+	if ((uint64_t)write_pos > f->fsize) {
+		ret = ext4_fenlarge(f, (uint64_t)write_pos);
+		if (ret != EOK)
+			return -1;
+	}
 	if ((loff_t)ext4_ftell(f) != write_pos)
 		ext4_fseek(f, write_pos, SEEK_SET);
-	int ret = ext4_fwrite(f, buf, size, &wcnt);
+	ret = ext4_fwrite(f, buf, size, &wcnt);
 	fs_write_size += wcnt;
 	if (ret != EOK)
 		return -1;
 	*pos = write_pos + (loff_t)wcnt;
-	if (fp->f_inode && (uint64_t)(*pos) > fp->f_inode->i_size)
-		fp->f_inode->i_size = (uint64_t)(*pos);
+	if (fp->f_inode)
+		fp->f_inode->i_size = f->fsize;
 	if (fp->f_name) {
 		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(fp->f_name, t);
@@ -89,31 +95,35 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 static loff_t ext4_file_llseek(file *fp, loff_t offset, int whence)
 {
 	ext4_file *f = fp->f_inode->i_private;
-	int ret;
+	loff_t new_pos;
+	loff_t cur = fp ? fp->f_pos : (loff_t)ext4_ftell(f);
+
 	switch (whence) {
 	case SEEK_SET:
-		if ((uint64_t)offset > f->fsize) {
-			ret = ext4_fenlarge(f, offset);
-			if (ret != EOK)
-				return (loff_t)(0 - ret);
-		}
+		new_pos = offset;
 		break;
 	case SEEK_CUR:
-		if ((uint64_t)(offset + f->fpos) > f->fsize) {
-			ret = ext4_fenlarge(f, offset + f->fpos);
-			if (ret != EOK)
-				return (loff_t)(0 - ret);
-		}
+		new_pos = cur + offset;
 		break;
 	case SEEK_END:
-		if ((uint64_t)offset > f->fsize)
-			return -EINVAL;
+		new_pos = (loff_t)f->fsize + offset;
 		break;
+	default:
+		return -EINVAL;
 	}
-	ret = ext4_fseek(f, offset, whence);
-	if (ret != EOK)
-		return (loff_t)(0 - ret);
-	return (loff_t)ext4_ftell(f);
+
+	if (new_pos < 0)
+		return -EINVAL;
+
+	/*
+	 * Linux lseek only updates the VFS file position. Seeking past EOF is
+	 * legal, but lwext4's ext4_fseek() rejects it, so the backing cursor is
+	 * synchronized later by read/write when I/O actually happens.
+	 */
+	if (fp)
+		fp->f_pos = new_pos;
+
+	return new_pos;
 }
 
 static unsigned ext4_file_poll(file *fp, unsigned events, poll_table *pt)

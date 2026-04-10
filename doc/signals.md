@@ -1,19 +1,20 @@
 # Signal Handling
 
-**Source:** `src/syscall/syscall_proc.c`, `src/mm/vdso.c`
-**Headers:** `include/ps/signal.h`, `include/mm/vdso.h`
+**Source:** `src/ps/ps_signal.c`
+**Headers:** `include/ps/signal.h`
 
 ---
 
 ## Overview
 
-| Component              | File             | Responsibility                                                                            |
-| ---------------------- | ---------------- | ----------------------------------------------------------------------------------------- |
-| Signal data structures | `signal.h`       | `sigaction`, `signal_frame`, signal numbers, masks                                        |
-| Delivery engine        | `syscall_proc.c` | `do_signal` — builds frame, redirects `iret`                                              |
-| Return trampoline      | `vdso.c`         | `vdso_sigreturn_tramp` — user-space `sys_sigreturn` stub                                  |
-| vDSO mapping           | `vdso.c`         | `mm_vdso_map` — maps kernel trampoline code into user space                               |
-| Syscall interface      | `syscall_proc.c` | `sys_kill`, `sys_sigaction`, `sys_sigprocmask`, `sys_sigreturn`, `sys_alarm`, `sys_pause` |
+| Component              | File           | Responsibility                                                                                  |
+| ---------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| Signal data structures | `signal.h`     | `sigaction`, `signal_frame`, `rt_signal_frame`, signal numbers, masks, altstack                 |
+| Delivery engine        | `ps_signal.c`  | `do_signal` — builds frame, redirects `iret`                                                    |
+| Return trampoline      | `signal_frame` | Inline 8-byte `__NR_sigreturn` / `__NR_rt_sigreturn` stub embedded in the signal frame on stack |
+| Syscall interface      | `ps_signal.c`  | `sys_kill`, `sys_sigaction`, `sys_rt_sigaction`, `sys_sigprocmask`, `sys_rt_sigprocmask`,       |
+|                        |                | `sys_sigreturn`, `sys_rt_sigreturn`, `sys_alarm`, `sys_pause`, `sys_sigaltstack`,               |
+|                        |                | `sys_rt_sigpending`, `sys_rt_sigtimedwait`, `sys_rt_sigqueueinfo`, `sys_rt_sigsuspend`          |
 
 ---
 
@@ -23,9 +24,12 @@ Each task has a `signal_context *` in its `task_struct`:
 
 ```c
 typedef struct _signal_context {
-    struct sigaction sig_handlers[NSIG];  // handler for each signal 1–31
-    sigset_t         sig_pending;         // bitmask: bit (N-1) = signal N pending
-    sigset_t         sig_mask;            // bitmask: blocked signals
+    struct sigaction sig_handlers[NSIG]; // handler for each signal 1–31
+    sigset_t         sig_pending;        // bitmask: bit (N-1) = signal N pending
+    sigset_t         sig_mask;           // bitmask: blocked signals
+    sigset_t         saved_sigmask;      // mask saved by sigsuspend/pselect
+    int              restore_sigmask;    // 1 → restore saved_sigmask after delivery
+    stack_t          altstack;           // alternate signal stack (sigaltstack)
 } signal_context;
 ```
 
@@ -35,8 +39,8 @@ typedef struct _signal_context {
 struct sigaction {
     void    (*sa_handler)(int);   // SIG_DFL / SIG_IGN / user function
     sigset_t  sa_mask;            // additional signals to block during handler
-    int       sa_flags;           // SA_NODEFER | SA_RESETHAND | SA_RESTART | …
-    void    (*sa_restorer)(void); // (not used; trampoline is vDSO-provided)
+    int       sa_flags;           // SA_NODEFER | SA_RESETHAND | SA_SIGINFO | SA_ONSTACK | …
+    void    (*sa_restorer)(void); // used when SA_RESTORER is set in sa_flags
 };
 ```
 
@@ -50,6 +54,7 @@ Linux/i386 ABI (1–31, `NSIG = 32`):
 | ---------- | ------ | -------------------------------------------- |
 | `SIGHUP`   | 1      | terminate                                    |
 | `SIGINT`   | 2      | terminate                                    |
+| `SIGQUIT`  | 3      | terminate                                    |
 | `SIGILL`   | 4      | terminate                                    |
 | `SIGKILL`  | 9      | terminate (cannot be caught/ignored/blocked) |
 | `SIGSEGV`  | 11     | terminate                                    |
@@ -62,70 +67,23 @@ Linux/i386 ABI (1–31, `NSIG = 32`):
 | `SIGURG`   | 23     | **ignore**                                   |
 | all others | —      | terminate                                    |
 
-`SIGKILL` and `SIGSTOP` always call `sys_exit(sig | 0x80)` / stop — they can never be caught, ignored, or blocked.
+`SIGKILL` and `SIGSTOP` always call `sys_exit(sig | 0x80)` — they can never be caught, ignored, or blocked.
 
 ---
 
-## 3. vDSO — signal return trampoline
+## 3. Return trampoline — inline in signal frame
 
-### Why vDSO is needed
+When a signal handler returns (`ret`), execution must jump to the kernel's `sys_sigreturn` so the interrupted context can be restored.
 
-When a signal handler returns (executes `ret`), it pops `return_addr` from the stack and jumps to it. The kernel needs to regain control at that point so it can call `sys_sigreturn` to restore the interrupted context. The trampoline code that does this must be executable in user space.
+**MOS does not use a vDSO for this.** Instead, the kernel writes a small 8-byte machine code stub directly into the signal frame on the user stack (`signal_frame.trampoline[]`):
 
-Rather than copying machine code bytes onto the stack (the old Linux approach), MOS maps a dedicated read-only kernel code region into every user process at a fixed virtual address (`VDSO_MM_REGION = 0x10000`). This region, the **vDSO**, contains the trampoline function.
-
-### vDSO section
-
-```c
-#define _VDSO __attribute__((used, section(".vdso")))
-#define VDSO_MM_REGION 0x10000
+```
+b8 77 00 00 00    mov $119, %eax    # __NR_sigreturn
+cd 80             int $0x80         # syscall
+90                nop               # padding
 ```
 
-All functions tagged `_VDSO` are placed into the `.vdso` linker section. The linker script exposes `__vdso_start` and `__vdso_end` so the kernel knows the physical extent of the section.
-
-### Trampoline: `vdso_sigreturn_tramp`
-
-```c
-_VDSO NAKED void vdso_sigreturn_tramp()
-{
-    asm volatile("mov $119, %eax");  // __NR_sigreturn = 119
-    asm volatile("int $0x80");       // syscall → sys_sigreturn
-    NOP();                           // padding
-}
-```
-
-This is the only code the handler needs to return through. It invokes `sys_sigreturn` (syscall 119) which restores the interrupted user context.
-
-### Mapping: `mm_vdso_map`
-
-Called by `sys_execve` after loading the ELF image:
-
-```c
-void mm_vdso_map()
-{
-    // compute physical page range of .vdso section
-    // map each page at VDSO_MM_REGION + i*PAGE_SIZE
-    // flags: PAGE_ENTRY_USER_CODE (present, user, read-only, not writable)
-    RELOAD_CR3();
-}
-```
-
-The vDSO pages are the **same physical pages** as the kernel's `.vdso` section — they are not copied. Every process shares the same physical pages, mapped read-only and execute-only at `0x10000`.
-
-### Address translation: `mm_vdso_translate`
-
-```c
-unsigned mm_vdso_translate(unsigned kernel_code)
-{
-    return VDSO_MM_REGION + (kernel_code - (unsigned)&__vdso_start);
-}
-```
-
-During signal delivery, `do_signal` uses this to find the user-space address of `vdso_sigreturn_tramp`:
-
-```c
-sf->return_addr = (unsigned int)mm_vdso_translate(vdso_sigreturn_tramp);
-```
+`signal_frame.return_addr` points to `&sf->trampoline[0]`.  When the handler executes `ret`, it pops `return_addr` and jumps to the inline trampoline, which calls `sys_sigreturn` (119) or `sys_rt_sigreturn` (173) depending on the frame type.
 
 ---
 
@@ -135,10 +93,9 @@ sf->return_addr = (unsigned int)mm_vdso_translate(vdso_sigreturn_tramp);
 void do_signal(intr_frame *frame);
 ```
 
-Called at two points, always just before `iret` returns to user space:
+Called just before `iret` returns to user space:
 - **End of every syscall** — `syscall_process()` in `syscall.c`
-- **Timer interrupt** — PIT ISR in `time.c` (ensures signals fire even in tight user loops)
-- **`ret_from_fork`** — newly-forked children call it directly from assembly before their first `iret`
+- **Timer interrupt** — PIT ISR in `time.c`
 
 Guard: only acts when `frame->cs == USER_CODE_SELECTOR` (returning to ring 3).
 
@@ -147,7 +104,10 @@ Guard: only acts when `frame->cs == USER_CODE_SELECTOR` (returning to ring 3).
 ```
 1. Check alarm:
      if alarm_expire_ms > 0 && time_now_ms() >= alarm_expire_ms:
-         alarm_expire_ms = 0
+         if alarm_interval_ms > 0:
+             alarm_expire_ms = now + alarm_interval_ms    ← repeating alarm
+         else:
+             alarm_expire_ms = 0                          ← one-shot alarm
          sig_pending |= SIGALRM bit
 
 2. deliverable = sig_pending & ~sig_mask
@@ -160,168 +120,197 @@ Guard: only acts when `frame->cs == USER_CODE_SELECTOR` (returning to ring 3).
 5. Dispatch by handler:
 
    SIGKILL / SIGSTOP:
-     sys_exit(sig | 0x80)        ← unconditional; cannot be overridden
+     sys_exit(sig | 0x80)             ← unconditional; cannot be overridden
 
    SIG_IGN:
-     return                      ← discard silently
+     maybe_restore_sigmask()           ← restore sigsuspend mask if active
+     return
 
    SIG_DFL:
-     SIGCHLD / SIGURG / SIGWINCH / SIGCONT → return (default = ignore)
-     all others → do_exit(sig)   ← terminate process
+     SIGCHLD / SIGURG / SIGWINCH / SIGCONT:
+         maybe_restore_sigmask(); return  ← default = ignore
+     all others:
+         do_exit(sig)                  ← terminate process
 
    user handler:
-     build signal_frame on user stack  (see §5)
-     redirect iret → handler
+     is_rt = (sa->sa_flags & SA_SIGINFO)
+     resolve_sigstack()               ← altstack or current ESP
+     if is_rt: build_rt_frame()       ← SA_SIGINFO path
+     else:      build_legacy_frame()  ← legacy path
+     update sig_mask, SA_RESETHAND
+     frame->eip = handler; frame->esp = new_esp
 ```
 
 ---
 
-## 5. Signal frame
+## 5. Legacy signal frame (`signal_frame`)
 
-When a user-defined handler is to be called, `do_signal` allocates a `signal_frame` on the **user stack** (below the current `frame->esp`, then 16-byte aligned):
+Used when `SA_SIGINFO` is **not** set.
 
 ```c
 typedef struct _signal_frame {
-    unsigned int return_addr;    // → vdso_sigreturn_tramp (user VA)
+    unsigned int return_addr;    // → &trampoline[0] in this frame
     int          signo;          // first argument to handler(int signo)
-    unsigned int saved_eip;      // interrupted instruction pointer
+    unsigned int saved_eip;
     unsigned int saved_eflags;
-    unsigned int saved_esp;      // stack pointer at time of interrupt
-    unsigned int saved_eax;      // all GP registers
+    unsigned int saved_esp;
+    unsigned int saved_eax;
     unsigned int saved_ebx;
     unsigned int saved_ecx;
     unsigned int saved_edx;
     unsigned int saved_esi;
     unsigned int saved_edi;
     unsigned int saved_ebp;
+    unsigned int saved_ds;       // segment registers saved/restored
+    unsigned int saved_es;
+    unsigned int saved_fs;
+    unsigned int saved_gs;
     unsigned long saved_mask;    // signal mask before delivery
+    unsigned char trampoline[8]; // inline __NR_sigreturn stub
 } signal_frame;
 ```
 
 **Stack view when handler starts executing** (ESP → `return_addr`):
 
 ```
-[ESP+ 0]  return_addr   → vdso_sigreturn_tramp  ← "ret" jumps here
+[ESP+ 0]  return_addr   → &trampoline[0]  ← "ret" jumps here
 [ESP+ 4]  signo         ← handler's argument
 [ESP+ 8]  saved_eip
 [ESP+12]  saved_eflags
 [ESP+16]  saved_esp
 [ESP+20]  saved_eax
-  …         (saved registers)
-[ESP+44]  saved_ebp
-[ESP+48]  saved_mask
+  …         (saved registers + segment registers)
+[ESP+64]  saved_mask
+[ESP+68]  trampoline[8] ← "mov $119,%eax; int $0x80; nop"
 ```
 
-After the frame is built:
-
-```c
-// Block this signal during handler (unless SA_NODEFER)
-if (!(sa->sa_flags & SA_NODEFER))
-    cur->signal->sig_mask |= (1UL << (sig - 1));
-cur->signal->sig_mask |= sa->sa_mask;  // plus sa->sa_mask
-
-// SA_RESETHAND: revert disposition to SIG_DFL after first delivery
-if (sa->sa_flags & SA_RESETHAND)
-    sa->sa_handler = SIG_DFL;
-
-// Redirect iret to the handler
-frame->eip = handler;
-frame->esp = new_esp;
-```
-
-The next `iret` instruction in the interrupt return path will land directly in the user-space handler with ESP pointing at the signal frame.
+`saved_mask` is the pre-delivery `sig_mask` (or the pre-sigsuspend `saved_sigmask` if `restore_sigmask` is set).
 
 ---
 
-## 6. Signal return: `sys_sigreturn`
+## 6. RT signal frame (`rt_signal_frame`)
 
-**Syscall 119** (`__NR_sigreturn`). Triggered by the vDSO trampoline after the handler executes `ret`.
-
-When `ret` executes:
-- It pops `return_addr` from `[ESP]` and jumps to `vdso_sigreturn_tramp`.
-- At this point `ESP = signal_frame_base + 4` (return_addr has been consumed).
-
-`sys_sigreturn` locates the frame:
+Used when `SA_SIGINFO` is set. This is a larger frame compatible with the Linux/i386 `ucontext_t` layout expected by glibc.
 
 ```c
-intr_frame   *frame = top of current task's kernel stack
-signal_frame *sf    = (signal_frame *)(frame->esp - 4)
-                    //  frame->esp == signal_frame_base + 4
-                    //  sf         == signal_frame_base
+typedef struct _rt_signal_frame {
+    unsigned int     pretcode;        // → sa_restorer or &retcode[0]
+    int              sig;             // signal number
+    unsigned int     pinfo;           // → &info
+    unsigned int     puc;             // → &uc
+    rt_siginfo_user  info;            // 128 bytes: si_signo, si_errno, si_code
+    rt_ucontext_user uc;              // ucontext: flags, link, altstack, mcontext, sigmask
+    rt_fpstate_user  fpstate;         // FPU state (zeroed; no FP save)
+    unsigned char    retcode[8];      // inline __NR_rt_sigreturn stub (fallback)
+} rt_signal_frame;
 ```
 
-It then restores all saved registers into the kernel interrupt frame:
+`uc.uc_mcontext` (`rt_sigcontext_user`) holds all GP registers, segment registers, `eip`, `eflags`, and `esp_at_signal`.
 
-```c
-frame->eip    = sf->saved_eip;
-frame->eflags = sf->saved_eflags;
-frame->esp    = sf->saved_esp;
-frame->eax    = sf->saved_eax;
-// … all GP registers …
-cur->signal->sig_mask = sf->saved_mask;   // restore pre-delivery mask
-```
-
-The syscall returns `sf->saved_eax` — so when `syscall_process` writes the return value into `frame->eax`, it writes back the original `eax` the user had before the signal interrupted them.
-
-After `sys_sigreturn`, `do_signal` is called again (the normal post-syscall path): if another signal is pending it can be delivered immediately.
+`pretcode` is set to `sa->sa_restorer` when `SA_RESTORER` is set; otherwise the inline `retcode[]` stub (`mov $173,%eax; int $0x80`) is used.
 
 ---
 
-## 7. Sending signals
+## 7. Signal return
+
+### `sys_sigreturn` (syscall 119) — legacy
+
+Triggered by the inline trampoline after the handler's `ret`. At that point:
+- `user ESP = signal_frame_base + 4` (return_addr has been consumed by `ret`)
+- `sf = (signal_frame *)(frame->esp - 4)`
+
+Restores all GP registers, segment registers, `eip`, `eflags`, `esp`, and `sig_mask` from the frame. Returns `sf->saved_eax` so the interrupted `eax` is preserved.
+
+If the task was executing on the altstack and the restored `esp` falls outside the altstack range, `SS_ONSTACK` is cleared.
+
+### `sys_rt_sigreturn` (syscall 173) — SA_SIGINFO
+
+Same principle. Restores from `rt_signal_frame.uc.uc_mcontext` and `uc.uc_sigmask`. Handles altstack cleanup the same way.
+
+---
+
+## 8. Alternate signal stack (`sigaltstack`)
+
+`sys_sigaltstack` (syscall 186) installs or queries the per-task alternate stack.
+
+```c
+int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
+```
+
+- Cannot be changed while the task is already executing on the altstack (`SS_ONSTACK`).
+- `ss->ss_size` must be ≥ `MINSIGSTKSZ` (2048) unless disabling.
+- `SS_DISABLE` clears the altstack.
+
+`do_signal` calls `resolve_sigstack()`:
+- If `SA_ONSTACK` is set, the altstack is installed and not disabled/active → use altstack top, set `SS_ONSTACK`.
+- Otherwise use current `frame->esp`.
+
+---
+
+## 9. Sending signals
 
 ### `ps_send_signal(pid, sig)`
 
 ```c
 target->signal->sig_pending |= (1UL << (sig - 1));
-if (target->status == ps_waiting)
-    ps_put_to_ready_queue(target);   // wake sleeping target
+if (target->status == ps_waiting &&
+    !(target->signal->sig_mask & (1UL << (sig - 1))))
+    ps_put_to_ready_queue(target);   // wake only if signal is unmasked
 ```
 
-Sets the pending bit atomically and wakes the target if it is blocked in `ps_waiting`.
+Only wakes the target if the arriving signal is not masked. This prevents spurious wakeups from `sigsuspend`.
 
-### `ps_send_signal_pgrp(pgrp, sig)`
-
-Iterates the global `mgr_queue` RB-tree; calls `ps_send_signal` for every user task whose `group_id == pgrp`. Used by:
-- **TTY line discipline** — sends `SIGINT` / `SIGQUIT` / `SIGTSTP` when Ctrl-C / Ctrl-\ / Ctrl-Z is typed.
-- **TTY write** — sends `SIGTTOU` to background process groups trying to write to the terminal.
+Permission check via `can_send_signal(sender, target)`: sender's `euid == 0`, or uid/euid matches target's uid/suid.
 
 ### `sys_kill(pid, sig)`
 
-Thin wrapper: `sig == 0` → existence check only; otherwise calls `ps_send_signal(pid, sig)`.
+| `pid`      | Behaviour                                        |
+| ---------- | ------------------------------------------------ |
+| `> 0`      | Send to process `pid`                            |
+| `== 0`     | Send to all processes in current process group   |
+| `== -1`    | Send to all other user processes (broadcast)     |
+| `< -1`     | Send to process group `abs(pid)`                 |
+| `sig == 0` | Existence/permission check only (no signal sent) |
 
 ---
 
-## 8. Signal-related syscalls
+## 10. Signal-related syscalls
 
-| Syscall                | Number | Description                           |
-| ---------------------- | ------ | ------------------------------------- |
-| `sys_kill`             | 37     | Send signal to process                |
-| `sys_sigaction`        | 67     | Get/set `sigaction` for a signal      |
-| `sys_sigprocmask`      | 126    | Block/unblock/replace signal mask     |
-| `sys_sigreturn`        | 119    | Restore context after handler         |
-| `sys_alarm`            | 27     | Set `SIGALRM` timer (seconds)         |
-| `sys_pause`            | 29     | Block until any signal is deliverable |
-| `sys_sigaction` (rt)   | 174    | `rt_sigaction` alias                  |
-| `sys_sigprocmask` (rt) | 175    | `rt_sigprocmask` alias                |
+| Syscall               | Number | Description                                       |
+| --------------------- | ------ | ------------------------------------------------- |
+| `sys_kill`            | 37     | Send signal to process / process group            |
+| `sys_alarm`           | 27     | Set `SIGALRM` timer (seconds)                     |
+| `sys_pause`           | 29     | Block until any signal is deliverable             |
+| `sys_sigaction`       | 67     | Get/set `sigaction` (legacy)                      |
+| `sys_sigreturn`       | 119    | Restore context after legacy handler              |
+| `sys_sigprocmask`     | 126    | Block/unblock/replace signal mask (legacy)        |
+| `sys_rt_sigaction`    | 174    | Get/set `sigaction` (glibc 2.3.2 RT layout)       |
+| `sys_rt_sigprocmask`  | 175    | Block/unblock/replace signal mask (8-byte sigset) |
+| `sys_rt_sigpending`   | 176    | Return set of pending blocked signals             |
+| `sys_rt_sigtimedwait` | 177    | Wait for signal from a set (with timeout)         |
+| `sys_rt_sigqueueinfo` | 178    | Send signal + siginfo to process                  |
+| `sys_rt_sigsuspend`   | 179    | Atomically set mask and suspend                   |
+| `sys_rt_sigreturn`    | 173    | Restore context after SA_SIGINFO handler          |
+| `sys_sigaltstack`     | 186    | Get/set alternate signal stack                    |
 
-### `sys_sigaction`
+### `sys_rt_sigaction`
 
-```c
-int sys_sigaction(int sig, struct sigaction *act, struct sigaction *oact);
-```
-
-- `SIGKILL` and `SIGSTOP` return `-EINVAL` (cannot be overridden).
-- If `oact != NULL`: copy old handler out.
-- If `act != NULL`: install new handler.
-
-### `sys_sigprocmask`
+glibc's `sigaction(3)` on i386 uses `rt_sigaction` with a different userspace layout:
 
 ```c
-int sys_sigprocmask(int how, sigset_t *set, sigset_t *oset);
+struct rt_sigaction_user {
+    void (*sa_handler)(int);
+    unsigned long sa_flags;
+    void (*sa_restorer)(void);
+    unsigned long sa_mask[32];  // 128-byte sigset
+};
 ```
 
-`how` values: `SIG_BLOCK` (OR), `SIG_UNBLOCK` (AND NOT), `SIG_SETMASK` (replace).
-`SIGKILL` and `SIGSTOP` bits are **always cleared** from the mask after any `sigprocmask` call — they can never be blocked.
+Only `sa_mask[0]` (low 32 bits) is used internally; upper words are zeroed on writeback.
+
+### `sys_rt_sigprocmask`
+
+Like `sys_sigprocmask` but reads/writes 8-byte sigsets (upper 4 bytes are always 0). `SIGKILL` and `SIGSTOP` bits are always cleared after any `sigprocmask`.
 
 ### `sys_alarm`
 
@@ -329,25 +318,34 @@ int sys_sigprocmask(int how, sigset_t *set, sigset_t *oset);
 unsigned sys_alarm(unsigned seconds);
 ```
 
-Sets `task->alarm_expire_ms = now_ms() + seconds*1000`.
-Returns remaining time of any previously set alarm.
-`seconds == 0` cancels the alarm.
-`do_signal` fires `SIGALRM` when `time_now_ms() >= alarm_expire_ms`.
+Sets `task->alarm_expire_ms = now_ms() + seconds*1000`. Returns remaining time.  
+`seconds == 0` cancels the alarm.  
+`do_signal` fires `SIGALRM` and re-arms if `alarm_interval_ms > 0` (repeating alarm).
 
-### `sys_pause`
+### `sys_rt_sigpending`
 
-Spins with `task_sched()` until `sig_pending & ~sig_mask != 0`, then returns `-EINTR`.
+Returns `sig_pending & sig_mask` — signals that are both pending and blocked (not yet delivered because masked).
+
+### `sys_rt_sigtimedwait`
+
+Waits for any signal in `set` to become pending. The signals in `set` should already be blocked. Returns the signal number on success, `-EAGAIN` on timeout, `-EINTR` if an unblocked, non-waited signal arrives.
+
+### `sys_rt_sigsuspend`
+
+Atomically replaces `sig_mask` with `*mask`, calls `ps_signal_wait()` to sleep until an unmasked signal arrives, then sets `restore_sigmask = 1` (so `do_signal` restores `saved_sigmask` after handler). Always returns `-EINTR`.
+
+The mask is **not** restored here; `do_signal` handles the restore so that the signal is delivered under the correct (temporary sigsuspend) mask before the original mask is put back.
 
 ---
 
-## 9. End-to-end lifecycle
+## 11. End-to-end lifecycle
 
 ```
 User process running at ring 3
   │
   │  Ctrl-C pressed  → TTY ldisc → ps_send_signal_pgrp(pgrp, SIGINT)
   │                              → target->sig_pending |= SIGINT bit
-  │                              → wake target if sleeping
+  │                              → wake target if sleeping and SIGINT unmasked
   │
   ↓  (next syscall or timer interrupt returns to user mode)
 
@@ -355,33 +353,32 @@ do_signal(frame):
   deliverable = sig_pending & ~sig_mask   ← SIGINT is deliverable
   sig = 2  (SIGINT)
   sig_pending &= ~SIGINT bit
-  sa->sa_handler = user_ctrl_c_handler
-  new_esp = frame->esp - sizeof(signal_frame), 16-byte aligned
-  sf->return_addr = mm_vdso_translate(vdso_sigreturn_tramp)  ← 0x10000+offset
-  sf->signo       = 2
-  sf->saved_eip   = frame->eip     ← interrupted instruction
-  sf->saved_*     = frame->*       ← all registers
-  sf->saved_mask  = sig_mask
-  sig_mask |= SIGINT bit           ← block SIGINT during handler
+  is_rt = (sa->sa_flags & SA_SIGINFO)     ← choose frame type
+  new_esp = frame->esp - sizeof(frame), 16-byte aligned
+  build_legacy_frame() or build_rt_frame()
+    sf->return_addr = &sf->trampoline[0]  ← inline stub in frame
+    sf->saved_*     = frame->*            ← all registers
+    sf->saved_mask  = sig_mask
+    sf->trampoline  = "mov $119,%eax; int $0x80; nop"
+  sig_mask |= SIGINT bit                  ← block SIGINT during handler
   frame->eip = user_ctrl_c_handler
   frame->esp = new_esp
 
 iret → user_ctrl_c_handler(2) runs at ring 3
   handler body executes
-  ret  →  pops return_addr  →  jumps to 0x10000+offset (vdso_sigreturn_tramp)
+  ret  →  pops return_addr  →  jumps to sf->trampoline[]
 
-vdso_sigreturn_tramp:
+trampoline (on user stack):
   mov $119, %eax
   int $0x80                 ← sys_sigreturn
 
 sys_sigreturn:
   sf = (signal_frame *)(frame->esp - 4)
-  frame->eip    = sf->saved_eip    ← original interrupted instruction
+  frame->eip    = sf->saved_eip
   frame->esp    = sf->saved_esp
   frame->eax    = sf->saved_eax
   … all registers restored …
   sig_mask      = sf->saved_mask   ← SIGINT unblocked again
-  return sf->saved_eax
 
 do_signal(frame):   ← called again after sys_sigreturn
   no more pending signals → return

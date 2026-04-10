@@ -95,7 +95,7 @@ static int poll_ctx_check(void *arg)
 			want |= FS_POLL_READ;
 		if (events & POLLOUT)
 			want |= FS_POLL_WRITE;
-		want |= FS_POLL_EXCEPT;
+		want |= FS_POLL_EXCEPT | FS_POLL_HUP;
 		unsigned ready_mask = fs_fd_poll(fd, want, NULL);
 		if (ready_mask & FS_POLL_READ)
 			revents |= POLLIN;
@@ -103,6 +103,8 @@ static int poll_ctx_check(void *arg)
 			revents |= POLLOUT;
 		if (ready_mask & FS_POLL_EXCEPT)
 			revents |= POLLERR;
+		if (ready_mask & FS_POLL_HUP)
+			revents |= POLLHUP;
 		ctx->fds[i].revents = revents;
 		if (revents)
 			ready++;
@@ -126,7 +128,7 @@ static int poll_ctx_reg(void *arg)
 			want |= FS_POLL_READ;
 		if (events & POLLOUT)
 			want |= FS_POLL_WRITE;
-		want |= FS_POLL_EXCEPT;
+		want |= FS_POLL_EXCEPT | FS_POLL_HUP;
 		fs_fd_poll(fd, want, pt);
 	}
 	return pt->unsupported;

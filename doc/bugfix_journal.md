@@ -5,6 +5,77 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-10 — Pipe and PTY EOF readiness split for `select()` vs `poll()`
+
+This bug showed up during full System V boot rather than in the smaller POSIX
+tests. `xinetd` was launched under `initlog`, and the system could burn
+through nearly all RAM while boot still looked superficially alive. The real
+problem was not `xinetd` itself; it was a subtle mismatch in how MOS exposed
+EOF through `poll()` versus `select()` on byte-stream IPC objects.
+
+### 1. `initlog` spun forever after daemon startup and consumed memory
+
+- **Caught by:** booting RH9 userspace with `xinetd` enabled
+- **Symptom:** `initlog` repeatedly looped on its capture pipe after
+  `xinetd` daemonized, steadily growing heap via `brk()`/`mmap()` and
+  eventually exhausting RAM.
+- **Root cause:** the earlier SSH/self-pipe work taught anonymous pipes to
+  surface EOF through readiness, but it did so too bluntly: empty closed
+  streams looked like ordinary read-ready data to both `select()` and `poll()`.
+  That was acceptable for EOF-observing `select()` users, but it broke
+  `poll(POLLIN)` callers like `initlog`, which then woke immediately on EOF
+  and spun.
+- **Fix:** split EOF/HUP from ordinary read readiness:
+  - in [fs.h](/home/zhengjia/project/mos/include/fs/fs.h), add an internal
+    `FS_POLL_HUP` readiness bit
+  - in [pipe.c](/home/zhengjia/project/mos/src/fs/pipe.c), report buffered
+    data as `FS_POLL_READ` and closed-writer EOF as `FS_POLL_HUP`
+  - in [pts.c](/home/zhengjia/project/mos/src/dev/pts.c), apply the same split
+    to PTY master/slave poll readiness so pseudo-terminals behave consistently
+    with pipes
+  - in [select.c](/home/zhengjia/project/mos/src/fs/select.c), treat
+    `FS_POLL_HUP` as readable when the caller asked for read readiness, so
+    EOF wakeups still work for `select()`
+  - in [poll.c](/home/zhengjia/project/mos/src/fs/poll.c), translate
+    `FS_POLL_HUP` to `POLLHUP` instead of `POLLIN`, matching the behavior
+    expected by daemon-monitoring loops
+
+### 2. The fix had to preserve the earlier SSH `vim` and `exit` behavior
+
+- **Caught by:** regression review immediately after the first attempt
+- **Symptom:** simply hiding EOF from pipe poll readiness would have avoided
+  the `initlog` spin, but it would also have regressed the SSH fixes that rely
+  on `select()` waking when a pipe reaches EOF.
+- **Root cause:** `select()` and `poll()` were sharing one anonymous-pipe
+  readiness signal, even though user space relied on different interpretations
+  of EOF.
+- **Fix:** keep nonblocking `read()` semantics unchanged, and teach the common
+  polling layer to expose EOF differently for the two APIs instead of removing
+  EOF readiness entirely.
+
+### 3. Regression coverage now checks the split explicitly
+
+- **Caught by:** the need to keep both the boot fix and SSH fix at once
+- **Symptom:** the previous `posix_nonblock_ipc` test covered `EAGAIN` versus
+  EOF on `read()`, but it did not verify how EOF appeared through `select()`
+  and `poll()`.
+- **Root cause:** readiness semantics had no direct script coverage.
+- **Fix:** extend [posix_nonblock_ipc.sh](/home/zhengjia/project/mos/test/posix_nonblock_ipc.sh)
+  to verify:
+  - `select()` reports EOF on pipes and PTYs as readable
+  - `poll(POLLIN)` reports EOF via `POLLHUP` without `POLLIN`
+  - ordinary nonblocking `read()` behavior remains `-EAGAIN` with live peers
+    and `0` only on real EOF
+
+### Result
+
+- Manual verification:
+  - boot with `xinetd` no longer runs `initlog` into a memory spiral
+  - SSH `vim` still works
+- Regression verification:
+  - `./run.sh kvm test logtofile`
+  - result: `rc=0`
+
 ## 2026-04-10 — SSH `vim` burst, SSH `exit` hang, and nonblocking IPC semantics
 
 This round started with `vim` disconnecting over SSH and ended up exposing two

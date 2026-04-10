@@ -41,10 +41,13 @@ static int select_ctx_check(void *arg)
 			want |= FS_POLL_WRITE;
 		if (ctx->excepts && FD_ISSET(i, ctx->excepts))
 			want |= FS_POLL_EXCEPT;
+		if (want & FS_POLL_READ)
+			want |= FS_POLL_HUP;
 		if (!want)
 			continue;
 		unsigned ready_mask = fs_fd_poll(i, want, NULL);
-		if ((want & FS_POLL_READ) && (ready_mask & FS_POLL_READ)) {
+		if ((want & FS_POLL_READ) &&
+		    (ready_mask & (FS_POLL_READ | FS_POLL_HUP))) {
 			FD_SET(i, ctx->readfds);
 			fd_ready = 1;
 		}
@@ -75,6 +78,8 @@ static int select_ctx_reg(void *arg)
 			want |= FS_POLL_WRITE;
 		if (ctx->excepts && FD_ISSET(i, ctx->excepts))
 			want |= FS_POLL_EXCEPT;
+		if (want & FS_POLL_READ)
+			want |= FS_POLL_HUP;
 		if (!want)
 			continue;
 		fs_fd_poll(i, want, pt);

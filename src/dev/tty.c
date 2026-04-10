@@ -61,7 +61,7 @@ typedef struct {
 	unsigned pgrp;
 	/* ANSI escape sequence parser */
 	int ansi_flag;
-	char ansi_buf[10];
+	char ansi_buf[24];
 	int ansi_idx;
 	/* canonical input line buffer */
 	tty_canon_t canon;
@@ -634,6 +634,49 @@ static void tty_exit_alt_screen(tty_state *state)
 
 /* ── ANSI escape state ───────────────────────────────────────────────────── */
 
+/* Map xterm 256-color index to ARGB. */
+static unsigned color256(int n)
+{
+	static const unsigned basic16[16] = {
+		VGA_COLOR_BLACK,
+		VGA_COLOR_RED,
+		VGA_COLOR_GREEN,
+		VGA_COLOR_YELLOW,
+		VGA_COLOR_BLUE,
+		VGA_COLOR_MAGENTA,
+		VGA_COLOR_CYAN,
+		VGA_COLOR_WHITE,
+		ARGB(0xff, 0x55, 0x55, 0x55), /* bright black (dark gray) */
+		ARGB(0xff, 0xff, 0x55, 0x55), /* bright red   */
+		ARGB(0xff, 0x55, 0xff, 0x55), /* bright green */
+		ARGB(0xff, 0xff, 0xff, 0x55), /* bright yellow */
+		ARGB(0xff, 0x55, 0x55, 0xff), /* bright blue  */
+		ARGB(0xff, 0xff, 0x55, 0xff), /* bright magenta */
+		ARGB(0xff, 0x55, 0xff, 0xff), /* bright cyan  */
+		VGA_COLOR_WHITE,
+	};
+	static const unsigned char cube[6] = { 0, 95, 135, 175, 215, 255 };
+
+	if (n < 0)
+		n = 0;
+	if (n > 255)
+		n = 255;
+	if (n < 16)
+		return basic16[n];
+	if (n < 232) {
+		int i = n - 16;
+		int b = i % 6;
+		i /= 6;
+		int g = i % 6;
+		i /= 6;
+		int r = i;
+		return ARGB(0xff, cube[r], cube[g], cube[b]);
+	}
+	/* Grayscale ramp 232-255: 8, 18, 28, … 238 */
+	int gray = 8 + (n - 232) * 10;
+	return ARGB(0xff, gray, gray, gray);
+}
+
 static void ansi_begin(tty_state *state)
 {
 	memset(state->ansi_buf, 0, sizeof(state->ansi_buf));
@@ -655,15 +698,39 @@ static void ansi_feed(tty_state *state, char c)
 
 	switch (c) {
 	case 'm': { /* SGR - select graphic rendition */
+		/* Parse all semicolon-separated params into an array. */
+		int params[8];
+		int nparams = 0;
 		char *p = arg;
-		/* empty sequence "\e[m" means reset */
-		if (*p == '\0')
-			p = "0";
-		while (*p) {
-			char *semi = strchr(p, ';');
-			if (semi)
-				*semi = '\0';
-			switch (atoi(p)) {
+		if (*p == '\0') {
+			params[0] = 0;
+			nparams = 1;
+		} else {
+			while (*p && nparams < 8) {
+				char *semi = strchr(p, ';');
+				if (semi)
+					*semi = '\0';
+				params[nparams++] = atoi(p);
+				if (!semi)
+					break;
+				p = semi + 1;
+			}
+		}
+		int pi = 0;
+		while (pi < nparams) {
+			int v = params[pi];
+			/* 256-color: 38;5;N (fg) or 48;5;N (bg) */
+			if ((v == 38 || v == 48) && pi + 2 < nparams &&
+			    params[pi + 1] == 5) {
+				unsigned col = color256(params[pi + 2]);
+				if (v == 38)
+					state->fg_color = col;
+				else
+					state->bg_color = col;
+				pi += 3;
+				continue;
+			}
+			switch (v) {
 			case 0:
 				state->fg_color = VGA_COLOR_WHITE;
 				state->bg_color = VGA_COLOR_BLACK;
@@ -690,8 +757,6 @@ static void ansi_feed(tty_state *state, char c)
 				state->fg_color = VGA_COLOR_CYAN;
 				break;
 			case 37:
-				state->fg_color = VGA_COLOR_WHITE;
-				break;
 			case 39:
 				state->fg_color = VGA_COLOR_WHITE;
 				break;
@@ -718,8 +783,6 @@ static void ansi_feed(tty_state *state, char c)
 				state->bg_color = VGA_COLOR_CYAN;
 				break;
 			case 47:
-				state->bg_color = VGA_COLOR_WHITE;
-				break;
 			case 49:
 				state->bg_color = VGA_COLOR_BLACK;
 				break;
@@ -751,9 +814,7 @@ static void ansi_feed(tty_state *state, char c)
 			default:
 				break;
 			}
-			if (!semi)
-				break;
-			p = semi + 1;
+			pi++;
 		}
 		ansi_end(state);
 		return;

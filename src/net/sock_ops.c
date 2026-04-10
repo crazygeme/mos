@@ -274,6 +274,9 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	nsk->peer.sin_family = AF_INET;
 	nsk->peer.sin_port = lwip_htons(newpcb->remote_port);
 	nsk->peer.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->remote_ip);
+	nsk->local.sin_family = AF_INET;
+	nsk->local.sin_port = lwip_htons(newpcb->local_port);
+	nsk->local.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->local_ip);
 
 	if (addr && addrlen) {
 		unsigned copy = *addrlen < sizeof(nsk->peer) ?
@@ -515,7 +518,7 @@ int do_shutdown(int fd, int how)
 	if (sk->domain == AF_UNIX) {
 		(void)how;
 		mos_sock *peer = sk->unix_peer;
-		if (peer) {
+		if (peer && sk->type == SOCK_STREAM) {
 			peer->unix_peer = NULL;
 			peer->state = SS_DISCONNECTING;
 			sock_wakeup(peer);

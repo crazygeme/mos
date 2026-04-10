@@ -112,73 +112,6 @@ int sock_wait(mos_sock *sk, unsigned long deadline)
 
 /* ── Socket file operations ──────────────────────────────────────────────── */
 
-/*
- * Read path for AF_UNIX sockets.  The spinlock serialises concurrent readers
- * (e.g. parent and child after fork both draining the same rxbuf).  The lock
- * must be released before calling sock_wait() because sock_wait() sleeps.
- */
-static ssize_t sock_unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
-{
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
-	int irq;
-	int nonblock = sock_file_nonblock(fp);
-	mos_sock *peer;
-
-	if (sk->type == SOCK_DGRAM) {
-		spinlock_lock(&sk->rxbuf_lock, &irq);
-		while (rx_used(sk) < sizeof(u16_t)) {
-			spinlock_unlock(&sk->rxbuf_lock, irq);
-			if (sk->err)
-				return sk->err;
-			if (time_now_ms() > deadline)
-				return -ETIMEDOUT;
-			if (sock_wait(sk, deadline) < 0)
-				return -EINTR;
-			spinlock_lock(&sk->rxbuf_lock, &irq);
-		}
-		u16_t dlen;
-		rx_read(sk, &dlen, sizeof(dlen));
-		unsigned n = (unsigned)count < (unsigned)dlen ?
-				     (unsigned)count :
-				     (unsigned)dlen;
-		rx_read(sk, buf, n);
-		if (n < (unsigned)dlen) {
-			char tmp;
-			unsigned rem = (unsigned)dlen - n;
-			while (rem--)
-				rx_read(sk, &tmp, 1);
-		}
-		peer = sk->unix_peer;
-		spinlock_unlock(&sk->rxbuf_lock, irq);
-		if (peer)
-			sock_wakeup(peer);
-		return (ssize_t)n;
-	}
-
-	/* SOCK_STREAM */
-	spinlock_lock(&sk->rxbuf_lock, &irq);
-	while (rx_used(sk) == 0) {
-		spinlock_unlock(&sk->rxbuf_lock, irq);
-		if (sk->err)
-			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
-			return 0;
-		if (nonblock)
-			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
-		if (sock_wait(sk, deadline) < 0)
-			return -EINTR;
-		spinlock_lock(&sk->rxbuf_lock, &irq);
-	}
-	unsigned n = rx_read(sk, buf, (unsigned)count);
-	peer = sk->unix_peer;
-	spinlock_unlock(&sk->rxbuf_lock, irq);
-	if (peer)
-		sock_wakeup(peer);
-	return (ssize_t)n;
-}
-
 static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	(void)pos;
@@ -186,7 +119,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	int nonblock = sock_file_nonblock(fp);
 
 	if (sk->domain == AF_UNIX)
-		return sock_unix_read(fp, sk, buf, count);
+		return unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
@@ -235,28 +168,6 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	return (ssize_t)n;
 }
 
-static ssize_t sock_unix_write(mos_sock *sk, const void *buf, size_t count)
-{
-	mos_sock *unix_peer = sk->unix_peer;
-	int irq;
-
-	if (!unix_peer)
-		return -EPIPE;
-	spinlock_lock(&unix_peer->rxbuf_lock, &irq);
-	if (sk->type == SOCK_DGRAM) {
-		u16_t dlen = (u16_t)count;
-		if (rx_free(unix_peer) < sizeof(dlen) + (unsigned)count) {
-			spinlock_unlock(&unix_peer->rxbuf_lock, irq);
-			return -ENOBUFS;
-		}
-		rx_write(unix_peer, &dlen, sizeof(dlen));
-	}
-	unsigned n = rx_write(unix_peer, buf, (unsigned)count);
-	spinlock_unlock(&unix_peer->rxbuf_lock, irq);
-	sock_wakeup(unix_peer);
-	return (ssize_t)n;
-}
-
 static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 {
 	(void)pos;
@@ -266,7 +177,7 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 		return sk->err;
 
 	if (sk->domain == AF_UNIX)
-		return sock_unix_write(sk, buf, count);
+		return unix_write(sk, buf, count);
 
 	if (sk->type == SOCK_RAW) {
 		if (sk->hdrincl)
@@ -313,6 +224,10 @@ static int sock_release(file *fp)
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
 	if (sk->domain == AF_UNIX) {
+		int irq;
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+		unix_drop_passfds(sk);
+		spinlock_unlock(&sk->rxbuf_lock, irq);
 		unix_release(sk);
 	} else if (sk->type == SOCK_RAW) {
 		if (sk->raw)

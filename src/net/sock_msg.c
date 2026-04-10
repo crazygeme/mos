@@ -119,6 +119,10 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 		ret = sk->err;
 		goto log;
 	}
+	if (sk->domain == AF_UNIX) {
+		ret = unix_sendmsg(sk, msg);
+		goto log;
+	}
 
 	size_t totlen = 0;
 	size_t i;
@@ -227,6 +231,10 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 		delivered = -ENOTSOCK;
 		goto done;
 	}
+	if (sk->domain == AF_UNIX) {
+		delivered = unix_recvmsg(sk, msg, flags);
+		goto done;
+	}
 
 	size_t total_len = 0;
 	for (i = 0; i < msg->msg_iovlen; i++)
@@ -329,9 +337,9 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 	msg->msg_flags = 0;
 
 done:
-	if (sk && (int)delivered >= 0)
+	if (sk && (int)delivered >= 0 && sk->domain != AF_UNIX)
 		cmsg_write(msg, sk);
-	else if (msg->msg_control)
+	else if (msg->msg_control && (!sk || sk->domain != AF_UNIX))
 		msg->msg_controllen = 0;
 
 	if (TEST_LOG(TEST_LOG_INFO)) {

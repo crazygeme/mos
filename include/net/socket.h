@@ -184,6 +184,9 @@ struct in_pktinfo {
 	struct in_addr ipi_addr; /* header destination address */
 };
 
+/* SOL_SOCKET ancillary types used by AF_UNIX fd passing */
+#define SCM_RIGHTS 1
+
 #define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
 #define CMSG_SPACE(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + CMSG_ALIGN(len))
 #define CMSG_LEN(len) (CMSG_ALIGN(sizeof(struct cmsghdr)) + (len))
@@ -229,6 +232,8 @@ struct msghdr {
 #define SOCK_RXBUF_SIZE (32 * 1024) /* per-socket receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
 #define SOCK_TIMEOUT_MS 30000 /* blocking-op timeout (ms) */
+#define UNIX_PASSFD_MAX 8 /* max descriptors per SCM_RIGHTS message */
+#define UNIX_PASSFD_QUEUE 16 /* queued ancillary records per AF_UNIX socket */
 
 /* ── Per-socket cmsg option flags (stored in mos_sock::cmsg_flags) ─────────── */
 #define SOCK_CMSG_TIMESTAMP (1u << 0) /* SO_TIMESTAMP  */
@@ -240,6 +245,13 @@ struct tcp_pcb;
 struct udp_pcb;
 struct raw_pcb;
 struct _task_struct;
+struct _file;
+
+typedef struct _unix_passfd_msg {
+	unsigned ready_head;
+	unsigned nfds;
+	struct _file *files[UNIX_PASSFD_MAX];
+} unix_passfd_msg;
 
 typedef struct _mos_sock {
 	int domain;
@@ -313,6 +325,8 @@ typedef struct _mos_sock {
 
 	/*
 	 * Protects rx_head, rx_tail, and rxbuf for AF_UNIX sockets.
+	 * Also serialises unix_passfd_* ancillary queues so SCM_RIGHTS records
+	 * stay ordered with the byte stream / datagram data they accompany.
 	 *
 	 * Network sockets (AF_INET) are safe without this lock because their
 	 * ring buffer follows a strict SPSC discipline: rx_write is only ever
@@ -329,6 +343,10 @@ typedef struct _mos_sock {
 	 * of every ring-buffer access on the AF_UNIX path.
 	 */
 	spinlock_t rxbuf_lock;
+
+	unix_passfd_msg unix_passfd_queue[UNIX_PASSFD_QUEUE];
+	int unix_passfd_head;
+	int unix_passfd_tail;
 } mos_sock;
 
 #endif /* _NET_SOCKET_H */

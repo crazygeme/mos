@@ -6,6 +6,7 @@
 #ifndef _NET_SOCK_H
 #define _NET_SOCK_H
 
+#include <fs/fs.h>
 #include <net/socket.h>
 #include <lwip/tcp.h>
 
@@ -72,6 +73,11 @@ int unix_listen(mos_sock *sk, int backlog);
 int unix_connect(mos_sock *sk, const struct sockaddr_un *addr,
 		 unsigned addrlen);
 int unix_accept(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen);
+ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count);
+ssize_t unix_write(mos_sock *sk, const void *buf, size_t count);
+int unix_sendmsg(mos_sock *sk, const struct msghdr *msg);
+int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags);
+void unix_drop_passfds(mos_sock *sk);
 void unix_release(mos_sock *sk);
 /* Remove a path from the Unix namespace; called by sys_unlink on socket files */
 void unix_ns_remove_path(const char *path);

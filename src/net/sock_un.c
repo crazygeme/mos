@@ -17,6 +17,7 @@
 #include <net/sock.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <mm/mm.h>
 #include <ps/ps.h>
 #include <lib/klib.h>
@@ -167,8 +168,6 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 
 	if (addrlen < (unsigned)(offsetof(struct sockaddr_un, sun_path) + 1))
 		return -EINVAL;
-	if (client->type != SOCK_STREAM)
-		return -EOPNOTSUPP;
 	if (client->state == SS_CONNECTED)
 		return -EISCONN;
 
@@ -178,8 +177,18 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 	mutex_lock(&unix_ns_lock);
 
 	listener = unix_ns_lookup_locked(path);
-	if (!listener || listener->state != SS_CONNECTED ||
-	    listener->type != SOCK_STREAM) {
+	if (!listener || listener->type != client->type) {
+		ret = -ECONNREFUSED;
+		goto out;
+	}
+
+	if (client->type == SOCK_DGRAM) {
+		client->unix_peer = listener;
+		client->state = SS_CONNECTED;
+		goto out;
+	}
+
+	if (listener->state != SS_CONNECTED) {
 		ret = -ECONNREFUSED;
 		goto out;
 	}
@@ -264,6 +273,503 @@ int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen)
 	return fd;
 }
 
+/* ── AF_UNIX data path ──────────────────────────────────────────────── */
+
+void unix_drop_passfds(mos_sock *sk)
+{
+	while (sk->unix_passfd_head != sk->unix_passfd_tail) {
+		unix_passfd_msg *msg =
+			&sk->unix_passfd_queue[sk->unix_passfd_head];
+		unsigned i;
+		for (i = 0; i < msg->nfds; i++) {
+			if (msg->files[i])
+				fs_put_file(msg->files[i]);
+			msg->files[i] = NULL;
+		}
+		msg->nfds = 0;
+		sk->unix_passfd_head =
+			(sk->unix_passfd_head + 1) % UNIX_PASSFD_QUEUE;
+	}
+}
+
+ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
+{
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	int irq;
+	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
+	mos_sock *peer;
+
+	if (sk->type == SOCK_DGRAM) {
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+		while (rx_used(sk) < sizeof(u16_t)) {
+			spinlock_unlock(&sk->rxbuf_lock, irq);
+			if (sk->err)
+				return sk->err;
+			if (time_now_ms() > deadline)
+				return -ETIMEDOUT;
+			if (sock_wait(sk, deadline) < 0)
+				return -EINTR;
+			spinlock_lock(&sk->rxbuf_lock, &irq);
+		}
+		u16_t dlen;
+		rx_read(sk, &dlen, sizeof(dlen));
+		unsigned n = (unsigned)count < (unsigned)dlen ?
+				     (unsigned)count :
+				     (unsigned)dlen;
+		rx_read(sk, buf, n);
+		if (n < (unsigned)dlen) {
+			char tmp;
+			unsigned rem = (unsigned)dlen - n;
+			while (rem--)
+				rx_read(sk, &tmp, 1);
+		}
+		peer = sk->unix_peer;
+		spinlock_unlock(&sk->rxbuf_lock, irq);
+		if (peer)
+			sock_wakeup(peer);
+		return (ssize_t)n;
+	}
+
+	spinlock_lock(&sk->rxbuf_lock, &irq);
+	while (rx_used(sk) == 0) {
+		spinlock_unlock(&sk->rxbuf_lock, irq);
+		if (sk->err)
+			return sk->err;
+		if (sk->state == SS_DISCONNECTING)
+			return 0;
+		if (nonblock)
+			return -EAGAIN;
+		if (time_now_ms() > deadline)
+			return -ETIMEDOUT;
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+	}
+	unsigned n = rx_read(sk, buf, (unsigned)count);
+	peer = sk->unix_peer;
+	spinlock_unlock(&sk->rxbuf_lock, irq);
+	if (peer)
+		sock_wakeup(peer);
+	return (ssize_t)n;
+}
+
+ssize_t unix_write(mos_sock *sk, const void *buf, size_t count)
+{
+	mos_sock *peer = sk->unix_peer;
+	int irq;
+
+	if (!peer)
+		return -EPIPE;
+	spinlock_lock(&peer->rxbuf_lock, &irq);
+	if (sk->type == SOCK_DGRAM) {
+		u16_t dlen = (u16_t)count;
+		if (rx_free(peer) < sizeof(dlen) + (unsigned)count) {
+			spinlock_unlock(&peer->rxbuf_lock, irq);
+			return -ENOBUFS;
+		}
+		rx_write(peer, &dlen, sizeof(dlen));
+	}
+	unsigned n = rx_write(peer, buf, (unsigned)count);
+	spinlock_unlock(&peer->rxbuf_lock, irq);
+	sock_wakeup(peer);
+	return (ssize_t)n;
+}
+
+static int unix_cmsg_validate_walk(const struct msghdr *msg,
+				   struct cmsghdr **next)
+{
+	struct cmsghdr *cm = *next;
+	char *base = (char *)msg->msg_control;
+	char *end = base + msg->msg_controllen;
+
+	if (!cm)
+		return 0;
+	if ((char *)cm + sizeof(*cm) > end)
+		return -EINVAL;
+	if (cm->cmsg_len < CMSG_LEN(0))
+		return -EINVAL;
+	if ((char *)cm + cm->cmsg_len > end)
+		return -EINVAL;
+
+	char *step = (char *)cm + CMSG_ALIGN(cm->cmsg_len);
+	*next = (step + sizeof(struct cmsghdr) <= end) ?
+			(struct cmsghdr *)step :
+			NULL;
+	return 0;
+}
+
+static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
+				   unsigned *nfds_out)
+{
+	unsigned nfds = 0;
+	struct cmsghdr *cm;
+	struct cmsghdr *next;
+
+	if (!msg->msg_control || !msg->msg_controllen) {
+		*nfds_out = 0;
+		return 0;
+	}
+
+	cm = CMSG_FIRSTHDR(msg);
+	while (cm) {
+		next = cm;
+		if (unix_cmsg_validate_walk(msg, &next) < 0)
+			goto err_drop;
+		if (cm->cmsg_level != SOL_SOCKET || cm->cmsg_type != SCM_RIGHTS)
+			goto err_drop;
+
+		size_t payload = cm->cmsg_len - CMSG_LEN(0);
+		unsigned count;
+		int *fds;
+		unsigned i;
+
+		if (payload == 0 || (payload % sizeof(int)) != 0)
+			goto err_drop;
+
+		count = (unsigned)(payload / sizeof(int));
+		if (nfds + count > UNIX_PASSFD_MAX)
+			goto err_drop;
+
+		fds = (int *)CMSG_DATA(cm);
+		for (i = 0; i < count; i++) {
+			task_struct *cur = CURRENT_TASK();
+			int fd = fds[i];
+			file *fp;
+			if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
+				goto err_drop;
+			fp = cur->fds[fd];
+			fs_get_file(fp);
+			files[nfds++] = fp;
+		}
+
+		cm = next;
+	}
+
+	*nfds_out = nfds;
+	return 0;
+
+err_drop:
+	while (nfds > 0)
+		fs_put_file(files[--nfds]);
+	return -EINVAL;
+}
+
+static void unix_cmsg_put_files(file **files, unsigned nfds)
+{
+	while (nfds > 0)
+		fs_put_file(files[--nfds]);
+}
+
+static int unix_queue_passfds(mos_sock *peer, file **files, unsigned nfds,
+			      unsigned ready_head)
+{
+	int next_tail;
+	unix_passfd_msg *slot;
+	unsigned i;
+
+	if (nfds == 0)
+		return 0;
+
+	next_tail = (peer->unix_passfd_tail + 1) % UNIX_PASSFD_QUEUE;
+	if (next_tail == peer->unix_passfd_head)
+		return -ENOBUFS;
+
+	slot = &peer->unix_passfd_queue[peer->unix_passfd_tail];
+	slot->ready_head = ready_head;
+	slot->nfds = nfds;
+	for (i = 0; i < nfds; i++) {
+		slot->files[i] = files[i];
+		files[i] = NULL;
+	}
+	peer->unix_passfd_tail = next_tail;
+	return 0;
+}
+
+static unsigned unix_collect_ready_passfds(mos_sock *sk, file **files)
+{
+	unsigned nfds = 0;
+
+	while (sk->unix_passfd_head != sk->unix_passfd_tail) {
+		unix_passfd_msg *msg =
+			&sk->unix_passfd_queue[sk->unix_passfd_head];
+		unsigned i;
+
+		if (msg->ready_head > sk->rx_head)
+			break;
+		if (nfds + msg->nfds > UNIX_PASSFD_MAX)
+			break;
+		for (i = 0; i < msg->nfds; i++)
+			files[nfds++] = msg->files[i];
+		msg->nfds = 0;
+		sk->unix_passfd_head =
+			(sk->unix_passfd_head + 1) % UNIX_PASSFD_QUEUE;
+	}
+
+	return nfds;
+}
+
+static void unix_cmsg_append(struct msghdr *msg, size_t *off, int level,
+			     int type, const void *data, size_t dlen)
+{
+	size_t space = CMSG_SPACE(dlen);
+	if (*off + space > (size_t)msg->msg_controllen) {
+		msg->msg_flags |= MSG_CTRUNC;
+		return;
+	}
+	struct cmsghdr *cm =
+		(struct cmsghdr *)((char *)msg->msg_control + *off);
+	cm->cmsg_len = CMSG_LEN(dlen);
+	cm->cmsg_level = level;
+	cm->cmsg_type = type;
+	memcpy(CMSG_DATA(cm), data, dlen);
+	*off += space;
+}
+
+static void unix_cmsg_install_fds(struct msghdr *msg, file **files,
+				  unsigned nfds)
+{
+	int fds[UNIX_PASSFD_MAX];
+	unsigned i;
+	unsigned installed = 0;
+	size_t payload_space;
+	size_t ctrl_len = msg->msg_controllen;
+	unsigned fit;
+
+	if (nfds == 0) {
+		msg->msg_controllen = 0;
+		return;
+	}
+
+	if (!msg->msg_control || ctrl_len < CMSG_SPACE(sizeof(int))) {
+		msg->msg_flags |= MSG_CTRUNC;
+		unix_cmsg_put_files(files, nfds);
+		msg->msg_controllen = 0;
+		return;
+	}
+
+	payload_space = ctrl_len - CMSG_SPACE(0);
+	fit = (unsigned)(payload_space / sizeof(int));
+	if (fit > UNIX_PASSFD_MAX)
+		fit = UNIX_PASSFD_MAX;
+	if (fit > nfds)
+		fit = nfds;
+
+	for (i = 0; i < fit; i++) {
+		int fd = fs_install_fd(files[i], 0);
+		if (fd < 0)
+			break;
+		fds[installed++] = fd;
+		files[i] = NULL;
+	}
+
+	if (installed < nfds)
+		msg->msg_flags |= MSG_CTRUNC;
+
+	msg->msg_controllen = ctrl_len;
+	if (installed > 0) {
+		size_t off = 0;
+		unix_cmsg_append(msg, &off, SOL_SOCKET, SCM_RIGHTS, fds,
+				 installed * sizeof(int));
+		msg->msg_controllen = off;
+	} else {
+		msg->msg_controllen = 0;
+	}
+
+	for (i = installed; i < nfds; i++) {
+		if (files[i])
+			fs_put_file(files[i]);
+	}
+}
+
+int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
+{
+	mos_sock *peer = sk->unix_peer;
+	file *files[UNIX_PASSFD_MAX] = { NULL };
+	unsigned nfds = 0;
+	size_t total_len = 0;
+	size_t i;
+	int irq;
+	int ret;
+	unsigned written;
+	int next_tail;
+
+	if (!peer)
+		return -EPIPE;
+
+	for (i = 0; i < msg->msg_iovlen; i++)
+		total_len += msg->msg_iov[i].iov_len;
+
+	ret = unix_cmsg_collect_files(msg, files, &nfds);
+	if (ret < 0)
+		return ret;
+
+	spinlock_lock(&peer->rxbuf_lock, &irq);
+	next_tail = (peer->unix_passfd_tail + 1) % UNIX_PASSFD_QUEUE;
+	if (nfds > 0 && next_tail == peer->unix_passfd_head) {
+		ret = -ENOBUFS;
+		goto out_unlock;
+	}
+
+	if (sk->type == SOCK_DGRAM) {
+		u16_t dlen = (u16_t)total_len;
+		if (total_len > 0xffff) {
+			ret = -EMSGSIZE;
+			goto out_unlock;
+		}
+		if (rx_free(peer) < sizeof(dlen) + (unsigned)total_len) {
+			ret = -ENOBUFS;
+			goto out_unlock;
+		}
+		rx_write(peer, &dlen, sizeof(dlen));
+		for (i = 0; i < msg->msg_iovlen; i++)
+			rx_write(peer, msg->msg_iov[i].iov_base,
+				 (unsigned)msg->msg_iov[i].iov_len);
+		ret = unix_queue_passfds(peer, files, nfds, peer->rx_tail);
+		if (ret < 0)
+			goto out_unlock;
+		spinlock_unlock(&peer->rxbuf_lock, irq);
+		sock_wakeup(peer);
+		return (int)total_len;
+	}
+
+	if (rx_free(peer) < (unsigned)total_len) {
+		ret = -ENOBUFS;
+		goto out_unlock;
+	}
+	written = 0;
+	for (i = 0; i < msg->msg_iovlen; i++)
+		written += rx_write(peer, msg->msg_iov[i].iov_base,
+				    (unsigned)msg->msg_iov[i].iov_len);
+	ret = unix_queue_passfds(peer, files, nfds, peer->rx_tail);
+	if (ret < 0)
+		goto out_unlock;
+	spinlock_unlock(&peer->rxbuf_lock, irq);
+	sock_wakeup(peer);
+	return (int)written;
+
+out_unlock:
+	spinlock_unlock(&peer->rxbuf_lock, irq);
+	unix_cmsg_put_files(files, nfds);
+	return ret;
+}
+
+int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
+{
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	file *files[UNIX_PASSFD_MAX] = { NULL };
+	unsigned nfds = 0;
+	unsigned delivered = 0;
+	size_t i;
+	int irq;
+	mos_sock *peer;
+
+	if (sk->type == SOCK_DGRAM) {
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+		while (rx_used(sk) < sizeof(u16_t)) {
+			if (sk->unix_passfd_head != sk->unix_passfd_tail)
+				break;
+			spinlock_unlock(&sk->rxbuf_lock, irq);
+			if (sk->err)
+				return sk->err;
+			if (flags & MSG_DONTWAIT)
+				return -EAGAIN;
+			if (time_now_ms() > deadline)
+				return -ETIMEDOUT;
+			if (sock_wait(sk, deadline) < 0)
+				return -EINTR;
+			spinlock_lock(&sk->rxbuf_lock, &irq);
+		}
+
+		if (rx_used(sk) >= sizeof(u16_t)) {
+			u16_t dlen;
+			unsigned remaining;
+
+			rx_read(sk, &dlen, sizeof(dlen));
+			remaining = (unsigned)dlen;
+			for (i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
+				unsigned n =
+					(unsigned)msg->msg_iov[i].iov_len <
+							 remaining ?
+						(unsigned)msg->msg_iov[i].iov_len :
+						remaining;
+				rx_read(sk, msg->msg_iov[i].iov_base, n);
+				delivered += n;
+				remaining -= n;
+			}
+			while (remaining--) {
+				char tmp;
+				rx_read(sk, &tmp, 1);
+			}
+			msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
+		}
+
+		nfds = unix_collect_ready_passfds(sk, files);
+		peer = sk->unix_peer;
+		spinlock_unlock(&sk->rxbuf_lock, irq);
+
+		if (peer)
+			sock_wakeup(peer);
+
+		if (msg->msg_name &&
+		    msg->msg_namelen >= sizeof(struct sockaddr_un)) {
+			struct sockaddr_un *un =
+				(struct sockaddr_un *)msg->msg_name;
+			un->sun_family = AF_UNIX;
+			strncpy(un->sun_path, peer ? peer->unix_path : "",
+				UNIX_PATH_MAX - 1);
+			un->sun_path[UNIX_PATH_MAX - 1] = '\0';
+			msg->msg_namelen = sizeof(*un);
+		}
+
+		unix_cmsg_install_fds(msg, files, nfds);
+		return (int)delivered;
+	}
+
+	spinlock_lock(&sk->rxbuf_lock, &irq);
+	while (rx_used(sk) == 0 && sk->unix_passfd_head == sk->unix_passfd_tail) {
+		spinlock_unlock(&sk->rxbuf_lock, irq);
+		if (sk->err)
+			return sk->err;
+		if (sk->state == SS_DISCONNECTING)
+			return 0;
+		if (sk->state == SS_UNCONNECTED)
+			return -ENOTCONN;
+		if (flags & MSG_DONTWAIT)
+			return -EAGAIN;
+		if (time_now_ms() > deadline)
+			return -ETIMEDOUT;
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+	}
+
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		unsigned n = rx_read(sk, msg->msg_iov[i].iov_base,
+				     (unsigned)msg->msg_iov[i].iov_len);
+		delivered += n;
+		if (n < (unsigned)msg->msg_iov[i].iov_len)
+			break;
+	}
+	nfds = unix_collect_ready_passfds(sk, files);
+	peer = sk->unix_peer;
+	spinlock_unlock(&sk->rxbuf_lock, irq);
+
+	if (peer)
+		sock_wakeup(peer);
+
+	if (msg->msg_name && msg->msg_namelen >= sizeof(struct sockaddr_un)) {
+		struct sockaddr_un *un = (struct sockaddr_un *)msg->msg_name;
+		un->sun_family = AF_UNIX;
+		strncpy(un->sun_path, peer ? peer->unix_path : "",
+			UNIX_PATH_MAX - 1);
+		un->sun_path[UNIX_PATH_MAX - 1] = '\0';
+		msg->msg_namelen = sizeof(*un);
+	}
+	msg->msg_flags = 0;
+	unix_cmsg_install_fds(msg, files, nfds);
+	return (int)delivered;
+}
+
 /* ── Release ─────────────────────────────────────────────────────────── */
 
 /*
@@ -283,7 +789,7 @@ void unix_release(mos_sock *sk)
 	task_struct *cur = CURRENT_TASK();
 	mos_sock *peer = sk->unix_peer;
 
-	if (peer) {
+	if (peer && sk->type == SOCK_STREAM) {
 		peer->unix_peer = NULL;
 		peer->state = SS_DISCONNECTING;
 		sock_wakeup(peer);
@@ -307,6 +813,7 @@ void unix_release(mos_sock *sk)
 			pending->unix_peer->state = SS_DISCONNECTING;
 			sock_wakeup(pending->unix_peer);
 		}
+		unix_drop_passfds(pending);
 		free(pending);
 	}
 }

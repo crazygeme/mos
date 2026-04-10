@@ -176,8 +176,10 @@ static file *pts_cdev_open(super_block *sb, unsigned rdev, int flag)
 		spinlock_unlock(&pts_alloc_lock, irq);
 		return NULL;
 	}
-	if (!(flag & O_PATH))
+	if (!(flag & O_PATH)) {
 		__sync_add_and_fetch(&p->slave_count, 1);
+		p->slave_ever_opened = 1;
+	}
 	spinlock_unlock(&pts_alloc_lock, irq);
 
 	inode *node = zalloc(sizeof(*node));

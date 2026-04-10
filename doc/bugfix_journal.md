@@ -5,6 +5,60 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-11 — PTY master spurious HUP breaks `screen`; `ssh` client can't exit
+
+Two regressions from the same select/HUP change pulled in opposite directions:
+`screen` killed its window immediately after forking the shell, and `ssh` hung
+forever after the remote session closed.
+
+### 1. `screen` window died immediately after creation
+
+- **Caught by:** running `screen` from a login shell
+- **Symptom:** screen created one window, printed the shell prompt briefly, then
+  exited cleanly (status 0). Kernel log showed `read(ptmx_master) = 0` at the
+  first `select()` after the `fork()`.
+- **Root cause (mechanism):** `select()` propagated `FS_POLL_HUP` on the ptmx
+  master into `readfds` for all CHR devices. At the point screen called
+  `select()`, the forked child had not yet opened the slave — so
+  `cyb_writer_count(s2m) == 0` and HUP fired. Screen read 0 bytes (EOF),
+  interpreted it as window exit, and tore the window down.
+- **Root cause (deeper):** `cyb_writer_count(s2m) == 0` cannot distinguish
+  "no slave has ever written" from "a slave opened and then exited". A plain
+  flag `slave_ever_opened` would fix this, *but* `fs_chown` calls
+  `vfs_open(O_RDONLY)` on the slave path, which (unconditionally) called
+  `cyb_writer_open(s2m)` and would have set that flag — silently defeating the
+  gate before the real shell opened the slave.
+- **Fix:**
+  - [pts_internal.h](../src/dev/pts_internal.h): add `slave_ever_opened` to
+    `pts_pair`.
+  - [fs.c](../src/fs/fs.c): change `fs_stat`, `fs_chmod`, and `fs_chown` to
+    open with `O_PATH` instead of `O_RDONLY`. These functions only need inode
+    access; `O_PATH` is the correct flag, and it already gates the cyclic
+    buffer and slave-count operations in the slave open path.
+  - [pty.c](../src/dev/pty.c) and [ptmx.c](../src/dev/ptmx.c): set
+    `slave_ever_opened = 1` inside the existing `if (!(flag & O_PATH))` block —
+    no new conditionals needed.
+  - [pts.c](../src/dev/pts.c): gate master HUP on
+    `p->slave_ever_opened && cyb_writer_count(p->s2m) == 0`.
+
+### 2. `ssh` client could not exit after the remote session closed
+
+- **Caught by:** running `ssh user@host`, logging out, observing the client
+  hanging.
+- **Symptom:** the ssh client process stayed alive indefinitely after the server
+  session ended.
+- **Root cause:** an earlier attempt to fix the screen regression suppressed
+  CHR HUP from `readfds` in `select()`. The ssh client's controlling terminal
+  is a pty slave; when the master is closed, the slave gets HUP. Without HUP
+  in `readfds`, the client's `select()` returned but stdin showed nothing, so
+  the client did not know to exit.
+- **Fix:** revert [select.c](../src/fs/select.c) to the unified rule: any
+  `FS_POLL_HUP` on a READ-subscribed fd sets `readfds`. No per-file-type
+  special-casing. The spurious HUP is prevented at the source (pts.c gate),
+  not masked in select.c.
+
+---
+
 ## 2026-04-10 — Pipe and PTY EOF readiness split for `select()` vs `poll()`
 
 This bug showed up during full System V boot rather than in the smaller POSIX

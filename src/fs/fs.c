@@ -327,7 +327,7 @@ int fs_close(int fd)
 int fs_stat(const char *path, struct stat *s)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->root, path, O_RDONLY);
+	file *fp = vfs_open(cur->root, path, O_PATH);
 	int ret;
 
 	if (!fp)
@@ -654,7 +654,7 @@ done:
 int fs_chmod(const char *pathname, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->root, pathname, O_RDONLY);
+	file *fp = vfs_open(cur->root, pathname, O_PATH);
 	struct stat s;
 	int ret;
 
@@ -684,7 +684,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->root, pathname, O_RDONLY);
+	file *fp = vfs_open(cur->root, pathname, O_PATH);
 	struct stat s;
 	int ret;
 

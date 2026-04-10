@@ -206,7 +206,8 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 	if ((events & FS_POLL_READ) &&
 	    (p->pkt_status || !cyb_isempty(p->s2m)))
 		ready |= FS_POLL_READ;
-	if ((events & FS_POLL_HUP) && cyb_writer_count(p->s2m) == 0)
+	if ((events & FS_POLL_HUP) && p->slave_ever_opened &&
+	    cyb_writer_count(p->s2m) == 0)
 		ready |= FS_POLL_HUP;
 	if (events & FS_POLL_WRITE)
 		ready |= FS_POLL_WRITE;

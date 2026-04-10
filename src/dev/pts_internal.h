@@ -38,6 +38,7 @@ typedef struct {
 
 	int master_open;
 	int slave_count;
+	int slave_ever_opened; /* set when first slave open; gates master HUP */
 } pts_pair;
 
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock);

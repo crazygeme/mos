@@ -65,6 +65,7 @@ cat > "$SRC" <<'EOF'
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <sys/select.h>
 #include <poll.h>
 
@@ -224,6 +225,67 @@ static void set_raw_mode(int slave)
 		die("TCSETS");
 }
 
+static void test_pts_large_blocking_write(void)
+{
+	int master, slave;
+	char tx[8192];
+	char rx[sizeof(tx)];
+	size_t off = 0;
+	pid_t pid;
+	int status;
+
+	open_pts_pair(&master, &slave);
+	set_raw_mode(slave);
+
+	for (off = 0; off < sizeof(tx); off++)
+		tx[off] = 'a' + (off % 26);
+
+	pid = fork();
+	if (pid < 0)
+		die("fork");
+	if (pid == 0) {
+		ssize_t n = write(slave, tx, sizeof(tx));
+		if (n != (ssize_t)sizeof(tx)) {
+			fprintf(stderr,
+				"large pty write was truncated: n=%ld errno=%d\n",
+				(long)n, errno);
+			_exit(1);
+		}
+		_exit(0);
+	}
+
+	if (close(slave) < 0)
+		die("close slave in parent");
+
+	off = 0;
+	while (off < sizeof(rx)) {
+		ssize_t n = read(master, rx + off, sizeof(rx) - off);
+		if (n <= 0) {
+			fprintf(stderr,
+				"large pty read failed: off=%lu n=%ld errno=%d\n",
+				(unsigned long)off, (long)n, errno);
+			exit(1);
+		}
+		off += (size_t)n;
+	}
+
+	if (memcmp(tx, rx, sizeof(tx)) != 0) {
+		fprintf(stderr, "large pty payload mismatch\n");
+		exit(1);
+	}
+
+	if (waitpid(pid, &status, 0) < 0)
+		die("waitpid");
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "large pty writer child failed: status=%d\n",
+			status);
+		exit(1);
+	}
+
+	if (close(master) < 0)
+		die("close master after large write");
+}
+
 static void test_pts_nonblock(void)
 {
 	int master, slave;
@@ -288,6 +350,7 @@ int main(void)
 {
 	test_pipe_nonblock();
 	test_pts_nonblock();
+	test_pts_large_blocking_write();
 	return 0;
 }
 EOF

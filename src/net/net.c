@@ -181,7 +181,7 @@ void net_init(void)
 
 	printk("net: eth0 up, DHCP started\n");
 
-	if (!TestControl.test && !TestControl.bash) {
+	if (0) {
 		/* Wait until the interface has a non-zero IP (required for TCP bind). */
 		uint32_t deadline = (uint32_t)time_now_ms() + 10000;
 		while (ip4_addr_isany(netif_ip4_addr(&eth0)) &&

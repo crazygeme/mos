@@ -137,6 +137,9 @@ unsigned fs_page_cache_get(inode *inode, unsigned offset, int *cache_hit)
 			*cache_hit = 1;
 		return phy;
 	}
+
+	if (hash_size(fs_page_cache) >= PAGE_CACHE_SIZE)
+		fs_page_cache_evict_one_locked();
 	mutex_unlock(&fs_page_cache_lock);
 
 	phy = fs_page_cache_load(inode, tmp.offset);
@@ -152,9 +155,6 @@ unsigned fs_page_cache_get(inode *inode, unsigned offset, int *cache_hit)
 			*cache_hit = 1;
 		return ((fs_page_cache_entry *)pair->val)->phy;
 	}
-
-	if (hash_size(fs_page_cache) >= PAGE_CACHE_SIZE)
-		fs_page_cache_evict_one_locked();
 
 	entry = malloc(sizeof(*entry));
 	if (!entry) {

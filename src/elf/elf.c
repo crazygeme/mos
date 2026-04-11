@@ -37,7 +37,6 @@ static int elf_read(file *fp, unsigned off, void *buf, int len)
 		goto DONE;
 
 	ret = (int)rcnt;
-
 DONE:
 	if (TestControl.profiling)
 		elf_read_time += time_wall_us() - begin;

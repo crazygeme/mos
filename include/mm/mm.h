@@ -70,6 +70,8 @@ void mm_init_task_pagedir(unsigned int *page_dir);
 
 void mm_sync_task_kernel_pagedir(unsigned int *page_dir);
 
+void mm_sync_current_kernel_pagedir(void);
+
 // map 0xCxxxxxxxx to xxxxxxx
 // return (is used for page table)
 int mm_kmap_page(unsigned int vir);

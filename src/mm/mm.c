@@ -4,6 +4,7 @@
 #include <lib/list.h>
 #include <lib/lock.h>
 #include <ps/ps.h>
+#include <hw/cpu.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/phymm.h>
@@ -116,6 +117,8 @@ static spinlock_t mm_lock;
 static spinlock_t path_lock;
 static int mm_dynamic_region(unsigned phy);
 static unsigned int kernel_pde_template[PG_TABLE_SIZE];
+static volatile unsigned kernel_pde_gen = 1;
+static volatile unsigned kernel_pde_seen[MAX_CPUS];
 
 /* Name-buffer cache node */
 
@@ -133,9 +136,11 @@ void mm_init_page_table_cache()
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
 	memset(kernel_pde_template, 0, sizeof(kernel_pde_template));
+	memset((void *)kernel_pde_seen, 0, sizeof(kernel_pde_seen));
 	memcpy(&kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
 	       &page_dir[KERNEL_PAGE_DIR_OFFSET],
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
+	kernel_pde_seen[0] = kernel_pde_gen;
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
@@ -171,6 +176,22 @@ static void mm_copy_kernel_pagedir_locked(unsigned int *page_dir)
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
 }
 
+static unsigned mm_current_cpu_index(void)
+{
+	if (ncpus <= 1)
+		return 0;
+	return (unsigned)cpu_current_id();
+}
+
+static void mm_note_kernel_pde_change_locked(void)
+{
+	unsigned cpu = mm_current_cpu_index();
+
+	kernel_pde_gen++;
+	if (cpu < MAX_CPUS)
+		kernel_pde_seen[cpu] = kernel_pde_gen;
+}
+
 void mm_sync_task_kernel_pagedir(unsigned int *page_dir)
 {
 	int irq;
@@ -181,6 +202,24 @@ void mm_sync_task_kernel_pagedir(unsigned int *page_dir)
 	spinlock_lock(&mm_lock, &irq);
 	mm_copy_kernel_pagedir_locked(page_dir);
 	spinlock_unlock(&mm_lock, irq);
+}
+
+void mm_sync_current_kernel_pagedir(void)
+{
+	unsigned cpu = mm_current_cpu_index();
+	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
+	unsigned gen = kernel_pde_gen;
+
+	if (!page_dir)
+		return;
+	if (cpu < MAX_CPUS && kernel_pde_seen[cpu] == gen)
+		return;
+
+	memcpy(&page_dir[KERNEL_PAGE_DIR_OFFSET],
+	       &kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
+	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
+	if (cpu < MAX_CPUS)
+		kernel_pde_seen[cpu] = gen;
 }
 
 void mm_init_task_pagedir(unsigned int *page_dir)
@@ -222,8 +261,10 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA |
 		      flag;
 		page_dir[offset] = pde;
-		if (addr >= KERNEL_OFFSET)
+		if (addr >= KERNEL_OFFSET) {
 			kernel_pde_template[offset] = pde;
+			mm_note_kernel_pde_change_locked();
+		}
 	}
 	info->dir = &page_dir[offset];
 	if (*info->dir)
@@ -535,7 +576,7 @@ void mm_unmap_page(unsigned int vir)
 		    phymm_dereference_page(page_index) == 0)
 			phymm_free_user(page_index);
 	}
-	mm_clear_page_table_entry(&info);
+	mm_clear_page_table_entry(vir, &info);
 	spinlock_unlock(&mm_lock, irq);
 }
 
@@ -579,6 +620,7 @@ unsigned int vm_alloc(int page_count)
 	int page_index;
 	int i;
 	int irq;
+	int shootdown = 0;
 
 	spinlock_lock(&mm_lock, &irq);
 
@@ -592,7 +634,11 @@ unsigned int vm_alloc(int page_count)
 		mm_kmap_page((page_index + i) * PAGE_SIZE + KERNEL_OFFSET);
 
 	RELOAD_CR3();
+	shootdown = (ncpus > 1);
 	spinlock_unlock(&mm_lock, irq);
+
+	if (shootdown)
+		smp_tlb_shootdown();
 
 	buffer_count += page_count;
 	return page_index * PAGE_SIZE + KERNEL_OFFSET;
@@ -603,6 +649,7 @@ void vm_free(unsigned int vm, int page_count)
 {
 	int i;
 	int irq;
+	int shootdown = 0;
 
 	spinlock_lock(&mm_lock, &irq);
 	vm &= PAGE_SIZE_MASK;
@@ -610,7 +657,11 @@ void vm_free(unsigned int vm, int page_count)
 		mm_kunmap_page(vm + i * PAGE_SIZE);
 	RELOAD_CR3();
 	phymm_free_kernel((vm - KERNEL_OFFSET) / PAGE_SIZE, page_count);
+	shootdown = (ncpus > 1);
 	spinlock_unlock(&mm_lock, irq);
+
+	if (shootdown)
+		smp_tlb_shootdown();
 
 	buffer_count -= page_count;
 }

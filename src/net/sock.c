@@ -140,8 +140,8 @@ unsigned rx_iov_write(mos_sock *sk, const struct iovec *iov, size_t iovlen)
 	unsigned written = 0;
 
 	for (i = 0; i < iovlen; i++)
-		written += rx_write(sk, iov[i].iov_base,
-				    (unsigned)iov[i].iov_len);
+		written +=
+			rx_write(sk, iov[i].iov_base, (unsigned)iov[i].iov_len);
 	return written;
 }
 

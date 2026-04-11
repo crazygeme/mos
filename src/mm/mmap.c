@@ -723,7 +723,7 @@ static int vm_same_file_identity(file *left, file *right)
 	left_tag = left_inode->i_pgcache_tag ? left_inode->i_pgcache_tag :
 					       left_inode->i_private;
 	right_tag = right_inode->i_pgcache_tag ? right_inode->i_pgcache_tag :
-						right_inode->i_private;
+						 right_inode->i_private;
 
 	return left_tag == right_tag && left_inode->i_ino == right_inode->i_ino;
 }

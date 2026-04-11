@@ -89,8 +89,8 @@ static void cmsg_write(struct msghdr *msg, const mos_sock *sk)
 				     &sk->rx_stamp, sizeof(sk->rx_stamp));
 
 	if (sk->cmsg_flags & SOCK_CMSG_TTL)
-		sock_msg_cmsg_append(msg, &off, IPPROTO_IP, IP_TTL,
-				     &sk->rx_ttl, sizeof(int));
+		sock_msg_cmsg_append(msg, &off, IPPROTO_IP, IP_TTL, &sk->rx_ttl,
+				     sizeof(int));
 
 	if (sk->cmsg_flags & SOCK_CMSG_PKTINFO) {
 		struct in_pktinfo pi;
@@ -151,7 +151,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 					return sent > 0 ? (int)sent : -EAGAIN;
 				if (time_now_ms() > deadline)
 					return sent > 0 ? (int)sent :
-							 -ETIMEDOUT;
+							  -ETIMEDOUT;
 				tcp_output(sk->tcp);
 				if (sock_wait(sk, deadline) < 0)
 					return sent > 0 ? (int)sent : -EINTR;
@@ -298,8 +298,8 @@ static unsigned sock_recvmsg_dgram(mos_sock *sk, struct msghdr *msg)
 	unsigned remaining;
 
 	rx_read(sk, &dlen, sizeof(dlen));
-	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen,
-				(unsigned)dlen);
+	delivered =
+		rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, (unsigned)dlen);
 	remaining = (unsigned)dlen - delivered;
 	rx_discard(sk, remaining);
 

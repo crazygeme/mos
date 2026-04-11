@@ -31,15 +31,19 @@ static err_t tcp_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
 		return ERR_OK;
 	}
 
+	/*
+	 * TCP is a byte stream: dropping any tail bytes from a received pbuf
+	 * corrupts the stream irrecoverably. If the userspace receive ring
+	 * cannot hold the whole segment yet, leave the pbuf unconsumed so lwIP
+	 * can retry delivery later instead of partially copying then freeing it.
+	 */
+	if (rx_free(sk) < (unsigned)p->tot_len)
+		return ERR_MEM;
+
 	struct pbuf *q;
-	u16_t acked = 0;
-	for (q = p; q; q = q->next) {
-		unsigned written = rx_write(sk, q->payload, (unsigned)q->len);
-		acked += (u16_t)written;
-		if (written < (unsigned)q->len)
-			break;
-	}
-	tcp_recved(pcb, acked);
+	for (q = p; q; q = q->next)
+		rx_write(sk, q->payload, (unsigned)q->len);
+	tcp_recved(pcb, p->tot_len);
 	pbuf_free(p);
 	sock_wakeup(sk);
 	return ERR_OK;

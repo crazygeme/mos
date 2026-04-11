@@ -5,6 +5,31 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-11 - TCP receive callback dropped tail bytes, corrupting SSH streams
+
+This one showed up as an intermittent OpenSSH client failure rather than a
+clean disconnect. The client would sometimes abort with `Bad packet length ...`,
+which is a strong sign that the encrypted byte stream itself was corrupted.
+
+### 1. SSH occasionally failed with `Bad packet length 1349676916`
+
+- **Caught by:** running an SSH client against the guest and seeing sporadic
+  packet framing failures instead of a stable session
+- **Symptom:** the client reported `Bad packet length 1349676916.` This is not
+  a normal SSH protocol rejection; it means the client decoded garbage where a
+  valid packet header should have been.
+- **Root cause:** [sock_cb.c](../src/net/sock_cb.c) handled incoming TCP pbufs
+  incorrectly when the socket receive ring did not have enough free space for
+  the whole segment. `tcp_on_recv()` copied as many bytes as fit, called
+  `tcp_recved()` only for those bytes, but then still freed the entire pbuf.
+  That silently discarded the tail of the TCP stream. For a byte-stream
+  protocol like SSH, losing even a few bytes irreversibly corrupts packet
+  framing and surfaces as a bogus packet length.
+- **Fix:** in [sock_cb.c](../src/net/sock_cb.c), make TCP receive all-or-nothing:
+  if the receive ring cannot hold `p->tot_len`, return `ERR_MEM` and leave the
+  pbuf unconsumed so lwIP can retry later. Only copy, acknowledge, and free the
+  pbuf once the whole segment fits.
+
 ## 2026-04-11 - fs page-cache refill allocated before evicting, breaking `gcc` under tighter cache pressure
 
 This one looked like an `execve()` or early-userspace startup problem at first

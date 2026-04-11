@@ -5,6 +5,31 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-11 - fs page-cache refill allocated before evicting, breaking `gcc` under tighter cache pressure
+
+This one looked like an `execve()` or early-userspace startup problem at first
+because `cc1` crashed very early during `gcc -o hello hello.c` under the full
+System V boot, while the same command worked in a simpler `/bin/bash` boot.
+The real trigger turned out to be the filesystem page-cache replacement order.
+
+### 1. `gcc` failed under System V boot when `PAGE_CACHE_SIZE` was small
+
+- **Caught by:** comparing the `gcc` repro under SysV init vs direct bash boot
+- **Symptom:** `cc1` segfaulted during early startup under the normal init
+  boot, but succeeded when the system booted straight to bash. Increasing
+  `PAGE_CACHE_SIZE` made the problem disappear.
+- **Root cause:** [cache.c](../src/fs/cache.c) handled fs page-cache misses in
+  the wrong order. On a miss it first called `fs_page_cache_load()`, which
+  allocates a fresh user page, and only after that checked whether the cache
+  was already full and evicted an old entry. Under heavy boot-time pressure,
+  this meant the cache refill path still required one extra free page even when
+  an evictable cache page already existed. With a smaller `PAGE_CACHE_SIZE`,
+  misses and refills happened often enough for `cc1`'s early file-backed faults
+  to hit this path reliably.
+- **Fix:** in [cache.c](../src/fs/cache.c), evict one LRU fs page-cache entry
+  before calling `fs_page_cache_load()` on a miss when `hash_size` has already
+  reached `PAGE_CACHE_SIZE`.
+
 ## 2026-04-11 — PTY writes silently truncated output beyond one buffer page
 
 This one initially looked like an `ssh`/`select()` wakeup problem because the

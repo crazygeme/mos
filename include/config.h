@@ -76,8 +76,8 @@
 #define USER_ZONE_END (KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE)
 
 // supported resolution
-#define VGA_RESOLUTION_X 720
-#define VGA_RESOLUTION_Y 540
+#define VGA_RESOLUTION_X 800
+#define VGA_RESOLUTION_Y 600
 #define VGA_COLOR_DEPTH 32
 
 #define MAX_PATH (4096 - sizeof(list_entry))

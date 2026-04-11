@@ -191,12 +191,21 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 ssize_t pts_master_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
+	int nonblock = pts_file_nonblock(fp);
+	int ret;
 	if (!buf || size < 1)
 		return 0;
 	if (cyb_reader_count(p->m2s) == 0)
 		return -EIO;
-	cyb_putbuf(p->m2s, (unsigned char *)buf, (unsigned)size, 0, 0);
-	return (ssize_t)size;
+	ret = cyb_putbuf(p->m2s, (unsigned char *)buf, (unsigned)size,
+			 !nonblock, 1);
+	if (ret == -EPIPE)
+		return -EIO;
+	if (ret < 0)
+		return -EINTR;
+	if (nonblock && ret == 0 && cyb_reader_count(p->m2s) > 0)
+		return -EAGAIN;
+	return (ssize_t)ret;
 }
 
 unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
@@ -366,6 +375,9 @@ ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	const unsigned char *src = (const unsigned char *)buf;
+	int nonblock = pts_file_nonblock(fp);
+	int blocking = nonblock ? 0 : 1;
+	size_t consumed = 0;
 	if (!buf || size < 1)
 		return 0;
 	if (cyb_reader_count(p->s2m) == 0)
@@ -376,21 +388,58 @@ ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos)
 		unsigned i = 0;
 		while (i < (unsigned)size) {
 			unsigned j = i;
+			unsigned chunk;
+			int ret;
 			while (j < (unsigned)size && src[j] != '\n')
 				j++;
-			if (j > i)
-				cyb_putbuf(p->s2m, (unsigned char *)src + i,
-					   j - i, 0, 0);
+			chunk = j - i;
+			if (j > i) {
+				ret = cyb_putbuf(p->s2m, (unsigned char *)src + i,
+						 chunk, blocking, 1);
+				if (ret == -EPIPE)
+					return consumed > 0 ? (ssize_t)consumed :
+							      -EIO;
+				if (ret < 0)
+					return consumed > 0 ? (ssize_t)consumed :
+							      -EINTR;
+				consumed += (size_t)ret;
+				if ((unsigned)ret < chunk)
+					return nonblock && consumed == 0 &&
+							 cyb_reader_count(p->s2m) > 0 ?
+							      -EAGAIN :
+							      (ssize_t)consumed;
+				i = j;
+			}
 			if (j < (unsigned)size) {
-				cyb_putbuf(p->s2m, crnl, 2, 0, 0);
+				ret = cyb_putbuf(p->s2m, crnl, 2, blocking, 1);
+				if (ret == -EPIPE)
+					return consumed > 0 ? (ssize_t)consumed :
+							      -EIO;
+				if (ret < 0)
+					return consumed > 0 ? (ssize_t)consumed :
+							      -EINTR;
+				if (ret < 2)
+					return nonblock && consumed == 0 &&
+							 cyb_reader_count(p->s2m) > 0 ?
+							      -EAGAIN :
+							      (ssize_t)consumed;
+				consumed++;
 				j++;
 			}
 			i = j;
 		}
 	} else {
-		cyb_putbuf(p->s2m, (unsigned char *)src, (unsigned)size, 0, 0);
+		int ret = cyb_putbuf(p->s2m, (unsigned char *)src, (unsigned)size,
+				     blocking, 1);
+		if (ret == -EPIPE)
+			return -EIO;
+		if (ret < 0)
+			return -EINTR;
+		if (nonblock && ret == 0 && cyb_reader_count(p->s2m) > 0)
+			return -EAGAIN;
+		return (ssize_t)ret;
 	}
-	return (ssize_t)size;
+	return (ssize_t)consumed;
 }
 
 unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt)

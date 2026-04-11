@@ -216,7 +216,6 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 	int prot = region->prot;
 	int flag = region->flag;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
-	int mmflag;
 	unsigned page_idx;
 	int handled = 0;
 
@@ -246,11 +245,6 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 		}
 		INVLPG(address);
 		memset(address, 0, PAGE_SIZE);
-
-		mmflag = mm_get_map_flag(address);
-		mmflag &= ~PAGE_ENTRY_WRITABLE;
-		mm_set_map_flag(address, mmflag);
-		INVLPG(address);
 
 		mm_anon_shared_add(region->anon_id, offset, phy);
 		handled = 1;

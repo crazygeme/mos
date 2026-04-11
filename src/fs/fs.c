@@ -292,8 +292,8 @@ int fs_open(const char *path, int flag, umode_t mode)
 			return ret;
 		}
 		if (fp->f_inode)
-			fp->f_inode->i_mode =
-				(fp->f_inode->i_mode & S_IFMT) | create_mode;
+			fp->f_inode->i_mode = (fp->f_inode->i_mode & S_IFMT) |
+					      create_mode;
 	}
 
 	int fd = fs_install_fd(fp, flag & O_CLOEXEC);
@@ -595,12 +595,6 @@ int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg)
 	pt->entries[pt->nr].dereg = dereg;
 	pt->nr++;
 	return 0;
-}
-
-void poll_table_note_unsupported(poll_table *pt)
-{
-	if (pt)
-		pt->unsupported = 1;
 }
 
 unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt)

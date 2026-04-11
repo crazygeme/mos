@@ -265,9 +265,10 @@ int fs_ioctl(int fd, unsigned cmd, void *buf);
 
 void poll_table_init(poll_table *pt, task_struct *task,
 		     poll_table_entry *entries, unsigned cap);
+
 void poll_table_cleanup(poll_table *pt);
+
 int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg);
-void poll_table_note_unsupported(poll_table *pt);
 
 int fs_chmod(const char *pathname, uint32_t mode);
 

@@ -82,33 +82,10 @@ int pts_slave_chown(inode *node, uint32_t uid, uint32_t gid)
 	return 0;
 }
 
-int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
+/* ioctl cases shared between master and slave */
+static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
 {
-	pts_pair *p = fp->f_inode->i_private;
 	switch (cmd) {
-	case TIOCGPTN:
-		*(unsigned *)buf = (unsigned)p->idx;
-		return 0;
-	case TIOCSPTLCK:
-		p->pt_locked = buf ? (*(int *)buf != 0) : 0;
-		return 0;
-	case TIOCGPTLCK:
-		*(int *)buf = p->pt_locked;
-		return 0;
-	case TCFLSH: {
-		int sel = (int)(uintptr_t)buf;
-		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
-			sel = TCIOFLUSH;
-		if (sel == TCIFLUSH || sel == TCIOFLUSH)
-			cyb_flush(p->s2m);
-		if (sel == TCOFLUSH || sel == TCIOFLUSH)
-			cyb_flush(p->m2s);
-		return 0;
-	}
-	case TIOCPKT:
-		p->pkt_mode = buf ? (*(int *)buf != 0) : 0;
-		p->pkt_status = 0;
-		return 0;
 	case TCGETS:
 		memcpy(buf, &p->termios, sizeof(p->termios));
 		return 0;
@@ -145,11 +122,44 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 	}
 	case TIOCNOTTY: {
 		task_struct *cur = CURRENT_TASK();
-
 		if (cur->user && p->pgrp == cur->user->group_id)
 			p->pgrp = 0;
 		return 0;
 	}
+	}
+	return -ENOSYS;
+}
+
+int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
+{
+	pts_pair *p = fp->f_inode->i_private;
+	int ret = pts_pair_ioctl(p, cmd, buf);
+	if (ret != -ENOSYS)
+		return ret;
+	switch (cmd) {
+	case TIOCGPTN:
+		*(unsigned *)buf = (unsigned)p->idx;
+		return 0;
+	case TIOCSPTLCK:
+		p->pt_locked = buf ? (*(int *)buf != 0) : 0;
+		return 0;
+	case TIOCGPTLCK:
+		*(int *)buf = p->pt_locked;
+		return 0;
+	case TCFLSH: {
+		int sel = (int)(uintptr_t)buf;
+		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+			sel = TCIOFLUSH;
+		if (sel == TCIFLUSH || sel == TCIOFLUSH)
+			cyb_flush(p->s2m);
+		if (sel == TCOFLUSH || sel == TCIOFLUSH)
+			cyb_flush(p->m2s);
+		return 0;
+	}
+	case TIOCPKT:
+		p->pkt_mode = buf ? (*(int *)buf != 0) : 0;
+		p->pkt_status = 0;
+		return 0;
 	}
 	return -ENOSYS;
 }
@@ -212,8 +222,7 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	unsigned ready = 0;
-	if ((events & FS_POLL_READ) &&
-	    (p->pkt_status || !cyb_isempty(p->s2m)))
+	if ((events & FS_POLL_READ) && (p->pkt_status || !cyb_isempty(p->s2m)))
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_HUP) && p->slave_ever_opened &&
 	    cyb_writer_count(p->s2m) == 0)
@@ -228,10 +237,10 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 {
 	pts_pair *p = fp->f_inode->i_private;
+	int ret = pts_pair_ioctl(p, cmd, buf);
+	if (ret != -ENOSYS)
+		return ret;
 	switch (cmd) {
-	case TCGETS:
-		memcpy(buf, &p->termios, sizeof(p->termios));
-		return 0;
 	case TCFLSH: {
 		int sel = (int)(uintptr_t)buf;
 		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
@@ -240,44 +249,6 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 			cyb_flush(p->m2s);
 		if (sel == TCOFLUSH || sel == TCIOFLUSH)
 			cyb_flush(p->s2m);
-		return 0;
-	}
-	case TCSETS:
-	case TCSETSW:
-		memcpy(&p->termios, buf, sizeof(p->termios));
-		return 0;
-	case TCSETSF:
-		p->canon.len = 0;
-		cyb_flush(p->m2s);
-		memcpy(&p->termios, buf, sizeof(p->termios));
-		return 0;
-	case TIOCGWINSZ:
-		memcpy(buf, &p->winsize, sizeof(p->winsize));
-		return 0;
-	case TIOCSWINSZ:
-		memcpy(&p->winsize, buf, sizeof(p->winsize));
-		return 0;
-	case TIOCGPGRP:
-		*(unsigned *)buf = p->pgrp;
-		return 0;
-	case TIOCSPGRP:
-		p->pgrp = *(unsigned *)buf;
-		return 0;
-	case TIOCSCTTY: {
-		task_struct *cur = CURRENT_TASK();
-		int steal = (int)(uintptr_t)buf;
-		if (!cur->user || cur->user->session_id != cur->psid)
-			return -EPERM;
-		if (p->pgrp && !steal)
-			return -EPERM;
-		p->pgrp = cur->user->group_id;
-		return 0;
-	}
-	case TIOCNOTTY: {
-		task_struct *cur = CURRENT_TASK();
-
-		if (cur->user && p->pgrp == cur->user->group_id)
-			p->pgrp = 0;
 		return 0;
 	}
 	case KDGETMODE:
@@ -371,75 +342,98 @@ ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos)
 	return (ssize_t)n;
 }
 
+/*
+ * Interprets a cyb_putbuf result during a slave write.
+ * Returns 1 (stop) and fills *out if the write was incomplete or failed.
+ * Returns 0 (continue) on full success.
+ */
+static int pts_write_check(int ret, size_t consumed, int nonblock, cy_buf *s2m,
+			   unsigned expected, ssize_t *out)
+{
+	if (ret == -EPIPE) {
+		*out = consumed > 0 ? (ssize_t)consumed : -EIO;
+		return 1;
+	}
+	if (ret < 0) {
+		*out = consumed > 0 ? (ssize_t)consumed : -EINTR;
+		return 1;
+	}
+	if ((unsigned)ret < expected) {
+		*out = (nonblock && consumed == 0 &&
+			cyb_reader_count(s2m) > 0) ?
+			       -EAGAIN :
+			       (ssize_t)consumed;
+		return 1;
+	}
+	return 0;
+}
+
+/* Translate \n → \r\n on the way to the master (OPOST|ONLCR). */
+static ssize_t pts_slave_write_opost(pts_pair *p, const unsigned char *src,
+				     size_t size, int nonblock)
+{
+	static const unsigned char crnl[2] = { '\r', '\n' };
+	int blocking = nonblock ? 0 : 1;
+	size_t consumed = 0;
+	unsigned i = 0;
+
+	while (i < (unsigned)size) {
+		unsigned j = i;
+		int ret;
+		ssize_t out;
+
+		while (j < (unsigned)size && src[j] != '\n')
+			j++;
+
+		if (j > i) {
+			unsigned chunk = j - i;
+			ret = cyb_putbuf(p->s2m, (unsigned char *)(src + i),
+					 chunk, blocking, 1);
+			if (pts_write_check(ret, consumed, nonblock, p->s2m,
+					    chunk, &out))
+				return out;
+			consumed += (size_t)ret;
+		}
+
+		if (j < (unsigned)size) {
+			ret = cyb_putbuf(p->s2m, (unsigned char *)crnl, 2,
+					 blocking, 1);
+			if (pts_write_check(ret, consumed, nonblock, p->s2m, 2,
+					    &out))
+				return out;
+			consumed++;
+			j++;
+		}
+		i = j;
+	}
+	return (ssize_t)consumed;
+}
+
 ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
-	const unsigned char *src = (const unsigned char *)buf;
 	int nonblock = pts_file_nonblock(fp);
 	int blocking = nonblock ? 0 : 1;
-	size_t consumed = 0;
+	int ret;
+
 	if (!buf || size < 1)
 		return 0;
 	if (cyb_reader_count(p->s2m) == 0)
 		return -EIO;
-	if ((p->termios.c_oflag & OPOST) && (p->termios.c_oflag & ONLCR)) {
-		/* Translate \n → \r\n: write spans between newlines in bulk */
-		unsigned char crnl[2] = { '\r', '\n' };
-		unsigned i = 0;
-		while (i < (unsigned)size) {
-			unsigned j = i;
-			unsigned chunk;
-			int ret;
-			while (j < (unsigned)size && src[j] != '\n')
-				j++;
-			chunk = j - i;
-			if (j > i) {
-				ret = cyb_putbuf(p->s2m, (unsigned char *)src + i,
-						 chunk, blocking, 1);
-				if (ret == -EPIPE)
-					return consumed > 0 ? (ssize_t)consumed :
-							      -EIO;
-				if (ret < 0)
-					return consumed > 0 ? (ssize_t)consumed :
-							      -EINTR;
-				consumed += (size_t)ret;
-				if ((unsigned)ret < chunk)
-					return nonblock && consumed == 0 &&
-							 cyb_reader_count(p->s2m) > 0 ?
-							      -EAGAIN :
-							      (ssize_t)consumed;
-				i = j;
-			}
-			if (j < (unsigned)size) {
-				ret = cyb_putbuf(p->s2m, crnl, 2, blocking, 1);
-				if (ret == -EPIPE)
-					return consumed > 0 ? (ssize_t)consumed :
-							      -EIO;
-				if (ret < 0)
-					return consumed > 0 ? (ssize_t)consumed :
-							      -EINTR;
-				if (ret < 2)
-					return nonblock && consumed == 0 &&
-							 cyb_reader_count(p->s2m) > 0 ?
-							      -EAGAIN :
-							      (ssize_t)consumed;
-				consumed++;
-				j++;
-			}
-			i = j;
-		}
-	} else {
-		int ret = cyb_putbuf(p->s2m, (unsigned char *)src, (unsigned)size,
-				     blocking, 1);
-		if (ret == -EPIPE)
-			return -EIO;
-		if (ret < 0)
-			return -EINTR;
-		if (nonblock && ret == 0 && cyb_reader_count(p->s2m) > 0)
-			return -EAGAIN;
-		return (ssize_t)ret;
-	}
-	return (ssize_t)consumed;
+
+	if ((p->termios.c_oflag & OPOST) && (p->termios.c_oflag & ONLCR))
+		return pts_slave_write_opost(p, (const unsigned char *)buf,
+					     size, nonblock);
+
+	ret = cyb_putbuf(p->s2m, (unsigned char *)buf, (unsigned)size, blocking,
+			 1);
+	if (ret == -EPIPE)
+		return -EIO;
+	if (ret < 0)
+		return -EINTR;
+	if (nonblock && ret == 0 && cyb_reader_count(p->s2m) > 0)
+		return -EAGAIN;
+	return (ssize_t)ret;
 }
 
 unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt)

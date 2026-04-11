@@ -111,10 +111,12 @@ int sys_kill(int pid, int sig)
 
 	if (pid > 0) {
 		ret = ps_send_signal((unsigned)pid, sig);
-		if (ret == 0 && cur->type == ps_user && (unsigned)pid == cur->psid &&
-		    cur->signal && !(cur->signal->sig_mask & (1UL << (sig - 1)))) {
-			intr_frame *frame = (intr_frame *)((char *)cur + PAGE_SIZE -
-							   sizeof(intr_frame));
+		if (ret == 0 && cur->type == ps_user &&
+		    (unsigned)pid == cur->psid && cur->signal &&
+		    !(cur->signal->sig_mask & (1UL << (sig - 1)))) {
+			intr_frame *frame =
+				(intr_frame *)((char *)cur + PAGE_SIZE -
+					       sizeof(intr_frame));
 			frame->eax = 0;
 			do_signal(frame);
 		}

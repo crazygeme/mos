@@ -5,6 +5,45 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-11 — PTY writes silently truncated output beyond one buffer page
+
+This one initially looked like an `ssh`/`select()` wakeup problem because the
+client showed only the first chunk of `ls -alh /bin`. The trace turned out to
+be more direct: the PTY layer was dropping data once the stream grew past the
+4 KiB cyclic buffer.
+
+### 1. `ssh` showed only the first 4096 bytes of PTY output
+
+- **Caught by:** running `ls -alh /bin` in an SSH session and reading
+  [out/krn.log](../out/krn.log)
+- **Symptom:** `ls` exited normally, but the client only displayed the first
+  part of the directory listing.
+- **Root cause:** [pts.c](../src/dev/pts.c) used `cyb_putbuf(..., 0, 0)` in
+  both `pts_master_write()` and `pts_slave_write()`, which made the cyclic
+  buffer act as nonblocking. Those functions then unconditionally returned the
+  caller's requested size even when `cyb_putbuf()` had accepted only a partial
+  write. Once the PTY buffer filled, the tail of the stream was silently
+  discarded.
+- **Fix:**
+  - in [pts.c](../src/dev/pts.c), honor the file's `O_NONBLOCK` state in
+    `pts_master_write()` and `pts_slave_write()`
+  - return the actual byte count from `cyb_putbuf()` instead of pretending the
+    whole request succeeded
+  - translate broken-reader cases back to `-EIO` for PTY semantics
+  - keep the `ONLCR` translation path consistent with the same partial-write
+    rules
+
+### 2. The first large-transfer regression test deadlocked
+
+- **Caught by:** running `script.posix_nonblock_ipc`
+- **Symptom:** the new PTY large-write test blocked forever.
+- **Root cause:** the test tried to do a blocking 8 KiB write into a 4 KiB PTY
+  buffer with no concurrent reader. That is valid kernel behavior, so the test
+  itself was wrong.
+- **Fix:** update [posix_nonblock_ipc.sh](../test/posix_nonblock_ipc.sh) to
+  fork a child writer while the parent drains the PTY master, and add
+  `<sys/wait.h>` for the child exit check.
+
 ## 2026-04-11 — PTY master spurious HUP breaks `screen`; `ssh` client can't exit
 
 Two regressions from the same select/HUP change pulled in opposite directions:

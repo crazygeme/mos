@@ -665,7 +665,8 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 						(unsigned)dlen);
 			remaining = (unsigned)dlen - delivered;
 			rx_discard(sk, remaining);
-			msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
+			msg->msg_flags =
+				(delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
 		}
 
 		nfds = unix_collect_ready_passfds(sk, files);
@@ -691,7 +692,8 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 	}
 
 	spinlock_lock(&sk->rxbuf_lock, &irq);
-	while (rx_used(sk) == 0 && sk->unix_passfd_head == sk->unix_passfd_tail) {
+	while (rx_used(sk) == 0 &&
+	       sk->unix_passfd_head == sk->unix_passfd_tail) {
 		spinlock_unlock(&sk->rxbuf_lock, irq);
 		if (sk->err)
 			return sk->err;
@@ -708,8 +710,7 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 		spinlock_lock(&sk->rxbuf_lock, &irq);
 	}
 
-	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen,
-				rx_used(sk));
+	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, rx_used(sk));
 	nfds = unix_collect_ready_passfds(sk, files);
 	peer = sk->unix_peer;
 	spinlock_unlock(&sk->rxbuf_lock, irq);

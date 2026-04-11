@@ -190,7 +190,6 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	if (TestControl.profiling)
 		page_fault_file_spent += (time_wall_us() - begin);
 	return 1;
-
 FAIL:
 	if (TestControl.profiling)
 		page_fault_file_spent += (time_wall_us() - begin);

@@ -37,7 +37,7 @@ make -j$(nproc)   # build kernel (sets up disk image on first run)
 ```
 
 > [!NOTE]
-> The `root` user has no password.
+> The `root` user has a password 123456.
 
 > [!TIP]
 > On Linux with KVM support, add `kvm` for **10×** faster emulation:

@@ -27,7 +27,7 @@ Virtual address space (after paging enabled):
 0xC0000000                KERNEL_OFFSET — kernel virtual base
 0xC0200000                Kernel image (virtual, mapped from phys 0x100000)
 0xC0700000 - 0xC0BFEFFF   Kernel heap (KHEAP_BEGIN / KHEAP_END)
-0xC0C00000 - 0xC4BFFFFF   Page table cache (1024 × 4 KB entries)
+0xC0C00000 - 0xCCBFFFFF   Page table cache (PAGE_TABLE_CACHE_PAGES × 4 KB, default 4096 entries = 16 MB)
 0xFEE00000                LAPIC MMIO
 0xFEC00000                IOAPIC MMIO
 ```
@@ -123,7 +123,7 @@ the PIT ISR). Supports `kill()`, `sigaction()`, `alarm()`.
 | `pagefault.c` | `#PF` handler — demand paging, copy-on-write, stack growth           |
 | `vdso.c`      | Maps a virtual DSO page (vDSO) into each process                     |
 
-**Page table cache:** a 1024-entry stack pre-allocates page tables from the
+**Page table cache:** a `PAGE_TABLE_CACHE_PAGES`-entry stack (default 4096) pre-allocates page tables from the
 reserved region `[PAGE_TABLE_CACHE_BEGIN, PAGE_TABLE_CACHE_END)` to avoid
 `kmalloc` during fault handling.
 

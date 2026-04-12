@@ -421,7 +421,7 @@ static int pf_handle_page_invalid(unsigned cr2)
  */
 static void wp_page_copy(unsigned cr2)
 {
-	unsigned vir = cr2;
+	unsigned vir = cr2 & PAGE_SIZE_MASK;
 	unsigned new_mem;
 	int flag;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
@@ -463,14 +463,15 @@ static void wp_page_copy(unsigned cr2)
  */
 static void wp_page_reuse(unsigned cr2)
 {
+	unsigned vir = cr2 & PAGE_SIZE_MASK;
 	int flag;
 	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_perm++;
-	flag = mm_get_map_flag(cr2);
+	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
-	mm_set_map_flag(cr2, flag);
-	INVLPG(cr2);
+	mm_set_map_flag(vir, flag);
+	INVLPG(vir);
 
 	if (TestControl.profiling)
 		page_fault_perm_spent += (time_wall_us() - begin);
@@ -497,26 +498,27 @@ static int do_wp_page(unsigned cr2)
 	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
 	unsigned page_index;
+	unsigned vir = cr2 & PAGE_SIZE_MASK;
 
-	region = vm_find_map_cached(cur->user, cr2);
+	region = vm_find_map_cached(cur->user, vir);
 
 	if (!region || !(region->prot & PROT_WRITE))
 		return 0;
 
 	if (region->flag & MAP_SHARED) {
-		wp_page_reuse(cr2);
+		wp_page_reuse(vir);
 		if (region->fp != NULL) {
-			unsigned page_index = mm_get_attached_page_index(cr2);
+			unsigned page_index = mm_get_attached_page_index(vir);
 			phymm_mark_dirty(page_index);
 		}
 		return 1;
 	}
 
-	page_index = mm_get_attached_page_index(cr2);
+	page_index = mm_get_attached_page_index(vir);
 	if (phymm_is_cow(page_index))
-		wp_page_copy(cr2);
+		wp_page_copy(vir);
 	else
-		wp_page_reuse(cr2);
+		wp_page_reuse(vir);
 
 	return 1;
 }
@@ -535,7 +537,6 @@ extern void do_exit(unsigned encoded_status);
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
-	unsigned fault_addr;
 	unsigned error = frame->error_code;
 	task_struct *cur;
 	int int_enable = 0;
@@ -553,7 +554,6 @@ static void pf_process(intr_frame *frame)
 	 */
 
 	LOAD_CR2(cr2);
-	fault_addr = cr2;
 	cr2 = cr2 & PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {
@@ -573,9 +573,8 @@ NOT_HANDLED:
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
 	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
-		klog("segfault: error code %x, address %x, page %x, eip %x, cmd %s\n",
-		     frame->error_code, fault_addr, cr2, frame->eip,
-		     cur->user->command);
+		klog("segfault: error code %x, address %x, eip %x\n", frame->error_code,
+		     cr2, frame->eip);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);

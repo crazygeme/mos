@@ -87,7 +87,7 @@
 #define PAGE_SIZE (4 * 1024)
 #define PAGE_SIZE_MASK 0xFFFFF000
 
-#define PAGE_CACHE_SIZE (4096 * 8) // pages
+#define PAGE_CACHE_SIZE (4096 * 16) // pages
 #define PAGE_PREFETCH_N \
 	16 /* read-ahead: (N-1) pages before, N pages after fault */
 

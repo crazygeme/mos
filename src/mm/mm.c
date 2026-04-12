@@ -55,9 +55,16 @@ static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
 
 	if (cache->count == 0)
 		return 0;
+
+	/*
+	 * `top` points at the current free slot. Pop that slot first, then move
+	 * the stack pointer down. The previous code decremented `top` before the
+	 * read, which skipped the last slot and eventually underflowed to
+	 * 0xffffffff on the final allocation.
+	 */
 	ret = cache->mem[cache->top];
-	__sync_add_and_fetch(&cache->top, -1);
-	pgc_top = __sync_add_and_fetch(&cache->count, -1);
+	__sync_sub_and_fetch(&cache->top, 1);
+	pgc_top = __sync_sub_and_fetch(&cache->count, 1);
 	cache_count++;
 	return ret;
 }
@@ -66,6 +73,12 @@ static void page_table_cache_free(page_table_cache_t *cache, unsigned int val)
 {
 	if (cache->count >= PAGE_TABLE_CACHE_PAGES)
 		return;
+
+	/*
+	 * Push into the next free slot above the current top. Writing to the old
+	 * `top` reused an in-use entry and made the allocator's stack metadata
+	 * diverge from the actual contents.
+	 */
 	__sync_add_and_fetch(&cache->top, 1);
 	cache->mem[cache->top] = val;
 	pgc_top = __sync_add_and_fetch(&cache->count, 1);
@@ -117,8 +130,6 @@ static spinlock_t mm_lock;
 static spinlock_t path_lock;
 static int mm_dynamic_region(unsigned phy);
 static unsigned int kernel_pde_template[PG_TABLE_SIZE];
-static volatile unsigned kernel_pde_gen = 1;
-static volatile unsigned kernel_pde_seen[MAX_CPUS];
 
 /* Name-buffer cache node */
 
@@ -136,11 +147,26 @@ void mm_init_page_table_cache()
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
 	memset(kernel_pde_template, 0, sizeof(kernel_pde_template));
-	memset((void *)kernel_pde_seen, 0, sizeof(kernel_pde_seen));
 	memcpy(&kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
 	       &page_dir[KERNEL_PAGE_DIR_OFFSET],
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
-	kernel_pde_seen[0] = kernel_pde_gen;
+
+	/*
+	 * Pre-allocate a page-table page for every kernel-half PDE slot that
+	 * the boot mapping left empty.  After this loop kernel_pde_template[]
+	 * is fully populated and never changes again: every task pgdir created
+	 * from the template already has all 256 kernel PDEs, so no vmalloc
+	 * fault or PDE propagation is ever needed.
+	 */
+	for (i = KERNEL_PAGE_DIR_OFFSET; i < 1024; i++) {
+		if (kernel_pde_template[i] == 0) {
+			unsigned int pt = mm_alloc_page_table();
+			unsigned int pde = (pt - KERNEL_OFFSET) |
+					   PAGE_ENTRY_KERNEL_DATA;
+			kernel_pde_template[i] = pde;
+			page_dir[i] = pde;
+		}
+	}
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
@@ -169,66 +195,19 @@ unsigned mm_get_pagedir()
 	return cr3 + KERNEL_OFFSET;
 }
 
-static void mm_copy_kernel_pagedir_locked(unsigned int *page_dir)
-{
-	memcpy(&page_dir[KERNEL_PAGE_DIR_OFFSET],
-	       &kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
-	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
-}
-
-static unsigned mm_current_cpu_index(void)
-{
-	if (ncpus <= 1)
-		return 0;
-	return (unsigned)cpu_current_id();
-}
-
-static void mm_note_kernel_pde_change_locked(void)
-{
-	unsigned cpu = mm_current_cpu_index();
-
-	kernel_pde_gen++;
-	if (cpu < MAX_CPUS)
-		kernel_pde_seen[cpu] = kernel_pde_gen;
-}
-
-void mm_sync_task_kernel_pagedir(unsigned int *page_dir)
+void mm_init_task_pagedir(unsigned int *page_dir)
 {
 	int irq;
 
 	if (!page_dir)
 		return;
 
+	memset(page_dir, 0, PAGE_SIZE);
 	spinlock_lock(&mm_lock, &irq);
-	mm_copy_kernel_pagedir_locked(page_dir);
-	spinlock_unlock(&mm_lock, irq);
-}
-
-void mm_sync_current_kernel_pagedir(void)
-{
-	unsigned cpu = mm_current_cpu_index();
-	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
-	unsigned gen = kernel_pde_gen;
-
-	if (!page_dir)
-		return;
-	if (cpu < MAX_CPUS && kernel_pde_seen[cpu] == gen)
-		return;
-
 	memcpy(&page_dir[KERNEL_PAGE_DIR_OFFSET],
 	       &kernel_pde_template[KERNEL_PAGE_DIR_OFFSET],
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
-	if (cpu < MAX_CPUS)
-		kernel_pde_seen[cpu] = gen;
-}
-
-void mm_init_task_pagedir(unsigned int *page_dir)
-{
-	if (!page_dir)
-		return;
-
-	memset(page_dir, 0, PAGE_SIZE);
-	mm_sync_task_kernel_pagedir(page_dir);
+	spinlock_unlock(&mm_lock, irq);
 }
 
 typedef struct {
@@ -261,10 +240,15 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA |
 		      flag;
 		page_dir[offset] = pde;
-		if (addr >= KERNEL_OFFSET) {
+
+		/*
+		 * Kernel-half PDEs must stay consistent across all task page
+		 * directories. Record newly created kernel PDEs in the shared
+		 * template so tasks created later inherit the same kernel
+		 * code/data/vmalloc coverage as the current page directory.
+		 */
+		if (addr >= KERNEL_OFFSET)
 			kernel_pde_template[offset] = pde;
-			mm_note_kernel_pde_change_locked();
-		}
 	}
 	info->dir = &page_dir[offset];
 	if (*info->dir)
@@ -303,6 +287,11 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
 /*
  * Zero the page-table entry and decrement the live-entry counter.
  * Reclaims the page table itself when the last entry is removed.
+ *
+ * Kernel PT pages are intentionally never reclaimed: they are physically
+ * shared across all task page directories, so freeing one while other tasks
+ * still hold a PDE pointing at it would be a use-after-free.  User PT pages
+ * belong to a single task and are safe to release when empty.
  */
 static void mm_clear_page_table_entry(unsigned addr, mm_addr_info *info)
 {

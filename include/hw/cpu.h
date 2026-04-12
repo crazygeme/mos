@@ -14,6 +14,7 @@ typedef struct _cpu_struct {
 	volatile int online; /* set to 1 by AP after initialisation */
 	tss_struct *tss; /* per-CPU TSS (allocated from kernel heap) */
 	task_struct *idle; /* per-CPU idle task */
+	task_struct *pending_dying; /* exited task awaiting post-switch publish */
 } cpu_struct;
 
 extern cpu_struct cpus[MAX_CPUS];

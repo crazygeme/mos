@@ -543,6 +543,13 @@ int do_vfork(void)
 	task->user = ps_alloc_user_env();
 	if (!task->user)
 		return -ENOMEM;
+
+	/*
+	 * vfork shares the parent's exact address space until exec/exit.
+	 * Keep the child on the same CPU so page-table and TLB assumptions that
+	 * rely on local invalidation do not suddenly become cross-CPU.
+	 */
+	task->affinity = cur->affinity;
 	/* Borrow parent's address space — child does not own these. */
 	task->user->page_dir = cur->user->page_dir;
 	task->user->vm = cur->user->vm;

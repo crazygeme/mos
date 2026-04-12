@@ -65,7 +65,6 @@ void int_unregister(int vec_no)
 /* IPI: TLB shootdown — flush the entire TLB on this CPU. */
 static void ipi_tlb_handler(intr_frame *frame)
 {
-	mm_sync_current_kernel_pagedir();
 	RELOAD_CR3();
 }
 

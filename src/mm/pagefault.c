@@ -21,6 +21,11 @@ unsigned page_fault_file = 0;
 unsigned page_fault_file_read = 0;
 unsigned page_fault_perm = 0;
 unsigned page_fault_file_cache_hit = 0;
+unsigned long long page_fault_cow_spent = 0;
+unsigned long long page_fault_invalid_spent = 0;
+unsigned long long page_fault_file_spent = 0;
+unsigned long long page_fault_file_search_spent = 0;
+unsigned long long page_fault_perm_spent = 0;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
@@ -377,6 +382,11 @@ static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
  *
  * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
  * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
+ *
+ * The new page is accessed through its direct kernel alias (phy +
+ * KERNEL_OFFSET) via mm_kmap_phys(), which avoids vm_alloc/vm_free and the
+ * kernel PDE work they would trigger on this hot path.
+ * phymm_alloc_user() leaves refcount at 0; mm_map_page() raises it to 1.
  */
 static void wp_page_copy(unsigned cr2)
 {
@@ -581,7 +591,7 @@ NOT_HANDLED:
 
 	DIE();
 
-	Done:
+Done:
 	int_intr_setlevel(int_enable);
 	sched_enable(cpu);
 }

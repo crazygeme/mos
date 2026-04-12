@@ -45,7 +45,10 @@
 
 #define KHEAP_END (KHEAP_BEGIN + 0x004FF000)
 
-#define PAGE_TABLE_CACHE_PAGES 4096 /* number of 4K page tables in the cache */
+/* Number of 4 KB page-table pages reserved for the PT cache.
+ * 256 are consumed at boot for the kernel-half pre-allocation; the rest
+ * serve user page tables.  Raise this if the system runs many processes. */
+#define PAGE_TABLE_CACHE_PAGES 4096
 #define PAGE_TABLE_CACHE_BEGIN (KHEAP_END + 0x00001000)
 #define PAGE_TABLE_CACHE_END \
 	(PAGE_TABLE_CACHE_BEGIN + PAGE_TABLE_CACHE_PAGES * PAGE_SIZE)

@@ -42,8 +42,10 @@
 
 #define KHEAP_END (KHEAP_BEGIN + 0x004FF000)
 
+#define PAGE_TABLE_CACHE_PAGES 4096 /* number of 4K page tables in the cache */
 #define PAGE_TABLE_CACHE_BEGIN (KHEAP_END + 0x00001000)
-#define PAGE_TABLE_CACHE_END (PAGE_TABLE_CACHE_BEGIN + 0x0400000)
+#define PAGE_TABLE_CACHE_END \
+	(PAGE_TABLE_CACHE_BEGIN + PAGE_TABLE_CACHE_PAGES * PAGE_SIZE)
 
 #define RESERVED_PAGES ((PAGE_TABLE_CACHE_END - KERNEL_OFFSET) / PAGE_SIZE)
 
@@ -85,7 +87,7 @@
 #define PAGE_SIZE (4 * 1024)
 #define PAGE_SIZE_MASK 0xFFFFF000
 
-#define PAGE_CACHE_SIZE (4096) // pages
+#define PAGE_CACHE_SIZE (4096 * 8) // pages
 #define PAGE_PREFETCH_N \
 	16 /* read-ahead: (N-1) pages before, N pages after fault */
 

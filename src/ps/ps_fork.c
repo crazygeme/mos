@@ -25,7 +25,7 @@
 #include "ps_internal.h"
 
 extern void ret_from_fork();
-extern short pgc_entry_count[1024];
+extern short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
 
 /*
  * Kernel task entry point

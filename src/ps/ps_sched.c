@@ -119,7 +119,8 @@ static task_struct *ps_get_next_task()
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	ps_fire_timers_unsafe();
+	if (current->psid != 0xffffffff)
+		ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
 		if (list_is_empty(&control.ready_queue[i]))
 			continue;

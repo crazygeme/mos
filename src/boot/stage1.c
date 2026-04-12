@@ -80,7 +80,8 @@ _START static void setup_idt()
 _START static void mm_setup_beginning_8m()
 {
 	unsigned int phy = PAGE_ENTRY_USER_DATA;
-	unsigned int reserved_page_tables = (RESERVED_PAGES / 1024);
+	unsigned int reserved_page_tables =
+		(RESERVED_PAGES + PE_TABLE_SIZE - 1) / PE_TABLE_SIZE;
 	unsigned int pg = (GDT_ADDRESS + PAGE_SIZE);
 	unsigned int *pgt;
 	int i = 0, j = 0;

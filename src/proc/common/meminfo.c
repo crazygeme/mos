@@ -36,7 +36,7 @@ static void fill(proc_buf_t *pb)
 	proc_buf_printf(pb, "Dirty:             %8u kB\n", 0u);
 	proc_buf_printf(pb, "Writeback:         %8u kB\n", 0u);
 	proc_buf_printf(pb, "PageTables:        %8u kB\n",
-			PG_KB(1024 - pgc_top));
+			PG_KB(PAGE_TABLE_CACHE_PAGES - pgc_top));
 	proc_buf_printf(pb, "KernelStack:       %8u kB\n",
 			PG_KB(ps_total_count()));
 	proc_buf_printf(pb, "CommitLimit:       %8u kB\n", PG_KB(total_pages));

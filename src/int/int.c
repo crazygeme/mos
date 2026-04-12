@@ -78,7 +78,7 @@ static void intr_check_point(intr_frame *frame)
 {
 	task_struct *cur = CURRENT_TASK();
 	const unsigned user_eflags_clear = 0x00054000U;
-	if (!ps_enabled())
+	if (cur->psid == 0xffffffff || !ps_enabled())
 		return;
 
 	/*

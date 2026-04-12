@@ -27,12 +27,12 @@ unsigned pgc_top = 0;
  */
 
 /* Live entry counts per cached page table (used to reclaim empty tables) */
-short pgc_entry_count[1024];
+short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
 
 typedef struct {
 	unsigned int top;
 	unsigned int count;
-	unsigned int mem[1024];
+	unsigned int mem[PAGE_TABLE_CACHE_PAGES];
 } page_table_cache_t;
 
 static page_table_cache_t page_table_cache;
@@ -41,10 +41,10 @@ static void page_table_cache_init(page_table_cache_t *cache)
 {
 	int i;
 
-	for (i = 0; i < 1024; i++)
+	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		cache->mem[i] = PAGE_TABLE_CACHE_BEGIN + i * PAGE_SIZE;
-	cache->top = 1023;
-	cache->count = 1024;
+	cache->top = PAGE_TABLE_CACHE_PAGES - 1;
+	cache->count = PAGE_TABLE_CACHE_PAGES;
 }
 
 static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
@@ -53,8 +53,8 @@ static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
 
 	if (cache->count == 0)
 		return 0;
-	__sync_add_and_fetch(&cache->top, -1);
 	ret = cache->mem[cache->top];
+	__sync_add_and_fetch(&cache->top, -1);
 	pgc_top = __sync_add_and_fetch(&cache->count, -1);
 	cache_count++;
 	return ret;
@@ -62,10 +62,10 @@ static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
 
 static void page_table_cache_free(page_table_cache_t *cache, unsigned int val)
 {
-	if (cache->count >= 1024)
+	if (cache->count >= PAGE_TABLE_CACHE_PAGES)
 		return;
-	cache->mem[cache->top] = val;
 	__sync_add_and_fetch(&cache->top, 1);
+	cache->mem[cache->top] = val;
 	pgc_top = __sync_add_and_fetch(&cache->count, 1);
 	cache_count--;
 }
@@ -102,7 +102,7 @@ void mm_init_page_table_cache()
 	int i;
 
 	page_table_cache_init(&page_table_cache);
-	for (i = 0; i < 1024; i++)
+	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
 
 	spinlock_init(&mm_lock);
@@ -310,13 +310,16 @@ int mm_map_io(unsigned int phy)
 	return 1;
 }
 
-/* Remove user-space mappings (page-directory entries 0 and 1) */
+/* Remove the temporary low identity map installed during boot. */
 void mm_del_user_map()
 {
 	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
+	unsigned int reserved_page_tables =
+		(RESERVED_PAGES + PE_TABLE_SIZE - 1) / PE_TABLE_SIZE;
+	unsigned int i;
 
-	page_dir[0] = 0;
-	page_dir[1] = 0;
+	for (i = 0; i < reserved_page_tables; i++)
+		page_dir[i] = 0;
 	RELOAD_CR3();
 }
 

@@ -573,8 +573,8 @@ NOT_HANDLED:
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
 	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
-		klog("segfault: error code %x, address %x, eip %x\n", frame->error_code,
-		     cr2, frame->eip);
+		klog("segfault: error code %x, address %x, eip %x\n",
+		     frame->error_code, cr2, frame->eip);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);

@@ -392,6 +392,7 @@ task_struct *ps_find_process(unsigned psid);
 int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);
+void ps_send_signal_owner(int owner, int sig);
 
 typedef void (*ps_enum_callback)(task_struct *task, void *ctx);
 void ps_enum_all(ps_enum_callback callback, void *ctx);

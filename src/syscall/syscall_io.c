@@ -394,6 +394,20 @@ int sys_fcntl(int fd, int cmd, int arg)
 				       (arg & ~(O_ACCMODE | O_CLOEXEC));
 		ret = 0;
 		break;
+	case F_SETOWN:
+		cur->fds[fd]->f_owner = arg;
+		ret = 0;
+		break;
+	case F_GETOWN:
+		ret = cur->fds[fd]->f_owner;
+		break;
+	case F_SETSIG:
+		cur->fds[fd]->f_sigio = arg;
+		ret = 0;
+		break;
+	case F_GETSIG:
+		ret = cur->fds[fd]->f_sigio;
+		break;
 	default:
 		ret = 0;
 		break;

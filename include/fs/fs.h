@@ -151,6 +151,8 @@ struct _file {
 	unsigned f_mode; /* O_RDONLY / O_WRONLY / O_RDWR (set by fs_open) */
 	unsigned f_flag; /* file status flags, including O_NONBLOCK */
 	unsigned f_state;
+	int f_owner; /* async I/O owner set via fcntl(F_SETOWN) */
+	int f_sigio; /* signal number for async I/O (0 => SIGIO) */
 	char *f_name;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };

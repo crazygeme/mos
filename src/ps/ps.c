@@ -277,8 +277,10 @@ int ps_enabled()
 void ps_kickoff()
 {
 	task_struct *cur = CURRENT_TASK();
+	memset(cur, 0, sizeof(*cur));
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
+	cur->stats = NULL;
 	_ps_enabled = 1;
 	task_sched();
 }
@@ -287,6 +289,7 @@ void ps_kickoff()
 void ps_kickoff_ap(void)
 {
 	task_struct *cur = CURRENT_TASK();
+	memset(cur, 0, sizeof(*cur));
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
 	ps_create(ap_idle_stub, NULL, ps_idle, ps_kernel);

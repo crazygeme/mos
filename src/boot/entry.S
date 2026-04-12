@@ -14,10 +14,10 @@ var:                  .long MAGIC
                       .long CHECKSUM
                       .long 0
 
-.align                4
-.section              .bss
+.section              .bootstrap_stack,"aw",@nobits
+.align                4096
 stack_bottom:         .zero 16384
-stack_top:            .byte 0
+stack_top:
 
 
 .section              .multiboot
@@ -34,5 +34,4 @@ __start:
 hang:
     hlt
     jmp hang
-
 

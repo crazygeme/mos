@@ -78,14 +78,14 @@ to avoid allocation inside fault handlers.
 
 ```
 Region: [PAGE_TABLE_CACHE_BEGIN, PAGE_TABLE_CACHE_END)
-         0xC0C00000 – 0xC4BFFFFF (4 MB, 1024 page tables)
+         size = PAGE_TABLE_CACHE_PAGES * 4K (default: 4096 pages = 16 MB)
 
 page_table_cache_t {
-    unsigned top;         // stack top index
-    unsigned count;       // free slots remaining
-    unsigned mem[1024];   // virtual addresses of free page tables
+    unsigned top;                              // stack top index
+    unsigned count;                            // free slots remaining
+    unsigned mem[PAGE_TABLE_CACHE_PAGES];      // virtual addresses of free page tables
 }
-pgc_entry_count[1024]    // live PTE count per table (for reclaim)
+pgc_entry_count[PAGE_TABLE_CACHE_PAGES]       // live PTE count per table (for reclaim)
 ```
 
 - `mm_alloc_page_table()` — pops from the stack, zeroes the page, returns vaddr

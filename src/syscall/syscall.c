@@ -193,14 +193,14 @@ static unsigned call_table[NR_syscalls] = {
 	sys_munlock, // 151 __NR_munlock
 	sys_mlockall, // 152 __NR_mlockall
 	sys_munlockall, // 153 __NR_munlockall
-	0, // 154 __NR_sched_setparam
-	0, // 155 __NR_sched_getparam
-	0, // 156 __NR_sched_setscheduler
-	0, // 157 __NR_sched_getscheduler
+	sys_sched_setparam, // 154 __NR_sched_setparam
+	sys_sched_getparam, // 155 __NR_sched_getparam
+	sys_sched_setscheduler, // 156 __NR_sched_setscheduler
+	sys_sched_getscheduler, // 157 __NR_sched_getscheduler
 	sys_sched_yield, // 158 __NR_sched_yield
-	0, // 159 __NR_sched_get_priority_max
-	0, // 160 __NR_sched_get_priority_min
-	0, // 161 __NR_sched_rr_get_interval
+	sys_sched_get_priority_max, // 159 __NR_sched_get_priority_max
+	sys_sched_get_priority_min, // 160 __NR_sched_get_priority_min
+	sys_sched_rr_get_interval, // 161 __NR_sched_rr_get_interval
 	sys_nanosleep, // 162 __NR_nanosleep
 	sys_mremap, // 163 __NR_mremap
 	sys_setresuid, // 164 __NR_setresuid

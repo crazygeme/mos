@@ -652,7 +652,24 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset)
 {
 	task_struct *cur = CURRENT_TASK();
-	void *node = (fd != -1 && cur->fds[fd] != NULL) ? cur->fds[fd] : 0;
+	file *node = NULL;
+
+	/*
+	 * This kernel historically treats fd == -1 as an anonymous mapping
+	 * even when callers omit MAP_ANONYMOUS (e.g. exec stack setup).
+	 * Preserve that behavior and only validate an fd when one is supplied.
+	 */
+	if (fd != -1) {
+		if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
+			return -EBADF;
+
+		node = cur->fds[fd];
+		if (node->f_inode == NULL)
+			return -ENODEV;
+		if (!S_ISREG(node->f_inode->i_mode) &&
+		    !S_ISCHR(node->f_inode->i_mode))
+			return -ENODEV;
+	}
 
 	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
 }

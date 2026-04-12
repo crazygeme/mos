@@ -271,7 +271,7 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 		return sk->err;
 
 	if (sk->domain == AF_UNIX)
-		return unix_write(sk, buf, count);
+		return unix_write(fp, sk, buf, count);
 
 	if (sk->type == SOCK_RAW) {
 		if (sk->hdrincl)
@@ -550,11 +550,24 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 	}
 
 	if (events & FS_POLL_WRITE) {
-		if (sk->domain == AF_UNIX)
-			ready |= sk->unix_peer ? FS_POLL_WRITE : 0;
-		if (sk->type == SOCK_STREAM)
-			ready |= sk->state == SS_CONNECTED ? FS_POLL_WRITE : 0;
-		else
+		if (sk->domain == AF_UNIX) {
+			if (sk->unix_peer) {
+				if (sk->type == SOCK_DGRAM) {
+					ready |= rx_free(sk->unix_peer) >=
+								 sizeof(u16_t) ?
+							 FS_POLL_WRITE :
+							 0;
+				} else {
+					ready |= rx_free(sk->unix_peer) > 0 ?
+							 FS_POLL_WRITE :
+							 0;
+				}
+			}
+		} else if (sk->type == SOCK_STREAM) {
+			if (sk->state == SS_CONNECTED && sk->tcp &&
+			    tcp_sndbuf(sk->tcp) > 0)
+				ready |= FS_POLL_WRITE;
+		} else
 			ready |= FS_POLL_WRITE;
 	}
 
@@ -577,12 +590,31 @@ static const file_operations sock_fops = {
 	.release = sock_release,
 };
 
+static int sock_getattr(inode *node, struct stat *s)
+{
+	(void)node;
+
+	memset(s, 0, sizeof(*s));
+	s->st_mode = S_IFSOCK | 0600;
+	s->st_nlink = 1;
+	s->st_blksize = PAGE_SIZE;
+	s->st_atime = time_now_sec();
+	s->st_ctime = time_now_sec();
+	s->st_mtime = time_now_sec();
+	return 0;
+}
+
+static const inode_operations sock_iops = {
+	.getattr = sock_getattr,
+};
+
 /* ── FD helpers ──────────────────────────────────────────────────────────── */
 
 int sock_to_fd(mos_sock *sk)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFSOCK | 0600;
+	node->i_op = &sock_iops;
 	node->i_private = sk;
 
 	file *fp = zalloc(sizeof(*fp));

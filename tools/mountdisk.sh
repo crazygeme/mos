@@ -2,7 +2,7 @@
 
 set -e
 
-DISK="rh9.qcow2"
+DISK="vm1.qcow2"
 NBD_DEV="/dev/nbd0"
 MNT="out/mnt"
 

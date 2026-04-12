@@ -65,6 +65,9 @@ static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
 	return 1;
 }
 
+static void vm_flush_dirty_region(vm_region *region, unsigned begin,
+				  unsigned end);
+
 /* Counter for unique anonymous MAP_SHARED region identifiers. */
 static unsigned g_anon_id_next = 0;
 
@@ -219,6 +222,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 	hash_table *table = vm;
 	vm_key probe;
 	key_value_pair *pair;
+	int tlb_needs_reload = 0;
 
 	/*
 	 * Resolve conflicts iteratively.  Each pass finds one overlapping
@@ -232,6 +236,9 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 	while ((pair = hash_find(table, &probe)) != NULL) {
 		vm_key *okey = pair->key;
 		vm_region *oregion = pair->val;
+		unsigned unmap_begin;
+		unsigned unmap_end;
+		unsigned vir;
 
 		/* Snapshot all origin data before vm_del_map frees the structs. */
 		unsigned o_begin = okey->begin;
@@ -247,7 +254,15 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_get(o_anon_id);
 
-		vm_del_map(vm, o_begin);
+		unmap_begin = o_begin > begin ? o_begin : begin;
+		unmap_end = o_end < end ? o_end : end;
+
+		vm_flush_dirty_region(oregion, unmap_begin, unmap_end);
+		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
+			mm_unmap_page(vir);
+		tlb_needs_reload = 1;
+
+		hash_remove(table, okey);
 
 		/* Re-insert the left remnant [o_begin, begin), if any. */
 		if (o_begin < begin)
@@ -267,6 +282,9 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_put(o_anon_id);
 	}
+
+	if (tlb_needs_reload)
+		RELOAD_CR3();
 
 	/* No conflicts remain: insert the new region. */
 	vm_key *key = kmalloc(sizeof(*key));

@@ -396,12 +396,12 @@ void mm_unmap_page(unsigned int vir)
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
 	spinlock_lock(&mm_lock, &irq);
-	if (mm_dynamic_region(phy_addr) || (mm_vdso_region(phy_addr))) {
+	if (mm_dynamic_region(phy_addr) || mm_vdso_region(phy_addr)) {
 		if (phymm_is_used(page_index) &&
 		    phymm_dereference_page(page_index) == 0)
 			phymm_free_user(page_index);
-		mm_clear_page_table_entry(&info);
 	}
+	mm_clear_page_table_entry(&info);
 	spinlock_unlock(&mm_lock, irq);
 }
 

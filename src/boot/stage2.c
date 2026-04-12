@@ -12,6 +12,7 @@
 #include <hw/vga.h>
 #include <hw/time.h>
 #include <hw/keyboard.h>
+#include <hw/mouse.h>
 #include <hw/tty.h>
 #include <hw/font.h>
 #include <lib/klib.h>
@@ -62,6 +63,8 @@ void kmain_startup()
 	serial_init_queue();
 
 	kb_init();
+
+	ps2mouse_init();
 
 	time_init();
 

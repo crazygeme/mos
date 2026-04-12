@@ -390,6 +390,30 @@ void ps_send_signal_pgrp(unsigned pgrp, int sig)
 	spinlock_unlock(&ps_lock, irq);
 }
 
+void ps_send_signal_owner(int owner, int sig)
+{
+	int irq;
+	task_struct *task;
+
+	if (!owner || sig <= 0 || sig >= NSIG)
+		return;
+
+	if (owner < 0) {
+		ps_send_signal_pgrp((unsigned)(-owner), sig);
+		return;
+	}
+
+	spinlock_lock(&ps_lock, &irq);
+	task = ps_find_process_unsafe((unsigned)owner);
+	if (task && task->type == ps_user && task->user && task->signal) {
+		task->signal->sig_pending |= (1UL << (sig - 1));
+		if (task->status == ps_waiting &&
+		    !(task->signal->sig_mask & (1UL << (sig - 1))))
+			ps_put_to_ready_queue_unsafe(task);
+	}
+	spinlock_unlock(&ps_lock, irq);
+}
+
 /*
  * Public — user address-space management
  */

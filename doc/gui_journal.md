@@ -1,5 +1,26 @@
 # GUI Debug Journal
 
+## 2026-04-12
+
+Status at stop:
+- GUI mouse input now works correctly inside X.
+- The PS/2 mouse path is no longer a fake `/dev/input/mice` stub; it is backed by a real hardware driver under `src/hw`.
+- Pointer movement was verified after fixing both probe-time compatibility and runtime async delivery issues.
+
+Fixes completed in this round:
+- Implemented a real PS/2 mouse driver in `src/hw/mouse.c` with i8042 auxiliary-port init, IRQ12 handling, DSR-based byte draining, packet assembly, and IMPS/2 wheel-mode negotiation.
+- Completed `src/dev/mouse.c` as a proper `/dev/input/mice` wrapper over the hardware driver instead of maintaining a separate fake device implementation.
+- Added PS/2 command handling needed by X probe logic, including reset, identify, sample-rate, resolution, status, read-data, defaults, and enable/disable reporting behavior.
+- Added async mouse notification support used by X at runtime, including `fcntl(F_SETOWN/F_GETOWN/F_SETSIG/F_GETSIG)` state on open files and `SIGIO` delivery when new mouse bytes arrive.
+- Fixed a runtime input stall where X stopped receiving wakeups after probe by honoring async notification ownership on the mouse fd.
+- Fixed a second async-design bug where only one global mouse file was tracked, so unrelated opens/closes could break X input delivery.
+- Fixed a follow-up deadlock in the packet completion path by moving async queue/notify work out from under `mouse_state_lock`.
+- Removed temporary mouse debugging stubs after the input path was confirmed working.
+
+Working conclusion:
+- XFree86 expects `/dev/input/mice` to behave like a real PS/2-compatible endpoint during probe and like an async signal-driven input source afterward.
+- The remaining GUI bring-up work is no longer blocked on mouse input; MOS now has stable end-to-end pointer delivery from IRQ12 through `/dev/input/mice` into X.
+
 ## 2026-04-07
 
 Status at stop:

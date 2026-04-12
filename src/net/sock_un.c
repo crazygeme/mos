@@ -679,9 +679,9 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 		size_t left = msg->msg_iov[i].iov_len;
 
 		while (left > 0) {
-			unsigned written =
-				rx_write(peer, base + (msg->msg_iov[i].iov_len - left),
-					 (unsigned)left);
+			unsigned written = rx_write(
+				peer, base + (msg->msg_iov[i].iov_len - left),
+				(unsigned)left);
 			if (written > 0) {
 				left -= written;
 				sent += written;

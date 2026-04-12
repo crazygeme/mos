@@ -1,7 +1,7 @@
 #!/bin/bash
 # mak
 _ramsize="512"
-diskfile="vm1.qcow2"
+diskfile="rh9.qcow2"
 kernel_file="out/kernel"
 _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")

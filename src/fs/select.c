@@ -100,7 +100,7 @@ static const struct poll_ops select_fops = {
 };
 
 int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
-	      const struct timespec *timeout, void *sigmask)
+	      const struct timeval *timeout, void *sigmask)
 {
 	int ret;
 	int just_test = 0, infinite = 0;
@@ -151,11 +151,11 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	}
 
 	if (timeout) {
-		if (timeout->tv_sec == 0 && timeout->tv_nsec == 0) {
+		if (timeout->tv_sec == 0 && timeout->tv_usec == 0) {
 			just_test = 1;
 		} else {
 			deadline = time_now_ms() + timeout->tv_sec * 1000 +
-				   timeout->tv_nsec / 1000000;
+				   timeout->tv_usec / 1000;
 		}
 	} else {
 		infinite = 1;

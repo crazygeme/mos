@@ -2,7 +2,9 @@
 
 > A 32-bit x86 (i686) educational OS kernel with Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility, running in QEMU via GRUB/Multiboot.
 
-Some kernel modules are intentionally unimplemented, so the boot log will show errors — but MOS **successfully boots to a Red Hat 9 login prompt**.
+MOS now reaches a visible Red Hat 9 graphical desktop.
+
+![MOS GUI desktop](doc/screenshot/gui.png)
 
 
 | Boot                             | Login Prompt                              |
@@ -83,5 +85,5 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                             |
 | [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes       |
 | [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status |
-| [Screenshots](doc/screenshots.md)        | Screenshots of MOS running                                                         |
+| [Screenshots](doc/screenshots.md)        | Screenshots of MOS running, including the GUI desktop                              |
 | [Todo](doc/todo.md)                      | Feature checklist                                                                  |

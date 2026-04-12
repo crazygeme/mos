@@ -39,6 +39,39 @@ struct sysinfo {
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
 
+struct sched_param_k {
+	int sched_priority;
+};
+
+#define MOS_SCHED_OTHER 0
+#define MOS_SCHED_FIFO 1
+#define MOS_SCHED_RR 2
+
+static int sched_resolve_task(int pid, task_struct **out)
+{
+	task_struct *task;
+
+	if (!out)
+		return -EINVAL;
+
+	if (pid == 0) {
+		*out = CURRENT_TASK();
+		return 0;
+	}
+
+	task = ps_find_process((unsigned)pid);
+	if (!task)
+		return -ESRCH;
+
+	*out = task;
+	return 0;
+}
+
+static int sched_policy_supported(int policy)
+{
+	return policy == MOS_SCHED_OTHER;
+}
+
 int sys_uname(struct utsname *utname)
 {
 	if (TestControl.verbos)
@@ -196,6 +229,106 @@ static unsigned notify_initctl(unsigned cmd)
 	fp->f_fop->write(fp, &req, sizeof(req), &fp->f_pos);
 	fs_put_file(fp);
 
+	return 0;
+}
+
+int sys_sched_setparam(int pid, const void *param)
+{
+	task_struct *task;
+	const struct sched_param_k *sp = param;
+	int ret;
+
+	if (!sp)
+		return -EINVAL;
+
+	ret = sched_resolve_task(pid, &task);
+	if (ret < 0)
+		return ret;
+
+	if (sp->sched_priority != 0)
+		return -EINVAL;
+
+	/* MOS currently implements only SCHED_OTHER semantics. */
+	(void)task;
+	return 0;
+}
+
+int sys_sched_getparam(int pid, void *param)
+{
+	task_struct *task;
+	struct sched_param_k *sp = param;
+	int ret;
+
+	if (!sp)
+		return -EINVAL;
+
+	ret = sched_resolve_task(pid, &task);
+	if (ret < 0)
+		return ret;
+
+	sp->sched_priority = 0;
+	(void)task;
+	return 0;
+}
+
+int sys_sched_setscheduler(int pid, int policy, const void *param)
+{
+	const struct sched_param_k *sp = param;
+	int ret;
+
+	if (!sched_policy_supported(policy))
+		return -EINVAL;
+	if (!sp)
+		return -EINVAL;
+
+	ret = sys_sched_setparam(pid, param);
+	if (ret < 0)
+		return ret;
+
+	return policy;
+}
+
+int sys_sched_getscheduler(int pid)
+{
+	task_struct *task;
+	int ret = sched_resolve_task(pid, &task);
+
+	if (ret < 0)
+		return ret;
+
+	(void)task;
+	return MOS_SCHED_OTHER;
+}
+
+int sys_sched_get_priority_max(int algorithm)
+{
+	if (!sched_policy_supported(algorithm))
+		return -EINVAL;
+	return 0;
+}
+
+int sys_sched_get_priority_min(int algorithm)
+{
+	if (!sched_policy_supported(algorithm))
+		return -EINVAL;
+	return 0;
+}
+
+int sys_sched_rr_get_interval(int pid, struct timespec *tp)
+{
+	task_struct *task;
+	int ret;
+
+	if (!tp)
+		return -EINVAL;
+
+	ret = sched_resolve_task(pid, &task);
+	if (ret < 0)
+		return ret;
+
+	tp->tv_sec = 0;
+	tp->tv_nsec = 0;
+	(void)task;
 	return 0;
 }
 

@@ -353,26 +353,56 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 	return (ssize_t)n;
 }
 
-ssize_t unix_write(mos_sock *sk, const void *buf, size_t count)
+ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 {
 	mos_sock *peer = sk->unix_peer;
+	const char *p = buf;
+	size_t done = 0;
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	int irq;
 
 	if (!peer)
 		return -EPIPE;
-	spinlock_lock(&peer->rxbuf_lock, &irq);
 	if (sk->type == SOCK_DGRAM) {
+		spinlock_lock(&peer->rxbuf_lock, &irq);
 		u16_t dlen = (u16_t)count;
 		if (rx_free(peer) < sizeof(dlen) + (unsigned)count) {
 			spinlock_unlock(&peer->rxbuf_lock, irq);
 			return -ENOBUFS;
 		}
 		rx_write(peer, &dlen, sizeof(dlen));
+		unsigned n = rx_write(peer, buf, (unsigned)count);
+		spinlock_unlock(&peer->rxbuf_lock, irq);
+		sock_wakeup(peer);
+		return (ssize_t)n;
 	}
-	unsigned n = rx_write(peer, buf, (unsigned)count);
-	spinlock_unlock(&peer->rxbuf_lock, irq);
-	sock_wakeup(peer);
-	return (ssize_t)n;
+
+	while (done < count) {
+		unsigned n;
+
+		peer = sk->unix_peer;
+		if (!peer)
+			return done > 0 ? (ssize_t)done : -EPIPE;
+
+		spinlock_lock(&peer->rxbuf_lock, &irq);
+		n = rx_write(peer, p + done, (unsigned)(count - done));
+		spinlock_unlock(&peer->rxbuf_lock, irq);
+		if (n > 0) {
+			done += n;
+			sock_wakeup(peer);
+			continue;
+		}
+
+		if (nonblock)
+			return done > 0 ? (ssize_t)done : -EAGAIN;
+		if (time_now_ms() > deadline)
+			return done > 0 ? (ssize_t)done : -ETIMEDOUT;
+		if (sock_wait(sk, deadline) < 0)
+			return done > 0 ? (ssize_t)done : -EINTR;
+	}
+
+	return (ssize_t)done;
 }
 
 static int unix_cmsg_validate_walk(const struct msghdr *msg,
@@ -570,9 +600,12 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 	file *files[UNIX_PASSFD_MAX] = { NULL };
 	unsigned nfds = 0;
 	size_t total_len = 0;
+	size_t sent = 0;
+	size_t i;
+	int nonblock = sock_msg_is_nonblock(msg->msg_flags);
+	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	int irq;
 	int ret;
-	unsigned written;
 	int next_tail;
 
 	if (!peer)
@@ -611,17 +644,80 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 		return (int)total_len;
 	}
 
-	if (rx_free(peer) < (unsigned)total_len) {
-		ret = -ENOBUFS;
+	if (nfds > 0 && total_len > SOCK_RXBUF_SIZE - 1) {
+		ret = -EMSGSIZE;
 		goto out_unlock;
 	}
-	written = rx_iov_write(peer, msg->msg_iov, msg->msg_iovlen);
+
+	if (nfds > 0) {
+		while (rx_free(peer) < (unsigned)total_len) {
+			spinlock_unlock(&peer->rxbuf_lock, irq);
+			if (nonblock) {
+				unix_cmsg_put_files(files, nfds);
+				return -EAGAIN;
+			}
+			if (time_now_ms() > deadline) {
+				unix_cmsg_put_files(files, nfds);
+				return -ETIMEDOUT;
+			}
+			if (sock_wait(sk, deadline) < 0) {
+				unix_cmsg_put_files(files, nfds);
+				return -EINTR;
+			}
+
+			peer = sk->unix_peer;
+			if (!peer) {
+				unix_cmsg_put_files(files, nfds);
+				return -EPIPE;
+			}
+			spinlock_lock(&peer->rxbuf_lock, &irq);
+		}
+	}
+
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		const char *base = (const char *)msg->msg_iov[i].iov_base;
+		size_t left = msg->msg_iov[i].iov_len;
+
+		while (left > 0) {
+			unsigned written =
+				rx_write(peer, base + (msg->msg_iov[i].iov_len - left),
+					 (unsigned)left);
+			if (written > 0) {
+				left -= written;
+				sent += written;
+				continue;
+			}
+
+			spinlock_unlock(&peer->rxbuf_lock, irq);
+			sock_wakeup(peer);
+			if (nonblock) {
+				unix_cmsg_put_files(files, nfds);
+				return sent > 0 ? (int)sent : -EAGAIN;
+			}
+			if (time_now_ms() > deadline) {
+				unix_cmsg_put_files(files, nfds);
+				return sent > 0 ? (int)sent : -ETIMEDOUT;
+			}
+			if (sock_wait(sk, deadline) < 0) {
+				unix_cmsg_put_files(files, nfds);
+				return sent > 0 ? (int)sent : -EINTR;
+			}
+
+			peer = sk->unix_peer;
+			if (!peer) {
+				unix_cmsg_put_files(files, nfds);
+				return sent > 0 ? (int)sent : -EPIPE;
+			}
+			spinlock_lock(&peer->rxbuf_lock, &irq);
+		}
+	}
+
 	ret = unix_queue_passfds(peer, files, nfds, peer->rx_tail);
 	if (ret < 0)
 		goto out_unlock;
 	spinlock_unlock(&peer->rxbuf_lock, irq);
 	sock_wakeup(peer);
-	return (int)written;
+	return (int)sent;
 
 out_unlock:
 	spinlock_unlock(&peer->rxbuf_lock, irq);

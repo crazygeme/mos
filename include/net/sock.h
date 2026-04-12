@@ -82,7 +82,7 @@ int unix_connect(mos_sock *sk, const struct sockaddr_un *addr,
 		 unsigned addrlen);
 int unix_accept(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen);
 ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count);
-ssize_t unix_write(mos_sock *sk, const void *buf, size_t count);
+ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count);
 int unix_sendmsg(mos_sock *sk, const struct msghdr *msg);
 int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags);
 void unix_drop_passfds(mos_sock *sk);

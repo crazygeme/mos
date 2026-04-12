@@ -115,3 +115,54 @@ Working conclusion:
 
 Suggested next step:
 - Resume from the helper-process crash path rather than the old X-server timeout path, starting with `xkbcomp`'s early `XkbOpenDisplay` / glibc locale initialization and the corresponding low-level user-context restore/return machinery in MOS.
+
+## 2026-04-12
+
+Status at stop:
+- The graphical desktop is now visible.
+- `startx` no longer dies in the old X loader/config/input paths.
+- GNOME session startup now gets through X, ICE, Bonobo activation, and into the desktop bring-up sequence.
+
+Fixes completed since the last journal update:
+- Fixed stale user PTE teardown in `mm_unmap_page()` so mappings backed by non-allocator physical pages are actually removed.
+- Fixed `vm_add_map()` overlap replacement so `MAP_FIXED` only unmaps the overlapping slice instead of destroying entire neighboring file-backed regions.
+- Fixed copy-on-write/write-protect handling to operate on page-aligned fault addresses.
+- Added minimal scheduler syscall support required by glib/pthreads:
+  - `sched_getparam`
+  - `sched_getscheduler`
+  - `sched_setparam`
+  - `sched_setscheduler`
+  - `sched_get_priority_max`
+  - `sched_get_priority_min`
+  - `sched_rr_get_interval`
+- Normalized trailing slashes in the ext4/lwext4 full-path path so operations like `mkdir("/root/.gnome2/")` behave like Linux.
+- Fixed `readv()`/`writev()` so stream/socket users get single vectored operations instead of per-iovec blocking behavior.
+- Added valid socket inode `getattr` support so `fstat64()` works on AF_UNIX socket descriptors used during ICE/session setup.
+- Fixed AF_UNIX stream write semantics:
+  - blocking writes now wait for peer buffer space
+  - nonblocking writes return `-EAGAIN` instead of stalling incorrectly
+  - stream `sendmsg()` no longer returns spurious `-ENOBUFS` on blocking paths
+- Fixed `select`/`__newselect` userspace ABI handling to use `struct timeval` rather than `struct timespec`.
+- Fixed socket poll write-readiness so AF_UNIX and TCP stream sockets only report writable when the peer/send buffer actually has space.
+- Fixed file-backed `mmap()` validation:
+  - reject invalid fds for non-anonymous mappings
+  - reject directory-backed `mmap()` instead of allowing a later SIGSEGV
+  - preserve the historical `fd == -1` anonymous behavior used by MOS exec stack setup
+  - continue allowing character-device mappings such as `/dev/mem`, which XFree86/VESA needs
+
+Observed failure progression during this round:
+- The old `/dev/psaux` core-pointer failure was replaced by successful X input setup once the config matched `/dev/input/mice`.
+- The dynamic linker crash in `ld-2.3.2.so` while loading `libnss_files.so.2` was eliminated by the VM unmap/overlap fixes.
+- The GThread abort on `pthread_getschedparam()` moved the failure forward into GNOME session startup once scheduler syscalls existed.
+- The `/root/.gnome2/` creation failure was eliminated by path normalization for trailing slashes.
+- The "big X cursor, nothing more" phase was narrowed to IPC/event-loop behavior, then improved by the AF_UNIX, vectored I/O, socket `fstat64()`, and `select()` fixes.
+- A later fontconfig crash came from allowing `mmap()` on a directory (`/usr/share/fonts/default`); rejecting directory-backed `mmap()` removed that crash path.
+- A temporary regression that blocked `/dev/mem` mappings caused `VESA(0): Cannot map SYS BIOS`; allowing character-device `mmap()` restored that path.
+
+Current working conclusion:
+- The GUI bring-up path is now substantially functional.
+- The remaining work, if any, should be treated as incremental desktop polish or narrower application/runtime issues rather than foundational X startup failure.
+
+Cleanup note:
+- Temporary investigation-only loader/page-fault tracing added during the earlier `_dl_lookup_symbol` and `libnss_files` debugging has already been removed.
+- No additional one-off GUI debugging stubs were found in the current tree during this cleanup pass beyond the normal configurable syscall/kernel logging already used by the project.

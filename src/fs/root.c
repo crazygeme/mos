@@ -817,11 +817,22 @@ int fs_sync_super(const super_block *sb)
 }
 
 /* Build the full lwext4 path for an operation on super_block sb. */
+static void ext4_trim_trailing_slashes(char *path)
+{
+	int len = strlen(path);
+
+	while (len > 1 && path[len - 1] == '/') {
+		path[len - 1] = '\0';
+		len--;
+	}
+}
+
 static void ext4_full_path(super_block *sb, const char *path, char *full)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
 	/* mi->mp ends with '/'; path starts with '/' — skip leading '/' */
 	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+	ext4_trim_trailing_slashes(full);
 }
 
 static int ext4_path_is_descendant(const char *parent, const char *path)

@@ -214,9 +214,12 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i;
-	int total = 0;
+	int ret;
+	size_t total_len = 0;
+	size_t copied = 0;
 	task_struct *cur = CURRENT_TASK();
 	file *fp;
+	char *buf;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("readv(%d, %x, %d)\n", fildes, iov, iovcnt);
@@ -234,36 +237,81 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 	if (S_ISDIR(fp->f_inode->i_mode))
 		return -EISDIR;
 
-	for (i = 0; i < iovcnt; i++) {
-		ssize_t n;
+	for (i = 0; i < iovcnt; i++)
+		total_len += iov[i].iov_len;
 
-		if (iov[i].iov_len == 0)
-			continue;
+	if (total_len == 0)
+		return 0;
 
-		n = fp->f_fop->read(fp, iov[i].iov_base, iov[i].iov_len,
-				    &fp->f_pos);
-		if (n < 0)
-			return total > 0 ? total : (int)n;
-		total += (int)n;
-		if ((size_t)n < iov[i].iov_len)
-			break;
+	buf = malloc(total_len);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = (int)fp->f_fop->read(fp, buf, total_len, &fp->f_pos);
+	if (ret <= 0) {
+		free(buf);
+		return ret;
 	}
 
-	return total;
+	for (i = 0; i < iovcnt && copied < (size_t)ret; i++) {
+		size_t n = iov[i].iov_len;
+		if (n > (size_t)ret - copied)
+			n = (size_t)ret - copied;
+		if (n > 0)
+			memcpy(iov[i].iov_base, buf + copied, n);
+		copied += n;
+	}
+
+	free(buf);
+	return ret;
 }
 
 int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i;
-	unsigned total = 0;
+	int ret;
+	size_t total_len = 0;
+	size_t copied = 0;
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+	char *buf;
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("writev: fd %d\n", fildes);
 
-	for (i = 0; i < iovcnt; i++)
-		total += sys_write(fildes, iov[i].iov_base, iov[i].iov_len);
+	if (fildes < 0 || fildes >= MAX_FD)
+		return -EBADF;
+	if (iovcnt < 0)
+		return -EINVAL;
+	if (cur->fds[fildes] == NULL)
+		return -EBADF;
 
-	return total;
+	fp = cur->fds[fildes];
+	if (!fp || !fp->f_fop || !fp->f_fop->write)
+		return -EBADF;
+	if (S_ISDIR(fp->f_inode->i_mode))
+		return -EISDIR;
+
+	for (i = 0; i < iovcnt; i++)
+		total_len += iov[i].iov_len;
+
+	if (total_len == 0)
+		return 0;
+
+	buf = malloc(total_len);
+	if (!buf)
+		return -ENOMEM;
+
+	for (i = 0; i < iovcnt; i++) {
+		if (iov[i].iov_len == 0)
+			continue;
+		memcpy(buf + copied, iov[i].iov_base, iov[i].iov_len);
+		copied += iov[i].iov_len;
+	}
+
+	ret = (int)fp->f_fop->write(fp, buf, total_len, &fp->f_pos);
+	free(buf);
+	return ret;
 }
 
 int sys_fsync(int fd)
@@ -471,7 +519,7 @@ int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)
 }
 
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
-	       const struct timespec *timeout)
+	       const struct timeval *timeout)
 {
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("select(%d, %x, %x, %x, %x)\n", nfds, readfds, writefds,
@@ -481,7 +529,7 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 }
 
 int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
-		  fd_set *exceptfds, const struct timespec *timeout,
+		  fd_set *exceptfds, const struct timeval *timeout,
 		  void *sigmask)
 {
 	if (TEST_LOG(TEST_LOG_TRACE))

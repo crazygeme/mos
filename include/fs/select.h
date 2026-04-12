@@ -37,6 +37,6 @@ typedef __fd_mask fd_mask;
 #define FD_ZERO(fdsetp) __FD_ZERO(fdsetp)
 
 int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
-	      const struct timespec *timeout, void *sigmask);
+	      const struct timeval *timeout, void *sigmask);
 
 #endif

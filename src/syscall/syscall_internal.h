@@ -56,9 +56,9 @@ int sys_pipe(int pipefd[2]);
 int sys_fcntl(int fd, int cmd, int arg);
 int sys_fcntl64(int fd, int cmd, int arg);
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
-	       const struct timespec *timeout);
+	       const struct timeval *timeout);
 int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
-		  fd_set *exceptfds, const struct timespec *timeout,
+		  fd_set *exceptfds, const struct timeval *timeout,
 		  void *sigmask);
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout);
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count);
@@ -220,6 +220,13 @@ int sys_munmap(void *addr, unsigned length);
 int sys_mprotect(void *addr, unsigned len, int prot);
 int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	       int flags, unsigned new_addr);
+int sys_sched_setparam(int pid, const void *param);
+int sys_sched_getparam(int pid, void *param);
+int sys_sched_setscheduler(int pid, int policy, const void *param);
+int sys_sched_getscheduler(int pid);
+int sys_sched_get_priority_max(int algorithm);
+int sys_sched_get_priority_min(int algorithm);
+int sys_sched_rr_get_interval(int pid, struct timespec *tp);
 int sys_umask(unsigned mask);
 int sys_sysinfo(void *info);
 int sys_ipc(unsigned call, int first, int second, int third, void *ptr,

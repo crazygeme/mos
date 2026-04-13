@@ -88,8 +88,13 @@
 #define PAGE_SIZE_MASK 0xFFFFF000
 
 #define PAGE_CACHE_SIZE (4096 * 16) // pages
-#define PAGE_PREFETCH_N \
-	16 /* read-ahead: (N-1) pages before, N pages after fault */
+
+/*
+ * read-ahead: (N-1) pages before, N pages after fault, 0 means disable
+ * interesting part is, this prefetch machinism lower the performance
+ * based on profiling result.
+ */
+#define PAGE_PREFETCH_N 0
 
 /* SMP configuration */
 #define MAX_CPUS 8

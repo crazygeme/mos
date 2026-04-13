@@ -1,387 +1,366 @@
 # Signal Handling
 
-**Source:** `src/ps/ps_signal.c`
-**Headers:** `include/ps/signal.h`
+**Source:** `src/ps/ps_signal.c`, `src/ps/ps.c`, `src/ps/ps_sched.c`, `src/syscall/syscall_proc.c`, `include/ps/signal.h`
 
----
+## Status
 
-## Overview
+MOS currently supports the Linux/i386-style signal model needed by the RH9/glibc userspace in this tree:
 
-| Component              | File           | Responsibility                                                                                  |
-| ---------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| Signal data structures | `signal.h`     | `sigaction`, `signal_frame`, `rt_signal_frame`, signal numbers, masks, altstack                 |
-| Delivery engine        | `ps_signal.c`  | `do_signal` — builds frame, redirects `iret`                                                    |
-| Return trampoline      | `signal_frame` | Inline 8-byte `__NR_sigreturn` / `__NR_rt_sigreturn` stub embedded in the signal frame on stack |
-| Syscall interface      | `ps_signal.c`  | `sys_kill`, `sys_sigaction`, `sys_rt_sigaction`, `sys_sigprocmask`, `sys_rt_sigprocmask`,       |
-|                        |                | `sys_sigreturn`, `sys_rt_sigreturn`, `sys_alarm`, `sys_pause`, `sys_sigaltstack`,               |
-|                        |                | `sys_rt_sigpending`, `sys_rt_sigtimedwait`, `sys_rt_sigqueueinfo`, `sys_rt_sigsuspend`          |
+- classic `signal(2)` and `sigaction(2)`
+- `rt_sigaction(2)` with the Linux/i386 userspace layout
+- `sigprocmask` and `rt_sigprocmask`
+- inline on-stack `sigreturn` and `rt_sigreturn` trampolines
+- `kill`, `pause`, `sigaltstack`
+- `rt_sigpending`, `rt_sigtimedwait`, `rt_sigqueueinfo`, `rt_sigsuspend`
+- `alarm`, `setitimer(ITIMER_REAL)`, and `getitimer(ITIMER_REAL)`
 
----
+Delivery is process-local and bitmask-based: standard signals are pending or not pending, with no queued multiplicity and no queued `siginfo` payloads.
 
-## 1. Per-task signal state
+## Per-Task Signal State
 
-Each task has a `signal_context *` in its `task_struct`:
+Each user task owns a `signal_context`:
 
 ```c
 typedef struct _signal_context {
-    struct sigaction sig_handlers[NSIG]; // handler for each signal 1–31
-    sigset_t         sig_pending;        // bitmask: bit (N-1) = signal N pending
-    sigset_t         sig_mask;           // bitmask: blocked signals
-    sigset_t         saved_sigmask;      // mask saved by sigsuspend/pselect
-    int              restore_sigmask;    // 1 → restore saved_sigmask after delivery
-    stack_t          altstack;           // alternate signal stack (sigaltstack)
+    struct sigaction sig_handlers[NSIG];
+    sigset_t sig_pending;
+    sigset_t sig_mask;
+    sigset_t saved_sigmask;
+    int restore_sigmask;
+    stack_t altstack;
 } signal_context;
 ```
 
-`sigset_t` is `unsigned long` (32 bits). Bit position `sig - 1` corresponds to signal number `sig`.
+Important points:
 
-```c
-struct sigaction {
-    void    (*sa_handler)(int);   // SIG_DFL / SIG_IGN / user function
-    sigset_t  sa_mask;            // additional signals to block during handler
-    int       sa_flags;           // SA_NODEFER | SA_RESETHAND | SA_SIGINFO | SA_ONSTACK | …
-    void    (*sa_restorer)(void); // used when SA_RESTORER is set in sa_flags
-};
+- `sig_pending` is a bitmask, not a queue.
+- `sig_mask` is the currently blocked set.
+- `saved_sigmask` and `restore_sigmask` are used by `rt_sigsuspend`.
+- `altstack` tracks `sigaltstack(2)` state, including `SS_ONSTACK`.
+
+`sigset_t` is effectively a 32-bit low-word mask in the current implementation.
+
+## Signal Numbers and Default Actions
+
+The tree uses Linux/i386 signal numbers `1..31` with `NSIG = 32`.
+
+Important defaults in the current code:
+
+- `SIGKILL` and `SIGSTOP`: cannot be caught, ignored, or blocked
+- `SIGCHLD`, `SIGURG`, `SIGWINCH`, `SIGCONT`: default action is ignore
+- most others: default action is terminate
+
+For `SIGKILL` and `SIGSTOP`, the kernel exits immediately with an encoded wait status path instead of building a signal frame.
+
+## Sending Signals
+
+### `ps_send_signal`
+
+`ps_send_signal(pid, sig)`:
+
+- validates the signal number
+- finds the target task
+- checks permission with Unix-style uid/euid rules
+- sets the pending bit
+- wakes the target only if it is sleeping and the signal is not masked
+
+That last rule is important for `rt_sigsuspend`: a masked signal should remain pending without spuriously waking the waiter.
+
+### `kill(2)`
+
+`sys_kill` currently supports:
+
+- `pid > 0`: one process
+- `pid == 0`: caller's process group
+- `pid == -1`: every other user process
+- `pid < -1`: process group `-pid`
+- `sig == 0`: existence and permission check only
+
+Self-signal special case:
+
+- if a process sends an unmasked signal to itself, MOS forces delivery immediately on the current user-return frame by calling `do_signal()` directly
+
+That makes shell trap/self-signal behavior much closer to Linux.
+
+## Where Delivery Happens
+
+`do_signal(intr_frame *frame)` is the delivery engine.
+
+It runs only when returning to user mode:
+
+- at the end of the syscall path
+- from the interrupt-return path for user tasks
+
+The function returns immediately if:
+
+- the current task is not a user task
+- the interrupted frame is not returning to ring 3
+- no unmasked signal is pending
+
+## Delivery Algorithm
+
+Current delivery sequence:
+
+1. Check whether `alarm_expire_ms` has elapsed; if so, set `SIGALRM` pending and optionally re-arm for interval timers.
+2. Compute `deliverable = sig_pending & ~sig_mask`.
+3. Pick the lowest-numbered set bit.
+4. Clear that pending bit.
+5. Dispatch according to the installed disposition.
+
+Disposition handling:
+
+- `SIGKILL` / `SIGSTOP`: force immediate exit
+- `SIG_IGN`: consume and return
+- `SIG_DFL`: either ignore or terminate depending on the signal
+- user handler: build a signal frame, update masks, redirect `eip` and `esp`
+
+MOS chooses the RT frame path only when `SA_SIGINFO` is set. Installing a handler through `rt_sigaction` alone does not force the RT frame format.
+
+## Signal Masks
+
+### `sigprocmask` and `rt_sigprocmask`
+
+Both variants support:
+
+- `SIG_BLOCK`
+- `SIG_UNBLOCK`
+- `SIG_SETMASK`
+
+Current behavior:
+
+- `SIGKILL` and `SIGSTOP` are always stripped from the blocked set
+- classic `sigprocmask` reads and writes one machine word
+- `rt_sigprocmask` expects an 8-byte Linux/i386 kernel mask payload and only uses the low 32 bits
+
+## Legacy and RT Handlers
+
+MOS supports two delivery frame formats.
+
+### Legacy frame
+
+Used when `SA_SIGINFO` is clear.
+
+The kernel writes a `signal_frame` onto the user stack containing:
+
+- handler argument `signo`
+- saved general-purpose registers
+- saved segment registers
+- saved `eip`, `eflags`, `esp`
+- saved signal mask
+- an inline `sigreturn` trampoline
+
+The trampoline bytes are written directly into the user stack frame:
+
+```text
+mov $__NR_sigreturn, %eax
+int $0x80
+nop
 ```
 
----
+The handler returns with a normal `ret`, which jumps into that inline stub.
 
-## 2. Signal numbers
+### RT frame
 
-Linux/i386 ABI (1–31, `NSIG = 32`):
+Used when `SA_SIGINFO` is set.
 
-| Signal     | Number | Default action                               |
-| ---------- | ------ | -------------------------------------------- |
-| `SIGHUP`   | 1      | terminate                                    |
-| `SIGINT`   | 2      | terminate                                    |
-| `SIGQUIT`  | 3      | terminate                                    |
-| `SIGILL`   | 4      | terminate                                    |
-| `SIGKILL`  | 9      | terminate (cannot be caught/ignored/blocked) |
-| `SIGSEGV`  | 11     | terminate                                    |
-| `SIGALRM`  | 14     | terminate                                    |
-| `SIGTERM`  | 15     | terminate                                    |
-| `SIGCHLD`  | 17     | **ignore**                                   |
-| `SIGCONT`  | 18     | **ignore**                                   |
-| `SIGSTOP`  | 19     | stop (cannot be caught/ignored/blocked)      |
-| `SIGWINCH` | 28     | **ignore**                                   |
-| `SIGURG`   | 23     | **ignore**                                   |
-| all others | —      | terminate                                    |
-
-`SIGKILL` and `SIGSTOP` always call `sys_exit(sig | 0x80)` — they can never be caught, ignored, or blocked.
-
----
-
-## 3. Return trampoline — inline in signal frame
-
-When a signal handler returns (`ret`), execution must jump to the kernel's `sys_sigreturn` so the interrupted context can be restored.
-
-**MOS does not use a vDSO for this.** Instead, the kernel writes a small 8-byte machine code stub directly into the signal frame on the user stack (`signal_frame.trampoline[]`):
-
-```
-b8 77 00 00 00    mov $119, %eax    # __NR_sigreturn
-cd 80             int $0x80         # syscall
-90                nop               # padding
-```
-
-`signal_frame.return_addr` points to `&sf->trampoline[0]`.  When the handler executes `ret`, it pops `return_addr` and jumps to the inline trampoline, which calls `sys_sigreturn` (119) or `sys_rt_sigreturn` (173) depending on the frame type.
-
----
-
-## 4. Signal delivery: `do_signal`
-
-```c
-void do_signal(intr_frame *frame);
-```
-
-Called just before `iret` returns to user space:
-- **End of every syscall** — `syscall_process()` in `syscall.c`
-- **Timer interrupt** — PIT ISR in `time.c`
-
-Guard: only acts when `frame->cs == USER_CODE_SELECTOR` (returning to ring 3).
-
-### Delivery sequence
-
-```
-1. Check alarm:
-     if alarm_expire_ms > 0 && time_now_ms() >= alarm_expire_ms:
-         if alarm_interval_ms > 0:
-             alarm_expire_ms = now + alarm_interval_ms    ← repeating alarm
-         else:
-             alarm_expire_ms = 0                          ← one-shot alarm
-         sig_pending |= SIGALRM bit
-
-2. deliverable = sig_pending & ~sig_mask
-   if deliverable == 0: return (nothing to do)
-
-3. Pick lowest-numbered deliverable signal (bit scan from sig 1 upward)
-
-4. Clear the bit in sig_pending
-
-5. Dispatch by handler:
-
-   SIGKILL / SIGSTOP:
-     sys_exit(sig | 0x80)             ← unconditional; cannot be overridden
-
-   SIG_IGN:
-     maybe_restore_sigmask()           ← restore sigsuspend mask if active
-     return
+The RT path builds a larger Linux/i386-compatible frame containing:
 
-   SIG_DFL:
-     SIGCHLD / SIGURG / SIGWINCH / SIGCONT:
-         maybe_restore_sigmask(); return  ← default = ignore
-     all others:
-         do_exit(sig)                  ← terminate process
+- signal number
+- `siginfo` storage
+- `ucontext`
+- zeroed FP-state area
+- either `sa_restorer` or an inline `rt_sigreturn` stub
 
-   user handler:
-     is_rt = (sa->sa_flags & SA_SIGINFO)
-     resolve_sigstack()               ← altstack or current ESP
-     if is_rt: build_rt_frame()       ← SA_SIGINFO path
-     else:      build_legacy_frame()  ← legacy path
-     update sig_mask, SA_RESETHAND
-     frame->eip = handler; frame->esp = new_esp
-```
+Current limitation:
 
----
+- MOS does not queue full `siginfo` objects for pending signals
+- `rt_sigqueueinfo` sends the signal but does not preserve a rich queued payload
 
-## 5. Legacy signal frame (`signal_frame`)
+## Signal Stack Selection
 
-Used when `SA_SIGINFO` is **not** set.
+`resolve_sigstack()` chooses the delivery stack:
 
-```c
-typedef struct _signal_frame {
-    unsigned int return_addr;    // → &trampoline[0] in this frame
-    int          signo;          // first argument to handler(int signo)
-    unsigned int saved_eip;
-    unsigned int saved_eflags;
-    unsigned int saved_esp;
-    unsigned int saved_eax;
-    unsigned int saved_ebx;
-    unsigned int saved_ecx;
-    unsigned int saved_edx;
-    unsigned int saved_esi;
-    unsigned int saved_edi;
-    unsigned int saved_ebp;
-    unsigned int saved_ds;       // segment registers saved/restored
-    unsigned int saved_es;
-    unsigned int saved_fs;
-    unsigned int saved_gs;
-    unsigned long saved_mask;    // signal mask before delivery
-    unsigned char trampoline[8]; // inline __NR_sigreturn stub
-} signal_frame;
-```
+- if `SA_ONSTACK` is set and a usable altstack is installed and not already active, deliver on the altstack and set `SS_ONSTACK`
+- otherwise deliver on the current user stack
 
-**Stack view when handler starts executing** (ESP → `return_addr`):
+Frames are then rounded down to a 16-byte boundary before control is transferred to the handler.
 
-```
-[ESP+ 0]  return_addr   → &trampoline[0]  ← "ret" jumps here
-[ESP+ 4]  signo         ← handler's argument
-[ESP+ 8]  saved_eip
-[ESP+12]  saved_eflags
-[ESP+16]  saved_esp
-[ESP+20]  saved_eax
-  …         (saved registers + segment registers)
-[ESP+64]  saved_mask
-[ESP+68]  trampoline[8] ← "mov $119,%eax; int $0x80; nop"
-```
+## Returning From a Handler
 
-`saved_mask` is the pre-delivery `sig_mask` (or the pre-sigsuspend `saved_sigmask` if `restore_sigmask` is set).
+### `sys_sigreturn`
 
----
+The legacy return path:
 
-## 6. RT signal frame (`rt_signal_frame`)
-
-Used when `SA_SIGINFO` is set. This is a larger frame compatible with the Linux/i386 `ucontext_t` layout expected by glibc.
-
-```c
-typedef struct _rt_signal_frame {
-    unsigned int     pretcode;        // → sa_restorer or &retcode[0]
-    int              sig;             // signal number
-    unsigned int     pinfo;           // → &info
-    unsigned int     puc;             // → &uc
-    rt_siginfo_user  info;            // 128 bytes: si_signo, si_errno, si_code
-    rt_ucontext_user uc;              // ucontext: flags, link, altstack, mcontext, sigmask
-    rt_fpstate_user  fpstate;         // FPU state (zeroed; no FP save)
-    unsigned char    retcode[8];      // inline __NR_rt_sigreturn stub (fallback)
-} rt_signal_frame;
-```
+- finds the `signal_frame` below the current user `esp`
+- restores saved registers into the kernel interrupt frame
+- restores the saved signal mask
+- clears `SS_ONSTACK` if the restored `esp` has left the altstack
+- returns the interrupted `eax`
 
-`uc.uc_mcontext` (`rt_sigcontext_user`) holds all GP registers, segment registers, `eip`, `eflags`, and `esp_at_signal`.
+### `sys_rt_sigreturn`
 
-`pretcode` is set to `sa->sa_restorer` when `SA_RESTORER` is set; otherwise the inline `retcode[]` stub (`mov $173,%eax; int $0x80`) is used.
+The RT return path performs the same job using the saved `ucontext`.
 
----
+In both cases, the interrupted CPU state is restored into the kernel's pending return frame, so execution resumes exactly where it left off.
 
-## 7. Signal return
+## `sigaction` and `signal`
 
-### `sys_sigreturn` (syscall 119) — legacy
+### `sigaction`
 
-Triggered by the inline trampoline after the handler's `ret`. At that point:
-- `user ESP = signal_frame_base + 4` (return_addr has been consumed by `ret`)
-- `sf = (signal_frame *)(frame->esp - 4)`
+`sys_sigaction` directly copies the kernel `struct sigaction` layout in and out.
 
-Restores all GP registers, segment registers, `eip`, `eflags`, `esp`, and `sig_mask` from the frame. Returns `sf->saved_eax` so the interrupted `eax` is preserved.
+Rules:
 
-If the task was executing on the altstack and the restored `esp` falls outside the altstack range, `SS_ONSTACK` is cleared.
+- invalid signal numbers are rejected
+- `SIGKILL` and `SIGSTOP` cannot be changed
 
-### `sys_rt_sigreturn` (syscall 173) — SA_SIGINFO
+### `signal`
 
-Same principle. Restores from `rt_signal_frame.uc.uc_mcontext` and `uc.uc_sigmask`. Handles altstack cleanup the same way.
+`sys_signal` is implemented as a convenience wrapper over `sys_sigaction`:
 
----
+- installs `handler`
+- clears `sa_mask`
+- sets `SA_RESTART`
+- leaves `sa_restorer = NULL`
 
-## 8. Alternate signal stack (`sigaltstack`)
+## `rt_sigaction`
 
-`sys_sigaltstack` (syscall 186) installs or queries the per-task alternate stack.
-
-```c
-int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
-```
-
-- Cannot be changed while the task is already executing on the altstack (`SS_ONSTACK`).
-- `ss->ss_size` must be ≥ `MINSIGSTKSZ` (2048) unless disabling.
-- `SS_DISABLE` clears the altstack.
-
-`do_signal` calls `resolve_sigstack()`:
-- If `SA_ONSTACK` is set, the altstack is installed and not disabled/active → use altstack top, set `SS_ONSTACK`.
-- Otherwise use current `frame->esp`.
-
----
-
-## 9. Sending signals
-
-### `ps_send_signal(pid, sig)`
-
-```c
-target->signal->sig_pending |= (1UL << (sig - 1));
-if (target->status == ps_waiting &&
-    !(target->signal->sig_mask & (1UL << (sig - 1))))
-    ps_put_to_ready_queue(target);   // wake only if signal is unmasked
-```
-
-Only wakes the target if the arriving signal is not masked. This prevents spurious wakeups from `sigsuspend`.
-
-Permission check via `can_send_signal(sender, target)`: sender's `euid == 0`, or uid/euid matches target's uid/suid.
-
-### `sys_kill(pid, sig)`
-
-| `pid`      | Behaviour                                        |
-| ---------- | ------------------------------------------------ |
-| `> 0`      | Send to process `pid`                            |
-| `== 0`     | Send to all processes in current process group   |
-| `== -1`    | Send to all other user processes (broadcast)     |
-| `< -1`     | Send to process group `abs(pid)`                 |
-| `sig == 0` | Existence/permission check only (no signal sent) |
-
----
-
-## 10. Signal-related syscalls
-
-| Syscall               | Number | Description                                       |
-| --------------------- | ------ | ------------------------------------------------- |
-| `sys_kill`            | 37     | Send signal to process / process group            |
-| `sys_alarm`           | 27     | Set `SIGALRM` timer (seconds)                     |
-| `sys_pause`           | 29     | Block until any signal is deliverable             |
-| `sys_sigaction`       | 67     | Get/set `sigaction` (legacy)                      |
-| `sys_sigreturn`       | 119    | Restore context after legacy handler              |
-| `sys_sigprocmask`     | 126    | Block/unblock/replace signal mask (legacy)        |
-| `sys_rt_sigaction`    | 174    | Get/set `sigaction` (glibc 2.3.2 RT layout)       |
-| `sys_rt_sigprocmask`  | 175    | Block/unblock/replace signal mask (8-byte sigset) |
-| `sys_rt_sigpending`   | 176    | Return set of pending blocked signals             |
-| `sys_rt_sigtimedwait` | 177    | Wait for signal from a set (with timeout)         |
-| `sys_rt_sigqueueinfo` | 178    | Send signal + siginfo to process                  |
-| `sys_rt_sigsuspend`   | 179    | Atomically set mask and suspend                   |
-| `sys_rt_sigreturn`    | 173    | Restore context after SA_SIGINFO handler          |
-| `sys_sigaltstack`     | 186    | Get/set alternate signal stack                    |
-
-### `sys_rt_sigaction`
-
-glibc's `sigaction(3)` on i386 uses `rt_sigaction` with a different userspace layout:
+MOS implements the Linux/i386 `rt_sigaction` userspace layout:
 
 ```c
 struct rt_sigaction_user {
     void (*sa_handler)(int);
     unsigned long sa_flags;
     void (*sa_restorer)(void);
-    unsigned long sa_mask[32];  // 128-byte sigset
+    unsigned long sa_mask[2];
 };
 ```
 
-Only `sa_mask[0]` (low 32 bits) is used internally; upper words are zeroed on writeback.
+Current behavior:
 
-### `sys_rt_sigprocmask`
+- `sigsetsize` must be exactly `8`
+- only the low 32 bits of the mask are used
+- writeback clears the high word to zero
 
-Like `sys_sigprocmask` but reads/writes 8-byte sigsets (upper 4 bytes are always 0). `SIGKILL` and `SIGSTOP` bits are always cleared after any `sigprocmask`.
+That matches the glibc 2.3.x expectations this userspace depends on.
 
-### `sys_alarm`
+## `pause`, `rt_sigsuspend`, and `rt_sigtimedwait`
 
-```c
-unsigned sys_alarm(unsigned seconds);
-```
+### `pause`
 
-Sets `task->alarm_expire_ms = now_ms() + seconds*1000`. Returns remaining time.  
-`seconds == 0` cancels the alarm.  
-`do_signal` fires `SIGALRM` and re-arms if `alarm_interval_ms > 0` (repeating alarm).
+`sys_pause()` simply sleeps until some unmasked signal becomes deliverable, then returns `-EINTR`.
 
-### `sys_rt_sigpending`
+### `rt_sigsuspend`
 
-Returns `sig_pending & sig_mask` — signals that are both pending and blocked (not yet delivered because masked).
+`sys_rt_sigsuspend()`:
 
-### `sys_rt_sigtimedwait`
+- saves the current mask
+- installs a temporary mask with `SIGKILL` and `SIGSTOP` forcibly unblocked
+- calls `ps_signal_wait()` to sleep atomically
+- leaves the temporary mask active
+- sets `saved_sigmask` and `restore_sigmask`
+- returns `-EINTR`
 
-Waits for any signal in `set` to become pending. The signals in `set` should already be blocked. Returns the signal number on success, `-EAGAIN` on timeout, `-EINTR` if an unblocked, non-waited signal arrives.
+The old mask is not restored inside `rt_sigsuspend()` itself. It is restored later by `do_signal()` after the pending signal is handled or ignored. That preserves Linux-style semantics.
 
-### `sys_rt_sigsuspend`
+### `rt_sigtimedwait`
 
-Atomically replaces `sig_mask` with `*mask`, calls `ps_signal_wait()` to sleep until an unmasked signal arrives, then sets `restore_sigmask = 1` (so `do_signal` restores `saved_sigmask` after handler). Always returns `-EINTR`.
+`sys_rt_sigtimedwait()`:
 
-The mask is **not** restored here; `do_signal` handles the restore so that the signal is delivered under the correct (temporary sigsuspend) mask before the original mask is put back.
+- waits for any signal in the supplied set to become pending
+- consumes and returns the lowest-numbered matching signal
+- returns `-EAGAIN` on timeout
+- returns `-EINTR` if a non-waited unblocked signal becomes deliverable
 
----
+Current limitation:
 
-## 11. End-to-end lifecycle
+- `info` is only zero-filled; MOS does not build a rich `siginfo` result
 
-```
-User process running at ring 3
-  │
-  │  Ctrl-C pressed  → TTY ldisc → ps_send_signal_pgrp(pgrp, SIGINT)
-  │                              → target->sig_pending |= SIGINT bit
-  │                              → wake target if sleeping and SIGINT unmasked
-  │
-  ↓  (next syscall or timer interrupt returns to user mode)
+## `sigaltstack`
 
-do_signal(frame):
-  deliverable = sig_pending & ~sig_mask   ← SIGINT is deliverable
-  sig = 2  (SIGINT)
-  sig_pending &= ~SIGINT bit
-  is_rt = (sa->sa_flags & SA_SIGINFO)     ← choose frame type
-  new_esp = frame->esp - sizeof(frame), 16-byte aligned
-  build_legacy_frame() or build_rt_frame()
-    sf->return_addr = &sf->trampoline[0]  ← inline stub in frame
-    sf->saved_*     = frame->*            ← all registers
-    sf->saved_mask  = sig_mask
-    sf->trampoline  = "mov $119,%eax; int $0x80; nop"
-  sig_mask |= SIGINT bit                  ← block SIGINT during handler
-  frame->eip = user_ctrl_c_handler
-  frame->esp = new_esp
+`sys_sigaltstack()` supports install, query, and disable.
 
-iret → user_ctrl_c_handler(2) runs at ring 3
-  handler body executes
-  ret  →  pops return_addr  →  jumps to sf->trampoline[]
+Current rules:
 
-trampoline (on user stack):
-  mov $119, %eax
-  int $0x80                 ← sys_sigreturn
+- changing the altstack while already executing on it returns `-EPERM`
+- `ss_size < MINSIGSTKSZ` returns `-ENOMEM`
+- `SS_DISABLE` clears the installed altstack
 
-sys_sigreturn:
-  sf = (signal_frame *)(frame->esp - 4)
-  frame->eip    = sf->saved_eip
-  frame->esp    = sf->saved_esp
-  frame->eax    = sf->saved_eax
-  … all registers restored …
-  sig_mask      = sf->saved_mask   ← SIGINT unblocked again
+## Timers and `SIGALRM`
 
-do_signal(frame):   ← called again after sys_sigreturn
-  no more pending signals → return
+The signal subsystem shares one real-time alarm state per task:
 
-iret → original user code resumes exactly where it was interrupted
-```
+- `alarm_expire_ms`
+- `alarm_interval_ms`
+
+### `alarm(2)`
+
+`sys_alarm(seconds)`:
+
+- returns the remaining alarm time in seconds
+- arms or cancels the one-shot timer
+- clears any interval behavior
+
+### `setitimer(ITIMER_REAL)` / `getitimer(ITIMER_REAL)`
+
+Current support is only for `which == 0` (`ITIMER_REAL`).
+
+`sys_setitimer()`:
+
+- exports the old timer state if requested
+- sets one-shot and interval state in milliseconds
+- uses the same `alarm_expire_ms` / `alarm_interval_ms` fields as `alarm(2)`
+
+`check_alarm()` in `do_signal()`:
+
+- raises `SIGALRM` when expiry is reached
+- re-arms the timer if `alarm_interval_ms != 0`
+
+## Pending-Set Queries
+
+`sys_rt_sigpending()` returns:
+
+- `sig_pending & sig_mask`
+
+That means only signals that are both pending and currently blocked are reported.
+
+## Scheduling Interaction
+
+Two scheduler helpers matter for signal correctness:
+
+- `time_wait(ms)` puts the task to sleep and optionally arms a wakeup timer
+- `ps_signal_wait()` checks `sig_pending & ~sig_mask` under `ps_lock` before sleeping
+
+That closes the classic lost-wakeup race between "check for signal" and "go to sleep".
+
+## `fork()` and `execve()` Semantics
+
+### `fork`
+
+`fork_dup_signal()` copies the parent's signal context, then clears the child's pending set:
+
+- handlers are inherited
+- masks are inherited
+- pending signals are not inherited
+
+The child's real-time alarm state is reset separately in the fork path, so an already-armed parent alarm does not accidentally fire in the child.
+
+### `execve`
+
+On exec:
+
+- caught handlers are reset to default
+- ignored handlers stay ignored
+- pending signals are cleared
+- `saved_sigmask` / `restore_sigmask` are cleared
+- the altstack is disabled
+
+That matches the expected Unix reset behavior closely enough for the current userspace.
+
+## Limitations
+
+- Standard signals are bitmask-based, so repeated identical signals coalesce.
+- `rt_sigqueueinfo()` does not queue full payloads.
+- `rt_sigtimedwait()` does not return a rich `siginfo`.
+- Only the low 32 signal bits are meaningful.
+- There is no full Linux stop/continue job-control state machine here; the implementation is focused on the semantics needed by this userspace.

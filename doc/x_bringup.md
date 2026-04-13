@@ -1,5 +1,310 @@
 # Bringing Up X On Your Own Kernel
 
+## X11 Architecture First
+
+Before diving into kernel compatibility details, it helps to frame what the X11 stack actually is.
+
+X11 is not a single graphics program. It is a distributed windowing system with a split responsibility model:
+
+- the kernel provides CPU scheduling, memory management, device access, interrupts, files, sockets, ttys, and process control
+- the X server owns the display hardware, input devices, screen state, and the core X11 protocol endpoint
+- window managers and desktop/session components sit on top of the X server and decide policy such as focus, decoration, placement, menus, and session startup
+- X clients such as `xterm`, `twm`, `xclock`, or GNOME programs speak the X11 protocol to the server over a Unix socket
+
+That means an X desktop is really a cooperation pipeline, not a direct "app -> GPU" model.
+
+### High-Level Layering
+
+```text
++---------------------------------------------------------------+
+| X clients: xterm, xclock, xkbcomp, panel, WM, desktop apps   |
+| use Xlib/XCB/toolkits and speak X11 protocol                  |
++--------------------------+------------------------------------+
+                           |
+                           | AF_UNIX socket: /tmp/.X11-unix/X0
+                           v
++---------------------------------------------------------------+
+| X server: XFree86 / early Xorg                               |
+| - accepts X11 protocol requests                              |
+| - tracks windows, pixmaps, GC, cursor, colormap              |
+| - probes video/input drivers                                 |
+| - owns the active VT / graphics console                      |
+| - translates kernel devices into X events                    |
++-----------+----------------------+----------------------------+
+            |                      |
+            | ioctls, mmap, iopl   | read/poll/fasync
+            | vm86/VBE, /dev/mem   | /dev/input/mice, tty ioctls
+            v                      v
++---------------------------------------------------------------+
+| MOS kernel                                                    |
+| - scheduler, signals, fork/exec, timers                      |
+| - VM, mmap, page faults, /dev/mem MMIO mapping               |
+| - tty/VT/session control, PTYs                               |
+| - AF_UNIX sockets, select/poll/readv/writev                  |
+| - PCI/port I/O privileges, vm86/VBE shim, IRQ delivery       |
++-----------+----------------------+----------------------------+
+            |                      |
+            v                      v
++-------------------------+   +--------------------------------+
+| video hw / framebuffer  |   | keyboard / PS/2 mouse / timer |
+| PCI BAR, VBE, VRAM      |   | IRQs and event sources         |
++-------------------------+   +--------------------------------+
+```
+
+### Who Does What
+
+The most important design boundary is this:
+
+- the kernel is responsible for mechanism
+- X and the desktop stack are responsible for graphics and UI policy
+
+In practice, the kernel does not know what a top-level window, decoration, menu, or clipboard manager is. The kernel only knows how to:
+
+- schedule X and its clients
+- let the X server become the controlling process for a VT
+- deliver keyboard and mouse bytes
+- map the framebuffer or MMIO registers
+- let processes talk over local sockets
+- preserve Linux-like syscall and signal ABI behavior
+
+Then the X server builds higher-level graphics behavior on top:
+
+- creates the root window
+- keeps window trees and clipping state
+- accepts draw requests from clients
+- composites or copies pixels into framebuffer-visible memory
+- converts input bytes into X key and pointer events
+- sends those events to the focused client
+
+And then a window manager adds policy:
+
+- reparents or decorates windows
+- chooses focus rules
+- responds to move/resize requests
+- manages stacking order
+
+So when people say "bring up X", what they usually mean is:
+
+1. the kernel is Linux-compatible enough for the X server to run
+2. the X server can own the screen and publish `DISPLAY=:0`
+3. clients can connect and create windows
+4. a window manager can make the session usable
+
+### How X Co-Works With The Kernel
+
+An old XFree86-style stack depends on the kernel in several separate directions at once.
+
+#### 1. Process, signal, and timer substrate
+
+The server, `xinit`, helper tools, and clients all rely on normal Unix process semantics:
+
+- `fork`, `execve`, `waitpid`
+- `sigaction`, `rt_sigaction`, `sigreturn`, `rt_sigreturn`
+- `alarm`, `setitimer`, `nanosleep`
+- scheduler state surviving preemption and syscall return
+
+In MOS, this matters directly because X startup exercises signal and timer paths heavily, and user-return state is restored in [src/int/int.c](/home/zhengjia/project/mos/src/int/int.c:64).
+
+#### 2. VT and tty ownership
+
+The X server usually starts from a text login and must take control of a real console:
+
+- allocate or choose a VT
+- become controlling process for that terminal
+- switch that VT to graphics mode
+- stop the text console renderer from painting over it
+
+Without this, the screen may flicker, be overwritten by tty redraws, or fail before graphics setup.
+
+#### 3. Graphics/MMIO path
+
+Old XFree86 video paths often work by discovering a mode through BIOS/VBE-style interfaces, then directly mapping VRAM:
+
+- VBE or card probe figures out mode and framebuffer location
+- `/dev/mem` plus `mmap()` exposes the physical BAR / linear framebuffer
+- userspace stores hit MMIO or VRAM directly
+
+MOS handles that in the page-fault path by mapping `/dev/mem` requests as direct I/O pages instead of ordinary cached file pages in [src/mm/pagefault.c](/home/zhengjia/project/mos/src/mm/pagefault.c:118).
+
+#### 3a. How the final image reaches the screen
+
+The last step is easy to miss because X itself mostly thinks in terms of draw requests and framebuffer memory, not "photons on a monitor."
+
+Conceptually, the visible image appears in these stages:
+
+1. a client asks X to draw something
+2. the X server updates its internal screen/window/pixmap state
+3. the X server writes pixels into the mapped framebuffer or card-visible memory
+4. the active display path scans that memory and turns it into the monitor image
+
+For an old framebuffer-style stack, the server often renders "directly into the thing being scanned out." There is no modern DRM/KMS compositor in between. The server's writes land in VRAM, and the display hardware keeps reading that VRAM repeatedly to refresh the screen.
+
+In other words:
+
+- X decides what pixels should exist
+- the kernel makes the framebuffer mapping legal and stable
+- the video hardware continuously reads the resulting pixel buffer
+- the monitor shows whatever the current scanout buffer contains
+
+In MOS there is one more practical detail: the graphics VT must remain the active visible target, and the kernel-side presentation path must keep pushing the graphics framebuffer to the display instead of letting tty text rendering reclaim the screen. The GUI journal explicitly notes that periodic graphics presentation was needed so framebuffer writes on graphics VTs became visible during X runtime.
+
+```text
+client draw request
+   -> X11 protocol message
+   -> X server updates draw state
+   -> X driver writes pixels into mapped VRAM/framebuffer
+   -> display engine scans framebuffer memory
+   -> DAC/display output presents pixels
+   -> monitor shows the final image
+```
+
+This is also why several different bugs can produce "X seems alive but nothing appears":
+
+- the server may be drawing into the wrong address
+- `/dev/mem` mappings may succeed but not actually hit MMIO/VRAM correctly
+- the wrong VT may still be active
+- tty redraw may overwrite the graphics VT
+- the present/scanout path may not be refreshing the visible display
+- the cursor may appear even while most window pixels are not being updated yet
+
+#### 4. x86 compatibility path
+
+For this codebase, old X startup is not only "draw pixels"; it also touches x86 legacy behavior:
+
+- `vm86`-style BIOS/VBE compatibility
+- PCI probing
+- `iopl` / port-I/O permissions
+- VMware SVGA/VBE mode setup assumptions
+
+MOS carries explicit VBE/vm86 compatibility shims for that path in [src/syscall/syscall_vm86.c](/home/zhengjia/project/mos/src/syscall/syscall_vm86.c:1).
+
+#### 5. Input path
+
+The X server does not talk to hardware interrupts directly. The kernel handles IRQs and exposes device streams. X then consumes those streams from userland:
+
+- keyboard input arrives through tty/console-compatible paths
+- mouse bytes arrive through `/dev/input/mice`
+- poll/read/async signal behavior wakes the server
+- X translates that into motion/button/key events for clients
+
+#### 6. Client/server IPC path
+
+Once the server is alive, nearly all app interaction becomes protocol traffic:
+
+- X listens on `/tmp/.X11-unix/X0`
+- `xinit` and clients connect over `AF_UNIX`
+- requests, replies, events, and errors flow through the socket
+- helper processes and terminal emulators also rely on PTYs, `select`, `poll`, `readv`, and `writev`
+
+This is why a kernel can have a visible screen but still not have a usable X desktop: the graphics path may work while the local-socket or event-loop path is still broken.
+
+### Architecture Graph For A Typical `startx`
+
+```text
+login shell
+   |
+   v
+startx
+   |
+   v
+xinit
+   |------------------------ forks -------------------------|
+   |                                                        |
+   v                                                        v
+X server (:0)                                        client/session script
+   |                                                        |
+   | open VT, KDSETMODE, VBE, /dev/mem, input              | waits for server
+   | create /tmp/.X11-unix/X0                              | then connects to :0
+   v                                                        v
+kernel services <------------------------------------ AF_UNIX connect
+   |
+   +--> tty/VT/session control
+   +--> vm86/VBE and port I/O privilege path
+   +--> page faults for framebuffer mmap
+   +--> mouse/keyboard delivery
+   +--> scheduler, signals, timers
+   +--> AF_UNIX socket transport
+```
+
+### Startup Call Sequence
+
+The full code path is large, but conceptually a successful X startup looks like this:
+
+```text
+startx
+  -> xinit
+     -> fork()
+     -> child: execve(X server)
+     -> parent: wait for server readiness
+
+X server
+  -> open tty / VT
+  -> ioctl(VT_OPENQRY / VT_ACTIVATE / VT_WAITACTIVE / KDSETMODE)
+  -> probe graphics path
+  -> vm86/VBE queries or card probe
+  -> open("/dev/mem")
+  -> mmap(framebuffer/MMIO)
+  -> open input devices
+  -> create/bind/listen("/tmp/.X11-unix/X0")
+  -> initialize root window and screen resources
+  -> enter main event loop
+
+xinit parent
+  -> connect("/tmp/.X11-unix/X0")
+  -> exec session clients / window manager
+
+client
+  -> socket(AF_UNIX)
+  -> connect(X0)
+  -> send X11 setup/auth request
+  -> create window / GC / pixmaps
+  -> server draws and sends Expose/input events
+```
+
+### Runtime Event Sequence
+
+After startup, a normal interaction has two independent flows: rendering requests from clients to the server, and hardware input from the kernel into the server and then back out to clients as X events.
+
+```text
+Rendering path:
+client -> X11 request -> X server -> framebuffer/MMIO writes
+       -> scanout/present path -> visible screen
+
+Input path:
+mouse/keyboard IRQ -> kernel driver -> device file readiness
+                    -> X server reads bytes
+                    -> X server chooses target window
+                    -> X event delivered to client
+```
+
+That split is why the kernel never directly sends a "mouse clicked window 5" message. The kernel only delivers low-level device readiness and bytes. The X server interprets them in the context of window focus, grabs, keymaps, and pointer position.
+
+You can think of the visible screen as the result of a loop that never stops while the mode is active:
+
+```text
+X updates framebuffer contents
+        ||
+        \/ 
+display hardware repeatedly scans current framebuffer memory
+        ||
+        \/
+monitor refresh shows newest pixels
+```
+
+So the "final image" is not usually produced by a one-shot `show()` call. It appears because the X server mutates the buffer that the hardware is already scanning for display.
+
+### Why This Matters For Bring-Up
+
+This architecture explains why old X bring-up failures can look unrelated:
+
+- a bad signal return path can kill the server after the screen already appears
+- weak `AF_UNIX` readiness can make `xinit` fail even though `X` created the socket
+- incorrect `/dev/mem` mapping semantics can corrupt framebuffer access
+- missing VT semantics can make the text console overwrite graphics
+- broken PTYs can let X start but make `xterm` unusable
+
+So the right mental model is not "make graphics work". It is "make enough Unix, tty, VM, IPC, and x86 compatibility contracts work together that the X server can act as the user-space owner of the display."
+
 This document is a practical checklist for anyone who wants to boot an old Linux/XFree86-style graphical stack on a homegrown x86 kernel.
 
 The important mindset is that X bring-up is not only a graphics-driver problem. A server such as `XFree86` or early `Xorg` depends on a wide compatibility surface:

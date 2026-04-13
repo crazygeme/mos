@@ -289,6 +289,65 @@ static int map_key(const struct keymap[], unsigned scancode, unsigned char *);
 static void kb_dsr(void *param);
 
 static const char *map_special_key(const struct keymap[], unsigned scancode);
+static int mediumraw_keycode(unsigned scancode);
+static void update_shift_state(unsigned scancode, int release);
+
+static void emit_kb_bytes(const unsigned char *bytes, unsigned len)
+{
+	unsigned i;
+
+	for (i = 0; i < len; i++)
+		tty_active_kb_put(bytes[i]);
+}
+
+static void emit_raw_scancode(unsigned raw_code)
+{
+	unsigned char bytes[2];
+	unsigned len = 0;
+
+	if (raw_code > 0xff)
+		bytes[len++] = (unsigned char)(raw_code >> 8);
+	bytes[len++] = (unsigned char)raw_code;
+	emit_kb_bytes(bytes, len);
+}
+
+static void emit_mediumraw(unsigned scancode, int release)
+{
+	int keycode = mediumraw_keycode(scancode);
+	unsigned char code;
+
+	if (keycode <= 0)
+		return;
+
+	code = (unsigned char)keycode;
+	if (release)
+		code |= 0x80;
+	tty_active_kb_put(code);
+}
+
+static void update_shift_state(unsigned scancode, int release)
+{
+	struct shift_key {
+		unsigned scancode;
+		int *state_var;
+	};
+
+	static const struct shift_key shift_keys[] = {
+		{ 0x2a, &left_shift }, { 0x36, &right_shift },
+		{ 0x38, &left_alt },   { 0xe038, &right_alt },
+		{ 0x1d, &left_ctrl },  { 0xe01d, &right_ctrl },
+		{ 0, NULL },
+	};
+
+	const struct shift_key *key;
+
+	for (key = shift_keys; key->scancode != 0; key++) {
+		if (key->scancode == scancode) {
+			*key->state_var = !release;
+			break;
+		}
+	}
+}
 
 void kb_init()
 {
@@ -318,9 +377,11 @@ static void kb_dsr(void *param)
 	int shift = left_shift || right_shift;
 	int alt = left_alt || right_alt;
 	int ctrl = left_ctrl || right_ctrl;
+	int kb_mode = tty_active_kb_mode();
 
 	/* Keyboard scancode. */
 	unsigned code;
+	unsigned raw_code;
 
 	/* False if key pressed, 1 if key released. */
 	int release;
@@ -336,13 +397,31 @@ static void kb_dsr(void *param)
 	code = port_read_byte(KB_DATA);
 	if (code == 0xe0)
 		code = (code << 8) | port_read_byte(KB_DATA);
+	raw_code = code;
 
 	/* Bit 0x80 distinguishes key press from key release
        (even if there's a prefix). */
 	release = (code & 0x80) != 0;
 	code &= ~0x80u;
+	update_shift_state(code, release);
 
+	/* Keep kernel VT hotkeys working even when userspace requested
+		 * raw keyboard bytes on the active console. */
 	/* Ctrl+1..0: switch virtual terminal (scancodes 2..11 → tty 1..10) */
+	if (!release && ctrl && code >= 2 && code <= 11) {
+		tty_switch((int)(code - 1));
+		return;
+	}
+
+	if (kb_mode == K_RAW) {
+		emit_raw_scancode(raw_code);
+		return;
+	}
+	if (kb_mode == K_MEDIUMRAW) {
+		emit_mediumraw(code, release);
+		return;
+	}
+
 	if (!release && ctrl && code >= 2 && code <= 11) {
 		tty_switch((int)(code - 1));
 		return;
@@ -389,28 +468,7 @@ static void kb_dsr(void *param)
 			}
 		}
 	} else {
-		/* Maps a keycode into a shift state variable. */
-		struct shift_key {
-			unsigned scancode;
-			int *state_var;
-		};
-
-		/* Table of shift keys. */
-		static const struct shift_key shift_keys[] = {
-			{ 0x2a, &left_shift }, { 0x36, &right_shift },
-			{ 0x38, &left_alt },   { 0xe038, &right_alt },
-			{ 0x1d, &left_ctrl },  { 0xe01d, &right_ctrl },
-			{ 0, NULL },
-		};
-
-		const struct shift_key *key;
-
-		/* Scan the table. */
-		for (key = shift_keys; key->scancode != 0; key++)
-			if (key->scancode == code) {
-				*key->state_var = !release;
-				break;
-			}
+		/* Modifier state was already updated before the mode dispatch. */
 	}
 }
 
@@ -438,4 +496,46 @@ static const char *map_special_key(const struct keymap k[], unsigned scancode)
 	}
 
 	return 0;
+}
+
+static int mediumraw_keycode(unsigned scancode)
+{
+	switch (scancode) {
+	case 0xe01c:
+		return 96;
+	case 0xe01d:
+		return 97;
+	case 0xe035:
+		return 98;
+	case 0xe037:
+		return 99;
+	case 0xe038:
+		return 100;
+	case 0xe047:
+		return 102;
+	case 0xe048:
+		return 103;
+	case 0xe049:
+		return 104;
+	case 0xe04b:
+		return 105;
+	case 0xe04d:
+		return 106;
+	case 0xe04f:
+		return 107;
+	case 0xe050:
+		return 108;
+	case 0xe051:
+		return 109;
+	case 0xe052:
+		return 110;
+	case 0xe053:
+		return 111;
+	default:
+		break;
+	}
+
+	if (scancode <= 0x7f)
+		return (int)scancode;
+	return -1;
 }

@@ -1404,9 +1404,11 @@ void tty_active_kb_put(unsigned char c)
 	t = this_ttys;
 	spinlock_unlock(&tty_switch_lock, irq);
 
-	/* Process signal characters immediately (ISIG) so that foreground
-	 * processes blocked on socket I/O are also interrupted. */
-	if ((t->termios.c_lflag & ISIG) && t->pgrp) {
+	/* Process signal characters only for translated console input.
+	 * Raw/mediumraw keyboard modes are consumed directly by applications
+	 * such as X, so bytes must pass through unchanged. */
+	if ((t->kb_mode == K_XLATE || t->kb_mode == K_UNICODE) &&
+	    (t->termios.c_lflag & ISIG) && t->pgrp) {
 		int sig = 0;
 		if (t->termios.c_cc[VINTR] && c == t->termios.c_cc[VINTR])
 			sig = SIGINT;
@@ -1421,6 +1423,22 @@ void tty_active_kb_put(unsigned char c)
 	}
 
 	cyb_putbuf(t->kb_buf, &c, 1, 0, 0);
+}
+
+int tty_active_kb_mode(void)
+{
+	int irq;
+	int mode = K_XLATE;
+
+	if (!this_ttys)
+		return mode;
+
+	spinlock_lock(&tty_switch_lock, &irq);
+	if (this_ttys)
+		mode = this_ttys->kb_mode;
+	spinlock_unlock(&tty_switch_lock, irq);
+
+	return mode;
 }
 
 /* ── Bash spawner helpers ────────────────────────────────────────────────── */

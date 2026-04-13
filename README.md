@@ -66,6 +66,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Virtual File System](doc/vfs.md)       | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend, loop device                        |
 | [TTY / PTY](doc/tty.md)                 | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, bash spawner                         |
 | [Framebuffer / VGA](doc/vga.md)         | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                           |
+| [X Bring-Up Requirements](doc/x_bringup.md) | Practical checklist for building the kernel features needed to boot an old Linux/XFree86-style graphical desktop |
 | [Poll / Select](doc/poll.md)            | Four-phase wait loop, lost-wakeup prevention, poll_wait driver interface, socket integration                    |
 | [ELF Loader](doc/elf_exec.md)           | Segment mapping, BSS handling, dynamic linker loading, execve lifecycle, initial stack layout                   |
 | [Signal Handling](doc/signals.md)       | Delivery engine, inline trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, altstack, sigsuspend  |

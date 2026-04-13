@@ -29,6 +29,9 @@ void tty_switch(int n);
  * Called from the keyboard driver interrupt handler. */
 void tty_active_kb_put(unsigned char c);
 
+/* Return the active TTY keyboard mode (K_XLATE, K_RAW, K_MEDIUMRAW, ...). */
+int tty_active_kb_mode(void);
+
 /* If the visible VT is in KD_GRAPHICS mode, schedule any driver-specific
  * display update needed to make user-space framebuffer writes visible.
  * The actual hardware flush may be deferred to a safe non-interrupt context. */

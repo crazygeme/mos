@@ -1,508 +1,387 @@
-# Virtual Memory Management
+# Virtual Memory
 
-**Source:** `src/mm/mm.c`, `src/mm/mmap.c`, `src/mm/pagefault.c`
-**Headers:** `include/mm/mm.h`, `include/mm/mmap.h`
+**Source:** `src/mm/mmap.c`, `src/mm/pagefault.c`, `src/mm/cache.c`, `src/syscall/syscall_sys.c`, `src/syscall/syscall_proc.c`, `src/ps/ps_fork.c`
 
----
+## Status
 
-## Overview
+MOS now has a Linux-like lazy virtual-memory layer:
 
-Virtual memory is managed across three layers:
+- Per-process VM regions are tracked in a sorted tree with overlap-aware lookup.
+- `mmap`, `munmap`, `mprotect`, and `brk` are implemented.
+- Anonymous mappings fault in lazily.
+- File-backed mappings fault in lazily from the filesystem page cache.
+- `MAP_PRIVATE` writable pages use copy-on-write across `fork()`.
+- `MAP_SHARED` file-backed pages are shared and written back on `munmap()` and process exit.
+- `MAP_SHARED | MAP_ANONYMOUS` is supported via a kernel shared-page cache keyed by an internal `anon_id`.
+- User stack growth is demand-driven: faults below the current stack bottom can extend the stack downward.
 
-| Layer                 | File          | Responsibility                                        |
-| --------------------- | ------------- | ----------------------------------------------------- |
-| Page table management | `mm.c`        | PDE/PTE manipulation, kernel heap, mapping primitives |
-| VM region map         | `mmap.c`      | Per-process address space descriptor, `mmap`/`munmap` |
-| Page fault handler    | `pagefault.c` | Demand paging, CoW, file-backed faults, page cache    |
+This document describes the behavior that exists in the current tree, not the older design.
 
----
+## Address-Space Layout
 
-## 1. Address space layout
+The exact layout is defined by kernel constants, but the current split is:
 
-```
-0x00000000 – 0x3FFFFFFF   user text / data / heap  (grows upward via brk)
-0x40000000 – USER_ZONE_END  mmap zone  (TASK_UNMAPPED_BASE)
-USER_ZONE_END – 0xBFFFFFFF  user stack (grows downward, 128 pages)
-0xC0000000 – 0xC06FFFFF  kernel image + direct-mapped RAM
-0xC0700000 – 0xC0BFEFFF  kernel heap  (KHEAP_BEGIN / KHEAP_END)
-0xC0C00000 – 0xC4BFFFFF  page table cache (1024 × 4 KB)
-```
+- Low user addresses: ELF text/data/BSS and the `brk` heap.
+- `TASK_UNMAPPED_BASE` and above: general `mmap()` area.
+- Top of user space below `KERNEL_OFFSET`: grow-down user stack.
+- `KERNEL_OFFSET` and above: kernel virtual address space.
 
-`KERNEL_OFFSET` = 0xC0000000.
-`KERNEL_PAGE_DIR_OFFSET` = 0xC0000000 / 4 MB = PDE index 768.
+`/proc/<pid>/maps` is populated from the VM region tree. Anonymous ranges are labeled as:
 
----
+- `[heap]` when fully inside `start_brk..brk`
+- `[stack]` when they match the task's current stack window
 
-## 2. Page table management (`mm.c`)
+## VM Region Model
 
-### Two-level x86 paging
-
-```
-CR3 → page directory (1024 PDEs, each covering 4 MB)
-           │
-           └─ page table (1024 PTEs, each covering 4 KB)
-                  │
-                  └─ physical page
-```
-
-Address decomposition macros:
+Each mapping is stored as:
 
 ```c
-ADDR_TO_PGT_OFFSET(addr)  // bits [31:22] → PDE index (0-1023)
-ADDR_TO_PET_OFFSET(addr)  // bits [21:12] → PTE index (0-1023)
-```
-
-### PTE flag bits
-
-| Flag                  | Bit | Meaning             |
-| --------------------- | --- | ------------------- |
-| `PAGE_ENTRY_PRESENT`  | 0   | Page is valid       |
-| `PAGE_ENTRY_WRITABLE` | 1   | Writable            |
-| `PAGE_ENTRY_DPL_USER` | 2   | User-accessible     |
-| `PAGE_ENTRY_WT`       | 3   | Write-through cache |
-| `PAGE_ENTRY_CD`       | 4   | Cache disable       |
-
-Composite flags:
-
-```c
-PAGE_ENTRY_KERNEL_CODE  = PRESENT
-PAGE_ENTRY_KERNEL_DATA  = PRESENT | WRITABLE
-PAGE_ENTRY_USER_CODE    = PRESENT | DPL_USER
-PAGE_ENTRY_USER_DATA    = PRESENT | WRITABLE | DPL_USER
-```
-
-### Page table cache
-
-Page tables are allocated from a **static stack cache** rather than `kmalloc`,
-to avoid allocation inside fault handlers.
-
-```
-Region: [PAGE_TABLE_CACHE_BEGIN, PAGE_TABLE_CACHE_END)
-         size = PAGE_TABLE_CACHE_PAGES * 4K (default: 4096 pages = 16 MB)
-
-page_table_cache_t {
-    unsigned top;                              // stack top index
-    unsigned count;                            // free slots remaining
-    unsigned mem[PAGE_TABLE_CACHE_PAGES];      // virtual addresses of free page tables
-}
-pgc_entry_count[PAGE_TABLE_CACHE_PAGES]       // live PTE count per table (for reclaim)
-```
-
-- `mm_alloc_page_table()` — pops from the stack, zeroes the page, returns vaddr
-- `mm_free_page_table(vir)` — pushes vaddr back; called automatically when
-  `pgc_entry_count` reaches 0 (all PTEs cleared → table is reclaimed)
-
-### Core internal helper: `mm_get_valid_page_table`
-
-```c
-static int mm_get_valid_page_table(unsigned addr, unsigned flag,
-                                   mm_addr_info *info, int alloc_if_none);
-```
-
-Walks the two-level table for `addr`. If the PDE is absent and `alloc_if_none`
-is set, allocates a new page table. Fills `mm_addr_info`:
-
-```c
-typedef struct {
-    unsigned *dir;    // pointer to the PDE
-    unsigned *table;  // base of the page table
-    unsigned *entry;  // pointer to the PTE
-} mm_addr_info;
-```
-
-### Mapping primitives
-
-| Function                          | Description                                                           |
-| --------------------------------- | --------------------------------------------------------------------- |
-| `mm_kmap_page(vir)`               | Map kernel vaddr → phys = vir − KERNEL_OFFSET; ref-counts the page    |
-| `mm_kunmap_page(vir)`             | Unmap and deref                                                       |
-| `mm_map_page(vir, phy, flag)`     | Map user vaddr → phy (allocates a new page if phy=0); ref-counts      |
-| `mm_unmap_page(vir)`              | Unmap user page; frees physical page when ref_count reaches 0         |
-| `mm_kmap_phys(phys)`              | Map firmware/MMIO phys → virt = phys + KERNEL_OFFSET; no ref-counting |
-| `mm_map_io(phy)`                  | Map high MMIO address (virt = phy) directly                           |
-| `mm_del_user_map()`               | Clears PDE[0] and PDE[1] (removes the boot identity map)              |
-| `mm_get_map_flag(vir)`            | Return PTE flags for vaddr                                            |
-| `mm_set_map_flag(vir, flag)`      | Overwrite PTE flags                                                   |
-| `mm_get_attached_page_index(vir)` | Return physical page index for vaddr                                  |
-
-### Kernel heap: `vm_alloc` / `vm_free`
-
-```c
-unsigned vm_alloc(int page_count);   // alloc contiguous kernel pages; returns vaddr
-void     vm_free(unsigned vm, int page_count);
-```
-
-`vm_alloc` calls `phymm_alloc_kernel`, maps each page with `mm_kmap_page`,
-flushes the TLB, and returns `page_index * PAGE_SIZE + KERNEL_OFFSET`.
-
-### Pathname buffer cache: `name_get` / `name_put`
-
-A small slab of `MAX_PATH` (4096-byte) buffers, to avoid repeated
-`vm_alloc`/`vm_free` for temporary path strings in syscall handlers.
-
----
-
-## 2. VM region map (`mmap.c`)
-
-### `vm_region` — the mapping descriptor
-
-```c
-typedef struct {
-    unsigned begin;   // start virtual address (page-aligned)
-    unsigned end;     // end virtual address (exclusive, page-aligned)
-    int      prot;    // PROT_READ | PROT_WRITE | PROT_EXEC | PROT_NONE
-    int      flag;    // MAP_SHARED | MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS
-    file    *fp;      // backing file (NULL for anonymous)
-    int      offset;  // byte offset into the file
+typedef struct _vm_region {
+    unsigned begin;
+    unsigned end;
+    int prot;
+    int flag;
+    file *fp;
+    int offset;
+    unsigned anon_id;
 } vm_region;
 ```
 
-### Data structure: interval tree
+Important current behaviors:
 
-Each process's address space is stored in a **hash table used as an interval
-tree**, keyed by `vm_key { begin, end }`. The comparator treats any range
-overlap as equal (returns 0), so a lookup for address `A` probes with
-`{ A, A+PAGE_SIZE }` and finds any region containing `A` in O(log n).
+- Regions are looked up with overlap semantics, so probing `[addr, addr + PAGE_SIZE)` finds the containing region.
+- Insertion trims or splits any overlapping old region before inserting the new one.
+- Adjacent compatible regions are coalesced automatically.
+- Anonymous `MAP_SHARED` regions keep a non-zero `anon_id` so related mappings can find the same shared physical pages after `fork()`.
+- `vm_find_vma()` can return the next higher VMA, not only an exact containing one; the page-fault path uses that for stack growth.
+- A small per-task cache (`mmap_cache`) remembers the last VMA hit.
+
+## `mmap`, `munmap`, `mprotect`, `brk`
+
+### `mmap`
+
+`do_mmap()` resolves the fd to a `file *` and delegates to `do_mmap_kernel()`.
+
+Current semantics:
+
+- `MAP_FIXED` replaces any overlapping mappings in the target range.
+- Non-fixed mappings treat `addr` as a hint; if occupied, MOS falls back to the first free gap from `TASK_UNMAPPED_BASE`.
+- Pages are not allocated at `mmap()` time.
+- File mappings accept regular files and char devices.
+- `fd == -1` is still treated as anonymous even if the caller omitted `MAP_ANONYMOUS`.
+
+### `munmap`
+
+`do_munmap()` iterates over every overlapping region and handles partial unmaps correctly:
+
+- Dirty `MAP_SHARED` file-backed pages in the removed subrange are flushed first.
+- Only the intersecting hardware PTEs are unmapped.
+- Left and right remnants are reinserted as independent regions.
+
+### `mprotect`
+
+`sys_mprotect()`:
+
+- requires page-aligned `addr`
+- splits VM regions at the protection boundaries
+- updates already-present PTE writability in place
+- leaves not-yet-faulted pages to pick up the new protection later through the VM metadata
+
+Current implementation only changes writable vs read-only at the PTE level. `PROT_NONE` is enforced in the page-fault path by treating the region as inaccessible.
+
+### `brk`
+
+`sys_brk()` grows and shrinks the heap between `start_brk` and `USER_HEAP_END`:
+
+- growth maps additional heap pages with `MAP_FIXED`
+- shrink unmaps whole pages above the new break
+- `task->user->brk` may sit in the middle of the last mapped page, matching normal Unix `brk` behavior
+
+## Page-Fault Handling
+
+`pf_process()` distinguishes:
+
+- non-present faults: demand allocation or file fault
+- write faults on present read-only pages: COW or permission upgrade
+- anything else: `SIGSEGV` in user mode, `DIE()` in kernel mode
+
+The kernel exports page-fault counters through `/proc/mos`, including:
+
+- `PfInvalid`
+- `PfFile`
+- `PfCow`
+- `PfPerm`
+- cache-hit and timing counters for file faults
+
+## Anonymous Faults
+
+### Private anonymous
+
+- Writable private anonymous pages allocate a fresh user page on first fault and zero-fill it.
+- Read-only private anonymous pages map a global shared zero page read-only.
+- A later write to that zero page goes through normal COW.
+
+### Shared anonymous
+
+For `MAP_SHARED | MAP_ANONYMOUS`, faults use the anonymous shared-page cache in `src/mm/cache.c`:
+
+- first fault on `(anon_id, page_offset)` allocates and zero-fills a page
+- later faults in the same shared mapping find and reuse that page
+- pages are mapped read-only first; a write fault upgrades the PTE in place because the mapping is shared
+
+The shared cache is reference-counted by mapping lifetime, so the backing pages are released when the last related region disappears.
+
+## File-Backed Faults
+
+File faults are lazy and page-granular.
+
+### Cache layers involved
+
+There are three distinct cache-like structures in the current implementation, and they have different jobs:
+
+1. Filesystem page cache in `src/fs/cache.c`
+2. MM file-shared cache in `src/mm/cache.c`
+3. MM anonymous-shared cache in `src/mm/cache.c`
+
+They are easy to confuse, so it helps to think of them this way:
+
+- the filesystem page cache is the primary cache for inode-backed file contents
+- the MM file-shared cache is a fallback sharing table for mappings that do not participate in the fs page cache
+- the MM anonymous-shared cache exists only for `MAP_SHARED | MAP_ANONYMOUS`
+
+### Normal files
+
+Current behavior:
+
+- If the inode participates in the filesystem page cache, faults come from `fs_page_cache_get()`.
+- Otherwise MOS can fall back to a direct page read path.
+- `MAP_SHARED` file pages are additionally tracked in a file-shared cache so multiple mappings can reuse the same physical page.
+- `MAP_PRIVATE` and read-only mappings are installed read-only first; the write path decides whether to COW.
+
+Readonly private file mappings also get simple read-ahead via `pf_prefetch_pages()`.
+
+### Filesystem page cache
+
+The filesystem page cache is keyed by:
 
 ```c
-vm_struct_t vm_create();              // allocate a new VM map
-void        vm_destroy(vm_struct_t);  // free all regions
+typedef struct _fs_page_cache_key {
+    void *tag;
+    uint64_t ino;
+    unsigned offset;
+} fs_page_cache_key;
 ```
 
-### `vm_add_map` — insert a region
+Meaning of the fields:
 
-Inserts `[begin, end)` with `prot`/`flag`/`fp`/`offset`. If the new range
-overlaps any existing region, the existing region is split:
+- `tag`: a stable address-space identity from `inode->i_pgcache_tag`
+- `ino`: inode number
+- `offset`: page-aligned file offset
 
-```
-Before: [====existing====]
-Insert:        [+++new++++++]
-After:  [==left] [+++new++++++]   (right remnant if needed)
-```
+An inode is eligible only when all of these are true:
 
-The conflict-resolution loop runs until no overlapping region remains.
-`fs_get_file` is called on `fp` to hold a reference for the lifetime of the
-region.
+- `inode != NULL`
+- `inode->i_pgcache_tag != NULL`
+- `inode->i_op->read_page` exists
 
-### `vm_del_map` — remove a region
+So this cache is not "all files everywhere"; it is only for backends that provide a stable page-cache identity plus page-granular read support.
 
-Finds the region containing `addr`, unmaps every page via `mm_unmap_page`,
-reloads CR3, and removes the descriptor. Calls `fs_put_file` on the backing
-file.
+Current mechanics:
 
-### `vm_find_map` — address lookup
+- lookup is protected by `fs_page_cache_lock`
+- hits move the entry to the tail of an LRU list
+- misses allocate a user physical page, temporarily kernel-map it, and fill it with `inode->i_op->read_page`
+- the inserted cache entry takes an extra physical-page reference with `phymm_reference_page`
+- eviction is LRU and bounded by `PAGE_CACHE_SIZE`
+
+On concurrent misses, the code double-checks after I/O:
+
+- if another thread inserted the page first, the newly loaded page is freed and the existing cached page is reused
+
+Invalidation:
+
+- `fs_page_cache_invalidate(inode)` drops every cached page matching the inode's `(i_pgcache_tag, i_ino)`
+- ext4 and tmpfs writes/truncates call this so buffered readers and mmap faults do not keep stale file data
+
+The important consequence for mmap is:
+
+- when an inode has this cache, both buffered file I/O and page faults converge on the same physical cached file pages
+
+### MM file-shared cache
+
+The MM file-shared cache is keyed by:
 
 ```c
-vm_region *vm_find_map(vm_struct_t vm, unsigned addr);
+typedef struct _file_shared_map_key {
+    void *tag;
+    uint64_t ino;
+    unsigned offset;
+} file_shared_map_key;
 ```
 
-Returns the `vm_region` containing `addr`, or NULL.
+It intentionally uses the same file identity idea as the fs page cache:
 
-### `vm_disc_map` — find a free virtual range
+- `inode->i_pgcache_tag` when available
+- otherwise `inode->i_private`
+- plus `inode->i_ino`
+- plus page-aligned file offset
 
-Scans existing regions in order and returns the first gap in
-`[TASK_UNMAPPED_BASE, KERNEL_OFFSET)` large enough to hold `size` bytes.
-Used by `do_mmap_kernel` when no hint address is given.
+This cache is used only from the page-fault path, and only when the inode does not go through the fs page cache.
 
-### `do_mmap_kernel` — core mmap implementation
+Current flow in `pf_get_file_page()`:
 
-1. Page-aligns `addr` and `len`.
-2. If `MAP_FIXED`: use `addr` exactly (vm_add_map replaces any overlap).
-3. Otherwise: if the hint is occupied or zero, call `vm_disc_map` to find a
-   free range.
-4. Calls `vm_add_map` to register the region. **No physical pages are
-   allocated** — pages are faulted in lazily.
+- if the file uses the fs page cache, use `fs_page_cache_get()` and stop there
+- else, for `MAP_SHARED`, probe `mm_file_shared_find(f, offset)`
+- on miss, read the page directly from the file backend
+- if that miss was for `MAP_SHARED`, register it with `mm_file_shared_add()`
 
-### `do_munmap` — unmap a range
+So the MM file-shared cache is a fallback sharing registry for file-backed mappings that still need `MAP_SHARED` semantics but are outside the fs page-cache path.
 
-Unmaps `[begin, end)` where `end = begin + ceil(length/PAGE_SIZE)*PAGE_SIZE`.
-Handles ranges that span **multiple vm_regions** by iterating over all
-overlapping regions until none remain:
+Like the other shared maps in `src/mm/cache.c`, inserting an entry pins the physical page with an extra reference count.
 
-```
-For each overlapping region R:
-  intersection = [max(R.begin, begin), min(R.end, end))
-  1. vm_flush_dirty_region(intersection)        — write back dirty MAP_SHARED pages
-  2. mm_unmap_page() for each page in intersection — release physical pages
-  3. hash_remove(R)                             — drop the vm_region descriptor
-  4. re-insert left  remnant [R.begin, intersection.begin) if any
-  5. re-insert right remnant [intersection.end, R.end)     if any
-RELOAD_CR3()
-```
+Notably, there is no standalone invalidation path for this cache today that mirrors `fs_page_cache_invalidate()`. The implementation relies on stable backing identity and mapping lifetime rather than a richer coherent address-space object.
 
-Remnant portions are re-inserted as new vm_region descriptors; their physical
-pages were **not** unmapped in step 2 so they remain live in the page tables.
-File references are bumped before `hash_remove` and released after re-insert
-(same pattern as `vm_mprotect`) to prevent use-after-free.
+### `/dev/mem`
 
-**Note on end calculation:** `end` is computed as
-`begin + ceil(length / PAGE_SIZE) * PAGE_SIZE` rather than
-`(begin + length + PAGE_SIZE - 1) & PAGE_MASK` — the latter incorrectly rounds
-an already page-aligned sum up by one extra page.
+`/dev/mem` is treated specially:
 
-### `vm_mprotect` — change protection
+- the fault maps the requested physical page directly
+- the PTE is cache-disabled
+- no filesystem-page-cache semantics are involved
 
-Updates `prot` for `[begin, end)` without unmapping pages. Overlapping
-regions are split and the intersecting portion is re-inserted with `new_prot`.
-File references are bumped before `hash_remove` and released after re-insert
-to avoid use-after-free.
+This is required for MMIO and framebuffer mappings.
 
-### `vm_dup` — fork address space
+## Write Faults and `fork()`
 
-Copies all `vm_region` descriptors from parent to child. Physical pages are
-**not** copied — the parent's pages become CoW (handled at the page-table
-level by `fork()` marking all PTEs read-only).
+`fork()` duplicates the VM region tree, then copies present PTEs VMA-by-VMA.
 
-### `vm_flush_all_dirty` — process exit flush
+Current rule set:
 
-Iterates every region and writes dirty `MAP_SHARED` file-backed pages back to
-disk via `ext4_fwrite` before the VM is torn down.
+- `MAP_PRIVATE` + writable present page: parent and child are both write-protected, so the first writer faults and gets a private copy
+- `MAP_SHARED` or read-only present page: child receives the same PTE without forced COW
+- `/dev/mem` and other non-managed physical pages are cloned as raw mappings without feeding them into RAM refcount logic
 
----
+Write faults use:
 
-## 3. Page fault handler (`pagefault.c`)
+- `wp_page_copy()` when the page is still shared
+- `wp_page_reuse()` when this task is already the sole owner, or when a `MAP_SHARED` page only needs its writable bit restored
 
-Registered at vector 14 (`pf_init`). Runs with interrupts **enabled** (disk
-reads may be needed).
+For shared file mappings, the first successful write fault also marks the backing physical page dirty.
 
-### Error code bits
+## Dirty Writeback
 
-```
-bit 0  P   — 0 = page not present, 1 = protection violation
-bit 1  W/R — 0 = read fault, 1 = write fault
-bit 2  U/S — 0 = kernel mode, 1 = user mode
-```
+Dirty writeback currently exists for `MAP_SHARED` file-backed mappings only.
 
-### Dispatch in `pf_process`
+`vm_flush_dirty_region()`:
 
-```
-error & P == 0  (not present)  → pf_handle_page_invalid(cr2)
-error & P == 1  (present)
-  error & W == 1  (write fault) → pf_handle_permission(cr2)
-  otherwise                     → unhandled → SIGSEGV (user) / kernel panic (kernel)
-```
+- skips anonymous mappings
+- skips `/dev/mem`
+- skips never-faulted pages
+- writes back only pages whose physical page is marked dirty
 
-`cr2` is masked to the page boundary before dispatch.
+Flush points in the current tree:
 
-### Unhandled faults — SIGSEGV delivery
+- before unmapping a shared file-backed subrange in `do_munmap()`
+- on overlap replacement inside `vm_add_map()`
+- on process teardown through `vm_flush_all_dirty()`
+- for one file identity through `vm_flush_file_dirty()`
 
-If no handler claims the fault (both `pf_handle_page_invalid` and
-`pf_handle_permission` return 0), `pf_process` falls through to
-`NOT_HANDLED`:
+There is no implemented `msync(2)` syscall entry yet; syscall slot 144 is still empty.
 
-- **User-mode fault** (`eip < KERNEL_OFFSET` or `cr2 < KERNEL_OFFSET`):
-  1. `SIGSEGV` is posted to the current task (`sig_pending |= 1 << (SIGSEGV-1)`).
-  2. `do_signal(frame)` is called immediately so the signal is delivered
-     before returning to user space.
-  3. If SIGSEGV is masked or set to `SIG_IGN`, `do_exit(SIGSEGV)` force-terminates
-     the process.
-  4. When `TestControl.verbos` is set, a diagnostic log line is emitted with
-     the error code, faulting address, EIP, command name, and VM region dump.
+## Shared-Page Caches In `mm/cache.c`
 
-- **Kernel-mode fault**: triggers a kernel panic (unreachable from user space).
+`src/mm/cache.c` owns two MM-side sharing registries:
 
-This replaces the previous behaviour of directly calling `sys_exit(-EFAULT)`,
-which bypassed signal semantics and prevented tools like shells from
-distinguishing a segfault exit from a clean failure.
+- `anon_shared_map`
+- `file_shared_map`
 
-### `pf_handle_page_invalid` — demand paging
+### Anonymous shared map
 
-1. Look up `cr2` in the current task's VM map (`vm_find_map`).
-2. If no region found, or `prot == PROT_NONE`: return 0 → SIGSEGV.
-3. If region has a backing file → `pf_handle_invalid_file_map` (major fault).
-4. Otherwise → `pf_handle_invalid_memory` (minor fault).
-
-#### Anonymous fault: `pf_handle_invalid_memory`
-
-- **Writable** (`PROT_WRITE`): allocate a fresh physical page, map
-  `PAGE_ENTRY_USER_DATA`, zero it.
-- **Read-only**: map the shared **zero page** as `PAGE_ENTRY_USER_CODE`
-  (read-only). The zero page's `ref_count` becomes > 1, so the next write
-  triggers CoW automatically.
-
-#### File-backed fault: `pf_handle_invalid_file_map`
-
-1. **Filesystem page-cache lookup** `fs_page_cache_get(inode, offset)`.
-   - The cache lives in `src/fs/cache.c`, not in the page-fault layer.
-   - Hits return the same physical file page used by buffered `read()`.
-2. **Cache miss**: allocate and fill one page through
-   `inode->i_op->read_page()`, then insert it into the filesystem cache.
-3. Map that physical page into the faulting process.
-4. Keep the PTE read-only for `MAP_SHARED` mappings and for non-writable
-   private mappings. Writable `MAP_PRIVATE` mappings start from the cached file
-   page and take CoW on the first write, which is closer to Linux.
-
-### MAP_SHARED implementation
-
-`MAP_SHARED` pages must be shared across all processes that map the same
-backing. File-backed sharing now comes from the filesystem page cache.
-Anonymous shared mappings still need a dedicated MM-side registry, because
-they have no inode-backed cache to attach to.
-
-#### `anon_shared_map` — shared-page registry for anonymous `MAP_SHARED`
-
-```
-Key:  (id, offset)
-        id = anon_id | 0x80000000
-Value: physical address of the shared page
-```
-
-#### File-backed MAP_SHARED fault sequence
-
-1. **Demand fault** (`pf_handle_invalid_file_map`, `flag & MAP_SHARED`):
-   - Look up `(sb, ino, offset)` in the filesystem page cache.
-   - **Hit**: map the cached physical page as `PAGE_ENTRY_USER_CODE`
-     (read-only).
-   - **Miss**: allocate and fill one page through `read_page`, then cache it
-     in the filesystem page cache.
-   - Result: page is **read-only** in every process's PTE.
-2. **Write fault** → `pf_handle_permission` → `pf_handle_readonly`:
-   - Flip PTE writable **in-place** (no CoW — all sharers see the same page).
-   - If file-backed: call `phymm_mark_dirty(page_index)` to schedule writeback.
-3. **Writeback** (`vm_flush_dirty_region`):
-   - Iterates pages in `[begin, end)`, skips clean pages, writes dirty pages
-     via `ext4_fwrite`, then clears the dirty flag.
-   - Called on `munmap` (for the unmapped interval) and on process exit
-     (`vm_flush_all_dirty`).
-
-#### Anonymous MAP_SHARED fault sequence
-
-A unique `anon_id` is assigned by `do_mmap_kernel` at `mmap` time
-(`++g_anon_id_next`).  The `vm_region` stores this ID and it is **preserved
-across `fork()`** (via `vm_dup`), so parent and child share the same
-`anon_shared_map` entries now live in `src/mm/cache.c`. A separate
-`anon_shared_refs` table tracks how many live VM regions still refer to each
-`anon_id`; when the last one disappears, all cached pages for that shared
-anonymous object are dropped.
-
-1. **Demand fault** (`pf_handle_invalid_memory`, `flag & MAP_SHARED`):
-   - Key = `(anon_id | ANON_SHARED_BIT, offset)`.
-   - **Hit**: map read-only.
-   - **Miss**: allocate, zero, strip writable, register in `anon_shared_map`.
-2. **Write fault** → `pf_handle_permission` → `pf_handle_readonly`:
-   - Flip PTE writable in-place (no dirty tracking; anonymous pages are not
-     written back to disk).
-
-#### Comparison: MAP_SHARED vs MAP_PRIVATE
-
-|             | MAP_SHARED                                              | MAP_PRIVATE                                          |
-| ----------- | ------------------------------------------------------- | ---------------------------------------------------- |
-| Cache       | File: fs page cache. Anonymous: `anon_shared_map`       | File: fs page cache plus CoW. Anonymous: zero/fresh pages |
-| Write fault | Flip PTE writable in-place; mark dirty if file-backed   | CoW if `ref_count > 1`; else flip PTE                |
-| Fork        | Child maps same physical page                           | Child gets CoW copy on first write                   |
-| Writeback   | `vm_flush_dirty_region` on munmap / exit                | Never                                                |
-
-### `pf_handle_permission` — write fault on a present page
-
-Dispatches based on region flags:
-
-| Condition                                   | Action                                                                                                            |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `MAP_SHARED`                                | Flip PTE writable in-place (`pf_handle_readonly`). If file-backed, mark physical page dirty (`phymm_mark_dirty`). |
-| `MAP_PRIVATE`, `ref_count > 1`              | CoW: allocate a private copy (`pf_handle_cow`).                                                                   |
-| `MAP_PRIVATE`, `ref_count == 1`             | Sole owner; just flip PTE writable (`pf_handle_readonly`).                                                        |
-| No covering region, or `PROT_WRITE` not set | Return 0 → SIGSEGV.                                                                                               |
-
-#### CoW sequence: `pf_handle_cow`
-
-```
-1. vm_alloc(1)            → allocate new kernel-mapped page
-2. memcpy(new, cr2, 4KB)  → copy the page contents
-3. mm_unmap_page(cr2) → release old physical page (deref; may free it)
-4. phymm_reference_page    → pin new page so it isn't freed before remapping
-5. mm_kunmap_page       → unmap new page from kernel window
-6. mm_map_page(cr2, new_phy, writable) → install private copy
-7. phymm_dereference_page  → release the extra pin
-8. RELOAD_CR3              → flush TLB
-```
-
-### Page caches
-
-There are now two distinct caching layers:
-
-#### Filesystem page cache
-
-- Implemented in `src/fs/cache.c`.
-- Keyed by `(i_pgcache_tag, i_ino, page_offset)` so repeated opens on the same
-  mounted filesystem share cached file pages.
-- Used by both buffered `read()` and file-backed mmap faults.
-- This is the Linux-like replacement for the old pagefault-local readonly file cache.
-
-#### `anon_shared_map`
+The anonymous shared map is keyed by:
 
 ```c
-static hash_table *anon_shared_map;   // keyed by (anon_id | ANON_SHARED_BIT, offset)
+typedef struct _anon_shared_map_key {
+    unsigned id;
+    unsigned offset;
+} anon_shared_map_key;
 ```
 
-Entries hold a reference (`phymm_reference_page`) to each anonymous shared
-page while its `anon_id` still has live VM-region references. `munmap`,
-splits/merges, and process exit update the refcount through the VM layer, and
-the last `mm_anon_shared_put()` removes the object's cached pages.
+The stored `id` is:
 
-#### `file_shared_map`
+- `anon_id | ANON_SHARED_BIT`
 
-```c
-static hash_table *file_shared_map;   // keyed by (tag, ino, page_offset)
-```
+The high-bit tag keeps anonymous-shared identities separate from ordinary numeric ids and makes the map key unambiguous inside the MM layer.
 
-This lives in `src/mm/cache.c` too, but only as a narrow fallback for
-file-backed `MAP_SHARED` objects that cannot use the filesystem page cache.
-Normal file-backed faults should still be satisfied through `src/fs/cache.c`.
+The lifetime model has two pieces:
 
-#### Zero page
+- `anon_shared_map`: `(anon_id, offset) -> phy`
+- `anon_shared_refs`: `anon_id -> number of live VM regions still referring to that shared object`
 
-A global **zero page** is allocated at `pf_init` time and reused for all
-anonymous MAP_PRIVATE read-only faults.  Because `mm_map_page` bumps the
-page's `ref_count` above 1, a write fault triggers CoW rather than silently
-dirtying the shared zero page.
+Why both exist:
 
-### Instrumentation counters
+- the page map tells faults which physical page backs a given shared-anon offset
+- the ref table tells the kernel when the last related VMA has disappeared and the whole shared-anon object can be dropped
 
-| Counter                     | Meaning                                          |
-| --------------------------- | ------------------------------------------------ |
-| `page_fault_cow`            | CoW faults                                       |
-| `page_fault_invalid`        | Anonymous demand-page faults                     |
-| `page_fault_file`           | File-backed demand-page faults                   |
-| `page_fault_file_cache_hit` | File faults served from page cache               |
-| `page_fault_perm`           | Permission-upgrade (read-only → writable) faults |
-| `page_fault_file_read`      | Total bytes read from disk for file faults       |
+Current lifetime rules:
 
-Cycle-accurate timing is collected when `TestControl.profiling == 1`.
+- `vm_add_map()` calls `mm_anon_shared_get(anon_id)` when inserting a shared-anon region
+- region destruction or replacement eventually calls `mm_anon_shared_put(anon_id)`
+- when the refcount falls to zero, every cached page for that `anon_id` is removed from `anon_shared_map`
+- each removed page drops its extra physical-page reference, freeing the page if nothing else still maps it
 
----
+### File shared map
 
-## 4. Lifecycle summary
+The file shared map is much simpler:
 
-```
-mmap(addr, len, prot, flags, fd, offset)
-  └─ do_mmap → do_mmap_kernel
-       └─ vm_add_map   [registers descriptor; no pages allocated]
+- there is no parallel per-object ref table
+- entries live as long as the MM shared registry retains them
+- insertion takes an extra page reference
 
-first access to mapped page
-  └─ #PF (vector 14) → pf_process
-       ├─ page not present → pf_handle_page_invalid
-       │    ├─ anonymous  → allocate page, zero, map writable (or share zero page)
-       │    └─ file-backed → cache lookup → read from ext4 → map read-only → cache insert
-       ├─ write to read-only page → pf_handle_permission
-       │    ├─ MAP_SHARED  → flip PTE writable; mark dirty if file-backed
-       │    └─ MAP_PRIVATE → CoW if shared, else flip PTE writable
-       └─ unhandled (no covering region / bad prot)
-            └─ user mode → post SIGSEGV → do_signal → [do_exit if ignored]
+Its purpose is only to preserve `MAP_SHARED` page sharing for non-fs-page-cache backends.
 
-munmap(addr, length)
-  └─ do_munmap
-       └─ for each overlapping vm_region:
-            ├─ vm_flush_dirty_region  [write back dirty MAP_SHARED pages]
-            ├─ mm_unmap_page     [unmap PTEs in intersection only]
-            ├─ hash_remove            [drop vm_region descriptor]
-            └─ re-insert remnants     [split; remnant pages stay live]
+## Fault Walkthroughs
 
-fork()
-  └─ vm_dup   [copy vm_region descriptors to child]
-  └─ (caller) mark all PTEs read-only in both parent and child
-       └─ first write → CoW fault → pf_handle_cow
+### File-backed `MAP_SHARED` with fs page cache
 
-process exit
-  └─ vm_flush_all_dirty   [flush all dirty MAP_SHARED pages]
-  └─ vm_destroy           [free all vm_region descriptors]
-```
+1. Fault on file offset `X`.
+2. `pf_file_uses_fs_page_cache()` says yes.
+3. `fs_page_cache_get(inode, X)` returns the shared physical page for `(tag, ino, X)`.
+4. The process maps that page.
+5. Write faults upgrade the PTE in place and mark the page dirty.
+6. `munmap()` or exit flushes dirty pages back through `write_page` or the ext4 fallback path.
+
+### File-backed `MAP_SHARED` without fs page cache
+
+1. Fault on file offset `X`.
+2. `pf_file_uses_fs_page_cache()` says no.
+3. `mm_file_shared_find(file, X)` is checked.
+4. On hit, the existing shared physical page is reused.
+5. On miss, the page is read directly from the backend and inserted into `file_shared_map`.
+
+### Anonymous `MAP_SHARED`
+
+1. `do_mmap_kernel()` assigns a fresh `anon_id`.
+2. `fork()` preserves that `anon_id` in child VM regions.
+3. Fault on offset `X` checks `mm_anon_shared_find(anon_id, X)`.
+4. On miss, a zero-filled page is allocated and registered.
+5. Later faults in parent/child/shared remnant VMAs find the same physical page.
+
+## Stack Growth
+
+The user stack is represented as an anonymous grow-down mapping near the top of user space.
+
+On a fault:
+
+- `pf_find_vma()` asks for the first VMA at or above the address
+- if the next VMA is the current stack mapping and the fault is within the allowed grow-down window, MOS extends the stack downward with `MAP_FIXED`
+- the new pages still fault in lazily afterward
+
+Growth happens in at least `USER_STACK_INIT_PAGES` chunks, not strictly one page at a time.
+
+## Limitations and Notes
+
+- `mprotect()` currently only changes writable state in hardware PTEs; execute permissions are tracked in metadata but not enforced by x86 NX.
+- `PROT_NONE` is enforced by fault handling rather than by installing a special non-accessible PTE.
+- Shared anonymous pages and shared file pages are cached in kernel-global structures; those caches are simple and correctness-oriented, not aggressively optimized.
+- Dirty shared-file writeback exists, but `msync()` is not wired up yet.
+- VM enumeration order depends on the tree traversal used by `hash_first/hash_next`; the implementation expects it to be sorted by address.

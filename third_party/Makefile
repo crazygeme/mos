@@ -19,14 +19,14 @@ LWIP_DEPS     = $(patsubst %.c.o,%.c.d,$(LWIP_OBJS))
 # ── Compiler flags ────────────────────────────────────────────────────────
 
 LWEXT4_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
-              -Wno-pointer-bool-conversion
+              -Wno-pointer-bool-conversion -O2
 ASFLAGS     = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
               -Wno-pointer-bool-conversion
 LWIP_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
               -Wno-address \
               -Wno-unused-variable \
               -Wno-unused-function \
-              -Wno-int-conversion
+              -Wno-int-conversion -O2
 
 SCRIPTS     = $(MAINPATH)/mos.mk $(MAINPATH)/Makefile Makefile
 

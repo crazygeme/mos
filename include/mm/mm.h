@@ -79,6 +79,7 @@ int mm_map_io(unsigned int phy);
 void mm_kunmap_page(unsigned int vir);
 
 void mm_del_user_map();
+void mm_destroy_user_map(unsigned int page_dir);
 
 unsigned int mm_alloc_page_table();
 

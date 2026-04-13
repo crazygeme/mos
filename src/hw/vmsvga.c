@@ -418,6 +418,14 @@ static void vmsvga_sync_mode(void)
 static void vmsvga_flush(void)
 {
 	svga_update(0, 0, _hw_resolution_x, _hw_resolution_y);
+	/*
+	 * The periodic graphics-refresh path relies on flush() to make user-space
+	 * framebuffer writes visible even when no other accelerated blit happens.
+	 * An UPDATE alone is only queued in the FIFO; force a SYNC here so QEMU
+	 * processes that queued update immediately instead of appearing to "wake
+	 * up" only on the next unrelated input event.
+	 */
+	fifo_sync();
 }
 
 static int vmsvga_is_char_visible(unsigned char c)

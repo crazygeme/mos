@@ -91,6 +91,7 @@ void mm_free_page_table(unsigned int vir)
 
 static spinlock_t mm_lock;
 static spinlock_t path_lock;
+static int mm_dynamic_region(unsigned phy);
 
 /* Name-buffer cache node */
 
@@ -321,6 +322,60 @@ void mm_del_user_map()
 	for (i = 0; i < reserved_page_tables; i++)
 		page_dir[i] = 0;
 	RELOAD_CR3();
+}
+
+/*
+ * Destroy every user-space mapping in @page_dir in one pass.
+ *
+ * This is faster than repeated mm_unmap_page() calls during exit/exec because
+ * it walks each user page table exactly once, drops all backing user pages,
+ * then frees the page table as a whole.
+ */
+void mm_destroy_user_map(unsigned int page_dir)
+{
+	unsigned int *dir = (unsigned int *)page_dir;
+	int irq;
+	unsigned int i;
+
+	if (!dir)
+		return;
+
+	spinlock_lock(&mm_lock, &irq);
+	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
+		unsigned int *table;
+		unsigned int table_phy;
+		unsigned int j;
+		int cache_idx;
+
+		table_phy = dir[i] & PAGE_SIZE_MASK;
+		if (!table_phy)
+			continue;
+
+		table = (unsigned int *)(table_phy + KERNEL_OFFSET);
+		for (j = 0; j < PG_TABLE_SIZE; j++) {
+			unsigned int phy_addr = table[j] & PAGE_SIZE_MASK;
+			unsigned int page_index;
+
+			if (!phy_addr)
+				continue;
+
+			page_index = PHY_TO_PAGE_IDX(phy_addr);
+			if ((mm_dynamic_region(phy_addr) ||
+			     mm_vdso_region(phy_addr)) &&
+			    phymm_is_used(page_index) &&
+			    phymm_dereference_page(page_index) == 0)
+				phymm_free_user(page_index);
+
+			table[j] = 0;
+		}
+
+		cache_idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
+			    1;
+		pgc_entry_count[cache_idx] = 0;
+		mm_free_page_table((unsigned int)table);
+		dir[i] = 0;
+	}
+	spinlock_unlock(&mm_lock, irq);
 }
 
 /*

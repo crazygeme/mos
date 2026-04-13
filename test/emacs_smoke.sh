@@ -34,6 +34,19 @@ require_cmd()
 	command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
 }
 
+ensure_local_hostname()
+{
+	nodename=$(uname -n 2>/dev/null)
+	[ -n "$nodename" ] || return 0
+
+	if grep -Eq "(^|[[:space:]])$nodename([[:space:]]|\$)" /etc/hosts 2>/dev/null; then
+		return 0
+	fi
+
+	printf '127.0.0.1 localhost %s\n' "$nodename" >> /etc/hosts 2>/dev/null ||
+		fail "failed to seed /etc/hosts for $nodename"
+}
+
 cleanup()
 {
 	rm -rf "$BASE" >/dev/null 2>&1 || true
@@ -43,6 +56,7 @@ trap cleanup EXIT
 cleanup
 
 require_cmd emacs
+ensure_local_hostname
 
 mkdir -p "$BASE" >/dev/null 2>&1 || fail "mkdir failed"
 printf 'old\n' > "$FILE"

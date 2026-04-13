@@ -189,11 +189,6 @@ static void ap_idle_stub(void *param)
  * Static helpers — user address-space enumeration
  */
 
-static void ps_cleanup_enum_callback(void *aux, unsigned vir, unsigned phy)
-{
-	mm_unmap_page(vir);
-}
-
 /*
  * Private — process ID
  */
@@ -448,6 +443,9 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 /* Unmap all user pages for task and flush the TLB. */
 void ps_cleanup_all_user_map(task_struct *task)
 {
-	ps_enum_user_map(task, ps_cleanup_enum_callback, 0);
+	if (!task || !task->user)
+		return;
+
+	mm_destroy_user_map(task->user->page_dir);
 	RELOAD_CR3();
 }

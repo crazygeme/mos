@@ -338,11 +338,19 @@ void copy_page_range(task_struct *parent, task_struct *child)
 		.src_pd = (unsigned *)mm_get_pagedir(),
 		.dst_pd = (unsigned *)child->user->page_dir,
 	};
+	int irq;
 
 	mm_init_task_pagedir(ctx.dst_pd);
 	vm_dup(parent->user->vm, child->user->vm);
+
+	/*
+	 * Serialize fork's parent-PTE write-protect pass against concurrent COW
+	 * faults and other page-table writers touching the same address space.
+	 */
+	spinlock_lock(&map_lock, &irq);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
 	RELOAD_CR3();
+	spinlock_unlock(&map_lock, irq);
 }
 
 /*

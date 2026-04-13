@@ -221,7 +221,7 @@ void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 void ps_put_to_ready_queue_unsafe(task_struct *task)
 {
 	unsigned dst_cpu = ps_task_cpu(task);
-	unsigned src_cpu = ps_task_cpu(CURRENT_TASK());
+	unsigned src_cpu = ps_current_cpu_early();
 
 	if (task->psid != 0xffffffff) {
 		list_remove_entry(&task->ps_list);

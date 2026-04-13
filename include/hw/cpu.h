@@ -29,6 +29,11 @@ int cpu_current_id(void);
 
 int cpu_id(int index);
 
+/* Per-CPU runtime GDT state (boot-time gdt[] remains the template). */
+unsigned long long *cpu_gdt_ptr(int cpu_id);
+void cpu_gdt_write(int cpu_id, int entry, unsigned long long desc);
+void cpu_gdt_load(int cpu_id);
+
 /* Bring all Application Processors online.
  * Must be called after apic_init_bsp() and ioapic_init(). */
 void smp_start_aps(void);

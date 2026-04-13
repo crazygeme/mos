@@ -11,6 +11,7 @@
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/vdso.h>
+#include <hw/cpu.h>
 #include <hw/time.h>
 #include <lib/klib.h>
 #include <errno.h>

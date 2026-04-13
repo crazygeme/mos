@@ -28,6 +28,7 @@
 cpu_struct cpus[MAX_CPUS];
 volatile int ncpus = 1; /* BSP is CPU 0, counted at boot */
 static volatile int smp_sched_go = 0;
+static unsigned long long cpu_gdts[MAX_CPUS][SELECTOR_COUNT];
 
 /* 
  * AP trampoline and params layout
@@ -82,6 +83,40 @@ int cpu_id(int index)
 	return cpus[index].cpu_id;
 }
 
+unsigned long long *cpu_gdt_ptr(int cpu_id)
+{
+	if (cpu_id < 0 || cpu_id >= MAX_CPUS)
+		return cpu_gdts[0];
+	return cpu_gdts[cpu_id];
+}
+
+void cpu_gdt_write(int cpu_id, int entry, unsigned long long desc)
+{
+	unsigned long long *gdt_local = cpu_gdt_ptr(cpu_id);
+
+	if (entry < 0 || entry >= SELECTOR_COUNT)
+		return;
+	gdt_local[entry] = desc;
+}
+
+void cpu_gdt_load(int cpu_id)
+{
+	unsigned long long gdtr;
+	unsigned long long *gdt_local = cpu_gdt_ptr(cpu_id);
+
+	gdtr = MAKE_GDTR_OPERAND(sizeof(cpu_gdts[cpu_id]) - 1, gdt_local);
+	SET_GDT(gdtr);
+	SET_DS(KERNEL_DATA_SELECTOR);
+	SET_CS(KERNEL_CODE_SELECTOR);
+}
+
+static void cpu_gdt_clone_template(int cpu_id)
+{
+	extern unsigned long long gdt[];
+
+	memcpy(cpu_gdt_ptr(cpu_id), gdt, sizeof(cpu_gdts[cpu_id]));
+}
+
 /* 
  * TLB shootdown IPI
  */
@@ -105,11 +140,12 @@ void smp_tlb_shootdown(void)
 static void cpu_load_tss(int cpu_id, tss_struct *tss)
 {
 	unsigned base = (unsigned)tss;
-	extern unsigned long long gdt[];
 	unsigned sel = TSS_SELECTOR_FOR(cpu_id);
 
-	gdt[sel / 8] = MAKE_SEG_DESC(base, TSS_SEG_LIMIT, SEG_CLASS_SYSTEM, 9,
-				     KERNEL_PRIVILEGE, SEG_BASE_1);
+	cpu_gdt_write(cpu_id, sel / 8,
+		      MAKE_SEG_DESC(base, TSS_SEG_LIMIT, SEG_CLASS_SYSTEM, 9,
+				    KERNEL_PRIVILEGE, SEG_BASE_1));
+	cpu_gdt_load(cpu_id);
 	SET_TSS(sel);
 }
 
@@ -123,6 +159,8 @@ void ap_init_c(int cpu_id)
 
 	/* Initialise this CPU's local APIC. */
 	apic_init_ap();
+
+	cpu_gdt_clone_template(cpu_id);
 
 	/* Set up per-CPU TSS. */
 	cpu->tss = kmalloc(sizeof(tss_io_struct));
@@ -253,6 +291,8 @@ void cpu_init_bsp(void)
 	cpus[0].online = 1;
 	cpus[0].tss = NULL; /* TSS for BSP is managed by ps_init() */
 	cpus[0].idle = NULL;
+	cpu_gdt_clone_template(0);
+	cpu_gdt_load(0);
 }
 
 void smp_scheduler_start(void)

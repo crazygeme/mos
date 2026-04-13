@@ -66,6 +66,19 @@ static tss_struct *ps_current_tss(int id)
 	return (tss_struct *)tss_address_storage;
 }
 
+unsigned ps_current_cpu_early(void)
+{
+	/*
+	 * During bootstrap the BSP creates the initial tasks before
+	 * ps_kickoff() fabricates a per-CPU CURRENT_TASK() frame. In that
+	 * window the scheduler must not derive CPU placement from the current
+	 * stack page; default to CPU0 until SMP per-CPU state is live.
+	 */
+	if (ncpus > 1 && cpus[0].online)
+		return cpu_current_id();
+	return 0;
+}
+
 /*
  * Static helpers — manager queue
  */
@@ -338,7 +351,7 @@ void ps_init()
 
 int ps_enabled()
 {
-	return _ps_enabled[ps_sched_cpu()];
+	return _ps_enabled[ps_current_cpu_early()];
 }
 
 /*

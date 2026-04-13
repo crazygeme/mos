@@ -592,6 +592,7 @@ NOT_HANDLED:
 	DIE();
 
 Done:
+
 	int_intr_setlevel(int_enable);
 	sched_enable(cpu);
 }

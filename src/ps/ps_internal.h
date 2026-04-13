@@ -60,6 +60,7 @@ user_enviroment *ps_alloc_user_env(void);
 void ps_share_heap_state(user_enviroment *dst, user_enviroment *src);
 unsigned ps_assign_affinity(unsigned psid);
 unsigned ps_task_cpu(const task_struct *task);
+unsigned ps_current_cpu_early(void);
 void ps_kick_cpu_if_needed(unsigned dst_cpu, unsigned src_cpu);
 
 /* ps_sched.c — timer helpers (called under ps_lock) */

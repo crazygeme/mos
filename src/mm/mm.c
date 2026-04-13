@@ -20,6 +20,19 @@ unsigned buffer_count = 0;
 unsigned pgc_top = 0;
 
 /*
+ * Locks and initialisation
+ */
+
+static spinlock_t mm_lock;
+static spinlock_t path_lock;
+static spinlock_t pt_cache_lock;
+static unsigned int kernel_pde_template[PG_TABLE_SIZE];
+
+/* Name-buffer cache node */
+
+static list_entry name_cache_head;
+
+/*
  * Page table cache
  *
  * The region PAGE_TABLE_CACHE_BEGIN..PAGE_TABLE_CACHE_END (8 MB – 12 MB) is
@@ -87,7 +100,12 @@ static void page_table_cache_free(page_table_cache_t *cache, unsigned int val)
 
 unsigned int mm_alloc_page_table()
 {
-	unsigned int ret = page_table_cache_alloc(&page_table_cache);
+	unsigned int ret;
+	int irq;
+
+	spinlock_lock(&pt_cache_lock, &irq);
+	ret = page_table_cache_alloc(&page_table_cache);
+	spinlock_unlock(&pt_cache_lock, irq);
 
 	if (ret == 0)
 		return 0;
@@ -97,43 +115,12 @@ unsigned int mm_alloc_page_table()
 
 void mm_free_page_table(unsigned int vir)
 {
+	int irq;
+
+	spinlock_lock(&pt_cache_lock, &irq);
 	page_table_cache_free(&page_table_cache, vir);
+	spinlock_unlock(&pt_cache_lock, irq);
 }
-
-static void mm_init_kernel_page_dir_template(void)
-{
-	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
-	unsigned int i;
-
-	for (i = 0; i < 1024 - KERNEL_PAGE_DIR_OFFSET; i++) {
-		if (page_dir[KERNEL_PAGE_DIR_OFFSET + i] & PAGE_ENTRY_PRESENT)
-			continue;
-
-		unsigned int table_addr =
-			page_table_cache_alloc(&page_table_cache);
-
-		if (table_addr == 0)
-			break;
-
-		memset((void *)table_addr, 0, PAGE_SIZE);
-		kernel_pde_tables[i] = table_addr;
-		page_dir[KERNEL_PAGE_DIR_OFFSET + i] =
-			(table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
-	}
-}
-
-/*
- * Locks and initialisation
- */
-
-static spinlock_t mm_lock;
-static spinlock_t path_lock;
-static int mm_dynamic_region(unsigned phy);
-static unsigned int kernel_pde_template[PG_TABLE_SIZE];
-
-/* Name-buffer cache node */
-
-static list_entry name_cache_head;
 
 /* Called once at boot: set up the page-table cache and related state */
 void mm_init_page_table_cache()
@@ -142,8 +129,7 @@ void mm_init_page_table_cache()
 	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
 
 	page_table_cache_init(&page_table_cache);
-	memset(kernel_pde_tables, 0, sizeof(kernel_pde_tables));
-	mm_init_kernel_page_dir_template();
+	spinlock_init(&pt_cache_lock);
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
 	memset(kernel_pde_template, 0, sizeof(kernel_pde_template));
@@ -389,16 +375,23 @@ int mm_kmap_phys(unsigned int phys)
 {
 	unsigned int virt = phys + KERNEL_OFFSET;
 	mm_addr_info info;
+	int irq;
+	int ret = 1;
 
 	/* Initial boot mapping covers phys [0, PAGE_TABLE_CACHE_END - KERNEL_OFFSET). */
 	if (phys < PAGE_TABLE_CACHE_END - KERNEL_OFFSET)
 		return 1;
 
-	if (!mm_get_valid_page_table(virt, 0, &info, 1))
-		return -1;
+	spinlock_lock(&mm_lock, &irq);
+	if (!mm_get_valid_page_table(virt, 0, &info, 1)) {
+		ret = -1;
+		goto out;
+	}
 
 	*info.entry = (phys & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
-	return 1;
+out:
+	spinlock_unlock(&mm_lock, irq);
+	return ret;
 }
 
 /*
@@ -408,15 +401,22 @@ int mm_kmap_phys(unsigned int phys)
 int mm_map_io(unsigned int phy)
 {
 	mm_addr_info info;
+	int irq;
+	int ret = 1;
 
 	if (phy < KERNEL_OFFSET)
 		return -1;
 
-	if (!mm_get_valid_page_table(phy, 0, &info, 1))
-		return -1;
+	spinlock_lock(&mm_lock, &irq);
+	if (!mm_get_valid_page_table(phy, 0, &info, 1)) {
+		ret = -1;
+		goto out;
+	}
 
 	*info.entry = (phy & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
-	return 1;
+out:
+	spinlock_unlock(&mm_lock, irq);
+	return ret;
 }
 
 /* Remove the temporary low identity map installed during boot. */

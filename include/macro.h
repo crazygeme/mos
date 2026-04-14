@@ -7,76 +7,90 @@
 
 #define LOAD_CR3(val) asm volatile("movl %%cr3, %0" : "=r"(val))
 
-#define SET_DS(val)                                         \
-	({                                                  \
-		asm volatile("movw %0, %%ax" : : "I"(val)); \
-		asm volatile("movw %ax, %ds");              \
-		asm volatile("movw %ax, %es");              \
-		asm volatile("movw %ax, %fs");              \
-		asm volatile("movw %ax, %gs");              \
-		asm volatile("movw %ax, %ss");              \
+#define LOAD_ESP(val) asm volatile("movl %%esp, %0" : "=r"(val) : : "memory")
+
+#define SET_DS(val)                                           \
+	({                                                    \
+		unsigned short __seg = (unsigned short)(val); \
+		asm volatile("movw %0, %%ds\n\t"              \
+			     "movw %0, %%es\n\t"              \
+			     "movw %0, %%fs\n\t"              \
+			     "movw %0, %%gs\n\t"              \
+			     "movw %0, %%ss"                  \
+			     :                                \
+			     : "rm"(__seg)                    \
+			     : "memory");                     \
 	})
 
-#define SET_CS(val) asm volatile("ljmp %0, $1f \n1:\n\tnop" : : "I"(val))
+#define SET_CS(val) \
+	asm volatile("ljmp %0, $1f \n1:\n\tnop" : : "I"(val) : "memory")
 
-#define SET_ESP(val) asm volatile("movl %0, %%esp" : : "m"(val))
+#define SET_ESP(val) asm volatile("movl %0, %%esp" : : "rm"(val) : "memory")
 
-#define SET_EBP(val) asm volatile("movl %0, %%ebp" : : "q"(val))
+#define SET_EBP(val) asm volatile("movl %0, %%ebp" : : "rm"(val) : "memory")
 
-#define SET_EIP(val) asm volatile("jmp %0" : : "q"(val))
+#define SET_EIP(val) asm volatile("jmp *%0" : : "rm"(val) : "memory")
 
-#define SET_TSS(val) asm volatile("ltr %w0" : : "q"(val))
+#define SET_TSS(val) asm volatile("ltr %w0" : : "r"(val) : "memory")
 
-#define SET_GDT(val) asm volatile("lgdt %0" : : "m"(val))
+#define SET_GDT(val) asm volatile("lgdt %0" : : "m"(val) : "memory")
 
-#define SET_IDT(val) asm volatile("lidt %0\nsti" : : "m"(val))
+#define SET_IDT(val) asm volatile("lidt %0\nsti" : : "m"(val) : "memory")
 
-#define SET_CR3(val) asm volatile("movl %0, %%cr3" : : "q"(val))
+#define SET_CR3(val) asm volatile("movl %0, %%cr3" : : "r"(val) : "memory")
 
-#define ENABLE_PAGING()                               \
-	({                                            \
-		asm volatile("movl %cr0,%eax");       \
-		asm volatile("orl $0x80000000,%eax"); \
-		asm volatile("movl %eax,%cr0");       \
+#define ENABLE_PAGING()                                   \
+	({                                                \
+		asm volatile("movl %%cr0, %%eax\n\t"      \
+			     "orl $0x80000000, %%eax\n\t" \
+			     "movl %%eax, %%cr0"          \
+			     :                            \
+			     :                            \
+			     : "eax", "cc", "memory");    \
 	})
 
-#define RELOAD_CR3()                                             \
-	({                                                       \
-		unsigned __cr3__;                                \
-		asm volatile("movl %%cr3, %0" : "=q"(__cr3__));  \
-		asm volatile("movl %0, %%cr3" : : "q"(__cr3__)); \
+#define RELOAD_CR3()                                 \
+	({                                           \
+		asm volatile("movl %%cr3, %%eax\n\t" \
+			     "movl %%eax, %%cr3"     \
+			     :                       \
+			     :                       \
+			     : "eax", "memory");     \
 	})
 
 #define INVLPG(addr) asm volatile("invlpg (%0)" : : "r"(addr) : "memory")
 
-#define RELOAD_EIP()                           \
-	({                                     \
-		asm volatile("jmp 1f");        \
-		asm volatile("1:");            \
-		asm volatile("movl $1f,%eax"); \
-		asm volatile("jmp *%eax");     \
-		asm volatile("1:");            \
-		asm volatile("nop");           \
+#define RELOAD_EIP()                               \
+	({                                         \
+		asm volatile("jmp 1f\n\t"          \
+			     "1:\n\t"              \
+			     "movl $1f, %%eax\n\t" \
+			     "jmp *%%eax\n\t"      \
+			     "1:\n\t"              \
+			     "nop"                 \
+			     :                     \
+			     :                     \
+			     : "eax", "memory");   \
 	})
 
-#define RELOAD_ESP()                                                   \
-	({                                                             \
-		asm volatile("movl %esp, %ecx");                       \
-		asm volatile("addl %0, %%ecx" : : "i"(KERNEL_OFFSET)); \
-		asm volatile("movl %ecx, %esp");                       \
+#define RELOAD_ESP()                                   \
+	({                                             \
+		asm volatile("movl %%esp, %%ecx\n\t"   \
+			     "addl %0, %%ecx\n\t"      \
+			     "movl %%ecx, %%esp"       \
+			     :                         \
+			     : "ir"(KERNEL_OFFSET)     \
+			     : "ecx", "cc", "memory"); \
 	})
 
-#define GET_INTR_FLAG(flag)                           \
-	({                                            \
-		asm volatile("pushfl");               \
-		asm volatile("popl %0" : "=q"(flag)); \
-	})
+#define GET_INTR_FLAG(flag) \
+	({ asm volatile("pushfl\n\tpopl %0" : "=r"(flag) : : "memory"); })
 
-#define ENABLE_INTR() asm volatile("sti")
+#define ENABLE_INTR() asm volatile("sti" : : : "memory")
 
-#define DISABLE_INTR() asm volatile("cli")
+#define DISABLE_INTR() asm volatile("cli" : : : "memory")
 
-#define HLT() asm volatile("hlt")
+#define HLT() asm volatile("hlt" : : : "memory")
 
 #define PAUSE() asm volatile("pause")
 
@@ -95,11 +109,13 @@
 	})
 
 /* In .multiboot section we can not call port_write_xxx functions */
-#define OUT_PORT(port, data)                         \
-	({                                           \
-		asm volatile("mov $" #port ", %dx"); \
-		asm volatile("mov $" #data ", %al"); \
-		asm volatile("outb %al, %dx");       \
+#define OUT_PORT(port, data)                                \
+	({                                                  \
+		asm volatile("outb %b0, %w1"                \
+			     :                              \
+			     : "a"((unsigned char)(data)),  \
+			       "Nd"((unsigned short)(port)) \
+			     : "memory");                   \
 	})
 
 /* Optimization barrier.
@@ -145,11 +161,8 @@
 		asm volatile("movl %0, %%ebp" : : "m"(task->tss.ebp)); \
 	})
 
-#define JUMP_TO_NEXT_TASK_EIP(next)                           \
-	({                                                    \
-		asm volatile("movl %0, %%edx" : : "m"(next)); \
-		asm volatile("jmp *%edx");                    \
-	})
+#define JUMP_TO_NEXT_TASK_EIP(next) \
+	({ asm volatile("jmp *%0" : : "r"(next) : "memory"); })
 
 // clang-format off
 #define MAKE_SEG_DESC(base, limit, class, type, dpl, granularity)                    \

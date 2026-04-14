@@ -74,11 +74,30 @@ static void ipi_sched_handler(intr_frame *frame)
 	 * this interrupt, allowing the scheduler to run. */
 }
 
-static void intr_check_point(intr_frame *frame)
+static void intr_maybe_preempt(void)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (cur->psid == 0xffffffff || !ps_enabled())
+		return;
+
+	if (sched_is_enabled() && cur->remain_ticks <= 0) {
+		cur->stats->niv_switches++;
+		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+		int_intr_enable();
+		task_sched();
+		int_intr_disable();
+	}
+}
+
+static void intr_prepare_user_return(intr_frame *frame)
 {
 	task_struct *cur = CURRENT_TASK();
 	const unsigned user_eflags_clear = 0x00054000U;
+
 	if (cur->psid == 0xffffffff || !ps_enabled())
+		return;
+	if (frame->cs != USER_CODE_SELECTOR)
 		return;
 
 	/*
@@ -96,14 +115,6 @@ static void intr_check_point(intr_frame *frame)
 	 */
 	frame->eflags &= ~0x3000U;
 	frame->eflags |= ((unsigned)(cur->io_priv_level & 0x3) << 12);
-
-	if (sched_is_enabled() && cur->remain_ticks <= 0) {
-		cur->stats->niv_switches++;
-		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		int_intr_enable();
-		task_sched();
-		int_intr_disable();
-	}
 
 	/* Deliver pending signals when returning to user space.
 	 * This ensures alarm() and kill() work even in tight user-space loops. */
@@ -133,7 +144,8 @@ void intr_handler(intr_frame *frame)
 		pic_end_of_interrupt(frame->vec_no);
 	}
 
-	intr_check_point(frame);
+	intr_maybe_preempt();
+	intr_prepare_user_return(frame);
 }
 
 void intr_syscall_handler(intr_frame *frame)
@@ -151,7 +163,7 @@ void intr_syscall_handler(intr_frame *frame)
 			(cur->stats->idle_tickets - idle_start);
 	}
 
-	intr_check_point(frame);
+	intr_prepare_user_return(frame);
 }
 
 static void handle_invalid_opcode(intr_frame *frame)

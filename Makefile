@@ -1,10 +1,12 @@
 MAINPATH = $(shell pwd)
 export MAINPATH
 MAKEFLAGS += --no-print-directory
-include $(MAINPATH)/mos.mk
+include $(MAINPATH)/build/config.mk
 TARGET	= kernel
 
-SCRIPTS   = $(MAINPATH)/mos.mk $(MAINPATH)/Makefile
+include $(MAINPATH)/build/helpers.mk
+
+SCRIPTS   = $(MAINPATH)/build/config.mk $(MAINPATH)/build/helpers.mk $(MAINPATH)/Makefile $(SUBDIR_CFLAGS_FILES)
 SRCS      = $(shell find src/ -name '*.c')
 ASMS      = $(shell find src/ -name '*.S')
 TEST_SRCS = $(shell find test/ -name '*.c')
@@ -67,12 +69,12 @@ $(DST)/kernel-test: $(OBJS) $(TEST_OBJS) $(LIBS) $(MAINPATH)/link.ld
 $(DST)/obj/%.c.o: %.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
 	@echo "CC  $<"
-	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	@$(CC) $(call dir_cflags,$<) -MMD -MP -c $< -o $@
 
 $(DST)/obj/%.s.o: %.S $(SCRIPTS)
 	@mkdir -p $(dir $@)
 	@echo "CC  $<"
-	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	@$(CC) $(call dir_cflags,$<) -MMD -MP -c $< -o $@
 
 $(DST)/generated/test/%.c: test/%.sh tools/gen_ktest_scripts.sh
 	@mkdir -p $(dir $@)

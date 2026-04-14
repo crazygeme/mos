@@ -1,4 +1,4 @@
-include $(MAINPATH)/mos.mk
+include $(MAINPATH)/build/config.mk
 
 # ── lwext4 ────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ LWIP_CFLAGS = $(filter-out -Werror -Wall,$(COMMON_CFLAGS)) \
               -Wno-unused-function \
               -Wno-int-conversion -O2
 
-SCRIPTS     = $(MAINPATH)/mos.mk $(MAINPATH)/Makefile Makefile
+SCRIPTS     = $(MAINPATH)/build/config.mk $(MAINPATH)/Makefile Makefile
 
 # ── Targets ───────────────────────────────────────────────────────────────
 

@@ -162,7 +162,7 @@
 	})
 
 #define JUMP_TO_NEXT_TASK_EIP(next) \
-		({ asm volatile("jmp *%0" : : "r"(next) : "memory"); })
+	({ asm volatile("jmp *%0" : : "r"(next) : "memory"); })
 
 // clang-format off
 #define MAKE_SEG_DESC(base, limit, class, type, dpl, granularity)                    \

@@ -1467,7 +1467,7 @@ static void tty_bash_spawner(void *p)
 	sb_get(cur->root);
 
 	/* set parent of current so that wait can work */
-	cur->parent = state->parent;
+	cur->ppid = state->parent->psid;
 
 	/* Set working directory. */
 	strcpy(cur->user->cwd, "/root");

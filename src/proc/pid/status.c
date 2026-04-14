@@ -93,8 +93,7 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 			pid_state_name(task->status));
 	proc_buf_printf(pb, "Tgid:      %u\n", task->psid);
 	proc_buf_printf(pb, "Pid:       %u\n", task->psid);
-	proc_buf_printf(pb, "PPid:      %u\n",
-			task->parent ? task->parent->psid : task->psid);
+	proc_buf_printf(pb, "PPid:      %u\n", task->ppid);
 	proc_buf_printf(pb, "TracerPid: 0\n");
 	proc_buf_printf(pb, "Uid:       %u\t%u\t%u\t%u\n", task->user->uid,
 			task->user->euid, task->user->suid, task->user->euid);
@@ -172,8 +171,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		/* 1  pid         */ task->psid,
 		/* 2  comm        */ comm,
 		/* 3  state       */ pid_state_char(task->status),
-		/* 4  ppid        */ task->parent ? task->parent->psid :
-						    task->psid,
+		/* 4  ppid        */ task->ppid,
 		/* 5  pgrp        */ task->user->group_id,
 		/* 6  session     */ task->user->session_id,
 		/* 7  tty_nr      */ tty_nr,

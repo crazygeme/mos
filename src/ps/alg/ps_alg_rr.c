@@ -21,7 +21,7 @@
 
 extern unsigned long long gdt[];
 
-#include "ps_internal.h"
+#include "../ps_internal.h"
 
 /*
  * Static globals
@@ -112,7 +112,7 @@ void ps_fire_timers_unsafe(void)
 }
 
 /* Scan ready levels from highest to lowest and return the next task to run. */
-static task_struct *ps_get_next_task()
+task_struct *ps_get_next_task()
 {
 	task_struct *task = NULL;
 	int i = PS_PRIORITY_MAX - 1;
@@ -130,23 +130,6 @@ static task_struct *ps_get_next_task()
 	}
 	spinlock_unlock(&ps_lock, irq);
 	return task;
-}
-
-/* Propagate kernel page-directory entries into task's saved page directory
- * so that any kernel mappings added since the task last ran become visible. */
-static void ps_copy_kernel_map(task_struct *task)
-{
-	if (task->user->page_dir) {
-		unsigned int cr3;
-		unsigned int *in_use;
-		unsigned int *per_ps = (unsigned int *)task->user->page_dir;
-
-		LOAD_CR3(cr3);
-		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
-		memcpy(&per_ps[KERNEL_PAGE_DIR_OFFSET],
-		       &in_use[KERNEL_PAGE_DIR_OFFSET],
-		       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
-	}
 }
 
 /*
@@ -227,109 +210,6 @@ void ps_put_to_ready_queue(task_struct *task)
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
-}
-
-/*
- * Public — context switch
- */
-
-/*
- * _task_sched — perform a voluntary or preemptive context switch.
- *
- * 1. Disable interrupts (switch must be atomic).
- * 2. Drain any pending DSR callbacks inline.
- * 3. Pick the next runnable task.
- * 4. If next == current: re-enable and return (no-op).
- * 5. Otherwise:
- *    a. SAVE_ALL: stash registers into current->tss; sets eip = NEXT label.
- *    b. RESTORE_ALL: load registers from next->tss.
- *    c. SET_CR3: switch address space.
- *    d. reset_tss: update hardware TSS for new task.
- *    e. JUMP_TO_NEXT_TASK_EIP: jump to next task's saved eip.
- *       On first run this is ps_run; on later runs it is the NEXT label.
- * 6. When rescheduled, execution resumes at NEXT.
- */
-void _task_sched(const char *func)
-{
-	task_struct *task = 0;
-	task_struct *cur = CURRENT_TASK();
-
-	task_schedule_count++;
-
-	if (cur->stats)
-		cur->stats->idle = time_now_tickets();
-
-	dsr_drain();
-
-	/* 
-	 * Schedule procedure can not be interrupted.
-	 */
-	sched_disable();
-
-	task = ps_get_next_task();
-
-	if (!task) {
-		/*
-		 * If the current task just blocked itself (for example in
-		 * time_wait/select/poll), we must not fall straight back into
-		 * it. Park the CPU until the next interrupt, then retry so
-		 * expired timers can be promoted by ps_get_next_task().
-		 */
-		if (CURRENT_TASK()->status != ps_running) {
-			sched_enable();
-			int_intr_enable();
-			HLT();
-			int_intr_disable();
-			goto SELF;
-		}
-
-		sched_enable();
-		goto SELF;
-	}
-
-	if (task->psid == CURRENT_TASK()->psid) {
-		sched_enable();
-		goto SELF;
-	}
-
-	if (CURRENT_TASK()->stats)
-		CURRENT_TASK()->stats->total_switches++;
-
-	task->status = ps_running;
-	/*
-	 * Can be optimized by syncing pgd entry when adding/removing kernel mappings,
-	 * but this is simpler and the overhead should be negligible.
-	 */
-	ps_copy_kernel_map(task);
-
-	SAVE_ALL(CURRENT_TASK(), NEXT);
-
-	/* Do TSS and CR3 setup on the current stack, before switching.
-	 * Kernel mappings are shared across all page directories so SET_CR3
-	 * here is safe — code and the current stack remain accessible. */
-	reset_tss(task);
-	SET_CR3(task->user->page_dir - KERNEL_OFFSET);
-
-	/* Reload per-process TLS descriptors so that when RESTORE_ALL
-	 * loads GS the CPU finds the correct segment descriptor. */
-	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
-	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
-	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
-
-	/* Switch to the new task's kernel stack.  After this point no local
-	 * variable may be written: CURRENT_TASK() derives the task from the
-	 * updated ESP and the only stack write is the 4-byte return address
-	 * pushed by the call below, at [new_esp - 4], which is within the
-	 * task's page even when new_esp == task + PAGE_SIZE. */
-	RESTORE_ALL(task, task->tss.eip);
-	sched_enable();
-	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
-	asm volatile("NEXT: nop");
-SELF:
-
-	if (CURRENT_TASK()->stats)
-		CURRENT_TASK()->stats->idle_tickets +=
-			time_now_tickets() - CURRENT_TASK()->stats->idle;
 }
 
 static int scheduler_enabled = 1;

@@ -39,6 +39,8 @@ extern tss_struct *tss_address;
  * Cross-file non-public functions
  */
 
+task_struct *ps_get_next_task();
+
 /* ps.c */
 void ps_add_mgr_unsafe(task_struct *task);
 void ps_add_mgr(task_struct *task);

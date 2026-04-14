@@ -5,6 +5,40 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-14 - AF_UNIX stream `SCM_RIGHTS` coalescing stalled `gnome-terminal` for 30 seconds
+
+This one first looked like a slow GNOME Terminal startup problem in userspace,
+but the log/source correlation pointed to a kernel protocol bug. The helper was
+not slow at opening PTYs; it was getting stuck because MOS merged two adjacent
+fd-passing records into one stream receive.
+
+### 1. `gnome-terminal` paused for about 30 seconds before opening
+
+- **Caught by:** reading [out/krn.log](../out/krn.log) around the
+  `gnome-pty-helper` exchange and matching it against the old VTE helper source
+  in [`.codex-data/context/vte-0.11.11`](../.codex-data/context/vte-0.11.11)
+- **Symptom:** the helper successfully opened `/dev/pts/0` and updated
+  `utmp`/`wtmp`, but GNOME Terminal did not continue until the helper timed out
+  roughly 30 seconds later and VTE fell back to plain `/dev/ptmx` allocation.
+- **Root cause:** `gnome-pty-helper` sends two back-to-back `SCM_RIGHTS`
+  messages, one for the PTY master and one for the slave, while VTE reads them
+  with two separate `recvmsg()` calls. MOS's AF_UNIX stream path in
+  [sock_un.c](../src/net/sock_un.c) drained all currently buffered bytes in one
+  `recvmsg()` and then exposed all ready ancillary records at once. That let
+  the first `recvmsg()` consume both one-byte helper payloads even though VTE
+  only picked up one fd from that call. The second `recvmsg()` then blocked
+  waiting for a second record that had effectively already been coalesced away,
+  until the socket timeout fired.
+- **Fix:**
+  - in [sock_un.c](../src/net/sock_un.c), preserve `SCM_RIGHTS` boundaries on
+    AF_UNIX stream sockets by stopping each `recvmsg()` at the next queued
+    rights boundary
+  - release at most one queued rights record per stream `recvmsg()` so
+    back-to-back fd-passing sends are observed as separate receives
+  - extend [posix_fd_pass.sh](../test/posix_fd_pass.sh) with a regression that
+    sends two consecutive `SCM_RIGHTS` messages over a Unix stream socket and
+    verifies they are received one-at-a-time
+
 ## 2026-04-11 - TCP receive callback dropped tail bytes, corrupting SSH streams
 
 This one showed up as an intermittent OpenSSH client failure rather than a

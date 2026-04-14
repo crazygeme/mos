@@ -89,13 +89,6 @@
 
 #define PAGE_CACHE_SIZE (4096 * 16) // pages
 
-/*
- * read-ahead: (N-1) pages before, N pages after fault, 0 means disable
- * interesting part is how to balance the prefetch overhead and optimize
- * based on profiling result count=2 got the best performance
- */
-#define PAGE_PREFETCH_N 2
-
 /* SMP configuration */
 #define MAX_CPUS 8
 #define AP_TRAMPOLINE_PHYS 0x8000 /* physical addr for AP startup code */

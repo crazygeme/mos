@@ -275,59 +275,6 @@ DONE:
 	return handled;
 }
 
-/*
- * pf_prefetch_pages — read-ahead for readonly MAP_PRIVATE file-backed pages.
- *
- * After a demand fault on 'fault_addr', prefetch up to (PAGE_PREFETCH_N - 1)
- * pages before and PAGE_PREFETCH_N pages after it into the current process's
- * page tables via the filesystem page cache.
- */
-static void pf_prefetch_pages(unsigned fault_addr, file *f, vm_region *region)
-{
-	uint64_t file_size = f->f_inode->i_size;
-	int i;
-
-	for (i = -(PAGE_PREFETCH_N - 1); i <= (int)PAGE_PREFETCH_N; i++) {
-		unsigned addr;
-		int file_offset;
-		unsigned phy;
-		int cache_hit;
-
-		if (i == 0)
-			continue;
-
-		/* Guard against unsigned underflow when scanning backwards. */
-		if (i < 0 && fault_addr < (unsigned)((-i) * (int)PAGE_SIZE))
-			continue;
-
-		addr = fault_addr + (unsigned)(i * (int)PAGE_SIZE);
-
-		/* Clamp to vm_region bounds. */
-		if (addr < region->begin || addr >= region->end)
-			continue;
-
-		/* Skip pages beyond the end of the file. */
-		file_offset = region->offset + (int)(addr - region->begin);
-		if ((uint64_t)file_offset >= file_size)
-			continue;
-
-		/* Skip if already present in the current page table. */
-		if (mm_get_map_flag(addr) != 0)
-			continue;
-
-		phy = fs_page_cache_get(f->f_inode, file_offset, &cache_hit);
-		if (phy == 0)
-			break;
-		if (cache_hit)
-			page_fault_file_cache_hit++;
-		else
-			page_fault_file_read += PAGE_SIZE;
-
-		mm_map_page(addr, phy, PAGE_ENTRY_USER_CODE);
-		INVLPG(addr);
-	}
-}
-
 static int pf_vma_is_stack(task_struct *task, vm_region *region)
 {
 	return region != NULL && region->fp == NULL &&
@@ -401,9 +348,6 @@ static int pf_handle_page_invalid(unsigned cr2)
 						region->prot, region->flag))
 			return 0;
 		cur->stats->pf_major++;
-		if (PAGE_PREFETCH_N > 0 && !(region->prot & PROT_WRITE) &&
-		    !(region->flag & MAP_SHARED))
-			pf_prefetch_pages(cr2, region->fp, region);
 	} else {
 		if (!pf_handle_invalid_memory(cr2, region, this_offset))
 			return 0;

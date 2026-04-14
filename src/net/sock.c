@@ -590,7 +590,8 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 			sk->poll_task_refs = 1;
 		}
 		if (poll_table_add(pt, sk, sock_poll_dereg) < 0) {
-			if (sk->poll_task == pt->task && sk->poll_task_refs > 1) {
+			if (sk->poll_task == pt->task &&
+			    sk->poll_task_refs > 1) {
 				sk->poll_task_refs--;
 			} else if (sk->poll_task == pt->task) {
 				sk->poll_task = NULL;

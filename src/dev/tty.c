@@ -42,6 +42,7 @@
 #include <dev/dev.h>
 #include <ext4_oflags.h>
 #include "devnums.h"
+#include "pts_internal.h"
 #include "tty_ldisc.h"
 #include <hw/keyboard.h>
 
@@ -2155,8 +2156,16 @@ static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
 		state = &ttys[DEFAULT_TTY - 1];
 	} else if (minor == 2) {
 		state = tty_find_controlling(cur);
-		if (!state)
+		if (!state) {
+			file *fp = pty_open_controlling(cur, flag);
+
+			if (fp)
+				return fp;
+			fp = ptmx_open_controlling(cur, flag);
+			if (fp)
+				return fp;
 			return NULL;
+		}
 	} else {
 		return NULL;
 	}

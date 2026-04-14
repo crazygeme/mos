@@ -286,8 +286,7 @@ void do_exit(unsigned encoded_status)
 
 	/* ps_put_to_dying_queue queues SIGCHLD on the parent atomically. */
 	ps_reparent_children(cur);
-	cur->status = ps_dying;
-	cur->wait_func = NULL;
+	ps_put_to_dying_queue(cur);
 
 	task_sched();
 }

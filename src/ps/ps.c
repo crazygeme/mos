@@ -351,11 +351,12 @@ void ps_enum_all(ps_enum_callback callback, void *ctx)
 	spinlock_lock(&ps_lock, &irq);
 	node = rb_first(&control.mgr_queue);
 	while (node) {
+		struct rb_node *next = rb_next(node);
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
 		spinlock_unlock(&ps_lock, irq);
 		callback(task, ctx);
 		spinlock_lock(&ps_lock, &irq);
-		node = rb_next(node);
+		node = next;
 	}
 	spinlock_unlock(&ps_lock, irq);
 }

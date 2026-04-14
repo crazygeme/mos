@@ -9,6 +9,7 @@
 #include <fs/fs.h>
 #include <dev/dev.h>
 #include <lib/klib.h>
+#include <lib/lock.h>
 #include <hw/time.h>
 #include <config.h>
 #include <macro.h>
@@ -27,6 +28,7 @@ unsigned long long page_fault_perm_spent = 0;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
+static rmutex_t cow_lock;
 static void pf_process(intr_frame *frame);
 
 void pf_init()
@@ -36,6 +38,7 @@ void pf_init()
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
+	rmutex_init(&cow_lock);
 }
 
 static unsigned pf_read_file_page_direct(file *f, unsigned offset)
@@ -372,6 +375,7 @@ static void wp_page_copy(unsigned cr2)
 
 	page_fault_cow++;
 
+	rmutex_lock(&cow_lock);
 	/* Allocate a new page mapped into kernel space for the copy. */
 	new_mem = vm_alloc(1);
 	memcpy(new_mem, vir, PAGE_SIZE);
@@ -394,6 +398,8 @@ static void wp_page_copy(unsigned cr2)
 	phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
 
 	RELOAD_CR3();
+
+	rmutex_unlock(&cow_lock);
 
 	if (TestControl.profiling)
 		page_fault_cow_spent += (time_wall_us() - begin);

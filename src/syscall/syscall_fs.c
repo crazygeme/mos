@@ -207,8 +207,11 @@ int sys_stat(const char *_name, struct stat *buf)
 	char *name = name_get();
 	int ret;
 
-	resolve_path(_name, name);
-	ret = do_stat("stat", name, buf, O_PATH);
+	ret = resolve_path(_name, name);
+	if (ret == 0)
+		ret = do_stat("stat", name, buf, O_PATH);
+	else
+		ret = -ENOENT;
 	name_put(name);
 	return ret;
 }
@@ -218,8 +221,11 @@ int sys_lstat(const char *_name, struct stat *buf)
 	char *name = name_get();
 	int ret;
 
-	resolve_path(_name, name);
-	ret = do_stat("lstat", name, buf, O_PATH | O_NOFOLLOW);
+	ret = resolve_path(_name, name);
+	if (ret == 0)
+		ret = do_stat("lstat", name, buf, O_PATH | O_NOFOLLOW);
+	else
+		ret = -ENOENT;
 	name_put(name);
 	return ret;
 }
@@ -265,8 +271,11 @@ int sys_stat64(const char *path, struct stat64 *s)
 	char *name = name_get();
 	int ret;
 
-	resolve_path(path, name);
-	ret = do_stat("stat64", name, &s32, O_PATH);
+	ret = resolve_path(path, name);
+	if (ret == 0)
+		ret = do_stat("stat64", name, &s32, O_PATH);
+	else
+		ret = -ENOENT;
 	memset(s, 0, sizeof(*s));
 	if (ret == 0)
 		stat_to_stat64(&s32, s);
@@ -281,8 +290,11 @@ int sys_lstat64(const char *path, struct stat64 *s)
 	char *name = name_get();
 	int ret;
 
-	resolve_path(path, name);
-	ret = do_stat("lstat64", name, &s32, O_PATH | O_NOFOLLOW);
+	ret = resolve_path(path, name);
+	if (ret == 0)
+		ret = do_stat("lstat64", name, &s32, O_PATH | O_NOFOLLOW);
+	else
+		ret = -ENOENT;
 	memset(s, 0, sizeof(*s));
 	if (ret == 0)
 		stat_to_stat64(&s32, s);

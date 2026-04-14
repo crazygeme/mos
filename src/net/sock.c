@@ -524,8 +524,14 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 static void sock_poll_dereg(void *opaque, task_struct *task)
 {
 	mos_sock *sk = opaque;
-	if (sk->poll_task == task)
-		sk->poll_task = NULL;
+	if (sk->poll_task != task)
+		return;
+	if (sk->poll_task_refs > 1) {
+		sk->poll_task_refs--;
+		return;
+	}
+	sk->poll_task = NULL;
+	sk->poll_task_refs = 0;
 }
 
 static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
@@ -573,11 +579,24 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 
 	if ((events & FS_POLL_EXCEPT) && sk->err)
 		ready |= FS_POLL_EXCEPT;
+	if ((events & FS_POLL_HUP) && sk->state == SS_DISCONNECTING)
+		ready |= FS_POLL_HUP;
 
 	if (!ready && pt) {
-		sk->poll_task = pt->task;
-		if (poll_table_add(pt, sk, sock_poll_dereg) < 0)
-			sk->poll_task = NULL;
+		if (sk->poll_task == pt->task) {
+			sk->poll_task_refs++;
+		} else {
+			sk->poll_task = pt->task;
+			sk->poll_task_refs = 1;
+		}
+		if (poll_table_add(pt, sk, sock_poll_dereg) < 0) {
+			if (sk->poll_task == pt->task && sk->poll_task_refs > 1) {
+				sk->poll_task_refs--;
+			} else if (sk->poll_task == pt->task) {
+				sk->poll_task = NULL;
+				sk->poll_task_refs = 0;
+			}
+		}
 	}
 	return ready;
 }

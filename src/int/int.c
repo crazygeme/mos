@@ -90,7 +90,7 @@ static void intr_maybe_preempt(void)
 	}
 }
 
-static void intr_prepare_user_return(intr_frame *frame)
+static void intr_sanitize_user_return(intr_frame *frame)
 {
 	task_struct *cur = CURRENT_TASK();
 	const unsigned user_eflags_clear = 0x00054000U;
@@ -115,6 +115,11 @@ static void intr_prepare_user_return(intr_frame *frame)
 	 */
 	frame->eflags &= ~0x3000U;
 	frame->eflags |= ((unsigned)(cur->io_priv_level & 0x3) << 12);
+}
+
+static void intr_prepare_user_return(intr_frame *frame)
+{
+	intr_sanitize_user_return(frame);
 
 	/* Deliver pending signals when returning to user space.
 	 * This ensures alarm() and kill() work even in tight user-space loops. */
@@ -142,6 +147,16 @@ void intr_handler(intr_frame *frame)
 		apic_eoi();
 	} else if (external) {
 		pic_end_of_interrupt(frame->vec_no);
+	}
+
+	/*
+	 * Page faults are part of normal demand paging and COW, so avoid the
+	 * heavier preemption/signal checks on every #PF return.  We still scrub
+	 * the user-visible EFLAGS image and restore IOPL before iret.
+	 */
+	if (frame->vec_no == 0x0e) {
+		intr_sanitize_user_return(frame);
+		return;
 	}
 
 	intr_maybe_preempt();

@@ -1,6 +1,6 @@
 # Build And Run
 
-**Source:** `Makefile`, `mos.mk`, `run.sh`
+**Source:** `Makefile`, `build/config.mk`, `build/helpers.mk`, `run.sh`
 
 ## Toolchains
 
@@ -52,7 +52,7 @@ brew install i386-elf-gdb
 
 ## Build Flags
 
-The main compile settings come from `mos.mk` and `Makefile`.
+The main compile settings come from `build/config.mk`, `build/helpers.mk`, and `Makefile`.
 
 Important defaults today:
 

@@ -263,7 +263,7 @@ struct _task_struct {
 	unsigned long *fd_cloexec;
 	mutex_t fd_lock;
 	unsigned exit_status;
-	task_struct *parent;
+	unsigned ppid;
 	unsigned nchildren; /* count of children not yet reaped (living + zombie) */
 	unsigned fork_flag;
 	cond_t vfork_event;

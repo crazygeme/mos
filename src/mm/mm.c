@@ -369,8 +369,9 @@ void mm_destroy_user_map(unsigned int page_dir)
 			table[j] = 0;
 		}
 
-		cache_idx = (PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
-			    1;
+		cache_idx =
+			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
+			1;
 		pgc_entry_count[cache_idx] = 0;
 		mm_free_page_table((unsigned int)table);
 		dir[i] = 0;

@@ -122,7 +122,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->umask = 0;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->psid = ps_id_gen();
-	task->parent = task;
+	task->ppid = task->psid;
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	memset(task->fds, 0, PAGE_SIZE);
@@ -364,7 +364,7 @@ static task_struct *fork_alloc_child(task_struct *cur)
 	task->tss.eip = (unsigned)ret_from_fork;
 	task_intr_frame->eax = 0;
 
-	task->parent = cur;
+	task->ppid = cur->psid;
 	task->nchildren = 0;
 	task->fd_cloexec = NULL;
 	task->io_bitmap = NULL;

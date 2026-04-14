@@ -33,7 +33,7 @@
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
-	task_struct *parent = task->parent;
+	task_struct *parent = ps_find_process(task->ppid);
 	unsigned long long child_utime =
 		time_now_tickets() - task->stats->start_tickets -
 		task->stats->kernel_tickets - task->stats->idle_tickets;
@@ -96,7 +96,7 @@ static int has_child_unsafe(task_struct *parent, unsigned pid)
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
 
-		if (task->parent != parent)
+		if (task->ppid != parent->psid)
 			continue;
 		if (pid && task->psid != pid)
 			continue;
@@ -113,7 +113,7 @@ static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
 		task_struct *task = rb_entry(node, task_struct, mgr_rb);
 
-		if (task->parent != parent || !task->user)
+		if (task->ppid != parent->psid || !task->user)
 			continue;
 		if (task->user->group_id != pgrp)
 			continue;
@@ -170,9 +170,9 @@ static void ps_reparent_children(task_struct *cur)
 
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
 		task_struct *t = rb_entry(node, task_struct, mgr_rb);
-		if (t->parent != cur)
+		if (t->ppid != cur->psid)
 			continue;
-		t->parent = init_task;
+		t->ppid = init_task->psid;
 		init_task->nchildren++;
 		if (t->status == ps_dying)
 			notify_init = 1;
@@ -284,7 +284,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			task = container_of(dying_task_entry, task_struct,
 					    ps_list);
 			dying_task_entry = dying_task_entry->next;
-			if (task->parent->psid != cur->psid)
+			if (task->ppid != cur->psid)
 				continue;
 
 			if (pid && pid != task->psid)
@@ -370,7 +370,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			task = container_of(dying_task_entry, task_struct,
 					    ps_list);
 			dying_task_entry = dying_task_entry->next;
-			if (task->parent->psid != cur->psid || !task->user ||
+			if (task->ppid != cur->psid || !task->user ||
 			    task->user->group_id != pgrp)
 				continue;
 

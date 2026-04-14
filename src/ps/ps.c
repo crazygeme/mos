@@ -449,3 +449,11 @@ void ps_cleanup_all_user_map(task_struct *task)
 	mm_destroy_user_map(task->user->page_dir);
 	RELOAD_CR3();
 }
+
+task_struct *__attribute__((noinline)) CURRENT_TASK(void)
+{
+	unsigned long esp;
+
+	LOAD_ESP(esp);
+	return (task_struct *)(esp & PAGE_SIZE_MASK);
+}

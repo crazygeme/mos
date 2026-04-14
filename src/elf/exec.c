@@ -251,7 +251,7 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 				 char **envp, unsigned top, mos_binfmt *exec)
 {
 	int i = 0;
-	char *esp = (char *)(top);
+	unsigned long esp = top;
 	unsigned *sp, *platform = 0;
 	int argv_buf_len = argc * sizeof(char *);
 	int env_buf_len = envc * sizeof(char *);
@@ -266,20 +266,20 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 
 	/* 4-byte sentinel at the very top of the stack region. */
 	esp -= 4;
-	*((unsigned *)esp) = 0;
+	memcpy((void *)esp, &(unsigned){ 0 }, sizeof(unsigned));
 
 	/* Push the executable filename as a string. */
 	len = strlen(file) + 1;
 	esp -= len;
-	strcpy(esp, file);
+	strcpy((char *)esp, file);
 
 	/* Push environment strings in reverse order, recording pointers. */
 	for (i = envc - 1; i >= 0; i--) {
 		int len = strlen(envp[i]) + 1;
 		esp -= len;
-		strcpy(esp, envp[i]);
-		tmp_array_env[i] = esp;
-		esp[len - 1] = '\0';
+		strcpy((char *)esp, envp[i]);
+		tmp_array_env[i] = (char *)esp;
+		((char *)esp)[len - 1] = '\0';
 	}
 	tmp_array_env[envc] = 0; /* NULL terminator for envp array */
 
@@ -287,20 +287,20 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 	for (i = argc - 1; i >= 0; i--) {
 		int len = strlen(argv[i]) + 1;
 		esp -= len;
-		strcpy(esp, argv[i]);
-		tmp_array_argv[i] = esp;
-		esp[len - 1] = '\0';
+		strcpy((char *)esp, argv[i]);
+		tmp_array_argv[i] = (char *)esp;
+		((char *)esp)[len - 1] = '\0';
 	}
 	tmp_array_argv[argc] = 0; /* NULL terminator for argv array */
 
 	/* Push the ELF platform string (used by AT_PLATFORM). */
 	len = sizeof(ELF_PLATFORM);
 	esp -= len;
-	strcpy(esp, ELF_PLATFORM);
+	strcpy((char *)esp, ELF_PLATFORM);
 	platform = (unsigned *)esp;
 
 	/* Align stack to 16 bytes (ABI requirement) then step back one slot. */
-	esp = (char *)((~15UL & (unsigned long)(esp)) - 16UL);
+	esp = (~15UL & esp) - 16UL;
 	sp = (unsigned *)esp;
 
 #define __put_user(val, addr) (*(unsigned long *)(addr) = (unsigned long)(val))
@@ -350,21 +350,21 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 #undef NEW_AUX_ENT
 
 	/* Copy the envp and argv pointer arrays onto the stack. */
-	esp = (char *)sp;
+	esp = (unsigned long)sp;
 	esp -= (env_buf_len + 4);
 	envpp = esp;
-	memcpy(envpp, tmp_array_env, env_buf_len + 4);
+	memcpy((void *)envpp, tmp_array_env, env_buf_len + 4);
 	esp -= (argv_buf_len + 4);
 	argvp = esp;
-	memcpy(argvp, tmp_array_argv, argv_buf_len + 4);
+	memcpy((void *)argvp, tmp_array_argv, argv_buf_len + 4);
 
 	kfree(tmp_array_argv);
 	kfree(tmp_array_env);
 
 	/* Push argc — this is what the entry point (or crt0) reads first. */
 	esp -= 4;
-	*((unsigned *)esp) = argc;
-	return esp;
+	memcpy((void *)esp, &argc, sizeof(argc));
+	return (unsigned)esp;
 }
 
 int sys_execve(const char *f, char **argv, char **envp)

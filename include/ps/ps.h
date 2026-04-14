@@ -331,12 +331,8 @@ static inline unsigned long long task_utime(task_struct *task)
 	return elapsed > busy ? elapsed - busy : 0;
 }
 
-static __attribute__((always_inline)) inline task_struct *CURRENT_TASK(void)
-{
-	task_struct *info = NULL;
-	info = (task_struct *)(((unsigned int)&info) & PAGE_SIZE_MASK);
-	return info;
-}
+task_struct *__attribute__((noinline)) CURRENT_TASK(void);
+
 #define current CURRENT_TASK()
 
 void ps_init();

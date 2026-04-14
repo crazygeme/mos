@@ -30,13 +30,16 @@ typedef unsigned long long uint64_t;
 uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p)
 {
 	uint64_t quot = 0, qbit = 1;
+	const uint64_t top_bit = 1ULL << 63;
 
 	if (den == 0) {
 		/* Intentional divide by zero to match libgcc behaviour. */
 		return 1 / ((unsigned)den);
 	}
 
-	while ((int64_t)den >= 0) {
+	/* Keep this purely unsigned so higher optimization levels do not rely
+	 * on signed-cast behavior for values above INT64_MAX. */
+	while ((den & top_bit) == 0) {
 		den <<= 1;
 		qbit <<= 1;
 	}
@@ -44,7 +47,7 @@ uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p)
 	while (qbit) {
 		if (den <= num) {
 			num -= den;
-			quot += qbit;
+			quot |= qbit;
 		}
 		den >>= 1;
 		qbit >>= 1;
@@ -57,7 +60,7 @@ uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p)
 
 uint64_t __umoddi3(uint64_t num, uint64_t den)
 {
-	uint64_t v;
+	uint64_t v = 0;
 
 	(void)__udivmoddi4(num, den, &v);
 	return v;
@@ -91,7 +94,7 @@ int64_t __moddi3(int64_t a, int64_t b)
 {
 	uint64_t ua = (a < 0) ? -(uint64_t)a : (uint64_t)a;
 	uint64_t ub = (b < 0) ? -(uint64_t)b : (uint64_t)b;
-	uint64_t r;
+	uint64_t r = 0;
 
 	(void)__udivmoddi4(ua, ub, &r);
 

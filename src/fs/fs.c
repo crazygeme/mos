@@ -950,5 +950,5 @@ done:
 fail:
 	if (plain_old)
 		free(plain_old);
-	return -1;
+	return 0;
 }

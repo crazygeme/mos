@@ -38,16 +38,31 @@ cat > "$SRC" <<'EOF'
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <poll.h>
+#include <errno.h>
 
 static void die(const char *msg)
 {
 	perror(msg);
 	exit(1);
+}
+
+static ssize_t retry_read_eintr(int fd, void *buf, size_t len)
+{
+	ssize_t n;
+
+	do {
+		n = read(fd, buf, len);
+	} while (n < 0 && errno == EINTR);
+
+	return n;
 }
 
 static void expect_payload_and_fd(int sock, char payload, const char *label)
@@ -201,11 +216,175 @@ static void run_stream_back_to_back(void)
 	close(sv[1]);
 }
 
+static void run_stream_disconnect_poll(void)
+{
+	int sv[2];
+	struct pollfd pfd;
+	char ch = 'X';
+	ssize_t n;
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
+		die("socketpair disconnect");
+
+	if (close(sv[1]) < 0)
+		die("close disconnect peer");
+
+	memset(&pfd, 0, sizeof(pfd));
+	pfd.fd = sv[0];
+	pfd.events = POLLIN;
+	if (poll(&pfd, 1, 0) != 1) {
+		fprintf(stderr, "disconnect poll did not become ready\n");
+		exit(1);
+	}
+	if (!(pfd.revents & POLLHUP)) {
+		fprintf(stderr, "disconnect poll missing POLLHUP: %#x\n",
+			pfd.revents);
+		exit(1);
+	}
+
+	n = read(sv[0], &ch, 1);
+	if (n != 0) {
+		fprintf(stderr, "disconnect read expected EOF, got %ld\n", (long)n);
+		exit(1);
+	}
+
+	errno = 0;
+	n = write(sv[0], "Q", 1);
+	if (n != -1 || errno != EPIPE) {
+		fprintf(stderr, "disconnect write expected EPIPE, got n=%ld errno=%d\n",
+			(long)n, errno);
+		exit(1);
+	}
+
+	close(sv[0]);
+}
+
+static void run_named_stream_server_exit(void)
+{
+	int listenfd;
+	int clientfd;
+	int ready_pipe[2];
+	struct sockaddr_un addr;
+	pid_t pid;
+	int status;
+	struct pollfd pfd;
+	char path[256];
+	char ch = 'X';
+	ssize_t n;
+
+	snprintf(path, sizeof(path), "/root/posix_fd_pass/named-exit.sock");
+	unlink(path);
+	if (pipe(ready_pipe) < 0)
+		die("pipe named stream");
+
+	pid = fork();
+	if (pid < 0)
+		die("fork named stream");
+
+	if (pid == 0) {
+		int connfd;
+		char ready = 'R';
+
+		close(ready_pipe[0]);
+
+		listenfd = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (listenfd < 0)
+			die("server socket");
+
+		memset(&addr, 0, sizeof(addr));
+		addr.sun_family = AF_UNIX;
+		strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+
+		if (bind(listenfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+			die("server bind");
+		if (listen(listenfd, 1) < 0)
+			die("server listen");
+		if (write(ready_pipe[1], &ready, 1) != 1)
+			die("server ready pipe");
+		close(ready_pipe[1]);
+
+		connfd = accept(listenfd, NULL, NULL);
+		if (connfd < 0)
+			die("server accept");
+
+		if (write(connfd, "R", 1) != 1)
+			die("server write ready");
+
+		close(connfd);
+		close(listenfd);
+		_exit(0);
+	}
+
+	close(ready_pipe[1]);
+	if (read(ready_pipe[0], &ch, 1) != 1)
+		die("client ready pipe");
+	close(ready_pipe[0]);
+
+	clientfd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (clientfd < 0)
+		die("client socket");
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+
+	if (connect(clientfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+		die("client connect");
+
+	n = retry_read_eintr(clientfd, &ch, 1);
+	if (n != 1 || ch != 'R') {
+		fprintf(stderr,
+			"named stream initial read mismatch: n=%ld ch=%d errno=%d\n",
+			(long)n, (int)ch, errno);
+		exit(1);
+	}
+
+	if (waitpid(pid, &status, 0) < 0)
+		die("waitpid named stream");
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "named stream server exit status %#x\n", status);
+		exit(1);
+	}
+
+	memset(&pfd, 0, sizeof(pfd));
+	pfd.fd = clientfd;
+	pfd.events = POLLIN;
+	if (poll(&pfd, 1, 0) != 1) {
+		fprintf(stderr, "named stream poll did not become ready\n");
+		exit(1);
+	}
+	if (!(pfd.revents & POLLHUP)) {
+		fprintf(stderr, "named stream missing POLLHUP: %#x\n", pfd.revents);
+		exit(1);
+	}
+
+	n = retry_read_eintr(clientfd, &ch, 1);
+	if (n != 0) {
+		fprintf(stderr, "named stream expected EOF, got %ld\n", (long)n);
+		exit(1);
+	}
+
+	signal(SIGPIPE, SIG_IGN);
+	errno = 0;
+	n = write(clientfd, "Q", 1);
+	if (n != -1 || errno != EPIPE) {
+		fprintf(stderr,
+			"named stream expected EPIPE, got n=%ld errno=%d\n",
+			(long)n, errno);
+		exit(1);
+	}
+
+	close(clientfd);
+	unlink(path);
+}
+
 int main(void)
 {
 	run_one(SOCK_STREAM, "stream-passfd");
 	run_one(SOCK_DGRAM, "dgram-passfd");
 	run_stream_back_to_back();
+	run_stream_disconnect_poll();
+	run_named_stream_server_exit();
 	return 0;
 }
 EOF

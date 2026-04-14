@@ -266,14 +266,19 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 	int cur_pos = 0;
 
 	while (count > 0) {
+		unsigned namelen;
+
 		entry = ext4_dir_entry_next(dir);
 		if (entry == NULL) {
 			if (prev)
 				prev->d_off = retcount;
 			break;
 		}
-		len = ROUND_UP(NAME_OFFSET() +
-			       strlen((const char *)entry->name) + 1);
+		if (entry->inode == 0 || entry->name_length == 0 ||
+		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM)
+			continue;
+		namelen = entry->name_length;
+		len = ROUND_UP(NAME_OFFSET() + namelen + 1);
 		if (count < len) {
 			if (prev)
 				prev->d_off = retcount;
@@ -281,10 +286,9 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		}
 		memset(dirp, 0, len);
 		dirp->d_ino = entry->inode;
-		strncpy(dirp->d_name, (const char *)entry->name,
-			entry->name_length);
-		dirp->d_reclen =
-			ROUND_UP(NAME_OFFSET() + strlen(dirp->d_name) + 1);
+		memcpy(dirp->d_name, entry->name, namelen);
+		dirp->d_name[namelen] = '\0';
+		dirp->d_reclen = (unsigned short)len;
 		cur_pos += dirp->d_reclen;
 		dirp->d_off = cur_pos;
 		retcount += dirp->d_reclen;
@@ -312,11 +316,16 @@ static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 
 	ext4_dir_entry_rewind(dir);
 	while (count > 0) {
+		unsigned namelen;
+
 		entry = ext4_dir_entry_next(dir);
 		if (entry == NULL)
 			break;
-		len = ROUND_UP(NAME_OFFSET() +
-			       strlen((const char *)entry->name) + 1);
+		if (entry->inode == 0 || entry->name_length == 0 ||
+		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM)
+			continue;
+		namelen = entry->name_length;
+		len = ROUND_UP(NAME_OFFSET() + namelen + 1);
 		if (count < len)
 			return (loff_t)(cur_pos + len);
 		cur_pos += len;
@@ -858,6 +867,9 @@ static int ext4_dir_check_empty(const char *full)
 
 	ext4_dir_entry_rewind(&dir);
 	while ((entry = ext4_dir_entry_next(&dir)) != NULL) {
+		if (entry->inode == 0 || entry->name_length == 0 ||
+		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM)
+			continue;
 		if (entry->name_length == 1 && entry->name[0] == '.')
 			continue;
 		if (entry->name_length == 2 && entry->name[0] == '.' &&

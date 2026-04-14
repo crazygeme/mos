@@ -304,6 +304,7 @@ typedef struct _mos_sock {
 
 	/* poll/select wakeup task, woken alongside waiter wakeups */
 	struct _task_struct *poll_task;
+	unsigned poll_task_refs;
 
 	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
 	struct _mos_sock *unix_peer;

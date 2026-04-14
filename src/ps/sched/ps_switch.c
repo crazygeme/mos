@@ -6,23 +6,6 @@
  * Public — context switch
  */
 
-/* Propagate kernel page-directory entries into task's saved page directory
- * so that any kernel mappings added since the task last ran become visible. */
-static void ps_copy_kernel_map(task_struct *task)
-{
-	if (task->user->page_dir) {
-		unsigned int cr3;
-		unsigned int *in_use;
-		unsigned int *per_ps = (unsigned int *)task->user->page_dir;
-
-		LOAD_CR3(cr3);
-		in_use = (unsigned int *)(cr3 + KERNEL_OFFSET);
-		memcpy(&per_ps[KERNEL_PAGE_DIR_OFFSET],
-		       &in_use[KERNEL_PAGE_DIR_OFFSET],
-		       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
-	}
-}
-
 /*
  * _task_sched — perform a voluntary or preemptive context switch.
  *
@@ -86,12 +69,6 @@ void _task_sched(const char *func)
 		CURRENT_TASK()->stats->total_switches++;
 
 	task->status = ps_running;
-	/*
-	 * Can be optimized by syncing pgd entry when adding/removing kernel mappings,
-	 * but this is simpler and the overhead should be negligible.
-	 */
-	ps_copy_kernel_map(task);
-
 	SAVE_ALL(CURRENT_TASK(), NEXT);
 
 	/* Do TSS and CR3 setup on the current stack, before switching.

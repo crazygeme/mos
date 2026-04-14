@@ -5,6 +5,56 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-14 - PTY controlling `/dev/tty` lookup broke `man`, and `strncpy()` still overflowed
+
+This round started from two user-visible regressions in SSH-backed sessions:
+`man ping` consistently failed once it invoked `less`, and the SSH client still
+occasionally reported a bogus packet length even after the TCP tail-drop fix.
+The first turned out to be a controlling-terminal resolution bug on PTYs; the
+second was a stale libc helper overflow that could scribble on adjacent state.
+
+### 1. `man ping` failed in SSH sessions with `Error executing formatting or display command`
+
+- **Caught by:** reading [out/krn.log](../out/krn.log) around the `man`/`less`
+  pipeline after reproducing `man ping` from an SSH-backed shell
+- **Symptom:** `man` successfully formatted the page and `less` started, but
+  the pager then failed while reopening `/dev/tty`, after which `man` printed
+  `Error executing formatting or display command`.
+- **Root cause:** MOS only resolved `/dev/tty` through the virtual-console
+  table in [tty.c](../src/dev/tty.c). That works for local VTs, but an SSH
+  shell runs on a PTY slave. When `less` reopened `/dev/tty` from that PTY
+  session, the kernel could not map the calling process group back to the PTY
+  controlling terminal, so it fell through to the wrong device path and the
+  pager lost its real tty.
+- **Fix:**
+  - in [tty.c](../src/dev/tty.c), teach `/dev/tty` lookup to fall back from
+    virtual consoles to PTY-backed controlling terminals
+  - in [pty.c](../src/dev/pty.c) and [ptmx.c](../src/dev/ptmx.c), add helpers
+    that reopen the PTY slave corresponding to the caller's controlling
+    process group
+  - in [pts_internal.h](../src/dev/pts_internal.h), expose the shared helper
+    declarations needed by that lookup path
+  - extend [dev_pts.sh](../test/dev_pts.sh) with a regression that creates a
+    PTY session, makes it controlling via `TIOCSCTTY`, and verifies a child can
+    reopen `/dev/tty`
+
+### 2. An old `strncpy()` bug could still corrupt nearby state
+
+- **Caught by:** reviewing low-level helpers while chasing the remaining
+  intermittent SSH corruption symptom
+- **Symptom:** the failure mode was sporadic and looked like memory corruption:
+  the SSH client would sometimes decode nonsense packet framing even though the
+  earlier TCP receive truncation bug had already been fixed.
+- **Root cause:** [kstring.c](../src/lib/kstring.c) implemented `strncpy()`
+  incorrectly. When the source length was at least `len`, the function copied
+  `len` bytes and then still wrote a terminating NUL at `dst[len]`, one byte
+  past the destination buffer. That is not POSIX `strncpy()` behavior and could
+  overwrite adjacent state in exactly the kind of hard-to-reproduce way that
+  shows up as protocol garbage later.
+- **Fix:** in [kstring.c](../src/lib/kstring.c), make `strncpy()` follow the
+  real contract: copy at most `len` bytes, pad with NULs only inside that
+  range, and never append a byte past the caller-provided buffer.
+
 ## 2026-04-14 - AF_UNIX stream `SCM_RIGHTS` coalescing stalled `gnome-terminal` for 30 seconds
 
 This one first looked like a slow GNOME Terminal startup problem in userspace,

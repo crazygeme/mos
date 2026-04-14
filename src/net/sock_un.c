@@ -689,8 +689,7 @@ static int unix_sendmsg_wait_for_passfd_room(mos_sock *sk, mos_sock **peer_ptr,
 static int unix_sendmsg_stream_payload(mos_sock *sk, mos_sock **peer_ptr,
 				       const struct msghdr *msg, int *irq,
 				       file **files, unsigned nfds,
-				       int nonblock,
-				       unsigned long deadline)
+				       int nonblock, unsigned long deadline)
 {
 	mos_sock *peer = *peer_ptr;
 	size_t sent = 0;
@@ -769,8 +768,8 @@ static unsigned unix_recvmsg_dgram_payload(mos_sock *sk, struct msghdr *msg)
 		unsigned remaining;
 
 		rx_read(sk, &dlen, sizeof(dlen));
-		delivered =
-			rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, (unsigned)dlen);
+		delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen,
+					(unsigned)dlen);
 		remaining = (unsigned)dlen - delivered;
 		rx_discard(sk, remaining);
 		msg->msg_flags = (delivered < (unsigned)dlen) ? MSG_TRUNC : 0;
@@ -809,7 +808,8 @@ static unsigned unix_recvmsg_stream_limit(mos_sock *sk)
 	unsigned limit = rx_used(sk);
 
 	if (sk->unix_passfd_head != sk->unix_passfd_tail) {
-		unix_passfd_msg *next = &sk->unix_passfd_queue[sk->unix_passfd_head];
+		unix_passfd_msg *next =
+			&sk->unix_passfd_queue[sk->unix_passfd_head];
 
 		/*
 		 * Preserve SCM_RIGHTS boundaries on stream sockets.
@@ -859,7 +859,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 	}
 
 	if (sk->type == SOCK_DGRAM) {
-		ret = unix_sendmsg_dgram_locked(peer, msg, files, nfds, total_len);
+		ret = unix_sendmsg_dgram_locked(peer, msg, files, nfds,
+						total_len);
 		if (ret < 0)
 			goto out_unlock;
 		spinlock_unlock(&peer->rxbuf_lock, irq);
@@ -874,8 +875,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 
 	if (nfds > 0) {
 		ret = unix_sendmsg_wait_for_passfd_room(sk, &peer, &irq, files,
-							nfds, total_len, nonblock,
-							deadline);
+							nfds, total_len,
+							nonblock, deadline);
 		if (ret < 0)
 			return ret;
 	}

@@ -36,6 +36,7 @@ typedef struct {
 } page_table_cache_t;
 
 static page_table_cache_t page_table_cache;
+static unsigned int kernel_pde_tables[1024 - KERNEL_PAGE_DIR_OFFSET];
 
 static void page_table_cache_init(page_table_cache_t *cache)
 {
@@ -85,6 +86,28 @@ void mm_free_page_table(unsigned int vir)
 	page_table_cache_free(&page_table_cache, vir);
 }
 
+static void mm_init_kernel_page_dir_template(void)
+{
+	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
+	unsigned int i;
+
+	for (i = 0; i < 1024 - KERNEL_PAGE_DIR_OFFSET; i++) {
+		if (page_dir[KERNEL_PAGE_DIR_OFFSET + i] & PAGE_ENTRY_PRESENT)
+			continue;
+
+		unsigned int table_addr =
+			page_table_cache_alloc(&page_table_cache);
+
+		if (table_addr == 0)
+			break;
+
+		memset((void *)table_addr, 0, PAGE_SIZE);
+		kernel_pde_tables[i] = table_addr;
+		page_dir[KERNEL_PAGE_DIR_OFFSET + i] =
+			(table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
+	}
+}
+
 /*
  * Locks and initialisation
  */
@@ -103,12 +126,24 @@ void mm_init_page_table_cache()
 	int i;
 
 	page_table_cache_init(&page_table_cache);
+	memset(kernel_pde_tables, 0, sizeof(kernel_pde_tables));
+	mm_init_kernel_page_dir_template();
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
 	list_init(&name_cache_head);
+}
+
+void mm_init_process_page_dir(unsigned int page_dir)
+{
+	unsigned int *dst = (unsigned int *)page_dir;
+	unsigned int *src = (unsigned int *)mm_get_pagedir();
+
+	memset(dst, 0, PAGE_SIZE);
+	memcpy(&dst[KERNEL_PAGE_DIR_OFFSET], &src[KERNEL_PAGE_DIR_OFFSET],
+	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned int));
 }
 
 /*
@@ -177,7 +212,7 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
 		return 0;
 
 	/* Track live entries so we know when to reclaim the page table */
-	if ((*info.entry & PAGE_SIZE_MASK) == 0) {
+	if (addr < KERNEL_OFFSET && (*info.entry & PAGE_SIZE_MASK) == 0) {
 		int idx = (PAGE_TABLE_CACHE_END - (unsigned)info.table) /
 				  PAGE_SIZE -
 			  1;
@@ -198,13 +233,20 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 
 	*info->entry = 0;
 	if (phy) {
-		int idx = (PAGE_TABLE_CACHE_END - (unsigned)info->table) /
-				  PAGE_SIZE -
-			  1;
-		pgc_entry_count[idx]--;
-		if (pgc_entry_count[idx] == 0) {
-			mm_free_page_table((unsigned int)info->table);
-			*info->dir = 0;
+		unsigned dir_index =
+			(unsigned)(info->dir -
+				   (unsigned int *)mm_get_pagedir());
+
+		if (dir_index < KERNEL_PAGE_DIR_OFFSET) {
+			int idx =
+				(PAGE_TABLE_CACHE_END - (unsigned)info->table) /
+					PAGE_SIZE -
+				1;
+			pgc_entry_count[idx]--;
+			if (pgc_entry_count[idx] == 0) {
+				mm_free_page_table((unsigned int)info->table);
+				*info->dir = 0;
+			}
 		}
 	}
 }

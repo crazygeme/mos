@@ -50,13 +50,9 @@ static void die(const char *msg)
 	exit(1);
 }
 
-static void run_one(int socktype, const char *label)
+static void expect_payload_and_fd(int sock, char payload, const char *label)
 {
-	int sv[2];
-	int fd;
 	int recvfd;
-	char path[256];
-	char payload = 'Z';
 	char recvbyte = 0;
 	char control[CMSG_SPACE(sizeof(int))];
 	char readbuf[32];
@@ -64,37 +60,6 @@ static void run_one(int socktype, const char *label)
 	struct msghdr msg;
 	struct cmsghdr *cmsg;
 	ssize_t n;
-
-	if (socketpair(AF_UNIX, socktype, 0, sv) < 0)
-		die("socketpair");
-
-	snprintf(path, sizeof(path), "/root/posix_fd_pass/%s.txt", label);
-	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
-	if (fd < 0)
-		die("open");
-	if (write(fd, label, strlen(label)) != (ssize_t)strlen(label))
-		die("write");
-	if (lseek(fd, 0, SEEK_SET) < 0)
-		die("lseek");
-
-	memset(&msg, 0, sizeof(msg));
-	memset(control, 0, sizeof(control));
-	iov.iov_base = &payload;
-	iov.iov_len = sizeof(payload);
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	msg.msg_control = control;
-	msg.msg_controllen = sizeof(control);
-	cmsg = CMSG_FIRSTHDR(&msg);
-	cmsg->cmsg_level = SOL_SOCKET;
-	cmsg->cmsg_type = SCM_RIGHTS;
-	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-	memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
-
-	if (sendmsg(sv[0], &msg, 0) != 1)
-		die("sendmsg");
-	if (close(fd) < 0)
-		die("close send fd");
 
 	memset(&msg, 0, sizeof(msg));
 	memset(control, 0, sizeof(control));
@@ -105,7 +70,7 @@ static void run_one(int socktype, const char *label)
 	msg.msg_control = control;
 	msg.msg_controllen = sizeof(control);
 
-	n = recvmsg(sv[1], &msg, 0);
+	n = recvmsg(sock, &msg, 0);
 	if (n != 1) {
 		fprintf(stderr, "recvmsg returned %ld for %s\n", (long)n, label);
 		exit(1);
@@ -140,6 +105,98 @@ static void run_one(int socktype, const char *label)
 	}
 
 	close(recvfd);
+}
+
+static void send_fd_with_payload(int sock, int fd, char payload)
+{
+	char control[CMSG_SPACE(sizeof(int))];
+	struct iovec iov;
+	struct msghdr msg;
+	struct cmsghdr *cmsg;
+
+	memset(&msg, 0, sizeof(msg));
+	memset(control, 0, sizeof(control));
+	iov.iov_base = &payload;
+	iov.iov_len = sizeof(payload);
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = control;
+	msg.msg_controllen = sizeof(control);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
+
+	if (sendmsg(sock, &msg, 0) != 1)
+		die("sendmsg");
+}
+
+static void run_one(int socktype, const char *label)
+{
+	int sv[2];
+	int fd;
+	char path[256];
+	char payload = 'Z';
+
+	if (socketpair(AF_UNIX, socktype, 0, sv) < 0)
+		die("socketpair");
+
+	snprintf(path, sizeof(path), "/root/posix_fd_pass/%s.txt", label);
+	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
+	if (fd < 0)
+		die("open");
+	if (write(fd, label, strlen(label)) != (ssize_t)strlen(label))
+		die("write");
+	if (lseek(fd, 0, SEEK_SET) < 0)
+		die("lseek");
+
+	send_fd_with_payload(sv[0], fd, payload);
+	if (close(fd) < 0)
+		die("close send fd");
+	expect_payload_and_fd(sv[1], payload, label);
+	close(sv[0]);
+	close(sv[1]);
+}
+
+static void run_stream_back_to_back(void)
+{
+	int sv[2];
+	int fd1;
+	int fd2;
+	char path1[256];
+	char path2[256];
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
+		die("socketpair");
+
+	snprintf(path1, sizeof(path1), "/root/posix_fd_pass/stream-a.txt");
+	fd1 = open(path1, O_CREAT | O_TRUNC | O_RDWR, 0644);
+	if (fd1 < 0)
+		die("open stream-a");
+	if (write(fd1, "stream-a", 8) != 8)
+		die("write stream-a");
+	if (lseek(fd1, 0, SEEK_SET) < 0)
+		die("lseek stream-a");
+
+	snprintf(path2, sizeof(path2), "/root/posix_fd_pass/stream-b.txt");
+	fd2 = open(path2, O_CREAT | O_TRUNC | O_RDWR, 0644);
+	if (fd2 < 0)
+		die("open stream-b");
+	if (write(fd2, "stream-b", 8) != 8)
+		die("write stream-b");
+	if (lseek(fd2, 0, SEEK_SET) < 0)
+		die("lseek stream-b");
+
+	send_fd_with_payload(sv[0], fd1, 'A');
+	send_fd_with_payload(sv[0], fd2, 'B');
+
+	close(fd1);
+	close(fd2);
+
+	expect_payload_and_fd(sv[1], 'A', "stream-a");
+	expect_payload_and_fd(sv[1], 'B', "stream-b");
+
 	close(sv[0]);
 	close(sv[1]);
 }
@@ -148,6 +205,7 @@ int main(void)
 {
 	run_one(SOCK_STREAM, "stream-passfd");
 	run_one(SOCK_DGRAM, "dgram-passfd");
+	run_stream_back_to_back();
 	return 0;
 }
 EOF

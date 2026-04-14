@@ -51,7 +51,6 @@ typedef struct {
 } page_table_cache_t;
 
 static page_table_cache_t page_table_cache;
-static unsigned int kernel_pde_tables[1024 - KERNEL_PAGE_DIR_OFFSET];
 
 static void page_table_cache_init(page_table_cache_t *cache)
 {

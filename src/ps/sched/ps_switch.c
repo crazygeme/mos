@@ -27,12 +27,13 @@ void _task_sched(const char *func)
 	task_struct *task = 0;
 	task_struct *cur = CURRENT_TASK();
 
-	task_schedule_count++;
+	__sync_fetch_and_add(&task_schedule_count, 1);
 
 	if (cur->stats)
 		cur->stats->idle = time_now_tickets();
 
-	dsr_drain();
+	if (ps_sched_cpu() == 0)
+		dsr_drain();
 
 	/* 
 	 * Schedule procedure can not be interrupted.
@@ -89,8 +90,8 @@ void _task_sched(const char *func)
 	 * updated ESP and the only stack write is the 4-byte return address
 	 * pushed by the call below, at [new_esp - 4], which is within the
 	 * task's page even when new_esp == task + PAGE_SIZE. */
-	RESTORE_ALL(task, task->tss.eip);
 	sched_enable(ps_sched_cpu());
+	RESTORE_ALL(task, task->tss.eip);
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:

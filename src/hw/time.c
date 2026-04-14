@@ -171,6 +171,19 @@ static unsigned long long time_now_us()
 	unsigned long long t1, t2;
 	unsigned count;
 
+	/*
+	 * PIT and PIC I/O ports are owned by the BSP (CPU 0).  Accessing them
+	 * from an AP races with the BSP's timer interrupt handler and corrupts
+	 * the latch register and PIC command state.  On APs, use tick-granular
+	 * time only (10 ms resolution), which is sufficient for sleep timers.
+	 */
+	if (ncpus > 1 && cpu_current_id() != 0) {
+		BARRIER();
+		t1 = tickets;
+		BARRIER();
+		return t1 * TICK_US;
+	}
+
 	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
 	do {
 		BARRIER();

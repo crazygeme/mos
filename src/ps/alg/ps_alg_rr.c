@@ -140,7 +140,7 @@ task_struct *ps_get_next_task()
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	if (current->psid != 0xffffffff)
+	if (ps_sched_cpu() == 0 && current->psid != 0xffffffff)
 		ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
 		list_entry *head = ps_ready_queue_head(cpu, i);

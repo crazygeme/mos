@@ -74,8 +74,12 @@ unsigned ps_current_cpu_early(void)
 	 * window the scheduler must not derive CPU placement from the current
 	 * stack page; default to CPU0 until SMP per-CPU state is live.
 	 */
-	if (ncpus > 1 && cpus[0].online)
-		return cpu_current_id();
+	if (ncpus > 1 && cpus[0].online) {
+		if (current->psid == 0xffffffff)
+			return cpu_current_id();
+		else
+			return current->affinity;
+	}
 	return 0;
 }
 

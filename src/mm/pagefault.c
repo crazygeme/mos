@@ -475,7 +475,6 @@ static int do_wp_page(task_struct *task, unsigned cr2)
 			return 1;
 		}
 	}
-
 	if (region->flag & MAP_SHARED) {
 		wp_page_reuse(vir);
 		if (region->fp != NULL) {
@@ -515,7 +514,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 
 	target_cr3 = task->user->page_dir - KERNEL_OFFSET;
 	old_level = int_intr_disable();
-	sched_disable();
+	sched_disable(ps_sched_cpu());
 	LOAD_CR3(old_cr3);
 	if (old_cr3 != target_cr3)
 		SET_CR3(target_cr3);
@@ -528,7 +527,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 
 	if (old_cr3 != target_cr3)
 		SET_CR3(old_cr3);
-	sched_enable();
+	sched_enable(ps_sched_cpu());
 	int_intr_setlevel(old_level);
 	return handled;
 }

@@ -27,6 +27,7 @@ static spinlock_t mm_lock;
 static spinlock_t path_lock;
 static spinlock_t pt_cache_lock;
 static unsigned int kernel_pde_template[PG_TABLE_SIZE];
+static int mm_dynamic_region(unsigned phy);
 
 /* Name-buffer cache node */
 

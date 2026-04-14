@@ -88,7 +88,7 @@ static void intr_maybe_preempt(void)
 	if (cur->psid == 0xffffffff || !ps_enabled())
 		return;
 
-	if (sched_is_enabled() && cur->remain_ticks <= 0) {
+	if (sched_is_enabled(ps_sched_cpu()) && cur->remain_ticks <= 0) {
 		cur->stats->niv_switches++;
 		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		int_intr_enable();

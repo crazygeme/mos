@@ -37,7 +37,7 @@ void _task_sched(const char *func)
 	/* 
 	 * Schedule procedure can not be interrupted.
 	 */
-	sched_disable();
+	sched_disable(ps_sched_cpu());
 
 	task = ps_get_next_task();
 
@@ -49,19 +49,19 @@ void _task_sched(const char *func)
 		 * expired timers can be promoted by ps_get_next_task().
 		 */
 		if (CURRENT_TASK()->status != ps_running) {
-			sched_enable();
+			sched_enable(ps_sched_cpu());
 			int_intr_enable();
 			HLT();
 			int_intr_disable();
 			goto SELF;
 		}
 
-		sched_enable();
+		sched_enable(ps_sched_cpu());
 		goto SELF;
 	}
 
 	if (task->psid == CURRENT_TASK()->psid) {
-		sched_enable();
+		sched_enable(ps_sched_cpu());
 		goto SELF;
 	}
 
@@ -90,7 +90,7 @@ void _task_sched(const char *func)
 	 * pushed by the call below, at [new_esp - 4], which is within the
 	 * task's page even when new_esp == task + PAGE_SIZE. */
 	RESTORE_ALL(task, task->tss.eip);
-	sched_enable();
+	sched_enable(ps_sched_cpu());
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:

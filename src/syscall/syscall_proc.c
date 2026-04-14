@@ -76,9 +76,9 @@ int sys_getppid()
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getppid() = %d\n", cur->parent->psid);
+		klog("getppid() = %d\n", cur->ppid);
 
-	return cur->parent->psid;
+	return cur->ppid;
 }
 
 int sys_getpgrp(unsigned pid)

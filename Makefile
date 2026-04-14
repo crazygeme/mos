@@ -23,6 +23,11 @@ TEST_DEPS = $(patsubst %.c,$(DST)/obj/%.c.d,$(TEST_SRCS))
 TEST_DEPS += $(patsubst test/%.sh,$(DST)/obj/generated/test/%.c.d,$(TEST_SCRIPTS))
 
 GENERATED_TEST_SCRIPT_CS = $(patsubst test/%.sh,$(DST)/generated/test/%.c,$(TEST_SCRIPTS))
+BUILD_GENERATED = $(OBJS) $(TEST_OBJS) $(DEPS) $(TEST_DEPS) \
+		    $(GENERATED_TEST_SCRIPT_CS) $(LIBS) \
+		    $(DST)/kernel $(DST)/kernel.dbg $(DST)/assemble.s \
+		    $(DST)/kernel-test $(DST)/kernel-test.dbg \
+		    $(DST)/assemble-test.s
 
 LIBS    = $(DST)/obj/third_party/lwext4/libext4.a $(DST)/obj/third_party/lwip/liblwip.a
 CFLAGS  = $(COMMON_CFLAGS) -O0
@@ -99,7 +104,7 @@ clean:
 	@-rm -rf $(DST)
 
 rebuild:
-	@+$(MAKE) clean
+	@-rm -f $(BUILD_GENERATED)
 	@+$(MAKE)
 
 format:

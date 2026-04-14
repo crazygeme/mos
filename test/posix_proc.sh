@@ -111,7 +111,7 @@ static int test_getpid(void)
 /* ── fork: child inherits PID continuity ─────────────────────────────────── */
 static int test_fork_getpid(void)
 {
-	pid_t parent_pid = getpid();
+	pid_t ppid = getpid();
 	pid_t child_pid;
 	int status;
 
@@ -122,16 +122,16 @@ static int test_fork_getpid(void)
 	if (child_pid == 0)
 	{
 		/* Child: my PID must differ from parent's PID. */
-		if (getpid() == parent_pid)
+		if (getpid() == ppid)
 		{
 			fprintf(stderr, "child getpid() == parent getpid()\n");
 			_exit(1);
 		}
 		/* Child: my PPID must equal parent's PID. */
-		if (getppid() != parent_pid)
+		if (getppid() != ppid)
 		{
 			fprintf(stderr, "child getppid() %d != parent pid %d\n",
-				(int)getppid(), (int)parent_pid);
+				(int)getppid(), (int)ppid);
 			_exit(2);
 		}
 		_exit(0);

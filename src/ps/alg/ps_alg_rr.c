@@ -156,12 +156,17 @@ void ps_put_to_dying_queue(task_struct *task)
 
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_dying_queue_unsafe(task);
-	if (task->parent) {
+	if (task->ppid) {
+		task_struct *parent = ps_find_process_unsafe(task->ppid);
+
+		if (!parent)
+			goto out;
 		/* Queue SIGCHLD before waking the parent so the signal is
 		 * already pending when wait() returns to userspace. */
-		task->parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
-		ps_put_to_ready_queue_unsafe(task->parent);
+		parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
+		ps_put_to_ready_queue_unsafe(parent);
 	}
+out:
 	spinlock_unlock(&ps_lock, irq);
 }
 

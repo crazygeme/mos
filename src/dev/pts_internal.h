@@ -6,6 +6,7 @@
 #include <fs/ioctl.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
+#include <ps/ps.h>
 #include "tty_ldisc.h"
 
 #define TIOCGPTN 0x80045430 /* get pty number */
@@ -64,5 +65,9 @@ ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos);
 ssize_t pts_slave_write(file *fp, const void *buf, size_t size, loff_t *pos);
 
 unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt);
+
+file *pty_open_controlling(task_struct *task, int flag);
+
+file *ptmx_open_controlling(task_struct *task, int flag);
 
 #endif

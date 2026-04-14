@@ -78,7 +78,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->user->cmd_len = strlen(task->user->command) + 1;
 	*((char *)task->user->environment) = '\0';
 	task->user->env_len = 0;
-	memset(task->user->page_dir, 0, PAGE_SIZE);
+	mm_init_process_page_dir(task->user->page_dir);
 	task->user->cwd = name_get();
 	memset(task->user->cwd, 0, MAX_PATH);
 	task->user->root_path = name_get();
@@ -321,7 +321,7 @@ static void copy_page_range(task_struct *parent, task_struct *child)
 		.dst_pd = (unsigned *)child->user->page_dir,
 	};
 
-	memset(ctx.dst_pd, 0, PAGE_SIZE);
+	mm_init_process_page_dir((unsigned int)ctx.dst_pd);
 	vm_dup(parent->user->vm, child->user->vm);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
 	RELOAD_CR3();
@@ -483,6 +483,7 @@ static int do_fork(void)
 		return -ENOMEM;
 	task->user->vm = vm_create();
 	task->user->page_dir = vm_alloc(1);
+	mm_init_process_page_dir(task->user->page_dir);
 	fork_dup_user_env(cur, task);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)

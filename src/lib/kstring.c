@@ -120,7 +120,8 @@ char *strncpy(char *dst, const char *src, int len)
 
 	for (i = 0; i < len && src[i] != '\0'; i++)
 		dst[i] = src[i];
-	dst[i] = '\0';
+	for (; i < len; i++)
+		dst[i] = '\0';
 	return d;
 }
 

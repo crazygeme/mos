@@ -120,5 +120,6 @@ void *name_get();
 void name_put(void *name);
 
 void mm_init_page_table_cache();
+void mm_init_process_page_dir(unsigned int page_dir);
 
 #endif

@@ -375,7 +375,6 @@ static void wp_page_copy(unsigned cr2)
 
 	page_fault_cow++;
 
-	rmutex_lock(&cow_lock);
 	/* Allocate a new page mapped into kernel space for the copy. */
 	new_mem = vm_alloc(1);
 	memcpy(new_mem, vir, PAGE_SIZE);
@@ -398,8 +397,6 @@ static void wp_page_copy(unsigned cr2)
 	phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
 
 	RELOAD_CR3();
-
-	rmutex_unlock(&cow_lock);
 
 	if (TestControl.profiling)
 		page_fault_cow_spent += (time_wall_us() - begin);
@@ -450,10 +447,14 @@ static int do_wp_page(unsigned cr2)
 	unsigned page_index;
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
 
+	rmutex_lock(&cow_lock);
+
 	region = vm_find_map_cached(cur->user, vir);
 
-	if (!region || !(region->prot & PROT_WRITE))
+	if (!region || !(region->prot & PROT_WRITE)) {
+		rmutex_unlock(&cow_lock);
 		return 0;
+	}
 
 	if (region->flag & MAP_SHARED) {
 		wp_page_reuse(vir);
@@ -461,6 +462,8 @@ static int do_wp_page(unsigned cr2)
 			unsigned page_index = mm_get_attached_page_index(vir);
 			phymm_mark_dirty(page_index);
 		}
+
+		rmutex_unlock(&cow_lock);
 		return 1;
 	}
 
@@ -469,6 +472,8 @@ static int do_wp_page(unsigned cr2)
 		wp_page_copy(vir);
 	else
 		wp_page_reuse(vir);
+
+	rmutex_unlock(&cow_lock);
 
 	return 1;
 }

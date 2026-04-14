@@ -106,6 +106,27 @@ static const inode_operations pts_slave_iops = {
 	.chown = pts_slave_chown,
 };
 
+static file *ptmx_open_slave_pair(pts_pair *p, int flag)
+{
+	inode *node;
+	file *fp;
+
+	node = zalloc(sizeof(*node));
+	node->i_mode = p->slave_mode;
+	node->i_op = &pts_slave_iops;
+	node->i_private = p;
+
+	fp = zalloc(sizeof(*fp));
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = (flag & O_PATH) ? &pts_slave_path_fops : &pts_slave_fops;
+	if (!(flag & O_PATH)) {
+		cyb_reader_open(p->m2s);
+		cyb_writer_open(p->s2m);
+	}
+	return fp;
+}
+
 file *ptmx_slave_open(super_block *sb, const char *path, int flag)
 {
 	int idx;
@@ -132,20 +153,36 @@ file *ptmx_slave_open(super_block *sb, const char *path, int flag)
 
 	spinlock_unlock(&pts_alloc_lock, irq);
 
-	inode *node = zalloc(sizeof(*node));
-	node->i_mode = p->slave_mode;
-	node->i_op = &pts_slave_iops;
-	node->i_private = p;
+	return ptmx_open_slave_pair(p, flag);
+}
 
-	file *fp = zalloc(sizeof(*fp));
-	fp->f_inode = node;
-	fp->f_count = 1;
-	fp->f_fop = (flag & O_PATH) ? &pts_slave_path_fops : &pts_slave_fops;
-	if (!(flag & O_PATH)) {
-		cyb_reader_open(p->m2s);
-		cyb_writer_open(p->s2m);
+file *ptmx_open_controlling(task_struct *task, int flag)
+{
+	int i;
+	int irq;
+	pts_pair *match = NULL;
+
+	if (!task || !task->user)
+		return NULL;
+
+	spinlock_lock(&pts_alloc_lock, &irq);
+	for (i = 0; i < MAX_PTS; i++) {
+		pts_pair *p = &pts_pairs[i];
+
+		if (!p->used || !p->master_open)
+			continue;
+		if (p->pgrp != task->user->group_id)
+			continue;
+		if (!(flag & O_PATH)) {
+			__sync_add_and_fetch(&p->slave_count, 1);
+			p->slave_ever_opened = 1;
+		}
+		match = p;
+		break;
 	}
-	return fp;
+	spinlock_unlock(&pts_alloc_lock, irq);
+
+	return match ? ptmx_open_slave_pair(match, flag) : NULL;
 }
 
 /* Master */

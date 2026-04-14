@@ -39,8 +39,6 @@ static void cleanup()
 
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
 		unsigned int *new_pd;
-		unsigned int *cur_pd;
-		unsigned cr3;
 
 		/* Wake the blocked parent. */
 		cond_notify(&cur->vfork_event);
@@ -53,12 +51,7 @@ static void cleanup()
 		 * The parent's page directory and vm are untouched.
 		 */
 		new_pd = vm_alloc(1);
-		memset(new_pd, 0, PAGE_SIZE);
-		LOAD_CR3(cr3);
-		cur_pd = (unsigned int *)(cr3 + KERNEL_OFFSET);
-		memcpy(&new_pd[KERNEL_PAGE_DIR_OFFSET],
-		       &cur_pd[KERNEL_PAGE_DIR_OFFSET],
-		       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned));
+		mm_init_process_page_dir((unsigned int)new_pd);
 		cur->user->page_dir = (unsigned int)new_pd;
 		SET_CR3((unsigned)new_pd - KERNEL_OFFSET);
 		cur->user->vm = vm_create();

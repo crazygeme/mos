@@ -960,9 +960,13 @@ retry:
 		/* Cache hit: promote to MRU and copy out. */
 		list_remove_entry(&item->time_list);
 		list_insert_head(&p->cache.timer_list_head, &item->time_list);
-		mutex_unlock(&p->cache_lock);
+		/*
+		 * Keep cache_lock held across the copy so another CPU cannot
+		 * recycle this cache line and overwrite item->buf mid-read.
+		 */
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
+		mutex_unlock(&p->cache_lock);
 		fs_cache_read_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
@@ -985,10 +989,9 @@ retry:
 
 	mutex_lock(&p->cache_lock);
 	hdd_cache_publish_loaded_locked(item);
-	mutex_unlock(&p->cache_lock);
-
 	memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 	       BLOCK_SECTOR_SIZE);
+	mutex_unlock(&p->cache_lock);
 	fs_cache_read_size += BLOCK_SECTOR_SIZE;
 	return BLOCK_SECTOR_SIZE;
 }

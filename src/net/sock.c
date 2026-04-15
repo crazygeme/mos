@@ -577,8 +577,8 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 			ready |= FS_POLL_WRITE;
 	}
 
-	if ((events & FS_POLL_EXCEPT) && sk->err)
-		ready |= FS_POLL_EXCEPT;
+	if ((events & FS_POLL_ERR) && sk->err)
+		ready |= FS_POLL_ERR;
 	if ((events & FS_POLL_HUP) && sk->state == SS_DISCONNECTING)
 		ready |= FS_POLL_HUP;
 

@@ -69,15 +69,15 @@ static char *format_buffer(const char *buf, unsigned len)
 
 int sys_read(int fd, char *buf, unsigned len)
 {
-	int ret = -1;
+	int ret = -EBADF;
 	task_struct *cur = CURRENT_TASK();
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 	if (cur->fds[fd] == NULL)
-		return -1;
+		return -EBADF;
 	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
-		return -1;
+		return -EISDIR;
 
 	ret = fs_read(fd, -1, buf, len);
 
@@ -100,11 +100,11 @@ int sys_write(int fd, const char *buf, unsigned len)
 	}
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 	if (cur->fds[fd] == NULL)
-		return -1;
+		return -EBADF;
 	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
-		return -1;
+		return -EISDIR;
 
 	return fs_write(fd, -1, buf, len);
 }
@@ -112,14 +112,14 @@ int sys_write(int fd, const char *buf, unsigned len)
 int sys_pread64(int fd, void *buf, unsigned count, int offset)
 {
 	task_struct *cur = CURRENT_TASK();
-	int ret = -1;
+	int ret = -EBADF;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 	if (cur->fds[fd] == NULL)
-		return -1;
+		return -EBADF;
 	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
-		return -1;
+		return -EISDIR;
 
 	ret = fs_pread(fd, offset, buf, count);
 
@@ -144,11 +144,11 @@ int sys_pwrite64(int fd, const void *buf, unsigned count, int offset)
 	}
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -1;
+		return -EBADF;
 	if (cur->fds[fd] == NULL)
-		return -1;
+		return -EBADF;
 	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
-		return -1;
+		return -EISDIR;
 
 	return fs_pwrite(fd, offset, buf, count);
 }

@@ -49,10 +49,19 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 {
 	pipe_inode *n = fp->f_inode->i_private;
 	task_struct *cur = CURRENT_TASK();
+	int nonblock;
+	int ret;
 	if (n->readonly)
 		return 0;
+	nonblock = (fp->f_flag & O_NONBLOCK) != 0;
+	if (cyb_reader_count(n->buf) == 0)
+		ret = -EPIPE;
+	else
+		ret = cyb_putbuf(n->buf, (unsigned char *)buf, len, !nonblock,
+				 1);
+	if (nonblock && ret == 0 && cyb_reader_count(n->buf) > 0)
+		ret = -EAGAIN;
 
-	int ret = cyb_putbuf(n->buf, (unsigned char *)buf, len, 1, 1);
 	if (ret == -EPIPE && cur && cur->type == ps_user)
 		cur->signal->sig_pending |= (1UL << (SIGPIPE - 1));
 	return (ssize_t)ret;
@@ -65,7 +74,10 @@ static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_HUP) && cyb_writer_count(n->buf) == 0)
 		ready |= FS_POLL_HUP;
-	if ((events & FS_POLL_WRITE) && !cyb_isfull(n->buf))
+	if ((events & FS_POLL_ERR) && cyb_reader_count(n->buf) == 0)
+		ready |= FS_POLL_ERR;
+	if ((events & FS_POLL_WRITE) && cyb_reader_count(n->buf) > 0 &&
+	    !cyb_isfull(n->buf))
 		ready |= FS_POLL_WRITE;
 	if (!ready && pt) {
 		if (events & (FS_POLL_READ | FS_POLL_HUP))
@@ -85,7 +97,7 @@ static unsigned pipe_read_poll(file *fp, unsigned events, poll_table *pt)
 static unsigned pipe_write_poll(file *fp, unsigned events, poll_table *pt)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	return pipe_poll_common(n, events & FS_POLL_WRITE, pt);
+	return pipe_poll_common(n, events & (FS_POLL_WRITE | FS_POLL_ERR), pt);
 }
 
 static loff_t pipe_llseek(file *fp, loff_t offset, int whence)

@@ -82,6 +82,8 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len)
 	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -EBADF;
+	if (fp->f_mode == O_WRONLY)
+		return -EBADF;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
@@ -104,6 +106,8 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 
 	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
+		return -EBADF;
+	if (fp->f_mode == O_RDONLY)
 		return -EBADF;
 
 	if (offset != (unsigned)-1)

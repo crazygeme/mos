@@ -22,7 +22,7 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 
 	for (;;) {
 		ret = ops->check(ctx);
-		if (ret > 0)
+		if (ret != 0)
 			break;
 
 		if (just_test)
@@ -32,9 +32,13 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 			break;
 
 		int has_unsupported = ops->reg(ctx);
+		if (has_unsupported < 0) {
+			ret = has_unsupported;
+			break;
+		}
 
 		ret = ops->check(ctx);
-		if (ret > 0) {
+		if (ret != 0) {
 			ops->dereg(ctx);
 			break;
 		}
@@ -56,6 +60,17 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 
 		time_wait(sleep_ms);
 		ops->dereg(ctx);
+
+		/*
+		 * If an fd became ready around the same time as a signal, prefer
+		 * reporting readiness over EINTR. This avoids losing a real wakeup
+		 * to a concurrent SIGCHLD/SIGALRM race.
+		 */
+		ret = ops->check(ctx);
+		if (ret > 0)
+			break;
+		if (ret < 0)
+			break;
 
 		cur = CURRENT_TASK();
 		if (cur->signal->sig_pending & ~cur->signal->sig_mask) {
@@ -90,18 +105,27 @@ static int poll_ctx_check(void *arg)
 			ctx->fds[i].revents = 0;
 			continue;
 		}
+		if (fd >= MAX_FD || CURRENT_TASK()->fds[fd] == NULL) {
+			ctx->fds[i].revents = POLLNVAL;
+			ready++;
+			continue;
+		}
 		unsigned want = 0;
-		if (events & (POLLIN | POLLPRI))
+		if (events & POLLIN)
 			want |= FS_POLL_READ;
+		if (events & POLLPRI)
+			want |= FS_POLL_EXCEPT;
 		if (events & POLLOUT)
 			want |= FS_POLL_WRITE;
-		want |= FS_POLL_EXCEPT | FS_POLL_HUP;
+		want |= FS_POLL_ERR | FS_POLL_HUP;
 		unsigned ready_mask = fs_fd_poll(fd, want, NULL);
 		if (ready_mask & FS_POLL_READ)
 			revents |= POLLIN;
 		if (ready_mask & FS_POLL_WRITE)
 			revents |= POLLOUT;
 		if (ready_mask & FS_POLL_EXCEPT)
+			revents |= POLLPRI;
+		if (ready_mask & FS_POLL_ERR)
 			revents |= POLLERR;
 		if (ready_mask & FS_POLL_HUP)
 			revents |= POLLHUP;
@@ -124,11 +148,13 @@ static int poll_ctx_reg(void *arg)
 		unsigned want = 0;
 		if (fd < 0)
 			continue;
-		if (events & (POLLIN | POLLPRI))
+		if (events & POLLIN)
 			want |= FS_POLL_READ;
+		if (events & POLLPRI)
+			want |= FS_POLL_EXCEPT;
 		if (events & POLLOUT)
 			want |= FS_POLL_WRITE;
-		want |= FS_POLL_EXCEPT | FS_POLL_HUP;
+		want |= FS_POLL_ERR | FS_POLL_HUP;
 		fs_fd_poll(fd, want, pt);
 	}
 	return pt->unsupported;

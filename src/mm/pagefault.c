@@ -28,7 +28,6 @@ unsigned long long page_fault_perm_spent = 0;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
-static rmutex_t cow_lock;
 static void pf_process(intr_frame *frame);
 
 void pf_init()
@@ -38,7 +37,6 @@ void pf_init()
 	zero_page = vm_alloc(1);
 	memset(zero_page, 0, PAGE_SIZE);
 	zero_page_phy = VIRT_TO_PHY(zero_page);
-	rmutex_init(&cow_lock);
 }
 
 static unsigned pf_read_file_page_direct(file *f, unsigned offset)
@@ -318,11 +316,33 @@ static vm_region *pf_find_vma(task_struct *task, unsigned address)
 					     minimal_grow;
 
 		task->user->stack_bottom -= grow_size;
-		do_mmap_kernel(task->user->stack_bottom, grow_size,
-			       PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0);
+		vm_add_map_with_shared_fault_lock(
+			task->user->vm, task->user->stack_bottom,
+			task->user->stack_bottom + grow_size,
+			PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0, 0, region);
+		vm_invalidate_user_cache(task->user);
 	}
 
 	return vm_find_map_cached(task->user, address);
+}
+
+static vm_region *pf_lock_region(vm_region *region, unsigned address)
+{
+	if (!region)
+		return NULL;
+
+	vm_region_lock_fault(region);
+	if (address < region->begin || address >= region->end) {
+		vm_region_unlock_fault(region);
+		return NULL;
+	}
+
+	return region;
+}
+
+static int pf_page_already_present(unsigned address)
+{
+	return (mm_get_map_flag(address) & PAGE_ENTRY_PRESENT) != 0;
 }
 
 /*
@@ -334,29 +354,41 @@ static int pf_handle_page_invalid(unsigned cr2)
 	int this_offset;
 	task_struct *cur = CURRENT_TASK();
 
-	region = vm_find_map_cached(cur->user, cr2);
+	region = pf_lock_region(vm_find_map_cached(cur->user, cr2), cr2);
 	if (!region)
-		region = pf_find_vma(cur, cr2);
-	if (!region || cr2 < region->begin || cr2 >= region->end)
+		region = pf_lock_region(pf_find_vma(cur, cr2), cr2);
+	if (!region)
 		return 0;
 
 	/* PROT_NONE: no access permitted — treat as unmapped. */
-	if (region->prot == PROT_NONE)
+	if (region->prot == PROT_NONE) {
+		vm_region_unlock_fault(region);
 		return 0;
+	}
+
+	if (pf_page_already_present(cr2)) {
+		vm_region_unlock_fault(region);
+		return 1;
+	}
 
 	this_offset = region->offset + (cr2 - region->begin);
 
 	if (region->fp != NULL) {
 		if (!pf_handle_invalid_file_map(cr2, region->fp, this_offset,
-						region->prot, region->flag))
+						region->prot, region->flag)) {
+			vm_region_unlock_fault(region);
 			return 0;
+		}
 		cur->stats->pf_major++;
 	} else {
-		if (!pf_handle_invalid_memory(cr2, region, this_offset))
+		if (!pf_handle_invalid_memory(cr2, region, this_offset)) {
+			vm_region_unlock_fault(region);
 			return 0;
+		}
 		cur->stats->pf_minor++;
 	}
 
+	vm_region_unlock_fault(region);
 	return 1;
 }
 
@@ -447,13 +479,25 @@ static int do_wp_page(unsigned cr2)
 	unsigned page_index;
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
 
-	rmutex_lock(&cow_lock);
-
-	region = vm_find_map_cached(cur->user, vir);
+	region = pf_lock_region(vm_find_map_cached(cur->user, vir), vir);
 
 	if (!region || !(region->prot & PROT_WRITE)) {
-		rmutex_unlock(&cow_lock);
+		if (region)
+			vm_region_unlock_fault(region);
 		return 0;
+	}
+
+	{
+		unsigned map_flag = mm_get_map_flag(vir);
+
+		if (!(map_flag & PAGE_ENTRY_PRESENT)) {
+			vm_region_unlock_fault(region);
+			return 0;
+		}
+		if (map_flag & PAGE_ENTRY_WRITABLE) {
+			vm_region_unlock_fault(region);
+			return 1;
+		}
 	}
 
 	if (region->flag & MAP_SHARED) {
@@ -463,7 +507,7 @@ static int do_wp_page(unsigned cr2)
 			phymm_mark_dirty(page_index);
 		}
 
-		rmutex_unlock(&cow_lock);
+		vm_region_unlock_fault(region);
 		return 1;
 	}
 
@@ -473,7 +517,7 @@ static int do_wp_page(unsigned cr2)
 	else
 		wp_page_reuse(vir);
 
-	rmutex_unlock(&cow_lock);
+	vm_region_unlock_fault(region);
 
 	return 1;
 }

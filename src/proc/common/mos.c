@@ -27,18 +27,21 @@ extern unsigned int heap_quota;
 extern unsigned int heap_quota_high;
 
 /* ---- fs/cache ---- */
-extern unsigned cache_hit;
-extern unsigned long long cache_search_time;
-extern unsigned cache_search_count;
-extern unsigned fs_cache_size;
-extern unsigned max_fs_cache_size;
 extern unsigned fs_read_size;
 extern unsigned fs_write_size;
-extern unsigned fs_cache_read_size;
-extern unsigned fs_cache_write_size;
 extern unsigned disk_read_size;
 extern unsigned disk_write_size;
 extern unsigned long long elf_read_time;
+
+#if HDD_CACHE_OPEN
+extern unsigned cache_hit;
+extern unsigned fs_cache_read_size;
+extern unsigned fs_cache_write_size;
+extern unsigned fs_cache_size;
+extern unsigned max_fs_cache_size;
+extern unsigned cache_search_count;
+extern unsigned long long cache_search_time;
+#endif
 
 /* ---- scheduler ---- */
 extern unsigned task_schedule_count;
@@ -49,9 +52,10 @@ static void fill(proc_buf_t *pb)
 		page_fault_file ?
 			page_fault_file_cache_hit * 100 / page_fault_file :
 			0;
+#if HDD_CACHE_OPEN
 	unsigned fs_cache_rate =
 		cache_search_count ? cache_hit * 100 / cache_search_count : 0;
-
+#endif
 	/* ---- Memory / kernel heap ---- */
 	proc_buf_printf(pb, "KernelHeapBytes:       %8u\n", heap_quota);
 	proc_buf_printf(pb, "KernelHeapPeakBytes:   %8u\n", heap_quota_high);
@@ -79,6 +83,7 @@ static void fill(proc_buf_t *pb)
 	/* ---- Filesystem I/O ---- */
 	proc_buf_printf(pb, "FsReadBytes:           %8u\n", fs_read_size);
 	proc_buf_printf(pb, "FsWriteBytes:          %8u\n", fs_write_size);
+#if HDD_CACHE_OPEN
 	proc_buf_printf(pb, "FsCacheReadBytes:      %8u\n", fs_cache_read_size);
 	proc_buf_printf(pb, "FsCacheWriteBytes:     %8u\n",
 			fs_cache_write_size);
@@ -91,6 +96,7 @@ static void fill(proc_buf_t *pb)
 			fs_cache_rate);
 	proc_buf_printf(pb, "FsCacheSearchTimeUs:   %8u\n",
 			(unsigned)cache_search_time);
+#endif
 	proc_buf_printf(pb, "DiskReadBytes:         %8u\n", disk_read_size);
 	proc_buf_printf(pb, "DiskWriteBytes:        %8u\n", disk_write_size);
 	proc_buf_printf(pb, "ElfLoadTimeUs:         %8u\n",

@@ -5,9 +5,9 @@
  * DMA is used when the PCI IDE controller exposes a bus master I/O range
  * (PCI BAR4).  Falls back to PIO if DMA is unavailable.
  *
- * PIO:  interrupt-driven, single sector (512 B) per operation.
- * DMA:  PRDT-based bus master DMA, single sector per operation with a
- *       per-channel bounce buffer (no alignment constraint on caller buffer).
+ * PIO:  interrupt-driven, multi-sector per operation when contiguous.
+ * DMA:  PRDT-based bus master DMA with a per-channel one-page bounce buffer
+ *       (no alignment constraint on caller buffer).
  *
  * Partition discovery: MBR + recursive extended partition tables.
  * Block cache: LRU write-back, indexed by 8-sector head groups.
@@ -24,6 +24,7 @@
 #include <lib/lock.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
+#include <ps/ps.h>
 #include <macro.h>
 #include <config.h>
 #include <ext4.h>
@@ -112,6 +113,8 @@ typedef struct _channel {
 	unsigned int dma_buf_phys; /* physical address of dma_buf      */
 } channel;
 
+#define HDD_IO_MAX_SECTORS (PAGE_SIZE / BLOCK_SECTOR_SIZE)
+
 /* ── Block cache structures ───────────────────────────────────────────────────── */
 #if HDD_CACHE_OPEN
 #define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
@@ -123,6 +126,7 @@ typedef struct _channel {
 typedef struct _block_cache_item {
 	int sector; /* head sector of this cached extent        */
 	unsigned dirty; /* non-zero if write-back flush needed      */
+	int loading; /* non-zero while refill/evict I/O is in flight */
 	void *buf; /* vm_alloc'd buffer (PREREAD_SECTOR * 512) */
 	struct rb_node hash_node;
 	list_entry time_list;
@@ -154,7 +158,7 @@ static int check_device_type(ata_disk *);
 static void identify_ata_device(ata_disk *);
 static int wait_while_busy(const ata_disk *);
 static void select_device(const ata_disk *);
-static void select_sector(ata_disk *, unsigned int sec_no);
+static void select_sector(ata_disk *, unsigned int sec_no, unsigned int count);
 static void input_sector(channel *, void *);
 static void output_sector(channel *, const void *);
 static int disk_read(void *aux, unsigned sector, void *buf, unsigned len);
@@ -247,6 +251,12 @@ int hdd_partition_write(unsigned idx, unsigned sector, void *buf, unsigned len)
 /* ── I/O statistics ───────────────────────────────────────────────────────────── */
 unsigned disk_read_size = 0;
 unsigned disk_write_size = 0;
+unsigned disk_read_req_count = 0;
+unsigned disk_write_req_count = 0;
+unsigned disk_read_multi_req_count = 0;
+unsigned disk_write_multi_req_count = 0;
+unsigned disk_read_multi_sectors = 0;
+unsigned disk_write_multi_sectors = 0;
 
 /* ── PCI IDE Bus Master detection ─────────────────────────────────────────────── */
 static unsigned short g_bm_base = 0;
@@ -486,11 +496,11 @@ static void select_device(const ata_disk *d)
 	port_read_byte(reg_alt_status(c)); /* 400 ns settling delay */
 }
 
-static void select_sector(ata_disk *d, unsigned int sec_no)
+static void select_sector(ata_disk *d, unsigned int sec_no, unsigned int count)
 {
 	channel *c = d->channel;
 	select_device(d);
-	port_write_byte(reg_nsect(c), 1);
+	port_write_byte(reg_nsect(c), (unsigned char)count);
 	port_write_byte(reg_lbal(c), (unsigned char)sec_no);
 	port_write_byte(reg_lbam(c), (unsigned char)(sec_no >> 8));
 	port_write_byte(reg_lbah(c), (unsigned char)(sec_no >> 16));
@@ -509,63 +519,102 @@ static void output_sector(channel *c, const void *buf)
 	port_write_dwords(reg_data(c), buf, BLOCK_SECTOR_SIZE / 4);
 }
 
+static unsigned int disk_io_chunk_sectors(unsigned len)
+{
+	unsigned int sectors;
+
+	if (!len || (len % BLOCK_SECTOR_SIZE) != 0)
+		return 0;
+
+	sectors = len / BLOCK_SECTOR_SIZE;
+	if (sectors > HDD_IO_MAX_SECTORS)
+		sectors = HDD_IO_MAX_SECTORS;
+	return sectors;
+}
+
 /* ── Disk I/O — DMA preferred, PIO fallback ──────────────────────────────────── */
 static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
-	ata_disk *volatile d = aux;
-	channel *volatile c = d->channel;
+	ata_disk *d = aux;
+	channel *c = d->channel;
+	unsigned char *dst = buf;
+	unsigned remaining = len;
 
+	disk_read_req_count++;
 	mutex_lock(&c->lock);
 
-	select_sector(d, sec_no);
+	while (remaining) {
+		unsigned int sectors = disk_io_chunk_sectors(remaining);
+		unsigned int chunk_bytes;
+		unsigned int i;
 
-	if (c->bm_base) {
-		/* ── DMA path: device → bounce buffer → caller ── */
-		c->prdt->phys_addr = c->dma_buf_phys;
-		c->prdt->byte_count = BLOCK_SECTOR_SIZE;
-		c->prdt->eot = PRDT_EOT;
+		if (!sectors) {
+			mutex_unlock(&c->lock);
+			return -1;
+		}
 
-		/* Clear error/IRQ status bits (write-1-to-clear). */
-		port_write_byte(c->bm_base + BM_STATUS,
-				BM_STA_IRQ | BM_STA_ERROR);
-		/* Load PRDT physical address. */
-		port_write_dword(c->bm_base + BM_PRDT,
-				 (unsigned int)c->prdt - KERNEL_OFFSET);
-		/* Set transfer direction: device → memory. */
-		port_write_byte(c->bm_base + BM_CMD, BM_CMD_READ);
-		/* Issue ATA DMA read command. */
-		port_write_byte(reg_command(c), CMD_READ_DMA);
-		/* Start bus master. */
-		port_write_byte(c->bm_base + BM_CMD,
-				BM_CMD_READ | BM_CMD_START);
+		chunk_bytes = sectors * BLOCK_SECTOR_SIZE;
+		if (sectors > 1) {
+			disk_read_multi_req_count++;
+			disk_read_multi_sectors += sectors;
+		}
+		select_sector(d, sec_no, sectors);
 
-		/* Poll until DMA engine finishes (active bit clears). */
-		while (port_read_byte(c->bm_base + BM_STATUS) & 0x01)
-			;
-		port_write_byte(c->bm_base + BM_CMD, 0);
+		if (c->bm_base) {
+			/* ── DMA path: device → bounce buffer → caller ── */
+			c->prdt->phys_addr = c->dma_buf_phys;
+			c->prdt->byte_count = chunk_bytes;
+			c->prdt->eot = PRDT_EOT;
 
-		/* Ack ATA interrupt, then read and clear BM status. */
-		port_read_byte(reg_status(c));
-		{
-			unsigned char bm_sta =
-				port_read_byte(c->bm_base + BM_STATUS);
+			/* Clear error/IRQ status bits (write-1-to-clear). */
 			port_write_byte(c->bm_base + BM_STATUS,
 					BM_STA_IRQ | BM_STA_ERROR);
-			if (bm_sta & BM_STA_ERROR)
-				klog("%s: DMA read error sector=%u\n", d->name,
-				     sec_no);
+			/* Load PRDT physical address. */
+			port_write_dword(c->bm_base + BM_PRDT,
+					 (unsigned int)c->prdt - KERNEL_OFFSET);
+			/* Set transfer direction: device → memory. */
+			port_write_byte(c->bm_base + BM_CMD, BM_CMD_READ);
+			/* Issue ATA DMA read command. */
+			port_write_byte(reg_command(c), CMD_READ_DMA);
+			/* Start bus master. */
+			port_write_byte(c->bm_base + BM_CMD,
+					BM_CMD_READ | BM_CMD_START);
+
+			/* Poll until DMA engine finishes (active bit clears). */
+			while (port_read_byte(c->bm_base + BM_STATUS) & 0x01)
+				;
+			port_write_byte(c->bm_base + BM_CMD, 0);
+
+			/* Ack ATA interrupt, then read and clear BM status. */
+			port_read_byte(reg_status(c));
+			{
+				unsigned char bm_sta =
+					port_read_byte(c->bm_base + BM_STATUS);
+				port_write_byte(c->bm_base + BM_STATUS,
+						BM_STA_IRQ | BM_STA_ERROR);
+				if (bm_sta & BM_STA_ERROR)
+					klog("%s: DMA read error sector=%u"
+					     " count=%u\n",
+					     d->name, sec_no, sectors);
+			}
+			memcpy(dst, c->dma_buf, chunk_bytes);
+		} else {
+			/* ── PIO path ── */
+			port_write_byte(reg_command(c), CMD_READ_SECTORS);
+
+			for (i = 0; i < sectors; i++) {
+				if (!wait_while_busy(d))
+					klog("%s: PIO read timeout sector=%u\n",
+					     d->name, sec_no + i);
+
+				port_read_byte(reg_status(c)); /* ack */
+				input_sector(c, dst + i * BLOCK_SECTOR_SIZE);
+			}
 		}
-		memcpy(buf, c->dma_buf, BLOCK_SECTOR_SIZE);
-	} else {
-		/* ── PIO path ── */
-		port_write_byte(reg_command(c), CMD_READ_SECTORS);
 
-		if (!wait_while_busy(d))
-			klog("%s: PIO read timeout sector=%u\n", d->name,
-			     sec_no);
-
-		port_read_byte(reg_status(c)); /* ack */
-		input_sector(c, buf);
+		dst += chunk_bytes;
+		sec_no += sectors;
+		remaining -= chunk_bytes;
 	}
 
 	mutex_unlock(&c->lock);
@@ -577,64 +626,91 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 {
 	ata_disk *d = aux;
 	channel *c = d->channel;
+	const unsigned char *src = buf;
+	unsigned remaining = len;
 
+	disk_write_req_count++;
 	mutex_lock(&c->lock);
 
-	select_sector(d, sec_no);
+	while (remaining) {
+		unsigned int sectors = disk_io_chunk_sectors(remaining);
+		unsigned int chunk_bytes;
+		unsigned int i;
 
-	if (c->bm_base) {
-		/* ── DMA path: caller → bounce buffer → device ── */
-		memcpy(c->dma_buf, buf, BLOCK_SECTOR_SIZE);
+		if (!sectors) {
+			mutex_unlock(&c->lock);
+			return -1;
+		}
 
-		c->prdt->phys_addr = c->dma_buf_phys;
-		c->prdt->byte_count = BLOCK_SECTOR_SIZE;
-		c->prdt->eot = PRDT_EOT;
+		chunk_bytes = sectors * BLOCK_SECTOR_SIZE;
+		if (sectors > 1) {
+			disk_write_multi_req_count++;
+			disk_write_multi_sectors += sectors;
+		}
+		select_sector(d, sec_no, sectors);
 
-		port_write_byte(c->bm_base + BM_STATUS,
-				BM_STA_IRQ | BM_STA_ERROR);
-		port_write_dword(c->bm_base + BM_PRDT,
-				 (unsigned int)c->prdt - KERNEL_OFFSET);
-		/* Set transfer direction: memory → device. */
-		port_write_byte(c->bm_base + BM_CMD, BM_CMD_WRITE);
-		/* Issue ATA DMA write command. */
-		port_write_byte(reg_command(c), CMD_WRITE_DMA);
-		/* Start bus master. */
-		port_write_byte(c->bm_base + BM_CMD,
-				BM_CMD_WRITE | BM_CMD_START);
+		if (c->bm_base) {
+			/* ── DMA path: caller → bounce buffer → device ── */
+			memcpy(c->dma_buf, src, chunk_bytes);
 
-		/* Poll until DMA engine finishes (active bit clears). */
-		while (port_read_byte(c->bm_base + BM_STATUS) & 0x01)
-			;
-		port_write_byte(c->bm_base + BM_CMD, 0);
+			c->prdt->phys_addr = c->dma_buf_phys;
+			c->prdt->byte_count = chunk_bytes;
+			c->prdt->eot = PRDT_EOT;
 
-		/* Ack ATA interrupt, then read and clear BM status. */
-		port_read_byte(reg_status(c));
-		{
-			unsigned char bm_sta =
-				port_read_byte(c->bm_base + BM_STATUS);
 			port_write_byte(c->bm_base + BM_STATUS,
 					BM_STA_IRQ | BM_STA_ERROR);
-			if (bm_sta & BM_STA_ERROR)
-				klog("%s: DMA write error sector=%u\n", d->name,
-				     sec_no);
+
+			port_write_dword(c->bm_base + BM_PRDT,
+					 (unsigned int)c->prdt - KERNEL_OFFSET);
+			/* Set transfer direction: memory → device. */
+			port_write_byte(c->bm_base + BM_CMD, BM_CMD_WRITE);
+			/* Issue ATA DMA write command. */
+			port_write_byte(reg_command(c), CMD_WRITE_DMA);
+			/* Start bus master. */
+			port_write_byte(c->bm_base + BM_CMD,
+					BM_CMD_WRITE | BM_CMD_START);
+
+			/* Poll until DMA engine finishes (active bit clears). */
+			while (port_read_byte(c->bm_base + BM_STATUS) & 0x01)
+				;
+			port_write_byte(c->bm_base + BM_CMD, 0);
+
+			/* Ack ATA interrupt, then read and clear BM status. */
+			port_read_byte(reg_status(c));
+			{
+				unsigned char bm_sta =
+					port_read_byte(c->bm_base + BM_STATUS);
+				port_write_byte(c->bm_base + BM_STATUS,
+						BM_STA_IRQ | BM_STA_ERROR);
+				if (bm_sta & BM_STA_ERROR)
+					klog("%s: DMA write error sector=%u"
+					     " count=%u\n",
+					     d->name, sec_no, sectors);
+			}
+		} else {
+			/*
+			 * ── PIO path ──
+			 * After CMD_WRITE_SECTORS the device asserts DRQ when
+			 * ready for each sector in the contiguous run.
+			 */
+			port_write_byte(reg_command(c), CMD_WRITE_SECTORS);
+
+			for (i = 0; i < sectors; i++) {
+				if (!wait_while_busy(d))
+					klog("%s: PIO write DRQ timeout"
+					     " sector=%u\n",
+					     d->name, sec_no + i);
+				output_sector(c, src + i * BLOCK_SECTOR_SIZE);
+			}
+
+			/* Poll for write completion (BSY clears), then ack. */
+			wait_while_busy(d);
+			port_read_byte(reg_status(c)); /* ack */
 		}
-	} else {
-		/*
-		 * ── PIO path ──
-		 * After CMD_WRITE_SECTORS the device asserts DRQ when ready
-		 * for data.  Write the sector, then poll for completion.
-		 */
-		port_write_byte(reg_command(c), CMD_WRITE_SECTORS);
 
-		if (!wait_while_busy(d))
-			klog("%s: PIO write DRQ timeout sector=%u\n", d->name,
-			     sec_no);
-
-		output_sector(c, buf);
-
-		/* Poll for write completion (BSY clears), then ack. */
-		wait_while_busy(d);
-		port_read_byte(reg_status(c)); /* ack */
+		src += chunk_bytes;
+		sec_no += sectors;
+		remaining -= chunk_bytes;
 	}
 
 	mutex_unlock(&c->lock);
@@ -677,6 +753,7 @@ static block_cache_item *block_cache_item_create(void)
 	item = kmalloc(sizeof(*item));
 	item->sector = -1;
 	item->dirty = 0;
+	item->loading = 0;
 	item->buf = vm_alloc(buf_pages);
 	cache_count += buf_pages;
 	rb_init_node(&item->hash_node);
@@ -730,25 +807,6 @@ static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 	return (block_cache_item *)pair->val;
 }
 
-static block_cache_item *hdd_cache_find_empty(partition *p, int sector)
-{
-	int head_sector = HEAD_SECTOR(sector);
-	block_cache_item *item;
-
-	if (p->cache.sectors >= CACHE_SECTOR_COUNT)
-		return NULL;
-
-	item = block_cache_item_create();
-	item->sector = head_sector;
-	list_insert_head(&p->cache.timer_list_head, &item->time_list);
-	hash_insert(p->cache.hash, head_sector, item);
-	p->cache.sectors += PREREAD_SECTOR;
-	fs_cache_size = p->cache.sectors;
-	if (max_fs_cache_size < p->cache.sectors)
-		max_fs_cache_size = p->cache.sectors;
-	return item;
-}
-
 static block_cache_item *hdd_cache_find_oldest(partition *p)
 {
 	list_entry *node;
@@ -759,16 +817,83 @@ static block_cache_item *hdd_cache_find_oldest(partition *p)
 	return container_of(node, block_cache_item, time_list);
 }
 
+static void hdd_cache_flush_buf(partition *p, int head_sector, void *buf,
+				int dirty)
+{
+	if (head_sector < 0 || !dirty)
+		return;
+	partition_write(p, head_sector, buf,
+			PREREAD_SECTOR * BLOCK_SECTOR_SIZE);
+}
+
 static void hdd_cache_flush(partition *p, block_cache_item *item)
 {
-	int i;
 	if (item->sector < 0 || !item->dirty)
 		return;
-	for (i = 0; i < PREREAD_SECTOR; i++)
-		partition_write(p, item->sector + i,
-				(char *)item->buf + i * BLOCK_SECTOR_SIZE,
-				BLOCK_SECTOR_SIZE);
+	hdd_cache_flush_buf(p, item->sector, item->buf, item->dirty);
 	item->dirty = 0;
+}
+
+static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
+{
+	return partition_read(aux, head_sector, buf,
+			      PREREAD_SECTOR * BLOCK_SECTOR_SIZE) ==
+			       PREREAD_SECTOR * BLOCK_SECTOR_SIZE ?
+		       0 :
+		       -1;
+}
+
+static block_cache_item *hdd_cache_reserve_miss_locked(partition *p,
+						       int head_sector,
+						       int *old_sector,
+						       int *old_dirty)
+{
+	block_cache_item *item;
+
+	if (p->cache.sectors < CACHE_SECTOR_COUNT) {
+		item = block_cache_item_create();
+		p->cache.sectors += PREREAD_SECTOR;
+		fs_cache_size = p->cache.sectors;
+		if (max_fs_cache_size < p->cache.sectors)
+			max_fs_cache_size = p->cache.sectors;
+		list_insert_head(&p->cache.timer_list_head, &item->time_list);
+	} else {
+		item = hdd_cache_find_oldest(p);
+		if (!item)
+			return NULL;
+	}
+
+	*old_sector = item->sector;
+	*old_dirty = item->dirty;
+	if (item->sector >= 0)
+		hash_remove(p->cache.hash, item->sector);
+
+	item->sector = head_sector;
+	item->dirty = 0;
+	item->loading = 1;
+	list_remove_entry(&item->time_list);
+	list_insert_head(&p->cache.timer_list_head, &item->time_list);
+	hash_insert(p->cache.hash, head_sector, item);
+	return item;
+}
+
+static void hdd_cache_publish_loaded_locked(block_cache_item *item)
+{
+	if (!item)
+		return;
+	item->loading = 0;
+}
+
+static void hdd_cache_cancel_load_locked(partition *p, block_cache_item *item)
+{
+	if (!item)
+		return;
+	hash_remove(p->cache.hash, item->sector);
+	item->sector = -1;
+	item->dirty = 0;
+	item->loading = 0;
+	list_remove_entry(&item->time_list);
+	list_insert_tail(&p->cache.timer_list_head, &item->time_list);
 }
 
 static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
@@ -788,32 +913,6 @@ static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 
 	memcpy((char *)item->buf + sector_off * BLOCK_SECTOR_SIZE, buf,
 	       BLOCK_SECTOR_SIZE);
-
-#if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
-	if (mark_dirty)
-		hdd_cache_flush(p, item);
-#endif
-}
-
-static void hdd_cache_update_all(void *aux, partition *p,
-				 block_cache_item *volatile item,
-				 int head_sector, int mark_dirty)
-{
-	int i;
-
-	if (item->sector != head_sector) {
-		hash_remove(p->cache.hash, item->sector);
-		hash_insert(p->cache.hash, head_sector, item);
-	}
-	item->dirty |= mark_dirty;
-	item->sector = head_sector;
-	list_remove_entry(&item->time_list);
-	list_insert_head(&p->cache.timer_list_head, &item->time_list);
-
-	for (i = 0; i < PREREAD_SECTOR; i++)
-		partition_read(aux, head_sector + i,
-			       (char *)item->buf + i * BLOCK_SECTOR_SIZE,
-			       BLOCK_SECTOR_SIZE);
 
 #if HDD_CACHE_WRITE_POLICY == HDD_CACHE_WRITE_THOUGH
 	if (mark_dirty)
@@ -848,11 +947,22 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	block_cache_item *volatile item;
 	int sector_off = SECTOR_OFF(sector);
 	int head_sector = HEAD_SECTOR(sector);
+	int old_sector;
+	int old_dirty;
+
+	(void)len;
+
+retry:
 
 	mutex_lock(&p->cache_lock);
 
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
+		if (item->loading) {
+			mutex_unlock(&p->cache_lock);
+			task_sched();
+			goto retry;
+		}
 		/* Cache hit: promote to MRU and copy out. */
 		list_remove_entry(&item->time_list);
 		list_insert_head(&p->cache.timer_list_head, &item->time_list);
@@ -863,25 +973,30 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 		return BLOCK_SECTOR_SIZE;
 	}
 
-	/* Cache miss: get a slot (free or evict LRU). */
-	item = hdd_cache_find_empty(p, sector);
-	if (!item) {
-		item = hdd_cache_find_oldest(p);
-		if (item)
-			hdd_cache_flush(p, item);
-	}
-
-	if (item) {
-		hdd_cache_update_all(aux, p, item, head_sector, 0);
-		mutex_unlock(&p->cache_lock);
-		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
-		       BLOCK_SECTOR_SIZE);
-		fs_cache_read_size += BLOCK_SECTOR_SIZE;
-		return BLOCK_SECTOR_SIZE;
-	}
-
+	/* Cache miss: reserve a slot under lock, then perform disk I/O unlocked. */
+	item = hdd_cache_reserve_miss_locked(p, head_sector, &old_sector,
+					     &old_dirty);
 	mutex_unlock(&p->cache_lock);
-	return -1;
+
+	if (!item)
+		return -1;
+
+	hdd_cache_flush_buf(p, old_sector, item->buf, old_dirty);
+	if (hdd_cache_fill_line(aux, head_sector, item->buf) != 0) {
+		mutex_lock(&p->cache_lock);
+		hdd_cache_cancel_load_locked(p, item);
+		mutex_unlock(&p->cache_lock);
+		return -1;
+	}
+
+	mutex_lock(&p->cache_lock);
+	hdd_cache_publish_loaded_locked(item);
+	mutex_unlock(&p->cache_lock);
+
+	memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
+	       BLOCK_SECTOR_SIZE);
+	fs_cache_read_size += BLOCK_SECTOR_SIZE;
+	return BLOCK_SECTOR_SIZE;
 }
 
 static int partition_cache_write(void *aux, unsigned sector, void *buf,
@@ -889,36 +1004,52 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 {
 	partition *p = aux;
 	block_cache_item *item;
+	int head_sector = HEAD_SECTOR(sector);
+	int old_sector;
+	int old_dirty;
+
+retry:
 
 	mutex_lock(&p->cache_lock);
 
 	item = hdd_cache_lookup(p, sector);
 	if (item) {
+		if (item->loading) {
+			mutex_unlock(&p->cache_lock);
+			task_sched();
+			goto retry;
+		}
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
 		fs_cache_write_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
 
-	item = hdd_cache_find_empty(p, sector);
-	if (item) {
-		hdd_cache_update(p, item, sector, buf, 1);
-		mutex_unlock(&p->cache_lock);
-		fs_cache_write_size += len;
-		return len;
-	}
-
-	item = hdd_cache_find_oldest(p);
-	if (item) {
-		hdd_cache_flush(p, item);
-		hdd_cache_update(p, item, sector, buf, 1);
-		mutex_unlock(&p->cache_lock);
-		fs_cache_write_size += len;
-		return len;
-	}
-
+	/*
+	 * Write miss: reserve a line, read the full extent so untouched sectors
+	 * remain valid, then patch the written sector into the cached line.
+	 */
+	item = hdd_cache_reserve_miss_locked(p, head_sector, &old_sector,
+					     &old_dirty);
 	mutex_unlock(&p->cache_lock);
-	return -1;
+
+	if (!item)
+		return -1;
+
+	hdd_cache_flush_buf(p, old_sector, item->buf, old_dirty);
+	if (hdd_cache_fill_line(aux, head_sector, item->buf) != 0) {
+		mutex_lock(&p->cache_lock);
+		hdd_cache_cancel_load_locked(p, item);
+		mutex_unlock(&p->cache_lock);
+		return -1;
+	}
+
+	mutex_lock(&p->cache_lock);
+	hdd_cache_publish_loaded_locked(item);
+	hdd_cache_update(p, item, sector, buf, 1);
+	mutex_unlock(&p->cache_lock);
+	fs_cache_write_size += len;
+	return len;
 }
 
 static void partition_cache_flush(void *aux)
@@ -984,14 +1115,26 @@ static int hdd_bdev_bread(struct ext4_blockdev *bdev, void *buf,
 	partition *p = bdev->aux;
 	char *dst = (char *)buf;
 	uint32_t i;
-	for (i = 0; i < blk_cnt; i++)
+
+	for (i = 0; i < blk_cnt;)
 #if HDD_CACHE_OPEN
+	{
 		partition_cache_read(p, (unsigned)(blk_id + i),
 				     dst + i * BLOCK_SECTOR_SIZE,
 				     BLOCK_SECTOR_SIZE);
+		i++;
+	}
 #else
+	{
+		uint32_t chunk = blk_cnt - i;
+
+		if (chunk > HDD_IO_MAX_SECTORS)
+			chunk = HDD_IO_MAX_SECTORS;
 		partition_read(p, (unsigned)(blk_id + i),
-			       dst + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+			       dst + i * BLOCK_SECTOR_SIZE,
+			       chunk * BLOCK_SECTOR_SIZE);
+		i += chunk;
+	}
 #endif
 	return 0;
 }
@@ -1002,14 +1145,26 @@ static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 	partition *p = bdev->aux;
 	char *src = (char *)buf;
 	uint32_t i;
-	for (i = 0; i < blk_cnt; i++)
+
+	for (i = 0; i < blk_cnt;)
 #if HDD_CACHE_OPEN
+	{
 		partition_cache_write(p, (unsigned)(blk_id + i),
 				      src + i * BLOCK_SECTOR_SIZE,
 				      BLOCK_SECTOR_SIZE);
+		i++;
+	}
 #else
+	{
+		uint32_t chunk = blk_cnt - i;
+
+		if (chunk > HDD_IO_MAX_SECTORS)
+			chunk = HDD_IO_MAX_SECTORS;
 		partition_write(p, (unsigned)(blk_id + i),
-				src + i * BLOCK_SECTOR_SIZE, BLOCK_SECTOR_SIZE);
+				src + i * BLOCK_SECTOR_SIZE,
+				chunk * BLOCK_SECTOR_SIZE);
+		i += chunk;
+	}
 #endif
 	return 0;
 }

@@ -30,7 +30,7 @@ Above the raw disk layer sits a **write-back LRU block cache** (enabled by `HDD_
         │
  partition_read / partition_write               ← adds partition start offset
         │
- disk_read / disk_write                         ← DMA or PIO, one sector (busy-loop)
+ disk_read / disk_write                         ← DMA or PIO, contiguous multi-sector I/O
         │
  ATA channel hardware (IRQ 14 / IRQ 15 — registered but not used for sync)
 ```
@@ -83,7 +83,7 @@ typedef struct {
 } __attribute__((packed, aligned(4))) prdt_entry_t;
 ```
 
-Each transfer uses a single-entry PRDT covering exactly 512 bytes (one sector).
+Each transfer uses a single-entry PRDT covering up to one page (4 KiB, 8 sectors). The current implementation batches contiguous requests up to the size of the per-channel bounce buffer.
 
 ### Bus Master registers
 
@@ -103,6 +103,8 @@ read reg_status (ack IRQ) → check BM_STATUS for error →
 memcpy dma_buf → caller
 ```
 
+The transfer length is the requested contiguous byte count, capped at one page.
+
 ### DMA write sequence
 
 ```
@@ -113,14 +115,16 @@ poll BM_STATUS bit 0 until clear → BM_CMD = 0 (stop) →
 read reg_status (ack IRQ) → check BM_STATUS for error
 ```
 
+Like reads, writes are batched for contiguous requests up to one page.
+
 ---
 
 ## PIO Mode (fallback)
 
 Used when `bm_base == 0` (DMA not available).
 
-**Read:** issue `CMD_READ_SECTORS` → `wait_while_busy` (poll `alt_status`) → read `reg_status` (ack IRQ) → `REP INSD`
-**Write:** issue `CMD_WRITE_SECTORS` → `wait_while_busy` (poll DRQ) → `REP OUTSD` → `wait_while_busy` (poll BSY) → read `reg_status` (ack IRQ)
+**Read:** issue `CMD_READ_SECTORS` once for the contiguous run, then for each sector: `wait_while_busy` (poll `alt_status`) → read `reg_status` (ack IRQ) → `REP INSD`
+**Write:** issue `CMD_WRITE_SECTORS` once for the contiguous run, then for each sector: `wait_while_busy` (poll DRQ) → `REP OUTSD`; finally `wait_while_busy` (poll BSY) → read `reg_status` (ack IRQ)
 
 ---
 
@@ -147,7 +151,7 @@ typedef struct _channel {
     /* DMA fields (all zero when DMA unavailable) */
     unsigned short bm_base;        // Bus Master I/O base
     prdt_entry_t  *prdt;           // PRDT table (kernel virtual address)
-    void          *dma_buf;        // 512-byte bounce buffer (virtual)
+    void          *dma_buf;        // 4 KiB bounce buffer (virtual)
     unsigned int   dma_buf_phys;   // physical address of dma_buf
 } channel;
 ```
@@ -168,10 +172,10 @@ Enabled by `HDD_CACHE_OPEN 1` in `config.h`.
 
 ### Organisation
 
-Cache entries are keyed on the **head sector** of each 8-sector group (`HEAD_SECTOR(s) = s / 8 * 8`). Each `block_cache_item` holds 8 × 512 = 4096 bytes and one dirty bit covering the whole group.
+Cache entries are keyed on the **head sector** of each 8-sector group (`HEAD_SECTOR(s) = s / 8 * 8`). Each `block_cache_item` holds 8 × 512 = 4096 bytes, one dirty bit covering the whole group, and a `loading` flag used while miss refill/evict I/O is in flight.
 
 - **Hash table** (`rb-tree`): O(log n) lookup by head sector.
-- **LRU list**: newest at head, oldest at tail. On miss, the tail entry is evicted and flushed if dirty.
+- **LRU list**: newest at head, oldest at tail. On miss, the tail entry is reused and flushed if dirty.
 
 ### Write policy
 
@@ -182,16 +186,20 @@ Controlled by `HDD_CACHE_WRITE_POLICY`:
 | Write-back (default) | `HDD_CACHE_WRITE_BACK`   | Writes update cache + dirty bit; flushed on eviction or `hdd_flush()` |
 | Write-through        | `HDD_CACHE_WRITE_THOUGH` | Every write immediately calls `partition_write`                       |
 
+On a write miss, the cache performs **read-for-ownership**: it first fills the full 8-sector cache line from disk, then patches the modified sector. This avoids later write-back corrupting the untouched sectors in the same cache line.
+
 ### Cache operations
 
 | Function                | Description                                                                      |
 | ----------------------- | -------------------------------------------------------------------------------- |
-| `partition_cache_read`  | Hit: copy from cache, promote to MRU. Miss: allocate/evict, read-ahead 8 sectors |
-| `partition_cache_write` | Hit: update cache, mark dirty. Miss: allocate/evict, write into new slot         |
+| `partition_cache_read`  | Hit: copy from cache, promote to MRU. Miss: reserve/reuse a slot, flush old dirty data, refill 8 sectors |
+| `partition_cache_write` | Hit: update cache, mark dirty. Miss: reserve/reuse a slot, flush old dirty data, read-for-ownership, then patch one sector |
 | `partition_cache_flush` | Walk LRU list and write all dirty entries to disk                                |
 | `partition_cache_evict` | Free all cache entries for a partition (called on close)                         |
 | `hdd_flush()`           | Flush all partitions (called on graceful shutdown)                               |
 | `hdd_close()`           | Flush + evict all partitions                                                     |
+
+Miss handling intentionally does disk I/O outside `cache_lock`. The cache line is reserved under the mutex and marked `loading=1`, then any refill/flush I/O happens unlocked, and the line is published afterward. Readers or writers that encounter an in-flight line yield and retry.
 
 ---
 

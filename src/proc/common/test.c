@@ -408,6 +408,8 @@ static file *make_wrapped_script_file(const char *script_name, const char *body)
 		"read __ktest_up _ < /proc/uptime\n"
 		"__ktest_start_s=${__ktest_up%%.*}\n"
 		"__ktest_start_cs=${__ktest_up#*.}\n"
+		"__ktest_start_s=$((10#$__ktest_start_s))\n"
+		"__ktest_start_cs=$((10#$__ktest_start_cs))\n"
 		"__ktest_log=/tmp/ktest_${__ktest_name}_$$.log\n"
 		"__ktest_result \"[ RUN      ] script.${__ktest_name}\"\n"
 		"(\n",
@@ -421,6 +423,8 @@ static file *make_wrapped_script_file(const char *script_name, const char *body)
 		"read __ktest_up _ < /proc/uptime\n"
 		"__ktest_end_s=${__ktest_up%%.*}\n"
 		"__ktest_end_cs=${__ktest_up#*.}\n"
+		"__ktest_end_s=$((10#$__ktest_end_s))\n"
+		"__ktest_end_cs=$((10#$__ktest_end_cs))\n"
 		"__ktest_elapsed_ms=$((((__ktest_end_s * 100) + __ktest_end_cs - "
 		"((__ktest_start_s * 100) + __ktest_start_cs)) * 10))\n"
 		"if [ \"$__ktest_rc\" -eq 0 ]; then\n"

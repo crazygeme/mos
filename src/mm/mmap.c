@@ -24,6 +24,11 @@ typedef struct _vm_key {
 	unsigned end;
 } vm_key;
 
+struct _vm_fault_lock {
+	rmutex_t lock;
+	unsigned refs;
+};
+
 /*
  * vm_region_compare - interval comparator for the VM region tree.
  *
@@ -55,6 +60,8 @@ static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
 {
 	if (left->prot != right->prot || left->flag != right->flag)
 		return 0;
+	if (left->fault_lock != right->fault_lock)
+		return 0;
 	if (left->fp != right->fp)
 		return 0;
 	if (left->fp != NULL &&
@@ -67,6 +74,33 @@ static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
 
 static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 				  unsigned end);
+static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
+				 int prot, int flag, file *fp, int offset,
+				 unsigned anon_id, vm_fault_lock *fault_lock);
+
+static vm_fault_lock *vm_fault_lock_new()
+{
+	vm_fault_lock *fault_lock = kmalloc(sizeof(*fault_lock));
+
+	rmutex_init(&fault_lock->lock);
+	fault_lock->refs = 1;
+	return fault_lock;
+}
+
+static void vm_fault_lock_get(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	__sync_add_and_fetch(&fault_lock->refs, 1);
+}
+
+static void vm_fault_lock_put(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	if (__sync_sub_and_fetch(&fault_lock->refs, 1) == 0)
+		kfree(fault_lock);
+}
 
 /* Counter for unique anonymous MAP_SHARED region identifiers. */
 static unsigned g_anon_id_next = 0;
@@ -81,6 +115,7 @@ static void vm_region_invalid(const key_value_pair *pair)
 	if ((region->flag & MAP_SHARED) && region->fp == NULL &&
 	    region->anon_id)
 		mm_anon_shared_put(region->anon_id);
+	vm_fault_lock_put(region->fault_lock);
 
 	kfree(key);
 	kfree(region);
@@ -148,22 +183,27 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 				file *new_fp = region->fp;
 				int new_offset = lregion->offset;
 				unsigned new_anon_id = lregion->anon_id;
+				vm_fault_lock *new_fault_lock =
+					lregion->fault_lock;
 
 				if (new_fp)
 					fs_get_file(new_fp);
 				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
 				    new_anon_id)
 					mm_anon_shared_get(new_anon_id);
+				vm_fault_lock_get(new_fault_lock);
 				hash_remove(table, lpair->key);
 				hash_remove(table, rkey);
-				vm_add_map(table, new_begin, new_end, new_prot,
-					   new_flag, new_fp, new_offset,
-					   new_anon_id);
+				vm_add_map_with_lock(table, new_begin, new_end,
+						     new_prot, new_flag, new_fp,
+						     new_offset, new_anon_id,
+						     new_fault_lock);
 				if (new_fp)
 					fs_put_file(new_fp);
 				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
 				    new_anon_id)
 					mm_anon_shared_put(new_anon_id);
+				vm_fault_lock_put(new_fault_lock);
 				return;
 			}
 		}
@@ -185,22 +225,27 @@ static void vm_coalesce(hash_table *table, unsigned addr)
 				file *new_fp = region->fp;
 				int new_offset = region->offset;
 				unsigned new_anon_id = region->anon_id;
+				vm_fault_lock *new_fault_lock =
+					region->fault_lock;
 
 				if (new_fp)
 					fs_get_file(new_fp);
 				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
 				    new_anon_id)
 					mm_anon_shared_get(new_anon_id);
+				vm_fault_lock_get(new_fault_lock);
 				hash_remove(table, rkey);
 				hash_remove(table, rpair->key);
-				vm_add_map(table, new_begin, new_end, new_prot,
-					   new_flag, new_fp, new_offset,
-					   new_anon_id);
+				vm_add_map_with_lock(table, new_begin, new_end,
+						     new_prot, new_flag, new_fp,
+						     new_offset, new_anon_id,
+						     new_fault_lock);
 				if (new_fp)
 					fs_put_file(new_fp);
 				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
 				    new_anon_id)
 					mm_anon_shared_put(new_anon_id);
+				vm_fault_lock_put(new_fault_lock);
 				return;
 			}
 		}
@@ -216,8 +261,9 @@ static void vm_coalesce(hash_table *table, unsigned addr)
  * handles arbitrarily many pre-existing overlapping regions one at a time
  * until no conflicts remain, then inserts the new region.
  */
-void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
-		int flag, file *fp, int offset, unsigned anon_id)
+static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
+				 int prot, int flag, file *fp, int offset,
+				 unsigned anon_id, vm_fault_lock *fault_lock)
 {
 	hash_table *table = vm;
 	vm_key probe;
@@ -248,11 +294,13 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		file *o_fp = oregion->fp;
 		int o_offset = oregion->offset;
 		unsigned o_anon_id = oregion->anon_id;
+		vm_fault_lock *o_fault_lock = oregion->fault_lock;
 
 		if (o_fp)
 			fs_get_file(o_fp);
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_get(o_anon_id);
+		vm_fault_lock_get(o_fault_lock);
 
 		unmap_begin = o_begin > begin ? o_begin : begin;
 		unmap_end = o_end < end ? o_end : end;
@@ -266,21 +314,25 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 
 		/* Re-insert the left remnant [o_begin, begin), if any. */
 		if (o_begin < begin)
-			vm_add_map(vm, o_begin, begin, o_prot, o_flag, o_fp,
-				   o_offset, o_anon_id);
+			vm_add_map_with_lock(vm, o_begin, begin, o_prot, o_flag,
+					     o_fp, o_offset, o_anon_id,
+					     o_fault_lock);
 
 		/*
 		 * Re-insert the right remnant [end, o_end), if any.
 		 * Its file offset advances by (end - o_begin) bytes.
 		 */
 		if (o_end > end)
-			vm_add_map(vm, end, o_end, o_prot, o_flag, o_fp,
-				   o_offset + (int)(end - o_begin), o_anon_id);
+			vm_add_map_with_lock(vm, end, o_end, o_prot, o_flag,
+					     o_fp,
+					     o_offset + (int)(end - o_begin),
+					     o_anon_id, o_fault_lock);
 
 		if (o_fp)
 			fs_put_file(o_fp);
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_put(o_anon_id);
+		vm_fault_lock_put(o_fault_lock);
 	}
 
 	if (tlb_needs_reload)
@@ -296,6 +348,11 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 	region->end = end;
 	region->prot = prot;
 	region->flag = flag;
+	if (fault_lock == NULL)
+		fault_lock = vm_fault_lock_new();
+	else
+		vm_fault_lock_get(fault_lock);
+	region->fault_lock = fault_lock;
 	region->fp = fp;
 	region->offset = offset;
 	region->anon_id = anon_id;
@@ -307,6 +364,26 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 
 	hash_insert(table, key, region);
 	vm_coalesce(table, begin);
+}
+
+void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
+		int flag, file *fp, int offset, unsigned anon_id)
+{
+	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
+			     NULL);
+}
+
+void vm_add_map_with_shared_fault_lock(vm_struct_t vm, unsigned begin,
+				       unsigned end, int prot, int flag,
+				       file *fp, int offset, unsigned anon_id,
+				       vm_region *shared_region)
+{
+	vm_fault_lock *fault_lock = NULL;
+
+	if (shared_region)
+		fault_lock = shared_region->fault_lock;
+	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
+			     fault_lock);
 }
 
 /*
@@ -460,11 +537,26 @@ void vm_dup(vm_struct_t src, vm_struct_t dst)
 
 	while (pair) {
 		vm_region *region = pair->val;
-		vm_add_map(dst, region->begin, region->end, region->prot,
-			   region->flag, region->fp, region->offset,
-			   region->anon_id);
+		vm_add_map_with_lock(dst, region->begin, region->end,
+				     region->prot, region->flag, region->fp,
+				     region->offset, region->anon_id,
+				     region->fault_lock);
 		pair = hash_next(table, pair);
 	}
+}
+
+void vm_region_lock_fault(vm_region *region)
+{
+	if (!region || !region->fault_lock)
+		return;
+	rmutex_lock(&region->fault_lock->lock);
+}
+
+void vm_region_unlock_fault(vm_region *region)
+{
+	if (!region || !region->fault_lock)
+		return;
+	rmutex_unlock(&region->fault_lock->lock);
 }
 
 void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
@@ -510,6 +602,7 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		file *r_fp = oregion->fp;
 		int r_offset = oregion->offset;
 		unsigned r_anon_id = oregion->anon_id;
+		vm_fault_lock *r_fault_lock = oregion->fault_lock;
 
 		/* Intersection of the region with [begin, end) */
 		unsigned upd_begin = r_begin > begin ? r_begin : begin;
@@ -520,29 +613,35 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 			fs_get_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_get(r_anon_id);
+		vm_fault_lock_get(r_fault_lock);
 
 		/* Remove descriptor only — physical pages stay mapped. */
 		hash_remove(table, okey);
 
 		/* Preserve left remnant [r_begin, upd_begin) at original prot. */
 		if (r_begin < upd_begin)
-			vm_add_map(vm, r_begin, upd_begin, r_prot, r_flag, r_fp,
-				   r_offset, r_anon_id);
+			vm_add_map_with_lock(vm, r_begin, upd_begin, r_prot,
+					     r_flag, r_fp, r_offset, r_anon_id,
+					     r_fault_lock);
 
 		/* Re-insert updated portion [upd_begin, upd_end) with new prot. */
-		vm_add_map(vm, upd_begin, upd_end, new_prot, r_flag, r_fp,
-			   r_offset + (int)(upd_begin - r_begin), r_anon_id);
+		vm_add_map_with_lock(vm, upd_begin, upd_end, new_prot, r_flag,
+				     r_fp,
+				     r_offset + (int)(upd_begin - r_begin),
+				     r_anon_id, r_fault_lock);
 
 		/* Preserve right remnant [upd_end, r_end) at original prot. */
 		if (upd_end < r_end)
-			vm_add_map(vm, upd_end, r_end, r_prot, r_flag, r_fp,
-				   r_offset + (int)(upd_end - r_begin),
-				   r_anon_id);
+			vm_add_map_with_lock(
+				vm, upd_end, r_end, r_prot, r_flag, r_fp,
+				r_offset + (int)(upd_end - r_begin), r_anon_id,
+				r_fault_lock);
 
 		if (r_fp)
 			fs_put_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_put(r_anon_id);
+		vm_fault_lock_put(r_fault_lock);
 
 		/* Advance probe past the portion we just handled. */
 		probe.begin = upd_end;
@@ -838,6 +937,7 @@ int do_munmap(void *addr, unsigned length)
 		file *r_fp = region->fp;
 		int r_offset = region->offset;
 		unsigned r_anon_id = region->anon_id;
+		vm_fault_lock *r_fault_lock = region->fault_lock;
 
 		/* Intersection of this region with the unmap range. */
 		unsigned unmap_begin = r_begin > begin ? r_begin : begin;
@@ -856,6 +956,7 @@ int do_munmap(void *addr, unsigned length)
 			fs_get_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_get(r_anon_id);
+		vm_fault_lock_get(r_fault_lock);
 
 		/* Remove this vm_region descriptor from the tree. */
 		hash_remove(cur->user->vm, key);
@@ -863,20 +964,22 @@ int do_munmap(void *addr, unsigned length)
 		/* Preserve the left remnant [r_begin, unmap_begin) if any.
 		 * Its physical pages were not unmapped above. */
 		if (r_begin < unmap_begin)
-			vm_add_map(cur->user->vm, r_begin, unmap_begin, r_prot,
-				   r_flag, r_fp, r_offset, r_anon_id);
+			vm_add_map_with_lock(cur->user->vm, r_begin,
+					     unmap_begin, r_prot, r_flag, r_fp,
+					     r_offset, r_anon_id, r_fault_lock);
 
 		/* Preserve the right remnant [unmap_end, r_end) if any. */
 		if (r_end > unmap_end)
-			vm_add_map(cur->user->vm, unmap_end, r_end, r_prot,
-				   r_flag, r_fp,
-				   r_offset + (int)(unmap_end - r_begin),
-				   r_anon_id);
+			vm_add_map_with_lock(
+				cur->user->vm, unmap_end, r_end, r_prot, r_flag,
+				r_fp, r_offset + (int)(unmap_end - r_begin),
+				r_anon_id, r_fault_lock);
 
 		if (r_fp)
 			fs_put_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_put(r_anon_id);
+		vm_fault_lock_put(r_fault_lock);
 	}
 
 	RELOAD_CR3();

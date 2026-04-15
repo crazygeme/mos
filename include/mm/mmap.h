@@ -1,15 +1,19 @@
 #ifndef _MM_MMAP_H
 #define _MM_MMAP_H
 #include <fs/fs.h>
+#include <lib/lock.h>
 
 typedef struct _user_enviroment user_enviroment;
 typedef void *vm_struct_t;
+typedef struct _vm_fault_lock vm_fault_lock;
 
 typedef struct _vm_region {
 	unsigned begin;
 	unsigned end;
 	int prot;
 	int flag;
+	vm_fault_lock *
+		fault_lock; /* Shared across fork/splits for fault serialization. */
 	file *fp;
 	int offset;
 	unsigned anon_id; /* non-zero for MAP_SHARED|MAP_ANONYMOUS; shared across fork */
@@ -32,6 +36,10 @@ void vm_destroy(vm_struct_t vm);
  */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int flag, file *fp, int offset, unsigned anon_id);
+void vm_add_map_with_shared_fault_lock(vm_struct_t vm, unsigned begin,
+				       unsigned end, int prot, int flag,
+				       file *fp, int offset, unsigned anon_id,
+				       vm_region *shared_region);
 
 /**
  * delete a mapped region which contains addr
@@ -70,6 +78,8 @@ vm_region *vm_find_vma(vm_struct_t vm, unsigned addr);
 vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr);
 vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr);
 void vm_invalidate_user_cache(user_enviroment *user);
+void vm_region_lock_fault(vm_region *region);
+void vm_region_unlock_fault(vm_region *region);
 
 /**
  * find a region large enough to contain @size

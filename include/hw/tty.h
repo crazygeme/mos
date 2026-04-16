@@ -1,7 +1,7 @@
 #ifndef _HW_TTY_H_
 #define _HW_TTY_H_
 
-#define TTY_MAX_VDEV 10
+#define TTY_MAX_VDEV 32
 
 /* Early VGA/framebuffer initialisation.  Must be called before printk. */
 void tty_init(void);

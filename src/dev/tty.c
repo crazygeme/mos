@@ -1455,13 +1455,11 @@ static void tty_bash_spawner(void *p)
 {
 	tty_state *state = (tty_state *)p;
 	char tty_path[16];
-	char *argv[] = { "/bin/login", NULL };
-	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "LANG=en_US",
-			 NULL };
+	char *argv[] = { "/bin/bash", "-l", NULL };
+	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "HOME=/root",
+			 "LANG=en_US", NULL };
 	struct stat st;
 	task_struct *cur = CURRENT_TASK();
-
-	sprintf(tty_path, "/dev/tty%d", state->tty_idx);
 
 	/* Wire this task to the root filesystem. */
 	cur->root = state->parent->root;
@@ -1469,6 +1467,24 @@ static void tty_bash_spawner(void *p)
 
 	/* set parent of current so that wait can work */
 	cur->ppid = state->parent->psid;
+	cur->user->gid = state->parent->user->gid;
+	cur->user->uid = state->parent->user->uid;
+	cur->user->euid = state->parent->user->euid;
+	cur->user->suid = state->parent->user->suid;
+	cur->user->egid = state->parent->user->egid;
+	cur->user->sgid = state->parent->user->sgid;
+	cur->user->fsuid = state->parent->user->fsuid;
+	cur->user->fsgid = state->parent->user->fsgid;
+	cur->user->session_id = 0;
+	cur->user->group_id = 0;
+
+	if (!TestControl.bash)
+		/* On System V init system, VT is enabled and tty is dynamically allocated */
+		sprintf(tty_path, "/dev/tty%d", tty_vt_find_free());
+
+	else
+		/* But in bare metal bash mode, we just simplly use ttyN for sessionN without login */
+		sprintf(tty_path, "/dev/tty%d", state->tty_idx);
 
 	/* Set working directory. */
 	strcpy(cur->user->cwd, "/root");
@@ -2207,7 +2223,7 @@ static void tty_dev_register(super_block *dev_sb)
 	/* major 4: tty1..tty10 (1-based minors matching tty_idx) */
 	cdev_register(S_IFCHR, TTY_VC_MAJOR, 1, TTY_MAX_VDEV, tty_cdev_open);
 	for (i = 1; i <= TTY_MAX_VDEV; i++) {
-		sprintf(path, "/tty%d", i);
+		sprintf(path, "/tty%x", i);
 		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(TTY_VC_MAJOR, i));
 	}
 

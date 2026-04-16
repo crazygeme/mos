@@ -253,6 +253,13 @@ typedef struct _unix_passfd_msg {
 	struct _file *files[UNIX_PASSFD_MAX];
 } unix_passfd_msg;
 
+typedef struct _sock_waiter {
+	list_entry node;
+	struct _task_struct *task;
+	struct _mos_sock *sk;
+	int queued;
+} sock_waiter;
+
 typedef struct _mos_sock {
 	int domain;
 	int type;
@@ -299,12 +306,10 @@ typedef struct _mos_sock {
 	/* ICMP_FILTER: bitmask of ICMP types to drop (bit N → block type N) */
 	struct icmp_filter icmp_filter;
 
-	/* Task currently blocked waiting for data or state change, or NULL */
-	struct _task_struct *waiter;
-
-	/* poll/select wakeup task, woken alongside waiter wakeups */
-	struct _task_struct *poll_task;
-	unsigned poll_task_refs;
+	/* Waiter bookkeeping for blocking operations and poll/select. */
+	spinlock_t wait_lock;
+	list_entry waiters;
+	list_entry poll_waiters;
 
 	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
 	struct _mos_sock *unix_peer;

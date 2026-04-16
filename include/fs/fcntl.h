@@ -1,6 +1,8 @@
 #ifndef _FS_FCNTL_H
 #define _FS_FCNTL_H
 
+#include <stdint.h>
+
 /* open/fcntl - O_SYNC is only implemented on blocks devices and on files
    located on an ext2 file system */
 #define O_ACCMODE 0003
@@ -60,5 +62,21 @@
 	4 /* or'd with one of the above to prevent \
              blocking */
 #define LOCK_UN 8 /* remove lock */
+
+struct flock {
+	short l_type;
+	short l_whence;
+	int32_t l_start;
+	int32_t l_len;
+	int l_pid;
+};
+
+struct flock64 {
+	short l_type;
+	short l_whence;
+	int64_t l_start;
+	int64_t l_len;
+	int l_pid;
+};
 
 #endif

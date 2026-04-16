@@ -281,7 +281,7 @@ static int pf_vma_is_stack(task_struct *task, vm_region *region)
 	return region != NULL && region->fp == NULL &&
 	       !(region->flag & MAP_SHARED) &&
 	       region->begin == task->user->stack_bottom &&
-	       region->end == KERNEL_OFFSET && (region->prot & PROT_WRITE);
+	       (region->prot & PROT_WRITE);
 }
 
 /*
@@ -316,10 +316,9 @@ static vm_region *pf_find_vma(task_struct *task, unsigned address)
 					     minimal_grow;
 
 		task->user->stack_bottom -= grow_size;
-		vm_add_map_with_shared_fault_lock(
-			task->user->vm, task->user->stack_bottom,
-			task->user->stack_bottom + grow_size,
-			PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0, 0, region);
+		vm_add_map(task->user->vm, task->user->stack_bottom,
+			   task->user->stack_bottom + grow_size,
+			   PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0, 0);
 		vm_invalidate_user_cache(task->user);
 	}
 

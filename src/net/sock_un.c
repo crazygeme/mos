@@ -208,6 +208,9 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 	server_sk->type = client->type;
 	server_sk->state = SS_CONNECTED;
 	server_sk->unix_peer = client;
+	spinlock_init(&server_sk->wait_lock);
+	list_init(&server_sk->waiters);
+	list_init(&server_sk->poll_waiters);
 	spinlock_init(&server_sk->rxbuf_lock);
 
 	/*
@@ -234,7 +237,8 @@ out:
 
 /* ── Accept ──────────────────────────────────────────────────────────── */
 
-int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen)
+int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen,
+		int nonblock)
 {
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	mos_sock *server_sk;
@@ -243,6 +247,8 @@ int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen)
 	while (listener->unix_accept_head == listener->unix_accept_tail) {
 		if (listener->err)
 			return listener->err;
+		if (nonblock)
+			return -EAGAIN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
 		if (sock_wait(listener, deadline) < 0)
@@ -1016,6 +1022,12 @@ int do_socketpair(int domain, int type, int protocol, int sv[2])
 	a->state = b->state = SS_CONNECTED;
 	a->unix_peer = b;
 	b->unix_peer = a;
+	spinlock_init(&a->wait_lock);
+	spinlock_init(&b->wait_lock);
+	list_init(&a->waiters);
+	list_init(&a->poll_waiters);
+	list_init(&b->waiters);
+	list_init(&b->poll_waiters);
 	spinlock_init(&a->rxbuf_lock);
 	spinlock_init(&b->rxbuf_lock);
 

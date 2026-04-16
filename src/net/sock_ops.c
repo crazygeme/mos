@@ -7,6 +7,7 @@
 #include <hw/time.h>
 #include <ps/ps.h>
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <errno.h>
 
 #include <lwip/tcp.h>
@@ -34,6 +35,9 @@ int do_socket(int domain, int type, int protocol)
 		sk->domain = AF_UNIX;
 		sk->type = type;
 		sk->state = SS_UNCONNECTED;
+		spinlock_init(&sk->wait_lock);
+		list_init(&sk->waiters);
+		list_init(&sk->poll_waiters);
 		spinlock_init(&sk->rxbuf_lock);
 		int fd = sock_to_fd(sk);
 		if (fd < 0) {
@@ -59,6 +63,9 @@ int do_socket(int domain, int type, int protocol)
 	sk->type = type;
 	sk->protocol = protocol;
 	sk->state = SS_UNCONNECTED;
+	spinlock_init(&sk->wait_lock);
+	list_init(&sk->waiters);
+	list_init(&sk->poll_waiters);
 
 	if (type == SOCK_STREAM) {
 		sk->tcp = tcp_new();
@@ -239,10 +246,13 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 		klog("accept(fd=%d, addr=%x, addrlen=%x)\n", fd, addr, addrlen);
 
 	mos_sock *sk = fd_to_sock(fd);
+	task_struct *cur = CURRENT_TASK();
+	int nonblock;
 	if (!sk)
 		return -ENOTSOCK;
+	nonblock = cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK) != 0;
 	if (sk->domain == AF_UNIX)
-		return unix_accept(sk, addr, addrlen);
+		return unix_accept(sk, addr, addrlen, nonblock);
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
 
@@ -250,6 +260,8 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	while (sk->accept_head == sk->accept_tail) {
 		if (sk->err)
 			return sk->err;
+		if (nonblock)
+			return -EAGAIN;
 		if (time_now_ms() > deadline)
 			return -ETIMEDOUT;
 		if (sock_wait(sk, deadline) < 0)
@@ -269,6 +281,9 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	nsk->type = SOCK_STREAM;
 	nsk->state = SS_CONNECTED;
 	nsk->tcp = newpcb;
+	spinlock_init(&nsk->wait_lock);
+	list_init(&nsk->waiters);
+	list_init(&nsk->poll_waiters);
 	tcp_setup_callbacks(newpcb, nsk);
 
 	nsk->peer.sin_family = AF_INET;

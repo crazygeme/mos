@@ -174,18 +174,45 @@ void rx_discard(mos_sock *sk, unsigned len)
 
 /* ── Blocking helpers ────────────────────────────────────────────────────── */
 
+static void sock_waiter_queue(list_entry *head, sock_waiter *waiter)
+{
+	list_insert_tail(head, &waiter->node);
+	waiter->queued = 1;
+}
+
+static void sock_waiter_dequeue(sock_waiter *waiter)
+{
+	if (!waiter->queued)
+		return;
+	list_remove_entry(&waiter->node);
+	list_init(&waiter->node);
+	waiter->queued = 0;
+}
+
 /* Wake the task currently blocked on sk, if any.
  * Also wakes any poll/select waiter registered via poll_wait.
  * Safe to call from lwIP callbacks (NIC IRQ context). */
 void sock_wakeup(mos_sock *sk)
 {
-	task_struct *t = sk->waiter;
-	if (t) {
-		sk->waiter = NULL;
-		ps_put_to_ready_queue(t);
+	list_entry *entry;
+	int irq;
+
+	spinlock_lock(&sk->wait_lock, &irq);
+	while (!list_is_empty(&sk->waiters)) {
+		sock_waiter *waiter = container_of(
+			list_remove_head(&sk->waiters), sock_waiter, node);
+		list_init(&waiter->node);
+		waiter->queued = 0;
+		ps_put_to_ready_queue(waiter->task);
 	}
-	if (sk->poll_task)
-		ps_put_to_ready_queue(sk->poll_task);
+
+	entry = sk->poll_waiters.next;
+	while (entry != &sk->poll_waiters) {
+		sock_waiter *waiter = container_of(entry, sock_waiter, node);
+		entry = entry->next;
+		ps_put_to_ready_queue(waiter->task);
+	}
+	spinlock_unlock(&sk->wait_lock, irq);
 }
 
 /* Block the current task on sk until woken by sock_wakeup or the deadline.
@@ -193,12 +220,27 @@ void sock_wakeup(mos_sock *sk)
 int sock_wait(mos_sock *sk, unsigned long deadline)
 {
 	unsigned long now = time_now_ms();
+	sock_waiter waiter;
+	int irq;
 	if (now >= deadline)
 		return 0;
 	task_struct *cur = CURRENT_TASK();
-	sk->waiter = cur;
+
+	list_init(&waiter.node);
+	waiter.task = cur;
+	waiter.sk = sk;
+	waiter.queued = 0;
+
+	spinlock_lock(&sk->wait_lock, &irq);
+	sock_waiter_queue(&sk->waiters, &waiter);
+	spinlock_unlock(&sk->wait_lock, irq);
+
 	time_wait((unsigned)(deadline - now));
-	sk->waiter = NULL;
+
+	spinlock_lock(&sk->wait_lock, &irq);
+	sock_waiter_dequeue(&waiter);
+	spinlock_unlock(&sk->wait_lock, irq);
+
 	if (cur->signal && (cur->signal->sig_pending & ~cur->signal->sig_mask))
 		return -1;
 	return 0;
@@ -523,15 +565,14 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 
 static void sock_poll_dereg(void *opaque, task_struct *task)
 {
-	mos_sock *sk = opaque;
-	if (sk->poll_task != task)
-		return;
-	if (sk->poll_task_refs > 1) {
-		sk->poll_task_refs--;
-		return;
-	}
-	sk->poll_task = NULL;
-	sk->poll_task_refs = 0;
+	sock_waiter *waiter = opaque;
+	int irq;
+
+	(void)task;
+	spinlock_lock(&waiter->sk->wait_lock, &irq);
+	sock_waiter_dequeue(waiter);
+	spinlock_unlock(&waiter->sk->wait_lock, irq);
+	free(waiter);
 }
 
 static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
@@ -583,20 +624,27 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 		ready |= FS_POLL_HUP;
 
 	if (!ready && pt) {
-		if (sk->poll_task == pt->task) {
-			sk->poll_task_refs++;
-		} else {
-			sk->poll_task = pt->task;
-			sk->poll_task_refs = 1;
+		sock_waiter *waiter = zalloc(sizeof(*waiter));
+		int irq;
+
+		if (!waiter) {
+			pt->unsupported = 1;
+			return ready;
 		}
-		if (poll_table_add(pt, sk, sock_poll_dereg) < 0) {
-			if (sk->poll_task == pt->task &&
-			    sk->poll_task_refs > 1) {
-				sk->poll_task_refs--;
-			} else if (sk->poll_task == pt->task) {
-				sk->poll_task = NULL;
-				sk->poll_task_refs = 0;
-			}
+
+		list_init(&waiter->node);
+		waiter->task = pt->task;
+		waiter->sk = sk;
+		waiter->queued = 0;
+		spinlock_lock(&sk->wait_lock, &irq);
+		sock_waiter_queue(&sk->poll_waiters, waiter);
+		spinlock_unlock(&sk->wait_lock, irq);
+
+		if (poll_table_add(pt, waiter, sock_poll_dereg) < 0) {
+			spinlock_lock(&sk->wait_lock, &irq);
+			sock_waiter_dequeue(waiter);
+			spinlock_unlock(&sk->wait_lock, irq);
+			free(waiter);
 		}
 	}
 	return ready;

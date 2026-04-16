@@ -396,17 +396,35 @@ int fs_pipe(int *pipefd)
 
 int fs_dup(int fd)
 {
+	return fs_dup_from(fd, 0);
+}
+
+int fs_dup_from(int fd, int minfd)
+{
 	task_struct *cur = CURRENT_TASK();
+
+	if (minfd < 0 || minfd >= MAX_FD)
+		return -EINVAL;
 	if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
 		return -EBADF;
 
 	file *fp = cur->fds[fd];
 	fs_get_file(fp);
+	int newfd;
 
-	int newfd = fs_install_fd(fp, 0);
-	if (newfd < 0)
-		fs_put_file(fp);
-	return newfd < 0 ? -EMFILE : newfd;
+	mutex_lock(&cur->fd_lock);
+	for (newfd = minfd; newfd < MAX_FD; newfd++) {
+		if (cur->fds[newfd] == NULL) {
+			cur->fds[newfd] = fp;
+			fd_bitmap_clear(cur->fd_cloexec, newfd);
+			mutex_unlock(&cur->fd_lock);
+			return newfd;
+		}
+	}
+	mutex_unlock(&cur->fd_lock);
+
+	fs_put_file(fp);
+	return -EMFILE;
 }
 
 int fs_dup2(int fd, int newfd)

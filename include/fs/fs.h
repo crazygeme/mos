@@ -254,6 +254,7 @@ int fs_sync(int fd);
 int fs_pipe(int *pipefd);
 
 int fs_dup(int fd);
+int fs_dup_from(int fd, int minfd);
 
 int fs_dup2(int fd, int newfd);
 

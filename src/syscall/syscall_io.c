@@ -342,12 +342,12 @@ int sys_dup2(int oldfd, int newfd)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("dup2(%d, %d)\n", oldfd, newfd);
 
-	if (oldfd == -1 || newfd == -1)
-		return -1;
+	if (oldfd < 0 || newfd < 0)
+		return -EBADF;
 	if (oldfd >= MAX_FD || newfd >= MAX_FD)
-		return -1;
+		return -EBADF;
 	if (oldfd == newfd)
-		return -1;
+		return newfd;
 
 	return fs_dup2(oldfd, newfd);
 }
@@ -362,19 +362,209 @@ int sys_pipe(int pipefd[2])
 	return ret;
 }
 
+static int flock_lazy_init(inode *in)
+{
+	if (!in)
+		return -EINVAL;
+	if (!in->i_flock_inited) {
+		spinlock_init(&in->i_flock_lock);
+		list_init(&in->i_flock_wait);
+		in->i_flock_inited = 1;
+	}
+	return 0;
+}
+
+/*
+ * We only implement coarse advisory locks per inode. Accept the common
+ * "first byte", "whole file", and lockf()-style current-position forms
+ * used by old GNOME userspace.
+ */
+static int posix_lock_range_supported_32(const struct flock *fl)
+{
+	if (fl->l_whence == 0) {
+		if (fl->l_start != 0)
+			return 0;
+	} else if (fl->l_whence == 1) {
+		if (fl->l_start != 0)
+			return 0;
+	} else {
+		return 0;
+	}
+	if (fl->l_len < 0)
+		return 0;
+	return fl->l_len == 0 || fl->l_len > 0;
+}
+
+static int posix_lock_range_supported_64(const struct flock64 *fl)
+{
+	if (fl->l_whence == 0) {
+		if (fl->l_start != 0)
+			return 0;
+	} else if (fl->l_whence == 1) {
+		if (fl->l_start != 0)
+			return 0;
+	} else {
+		return 0;
+	}
+	if (fl->l_len < 0)
+		return 0;
+	return fl->l_len == 0 || fl->l_len > 0;
+}
+
+static int posix_lock_conflict(file *fp, inode *in, int lock_type)
+{
+	int other_sh;
+
+	if (lock_type == F_RDLCK)
+		return in->i_flock_ex_owner != NULL &&
+		       in->i_flock_ex_owner != fp;
+
+	other_sh = in->i_flock_sh - (fp->f_flock == LOCK_SH ? 1 : 0);
+	return (in->i_flock_ex_owner != NULL && in->i_flock_ex_owner != fp) ||
+	       (other_sh > 0);
+}
+
+static void posix_lock_release(file *fp, inode *in)
+{
+	if (fp->f_flock == LOCK_SH)
+		in->i_flock_sh--;
+	else if (fp->f_flock == LOCK_EX)
+		in->i_flock_ex_owner = NULL;
+	fp->f_flock = 0;
+}
+
+static void posix_lock_acquire(file *fp, inode *in, int lock_type)
+{
+	if (lock_type == F_RDLCK) {
+		in->i_flock_sh++;
+		fp->f_flock = LOCK_SH;
+	} else {
+		in->i_flock_ex_owner = fp;
+		fp->f_flock = LOCK_EX;
+	}
+}
+
+static int sys_fcntl_lock32(int fd, int cmd, struct flock *fl)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+	inode *in;
+	int irq, lock_type, nonblock;
+	int conflict;
+
+	if (!fl)
+		return -EFAULT;
+	if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
+		return -EBADF;
+
+	fp = cur->fds[fd];
+	in = fp->f_inode;
+	if (flock_lazy_init(in) < 0)
+		return -EINVAL;
+
+	if (!posix_lock_range_supported_32(fl))
+		return -ENOSYS;
+
+	lock_type = fl->l_type;
+	if (cmd == F_GETLK) {
+		spinlock_lock(&in->i_flock_lock, &irq);
+		conflict = 0;
+		if (lock_type == F_RDLCK || lock_type == F_WRLCK)
+			conflict = posix_lock_conflict(fp, in, lock_type);
+		if (conflict) {
+			if (in->i_flock_ex_owner &&
+			    in->i_flock_ex_owner != fp) {
+				fl->l_type = F_WRLCK;
+				fl->l_pid = in->i_flock_ex_owner->f_owner;
+			} else {
+				fl->l_type = F_RDLCK;
+				fl->l_pid = 0;
+			}
+		} else {
+			fl->l_type = F_UNLCK;
+			fl->l_pid = 0;
+		}
+		spinlock_unlock(&in->i_flock_lock, irq);
+		return 0;
+	}
+
+	if (lock_type != F_RDLCK && lock_type != F_WRLCK &&
+	    lock_type != F_UNLCK)
+		return -EINVAL;
+	nonblock = (cmd == F_SETLK);
+
+	spinlock_lock(&in->i_flock_lock, &irq);
+	if (lock_type == F_UNLCK) {
+		posix_lock_release(fp, in);
+		flock_wake_all_locked(in);
+		spinlock_unlock(&in->i_flock_lock, irq);
+		return 0;
+	}
+
+	for (;;) {
+		conflict = posix_lock_conflict(fp, in, lock_type);
+		if (!conflict)
+			break;
+		if (nonblock) {
+			spinlock_unlock(&in->i_flock_lock, irq);
+			return -EAGAIN;
+		}
+		ps_put_to_wait_queue(cur, &in->i_flock_wait, __func__);
+		spinlock_unlock(&in->i_flock_lock, irq);
+		task_sched();
+		spinlock_lock(&in->i_flock_lock, &irq);
+	}
+
+	posix_lock_release(fp, in);
+	posix_lock_acquire(fp, in, lock_type);
+	spinlock_unlock(&in->i_flock_lock, irq);
+	return 0;
+}
+
+static int sys_fcntl_lock64(int fd, int cmd, struct flock64 *fl)
+{
+	struct flock fl32;
+	int ret;
+
+	if (!fl)
+		return -EFAULT;
+
+	if (!posix_lock_range_supported_64(fl))
+		return -ENOSYS;
+
+	fl32.l_type = fl->l_type;
+	fl32.l_whence = fl->l_whence;
+	fl32.l_start = (off_t)fl->l_start;
+	fl32.l_len = (off_t)fl->l_len;
+	fl32.l_pid = fl->l_pid;
+
+	ret = sys_fcntl_lock32(fd, cmd - (F_GETLK64 - F_GETLK), &fl32);
+	fl->l_type = fl32.l_type;
+	fl->l_whence = fl32.l_whence;
+	fl->l_start = fl32.l_start;
+	fl->l_len = fl32.l_len;
+	fl->l_pid = fl32.l_pid;
+	return ret;
+}
+
 int sys_fcntl(int fd, int cmd, int arg)
 {
 	task_struct *cur = CURRENT_TASK();
 	int ret = 0;
 
 	if (fd < 0 || fd >= MAX_FD)
-		return -ENOENT;
+		return -EBADF;
 	if (cur->fds[fd] == NULL)
-		return -ENOENT;
+		return -EBADF;
 
 	switch (cmd) {
 	case F_DUPFD:
-		ret = fs_dup(fd);
+		ret = fs_dup_from(fd, arg);
+		break;
+	case F_GETLK:
+	case F_SETLK:
+	case F_SETLKW:
+		ret = sys_fcntl_lock32(fd, cmd, (struct flock *)arg);
 		break;
 	case F_GETFD:
 		ret = fd_bitmap_test(cur->fd_cloexec, fd) ? FD_CLOEXEC : 0;
@@ -409,7 +599,7 @@ int sys_fcntl(int fd, int cmd, int arg)
 		ret = cur->fds[fd]->f_sigio;
 		break;
 	default:
-		ret = 0;
+		ret = -EINVAL;
 		break;
 	}
 
@@ -425,7 +615,7 @@ int sys_fcntl64(int fd, int cmd, int arg)
 	case F_GETLK64:
 	case F_SETLK64:
 	case F_SETLKW64:
-		return 0;
+		return sys_fcntl_lock64(fd, cmd, (struct flock64 *)arg);
 	default:
 		return sys_fcntl(fd, cmd, arg);
 	}

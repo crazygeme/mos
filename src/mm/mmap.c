@@ -48,7 +48,6 @@ static INLINE int vm_region_compare(const void *region1, const void *region2)
 	return 0; /* overlap */
 }
 
-
 static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 				  unsigned end);
 static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
@@ -120,7 +119,6 @@ static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 	key.end = key.begin + PAGE_SIZE;
 	return hash_find(table, &key);
 }
-
 
 /*
  * vm_add_map - insert a new mapping [begin, end) into the VM map.
@@ -241,7 +239,6 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
 			     NULL);
 }
-
 
 /*
  * vm_del_map - remove the mapping that contains addr and unmap its pages.

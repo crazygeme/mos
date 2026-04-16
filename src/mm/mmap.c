@@ -48,29 +48,6 @@ static INLINE int vm_region_compare(const void *region1, const void *region2)
 	return 0; /* overlap */
 }
 
-/*
- * vm_can_merge - true if two adjacent regions can be folded into one.
- *
- * Anonymous regions (fp == NULL) only need matching prot and flag.
- * File-backed regions additionally require the same fp and contiguous
- * file offsets (right.offset == left.offset + left_size).
- * MAP_SHARED anonymous regions with different anon_ids must never merge.
- */
-static INLINE int vm_can_merge(const vm_region *left, const vm_region *right)
-{
-	if (left->prot != right->prot || left->flag != right->flag)
-		return 0;
-	if (left->fault_lock != right->fault_lock)
-		return 0;
-	if (left->fp != right->fp)
-		return 0;
-	if (left->fp != NULL &&
-	    left->offset + (int)(left->end - left->begin) != right->offset)
-		return 0;
-	if (left->anon_id != right->anon_id)
-		return 0;
-	return 1;
-}
 
 static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 				  unsigned end);
@@ -144,113 +121,6 @@ static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
 	return hash_find(table, &key);
 }
 
-/*
- * vm_coalesce - try to merge the region at @addr with its immediate neighbors.
- *
- * After inserting a new region, check whether the left neighbor (whose end
- * equals our begin) or the right neighbor (whose begin equals our end) can be
- * folded in.  If so, both are removed and vm_add_map() is called for the
- * combined range; that recursive call will coalesce further if needed.
- *
- * File ref-counting mirrors the vm_mprotect() pattern: bump once before
- * hash_remove() so the invalidator's fs_put_file() does not drop to zero,
- * then release after vm_add_map() has taken its own reference.
- */
-static void vm_coalesce(hash_table *table, unsigned addr)
-{
-	key_value_pair *pair = vm_find_pair(table, addr);
-	vm_key probe;
-
-	if (!pair)
-		return;
-
-	vm_region *region = pair->val;
-	vm_key *rkey = pair->key;
-
-	/* --- left neighbor: probe [begin-1, begin) ---------------------- */
-	if (region->begin > 0) {
-		probe.begin = region->begin - 1;
-		probe.end = region->begin;
-		key_value_pair *lpair = hash_find(table, &probe);
-		if (lpair) {
-			vm_region *lregion = lpair->val;
-			if (lregion->end == region->begin &&
-			    vm_can_merge(lregion, region)) {
-				unsigned new_begin = lregion->begin;
-				unsigned new_end = region->end;
-				int new_prot = region->prot;
-				int new_flag = region->flag;
-				file *new_fp = region->fp;
-				int new_offset = lregion->offset;
-				unsigned new_anon_id = lregion->anon_id;
-				vm_fault_lock *new_fault_lock =
-					lregion->fault_lock;
-
-				if (new_fp)
-					fs_get_file(new_fp);
-				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
-				    new_anon_id)
-					mm_anon_shared_get(new_anon_id);
-				vm_fault_lock_get(new_fault_lock);
-				hash_remove(table, lpair->key);
-				hash_remove(table, rkey);
-				vm_add_map_with_lock(table, new_begin, new_end,
-						     new_prot, new_flag, new_fp,
-						     new_offset, new_anon_id,
-						     new_fault_lock);
-				if (new_fp)
-					fs_put_file(new_fp);
-				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
-				    new_anon_id)
-					mm_anon_shared_put(new_anon_id);
-				vm_fault_lock_put(new_fault_lock);
-				return;
-			}
-		}
-	}
-
-	/* --- right neighbor: probe [end, end+1) ------------------------- */
-	probe.begin = region->end;
-	probe.end = region->end + 1;
-	{
-		key_value_pair *rpair = hash_find(table, &probe);
-		if (rpair) {
-			vm_region *rregion = rpair->val;
-			if (rregion->begin == region->end &&
-			    vm_can_merge(region, rregion)) {
-				unsigned new_begin = region->begin;
-				unsigned new_end = rregion->end;
-				int new_prot = region->prot;
-				int new_flag = region->flag;
-				file *new_fp = region->fp;
-				int new_offset = region->offset;
-				unsigned new_anon_id = region->anon_id;
-				vm_fault_lock *new_fault_lock =
-					region->fault_lock;
-
-				if (new_fp)
-					fs_get_file(new_fp);
-				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
-				    new_anon_id)
-					mm_anon_shared_get(new_anon_id);
-				vm_fault_lock_get(new_fault_lock);
-				hash_remove(table, rkey);
-				hash_remove(table, rpair->key);
-				vm_add_map_with_lock(table, new_begin, new_end,
-						     new_prot, new_flag, new_fp,
-						     new_offset, new_anon_id,
-						     new_fault_lock);
-				if (new_fp)
-					fs_put_file(new_fp);
-				if ((new_flag & MAP_SHARED) && new_fp == NULL &&
-				    new_anon_id)
-					mm_anon_shared_put(new_anon_id);
-				vm_fault_lock_put(new_fault_lock);
-				return;
-			}
-		}
-	}
-}
 
 /*
  * vm_add_map - insert a new mapping [begin, end) into the VM map.
@@ -363,7 +233,6 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 		mm_anon_shared_get(anon_id);
 
 	hash_insert(table, key, region);
-	vm_coalesce(table, begin);
 }
 
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
@@ -373,18 +242,6 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 			     NULL);
 }
 
-void vm_add_map_with_shared_fault_lock(vm_struct_t vm, unsigned begin,
-				       unsigned end, int prot, int flag,
-				       file *fp, int offset, unsigned anon_id,
-				       vm_region *shared_region)
-{
-	vm_fault_lock *fault_lock = NULL;
-
-	if (shared_region)
-		fault_lock = shared_region->fault_lock;
-	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
-			     fault_lock);
-}
 
 /*
  * vm_del_map - remove the mapping that contains addr and unmap its pages.

@@ -36,10 +36,6 @@ void vm_destroy(vm_struct_t vm);
  */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int flag, file *fp, int offset, unsigned anon_id);
-void vm_add_map_with_shared_fault_lock(vm_struct_t vm, unsigned begin,
-				       unsigned end, int prot, int flag,
-				       file *fp, int offset, unsigned anon_id,
-				       vm_region *shared_region);
 
 /**
  * delete a mapped region which contains addr

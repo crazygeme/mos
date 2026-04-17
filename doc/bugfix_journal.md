@@ -31,6 +31,32 @@ there is no TCP socket at all.
 
 ---
 
+## 2026-04-17 - `gnome-terminal` PTY poll wakeups could go stale
+
+**Symptom**: Large output such as `ls -alh /usr/lib` could stall in
+`gnome-terminal`, even though the same workload worked on a tty, in `screen`,
+and over SSH.
+
+**Root cause**: The PTY transport uses `cyb_notify_poll()` to wake tasks
+sleeping in `poll()`. That path called [ps_put_to_ready_queue()](../src/ps/alg/ps_alg_rr.c)
+unconditionally on the remembered poll task. In a fast poll-driven consumer
+like old VTE, multiple PTY wakeups can arrive while the main-loop task is
+already runnable or back in userspace rather than still blocked in `poll()`.
+That stale wake relabeled the task as `ps_ready` again even though it was no
+longer asleep, making the scheduler state timing-sensitive in exactly the way
+that verbose kernel logging could mask.
+
+**Fix**:
+- in [ps_alg_rr.c](../src/ps/alg/ps_alg_rr.c), make the public
+  `ps_put_to_ready_queue()` wake helper transition tasks only when they are
+  still in `ps_waiting`
+- leave `ps_put_to_ready_queue_unsafe()` unchanged for internal scheduler paths
+  that intentionally enqueue newly created or timer-expired tasks
+- keep PTY/socket/lock wakeups on the public helper so stale poll notifications
+  stop perturbing runnable tasks
+
+---
+
 ## 2026-04-14 - PTY controlling `/dev/tty` lookup broke `man`, and `strncpy()` still overflowed
 
 This round started from two user-visible regressions in SSH-backed sessions:

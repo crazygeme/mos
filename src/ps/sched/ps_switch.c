@@ -82,6 +82,7 @@ void _task_sched(const char *func)
 	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
 	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
 	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
+	ps_update_ldt(task);
 
 	/* Switch to the new task's kernel stack.  After this point no local
 	 * variable may be written: CURRENT_TASK() derives the task from the

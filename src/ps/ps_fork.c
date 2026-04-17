@@ -149,7 +149,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
  * Static helpers — file-descriptor duplication
  */
 
-static void ps_dup_fds(task_struct *cur, task_struct *task)
+void ps_dup_fds(task_struct *cur, task_struct *task)
 {
 	int i;
 	memset(task->fds, 0, PAGE_SIZE);
@@ -165,6 +165,8 @@ static void ps_dup_fds(task_struct *cur, task_struct *task)
 	}
 	mutex_unlock(&cur->fd_lock);
 }
+
+int do_vfork(void);
 
 /*
  * Static helpers — COW user address-space duplication
@@ -314,7 +316,7 @@ static void copy_vma_callback(vm_region *vma, void *data)
  * and copied with COW semantics.  A full TLB flush is issued at the end
  * because parent PTEs that were writable may now be read-only in the TLB.
  */
-static void copy_page_range(task_struct *parent, task_struct *child)
+void copy_page_range(task_struct *parent, task_struct *child)
 {
 	struct copy_page_range_ctx ctx = {
 		.src_pd = (unsigned *)mm_get_pagedir(),
@@ -333,7 +335,7 @@ static void copy_page_range(task_struct *parent, task_struct *child)
 
 /* Allocate the child task page, clone the parent's register state, and set
  * up the kernel stack so the child returns through ret_from_fork. */
-static task_struct *fork_alloc_child(task_struct *cur)
+task_struct *fork_alloc_child(task_struct *cur)
 {
 	task_struct *task = vm_alloc(KERNEL_TASK_SIZE);
 	intr_frame *cur_intr_frame =
@@ -378,7 +380,7 @@ static task_struct *fork_alloc_child(task_struct *cur)
 /* Copy the user environment fields that are identical for both fork and
  * vfork: address-space bookkeeping, command line, environment string, cwd,
  * and all credentials. */
-static void fork_dup_user_env(task_struct *cur, task_struct *task)
+void fork_dup_user_env(task_struct *cur, task_struct *task)
 {
 	task->user->brk = cur->user->brk;
 	task->user->start_brk = cur->user->start_brk;
@@ -408,19 +410,21 @@ static void fork_dup_user_env(task_struct *cur, task_struct *task)
 	task->user->fsgid = cur->user->fsgid;
 	memcpy(task->user->tls_desc, cur->user->tls_desc,
 	       sizeof(cur->user->tls_desc));
+	memcpy(task->user->ldt_desc, cur->user->ldt_desc,
+	       sizeof(cur->user->ldt_desc));
 	memcpy(task->user->rlimits, cur->user->rlimits,
 	       sizeof(cur->user->rlimits));
 }
 
 /* Duplicate the signal context; child starts with no pending signals. */
-static void fork_dup_signal(task_struct *cur, task_struct *task)
+void fork_dup_signal(task_struct *cur, task_struct *task)
 {
 	task->signal = zalloc(sizeof(signal_context));
 	memcpy(task->signal, cur->signal, sizeof(signal_context));
 	task->signal->sig_pending = 0;
 }
 
-static int fork_dup_io(task_struct *cur, task_struct *task)
+int fork_dup_io(task_struct *cur, task_struct *task)
 {
 	task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
 	if (!task->io_bitmap)
@@ -430,8 +434,7 @@ static int fork_dup_io(task_struct *cur, task_struct *task)
 }
 
 /* Copy scheduling metadata and ownership fields from parent to child. */
-static void fork_set_meta(task_struct *cur, task_struct *task,
-			  unsigned fork_flag)
+void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag)
 {
 	task->umask = cur->umask;
 	task->priority = cur->priority;
@@ -451,7 +454,7 @@ static void fork_set_meta(task_struct *cur, task_struct *task,
 }
 
 /* Enqueue the child: increment parent's child count and add to ready+mgr. */
-static void fork_enqueue(task_struct *cur, task_struct *task)
+void fork_enqueue(task_struct *cur, task_struct *task)
 {
 	int irq;
 
@@ -506,7 +509,7 @@ static int do_fork(void)
  * The child does NOT own page_dir or vm — cleanup() and do_exit() detect
  * FORK_FLAG_VFORK and skip the destroy/unmap paths for those resources.
  */
-static int do_vfork(void)
+int do_vfork(void)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =

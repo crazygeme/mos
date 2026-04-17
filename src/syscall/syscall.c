@@ -159,10 +159,10 @@ static unsigned call_table[NR_syscalls] = {
 	sys_ipc, // 117 __NR_ipc
 	sys_fsync, // 118 __NR_fsync
 	sys_sigreturn, // 119 __NR_sigreturn
-	0, // 120 __NR_clone
+	sys_clone, // 120 __NR_clone
 	0, // 121 __NR_setdomainname
 	sys_uname, // 122 __NR_uname
-	0, // 123 __NR_modify_ldt
+	sys_modify_ldt, // 123 __NR_modify_ldt
 	0, // 124 __NR_adjtimex
 	sys_mprotect, // 125 __NR_mprotect
 	0, // 126 __NR_sigprocmask
@@ -263,7 +263,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_fcntl64, // 221 __NR_fcntl64
 	0, // 222
 	0, // 223
-	0, // 224 __NR_gettid
+	sys_gettid, // 224 __NR_gettid
 	0, // 225 __NR_readahead
 	0, // 226 __NR_setxattr
 	0, // 227 __NR_lsetxattr
@@ -277,13 +277,13 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 235 __NR_removexattr
 	0, // 236 __NR_lremovexattr
 	0, // 237 __NR_fremovexattr
-	0, // 238 __NR_tkill
+	sys_tkill, // 238 __NR_tkill
 	0, // 239 __NR_sendfile64
-	0, // 240 __NR_futex
+	sys_futex, // 240 __NR_futex
 	0, // 241 __NR_sched_setaffinity
 	0, // 242 __NR_sched_getaffinity
 	sys_set_thread_area, // 243 __NR_set_thread_area
-	0, // 244 __NR_get_thread_area
+	sys_get_thread_area, // 244 __NR_get_thread_area
 	0, // 245 __NR_io_setup
 	0, // 246 __NR_io_destroy
 	0, // 247 __NR_io_getevents
@@ -292,6 +292,12 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 250 __NR_fadvise64
 	0, // 251
 	sys_exit_group, // 252 __NR_exit_group
+	0, // 253 __NR_lookup_dcookie
+	0, // 254 __NR_epoll_create
+	0, // 255 __NR_epoll_ctl
+	0, // 256 __NR_epoll_wait
+	0, // 257 __NR_remap_file_pages
+	sys_set_tid_address, // 258 __NR_set_tid_address
 };
 
 static int unhandled_syscall(unsigned callno)
@@ -303,9 +309,15 @@ static int unhandled_syscall(unsigned callno)
 
 static void syscall_process(intr_frame *frame)
 {
-	syscall_fn fn = (syscall_fn)call_table[frame->eax];
+	syscall_fn fn;
 	int ret;
 
+	if (frame->eax >= NR_syscalls) {
+		frame->eax = unhandled_syscall(frame->eax);
+		return;
+	}
+
+	fn = (syscall_fn)call_table[frame->eax];
 	if (!fn)
 		ret = unhandled_syscall(frame->eax);
 	else

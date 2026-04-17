@@ -163,10 +163,19 @@ int sys_ugetrlimit(int resource, void *limit);
 int sys_exit_group(int status);
 int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 		     size_t *ret);
+int sys_gettid(void);
+int sys_tkill(int tid, int sig);
+int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
+	      int *uaddr2, int val3);
 int sys_set_thread_area(void *u_info);
+int sys_get_thread_area(void *u_info);
+int sys_set_tid_address(int *tidptr);
+int sys_modify_ldt(int func, void *ptr, unsigned long bytecount);
 int sys_setitimer(int which, const struct itimerval *new_value,
 		  struct itimerval *old_value);
 int sys_getitimer(int which, struct itimerval *value);
+int sys_clone(unsigned long flags, unsigned long child_stack,
+	      int *parent_tidptr, int *tls, int *child_tidptr);
 
 /*
  * ps/ps_signal.c

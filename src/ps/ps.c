@@ -107,6 +107,33 @@ void ps_remove_mgr(task_struct *task)
 	spinlock_unlock(&ps_lock, irq);
 }
 
+void ps_update_ldt(task_struct *task)
+{
+	extern unsigned long long gdt[];
+	unsigned i;
+	unsigned limit;
+
+	if (!task || !task->user) {
+		SET_LDT(0);
+		return;
+	}
+
+	for (i = 0; i < LDT_ENTRY_COUNT; i++) {
+		if (task->user->ldt_desc[i]) {
+			limit = LDT_ENTRY_COUNT * sizeof(unsigned long long) -
+				1;
+			gdt[LDT_SELECTOR / 8] =
+				MAKE_SEG_DESC((unsigned)task->user->ldt_desc,
+					      limit, SEG_CLASS_SYSTEM, 2,
+					      KERNEL_PRIVILEGE, SEG_BASE_1);
+			SET_LDT(LDT_SELECTOR);
+			return;
+		}
+	}
+
+	SET_LDT(0);
+}
+
 int ps_total_count()
 {
 	int ret = 0;

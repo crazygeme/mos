@@ -91,13 +91,15 @@
 
 /* SMP configuration */
 #define MAX_CPUS 8
+#define LDT_ENTRY_COUNT 16
+#define LDT_SELECTOR ((5 + MAX_CPUS) << 3)
 #define AP_TRAMPOLINE_PHYS 0x8000 /* physical addr for AP startup code */
 #define AP_PARAMS_PHYS 0x9000 /* physical addr for AP params page */
 #define IPI_VECTOR_SCHED 0xF0 /* scheduler kick IPI */
 #define IPI_VECTOR_TLB 0xF1 /* TLB shootdown IPI */
 #define IPI_VECTOR_SPURIOUS 0xFF /* spurious APIC interrupt */
 
-/* GDT: 5 base entries + one TSS per CPU */
-#define SELECTOR_COUNT (5 + MAX_CPUS)
+/* GDT: 5 base entries + one TSS per CPU + one current-task LDT descriptor */
+#define SELECTOR_COUNT (5 + MAX_CPUS + 1)
 
 #endif

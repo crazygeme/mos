@@ -54,6 +54,19 @@ void ps_id_free(unsigned pid);
 void timer_arm_unsafe(task_struct *task, unsigned ms);
 void timer_disarm_unsafe(task_struct *task);
 void ps_fire_timers_unsafe(void);
+int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake);
+void ps_clear_child_tid(task_struct *task);
+
+/* Shared task-creation helpers. */
+void ps_dup_fds(task_struct *cur, task_struct *task);
+int do_vfork(void);
+task_struct *fork_alloc_child(task_struct *cur);
+void fork_dup_user_env(task_struct *cur, task_struct *task);
+void fork_dup_signal(task_struct *cur, task_struct *task);
+int fork_dup_io(task_struct *cur, task_struct *task);
+void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag);
+void fork_enqueue(task_struct *cur, task_struct *task);
+void copy_page_range(task_struct *parent, task_struct *child);
 
 /* Set the kernel-mode segment selectors in a task's saved TSS.
  * Used by both ps_create and the fork helpers. */

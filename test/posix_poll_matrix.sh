@@ -72,6 +72,7 @@ cat > "$SRC" <<'EOF'
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/time.h>
 
 #ifndef TIOCGPTN
 #define TIOCGPTN 0x80045430
@@ -430,6 +431,92 @@ static void expect_poll_ready_blocking(int fd, short events, int timeout_ms,
 		fprintf(stderr,
 			"%s: unexpected blocking poll bits, revents=%#x forbidden=%#x\n",
 			label, pfd.revents, must_not_have);
+		exit(1);
+	}
+}
+
+static long now_ms(void)
+{
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	return tv.tv_sec * 1000L + tv.tv_usec / 1000;
+}
+
+static void expect_select_readable_blocking_prompt(int fd, int timeout_ms,
+						   int prompt_ms,
+						   const char *label)
+{
+	fd_set rfds;
+	struct timeval tv;
+	long t0;
+	long elapsed;
+	int rc;
+
+	FD_ZERO(&rfds);
+	FD_SET(fd, &rfds);
+	tv.tv_sec = timeout_ms / 1000;
+	tv.tv_usec = (timeout_ms % 1000) * 1000;
+	t0 = now_ms();
+	rc = select(fd + 1, &rfds, NULL, NULL, &tv);
+	elapsed = now_ms() - t0;
+	if (rc < 0)
+		die("select readable blocking prompt");
+	if (rc != 1 || !FD_ISSET(fd, &rfds)) {
+		fprintf(stderr,
+			"%s: expected blocking select readability, rc=%d isset=%d\n",
+			label, rc, FD_ISSET(fd, &rfds));
+		exit(1);
+	}
+	if (elapsed > prompt_ms) {
+		fprintf(stderr,
+			"%s: select woke too late, elapsed=%ldms limit=%dms\n",
+			label, elapsed, prompt_ms);
+		exit(1);
+	}
+}
+
+static void expect_poll_ready_blocking_prompt(int fd, short events,
+					      int timeout_ms, int prompt_ms,
+					      short must_have,
+					      short must_not_have,
+					      const char *label)
+{
+	struct pollfd pfd;
+	long t0;
+	long elapsed;
+	int rc;
+
+	memset(&pfd, 0, sizeof(pfd));
+	pfd.fd = fd;
+	pfd.events = events;
+	t0 = now_ms();
+	rc = poll(&pfd, 1, timeout_ms);
+	elapsed = now_ms() - t0;
+	if (rc < 0)
+		die("poll blocking prompt");
+	if (rc != 1) {
+		fprintf(stderr,
+			"%s: expected blocking poll rc=1, got rc=%d\n",
+			label, rc);
+		exit(1);
+	}
+	if ((pfd.revents & must_have) != must_have) {
+		fprintf(stderr,
+			"%s: missing blocking poll bits, revents=%#x expected=%#x\n",
+			label, pfd.revents, must_have);
+		exit(1);
+	}
+	if (pfd.revents & must_not_have) {
+		fprintf(stderr,
+			"%s: unexpected blocking poll bits, revents=%#x forbidden=%#x\n",
+			label, pfd.revents, must_not_have);
+		exit(1);
+	}
+	if (elapsed > prompt_ms) {
+		fprintf(stderr,
+			"%s: poll woke too late, elapsed=%ldms limit=%dms\n",
+			label, elapsed, prompt_ms);
 		exit(1);
 	}
 }
@@ -870,16 +957,40 @@ static void test_socket_stream_blocking_waits(void)
 		_exit(0);
 	}
 	close(sv[1]);
-	expect_poll_ready_blocking(
-		sv[0], POLLIN, 2000, POLLIN, 0,
-		"blocking poll wakes for stream socket readability after peer write");
+	expect_select_readable_blocking_prompt(
+		sv[0], 2000, 1000,
+		"blocking select wakes promptly for stream socket readability after peer write");
 	if (read(sv[0], &ch, 1) != 1 || ch != 'W') {
-		fprintf(stderr, "blocking stream socket payload mismatch\n");
+		fprintf(stderr, "blocking stream socket select payload mismatch\n");
 		exit(1);
 	}
 	if (close(sv[0]) < 0)
-		die("close blocking stream socket");
-	wait_child_ok(pid, "blocking stream socket");
+		die("close blocking stream socket select");
+	wait_child_ok(pid, "blocking stream socket select");
+
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
+		die("socketpair blocking poll");
+	pid = fork();
+	if (pid < 0)
+		die("fork socketpair blocking poll");
+	if (pid == 0) {
+		close(sv[0]);
+		usleep(100000);
+		if (write(sv[1], "X", 1) != 1)
+			_exit(1);
+		_exit(0);
+	}
+	close(sv[1]);
+	expect_poll_ready_blocking_prompt(
+		sv[0], POLLIN, 2000, 1000, POLLIN, 0,
+		"blocking poll wakes promptly for stream socket readability after peer write");
+	if (read(sv[0], &ch, 1) != 1 || ch != 'X') {
+		fprintf(stderr, "blocking stream socket poll payload mismatch\n");
+		exit(1);
+	}
+	if (close(sv[0]) < 0)
+		die("close blocking stream socket poll");
+	wait_child_ok(pid, "blocking stream socket poll");
 }
 
 static void test_named_unix_stream(void)

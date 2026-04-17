@@ -2,7 +2,8 @@
 
 A focused log of the NPTL-related debugging and fixes done on 2026-04-17.
 This document is narrower than `bugfix_journal.md`: it records the `clone()`,
-`CLONE_CHILD_SETTID`, and `script.posix_signal` work from this session.
+`CLONE_CHILD_SETTID`, `script.posix_signal`, and `startx`/VDSO work from this
+session.
 
 ---
 
@@ -158,6 +159,74 @@ task-level pre-start write use case and is only consumed by `clone()`.
 
 ---
 
+## 2026-04-17 - `startx` regressed in `nptl` because the VDSO lived inside XFree86 int10 low memory
+
+**Symptom**: `startx` worked on the non-`nptl` branch but failed again on the
+`nptl` branch. The X server stopped at:
+
+```text
+(II) VESA(0): initializing int10
+```
+
+and then exited. In `krn.log`, the matching path was:
+
+- X mapped `/dev/mem` at `0xf0000`, `0xa0000`, and `0xc0000`
+- X created the low-memory SysV SHM segment
+- X attached that segment twice:
+  - once at an arbitrary base
+  - once at virtual address `0x00000000` via `shmat(..., 1, SHM_RND)`
+- the process then exited before logging:
+  - `Primary V_BIOS segment is: 0xc000`
+  - `VESA BIOS detected`
+
+Those two lines do appear in the successful run captured in
+`/var/log/XFree86.1.log`, so the regression was before the first successful
+VBIOS detection.
+
+### Root cause
+
+The `nptl` branch introduced a live VDSO mapping and placed it at:
+
+```c
+0x00010000
+```
+
+That address is inside the legacy low-memory range that XFree86 int10 remaps
+with:
+
+```c
+shmat(low_mem, (char*)1, SHM_RND)
+```
+
+which rounds down and maps the SysV SHM segment over `0x00000000-0x0009ffff`.
+
+So on the `nptl` branch, XFree86's low-memory int10 attach could overwrite the
+user-visible VDSO page and its VMA. The non-`nptl` branch did not have a real
+live VDSO fast-syscall mapping there, which explains why it did not hit the
+same regression.
+
+### Fix
+
+In [`src/mm/vdso.c`](../src/mm/vdso.c) and
+[`include/mm/vdso.h`](../include/mm/vdso.h):
+
+- removed the fixed low-memory VDSO address
+- made the VDSO base dynamic
+- mapped it just below `USER_ZONE_END`, i.e. at the top of normal user mmap
+  space and far away from the first 640KB used by XFree86 int10
+
+`AT_SYSINFO` now points at that relocated high mapping instead of the old
+`0x00010000` region.
+
+### Why this was an `nptl`-only bug
+
+The non-`nptl` branch effectively had no active VDSO fast-syscall code, so
+overwriting low memory during XFree86 int10 setup did not destroy anything
+important. The `nptl` branch did, and the low VDSO placement made the new
+mapping collide with software that still expects to own legacy low memory.
+
+---
+
 ## Files changed in the final working version
 
 - [`src/ps/ps_clone.c`](../src/ps/ps_clone.c)
@@ -168,15 +237,21 @@ task-level pre-start write use case and is only consumed by `clone()`.
   - `ps_write_process_memory(...)`
 - [`src/ps/ps_internal.h`](../src/ps/ps_internal.h)
   - internal declaration for `ps_write_process_memory(...)`
+- [`src/mm/vdso.c`](../src/mm/vdso.c)
+  - VDSO relocated out of low memory into high user mmap space
+- [`include/mm/vdso.h`](../include/mm/vdso.h)
+  - removed the fixed `0x00010000` VDSO address
 
 ---
 
 ## Net result
 
-Today fixed two distinct `nptl` issues:
+Today fixed three distinct `nptl` issues:
 
 1. `CLONE_CHILD_SETTID` now targets the child address space correctly for
    process-style `clone()`.
 2. The final `script.posix_signal` race no longer hangs because the newborn
    process-style clone gets its first run before the parent races ahead and
    signals it.
+3. `startx` works again because the `nptl` VDSO no longer collides with
+   XFree86 int10's low-memory `shmat()` mapping.

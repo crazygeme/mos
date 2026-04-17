@@ -2,7 +2,7 @@
 #include <fs/fs.h>
 #include <mm/mmap.h>
 #include <mm/mm.h>
-#include <mm/cache.h>
+#include <mm/phymm.h>
 #include <hw/time.h>
 #include <lib/klib.h>
 #include <macro.h>
@@ -56,8 +56,9 @@ struct mos_shm_segment {
 	int removed;
 	int key;
 	int shmid;
-	unsigned anon_id;
 	unsigned size;
+	unsigned page_count;
+	unsigned *pages;
 	unsigned owner_pid;
 	unsigned creator_uid;
 	unsigned creator_gid;
@@ -78,6 +79,38 @@ static struct mos_shm_segment mos_shm_segments[MOS_SHM_SEGMENT_MAX];
 static struct mos_shm_attach mos_shm_attaches[MOS_SHM_ATTACH_MAX];
 static spinlock_t mos_shm_lock;
 static int mos_shm_next_id = 1;
+
+static void mos_shm_release_pages(struct mos_shm_segment *seg)
+{
+	unsigned i;
+
+	if (!seg || !seg->pages)
+		return;
+
+	for (i = 0; i < seg->page_count; ++i) {
+		unsigned phy = seg->pages[i];
+		unsigned page_index;
+
+		if (!phy)
+			continue;
+
+		page_index = PHY_TO_PAGE_IDX(phy);
+		if (phymm_dereference_page(page_index) == 0)
+			phymm_free_user(page_index);
+	}
+
+	kfree(seg->pages);
+	seg->pages = NULL;
+}
+
+static void mos_shm_destroy_segment(struct mos_shm_segment *seg)
+{
+	if (!seg)
+		return;
+
+	mos_shm_release_pages(seg);
+	memset(seg, 0, sizeof(*seg));
+}
 
 static void mos_shm_init(void)
 {
@@ -116,6 +149,17 @@ static int mos_shm_create(int key, unsigned size, unsigned mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	int i;
+	unsigned page_count;
+	unsigned *pages;
+
+	page_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+	if (page_count == 0)
+		page_count = 1;
+
+	pages = kmalloc(sizeof(*pages) * page_count);
+	if (!pages)
+		return -ENOMEM;
+	memset(pages, 0, sizeof(*pages) * page_count);
 
 	for (i = 0; i < MOS_SHM_SEGMENT_MAX; ++i) {
 		struct mos_shm_segment *seg = &mos_shm_segments[i];
@@ -127,10 +171,11 @@ static int mos_shm_create(int key, unsigned size, unsigned mode)
 		seg->used = 1;
 		seg->key = key;
 		seg->shmid = mos_shm_next_id++;
-		seg->anon_id = (unsigned)seg->shmid;
 		seg->size = (size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 		if (seg->size == 0)
 			seg->size = PAGE_SIZE;
+		seg->page_count = page_count;
+		seg->pages = pages;
 		seg->owner_pid = cur->psid;
 		seg->creator_uid = cur->user ? cur->user->euid : 0;
 		seg->creator_gid = cur->user ? cur->user->egid : 0;
@@ -139,43 +184,59 @@ static int mos_shm_create(int key, unsigned size, unsigned mode)
 		return seg->shmid;
 	}
 
+	kfree(pages);
 	return -ENOSPC;
 }
 
-static void mos_shm_rebind_region(unsigned addr, unsigned size,
-				  unsigned anon_id)
+static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
+			       unsigned *phy_out)
 {
-	task_struct *cur = CURRENT_TASK();
-	vm_region *region;
-	unsigned old_anon_id;
-	unsigned vir;
+	unsigned page_index;
+	unsigned phy;
 
-	if (!cur || !cur->user || anon_id == 0)
-		return;
+	if (!seg || page_no >= seg->page_count || !phy_out)
+		return -EINVAL;
 
-	region = vm_find_map(cur->user->vm, addr);
-	if (!region || region->begin != addr || region->end < addr + size)
-		return;
+	phy = seg->pages[page_no];
+	if (phy == 0) {
+		page_index = phymm_alloc_user();
+		if (page_index == PHYMM_INVALID)
+			return -ENOMEM;
 
-	old_anon_id = region->anon_id;
-	if (old_anon_id == anon_id)
-		return;
+		phy = page_index * PAGE_SIZE;
+		if (mm_kmap_phys(phy) != 1) {
+			phymm_free_user(page_index);
+			return -ENOMEM;
+		}
+		memset((void *)(phy + KERNEL_OFFSET), 0, PAGE_SIZE);
 
-	mm_anon_shared_get(anon_id);
-	region->anon_id = anon_id;
-
-	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
-		unsigned mmflag = mm_get_map_flag(vir);
-
-		if (mmflag == 0)
-			continue;
-
-		mm_anon_shared_add(anon_id, vir - region->begin,
-				   mm_get_attached_page_index(vir) * PAGE_SIZE);
+		/* The segment itself owns one persistent reference. */
+		phymm_reference_page(page_index);
+		seg->pages[page_no] = phy;
 	}
 
-	if (old_anon_id != 0)
-		mm_anon_shared_put(old_anon_id);
+	*phy_out = phy;
+	return 0;
+}
+
+static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg, int prot)
+{
+	unsigned vir;
+	unsigned page_no = 0;
+	unsigned pte_flag = (prot & PROT_WRITE) ? PAGE_ENTRY_USER_DATA :
+						 PAGE_ENTRY_USER_CODE;
+
+	for (vir = addr; vir < addr + seg->size; vir += PAGE_SIZE, ++page_no) {
+		unsigned phy;
+
+		if (mos_shm_ensure_page(seg, page_no, &phy) != 0)
+			return -ENOMEM;
+		if (mm_map_page(vir, phy, pte_flag) != 1)
+			return -ENOMEM;
+	}
+
+	RELOAD_CR3();
+	return 0;
 }
 
 static int mos_shmget(int key, unsigned size, int shmflg)
@@ -266,7 +327,10 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 	if ((int)mapped < 0)
 		return (int)mapped;
 
-	mos_shm_rebind_region(mapped, seg->size, seg->anon_id);
+	if (mos_shm_map_pages(mapped, seg, prot) != 0) {
+		do_munmap((void *)mapped, seg->size);
+		return -ENOMEM;
+	}
 
 	*user_raddr = mapped;
 
@@ -324,7 +388,7 @@ static int mos_shmdt(const void *shmaddr)
 		if (seg->attach_count > 0)
 			seg->attach_count--;
 		if (seg->removed && seg->attach_count == 0)
-			memset(seg, 0, sizeof(*seg));
+			mos_shm_destroy_segment(seg);
 	}
 	spinlock_unlock(&mos_shm_lock, irq);
 
@@ -349,7 +413,7 @@ static int mos_shmctl(int shmid, int cmd, void *buf)
 	case MOS_IPC_RMID:
 		seg->removed = 1;
 		if (seg->attach_count == 0)
-			memset(seg, 0, sizeof(*seg));
+			mos_shm_destroy_segment(seg);
 		spinlock_unlock(&mos_shm_lock, irq);
 		return 0;
 	case MOS_IPC_STAT:

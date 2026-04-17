@@ -1,1 +1,1 @@
-CFLAGS += -O0
+CFLAGS += -O2

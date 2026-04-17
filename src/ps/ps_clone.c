@@ -21,6 +21,24 @@
 #define CLONE_SYSVSEM 0x00040000
 #define CLONE_DETACHED 0x00400000
 
+static void clone_enqueue_process_child(task_struct *cur, task_struct *task)
+{
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
+	cur->nchildren++;
+	ps_put_to_ready_queue_unsafe(task);
+	/*
+	 * Process-style clone() should let the newborn run its fork return path
+	 * before the parent resumes. Move it to the front of its ready queue for
+	 * this first scheduling decision.
+	 */
+	list_remove_entry(&task->ps_list);
+	list_insert_head(&control.ready_queue[task->priority], &task->ps_list);
+	ps_add_mgr_unsafe(task);
+	spinlock_unlock(&ps_lock, irq);
+}
+
 static int do_clone(unsigned long flags, unsigned long child_stack,
 		    int *parent_tidptr, int *tls, int *child_tidptr)
 {
@@ -122,13 +140,23 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 
 	if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
 		*parent_tidptr = task->psid;
-	if ((flags & CLONE_CHILD_SETTID) && child_tidptr)
-		*child_tidptr = task->psid;
+	if ((flags & CLONE_CHILD_SETTID) && child_tidptr) {
+		if (share_vm)
+			*child_tidptr = task->psid;
+		else {
+			int rc = ps_write_process_memory(task, child_tidptr,
+							 &task->psid,
+							 sizeof(task->psid));
+
+			if (rc != 0)
+				return rc;
+		}
+	}
 	if ((flags & CLONE_CHILD_CLEARTID) && child_tidptr)
 		task->clear_child_tid = child_tidptr;
 
 	if (!thread_group)
-		fork_enqueue(cur, task);
+		clone_enqueue_process_child(cur, task);
 	else {
 		spinlock_lock(&ps_lock, &irq);
 		ps_put_to_ready_queue_unsafe(task);
@@ -136,6 +164,14 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		spinlock_unlock(&ps_lock, irq);
 	}
 	cur_intr_frame->eax = task->psid;
+	/*
+	 * Process-style clone() is used by glibc/NPTL for fork-like children
+	 * with CLONE_CHILD_SETTID/CLEARTID. Yield once after enqueue so the
+	 * newborn child can run its fork return path before the parent races
+	 * ahead and signals it.
+	 */
+	if (!thread_group)
+		task_sched();
 	return task->psid;
 }
 

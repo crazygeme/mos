@@ -68,6 +68,8 @@ void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag);
 void fork_enqueue(task_struct *cur, task_struct *task);
 void copy_page_range(task_struct *parent, task_struct *child);
 int ps_set_thread_area_for(task_struct *task, void *info);
+int ps_write_process_memory(task_struct *task, void *addr, const void *src,
+			    unsigned len);
 
 /* Set the kernel-mode segment selectors in a task's saved TSS.
  * Used by both ps_create and the fork helpers. */

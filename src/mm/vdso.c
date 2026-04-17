@@ -16,11 +16,40 @@ _VDSO NAKED void __kernel_vsyscall(void)
 		     "ret");
 }
 
-void mm_vdso_map()
+static unsigned mm_vdso_size(void)
 {
 	unsigned vdso_start = (unsigned)&__vdso_start;
 	unsigned vdso_end = (unsigned)&__vdso_end;
-	unsigned size = vdso_end - vdso_start;
+
+	if (vdso_end <= vdso_start)
+		return 0;
+	return vdso_end - vdso_start;
+}
+
+static unsigned mm_vdso_base(void)
+{
+	unsigned size = mm_vdso_size();
+	unsigned page_count;
+
+	if (size == 0)
+		return 0;
+
+	page_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+	/*
+	 * Keep the VDSO just below the mmap/stack boundary, well away from
+	 * legacy low-memory layouts such as XFree86 int10's 0x00000-0x9ffff
+	 * shared-memory attach. The non-NPTL branch has no live VDSO code, so
+	 * placing it in low memory created an NPTL-only regression.
+	 */
+	return USER_ZONE_END - page_count * PAGE_SIZE;
+}
+
+void mm_vdso_map()
+{
+	unsigned vdso_start = (unsigned)&__vdso_start;
+	unsigned size = mm_vdso_size();
+	unsigned base = mm_vdso_base();
 	unsigned page_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 	unsigned i;
 
@@ -28,7 +57,7 @@ void mm_vdso_map()
 		return;
 
 	for (i = 0; i < page_count; i++) {
-		unsigned vir = VDSO_MM_REGION + i * PAGE_SIZE;
+		unsigned vir = base + i * PAGE_SIZE;
 		unsigned phy = vdso_start + i * PAGE_SIZE - KERNEL_OFFSET;
 		mm_map_page(vir, phy, PAGE_ENTRY_USER_CODE);
 	}
@@ -37,8 +66,7 @@ void mm_vdso_map()
 	/* Register a VMA so fork's copy_page_range includes these pages. */
 	{
 		task_struct *cur = CURRENT_TASK();
-		vm_add_map(cur->user->vm, VDSO_MM_REGION,
-			   VDSO_MM_REGION + page_count * PAGE_SIZE,
+		vm_add_map(cur->user->vm, base, base + page_count * PAGE_SIZE,
 			   PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS,
 			   NULL, 0, 0);
 	}
@@ -47,13 +75,12 @@ void mm_vdso_map()
 unsigned mm_vdso_fastcall_entry(void)
 {
 	unsigned vdso_start = (unsigned)&__vdso_start;
-	unsigned vdso_end = (unsigned)&__vdso_end;
+	unsigned base = mm_vdso_base();
 
-	if (vdso_end <= vdso_start)
+	if (base == 0)
 		return 0;
 
-	return VDSO_MM_REGION +
-	       ((unsigned)&__kernel_vsyscall - (unsigned)&__vdso_start);
+	return base + ((unsigned)&__kernel_vsyscall - vdso_start);
 }
 
 int mm_vdso_region(int phy)

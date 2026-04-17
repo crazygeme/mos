@@ -93,13 +93,12 @@ static unsigned long long build_ldt_desc(const struct user_desc *u)
 	return (unsigned long long)low | ((unsigned long long)high << 32);
 }
 
-int sys_set_thread_area(void *info)
+int ps_set_thread_area_for(task_struct *task, void *info)
 {
-	task_struct *cur = CURRENT_TASK();
 	unsigned int entry;
 	struct user_desc *u_info = (struct user_desc *)info;
 
-	if (!u_info)
+	if (!task || !task->user || !u_info)
 		return -EFAULT;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -108,10 +107,10 @@ int sys_set_thread_area(void *info)
 
 	entry = u_info->entry_number;
 
-	if (entry == (unsigned int)-1) {
+		if (entry == (unsigned int)-1) {
 		for (entry = GDT_ENTRY_TLS_MIN; entry <= GDT_ENTRY_TLS_MAX;
 		     entry++) {
-			if (!cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
+			if (!task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
 				break;
 		}
 		if (entry > GDT_ENTRY_TLS_MAX)
@@ -122,9 +121,15 @@ int sys_set_thread_area(void *info)
 	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
 		return -EINVAL;
 
-	cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = build_tls_desc(u_info);
-	gdt[entry] = cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
+	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = build_tls_desc(u_info);
+	if (task == CURRENT_TASK())
+		gdt[entry] = task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
 	return 0;
+}
+
+int sys_set_thread_area(void *info)
+{
+	return ps_set_thread_area_for(CURRENT_TASK(), info);
 }
 
 int sys_get_thread_area(void *info)

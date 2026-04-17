@@ -422,6 +422,14 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 		if (mmflag == 0)
 			continue; /* not yet mapped; vm descriptor update is enough */
 
+		if (prot == PROT_NONE) {
+			/* Force a user-mode fault on any access to guard pages. */
+			mmflag &= ~(PAGE_ENTRY_DPL_USER | PAGE_ENTRY_WRITABLE);
+			mm_set_map_flag(vir, mmflag);
+			continue;
+		}
+
+		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (prot & PROT_WRITE)
 			mmflag |= PAGE_ENTRY_WRITABLE;
 		else
@@ -554,11 +562,12 @@ int sys_quotactl(int cmd, const char *special, int id, void *addr)
 int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	       int flags, unsigned new_addr)
 {
-#if 0
 	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
 	unsigned old_size_pg, new_size_pg, old_end;
 	int ret;
+
+	(void)new_addr;
 
 	if (TestControl.verbos)
 		klog("mremap(%x, %x, %x, flags=%x)\n", old_addr, old_size,
@@ -607,8 +616,6 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	memcpy((void *)ret, (void *)old_addr, old_size_pg);
 	do_munmap((void *)old_addr, old_size_pg);
 	return ret;
-#endif
-	return -ENOSYS;
 }
 
 /* mlock/munlock/mlockall/munlockall — no-ops: we never swap, all pages resident */

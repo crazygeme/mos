@@ -478,6 +478,80 @@ void ps_cleanup_all_user_map(task_struct *task)
 	RELOAD_CR3();
 }
 
+/*
+ * Write `len` bytes from `src` into `task`'s virtual address space at `addr`.
+ *
+ * Used before the child has started running (e.g. CLONE_CHILD_SETTID).  Walks
+ * the child's page directory directly.  If the target page is COW (present but
+ * read-only due to fork), a private copy is made for the child first.
+ */
+int ps_write_process_memory(task_struct *task, void *addr, const void *src,
+			    unsigned len)
+{
+	unsigned vaddr = (unsigned)addr;
+	const char *csrc = (const char *)src;
+	unsigned *pd;
+
+	if (!task || !task->user)
+		return -EFAULT;
+
+	pd = (unsigned *)task->user->page_dir;
+
+	while (len > 0) {
+		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
+		unsigned pte_idx = ADDR_TO_PET_OFFSET(vaddr);
+		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
+		unsigned to_write = PAGE_SIZE - page_off;
+		unsigned *pt;
+		unsigned pte;
+
+		if (to_write > len)
+			to_write = len;
+
+		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
+			return -EFAULT;
+
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pte = pt[pte_idx];
+
+		if (!(pte & PAGE_ENTRY_PRESENT))
+			return -EFAULT;
+
+		if (!(pte & PAGE_ENTRY_WRITABLE)) {
+			/* COW: allocate a private page for the child, then write.
+			 * Read the source via the parent's current virtual address
+			 * (same layout as child's) — avoids phys+KERNEL_OFFSET which
+			 * may not be mapped for high physical addresses. */
+			unsigned old_phy = pte & PAGE_SIZE_MASK;
+			unsigned page_base = vaddr & PAGE_SIZE_MASK;
+			unsigned new_virt = vm_alloc(1);
+
+			if (!new_virt)
+				return -ENOMEM;
+
+			memcpy((void *)new_virt, (void *)page_base, PAGE_SIZE);
+			memcpy((char *)new_virt + page_off, csrc, to_write);
+
+			phymm_reference_page(VIRT_TO_PAGE_IDX(new_virt));
+			mm_kunmap_page(new_virt);
+			pt[pte_idx] = VIRT_TO_PHY(new_virt) |
+				      (pte & ~PAGE_SIZE_MASK) |
+				      PAGE_ENTRY_WRITABLE;
+			phymm_dereference_page(old_phy / PAGE_SIZE);
+		} else {
+			unsigned phy = pte & PAGE_SIZE_MASK;
+
+			memcpy((char *)(phy + KERNEL_OFFSET) + page_off, csrc,
+			       to_write);
+		}
+
+		vaddr += to_write;
+		csrc += to_write;
+		len -= to_write;
+	}
+	return 0;
+}
+
 task_struct *__attribute__((noinline)) CURRENT_TASK(void)
 {
 	unsigned long esp;

@@ -3,6 +3,9 @@
 > A 32-bit x86 (i686) educational OS kernel with Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility, running in QEMU via GRUB/Multiboot.
 
 MOS now reaches a visible Red Hat 9 graphical desktop.
+The current `nptl` branch also includes working process-style `clone()`
+support for glibc/NPTL, including `CLONE_CHILD_SETTID` handling and the
+fork-like scheduling fix needed by `script.posix_signal`.
 
 ![MOS GUI desktop](doc/screenshot/gui.png)
 
@@ -84,6 +87,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis  |
 | [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch       |
 | [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                             |
+| [NPTL Journal](doc/nptl_journal.md)      | `clone()`/NPTL debugging notes, `CLONE_CHILD_SETTID` fixes, and `posix_signal` race analysis |
 | [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes       |
 | [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status |
 | [Screenshots](doc/screenshots.md)        | Screenshots of MOS running, including the GUI desktop                              |

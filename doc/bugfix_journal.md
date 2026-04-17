@@ -5,6 +5,32 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-17 - SSH large output stalls until keypress (`tcp_on_sent` missing)
+
+**Symptom**: Running `ls -alh /usr/lib` over SSH would stall partway through
+the output. Pressing any key resumed it briefly, then it stalled again. Running
+the same command inside the guest directly, or redirecting to a file over SSH,
+worked fine.
+
+**Root cause**: `tcp_setup_callbacks` registered `tcp_recv` and `tcp_err` but
+never called `tcp_sent`. When sshd filled the lwIP TCP send buffer
+(`tcp_sndbuf == 0`), `sock_tcp_stream_write` called `sock_wait` to block until
+space freed. Send buffer space is freed when the remote peer ACKs data —
+but that path goes through lwIP's internal ACK processing, which invokes the
+`tcp_sent` callback. With no callback registered, `sock_wakeup` was never
+called. The writer stayed blocked indefinitely. The only escape was a received
+data packet (e.g. an SSH window-adjust or keystroke from the client), which
+fired `tcp_on_recv` → `sock_wakeup` as a side effect.
+
+**Fix**: Added `tcp_on_sent` callback (calls `sock_wakeup`) and registered it
+via `tcp_sent(pcb, tcp_on_sent)` in `tcp_setup_callbacks` (`src/net/sock_cb.c`).
+
+**Why only SSH and not file redirect**: File redirect sends no terminal output
+over the TCP connection, so the TCP send buffer never fills. Inside the guest
+there is no TCP socket at all.
+
+---
+
 ## 2026-04-14 - PTY controlling `/dev/tty` lookup broke `man`, and `strncpy()` still overflowed
 
 This round started from two user-visible regressions in SSH-backed sessions:

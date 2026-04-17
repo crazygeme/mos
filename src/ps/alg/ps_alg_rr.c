@@ -214,7 +214,13 @@ void ps_put_to_ready_queue(task_struct *task)
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	ps_put_to_ready_queue_unsafe(task);
+	/*
+	 * Public wakeups come from poll/select, locks, sockets, and signals.
+	 * They should only transition tasks that are still blocked; otherwise
+	 * a stale wakeup can relabel the current/runnable task as ps_ready.
+	 */
+	if (task->status == ps_waiting)
+		ps_put_to_ready_queue_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
 }
 

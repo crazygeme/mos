@@ -2,7 +2,8 @@
 # mak
 _ramsize="512"
 diskfile="rh9.qcow2"
-kernel_file="out/kernel"
+_build="release"
+kernel_file=""
 _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _verbose=""
@@ -25,8 +26,8 @@ for arg in $@
 do
 if [ "$arg" == "test" ]; then
 	_test="test"
-	kernel_file=out/kernel-test
 elif [ "$arg" == "debug" ]; then
+	_build="debug"
 	_debug="-gdb tcp::8888 -S"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
@@ -37,7 +38,7 @@ elif [ "$arg" == "verbose=1" ]; then
 elif [ "$arg" == "verbose=2" ]; then
 	_verbose="verbose=2"
 elif [ "$arg" == "profile" ]; then
-	kernel_file="out/kernel.dbg"
+	_build="debug"
 	_debug="-monitor unix:/tmp/qemu-profiler.sock,server,nowait"
 elif [ "$arg" == "curses" ]; then
 	_window="curses"
@@ -47,15 +48,15 @@ elif [ "$arg" == "kvm" ]; then
 elif [ "$arg" == "bash" ]; then
 	_bash="bash"
 elif [ "$arg" == "logtofile" ]; then
-	_logtofile="file:out/krn.log"
+	_logtofile="pending"
 elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
 	echo "param:"
-	echo -e "\t test: build and run the test kernel (out/kernel-test)"
-	echo -e "\t debug: wait for gdb before running"
+	echo -e "\t test: build and run the test kernel for the selected build"
+	echo -e "\t debug: use the debug build and wait for gdb before running"
 	echo -e "\t curses: use current console as vm console instead of opening a new window"
-	echo -e "\t logtofile: write kernel log to file \"krn.log\" instead of stdio"
+	echo -e "\t logtofile: write kernel log to out/x86/<build>/krn.log instead of stdio"
 	echo -e "\t verbose: run with focused diagnostic logging (level 2)"
 	echo -e "\t verbose=0: disable verbose logging"
 	echo -e "\t verbose=1: run with full syscall trace logging"
@@ -65,8 +66,23 @@ elif [ "$arg" == "-h" ]; then
 fi
 done
 
+_outdir="out/x86/$_build"
+if [ "$_test" == "test" ]; then
+	kernel_file="$_outdir/kernel-test"
+else
+	kernel_file="$_outdir/kernel"
+fi
+
+if [ "$_debug" == "-monitor unix:/tmp/qemu-profiler.sock,server,nowait" ] && [ "$_test" != "test" ]; then
+	kernel_file="$_outdir/kernel.dbg"
+fi
+
+if [ "$_logtofile" == "pending" ]; then
+	_logtofile="file:$_outdir/krn.log"
+fi
+
 if [ "$_window" == "curses" ]; then
-	_logtofile="file:out/krn.log"
+	_logtofile="file:$_outdir/krn.log"
 fi
 
 if [ "$_test" == "test" ]; then
@@ -146,7 +162,7 @@ if [ "$_test" != "test" ]; then
 	setup_nat
 fi
 
-make -s -j8 $_test || { echo "Error: build failed" >&2; exit 1; }
+make -s -j8 BUILD="$_build" $_test || { echo "Error: build failed" >&2; exit 1; }
 
 if [ ! -f "$diskfile" ]; then
 	unzip redhat9.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }

@@ -24,7 +24,7 @@ import argparse
 from collections import defaultdict
 
 DEFAULT_SOCK   = "/tmp/qemu-profiler.sock"
-DEFAULT_KERNEL = "out/kernel.dbg"
+DEFAULT_KERNEL = "out/x86/debug/kernel.dbg"
 KERNEL_BASE    = 0xC0000000
 
 

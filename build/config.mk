@@ -16,6 +16,14 @@ OS =		Darwin
 endif
 endif
 
+DEBUG	=	debug
+RELEASE	=	release
+BUILD	?=	$(RELEASE)
+
+ifneq ($(filter $(BUILD),$(DEBUG) $(RELEASE)),$(BUILD))
+$(error BUILD must be one of: $(DEBUG) $(RELEASE))
+endif
+
 CSTRICT	= 	-fno-stack-protector\
 		-Werror\
 		-Wall
@@ -25,6 +33,7 @@ COMMON_CFLAGS = -fno-pie\
 		-fno-builtin\
 		-nostdlib\
 		-nostdinc\
+		-g\
 		-ggdb3\
 		-march=i686\
 		-m32\
@@ -48,4 +57,4 @@ COMMON_CFLAGS = -fno-pie\
 		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=16\
 		-DCONFIG_BLOCK_DEV_CACHE_SIZE=1024
 LDFLAGS	=	-m elf_i386 -T link.ld
-DST     =	$(MAINPATH)/out
+DST     =	$(MAINPATH)/out/x86/$(BUILD)

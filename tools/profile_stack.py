@@ -12,7 +12,8 @@ Requires QEMU running with:
     ./run.sh profile
 (which passes -monitor unix:/tmp/qemu-profiler.sock,server,nowait)
 
-Requires -O0 build (default) — GCC keeps frame pointers at -O0.
+Requires the debug build — GCC keeps frame pointers in the explicit `-O0`
+debug configuration.
 """
 
 import socket
@@ -26,7 +27,7 @@ import os
 from collections import defaultdict
 
 DEFAULT_SOCK   = "/tmp/qemu-profiler.sock"
-DEFAULT_KERNEL = "out/kernel.dbg"
+DEFAULT_KERNEL = "out/x86/debug/kernel.dbg"
 KERNEL_BASE    = 0xC0000000
 KERNEL_END     = 0xFFFFFFFF
 OUT_DIR        = "out"

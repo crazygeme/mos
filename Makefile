@@ -30,9 +30,11 @@ BUILD_GENERATED = $(OBJS) $(TEST_OBJS) $(DEPS) $(TEST_DEPS) \
 		    $(DST)/assemble-test.s
 
 LIBS    = $(DST)/obj/third_party/lwext4/libext4.a $(DST)/obj/third_party/lwip/liblwip.a
-CFLAGS  = $(COMMON_CFLAGS) -O0
+GENERATED_TEST_CFLAGS-debug = -O0
+GENERATED_TEST_CFLAGS-release = -O2
 
-.PHONY: all test run run-test clean rebuild third_party format
+.PHONY: all debug release test test-debug run run-debug run-test run-test-debug \
+	clean rebuild third_party format help
 .SECONDARY: $(GENERATED_TEST_SCRIPT_CS)
 
 # ── Default build (no test code) ────────────────────────────────────────────
@@ -40,16 +42,31 @@ CFLAGS  = $(COMMON_CFLAGS) -O0
 all: $(DST)/kernel
 	@:
 
+release:
+	@+$(MAKE) BUILD=$(RELEASE) all
+
+debug:
+	@+$(MAKE) BUILD=$(DEBUG) all
+
 run: all
 	@./run.sh
+
+run-debug:
+	@./run.sh debug
 
 # ── Test build (kernel + test/ sources) ─────────────────────────────────────
 
 test: $(DST)/kernel-test
 	@:
 
+test-debug:
+	@+$(MAKE) BUILD=$(DEBUG) test
+
 run-test: $(DST)/kernel-test
 	@./run.sh test
+
+run-test-debug:
+	@./run.sh test debug
 
 # ── Link rules ───────────────────────────────────────────────────────────────
 
@@ -89,7 +106,7 @@ $(DST)/generated/test/%.c: test/%.sh tools/gen_ktest_scripts.sh
 $(DST)/obj/generated/test/%.c.o: $(DST)/generated/test/%.c $(SCRIPTS)
 	@mkdir -p $(dir $@)
 	@echo "CC  $(subst $(MAINPATH)/,,$<)"
-	@$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+	@$(CC) $(COMMON_CFLAGS) $(GENERATED_TEST_CFLAGS-$(BUILD)) -MMD -MP -c $< -o $@
 
 # ── Third-party ──────────────────────────────────────────────────────────────
 
@@ -109,6 +126,21 @@ rebuild:
 
 format:
 	@-find src include test -name "*.c" -o -name "*.h" | xargs clang-format -i
+
+help:
+	@echo "Usage:"
+	@echo "  make [all|test] [BUILD=release|debug]"
+	@echo "  make release"
+	@echo "  make debug"
+	@echo "  make test-debug"
+	@echo "  make run"
+	@echo "  make run-debug"
+	@echo "  make run-test"
+	@echo "  make run-test-debug"
+	@echo ""
+	@echo "Output directories:"
+	@echo "  release -> out/x86/release"
+	@echo "  debug   -> out/x86/debug"
 
 -include $(DEPS)
 -include $(TEST_DEPS)

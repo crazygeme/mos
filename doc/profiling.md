@@ -30,7 +30,7 @@ The guest boots normally; the profiler attaches in a second terminal.
 ./tools/profile.py [--delay MS] [--sock PATH] [--kernel PATH]
 ```
 
-1. Loads symbols from `out/kernel.dbg`.
+1. Loads symbols from `out/x86/debug/kernel.dbg`.
 2. Connects to `/tmp/qemu-profiler.sock`.
 3. Waits for you to press **Enter** — start your workload in the guest first.
 4. Samples EIP at the specified interval.
@@ -42,12 +42,12 @@ The guest boots normally; the profiler attaches in a second terminal.
 | --------------- | ------------------------- | ---------------------------- |
 | `--delay MS`    | `5`                       | Milliseconds between samples |
 | `--sock PATH`   | `/tmp/qemu-profiler.sock` | QEMU monitor socket          |
-| `--kernel PATH` | `out/kernel.dbg`          | Debug symbol binary          |
+| `--kernel PATH` | `out/x86/debug/kernel.dbg` | Debug symbol binary         |
 
 **Example output**
 
 ```
-Loading symbols from out/kernel.dbg ...
+Loading symbols from out/x86/debug/kernel.dbg ...
   4821 symbols loaded.
 Connecting to QEMU monitor at /tmp/qemu-profiler.sock ...
   Connected.
@@ -97,10 +97,11 @@ The result is written to `out/profile-YYYYMMDD-HHMMSS.svg`.
 | `--delay MS`    | `10`                      | Milliseconds between samples |
 | `--depth N`     | `32`                      | Maximum frame-chain depth    |
 | `--sock PATH`   | `/tmp/qemu-profiler.sock` | QEMU monitor socket          |
-| `--kernel PATH` | `out/kernel.dbg`          | Debug symbol binary          |
+| `--kernel PATH` | `out/x86/debug/kernel.dbg` | Debug symbol binary         |
 
-**Requirements:** the kernel must be built at `-O0` (the default) so that GCC
-emits standard EBP frame pointers. Optimised builds may omit them.
+**Requirements:** use the debug build (`./run.sh profile` or `make BUILD=debug`)
+so the kernel is built with the explicit `-O0` debug settings. Optimised release
+builds may omit the frame layout needed for reliable stack walking.
 
 ---
 
@@ -173,9 +174,9 @@ profiler terminal to begin sampling. Press Ctrl-C when the workload finishes.
 
 **Correlate with source**
 
-Symbol names come from `nm out/kernel.dbg`. To map a symbol to its source
+Symbol names come from `nm out/x86/debug/kernel.dbg`. To map a symbol to its source
 location:
 
 ```sh
-addr2line -e out/kernel.dbg -f $(nm out/kernel.dbg | grep ' ext4_dir_find_entry$' | awk '{print "0x"$1}')
+addr2line -e out/x86/debug/kernel.dbg -f $(nm out/x86/debug/kernel.dbg | grep ' ext4_dir_find_entry$' | awk '{print "0x"$1}')
 ```

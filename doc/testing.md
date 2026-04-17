@@ -12,9 +12,12 @@ Both are opt-in: they are only compiled and linked when building `kernel-test` (
 ## Build and Run
 
 ```sh
-make test          # build out/kernel-test (kernel + all test sources)
-make run-test      # build and boot in QEMU with test kernel
+make test          # build out/x86/release/kernel-test
+make test-debug    # build out/x86/debug/kernel-test
+make run-test      # build and boot the release test kernel
+make run-test-debug # build and boot the debug test kernel
 ./run.sh test      # same as run-test
+./run.sh test debug # same as run-test-debug
 ```
 
 The kernel command line receives `"test"`, which sets `TestControl.test = 1`.
@@ -135,7 +138,7 @@ Output format mirrors Google Test:
 1. Create `test/yourmodule_test.c` (or add to an existing file in `test/`).
 2. Include `<test/test.h>` and any relevant kernel headers.
 3. Write `KTEST(SuiteName, TestName) { ... return 0; }` blocks.
-4. Run `make test` — the new file is automatically picked up by the Makefile (`TEST_SRCS = $(shell find test/ -name '*.c')`).
+4. Run `make test` or `make test-debug` — the new file is automatically picked up by the Makefile (`TEST_SRCS = $(shell find test/ -name '*.c')`).
 
 No Makefile edits needed.
 
@@ -251,7 +254,7 @@ expect_failure cat "$BASE/nonexistent"
 
 1. Create `test/myfeature.sh` with `#!/bin/sh` at the top.
 2. Make it exit 0 on success, non-zero on failure.
-3. Run `make test` — the Makefile finds it via `$(shell find test/ -name '*.sh' | sort)`, generates `out/generated/test/myfeature.c`, compiles and links it.
+3. Run `make test` or `make test-debug` — the Makefile finds it via `$(shell find test/ -name '*.sh' | sort)`, generates `out/x86/<build>/generated/test/myfeature.c`, compiles and links it.
 
 No Makefile edits needed.
 

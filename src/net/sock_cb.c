@@ -63,6 +63,15 @@ static err_t tcp_on_connected(void *arg, struct tcp_pcb *pcb, err_t err)
 	return ERR_OK;
 }
 
+static err_t tcp_on_sent(void *arg, struct tcp_pcb *pcb, u16_t len)
+{
+	mos_sock *sk = (mos_sock *)arg;
+	(void)pcb;
+	(void)len;
+	sock_wakeup(sk);
+	return ERR_OK;
+}
+
 static void tcp_on_err(void *arg, err_t err)
 {
 	mos_sock *sk = (mos_sock *)arg;
@@ -93,6 +102,7 @@ void tcp_setup_callbacks(struct tcp_pcb *pcb, mos_sock *sk)
 {
 	tcp_arg(pcb, sk);
 	tcp_recv(pcb, tcp_on_recv);
+	tcp_sent(pcb, tcp_on_sent);
 	tcp_err(pcb, tcp_on_err);
 }
 

@@ -1,3 +1,4 @@
+#include <config.h>
 #include <mm/vdso.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
@@ -6,9 +7,14 @@
 #include <macro.h>
 
 #define _VDSO __attribute__((used, section(".vdso")))
-#define VDSO_MM_REGION 0x10000
 extern const unsigned __vdso_start;
 extern const unsigned __vdso_end;
+
+_VDSO NAKED void __kernel_vsyscall(void)
+{
+	asm volatile("int $0x80\n\t"
+		     "ret");
+}
 
 void mm_vdso_map()
 {
@@ -36,6 +42,18 @@ void mm_vdso_map()
 			   PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS,
 			   NULL, 0, 0);
 	}
+}
+
+unsigned mm_vdso_fastcall_entry(void)
+{
+	unsigned vdso_start = (unsigned)&__vdso_start;
+	unsigned vdso_end = (unsigned)&__vdso_end;
+
+	if (vdso_end <= vdso_start)
+		return 0;
+
+	return VDSO_MM_REGION +
+	       ((unsigned)&__kernel_vsyscall - (unsigned)&__vdso_start);
 }
 
 int mm_vdso_region(int phy)

@@ -33,6 +33,8 @@
 
 #define SET_TSS(val) asm volatile("ltr %w0" : : "r"(val) : "memory")
 
+#define SET_LDT(val) asm volatile("lldt %w0" : : "r"(val) : "memory")
+
 #define SET_GDT(val) asm volatile("lgdt %0" : : "m"(val) : "memory")
 
 #define SET_IDT(val) asm volatile("lidt %0\nsti" : : "m"(val) : "memory")

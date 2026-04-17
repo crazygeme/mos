@@ -203,10 +203,15 @@
 #define __NR_quota 198
 
 #define __NR_fcntl64 221
+#define __NR_tkill 238
+#define __NR_gettid 224
+#define __NR_futex 240
+#define __NR_get_thread_area 244
 #define __NR_getuid32 199
 #define __NR_geteuid32 201
 #define __NR_exit_group 252
-#define NR_syscalls 253
+#define __NR_set_tid_address 258
+#define NR_syscalls 259
 
 #define _SYS_NAMELEN 65 // in linux 2.1
 

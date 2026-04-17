@@ -305,7 +305,7 @@ Auxiliary vector entries written by `NEW_AUX_ENT`:
 | `AT_FLAGS`             | 0                                                    |
 | `AT_ENTRY`             | `fmt.e_entry` (executable's raw entry point)         |
 | `AT_UID/EUID/GID/EGID` | 0 (root)                                             |
-| `AT_HWCAP`             | `0x0183FBFF` (i686 capability mask)                  |
+| `AT_HWCAP`             | `0xFFFFFFFF` (forced legacy hwcap mask to prefer `/lib/tls`) |
 | `AT_PAGESZ`            | 4096                                                 |
 | `AT_CLKTCK`            | 100                                                  |
 | `AT_PLATFORM`          | pointer to `"i686"` string on stack                  |

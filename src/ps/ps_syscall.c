@@ -204,6 +204,8 @@ void do_exit(unsigned encoded_status)
 		cur->user->vm = NULL;
 	}
 
+	ps_clear_child_tid(cur);
+
 	if (cur->user->vm) {
 		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */
 		vm_flush_all_dirty(cur->user->vm);

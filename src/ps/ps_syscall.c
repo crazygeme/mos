@@ -206,6 +206,11 @@ void do_exit(unsigned encoded_status)
 
 	ps_clear_child_tid(cur);
 
+	if ((cur->fork_flag & FORK_FLAG_SHARE_VM) && cur->user) {
+		cur->user->page_dir = 0;
+		cur->user->vm = NULL;
+	}
+
 	if (cur->user->vm) {
 		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */
 		vm_flush_all_dirty(cur->user->vm);
@@ -222,7 +227,8 @@ void do_exit(unsigned encoded_status)
 	kfree(cur->fd_cloexec);
 	cur->fd_cloexec = NULL;
 
-	ps_cleanup_all_user_map(cur);
+	if (!(cur->fork_flag & FORK_FLAG_SHARE_VM))
+		ps_cleanup_all_user_map(cur);
 
 	if (cur->psid == 0) {
 		printk("fatal error! process 0 exit\n");
@@ -241,6 +247,14 @@ void do_exit(unsigned encoded_status)
 				HLT();
 		}
 		shutdown();
+	}
+
+	if (cur->fork_flag & FORK_FLAG_THREAD) {
+		ps_remove_mgr(cur);
+		cur->psid = 0xffffffff;
+		cur->tgid = 0xffffffff;
+		cur->status = ps_dying;
+		task_sched();
 	}
 
 	/* ps_put_to_dying_queue queues SIGCHLD on the parent atomically. */

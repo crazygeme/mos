@@ -49,7 +49,7 @@ int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake)
 	while (entry != &futex_waiters && n < max_wake) {
 		futex_waiter *w = container_of(entry, futex_waiter, list);
 		entry = entry->next;
-		if (w->user != user || w->uaddr != uaddr)
+		if (w->user->vm != user->vm || w->uaddr != uaddr)
 			continue;
 		w->woken = 1;
 		list_remove_entry(&w->list);

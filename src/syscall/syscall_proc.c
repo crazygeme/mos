@@ -62,9 +62,9 @@ int sys_getpid()
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getpid() = %d\n", cur->psid);
+		klog("getpid() = %d\n", cur->tgid);
 
-	return cur->psid;
+	return cur->tgid;
 }
 
 int sys_getppid()

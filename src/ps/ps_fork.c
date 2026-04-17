@@ -122,7 +122,9 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->umask = 0;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->psid = ps_id_gen();
+	task->tgid = task->psid;
 	task->ppid = task->psid;
+	task->exit_signal = SIGCHLD;
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	memset(task->fds, 0, PAGE_SIZE);
@@ -356,6 +358,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	else
 		task->remain_ticks = cur->remain_ticks;
 	task->psid = ps_id_gen();
+	task->tgid = cur->tgid;
 	mutex_init(&task->fd_lock);
 
 	task_init_selectors(task);
@@ -367,6 +370,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task_intr_frame->eax = 0;
 
 	task->ppid = cur->psid;
+	task->exit_signal = SIGCHLD;
 	task->nchildren = 0;
 	task->fd_cloexec = NULL;
 	task->io_bitmap = NULL;
@@ -492,6 +496,8 @@ static int do_fork(void)
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;
 	fork_set_meta(cur, task, 0);
+	task->tgid = task->psid;
+	task->exit_signal = SIGCHLD;
 
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
@@ -530,6 +536,8 @@ int do_vfork(void)
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;
 	fork_set_meta(cur, task, FORK_FLAG_VFORK);
+	task->tgid = task->psid;
+	task->exit_signal = SIGCHLD;
 
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));

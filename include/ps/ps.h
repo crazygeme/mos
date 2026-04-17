@@ -11,6 +11,8 @@
 #include <config.h>
 
 #define FORK_FLAG_VFORK 1
+#define FORK_FLAG_SHARE_VM 2
+#define FORK_FLAG_THREAD 4
 /*
  * ----------------------------
  * offset	|31-16		15-0  |
@@ -249,6 +251,7 @@ struct _task_struct {
 	task_frame tss;
 	unsigned long cr3;
 	unsigned int psid;
+	unsigned int tgid;
 	process_fn fn;
 	void *param;
 	user_enviroment *user;
@@ -264,6 +267,7 @@ struct _task_struct {
 	unsigned long *fd_cloexec;
 	mutex_t fd_lock;
 	unsigned exit_status;
+	unsigned exit_signal;
 	unsigned ppid;
 	unsigned nchildren; /* count of children not yet reaped (living + zombie) */
 	unsigned fork_flag;

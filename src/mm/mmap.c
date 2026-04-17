@@ -583,6 +583,13 @@ void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags)
 	/* Also update actual mmap flag */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
 		unsigned mmflag = mm_get_map_flag(vir);
+		if (prot == PROT_NONE) {
+			mmflag &= ~(PAGE_ENTRY_DPL_USER | PAGE_ENTRY_WRITABLE);
+			mm_set_map_flag(vir, mmflag);
+			continue;
+		}
+
+		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (prot & PROT_WRITE)
 			mmflag |= PAGE_ENTRY_WRITABLE;
 		else

@@ -247,9 +247,9 @@ void int_enable_all_ap(void)
 void int_update_tss(void *address)
 {
 	unsigned int base = (unsigned int)address;
-	unsigned long long desc =
-		MAKE_SEG_DESC(base, TSS_SEG_LIMIT, SEG_CLASS_SYSTEM, 9,
-			      KERNEL_PRIVILEGE, SEG_BASE_1);
+	unsigned long long desc = MAKE_SEG_DESC(base, TSS_SEG_LIMIT,
+						SEG_CLASS_SYSTEM, 9,
+						KERNEL_PRIVILEGE, SEG_BASE_1);
 
 	/*
 	 * ps_init() installs the BSP TSS before LAPIC bring-up and before the

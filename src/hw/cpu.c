@@ -124,10 +124,9 @@ static void cpu_gdt_clone_template(int cpu_id)
 void smp_tlb_shootdown(void)
 {
 	int i;
-	unsigned my_apic = apic_id();
 
 	for (i = 0; i < ncpus; i++) {
-		if (cpus[i].online && cpus[i].apic_id != my_apic)
+		if (cpus[i].online && cpus[i].apic_id != current->affinity)
 			apic_send_ipi(cpus[i].apic_id, IPI_VECTOR_TLB);
 	}
 }

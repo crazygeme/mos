@@ -52,7 +52,7 @@ void _task_sched(const char *func)
 		if (CURRENT_TASK()->status != ps_running) {
 			sched_enable(ps_sched_cpu());
 			int_intr_enable();
-			HLT();
+			PAUSE();
 			int_intr_disable();
 			goto SELF;
 		}

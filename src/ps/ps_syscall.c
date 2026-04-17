@@ -271,7 +271,7 @@ void do_exit(unsigned encoded_status)
 			int_intr_disable();
 			qemu_exit(code);
 			for (;;)
-				HLT();
+				PAUSE();
 		}
 		shutdown();
 	}
@@ -597,5 +597,5 @@ void shutdown()
 
 	printf("still running...\n");
 	for (;;)
-		HLT();
+		PAUSE();
 }

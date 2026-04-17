@@ -13,12 +13,8 @@
 #include <mm/vdso.h>
 #include <hw/time.h>
 #include <lib/klib.h>
-#include <config.h>
 #include <errno.h>
-#include <macro.h>
 #include "syscall_internal.h"
-
-extern unsigned long long gdt[];
 
 /* personality flags */
 enum {
@@ -786,69 +782,22 @@ int sys_exit_group(int status)
 	return 0; /* unreachable */
 }
 
-/* ── sys_set_thread_area ─────────────────────────────────────────────────── */
-
-struct user_desc {
-	unsigned int entry_number;
-	unsigned int base_addr;
-	unsigned int limit;
-	unsigned int seg_32bit : 1;
-	unsigned int contents : 2;
-	unsigned int read_exec_only : 1;
-	unsigned int limit_in_pages : 1;
-	unsigned int seg_not_present : 1;
-	unsigned int useable : 1;
-	unsigned int empty : 25;
-};
-
-static unsigned long long build_tls_desc(struct user_desc *u)
+int sys_gettid(void)
 {
-	unsigned int type;
-
-	if (u->contents >= 2)
-		type = 8 | ((u->contents & 1) << 2) |
-		       (u->read_exec_only ? 0 : 2);
-	else
-		type = (u->contents << 2) | (u->read_exec_only ? 0 : 2);
-
-	return MAKE_SEG_DESC(u->base_addr, u->limit, SEG_CLASS_DATA, type,
-			     USER_PRIVILEGE,
-			     u->limit_in_pages ? SEG_BASE_4K : SEG_BASE_1);
+	return CURRENT_TASK()->psid;
 }
 
-int sys_set_thread_area(void *info)
+int sys_tkill(int tid, int sig)
+{
+	if (sig <= 0 || sig >= NSIG)
+		return -EINVAL;
+	return ps_send_signal((unsigned)tid, sig);
+}
+
+int sys_set_tid_address(int *tidptr)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned int entry;
-	unsigned long long desc;
-	struct user_desc *u_info = (struct user_desc *)info;
 
-	if (!u_info)
-		return -EFAULT;
-
-	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("set_thread_area(entry=%d, base=%x)\n",
-		     u_info->entry_number, u_info->base_addr);
-
-	entry = u_info->entry_number;
-
-	if (entry == (unsigned int)-1) {
-		for (entry = GDT_ENTRY_TLS_MIN; entry <= GDT_ENTRY_TLS_MAX;
-		     entry++) {
-			if (!cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
-				break;
-		}
-		if (entry > GDT_ENTRY_TLS_MAX)
-			return -ESRCH;
-		u_info->entry_number = entry;
-	}
-
-	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
-		return -EINVAL;
-
-	desc = build_tls_desc(u_info);
-	cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = desc;
-	gdt[entry] = desc;
-
-	return 0;
+	cur->clear_child_tid = tidptr;
+	return cur->psid;
 }

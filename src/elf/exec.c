@@ -183,7 +183,9 @@ static void free_v(char **v, unsigned size)
 }
 
 /* TODO; fix this */
-#define ELF_HWCAP 0x0183FBFF //(boot_cpu_data.x86_capability)
+/* bit 29: HWCAP_I386_TLS — kernel supports set_thread_area; causes ld-linux
+ * to search /lib/tls/ for NPTL-optimised libraries (e.g. /lib/tls/libc.so.6) */
+#define ELF_HWCAP (0x0183FBFF | (1 << 29))
 
 /* This yields a string that ld.so will use to load implementation
 specific libraries for optimization.  This is more specific in
@@ -213,6 +215,7 @@ but that could change... */
 #define AT_PLATFORM 15 /* string identifying CPU for optimizations */
 #define AT_HWCAP 16 /* arch dependent hints at CPU capabilities */
 #define AT_CLKTCK 17 /* Frequency of times() */
+#define AT_SYSINFO 32 /* address of kernel fast-syscall entry (vsyscall) */
 
 /*
  * setup_user_stack - build the initial user stack layout required by the ELF ABI
@@ -246,6 +249,7 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 	int i = 0;
 	unsigned long esp = top;
 	unsigned *sp, *platform = 0;
+	unsigned vdso_entry = mm_vdso_fastcall_entry();
 	int argv_buf_len = argc * sizeof(char *);
 	int env_buf_len = envc * sizeof(char *);
 	char **tmp_array_argv = 0;
@@ -312,11 +316,13 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 		NEW_AUX_ENT(0, AT_PLATFORM, (unsigned long)platform);
 	}
 
-	/* Hardware capability, page size, and clock-tick frequency. */
-	sp -= 3 * 2;
+	/* Hardware capability, page size, clock-tick frequency, optional vsyscall entry. */
+	sp -= (vdso_entry ? 4 : 3) * 2;
 	NEW_AUX_ENT(0, AT_HWCAP, ELF_HWCAP);
 	NEW_AUX_ENT(1, AT_PAGESZ, 4096);
 	NEW_AUX_ENT(2, AT_CLKTCK, 100);
+	if (vdso_entry)
+		NEW_AUX_ENT(3, AT_SYSINFO, vdso_entry);
 
 	/*
 	 * Core auxiliary entries consumed by the dynamic linker:

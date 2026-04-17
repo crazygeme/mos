@@ -193,6 +193,7 @@ typedef struct _user_enviroment {
 	unsigned fsuid, fsgid; /* filesystem uid/gid */
 	/* Per-process TLS GDT descriptors (GDT_ENTRY_TLS_MIN .. GDT_ENTRY_TLS_MAX) */
 	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
+	unsigned long long ldt_desc[LDT_ENTRY_COUNT];
 	rlimit_t rlimits[RLIM_NLIMITS];
 } user_enviroment;
 
@@ -281,6 +282,7 @@ struct _task_struct {
 	unsigned char
 		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
 	unsigned char *io_bitmap; /* per-task I/O-permission bitmap */
+	int *clear_child_tid; /* Linux set_tid_address / CLONE_CHILD_CLEARTID */
 	unsigned int magic; // to avoid stack overflow
 };
 
@@ -395,6 +397,7 @@ void ps_enum_all(ps_enum_callback callback, void *ctx);
 // syscall handler
 int sys_fork();
 int sys_vfork();
+void ps_update_ldt(task_struct *task);
 void do_exit(unsigned encoded_status);
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);

@@ -801,3 +801,24 @@ int sys_set_tid_address(int *tidptr)
 	cur->clear_child_tid = tidptr;
 	return cur->psid;
 }
+
+int sys_nice(int inc)
+{
+	if (TEST_LOG(TEST_LOG_TRACE))
+		klog("nice(%d)\n", inc);
+
+	/* MOS has no real nice-based scheduling; silently accept. */
+	(void)inc;
+	return 0;
+}
+
+int sys_acct(const char *filename)
+{
+	if (TEST_LOG(TEST_LOG_TRACE))
+		klog("acct(%s)\n", filename ? filename : "(null)");
+
+	if (!filename)
+		return 0; /* disabling accounting: no-op */
+
+	return -ENOSYS;
+}

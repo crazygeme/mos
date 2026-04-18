@@ -122,7 +122,8 @@ static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
 			continue;
 		if (!task->stop_report_pending)
 			continue;
-		if (!(options & WUNTRACED) && task->ptrace_tracer != parent->psid)
+		if (!(options & WUNTRACED) &&
+		    task->ptrace_tracer != parent->psid)
 			continue;
 		return task;
 	}
@@ -434,7 +435,8 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			goto done;
 		}
 
-		for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+		for (node = rb_first(&control.mgr_queue); node;
+		     node = rb_next(node)) {
 			task_struct *st = rb_entry(node, task_struct, mgr_rb);
 
 			if (st->ppid != cur->psid || !st->user ||

@@ -661,3 +661,79 @@ int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 
 	return 0;
 }
+
+/* 17: break — predates virtual memory, permanently obsolete */
+int sys_break(void)
+{
+	return -ENOSYS;
+}
+
+/* 25: stime — set system time from a time_t pointer */
+int sys_stime(unsigned *t)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (!t)
+		return -EFAULT;
+	if (cur->user->euid != 0)
+		return -EPERM;
+
+	time_set_wall_offset((long long)(*t) * 1000000LL);
+
+	if (TestControl.verbos)
+		klog("stime(%u)\n", *t);
+
+	return 0;
+}
+
+/* 31: stty — obsolete tty ioctl interface */
+int sys_stty(void)
+{
+	return -ENOSYS;
+}
+
+/* 32: gtty — obsolete tty ioctl interface */
+int sys_gtty(void)
+{
+	return -ENOSYS;
+}
+
+struct timeb {
+	unsigned time;
+	unsigned short millitm;
+	short timezone;
+	short dstflag;
+};
+
+/* 35: ftime — return time in old BSD timeb struct */
+int sys_ftime(void *buf)
+{
+	struct timeb *tp = (struct timeb *)buf;
+	unsigned long long now_us;
+
+	if (!tp)
+		return -EFAULT;
+
+	now_us = time_wall_us();
+	tp->time = (unsigned)(now_us / 1000000ULL);
+	tp->millitm = (unsigned short)((now_us % 1000000ULL) / 1000ULL);
+	tp->timezone = 0;
+	tp->dstflag = 0;
+
+	if (TestControl.verbos)
+		klog("ftime() = %u.%03u\n", tp->time, tp->millitm);
+
+	return 0;
+}
+
+/* 44: prof — profiling, not supported */
+int sys_prof(void)
+{
+	return -ENOSYS;
+}
+
+/* 53: lock — obsolete file locking */
+int sys_lock(void)
+{
+	return -ENOSYS;
+}

@@ -93,6 +93,7 @@ int sys_rmdir(const char *path);
 int sys_creat(const char *path, unsigned mode);
 int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data);
 int sys_umount(char *name, int flag);
+int sys_umount2(char *name, int flags);
 int sys_readlink(const char *path, char *buf, unsigned bufsiz);
 int sys_sync();
 int sys_chdir(const char *path);
@@ -108,6 +109,23 @@ int sys_mlock(const void *addr, size_t len);
 int sys_munlock(const void *addr, size_t len);
 int sys_mlockall(int flags);
 int sys_munlockall(void);
+int sys_setxattr(const char *path, const char *name, const void *value,
+		 unsigned size, int flags);
+int sys_lsetxattr(const char *path, const char *name, const void *value,
+		  unsigned size, int flags);
+int sys_fsetxattr(int fd, const char *name, const void *value, unsigned size,
+		  int flags);
+int sys_getxattr(const char *path, const char *name, void *value,
+		 unsigned size);
+int sys_lgetxattr(const char *path, const char *name, void *value,
+		  unsigned size);
+int sys_fgetxattr(int fd, const char *name, void *value, unsigned size);
+int sys_listxattr(const char *path, char *list, unsigned size);
+int sys_llistxattr(const char *path, char *list, unsigned size);
+int sys_flistxattr(int fd, char *list, unsigned size);
+int sys_removexattr(const char *path, const char *name);
+int sys_lremovexattr(const char *path, const char *name);
+int sys_fremovexattr(int fd, const char *name);
 
 /*
  * syscall_proc.c
@@ -165,6 +183,8 @@ int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 		     size_t *ret);
 int sys_gettid(void);
 int sys_tkill(int tid, int sig);
+int sys_nice(int inc);
+int sys_acct(const char *filename);
 int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 	      int *uaddr2, int val3);
 int sys_set_thread_area(void *u_info);
@@ -238,8 +258,18 @@ int sys_sched_get_priority_min(int algorithm);
 int sys_sched_rr_get_interval(int pid, struct timespec *tp);
 int sys_umask(unsigned mask);
 int sys_sysinfo(void *info);
+int sys_break(void);
+int sys_stime(unsigned *t);
+int sys_stty(void);
+int sys_gtty(void);
+int sys_ftime(void *tp);
+int sys_prof(void);
+int sys_lock(void);
 int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
 	    long fifth);
+
+int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
+		  unsigned count);
 
 /*
  * syscall_net.c

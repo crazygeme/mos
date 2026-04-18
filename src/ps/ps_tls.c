@@ -107,7 +107,7 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 
 	entry = u_info->entry_number;
 
-		if (entry == (unsigned int)-1) {
+	if (entry == (unsigned int)-1) {
 		for (entry = GDT_ENTRY_TLS_MIN; entry <= GDT_ENTRY_TLS_MAX;
 		     entry++) {
 			if (!task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
@@ -121,7 +121,8 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
 		return -EINVAL;
 
-	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = build_tls_desc(u_info);
+	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
+		build_tls_desc(u_info);
 	if (task == CURRENT_TASK())
 		gdt[entry] = task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
 	return 0;

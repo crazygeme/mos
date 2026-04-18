@@ -756,3 +756,14 @@ int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)
 
 	return do_poll(fds, nfds, timeout);
 }
+
+/* 225: readahead — hint to preload file pages; MOS has no page cache, no-op */
+int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
+		  unsigned count)
+{
+	(void)fd;
+	(void)offset_hi;
+	(void)offset_lo;
+	(void)count;
+	return 0;
+}

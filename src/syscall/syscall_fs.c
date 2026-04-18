@@ -740,6 +740,11 @@ int sys_umount(char *name, int flag)
 	return ret;
 }
 
+int sys_umount2(char *name, int flags)
+{
+	return sys_umount(name, flags);
+}
+
 int sys_sync()
 {
 	if (TestControl.verbos)
@@ -1061,4 +1066,115 @@ int sys__sysctl(void *args)
 		klog("_sysctl\n");
 
 	return -ENOSYS;
+}
+
+/* ------------------------------------------------------------------ *
+ * Extended attributes (226-237)                                        *
+ * MOS filesystems do not support xattrs.                              *
+ * ------------------------------------------------------------------ */
+
+int sys_setxattr(const char *path, const char *name, const void *value,
+		 unsigned size, int flags)
+{
+	(void)path;
+	(void)name;
+	(void)value;
+	(void)size;
+	(void)flags;
+	return -EOPNOTSUPP;
+}
+
+int sys_lsetxattr(const char *path, const char *name, const void *value,
+		  unsigned size, int flags)
+{
+	(void)path;
+	(void)name;
+	(void)value;
+	(void)size;
+	(void)flags;
+	return -EOPNOTSUPP;
+}
+
+int sys_fsetxattr(int fd, const char *name, const void *value, unsigned size,
+		  int flags)
+{
+	(void)fd;
+	(void)name;
+	(void)value;
+	(void)size;
+	(void)flags;
+	return -EOPNOTSUPP;
+}
+
+int sys_getxattr(const char *path, const char *name, void *value, unsigned size)
+{
+	(void)path;
+	(void)name;
+	(void)value;
+	(void)size;
+	return -ENODATA;
+}
+
+int sys_lgetxattr(const char *path, const char *name, void *value,
+		  unsigned size)
+{
+	(void)path;
+	(void)name;
+	(void)value;
+	(void)size;
+	return -ENODATA;
+}
+
+int sys_fgetxattr(int fd, const char *name, void *value, unsigned size)
+{
+	(void)fd;
+	(void)name;
+	(void)value;
+	(void)size;
+	return -ENODATA;
+}
+
+int sys_listxattr(const char *path, char *list, unsigned size)
+{
+	(void)path;
+	(void)list;
+	(void)size;
+	return 0;
+}
+
+int sys_llistxattr(const char *path, char *list, unsigned size)
+{
+	(void)path;
+	(void)list;
+	(void)size;
+	return 0;
+}
+
+int sys_flistxattr(int fd, char *list, unsigned size)
+{
+	(void)fd;
+	(void)list;
+	(void)size;
+	return 0;
+}
+
+int sys_removexattr(const char *path, const char *name)
+{
+	(void)path;
+	(void)name;
+	return -ENODATA;
+}
+
+int sys_lremovexattr(const char *path, const char *name)
+{
+	(void)path;
+	(void)name;
+	return -ENODATA;
+}
+
+int sys_fremovexattr(int fd, const char *name)
+{
+	(void)fd;
+	(void)name;
+	return -ENODATA;
 }

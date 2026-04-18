@@ -213,6 +213,7 @@ typedef enum _ps_status {
 	ps_running,
 	ps_ready,
 	ps_waiting,
+	ps_stopped,
 	ps_dying
 } ps_status;
 
@@ -247,6 +248,26 @@ typedef volatile struct _task_frame {
 } task_frame;
 
 typedef struct _task_struct task_struct;
+typedef struct _intr_frame intr_frame;
+typedef struct _ptrace_saved_frame {
+	unsigned edi;
+	unsigned esi;
+	unsigned ebp;
+	unsigned ebx;
+	unsigned edx;
+	unsigned ecx;
+	unsigned eax;
+	unsigned short gs;
+	unsigned short fs;
+	unsigned short es;
+	unsigned short ds;
+	unsigned error_code;
+	unsigned eip;
+	unsigned short cs;
+	unsigned eflags;
+	unsigned esp;
+	unsigned short ss;
+} ptrace_saved_frame;
 struct _task_struct {
 	task_frame tss;
 	unsigned long cr3;
@@ -287,6 +308,13 @@ struct _task_struct {
 		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
 	unsigned char *io_bitmap; /* per-task I/O-permission bitmap */
 	int *clear_child_tid; /* Linux set_tid_address / CLONE_CHILD_CLEARTID */
+	unsigned stop_signal; /* last job-control/ptrace stop signal */
+	unsigned stop_report_pending; /* waitpid() has not consumed this stop yet */
+	unsigned ptrace_tracer; /* tracer pid, 0 if not traced */
+	unsigned ptrace_mode; /* run mode requested by tracer */
+	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */
+	unsigned ptrace_frame_valid; /* whether ptrace_frame holds saved state */
+	ptrace_saved_frame ptrace_frame; /* saved stopped state for ptrace reads */
 	unsigned int magic; // to avoid stack overflow
 };
 
@@ -407,6 +435,10 @@ int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage);
+int sys_ptrace(int request, int pid, void *addr, void *data);
+void ps_stop_current(intr_frame *frame, int sig);
+void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
+void ps_ptrace_stop_exec(unsigned eip, unsigned esp);
 void qemu_exit(unsigned char code);
 char *sys_getcwd(char *buf, unsigned size);
 int sys_getrusage(int who, rusage *usage);

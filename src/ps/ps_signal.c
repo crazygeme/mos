@@ -571,7 +571,7 @@ static void maybe_restore_sigmask(task_struct *cur)
  * Handle a signal whose disposition is SIG_DFL.
  * Returns 1 if the signal was fully handled (no frame needed), 0 otherwise.
  */
-static int handle_sig_dfl(task_struct *cur, int sig)
+static int handle_sig_dfl(task_struct *cur, intr_frame *frame, int sig)
 {
 	switch (sig) {
 	case SIGCHLD:
@@ -579,6 +579,13 @@ static int handle_sig_dfl(task_struct *cur, int sig)
 	case SIGWINCH:
 	case SIGCONT:
 		maybe_restore_sigmask(cur);
+		return 1;
+	case SIGSTOP:
+	case SIGTSTP:
+	case SIGTTIN:
+	case SIGTTOU:
+		maybe_restore_sigmask(cur);
+		ps_stop_current(frame, sig);
 		return 1;
 	default:
 		do_exit(sig);
@@ -710,8 +717,8 @@ void do_signal(intr_frame *frame)
 		return;
 	cur->signal->sig_pending &= ~(1UL << (sig - 1));
 
-	/* SIGKILL / SIGSTOP cannot be caught or ignored. */
-	if (sig == SIGKILL || sig == SIGSTOP) {
+	/* SIGKILL cannot be caught or ignored. SIGSTOP is handled below. */
+	if (sig == SIGKILL) {
 		sys_exit(sig | 0x80);
 		return;
 	}
@@ -724,7 +731,7 @@ void do_signal(intr_frame *frame)
 	}
 
 	if (sa->sa_handler == SIG_DFL) {
-		handle_sig_dfl(cur, sig);
+		handle_sig_dfl(cur, frame, sig);
 		return;
 	}
 

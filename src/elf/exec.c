@@ -610,6 +610,13 @@ int sys_execve(const char *f, char **argv, char **envp)
 	esp_top = setup_user_stack(file_name, argc, s_argv, envc, s_envp,
 				   esp_top, &fmt);
 
+	/*
+	 * A traced task that reaches execve without a prior startup SIGSTOP
+	 * still needs a visible stop so the tracer can take control before
+	 * first user instruction in the new image.
+	 */
+	ps_ptrace_stop_exec(eip, esp_top);
+
 	/* that's all */
 	free_v(s_argv, argc);
 	free_v(s_envp, envc);

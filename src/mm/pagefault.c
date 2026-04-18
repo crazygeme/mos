@@ -514,7 +514,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 
 	target_cr3 = task->user->page_dir - KERNEL_OFFSET;
 	old_level = int_intr_disable();
-	sched_disable(ps_sched_cpu());
+	sched_disable((unsigned)cpu_current_id());
 	LOAD_CR3(old_cr3);
 	if (old_cr3 != target_cr3)
 		SET_CR3(target_cr3);
@@ -527,7 +527,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 
 	if (old_cr3 != target_cr3)
 		SET_CR3(old_cr3);
-	sched_enable(ps_sched_cpu());
+	sched_enable((unsigned)cpu_current_id());
 	int_intr_setlevel(old_level);
 	return handled;
 }
@@ -539,7 +539,7 @@ static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
 	unsigned error = frame->error_code;
-	unsigned cpu = ps_task_cpu(CURRENT_TASK());
+	unsigned cpu = (unsigned)cpu_current_id();
 	task_struct *cur;
 	int int_enable = 0;
 
@@ -575,12 +575,21 @@ NOT_HANDLED:
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
 	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
+		void *fault_eip = frame->eip;
+		void *fault_esp = frame->esp;
+
 		klog("segfault: error code %x, address %x, eip %x\n",
 		     frame->error_code, cr2, frame->eip);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);
-		/* Falls through only if SIGSEGV is masked or SIG_IGN; force-terminate. */
+
+		/* If do_signal redirected execution to a user handler, return to
+		 * user mode through that frame. Otherwise no handler ran, so
+		 * force the default SIGSEGV termination here. */
+		if (frame->eip != fault_eip || frame->esp != fault_esp)
+			goto Done;
+
 		do_exit(SIGSEGV);
 		goto Done;
 	}

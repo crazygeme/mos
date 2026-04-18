@@ -14,6 +14,7 @@ _kvm=""
 _bash=""
 _test=""
 _priviledge=""
+_qemu_log=""
 _IS_MACOS=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
 if [ "$_IS_MACOS" -eq 1 ]; then
 	_netdev="vmnet-shared,id=net0"
@@ -80,6 +81,10 @@ fi
 if [ "$_test" == "test" ]; then
 	_netdev="user,id=net0"
 	_priviledge=""
+fi
+
+if [ "$_verbose" != "" ]; then
+	_qemu_log="-no-reboot -no-shutdown -D $_outdir/qemu.log"
 fi
 
 # ── TAP/NAT state (shared between setup and teardown) ─────────────────────────
@@ -172,11 +177,11 @@ $_priviledge qemu-system-i386 -cpu coreduo -smp 2\
 	$_power \
 	$_kvm \
 	$_debug \
-	-no-reboot \
+	${_qemu_log}\
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56\
-	-no-reboot -no-shutdown
+	
 
 rc=$?
 if [ "$_test" == "test" ] && [ $((rc & 1)) -eq 1 ]; then

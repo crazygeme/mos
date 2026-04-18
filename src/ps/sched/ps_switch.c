@@ -1,6 +1,7 @@
 #include <int/dsr.h>
 #include <int/int.h>
 #include <ps/ps.h>
+#include <hw/cpu.h>
 #include "../ps_internal.h"
 /*
  * Public — context switch
@@ -26,19 +27,20 @@ void _task_sched(const char *func)
 {
 	task_struct *task = 0;
 	task_struct *cur = CURRENT_TASK();
+	unsigned cpu = (unsigned)cpu_current_id();
 
 	__sync_fetch_and_add(&task_schedule_count, 1);
 
 	if (cur->stats)
 		cur->stats->idle = time_now_tickets();
 
-	if (ps_sched_cpu() == 0)
+	if (cpu == 0)
 		dsr_drain();
 
 	/* 
 	 * Schedule procedure can not be interrupted.
 	 */
-	sched_disable(ps_sched_cpu());
+	sched_disable(cpu);
 
 	task = ps_get_next_task();
 
@@ -50,19 +52,19 @@ void _task_sched(const char *func)
 		 * expired timers can be promoted by ps_get_next_task().
 		 */
 		if (CURRENT_TASK()->status != ps_running) {
-			sched_enable(ps_sched_cpu());
+			sched_enable(cpu);
 			int_intr_enable();
 			PAUSE();
 			int_intr_disable();
 			goto SELF;
 		}
 
-		sched_enable(ps_sched_cpu());
+		sched_enable(cpu);
 		goto SELF;
 	}
 
 	if (task->psid == CURRENT_TASK()->psid) {
-		sched_enable(ps_sched_cpu());
+		sched_enable(cpu);
 		goto SELF;
 	}
 
@@ -78,11 +80,17 @@ void _task_sched(const char *func)
 	reset_tss(task);
 	SET_CR3(task->user->page_dir - KERNEL_OFFSET);
 
-	/* Reload per-process TLS descriptors so that when RESTORE_ALL
-	 * loads GS the CPU finds the correct segment descriptor. */
-	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
-	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
-	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
+	/* Reload per-process TLS descriptors into this CPU's per-CPU GDT copy.
+	 * The global gdt[] is only the boot-time template; each CPU loaded its
+	 * own cpu_gdts[cpu_id] at init, so writes must go through cpu_gdt_write. */
+	{
+		cpu_gdt_write(cpu, GDT_ENTRY_TLS_MIN + 0,
+			      task->user->tls_desc[0]);
+		cpu_gdt_write(cpu, GDT_ENTRY_TLS_MIN + 1,
+			      task->user->tls_desc[1]);
+		cpu_gdt_write(cpu, GDT_ENTRY_TLS_MIN + 2,
+			      task->user->tls_desc[2]);
+	}
 	ps_update_ldt(task);
 
 	/* Switch to the new task's kernel stack.  After this point no local
@@ -90,7 +98,7 @@ void _task_sched(const char *func)
 	 * updated ESP and the only stack write is the 4-byte return address
 	 * pushed by the call below, at [new_esp - 4], which is within the
 	 * task's page even when new_esp == task + PAGE_SIZE. */
-	sched_enable(ps_sched_cpu());
+	sched_enable(cpu);
 	RESTORE_ALL(task, task->tss.eip);
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");

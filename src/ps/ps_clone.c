@@ -1,3 +1,4 @@
+#include "hw/cpu.h"
 #include <ps/ps.h>
 #include <int/int.h>
 #include <mm/mmap.h>
@@ -34,7 +35,9 @@ static void clone_enqueue_process_child(task_struct *cur, task_struct *task)
 	 * this first scheduling decision.
 	 */
 	list_remove_entry(&task->ps_list);
-	list_insert_head(&control.ready_queue[task->priority], &task->ps_list);
+	list_insert_head(
+		&control.cpu[ps_sched_cpu()].ready_queue[task->priority],
+		&task->ps_list);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
 }
@@ -183,7 +186,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	 * newborn child can run its fork return path before the parent races
 	 * ahead and signals it.
 	 */
-	if (!thread_group)
+	if (!thread_group && ncpus > 1)
 		task_sched();
 	return task->psid;
 }

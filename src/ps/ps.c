@@ -139,6 +139,7 @@ void ps_remove_mgr(task_struct *task)
 void ps_update_ldt(task_struct *task)
 {
 	extern unsigned long long gdt[];
+	unsigned cpu = (unsigned)cpu_current_id();
 	unsigned i;
 	unsigned limit;
 
@@ -149,12 +150,17 @@ void ps_update_ldt(task_struct *task)
 
 	for (i = 0; i < LDT_ENTRY_COUNT; i++) {
 		if (task->user->ldt_desc[i]) {
+			unsigned long long desc;
+
 			limit = LDT_ENTRY_COUNT * sizeof(unsigned long long) -
 				1;
-			gdt[LDT_SELECTOR / 8] =
-				MAKE_SEG_DESC((unsigned)task->user->ldt_desc,
-					      limit, SEG_CLASS_SYSTEM, 2,
-					      KERNEL_PRIVILEGE, SEG_BASE_1);
+			desc = MAKE_SEG_DESC((unsigned)task->user->ldt_desc,
+					     limit, SEG_CLASS_SYSTEM, 2,
+					     KERNEL_PRIVILEGE, SEG_BASE_1);
+			/* On SMP each CPU runs with its own cloned GDT, so the
+			 * live CPU-local copy must be updated before lldt. */
+			gdt[LDT_SELECTOR / 8] = desc;
+			cpu_gdt_write(cpu, LDT_SELECTOR / 8, desc);
 			SET_LDT(LDT_SELECTOR);
 			return;
 		}
@@ -181,7 +187,7 @@ int ps_total_count()
 /* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
 void reset_tss(task_struct *task)
 {
-	tss_struct *cur_tss = ps_current_tss(ps_task_cpu(task));
+	tss_struct *cur_tss = ps_current_tss(cpu_current_id());
 	tss_io_struct *io_tss = (tss_io_struct *)cur_tss;
 
 	cur_tss->cr3 = task->cr3;

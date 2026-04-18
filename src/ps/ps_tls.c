@@ -1,5 +1,6 @@
 #include <ps/ps.h>
 #include <int/int.h>
+#include <hw/cpu.h>
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
@@ -155,14 +156,26 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 
 	if (user_desc_empty(u_info)) {
 		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = 0;
-		if (task == CURRENT_TASK())
+		if (task == CURRENT_TASK()) {
+			unsigned cpu = (unsigned)cpu_current_id();
+
 			gdt[entry] = 0;
+			cpu_gdt_write(cpu, entry, 0);
+		}
 	} else {
 		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
 			build_tls_desc(u_info);
-		if (task == CURRENT_TASK())
-			gdt[entry] =
+		if (task == CURRENT_TASK()) {
+			unsigned cpu = (unsigned)cpu_current_id();
+			unsigned long long desc =
 				task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
+
+			/* Keep the boot template in sync, but update the live
+			 * CPU-local GDT as well: on SMP the current CPU no longer
+			 * runs on gdt[]. */
+			gdt[entry] = desc;
+			cpu_gdt_write(cpu, entry, desc);
+		}
 		set_saved_user_gs(task, entry);
 	}
 	return 0;

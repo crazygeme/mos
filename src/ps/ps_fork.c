@@ -128,8 +128,7 @@ unsigned _ps_create_affine(process_fn fn, const char *name, void *param,
 	task->tgid = task->psid;
 	task->ppid = task->psid;
 	task->exit_signal = SIGCHLD;
-	task->affinity = affinity >= 0 ? (unsigned)affinity :
-					 ps_assign_affinity(task->psid);
+	task->affinity = affinity >= 0 ? (unsigned)affinity : 0;
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	memset(task->fds, 0, PAGE_SIZE);
@@ -381,7 +380,10 @@ task_struct *fork_alloc_child(task_struct *cur)
 		task->remain_ticks = cur->remain_ticks;
 	task->psid = ps_id_gen();
 	task->tgid = cur->tgid;
-	task->affinity = ps_assign_affinity(task->psid);
+	/* Start fork/clone children on the parent's CPU so the copied user
+	 * return frame (especially TLS selector state like %gs) is first
+	 * restored on the CPU that already ran the parent. */
+	task->affinity = cur->affinity;
 	mutex_init(&task->fd_lock);
 
 	task_init_selectors(task);

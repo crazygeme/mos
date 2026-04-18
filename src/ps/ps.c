@@ -524,7 +524,8 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
+				  KERNEL_OFFSET);
 		pte = pt[pte_idx];
 
 		/* The page-table page exists now, but the target leaf mapping can
@@ -533,7 +534,8 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
+				  KERNEL_OFFSET);
 		pte = pt[pte_idx];
 
 		/* Present is not enough for a store: private forked pages arrive
@@ -543,7 +545,8 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 1))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
+				  KERNEL_OFFSET);
 		pte = pt[pte_idx];
 		if (!(pte & PAGE_ENTRY_PRESENT) || !(pte & PAGE_ENTRY_WRITABLE))
 			return -EFAULT;
@@ -551,7 +554,8 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		if (mm_kmap_phys(pte & PAGE_SIZE_MASK) != 1)
 			return -EFAULT;
 
-		memcpy((char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) + page_off,
+		memcpy((char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) +
+			       page_off,
 		       csrc, to_write);
 
 		vaddr += to_write;
@@ -587,7 +591,8 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
+				  KERNEL_OFFSET);
 		pte = pt[pte_idx];
 		if (!(pte & PAGE_ENTRY_PRESENT))
 			return -EFAULT;
@@ -600,8 +605,9 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		 * phys+KERNEL_OFFSET boot mapping. Ensure the kernel alias
 		 * exists before dereferencing the tracee's backing page.
 		 */
-		memcpy(cdst, (char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) +
-				     page_off,
+		memcpy(cdst,
+		       (char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) +
+			       page_off,
 		       to_read);
 		vaddr += to_read;
 		cdst += to_read;

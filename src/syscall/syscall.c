@@ -56,7 +56,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_mknod, // 14  __NR_mknod
 	sys_chmod, // 15  __NR_chmod
 	sys_lchown, // 16  __NR_lchown
-	0, // 17  __NR_break
+	sys_break, // 17  __NR_break
 	sys_oldstat, // 18  __NR_oldstat
 	sys_lseek, // 19  __NR_lseek
 	sys_getpid, // 20  __NR_getpid
@@ -64,17 +64,17 @@ static unsigned call_table[NR_syscalls] = {
 	sys_umount, // 22  __NR_umount
 	sys_setuid, // 23  __NR_setuid
 	sys_getuid, // 24  __NR_getuid
-	0, // 25  __NR_stime
+	sys_stime, // 25  __NR_stime
 	sys_ptrace, // 26  __NR_ptrace
 	sys_alarm, // 27  __NR_alarm
 	0, // 28  __NR_oldfstat
 	sys_pause, // 29  __NR_pause
 	sys_utime, // 30  __NR_utime
-	0, // 31  __NR_stty
-	0, // 32  __NR_gtty
+	sys_stty, // 31  __NR_stty
+	sys_gtty, // 32  __NR_gtty
 	sys_access, // 33  __NR_access
-	0, // 34  __NR_nice
-	0, // 35  __NR_ftime
+	sys_nice, // 34  __NR_nice
+	sys_ftime, // 35  __NR_ftime
 	sys_sync, // 36  __NR_sync
 	sys_kill, // 37  __NR_kill
 	sys_rename, // 38  __NR_rename
@@ -83,16 +83,16 @@ static unsigned call_table[NR_syscalls] = {
 	sys_dup, // 41  __NR_dup
 	sys_pipe, // 42  __NR_pipe
 	sys_times, // 43  __NR_times
-	0, // 44  __NR_prof
+	sys_prof, // 44  __NR_prof
 	sys_brk, // 45  __NR_brk
 	sys_setgid, // 46  __NR_setgid
 	sys_getgid, // 47  __NR_getgid
 	sys_signal, // 48  __NR_signal
 	sys_geteuid, // 49  __NR_geteuid
 	sys_getegid, // 50  __NR_getegid
-	0, // 51  __NR_acct
-	0, // 52  __NR_umount2
-	0, // 53  __NR_lock
+	sys_acct, // 51  __NR_acct
+	sys_umount2, // 52  __NR_umount2
+	sys_lock, // 53  __NR_lock
 	sys_ioctl, // 54  __NR_ioctl
 	sys_fcntl, // 55  __NR_fcntl
 	0, // 56  __NR_mpx
@@ -264,19 +264,19 @@ static unsigned call_table[NR_syscalls] = {
 	0, // 222
 	0, // 223
 	sys_gettid, // 224 __NR_gettid
-	0, // 225 __NR_readahead
-	0, // 226 __NR_setxattr
-	0, // 227 __NR_lsetxattr
-	0, // 228 __NR_fsetxattr
-	0, // 229 __NR_getxattr
-	0, // 230 __NR_lgetxattr
-	0, // 231 __NR_fgetxattr
-	0, // 232 __NR_listxattr
-	0, // 233 __NR_llistxattr
-	0, // 234 __NR_flistxattr
-	0, // 235 __NR_removexattr
-	0, // 236 __NR_lremovexattr
-	0, // 237 __NR_fremovexattr
+	sys_readahead, // 225 __NR_readahead
+	sys_setxattr, // 226 __NR_setxattr
+	sys_lsetxattr, // 227 __NR_lsetxattr
+	sys_fsetxattr, // 228 __NR_fsetxattr
+	sys_getxattr, // 229 __NR_getxattr
+	sys_lgetxattr, // 230 __NR_lgetxattr
+	sys_fgetxattr, // 231 __NR_fgetxattr
+	sys_listxattr, // 232 __NR_listxattr
+	sys_llistxattr, // 233 __NR_llistxattr
+	sys_flistxattr, // 234 __NR_flistxattr
+	sys_removexattr, // 235 __NR_removexattr
+	sys_lremovexattr, // 236 __NR_lremovexattr
+	sys_fremovexattr, // 237 __NR_fremovexattr
 	sys_tkill, // 238 __NR_tkill
 	0, // 239 __NR_sendfile64
 	sys_futex, // 240 __NR_futex

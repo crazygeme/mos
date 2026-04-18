@@ -314,7 +314,8 @@ struct _task_struct {
 	unsigned ptrace_mode; /* run mode requested by tracer */
 	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */
 	unsigned ptrace_frame_valid; /* whether ptrace_frame holds saved state */
-	ptrace_saved_frame ptrace_frame; /* saved stopped state for ptrace reads */
+	ptrace_saved_frame
+		ptrace_frame; /* saved stopped state for ptrace reads */
 	unsigned int magic; // to avoid stack overflow
 };
 

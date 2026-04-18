@@ -219,12 +219,13 @@ static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
 	return 0;
 }
 
-static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg, int prot)
+static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg,
+			     int prot)
 {
 	unsigned vir;
 	unsigned page_no = 0;
 	unsigned pte_flag = (prot & PROT_WRITE) ? PAGE_ENTRY_USER_DATA :
-						 PAGE_ENTRY_USER_CODE;
+						  PAGE_ENTRY_USER_CODE;
 
 	for (vir = addr; vir < addr + seg->size; vir += PAGE_SIZE, ++page_no) {
 		unsigned phy;

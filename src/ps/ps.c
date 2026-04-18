@@ -552,6 +552,56 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 	return 0;
 }
 
+int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
+			   unsigned len)
+{
+	unsigned vaddr = (unsigned)addr;
+	char *cdst = (char *)dst;
+	unsigned *pd;
+
+	if (!task || !task->user)
+		return -EFAULT;
+
+	pd = (unsigned *)task->user->page_dir;
+
+	while (len > 0) {
+		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
+		unsigned pte_idx = ADDR_TO_PET_OFFSET(vaddr);
+		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
+		unsigned to_read = PAGE_SIZE - page_off;
+		unsigned *pt;
+		unsigned pte;
+
+		if (to_read > len)
+			to_read = len;
+
+		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
+			return -EFAULT;
+
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pte = pt[pte_idx];
+		if (!(pte & PAGE_ENTRY_PRESENT))
+			return -EFAULT;
+
+		if (mm_kmap_phys(pte & PAGE_SIZE_MASK) != 1)
+			return -EFAULT;
+
+		/*
+		 * High physical pages are not always covered by the initial
+		 * phys+KERNEL_OFFSET boot mapping. Ensure the kernel alias
+		 * exists before dereferencing the tracee's backing page.
+		 */
+		memcpy(cdst, (char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) +
+				     page_off,
+		       to_read);
+		vaddr += to_read;
+		cdst += to_read;
+		len -= to_read;
+	}
+
+	return 0;
+}
+
 task_struct *__attribute__((noinline)) CURRENT_TASK(void)
 {
 	unsigned long esp;

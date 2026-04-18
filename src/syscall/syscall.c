@@ -65,7 +65,7 @@ static unsigned call_table[NR_syscalls] = {
 	sys_setuid, // 23  __NR_setuid
 	sys_getuid, // 24  __NR_getuid
 	0, // 25  __NR_stime
-	0, // 26  __NR_ptrace
+	sys_ptrace, // 26  __NR_ptrace
 	sys_alarm, // 27  __NR_alarm
 	0, // 28  __NR_oldfstat
 	sys_pause, // 29  __NR_pause
@@ -312,8 +312,11 @@ static void syscall_process(intr_frame *frame)
 	syscall_fn fn;
 	int ret;
 
+	ps_ptrace_maybe_stop_syscall(frame, 1);
+
 	if (frame->eax >= NR_syscalls) {
 		frame->eax = unhandled_syscall(frame->eax);
+		ps_ptrace_maybe_stop_syscall(frame, 0);
 		return;
 	}
 
@@ -325,6 +328,7 @@ static void syscall_process(intr_frame *frame)
 			 frame->edi, frame->ebp);
 
 	frame->eax = ret;
+	ps_ptrace_maybe_stop_syscall(frame, 0);
 }
 
 static void syscall_init()

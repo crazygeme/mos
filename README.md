@@ -3,9 +3,6 @@
 > A 32-bit x86 (i686) educational OS kernel with Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility, running in QEMU via GRUB/Multiboot.
 
 MOS now reaches a visible Red Hat 9 graphical desktop.
-The current `nptl` branch also includes working process-style `clone()`
-support for glibc/NPTL, including `CLONE_CHILD_SETTID` handling and the
-fork-like scheduling fix needed by `script.posix_signal`.
 
 ![MOS GUI desktop](doc/screenshot/gui.png)
 
@@ -58,38 +55,38 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 
 ### Architecture
 
-| Document                                | Summary                                                                                                         |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| [Architecture Overview](doc/overall.md) | Memory layout, boot sequence, all subsystems, key constants                                                     |
-| [Boot Stage 1](doc/boot_stage1.md)      | GDT/IDT setup, PIC init, initial 8 MB page tables, paging enable, EIP/ESP transition, physical memory allocator |
-| [Boot Stage 2](doc/boot_stage2.md)      | Subsystem init order, `KERNEL_INIT` table, SMP startup, first userspace process                                 |
-| [Interrupt Handling](doc/interrupts.md) | IDT setup, entry stubs, stack layout, dispatcher, syscall/page-fault/IRQ/IPI paths, IF timeline                 |
-| [Physical Memory](doc/mm_physical.md)   | Buddy allocator, page descriptors, reference counting, CoW, dirty tracking                                      |
-| [Virtual Memory](doc/mm_virtual.md)     | Page table management, VM region map, mmap/munmap, demand paging, CoW, page cache                               |
-| [Process & Scheduler](doc/ps.md)        | MPRQ, context switch, fork/exit/waitpid, signals, synchronization primitives                                    |
-| [Virtual File System](doc/vfs.md)       | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend, loop device                        |
-| [TTY / PTY](doc/tty.md)                 | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, bash spawner                         |
-| [Framebuffer / VGA](doc/vga.md)         | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                           |
+| Document                                    | Summary                                                                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [Architecture Overview](doc/overall.md)     | Memory layout, boot sequence, all subsystems, key constants                                                      |
+| [Boot Stage 1](doc/boot_stage1.md)          | GDT/IDT setup, PIC init, initial 8 MB page tables, paging enable, EIP/ESP transition, physical memory allocator  |
+| [Boot Stage 2](doc/boot_stage2.md)          | Subsystem init order, `KERNEL_INIT` table, SMP startup, first userspace process                                  |
+| [Interrupt Handling](doc/interrupts.md)     | IDT setup, entry stubs, stack layout, dispatcher, syscall/page-fault/IRQ/IPI paths, IF timeline                  |
+| [Physical Memory](doc/mm_physical.md)       | Buddy allocator, page descriptors, reference counting, CoW, dirty tracking                                       |
+| [Virtual Memory](doc/mm_virtual.md)         | Page table management, VM region map, mmap/munmap, demand paging, CoW, page cache                                |
+| [Process & Scheduler](doc/ps.md)            | MPRQ, context switch, fork/exit/waitpid, signals, synchronization primitives                                     |
+| [Virtual File System](doc/vfs.md)           | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend, loop device                         |
+| [TTY / PTY](doc/tty.md)                     | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, bash spawner                          |
+| [Framebuffer / VGA](doc/vga.md)             | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                            |
 | [X Bring-Up Requirements](doc/x_bringup.md) | Practical checklist for building the kernel features needed to boot an old Linux/XFree86-style graphical desktop |
-| [Poll / Select](doc/poll.md)            | Four-phase wait loop, lost-wakeup prevention, poll_wait driver interface, socket integration                    |
-| [ELF Loader](doc/elf_exec.md)           | Segment mapping, BSS handling, dynamic linker loading, execve lifecycle, initial stack layout                   |
-| [Signal Handling](doc/signals.md)       | Delivery engine, inline trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, altstack, sigsuspend  |
-| [Network Stack](doc/network.md)         | e1000 NIC driver, lwIP integration, socket layer, TCP/UDP/RAW operations, ioctl, blocking model                 |
-| [Kernel Heap Allocator](doc/malloc.md)  | Segregated free-lists, block layout, coalescing, heap extension, user-space sys_brk                             |
-| [Locking Primitives](doc/locks.md)      | Spinlock, condition variable, mutex, readers-writer lock, semaphore                                             |
-| [ATA/IDE Disk Driver](doc/hdd.md)       | Bus Master DMA + PIO modes, PRDT layout, IRQ sync, LRU write-back block cache, partition discovery              |
+| [Poll / Select](doc/poll.md)                | Four-phase wait loop, lost-wakeup prevention, poll_wait driver interface, socket integration                     |
+| [ELF Loader](doc/elf_exec.md)               | Segment mapping, BSS handling, dynamic linker loading, execve lifecycle, initial stack layout                    |
+| [Signal Handling](doc/signals.md)           | Delivery engine, inline trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, altstack, sigsuspend   |
+| [Network Stack](doc/network.md)             | e1000 NIC driver, lwIP integration, socket layer, TCP/UDP/RAW operations, ioctl, blocking model                  |
+| [Kernel Heap Allocator](doc/malloc.md)      | Segregated free-lists, block layout, coalescing, heap extension, user-space sys_brk                              |
+| [Locking Primitives](doc/locks.md)          | Spinlock, condition variable, mutex, readers-writer lock, semaphore                                              |
+| [ATA/IDE Disk Driver](doc/hdd.md)           | Bus Master DMA + PIO modes, PRDT layout, IRQ sync, LRU write-back block cache, partition discovery               |
 
 ### Reference
 
-| Document                                 | Summary                                                                            |
-| ---------------------------------------- | ---------------------------------------------------------------------------------- |
-| [Testing](doc/testing.md)                | Kernel-mode KTEST framework, shell script tests, /proc/tests/ interface            |
-| [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image    |
-| [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis  |
-| [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch       |
-| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                             |
+| Document                                 | Summary                                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [Testing](doc/testing.md)                | Kernel-mode KTEST framework, shell script tests, /proc/tests/ interface                      |
+| [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image              |
+| [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis            |
+| [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch                 |
+| [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                                       |
 | [NPTL Journal](doc/nptl_journal.md)      | `clone()`/NPTL debugging notes, `CLONE_CHILD_SETTID` fixes, and `posix_signal` race analysis |
-| [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes       |
-| [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status |
-| [Screenshots](doc/screenshots.md)        | Screenshots of MOS running, including the GUI desktop                              |
-| [Todo](doc/todo.md)                      | Feature checklist                                                                  |
+| [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes                 |
+| [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status           |
+| [Screenshots](doc/screenshots.md)        | Screenshots of MOS running, including the GUI desktop                                        |
+| [Todo](doc/todo.md)                      | Feature checklist                                                                            |

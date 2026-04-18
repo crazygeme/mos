@@ -27,6 +27,8 @@
 
 #include "ps_internal.h"
 
+#define W_STOPCODE(sig) (((sig) << 8) | 0x7f)
+
 /*
  * Static helpers — child reaping
  */
@@ -104,6 +106,28 @@ static int has_child_unsafe(task_struct *parent, unsigned pid)
 	}
 
 	return 0;
+}
+
+static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
+					      int options)
+{
+	struct rb_node *node;
+
+	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+
+		if (task->ppid != parent->psid)
+			continue;
+		if (pid && task->psid != pid)
+			continue;
+		if (!task->stop_report_pending)
+			continue;
+		if (!(options & WUNTRACED) && task->ptrace_tracer != parent->psid)
+			continue;
+		return task;
+	}
+
+	return NULL;
 }
 
 static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
@@ -316,7 +340,15 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 			goto done;
 		}
 
-		task = NULL;
+		task = find_stopped_child_unsafe(cur, pid, options);
+		if (task) {
+			ret = task->psid;
+			if (status)
+				*status = W_STOPCODE(task->stop_signal);
+			task->stop_report_pending = 0;
+			task = NULL;
+			goto done;
+		}
 
 		if (pid && !has_child_unsafe(cur, pid)) {
 			ret = -ECHILD;
@@ -368,6 +400,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 	task_struct *cur = CURRENT_TASK();
 	task_struct *task = NULL;
 	list_entry *dying_task_entry;
+	struct rb_node *node;
 	int ret = -1;
 	int irq;
 	int has_group_child = 0;
@@ -398,6 +431,26 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			list_remove_entry(&task->ps_list);
 			ps_remove_mgr_unsafe(task);
 			cur->nchildren--;
+			goto done;
+		}
+
+		for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+			task_struct *st = rb_entry(node, task_struct, mgr_rb);
+
+			if (st->ppid != cur->psid || !st->user ||
+			    st->user->group_id != pgrp)
+				continue;
+			has_group_child = 1;
+			if (!st->stop_report_pending)
+				continue;
+			if (!(options & WUNTRACED) &&
+			    st->ptrace_tracer != cur->psid)
+				continue;
+			ret = st->psid;
+			if (status)
+				*status = W_STOPCODE(st->stop_signal);
+			st->stop_report_pending = 0;
+			task = NULL;
 			goto done;
 		}
 

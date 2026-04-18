@@ -36,7 +36,7 @@ static void clone_enqueue_process_child(task_struct *cur, task_struct *task)
 	 */
 	list_remove_entry(&task->ps_list);
 	list_insert_head(
-		&control.cpu[ps_sched_cpu()].ready_queue[task->priority],
+		&control.cpu[cpu_current_id()].ready_queue[task->priority],
 		&task->ps_list);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);

@@ -419,7 +419,6 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
 
 void ps_cleanup_all_user_map(task_struct *task);
 unsigned ps_task_cpu(const task_struct *task);
-unsigned ps_sched_cpu(void);
 
 void ps_put_to_ready_queue_unsafe(task_struct *task);
 void ps_put_to_ready_queue(task_struct *task);

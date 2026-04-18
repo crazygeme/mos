@@ -48,11 +48,6 @@ static struct rb_root *ps_timer_queue_root(unsigned cpu)
 	return &control.cpu[cpu].timer_queue;
 }
 
-unsigned ps_sched_cpu(void)
-{
-	return ps_task_cpu(CURRENT_TASK());
-}
-
 static task_struct *ps_get_available_ready_task(list_entry *head)
 {
 	list_entry *node = head->next;
@@ -115,7 +110,7 @@ void timer_disarm_unsafe(task_struct *task)
 
 void ps_fire_timers_unsafe(void)
 {
-	unsigned cpu = ps_sched_cpu();
+	unsigned cpu = cpu_current_id();
 	unsigned now = time_now_ms();
 	struct rb_node *n = rb_first(ps_timer_queue_root(cpu));
 
@@ -135,12 +130,12 @@ void ps_fire_timers_unsafe(void)
 task_struct *ps_get_next_task()
 {
 	task_struct *task = NULL;
-	unsigned cpu = ps_sched_cpu();
+	unsigned cpu = cpu_current_id();
 	int i = PS_PRIORITY_MAX - 1;
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	if (ps_sched_cpu() == 0 && current->psid != 0xffffffff)
+	if (cpu == 0 && current->psid != 0xffffffff)
 		ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
 		list_entry *head = ps_ready_queue_head(cpu, i);
@@ -149,6 +144,16 @@ task_struct *ps_get_next_task()
 		task = ps_get_available_ready_task(head);
 		if (task)
 			break;
+	}
+	if (!task && ps_migrate_steal_unsafe(cpu)) {
+		for (i = PS_PRIORITY_MAX - 1; i >= 0; i--) {
+			list_entry *head = ps_ready_queue_head(cpu, i);
+			if (list_is_empty(head))
+				continue;
+			task = ps_get_available_ready_task(head);
+			if (task)
+				break;
+		}
 	}
 	spinlock_unlock(&ps_lock, irq);
 	return task;
@@ -220,13 +225,17 @@ void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 
 void ps_put_to_ready_queue_unsafe(task_struct *task)
 {
-	unsigned dst_cpu = ps_task_cpu(task);
+	unsigned dst_cpu;
 	unsigned src_cpu = ps_current_cpu_early();
 
 	if (task->psid != 0xffffffff) {
+		dst_cpu = ps_migrate_select_cpu_unsafe(task, src_cpu);
+		task->affinity = dst_cpu;
 		list_remove_entry(&task->ps_list);
 		list_insert_tail(ps_ready_queue_head(dst_cpu, task->priority),
 				 &task->ps_list);
+	} else {
+		dst_cpu = ps_task_cpu(task);
 	}
 	task->status = ps_ready;
 	task->wait_func = NULL;

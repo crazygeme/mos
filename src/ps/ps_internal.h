@@ -54,6 +54,8 @@ void ps_add_mgr(task_struct *task);
 void ps_remove_mgr_unsafe(task_struct *task);
 void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
+unsigned ps_migrate_select_cpu_unsafe(task_struct *task, unsigned src_cpu);
+task_struct *ps_migrate_steal_unsafe(unsigned dst_cpu);
 unsigned ps_id_gen();
 void ps_id_free(unsigned pid);
 user_enviroment *ps_alloc_user_env(void);

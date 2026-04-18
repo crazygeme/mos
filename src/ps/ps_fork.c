@@ -40,7 +40,7 @@ static void ps_run()
 	process_fn fn;
 
 	int_intr_enable();
-	_ps_enabled[ps_sched_cpu()] = 1;
+	_ps_enabled[cpu_current_id()] = 1;
 	task->status = ps_running;
 	fn = task->fn;
 	if (fn)
@@ -128,7 +128,8 @@ unsigned _ps_create_affine(process_fn fn, const char *name, void *param,
 	task->tgid = task->psid;
 	task->ppid = task->psid;
 	task->exit_signal = SIGCHLD;
-	task->affinity = affinity >= 0 ? (unsigned)affinity : 0;
+	task->affinity = affinity >= 0 ? (unsigned)affinity :
+					 ps_assign_affinity(task->psid);
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	memset(task->fds, 0, PAGE_SIZE);

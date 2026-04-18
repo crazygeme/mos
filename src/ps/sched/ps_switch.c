@@ -28,6 +28,7 @@ void _task_sched(const char *func)
 	task_struct *task = 0;
 	task_struct *cur = CURRENT_TASK();
 	unsigned cpu = (unsigned)cpu_current_id();
+	unsigned old_level;
 
 	__sync_fetch_and_add(&task_schedule_count, 1);
 
@@ -73,6 +74,7 @@ void _task_sched(const char *func)
 
 	task->status = ps_running;
 	SAVE_ALL(CURRENT_TASK(), NEXT);
+	old_level = int_intr_disable();
 
 	/* Do TSS and CR3 setup on the current stack, before switching.
 	 * Kernel mappings are shared across all page directories so SET_CR3
@@ -102,6 +104,7 @@ void _task_sched(const char *func)
 	RESTORE_ALL(task, task->tss.eip);
 	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
 	asm volatile("NEXT: nop");
+	int_intr_setlevel(old_level);
 SELF:
 
 	if (CURRENT_TASK()->stats)

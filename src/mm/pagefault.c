@@ -347,15 +347,14 @@ static int pf_page_already_present(unsigned address)
 /*
  * Handle page fault which has no physical page.
  */
-static int pf_handle_page_invalid(unsigned cr2)
+static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
 {
 	vm_region *region;
 	int this_offset;
-	task_struct *cur = CURRENT_TASK();
 
-	region = pf_lock_region(vm_find_map_cached(cur->user, cr2), cr2);
+	region = pf_lock_region(vm_find_map_cached(task->user, cr2), cr2);
 	if (!region)
-		region = pf_lock_region(pf_find_vma(cur, cr2), cr2);
+		region = pf_lock_region(pf_find_vma(task, cr2), cr2);
 	if (!region)
 		return 0;
 
@@ -378,13 +377,15 @@ static int pf_handle_page_invalid(unsigned cr2)
 			vm_region_unlock_fault(region);
 			return 0;
 		}
-		cur->stats->pf_major++;
+		if (task->stats)
+			task->stats->pf_major++;
 	} else {
 		if (!pf_handle_invalid_memory(cr2, region, this_offset)) {
 			vm_region_unlock_fault(region);
 			return 0;
 		}
-		cur->stats->pf_minor++;
+		if (task->stats)
+			task->stats->pf_minor++;
 	}
 
 	vm_region_unlock_fault(region);
@@ -471,14 +472,13 @@ static void wp_page_reuse(unsigned cr2)
  *
  * No VMA or VMA without PROT_WRITE → SIGSEGV.
  */
-static int do_wp_page(unsigned cr2)
+static int do_wp_page(task_struct *task, unsigned cr2)
 {
-	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
 	unsigned page_index;
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
 
-	region = pf_lock_region(vm_find_map_cached(cur->user, vir), vir);
+	region = pf_lock_region(vm_find_map_cached(task->user, vir), vir);
 
 	if (!region || !(region->prot & PROT_WRITE)) {
 		if (region)
@@ -521,12 +521,39 @@ static int do_wp_page(unsigned cr2)
 	return 1;
 }
 
-static void pf_dump_region(vm_region *region, void *data)
+/*
+ * Resolve a fault in @task's user address space while borrowing its page
+ * tables.  The scheduler and interrupts stay disabled for the duration so the
+ * logical current task cannot diverge from the active CR3 mid-operation.
+ */
+int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 {
-	(void)data;
-	klog("    %08x-%08x prot=%x flag=%x %s\n", region->begin, region->end,
-	     region->prot, region->flag,
-	     region->fp ? region->fp->f_name : "anon");
+	unsigned old_cr3;
+	unsigned target_cr3;
+	unsigned old_level;
+	int handled;
+
+	if (!task || !task->user)
+		return 0;
+
+	target_cr3 = task->user->page_dir - KERNEL_OFFSET;
+	old_level = int_intr_disable();
+	sched_disable();
+	LOAD_CR3(old_cr3);
+	if (old_cr3 != target_cr3)
+		SET_CR3(target_cr3);
+
+	addr &= PAGE_SIZE_MASK;
+	if (write)
+		handled = do_wp_page(task, addr);
+	else
+		handled = pf_handle_page_invalid(task, addr);
+
+	if (old_cr3 != target_cr3)
+		SET_CR3(old_cr3);
+	sched_enable();
+	int_intr_setlevel(old_level);
+	return handled;
 }
 
 extern void do_signal(intr_frame *frame);
@@ -555,13 +582,13 @@ static void pf_process(intr_frame *frame)
 	cr2 = cr2 & PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {
-		if (pf_handle_page_invalid(cr2))
+		if (pf_handle_page_invalid(CURRENT_TASK(), cr2))
 			goto Done;
 		goto NOT_HANDLED;
 	}
 
 	if (error & PF_MASK_RW) {
-		if (do_wp_page(cr2))
+		if (do_wp_page(CURRENT_TASK(), cr2))
 			goto Done;
 		goto NOT_HANDLED;
 	}

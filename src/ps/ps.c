@@ -14,6 +14,7 @@
 #include <int/int.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
+#include <mm/pagefault.h>
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <mm/mm.h>
@@ -481,9 +482,9 @@ void ps_cleanup_all_user_map(task_struct *task)
 /*
  * Write `len` bytes from `src` into `task`'s virtual address space at `addr`.
  *
- * Used before the child has started running (e.g. CLONE_CHILD_SETTID).  Walks
- * the child's page directory directly.  If the target page is COW (present but
- * read-only due to fork), a private copy is made for the child first.
+ * Used before the child has started running (e.g. CLONE_CHILD_SETTID).  Missing
+ * or read-only target pages are resolved through the task-aware page-fault
+ * helpers before copying via the target page's kernel alias.
  */
 int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 			    unsigned len)
@@ -508,42 +509,50 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		if (to_write > len)
 			to_write = len;
 
-		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
+		/*
+		 * Remote writes may need multiple passes through the target fault
+		 * path:
+		 *   1. materialize the page-table page (missing PDE),
+		 *   2. materialize the leaf mapping itself (missing PTE),
+		 *   3. upgrade/break COW so the leaf becomes writable.
+		 *
+		 * Each step can unlock the next one, so re-read the target PTE after
+		 * every successful resolution attempt instead of assuming one call can
+		 * satisfy all three conditions.
+		 */
+		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT) &&
+		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
 		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
 		pte = pt[pte_idx];
 
-		if (!(pte & PAGE_ENTRY_PRESENT))
+		/* The page-table page exists now, but the target leaf mapping can
+		 * still be absent until the target task's fault handler installs it. */
+		if (!(pte & PAGE_ENTRY_PRESENT) &&
+		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		if (!(pte & PAGE_ENTRY_WRITABLE)) {
-			/* COW: allocate a private page for the child, then write.
-			 * Read the source via the parent's current virtual address
-			 * (same layout as child's) — avoids phys+KERNEL_OFFSET which
-			 * may not be mapped for high physical addresses. */
-			unsigned old_phy = pte & PAGE_SIZE_MASK;
-			unsigned page_base = vaddr & PAGE_SIZE_MASK;
-			unsigned new_virt = vm_alloc(1);
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pte = pt[pte_idx];
 
-			if (!new_virt)
-				return -ENOMEM;
+		/* Present is not enough for a store: private forked pages arrive
+		 * read-only and must go through the target task's write-fault path
+		 * before we copy into them. */
+		if (!(pte & PAGE_ENTRY_WRITABLE) &&
+		    !pf_resolve_task_page_fault(task, vaddr, 1))
+			return -EFAULT;
 
-			memcpy((void *)new_virt, (void *)page_base, PAGE_SIZE);
-			memcpy((char *)new_virt + page_off, csrc, to_write);
+		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) + KERNEL_OFFSET);
+		pte = pt[pte_idx];
+		if (!(pte & PAGE_ENTRY_PRESENT) || !(pte & PAGE_ENTRY_WRITABLE))
+			return -EFAULT;
 
-			phymm_reference_page(VIRT_TO_PAGE_IDX(new_virt));
-			mm_kunmap_page(new_virt);
-			pt[pte_idx] = VIRT_TO_PHY(new_virt) |
-				      (pte & ~PAGE_SIZE_MASK) |
-				      PAGE_ENTRY_WRITABLE;
-			phymm_dereference_page(old_phy / PAGE_SIZE);
-		} else {
-			unsigned phy = pte & PAGE_SIZE_MASK;
+		if (mm_kmap_phys(pte & PAGE_SIZE_MASK) != 1)
+			return -EFAULT;
 
-			memcpy((char *)(phy + KERNEL_OFFSET) + page_off, csrc,
-			       to_write);
-		}
+		memcpy((char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) + page_off,
+		       csrc, to_write);
 
 		vaddr += to_write;
 		csrc += to_write;

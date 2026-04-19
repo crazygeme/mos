@@ -76,6 +76,8 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		name_put(task->user->root_path);
 		task->user->root_path = NULL;
 	}
+	ps_heap_state_put(task->user->heap);
+	task->user->heap = NULL;
 	if (task->user->page_dir) {
 		vm_free(task->user->page_dir, 1);
 		task->user->page_dir = 0;

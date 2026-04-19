@@ -35,6 +35,9 @@
 static void cleanup()
 {
 	task_struct *cur = CURRENT_TASK();
+	intr_frame *frame =
+		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(*frame));
+	heap_state *heap;
 	int i = 0;
 
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
@@ -78,9 +81,28 @@ static void cleanup()
 	 * Do not wipe the whole signal context here or we'd lose SIG_IGN.
 	 */
 
-	/* Reset heap; start_brk/brk will be set after elf_map(). */
-	cur->user->start_brk = 0;
-	cur->user->brk = 0;
+	/*
+	 * execve gets a fresh user image, so detach from any shared heap state
+	 * before resetting the program break.
+	 */
+	heap = ps_heap_state_new();
+	if (!heap)
+		DIE();
+	ps_heap_state_put(cur->user->heap);
+	cur->user->heap = heap;
+
+	/*
+	 * execve replaces the user image, so any thread-local descriptor state
+	 * from the old program must not leak into the new one. Otherwise the new
+	 * image can hit set_thread_area(entry=-1) with all three slots already
+	 * appearing occupied before it has installed its own TLS.
+	 */
+	memset(cur->user->tls_desc, 0, sizeof(cur->user->tls_desc));
+	memset(cur->user->ldt_desc, 0, sizeof(cur->user->ldt_desc));
+	frame->gs = 0;
+	cur->tss.gs = 0;
+	asm volatile("movw %0, %%gs" : : "rm"((unsigned short)0));
+	ps_update_ldt(cur);
 }
 
 /*
@@ -576,17 +598,18 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 */
 	elf_map(file_name, &fmt);
 	eip = fmt.interp_load_addr;
-	cur->user->start_brk = fmt.start_brk;
-	cur->user->brk = fmt.start_brk;
+	cur->user->heap->start_brk = fmt.start_brk;
+	cur->user->heap->brk = fmt.start_brk;
 	if (!eip) {
 		printk("fatal error: file %s not found!\n", file_name);
 		asm("hlt");
 	}
 
-	if (cur->user->start_brk > 0 && cur->user->start_brk < USER_HEAP_END) {
-		do_mmap(cur->user->start_brk, PAGE_SIZE,
+	if (cur->user->heap->start_brk > 0 &&
+	    cur->user->heap->start_brk < USER_HEAP_END) {
+		do_mmap(cur->user->heap->start_brk, PAGE_SIZE,
 			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
-		cur->user->brk = cur->user->start_brk + PAGE_SIZE;
+		cur->user->heap->brk = cur->user->heap->start_brk + PAGE_SIZE;
 	}
 
 	/*

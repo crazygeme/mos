@@ -48,8 +48,8 @@ static void maps_region_cb(vm_region *region, void *data)
 	if (region->fp) {
 		name = region->fp->f_name;
 		ino = region->fp->f_inode->i_ino;
-	} else if (region->begin >= ctx->task->user->start_brk &&
-		   region->end <= ctx->task->user->brk)
+	} else if (region->begin >= ctx->task->user->heap->start_brk &&
+		   region->end <= ctx->task->user->heap->brk)
 		name = "[heap]";
 	else if (region->begin >= stack_begin && region->end <= stack_end)
 		name = "[stack]";

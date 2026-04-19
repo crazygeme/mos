@@ -462,19 +462,20 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 int sys_brk(unsigned _top)
 {
 	task_struct *task = CURRENT_TASK();
+	heap_state *heap = task->user->heap;
 	unsigned top, ret;
-	unsigned old_brk = task->user->brk;
+	unsigned old_brk = heap->brk;
 	unsigned old_page_end;
 	unsigned new_page_end;
 
 	top = _top;
 	if (top == 0) {
-		ret = task->user->brk;
+		ret = heap->brk;
 	} else if (top >= USER_HEAP_END) {
-		ret = task->user->brk;
+		ret = heap->brk;
 	} else {
-		if (top < task->user->start_brk)
-			top = task->user->start_brk;
+		if (top < heap->start_brk)
+			top = heap->start_brk;
 
 		old_page_end = (old_brk + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 		new_page_end = (top + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
@@ -493,7 +494,7 @@ int sys_brk(unsigned _top)
 			}
 		}
 
-		task->user->brk = top;
+		heap->brk = top;
 		ret = top;
 	}
 

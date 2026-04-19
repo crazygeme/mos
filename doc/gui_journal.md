@@ -188,3 +188,34 @@ Fixes completed in this round:
 Working conclusion:
 - XFree86 expects `/dev/input/mice` to behave like a real PS/2-compatible endpoint during probe and like an async signal-driven input source afterward.
 - The remaining GUI bring-up work is no longer blocked on mouse input; MOS now has stable end-to-end pointer delivery from IRQ12 through `/dev/input/mice` into X.
+
+## 2026-04-19
+
+Status at stop:
+- `nautilus -c` now runs through `nautilus_self_check_directory()` instead of hanging in early startup.
+- The old Nautilus/FAM-triggered thread startup block is fixed.
+- Nautilus also no longer dies later in GLib heap allocation once helper threads are running.
+
+Fixes completed in this round:
+- Fixed i386 TLS setup so `set_thread_area()` updates the saved user `%gs` selector alongside the descriptor install.
+- Fixed `CLONE_SETTLS` for the RH9/NPTL case where the parent thread is still using an LDT-backed `%gs`, so child threads inherit valid TLS instead of stalling in the startup futex handshake.
+- Fixed TLS slot lifetime issues:
+  - `set_thread_area()` now allows empty descriptors to clear slots
+  - new threads no longer inherit stale occupied `tls_desc[]` state
+  - `execve()` clears old TLS/LDT descriptor state before a new image starts
+- Reworked heap bookkeeping so `CLONE_VM` tasks share `start_brk/brk` through a shared heap-state object instead of keeping per-task copies that drift apart.
+- Updated `/proc` heap reporting and teardown paths to use the shared heap-state model.
+- Removed the temporary TLS/clone debugging logs after the fix was verified.
+
+Observed failure progression during this round:
+- The original Nautilus failure looked like a hang in `nautilus_self_check_directory()`, but the real block was a helper-thread startup futex wait after GNOME VFS tried to monitor `/etc/fstab`.
+- Once TLS setup was corrected, the hang moved forward into a later `GLib-ERROR **: gmem.c:173: failed to allocate 32774 bytes`.
+- That later allocation failure came from `CLONE_VM` threads sharing mappings but not sharing `brk` bookkeeping.
+- After making heap state shared for shared-VM tasks and private again across `fork()`/`execve()`, Nautilus completed the problematic startup path successfully.
+
+Current working conclusion:
+- The Nautilus bring-up problem was not a missing FAM daemon by itself; missing FAM only exercised an NPTL thread path that exposed MOS kernel bugs.
+- Two kernel-level compatibility gaps were involved:
+  - Linux/i386 TLS semantics for NPTL thread startup
+  - shared heap bookkeeping semantics for `CLONE_VM`
+- With both fixed, the GUI stack is materially closer to RH9/NPTL-compatible desktop behavior.

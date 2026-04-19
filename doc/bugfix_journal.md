@@ -5,6 +5,73 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-19 - Nautilus hung in `nautilus_self_check_directory()` and later crashed in GLib allocation
+
+This one started as a GUI application hang, but the useful clue was that the
+hang consistently appeared while Nautilus was walking its self-check startup
+path around directory and volume monitoring. The userspace source and syscall
+log showed that the real failure was in old RH9/NPTL thread setup, with a
+second bug waiting behind it in shared heap bookkeeping.
+
+### 1. `nautilus -c` blocked during `nautilus_self_check_directory()`
+
+- **Caught by:** reading `out/x86/release/krn.log` after the user explicitly
+  pointed at `nautilus_self_check_directory`, then correlating that with the
+  RH9 Nautilus and `gnome-vfs` sources under
+  [`.codex-data/context/nautilus-2.4.2`](../.codex-data/context/nautilus-2.4.2)
+  and
+  [`.codex-data/context/gnome-vfs-2.4.2`](../.codex-data/context/gnome-vfs-2.4.2).
+- **Symptom:** Nautilus loaded `libfam.so`, went through the file-monitor
+  setup path used to watch `/etc/fstab`, issued `clone(...)`, and then the
+  parent thread stopped in a futex handshake instead of continuing.
+- **Root cause:** MOS installed TLS descriptors but did not consistently keep
+  the task's saved user `%gs` selector in sync with that descriptor state.
+  On Linux/i386, RH9 glibc/NPTL reads the current `%gs` to build the child
+  `clone(CLONE_SETTLS)` descriptor. Because MOS could return to userspace with
+  a stale or zero `%gs`, the newborn helper thread never completed NPTL
+  startup and the parent blocked forever in the thread-creation futex.
+- **Fix:**
+  - in [ps_tls.c](../src/ps/ps_tls.c), update the saved user `%gs` selector
+    whenever `set_thread_area()` or clone TLS installation picks a TLS slot
+  - handle the RH9 case where `%gs` is LDT-backed rather than one of the Linux
+    GDT TLS slots, and install equivalent child TLS for `CLONE_SETTLS`
+  - stop inheriting stale occupied `tls_desc[]` state into newly created
+    threads
+  - clear stale TLS/LDT descriptor state across `execve()`
+
+### 2. After the TLS fix, Nautilus moved forward and then crashed with `GLib-ERROR **: gmem.c:173: failed to allocate 32774 bytes`
+
+- **Caught by:** rerunning after the TLS/thread fix and reading the next
+  failure in `out/x86/release/krn.log`.
+- **Symptom:** Nautilus no longer hung in helper-thread startup. It progressed
+  into later desktop initialization, but a helper thread eventually aborted in
+  GLib allocation and the main client then reported follow-on GUI protocol
+  fallout such as an unexpected Xlib async reply.
+- **Root cause:** MOS treated `start_brk/brk` as per-task state inside
+  `user_enviroment` even for `CLONE_VM` threads. That meant multiple threads
+  in one shared address space could grow or shrink the heap mapping while still
+  observing different cached program-break values. Old GLib allocation paths
+  then reasoned about heap state using stale `brk` bookkeeping even though the
+  mappings themselves were shared correctly.
+- **Fix:**
+  - introduce a refcounted shared heap-state object in
+    [ps.h](../include/ps/ps.h)
+  - make plain `fork()` copy heap state, while `CLONE_VM` and `vfork()`
+    share it
+  - make `execve()` detach from any shared heap state before resetting the new
+    image's `start_brk/brk`
+  - update [syscall_proc.c](../src/syscall/syscall_proc.c) and `/proc` heap
+    reporting paths to use the shared heap-state object
+
+### Key lesson
+
+For old RH9 desktop software, "threads share an address space" is not just
+about sharing page tables. The kernel also has to share the higher-level
+address-space bookkeeping that userspace expects to be process-wide, such as
+the active TLS selector and the current program break. If those metadata stay
+per-task while mappings are shared, old NPTL and GLib code will fail in ways
+that look like random userspace hangs or allocation bugs.
+
 ## 2026-04-17 - SSH large output stalls until keypress (`tcp_on_sent` missing)
 
 **Symptom**: Running `ls -alh /usr/lib` over SSH would stall partway through

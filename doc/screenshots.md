@@ -2,7 +2,8 @@
 
 ## GUI Desktop
 
-![MOS GUI desktop](screenshot/gui.png)
+![MOS GUI desktop](screenshot/gui1.png)
+![MOS GUI desktop](screenshot/gui2.png)
 
 MOS now boots far enough to reach a visible graphical desktop under the Red Hat 9 userspace stack.
 

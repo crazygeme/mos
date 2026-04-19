@@ -1,4 +1,5 @@
 #include <ps/ps.h>
+#include <int/int.h>
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
@@ -18,6 +19,39 @@ struct user_desc {
 };
 
 extern unsigned long long gdt[];
+
+static unsigned short read_gs_selector(void)
+{
+	unsigned short selector;
+
+	asm volatile("mov %%gs, %0" : "=rm"(selector));
+	return selector;
+}
+
+static void set_saved_user_selector(task_struct *task, unsigned short selector)
+{
+	intr_frame *frame;
+
+	if (!task || !task->user)
+		return;
+
+	/*
+	 * Linux i386 TLS uses a user-mode %gs selector that points at the
+	 * chosen GDT TLS slot.  NPTL thread startup reads the current %gs
+	 * value to populate the child clone() TLS argument, so merely
+	 * installing the descriptor is not enough: the task's next return to
+	 * user mode must also restore the matching selector.
+	 */
+	frame = (intr_frame *)((char *)task + PAGE_SIZE - sizeof(*frame));
+	frame->gs = selector;
+	task->tss.gs = selector;
+}
+
+static void set_saved_user_gs(task_struct *task, unsigned int entry)
+{
+	set_saved_user_selector(task, (unsigned short)((entry << 3) |
+						       USER_PRIVILEGE));
+}
 
 static void decode_tls_desc(unsigned long long desc, struct user_desc *u)
 {
@@ -101,13 +135,11 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 	if (!task || !task->user || !u_info)
 		return -EFAULT;
 
-	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("set_thread_area(entry=%d, base=%x)\n",
-		     u_info->entry_number, u_info->base_addr);
-
 	entry = u_info->entry_number;
 
 	if (entry == (unsigned int)-1) {
+		if (user_desc_empty(u_info))
+			return -EINVAL;
 		for (entry = GDT_ENTRY_TLS_MIN; entry <= GDT_ENTRY_TLS_MAX;
 		     entry++) {
 			if (!task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
@@ -121,11 +153,54 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
 		return -EINVAL;
 
-	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
-		build_tls_desc(u_info);
-	if (task == CURRENT_TASK())
-		gdt[entry] = task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
+	if (user_desc_empty(u_info)) {
+		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = 0;
+		if (task == CURRENT_TASK())
+			gdt[entry] = 0;
+	} else {
+		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
+			build_tls_desc(u_info);
+		if (task == CURRENT_TASK())
+			gdt[entry] =
+				task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
+		set_saved_user_gs(task, entry);
+	}
 	return 0;
+}
+
+int ps_set_clone_tls_for(task_struct *task, void *info,
+			 unsigned short parent_gs)
+{
+	struct user_desc *u_info = (struct user_desc *)info;
+	unsigned int entry;
+
+	if (!task || !task->user || !u_info)
+		return -EFAULT;
+
+	/*
+	 * RH9-era glibc/NPTL can still be running with an LDT-backed %gs
+	 * selector by the time pthread_create() issues clone(CLONE_SETTLS).
+	 * In that case TLS_GET_GS() >> 3 yields an LDT entry number such as 0,
+	 * not one of the Linux GDT TLS slots 6..8.  The child must inherit an
+	 * equivalent LDT descriptor and selector rather than treating it as an
+	 * invalid set_thread_area() request.
+	 */
+	entry = u_info->entry_number;
+	if ((parent_gs & 0x4) != 0) {
+		if (entry >= LDT_ENTRY_COUNT)
+			return -EINVAL;
+		if (user_desc_empty(u_info))
+			return -EINVAL;
+		if (!u_info->seg_32bit || u_info->contents == 3)
+			return -EINVAL;
+
+		task->user->ldt_desc[entry] = build_ldt_desc(u_info);
+		set_saved_user_selector(task,
+					(unsigned short)((entry << 3) | 0x7));
+		return 0;
+	}
+
+	return ps_set_thread_area_for(task, info);
 }
 
 int sys_set_thread_area(void *info)
@@ -138,6 +213,9 @@ int sys_get_thread_area(void *info)
 	task_struct *cur = CURRENT_TASK();
 	struct user_desc *u_info = (struct user_desc *)info;
 	unsigned int entry;
+
+	if (TEST_LOG(TEST_LOG_TRACE))
+		klog("get_thread_area()\n");
 
 	if (!u_info)
 		return -EFAULT;
@@ -156,6 +234,9 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 	task_struct *cur = CURRENT_TASK();
 	struct user_desc *u_info = (struct user_desc *)ptr;
 	unsigned long copy_len;
+
+	if (TEST_LOG(TEST_LOG_TRACE))
+		klog("modify_ldt(%d, %x, %x)\n", func, ptr, bytecount);
 
 	switch (func) {
 	case 0:

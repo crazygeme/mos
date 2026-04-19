@@ -90,7 +90,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if (!task)
 		return -ENOMEM;
 
-	task->user = zalloc(sizeof(user_enviroment));
+	task->user = ps_alloc_user_env();
 	if (!task->user)
 		return -ENOMEM;
 
@@ -103,6 +103,8 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		mm_init_process_page_dir(task->user->page_dir);
 	}
 	fork_dup_user_env(cur, task);
+	if (share_vm)
+		ps_share_heap_state(task->user, cur->user);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;
@@ -111,6 +113,17 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		task->fork_flag |= FORK_FLAG_SHARE_VM;
 	if (thread_group)
 		task->fork_flag |= FORK_FLAG_THREAD;
+
+	if (thread_group) {
+		/*
+		 * A new thread gets its live TLS state from CLONE_SETTLS (or the
+		 * current %gs/LDT state), not by reusing every occupied GDT TLS
+		 * slot the parent happened to have touched earlier. Inheriting the
+		 * parent's tls_desc[] verbatim makes set_thread_area(entry=-1)
+		 * think the child has no free slots and return -ESRCH.
+		 */
+		memset(task->user->tls_desc, 0, sizeof(task->user->tls_desc));
+	}
 
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
@@ -132,7 +145,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	}
 
 	if ((flags & CLONE_SETTLS) && tls) {
-		int rc = ps_set_thread_area_for(task, tls);
+		int rc = ps_set_clone_tls_for(task, tls, cur_intr_frame->gs);
 
 		if (rc != 0)
 			return rc;

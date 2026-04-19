@@ -70,7 +70,11 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 
 	memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
 
-	task->user = zalloc(sizeof(user_enviroment));
+	task->user = ps_alloc_user_env();
+	if (!task->user) {
+		vm_free(task, 1);
+		return -ENOMEM;
+	}
 	task->user->page_dir = (unsigned int)vm_alloc(1);
 	task->user->command = vm_alloc(1);
 	task->user->environment = vm_alloc(1);
@@ -83,8 +87,6 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	memset(task->user->cwd, 0, MAX_PATH);
 	task->user->root_path = name_get();
 	strcpy(task->user->root_path, "/");
-	task->user->start_brk = 0;
-	task->user->brk = 0;
 	task->user->vm = vm_create();
 	/* Default rlimits: RLIM_INFINITY for all, except known constraints. */
 	for (int i = 0; i < RLIM_NLIMITS; i++) {
@@ -386,8 +388,8 @@ task_struct *fork_alloc_child(task_struct *cur)
  * and all credentials. */
 void fork_dup_user_env(task_struct *cur, task_struct *task)
 {
-	task->user->brk = cur->user->brk;
-	task->user->start_brk = cur->user->start_brk;
+	task->user->heap->start_brk = cur->user->heap->start_brk;
+	task->user->heap->brk = cur->user->heap->brk;
 	task->user->stack_bottom = cur->user->stack_bottom;
 	task->user->mmap_cache = NULL;
 
@@ -485,7 +487,7 @@ static int do_fork(void)
 	if (!task)
 		return -ENOMEM;
 
-	task->user = zalloc(sizeof(user_enviroment));
+	task->user = ps_alloc_user_env();
 	if (!task->user)
 		return -ENOMEM;
 	task->user->vm = vm_create();
@@ -525,13 +527,14 @@ int do_vfork(void)
 	if (!task)
 		return -ENOMEM;
 
-	task->user = zalloc(sizeof(user_enviroment));
+	task->user = ps_alloc_user_env();
 	if (!task->user)
 		return -ENOMEM;
 	/* Borrow parent's address space — child does not own these. */
 	task->user->page_dir = cur->user->page_dir;
 	task->user->vm = cur->user->vm;
 	fork_dup_user_env(cur, task);
+	ps_share_heap_state(task->user, cur->user);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;

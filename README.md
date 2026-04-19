@@ -4,8 +4,12 @@
 
 MOS now reaches a visible Red Hat 9 graphical desktop.
 
-![MOS GUI desktop](doc/screenshot/gui.png)
+![MOS GUI desktop](doc/screenshot/gui1.png)
+![MOS GUI desktop](doc/screenshot/gui2.png)
 
+> [!NOTE]
+> The GUI stack still has a number of known issues and is not a current focus of development.
+> SMP support would be a valuable addition, but it is not a near-term priority.
 
 | Boot                             | Login Prompt                              |
 | -------------------------------- | ----------------------------------------- |

@@ -51,6 +51,8 @@ void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
 unsigned ps_id_gen();
 void ps_id_free(unsigned pid);
+user_enviroment *ps_alloc_user_env(void);
+void ps_share_heap_state(user_enviroment *dst, user_enviroment *src);
 
 /* ps_sched.c — timer helpers (called under ps_lock) */
 void timer_arm_unsafe(task_struct *task, unsigned ms);
@@ -70,6 +72,8 @@ void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag);
 void fork_enqueue(task_struct *cur, task_struct *task);
 void copy_page_range(task_struct *parent, task_struct *child);
 int ps_set_thread_area_for(task_struct *task, void *info);
+int ps_set_clone_tls_for(task_struct *task, void *info,
+			 unsigned short parent_gs);
 int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 			   unsigned len);
 int ps_write_process_memory(task_struct *task, void *addr, const void *src,

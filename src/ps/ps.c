@@ -389,6 +389,55 @@ void ps_enum_all(ps_enum_callback callback, void *ctx)
 	spinlock_unlock(&ps_lock, irq);
 }
 
+heap_state *ps_heap_state_new(void)
+{
+	heap_state *heap = zalloc(sizeof(*heap));
+
+	if (!heap)
+		return NULL;
+	heap->refs = 1;
+	return heap;
+}
+
+void ps_heap_state_get(heap_state *heap)
+{
+	if (!heap)
+		return;
+	__sync_add_and_fetch(&heap->refs, 1);
+}
+
+void ps_heap_state_put(heap_state *heap)
+{
+	if (!heap)
+		return;
+	if (__sync_sub_and_fetch(&heap->refs, 1) == 0)
+		kfree(heap);
+}
+
+user_enviroment *ps_alloc_user_env(void)
+{
+	user_enviroment *user = zalloc(sizeof(*user));
+
+	if (!user)
+		return NULL;
+	user->heap = ps_heap_state_new();
+	if (!user->heap) {
+		kfree(user);
+		return NULL;
+	}
+	return user;
+}
+
+void ps_share_heap_state(user_enviroment *dst, user_enviroment *src)
+{
+	if (!dst || !src || !src->heap)
+		return;
+
+	ps_heap_state_put(dst->heap);
+	dst->heap = src->heap;
+	ps_heap_state_get(dst->heap);
+}
+
 /* Send signal sig to every user task whose group_id matches pgrp. */
 void ps_send_signal_pgrp(unsigned pgrp, int sig)
 {

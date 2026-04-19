@@ -188,18 +188,13 @@ static void handle_invalid_opcode(intr_frame *frame)
 
 static void handle_general_protection(intr_frame *frame)
 {
+	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x\n",
+	     current->psid, current->user->command, frame->eip, frame->esp,
+	     frame->ebp, frame->eax, frame->ebx, frame->ecx, frame->edx,
+	     frame->ds, frame->cs);
 	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
-	if ((frame->cs & 0x3) == 0x3) {
-		klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x\n",
-		     current->psid, current->user->command, frame->eip,
-		     frame->esp, frame->ebp, frame->eax, frame->ebx, frame->ecx,
-		     frame->edx, frame->ds, frame->cs);
-		sys_exit(-EFAULT);
-		return;
-	}
-
-	while (1)
-		HLT();
+	sys_exit(-EFAULT);
+	return;
 }
 
 void int_enable_all(void)

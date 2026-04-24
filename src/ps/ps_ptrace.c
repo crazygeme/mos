@@ -81,7 +81,8 @@ static void ptrace_notify_parent_unsafe(task_struct *task)
 		return;
 
 	parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
-	ps_put_to_ready_queue_unsafe(parent);
+	if (parent->status == ps_waiting)
+		ps_put_to_ready_queue_unsafe(parent);
 }
 
 static void ptrace_stop_task_unsafe(task_struct *task, int sig,

@@ -181,6 +181,7 @@ $_priviledge qemu-system-i386 -cpu coreduo -smp 2\
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56\
+	-no-shutdown
 	
 
 rc=$?

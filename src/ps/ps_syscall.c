@@ -206,7 +206,8 @@ static void ps_reparent_children(task_struct *cur)
 	}
 	if (notify_init) {
 		init_task->signal->sig_pending |= (1UL << (SIGCHLD - 1));
-		ps_put_to_ready_queue_unsafe(init_task);
+		if (init_task->status == ps_waiting)
+			ps_put_to_ready_queue_unsafe(init_task);
 	}
 out:
 	spinlock_unlock(&ps_lock, irq);

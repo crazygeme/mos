@@ -191,7 +191,8 @@ void ps_put_to_dying_queue(task_struct *task)
 		/* Queue the requested exit signal before waking the parent so the
 		 * already pending when wait() returns to userspace. */
 		parent->signal->sig_pending |= (1UL << (task->exit_signal - 1));
-		ps_put_to_ready_queue_unsafe(parent);
+		if (parent->status == ps_waiting)
+			ps_put_to_ready_queue_unsafe(parent);
 	}
 out:
 	spinlock_unlock(&ps_lock, irq);

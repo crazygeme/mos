@@ -1,9 +1,13 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_proc
+CASE_NAME=posix_proc
+CASE_MTIME=@CASE_MTIME@
+BASE=/root/tests/$CASE_NAME
+WORKDIR=/root/posix_proc
 SRC="$BASE/proc_test.c"
 BIN="$BASE/proc_test"
+STAMP="$BASE/.case_timestamp"
 
 fail()
 {
@@ -28,17 +32,37 @@ require_cmd()
 	command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
 }
 
-cleanup()
+prepare_embedded_c()
 {
-	rm -rf "$BASE" >/dev/null 2>&1 || true
+	mkdir -p "$BASE" "$WORKDIR" >/dev/null 2>&1 || fail "mkdir failed"
+	if [ -f "$STAMP" ] && [ -f "$SRC" ] && [ -f "$BIN" ]; then
+		stamp_mtime=$(cat "$STAMP" 2>/dev/null || printf '')
+		if [ "$stamp_mtime" = "$CASE_MTIME" ]; then
+			return 1
+		fi
+	fi
+	return 0
 }
 
-trap cleanup EXIT
-cleanup
+update_case_timestamp()
+{
+	printf '%s\n' "$CASE_MTIME" > "$STAMP" || fail "timestamp write failed"
+}
+
+finish()
+{
+	sync >/dev/null 2>&1 || true
+}
+
+trap finish EXIT
 
 require_cmd gcc
 
-mkdir -p "$BASE"
+if prepare_embedded_c; then
+	need_rebuild=0
+else
+	need_rebuild=1
+fi
 
 # ── Shell-level checks (no compilation needed) ────────────────────────────
 
@@ -61,6 +85,7 @@ Actual: both $pid"
 
 # ── Compiled C tests ──────────────────────────────────────────────────────
 
+if [ "$need_rebuild" -eq 0 ]; then
 cat > "$SRC" << 'EOF'
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -305,5 +330,7 @@ int main(void)
 EOF
 
 expect_success gcc -o "$BIN" "$SRC"
+update_case_timestamp
+fi
 [ -x "$BIN" ] || fail "compiled binary missing"
 expect_success "$BIN"

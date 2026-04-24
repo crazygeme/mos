@@ -650,14 +650,10 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 				  unsigned end)
 {
 	unsigned vir;
-	inode *node;
-
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
 		return;
 	if (dev_mem_is_file(region->fp))
 		return;
-
-	node = region->fp->f_inode;
 
 	for (vir = begin; vir < end; vir += PAGE_SIZE) {
 		unsigned page_index;
@@ -676,11 +672,13 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 
 		file_offset = region->offset + (int)(vir - region->begin);
 
-		if (node->i_op && node->i_op->write_page) {
-			if (node->i_op->write_page(node, file_offset,
-						   (void *)vir) == 0)
+		if (region->fp->f_fop && region->fp->f_fop->write_page) {
+			if (region->fp->f_fop->write_page(region->fp,
+							 file_offset,
+							 (void *)vir) == 0)
 				phymm_clear_dirty(page_index);
 		} else {
+			inode *node = region->fp->f_inode;
 			ext4_file *ff = node->i_private;
 			size_t wcnt = 0;
 

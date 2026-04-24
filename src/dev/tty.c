@@ -2040,8 +2040,9 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 	return -ENOSYS;
 }
 
-static int tty_fs_getattr(inode *node, struct stat *s)
+static int tty_fs_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	tty_state *state = node->i_private;
 	s->st_atime = time_now_sec();
 	s->st_mtime = time_now_sec();
@@ -2105,12 +2106,9 @@ static int tty_fs_release(file *fp)
 	return 0;
 }
 
-static const inode_operations tty_iops = {
-	.getattr = tty_fs_getattr,
-};
-
 static const file_operations tty_fops = {
 	.release = tty_fs_release,
+	.getattr = tty_fs_getattr,
 	.read = tty_fs_read,
 	.write = tty_fs_write,
 	.llseek = tty_fs_llseek,
@@ -2133,7 +2131,6 @@ static file *tty_open_state(tty_state *state, int flag)
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
-	node->i_op = &tty_iops;
 	node->i_private = state;
 
 	file *fp = zalloc(sizeof(*fp));

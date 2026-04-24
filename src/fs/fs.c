@@ -268,8 +268,8 @@ int fs_open(const char *path, int flag, umode_t mode)
 		return -ENOENT;
 
 	/* Check DAC permissions based on requested access mode. */
-	if (fp->f_inode && fp->f_inode->i_op && fp->f_inode->i_op->getattr &&
-	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+	if (fp->f_fop && fp->f_fop->getattr &&
+	    fp->f_fop->getattr(fp, &s) == 0) {
 		acc = 0;
 		if ((flag & O_ACCMODE) != O_WRONLY)
 			acc |= R_OK;
@@ -337,12 +337,12 @@ int fs_stat(const char *path, struct stat *s)
 	if (!fp)
 		return -ENOENT;
 
-	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr) {
+	if (!fp->f_fop || !fp->f_fop->getattr) {
 		fs_put_file(fp);
 		return -EACCES;
 	}
 
-	ret = fp->f_inode->i_op->getattr(fp->f_inode, s);
+	ret = fp->f_fop->getattr(fp, s);
 	fs_put_file(fp);
 	return ret == EOK ? 0 : -1;
 }
@@ -359,11 +359,10 @@ int fs_fstat(int fd, struct stat *s)
 	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
-	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
-	    !fp->f_inode->i_op->getattr)
+	if (!fp || !fp->f_fop || !fp->f_fop->getattr)
 		return -EBADF;
 
-	ret = fp->f_inode->i_op->getattr(fp->f_inode, s);
+	ret = fp->f_fop->getattr(fp, s);
 	return ret == EOK ? 0 : -EIO;
 }
 
@@ -677,14 +676,13 @@ int fs_chmod(const char *pathname, uint32_t mode)
 	if (!fp)
 		return -ENOENT;
 
-	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->setattr) {
+	if (!fp->f_fop || !fp->f_fop->setattr) {
 		fs_put_file(fp);
 		return 0;
 	}
 
 	/* Only file owner or root may chmod */
-	if (fp->f_inode->i_op->getattr &&
-	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+	if (fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
 		if (cur->user && cur->user->euid != 0 &&
 		    cur->user->euid != s.st_uid) {
 			fs_put_file(fp);
@@ -692,7 +690,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 		}
 	}
 
-	ret = fp->f_inode->i_op->setattr(fp->f_inode, mode);
+	ret = fp->f_fop->setattr(fp, mode);
 	fs_put_file(fp);
 	return (0 - ret);
 }
@@ -707,7 +705,7 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	if (!fp)
 		return -ENOENT;
 
-	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->chown) {
+	if (!fp->f_fop || !fp->f_fop->chown) {
 		fs_put_file(fp);
 		return 0;
 	}
@@ -720,8 +718,8 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 				fs_put_file(fp);
 				return -EPERM;
 			}
-			if (fp->f_inode->i_op->getattr &&
-			    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+			if (fp->f_fop->getattr &&
+			    fp->f_fop->getattr(fp, &s) == 0) {
 				if (cur->user->euid != s.st_uid) {
 					fs_put_file(fp);
 					return -EPERM;
@@ -736,7 +734,7 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 		}
 	}
 
-	ret = fp->f_inode->i_op->chown(fp->f_inode, uid, gid);
+	ret = fp->f_fop->chown(fp, uid, gid);
 	fs_put_file(fp);
 	return (0 - ret);
 }
@@ -758,14 +756,12 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
-	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
-	    !fp->f_inode->i_op->chown)
+	if (!fp || !fp->f_fop || !fp->f_fop->chown)
 		return 0;
 
 	/* Only root may change owner; owner may change group to own group */
 	if (cur->user && cur->user->euid != 0) {
-		if (fp->f_inode->i_op->getattr &&
-		    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+		if (fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
 			if (uid != (uint32_t)-1 && uid != s.st_uid)
 				return -EPERM;
 			if (cur->user->euid != s.st_uid)
@@ -776,7 +772,7 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 		}
 	}
 
-	ret = fp->f_inode->i_op->chown(fp->f_inode, uid, gid);
+	ret = fp->f_fop->chown(fp, uid, gid);
 	return (0 - ret);
 }
 
@@ -797,18 +793,17 @@ int fs_fchmod(int fd, uint32_t mode)
 	fp = cur->fds[fd];
 	mutex_unlock(&cur->fd_lock);
 
-	if (!fp || !fp->f_inode || !fp->f_inode->i_op ||
-	    !fp->f_inode->i_op->setattr)
+	if (!fp || !fp->f_fop || !fp->f_fop->setattr)
 		return 0;
 
 	/* Only file owner or root may fchmod */
-	if (cur->user && cur->user->euid != 0 && fp->f_inode->i_op->getattr &&
-	    fp->f_inode->i_op->getattr(fp->f_inode, &s) == 0) {
+	if (cur->user && cur->user->euid != 0 && fp->f_fop &&
+	    fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
 		if (cur->user->euid != s.st_uid)
 			return -EPERM;
 	}
 
-	ret = fp->f_inode->i_op->setattr(fp->f_inode, mode);
+	ret = fp->f_fop->setattr(fp, mode);
 	return (0 - ret);
 }
 

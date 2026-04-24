@@ -65,13 +65,13 @@ static void fs_page_cache_ensure_init(void)
 	fs_page_cache_ready = 1;
 }
 
-static int fs_page_cache_can_use(inode *inode)
+static int fs_page_cache_can_use(file *fp)
 {
-	return inode && inode->i_pgcache_tag && inode->i_op &&
-	       inode->i_op->read_page;
+	return fp && fp->f_inode && fp->f_inode->i_pgcache_tag && fp->f_fop &&
+	       fp->f_fop->read_page;
 }
 
-static unsigned fs_page_cache_load(inode *inode, unsigned offset)
+static unsigned fs_page_cache_load(file *fp, unsigned offset)
 {
 	unsigned page_index;
 	unsigned phy;
@@ -86,8 +86,7 @@ static unsigned fs_page_cache_load(inode *inode, unsigned offset)
 		return 0;
 	}
 
-	if (inode->i_op->read_page(inode, offset, (void *)PHY_TO_VIRT(phy)) !=
-	    0) {
+	if (fp->f_fop->read_page(fp, offset, (void *)PHY_TO_VIRT(phy)) != 0) {
 		phymm_free_user(page_index);
 		return 0;
 	}
@@ -107,19 +106,21 @@ static void fs_page_cache_evict_one_locked(void)
 	hash_remove(fs_page_cache, &evict->key);
 }
 
-unsigned fs_page_cache_get(inode *inode, unsigned offset, int *cache_hit)
+unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 {
 	fs_page_cache_key tmp;
 	key_value_pair *pair;
 	fs_page_cache_entry *entry;
 	unsigned phy;
+	inode *inode;
 
 	if (cache_hit)
 		*cache_hit = 0;
 
-	if (!fs_page_cache_can_use(inode))
+	if (!fs_page_cache_can_use(fp))
 		return 0;
 
+	inode = fp->f_inode;
 	fs_page_cache_ensure_init();
 	tmp.tag = inode->i_pgcache_tag;
 	tmp.ino = inode->i_ino;
@@ -142,7 +143,7 @@ unsigned fs_page_cache_get(inode *inode, unsigned offset, int *cache_hit)
 		fs_page_cache_evict_one_locked();
 	mutex_unlock(&fs_page_cache_lock);
 
-	phy = fs_page_cache_load(inode, tmp.offset);
+	phy = fs_page_cache_load(fp, tmp.offset);
 	if (phy == 0)
 		return 0;
 
@@ -172,13 +173,15 @@ unsigned fs_page_cache_get(inode *inode, unsigned offset, int *cache_hit)
 	return phy;
 }
 
-void fs_page_cache_invalidate(inode *inode)
+void fs_page_cache_invalidate(file *fp)
 {
 	key_value_pair *pair;
+	inode *inode;
 
-	if (!fs_page_cache_can_use(inode) || !fs_page_cache_ready)
+	if (!fs_page_cache_can_use(fp) || !fs_page_cache_ready)
 		return;
 
+	inode = fp->f_inode;
 	mutex_lock(&fs_page_cache_lock);
 	pair = hash_first(fs_page_cache);
 	while (pair != NULL) {
@@ -205,7 +208,7 @@ ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos)
 		return -EINVAL;
 
 	inode = fp->f_inode;
-	if (!fs_page_cache_can_use(inode))
+	if (!fs_page_cache_can_use(fp))
 		return -EINVAL;
 
 	while (done < size && (uint64_t)(*pos) < inode->i_size) {
@@ -219,7 +222,7 @@ ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos)
 		if ((uint64_t)(*pos) + chunk > inode->i_size)
 			chunk = (size_t)(inode->i_size - (uint64_t)(*pos));
 
-		phy = fs_page_cache_get(inode, base, NULL);
+		phy = fs_page_cache_get(fp, base, NULL);
 		if (phy == 0)
 			return done ? (ssize_t)done : -EIO;
 

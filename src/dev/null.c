@@ -24,8 +24,10 @@ static unsigned null_poll(file *fp, unsigned events, poll_table *pt)
 	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
-static int null_getattr(inode *node, struct stat *s)
+static int null_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_rdev = MKDEV(NULL_MAJOR, NULL_MINOR);
@@ -44,12 +46,9 @@ static int null_release(file *fp)
 	return 0;
 }
 
-static const inode_operations null_iops = {
-	.getattr = null_getattr,
-};
-
 static const file_operations null_fops = {
 	.release = null_release,
+	.getattr = null_getattr,
 	.read = null_read,
 	.write = null_write,
 	.poll = null_poll,
@@ -60,7 +59,6 @@ static file *null_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
-	node->i_op = &null_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
@@ -92,8 +90,10 @@ static ssize_t zero_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	return (ssize_t)size;
 }
 
-static int zero_getattr(inode *node, struct stat *s)
+static int zero_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_rdev = MKDEV(ZERO_MAJOR, ZERO_MINOR);
@@ -112,12 +112,9 @@ static int zero_release(file *fp)
 	return 0;
 }
 
-static const inode_operations zero_iops = {
-	.getattr = zero_getattr,
-};
-
 static const file_operations zero_fops = {
 	.release = zero_release,
+	.getattr = zero_getattr,
 	.read = zero_read,
 	.write = zero_write,
 	.poll = null_poll,
@@ -128,7 +125,6 @@ static file *zero_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
-	node->i_op = &zero_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;

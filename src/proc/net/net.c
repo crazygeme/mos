@@ -22,7 +22,6 @@ static const char *net_dir_entries[] = { ".",	  "..",	 "dev", "if_inet6",
 					 "route", "arp", NULL };
 
 static const file_operations net_dir_fops;
-static const inode_operations net_dir_iops;
 
 static ssize_t net_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
@@ -46,8 +45,10 @@ static int net_dir_release(file *fp)
 	return 0;
 }
 
-static int net_dir_getattr(inode *node, struct stat *s)
+static int net_dir_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_nlink = 2;
@@ -59,12 +60,9 @@ static int net_dir_getattr(inode *node, struct stat *s)
 }
 
 static const file_operations net_dir_fops = {
+	.getattr = net_dir_getattr,
 	.read = net_dir_read,
 	.release = net_dir_release,
-};
-
-static const inode_operations net_dir_iops = {
-	.getattr = net_dir_getattr,
 };
 
 static file *proc_net_open_root(super_block *sb, int flag)
@@ -96,7 +94,6 @@ static file *proc_net_open_root(super_block *sb, int flag)
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
 		       S_IXGRP | S_IXOTH;
-	node->i_op = &net_dir_iops;
 	node->i_private = buf;
 	node->i_size = size;
 

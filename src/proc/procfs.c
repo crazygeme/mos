@@ -85,8 +85,9 @@ static unsigned proc_root_poll(file *fp, unsigned events, poll_table *pt)
 	return (events & FS_POLL_READ) ? FS_POLL_READ : 0;
 }
 
-static int proc_root_getattr(inode *node, struct stat *s)
+static int proc_root_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
 	s->st_atime = time_now_sec();
 	s->st_mtime = time_now_sec();
@@ -109,11 +110,8 @@ static int proc_root_release(file *fp)
 	return 0;
 }
 
-static const inode_operations proc_root_iops = {
-	.getattr = proc_root_getattr,
-};
-
 static const file_operations proc_root_fops = {
+	.getattr = proc_root_getattr,
 	.read = proc_root_read,
 	.poll = proc_root_poll,
 	.release = proc_root_release,
@@ -207,7 +205,6 @@ static file *proc_open_root(super_block *sb, int flag)
 
 	node->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
 		       S_IXGRP | S_IXOTH;
-	node->i_op = &proc_root_iops;
 	node->i_private = rd;
 
 	fp->f_inode = node;

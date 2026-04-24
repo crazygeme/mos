@@ -37,8 +37,10 @@ static fs_type *fs_find_type(const char *name)
  * callback is registered.
  * ====================================================================== */
 
-static int stub_getattr(inode *node, struct stat *s)
+static int stub_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	s->st_mode = node->i_mode;
 	s->st_ino = node->i_ino;
 	s->st_size = 0;
@@ -47,7 +49,7 @@ static int stub_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static const inode_operations stub_iops = {
+static const file_operations stub_fops = {
 	.getattr = stub_getattr,
 };
 
@@ -57,11 +59,11 @@ static file *stub_open_root(super_block *sb, int flag)
 	node->i_mode = S_IFDIR | S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH |
 		       S_IXOTH;
 	node->i_ino = 1;
-	node->i_op = &stub_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
+	fp->f_fop = &stub_fops;
 	return fp;
 }
 

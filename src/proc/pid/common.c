@@ -68,8 +68,9 @@ static int pid_release(file *fp)
 	return 0;
 }
 
-static int pid_file_getattr(inode *node, struct stat *s)
+static int pid_file_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	proc_buf_t *pb = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
@@ -81,8 +82,9 @@ static int pid_file_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static int pid_dir_getattr(inode *node, struct stat *s)
+static int pid_dir_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
@@ -92,10 +94,8 @@ static int pid_dir_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static const inode_operations pid_file_iops = { .getattr = pid_file_getattr };
-static const inode_operations pid_dir_iops = { .getattr = pid_dir_getattr };
-
 static const file_operations pid_file_fops = {
+	.getattr = pid_file_getattr,
 	.read = pid_read,
 	.llseek = pid_llseek,
 	.poll = pid_poll,
@@ -103,6 +103,7 @@ static const file_operations pid_file_fops = {
 };
 
 static const file_operations pid_dir_fops = {
+	.getattr = pid_dir_getattr,
 	.read = pid_read,
 	.llseek = pid_llseek,
 	.poll = pid_poll,
@@ -111,8 +112,9 @@ static const file_operations pid_dir_fops = {
 
 /* ── Symlink ops for /proc/{pid}/fd/{N} ──────────────────────────────── */
 
-static int pid_symlink_getattr(inode *node, struct stat *s)
+static int pid_symlink_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	const char *target = (const char *)node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
@@ -131,10 +133,8 @@ static int pid_symlink_release(file *fp)
 	return 0;
 }
 
-static const inode_operations pid_symlink_iops = {
-	.getattr = pid_symlink_getattr,
-};
 static const file_operations pid_symlink_fops = {
+	.getattr = pid_symlink_getattr,
 	.release = pid_symlink_release,
 };
 
@@ -146,7 +146,6 @@ file *make_pid_file(proc_buf_t *pb)
 	file *fp = zalloc(sizeof(*fp));
 
 	nd->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
-	nd->i_op = &pid_file_iops;
 	nd->i_private = pb;
 
 	fp->f_inode = nd;
@@ -162,7 +161,6 @@ file *make_pid_dir(proc_buf_t *pb)
 
 	nd->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR | S_IXGRP |
 		     S_IXOTH;
-	nd->i_op = &pid_dir_iops;
 	nd->i_private = pb;
 
 	fp->f_inode = nd;
@@ -177,7 +175,6 @@ file *make_pid_symlink(const char *target)
 	file *fp = zalloc(sizeof(*fp));
 
 	nd->i_mode = S_IFLNK | S_IRWXU | S_IRWXG | S_IRWXO;
-	nd->i_op = &pid_symlink_iops;
 	nd->i_private = strdup(target ? target : "(unknown)");
 
 	fp->f_inode = nd;

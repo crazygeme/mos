@@ -258,8 +258,9 @@ static tmpfs_node *tmpfs_walk_parent(tmpfs_node *root, const char *path,
 
 /* ── File inode operations ────────────────────────────────────────────────── */
 
-static int tmpfs_file_getattr(inode *node, struct stat *s)
+static int tmpfs_file_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 
 	memset(s, 0, sizeof(*s));
@@ -277,8 +278,9 @@ static int tmpfs_file_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static int tmpfs_inode_setattr(inode *node, uint32_t mode)
+static int tmpfs_inode_setattr(file *fp, uint32_t mode)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 
 	tn->mode = (tn->mode & S_IFMT) | (mode & 07777);
@@ -287,8 +289,9 @@ static int tmpfs_inode_setattr(inode *node, uint32_t mode)
 	return 0;
 }
 
-static int tmpfs_inode_chown(inode *node, uint32_t uid, uint32_t gid)
+static int tmpfs_inode_chown(file *fp, uint32_t uid, uint32_t gid)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 
 	if (uid != (uint32_t)-1)
@@ -334,8 +337,9 @@ static int tmpfs_ensure_page(tmpfs_node *tn, unsigned offset)
 	return 0;
 }
 
-static int tmpfs_file_read_page(inode *node, unsigned offset, void *buf)
+static int tmpfs_file_read_page(file *fp, unsigned offset, void *buf)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 	unsigned page_idx = (offset / PAGE_SIZE);
 
@@ -347,13 +351,14 @@ static int tmpfs_file_read_page(inode *node, unsigned offset, void *buf)
 	return 0;
 }
 
-static int tmpfs_file_write_page(inode *node, unsigned offset, const void *buf)
+static int tmpfs_file_write_page(file *fp, unsigned offset, const void *buf)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 	unsigned page_idx = offset / PAGE_SIZE;
 	int ret;
 
-	fs_page_cache_invalidate(node);
+	fs_page_cache_invalidate(fp);
 	ret = tmpfs_ensure_page(tn, page_idx * PAGE_SIZE);
 	if (ret < 0)
 		return ret;
@@ -366,8 +371,9 @@ static int tmpfs_file_write_page(inode *node, unsigned offset, const void *buf)
 	return 0;
 }
 
-static int tmpfs_file_ftruncate(inode *node, loff_t size)
+static int tmpfs_file_ftruncate(file *fp, loff_t size)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 	unsigned old_size = tn->size;
 	unsigned new_size = (unsigned)size;
@@ -376,7 +382,7 @@ static int tmpfs_file_ftruncate(inode *node, loff_t size)
 	if (size < 0)
 		return -EINVAL;
 
-	fs_page_cache_invalidate(node);
+	fs_page_cache_invalidate(fp);
 
 	if (new_size < old_size && new_npages > 0 &&
 	    (new_size % PAGE_SIZE) != 0 && new_npages <= tn->n_pages &&
@@ -423,15 +429,6 @@ static int tmpfs_file_ftruncate(inode *node, loff_t size)
 	return 0;
 }
 
-static const inode_operations tmpfs_file_iops = {
-	.getattr = tmpfs_file_getattr,
-	.setattr = tmpfs_inode_setattr,
-	.chown = tmpfs_inode_chown,
-	.read_page = tmpfs_file_read_page,
-	.write_page = tmpfs_file_write_page,
-	.ftruncate = tmpfs_file_ftruncate,
-};
-
 /* ── File file_operations ─────────────────────────────────────────────────── */
 
 static ssize_t tmpfs_file_read(file *fp, void *buf, size_t size, loff_t *pos)
@@ -474,7 +471,7 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 	const char *src = (const char *)buf;
 	ssize_t transferred = 0;
 
-	fs_page_cache_invalidate(fp->f_inode);
+	fs_page_cache_invalidate(fp);
 
 	while ((size_t)transferred < size) {
 		unsigned cur_off = (unsigned)*pos + (unsigned)transferred;
@@ -555,15 +552,22 @@ static int tmpfs_file_release(file *fp)
 
 static const file_operations tmpfs_file_fops = {
 	.release = tmpfs_file_release,
+	.getattr = tmpfs_file_getattr,
+	.setattr = tmpfs_inode_setattr,
+	.chown = tmpfs_inode_chown,
 	.read = tmpfs_file_read,
 	.write = tmpfs_file_write,
 	.llseek = tmpfs_file_llseek,
+	.read_page = tmpfs_file_read_page,
+	.write_page = tmpfs_file_write_page,
+	.ftruncate = tmpfs_file_ftruncate,
 };
 
 /* ── Directory inode/file operations ─────────────────────────────────────── */
 
-static int tmpfs_dir_getattr(inode *node, struct stat *s)
+static int tmpfs_dir_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 	unsigned nlink = 2;
 	list_entry *e;
@@ -589,12 +593,6 @@ static int tmpfs_dir_getattr(inode *node, struct stat *s)
 	s->st_ctime = tn->ctime;
 	return 0;
 }
-
-static const inode_operations tmpfs_dir_iops = {
-	.getattr = tmpfs_dir_getattr,
-	.setattr = tmpfs_inode_setattr,
-	.chown = tmpfs_inode_chown,
-};
 
 static ssize_t tmpfs_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
@@ -680,6 +678,9 @@ static int tmpfs_dir_release(file *fp)
 
 static const file_operations tmpfs_dir_fops = {
 	.release = tmpfs_dir_release,
+	.getattr = tmpfs_dir_getattr,
+	.setattr = tmpfs_inode_setattr,
+	.chown = tmpfs_inode_chown,
 	.read = tmpfs_dir_read,
 };
 
@@ -694,7 +695,6 @@ static file *tmpfs_make_file(tmpfs_node *tn)
 	node->i_mode = tn->mode;
 	node->i_ino = tn->ino;
 	node->i_size = tn->size;
-	node->i_op = &tmpfs_file_iops;
 	node->i_pgcache_tag = tn;
 	node->i_private = tn;
 	fp->f_inode = node;
@@ -711,7 +711,6 @@ static file *tmpfs_make_dir(tmpfs_node *tn)
 	tmpfs_node_get(tn);
 	node->i_mode = tn->mode;
 	node->i_ino = tn->ino;
-	node->i_op = &tmpfs_dir_iops;
 	node->i_private = tn;
 	fp->f_inode = node;
 	fp->f_count = 1;
@@ -769,7 +768,7 @@ static file *tmpfs_open(super_block *sb, const char *path, int flag)
 		file *fp = tmpfs_make_file(tn);
 
 		if (flag & O_TRUNC)
-			tmpfs_file_ftruncate(fp->f_inode, 0);
+			tmpfs_file_ftruncate(fp, 0);
 		if (flag & O_APPEND)
 			fp->f_pos = tn->size;
 		return fp;

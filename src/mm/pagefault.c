@@ -44,8 +44,7 @@ static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 	unsigned page_idx;
 	unsigned phy;
 
-	if (!f || !f->f_inode || !f->f_inode->i_op ||
-	    !f->f_inode->i_op->read_page)
+	if (!f || !f->f_inode || !f->f_fop || !f->f_fop->read_page)
 		return 0;
 
 	page_idx = phymm_alloc_user();
@@ -58,8 +57,7 @@ static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 		return 0;
 	}
 
-	if (f->f_inode->i_op->read_page(f->f_inode, offset,
-					(void *)PHY_TO_VIRT(phy)) != 0) {
+	if (f->f_fop->read_page(f, offset, (void *)PHY_TO_VIRT(phy)) != 0) {
 		phymm_free_user(page_idx);
 		return 0;
 	}
@@ -74,8 +72,7 @@ static int pf_file_uses_fs_page_cache(file *f)
 	if (!f)
 		return 0;
 	node = f->f_inode;
-	return node && node->i_pgcache_tag && node->i_op &&
-	       node->i_op->read_page;
+	return node && node->i_pgcache_tag && f->f_fop && f->f_fop->read_page;
 }
 
 typedef struct _pf_file_page_result {
@@ -90,8 +87,7 @@ static pf_file_page_result pf_get_file_page(file *f, int offset, int flag)
 	int shared = (flag & MAP_SHARED) != 0;
 
 	if (pf_file_uses_fs_page_cache(f)) {
-		result.phy = fs_page_cache_get(f->f_inode, offset,
-					       &result.cache_hit);
+		result.phy = fs_page_cache_get(f, offset, &result.cache_hit);
 		return result;
 	}
 

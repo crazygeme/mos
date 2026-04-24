@@ -56,8 +56,9 @@ void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 	}
 }
 
-int pts_slave_setattr(inode *node, uint32_t mode)
+int pts_slave_setattr(file *fp, uint32_t mode)
 {
+	inode *node = fp->f_inode;
 	pts_pair *p = node->i_private;
 	int irq;
 
@@ -68,8 +69,9 @@ int pts_slave_setattr(inode *node, uint32_t mode)
 	return 0;
 }
 
-int pts_slave_chown(inode *node, uint32_t uid, uint32_t gid)
+int pts_slave_chown(file *fp, uint32_t uid, uint32_t gid)
 {
+	inode *node = fp->f_inode;
 	pts_pair *p = node->i_private;
 	int irq;
 

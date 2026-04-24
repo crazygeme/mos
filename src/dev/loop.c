@@ -334,8 +334,9 @@ static int loop_ioctl(file *fp, unsigned cmd, void *buf)
 	}
 }
 
-static int loop_cdev_getattr(inode *node, struct stat *s)
+static int loop_cdev_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	int minor = (int)(uintptr_t)node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = S_IFBLK | 0660;
@@ -402,10 +403,6 @@ static loff_t loop_cdev_llseek(file *fp, loff_t offset, int whence)
 	return fp->f_pos;
 }
 
-static const inode_operations loop_cdev_iops = {
-	.getattr = loop_cdev_getattr,
-};
-
 static int loop_cdev_release(file *fp)
 {
 	free(fp->f_inode);
@@ -414,6 +411,7 @@ static int loop_cdev_release(file *fp)
 }
 
 static const file_operations loop_cdev_fops = {
+	.getattr = loop_cdev_getattr,
 	.ioctl = loop_ioctl,
 	.read = loop_cdev_read,
 	.write = loop_cdev_write,
@@ -432,7 +430,6 @@ static file *loop_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 	node = zalloc(sizeof(*node));
 	node->i_mode = S_IFBLK | 0660;
-	node->i_op = &loop_cdev_iops;
 	node->i_private = (void *)(uintptr_t)minor;
 
 	fp = zalloc(sizeof(*fp));

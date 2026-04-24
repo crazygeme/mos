@@ -84,17 +84,24 @@ typedef struct _poll_table {
 } poll_table;
 
 /*
- * file_operations - per-open-file operations, analogous to Linux
- * struct file_operations. All ops receive the open file as first argument.
+ * file_operations - operations for an open file. All ops receive the open file
+ * as first argument, even when they conceptually operate on inode metadata.
  */
 typedef struct _file_operations {
 	/* Custom dtor of file struct, will call regular kfree if not provided */
 	int (*release)(file *file);
+	int (*getattr)(file *file, struct stat *s);
+	int (*setattr)(file *file, uint32_t mode);
+	int (*chown)(file *file, uint32_t uid, uint32_t gid);
 	/* read/write: update *pos on success, return bytes transferred or -errno */
 	ssize_t (*read)(file *file, void *buf, size_t size, loff_t *pos);
 	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
 	/* llseek: return new position or -errno */
 	loff_t (*llseek)(file *file, loff_t offset, int whence);
+	/* read_page/write_page: transfer one PAGE_SIZE chunk at file offset @offset */
+	int (*read_page)(file *file, unsigned offset, void *buf);
+	int (*write_page)(file *file, unsigned offset, const void *buf);
+	int (*ftruncate)(file *file, loff_t size);
 	/*
 	 * poll: return an FS_POLL_* readiness bitmask for the requested @events.
 	 * If @pt is non-NULL, the implementation may register wakeups for the
@@ -107,20 +114,6 @@ typedef struct _file_operations {
 } file_operations;
 
 /*
- * inode_operations - inode-level metadata operations, analogous to Linux
- * struct inode_operations.
- */
-typedef struct _inode_operations {
-	int (*getattr)(inode *inode, struct stat *s);
-	int (*setattr)(inode *inode, uint32_t mode);
-	int (*chown)(inode *inode, uint32_t uid, uint32_t gid);
-	/* read_page/write_page: transfer one PAGE_SIZE chunk at file offset @offset */
-	int (*read_page)(inode *inode, unsigned offset, void *buf);
-	int (*write_page)(inode *inode, unsigned offset, const void *buf);
-	int (*ftruncate)(inode *inode, loff_t size);
-} inode_operations;
-
-/*
  * inode - in-memory representation of a filesystem object.
  * i_private holds the backend-specific handle (e.g. ext4_file *).
  */
@@ -128,7 +121,6 @@ struct _inode {
 	uint32_t i_mode;
 	uint64_t i_ino;
 	uint64_t i_size;
-	const inode_operations *i_op;
 	void *i_private;
 	void *i_pgcache_tag; /* stable address_space-style identity for page cache */
 

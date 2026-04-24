@@ -180,9 +180,9 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 	fp = fs_open_file(name, flag, 0);
 	if (!fp)
 		goto log;
-	if (!fp->f_inode || !fp->f_inode->i_op || !fp->f_inode->i_op->getattr)
+	if (!fp->f_fop || !fp->f_fop->getattr)
 		goto log;
-	ret = fp->f_inode->i_op->getattr(fp->f_inode, buf);
+	ret = fp->f_fop->getattr(fp, buf);
 
 log:
 	if (TestControl.verbos && func) {
@@ -1029,10 +1029,10 @@ int sys_ftruncate(int fd, unsigned long length)
 		return -EBADF;
 
 	fp = cur->fds[fd];
-	if (!fp->f_inode->i_op || !fp->f_inode->i_op->ftruncate)
+	if (!fp->f_fop || !fp->f_fop->ftruncate)
 		return -EINVAL;
 
-	ret = fp->f_inode->i_op->ftruncate(fp->f_inode, (loff_t)length);
+	ret = fp->f_fop->ftruncate(fp, (loff_t)length);
 	if (ret == 0)
 		fp->f_inode->i_size = length;
 	return ret;
@@ -1051,10 +1051,10 @@ int sys_ftruncate64(int fd, uint64_t length)
 		return -EBADF;
 
 	fp = cur->fds[fd];
-	if (!fp->f_inode->i_op || !fp->f_inode->i_op->ftruncate)
+	if (!fp->f_fop || !fp->f_fop->ftruncate)
 		return -EINVAL;
 
-	ret = fp->f_inode->i_op->ftruncate(fp->f_inode, (loff_t)length);
+	ret = fp->f_fop->ftruncate(fp, (loff_t)length);
 	if (ret == 0)
 		fp->f_inode->i_size = length;
 	return ret;

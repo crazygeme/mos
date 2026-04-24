@@ -44,9 +44,9 @@ typedef struct {
 
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock);
 
-int pts_slave_setattr(inode *node, uint32_t mode);
+int pts_slave_setattr(file *fp, uint32_t mode);
 
-int pts_slave_chown(inode *node, uint32_t uid, uint32_t gid);
+int pts_slave_chown(file *fp, uint32_t uid, uint32_t gid);
 
 int pts_master_ioctl(file *fp, unsigned type, void *buf);
 

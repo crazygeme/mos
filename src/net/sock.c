@@ -37,6 +37,8 @@ static int sock_file_nonblock(file *fp)
 	return (fp->f_flag & O_NONBLOCK) != 0;
 }
 
+static int sock_getattr(file *fp, struct stat *s);
+
 static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 				     size_t count)
 {
@@ -651,6 +653,7 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 }
 
 static const file_operations sock_fops = {
+	.getattr = sock_getattr,
 	.read = sock_read,
 	.write = sock_write,
 	.ioctl = sock_ioctl,
@@ -658,9 +661,9 @@ static const file_operations sock_fops = {
 	.release = sock_release,
 };
 
-static int sock_getattr(inode *node, struct stat *s)
+static int sock_getattr(file *fp, struct stat *s)
 {
-	(void)node;
+	(void)fp;
 
 	memset(s, 0, sizeof(*s));
 	s->st_mode = S_IFSOCK | 0600;
@@ -672,17 +675,12 @@ static int sock_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static const inode_operations sock_iops = {
-	.getattr = sock_getattr,
-};
-
 /* ── FD helpers ──────────────────────────────────────────────────────────── */
 
 int sock_to_fd(mos_sock *sk)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFSOCK | 0600;
-	node->i_op = &sock_iops;
 	node->i_private = sk;
 
 	file *fp = zalloc(sizeof(*fp));

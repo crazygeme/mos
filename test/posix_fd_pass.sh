@@ -1,10 +1,14 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_fd_pass
+CASE_NAME=posix_fd_pass
+CASE_MTIME=@CASE_MTIME@
+BASE=/root/tests/$CASE_NAME
+WORKDIR=/root/posix_fd_pass
 SRC="$BASE/fd_pass.c"
 BIN="$BASE/fd_pass"
 OUT="$BASE/out.txt"
+STAMP="$BASE/.case_timestamp"
 
 fail()
 {
@@ -24,16 +28,31 @@ Actual: exit status $rc
 Output: ${output:-<none>}"
 }
 
-cleanup()
+prepare_embedded_c()
 {
-	rm -rf "$BASE" >/dev/null 2>&1 || true
+	mkdir -p "$BASE" "$WORKDIR" >/dev/null 2>&1 || fail "mkdir failed"
+	if [ -f "$STAMP" ] && [ -f "$SRC" ] && [ -f "$BIN" ]; then
+		stamp_mtime=$(cat "$STAMP" 2>/dev/null || printf '')
+		if [ "$stamp_mtime" = "$CASE_MTIME" ]; then
+			return 1
+		fi
+	fi
+	return 0
 }
 
-trap cleanup EXIT
-cleanup
+update_case_timestamp()
+{
+	printf '%s\n' "$CASE_MTIME" > "$STAMP" || fail "timestamp write failed"
+}
 
-mkdir -p "$BASE" >/dev/null 2>&1 || fail "mkdir failed"
+finish()
+{
+	sync >/dev/null 2>&1 || true
+}
 
+trap finish EXIT
+
+if prepare_embedded_c; then
 cat > "$SRC" <<'EOF'
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -390,6 +409,8 @@ int main(void)
 EOF
 
 expect_success gcc -Wall -Werror -o "$BIN" "$SRC"
+update_case_timestamp
+fi
 
 set +e
 "$BIN" > "$OUT" 2>&1

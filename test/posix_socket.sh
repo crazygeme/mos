@@ -1,9 +1,13 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_socket_endpoints
+CASE_NAME=posix_socket
+CASE_MTIME=@CASE_MTIME@
+BASE=/root/tests/$CASE_NAME
+WORKDIR=/root/posix_socket_endpoints
 SRC="$BASE/socket_endpoints.c"
 BIN="$BASE/socket_endpoints"
+STAMP="$BASE/.case_timestamp"
 
 fail()
 {
@@ -28,18 +32,33 @@ require_cmd()
 	command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
 }
 
-cleanup()
+prepare_embedded_c()
 {
-	rm -rf "$BASE" >/dev/null 2>&1 || true
+	mkdir -p "$BASE" "$WORKDIR" >/dev/null 2>&1 || fail "mkdir failed"
+	if [ -f "$STAMP" ] && [ -f "$SRC" ] && [ -f "$BIN" ]; then
+		stamp_mtime=$(cat "$STAMP" 2>/dev/null || printf '')
+		if [ "$stamp_mtime" = "$CASE_MTIME" ]; then
+			return 1
+		fi
+	fi
+	return 0
 }
 
-trap cleanup EXIT
-cleanup
+update_case_timestamp()
+{
+	printf '%s\n' "$CASE_MTIME" > "$STAMP" || fail "timestamp write failed"
+}
+
+finish()
+{
+	sync >/dev/null 2>&1 || true
+}
+
+trap finish EXIT
 
 require_cmd gcc
 
-mkdir -p "$BASE" >/dev/null 2>&1 || fail "mkdir failed"
-
+if prepare_embedded_c; then
 cat > "$SRC" <<'EOF'
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -982,4 +1001,6 @@ int main(void)
 EOF
 
 expect_success gcc -Wall -Werror -o "$BIN" "$SRC"
+update_case_timestamp
+fi
 expect_success "$BIN"

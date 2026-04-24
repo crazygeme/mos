@@ -146,8 +146,9 @@ static unsigned mem_poll(file *fp, unsigned events, poll_table *pt)
 	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
-static int mem_getattr(inode *node, struct stat *s)
+static int mem_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_rdev = (unsigned)(uintptr_t)node->i_private;
@@ -161,9 +162,9 @@ static int mem_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static int mem_read_page(inode *node, unsigned offset, void *buf)
+static int mem_read_page(file *fp, unsigned offset, void *buf)
 {
-	(void)node;
+	(void)fp;
 	memset(buf, 0, PAGE_SIZE);
 	if (offset >= mem_dev_limit())
 		return 0;
@@ -173,9 +174,9 @@ static int mem_read_page(inode *node, unsigned offset, void *buf)
 	return mem_copy_from_phys(buf, offset, PAGE_SIZE);
 }
 
-static int mem_write_page(inode *node, unsigned offset, const void *buf)
+static int mem_write_page(file *fp, unsigned offset, const void *buf)
 {
-	(void)node;
+	(void)fp;
 	if (offset >= mem_dev_limit())
 		return 0;
 	if (offset + PAGE_SIZE > mem_dev_limit())
@@ -190,18 +191,15 @@ static int mem_release(file *fp)
 	return 0;
 }
 
-static const inode_operations mem_iops = {
-	.getattr = mem_getattr,
-	.read_page = mem_read_page,
-	.write_page = mem_write_page,
-};
-
 static const file_operations mem_fops = {
 	.release = mem_release,
+	.getattr = mem_getattr,
 	.read = mem_read,
 	.write = mem_write,
 	.llseek = mem_llseek,
 	.poll = mem_poll,
+	.read_page = mem_read_page,
+	.write_page = mem_write_page,
 };
 
 static file *mem_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
@@ -215,7 +213,6 @@ static file *mem_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR;
 	node->i_private = (void *)(uintptr_t)MKDEV(MEM_MAJOR, MEM_MINOR);
-	node->i_op = &mem_iops;
 
 	fp->f_inode = node;
 	fp->f_count = 1;

@@ -17,8 +17,9 @@
 static spinlock_t pts_alloc_lock;
 static pts_pair pts_pairs[MAX_PTS];
 
-static int ptmx_dir_getattr(inode *node, struct stat *s)
+static int ptmx_dir_getattr(file *fp, struct stat *s)
 {
+	(void)fp;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = S_IFDIR | 0755;
 	s->st_nlink = 2;
@@ -32,8 +33,9 @@ static int ptmx_dir_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static int ptmx_master_getattr(inode *node, struct stat *s)
+static int ptmx_master_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_dev = MKDEV(3, 1);
@@ -49,8 +51,9 @@ static int ptmx_master_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static int pts_slave_getattr(inode *node, struct stat *s)
+static int pts_slave_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	pts_pair *p = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = p->slave_mode;
@@ -89,21 +92,21 @@ static int pts_slave_release(file *fp)
 }
 
 static const file_operations pts_slave_path_fops = {
+	.getattr = pts_slave_getattr,
+	.setattr = pts_slave_setattr,
+	.chown = pts_slave_chown,
 	.release = pts_slave_path_release,
 };
 
 static const file_operations pts_slave_fops = {
 	.release = pts_slave_release,
+	.getattr = pts_slave_getattr,
+	.setattr = pts_slave_setattr,
+	.chown = pts_slave_chown,
 	.read = pts_slave_read,
 	.write = pts_slave_write,
 	.poll = pts_slave_poll,
 	.ioctl = pts_slave_ioctl,
-};
-
-static const inode_operations pts_slave_iops = {
-	.getattr = pts_slave_getattr,
-	.setattr = pts_slave_setattr,
-	.chown = pts_slave_chown,
 };
 
 static file *ptmx_open_slave_pair(pts_pair *p, int flag)
@@ -113,7 +116,6 @@ static file *ptmx_open_slave_pair(pts_pair *p, int flag)
 
 	node = zalloc(sizeof(*node));
 	node->i_mode = p->slave_mode;
-	node->i_op = &pts_slave_iops;
 	node->i_private = p;
 
 	fp = zalloc(sizeof(*fp));
@@ -203,14 +205,11 @@ static int pts_master_release(file *fp)
 
 static const file_operations ptmx_master_fops = {
 	.release = pts_master_release,
+	.getattr = ptmx_master_getattr,
 	.read = pts_master_read,
 	.write = pts_master_write,
 	.poll = pts_master_poll,
 	.ioctl = pts_master_ioctl,
-};
-
-static const inode_operations ptmx_master_iops = {
-	.getattr = ptmx_master_getattr,
 };
 
 /*
@@ -257,12 +256,9 @@ static int ptmx_dir_release(file *fp)
 	return 0;
 }
 
-static const inode_operations ptmx_dir_iops = {
-	.getattr = ptmx_dir_getattr,
-};
-
 static const file_operations ptmx_dir_fops = {
 	.release = ptmx_dir_release,
+	.getattr = ptmx_dir_getattr,
 	.read = ptmx_dir_read,
 	.poll = ptmx_dir_poll,
 };
@@ -329,7 +325,6 @@ static file *ptmx_dir_open_root(super_block *sb, int flag)
 	ptmx_dir_gen(sb, rd);
 
 	node->i_mode = S_IFDIR | 0755;
-	node->i_op = &ptmx_dir_iops;
 	node->i_private = rd;
 	fp->f_inode = node;
 	fp->f_count = 1;
@@ -387,7 +382,6 @@ static file *ptmx_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
-	node->i_op = &ptmx_master_iops;
 	node->i_private = p;
 
 	file *fp = zalloc(sizeof(*fp));

@@ -68,7 +68,7 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	int ret;
 
 	if (fp->f_inode)
-		fs_page_cache_invalidate(fp->f_inode);
+		fs_page_cache_invalidate(fp);
 	if (fp->f_flag & O_APPEND)
 		write_pos = (loff_t)f->fsize;
 	if ((uint64_t)write_pos > f->fsize) {
@@ -175,27 +175,27 @@ static int ext4_file_flush(file *fp)
 	return 0;
 }
 
-static int ext4_file_getattr(inode *node, struct stat *s)
+static int ext4_file_getattr(file *fp, struct stat *s)
 {
-	ext4_file *f = node->i_private;
+	ext4_file *f = fp->f_inode->i_private;
 	return ext4_fstat(f, s);
 }
 
-static int ext4_file_setattr(inode *node, uint32_t mode)
+static int ext4_file_setattr(file *fp, uint32_t mode)
 {
-	ext4_file *f = node->i_private;
+	ext4_file *f = fp->f_inode->i_private;
 	return ext4_fchmod(f, mode);
 }
 
-static int ext4_file_chown(inode *node, uint32_t uid, uint32_t gid)
+static int ext4_file_chown(file *fp, uint32_t uid, uint32_t gid)
 {
-	ext4_file *f = node->i_private;
+	ext4_file *f = fp->f_inode->i_private;
 	return ext4_fchown(f, uid, gid);
 }
 
-static int ext4_file_read_page(inode *node, unsigned offset, void *buf)
+static int ext4_file_read_page(file *fp, unsigned offset, void *buf)
 {
-	ext4_file *ff = node->i_private;
+	ext4_file *ff = fp->f_inode->i_private;
 	loff_t saved_pos = (loff_t)ext4_ftell(ff);
 	size_t rcnt = 0;
 	int ret;
@@ -211,14 +211,14 @@ static int ext4_file_read_page(inode *node, unsigned offset, void *buf)
 	return 0;
 }
 
-static int ext4_file_write_page(inode *node, unsigned offset, const void *buf)
+static int ext4_file_write_page(file *fp, unsigned offset, const void *buf)
 {
-	ext4_file *ff = node->i_private;
+	ext4_file *ff = fp->f_inode->i_private;
 	loff_t saved_pos = (loff_t)ext4_ftell(ff);
 	size_t wcnt = 0;
 	int ret;
 
-	fs_page_cache_invalidate(node);
+	fs_page_cache_invalidate(fp);
 	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
 		return -EIO;
 	ret = ext4_fwrite(ff, buf, PAGE_SIZE, &wcnt);
@@ -228,20 +228,17 @@ static int ext4_file_write_page(inode *node, unsigned offset, const void *buf)
 	return 0;
 }
 
-static const inode_operations ext4_file_iops = {
+static const file_operations ext4_file_fops = {
+	.release = ext4_file_release,
 	.getattr = ext4_file_getattr,
 	.setattr = ext4_file_setattr,
 	.chown = ext4_file_chown,
-	.read_page = ext4_file_read_page,
-	.write_page = ext4_file_write_page,
-};
-
-static const file_operations ext4_file_fops = {
-	.release = ext4_file_release,
 	.read = ext4_file_read,
 	.write = ext4_file_write,
 	.llseek = ext4_file_llseek,
 	.poll = ext4_file_poll,
+	.read_page = ext4_file_read_page,
+	.write_page = ext4_file_write_page,
 	.flush = ext4_file_flush,
 };
 
@@ -334,32 +331,29 @@ static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 	return (loff_t)cur_pos;
 }
 
-static int ext4_dir_getattr(inode *node, struct stat *s)
+static int ext4_dir_getattr(file *fp, struct stat *s)
 {
-	ext4_dir *dir = node->i_private;
+	ext4_dir *dir = fp->f_inode->i_private;
 	return ext4_fstat(&dir->f, s);
 }
 
-static int ext4_dir_setattr(inode *node, uint32_t mode)
+static int ext4_dir_setattr(file *fp, uint32_t mode)
 {
-	ext4_dir *dir = node->i_private;
+	ext4_dir *dir = fp->f_inode->i_private;
 	return ext4_fchmod(&dir->f, mode);
 }
 
-static int ext4_dir_chown(inode *node, uint32_t uid, uint32_t gid)
+static int ext4_dir_chown(file *fp, uint32_t uid, uint32_t gid)
 {
-	ext4_dir *dir = node->i_private;
+	ext4_dir *dir = fp->f_inode->i_private;
 	return ext4_fchown(&dir->f, uid, gid);
 }
 
-static const inode_operations ext4_dir_iops = {
+static const file_operations ext4_dir_fops = {
+	.release = ext4_dir_release,
 	.getattr = ext4_dir_getattr,
 	.setattr = ext4_dir_setattr,
 	.chown = ext4_dir_chown,
-};
-
-static const file_operations ext4_dir_fops = {
-	.release = ext4_dir_release,
 	.read = ext4_dir_read,
 	.llseek = ext4_dir_llseek,
 	.poll = ext4_file_poll,
@@ -369,7 +363,6 @@ static const file_operations ext4_dir_fops = {
 static file *ext4_alloc_file(void *content)
 {
 	inode *node = zalloc(sizeof(*node));
-	node->i_op = &ext4_file_iops;
 	node->i_private = content;
 
 	file *fp = zalloc(sizeof(*fp));
@@ -382,7 +375,6 @@ static file *ext4_alloc_file(void *content)
 static file *ext4_alloc_dir(void *content)
 {
 	inode *node = zalloc(sizeof(*node));
-	node->i_op = &ext4_dir_iops;
 	node->i_private = content;
 
 	file *fp = zalloc(sizeof(*fp));
@@ -735,7 +727,7 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 	if (ret && ret->f_inode) {
 		ret->f_inode->i_pgcache_tag = sb;
 		if (flag & O_TRUNC)
-			fs_page_cache_invalidate(ret->f_inode);
+			fs_page_cache_invalidate(ret);
 	}
 	name_put(full);
 	return ret;

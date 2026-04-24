@@ -149,8 +149,10 @@ static int rtc_ioctl(file *fp, unsigned cmd, void *buf)
 	return -ENOSYS;
 }
 
-static int rtc_getattr(inode *node, struct stat *s)
+static int rtc_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_atime = s->st_mtime = s->st_ctime = time_now_sec();
 	s->st_mode = node->i_mode;
@@ -167,11 +169,8 @@ static int rtc_release(file *fp)
 	return 0;
 }
 
-static const inode_operations rtc_iops = {
-	.getattr = rtc_getattr,
-};
-
 static const file_operations rtc_fops = {
+	.getattr = rtc_getattr,
 	.read = rtc_read,
 	.poll = rtc_poll,
 	.ioctl = rtc_ioctl,
@@ -184,7 +183,6 @@ static file *rtc_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-	node->i_op = &rtc_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;

@@ -40,8 +40,10 @@ static unsigned random_poll(file *fp, unsigned events, poll_table *pt)
 	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
-static int random_getattr(inode *node, struct stat *s)
+static int random_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_rdev = (unsigned)(uintptr_t)node->i_private;
@@ -60,12 +62,9 @@ static int random_release(file *fp)
 	return 0;
 }
 
-static const inode_operations random_iops = {
-	.getattr = random_getattr,
-};
-
 static const file_operations random_fops = {
 	.release = random_release,
+	.getattr = random_getattr,
 	.read = random_read,
 	.write = random_write,
 	.poll = random_poll,
@@ -77,7 +76,6 @@ static file *random_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP |
 		       S_IROTH | S_IWOTH;
 	node->i_private = (void *)(uintptr_t)rdev;
-	node->i_op = &random_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;

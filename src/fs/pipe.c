@@ -106,8 +106,10 @@ static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 	return -ESPIPE;
 }
 
-static int pipe_getattr(inode *node, struct stat *s)
+static int pipe_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	s->st_atime = time_now_sec();
 	s->st_ctime = time_now_sec();
 	s->st_mtime = time_now_sec();
@@ -123,12 +125,9 @@ static int pipe_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static const inode_operations pipe_iops = {
-	.getattr = pipe_getattr,
-};
-
 static const file_operations pipe_read_fops = {
 	.release = pipe_release,
+	.getattr = pipe_getattr,
 	.read = pipe_read,
 	.poll = pipe_read_poll,
 	.llseek = pipe_llseek,
@@ -136,6 +135,7 @@ static const file_operations pipe_read_fops = {
 
 static const file_operations pipe_write_fops = {
 	.release = pipe_release,
+	.getattr = pipe_getattr,
 	.write = pipe_write,
 	.poll = pipe_write_poll,
 	.llseek = pipe_llseek,
@@ -152,7 +152,6 @@ int pipe_open(file **pipes)
 
 	inode *ri = zalloc(sizeof(*ri));
 	ri->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
-	ri->i_op = &pipe_iops;
 	ri->i_private = rn;
 
 	file *fp_read = zalloc(sizeof(*fp_read));
@@ -168,7 +167,6 @@ int pipe_open(file **pipes)
 
 	inode *wi = zalloc(sizeof(*wi));
 	wi->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
-	wi->i_op = &pipe_iops;
 	wi->i_private = wn;
 
 	file *fp_write = zalloc(sizeof(*fp_write));

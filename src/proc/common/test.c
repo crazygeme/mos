@@ -179,8 +179,9 @@ static void run_all_tests(const char *suite_pat)
 
 /* ── Shared getattr ──────────────────────────────────────────────────────── */
 
-static int tests_getattr(inode *node, struct stat *s)
+static int tests_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_size = (loff_t)node->i_size;
@@ -192,10 +193,6 @@ static int tests_getattr(inode *node, struct stat *s)
 	s->st_nlink = S_ISDIR(node->i_mode) ? 2 : 1;
 	return 0;
 }
-
-static const inode_operations tests_iops = {
-	.getattr = tests_getattr,
-};
 
 /* ── /proc/tests/.runner — write-only ────────────────────────────────────── */
 
@@ -267,11 +264,13 @@ static int runner_release(file *fp)
 }
 
 static const file_operations runner_fops = {
+	.getattr = tests_getattr,
 	.write = runner_write,
 	.release = runner_release,
 };
 
 static const file_operations result_fops = {
+	.getattr = tests_getattr,
 	.write = result_write,
 	.release = runner_release,
 };
@@ -280,7 +279,6 @@ static file *make_runner_file(void)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFREG | S_IWUSR | S_IWGRP | S_IWOTH;
-	node->i_op = &tests_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
@@ -293,7 +291,6 @@ static file *make_result_file(void)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFREG | S_IWUSR | S_IWGRP | S_IWOTH;
-	node->i_op = &tests_iops;
 
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
@@ -362,6 +359,7 @@ static int suite_release(file *fp)
 }
 
 static const file_operations suite_fops = {
+	.getattr = tests_getattr,
 	.read = suite_read,
 	.release = suite_release,
 };
@@ -379,7 +377,6 @@ static file *make_static_file(const char *content)
 	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
 		       S_IXGRP | S_IXOTH;
 	node->i_size = length;
-	node->i_op = &tests_iops;
 	node->i_private = ss;
 
 	file *fp = zalloc(sizeof(*fp));
@@ -526,6 +523,7 @@ static int tests_dir_release(file *fp)
 }
 
 static const file_operations tests_dir_fops = {
+	.getattr = tests_getattr,
 	.read = tests_dir_read,
 	.release = tests_dir_release,
 };
@@ -599,7 +597,6 @@ static file *tests_open_root(super_block *sb, int flag)
 	node = zalloc(sizeof(*node));
 	node->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
 		       S_IXGRP | S_IXOTH;
-	node->i_op = &tests_iops;
 	node->i_private = td;
 
 	fp = zalloc(sizeof(*fp));

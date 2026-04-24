@@ -47,8 +47,9 @@ void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 
 /* _DEFINE_PROC_FILE_IMPL — all boilerplate except the PROC_INIT registration */
 #define _DEFINE_PROC_FILE_IMPL(name, fill_func)                           \
-	static int _getattr_##name(inode *inode, struct stat *s)          \
+	static int _getattr_##name(file *file, struct stat *s)           \
 	{                                                                 \
+		inode *inode = file->f_inode;                             \
 		unsigned long _now = time_now_sec();                      \
 		s->st_atime = _now;                                       \
 		s->st_mode = inode->i_mode;                               \
@@ -112,11 +113,8 @@ void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 		return newpos;                                            \
 	}                                                                 \
                                                                           \
-	static inode_operations _iops_##name = {                          \
-		.getattr = _getattr_##name,                               \
-	};                                                                \
-                                                                          \
 	static file_operations _fops_##name = {                           \
+		.getattr = _getattr_##name,                               \
 		.release = _release_##name,                               \
 		.read = _read_##name,                                     \
 		.llseek = _llseek_##name,                                 \
@@ -128,7 +126,6 @@ void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 		fill_func(_pb);                                           \
 		inode *node = zalloc(sizeof(*node));                      \
 		node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;     \
-		node->i_op = &_iops_##name;                               \
 		node->i_private = _pb;                                    \
 		node->i_size = _pb->len;                                  \
 		file *fp = zalloc(sizeof(*fp));                           \

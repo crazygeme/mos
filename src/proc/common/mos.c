@@ -107,8 +107,9 @@ static void fill(proc_buf_t *pb)
 			task_schedule_count);
 }
 
-static int mos_getattr(inode *inode, struct stat *s)
+static int mos_getattr(file *file, struct stat *s)
 {
+	inode *inode = file->f_inode;
 	unsigned long now = time_now_sec();
 
 	s->st_atime = now;
@@ -212,11 +213,8 @@ static loff_t mos_llseek(file *file, loff_t offset, int whence)
 	return newpos;
 }
 
-static inode_operations mos_iops = {
-	.getattr = mos_getattr,
-};
-
 static file_operations mos_fops = {
+	.getattr = mos_getattr,
 	.release = mos_release,
 	.read = mos_read,
 	.write = mos_write,
@@ -237,7 +235,6 @@ static file *mos_open_root(super_block *sb, int flag)
 	node = zalloc(sizeof(*node));
 	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH | S_IWUSR |
 		       S_IWGRP | S_IWOTH;
-	node->i_op = &mos_iops;
 	node->i_private = pb;
 	node->i_size = pb->len;
 

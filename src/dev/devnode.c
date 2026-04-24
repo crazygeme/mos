@@ -41,9 +41,7 @@ typedef struct {
 static cdev_entry cdev_table[MAX_CDEVS];
 static int cdev_count;
 
-static const inode_operations devnode_iops;
 static const file_operations devnode_fops;
-static const inode_operations fifonode_iops;
 static const file_operations fifonode_reader_fops;
 static const file_operations fifonode_writer_fops;
 
@@ -68,7 +66,6 @@ static file *devnode_open_stub(super_block *sb, unsigned mode)
 
 	node = zalloc(sizeof(*node));
 	node->i_mode = mode;
-	node->i_op = &devnode_iops;
 	node->i_private =
 		sb->s_fs_info; /* owned by super_block; not freed here */
 
@@ -89,8 +86,9 @@ typedef struct {
  * Char / block / socket: stat works; I/O returns ENXIO               *
  * ------------------------------------------------------------------ */
 
-static int devnode_getattr(inode *node, struct stat *s)
+static int devnode_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	devnode_info *dn = node->i_private;
 
 	memset(s, 0, sizeof(*s));
@@ -121,12 +119,9 @@ static int devnode_release(file *fp)
 	return 0;
 }
 
-static const inode_operations devnode_iops = {
-	.getattr = devnode_getattr,
-};
-
 static const file_operations devnode_fops = {
 	.release = devnode_release,
+	.getattr = devnode_getattr,
 	.read = devnode_read,
 	.write = devnode_write,
 };
@@ -135,8 +130,9 @@ static const file_operations devnode_fops = {
  * FIFO: shared cy_buf between reader and writer opens                 *
  * ------------------------------------------------------------------ */
 
-static int fifonode_getattr(inode *node, struct stat *s)
+static int fifonode_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode; /* mode was copied into i_mode at open */
 	s->st_nlink = 1;
@@ -210,18 +206,16 @@ static int fifonode_release_writer(file *fp)
 	return 0;
 }
 
-static const inode_operations fifonode_iops = {
-	.getattr = fifonode_getattr,
-};
-
 static const file_operations fifonode_reader_fops = {
 	.release = fifonode_release_reader,
+	.getattr = fifonode_getattr,
 	.read = fifonode_read,
 	.poll = fifonode_read_poll,
 };
 
 static const file_operations fifonode_writer_fops = {
 	.release = fifonode_release_writer,
+	.getattr = fifonode_getattr,
 	.write = fifonode_write,
 	.poll = fifonode_write_poll,
 };
@@ -233,7 +227,6 @@ static file *devnode_open_fifo(devnode_info *dn, int flag)
 	file *fp = zalloc(sizeof(*fp));
 
 	node->i_mode = dn->mode;
-	node->i_op = &fifonode_iops;
 	node->i_private = b;
 
 	fp->f_inode = node;

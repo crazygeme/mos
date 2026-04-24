@@ -36,6 +36,11 @@ static int pts_file_nonblock(file *fp)
 	return (fp->f_flag & O_NONBLOCK) != 0;
 }
 
+static int pts_slave_fionread(pts_pair *p)
+{
+	return cyb_get_buf_len(p->m2s);
+}
+
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 {
 	cy_buf *m2s = NULL, *s2m = NULL;
@@ -91,6 +96,9 @@ static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
 	case TCGETS:
 		memcpy(buf, &p->termios, sizeof(p->termios));
 		return 0;
+	case TCXONC:
+		/* PTYs don't model software flow-control stop/start state yet. */
+		return 0;
 	case TCSETS:
 	case TCSETSW:
 		memcpy(&p->termios, buf, sizeof(p->termios));
@@ -141,6 +149,9 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 	switch (cmd) {
 	case TIOCGPTN:
 		*(unsigned *)buf = (unsigned)p->idx;
+		return 0;
+	case FIONREAD:
+		*(int *)buf = cyb_get_buf_len(p->s2m);
 		return 0;
 	case TIOCSPTLCK:
 		p->pt_locked = buf ? (*(int *)buf != 0) : 0;
@@ -253,6 +264,9 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 			cyb_flush(p->s2m);
 		return 0;
 	}
+	case FIONREAD:
+		*(int *)buf = pts_slave_fionread(p);
+		return 0;
 	case KDGETMODE:
 		*(int *)buf = KD_TEXT;
 		return 0;

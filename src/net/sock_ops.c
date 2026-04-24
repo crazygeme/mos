@@ -16,6 +16,31 @@
 #include <lwip/ip4_addr.h>
 #include <lwip/ip.h>
 
+static void sock_refresh_local_inet(mos_sock *sk)
+{
+	sk->local.sin_family = AF_INET;
+
+	if (sk->type == SOCK_STREAM && sk->tcp) {
+		sk->local.sin_port = lwip_htons(sk->tcp->local_port);
+		sk->local.sin_addr.s_addr =
+			ip4_addr_get_u32(&sk->tcp->local_ip);
+		return;
+	}
+
+	if (sk->type == SOCK_DGRAM && sk->udp) {
+		sk->local.sin_port = lwip_htons(sk->udp->local_port);
+		sk->local.sin_addr.s_addr =
+			ip4_addr_get_u32(ip_2_ip4(&sk->udp->local_ip));
+		return;
+	}
+
+	if (sk->type == SOCK_RAW && sk->raw) {
+		sk->local.sin_port = 0;
+		sk->local.sin_addr.s_addr =
+			ip4_addr_get_u32(ip_2_ip4(&sk->raw->local_ip));
+	}
+}
+
 /* ── do_socket ───────────────────────────────────────────────────────────── */
 
 int do_socket(int domain, int type, int protocol)
@@ -143,6 +168,7 @@ int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 		return (e == ERR_USE) ? -EADDRINUSE : -EINVAL;
 
 	sk->local = *in;
+	sock_refresh_local_inet(sk);
 	return 0;
 }
 
@@ -181,6 +207,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 		if (e != ERR_OK)
 			return -EINVAL;
 		sk->peer = *in;
+		sock_refresh_local_inet(sk);
 		sk->state = SS_CONNECTED;
 		return 0;
 	}
@@ -207,6 +234,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 		return sk->err ? sk->err : -ECONNREFUSED;
 
 	sk->peer = *in;
+	sock_refresh_local_inet(sk);
 	return 0;
 }
 
@@ -332,6 +360,7 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 		return 0;
 	}
 
+	sock_refresh_local_inet(sk);
 	unsigned copy = *addrlen < sizeof(sk->local) ? *addrlen :
 						       sizeof(sk->local);
 	memcpy(addr, &sk->local, copy);
@@ -459,8 +488,11 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		     fd, buf, len, flags, from, fromlen);
 
 	mos_sock *sk = fd_to_sock(fd);
+	task_struct *cur = CURRENT_TASK();
 	if (!sk)
 		return -ENOTSOCK;
+	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
+		flags |= MSG_DONTWAIT;
 
 	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 

@@ -4,6 +4,8 @@
 #include <net/sock.h>
 #include <lib/klib.h>
 #include <hw/time.h>
+#include <ps/ps.h>
+#include <fs/fcntl.h>
 #include <errno.h>
 
 #include <lwip/tcp.h>
@@ -327,16 +329,18 @@ static unsigned sock_recvmsg_stream(mos_sock *sk, struct msghdr *msg)
 
 int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 {
-	(void)flags;
 	mos_sock *sk = fd_to_sock(fd);
 	int ret;
 	size_t totlen;
 	const struct sockaddr_in *to;
+	task_struct *cur = CURRENT_TASK();
 
 	if (!sk) {
 		ret = -ENOTSOCK;
 		goto log;
 	}
+	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
+		flags |= MSG_DONTWAIT;
 	if (sk->err) {
 		ret = sk->err;
 		goto log;
@@ -384,11 +388,14 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 	size_t total_len;
 	unsigned long deadline;
 	int wait_ret;
+	task_struct *cur = CURRENT_TASK();
 
 	if (!sk) {
 		delivered = -ENOTSOCK;
 		goto done;
 	}
+	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
+		flags |= MSG_DONTWAIT;
 	if (sk->domain == AF_UNIX) {
 		delivered = unix_recvmsg(sk, msg, flags);
 		goto done;

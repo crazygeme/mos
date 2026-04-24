@@ -16,8 +16,9 @@
 static pts_pair pts_pairs[MAX_PTS];
 static spinlock_t pts_alloc_lock;
 
-static int pts_master_getattr(inode *node, struct stat *s)
+static int pts_master_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	pts_pair *p = node->i_private;
 
 	memset(s, 0, sizeof(*s));
@@ -35,8 +36,9 @@ static int pts_master_getattr(inode *node, struct stat *s)
 	return 0;
 }
 
-static int pts_slave_getattr(inode *node, struct stat *s)
+static int pts_slave_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	pts_pair *p = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = p->slave_mode;
@@ -72,18 +74,18 @@ static int pts_slave_release(file *fp)
 	return 0;
 }
 
-static const inode_operations pts_slave_iops = {
+static const file_operations pts_slave_path_fops = {
 	.getattr = pts_slave_getattr,
 	.setattr = pts_slave_setattr,
 	.chown = pts_slave_chown,
-};
-
-static const file_operations pts_slave_path_fops = {
 	.release = pts_slave_path_release,
 };
 
 static const file_operations pts_slave_fops = {
 	.release = pts_slave_release,
+	.getattr = pts_slave_getattr,
+	.setattr = pts_slave_setattr,
+	.chown = pts_slave_chown,
 	.read = pts_slave_read,
 	.write = pts_slave_write,
 	.poll = pts_slave_poll,
@@ -107,12 +109,9 @@ static int pts_master_release(file *fp)
 	return 0;
 }
 
-static const inode_operations pts_master_iops = {
-	.getattr = pts_master_getattr,
-};
-
 static const file_operations pts_master_fops = {
 	.release = pts_master_release,
+	.getattr = pts_master_getattr,
 	.read = pts_master_read,
 	.write = pts_master_write,
 	.poll = pts_master_poll,
@@ -126,7 +125,6 @@ static file *pty_open_slave_pair(pts_pair *p, int flag)
 
 	node = zalloc(sizeof(*node));
 	node->i_mode = p->slave_mode;
-	node->i_op = &pts_slave_iops;
 	node->i_private = p;
 
 	fp = zalloc(sizeof(*fp));
@@ -176,7 +174,6 @@ static file *ptm_cdev_open(super_block *sb, unsigned rdev, int flag)
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-	node->i_op = &pts_master_iops;
 	node->i_private = p;
 
 	file *fp = zalloc(sizeof(*fp));

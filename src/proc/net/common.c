@@ -12,7 +12,6 @@
 #include <ext4.h>
 
 static const file_operations plain_fops;
-static const inode_operations plain_iops;
 
 static ssize_t plain_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
@@ -58,8 +57,10 @@ static int plain_release(file *fp)
 	return 0;
 }
 
-static int plain_getattr(inode *node, struct stat *s)
+static int plain_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_size = (loff_t)node->i_size;
@@ -71,20 +72,16 @@ static int plain_getattr(inode *node, struct stat *s)
 }
 
 static const file_operations plain_fops = {
+	.getattr = plain_getattr,
 	.read = plain_read,
 	.llseek = plain_llseek,
 	.release = plain_release,
-};
-
-static const inode_operations plain_iops = {
-	.getattr = plain_getattr,
 };
 
 file *make_text_file(char *buf)
 {
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
-	node->i_op = &plain_iops;
 	node->i_private = buf;
 	node->i_size = strlen(buf);
 

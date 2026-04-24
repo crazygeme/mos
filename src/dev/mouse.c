@@ -39,8 +39,10 @@ static unsigned mouse_poll(file *fp, unsigned events, poll_table *pt)
 	return ps2mouse_poll(events, pt);
 }
 
-static int mouse_getattr(inode *node, struct stat *s)
+static int mouse_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
+
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
 	s->st_rdev = (unsigned)(uintptr_t)node->i_private;
@@ -121,12 +123,9 @@ static int mouse_release(file *fp)
 	return 0;
 }
 
-static const inode_operations mouse_iops = {
-	.getattr = mouse_getattr,
-};
-
 static const file_operations mouse_fops = {
 	.release = mouse_release,
+	.getattr = mouse_getattr,
 	.read = mouse_read,
 	.write = mouse_write,
 	.poll = mouse_poll,
@@ -143,7 +142,6 @@ static file *mouse_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 	node->i_mode = S_IFCHR | 0666;
 	node->i_private = (void *)(uintptr_t)rdev;
-	node->i_op = &mouse_iops;
 
 	fp->f_inode = node;
 	fp->f_count = 1;

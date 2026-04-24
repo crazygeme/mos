@@ -164,8 +164,9 @@ static unsigned hdd_dev_poll(file *fp, unsigned events, poll_table *pt)
 	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
-static int hdd_dev_getattr(inode *node, struct stat *s)
+static int hdd_dev_getattr(file *fp, struct stat *s)
 {
+	inode *node = fp->f_inode;
 	unsigned idx = (unsigned)(uintptr_t)node->i_private;
 
 	memset(s, 0, sizeof(*s));
@@ -190,12 +191,9 @@ static int hdd_dev_release(file *fp)
 	return 0;
 }
 
-static const inode_operations hdd_dev_iops = {
-	.getattr = hdd_dev_getattr,
-};
-
 static const file_operations hdd_dev_fops = {
 	.release = hdd_dev_release,
+	.getattr = hdd_dev_getattr,
 	.read = hdd_dev_read,
 	.write = hdd_dev_write,
 	.llseek = hdd_dev_llseek,
@@ -213,7 +211,6 @@ static file *hdd_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFBLK | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-	node->i_op = &hdd_dev_iops;
 	node->i_private = (void *)(uintptr_t)idx;
 
 	file *fp = zalloc(sizeof(*fp));

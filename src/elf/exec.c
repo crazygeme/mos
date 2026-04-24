@@ -423,8 +423,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 
 	/* stat via VFS inode ops */
 	memset(&s, 0, sizeof(s));
-	if (!fp->f_inode->i_op || !fp->f_inode->i_op->getattr ||
-	    fp->f_inode->i_op->getattr(fp->f_inode, &s) != 0) {
+	if (!fp->f_fop || !fp->f_fop->getattr ||
+	    fp->f_fop->getattr(fp, &s) != 0) {
 		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOENT;

@@ -15,11 +15,6 @@
 #define KERNEL_CODE_SELECTOR 0x10
 #define USER_DATA_SELECTOR 0x1b
 #define USER_CODE_SELECTOR 0x23
-/* TSS_SELECTOR: not used for task switching, but TR must be valid on x86 */
-#define TSS_SELECTOR 0x28
-/* TSS selectors: CPU 0 at TSS_SELECTOR, CPU n at TSS_SELECTOR + n*8 */
-/* SELECTOR_COUNT is now defined after MAX_CPUS below */
-
 #define ADDRESS_LIMIT \
 	0xfffff //  always 4k bytes algined, so last 0xfffff means 4G space
 
@@ -30,6 +25,14 @@
 #define GDT_ENTRY_TLS_MIN 6
 #define GDT_ENTRY_TLS_MAX 8
 #define GDT_ENTRY_TLS_COUNT 3
+
+/*
+ * TSS selectors: keep the per-CPU TSS block after the user TLS slots so
+ * loading CPU1/CPU2/CPU3 TSS descriptors never overwrites GDT entries 6..8.
+ * TSS_SELECTOR is not used for hardware task switching, but TR must be valid.
+ */
+#define TSS_SELECTOR ((GDT_ENTRY_TLS_MAX + 1) << 3)
+/* SELECTOR_COUNT is now defined after MAX_CPUS below */
 
 #define SEG_BASE_4K 1 // address count with 4k
 #define SEG_BASE_1 0 // address count with 1 byte
@@ -92,14 +95,18 @@
 /* SMP configuration */
 #define MAX_CPUS 8
 #define LDT_ENTRY_COUNT 16
-#define LDT_SELECTOR ((5 + MAX_CPUS) << 3)
+#define LDT_SELECTOR \
+	((5 + GDT_ENTRY_TLS_COUNT + MAX_CPUS) << 3)
 #define AP_TRAMPOLINE_PHYS 0x8000 /* physical addr for AP startup code */
 #define AP_PARAMS_PHYS 0x9000 /* physical addr for AP params page */
 #define IPI_VECTOR_SCHED 0xF0 /* scheduler kick IPI */
 #define IPI_VECTOR_TLB 0xF1 /* TLB shootdown IPI */
 #define IPI_VECTOR_SPURIOUS 0xFF /* spurious APIC interrupt */
 
-/* GDT: 5 base entries + one TSS per CPU + one current-task LDT descriptor */
-#define SELECTOR_COUNT (5 + MAX_CPUS + 1)
+/*
+ * GDT: null + kernel/user code/data (5 base entries total),
+ * 3 process TLS slots, one TSS per CPU, and one current-task LDT descriptor.
+ */
+#define SELECTOR_COUNT (5 + GDT_ENTRY_TLS_COUNT + MAX_CPUS + 1)
 
 #endif

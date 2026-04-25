@@ -188,10 +188,10 @@ static void handle_invalid_opcode(intr_frame *frame)
 
 static void handle_general_protection(intr_frame *frame)
 {
-	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x\n",
+	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
 	     current->psid, current->user->command, frame->eip, frame->esp,
 	     frame->ebp, frame->eax, frame->ebx, frame->ecx, frame->edx,
-	     frame->ds, frame->cs);
+	     frame->ds, frame->cs, frame->gs, frame->fs, frame->error_code);
 	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
 	sys_exit(-EFAULT);
 	return;

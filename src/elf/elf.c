@@ -10,15 +10,10 @@
 /* Round x up to the nearest page boundary. */
 #define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & PAGE_SIZE_MASK)
 
-/* Cumulative time (microseconds) spent in elf_read(), used when profiling is
- * enabled via TestControl.profiling. */
-unsigned long long elf_read_time = 0;
-
 /*
  * elf_read - read bytes from an ELF file at a given offset
  *
  * Seeks to @off in the underlying ext4 file and reads @len bytes into @buf.
- * When profiling is enabled the elapsed time is accumulated into elf_read_time.
  *
  * Returns the number of bytes actually read, or a negative value on error.
  */
@@ -26,7 +21,6 @@ static int elf_read(file *fp, unsigned off, void *buf, int len)
 {
 	size_t rcnt;
 	int ret = -1;
-	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	ret = ext4_fseek(fp->f_inode->i_private, off, SEEK_SET);
 	if (ret != EOK)
@@ -38,8 +32,6 @@ static int elf_read(file *fp, unsigned off, void *buf, int len)
 
 	ret = (int)rcnt;
 DONE:
-	if (TestControl.profiling)
-		elf_read_time += time_wall_us() - begin;
 
 	return ret;
 }

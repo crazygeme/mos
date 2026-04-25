@@ -48,12 +48,6 @@ release:
 debug:
 	@+$(MAKE) BUILD=$(DEBUG) all
 
-run: all
-	@./run.sh
-
-run-debug:
-	@./run.sh debug
-
 # ── Test build (kernel + test/ sources) ─────────────────────────────────────
 
 test: $(DST)/kernel-test
@@ -61,12 +55,6 @@ test: $(DST)/kernel-test
 
 test-debug:
 	@+$(MAKE) BUILD=$(DEBUG) test
-
-run-test: $(DST)/kernel-test
-	@./run.sh test
-
-run-test-debug:
-	@./run.sh test debug
 
 # ── Link rules ───────────────────────────────────────────────────────────────
 
@@ -133,10 +121,6 @@ help:
 	@echo "  make release"
 	@echo "  make debug"
 	@echo "  make test-debug"
-	@echo "  make run"
-	@echo "  make run-debug"
-	@echo "  make run-test"
-	@echo "  make run-test-debug"
 	@echo ""
 	@echo "Output directories:"
 	@echo "  release -> out/x86/release"

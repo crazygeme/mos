@@ -74,7 +74,7 @@ static int sched_policy_supported(int policy)
 
 int sys_uname(struct utsname *utname)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("uname\n");
 
 	strcpy(utname->sysname, UTS_SYSNAME);
@@ -94,7 +94,7 @@ int sys_sethostname(const char *name, unsigned len)
 	memcpy(sys_hostname, name, len);
 	sys_hostname[len] = '\0';
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sethostname(%s, %d)\n", sys_hostname, len);
 
 	return 0;
@@ -107,7 +107,7 @@ int sys_time(unsigned *t)
 	if (t)
 		*t = now;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("time() = %u\n", now);
 
 	return (int)now;
@@ -126,7 +126,7 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	if (tz)
 		tz->tz_minuteswest = tz->tz_dsttime = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("gettimeofday() = %d(sec), %d(usec), while now is %lld(us)\n",
 		     tv->tv_sec, tv->tv_usec, now);
 
@@ -156,7 +156,7 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 
 	total_millisecond = req->tv_sec * 1000 + req->tv_nsec / 1000000;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("nanosleep(%d.%09d) = %ums\n", req->tv_sec, req->tv_nsec,
 		     total_millisecond);
 
@@ -336,7 +336,7 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("reboot(magic1=%x, magic2=%x, cmd=%x) from pid %d\n",
 		     magic1, magic2, cmd, cur->psid);
 
@@ -389,7 +389,7 @@ int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 
 int sys_munmap(void *addr, unsigned length)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("munmap (%x, %x)\n", addr, length);
 
 	return do_munmap(addr, length);
@@ -401,7 +401,7 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 	unsigned begin = (unsigned)addr;
 	unsigned end, vir;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
 
 	/* POSIX: addr must be page-aligned */
@@ -448,7 +448,7 @@ int sys_umask(unsigned mask)
 	task_struct *cur = CURRENT_TASK();
 	int ret = __sync_lock_test_and_set(&cur->umask, (mask & S_IRWXOGU));
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("umask(%d) = %d\n", mask, ret);
 
 	return ret;
@@ -456,7 +456,7 @@ int sys_umask(unsigned mask)
 
 long sys_times(struct tms *buf)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("times\n");
 
 	if (buf) {
@@ -471,7 +471,7 @@ long sys_times(struct tms *buf)
 
 int sys_setpriority(int which, int who, int prio)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("setpriority(%d, %d, %d)\n", which, who, prio);
 
 	/* No real scheduling priority support; silently accept. */
@@ -480,7 +480,7 @@ int sys_setpriority(int which, int who, int prio)
 
 int sys_vhangup(void)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vhangup\n");
 
 	/* Virtual hangup on the controlling terminal — no-op. */
@@ -503,7 +503,7 @@ int sys_sysinfo(void *buf)
 	info->freeram = (unsigned long)free_pages * PAGE_SIZE;
 	info->mem_unit = 1;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sysinfo: total=%luKB free=%luKB\n", info->totalram / 1024,
 		     info->freeram / 1024);
 
@@ -512,7 +512,7 @@ int sys_sysinfo(void *buf)
 
 int sys_getpriority(int which, int who)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getpriority(%d, %d)\n", which, who);
 
 	/* No real priority; return 0 (maps to nice 0). */
@@ -523,7 +523,7 @@ int sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ioperm(%lx, %lx, %d)\n", from, num, turn_on);
 
 	if (!cur->user || cur->user->euid != 0)
@@ -535,7 +535,7 @@ int sys_iopl(int level)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("iopl(%d)\n", level);
 
 	if (!cur->user || cur->user->euid != 0)
@@ -551,7 +551,7 @@ int sys_iopl(int level)
 
 int sys_quotactl(int cmd, const char *special, int id, void *addr)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("quotactl\n");
 
 	return -ENOSYS;
@@ -569,7 +569,7 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 
 	(void)new_addr;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mremap(%x, %x, %x, flags=%x)\n", old_addr, old_size,
 		     new_size, flags);
 
@@ -648,7 +648,7 @@ int sys_query_module(const char *name, int which, void *buf, size_t bufsize,
 		     size_t *ret)
 {
 	// No module support, always return success
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("query_module\n");
 
 	if (buf && bufsize > 0) {
@@ -680,7 +680,7 @@ int sys_stime(unsigned *t)
 
 	time_set_wall_offset((long long)(*t) * 1000000LL);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("stime(%u)\n", *t);
 
 	return 0;
@@ -720,7 +720,7 @@ int sys_ftime(void *buf)
 	tp->timezone = 0;
 	tp->dstflag = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ftime() = %u.%03u\n", tp->time, tp->millitm);
 
 	return 0;

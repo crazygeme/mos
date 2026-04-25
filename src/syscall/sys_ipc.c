@@ -450,7 +450,7 @@ int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
 	call &= 0xffff;
 	(void)fifth;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ipc(call=%u, version=%u, first=%x, second=%x, third=%x, ptr=%x, fifth=%x)\n",
 		     call, version, first, second, third, ptr, fifth);
 

@@ -3,14 +3,12 @@
 #include <hw/font.h>
 
 /* Add default fonts at very beginning */
-extern fb_font_t font_default;
 extern fb_font_t font_vga16;
 list_entry font_list;
 
 void font_init()
 {
 	list_init(&font_list);
-	font_add(&font_default);
 	font_add(&font_vga16);
 }
 

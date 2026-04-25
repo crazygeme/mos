@@ -165,15 +165,13 @@ static void parse_kernel_cmdline()
 		*end = '\0';
 		end++;
 		if (strcmp(token, "verbose") == 0)
-			TestControl.verbos = TEST_LOG_INFO;
+			TestControl.verbose = TEST_LOG_INFO;
 		else if (strcmp(token, "verbose=0") == 0)
-			TestControl.verbos = TEST_LOG_OFF;
+			TestControl.verbose = TEST_LOG_OFF;
 		else if (strcmp(token, "verbose=1") == 0)
-			TestControl.verbos = TEST_LOG_TRACE;
+			TestControl.verbose = TEST_LOG_TRACE;
 		else if (strcmp(token, "verbose=2") == 0)
-			TestControl.verbos = TEST_LOG_INFO;
-		else if (strcmp(token, "profile") == 0)
-			TestControl.profiling = 1;
+			TestControl.verbose = TEST_LOG_INFO;
 		else if (strcmp(token, "bash") == 0)
 			TestControl.bash = 1;
 		else if (strcmp(token, "test") == 0)

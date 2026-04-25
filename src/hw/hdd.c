@@ -784,7 +784,6 @@ static void init_partition_cache(partition *p)
 
 static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 {
-	unsigned long long search_time = 0;
 	int head_sector = HEAD_SECTOR(sector);
 	key_value_pair *pair;
 
@@ -792,13 +791,8 @@ static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 		return (block_cache_item *)-1;
 
 	cache_search_count++;
-	if (TestControl.profiling)
-		search_time = time_wall_us();
 
 	pair = hash_find(p->cache.hash, head_sector);
-
-	if (TestControl.profiling)
-		cache_search_time += time_wall_us() - search_time;
 
 	if (!pair)
 		return NULL;

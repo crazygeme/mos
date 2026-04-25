@@ -40,9 +40,6 @@ elif [ "$arg" == "verbose=2" ]; then
 elif [ "$arg" == "profile" ]; then
 	_build="debug"
 	_debug="-monitor unix:/tmp/qemu-profiler.sock,server,nowait"
-elif [ "$arg" == "curses" ]; then
-	_window="curses"
-	_vga=""
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
 elif [ "$arg" == "bash" ]; then
@@ -55,7 +52,6 @@ elif [ "$arg" == "-h" ]; then
 	echo "param:"
 	echo -e "\t test: build and run the test kernel for the selected build"
 	echo -e "\t debug: use the debug build and wait for gdb before running"
-	echo -e "\t curses: use current console as vm console instead of opening a new window"
 	echo -e "\t logtofile: write kernel log to out/x86/<build>/krn.log instead of stdio"
 	echo -e "\t verbose: run with focused diagnostic logging (level 2)"
 	echo -e "\t verbose=0: disable verbose logging"
@@ -78,10 +74,6 @@ if [ "$_debug" == "-monitor unix:/tmp/qemu-profiler.sock,server,nowait" ] && [ "
 fi
 
 if [ "$_logtofile" == "pending" ]; then
-	_logtofile="file:$_outdir/krn.log"
-fi
-
-if [ "$_window" == "curses" ]; then
 	_logtofile="file:$_outdir/krn.log"
 fi
 

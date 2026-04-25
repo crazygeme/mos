@@ -33,7 +33,7 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 
 	/* Fast path: optimistically try once before entering the retry loop.
 	 * On an uncontended lock this avoids the HLT overhead entirely. */
-	if (__builtin_expect(__sync_lock_test_and_set(&lock->lock, 1) == 0, 1))
+	if (LIKELY(__sync_lock_test_and_set(&lock->lock, 1) == 0))
 		goto locked;
 
 	/* Slow path: stay in a true spin loop. We already disabled interrupts

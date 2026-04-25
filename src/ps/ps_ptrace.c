@@ -321,7 +321,7 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 	} peek;
 	int ret;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ptrace(%d, %d, %x, %x)\n", request, pid, addr, data);
 
 	switch (request) {

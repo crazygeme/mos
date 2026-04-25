@@ -555,14 +555,14 @@ int do_vfork(void)
 
 int sys_fork()
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("fork()\n");
 	return do_fork();
 }
 
 int sys_vfork()
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vfork()\n");
 	return do_vfork();
 }

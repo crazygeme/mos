@@ -45,7 +45,7 @@ int sys_syslog(int type, char *buf, int len)
 {
 	int ret = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("syslog: type=%d, buf=%x, len=%d\n", type, buf, len);
 
 	switch (type) {

@@ -52,7 +52,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	int irq;
 	unsigned exit_signal = flags & CSIGNAL;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("clone(flags=%x, child_stack=%x, ptid=%x, tls=%x, ctid=%x)\n",
 		     (unsigned)flags, (unsigned)child_stack,
 		     (unsigned)parent_tidptr, (unsigned)tls,

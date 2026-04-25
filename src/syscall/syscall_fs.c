@@ -185,7 +185,7 @@ static int do_stat(const char *func, const char *name, struct stat *buf,
 	ret = fp->f_fop->getattr(fp, buf);
 
 log:
-	if (TestControl.verbos && func) {
+	if (TEST_LOG(TEST_LOG_INFO) && func) {
 		format_modes(buf->st_mode, modes);
 		klog("%s(%s, %x) = %d, %s, uid=%d, gid=%d, size=%d, blocks = %d, ino = %d, rdev = %d (%d:%d), dev = %d (%d:%d), nlink = %d\n",
 		     func, name, buf, ret, modes, buf->st_uid, buf->st_gid,
@@ -363,7 +363,7 @@ int sys_statfs(const char *_path, struct statfs *buf)
 	resolve_path(_path, name);
 	ret = vfs_statfs(CURRENT_TASK()->root, name, buf);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("statfs(%s, %x) = %d, type=%x, bsize=%d, namelen=%d\n",
 		     name, buf, ret, buf->f_type, buf->f_bsize, buf->f_namelen);
 
@@ -391,7 +391,7 @@ int sys_fstatfs(int fd, struct statfs *buf)
 
 	ret = vfs_statfs(cur->root, fp->f_name, buf);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("fstatfs(%d, %x) = %d, path=%s, type=%x, bsize=%d, namelen=%d\n",
 		     fd, buf, ret, fp->f_name, buf->f_type, buf->f_bsize,
 		     buf->f_namelen);
@@ -424,7 +424,7 @@ int sys_access(const char *path, int mode)
 
 done:
 	name_put(name);
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("access(%s, %x) = %d\n", path, mode, ret);
 	return ret;
 }
@@ -438,7 +438,7 @@ int sys_chmod(const char *pathname, uint32_t mode)
 	ret = fs_chmod(name, mode);
 	name_put(name);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("chmod(%s, %d) = %d\n", pathname, mode, ret);
 
 	return ret;
@@ -448,7 +448,7 @@ int sys_fchmod(int fd, uint32_t mode)
 {
 	int ret = fs_fchmod(fd, mode);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("fchmod(%d, %d) = %d\n", fd, mode, ret);
 
 	return ret;
@@ -464,7 +464,7 @@ int sys_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	ret = fs_chown(name, uid, gid);
 	name_put(name);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("chown(%s, %d, %d) = %d\n", pathname, uid, gid, ret);
 
 	return ret;
@@ -480,7 +480,7 @@ int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid)
 	ret = fs_chown(name, uid, gid);
 	name_put(name);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("lchown(%s, %d, %d) = %d\n", pathname, uid, gid, ret);
 
 	return ret;
@@ -490,7 +490,7 @@ int sys_fchown(int fd, uint32_t uid, uint32_t gid)
 {
 	int ret = fs_fchown(fd, uid, gid);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("fchown(%d, %d, %d) = %d\n", fd, uid, gid, ret);
 
 	return ret;
@@ -509,7 +509,7 @@ int sys_mknod(const char *_path, unsigned mode, unsigned dev)
 	resolve_path(_path, path);
 	ret = vfs_mknod(cur->root, path, mode, dev);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mknod(%s, %o, %x) = %d\n", _path, mode, dev, ret);
 
 	name_put(path);
@@ -527,7 +527,7 @@ int sys_mkdir(const char *path, unsigned mode)
 	masked_mode = mode & ~(cur->umask & 0777U);
 	ret = vfs_mkdir(cur->root, name, masked_mode);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mkdir(%s, %d) = %d\n", name, mode, ret);
 
 	name_put(name);
@@ -543,7 +543,7 @@ int sys_rmdir(const char *path)
 	resolve_path(path, name);
 	ret = vfs_rmdir(cur->root, name);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("rmdir(%s) = %d\n", name, ret);
 
 	name_put(name);
@@ -553,7 +553,7 @@ int sys_rmdir(const char *path)
 int sys_creat(const char *path, unsigned mode)
 {
 	int fd;
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("creat(%s, %d)\n", path, mode);
 
 	fd = fs_open(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
@@ -573,7 +573,7 @@ int sys_link(const char *path1, const char *path2)
 	resolve_path(path2, name2);
 	ret = vfs_link(cur->root, name1, name2);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("link(%s, %s) = %d\n", name1, name2, ret);
 
 	name_put(name1);
@@ -591,7 +591,7 @@ int sys_symlink(const char *path1, const char *path2)
 	resolve_path(path2, name2);
 	ret = vfs_symlink(cur->root, path1, name2);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("symlink(%s, %s) = %d\n", path1, name2, ret);
 
 	name_put(name2);
@@ -628,7 +628,7 @@ int sys_unlink(const char *_name)
 	if (ret == -ENOENT)
 		ret = vfs_unlink(cur->root, name);
 done:
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("unlink(%s) = %d\n", name, ret);
 	name_put(name);
 	return ret;
@@ -655,7 +655,7 @@ int sys_utime(const char *filename, const struct utimbuf *times)
 	cur = CURRENT_TASK();
 	resolve_path(filename, name);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("utime(%s, atime=%u mtime=%u)\n", name, atime, mtime);
 
 	ret = vfs_utime(cur->root, name, atime, mtime);
@@ -680,7 +680,7 @@ int sys_rename(const char *oldpath, const char *newpath)
 	resolve_path(newpath, name2);
 	ret = vfs_rename(cur->root, name1, name2);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("rename(%s, %s) = %d\n", name1, name2, ret);
 
 	name_put(name1);
@@ -703,7 +703,7 @@ int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 	resolve_path(_path, name);
 
 	ret = vfs_readlink(cur->root, name, buf, bufsiz, &rcnt);
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("readlink(%s, %s, %d) = %d\n", name, buf, bufsiz,
 		     ret ? ret : rcnt);
 
@@ -723,7 +723,7 @@ int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data)
 {
 	int ret = fs_do_mount(dev, dir_name, type, flag, data);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mount(%s, %s, %s, %d, %x) = %d\n", dev, dir_name, type,
 		     flag, data, ret);
 
@@ -734,7 +734,7 @@ int sys_umount(char *name, int flag)
 {
 	int ret = fs_do_umount(name, flag);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("umount(%s, %d) = %d\n", name, flag, ret);
 
 	return ret;
@@ -747,7 +747,7 @@ int sys_umount2(char *name, int flags)
 
 int sys_sync()
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sync()\n");
 
 	if (TestControl.test)
@@ -776,7 +776,7 @@ int sys_chdir(const char *path)
 		goto done;
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("chdir(%s)\n", path);
 
 	if (*path == '/') {
@@ -900,7 +900,7 @@ int sys_chroot(const char *path)
 		goto done;
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("chroot(%s)\n", path);
 
 	resolve_path(path, name);
@@ -935,7 +935,7 @@ int sys_flock(int fd, int operation)
 	int conflict;
 	int other_sh;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("flock(%d, %d)\n", fd, operation);
 
 	if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd])
@@ -1022,7 +1022,7 @@ int sys_ftruncate(int fd, unsigned long length)
 	file *fp;
 	int ret;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ftruncate(%d, %lu)\n", fd, length);
 
 	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
@@ -1044,7 +1044,7 @@ int sys_ftruncate64(int fd, uint64_t length)
 	file *fp;
 	int ret;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ftruncate64(%d, %llu)\n", fd, length);
 
 	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
@@ -1062,7 +1062,7 @@ int sys_ftruncate64(int fd, uint64_t length)
 
 int sys__sysctl(void *args)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("_sysctl\n");
 
 	return -ENOSYS;

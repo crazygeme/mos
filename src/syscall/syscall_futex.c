@@ -94,7 +94,7 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 	int n = 0;
 	int cmd = op & ~FUTEX_PRIVATE_FLAG;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("futex(%x, %d, %d, %x, %x, %d)\n", uaddr, op, val, timeout,
 		     uaddr2, val3);
 

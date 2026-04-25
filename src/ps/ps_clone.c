@@ -21,6 +21,32 @@
 #define CLONE_SYSVSEM 0x00040000
 #define CLONE_DETACHED 0x00400000
 
+static void clone_prepare_thread_tls(task_struct *cur, task_struct *task,
+				     unsigned short parent_gs)
+{
+	unsigned entry;
+
+	memset(task->user->tls_desc, 0, sizeof(task->user->tls_desc));
+
+	/*
+	 * A CLONE_THREAD child should not inherit every historical GDT TLS slot
+	 * the parent touched, but it must still inherit the selector that is
+	 * live in the parent's %gs when clone() is issued if CLONE_SETTLS is
+	 * not used. Otherwise the copied child interrupt frame still returns
+	 * with (for example) gs=0x33 while GDT slot 6 has just been cleared,
+	 * and intr_exit faults on "pop %gs" with #GP(error_code=0x30).
+	 */
+	if ((parent_gs & 0x4) != 0 || parent_gs == 0)
+		return;
+
+	entry = parent_gs >> 3;
+	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
+		return;
+
+	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
+		cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
+}
+
 static int do_clone(unsigned long flags, unsigned long child_stack,
 		    int *parent_tidptr, int *tls, int *child_tidptr)
 {
@@ -104,7 +130,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		 * parent's tls_desc[] verbatim makes set_thread_area(entry=-1)
 		 * think the child has no free slots and return -ESRCH.
 		 */
-		memset(task->user->tls_desc, 0, sizeof(task->user->tls_desc));
+		clone_prepare_thread_tls(cur, task, cur_intr_frame->gs);
 	}
 
 	task->fds = vm_alloc(1);

@@ -39,6 +39,7 @@ void _task_sched(const char *func)
 	 */
 	sched_disable();
 
+RETRY:
 	task = ps_get_next_task();
 
 	if (!task) {
@@ -53,7 +54,8 @@ void _task_sched(const char *func)
 			int_intr_enable();
 			HLT();
 			int_intr_disable();
-			goto SELF;
+			sched_disable();
+			goto RETRY;
 		}
 
 		sched_enable();
@@ -61,6 +63,8 @@ void _task_sched(const char *func)
 	}
 
 	if (task->psid == CURRENT_TASK()->psid) {
+		task->status = ps_running;
+		ps_load_task_segments(task);
 		sched_enable();
 		goto SELF;
 	}
@@ -79,10 +83,7 @@ void _task_sched(const char *func)
 
 	/* Reload per-process TLS descriptors so that when RESTORE_ALL
 	 * loads GS the CPU finds the correct segment descriptor. */
-	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
-	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
-	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
-	ps_update_ldt(task);
+	ps_load_task_segments(task);
 
 	/* Switch to the new task's kernel stack.  After this point no local
 	 * variable may be written: CURRENT_TASK() derives the task from the

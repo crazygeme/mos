@@ -437,6 +437,7 @@ void ps_heap_state_put(heap_state *heap);
 int sys_fork();
 int sys_vfork();
 void ps_update_ldt(task_struct *task);
+void ps_load_task_segments(task_struct *task);
 void do_exit(unsigned encoded_status);
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);

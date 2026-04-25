@@ -5,9 +5,6 @@
 #include <mm/mm.h>
 #include <mm/pagefault.h>
 #include <ps/ps.h>
-#include <hw/apic.h>
-#include <hw/acpi.h>
-#include <hw/cpu.h>
 #include <hw/serial.h>
 #include <hw/vga.h>
 #include <hw/time.h>
@@ -33,9 +30,6 @@ static void parse_kernel_cmdline();
  */
 extern kinit_fn_t __kinit_start[];
 extern kinit_fn_t __kinit_end[];
-
-/* ACPI result: populated during SMP init, used by cpu.c */
-acpi_info_t g_acpi_info;
 
 static void idle_process(void *param);
 
@@ -72,37 +66,8 @@ void kmain_startup()
 
 	pf_init();
 
-	/*
-	 * SMP: discover CPUs via ACPI, init LAPIC/IOAPIC, start APs.
-	 */
-	if (acpi_parse(&g_acpi_info) == 0 && g_acpi_info.ncpus > 1) {
-		unsigned ioapic_phys = g_acpi_info.ioapic_phys ?
-					       g_acpi_info.ioapic_phys :
-					       IOAPIC_BASE_PHY;
-
-		apic_init_bsp();
-
-		/*
-		 * Virtual-wire mode: the 8259A PIC remains active and its INTR
-		 * signal passes through BSP LINT0 (ExtINT).  Do NOT call
-		 * int_set_apic_mode() — that would switch EOI to LAPIC, causing
-		 * the 8259A to never receive its EOI and blocking all future PIC
-		 * interrupts (including the PIT timer at vector 0x20).
-		 *
-		 * The IOAPIC is initialised (all entries masked) for IPI routing
-		 * only; external IRQs stay with the 8259A.
-		 */
-		ioapic_init(ioapic_phys);
-
-		cpu_init_bsp();
-
-		smp_start_aps();
-	}
-
-	if (ncpus == 1) {
-		// create idle process for single CPU system
-		ps_create(idle_process, NULL, ps_idle, ps_kernel);
-	}
+	/* Mainline kernel runs uniprocessor only. */
+	ps_create(idle_process, NULL, ps_idle, ps_kernel);
 	// create first process
 	ps_create(kmain_process, NULL, ps_normal, ps_kernel);
 

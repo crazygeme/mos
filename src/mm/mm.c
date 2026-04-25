@@ -594,13 +594,14 @@ void *name_get()
 
 	spinlock_lock(&path_lock, &irq);
 	if (list_is_empty(&name_cache_head)) {
+		spinlock_unlock(&path_lock, irq);
 		region = (void *)vm_alloc(1);
 		buf = region + sizeof(list_entry);
 	} else {
 		region = (char *)list_remove_tail(&name_cache_head);
+		spinlock_unlock(&path_lock, irq);
 		buf = region + sizeof(list_entry);
 	}
-	spinlock_unlock(&path_lock, irq);
 	memset(buf, 0, MAX_PATH);
 	cache_count++;
 	return buf;

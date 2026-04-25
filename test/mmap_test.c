@@ -209,8 +209,8 @@ KTEST(mmap, large_mapping)
 }
 
 /* ── MergeAdjacent ────────────────────────────────────────────────────────
- * Two adjacent anonymous regions with identical prot/flags are coalesced
- * into one by vm_coalesce() after the second mmap.
+ * Current vm_add_map() behavior keeps adjacent anonymous regions distinct
+ * even when prot/flags match.
  */
 KTEST(mmap, merge_adjacent)
 {
@@ -224,12 +224,13 @@ KTEST(mmap, merge_adjacent)
 	vm_region *r = vm_find_map(cur_vm(), base);
 	ASSERT_NONNULL(r);
 	EXPECT_EQ(r->begin, base);
-	EXPECT_EQ(r->end, base + 2 * PAGE_SIZE);
+	EXPECT_EQ(r->end, base + PAGE_SIZE);
 
-	/* Both pages must fall in the same region. */
 	vm_region *r2 = vm_find_map(cur_vm(), base + PAGE_SIZE);
 	ASSERT_NONNULL(r2);
-	EXPECT_EQ(r2->begin, r->begin);
+	EXPECT_EQ(r2->begin, base + PAGE_SIZE);
+	EXPECT_EQ(r2->end, base + 2 * PAGE_SIZE);
+	EXPECT_NE(r2->begin, r->begin);
 
 	do_munmap((void *)base, 2 * PAGE_SIZE);
 	return 0;
@@ -258,7 +259,7 @@ KTEST(mmap, merge_no_diff_prot)
 }
 
 /* ── MergeThreeWay ────────────────────────────────────────────────────────
- * Mapping the gap between two same-prot regions triggers a three-way merge.
+ * Filling the gap between two same-prot regions keeps three distinct VMAs.
  */
 KTEST(mmap, merge_three_way)
 {
@@ -274,7 +275,17 @@ KTEST(mmap, merge_three_way)
 	vm_region *r = vm_find_map(cur_vm(), base);
 	ASSERT_NONNULL(r);
 	EXPECT_EQ(r->begin, base);
-	EXPECT_EQ(r->end, base + 3 * PAGE_SIZE);
+	EXPECT_EQ(r->end, base + PAGE_SIZE);
+
+	vm_region *mid = vm_find_map(cur_vm(), base + PAGE_SIZE);
+	ASSERT_NONNULL(mid);
+	EXPECT_EQ(mid->begin, base + PAGE_SIZE);
+	EXPECT_EQ(mid->end, base + 2 * PAGE_SIZE);
+
+	vm_region *right = vm_find_map(cur_vm(), base + 2 * PAGE_SIZE);
+	ASSERT_NONNULL(right);
+	EXPECT_EQ(right->begin, base + 2 * PAGE_SIZE);
+	EXPECT_EQ(right->end, base + 3 * PAGE_SIZE);
 
 	do_munmap((void *)base, 3 * PAGE_SIZE);
 	return 0;

@@ -251,23 +251,25 @@ KTEST(mm, name_put_reuse)
 }
 
 /*
- * name_node_no_heap_leak: name_put allocates a cache node on the heap;
- * the paired name_get must free it.  Snapshot heap *after* name_put so
- * the check is independent of how many nodes were already in the cache.
+ * name_node_no_heap_leak: the pathname cache is page-backed, so balancing
+ * name_get/name_put should not change heap_quota at all.
  */
 KTEST(mm, name_node_no_heap_leak)
 {
+	unsigned heap_before = heap_quota;
 	void *a = name_get();
 	ASSERT_NONNULL(a);
-	name_put(a); /* allocates one name_cache_t node */
+	EXPECT_EQ(heap_quota, heap_before);
 
-	unsigned heap_after_put = heap_quota;
+	name_put(a);
+	EXPECT_EQ(heap_quota, heap_before);
 
-	void *b = name_get(); /* must free that node */
+	void *b = name_get();
 	ASSERT_NONNULL(b);
-	EXPECT_LT(heap_quota, heap_after_put); /* node was freed */
+	EXPECT_EQ(heap_quota, heap_before);
 
 	name_put(b);
+	EXPECT_EQ(heap_quota, heap_before);
 	return 0;
 }
 

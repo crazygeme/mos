@@ -380,33 +380,28 @@ static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
 static void wp_page_copy(unsigned cr2)
 {
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
-	unsigned new_mem;
+	unsigned page_idx;
+	unsigned phy;
 	int flag;
 
 	page_fault_cow++;
 
-	/* Allocate a new page mapped into kernel space for the copy. */
-	new_mem = vm_alloc(1);
-	memcpy(new_mem, vir, PAGE_SIZE);
+	page_idx = phymm_alloc_user();
+	if (page_idx == PHYMM_INVALID)
+		return;
+	phy = page_idx * PAGE_SIZE;
 
-	/* Unmap the shared page from this process. */
+	/* Establish the direct kernel alias and copy the original content. */
+	mm_kmap_phys(phy);
+	memcpy((void *)(phy + KERNEL_OFFSET), (void *)vir, PAGE_SIZE);
+
+	/* Swap the shared PTE for a private writable one. */
 	flag = mm_get_map_flag(vir);
 	mm_unmap_page(vir);
-
-	/*
-	 * Pin the new page before removing its kernel mapping so the physical
-	 * page cannot be reclaimed between mm_kunmap_page and mm_map_page.
-	 */
-	phymm_reference_page(VIRT_TO_PAGE_IDX(new_mem));
-	mm_kunmap_page(new_mem);
-
-	/* Install the private writable PTE. */
 	flag |= PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-	mm_map_page(vir, VIRT_TO_PHY(new_mem), flag);
+	mm_map_page(vir, phy, flag);
 
-	phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
-
-	RELOAD_CR3();
+	INVLPG(vir);
 }
 
 /*

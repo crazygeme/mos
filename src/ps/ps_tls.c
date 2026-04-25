@@ -53,6 +53,28 @@ static void set_saved_user_gs(task_struct *task, unsigned int entry)
 						       USER_PRIVILEGE));
 }
 
+static void clear_tls_selector_if_matches(task_struct *task, unsigned int entry)
+{
+	unsigned short selector;
+
+	if (!task)
+		return;
+
+	selector = (unsigned short)((entry << 3) | USER_PRIVILEGE);
+	if (task->tss.gs == selector)
+		set_saved_user_selector(task, 0);
+
+	/*
+	 * The running task keeps the user %gs value live in the CPU while it is
+	 * executing kernel code. If userspace deletes the active TLS slot and we
+	 * leave %gs as-is, SAVE_ALL later snapshots the stale selector back into
+	 * task->tss.gs and the next RESTORE_ALL faults on "mov %gs, 0x33" with
+	 * #GP(error_code = selector index). Clear the live register too.
+	 */
+	if (task == CURRENT_TASK() && read_gs_selector() == selector)
+		asm volatile("movw %0, %%gs" : : "rm"((unsigned short)0));
+}
+
 static void decode_tls_desc(unsigned long long desc, struct user_desc *u)
 {
 	unsigned int base_mid = (unsigned int)((desc >> 32) & 0xff);
@@ -155,6 +177,7 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 
 	if (user_desc_empty(u_info)) {
 		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = 0;
+		clear_tls_selector_if_matches(task, entry);
 		if (task == CURRENT_TASK())
 			gdt[entry] = 0;
 	} else {

@@ -472,6 +472,24 @@ void fork_enqueue(task_struct *cur, task_struct *task)
 }
 
 /*
+ * Process-style fork/vfork children benefit from running their return path
+ * before the parent resumes: a fork child often execs immediately, which can
+ * drop the extra COW references before the parent dirties private pages.
+ */
+void ps_enqueue_child_first(task_struct *cur, task_struct *task)
+{
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
+	cur->nchildren++;
+	ps_put_to_ready_queue_unsafe(task);
+	list_remove_entry(&task->ps_list);
+	list_insert_head(&control.ready_queue[task->priority], &task->ps_list);
+	ps_add_mgr_unsafe(task);
+	spinlock_unlock(&ps_lock, irq);
+}
+
+/*
  * Public — fork / vfork
  */
 
@@ -505,8 +523,9 @@ static int do_fork(void)
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	ps_dup_fds(cur, task);
 	copy_page_range(cur, task);
-	fork_enqueue(cur, task);
+	ps_enqueue_child_first(cur, task);
 	cur_intr_frame->eax = task->psid;
+	task_sched();
 	return task->psid;
 }
 
@@ -545,8 +564,8 @@ int do_vfork(void)
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
 	ps_dup_fds(cur, task);
-	fork_enqueue(cur, task);
 	cond_init(&task->vfork_event, 1);
+	ps_enqueue_child_first(cur, task);
 	cond_wait(&task->vfork_event, 0);
 
 	cur_intr_frame->eax = task->psid;

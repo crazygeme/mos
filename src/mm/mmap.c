@@ -70,6 +70,20 @@ static void vm_fault_lock_get(vm_fault_lock *fault_lock)
 	__sync_add_and_fetch(&fault_lock->refs, 1);
 }
 
+static void vm_fault_lock_lock(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	rmutex_lock(&fault_lock->lock);
+}
+
+static void vm_fault_lock_unlock(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	rmutex_unlock(&fault_lock->lock);
+}
+
 static void vm_fault_lock_put(vm_fault_lock *fault_lock)
 {
 	if (!fault_lock)
@@ -169,6 +183,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_get(o_anon_id);
 		vm_fault_lock_get(o_fault_lock);
+		vm_fault_lock_lock(o_fault_lock);
 
 		unmap_begin = o_begin > begin ? o_begin : begin;
 		unmap_end = o_end < end ? o_end : end;
@@ -200,6 +215,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 			fs_put_file(o_fp);
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_put(o_anon_id);
+		vm_fault_lock_unlock(o_fault_lock);
 		vm_fault_lock_put(o_fault_lock);
 	}
 
@@ -262,8 +278,12 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 
 	key = pair->key;
 	region = pair->val;
+	vm_fault_lock *fault_lock = region->fault_lock;
 
 	/* FIXME(Ender:) flush file if has one */
+
+	vm_fault_lock_get(fault_lock);
+	vm_fault_lock_lock(fault_lock);
 
 	/* Unmap every page in the region from the hardware page tables. */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
@@ -271,6 +291,8 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 	RELOAD_CR3();
 
 	hash_remove(table, key);
+	vm_fault_lock_unlock(fault_lock);
+	vm_fault_lock_put(fault_lock);
 }
 
 /*
@@ -292,16 +314,40 @@ vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 {
 	hash_table *table = vm;
-	key_value_pair *pair;
+	struct rb_node *node;
+	vm_region *candidate = NULL;
+	int irq;
 
 	addr &= PAGE_SIZE_MASK;
-	for (pair = hash_first(table); pair; pair = hash_next(table, pair)) {
+	spinlock_lock(&table->lock, &irq);
+	for (node = table->root.rb_node; node != NULL;) {
+		key_value_pair *pair = rb_entry(node, key_value_pair, node);
 		vm_region *region = pair->val;
 
-		if (addr < region->end)
+		/*
+		 * vm_region descriptors live in kernel heap. If the tree ever hands
+		 * us a user-space pointer here, the tree is already corrupted; bail
+		 * out rather than faulting again while holding table->lock and
+		 * deadlocking in the nested page-fault path.
+		 */
+		if ((unsigned)region < KERNEL_OFFSET) {
+			spinlock_unlock(&table->lock, irq);
+			return NULL;
+		}
+
+		if (addr < region->begin) {
+			candidate = region;
+			node = node->rb_left;
+		} else if (addr >= region->end) {
+			node = node->rb_right;
+		} else {
+			spinlock_unlock(&table->lock, irq);
 			return region;
+		}
 	}
-	return 0;
+	spinlock_unlock(&table->lock, irq);
+
+	return candidate;
 }
 
 void vm_invalidate_user_cache(user_enviroment *user)
@@ -314,19 +360,19 @@ void vm_invalidate_user_cache(user_enviroment *user)
 
 vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
 {
-	vm_region *region;
-
 	if (!user || !user->vm)
 		return NULL;
 
-	addr &= PAGE_SIZE_MASK;
-	region = user->mmap_cache;
-	if (region && region->begin <= addr && addr < region->end)
-		return region;
-
-	region = vm_find_vma(user->vm, addr);
-	user->mmap_cache = region;
-	return region;
+	/*
+	 * mmap_cache is stored per-user_env, but CLONE_VM threads share the same
+	 * underlying vm tree while keeping separate user_env instances. A sibling
+	 * thread can therefore split or delete a VMA and free its vm_region while
+	 * this task still holds the old raw pointer in mmap_cache. Returning that
+	 * stale pointer makes fault-time lookups race against freed metadata.
+	 *
+	 * Until the cache is made coherent for shared VMs, always walk the tree.
+	 */
+	return vm_find_vma(user->vm, addr);
 }
 
 vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)
@@ -468,6 +514,7 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_get(r_anon_id);
 		vm_fault_lock_get(r_fault_lock);
+		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove descriptor only — physical pages stay mapped. */
 		hash_remove(table, okey);
@@ -495,6 +542,7 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 			fs_put_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_put(r_anon_id);
+		vm_fault_lock_unlock(r_fault_lock);
 		vm_fault_lock_put(r_fault_lock);
 
 		/* Advance probe past the portion we just handled. */
@@ -816,6 +864,7 @@ int do_munmap(void *addr, unsigned length)
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_get(r_anon_id);
 		vm_fault_lock_get(r_fault_lock);
+		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove this vm_region descriptor from the tree. */
 		hash_remove(cur->user->vm, key);
@@ -838,6 +887,7 @@ int do_munmap(void *addr, unsigned length)
 			fs_put_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_put(r_anon_id);
+		vm_fault_lock_unlock(r_fault_lock);
 		vm_fault_lock_put(r_fault_lock);
 	}
 

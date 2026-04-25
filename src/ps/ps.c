@@ -134,6 +134,19 @@ void ps_update_ldt(task_struct *task)
 	SET_LDT(0);
 }
 
+void ps_load_task_segments(task_struct *task)
+{
+	extern unsigned long long gdt[];
+
+	if (!task || !task->user)
+		return;
+
+	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
+	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
+	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
+	ps_update_ldt(task);
+}
+
 int ps_total_count()
 {
 	int ret = 0;

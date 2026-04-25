@@ -7,6 +7,7 @@
 #include <macro.h>
 #include <errno.h>
 extern void do_signal(intr_frame *frame);
+extern unsigned long long gdt[];
 
 /* Sends an end-of-interrupt signal to the PIC for the given IRQ.
 If we don't acknowledge the IRQ, it will never be delivered to
@@ -71,6 +72,19 @@ static void intr_sanitize_user_return(intr_frame *frame)
 
 	if (cur->psid == 0xffffffff || !ps_enabled())
 		return;
+
+	/*
+	 * TLS slots 6..8 live in the shared CPU GDT, but their contents are
+	 * per-task. If kernel execution returns to user mode without taking the
+	 * normal scheduler path that reloads them, "pop %gs" in intr_exit can
+	 * resolve selector 0x33 against stale or zeroed descriptors and fault.
+	 * This can happen even on a nested kernel interrupt, because MOS keeps
+	 * the current task's user %gs live while executing in ring 0. Refresh
+	 * them on every interrupt/syscall exit so the live GDT always matches
+	 * the current task before any saved %gs is restored.
+	 */
+	ps_load_task_segments(cur);
+
 	if (frame->cs != USER_CODE_SELECTOR)
 		return;
 
@@ -156,10 +170,35 @@ static void handle_invalid_opcode(intr_frame *frame)
 
 static void handle_general_protection(intr_frame *frame)
 {
+	task_struct *cur = CURRENT_TASK();
+	unsigned long long tls0 = 0;
+	unsigned long long tls1 = 0;
+	unsigned long long tls2 = 0;
+
+	if (cur->user) {
+		tls0 = cur->user->tls_desc[0];
+		tls1 = cur->user->tls_desc[1];
+		tls2 = cur->user->tls_desc[2];
+	}
+
 	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
-	     current->psid, current->user->command, frame->eip, frame->esp,
+	     cur->psid, cur->user->command, frame->eip, frame->esp,
 	     frame->ebp, frame->eax, frame->ebx, frame->ecx, frame->edx,
 	     frame->ds, frame->cs, frame->gs, frame->fs, frame->error_code);
+	klog("#GP state: status %d, ptrace_mode %u, stop_signal %u, ptrace_frame_valid %u, tss.gs %x, ptrace.gs %x, ptrace.eip %x, ptrace.esp %x\n",
+	     cur->status, cur->ptrace_mode, cur->stop_signal,
+	     cur->ptrace_frame_valid, cur->tss.gs, cur->ptrace_frame.gs,
+	     cur->ptrace_frame.eip, cur->ptrace_frame.esp);
+	klog("#GP tls: slot6 %x:%x slot7 %x:%x slot8 %x:%x\n",
+	     (unsigned)(tls0 >> 32), (unsigned)tls0, (unsigned)(tls1 >> 32),
+	     (unsigned)tls1, (unsigned)(tls2 >> 32), (unsigned)tls2);
+	klog("#GP gdt: slot6 %x:%x slot7 %x:%x slot8 %x:%x\n",
+	     (unsigned)(gdt[GDT_ENTRY_TLS_MIN + 0] >> 32),
+	     (unsigned)gdt[GDT_ENTRY_TLS_MIN + 0],
+	     (unsigned)(gdt[GDT_ENTRY_TLS_MIN + 1] >> 32),
+	     (unsigned)gdt[GDT_ENTRY_TLS_MIN + 1],
+	     (unsigned)(gdt[GDT_ENTRY_TLS_MIN + 2] >> 32),
+	     (unsigned)gdt[GDT_ENTRY_TLS_MIN + 2]);
 	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
 	sys_exit(-EFAULT);
 	return;

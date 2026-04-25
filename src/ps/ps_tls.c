@@ -47,12 +47,6 @@ static void set_saved_user_selector(task_struct *task, unsigned short selector)
 	task->tss.gs = selector;
 }
 
-static void set_saved_user_gs(task_struct *task, unsigned int entry)
-{
-	set_saved_user_selector(task, (unsigned short)((entry << 3) |
-						       USER_PRIVILEGE));
-}
-
 static void clear_tls_selector_if_matches(task_struct *task, unsigned int entry)
 {
 	unsigned short selector;
@@ -186,7 +180,6 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 		if (task == CURRENT_TASK())
 			gdt[entry] =
 				task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
-		set_saved_user_gs(task, entry);
 	}
 	return 0;
 }

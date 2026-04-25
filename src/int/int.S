@@ -39,6 +39,8 @@ intr_entry:
     mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
     mov %edx, %es
+    mov %edx, %fs
+    mov %edx, %gs
     popl %edx
     leal 56(%esp), %ebp    /* Set up frame pointer. */
     /* Call interrupt handler. */
@@ -283,6 +285,8 @@ syscall_handler:
     mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
     mov %edx, %es
+    mov %edx, %fs
+    mov %edx, %gs
     popl %edx
     leal 56(%esp), %ebp    /* Set up frame pointer. */
 

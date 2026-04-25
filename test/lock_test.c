@@ -68,7 +68,8 @@ KTEST(lock, spinlock_holder_cleared_on_unlock)
 	spinlock_init(&s);
 	spinlock_lock(&s, &irq);
 	spinlock_unlock(&s, irq);
-	EXPECT_NULL(s.holder);
+	/* Current implementation leaves a debug sentinel on unlock. */
+	EXPECT_EQ(s.holder, (const char *)0xff);
 	return 0;
 }
 

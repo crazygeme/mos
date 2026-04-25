@@ -29,6 +29,8 @@ cpu_struct cpus[MAX_CPUS];
 volatile int ncpus = 1; /* BSP is CPU 0, counted at boot */
 static volatile int smp_sched_go = 0;
 static unsigned long long cpu_gdts[MAX_CPUS][SELECTOR_COUNT];
+static volatile unsigned tlb_shootdown_seq = 0;
+static volatile unsigned tlb_shootdown_ack_seq[MAX_CPUS];
 
 /* 
  * AP trampoline and params layout
@@ -124,11 +126,36 @@ static void cpu_gdt_clone_template(int cpu_id)
 void smp_tlb_shootdown(void)
 {
 	int i;
+	unsigned seq;
+	unsigned self = (unsigned)cpu_current_id();
 
+	seq = __sync_add_and_fetch(&tlb_shootdown_seq, 1);
+	/*
+	 * The caller has already reloaded its own CR3 before invoking the
+	 * remote shootdown path, so publish self-ack immediately. This also
+	 * lets overlapping shootdowns coalesce: a CPU starting a newer
+	 * shootdown implicitly satisfies any older request for itself.
+	 */
+	tlb_shootdown_ack_seq[self] = seq;
+	__sync_synchronize();
 	for (i = 0; i < ncpus; i++) {
-		if (cpus[i].online && cpus[i].apic_id != current->affinity)
+		if (cpus[i].online && cpus[i].apic_id != apic_id())
 			apic_send_ipi(cpus[i].apic_id, IPI_VECTOR_TLB);
 	}
+	for (i = 0; i < ncpus; i++) {
+		if (!cpus[i].online || (unsigned)i == self)
+			continue;
+		while (tlb_shootdown_ack_seq[i] < seq)
+			PAUSE();
+	}
+}
+
+void smp_tlb_shootdown_ack(void)
+{
+	unsigned cpu = (unsigned)cpu_current_id();
+
+	__sync_synchronize();
+	tlb_shootdown_ack_seq[cpu] = tlb_shootdown_seq;
 }
 
 /* 

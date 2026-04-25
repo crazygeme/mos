@@ -66,6 +66,7 @@ void int_unregister(int vec_no)
 static void ipi_tlb_handler(intr_frame *frame)
 {
 	RELOAD_CR3();
+	smp_tlb_shootdown_ack();
 }
 
 static void ipi_timer_handler(intr_frame *frame)

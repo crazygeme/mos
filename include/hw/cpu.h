@@ -43,6 +43,7 @@ void ap_init_c(int cpu_id);
 
 /* Broadcast a TLB invalidation IPI to all other online CPUs. */
 void smp_tlb_shootdown(void);
+void smp_tlb_shootdown_ack(void);
 
 /* Release APs into the scheduler after BSP task bootstrap is ready. */
 void smp_scheduler_start(void);

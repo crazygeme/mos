@@ -70,6 +70,7 @@ void fork_dup_signal(task_struct *cur, task_struct *task);
 int fork_dup_io(task_struct *cur, task_struct *task);
 void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag);
 void fork_enqueue(task_struct *cur, task_struct *task);
+void ps_enqueue_child_first(task_struct *cur, task_struct *task);
 void copy_page_range(task_struct *parent, task_struct *child);
 int ps_set_thread_area_for(task_struct *task, void *info);
 int ps_set_clone_tls_for(task_struct *task, void *info,

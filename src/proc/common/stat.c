@@ -23,7 +23,6 @@
 
 #include "hw/time.h"
 #include <ps/ps.h>
-#include <hw/cpu.h>
 #include "common.h"
 
 /* Externs from ps_sched.c */
@@ -68,7 +67,7 @@ static void fill(proc_buf_t *pb)
 	wall = (unsigned)time_now_tickets();
 	idle = (wall > c.user + c.system) ? wall - c.user - c.system : 0;
 
-	ncpu = ncpus > 0 ? ncpus : 1;
+	ncpu = 1;
 
 	/* ---- aggregate cpu line ---- */
 	proc_buf_printf(pb, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,

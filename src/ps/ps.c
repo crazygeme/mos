@@ -10,7 +10,6 @@
  */
 
 #include <ps/ps.h>
-#include <hw/cpu.h>
 #include <int/int.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
@@ -205,14 +204,6 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 	return 0;
 }
 
-static void ap_idle_stub(void *param)
-{
-	while (1) {
-		HLT();
-		task_sched();
-	}
-}
-
 /*
  * Static helpers — user address-space enumeration
  */
@@ -304,18 +295,6 @@ void ps_kickoff()
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
 	cur->stats = NULL;
-	_ps_enabled = 1;
-	task_sched();
-}
-
-/* Called by each AP after per-CPU LAPIC/TSS setup. */
-void ps_kickoff_ap(void)
-{
-	task_struct *cur = CURRENT_TASK();
-	memset(cur, 0, sizeof(*cur));
-	cur->psid = 0xffffffff;
-	cur->ps_list.prev = cur->ps_list.next = 0;
-	ps_create(ap_idle_stub, NULL, ps_idle, ps_kernel);
 	_ps_enabled = 1;
 	task_sched();
 }

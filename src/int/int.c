@@ -3,22 +3,10 @@
 #include <mm/mm.h>
 #include <lib/port.h>
 #include <lib/klib.h>
-#include <hw/apic.h>
 #include <hw/time.h>
 #include <macro.h>
 #include <errno.h>
-
-/*
- * use_apic: set to 1 after apic_init_bsp() so intr_handler sends APIC EOI
- * instead of 8259 PIC EOI.
- */
-static int use_apic = 0;
 extern void do_signal(intr_frame *frame);
-
-void int_set_apic_mode(void)
-{
-	use_apic = 1;
-}
 
 /* Sends an end-of-interrupt signal to the PIC for the given IRQ.
 If we don't acknowledge the IRQ, it will never be delivered to
@@ -60,20 +48,6 @@ void int_unregister(int vec_no)
 	in_callbacks[vec_no] = 0;
 	idt[vec_no] = 0;
 }
-
-/* IPI: TLB shootdown — flush the entire TLB on this CPU. */
-static void ipi_tlb_handler(intr_frame *frame)
-{
-	RELOAD_CR3();
-}
-
-/* IPI: scheduler kick — wake this CPU from idle so it picks up new work. */
-static void ipi_sched_handler(intr_frame *frame)
-{
-	/* No explicit action needed; the next idle HLT will return due to
-	 * this interrupt, allowing the scheduler to run. */
-}
-
 static void intr_maybe_preempt(void)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -129,9 +103,6 @@ static void intr_prepare_user_return(intr_frame *frame)
 void intr_handler(intr_frame *frame)
 {
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
-	int is_ipi = (frame->vec_no == IPI_VECTOR_TLB ||
-		      frame->vec_no == IPI_VECTOR_SCHED ||
-		      frame->vec_no == IPI_VECTOR_SPURIOUS);
 	int_callback fn = 0;
 
 	if (frame->vec_no < 0 || frame->vec_no >= IDT_SIZE) {
@@ -142,10 +113,7 @@ void intr_handler(intr_frame *frame)
 	if (fn)
 		fn(frame);
 
-	/* Send EOI to whichever interrupt controller is active. */
-	if (is_ipi || (external && use_apic)) {
-		apic_eoi();
-	} else if (external) {
+	if (external) {
 		pic_end_of_interrupt(frame->vec_no);
 	}
 
@@ -216,20 +184,8 @@ void int_enable_all(void)
 	for (i = 0; i < IDT_SIZE; i++) {
 		in_callbacks[i] = 0;
 	}
-
-	/* Register IPI handlers. */
-	int_register(IPI_VECTOR_TLB, ipi_tlb_handler, 0, 0);
-	int_register(IPI_VECTOR_SCHED, ipi_sched_handler, 0, 0);
 	int_register(6, handle_invalid_opcode, 0, 3);
 	int_register(INT_VECTOR_PROTECTION, handle_general_protection, 0, 0);
-}
-
-/* Called on each AP: load IDT, register IPI handlers, enable interrupts. */
-void int_enable_all_ap(void)
-{
-	unsigned long long idtr = MAKE_IDTR_OPERAND(idt_size - 1, idt);
-	SET_IDT(idtr);
-	ENABLE_INTR();
 }
 
 /*

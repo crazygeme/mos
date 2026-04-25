@@ -578,13 +578,30 @@ int hash_insert(hash_table *table, void *key, void *val)
 
 int hash_remove(hash_table *table, void *key)
 {
-	key_value_pair *pair = hash_find(table, key);
+	struct rb_node **p = &table->root.rb_node;
+	struct rb_node *parent;
+	key_value_pair *pair = NULL;
+	int comp = 0;
 	int irq;
 
-	if (!pair)
-		return 0;
-
 	spinlock_lock(&table->lock, &irq);
+	while (*p) {
+		parent = *p;
+		pair = rb_entry(parent, key_value_pair, node);
+		comp = table->comp(key, pair->key);
+		if (comp < 0)
+			p = &(*p)->rb_left;
+		else if (comp > 0)
+			p = &(*p)->rb_right;
+		else
+			break;
+	}
+
+	if (!*p) {
+		spinlock_unlock(&table->lock, irq);
+		return 0;
+	}
+
 	rb_erase(&pair->node, &table->root);
 	RB_CLEAR_NODE(&pair->node);
 	table->size--;

@@ -713,8 +713,12 @@ static void kinit_userspace()
 	const char *devault_argv[] = { "/sbin/init", NULL };
 	const char *default_envp[] = { "TERM=linux", NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
-	const char *test_bash_argv[] = { "/bin/bash", "/proc/tests/all_script",
-					 NULL };
+	const char *test_bash_argv[] = {
+		"/bin/bash",
+		"-c",
+		"/proc/tests/all && /proc/tests/all_script",
+		NULL,
+	};
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
 				    "HOME=/root", "LANG=en_US", NULL };
 	task_struct *cur = CURRENT_TASK();

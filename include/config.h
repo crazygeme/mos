@@ -27,12 +27,11 @@
 #define GDT_ENTRY_TLS_COUNT 3
 
 /*
- * TSS selectors: keep the per-CPU TSS block after the user TLS slots so
- * loading CPU1/CPU2/CPU3 TSS descriptors never overwrites GDT entries 6..8.
+ * TSS selector lives after the user TLS slots so the kernel TSS descriptor
+ * never overwrites GDT entries 6..8.
  * TSS_SELECTOR is not used for hardware task switching, but TR must be valid.
  */
 #define TSS_SELECTOR ((GDT_ENTRY_TLS_MAX + 1) << 3)
-/* SELECTOR_COUNT is now defined after MAX_CPUS below */
 
 #define SEG_BASE_4K 1 // address count with 4k
 #define SEG_BASE_1 0 // address count with 1 byte
@@ -92,21 +91,13 @@
 
 #define PAGE_CACHE_SIZE (4096 * 16) // pages
 
-/* SMP configuration */
-#define MAX_CPUS 8
 #define LDT_ENTRY_COUNT 16
-#define LDT_SELECTOR \
-	((5 + GDT_ENTRY_TLS_COUNT + MAX_CPUS) << 3)
-#define AP_TRAMPOLINE_PHYS 0x8000 /* physical addr for AP startup code */
-#define AP_PARAMS_PHYS 0x9000 /* physical addr for AP params page */
-#define IPI_VECTOR_SCHED 0xF0 /* scheduler kick IPI */
-#define IPI_VECTOR_TLB 0xF1 /* TLB shootdown IPI */
-#define IPI_VECTOR_SPURIOUS 0xFF /* spurious APIC interrupt */
+#define LDT_SELECTOR ((5 + GDT_ENTRY_TLS_COUNT + 1) << 3)
 
 /*
  * GDT: null + kernel/user code/data (5 base entries total),
- * 3 process TLS slots, one TSS per CPU, and one current-task LDT descriptor.
+ * 3 process TLS slots, one kernel TSS, and one current-task LDT descriptor.
  */
-#define SELECTOR_COUNT (5 + GDT_ENTRY_TLS_COUNT + MAX_CPUS + 1)
+#define SELECTOR_COUNT (5 + GDT_ENTRY_TLS_COUNT + 1 + 1)
 
 #endif

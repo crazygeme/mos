@@ -56,7 +56,7 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 /*
  * Timer queue helpers — all called with ps_lock held.
  *
- * timer_arm_unsafe: insert @task into the per-CPU timer RB-tree with
+ * timer_arm_unsafe: insert @task into the global timer RB-tree with
  *   expiry = now + ms.  Duplicate due times go to the right so that
  *   rb_first() always returns the earliest entry.
  *

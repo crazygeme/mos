@@ -94,41 +94,11 @@ Registers the `#PF` handler (vector 14). Handles demand paging, copy-on-write,
 and user stack growth. Page faults must run with interrupts enabled (disk I/O
 may be needed), so the handler does not disable interrupts globally.
 
-### 11. SMP initialisation (conditional)
-
-```
-acpi_parse(&g_acpi_info)   — parse ACPI MADT: discover CPU APIC IDs and
-                             IOAPIC base address
-```
-
-If more than one CPU is found:
-
-```
-apic_init_bsp()            — enable BSP LAPIC in virtual-wire mode
-ioapic_init(ioapic_phys)   — map IOAPIC, mask all redirection entries
-                             (external IRQs stay with 8259A)
-cpu_init_bsp()             — initialise BSP per-CPU struct, load TSS
-smp_start_aps()            — send INIT/SIPI IPIs; each AP runs the
-                             trampoline at phys 0x8000, receives params
-                             from phys 0x9000, then calls ps_kickoff_ap()
-```
-
-**Virtual-wire mode:** the 8259A PIC remains the primary interrupt controller.
-Its INTR line passes through BSP LINT0 (ExtINT mode). The LAPIC is enabled
-only for IPI delivery (`IPI_VECTOR_SCHED` 0xF0, `IPI_VECTOR_TLB` 0xF1).
-`int_set_apic_mode()` is intentionally **not** called — doing so would switch
-EOI to the LAPIC, causing the 8259A to block all subsequent PIC interrupts
-(including the PIT tick at vector 0x20).
-
-If only one CPU is found, SMP is skipped and a message is printed.
-
-### 12. Create initial kernel threads
+### 11. Create initial kernel threads
 
 ```c
-if (ncpus == 1)
-    ps_create(idle_process,   NULL, ps_idle,   ps_kernel);
+ps_create(idle_process,   NULL, ps_idle,   ps_kernel);
 ps_create(kmain_process,  NULL, ps_normal, ps_kernel);
-ps_create(timer_process,  NULL, ps_normal, ps_kernel);
 ```
 
 | Thread          | Priority    | Purpose                                                                                          |
@@ -137,7 +107,7 @@ ps_create(timer_process,  NULL, ps_normal, ps_kernel);
 | `kmain_process` | `ps_normal` | Runs the `KERNEL_INIT` table then becomes idle                                                   |
 | `timer_process` | `ps_normal` | Runs software timers (`timer_init` + `do_timer_loop`)                                            |
 
-### 13. Start the scheduler (`ps_kickoff`)
+### 12. Start the scheduler (`ps_kickoff`)
 
 ```c
 ps_kickoff();   // enables scheduling, picks the first task, never returns
@@ -205,7 +175,6 @@ klib_init ───────────────────────�
     ├─ kb_init
     ├─ time_init ───────────────────────────────── (PIT ticks, preemption)
     ├─ pf_init ─────────────────────────────────── (demand paging)
-    ├─ acpi_parse → apic_init_bsp → ioapic_init → cpu_init_bsp → smp_start_aps
     └─ ps_kickoff ──────────────────────────────── (scheduler running)
            │
            ├─ kmain_process → KERNEL_INIT[0..8]

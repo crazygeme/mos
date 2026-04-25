@@ -1,5 +1,4 @@
 #include <config.h>
-#include <hw/cpu.h>
 #include "common.h"
 
 /* Execute the CPUID instruction. */
@@ -39,7 +38,6 @@ static void fill(proc_buf_t *pb)
 	unsigned eax, ebx, ecx, edx;
 	unsigned family, model, stepping;
 	unsigned mhz;
-	int i, ncpu;
 
 	/* --- CPUID leaf 0: vendor string (EBX=chars 0-3, EDX=4-7, ECX=8-11) --- */
 	do_cpuid(0, &eax, &ebx, &ecx, &edx);
@@ -60,75 +58,62 @@ static void fill(proc_buf_t *pb)
 
 	cpu_brand_string(brand);
 	mhz = time_get_cpu_mhz();
-	ncpu = ncpus > 0 ? ncpus : 1;
+	proc_buf_printf(pb,
+			"processor\t: 0\n"
+			"vendor_id\t: %s\n"
+			"cpu family\t: %d\n"
+			"model\t\t: %d\n"
+			"model name\t: %s\n"
+			"stepping\t: %d\n"
+			"cpu MHz\t\t: %d\n"
+			"cache size\t: unknown\n"
+			"bogomips\t: %d\n"
+			"flags\t\t:",
+			vendor, family, model, brand, stepping, mhz, mhz * 2);
 
-	for (i = 0; i < ncpu; i++) {
-		/* Per-processor block — mirrors Linux /proc/cpuinfo layout. */
-		proc_buf_printf(pb,
-				"processor\t: %d\n"
-				"vendor_id\t: %s\n"
-				"cpu family\t: %d\n"
-				"model\t\t: %d\n"
-				"model name\t: %s\n"
-				"stepping\t: %d\n"
-				"cpu MHz\t\t: %d\n"
-				"cache size\t: unknown\n"
-				"physical id\t: %d\n"
-				"apic id\t\t: %d\n"
-				"online\t\t: %s\n"
-				"bogomips\t: %d\n"
-				"flags\t\t:",
-				i, vendor, family, model, brand, stepping, mhz,
-				i, (i < MAX_CPUS) ? (int)cpus[i].apic_id : i,
-				(i < MAX_CPUS && cpus[i].online) ? "yes" : "no",
-				mhz * 2);
+	/* Feature flags from CPUID leaf 1 EDX */
+	if (edx & (1u << 0))
+		proc_buf_printf(pb, " fpu");
+	if (edx & (1u << 1))
+		proc_buf_printf(pb, " vme");
+	if (edx & (1u << 4))
+		proc_buf_printf(pb, " tsc");
+	if (edx & (1u << 5))
+		proc_buf_printf(pb, " msr");
+	if (edx & (1u << 8))
+		proc_buf_printf(pb, " cx8");
+	if (edx & (1u << 11))
+		proc_buf_printf(pb, " sep");
+	if (edx & (1u << 15))
+		proc_buf_printf(pb, " cmov");
+	if (edx & (1u << 19))
+		proc_buf_printf(pb, " clflush");
+	if (edx & (1u << 23))
+		proc_buf_printf(pb, " mmx");
+	if (edx & (1u << 24))
+		proc_buf_printf(pb, " fxsr");
+	if (edx & (1u << 25))
+		proc_buf_printf(pb, " sse");
+	if (edx & (1u << 26))
+		proc_buf_printf(pb, " sse2");
+	if (edx & (1u << 28))
+		proc_buf_printf(pb, " ht");
 
-		/* Feature flags from CPUID leaf 1 EDX */
-		if (edx & (1u << 0))
-			proc_buf_printf(pb, " fpu");
-		if (edx & (1u << 1))
-			proc_buf_printf(pb, " vme");
-		if (edx & (1u << 4))
-			proc_buf_printf(pb, " tsc");
-		if (edx & (1u << 5))
-			proc_buf_printf(pb, " msr");
-		if (edx & (1u << 8))
-			proc_buf_printf(pb, " cx8");
-		if (edx & (1u << 9))
-			proc_buf_printf(pb, " apic");
-		if (edx & (1u << 11))
-			proc_buf_printf(pb, " sep");
-		if (edx & (1u << 15))
-			proc_buf_printf(pb, " cmov");
-		if (edx & (1u << 19))
-			proc_buf_printf(pb, " clflush");
-		if (edx & (1u << 23))
-			proc_buf_printf(pb, " mmx");
-		if (edx & (1u << 24))
-			proc_buf_printf(pb, " fxsr");
-		if (edx & (1u << 25))
-			proc_buf_printf(pb, " sse");
-		if (edx & (1u << 26))
-			proc_buf_printf(pb, " sse2");
-		if (edx & (1u << 28))
-			proc_buf_printf(pb, " ht");
+	/* Feature flags from CPUID leaf 1 ECX */
+	if (ecx & (1u << 0))
+		proc_buf_printf(pb, " sse3");
+	if (ecx & (1u << 9))
+		proc_buf_printf(pb, " ssse3");
+	if (ecx & (1u << 19))
+		proc_buf_printf(pb, " sse4_1");
+	if (ecx & (1u << 20))
+		proc_buf_printf(pb, " sse4_2");
+	if (ecx & (1u << 23))
+		proc_buf_printf(pb, " popcnt");
+	if (ecx & (1u << 30))
+		proc_buf_printf(pb, " rdrand");
 
-		/* Feature flags from CPUID leaf 1 ECX */
-		if (ecx & (1u << 0))
-			proc_buf_printf(pb, " sse3");
-		if (ecx & (1u << 9))
-			proc_buf_printf(pb, " ssse3");
-		if (ecx & (1u << 19))
-			proc_buf_printf(pb, " sse4_1");
-		if (ecx & (1u << 20))
-			proc_buf_printf(pb, " sse4_2");
-		if (ecx & (1u << 23))
-			proc_buf_printf(pb, " popcnt");
-		if (ecx & (1u << 30))
-			proc_buf_printf(pb, " rdrand");
-
-		proc_buf_printf(pb, "\n\n");
-	}
+	proc_buf_printf(pb, "\n\n");
 }
 
 DEFINE_PROC_FILE(cpuinfo, fill);

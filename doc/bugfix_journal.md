@@ -5,6 +5,45 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-26 - `strace ps aux` over SSH could #GP on `intr_exit: pop %gs`
+
+This one looked like a ptrace or TLS setup bug at first because the visible
+crash was always a user task dying with `#GP(error_code = 0x30)` while traced
+through SSH. The decisive clue came from logging both the task's saved TLS
+state and the live hardware GDT entries at fault time.
+
+### 1. Traced `/usr/sbin/sshd` and `/bin/ps` faulted in `intr_exit`
+
+- **Caught by:** logging `#GP` state in [int.c](../src/int/int.c) and matching
+  the faulting EIP against [assemble.s](../out/x86/debug/assemble.s), which
+  showed the crash at `intr_exit: pop %gs`.
+- **Symptom:** `strace ps aux` in an SSH session could kill either `sshd` or
+  the traced `/bin/ps` with logs like `gs=0x33` or `gs=0x1b`, always faulting
+  in the interrupt-exit path rather than in ordinary userspace code.
+- **Root cause:** MOS stores Linux TLS slots 6..8 in the shared CPU GDT even
+  though their contents are per-task. Some ptrace-stop and nested
+  interrupt/syscall-return paths reached `intr_exit` without refreshing those
+  live GDT entries for the current task first. The logs showed the mismatch
+  directly: the task's `tls_desc[0]` for slot 6 was valid while live `gdt[6]`
+  was zero, so `pop %gs` revalidated selector `0x33` against an empty
+  descriptor and raised `#GP(error_code = 0x30)`. The later `/bin/ps` traces
+  also exposed a second half of the problem: MOS left user `%fs/%gs` live in
+  ring 0, making nested interrupt returns depend on user selectors while still
+  executing kernel code.
+- **Fix:**
+  - in [int.S](../src/int/int.S), switch `%fs` and `%gs` to
+    `KERNEL_DATA_SELECTOR` on interrupt and syscall entry, just like `%ds/%es`
+  - in [int.c](../src/int/int.c), reload the current task's live TLS GDT slots
+    and LDT on every interrupt/syscall exit before any saved user `%gs` is
+    restored
+  - in [ps.c](../src/ps/ps.c), centralize that live TLS/LDT reload logic in
+    `ps_load_task_segments()` so both the scheduler and interrupt-exit path use
+    the same code
+  - keep the already-needed clone/TLS fixes in [ps_clone.c](../src/ps/ps_clone.c)
+    and [ps_tls.c](../src/ps/ps_tls.c) so new threads inherit only the active
+    TLS state and plain `set_thread_area()` does not silently rewrite the
+    saved user `%gs`
+
 ## 2026-04-19 - Nautilus hung in `nautilus_self_check_directory()` and later crashed in GLib allocation
 
 This one started as a GUI application hang, but the useful clue was that the

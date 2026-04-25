@@ -2,6 +2,7 @@
 #define _LIB_KLIB_H
 #include <mm/mm.h>
 #include <config.h>
+#include <macro.h>
 
 /* ── Heap ─────────────────────────────────────────────────────────────────── */
 
@@ -89,8 +90,7 @@ unsigned int rand(void);
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 
 typedef struct _TEST_CONTROL {
-	int verbos; /* verbose level: 0=off, 1=trace, 2=info */
-	int profiling;
+	int verbose; /* verbose level: 0=off, 1=trace, 2=info */
 	int bash;
 	int test;
 } TEST_CONTROL;
@@ -100,6 +100,6 @@ extern TEST_CONTROL TestControl;
 #define TEST_LOG_TRACE 1
 #define TEST_LOG_INFO 2
 
-#define TEST_LOG(level) (TestControl.verbos >= (level))
+#define TEST_LOG(level) (UNLIKELY(TestControl.verbose >= (level)))
 
 #endif

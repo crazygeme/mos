@@ -208,6 +208,9 @@
      (((unsigned short)(limit)) | ((unsigned long long)(unsigned int)(base) << 16))
 
 #define NAKED __attribute__((naked))
+
+#define LIKELY(x)      __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)    __builtin_expect(!!(x), 0)
 /*
  * Kernel init call mechanism.
  *

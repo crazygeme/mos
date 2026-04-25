@@ -45,7 +45,7 @@ static void sock_refresh_local_inet(mos_sock *sk)
 
 int do_socket(int domain, int type, int protocol)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("socket(domain=%d, type=%d, protocol=%d)\n", domain, type,
 		     protocol);
 
@@ -135,7 +135,7 @@ int do_socket(int domain, int type, int protocol)
 
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("bind(fd=%d, addr=%x, addrlen=%u)\n", fd, addr, addrlen);
 
 	mos_sock *sk = fd_to_sock(fd);
@@ -176,7 +176,7 @@ int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("connect(fd=%d, addr=%x, addrlen=%u)\n", fd, addr,
 		     addrlen);
 
@@ -242,7 +242,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_listen(int fd, int backlog)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("listen(fd=%d, backlog=%d)\n", fd, backlog);
 
 	mos_sock *sk = fd_to_sock(fd);
@@ -270,7 +270,7 @@ int do_listen(int fd, int backlog)
 
 int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("accept(fd=%d, addr=%x, addrlen=%x)\n", fd, addr, addrlen);
 
 	mos_sock *sk = fd_to_sock(fd);
@@ -342,7 +342,7 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getsockname(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
 
@@ -370,7 +370,7 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getpeername(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
 
@@ -403,7 +403,7 @@ int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_send(int fd, const void *buf, unsigned len, int flags)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("send(fd=%d, buf=%x, len=%u, flags=%d)\n", fd, buf, len,
 		     flags);
 
@@ -419,7 +419,7 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 
 int do_recv(int fd, void *buf, unsigned len, int flags)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("recv(fd=%d, buf=%x, len=%u, flags=%d)\n", fd, buf, len,
 		     flags);
 
@@ -431,7 +431,7 @@ int do_recv(int fd, void *buf, unsigned len, int flags)
 int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	      const struct sockaddr_in *to, unsigned tolen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sendto(fd=%d, buf=%x, len=%u, flags=%d, to=%x, tolen=%u)\n",
 		     fd, buf, len, flags, to, tolen);
 
@@ -483,7 +483,7 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		struct sockaddr_in *from, unsigned *fromlen)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("recvfrom(fd=%d, buf=%x, len=%u, flags=%d, from=%x, fromlen=%x)\n",
 		     fd, buf, len, flags, from, fromlen);
 
@@ -555,7 +555,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 
 int do_shutdown(int fd, int how)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("shutdown(fd=%d, how=%d)\n", fd, how);
 
 	mos_sock *sk = fd_to_sock(fd);

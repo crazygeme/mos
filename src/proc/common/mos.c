@@ -18,11 +18,6 @@ extern unsigned page_fault_file;
 extern unsigned page_fault_file_cache_hit;
 extern unsigned page_fault_file_read;
 extern unsigned page_fault_perm;
-extern unsigned long long page_fault_cow_spent;
-extern unsigned long long page_fault_invalid_spent;
-extern unsigned long long page_fault_file_spent;
-extern unsigned long long page_fault_file_search_spent;
-extern unsigned long long page_fault_perm_spent;
 extern unsigned int heap_quota;
 extern unsigned int heap_quota_high;
 
@@ -31,7 +26,6 @@ extern unsigned fs_read_size;
 extern unsigned fs_write_size;
 extern unsigned disk_read_size;
 extern unsigned disk_write_size;
-extern unsigned long long elf_read_time;
 
 #if HDD_CACHE_OPEN
 extern unsigned cache_hit;
@@ -62,23 +56,13 @@ static void fill(proc_buf_t *pb)
 
 	/* ---- Page fault counters ---- */
 	proc_buf_printf(pb, "PfCow:                 %8u\n", page_fault_cow);
-	proc_buf_printf(pb, "PfCowTimeUs:           %8u\n",
-			(unsigned)page_fault_cow_spent);
 	proc_buf_printf(pb, "PfInvalid:             %8u\n", page_fault_invalid);
-	proc_buf_printf(pb, "PfInvalidTimeUs:       %8u\n",
-			(unsigned)page_fault_invalid_spent);
 	proc_buf_printf(pb, "PfFile:                %8u\n", page_fault_file);
-	proc_buf_printf(pb, "PfFileTimeUs:          %8u\n",
-			(unsigned)page_fault_file_spent);
-	proc_buf_printf(pb, "PfFileSearchTimeUs:    %8u\n",
-			(unsigned)page_fault_file_search_spent);
 	proc_buf_printf(pb, "PfFileCacheHit:        %8u (%u%%)\n",
 			page_fault_file_cache_hit, pf_cache_rate);
 	proc_buf_printf(pb, "PfFileRead:            %8u\n",
 			page_fault_file_read);
 	proc_buf_printf(pb, "PfPerm:                %8u\n", page_fault_perm);
-	proc_buf_printf(pb, "PfPermTimeUs:          %8u\n",
-			(unsigned)page_fault_perm_spent);
 
 	/* ---- Filesystem I/O ---- */
 	proc_buf_printf(pb, "FsReadBytes:           %8u\n", fs_read_size);
@@ -99,8 +83,6 @@ static void fill(proc_buf_t *pb)
 #endif
 	proc_buf_printf(pb, "DiskReadBytes:         %8u\n", disk_read_size);
 	proc_buf_printf(pb, "DiskWriteBytes:        %8u\n", disk_write_size);
-	proc_buf_printf(pb, "ElfLoadTimeUs:         %8u\n",
-			(unsigned)elf_read_time);
 
 	/* ---- Scheduler ---- */
 	proc_buf_printf(pb, "SchedCalls:            %8u\n",
@@ -181,7 +163,7 @@ static ssize_t mos_write(file *file, const void *buf, size_t size, loff_t *pos)
 
 		if (level < TEST_LOG_OFF || level > TEST_LOG_INFO)
 			return -EINVAL;
-		TestControl.verbos = level;
+		TestControl.verbose = level;
 	}
 
 	return (ssize_t)size;

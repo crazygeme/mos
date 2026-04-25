@@ -20,11 +20,6 @@ unsigned page_fault_file = 0;
 unsigned page_fault_file_read = 0;
 unsigned page_fault_perm = 0;
 unsigned page_fault_file_cache_hit = 0;
-unsigned long long page_fault_cow_spent = 0;
-unsigned long long page_fault_invalid_spent = 0;
-unsigned long long page_fault_file_spent = 0;
-unsigned long long page_fault_file_search_spent = 0;
-unsigned long long page_fault_perm_spent = 0;
 static unsigned zero_page = 0;
 static unsigned zero_page_phy = 0;
 
@@ -130,7 +125,6 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 {
 	pf_file_page_result page;
 	int mmflag;
-	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_file++;
 
@@ -150,8 +144,6 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 		if (mm_map_page_io(address, phy, pte) != 1)
 			goto FAIL;
 		INVLPG(address);
-		if (TestControl.profiling)
-			page_fault_file_spent += (time_wall_us() - begin);
 		return 1;
 	}
 
@@ -161,8 +153,6 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * private mappings fault COW on the first write.
 	 */
 	page = pf_get_file_page(f, offset, flag);
-	if (TestControl.profiling)
-		page_fault_file_search_spent += time_wall_us() - begin;
 
 	if (page.phy == 0)
 		goto FAIL;
@@ -184,12 +174,8 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	if ((flag & MAP_SHARED) && page.needs_shared_registration)
 		mm_file_shared_add(f, offset, page.phy);
 
-	if (TestControl.profiling)
-		page_fault_file_spent += (time_wall_us() - begin);
 	return 1;
 FAIL:
-	if (TestControl.profiling)
-		page_fault_file_spent += (time_wall_us() - begin);
 	return 0;
 }
 
@@ -211,7 +197,6 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 {
 	int prot = region->prot;
 	int flag = region->flag;
-	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 	unsigned page_idx;
 	int handled = 0;
 
@@ -267,8 +252,6 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 	handled = 1;
 
 DONE:
-	if (TestControl.profiling)
-		page_fault_invalid_spent += (time_wall_us() - begin);
 	return handled;
 }
 
@@ -399,7 +382,6 @@ static void wp_page_copy(unsigned cr2)
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
 	unsigned new_mem;
 	int flag;
-	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_cow++;
 
@@ -425,9 +407,6 @@ static void wp_page_copy(unsigned cr2)
 	phymm_dereference_page(VIRT_TO_PAGE_IDX(new_mem));
 
 	RELOAD_CR3();
-
-	if (TestControl.profiling)
-		page_fault_cow_spent += (time_wall_us() - begin);
 }
 
 /*
@@ -440,16 +419,12 @@ static void wp_page_reuse(unsigned cr2)
 {
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
 	int flag;
-	unsigned long long begin = TestControl.profiling ? time_wall_us() : 0;
 
 	page_fault_perm++;
 	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_set_map_flag(vir, flag);
 	INVLPG(vir);
-
-	if (TestControl.profiling)
-		page_fault_perm_spent += (time_wall_us() - begin);
 }
 
 /*

@@ -218,7 +218,7 @@ void do_exit(unsigned encoded_status)
 	int i;
 
 	cur->exit_status = encoded_status;
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("exit(%s, status=%x)\n", cur->user->command,
 		     encoded_status);
 
@@ -316,7 +316,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 	int ret = -1;
 	int irq;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("wait(%d, %x, %x, %x)\n", pid, status, options, rusage);
 
 	for (;;) {
@@ -392,7 +392,7 @@ done:
 	if (task)
 		ps_reap_task(task, rusage);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("wait(%d) returns %d\n", pid, ret);
 
 	return ret;
@@ -408,7 +408,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 	int irq;
 	int has_group_child = 0;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("wait4(pgrp=%u, %x, %x, %x)\n", pgrp, status, options,
 		     rusage);
 
@@ -488,7 +488,7 @@ done:
 	if (task)
 		ps_reap_task(task, rusage);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("wait4(pgrp=%u) returns %d\n", pgrp, ret);
 
 	return ret;
@@ -496,7 +496,7 @@ done:
 
 int sys_waitpid(unsigned pid, int *status, int options)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("waitpid(%d, %x, %d)\n", pid, status, options);
 
 	return do_waitpid(pid, status, options, NULL);
@@ -516,7 +516,7 @@ char *sys_getcwd(char *buf, unsigned size)
 
 	strcpy(buf, cwd);
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getcwd(%s, %d) = %s\n", buf, size, buf);
 
 	return buf;
@@ -553,7 +553,7 @@ int sys_getrusage(int who, rusage *usage)
 		ms_to_timeval(cur->stats->child_stime * 10, &usage->ru_stime);
 	}
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getrusage(%d) utime=%d stime=%d\n", who,
 		     (int)usage->ru_utime.tv_sec, (int)usage->ru_stime.tv_sec);
 

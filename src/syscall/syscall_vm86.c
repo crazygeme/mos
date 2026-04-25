@@ -555,7 +555,7 @@ int sys_vm86old(void *user_vm86)
 {
 	struct mos_vm86_struct *vm = (struct mos_vm86_struct *)user_vm86;
 
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vm86old(%x)\n", user_vm86);
 
 	if (!user_vm86)
@@ -572,7 +572,7 @@ int sys_vm86old(void *user_vm86)
 
 int sys_vm86(unsigned long fn, void *user_vm86plus)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vm86(fn=%x, %x)\n", fn, user_vm86plus);
 
 	if (!user_vm86plus)

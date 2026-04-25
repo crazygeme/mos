@@ -302,7 +302,7 @@ static unsigned call_table[NR_syscalls] = {
 
 static int unhandled_syscall(unsigned callno)
 {
-	if (TestControl.verbos)
+	if (TEST_LOG(TEST_LOG_INFO))
 		klog("unhandled syscall %d\n", callno);
 	return -ENOSYS;
 }

@@ -423,7 +423,7 @@ int sys_sigreturn()
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *frame =
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
-	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 4);
+	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 8);
 
 	/* Restore original user registers and EIP into the interrupt frame. */
 	frame->eip = (void *)sf->saved_eip;
@@ -518,11 +518,17 @@ static void build_rt_sigreturn_code(unsigned char retcode[8])
 
 static void build_sigreturn_code(unsigned char retcode[8])
 {
-	retcode[0] = 0xb8; /* mov imm32,%eax */
-	*(unsigned int *)&retcode[1] = 119;
-	retcode[5] = 0xcd; /* int $0x80 */
-	retcode[6] = 0x80;
-	retcode[7] = 0x90; /* nop */
+	/*
+	 * Match Linux/glibc i386 __restore:
+	 *   popl %eax         ; discard signo argument
+	 *   mov $__NR_sigreturn,%eax
+	 *   int $0x80
+	 */
+	retcode[0] = 0x58; /* popl %eax */
+	retcode[1] = 0xb8; /* mov imm32,%eax */
+	*(unsigned int *)&retcode[2] = 119;
+	retcode[6] = 0xcd; /* int $0x80 */
+	retcode[7] = 0x80;
 }
 
 /* Fire SIGALRM if the current task's alarm has expired. */
@@ -661,10 +667,15 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 
 /* Build the legacy signal frame on the user stack. */
 static void build_legacy_frame(task_struct *cur, intr_frame *frame,
-			       signal_frame *sf, int sig)
+			       signal_frame *sf, struct sigaction *sa, int sig)
 {
-	build_sigreturn_code(sf->trampoline);
-	sf->return_addr = (unsigned int)&sf->trampoline[0];
+	if ((sa->sa_flags & SA_RESTORER) && sa->sa_restorer) {
+		sf->return_addr = (unsigned int)sa->sa_restorer;
+		memset(sf->trampoline, 0, sizeof(sf->trampoline));
+	} else {
+		build_sigreturn_code(sf->trampoline);
+		sf->return_addr = (unsigned int)&sf->trampoline[0];
+	}
 	sf->signo = sig;
 	sf->saved_eip = (unsigned int)frame->eip;
 	sf->saved_eflags = frame->eflags;
@@ -749,7 +760,8 @@ void do_signal(intr_frame *frame)
 	if (is_rt)
 		build_rt_frame(cur, frame, (rt_signal_frame *)new_esp, sa, sig);
 	else
-		build_legacy_frame(cur, frame, (signal_frame *)new_esp, sig);
+		build_legacy_frame(cur, frame, (signal_frame *)new_esp, sa,
+				   sig);
 
 	/* Block this signal while handler runs (unless SA_NODEFER). */
 	if (!(sa->sa_flags & SA_NODEFER))

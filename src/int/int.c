@@ -182,9 +182,9 @@ static void handle_general_protection(intr_frame *frame)
 	}
 
 	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
-	     cur->psid, cur->user->command, frame->eip, frame->esp,
-	     frame->ebp, frame->eax, frame->ebx, frame->ecx, frame->edx,
-	     frame->ds, frame->cs, frame->gs, frame->fs, frame->error_code);
+	     cur->psid, cur->user->command, frame->eip, frame->esp, frame->ebp,
+	     frame->eax, frame->ebx, frame->ecx, frame->edx, frame->ds,
+	     frame->cs, frame->gs, frame->fs, frame->error_code);
 	klog("#GP state: status %d, ptrace_mode %u, stop_signal %u, ptrace_frame_valid %u, tss.gs %x, ptrace.gs %x, ptrace.eip %x, ptrace.esp %x\n",
 	     cur->status, cur->ptrace_mode, cur->stop_signal,
 	     cur->ptrace_frame_valid, cur->tss.gs, cur->ptrace_frame.gs,

@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_path_errors
+CASE_NAME=posix_path_errors
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 FILE="$DIR/file.txt"
 MISSING="$BASE/missing"

@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_unlink
+CASE_NAME=posix_unlink
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 TARGET="$DIR/target.txt"
 SYM="$DIR/target.sym"

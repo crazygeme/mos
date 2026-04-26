@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/gcc_hello
+CASE_NAME=gcc_hello
+BASE=/root/tests/$CASE_NAME
 SRC="$BASE/hello.c"
 BIN="$BASE/hello"
 OUT="$BASE/out.txt"

@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/emacs_smoke
+CASE_NAME=emacs_smoke
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.txt"
 
 fail()

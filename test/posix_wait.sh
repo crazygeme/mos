@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_wait
+CASE_NAME=posix_wait
+BASE=/root/tests/$CASE_NAME
 
 fail()
 {

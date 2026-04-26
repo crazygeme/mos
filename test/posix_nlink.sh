@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_nlink
+CASE_NAME=posix_nlink
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.txt"
 LINK="$BASE/file.link"
 

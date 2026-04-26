@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_dirs
+CASE_NAME=posix_dirs
+BASE=/root/tests/$CASE_NAME
 PARENT="$BASE/parent"
 CHILD="$PARENT/child"
 

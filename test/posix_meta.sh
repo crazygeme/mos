@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_meta
+CASE_NAME=posix_meta
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 CHILD="$DIR/child"
 FILE="$DIR/file.txt"

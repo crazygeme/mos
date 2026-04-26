@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_chmod
+CASE_NAME=posix_chmod
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.sh"
 
 fail()

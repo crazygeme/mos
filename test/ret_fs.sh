@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/ret_fs
+CASE_NAME=ret_fs
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 FILE="$DIR/file.txt"
 

@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_stat
+CASE_NAME=posix_stat
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 FILE="$DIR/file.txt"
 EMPTY="$DIR/empty.txt"

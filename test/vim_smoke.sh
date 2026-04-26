@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/vim_smoke
+CASE_NAME=vim_smoke
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.txt"
 
 fail()

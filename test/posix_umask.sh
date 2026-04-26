@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_umask
+CASE_NAME=posix_umask
+BASE=/root/tests/$CASE_NAME
 
 fail()
 {

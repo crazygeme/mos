@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_pipe
+CASE_NAME=posix_pipe
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.txt"
 
 fail()

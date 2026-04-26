@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_rlimit
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_rlimit
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/rlimit_test.c"
 BIN="$BASE/rlimit_test"
 STAMP="$BASE/.case_timestamp"
@@ -70,7 +70,7 @@ cat > "$SRC" << 'EOF'
 #include <string.h>
 #include <errno.h>
 
-#define TMPFILE "/root/posix_rlimit/rlimit_data.bin"
+#define TMPFILE "/root/tests/posix_rlimit/rlimit_data.bin"
 
 static int fail(const char *msg)
 {

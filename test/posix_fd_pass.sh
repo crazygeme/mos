@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_fd_pass
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_fd_pass
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/fd_pass.c"
 BIN="$BASE/fd_pass"
 OUT="$BASE/out.txt"
@@ -176,7 +176,7 @@ static void run_one(int socktype, const char *label)
 	if (socketpair(AF_UNIX, socktype, 0, sv) < 0)
 		die("socketpair");
 
-	snprintf(path, sizeof(path), "/root/posix_fd_pass/%s.txt", label);
+	snprintf(path, sizeof(path), "/root/tests/posix_fd_pass/%s.txt", label);
 	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd < 0)
 		die("open");
@@ -204,7 +204,7 @@ static void run_stream_back_to_back(void)
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
 		die("socketpair");
 
-	snprintf(path1, sizeof(path1), "/root/posix_fd_pass/stream-a.txt");
+	snprintf(path1, sizeof(path1), "/root/tests/posix_fd_pass/stream-a.txt");
 	fd1 = open(path1, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd1 < 0)
 		die("open stream-a");
@@ -213,7 +213,7 @@ static void run_stream_back_to_back(void)
 	if (lseek(fd1, 0, SEEK_SET) < 0)
 		die("lseek stream-a");
 
-	snprintf(path2, sizeof(path2), "/root/posix_fd_pass/stream-b.txt");
+	snprintf(path2, sizeof(path2), "/root/tests/posix_fd_pass/stream-b.txt");
 	fd2 = open(path2, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd2 < 0)
 		die("open stream-b");
@@ -291,7 +291,7 @@ static void run_named_stream_server_exit(void)
 	char ch = 'X';
 	ssize_t n;
 
-	snprintf(path, sizeof(path), "/root/posix_fd_pass/named-exit.sock");
+	snprintf(path, sizeof(path), "/root/tests/posix_fd_pass/named-exit.sock");
 	unlink(path);
 	if (pipe(ready_pipe) < 0)
 		die("pipe named stream");

@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_io
+CASE_NAME=posix_io
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.txt"
 DIR="$BASE/dir"
 

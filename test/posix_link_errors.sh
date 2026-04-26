@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_link_errors
+CASE_NAME=posix_link_errors
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 FILE="$BASE/file.txt"
 LINK="$BASE/file.link"

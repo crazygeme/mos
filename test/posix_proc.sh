@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_proc
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_proc
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/proc_test.c"
 BIN="$BASE/proc_test"
 STAMP="$BASE/.case_timestamp"

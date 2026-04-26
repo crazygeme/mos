@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_rw_matrix
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_rw_matrix
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/rw_matrix.c"
 BIN="$BASE/rw_matrix"
 STAMP="$BASE/.case_timestamp"
@@ -336,7 +336,7 @@ static void test_regular_file_basics(void)
 	struct stat st;
 	off_t off;
 
-	snprintf(path, sizeof(path), "%s/file.txt", "/root/posix_rw_matrix");
+	snprintf(path, sizeof(path), "%s/file.txt", "/root/tests/posix_rw_matrix");
 	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd < 0)
 		die("open regular file");
@@ -390,7 +390,7 @@ static void test_regular_file_errors(void)
 	char path[256];
 	int fd_rdonly, fd_wronly, fd_dir, fd_closed;
 
-	snprintf(path, sizeof(path), "%s/error.txt", "/root/posix_rw_matrix");
+	snprintf(path, sizeof(path), "%s/error.txt", "/root/tests/posix_rw_matrix");
 	fd_rdonly = open(path, O_CREAT | O_TRUNC | O_RDONLY, 0644);
 	if (fd_rdonly < 0)
 		die("open rdonly");
@@ -427,7 +427,7 @@ static void test_regular_file_rlimit_fsize(void)
 	char path[256];
 	pid_t pid;
 
-	snprintf(path, sizeof(path), "%s/rlimit.txt", "/root/posix_rw_matrix");
+	snprintf(path, sizeof(path), "%s/rlimit.txt", "/root/tests/posix_rw_matrix");
 	pid = fork();
 	if (pid < 0)
 		die("fork rlimit_fsize");
@@ -536,7 +536,7 @@ static void __attribute__((unused)) test_named_unix_socket_rw(void)
 	int srv, cli, lst;
 	char buf[8];
 
-	snprintf(path, sizeof(path), "%s/stream.sock", "/root/posix_rw_matrix");
+	snprintf(path, sizeof(path), "%s/stream.sock", "/root/tests/posix_rw_matrix");
 	make_named_unix_stream_pair(path, &srv, &cli, &lst);
 
 	set_nonblock(srv, 1, "fcntl unix srv nonblock");
@@ -576,7 +576,7 @@ static void __attribute__((unused)) test_named_unix_socket_blocking_read(void)
 	pid_t pid;
 	char ch = 0;
 
-	snprintf(path, sizeof(path), "%s/blocking.sock", "/root/posix_rw_matrix");
+	snprintf(path, sizeof(path), "%s/blocking.sock", "/root/tests/posix_rw_matrix");
 	make_named_unix_stream_pair(path, &srv, &cli, &lst);
 
 	pid = fork();

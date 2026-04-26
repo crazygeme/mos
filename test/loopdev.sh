@@ -3,8 +3,10 @@
 # requires: dd, mkfs.ext3, mount, umount
 
 set -e
-IMG=/root/test.img
-MNT=/root/mnt
+CASE_NAME=loopdev
+BASE=/root/tests/$CASE_NAME
+IMG=$BASE/test.img
+MNT=$BASE/mnt
 FILE="$MNT/hello.txt"
 DATA='loop_ok'
 

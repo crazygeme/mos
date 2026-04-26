@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_pthread
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_pthread
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/pthread_test.c"
 BIN="$BASE/pthread_test"
 STAMP="$BASE/.case_timestamp"

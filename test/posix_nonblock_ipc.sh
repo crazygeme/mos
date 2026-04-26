@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_nonblock_ipc
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_nonblock_ipc
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/nonblock_ipc.c"
 BIN="$BASE/nonblock_ipc"
 STAMP="$BASE/.case_timestamp"

@@ -721,9 +721,8 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 		file_offset = region->offset + (int)(vir - region->begin);
 
 		if (region->fp->f_fop && region->fp->f_fop->write_page) {
-			if (region->fp->f_fop->write_page(region->fp,
-							 file_offset,
-							 (void *)vir) == 0)
+			if (region->fp->f_fop->write_page(
+				    region->fp, file_offset, (void *)vir) == 0)
 				phymm_clear_dirty(page_index);
 		} else {
 			inode *node = region->fp->f_inode;

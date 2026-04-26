@@ -795,9 +795,12 @@ int sys_setfsgid32(unsigned fsgid)
 
 int sys_exit_group(int status)
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("exit_group(%d)\n", status);
 
+	ps_kill_thread_group(cur);
 	sys_exit((unsigned)status);
 	return 0; /* unreachable */
 }

@@ -212,6 +212,89 @@ out:
 	spinlock_unlock(&ps_lock, irq);
 }
 
+static void ps_reap_group_thread(task_struct *task)
+{
+	int i;
+
+	if (!task)
+		return;
+
+	ps_clear_child_tid(task);
+
+	/*
+	 * CLONE_THREAD siblings borrow the same address space as the exiting
+	 * group leader. Prevent ps_reap_task() from freeing shared VM state
+	 * after the leader performs the real process teardown.
+	 */
+	if ((task->fork_flag & FORK_FLAG_SHARE_VM) && task->user) {
+		task->user->page_dir = 0;
+		task->user->vm = NULL;
+	}
+
+	if (task->fds) {
+		for (i = 0; i < MAX_FD; i++) {
+			if (!task->fds[i])
+				continue;
+			fs_put_file(task->fds[i]);
+			task->fds[i] = NULL;
+		}
+		vm_free(task->fds, 1);
+		task->fds = NULL;
+	}
+
+	ps_reap_task(task, NULL);
+}
+
+void ps_kill_thread_group(task_struct *leader)
+{
+	struct rb_node *node;
+	struct rb_node *next;
+	list_entry reap_list;
+	int irq;
+
+	if (!leader)
+		return;
+
+	list_init(&reap_list);
+
+	spinlock_lock(&ps_lock, &irq);
+	for (node = rb_first(&control.mgr_queue); node; node = next) {
+		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		next = rb_next(node);
+
+		if (task == leader)
+			continue;
+		if (!(task->fork_flag & FORK_FLAG_THREAD))
+			continue;
+		if (task->type != ps_user || !task->signal)
+			continue;
+		if (task->tgid != leader->tgid)
+			continue;
+
+		/*
+		 * exit_group() must remove sibling threads from every scheduler data
+		 * structure before the leader destroys shared VM/file-table state.
+		 */
+		timer_disarm_unsafe(task);
+		list_remove_entry(&task->ps_list);
+		ps_remove_mgr_unsafe(task);
+		task->psid = 0xffffffff;
+		task->tgid = 0xffffffff;
+		task->status = ps_dying;
+		task->wait_func = NULL;
+		list_insert_tail(&reap_list, &task->ps_list);
+	}
+	spinlock_unlock(&ps_lock, irq);
+
+	while (!list_is_empty(&reap_list)) {
+		task_struct *task =
+			container_of(reap_list.next, task_struct, ps_list);
+
+		list_remove_entry(&task->ps_list);
+		ps_reap_group_thread(task);
+	}
+}
+
 void do_exit(unsigned encoded_status)
 {
 	task_struct *cur = CURRENT_TASK();

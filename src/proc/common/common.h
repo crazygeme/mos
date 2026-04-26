@@ -47,7 +47,7 @@ void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 
 /* _DEFINE_PROC_FILE_IMPL — all boilerplate except the PROC_INIT registration */
 #define _DEFINE_PROC_FILE_IMPL(name, fill_func)                           \
-	static int _getattr_##name(file *file, struct stat *s)           \
+	static int _getattr_##name(file *file, struct stat *s)            \
 	{                                                                 \
 		inode *inode = file->f_inode;                             \
 		unsigned long _now = time_now_sec();                      \

@@ -10,6 +10,8 @@ static unsigned long tickets;
 static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
 static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
+static unsigned long long last_time_sample_tickets;
+static unsigned last_time_sample_count = LATCH;
 static unsigned long rtc_get_time(void);
 
 static void time_process(intr_frame *frame)
@@ -146,6 +148,7 @@ static unsigned long long time_now_us()
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
 	unsigned long long t1, t2;
 	unsigned count;
+	int wrapped_without_irq;
 
 	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
 	do {
@@ -156,12 +159,24 @@ static unsigned long long time_now_us()
 		t2 = tickets;
 	} while (t1 != t2);
 
-	/* Handle the race where the PIT has already fired and reloaded (so count
-	 * is from the new period) but the IRQ has not been serviced yet, leaving
-	 * total_tickets un-incremented.  If IRQ0 is pending we must add the
-	 * missing tick; the count we read already belongs to the next interval. */
-	if (pic_timer_irq_pending())
+	/*
+	 * Handle the race where the PIT has already reloaded for the next period
+	 * but IRQ0 has not been serviced yet, leaving tickets unchanged.
+	 *
+	 * Reading the PIC IRR alone is too noisy here: unrelated interrupt timing
+	 * can make bit 0 transiently visible and spuriously add a whole tick,
+	 * which makes gettimeofday() jump backwards on the next sample.  Only
+	 * compensate when the hardware counter proves we wrapped inside the same
+	 * ticket epoch, i.e. the down-counter becomes larger than the previous
+	 * latched value without tickets advancing.
+	 */
+	wrapped_without_irq = (t1 == last_time_sample_tickets &&
+			       count > last_time_sample_count);
+	if (wrapped_without_irq && pic_timer_irq_pending())
 		t1++;
+
+	last_time_sample_tickets = t2;
+	last_time_sample_count = count;
 
 	/* PIT counts DOWN from LATCH to 0; convert remaining count to elapsed us.
 	 * Resolution: 1 / CLOCK_TICK_RATE ≈ 0.84 μs, no calibration needed. */

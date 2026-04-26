@@ -7,8 +7,8 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ## 2026-04-26 - `strace ps aux` over SSH could #GP on `intr_exit: pop %gs`
 
-This one looked like a ptrace or TLS setup bug at first because the visible
-crash was always a user task dying with `#GP(error_code = 0x30)` while traced
+Initial triage suggested a ptrace or TLS setup bug because the visible crash
+was always a user task dying with `#GP(error_code = 0x30)` while traced
 through SSH. The decisive clue came from logging both the task's saved TLS
 state and the live hardware GDT entries at fault time.
 
@@ -44,22 +44,163 @@ state and the live hardware GDT entries at fault time.
     TLS state and plain `set_thread_area()` does not silently rewrite the
     saved user `%gs`
 
+
+## 2026-04-26 - GUI Emacs mapped a frame but stalled before usable content
+
+This issue required three separate kernel fixes because the visible symptom
+changed as each blocker was removed. The important part was not to patch
+around the blank window directly, but to keep explaining why old RH9 Emacs
+behaved differently from simpler X clients.
+
+### 1. `gettimeofday()` could move backward and trap Emacs in `SIGALRM`
+
+- **Caught by:** reading [out/x86/release/krn.log](../out/x86/release/krn.log)
+  during the GUI Emacs investigation, then comparing the timer path with the
+  real Emacs 21.2 sources under
+  [`emacs-21.2-rh9-src`](../emacs-21.2-rh9-src).
+- **Symptom:** GUI `emacs` did not appear at all, and the syscall log showed a
+  hot loop of `sig_deliver(14)`, `setitimer()`, and `gettimeofday()` during X
+  startup.
+- **Root cause:** MOS could return a wall-clock sample that jumped forward by
+  one PIT tick and then backward on the next call. Emacs 21.2 uses
+  `ITIMER_REAL` and `SIGALRM` for atimers during GUI startup, so that
+  non-monotonic clock made its timer machinery spin instead of progressing
+  through the X event loop.
+- **Fix:** in [time.c](../src/hw/time.c), keep the IRQ-pending compensation for
+  the PIT race, but only add a missing tick when the latched counter proves a
+  wrap happened inside the same `tickets` epoch. This stopped the false
+  one-jiffy jumps caused by noisy PIC IRR reads.
+
+### 2. `ITIMER_REAL` was too fine-grained compared with RH9/Linux 2.4
+
+- **Caught by:** rerunning after the timekeeping fix and observing that Emacs
+  now got much farther into X setup but still spent excessive time in
+  `SIGALRM`/`setitimer()` churn.
+- **Symptom:** a frame began to appear, but Emacs still behaved as if its timer
+  retries were far more aggressive than on the target RH9 userspace.
+- **Root cause:** old Linux 2.4 i386 `ITIMER_REAL` behavior is effectively
+  jiffy-based at `HZ=100`. MOS was honoring very small nonzero timer values too
+  precisely. Emacs's deferred 1 ms retry path in its atimer code therefore ran
+  much more aggressively on MOS than on the RH9 baseline it was built for.
+- **Fix:** in [syscall_proc.c](../src/syscall/syscall_proc.c), round nonzero
+  `ITIMER_REAL` values and intervals up to the next jiffy before arming the
+  task alarm state.
+
+### 3. X sockets accepted `FASYNC`/`F_SETOWN` but never delivered `SIGIO`
+
+- **Caught by:** reading the updated Emacs-focused log once a frame existed and
+  correlating it with the X input path in
+  [xterm.c](../emacs-21.2-rh9-src/emacs-21.2/src/xterm.c)
+  and the `SIGIO` setup in
+  [keyboard.c](../emacs-21.2-rh9-src/emacs-21.2/src/keyboard.c).
+- **Symptom:** Emacs mapped a window and exchanged real X traffic, but it kept
+  falling back to sluggish polling / sync-style behavior instead of using its
+  intended async X input path. The log showed pid `1632` installing a `SIGIO`
+  handler and enabling `F_SETOWN` plus `FASYNC` on the X socket, but no
+  `sig_deliver(29)` ever reached that pid.
+- **Root cause:** MOS stored async ownership on the socket file descriptor, but
+  the socket wakeup path never translated readability/writability changes into
+  `SIGIO`. The kernel already did this for mouse input, so Emacs's X socket was
+  silently missing an old BSD/Linux compatibility behavior it expected.
+- **Fix:**
+  - in [socket.h](../include/net/socket.h), add a back-pointer from
+    `mos_sock` to the owning open file used for async notification
+  - in [sock.c](../src/net/sock.c), preserve that pointer in `sock_to_fd()`
+  - in [sock.c](../src/net/sock.c), teach `sock_wakeup()` to send the async
+    owner `SIGIO` (or the configured alternate signal) when `FASYNC` is set
+
+### Key lesson
+
+Old GUI applications often fail through compatibility layering rather than one
+big crash. Emacs needed:
+- a monotonic `gettimeofday()`
+- Linux-2.4-like `ITIMER_REAL` granularity
+- actual `SIGIO` delivery on X sockets after accepting `F_SETOWN`/`FASYNC`
+
+Once all three matched old Linux expectations closely enough, GUI Emacs worked
+normally instead of stopping at a blank or half-alive frame.
+
+
+## 2026-04-26 - Nautilus text preview crashed after `exit_group()` left sibling threads alive
+
+Initial triage suggested a stack-limit or signal-trampoline bug because the
+visible fault address tracked `MAX_USER_STACK`, and the first crash always
+landed on a page boundary near the top of user memory. The decisive clue was
+following the thread-group lifetime all the way through
+`nautilus-text-view` shutdown instead of stopping at the first `SIGSEGV`.
+
+### 1. File preview worker crashed at `befff000` / `befff002`
+
+- **Caught by:** reading
+  [out/x86/release/krn.log](../out/x86/release/krn.log) during the Nautilus
+  file-preview investigation, then mapping the faulting addresses against the
+  kernel signal and VDSO code.
+- **Symptom:** previewing simple files such as `hello.c` in Nautilus could run
+  for a long time, but opening file contents through `nautilus-text-view`
+  eventually ended with `segfault: address befff000, eip befff002`.
+- **What made it misleading:** `befff000` moved when `MAX_USER_STACK` changed,
+  so it initially looked like the kernel was always walking one page past the
+  allowed user stack floor.
+- **Why that interpretation was wrong:** on MOS, the VDSO helper page is mapped
+  just below the mmap/stack boundary in
+  [vdso.c](../src/mm/vdso.c), so `befff000` was actually the VDSO page, and
+  `eip = befff002` landed inside `__kernel_vsyscall` rather than inside a true
+  stack-growth fault.
+
+### 2. The real failure was thread-group exit, not stack growth
+
+- **Caught by:** correlating the crash with the earlier `exit_group(0)` lines
+  from the same `nautilus-text-view` instance in the syscall log.
+- **Symptom:** pid `1637` called `exit_group(0)` and exited cleanly, but sibling
+  thread `1638` remained alive and later faulted while returning through the
+  VDSO helper. An intermediate attempt to kill siblings by queuing `SIGKILL`
+  removed the VDSO crash but exposed a new debug-build hang in
+  [_task_sched()](../src/ps/sched/ps_switch.c) while the scheduler tried to
+  consider threads whose shared process state had already been torn down.
+- **Root cause:** `sys_exit_group()` only routed through `sys_exit()`, so the
+  caller destroyed process-wide state in `do_exit()` while same-`tgid`
+  `CLONE_THREAD` siblings still existed. Because MOS shares the VM and higher
+  process state across NPTL threads, any surviving sibling could later run with
+  freed address-space or file-table state. The first visible fallout happened
+  to be a VDSO fault; after a partial fix, the same bug surfaced as a scheduler
+  hang.
+- **Fix:**
+  - in [syscall_proc.c](../src/syscall/syscall_proc.c), teach
+    `sys_exit_group()` to terminate the whole thread group instead of only the
+    caller
+  - in [ps_syscall.c](../src/ps/ps_syscall.c), add `ps_kill_thread_group()`
+    that synchronously removes same-`tgid` sibling threads from scheduler
+    structures before the leader continues into `do_exit()`
+  - reap those sibling threads' per-thread resources immediately, while
+    explicitly preventing the shared VM from being freed multiple times
+
+### Key lesson
+
+For old RH9/NPTL userspace, `exit_group()` compatibility is not optional. If a
+thread-group leader exits and frees shared process state before sibling threads
+are actually gone, the eventual symptom may look like a random signal-frame
+crash, a VDSO fault, or even a scheduler hang. When the log shows a helper
+thread surviving past `exit_group(0)`, debug thread-group teardown first.
+
+---
+
+
 ## 2026-04-19 - Nautilus hung in `nautilus_self_check_directory()` and later crashed in GLib allocation
 
-This one started as a GUI application hang, but the useful clue was that the
-hang consistently appeared while Nautilus was walking its self-check startup
-path around directory and volume monitoring. The userspace source and syscall
-log showed that the real failure was in old RH9/NPTL thread setup, with a
-second bug waiting behind it in shared heap bookkeeping.
+This issue initially presented as a GUI application hang, but the useful clue
+was that the hang consistently appeared while Nautilus was walking its
+self-check startup path around directory and volume monitoring. The userspace
+source and syscall log showed that the real failure was in old RH9/NPTL thread
+setup, with a second bug waiting behind it in shared heap bookkeeping.
 
 ### 1. `nautilus -c` blocked during `nautilus_self_check_directory()`
 
-- **Caught by:** reading `out/x86/release/krn.log` after the user explicitly
-  pointed at `nautilus_self_check_directory`, then correlating that with the
-  RH9 Nautilus and `gnome-vfs` sources under
-  [`.codex-data/context/nautilus-2.4.2`](../.codex-data/context/nautilus-2.4.2)
+- **Caught by:** reading `out/x86/release/krn.log` during investigation of
+  `nautilus_self_check_directory`, then correlating that with the RH9 Nautilus
+  and `gnome-vfs` sources under
+  [`nautilus-2.4.2`](../nautilus-2.4.2)
   and
-  [`.codex-data/context/gnome-vfs-2.4.2`](../.codex-data/context/gnome-vfs-2.4.2).
+  [`gnome-vfs-2.4.2`](../gnome-vfs-2.4.2).
 - **Symptom:** Nautilus loaded `libfam.so`, went through the file-monitor
   setup path used to watch `/etc/fstab`, issued `clone(...)`, and then the
   parent thread stopped in a futex handshake instead of continuing.
@@ -111,80 +252,6 @@ the active TLS selector and the current program break. If those metadata stay
 per-task while mappings are shared, old NPTL and GLib code will fail in ways
 that look like random userspace hangs or allocation bugs.
 
-## 2026-04-26 - GUI Emacs mapped a frame but stalled before usable content
-
-This one took three separate kernel fixes because the visible symptom changed
- as each blocker was removed. The important part was not to patch around the
- blank window directly, but to keep explaining why old RH9 Emacs behaved
- differently from simpler X clients.
-
-### 1. `gettimeofday()` could move backward and trap Emacs in `SIGALRM`
-
-- **Caught by:** reading [out/x86/release/krn.log](../out/x86/release/krn.log)
-  after the user explicitly asked to investigate GUI Emacs, then comparing the
-  timer path with the real Emacs 21.2 sources under
-  [`.codex-data/context/emacs-21.2-rh9-src`](../.codex-data/context/emacs-21.2-rh9-src).
-- **Symptom:** GUI `emacs` did not appear at all, and the syscall log showed a
-  hot loop of `sig_deliver(14)`, `setitimer()`, and `gettimeofday()` during X
-  startup.
-- **Root cause:** MOS could return a wall-clock sample that jumped forward by
-  one PIT tick and then backward on the next call. Emacs 21.2 uses
-  `ITIMER_REAL` and `SIGALRM` for atimers during GUI startup, so that
-  non-monotonic clock made its timer machinery spin instead of progressing
-  through the X event loop.
-- **Fix:** in [time.c](../src/hw/time.c), keep the IRQ-pending compensation for
-  the PIT race, but only add a missing tick when the latched counter proves a
-  wrap happened inside the same `tickets` epoch. This stopped the false
-  one-jiffy jumps caused by noisy PIC IRR reads.
-
-### 2. `ITIMER_REAL` was too fine-grained compared with RH9/Linux 2.4
-
-- **Caught by:** rerunning after the timekeeping fix and observing that Emacs
-  now got much farther into X setup but still spent excessive time in
-  `SIGALRM`/`setitimer()` churn.
-- **Symptom:** a frame began to appear, but Emacs still behaved as if its timer
-  retries were far more aggressive than on the target RH9 userspace.
-- **Root cause:** old Linux 2.4 i386 `ITIMER_REAL` behavior is effectively
-  jiffy-based at `HZ=100`. MOS was honoring very small nonzero timer values too
-  precisely. Emacs's deferred 1 ms retry path in its atimer code therefore ran
-  much more aggressively on MOS than on the RH9 baseline it was built for.
-- **Fix:** in [syscall_proc.c](../src/syscall/syscall_proc.c), round nonzero
-  `ITIMER_REAL` values and intervals up to the next jiffy before arming the
-  task alarm state.
-
-### 3. X sockets accepted `FASYNC`/`F_SETOWN` but never delivered `SIGIO`
-
-- **Caught by:** reading the updated Emacs-focused log once a frame existed and
-  correlating it with the X input path in
-  [xterm.c](../.codex-data/context/emacs-21.2-rh9-src/emacs-21.2/src/xterm.c)
-  and the `SIGIO` setup in
-  [keyboard.c](../.codex-data/context/emacs-21.2-rh9-src/emacs-21.2/src/keyboard.c).
-- **Symptom:** Emacs mapped a window and exchanged real X traffic, but it kept
-  falling back to sluggish polling / sync-style behavior instead of using its
-  intended async X input path. The log showed pid `1632` installing a `SIGIO`
-  handler and enabling `F_SETOWN` plus `FASYNC` on the X socket, but no
-  `sig_deliver(29)` ever reached that pid.
-- **Root cause:** MOS stored async ownership on the socket file descriptor, but
-  the socket wakeup path never translated readability/writability changes into
-  `SIGIO`. The kernel already did this for mouse input, so Emacs's X socket was
-  silently missing an old BSD/Linux compatibility behavior it expected.
-- **Fix:**
-  - in [socket.h](../include/net/socket.h), add a back-pointer from
-    `mos_sock` to the owning open file used for async notification
-  - in [sock.c](../src/net/sock.c), preserve that pointer in `sock_to_fd()`
-  - in [sock.c](../src/net/sock.c), teach `sock_wakeup()` to send the async
-    owner `SIGIO` (or the configured alternate signal) when `FASYNC` is set
-
-### Key lesson
-
-Old GUI applications often fail through compatibility layering rather than one
-big crash. Emacs needed:
-- a monotonic `gettimeofday()`
-- Linux-2.4-like `ITIMER_REAL` granularity
-- actual `SIGIO` delivery on X sockets after accepting `F_SETOWN`/`FASYNC`
-
-Once all three matched old Linux expectations closely enough, GUI Emacs worked
-normally instead of stopping at a blank or half-alive frame.
 
 ## 2026-04-17 - SSH large output stalls until keypress (`tcp_on_sent` missing)
 
@@ -212,6 +279,7 @@ there is no TCP socket at all.
 
 ---
 
+
 ## 2026-04-17 - `gnome-terminal` PTY poll wakeups could go stale
 
 **Symptom**: Large output such as `ls -alh /usr/lib` could stall in
@@ -238,13 +306,14 @@ that verbose kernel logging could mask.
 
 ---
 
+
 ## 2026-04-14 - PTY controlling `/dev/tty` lookup broke `man`, and `strncpy()` still overflowed
 
-This round started from two user-visible regressions in SSH-backed sessions:
+This entry addresses two user-visible regressions in SSH-backed sessions:
 `man ping` consistently failed once it invoked `less`, and the SSH client still
 occasionally reported a bogus packet length even after the TCP tail-drop fix.
-The first turned out to be a controlling-terminal resolution bug on PTYs; the
-second was a stale libc helper overflow that could scribble on adjacent state.
+The first issue was a controlling-terminal resolution bug on PTYs; the second
+was a stale libc helper overflow that could scribble on adjacent state.
 
 ### 1. `man ping` failed in SSH sessions with `Error executing formatting or display command`
 
@@ -288,18 +357,19 @@ second was a stale libc helper overflow that could scribble on adjacent state.
   real contract: copy at most `len` bytes, pad with NULs only inside that
   range, and never append a byte past the caller-provided buffer.
 
+
 ## 2026-04-14 - AF_UNIX stream `SCM_RIGHTS` coalescing stalled `gnome-terminal` for 30 seconds
 
-This one first looked like a slow GNOME Terminal startup problem in userspace,
-but the log/source correlation pointed to a kernel protocol bug. The helper was
-not slow at opening PTYs; it was getting stuck because MOS merged two adjacent
-fd-passing records into one stream receive.
+This issue first looked like a slow GNOME Terminal startup problem in
+userspace, but the log/source correlation pointed to a kernel protocol bug.
+The helper was not slow at opening PTYs; it was getting stuck because MOS
+merged two adjacent fd-passing records into one stream receive.
 
 ### 1. `gnome-terminal` paused for about 30 seconds before opening
 
 - **Caught by:** reading [out/krn.log](../out/krn.log) around the
   `gnome-pty-helper` exchange and matching it against the old VTE helper source
-  in [`.codex-data/context/vte-0.11.11`](../.codex-data/context/vte-0.11.11)
+  in [`vte-0.11.11`](../vte-0.11.11)
 - **Symptom:** the helper successfully opened `/dev/pts/0` and updated
   `utmp`/`wtmp`, but GNOME Terminal did not continue until the helper timed out
   roughly 30 seconds later and VTE fell back to plain `/dev/ptmx` allocation.
@@ -322,11 +392,13 @@ fd-passing records into one stream receive.
     sends two consecutive `SCM_RIGHTS` messages over a Unix stream socket and
     verifies they are received one-at-a-time
 
+
 ## 2026-04-11 - TCP receive callback dropped tail bytes, corrupting SSH streams
 
-This one showed up as an intermittent OpenSSH client failure rather than a
-clean disconnect. The client would sometimes abort with `Bad packet length ...`,
-which is a strong sign that the encrypted byte stream itself was corrupted.
+This issue appeared as an intermittent OpenSSH client failure rather than a
+clean disconnect. The client would sometimes abort with
+`Bad packet length ...`, which is a strong sign that the encrypted byte stream
+itself was corrupted.
 
 ### 1. SSH occasionally failed with `Bad packet length 1349676916`
 
@@ -347,12 +419,13 @@ which is a strong sign that the encrypted byte stream itself was corrupted.
   pbuf unconsumed so lwIP can retry later. Only copy, acknowledge, and free the
   pbuf once the whole segment fits.
 
+
 ## 2026-04-11 - fs page-cache refill allocated before evicting, breaking `gcc` under tighter cache pressure
 
-This one looked like an `execve()` or early-userspace startup problem at first
+Initial triage suggested an `execve()` or early-userspace startup problem
 because `cc1` crashed very early during `gcc -o hello hello.c` under the full
 System V boot, while the same command worked in a simpler `/bin/bash` boot.
-The real trigger turned out to be the filesystem page-cache replacement order.
+The real trigger was the filesystem page-cache replacement order.
 
 ### 1. `gcc` failed under System V boot when `PAGE_CACHE_SIZE` was small
 
@@ -372,12 +445,12 @@ The real trigger turned out to be the filesystem page-cache replacement order.
   before calling `fs_page_cache_load()` on a miss when `hash_size` has already
   reached `PAGE_CACHE_SIZE`.
 
+
 ## 2026-04-11 — PTY writes silently truncated output beyond one buffer page
 
-This one initially looked like an `ssh`/`select()` wakeup problem because the
-client showed only the first chunk of `ls -alh /bin`. The trace turned out to
-be more direct: the PTY layer was dropping data once the stream grew past the
-4 KiB cyclic buffer.
+Initial triage suggested an `ssh`/`select()` wakeup problem because the client
+showed only the first chunk of `ls -alh /bin`. The trace was more direct: the
+PTY layer was dropping data once the stream grew past the 4 KiB cyclic buffer.
 
 ### 1. `ssh` showed only the first 4096 bytes of PTY output
 
@@ -410,6 +483,7 @@ be more direct: the PTY layer was dropping data once the stream grew past the
 - **Fix:** update [posix_nonblock_ipc.sh](../test/posix_nonblock_ipc.sh) to
   fork a child writer while the parent drains the PTY master, and add
   `<sys/wait.h>` for the child exit check.
+
 
 ## 2026-04-11 — PTY master spurious HUP breaks `screen`; `ssh` client can't exit
 
@@ -464,6 +538,7 @@ forever after the remote session closed.
   not masked in select.c.
 
 ---
+
 
 ## 2026-04-10 — Pipe and PTY EOF readiness split for `select()` vs `poll()`
 
@@ -536,13 +611,14 @@ EOF through `poll()` versus `select()` on byte-stream IPC objects.
   - `./run.sh kvm test logtofile`
   - result: `rc=0`
 
+
 ## 2026-04-10 — SSH `vim` burst, SSH `exit` hang, and nonblocking IPC semantics
 
-This round started with `vim` disconnecting over SSH and ended up exposing two
-separate POSIX-visible bugs: stream sockets treated temporary TCP backpressure
-as a hard write failure, and nonblocking anonymous pipes/PTYs reported EOF too
-eagerly instead of `EAGAIN`. The visible symptoms looked unrelated at first,
-but both surfaced through OpenSSH.
+This entry began with `vim` disconnecting over SSH and exposed two separate
+POSIX-visible bugs: stream sockets treated temporary TCP backpressure as a
+hard write failure, and nonblocking anonymous pipes/PTYs reported EOF too
+eagerly instead of `EAGAIN`. The visible symptoms initially appeared
+unrelated, but both surfaced through OpenSSH.
 
 ### 1. `vim` over SSH failed on the first full-screen redraw
 
@@ -628,12 +704,13 @@ but both surfaced through OpenSSH.
 
 ---
 
+
 ## 2026-04-10 — POSIX script-suite fixes from the long `./run.sh test` loop
 
-This round started as a hang in `posix_wait.sh` and ended with a full green
-run of the `/proc/tests/all_script` suite. The failures were mostly not hard
-crashes; they were quiet POSIX-visible mismatches that only became obvious once
- the script suite was run continuously.
+This entry began as a hang in `posix_wait.sh` and ended with a full green run
+of the `/proc/tests/all_script` suite. The failures were mostly not hard
+crashes; they were quiet POSIX-visible mismatches that only became obvious
+once the script suite was run continuously.
 
 ### 1. `waitpid()` and `sleep 0` combined into a false hang
 
@@ -741,6 +818,7 @@ crashes; they were quiet POSIX-visible mismatches that only became obvious once
 
 ---
 
+
 ## 2026-04-07 — Page-fault VMA lookup now uses a Linux-style `mmap_cache`
 
 ### Symptom
@@ -790,6 +868,7 @@ crashes; they were quiet POSIX-visible mismatches that only became obvious once
 
 ---
 
+
 ## 2026-04-07 — Shared-mapping cleanup after the boot/MM fixes
 
 ### Symptom
@@ -827,6 +906,7 @@ crashes; they were quiet POSIX-visible mismatches that only became obvious once
 
 ---
 
+
 ## 2026-04-07 — Generic block-device lookup for ext mounts
 
 ### Symptom
@@ -861,6 +941,7 @@ crashes; they were quiet POSIX-visible mismatches that only became obvious once
   editing ext4 mount code again.
 
 ---
+
 
 ## 2026-04-07 — Bugs flushed out by the new `/proc/tests` script suite
 
@@ -984,6 +1065,7 @@ features already work.
 ---
 
 
+
 ## 2026-04-06 — OpenSSH 3.5p1 `sshd` crash / privilege-separation bring-up
 
 ### Symptoms
@@ -1091,6 +1173,7 @@ items (`chroot`, path-root semantics, legacy `rt_sigaction` layout).
 
 
 ---
+
 
 ## 2026-04-06 — GNU `screen` failed with `"No more PTYs"` and later hung blank
 
@@ -1268,6 +1351,7 @@ poll or read path still holds the raw pointer.
 
 ---
 
+
 ## 2026-04-05 — `man` doesn't work (stderr opened O_WRONLY)
 
 ### Symptom
@@ -1315,6 +1399,7 @@ fd must allow reads because pagers and interactive programs re-use fd 2 as
 their terminal input channel when stdin is a pipe.
 
 ---
+
 
 ## 2026-04-05 — xinetd crash + "not enough memory" (ugetrlimit / setrlimit / fs_close)
 

@@ -107,9 +107,12 @@ struct sigaction {
  *   [ESP+64]  saved_mask    — saved signal mask (restored by sys_sigreturn)
  *   [ESP+68]  trampoline[8] — inline __NR_sigreturn stub
  *
- * On handler return, "ret" pops return_addr and jumps into trampoline[].
- * At that point ESP = signal_frame_base + 4; trampoline calls sys_sigreturn
- * which finds the frame via (frame->esp - 4).
+ * On handler return, "ret" pops return_addr and jumps into the restorer.
+ *
+ * Linux/i386 legacy restorers (including glibc's __restore) consume the
+ * one-word signo argument before invoking sigreturn. Therefore by the time
+ * sys_sigreturn runs, user ESP points at signal_frame_base + 8 and the
+ * kernel must recover the frame from (frame->esp - 8).
  */
 typedef struct _signal_frame {
 	unsigned int return_addr;

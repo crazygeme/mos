@@ -25,7 +25,7 @@ not the default-terminate path.
 ### Userspace analysis
 
 This was not guessed from shell behavior alone. Bash 2.05b source was fetched
-and checked in `.codex-data/context/bash-2.05b`.
+and checked in `bash-2.05b`.
 
 The failing script pattern is:
 

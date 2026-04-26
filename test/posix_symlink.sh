@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_symlink
+CASE_NAME=posix_symlink
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 TARGET="$DIR/target.txt"
 SYM="$DIR/link.txt"

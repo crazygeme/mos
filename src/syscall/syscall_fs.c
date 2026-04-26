@@ -15,6 +15,7 @@
 #include <hw/time.h>
 #include <lib/klib.h>
 #include <dev/dev.h>
+#include <mm/mmap.h>
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
@@ -747,13 +748,23 @@ int sys_umount2(char *name, int flags)
 
 int sys_sync()
 {
+	task_struct *cur = CURRENT_TASK();
+
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sync()\n");
 
 	if (TestControl.test)
 		return 0;
 
-	fs_sync_super(current->root);
+	/*
+	 * sync(2) must also push dirty MAP_SHARED pages that still live only in
+	 * the caller's VM mappings before flushing filesystem/device caches.
+	 */
+	if (cur && cur->user && cur->user->vm)
+		vm_flush_all_dirty(cur->user->vm);
+
+	if (cur && cur->root)
+		fs_sync_super(cur->root);
 	hdd_flush();
 	return 0;
 }

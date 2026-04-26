@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_links
+CASE_NAME=posix_links
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 SRC="$DIR/src.txt"
 SYM="$DIR/src.sym"

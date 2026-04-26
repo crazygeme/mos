@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_mkdir
+CASE_NAME=posix_mkdir
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 FILE="$BASE/file.txt"
 CHILD="$BASE/missing/child"

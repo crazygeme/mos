@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/ret_mount
+CASE_NAME=ret_mount
+BASE=/root/tests/$CASE_NAME
 IMG="$BASE/test.img"
 MNT="$BASE/mnt"
 

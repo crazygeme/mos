@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_fd
+CASE_NAME=posix_fd
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/file.txt"
 
 fail()

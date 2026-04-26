@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_socket
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_socket_endpoints
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/socket_endpoints.c"
 BIN="$BASE/socket_endpoints"
 STAMP="$BASE/.case_timestamp"
@@ -566,7 +566,7 @@ static void test_named_unix_stream(void)
 	pid_t pid;
 
 	snprintf(path, sizeof(path), "%s/named-stream.sock",
-		 "/root/posix_socket_endpoints");
+		 "/root/tests/posix_socket");
 	unlink(path);
 	fill_unix_addr(&addr, path);
 
@@ -668,9 +668,9 @@ static void test_unix_dgram(void)
 	char rbuf[16];
 
 	snprintf(srv_path, sizeof(srv_path), "%s/unix-dgram-srv.sock",
-		 "/root/posix_socket_endpoints");
+		 "/root/tests/posix_socket");
 	snprintf(cli_path, sizeof(cli_path), "%s/unix-dgram-cli.sock",
-		 "/root/posix_socket_endpoints");
+		 "/root/tests/posix_socket");
 	unlink(srv_path);
 	unlink(cli_path);
 	fill_unix_addr(&srv_addr, srv_path);

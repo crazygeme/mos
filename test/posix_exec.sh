@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_exec
+CASE_NAME=posix_exec
+BASE=/root/tests/$CASE_NAME
 FILE="$BASE/run.sh"
 
 fail()

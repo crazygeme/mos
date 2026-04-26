@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_environ
+CASE_NAME=posix_environ
+BASE=/root/tests/$CASE_NAME
 
 fail()
 {

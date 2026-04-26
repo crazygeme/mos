@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_fcntl
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_fcntl
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/fcntl_test.c"
 BIN="$BASE/fcntl_test"
 STAMP="$BASE/.case_timestamp"
@@ -68,7 +68,7 @@ cat > "$SRC" << 'EOF'
 #include <string.h>
 #include <errno.h>
 
-#define FILE_PATH "/root/posix_fcntl/data.txt"
+#define FILE_PATH "/root/tests/posix_fcntl/data.txt"
 
 static int fail(const char *msg)
 {

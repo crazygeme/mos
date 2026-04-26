@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_path
+CASE_NAME=posix_path
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 SUB="$DIR/sub"
 FILE="$DIR/file.txt"

@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/dev_pts
+CASE_NAME=dev_pts
+BASE=/root/tests/$CASE_NAME
 SRC="$BASE/dev_pts.c"
 BIN="$BASE/dev_pts"
 

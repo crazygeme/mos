@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_mount_state
+CASE_NAME=posix_mount_state
+BASE=/root/tests/$CASE_NAME
 IMG="$BASE/test.img"
 MNT="$BASE/mnt"
 

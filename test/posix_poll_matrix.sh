@@ -4,7 +4,7 @@ set -e
 CASE_NAME=posix_poll_matrix
 CASE_MTIME=@CASE_MTIME@
 BASE=/root/tests/$CASE_NAME
-WORKDIR=/root/posix_poll_select_matrix
+WORKDIR=/root/tests/$CASE_NAME
 SRC="$BASE/poll_select_matrix.c"
 BIN="$BASE/poll_select_matrix"
 STAMP="$BASE/.case_timestamp"
@@ -601,7 +601,7 @@ static void test_invalid_fd(void)
 	char path[256];
 
 	snprintf(path, sizeof(path), "%s/invalid.txt",
-		 "/root/posix_poll_select_matrix");
+		 "/root/tests/posix_poll_matrix");
 	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd < 0)
 		die("open invalid-fd file");
@@ -626,7 +626,7 @@ static void test_ext4_file(void)
 	int fd;
 	char ch = 0;
 
-	snprintf(path, sizeof(path), "%s/file.txt", "/root/posix_poll_select_matrix");
+	snprintf(path, sizeof(path), "%s/file.txt", "/root/tests/posix_poll_matrix");
 	fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0644);
 	if (fd < 0)
 		die("open ext4 file");
@@ -1024,7 +1024,7 @@ static void test_named_unix_stream(void)
 	char ch = 0;
 
 	snprintf(path, sizeof(path), "%s/named-stream.sock",
-		 "/root/posix_poll_select_matrix");
+		 "/root/tests/posix_poll_matrix");
 	unlink(path);
 
 	listenfd = socket(AF_UNIX, SOCK_STREAM, 0);

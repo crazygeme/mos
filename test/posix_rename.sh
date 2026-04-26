@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_rename
+CASE_NAME=posix_rename
+BASE=/root/tests/$CASE_NAME
 DIR="$BASE/dir"
 SRC="$DIR/src.txt"
 DST="$DIR/dst.txt"

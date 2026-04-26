@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/posix_tmpfs
+CASE_NAME=posix_tmpfs
+BASE=/root/tests/$CASE_NAME
 SRC="$BASE/posix_tmpfs.c"
 BIN="$BASE/posix_tmpfs"
 

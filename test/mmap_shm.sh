@@ -1,7 +1,8 @@
 #!/bin/sh
 
 set -e
-BASE=/root/mmap_shm
+CASE_NAME=mmap_shm
+BASE=/root/tests/$CASE_NAME
 SRC="$BASE/mmap_shm.c"
 BIN="$BASE/mmap_shm"
 

@@ -197,6 +197,9 @@ static void sock_waiter_dequeue(sock_waiter *waiter)
 void sock_wakeup(mos_sock *sk)
 {
 	list_entry *entry;
+	file *async_fp;
+	int owner = 0;
+	int sig = SIGIO;
 	int irq;
 
 	spinlock_lock(&sk->wait_lock, &irq);
@@ -214,7 +217,16 @@ void sock_wakeup(mos_sock *sk)
 		entry = entry->next;
 		ps_put_to_ready_queue(waiter->task);
 	}
+	async_fp = sk->async_file;
+	if (async_fp && (async_fp->f_flag & FASYNC) && async_fp->f_owner) {
+		owner = async_fp->f_owner;
+		if (async_fp->f_sigio > 0)
+			sig = async_fp->f_sigio;
+	}
 	spinlock_unlock(&sk->wait_lock, irq);
+
+	if (owner)
+		ps_send_signal_owner(owner, sig);
 }
 
 /* Block the current task on sk until woken by sock_wakeup or the deadline.
@@ -689,9 +701,11 @@ int sock_to_fd(mos_sock *sk)
 	fp->f_fop = &sock_fops;
 	fp->f_mode = O_RDWR;
 	fp->f_flag = O_RDWR;
+	sk->async_file = fp;
 
 	int fd = fs_install_fd(fp, O_RDWR);
 	if (fd < 0) {
+		sk->async_file = NULL;
 		free(node);
 		free(fp);
 	}

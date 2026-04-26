@@ -219,3 +219,63 @@ Current working conclusion:
   - Linux/i386 TLS semantics for NPTL thread startup
   - shared heap bookkeeping semantics for `CLONE_VM`
 - With both fixed, the GUI stack is materially closer to RH9/NPTL-compatible desktop behavior.
+
+## 2026-04-26
+
+Status at stop:
+- GUI `emacs` now works.
+- The original "no Emacs window" failure is gone.
+- The intermediate "window frame appears but content never becomes usable"
+  phase is also gone.
+- `xclock` was already rendering correctly during this round, which helped
+  separate generic X rendering from Emacs-specific compatibility issues.
+- `xterm` was still slower than ideal during investigation, but Emacs itself
+  is no longer blocked.
+
+Fixes completed in this round:
+- Fixed PIT-based wall-clock sampling so `gettimeofday()` no longer jumps
+  backward when the timer IRQ pending check races with the latched counter:
+  - added previous-sample tracking in [time.c](../src/hw/time.c)
+  - only compensate for a missing tick when the PIT counter proves a wrap in
+    the same `tickets` epoch
+- Adjusted `ITIMER_REAL` semantics to better match RH9/Linux 2.4 behavior:
+  - rounded nonzero timer values and intervals up to the next jiffy in
+    [syscall_proc.c](../src/syscall/syscall_proc.c)
+  - this matches the coarser `HZ=100` behavior old Emacs expects for its
+    `SIGALRM` retry path
+- Added async `SIGIO` delivery for sockets:
+  - stored the owning open file on each socket in
+    [socket.h](../include/net/socket.h)
+  - wired `sock_to_fd()` to preserve that link in
+    [sock.c](../src/net/sock.c)
+  - taught `sock_wakeup()` in [sock.c](../src/net/sock.c) to send the
+    configured async signal to the `F_SETOWN` owner when `FASYNC` is enabled
+
+Observed failure progression during this round:
+- Initially, GUI Emacs did not show at all. The log showed a `SIGALRM` /
+  `setitimer()` / `gettimeofday()` storm while Emacs was still bringing up its
+  X connection.
+- After the monotonic-clock fix, Emacs advanced much farther and began mapping
+  a real X window.
+- After the `ITIMER_REAL` granularity fix, the window appeared more
+  consistently, but content still did not fully settle.
+- The decisive later clue was that Emacs enabled `F_SETOWN` and `FASYNC` on
+  its X socket and installed a `SIGIO` handler, yet the log never showed
+  `sig_deliver(29)` for the Emacs pid. That pointed to a missing kernel async
+  socket wakeup path rather than a pure X drawing problem.
+- Once socket `SIGIO` delivery was added, GUI Emacs became usable.
+
+Working conclusion:
+- The Emacs failure was not one X11 rendering bug. It was a compatibility
+  stack:
+  - non-monotonic wall clock broke atimer scheduling
+  - too-fine `ITIMER_REAL` semantics amplified Emacs retry behavior beyond what
+    RH9/Linux 2.4 would do
+  - missing async `SIGIO` delivery on sockets prevented Emacs from using its
+    intended X input path
+- With those three fixed, MOS is significantly closer to the timing and async
+  I/O expectations of old RH9 desktop software.
+
+Suggested next step:
+- Return to the remaining GUI polish issue around `xterm` slowness, which now
+  looks independent from the Emacs bring-up path that was blocking this round.

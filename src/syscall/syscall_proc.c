@@ -549,6 +549,23 @@ static unsigned long long timeval_to_ms(const struct timeval *tv)
 	return ms;
 }
 
+static unsigned long long round_itimer_ms(unsigned long long ms)
+{
+	if (ms == 0)
+		return 0;
+
+	/*
+	 * Linux 2.4 ITIMER_REAL is effectively jiffy-based on i386.
+	 * Emacs relies on that coarser behavior for its deferred 1ms retry
+	 * path; without rounding, it can re-arm SIGALRM far more aggressively
+	 * than on RH9/HZ=100 and starve X startup.
+	 */
+	if (ms <= TICK_MS)
+		return TICK_MS;
+
+	return ((ms + TICK_MS - 1) / TICK_MS) * TICK_MS;
+}
+
 static void ms_to_itimeval(unsigned long long ms, struct timeval *tv)
 {
 	if (!tv)
@@ -586,6 +603,8 @@ int sys_setitimer(int which, const struct itimerval *new_value,
 
 	new_interval_ms = timeval_to_ms(&new_value->it_interval);
 	new_value_ms = timeval_to_ms(&new_value->it_value);
+	new_interval_ms = round_itimer_ms(new_interval_ms);
+	new_value_ms = round_itimer_ms(new_value_ms);
 	effective_value_ms = new_value_ms;
 
 	cur->alarm_interval_ms = new_interval_ms;

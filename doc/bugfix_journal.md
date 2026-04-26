@@ -111,6 +111,81 @@ the active TLS selector and the current program break. If those metadata stay
 per-task while mappings are shared, old NPTL and GLib code will fail in ways
 that look like random userspace hangs or allocation bugs.
 
+## 2026-04-26 - GUI Emacs mapped a frame but stalled before usable content
+
+This one took three separate kernel fixes because the visible symptom changed
+ as each blocker was removed. The important part was not to patch around the
+ blank window directly, but to keep explaining why old RH9 Emacs behaved
+ differently from simpler X clients.
+
+### 1. `gettimeofday()` could move backward and trap Emacs in `SIGALRM`
+
+- **Caught by:** reading [out/x86/release/krn.log](../out/x86/release/krn.log)
+  after the user explicitly asked to investigate GUI Emacs, then comparing the
+  timer path with the real Emacs 21.2 sources under
+  [`.codex-data/context/emacs-21.2-rh9-src`](../.codex-data/context/emacs-21.2-rh9-src).
+- **Symptom:** GUI `emacs` did not appear at all, and the syscall log showed a
+  hot loop of `sig_deliver(14)`, `setitimer()`, and `gettimeofday()` during X
+  startup.
+- **Root cause:** MOS could return a wall-clock sample that jumped forward by
+  one PIT tick and then backward on the next call. Emacs 21.2 uses
+  `ITIMER_REAL` and `SIGALRM` for atimers during GUI startup, so that
+  non-monotonic clock made its timer machinery spin instead of progressing
+  through the X event loop.
+- **Fix:** in [time.c](../src/hw/time.c), keep the IRQ-pending compensation for
+  the PIT race, but only add a missing tick when the latched counter proves a
+  wrap happened inside the same `tickets` epoch. This stopped the false
+  one-jiffy jumps caused by noisy PIC IRR reads.
+
+### 2. `ITIMER_REAL` was too fine-grained compared with RH9/Linux 2.4
+
+- **Caught by:** rerunning after the timekeeping fix and observing that Emacs
+  now got much farther into X setup but still spent excessive time in
+  `SIGALRM`/`setitimer()` churn.
+- **Symptom:** a frame began to appear, but Emacs still behaved as if its timer
+  retries were far more aggressive than on the target RH9 userspace.
+- **Root cause:** old Linux 2.4 i386 `ITIMER_REAL` behavior is effectively
+  jiffy-based at `HZ=100`. MOS was honoring very small nonzero timer values too
+  precisely. Emacs's deferred 1 ms retry path in its atimer code therefore ran
+  much more aggressively on MOS than on the RH9 baseline it was built for.
+- **Fix:** in [syscall_proc.c](../src/syscall/syscall_proc.c), round nonzero
+  `ITIMER_REAL` values and intervals up to the next jiffy before arming the
+  task alarm state.
+
+### 3. X sockets accepted `FASYNC`/`F_SETOWN` but never delivered `SIGIO`
+
+- **Caught by:** reading the updated Emacs-focused log once a frame existed and
+  correlating it with the X input path in
+  [xterm.c](../.codex-data/context/emacs-21.2-rh9-src/emacs-21.2/src/xterm.c)
+  and the `SIGIO` setup in
+  [keyboard.c](../.codex-data/context/emacs-21.2-rh9-src/emacs-21.2/src/keyboard.c).
+- **Symptom:** Emacs mapped a window and exchanged real X traffic, but it kept
+  falling back to sluggish polling / sync-style behavior instead of using its
+  intended async X input path. The log showed pid `1632` installing a `SIGIO`
+  handler and enabling `F_SETOWN` plus `FASYNC` on the X socket, but no
+  `sig_deliver(29)` ever reached that pid.
+- **Root cause:** MOS stored async ownership on the socket file descriptor, but
+  the socket wakeup path never translated readability/writability changes into
+  `SIGIO`. The kernel already did this for mouse input, so Emacs's X socket was
+  silently missing an old BSD/Linux compatibility behavior it expected.
+- **Fix:**
+  - in [socket.h](../include/net/socket.h), add a back-pointer from
+    `mos_sock` to the owning open file used for async notification
+  - in [sock.c](../src/net/sock.c), preserve that pointer in `sock_to_fd()`
+  - in [sock.c](../src/net/sock.c), teach `sock_wakeup()` to send the async
+    owner `SIGIO` (or the configured alternate signal) when `FASYNC` is set
+
+### Key lesson
+
+Old GUI applications often fail through compatibility layering rather than one
+big crash. Emacs needed:
+- a monotonic `gettimeofday()`
+- Linux-2.4-like `ITIMER_REAL` granularity
+- actual `SIGIO` delivery on X sockets after accepting `F_SETOWN`/`FASYNC`
+
+Once all three matched old Linux expectations closely enough, GUI Emacs worked
+normally instead of stopping at a blank or half-alive frame.
+
 ## 2026-04-17 - SSH large output stalls until keypress (`tcp_on_sent` missing)
 
 **Symptom**: Running `ls -alh /usr/lib` over SSH would stall partway through

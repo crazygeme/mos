@@ -45,7 +45,7 @@ static int select_ctx_check(void *arg)
 			want |= FS_POLL_HUP;
 		if (!want)
 			continue;
-		if (i >= MAX_FD || CURRENT_TASK()->fds[i] == NULL)
+		if (i >= MAX_FD || current->fds[i] == NULL)
 			return -EBADF;
 		unsigned ready_mask = fs_fd_poll(i, want, NULL);
 		if ((want & FS_POLL_READ) &&
@@ -84,7 +84,7 @@ static int select_ctx_reg(void *arg)
 			want |= FS_POLL_HUP;
 		if (!want)
 			continue;
-		if (i >= MAX_FD || CURRENT_TASK()->fds[i] == NULL)
+		if (i >= MAX_FD || current->fds[i] == NULL)
 			return -EBADF;
 		fs_fd_poll(i, want, pt);
 	}

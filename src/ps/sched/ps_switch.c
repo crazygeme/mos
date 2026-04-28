@@ -39,38 +39,17 @@ void _task_sched(const char *func)
 	 */
 	sched_disable();
 
-RETRY:
 	task = ps_get_next_task();
 
-	if (!task) {
-		/*
-		 * If the current task just blocked itself (for example in
-		 * time_wait/select/poll), we must not fall straight back into
-		 * it. Park the CPU until the next interrupt, then retry so
-		 * expired timers can be promoted by ps_get_next_task().
-		 */
-		if (CURRENT_TASK()->status != ps_running) {
-			sched_enable();
-			int_intr_enable();
-			HLT();
-			int_intr_disable();
-			sched_disable();
-			goto RETRY;
-		}
-
-		sched_enable();
-		goto SELF;
-	}
-
-	if (task->psid == CURRENT_TASK()->psid) {
+	if (task->psid == current->psid) {
 		task->status = ps_running;
 		ps_load_task_segments(task);
 		sched_enable();
 		goto SELF;
 	}
 
-	if (CURRENT_TASK()->stats)
-		CURRENT_TASK()->stats->total_switches++;
+	if (current->stats)
+		current->stats->total_switches++;
 
 	task->status = ps_running;
 	SAVE_ALL(CURRENT_TASK(), NEXT);
@@ -92,11 +71,11 @@ RETRY:
 	 * task's page even when new_esp == task + PAGE_SIZE. */
 	RESTORE_ALL(task, task->tss.eip);
 	sched_enable();
-	JUMP_TO_NEXT_TASK_EIP(CURRENT_TASK()->tss.eip);
+	JUMP_TO_NEXT_TASK_EIP(current->tss.eip);
 	asm volatile("NEXT: nop");
 SELF:
 
-	if (CURRENT_TASK()->stats)
-		CURRENT_TASK()->stats->idle_tickets +=
-			time_now_tickets() - CURRENT_TASK()->stats->idle;
+	if (current->stats)
+		current->stats->idle_tickets +=
+			time_now_tickets() - current->stats->idle;
 }

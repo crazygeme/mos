@@ -465,7 +465,7 @@ void printk(const char *fmt, ...)
 	int irq;
 
 	tty_lock_acquire(&irq);
-	printf("[%d]: ", CURRENT_TASK()->psid);
+	printf("[%d]: ", current->psid);
 
 	va_start(ap, fmt);
 	kvformat(tty_print, fmt, ap, NULL);

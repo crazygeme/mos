@@ -26,7 +26,7 @@ static void emit_mount(const super_block *sb, void *arg)
 
 static void fill(proc_buf_t *pb)
 {
-	vfs_mount_walk(CURRENT_TASK()->root, emit_mount, pb);
+	vfs_mount_walk(current->root, emit_mount, pb);
 }
 
 DEFINE_PROC_FILE(mounts, fill);

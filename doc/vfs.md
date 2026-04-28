@@ -255,7 +255,7 @@ int fs_do_umount(const char *target, int flags);
 
 ## 4. File descriptor API (`fs.c`)
 
-All `fs_*` functions operate on the **current task's** fd table (`CURRENT_TASK()->fds`).
+All `fs_*` functions operate on the **current task's** fd table (`current->fds`).
 
 ### `fs_open`
 

@@ -153,8 +153,8 @@ static int ext4_file_flush(file *fp)
 	if (!path)
 		return 0;
 
-	if (CURRENT_TASK() && CURRENT_TASK()->user)
-		vm_flush_file_dirty(CURRENT_TASK()->user->vm, fp);
+	if (CURRENT_TASK() && current->user)
+		vm_flush_file_dirty(current->user->vm, fp);
 
 	/*
 	 * rw lwext4 mounts keep delayed write-back enabled. Toggle it off once

@@ -206,7 +206,7 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("llseek(%d, %x, %x, %x, %d) = %d, current %d\n", fd,
 		     offset_high, offset_low, result, whence, ret,
-		     (int)CURRENT_TASK()->fds[fd]->f_pos);
+		     (int)current->fds[fd]->f_pos);
 
 	return ret;
 }
@@ -637,7 +637,7 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 	if (!S_ISDIR(s.st_mode))
 		return -EISDIR;
 
-	fp = CURRENT_TASK()->fds[fd];
+	fp = current->fds[fd];
 
 	if (count < sizeof(struct linux_dirent))
 		return -22;
@@ -670,7 +670,7 @@ int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
 	if (!S_ISDIR(s.st_mode))
 		return -EISDIR;
 
-	fp = CURRENT_TASK()->fds[fd];
+	fp = current->fds[fd];
 
 	if (count < sizeof(struct linux_dirent64))
 		return -22;

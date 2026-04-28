@@ -236,7 +236,7 @@ static file *proc_open(super_block *sb, const char *path, int flag)
 
 	/* /self or /self/... */
 	if (strncmp(p, "self", 4) == 0 && (p[4] == '/' || p[4] == '\0')) {
-		pid = CURRENT_TASK()->psid;
+		pid = current->psid;
 		rest = p + 4; /* "" or "/status" etc. */
 		return proc_pid_lookup(pid, rest, flag);
 	}
@@ -278,7 +278,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	p++;
 
 	if (strncmp(p, "self", 4) == 0 && p[4] == '/') {
-		pid = CURRENT_TASK()->psid;
+		pid = current->psid;
 		p += 4;
 	} else if (*p >= '0' && *p <= '9') {
 		pid = 0;

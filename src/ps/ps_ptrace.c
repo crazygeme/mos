@@ -66,7 +66,8 @@ struct ptrace_user_regs {
 
 static int ptrace_is_traced_by(task_struct *target, task_struct *tracer)
 {
-	return target && tracer && target->ptrace_tracer == tracer->psid;
+	return target && tracer && target->user &&
+	       target->user->ptrace_tracer == tracer->psid;
 }
 
 static void ptrace_notify_parent_unsafe(task_struct *task)
@@ -95,36 +96,37 @@ static void ptrace_stop_task_unsafe(task_struct *task, int sig,
 	task->stop_signal = sig;
 	task->stop_report_pending = 1;
 	if (frame) {
-		task->ptrace_frame.edi = frame->edi;
-		task->ptrace_frame.esi = frame->esi;
-		task->ptrace_frame.ebp = frame->ebp;
-		task->ptrace_frame.ebx = frame->ebx;
-		task->ptrace_frame.edx = frame->edx;
-		task->ptrace_frame.ecx = frame->ecx;
-		task->ptrace_frame.eax = frame->eax;
-		task->ptrace_frame.gs = frame->gs;
-		task->ptrace_frame.fs = frame->fs;
-		task->ptrace_frame.es = frame->es;
-		task->ptrace_frame.ds = frame->ds;
-		task->ptrace_frame.error_code = frame->error_code;
-		task->ptrace_frame.eip = (unsigned)frame->eip;
-		task->ptrace_frame.cs = frame->cs;
-		task->ptrace_frame.eflags = frame->eflags;
-		task->ptrace_frame.esp = (unsigned)frame->esp;
-		task->ptrace_frame.ss = frame->ss;
-		task->ptrace_frame_valid = 1;
+		task->user->ptrace_frame.edi = frame->edi;
+		task->user->ptrace_frame.esi = frame->esi;
+		task->user->ptrace_frame.ebp = frame->ebp;
+		task->user->ptrace_frame.ebx = frame->ebx;
+		task->user->ptrace_frame.edx = frame->edx;
+		task->user->ptrace_frame.ecx = frame->ecx;
+		task->user->ptrace_frame.eax = frame->eax;
+		task->user->ptrace_frame.gs = frame->gs;
+		task->user->ptrace_frame.fs = frame->fs;
+		task->user->ptrace_frame.es = frame->es;
+		task->user->ptrace_frame.ds = frame->ds;
+		task->user->ptrace_frame.error_code = frame->error_code;
+		task->user->ptrace_frame.eip = (unsigned)frame->eip;
+		task->user->ptrace_frame.cs = frame->cs;
+		task->user->ptrace_frame.eflags = frame->eflags;
+		task->user->ptrace_frame.esp = (unsigned)frame->esp;
+		task->user->ptrace_frame.ss = frame->ss;
+		task->user->ptrace_frame_valid = 1;
 	} else {
-		memset(&task->ptrace_frame, 0, sizeof(task->ptrace_frame));
-		task->ptrace_frame_valid = 0;
+		memset(&task->user->ptrace_frame, 0,
+		       sizeof(task->user->ptrace_frame));
+		task->user->ptrace_frame_valid = 0;
 	}
 	ptrace_notify_parent_unsafe(task);
 }
 
 static int ptrace_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 {
-	ptrace_saved_frame *frame = &task->ptrace_frame;
+	ptrace_saved_frame *frame = &task->user->ptrace_frame;
 
-	if (!task->ptrace_frame_valid)
+	if (!task->user->ptrace_frame_valid)
 		return -EIO;
 
 	memset(regs, 0, sizeof(*regs));
@@ -139,7 +141,7 @@ static int ptrace_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 	regs->xes = frame->es;
 	regs->xfs = frame->fs;
 	regs->xgs = frame->gs;
-	regs->orig_eax = task->ptrace_orig_eax;
+	regs->orig_eax = task->user->ptrace_orig_eax;
 	regs->eip = (unsigned)frame->eip;
 	regs->xcs = frame->cs;
 	regs->eflags = frame->eflags;
@@ -150,10 +152,10 @@ static int ptrace_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 
 static int ptrace_peekuser(task_struct *task, unsigned addr, long *out)
 {
-	ptrace_saved_frame *frame = &task->ptrace_frame;
+	ptrace_saved_frame *frame = &task->user->ptrace_frame;
 	unsigned index = addr / sizeof(unsigned);
 
-	if (!task->ptrace_frame_valid || (addr & (sizeof(unsigned) - 1)))
+	if (!task->user->ptrace_frame_valid || (addr & (sizeof(unsigned) - 1)))
 		return -EIO;
 
 	switch (index) {
@@ -191,7 +193,7 @@ static int ptrace_peekuser(task_struct *task, unsigned addr, long *out)
 		*out = frame->gs;
 		return 0;
 	case PTRACE_REG_ORIG_EAX:
-		*out = task->ptrace_orig_eax;
+		*out = task->user->ptrace_orig_eax;
 		return 0;
 	case PTRACE_REG_EIP:
 		*out = (unsigned)frame->eip;
@@ -229,9 +231,10 @@ static int ptrace_resume(task_struct *tracer, task_struct *target, int mode,
 		target->signal->sig_pending |= (1UL << (sig - 1));
 
 	spinlock_lock(&ps_lock, &irq);
-	target->ptrace_mode = mode;
-	target->ptrace_frame_valid = 0;
-	memset(&target->ptrace_frame, 0, sizeof(target->ptrace_frame));
+	target->user->ptrace_mode = mode;
+	target->user->ptrace_frame_valid = 0;
+	memset(&target->user->ptrace_frame, 0,
+	       sizeof(target->user->ptrace_frame));
 	target->stop_signal = 0;
 	target->stop_report_pending = 0;
 	ps_put_to_ready_queue_unsafe(target);
@@ -257,11 +260,12 @@ void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	intr_frame *saved_frame = frame;
 	int irq;
 
-	if (!cur->ptrace_tracer || cur->ptrace_mode != PTRACE_MODE_SYSCALL)
+	if (!cur->user->ptrace_tracer ||
+	    cur->user->ptrace_mode != PTRACE_MODE_SYSCALL)
 		return;
 
 	if (entering) {
-		cur->ptrace_orig_eax = frame->eax;
+		cur->user->ptrace_orig_eax = frame->eax;
 		/*
 		 * Linux reports EAX as -ENOSYS at syscall-entry ptrace
 		 * stops on i386. strace uses ORIG_EAX for the syscall
@@ -287,7 +291,7 @@ void ps_ptrace_stop_exec(unsigned eip, unsigned esp)
 	intr_frame frame;
 	int irq;
 
-	if (!cur->ptrace_tracer)
+	if (!cur->user->ptrace_tracer)
 		return;
 
 	memset(&frame, 0, sizeof(frame));
@@ -301,7 +305,7 @@ void ps_ptrace_stop_exec(unsigned eip, unsigned esp)
 	frame.gs = USER_DATA_SELECTOR;
 	frame.eflags = 0x202;
 	frame.eax = 0;
-	cur->ptrace_orig_eax = 11; /* __NR_execve on i386 */
+	cur->user->ptrace_orig_eax = 11; /* __NR_execve on i386 */
 
 	spinlock_lock(&ps_lock, &irq);
 	ptrace_stop_task_unsafe(cur, SIGTRAP, &frame, "ptrace-exec");
@@ -326,11 +330,11 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 
 	switch (request) {
 	case PTRACE_TRACEME:
-		if (cur->ptrace_tracer)
+		if (cur->user->ptrace_tracer)
 			return -EPERM;
-		cur->ptrace_tracer = cur->ppid;
-		cur->ptrace_mode = PTRACE_MODE_NONE;
-		cur->ptrace_orig_eax = 0;
+		cur->user->ptrace_tracer = cur->ppid;
+		cur->user->ptrace_mode = PTRACE_MODE_NONE;
+		cur->user->ptrace_orig_eax = 0;
 		return 0;
 
 	case PTRACE_ATTACH:

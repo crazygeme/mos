@@ -125,7 +125,7 @@ static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
 		if (!task->stop_report_pending)
 			continue;
 		if (!(options & WUNTRACED) &&
-		    task->ptrace_tracer != parent->psid)
+		    (!task->user || task->user->ptrace_tracer != parent->psid))
 			continue;
 		return task;
 	}
@@ -531,7 +531,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			if (!st->stop_report_pending)
 				continue;
 			if (!(options & WUNTRACED) &&
-			    st->ptrace_tracer != cur->psid)
+			    (!st->user || st->user->ptrace_tracer != cur->psid))
 				continue;
 			ret = st->psid;
 			if (status)

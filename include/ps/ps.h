@@ -180,6 +180,26 @@ typedef struct _heap_state {
 	unsigned refs;
 } heap_state;
 
+typedef struct _ptrace_saved_frame {
+	unsigned edi;
+	unsigned esi;
+	unsigned ebp;
+	unsigned ebx;
+	unsigned edx;
+	unsigned ecx;
+	unsigned eax;
+	unsigned short gs;
+	unsigned short fs;
+	unsigned short es;
+	unsigned short ds;
+	unsigned error_code;
+	unsigned eip;
+	unsigned short cs;
+	unsigned eflags;
+	unsigned esp;
+	unsigned short ss;
+} ptrace_saved_frame;
+
 typedef struct _user_enviroment {
 	unsigned int page_dir; // every process needs it's own clone of page dir
 	heap_state *
@@ -202,6 +222,12 @@ typedef struct _user_enviroment {
 	/* Per-process TLS GDT descriptors (GDT_ENTRY_TLS_MIN .. GDT_ENTRY_TLS_MAX) */
 	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
 	unsigned long long ldt_desc[LDT_ENTRY_COUNT];
+	unsigned ptrace_tracer; /* tracer pid, 0 if not traced */
+	unsigned ptrace_mode; /* run mode requested by tracer */
+	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */
+	unsigned ptrace_frame_valid; /* whether ptrace_frame holds saved state */
+	ptrace_saved_frame
+		ptrace_frame; /* saved stopped state for ptrace reads */
 	rlimit_t rlimits[RLIM_NLIMITS];
 } user_enviroment;
 
@@ -255,25 +281,6 @@ typedef volatile struct _task_frame {
 
 typedef struct _task_struct task_struct;
 typedef struct _intr_frame intr_frame;
-typedef struct _ptrace_saved_frame {
-	unsigned edi;
-	unsigned esi;
-	unsigned ebp;
-	unsigned ebx;
-	unsigned edx;
-	unsigned ecx;
-	unsigned eax;
-	unsigned short gs;
-	unsigned short fs;
-	unsigned short es;
-	unsigned short ds;
-	unsigned error_code;
-	unsigned eip;
-	unsigned short cs;
-	unsigned eflags;
-	unsigned esp;
-	unsigned short ss;
-} ptrace_saved_frame;
 struct _task_struct {
 	task_frame tss;
 	unsigned long cr3;
@@ -316,12 +323,6 @@ struct _task_struct {
 	int *clear_child_tid; /* Linux set_tid_address / CLONE_CHILD_CLEARTID */
 	unsigned stop_signal; /* last job-control/ptrace stop signal */
 	unsigned stop_report_pending; /* waitpid() has not consumed this stop yet */
-	unsigned ptrace_tracer; /* tracer pid, 0 if not traced */
-	unsigned ptrace_mode; /* run mode requested by tracer */
-	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */
-	unsigned ptrace_frame_valid; /* whether ptrace_frame holds saved state */
-	ptrace_saved_frame
-		ptrace_frame; /* saved stopped state for ptrace reads */
 	unsigned int magic; // to avoid stack overflow
 };
 

@@ -95,7 +95,7 @@ int sys_getpgid(unsigned pid)
 		klog("getpgid(%d)\n", pid);
 
 	if (pid == 0)
-		return CURRENT_TASK()->user->group_id;
+		return current->user->group_id;
 
 	t = ps_find_process(pid);
 	if (!t)
@@ -135,7 +135,7 @@ int sys_getsid(unsigned pid)
 		klog("getsid(%d)\n", pid);
 
 	if (pid == 0)
-		return CURRENT_TASK()->user->session_id;
+		return current->user->session_id;
 
 	t = ps_find_process(pid);
 	if (!t)
@@ -348,7 +348,7 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 
 int sys_getresuid(unsigned *ruid, unsigned *euid, unsigned *suid)
 {
-	user_enviroment *u = CURRENT_TASK()->user;
+	user_enviroment *u = current->user;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getresuid\n");
@@ -399,7 +399,7 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 
 int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
 {
-	user_enviroment *u = CURRENT_TASK()->user;
+	user_enviroment *u = current->user;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getresgid\n");
@@ -419,7 +419,7 @@ int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
  */
 int sys_setfsuid(unsigned fsuid)
 {
-	user_enviroment *u = CURRENT_TASK()->user;
+	user_enviroment *u = current->user;
 	unsigned old = u->fsuid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -435,7 +435,7 @@ int sys_setfsuid(unsigned fsuid)
 
 int sys_setfsgid(unsigned fsgid)
 {
-	user_enviroment *u = CURRENT_TASK()->user;
+	user_enviroment *u = current->user;
 	unsigned old = u->fsgid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -665,7 +665,7 @@ int sys_getgroups(int size, unsigned *list)
 
 int sys_setgroups(int size, unsigned short *list)
 {
-	user_enviroment *u = CURRENT_TASK()->user;
+	user_enviroment *u = current->user;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgroups(%d)\n", size);
@@ -687,7 +687,7 @@ int sys_getgroups32(int size, unsigned *list)
 
 int sys_setgroups32(int size, unsigned *list)
 {
-	user_enviroment *u = CURRENT_TASK()->user;
+	user_enviroment *u = current->user;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgroups32(%d)\n", size);
@@ -807,7 +807,7 @@ int sys_exit_group(int status)
 
 int sys_gettid(void)
 {
-	return CURRENT_TASK()->psid;
+	return current->psid;
 }
 
 int sys_tkill(int tid, int sig)

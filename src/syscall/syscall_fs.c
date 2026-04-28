@@ -149,15 +149,14 @@ static int unlink_open_file(task_struct *cur, const char *path)
 	seq = ++tombstone_seq;
 
 	if (!slash || slash == path) {
-		sprintf(newpath, "/.mos-unlinked-%u-%u", CURRENT_TASK()->psid,
-			seq);
+		sprintf(newpath, "/.mos-unlinked-%u-%u", current->psid, seq);
 	} else {
 		unsigned dir_len = (unsigned)(slash - path);
 
 		memcpy(newpath, path, dir_len);
 		newpath[dir_len] = '\0';
 		sprintf(newpath + dir_len, "/.mos-unlinked-%u-%u",
-			CURRENT_TASK()->psid, seq);
+			current->psid, seq);
 	}
 
 	ret = vfs_rename(cur->root, path, newpath);
@@ -362,7 +361,7 @@ int sys_statfs(const char *_path, struct statfs *buf)
 	int ret;
 
 	resolve_path(_path, name);
-	ret = vfs_statfs(CURRENT_TASK()->root, name, buf);
+	ret = vfs_statfs(current->root, name, buf);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("statfs(%s, %x) = %d, type=%x, bsize=%d, namelen=%d\n",

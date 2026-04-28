@@ -204,6 +204,11 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 		ret = -ENOMEM;
 		goto out;
 	}
+	if (sock_alloc_rxbuf(server_sk, sock_default_rxbuf_size(AF_UNIX)) < 0) {
+		sock_destroy(server_sk);
+		ret = -ENOMEM;
+		goto out;
+	}
 	server_sk->domain = AF_UNIX;
 	server_sk->type = client->type;
 	server_sk->state = SS_CONNECTED;
@@ -273,7 +278,7 @@ int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen,
 
 	fd = sock_to_fd(server_sk);
 	if (fd < 0) {
-		free(server_sk);
+		sock_destroy(server_sk);
 		return -ENOMEM;
 	}
 	return fd;
@@ -874,7 +879,7 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 		return ret;
 	}
 
-	if (nfds > 0 && total_len > SOCK_RXBUF_SIZE - 1) {
+	if (nfds > 0 && total_len > peer->rxbuf_size - 1) {
 		ret = -EMSGSIZE;
 		goto out_unlock;
 	}
@@ -993,7 +998,7 @@ void unix_release(mos_sock *sk)
 			sock_wakeup(pending->unix_peer);
 		}
 		unix_drop_passfds(pending);
-		free(pending);
+		sock_destroy(pending);
 	}
 }
 
@@ -1011,8 +1016,14 @@ int do_socketpair(int domain, int type, int protocol, int sv[2])
 	mos_sock *a = zalloc(sizeof(*a));
 	mos_sock *b = zalloc(sizeof(*b));
 	if (!a || !b) {
-		free(a);
-		free(b);
+		sock_destroy(a);
+		sock_destroy(b);
+		return -ENOMEM;
+	}
+	if (sock_alloc_rxbuf(a, sock_default_rxbuf_size(AF_UNIX)) < 0 ||
+	    sock_alloc_rxbuf(b, sock_default_rxbuf_size(AF_UNIX)) < 0) {
+		sock_destroy(a);
+		sock_destroy(b);
 		return -ENOMEM;
 	}
 
@@ -1033,15 +1044,15 @@ int do_socketpair(int domain, int type, int protocol, int sv[2])
 
 	int fd0 = sock_to_fd(a);
 	if (fd0 < 0) {
-		free(a);
-		free(b);
+		sock_destroy(a);
+		sock_destroy(b);
 		return -ENOMEM;
 	}
 
 	int fd1 = sock_to_fd(b);
 	if (fd1 < 0) {
 		fs_close(fd0); /* releases a; also clears b->unix_peer */
-		free(b);
+		sock_destroy(b);
 		return -ENOMEM;
 	}
 

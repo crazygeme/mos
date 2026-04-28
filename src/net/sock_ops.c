@@ -60,13 +60,17 @@ int do_socket(int domain, int type, int protocol)
 		sk->domain = AF_UNIX;
 		sk->type = type;
 		sk->state = SS_UNCONNECTED;
+		if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_UNIX)) < 0) {
+			sock_destroy(sk);
+			return -ENOMEM;
+		}
 		spinlock_init(&sk->wait_lock);
 		list_init(&sk->waiters);
 		list_init(&sk->poll_waiters);
 		spinlock_init(&sk->rxbuf_lock);
 		int fd = sock_to_fd(sk);
 		if (fd < 0) {
-			free(sk);
+			sock_destroy(sk);
 			return -ENOMEM;
 		}
 		return fd;
@@ -83,6 +87,10 @@ int do_socket(int domain, int type, int protocol)
 	mos_sock *sk = zalloc(sizeof(*sk));
 	if (!sk)
 		return -ENOMEM;
+	if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_INET)) < 0) {
+		sock_destroy(sk);
+		return -ENOMEM;
+	}
 
 	sk->domain = domain;
 	sk->type = type;
@@ -95,14 +103,14 @@ int do_socket(int domain, int type, int protocol)
 	if (type == SOCK_STREAM) {
 		sk->tcp = tcp_new();
 		if (!sk->tcp) {
-			free(sk);
+			sock_destroy(sk);
 			return -ENOMEM;
 		}
 		tcp_setup_callbacks(sk->tcp, sk);
 	} else if (type == SOCK_RAW && protocol == IPPROTO_ICMP) {
 		sk->raw = raw_new(IP_PROTO_ICMP);
 		if (!sk->raw) {
-			free(sk);
+			sock_destroy(sk);
 			return -ENOMEM;
 		}
 		sock_raw_recv_setup(sk->raw, sk);
@@ -111,7 +119,7 @@ int do_socket(int domain, int type, int protocol)
 	} else {
 		sk->udp = udp_new();
 		if (!sk->udp) {
-			free(sk);
+			sock_destroy(sk);
 			return -ENOMEM;
 		}
 		sock_udp_recv_setup(sk->udp, sk);
@@ -125,7 +133,7 @@ int do_socket(int domain, int type, int protocol)
 			raw_remove(sk->raw);
 		else if (sk->udp)
 			udp_remove(sk->udp);
-		free(sk);
+		sock_destroy(sk);
 		return -ENOMEM;
 	}
 	return fd;
@@ -305,6 +313,11 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 		tcp_abort(newpcb);
 		return -ENOMEM;
 	}
+	if (sock_alloc_rxbuf(nsk, sock_default_rxbuf_size(AF_INET)) < 0) {
+		tcp_abort(newpcb);
+		sock_destroy(nsk);
+		return -ENOMEM;
+	}
 	nsk->domain = AF_INET;
 	nsk->type = SOCK_STREAM;
 	nsk->state = SS_CONNECTED;
@@ -332,7 +345,7 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	int nfd = sock_to_fd(nsk);
 	if (nfd < 0) {
 		tcp_abort(newpcb);
-		free(nsk);
+		sock_destroy(nsk);
 		return -ENOMEM;
 	}
 	return nfd;

@@ -164,6 +164,25 @@ typedef struct {
 	unsigned int *entry; /* page-table entry for this address */
 } mm_addr_info;
 
+static int mm_get_valid_page_table_in_dir(unsigned int *page_dir,
+					  unsigned addr, mm_addr_info *info)
+{
+	unsigned offset = ADDR_TO_PGT_OFFSET(addr);
+
+	info->dir = info->table = info->entry = NULL;
+	if (!page_dir)
+		return 0;
+
+	info->dir = &page_dir[offset];
+	if ((*info->dir & PAGE_SIZE_MASK) == 0)
+		return 0;
+
+	info->table = (unsigned int *)((*info->dir & PAGE_SIZE_MASK) +
+				       KERNEL_OFFSET);
+	info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
+	return 1;
+}
+
 /*
  * Locate (and optionally allocate) the page-table entry for @addr.
  * Returns 1 on success; 0 if a new page table was needed but allocation failed.
@@ -513,12 +532,30 @@ unsigned mm_get_map_flag(unsigned vir)
 	return *info.entry & ~PAGE_SIZE_MASK;
 }
 
+unsigned mm_get_map_flag_pd(unsigned page_dir, unsigned vir)
+{
+	mm_addr_info info;
+
+	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir, &info))
+		return 0;
+	return *info.entry & ~PAGE_SIZE_MASK;
+}
+
 /* Update the page-table flags for the mapping at @vir */
 void mm_set_map_flag(unsigned vir, unsigned flag)
 {
 	mm_addr_info info;
 
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
+		return;
+	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
+}
+
+void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
+{
+	mm_addr_info info;
+
+	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir, &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
 }

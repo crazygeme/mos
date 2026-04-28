@@ -95,6 +95,16 @@ void fb_flush(void)
 		_drv->flush();
 }
 
+void fb_get_phys_window(unsigned *phys, unsigned *size)
+{
+	if (phys)
+		*phys = 0;
+	if (size)
+		*size = 0;
+	if (_drv && _drv->get_phys_window)
+		_drv->get_phys_window(phys, size);
+}
+
 unsigned fb_snapshot_size(void)
 {
 	if (_drv && _drv->snapshot_size)

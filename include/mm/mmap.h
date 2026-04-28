@@ -7,11 +7,14 @@ typedef struct _user_enviroment user_enviroment;
 typedef void *vm_struct_t;
 typedef struct _vm_fault_lock vm_fault_lock;
 
+#define VM_REGION_F_DIRECT_PHYS 0x1
+
 typedef struct _vm_region {
 	unsigned begin;
 	unsigned end;
 	int prot;
 	int flag;
+	unsigned vm_flags; /* Internal VM metadata, not userspace mmap flags. */
 	vm_fault_lock *
 		fault_lock; /* Shared across fork/splits for fault serialization. */
 	file *fp;

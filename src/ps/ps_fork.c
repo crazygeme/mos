@@ -13,7 +13,6 @@
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <mm/mm.h>
-#include <dev/dev.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <errno.h>
@@ -209,7 +208,7 @@ static void copy_one_pte(unsigned *src_pte, unsigned *dst_pte, vm_region *vma,
 	 * owned by phymm, so fork must clone the PTE without taking a RAM page
 	 * reference or forcing COW semantics.
 	 */
-	if (dev_mem_is_file(vma->fp)) {
+	if (vma->vm_flags & VM_REGION_F_DIRECT_PHYS) {
 		if ((*dst_pte & PAGE_SIZE_MASK) == 0)
 			(*pt_count)++;
 		*dst_pte = pte;

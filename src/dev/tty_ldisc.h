@@ -35,6 +35,13 @@ typedef void (*tty_ldisc_echo_fn)(void *ctx, const char *buf, int len);
 int tty_input_translate(unsigned char c, tcflag_t iflag);
 
 /*
+ * tty_ldisc_handle_signal_char - process a translated signal character.
+ * Returns 1 if the byte was consumed as VINTR/VQUIT/VSUSP, 0 otherwise.
+ */
+int tty_ldisc_handle_signal_char(const struct termios *tc, unsigned char c,
+				 unsigned pgrp);
+
+/*
  * tty_canon_drain - copy up to size bytes out of canon into dst,
  * sliding remaining bytes to the front.  Returns bytes copied.
  */

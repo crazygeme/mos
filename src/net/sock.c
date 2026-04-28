@@ -22,14 +22,48 @@
 
 /* ── Ring-buffer helpers ─────────────────────────────────────────────────── */
 
+unsigned sock_default_rxbuf_size(int domain)
+{
+	return domain == AF_UNIX ? SOCK_RXBUF_UNIX_SIZE :
+				   SOCK_RXBUF_INET_SIZE;
+}
+
+int sock_alloc_rxbuf(mos_sock *sk, unsigned size)
+{
+	if (!sk || size == 0)
+		return -EINVAL;
+	if ((size & (size - 1)) != 0)
+		return -EINVAL;
+
+	sk->rxbuf = zalloc(size);
+	if (!sk->rxbuf)
+		return -ENOMEM;
+	sk->rxbuf_size = size;
+	sk->rx_head = 0;
+	sk->rx_tail = 0;
+	return 0;
+}
+
+void sock_destroy(mos_sock *sk)
+{
+	if (!sk)
+		return;
+	free(sk->rxbuf);
+	free(sk);
+}
+
 unsigned rx_used(const mos_sock *sk)
 {
-	return (sk->rx_tail - sk->rx_head) & (SOCK_RXBUF_SIZE - 1);
+	if (!sk || sk->rxbuf_size == 0)
+		return 0;
+	return (sk->rx_tail - sk->rx_head) & (sk->rxbuf_size - 1);
 }
 
 unsigned rx_free(const mos_sock *sk)
 {
-	return (SOCK_RXBUF_SIZE - 1) - rx_used(sk);
+	if (!sk || sk->rxbuf_size == 0)
+		return 0;
+	return (sk->rxbuf_size - 1) - rx_used(sk);
 }
 
 static int sock_file_nonblock(file *fp)
@@ -103,8 +137,8 @@ unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
 	unsigned n = len < avail ? len : avail;
 
 	if (n > 0) {
-		unsigned pos = sk->rx_tail & (SOCK_RXBUF_SIZE - 1);
-		unsigned first = SOCK_RXBUF_SIZE - pos;
+		unsigned pos = sk->rx_tail & (sk->rxbuf_size - 1);
+		unsigned first = sk->rxbuf_size - pos;
 		if (first > n)
 			first = n;
 		memcpy(sk->rxbuf + pos, src, first);
@@ -124,8 +158,8 @@ unsigned rx_read(mos_sock *sk, void *dst, unsigned len)
 	unsigned n = len < avail ? len : avail;
 
 	if (n > 0) {
-		unsigned pos = sk->rx_head & (SOCK_RXBUF_SIZE - 1);
-		unsigned first = SOCK_RXBUF_SIZE - pos;
+		unsigned pos = sk->rx_head & (sk->rxbuf_size - 1);
+		unsigned first = sk->rxbuf_size - pos;
 		if (first > n)
 			first = n;
 		memcpy(dst, sk->rxbuf + pos, first);
@@ -396,7 +430,7 @@ static int sock_release(file *fp)
 		}
 	}
 
-	free(sk);
+	sock_destroy(sk);
 	free(fp->f_inode);
 	free(fp);
 	return 0;

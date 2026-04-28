@@ -229,7 +229,8 @@ struct msghdr {
 #define SS_DISCONNECTING 3 /* EOF received; local side may still send */
 
 /* ── Tuning ─────────────────────────────────────────────────────────────────── */
-#define SOCK_RXBUF_SIZE (256 * 1024) /* per-socket receive ring */
+#define SOCK_RXBUF_INET_SIZE (256 * 1024) /* per-INET-socket receive ring */
+#define SOCK_RXBUF_UNIX_SIZE (4 * 1024) /* per-AF_UNIX-socket receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
 #define SOCK_TIMEOUT_MS 30000 /* blocking-op timeout (ms) */
 #define UNIX_PASSFD_MAX 8 /* max descriptors per SCM_RIGHTS message */
@@ -275,7 +276,8 @@ typedef struct _mos_sock {
 	};
 
 	/* Circular receive buffer (TCP stream or UDP datagrams) */
-	char rxbuf[SOCK_RXBUF_SIZE];
+	char *rxbuf;
+	unsigned rxbuf_size;
 	unsigned rx_head; /* consumer offset */
 	unsigned rx_tail; /* producer offset */
 

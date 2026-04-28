@@ -20,6 +20,9 @@ unsigned rx_iov_write(mos_sock *sk, const struct iovec *iov, size_t iovlen);
 unsigned rx_iov_read(mos_sock *sk, const struct iovec *iov, size_t iovlen,
 		     unsigned limit);
 void rx_discard(mos_sock *sk, unsigned len);
+int sock_alloc_rxbuf(mos_sock *sk, unsigned size);
+void sock_destroy(mos_sock *sk);
+unsigned sock_default_rxbuf_size(int domain);
 
 /* ── Blocking helpers (sock.c) ──────────────────────────────────────────── */
 

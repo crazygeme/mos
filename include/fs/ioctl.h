@@ -62,15 +62,71 @@
 #define KDSKBSENT 0x4B49 /* set one entry in function-key string table */
 #define KDGKBDIACR 0x4B4A /* get kernel diacriticals table */
 #define KDSKBDIACR 0x4B4B /* set kernel diacriticals table */
-#define K_NOSUCHMAP 0x0080 /* no such translation table */
+#define KG_SHIFT 0
+#define KG_ALTGR 1
+#define KG_CTRL 2
+#define KG_ALT 3
+#define KG_SHIFTL 4
+#define KG_SHIFTR 5
+#define KG_CTRLL 6
+#define KG_CTRLR 7
 
-/* Keysym type / value encoding (matching Linux keyboard.h) */
-#define KT_LATIN 0x00 /* printable latin characters */
-#define KT_FN 0x01 /* function keys */
-#define KT_SPEC 0x0f /* special: K_HOLE, K_ENTER, … */
+/* Keysym type / value encoding matching Linux keyboard.h. */
+#define KT_LATIN 0 /* printable latin characters */
+#define KT_FN 1 /* function / navigation aliases */
+#define KT_SPEC 2 /* special: K_HOLE, K_ENTER, … */
+#define KT_PAD 3 /* keypad keys */
+#define KT_CUR 6 /* cursor keys */
+#define KT_SHIFT 7 /* modifiers */
 #define KS(t, v) ((unsigned short)(((unsigned)(t) << 8) | (unsigned char)(v)))
+
 #define K_HOLE KS(KT_SPEC, 0) /* unmapped key */
-#define K_ENTER KS(KT_SPEC, 13) /* Return */
+#define K_ENTER KS(KT_SPEC, 1) /* Return */
+#define K_BREAK KS(KT_SPEC, 5)
+#define K_CAPS KS(KT_SPEC, 7)
+#define K_NUM KS(KT_SPEC, 8)
+#define K_HOLD KS(KT_SPEC, 9)
+
+#define K_P0 KS(KT_PAD, 0)
+#define K_P1 KS(KT_PAD, 1)
+#define K_P2 KS(KT_PAD, 2)
+#define K_P3 KS(KT_PAD, 3)
+#define K_P4 KS(KT_PAD, 4)
+#define K_P5 KS(KT_PAD, 5)
+#define K_P6 KS(KT_PAD, 6)
+#define K_P7 KS(KT_PAD, 7)
+#define K_P8 KS(KT_PAD, 8)
+#define K_P9 KS(KT_PAD, 9)
+#define K_PPLUS KS(KT_PAD, 10)
+#define K_PMINUS KS(KT_PAD, 11)
+#define K_PSTAR KS(KT_PAD, 12)
+#define K_PSLASH KS(KT_PAD, 13)
+#define K_PENTER KS(KT_PAD, 14)
+#define K_PCOMMA KS(KT_PAD, 15)
+#define K_PDOT KS(KT_PAD, 16)
+
+#define K_DOWN KS(KT_CUR, 0)
+#define K_LEFT KS(KT_CUR, 1)
+#define K_RIGHT KS(KT_CUR, 2)
+#define K_UP KS(KT_CUR, 3)
+
+#define K_FIND KS(KT_FN, 20)
+#define K_INSERT KS(KT_FN, 21)
+#define K_REMOVE KS(KT_FN, 22)
+#define K_SELECT KS(KT_FN, 23)
+#define K_PGUP KS(KT_FN, 24)
+#define K_PGDN KS(KT_FN, 25)
+
+#define K_SHIFT KS(KT_SHIFT, KG_SHIFT)
+#define K_ALT KS(KT_SHIFT, KG_ALT)
+#define K_ALTGR KS(KT_SHIFT, KG_ALTGR)
+#define K_CTRL KS(KT_SHIFT, KG_CTRL)
+#define K_SHIFTL KS(KT_SHIFT, KG_SHIFTL)
+#define K_SHIFTR KS(KT_SHIFT, KG_SHIFTR)
+#define K_CTRLL KS(KT_SHIFT, KG_CTRLL)
+#define K_CTRLR KS(KT_SHIFT, KG_CTRLR)
+
+#define K_NOSUCHMAP KS(KT_SPEC, 127) /* no such translation table */
 
 #define NR_KEYMAPS \
 	256 /* modifier layers (8-bit modifier mask, matches Linux) */

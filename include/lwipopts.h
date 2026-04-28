@@ -22,13 +22,21 @@
 /* ── Memory ─────────────────────────────────────────────────────────────── */
 #define MEM_LIBC_MALLOC 0
 #define MEMP_MEM_MALLOC 0
-#define MEM_SIZE (64 * 1024)
-#define PBUF_POOL_SIZE 64
+#define MEM_SIZE (256 * 1024)
+#define PBUF_POOL_SIZE 256
 #define PBUF_POOL_BUFSIZE 1600
 
 /* ── TCP tuning ──────────────────────────────────────────────────────────── */
 #define TCP_MSS 1460
-#define TCP_WND (32 * 1024)
+/*
+ * Long-RTT downloads need a larger advertised receive window than 64 KiB
+ * allows. Enable window scaling and size the window for ~1 MiB/s-class
+ * transfers on ~200 ms paths.
+ */
+#define LWIP_WND_SCALE 1
+#define TCP_RCV_SCALE 2
+#define TCP_WND 262140
+#define MEMP_NUM_TCP_SEG 128
 
 /* ── Netconn / Socket API (require OS threading) ────────────────────────── */
 #define LWIP_NETCONN 0

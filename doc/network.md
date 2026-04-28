@@ -15,6 +15,7 @@ Implemented today:
 - AF_INET supports `SOCK_STREAM`, `SOCK_DGRAM`, and `SOCK_RAW`.
 - AF_UNIX supports `SOCK_STREAM`, `SOCK_DGRAM`, `socketpair()`, and `SCM_RIGHTS`.
 - `sendmsg()` and `recvmsg()` are implemented, including selected control messages.
+- TCP receive window scaling is enabled for higher-latency throughput tests.
 
 Not implemented or intentionally partial:
 
@@ -84,10 +85,18 @@ Driver model:
 - RX is interrupt-driven.
 - MMIO is used for device registers.
 - DMA buffers live in kernel virtual memory with physical addresses derived from the kernel mapping.
+- RX and TX descriptor rings are sized for bursty TCP traffic rather than minimal boot-time networking.
+
+Current ring sizes:
+
+- RX descriptors: `256`
+- TX descriptors: `64`
 
 ## Receive Path
 
-The receive path is deliberately split in two.
+The receive path is deliberately split in two. The split keeps interrupt
+context allocation-free while avoiding the older extra frame copy through a
+software byte ring.
 
 ### Phase 1: IRQ-safe enqueue
 
@@ -95,7 +104,7 @@ The NIC ISR calls `rx_notify`, which is wired to `eth0_rx_enqueue()`.
 
 That function:
 
-- copies the raw frame into a fixed 32-slot ring
+- queues a reference to the NIC DMA buffer in a fixed 256-slot ring
 - does not allocate memory
 - arms a deferred service routine once
 
@@ -105,16 +114,29 @@ This avoids deadlocking against the heap allocator from interrupt context.
 
 `eth0_rx_dsr()` runs later from the DSR layer:
 
-- allocates a lwIP `pbuf`
-- copies the frame into it
+- wraps the NIC DMA buffer in a custom lwIP `PBUF_REF`
 - feeds it into `eth0.input()`
+- returns the descriptor to the NIC only after lwIP releases the custom pbuf
 
 Counters updated here:
 
 - `rx_bytes`
 - `rx_packets`
 
-If the IRQ ring is full, frames are dropped.
+If the queue is full or no tracking slot is available, frames are dropped and
+the descriptor is immediately returned to the NIC.
+
+The resulting hot receive copy path is:
+
+```text
+NIC DMA buffer
+  -> custom PBUF_REF
+  -> TCP/UDP/raw callback
+  -> per-socket receive ring
+  -> userspace buffer
+```
+
+The pbuf layer no longer copies the frame before lwIP parses it.
 
 ## Transmit Path
 
@@ -122,11 +144,17 @@ If the IRQ ring is full, frames are dropped.
 
 Current behavior:
 
-- flattens the lwIP `pbuf` chain into a static bounce buffer
-- calls the NIC driver's `send`
+- calls the NIC driver's `send_pbuf` hook when available
+- copies the lwIP `pbuf` chain directly into the e1000 TX DMA buffer
 - updates `tx_bytes` and `tx_packets` on success
 
-The code assumes non-reentrant task/DSR use of that static bounce buffer.
+The legacy flat-buffer `send` hook still exists for drivers that do not
+provide `send_pbuf`, but the in-tree e1000 driver avoids the intermediate
+`txbounce` copy.
+
+This is not full scatter-gather TX. The e1000 path still copies into a
+driver-owned DMA buffer before ringing the hardware doorbell, which keeps
+lwIP pbuf ownership simple and avoids holding pbufs until TX completion.
 
 ## Timer and Timeout Pump
 
@@ -174,6 +202,10 @@ Current TCP behavior:
 - receive data is byte-stream data stored in the per-socket ring buffer.
 - if the userspace receive ring cannot hold an entire incoming segment, the lwIP callback returns `ERR_MEM` so lwIP retries later instead of truncating the stream.
 - EOF is surfaced by transitioning to `SS_DISCONNECTING`.
+- the receive window uses lwIP window scaling (`LWIP_WND_SCALE = 1`,
+  `TCP_RCV_SCALE = 2`) with `TCP_WND = 262140`.
+- the socket receive ring is sized to `256 KiB` to match the scaled TCP
+  receive window.
 
 Writes:
 
@@ -326,6 +358,17 @@ Current contents:
 
 These files exist mainly to satisfy common userland tools such as `ifconfig` and routing utilities.
 
+## Throughput Test Helpers
+
+Two host-side helper scripts live under `tools/`:
+
+- `tools/net_throughput.sh` runs a large HTTP download inside the guest with `wget`.
+- `tools/ssh_throughput.sh` measures encrypted host-to-guest and guest-to-host transfer rates over `ssh`.
+
+`ssh_throughput.sh` intentionally uses the same legacy-compatible SSH options
+as `tools/ssh_client.sh`, then transfers data with remote `cat` rather than
+depending on guest `scp` or `sftp` support.
+
 ## Socket ioctls
 
 The socket file implementation also exposes Linux-style ioctls used by common networking tools.
@@ -354,7 +397,7 @@ The interface view currently consists of:
 
 - IPv4 only.
 - Only the first registered physical NIC is attached to the lwIP stack.
-- RX uses a fixed-size 32-frame staging ring before lwIP; overflow drops frames.
+- RX uses a fixed-size 256-entry descriptor-reference queue before lwIP; overflow drops frames.
 - TCP and UDP buffering is intentionally simple and bounded by the socket ring sizes.
 - Many socket options are partial compatibility shims rather than full Linux behavior.
 - The implementation is designed for correctness and compatibility with the current userland, not for SMP scalability or high throughput.

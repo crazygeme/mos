@@ -266,7 +266,8 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 			goto done;
 		}
 		case SO_RCVBUF:
-			ret = sockopt_put_int(optval, optlen, SOCK_RXBUF_SIZE);
+			ret = sockopt_put_int(optval, optlen,
+					      (int)sk->rxbuf_size);
 			goto done;
 
 		case SO_SNDBUF: {

@@ -57,6 +57,14 @@ static unsigned bochs_snapshot_size(void)
 	return _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8);
 }
 
+static void bochs_get_phys_window(unsigned *phys, unsigned *size)
+{
+	if (phys)
+		*phys = _fb_phys;
+	if (size)
+		*size = bochs_snapshot_size();
+}
+
 static void bochs_snapshot_save(void *dst, unsigned size)
 {
 	unsigned need = bochs_snapshot_size();
@@ -401,6 +409,7 @@ const fb_drv_t bochs_drv = {
 	.change_font = bochs_change_font,
 	.sync_mode = bochs_sync_mode,
 	.flush = bochs_flush,
+	.get_phys_window = bochs_get_phys_window,
 	.snapshot_size = bochs_snapshot_size,
 	.snapshot_save = bochs_snapshot_save,
 	.snapshot_restore = bochs_snapshot_restore,

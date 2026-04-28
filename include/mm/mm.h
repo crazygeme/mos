@@ -27,6 +27,8 @@ typedef struct multiboot_info multiboot_info_t;
 #define PAGE_ENTRY_DPL_USER 0x04 // user can access if set
 #define PAGE_ENTRY_WT 0x08 // write through if set
 #define PAGE_ENTRY_CD 0x10 // cache disable if set
+#define PAGE_ENTRY_ACCESSED 0x20 // CPU has accessed this page
+#define PAGE_ENTRY_DIRTY 0x40 // CPU has written this page
 
 #define PAGE_ENTRY_KERNEL_CODE (PAGE_ENTRY_PRESENT)
 #define PAGE_ENTRY_KERNEL_DATA (PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE)
@@ -100,8 +102,10 @@ unsigned mm_get_attached_page_index(unsigned int vir);
 unsigned int mm_get_free_phy_page_index();
 
 unsigned mm_get_map_flag(unsigned vir);
+unsigned mm_get_map_flag_pd(unsigned page_dir, unsigned vir);
 
 void mm_set_map_flag(unsigned vir, unsigned flag);
+void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 

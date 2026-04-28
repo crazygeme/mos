@@ -11,13 +11,6 @@
 #include <errno.h>
 #include "devnums.h"
 
-int dev_mem_is_file(const file *fp)
-{
-	return fp && fp->f_inode &&
-	       (unsigned)(uintptr_t)fp->f_inode->i_private ==
-		       MKDEV(MEM_MAJOR, MEM_MINOR);
-}
-
 static unsigned mem_dev_limit(void)
 {
 	return phymm_end * PAGE_SIZE;

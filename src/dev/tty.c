@@ -312,7 +312,8 @@ static void tty_graphics_dirty_region_cb(vm_region *region, void *data)
 	unsigned vir;
 	unsigned vir_end;
 
-	if (!ctx || !region || !region->fp || !dev_mem_is_file(region->fp))
+	if (!ctx || !region ||
+	    !(region->vm_flags & VM_REGION_F_DIRECT_PHYS))
 		return;
 
 	region_phys_begin = (unsigned)region->offset;

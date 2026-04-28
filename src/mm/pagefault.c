@@ -7,7 +7,6 @@
 #include <ps/ps.h>
 #include <fs/cache.h>
 #include <fs/fs.h>
-#include <dev/dev.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <hw/time.h>
@@ -120,8 +119,8 @@ extern phymm_page *phymm_pages;
  * to Linux than the old pagefault-local cache: MAP_SHARED and MAP_PRIVATE both
  * start from the cached file page, and the semantic split happens on write.
  */
-static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
-				      int prot, int flag)
+static int pf_handle_invalid_file_map(unsigned address, vm_region *region,
+				      file *f, int offset, int prot, int flag)
 {
 	pf_file_page_result page;
 	int mmflag;
@@ -135,7 +134,7 @@ static int pf_handle_invalid_file_map(unsigned address, file *f, int offset,
 	 * XFree86's VESA driver mmaps the linear framebuffer through /dev/mem and
 	 * expects stores to hit the BAR immediately.
 	 */
-	if (dev_mem_is_file(f)) {
+	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS) {
 		unsigned phy = (unsigned)offset & PAGE_SIZE_MASK;
 		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_CD;
 
@@ -351,8 +350,9 @@ static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
 	this_offset = region->offset + (cr2 - region->begin);
 
 	if (region->fp != NULL) {
-		if (!pf_handle_invalid_file_map(cr2, region->fp, this_offset,
-						region->prot, region->flag)) {
+		if (!pf_handle_invalid_file_map(cr2, region, region->fp,
+						this_offset, region->prot,
+						region->flag)) {
 			vm_region_unlock_fault(region);
 			return 0;
 		}

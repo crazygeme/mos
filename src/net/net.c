@@ -33,7 +33,7 @@ u32_t sys_now(void)
  * only, no malloc) and schedules a DSR.  The DSR runs from _task_sched()
  * with interrupts disabled but outside IRQ context, where malloc is safe.
  */
-#define NET_RX_RING_SIZE 32
+#define NET_RX_RING_SIZE 256
 #define NET_RX_MAX_FRAME 1600
 
 typedef struct {

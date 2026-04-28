@@ -67,14 +67,30 @@ static ssize_t pts_slave_read_raw(pts_pair *p, void *buf, size_t size,
 		ch = tty_input_translate(raw, tc->c_iflag);
 		if (ch < 0)
 			continue;
-		if (tty_ldisc_handle_signal_char(tc, (unsigned char)ch,
-						 p->pgrp))
-			return n > 0 ? n : -EINTR;
-
 		dst[n++] = (unsigned char)ch;
 	}
 
 	return n;
+}
+
+static int pts_master_consume_signal_char(pts_pair *p, unsigned char raw)
+{
+	int ch;
+
+	if (!(p->termios.c_lflag & ISIG) || !p->pgrp)
+		return 0;
+
+	ch = tty_input_translate(raw, p->termios.c_iflag);
+	if (ch < 0)
+		return 0;
+	if (!tty_ldisc_handle_signal_char(&p->termios, (unsigned char)ch,
+					  p->pgrp))
+		return 0;
+
+	/* Match the existing canonical-read behavior: discard the partial
+	 * line being assembled when VINTR/VQUIT/VSUSP is received. */
+	p->canon.len = 0;
+	return 1;
 }
 
 static int pts_slave_fionread(pts_pair *p)
@@ -255,21 +271,36 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 ssize_t pts_master_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
 	pts_pair *p = fp->f_inode->i_private;
+	const unsigned char *src = (const unsigned char *)buf;
 	int nonblock = pts_file_nonblock(fp);
-	int ret;
+	int blocking = nonblock ? 0 : 1;
+	size_t done = 0;
 	if (!buf || size < 1)
 		return 0;
 	if (cyb_reader_count(p->m2s) == 0)
 		return -EIO;
-	ret = cyb_putbuf(p->m2s, (unsigned char *)buf, (unsigned)size,
-			 !nonblock, 1);
-	if (ret == -EPIPE)
-		return -EIO;
-	if (ret < 0)
-		return -EINTR;
-	if (nonblock && ret == 0 && cyb_reader_count(p->m2s) > 0)
-		return -EAGAIN;
-	return (ssize_t)ret;
+
+	while (done < size) {
+		unsigned char ch;
+		int ret;
+
+		if (pts_master_consume_signal_char(p, src[done])) {
+			done++;
+			continue;
+		}
+
+		ch = src[done];
+		ret = cyb_putbuf(p->m2s, &ch, 1, blocking, 1);
+		if (ret == -EPIPE)
+			return done > 0 ? (ssize_t)done : -EIO;
+		if (ret < 0)
+			return done > 0 ? (ssize_t)done : -EINTR;
+		if (ret == 0)
+			return done > 0 ? (ssize_t)done : -EAGAIN;
+		done++;
+	}
+
+	return (ssize_t)done;
 }
 
 unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
@@ -378,8 +409,8 @@ ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos)
 	if (p->termios.c_lflag & ICANON) {
 		if (p->canon.len == 0) {
 			n = tty_ldisc_canon_readline(&p->canon, &p->termios,
-						     p->m2s, !nonblock, 1,
-						     p->pgrp, NULL, NULL);
+						     p->m2s, !nonblock, 1, 0,
+						     NULL, NULL);
 			if (n < 0)
 				return -EINTR;
 			if (n == 0) {

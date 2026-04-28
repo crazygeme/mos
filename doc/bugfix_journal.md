@@ -5,6 +5,48 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-29 - `gnome-terminal` `Ctrl-C` still could not interrupt `ping`
+
+This failure looked at first like the earlier raw-read wakeup bug, but the
+remaining symptom was narrower: interactive programs that do not read stdin
+still ignored `Ctrl-C` while running behind a PTY. The right approach was to
+follow where MOS actually interprets PTY input bytes instead of assuming the
+existing `ISIG` checks were enough.
+
+### 1. PTY `Ctrl-C` depended on the foreground program reading stdin
+
+- **Caught by:** tracing the PTY line-discipline path and comparing it with
+  the already-working virtual-console path in
+  [tty.c](../src/dev/tty.c).
+- **Symptom:** pressing `Ctrl-C` in `gnome-terminal` still failed to stop
+  `ping` immediately even though `Ctrl-C` worked better for programs blocked in
+  terminal reads.
+- **Root cause:** MOS handled PTY signal characters too late. On the PTY path,
+  `VINTR`, `VQUIT`, and `VSUSP` were recognized only when the slave side later
+  executed `read()`. That works for shells or utilities actively reading the
+  terminal, but a foreground program like `ping` usually does not read stdin at
+  all. The `^C` byte therefore remained queued in the PTY input buffer and no
+  `SIGINT` reached the foreground process group.
+- **Fix:**
+  - in [pts.c](../src/dev/pts.c), move PTY signal-character handling to
+    `pts_master_write()` so the line discipline interprets `VINTR`, `VQUIT`,
+    and `VSUSP` at input-arrival time, matching real terminal behavior more
+    closely
+  - consume those signal characters before they enter the PTY slave input
+    queue, so a foreground job that never reads stdin still receives the
+    signal
+  - clear the partial canonical buffer when such a signal character arrives,
+    preserving the same line-reset behavior already used by canonical reads
+  - remove the duplicate PTY read-side signal-generation path so the same byte
+    cannot raise the signal a second time later
+
+### Key lesson
+
+For PTYs, `ISIG` handling must happen when input is delivered to the terminal,
+not only when a process eventually reads from it. Otherwise foreground jobs
+that do not consume stdin, such as `ping`, can never see `Ctrl-C` even though
+the signal-character logic exists in the read path.
+
 ## 2026-04-29 - `gnome-terminal` lost immediate `Ctrl-C` and turned Up-arrow into `8`
 
 This bug looked at first like a terminal-emulator or readline problem because

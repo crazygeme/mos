@@ -65,6 +65,18 @@ static int isig_char(const struct termios *tc, unsigned char c)
 	return 0;
 }
 
+int tty_ldisc_handle_signal_char(const struct termios *tc, unsigned char c,
+				 unsigned pgrp)
+{
+	int sig = isig_char(tc, c);
+
+	if (!sig)
+		return 0;
+	if (pgrp)
+		ps_send_signal_pgrp(pgrp, sig);
+	return 1;
+}
+
 static void canon_erase(tty_canon_t *canon, const struct termios *tc,
 			tty_ldisc_echo_fn echo, void *ctx)
 {
@@ -130,11 +142,9 @@ int tty_ldisc_canon_readline(tty_canon_t *canon, const struct termios *tc,
 			continue;
 		unsigned char c = (unsigned char)ch;
 
-		int sig = isig_char(tc, c);
-		if (sig) {
+		if (tty_ldisc_handle_signal_char(tc, c, pgrp)) {
 			canon->len = 0;
-			ps_send_signal_pgrp(pgrp, sig);
-			return 0;
+			return -1;
 		}
 		if (tc->c_cc[VEOF] && c == tc->c_cc[VEOF])
 			return canon->len > 0 ? 1 : 0;

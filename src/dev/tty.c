@@ -1304,6 +1304,9 @@ static ssize_t raw_read(tty_state *state, char *dst, size_t size, int blocking)
 		int ch = tty_input_translate(raw, tc->c_iflag);
 		if (ch < 0)
 			continue;
+		if (tty_ldisc_handle_signal_char(tc, (unsigned char)ch,
+						 state->pgrp))
+			return n > 0 ? n : -EINTR;
 		dst[n++] = (char)ch;
 		if (tc->c_lflag & ECHO)
 			tty_do_write(state, &dst[n - 1], 1);

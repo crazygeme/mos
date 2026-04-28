@@ -36,6 +36,47 @@ static int pts_file_nonblock(file *fp)
 	return (fp->f_flag & O_NONBLOCK) != 0;
 }
 
+static ssize_t pts_slave_read_raw(pts_pair *p, void *buf, size_t size,
+				  int nonblock)
+{
+	const struct termios *tc = &p->termios;
+	unsigned vmin = tc->c_cc[VMIN];
+	unsigned char *dst = (unsigned char *)buf;
+	int blocking = nonblock ? 0 : 1;
+	ssize_t n = 0;
+
+	while ((size_t)n < size) {
+		unsigned char raw;
+		int ret;
+		int ch;
+
+		if ((unsigned)n >= vmin && cyb_isempty(p->m2s))
+			break;
+
+		ret = cyb_getbuf(p->m2s, &raw, 1, blocking, 1);
+		if (ret < 0)
+			return n > 0 ? n : -EINTR;
+		if (ret == 0) {
+			if (nonblock && n == 0 && cyb_writer_count(p->m2s) > 0)
+				return -EAGAIN;
+			break;
+		}
+		if (raw == (unsigned char)EOF)
+			break;
+
+		ch = tty_input_translate(raw, tc->c_iflag);
+		if (ch < 0)
+			continue;
+		if (tty_ldisc_handle_signal_char(tc, (unsigned char)ch,
+						 p->pgrp))
+			return n > 0 ? n : -EINTR;
+
+		dst[n++] = (unsigned char)ch;
+	}
+
+	return n;
+}
+
 static int pts_slave_fionread(pts_pair *p)
 {
 	return cyb_get_buf_len(p->m2s);
@@ -350,12 +391,7 @@ ssize_t pts_slave_read(file *fp, void *buf, size_t size, loff_t *pos)
 		return (ssize_t)tty_canon_drain(&p->canon, (char *)buf,
 						(int)size);
 	}
-	n = cyb_getbuf(p->m2s, buf, (int)size, !nonblock, 1);
-	if (n < 0)
-		return -EINTR;
-	if (nonblock && n == 0 && cyb_writer_count(p->m2s) > 0)
-		return -EAGAIN;
-	return (ssize_t)n;
+	return pts_slave_read_raw(p, buf, size, nonblock);
 }
 
 /*

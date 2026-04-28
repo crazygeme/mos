@@ -106,7 +106,7 @@ KTEST(lock, mutex_lock_sets_holder)
 	mutex_init(&m);
 	mutex_lock(&m);
 	/* holder must equal the current task's psid */
-	EXPECT_EQ((int)m.holder, (int)CURRENT_TASK()->psid);
+	EXPECT_EQ((int)m.holder, (int)current->psid);
 	mutex_unlock(&m);
 	return 0;
 }
@@ -149,7 +149,7 @@ KTEST(lock, mutex_reacquire)
 	mutex_lock(&m);
 	mutex_unlock(&m);
 	mutex_lock(&m);
-	EXPECT_EQ((int)m.holder, (int)CURRENT_TASK()->psid);
+	EXPECT_EQ((int)m.holder, (int)current->psid);
 	mutex_unlock(&m);
 	EXPECT_EQ((int)m.holder, 0);
 	return 0;

@@ -174,11 +174,21 @@ static void handle_general_protection(intr_frame *frame)
 	unsigned long long tls0 = 0;
 	unsigned long long tls1 = 0;
 	unsigned long long tls2 = 0;
+	unsigned ptrace_mode = 0;
+	unsigned ptrace_frame_valid = 0;
+	unsigned short ptrace_gs = 0;
+	unsigned ptrace_eip = 0;
+	unsigned ptrace_esp = 0;
 
 	if (cur->user) {
 		tls0 = cur->user->tls_desc[0];
 		tls1 = cur->user->tls_desc[1];
 		tls2 = cur->user->tls_desc[2];
+		ptrace_mode = cur->user->ptrace_mode;
+		ptrace_frame_valid = cur->user->ptrace_frame_valid;
+		ptrace_gs = cur->user->ptrace_frame.gs;
+		ptrace_eip = cur->user->ptrace_frame.eip;
+		ptrace_esp = cur->user->ptrace_frame.esp;
 	}
 
 	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
@@ -186,9 +196,8 @@ static void handle_general_protection(intr_frame *frame)
 	     frame->eax, frame->ebx, frame->ecx, frame->edx, frame->ds,
 	     frame->cs, frame->gs, frame->fs, frame->error_code);
 	klog("#GP state: status %d, ptrace_mode %u, stop_signal %u, ptrace_frame_valid %u, tss.gs %x, ptrace.gs %x, ptrace.eip %x, ptrace.esp %x\n",
-	     cur->status, cur->ptrace_mode, cur->stop_signal,
-	     cur->ptrace_frame_valid, cur->tss.gs, cur->ptrace_frame.gs,
-	     cur->ptrace_frame.eip, cur->ptrace_frame.esp);
+	     cur->status, ptrace_mode, cur->stop_signal, ptrace_frame_valid,
+	     cur->tss.gs, ptrace_gs, ptrace_eip, ptrace_esp);
 	klog("#GP tls: slot6 %x:%x slot7 %x:%x slot8 %x:%x\n",
 	     (unsigned)(tls0 >> 32), (unsigned)tls0, (unsigned)(tls1 >> 32),
 	     (unsigned)tls1, (unsigned)(tls2 >> 32), (unsigned)tls2);

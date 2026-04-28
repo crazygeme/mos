@@ -18,7 +18,7 @@
 
 static vm_struct_t cur_vm(void)
 {
-	return CURRENT_TASK()->user->vm;
+	return current->user->vm;
 }
 
 /* ── AnonAutoAddr ─────────────────────────────────────────────────────────

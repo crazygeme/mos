@@ -81,6 +81,9 @@
 /* ── altcp ───────────────────────────────────────────────────────────────── */
 #define LWIP_ALTCP 0
 
+/* ── Driver integration ──────────────────────────────────────────────────── */
+#define LWIP_SUPPORT_CUSTOM_PBUF 1
+
 /* ── Checksum offload ───────────────────────────────────────────────────── */
 #define CHECKSUM_BY_HARDWARE 0
 

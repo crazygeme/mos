@@ -4,7 +4,11 @@
 
 #define MAX_NETWORK_DEV 12
 
-typedef void (*nic_rx_fn)(void *ctx, const uint8_t *buf, uint16_t len);
+struct pbuf;
+
+typedef int (*nic_rx_fn)(void *ctx, const uint8_t *buf, uint16_t len,
+			 void *cookie);
+typedef void (*nic_rx_reclaim_fn)(void *dev, void *cookie);
 
 typedef struct _nic_dev {
 	uint32_t pci_dev;
@@ -17,7 +21,9 @@ typedef struct _nic_dev {
 		struct _nic_dev
 			*permanent); /* called after copy into device table */
 	int (*send)(void *dev, const void *buf, uint16_t len);
+	int (*send_pbuf)(void *dev, const struct pbuf *p);
 	nic_rx_fn rx_notify;
+	nic_rx_reclaim_fn rx_reclaim;
 	void *rx_ctx;
 	void *ctx;
 } nic_dev;

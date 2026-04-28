@@ -15,6 +15,7 @@
 #include <macro.h>
 #include <config.h>
 #include <stdint.h>
+#include <lwip/pbuf.h>
 
 /* ── MMIO register offsets ─────────────────────────────────────────────────── */
 #define E1000_CTRL 0x0000
@@ -106,6 +107,8 @@ typedef struct {
 	struct e1000_rx_desc *rx_descs;
 	uint32_t rx_bufs_va; /* base VA; buf i at rx_bufs_va + i*RX_BUF_SIZE */
 	uint16_t rx_cur;
+	uint16_t rx_reclaim_head;
+	uint8_t rx_reclaim_ready[E1000_NUM_RX_DESC];
 
 	struct e1000_tx_desc *tx_descs;
 	uint32_t tx_bufs_va;
@@ -154,22 +157,55 @@ static uint32_t e1000_map_mmio(uint32_t bar0)
 static void e1000_handle_rx(e1000_ctx *ctx)
 {
 	while (1) {
-		struct e1000_rx_desc *desc = &ctx->rx_descs[ctx->rx_cur];
+		uint16_t idx = ctx->rx_cur;
+		struct e1000_rx_desc *desc = &ctx->rx_descs[idx];
 		if (!(desc->status & E1000_RXD_STAT_DD))
 			break;
 
 		uint16_t len = desc->length;
 		uint8_t *buf =
 			(uint8_t *)(ctx->rx_bufs_va +
-				    (uint32_t)ctx->rx_cur * E1000_RX_BUF_SIZE);
+				    (uint32_t)idx * E1000_RX_BUF_SIZE);
 
+		int queued = 0;
 		if (len > 0 && ctx->nic && ctx->nic->rx_notify)
-			ctx->nic->rx_notify(ctx->nic->rx_ctx, buf, len);
+			queued = ctx->nic->rx_notify(ctx->nic->rx_ctx, buf, len,
+						     (void *)(uintptr_t)idx);
 
-		/* return descriptor to hardware */
-		desc->status = 0;
-		e1000_wr(ctx, E1000_RDT, ctx->rx_cur);
+		if (!queued) {
+			ctx->rx_reclaim_ready[idx] = 1;
+			while (ctx->rx_reclaim_ready[ctx->rx_reclaim_head]) {
+				uint16_t reclaim = ctx->rx_reclaim_head;
+				ctx->rx_reclaim_ready[reclaim] = 0;
+				ctx->rx_descs[reclaim].status = 0;
+				e1000_wr(ctx, E1000_RDT, reclaim);
+				ctx->rx_reclaim_head =
+					(uint16_t)((reclaim + 1) %
+						   E1000_NUM_RX_DESC);
+			}
+		}
+
 		ctx->rx_cur = (uint16_t)((ctx->rx_cur + 1) % E1000_NUM_RX_DESC);
+	}
+}
+
+static void nic_intel_8254x_rx_reclaim(void *_dev, void *cookie)
+{
+	nic_dev *dev = (nic_dev *)_dev;
+	e1000_ctx *ctx = (e1000_ctx *)dev->ctx;
+	uint16_t idx = (uint16_t)(uintptr_t)cookie;
+
+	if (idx >= E1000_NUM_RX_DESC)
+		return;
+
+	ctx->rx_reclaim_ready[idx] = 1;
+	while (ctx->rx_reclaim_ready[ctx->rx_reclaim_head]) {
+		uint16_t reclaim = ctx->rx_reclaim_head;
+		ctx->rx_reclaim_ready[reclaim] = 0;
+		ctx->rx_descs[reclaim].status = 0;
+		e1000_wr(ctx, E1000_RDT, reclaim);
+		ctx->rx_reclaim_head =
+			(uint16_t)((reclaim + 1) % E1000_NUM_RX_DESC);
 	}
 }
 
@@ -202,6 +238,50 @@ static int nic_intel_8254x_send(void *_dev, const void *buf, uint16_t len)
 	if (len > E1000_TX_BUF_SIZE)
 		len = (uint16_t)E1000_TX_BUF_SIZE;
 	memcpy(txbuf, buf, len);
+
+	desc->addr = (uint64_t)((uint32_t)txbuf - KERNEL_OFFSET);
+	desc->length = len;
+	desc->cso = 0;
+	desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
+	desc->status = 0;
+	desc->css = 0;
+	desc->special = 0;
+
+	ctx->tx_cur = (uint16_t)((tail + 1) % E1000_NUM_TX_DESC);
+	e1000_wr(ctx, E1000_TDT, ctx->tx_cur);
+	return len;
+}
+
+static int nic_intel_8254x_send_pbuf(void *_dev, const struct pbuf *p)
+{
+	nic_dev *dev = (nic_dev *)_dev;
+	e1000_ctx *ctx = (e1000_ctx *)dev->ctx;
+	uint16_t tail = ctx->tx_cur;
+	struct e1000_tx_desc *desc = &ctx->tx_descs[tail];
+	uint8_t *txbuf;
+	uint16_t len;
+	uint16_t off = 0;
+	const struct pbuf *q;
+
+	if (!p || p->tot_len > E1000_TX_BUF_SIZE)
+		return -1;
+
+	/* wait for previous descriptor to be reclaimed */
+	while (!(desc->status & E1000_TXD_STAT_DD))
+		HLT();
+
+	txbuf = (uint8_t *)(ctx->tx_bufs_va +
+			    (uint32_t)tail * E1000_TX_BUF_SIZE);
+	len = p->tot_len;
+	for (q = p; q && off < len; q = q->next) {
+		uint16_t copy = q->len;
+		if (copy > len - off)
+			copy = (uint16_t)(len - off);
+		memcpy(txbuf + off, q->payload, copy);
+		off = (uint16_t)(off + copy);
+	}
+	if (off != len)
+		return -1;
 
 	desc->addr = (uint64_t)((uint32_t)txbuf - KERNEL_OFFSET);
 	desc->length = len;
@@ -281,6 +361,8 @@ static int nic_intel_8254x_init(void *_dev)
 		PAGE_SIZE;
 	ctx->rx_bufs_va = vm_alloc(rx_buf_pages);
 	ctx->rx_cur = 0;
+	ctx->rx_reclaim_head = 0;
+	memset(ctx->rx_reclaim_ready, 0, sizeof(ctx->rx_reclaim_ready));
 
 	for (i = 0; i < E1000_NUM_RX_DESC; i++) {
 		uint32_t va = ctx->rx_bufs_va + (uint32_t)i * E1000_RX_BUF_SIZE;
@@ -366,5 +448,7 @@ nic_dev *nic_intel_8254x_create(uint32_t device, uint16_t v, uint16_t d)
 	dev->init = nic_intel_8254x_init;
 	dev->on_register = nic_intel_8254x_on_register;
 	dev->send = nic_intel_8254x_send;
+	dev->send_pbuf = nic_intel_8254x_send_pbuf;
+	dev->rx_reclaim = nic_intel_8254x_rx_reclaim;
 	return dev;
 }

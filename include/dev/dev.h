@@ -12,6 +12,9 @@
 #define MAJOR(dev) ((unsigned)(dev) >> 8)
 #define MINOR(dev) ((unsigned)(dev) & 0xFF)
 
+/* Public device number used by VM code to recognize /dev/mem mappings. */
+#define DEV_MEM_RDEV MKDEV(1, 1)
+
 /*
  * cdev_register - register a character or block device handler.
  *
@@ -54,8 +57,5 @@ extern dev_init_fn_t __devfs_init_end[];
  */
 void dev_node_add(const char *name, unsigned mode, unsigned devno);
 void dev_node_remove(const char *name);
-
-/* /dev/mem helpers used by the VM/page-fault layer. */
-int dev_mem_is_file(const file *fp);
 
 #endif /* _DEV_DEV_H */

@@ -54,6 +54,15 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 				 int prot, int flag, file *fp, int offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock);
 
+static unsigned vm_region_flags_for_file(file *fp)
+{
+	if (!fp || !fp->f_inode)
+		return 0;
+	if ((unsigned)(uintptr_t)fp->f_inode->i_private == DEV_MEM_RDEV)
+		return VM_REGION_F_DIRECT_PHYS;
+	return 0;
+}
+
 static vm_fault_lock *vm_fault_lock_new()
 {
 	vm_fault_lock *fault_lock = kmalloc(sizeof(*fault_lock));
@@ -232,6 +241,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 	region->end = end;
 	region->prot = prot;
 	region->flag = flag;
+	region->vm_flags = vm_region_flags_for_file(fp);
 	if (fault_lock == NULL)
 		fault_lock = vm_fault_lock_new();
 	else
@@ -700,7 +710,7 @@ static void vm_flush_dirty_region(vm_region *region, unsigned begin,
 	unsigned vir;
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
 		return;
-	if (dev_mem_is_file(region->fp))
+	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
 		return;
 
 	for (vir = begin; vir < end; vir += PAGE_SIZE) {

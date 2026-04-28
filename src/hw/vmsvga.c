@@ -87,6 +87,14 @@ static unsigned vmsvga_snapshot_size(void)
 	return _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8);
 }
 
+static void vmsvga_get_phys_window(unsigned *phys, unsigned *size)
+{
+	if (phys)
+		*phys = _fb_phys;
+	if (size)
+		*size = vmsvga_snapshot_size();
+}
+
 static void vmsvga_snapshot_save(void *dst, unsigned size)
 {
 	unsigned need = vmsvga_snapshot_size();
@@ -530,6 +538,7 @@ const fb_drv_t vmsvga_drv = {
 	.change_font = vmsvga_change_font,
 	.sync_mode = vmsvga_sync_mode,
 	.flush = vmsvga_flush,
+	.get_phys_window = vmsvga_get_phys_window,
 	.snapshot_size = vmsvga_snapshot_size,
 	.snapshot_save = vmsvga_snapshot_save,
 	.snapshot_restore = vmsvga_snapshot_restore,

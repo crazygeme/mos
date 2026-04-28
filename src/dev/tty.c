@@ -34,6 +34,7 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
+#include <mm/mmap.h>
 #include <ps/ps.h>
 #include <elf/exec.h>
 #include <unistd.h>
@@ -136,6 +137,7 @@ static void tty_complete_switch_locked(int n, int spawn_shell);
 static void tty_capture_graphics_locked(tty_state *state);
 static void tty_restore_graphics_locked(tty_state *state);
 static void tty_graphics_refresh_dsr(void *unused);
+static int tty_graphics_owner_fb_dirty(const tty_state *state);
 
 #define VGA_IO_FIRST 0x3b4
 #define VGA_IO_LAST 0x3df
@@ -291,6 +293,77 @@ static void tty_graphics_refresh_dsr(void *unused)
 	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS)
 		fb_flush();
 	spinlock_unlock(&tty_switch_lock, irq);
+}
+
+typedef struct {
+	unsigned page_dir;
+	unsigned fb_phys;
+	unsigned fb_end;
+	int dirty;
+} tty_graphics_dirty_ctx;
+
+static void tty_graphics_dirty_region_cb(vm_region *region, void *data)
+{
+	tty_graphics_dirty_ctx *ctx = data;
+	unsigned region_phys_begin;
+	unsigned region_phys_end;
+	unsigned overlap_begin;
+	unsigned overlap_end;
+	unsigned vir;
+	unsigned vir_end;
+
+	if (!ctx || !region || !region->fp || !dev_mem_is_file(region->fp))
+		return;
+
+	region_phys_begin = (unsigned)region->offset;
+	region_phys_end = region_phys_begin + (region->end - region->begin);
+	if (region_phys_end <= ctx->fb_phys || region_phys_begin >= ctx->fb_end)
+		return;
+
+	overlap_begin = region_phys_begin > ctx->fb_phys ? region_phys_begin :
+							  ctx->fb_phys;
+	overlap_end = region_phys_end < ctx->fb_end ? region_phys_end :
+							ctx->fb_end;
+	vir = region->begin + (overlap_begin - region_phys_begin);
+	vir_end = region->begin + (overlap_end - region_phys_begin);
+
+	for (; vir < region->end && vir < vir_end; vir += PAGE_SIZE) {
+		unsigned flag = mm_get_map_flag_pd(ctx->page_dir, vir);
+
+		if (!(flag & PAGE_ENTRY_PRESENT))
+			continue;
+		if (!(flag & PAGE_ENTRY_DIRTY))
+			continue;
+
+		flag &= ~PAGE_ENTRY_DIRTY;
+		mm_set_map_flag_pd(ctx->page_dir, vir, flag);
+		ctx->dirty = 1;
+	}
+}
+
+static int tty_graphics_owner_fb_dirty(const tty_state *state)
+{
+	task_struct *owner;
+	tty_graphics_dirty_ctx ctx;
+
+	if (!state || state->kd_mode != KD_GRAPHICS || state->kd_owner_pid == 0)
+		return 0;
+
+	owner = ps_find_process(state->kd_owner_pid);
+	if (!owner || !owner->user || !owner->user->vm || !owner->user->page_dir)
+		return 0;
+
+	fb_get_phys_window(&ctx.fb_phys, &ctx.fb_end);
+	if (ctx.fb_phys == 0 || ctx.fb_end == 0)
+		return 1;
+
+	ctx.page_dir = owner->user->page_dir;
+	ctx.fb_end += ctx.fb_phys;
+	ctx.dirty = 0;
+	vm_enum(owner->user->vm, tty_graphics_dirty_region_cb, &ctx);
+	if (ctx.dirty)
+		RELOAD_CR3();
+	return ctx.dirty;
 }
 
 static int tty_vt_is_available(int tty_idx)
@@ -1652,7 +1725,8 @@ void tty_refresh_graphics(void)
 
 	spinlock_lock(&tty_switch_lock, &irq);
 	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS &&
-	    !tty_graphics_refresh_pending) {
+	    !tty_graphics_refresh_pending &&
+	    tty_graphics_owner_fb_dirty(this_ttys)) {
 		tty_graphics_refresh_pending = 1;
 		need_queue = 1;
 	}

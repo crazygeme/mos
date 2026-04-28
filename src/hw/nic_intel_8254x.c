@@ -73,8 +73,8 @@
 #define E1000_TXD_STAT_DD 0x01u /* descriptor done */
 
 /* ── Descriptor ring sizes ─────────────────────────────────────────────────── */
-#define E1000_NUM_RX_DESC 32
-#define E1000_NUM_TX_DESC 32
+#define E1000_NUM_RX_DESC 256
+#define E1000_NUM_TX_DESC 64
 #define E1000_RX_BUF_SIZE 2048
 #define E1000_TX_BUF_SIZE 2048
 

@@ -5,6 +5,93 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-29 - `gnome-terminal` lost immediate `Ctrl-C` and turned Up-arrow into `8`
+
+This bug looked at first like a terminal-emulator or readline problem because
+the visible failures happened inside `gnome-terminal` and bash. The useful
+approach was to separate the two symptoms and follow each one down to the
+kernel boundary instead of patching PTY behavior blindly.
+
+### 1. `Ctrl-C` generated `SIGINT` only after a follow-up key
+
+- **Caught by:** reproducing the shell behavior in `gnome-terminal`, then
+  comparing MOS raw TTY/PTTY reads with bash 2.05b's real tty setup in
+  [rltty.c](bash-2.05b/lib/readline/rltty.c).
+- **Symptom:** pressing `Ctrl-C` did not interrupt the foreground program
+  immediately. No visible effect occurred until a subsequent keystroke such as
+  Backspace or an arrow key arrived.
+- **Root cause:** bash/readline puts the terminal into noncanonical mode but
+  keeps `ISIG` enabled. MOS raw console and PTY-slave read paths were updated
+  to recognize signal characters and send `SIGINT`, `SIGQUIT`, or `SIGTSTP`,
+  but they still stayed inside the same blocking read after consuming the
+  signal byte. That left the caller asleep until another input byte woke the
+  read path.
+- **Fix:**
+  - in [tty_ldisc.c](../src/dev/tty_ldisc.c) and
+    [tty_ldisc.h](../src/dev/tty_ldisc.h), add a shared helper that recognizes
+    `VINTR`, `VQUIT`, and `VSUSP` and signals the foreground process group
+  - in [tty.c](../src/dev/tty.c) and [pts.c](../src/dev/pts.c), return
+    `-EINTR` immediately when a raw read consumes only a signal character, or
+    return the already-collected byte count when the signal arrives after data
+  - in canonical handling, stop treating signal characters like ordinary input
+    bytes when `ISIG` is active
+
+### 2. Up-arrow intermittently arrived as keypad `8`
+
+- **Caught by:** reading
+  [out/x86/release/krn.log](../out/x86/release/krn.log), then correlating the
+  raw keyboard reads with the X server's output into the PTY.
+- **Symptom:** Up-arrow in `gnome-terminal` sometimes produced the expected
+  cursor sequence, but often inserted a literal `8`.
+- **Key log evidence:**
+  - the good case showed `read(5, "\xe0H", 64) = 2`, followed by X writing
+    `"\x1b[A"` to the PTY
+  - the bad case showed `read(5, "H", 64) = 1` and `read(5, "\xc8", 64) = 1`,
+    followed by pid `1604` writing `"8"` to the PTY
+- **Why that matters:** bare `0x48` / `0xc8` is keypad 8 press/release in the
+  PC set-1 stream, while extended cursor-Up is `0xe0 0x48` / `0xe0 0xc8`.
+  The PTY and shell were behaving correctly; X was faithfully turning the scan
+  codes it received into either Up or keypad 8.
+- **Root cause:** MOS's keyboard DSR assumed that an `0xe0` prefix and the
+  following scan byte were both available immediately. When the controller
+  delivered them as separate bytes or separate interrupts, the prefix could be
+  dropped and the next byte was emitted alone as `0x48`/`0xc8`. That made X
+  interpret the cursor key as keypad 8.
+- **Fix:**
+  - in [keyboard.c](../src/hw/keyboard.c), make the keyboard DSR drain all
+    pending keyboard bytes from the i8042 output buffer instead of processing
+    only one logical code per callback
+  - preserve an `0xe0`/`0xe1` prefix across bytes and combine it with the next
+    scan byte before raw, medium-raw, or translated handling
+  - keep ignoring auxiliary-device bytes in the keyboard path so mouse traffic
+    stays owned by the PS/2 mouse driver
+
+### 3. Linux console keyboard compatibility also needed Linux-style keysyms
+
+- **Caught by:** checking how XFree86 4.3.0 reads `KDGKBENT` and keyboard mode
+  ioctls from a Linux console.
+- **Symptom:** even before the prefix-loss bug was isolated, MOS was exporting
+  keyboard symbols that did not match Linux `keyboard.h`, which made extended
+  key interpretation fragile for X.
+- **Root cause:** MOS's `KDGKBENT` encoding and default keymap entries did not
+  match the Linux console values that XFree86 expects for keypad, cursor, and
+  modifier symbols.
+- **Fix:**
+  - in [ioctl.h](../include/fs/ioctl.h), switch the keysym type/value encoding
+    and exported constants to Linux-compatible values
+  - in [keyboard.c](../src/hw/keyboard.c), populate the default keymap entries
+    for keypad, cursor, navigation, and right-side modifier keycodes with the
+    expected Linux symbols
+
+### Key lesson
+
+When an old X stack turns an arrow key into a printable digit, inspect the raw
+keyboard bytes before blaming the PTY or shell. Here the visible `"8"` was a
+faithful consequence of MOS occasionally dropping the `0xe0` extended-key
+prefix, and the `Ctrl-C` delay was a separate `-EINTR` wakeup bug in raw tty
+reads.
+
+
 ## 2026-04-26 - `strace ps aux` over SSH could #GP on `intr_exit: pop %gs`
 
 Initial triage suggested a ptrace or TLS setup bug because the visible crash

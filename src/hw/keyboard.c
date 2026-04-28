@@ -11,6 +11,10 @@
 #include <fs/ioctl.h>
 #include <config.h>
 
+#define I8042_STATUS 0x64
+#define I8042_STATUS_OBF 0x01
+#define I8042_STATUS_AUX 0x20
+
 /* ── Keysym translation table (KDGKBENT / KDSKBENT) ─────────────────────── */
 
 static unsigned short key_maps[NR_KEYMAPS][NR_KEYS];
@@ -108,6 +112,7 @@ static void kbd_init_keymaps(void)
 	p[26] = KSL('[');
 	p[27] = KSL(']');
 	p[28] = K_ENTER; /* Return */
+	p[29] = K_CTRL;
 	p[30] = KSL('a');
 	p[31] = KSL('s');
 	p[32] = KSL('d');
@@ -120,6 +125,7 @@ static void kbd_init_keymaps(void)
 	p[39] = KSL(';');
 	p[40] = KSL('\'');
 	p[41] = KSL('`');
+	p[42] = K_SHIFTL;
 	p[43] = KSL('\\');
 	p[44] = KSL('z');
 	p[45] = KSL('x');
@@ -131,12 +137,44 @@ static void kbd_init_keymaps(void)
 	p[51] = KSL(',');
 	p[52] = KSL('.');
 	p[53] = KSL('/');
-	p[55] = KSL('*'); /* Keypad * */
+	p[54] = K_SHIFTR;
+	p[55] = K_PSTAR;
+	p[56] = K_ALT;
 	p[57] = KSL(' '); /* Space */
+	p[58] = K_CAPS;
 	for (k = 0; k < 10; k++)
 		p[59 + k] = KSF(k); /* F1–F10 */
+	p[69] = K_NUM;
+	p[70] = K_HOLD;
+	p[71] = K_P7;
+	p[72] = K_P8;
+	p[73] = K_P9;
+	p[74] = K_PMINUS;
+	p[75] = K_P4;
+	p[76] = K_P5;
+	p[77] = K_P6;
+	p[78] = K_PPLUS;
+	p[79] = K_P1;
+	p[80] = K_P2;
+	p[81] = K_P3;
+	p[82] = K_P0;
+	p[83] = K_PDOT;
 	p[87] = KSF(10); /* F11 */
 	p[88] = KSF(11); /* F12 */
+	p[96] = K_PENTER;
+	p[97] = K_CTRLR;
+	p[98] = K_PSLASH;
+	p[100] = K_ALTGR;
+	p[102] = K_FIND;
+	p[103] = K_UP;
+	p[104] = K_PGUP;
+	p[105] = K_LEFT;
+	p[106] = K_RIGHT;
+	p[107] = K_SELECT;
+	p[108] = K_DOWN;
+	p[109] = K_PGDN;
+	p[110] = K_INSERT;
+	p[111] = K_REMOVE;
 
 	/* ── Table 1: shift ──────────────────────────────────────────────── */
 	s = key_maps[1];
@@ -168,6 +206,7 @@ static void kbd_init_keymaps(void)
 	s[26] = KSL('{');
 	s[27] = KSL('}');
 	s[28] = K_ENTER;
+	s[29] = K_CTRL;
 	s[30] = KSL('A');
 	s[31] = KSL('S');
 	s[32] = KSL('D');
@@ -180,6 +219,7 @@ static void kbd_init_keymaps(void)
 	s[39] = KSL(':');
 	s[40] = KSL('"');
 	s[41] = KSL('~');
+	s[42] = K_SHIFTL;
 	s[43] = KSL('|');
 	s[44] = KSL('Z');
 	s[45] = KSL('X');
@@ -191,12 +231,44 @@ static void kbd_init_keymaps(void)
 	s[51] = KSL('<');
 	s[52] = KSL('>');
 	s[53] = KSL('?');
-	s[55] = KSL('*');
+	s[54] = K_SHIFTR;
+	s[55] = K_PSTAR;
+	s[56] = K_ALT;
 	s[57] = KSL(' ');
+	s[58] = K_CAPS;
 	for (k = 0; k < 10; k++)
 		s[59 + k] = KSF(k);
+	s[69] = K_NUM;
+	s[70] = K_HOLD;
+	s[71] = K_P7;
+	s[72] = K_P8;
+	s[73] = K_P9;
+	s[74] = K_PMINUS;
+	s[75] = K_P4;
+	s[76] = K_P5;
+	s[77] = K_P6;
+	s[78] = K_PPLUS;
+	s[79] = K_P1;
+	s[80] = K_P2;
+	s[81] = K_P3;
+	s[82] = K_P0;
+	s[83] = K_PDOT;
 	s[87] = KSF(10);
 	s[88] = KSF(11);
+	s[96] = K_PENTER;
+	s[97] = K_CTRLR;
+	s[98] = K_PSLASH;
+	s[100] = K_ALTGR;
+	s[102] = K_FIND;
+	s[103] = K_UP;
+	s[104] = K_PGUP;
+	s[105] = K_LEFT;
+	s[106] = K_RIGHT;
+	s[107] = K_SELECT;
+	s[108] = K_DOWN;
+	s[109] = K_PGDN;
+	s[110] = K_INSERT;
+	s[111] = K_REMOVE;
 }
 
 #undef KSL
@@ -291,6 +363,7 @@ static void kb_dsr(void *param);
 static const char *map_special_key(const struct keymap[], unsigned scancode);
 static int mediumraw_keycode(unsigned scancode);
 static void update_shift_state(unsigned scancode, int release);
+static void kb_handle_scancode(unsigned code, int kb_mode);
 
 static void emit_kb_bytes(const unsigned char *bytes, unsigned len)
 {
@@ -357,6 +430,8 @@ void kb_init()
 }
 
 static int kb_dsr_armed = 0;
+static unsigned kb_prefix;
+
 void kb_process(intr_frame *frame)
 {
 	if (!kb_dsr_armed) {
@@ -373,15 +448,39 @@ void kb_process(intr_frame *frame)
 
 static void kb_dsr(void *param)
 {
+	unsigned char st;
+	int kb_mode = tty_active_kb_mode();
+	kb_dsr_armed = 0;
+
+	while ((st = port_read_byte(I8042_STATUS)) & I8042_STATUS_OBF) {
+		unsigned code;
+
+		if (st & I8042_STATUS_AUX)
+			break;
+
+		code = port_read_byte(KB_DATA);
+		if (code == 0xe0 || code == 0xe1) {
+			kb_prefix = code;
+			continue;
+		}
+		if (kb_prefix) {
+			code |= kb_prefix << 8;
+			kb_prefix = 0;
+		}
+
+		kb_handle_scancode(code, kb_mode);
+	}
+}
+
+static void kb_handle_scancode(unsigned raw_code, int kb_mode)
+{
 	/* Status of shift keys. */
 	int shift = left_shift || right_shift;
 	int alt = left_alt || right_alt;
 	int ctrl = left_ctrl || right_ctrl;
-	int kb_mode = tty_active_kb_mode();
 
 	/* Keyboard scancode. */
-	unsigned code;
-	unsigned raw_code;
+	unsigned code = raw_code;
 
 	/* False if key pressed, 1 if key released. */
 	int release;
@@ -391,23 +490,15 @@ static void kb_dsr(void *param)
 
 	const char *special = 0;
 
-	kb_dsr_armed = 0;
-
-	/* Read scancode, including second byte if prefix code. */
-	code = port_read_byte(KB_DATA);
-	if (code == 0xe0)
-		code = (code << 8) | port_read_byte(KB_DATA);
-	raw_code = code;
-
 	/* Bit 0x80 distinguishes key press from key release
-       (even if there's a prefix). */
+	 * (even if there's a prefix). */
 	release = (code & 0x80) != 0;
 	code &= ~0x80u;
 	update_shift_state(code, release);
 
 	/* Keep kernel VT hotkeys working even when userspace requested
-		 * raw keyboard bytes on the active console. */
-	/* Ctrl+1..0: switch virtual terminal (scancodes 2..11 → tty 1..10) */
+	 * raw keyboard bytes on the active console.
+	 * Ctrl+1..0: switch virtual terminal (scancodes 2..11 → tty 1..10) */
 	if (!release && ctrl && code >= 2 && code <= 11) {
 		tty_switch((int)(code - 1));
 		return;

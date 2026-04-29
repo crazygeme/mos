@@ -22,6 +22,7 @@
 #include <dev/dev.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/ioctl.h>
 #include <mm/mm.h>
 #include <lib/klib.h>
 #include <ps/ps.h>
@@ -250,8 +251,31 @@ static int loop_ioctl(file *fp, unsigned cmd, void *buf)
 {
 	int minor = (int)(uintptr_t)fp->f_inode->i_private;
 	task_struct *cur = CURRENT_TASK();
+	uint64_t size_bytes = loop_devs[minor].size_bytes;
 
 	switch (cmd) {
+	case BLKGETSIZE:
+		if (!buf)
+			return -EINVAL;
+		if (!loop_devices[minor].fp)
+			return -ENXIO;
+		*(unsigned long *)buf = (unsigned long)(size_bytes / 512);
+		return 0;
+
+	case BLKGETSIZE64:
+		if (!buf)
+			return -EINVAL;
+		if (!loop_devices[minor].fp)
+			return -ENXIO;
+		*(uint64_t *)buf = size_bytes;
+		return 0;
+
+	case BLKSSZGET:
+		if (!buf)
+			return -EINVAL;
+		*(int *)buf = 512;
+		return 0;
+
 	case LOOP_SET_FD: {
 		int img_fd = (int)(uintptr_t)buf;
 		file *img_fp;

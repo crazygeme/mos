@@ -39,6 +39,11 @@
 #define TIOCPKT 0x5420
 #define TIOCNOTTY 0x5422
 
+/* Block-device ioctls used by old util-linux/libblkid probes. */
+#define BLKGETSIZE 0x1260 /* return device size in 512-byte sectors */
+#define BLKSSZGET 0x1268 /* return logical sector size */
+#define BLKGETSIZE64 0x80041272 /* return device size in bytes */
+
 #define TIOCPKT_DATA 0x00
 #define TIOCPKT_FLUSHREAD 0x01
 #define TIOCPKT_FLUSHWRITE 0x02

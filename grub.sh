@@ -8,8 +8,9 @@ _build="release"
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
 _logtofile="stdio"
 _priviledge=""
-_IS_MACOS=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
-if [ "$_IS_MACOS" -eq 1 ]; then
+_is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
+_kvm=$([ "$(uname)" == "Darwin" ] && echo "" || echo "-enable-kvm")
+if [ "$_is_macos" -eq 1 ]; then
 	_netdev="vmnet-shared,id=net0"
 	_priviledge="sudo"
 else
@@ -24,7 +25,6 @@ elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run-grub.sh param1 param2 ..."
 	echo "param:"
-	echo -e "\t kvm: enable kvm"
 	echo -e "\t logtofile: write kernel log to out/x86/release/krn.log instead of stdio"
 	exit
 else
@@ -50,7 +50,7 @@ _TAP_NET="10.0.5.0/24"
 _TAP_RANGE="10.0.5.2,10.0.5.20,1h"
 
 setup_nat() {
-	if [ "$_IS_MACOS" -eq 1 ]; then
+	if [ "$_is_macos" -eq 1 ]; then
 		echo "tap: using vmnet-shared (macOS) - no host setup required"
 		_tap_was_setup=1
 		trap 'cleanup_nat' EXIT INT TERM
@@ -83,7 +83,7 @@ setup_nat() {
 cleanup_nat() {
 	[ "$_tap_was_setup" -eq 0 ] && return
 
-	if [ "$_IS_MACOS" -eq 1 ]; then
+	if [ "$_is_macos" -eq 1 ]; then
 		return
 	fi
 
@@ -133,7 +133,7 @@ $_priviledge qemu-system-i386 -cpu coreduo \
 	-serial $_logtofile \
 	-vga vmware\
 	-device isa-debug-exit,iobase=0xf4,iosize=0x04\
-	-enable-kvm\
+	$_kvm\
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56

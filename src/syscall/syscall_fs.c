@@ -621,7 +621,13 @@ int sys_unlink(const char *_name)
 	if (S_ISSOCK(s.st_mode)) {
 		unix_ns_remove_path(name);
 		ret = vfs_umount(cur->root, name);
-		goto done;
+		if (ret != -ENOENT)
+			goto done;
+		/*
+		 * A socket inode can also be a stale on-disk entry from ext4
+		 * rather than a MOS AF_UNIX mount.  In that case vfs_umount()
+		 * has nothing to detach, so remove the filesystem entry.
+		 */
 	}
 
 	ret = unlink_open_file(cur, name);

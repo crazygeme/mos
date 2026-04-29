@@ -42,12 +42,17 @@ static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 		return 0;
 
 	page_idx = phymm_alloc_user();
-	if (page_idx == PHYMM_INVALID)
+	if (page_idx == PHYMM_INVALID) {
+		klog("pagefault: phymm_alloc_user failed reading file page offset=%x\n",
+		     offset);
 		return 0;
+	}
 
 	phy = page_idx * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(page_idx);
+		klog("pagefault: mm_kmap_phys failed reading file page phy=%x offset=%x\n",
+		     phy, offset);
 		return 0;
 	}
 
@@ -216,11 +221,16 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 
 		/* Miss — allocate, zero, strip writable, and register in anon_shared_map. */
 		page_idx = phymm_alloc_user();
-		if (page_idx == PHYMM_INVALID)
+		if (page_idx == PHYMM_INVALID) {
+			klog("pagefault: phymm_alloc_user failed anon shared addr=%x offset=%x\n",
+			     address, offset);
 			goto DONE;
+		}
 		phy = page_idx * PAGE_SIZE;
 		if (mm_map_page(address, phy, PAGE_ENTRY_USER_DATA) != 1) {
 			phymm_free_user(page_idx);
+			klog("pagefault: mm_map_page failed anon shared addr=%x phy=%x\n",
+			     address, phy);
 			goto DONE;
 		}
 		INVLPG(address);
@@ -387,12 +397,19 @@ static void wp_page_copy(unsigned cr2)
 	page_fault_cow++;
 
 	page_idx = phymm_alloc_user();
-	if (page_idx == PHYMM_INVALID)
+	if (page_idx == PHYMM_INVALID) {
+		klog("pagefault: phymm_alloc_user failed COW addr=%x\n", cr2);
 		return;
+	}
 	phy = page_idx * PAGE_SIZE;
 
 	/* Establish the direct kernel alias and copy the original content. */
-	mm_kmap_phys(phy);
+	if (mm_kmap_phys(phy) != 1) {
+		phymm_free_user(page_idx);
+		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x\n",
+		     cr2, phy);
+		return;
+	}
 	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);
 
 	/* Swap the shared PTE for a private writable one. */

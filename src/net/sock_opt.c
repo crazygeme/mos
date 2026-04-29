@@ -253,7 +253,7 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 	}
 
 done:
-	if (ret == -ENOPROTOOPT)
+	if (TEST_LOG(TEST_LOG_TRACE) && ret == -ENOPROTOOPT)
 		klog("setsockopt(%d, level=%d, optname=%d) = -ENOPROTOOPT\n",
 		     fd, level, optname);
 	return ret;
@@ -410,7 +410,7 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 	}
 
 done:
-	if (ret == -ENOPROTOOPT)
+	if (TEST_LOG(TEST_LOG_TRACE) && ret == -ENOPROTOOPT)
 		klog("getsockopt(%d, level=%d, optname=%d) = -ENOPROTOOPT\n",
 		     fd, level, optname);
 	return ret;

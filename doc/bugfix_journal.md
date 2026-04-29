@@ -5,6 +5,62 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-29 - RH9 `LABEL=/` fstab root remount failed before `mount(2)`
+
+Real Red Hat 9 systems commonly use an `/etc/fstab` root entry whose source is
+`LABEL=/`:
+
+```text
+LABEL=/  /  ext3  defaults  1 1
+```
+
+MOS could boot the same image only after changing that source to `/`, but that
+replacement was not compatible with the real Linux boot path.
+
+### 1. `mount` failed while resolving the label in userspace
+
+- **Caught by:** tracing the boot log around the
+  `Remounting root filesystem in read-write mode` step and comparing it with
+  the Red Hat 9 util-linux 2.11y `mount` source.
+- **Symptom:** `/bin/mount` printed `mount: no such partition found` and
+  exited with status `100` during `mount -n -o remount,rw /`. No kernel
+  `mount(2)` syscall for the root remount appeared after the failure.
+- **Key log evidence:**
+  - `/bin/mount` read the root fstab entry as `LABEL=/ ... / ... ext3 ...`
+  - it opened `/proc/partitions` and found `hda1`
+  - it opened `/dev/hda1` successfully
+  - both block-device size ioctls failed:
+
+```text
+ioctl(4, 80041272, ...) = -25
+ioctl(4, 1260, ...) = -25
+```
+
+- **Root cause:** RH9 `mount` resolves `LABEL=/` before calling `mount(2)`.
+  Its label probe scans `/proc/partitions`, opens each candidate block device,
+  asks block-device size ioctls such as `BLKGETSIZE64` and `BLKGETSIZE`, then
+  reads the ext2/ext3 superblock at offset 1024 to compare the volume label.
+  MOS exposed `/proc/partitions` and `/dev/hda1`, but the HDD block device did
+  not implement those ioctls, so userspace stopped before reading the
+  superblock and never issued the remount syscall.
+- **Fix:**
+  - in [ioctl.h](../include/fs/ioctl.h), define Linux-compatible
+    `BLKGETSIZE`, `BLKSSZGET`, and `BLKGETSIZE64`
+  - in [hdd.c](../src/dev/hdd.c), implement those ioctls for IDE partition
+    block devices using the discovered partition sector count
+  - in [loop.c](../src/dev/loop.c), implement the same block-size ioctls for
+    configured loop devices so label and filesystem probes see normal block
+    device behavior there as well
+
+### Key lesson
+
+Boot compatibility with old Linux userspace can depend on pre-syscall probing
+behavior. A failing `mount` command does not necessarily mean the kernel
+rejected `mount(2)`; it may mean userspace could not resolve an fstab source
+because a block-device compatibility ioctl was missing.
+
+---
+
 ## 2026-04-29 - `exit_group()` could leave stale futex waiters on killed thread stacks
 
 The observed crash was a kernel page fault in the release build:

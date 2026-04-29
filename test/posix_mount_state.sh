@@ -46,6 +46,8 @@ cleanup()
 trap cleanup EXIT
 cleanup
 
+expect_contains "rootfs / rootfs rw 0 0" /proc/mounts
+
 mkdir -p "$MNT" >/dev/null 2>&1 || fail "mkdir failed"
 dd if=/dev/zero of="$IMG" bs=1M count=8 >/dev/null 2>&1 || fail "dd failed"
 mkfs.ext3 -F "$IMG" >/dev/null 2>&1 || fail "mkfs failed"

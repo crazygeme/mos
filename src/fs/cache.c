@@ -83,12 +83,17 @@ static unsigned fs_page_cache_load(file *fp, unsigned offset)
 	unsigned phy;
 
 	page_index = phymm_alloc_user();
-	if (page_index == PHYMM_INVALID)
+	if (page_index == PHYMM_INVALID) {
+		klog("fs_page_cache: phymm_alloc_user failed offset=%x\n",
+		     offset);
 		return 0;
+	}
 
 	phy = page_index * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(page_index);
+		klog("fs_page_cache: mm_kmap_phys failed phy=%x offset=%x\n",
+		     phy, offset);
 		return 0;
 	}
 

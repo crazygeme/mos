@@ -79,8 +79,10 @@ unsigned int mm_alloc_page_table()
 {
 	unsigned int ret = page_table_cache_alloc(&page_table_cache);
 
-	if (ret == 0)
+	if (ret == 0) {
+		klog("mm_alloc_page_table: page table cache exhausted\n");
 		return 0;
+	}
 	memset((void *)ret, 0, PAGE_SIZE);
 	return ret;
 }
@@ -374,8 +376,11 @@ int mm_kmap_phys(unsigned int phys)
 
 	if (page < KERNEL_DIRECT_MAP_LIMIT) {
 		virt = KERNEL_OFFSET + page;
-		if (!mm_get_valid_page_table(virt, 0, &info, 1))
+		if (!mm_get_valid_page_table(virt, 0, &info, 1)) {
+			klog("mm_kmap_phys: page table alloc failed phys=%x virt=%x\n",
+			     phys, virt);
 			return -1;
+		}
 		*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
 		INVLPG(virt);
 		return 1;
@@ -407,6 +412,8 @@ int mm_kmap_phys(unsigned int phys)
 		spinlock_lock(&kmap_lock, &irq);
 		kernel_kmap_phys[slot] = 0;
 		spinlock_unlock(&kmap_lock, irq);
+		klog("mm_kmap_phys: page table alloc failed phys=%x virt=%x slot=%u\n",
+		     page, virt, slot);
 		return -1;
 	}
 
@@ -426,8 +433,10 @@ int mm_map_io(unsigned int phy)
 	if (phy < KERNEL_OFFSET)
 		return -1;
 
-	if (!mm_get_valid_page_table(phy, 0, &info, 1))
+	if (!mm_get_valid_page_table(phy, 0, &info, 1)) {
+		klog("mm_map_io: page table alloc failed phy=%x\n", phy);
 		return -1;
+	}
 
 	*info.entry = (phy & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
 	return 1;
@@ -521,6 +530,8 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 		page_index = phymm_alloc_user();
 		if (page_index == PHYMM_INVALID) {
 			spinlock_unlock(&mm_lock, irq);
+			klog("mm_map_page: phymm_alloc_user failed vir=%x flag=%x\n",
+			     vir, flag);
 			return -1;
 		}
 		target_phy = page_index * PAGE_SIZE;
@@ -528,7 +539,11 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 
 	if (!mm_set_page_table_entry(vir, flag | PAGE_ENTRY_WRITABLE,
 				     target_phy | flag)) {
+		if (!phy)
+			phymm_free_user(page_index);
 		spinlock_unlock(&mm_lock, irq);
+		klog("mm_map_page: page table alloc failed vir=%x phy=%x flag=%x\n",
+		     vir, target_phy, flag);
 		return -1;
 	}
 
@@ -550,6 +565,8 @@ int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag)
 	if (!mm_set_page_table_entry(vir, flag,
 				     (phy & PAGE_SIZE_MASK) | flag)) {
 		spinlock_unlock(&mm_lock, irq);
+		klog("mm_map_page_io: page table alloc failed vir=%x phy=%x flag=%x\n",
+		     vir, phy, flag);
 		return -1;
 	}
 	spinlock_unlock(&mm_lock, irq);
@@ -654,6 +671,8 @@ unsigned int vm_alloc(int page_count)
 	page_index = phymm_alloc_kernel(page_count);
 	if (page_index < 0) {
 		spinlock_unlock(&mm_lock, irq);
+		klog("vm_alloc: phymm_alloc_kernel failed page_count=%d\n",
+		     page_count);
 		return 0;
 	}
 
@@ -666,6 +685,8 @@ unsigned int vm_alloc(int page_count)
 			}
 			phymm_free_kernel(page_index, page_count);
 			spinlock_unlock(&mm_lock, irq);
+			klog("vm_alloc: mm_kmap_page failed page_count=%d page_index=%u i=%d vm=%x\n",
+			     page_count, page_index, i, vm);
 			return 0;
 		}
 		phymm_reference_page(page_index + i);

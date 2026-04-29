@@ -762,6 +762,7 @@ static block_cache_item *block_cache_item_create(void)
 	item->page_index = phymm_alloc_user();
 	if (item->page_index == PHYMM_INVALID) {
 		kfree(item);
+		klog("hdd: phymm_alloc_user failed for block cache item\n");
 		return NULL;
 	}
 
@@ -769,6 +770,8 @@ static block_cache_item *block_cache_item_create(void)
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(item->page_index);
 		kfree(item);
+		klog("hdd: mm_kmap_phys failed for block cache item phy=%x\n",
+		     phy);
 		return NULL;
 	}
 

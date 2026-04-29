@@ -5,6 +5,55 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-30 - Loopback `ping` could hang or print timeout errors after very fast replies
+
+Loopback ICMP echo could stop making progress after a reply with a
+sub-millisecond round-trip time. After the initial blocking issue was exposed,
+the same path could also print intermittent `ping: recvmsg: Connection timed
+out` messages between successful replies.
+
+### Symptom
+
+`ping 127.0.0.1` usually printed replies normally, but could hang immediately
+after an unusually small RTT such as `0.034 ms`. Enabling verbose kernel
+logging made the hang disappear. Once socket receive timeouts were honored, the
+hang changed into visible `recvmsg` timeout errors after similarly fast replies.
+
+### Root cause
+
+Two timing-sensitive socket behaviors were involved:
+
+- `sock_wait()` added the current task to the socket waiter list before the
+  scheduler marked the task as sleeping. A loopback reply could arrive in that
+  small window. The wakeup saw the task as still running, skipped the transition
+  to ready state, and the task then went to sleep with the wakeup already lost.
+- RH9 `iputils` `ping` uses `SO_RCVTIMEO` to let `recvmsg()` wait only until the
+  next probe should be sent. MOS accepted `SO_RCVTIMEO` but did not apply it, so
+  `ping` could block in `recvmsg()` instead of returning to send the next echo
+  request. The first timeout implementation returned `ETIMEDOUT`; Linux returns
+  `EAGAIN`/`EWOULDBLOCK` for socket receive timeout expiry, and RH9 `ping`
+  treats only that result as a normal timeout.
+
+### Fix
+
+Socket waits now prepare the timed scheduler wait while holding the socket wait
+lock, then release the socket lock and schedule. This closes the lost-wakeup
+window between waiter registration and sleeping.
+
+INET sockets now store `SO_RCVTIMEO` and `SO_SNDTIMEO`, and receive/send paths
+use those values instead of always using the internal socket guard timeout.
+Application-requested socket timeout expiry returns `EAGAIN`; the internal
+30-second guard still returns `ETIMEDOUT`.
+
+### Key lesson
+
+Loopback networking can expose scheduler races because the reply may be
+generated before the sender has fully entered its sleep path. Socket timeout
+ABI details also matter: returning the wrong errno can turn a normal user-space
+polling strategy into a visible application error.
+
+---
+
 ## 2026-04-30 - RH9 `shutdown -h now` stalled across xinetd, killall5, and final halt
 
 The RH9 shutdown path progressed through several separate compatibility

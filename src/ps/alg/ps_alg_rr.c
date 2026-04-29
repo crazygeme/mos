@@ -254,16 +254,29 @@ int sched_is_enabled()
 void time_wait(unsigned ms)
 {
 	task_struct *cur = CURRENT_TASK();
+
+	ps_prepare_timed_wait(cur, ms, __func__);
+	task_sched();
+	ps_finish_timed_wait(cur);
+}
+
+void ps_prepare_timed_wait(task_struct *task, unsigned ms, const char *func)
+{
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
 	if (ms > 0)
-		timer_arm_unsafe(cur, ms);
-	ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		timer_arm_unsafe(task, ms);
+	ps_put_to_wait_queue_unsafe(task, NULL, func);
 	spinlock_unlock(&ps_lock, irq);
-	task_sched();
+}
+
+void ps_finish_timed_wait(task_struct *task)
+{
+	int irq;
+
 	spinlock_lock(&ps_lock, &irq);
-	timer_disarm_unsafe(cur);
+	timer_disarm_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
 }
 

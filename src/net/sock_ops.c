@@ -508,7 +508,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
 
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		while (rx_used(sk) < sizeof(u16_t)) {
@@ -517,7 +517,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 			if (flags & MSG_DONTWAIT)
 				return -EAGAIN;
 			if (time_now_ms() > deadline)
-				return -ETIMEDOUT;
+				return sock_recv_timeout_errno(sk);
 			if (sock_wait(sk, deadline) < 0)
 				return -EINTR;
 		}
@@ -551,7 +551,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		if (flags & MSG_DONTWAIT)
 			return -EAGAIN;
 		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+			return sock_recv_timeout_errno(sk);
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}

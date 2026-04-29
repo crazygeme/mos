@@ -351,6 +351,61 @@ int phymm_is_used(unsigned page_index)
 					  0) > 0);
 }
 
+void phymm_get_usage(phymm_usage *usage)
+{
+	unsigned limit, i, order;
+	int irq;
+
+	if (!usage)
+		return;
+
+	memset(usage, 0, sizeof(*usage));
+	limit = phymm_kernel_page_limit();
+
+	spinlock_lock(&buddy_lock, &irq);
+	for (i = phymm_begin; i < phymm_end; i++) {
+		if (phymm_pages[i].ref_count == PHYMM_RESERVED)
+			continue;
+		if (i < limit)
+			usage->low_total_pages++;
+		else
+			usage->high_total_pages++;
+	}
+
+	for (order = 0; order <= MAX_BUDDY_ORDER; order++) {
+		unsigned pages = 1u << order;
+		unsigned idx;
+
+		for (idx = buddy_lists[order]; idx != PHYMM_INVALID;
+		     idx = phymm_pages[idx].next_free) {
+			unsigned end = idx + pages;
+			unsigned low_start, low_end;
+			unsigned high_start, high_end;
+
+			low_start = idx < limit ? idx : limit;
+			low_end = end < limit ? end : limit;
+			if (low_start < low_end)
+				usage->low_free_pages += low_end - low_start;
+
+			high_start = idx > limit ? idx : limit;
+			high_end = end;
+			if (high_start < high_end)
+				usage->high_free_pages +=
+					high_end - high_start;
+		}
+	}
+	spinlock_unlock(&buddy_lock, irq);
+
+	usage->low_used_pages =
+		usage->low_total_pages > usage->low_free_pages ?
+			usage->low_total_pages - usage->low_free_pages :
+			0;
+	usage->high_used_pages =
+		usage->high_total_pages > usage->high_free_pages ?
+			usage->high_total_pages - usage->high_free_pages :
+			0;
+}
+
 void phymm_mark_dirty(unsigned page_index)
 {
 	__sync_fetch_and_or(&phymm_pages[page_index].flags, PHYMM_PAGE_DIRTY);

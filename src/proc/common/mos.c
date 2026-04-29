@@ -8,6 +8,7 @@
  */
 #include <errno.h>
 #include <mm/mm.h>
+#include <mm/phymm.h>
 #include <hw/hdd.h>
 #include "common.h"
 
@@ -26,67 +27,168 @@ extern unsigned fs_read_size;
 extern unsigned fs_write_size;
 extern unsigned disk_read_size;
 extern unsigned disk_write_size;
+extern unsigned fs_page_cache_pages;
+extern unsigned fs_page_cache_max_pages;
+extern unsigned fs_page_cache_searches;
+extern unsigned fs_page_cache_hits;
 
 #if HDD_CACHE_OPEN
-extern unsigned cache_hit;
-extern unsigned fs_cache_read_size;
-extern unsigned fs_cache_write_size;
-extern unsigned fs_cache_size;
-extern unsigned max_fs_cache_size;
-extern unsigned cache_search_count;
-extern unsigned long long cache_search_time;
+extern unsigned hdd_cache_hit;
+extern unsigned hdd_cache_read_size;
+extern unsigned hdd_cache_write_size;
+extern unsigned hdd_cache_size;
+extern unsigned hdd_cache_max_size;
+extern unsigned hdd_cache_search_count;
 #endif
 
 /* ---- scheduler ---- */
 extern unsigned task_schedule_count;
 
+#define MOS_TABLE_LINE "+------------------------+--------------+--------------+--------------+\n"
+
+static void mos_table_begin(proc_buf_t *pb, const char *title)
+{
+	proc_buf_printf(pb, "%s\n", title);
+	proc_buf_printf(pb, MOS_TABLE_LINE);
+	proc_buf_printf(pb, "| %-22s | %12s | %12s | %-12s |\n", "Metric",
+			"Value", "Raw", "Notes");
+	proc_buf_printf(pb, MOS_TABLE_LINE);
+}
+
+static void mos_table_end(proc_buf_t *pb)
+{
+	proc_buf_printf(pb, MOS_TABLE_LINE);
+	proc_buf_printf(pb, "\n");
+}
+
+static void mos_print_row(proc_buf_t *pb, const char *name, const char *value,
+			  unsigned raw, const char *notes)
+{
+	proc_buf_printf(pb, "| %-22s | %12s | %12u | %-12s |\n", name, value,
+			raw, notes);
+}
+
+static void mos_print_bytes(proc_buf_t *pb, const char *name, unsigned bytes)
+{
+	char value[32];
+
+	sprintf(value, "%h", bytes);
+	mos_print_row(pb, name, value, bytes, "bytes");
+}
+
+static void mos_print_count(proc_buf_t *pb, const char *name, unsigned count)
+{
+	char value[32];
+
+	sprintf(value, "%h", count);
+	mos_print_row(pb, name, value, count, "count");
+}
+
+static void mos_print_count_rate(proc_buf_t *pb, const char *name,
+				 unsigned count, unsigned rate)
+{
+	char value[32];
+	char notes[16];
+
+	sprintf(value, "%h", count);
+	sprintf(notes, "%u%% hit", rate);
+	mos_print_row(pb, name, value, count, notes);
+}
+
+static void mos_print_usage(proc_buf_t *pb, const char *name, unsigned pages,
+			    unsigned total_pages)
+{
+	unsigned bytes = pages * PAGE_SIZE;
+	unsigned pct = total_pages ? pages * 100 / total_pages : 0;
+	char value[32];
+	char notes[16];
+
+	sprintf(value, "%h", bytes);
+	sprintf(notes, "%u%% used", pct);
+	mos_print_row(pb, name, value, bytes, notes);
+}
+
 static void fill(proc_buf_t *pb)
 {
+	phymm_usage mem;
 	unsigned pf_cache_rate =
 		page_fault_file ?
 			page_fault_file_cache_hit * 100 / page_fault_file :
 			0;
+	unsigned inode_cache_rate =
+		fs_page_cache_searches ?
+			fs_page_cache_hits * 100 / fs_page_cache_searches :
+			0;
 #if HDD_CACHE_OPEN
-	unsigned fs_cache_rate =
-		cache_search_count ? cache_hit * 100 / cache_search_count : 0;
+	unsigned hdd_cache_rate =
+		hdd_cache_search_count ?
+			hdd_cache_hit * 100 / hdd_cache_search_count :
+			0;
 #endif
+	phymm_get_usage(&mem);
+
 	/* ---- Memory / kernel heap ---- */
-	proc_buf_printf(pb, "KernelHeapBytes:       %8u\n", heap_quota);
-	proc_buf_printf(pb, "KernelHeapPeakBytes:   %8u\n", heap_quota_high);
+	mos_table_begin(pb, "Memory");
+	mos_print_bytes(pb, "kmalloc current", heap_quota);
+	mos_print_bytes(pb, "kmalloc peak", heap_quota_high);
+	mos_print_bytes(pb, "low phys total", mem.low_total_pages * PAGE_SIZE);
+	mos_print_usage(pb, "low phys used", mem.low_used_pages,
+			mem.low_total_pages);
+	mos_print_bytes(pb, "low phys free", mem.low_free_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "high phys total",
+			mem.high_total_pages * PAGE_SIZE);
+	mos_print_usage(pb, "high phys used", mem.high_used_pages,
+			mem.high_total_pages);
+	mos_print_bytes(pb, "high phys free", mem.high_free_pages * PAGE_SIZE);
+	mos_table_end(pb);
 
 	/* ---- Page fault counters ---- */
-	proc_buf_printf(pb, "PfCow:                 %8u\n", page_fault_cow);
-	proc_buf_printf(pb, "PfInvalid:             %8u\n", page_fault_invalid);
-	proc_buf_printf(pb, "PfFile:                %8u\n", page_fault_file);
-	proc_buf_printf(pb, "PfFileCacheHit:        %8u (%u%%)\n",
-			page_fault_file_cache_hit, pf_cache_rate);
-	proc_buf_printf(pb, "PfFileRead:            %8u\n",
-			page_fault_file_read);
-	proc_buf_printf(pb, "PfPerm:                %8u\n", page_fault_perm);
+	mos_table_begin(pb, "Page faults");
+	mos_print_count(pb, "COW", page_fault_cow);
+	mos_print_count(pb, "invalid", page_fault_invalid);
+	mos_print_count(pb, "file-backed", page_fault_file);
+	mos_print_count_rate(pb, "file cache hit", page_fault_file_cache_hit,
+			     pf_cache_rate);
+	mos_print_count(pb, "file read", page_fault_file_read);
+	mos_print_count(pb, "permission", page_fault_perm);
+	mos_table_end(pb);
 
 	/* ---- Filesystem I/O ---- */
-	proc_buf_printf(pb, "FsReadBytes:           %8u\n", fs_read_size);
-	proc_buf_printf(pb, "FsWriteBytes:          %8u\n", fs_write_size);
+	mos_table_begin(pb, "I/O");
+	mos_print_bytes(pb, "fs read", fs_read_size);
+	mos_print_bytes(pb, "fs write", fs_write_size);
+	mos_print_bytes(pb, "disk read", disk_read_size);
+	mos_print_bytes(pb, "disk write", disk_write_size);
+	mos_table_end(pb);
+
+	/* ---- Inode / filesystem page cache ---- */
+	mos_table_begin(pb, "Inode/filesystem page cache");
+	mos_print_bytes(pb, "current", fs_page_cache_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "peak", fs_page_cache_max_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "capacity", PAGE_CACHE_SIZE * PAGE_SIZE);
+	mos_print_count(pb, "lookups", fs_page_cache_searches);
+	mos_print_count_rate(pb, "hits", fs_page_cache_hits,
+			     inode_cache_rate);
+	mos_table_end(pb);
+
 #if HDD_CACHE_OPEN
-	proc_buf_printf(pb, "FsCacheReadBytes:      %8u\n", fs_cache_read_size);
-	proc_buf_printf(pb, "FsCacheWriteBytes:     %8u\n",
-			fs_cache_write_size);
-	proc_buf_printf(pb, "FsCacheBytes:          %8u\n",
-			fs_cache_size * BLOCK_SECTOR_SIZE);
-	proc_buf_printf(pb, "FsCacheMaxBytes:       %8u\n",
-			max_fs_cache_size * BLOCK_SECTOR_SIZE);
-	proc_buf_printf(pb, "FsCacheSearches:       %8u\n", cache_search_count);
-	proc_buf_printf(pb, "FsCacheHits:           %8u (%u%%)\n", cache_hit,
-			fs_cache_rate);
-	proc_buf_printf(pb, "FsCacheSearchTimeUs:   %8u\n",
-			(unsigned)cache_search_time);
+	/* ---- HDD block cache ---- */
+	mos_table_begin(pb, "HDD block cache");
+	mos_print_bytes(pb, "cached sectors", hdd_cache_size * BLOCK_SECTOR_SIZE);
+	mos_print_bytes(pb, "peak sectors",
+			hdd_cache_max_size * BLOCK_SECTOR_SIZE);
+	mos_print_bytes(pb, "capacity", HDD_CACHE_SIZE * PAGE_SIZE);
+	mos_print_bytes(pb, "read served", hdd_cache_read_size);
+	mos_print_bytes(pb, "write served", hdd_cache_write_size);
+	mos_print_count(pb, "lookups", hdd_cache_search_count);
+	mos_print_count_rate(pb, "hits", hdd_cache_hit, hdd_cache_rate);
+	mos_table_end(pb);
 #endif
-	proc_buf_printf(pb, "DiskReadBytes:         %8u\n", disk_read_size);
-	proc_buf_printf(pb, "DiskWriteBytes:        %8u\n", disk_write_size);
 
 	/* ---- Scheduler ---- */
-	proc_buf_printf(pb, "SchedCalls:            %8u\n",
-			task_schedule_count);
+	mos_table_begin(pb, "Scheduler");
+	mos_print_count(pb, "schedule calls", task_schedule_count);
+	mos_table_end(pb);
 }
 
 static int mos_getattr(file *file, struct stat *s)

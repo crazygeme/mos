@@ -9,6 +9,11 @@
 
 extern unsigned cache_count;
 
+unsigned fs_page_cache_pages = 0;
+unsigned fs_page_cache_max_pages = 0;
+unsigned fs_page_cache_searches = 0;
+unsigned fs_page_cache_hits = 0;
+
 typedef struct _fs_page_cache_key {
 	void *tag;
 	uint64_t ino;
@@ -50,6 +55,7 @@ static void fs_page_cache_entry_evict(const key_value_pair *pair)
 	if (phymm_dereference_page(page_index) == 0)
 		phymm_free_user(page_index);
 	cache_count--;
+	fs_page_cache_pages--;
 	free(evict);
 }
 
@@ -125,6 +131,7 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 	tmp.tag = inode->i_pgcache_tag;
 	tmp.ino = inode->i_ino;
 	tmp.offset = offset & PAGE_SIZE_MASK;
+	fs_page_cache_searches++;
 
 	mutex_lock(&fs_page_cache_lock);
 	pair = hash_find(fs_page_cache, &tmp);
@@ -136,6 +143,7 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 		mutex_unlock(&fs_page_cache_lock);
 		if (cache_hit)
 			*cache_hit = 1;
+		fs_page_cache_hits++;
 		return phy;
 	}
 
@@ -154,6 +162,7 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 		phymm_free_user(PHY_TO_PAGE_IDX(phy));
 		if (cache_hit)
 			*cache_hit = 1;
+		fs_page_cache_hits++;
 		return ((fs_page_cache_entry *)pair->val)->phy;
 	}
 
@@ -169,6 +178,9 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 	hash_insert(fs_page_cache, &entry->key, entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 	cache_count++;
+	fs_page_cache_pages++;
+	if (fs_page_cache_max_pages < fs_page_cache_pages)
+		fs_page_cache_max_pages = fs_page_cache_pages;
 	mutex_unlock(&fs_page_cache_lock);
 	return phy;
 }

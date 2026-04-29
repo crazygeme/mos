@@ -204,7 +204,7 @@ KTEST(mm, attached_page_index)
 	ASSERT_NE(addr, 0u);
 
 	unsigned idx = mm_get_attached_page_index(addr);
-	/* Physical page index must correspond to addr - KERNEL_OFFSET */
+	/* Kernel heap addresses are direct-map aliases. */
 	unsigned expected = (addr - KERNEL_OFFSET) / PAGE_SIZE;
 	EXPECT_EQ(idx, expected);
 

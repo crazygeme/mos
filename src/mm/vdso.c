@@ -58,7 +58,7 @@ void mm_vdso_map()
 
 	for (i = 0; i < page_count; i++) {
 		unsigned vir = base + i * PAGE_SIZE;
-		unsigned phy = vdso_start + i * PAGE_SIZE - KERNEL_OFFSET;
+		unsigned phy = VIRT_TO_PHY(vdso_start + i * PAGE_SIZE);
 		mm_map_page(vir, phy, PAGE_ENTRY_USER_CODE);
 	}
 	RELOAD_CR3();
@@ -85,8 +85,8 @@ unsigned mm_vdso_fastcall_entry(void)
 
 int mm_vdso_region(int phy)
 {
-	unsigned vdso_start = (unsigned)&__vdso_start - KERNEL_OFFSET;
-	unsigned vdso_end = (unsigned)&__vdso_end - KERNEL_OFFSET;
+	unsigned vdso_start = VIRT_TO_PHY(&__vdso_start);
+	unsigned vdso_end = VIRT_TO_PHY(&__vdso_end);
 
 	return phy >= vdso_start && phy < vdso_end;
 }

@@ -499,7 +499,7 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 			(unsigned *)(page_dir[i] & PAGE_SIZE_MASK);
 		if (!page_table)
 			continue;
-		page_table = (unsigned *)((unsigned)page_table + KERNEL_OFFSET);
+		page_table = (unsigned *)PHY_TO_VIRT((unsigned)page_table);
 		for (j = 0; j < 1024; j++) {
 			if ((page_table[j] & PAGE_SIZE_MASK) == 0)
 				continue;
@@ -565,8 +565,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
-				  KERNEL_OFFSET);
+		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 
 		/* The page-table page exists now, but the target leaf mapping can
@@ -575,8 +574,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
-				  KERNEL_OFFSET);
+		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 
 		/* Present is not enough for a store: private forked pages arrive
@@ -586,8 +584,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 1))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
-				  KERNEL_OFFSET);
+		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 		if (!(pte & PAGE_ENTRY_PRESENT) || !(pte & PAGE_ENTRY_WRITABLE))
 			return -EFAULT;
@@ -595,8 +592,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		if (mm_kmap_phys(pte & PAGE_SIZE_MASK) != 1)
 			return -EFAULT;
 
-		memcpy((char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) +
-			       page_off,
+		memcpy((char *)PHY_TO_VIRT(pte & PAGE_SIZE_MASK) + page_off,
 		       csrc, to_write);
 
 		vaddr += to_write;
@@ -632,8 +628,7 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
 			return -EFAULT;
 
-		pt = (unsigned *)((pd[pde_idx] & PAGE_SIZE_MASK) +
-				  KERNEL_OFFSET);
+		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 		if (!(pte & PAGE_ENTRY_PRESENT))
 			return -EFAULT;
@@ -642,13 +637,11 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 			return -EFAULT;
 
 		/*
-		 * High physical pages are not always covered by the initial
-		 * phys+KERNEL_OFFSET boot mapping. Ensure the kernel alias
-		 * exists before dereferencing the tracee's backing page.
+		 * Tracee pages may need a kmap alias before the kernel can
+		 * dereference their physical backing page.
 		 */
 		memcpy(cdst,
-		       (char *)((pte & PAGE_SIZE_MASK) + KERNEL_OFFSET) +
-			       page_off,
+		       (char *)PHY_TO_VIRT(pte & PAGE_SIZE_MASK) + page_off,
 		       to_read);
 		vaddr += to_read;
 		cdst += to_read;

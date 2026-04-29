@@ -56,7 +56,7 @@ static void cleanup()
 		new_pd = vm_alloc(1);
 		mm_init_process_page_dir((unsigned int)new_pd);
 		cur->user->page_dir = (unsigned int)new_pd;
-		SET_CR3((unsigned)new_pd - KERNEL_OFFSET);
+		SET_CR3(VIRT_TO_PHY(new_pd));
 		cur->user->vm = vm_create();
 		cur->user->mmap_cache = NULL;
 	} else {

@@ -24,8 +24,7 @@
 
 unsigned sock_default_rxbuf_size(int domain)
 {
-	return domain == AF_UNIX ? SOCK_RXBUF_UNIX_SIZE :
-				   SOCK_RXBUF_INET_SIZE;
+	return domain == AF_UNIX ? SOCK_RXBUF_UNIX_SIZE : SOCK_RXBUF_INET_SIZE;
 }
 
 int sock_alloc_rxbuf(mos_sock *sk, unsigned size)

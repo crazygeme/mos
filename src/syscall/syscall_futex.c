@@ -60,6 +60,18 @@ int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake)
 	return n;
 }
 
+void ps_futex_remove_task_locked(task_struct *task)
+{
+	list_entry *entry = futex_waiters.next;
+
+	while (entry != &futex_waiters) {
+		futex_waiter *w = container_of(entry, futex_waiter, list);
+		entry = entry->next;
+		if (w->task == task)
+			list_remove_entry(&w->list);
+	}
+}
+
 void ps_clear_child_tid(task_struct *task)
 {
 	int irq;

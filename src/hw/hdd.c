@@ -734,11 +734,10 @@ static int partition_write(void *aux, unsigned sector, void *buf, unsigned len)
 
 /* ── Block cache ──────────────────────────────────────────────────────────────── */
 #if HDD_CACHE_OPEN
-unsigned cache_hit = 0;
-unsigned long long cache_search_time = 0;
-unsigned cache_search_count = 0;
-unsigned fs_cache_size = 0;
-unsigned max_fs_cache_size = 0;
+unsigned hdd_cache_hit = 0;
+unsigned hdd_cache_search_count = 0;
+unsigned hdd_cache_size = 0;
+unsigned hdd_cache_max_size = 0;
 
 static int int_comp(const void *key1, const void *key2)
 {
@@ -818,14 +817,14 @@ static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 	if (sector == -1)
 		return (block_cache_item *)-1;
 
-	cache_search_count++;
+	hdd_cache_search_count++;
 
 	pair = hash_find(p->cache.hash, head_sector);
 
 	if (!pair)
 		return NULL;
 
-	cache_hit++;
+	hdd_cache_hit++;
 	return (block_cache_item *)pair->val;
 }
 
@@ -877,9 +876,9 @@ static block_cache_item *hdd_cache_reserve_miss_locked(partition *p,
 		if (!item)
 			return NULL;
 		p->cache.sectors += PREREAD_SECTOR;
-		fs_cache_size = p->cache.sectors;
-		if (max_fs_cache_size < p->cache.sectors)
-			max_fs_cache_size = p->cache.sectors;
+		hdd_cache_size = p->cache.sectors;
+		if (hdd_cache_max_size < p->cache.sectors)
+			hdd_cache_max_size = p->cache.sectors;
 		list_insert_head(&p->cache.timer_list_head, &item->time_list);
 	} else {
 		item = hdd_cache_find_oldest(p);
@@ -955,14 +954,14 @@ static void partition_cache_evict(partition *p)
 			container_of(entry, block_cache_item, time_list);
 		block_cache_item_remove(item);
 		p->cache.sectors -= PREREAD_SECTOR;
-		fs_cache_size = p->cache.sectors;
+		hdd_cache_size = p->cache.sectors;
 		entry = next;
 	}
 	mutex_unlock(&p->cache_lock);
 }
 
-unsigned fs_cache_read_size = 0;
-unsigned fs_cache_write_size = 0;
+unsigned hdd_cache_read_size = 0;
+unsigned hdd_cache_write_size = 0;
 
 static int partition_cache_read(void *aux, unsigned sector, void *buf,
 				unsigned len)
@@ -993,7 +992,7 @@ retry:
 		mutex_unlock(&p->cache_lock);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
-		fs_cache_read_size += BLOCK_SECTOR_SIZE;
+		hdd_cache_read_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
 
@@ -1019,7 +1018,7 @@ retry:
 
 	memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 	       BLOCK_SECTOR_SIZE);
-	fs_cache_read_size += BLOCK_SECTOR_SIZE;
+	hdd_cache_read_size += BLOCK_SECTOR_SIZE;
 	return BLOCK_SECTOR_SIZE;
 }
 
@@ -1045,7 +1044,7 @@ retry:
 		}
 		hdd_cache_update(p, item, sector, buf, 1);
 		mutex_unlock(&p->cache_lock);
-		fs_cache_write_size += BLOCK_SECTOR_SIZE;
+		hdd_cache_write_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
 	}
 
@@ -1072,7 +1071,7 @@ retry:
 	hdd_cache_publish_loaded_locked(item);
 	hdd_cache_update(p, item, sector, buf, 1);
 	mutex_unlock(&p->cache_lock);
-	fs_cache_write_size += len;
+	hdd_cache_write_size += len;
 	return len;
 }
 

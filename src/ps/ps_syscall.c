@@ -276,6 +276,7 @@ void ps_kill_thread_group(task_struct *leader)
 		 * structure before the leader destroys shared VM/file-table state.
 		 */
 		timer_disarm_unsafe(task);
+		ps_futex_remove_task_locked(task);
 		list_remove_entry(&task->ps_list);
 		ps_remove_mgr_unsafe(task);
 		task->psid = 0xffffffff;

@@ -59,6 +59,7 @@ void timer_arm_unsafe(task_struct *task, unsigned ms);
 void timer_disarm_unsafe(task_struct *task);
 void ps_fire_timers_unsafe(void);
 int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake);
+void ps_futex_remove_task_locked(task_struct *task);
 void ps_clear_child_tid(task_struct *task);
 
 /* Shared task-creation helpers. */

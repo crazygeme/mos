@@ -167,10 +167,11 @@ static void close_fp_callback(task_struct *task, void *ctx)
 	}
 }
 
-static void system_down()
+static void system_down(int process)
 {
 	klog_close();
-	ps_enum_all(close_fp_callback, NULL);
+	if (process)
+		ps_enum_all(close_fp_callback, NULL);
 	ext4_umount("/");
 	hdd_close();
 }
@@ -349,9 +350,9 @@ void do_exit(unsigned encoded_status)
 		if (TestControl.test) {
 			unsigned char code =
 				(unsigned char)((encoded_status >> 8) & 0xff);
-			printf("test mode: init exited with status %u\n", code);
+			klog("test mode: init exited with status %u\n", code);
 			int_intr_enable();
-			system_down();
+			system_down(1);
 			int_intr_disable();
 			qemu_exit(code);
 			for (;;)
@@ -655,31 +656,20 @@ void reboot()
 	 * Force enable interrupt first to make sure fs cache can be flushed.
 	 */
 	int_intr_enable();
-	system_down();
+	system_down(0);
 	int_intr_disable();
 	port_write_byte(0x64, 0xfe);
 }
 
 void shutdown()
 {
-	/**
-	 * This is not a correct shutdown but now we just needs a testable procedure.
-	 * Force enable interrupt first to make sure fs cache can be flushed.
-	 */
-	const char s[] = "Shutdown";
-	const char *p;
-	printf("Shutting down system ...\n");
+	klog("Shutting down system ...\n");
 	int_intr_enable();
-	system_down();
+	system_down(0);
 	int_intr_disable();
-
-	printf("Power off...\n");
-	for (p = s; *p != '\0'; p++)
-		port_write_byte(0x8900, *p);
 
 	qemu_exit(0x00);
 
-	printf("still running...\n");
 	for (;;)
 		HLT();
 }

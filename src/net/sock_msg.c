@@ -128,7 +128,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 	size_t sent = 0;
 	size_t i;
 	int nonblock = sock_msg_is_nonblock(flags);
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long deadline = time_now_ms() + sock_send_timeout_ms(sk);
 
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
 		return -ENOTCONN;
@@ -153,7 +153,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 					return sent > 0 ? (int)sent : -EAGAIN;
 				if (time_now_ms() > deadline)
 					return sent > 0 ? (int)sent :
-							  -ETIMEDOUT;
+							  sock_send_timeout_errno(sk);
 				tcp_output(sk->tcp);
 				if (sock_wait(sk, deadline) < 0)
 					return sent > 0 ? (int)sent : -EINTR;
@@ -177,7 +177,8 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 			if (nonblock)
 				return sent > 0 ? (int)sent : -EAGAIN;
 			if (time_now_ms() > deadline)
-				return sent > 0 ? (int)sent : -ETIMEDOUT;
+				return sent > 0 ? (int)sent :
+						  sock_send_timeout_errno(sk);
 			tcp_output(sk->tcp);
 			if (sock_wait(sk, deadline) < 0)
 				return sent > 0 ? (int)sent : -EINTR;
@@ -266,7 +267,7 @@ static int sock_recv_wait_dgram(mos_sock *sk, int flags, unsigned long deadline)
 		if (sock_msg_is_nonblock(flags))
 			return -EAGAIN;
 		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+			return sock_recv_timeout_errno(sk);
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
@@ -286,7 +287,7 @@ static int sock_recv_wait_stream(mos_sock *sk, int flags,
 		if (sock_msg_is_nonblock(flags))
 			return -EAGAIN;
 		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+			return sock_recv_timeout_errno(sk);
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
@@ -408,7 +409,7 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 		goto done;
 	}
 
-	deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		wait_ret = sock_recv_wait_dgram(sk, flags, deadline);

@@ -127,7 +127,8 @@ typedef struct _block_cache_item {
 	int sector; /* head sector of this cached extent        */
 	unsigned dirty; /* non-zero if write-back flush needed      */
 	int loading; /* non-zero while refill/evict I/O is in flight */
-	void *buf; /* vm_alloc'd buffer (PREREAD_SECTOR * 512) */
+	unsigned page_index; /* phymm_alloc_user() page backing buf */
+	void *buf; /* kernel alias for page_index */
 	struct rb_node hash_node;
 	list_entry time_list;
 } block_cache_item;
@@ -294,7 +295,7 @@ static void dma_init_channel(channel *c, int chan_no)
 
 	/*
 	 * PRDT: single 8-byte entry.  kmalloc returns kernel-heap memory
-	 * whose physical address is (virt - KERNEL_OFFSET).  An 8-byte
+	 * whose physical address is resolved from its page-table mapping. An 8-byte
 	 * allocation never crosses a 64 KiB physical boundary.
 	 */
 	c->prdt = (prdt_entry_t *)kmalloc(sizeof(prdt_entry_t));
@@ -303,7 +304,7 @@ static void dma_init_channel(channel *c, int chan_no)
 	/* One-page (4 KiB) bounce buffer — always page-aligned, never
 	 * crosses a 64 KiB boundary, suitable for single-sector DMA.    */
 	c->dma_buf = (void *)vm_alloc(1);
-	c->dma_buf_phys = (unsigned int)c->dma_buf - KERNEL_OFFSET;
+	c->dma_buf_phys = VIRT_TO_PHY(c->dma_buf);
 
 	printk("hdd: %s DMA enabled, bm=0x%x buf_phys=0x%x\n", c->name,
 	       c->bm_base, c->dma_buf_phys);
@@ -571,7 +572,7 @@ static int disk_read(void *aux, unsigned sec_no, void *buf, unsigned len)
 					BM_STA_IRQ | BM_STA_ERROR);
 			/* Load PRDT physical address. */
 			port_write_dword(c->bm_base + BM_PRDT,
-					 (unsigned int)c->prdt - KERNEL_OFFSET);
+					 VIRT_TO_PHY(c->prdt));
 			/* Set transfer direction: device → memory. */
 			port_write_byte(c->bm_base + BM_CMD, BM_CMD_READ);
 			/* Issue ATA DMA read command. */
@@ -661,7 +662,7 @@ static int disk_write(void *aux, unsigned sec_no, void *buf, unsigned len)
 					BM_STA_IRQ | BM_STA_ERROR);
 
 			port_write_dword(c->bm_base + BM_PRDT,
-					 (unsigned int)c->prdt - KERNEL_OFFSET);
+					 VIRT_TO_PHY(c->prdt));
 			/* Set transfer direction: memory → device. */
 			port_write_byte(c->bm_base + BM_CMD, BM_CMD_WRITE);
 			/* Issue ATA DMA write command. */
@@ -747,14 +748,39 @@ static int int_comp(const void *key1, const void *key2)
 static block_cache_item *block_cache_item_create(void)
 {
 	unsigned buf_pages = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
+	unsigned phy;
 	block_cache_item *item;
-	if (!buf_pages)
-		buf_pages = 1;
+
+	if (buf_pages != 1)
+		return NULL;
+
 	item = kmalloc(sizeof(*item));
+	if (!item)
+		return NULL;
 	item->sector = -1;
 	item->dirty = 0;
 	item->loading = 0;
-	item->buf = vm_alloc(buf_pages);
+	item->page_index = phymm_alloc_user();
+	if (item->page_index == PHYMM_INVALID) {
+		kfree(item);
+		return NULL;
+	}
+
+	phy = item->page_index * PAGE_SIZE;
+	if (mm_kmap_phys(phy) != 1) {
+		phymm_free_user(item->page_index);
+		kfree(item);
+		return NULL;
+	}
+
+	item->buf = (void *)PHY_TO_VIRT(phy);
+	if (!item->buf) {
+		phymm_free_user(item->page_index);
+		kfree(item);
+		return NULL;
+	}
+
+	phymm_reference_page(item->page_index);
 	cache_count += buf_pages;
 	rb_init_node(&item->hash_node);
 	list_init(&item->time_list);
@@ -768,7 +794,9 @@ static void block_cache_item_remove(block_cache_item *item)
 		buf_pages = 1;
 	if (!item)
 		return;
-	vm_free(item->buf, buf_pages);
+	if (item->page_index != PHYMM_INVALID &&
+	    phymm_dereference_page(item->page_index) == 0)
+		phymm_free_user(item->page_index);
 	cache_count -= buf_pages;
 	kfree(item);
 }
@@ -846,6 +874,8 @@ static block_cache_item *hdd_cache_reserve_miss_locked(partition *p,
 
 	if (p->cache.sectors < CACHE_SECTOR_COUNT) {
 		item = block_cache_item_create();
+		if (!item)
+			return NULL;
 		p->cache.sectors += PREREAD_SECTOR;
 		fs_cache_size = p->cache.sectors;
 		if (max_fs_cache_size < p->cache.sectors)

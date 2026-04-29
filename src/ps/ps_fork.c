@@ -263,15 +263,12 @@ static void copy_pte_range(unsigned *src_pd, unsigned *dst_pd, vm_region *vma,
 	int cache_idx;
 	unsigned i;
 
-	src_pt = (unsigned *)((src_pd[pde_idx] & PAGE_SIZE_MASK) +
-			      KERNEL_OFFSET);
+	src_pt = (unsigned *)PHY_TO_VIRT(src_pd[pde_idx] & PAGE_SIZE_MASK);
 
 	if (!(dst_pd[pde_idx] & PAGE_SIZE_MASK))
-		dst_pd[pde_idx] = (mm_alloc_page_table() - KERNEL_OFFSET) |
-				  pde_flag;
+		dst_pd[pde_idx] = VIRT_TO_PHY(mm_alloc_page_table()) | pde_flag;
 
-	dst_pt = (unsigned *)((dst_pd[pde_idx] & PAGE_SIZE_MASK) +
-			      KERNEL_OFFSET);
+	dst_pt = (unsigned *)PHY_TO_VIRT(dst_pd[pde_idx] & PAGE_SIZE_MASK);
 	cache_idx = (PAGE_TABLE_CACHE_END - (unsigned)dst_pt) / PAGE_SIZE - 1;
 
 	for (i = pt_start; i < pt_end; i++) {

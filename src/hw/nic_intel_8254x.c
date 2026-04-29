@@ -4,7 +4,7 @@
  *
  * Uses legacy descriptor format, polled TX, interrupt-driven RX.
  * MMIO is at BAR0 (memory-mapped, >= 0xC0000000 in QEMU → mapped with
- * mm_map_io).  DMA buffers live in kernel heap; PA = VA - KERNEL_OFFSET.
+ * mm_map_io).  DMA buffers live in kernel heap; PA is resolved from the PTE.
  */
 #include <hw/nic.h>
 #include <hw/pci.h>
@@ -14,6 +14,7 @@
 #include <int/int.h>
 #include <macro.h>
 #include <config.h>
+#include <mm/phymm.h>
 #include <stdint.h>
 #include <lwip/pbuf.h>
 
@@ -163,9 +164,8 @@ static void e1000_handle_rx(e1000_ctx *ctx)
 			break;
 
 		uint16_t len = desc->length;
-		uint8_t *buf =
-			(uint8_t *)(ctx->rx_bufs_va +
-				    (uint32_t)idx * E1000_RX_BUF_SIZE);
+		uint8_t *buf = (uint8_t *)(ctx->rx_bufs_va +
+					   (uint32_t)idx * E1000_RX_BUF_SIZE);
 
 		int queued = 0;
 		if (len > 0 && ctx->nic && ctx->nic->rx_notify)
@@ -239,7 +239,7 @@ static int nic_intel_8254x_send(void *_dev, const void *buf, uint16_t len)
 		len = (uint16_t)E1000_TX_BUF_SIZE;
 	memcpy(txbuf, buf, len);
 
-	desc->addr = (uint64_t)((uint32_t)txbuf - KERNEL_OFFSET);
+	desc->addr = (uint64_t)VIRT_TO_PHY(txbuf);
 	desc->length = len;
 	desc->cso = 0;
 	desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
@@ -283,7 +283,7 @@ static int nic_intel_8254x_send_pbuf(void *_dev, const struct pbuf *p)
 	if (off != len)
 		return -1;
 
-	desc->addr = (uint64_t)((uint32_t)txbuf - KERNEL_OFFSET);
+	desc->addr = (uint64_t)VIRT_TO_PHY(txbuf);
 	desc->length = len;
 	desc->cso = 0;
 	desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_IFCS | E1000_TXD_CMD_RS;
@@ -366,11 +366,10 @@ static int nic_intel_8254x_init(void *_dev)
 
 	for (i = 0; i < E1000_NUM_RX_DESC; i++) {
 		uint32_t va = ctx->rx_bufs_va + (uint32_t)i * E1000_RX_BUF_SIZE;
-		ctx->rx_descs[i].addr =
-			(uint64_t)((uint32_t)va - KERNEL_OFFSET);
+		ctx->rx_descs[i].addr = (uint64_t)VIRT_TO_PHY(va);
 	}
 
-	uint32_t rx_phys = (uint32_t)ctx->rx_descs - KERNEL_OFFSET;
+	uint32_t rx_phys = VIRT_TO_PHY(ctx->rx_descs);
 	e1000_wr(ctx, E1000_RDBAL, rx_phys);
 	e1000_wr(ctx, E1000_RDBAH, 0);
 	e1000_wr(ctx, E1000_RDLEN,
@@ -401,7 +400,7 @@ static int nic_intel_8254x_init(void *_dev)
 	for (i = 0; i < E1000_NUM_TX_DESC; i++)
 		ctx->tx_descs[i].status = E1000_TXD_STAT_DD;
 
-	uint32_t tx_phys = (uint32_t)ctx->tx_descs - KERNEL_OFFSET;
+	uint32_t tx_phys = VIRT_TO_PHY(ctx->tx_descs);
 	e1000_wr(ctx, E1000_TDBAL, tx_phys);
 	e1000_wr(ctx, E1000_TDBAH, 0);
 	e1000_wr(ctx, E1000_TDLEN,

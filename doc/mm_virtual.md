@@ -17,6 +17,72 @@ MOS now has a Linux-like lazy virtual-memory layer:
 
 This document describes the behavior that exists in the current tree, not the older design.
 
+## Summary
+
+MOS uses a classic 3G/1G split. User virtual memory occupies
+`0x00000000..KERNEL_OFFSET`, while kernel virtual memory occupies
+`KERNEL_OFFSET..0xFFFFFFFF`. Kernel-owned RAM remains in the low physical
+direct map. User, page-cache, file-backed, shared-memory, and HDD-cache pages
+prefer high physical RAM and are reached by the kernel through `kmap` aliases
+when they are outside the direct map. Firmware, BIOS, and MMIO ranges are
+physical address ranges, not allocator-owned RAM; they are mapped only through
+special direct-physical paths. The vDSO is a user mapping near the top of the
+mmap area, backed by read-only kernel image pages.
+
+```
+Virtual address space
+
+0x00000000
+    +---------------------------------------------------------------+
+    | Reserved / NULL guard / low user addresses                    |
+    +---------------------------------------------------------------+
+    | ELF text, data, BSS, loader mappings                          |
+    +---------------------------------------------------------------+
+    | brk heap                                                      |
+    |   [start_brk, brk)                                            |
+    +---------------------------------------------------------------+  TASK_UNMAPPED_BASE
+    | mmap area                                                     |
+    |   anonymous, file-backed, shared mappings                     |
+    |   pages fault in lazily, user physical pages prefer high RAM  |
+    |                                                               |
+    |   vDSO                                                        |
+    |     placed just below USER_ZONE_END                           |
+    |     maps kernel .vdso pages read/execute into each process    |
+    |                                                               |
+    |   /dev/mem mappings                                           |
+    |     direct physical PTEs, cache-disabled for MMIO/VRAM        |
+    |     may target BIOS, framebuffer, PCI BAR, or other phys addr |
+    +---------------------------------------------------------------+  USER_ZONE_END
+    | grow-down user stack reservation                              |
+    |   stack faults extend the stack downward within this window   |
+    +---------------------------------------------------------------+  KERNEL_OFFSET
+    | kernel direct map                                             |
+    |   low physical memory at physical + KERNEL_OFFSET             |
+    |   kernel image, static heap, page-table cache, vm_alloc pages |
+    |   boot-reserved low BIOS/firmware-adjacent pages stay here    |
+    +---------------------------------------------------------------+  KERNEL_KMAP_BEGIN
+    | high kernel physical window                                   |
+    |   temporary aliases for high physical user/cache pages        |
+    |   fixed MMIO mappings made by mm_map_io()                     |
+    |   examples: IOAPIC 0xFEC00000, LAPIC 0xFEE00000, PCI BARs     |
+    +---------------------------------------------------------------+  KERNEL_KMAP_END / 0x100000000
+```
+
+Physical memory classes:
+
+- Allocator RAM: usable Multiboot memory in `[phymm_begin, phymm_end)`.
+- Kernel direct-map RAM: allocator RAM below `KERNEL_DIRECT_MAP_LIMIT`, used
+  for kernel-owned allocations.
+- High user/cache RAM: allocator RAM above `KERNEL_DIRECT_MAP_LIMIT`, preferred
+  for user pages and caches.
+- vDSO pages: kernel image pages from the `.vdso` section, mapped read/execute
+  into user space just below `USER_ZONE_END`; these are not allocated from
+  `phymm_alloc_user()`.
+- Firmware/BIOS/reserved physical memory: not handed out by `phymm`; accessed
+  only when a subsystem maps the physical address explicitly.
+- MMIO/VRAM/PCI BARs: direct physical mappings; user mappings go through
+  `/dev/mem` with cache-disabled PTEs, while kernel mappings use `mm_map_io()`.
+
 ## Address-Space Layout
 
 The exact layout is defined by kernel constants, but the current split is:
@@ -25,6 +91,15 @@ The exact layout is defined by kernel constants, but the current split is:
 - `TASK_UNMAPPED_BASE` and above: general `mmap()` area.
 - Top of user space below `KERNEL_OFFSET`: grow-down user stack.
 - `KERNEL_OFFSET` and above: kernel virtual address space.
+
+The kernel half has two important MM regions:
+
+- `KERNEL_OFFSET..KERNEL_KMAP_BEGIN`: low physical memory direct map. Kernel
+  heap allocations returned by `vm_alloc()` live here and have stable
+  `physical + KERNEL_OFFSET` addresses.
+- `KERNEL_KMAP_BEGIN..KERNEL_KMAP_END`: kmap alias window. This range is used
+  when the kernel must temporarily dereference physical pages that are not in
+  the direct-map range, such as high user pages or page-cache pages.
 
 `/proc/<pid>/maps` is populated from the VM region tree. Anonymous ranges are labeled as:
 
@@ -190,7 +265,8 @@ Current mechanics:
 
 - lookup is protected by `fs_page_cache_lock`
 - hits move the entry to the tail of an LRU list
-- misses allocate a user physical page, temporarily kernel-map it, and fill it with `inode->i_op->read_page`
+- misses allocate a user physical page, preferring high physical memory, then
+  temporarily kernel-map it and fill it with `inode->i_op->read_page`
 - the inserted cache entry takes an extra physical-page reference with `phymm_reference_page`
 - eviction is LRU and bounded by `PAGE_CACHE_SIZE`
 
@@ -206,6 +282,9 @@ Invalidation:
 The important consequence for mmap is:
 
 - when an inode has this cache, both buffered file I/O and page faults converge on the same physical cached file pages
+- cached pages may live outside the kernel direct map; code that touches their
+  contents must first use `mm_kmap_phys()` or `PHY_TO_VIRT()` rather than
+  assuming `physical + KERNEL_OFFSET`
 
 ### MM file-shared cache
 
@@ -385,3 +464,6 @@ Growth happens in at least `USER_STACK_INIT_PAGES` chunks, not strictly one page
 - Shared anonymous pages and shared file pages are cached in kernel-global structures; those caches are simple and correctness-oriented, not aggressively optimized.
 - Dirty shared-file writeback exists, but `msync()` is not wired up yet.
 - VM enumeration order depends on the tree traversal used by `hash_first/hash_next`; the implementation expects it to be sorted by address.
+- User, page-cache, and shared-memory physical pages are allocated from high
+  memory first. Kernel-owned memory remains in the direct map so kernel
+  pointers returned by `vm_alloc()` stay simple and stable.

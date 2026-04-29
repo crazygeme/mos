@@ -312,8 +312,7 @@ static void tty_graphics_dirty_region_cb(vm_region *region, void *data)
 	unsigned vir;
 	unsigned vir_end;
 
-	if (!ctx || !region ||
-	    !(region->vm_flags & VM_REGION_F_DIRECT_PHYS))
+	if (!ctx || !region || !(region->vm_flags & VM_REGION_F_DIRECT_PHYS))
 		return;
 
 	region_phys_begin = (unsigned)region->offset;
@@ -322,9 +321,9 @@ static void tty_graphics_dirty_region_cb(vm_region *region, void *data)
 		return;
 
 	overlap_begin = region_phys_begin > ctx->fb_phys ? region_phys_begin :
-							  ctx->fb_phys;
+							   ctx->fb_phys;
 	overlap_end = region_phys_end < ctx->fb_end ? region_phys_end :
-							ctx->fb_end;
+						      ctx->fb_end;
 	vir = region->begin + (overlap_begin - region_phys_begin);
 	vir_end = region->begin + (overlap_end - region_phys_begin);
 
@@ -351,7 +350,8 @@ static int tty_graphics_owner_fb_dirty(const tty_state *state)
 		return 0;
 
 	owner = ps_find_process(state->kd_owner_pid);
-	if (!owner || !owner->user || !owner->user->vm || !owner->user->page_dir)
+	if (!owner || !owner->user || !owner->user->vm ||
+	    !owner->user->page_dir)
 		return 0;
 
 	fb_get_phys_window(&ctx.fb_phys, &ctx.fb_end);

@@ -62,6 +62,9 @@ static void buddy_remove(unsigned idx)
 
 	if (next != PHYMM_INVALID)
 		phymm_pages[next].prev_free = prev;
+
+	phymm_pages[idx].next_free = PHYMM_INVALID;
+	phymm_pages[idx].prev_free = PHYMM_INVALID;
 }
 
 /* Pop the head of the free list for @order. Returns PHYMM_INVALID if empty. */
@@ -80,7 +83,10 @@ static int buddy_is_free_at_order(unsigned idx, unsigned order)
 	if (idx < phymm_begin || idx >= phymm_end)
 		return 0;
 	return (phymm_pages[idx].ref_count == 0 &&
-		phymm_pages[idx].order == (unsigned char)order);
+		phymm_pages[idx].order == (unsigned char)order &&
+		(buddy_lists[order] == idx ||
+		 phymm_pages[idx].next_free != PHYMM_INVALID ||
+		 phymm_pages[idx].prev_free != PHYMM_INVALID));
 }
 
 /*
@@ -127,6 +133,103 @@ static unsigned buddy_alloc(unsigned order)
 	return PHYMM_INVALID;
 }
 
+static unsigned buddy_alloc_high(unsigned order)
+{
+	unsigned o;
+
+	for (o = order; o <= MAX_BUDDY_ORDER; o++) {
+		unsigned idx, best;
+
+		best = PHYMM_INVALID;
+		for (idx = buddy_lists[o]; idx != PHYMM_INVALID;
+		     idx = phymm_pages[idx].next_free)
+			if (best == PHYMM_INVALID || idx > best)
+				best = idx;
+
+		if (best == PHYMM_INVALID)
+			continue;
+
+		idx = best;
+		buddy_remove(idx);
+		while (o > order) {
+			unsigned lower = idx;
+			unsigned upper;
+
+			o--;
+			upper = idx + (1u << o);
+			if (upper < phymm_end) {
+				phymm_pages[lower].ref_count = 0;
+				buddy_push(lower, o);
+				idx = upper;
+			}
+		}
+
+		phymm_pages[idx].order = (unsigned char)order;
+		for (o = 1; o < (1u << order); o++) {
+			if (idx + o < phymm_end)
+				phymm_pages[idx + o].order = PHYMM_ORDER_NONE;
+		}
+		return idx;
+	}
+	return PHYMM_INVALID;
+}
+
+static int buddy_block_fits(unsigned idx, unsigned order, unsigned min_idx,
+			    unsigned max_idx)
+{
+	unsigned pages = 1u << order;
+
+	return idx >= min_idx && idx + pages <= max_idx;
+}
+
+static unsigned buddy_alloc_in_range(unsigned order, unsigned min_idx,
+				     unsigned max_idx)
+{
+	unsigned o;
+
+	if (min_idx >= max_idx)
+		return PHYMM_INVALID;
+
+	for (o = order; o <= MAX_BUDDY_ORDER; o++) {
+		unsigned idx;
+
+		for (idx = buddy_lists[o]; idx != PHYMM_INVALID;
+		     idx = phymm_pages[idx].next_free) {
+			unsigned half;
+			unsigned cur_order = o;
+
+			if (!buddy_block_fits(idx, o, min_idx, max_idx))
+				continue;
+
+			buddy_remove(idx);
+			while (cur_order > order) {
+				cur_order--;
+				half = idx + (1u << cur_order);
+				if (half < phymm_end) {
+					phymm_pages[half].ref_count = 0;
+					buddy_push(half, cur_order);
+				}
+			}
+
+			phymm_pages[idx].order = (unsigned char)order;
+			for (half = 1; half < (1u << order); half++) {
+				if (idx + half < phymm_end)
+					phymm_pages[idx + half].order =
+						PHYMM_ORDER_NONE;
+			}
+			return idx;
+		}
+	}
+	return PHYMM_INVALID;
+}
+
+static unsigned phymm_kernel_page_limit(void)
+{
+	unsigned limit = KERNEL_DIRECT_MAP_LIMIT / PAGE_SIZE;
+
+	return limit < phymm_end ? limit : phymm_end;
+}
+
 /*
  * Return a block starting at @idx of @order to the buddy system,
  * coalescing with free buddies as far as possible.
@@ -163,7 +266,8 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 	int irq;
 
 	spinlock_lock(&buddy_lock, &irq);
-	idx = buddy_alloc(order);
+	idx = buddy_alloc_in_range(order, phymm_begin,
+				   phymm_kernel_page_limit());
 	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
@@ -174,7 +278,9 @@ unsigned phymm_alloc_user(void)
 	int irq;
 
 	spinlock_lock(&buddy_lock, &irq);
-	idx = buddy_alloc(0);
+	idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
+	if (idx == PHYMM_INVALID)
+		idx = buddy_alloc_high(0);
 	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
@@ -279,11 +385,11 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 
 	for (i = (start_page * PAGE_SIZE); i < (phymm_begin * PAGE_SIZE);
 	     i += PAGE_SIZE) {
-		addr = i + KERNEL_OFFSET;
+		addr = KERNEL_OFFSET + i;
 		mm_kmap_page(addr);
 	}
 	RELOAD_CR3();
-	addr = (start_page * PAGE_SIZE) + KERNEL_OFFSET;
+	addr = KERNEL_OFFSET + start_page * PAGE_SIZE;
 	memset((void *)addr, 0, (phymm_begin - start_page) * PAGE_SIZE);
 	phymm_pages = (phymm_page *)(addr);
 }
@@ -316,8 +422,7 @@ static void buddy_add_free_range(unsigned start, unsigned end)
 /*
  * phymm_init – called once after phymm_setup_mgmt_pages.
  *
- * @mmap_addr: physical address of the multiboot memory map (accessible at
- *             mmap_addr + KERNEL_OFFSET since paging is now active).
+ * @mmap_addr: physical address of the multiboot memory map.
  * @mmap_len:  total byte length of the memory map.
  *
  * Steps:
@@ -349,10 +454,11 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 	if (!mmap_addr || !mmap_len)
 		return;
 
-	/* Access the mmap through the kernel virtual window (phys + KERNEL_OFFSET).
+	/* Access the mmap through the kernel physical-page alias.
 	 * The initial 8 MB mapping covers physical 0..8MB; GRUB places the mmap
 	 * in low memory so this is always valid. */
-	vmap_addr = mmap_addr + KERNEL_OFFSET;
+	mm_kmap_phys(mmap_addr);
+	vmap_addr = PHY_TO_VIRT(mmap_addr);
 	map = (memory_map_t *)vmap_addr;
 
 	/* 3. Walk all type-1 (usable RAM) entries */

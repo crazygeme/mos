@@ -58,7 +58,7 @@ void _task_sched(const char *func)
 	 * Kernel mappings are shared across all page directories so SET_CR3
 	 * here is safe — code and the current stack remain accessible. */
 	reset_tss(task);
-	SET_CR3(task->user->page_dir - KERNEL_OFFSET);
+	SET_CR3(VIRT_TO_PHY(task->user->page_dir));
 
 	/* Reload per-process TLS descriptors so that when RESTORE_ALL
 	 * loads GS the CPU finds the correct segment descriptor. */

@@ -46,8 +46,9 @@ static void fill(proc_buf_t *pb)
 	inactive_clean_pages = free_pages;
 	inactive_target_pages = free_pages / 4;
 
-	proc_buf_printf(pb,
-			"        total:    used:    free:  shared: buffers:  cached:\n");
+	proc_buf_printf(
+		pb,
+		"        total:    used:    free:  shared: buffers:  cached:\n");
 	proc_buf_printf(pb, "Mem:  %8lu %8lu %8lu %8lu %8lu %8lu\n",
 			PG_BYTES(total_pages), PG_BYTES(used_pages),
 			PG_BYTES(free_pages), 0ul, PG_BYTES(buffer_count),

@@ -97,6 +97,7 @@ typedef struct _TEST_CONTROL {
 extern TEST_CONTROL TestControl;
 
 #define TEST_LOG_OFF 0
+#define TEST_LOG_ALWAYS 0
 #define TEST_LOG_TRACE 1
 #define TEST_LOG_INFO 2
 

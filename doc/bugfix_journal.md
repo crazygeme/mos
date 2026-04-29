@@ -5,6 +5,172 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-30 - RH9 `shutdown -h now` stalled across xinetd, killall5, and final halt
+
+The RH9 shutdown path progressed through several separate compatibility
+boundaries before reaching the final halt. Each failure looked like a hang in
+the shutdown UI, but the syscall log showed a different missing Linux behavior
+at each stage.
+
+### 1. `xinetd` stayed alive after `SIGTERM`
+
+- **Caught by:** tracing the shutdown log around `/etc/rc0.d/K50xinetd` and
+  comparing it with RH9 `xinetd` 2.3.11 signal handling.
+- **Symptom:** the service script printed `Stopping xinetd:` and sent
+  `kill(1303, 15)`, but `xinetd` repeatedly woke from `select()` and never
+  exited.
+- **Key log evidence:**
+
+```text
+kill(1303, 15)
+sig_deliver(15)
+write(4, "\x0f", 1)
+_newselect(6, ...)
+ioctl(3, 541b, ...) = -25
+```
+
+- **Root cause:** `xinetd` writes received signals into an internal signal
+  pipe, then calls `ioctl(pipe_fd, FIONREAD, &count)` before draining that
+  pipe. MOS pipes did not implement `FIONREAD`, so `xinetd` logged the failure
+  and returned without consuming the pending `SIGTERM` byte. The pipe remained
+  readable and `select()` woke immediately again.
+- **Fix:** in [pipe.c](../src/fs/pipe.c), implement pipe `FIONREAD` using the
+  cycle-buffer byte count and expose the ioctl operation on both pipe ends.
+
+### 2. `killall5` left the shutdown shell stopped
+
+- **Caught by:** tracing `/etc/rc0.d/S01halt` after the service shutdown phase
+  and reading RH9 SysVinit `killall5` source.
+- **Symptom:** the script reached
+  `Sending all processes the TERM signal...`, then PID 1 resumed polling
+  `/dev/initctl` while the rc0 shell stopped making progress.
+- **Key log evidence:**
+
+```text
+execve(/sbin/killall5)
+kill(-1, 19)
+...
+kill(-1, 18)
+```
+
+- **Root cause:** `killall5` intentionally broadcasts `SIGSTOP`, scans
+  `/proc`, sends the requested signal to processes outside its own session,
+  then broadcasts `SIGCONT`. MOS stopped tasks on `SIGSTOP`, but default
+  `SIGCONT` only behaved as an ignored signal and did not resume tasks in
+  `ps_stopped`.
+- **Fix:** in [ps_signal.c](../src/ps/ps_signal.c), make `SIGCONT` clear
+  pending stop signals and wake stopped tasks. Stop signals now clear pending
+  `SIGCONT`, and `SIGKILL` wakes stopped tasks so they can terminate.
+
+### 3. `killall5 -9` killed PID 1
+
+- **Caught by:** the next shutdown attempt progressed through the TERM/KILL
+  phase, then printed the kernel-side shutdown message before `/sbin/halt`
+  issued the terminal reboot syscall.
+- **Symptom:** after `Sending all processes the KILL signal...`, init exited
+  and MOS entered the kernel shutdown helper early.
+- **Key log evidence:**
+
+```text
+kill(1, 9)
+exit(/sbin/init, status=8900)
+```
+
+- **Root cause:** Linux protects global init from ordinary default signal
+  actions. RH9 SysVinit relies on that behavior; `killall5 -9` may attempt to
+  signal PID 1, but PID 1 must not die unless it deliberately exits. MOS applied
+  normal `SIGKILL` semantics to PID 1.
+- **Fix:** protect PID 1 from default-disposition signal termination and stop
+  actions while still allowing init's installed handlers, such as its
+  `SIGTSTP`/`SIGCONT` handlers, to run normally.
+
+### 4. Final `reboot(2)` calls came from the rc0 shell, not PID 1
+
+- **Caught by:** enabling durable reboot syscall logging and tracing the final
+  `/sbin/halt` calls.
+- **Symptom:** `/sbin/halt` issued `BMAGIC_POWEROFF` and `BMAGIC_HALT`, but
+  MOS treated them as another request to init rather than powering off.
+- **Key log evidence:**
+
+```text
+reboot(magic1=fee1dead, magic2=28121969, cmd=89abcdef) from pid 1478
+reboot(magic1=fee1dead, magic2=28121969, cmd=4321fedc) from pid 1478
+reboot(magic1=fee1dead, magic2=28121969, cmd=cdef0123) from pid 1478
+reboot(magic1=fee1dead, magic2=28121969, cmd=0) from pid 1478
+```
+
+- **Root cause:** MOS only performed the hardware halt/poweroff action when
+  `reboot(2)` was called by PID 1. RH9's final `/sbin/halt` runs from the rc0
+  script process and expects `BMAGIC_POWEROFF` or `BMAGIC_HALT` to stop the
+  system directly.
+- **Fix:** in [syscall_sys.c](../src/syscall/syscall_sys.c), treat terminal
+  `POWER_OFF` and `HALT` reboot commands as direct hardware actions regardless
+  of caller PID. Restart remains routed conservatively unless issued by PID 1.
+
+### Key lesson
+
+Orderly SysV shutdown depends on several old Linux process and device
+semantics outside the final `reboot(2)` syscall. Signal-pipe ioctls, job-control
+resume behavior, PID 1 signal immunity, and forced halt command handling all
+need to match Linux closely or the same shutdown command can appear to hang at
+different user-visible messages.
+
+---
+
+## 2026-04-29 - GNOME desktop home and trash links lost their icons
+
+The RH9 GNOME desktop showed the `root's Home` and `Trash` desktop entries
+without their expected special icons. Real Linux preserves the home and trash
+icons because Nautilus can update the `.desktop` files in place during desktop
+startup.
+
+### 1. Nautilus truncated special desktop links, then aborted the rewrite
+
+- **Caught by:** tracing the syscall log around `/root/.gnome-desktop` and
+  comparing the observed operations with Nautilus 2.2 and GNOME desktop item
+  save behavior.
+- **Symptom:** both special desktop entries initially contained valid
+  `X-Nautilus-Icon` keys, but later became zero-length regular files. After
+  that, Nautilus could no longer parse the entries as special links, so the
+  desktop fell back to missing or generic icon handling.
+- **Key log evidence:**
+
+```text
+read(17, "[Desktop Entry]...Type=X-nautilus-home...X-Nautilus-Icon=gnome-fs-home\n", 32768) = 128
+open(/root/.gnome-desktop/root's Home, 8201, 0) = 17
+ftruncate64(17, 0)
+lstat64(/root/.gnome-desktop/root's Home, ...) = 0, -rwx------, ... size=0 ...
+
+read(19, "[Desktop Entry]...Type=X-nautilus-trash...X-Nautilus-Icon=gnome-fs-trash-empty\n", 32768) = 124
+open(/root/.gnome-desktop/Trash, 8201, 0) = 19
+ftruncate64(19, 0)
+```
+
+- **Root cause:** Nautilus refreshes desktop link metadata through
+  `gnome_desktop_item_save()`. That function opens the existing file for
+  writing, truncates it with `gnome_vfs_truncate_handle(..., 0)`, then writes
+  the refreshed desktop-entry keys. MOS ext4 handled `O_TRUNC` during open, but
+  ext4 regular files did not provide a file-operation implementation for
+  `ftruncate`. As a result, `ftruncate64(fd, 0)` returned an error after the
+  open had already emptied the file. GNOME desktop item save then aborted
+  before writing the replacement contents.
+- **Fix:**
+  - in [root.c](../src/fs/root.c), add `ext4_file_ftruncate()` for ext4
+    regular files
+  - wire it into `ext4_file_fops.ftruncate`
+  - use `ext4_ftruncate()` when shrinking and `ext4_fenlarge()` when growing
+  - invalidate the shared page cache, update the VFS inode size, clamp the file
+    position when needed, and refresh file modification/change timestamps
+
+### Key lesson
+
+`O_TRUNC` support alone is not enough for Linux desktop compatibility. Old
+GNOME userspace performs an explicit `ftruncate64()` as part of saving
+`.desktop` files, and failure after a successful truncating open can destroy
+the original metadata before the replacement contents are written.
+
+---
+
 ## 2026-04-29 - RH9 `LABEL=/` fstab root remount failed before `mount(2)`
 
 Real Red Hat 9 systems commonly use an `/etc/fstab` root entry whose source is

@@ -1,5 +1,6 @@
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/ioctl.h>
 #include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
@@ -106,6 +107,19 @@ static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 	return -ESPIPE;
 }
 
+static int pipe_ioctl(file *fp, unsigned cmd, void *arg)
+{
+	pipe_inode *n = fp->f_inode->i_private;
+
+	switch (cmd) {
+	case FIONREAD:
+		*(int *)arg = cyb_get_buf_len(n->buf);
+		return 0;
+	default:
+		return -ENOTTY;
+	}
+}
+
 static int pipe_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
@@ -131,6 +145,7 @@ static const file_operations pipe_read_fops = {
 	.read = pipe_read,
 	.poll = pipe_read_poll,
 	.llseek = pipe_llseek,
+	.ioctl = pipe_ioctl,
 };
 
 static const file_operations pipe_write_fops = {
@@ -139,6 +154,7 @@ static const file_operations pipe_write_fops = {
 	.write = pipe_write,
 	.poll = pipe_write_poll,
 	.llseek = pipe_llseek,
+	.ioctl = pipe_ioctl,
 };
 
 int pipe_open(file **pipes)

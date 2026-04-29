@@ -228,6 +228,34 @@ static int ext4_file_write_page(file *fp, unsigned offset, const void *buf)
 	return 0;
 }
 
+static int ext4_file_ftruncate(file *fp, loff_t size)
+{
+	ext4_file *f = fp->f_inode->i_private;
+	int ret;
+
+	if (size < 0)
+		return -EINVAL;
+
+	fs_page_cache_invalidate(fp);
+	if ((uint64_t)size > f->fsize)
+		ret = ext4_fenlarge(f, (uint64_t)size);
+	else
+		ret = ext4_ftruncate(f, (uint64_t)size);
+	if (ret != EOK)
+		return -ret;
+
+	if (fp->f_inode)
+		fp->f_inode->i_size = f->fsize;
+	if (fp->f_pos > size)
+		fp->f_pos = size;
+	if (fp->f_name) {
+		uint32_t t = (uint32_t)time_now_sec();
+		ext4_file_set_mtime(fp->f_name, t);
+		ext4_file_set_ctime(fp->f_name, t);
+	}
+	return 0;
+}
+
 static const file_operations ext4_file_fops = {
 	.release = ext4_file_release,
 	.getattr = ext4_file_getattr,
@@ -239,6 +267,7 @@ static const file_operations ext4_file_fops = {
 	.poll = ext4_file_poll,
 	.read_page = ext4_file_read_page,
 	.write_page = ext4_file_write_page,
+	.ftruncate = ext4_file_ftruncate,
 	.flush = ext4_file_flush,
 };
 

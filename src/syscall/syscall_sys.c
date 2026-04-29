@@ -336,7 +336,7 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TEST_LOG(TEST_LOG_INFO))
+	if (TEST_LOG(TEST_LOG_ALWAYS))
 		klog("reboot(magic1=%x, magic2=%x, cmd=%x) from pid %d\n",
 		     magic1, magic2, cmd, cur->psid);
 
@@ -352,20 +352,22 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 		return 0;
 
 	/*
-	 * PID 1 (init) calls us after completing an orderly shutdown —
-	 * perform the hardware action directly.
+	 * The final SysV halt/poweroff binary runs from the rc0 script, not as
+	 * PID 1.  Once it issues the terminal reboot command, perform the
+	 * hardware action directly instead of feeding another runlevel request
+	 * back into init.
 	 */
-	if (cur->psid == 1) {
-		switch (cmd) {
-		case MOS_REBOOT_CMD_RESTART:
-			reboot();
-			break;
-		case MOS_REBOOT_CMD_POWER_OFF:
-		case MOS_REBOOT_CMD_HALT:
-			shutdown();
-			break;
-		}
+	switch (cmd) {
+	case MOS_REBOOT_CMD_POWER_OFF:
+	case MOS_REBOOT_CMD_HALT:
+		shutdown();
 		return 0;
+	case MOS_REBOOT_CMD_RESTART:
+		if (cur->psid == 1) {
+			reboot();
+			return 0;
+		}
+		break;
 	}
 
 	/*

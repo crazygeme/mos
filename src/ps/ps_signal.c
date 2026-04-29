@@ -14,8 +14,13 @@
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
+#include "ps_internal.h"
 
 void do_signal(intr_frame *frame);
+
+#define STOP_SIGNALS_MASK                                  \
+	((1UL << (SIGSTOP - 1)) | (1UL << (SIGTSTP - 1)) | \
+	 (1UL << (SIGTTIN - 1)) | (1UL << (SIGTTOU - 1)))
 
 struct kill_all_ctx {
 	task_struct *self;
@@ -73,28 +78,51 @@ int ps_send_signal(unsigned pid, int sig)
 {
 	task_struct *sender = CURRENT_TASK();
 	task_struct *target;
+	unsigned long bit;
+	int irq;
+	int ret = 0;
 
 	if (sig <= 0 || sig >= NSIG)
 		return -EINVAL;
 
-	target = ps_find_process(pid);
-	if (!target)
-		return -ESRCH;
-
-	if (target->type != ps_user || !target->user || !target->signal) {
-		return -ESRCH;
+	spinlock_lock(&ps_lock, &irq);
+	target = ps_find_process_unsafe(pid);
+	if (!target) {
+		ret = -ESRCH;
+		goto done;
 	}
 
-	if (!can_send_signal(sender, target))
-		return -EPERM;
+	if (target->type != ps_user || !target->user || !target->signal) {
+		ret = -ESRCH;
+		goto done;
+	}
 
-	target->signal->sig_pending |= (1UL << (sig - 1));
+	if (!can_send_signal(sender, target)) {
+		ret = -EPERM;
+		goto done;
+	}
 
-	if (target->status == ps_waiting &&
-	    !(target->signal->sig_mask & (1UL << (sig - 1))))
-		ps_put_to_ready_queue(target);
+	bit = 1UL << (sig - 1);
+	if (sig == SIGCONT)
+		target->signal->sig_pending &= ~STOP_SIGNALS_MASK;
+	else if (bit & STOP_SIGNALS_MASK)
+		target->signal->sig_pending &= ~(1UL << (SIGCONT - 1));
 
-	return 0;
+	target->signal->sig_pending |= bit;
+
+	if (target->status == ps_stopped &&
+	    (sig == SIGCONT || sig == SIGKILL)) {
+		target->stop_signal = 0;
+		target->stop_report_pending = 0;
+		ps_put_to_ready_queue_unsafe(target);
+	} else if (target->status == ps_waiting &&
+		   !(target->signal->sig_mask & bit)) {
+		ps_put_to_ready_queue_unsafe(target);
+	}
+
+done:
+	spinlock_unlock(&ps_lock, irq);
+	return ret;
 }
 
 int sys_kill(int pid, int sig)
@@ -579,6 +607,16 @@ static void maybe_restore_sigmask(task_struct *cur)
  */
 static int handle_sig_dfl(task_struct *cur, intr_frame *frame, int sig)
 {
+	/*
+	 * Linux protects global init from ordinary default signal actions.
+	 * SysV killall5 broadcasts SIGSTOP/SIGKILL during shutdown and relies
+	 * on PID 1 surviving; init catches the signals it intentionally handles.
+	 */
+	if (cur->psid == 1) {
+		maybe_restore_sigmask(cur);
+		return 1;
+	}
+
 	switch (sig) {
 	case SIGCHLD:
 	case SIGURG:
@@ -728,8 +766,12 @@ void do_signal(intr_frame *frame)
 		return;
 	cur->signal->sig_pending &= ~(1UL << (sig - 1));
 
-	/* SIGKILL cannot be caught or ignored. SIGSTOP is handled below. */
+	/* SIGKILL cannot be caught. Global init is protected above SIG_DFL. */
 	if (sig == SIGKILL) {
+		if (cur->psid == 1) {
+			maybe_restore_sigmask(cur);
+			return;
+		}
 		sys_exit(sig | 0x80);
 		return;
 	}

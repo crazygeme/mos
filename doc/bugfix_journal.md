@@ -5,6 +5,50 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-29 - `exit_group()` could leave stale futex waiters on killed thread stacks
+
+The observed crash was a kernel page fault in the release build:
+`segfault: error code 0, address eedad000, eip c022f039`. Resolving the
+release address placed the fault at `ps_futex_wake_locked+0x39`, while walking
+the global futex waiter list.
+
+### 1. Futex wake dereferenced a stale waiter node
+
+- **Caught by:** resolving `c022f039` against the release kernel symbols and
+  checking the generated instruction stream, which showed the faulting
+  instruction loading the waiter state from the list entry being walked by
+  `ps_futex_wake_locked()`.
+- **Symptom:** the kernel faulted at `ps_futex_wake_locked()` while reading
+  through an address near `0xeedad000`, below the kmap window and not in a
+  normal user mapping.
+- **Root cause:** `sys_futex(FUTEX_WAIT)` stores a `futex_waiter` object on the
+  sleeping task's kernel stack and links that stack object into the global
+  `futex_waiters` list. A normal futex wake or timeout removes the node before
+  the waiter returns. However, `exit_group()` kills sibling threads by removing
+  them from scheduler structures and then reaping their task pages. If one of
+  those sibling threads was blocked in `FUTEX_WAIT`, its stack-resident waiter
+  node could remain in the global futex list after the task page was freed.
+  A later `FUTEX_WAKE` then walked the stale list entry and dereferenced freed
+  stack memory.
+- **Fix:**
+  - in [syscall_futex.c](../src/syscall/syscall_futex.c), add
+    `ps_futex_remove_task_locked()` to unlink any futex waiter owned by a task
+    while `ps_lock` is held
+  - in [ps_internal.h](../src/ps/ps_internal.h), expose the helper to process
+    teardown code
+  - in [ps_syscall.c](../src/ps/ps_syscall.c), call the helper from
+    `ps_kill_thread_group()` before removing a killed sibling thread from the
+    process manager and before its kernel stack can be reaped
+
+### Key lesson
+
+Any wait object stored on a task's kernel stack must be unlinked from global
+wait queues before asynchronous thread teardown can free that stack. Scheduler
+queue removal and timer disarming are not enough when a blocking syscall also
+publishes a stack-local waiter through a subsystem-specific list.
+
+---
+
 ## 2026-04-29 - `gnome-terminal` `Ctrl-C` still could not interrupt `ping`
 
 This failure looked at first like the earlier raw-read wakeup bug, but the

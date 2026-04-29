@@ -44,7 +44,8 @@ extern unsigned hdd_cache_search_count;
 /* ---- scheduler ---- */
 extern unsigned task_schedule_count;
 
-#define MOS_TABLE_LINE "+------------------------+--------------+--------------+--------------+\n"
+#define MOS_TABLE_LINE \
+	"+------------------------+--------------+--------------+--------------+\n"
 
 static void mos_table_begin(proc_buf_t *pb, const char *title)
 {
@@ -167,14 +168,14 @@ static void fill(proc_buf_t *pb)
 	mos_print_bytes(pb, "peak", fs_page_cache_max_pages * PAGE_SIZE);
 	mos_print_bytes(pb, "capacity", PAGE_CACHE_SIZE * PAGE_SIZE);
 	mos_print_count(pb, "lookups", fs_page_cache_searches);
-	mos_print_count_rate(pb, "hits", fs_page_cache_hits,
-			     inode_cache_rate);
+	mos_print_count_rate(pb, "hits", fs_page_cache_hits, inode_cache_rate);
 	mos_table_end(pb);
 
 #if HDD_CACHE_OPEN
 	/* ---- HDD block cache ---- */
 	mos_table_begin(pb, "HDD block cache");
-	mos_print_bytes(pb, "cached sectors", hdd_cache_size * BLOCK_SECTOR_SIZE);
+	mos_print_bytes(pb, "cached sectors",
+			hdd_cache_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "peak sectors",
 			hdd_cache_max_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "capacity", HDD_CACHE_SIZE * PAGE_SIZE);

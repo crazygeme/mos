@@ -390,8 +390,7 @@ void phymm_get_usage(phymm_usage *usage)
 			high_start = idx > limit ? idx : limit;
 			high_end = end;
 			if (high_start < high_end)
-				usage->high_free_pages +=
-					high_end - high_start;
+				usage->high_free_pages += high_end - high_start;
 		}
 	}
 	spinlock_unlock(&buddy_lock, irq);

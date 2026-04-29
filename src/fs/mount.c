@@ -117,13 +117,14 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	super_block *sb;
 	int ret;
 
-	if (!target || *target != '/')
+	if (!target)
 		return -EINVAL;
 
 	if (!type)
 		return -EINVAL;
 
 	/* Remount of "/" — change flags on the existing root superblock. */
+
 	if ((strcmp(target, "LABEL=/") == 0 || target[1] == '\0') &&
 	    (flags & MS_REMOUNT)) {
 		if (!cur->root->s_op || !cur->root->s_op->remount)

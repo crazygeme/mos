@@ -10,6 +10,7 @@
  */
 
 #include <fs/fs.h>
+#include <fs/ioctl.h>
 #include <fs/vfs.h>
 #include <hw/hdd.h>
 #include <hw/time.h>
@@ -19,6 +20,7 @@
 #include <dev/dev.h>
 #include <unistd.h>
 #include <ext4.h>
+#include <errno.h>
 #include "devnums.h"
 
 /* ── File operations ─────────────────────────────────────────────────────── */
@@ -164,6 +166,30 @@ static unsigned hdd_dev_poll(file *fp, unsigned events, poll_table *pt)
 	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
+static int hdd_dev_ioctl(file *fp, unsigned cmd, void *buf)
+{
+	unsigned idx = (unsigned)(uintptr_t)fp->f_inode->i_private;
+	uint64_t size_bytes =
+		(uint64_t)hdd_partition_size_sectors(idx) * BLOCK_SECTOR_SIZE;
+
+	if (!buf)
+		return -EINVAL;
+
+	switch (cmd) {
+	case BLKGETSIZE:
+		*(unsigned long *)buf = (unsigned long)(size_bytes / 512);
+		return 0;
+	case BLKGETSIZE64:
+		*(uint64_t *)buf = size_bytes;
+		return 0;
+	case BLKSSZGET:
+		*(int *)buf = BLOCK_SECTOR_SIZE;
+		return 0;
+	default:
+		return -ENOTTY;
+	}
+}
+
 static int hdd_dev_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
@@ -194,6 +220,7 @@ static int hdd_dev_release(file *fp)
 static const file_operations hdd_dev_fops = {
 	.release = hdd_dev_release,
 	.getattr = hdd_dev_getattr,
+	.ioctl = hdd_dev_ioctl,
 	.read = hdd_dev_read,
 	.write = hdd_dev_write,
 	.llseek = hdd_dev_llseek,

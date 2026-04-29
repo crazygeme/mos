@@ -14,8 +14,8 @@ _kvm=""
 _bash=""
 _test=""
 _priviledge=""
-_IS_MACOS=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
-if [ "$_IS_MACOS" -eq 1 ]; then
+_is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
+if [ "$_is_macos" -eq 1 ]; then
 	_netdev="vmnet-shared,id=net0"
 	_priviledge="sudo"
 else
@@ -91,7 +91,7 @@ _TAP_NET="10.0.5.0/24"
 _TAP_RANGE="10.0.5.2,10.0.5.20,1h"
 
 setup_nat() {
-	if [ "$_IS_MACOS" -eq 1 ]; then
+	if [ "$_is_macos" -eq 1 ]; then
 		# macOS: vmnet-shared provides TAP + DHCP + NAT automatically; nothing to set up.
 		echo "tap: using vmnet-shared (macOS) — no host setup required"
 		_tap_was_setup=1
@@ -128,7 +128,7 @@ setup_nat() {
 cleanup_nat() {
 	[ "$_tap_was_setup" -eq 0 ] && return
 
-	if [ "$_IS_MACOS" -eq 1 ]; then
+	if [ "$_is_macos" -eq 1 ]; then
 		return  # vmnet-shared tears itself down when QEMU exits
 	fi
 

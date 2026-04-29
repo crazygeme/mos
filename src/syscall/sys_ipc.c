@@ -200,12 +200,17 @@ static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
 	phy = seg->pages[page_no];
 	if (phy == 0) {
 		page_index = phymm_alloc_user();
-		if (page_index == PHYMM_INVALID)
+		if (page_index == PHYMM_INVALID) {
+			klog("shm: phymm_alloc_user failed shmid=%d page=%u\n",
+			     seg->shmid, page_no);
 			return -ENOMEM;
+		}
 
 		phy = page_index * PAGE_SIZE;
 		if (mm_kmap_phys(phy) != 1) {
 			phymm_free_user(page_index);
+			klog("shm: mm_kmap_phys failed shmid=%d page=%u phy=%x\n",
+			     seg->shmid, page_no, phy);
 			return -ENOMEM;
 		}
 		memset((void *)PHY_TO_VIRT(phy), 0, PAGE_SIZE);

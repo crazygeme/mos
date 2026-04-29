@@ -336,7 +336,7 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (TEST_LOG(TEST_LOG_ALWAYS))
+	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("reboot(magic1=%x, magic2=%x, cmd=%x) from pid %d\n",
 		     magic1, magic2, cmd, cur->psid);
 

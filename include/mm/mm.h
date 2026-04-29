@@ -7,6 +7,9 @@ typedef struct multiboot_info multiboot_info_t;
 
 #define KERNEL_OFFSET 0xC0000000
 #define KERNEL_SIZE 0x40000000
+#define KERNEL_KMAP_BEGIN 0xF0000000
+#define KERNEL_KMAP_END 0x100000000ULL
+#define KERNEL_DIRECT_MAP_LIMIT (KERNEL_KMAP_BEGIN - KERNEL_OFFSET)
 #define PG_TABLE_SIZE 1024
 #define PE_TABLE_SIZE 1024
 #define KERNEL_PAGE_DIR_OFFSET (KERNEL_OFFSET / (4 * 1024 * 1024))
@@ -18,9 +21,6 @@ typedef struct multiboot_info multiboot_info_t;
 #define ADDR_TO_PGT_OFFSET(addr) ((addr & OFFSET_IN_PGT_MASK) >> 22)
 #define ADDR_TO_PET_OFFSET(addr) ((addr & OFFSET_IN_PET_MASK) >> 12)
 #define ADDR_TO_PAGE_OFFSET(addr) (addr & OFFSET_IN_PAGE_MASK)
-
-#define USABLE_PG_INDEX_MIN 2
-#define USABLE_PG_INDEX_MAX 1023
 
 #define PAGE_ENTRY_PRESENT 0x01 // present if set
 #define PAGE_ENTRY_WRITABLE 0x02 // writable if set
@@ -55,6 +55,11 @@ typedef struct multiboot_info multiboot_info_t;
 #define MAP_UNINITIALIZED 0x0 /* Don't support this flag */
 #endif
 
+#define VIRT_TO_PHY(x) mm_virt_to_phys((unsigned int)(x))
+#define PHY_TO_VIRT(x) mm_phys_to_virt((unsigned int)(x))
+#define PHY_TO_PAGE_IDX(x) (((x) & PAGE_SIZE_MASK) / PAGE_SIZE)
+#define VIRT_TO_PAGE_IDX(x) PHY_TO_PAGE_IDX(VIRT_TO_PHY(x))
+
 // clang-format on
 
 extern unsigned phymm_end;
@@ -72,11 +77,14 @@ unsigned mm_get_pagedir();
 // return (is used for page table)
 int mm_kmap_page(unsigned int vir);
 
-/* Map firmware physical page (ACPI tables, etc.) to virt = phys + KERNEL_OFFSET.
- * Safe for any physical address; does not touch the physical allocator. */
+/* Map a physical page into the kernel physical-page alias space.
+ * Safe for any 32-bit physical address; does not touch the allocator. */
 int mm_kmap_phys(unsigned int phys);
 
 int mm_map_io(unsigned int phy);
+
+unsigned int mm_phys_to_virt(unsigned int phys);
+unsigned int mm_virt_to_phys(unsigned int virt);
 
 void mm_kunmap_page(unsigned int vir);
 

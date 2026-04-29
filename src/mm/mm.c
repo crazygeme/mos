@@ -38,6 +38,10 @@ typedef struct {
 static page_table_cache_t page_table_cache;
 static unsigned int kernel_pde_tables[1024 - KERNEL_PAGE_DIR_OFFSET];
 
+#define KERNEL_KMAP_PAGES ((KERNEL_KMAP_END - KERNEL_KMAP_BEGIN) / PAGE_SIZE)
+
+static unsigned int kernel_kmap_phys[KERNEL_KMAP_PAGES];
+
 static void page_table_cache_init(page_table_cache_t *cache)
 {
 	int i;
@@ -103,8 +107,8 @@ static void mm_init_kernel_page_dir_template(void)
 
 		memset((void *)table_addr, 0, PAGE_SIZE);
 		kernel_pde_tables[i] = table_addr;
-		page_dir[KERNEL_PAGE_DIR_OFFSET + i] =
-			(table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA;
+		page_dir[KERNEL_PAGE_DIR_OFFSET + i] = VIRT_TO_PHY(table_addr) |
+						       PAGE_ENTRY_KERNEL_DATA;
 	}
 }
 
@@ -114,6 +118,7 @@ static void mm_init_kernel_page_dir_template(void)
 
 static spinlock_t mm_lock;
 static spinlock_t path_lock;
+static spinlock_t kmap_lock;
 static int mm_dynamic_region(unsigned phy);
 
 /* Name-buffer cache node */
@@ -133,6 +138,7 @@ void mm_init_page_table_cache()
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
+	spinlock_init(&kmap_lock);
 	list_init(&name_cache_head);
 }
 
@@ -158,14 +164,38 @@ unsigned mm_get_pagedir()
 	return cr3 + KERNEL_OFFSET;
 }
 
+unsigned int mm_phys_to_virt(unsigned int phys)
+{
+	unsigned int page = phys & PAGE_SIZE_MASK;
+	unsigned int off = ADDR_TO_PAGE_OFFSET(phys);
+	unsigned int i;
+
+	if (page < KERNEL_DIRECT_MAP_LIMIT)
+		return KERNEL_OFFSET + page + off;
+
+	for (i = 0; i < KERNEL_KMAP_PAGES; i++) {
+		if (kernel_kmap_phys[i] == page + 1)
+			return KERNEL_KMAP_BEGIN + i * PAGE_SIZE + off;
+	}
+
+	if (mm_kmap_phys(page) == 1) {
+		for (i = 0; i < KERNEL_KMAP_PAGES; i++) {
+			if (kernel_kmap_phys[i] == page + 1)
+				return KERNEL_KMAP_BEGIN + i * PAGE_SIZE + off;
+		}
+	}
+
+	return 0;
+}
+
 typedef struct {
 	unsigned int *dir; /* page-directory entry for this address */
 	unsigned int *table; /* base of the page table */
 	unsigned int *entry; /* page-table entry for this address */
 } mm_addr_info;
 
-static int mm_get_valid_page_table_in_dir(unsigned int *page_dir,
-					  unsigned addr, mm_addr_info *info)
+static int mm_get_valid_page_table_in_dir(unsigned int *page_dir, unsigned addr,
+					  mm_addr_info *info)
 {
 	unsigned offset = ADDR_TO_PGT_OFFSET(addr);
 
@@ -177,8 +207,7 @@ static int mm_get_valid_page_table_in_dir(unsigned int *page_dir,
 	if ((*info->dir & PAGE_SIZE_MASK) == 0)
 		return 0;
 
-	info->table = (unsigned int *)((*info->dir & PAGE_SIZE_MASK) +
-				       KERNEL_OFFSET);
+	info->table = (unsigned int *)PHY_TO_VIRT(*info->dir & PAGE_SIZE_MASK);
 	info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
 	return 1;
 }
@@ -204,18 +233,28 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 
 		if (table_addr == 0)
 			return 0;
-		pde = (table_addr - KERNEL_OFFSET) | PAGE_ENTRY_KERNEL_DATA |
-		      flag;
+		pde = VIRT_TO_PHY(table_addr) | PAGE_ENTRY_KERNEL_DATA | flag;
 		page_dir[offset] = pde;
 	}
 	info->dir = &page_dir[offset];
 	if (*info->dir)
-		info->table = (unsigned int *)((*info->dir & PAGE_SIZE_MASK) +
-					       KERNEL_OFFSET);
+		info->table = (unsigned int *)PHY_TO_VIRT(*info->dir &
+							  PAGE_SIZE_MASK);
 	if (info->table)
 		info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
 
 	return info->entry != NULL;
+}
+
+unsigned int mm_virt_to_phys(unsigned int virt)
+{
+	mm_addr_info info;
+
+	if (!mm_get_valid_page_table(virt, 0, &info, 0) ||
+	    !(*info.entry & PAGE_ENTRY_PRESENT)) {
+		return 0;
+	}
+	return (*info.entry & PAGE_SIZE_MASK) + ADDR_TO_PAGE_OFFSET(virt);
 }
 
 /*
@@ -275,15 +314,17 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
  */
 
 /*
- * Add a direct (identity-offset) mapping for a kernel virtual address.
- * Only valid for KERNEL_OFFSET..KERNEL_OFFSET+KERNEL_SIZE.
- * The page-table cache region is permanently mapped and needs no work.
+ * Add a low-memory direct mapping for a kernel virtual address.
+ * This is used during boot for reserved kernel pages and for the physical
+ * memory descriptor array.  It does not change physical allocator refcounts.
  */
 int mm_kmap_page(unsigned int vir)
 {
 	unsigned int page_index;
 
 	if (vir < KERNEL_OFFSET)
+		return -1;
+	if (vir >= KERNEL_KMAP_BEGIN)
 		return -1;
 
 	/* The page-table cache region is permanently mapped */
@@ -292,65 +333,85 @@ int mm_kmap_page(unsigned int vir)
 
 	page_index = (vir - KERNEL_OFFSET) / PAGE_SIZE;
 
-	if ((page_index * PAGE_SIZE) > KERNEL_SIZE)
-		return -1;
-
-	if (phymm_is_used(page_index))
-		return -1;
-
 	if (!mm_set_page_table_entry(
 		    vir, 0, (page_index * PAGE_SIZE) | PAGE_ENTRY_KERNEL_DATA))
 		return -1;
 
-	phymm_reference_page(page_index);
 	return 1;
 }
 
-/* Remove a direct kernel mapping and dereference the backing physical page */
+/* Remove a kernel mapping without touching physical allocator refcounts. */
 void mm_kunmap_page(unsigned int vir)
 {
 	mm_addr_info info;
-	unsigned int phy_addr;
 
 	/* The page-table cache region is permanently mapped */
 	if (vir >= KERNEL_OFFSET && vir < PAGE_TABLE_CACHE_END)
 		return;
 
-	phy_addr = vir & PAGE_SIZE_MASK;
-	if (vir >= KERNEL_OFFSET)
-		phy_addr -= KERNEL_OFFSET;
-
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 
 	mm_clear_page_table_entry(&info);
-	phymm_dereference_page(phy_addr / PAGE_SIZE);
 }
 
 /*
- * Map a firmware physical address (e.g. ACPI tables) into the kernel virtual
- * address space at virtual = phys + KERNEL_OFFSET.
+ * Map a physical page into the kernel kmap alias window.
  *
- * Works for any physical address, including those above the initial 8 MB boot
- * mapping.  Does NOT touch the physical allocator reference counts — firmware
- * pages are outside the allocator range and must not be ref-counted.
+ * Works for any physical address and does not touch physical allocator
+ * reference counts.  Firmware pages and user pages may both pass through this
+ * path.
  *
- * If the page is already covered by the initial boot mapping the function is
- * a no-op and returns 1.  Returns -1 on page-table allocation failure.
+ * Returns -1 on page-table allocation failure or alias-space exhaustion.
  */
 int mm_kmap_phys(unsigned int phys)
 {
-	unsigned int virt = phys + KERNEL_OFFSET;
+	unsigned int page = phys & PAGE_SIZE_MASK;
+	unsigned int slot;
+	unsigned int virt;
+	int irq;
 	mm_addr_info info;
 
-	/* Initial boot mapping covers phys [0, PAGE_TABLE_CACHE_END - KERNEL_OFFSET). */
-	if (phys < PAGE_TABLE_CACHE_END - KERNEL_OFFSET)
+	if (page < KERNEL_DIRECT_MAP_LIMIT) {
+		virt = KERNEL_OFFSET + page;
+		if (!mm_get_valid_page_table(virt, 0, &info, 1))
+			return -1;
+		*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
+		INVLPG(virt);
 		return 1;
+	}
 
-	if (!mm_get_valid_page_table(virt, 0, &info, 1))
+	spinlock_lock(&kmap_lock, &irq);
+	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
+		if (kernel_kmap_phys[slot] == page + 1) {
+			spinlock_unlock(&kmap_lock, irq);
+			return 1;
+		}
+	}
+
+	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
+		if (kernel_kmap_phys[slot] == 0)
+			break;
+	}
+	if (slot == KERNEL_KMAP_PAGES) {
+		spinlock_unlock(&kmap_lock, irq);
 		return -1;
+	}
 
-	*info.entry = (phys & PAGE_SIZE_MASK) | PAGE_ENTRY_KERNEL_DATA;
+	kernel_kmap_phys[slot] = page + 1;
+	spinlock_unlock(&kmap_lock, irq);
+
+	phys = KERNEL_KMAP_BEGIN + slot * PAGE_SIZE;
+	virt = phys;
+	if (!mm_get_valid_page_table(virt, 0, &info, 1)) {
+		spinlock_lock(&kmap_lock, &irq);
+		kernel_kmap_phys[slot] = 0;
+		spinlock_unlock(&kmap_lock, irq);
+		return -1;
+	}
+
+	*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
+	INVLPG(virt);
 	return 1;
 }
 
@@ -412,7 +473,7 @@ void mm_destroy_user_map(unsigned int page_dir)
 		if (!table_phy)
 			continue;
 
-		table = (unsigned int *)(table_phy + KERNEL_OFFSET);
+		table = (unsigned int *)PHY_TO_VIRT(table_phy);
 		for (j = 0; j < PG_TABLE_SIZE; j++) {
 			unsigned int phy_addr = table[j] & PAGE_SIZE_MASK;
 			unsigned int page_index;
@@ -458,6 +519,10 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
 		target_phy = phy & PAGE_SIZE_MASK;
 	} else {
 		page_index = phymm_alloc_user();
+		if (page_index == PHYMM_INVALID) {
+			spinlock_unlock(&mm_lock, irq);
+			return -1;
+		}
 		target_phy = page_index * PAGE_SIZE;
 	}
 
@@ -536,7 +601,8 @@ unsigned mm_get_map_flag_pd(unsigned page_dir, unsigned vir)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir, &info))
+	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir,
+					    &info))
 		return 0;
 	return *info.entry & ~PAGE_SIZE_MASK;
 }
@@ -555,7 +621,8 @@ void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir, &info))
+	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir,
+					    &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
 }
@@ -580,6 +647,7 @@ unsigned int vm_alloc(int page_count)
 	int page_index;
 	int i;
 	int irq;
+	unsigned int vm;
 
 	spinlock_lock(&mm_lock, &irq);
 
@@ -589,14 +657,25 @@ unsigned int vm_alloc(int page_count)
 		return 0;
 	}
 
-	for (i = 0; i < page_count; i++)
-		mm_kmap_page((page_index + i) * PAGE_SIZE + KERNEL_OFFSET);
+	vm = KERNEL_OFFSET + page_index * PAGE_SIZE;
+	for (i = 0; i < page_count; i++) {
+		if (mm_kmap_page(vm + i * PAGE_SIZE) != 1) {
+			while (i-- > 0) {
+				phymm_dereference_page(page_index + i);
+				mm_kunmap_page(vm + i * PAGE_SIZE);
+			}
+			phymm_free_kernel(page_index, page_count);
+			spinlock_unlock(&mm_lock, irq);
+			return 0;
+		}
+		phymm_reference_page(page_index + i);
+	}
 
 	RELOAD_CR3();
 	spinlock_unlock(&mm_lock, irq);
 
 	buffer_count += page_count;
-	return page_index * PAGE_SIZE + KERNEL_OFFSET;
+	return vm;
 }
 
 /* Release @page_count pages starting at kernel virtual address @vm */
@@ -604,13 +683,20 @@ void vm_free(unsigned int vm, int page_count)
 {
 	int i;
 	int irq;
+	unsigned int page_index;
 
 	spinlock_lock(&mm_lock, &irq);
 	vm &= PAGE_SIZE_MASK;
-	for (i = 0; i < page_count; i++)
+	page_index = VIRT_TO_PAGE_IDX(vm);
+	for (i = 0; i < page_count; i++) {
+		unsigned int phy = VIRT_TO_PHY(vm + i * PAGE_SIZE);
+
 		mm_kunmap_page(vm + i * PAGE_SIZE);
+		if (phy)
+			phymm_dereference_page(PHY_TO_PAGE_IDX(phy));
+	}
 	RELOAD_CR3();
-	phymm_free_kernel((vm - KERNEL_OFFSET) / PAGE_SIZE, page_count);
+	phymm_free_kernel(page_index, page_count);
 	spinlock_unlock(&mm_lock, irq);
 
 	buffer_count -= page_count;

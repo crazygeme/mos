@@ -393,7 +393,7 @@ static void wp_page_copy(unsigned cr2)
 
 	/* Establish the direct kernel alias and copy the original content. */
 	mm_kmap_phys(phy);
-	memcpy((void *)(phy + KERNEL_OFFSET), (void *)vir, PAGE_SIZE);
+	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);
 
 	/* Swap the shared PTE for a private writable one. */
 	flag = mm_get_map_flag(vir);
@@ -502,7 +502,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 	if (!task || !task->user)
 		return 0;
 
-	target_cr3 = task->user->page_dir - KERNEL_OFFSET;
+	target_cr3 = VIRT_TO_PHY(task->user->page_dir);
 	old_level = int_intr_disable();
 	sched_disable();
 	LOAD_CR3(old_cr3);

@@ -208,7 +208,7 @@ static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
 			phymm_free_user(page_index);
 			return -ENOMEM;
 		}
-		memset((void *)(phy + KERNEL_OFFSET), 0, PAGE_SIZE);
+		memset((void *)PHY_TO_VIRT(phy), 0, PAGE_SIZE);
 
 		/* The segment itself owns one persistent reference. */
 		phymm_reference_page(page_index);

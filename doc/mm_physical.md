@@ -99,10 +99,16 @@ result: idx=0, order=1      (pages 0-1 allocated)
 ### Free + coalesce — `buddy_free_block(idx, order)`
 
 1. Compute buddy index: `buddy = idx XOR (1 << order)`.
-2. If buddy is free at the same order (same `ref_count == 0` and `order`),
-   remove it from its list, merge (take the lower index), increment `order`.
+2. If buddy is free at the same order, has `ref_count == 0`, and is currently
+   linked into that order's free list, remove it from its list, merge (take the
+   lower index), increment `order`.
 3. Repeat until `MAX_BUDDY_ORDER` or the buddy is not free.
 4. Push the final merged block onto `buddy_lists[order]`.
+
+Allocated blocks are unlinked from free lists and their free-list links are
+cleared. This matters because newly allocated pages are still `ref_count == 0`
+until the mapping layer records the first reference; coalescing must not treat
+such allocated-but-unreferenced blocks as free.
 
 All operations are protected by `buddy_lock` (spinlock).
 
@@ -122,8 +128,17 @@ unsigned phymm_alloc_user(void);
 ```
 
 `phymm_alloc_kernel` rounds `page_count` up to the next power of two via
-`ceil_log2`, then calls `buddy_alloc(order)`.
-`phymm_alloc_user` is a thin wrapper for `buddy_alloc(0)` (order 0 = 1 page).
+`ceil_log2`, then allocates from the physical range that can be represented by
+the kernel direct map. Kernel-owned memory therefore has stable
+`KERNEL_OFFSET + physical` addresses and can be returned directly by
+`vm_alloc()`.
+
+`phymm_alloc_user` allocates one page and prefers the high physical range above
+the kernel direct-map limit. If no high page is available, it falls back to the
+highest available page from the normal buddy lists. This keeps user-space,
+page-cache, file-backed, and shared-memory pages out of low direct-map memory
+when larger guests provide enough RAM, while still allowing small guests to
+boot and run.
 
 ### Free
 
@@ -139,11 +154,22 @@ stored order is out of range.
 ### Address conversion
 
 ```c
-VIRT_TO_PHY(vaddr)          // virtual → physical: vaddr - KERNEL_OFFSET
-PHY_TO_VIRT(paddr)          // physical → virtual: paddr + KERNEL_OFFSET
+VIRT_TO_PHY(vaddr)          // virtual → physical by current page-table lookup
+PHY_TO_VIRT(paddr)          // physical → kernel direct map or kmap alias
 PHY_TO_PAGE_IDX(paddr)      // physical address → page index
 VIRT_TO_PAGE_IDX(vaddr)     // virtual address → page index
 ```
+
+The kernel direct map covers the low physical range below
+`KERNEL_DIRECT_MAP_LIMIT`, with virtual addresses starting at `KERNEL_OFFSET`.
+`vm_alloc()` and other kernel-owned allocations use this range.
+
+Physical pages outside that range are not reachable through
+`physical + KERNEL_OFFSET`. The kernel maps them on demand through the kmap
+alias range `[KERNEL_KMAP_BEGIN, KERNEL_KMAP_END)` before dereferencing them.
+`mm_kmap_phys()` also ensures a direct-map PTE exists for low physical pages
+that were allocated for user/cache use and therefore were not already mapped by
+`vm_alloc()`.
 
 ---
 

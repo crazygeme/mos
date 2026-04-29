@@ -60,7 +60,8 @@ int do_socket(int domain, int type, int protocol)
 		sk->domain = AF_UNIX;
 		sk->type = type;
 		sk->state = SS_UNCONNECTED;
-		if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_UNIX)) < 0) {
+		if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_UNIX)) <
+		    0) {
 			sock_destroy(sk);
 			return -ENOMEM;
 		}

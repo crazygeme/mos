@@ -247,8 +247,8 @@ void net_init(void)
 		g_rx_slots[i].data = NULL;
 		g_rx_slots[i].len = 0;
 		g_rx_slots[i].cookie = NULL;
-		g_rx_slots[i].next_free =
-			(i + 1 < NET_RX_RING_SIZE) ? (i + 1) : -1;
+		g_rx_slots[i].next_free = (i + 1 < NET_RX_RING_SIZE) ? (i + 1) :
+								       -1;
 	}
 
 	/* Start shared periodic services after lwIP is initialized. */

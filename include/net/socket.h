@@ -306,6 +306,10 @@ typedef struct _mos_sock {
 	/* Bitmask of enabled cmsg options (SOCK_CMSG_*) */
 	unsigned int cmsg_flags;
 
+	/* SOL_SOCKET send/receive timeouts in milliseconds. */
+	unsigned recv_timeout_ms;
+	unsigned send_timeout_ms;
+
 	/* ICMP_FILTER: bitmask of ICMP types to drop (bit N → block type N) */
 	struct icmp_filter icmp_filter;
 

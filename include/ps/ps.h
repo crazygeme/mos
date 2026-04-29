@@ -456,6 +456,8 @@ void reboot();
 void shutdown();
 
 void time_wait(unsigned ms);
+void ps_prepare_timed_wait(task_struct *task, unsigned ms, const char *func);
+void ps_finish_timed_wait(task_struct *task);
 void ps_signal_wait(void);
 
 #define RUSAGE_SELF 0

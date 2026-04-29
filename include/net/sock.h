@@ -23,6 +23,10 @@ void rx_discard(mos_sock *sk, unsigned len);
 int sock_alloc_rxbuf(mos_sock *sk, unsigned size);
 void sock_destroy(mos_sock *sk);
 unsigned sock_default_rxbuf_size(int domain);
+unsigned sock_recv_timeout_ms(const mos_sock *sk);
+unsigned sock_send_timeout_ms(const mos_sock *sk);
+int sock_recv_timeout_errno(const mos_sock *sk);
+int sock_send_timeout_errno(const mos_sock *sk);
 
 /* ── Blocking helpers (sock.c) ──────────────────────────────────────────── */
 

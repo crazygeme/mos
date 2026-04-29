@@ -27,6 +27,26 @@ unsigned sock_default_rxbuf_size(int domain)
 	return domain == AF_UNIX ? SOCK_RXBUF_UNIX_SIZE : SOCK_RXBUF_INET_SIZE;
 }
 
+unsigned sock_recv_timeout_ms(const mos_sock *sk)
+{
+	return sk && sk->recv_timeout_ms ? sk->recv_timeout_ms : SOCK_TIMEOUT_MS;
+}
+
+unsigned sock_send_timeout_ms(const mos_sock *sk)
+{
+	return sk && sk->send_timeout_ms ? sk->send_timeout_ms : SOCK_TIMEOUT_MS;
+}
+
+int sock_recv_timeout_errno(const mos_sock *sk)
+{
+	return sk && sk->recv_timeout_ms ? -EAGAIN : -ETIMEDOUT;
+}
+
+int sock_send_timeout_errno(const mos_sock *sk)
+{
+	return sk && sk->send_timeout_ms ? -EAGAIN : -ETIMEDOUT;
+}
+
 int sock_alloc_rxbuf(mos_sock *sk, unsigned size)
 {
 	if (!sk || size == 0)
@@ -78,7 +98,7 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 	const char *p = (const char *)buf;
 	size_t done = 0;
 	int nonblock = sock_file_nonblock(fp);
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long deadline = time_now_ms() + sock_send_timeout_ms(sk);
 
 	while (done < count) {
 		size_t remain = count - done;
@@ -96,7 +116,8 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 			if (nonblock)
 				return done ? (ssize_t)done : -EAGAIN;
 			if (time_now_ms() > deadline)
-				return done ? (ssize_t)done : -ETIMEDOUT;
+				return done ? (ssize_t)done :
+						      sock_send_timeout_errno(sk);
 			tcp_output(sk->tcp);
 			if (sock_wait(sk, deadline) < 0)
 				return done ? (ssize_t)done : -EINTR;
@@ -118,7 +139,8 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 		if (nonblock)
 			return done ? (ssize_t)done : -EAGAIN;
 		if (time_now_ms() > deadline)
-			return done ? (ssize_t)done : -ETIMEDOUT;
+			return done ? (ssize_t)done :
+					      sock_send_timeout_errno(sk);
 
 		tcp_output(sk->tcp);
 		if (sock_wait(sk, deadline) < 0)
@@ -266,12 +288,14 @@ void sock_wakeup(mos_sock *sk)
  * Returns -1 if a deliverable signal is pending after waking, 0 otherwise. */
 int sock_wait(mos_sock *sk, unsigned long deadline)
 {
-	unsigned long now = time_now_ms();
+	unsigned long now;
 	sock_waiter waiter;
 	int irq;
+	task_struct *cur = CURRENT_TASK();
+
+	now = time_now_ms();
 	if (now >= deadline)
 		return 0;
-	task_struct *cur = CURRENT_TASK();
 
 	list_init(&waiter.node);
 	waiter.task = cur;
@@ -280,9 +304,17 @@ int sock_wait(mos_sock *sk, unsigned long deadline)
 
 	spinlock_lock(&sk->wait_lock, &irq);
 	sock_waiter_queue(&sk->waiters, &waiter);
+	now = time_now_ms();
+	if (now >= deadline) {
+		sock_waiter_dequeue(&waiter);
+		spinlock_unlock(&sk->wait_lock, irq);
+		return 0;
+	}
+	ps_prepare_timed_wait(cur, (unsigned)(deadline - now), __func__);
 	spinlock_unlock(&sk->wait_lock, irq);
 
-	time_wait((unsigned)(deadline - now));
+	task_sched();
+	ps_finish_timed_wait(cur);
 
 	spinlock_lock(&sk->wait_lock, &irq);
 	sock_waiter_dequeue(&waiter);
@@ -305,12 +337,12 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 		return unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
-		unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+		unsigned long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
 				return sk->err;
 			if (time_now_ms() > deadline)
-				return -ETIMEDOUT;
+				return sock_recv_timeout_errno(sk);
 			if (sock_wait(sk, deadline) < 0)
 				return -EINTR;
 		}
@@ -330,7 +362,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	}
 
 	/* TCP: block until data or EOF */
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 	while (rx_used(sk) == 0) {
 		if (sk->err)
 			return sk->err;
@@ -341,7 +373,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 		if (nonblock)
 			return -EAGAIN;
 		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+			return sock_recv_timeout_errno(sk);
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}

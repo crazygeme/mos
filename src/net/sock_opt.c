@@ -29,6 +29,40 @@ static int sockopt_put_int(void *optval, unsigned *optlen, int val)
 	return 0;
 }
 
+static int sockopt_get_timeval_ms(const void *optval, unsigned optlen,
+				  unsigned *out)
+{
+	const struct timeval *tv = (const struct timeval *)optval;
+	unsigned long long ms;
+
+	if (!optval || optlen < sizeof(*tv))
+		return -EINVAL;
+	if (tv->tv_sec < 0 || tv->tv_usec < 0 || tv->tv_usec >= 1000000)
+		return -EINVAL;
+
+	ms = (unsigned long long)tv->tv_sec * 1000ULL +
+	     ((unsigned long long)tv->tv_usec + 999ULL) / 1000ULL;
+	if (ms > 0xffffffffULL)
+		ms = 0xffffffffULL;
+	*out = (unsigned)ms;
+	return 0;
+}
+
+static int sockopt_put_timeval_ms(void *optval, unsigned *optlen, unsigned ms)
+{
+	struct timeval tv;
+	unsigned copy;
+
+	if (!optval || !optlen)
+		return -EFAULT;
+	tv.tv_sec = (int)(ms / 1000);
+	tv.tv_usec = (int)((ms % 1000) * 1000);
+	copy = *optlen < sizeof(tv) ? *optlen : sizeof(tv);
+	__builtin_memcpy(optval, &tv, copy);
+	*optlen = sizeof(tv);
+	return 0;
+}
+
 /* ── do_setsockopt ───────────────────────────────────────────────────────── */
 
 int do_setsockopt(int fd, int level, int optname, const void *optval,
@@ -96,9 +130,17 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 		case SO_RCVBUF:
 		case SO_SNDBUF:
 		case SO_LINGER:
-		case SO_RCVTIMEO:
-		case SO_SNDTIMEO:
 			break;
+
+		case SO_RCVTIMEO:
+			ret = sockopt_get_timeval_ms(optval, optlen,
+						     &sk->recv_timeout_ms);
+			goto done;
+
+		case SO_SNDTIMEO:
+			ret = sockopt_get_timeval_ms(optval, optlen,
+						     &sk->send_timeout_ms);
+			goto done;
 
 		case SO_ERROR:
 			ret = -ENOPROTOOPT;
@@ -289,6 +331,16 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 			ret = sockopt_put_int(
 				optval, optlen,
 				(sk->cmsg_flags & SOCK_CMSG_TIMESTAMP) ? 1 : 0);
+			goto done;
+
+		case SO_RCVTIMEO:
+			ret = sockopt_put_timeval_ms(optval, optlen,
+						     sk->recv_timeout_ms);
+			goto done;
+
+		case SO_SNDTIMEO:
+			ret = sockopt_put_timeval_ms(optval, optlen,
+						     sk->send_timeout_ms);
 			goto done;
 
 		default:

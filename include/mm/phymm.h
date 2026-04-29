@@ -24,6 +24,15 @@ typedef struct _phymm_page {
 	unsigned char _pad[2];
 } phymm_page;
 
+typedef struct _phymm_usage {
+	unsigned low_total_pages;
+	unsigned low_used_pages;
+	unsigned low_free_pages;
+	unsigned high_total_pages;
+	unsigned high_used_pages;
+	unsigned high_free_pages;
+} phymm_usage;
+
 extern phymm_page *phymm_pages;
 
 /* Called once at boot after phymm_setup_mgmt_pages.
@@ -56,6 +65,8 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count);
 void phymm_free_user(unsigned page_index);
 
 int phymm_is_used(unsigned page_index);
+
+void phymm_get_usage(phymm_usage *usage);
 
 /* Dirty-page tracking for MAP_SHARED file-backed mappings. */
 void phymm_mark_dirty(unsigned page_index);

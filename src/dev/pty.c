@@ -239,8 +239,10 @@ static void pty_dev_register(super_block *dev_sb)
 	int i;
 	char path[16];
 
-	cdev_register(S_IFCHR, BSD_PTM_MAJOR, 0, MAX_PTS, ptm_cdev_open);
-	cdev_register(S_IFCHR, BSD_PTS_MAJOR, 0, MAX_PTS, pts_cdev_open);
+	cdev_register_named(S_IFCHR, BSD_PTM_MAJOR, 0, MAX_PTS, "pty",
+			    ptm_cdev_open);
+	cdev_register_named(S_IFCHR, BSD_PTS_MAJOR, 0, MAX_PTS, "ttyp",
+			    pts_cdev_open);
 
 	for (i = 0; i < MAX_PTS; i++) {
 		sprintf(path, "/ptyp%c", pty_hex[i]);

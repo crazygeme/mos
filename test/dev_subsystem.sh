@@ -54,6 +54,12 @@ require_cmd grep
 
 expect_success_sh "grep -q '^devtmpfs /dev ' /proc/mounts"
 expect_success_sh "grep -q '^devpts /dev/pts ' /proc/mounts"
+expect_success_sh "grep -q '^Character devices:$' /proc/devices"
+expect_success_sh "grep -q '^[[:space:]]*1 mem$' /proc/devices"
+expect_success_sh "grep -q '^[[:space:]]*5 ptmx$' /proc/devices"
+expect_success_sh "grep -q '^[[:space:]]*136 pts$' /proc/devices"
+expect_success_sh "grep -q '^Block devices:$' /proc/devices"
+expect_success_sh "grep -q '^[[:space:]]*7 loop$' /proc/devices"
 expect_success_sh "test -c /dev/null"
 expect_success_sh "test -c /dev/zero"
 expect_success_sh "test -c /dev/random"

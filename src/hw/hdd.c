@@ -117,7 +117,6 @@ typedef struct _channel {
 
 /* ── Block cache structures ───────────────────────────────────────────────────── */
 #if HDD_CACHE_OPEN
-#define CACHE_SECTOR_COUNT ((HDD_CACHE_SIZE * PAGE_SIZE) / BLOCK_SECTOR_SIZE)
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
 #define PREREAD_SECTOR 8
 #define HEAD_SECTOR(s) ((s) / PREREAD_SECTOR * PREREAD_SECTOR)
@@ -761,9 +760,13 @@ static block_cache_item *block_cache_item_create(void)
 	item->loading = 0;
 	item->page_index = phymm_alloc_kernel(1);
 	if (item->page_index == PHYMM_INVALID) {
-		kfree(item);
-		klog("hdd: phymm_alloc_kernel failed for block cache item\n");
-		return NULL;
+		phymm_reclaim_kernel_cache(32);
+		item->page_index = phymm_alloc_kernel(1);
+		if (item->page_index == PHYMM_INVALID) {
+			kfree(item);
+			klog("hdd: phymm_alloc_kernel failed for block cache item\n");
+			return NULL;
+		}
 	}
 
 	phy = item->page_index * PAGE_SIZE;
@@ -838,7 +841,14 @@ static block_cache_item *hdd_cache_find_oldest(partition *p)
 		return NULL;
 	/* LRU is at the tail of the list (prev of sentinel). */
 	node = p->cache.timer_list_head.prev;
-	return container_of(node, block_cache_item, time_list);
+	while (node != &p->cache.timer_list_head) {
+		block_cache_item *item =
+			container_of(node, block_cache_item, time_list);
+		if (!item->loading)
+			return item;
+		node = node->prev;
+	}
+	return NULL;
 }
 
 static void hdd_cache_flush_buf(partition *p, int head_sector, void *buf,
@@ -870,18 +880,17 @@ static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
 static block_cache_item *hdd_cache_reserve_miss_locked(partition *p,
 						       int head_sector,
 						       int *old_sector,
-						       int *old_dirty)
+						       int *old_dirty,
+						       block_cache_item *new_item)
 {
 	block_cache_item *item;
 
-	if (p->cache.sectors < CACHE_SECTOR_COUNT) {
-		item = block_cache_item_create();
-		if (!item)
-			return NULL;
+	if (new_item) {
+		item = new_item;
 		p->cache.sectors += PREREAD_SECTOR;
-		hdd_cache_size = p->cache.sectors;
-		if (hdd_cache_max_size < p->cache.sectors)
-			hdd_cache_max_size = p->cache.sectors;
+		hdd_cache_size += PREREAD_SECTOR;
+		if (hdd_cache_max_size < hdd_cache_size)
+			hdd_cache_max_size = hdd_cache_size;
 		list_insert_head(&p->cache.timer_list_head, &item->time_list);
 	} else {
 		item = hdd_cache_find_oldest(p);
@@ -957,10 +966,63 @@ static void partition_cache_evict(partition *p)
 			container_of(entry, block_cache_item, time_list);
 		block_cache_item_remove(item);
 		p->cache.sectors -= PREREAD_SECTOR;
-		hdd_cache_size = p->cache.sectors;
+		hdd_cache_size -= PREREAD_SECTOR;
 		entry = next;
 	}
 	mutex_unlock(&p->cache_lock);
+}
+
+static int partition_cache_reclaim_one_locked(partition *p)
+{
+	list_entry *entry;
+	block_cache_item *item = NULL;
+
+	entry = p->cache.timer_list_head.prev;
+	while (entry != &p->cache.timer_list_head) {
+		block_cache_item *candidate =
+			container_of(entry, block_cache_item, time_list);
+		if (!candidate->loading) {
+			item = candidate;
+			break;
+		}
+		entry = entry->prev;
+	}
+
+	if (!item)
+		return 0;
+
+	hdd_cache_flush(p, item);
+	if (item->sector >= 0)
+		hash_remove(p->cache.hash, item->sector);
+	list_remove_entry(&item->time_list);
+	block_cache_item_remove(item);
+	p->cache.sectors -= PREREAD_SECTOR;
+	hdd_cache_size -= PREREAD_SECTOR;
+	return 1;
+}
+
+unsigned hdd_cache_reclaim(unsigned target_pages)
+{
+	unsigned freed = 0;
+	int i;
+
+	if (target_pages == 0)
+		return 0;
+
+	for (i = 0; i < hdd_partition_count && freed < target_pages; i++) {
+		partition *p = hdd_partitions[i].aux;
+
+		if (!p || !p->cache_inited)
+			continue;
+
+		mutex_lock(&p->cache_lock);
+		while (freed < target_pages &&
+		       partition_cache_reclaim_one_locked(p))
+			freed++;
+		mutex_unlock(&p->cache_lock);
+	}
+
+	return freed;
 }
 
 unsigned hdd_cache_read_size = 0;
@@ -975,6 +1037,7 @@ static int partition_cache_read(void *aux, unsigned sector, void *buf,
 	int head_sector = HEAD_SECTOR(sector);
 	int old_sector;
 	int old_dirty;
+	block_cache_item *new_item;
 
 	(void)len;
 
@@ -999,9 +1062,22 @@ retry:
 		return BLOCK_SECTOR_SIZE;
 	}
 
+	mutex_unlock(&p->cache_lock);
+
+	new_item = block_cache_item_create();
+
 	/* Cache miss: reserve a slot under lock, then perform disk I/O unlocked. */
+	mutex_lock(&p->cache_lock);
+	item = hdd_cache_lookup(p, sector);
+	if (item) {
+		mutex_unlock(&p->cache_lock);
+		if (new_item)
+			block_cache_item_remove(new_item);
+		goto retry;
+	}
+
 	item = hdd_cache_reserve_miss_locked(p, head_sector, &old_sector,
-					     &old_dirty);
+					     &old_dirty, new_item);
 	mutex_unlock(&p->cache_lock);
 
 	if (!item)
@@ -1033,6 +1109,7 @@ static int partition_cache_write(void *aux, unsigned sector, void *buf,
 	int head_sector = HEAD_SECTOR(sector);
 	int old_sector;
 	int old_dirty;
+	block_cache_item *new_item;
 
 retry:
 
@@ -1051,12 +1128,25 @@ retry:
 		return BLOCK_SECTOR_SIZE;
 	}
 
+	mutex_unlock(&p->cache_lock);
+
+	new_item = block_cache_item_create();
+
 	/*
 	 * Write miss: reserve a line, read the full extent so untouched sectors
 	 * remain valid, then patch the written sector into the cached line.
 	 */
+	mutex_lock(&p->cache_lock);
+	item = hdd_cache_lookup(p, sector);
+	if (item) {
+		mutex_unlock(&p->cache_lock);
+		if (new_item)
+			block_cache_item_remove(new_item);
+		goto retry;
+	}
+
 	item = hdd_cache_reserve_miss_locked(p, head_sector, &old_sector,
-					     &old_dirty);
+					     &old_dirty, new_item);
 	mutex_unlock(&p->cache_lock);
 
 	if (!item)
@@ -1106,6 +1196,12 @@ static void partition_cache_flush(void *aux)
 static void partition_cache_flush(void *aux)
 {
 	(void)aux;
+}
+
+unsigned hdd_cache_reclaim(unsigned target_pages)
+{
+	(void)target_pages;
+	return 0;
 }
 
 #endif /* HDD_CACHE_OPEN */

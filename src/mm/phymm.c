@@ -1,6 +1,8 @@
 #include <mm/phymm.h>
 #include <mm/mm.h>
 #include <boot/multiboot.h>
+#include <fs/cache.h>
+#include <hw/hdd.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <macro.h>
@@ -315,6 +317,16 @@ void phymm_free_user(unsigned page_index)
 	spinlock_lock(&buddy_lock, &irq);
 	buddy_free_block(page_index, 0);
 	spinlock_unlock(&buddy_lock, irq);
+}
+
+unsigned phymm_reclaim_user_cache(unsigned target_pages)
+{
+	return fs_page_cache_reclaim(target_pages);
+}
+
+unsigned phymm_reclaim_kernel_cache(unsigned target_pages)
+{
+	return hdd_cache_reclaim(target_pages);
 }
 
 /*

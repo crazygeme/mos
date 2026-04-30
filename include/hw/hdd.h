@@ -18,6 +18,7 @@ int hdd_partition_read(unsigned idx, unsigned sector, void *buf, unsigned len);
 int hdd_partition_write(unsigned idx, unsigned sector, void *buf, unsigned len);
 
 void hdd_flush();
+unsigned hdd_cache_reclaim(unsigned target_pages);
 
 /* Flush all partition caches and release block device resources. */
 void hdd_close(void);

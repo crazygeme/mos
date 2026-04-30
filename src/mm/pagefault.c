@@ -406,8 +406,8 @@ static void wp_page_copy(unsigned cr2)
 	/* Establish the direct kernel alias and copy the original content. */
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(page_idx);
-		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x\n",
-		     cr2, phy);
+		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x\n", cr2,
+		     phy);
 		return;
 	}
 	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);
@@ -542,6 +542,43 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 extern void do_signal(intr_frame *frame);
 extern void do_exit(unsigned encoded_status);
 
+static int pf_stack_addr_valid(unsigned addr, unsigned stack_base,
+			       unsigned stack_top)
+{
+	return addr >= stack_base && addr <= stack_top - sizeof(unsigned);
+}
+
+static void pf_dump_callstack(intr_frame *frame)
+{
+	task_struct *task = CURRENT_TASK();
+	unsigned stack_base = (unsigned)task;
+	unsigned stack_top = stack_base + PAGE_SIZE;
+	unsigned ebp = frame->ebp;
+	unsigned depth;
+
+	klog("callstack: eip %x ebp %x frame_ebp %x stack [%x, %x)\n",
+	     frame->eip, frame->ebp, frame->frame_pointer, stack_base,
+	     stack_top);
+
+	for (depth = 0; depth < 12; depth++) {
+		unsigned ret;
+		unsigned next;
+
+		if (!pf_stack_addr_valid(ebp, stack_base, stack_top) ||
+		    !pf_stack_addr_valid(ebp + sizeof(unsigned), stack_base,
+					 stack_top))
+			break;
+
+		next = *(unsigned *)ebp;
+		ret = *(unsigned *)(ebp + sizeof(unsigned));
+		klog("  fp #%d: ebp %x ret %x\n", depth, ebp, ret);
+
+		if (next <= ebp)
+			break;
+		ebp = next;
+	}
+}
+
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
@@ -581,8 +618,12 @@ NOT_HANDLED:
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
 	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
-		klog("segfault: error code %x, address %x, eip %x\n",
+		klog("segfault: %s: error code %x, address %x, eip %x\n",
+		     cur->user ? cur->user->command ? cur->user->command :
+						      "[none]" :
+				 "[none]",
 		     frame->error_code, cr2, frame->eip);
+		pf_dump_callstack(frame);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);
@@ -591,8 +632,11 @@ NOT_HANDLED:
 		goto Done;
 	}
 
-	klog("segfault: error code %x, address %x, eip %x\n", frame->error_code,
-	     cr2, frame->eip);
+	klog("segfault: %s: error code %x, address %x, eip %x\n",
+	     cur->user ? cur->user->command ? cur->user->command : "[none]" :
+			 "[none]",
+	     frame->error_code, cr2, frame->eip);
+	pf_dump_callstack(frame);
 
 	DIE();
 

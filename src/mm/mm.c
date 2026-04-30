@@ -41,6 +41,7 @@ static unsigned int kernel_pde_tables[1024 - KERNEL_PAGE_DIR_OFFSET];
 #define KERNEL_KMAP_PAGES ((KERNEL_KMAP_END - KERNEL_KMAP_BEGIN) / PAGE_SIZE)
 
 static unsigned int kernel_kmap_phys[KERNEL_KMAP_PAGES];
+static unsigned int kernel_kmap_refs[KERNEL_KMAP_PAGES];
 
 static void page_table_cache_init(page_table_cache_t *cache)
 {
@@ -389,6 +390,7 @@ int mm_kmap_phys(unsigned int phys)
 	spinlock_lock(&kmap_lock, &irq);
 	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
 		if (kernel_kmap_phys[slot] == page + 1) {
+			kernel_kmap_refs[slot]++;
 			spinlock_unlock(&kmap_lock, irq);
 			return 1;
 		}
@@ -403,14 +405,8 @@ int mm_kmap_phys(unsigned int phys)
 		return -1;
 	}
 
-	kernel_kmap_phys[slot] = page + 1;
-	spinlock_unlock(&kmap_lock, irq);
-
-	phys = KERNEL_KMAP_BEGIN + slot * PAGE_SIZE;
-	virt = phys;
+	virt = KERNEL_KMAP_BEGIN + slot * PAGE_SIZE;
 	if (!mm_get_valid_page_table(virt, 0, &info, 1)) {
-		spinlock_lock(&kmap_lock, &irq);
-		kernel_kmap_phys[slot] = 0;
 		spinlock_unlock(&kmap_lock, irq);
 		klog("mm_kmap_phys: page table alloc failed phys=%x virt=%x slot=%u\n",
 		     page, virt, slot);
@@ -418,8 +414,45 @@ int mm_kmap_phys(unsigned int phys)
 	}
 
 	*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
+	kernel_kmap_phys[slot] = page + 1;
+	kernel_kmap_refs[slot] = 1;
 	INVLPG(virt);
+	spinlock_unlock(&kmap_lock, irq);
 	return 1;
+}
+
+void mm_kunmap_phys(unsigned int phys)
+{
+	unsigned int page = phys & PAGE_SIZE_MASK;
+	unsigned int slot;
+	unsigned int virt;
+	int irq;
+	mm_addr_info info;
+
+	if (page < KERNEL_DIRECT_MAP_LIMIT)
+		return;
+
+	spinlock_lock(&kmap_lock, &irq);
+	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
+		if (kernel_kmap_phys[slot] != page + 1)
+			continue;
+
+		if (kernel_kmap_refs[slot] > 1) {
+			kernel_kmap_refs[slot]--;
+			spinlock_unlock(&kmap_lock, irq);
+			return;
+		}
+
+		virt = KERNEL_KMAP_BEGIN + slot * PAGE_SIZE;
+		if (mm_get_valid_page_table(virt, 0, &info, 0)) {
+			*info.entry = 0;
+			INVLPG(virt);
+		}
+		kernel_kmap_phys[slot] = 0;
+		kernel_kmap_refs[slot] = 0;
+		break;
+	}
+	spinlock_unlock(&kmap_lock, irq);
 }
 
 /*

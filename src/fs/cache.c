@@ -98,10 +98,12 @@ static unsigned fs_page_cache_load(file *fp, unsigned offset)
 	}
 
 	if (fp->f_fop->read_page(fp, offset, (void *)PHY_TO_VIRT(phy)) != 0) {
+		mm_kunmap_phys(phy);
 		phymm_free_user(page_index);
 		return 0;
 	}
 
+	mm_kunmap_phys(phy);
 	return phy;
 }
 
@@ -248,6 +250,7 @@ ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos)
 
 		memcpy((char *)buf + done,
 		       (void *)(PHY_TO_VIRT(phy) + page_off), chunk);
+		mm_kunmap_phys(phy);
 		done += chunk;
 		*pos += (loff_t)chunk;
 	}

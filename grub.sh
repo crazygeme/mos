@@ -5,7 +5,7 @@ set -e
 _ramsize="2048"
 diskfile="rh9.qcow2"
 _build="release"
-_window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
+_window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
 _logtofile="stdio"
 _priviledge=""
 _is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")

@@ -32,6 +32,7 @@ static int mem_copy_from_phys(void *dst, unsigned phys, size_t size)
 			return -EIO;
 		memcpy((char *)dst + done,
 		       (void *)(PHY_TO_VIRT(base) + page_off), chunk);
+		mm_kunmap_phys(base);
 		done += chunk;
 	}
 
@@ -54,6 +55,7 @@ static int mem_copy_to_phys(unsigned phys, const void *src, size_t size)
 			return -EIO;
 		memcpy((void *)(PHY_TO_VIRT(base) + page_off),
 		       (const char *)src + done, chunk);
+		mm_kunmap_phys(base);
 		done += chunk;
 	}
 

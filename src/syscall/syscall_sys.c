@@ -566,7 +566,7 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 {
 	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
-	unsigned old_size_pg, new_size_pg, old_end;
+	unsigned old_size_pg, new_size_pg, old_end, new_end;
 	int ret;
 
 	(void)new_addr;
@@ -597,13 +597,12 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 		return (int)old_addr;
 	}
 
-	/* Grow: try in-place if space after the region is free. */
+	/* Grow: extend the existing VMA if the full new range is free. */
 	old_end = old_addr + old_size_pg;
-	if (!vm_find_map(cur->user->vm, old_end)) {
-		ret = do_mmap(old_end, new_size_pg - old_size_pg, region->prot,
-			      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-		if (ret >= 0)
-			return (int)old_addr;
+	new_end = old_addr + new_size_pg;
+	if (vm_extend_map(cur->user->vm, old_addr, old_end, new_end)) {
+		vm_invalidate_user_cache(cur->user);
+		return (int)old_addr;
 	}
 
 	if (!(flags & MREMAP_MAYMOVE))

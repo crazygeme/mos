@@ -40,6 +40,10 @@ void vm_destroy(vm_struct_t vm);
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int flag, file *fp, int offset, unsigned anon_id);
 
+/* Extend the mapping that starts at @begin from @old_end to @new_end. */
+int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
+		  unsigned new_end);
+
 /**
  * delete a mapped region which contains addr
  *

@@ -5,6 +5,67 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-30 - X server segfault after System Monitor activity
+
+Opening GNOME System Monitor could trigger an X server crash shortly afterward.
+The crash terminated `/usr/X11R6/bin/X`, after which GNOME clients reported
+that their display connection had been lost.
+
+### Symptom
+
+The syscall log showed `gnome-system-monitor` actively polling `/proc/stat`,
+`/proc/meminfo`, and mount information, while the process that actually
+received `SIGSEGV` was the X server:
+
+```text
+segfault: error code 4, address 4003a000, eip 4003af50
+exit(/usr/X11R6/bin/X, status=b)
+```
+
+The fault was a user-mode non-present-page fault at `0x4003a000`, with
+execution also inside the same unmapped page.
+
+### Root cause
+
+The X server repeatedly resized an anonymous executable loader allocation with
+`mremap(40017000, ..., MREMAP_MAYMOVE)`. MOS handled in-place `mremap` growth
+by adding a new adjacent anonymous VMA with `MAP_FIXED`, instead of extending
+the original VMA descriptor. This left one logical resized mapping represented
+as multiple VM regions.
+
+The implementation also checked only the first page after the old mapping end
+when deciding whether in-place growth was possible. A later VMA inside the
+requested growth range could therefore be missed.
+
+After a later shrink, `0x4003a000` was legitimately unmapped, but X still
+jumped through an address in that old expanded range. The fragmented VMA state
+violated the single-resized-mapping behavior expected by Linux userspace and
+made stale loader/allocator state observable as an X server crash.
+
+### Fix
+
+`mremap` growth now extends the existing VM descriptor in place when the full
+target range is free. The new `vm_extend_map()` helper validates that the
+mapping starts and ends at the expected addresses, checks the whole extension
+range for overlap, then updates the VM key and region end together.
+
+If in-place extension is not possible, `mremap` falls back to the existing
+move-and-copy path when `MREMAP_MAYMOVE` is present, or returns `ENOMEM` when
+movement is not allowed.
+
+Focused mmap tests now cover successful in-place growth and rejection of growth
+across a later overlapping VMA. `make` and `make test` both build successfully.
+
+### Key lesson
+
+`mremap` is not just an allocation convenience. Userspace loaders and allocators
+depend on Linux's resized-mapping semantics, including coherent VMA identity
+and full-range collision checks. Representing one resized mapping as adjacent
+independent VMAs can corrupt higher-level assumptions even when individual page
+fault handling appears correct.
+
+---
+
 ## 2026-04-30 - Loopback `ping` could hang or print timeout errors after very fast replies
 
 Loopback ICMP echo could stop making progress after a reply with a

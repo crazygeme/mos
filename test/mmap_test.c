@@ -9,12 +9,16 @@
 #include <mm/mmap.h>
 #include <ps/ps.h>
 #include <config.h>
+#include <errno.h>
 #include <test/test.h>
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
 /* A fixed user-space address well within the user zone, page-aligned. */
 #define TEST_FIXED_ADDR 0x20000000u
+
+int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
+	       int flags, unsigned new_addr);
 
 static vm_struct_t cur_vm(void)
 {
@@ -402,5 +406,47 @@ KTEST(mmap, split_by_fixed)
 	EXPECT_EQ(rr->prot, PROT_READ);
 
 	do_munmap((void *)base, 4 * PAGE_SIZE);
+	return 0;
+}
+
+KTEST(mmap, mremap_grow_extends_region)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, 2 * PAGE_SIZE, prot, flags, -1, 0);
+
+	EXPECT_EQ(sys_mremap(base, 2 * PAGE_SIZE, 4 * PAGE_SIZE, 0, 0),
+		  (int)base);
+
+	vm_region *r = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base);
+	EXPECT_EQ(r->end, base + 4 * PAGE_SIZE);
+	EXPECT_EQ(vm_find_map(cur_vm(), base + 3 * PAGE_SIZE), r);
+
+	do_munmap((void *)base, 4 * PAGE_SIZE);
+	return 0;
+}
+
+KTEST(mmap, mremap_grow_rejects_later_overlap)
+{
+	unsigned base = TEST_MERGE_BASE;
+	int prot = PROT_READ | PROT_WRITE;
+	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+
+	do_mmap(base, PAGE_SIZE, prot, flags, -1, 0);
+	do_mmap(base + 2 * PAGE_SIZE, PAGE_SIZE, prot, flags, -1, 0);
+
+	EXPECT_EQ(sys_mremap(base, PAGE_SIZE, 4 * PAGE_SIZE, 0, 0), -ENOMEM);
+
+	vm_region *r = vm_find_map(cur_vm(), base);
+	ASSERT_NONNULL(r);
+	EXPECT_EQ(r->begin, base);
+	EXPECT_EQ(r->end, base + PAGE_SIZE);
+
+	do_munmap((void *)base, PAGE_SIZE);
+	do_munmap((void *)(base + 2 * PAGE_SIZE), PAGE_SIZE);
 	return 0;
 }

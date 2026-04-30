@@ -267,6 +267,49 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 }
 
 /*
+ * vm_extend_map - extend one existing VM descriptor in place.
+ *
+ * This is used by mremap() growth.  Unlike adding a second adjacent mapping,
+ * extending the descriptor preserves userspace's expectation that the resized
+ * range remains one mapping with one set of attributes.
+ */
+int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
+		  unsigned new_end)
+{
+	hash_table *table = vm;
+	key_value_pair *pair;
+	vm_key probe;
+	vm_key *key;
+	vm_region *region;
+	int irq;
+
+	if (!vm || begin >= old_end || old_end >= new_end)
+		return 0;
+
+	pair = vm_find_pair(table, begin);
+	if (!pair)
+		return 0;
+
+	key = pair->key;
+	region = pair->val;
+	if (key->begin != begin || key->end != old_end ||
+	    region->begin != begin || region->end != old_end)
+		return 0;
+
+	probe.begin = old_end;
+	probe.end = new_end;
+	if (hash_find(table, &probe) != NULL)
+		return 0;
+
+	spinlock_lock(&table->lock, &irq);
+	key->end = new_end;
+	region->end = new_end;
+	spinlock_unlock(&table->lock, irq);
+
+	return 1;
+}
+
+/*
  * vm_del_map - remove the mapping that contains addr and unmap its pages.
  *
  * addr is rounded down to the nearest page boundary.  All hardware page-table

@@ -4,6 +4,8 @@ set -e
 CASE_NAME=posix_exec
 BASE=/root/tests/$CASE_NAME
 FILE="$BASE/run.sh"
+SRC="$BASE/exec_script.c"
+BIN="$BASE/exec_script"
 
 fail()
 {
@@ -35,6 +37,11 @@ Actual: exit status $rc
 Output: ${output:-<none>}"
 }
 
+require_cmd()
+{
+	command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"
+}
+
 cleanup()
 {
 	rm -rf "$BASE" >/dev/null 2>&1 || true
@@ -42,6 +49,8 @@ cleanup()
 
 trap cleanup EXIT
 cleanup
+
+require_cmd gcc
 
 mkdir -p "$BASE" >/dev/null 2>&1 || fail "mkdir failed"
 printf '#!/bin/sh\nexit 7\n' > "$FILE"
@@ -62,4 +71,25 @@ sh "$FILE" >/dev/null 2>&1
 rc=$?
 set -e
 [ "$rc" -eq 7 ] || fail "Expected: 'sh $FILE' exit status 7
+Actual: ${rc}"
+
+printf '#!/bin/sh\n[ "$0" = "%s" ] || exit 31\nexit 23\n' "$FILE" > "$FILE"
+cat > "$SRC" <<EOF
+#include <unistd.h>
+
+extern char **environ;
+
+int main(void)
+{
+	char *argv[] = { "not-the-script-path", "arg1", 0 };
+	execve("$FILE", argv, environ);
+	return 99;
+}
+EOF
+expect_success gcc "$SRC" -o "$BIN"
+set +e
+"$BIN" >/dev/null 2>&1
+rc=$?
+set -e
+[ "$rc" -eq 23 ] || fail "Expected: shebang passes script path as argv[1]
 Actual: ${rc}"

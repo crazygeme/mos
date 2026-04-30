@@ -463,9 +463,9 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * ELF: file_name unchanged, argv/envp deep-copied as-is.
 	 *
 	 * #!: parse "#!/path/to/interp[ optional_arg]", update file_name
-	 *     to the interpreter, and prepend [interp, optional_arg?] ahead
-	 *     of the original argv so the final layout is:
-	 *       [interp, optional_arg?, argv[0], argv[1], ...]
+	 *     to the interpreter. Linux passes the script pathname, not the
+	 *     caller's argv[0], as the first script argument:
+	 *       [interp, optional_arg?, script_path, argv[1], ...]
 	 *
 	 * After this block: file_name is the executable to load; argc/s_argv
 	 * and envc/s_envp are fully set and ready for setup_user_stack().
@@ -480,7 +480,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 		s_envp = dup_strv(envp, envc);
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
 		const char *interp, *interp_arg;
-		unsigned shebang_argc, user_argc, j;
+		unsigned shebang_argc, user_argc, j, dst;
 
 		parse_shebang(firstline, &interp, &interp_arg);
 
@@ -488,14 +488,16 @@ int sys_execve(const char *f, char **argv, char **envp)
 		envc = count_strv(envp);
 
 		shebang_argc = 1 + (interp_arg ? 1 : 0);
-		argc = shebang_argc + user_argc;
+		argc = shebang_argc + 1 + (user_argc ? user_argc - 1 : 0);
 
 		s_argv = kmalloc(argc * sizeof(char *));
 		s_argv[0] = strdup(interp);
+		dst = 1;
 		if (interp_arg)
-			s_argv[1] = strdup(interp_arg);
-		for (j = 0; j < user_argc; j++)
-			s_argv[shebang_argc + j] = strdup(argv[j]);
+			s_argv[dst++] = strdup(interp_arg);
+		s_argv[dst++] = strdup(file_name);
+		for (j = 1; j < user_argc; j++)
+			s_argv[dst++] = strdup(argv[j]);
 
 		strcpy(file_name, interp);
 

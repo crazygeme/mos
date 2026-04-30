@@ -5,6 +5,80 @@ Each entry explains the reasoning so the same mistake is not repeated.
 
 ---
 
+## 2026-04-30 - Consolehelper-launched GUI tools failed through broken shebang argv
+
+Several GNOME control-panel applications launched through `consolehelper`
+failed immediately even though their desktop entries, authentication wrapper,
+and X startup-notification traffic were otherwise working. The visible example
+was Hardware Browser, but the same bug affected other wrapped GUI tools that
+ultimately execute installed shell scripts.
+
+### Symptom
+
+Launching Hardware Browser reached the `consolehelper` path, read
+`/etc/security/console.apps/hwbrowser`, authenticated through the usermode
+wrapper, and then failed from `/bin/sh`:
+
+```text
+open(/root/hwbrowser, 8000, 0) = -2
+stat64(/usr/sbin/hwbrowser, ...) = -2
+stat64(/usr/bin/hwbrowser, ...) = 0
+open(/usr/bin/hwbrowser, 8000, 0) = 3
+read(3, "\x7fELF...", 80) = 80
+write(2, "hwbrowser: /usr/bin/hwbrowser: cannot execute binary file\n", 58)
+exit_group(126)
+```
+
+The shell was searching for `hwbrowser` by name and found the
+`/usr/bin/hwbrowser` consolehelper ELF wrapper, not the intended
+`/usr/share/hwbrowser/hwbrowser` shell script.
+
+### Root cause
+
+Linux shebang execution rewrites the argument vector as:
+
+```text
+interpreter, optional-interpreter-argument, script-path, original-argv[1]...
+```
+
+MOS instead preserved the caller's `argv[0]` after the interpreter:
+
+```text
+interpreter, optional-interpreter-argument, original-argv[0], original-argv[1]...
+```
+
+The RH9 hwbrowser package installs `/usr/share/hwbrowser/hwbrowser` as a
+`#!/bin/sh` script. The usermode `consolehelper` source shows that it reads
+`PROGRAM=/usr/share/hwbrowser/hwbrowser` from the console.apps file and
+executes that path while setting the wrapped service name as the script's
+displayed command name. With MOS's argv layout, `/bin/sh` received
+`argv[1] == "hwbrowser"` instead of the script path. It therefore searched
+`PATH`, opened `/usr/bin/hwbrowser`, saw an ELF binary while already running as
+the shell, and emitted `cannot execute binary file`.
+
+### Fix
+
+`execve` shebang handling now inserts the resolved script pathname after the
+interpreter and optional interpreter argument, then appends the original
+arguments starting at `argv[1]`. This matches Linux behavior and allows shells,
+Python, and other interpreters to open the actual script regardless of the
+caller's chosen `argv[0]`.
+
+The `posix_exec` test now includes a compiled regression helper that calls
+`execve()` on a script with a deliberately misleading `argv[0]`. The script
+verifies that `$0` is the script pathname and exits with a distinct status.
+`make` and shell syntax validation pass.
+
+### Key lesson
+
+Shebang execution is an ABI boundary, not an implementation detail. Preserving
+the caller's `argv[0]` is correct for native ELF execution, but scripts require
+the kernel-supplied script path so the interpreter can open the intended file.
+Desktop wrappers and privilege helpers often depend on this distinction because
+their service name and executable path are deliberately different.
+
+---
+
 ## 2026-04-30 - X server segfault after System Monitor activity
 
 Opening GNOME System Monitor could trigger an X server crash shortly afterward.

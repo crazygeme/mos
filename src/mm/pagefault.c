@@ -57,10 +57,12 @@ static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 	}
 
 	if (f->f_fop->read_page(f, offset, (void *)PHY_TO_VIRT(phy)) != 0) {
+		mm_kunmap_phys(phy);
 		phymm_free_user(page_idx);
 		return 0;
 	}
 
+	mm_kunmap_phys(phy);
 	return phy;
 }
 
@@ -411,6 +413,7 @@ static void wp_page_copy(unsigned cr2)
 		return;
 	}
 	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);
+	mm_kunmap_phys(phy);
 
 	/* Swap the shared PTE for a private writable one. */
 	flag = mm_get_map_flag(vir);
@@ -548,37 +551,6 @@ static int pf_stack_addr_valid(unsigned addr, unsigned stack_base,
 	return addr >= stack_base && addr <= stack_top - sizeof(unsigned);
 }
 
-static void pf_dump_callstack(intr_frame *frame)
-{
-	task_struct *task = CURRENT_TASK();
-	unsigned stack_base = (unsigned)task;
-	unsigned stack_top = stack_base + PAGE_SIZE;
-	unsigned ebp = frame->ebp;
-	unsigned depth;
-
-	klog("callstack: eip %x ebp %x frame_ebp %x stack [%x, %x)\n",
-	     frame->eip, frame->ebp, frame->frame_pointer, stack_base,
-	     stack_top);
-
-	for (depth = 0; depth < 12; depth++) {
-		unsigned ret;
-		unsigned next;
-
-		if (!pf_stack_addr_valid(ebp, stack_base, stack_top) ||
-		    !pf_stack_addr_valid(ebp + sizeof(unsigned), stack_base,
-					 stack_top))
-			break;
-
-		next = *(unsigned *)ebp;
-		ret = *(unsigned *)(ebp + sizeof(unsigned));
-		klog("  fp #%d: ebp %x ret %x\n", depth, ebp, ret);
-
-		if (next <= ebp)
-			break;
-		ebp = next;
-	}
-}
-
 static void pf_process(intr_frame *frame)
 {
 	unsigned cr2;
@@ -623,7 +595,6 @@ NOT_HANDLED:
 						      "[none]" :
 				 "[none]",
 		     frame->error_code, cr2, frame->eip);
-		pf_dump_callstack(frame);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);
@@ -636,7 +607,6 @@ NOT_HANDLED:
 	     cur->user ? cur->user->command ? cur->user->command : "[none]" :
 			 "[none]",
 	     frame->error_code, cr2, frame->eip);
-	pf_dump_callstack(frame);
 
 	DIE();
 

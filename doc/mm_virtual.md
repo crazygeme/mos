@@ -268,7 +268,8 @@ Current mechanics:
 - misses allocate a user physical page, preferring high physical memory, then
   temporarily kernel-map it and fill it with `inode->i_op->read_page`
 - the inserted cache entry takes an extra physical-page reference with `phymm_reference_page`
-- eviction is LRU and bounded by `PAGE_CACHE_SIZE`
+- eviction is LRU and pressure-driven; the cache grows while memory is
+  available and shrinks when page allocation requests reclaim file-cache pages
 
 On concurrent misses, the code double-checks after I/O:
 

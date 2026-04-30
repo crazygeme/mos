@@ -53,8 +53,6 @@
 
 #define DSR_CACHE_DEPTH 4096
 
-#define HDD_CACHE_SIZE (4096 * 8) /* pages */
-
 #define HDD_CACHE_OPEN 1
 
 #define HDD_CACHE_WRITE_THOUGH 0
@@ -88,8 +86,6 @@
 
 #define PAGE_SIZE (4 * 1024)
 #define PAGE_SIZE_MASK 0xFFFFF000
-
-#define PAGE_CACHE_SIZE (4096 * 8) // pages
 
 #define LDT_ENTRY_COUNT 16
 #define LDT_SELECTOR ((5 + GDT_ENTRY_TLS_COUNT + 1) << 3)

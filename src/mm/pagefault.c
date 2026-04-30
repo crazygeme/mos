@@ -43,9 +43,13 @@ static unsigned pf_read_file_page_direct(file *f, unsigned offset)
 
 	page_idx = phymm_alloc_user();
 	if (page_idx == PHYMM_INVALID) {
-		klog("pagefault: phymm_alloc_user failed reading file page offset=%x\n",
-		     offset);
-		return 0;
+		phymm_reclaim_user_cache(32);
+		page_idx = phymm_alloc_user();
+		if (page_idx == PHYMM_INVALID) {
+			klog("pagefault: phymm_alloc_user failed reading file page offset=%x\n",
+			     offset);
+			return 0;
+		}
 	}
 
 	phy = page_idx * PAGE_SIZE;
@@ -224,9 +228,13 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 		/* Miss — allocate, zero, strip writable, and register in anon_shared_map. */
 		page_idx = phymm_alloc_user();
 		if (page_idx == PHYMM_INVALID) {
-			klog("pagefault: phymm_alloc_user failed anon shared addr=%x offset=%x\n",
-			     address, offset);
-			goto DONE;
+			phymm_reclaim_user_cache(32);
+			page_idx = phymm_alloc_user();
+			if (page_idx == PHYMM_INVALID) {
+				klog("pagefault: phymm_alloc_user failed anon shared addr=%x offset=%x\n",
+				     address, offset);
+				goto DONE;
+			}
 		}
 		phy = page_idx * PAGE_SIZE;
 		if (mm_map_page(address, phy, PAGE_ENTRY_USER_DATA) != 1) {
@@ -400,8 +408,13 @@ static void wp_page_copy(unsigned cr2)
 
 	page_idx = phymm_alloc_user();
 	if (page_idx == PHYMM_INVALID) {
-		klog("pagefault: phymm_alloc_user failed COW addr=%x\n", cr2);
-		return;
+		phymm_reclaim_user_cache(32);
+		page_idx = phymm_alloc_user();
+		if (page_idx == PHYMM_INVALID) {
+			klog("pagefault: phymm_alloc_user failed COW addr=%x\n",
+			     cr2);
+			return;
+		}
 	}
 	phy = page_idx * PAGE_SIZE;
 

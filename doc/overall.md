@@ -308,4 +308,3 @@ IRQs; the IOAPIC is used only for IPI delivery.
 | `MAX_CPUS`           | 8          | Maximum SMP CPUs              |
 | `USER_STACK_PAGES`   | 128        | User stack size (512 KB)      |
 | `TASK_UNMAPPED_BASE` | 0x40000000 | Base of mmap zone             |
-| `HDD_CACHE_SIZE`     | 4096 pages | Block cache capacity          |

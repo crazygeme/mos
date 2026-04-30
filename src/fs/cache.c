@@ -84,9 +84,13 @@ static unsigned fs_page_cache_load(file *fp, unsigned offset)
 
 	page_index = phymm_alloc_user();
 	if (page_index == PHYMM_INVALID) {
-		klog("fs_page_cache: phymm_alloc_user failed offset=%x\n",
-		     offset);
-		return 0;
+		phymm_reclaim_user_cache(32);
+		page_index = phymm_alloc_user();
+		if (page_index == PHYMM_INVALID) {
+			klog("fs_page_cache: phymm_alloc_user failed offset=%x\n",
+			     offset);
+			return 0;
+		}
 	}
 
 	phy = page_index * PAGE_SIZE;
@@ -154,8 +158,6 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 		return phy;
 	}
 
-	if (hash_size(fs_page_cache) >= PAGE_CACHE_SIZE)
-		fs_page_cache_evict_one_locked();
 	mutex_unlock(&fs_page_cache_lock);
 
 	phy = fs_page_cache_load(fp, tmp.offset);
@@ -216,6 +218,22 @@ void fs_page_cache_invalidate(file *fp)
 		}
 	}
 	mutex_unlock(&fs_page_cache_lock);
+}
+
+unsigned fs_page_cache_reclaim(unsigned target_pages)
+{
+	unsigned freed = 0;
+
+	if (!fs_page_cache_ready || target_pages == 0)
+		return 0;
+
+	mutex_lock(&fs_page_cache_lock);
+	while (freed < target_pages && !list_is_empty(&fs_page_cache_lru)) {
+		fs_page_cache_evict_one_locked();
+		freed++;
+	}
+	mutex_unlock(&fs_page_cache_lock);
+	return freed;
 }
 
 ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos)

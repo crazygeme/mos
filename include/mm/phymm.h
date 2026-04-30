@@ -64,6 +64,9 @@ void phymm_free_kernel(unsigned page_index, unsigned page_count);
 /* Return a single user page to the allocator. */
 void phymm_free_user(unsigned page_index);
 
+unsigned phymm_reclaim_user_cache(unsigned target_pages);
+unsigned phymm_reclaim_kernel_cache(unsigned target_pages);
+
 int phymm_is_used(unsigned page_index);
 
 void phymm_get_usage(phymm_usage *usage);

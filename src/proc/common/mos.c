@@ -166,7 +166,6 @@ static void fill(proc_buf_t *pb)
 	mos_table_begin(pb, "Inode/filesystem page cache");
 	mos_print_bytes(pb, "current", fs_page_cache_pages * PAGE_SIZE);
 	mos_print_bytes(pb, "peak", fs_page_cache_max_pages * PAGE_SIZE);
-	mos_print_bytes(pb, "capacity", PAGE_CACHE_SIZE * PAGE_SIZE);
 	mos_print_count(pb, "lookups", fs_page_cache_searches);
 	mos_print_count_rate(pb, "hits", fs_page_cache_hits, inode_cache_rate);
 	mos_table_end(pb);
@@ -178,7 +177,6 @@ static void fill(proc_buf_t *pb)
 			hdd_cache_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "peak sectors",
 			hdd_cache_max_size * BLOCK_SECTOR_SIZE);
-	mos_print_bytes(pb, "capacity", HDD_CACHE_SIZE * PAGE_SIZE);
 	mos_print_bytes(pb, "read served", hdd_cache_read_size);
 	mos_print_bytes(pb, "write served", hdd_cache_write_size);
 	mos_print_count(pb, "lookups", hdd_cache_search_count);

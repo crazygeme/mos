@@ -164,11 +164,13 @@ Enabled by `HDD_CACHE_OPEN 1` in `config.h`.
 
 ### Parameters
 
-| Constant             | Value                         | Meaning                         |
-| -------------------- | ----------------------------- | ------------------------------- |
-| `HDD_CACHE_SIZE`     | 40960 pages                   | Maximum cache memory            |
-| `CACHE_SECTOR_COUNT` | `HDD_CACHE_SIZE * 4096 / 512` | Max cached sectors              |
-| `PREREAD_SECTOR`     | 8                             | Read-ahead group size (sectors) |
+| Constant         | Value | Meaning                         |
+| ---------------- | ----- | ------------------------------- |
+| `PREREAD_SECTOR` | 8     | Read-ahead group size (sectors) |
+
+The cache has no fixed compile-time capacity. It grows while low kernel memory
+is available and reclaims least-recently-used clean or flushed entries when
+kernel-page allocation requests need memory back.
 
 ### Organisation
 

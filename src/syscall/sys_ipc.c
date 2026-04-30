@@ -201,9 +201,13 @@ static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
 	if (phy == 0) {
 		page_index = phymm_alloc_user();
 		if (page_index == PHYMM_INVALID) {
-			klog("shm: phymm_alloc_user failed shmid=%d page=%u\n",
-			     seg->shmid, page_no);
-			return -ENOMEM;
+			phymm_reclaim_user_cache(32);
+			page_index = phymm_alloc_user();
+			if (page_index == PHYMM_INVALID) {
+				klog("shm: phymm_alloc_user failed shmid=%d page=%u\n",
+				     seg->shmid, page_no);
+				return -ENOMEM;
+			}
 		}
 
 		phy = page_index * PAGE_SIZE;

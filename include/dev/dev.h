@@ -22,12 +22,26 @@
  * major:       device major number
  * minor_base:  first minor handled
  * minor_count: number of consecutive minors handled
- * open:        called on open(); rdev = MKDEV(major, minor)
+ * open:        called on open(); rdev = MKDEV(major, minor).  May be NULL
+ *              for majors that are listed in /proc/devices but opened through
+ *              another filesystem (e.g. devpts).
  *              returns a new open file* on success, NULL on error.
  */
-void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
-		   unsigned minor_count,
-		   file *(*open)(super_block *sb, unsigned rdev, int flag));
+void cdev_register_named(unsigned mode_type, unsigned major,
+			 unsigned minor_base, unsigned minor_count,
+			 const char *name,
+			 file *(*open)(super_block *sb, unsigned rdev,
+				       int flag));
+
+#define cdev_register(mode_type, major, minor_base, minor_count, open) \
+	cdev_register_named(mode_type, major, minor_base, minor_count, NULL, open)
+
+#define cdev_register_major(mode_type, major, name) \
+	cdev_register_named(mode_type, major, 0, 0, name, NULL)
+
+typedef void (*cdev_major_iter_fn)(unsigned mode_type, unsigned major,
+				   const char *name, void *data);
+void cdev_for_each_major(cdev_major_iter_fn fn, void *data);
 
 /*
  * DEV_INIT(fn) registers a void (*)(super_block *) function to be called

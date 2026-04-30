@@ -88,14 +88,15 @@ static void random_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/random\n");
 
-	cdev_register(S_IFCHR, RANDOM_MAJOR, RANDOM_MINOR, 1, random_cdev_open);
+	cdev_register_named(S_IFCHR, RANDOM_MAJOR, RANDOM_MINOR, 1, "mem",
+			    random_cdev_open);
 	vfs_mknod(dev_sb, "/random", S_IFCHR | 0666,
 		  MKDEV(RANDOM_MAJOR, RANDOM_MINOR));
 
 	printk("dev: registered /dev/urandom\n");
 
-	cdev_register(S_IFCHR, RANDOM_MAJOR, URANDOM_MINOR, 1,
-		      random_cdev_open);
+	cdev_register_named(S_IFCHR, RANDOM_MAJOR, URANDOM_MINOR, 1, "mem",
+			    random_cdev_open);
 	vfs_mknod(dev_sb, "/urandom", S_IFCHR | 0666,
 		  MKDEV(RANDOM_MAJOR, URANDOM_MINOR));
 }

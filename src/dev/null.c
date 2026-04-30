@@ -70,7 +70,8 @@ static file *null_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 static void null_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/null\n");
-	cdev_register(S_IFCHR, NULL_MAJOR, NULL_MINOR, 1, null_cdev_open);
+	cdev_register_named(S_IFCHR, NULL_MAJOR, NULL_MINOR, 1, "mem",
+			    null_cdev_open);
 	vfs_mknod(dev_sb, "/null", S_IFCHR | 0666,
 		  MKDEV(NULL_MAJOR, NULL_MINOR));
 }
@@ -136,7 +137,8 @@ static file *zero_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 static void zero_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/zero\n");
-	cdev_register(S_IFCHR, ZERO_MAJOR, ZERO_MINOR, 1, zero_cdev_open);
+	cdev_register_named(S_IFCHR, ZERO_MAJOR, ZERO_MINOR, 1, "mem",
+			    zero_cdev_open);
 	vfs_mknod(dev_sb, "/zero", S_IFCHR | 0666,
 		  MKDEV(ZERO_MAJOR, ZERO_MINOR));
 }

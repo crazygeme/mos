@@ -158,8 +158,8 @@ static file *mouse_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 static void mouse_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/input/mice\n");
-	cdev_register(S_IFCHR, INPUT_MOUSE_MAJOR, INPUT_MOUSE_MINOR, 1,
-		      mouse_cdev_open);
+	cdev_register_named(S_IFCHR, INPUT_MOUSE_MAJOR, INPUT_MOUSE_MINOR, 1,
+			    "input", mouse_cdev_open);
 	vfs_mkdir(dev_sb, "/input", 0755);
 	vfs_mknod(dev_sb, "/input/mice", S_IFCHR | 0666,
 		  MKDEV(INPUT_MOUSE_MAJOR, INPUT_MOUSE_MINOR));

@@ -216,7 +216,8 @@ static file *mem_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 static void mem_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/mem\n");
-	cdev_register(S_IFCHR, MEM_MAJOR, MEM_MINOR, 1, mem_cdev_open);
+	cdev_register_named(S_IFCHR, MEM_MAJOR, MEM_MINOR, 1, "mem",
+			    mem_cdev_open);
 	vfs_mknod(dev_sb, "/mem", S_IFCHR | 0600, MKDEV(MEM_MAJOR, MEM_MINOR));
 }
 

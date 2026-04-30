@@ -472,7 +472,8 @@ static void loop_dev_register(super_block *dev_sb)
 
 	printk("dev: registered /dev/loop[0-%d]\n", LOOP_MAX_DEVS - 1);
 
-	cdev_register(S_IFBLK, LOOP_MAJOR, 0, LOOP_MAX_DEVS, loop_cdev_open);
+	cdev_register_named(S_IFBLK, LOOP_MAJOR, 0, LOOP_MAX_DEVS, "loop",
+			    loop_cdev_open);
 
 	for (i = 0; i < LOOP_MAX_DEVS; i++) {
 		sprintf(loop_devs[i].name, "loop%d", i);

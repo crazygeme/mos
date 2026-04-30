@@ -196,7 +196,8 @@ static file *rtc_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 static void rtc_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/rtc\n");
-	cdev_register(S_IFCHR, RTC_MAJOR, RTC_MINOR, 1, rtc_cdev_open);
+	cdev_register_named(S_IFCHR, RTC_MAJOR, RTC_MINOR, 1, "misc",
+			    rtc_cdev_open);
 	vfs_mknod(dev_sb, "/rtc", S_IFCHR | 0660, MKDEV(RTC_MAJOR, RTC_MINOR));
 }
 

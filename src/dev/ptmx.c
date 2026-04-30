@@ -421,8 +421,9 @@ static void ptmx_fs_type_init(void)
 static void ptmx_dev_register(super_block *dev_sb)
 {
 	printk("dev: registered /dev/ptmx\n");
-	cdev_register(S_IFCHR, UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR, 1,
-		      ptmx_cdev_open);
+	cdev_register_named(S_IFCHR, UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR, 1,
+			    "ptmx", ptmx_cdev_open);
+	cdev_register_major(S_IFCHR, UNIX98_PTS_MAJOR, "pts");
 	vfs_mknod(dev_sb, "/ptmx", S_IFCHR | 0666,
 		  MKDEV(UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR));
 }

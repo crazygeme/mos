@@ -35,6 +35,7 @@ typedef struct {
 	unsigned major;
 	unsigned minor_base;
 	unsigned minor_count;
+	const char *name;
 	file *(*open)(super_block *sb, unsigned rdev, int flag);
 } cdev_entry;
 
@@ -45,9 +46,11 @@ static const file_operations devnode_fops;
 static const file_operations fifonode_reader_fops;
 static const file_operations fifonode_writer_fops;
 
-void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
-		   unsigned minor_count,
-		   file *(*open)(super_block *sb, unsigned rdev, int flag))
+void cdev_register_named(unsigned mode_type, unsigned major,
+			 unsigned minor_base, unsigned minor_count,
+			 const char *name,
+			 file *(*open)(super_block *sb, unsigned rdev,
+				       int flag))
 {
 	if (cdev_count >= MAX_CDEVS)
 		return;
@@ -55,8 +58,31 @@ void cdev_register(unsigned mode_type, unsigned major, unsigned minor_base,
 	cdev_table[cdev_count].major = major;
 	cdev_table[cdev_count].minor_base = minor_base;
 	cdev_table[cdev_count].minor_count = minor_count;
+	cdev_table[cdev_count].name = name;
 	cdev_table[cdev_count].open = open;
 	cdev_count++;
+}
+
+void cdev_for_each_major(cdev_major_iter_fn fn, void *data)
+{
+	int i, j, seen;
+
+	if (!fn)
+		return;
+
+	for (i = 0; i < cdev_count; i++) {
+		seen = 0;
+		for (j = 0; j < i; j++) {
+			if (cdev_table[j].mode_type == cdev_table[i].mode_type &&
+			    cdev_table[j].major == cdev_table[i].major) {
+				seen = 1;
+				break;
+			}
+		}
+		if (!seen)
+			fn(cdev_table[i].mode_type, cdev_table[i].major,
+			   cdev_table[i].name, data);
+	}
 }
 
 static file *devnode_open_stub(super_block *sb, unsigned mode)
@@ -253,7 +279,7 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 
 	for (i = 0; i < cdev_count; i++) {
 		cdev_entry *e = &cdev_table[i];
-		if (e->mode_type == mt && e->major == major &&
+		if (e->open && e->mode_type == mt && e->major == major &&
 		    minor >= e->minor_base &&
 		    minor < e->minor_base + e->minor_count) {
 			fp = e->open(sb, dn->rdev, flag);

@@ -254,8 +254,9 @@ static void hdd_dev_register(super_block *dev_sb)
 	char path[48];
 	int i;
 
-	cdev_register(S_IFBLK, HDD_MAJOR, 1, (unsigned)hdd_partition_total(),
-		      hdd_cdev_open);
+	cdev_register_named(S_IFBLK, HDD_MAJOR, 1,
+			    (unsigned)hdd_partition_total(), "ide0",
+			    hdd_cdev_open);
 
 	for (i = 0; i < hdd_partition_total(); i++) {
 		sprintf(path, "/%s", hdd_partition_name(i));

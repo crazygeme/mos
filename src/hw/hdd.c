@@ -759,16 +759,16 @@ static block_cache_item *block_cache_item_create(void)
 	item->sector = -1;
 	item->dirty = 0;
 	item->loading = 0;
-	item->page_index = phymm_alloc_user();
+	item->page_index = phymm_alloc_kernel(1);
 	if (item->page_index == PHYMM_INVALID) {
 		kfree(item);
-		klog("hdd: phymm_alloc_user failed for block cache item\n");
+		klog("hdd: phymm_alloc_kernel failed for block cache item\n");
 		return NULL;
 	}
 
 	phy = item->page_index * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
-		phymm_free_user(item->page_index);
+		phymm_free_kernel(item->page_index, 1);
 		kfree(item);
 		klog("hdd: mm_kmap_phys failed for block cache item phy=%x\n",
 		     phy);
@@ -777,7 +777,7 @@ static block_cache_item *block_cache_item_create(void)
 
 	item->buf = (void *)PHY_TO_VIRT(phy);
 	if (!item->buf) {
-		phymm_free_user(item->page_index);
+		phymm_free_kernel(item->page_index, 1);
 		kfree(item);
 		return NULL;
 	}
@@ -798,7 +798,7 @@ static void block_cache_item_remove(block_cache_item *item)
 		return;
 	if (item->page_index != PHYMM_INVALID &&
 	    phymm_dereference_page(item->page_index) == 0)
-		phymm_free_user(item->page_index);
+		phymm_free_kernel(item->page_index, 1);
 	cache_count -= buf_pages;
 	kfree(item);
 }

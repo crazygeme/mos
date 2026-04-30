@@ -5,7 +5,7 @@ diskfile="rh9.qcow2"
 _build="release"
 kernel_file=""
 _debug=""
-_window=$([ "$(uname)" == "Linux" ] && echo "gtk" || echo "cocoa")
+_window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
 _verbose=""
 _logtofile="stdio"
 _vga="-vga vmware"

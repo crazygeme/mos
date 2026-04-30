@@ -594,6 +594,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 
 		memcpy((char *)PHY_TO_VIRT(pte & PAGE_SIZE_MASK) + page_off,
 		       csrc, to_write);
+		mm_kunmap_phys(pte & PAGE_SIZE_MASK);
 
 		vaddr += to_write;
 		csrc += to_write;
@@ -643,6 +644,7 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		memcpy(cdst,
 		       (char *)PHY_TO_VIRT(pte & PAGE_SIZE_MASK) + page_off,
 		       to_read);
+		mm_kunmap_phys(pte & PAGE_SIZE_MASK);
 		vaddr += to_read;
 		cdst += to_read;
 		len -= to_read;

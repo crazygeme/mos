@@ -80,6 +80,7 @@ int mm_kmap_page(unsigned int vir);
 /* Map a physical page into the kernel physical-page alias space.
  * Safe for any 32-bit physical address; does not touch the allocator. */
 int mm_kmap_phys(unsigned int phys);
+void mm_kunmap_phys(unsigned int phys);
 
 int mm_map_io(unsigned int phy);
 

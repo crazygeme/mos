@@ -63,6 +63,29 @@ static const fb_font_t *_font = NULL;
 
 static void svga_update(unsigned x, unsigned y, unsigned w, unsigned h);
 
+static unsigned vmsvga_map_mmio_window(unsigned phys, unsigned size)
+{
+	unsigned begin;
+	unsigned end;
+	unsigned a;
+
+	if (size == 0)
+		return 0;
+
+	begin = phys & PAGE_SIZE_MASK;
+	end = (phys + size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	if (end <= begin)
+		return 0;
+
+	for (a = begin; a < end; a += PAGE_SIZE) {
+		if (mm_phys_to_virt(a) == 0)
+			return 0;
+	}
+	RELOAD_CR3();
+
+	return mm_phys_to_virt(phys);
+}
+
 static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
 {
 	unsigned need_bytes;
@@ -76,8 +99,10 @@ static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
 		return;
 
 	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
-	     a += PAGE_SIZE)
-		mm_map_io(a);
+	     a += PAGE_SIZE) {
+		if (mm_phys_to_virt(a) == 0)
+			return;
+	}
 	RELOAD_CR3();
 	_fb_mapped_bytes = need_bytes;
 }
@@ -481,11 +506,10 @@ static int vmsvga_probe(void)
 		return 0;
 
 	uint32_t fifo_size = svga_read_reg(SVGA_REG_MEM_SIZE);
-	uint32_t a;
-	for (a = pci.fifo_phys; a < pci.fifo_phys + fifo_size; a += PAGE_SIZE)
-		mm_map_io(a);
-	RELOAD_CR3();
-	_fifo = (uint32_t *)pci.fifo_phys;
+	uint32_t fifo_virt = vmsvga_map_mmio_window(pci.fifo_phys, fifo_size);
+	if (fifo_virt == 0)
+		return 0;
+	_fifo = (uint32_t *)fifo_virt;
 
 	_fifo[SVGA_FIFO_MIN] = 4 * sizeof(uint32_t);
 	_fifo[SVGA_FIFO_MAX] = fifo_size;
@@ -502,11 +526,11 @@ static int vmsvga_probe(void)
 
 	uint32_t fb_size =
 		VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
-	for (a = pci.fb_phys; a < pci.fb_phys + fb_size; a += PAGE_SIZE)
-		mm_map_io(a);
-	RELOAD_CR3();
+	uint32_t fb_virt = vmsvga_map_mmio_window(pci.fb_phys, fb_size);
+	if (fb_virt == 0)
+		return 0;
 	_fb_phys = pci.fb_phys;
-	_fb_buffer = pci.fb_phys;
+	_fb_buffer = fb_virt;
 	_fb_mapped_bytes = fb_size;
 
 	memset((char *)_fb_buffer, 0, fb_size);

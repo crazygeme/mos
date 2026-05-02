@@ -101,15 +101,7 @@ cleanup_nat() {
 	echo "tap: $_TAP_IF removed"
 }
 
-_disk_mounted=0
-
-cleanup_disk() {
-	[ "$_disk_mounted" -eq 0 ] && return
-	tools/umountdisk.sh
-	_disk_mounted=0
-}
-
-trap 'cleanup_disk; cleanup_nat' EXIT INT TERM
+trap 'cleanup_nat' EXIT INT TERM
 
 make -s -j8 BUILD="$_build" || { echo "Error: build failed" >&2; exit 1; }
 
@@ -117,12 +109,7 @@ if [ ! -f "$diskfile" ]; then
 	unzip redhat9.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
 fi
 
-tools/mountdisk.sh
-_disk_mounted=1
-sudo mkdir -p out/mnt/boot
-sudo cp "$kernel_file" out/mnt/boot/mos
-sync
-cleanup_disk
+tools/guest/setup.sh "$kernel_file" || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
 setup_nat
 

@@ -160,6 +160,7 @@ if [ ! -f "$diskfile" ]; then
 	unzip redhat9.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
 fi
 
+tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
 $_priviledge qemu-system-i386 -cpu coreduo \
 	-display $_window \

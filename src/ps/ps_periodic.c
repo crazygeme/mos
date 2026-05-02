@@ -13,7 +13,7 @@
 #include <lwip/timeouts.h>
 #include <lwip/netif.h>
 
-#define GRAPHICS_REFRESH_FPS 60
+#define GRAPHICS_REFRESH_FPS 120
 #define GRAPHICS_REFRESH_MS (1000 / GRAPHICS_REFRESH_FPS)
 
 static void ps_system_service_task(void *param)

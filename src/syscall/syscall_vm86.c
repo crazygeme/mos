@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <config.h>
 #include <hw/pci.h>
+#include <hw/vga.h>
 #include <lib/port.h>
 
 #define MOS_VM86_UNKNOWN 1
@@ -157,6 +158,7 @@ static const mos_vbe_mode_t mos_vbe_modes[] = {
 	{ 0x111, 640, 480, 32 },
 	{ 0x114, 800, 600, 32 },
 	{ 0x117, 1024, 768, 32 },
+	{ 0x11b, 1280, 1024, 32 },
 };
 
 static unsigned short mos_vbe_current_mode = 0x111;
@@ -452,6 +454,7 @@ static int mos_vm86_vbe_set_mode(struct mos_vm86_struct *vm)
 
 	mos_vbe_current_mode = mode->mode_id;
 	mos_vbe_hw_set_mode(mode);
+	fb_sync_mode();
 	mos_vm86_finish(vm, 0x004f);
 	return 1;
 }

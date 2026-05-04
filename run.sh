@@ -11,6 +11,7 @@ _logtofile="stdio"
 _vga="-vga vmware"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
+_cpu="coreduo"
 _bash=""
 _test=""
 _priviledge=""
@@ -42,6 +43,7 @@ elif [ "$arg" == "profile" ]; then
 	_debug="-monitor unix:/tmp/qemu-profiler.sock,server,nowait"
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
+	_cpu="host"
 elif [ "$arg" == "bash" ]; then
 	_bash="bash"
 elif [ "$arg" == "logtofile" ]; then
@@ -162,7 +164,7 @@ fi
 
 tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
-$_priviledge qemu-system-i386 -cpu coreduo \
+$_priviledge qemu-system-x86_64 -cpu $_cpu \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \

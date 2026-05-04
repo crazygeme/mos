@@ -271,7 +271,7 @@ def write_flamegraph(path, root, ts):
 
 def main():
     p = argparse.ArgumentParser(description="QEMU kernel stack profiler — flamegraph output")
-    p.add_argument("--delay",  type=float, default=10.0,      help="ms between samples (default: 10)")
+    p.add_argument("--delay",  type=float, default=1.0,      help="ms between samples (default: 1)")
     p.add_argument("--depth",  type=int,   default=MAX_DEPTH, help=f"max frame depth (default: {MAX_DEPTH})")
     p.add_argument("--sock",   default=DEFAULT_SOCK,           help=f"monitor socket (default: {DEFAULT_SOCK})")
     p.add_argument("--kernel", default=DEFAULT_KERNEL,         help=f"debug binary   (default: {DEFAULT_KERNEL})")

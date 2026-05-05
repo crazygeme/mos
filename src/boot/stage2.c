@@ -35,14 +35,14 @@ static void idle_process(void *param);
 
 void kmain_startup()
 {
+	klib_init();
+
 	font_init();
 
 	fb_init();
 
 	// after klib_init, kmalloc/kfree/prink/etc are workable
 	tty_init();
-
-	klib_init();
 
 	parse_kernel_cmdline();
 

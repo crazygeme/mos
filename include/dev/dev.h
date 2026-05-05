@@ -33,8 +33,9 @@ void cdev_register_named(unsigned mode_type, unsigned major,
 			 file *(*open)(super_block *sb, unsigned rdev,
 				       int flag));
 
-#define cdev_register(mode_type, major, minor_base, minor_count, open) \
-	cdev_register_named(mode_type, major, minor_base, minor_count, NULL, open)
+#define cdev_register(mode_type, major, minor_base, minor_count, open)       \
+	cdev_register_named(mode_type, major, minor_base, minor_count, NULL, \
+			    open)
 
 #define cdev_register_major(mode_type, major, name) \
 	cdev_register_named(mode_type, major, 0, 0, name, NULL)

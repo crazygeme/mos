@@ -73,7 +73,8 @@ void cdev_for_each_major(cdev_major_iter_fn fn, void *data)
 	for (i = 0; i < cdev_count; i++) {
 		seen = 0;
 		for (j = 0; j < i; j++) {
-			if (cdev_table[j].mode_type == cdev_table[i].mode_type &&
+			if (cdev_table[j].mode_type ==
+				    cdev_table[i].mode_type &&
 			    cdev_table[j].major == cdev_table[i].major) {
 				seen = 1;
 				break;

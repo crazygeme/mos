@@ -29,12 +29,14 @@ unsigned sock_default_rxbuf_size(int domain)
 
 unsigned sock_recv_timeout_ms(const mos_sock *sk)
 {
-	return sk && sk->recv_timeout_ms ? sk->recv_timeout_ms : SOCK_TIMEOUT_MS;
+	return sk && sk->recv_timeout_ms ? sk->recv_timeout_ms :
+					   SOCK_TIMEOUT_MS;
 }
 
 unsigned sock_send_timeout_ms(const mos_sock *sk)
 {
-	return sk && sk->send_timeout_ms ? sk->send_timeout_ms : SOCK_TIMEOUT_MS;
+	return sk && sk->send_timeout_ms ? sk->send_timeout_ms :
+					   SOCK_TIMEOUT_MS;
 }
 
 int sock_recv_timeout_errno(const mos_sock *sk)
@@ -117,7 +119,7 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 				return done ? (ssize_t)done : -EAGAIN;
 			if (time_now_ms() > deadline)
 				return done ? (ssize_t)done :
-						      sock_send_timeout_errno(sk);
+					      sock_send_timeout_errno(sk);
 			tcp_output(sk->tcp);
 			if (sock_wait(sk, deadline) < 0)
 				return done ? (ssize_t)done : -EINTR;
@@ -140,7 +142,7 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 			return done ? (ssize_t)done : -EAGAIN;
 		if (time_now_ms() > deadline)
 			return done ? (ssize_t)done :
-					      sock_send_timeout_errno(sk);
+				      sock_send_timeout_errno(sk);
 
 		tcp_output(sk->tcp);
 		if (sock_wait(sk, deadline) < 0)
@@ -337,7 +339,8 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 		return unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
-		unsigned long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
+		unsigned long deadline =
+			time_now_ms() + sock_recv_timeout_ms(sk);
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
 				return sk->err;

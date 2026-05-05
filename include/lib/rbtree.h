@@ -152,6 +152,11 @@ struct _key_value_pair {
 	struct rb_node node;
 };
 
+static inline int int_comp(const void *key1, const void *key2)
+{
+	return (int)key1 - (int)key2;
+}
+
 hash_table *hash_create(hash_comp_fn comp, hash_evict_fn evict);
 
 int hash_destroy(hash_table *table);

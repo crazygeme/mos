@@ -152,8 +152,10 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 				if (nonblock)
 					return sent > 0 ? (int)sent : -EAGAIN;
 				if (time_now_ms() > deadline)
-					return sent > 0 ? (int)sent :
-							  sock_send_timeout_errno(sk);
+					return sent > 0 ?
+						       (int)sent :
+						       sock_send_timeout_errno(
+							       sk);
 				tcp_output(sk->tcp);
 				if (sock_wait(sk, deadline) < 0)
 					return sent > 0 ? (int)sent : -EINTR;

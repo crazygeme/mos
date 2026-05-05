@@ -402,6 +402,7 @@ static void wp_page_copy(unsigned cr2)
 	unsigned vir = cr2 & PAGE_SIZE_MASK;
 	unsigned page_idx;
 	unsigned phy;
+	int ret;
 	int flag;
 
 	page_fault_cow++;
@@ -419,10 +420,11 @@ static void wp_page_copy(unsigned cr2)
 	phy = page_idx * PAGE_SIZE;
 
 	/* Establish the direct kernel alias and copy the original content. */
-	if (mm_kmap_phys(phy) != 1) {
+	ret = mm_kmap_phys(phy);
+	if (ret != 1) {
 		phymm_free_user(page_idx);
-		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x\n", cr2,
-		     phy);
+		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x ret = %d\n",
+		     cr2, phy, ret);
 		return;
 	}
 	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);

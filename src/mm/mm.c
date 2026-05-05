@@ -1,4 +1,5 @@
 #include "config.h"
+#include "lib/rbtree.h"
 #include <boot/multiboot.h>
 #include <lib/klib.h>
 #include <lib/list.h>
@@ -29,9 +30,15 @@ unsigned pgc_top = 0;
 /* Live entry counts per cached page table (used to reclaim empty tables) */
 short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
 
-typedef struct {
+typedef struct _mm_cache_t {
 	unsigned int top;
 	unsigned int count;
+	unsigned int total;
+	unsigned int mem[0];
+} mm_cache_t;
+
+typedef struct _page_table_cache_t {
+	mm_cache_t hdr;
 	unsigned int mem[PAGE_TABLE_CACHE_PAGES];
 } page_table_cache_t;
 
@@ -40,37 +47,49 @@ static unsigned int kernel_pde_tables[1024 - KERNEL_PAGE_DIR_OFFSET];
 
 #define KERNEL_KMAP_PAGES ((KERNEL_KMAP_END - KERNEL_KMAP_BEGIN) / PAGE_SIZE)
 
-static unsigned int kernel_kmap_phys[KERNEL_KMAP_PAGES];
-static unsigned int kernel_kmap_refs[KERNEL_KMAP_PAGES];
+typedef struct _kmap_cache_t {
+	mm_cache_t hdr;
+	unsigned int mem[KERNEL_KMAP_PAGES];
+} kmap_cache_t;
 
-static void page_table_cache_init(page_table_cache_t *cache)
+typedef struct _kmap_loopup_entry {
+	unsigned int virt;
+	unsigned int ref;
+} kmap_loopup_entry;
+
+static kmap_cache_t kmap_phy_cache;
+static hash_table *kmap_phy_to_virt = NULL;
+
+static void mm_cache_init(mm_cache_t *cache, unsigned int begin,
+			  unsigned int total)
 {
 	int i;
 
-	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
-		cache->mem[i] = PAGE_TABLE_CACHE_BEGIN + i * PAGE_SIZE;
-	cache->top = PAGE_TABLE_CACHE_PAGES - 1;
-	cache->count = PAGE_TABLE_CACHE_PAGES;
+	for (i = 0; i < total; i++)
+		cache->mem[i] = begin + i * PAGE_SIZE;
+	cache->top = 0;
+	cache->count = total;
+	cache->total = total;
 }
 
-static unsigned int page_table_cache_alloc(page_table_cache_t *cache)
+static unsigned int mm_cache_alloc(mm_cache_t *cache)
 {
 	unsigned int ret;
 
 	if (cache->count == 0)
 		return 0;
 	ret = cache->mem[cache->top];
-	__sync_add_and_fetch(&cache->top, -1);
+	__sync_add_and_fetch(&cache->top, 1);
 	pgc_top = __sync_add_and_fetch(&cache->count, -1);
 	cache_count++;
 	return ret;
 }
 
-static void page_table_cache_free(page_table_cache_t *cache, unsigned int val)
+static void mm_cache_free(mm_cache_t *cache, unsigned int val)
 {
-	if (cache->count >= PAGE_TABLE_CACHE_PAGES)
+	if (cache->count > cache->total)
 		return;
-	__sync_add_and_fetch(&cache->top, 1);
+	__sync_add_and_fetch(&cache->top, -1);
 	cache->mem[cache->top] = val;
 	pgc_top = __sync_add_and_fetch(&cache->count, 1);
 	cache_count--;
@@ -78,7 +97,7 @@ static void page_table_cache_free(page_table_cache_t *cache, unsigned int val)
 
 unsigned int mm_alloc_page_table()
 {
-	unsigned int ret = page_table_cache_alloc(&page_table_cache);
+	unsigned int ret = mm_cache_alloc((mm_cache_t *)&page_table_cache);
 
 	if (ret == 0) {
 		klog("mm_alloc_page_table: page table cache exhausted\n");
@@ -90,7 +109,40 @@ unsigned int mm_alloc_page_table()
 
 void mm_free_page_table(unsigned int vir)
 {
-	page_table_cache_free(&page_table_cache, vir);
+	mm_cache_free((mm_cache_t *)&page_table_cache, vir);
+}
+
+static void kmap_cache_entry_free(const key_value_pair *pair)
+{
+	kfree(pair->val);
+}
+
+static void kmap_cache_insert(unsigned phy_address, kmap_loopup_entry *entry)
+{
+	if (kmap_phy_to_virt == NULL)
+		kmap_phy_to_virt = hash_create(int_comp, kmap_cache_entry_free);
+
+	hash_insert(kmap_phy_to_virt, phy_address, entry);
+}
+
+static kmap_loopup_entry *kmap_cache_find(unsigned phy_address)
+{
+	if (kmap_phy_to_virt == NULL)
+		return NULL;
+
+	key_value_pair *pair = hash_find(kmap_phy_to_virt, phy_address);
+	if (!pair)
+		return NULL;
+
+	return pair->val;
+}
+
+static void kmap_cache_erase(unsigned phy_address)
+{
+	if (kmap_phy_to_virt == NULL)
+		return;
+
+	hash_remove(kmap_phy_to_virt, phy_address);
 }
 
 static void mm_init_kernel_page_dir_template(void)
@@ -103,7 +155,7 @@ static void mm_init_kernel_page_dir_template(void)
 			continue;
 
 		unsigned int table_addr =
-			page_table_cache_alloc(&page_table_cache);
+			mm_cache_alloc((mm_cache_t *)&page_table_cache);
 
 		if (table_addr == 0)
 			break;
@@ -129,15 +181,19 @@ static int mm_dynamic_region(unsigned phy);
 static list_entry name_cache_head;
 
 /* Called once at boot: set up the page-table cache and related state */
-void mm_init_page_table_cache()
+void mm_init_cache()
 {
 	int i;
 
-	page_table_cache_init(&page_table_cache);
+	mm_cache_init((mm_cache_t *)&page_table_cache, PAGE_TABLE_CACHE_BEGIN,
+		      PAGE_TABLE_CACHE_PAGES);
 	memset(kernel_pde_tables, 0, sizeof(kernel_pde_tables));
 	mm_init_kernel_page_dir_template();
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
+
+	mm_cache_init((mm_cache_t *)&kmap_phy_cache, KERNEL_KMAP_BEGIN,
+		      KERNEL_KMAP_PAGES);
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
@@ -171,20 +227,20 @@ unsigned int mm_phys_to_virt(unsigned int phys)
 {
 	unsigned int page = phys & PAGE_SIZE_MASK;
 	unsigned int off = ADDR_TO_PAGE_OFFSET(phys);
-	unsigned int i;
+	kmap_loopup_entry *entry = NULL;
 
 	if (page < KERNEL_DIRECT_MAP_LIMIT)
 		return KERNEL_OFFSET + page + off;
 
-	for (i = 0; i < KERNEL_KMAP_PAGES; i++) {
-		if (kernel_kmap_phys[i] == page + 1)
-			return KERNEL_KMAP_BEGIN + i * PAGE_SIZE + off;
+	entry = kmap_cache_find(page);
+	if (entry) {
+		return entry->virt + off;
 	}
 
 	if (mm_kmap_phys(page) == 1) {
-		for (i = 0; i < KERNEL_KMAP_PAGES; i++) {
-			if (kernel_kmap_phys[i] == page + 1)
-				return KERNEL_KMAP_BEGIN + i * PAGE_SIZE + off;
+		entry = kmap_cache_find(page);
+		if (entry) {
+			return entry->virt + off;
 		}
 	}
 
@@ -370,8 +426,8 @@ void mm_kunmap_page(unsigned int vir)
 int mm_kmap_phys(unsigned int phys)
 {
 	unsigned int page = phys & PAGE_SIZE_MASK;
-	unsigned int slot;
 	unsigned int virt;
+	kmap_loopup_entry *entry = NULL;
 	int irq;
 	mm_addr_info info;
 
@@ -388,35 +444,36 @@ int mm_kmap_phys(unsigned int phys)
 	}
 
 	spinlock_lock(&kmap_lock, &irq);
-	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
-		if (kernel_kmap_phys[slot] == page + 1) {
-			kernel_kmap_refs[slot]++;
-			spinlock_unlock(&kmap_lock, irq);
-			return 1;
-		}
+	entry = kmap_cache_find(page);
+	if (entry) {
+		entry->ref++;
+		spinlock_unlock(&kmap_lock, irq);
+		return 1;
 	}
 
-	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
-		if (kernel_kmap_phys[slot] == 0)
-			break;
-	}
-	if (slot == KERNEL_KMAP_PAGES) {
+	virt = mm_cache_alloc((mm_cache_t *)&kmap_phy_cache);
+	if (virt == 0) {
 		spinlock_unlock(&kmap_lock, irq);
+		klog("mm_kmap_phys: no more kernel directmap slot\n");
 		return -1;
 	}
 
-	virt = KERNEL_KMAP_BEGIN + slot * PAGE_SIZE;
 	if (!mm_get_valid_page_table(virt, 0, &info, 1)) {
+		mm_cache_free((mm_cache_t *)&kmap_phy_cache, virt);
 		spinlock_unlock(&kmap_lock, irq);
-		klog("mm_kmap_phys: page table alloc failed phys=%x virt=%x slot=%u\n",
-		     page, virt, slot);
+		klog("mm_kmap_phys: page table alloc failed phys=%x virt=%x\n",
+		     page, virt);
 		return -1;
 	}
 
 	*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
-	kernel_kmap_phys[slot] = page + 1;
-	kernel_kmap_refs[slot] = 1;
 	INVLPG(virt);
+
+	// add an entry
+	entry = kmalloc(sizeof(*entry));
+	entry->virt = virt;
+	entry->ref = 1;
+	kmap_cache_insert(page, entry);
 	spinlock_unlock(&kmap_lock, irq);
 	return 1;
 }
@@ -424,7 +481,7 @@ int mm_kmap_phys(unsigned int phys)
 void mm_kunmap_phys(unsigned int phys)
 {
 	unsigned int page = phys & PAGE_SIZE_MASK;
-	unsigned int slot;
+	kmap_loopup_entry *entry = NULL;
 	unsigned int virt;
 	int irq;
 	mm_addr_info info;
@@ -433,25 +490,26 @@ void mm_kunmap_phys(unsigned int phys)
 		return;
 
 	spinlock_lock(&kmap_lock, &irq);
-	for (slot = 0; slot < KERNEL_KMAP_PAGES; slot++) {
-		if (kernel_kmap_phys[slot] != page + 1)
-			continue;
-
-		if (kernel_kmap_refs[slot] > 1) {
-			kernel_kmap_refs[slot]--;
-			spinlock_unlock(&kmap_lock, irq);
-			return;
-		}
-
-		virt = KERNEL_KMAP_BEGIN + slot * PAGE_SIZE;
-		if (mm_get_valid_page_table(virt, 0, &info, 0)) {
-			*info.entry = 0;
-			INVLPG(virt);
-		}
-		kernel_kmap_phys[slot] = 0;
-		kernel_kmap_refs[slot] = 0;
-		break;
+	entry = kmap_cache_find(page);
+	if (!entry) {
+		goto done;
 	}
+
+	entry->ref--;
+	if (entry->ref > 0) {
+		goto done;
+	}
+
+	virt = entry->virt;
+	if (mm_get_valid_page_table(virt, 0, &info, 0)) {
+		*info.entry = 0;
+		INVLPG(virt);
+	}
+
+	mm_cache_free((mm_cache_t *)&kmap_phy_cache, page);
+	kmap_cache_erase(page);
+
+done:
 	spinlock_unlock(&kmap_lock, irq);
 }
 

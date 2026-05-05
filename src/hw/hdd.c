@@ -738,11 +738,6 @@ unsigned hdd_cache_search_count = 0;
 unsigned hdd_cache_size = 0;
 unsigned hdd_cache_max_size = 0;
 
-static int int_comp(const void *key1, const void *key2)
-{
-	return (int)key1 - (int)key2;
-}
-
 static block_cache_item *block_cache_item_create(void)
 {
 	unsigned buf_pages = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
@@ -877,11 +872,9 @@ static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
 		       -1;
 }
 
-static block_cache_item *hdd_cache_reserve_miss_locked(partition *p,
-						       int head_sector,
-						       int *old_sector,
-						       int *old_dirty,
-						       block_cache_item *new_item)
+static block_cache_item *
+hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
+			      int *old_dirty, block_cache_item *new_item)
 {
 	block_cache_item *item;
 

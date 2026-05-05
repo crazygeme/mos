@@ -184,7 +184,7 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	phymm_begin = phymm_get_mgmt_pages((unsigned)mem_high);
 	phymm_begin += (unsigned)(mem_low / PAGE_SIZE) + RESERVED_PAGES;
 
-	mm_init_page_table_cache();
+	mm_init_cache();
 
 	/* Map management pages and zero the phymm_pages array */
 	phymm_setup_mgmt_pages((unsigned)(mem_low / PAGE_SIZE) +

@@ -15,6 +15,7 @@ _cpu="coreduo"
 _bash=""
 _test=""
 _priviledge=""
+_qemu="qemu-system-x86_64"
 _is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
 if [ "$_is_macos" -eq 1 ]; then
 	_netdev="vmnet-shared,id=net0"
@@ -30,6 +31,7 @@ if [ "$arg" == "test" ]; then
 elif [ "$arg" == "debug" ]; then
 	_build="debug"
 	_debug="-gdb tcp::8888 -S"
+	_qemu="qemu-system-i386"
 elif [ "$arg" == "verbose" ]; then
 	_verbose="verbose"
 elif [ "$arg" == "verbose=0" ]; then
@@ -164,7 +166,7 @@ fi
 
 tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
-$_priviledge qemu-system-x86_64 -cpu $_cpu \
+$_priviledge $_qemu -cpu $_cpu \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
@@ -175,7 +177,7 @@ $_priviledge qemu-system-x86_64 -cpu $_cpu \
 	$_power \
 	$_kvm \
 	$_debug \
-	-no-reboot \
+	-no-reboot\
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56

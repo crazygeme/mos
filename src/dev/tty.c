@@ -2307,8 +2307,7 @@ static void tty_dev_register(super_block *dev_sb)
 	printk("dev: registered /dev/console\n");
 	printk("dev: registered /dev/tty\n");
 	/* major 11: /dev/tty0, /dev/console, /dev/tty */
-	cdev_register_named(S_IFCHR, TTY_AUX_MAJOR, 0, 3, "vc",
-			    tty_cdev_open);
+	cdev_register_named(S_IFCHR, TTY_AUX_MAJOR, 0, 3, "vc", tty_cdev_open);
 	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(TTY_AUX_MAJOR, 0));
 	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(TTY_AUX_MAJOR, 1));
 	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(TTY_AUX_MAJOR, 2));

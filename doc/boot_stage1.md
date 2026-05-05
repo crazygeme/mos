@@ -198,7 +198,7 @@ phymm_begin = phymm_get_mgmt_pages(mem_high)    // pages needed for phymm_pages[
 `phymm_end` is the exclusive upper bound.
 
 ```c
-mm_init_page_table_cache();         // set up the page-table slab
+mm_init_cache();         // set up the page-table slab
 phymm_setup_mgmt_pages(...);        // map & zero phymm_pages[]
 phymm_init(mmap_addr, mmap_len);    // mark holes, build buddy free lists
 ```

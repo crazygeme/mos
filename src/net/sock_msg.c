@@ -128,7 +128,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 	size_t sent = 0;
 	size_t i;
 	int nonblock = sock_msg_is_nonblock(flags);
-	unsigned long deadline = time_now_ms() + sock_send_timeout_ms(sk);
+	unsigned long long deadline = time_now_ms() + sock_send_timeout_ms(sk);
 
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
 		return -ENOTCONN;
@@ -261,7 +261,8 @@ static int sock_send_datagram(mos_sock *sk, const struct msghdr *msg,
 	return e == ERR_OK ? (int)totlen : -EIO;
 }
 
-static int sock_recv_wait_dgram(mos_sock *sk, int flags, unsigned long deadline)
+static int sock_recv_wait_dgram(mos_sock *sk, int flags,
+				unsigned long long deadline)
 {
 	while (rx_used(sk) < sizeof(u16_t)) {
 		if (sk->err)
@@ -277,7 +278,7 @@ static int sock_recv_wait_dgram(mos_sock *sk, int flags, unsigned long deadline)
 }
 
 static int sock_recv_wait_stream(mos_sock *sk, int flags,
-				 unsigned long deadline)
+				 unsigned long long deadline)
 {
 	while (rx_used(sk) == 0) {
 		if (sk->err)
@@ -389,7 +390,7 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 	mos_sock *sk = fd_to_sock(fd);
 	unsigned delivered;
 	size_t total_len;
-	unsigned long deadline;
+	unsigned long long deadline;
 	int wait_ret;
 	task_struct *cur = CURRENT_TASK();
 

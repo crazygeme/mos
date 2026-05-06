@@ -108,7 +108,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 {
 	int ret;
 	int just_test = 0, infinite = 0;
-	unsigned deadline = 0;
+	unsigned long long deadline = 0;
 	size_t set_bytes;
 	task_struct *cur = CURRENT_TASK();
 	sigset_t saved_mask = cur->signal->sig_mask;

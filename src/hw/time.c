@@ -128,7 +128,7 @@ static int pic_timer_irq_pending(void)
 #undef PIC1_CMD
 }
 
-unsigned time_now_ms()
+unsigned long long time_now_ms()
 {
 	return time_wall_us() / 1000;
 }
@@ -143,7 +143,7 @@ unsigned long time_now_sec(void)
 	return (unsigned long)(time_wall_us() / 1000000ULL);
 }
 
-static unsigned long long time_now_us()
+unsigned long long time_now_us()
 {
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
 	unsigned long long t1, t2;

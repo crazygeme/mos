@@ -245,7 +245,7 @@ out:
 int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen,
 		int nonblock)
 {
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	mos_sock *server_sk;
 	int fd;
 
@@ -305,7 +305,7 @@ void unix_drop_passfds(mos_sock *sk)
 
 ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 {
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	int irq;
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	mos_sock *peer;
@@ -369,7 +369,7 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 	mos_sock *peer = sk->unix_peer;
 	const char *p = buf;
 	size_t done = 0;
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	int irq;
 
@@ -666,7 +666,7 @@ static int unix_sendmsg_wait_for_passfd_room(mos_sock *sk, mos_sock **peer_ptr,
 					     int *irq, file **files,
 					     unsigned nfds, size_t total_len,
 					     int nonblock,
-					     unsigned long deadline)
+					     unsigned long long deadline)
 {
 	mos_sock *peer = *peer_ptr;
 
@@ -749,7 +749,7 @@ static int unix_sendmsg_stream_payload(mos_sock *sk, mos_sock **peer_ptr,
 }
 
 static int unix_recvmsg_wait_dgram(mos_sock *sk, int flags,
-				   unsigned long deadline, int *irq)
+				   unsigned long long deadline, int *irq)
 {
 	spinlock_lock(&sk->rxbuf_lock, irq);
 	while (rx_used(sk) < sizeof(u16_t)) {
@@ -848,7 +848,7 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 	size_t total_len = 0;
 	int sent;
 	int nonblock = sock_msg_is_nonblock(msg->msg_flags);
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	int irq;
 	int ret;
 	int next_tail;
@@ -911,7 +911,7 @@ out_unlock:
 
 int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 {
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	file *files[UNIX_PASSFD_MAX] = { NULL };
 	unsigned nfds = 0;
 	unsigned delivered = 0;

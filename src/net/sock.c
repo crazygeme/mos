@@ -100,7 +100,7 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 	const char *p = (const char *)buf;
 	size_t done = 0;
 	int nonblock = sock_file_nonblock(fp);
-	unsigned long deadline = time_now_ms() + sock_send_timeout_ms(sk);
+	unsigned long long deadline = time_now_ms() + sock_send_timeout_ms(sk);
 
 	while (done < count) {
 		size_t remain = count - done;
@@ -288,9 +288,9 @@ void sock_wakeup(mos_sock *sk)
 
 /* Block the current task on sk until woken by sock_wakeup or the deadline.
  * Returns -1 if a deliverable signal is pending after waking, 0 otherwise. */
-int sock_wait(mos_sock *sk, unsigned long deadline)
+int sock_wait(mos_sock *sk, unsigned long long deadline)
 {
-	unsigned long now;
+	unsigned long long now;
 	sock_waiter waiter;
 	int irq;
 	task_struct *cur = CURRENT_TASK();
@@ -339,7 +339,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 		return unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
-		unsigned long deadline =
+		unsigned long long deadline =
 			time_now_ms() + sock_recv_timeout_ms(sk);
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
@@ -365,7 +365,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	}
 
 	/* TCP: block until data or EOF */
-	unsigned long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
+	unsigned long long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 	while (rx_used(sk) == 0) {
 		if (sk->err)
 			return sk->err;

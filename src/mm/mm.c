@@ -1,5 +1,5 @@
-#include "config.h"
-#include "lib/rbtree.h"
+#include <config.h>
+#include <lib/rbtree.h>
 #include <boot/multiboot.h>
 #include <lib/klib.h>
 #include <lib/list.h>

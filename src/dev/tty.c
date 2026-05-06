@@ -21,7 +21,7 @@
  *   tty_active_kb_put(c)          - enqueue a byte into the active TTY's kb buf
  */
 
-#include "config.h"
+#include <config.h>
 #include <int/int.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>

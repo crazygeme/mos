@@ -34,7 +34,7 @@ struct poll_ops {
  * Returns number of ready fds, 0 on timeout, or -EINTR.
  */
 int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
-		   int infinite, unsigned deadline);
+		   int infinite, unsigned long long deadline);
 
 int do_poll(struct pollfd *fds, unsigned nfds, int timeout);
 

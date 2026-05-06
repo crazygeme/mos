@@ -126,18 +126,18 @@ static void run_all_tests(const char *suite_pat)
 			continue;
 		}
 
-		unsigned suite_start = time_now_ms();
+		unsigned long long suite_start = time_now_ms();
 		klog("[----------] %d %s from %s\n", in_suite,
 		     in_suite == 1 ? "test" : "tests", suite_name);
 
 		while (t < end_of_suite) {
-			unsigned t_start = time_now_ms();
+			unsigned long long t_start = time_now_ms();
 			klog("[ RUN      ] %s.%s\n", t->suite, t->name);
 
 			_ktest_expect_failed = 0;
 			int ret = t->fn();
 			int failed = (ret != 0) || (_ktest_expect_failed != 0);
-			unsigned t_ms = time_now_ms() - t_start;
+			unsigned long long t_ms = time_now_ms() - t_start;
 
 			if (!failed) {
 				klog("[       OK ] %s.%s (%u ms)\n", t->suite,
@@ -156,7 +156,7 @@ static void run_all_tests(const char *suite_pat)
 			t++;
 		}
 
-		unsigned suite_ms = time_now_ms() - suite_start;
+		unsigned long long suite_ms = time_now_ms() - suite_start;
 		klog("[----------] %d %s from %s (%u ms total)\n\n", in_suite,
 		     in_suite == 1 ? "test" : "tests", suite_name, suite_ms);
 	}

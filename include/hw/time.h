@@ -75,7 +75,9 @@ void time_calculate_cpu_cycle();
 
 unsigned time_get_cpu_mhz(void);
 
-unsigned time_now_ms();
+unsigned long long time_now_us();
+
+unsigned long long time_now_ms();
 
 unsigned long long time_now_tickets();
 

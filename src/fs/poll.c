@@ -15,7 +15,7 @@
  * Phase 4: sleep; after waking, deregister and check for signals.
  */
 int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
-		   int infinite, unsigned deadline)
+		   int infinite, unsigned long long deadline)
 {
 	task_struct *cur;
 	int ret;
@@ -45,7 +45,7 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 
 		unsigned sleep_ms = 0;
 		if (!infinite) {
-			unsigned now = time_now_ms();
+			unsigned long long now = time_now_ms();
 			if (now >= deadline) {
 				ops->dereg(ctx);
 				ret = 0;
@@ -176,7 +176,7 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 {
 	int just_test = (timeout == 0);
 	int infinite = (timeout < 0);
-	unsigned deadline = 0;
+	unsigned long long deadline = 0;
 	struct poll_ctx ctx = { fds, nfds };
 	poll_table_entry *entries = NULL;
 

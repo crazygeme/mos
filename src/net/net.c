@@ -25,7 +25,7 @@
 /* ── sys_now() required by lwIP in NO_SYS mode ─────────────────────────────── */
 u32_t sys_now(void)
 {
-	return (u32_t)time_now_ms();
+	return (u32_t)(time_now_us() / 1000);
 }
 
 /* ── RX ring buffer (IRQ → DSR context) ─────────────────────────────────────
@@ -279,9 +279,9 @@ void net_init(void)
 
 	if (0) {
 		/* Wait until the interface has a non-zero IP (required for TCP bind). */
-		uint32_t deadline = (uint32_t)time_now_ms() + 10000;
+		uint64_t deadline = time_now_ms() + 10000;
 		while (ip4_addr_isany(netif_ip4_addr(&eth0)) &&
-		       (uint32_t)time_now_ms() < deadline)
+		       time_now_ms() < deadline)
 			time_wait(10);
 
 		if (!ip4_addr_isany(netif_ip4_addr(&eth0)))

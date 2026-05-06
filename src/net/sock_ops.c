@@ -230,7 +230,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	if (e != ERR_OK)
 		return -ECONNREFUSED;
 
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	while (sk->state == SS_CONNECTING) {
 		if (sk->err)
 			return sk->err;
@@ -293,7 +293,7 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
 
-	unsigned long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
 	while (sk->accept_head == sk->accept_tail) {
 		if (sk->err)
 			return sk->err;
@@ -508,7 +508,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
 
-	unsigned long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
+	unsigned long long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		while (rx_used(sk) < sizeof(u16_t)) {

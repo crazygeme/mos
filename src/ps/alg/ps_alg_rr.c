@@ -70,7 +70,7 @@ void timer_arm_unsafe(task_struct *task, unsigned ms)
 	struct rb_root *root = &control.timer_queue;
 	struct rb_node **link = &root->rb_node;
 	struct rb_node *parent = NULL;
-	unsigned due = time_now_ms() + ms;
+	unsigned long long due = time_now_ms() + ms;
 
 	task->timer_due_ms = due;
 	while (*link) {
@@ -96,7 +96,7 @@ void timer_disarm_unsafe(task_struct *task)
 
 void ps_fire_timers_unsafe(void)
 {
-	unsigned now = time_now_ms();
+	unsigned long long now = time_now_ms();
 	struct rb_node *n = rb_first(&control.timer_queue);
 
 	while (n) {

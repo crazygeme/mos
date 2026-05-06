@@ -7,6 +7,7 @@
  *   - graphics-VT refresh pacing
  */
 
+#include "lib/klib.h"
 #include <ps/ps.h>
 #include <hw/tty.h>
 #include <hw/time.h>

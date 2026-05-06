@@ -314,7 +314,8 @@ struct _task_struct {
 	/* interval for ITIMER_REAL in ms (0 = one-shot) */
 	unsigned long long alarm_interval_ms;
 	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
-	unsigned timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
+	unsigned long long
+		timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
 	unsigned char
 		io_priv_level; /* requested iopl(2) level for compatibility */
 	unsigned char

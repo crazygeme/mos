@@ -32,7 +32,7 @@ int sock_send_timeout_errno(const mos_sock *sk);
 
 void sock_wakeup(mos_sock *sk);
 /* Returns 0 normally, -1 if a deliverable signal is pending. */
-int sock_wait(mos_sock *sk, unsigned long deadline);
+int sock_wait(mos_sock *sk, unsigned long long deadline);
 
 /* ── FD helpers (sock.c) ────────────────────────────────────────────────── */
 

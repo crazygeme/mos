@@ -294,6 +294,7 @@ struct _task_struct {
 	int type;
 	list_entry ps_list; /* dying-queue or wait-queue list node */
 	struct rb_node mgr_rb; /* management-queue RB-tree node */
+	list_entry dying_queue; /* dying task holder */
 	ps_status status;
 	const char *wait_func;
 	int remain_ticks;

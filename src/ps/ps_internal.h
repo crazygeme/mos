@@ -18,7 +18,6 @@ typedef struct _intr_frame intr_frame;
 
 typedef struct _ps_control {
 	list_entry ready_queue[PS_PRIORITY_MAX];
-	list_entry dying_queue;
 	list_entry wait_queue;
 	struct rb_root mgr_queue;
 	int ps_count;

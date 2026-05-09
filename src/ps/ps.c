@@ -269,7 +269,6 @@ void ps_id_free(unsigned pid)
 void ps_init()
 {
 	int i;
-	list_init(&control.dying_queue);
 	list_init(&control.wait_queue);
 	control.mgr_queue.rb_node = NULL;
 	control.timer_queue.rb_node = NULL;

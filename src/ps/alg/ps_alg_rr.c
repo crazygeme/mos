@@ -8,6 +8,7 @@
  *   - Scheduling instrumentation
  */
 
+#include "fs/fs.h"
 #include <ps/ps.h>
 #include <ps/signal.h>
 #include <hw/time.h>
@@ -141,10 +142,25 @@ task_struct *ps_get_next_task()
  * two steps cannot lose the task (the scheduler skips ps_dying tasks). */
 void ps_put_to_dying_queue_unsafe(task_struct *task)
 {
+	task_struct *parent = ps_find_process_unsafe(task->ppid);
+	task_struct *init_process = ps_find_process_unsafe(1);
+	list_entry *entry;
+
+	while (!list_is_empty(&task->dying_queue)) {
+		entry = list_remove_head(&task->dying_queue);
+		list_insert_tail(&init_process->dying_queue, entry);
+	}
+
+	if (!parent || parent->status == ps_dying)
+		parent = init_process;
+
+	if (!parent || parent->status == ps_dying)
+		klog("Can't find parent process %d or 1\n", task->ppid);
+
 	list_remove_entry(&task->ps_list);
 
 	if (task->psid != 0xffffffff)
-		list_insert_tail(&control.dying_queue, &task->ps_list);
+		list_insert_tail(&parent->dying_queue, &task->ps_list);
 
 	task->status = ps_dying;
 	task->wait_func = NULL;

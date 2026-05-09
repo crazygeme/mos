@@ -112,6 +112,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	stack_bottom = (unsigned int)task + PAGE_SIZE;
 	LOAD_CR3(task->cr3);
 	list_init(&task->ps_list);
+	list_init(&task->dying_queue);
 	RB_CLEAR_NODE(&task->mgr_rb);
 	RB_CLEAR_NODE(&task->timer_rb);
 	task->timer_due_ms = 0;
@@ -373,6 +374,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->fd_cloexec = NULL;
 	task->io_bitmap = NULL;
 	list_init(&task->ps_list);
+	list_init(&task->dying_queue);
 	RB_CLEAR_NODE(&task->mgr_rb);
 	RB_CLEAR_NODE(&task->timer_rb);
 	task->timer_due_ms = 0;

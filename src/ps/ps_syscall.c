@@ -363,6 +363,7 @@ void do_exit(unsigned encoded_status)
 
 	if (cur->fork_flag & FORK_FLAG_THREAD) {
 		ps_remove_mgr(cur);
+
 		cur->psid = 0xffffffff;
 		cur->tgid = 0xffffffff;
 		cur->status = ps_dying;
@@ -407,8 +408,8 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 	for (;;) {
 		task = NULL;
 		spinlock_lock(&ps_lock, &irq);
-		dying_task_entry = control.dying_queue.next;
-		while (dying_task_entry != &control.dying_queue) {
+		dying_task_entry = cur->dying_queue.next;
+		while (dying_task_entry != &cur->dying_queue) {
 			task = container_of(dying_task_entry, task_struct,
 					    ps_list);
 			dying_task_entry = dying_task_entry->next;
@@ -502,8 +503,8 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		has_group_child = 0;
 		spinlock_lock(&ps_lock, &irq);
 
-		dying_task_entry = control.dying_queue.next;
-		while (dying_task_entry != &control.dying_queue) {
+		dying_task_entry = cur->dying_queue.next;
+		while (dying_task_entry != &cur->dying_queue) {
 			task = container_of(dying_task_entry, task_struct,
 					    ps_list);
 			dying_task_entry = dying_task_entry->next;

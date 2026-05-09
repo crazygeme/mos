@@ -24,6 +24,7 @@ trap cleanup_disk EXIT INT TERM
 tools/mountdisk.sh
 _disk_mounted=1
 
+echo "Copy configure files"
 sudo mkdir -p "$MNT"
 tar -C "$SCRIPT_DIR" --exclude='./setup.sh' -cf - . | sudo tar --no-same-owner -C "$MNT" -xf -
 
@@ -33,6 +34,7 @@ if [ -n "$KERNEL_FILE" ]; then
 		exit 1
 	fi
 	sudo mkdir -p "$MNT/boot"
+	echo "Copy mos kernel into $MNT/boot/mos"
 	sudo cp "$KERNEL_FILE" "$MNT/boot/mos"
 fi
 

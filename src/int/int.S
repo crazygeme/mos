@@ -24,14 +24,7 @@ intr_entry:
     push %es
     push %fs
     push %gs
-    pushl %eax
-    pushl %ecx
-    pushl %edx
-    pushl %ebx
-    pushl $0
-    pushl %ebp
-    pushl %esi
-    pushl %edi
+    pushal
             
     /* Set up kernel environment. */
     cld    /* String instructions go upward. */
@@ -60,18 +53,7 @@ intr_entry:
 .globl intr_exit
 intr_exit:
     /* Restore caller's registers. */
-    popl %edi
-    popl %esi
-    popl %ebp
-    addl $4, %esp // dummy esp always 0
-    popl %ebx
-    popl %edx
-    popl %ecx
-    // for a system call, eax is the return val
-    // but for an external interrupt, eax must be restored
-    // or else a return value in kernel function will be broken
-    /*addl $4, %esp*/ 
-    popl %eax
+    popal
     pop %gs
     pop %fs
     pop %es
@@ -270,14 +252,7 @@ syscall_handler:
     push %es
     push %fs
     push %gs
-    pushl %eax
-    pushl %ecx
-    pushl %edx
-    pushl %ebx
-    pushl $0
-    pushl %ebp
-    pushl %esi
-    pushl %edi
+    pushal
         
     /* Set up kernel environment. */
     cld    /* User mode may enter with DF set; kernel string ops require DF=0. */
@@ -309,18 +284,7 @@ ret_from_fork:
 .global ret_from_syscall;
 ret_from_syscall:
     /* Restore caller's registers. */
-    popl %edi
-    popl %esi
-    popl %ebp
-    addl $4, %esp // dummy esp always 0
-    popl %ebx
-    popl %edx
-    popl %ecx
-    // for a system call, eax is the return val
-    // but for an external interrupt, eax must be restored
-    // or else a return value in kernel function will be broken
-    //addl $4, %esp
-    popl %eax
+    popal
     pop %gs
     pop %fs
     pop %es

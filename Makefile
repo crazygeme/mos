@@ -106,10 +106,12 @@ third_party: $(SCRIPTS)
 # ── Utility ──────────────────────────────────────────────────────────────────
 
 clean:
-	@-rm -rf $(DST)
+	@-rm -rf $(BUILD_GENERATED)
+	@$(MAKE) -C third_party clean
 
 rebuild:
 	@-rm -f $(BUILD_GENERATED)
+	@$(MAKE) -C third_party clean
 	@+$(MAKE)
 
 format:

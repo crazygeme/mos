@@ -97,6 +97,7 @@ check_contains "$LOOP_NAME" /proc/partitions
 check_not_exists "$FILE"
 
 printf '%s\n' "$DATA" > "$FILE"
+sleep 0.2
 check_file "$FILE"
 read_back=$(cat "$FILE")
 check_equals "$read_back" "$DATA" "file contents changed after write"
@@ -108,6 +109,7 @@ check_not_exists "$FILE"
 
 mount -o loop "$IMG" "$MNT" >/dev/null 2>&1
 LOOP_DEV=$(check_loop_mounted)
+sleep 0.2
 check_file "$FILE"
 read_back=$(cat "$FILE")
 check_equals "$read_back" "$DATA" "file contents not persisted after remount"

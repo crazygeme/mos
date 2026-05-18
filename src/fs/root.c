@@ -594,21 +594,21 @@ static file *ext4_path_open(const char *path, int flag)
 	struct stat s;
 
 	/*
-	 * Resolve symlinks in all intermediate path components.
-	 * lwext4 does not follow symlinks in non-final components; without
-	 * this step, paths like "/var/mail/foo" (where "mail" is a symlink)
-	 * return ENOENT from lwext4.
+	 * First try the direct lwext4 operation.  The expensive prefix walk is
+	 * only needed when an intermediate component is a symlink; ordinary
+	 * opens should not pay one ext4_fopen2/ext4_fstat pair per component.
 	 */
-	pre_res = name_get();
-	if (pre_res && ext4_resolve_prefix(path, pre_res) == 0)
-		cur_path = pre_res;
+retry_open:
 
 	/* ---- Case 1: trailing '/' means "open as dir" ---- */
 	if (cur_path[strlen(cur_path) - 1] == '/') {
 		dir = zalloc(sizeof(*dir));
 		ret = ext4_dir_open(dir, cur_path);
-		if (ret != EOK)
-			goto fail;
+		if (ret != EOK) {
+			free(dir);
+			dir = NULL;
+			goto resolve_prefix;
+		}
 		ret = ext4_fstat(&dir->f, &s);
 		if (ret != EOK)
 			goto fail;
@@ -639,7 +639,7 @@ static file *ext4_path_open(const char *path, int flag)
 	}
 
 	if (ret != EOK)
-		goto fail;
+		goto resolve_prefix;
 
 	ret = ext4_fstat(f, &s);
 	if (ret != EOK)
@@ -712,6 +712,26 @@ static file *ext4_path_open(const char *path, int flag)
 	fp->f_inode->i_size = s.st_size;
 	fp->f_name = strdup(cur_path);
 	goto done;
+
+resolve_prefix:
+	if (f) {
+		free(f);
+		f = NULL;
+	}
+	if (pre_res)
+		goto fail;
+
+	/*
+	 * lwext4 does not follow symlinks in non-final components; without
+	 * this fallback, paths like "/var/mail/foo" where "mail" is a symlink
+	 * return ENOENT from lwext4.
+	 */
+	pre_res = name_get();
+	if (!pre_res || ext4_resolve_prefix(path, pre_res) != 0 ||
+	    strcmp(pre_res, path) == 0)
+		goto fail;
+	cur_path = pre_res;
+	goto retry_open;
 
 fail:
 	fp = NULL;

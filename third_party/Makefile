@@ -58,7 +58,11 @@ $(DST)/obj/third_party/lwip/%.c.o: $(LWIPDIR)/%.c $(SCRIPTS)
 	@$(CC) $(LWIP_CFLAGS) -MMD -MP -o $@ -c $<
 
 clean:
-	-@rm -f $(EXT4_OBJS) $(LWIP_OBJS)
+	-@rm -f $(EXT4_OBJS) $(LWIP_OBJS) $(EXT4_DEPS) $(LWIP_DEPS)
+
+rebuild:
+	-@rm -f $(EXT4_OBJS) $(LWIP_OBJS) $(EXT4_DEPS) $(LWIP_DEPS)
+	@+$(MAKE)
 
 -include $(EXT4_DEPS)
 -include $(LWIP_DEPS)

@@ -39,5 +39,5 @@ if [ -n "$KERNEL_FILE" ]; then
 fi
 
 sync
-sleep 1
+sleep 0.2
 cleanup_disk

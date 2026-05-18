@@ -101,7 +101,7 @@ static void cleanup()
 	memset(cur->user->ldt_desc, 0, sizeof(cur->user->ldt_desc));
 	frame->gs = 0;
 	cur->tss.gs = 0;
-	asm volatile("movw %0, %%gs" : : "rm"((unsigned short)0));
+	SET_GS(0);
 	ps_update_ldt(cur);
 }
 

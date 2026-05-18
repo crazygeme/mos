@@ -145,21 +145,36 @@ void ps_put_to_dying_queue_unsafe(task_struct *task)
 	task_struct *parent = ps_find_process_unsafe(task->ppid);
 	task_struct *init_process = ps_find_process_unsafe(1);
 	list_entry *entry;
+	int moved_children = 0;
 
 	while (!list_is_empty(&task->dying_queue)) {
+		task_struct *child;
+
 		entry = list_remove_head(&task->dying_queue);
-		list_insert_tail(&init_process->dying_queue, entry);
+		child = container_of(entry, task_struct, ps_list);
+		if (init_process) {
+			child->ppid = init_process->psid;
+			list_insert_tail(&init_process->dying_queue, entry);
+			moved_children = 1;
+		}
+	}
+	if (moved_children && init_process && init_process->signal) {
+		init_process->signal->sig_pending |= (1UL << (SIGCHLD - 1));
+		ps_put_to_ready_queue_unsafe(init_process);
 	}
 
-	if (!parent || parent->status == ps_dying)
+	if (!parent || parent->status == ps_dying) {
 		parent = init_process;
+		if (parent)
+			task->ppid = parent->psid;
+	}
 
 	if (!parent || parent->status == ps_dying)
 		klog("Can't find parent process %d or 1\n", task->ppid);
 
 	list_remove_entry(&task->ps_list);
 
-	if (task->psid != 0xffffffff)
+	if (task->psid != 0xffffffff && parent)
 		list_insert_tail(&parent->dying_queue, &task->ps_list);
 
 	task->status = ps_dying;

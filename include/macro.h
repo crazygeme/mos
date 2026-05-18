@@ -25,6 +25,9 @@
 #define SET_CS(val) \
 	asm volatile("ljmp %0, $1f \n1:\n\tnop" : : "I"(val) : "memory")
 
+#define SET_GS(val) \
+	asm volatile("movw %0, %%gs" : : "rm"((unsigned short)val) : "memory")
+
 #define SET_ESP(val) asm volatile("movl %0, %%esp" : : "rm"(val) : "memory")
 
 #define SET_EBP(val) asm volatile("movl %0, %%ebp" : : "rm"(val) : "memory")

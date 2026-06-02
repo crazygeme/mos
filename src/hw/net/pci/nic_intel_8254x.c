@@ -8,6 +8,7 @@
  */
 #include <hw/nic.h>
 #include <hw/pci.h>
+#include <hw/driver.h>
 #include <lib/klib.h>
 #include <lib/port.h>
 #include <mm/mm.h>
@@ -319,10 +320,7 @@ static int nic_intel_8254x_init(void *_dev)
 	/* ── Enable PCI bus master + memory access ── */
 	uint32_t cmd = pci_read_field(dev->pci_dev, PCI_COMMAND, 2);
 	/* write back with bus-master (bit2) and mem-space (bit1) enabled */
-	/* use port I/O directly: PCI config write */
-	port_write_dword(PCI_ADDRESS_PORT,
-			 pci_get_addr(dev->pci_dev, PCI_COMMAND));
-	port_write_word(PCI_VALUE_PORT, (unsigned short)(cmd | 0x06));
+	pci_write_field(dev->pci_dev, PCI_COMMAND, 2, cmd | 0x06);
 
 	/* ── Reset ── */
 	e1000_wr(ctx, E1000_CTRL, e1000_rd(ctx, E1000_CTRL) | E1000_CTRL_RST);
@@ -438,16 +436,61 @@ static void nic_intel_8254x_on_register(nic_dev *permanent)
 		ctx->nic = permanent;
 }
 
-nic_dev *nic_intel_8254x_create(uint32_t device, uint16_t v, uint16_t d)
+static const nic_ops nic_intel_8254x_ops = {
+	.init = nic_intel_8254x_init,
+	.on_register = nic_intel_8254x_on_register,
+	.send = nic_intel_8254x_send,
+	.send_pbuf = nic_intel_8254x_send_pbuf,
+	.rx_reclaim = nic_intel_8254x_rx_reclaim,
+};
+
+static nic_dev *nic_intel_8254x_create(uint32_t device, uint16_t v, uint16_t d)
 {
 	nic_dev *dev = (nic_dev *)zalloc(sizeof(*dev));
 	dev->pci_dev = device;
 	dev->ven = v;
 	dev->dev = d;
-	dev->init = nic_intel_8254x_init;
-	dev->on_register = nic_intel_8254x_on_register;
-	dev->send = nic_intel_8254x_send;
-	dev->send_pbuf = nic_intel_8254x_send_pbuf;
-	dev->rx_reclaim = nic_intel_8254x_rx_reclaim;
+	dev->ops = &nic_intel_8254x_ops;
 	return dev;
 }
+
+static int nic_intel_8254x_probe_pci(uint32_t device, uint16_t v, uint16_t d,
+				     const hw_pci_id *id)
+{
+	nic_dev *dev;
+	nic_dev *registered;
+
+	(void)id;
+	dev = nic_intel_8254x_create(device, v, d);
+	if (!dev)
+		return -1;
+
+	registered = nic_register_device(dev);
+	free(dev);
+	return registered ? 0 : -1;
+}
+
+static const hw_pci_id nic_intel_8254x_ids[] = {
+	{ 0x8086, 0x100E },
+	{ 0x8086, 0x100F },
+	{ 0x8086, 0x1000 },
+	{ 0x8086, 0x1001 },
+};
+
+static hw_driver nic_intel_8254x_driver = {
+	.name = "intel-8254x",
+	.type = HW_TYPE_NET,
+	.bus = HW_BUS_PCI,
+	.pci_ids = nic_intel_8254x_ids,
+	.pci_id_count =
+		sizeof(nic_intel_8254x_ids) / sizeof(nic_intel_8254x_ids[0]),
+	.ops = &nic_intel_8254x_ops,
+	.probe_pci = nic_intel_8254x_probe_pci,
+};
+
+static void nic_intel_8254x_register(void)
+{
+	hw_driver_register(&nic_intel_8254x_driver);
+}
+
+KERNEL_INIT(5, nic_intel_8254x_register);

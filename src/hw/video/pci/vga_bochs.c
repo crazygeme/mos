@@ -395,7 +395,7 @@ static int bochs_probe(void)
 
 /* ── Driver descriptor ────────────────────────────────────────────────────── */
 
-const fb_drv_t bochs_drv = {
+static const fb_drv_t bochs_drv = {
 	.probe = bochs_probe,
 	.get_char_dims = bochs_get_char_dims,
 	.putcell = bochs_putcell,
@@ -416,3 +416,5 @@ const fb_drv_t bochs_drv = {
 	.is_char_visible = bochs_is_char_visible,
 	.cursor_erase = bochs_cursor_erase,
 };
+
+FB_DRIVER(1, bochs_drv);

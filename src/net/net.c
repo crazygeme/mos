@@ -82,12 +82,12 @@ static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 	nic_dev *nic = (nic_dev *)netif->state;
 	u16_t len;
 
-	if (!nic->send && !nic->send_pbuf)
+	if (!nic->ops || (!nic->ops->send && !nic->ops->send_pbuf))
 		return ERR_IF;
 
-	if (nic->send_pbuf) {
+	if (nic->ops->send_pbuf) {
 		len = p->tot_len;
-		if (nic->send_pbuf(nic, p) >= 0) {
+		if (nic->ops->send_pbuf(nic, p) >= 0) {
 			g_tx_bytes += len;
 			g_tx_packets += 1;
 			return ERR_OK;
@@ -96,7 +96,7 @@ static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 	}
 
 	len = pbuf_copy_partial(p, txbounce, sizeof(txbounce), 0);
-	if (nic->send(nic, txbounce, len) >= 0) {
+	if (nic->ops->send(nic, txbounce, len) >= 0) {
 		g_tx_bytes += len;
 		g_tx_packets += 1;
 		return ERR_OK;
@@ -126,8 +126,8 @@ static void eth0_rx_release_slot(net_rx_slot_t *slot)
 	int irq;
 	int idx = (int)(slot - g_rx_slots);
 
-	if (slot->nic && slot->nic->rx_reclaim)
-		slot->nic->rx_reclaim(slot->nic, slot->cookie);
+	if (slot->nic && slot->nic->ops && slot->nic->ops->rx_reclaim)
+		slot->nic->ops->rx_reclaim(slot->nic, slot->cookie);
 
 	slot->nic = NULL;
 	slot->data = NULL;

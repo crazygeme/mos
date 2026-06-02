@@ -43,8 +43,15 @@ typedef struct {
 			     unsigned cols);
 } fb_drv_t;
 
-extern const fb_drv_t vmsvga_drv;
-extern const fb_drv_t bochs_drv;
+typedef const fb_drv_t *fb_driver_ref_t;
+
+extern fb_driver_ref_t __fb_driver_start[];
+extern fb_driver_ref_t __fb_driver_end[];
+
+#define FB_DRIVER(priority, drv)                                          \
+	static fb_driver_ref_t __fb_driver_##priority##_##drv             \
+		__attribute__((used, section(".fb_driver." #priority))) = \
+			&(drv)
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
 

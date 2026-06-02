@@ -548,7 +548,7 @@ static int vmsvga_probe(void)
 
 /* ── Driver descriptor ────────────────────────────────────────────────────── */
 
-const fb_drv_t vmsvga_drv = {
+static const fb_drv_t vmsvga_drv = {
 	.probe = vmsvga_probe,
 	.get_char_dims = vmsvga_get_char_dims,
 	.putcell = vmsvga_putcell,
@@ -569,3 +569,5 @@ const fb_drv_t vmsvga_drv = {
 	.is_char_visible = vmsvga_is_char_visible,
 	.cursor_erase = vmsvga_cursor_erase,
 };
+
+FB_DRIVER(0, vmsvga_drv);

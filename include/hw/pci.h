@@ -74,5 +74,6 @@ void pci_scan_bus(pci_func_t f, int type, int bus, void *extra);
 void pci_scan(pci_func_t f, int type, void *extra);
 
 unsigned pci_read_field(unsigned device, int field, int size);
+void pci_write_field(unsigned device, int field, int size, unsigned value);
 
 #endif

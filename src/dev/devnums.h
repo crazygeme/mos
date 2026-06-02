@@ -48,6 +48,12 @@
 #define RTC_MAJOR 10 /* /dev/rtc: major */
 #define RTC_MINOR 135 /* /dev/rtc: minor */
 
+/* OSS-compatible audio nodes */
+#define SOUND_MAJOR 14 /* /dev/mixer, /dev/dsp, /dev/audio: shared major */
+#define SOUND_MIXER_MINOR 0 /* /dev/mixer: minor */
+#define SOUND_DSP_MINOR 3 /* /dev/dsp: minor */
+#define SOUND_AUDIO_MINOR 4 /* /dev/audio: minor */
+
 /* /dev/input/mice */
 #define INPUT_MOUSE_MAJOR 13 /* /dev/input/mice: major */
 #define INPUT_MOUSE_MINOR 63 /* /dev/input/mice: minor */

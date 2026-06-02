@@ -7,6 +7,8 @@ diskfile="rh9.qcow2"
 _build="release"
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
 _logtofile="stdio"
+_audio_backend=$([ "$(uname)" == "Linux" ] && echo "alsa" || echo "coreaudio")
+_audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _priviledge=""
 _is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
 _kvm=$([ "$(uname)" == "Darwin" ] && echo "" || echo "-enable-kvm")
@@ -118,9 +120,10 @@ $_priviledge qemu-system-i386 -cpu coreduo \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
 	-serial $_logtofile \
-	-vga vmware\
-	-device isa-debug-exit,iobase=0xf4,iosize=0x04\
-	$_kvm\
+	-vga vmware \
+	-device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+	$_audio \
+	$_kvm \
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56

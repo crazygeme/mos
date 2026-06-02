@@ -9,6 +9,8 @@ _window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "coco
 _verbose=""
 _logtofile="stdio"
 _vga="-vga vmware"
+_audio_backend=$([ "$(uname)" == "Linux" ] && echo "alsa" || echo "coreaudio")
+_audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _cpu="coreduo"
@@ -175,9 +177,10 @@ $_priviledge $_qemu -cpu $_cpu \
 	-serial $_logtofile \
 	$_vga \
 	$_power \
+	$_audio \
 	$_kvm \
 	$_debug \
-	-no-reboot\
+	-no-reboot \
 	-rtc base=localtime \
 	-netdev $_netdev \
 	-device e1000,netdev=net0,mac=52:54:00:12:34:56

@@ -352,7 +352,7 @@ typedef struct _rusage {
 /*
  * task_utime — corrected user-mode CPU time for a task (in jiffies).
  *
- * idle_tickets is only flushed at the SELF label in _task_sched(), i.e. when
+ * idle_tickets is only flushed on the resume path in _task_sched(), i.e. when
  * the task is rescheduled back in.  For a sleeping or ready task the current
  * off-CPU period has NOT yet been added to idle_tickets.  We correct for that
  * by adding (now - stats->idle), where stats->idle was stamped at the top of

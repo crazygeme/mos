@@ -18,6 +18,20 @@ struct user_desc {
 	unsigned int empty : 25;
 };
 
+enum modify_ldt_function {
+	MODIFY_LDT_READ = 0,
+	MODIFY_LDT_WRITE_LEGACY = 1,
+	MODIFY_LDT_READ_DEFAULT = 2,
+	MODIFY_LDT_WRITE = 0x11,
+};
+
+enum user_desc_contents {
+	USER_DESC_CONTENTS_DATA = 0,
+	USER_DESC_CONTENTS_STACK = 1,
+	USER_DESC_CONTENTS_CODE = 2,
+	USER_DESC_CONTENTS_RESERVED = 3,
+};
+
 extern unsigned long long gdt[];
 
 static unsigned short read_gs_selector(void)
@@ -255,7 +269,7 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 		klog("modify_ldt(%d, %x, %x)\n", func, ptr, bytecount);
 
 	switch (func) {
-	case 0:
+	case MODIFY_LDT_READ:
 		if (!ptr)
 			return -EFAULT;
 		copy_len = bytecount;
@@ -263,13 +277,13 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 			copy_len = sizeof(cur->user->ldt_desc);
 		memcpy(ptr, cur->user->ldt_desc, copy_len);
 		return (int)copy_len;
-	case 2:
+	case MODIFY_LDT_READ_DEFAULT:
 		if (!ptr)
 			return -EFAULT;
 		memset(ptr, 0, bytecount);
 		return (int)bytecount;
-	case 1:
-	case 0x11:
+	case MODIFY_LDT_WRITE_LEGACY:
+	case MODIFY_LDT_WRITE:
 		if (!u_info)
 			return -EFAULT;
 		if (bytecount != sizeof(*u_info))
@@ -277,7 +291,8 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 		if (u_info->entry_number >= LDT_ENTRY_COUNT)
 			return -EINVAL;
 		if (!user_desc_empty(u_info)) {
-			if (!u_info->seg_32bit || u_info->contents == 3)
+			if (!u_info->seg_32bit ||
+			    u_info->contents == USER_DESC_CONTENTS_RESERVED)
 				return -EINVAL;
 			cur->user->ldt_desc[u_info->entry_number] =
 				build_ldt_desc(u_info);

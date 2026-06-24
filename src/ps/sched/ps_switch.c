@@ -7,75 +7,69 @@
  */
 
 /*
- * _task_sched — perform a voluntary or preemptive context switch.
+ * Pick a runnable task and switch to it.
  *
- * 1. Disable interrupts (switch must be atomic).
- * 2. Drain any pending DSR callbacks inline.
- * 3. Pick the next runnable task.
- * 4. If next == current: re-enable and return (no-op).
- * 5. Otherwise:
- *    a. SAVE_ALL: stash registers into current->tss; sets eip = NEXT label.
- *    b. RESTORE_ALL: load registers from next->tss.
- *    c. SET_CR3: switch address space.
- *    d. reset_tss: update hardware TSS for new task.
- *    e. JUMP_TO_NEXT_TASK_EIP: jump to next task's saved eip.
- *       On first run this is ps_run; on later runs it is the NEXT label.
- * 6. When rescheduled, execution resumes at NEXT.
+ * SAVE_ALL records the resume label in prev->tss.eip.  A task returning from
+ * a later context switch therefore resumes at task_resume and completes the
+ * accounting for the interval during which it was not running.
  */
 void _task_sched(const char *func)
 {
-	task_struct *task = 0;
-	task_struct *cur = CURRENT_TASK();
+	task_struct *prev = current;
+	task_struct *next;
 
+	(void)func;
 	task_schedule_count++;
 
-	if (cur->stats)
-		cur->stats->idle = time_now_tickets();
+	if (prev->stats)
+		prev->stats->idle = time_now_tickets();
 
 	dsr_drain();
 
-	/* 
-	 * Schedule procedure can not be interrupted.
-	 */
+	/* Task selection and the context switch form one atomic operation. */
 	sched_disable();
 
-	task = ps_get_next_task();
+	next = ps_get_next_task();
+	next->status = ps_running;
 
-	if (task->psid == current->psid) {
-		task->status = ps_running;
-		ps_load_task_segments(task);
+	if (next == prev) {
+		ps_load_task_segments(next);
 		sched_enable();
-		goto SELF;
+		goto out;
 	}
 
-	if (current->stats)
-		current->stats->total_switches++;
+	if (prev->stats)
+		prev->stats->total_switches++;
 
-	task->status = ps_running;
-	SAVE_ALL(CURRENT_TASK(), NEXT);
+	SAVE_ALL(prev, task_resume);
 
-	/* Do TSS and CR3 setup on the current stack, before switching.
+	/*
+	 * Do TSS and CR3 setup on the current stack, before switching.
 	 * Kernel mappings are shared across all page directories so SET_CR3
-	 * here is safe — code and the current stack remain accessible. */
-	reset_tss(task);
-	SET_CR3(VIRT_TO_PHY(task->user->page_dir));
+	 * here is safe: the code and current stack remain accessible.
+	 */
+	reset_tss(next);
+	SET_CR3(VIRT_TO_PHY(next->user->page_dir));
 
-	/* Reload per-process TLS descriptors so that when RESTORE_ALL
-	 * loads GS the CPU finds the correct segment descriptor. */
-	ps_load_task_segments(task);
+	/*
+	 * Reload per-process TLS descriptors before RESTORE_ALL loads GS.
+	 */
+	ps_load_task_segments(next);
 
-	/* Switch to the new task's kernel stack.  After this point no local
+	/*
+	 * Switch to the new task's kernel stack.  After this point no local
 	 * variable may be written: CURRENT_TASK() derives the task from the
 	 * updated ESP and the only stack write is the 4-byte return address
 	 * pushed by the call below, at [new_esp - 4], which is within the
-	 * task's page even when new_esp == task + PAGE_SIZE. */
-	RESTORE_ALL(task, task->tss.eip);
+	 * task's page even when new_esp == task + PAGE_SIZE.
+	 */
+	RESTORE_ALL(next, next->tss.eip);
 	sched_enable();
 	JUMP_TO_NEXT_TASK_EIP(current->tss.eip);
-	asm volatile("NEXT: nop");
-SELF:
+	asm volatile("task_resume: nop");
 
-	if (current->stats)
-		current->stats->idle_tickets +=
-			time_now_tickets() - current->stats->idle;
+out:
+	if (prev->stats)
+		prev->stats->idle_tickets +=
+			time_now_tickets() - prev->stats->idle;
 }

@@ -115,7 +115,7 @@ struct super_block {
     void                   *s_fs_info; // private fs data (e.g. ext4_mount_info)
     unsigned                s_ref;  // reference count (atomic)
     mutex_t                 s_lock;
-    hash_table             *s_mounts; // child mounts: path → super_block
+    struct rb_root          s_mounts; // child mounts ordered by path
 };
 ```
 
@@ -183,7 +183,7 @@ file *vfs_open(super_block *sb, const char *path, int flag);
 3. Otherwise: insert `strdup(path) → child` into `sb->s_mounts`.
 
 **Umount:**
-1. If `path` is a direct key: `hash_remove_at` and call `sb_put` via the evict callback.
+1. If `path` is a direct key: erase its mount node and call `sb_put`.
 2. If a direct child is a prefix: delegate to `vfs_umount(child, suffix)`.
 3. Otherwise: return `-ENOENT`.
 
@@ -477,7 +477,7 @@ mount("/dev/hda1", "/mnt", "ext4")
        └─ fs_find_type("ext4") → &ext4_fs_type
        └─ ext4_get_sb("/dev/hda1", "/mnt") → sb_mnt
        └─ vfs_mount(cur->root, "/mnt", sb_mnt)
-            └─ hash_insert(root->s_mounts, "/mnt", sb_mnt)
+            └─ rb-tree insert(root->s_mounts, "/mnt", sb_mnt)
 
 open("/mnt/data.txt", O_RDONLY)
   └─ vfs_open(root, "/mnt/data.txt")
@@ -499,7 +499,7 @@ close(fd)
 umount("/mnt")
   └─ sys_umount → fs_do_umount
        └─ vfs_umount(cur->root, "/mnt")
-            └─ hash_remove_at → sb_entry_evict
+            └─ rb_erase → release mount node
                  └─ free(key), sb_put(sb_mnt)
                       └─ s_op->release → ext4_umount("/mnt/"), kfree(sb_mnt)
 ```

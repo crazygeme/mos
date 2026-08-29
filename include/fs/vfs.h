@@ -74,8 +74,14 @@ struct super_block {
 	char s_fstype[32]; /* filesystem type, e.g. "ext4"; empty = not a real mount */
 	char s_mountpoint[256]; /* absolute mountpoint, set by vfs_mount() */
 	mutex_t s_lock;
-	hash_table *s_mounts; /* child mounts: path → super_block */
+	struct rb_root s_mounts; /* child mounts, ordered by path */
 };
+
+typedef struct _vfs_mount_node {
+	char *path;
+	super_block *sb;
+	struct rb_node rb_node;
+} vfs_mount_node;
 
 /* Allocate and initialise a new super_block with the given operations. */
 super_block *sget(const super_operations *s_op);

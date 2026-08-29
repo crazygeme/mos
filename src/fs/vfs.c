@@ -10,20 +10,48 @@
 /**
  * To make sure sorted by path
  */
-static int sb_path_comp(const void *k1, const void *k2)
+static int sb_path_comp(const char *left, const char *right)
 {
-	const char *left = k1;
-	const char *right = k2;
 	return 0 - strcmp(left, right);
 }
 
-/*
- * Release memory for `key`
- */
-static void sb_entry_evict(const key_value_pair *pair)
+static vfs_mount_node *sb_mount_find(super_block *sb, const char *path)
 {
-	free(pair->key);
-	sb_put(pair->val);
+	struct rb_node *node = sb->s_mounts.rb_node;
+	while (node) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
+		int comp = sb_path_comp(path, mount->path);
+		if (comp < 0)
+			node = node->rb_left;
+		else if (comp > 0)
+			node = node->rb_right;
+		else
+			return mount;
+	}
+	return NULL;
+}
+
+static void sb_mount_insert(super_block *sb, vfs_mount_node *mount)
+{
+	struct rb_node **link = &sb->s_mounts.rb_node, *parent = NULL;
+	while (*link) {
+		vfs_mount_node *cur = rb_entry(*link, vfs_mount_node, rb_node);
+		parent = *link;
+		if (sb_path_comp(mount->path, cur->path) < 0)
+			link = &(*link)->rb_left;
+		else
+			link = &(*link)->rb_right;
+	}
+	rb_link_node(&mount->rb_node, parent, link);
+	rb_insert_color(&mount->rb_node, &sb->s_mounts);
+}
+
+static void sb_mount_remove(super_block *sb, vfs_mount_node *mount)
+{
+	rb_erase(&mount->rb_node, &sb->s_mounts);
+	free(mount->path);
+	sb_put(mount->sb);
+	free(mount);
 }
 
 /*
@@ -39,7 +67,7 @@ static void sb_entry_evict(const key_value_pair *pair)
 static int sb_path_resolve(super_block *sb, const char *path,
 			   super_block **out_sb, char **out_path)
 {
-	key_value_pair *kv;
+	struct rb_node *node;
 	super_block *child;
 	const char *rest;
 	size_t klen;
@@ -52,12 +80,12 @@ static int sb_path_resolve(super_block *sb, const char *path,
 
 	mutex_lock(&sb->s_lock);
 
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		klen = strlen(kv->key);
-		if (strncmp(path, kv->key, klen) == 0 &&
+	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
+		klen = strlen(mount->path);
+		if (strncmp(path, mount->path, klen) == 0 &&
 		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = kv->val;
+			child = mount->sb;
 			rest = path + klen;
 			mutex_unlock(&sb->s_lock);
 			return sb_path_resolve(child, rest, out_sb, out_path);
@@ -76,7 +104,7 @@ super_block *sget(const super_operations *s_op)
 {
 	super_block *sb = zalloc(sizeof(*sb));
 	mutex_init(&sb->s_lock);
-	sb->s_mounts = hash_create(sb_path_comp, sb_entry_evict);
+	sb->s_mounts = _RBTREE_ROOT_INIT;
 	sb->s_op = s_op;
 	sb->s_ref = 1;
 	return sb;
@@ -94,7 +122,10 @@ void sb_put(super_block *sb)
 
 	mutex_lock(&sb->s_lock);
 
-	hash_destroy(sb->s_mounts);
+	while (sb->s_mounts.rb_node) {
+		struct rb_node *node = rb_first(&sb->s_mounts);
+		sb_mount_remove(sb, rb_entry(node, vfs_mount_node, rb_node));
+	}
 
 	mutex_unlock(&sb->s_lock);
 
@@ -106,7 +137,7 @@ void sb_put(super_block *sb)
 
 int vfs_mount(super_block *sb, const char *path, super_block *next)
 {
-	key_value_pair *kv;
+	struct rb_node *node;
 	super_block *child;
 	char *key;
 	size_t klen;
@@ -120,18 +151,18 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 	mutex_lock(&sb->s_lock);
 
 	/* Reject duplicate direct registration */
-	if (hash_find(sb->s_mounts, path)) {
+	if (sb_mount_find(sb, path)) {
 		mutex_unlock(&sb->s_lock);
 		return -EEXIST;
 	}
 
 	/* Delegate to an existing child that is a strict prefix of path */
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		klen = strlen(kv->key);
-		if (strncmp(path, kv->key, klen) == 0 &&
+	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
+		klen = strlen(mount->path);
+		if (strncmp(path, mount->path, klen) == 0 &&
 		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = kv->val;
+			child = mount->sb;
 			mutex_unlock(&sb->s_lock);
 			return vfs_mount(child, path + klen, next);
 		}
@@ -150,7 +181,13 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 	}
 
 	key = strdup(path);
-	hash_insert(sb->s_mounts, key, child);
+	{
+		vfs_mount_node *mount = kmalloc(sizeof(*mount));
+		mount->path = key;
+		mount->sb = child;
+		rb_init_node(&mount->rb_node);
+		sb_mount_insert(sb, mount);
+	}
 	mutex_unlock(&sb->s_lock);
 	return 0;
 }
@@ -158,7 +195,7 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
 		    void *arg)
 {
-	key_value_pair *kv;
+	struct rb_node *node;
 
 	if (!sb)
 		return;
@@ -170,9 +207,9 @@ void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
 	/* Recurse into children — release lock while calling back to avoid
 	 * deadlock; single-CPU so no structural changes will happen. */
 	mutex_lock(&sb->s_lock);
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		super_block *child = kv->val;
+	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
+		super_block *child = mount->sb;
 		mutex_unlock(&sb->s_lock);
 		vfs_mount_walk(child, cb, arg);
 		mutex_lock(&sb->s_lock);
@@ -182,7 +219,8 @@ void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
 
 int vfs_umount(super_block *sb, const char *path)
 {
-	key_value_pair *kv;
+	vfs_mount_node *mount;
+	struct rb_node *node;
 	super_block *child;
 	size_t klen;
 
@@ -192,21 +230,21 @@ int vfs_umount(super_block *sb, const char *path)
 	mutex_lock(&sb->s_lock);
 
 	/* Direct child mount? */
-	kv = hash_find(sb->s_mounts, path);
-	if (kv) {
-		child = kv->val;
-		hash_remove_at(sb->s_mounts, kv);
+	mount = sb_mount_find(sb, path);
+	if (mount) {
+		child = mount->sb;
+		sb_mount_remove(sb, mount);
 		mutex_unlock(&sb->s_lock);
 		return 0;
 	}
 
 	/* Prefix match: delegate to child */
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
-		klen = strlen(kv->key);
-		if (strncmp(path, kv->key, klen) == 0 &&
+	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
+		mount = rb_entry(node, vfs_mount_node, rb_node);
+		klen = strlen(mount->path);
+		if (strncmp(path, mount->path, klen) == 0 &&
 		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = kv->val;
+			child = mount->sb;
 			mutex_unlock(&sb->s_lock);
 			return vfs_umount(child, path + klen);
 		}

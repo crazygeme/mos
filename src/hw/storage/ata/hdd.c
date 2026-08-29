@@ -133,10 +133,48 @@ typedef struct _block_cache_item {
 } block_cache_item;
 
 typedef struct _block_cache {
-	hash_table *hash; /* rb-tree keyed by head sector     */
+	struct rb_root tree; /* keyed by head sector */
 	list_entry timer_list_head; /* LRU list; head=LRU, newest at front */
 	int sectors; /* total cached sectors             */
 } block_cache;
+
+static block_cache_item *hdd_cache_tree_find(block_cache *cache, int sector)
+{
+	struct rb_node *node = cache->tree.rb_node;
+	while (node) {
+		block_cache_item *item =
+			rb_entry(node, block_cache_item, hash_node);
+		if (sector < item->sector)
+			node = node->rb_left;
+		else if (sector > item->sector)
+			node = node->rb_right;
+		else
+			return item;
+	}
+	return NULL;
+}
+
+static void hdd_cache_tree_insert(block_cache *cache, block_cache_item *item)
+{
+	struct rb_node **link = &cache->tree.rb_node, *parent = NULL;
+	while (*link) {
+		block_cache_item *cur =
+			rb_entry(*link, block_cache_item, hash_node);
+		parent = *link;
+		if (item->sector < cur->sector)
+			link = &(*link)->rb_left;
+		else
+			link = &(*link)->rb_right;
+	}
+	rb_link_node(&item->hash_node, parent, link);
+	rb_insert_color(&item->hash_node, &cache->tree);
+}
+
+static void hdd_cache_tree_remove(block_cache *cache, block_cache_item *item)
+{
+	rb_erase(&item->hash_node, &cache->tree);
+	RB_CLEAR_NODE(&item->hash_node);
+}
 #endif /* HDD_CACHE_OPEN */
 
 /* ── Partition descriptor ─────────────────────────────────────────────────────── */
@@ -809,7 +847,7 @@ static void block_cache_item_remove(block_cache_item *item)
 static void init_partition_cache(partition *p)
 {
 	p->cache.sectors = 0;
-	p->cache.hash = hash_create(int_comp, NULL);
+	p->cache.tree = _RBTREE_ROOT_INIT;
 	list_init(&p->cache.timer_list_head);
 	p->cache_inited = 1;
 	mutex_init(&p->cache_lock);
@@ -818,20 +856,19 @@ static void init_partition_cache(partition *p)
 static block_cache_item *hdd_cache_lookup(partition *p, int sector)
 {
 	int head_sector = HEAD_SECTOR(sector);
-	key_value_pair *pair;
+	block_cache_item *item;
 
 	if (sector == -1)
 		return (block_cache_item *)-1;
 
 	hdd_cache_search_count++;
 
-	pair = hash_find(p->cache.hash, head_sector);
-
-	if (!pair)
+	item = hdd_cache_tree_find(&p->cache, head_sector);
+	if (!item)
 		return NULL;
 
 	hdd_cache_hit++;
-	return (block_cache_item *)pair->val;
+	return item;
 }
 
 static block_cache_item *hdd_cache_find_oldest(partition *p)
@@ -882,8 +919,7 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 			      int *old_dirty, block_cache_item *new_item)
 {
 	block_cache_item *item;
-	unsigned cached_pages =
-		hdd_cache_size * BLOCK_SECTOR_SIZE / PAGE_SIZE;
+	unsigned cached_pages = hdd_cache_size * BLOCK_SECTOR_SIZE / PAGE_SIZE;
 
 	if (new_item && cached_pages >= HDD_CACHE_MAX_PAGES) {
 		block_cache_item_remove(new_item);
@@ -906,14 +942,14 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 	*old_sector = item->sector;
 	*old_dirty = item->dirty;
 	if (item->sector >= 0)
-		hash_remove(p->cache.hash, item->sector);
+		hdd_cache_tree_remove(&p->cache, item);
 
 	item->sector = head_sector;
 	item->dirty = 0;
 	item->loading = 1;
 	list_remove_entry(&item->time_list);
 	list_insert_head(&p->cache.timer_list_head, &item->time_list);
-	hash_insert(p->cache.hash, head_sector, item);
+	hdd_cache_tree_insert(&p->cache, item);
 	return item;
 }
 
@@ -928,7 +964,7 @@ static void hdd_cache_cancel_load_locked(partition *p, block_cache_item *item)
 {
 	if (!item)
 		return;
-	hash_remove(p->cache.hash, item->sector);
+	hdd_cache_tree_remove(&p->cache, item);
 	item->sector = -1;
 	item->dirty = 0;
 	item->loading = 0;
@@ -943,8 +979,9 @@ static void hdd_cache_update(partition *p, block_cache_item *item, int sector,
 	int sector_off = SECTOR_OFF(sector);
 
 	if (item->sector != head_sector) {
-		hash_remove(p->cache.hash, item->sector);
-		hash_insert(p->cache.hash, head_sector, item);
+		hdd_cache_tree_remove(&p->cache, item);
+		item->sector = head_sector;
+		hdd_cache_tree_insert(&p->cache, item);
 	}
 	item->dirty |= mark_dirty;
 	item->sector = head_sector;
@@ -998,7 +1035,7 @@ static int partition_cache_reclaim_one_locked(partition *p)
 
 	hdd_cache_flush(p, item);
 	if (item->sector >= 0)
-		hash_remove(p->cache.hash, item->sector);
+		hdd_cache_tree_remove(&p->cache, item);
 	list_remove_entry(&item->time_list);
 	block_cache_item_remove(item);
 	p->cache.sectors -= PREREAD_SECTOR;
@@ -1219,8 +1256,7 @@ static void partition_close(void *aux)
 	if (p->cache_inited) {
 		partition_cache_flush(aux);
 		partition_cache_evict(aux);
-		hash_destroy(p->cache.hash);
-		p->cache.hash = NULL;
+		p->cache.tree = _RBTREE_ROOT_INIT;
 		list_init(&p->cache.timer_list_head);
 		p->cache_inited = 0;
 	}

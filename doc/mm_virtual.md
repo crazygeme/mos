@@ -464,7 +464,7 @@ Growth happens in at least `USER_STACK_INIT_PAGES` chunks, not strictly one page
 - `PROT_NONE` is enforced by fault handling rather than by installing a special non-accessible PTE.
 - Shared anonymous pages and shared file pages are cached in kernel-global structures; those caches are simple and correctness-oriented, not aggressively optimized.
 - Dirty shared-file writeback exists, but `msync()` is not wired up yet.
-- VM enumeration order depends on the tree traversal used by `hash_first/hash_next`; the implementation expects it to be sorted by address.
+- VM enumeration uses `rb_first`/`rb_next` and is sorted by address.
 - User, page-cache, and shared-memory physical pages are allocated from high
   memory first. Kernel-owned memory remains in the direct map so kernel
   pointers returned by `vm_alloc()` stay simple and stable.

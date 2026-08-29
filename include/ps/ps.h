@@ -213,6 +213,7 @@ typedef struct _user_enviroment {
 	/* Per-process TLS GDT descriptors (GDT_ENTRY_TLS_MIN .. GDT_ENTRY_TLS_MAX) */
 	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
 	unsigned long long ldt_desc[LDT_ENTRY_COUNT];
+	unsigned ldt_present;
 	unsigned ptrace_tracer; /* tracer pid, 0 if not traced */
 	unsigned ptrace_mode; /* run mode requested by tracer */
 	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */

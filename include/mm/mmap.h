@@ -85,6 +85,7 @@ void vm_destroy(vm_struct_t vm);
  */
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 		int flag, file *fp, int offset, unsigned anon_id);
+void vm_add_map_clone(vm_struct_t vm, vm_region *src);
 
 /* Extend the mapping that starts at @begin from @old_end to @new_end. */
 int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,

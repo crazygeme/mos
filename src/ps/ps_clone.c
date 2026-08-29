@@ -106,10 +106,9 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		task->user->vm = cur->user->vm;
 		vm_get(task->user->vm);
 	} else {
-		 task->user->vm = vm_create();
+		task->user->vm = vm_create();
 		task->user->vm->page_dir = vm_alloc(1);
 		vm_set_page_dir(task->user->vm, task->user->vm->page_dir);
-		mm_init_process_page_dir(task->user->vm->page_dir);
 	}
 	fork_dup_user_env(cur, task);
 	fork_dup_signal(cur, task);

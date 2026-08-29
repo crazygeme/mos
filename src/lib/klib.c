@@ -30,16 +30,20 @@ typedef unsigned long long uint64_t;
 uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p)
 {
 	uint64_t quot = 0, qbit = 1;
-	const uint64_t top_bit = 1ULL << 63;
 
 	if (den == 0) {
 		/* Intentional divide by zero to match libgcc behaviour. */
 		return 1 / ((unsigned)den);
 	}
 
-	/* Keep this purely unsigned so higher optimization levels do not rely
-	 * on signed-cast behavior for values above INT64_MAX. */
-	while ((den & top_bit) == 0) {
+	/*
+	 * Align the divisor with the dividend, rather than unconditionally with
+	 * bit 63.  The old loop always performed 64 trial subtractions, even for
+	 * common divisions such as a timestamp by 1000.  Stopping at num / 2
+	 * both avoids overflow and makes the work proportional to the quotient's
+	 * significant bits.
+	 */
+	while (den <= (num >> 1)) {
 		den <<= 1;
 		qbit <<= 1;
 	}

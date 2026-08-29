@@ -1,6 +1,8 @@
 #ifndef _ELF_ELF_H_
 #define _ELF_ELF_H_
 
+typedef struct _file file;
+
 typedef signed char s8;
 typedef unsigned char u8;
 
@@ -418,5 +420,6 @@ typedef struct _mos_binfmt {
 } mos_binfmt;
 
 unsigned elf_map(char *path, mos_binfmt *fmt);
+unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp);
 
 #endif

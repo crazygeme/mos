@@ -380,53 +380,9 @@ void ps_enum_all(ps_enum_callback callback, void *ctx)
 	spinlock_unlock(&ps_lock, irq);
 }
 
-heap_state *ps_heap_state_new(void)
-{
-	heap_state *heap = zalloc(sizeof(*heap));
-
-	if (!heap)
-		return NULL;
-	heap->refs = 1;
-	return heap;
-}
-
-void ps_heap_state_get(heap_state *heap)
-{
-	if (!heap)
-		return;
-	__sync_add_and_fetch(&heap->refs, 1);
-}
-
-void ps_heap_state_put(heap_state *heap)
-{
-	if (!heap)
-		return;
-	if (__sync_sub_and_fetch(&heap->refs, 1) == 0)
-		kfree(heap);
-}
-
 user_enviroment *ps_alloc_user_env(void)
 {
-	user_enviroment *user = zalloc(sizeof(*user));
-
-	if (!user)
-		return NULL;
-	user->heap = ps_heap_state_new();
-	if (!user->heap) {
-		kfree(user);
-		return NULL;
-	}
-	return user;
-}
-
-void ps_share_heap_state(user_enviroment *dst, user_enviroment *src)
-{
-	if (!dst || !src || !src->heap)
-		return;
-
-	ps_heap_state_put(dst->heap);
-	dst->heap = src->heap;
-	ps_heap_state_get(dst->heap);
+	return zalloc(sizeof(user_enviroment));
 }
 
 /* Send signal sig to every user task whose group_id matches pgrp. */
@@ -489,10 +445,10 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 	unsigned i, j;
 	unsigned int *page_dir;
 
-	if (!fn || !task->user->page_dir)
+	if (!fn || !task->user->vm || !task->user->vm->page_dir)
 		return;
 
-	page_dir = (unsigned int *)task->user->page_dir;
+	page_dir = (unsigned int *)task->user->vm->page_dir;
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
 		unsigned *page_table =
 			(unsigned *)(page_dir[i] & PAGE_SIZE_MASK);
@@ -512,10 +468,10 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 /* Unmap all user pages for task and flush the TLB. */
 void ps_cleanup_all_user_map(task_struct *task)
 {
-	if (!task || !task->user)
+	if (!task || !task->user || !task->user->vm)
 		return;
 
-	mm_destroy_user_map(task->user->page_dir);
+	mm_destroy_user_map(task->user->vm->page_dir);
 	RELOAD_CR3();
 }
 
@@ -536,7 +492,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 	if (!task || !task->user)
 		return -EFAULT;
 
-	pd = (unsigned *)task->user->page_dir;
+	pd = (unsigned *)task->user->vm->page_dir;
 
 	while (len > 0) {
 		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
@@ -612,7 +568,7 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 	if (!task || !task->user)
 		return -EFAULT;
 
-	pd = (unsigned *)task->user->page_dir;
+	pd = (unsigned *)task->user->vm->page_dir;
 
 	while (len > 0) {
 		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);

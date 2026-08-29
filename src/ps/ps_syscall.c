@@ -76,11 +76,9 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		name_put(task->user->root_path);
 		task->user->root_path = NULL;
 	}
-	ps_heap_state_put(task->user->heap);
-	task->user->heap = NULL;
-	if (task->user->page_dir) {
-		vm_free(task->user->page_dir, 1);
-		task->user->page_dir = 0;
+	if (task->user->vm) {
+		vm_put(task->user->vm);
+		task->user->vm = NULL;
 	}
 	if (task->root)
 		sb_put(task->root);
@@ -222,16 +220,6 @@ static void ps_reap_group_thread(task_struct *task)
 
 	ps_clear_child_tid(task);
 
-	/*
-	 * CLONE_THREAD siblings borrow the same address space as the exiting
-	 * group leader. Prevent ps_reap_task() from freeing shared VM state
-	 * after the leader performs the real process teardown.
-	 */
-	if ((task->fork_flag & FORK_FLAG_SHARE_VM) && task->user) {
-		task->user->page_dir = 0;
-		task->user->vm = NULL;
-	}
-
 	if (task->fds) {
 		for (i = 0; i < MAX_FD; i++) {
 			if (!task->fds[i])
@@ -309,25 +297,15 @@ void do_exit(unsigned encoded_status)
 
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
 		cond_notify(&cur->vfork_event);
-		/* Borrowed page_dir and vm from parent — detach without freeing.
-		 * ps_cleanup_all_user_map becomes a no-op with page_dir == 0,
-		 * and ps_reap_task skips the vm_free check. */
-		cur->user->page_dir = 0;
+		vm_put(cur->user->vm);
 		cur->user->vm = NULL;
 	}
 
 	ps_clear_child_tid(cur);
 
-	if ((cur->fork_flag & FORK_FLAG_SHARE_VM) && cur->user) {
-		cur->user->page_dir = 0;
-		cur->user->vm = NULL;
-	}
-
 	if (cur->user->vm) {
 		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */
 		vm_flush_all_dirty(cur->user->vm);
-		vm_destroy(cur->user->vm);
-		cur->user->vm = 0;
 	}
 
 	for (i = 0; i < MAX_FD; i++) {
@@ -338,9 +316,6 @@ void do_exit(unsigned encoded_status)
 	cur->fds = NULL;
 	kfree(cur->fd_cloexec);
 	cur->fd_cloexec = NULL;
-
-	if (!(cur->fork_flag & FORK_FLAG_SHARE_VM))
-		ps_cleanup_all_user_map(cur);
 
 	if (cur->psid == 0) {
 		printk("fatal error! process 0 exit\n");

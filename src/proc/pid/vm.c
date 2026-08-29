@@ -42,13 +42,13 @@ void vm_get_stats(task_struct *task, vm_stats_t *out)
 
 	if (task->user->vm)
 		vm_enum(task->user->vm, statm_region_cb, &ctx);
-	if (task->user->heap->brk > task->user->heap->start_brk)
+	if (task->user->vm->brk > task->user->vm->start_brk)
 		heap_pages =
-			(task->user->heap->brk - task->user->heap->start_brk) /
+			(task->user->vm->brk - task->user->vm->start_brk) /
 			PAGE_SIZE;
 
 	unsigned stack_pages =
-		(KERNEL_OFFSET - task->user->stack_bottom) / PAGE_SIZE;
+		(KERNEL_OFFSET - task->user->vm->start_stack) / PAGE_SIZE;
 	out->stk_kb = stack_pages * (PAGE_SIZE / 1024);
 	out->text_kb = ctx.text * (PAGE_SIZE / 1024);
 	out->data_kb = (ctx.data + heap_pages) * (PAGE_SIZE / 1024);
@@ -65,14 +65,14 @@ void vm_fill_statm(proc_buf_t *pb, task_struct *task)
 	statm_ctx ctx = { 0, 0, 0, 0, 0 };
 	unsigned heap_pages = 0;
 	unsigned stack_pages =
-		(KERNEL_OFFSET - task->user->stack_bottom) / PAGE_SIZE;
+		(KERNEL_OFFSET - task->user->vm->start_stack) / PAGE_SIZE;
 
 	if (task->user->vm)
 		vm_enum(task->user->vm, statm_region_cb, &ctx);
 
-	if (task->user->heap->brk > task->user->heap->start_brk)
+	if (task->user->vm->brk > task->user->vm->start_brk)
 		heap_pages =
-			(task->user->heap->brk - task->user->heap->start_brk) /
+			(task->user->vm->brk - task->user->vm->start_brk) /
 			PAGE_SIZE;
 
 	ctx.total += heap_pages + stack_pages;

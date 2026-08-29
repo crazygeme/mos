@@ -103,16 +103,15 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		return -ENOMEM;
 
 	if (share_vm) {
-		task->user->page_dir = cur->user->page_dir;
 		task->user->vm = cur->user->vm;
+		vm_get(task->user->vm);
 	} else {
-		task->user->vm = vm_create();
-		task->user->page_dir = vm_alloc(1);
-		mm_init_process_page_dir(task->user->page_dir);
+		 task->user->vm = vm_create();
+		task->user->vm->page_dir = vm_alloc(1);
+		vm_set_page_dir(task->user->vm, task->user->vm->page_dir);
+		mm_init_process_page_dir(task->user->vm->page_dir);
 	}
 	fork_dup_user_env(cur, task);
-	if (share_vm)
-		ps_share_heap_state(task->user, cur->user);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;

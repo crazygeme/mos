@@ -133,6 +133,10 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 			top = base +
 			      ((unsigned long long)map->length_low |
 			       ((unsigned long long)map->length_high << 32));
+			if (base >= PHYMM_ADDRESS_LIMIT)
+				goto next;
+			if (top > PHYMM_ADDRESS_LIMIT)
+				top = PHYMM_ADDRESS_LIMIT;
 
 			/* Track first non-zero region for mem_low */
 			if (base != 0 && *mem_low == 0)
@@ -142,6 +146,7 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 			if (top > *mem_high)
 				*mem_high = top;
 		}
+	next:
 		map = (memory_map_t *)((unsigned int)map + map->size +
 				       sizeof(unsigned int));
 	}
@@ -181,7 +186,7 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	RELOAD_ESP();
 
 	phymm_end = (unsigned)(mem_high / PAGE_SIZE);
-	phymm_begin = phymm_get_mgmt_pages((unsigned)mem_high);
+	phymm_begin = phymm_get_mgmt_pages(phymm_end);
 	phymm_begin += (unsigned)(mem_low / PAGE_SIZE) + RESERVED_PAGES;
 
 	mm_init_cache();

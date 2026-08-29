@@ -266,6 +266,8 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 	unsigned order = ceil_log2(page_count ? page_count : 1);
 	unsigned idx;
 	int irq;
+	if (order > MAX_BUDDY_ORDER)
+		return PHYMM_INVALID;
 
 	spinlock_lock(&buddy_lock, &irq);
 	idx = buddy_alloc_in_range(order, phymm_begin,
@@ -283,6 +285,17 @@ unsigned phymm_alloc_user(void)
 	idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
 	if (idx == PHYMM_INVALID)
 		idx = buddy_alloc_high(0);
+	spinlock_unlock(&buddy_lock, irq);
+	return idx;
+}
+
+unsigned phymm_alloc_cache(void)
+{
+	unsigned idx;
+	int irq;
+
+	spinlock_lock(&buddy_lock, &irq);
+	idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
 	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
@@ -437,11 +450,11 @@ void phymm_clear_dirty(unsigned page_index)
  * Boot-time setup
  */
 
-unsigned phymm_get_mgmt_pages(unsigned highest_mm_addr)
+unsigned phymm_get_mgmt_pages(unsigned highest_page)
 {
-	unsigned page_count = highest_mm_addr / PAGE_SIZE;
-	unsigned size = page_count * sizeof(phymm_page);
-	return ((size - 1) / PAGE_SIZE) + 1;
+	unsigned long long size =
+		(unsigned long long)highest_page * sizeof(phymm_page);
+	return (unsigned)((size + PAGE_SIZE - 1) / PAGE_SIZE);
 }
 
 void phymm_setup_mgmt_pages(unsigned start_page)
@@ -538,6 +551,10 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 			top = base +
 			      ((unsigned long long)map->length_low |
 			       ((unsigned long long)map->length_high << 32));
+			if (base >= PHYMM_ADDRESS_LIMIT)
+				goto next;
+			if (top > PHYMM_ADDRESS_LIMIT)
+				top = PHYMM_ADDRESS_LIMIT;
 
 			/* Convert to page indices, clamp to managed range */
 			page_start = (unsigned)(base / PAGE_SIZE);

@@ -51,7 +51,6 @@ void reset_tss(task_struct *task);
 unsigned ps_id_gen();
 void ps_id_free(unsigned pid);
 user_enviroment *ps_alloc_user_env(void);
-void ps_share_heap_state(user_enviroment *dst, user_enviroment *src);
 
 /* ps_sched.c — timer helpers (called under ps_lock) */
 void timer_arm_unsafe(task_struct *task, unsigned ms);

@@ -82,10 +82,14 @@ static unsigned fs_page_cache_load(file *fp, unsigned offset)
 	unsigned page_index;
 	unsigned phy;
 
-	page_index = phymm_alloc_user();
+	/* Reclaimable file data should not consume scarce lowmem while highmem
+	 * is available.  Reclaim before using the small-machine fallback. */
+	page_index = phymm_alloc_cache();
 	if (page_index == PHYMM_INVALID) {
 		phymm_reclaim_user_cache(32);
-		page_index = phymm_alloc_user();
+		page_index = phymm_alloc_cache();
+		if (page_index == PHYMM_INVALID)
+			page_index = phymm_alloc_user();
 		if (page_index == PHYMM_INVALID) {
 			klog("fs_page_cache: phymm_alloc_user failed offset=%x\n",
 			     offset);

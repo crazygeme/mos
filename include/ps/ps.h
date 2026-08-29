@@ -151,7 +151,9 @@ struct _region_elem {
 	struct _region_elem *next;
 };
 
-typedef void *vm_struct_t;
+struct _mm_struct;
+typedef struct _mm_struct mm_struct;
+typedef mm_struct *vm_struct_t;
 
 typedef struct _task_stats {
 	unsigned niv_switches; /* involuntary context switches */
@@ -174,12 +176,6 @@ typedef struct {
 	unsigned long rlim_max;
 } rlimit_t;
 
-typedef struct _heap_state {
-	unsigned start_brk; /* base of heap, set from ELF BSS end at exec time */
-	unsigned brk; /* current program break (Linux: mm->brk) */
-	unsigned refs;
-} heap_state;
-
 typedef struct _ptrace_saved_frame {
 	unsigned edi;
 	unsigned esi;
@@ -201,12 +197,7 @@ typedef struct _ptrace_saved_frame {
 } ptrace_saved_frame;
 
 typedef struct _user_enviroment {
-	unsigned int page_dir; // every process needs it's own clone of page dir
-	heap_state *
-		heap; /* shared among CLONE_VM tasks, private after fork/exec */
-	unsigned stack_bottom; /* lowest mapped stack page (grows down on fault) */
 	vm_struct_t vm;
-	vm_region *mmap_cache; /* Linux-style last find_vma() result cache */
 	char *command;
 	size_t cmd_len;
 	char *environment;
@@ -433,9 +424,6 @@ void ps_send_signal_owner(int owner, int sig);
 
 typedef void (*ps_enum_callback)(task_struct *task, void *ctx);
 void ps_enum_all(ps_enum_callback callback, void *ctx);
-heap_state *ps_heap_state_new(void);
-void ps_heap_state_get(heap_state *heap);
-void ps_heap_state_put(heap_state *heap);
 // syscall handler
 int sys_fork();
 int sys_vfork();

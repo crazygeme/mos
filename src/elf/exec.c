@@ -35,37 +35,31 @@
 static void cleanup()
 {
 	task_struct *cur = CURRENT_TASK();
+	mm_struct *old_mm = cur->user->vm;
+	mm_struct *new_mm;
 	intr_frame *frame =
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(*frame));
-	heap_state *heap;
+	unsigned int *new_pd;
 	int i = 0;
 
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
-		unsigned int *new_pd;
-
-		/* Wake the blocked parent. */
 		cond_notify(&cur->vfork_event);
 		cur->fork_flag &= ~FORK_FLAG_VFORK;
-
-		/*
-		 * The child borrowed the parent's page_dir and vm.  Give the
-		 * child its own empty page directory now, copying only the
-		 * kernel half so kernel code remains reachable after SET_CR3.
-		 * The parent's page directory and vm are untouched.
-		 */
-		new_pd = vm_alloc(1);
-		mm_init_process_page_dir((unsigned int)new_pd);
-		cur->user->page_dir = (unsigned int)new_pd;
-		SET_CR3(VIRT_TO_PHY(new_pd));
-		cur->user->vm = vm_create();
-		cur->user->mmap_cache = NULL;
-	} else {
-		vm_destroy(cur->user->vm);
-		/* Unmap every user-space page table entry. */
-		ps_cleanup_all_user_map(cur);
-		cur->user->vm = vm_create();
-		cur->user->mmap_cache = NULL;
 	}
+
+	/* Build and activate a completely new address space before dropping the
+	 * old one.  This is the exec-time equivalent of Linux's exec_mmap(). */
+	new_mm = vm_create();
+	if (!new_mm)
+		DIE();
+	new_pd = vm_alloc(1);
+	if (!new_pd)
+		DIE();
+	mm_init_process_page_dir((unsigned)new_pd);
+	vm_set_page_dir(new_mm, (unsigned)new_pd);
+	cur->user->vm = new_mm;
+	SET_CR3(VIRT_TO_PHY(new_pd));
+	vm_put(old_mm);
 
 	/* Close all O_CLOEXEC file descriptors. */
 	for (i = 0; i < MAX_FD; i++) {
@@ -80,16 +74,6 @@ static void cleanup()
 	 * pending signals are cleared, and the altstack is disabled.
 	 * Do not wipe the whole signal context here or we'd lose SIG_IGN.
 	 */
-
-	/*
-	 * execve gets a fresh user image, so detach from any shared heap state
-	 * before resetting the program break.
-	 */
-	heap = ps_heap_state_new();
-	if (!heap)
-		DIE();
-	ps_heap_state_put(cur->user->heap);
-	cur->user->heap = heap;
 
 	/*
 	 * execve replaces the user image, so any thread-local descriptor state
@@ -600,18 +584,21 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 */
 	elf_map(file_name, &fmt);
 	eip = fmt.interp_load_addr;
-	cur->user->heap->start_brk = fmt.start_brk;
-	cur->user->heap->brk = fmt.start_brk;
+	cur->user->vm->start_brk = fmt.start_brk;
+	cur->user->vm->brk = fmt.start_brk;
+	vm_set_brk(cur->user->vm, fmt.start_brk, fmt.start_brk);
 	if (!eip) {
 		printk("fatal error: file %s not found!\n", file_name);
 		asm("hlt");
 	}
 
-	if (cur->user->heap->start_brk > 0 &&
-	    cur->user->heap->start_brk < USER_HEAP_END) {
-		do_mmap(cur->user->heap->start_brk, PAGE_SIZE,
+	if (cur->user->vm->start_brk > 0 &&
+	    cur->user->vm->start_brk < USER_HEAP_END) {
+		do_mmap(cur->user->vm->start_brk, PAGE_SIZE,
 			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
-		cur->user->heap->brk = cur->user->heap->start_brk + PAGE_SIZE;
+		cur->user->vm->brk = cur->user->vm->start_brk + PAGE_SIZE;
+		vm_set_brk(cur->user->vm, cur->user->vm->start_brk,
+			   cur->user->vm->brk);
 	}
 
 	/*
@@ -628,7 +615,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 			KERNEL_OFFSET - USER_STACK_INIT_PAGES * PAGE_SIZE;
 		do_mmap(stack_init_bottom, USER_STACK_INIT_PAGES * PAGE_SIZE,
 			PROT_READ | PROT_WRITE, MAP_FIXED, -1, 0);
-		cur->user->stack_bottom = stack_init_bottom;
+		cur->user->vm->start_stack = stack_init_bottom;
+		vm_set_stack(cur->user->vm, stack_init_bottom);
 	}
 
 	/* setup arguments and enviroments in proper way for interp */

@@ -351,14 +351,14 @@ static int tty_graphics_owner_fb_dirty(const tty_state *state)
 
 	owner = ps_find_process(state->kd_owner_pid);
 	if (!owner || !owner->user || !owner->user->vm ||
-	    !owner->user->page_dir)
+	    !owner->user->vm->page_dir)
 		return 0;
 
 	fb_get_phys_window(&ctx.fb_phys, &ctx.fb_end);
 	if (ctx.fb_phys == 0 || ctx.fb_end == 0)
 		return 1;
 
-	ctx.page_dir = owner->user->page_dir;
+	ctx.page_dir = owner->user->vm->page_dir;
 	ctx.fb_end += ctx.fb_phys;
 	ctx.dirty = 0;
 	vm_enum(owner->user->vm, tty_graphics_dirty_region_cb, &ctx);

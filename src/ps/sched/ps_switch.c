@@ -1,6 +1,7 @@
 #include <int/dsr.h>
 #include <int/int.h>
 #include <ps/ps.h>
+#include <mm/mmap.h>
 #include "../ps_internal.h"
 /*
  * Public — context switch
@@ -49,7 +50,7 @@ void _task_sched(const char *func)
 	 * here is safe: the code and current stack remain accessible.
 	 */
 	reset_tss(next);
-	SET_CR3(VIRT_TO_PHY(next->user->page_dir));
+	SET_CR3(VIRT_TO_PHY(next->user->vm->page_dir));
 
 	/*
 	 * Reload per-process TLS descriptors before RESTORE_ALL loads GS.

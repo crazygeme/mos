@@ -74,19 +74,19 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 		vm_free(task, 1);
 		return -ENOMEM;
 	}
-	task->user->page_dir = (unsigned int)vm_alloc(1);
+	task->user->vm = vm_create();
+	task->user->vm->page_dir = (unsigned int)vm_alloc(1);
 	task->user->command = vm_alloc(1);
 	task->user->environment = vm_alloc(1);
 	sprintf(task->user->command, "sys-%s", name);
 	task->user->cmd_len = strlen(task->user->command) + 1;
 	*((char *)task->user->environment) = '\0';
 	task->user->env_len = 0;
-	mm_init_process_page_dir(task->user->page_dir);
+	mm_init_process_page_dir(task->user->vm->page_dir);
 	task->user->cwd = name_get();
 	memset(task->user->cwd, 0, MAX_PATH);
 	task->user->root_path = name_get();
 	strcpy(task->user->root_path, "/");
-	task->user->vm = vm_create();
 	/* Default rlimits: RLIM_INFINITY for all, except known constraints. */
 	for (int i = 0; i < RLIM_NLIMITS; i++) {
 		task->user->rlimits[i].rlim_cur = RLIM_INFINITY;
@@ -321,7 +321,7 @@ void copy_page_range(task_struct *parent, task_struct *child)
 {
 	struct copy_page_range_ctx ctx = {
 		.src_pd = (unsigned *)mm_get_pagedir(),
-		.dst_pd = (unsigned *)child->user->page_dir,
+		.dst_pd = (unsigned *)child->user->vm->page_dir,
 	};
 
 	mm_init_process_page_dir((unsigned int)ctx.dst_pd);
@@ -386,10 +386,9 @@ task_struct *fork_alloc_child(task_struct *cur)
  * and all credentials. */
 void fork_dup_user_env(task_struct *cur, task_struct *task)
 {
-	task->user->heap->start_brk = cur->user->heap->start_brk;
-	task->user->heap->brk = cur->user->heap->brk;
-	task->user->stack_bottom = cur->user->stack_bottom;
-	task->user->mmap_cache = NULL;
+	task->user->vm->start_brk = cur->user->vm->start_brk;
+	task->user->vm->brk = cur->user->vm->brk;
+	task->user->vm->start_stack = cur->user->vm->start_stack;
 
 	task->user->command = vm_alloc(1);
 	task->user->cmd_len = cur->user->cmd_len;
@@ -507,8 +506,9 @@ static int do_fork(void)
 	if (!task->user)
 		return -ENOMEM;
 	task->user->vm = vm_create();
-	task->user->page_dir = vm_alloc(1);
-	mm_init_process_page_dir(task->user->page_dir);
+	task->user->vm->page_dir = vm_alloc(1);
+	vm_set_page_dir(task->user->vm, task->user->vm->page_dir);
+	mm_init_process_page_dir(task->user->vm->page_dir);
 	fork_dup_user_env(cur, task);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
@@ -547,11 +547,10 @@ int do_vfork(void)
 	task->user = ps_alloc_user_env();
 	if (!task->user)
 		return -ENOMEM;
-	/* Borrow parent's address space — child does not own these. */
-	task->user->page_dir = cur->user->page_dir;
+	/* Share the parent's address space until vfork exec/exit. */
 	task->user->vm = cur->user->vm;
+	vm_get(task->user->vm);
 	fork_dup_user_env(cur, task);
-	ps_share_heap_state(task->user, cur->user);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;

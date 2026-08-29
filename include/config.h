@@ -60,6 +60,10 @@
 
 #define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
 
+/* Block-cache pages hold persistent kmap aliases.  Bound them well below the
+ * kmap window size so fault-time temporary mappings cannot be starved. */
+#define HDD_CACHE_MAX_PAGES 16384 /* 64 MiB */
+
 #define USER_STACK_PAGES 4096
 /* Initial stack pages allocated at exec; stack grows down to USER_STACK_PAGES max. */
 #define USER_STACK_INIT_PAGES 16

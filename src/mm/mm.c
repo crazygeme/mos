@@ -53,12 +53,38 @@ typedef struct _kmap_cache_t {
 } kmap_cache_t;
 
 typedef struct _kmap_loopup_entry {
+	struct rb_node node;
+	unsigned int phys;
 	unsigned int virt;
 	unsigned int ref;
 } kmap_loopup_entry;
 
 static kmap_cache_t kmap_phy_cache;
-static hash_table *kmap_phy_to_virt = NULL;
+static struct rb_root kmap_phy_to_virt = _RBTREE_ROOT_INIT;
+
+static kmap_loopup_entry *kmap_cache_find(unsigned phy_address)
+{
+	struct rb_node *n = kmap_phy_to_virt.rb_node;
+	while (n) {
+		kmap_loopup_entry *e = rb_entry(n, kmap_loopup_entry, node);
+		if (phy_address < e->phys) n = n->rb_left;
+		else if (phy_address > e->phys) n = n->rb_right;
+		else return e;
+	}
+	return NULL;
+}
+
+static void kmap_cache_insert(kmap_loopup_entry *entry)
+{
+	struct rb_node **link = &kmap_phy_to_virt.rb_node, *parent = NULL;
+	while (*link) {
+		kmap_loopup_entry *e = rb_entry(*link, kmap_loopup_entry, node);
+		parent = *link;
+		link = entry->phys < e->phys ? &(*link)->rb_left : &(*link)->rb_right;
+	}
+	rb_link_node(&entry->node, parent, link);
+	rb_insert_color(&entry->node, &kmap_phy_to_virt);
+}
 
 static void mm_cache_init(mm_cache_t *cache, unsigned int begin,
 			  unsigned int total)
@@ -87,7 +113,9 @@ static unsigned int mm_cache_alloc(mm_cache_t *cache)
 
 static void mm_cache_free(mm_cache_t *cache, unsigned int val)
 {
-	if (cache->count > cache->total)
+	/* A cache is a bounded stack.  Reject duplicate/foreign frees instead of
+	 * allowing top to underflow and poisoning all subsequent allocations. */
+	if (cache->count >= cache->total || cache->top == 0)
 		return;
 	__sync_add_and_fetch(&cache->top, -1);
 	cache->mem[cache->top] = val;
@@ -112,37 +140,10 @@ void mm_free_page_table(unsigned int vir)
 	mm_cache_free((mm_cache_t *)&page_table_cache, vir);
 }
 
-static void kmap_cache_entry_free(const key_value_pair *pair)
-{
-	kfree(pair->val);
-}
-
-static void kmap_cache_insert(unsigned phy_address, kmap_loopup_entry *entry)
-{
-	if (kmap_phy_to_virt == NULL)
-		kmap_phy_to_virt = hash_create(int_comp, kmap_cache_entry_free);
-
-	hash_insert(kmap_phy_to_virt, phy_address, entry);
-}
-
-static kmap_loopup_entry *kmap_cache_find(unsigned phy_address)
-{
-	if (kmap_phy_to_virt == NULL)
-		return NULL;
-
-	key_value_pair *pair = hash_find(kmap_phy_to_virt, phy_address);
-	if (!pair)
-		return NULL;
-
-	return pair->val;
-}
-
 static void kmap_cache_erase(unsigned phy_address)
 {
-	if (kmap_phy_to_virt == NULL)
-		return;
-
-	hash_remove(kmap_phy_to_virt, phy_address);
+	kmap_loopup_entry *entry = kmap_cache_find(phy_address);
+	if (entry) { rb_erase(&entry->node, &kmap_phy_to_virt); kfree(entry); }
 }
 
 static void mm_init_kernel_page_dir_template(void)
@@ -228,14 +229,19 @@ unsigned int mm_phys_to_virt(unsigned int phys)
 	unsigned int page = phys & PAGE_SIZE_MASK;
 	unsigned int off = ADDR_TO_PAGE_OFFSET(phys);
 	kmap_loopup_entry *entry = NULL;
+	int irq;
 
 	if (page < KERNEL_DIRECT_MAP_LIMIT)
 		return KERNEL_OFFSET + page + off;
 
+	spinlock_lock(&kmap_lock, &irq);
 	entry = kmap_cache_find(page);
 	if (entry) {
-		return entry->virt + off;
+		unsigned int ret = entry->virt + off;
+		spinlock_unlock(&kmap_lock, irq);
+		return ret;
 	}
+	spinlock_unlock(&kmap_lock, irq);
 
 	if (mm_kmap_phys(page) == 1) {
 		entry = kmap_cache_find(page);
@@ -454,7 +460,7 @@ int mm_kmap_phys(unsigned int phys)
 	virt = mm_cache_alloc((mm_cache_t *)&kmap_phy_cache);
 	if (virt == 0) {
 		spinlock_unlock(&kmap_lock, irq);
-		klog("mm_kmap_phys: no more kernel directmap slot\n");
+		klog("mm_kmap_phys: kmap window exhausted\n");
 		return -1;
 	}
 
@@ -471,9 +477,18 @@ int mm_kmap_phys(unsigned int phys)
 
 	// add an entry
 	entry = kmalloc(sizeof(*entry));
+	if (!entry) {
+		*info.entry = 0;
+		INVLPG(virt);
+		mm_cache_free((mm_cache_t *)&kmap_phy_cache, virt);
+		spinlock_unlock(&kmap_lock, irq);
+		return -1;
+	}
+	rb_init_node(&entry->node);
+	entry->phys = page;
 	entry->virt = virt;
 	entry->ref = 1;
-	kmap_cache_insert(page, entry);
+	kmap_cache_insert(entry);
 	spinlock_unlock(&kmap_lock, irq);
 	return 1;
 }
@@ -506,7 +521,11 @@ void mm_kunmap_phys(unsigned int phys)
 		INVLPG(virt);
 	}
 
-	mm_cache_free((mm_cache_t *)&kmap_phy_cache, page);
+	/* Return the virtual slot to the kmap allocator.  The cache contains
+	 * virtual addresses (not physical page numbers); passing @page here
+	 * silently corrupts the free-slot stack and typically only becomes
+	 * visible once allocations spill above the low direct-map window. */
+	mm_cache_free((mm_cache_t *)&kmap_phy_cache, virt);
 	kmap_cache_erase(page);
 
 done:
@@ -521,7 +540,9 @@ int mm_map_io(unsigned int phy)
 {
 	mm_addr_info info;
 
-	if (phy < KERNEL_OFFSET)
+	/* Fixed-address MMIO lives above the kmap allocator.  Keeping these
+	 * windows disjoint prevents highmem aliases from replacing PCI BAR PTEs. */
+	if (phy < KERNEL_IO_BEGIN)
 		return -1;
 
 	if (!mm_get_valid_page_table(phy, 0, &info, 1)) {
@@ -770,7 +791,7 @@ unsigned int vm_alloc(int page_count)
 	spinlock_lock(&mm_lock, &irq);
 
 	page_index = phymm_alloc_kernel(page_count);
-	if (page_index < 0) {
+	if (page_index == PHYMM_INVALID) {
 		spinlock_unlock(&mm_lock, irq);
 		if (phymm_reclaim_kernel_cache(32) == 0) {
 			klog("vm_alloc: phymm_alloc_kernel failed page_count=%d\n",
@@ -779,7 +800,7 @@ unsigned int vm_alloc(int page_count)
 		}
 		spinlock_lock(&mm_lock, &irq);
 		page_index = phymm_alloc_kernel(page_count);
-		if (page_index < 0) {
+		if (page_index == PHYMM_INVALID) {
 			spinlock_unlock(&mm_lock, irq);
 			klog("vm_alloc: phymm_alloc_kernel failed after reclaim page_count=%d\n",
 			     page_count);

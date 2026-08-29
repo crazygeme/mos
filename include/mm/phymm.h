@@ -8,6 +8,9 @@
 #define PHYMM_INVALID 0xFFFFFFFFu /* end-of-list / invalid page index */
 #define PHYMM_RESERVED 0xFFFFFFFEu /* ref_count: page is non-RAM / firmware */
 
+/* Non-PAE i386 page tables encode a 32-bit physical frame address. */
+#define PHYMM_ADDRESS_LIMIT 0x100000000ULL
+
 /* Values stored in phymm_page.order */
 #define MAX_BUDDY_ORDER 10 /* largest block = 2^10 = 1024 pages (4 MB) */
 #define PHYMM_ORDER_NONE 0xFE /* page is part of a larger block (not head) */
@@ -40,7 +43,7 @@ extern phymm_page *phymm_pages;
  * populates the buddy free lists with all available physical pages. */
 void phymm_init(unsigned mmap_addr, unsigned mmap_len);
 
-unsigned phymm_get_mgmt_pages(unsigned highest_mm_addr);
+unsigned phymm_get_mgmt_pages(unsigned highest_page);
 
 void phymm_setup_mgmt_pages(unsigned start_page);
 
@@ -57,6 +60,10 @@ unsigned phymm_alloc_kernel(unsigned page_count);
 /* Allocate a single physical page for user space.
  * Returns the page index, or PHYMM_INVALID on failure. */
 unsigned phymm_alloc_user(void);
+
+/* Allocate reclaimable cache storage from highmem only.  Callers may reclaim
+ * and explicitly fall back to phymm_alloc_user() for small-memory systems. */
+unsigned phymm_alloc_cache(void);
 
 /* Return a kernel block (starting at page_index) to the allocator. */
 void phymm_free_kernel(unsigned page_index, unsigned page_count);

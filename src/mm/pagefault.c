@@ -278,7 +278,7 @@ static int pf_vma_is_stack(task_struct *task, vm_region *region)
 {
 	return region != NULL && region->fp == NULL &&
 	       !(region->flag & MAP_SHARED) &&
-	       region->begin == task->user->stack_bottom &&
+	       region->begin == task->user->vm->start_stack &&
 	       (region->prot & PROT_WRITE);
 }
 
@@ -303,19 +303,20 @@ static vm_region *pf_find_vma(task_struct *task, unsigned address)
 	if (!pf_vma_is_stack(task, region))
 		return NULL;
 
-	if (address < USER_ZONE_END || address >= task->user->stack_bottom)
+	if (address < USER_ZONE_END || address >= task->user->vm->start_stack)
 		return NULL;
 
 	{
 		unsigned minimal_grow = USER_STACK_INIT_PAGES * PAGE_SIZE;
-		unsigned required_grow = task->user->stack_bottom - address;
+		unsigned required_grow = task->user->vm->start_stack - address;
 		unsigned grow_size = required_grow > minimal_grow ?
 					     required_grow :
 					     minimal_grow;
 
-		task->user->stack_bottom -= grow_size;
-		vm_add_map(task->user->vm, task->user->stack_bottom,
-			   task->user->stack_bottom + grow_size,
+	task->user->vm->start_stack -= grow_size;
+	vm_set_stack(task->user->vm, task->user->vm->start_stack);
+		vm_add_map(task->user->vm, task->user->vm->start_stack,
+			   task->user->vm->start_stack + grow_size,
 			   PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0, 0);
 		vm_invalidate_user_cache(task->user);
 	}
@@ -537,7 +538,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 	if (!task || !task->user)
 		return 0;
 
-	target_cr3 = VIRT_TO_PHY(task->user->page_dir);
+	target_cr3 = VIRT_TO_PHY(task->user->vm->page_dir);
 	old_level = int_intr_disable();
 	sched_disable();
 	LOAD_CR3(old_cr3);

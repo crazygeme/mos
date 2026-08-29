@@ -1,6 +1,6 @@
 #!/bin/bash
 # mak
-_ramsize="2048"
+_ramsize="4096"
 diskfile="rh9.qcow2"
 _build="release"
 kernel_file=""

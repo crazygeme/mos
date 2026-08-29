@@ -122,12 +122,49 @@ static void vm_region_invalid(const key_value_pair *pair)
 
 vm_struct_t vm_create()
 {
-	return hash_create(vm_region_compare, vm_region_invalid);
+	mm_struct *mm = kmalloc(sizeof(*mm));
+	if (!mm)
+		return NULL;
+	mm->vma_index = hash_create(vm_region_compare, vm_region_invalid);
+	if (!mm->vma_index) {
+		kfree(mm);
+		return NULL;
+	}
+	mm->page_dir = 0;
+	mm->start_brk = mm->brk = 0;
+	mm->start_stack = 0;
+	mm->mmap_base = TASK_UNMAPPED_BASE;
+	mm->task_size = KERNEL_OFFSET;
+	mm->users = 1;
+	mm->count = 1;
+	return mm;
+}
+
+void vm_get(vm_struct_t vm)
+{
+	if (vm)
+		__sync_add_and_fetch(&vm->users, 1);
+}
+
+void vm_put(vm_struct_t vm)
+{
+	mm_struct *mm = vm;
+	if (!mm)
+		return;
+	if (__sync_sub_and_fetch(&mm->users, 1) != 0)
+		return;
+	if (mm->page_dir) {
+		mm_destroy_user_map(mm->page_dir);
+		vm_free(mm->page_dir, 1);
+		mm->page_dir = 0;
+	}
+	hash_destroy((hash_table *)mm->vma_index);
+	kfree(mm);
 }
 
 void vm_destroy(vm_struct_t vm)
 {
-	hash_destroy((hash_table *)vm);
+	vm_put(vm);
 }
 
 /*
@@ -156,7 +193,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 				 int prot, int flag, file *fp, int offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	vm_key probe;
 	key_value_pair *pair;
 	int tlb_needs_reload = 0;
@@ -276,7 +313,7 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
 		  unsigned new_end)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	key_value_pair *pair;
 	vm_key probe;
 	vm_key *key;
@@ -317,7 +354,7 @@ int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
  */
 void vm_del_map(vm_struct_t vm, unsigned addr)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	key_value_pair *pair;
 	vm_key *key;
 	vm_region *region;
@@ -356,7 +393,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
  */
 vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	key_value_pair *pair;
 
 	addr &= PAGE_SIZE_MASK;
@@ -366,7 +403,7 @@ vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 
 vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	struct rb_node *node;
 	vm_region *candidate = NULL;
 	int irq;
@@ -405,10 +442,7 @@ vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 
 void vm_invalidate_user_cache(user_enviroment *user)
 {
-	if (!user)
-		return;
-
-	user->mmap_cache = NULL;
+	(void)user;
 }
 
 vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
@@ -450,7 +484,7 @@ vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)
  */
 unsigned vm_disc_map(vm_struct_t vm, int size)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	key_value_pair *pair = hash_first(table);
 	unsigned candidate = TASK_UNMAPPED_BASE;
 	vm_key *key;
@@ -485,7 +519,7 @@ unsigned vm_disc_map(vm_struct_t vm, int size)
  */
 void vm_dup(vm_struct_t src, vm_struct_t dst)
 {
-	hash_table *table = src;
+	hash_table *table = ((mm_struct *)src)->vma_index;
 	key_value_pair *pair = hash_first(table);
 
 	while (pair) {
@@ -514,7 +548,7 @@ void vm_region_unlock_fault(vm_region *region)
 
 void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
 {
-	hash_table *table = (hash_table *)vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	key_value_pair *kv;
 
 	if (!vm || !fn)
@@ -537,7 +571,7 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
  */
 void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 {
-	hash_table *table = vm;
+	hash_table *table = ((mm_struct *)vm)->vma_index;
 	vm_key probe;
 	key_value_pair *pair;
 
@@ -621,7 +655,7 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
 	unsigned size = page_count * PAGE_SIZE;
 	task_struct *cur = CURRENT_TASK();
-	hash_table *table = cur->user->vm;
+	hash_table *table = ((mm_struct *)cur->user->vm)->vma_index;
 	vm_key probe;
 	unsigned anon_id = 0;
 
@@ -886,7 +920,7 @@ int do_munmap(void *addr, unsigned length)
 	probe.begin = begin;
 	probe.end = end;
 
-	while ((pair = hash_find(cur->user->vm, &probe)) != NULL) {
+	while ((pair = hash_find(((mm_struct *)cur->user->vm)->vma_index, &probe)) != NULL) {
 		vm_region *region = pair->val;
 		vm_key *key = pair->key;
 		unsigned r_begin = region->begin;
@@ -919,7 +953,7 @@ int do_munmap(void *addr, unsigned length)
 		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove this vm_region descriptor from the tree. */
-		hash_remove(cur->user->vm, key);
+		hash_remove(((mm_struct *)cur->user->vm)->vma_index, key);
 
 		/* Preserve the left remnant [r_begin, unmap_begin) if any.
 		 * Its physical pages were not unmapped above. */

@@ -4,7 +4,8 @@
 #include <lib/lock.h>
 
 typedef struct _user_enviroment user_enviroment;
-typedef void *vm_struct_t;
+typedef struct _mm_struct mm_struct;
+typedef mm_struct *vm_struct_t;
 typedef struct _vm_fault_lock vm_fault_lock;
 
 #define VM_REGION_F_DIRECT_PHYS 0x1
@@ -22,7 +23,35 @@ typedef struct _vm_region {
 	unsigned anon_id; /* non-zero for MAP_SHARED|MAP_ANONYMOUS; shared across fork */
 } vm_region;
 
+/* Process address-space descriptor.  The VMA index remains implemented by
+ * the existing ordered tree, while all address-space lifetime/state is now
+ * owned by one explicit object (Linux's mm_struct analogue). */
+struct _mm_struct {
+	void *vma_index;
+	unsigned page_dir;
+	unsigned start_brk;
+	unsigned brk;
+	unsigned start_stack;
+	unsigned mmap_base;
+	unsigned task_size;
+	unsigned users;
+	unsigned count;
+};
+
+static inline mm_struct *vm_mm(vm_struct_t vm) { return vm; }
+static inline void vm_set_page_dir(vm_struct_t vm, unsigned pd)
+{ if (vm) vm->page_dir = pd; }
+static inline unsigned vm_get_page_dir(vm_struct_t vm)
+{ return vm ? vm->page_dir : 0; }
+static inline void vm_set_brk(vm_struct_t vm, unsigned start, unsigned brk)
+{ if (vm) { vm->start_brk = start; vm->brk = brk; } }
+static inline void vm_set_stack(vm_struct_t vm, unsigned bottom)
+{ if (vm) vm->start_stack = bottom; }
+
 vm_struct_t vm_create();
+
+void vm_get(vm_struct_t vm);
+void vm_put(vm_struct_t vm);
 
 void vm_destroy(vm_struct_t vm);
 

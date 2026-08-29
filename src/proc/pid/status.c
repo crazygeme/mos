@@ -4,6 +4,7 @@
 #include "proc_pid.h"
 #include <config.h>
 #include <macro.h>
+#include <mm/mmap.h>
 
 /* ── TTY helper ──────────────────────────────────────────────────────── */
 
@@ -156,7 +157,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 	vm_get_stats(task, &vm);
 	vsize = vm.total_kb * 1024u;
 	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) * 1024u / PAGE_SIZE;
-	stack_start = task->user->stack_bottom;
+	stack_start = task->user->vm->start_stack;
 
 	stime = task->stats->kernel_tickets;
 	utime = task_utime(task);
@@ -193,8 +194,8 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		/* 23 vsize       */ (unsigned long)vsize,
 		/* 24 rss         */ (long)rss_pages,
 		/* 25 rlim        */ (unsigned long)0x7ffffffful,
-		/* 26 startcode   */ (unsigned long)task->user->heap->start_brk,
-		/* 27 endcode     */ (unsigned long)task->user->heap->brk,
+		/* 26 startcode   */ (unsigned long)task->user->vm->start_brk,
+		/* 27 endcode     */ (unsigned long)task->user->vm->brk,
 		/* 28 startstack  */ (unsigned long)stack_start,
 		/* 29 kstkesp     */ (unsigned long)0,
 		/* 30 kstkeip     */ (unsigned long)0,

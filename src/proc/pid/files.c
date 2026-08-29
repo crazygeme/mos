@@ -35,7 +35,7 @@ static void maps_region_cb(vm_region *region, void *data)
 	maps_ctx *ctx = data;
 	char perms[5];
 	const char *name;
-	unsigned stack_begin = ctx->task->user->stack_bottom;
+	unsigned stack_begin = ctx->task->user->vm->start_stack;
 	unsigned stack_end = KERNEL_OFFSET;
 	int ino = 0;
 
@@ -48,8 +48,8 @@ static void maps_region_cb(vm_region *region, void *data)
 	if (region->fp) {
 		name = region->fp->f_name;
 		ino = region->fp->f_inode->i_ino;
-	} else if (region->begin >= ctx->task->user->heap->start_brk &&
-		   region->end <= ctx->task->user->heap->brk)
+	} else if (region->begin >= ctx->task->user->vm->start_brk &&
+		   region->end <= ctx->task->user->vm->brk)
 		name = "[heap]";
 	else if (region->begin >= stack_begin && region->end <= stack_end)
 		name = "[stack]";

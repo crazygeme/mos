@@ -753,20 +753,22 @@ static block_cache_item *block_cache_item_create(void)
 	item->sector = -1;
 	item->dirty = 0;
 	item->loading = 0;
-	item->page_index = phymm_alloc_kernel(1);
+	item->page_index = phymm_alloc_cache();
 	if (item->page_index == PHYMM_INVALID) {
 		phymm_reclaim_kernel_cache(32);
-		item->page_index = phymm_alloc_kernel(1);
+		item->page_index = phymm_alloc_cache();
+		if (item->page_index == PHYMM_INVALID)
+			item->page_index = phymm_alloc_user();
 		if (item->page_index == PHYMM_INVALID) {
 			kfree(item);
-			klog("hdd: phymm_alloc_kernel failed for block cache item\n");
+			klog("hdd: physical allocation failed for block cache item\n");
 			return NULL;
 		}
 	}
 
 	phy = item->page_index * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
-		phymm_free_kernel(item->page_index, 1);
+		phymm_free_user(item->page_index);
 		kfree(item);
 		klog("hdd: mm_kmap_phys failed for block cache item phy=%x\n",
 		     phy);
@@ -775,7 +777,8 @@ static block_cache_item *block_cache_item_create(void)
 
 	item->buf = (void *)PHY_TO_VIRT(phy);
 	if (!item->buf) {
-		phymm_free_kernel(item->page_index, 1);
+		mm_kunmap_phys(phy);
+		phymm_free_user(item->page_index);
 		kfree(item);
 		return NULL;
 	}
@@ -794,9 +797,11 @@ static void block_cache_item_remove(block_cache_item *item)
 		buf_pages = 1;
 	if (!item)
 		return;
+	if (item->page_index != PHYMM_INVALID)
+		mm_kunmap_phys(item->page_index * PAGE_SIZE);
 	if (item->page_index != PHYMM_INVALID &&
 	    phymm_dereference_page(item->page_index) == 0)
-		phymm_free_kernel(item->page_index, 1);
+		phymm_free_user(item->page_index);
 	cache_count -= buf_pages;
 	kfree(item);
 }
@@ -877,6 +882,13 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 			      int *old_dirty, block_cache_item *new_item)
 {
 	block_cache_item *item;
+	unsigned cached_pages =
+		hdd_cache_size * BLOCK_SECTOR_SIZE / PAGE_SIZE;
+
+	if (new_item && cached_pages >= HDD_CACHE_MAX_PAGES) {
+		block_cache_item_remove(new_item);
+		new_item = NULL;
+	}
 
 	if (new_item) {
 		item = new_item;

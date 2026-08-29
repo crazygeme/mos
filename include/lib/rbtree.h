@@ -36,7 +36,6 @@ rbtree, if necessary.
 #define _LIB_RBTREE_H
 #include <lib/klib.h>
 #include <lib/list.h>
-#include <lib/lock.h>
 
 #ifndef NULL
 #define NULL ((void *)0)
@@ -127,62 +126,5 @@ static INLINE void rb_link_node(struct rb_node *node, struct rb_node *parent,
 
 	*rb_link = node;
 }
-
-/**
- * Now for hash table based on rb_tree
- */
-
-typedef struct _hash_table hash_table;
-typedef struct _key_value_pair key_value_pair;
-typedef int (*hash_comp_fn)(const void *my_key, const void *in_node);
-typedef void (*hash_evict_fn)(const key_value_pair *pair);
-
-struct _hash_table {
-	struct rb_root root;
-	hash_comp_fn comp;
-	hash_evict_fn evict;
-	spinlock_t lock;
-	unsigned size;
-};
-
-struct _key_value_pair {
-	void *key;
-	void *val;
-	list_entry list;
-	struct rb_node node;
-};
-
-static inline int int_comp(const void *key1, const void *key2)
-{
-	return (int)key1 - (int)key2;
-}
-
-hash_table *hash_create(hash_comp_fn comp, hash_evict_fn evict);
-
-int hash_destroy(hash_table *table);
-
-int hash_insert(hash_table *table, void *key, void *val);
-
-int hash_remove(hash_table *table, void *key);
-
-int hash_remove_at(hash_table *table, key_value_pair *pair);
-
-key_value_pair *hash_find(hash_table *table, const void *key);
-
-int hash_update(hash_table *table, void *key, void *val);
-
-unsigned hash_size(hash_table *table);
-
-key_value_pair *hash_first(hash_table *table);
-
-key_value_pair *hash_next(hash_table *table, key_value_pair *pair);
-
-int hash_isempty(hash_table *table);
-
-#ifdef DEBUG_RB
-
-void hash_print(hash_table *table);
-
-#endif
 
 #endif /* _LINUX_RBTREE_H */

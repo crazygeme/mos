@@ -23,10 +23,11 @@ typedef struct _fs_page_cache_key {
 typedef struct _fs_page_cache_entry {
 	fs_page_cache_key key;
 	unsigned phy;
+	struct rb_node rb_node;
 	list_entry lru;
 } fs_page_cache_entry;
 
-static hash_table *fs_page_cache = NULL;
+static struct rb_root fs_page_cache = _RBTREE_ROOT_INIT;
 static list_entry fs_page_cache_lru;
 static mutex_t fs_page_cache_lock;
 static int fs_page_cache_ready = 0;
@@ -47,11 +48,44 @@ static int fs_page_cache_key_comp(const void *k1, const void *k2)
 	return (int)key1->offset - (int)key2->offset;
 }
 
-static void fs_page_cache_entry_evict(const key_value_pair *pair)
+static fs_page_cache_entry *fs_page_cache_find(const fs_page_cache_key *key)
 {
-	fs_page_cache_entry *evict = pair->val;
+	struct rb_node *node = fs_page_cache.rb_node;
+	while (node) {
+		fs_page_cache_entry *entry =
+			rb_entry(node, fs_page_cache_entry, rb_node);
+		int comp = fs_page_cache_key_comp(key, &entry->key);
+		if (comp < 0)
+			node = node->rb_left;
+		else if (comp > 0)
+			node = node->rb_right;
+		else
+			return entry;
+	}
+	return NULL;
+}
+
+static void fs_page_cache_insert(fs_page_cache_entry *entry)
+{
+	struct rb_node **link = &fs_page_cache.rb_node, *parent = NULL;
+	while (*link) {
+		fs_page_cache_entry *cur =
+			rb_entry(*link, fs_page_cache_entry, rb_node);
+		parent = *link;
+		if (fs_page_cache_key_comp(&entry->key, &cur->key) < 0)
+			link = &(*link)->rb_left;
+		else
+			link = &(*link)->rb_right;
+	}
+	rb_link_node(&entry->rb_node, parent, link);
+	rb_insert_color(&entry->rb_node, &fs_page_cache);
+}
+
+static void fs_page_cache_remove(fs_page_cache_entry *evict)
+{
 	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
 
+	rb_erase(&evict->rb_node, &fs_page_cache);
 	if (phymm_dereference_page(page_index) == 0)
 		phymm_free_user(page_index);
 	cache_count--;
@@ -64,8 +98,7 @@ static void fs_page_cache_ensure_init(void)
 	if (fs_page_cache_ready)
 		return;
 
-	fs_page_cache =
-		hash_create(fs_page_cache_key_comp, fs_page_cache_entry_evict);
+	fs_page_cache = _RBTREE_ROOT_INIT;
 	list_init(&fs_page_cache_lru);
 	mutex_init(&fs_page_cache_lock);
 	fs_page_cache_ready = 1;
@@ -119,18 +152,17 @@ static void fs_page_cache_evict_one_locked(void)
 {
 	fs_page_cache_entry *evict;
 
-	if (!fs_page_cache || list_is_empty(&fs_page_cache_lru))
+	if (list_is_empty(&fs_page_cache_lru))
 		return;
 
 	evict = container_of(list_remove_head(&fs_page_cache_lru),
 			     fs_page_cache_entry, lru);
-	hash_remove(fs_page_cache, &evict->key);
+	fs_page_cache_remove(evict);
 }
 
 unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 {
 	fs_page_cache_key tmp;
-	key_value_pair *pair;
 	fs_page_cache_entry *entry;
 	unsigned phy;
 	inode *inode;
@@ -149,9 +181,8 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 	fs_page_cache_searches++;
 
 	mutex_lock(&fs_page_cache_lock);
-	pair = hash_find(fs_page_cache, &tmp);
-	if (pair) {
-		entry = pair->val;
+	entry = fs_page_cache_find(&tmp);
+	if (entry) {
 		list_remove_entry(&entry->lru);
 		list_insert_tail(&fs_page_cache_lru, &entry->lru);
 		phy = entry->phy;
@@ -169,14 +200,14 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 		return 0;
 
 	mutex_lock(&fs_page_cache_lock);
-	pair = hash_find(fs_page_cache, &tmp);
-	if (pair) {
+	entry = fs_page_cache_find(&tmp);
+	if (entry) {
 		mutex_unlock(&fs_page_cache_lock);
 		phymm_free_user(PHY_TO_PAGE_IDX(phy));
 		if (cache_hit)
 			*cache_hit = 1;
 		fs_page_cache_hits++;
-		return ((fs_page_cache_entry *)pair->val)->phy;
+		return entry->phy;
 	}
 
 	entry = malloc(sizeof(*entry));
@@ -187,8 +218,9 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 	}
 	entry->key = tmp;
 	entry->phy = phy;
+	rb_init_node(&entry->rb_node);
 	list_insert_tail(&fs_page_cache_lru, &entry->lru);
-	hash_insert(fs_page_cache, &entry->key, entry);
+	fs_page_cache_insert(entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 	cache_count++;
 	fs_page_cache_pages++;
@@ -200,7 +232,7 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 
 void fs_page_cache_invalidate(file *fp)
 {
-	key_value_pair *pair;
+	struct rb_node *node, *next;
 	inode *inode;
 
 	if (!fs_page_cache_can_use(fp) || !fs_page_cache_ready)
@@ -208,17 +240,14 @@ void fs_page_cache_invalidate(file *fp)
 
 	inode = fp->f_inode;
 	mutex_lock(&fs_page_cache_lock);
-	pair = hash_first(fs_page_cache);
-	while (pair != NULL) {
-		fs_page_cache_entry *entry = pair->val;
-		fs_page_cache_key key = entry->key;
-
-		if (key.tag != inode->i_pgcache_tag || key.ino != inode->i_ino)
-			pair = hash_next(fs_page_cache, pair);
-		else {
+	for (node = rb_first(&fs_page_cache); node; node = next) {
+		fs_page_cache_entry *entry =
+			rb_entry(node, fs_page_cache_entry, rb_node);
+		next = rb_next(node);
+		if (entry->key.tag == inode->i_pgcache_tag &&
+		    entry->key.ino == inode->i_ino) {
 			list_remove_entry(&entry->lru);
-			hash_remove(fs_page_cache, &key);
-			pair = hash_first(fs_page_cache);
+			fs_page_cache_remove(entry);
 		}
 	}
 	mutex_unlock(&fs_page_cache_lock);

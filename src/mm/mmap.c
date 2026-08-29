@@ -16,7 +16,7 @@
 /*
  * vm_key is the search key for the red-black tree that backs each process's
  * VM map.  The comparator treats any range overlap as equal (returns 0), so
- * hash_find() works as an overlap query: it returns any existing region that
+ * tree lookup works as an overlap query: it returns any existing region that
  * intersects the probe key.
  */
 typedef struct _vm_key {
@@ -104,11 +104,8 @@ static void vm_fault_lock_put(vm_fault_lock *fault_lock)
 /* Counter for unique anonymous MAP_SHARED region identifiers. */
 static unsigned g_anon_id_next = 0;
 
-static void vm_region_invalid(const key_value_pair *pair)
+static void vm_region_free(vm_region *region)
 {
-	vm_key *key = pair->key;
-	vm_region *region = pair->val;
-
 	if (region->fp)
 		fs_put_file(region->fp);
 	if ((region->flag & MAP_SHARED) && region->fp == NULL &&
@@ -116,8 +113,94 @@ static void vm_region_invalid(const key_value_pair *pair)
 		mm_anon_shared_put(region->anon_id);
 	vm_fault_lock_put(region->fault_lock);
 
-	kfree(key);
 	kfree(region);
+}
+
+static vm_region *vm_tree_find(mm_struct *mm, const vm_key *key)
+{
+	struct rb_node *node = mm->vma_index.rb_node;
+	int irq;
+
+	spinlock_lock(&mm->vma_lock, &irq);
+	while (node) {
+		vm_region *region = rb_entry(node, vm_region, rb_node);
+		vm_key node_key = { region->begin, region->end };
+		int comp = vm_region_compare(key, &node_key);
+		if (comp < 0)
+			node = node->rb_left;
+		else if (comp > 0)
+			node = node->rb_right;
+		else {
+			spinlock_unlock(&mm->vma_lock, irq);
+			return region;
+		}
+	}
+	spinlock_unlock(&mm->vma_lock, irq);
+	return NULL;
+}
+
+static int vm_tree_insert(mm_struct *mm, vm_region *region)
+{
+	struct rb_node **link = &mm->vma_index.rb_node;
+	struct rb_node *parent = NULL;
+	vm_key key = { region->begin, region->end };
+	int irq;
+
+	spinlock_lock(&mm->vma_lock, &irq);
+	while (*link) {
+		vm_region *node_region = rb_entry(*link, vm_region, rb_node);
+		vm_key node_key = { node_region->begin, node_region->end };
+		int comp = vm_region_compare(&key, &node_key);
+		parent = *link;
+		if (comp < 0)
+			link = &(*link)->rb_left;
+		else if (comp > 0)
+			link = &(*link)->rb_right;
+		else {
+			spinlock_unlock(&mm->vma_lock, irq);
+			return 0;
+		}
+	}
+	rb_link_node(&region->rb_node, parent, link);
+	rb_insert_color(&region->rb_node, &mm->vma_index);
+	spinlock_unlock(&mm->vma_lock, irq);
+	return 1;
+}
+
+static void vm_tree_remove(mm_struct *mm, vm_region *region)
+{
+	int irq;
+	spinlock_lock(&mm->vma_lock, &irq);
+	rb_erase(&region->rb_node, &mm->vma_index);
+	spinlock_unlock(&mm->vma_lock, irq);
+	vm_region_free(region);
+}
+
+static vm_region *vm_tree_first(mm_struct *mm)
+{
+	struct rb_node *node;
+	int irq;
+	spinlock_lock(&mm->vma_lock, &irq);
+	node = rb_first(&mm->vma_index);
+	spinlock_unlock(&mm->vma_lock, irq);
+	return node ? rb_entry(node, vm_region, rb_node) : NULL;
+}
+
+static vm_region *vm_tree_next(mm_struct *mm, vm_region *region)
+{
+	struct rb_node *node;
+	int irq;
+	spinlock_lock(&mm->vma_lock, &irq);
+	node = rb_next(&region->rb_node);
+	spinlock_unlock(&mm->vma_lock, irq);
+	return node ? rb_entry(node, vm_region, rb_node) : NULL;
+}
+
+static void vm_tree_destroy(mm_struct *mm)
+{
+	vm_region *region;
+	while ((region = vm_tree_first(mm)) != NULL)
+		vm_tree_remove(mm, region);
 }
 
 vm_struct_t vm_create()
@@ -125,11 +208,8 @@ vm_struct_t vm_create()
 	mm_struct *mm = kmalloc(sizeof(*mm));
 	if (!mm)
 		return NULL;
-	mm->vma_index = hash_create(vm_region_compare, vm_region_invalid);
-	if (!mm->vma_index) {
-		kfree(mm);
-		return NULL;
-	}
+	mm->vma_index = _RBTREE_ROOT_INIT;
+	spinlock_init(&mm->vma_lock);
 	mm->page_dir = 0;
 	mm->start_brk = mm->brk = 0;
 	mm->start_stack = 0;
@@ -158,7 +238,7 @@ void vm_put(vm_struct_t vm)
 		vm_free(mm->page_dir, 1);
 		mm->page_dir = 0;
 	}
-	hash_destroy((hash_table *)mm->vma_index);
+	vm_tree_destroy(mm);
 	kfree(mm);
 }
 
@@ -172,12 +252,12 @@ void vm_destroy(vm_struct_t vm)
  *
  * addr is rounded down to its page boundary before probing the tree.
  */
-static INLINE key_value_pair *vm_find_pair(hash_table *table, unsigned addr)
+static INLINE vm_region *vm_find_region(mm_struct *mm, unsigned addr)
 {
 	vm_key key;
 	key.begin = addr & PAGE_SIZE_MASK;
 	key.end = key.begin + PAGE_SIZE;
-	return hash_find(table, &key);
+	return vm_tree_find(mm, &key);
 }
 
 /*
@@ -193,9 +273,9 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 				 int prot, int flag, file *fp, int offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
+	mm_struct *mm = vm;
 	vm_key probe;
-	key_value_pair *pair;
+	vm_region *oregion;
 	int tlb_needs_reload = 0;
 
 	/*
@@ -207,16 +287,14 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 	 */
 	probe.begin = begin;
 	probe.end = end;
-	while ((pair = hash_find(table, &probe)) != NULL) {
-		vm_key *okey = pair->key;
-		vm_region *oregion = pair->val;
+	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
 		unsigned unmap_begin;
 		unsigned unmap_end;
 		unsigned vir;
 
 		/* Snapshot all origin data before vm_del_map frees the structs. */
-		unsigned o_begin = okey->begin;
-		unsigned o_end = okey->end;
+		unsigned o_begin = oregion->begin;
+		unsigned o_end = oregion->end;
 		int o_prot = oregion->prot;
 		int o_flag = oregion->flag;
 		file *o_fp = oregion->fp;
@@ -239,7 +317,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 			mm_unmap_page(vir);
 		tlb_needs_reload = 1;
 
-		hash_remove(table, okey);
+		vm_tree_remove(mm, oregion);
 
 		/* Re-insert the left remnant [o_begin, begin), if any. */
 		if (o_begin < begin)
@@ -269,11 +347,8 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 		RELOAD_CR3();
 
 	/* No conflicts remain: insert the new region. */
-	vm_key *key = kmalloc(sizeof(*key));
-	key->begin = begin;
-	key->end = end;
-
 	vm_region *region = kmalloc(sizeof(*region));
+	rb_init_node(&region->rb_node);
 	region->begin = begin;
 	region->end = end;
 	region->prot = prot;
@@ -293,7 +368,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 	if ((flag & MAP_SHARED) && fp == NULL && anon_id)
 		mm_anon_shared_get(anon_id);
 
-	hash_insert(table, key, region);
+	vm_tree_insert(mm, region);
 }
 
 void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
@@ -313,35 +388,29 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
 		  unsigned new_end)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
-	key_value_pair *pair;
+	mm_struct *mm = vm;
 	vm_key probe;
-	vm_key *key;
 	vm_region *region;
 	int irq;
 
 	if (!vm || begin >= old_end || old_end >= new_end)
 		return 0;
 
-	pair = vm_find_pair(table, begin);
-	if (!pair)
+	region = vm_find_region(mm, begin);
+	if (!region)
 		return 0;
 
-	key = pair->key;
-	region = pair->val;
-	if (key->begin != begin || key->end != old_end ||
-	    region->begin != begin || region->end != old_end)
+	if (region->begin != begin || region->end != old_end)
 		return 0;
 
 	probe.begin = old_end;
 	probe.end = new_end;
-	if (hash_find(table, &probe) != NULL)
+	if (vm_tree_find(mm, &probe) != NULL)
 		return 0;
 
-	spinlock_lock(&table->lock, &irq);
-	key->end = new_end;
+	spinlock_lock(&mm->vma_lock, &irq);
 	region->end = new_end;
-	spinlock_unlock(&table->lock, irq);
+	spinlock_unlock(&mm->vma_lock, irq);
 
 	return 1;
 }
@@ -354,20 +423,15 @@ int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
  */
 void vm_del_map(vm_struct_t vm, unsigned addr)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
-	key_value_pair *pair;
-	vm_key *key;
+	mm_struct *mm = vm;
 	vm_region *region;
 	unsigned vir;
 
 	addr &= PAGE_SIZE_MASK;
 
-	pair = vm_find_pair(table, addr);
-	if (!pair)
+	region = vm_find_region(mm, addr);
+	if (!region)
 		return;
-
-	key = pair->key;
-	region = pair->val;
 	vm_fault_lock *fault_lock = region->fault_lock;
 
 	/* FIXME(Ender:) flush file if has one */
@@ -380,7 +444,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 		mm_unmap_page(vir);
 	RELOAD_CR3();
 
-	hash_remove(table, key);
+	vm_tree_remove(mm, region);
 	vm_fault_lock_unlock(fault_lock);
 	vm_fault_lock_put(fault_lock);
 }
@@ -393,26 +457,21 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
  */
 vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
-	key_value_pair *pair;
-
 	addr &= PAGE_SIZE_MASK;
-	pair = vm_find_pair(table, addr);
-	return pair ? pair->val : 0;
+	return vm_find_region(vm, addr);
 }
 
 vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
+	mm_struct *mm = vm;
 	struct rb_node *node;
 	vm_region *candidate = NULL;
 	int irq;
 
 	addr &= PAGE_SIZE_MASK;
-	spinlock_lock(&table->lock, &irq);
-	for (node = table->root.rb_node; node != NULL;) {
-		key_value_pair *pair = rb_entry(node, key_value_pair, node);
-		vm_region *region = pair->val;
+	spinlock_lock(&mm->vma_lock, &irq);
+	for (node = mm->vma_index.rb_node; node != NULL;) {
+		vm_region *region = rb_entry(node, vm_region, rb_node);
 
 		/*
 		 * vm_region descriptors live in kernel heap. If the tree ever hands
@@ -421,7 +480,7 @@ vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 		 * deadlocking in the nested page-fault path.
 		 */
 		if ((unsigned)region < KERNEL_OFFSET) {
-			spinlock_unlock(&table->lock, irq);
+			spinlock_unlock(&mm->vma_lock, irq);
 			return NULL;
 		}
 
@@ -431,11 +490,11 @@ vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 		} else if (addr >= region->end) {
 			node = node->rb_right;
 		} else {
-			spinlock_unlock(&table->lock, irq);
+			spinlock_unlock(&mm->vma_lock, irq);
 			return region;
 		}
 	}
-	spinlock_unlock(&table->lock, irq);
+	spinlock_unlock(&mm->vma_lock, irq);
 
 	return candidate;
 }
@@ -484,23 +543,20 @@ vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)
  */
 unsigned vm_disc_map(vm_struct_t vm, int size)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
-	key_value_pair *pair = hash_first(table);
+	mm_struct *mm = vm;
+	vm_region *region = vm_tree_first(mm);
 	unsigned candidate = TASK_UNMAPPED_BASE;
-	vm_key *key;
 
-	while (pair) {
-		key = pair->key;
-
+	while (region) {
 		/* Gap before this region is large enough — use it. */
-		if (candidate + (unsigned)size <= key->begin)
+		if (candidate + (unsigned)size <= region->begin)
 			return candidate;
 
 		/* Advance candidate past this region if it overlaps. */
-		if (key->end > candidate)
-			candidate = key->end;
+		if (region->end > candidate)
+			candidate = region->end;
 
-		pair = hash_next(table, pair);
+		region = vm_tree_next(mm, region);
 	}
 
 	/* Check for room after the last region. */
@@ -519,16 +575,15 @@ unsigned vm_disc_map(vm_struct_t vm, int size)
  */
 void vm_dup(vm_struct_t src, vm_struct_t dst)
 {
-	hash_table *table = ((mm_struct *)src)->vma_index;
-	key_value_pair *pair = hash_first(table);
+	mm_struct *mm = src;
+	vm_region *region = vm_tree_first(mm);
 
-	while (pair) {
-		vm_region *region = pair->val;
+	while (region) {
 		vm_add_map_with_lock(dst, region->begin, region->end,
 				     region->prot, region->flag, region->fp,
 				     region->offset, region->anon_id,
 				     region->fault_lock);
-		pair = hash_next(table, pair);
+		region = vm_tree_next(mm, region);
 	}
 }
 
@@ -548,13 +603,14 @@ void vm_region_unlock_fault(vm_region *region)
 
 void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
-	key_value_pair *kv;
+	mm_struct *mm = vm;
+	vm_region *region;
 
 	if (!vm || !fn)
 		return;
-	for (kv = hash_first(table); kv; kv = hash_next(table, kv))
-		fn((vm_region *)kv->val, data);
+	for (region = vm_tree_first(mm); region;
+	     region = vm_tree_next(mm, region))
+		fn(region, data);
 }
 
 /*
@@ -566,22 +622,19 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
  * Physical page mappings are left intact; only the VM descriptors and page-
  * table permission bits change (done by the caller after this returns).
  *
- * File reference counting: we temporarily bump the ref before hash_remove()
- * drops it via vm_region_invalid(), then release our bump at the end.
+ * File reference counting: we temporarily bump the ref before removing the
+ * region, then release our bump at the end.
  */
 void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 {
-	hash_table *table = ((mm_struct *)vm)->vma_index;
+	mm_struct *mm = vm;
 	vm_key probe;
-	key_value_pair *pair;
+	vm_region *oregion;
 
 	probe.begin = begin;
 	probe.end = end;
 
-	while ((pair = hash_find(table, &probe)) != NULL) {
-		vm_key *okey = pair->key;
-		vm_region *oregion = pair->val;
-
+	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
 		unsigned r_begin = oregion->begin;
 		unsigned r_end = oregion->end;
 		int r_prot = oregion->prot;
@@ -595,7 +648,7 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		unsigned upd_begin = r_begin > begin ? r_begin : begin;
 		unsigned upd_end = r_end < end ? r_end : end;
 
-		/* Temporarily hold a file ref across the hash_remove() drop. */
+		/* Temporarily hold references across descriptor removal. */
 		if (r_fp)
 			fs_get_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
@@ -604,7 +657,7 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
 		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove descriptor only — physical pages stay mapped. */
-		hash_remove(table, okey);
+		vm_tree_remove(mm, oregion);
 
 		/* Preserve left remnant [r_begin, upd_begin) at original prot. */
 		if (r_begin < upd_begin)
@@ -655,7 +708,7 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
 	unsigned size = page_count * PAGE_SIZE;
 	task_struct *cur = CURRENT_TASK();
-	hash_table *table = ((mm_struct *)cur->user->vm)->vma_index;
+	mm_struct *mm = cur->user->vm;
 	vm_key probe;
 	unsigned anon_id = 0;
 
@@ -674,7 +727,7 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 		if (addr != 0) {
 			probe.begin = addr;
 			probe.end = addr + size;
-			if (hash_find(table, &probe) != NULL)
+			if (vm_tree_find(mm, &probe) != NULL)
 				addr = 0; /* fall through to vm_disc_map */
 		}
 		if (addr == 0)
@@ -910,8 +963,9 @@ int do_munmap(void *addr, unsigned length)
 	 * length is already a multiple of PAGE_SIZE. */
 	unsigned pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 	unsigned end = begin + pages * PAGE_SIZE;
+	mm_struct *mm = cur->user->vm;
 	vm_key probe;
-	key_value_pair *pair;
+	vm_region *region;
 	unsigned vir;
 
 	if (length == 0)
@@ -920,9 +974,7 @@ int do_munmap(void *addr, unsigned length)
 	probe.begin = begin;
 	probe.end = end;
 
-	while ((pair = hash_find(((mm_struct *)cur->user->vm)->vma_index, &probe)) != NULL) {
-		vm_region *region = pair->val;
-		vm_key *key = pair->key;
+	while ((region = vm_tree_find(mm, &probe)) != NULL) {
 		unsigned r_begin = region->begin;
 		unsigned r_end = region->end;
 		int r_prot = region->prot;
@@ -944,7 +996,7 @@ int do_munmap(void *addr, unsigned length)
 		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
 			mm_unmap_page(vir);
 
-		/* Hold a file ref across the evict() drop inside hash_remove(). */
+		/* Hold references across descriptor removal. */
 		if (r_fp)
 			fs_get_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
@@ -953,7 +1005,7 @@ int do_munmap(void *addr, unsigned length)
 		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove this vm_region descriptor from the tree. */
-		hash_remove(((mm_struct *)cur->user->vm)->vma_index, key);
+		vm_tree_remove(mm, region);
 
 		/* Preserve the left remnant [r_begin, unmap_begin) if any.
 		 * Its physical pages were not unmapped above. */

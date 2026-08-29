@@ -1021,7 +1021,7 @@ The real trigger was the filesystem page-cache replacement order.
   misses and refills happened often enough for `cc1`'s early file-backed faults
   to hit this path reliably.
 - **Fix:** in [cache.c](../src/fs/cache.c), evict one LRU fs page-cache entry
-  before calling `fs_page_cache_load()` on a miss when `hash_size` has already
+  before calling `fs_page_cache_load()` on a miss when the cache size has already
   reached `PAGE_CACHE_SIZE`.
 
 

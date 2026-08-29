@@ -840,7 +840,7 @@ static int fs_sync_super_one(const super_block *sb)
 int fs_sync_super(const super_block *sb)
 {
 	super_block *cur = (super_block *)sb;
-	key_value_pair *kv;
+	struct rb_node *node;
 	int ret;
 
 	if (!sb)
@@ -851,9 +851,9 @@ int fs_sync_super(const super_block *sb)
 		return ret;
 
 	mutex_lock(&cur->s_lock);
-	for (kv = hash_first(cur->s_mounts); kv;
-	     kv = hash_next(cur->s_mounts, kv)) {
-		super_block *child = kv->val;
+	for (node = rb_first(&cur->s_mounts); node; node = rb_next(node)) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
+		super_block *child = mount->sb;
 
 		mutex_unlock(&cur->s_lock);
 		ret = fs_sync_super(child);

@@ -2,6 +2,7 @@
 #define _MM_MMAP_H
 #include <fs/fs.h>
 #include <lib/lock.h>
+#include <lib/rbtree.h>
 
 typedef struct _user_enviroment user_enviroment;
 typedef struct _mm_struct mm_struct;
@@ -11,6 +12,7 @@ typedef struct _vm_fault_lock vm_fault_lock;
 #define VM_REGION_F_DIRECT_PHYS 0x1
 
 typedef struct _vm_region {
+	struct rb_node rb_node;
 	unsigned begin;
 	unsigned end;
 	int prot;
@@ -23,11 +25,10 @@ typedef struct _vm_region {
 	unsigned anon_id; /* non-zero for MAP_SHARED|MAP_ANONYMOUS; shared across fork */
 } vm_region;
 
-/* Process address-space descriptor.  The VMA index remains implemented by
- * the existing ordered tree, while all address-space lifetime/state is now
- * owned by one explicit object (Linux's mm_struct analogue). */
+/* Process address-space descriptor. */
 struct _mm_struct {
-	void *vma_index;
+	struct rb_root vma_index;
+	spinlock_t vma_lock;
 	unsigned page_dir;
 	unsigned start_brk;
 	unsigned brk;
@@ -38,15 +39,31 @@ struct _mm_struct {
 	unsigned count;
 };
 
-static inline mm_struct *vm_mm(vm_struct_t vm) { return vm; }
+static inline mm_struct *vm_mm(vm_struct_t vm)
+{
+	return vm;
+}
 static inline void vm_set_page_dir(vm_struct_t vm, unsigned pd)
-{ if (vm) vm->page_dir = pd; }
+{
+	if (vm)
+		vm->page_dir = pd;
+}
 static inline unsigned vm_get_page_dir(vm_struct_t vm)
-{ return vm ? vm->page_dir : 0; }
+{
+	return vm ? vm->page_dir : 0;
+}
 static inline void vm_set_brk(vm_struct_t vm, unsigned start, unsigned brk)
-{ if (vm) { vm->start_brk = start; vm->brk = brk; } }
+{
+	if (vm) {
+		vm->start_brk = start;
+		vm->brk = brk;
+	}
+}
 static inline void vm_set_stack(vm_struct_t vm, unsigned bottom)
-{ if (vm) vm->start_stack = bottom; }
+{
+	if (vm)
+		vm->start_stack = bottom;
+}
 
 vm_struct_t vm_create();
 

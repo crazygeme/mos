@@ -132,7 +132,7 @@ static const file_operations proc_root_fops = {
  */
 static void proc_dir_gen(super_block *sb, memory_dir *rd)
 {
-	key_value_pair *kv;
+	struct rb_node *node;
 	unsigned size = 0;
 	int i;
 	char pidbuf[12];
@@ -151,11 +151,10 @@ static void proc_dir_gen(super_block *sb, memory_dir *rd)
 	size += ROUND_UP(NAME_OFFSET() + 5); /* "self" strlen=4 +1 */
 
 	mutex_lock(&sb->s_lock);
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv)) {
+	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
 		/* key is "/name"; display "name" (key+1) */
-		size += ROUND_UP(NAME_OFFSET() + strlen((char *)kv->key + 1) +
-				 1);
+		size += ROUND_UP(NAME_OFFSET() + strlen(mount->path + 1) + 1);
 	}
 	mutex_unlock(&sb->s_lock);
 
@@ -174,9 +173,10 @@ static void proc_dir_gen(super_block *sb, memory_dir *rd)
 	FILL_ENTRY("..", PROC_INODE);
 
 	mutex_lock(&sb->s_lock);
-	for (kv = hash_first(sb->s_mounts); kv;
-	     kv = hash_next(sb->s_mounts, kv))
-		FILL_ENTRY((char *)kv->key + 1, PROC_INODE);
+	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
+		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
+		FILL_ENTRY(mount->path + 1, PROC_INODE);
+	}
 	mutex_unlock(&sb->s_lock);
 
 	for (i = 0; i < pid_ctx.count; i++) {

@@ -225,6 +225,7 @@ int ps_set_clone_tls_for(task_struct *task, void *info,
 			return -EINVAL;
 
 		task->user->ldt_desc[entry] = build_ldt_desc(u_info);
+		task->user->ldt_present = 1;
 		set_saved_user_selector(task,
 					(unsigned short)((entry << 3) | 0x7));
 		return 0;
@@ -296,8 +297,15 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 				return -EINVAL;
 			cur->user->ldt_desc[u_info->entry_number] =
 				build_ldt_desc(u_info);
+			cur->user->ldt_present = 1;
 		} else {
 			cur->user->ldt_desc[u_info->entry_number] = 0;
+			cur->user->ldt_present = 0;
+			for (unsigned i = 0; i < LDT_ENTRY_COUNT; i++)
+				if (cur->user->ldt_desc[i]) {
+					cur->user->ldt_present = 1;
+					break;
+				}
 		}
 		ps_update_ldt(cur);
 		return 0;

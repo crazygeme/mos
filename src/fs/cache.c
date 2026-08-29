@@ -32,7 +32,8 @@ static list_entry fs_page_cache_lru;
 static mutex_t fs_page_cache_lock;
 static int fs_page_cache_ready = 0;
 
-static int fs_page_cache_key_comp(const void *k1, const void *k2)
+static __attribute__((always_inline)) inline int
+fs_page_cache_key_comp(const void *k1, const void *k2)
 {
 	const fs_page_cache_key *key1 = k1;
 	const fs_page_cache_key *key2 = k2;
@@ -45,10 +46,15 @@ static int fs_page_cache_key_comp(const void *k1, const void *k2)
 		return -1;
 	if (key1->ino > key2->ino)
 		return 1;
-	return (int)key1->offset - (int)key2->offset;
+	if (key1->offset < key2->offset)
+		return -1;
+	if (key1->offset > key2->offset)
+		return 1;
+	return 0;
 }
 
-static fs_page_cache_entry *fs_page_cache_find(const fs_page_cache_key *key)
+static __attribute__((always_inline)) inline fs_page_cache_entry *
+fs_page_cache_find(const fs_page_cache_key *key)
 {
 	struct rb_node *node = fs_page_cache.rb_node;
 	while (node) {

@@ -378,6 +378,15 @@ void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
 			     NULL);
 }
 
+void vm_add_map_clone(vm_struct_t vm, vm_region *src)
+{
+	if (!src)
+		return;
+	vm_add_map_with_lock(vm, src->begin, src->end, src->prot, src->flag,
+				     src->fp, src->offset, src->anon_id,
+				     src->fault_lock);
+}
+
 /*
  * vm_extend_map - extend one existing VM descriptor in place.
  *

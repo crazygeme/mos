@@ -492,9 +492,10 @@ static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
  * Returns the executable's raw (unbiased) entry point on success, 0 on error.
  * Callers should use fmt->interp_load_addr as the actual jump target.
  */
-unsigned elf_map(char *path, mos_binfmt *fmt)
+static unsigned elf_map_opened(char *path, mos_binfmt *fmt, file *opened)
 {
-	file *fp = fs_open_file(path, 0, 0);
+	file *fp = opened ? opened : fs_open_file(path, 0, 0);
+	int owned = opened == NULL;
 	unsigned entry_point = 0;
 	Elf32_Ehdr elf;
 	char *interp = name_get();
@@ -511,21 +512,21 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 
 	/* Validate ELF magic number (0x7f 'E' 'L' 'F'). */
 	if (elf.e_ident[0] != 0x7f) {
-		fs_put_file(fp);
+		if (owned) fs_put_file(fp);
 		name_put(interp);
 		return 0;
 	}
 
 	/* Only IA-32 (32-bit) ELF is supported. */
 	if (elf.e_ident[4] != ELFCLASS32) {
-		fs_put_file(fp);
+		if (owned) fs_put_file(fp);
 		name_put(interp);
 		return 0;
 	}
 
 	/* Must be an executable (ET_EXEC), not a shared object. */
 	if (elf.e_type != ET_EXEC) {
-		fs_put_file(fp);
+		if (owned) fs_put_file(fp);
 		name_put(interp);
 		return 0;
 	}
@@ -560,8 +561,18 @@ unsigned elf_map(char *path, mos_binfmt *fmt)
 		fmt->interp_load_addr = entry_point;
 	}
 
-	fs_put_file(fp);
+	if (owned) fs_put_file(fp);
 	name_put(interp);
 
 	return entry_point;
+}
+
+unsigned elf_map(char *path, mos_binfmt *fmt)
+{
+	return elf_map_opened(path, fmt, NULL);
+}
+
+unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp)
+{
+	return elf_map_opened(path, fmt, fp);
 }

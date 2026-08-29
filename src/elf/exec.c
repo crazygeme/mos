@@ -83,6 +83,7 @@ static void cleanup()
 	 */
 	memset(cur->user->tls_desc, 0, sizeof(cur->user->tls_desc));
 	memset(cur->user->ldt_desc, 0, sizeof(cur->user->ldt_desc));
+	cur->user->ldt_present = 0;
 	frame->gs = 0;
 	cur->tss.gs = 0;
 	SET_GS(0);
@@ -386,6 +387,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
 	file *fp;
+	file *exec_fp = NULL;
 	int len = 64; /* max bytes to read for the first line of a script */
 	char *firstline = NULL;
 	if (!f) {
@@ -439,8 +441,6 @@ int sys_execve(const char *f, char **argv, char **envp)
 			return -ENOENT;
 		}
 	}
-	fs_put_file(fp);
-
 	/*
 	 * Determine binary type and build the final argc/argv/envp.
 	 *
@@ -462,6 +462,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 		envc = count_strv(envp);
 		s_argv = dup_strv(argv, argc);
 		s_envp = dup_strv(envp, envc);
+		exec_fp = fp;
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
 		const char *interp, *interp_arg;
 		unsigned shebang_argc, user_argc, j, dst;
@@ -487,9 +488,11 @@ int sys_execve(const char *f, char **argv, char **envp)
 
 		free(firstline);
 		firstline = NULL;
+		fs_put_file(fp);
 		s_envp = dup_strv(envp, envc);
 	} else {
 		free(firstline);
+		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOEXEC;
 	}
@@ -582,7 +585,9 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * loading / symbol resolve / etc will be handled by interp
 	 * pretty easy ha?
 	 */
-	elf_map(file_name, &fmt);
+	elf_map_file(file_name, &fmt, exec_fp);
+	if (exec_fp)
+		fs_put_file(exec_fp);
 	eip = fmt.interp_load_addr;
 	cur->user->vm->start_brk = fmt.start_brk;
 	cur->user->vm->brk = fmt.start_brk;

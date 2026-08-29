@@ -11,6 +11,9 @@
 #include <mm/vdso.h>
 #include <macro.h>
 
+extern const unsigned __vdso_start;
+extern const unsigned __vdso_end;
+
 /* Physical memory range tracked by the page allocator */
 unsigned phymm_end = 0;
 unsigned phymm_begin = 0;
@@ -579,6 +582,10 @@ void mm_destroy_user_map(unsigned int page_dir)
 	unsigned int *dir = (unsigned int *)page_dir;
 	int irq;
 	unsigned int i;
+	unsigned int dynamic_begin = phymm_begin * PAGE_SIZE;
+	unsigned int dynamic_end = phymm_end * PAGE_SIZE;
+	unsigned int vdso_begin = VIRT_TO_PHY(&__vdso_start);
+	unsigned int vdso_end = VIRT_TO_PHY(&__vdso_end);
 
 	if (!dir)
 		return;
@@ -595,6 +602,13 @@ void mm_destroy_user_map(unsigned int page_dir)
 			continue;
 
 		table = (unsigned int *)PHY_TO_VIRT(table_phy);
+		cache_idx =
+			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
+		/* The live-entry counter is maintained for every user mapping.  Most
+		 * page tables created during short-lived exec/clone paths are already
+		 * empty by the time the address space is destroyed; avoid needlessly
+		 * scanning all 1024 PTEs in that case. */
+		if (pgc_entry_count[cache_idx] != 0)
 		for (j = 0; j < PG_TABLE_SIZE; j++) {
 			unsigned int phy_addr = table[j] & PAGE_SIZE_MASK;
 			unsigned int page_index;
@@ -603,18 +617,17 @@ void mm_destroy_user_map(unsigned int page_dir)
 				continue;
 
 			page_index = PHY_TO_PAGE_IDX(phy_addr);
-			if ((mm_dynamic_region(phy_addr) ||
-			     mm_vdso_region(phy_addr)) &&
-			    phymm_is_used(page_index) &&
-			    phymm_dereference_page(page_index) == 0)
-				phymm_free_user(page_index);
+			if ((phy_addr >= dynamic_begin && phy_addr < dynamic_end) ||
+			    (phy_addr >= vdso_begin && phy_addr < vdso_end)) {
+				/* Every page installed through mm_map_page carries a reference;
+				 * decrement once directly instead of doing a separate atomic
+				 * read via phymm_is_used(). */
+				if (phymm_dereference_page(page_index) == 0)
+					phymm_free_user(page_index);
+			}
 
-			table[j] = 0;
 		}
 
-		cache_idx =
-			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
-			1;
 		pgc_entry_count[cache_idx] = 0;
 		mm_free_page_table((unsigned int)table);
 		dir[i] = 0;

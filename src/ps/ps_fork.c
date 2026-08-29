@@ -302,11 +302,13 @@ static void copy_vma_pages(unsigned *src_pd, unsigned *dst_pd, vm_region *vma)
 struct copy_page_range_ctx {
 	unsigned *src_pd;
 	unsigned *dst_pd;
+	vm_struct_t child_vm;
 };
 
 static void copy_vma_callback(vm_region *vma, void *data)
 {
 	struct copy_page_range_ctx *ctx = data;
+	vm_add_map_clone(ctx->child_vm, vma);
 	copy_vma_pages(ctx->src_pd, ctx->dst_pd, vma);
 }
 
@@ -322,10 +324,10 @@ void copy_page_range(task_struct *parent, task_struct *child)
 	struct copy_page_range_ctx ctx = {
 		.src_pd = (unsigned *)mm_get_pagedir(),
 		.dst_pd = (unsigned *)child->user->vm->page_dir,
+		.child_vm = child->user->vm,
 	};
 
 	mm_init_process_page_dir((unsigned int)ctx.dst_pd);
-	vm_dup(parent->user->vm, child->user->vm);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
 	RELOAD_CR3();
 }
@@ -415,6 +417,7 @@ void fork_dup_user_env(task_struct *cur, task_struct *task)
 	       sizeof(cur->user->tls_desc));
 	memcpy(task->user->ldt_desc, cur->user->ldt_desc,
 	       sizeof(cur->user->ldt_desc));
+	task->user->ldt_present = cur->user->ldt_present;
 	memcpy(task->user->rlimits, cur->user->rlimits,
 	       sizeof(cur->user->rlimits));
 }
@@ -508,7 +511,6 @@ static int do_fork(void)
 	task->user->vm = vm_create();
 	task->user->vm->page_dir = vm_alloc(1);
 	vm_set_page_dir(task->user->vm, task->user->vm->page_dir);
-	mm_init_process_page_dir(task->user->vm->page_dir);
 	fork_dup_user_env(cur, task);
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)

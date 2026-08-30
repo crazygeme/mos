@@ -37,6 +37,8 @@ struct _mm_struct {
 	unsigned task_size;
 	unsigned users;
 	unsigned count;
+	/* Incremented whenever the VMA tree changes; used by fault-time cache. */
+	unsigned vma_generation;
 };
 
 static inline mm_struct *vm_mm(vm_struct_t vm)

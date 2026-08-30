@@ -163,6 +163,7 @@ static int vm_tree_insert(mm_struct *mm, vm_region *region)
 	}
 	rb_link_node(&region->rb_node, parent, link);
 	rb_insert_color(&region->rb_node, &mm->vma_index);
+	mm->vma_generation++;
 	spinlock_unlock(&mm->vma_lock, irq);
 	return 1;
 }
@@ -172,6 +173,7 @@ static void vm_tree_remove(mm_struct *mm, vm_region *region)
 	int irq;
 	spinlock_lock(&mm->vma_lock, &irq);
 	rb_erase(&region->rb_node, &mm->vma_index);
+	mm->vma_generation++;
 	spinlock_unlock(&mm->vma_lock, irq);
 	vm_region_free(region);
 }
@@ -198,9 +200,26 @@ static vm_region *vm_tree_next(mm_struct *mm, vm_region *region)
 
 static void vm_tree_destroy(mm_struct *mm)
 {
-	vm_region *region;
-	while ((region = vm_tree_first(mm)) != NULL)
-		vm_tree_remove(mm, region);
+	/* Destruction is only used once the address space is detached.  Remove
+	 * each node while holding the tree lock, then release the lock before
+	 * dropping file/fault-lock references (those paths may acquire locks). */
+	for (;;) {
+		struct rb_node *node;
+		vm_region *region;
+		int irq;
+
+		spinlock_lock(&mm->vma_lock, &irq);
+		node = rb_first(&mm->vma_index);
+		if (!node) {
+			spinlock_unlock(&mm->vma_lock, irq);
+			break;
+		}
+		region = rb_entry(node, vm_region, rb_node);
+		rb_erase(node, &mm->vma_index);
+		mm->vma_generation++;
+		spinlock_unlock(&mm->vma_lock, irq);
+		vm_region_free(region);
+	}
 }
 
 vm_struct_t vm_create()
@@ -217,6 +236,7 @@ vm_struct_t vm_create()
 	mm->task_size = KERNEL_OFFSET;
 	mm->users = 1;
 	mm->count = 1;
+	mm->vma_generation = 1;
 	return mm;
 }
 
@@ -419,6 +439,7 @@ int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
 
 	spinlock_lock(&mm->vma_lock, &irq);
 	region->end = new_end;
+	mm->vma_generation++;
 	spinlock_unlock(&mm->vma_lock, irq);
 
 	return 1;
@@ -510,7 +531,11 @@ vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
 
 void vm_invalidate_user_cache(user_enviroment *user)
 {
-	(void)user;
+	if (user) {
+		user->mmap_cache = NULL;
+		user->mmap_cache_vm = NULL;
+		user->mmap_cache_generation = 0;
+	}
 }
 
 vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
@@ -518,16 +543,19 @@ vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
 	if (!user || !user->vm)
 		return NULL;
 
-	/*
-	 * mmap_cache is stored per-user_env, but CLONE_VM threads share the same
-	 * underlying vm tree while keeping separate user_env instances. A sibling
-	 * thread can therefore split or delete a VMA and free its vm_region while
-	 * this task still holds the old raw pointer in mmap_cache. Returning that
-	 * stale pointer makes fault-time lookups race against freed metadata.
-	 *
-	 * Until the cache is made coherent for shared VMs, always walk the tree.
-	 */
-	return vm_find_vma(user->vm, addr);
+	mm_struct *mm = user->vm;
+	unsigned page = addr & PAGE_SIZE_MASK;
+	/* Validate generation before touching the cached raw pointer. */
+	if (user->mmap_cache_vm == mm &&
+	    user->mmap_cache_generation == mm->vma_generation &&
+	    user->mmap_cache && user->mmap_cache->begin <= page &&
+	    page < user->mmap_cache->end)
+		return user->mmap_cache;
+	vm_region *region = vm_find_vma(mm, page);
+	user->mmap_cache = region;
+	user->mmap_cache_vm = mm;
+	user->mmap_cache_generation = mm->vma_generation;
+	return region;
 }
 
 vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)

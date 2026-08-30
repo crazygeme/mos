@@ -1,6 +1,7 @@
 MAINPATH = $(shell pwd)
 export MAINPATH
 MAKEFLAGS += --no-print-directory
+MAKEFLAGS += -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
 include $(MAINPATH)/build/config.mk
 TARGET	= kernel
 

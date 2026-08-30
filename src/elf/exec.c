@@ -110,17 +110,26 @@ static unsigned count_strv(char **v)
  * User-supplied pointers become invalid after cleanup() tears down the
  * address space, so every string is strdup()'d here.  Returns a
  * heap-allocated array of @n strings, or NULL if @n is zero.
- * Free with free_v().
+ * Free with free_v(). The pointer array and all strings share one allocation.
  */
 static char **dup_strv(char **v, unsigned n)
 {
-	unsigned i;
+	unsigned i, bytes = 0;
 	char **ret;
 	if (!n)
 		return NULL;
-	ret = kmalloc(n * sizeof(char *));
 	for (i = 0; i < n; i++)
-		ret[i] = strdup(v[i]);
+		bytes += strlen(v[i]) + 1;
+	ret = kmalloc(n * sizeof(char *) + bytes);
+	if (!ret)
+		return NULL;
+	char *strings = (char *)(ret + n);
+	for (i = 0; i < n; i++) {
+		unsigned len = strlen(v[i]) + 1;
+		ret[i] = strings;
+		memcpy(strings, v[i], len);
+		strings += len;
+	}
 	return ret;
 }
 
@@ -178,13 +187,9 @@ static void parse_shebang(char *line, const char **interp,
  */
 static void free_v(char **v, unsigned size)
 {
-	int i = 0;
+	(void)size;
 	if (!v) {
 		return;
-	}
-
-	for (i = 0; i < size; i++) {
-		kfree(v[i]);
 	}
 	kfree(v);
 }
@@ -475,14 +480,27 @@ int sys_execve(const char *f, char **argv, char **envp)
 		shebang_argc = 1 + (interp_arg ? 1 : 0);
 		argc = shebang_argc + 1 + (user_argc ? user_argc - 1 : 0);
 
-		s_argv = kmalloc(argc * sizeof(char *));
-		s_argv[0] = strdup(interp);
+		/* Build the interpreter argv in one arena allocation. */
+		{
+			char **src_argv = kmalloc(argc * sizeof(char *));
+			if (!src_argv) {
+				free(firstline); fs_put_file(fp); name_put(file_name);
+				return -ENOMEM;
+			}
+			src_argv[0] = (char *)interp;
 		dst = 1;
 		if (interp_arg)
-			s_argv[dst++] = strdup(interp_arg);
-		s_argv[dst++] = strdup(file_name);
+				src_argv[dst++] = (char *)interp_arg;
+			src_argv[dst++] = file_name;
 		for (j = 1; j < user_argc; j++)
-			s_argv[dst++] = strdup(argv[j]);
+				src_argv[dst++] = argv[j];
+			s_argv = dup_strv(src_argv, argc);
+			kfree(src_argv);
+		}
+		if (!s_argv) {
+			free(firstline); fs_put_file(fp); name_put(file_name);
+			return -ENOMEM;
+		}
 
 		strcpy(file_name, interp);
 

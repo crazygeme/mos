@@ -198,6 +198,9 @@ typedef struct _ptrace_saved_frame {
 
 typedef struct _user_enviroment {
 	vm_struct_t vm;
+	struct _vm_region *mmap_cache;
+	mm_struct *mmap_cache_vm;
+	unsigned mmap_cache_generation;
 	char *command;
 	size_t cmd_len;
 	char *environment;

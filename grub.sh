@@ -7,7 +7,15 @@ diskfile="rh9.qcow2"
 _build="release"
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
 _logtofile="stdio"
-_audio_backend=$([ "$(uname)" == "Linux" ] && echo "alsa" || echo "coreaudio")
+# Prefer PipeWire on Linux; override with MOS_AUDIO_BACKEND when needed (for
+# example, MOS_AUDIO_BACKEND=alsa or MOS_AUDIO_BACKEND=none).
+if [ -n "${MOS_AUDIO_BACKEND:-}" ]; then
+	_audio_backend="$MOS_AUDIO_BACKEND"
+elif [ "$(uname)" == "Darwin" ]; then
+	_audio_backend="coreaudio"
+else
+	_audio_backend="pipewire"
+fi
 _audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _priviledge=""
 _is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")

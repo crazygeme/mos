@@ -9,7 +9,15 @@ _window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "coco
 _verbose=""
 _logtofile="stdio"
 _vga="-vga vmware"
-_audio_backend=$([ "$(uname)" == "Linux" ] && echo "alsa" || echo "coreaudio")
+# Prefer PipeWire on Linux.  Set MOS_AUDIO_BACKEND (alsa, pipewire, pulse,
+# none, ...) to override the host audio backend explicitly.
+if [ -n "${MOS_AUDIO_BACKEND:-}" ]; then
+	_audio_backend="$MOS_AUDIO_BACKEND"
+elif [ "$(uname)" == "Darwin" ]; then
+	_audio_backend="coreaudio"
+else
+	_audio_backend="pipewire"
+fi
 _audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""

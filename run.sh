@@ -22,6 +22,7 @@ _audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _cpu="coreduo"
+_smp="1"
 _bash=""
 _test=""
 _priviledge=""
@@ -58,6 +59,8 @@ elif [ "$arg" == "kvm" ]; then
 	_cpu="host"
 elif [ "$arg" == "bash" ]; then
 	_bash="bash"
+elif [[ "$arg" =~ ^smp=([1-8])$ ]]; then
+	_smp="${BASH_REMATCH[1]}"
 elif [ "$arg" == "logtofile" ]; then
 	_logtofile="pending"
 elif [ "$arg" == "-h" ]; then
@@ -72,6 +75,7 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t verbose=1: run with full syscall trace logging"
 	echo -e "\t verbose=2: run with focused diagnostic logging"
 	echo -e "\t kvm: enable kvm"
+	echo -e "\t smp=N: start 1-8 virtual CPUs (default: 1)"
 	exit
 fi
 done
@@ -177,6 +181,7 @@ fi
 tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
 $_priviledge $_qemu -cpu $_cpu \
+	-smp $_smp \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \

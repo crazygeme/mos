@@ -5,6 +5,7 @@
 #include <lib/port.h>
 #include <config.h>
 #include <macro.h>
+#include <hw/cpu.h>
 
 static unsigned long tickets;
 static unsigned long cycle_per_ticket;
@@ -19,6 +20,9 @@ static void time_process(intr_frame *frame)
 	tickets++;
 	if (ps_enabled())
 		current->remain_ticks--;
+	/* External IRQs stay on the BSP in virtual-wire mode.  Use an IPI as
+	 * the per-CPU scheduling tick for APs. */
+	smp_reschedule_others();
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

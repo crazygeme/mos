@@ -282,7 +282,7 @@ transfers control to the entry point.
 
 ---
 
-## 12. SMP (infrastructure present, single-CPU in practice)
+## 12. SMP
 
 AP startup code lives in `src/boot/ap_trampoline.S`. The BSP:
 1. Parses ACPI MADT to find CPUs and IOAPIC address.
@@ -292,6 +292,11 @@ AP startup code lives in `src/boot/ap_trampoline.S`. The BSP:
 
 The design uses virtual-wire mode: the 8259A PIC remains active for external
 IRQs; the IOAPIC is used only for IPI delivery.
+
+Runnable tasks are claimed atomically from a shared priority queue and may run
+on any online CPU.  Each CPU owns its descriptor table, TSS, idle context, and
+preemption-disable state.  Because the PIT remains connected to the BSP, its
+tick handler broadcasts a scheduler IPI to provide preemption ticks on APs.
 
 ---
 

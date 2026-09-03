@@ -51,8 +51,8 @@ void spinlock_unlock(spinlock_t *lock, int irq)
 	if (!lock->inited)
 		return;
 
-	lock->holder = 0xff;
-	__sync_lock_test_and_set(&lock->lock, 0);
+	lock->holder = 0;
+	__sync_lock_release(&lock->lock);
 	int_intr_setlevel(irq);
 }
 

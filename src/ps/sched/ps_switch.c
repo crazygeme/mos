@@ -31,7 +31,10 @@ void _task_sched(const char *func)
 	sched_disable();
 
 	next = ps_get_next_task();
-	next->status = ps_running;
+	if (!next) {
+		sched_enable();
+		return;
+	}
 
 	if (next == prev) {
 		ps_load_task_segments(next);

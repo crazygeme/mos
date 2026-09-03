@@ -10,6 +10,7 @@
  */
 
 #include <ps/ps.h>
+#include <hw/cpu.h>
 #include <int/int.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
@@ -24,6 +25,7 @@
 #include <config.h>
 #include <macro.h>
 #include <errno.h>
+#include <hw/cpu.h>
 
 #include "ps_internal.h"
 
@@ -109,7 +111,7 @@ void ps_remove_mgr(task_struct *task)
 
 void ps_update_ldt(task_struct *task)
 {
-	extern unsigned long long gdt[];
+	unsigned long long *gdt = cpu_gdt();
 	unsigned limit;
 
 	if (!task || !task->user) {
@@ -131,7 +133,7 @@ void ps_update_ldt(task_struct *task)
 
 void ps_load_task_segments(task_struct *task)
 {
-	extern unsigned long long gdt[];
+	unsigned long long *gdt = cpu_gdt();
 
 	if (!task || !task->user)
 		return;
@@ -160,11 +162,12 @@ int ps_total_count()
 /* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
 void reset_tss(task_struct *task)
 {
-	tss_io_struct *io_tss = (tss_io_struct *)tss_address;
+	tss_struct *local_tss = cpu_current()->tss ? cpu_current()->tss : tss_address;
+	tss_io_struct *io_tss = (tss_io_struct *)local_tss;
 
-	tss_address->cr3 = task->cr3;
-	tss_address->esp0 = task->tss.esp0;
-	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
+	local_tss->cr3 = task->cr3;
+	local_tss->esp0 = task->tss.esp0;
+	local_tss->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
 	if (task->io_allow_all) {
 		memset(io_tss->io_bitmap, 0x00, TSS_IO_BITMAP_BYTES);
 	} else if (task->io_bitmap) {
@@ -173,11 +176,11 @@ void reset_tss(task_struct *task)
 		memset(io_tss->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
 	}
 	io_tss->io_bitmap[TSS_IO_BITMAP_BYTES] = 0xff;
-	tss_address->ss0 = KERNEL_DATA_SELECTOR;
-	tss_address->ss = tss_address->gs = tss_address->fs = tss_address->ds =
-		tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
-	tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
-	int_update_tss((unsigned int)tss_address);
+	local_tss->ss0 = KERNEL_DATA_SELECTOR;
+	local_tss->ss = local_tss->gs = local_tss->fs = local_tss->ds =
+		local_tss->es = KERNEL_DATA_SELECTOR | 0x3;
+	local_tss->cs = KERNEL_CODE_SELECTOR | 0x3;
+	int_update_tss((unsigned int)local_tss);
 }
 
 int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
@@ -210,6 +213,14 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 
 	reset_tss(task);
 	return 0;
+}
+
+static void ap_idle_stub(void *param)
+{
+	while (1) {
+		HLT();
+		task_sched();
+	}
 }
 
 /*
@@ -302,6 +313,18 @@ void ps_kickoff()
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
 	cur->stats = NULL;
+	_ps_enabled = 1;
+	task_sched();
+}
+
+/* Called by each AP after per-CPU LAPIC/TSS setup. */
+void ps_kickoff_ap(void)
+{
+	task_struct *cur = CURRENT_TASK();
+	memset(cur, 0, sizeof(*cur));
+	cur->psid = 0xffffffff;
+	cur->ps_list.prev = cur->ps_list.next = 0;
+	ps_create(ap_idle_stub, NULL, ps_idle, ps_kernel);
 	_ps_enabled = 1;
 	task_sched();
 }

@@ -19,6 +19,7 @@
 #include <lib/klib.h>
 #include <macro.h>
 #include <config.h>
+#include <hw/cpu.h>
 
 extern unsigned long long gdt[];
 
@@ -46,7 +47,7 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 		task_struct *task = container_of(node, task_struct, ps_list);
 		if (task->status != ps_dying) {
 			list_remove_entry(node);
-			list_insert_tail(head, &task->ps_list);
+			task->status = ps_running;
 			return task;
 		}
 		node = node->next;
@@ -57,7 +58,7 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 /*
  * Timer queue helpers — all called with ps_lock held.
  *
- * timer_arm_unsafe: insert @task into the global timer RB-tree with
+ * timer_arm_unsafe: insert @task into the per-CPU timer RB-tree with
  *   expiry = now + ms.  Duplicate due times go to the right so that
  *   rb_first() always returns the earliest entry.
  *
@@ -120,6 +121,13 @@ task_struct *ps_get_next_task()
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
+	/* A running task is owned by one CPU and is not kept on the shared
+	 * ready queue.  Requeue the yielding task before claiming its successor. */
+	if (current->psid != 0xffffffff && current->status == ps_running) {
+		current->status = ps_ready;
+		list_insert_tail(&control.ready_queue[current->priority],
+				 &current->ps_list);
+	}
 	if (current->psid != 0xffffffff)
 		ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
@@ -254,21 +262,19 @@ void ps_put_to_ready_queue(task_struct *task)
 	spinlock_unlock(&ps_lock, irq);
 }
 
-static int scheduler_enabled = 1;
-
 int sched_enable()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 1);
+	return __sync_add_and_fetch(&cpu_current()->sched_level, 1);
 }
 
 int sched_disable()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, -1);
+	return __sync_add_and_fetch(&cpu_current()->sched_level, -1);
 }
 
 int sched_is_enabled()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 0) > 0;
+	return __sync_add_and_fetch(&cpu_current()->sched_level, 0) > 0;
 }
 
 /*

@@ -9,7 +9,10 @@ MOS now reaches a visible Red Hat 9 graphical desktop.
 
 > [!NOTE]
 > The GUI stack still has a number of known issues and is not a current focus of development.
-> SMP support would be a valuable addition, but it is not a near-term priority.
+
+MOS supports SMP on ACPI/APIC systems. Pass `smp=N` to `run.sh` to start up
+to eight CPUs; external device interrupts remain routed through the legacy PIC
+on the bootstrap CPU while scheduler and TLB IPIs use the local APIC.
 
 | Boot                             | Login Prompt                              |
 | -------------------------------- | ----------------------------------------- |

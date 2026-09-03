@@ -291,6 +291,7 @@ struct _task_struct {
 	struct rb_node mgr_rb; /* management-queue RB-tree node */
 	list_entry dying_queue; /* dying task holder */
 	ps_status status;
+	int affinity; /* logical CPU that may execute this task */
 	const char *wait_func;
 	int remain_ticks;
 	file **fds;

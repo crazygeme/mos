@@ -16,6 +16,7 @@
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <errno.h>
+#include <hw/cpu.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <config.h>
@@ -124,6 +125,10 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->umask = 0;
 	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 	task->psid = ps_id_gen();
+	/* Pin tasks until context-switch handoff can safely support migration.
+	 * Idle tasks belong to their creator; other work is spread round-robin. */
+	task->affinity = priority == ps_idle ? cpu_current_id() :
+					       cpu_id(task->psid % ncpus);
 	task->tgid = task->psid;
 	task->ppid = task->psid;
 	task->exit_signal = SIGCHLD;
@@ -359,6 +364,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	else
 		task->remain_ticks = cur->remain_ticks;
 	task->psid = ps_id_gen();
+	task->affinity = cpu_id(task->psid % ncpus);
 	task->tgid = cur->tgid;
 	mutex_init(&task->fd_lock);
 

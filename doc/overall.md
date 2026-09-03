@@ -293,8 +293,10 @@ AP startup code lives in `src/boot/ap_trampoline.S`. The BSP:
 The design uses virtual-wire mode: the 8259A PIC remains active for external
 IRQs; the IOAPIC is used only for IPI delivery.
 
-Runnable tasks are claimed atomically from a shared priority queue and may run
-on any online CPU.  Each CPU owns its descriptor table, TSS, idle context, and
+Runnable tasks are assigned round-robin to an online CPU and claimed atomically
+from a shared priority queue. Pinning closes the context-switch handoff window
+in which another CPU could otherwise start a task before its old CPU has left
+the task's kernel stack. Each CPU owns its descriptor table, TSS, idle context, and
 preemption-disable state.  Because the PIT remains connected to the BSP, its
 tick handler broadcasts a scheduler IPI to provide preemption ticks on APs.
 

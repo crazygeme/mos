@@ -24,8 +24,26 @@
  */
 static void *acpi_phys_to_virt(unsigned phys)
 {
-	mm_kmap_phys(phys & PAGE_SIZE_MASK);
-	return (void *)(phys + KERNEL_OFFSET);
+	if (mm_kmap_phys(phys & PAGE_SIZE_MASK) < 0)
+		return NULL;
+	return (void *)PHY_TO_VIRT(phys);
+}
+
+static void *acpi_map_table(unsigned phys)
+{
+	acpi_header_t *header = acpi_phys_to_virt(phys);
+	unsigned offset;
+
+	if ((phys & (PAGE_SIZE - 1)) + sizeof(*header) > PAGE_SIZE &&
+	    !acpi_phys_to_virt((phys & PAGE_SIZE_MASK) + PAGE_SIZE))
+		return NULL;
+	if (!header || header->length < sizeof(*header))
+		return NULL;
+	for (offset = 0; offset < header->length; offset += PAGE_SIZE) {
+		if (!acpi_phys_to_virt(phys + offset))
+			return NULL;
+	}
+	return (void *)PHY_TO_VIRT(phys);
 }
 
 /* Convenience: plain virtual cast for addresses known to be in the
@@ -130,7 +148,11 @@ int acpi_parse(acpi_info_t *info)
 	printk("acpi: RSDP at phys %x\n", (unsigned)rsdp - KERNEL_OFFSET);
 
 	/* rsdt_addr can be anywhere in physical RAM; map before dereferencing. */
-	rsdt = acpi_phys_to_virt(rsdp->rsdt_addr);
+	rsdt = acpi_map_table(rsdp->rsdt_addr);
+	if (!rsdt) {
+		printk("acpi: cannot map RSDT\n");
+		return -1;
+	}
 	if (memcmp(rsdt->header.signature, "RSDT", 4) != 0 ||
 	    !acpi_checksum(rsdt, rsdt->header.length)) {
 		printk("acpi: RSDT invalid\n");
@@ -142,7 +164,9 @@ int acpi_parse(acpi_info_t *info)
 
 	for (i = 0; i < n; i++) {
 		/* Each child table pointer also needs mapping. */
-		acpi_header_t *hdr = acpi_phys_to_virt(entries[i]);
+		acpi_header_t *hdr = acpi_map_table(entries[i]);
+		if (!hdr)
+			continue;
 		if (memcmp(hdr->signature, "APIC", 4) == 0 &&
 		    acpi_checksum(hdr, hdr->length)) {
 			printk("acpi: found MADT at phys 0x%x\n", entries[i]);

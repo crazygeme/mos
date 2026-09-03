@@ -47,6 +47,9 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 		task_struct *task = container_of(node, task_struct, ps_list);
 		if (task->status != ps_dying) {
 			list_remove_entry(node);
+			/* Detached running tasks must not retain links into the run queue:
+			 * blocking/exit paths defensively remove ps_list again. */
+			list_init(&task->ps_list);
 			task->status = ps_running;
 			return task;
 		}

@@ -281,8 +281,22 @@ void smp_start_aps(void)
 
 void cpu_init_bsp(void)
 {
+	extern acpi_info_t g_acpi_info;
+	unsigned char bsp_apic = apic_id();
+	int i;
+
+	/* MADT order is not required to put the BSP first.  The startup loop
+	 * treats entry zero as the BSP, so normalize the discovered topology. */
+	for (i = 0; i < g_acpi_info.ncpus; i++) {
+		if (g_acpi_info.apic_ids[i] == bsp_apic) {
+			unsigned char first = g_acpi_info.apic_ids[0];
+			g_acpi_info.apic_ids[0] = bsp_apic;
+			g_acpi_info.apic_ids[i] = first;
+			break;
+		}
+	}
 	cpus[0].cpu_id = 0;
-	cpus[0].apic_id = apic_id();
+	cpus[0].apic_id = bsp_apic;
 	cpus[0].online = 1;
 	cpus[0].sched_level = 1;
 	cpus[0].tss = NULL; /* TSS for BSP is managed by ps_init() */

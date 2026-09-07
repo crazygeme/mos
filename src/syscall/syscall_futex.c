@@ -87,8 +87,13 @@ void ps_clear_child_tid(task_struct *task)
 	if (region && region->begin <= (unsigned)task->clear_child_tid &&
 	    (unsigned)task->clear_child_tid + sizeof(int) <= region->end &&
 	    (region->prot & PROT_WRITE)) {
+		int zero = 0;
+		if (ps_write_process_memory(task, task->clear_child_tid, &zero,
+					    sizeof(zero)) < 0) {
+			task->clear_child_tid = NULL;
+			return;
+		}
 		spinlock_lock(&ps_lock, &irq);
-		*task->clear_child_tid = 0;
 		ps_futex_wake_locked(task->user, task->clear_child_tid, 1);
 		spinlock_unlock(&ps_lock, irq);
 	}

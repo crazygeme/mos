@@ -54,7 +54,7 @@
 			     : "eax", "cc", "memory");    \
 	})
 
-#define RELOAD_CR3()                                 \
+#define LOCAL_RELOAD_CR3()                           \
 	({                                           \
 		asm volatile("movl %%cr3, %%eax\n\t" \
 			     "movl %%eax, %%cr3"     \
@@ -63,7 +63,12 @@
 			     : "eax", "memory");     \
 	})
 
-#define INVLPG(addr) asm volatile("invlpg (%0)" : : "r"(addr) : "memory")
+#ifndef __ASSEMBLER__
+void smp_tlb_flush(void);
+#endif
+/* Conservative synchronous all-CPU flush, including shared kernel aliases. */
+#define RELOAD_CR3() smp_tlb_flush()
+#define INVLPG(addr) do { (void)(addr); smp_tlb_flush(); } while (0)
 
 #define RELOAD_EIP()                               \
 	({                                         \

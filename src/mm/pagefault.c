@@ -577,6 +577,7 @@ static void pf_process(intr_frame *frame)
 	/*
 	 * Save old interrupt state first.
 	 */
+	LOAD_CR2(cr2);
 	sched_disable();
 	int_enable = int_intr_enable();
 
@@ -586,7 +587,6 @@ static void pf_process(intr_frame *frame)
 	 * `error_code` is actually pushed by CPU.
 	 */
 
-	LOAD_CR2(cr2);
 	cr2 = cr2 & PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {

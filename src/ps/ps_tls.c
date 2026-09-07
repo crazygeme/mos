@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <macro.h>
 #include <lib/klib.h>
+#include <ps/smp.h>
 
 struct user_desc {
 	unsigned int entry_number;
@@ -32,7 +33,7 @@ enum user_desc_contents {
 	USER_DESC_CONTENTS_RESERVED = 3,
 };
 
-extern unsigned long long gdt[];
+#define gdt (smp_gdt())
 
 static unsigned short read_gs_selector(void)
 {

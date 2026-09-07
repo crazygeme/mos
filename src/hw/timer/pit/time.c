@@ -5,6 +5,7 @@
 #include <lib/port.h>
 #include <config.h>
 #include <macro.h>
+#include <ps/smp.h>
 
 static unsigned long tickets;
 static unsigned long cycle_per_ticket;
@@ -17,6 +18,7 @@ static unsigned long rtc_get_time(void);
 static void time_process(intr_frame *frame)
 {
 	tickets++;
+	smp_tick();
 	if (ps_enabled())
 		current->remain_ticks--;
 }
@@ -251,9 +253,8 @@ void usleep(unsigned int us)
 void delay(unsigned int us)
 {
 	unsigned cycles = 0;
-	cycles = (unsigned int)(((double)cycle_per_ticket /
-				 (double)(1000 * 1000)) *
-				HZ * us);
+	cycles = (unsigned)((unsigned long long)cycle_per_ticket * HZ * us /
+			    1000000ULL);
 	// printk("usleep %d us equals %d cycles\n", us, cycles);
 	busy_wait(cycles);
 }

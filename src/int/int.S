@@ -52,6 +52,10 @@ intr_entry:
    userprog/process.c). */
 .globl intr_exit
 intr_exit:
+    /* TLB IPIs must not drop a BKL owned by interrupted kernel code. */
+    pushl %esp
+    call smp_return
+    addl $4, %esp
     /* Restore caller's registers. */
     popal
     pop %gs
@@ -206,6 +210,11 @@ switch_to_user_mode:
     cld;
     movl 4(%esp), %ecx
     movl 8(%esp), %edx
+    pushl %ecx
+    pushl %edx
+    call smp_kernel_leave
+    popl %edx
+    popl %ecx
     mov $USER_DATA_SELECTOR, %ax; 
     mov %ax, %ds; 
     mov %ax, %es; 
@@ -244,6 +253,7 @@ USER: nop;
 
 .global syscall_handler;
 syscall_handler:
+    cli
     pushl %ebp
     pushl $0
     pushl $0x80
@@ -283,6 +293,9 @@ ret_from_fork:
 
 .global ret_from_syscall;
 ret_from_syscall:
+    pushl %esp
+    call smp_return
+    addl $4, %esp
     /* Restore caller's registers. */
     popal
     pop %gs

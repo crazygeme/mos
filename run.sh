@@ -22,6 +22,7 @@ _audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _cpu="coreduo"
+_smp=1
 _bash=""
 _test=""
 _priviledge=""
@@ -34,10 +35,16 @@ else
 	_netdev="tap,id=net0,ifname=tap0,script=no,downscript=no"
 fi
 
-for arg in $@
+for arg in "$@"
 do
 if [ "$arg" == "test" ]; then
 	_test="test"
+elif [[ "$arg" == smp=* ]]; then
+	_smp="${arg#smp=}"
+	if ! [[ "$_smp" =~ ^[1-9][0-9]*$ ]] || [ "${#_smp}" -gt 2 ] || [ "$_smp" -gt 32 ]; then
+		echo "smp must be an integer between 1 and 32" >&2
+		exit 1
+	fi
 elif [ "$arg" == "debug" ]; then
 	_build="debug"
 	_debug="-gdb tcp::8888 -S"
@@ -72,6 +79,7 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t verbose=1: run with full syscall trace logging"
 	echo -e "\t verbose=2: run with focused diagnostic logging"
 	echo -e "\t kvm: enable kvm"
+	echo -e "\t smp=N: start N CPUs (1..32, default 1)"
 	exit
 fi
 done
@@ -177,6 +185,7 @@ fi
 tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
 $_priviledge $_qemu -cpu $_cpu \
+	-smp "$_smp" \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \

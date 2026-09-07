@@ -19,6 +19,7 @@
 #include <lib/klib.h>
 #include <macro.h>
 #include <config.h>
+#include <ps/smp.h>
 
 extern unsigned long long gdt[];
 
@@ -44,7 +45,10 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 
 	while (node != head) {
 		task_struct *task = container_of(node, task_struct, ps_list);
-		if (task->status != ps_dying) {
+		if ((task->status == ps_ready || task == current) &&
+		    !task->terminate_requested &&
+		    (!task->on_cpu || task == current) &&
+		    (task->priority != ps_idle || task->param == (void *)smp_cpu_id())) {
 			list_remove_entry(node);
 			list_insert_tail(head, &task->ps_list);
 			return task;
@@ -229,6 +233,8 @@ void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
 
 void ps_put_to_ready_queue_unsafe(task_struct *task)
 {
+	if (task->status == ps_dying)
+		return;
 	if (task->psid != 0xffffffff) {
 		list_remove_entry(&task->ps_list);
 		list_insert_tail(&control.ready_queue[task->priority],
@@ -254,21 +260,19 @@ void ps_put_to_ready_queue(task_struct *task)
 	spinlock_unlock(&ps_lock, irq);
 }
 
-static int scheduler_enabled = 1;
-
 int sched_enable()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 1);
+	return ++current->sched_level;
 }
 
 int sched_disable()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, -1);
+	return --current->sched_level;
 }
 
 int sched_is_enabled()
 {
-	return __sync_add_and_fetch(&scheduler_enabled, 0) > 0;
+	return current->sched_level > 0;
 }
 
 /*

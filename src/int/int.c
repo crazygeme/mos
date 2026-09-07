@@ -6,8 +6,9 @@
 #include <hw/time.h>
 #include <macro.h>
 #include <errno.h>
+#include <ps/smp.h>
 extern void do_signal(intr_frame *frame);
-extern unsigned long long gdt[];
+#define gdt (smp_gdt())
 
 /* Sends an end-of-interrupt signal to the PIC for the given IRQ.
 If we don't acknowledge the IRQ, it will never be delivered to
@@ -118,6 +119,15 @@ void intr_handler(intr_frame *frame)
 {
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
 	int_callback fn = 0;
+	int special = smp_interrupt(frame);
+	int owned;
+	if (special == 1)
+		return;
+	owned = smp_kernel_owned();
+	smp_kernel_enter();
+	smp_check_stop();
+	if (special == 2 && ps_enabled())
+		current->remain_ticks--;
 
 	if (frame->vec_no < 0 || frame->vec_no >= IDT_SIZE) {
 		return;
@@ -138,15 +148,21 @@ void intr_handler(intr_frame *frame)
 	 */
 	if (frame->vec_no == 0x0e) {
 		intr_sanitize_user_return(frame);
-		return;
+		goto done;
 	}
 
 	intr_maybe_preempt();
 	intr_prepare_user_return(frame);
+done:
+	if (!owned && (frame->cs & 3) == 0)
+		smp_kernel_leave();
 }
 
 void intr_syscall_handler(intr_frame *frame)
 {
+	smp_kernel_enter();
+	smp_check_stop();
+	int_intr_enable();
 	int_callback fn = 0;
 	task_struct *cur = CURRENT_TASK();
 	unsigned long long start = 0;

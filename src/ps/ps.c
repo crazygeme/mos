@@ -26,6 +26,7 @@
 #include <errno.h>
 
 #include "ps_internal.h"
+#include <ps/smp.h>
 
 /*
  * Global variables
@@ -109,7 +110,7 @@ void ps_remove_mgr(task_struct *task)
 
 void ps_update_ldt(task_struct *task)
 {
-	extern unsigned long long gdt[];
+	unsigned long long *gdt = smp_gdt();
 	unsigned limit;
 
 	if (!task || !task->user) {
@@ -131,7 +132,7 @@ void ps_update_ldt(task_struct *task)
 
 void ps_load_task_segments(task_struct *task)
 {
-	extern unsigned long long gdt[];
+	unsigned long long *gdt = smp_gdt();
 
 	if (!task || !task->user)
 		return;
@@ -160,6 +161,7 @@ int ps_total_count()
 /* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
 void reset_tss(task_struct *task)
 {
+	tss_struct *tss_address = smp_tss();
 	tss_io_struct *io_tss = (tss_io_struct *)tss_address;
 
 	tss_address->cr3 = task->cr3;
@@ -302,6 +304,8 @@ void ps_kickoff()
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
 	cur->stats = NULL;
+	cur->sched_level = 1;
+	cur->on_cpu = smp_cpu_id() + 1;
 	_ps_enabled = 1;
 	task_sched();
 }

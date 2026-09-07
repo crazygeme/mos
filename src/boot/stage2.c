@@ -13,6 +13,7 @@
 #include <hw/tty.h>
 #include <hw/font.h>
 #include <lib/klib.h>
+#include <ps/smp.h>
 
 #include <macro.h>
 
@@ -66,10 +67,17 @@ void kmain_startup()
 
 	pf_init();
 
-	/* Mainline kernel runs uniprocessor only. */
+	smp_init();
 	ps_create(idle_process, NULL, ps_idle, ps_kernel);
 	// create first process
 	ps_create(kmain_process, NULL, ps_normal, ps_kernel);
+	/* Preserve PID 0 (idle) and PID 1 (init). AP idle tasks follow them. */
+	for (unsigned i = 1; i < SMP_MAX_CPUS; i++) {
+		if (!smp_cpus[i].apic_id && !smp_cpus[i].online)
+			continue;
+		ps_create(idle_process, (void *)i, ps_idle, ps_kernel);
+	}
+	smp_start();
 
 	ps_kickoff();
 
@@ -79,7 +87,7 @@ void kmain_startup()
 static void idle_process(void *param)
 {
 	while (1) {
-		HLT();
+		smp_idle();
 		task_sched();
 	}
 }

@@ -22,6 +22,23 @@
 #include <macro.h>
 
 #include "ps_internal.h"
+#include <ps/smp.h>
+
+/* Matches ps_context_switch: flags, edi, esi, ebx, ebp, return address. */
+static void init_switch_frame(task_struct *task)
+{
+	unsigned *sp = (unsigned *)task->tss.esp;
+	*--sp = task->tss.eip;
+	*--sp = 0;
+	*--sp = 0;
+	*--sp = 0;
+	*--sp = 0;
+	*--sp = 2; /* IF remains clear until the new task entry is ready */
+	task->switch_sp = (unsigned)sp;
+	task->on_cpu = 0;
+	task->terminate_requested = 0;
+	task->sched_level = 1;
+}
 
 extern void ret_from_fork();
 extern short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
@@ -138,6 +155,8 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->tss.esp = stack_bottom;
 	task->tss.esp0 = stack_bottom;
 	task->tss.eip = ps_run;
+	init_switch_frame(task);
+	smp_fpu_new(task);
 
 	task->stats = zalloc(sizeof(task_stats_t));
 	task->stats->start_tickets = time_now_tickets();
@@ -351,6 +370,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task_intr_frame =
 		(intr_frame *)((char *)task + PAGE_SIZE - sizeof(intr_frame));
 
+	smp_fpu_save(cur);
 	*task = *cur;
 	*task_intr_frame = *cur_intr_frame;
 
@@ -368,6 +388,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->tss.esp = (char *)task_intr_frame;
 	task->tss.esp0 = (unsigned)task + PAGE_SIZE;
 	task->tss.eip = (unsigned)ret_from_fork;
+	init_switch_frame(task);
 	task_intr_frame->eax = 0;
 
 	task->ppid = cur->psid;

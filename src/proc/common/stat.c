@@ -23,6 +23,7 @@
 
 #include "hw/time.h"
 #include <ps/ps.h>
+#include <ps/smp.h>
 #include "common.h"
 
 /* Externs from ps_sched.c */
@@ -64,10 +65,10 @@ static void fill(proc_buf_t *pb)
 	ps_enum_all(stat_collect, &c);
 
 	/* Idle = wall-clock jiffies since boot minus all busy (user+system) time. */
-	wall = (unsigned)time_now_tickets();
+	wall = (unsigned)time_now_tickets() * smp_cpu_count();
 	idle = (wall > c.user + c.system) ? wall - c.user - c.system : 0;
 
-	ncpu = 1;
+	ncpu = smp_cpu_count();
 
 	/* ---- aggregate cpu line ---- */
 	proc_buf_printf(pb, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,

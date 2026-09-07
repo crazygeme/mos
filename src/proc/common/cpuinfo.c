@@ -1,4 +1,5 @@
 #include <config.h>
+#include <ps/smp.h>
 #include "common.h"
 
 /* Execute the CPUID instruction. */
@@ -58,8 +59,9 @@ static void fill(proc_buf_t *pb)
 
 	cpu_brand_string(brand);
 	mhz = time_get_cpu_mhz();
+	for (unsigned cpu = 0; cpu < smp_cpu_count(); cpu++) {
 	proc_buf_printf(pb,
-			"processor\t: 0\n"
+			"processor\t: %u\n"
 			"vendor_id\t: %s\n"
 			"cpu family\t: %d\n"
 			"model\t\t: %d\n"
@@ -69,7 +71,7 @@ static void fill(proc_buf_t *pb)
 			"cache size\t: unknown\n"
 			"bogomips\t: %d\n"
 			"flags\t\t:",
-			vendor, family, model, brand, stepping, mhz, mhz * 2);
+			cpu, vendor, family, model, brand, stepping, mhz, mhz * 2);
 
 	/* Feature flags from CPUID leaf 1 EDX */
 	if (edx & (1u << 0))
@@ -114,6 +116,7 @@ static void fill(proc_buf_t *pb)
 		proc_buf_printf(pb, " rdrand");
 
 	proc_buf_printf(pb, "\n\n");
+	}
 }
 
 DEFINE_PROC_FILE(cpuinfo, fill);

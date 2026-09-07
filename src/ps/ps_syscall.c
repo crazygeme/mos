@@ -26,6 +26,7 @@
 #include <ext4.h>
 
 #include "ps_internal.h"
+#include <ps/smp.h>
 
 #define W_STOPCODE(sig) (((sig) << 8) | 0x7f)
 
@@ -234,6 +235,21 @@ static void ps_reap_group_thread(task_struct *task)
 	ps_reap_task(task, NULL);
 }
 
+static list_entry dead_threads = { &dead_threads, &dead_threads };
+
+void ps_reap_dead_threads(void)
+{
+	list_entry *node = dead_threads.next;
+	while (node != &dead_threads) {
+		task_struct *task = container_of(node, task_struct, ps_list);
+		node = node->next;
+		if (task->on_cpu) continue;
+		list_remove_entry(&task->ps_list);
+		ps_reap_group_thread(task);
+		node = dead_threads.next;
+	}
+}
+
 void ps_kill_thread_group(task_struct *leader)
 {
 	struct rb_node *node;
@@ -245,6 +261,25 @@ void ps_kill_thread_group(task_struct *leader)
 		return;
 
 	list_init(&reap_list);
+
+	/* Stop remote users before touching their VM, descriptors or stack.
+	 * Do not wait while holding ps_lock or the BKL: timer IPIs bring them
+	 * into smp_check_stop(), and sleeping lets that entry acquire the BKL. */
+	for (;;) {
+		int active = 0;
+		spinlock_lock(&ps_lock, &irq);
+		for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+			task_struct *task = rb_entry(node, task_struct, mgr_rb);
+			if (task != leader && task->tgid == leader->tgid &&
+			    (task->fork_flag & FORK_FLAG_THREAD)) {
+				task->terminate_requested = 1;
+				active |= task->on_cpu != 0;
+			}
+		}
+		spinlock_unlock(&ps_lock, irq);
+		if (!active) break;
+		time_wait(1);
+	}
 
 	spinlock_lock(&ps_lock, &irq);
 	for (node = rb_first(&control.mgr_queue); node; node = next) {
@@ -342,6 +377,8 @@ void do_exit(unsigned encoded_status)
 		cur->psid = 0xffffffff;
 		cur->tgid = 0xffffffff;
 		cur->status = ps_dying;
+		list_remove_entry(&cur->ps_list);
+		list_insert_tail(&dead_threads, &cur->ps_list);
 		task_sched();
 	}
 
@@ -389,6 +426,8 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 					    ps_list);
 			dying_task_entry = dying_task_entry->next;
 			if (task->ppid != cur->psid)
+				continue;
+			if (task->on_cpu)
 				continue;
 
 			if (pid && pid != task->psid)

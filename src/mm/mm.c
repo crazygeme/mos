@@ -346,6 +346,7 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
 	}
 
 	*info.entry = value;
+	RELOAD_CR3();
 	return 1;
 }
 
@@ -358,6 +359,7 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 	unsigned phy = *info->entry & PAGE_SIZE_MASK;
 
 	*info->entry = 0;
+	RELOAD_CR3();
 	if (phy) {
 		unsigned dir_index =
 			(unsigned)(info->dir -
@@ -370,8 +372,9 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 				1;
 			pgc_entry_count[idx]--;
 			if (pgc_entry_count[idx] == 0) {
-				mm_free_page_table((unsigned int)info->table);
 				*info->dir = 0;
+				RELOAD_CR3();
+				mm_free_page_table((unsigned int)info->table);
 			}
 		}
 	}
@@ -604,6 +607,9 @@ void mm_destroy_user_map(unsigned int page_dir)
 		table = (unsigned int *)PHY_TO_VIRT(table_phy);
 		cache_idx =
 			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
+		/* Detach before freeing any backing pages or the table itself. */
+		dir[i] = 0;
+		RELOAD_CR3();
 		/* The live-entry counter is maintained for every user mapping.  Most
 		 * page tables created during short-lived exec/clone paths are already
 		 * empty by the time the address space is destroyed; avoid needlessly
@@ -730,12 +736,12 @@ void mm_unmap_page(unsigned int vir)
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
 	spinlock_lock(&mm_lock, &irq);
+	mm_clear_page_table_entry(&info);
 	if (mm_dynamic_region(phy_addr) || mm_vdso_region(phy_addr)) {
 		if (phymm_is_used(page_index) &&
 		    phymm_dereference_page(page_index) == 0)
 			phymm_free_user(page_index);
 	}
-	mm_clear_page_table_entry(&info);
 	spinlock_unlock(&mm_lock, irq);
 }
 
@@ -767,6 +773,7 @@ void mm_set_map_flag(unsigned vir, unsigned flag)
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
+	RELOAD_CR3();
 }
 
 void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
@@ -777,6 +784,7 @@ void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
 					    &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
+	RELOAD_CR3();
 }
 
 /* Return the physical page index backing the virtual address @vir */

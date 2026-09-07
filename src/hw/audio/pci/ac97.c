@@ -106,14 +106,14 @@ static void ac97_reset_stream(void)
 	for (i = 0; i < 10000; i++) {
 		if (ac97_bm_readw(AC97_PO_SR) & AC97_SR_DCH)
 			break;
-		HLT();
+		PAUSE();
 	}
 
 	ac97_bm_writeb(AC97_PO_CR, AC97_CR_RR);
 	for (i = 0; i < 10000; i++) {
 		if (!(ac97_bm_readb(AC97_PO_CR) & AC97_CR_RR))
 			break;
-		HLT();
+		PAUSE();
 	}
 	ac97_bm_writew(AC97_PO_SR, AC97_SR_BCIS | AC97_SR_LVBCI |
 					   AC97_SR_FIFOE | AC97_SR_CELV);
@@ -127,7 +127,7 @@ static void ac97_wait_done(void)
 		uint16_t sr = ac97_bm_readw(AC97_PO_SR);
 		if (sr & (AC97_SR_BCIS | AC97_SR_DCH | AC97_SR_FIFOE))
 			break;
-		HLT();
+		PAUSE();
 	}
 	ac97_bm_writeb(AC97_PO_CR, 0);
 	ac97_bm_writew(AC97_PO_SR, AC97_SR_BCIS | AC97_SR_LVBCI |

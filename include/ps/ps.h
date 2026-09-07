@@ -278,6 +278,11 @@ typedef struct _task_struct task_struct;
 typedef struct _intr_frame intr_frame;
 struct _task_struct {
 	task_frame tss;
+	unsigned switch_sp;
+	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
+	unsigned terminate_requested;
+	int sched_level;
+	unsigned char fpu[512] __attribute__((aligned(16)));
 	unsigned long cr3;
 	unsigned int psid;
 	unsigned int tgid;

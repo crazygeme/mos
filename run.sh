@@ -22,7 +22,7 @@ _audio="-audiodev $_audio_backend,id=audio0 -device AC97,audiodev=audio0"
 _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _cpu="coreduo"
-_smp=1
+_smp=2
 _bash=""
 _test=""
 _priviledge=""

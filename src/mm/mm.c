@@ -10,6 +10,7 @@
 #include <mm/phymm.h>
 #include <mm/vdso.h>
 #include <macro.h>
+#include <ps/smp.h>
 
 extern const unsigned __vdso_start;
 extern const unsigned __vdso_end;
@@ -592,6 +593,8 @@ void mm_destroy_user_map(unsigned int page_dir)
 
 	if (!dir)
 		return;
+	/* Other CPUs may still have this address space loaded while a thread exits. */
+	smp_tlb_flush();
 
 	spinlock_lock(&mm_lock, &irq);
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {

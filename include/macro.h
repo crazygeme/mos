@@ -66,9 +66,11 @@
 #ifndef __ASSEMBLER__
 void smp_tlb_flush(void);
 #endif
-/* Conservative synchronous all-CPU flush, including shared kernel aliases. */
-#define RELOAD_CR3() smp_tlb_flush()
-#define INVLPG(addr) do { (void)(addr); smp_tlb_flush(); } while (0)
+/* Ordinary mapping changes only need to invalidate this CPU.  Call
+ * smp_tlb_flush() explicitly when an address space is destroyed or a shared
+ * kernel mapping is removed. */
+#define RELOAD_CR3() LOCAL_RELOAD_CR3()
+#define INVLPG(addr) asm volatile("invlpg (%0)" : : "r"(addr) : "memory")
 
 #define RELOAD_EIP()                               \
 	({                                         \

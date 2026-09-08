@@ -57,8 +57,8 @@ void mm_vdso_map()
 		return;
 
 	for (i = 0; i < page_count; i++) {
-		unsigned vir = base + i * PAGE_SIZE;
-		unsigned phy = VIRT_TO_PHY(vdso_start + i * PAGE_SIZE);
+		vaddr_t vir = base + i * PAGE_SIZE;
+		paddr_t phy = VIRT_TO_PHY(vdso_start + i * PAGE_SIZE);
 		mm_map_page(vir, phy, PAGE_ENTRY_USER_CODE);
 	}
 	RELOAD_CR3();

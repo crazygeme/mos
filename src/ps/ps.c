@@ -384,23 +384,23 @@ void ps_send_signal_owner(int owner, int sig)
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 {
 	unsigned i, j;
-	unsigned int *page_dir;
+	pte_t *page_dir;
 
 	if (!fn || !task->user->vm || !task->user->vm->page_dir)
 		return;
 
-	page_dir = (unsigned int *)task->user->vm->page_dir;
+	page_dir = (pte_t *)task->user->vm->page_dir;
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-		unsigned *page_table =
-			(unsigned *)(page_dir[i] & PAGE_SIZE_MASK);
+		pte_t *page_table =
+			(pte_t *)(page_dir[i] & PAGE_SIZE_MASK);
 		if (!page_table)
 			continue;
-		page_table = (unsigned *)PHY_TO_VIRT((unsigned)page_table);
+		page_table = (pte_t *)PHY_TO_VIRT((paddr_t)page_table);
 		for (j = 0; j < 1024; j++) {
 			if ((page_table[j] & PAGE_SIZE_MASK) == 0)
 				continue;
-			unsigned vir = (i << 22) + (j << 12);
-			unsigned phy = page_table[j] & PAGE_SIZE_MASK;
+			vaddr_t vir = ((vaddr_t)i << 22) + (j << 12);
+			paddr_t phy = page_table[j] & PAGE_SIZE_MASK;
 			fn(aux, vir, phy);
 		}
 	}
@@ -426,22 +426,22 @@ void ps_cleanup_all_user_map(task_struct *task)
 int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 			    unsigned len)
 {
-	unsigned vaddr = (unsigned)addr;
+	vaddr_t vaddr = (vaddr_t)(uintptr_t)addr;
 	const char *csrc = (const char *)src;
-	unsigned *pd;
+	pte_t *pd;
 
 	if (!task || !task->user)
 		return -EFAULT;
 
-	pd = (unsigned *)task->user->vm->page_dir;
+	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {
 		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
 		unsigned pte_idx = ADDR_TO_PET_OFFSET(vaddr);
 		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
 		unsigned to_write = PAGE_SIZE - page_off;
-		unsigned *pt;
-		unsigned pte;
+		pte_t *pt;
+		pte_t pte;
 
 		if (to_write > len)
 			to_write = len;
@@ -461,7 +461,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
+		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 
 		/* The page-table page exists now, but the target leaf mapping can
@@ -470,7 +470,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
+		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 
 		/* Present is not enough for a store: private forked pages arrive
@@ -480,7 +480,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 1))
 			return -EFAULT;
 
-		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
+		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 		if (!(pte & PAGE_ENTRY_PRESENT) || !(pte & PAGE_ENTRY_WRITABLE))
 			return -EFAULT;
@@ -502,22 +502,22 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 			   unsigned len)
 {
-	unsigned vaddr = (unsigned)addr;
+	vaddr_t vaddr = (vaddr_t)(uintptr_t)addr;
 	char *cdst = (char *)dst;
-	unsigned *pd;
+	pte_t *pd;
 
 	if (!task || !task->user)
 		return -EFAULT;
 
-	pd = (unsigned *)task->user->vm->page_dir;
+	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {
 		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
 		unsigned pte_idx = ADDR_TO_PET_OFFSET(vaddr);
 		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
 		unsigned to_read = PAGE_SIZE - page_off;
-		unsigned *pt;
-		unsigned pte;
+		pte_t *pt;
+		pte_t pte;
 
 		if (to_read > len)
 			to_read = len;
@@ -525,7 +525,7 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
 			return -EFAULT;
 
-		pt = (unsigned *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
+		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
 		pte = pt[pte_idx];
 		if (!(pte & PAGE_ENTRY_PRESENT))
 			return -EFAULT;

@@ -9,133 +9,13 @@
 #include <ps/signal.h>
 #include <stddef.h>
 #include <config.h>
+#include <arch/types.h>
+#include <arch/interrupt.h>
+#include <arch/task.h>
 
 #define FORK_FLAG_VFORK 1
 #define FORK_FLAG_SHARE_VM 2
 #define FORK_FLAG_THREAD 4
-/*
- * ----------------------------
- * offset	|31-16		15-0  |
- * ----------------------------
- * 0x00		|reserved	|LINK |
- * ----------------------------
- * 0x04		|ESP0			  |
- * ----------------------------
- * 0x08		|reserved	|SS0  |
- * ----------------------------
- * 0x0C		|ESP1			  |
- * ----------------------------
- * 0x10		|reserved	|SS1  |
- * ----------------------------
- * 0x14		|ESP2			  |
- * ----------------------------
- * 0x18		|reserved	|SS2  |
- * ----------------------------
- * 0x1C		|CR3			  |
- * ----------------------------
- * 0x20		|EIP			  |
- * ----------------------------
- * 0x24		|EFLAGS			  |
- * ----------------------------
- * 0x28		|EAX			  |
- * ----------------------------
- * 0x2C		|ECX			  |
- * ----------------------------
- * 0x30		|EDX			  |
- * ----------------------------
- * 0x34		|EBX			  |
- * ----------------------------
- * 0x38		|ESP			  |
- * ----------------------------
- * 0x3C		|EBP			  |
- * ----------------------------
- * 0x40		|ESI			  |
- * ----------------------------
- * 0x44		|EDI			  |
- * ----------------------------
- * 0x48		|reserved	|ES	  |
- * ----------------------------
- * 0x4C		|reserved	|CS	  |
- * ----------------------------
- * 0x50		|reserved	|SS	  |
- * ----------------------------
- * 0x54		|reserved	|DS	  |
- * ----------------------------
- * 0x58		|reserved	|FS	  |
- * ----------------------------
- * 0x5C		|reserved	|GS	  |
- * ----------------------------
- * 0x60		|reserved	|LDTR |
- * ----------------------------
- * 0x64		|IOPB		|reser|
- * ----------------------------
- */
-typedef volatile struct __tss_struct {
-	unsigned short link;
-	unsigned short link_h;
-
-	unsigned long esp0;
-	unsigned short ss0;
-	unsigned short ss0_h;
-
-	unsigned long esp1;
-	unsigned short ss1;
-	unsigned short ss1_h;
-
-	unsigned long esp2;
-	unsigned short ss2;
-	unsigned short ss2_h;
-
-	unsigned long cr3;
-	unsigned long eip;
-	unsigned long eflags;
-
-	unsigned long eax;
-	unsigned long ecx;
-	unsigned long edx;
-	unsigned long ebx;
-
-	unsigned long esp;
-	unsigned long ebp;
-
-	unsigned long esi;
-	unsigned long edi;
-
-	unsigned short es;
-	unsigned short es_h;
-
-	unsigned short cs;
-	unsigned short cs_h;
-
-	unsigned short ss;
-	unsigned short ss_h;
-
-	unsigned short ds;
-	unsigned short ds_h;
-
-	unsigned short fs;
-	unsigned short fs_h;
-
-	unsigned short gs;
-	unsigned short gs_h;
-
-	unsigned short ldt;
-	unsigned short ldt_h;
-
-	unsigned short trap;
-	unsigned short iomap;
-
-} tss_struct;
-
-#define TSS_IO_BITMAP_BYTES 8192
-
-typedef struct _tss_io_struct {
-	tss_struct tss;
-	unsigned char io_bitmap[TSS_IO_BITMAP_BYTES + 1];
-} tss_io_struct;
-
-#define TSS_SEG_LIMIT ((unsigned)(sizeof(tss_io_struct) - 1))
-
 typedef struct _vm_region vm_region;
 
 typedef struct _page_table_list_entry {
@@ -175,26 +55,6 @@ typedef struct {
 	unsigned long rlim_cur;
 	unsigned long rlim_max;
 } rlimit_t;
-
-typedef struct _ptrace_saved_frame {
-	unsigned edi;
-	unsigned esi;
-	unsigned ebp;
-	unsigned ebx;
-	unsigned edx;
-	unsigned ecx;
-	unsigned eax;
-	unsigned short gs;
-	unsigned short fs;
-	unsigned short es;
-	unsigned short ds;
-	unsigned error_code;
-	unsigned eip;
-	unsigned short cs;
-	unsigned eflags;
-	unsigned esp;
-	unsigned short ss;
-} ptrace_saved_frame;
 
 typedef struct _user_enviroment {
 	vm_struct_t vm;
@@ -255,27 +115,7 @@ typedef enum _ps_priority {
 
 typedef void (*process_fn)(void *param);
 
-typedef volatile struct _task_frame {
-	unsigned short ds;
-	unsigned short ss;
-	unsigned short es;
-	unsigned short gs;
-	unsigned short fs;
-	unsigned short cs;
-	unsigned long edi;
-	unsigned long esi;
-	unsigned long edx;
-	unsigned long ecx;
-	unsigned long ebx;
-	unsigned long eax;
-	unsigned long ebp;
-	unsigned long eip;
-	unsigned long esp0; // kernel esp
-	unsigned long esp; // kernel or user esp
-} task_frame;
-
 typedef struct _task_struct task_struct;
-typedef struct _intr_frame intr_frame;
 struct _task_struct {
 	task_frame tss;
 	unsigned switch_sp;
@@ -283,7 +123,7 @@ struct _task_struct {
 	unsigned terminate_requested;
 	int sched_level;
 	unsigned char fpu[512] __attribute__((aligned(16)));
-	unsigned long cr3;
+	addr_space_t address_space;
 	unsigned int psid;
 	unsigned int tgid;
 	process_fn fn;
@@ -408,7 +248,7 @@ int sched_is_enabled();
 
 int sched_set_level(int level);
 
-typedef void (*fpuser_map_callback)(void *aux, unsigned vir, unsigned phy);
+typedef void (*fpuser_map_callback)(void *aux, vaddr_t vir, paddr_t phy);
 
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
 

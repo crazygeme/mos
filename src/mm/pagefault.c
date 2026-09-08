@@ -34,10 +34,10 @@ void pf_init()
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
-static unsigned pf_read_file_page_direct(file *f, unsigned offset)
+static paddr_t pf_read_file_page_direct(file *f, unsigned offset)
 {
 	unsigned page_idx;
-	unsigned phy;
+	paddr_t phy;
 
 	if (!f || !f->f_inode || !f->f_fop || !f->f_fop->read_page)
 		return 0;
@@ -82,7 +82,7 @@ static int pf_file_uses_fs_page_cache(file *f)
 }
 
 typedef struct _pf_file_page_result {
-	unsigned phy;
+	paddr_t phy;
 	int cache_hit;
 	int needs_shared_registration;
 } pf_file_page_result;
@@ -131,7 +131,7 @@ extern phymm_page *phymm_pages;
  * to Linux than the old pagefault-local cache: MAP_SHARED and MAP_PRIVATE both
  * start from the cached file page, and the semantic split happens on write.
  */
-static int pf_handle_invalid_file_map(unsigned address, vm_region *region,
+static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 				      file *f, int offset, int prot, int flag)
 {
 	pf_file_page_result page;
@@ -147,7 +147,7 @@ static int pf_handle_invalid_file_map(unsigned address, vm_region *region,
 	 * expects stores to hit the BAR immediately.
 	 */
 	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS) {
-		unsigned phy = (unsigned)offset & PAGE_SIZE_MASK;
+		paddr_t phy = (paddr_t)offset & PAGE_SIZE_MASK;
 		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_CD;
 
 		if (prot & PROT_WRITE)
@@ -203,7 +203,7 @@ FAIL:
  * MAP_PRIVATE read-only: map the global zero page read-only; a write fault
  *   triggers COW.
  */
-static int pf_handle_invalid_memory(unsigned address, vm_region *region,
+static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 				    int offset)
 {
 	int prot = region->prot;
@@ -214,7 +214,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 	page_fault_invalid++;
 
 	if ((flag & MAP_SHARED) && region->anon_id != 0) {
-		unsigned phy = mm_anon_shared_find(region->anon_id, offset);
+		paddr_t phy = mm_anon_shared_find(region->anon_id, offset);
 
 		if (phy != 0) {
 			/* Hit — map read-only so writes go through pf_handle_permission. */
@@ -290,7 +290,7 @@ static int pf_vma_is_stack(task_struct *task, vm_region *region)
  * address falls in a hole and the next VMA is the grow-down stack mapping,
  * extend that mapping downward to cover the faulting page.
  */
-static vm_region *pf_find_vma(task_struct *task, unsigned address)
+static vm_region *pf_find_vma(task_struct *task, vaddr_t address)
 {
 	vm_region *region;
 
@@ -325,7 +325,7 @@ static vm_region *pf_find_vma(task_struct *task, unsigned address)
 	return vm_find_map_cached(task->user, address);
 }
 
-static vm_region *pf_lock_region(vm_region *region, unsigned address)
+static vm_region *pf_lock_region(vm_region *region, vaddr_t address)
 {
 	if (!region)
 		return NULL;
@@ -339,7 +339,7 @@ static vm_region *pf_lock_region(vm_region *region, unsigned address)
 	return region;
 }
 
-static int pf_page_already_present(unsigned address)
+static int pf_page_already_present(vaddr_t address)
 {
 	return (mm_get_map_flag(address) & PAGE_ENTRY_PRESENT) != 0;
 }
@@ -347,14 +347,16 @@ static int pf_page_already_present(unsigned address)
 /*
  * Handle page fault which has no physical page.
  */
-static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
+static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
 {
 	vm_region *region;
 	int this_offset;
 
-	region = pf_lock_region(vm_find_map_cached(task->user, cr2), cr2);
+	region = pf_lock_region(vm_find_map_cached(task->user, fault_address),
+				fault_address);
 	if (!region)
-		region = pf_lock_region(pf_find_vma(task, cr2), cr2);
+		region = pf_lock_region(pf_find_vma(task, fault_address),
+				fault_address);
 	if (!region)
 		return 0;
 
@@ -364,15 +366,15 @@ static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
 		return 0;
 	}
 
-	if (pf_page_already_present(cr2)) {
+	if (pf_page_already_present(fault_address)) {
 		vm_region_unlock_fault(region);
 		return 1;
 	}
 
-	this_offset = region->offset + (cr2 - region->begin);
+	this_offset = region->offset + (fault_address - region->begin);
 
 	if (region->fp != NULL) {
-		if (!pf_handle_invalid_file_map(cr2, region, region->fp,
+		if (!pf_handle_invalid_file_map(fault_address, region, region->fp,
 						this_offset, region->prot,
 						region->flag)) {
 			vm_region_unlock_fault(region);
@@ -381,7 +383,7 @@ static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
 		if (task->stats)
 			task->stats->pf_major++;
 	} else {
-		if (!pf_handle_invalid_memory(cr2, region, this_offset)) {
+		if (!pf_handle_invalid_memory(fault_address, region, this_offset)) {
 			vm_region_unlock_fault(region);
 			return 0;
 		}
@@ -399,11 +401,11 @@ static int pf_handle_page_invalid(task_struct *task, unsigned cr2)
  * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
  * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
  */
-static void wp_page_copy(unsigned cr2)
+static void wp_page_copy(vaddr_t fault_address)
 {
-	unsigned vir = cr2 & PAGE_SIZE_MASK;
+	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
 	unsigned page_idx;
-	unsigned phy;
+	paddr_t phy;
 	int ret;
 	int flag;
 
@@ -415,7 +417,7 @@ static void wp_page_copy(unsigned cr2)
 		page_idx = phymm_alloc_user();
 		if (page_idx == PHYMM_INVALID) {
 			klog("pagefault: phymm_alloc_user failed COW addr=%x\n",
-			     cr2);
+			     fault_address);
 			return;
 		}
 	}
@@ -426,7 +428,7 @@ static void wp_page_copy(unsigned cr2)
 	if (ret != 1) {
 		phymm_free_user(page_idx);
 		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x ret = %d\n",
-		     cr2, phy, ret);
+		     fault_address, phy, ret);
 		return;
 	}
 	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);
@@ -447,9 +449,9 @@ static void wp_page_copy(unsigned cr2)
  * Called when ref_count == 1 (this process is the only user of the page).
  * Mirrors Linux's wp_page_reuse(): no copy needed, just flip the PTE bit.
  */
-static void wp_page_reuse(unsigned cr2)
+static void wp_page_reuse(vaddr_t fault_address)
 {
-	unsigned vir = cr2 & PAGE_SIZE_MASK;
+	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
 	int flag;
 
 	page_fault_perm++;
@@ -475,11 +477,11 @@ static void wp_page_reuse(unsigned cr2)
  *
  * No VMA or VMA without PROT_WRITE → SIGSEGV.
  */
-static int do_wp_page(task_struct *task, unsigned cr2)
+static int do_wp_page(task_struct *task, vaddr_t fault_address)
 {
 	vm_region *region;
 	unsigned page_index;
-	unsigned vir = cr2 & PAGE_SIZE_MASK;
+	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
 
 	region = pf_lock_region(vm_find_map_cached(task->user, vir), vir);
 
@@ -529,22 +531,22 @@ static int do_wp_page(task_struct *task, unsigned cr2)
  * tables.  The scheduler and interrupts stay disabled for the duration so the
  * logical current task cannot diverge from the active CR3 mid-operation.
  */
-int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
+int pf_resolve_task_page_fault(task_struct *task, vaddr_t addr, int write)
 {
-	unsigned old_cr3;
-	unsigned target_cr3;
+	addr_space_t old_address_space;
+	addr_space_t target_address_space;
 	unsigned old_level;
 	int handled;
 
 	if (!task || !task->user)
 		return 0;
 
-	target_cr3 = VIRT_TO_PHY(task->user->vm->page_dir);
+	target_address_space = VIRT_TO_PHY(task->user->vm->page_dir);
 	old_level = int_intr_disable();
 	sched_disable();
-	old_cr3 = arch_mm_current_address_space();
-	if (old_cr3 != target_cr3)
-		arch_mm_activate(target_cr3);
+	old_address_space = arch_mm_current_address_space();
+	if (old_address_space != target_address_space)
+		arch_mm_activate(target_address_space);
 
 	addr &= PAGE_SIZE_MASK;
 	if (write)
@@ -552,8 +554,8 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 	else
 		handled = pf_handle_page_invalid(task, addr);
 
-	if (old_cr3 != target_cr3)
-		arch_mm_activate(old_cr3);
+	if (old_address_space != target_address_space)
+		arch_mm_activate(old_address_space);
 	sched_enable();
 	int_intr_setlevel(old_level);
 	return handled;
@@ -562,15 +564,15 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 extern void do_signal(intr_frame *frame);
 extern void do_exit(unsigned encoded_status);
 
-static int pf_stack_addr_valid(unsigned addr, unsigned stack_base,
-			       unsigned stack_top)
+static int pf_stack_addr_valid(vaddr_t addr, vaddr_t stack_base,
+			       vaddr_t stack_top)
 {
 	return addr >= stack_base && addr <= stack_top - sizeof(unsigned);
 }
 
 static void pf_process(intr_frame *frame)
 {
-	unsigned cr2;
+	vaddr_t fault_address;
 	unsigned error = frame->error_code;
 	task_struct *cur;
 	int int_enable = 0;
@@ -578,7 +580,7 @@ static void pf_process(intr_frame *frame)
 	/*
 	 * Save old interrupt state first.
 	 */
-	cr2 = arch_mm_fault_address();
+	fault_address = arch_mm_fault_address();
 	sched_disable();
 	int_enable = int_intr_enable();
 
@@ -588,16 +590,16 @@ static void pf_process(intr_frame *frame)
 	 * `error_code` is actually pushed by CPU.
 	 */
 
-	cr2 = cr2 & PAGE_SIZE_MASK;
+	fault_address &= PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {
-		if (pf_handle_page_invalid(CURRENT_TASK(), cr2))
+		if (pf_handle_page_invalid(CURRENT_TASK(), fault_address))
 			goto Done;
 		goto NOT_HANDLED;
 	}
 
 	if (error & PF_MASK_RW) {
-		if (do_wp_page(CURRENT_TASK(), cr2))
+		if (do_wp_page(CURRENT_TASK(), fault_address))
 			goto Done;
 		goto NOT_HANDLED;
 	}
@@ -606,12 +608,12 @@ NOT_HANDLED:
 	cur = CURRENT_TASK();
 
 	if ((unsigned)frame->eip < KERNEL_OFFSET ||
-	    (cr2 < KERNEL_OFFSET && cr2 > 0x1000)) {
+	    (fault_address < KERNEL_OFFSET && fault_address > 0x1000)) {
 		klog("segfault: %s: error code %x, address %x, eip %x\n",
 		     cur->user ? cur->user->command ? cur->user->command :
 						      "[none]" :
 				 "[none]",
-		     frame->error_code, cr2, frame->eip);
+		     frame->error_code, fault_address, frame->eip);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);
@@ -623,7 +625,7 @@ NOT_HANDLED:
 	klog("segfault: %s: error code %x, address %x, eip %x\n",
 	     cur->user ? cur->user->command ? cur->user->command : "[none]" :
 			 "[none]",
-	     frame->error_code, cr2, frame->eip);
+	     frame->error_code, fault_address, frame->eip);
 
 	DIE();
 

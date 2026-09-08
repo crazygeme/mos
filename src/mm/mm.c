@@ -59,15 +59,15 @@ typedef struct _kmap_cache_t {
 
 typedef struct _kmap_loopup_entry {
 	struct rb_node node;
-	unsigned int phys;
-	unsigned int virt;
+	paddr_t phys;
+	vaddr_t virt;
 	unsigned int ref;
 } kmap_loopup_entry;
 
 static kmap_cache_t kmap_phy_cache;
 static struct rb_root kmap_phy_to_virt = _RBTREE_ROOT_INIT;
 
-static kmap_loopup_entry *kmap_cache_find(unsigned phy_address)
+static kmap_loopup_entry *kmap_cache_find(paddr_t phy_address)
 {
 	struct rb_node *n = kmap_phy_to_virt.rb_node;
 	while (n) {
@@ -132,7 +132,7 @@ static void mm_cache_free(mm_cache_t *cache, unsigned int val)
 	cache_count--;
 }
 
-unsigned int mm_alloc_page_table()
+vaddr_t mm_alloc_page_table(void)
 {
 	unsigned int ret = mm_cache_alloc((mm_cache_t *)&page_table_cache);
 
@@ -144,12 +144,12 @@ unsigned int mm_alloc_page_table()
 	return ret;
 }
 
-void mm_free_page_table(unsigned int vir)
+void mm_free_page_table(vaddr_t vir)
 {
 	mm_cache_free((mm_cache_t *)&page_table_cache, vir);
 }
 
-static void kmap_cache_erase(unsigned phy_address)
+static void kmap_cache_erase(paddr_t phy_address)
 {
 	kmap_loopup_entry *entry = kmap_cache_find(phy_address);
 	if (entry) {
@@ -160,7 +160,7 @@ static void kmap_cache_erase(unsigned phy_address)
 
 static void mm_init_kernel_page_dir_template(void)
 {
-	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
+	pte_t *page_dir = (pte_t *)mm_get_pagedir();
 	unsigned int i;
 
 	for (i = 0; i < 1024 - KERNEL_PAGE_DIR_OFFSET; i++) {
@@ -187,7 +187,7 @@ static void mm_init_kernel_page_dir_template(void)
 static spinlock_t mm_lock;
 static spinlock_t path_lock;
 static spinlock_t kmap_lock;
-static int mm_dynamic_region(unsigned phy);
+static int mm_dynamic_region(paddr_t phy);
 
 /* Name-buffer cache node */
 
@@ -214,28 +214,28 @@ void mm_init_cache()
 	list_init(&name_cache_head);
 }
 
-void mm_init_process_page_dir(unsigned int page_dir)
+void mm_init_process_page_dir(vaddr_t page_dir)
 {
-	unsigned int *dst = (unsigned int *)page_dir;
-	unsigned int *src = (unsigned int *)mm_get_pagedir();
+	pte_t *dst = (pte_t *)page_dir;
+	pte_t *src = (pte_t *)mm_get_pagedir();
 
 	memset(dst, 0, PAGE_SIZE);
 	memcpy(&dst[KERNEL_PAGE_DIR_OFFSET], &src[KERNEL_PAGE_DIR_OFFSET],
-	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(unsigned int));
+	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(pte_t));
 }
 
 /*
  * Internal: page directory / page table helpers
  */
 
-unsigned mm_get_pagedir()
+vaddr_t mm_get_pagedir(void)
 {
 	return arch_mm_current_address_space() + KERNEL_OFFSET;
 }
 
-unsigned int mm_phys_to_virt(unsigned int phys)
+vaddr_t mm_phys_to_virt(paddr_t phys)
 {
-	unsigned int page = phys & PAGE_SIZE_MASK;
+	paddr_t page = phys & PAGE_SIZE_MASK;
 	unsigned int off = ADDR_TO_PAGE_OFFSET(phys);
 	kmap_loopup_entry *entry = NULL;
 	int irq;
@@ -246,7 +246,7 @@ unsigned int mm_phys_to_virt(unsigned int phys)
 	spinlock_lock(&kmap_lock, &irq);
 	entry = kmap_cache_find(page);
 	if (entry) {
-		unsigned int ret = entry->virt + off;
+		vaddr_t ret = entry->virt + off;
 		spinlock_unlock(&kmap_lock, irq);
 		return ret;
 	}
@@ -263,12 +263,12 @@ unsigned int mm_phys_to_virt(unsigned int phys)
 }
 
 typedef struct {
-	unsigned int *dir; /* page-directory entry for this address */
-	unsigned int *table; /* base of the page table */
-	unsigned int *entry; /* page-table entry for this address */
+	pte_t *dir; /* page-directory entry for this address */
+	pte_t *table; /* base of the page table */
+	pte_t *entry; /* page-table entry for this address */
 } mm_addr_info;
 
-static int mm_get_valid_page_table_in_dir(unsigned int *page_dir, unsigned addr,
+static int mm_get_valid_page_table_in_dir(pte_t *page_dir, vaddr_t addr,
 					  mm_addr_info *info)
 {
 	unsigned offset = ADDR_TO_PGT_OFFSET(addr);
@@ -281,7 +281,7 @@ static int mm_get_valid_page_table_in_dir(unsigned int *page_dir, unsigned addr,
 	if ((*info->dir & PAGE_SIZE_MASK) == 0)
 		return 0;
 
-	info->table = (unsigned int *)PHY_TO_VIRT(*info->dir & PAGE_SIZE_MASK);
+	info->table = (pte_t *)PHY_TO_VIRT(*info->dir & PAGE_SIZE_MASK);
 	info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
 	return 1;
 }
@@ -290,10 +290,10 @@ static int mm_get_valid_page_table_in_dir(unsigned int *page_dir, unsigned addr,
  * Locate (and optionally allocate) the page-table entry for @addr.
  * Returns 1 on success; 0 if a new page table was needed but allocation failed.
  */
-static int mm_get_valid_page_table(unsigned addr, unsigned flag,
+static int mm_get_valid_page_table(vaddr_t addr, unsigned flag,
 				   mm_addr_info *info, int alloc_if_none)
 {
-	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
+	pte_t *page_dir = (pte_t *)mm_get_pagedir();
 	unsigned offset = ADDR_TO_PGT_OFFSET(addr);
 
 	info->dir = info->table = info->entry = NULL;
@@ -302,8 +302,8 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 		if (!alloc_if_none)
 			return 0;
 
-		unsigned int table_addr = mm_alloc_page_table();
-		unsigned int pde;
+		vaddr_t table_addr = mm_alloc_page_table();
+		pte_t pde;
 
 		if (table_addr == 0)
 			return 0;
@@ -312,7 +312,7 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 	}
 	info->dir = &page_dir[offset];
 	if (*info->dir)
-		info->table = (unsigned int *)PHY_TO_VIRT(*info->dir &
+		info->table = (pte_t *)PHY_TO_VIRT(*info->dir &
 							  PAGE_SIZE_MASK);
 	if (info->table)
 		info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
@@ -320,7 +320,7 @@ static int mm_get_valid_page_table(unsigned addr, unsigned flag,
 	return info->entry != NULL;
 }
 
-unsigned int mm_virt_to_phys(unsigned int virt)
+paddr_t mm_virt_to_phys(vaddr_t virt)
 {
 	mm_addr_info info;
 
@@ -336,7 +336,7 @@ unsigned int mm_virt_to_phys(unsigned int virt)
  * necessary.  Increments the per-table live-entry counter.
  * Returns 1 on success, 0 on allocation failure.
  */
-static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
+static int mm_set_page_table_entry(vaddr_t addr, unsigned flag, pte_t value)
 {
 	mm_addr_info info;
 
@@ -362,14 +362,14 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
  */
 static void mm_clear_page_table_entry(mm_addr_info *info)
 {
-	unsigned phy = *info->entry & PAGE_SIZE_MASK;
+	paddr_t phy = *info->entry & PAGE_SIZE_MASK;
 
 	*info->entry = 0;
 	arch_mm_flush_local();
 	if (phy) {
 		unsigned dir_index =
 			(unsigned)(info->dir -
-				   (unsigned int *)mm_get_pagedir());
+				   (pte_t *)mm_get_pagedir());
 
 		if (dir_index < KERNEL_PAGE_DIR_OFFSET) {
 			int idx =
@@ -395,7 +395,7 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
  * This is used during boot for reserved kernel pages and for the physical
  * memory descriptor array.  It does not change physical allocator refcounts.
  */
-int mm_kmap_page(unsigned int vir)
+int mm_kmap_page(vaddr_t vir)
 {
 	unsigned int page_index;
 
@@ -418,7 +418,7 @@ int mm_kmap_page(unsigned int vir)
 }
 
 /* Remove a kernel mapping without touching physical allocator refcounts. */
-void mm_kunmap_page(unsigned int vir)
+void mm_kunmap_page(vaddr_t vir)
 {
 	mm_addr_info info;
 
@@ -441,10 +441,10 @@ void mm_kunmap_page(unsigned int vir)
  *
  * Returns -1 on page-table allocation failure or alias-space exhaustion.
  */
-int mm_kmap_phys(unsigned int phys)
+int mm_kmap_phys(paddr_t phys)
 {
-	unsigned int page = phys & PAGE_SIZE_MASK;
-	unsigned int virt;
+	paddr_t page = phys & PAGE_SIZE_MASK;
+	vaddr_t virt;
 	kmap_loopup_entry *entry = NULL;
 	int irq;
 	mm_addr_info info;
@@ -505,11 +505,11 @@ int mm_kmap_phys(unsigned int phys)
 	return 1;
 }
 
-void mm_kunmap_phys(unsigned int phys)
+void mm_kunmap_phys(paddr_t phys)
 {
-	unsigned int page = phys & PAGE_SIZE_MASK;
+	paddr_t page = phys & PAGE_SIZE_MASK;
 	kmap_loopup_entry *entry = NULL;
-	unsigned int virt;
+	vaddr_t virt;
 	int irq;
 	mm_addr_info info;
 
@@ -548,7 +548,7 @@ done:
  * Map a high physical address (e.g. MMIO resource) into the kernel address
  * space at the same virtual address.
  */
-int mm_map_io(unsigned int phy)
+int mm_map_io(paddr_t phy)
 {
 	mm_addr_info info;
 
@@ -569,7 +569,7 @@ int mm_map_io(unsigned int phy)
 /* Remove the temporary low identity map installed during boot. */
 void mm_del_user_map()
 {
-	unsigned int *page_dir = (unsigned int *)mm_get_pagedir();
+	pte_t *page_dir = (pte_t *)mm_get_pagedir();
 	unsigned int reserved_page_tables =
 		(RESERVED_PAGES + PE_TABLE_SIZE - 1) / PE_TABLE_SIZE;
 	unsigned int i;
@@ -586,9 +586,9 @@ void mm_del_user_map()
  * it walks each user page table exactly once, drops all backing user pages,
  * then frees the page table as a whole.
  */
-void mm_destroy_user_map(unsigned int page_dir)
+void mm_destroy_user_map(vaddr_t page_dir)
 {
-	unsigned int *dir = (unsigned int *)page_dir;
+	pte_t *dir = (pte_t *)page_dir;
 	int irq;
 	unsigned int i;
 	unsigned int dynamic_begin = phymm_begin * PAGE_SIZE;
@@ -603,8 +603,8 @@ void mm_destroy_user_map(unsigned int page_dir)
 
 	spinlock_lock(&mm_lock, &irq);
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-		unsigned int *table;
-		unsigned int table_phy;
+		pte_t *table;
+		paddr_t table_phy;
 		unsigned int j;
 		int cache_idx;
 
@@ -612,7 +612,7 @@ void mm_destroy_user_map(unsigned int page_dir)
 		if (!table_phy)
 			continue;
 
-		table = (unsigned int *)PHY_TO_VIRT(table_phy);
+		table = (pte_t *)PHY_TO_VIRT(table_phy);
 		cache_idx =
 			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
 			1;
@@ -625,7 +625,7 @@ void mm_destroy_user_map(unsigned int page_dir)
 		 * scanning all 1024 PTEs in that case. */
 		if (pgc_entry_count[cache_idx] != 0)
 			for (j = 0; j < PG_TABLE_SIZE; j++) {
-				unsigned int phy_addr = table[j] &
+				paddr_t phy_addr = table[j] &
 							PAGE_SIZE_MASK;
 				unsigned int page_index;
 
@@ -658,7 +658,7 @@ void mm_destroy_user_map(unsigned int page_dir)
  * otherwise the caller-supplied physical address is used.
  * Returns 1 on success, -1 on failure.
  */
-int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
+int mm_map_page(vaddr_t vir, paddr_t phy, unsigned flag)
 {
 	unsigned int target_phy;
 	unsigned int page_index;
@@ -710,7 +710,7 @@ int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag)
  * allocator reference counts.  This is for /dev/mem-style mappings of device
  * BARs or firmware regions, not normal RAM-backed user pages.
  */
-int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag)
+int mm_map_page_io(vaddr_t vir, paddr_t phy, unsigned flag)
 {
 	int irq;
 
@@ -726,18 +726,18 @@ int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag)
 	return 1;
 }
 
-static int mm_dynamic_region(unsigned phy)
+static int mm_dynamic_region(paddr_t phy)
 {
-	unsigned begin = phymm_begin * PAGE_SIZE;
-	unsigned end = phymm_end * PAGE_SIZE;
+	paddr_t begin = (paddr_t)phymm_begin * PAGE_SIZE;
+	paddr_t end = (paddr_t)phymm_end * PAGE_SIZE;
 	return phy >= begin && phy < end;
 }
 
 /* Remove a dynamic user mapping and free the physical page if unreferenced */
-void mm_unmap_page(unsigned int vir)
+void mm_unmap_page(vaddr_t vir)
 {
 	mm_addr_info info;
-	unsigned int phy_addr;
+	paddr_t phy_addr;
 	int page_index;
 	int irq;
 
@@ -758,7 +758,7 @@ void mm_unmap_page(unsigned int vir)
 }
 
 /* Return the page-table flags (low 12 bits) for the mapping at @vir */
-unsigned mm_get_map_flag(unsigned vir)
+unsigned mm_get_map_flag(vaddr_t vir)
 {
 	mm_addr_info info;
 
@@ -767,18 +767,18 @@ unsigned mm_get_map_flag(unsigned vir)
 	return *info.entry & ~PAGE_SIZE_MASK;
 }
 
-unsigned mm_get_map_flag_pd(unsigned page_dir, unsigned vir)
+unsigned mm_get_map_flag_pd(vaddr_t page_dir, vaddr_t vir)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir,
+	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir,
 					    &info))
 		return 0;
 	return *info.entry & ~PAGE_SIZE_MASK;
 }
 
 /* Update the page-table flags for the mapping at @vir */
-void mm_set_map_flag(unsigned vir, unsigned flag)
+void mm_set_map_flag(vaddr_t vir, unsigned flag)
 {
 	mm_addr_info info;
 
@@ -788,11 +788,11 @@ void mm_set_map_flag(unsigned vir, unsigned flag)
 	arch_mm_flush_local();
 }
 
-void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
+void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((unsigned int *)page_dir, vir,
+	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir,
 					    &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
@@ -800,7 +800,7 @@ void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
 }
 
 /* Return the physical page index backing the virtual address @vir */
-unsigned mm_get_attached_page_index(unsigned int vir)
+pfn_t mm_get_attached_page_index(vaddr_t vir)
 {
 	mm_addr_info info;
 
@@ -814,7 +814,7 @@ unsigned mm_get_attached_page_index(unsigned int vir)
  */
 
 /* Allocate @page_count contiguous kernel pages; returns virtual base address */
-unsigned int vm_alloc(int page_count)
+vaddr_t vm_alloc(int page_count)
 {
 	int page_index;
 	int i;
@@ -865,7 +865,7 @@ unsigned int vm_alloc(int page_count)
 }
 
 /* Release @page_count pages starting at kernel virtual address @vm */
-void vm_free(unsigned int vm, int page_count)
+void vm_free(vaddr_t vm, int page_count)
 {
 	int i;
 	int irq;
@@ -875,7 +875,7 @@ void vm_free(unsigned int vm, int page_count)
 	vm &= PAGE_SIZE_MASK;
 	page_index = VIRT_TO_PAGE_IDX(vm);
 	for (i = 0; i < page_count; i++) {
-		unsigned int phy = VIRT_TO_PHY(vm + i * PAGE_SIZE);
+		paddr_t phy = VIRT_TO_PHY(vm + i * PAGE_SIZE);
 
 		mm_kunmap_page(vm + i * PAGE_SIZE);
 		if (phy)

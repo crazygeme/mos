@@ -3,6 +3,7 @@
 #define _INT_INT_H
 
 #include <config.h>
+#include <arch/interrupt.h>
 #include <macro.h>
 #include <mm/mm.h>
 
@@ -36,52 +37,6 @@
 #define KEYBOARD_IRQ 1
 
 #define DA_386IGate 0x8E
-
-/* Interrupt stack frame. */
-typedef struct _intr_frame {
-	/* 
-	 * Pushed by intr_entry in int.S.
-	 * These are the interrupted task's saved registers. 
-	 */
-	unsigned int edi; /* Saved EDI. */
-	unsigned int esi; /* Saved ESI. */
-	unsigned int ebp; /* Saved EBP. */
-	unsigned int esp_dummy; /* Not used. */
-	unsigned int ebx; /* Saved EBX. */
-	unsigned int edx; /* Saved EDX. */
-	unsigned int ecx; /* Saved ECX. */
-	unsigned int eax; /* Saved EAX. */
-	unsigned short gs, : 16; /* Saved GS segment register. */
-	unsigned short fs, : 16; /* Saved FS segment register. */
-	unsigned short es, : 16; /* Saved ES segment register. */
-	unsigned short ds, : 16; /* Saved DS segment register. */
-
-	/* Pushed by STUB in int.S. */
-	unsigned int vec_no; /* Interrupt vector number. */
-
-	/* 
-	 * Sometimes pushed by the CPU,
-	 * otherwise for consistency pushed as 0 by intrNN_stub.
-	 * The CPU puts it just under `eip', but we move it here. 
-	 */
-	unsigned int error_code; /* Error code. */
-
-	/* 
-	 * Pushed by STUB in int.S.
-         * This frame pointer eases interpretation of backtraces. 
-	 */
-	void *frame_pointer; /* Saved EBP (frame pointer). */
-
-	/* 
-	 * Pushed by the CPU.
-         * These are the interrupted task's saved registers. 
-	 */
-	void (*eip)(void); /* Next instruction to execute. */
-	unsigned short cs, : 16; /* Code segment for eip. */
-	unsigned int eflags; /* Saved CPU flags. */
-	void *esp; /* Saved stack pointer. */
-	unsigned short ss, : 16; /* Data segment for esp. */
-} __attribute__((packed)) intr_frame;
 
 extern void asm_interrupt_handle_for_keyboard();
 

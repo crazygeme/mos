@@ -1,6 +1,8 @@
 #ifndef _MM_MM_H
 #define _MM_MM_H
 #include <config.h>
+#include <arch/types.h>
+#include <stddef.h>
 
 typedef struct _file file;
 typedef struct multiboot_info multiboot_info_t;
@@ -57,8 +59,8 @@ typedef struct multiboot_info multiboot_info_t;
 #define MAP_UNINITIALIZED 0x0 /* Don't support this flag */
 #endif
 
-#define VIRT_TO_PHY(x) mm_virt_to_phys((unsigned int)(x))
-#define PHY_TO_VIRT(x) mm_phys_to_virt((unsigned int)(x))
+#define VIRT_TO_PHY(x) mm_virt_to_phys((vaddr_t)(x))
+#define PHY_TO_VIRT(x) mm_phys_to_virt((paddr_t)(x))
 #define PHY_TO_PAGE_IDX(x) (((x) & PAGE_SIZE_MASK) / PAGE_SIZE)
 #define VIRT_TO_PAGE_IDX(x) PHY_TO_PAGE_IDX(VIRT_TO_PHY(x))
 
@@ -73,60 +75,60 @@ extern unsigned long intr_stubs[];
 extern unsigned long long idt[];
 extern unsigned short idt_size;
 
-unsigned mm_get_pagedir();
+vaddr_t mm_get_pagedir(void);
 
 // map 0xCxxxxxxxx to xxxxxxx
 // return (is used for page table)
-int mm_kmap_page(unsigned int vir);
+int mm_kmap_page(vaddr_t vir);
 
 /* Map a physical page into the kernel physical-page alias space.
  * Safe for any 32-bit physical address; does not touch the allocator. */
-int mm_kmap_phys(unsigned int phys);
-void mm_kunmap_phys(unsigned int phys);
+int mm_kmap_phys(paddr_t phys);
+void mm_kunmap_phys(paddr_t phys);
 
-int mm_map_io(unsigned int phy);
+int mm_map_io(paddr_t phy);
 
-unsigned int mm_phys_to_virt(unsigned int phys);
-unsigned int mm_virt_to_phys(unsigned int virt);
+vaddr_t mm_phys_to_virt(paddr_t phys);
+paddr_t mm_virt_to_phys(vaddr_t virt);
 
-void mm_kunmap_page(unsigned int vir);
+void mm_kunmap_page(vaddr_t vir);
 
 void mm_del_user_map();
-void mm_destroy_user_map(unsigned int page_dir);
+void mm_destroy_user_map(vaddr_t page_dir);
 
-unsigned int mm_alloc_page_table();
+vaddr_t mm_alloc_page_table(void);
 
-void mm_free_page_table(unsigned int vir);
+void mm_free_page_table(vaddr_t vir);
 
-unsigned int vm_alloc(int page_count);
+vaddr_t vm_alloc(int page_count);
 
-void vm_free(unsigned int vm, int page_count);
+void vm_free(vaddr_t vm, int page_count);
 
-int mm_map_page(unsigned int vir, unsigned int phy, unsigned flag);
+int mm_map_page(vaddr_t vir, paddr_t phy, unsigned flag);
 
-int mm_map_page_io(unsigned int vir, unsigned int phy, unsigned flag);
+int mm_map_page_io(vaddr_t vir, paddr_t phy, unsigned flag);
 
-void mm_unmap_page(unsigned int vir);
+void mm_unmap_page(vaddr_t vir);
 
-unsigned mm_get_attached_page_index(unsigned int vir);
+pfn_t mm_get_attached_page_index(vaddr_t vir);
 
 unsigned int mm_get_free_phy_page_index();
 
-unsigned mm_get_map_flag(unsigned vir);
-unsigned mm_get_map_flag_pd(unsigned page_dir, unsigned vir);
+unsigned mm_get_map_flag(vaddr_t vir);
+unsigned mm_get_map_flag_pd(vaddr_t page_dir, vaddr_t vir);
 
-void mm_set_map_flag(unsigned vir, unsigned flag);
-void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag);
+void mm_set_map_flag(vaddr_t vir, unsigned flag);
+void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
 int do_mmap(unsigned int addr, unsigned int len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset);
 
-void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags);
+void do_mmap_update(vaddr_t addr, unsigned int prot, unsigned int flags);
 
-int do_mmap_kernel(unsigned int addr, unsigned int len, unsigned int prot,
-		   unsigned int flags, file *fp, unsigned int offset);
+vaddr_t do_mmap_kernel(vaddr_t addr, size_t len, unsigned int prot,
+		      unsigned int flags, file *fp, unsigned int offset);
 
 int do_munmap(void *addr, unsigned length);
 
@@ -135,6 +137,6 @@ void *name_get();
 void name_put(void *name);
 
 void mm_init_cache();
-void mm_init_process_page_dir(unsigned int page_dir);
+void mm_init_process_page_dir(vaddr_t page_dir);
 
 #endif

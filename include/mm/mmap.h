@@ -1,5 +1,6 @@
 #ifndef _MM_MMAP_H
 #define _MM_MMAP_H
+#include <arch/types.h>
 #include <fs/fs.h>
 #include <lib/lock.h>
 #include <lib/rbtree.h>
@@ -13,8 +14,8 @@ typedef struct _vm_fault_lock vm_fault_lock;
 
 typedef struct _vm_region {
 	struct rb_node rb_node;
-	unsigned begin;
-	unsigned end;
+	vaddr_t begin;
+	vaddr_t end;
 	int prot;
 	int flag;
 	unsigned vm_flags; /* Internal VM metadata, not userspace mmap flags. */
@@ -29,12 +30,12 @@ typedef struct _vm_region {
 struct _mm_struct {
 	struct rb_root vma_index;
 	spinlock_t vma_lock;
-	unsigned page_dir;
-	unsigned start_brk;
-	unsigned brk;
-	unsigned start_stack;
-	unsigned mmap_base;
-	unsigned task_size;
+	vaddr_t page_dir;
+	vaddr_t start_brk;
+	vaddr_t brk;
+	vaddr_t start_stack;
+	vaddr_t mmap_base;
+	vaddr_t task_size;
 	unsigned users;
 	unsigned count;
 	/* Incremented whenever the VMA tree changes; used by fault-time cache. */
@@ -45,23 +46,23 @@ static inline mm_struct *vm_mm(vm_struct_t vm)
 {
 	return vm;
 }
-static inline void vm_set_page_dir(vm_struct_t vm, unsigned pd)
+static inline void vm_set_page_dir(vm_struct_t vm, vaddr_t pd)
 {
 	if (vm)
 		vm->page_dir = pd;
 }
-static inline unsigned vm_get_page_dir(vm_struct_t vm)
+static inline vaddr_t vm_get_page_dir(vm_struct_t vm)
 {
 	return vm ? vm->page_dir : 0;
 }
-static inline void vm_set_brk(vm_struct_t vm, unsigned start, unsigned brk)
+static inline void vm_set_brk(vm_struct_t vm, vaddr_t start, vaddr_t brk)
 {
 	if (vm) {
 		vm->start_brk = start;
 		vm->brk = brk;
 	}
 }
-static inline void vm_set_stack(vm_struct_t vm, unsigned bottom)
+static inline void vm_set_stack(vm_struct_t vm, vaddr_t bottom)
 {
 	if (vm)
 		vm->start_stack = bottom;
@@ -85,13 +86,13 @@ void vm_destroy(vm_struct_t vm);
  * @param end
  * @param fd
  */
-void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
+void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot,
 		int flag, file *fp, int offset, unsigned anon_id);
 void vm_add_map_clone(vm_struct_t vm, vm_region *src);
 
 /* Extend the mapping that starts at @begin from @old_end to @new_end. */
-int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
-		  unsigned new_end);
+int vm_extend_map(vm_struct_t vm, vaddr_t begin, vaddr_t old_end,
+		  vaddr_t new_end);
 
 /**
  * delete a mapped region which contains addr
@@ -100,10 +101,10 @@ int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
  *
  * @param addr
  */
-void vm_del_map(vm_struct_t vm, unsigned addr);
+void vm_del_map(vm_struct_t vm, vaddr_t addr);
 
 /* Update protection of [begin, end) without unmapping physical pages. */
-void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot);
+void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot);
 
 /**
  * find the region that contains addr
@@ -114,21 +115,21 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot);
  *
  * @return vm_region*
  */
-vm_region *vm_find_map(vm_struct_t vm, unsigned addr);
+vm_region *vm_find_map(vm_struct_t vm, vaddr_t addr);
 
 /*
  * vm_find_vma - return the mapping containing @addr, or the next mapping above
  * it if @addr is in a hole. Returns NULL when no VMA exists at or above @addr.
  */
-vm_region *vm_find_vma(vm_struct_t vm, unsigned addr);
+vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr);
 
 /*
  * Linux-style per-task last-hit cache around vm_find_vma/vm_find_map.
  * The cache stores the last vm_find_vma() result, which may be a containing
  * VMA or the next VMA above the probed address.
  */
-vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr);
-vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr);
+vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr);
+vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr);
 void vm_invalidate_user_cache(user_enviroment *user);
 void vm_region_lock_fault(vm_region *region);
 void vm_region_unlock_fault(vm_region *region);
@@ -143,7 +144,7 @@ void vm_region_unlock_fault(vm_region *region);
  *
  * @return unsigned
  */
-unsigned vm_disc_map(vm_struct_t vm, int size);
+vaddr_t vm_disc_map(vm_struct_t vm, int size);
 
 /**
  * dup vm maps from cur into new

@@ -41,7 +41,7 @@ static void cleanup()
 	mm_struct *new_mm;
 	intr_frame *frame =
 		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(*frame));
-	unsigned int *new_pd;
+	vaddr_t new_pd;
 	int i = 0;
 
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
@@ -57,8 +57,8 @@ static void cleanup()
 	new_pd = vm_alloc(1);
 	if (!new_pd)
 		DIE();
-	mm_init_process_page_dir((unsigned)new_pd);
-	vm_set_page_dir(new_mm, (unsigned)new_pd);
+	mm_init_process_page_dir(new_pd);
+	vm_set_page_dir(new_mm, new_pd);
 	cur->user->vm = new_mm;
 	arch_mm_activate(VIRT_TO_PHY(new_pd));
 	vm_put(old_mm);

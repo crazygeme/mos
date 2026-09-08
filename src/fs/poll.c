@@ -5,6 +5,7 @@
 #include <hw/time.h>
 #include <errno.h>
 #include <config.h>
+#include <int/int.h>
 
 /*
  * Generic 4-phase wait loop used by both poll and select.
@@ -58,7 +59,28 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 			sleep_ms = TICK_MS;
 		}
 
-		time_wait(sleep_ms);
+		/* Close the final check-to-sleep race.  An interrupt could make an
+		 * fd ready after the check above but before time_wait() marks cur as
+		 * waiting; that wakeup would see a running task and be discarded.
+		 * Publish the waiting state with interrupts disabled, then perform
+		 * one last readiness check before actually switching away. */
+		{
+			unsigned irq = int_intr_disable();
+
+			cur = CURRENT_TASK();
+			ps_prepare_timed_wait(cur, sleep_ms, __func__);
+			ret = ops->check(ctx);
+			if (ret != 0) {
+				ps_put_to_ready_queue(cur);
+				ps_finish_timed_wait(cur);
+				int_intr_setlevel(irq);
+				ops->dereg(ctx);
+				break;
+			}
+			task_sched();
+			int_intr_setlevel(irq);
+			ps_finish_timed_wait(cur);
+		}
 		ops->dereg(ctx);
 
 		/*

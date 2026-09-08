@@ -24,7 +24,6 @@ void _task_sched(const char *func)
 	unsigned irq;
 
 	(void)func;
-	ps_reap_dead_threads();
 	task_schedule_count++;
 
 	if (prev->stats)
@@ -34,6 +33,9 @@ void _task_sched(const char *func)
 
 	irq = int_intr_disable();
 	smp_kernel_enter();
+	/* dead_threads is global; serialize its traversal and reclamation with
+	 * exits and with other CPUs' schedulers under the BKL. */
+	ps_reap_dead_threads();
 	if (prev->status == ps_running)
 		prev->status = ps_ready;
 

@@ -71,9 +71,12 @@ static kmap_loopup_entry *kmap_cache_find(unsigned phy_address)
 	struct rb_node *n = kmap_phy_to_virt.rb_node;
 	while (n) {
 		kmap_loopup_entry *e = rb_entry(n, kmap_loopup_entry, node);
-		if (phy_address < e->phys) n = n->rb_left;
-		else if (phy_address > e->phys) n = n->rb_right;
-		else return e;
+		if (phy_address < e->phys)
+			n = n->rb_left;
+		else if (phy_address > e->phys)
+			n = n->rb_right;
+		else
+			return e;
 	}
 	return NULL;
 }
@@ -84,7 +87,8 @@ static void kmap_cache_insert(kmap_loopup_entry *entry)
 	while (*link) {
 		kmap_loopup_entry *e = rb_entry(*link, kmap_loopup_entry, node);
 		parent = *link;
-		link = entry->phys < e->phys ? &(*link)->rb_left : &(*link)->rb_right;
+		link = entry->phys < e->phys ? &(*link)->rb_left :
+					       &(*link)->rb_right;
 	}
 	rb_link_node(&entry->node, parent, link);
 	rb_insert_color(&entry->node, &kmap_phy_to_virt);
@@ -147,7 +151,10 @@ void mm_free_page_table(unsigned int vir)
 static void kmap_cache_erase(unsigned phy_address)
 {
 	kmap_loopup_entry *entry = kmap_cache_find(phy_address);
-	if (entry) { rb_erase(&entry->node, &kmap_phy_to_virt); kfree(entry); }
+	if (entry) {
+		rb_erase(&entry->node, &kmap_phy_to_virt);
+		kfree(entry);
+	}
 }
 
 static void mm_init_kernel_page_dir_template(void)
@@ -609,7 +616,8 @@ void mm_destroy_user_map(unsigned int page_dir)
 
 		table = (unsigned int *)PHY_TO_VIRT(table_phy);
 		cache_idx =
-			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE - 1;
+			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
+			1;
 		/* Detach before freeing any backing pages or the table itself. */
 		dir[i] = 0;
 		RELOAD_CR3();
@@ -618,24 +626,27 @@ void mm_destroy_user_map(unsigned int page_dir)
 		 * empty by the time the address space is destroyed; avoid needlessly
 		 * scanning all 1024 PTEs in that case. */
 		if (pgc_entry_count[cache_idx] != 0)
-		for (j = 0; j < PG_TABLE_SIZE; j++) {
-			unsigned int phy_addr = table[j] & PAGE_SIZE_MASK;
-			unsigned int page_index;
+			for (j = 0; j < PG_TABLE_SIZE; j++) {
+				unsigned int phy_addr = table[j] &
+							PAGE_SIZE_MASK;
+				unsigned int page_index;
 
-			if (!phy_addr)
-				continue;
+				if (!phy_addr)
+					continue;
 
-			page_index = PHY_TO_PAGE_IDX(phy_addr);
-			if ((phy_addr >= dynamic_begin && phy_addr < dynamic_end) ||
-			    (phy_addr >= vdso_begin && phy_addr < vdso_end)) {
-				/* Every page installed through mm_map_page carries a reference;
+				page_index = PHY_TO_PAGE_IDX(phy_addr);
+				if ((phy_addr >= dynamic_begin &&
+				     phy_addr < dynamic_end) ||
+				    (phy_addr >= vdso_begin &&
+				     phy_addr < vdso_end)) {
+					/* Every page installed through mm_map_page carries a reference;
 				 * decrement once directly instead of doing a separate atomic
 				 * read via phymm_is_used(). */
-				if (phymm_dereference_page(page_index) == 0)
-					phymm_free_user(page_index);
+					if (phymm_dereference_page(
+						    page_index) == 0)
+						phymm_free_user(page_index);
+				}
 			}
-
-		}
 
 		pgc_entry_count[cache_idx] = 0;
 		mm_free_page_table((unsigned int)table);

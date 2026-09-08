@@ -93,7 +93,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 		return -ENOMEM;
 	}
 	task->user->vm = vm_create();
-	task->user->vm->page_dir = (unsigned int)vm_alloc(1);
+	task->user->vm->page_dir = vm_alloc(1);
 	task->user->command = vm_alloc(1);
 	task->user->environment = vm_alloc(1);
 	sprintf(task->user->command, "sys-%s", name);
@@ -128,7 +128,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 
 	task->umask = 0;
 	stack_bottom = (unsigned int)task + PAGE_SIZE;
-	task->cr3 = arch_mm_current_address_space();
+	task->address_space = arch_mm_current_address_space();
 	list_init(&task->ps_list);
 	list_init(&task->dying_queue);
 	RB_CLEAR_NODE(&task->mgr_rb);
@@ -213,11 +213,11 @@ int do_vfork(void);
  * so that the first write by either process triggers a #PF → wp_page_copy().
  * The child inherits the (now read-only) PTE and the page ref_count is bumped.
  */
-static void copy_one_pte(unsigned *src_pte, unsigned *dst_pte, vm_region *vma,
+static void copy_one_pte(pte_t *src_pte, pte_t *dst_pte, vm_region *vma,
 			 short *pt_count)
 {
-	unsigned pte = *src_pte;
-	unsigned phy = pte & PAGE_SIZE_MASK;
+	pte_t pte = *src_pte;
+	paddr_t phy = pte & PAGE_SIZE_MASK;
 	unsigned page_index;
 
 	if (!(pte & PAGE_ENTRY_PRESENT))
@@ -267,29 +267,29 @@ static void copy_one_pte(unsigned *src_pte, unsigned *dst_pte, vm_region *vma,
  * copy_pte_range — copy all present PTEs within [vma->begin, vma->end)
  * that reside in the page table at src_pd[pde_idx].
  */
-static void copy_pte_range(unsigned *src_pd, unsigned *dst_pd, vm_region *vma,
+static void copy_pte_range(pte_t *src_pd, pte_t *dst_pd, vm_region *vma,
 			   unsigned pde_idx)
 {
-	unsigned *src_pt;
-	unsigned *dst_pt;
-	unsigned pde_base = pde_idx << 22;
-	unsigned pde_end = pde_base + (1u << 22);
+	pte_t *src_pt;
+	pte_t *dst_pt;
+	vaddr_t pde_base = (vaddr_t)pde_idx << 22;
+	vaddr_t pde_end = pde_base + (1u << 22);
 	unsigned pt_start =
 		(vma->begin > pde_base) ? ADDR_TO_PET_OFFSET(vma->begin) : 0;
 	unsigned pt_end =
 		(vma->end >= pde_end) ?
 			1024 :
 			ADDR_TO_PET_OFFSET((vma->end - PAGE_SIZE)) + 1;
-	unsigned pde_flag = src_pd[pde_idx] & ~PAGE_SIZE_MASK;
+	pte_t pde_flag = src_pd[pde_idx] & ~PAGE_SIZE_MASK;
 	int cache_idx;
 	unsigned i;
 
-	src_pt = (unsigned *)PHY_TO_VIRT(src_pd[pde_idx] & PAGE_SIZE_MASK);
+	src_pt = (pte_t *)PHY_TO_VIRT(src_pd[pde_idx] & PAGE_SIZE_MASK);
 
 	if (!(dst_pd[pde_idx] & PAGE_SIZE_MASK))
 		dst_pd[pde_idx] = VIRT_TO_PHY(mm_alloc_page_table()) | pde_flag;
 
-	dst_pt = (unsigned *)PHY_TO_VIRT(dst_pd[pde_idx] & PAGE_SIZE_MASK);
+	dst_pt = (pte_t *)PHY_TO_VIRT(dst_pd[pde_idx] & PAGE_SIZE_MASK);
 	cache_idx = (PAGE_TABLE_CACHE_END - (unsigned)dst_pt) / PAGE_SIZE - 1;
 
 	for (i = pt_start; i < pt_end; i++) {
@@ -306,7 +306,7 @@ static void copy_pte_range(unsigned *src_pd, unsigned *dst_pd, vm_region *vma,
  * Iterates only the PDE indices covered by the VMA; entries that are not
  * present (pages never faulted in) are skipped without descending.
  */
-static void copy_vma_pages(unsigned *src_pd, unsigned *dst_pd, vm_region *vma)
+static void copy_vma_pages(pte_t *src_pd, pte_t *dst_pd, vm_region *vma)
 {
 	unsigned pde_first = ADDR_TO_PGT_OFFSET(vma->begin);
 	unsigned pde_last = ADDR_TO_PGT_OFFSET((vma->end - PAGE_SIZE));
@@ -320,8 +320,8 @@ static void copy_vma_pages(unsigned *src_pd, unsigned *dst_pd, vm_region *vma)
 }
 
 struct copy_page_range_ctx {
-	unsigned *src_pd;
-	unsigned *dst_pd;
+	pte_t *src_pd;
+	pte_t *dst_pd;
 	vm_struct_t child_vm;
 };
 
@@ -342,12 +342,12 @@ static void copy_vma_callback(vm_region *vma, void *data)
 void copy_page_range(task_struct *parent, task_struct *child)
 {
 	struct copy_page_range_ctx ctx = {
-		.src_pd = (unsigned *)mm_get_pagedir(),
-		.dst_pd = (unsigned *)child->user->vm->page_dir,
+		.src_pd = (pte_t *)mm_get_pagedir(),
+		.dst_pd = (pte_t *)child->user->vm->page_dir,
 		.child_vm = child->user->vm,
 	};
 
-	mm_init_process_page_dir((unsigned int)ctx.dst_pd);
+	mm_init_process_page_dir((vaddr_t)ctx.dst_pd);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
 	arch_mm_flush_local();
 }

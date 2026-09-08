@@ -21,8 +21,8 @@
  * intersects the probe key.
  */
 typedef struct _vm_key {
-	unsigned begin;
-	unsigned end;
+	vaddr_t begin;
+	vaddr_t end;
 } vm_key;
 
 struct _vm_fault_lock {
@@ -49,9 +49,9 @@ static INLINE int vm_region_compare(const void *region1, const void *region2)
 	return 0; /* overlap */
 }
 
-static void vm_flush_dirty_region(vm_region *region, unsigned begin,
-				  unsigned end);
-static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
+static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
+				  vaddr_t end);
+static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 				 int prot, int flag, file *fp, int offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock);
 
@@ -273,7 +273,7 @@ void vm_destroy(vm_struct_t vm)
  *
  * addr is rounded down to its page boundary before probing the tree.
  */
-static INLINE vm_region *vm_find_region(mm_struct *mm, unsigned addr)
+static INLINE vm_region *vm_find_region(mm_struct *mm, vaddr_t addr)
 {
 	vm_key key;
 	key.begin = addr & PAGE_SIZE_MASK;
@@ -290,7 +290,7 @@ static INLINE vm_region *vm_find_region(mm_struct *mm, unsigned addr)
  * handles arbitrarily many pre-existing overlapping regions one at a time
  * until no conflicts remain, then inserts the new region.
  */
-static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
+static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 				 int prot, int flag, file *fp, int offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock)
 {
@@ -311,7 +311,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
 		unsigned unmap_begin;
 		unsigned unmap_end;
-		unsigned vir;
+		vaddr_t vir;
 
 		/* Snapshot all origin data before vm_del_map frees the structs. */
 		unsigned o_begin = oregion->begin;
@@ -392,7 +392,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 	vm_tree_insert(mm, region);
 }
 
-void vm_add_map(vm_struct_t vm, unsigned begin, unsigned end, int prot,
+void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot,
 		int flag, file *fp, int offset, unsigned anon_id)
 {
 	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
@@ -415,8 +415,8 @@ void vm_add_map_clone(vm_struct_t vm, vm_region *src)
  * extending the descriptor preserves userspace's expectation that the resized
  * range remains one mapping with one set of attributes.
  */
-int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
-		  unsigned new_end)
+int vm_extend_map(vm_struct_t vm, vaddr_t begin, vaddr_t old_end,
+		  vaddr_t new_end)
 {
 	mm_struct *mm = vm;
 	vm_key probe;
@@ -452,11 +452,11 @@ int vm_extend_map(vm_struct_t vm, unsigned begin, unsigned old_end,
  * addr is rounded down to the nearest page boundary.  All hardware page-table
  * entries for the region are cleared and CR3 is reloaded to flush the TLB.
  */
-void vm_del_map(vm_struct_t vm, unsigned addr)
+void vm_del_map(vm_struct_t vm, vaddr_t addr)
 {
 	mm_struct *mm = vm;
 	vm_region *region;
-	unsigned vir;
+	vaddr_t vir;
 
 	addr &= PAGE_SIZE_MASK;
 
@@ -486,13 +486,13 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
  * Returns a pointer to the live vm_region (caller must not free it),
  * or NULL if no region covers addr.
  */
-vm_region *vm_find_map(vm_struct_t vm, unsigned addr)
+vm_region *vm_find_map(vm_struct_t vm, vaddr_t addr)
 {
 	addr &= PAGE_SIZE_MASK;
 	return vm_find_region(vm, addr);
 }
 
-vm_region *vm_find_vma(vm_struct_t vm, unsigned addr)
+vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr)
 {
 	mm_struct *mm = vm;
 	struct rb_node *node;
@@ -539,7 +539,7 @@ void vm_invalidate_user_cache(user_enviroment *user)
 	}
 }
 
-vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
+vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr)
 {
 	if (!user || !user->vm)
 		return NULL;
@@ -559,7 +559,7 @@ vm_region *vm_find_vma_cached(user_enviroment *user, unsigned addr)
 	return region;
 }
 
-vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)
+vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr)
 {
 	vm_region *region = vm_find_vma_cached(user, addr);
 
@@ -579,7 +579,7 @@ vm_region *vm_find_map_cached(user_enviroment *user, unsigned addr)
  * stack set up by the process loader) are skipped over.  Returns 0 if no
  * suitable gap exists.
  */
-unsigned vm_disc_map(vm_struct_t vm, int size)
+vaddr_t vm_disc_map(vm_struct_t vm, int size)
 {
 	mm_struct *mm = vm;
 	vm_region *region = vm_tree_first(mm);
@@ -663,7 +663,7 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
  * File reference counting: we temporarily bump the ref before removing the
  * region, then release our bump at the end.
  */
-void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
+void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 {
 	mm_struct *mm = vm;
 	vm_key probe;
@@ -738,13 +738,13 @@ void vm_mprotect(vm_struct_t vm, unsigned begin, unsigned end, int new_prot)
  * For MAP_SHARED|MAP_ANONYMOUS, assigns a unique anon_id so that the region
  * is identifiable across fork() for shared-page lookup.
  */
-int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
-		   unsigned int flags, file *fp, unsigned int offset)
+vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
+		      unsigned int flags, file *fp, unsigned int offset)
 {
-	unsigned addr = _addr & PAGE_SIZE_MASK;
-	unsigned last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
-	unsigned page_count = (last_addr - addr) / PAGE_SIZE + 1;
-	unsigned size = page_count * PAGE_SIZE;
+	vaddr_t addr = _addr & PAGE_SIZE_MASK;
+	vaddr_t last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
+	size_t page_count = (last_addr - addr) / PAGE_SIZE + 1;
+	size_t size = page_count * PAGE_SIZE;
 	task_struct *cur = CURRENT_TASK();
 	mm_struct *mm = cur->user->vm;
 	vm_key probe;
@@ -793,12 +793,12 @@ int do_mmap_kernel(unsigned int _addr, unsigned int _len, unsigned int prot,
 	return addr;
 }
 
-void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags)
+void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 {
-	unsigned addr = _addr & PAGE_SIZE_MASK;
+	vaddr_t addr = _addr & PAGE_SIZE_MASK;
 	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
-	unsigned vir;
+	vaddr_t vir;
 
 	region = vm_find_map(cur->user->vm, addr);
 	if (region) {
@@ -872,10 +872,10 @@ int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
  * Called with the user's page tables still active so that (void *)vir is a
  * valid kernel-readable address.
  */
-static void vm_flush_dirty_region(vm_region *region, unsigned begin,
-				  unsigned end)
+static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
+				  vaddr_t end)
 {
-	unsigned vir;
+	vaddr_t vir;
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
 		return;
 	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
@@ -995,16 +995,16 @@ void vm_flush_file_dirty(vm_struct_t vm, file *fp)
 int do_munmap(void *addr, unsigned length)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned begin = ((unsigned)addr) & PAGE_SIZE_MASK;
+	vaddr_t begin = ((vaddr_t)(uintptr_t)addr) & PAGE_SIZE_MASK;
 	/* Round length up to a page count, then compute end — avoids the
 	 * off-by-one that (addr+length+PAGE_SIZE-1)&PAGE_MASK produces when
 	 * length is already a multiple of PAGE_SIZE. */
 	unsigned pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
-	unsigned end = begin + pages * PAGE_SIZE;
+	vaddr_t end = begin + pages * PAGE_SIZE;
 	mm_struct *mm = cur->user->vm;
 	vm_key probe;
 	vm_region *region;
-	unsigned vir;
+	vaddr_t vir;
 
 	if (length == 0)
 		return 0;

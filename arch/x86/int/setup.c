@@ -5,7 +5,7 @@
 #include <mm/mm.h>
 #include <ps/ps.h>
 
-void arch_interrupt_set_gate(int vector, unsigned long entry, int trap, int dpl)
+void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap, int dpl)
 {
 	idt[vector] = trap ? MAKE_TRAP_GATE(entry, dpl) :
 			     MAKE_INTR_GATE(entry, dpl);

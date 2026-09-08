@@ -15,7 +15,7 @@ typedef struct _anon_shared_map_key {
 
 typedef struct _anon_shared_map_entry {
 	anon_shared_map_key key; /* must be first */
-	unsigned phy;
+	paddr_t phy;
 	struct rb_node rb_node;
 } anon_shared_map_entry;
 
@@ -33,7 +33,7 @@ typedef struct _file_shared_map_key {
 
 typedef struct _file_shared_map_entry {
 	file_shared_map_key key; /* must be first */
-	unsigned phy;
+	paddr_t phy;
 	struct rb_node rb_node;
 } file_shared_map_entry;
 
@@ -171,7 +171,7 @@ void mm_cache_init(void)
 	mm_cache_ready = 1;
 }
 
-unsigned mm_anon_shared_find(unsigned anon_id, unsigned offset)
+paddr_t mm_anon_shared_find(unsigned anon_id, unsigned offset)
 {
 	anon_shared_map_key tmp;
 	anon_shared_map_entry *entry;
@@ -192,7 +192,7 @@ unsigned mm_anon_shared_find(unsigned anon_id, unsigned offset)
 	return entry->phy;
 }
 
-void mm_anon_shared_add(unsigned anon_id, unsigned offset, unsigned phy)
+void mm_anon_shared_add(unsigned anon_id, unsigned offset, paddr_t phy)
 {
 	anon_shared_map_entry *entry;
 	anon_shared_map_key tmp;
@@ -275,7 +275,7 @@ void mm_anon_shared_put(unsigned anon_id)
 	mutex_unlock(&anon_shared_map_lock);
 }
 
-unsigned mm_file_shared_find(file *f, unsigned offset)
+paddr_t mm_file_shared_find(file *f, unsigned offset)
 {
 	file_shared_map_key tmp;
 	file_shared_map_entry *entry;
@@ -293,7 +293,7 @@ unsigned mm_file_shared_find(file *f, unsigned offset)
 	return entry->phy;
 }
 
-void mm_file_shared_add(file *f, unsigned offset, unsigned phy)
+void mm_file_shared_add(file *f, unsigned offset, paddr_t phy)
 {
 	file_shared_map_entry *entry;
 	file_shared_map_key tmp;

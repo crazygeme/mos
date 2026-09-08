@@ -13,7 +13,7 @@ static volatile unsigned kernel_owner;
 static volatile unsigned kernel_ticket;
 static volatile unsigned kernel_serving;
 static volatile unsigned tlb_generation;
-static unsigned boot_pd;
+static addr_space_t boot_pd;
 static void *firmware_copies[128];
 static unsigned firmware_copy_count;
 static unsigned char ap_stacks[SMP_MAX_CPUS][PAGE_SIZE]
@@ -339,9 +339,9 @@ void smp_init(void)
 void smp_start(void)
 {
 	unsigned i, irq = int_intr_disable();
-	unsigned *pd = (void *)(boot_pd + KERNEL_OFFSET);
-	unsigned old = pd[0];
-	unsigned *pt = (void *)mm_alloc_page_table();
+	pte_t *pd = (void *)(boot_pd + KERNEL_OFFSET);
+	pte_t old = pd[0];
+	pte_t *pt = (void *)mm_alloc_page_table();
 	if (!pt) DIE();
 	pt[7] = 0x7000 | PAGE_ENTRY_KERNEL_DATA;
 	pd[0] = VIRT_TO_PHY(pt) | PAGE_ENTRY_KERNEL_DATA;

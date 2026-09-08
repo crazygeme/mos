@@ -51,7 +51,7 @@ void reset_tss(task_struct *task)
 	tss_struct *tss = smp_tss();
 	tss_io_struct *io_tss = (tss_io_struct *)tss;
 
-	tss->cr3 = task->cr3;
+	tss->cr3 = task->address_space;
 	tss->esp0 = task->tss.esp0;
 	tss->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
 	if (task->io_allow_all)
@@ -85,7 +85,7 @@ void arch_task_reset_tls(task_struct *task, intr_frame *frame)
 	load_ldt(task);
 }
 
-void arch_task_init_user_frame(intr_frame *frame, unsigned ip, unsigned sp)
+void arch_task_init_user_frame(intr_frame *frame, vaddr_t ip, vaddr_t sp)
 {
 	memset(frame, 0, sizeof(*frame));
 	frame->eip = (void *)ip;

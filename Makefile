@@ -144,7 +144,7 @@ rebuild:
 	@+$(MAKE)
 
 format:
-	@-find src include test -name "*.c" -o -name "*.h" | xargs clang-format -i
+	@-find src arch test \( -name "*.c" -o -name "*.h" \) | xargs clang-format -i
 
 help:
 	@echo "Usage:"

@@ -7,8 +7,11 @@ headers, and architecture-specific sources under `arch/<arch>/`.
 - `x64`: reserved x86-64 backend; output in `out/x64/<build>` once enabled.
 
 Common kernel code remains under `src/`. Architecture-specific code is grouped
-directly by subsystem, for example `arch/x86/mm` and `arch/x86/ps`; there is no
-extra `src` directory. Architecture-specific headers live under
-`include/arch/<arch>/`. The build selects only the source and header directories
-matching `ARCH` through include-path priority; headers do not dispatch with
-architecture preprocessor conditionals.
+directly by subsystem, for example `arch/x86/mm` and `arch/x86/ps`. Public
+headers live at each module root and implementations live below `impl/`, for
+example `arch/x86/mm/mmu.h` and `arch/x86/mm/impl/cpu.c`.
+
+The build puts `arch/<arch>` before the common `src` tree on the include path.
+Architecture headers are therefore selected by the build and never dispatched
+with architecture preprocessor conditionals. Toolchain glue required under the
+`arch/` include namespace remains in `arch/<arch>/arch/`.

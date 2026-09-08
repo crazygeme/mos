@@ -30,9 +30,9 @@ COMMON_CFLAGS = -fno-pie\
 		$(ARCH_CFLAGS)\
 		$(CSTRICT)\
 		$(CIGNORE)\
-		-I$(MAINPATH)/include/arch/$(ARCH)\
+		-I$(MAINPATH)/arch/$(ARCH)\
 		-I$(MAINPATH)\
-		-I$(MAINPATH)/include\
+		-I$(MAINPATH)/src\
 		-I$(MAINPATH)/third_party/std\
 		-I$(MAINPATH)/third_party/lwext4/include\
 		-I$(MAINPATH)/third_party/lwip/src/include\

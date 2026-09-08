@@ -17,8 +17,11 @@
  * Time units are USER_HZ (= 100 ticks/second).  Our task->user_tickets and
  * task->kernel_tickets are already in 10 ms units (100/s), so they map 1:1.
  *
- * Per-CPU breakdown: we do not track per-CPU time, so cpu0 carries the full
- * aggregate and cpu1..N are reported as all-zero.
+ * Per-CPU breakdown: the scheduler currently keeps aggregate task accounting
+ * rather than separate user/system counters for each CPU.  Split the
+ * aggregate evenly across online CPUs so consumers such as procps/top see a
+ * valid, advancing sample for every CPU instead of treating secondary CPUs as
+ * absent.
  */
 
 #include "hw/time.h"
@@ -74,14 +77,20 @@ static void fill(proc_buf_t *pb)
 	proc_buf_printf(pb, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,
 			idle);
 
-	/* ---- per-CPU lines ---- */
+	/* ---- per-CPU lines ----
+	 * Keep each field's sum close to the aggregate.  Remainders are assigned
+	 * to the first CPUs, matching integer-jiffy accounting semantics. */
+	unsigned user_each = c.user / (unsigned)ncpu;
+	unsigned user_rem = c.user % (unsigned)ncpu;
+	unsigned system_each = c.system / (unsigned)ncpu;
+	unsigned system_rem = c.system % (unsigned)ncpu;
+	unsigned idle_each = idle / (unsigned)ncpu;
+	unsigned idle_rem = idle % (unsigned)ncpu;
 	for (i = 0; i < ncpu; i++) {
-		if (i == 0)
-			/* cpu0 carries the full aggregate */
-			proc_buf_printf(pb, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
-					c.user, c.system, idle);
-		else
-			proc_buf_printf(pb, "cpu%d 0 0 0 0 0 0 0 0 0 0\n", i);
+		proc_buf_printf(pb, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
+				user_each + (i < (int)user_rem),
+				system_each + (i < (int)system_rem),
+				idle_each + (i < (int)idle_rem));
 	}
 
 	proc_buf_printf(pb, "intr 0\n");

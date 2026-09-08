@@ -8,7 +8,7 @@ TARGET	= kernel
 include $(MAINPATH)/build/helpers.mk
 
 SCRIPTS   = $(MAINPATH)/build/config.mk $(ARCH_DIR)/config.mk $(MAINPATH)/build/helpers.mk $(MAINPATH)/Makefile $(SUBDIR_CFLAGS_FILES)
-SOURCE_DIRS = src $(if $(wildcard arch/$(ARCH)/src),arch/$(ARCH)/src)
+SOURCE_DIRS = src arch/$(ARCH)
 SRCS      = $(shell find $(SOURCE_DIRS) -name '*.c')
 ASMS      = $(shell find $(SOURCE_DIRS) -name '*.S')
 TEST_SRCS = $(shell find test/ -name '*.c')

@@ -1,4 +1,4 @@
-SUBDIR_CFLAGS_FILES = $(shell find src/ -name 'cflags.mk' | sort)
+SUBDIR_CFLAGS_FILES = $(shell find src/ arch/$(ARCH)/ -name 'cflags.mk' 2>/dev/null | sort)
 
 dir_cflags_var = CFLAGS_$(subst /,_,$(patsubst %/,%,$(1)))
 dir_build_cflags_var = $(call dir_cflags_var,$(1))_$(2)

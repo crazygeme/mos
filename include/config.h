@@ -1,41 +1,13 @@
 #ifndef _CONFIG_H
 #define _CONFIG_H
 
+#include <arch/config.h>
+
 #define UTS_SYSNAME "Linux"
 #define UTS_NODENAME "mos"
 #define UTS_RELEASE "2.4.20-8"
 #define UTS_VERSION "#1 Thu Mar 13 17:54:28 EST 2003"
 #define UTS_MACHINE "i686"
-
-#define KERNEL_PRIVILEGE 0
-#define USER_PRIVILEGE 3
-
-#define NULL_SELECTOR 0x0
-#define KERNEL_DATA_SELECTOR 0x8
-#define KERNEL_CODE_SELECTOR 0x10
-#define USER_DATA_SELECTOR 0x1b
-#define USER_CODE_SELECTOR 0x23
-#define ADDRESS_LIMIT \
-	0xfffff //  always 4k bytes algined, so last 0xfffff means 4G space
-
-#define SEG_CLASS_DATA 1
-#define SEG_CLASS_SYSTEM 0 // this is for TSS
-
-/* GDT entries reserved for per-process TLS (set_thread_area / Linux compat) */
-#define GDT_ENTRY_TLS_MIN 6
-#define GDT_ENTRY_TLS_MAX 8
-#define GDT_ENTRY_TLS_COUNT 3
-
-/*
- * TSS selector lives after the user TLS slots so the kernel TSS descriptor
- * never overwrites GDT entries 6..8.
- * TSS_SELECTOR is not used for hardware task switching, but TR must be valid.
- */
-#define TSS_SELECTOR ((GDT_ENTRY_TLS_MAX + 1) << 3)
-
-#define SEG_BASE_4K 1 // address count with 4k
-#define SEG_BASE_1 0 // address count with 1 byte
-#define TSS_SEG_BASE SEG_BASE_1
 
 #define IDT_SIZE 256
 
@@ -68,8 +40,6 @@
 /* Initial stack pages allocated at exec; stack grows down to USER_STACK_PAGES max. */
 #define USER_STACK_INIT_PAGES 16
 
-#define SYSCALL_INT_NO 0x80
-
 #define STDIN_FILENO 0 /* Standard input.  */
 #define STDOUT_FILENO 1 /* Standard output.  */
 #define STDERR_FILENO 2 /* Standard error output.  */
@@ -90,14 +60,5 @@
 
 #define PAGE_SIZE (4 * 1024)
 #define PAGE_SIZE_MASK 0xFFFFF000
-
-#define LDT_ENTRY_COUNT 16
-#define LDT_SELECTOR ((5 + GDT_ENTRY_TLS_COUNT + 1) << 3)
-
-/*
- * GDT: null + kernel/user code/data (5 base entries total),
- * 3 process TLS slots, one kernel TSS, and one current-task LDT descriptor.
- */
-#define SELECTOR_COUNT (5 + GDT_ENTRY_TLS_COUNT + 1 + 1)
 
 #endif

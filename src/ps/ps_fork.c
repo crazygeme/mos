@@ -20,6 +20,7 @@
 #include <lib/lock.h>
 #include <config.h>
 #include <macro.h>
+#include <arch/mmu.h>
 
 #include "ps_internal.h"
 #include <ps/smp.h>
@@ -127,7 +128,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 
 	task->umask = 0;
 	stack_bottom = (unsigned int)task + PAGE_SIZE;
-	LOAD_CR3(task->cr3);
+	task->cr3 = arch_mm_current_address_space();
 	list_init(&task->ps_list);
 	list_init(&task->dying_queue);
 	RB_CLEAR_NODE(&task->mgr_rb);
@@ -348,7 +349,7 @@ void copy_page_range(task_struct *parent, task_struct *child)
 
 	mm_init_process_page_dir((unsigned int)ctx.dst_pd);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
-	RELOAD_CR3();
+	arch_mm_flush_local();
 }
 
 /*

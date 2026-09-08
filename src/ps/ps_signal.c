@@ -14,6 +14,7 @@
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
+#include <arch/interrupt.h>
 #include "ps_internal.h"
 
 void do_signal(intr_frame *frame);
@@ -744,7 +745,7 @@ static void build_legacy_frame(task_struct *cur, intr_frame *frame,
  * to the handler before iret returns to user space.
  *
  * Called at the end of syscall_process() and from the timer interrupt path.
- * Only acts when the frame is returning to user mode (cs == USER_CODE_SELECTOR).
+ * Only acts when the architecture reports a return to user mode.
  */
 void do_signal(intr_frame *frame)
 {
@@ -756,7 +757,7 @@ void do_signal(intr_frame *frame)
 
 	if (cur->type != ps_user)
 		return;
-	if (frame->cs != USER_CODE_SELECTOR)
+	if (!arch_interrupt_frame_is_user(frame))
 		return;
 
 	check_alarm(cur);

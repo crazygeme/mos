@@ -6,6 +6,7 @@
 #include <hw/time.h>
 #include <lib/klib.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <errno.h>
 
 #define MOS_IPC_PRIVATE 0
@@ -246,7 +247,7 @@ static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg,
 			return -ENOMEM;
 	}
 
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	return 0;
 }
 

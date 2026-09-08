@@ -23,6 +23,7 @@
 #include <lib/port.h>
 #include <config.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <errno.h>
 
 #include "ps_internal.h"
@@ -108,41 +109,6 @@ void ps_remove_mgr(task_struct *task)
 	spinlock_unlock(&ps_lock, irq);
 }
 
-void ps_update_ldt(task_struct *task)
-{
-	unsigned long long *gdt = smp_gdt();
-	unsigned limit;
-
-	if (!task || !task->user) {
-		SET_LDT(0);
-		return;
-	}
-
-	if (task->user->ldt_present) {
-		limit = LDT_ENTRY_COUNT * sizeof(unsigned long long) - 1;
-		gdt[LDT_SELECTOR / 8] =
-			MAKE_SEG_DESC((unsigned)task->user->ldt_desc, limit,
-				      SEG_CLASS_SYSTEM, 2, KERNEL_PRIVILEGE, SEG_BASE_1);
-		SET_LDT(LDT_SELECTOR);
-		return;
-	}
-
-	SET_LDT(0);
-}
-
-void ps_load_task_segments(task_struct *task)
-{
-	unsigned long long *gdt = smp_gdt();
-
-	if (!task || !task->user)
-		return;
-
-	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
-	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
-	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
-	ps_update_ldt(task);
-}
-
 int ps_total_count()
 {
 	int ret = 0;
@@ -157,30 +123,6 @@ int ps_total_count()
 /*
  * Static helpers — TSS and context-switch support
  */
-
-/* Reload the global TSS with the given task's CR3 and kernel stack pointer. */
-void reset_tss(task_struct *task)
-{
-	tss_struct *tss_address = smp_tss();
-	tss_io_struct *io_tss = (tss_io_struct *)tss_address;
-
-	tss_address->cr3 = task->cr3;
-	tss_address->esp0 = task->tss.esp0;
-	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
-	if (task->io_allow_all) {
-		memset(io_tss->io_bitmap, 0x00, TSS_IO_BITMAP_BYTES);
-	} else if (task->io_bitmap) {
-		memcpy(io_tss->io_bitmap, task->io_bitmap, TSS_IO_BITMAP_BYTES);
-	} else {
-		memset(io_tss->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
-	}
-	io_tss->io_bitmap[TSS_IO_BITMAP_BYTES] = 0xff;
-	tss_address->ss0 = KERNEL_DATA_SELECTOR;
-	tss_address->ss = tss_address->gs = tss_address->fs = tss_address->ds =
-		tss_address->es = KERNEL_DATA_SELECTOR | 0x3;
-	tss_address->cs = KERNEL_CODE_SELECTOR | 0x3;
-	int_update_tss((unsigned int)tss_address);
-}
 
 int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 		  int turn_on)
@@ -471,7 +413,7 @@ void ps_cleanup_all_user_map(task_struct *task)
 		return;
 
 	mm_destroy_user_map(task->user->vm->page_dir);
-	RELOAD_CR3();
+	arch_mm_flush_local();
 }
 
 /*

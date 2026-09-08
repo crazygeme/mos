@@ -5,6 +5,7 @@
 #include <hw/font.h>
 #include <mm/mm.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <lib/port.h>
 #include <lib/klib.h>
 
@@ -81,7 +82,7 @@ static unsigned vmsvga_map_mmio_window(unsigned phys, unsigned size)
 		if (mm_phys_to_virt(a) == 0)
 			return 0;
 	}
-	RELOAD_CR3();
+	arch_mm_flush_local();
 
 	return mm_phys_to_virt(phys);
 }
@@ -103,7 +104,7 @@ static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
 		if (mm_phys_to_virt(a) == 0)
 			return;
 	}
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	_fb_mapped_bytes = need_bytes;
 }
 

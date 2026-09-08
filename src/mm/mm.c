@@ -10,6 +10,7 @@
 #include <mm/phymm.h>
 #include <mm/vdso.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <ps/smp.h>
 
 extern const unsigned __vdso_start;
@@ -229,10 +230,7 @@ void mm_init_process_page_dir(unsigned int page_dir)
 
 unsigned mm_get_pagedir()
 {
-	unsigned cr3 = 0;
-
-	LOAD_CR3(cr3);
-	return cr3 + KERNEL_OFFSET;
+	return arch_mm_current_address_space() + KERNEL_OFFSET;
 }
 
 unsigned int mm_phys_to_virt(unsigned int phys)
@@ -354,7 +352,7 @@ static int mm_set_page_table_entry(unsigned addr, unsigned flag, unsigned value)
 	}
 
 	*info.entry = value;
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	return 1;
 }
 
@@ -367,7 +365,7 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 	unsigned phy = *info->entry & PAGE_SIZE_MASK;
 
 	*info->entry = 0;
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	if (phy) {
 		unsigned dir_index =
 			(unsigned)(info->dir -
@@ -381,7 +379,7 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 			pgc_entry_count[idx]--;
 			if (pgc_entry_count[idx] == 0) {
 				*info->dir = 0;
-				RELOAD_CR3();
+				arch_mm_flush_local();
 				mm_free_page_table((unsigned int)info->table);
 			}
 		}
@@ -459,7 +457,7 @@ int mm_kmap_phys(unsigned int phys)
 			return -1;
 		}
 		*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
-		INVLPG(virt);
+		arch_mm_invalidate(virt);
 		return 1;
 	}
 
@@ -487,13 +485,13 @@ int mm_kmap_phys(unsigned int phys)
 	}
 
 	*info.entry = page | PAGE_ENTRY_KERNEL_DATA;
-	INVLPG(virt);
+	arch_mm_invalidate(virt);
 
 	// add an entry
 	entry = kmalloc(sizeof(*entry));
 	if (!entry) {
 		*info.entry = 0;
-		INVLPG(virt);
+		arch_mm_invalidate(virt);
 		mm_cache_free((mm_cache_t *)&kmap_phy_cache, virt);
 		spinlock_unlock(&kmap_lock, irq);
 		return -1;
@@ -532,7 +530,7 @@ void mm_kunmap_phys(unsigned int phys)
 	virt = entry->virt;
 	if (mm_get_valid_page_table(virt, 0, &info, 0)) {
 		*info.entry = 0;
-		INVLPG(virt);
+		arch_mm_invalidate(virt);
 	}
 
 	/* Return the virtual slot to the kmap allocator.  The cache contains
@@ -578,7 +576,7 @@ void mm_del_user_map()
 
 	for (i = 0; i < reserved_page_tables; i++)
 		page_dir[i] = 0;
-	RELOAD_CR3();
+	arch_mm_flush_local();
 }
 
 /*
@@ -620,7 +618,7 @@ void mm_destroy_user_map(unsigned int page_dir)
 			1;
 		/* Detach before freeing any backing pages or the table itself. */
 		dir[i] = 0;
-		RELOAD_CR3();
+		arch_mm_flush_local();
 		/* The live-entry counter is maintained for every user mapping.  Most
 		 * page tables created during short-lived exec/clone paths are already
 		 * empty by the time the address space is destroyed; avoid needlessly
@@ -787,7 +785,7 @@ void mm_set_map_flag(unsigned vir, unsigned flag)
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
-	RELOAD_CR3();
+	arch_mm_flush_local();
 }
 
 void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
@@ -798,7 +796,7 @@ void mm_set_map_flag_pd(unsigned page_dir, unsigned vir, unsigned flag)
 					    &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
-	RELOAD_CR3();
+	arch_mm_flush_local();
 }
 
 /* Return the physical page index backing the virtual address @vir */
@@ -859,7 +857,7 @@ unsigned int vm_alloc(int page_count)
 		phymm_reference_page(page_index + i);
 	}
 
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	spinlock_unlock(&mm_lock, irq);
 
 	buffer_count += page_count;
@@ -883,7 +881,7 @@ void vm_free(unsigned int vm, int page_count)
 		if (phy)
 			phymm_dereference_page(PHY_TO_PAGE_IDX(phy));
 	}
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	phymm_free_kernel(page_index, page_count);
 	spinlock_unlock(&mm_lock, irq);
 

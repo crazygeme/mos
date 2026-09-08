@@ -3,6 +3,8 @@
 #include <ps/ps.h>
 #include <mm/mmap.h>
 #include <ps/smp.h>
+#include <arch/mmu.h>
+#include <arch/task.h>
 #include "../ps_internal.h"
 /*
  * Public — context switch
@@ -56,16 +58,15 @@ void _task_sched(const char *func)
 
 	/*
 	 * Do TSS and CR3 setup on the current stack, before switching.
-	 * Kernel mappings are shared across all page directories so SET_CR3
-	 * here is safe: the code and current stack remain accessible.
+	 * Kernel mappings are shared across all address spaces, so activation here
+	 * is safe: the code and current stack remain accessible.
 	 */
-	reset_tss(next);
-	SET_CR3(VIRT_TO_PHY(next->user->vm->page_dir));
+	arch_task_activate(next);
+	arch_mm_activate(VIRT_TO_PHY(next->user->vm->page_dir));
 
 	/*
 	 * Reload per-process TLS descriptors before the eventual user return.
 	 */
-	ps_load_task_segments(next);
 	smp_fpu_restore(next);
 	prev->on_cpu = 0;
 	next->on_cpu = smp_cpu_id() + 1;

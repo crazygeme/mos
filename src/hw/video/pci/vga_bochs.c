@@ -19,6 +19,7 @@
 #include <hw/font.h>
 #include <mm/mm.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <lib/port.h>
 #include <lib/klib.h>
 
@@ -48,7 +49,7 @@ static void bochs_ensure_fb_mapping(unsigned width, unsigned height)
 	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
 	     a += PAGE_SIZE)
 		mm_map_io(a);
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	_fb_mapped_bytes = need_bytes;
 }
 
@@ -377,7 +378,7 @@ static int bochs_probe(void)
 	unsigned a;
 	for (a = fb_phys; a < fb_phys + fb_size; a += PAGE_SIZE)
 		mm_map_io(a);
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	_fb_phys = fb_phys;
 	_fb_buffer = fb_phys;
 	_fb_mapped_bytes = fb_size;

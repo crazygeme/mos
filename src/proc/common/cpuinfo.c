@@ -1,4 +1,5 @@
 #include <config.h>
+#include <macro.h>
 #include <ps/smp.h>
 #include "common.h"
 
@@ -6,10 +7,7 @@
 static void do_cpuid(unsigned leaf, unsigned *eax, unsigned *ebx, unsigned *ecx,
 		     unsigned *edx)
 {
-	asm volatile("cpuid"
-		     : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
-		     : "a"(leaf)
-		     : "memory");
+	arch_cpu_cpuid(leaf, 0, eax, ebx, ecx, edx);
 }
 
 /*

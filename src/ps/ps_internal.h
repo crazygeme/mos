@@ -7,6 +7,7 @@
  */
 
 #include <ps/ps.h>
+#include <arch/task.h>
 #include <lib/lock.h>
 #include <lib/list.h>
 
@@ -85,9 +86,7 @@ void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
  * Used by both ps_create and the fork helpers. */
 static inline void task_init_selectors(task_struct *task)
 {
-	task->tss.fs = task->tss.gs = task->tss.ds = task->tss.es =
-		task->tss.ss = KERNEL_DATA_SELECTOR;
-	task->tss.cs = KERNEL_CODE_SELECTOR;
+	arch_task_init(task);
 }
 
 #endif /* _PS_INTERNAL_H_ */

@@ -4,7 +4,10 @@
 
 ## Toolchains
 
-MOS builds as a 32-bit freestanding i686 kernel.
+MOS currently builds as a 32-bit freestanding i686 kernel. The build accepts
+`ARCH=x86|x64`; `x86` is the default and active backend, while `x64` reserves
+the toolchain configuration and `out/x64/<build>` output layout for the
+long-mode implementation.
 
 ### Linux
 
@@ -86,6 +89,8 @@ Kernel source trees write their optimization policy explicitly in `src/**/cflags
 ```sh
 make                  # build release kernel -> out/x86/release/kernel
 make BUILD=debug      # build debug kernel   -> out/x86/debug/kernel
+make ARCH=x86         # explicit spelling of the default architecture
+make ARCH=x64         # reports that the reserved x64 backend is not ready
 make test             # build release test kernel
 make test-debug       # build debug test kernel
 make run              # build/reuse release build, then run ./run.sh

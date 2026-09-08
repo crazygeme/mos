@@ -1,3 +1,4 @@
+/* i686 kernel layout. */
 SECTIONS
 {
 	ENTRY(__start)

@@ -1,28 +1,20 @@
-ifeq ($(shell uname),Linux)
-CC =		gcc
-LD =		ld
-AR = 		ar
-SP =		strip
-DS =		objdump
-OS =		Linux
-else
-ifeq ($(shell uname),Darwin)
-CC =		i686-elf-gcc
-LD =		i686-elf-ld
-AR =		i686-elf-ar
-SP =		i686-elf-strip
-DS =		i686-elf-objdump
-OS =		Darwin
-endif
-endif
-
 DEBUG	=	debug
 RELEASE	=	release
 BUILD	?=	$(RELEASE)
+ARCH	?=	x86
+
+SUPPORTED_ARCHES := x86 x64
 
 ifneq ($(filter $(BUILD),$(DEBUG) $(RELEASE)),$(BUILD))
 $(error BUILD must be one of: $(DEBUG) $(RELEASE))
 endif
+
+ifeq ($(filter $(ARCH),$(SUPPORTED_ARCHES)),)
+$(error ARCH must be one of: $(SUPPORTED_ARCHES))
+endif
+
+ARCH_DIR := $(MAINPATH)/arch/$(ARCH)
+include $(ARCH_DIR)/config.mk
 
 CSTRICT	= 	-fno-stack-protector\
 		-Werror\
@@ -35,10 +27,10 @@ COMMON_CFLAGS = -fno-pie\
 		-nostdinc\
 		-g\
 		-ggdb3\
-		-march=i686\
-		-m32\
+		$(ARCH_CFLAGS)\
 		$(CSTRICT)\
 		$(CIGNORE)\
+		-I$(ARCH_DIR)/include\
 		-I$(MAINPATH)\
 		-I$(MAINPATH)/include\
 		-I$(MAINPATH)/third_party/std\
@@ -55,6 +47,7 @@ COMMON_CFLAGS = -fno-pie\
 		-DCONFIG_USE_USER_MALLOC=0\
 		-DCONFIG_EXT4_BLOCKDEVS_COUNT=16\
 		-DCONFIG_EXT4_MOUNTPOINTS_COUNT=16\
-		-DCONFIG_BLOCK_DEV_CACHE_SIZE=1024
-LDFLAGS	=	-m elf_i386 -T link.ld
-DST     =	$(MAINPATH)/out/x86/$(BUILD)
+		-DCONFIG_BLOCK_DEV_CACHE_SIZE=1024\
+		-DMOS_ARCH_$(shell echo $(ARCH) | tr a-z A-Z)=1
+LDFLAGS = $(ARCH_LDFLAGS) -T $(ARCH_LINKER_SCRIPT)
+DST     = $(MAINPATH)/out/$(ARCH)/$(BUILD)

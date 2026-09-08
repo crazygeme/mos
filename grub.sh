@@ -5,6 +5,8 @@ set -e
 _ramsize="4096"
 diskfile="rh9.qcow2"
 _build="release"
+_cpu="coreduo"
+_smp=2
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
 _logtofile="stdio"
 # Prefer PipeWire on Linux; override with MOS_AUDIO_BACKEND when needed (for
@@ -31,11 +33,18 @@ for arg in "$@"
 do
 if [ "$arg" == "logtofile" ]; then
 	_logtofile="pending"
+elif [[ "$arg" == smp=* ]]; then
+	_smp="${arg#smp=}"
+	if ! [[ "$_smp" =~ ^[1-9][0-9]*$ ]] || [ "${#_smp}" -gt 2 ] || [ "$_smp" -gt 32 ]; then
+		echo "smp must be an integer between 1 and 32" >&2
+		exit 1
+	fi
 elif [ "$arg" == "-h" ]; then
 	echo "usage:"
-	echo "./run-grub.sh param1 param2 ..."
+	echo "./grub.sh param1 param2 ..."
 	echo "param:"
 	echo -e "\t logtofile: write kernel log to out/x86/release/krn.log instead of stdio"
+	echo -e "\t smp=N: start N CPUs (1..32, default 2)"
 	exit
 else
 	echo "Error: unsupported argument '$arg'" >&2
@@ -123,7 +132,8 @@ tools/guest/setup.sh "$kernel_file" || { echo "Error: failed to set up guest dis
 
 setup_nat
 
-$_priviledge qemu-system-i386 -cpu coreduo \
+$_priviledge qemu-system-i386 -cpu "$_cpu" \
+	-smp "$_smp" \
 	-display $_window \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \

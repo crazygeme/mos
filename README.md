@@ -35,7 +35,9 @@ brew tap nativeos/i386-elf-toolchain && brew install i386-elf-gcc i386-elf-binut
 ### Build & Run
 
 ```sh
-make -j$(nproc)   # build release kernel into out/x86/release/
+make -j$(nproc)                 # x86 release -> out/x86/release/
+make ARCH=x86 BUILD=debug       # x86 debug   -> out/x86/debug/
+make ARCH=x64                   # reserved x64 backend (not implemented yet)
 ./run.sh          # boot release build into Red Hat 9
 ./run.sh bash     # boot release build directly into bash
 ./run.sh debug    # build and boot the debug kernel from out/x86/debug/

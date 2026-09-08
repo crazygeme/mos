@@ -7,9 +7,10 @@ TARGET	= kernel
 
 include $(MAINPATH)/build/helpers.mk
 
-SCRIPTS   = $(MAINPATH)/build/config.mk $(MAINPATH)/build/helpers.mk $(MAINPATH)/Makefile $(SUBDIR_CFLAGS_FILES)
-SRCS      = $(shell find src/ -name '*.c')
-ASMS      = $(shell find src/ -name '*.S')
+SCRIPTS   = $(MAINPATH)/build/config.mk $(ARCH_DIR)/config.mk $(MAINPATH)/build/helpers.mk $(MAINPATH)/Makefile $(SUBDIR_CFLAGS_FILES)
+SOURCE_DIRS = src $(if $(wildcard arch/$(ARCH)/src),arch/$(ARCH)/src)
+SRCS      = $(shell find $(SOURCE_DIRS) -name '*.c')
+ASMS      = $(shell find $(SOURCE_DIRS) -name '*.S')
 TEST_SRCS = $(shell find test/ -name '*.c')
 TEST_SCRIPTS = $(shell find test/ -name '*.sh' | sort)
 
@@ -38,6 +39,33 @@ GENERATED_TEST_CFLAGS-release = -O2
 	clean rebuild third_party format help
 .SECONDARY: $(GENERATED_TEST_SCRIPT_CS)
 
+ifeq ($(ARCH_READY),0)
+
+.PHONY: all debug release test test-debug third_party arch-not-ready clean rebuild help
+
+all debug release test test-debug third_party: arch-not-ready
+
+arch-not-ready:
+	@echo "Error: ARCH=$(ARCH) backend is not implemented yet." >&2
+	@echo "Its build output is reserved at out/$(ARCH)/$(BUILD)." >&2
+	@exit 2
+
+clean:
+	@-rm -rf $(DST)
+
+rebuild: arch-not-ready
+
+help:
+	@echo "Usage: make [all|test] [ARCH=x86|x64] [BUILD=release|debug]"
+	@echo ""
+	@echo "Output directories:"
+	@echo "  x86 release -> out/x86/release"
+	@echo "  x86 debug   -> out/x86/debug"
+	@echo "  x64 release -> out/x64/release (backend pending)"
+	@echo "  x64 debug   -> out/x64/debug (backend pending)"
+
+else
+
 # ── Default build (no test code) ────────────────────────────────────────────
 
 all: $(DST)/kernel
@@ -59,7 +87,7 @@ test-debug:
 
 # ── Link rules ───────────────────────────────────────────────────────────────
 
-$(DST)/kernel: $(OBJS) $(LIBS) $(MAINPATH)/link.ld
+$(DST)/kernel: $(OBJS) $(LIBS) $(ARCH_LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	@echo "LD  $@"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
@@ -67,7 +95,7 @@ $(DST)/kernel: $(OBJS) $(LIBS) $(MAINPATH)/link.ld
 	@$(SP) $(DST)/kernel
 	@$(DS) -d $(DST)/kernel.dbg > $(DST)/assemble.s
 
-$(DST)/kernel-test: $(OBJS) $(TEST_OBJS) $(LIBS) $(MAINPATH)/link.ld
+$(DST)/kernel-test: $(OBJS) $(TEST_OBJS) $(LIBS) $(ARCH_LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	@echo "LD  $@ (with tests)"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJS) $(TEST_OBJS) $(LIBS)
@@ -120,14 +148,18 @@ format:
 
 help:
 	@echo "Usage:"
-	@echo "  make [all|test] [BUILD=release|debug]"
+	@echo "  make [all|test] [ARCH=x86|x64] [BUILD=release|debug]"
 	@echo "  make release"
 	@echo "  make debug"
 	@echo "  make test-debug"
 	@echo ""
 	@echo "Output directories:"
-	@echo "  release -> out/x86/release"
-	@echo "  debug   -> out/x86/debug"
+	@echo "  x86 release -> out/x86/release"
+	@echo "  x86 debug   -> out/x86/debug"
+	@echo "  x64 release -> out/x64/release (backend pending)"
+	@echo "  x64 debug   -> out/x64/debug (backend pending)"
 
 -include $(DEPS)
 -include $(TEST_DEPS)
+
+endif

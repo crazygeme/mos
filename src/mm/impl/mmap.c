@@ -1,0 +1,1073 @@
+#include <mm/mm.h>
+#include <mm/cache.h>
+#include <mm/phymm.h>
+#include <lib/list.h>
+#include <lib/rbtree.h>
+#include <lib/klib.h>
+#include <mm/mmap.h>
+#include <dev/dev.h>
+#include <ps/ps.h>
+#include <fs/fs.h>
+#include <macro.h>
+#include <mm/mmu.h>
+#include <config.h>
+#include <errno.h>
+#include <ext4.h>
+
+/*
+ * vm_key is the search key for the red-black tree that backs each process's
+ * VM map.  The comparator treats any range overlap as equal (returns 0), so
+ * tree lookup works as an overlap query: it returns any existing region that
+ * intersects the probe key.
+ */
+typedef struct _vm_key {
+	vaddr_t begin;
+	vaddr_t end;
+} vm_key;
+
+struct _vm_fault_lock {
+	rmutex_t lock;
+	unsigned refs;
+};
+
+/*
+ * vm_region_compare - interval comparator for the VM region tree.
+ *
+ * Returns -1  if region1 ends before region2 starts  (region1 strictly left),
+ *          1  if region1 starts after region2 ends    (region1 strictly right),
+ *          0  if the two ranges overlap in any way.
+ */
+static INLINE int vm_region_compare(const void *region1, const void *region2)
+{
+	const vm_key *key1 = region1;
+	const vm_key *key2 = region2;
+
+	if (key1->end <= key2->begin)
+		return -1;
+	if (key1->begin >= key2->end)
+		return 1;
+	return 0; /* overlap */
+}
+
+static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
+				  vaddr_t end);
+static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
+				 int prot, int flag, file *fp, int offset,
+				 unsigned anon_id, vm_fault_lock *fault_lock);
+
+static unsigned vm_region_flags_for_file(file *fp)
+{
+	if (!fp || !fp->f_inode)
+		return 0;
+	if ((unsigned)(uintptr_t)fp->f_inode->i_private == DEV_MEM_RDEV)
+		return VM_REGION_F_DIRECT_PHYS;
+	return 0;
+}
+
+static vm_fault_lock *vm_fault_lock_new()
+{
+	vm_fault_lock *fault_lock = kmalloc(sizeof(*fault_lock));
+
+	rmutex_init(&fault_lock->lock);
+	fault_lock->refs = 1;
+	return fault_lock;
+}
+
+static void vm_fault_lock_get(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	__sync_add_and_fetch(&fault_lock->refs, 1);
+}
+
+static void vm_fault_lock_lock(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	rmutex_lock(&fault_lock->lock);
+}
+
+static void vm_fault_lock_unlock(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	rmutex_unlock(&fault_lock->lock);
+}
+
+static void vm_fault_lock_put(vm_fault_lock *fault_lock)
+{
+	if (!fault_lock)
+		return;
+	if (__sync_sub_and_fetch(&fault_lock->refs, 1) == 0)
+		kfree(fault_lock);
+}
+
+/* Counter for unique anonymous MAP_SHARED region identifiers. */
+static unsigned g_anon_id_next = 0;
+
+static void vm_region_free(vm_region *region)
+{
+	if (region->fp)
+		fs_put_file(region->fp);
+	if ((region->flag & MAP_SHARED) && region->fp == NULL &&
+	    region->anon_id)
+		mm_anon_shared_put(region->anon_id);
+	vm_fault_lock_put(region->fault_lock);
+
+	kfree(region);
+}
+
+static vm_region *vm_tree_find(mm_struct *mm, const vm_key *key)
+{
+	struct rb_node *node = mm->vma_index.rb_node;
+	int irq;
+
+	spinlock_lock(&mm->vma_lock, &irq);
+	while (node) {
+		vm_region *region = rb_entry(node, vm_region, rb_node);
+		vm_key node_key = { region->begin, region->end };
+		int comp = vm_region_compare(key, &node_key);
+		if (comp < 0)
+			node = node->rb_left;
+		else if (comp > 0)
+			node = node->rb_right;
+		else {
+			spinlock_unlock(&mm->vma_lock, irq);
+			return region;
+		}
+	}
+	spinlock_unlock(&mm->vma_lock, irq);
+	return NULL;
+}
+
+static int vm_tree_insert(mm_struct *mm, vm_region *region)
+{
+	struct rb_node **link = &mm->vma_index.rb_node;
+	struct rb_node *parent = NULL;
+	vm_key key = { region->begin, region->end };
+	int irq;
+
+	spinlock_lock(&mm->vma_lock, &irq);
+	while (*link) {
+		vm_region *node_region = rb_entry(*link, vm_region, rb_node);
+		vm_key node_key = { node_region->begin, node_region->end };
+		int comp = vm_region_compare(&key, &node_key);
+		parent = *link;
+		if (comp < 0)
+			link = &(*link)->rb_left;
+		else if (comp > 0)
+			link = &(*link)->rb_right;
+		else {
+			spinlock_unlock(&mm->vma_lock, irq);
+			return 0;
+		}
+	}
+	rb_link_node(&region->rb_node, parent, link);
+	rb_insert_color(&region->rb_node, &mm->vma_index);
+	mm->vma_generation++;
+	spinlock_unlock(&mm->vma_lock, irq);
+	return 1;
+}
+
+static void vm_tree_remove(mm_struct *mm, vm_region *region)
+{
+	int irq;
+	spinlock_lock(&mm->vma_lock, &irq);
+	rb_erase(&region->rb_node, &mm->vma_index);
+	mm->vma_generation++;
+	spinlock_unlock(&mm->vma_lock, irq);
+	vm_region_free(region);
+}
+
+static vm_region *vm_tree_first(mm_struct *mm)
+{
+	struct rb_node *node;
+	int irq;
+	spinlock_lock(&mm->vma_lock, &irq);
+	node = rb_first(&mm->vma_index);
+	spinlock_unlock(&mm->vma_lock, irq);
+	return node ? rb_entry(node, vm_region, rb_node) : NULL;
+}
+
+static vm_region *vm_tree_next(mm_struct *mm, vm_region *region)
+{
+	struct rb_node *node;
+	int irq;
+	spinlock_lock(&mm->vma_lock, &irq);
+	node = rb_next(&region->rb_node);
+	spinlock_unlock(&mm->vma_lock, irq);
+	return node ? rb_entry(node, vm_region, rb_node) : NULL;
+}
+
+static void vm_tree_destroy(mm_struct *mm)
+{
+	/* Destruction is only used once the address space is detached.  Remove
+	 * each node while holding the tree lock, then release the lock before
+	 * dropping file/fault-lock references (those paths may acquire locks). */
+	for (;;) {
+		struct rb_node *node;
+		vm_region *region;
+		int irq;
+
+		spinlock_lock(&mm->vma_lock, &irq);
+		node = rb_first(&mm->vma_index);
+		if (!node) {
+			spinlock_unlock(&mm->vma_lock, irq);
+			break;
+		}
+		region = rb_entry(node, vm_region, rb_node);
+		rb_erase(node, &mm->vma_index);
+		mm->vma_generation++;
+		spinlock_unlock(&mm->vma_lock, irq);
+		vm_region_free(region);
+	}
+}
+
+vm_struct_t vm_create()
+{
+	mm_struct *mm = kmalloc(sizeof(*mm));
+	if (!mm)
+		return NULL;
+	mm->vma_index = _RBTREE_ROOT_INIT;
+	spinlock_init(&mm->vma_lock);
+	mm->page_dir = 0;
+	mm->start_brk = mm->brk = 0;
+	mm->start_stack = 0;
+	mm->mmap_base = TASK_UNMAPPED_BASE;
+	mm->task_size = KERNEL_OFFSET;
+	mm->users = 1;
+	mm->count = 1;
+	mm->vma_generation = 1;
+	return mm;
+}
+
+void vm_get(vm_struct_t vm)
+{
+	if (vm)
+		__sync_add_and_fetch(&vm->users, 1);
+}
+
+void vm_put(vm_struct_t vm)
+{
+	mm_struct *mm = vm;
+	if (!mm)
+		return;
+	if (__sync_sub_and_fetch(&mm->users, 1) != 0)
+		return;
+	if (mm->page_dir) {
+		mm_destroy_user_map(mm->page_dir);
+		vm_free(mm->page_dir, 1);
+		mm->page_dir = 0;
+	}
+	vm_tree_destroy(mm);
+	kfree(mm);
+}
+
+void vm_destroy(vm_struct_t vm)
+{
+	vm_put(vm);
+}
+
+/*
+ * vm_find_pair - return the tree pair whose region contains addr, or NULL.
+ *
+ * addr is rounded down to its page boundary before probing the tree.
+ */
+static INLINE vm_region *vm_find_region(mm_struct *mm, vaddr_t addr)
+{
+	vm_key key;
+	key.begin = addr & PAGE_SIZE_MASK;
+	key.end = key.begin + PAGE_SIZE;
+	return vm_tree_find(mm, &key);
+}
+
+/*
+ * vm_add_map - insert a new mapping [begin, end) into the VM map.
+ *
+ * If the new range overlaps any existing region, the overlapping region is
+ * trimmed: portions outside [begin, end) are preserved as independent regions
+ * and the overlapping portion is replaced by the new mapping.  The loop
+ * handles arbitrarily many pre-existing overlapping regions one at a time
+ * until no conflicts remain, then inserts the new region.
+ */
+static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
+				 int prot, int flag, file *fp, int offset,
+				 unsigned anon_id, vm_fault_lock *fault_lock)
+{
+	mm_struct *mm = vm;
+	vm_key probe;
+	vm_region *oregion;
+	int tlb_needs_reload = 0;
+
+	/*
+	 * Resolve conflicts iteratively.  Each pass finds one overlapping
+	 * region, saves its extent, removes it, then re-inserts the non-
+	 * overlapping left and right remnants.  Those remnants never conflict
+	 * with [begin, end), so their recursive vm_add_map calls insert
+	 * directly without further iteration.
+	 */
+	probe.begin = begin;
+	probe.end = end;
+	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
+		unsigned unmap_begin;
+		unsigned unmap_end;
+		vaddr_t vir;
+
+		/* Snapshot all origin data before vm_del_map frees the structs. */
+		unsigned o_begin = oregion->begin;
+		unsigned o_end = oregion->end;
+		int o_prot = oregion->prot;
+		int o_flag = oregion->flag;
+		file *o_fp = oregion->fp;
+		int o_offset = oregion->offset;
+		unsigned o_anon_id = oregion->anon_id;
+		vm_fault_lock *o_fault_lock = oregion->fault_lock;
+
+		if (o_fp)
+			fs_get_file(o_fp);
+		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
+			mm_anon_shared_get(o_anon_id);
+		vm_fault_lock_get(o_fault_lock);
+		vm_fault_lock_lock(o_fault_lock);
+
+		unmap_begin = o_begin > begin ? o_begin : begin;
+		unmap_end = o_end < end ? o_end : end;
+
+		vm_flush_dirty_region(oregion, unmap_begin, unmap_end);
+		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
+			mm_unmap_page(vir);
+		tlb_needs_reload = 1;
+
+		vm_tree_remove(mm, oregion);
+
+		/* Re-insert the left remnant [o_begin, begin), if any. */
+		if (o_begin < begin)
+			vm_add_map_with_lock(vm, o_begin, begin, o_prot, o_flag,
+					     o_fp, o_offset, o_anon_id,
+					     o_fault_lock);
+
+		/*
+		 * Re-insert the right remnant [end, o_end), if any.
+		 * Its file offset advances by (end - o_begin) bytes.
+		 */
+		if (o_end > end)
+			vm_add_map_with_lock(vm, end, o_end, o_prot, o_flag,
+					     o_fp,
+					     o_offset + (int)(end - o_begin),
+					     o_anon_id, o_fault_lock);
+
+		if (o_fp)
+			fs_put_file(o_fp);
+		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
+			mm_anon_shared_put(o_anon_id);
+		vm_fault_lock_unlock(o_fault_lock);
+		vm_fault_lock_put(o_fault_lock);
+	}
+
+	if (tlb_needs_reload)
+		arch_mm_flush_local();
+
+	/* No conflicts remain: insert the new region. */
+	vm_region *region = kmalloc(sizeof(*region));
+	rb_init_node(&region->rb_node);
+	region->begin = begin;
+	region->end = end;
+	region->prot = prot;
+	region->flag = flag;
+	region->vm_flags = vm_region_flags_for_file(fp);
+	if (fault_lock == NULL)
+		fault_lock = vm_fault_lock_new();
+	else
+		vm_fault_lock_get(fault_lock);
+	region->fault_lock = fault_lock;
+	region->fp = fp;
+	region->offset = offset;
+	region->anon_id = anon_id;
+
+	if (fp)
+		fs_get_file(fp);
+	if ((flag & MAP_SHARED) && fp == NULL && anon_id)
+		mm_anon_shared_get(anon_id);
+
+	vm_tree_insert(mm, region);
+}
+
+void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot,
+		int flag, file *fp, int offset, unsigned anon_id)
+{
+	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
+			     NULL);
+}
+
+void vm_add_map_clone(vm_struct_t vm, vm_region *src)
+{
+	if (!src)
+		return;
+	vm_add_map_with_lock(vm, src->begin, src->end, src->prot, src->flag,
+				     src->fp, src->offset, src->anon_id,
+				     src->fault_lock);
+}
+
+/*
+ * vm_extend_map - extend one existing VM descriptor in place.
+ *
+ * This is used by mremap() growth.  Unlike adding a second adjacent mapping,
+ * extending the descriptor preserves userspace's expectation that the resized
+ * range remains one mapping with one set of attributes.
+ */
+int vm_extend_map(vm_struct_t vm, vaddr_t begin, vaddr_t old_end,
+		  vaddr_t new_end)
+{
+	mm_struct *mm = vm;
+	vm_key probe;
+	vm_region *region;
+	int irq;
+
+	if (!vm || begin >= old_end || old_end >= new_end)
+		return 0;
+
+	region = vm_find_region(mm, begin);
+	if (!region)
+		return 0;
+
+	if (region->begin != begin || region->end != old_end)
+		return 0;
+
+	probe.begin = old_end;
+	probe.end = new_end;
+	if (vm_tree_find(mm, &probe) != NULL)
+		return 0;
+
+	spinlock_lock(&mm->vma_lock, &irq);
+	region->end = new_end;
+	mm->vma_generation++;
+	spinlock_unlock(&mm->vma_lock, irq);
+
+	return 1;
+}
+
+/*
+ * vm_del_map - remove the mapping that contains addr and unmap its pages.
+ *
+ * addr is rounded down to the nearest page boundary.  All hardware page-table
+ * entries for the region are cleared and CR3 is reloaded to flush the TLB.
+ */
+void vm_del_map(vm_struct_t vm, vaddr_t addr)
+{
+	mm_struct *mm = vm;
+	vm_region *region;
+	vaddr_t vir;
+
+	addr &= PAGE_SIZE_MASK;
+
+	region = vm_find_region(mm, addr);
+	if (!region)
+		return;
+	vm_fault_lock *fault_lock = region->fault_lock;
+
+	/* FIXME(Ender:) flush file if has one */
+
+	vm_fault_lock_get(fault_lock);
+	vm_fault_lock_lock(fault_lock);
+
+	/* Unmap every page in the region from the hardware page tables. */
+	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
+		mm_unmap_page(vir);
+	arch_mm_flush_local();
+
+	vm_tree_remove(mm, region);
+	vm_fault_lock_unlock(fault_lock);
+	vm_fault_lock_put(fault_lock);
+}
+
+/*
+ * vm_find_map - find the region that contains addr.
+ *
+ * Returns a pointer to the live vm_region (caller must not free it),
+ * or NULL if no region covers addr.
+ */
+vm_region *vm_find_map(vm_struct_t vm, vaddr_t addr)
+{
+	addr &= PAGE_SIZE_MASK;
+	return vm_find_region(vm, addr);
+}
+
+vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr)
+{
+	mm_struct *mm = vm;
+	struct rb_node *node;
+	vm_region *candidate = NULL;
+	int irq;
+
+	addr &= PAGE_SIZE_MASK;
+	spinlock_lock(&mm->vma_lock, &irq);
+	for (node = mm->vma_index.rb_node; node != NULL;) {
+		vm_region *region = rb_entry(node, vm_region, rb_node);
+
+		/*
+		 * vm_region descriptors live in kernel heap. If the tree ever hands
+		 * us a user-space pointer here, the tree is already corrupted; bail
+		 * out rather than faulting again while holding table->lock and
+		 * deadlocking in the nested page-fault path.
+		 */
+		if ((unsigned)region < KERNEL_OFFSET) {
+			spinlock_unlock(&mm->vma_lock, irq);
+			return NULL;
+		}
+
+		if (addr < region->begin) {
+			candidate = region;
+			node = node->rb_left;
+		} else if (addr >= region->end) {
+			node = node->rb_right;
+		} else {
+			spinlock_unlock(&mm->vma_lock, irq);
+			return region;
+		}
+	}
+	spinlock_unlock(&mm->vma_lock, irq);
+
+	return candidate;
+}
+
+void vm_invalidate_user_cache(user_enviroment *user)
+{
+	if (user) {
+		user->mmap_cache = NULL;
+		user->mmap_cache_vm = NULL;
+		user->mmap_cache_generation = 0;
+	}
+}
+
+vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr)
+{
+	if (!user || !user->vm)
+		return NULL;
+
+	mm_struct *mm = user->vm;
+	unsigned page = addr & PAGE_SIZE_MASK;
+	/* Validate generation before touching the cached raw pointer. */
+	if (user->mmap_cache_vm == mm &&
+	    user->mmap_cache_generation == mm->vma_generation &&
+	    user->mmap_cache && user->mmap_cache->begin <= page &&
+	    page < user->mmap_cache->end)
+		return user->mmap_cache;
+	vm_region *region = vm_find_vma(mm, page);
+	user->mmap_cache = region;
+	user->mmap_cache_vm = mm;
+	user->mmap_cache_generation = mm->vma_generation;
+	return region;
+}
+
+vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr)
+{
+	vm_region *region = vm_find_vma_cached(user, addr);
+
+	addr &= PAGE_SIZE_MASK;
+	if (region && region->begin <= addr && addr < region->end)
+		return region;
+	return NULL;
+}
+
+/*
+ * vm_disc_map - find a free virtual address range of at least @size bytes
+ *               within [TASK_UNMAPPED_BASE, KERNEL_OFFSET).
+ *
+ * Iterates the sorted region list and returns the start of the first gap
+ * that is large enough.  The candidate start is always clamped to at least
+ * TASK_UNMAPPED_BASE so that existing mappings below the user zone (text,
+ * stack set up by the process loader) are skipped over.  Returns 0 if no
+ * suitable gap exists.
+ */
+vaddr_t vm_disc_map(vm_struct_t vm, int size)
+{
+	mm_struct *mm = vm;
+	vm_region *region = vm_tree_first(mm);
+	unsigned candidate = TASK_UNMAPPED_BASE;
+
+	while (region) {
+		/* Gap before this region is large enough — use it. */
+		if (candidate + (unsigned)size <= region->begin)
+			return candidate;
+
+		/* Advance candidate past this region if it overlaps. */
+		if (region->end > candidate)
+			candidate = region->end;
+
+		region = vm_tree_next(mm, region);
+	}
+
+	/* Check for room after the last region. */
+	if (candidate + (unsigned)size <= KERNEL_OFFSET)
+		return candidate;
+
+	return 0;
+}
+
+/*
+ * vm_dup - copy all VM mappings from @src into @dst.
+ *
+ * Used during fork() to duplicate the parent's address space descriptor into
+ * the child.  vm_add_map() handles the fs_get_file() reference for each node.
+ * anon_id is preserved so MAP_SHARED anonymous pages are shared across fork.
+ */
+void vm_dup(vm_struct_t src, vm_struct_t dst)
+{
+	mm_struct *mm = src;
+	vm_region *region = vm_tree_first(mm);
+
+	while (region) {
+		vm_add_map_with_lock(dst, region->begin, region->end,
+				     region->prot, region->flag, region->fp,
+				     region->offset, region->anon_id,
+				     region->fault_lock);
+		region = vm_tree_next(mm, region);
+	}
+}
+
+void vm_region_lock_fault(vm_region *region)
+{
+	if (!region || !region->fault_lock)
+		return;
+	rmutex_lock(&region->fault_lock->lock);
+}
+
+void vm_region_unlock_fault(vm_region *region)
+{
+	if (!region || !region->fault_lock)
+		return;
+	rmutex_unlock(&region->fault_lock->lock);
+}
+
+void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
+{
+	mm_struct *mm = vm;
+	vm_region *region;
+
+	if (!vm || !fn)
+		return;
+	for (region = vm_tree_first(mm); region;
+	     region = vm_tree_next(mm, region))
+		fn(region, data);
+}
+
+/*
+ * vm_mprotect - update protection flags for [begin, end) without unmapping pages.
+ *
+ * Iterates all VM regions that overlap [begin, end).  For each overlapping
+ * region the portion outside [begin, end) is re-inserted with its original
+ * protection, while the overlapping portion is re-inserted with @new_prot.
+ * Physical page mappings are left intact; only the VM descriptors and page-
+ * table permission bits change (done by the caller after this returns).
+ *
+ * File reference counting: we temporarily bump the ref before removing the
+ * region, then release our bump at the end.
+ */
+void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
+{
+	mm_struct *mm = vm;
+	vm_key probe;
+	vm_region *oregion;
+
+	probe.begin = begin;
+	probe.end = end;
+
+	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
+		unsigned r_begin = oregion->begin;
+		unsigned r_end = oregion->end;
+		int r_prot = oregion->prot;
+		int r_flag = oregion->flag;
+		file *r_fp = oregion->fp;
+		int r_offset = oregion->offset;
+		unsigned r_anon_id = oregion->anon_id;
+		vm_fault_lock *r_fault_lock = oregion->fault_lock;
+
+		/* Intersection of the region with [begin, end) */
+		unsigned upd_begin = r_begin > begin ? r_begin : begin;
+		unsigned upd_end = r_end < end ? r_end : end;
+
+		/* Temporarily hold references across descriptor removal. */
+		if (r_fp)
+			fs_get_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_get(r_anon_id);
+		vm_fault_lock_get(r_fault_lock);
+		vm_fault_lock_lock(r_fault_lock);
+
+		/* Remove descriptor only — physical pages stay mapped. */
+		vm_tree_remove(mm, oregion);
+
+		/* Preserve left remnant [r_begin, upd_begin) at original prot. */
+		if (r_begin < upd_begin)
+			vm_add_map_with_lock(vm, r_begin, upd_begin, r_prot,
+					     r_flag, r_fp, r_offset, r_anon_id,
+					     r_fault_lock);
+
+		/* Re-insert updated portion [upd_begin, upd_end) with new prot. */
+		vm_add_map_with_lock(vm, upd_begin, upd_end, new_prot, r_flag,
+				     r_fp,
+				     r_offset + (int)(upd_begin - r_begin),
+				     r_anon_id, r_fault_lock);
+
+		/* Preserve right remnant [upd_end, r_end) at original prot. */
+		if (upd_end < r_end)
+			vm_add_map_with_lock(
+				vm, upd_end, r_end, r_prot, r_flag, r_fp,
+				r_offset + (int)(upd_end - r_begin), r_anon_id,
+				r_fault_lock);
+
+		if (r_fp)
+			fs_put_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_put(r_anon_id);
+		vm_fault_lock_unlock(r_fault_lock);
+		vm_fault_lock_put(r_fault_lock);
+
+		/* Advance probe past the portion we just handled. */
+		probe.begin = upd_end;
+	}
+}
+
+/*
+ * do_mmap_kernel - kernel-internal mmap implementation.
+ *
+ * Maps the page-aligned range covering [_addr, _addr+_len) into the current
+ * task's address space.  If _addr is 0, an appropriate free range is located
+ * automatically via vm_disc_map().  Returns the mapped virtual address.
+ *
+ * For MAP_SHARED|MAP_ANONYMOUS, assigns a unique anon_id so that the region
+ * is identifiable across fork() for shared-page lookup.
+ */
+vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
+		      unsigned int flags, file *fp, unsigned int offset)
+{
+	vaddr_t addr = _addr & PAGE_SIZE_MASK;
+	vaddr_t last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
+	size_t page_count = (last_addr - addr) / PAGE_SIZE + 1;
+	size_t size = page_count * PAGE_SIZE;
+	task_struct *cur = CURRENT_TASK();
+	mm_struct *mm = cur->user->vm;
+	vm_key probe;
+	unsigned anon_id = 0;
+
+	if (flags & MAP_FIXED) {
+		/*
+		 * POSIX MAP_FIXED: map at addr exactly.  Any existing mappings
+		 * that overlap [addr, addr+size) are silently discarded and
+		 * replaced.  vm_add_map() handles this via its conflict-
+		 * resolution loop, so no pre-processing is needed here.
+		 */
+	} else {
+		/*
+		 * addr is a hint.  If addr == 0 or the hinted range overlaps an
+		 * existing region, pick a free range automatically.
+		 */
+		if (addr != 0) {
+			probe.begin = addr;
+			probe.end = addr + size;
+			if (vm_tree_find(mm, &probe) != NULL)
+				addr = 0; /* fall through to vm_disc_map */
+		}
+		if (addr == 0)
+			addr = vm_disc_map(cur->user->vm, size);
+	}
+
+	/*
+	 * Assign a unique ID for anonymous MAP_SHARED regions so that all
+	 * processes sharing this mapping (e.g. after fork) can locate the
+	 * same physical pages via the anonymous shared-page cache in mm/cache.c.
+	 */
+	if ((flags & MAP_SHARED) && fp == NULL)
+		anon_id = ++g_anon_id_next;
+
+	vm_add_map(cur->user->vm, addr, addr + size, prot, flags, fp, offset,
+		   anon_id);
+	vm_invalidate_user_cache(cur->user);
+
+	if (TEST_LOG(TEST_LOG_INFO)) {
+		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",
+		     fp ? fp->f_name : "ANON", _addr, offset, prot, flags, _len,
+		     addr);
+	}
+
+	return addr;
+}
+
+void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
+{
+	vaddr_t addr = _addr & PAGE_SIZE_MASK;
+	task_struct *cur = CURRENT_TASK();
+	vm_region *region;
+	vaddr_t vir;
+
+	region = vm_find_map(cur->user->vm, addr);
+	if (region) {
+		region->prot = prot;
+		region->flag = flags;
+	}
+
+	/* Also update actual mmap flag */
+	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
+		unsigned mmflag = mm_get_map_flag(vir);
+		if (prot == PROT_NONE) {
+			mmflag &= ~(PAGE_ENTRY_DPL_USER | PAGE_ENTRY_WRITABLE);
+			mm_set_map_flag(vir, mmflag);
+			continue;
+		}
+
+		mmflag |= PAGE_ENTRY_DPL_USER;
+		if (prot & PROT_WRITE)
+			mmflag |= PAGE_ENTRY_WRITABLE;
+		else
+			mmflag &= ~PAGE_ENTRY_WRITABLE;
+
+		mm_set_map_flag(vir, mmflag);
+	}
+
+	arch_mm_flush_local();
+	vm_invalidate_user_cache(cur->user);
+}
+
+/*
+ * do_mmap - syscall handler for mmap(2).
+ *
+ * Resolves the file descriptor to an inode pointer (NULL for anonymous
+ * mappings where fd == -1) and delegates to do_mmap_kernel().
+ */
+int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
+	    unsigned int flags, int fd, unsigned int offset)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *node = NULL;
+
+	/*
+	 * This kernel historically treats fd == -1 as an anonymous mapping
+	 * even when callers omit MAP_ANONYMOUS (e.g. exec stack setup).
+	 * Preserve that behavior and only validate an fd when one is supplied.
+	 */
+	if (fd != -1) {
+		if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
+			return -EBADF;
+
+		node = cur->fds[fd];
+		if (node->f_inode == NULL)
+			return -ENODEV;
+		if (!S_ISREG(node->f_inode->i_mode) &&
+		    !S_ISCHR(node->f_inode->i_mode))
+			return -ENODEV;
+	}
+
+	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
+}
+
+/*
+ * vm_flush_dirty_region - write dirty MAP_SHARED pages in [begin, end) back
+ * to the underlying file.
+ *
+ * Only acts on regions that are both MAP_SHARED and file-backed.  Pages that
+ * were never faulted in (not present in the page table) are skipped.  The
+ * dirty flag is cleared after a successful write so that a repeated flush
+ * (e.g. partial unmap followed by exit) does not re-write clean pages.
+ *
+ * Called with the user's page tables still active so that (void *)vir is a
+ * valid kernel-readable address.
+ */
+static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
+				  vaddr_t end)
+{
+	vaddr_t vir;
+	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
+		return;
+	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
+		return;
+
+	for (vir = begin; vir < end; vir += PAGE_SIZE) {
+		unsigned page_index;
+		int file_offset;
+
+		/* Skip pages that were never faulted in. */
+		if (mm_get_map_flag(vir) == 0)
+			continue;
+
+		page_index = mm_get_attached_page_index(vir);
+		if (page_index < phymm_begin || page_index >= phymm_end ||
+		    phymm_pages[page_index].ref_count == PHYMM_RESERVED)
+			continue;
+		if (!phymm_is_dirty(page_index))
+			continue;
+
+		file_offset = region->offset + (int)(vir - region->begin);
+
+		if (region->fp->f_fop && region->fp->f_fop->write_page) {
+			if (region->fp->f_fop->write_page(
+				    region->fp, file_offset, (void *)vir) == 0)
+				phymm_clear_dirty(page_index);
+		} else {
+			inode *node = region->fp->f_inode;
+			ext4_file *ff = node->i_private;
+			size_t wcnt = 0;
+
+			if (ext4_fseek(ff, file_offset, SEEK_SET) != EOK)
+				continue;
+			if (ext4_fwrite(ff, (void *)vir, PAGE_SIZE, &wcnt) ==
+			    EOK)
+				phymm_clear_dirty(page_index);
+		}
+	}
+}
+
+/* vm_enum callback wrapper for vm_flush_all_dirty. */
+static void vm_flush_region_cb(vm_region *region, void *data)
+{
+	(void)data;
+	vm_flush_dirty_region(region, region->begin, region->end);
+}
+
+static int vm_same_file_identity(file *left, file *right)
+{
+	void *left_tag;
+	void *right_tag;
+	inode *left_inode;
+	inode *right_inode;
+
+	if (!left || !right)
+		return 0;
+
+	left_inode = left->f_inode;
+	right_inode = right->f_inode;
+	if (!left_inode || !right_inode)
+		return 0;
+
+	left_tag = left_inode->i_pgcache_tag ? left_inode->i_pgcache_tag :
+					       left_inode->i_private;
+	right_tag = right_inode->i_pgcache_tag ? right_inode->i_pgcache_tag :
+						 right_inode->i_private;
+
+	return left_tag == right_tag && left_inode->i_ino == right_inode->i_ino;
+}
+
+typedef struct _vm_flush_file_ctx {
+	file *fp;
+} vm_flush_file_ctx;
+
+static void vm_flush_file_region_cb(vm_region *region, void *data)
+{
+	vm_flush_file_ctx *ctx = data;
+
+	if (!ctx || !vm_same_file_identity(region->fp, ctx->fp))
+		return;
+
+	vm_flush_dirty_region(region, region->begin, region->end);
+}
+
+/*
+ * vm_flush_all_dirty - flush every dirty MAP_SHARED page in the VM map.
+ *
+ * Called on process exit before the VM is torn down.
+ */
+void vm_flush_all_dirty(vm_struct_t vm)
+{
+	vm_enum(vm, vm_flush_region_cb, NULL);
+}
+
+void vm_flush_file_dirty(vm_struct_t vm, file *fp)
+{
+	vm_flush_file_ctx ctx;
+
+	if (!vm || !fp)
+		return;
+
+	ctx.fp = fp;
+	vm_enum(vm, vm_flush_file_region_cb, &ctx);
+}
+
+/*
+ * do_munmap - syscall handler for munmap(2).
+ *
+ * Unmaps the page-aligned range [begin, end) from the current task's address
+ * space.  Handles ranges that span multiple vm_regions by iterating over all
+ * overlapping regions.  For each region the intersection with [begin, end) is
+ * physically unmapped; portions outside [begin, end) are re-inserted as
+ * independent mappings with their physical pages left intact.
+ *
+ * Returns 0 on success.
+ */
+int do_munmap(void *addr, unsigned length)
+{
+	task_struct *cur = CURRENT_TASK();
+	vaddr_t begin = ((vaddr_t)(uintptr_t)addr) & PAGE_SIZE_MASK;
+	/* Round length up to a page count, then compute end — avoids the
+	 * off-by-one that (addr+length+PAGE_SIZE-1)&PAGE_MASK produces when
+	 * length is already a multiple of PAGE_SIZE. */
+	unsigned pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+	vaddr_t end = begin + pages * PAGE_SIZE;
+	mm_struct *mm = cur->user->vm;
+	vm_key probe;
+	vm_region *region;
+	vaddr_t vir;
+
+	if (length == 0)
+		return 0;
+
+	probe.begin = begin;
+	probe.end = end;
+
+	while ((region = vm_tree_find(mm, &probe)) != NULL) {
+		unsigned r_begin = region->begin;
+		unsigned r_end = region->end;
+		int r_prot = region->prot;
+		int r_flag = region->flag;
+		file *r_fp = region->fp;
+		int r_offset = region->offset;
+		unsigned r_anon_id = region->anon_id;
+		vm_fault_lock *r_fault_lock = region->fault_lock;
+
+		/* Intersection of this region with the unmap range. */
+		unsigned unmap_begin = r_begin > begin ? r_begin : begin;
+		unsigned unmap_end = r_end < end ? r_end : end;
+
+		/* Flush dirty MAP_SHARED pages before physical unmap. */
+		vm_flush_dirty_region(region, unmap_begin, unmap_end);
+
+		/* Unmap physical pages only in the intersection [unmap_begin, unmap_end).
+		 * Pages in remnant portions are left untouched in the page tables. */
+		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
+			mm_unmap_page(vir);
+
+		/* Hold references across descriptor removal. */
+		if (r_fp)
+			fs_get_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_get(r_anon_id);
+		vm_fault_lock_get(r_fault_lock);
+		vm_fault_lock_lock(r_fault_lock);
+
+		/* Remove this vm_region descriptor from the tree. */
+		vm_tree_remove(mm, region);
+
+		/* Preserve the left remnant [r_begin, unmap_begin) if any.
+		 * Its physical pages were not unmapped above. */
+		if (r_begin < unmap_begin)
+			vm_add_map_with_lock(cur->user->vm, r_begin,
+					     unmap_begin, r_prot, r_flag, r_fp,
+					     r_offset, r_anon_id, r_fault_lock);
+
+		/* Preserve the right remnant [unmap_end, r_end) if any. */
+		if (r_end > unmap_end)
+			vm_add_map_with_lock(
+				cur->user->vm, unmap_end, r_end, r_prot, r_flag,
+				r_fp, r_offset + (int)(unmap_end - r_begin),
+				r_anon_id, r_fault_lock);
+
+		if (r_fp)
+			fs_put_file(r_fp);
+		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
+			mm_anon_shared_put(r_anon_id);
+		vm_fault_lock_unlock(r_fault_lock);
+		vm_fault_lock_put(r_fault_lock);
+	}
+
+	arch_mm_flush_local();
+	vm_invalidate_user_cache(cur->user);
+	return 0;
+}

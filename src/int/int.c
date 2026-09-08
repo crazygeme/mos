@@ -7,6 +7,7 @@
 #include <macro.h>
 #include <errno.h>
 #include <ps/smp.h>
+#include <arch/interrupt.h>
 extern void do_signal(intr_frame *frame);
 #define gdt (smp_gdt())
 
@@ -32,11 +33,7 @@ void int_register(int vec_no, int_callback fn, int is_trap, int dpl)
 		return;
 
 	f = intr_stubs[vec_no];
-	if (is_trap) {
-		idt[vec_no] = MAKE_TRAP_GATE(f, dpl);
-	} else {
-		idt[vec_no] = MAKE_INTR_GATE(f, dpl);
-	}
+	arch_interrupt_set_gate(vec_no, f, is_trap, dpl);
 
 	in_callbacks[vec_no] = fn;
 }
@@ -86,7 +83,7 @@ static void intr_sanitize_user_return(intr_frame *frame)
 	 */
 	ps_load_task_segments(cur);
 
-	if (frame->cs != USER_CODE_SELECTOR)
+	if (!arch_interrupt_frame_is_user(frame))
 		return;
 
 	/*
@@ -232,15 +229,7 @@ static void handle_general_protection(intr_frame *frame)
 void int_enable_all(void)
 {
 	int i = 0;
-	unsigned long long idtr = 0;
-	unsigned long long gdtr = 0;
-
-	idtr = MAKE_IDTR_OPERAND(idt_size - 1, idt);
-	gdtr = MAKE_GDTR_OPERAND(gdt_size - 1, gdt);
-	SET_IDT(idtr);
-	SET_GDT(gdtr);
-	SET_CS(KERNEL_CODE_SELECTOR);
-	SET_DS(KERNEL_DATA_SELECTOR);
+	arch_interrupt_activate();
 
 	port_write_byte(0x21, 0x0);
 	port_write_byte(0xA1, 0x0);
@@ -257,9 +246,5 @@ void int_enable_all(void)
  */
 void int_update_tss(void *address)
 {
-	unsigned int base = (unsigned int)address;
-	gdt[TSS_SELECTOR / 8] = MAKE_SEG_DESC(base, TSS_SEG_LIMIT,
-					      SEG_CLASS_SYSTEM, 9,
-					      KERNEL_PRIVILEGE, SEG_BASE_1);
-	SET_TSS(TSS_SELECTOR);
+	arch_interrupt_set_kernel_stack(address);
 }

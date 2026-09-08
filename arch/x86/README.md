@@ -1,6 +1,6 @@
 # x86 backend
 
-This is the active 32-bit i686 backend. Its linker script and build settings
-live here. Existing architecture-specific source files remain under `src/`
-during the first, behavior-preserving build split and will be moved behind
-architecture interfaces incrementally.
+This is the active 32-bit i686 backend. Architecture-specific implementations
+are grouped directly by subsystem (`boot`, `int`, `mm`, and `ps`) without an
+extra `src` directory. Architecture-neutral process, VM, and interrupt policy
+remains in the top-level `src` tree.

@@ -15,6 +15,8 @@
 #include <config.h>
 #include <unistd.h>
 #include <macro.h>
+#include <arch/mmu.h>
+#include <arch/task.h>
 #include <errno.h>
 
 /*
@@ -58,7 +60,7 @@ static void cleanup()
 	mm_init_process_page_dir((unsigned)new_pd);
 	vm_set_page_dir(new_mm, (unsigned)new_pd);
 	cur->user->vm = new_mm;
-	SET_CR3(VIRT_TO_PHY(new_pd));
+	arch_mm_activate(VIRT_TO_PHY(new_pd));
 	vm_put(old_mm);
 
 	/* Close all O_CLOEXEC file descriptors. */
@@ -81,13 +83,7 @@ static void cleanup()
 	 * image can hit set_thread_area(entry=-1) with all three slots already
 	 * appearing occupied before it has installed its own TLS.
 	 */
-	memset(cur->user->tls_desc, 0, sizeof(cur->user->tls_desc));
-	memset(cur->user->ldt_desc, 0, sizeof(cur->user->ldt_desc));
-	cur->user->ldt_present = 0;
-	frame->gs = 0;
-	cur->tss.gs = 0;
-	SET_GS(0);
-	ps_update_ldt(cur);
+	arch_task_reset_tls(cur, frame);
 }
 
 /*
@@ -612,7 +608,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	vm_set_brk(cur->user->vm, fmt.start_brk, fmt.start_brk);
 	if (!eip) {
 		printk("fatal error: file %s not found!\n", file_name);
-		asm("hlt");
+		HLT();
 	}
 
 	if (cur->user->vm->start_brk > 0 &&

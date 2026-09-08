@@ -12,6 +12,7 @@
 #include <hw/time.h>
 #include <config.h>
 #include <macro.h>
+#include <arch/mmu.h>
 
 unsigned page_fault_cow = 0;
 unsigned page_fault_invalid = 0;
@@ -153,7 +154,7 @@ static int pf_handle_invalid_file_map(unsigned address, vm_region *region,
 			pte |= PAGE_ENTRY_WRITABLE;
 		if (mm_map_page_io(address, phy, pte) != 1)
 			goto FAIL;
-		INVLPG(address);
+		arch_mm_invalidate(address);
 		return 1;
 	}
 
@@ -173,13 +174,13 @@ static int pf_handle_invalid_file_map(unsigned address, vm_region *region,
 
 	if (mm_map_page(address, page.phy, PAGE_ENTRY_USER_CODE) != 1)
 		goto FAIL;
-	INVLPG(address);
+	arch_mm_invalidate(address);
 
 	if ((flag & MAP_SHARED) || !(prot & PROT_WRITE)) {
 		mmflag = mm_get_map_flag(address);
 		mmflag &= ~PAGE_ENTRY_WRITABLE;
 		mm_set_map_flag(address, mmflag);
-		INVLPG(address);
+		arch_mm_invalidate(address);
 	}
 	if ((flag & MAP_SHARED) && page.needs_shared_registration)
 		mm_file_shared_add(f, offset, page.phy);
@@ -220,7 +221,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 			if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE) !=
 			    1)
 				goto DONE;
-			INVLPG(address);
+			arch_mm_invalidate(address);
 			handled = 1;
 			goto DONE;
 		}
@@ -243,7 +244,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 			     address, phy);
 			goto DONE;
 		}
-		INVLPG(address);
+		arch_mm_invalidate(address);
 		memset(address, 0, PAGE_SIZE);
 
 		mm_anon_shared_add(region->anon_id, offset, phy);
@@ -254,7 +255,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 	if (prot & PROT_WRITE) {
 		if (mm_map_page(address, 0, PAGE_ENTRY_USER_DATA) != 1)
 			goto DONE;
-		INVLPG(address);
+		arch_mm_invalidate(address);
 		memset(address, 0, PAGE_SIZE);
 	} else {
 		/*
@@ -266,7 +267,7 @@ static int pf_handle_invalid_memory(unsigned address, vm_region *region,
 		if (mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE) !=
 		    1)
 			goto DONE;
-		INVLPG(address);
+		arch_mm_invalidate(address);
 	}
 	handled = 1;
 
@@ -437,7 +438,7 @@ static void wp_page_copy(unsigned cr2)
 	flag |= PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
 	mm_map_page(vir, phy, flag);
 
-	INVLPG(vir);
+	arch_mm_invalidate(vir);
 }
 
 /*
@@ -455,7 +456,7 @@ static void wp_page_reuse(unsigned cr2)
 	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_set_map_flag(vir, flag);
-	INVLPG(vir);
+	arch_mm_invalidate(vir);
 }
 
 /*
@@ -541,9 +542,9 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 	target_cr3 = VIRT_TO_PHY(task->user->vm->page_dir);
 	old_level = int_intr_disable();
 	sched_disable();
-	LOAD_CR3(old_cr3);
+	old_cr3 = arch_mm_current_address_space();
 	if (old_cr3 != target_cr3)
-		SET_CR3(target_cr3);
+		arch_mm_activate(target_cr3);
 
 	addr &= PAGE_SIZE_MASK;
 	if (write)
@@ -552,7 +553,7 @@ int pf_resolve_task_page_fault(task_struct *task, unsigned addr, int write)
 		handled = pf_handle_page_invalid(task, addr);
 
 	if (old_cr3 != target_cr3)
-		SET_CR3(old_cr3);
+		arch_mm_activate(old_cr3);
 	sched_enable();
 	int_intr_setlevel(old_level);
 	return handled;
@@ -577,7 +578,7 @@ static void pf_process(intr_frame *frame)
 	/*
 	 * Save old interrupt state first.
 	 */
-	LOAD_CR2(cr2);
+	cr2 = arch_mm_fault_address();
 	sched_disable();
 	int_enable = int_intr_enable();
 

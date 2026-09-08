@@ -80,7 +80,7 @@ Kernel source trees write their optimization policy explicitly in `src/**/cflags
 
 - debug builds use `CFLAGS-$(DEBUG) += -O0`
 - release builds typically use `CFLAGS-$(RELEASE) += -O2`
-- special cases can override either side explicitly, such as `src/ps/sched/cflags.mk`
+- special cases can override either side explicitly, such as `arch/x86/ps/sched/cflags.mk`
 
 `third_party/` is intentionally left on its own build flags and is not switched to debug settings.
 

@@ -40,6 +40,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <dev/dev.h>
 #include <ext4_oflags.h>
 #include "devnums.h"
@@ -363,7 +364,7 @@ static int tty_graphics_owner_fb_dirty(const tty_state *state)
 	ctx.dirty = 0;
 	vm_enum(owner->user->vm, tty_graphics_dirty_region_cb, &ctx);
 	if (ctx.dirty)
-		RELOAD_CR3();
+		arch_mm_flush_local();
 	return ctx.dirty;
 }
 

@@ -12,52 +12,20 @@
 
 void memcpy(void *to, const void *from, unsigned n)
 {
-	unsigned dwords = n / 4;
-	unsigned tail = n % 4;
 	unsigned char *d = to;
 	const unsigned char *s = from;
 
-	/* Copy 4 bytes at a time with rep movsd */
-	__asm__ volatile("rep movsl"
-			 : "+D"(d), "+S"(s), "+c"(dwords)
-			 :
-			 : "memory");
-
-	/* Copy remaining 0-3 bytes */
-	switch (tail) {
-	case 3:
-		*d++ = *s++; /* fall through */
-	case 2:
-		*d++ = *s++; /* fall through */
-	case 1:
+	while (n--)
 		*d++ = *s++;
-	}
 }
 
 void memset(void *src, char val, int len)
 {
 	unsigned char bval = (unsigned char)val;
-	unsigned word = bval | ((unsigned)bval << 8) | ((unsigned)bval << 16) |
-			((unsigned)bval << 24);
-	unsigned dwords = (unsigned)len / 4;
-	unsigned tail = (unsigned)len % 4;
 	unsigned char *p = src;
 
-	/* Fill 4 bytes at a time with rep stosd */
-	__asm__ volatile("rep stosl"
-			 : "+D"(p), "+c"(dwords)
-			 : "a"(word)
-			 : "memory");
-
-	/* Fill remaining 0-3 bytes */
-	switch (tail) {
-	case 3:
-		*p++ = bval; /* fall through */
-	case 2:
-		*p++ = bval; /* fall through */
-	case 1:
+	while (len-- > 0)
 		*p++ = bval;
-	}
 }
 
 void memmove(void *dst, void *src, unsigned len)

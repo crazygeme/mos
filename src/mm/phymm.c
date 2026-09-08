@@ -6,6 +6,7 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <macro.h>
+#include <arch/mmu.h>
 
 /*
  * Global state
@@ -467,7 +468,7 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 		addr = KERNEL_OFFSET + i;
 		mm_kmap_page(addr);
 	}
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	addr = KERNEL_OFFSET + start_page * PAGE_SIZE;
 	memset((void *)addr, 0, (phymm_begin - start_page) * PAGE_SIZE);
 	phymm_pages = (phymm_page *)(addr);

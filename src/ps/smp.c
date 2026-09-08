@@ -3,6 +3,8 @@
 #include <lib/klib.h>
 #include <hw/time.h>
 #include <mm/mm.h>
+#include <arch/mmu.h>
+#include <arch/cpu_local.h>
 
 struct smp_cpu smp_cpus[SMP_MAX_CPUS];
 static unsigned ncpu = 1;
@@ -68,8 +70,7 @@ void smp_tlb_poll(void)
 	struct smp_cpu *cpu = &smp_cpus[smp_cpu_id()];
 	unsigned gen = __atomic_load_n(&tlb_generation, __ATOMIC_ACQUIRE);
 	if (cpu->tlb_ack != gen) {
-		asm volatile("mov %%cr3, %%eax; mov %%eax, %%cr3"
-			     : : : "eax", "memory");
+		arch_cpu_reload_tlb();
 		__atomic_store_n(&cpu->tlb_ack, gen, __ATOMIC_RELEASE);
 	}
 }
@@ -80,8 +81,7 @@ void smp_tlb_flush(void)
 {
 	unsigned i, me = smp_cpu_id();
 	unsigned irq = int_intr_disable();
-	asm volatile("mov %%cr3, %%eax; mov %%eax, %%cr3"
-		     : : : "eax", "memory");
+	arch_cpu_reload_tlb();
 	if (smp_cpu_count() > 1) {
 		unsigned gen = __atomic_add_fetch(&tlb_generation, 1, __ATOMIC_RELEASE);
 		smp_cpus[me].tlb_ack = gen;
@@ -146,7 +146,7 @@ void smp_idle(void)
 	DISABLE_INTR();
 	smp_kernel_leave();
 	/* PIT broadcasts guarantee a wake even if a ready transition races hlt. */
-	asm volatile("sti; hlt; cli" : : : "memory");
+	arch_cpu_idle_wait();
 	smp_kernel_enter();
 	ENABLE_INTR();
 }
@@ -179,23 +179,17 @@ int smp_interrupt(intr_frame *frame)
 
 void smp_fpu_init(void)
 {
-	unsigned cr0, cr4;
-	asm volatile("mov %%cr0, %0" : "=r"(cr0));
-	cr0 = (cr0 & ~12U) | 0x10022U;
-	asm volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
-	asm volatile("mov %%cr4, %0" : "=r"(cr4));
-	cr4 = (cr4 & ~(1U << 7)) | (3U << 9);
-	asm volatile("mov %0, %%cr4; fninit" : : "r"(cr4) : "memory");
+	arch_cpu_fpu_init();
 }
 
 void smp_fpu_save(task_struct *task)
 {
-	asm volatile("fxsave %0" : "=m"(task->fpu));
+	arch_cpu_fpu_save((void *)task->fpu);
 }
 
 void smp_fpu_restore(task_struct *task)
 {
-	asm volatile("fxrstor %0" : : "m"(task->fpu));
+	arch_cpu_fpu_restore((const void *)task->fpu);
 }
 
 void smp_fpu_new(task_struct *task)
@@ -290,16 +284,7 @@ static int acpi_scan(unsigned begin, unsigned end)
 static void cpu_setup(void)
 {
 	struct smp_cpu *cpu = &smp_cpus[smp_cpu_id()];
-	unsigned long long operand;
-	memcpy(cpu->gdt, gdt, sizeof(cpu->gdt));
-	operand = MAKE_GDTR_OPERAND(sizeof(cpu->gdt) - 1, cpu->gdt);
-	SET_GDT(operand);
-	operand = MAKE_IDTR_OPERAND(idt_size - 1, idt);
-	asm volatile("lidt %0" : : "m"(operand) : "memory");
-	memset(&cpu->tss, 0, sizeof(cpu->tss));
-	memset(cpu->tss.io_bitmap, 0xff, sizeof(cpu->tss.io_bitmap));
-	cpu->tss.tss.ss0 = KERNEL_DATA_SELECTOR;
-	cpu->tss.tss.iomap = offsetof(tss_io_struct, io_bitmap);
+	arch_cpu_local_init(cpu);
 	smp_fpu_init();
 	if (lapic) {
 		apic_write(0xf0, 0x100 | SMP_SPURIOUS_VECTOR);
@@ -325,12 +310,12 @@ void smp_init(void)
 	unsigned a, b, c, d, low, high;
 	unsigned ebda;
 	DISABLE_INTR();
-	asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1), "c"(0));
+	arch_cpu_cpuid(1, 0, &a, &b, &c, &d);
 	if (!(d & (1U << 24))) { klog("SMP: FXSR required\n"); DIE(); }
 	if (d & (1U << 9)) {
-		asm volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(0x1b));
+		arch_cpu_read_msr(0x1b, &low, &high);
 		low = (low | (1U << 11)) & ~(1U << 10);
-		asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(0x1b));
+		arch_cpu_write_msr(0x1b, low, high);
 		if (mm_map_io(low & PAGE_SIZE_MASK) != 1) DIE();
 		lapic = (void *)(low & PAGE_SIZE_MASK);
 		/* APIC registers must never be cacheable. */
@@ -346,8 +331,8 @@ void smp_init(void)
 	smp_cpus[0].online = 1;
 	kernel_owner = 1;
 	kernel_ticket = kernel_serving + 1;
-	asm volatile("fxsave %0" : "=m"(clean_fpu));
-	LOAD_CR3(boot_pd);
+	arch_cpu_fpu_save(clean_fpu);
+	boot_pd = arch_mm_current_address_space();
 	ENABLE_INTR();
 }
 

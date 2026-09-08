@@ -1,4 +1,5 @@
 #include <ps/ps.h>
+#include <arch/task.h>
 #include <ps/signal.h>
 #include <int/int.h>
 #include <lib/klib.h>
@@ -294,16 +295,7 @@ void ps_ptrace_stop_exec(unsigned eip, unsigned esp)
 	if (!cur->user->ptrace_tracer)
 		return;
 
-	memset(&frame, 0, sizeof(frame));
-	frame.eip = (void *)eip;
-	frame.esp = (void *)esp;
-	frame.cs = USER_CODE_SELECTOR;
-	frame.ss = USER_DATA_SELECTOR;
-	frame.ds = USER_DATA_SELECTOR;
-	frame.es = USER_DATA_SELECTOR;
-	frame.fs = USER_DATA_SELECTOR;
-	frame.gs = USER_DATA_SELECTOR;
-	frame.eflags = 0x202;
+	arch_task_init_user_frame(&frame, eip, esp);
 	frame.eax = 0;
 	cur->user->ptrace_orig_eax = 11; /* __NR_execve on i386 */
 

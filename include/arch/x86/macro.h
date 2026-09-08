@@ -108,6 +108,51 @@ void smp_tlb_flush(void);
 
 #define NOP() asm volatile("nop")
 
+#ifndef __ASSEMBLER__
+static inline void arch_cpu_reload_tlb(void) { LOCAL_RELOAD_CR3(); }
+static inline void arch_cpu_idle_wait(void)
+{
+	asm volatile("sti; hlt; cli" : : : "memory");
+}
+static inline void arch_cpu_cpuid(unsigned leaf, unsigned subleaf,
+				  unsigned *a, unsigned *b, unsigned *c,
+				  unsigned *d)
+{
+	asm volatile("cpuid" : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d)
+		     : "a"(leaf), "c"(subleaf) : "memory");
+}
+static inline void arch_cpu_read_msr(unsigned msr, unsigned *low, unsigned *high)
+{
+	asm volatile("rdmsr" : "=a"(*low), "=d"(*high) : "c"(msr));
+}
+static inline void arch_cpu_write_msr(unsigned msr, unsigned low, unsigned high)
+{
+	asm volatile("wrmsr" : : "a"(low), "d"(high), "c"(msr));
+}
+static inline void arch_cpu_fpu_init(void)
+{
+	unsigned cr0, cr4;
+	asm volatile("mov %%cr0, %0" : "=r"(cr0));
+	cr0 = (cr0 & ~12U) | 0x10022U;
+	asm volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
+	asm volatile("mov %%cr4, %0" : "=r"(cr4));
+	cr4 = (cr4 & ~(1U << 7)) | (3U << 9);
+	asm volatile("mov %0, %%cr4; fninit" : : "r"(cr4) : "memory");
+}
+static inline void arch_cpu_fpu_save(void *state)
+{
+	asm volatile("fxsave (%0)" : : "r"(state) : "memory");
+}
+static inline void arch_cpu_fpu_restore(const void *state)
+{
+	asm volatile("fxrstor (%0)" : : "r"(state) : "memory");
+}
+static inline void arch_cpu_load_idt(const void *operand)
+{
+	asm volatile("lidt (%0)" : : "r"(operand) : "memory");
+}
+#endif
+
 /* Per-CPU TSS selector: CPU 0 → TSS_SELECTOR, CPU n → TSS_SELECTOR + n*8 */
 #define TSS_SELECTOR_FOR(n) (TSS_SELECTOR + (n) * 8)
 

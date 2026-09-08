@@ -9,6 +9,7 @@
 #include <ps/ps.h>
 #include <fs/fs.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <config.h>
 #include <errno.h>
 #include <ext4.h>
@@ -364,7 +365,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, unsigned begin, unsigned end,
 	}
 
 	if (tlb_needs_reload)
-		RELOAD_CR3();
+		arch_mm_flush_local();
 
 	/* No conflicts remain: insert the new region. */
 	vm_region *region = kmalloc(sizeof(*region));
@@ -472,7 +473,7 @@ void vm_del_map(vm_struct_t vm, unsigned addr)
 	/* Unmap every page in the region from the hardware page tables. */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
 		mm_unmap_page(vir);
-	RELOAD_CR3();
+	arch_mm_flush_local();
 
 	vm_tree_remove(mm, region);
 	vm_fault_lock_unlock(fault_lock);
@@ -823,7 +824,7 @@ void do_mmap_update(unsigned int _addr, unsigned int prot, unsigned int flags)
 		mm_set_map_flag(vir, mmflag);
 	}
 
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	vm_invalidate_user_cache(cur->user);
 }
 
@@ -1066,7 +1067,7 @@ int do_munmap(void *addr, unsigned length)
 		vm_fault_lock_put(r_fault_lock);
 	}
 
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	vm_invalidate_user_cache(cur->user);
 	return 0;
 }

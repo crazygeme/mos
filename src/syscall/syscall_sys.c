@@ -14,6 +14,7 @@
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <unistd.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
@@ -440,7 +441,7 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 		mm_set_map_flag(vir, mmflag);
 	}
 
-	RELOAD_CR3();
+	arch_mm_flush_local();
 	vm_invalidate_user_cache(cur->user);
 	return 0;
 }

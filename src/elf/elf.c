@@ -5,6 +5,7 @@
 #include <ps/ps.h>
 #include <lib/klib.h>
 #include <macro.h>
+#include <arch/mmu.h>
 #include <ext4.h>
 
 /* Round x up to the nearest page boundary. */
@@ -168,7 +169,7 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 
 				mm_map_page(file_page_end, 0,
 					    PAGE_ENTRY_USER_DATA);
-				INVLPG(file_page_end);
+				arch_mm_invalidate(file_page_end);
 				memset((void *)file_page_end, 0, PAGE_SIZE);
 				elf_read(fp, page_file_off,
 					 (void *)file_page_end, bytes);
@@ -177,7 +178,7 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 				if (!(prot & PROT_WRITE)) {
 					mm_set_map_flag(file_page_end,
 							PAGE_ENTRY_USER_CODE);
-					INVLPG(file_page_end);
+					arch_mm_invalidate(file_page_end);
 				}
 			}
 
@@ -228,7 +229,7 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		for (page = va_begin; page < va_begin + map_size;
 		     page += PAGE_SIZE) {
 			mm_map_page(page, 0, PAGE_ENTRY_USER_DATA);
-			INVLPG(page);
+			arch_mm_invalidate(page);
 			memset((void *)page, 0, PAGE_SIZE);
 		}
 		if (copy_size > 0)

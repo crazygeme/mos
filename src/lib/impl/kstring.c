@@ -10,24 +10,6 @@
 
 /* ── Memory operations ───────────────────────────────────────────────────── */
 
-void memcpy(void *to, const void *from, unsigned n)
-{
-	unsigned char *d = to;
-	const unsigned char *s = from;
-
-	while (n--)
-		*d++ = *s++;
-}
-
-void memset(void *src, char val, int len)
-{
-	unsigned char bval = (unsigned char)val;
-	unsigned char *p = src;
-
-	while (len-- > 0)
-		*p++ = bval;
-}
-
 void memmove(void *dst, void *src, unsigned len)
 {
 	char *d = dst, *s = src;

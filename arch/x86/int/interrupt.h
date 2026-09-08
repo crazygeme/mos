@@ -2,6 +2,7 @@
 #define MOS_X86_ARCH_INTERRUPT_H
 
 #include <arch/types.h>
+#include <compiler.h>
 
 /* Must match the pushes performed by arch/x86/int/impl/int.S. */
 typedef struct _intr_frame {
@@ -25,6 +26,9 @@ void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap,
 			     int dpl);
 void arch_interrupt_activate(void);
 void arch_interrupt_set_kernel_stack(void *address);
-int arch_interrupt_frame_is_user(const struct _intr_frame *frame);
+ALWAYS_INLINE int arch_interrupt_frame_is_user(const struct _intr_frame *frame)
+{
+	return (frame->cs & 3) != 0;
+}
 
 #endif

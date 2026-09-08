@@ -33,8 +33,3 @@ void arch_interrupt_set_kernel_stack(void *address)
 			      KERNEL_PRIVILEGE, SEG_BASE_1);
 	SET_TSS(TSS_SELECTOR);
 }
-
-int arch_interrupt_frame_is_user(const intr_frame *frame)
-{
-	return (frame->cs & 3) == USER_PRIVILEGE;
-}

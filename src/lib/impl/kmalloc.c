@@ -47,7 +47,7 @@
 unsigned int heap_quota;
 unsigned int heap_quota_high;
 unsigned int heap_time;
-unsigned int cur_block_top = KHEAP_BEGIN;
+vaddr_t cur_block_top = KHEAP_BEGIN;
 
 static spinlock_t heap_lock;
 
@@ -147,7 +147,7 @@ static void bins_init(void)
 
 /* ── Heap extension ──────────────────────────────────────────────────────── */
 
-static unsigned kblk_raw(unsigned page_count)
+static vaddr_t kblk_raw(unsigned page_count)
 {
 	unsigned ret = cur_block_top;
 
@@ -170,7 +170,7 @@ static void *extend_heap(unsigned min_sz)
 {
 	unsigned pages = (min_sz + HDR_SZ + PAGE_SIZE - 1) / PAGE_SIZE;
 	unsigned chunk = pages * PAGE_SIZE;
-	unsigned addr = kblk_raw(pages);
+	vaddr_t addr = kblk_raw(pages);
 
 	if (!addr)
 		return NULL;

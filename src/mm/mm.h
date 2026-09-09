@@ -7,23 +7,23 @@
 typedef struct _file file;
 typedef struct multiboot_info multiboot_info_t;
 
-#define KERNEL_OFFSET 0xC0000000
-#define KERNEL_SIZE 0x40000000
-#define KERNEL_KMAP_BEGIN 0xF0000000
-#define KERNEL_KMAP_END 0xF8000000
-#define KERNEL_IO_BEGIN KERNEL_KMAP_END
-#define KERNEL_IO_END 0x100000000ULL
+#define KERNEL_OFFSET MOS_KERNEL_OFFSET
+#define KERNEL_SIZE MOS_KERNEL_SIZE
+#define KERNEL_KMAP_BEGIN MOS_KERNEL_KMAP_BEGIN
+#define KERNEL_KMAP_END MOS_KERNEL_KMAP_END
+#define KERNEL_IO_BEGIN MOS_KERNEL_IO_BEGIN
+#define KERNEL_IO_END MOS_KERNEL_IO_END
 #define KERNEL_DIRECT_MAP_LIMIT (KERNEL_KMAP_BEGIN - KERNEL_OFFSET)
-#define PG_TABLE_SIZE 1024
-#define PE_TABLE_SIZE 1024
-#define KERNEL_PAGE_DIR_OFFSET (KERNEL_OFFSET / (4 * 1024 * 1024))
+#define PG_TABLE_SIZE MOS_PG_TABLE_SIZE
+#define PE_TABLE_SIZE MOS_PE_TABLE_SIZE
+#define KERNEL_PAGE_DIR_OFFSET MOS_KERNEL_PAGE_DIR_OFFSET
 
-#define OFFSET_IN_PAGE_MASK 0x00000FFF
-#define OFFSET_IN_PET_MASK 0x003FF000
-#define OFFSET_IN_PGT_MASK 0xFFC00000
+#define OFFSET_IN_PAGE_MASK (MOS_PAGE_SIZE - 1)
+#define OFFSET_IN_PET_MASK MOS_OFFSET_IN_PET_MASK
+#define OFFSET_IN_PGT_MASK MOS_OFFSET_IN_PGT_MASK
 
-#define ADDR_TO_PGT_OFFSET(addr) ((addr & OFFSET_IN_PGT_MASK) >> 22)
-#define ADDR_TO_PET_OFFSET(addr) ((addr & OFFSET_IN_PET_MASK) >> 12)
+#define ADDR_TO_PGT_OFFSET(addr) ((addr & OFFSET_IN_PGT_MASK) >> MOS_PGT_SHIFT)
+#define ADDR_TO_PET_OFFSET(addr) ((addr & OFFSET_IN_PET_MASK) >> MOS_PET_SHIFT)
 #define ADDR_TO_PAGE_OFFSET(addr) (addr & OFFSET_IN_PAGE_MASK)
 
 #define PAGE_ENTRY_PRESENT 0x01 // present if set
@@ -122,7 +122,7 @@ void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
-int do_mmap(unsigned int addr, unsigned int len, unsigned int prot,
+int do_mmap(vaddr_t addr, unsigned int len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset);
 
 void do_mmap_update(vaddr_t addr, unsigned int prot, unsigned int flags);

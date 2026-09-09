@@ -510,7 +510,7 @@ vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr)
 		 * out rather than faulting again while holding table->lock and
 		 * deadlocking in the nested page-fault path.
 		 */
-		if ((unsigned)region < KERNEL_OFFSET) {
+		if ((uintptr_t)region < KERNEL_OFFSET) {
 			spinlock_unlock(&mm->vma_lock, irq);
 			return NULL;
 		}
@@ -834,7 +834,7 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
  * Resolves the file descriptor to an inode pointer (NULL for anonymous
  * mappings where fd == -1) and delegates to do_mmap_kernel().
  */
-int do_mmap(unsigned int _addr, unsigned int _len, unsigned int prot,
+int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 	    unsigned int flags, int fd, unsigned int offset)
 {
 	task_struct *cur = CURRENT_TASK();

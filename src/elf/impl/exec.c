@@ -251,18 +251,18 @@ but that could change... */
  *
  * Returns the new stack pointer (esp) that should be given to the entry point.
  */
-static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
+static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
 				 char **envp, unsigned top, mos_binfmt *exec)
 {
 	int i = 0;
-	unsigned long esp = top;
-	unsigned *sp, *platform = 0;
-	unsigned vdso_entry = mm_vdso_fastcall_entry();
+	vaddr_t esp = top;
+	vaddr_t *sp, *platform = 0;
+	vaddr_t vdso_entry = mm_vdso_fastcall_entry();
 	int argv_buf_len = argc * sizeof(char *);
 	int env_buf_len = envc * sizeof(char *);
 	char **tmp_array_argv = 0;
 	char **tmp_array_env = 0;
-	unsigned argvp, envpp;
+	vaddr_t argvp, envpp;
 	int len;
 
 	/* Temporary kernel-side pointer arrays; filled while copying strings. */
@@ -371,14 +371,14 @@ static unsigned setup_user_stack(char *file, int argc, char **argv, int envc,
 	/* Push argc — this is what the entry point (or crt0) reads first. */
 	esp -= 4;
 	memcpy((void *)esp, &argc, sizeof(argc));
-	return (unsigned)esp;
+	return (vaddr_t)esp;
 }
 
 int sys_execve(const char *f, char **argv, char **envp)
 {
-	unsigned eip = 0;
+	vaddr_t eip = 0;
 	int i = 0;
-	unsigned esp_top = KERNEL_OFFSET;
+	vaddr_t esp_top = KERNEL_OFFSET;
 	char *file_name;
 	unsigned argc = 0, envc = 0;
 	char **s_argv = 0;
@@ -654,7 +654,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	free_v(s_envp, envc);
 	name_put(file_name);
 	cur->type = ps_user;
-	extern void switch_to_user_mode(unsigned eip, unsigned esp);
+	extern void switch_to_user_mode(vaddr_t eip, vaddr_t esp);
 	switch_to_user_mode(eip, esp_top);
 	// never return here
 	return 0;
@@ -733,7 +733,7 @@ static void kinit_userspace()
 	task_struct *cur = CURRENT_TASK();
 	const char **argv = devault_argv;
 	const char **envp = default_envp;
-	unsigned esp0 = (unsigned)cur + (unsigned)PAGE_SIZE;
+	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + PAGE_SIZE;
 
 	if (TestControl.bash) {
 		argv = user_argv;

@@ -346,7 +346,7 @@ static int mm_set_page_table_entry(vaddr_t addr, unsigned flag, pte_t value)
 
 	/* Track live entries so we know when to reclaim the page table */
 	if (addr < KERNEL_OFFSET && (*info.entry & PAGE_SIZE_MASK) == 0) {
-		int idx = (PAGE_TABLE_CACHE_END - (unsigned)info.table) /
+		int idx = (PAGE_TABLE_CACHE_END - (uintptr_t)info.table) /
 				  PAGE_SIZE -
 			  1;
 		pgc_entry_count[idx]++;
@@ -369,15 +369,15 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 	paddr_t phy = *info->entry & PAGE_SIZE_MASK;
 	unsigned dir_index =
 		(unsigned)(info->dir - (pte_t *)mm_get_pagedir());
-	vaddr_t addr = (dir_index << 22) |
-		((unsigned)(info->entry - info->table) << 12);
+	vaddr_t addr = ((vaddr_t)dir_index << MOS_PGT_SHIFT) |
+		((vaddr_t)(info->entry - info->table) << MOS_PET_SHIFT);
 
 	*info->entry = 0;
 	arch_mm_invalidate(addr);
 	if (phy) {
 		if (dir_index < KERNEL_PAGE_DIR_OFFSET) {
 			int idx =
-				(PAGE_TABLE_CACHE_END - (unsigned)info->table) /
+				(PAGE_TABLE_CACHE_END - (uintptr_t)info->table) /
 					PAGE_SIZE -
 				1;
 			pgc_entry_count[idx]--;
@@ -614,7 +614,7 @@ void mm_destroy_user_map(vaddr_t page_dir)
 
 		table = (pte_t *)PHY_TO_VIRT(table_phy);
 		cache_idx =
-			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
+			(PAGE_TABLE_CACHE_END - (uintptr_t)table) / PAGE_SIZE -
 			1;
 		/* The address space is inactive before its last reference is dropped. */
 		dir[i] = 0;

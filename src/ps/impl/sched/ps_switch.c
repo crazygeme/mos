@@ -16,7 +16,7 @@
  * The assembly switch saves an ordinary cdecl call frame. A resumed task
  * returns from that call and restores its own interrupt state.
  */
-extern void ps_context_switch(unsigned *old_sp, unsigned new_sp);
+extern void ps_context_switch(uintptr_t *old_sp, uintptr_t new_sp);
 extern void ps_reap_dead_threads(void);
 
 void _task_sched(const char *func)

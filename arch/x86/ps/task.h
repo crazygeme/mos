@@ -48,15 +48,17 @@ typedef volatile struct _task_frame {
 
 /* Register image exported by the x86 ptrace implementation. */
 typedef struct _ptrace_saved_frame {
-	unsigned edi, esi, ebp, ebx, edx, ecx, eax;
+	uintptr_t edi, esi, ebp, ebx, edx, ecx, eax;
 	unsigned short gs, fs, es, ds;
 	unsigned error_code;
-	unsigned eip;
+	uintptr_t eip;
 	unsigned short cs;
 	unsigned eflags;
-	unsigned esp;
+	uintptr_t esp;
 	unsigned short ss;
 } ptrace_saved_frame;
+
+/* Keep architecture task pointers width-neutral at common call sites. */
 
 void arch_task_init(struct _task_struct *task);
 void arch_task_activate(struct _task_struct *task);

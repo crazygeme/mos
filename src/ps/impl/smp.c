@@ -219,20 +219,20 @@ static int checksum(const void *ptr, unsigned len)
 	return sum == 0;
 }
 
-static void *firmware(unsigned addr, unsigned len)
+static void *firmware(paddr_t addr, unsigned len)
 {
 	unsigned p;
 	if (!len || addr + len < addr)
 		return NULL;
 	if (addr + len > KERNEL_DIRECT_MAP_LIMIT) {
-		unsigned off = 0;
+		paddr_t off = 0;
 		char *copy;
 		if (len > 65536 || firmware_copy_count == 128) return NULL;
 		copy = kmalloc(len);
 		if (!copy) return NULL;
 		firmware_copies[firmware_copy_count++] = copy;
 		while (off < len) {
-			unsigned phys = addr + off;
+			paddr_t phys = addr + off;
 			unsigned count = PAGE_SIZE - (phys & (PAGE_SIZE - 1));
 			if (count > len - off) count = len - off;
 			if (mm_kmap_phys(phys) != 1) return NULL;
@@ -242,7 +242,7 @@ static void *firmware(unsigned addr, unsigned len)
 		}
 		return copy;
 	}
-	for (p = addr & PAGE_SIZE_MASK; p < addr + len; p += PAGE_SIZE)
+	for (p = (unsigned)(addr & PAGE_SIZE_MASK); p < addr + len; p += PAGE_SIZE)
 		if (mm_kmap_phys(p) != 1) return NULL;
 	return (void *)(addr + KERNEL_OFFSET);
 }
@@ -343,7 +343,7 @@ void smp_init(void)
 		if (mm_map_io(low & PAGE_SIZE_MASK) != 1) DIE();
 		lapic = (void *)(low & PAGE_SIZE_MASK);
 		/* APIC registers must never be cacheable. */
-		mm_set_map_flag((unsigned)lapic, PAGE_ENTRY_KERNEL_DATA | PAGE_ENTRY_CD | PAGE_ENTRY_WT);
+		mm_set_map_flag((vaddr_t)(uintptr_t)lapic, PAGE_ENTRY_KERNEL_DATA | PAGE_ENTRY_CD | PAGE_ENTRY_WT);
 		smp_cpus[0].apic_id = apic_read(0x20) >> 24;
 		ebda = *(unsigned short *)(KERNEL_OFFSET + 0x40e) << 4;
 		if (!ebda || !acpi_scan(ebda, ebda + 1024))
@@ -395,7 +395,7 @@ void smp_start(void)
 	}
 	pd[0] = old;
 	smp_tlb_flush();
-	mm_free_page_table((unsigned)pt);
+		mm_free_page_table((vaddr_t)(uintptr_t)pt);
 	klog("SMP: %u CPUs online\n", smp_cpu_count());
 	int_intr_setlevel(irq);
 }

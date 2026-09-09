@@ -118,7 +118,7 @@ typedef void (*process_fn)(void *param);
 typedef struct _task_struct task_struct;
 struct _task_struct {
 	task_frame tss;
-	unsigned switch_sp;
+	uintptr_t switch_sp;
 	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
 	unsigned terminate_requested;
 	int sched_level;
@@ -231,7 +231,7 @@ void ps_kickoff();
 
 int ps_enabled();
 
-void ps_update_tss(unsigned int esp0);
+void ps_update_tss(uintptr_t sp0);
 void reset_tss(task_struct *task);
 int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 		  int turn_on);
@@ -287,7 +287,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage);
 int sys_ptrace(int request, int pid, void *addr, void *data);
 void ps_stop_current(intr_frame *frame, int sig);
 void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
-void ps_ptrace_stop_exec(unsigned eip, unsigned esp);
+void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp);
 void qemu_exit(unsigned char code);
 char *sys_getcwd(char *buf, unsigned size);
 int sys_getrusage(int who, rusage *usage);

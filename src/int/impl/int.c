@@ -189,8 +189,8 @@ static void handle_general_protection(intr_frame *frame)
 	unsigned ptrace_mode = 0;
 	unsigned ptrace_frame_valid = 0;
 	unsigned short ptrace_gs = 0;
-	unsigned ptrace_eip = 0;
-	unsigned ptrace_esp = 0;
+	vaddr_t ptrace_eip = 0;
+	vaddr_t ptrace_esp = 0;
 
 	if (cur->user) {
 		tls0 = cur->user->tls_desc[0];
@@ -203,7 +203,7 @@ static void handle_general_protection(intr_frame *frame)
 		ptrace_esp = cur->user->ptrace_frame.esp;
 	}
 
-	klog("#GP happens for pid %d, command %s, eip %x, esp %x, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
+	klog("#GP happens for pid %d, command %s, eip %lx, esp %lx, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
 	     cur->psid, cur->user->command, frame->eip, frame->esp, frame->ebp,
 	     frame->eax, frame->ebx, frame->ecx, frame->edx, frame->ds,
 	     frame->cs, frame->gs, frame->fs, frame->error_code);

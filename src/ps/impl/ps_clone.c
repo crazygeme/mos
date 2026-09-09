@@ -146,8 +146,8 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 			(intr_frame *)((char *)task + PAGE_SIZE -
 				       sizeof(intr_frame));
 		task_intr_frame->esp = (void *)child_stack;
-		task->tss.esp = (unsigned)task_intr_frame;
-		task->tss.ebp = (unsigned)task_intr_frame;
+		task->tss.esp = (uintptr_t)task_intr_frame;
+		task->tss.ebp = (uintptr_t)task_intr_frame;
 	}
 
 	if ((flags & CLONE_SETTLS) && tls) {

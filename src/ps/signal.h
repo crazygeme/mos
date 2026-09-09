@@ -5,6 +5,8 @@
 #ifndef _PS_SIGNAL_H
 #define _PS_SIGNAL_H
 
+#include <arch/types.h>
+
 /* -----------------------------------------------------------------------
  * Signal numbers (Linux/i386 ABI)
  * --------------------------------------------------------------------- */
@@ -115,11 +117,11 @@ struct sigaction {
  * kernel must recover the frame from (frame->esp - 8).
  */
 typedef struct _signal_frame {
-	unsigned int return_addr;
+	arch_reg_t return_addr;
 	int signo;
-	unsigned int saved_eip;
+	arch_reg_t saved_eip;
 	unsigned int saved_eflags;
-	unsigned int saved_esp;
+	arch_reg_t saved_esp;
 	unsigned int saved_eax;
 	unsigned int saved_ebx;
 	unsigned int saved_ecx;

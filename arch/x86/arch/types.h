@@ -8,5 +8,6 @@ typedef uint32_t paddr_t;
 typedef uint32_t addr_space_t;
 typedef uint32_t pte_t;
 typedef uint32_t pfn_t;
+typedef uint32_t arch_reg_t;
 
 #endif

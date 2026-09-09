@@ -5,6 +5,7 @@
 #include <mm/phymm.h>
 #include <ps/ps.h>
 #include <macro.h>
+#include <mm/mmu.h>
 
 #define _VDSO __attribute__((used, section(".vdso")))
 extern const unsigned __vdso_start;
@@ -60,8 +61,8 @@ void mm_vdso_map()
 		vaddr_t vir = base + i * PAGE_SIZE;
 		paddr_t phy = VIRT_TO_PHY(vdso_start + i * PAGE_SIZE);
 		mm_map_page(vir, phy, PAGE_ENTRY_USER_CODE);
+		arch_mm_invalidate(vir);
 	}
-	RELOAD_CR3();
 
 	/* Register a VMA so fork's copy_page_range includes these pages. */
 	{

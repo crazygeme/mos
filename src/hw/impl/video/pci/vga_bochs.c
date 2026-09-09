@@ -48,8 +48,8 @@ static void bochs_ensure_fb_mapping(unsigned width, unsigned height)
 
 	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
 	     a += PAGE_SIZE)
-		mm_map_io(a);
-	arch_mm_flush_local();
+		if (mm_map_io(a) == 1)
+			arch_mm_invalidate(a);
 	_fb_mapped_bytes = need_bytes;
 }
 
@@ -377,8 +377,8 @@ static int bochs_probe(void)
 		VGA_RESOLUTION_X * VGA_RESOLUTION_Y * (VGA_COLOR_DEPTH / 8);
 	unsigned a;
 	for (a = fb_phys; a < fb_phys + fb_size; a += PAGE_SIZE)
-		mm_map_io(a);
-	arch_mm_flush_local();
+		if (mm_map_io(a) == 1)
+			arch_mm_invalidate(a);
 	_fb_phys = fb_phys;
 	_fb_buffer = fb_phys;
 	_fb_mapped_bytes = fb_size;

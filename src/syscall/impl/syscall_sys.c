@@ -441,7 +441,6 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 		mm_set_map_flag(vir, mmflag);
 	}
 
-	arch_mm_flush_local();
 	vm_invalidate_user_cache(cur->user);
 	return 0;
 }

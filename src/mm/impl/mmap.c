@@ -297,7 +297,6 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 	mm_struct *mm = vm;
 	vm_key probe;
 	vm_region *oregion;
-	int tlb_needs_reload = 0;
 
 	/*
 	 * Resolve conflicts iteratively.  Each pass finds one overlapping
@@ -336,7 +335,6 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 		vm_flush_dirty_region(oregion, unmap_begin, unmap_end);
 		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
 			mm_unmap_page(vir);
-		tlb_needs_reload = 1;
 
 		vm_tree_remove(mm, oregion);
 
@@ -363,9 +361,6 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 		vm_fault_lock_unlock(o_fault_lock);
 		vm_fault_lock_put(o_fault_lock);
 	}
-
-	if (tlb_needs_reload)
-		arch_mm_flush_local();
 
 	/* No conflicts remain: insert the new region. */
 	vm_region *region = kmalloc(sizeof(*region));
@@ -473,8 +468,6 @@ void vm_del_map(vm_struct_t vm, vaddr_t addr)
 	/* Unmap every page in the region from the hardware page tables. */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
 		mm_unmap_page(vir);
-	arch_mm_flush_local();
-
 	vm_tree_remove(mm, region);
 	vm_fault_lock_unlock(fault_lock);
 	vm_fault_lock_put(fault_lock);
@@ -824,7 +817,6 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 		mm_set_map_flag(vir, mmflag);
 	}
 
-	arch_mm_flush_local();
 	vm_invalidate_user_cache(cur->user);
 }
 
@@ -1067,7 +1059,6 @@ int do_munmap(void *addr, unsigned length)
 		vm_fault_lock_put(r_fault_lock);
 	}
 
-	arch_mm_flush_local();
 	vm_invalidate_user_cache(cur->user);
 	return 0;
 }

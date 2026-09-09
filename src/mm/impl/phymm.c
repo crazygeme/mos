@@ -467,8 +467,8 @@ void phymm_setup_mgmt_pages(unsigned start_page)
 	     i += PAGE_SIZE) {
 		addr = KERNEL_OFFSET + i;
 		mm_kmap_page(addr);
+		arch_mm_invalidate(addr);
 	}
-	arch_mm_flush_local();
 	addr = KERNEL_OFFSET + start_page * PAGE_SIZE;
 	memset((void *)addr, 0, (phymm_begin - start_page) * PAGE_SIZE);
 	phymm_pages = (phymm_page *)(addr);

@@ -138,8 +138,12 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 	end = from + num;
 	if (end <= from || end > (TSS_IO_BITMAP_BYTES * 8))
 		return -EINVAL;
-	if (!task->io_bitmap)
-		return -ENOMEM;
+	if (!task->io_bitmap) {
+		task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
+		if (!task->io_bitmap)
+			return -ENOMEM;
+		memset(task->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
+	}
 
 	task->io_allow_all = 0;
 	for (port = from; port < end; port++) {
@@ -406,14 +410,13 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 	}
 }
 
-/* Unmap all user pages for task and flush the TLB. */
+/* Unmap all user pages of an inactive task. */
 void ps_cleanup_all_user_map(task_struct *task)
 {
 	if (!task || !task->user || !task->user->vm)
 		return;
 
 	mm_destroy_user_map(task->user->vm->page_dir);
-	arch_mm_flush_local();
 }
 
 /*

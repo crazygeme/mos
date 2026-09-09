@@ -21,11 +21,12 @@
 #define GDT_ENTRY_TLS_MAX 8
 #define GDT_ENTRY_TLS_COUNT 3
 #define TSS_SELECTOR ((GDT_ENTRY_TLS_MAX + 1) << 3)
+#define CPU_LOCAL_SELECTOR (10 << 3)
 
 #define SYSCALL_INT_NO 0x80
 
 #define LDT_ENTRY_COUNT 16
 #define LDT_SELECTOR ((5 + GDT_ENTRY_TLS_COUNT + 1) << 3)
-#define SELECTOR_COUNT (5 + GDT_ENTRY_TLS_COUNT + 1 + 1)
+#define SELECTOR_COUNT 11
 
 #endif

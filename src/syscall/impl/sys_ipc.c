@@ -245,9 +245,9 @@ static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg,
 			return -ENOMEM;
 		if (mm_map_page(vir, phy, pte_flag) != 1)
 			return -ENOMEM;
+		arch_mm_invalidate(vir);
 	}
 
-	arch_mm_flush_local();
 	return 0;
 }
 

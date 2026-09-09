@@ -79,10 +79,11 @@ static unsigned vmsvga_map_mmio_window(unsigned phys, unsigned size)
 		return 0;
 
 	for (a = begin; a < end; a += PAGE_SIZE) {
-		if (mm_phys_to_virt(a) == 0)
+		vaddr_t virt = mm_phys_to_virt(a);
+		if (virt == 0)
 			return 0;
+		arch_mm_invalidate(virt & PAGE_SIZE_MASK);
 	}
-	arch_mm_flush_local();
 
 	return mm_phys_to_virt(phys);
 }
@@ -101,10 +102,11 @@ static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
 
 	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
 	     a += PAGE_SIZE) {
-		if (mm_phys_to_virt(a) == 0)
+		vaddr_t virt = mm_phys_to_virt(a);
+		if (virt == 0)
 			return;
+		arch_mm_invalidate(virt & PAGE_SIZE_MASK);
 	}
-	arch_mm_flush_local();
 	_fb_mapped_bytes = need_bytes;
 }
 

@@ -46,23 +46,8 @@ enum ptrace_user_reg_index {
 };
 
 struct ptrace_user_regs {
-	unsigned ebx;
-	unsigned ecx;
-	unsigned edx;
-	unsigned esi;
-	unsigned edi;
-	unsigned ebp;
-	unsigned eax;
-	unsigned xds;
-	unsigned xes;
-	unsigned xfs;
-	unsigned xgs;
-	unsigned orig_eax;
-	unsigned eip;
-	unsigned xcs;
-	unsigned eflags;
-	unsigned esp;
-	unsigned xss;
+	arch_reg_t ebx, ecx, edx, esi, edi, ebp, eax;
+	arch_reg_t xds, xes, xfs, xgs, orig_eax, eip, xcs, eflags, esp, xss;
 };
 
 static int ptrace_is_traced_by(task_struct *target, task_struct *tracer)
@@ -109,10 +94,10 @@ static void ptrace_stop_task_unsafe(task_struct *task, int sig,
 		task->user->ptrace_frame.es = frame->es;
 		task->user->ptrace_frame.ds = frame->ds;
 		task->user->ptrace_frame.error_code = frame->error_code;
-		task->user->ptrace_frame.eip = (unsigned)frame->eip;
+		task->user->ptrace_frame.eip = (uintptr_t)frame->eip;
 		task->user->ptrace_frame.cs = frame->cs;
 		task->user->ptrace_frame.eflags = frame->eflags;
-		task->user->ptrace_frame.esp = (unsigned)frame->esp;
+		task->user->ptrace_frame.esp = (uintptr_t)frame->esp;
 		task->user->ptrace_frame.ss = frame->ss;
 		task->user->ptrace_frame_valid = 1;
 	} else {
@@ -143,10 +128,10 @@ static int ptrace_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 	regs->xfs = frame->fs;
 	regs->xgs = frame->gs;
 	regs->orig_eax = task->user->ptrace_orig_eax;
-	regs->eip = (unsigned)frame->eip;
+	regs->eip = frame->eip;
 	regs->xcs = frame->cs;
 	regs->eflags = frame->eflags;
-	regs->esp = (unsigned)frame->esp;
+	regs->esp = frame->esp;
 	regs->xss = frame->ss;
 	return 0;
 }
@@ -197,7 +182,7 @@ static int ptrace_peekuser(task_struct *task, unsigned addr, long *out)
 		*out = task->user->ptrace_orig_eax;
 		return 0;
 	case PTRACE_REG_EIP:
-		*out = (unsigned)frame->eip;
+		*out = (long)frame->eip;
 		return 0;
 	case PTRACE_REG_CS:
 		*out = frame->cs;
@@ -206,7 +191,7 @@ static int ptrace_peekuser(task_struct *task, unsigned addr, long *out)
 		*out = frame->eflags;
 		return 0;
 	case PTRACE_REG_UESP:
-		*out = (unsigned)frame->esp;
+		*out = (long)frame->esp;
 		return 0;
 	case PTRACE_REG_SS:
 		*out = frame->ss;
@@ -286,7 +271,7 @@ void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	task_sched();
 }
 
-void ps_ptrace_stop_exec(unsigned eip, unsigned esp)
+void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame frame;

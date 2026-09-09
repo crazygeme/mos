@@ -35,7 +35,7 @@ static void init_switch_frame(task_struct *task)
 	*--sp = 0;
 	*--sp = 0;
 	*--sp = 2; /* IF remains clear until the new task entry is ready */
-	task->switch_sp = (unsigned)sp;
+	task->switch_sp = (uintptr_t)sp;
 	task->on_cpu = 0;
 	task->terminate_requested = 0;
 	task->sched_level = 1;
@@ -288,7 +288,7 @@ static void copy_pte_range(pte_t *src_pd, pte_t *dst_pd, vm_region *vma,
 		dst_pd[pde_idx] = VIRT_TO_PHY(mm_alloc_page_table()) | pde_flag;
 
 	dst_pt = (pte_t *)PHY_TO_VIRT(dst_pd[pde_idx] & PAGE_SIZE_MASK);
-	cache_idx = (PAGE_TABLE_CACHE_END - (unsigned)dst_pt) / PAGE_SIZE - 1;
+	cache_idx = (PAGE_TABLE_CACHE_END - (uintptr_t)dst_pt) / PAGE_SIZE - 1;
 
 	for (i = pt_start; i < pt_end; i++) {
 		if (!(src_pt[i] & PAGE_ENTRY_PRESENT))
@@ -385,8 +385,8 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->tss.eax = 0;
 	task->tss.ebp = (char *)task_intr_frame;
 	task->tss.esp = (char *)task_intr_frame;
-	task->tss.esp0 = (unsigned)task + PAGE_SIZE;
-	task->tss.eip = (unsigned)ret_from_fork;
+	task->tss.esp0 = (uintptr_t)task + PAGE_SIZE;
+	task->tss.eip = (uintptr_t)ret_from_fork;
 	init_switch_frame(task);
 	task_intr_frame->eax = 0;
 

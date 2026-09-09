@@ -297,26 +297,23 @@ static void tty_graphics_refresh_dsr(void *unused)
 }
 
 typedef struct {
-	unsigned page_dir;
-	unsigned fb_phys;
-	unsigned fb_end;
+	vaddr_t page_dir;
+	paddr_t fb_phys;
+	paddr_t fb_end;
 	int dirty;
 } tty_graphics_dirty_ctx;
 
 static void tty_graphics_dirty_region_cb(vm_region *region, void *data)
 {
 	tty_graphics_dirty_ctx *ctx = data;
-	unsigned region_phys_begin;
-	unsigned region_phys_end;
-	unsigned overlap_begin;
-	unsigned overlap_end;
-	unsigned vir;
-	unsigned vir_end;
+	paddr_t region_phys_begin, region_phys_end;
+	paddr_t overlap_begin, overlap_end;
+	vaddr_t vir, vir_end;
 
 	if (!ctx || !region || !(region->vm_flags & VM_REGION_F_DIRECT_PHYS))
 		return;
 
-	region_phys_begin = (unsigned)region->offset;
+	region_phys_begin = (paddr_t)region->offset;
 	region_phys_end = region_phys_begin + (region->end - region->begin);
 	if (region_phys_end <= ctx->fb_phys || region_phys_begin >= ctx->fb_end)
 		return;

@@ -260,10 +260,10 @@ void ps_kickoff()
  * Public — TSS management
  */
 
-void ps_update_tss(unsigned int esp0)
+void ps_update_tss(uintptr_t sp0)
 {
 	task_struct *task = CURRENT_TASK();
-	task->tss.esp0 = esp0;
+	task->tss.esp0 = sp0;
 	reset_tss(task);
 }
 

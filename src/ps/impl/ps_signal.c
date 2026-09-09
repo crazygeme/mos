@@ -265,20 +265,13 @@ typedef struct _rt_sigcontext_user {
 	unsigned short fs, __fsh;
 	unsigned short es, __esh;
 	unsigned short ds, __dsh;
-	unsigned long edi;
-	unsigned long esi;
-	unsigned long ebp;
-	unsigned long esp;
-	unsigned long ebx;
-	unsigned long edx;
-	unsigned long ecx;
-	unsigned long eax;
+	arch_reg_t edi, esi, ebp, esp, ebx, edx, ecx, eax;
 	unsigned long trapno;
 	unsigned long err;
-	unsigned long eip;
+	arch_reg_t eip;
 	unsigned short cs, __csh;
-	unsigned long eflags;
-	unsigned long esp_at_signal;
+	arch_reg_t eflags;
+	arch_reg_t esp_at_signal;
 	unsigned short ss, __ssh;
 	void *fpstate;
 	unsigned long oldmask;
@@ -311,10 +304,10 @@ typedef struct _rt_fpstate_user {
 } rt_fpstate_user;
 
 typedef struct _rt_signal_frame {
-	unsigned int pretcode;
+	arch_reg_t pretcode;
 	int sig;
-	unsigned int pinfo;
-	unsigned int puc;
+	arch_reg_t pinfo;
+	arch_reg_t puc;
 	rt_siginfo_user info;
 	rt_ucontext_user uc;
 	rt_fpstate_user fpstate;
@@ -480,9 +473,9 @@ int sys_sigreturn()
 	{
 		stack_t *alt = &cur->signal->altstack;
 		if (alt->ss_flags & SS_ONSTACK) {
-			unsigned alt_base = (unsigned)alt->ss_sp;
-			unsigned alt_top = alt_base + alt->ss_size;
-			unsigned restored = sf->saved_esp;
+			uintptr_t alt_base = (uintptr_t)alt->ss_sp;
+			uintptr_t alt_top = alt_base + alt->ss_size;
+			uintptr_t restored = (uintptr_t)sf->saved_esp;
 			if (restored < alt_base || restored >= alt_top)
 				alt->ss_flags &= ~SS_ONSTACK;
 		}
@@ -663,14 +656,14 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 					   cur->signal->sig_mask;
 
 	if ((sa->sa_flags & SA_RESTORER) && sa->sa_restorer) {
-		rt_sf->pretcode = (unsigned int)sa->sa_restorer;
+		rt_sf->pretcode = (arch_reg_t)(uintptr_t)sa->sa_restorer;
 	} else {
 		build_rt_sigreturn_code(rt_sf->retcode);
 		rt_sf->pretcode = (unsigned int)&rt_sf->retcode[0];
 	}
 	rt_sf->sig = sig;
-	rt_sf->pinfo = (unsigned int)&rt_sf->info;
-	rt_sf->puc = (unsigned int)&rt_sf->uc;
+	rt_sf->pinfo = (arch_reg_t)(uintptr_t)&rt_sf->info;
+	rt_sf->puc = (arch_reg_t)(uintptr_t)&rt_sf->uc;
 	memset(&rt_sf->info, 0, sizeof(rt_sf->info));
 	rt_sf->info.si_signo = sig;
 	rt_sf->uc.uc_flags = 0;
@@ -686,17 +679,17 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	sc->edi = frame->edi;
 	sc->esi = frame->esi;
 	sc->ebp = frame->ebp;
-	sc->esp = (unsigned long)frame->esp;
+	sc->esp = (arch_reg_t)(uintptr_t)frame->esp;
 	sc->ebx = frame->ebx;
 	sc->edx = frame->edx;
 	sc->ecx = frame->ecx;
 	sc->eax = frame->eax;
 	sc->trapno = 0;
 	sc->err = frame->error_code;
-	sc->eip = (unsigned long)frame->eip;
+	sc->eip = (arch_reg_t)(uintptr_t)frame->eip;
 	sc->cs = frame->cs;
 	sc->eflags = frame->eflags;
-	sc->esp_at_signal = (unsigned long)frame->esp;
+	sc->esp_at_signal = (arch_reg_t)(uintptr_t)frame->esp;
 	sc->ss = frame->ss;
 	sc->fpstate = &rt_sf->fpstate;
 	sc->oldmask = saved_mask;
@@ -709,16 +702,16 @@ static void build_legacy_frame(task_struct *cur, intr_frame *frame,
 			       signal_frame *sf, struct sigaction *sa, int sig)
 {
 	if ((sa->sa_flags & SA_RESTORER) && sa->sa_restorer) {
-		sf->return_addr = (unsigned int)sa->sa_restorer;
+		sf->return_addr = (arch_reg_t)(uintptr_t)sa->sa_restorer;
 		memset(sf->trampoline, 0, sizeof(sf->trampoline));
 	} else {
 		build_sigreturn_code(sf->trampoline);
-		sf->return_addr = (unsigned int)&sf->trampoline[0];
+		sf->return_addr = (arch_reg_t)(uintptr_t)&sf->trampoline[0];
 	}
 	sf->signo = sig;
-	sf->saved_eip = (unsigned int)frame->eip;
+	sf->saved_eip = (arch_reg_t)(uintptr_t)frame->eip;
 	sf->saved_eflags = frame->eflags;
-	sf->saved_esp = (unsigned int)frame->esp;
+	sf->saved_esp = (arch_reg_t)(uintptr_t)frame->esp;
 	sf->saved_eax = frame->eax;
 	sf->saved_ebx = frame->ebx;
 	sf->saved_ecx = frame->ecx;

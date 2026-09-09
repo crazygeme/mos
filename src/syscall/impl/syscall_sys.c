@@ -401,8 +401,8 @@ int sys_munmap(void *addr, unsigned length)
 int sys_mprotect(void *addr, unsigned len, int prot)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned begin = (unsigned)addr;
-	unsigned end, vir;
+	vaddr_t begin = (vaddr_t)(uintptr_t)addr;
+	vaddr_t end, vir;
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);

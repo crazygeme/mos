@@ -663,8 +663,8 @@ static const super_operations tests_sops = {
 
 static void tests_proc_register(super_block *proc_sb)
 {
-	if ((unsigned)__ktest_start != (unsigned)__ktest_end ||
-	    (unsigned)__ktest_script_start != (unsigned)__ktest_script_end)
+	if ((uintptr_t)__ktest_start != (uintptr_t)__ktest_end ||
+	    (uintptr_t)__ktest_script_start != (uintptr_t)__ktest_script_end)
 		vfs_mount(proc_sb, "/tests", sget(&tests_sops));
 }
 

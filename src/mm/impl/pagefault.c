@@ -607,7 +607,7 @@ static void pf_process(intr_frame *frame)
 NOT_HANDLED:
 	cur = CURRENT_TASK();
 
-	if ((unsigned)frame->eip < KERNEL_OFFSET ||
+	if ((vaddr_t)(uintptr_t)frame->eip < KERNEL_OFFSET ||
 	    (fault_address < KERNEL_OFFSET && fault_address > 0x1000)) {
 		klog("segfault: %s: error code %x, address %x, eip %x\n",
 		     cur->user ? cur->user->command ? cur->user->command :

@@ -18,6 +18,7 @@
    We "fall through" to intr_exit to return from the interrupt.
 */
 .globl intr_entry
+.extern smp_online_count
 intr_entry:
     /* Save caller's registers. */
     push %ds
@@ -32,8 +33,9 @@ intr_entry:
     mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
     mov %edx, %es
-    mov %edx, %fs
     mov %edx, %gs
+    mov $CPU_LOCAL_SELECTOR, %edx
+    mov %edx, %fs
     popl %edx
     leal 56(%esp), %ebp    /* Set up frame pointer. */
     /* Call interrupt handler. */
@@ -53,9 +55,12 @@ intr_entry:
 .globl intr_exit
 intr_exit:
     /* TLB IPIs must not drop a BKL owned by interrupted kernel code. */
+    cmpl $1, smp_online_count
+    je 1f
     pushl %esp
     call smp_return
     addl $4, %esp
+1:
     /* Restore caller's registers. */
     popal
     pop %gs
@@ -270,8 +275,9 @@ syscall_handler:
     mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
     mov %edx, %ds
     mov %edx, %es
-    mov %edx, %fs
     mov %edx, %gs
+    mov $CPU_LOCAL_SELECTOR, %edx
+    mov %edx, %fs
     popl %edx
     leal 56(%esp), %ebp    /* Set up frame pointer. */
 
@@ -293,9 +299,12 @@ ret_from_fork:
 
 .global ret_from_syscall;
 ret_from_syscall:
+    cmpl $1, smp_online_count
+    je 2f
     pushl %esp
     call smp_return
     addl $4, %esp
+2:
     /* Restore caller's registers. */
     popal
     pop %gs

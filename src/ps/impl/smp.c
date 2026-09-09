@@ -8,6 +8,7 @@
 
 struct smp_cpu smp_cpus[SMP_MAX_CPUS];
 static unsigned ncpu = 1;
+volatile unsigned smp_online_count = 1;
 static volatile unsigned *lapic;
 static volatile unsigned kernel_owner;
 static volatile unsigned kernel_ticket;
@@ -30,6 +31,11 @@ static void apic_write(unsigned reg, unsigned value)
 
 unsigned smp_cpu_id(void)
 {
+	return arch_cpu_local()->index;
+}
+
+static unsigned smp_lapic_cpu_id(void)
+{
 	unsigned id, i;
 	if (!lapic)
 		return 0;
@@ -42,18 +48,15 @@ unsigned smp_cpu_id(void)
 
 unsigned smp_cpu_count(void)
 {
-	unsigned i, count = 0;
-	for (i = 0; i < ncpu; i++)
-		count += !!smp_cpus[i].online;
-	return count ? count : 1;
+	return __atomic_load_n(&smp_online_count, __ATOMIC_ACQUIRE);
 }
 
 unsigned long long *smp_gdt(void)
 {
-	return smp_cpus[0].online ? smp_cpus[smp_cpu_id()].gdt : gdt;
+	return arch_cpu_local()->gdt;
 }
 
-tss_struct *smp_tss(void) { return &smp_cpus[smp_cpu_id()].tss.tss; }
+tss_struct *smp_tss(void) { return &arch_cpu_local()->tss.tss; }
 
 static void ipi(unsigned id, unsigned value)
 {
@@ -67,7 +70,7 @@ static void ipi(unsigned id, unsigned value)
 
 void smp_tlb_poll(void)
 {
-	struct smp_cpu *cpu = &smp_cpus[smp_cpu_id()];
+	struct smp_cpu *cpu = arch_cpu_local();
 	unsigned gen = __atomic_load_n(&tlb_generation, __ATOMIC_ACQUIRE);
 	if (cpu->tlb_ack != gen) {
 		arch_cpu_reload_tlb();
@@ -79,10 +82,10 @@ void smp_tlb_poll(void)
  * neither interrupt masking nor BKL contention can block acknowledgment. */
 void smp_tlb_flush(void)
 {
-	unsigned i, me = smp_cpu_id();
+	unsigned i, me = arch_cpu_local()->index;
 	unsigned irq = int_intr_disable();
 	arch_cpu_reload_tlb();
-	if (smp_cpu_count() > 1) {
+	if (ncpu > 1) {
 		unsigned gen = __atomic_add_fetch(&tlb_generation, 1, __ATOMIC_RELEASE);
 		smp_cpus[me].tlb_ack = gen;
 		for (i = 0; i < ncpu; i++)
@@ -97,16 +100,22 @@ void smp_tlb_flush(void)
 	int_intr_setlevel(irq);
 }
 
-int smp_kernel_owned(void)
+int smp_kernel_enter(void)
 {
-	return kernel_owner == smp_cpu_id() + 1;
-}
-
-void smp_kernel_enter(void)
-{
-	unsigned irq = int_intr_disable();
-	unsigned owner = smp_cpu_id() + 1;
-	if (kernel_owner != owner) {
+	struct smp_cpu *cpu;
+	unsigned irq;
+	unsigned owner;
+	if (ncpu == 1) return 1;
+	cpu = arch_cpu_local();
+	owner = cpu->index + 1;
+	if (kernel_owner == owner)
+		return 1;
+	irq = int_intr_disable();
+	if (kernel_owner == owner) {
+		int_intr_setlevel(irq);
+		return 1;
+	}
+	{
 		unsigned ticket = __sync_fetch_and_add(&kernel_ticket, 1);
 		while (__atomic_load_n(&kernel_serving, __ATOMIC_ACQUIRE) != ticket) {
 			smp_tlb_poll();
@@ -116,18 +125,23 @@ void smp_kernel_enter(void)
 		smp_tlb_poll();
 	}
 	int_intr_setlevel(irq);
+	return 0;
 }
 
 void smp_kernel_leave(void)
 {
+	if (ncpu == 1) return;
 	__atomic_store_n(&kernel_owner, 0, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&kernel_serving, 1, __ATOMIC_RELEASE);
 }
 
 void smp_return(intr_frame *frame)
 {
+	struct smp_cpu *cpu;
+	if (ncpu == 1) return;
+	cpu = arch_cpu_local();
 	DISABLE_INTR();
-	if ((frame->cs & 3) == 3 && smp_kernel_owned())
+	if ((frame->cs & 3) == 3 && kernel_owner == cpu->index + 1)
 		smp_kernel_leave();
 }
 
@@ -242,6 +256,7 @@ static void add_cpu(unsigned id)
 		klog("SMP: CPU limit exceeded\n");
 		DIE();
 	}
+	smp_cpus[ncpu].index = ncpu;
 	smp_cpus[ncpu++].apic_id = id;
 }
 
@@ -283,23 +298,32 @@ static int acpi_scan(unsigned begin, unsigned end)
 
 static void cpu_setup(void)
 {
-	struct smp_cpu *cpu = &smp_cpus[smp_cpu_id()];
+	struct smp_cpu *cpu = &smp_cpus[smp_lapic_cpu_id()];
 	arch_cpu_local_init(cpu);
 	smp_fpu_init();
 	if (lapic) {
 		apic_write(0xf0, 0x100 | SMP_SPURIOUS_VECTOR);
 		apic_write(0x80, 0);
 		apic_write(0x320, 1 << 16);
-		apic_write(0x350, smp_cpu_id() ? (1 << 16) : (7 << 8));
+		apic_write(0x350, cpu->index ? (1 << 16) : (7 << 8));
 		apic_write(0x360, 1 << 16);
 	}
 }
 
+void smp_bootstrap(void)
+{
+	smp_cpus[0].index = 0;
+	arch_cpu_local_init(&smp_cpus[0]);
+}
+
 static void ap_main(void)
 {
+	struct smp_cpu *cpu;
 	cpu_setup();
-	smp_cpus[smp_cpu_id()].tlb_ack = tlb_generation;
-	__atomic_store_n(&smp_cpus[smp_cpu_id()].online, 1, __ATOMIC_RELEASE);
+	cpu = arch_cpu_local();
+	cpu->tlb_ack = tlb_generation;
+	__atomic_store_n(&cpu->online, 1, __ATOMIC_RELEASE);
+	__atomic_add_fetch(&smp_online_count, 1, __ATOMIC_RELEASE);
 	smp_kernel_enter();
 	ps_kickoff();
 	for (;;) PAUSE();
@@ -329,6 +353,7 @@ void smp_init(void)
 	}
 	cpu_setup();
 	smp_cpus[0].online = 1;
+	smp_online_count = 1;
 	kernel_owner = 1;
 	kernel_ticket = kernel_serving + 1;
 	arch_cpu_fpu_save(clean_fpu);

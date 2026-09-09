@@ -122,9 +122,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->user->rlimits[7].rlim_max = 1024;
 
 	task->signal = zalloc(sizeof(signal_context));
-	task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
-	if (task->io_bitmap)
-		memset(task->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
+	task->io_bitmap = NULL;
 
 	task->umask = 0;
 	stack_bottom = (unsigned int)task + PAGE_SIZE;
@@ -454,6 +452,10 @@ void fork_dup_signal(task_struct *cur, task_struct *task)
 
 int fork_dup_io(task_struct *cur, task_struct *task)
 {
+	if (!cur->io_bitmap) {
+		task->io_bitmap = NULL;
+		return 0;
+	}
 	task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
 	if (!task->io_bitmap)
 		return -ENOMEM;

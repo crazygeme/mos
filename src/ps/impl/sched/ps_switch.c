@@ -24,6 +24,7 @@ void _task_sched(const char *func)
 	task_struct *prev = current;
 	task_struct *next;
 	unsigned irq;
+	unsigned cpu;
 
 	(void)func;
 	task_schedule_count++;
@@ -69,8 +70,9 @@ void _task_sched(const char *func)
 	 */
 	smp_fpu_restore(next);
 	prev->on_cpu = 0;
-	next->on_cpu = smp_cpu_id() + 1;
-	smp_cpus[smp_cpu_id()].task = next;
+	cpu = smp_cpu_id();
+	next->on_cpu = cpu + 1;
+	smp_cpus[cpu].task = next;
 	/* No other CPU can select prev until next releases the BKL. */
 	ps_context_switch(&prev->switch_sp, next->switch_sp);
 	int_intr_setlevel(irq);

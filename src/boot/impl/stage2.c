@@ -47,6 +47,9 @@ void kmain_startup()
 
 	parse_kernel_cmdline();
 
+	/* Establish BSP CPU-local storage before process/interrupt setup uses it. */
+	smp_bootstrap();
+
 	ps_init();
 
 	dsr_init();

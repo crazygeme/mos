@@ -9,6 +9,9 @@
 #define SMP_SPURIOUS_VECTOR 0xff
 
 struct smp_cpu {
+	/* Kept first so arch_cpu_local() can load it from %fs:0. */
+	struct smp_cpu *self;
+	unsigned index;
 	unsigned apic_id;
 	volatile unsigned online;
 	volatile unsigned tlb_ack;
@@ -18,14 +21,15 @@ struct smp_cpu {
 };
 
 extern struct smp_cpu smp_cpus[SMP_MAX_CPUS];
+extern volatile unsigned smp_online_count;
 unsigned smp_cpu_id(void);
 unsigned smp_cpu_count(void);
 unsigned long long *smp_gdt(void);
 tss_struct *smp_tss(void);
 void smp_init(void);
+void smp_bootstrap(void);
 void smp_start(void);
-int smp_kernel_owned(void);
-void smp_kernel_enter(void);
+int smp_kernel_enter(void);
 void smp_kernel_leave(void);
 void smp_return(intr_frame *frame);
 void smp_idle(void);

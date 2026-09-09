@@ -120,8 +120,7 @@ void intr_handler(intr_frame *frame)
 	int owned;
 	if (special == 1)
 		return;
-	owned = smp_kernel_owned();
-	smp_kernel_enter();
+	owned = smp_kernel_enter();
 	smp_check_stop();
 	if (special == 2 && ps_enabled())
 		current->remain_ticks--;

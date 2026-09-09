@@ -339,6 +339,7 @@ paddr_t mm_virt_to_phys(vaddr_t virt)
 static int mm_set_page_table_entry(vaddr_t addr, unsigned flag, pte_t value)
 {
 	mm_addr_info info;
+	pte_t old;
 
 	if (!mm_get_valid_page_table(addr, flag, &info, 1))
 		return 0;
@@ -351,8 +352,11 @@ static int mm_set_page_table_entry(vaddr_t addr, unsigned flag, pte_t value)
 		pgc_entry_count[idx]++;
 	}
 
+	old = *info.entry;
 	*info.entry = value;
-	arch_mm_flush_local();
+	/* A newly-present entry cannot have a stale TLB translation. */
+	if (old & PAGE_ENTRY_PRESENT)
+		arch_mm_invalidate(addr);
 	return 1;
 }
 
@@ -363,14 +367,14 @@ static int mm_set_page_table_entry(vaddr_t addr, unsigned flag, pte_t value)
 static void mm_clear_page_table_entry(mm_addr_info *info)
 {
 	paddr_t phy = *info->entry & PAGE_SIZE_MASK;
+	unsigned dir_index =
+		(unsigned)(info->dir - (pte_t *)mm_get_pagedir());
+	vaddr_t addr = (dir_index << 22) |
+		((unsigned)(info->entry - info->table) << 12);
 
 	*info->entry = 0;
-	arch_mm_flush_local();
+	arch_mm_invalidate(addr);
 	if (phy) {
-		unsigned dir_index =
-			(unsigned)(info->dir -
-				   (pte_t *)mm_get_pagedir());
-
 		if (dir_index < KERNEL_PAGE_DIR_OFFSET) {
 			int idx =
 				(PAGE_TABLE_CACHE_END - (unsigned)info->table) /
@@ -379,7 +383,6 @@ static void mm_clear_page_table_entry(mm_addr_info *info)
 			pgc_entry_count[idx]--;
 			if (pgc_entry_count[idx] == 0) {
 				*info->dir = 0;
-				arch_mm_flush_local();
 				mm_free_page_table((unsigned int)info->table);
 			}
 		}
@@ -598,9 +601,6 @@ void mm_destroy_user_map(vaddr_t page_dir)
 
 	if (!dir)
 		return;
-	/* Other CPUs may still have this address space loaded while a thread exits. */
-	smp_tlb_flush();
-
 	spinlock_lock(&mm_lock, &irq);
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
 		pte_t *table;
@@ -616,9 +616,8 @@ void mm_destroy_user_map(vaddr_t page_dir)
 		cache_idx =
 			(PAGE_TABLE_CACHE_END - (unsigned)table) / PAGE_SIZE -
 			1;
-		/* Detach before freeing any backing pages or the table itself. */
+		/* The address space is inactive before its last reference is dropped. */
 		dir[i] = 0;
-		arch_mm_flush_local();
 		/* The live-entry counter is maintained for every user mapping.  Most
 		 * page tables created during short-lived exec/clone paths are already
 		 * empty by the time the address space is destroyed; avoid needlessly
@@ -785,7 +784,7 @@ void mm_set_map_flag(vaddr_t vir, unsigned flag)
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
-	arch_mm_flush_local();
+	arch_mm_invalidate(vir);
 }
 
 void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag)
@@ -796,7 +795,8 @@ void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag)
 					    &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
-	arch_mm_flush_local();
+	if ((pte_t *)page_dir == (pte_t *)mm_get_pagedir())
+		arch_mm_invalidate(vir);
 }
 
 /* Return the physical page index backing the virtual address @vir */
@@ -857,7 +857,6 @@ vaddr_t vm_alloc(int page_count)
 		phymm_reference_page(page_index + i);
 	}
 
-	arch_mm_flush_local();
 	spinlock_unlock(&mm_lock, irq);
 
 	buffer_count += page_count;
@@ -881,7 +880,6 @@ void vm_free(vaddr_t vm, int page_count)
 		if (phy)
 			phymm_dereference_page(PHY_TO_PAGE_IDX(phy));
 	}
-	arch_mm_flush_local();
 	phymm_free_kernel(page_index, page_count);
 	spinlock_unlock(&mm_lock, irq);
 

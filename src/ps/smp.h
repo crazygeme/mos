@@ -41,6 +41,7 @@ void smp_fpu_init(void);
 void smp_fpu_save(task_struct *task);
 void smp_fpu_restore(task_struct *task);
 void smp_fpu_new(task_struct *task);
+void smp_fpu_copy(task_struct *from, task_struct *to);
 void smp_check_stop(void);
 
 #endif

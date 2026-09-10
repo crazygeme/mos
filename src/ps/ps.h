@@ -57,6 +57,8 @@ typedef struct {
 } rlimit_t;
 
 typedef struct _user_enviroment {
+	unsigned char fpu_storage[512 + 15];
+	unsigned char *fpu;
 	vm_struct_t vm;
 	struct _vm_region *mmap_cache;
 	mm_struct *mmap_cache_vm;
@@ -122,7 +124,6 @@ struct _task_struct {
 	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
 	unsigned terminate_requested;
 	int sched_level;
-	unsigned char fpu[512] __attribute__((aligned(16)));
 	addr_space_t address_space;
 	unsigned int psid;
 	unsigned int tgid;

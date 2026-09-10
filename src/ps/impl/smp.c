@@ -198,17 +198,34 @@ void smp_fpu_init(void)
 
 void smp_fpu_save(task_struct *task)
 {
-	arch_cpu_fpu_save((void *)task->fpu);
+	if (!task || !task->user) {
+		arch_cpu_fpu_save(clean_fpu);
+		return;
+	}
+	arch_cpu_fpu_save((void *)task->user->fpu);
 }
 
 void smp_fpu_restore(task_struct *task)
 {
-	arch_cpu_fpu_restore((const void *)task->fpu);
+	if (!task || !task->user) {
+		arch_cpu_fpu_restore(clean_fpu);
+		return;
+	}
+	arch_cpu_fpu_restore((const void *)task->user->fpu);
 }
 
 void smp_fpu_new(task_struct *task)
 {
-	memcpy(task->fpu, clean_fpu, sizeof(clean_fpu));
+	if (!task || !task->user)
+		return;
+	memcpy(task->user->fpu, clean_fpu, sizeof(clean_fpu));
+}
+
+void smp_fpu_copy(task_struct *from, task_struct *to)
+{
+	if (!from || !from->user || !to || !to->user)
+		return;
+	memcpy(to->user->fpu, from->user->fpu, sizeof(clean_fpu));
 }
 
 static int checksum(const void *ptr, unsigned len)

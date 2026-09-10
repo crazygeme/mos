@@ -408,6 +408,7 @@ task_struct *fork_alloc_child(task_struct *cur)
  * and all credentials. */
 void fork_dup_user_env(task_struct *cur, task_struct *task)
 {
+	smp_fpu_copy(cur, task);
 	task->user->vm->start_brk = cur->user->vm->start_brk;
 	task->user->vm->brk = cur->user->vm->brk;
 	task->user->vm->start_stack = cur->user->vm->start_stack;

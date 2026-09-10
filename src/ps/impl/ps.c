@@ -327,7 +327,12 @@ void ps_enum_all(ps_enum_callback callback, void *ctx)
 
 user_enviroment *ps_alloc_user_env(void)
 {
-	return zalloc(sizeof(user_enviroment));
+	user_enviroment *user = zalloc(sizeof(user_enviroment));
+	if (user) {
+		uintptr_t p = (uintptr_t)user->fpu_storage;
+		user->fpu = (unsigned char *)((p + 15U) & ~15U);
+	}
+	return user;
 }
 
 /* Send signal sig to every user task whose group_id matches pgrp. */

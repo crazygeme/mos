@@ -11,8 +11,6 @@
 #include <lib/lock.h>
 #include <lib/list.h>
 
-typedef struct _intr_frame intr_frame;
-
 /*
  * Scheduler control block
  */

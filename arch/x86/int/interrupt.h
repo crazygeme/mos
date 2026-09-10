@@ -5,7 +5,7 @@
 #include <compiler.h>
 
 /* Must match the pushes performed by arch/x86/int/impl/int.S. */
-typedef struct _intr_frame {
+typedef struct _arch_intr_frame {
 	unsigned int edi, esi, ebp, esp_dummy;
 	unsigned int ebx, edx, ecx, eax;
 	unsigned short gs, : 16;
@@ -20,13 +20,16 @@ typedef struct _intr_frame {
 	unsigned int eflags;
 	void *esp;
 	unsigned short ss, : 16;
-} __attribute__((packed)) intr_frame;
+} __attribute__((packed)) arch_intr_frame;
+
+/* Generic kernel name retained for architecture-independent users. */
+typedef arch_intr_frame intr_frame;
 
 void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap,
 			     int dpl);
 void arch_interrupt_activate(void);
 void arch_interrupt_set_kernel_stack(void *address);
-ALWAYS_INLINE int arch_interrupt_frame_is_user(const struct _intr_frame *frame)
+ALWAYS_INLINE int arch_interrupt_frame_is_user(const arch_intr_frame *frame)
 {
 	return (frame->cs & 3) != 0;
 }

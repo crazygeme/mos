@@ -6,6 +6,7 @@
 #define _PS_SIGNAL_H
 
 #include <arch/types.h>
+#include <arch/signal.h>
 
 /* -----------------------------------------------------------------------
  * Signal numbers (Linux/i386 ABI)
@@ -116,25 +117,4 @@ struct sigaction {
  * sys_sigreturn runs, user ESP points at signal_frame_base + 8 and the
  * kernel must recover the frame from (frame->esp - 8).
  */
-typedef struct _signal_frame {
-	arch_reg_t return_addr;
-	int signo;
-	arch_reg_t saved_eip;
-	unsigned int saved_eflags;
-	arch_reg_t saved_esp;
-	unsigned int saved_eax;
-	unsigned int saved_ebx;
-	unsigned int saved_ecx;
-	unsigned int saved_edx;
-	unsigned int saved_esi;
-	unsigned int saved_edi;
-	unsigned int saved_ebp;
-	unsigned int saved_ds;
-	unsigned int saved_es;
-	unsigned int saved_fs;
-	unsigned int saved_gs;
-	unsigned long saved_mask;
-	unsigned char trampoline[8];
-} signal_frame;
-
 #endif /* _SIGNAL_H */

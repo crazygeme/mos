@@ -2,7 +2,7 @@
 #define _HW_KEYBOARD_H_
 #define KB_DATA 0x60
 #define KB_UP_MASK 0x80
-typedef struct _intr_frame intr_frame;
+#include <int/interrupt.h>
 struct kbentry;
 void kb_init();
 void kb_process(intr_frame *frame);

@@ -4,7 +4,7 @@
 #include <arch/types.h>
 
 struct _task_struct;
-struct _intr_frame;
+struct _arch_intr_frame;
 
 /* Hardware task-state layout consumed by the x86 CPU and GDT. */
 typedef volatile struct __tss_struct {
@@ -63,8 +63,8 @@ typedef struct _ptrace_saved_frame {
 void arch_task_init(struct _task_struct *task);
 void arch_task_activate(struct _task_struct *task);
 void arch_task_reset_tls(struct _task_struct *task,
-			 struct _intr_frame *frame);
-void arch_task_init_user_frame(struct _intr_frame *frame, vaddr_t ip,
+				 struct _arch_intr_frame *frame);
+void arch_task_init_user_frame(struct _arch_intr_frame *frame, vaddr_t ip,
 			       vaddr_t sp);
 
 #endif

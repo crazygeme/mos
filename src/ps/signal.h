@@ -86,35 +86,5 @@ struct sigaction {
 	void (*sa_restorer)(void);
 };
 
-/*
- * Signal frame — laid out on the user stack during delivery.
- *
- * When the handler is called the user ESP points at return_addr:
- *
- *   [ESP+ 0]  return_addr   → &trampoline[0]  (popped as ret address)
- *   [ESP+ 4]  signo         (first argument to handler)
- *   [ESP+ 8]  saved_eip     \
- *   [ESP+12]  saved_eflags   |
- *   [ESP+16]  saved_esp      |  original user context;
- *   [ESP+20]  saved_eax      |  restored by sys_sigreturn (syscall 119)
- *   [ESP+24]  saved_ebx      |
- *   [ESP+28]  saved_ecx      |
- *   [ESP+32]  saved_edx      |
- *   [ESP+36]  saved_esi      |
- *   [ESP+40]  saved_edi      |
- *   [ESP+44]  saved_ebp      |
- *   [ESP+48]  saved_ds       |
- *   [ESP+52]  saved_es       |
- *   [ESP+56]  saved_fs       |
- *   [ESP+60]  saved_gs      /
- *   [ESP+64]  saved_mask    — saved signal mask (restored by sys_sigreturn)
- *   [ESP+68]  trampoline[8] — inline __NR_sigreturn stub
- *
- * On handler return, "ret" pops return_addr and jumps into the restorer.
- *
- * Linux/i386 legacy restorers (including glibc's __restore) consume the
- * one-word signo argument before invoking sigreturn. Therefore by the time
- * sys_sigreturn runs, user ESP points at signal_frame_base + 8 and the
- * kernel must recover the frame from (frame->esp - 8).
- */
+/* The concrete user-stack signal-frame layout is supplied by the architecture. */
 #endif /* _SIGNAL_H */

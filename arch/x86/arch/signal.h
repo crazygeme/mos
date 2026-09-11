@@ -3,6 +3,11 @@
 
 #include <arch/types.h>
 
+/*
+ * Linux/i386 legacy signal frame placed on the user stack by signal delivery.
+ * The restorer returns through trampoline[]; sigreturn recovers this frame
+ * after the handler has consumed the return address and signal argument.
+ */
 typedef struct _arch_signal_frame {
 	arch_reg_t return_addr;
 	int signo;

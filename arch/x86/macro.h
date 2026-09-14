@@ -109,7 +109,23 @@ void smp_tlb_flush(void);
 #define NOP() asm volatile("nop")
 
 #ifndef __ASSEMBLER__
-static inline void arch_cpu_reload_tlb(void) { LOCAL_RELOAD_CR3(); }
+/* Flush every TLB entry, including global translations.  A CR3 reload alone
+ * deliberately preserves global entries once CR4.PGE is enabled. */
+static inline void arch_cpu_reload_tlb(void)
+{
+	unsigned cr4;
+
+	asm volatile("movl %%cr4, %0" : "=r"(cr4));
+	if (!(cr4 & (1U << 7))) {
+		LOCAL_RELOAD_CR3();
+		return;
+	}
+	asm volatile("movl %0, %%cr4\n\t"
+		     "movl %1, %%cr4"
+		     :
+		     : "r"(cr4 & ~(1U << 7)), "r"(cr4)
+		     : "memory");
+}
 static inline void arch_cpu_idle_wait(void)
 {
 	asm volatile("sti; hlt; cli" : : : "memory");
@@ -136,7 +152,8 @@ static inline void arch_cpu_fpu_init(void)
 	cr0 = (cr0 & ~12U) | 0x10022U;
 	asm volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
 	asm volatile("mov %%cr4, %0" : "=r"(cr4));
-	cr4 = (cr4 & ~(1U << 7)) | (3U << 9);
+	/* Keep CR4.PGE intact while enabling OSFXSR and OSXMMEXCPT. */
+	cr4 |= 3U << 9;
 	asm volatile("mov %0, %%cr4; fninit" : : "r"(cr4) : "memory");
 }
 static inline void arch_cpu_fpu_save(void *state)

@@ -23,6 +23,15 @@ ALWAYS_INLINE void arch_mm_flush_local(void)
 		     : "=&r"(value) : : "memory");
 }
 
+ALWAYS_INLINE void arch_mm_enable_global_pages(void)
+{
+	unsigned long value;
+
+	asm volatile("movl %%cr4, %0" : "=r"(value));
+	value |= 1UL << 7; /* CR4.PGE */
+	asm volatile("movl %0, %%cr4" : : "r"(value) : "memory");
+}
+
 ALWAYS_INLINE void arch_mm_invalidate(vaddr_t address)
 {
 	asm volatile("invlpg (%0)" : : "r"(address) : "memory");

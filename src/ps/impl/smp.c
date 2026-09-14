@@ -316,6 +316,7 @@ static int acpi_scan(unsigned begin, unsigned end)
 static void cpu_setup(void)
 {
 	struct smp_cpu *cpu = &smp_cpus[smp_lapic_cpu_id()];
+	arch_mm_enable_global_pages();
 	arch_cpu_local_init(cpu);
 	smp_fpu_init();
 	if (lapic) {
@@ -386,7 +387,7 @@ void smp_start(void)
 	pte_t *pt = (void *)mm_alloc_page_table();
 	if (!pt) DIE();
 	pt[7] = 0x7000 | PAGE_ENTRY_KERNEL_DATA;
-	pd[0] = VIRT_TO_PHY(pt) | PAGE_ENTRY_KERNEL_DATA;
+	pd[0] = VIRT_TO_PHY(pt) | PAGE_ENTRY_PAGE_TABLE;
 	memcpy((void *)(KERNEL_OFFSET + 0x7000), smp_trampoline,
 	       smp_trampoline_end - smp_trampoline);
 	for (i = 1; i < ncpu; i++) {

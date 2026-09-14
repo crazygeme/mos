@@ -176,7 +176,25 @@ static void mm_init_kernel_page_dir_template(void)
 		memset((void *)table_addr, 0, PAGE_SIZE);
 		kernel_pde_tables[i] = table_addr;
 		page_dir[KERNEL_PAGE_DIR_OFFSET + i] = VIRT_TO_PHY(table_addr) |
-						       PAGE_ENTRY_KERNEL_DATA;
+						       PAGE_ENTRY_PAGE_TABLE;
+	}
+}
+
+static void mm_mark_kernel_pages_global(void)
+{
+	pte_t *page_dir = (pte_t *)mm_get_pagedir();
+	unsigned int i;
+
+	for (i = KERNEL_PAGE_DIR_OFFSET; i < PG_TABLE_SIZE; i++) {
+		pte_t *page_table;
+		unsigned int j;
+
+		if (!(page_dir[i] & PAGE_ENTRY_PRESENT))
+			continue;
+		page_table = (pte_t *)PHY_TO_VIRT(page_dir[i] & PAGE_SIZE_MASK);
+		for (j = 0; j < PE_TABLE_SIZE; j++)
+			if (page_table[j] & PAGE_ENTRY_PRESENT)
+				page_table[j] |= PAGE_ENTRY_GLOBAL;
 	}
 }
 
@@ -200,6 +218,9 @@ void mm_init_cache()
 
 	mm_cache_init((mm_cache_t *)&page_table_cache, PAGE_TABLE_CACHE_BEGIN,
 		      PAGE_TABLE_CACHE_PAGES);
+	/* The bootstrap mappings predate PAGE_ENTRY_KERNEL_DATA.  Mark their
+	 * high-half aliases global before process page directories copy them. */
+	mm_mark_kernel_pages_global();
 	memset(kernel_pde_tables, 0, sizeof(kernel_pde_tables));
 	mm_init_kernel_page_dir_template();
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
@@ -307,7 +328,7 @@ static int mm_get_valid_page_table(vaddr_t addr, unsigned flag,
 
 		if (table_addr == 0)
 			return 0;
-		pde = VIRT_TO_PHY(table_addr) | PAGE_ENTRY_KERNEL_DATA | flag;
+		pde = VIRT_TO_PHY(table_addr) | PAGE_ENTRY_PAGE_TABLE | flag;
 		page_dir[offset] = pde;
 	}
 	info->dir = &page_dir[offset];
@@ -580,6 +601,9 @@ void mm_del_user_map()
 	for (i = 0; i < reserved_page_tables; i++)
 		page_dir[i] = 0;
 	arch_mm_flush_local();
+	/* Enabling PGE after the identity-map flush prevents its shared bootstrap
+	 * PTEs from ever surviving as global low-address translations. */
+	arch_mm_enable_global_pages();
 }
 
 /*

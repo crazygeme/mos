@@ -163,9 +163,10 @@ KTEST(mm, map_flag_get_after_alloc)
 	ASSERT_NE(addr, 0u);
 
 	unsigned flags = mm_get_map_flag(addr);
-	/* Kernel data pages are present and writable */
+	/* Kernel data pages are present, writable and global. */
 	EXPECT_TRUE(flags & PAGE_ENTRY_PRESENT);
 	EXPECT_TRUE(flags & PAGE_ENTRY_WRITABLE);
+	EXPECT_TRUE(flags & PAGE_ENTRY_GLOBAL);
 
 	vm_free(addr, 1);
 	EXPECT_EQ(phymm_used, phys_before); /* no leak */

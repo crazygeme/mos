@@ -9,6 +9,70 @@
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1
 #define FUTEX_PRIVATE_FLAG 128
+#define FUTEX_WAITERS 0x80000000U
+#define FUTEX_OWNER_DIED 0x40000000U
+#define FUTEX_TID_MASK 0x3fffffffU
+#define ROBUST_LIST_LIMIT 2048
+
+struct robust_list_head_compat {
+	unsigned list_next;
+	int futex_offset;
+	unsigned list_op_pending;
+};
+
+static int robust_read(task_struct *task, unsigned addr, void *dst,
+		       unsigned len)
+{
+	return ps_read_process_memory(task, (void *)addr, dst, len);
+}
+
+static void robust_release_futex(task_struct *task, unsigned entry,
+				 int offset)
+{
+	unsigned addr;
+	unsigned value, owner_died;
+	int irq;
+
+	if (!entry || (unsigned)(entry + offset) < PAGE_SIZE)
+		return;
+	addr = entry + offset;
+	if (robust_read(task, addr, &value, sizeof(value)) != 0 ||
+	    (value & FUTEX_TID_MASK) != task->psid)
+		return;
+	owner_died = (value & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
+	if (ps_write_process_memory(task, (void *)addr, &owner_died,
+				    sizeof(owner_died)) != 0)
+		return;
+	if (value & FUTEX_WAITERS) {
+		spinlock_lock(&ps_lock, &irq);
+		ps_futex_wake_locked(task->user, (int *)addr, 1);
+		spinlock_unlock(&ps_lock, irq);
+	}
+}
+
+void ps_release_robust_list(task_struct *task)
+{
+	struct robust_list_head_compat head;
+	unsigned base = (unsigned)task->robust_list_head;
+	unsigned entry, next, pending;
+	unsigned count;
+
+	if (!base || robust_read(task, base, &head, sizeof(head)) != 0)
+		return;
+	entry = head.list_next & ~1U;
+	pending = head.list_op_pending & ~1U;
+	for (count = 0; entry && entry != base &&
+	     count < ROBUST_LIST_LIMIT; count++) {
+		if (robust_read(task, entry, &next, sizeof(next)) != 0)
+			break;
+		if (entry != pending)
+			robust_release_futex(task, entry, head.futex_offset);
+		entry = next & ~1U;
+	}
+	if (pending)
+		robust_release_futex(task, pending, head.futex_offset);
+	task->robust_list_head = NULL;
+}
 
 typedef struct futex_waiter {
 	task_struct *task;

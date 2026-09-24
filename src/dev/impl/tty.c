@@ -1803,29 +1803,10 @@ static ssize_t tty_fs_write(file *fp, const void *buf, size_t size, loff_t *pos)
 
 static loff_t tty_fs_llseek(file *fp, loff_t offset, int whence)
 {
-	tty_state *state = fp->f_inode->i_private;
-	int pos;
-	switch (whence) {
-	case SEEK_SET:
-		pos = (int)offset;
-		break;
-	case SEEK_CUR:
-		pos = (int)offset + state->cursor;
-		break;
-	case SEEK_END:
-		pos = MAX_CHARS - (int)offset;
-		break;
-	default:
-		return -EINVAL;
-	}
-	if (pos < 0)
-		pos = 0;
-	if (pos > MAX_CHARS)
-		pos = MAX_CHARS;
-	state->cursor = pos;
-	tty_hw_cursor(state, (unsigned)state->cursor);
-	fp->f_pos = state->cursor;
-	return fp->f_pos;
+	(void)fp;
+	(void)offset;
+	(void)whence;
+	return -ESPIPE;
 }
 
 static unsigned tty_fs_poll(file *fp, unsigned events, poll_table *pt)
@@ -1839,7 +1820,10 @@ static unsigned tty_fs_poll(file *fp, unsigned events, poll_table *pt)
 		if (fp->f_mode == O_WRONLY)
 			return ready;
 		if (state->termios.c_lflag & ICANON) {
-			if (state->canon_ready)
+			/* agetty polls the controlling terminal before reading it.
+			 * Input is kept in kb_buf until the line discipline consumes
+			 * it, so canon_ready alone cannot describe pending input. */
+			if (state->canon_ready || !cyb_isempty(state->kb_buf))
 				ready |= FS_POLL_READ;
 		} else if (!cyb_isempty(state->kb_buf)) {
 			ready |= FS_POLL_READ;
@@ -1858,13 +1842,21 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		*(int *)buf = cyb_get_buf_len(state->kb_buf);
 		return 0;
 	case TCGETS:
+	case TCGETA:
+	case TCGETS2:
 		memcpy(buf, &state->termios, sizeof(state->termios));
 		return 0;
 	case TCSETS:
 	case TCSETSW:
+	case TCSETA:
+	case TCSETAW:
+	case TCSETS2:
+	case TCSETSW2:
 		memcpy(&state->termios, buf, sizeof(state->termios));
 		return 0;
 	case TCSETSF:
+	case TCSETAF:
+	case TCSETSF2:
 		/* Flush pending input before applying new settings. */
 		state->canon.len = 0;
 		state->canon_ready = 0;
@@ -1883,6 +1875,10 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		return 0;
 	case TIOCGPGRP:
 		*(unsigned *)buf = state->pgrp;
+		return 0;
+	case TIOCGSID:
+		/* The active virtual console is controlled by the caller's session. */
+		*(unsigned *)buf = CURRENT_TASK()->user->session_id;
 		return 0;
 	case TIOCSPGRP:
 		state->pgrp = *(unsigned *)buf;

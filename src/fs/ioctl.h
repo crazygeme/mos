@@ -38,6 +38,11 @@
 #define TIOCSSERIAL 0x541F
 #define TIOCPKT 0x5420
 #define TIOCNOTTY 0x5422
+#define TIOCGSID 0x5429
+#define TCGETS2 0x802C542A
+#define TCSETS2 0x402C542B
+#define TCSETSW2 0x402C542C
+#define TCSETSF2 0x402C542D
 
 /* Block-device ioctls used by old util-linux/libblkid probes. */
 #define BLKGETSIZE 0x1260 /* return device size in 512-byte sectors */

@@ -71,6 +71,8 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 {
 	unsigned ready = 0;
+	/* An empty synthetic inotify queue must be reported as not-ready while
+	 * its writer remains open; this lets nonblocking readers return EAGAIN. */
 	if ((events & FS_POLL_READ) && !cyb_isempty(n->buf))
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_HUP) && cyb_writer_count(n->buf) == 0)

@@ -164,6 +164,7 @@ struct _task_struct {
 		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
 	unsigned char *io_bitmap; /* per-task I/O-permission bitmap */
 	int *clear_child_tid; /* Linux set_tid_address / CLONE_CHILD_CLEARTID */
+	void *robust_list_head; /* Per-thread robust futex list. */
 	unsigned stop_signal; /* last job-control/ptrace stop signal */
 	unsigned stop_report_pending; /* waitpid() has not consumed this stop yet */
 	unsigned int magic; // to avoid stack overflow

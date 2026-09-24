@@ -12,6 +12,7 @@
 #include <fs/select.h>
 #include <fs/poll.h>
 #include <fs/fcntl.h>
+#include <fs/ioctl.h>
 #include <lib/klib.h>
 #include <config.h>
 #include <errno.h>
@@ -157,7 +158,8 @@ int sys_ioctl(int fd, int request, char *buf)
 {
 	int ret = fs_ioctl(fd, request, buf);
 
-	if (TEST_LOG(TEST_LOG_TRACE) && request != 0x4b46 &&
+	if (TEST_LOG(TEST_LOG_TRACE) && request != TCGETS2 &&
+	    request != 0x4b46 &&
 	    request != 0x4b47 && request != 0x4b48 && request != 0x4b49)
 		klog("ioctl(%d, %x, ...) = %d\n", fd, request, ret);
 
@@ -178,6 +180,17 @@ int sys_open(const char *_name, int flags, umode_t mode)
 
 	name_put(name);
 	return fd;
+}
+
+int sys_openat(int dirfd, const char *path, int flags, umode_t mode)
+{
+	char *name = name_get();
+	int ret = syscall_resolve_at(dirfd, path, name);
+
+	if (ret == 0)
+		ret = fs_open(name, flags, mode);
+	name_put(name);
+	return ret;
 }
 
 int sys_close(unsigned fd)
@@ -360,6 +373,108 @@ int sys_pipe(int pipefd[2])
 		klog("pipe(pipefd[%d,%d]) = %d\n", pipefd[0], pipefd[1], ret);
 
 	return ret;
+}
+
+int sys_pipe2(int pipefd[2], int flags)
+{
+	int ret;
+	task_struct *cur;
+
+	if (flags & ~(O_NONBLOCK | O_CLOEXEC))
+		return -EINVAL;
+	ret = sys_pipe(pipefd);
+	if (ret < 0)
+		return ret;
+	cur = CURRENT_TASK();
+	cur->fds[pipefd[0]]->f_flag |= flags & O_NONBLOCK;
+	cur->fds[pipefd[1]]->f_flag |= flags & O_NONBLOCK;
+	if (flags & O_CLOEXEC) {
+		fd_bitmap_set(cur->fd_cloexec, pipefd[0]);
+		fd_bitmap_set(cur->fd_cloexec, pipefd[1]);
+	}
+	return 0;
+}
+
+static ssize_t inotify_read(file *fp, void *buf, size_t len, loff_t *pos)
+{
+	(void)fp;
+	(void)buf;
+	(void)pos;
+	(void)len;
+	/* The minimal instance has no queued events. A nonblocking instance
+	 * reports the standard empty-queue result; a blocking read waits until
+	 * an event exists, which never occurs for this implementation. */
+	return -EAGAIN;
+}
+
+static unsigned inotify_poll(file *fp, unsigned events, poll_table *pt)
+{
+	(void)fp;
+	(void)events;
+	(void)pt;
+	return 0;
+}
+
+static int inotify_release(file *fp)
+{
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+
+static const file_operations inotify_fops = {
+	.release = inotify_release,
+	.read = inotify_read,
+	.poll = inotify_poll,
+};
+
+int sys_inotify_init1(int flags)
+{
+	const int in_nonblock = 0x800;
+	const int in_cloexec = 0x80000;
+	file *fp;
+	inode *node;
+	int fd;
+
+	if (flags & ~(in_nonblock | in_cloexec))
+		return -EINVAL;
+	node = zalloc(sizeof(*node));
+	if (!node)
+		return -ENOMEM;
+	node->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
+	fp = zalloc(sizeof(*fp));
+	if (!fp) {
+		free(node);
+		return -ENOMEM;
+	}
+	fp->f_inode = node;
+	fp->f_mode = O_RDONLY;
+	fp->f_flag = O_RDONLY | ((flags & in_nonblock) ? O_NONBLOCK : 0);
+	fp->f_fop = &inotify_fops;
+	fd = fs_install_fd(fp, (flags & in_cloexec) ? O_CLOEXEC : 0);
+	if (fd < 0) {
+		free(fp);
+		free(node);
+		return -EMFILE;
+	}
+	return fd;
+}
+
+int sys_inotify_add_watch(int fd, const char *path, unsigned mask)
+{
+	(void)path;
+	(void)mask;
+	if (fd < 0 || fd >= MAX_FD || !CURRENT_TASK()->fds[fd])
+		return -EBADF;
+	return 1;
+}
+
+int sys_inotify_rm_watch(int fd, int wd)
+{
+	(void)wd;
+	if (fd < 0 || fd >= MAX_FD || !CURRENT_TASK()->fds[fd])
+		return -EBADF;
+	return 0;
 }
 
 static int flock_lazy_init(inode *in)
@@ -747,6 +862,39 @@ int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 	 */
 	(void)sigmask;
 	return do_select(nfds, readfds, writefds, exceptfds, timeout, NULL);
+}
+
+int sys_pselect6(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+		 const struct timespec *timeout, const void *sigmask_arg)
+{
+	struct {
+		const sigset_t *mask;
+		unsigned size;
+	} *arg = (void *)sigmask_arg;
+	struct timeval tv;
+	const struct timeval *tvp = NULL;
+	sigset_t mask;
+
+	if (timeout) {
+		if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
+		    timeout->tv_nsec >= 1000000000)
+			return -EINVAL;
+		tv.tv_sec = timeout->tv_sec;
+		tv.tv_usec = (timeout->tv_nsec + 999) / 1000;
+		if (tv.tv_usec >= 1000000) {
+			tv.tv_sec++;
+			tv.tv_usec = 0;
+		}
+		tvp = &tv;
+	}
+	if (arg) {
+		if (!arg->mask || arg->size != 8)
+			return -EINVAL;
+		mask = *(const sigset_t *)arg->mask;
+		return do_select(nfds, readfds, writefds, exceptfds, tvp,
+				 &mask);
+	}
+	return do_select(nfds, readfds, writefds, exceptfds, tvp, NULL);
 }
 
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)

@@ -825,6 +825,39 @@ int sys_set_tid_address(int *tidptr)
 	return cur->psid;
 }
 
+int sys_set_robust_list(void *head, unsigned len)
+{
+	if (len != 12)
+		return -EINVAL;
+	if (!head)
+		return -EFAULT;
+	current->robust_list_head = head;
+	return 0;
+}
+
+int sys_get_robust_list(int pid, void **head, unsigned *len)
+{
+	task_struct *task;
+
+	if (!head || !len)
+		return -EFAULT;
+	task = pid ? ps_find_process(pid) : CURRENT_TASK();
+	if (!task)
+		return -ESRCH;
+	*head = task->robust_list_head;
+	*len = 12;
+	return 0;
+}
+
+int sys_rseq(void *rseq, unsigned len, int flags, unsigned signature)
+{
+	(void)rseq;
+	(void)len;
+	(void)flags;
+	(void)signature;
+	return -ENOSYS;
+}
+
 int sys_nice(int inc)
 {
 	if (TEST_LOG(TEST_LOG_TRACE))

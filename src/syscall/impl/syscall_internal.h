@@ -43,6 +43,7 @@ int sys_pread64(int fd, void *buf, unsigned count, int offset);
 int sys_pwrite64(int fd, const void *buf, unsigned count, int offset);
 int sys_ioctl(int d, int request, char *buf);
 int sys_open(const char *name, int flags, umode_t mode);
+int sys_openat(int dirfd, const char *name, int flags, umode_t mode);
 int sys_close(unsigned fd);
 int sys_lseek(int fd, int offset, int whence);
 int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
@@ -53,6 +54,12 @@ int sys_fsync(int fd);
 int sys_dup(int oldfd);
 int sys_dup2(int oldfd, int newfd);
 int sys_pipe(int pipefd[2]);
+int sys_pipe2(int pipefd[2], int flags);
+int sys_inotify_init1(int flags);
+int sys_inotify_add_watch(int fd, const char *path, unsigned mask);
+int sys_inotify_rm_watch(int fd, int wd);
+int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
+		      unsigned arg5);
 int sys_fcntl(int fd, int cmd, int arg);
 int sys_fcntl64(int fd, int cmd, int arg);
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
@@ -60,6 +67,9 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 		  fd_set *exceptfds, const struct timeval *timeout,
 		  void *sigmask);
+int sys_pselect6(int nfds, fd_set *readfds, fd_set *writefds,
+		 fd_set *exceptfds, const struct timespec *timeout,
+		 const void *sigmask_arg);
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout);
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count);
 int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
@@ -76,6 +86,10 @@ int sys_fstat(int fd, struct stat *s);
 int sys_stat64(const char *pathname, struct stat64 *s);
 int sys_lstat64(const char *path, struct stat64 *s);
 int sys_fstat64(int fd, struct stat64 *s);
+int sys_fstatat64(int dirfd, const char *path, struct stat64 *s, int flags);
+int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
+	      void *buf);
+int syscall_resolve_at(int dirfd, const char *path, char *name);
 int sys_oldstat(const char *filename, struct oldstat *buf);
 int sys_access(const char *path, int mode);
 int sys_chmod(const char *pathname, uint32_t mode);
@@ -88,6 +102,7 @@ int sys_symlink(const char *path1, const char *path2);
 int sys_unlink(const char *pathname);
 int sys_rename(const char *oldpath, const char *newpath);
 int sys_mknod(const char *path, unsigned mode, unsigned dev);
+int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev);
 int sys_mkdir(const char *path, unsigned mode);
 int sys_rmdir(const char *path);
 int sys_creat(const char *path, unsigned mode);
@@ -190,6 +205,9 @@ int sys_futex(int *uaddr, int op, int val, const struct timespec *timeout,
 int sys_set_thread_area(void *u_info);
 int sys_get_thread_area(void *u_info);
 int sys_set_tid_address(int *tidptr);
+int sys_set_robust_list(void *head, unsigned len);
+int sys_get_robust_list(int pid, void **head, unsigned *len);
+int sys_rseq(void *rseq, unsigned len, int flags, unsigned signature);
 int sys_modify_ldt(int func, void *ptr, unsigned long bytecount);
 int sys_setitimer(int which, const struct itimerval *new_value,
 		  struct itimerval *old_value);
@@ -233,8 +251,13 @@ int sys_sethostname(const char *name, unsigned len);
 int sys_utime(const char *filename, const struct utimbuf *times);
 int sys_time(unsigned *t);
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
+int sys_clock_gettime(int clockid, struct timespec *tp);
+int sys_clock_gettime64(int clockid, void *tp);
+int sys_getrandom(void *buf, unsigned len, unsigned flags);
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz);
 int sys_nanosleep(const struct timespec *req, struct timespec *rem);
+int sys_clock_nanosleep(int clockid, int flags, const struct timespec *req,
+                        struct timespec *rem);
 int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg);
 int sys_getpriority(int which, int who);
 int sys_ioperm(unsigned long from, unsigned long num, int turn_on);

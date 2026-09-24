@@ -21,6 +21,78 @@
 #include <macro.h>
 #include "syscall_internal.h"
 
+#define AT_FDCWD (-100)
+#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_NO_AUTOMOUNT 0x800
+#define AT_EMPTY_PATH 0x1000
+#define AT_STATX_FORCE_SYNC 0x2000
+#define AT_STATX_DONT_SYNC 0x4000
+#define STATX_BASIC_STATS 0x7ff
+#define STATX__RESERVED 0x80000000U
+
+struct statx_timestamp {
+	int64_t tv_sec;
+	uint32_t tv_nsec;
+	int32_t __reserved;
+};
+
+struct statx_result {
+	uint32_t stx_mask;
+	uint32_t stx_blksize;
+	uint64_t stx_attributes;
+	uint32_t stx_nlink;
+	uint32_t stx_uid;
+	uint32_t stx_gid;
+	uint16_t stx_mode;
+	uint16_t __spare0;
+	uint64_t stx_ino;
+	uint64_t stx_size;
+	uint64_t stx_blocks;
+	uint64_t stx_attributes_mask;
+	struct statx_timestamp stx_atime;
+	struct statx_timestamp stx_btime;
+	struct statx_timestamp stx_ctime;
+	struct statx_timestamp stx_mtime;
+	uint32_t stx_rdev_major;
+	uint32_t stx_rdev_minor;
+	uint32_t stx_dev_major;
+	uint32_t stx_dev_minor;
+	unsigned char __spare[112];
+};
+
+int syscall_resolve_at(int dirfd, const char *path, char *name)
+{
+	file *fp;
+	struct stat st;
+	const char *base;
+	size_t base_len, path_len;
+
+	if (!path)
+		return -EFAULT;
+	if (!*path)
+		return -ENOENT;
+	if (*path == '/')
+		return resolve_path(path, name) == 0 ? 0 : -ENAMETOOLONG;
+	if (dirfd == AT_FDCWD)
+		return resolve_path(path, name) == 0 ? 0 : -ENAMETOOLONG;
+	if (dirfd < 0 || dirfd >= MAX_FD || !(fp = current->fds[dirfd]))
+		return -EBADF;
+	if (fs_fstat(dirfd, &st) != 0 || !S_ISDIR(st.st_mode))
+		return -ENOTDIR;
+	base = fp->f_name;
+	if (!base)
+		return -ENOENT;
+	base_len = strlen(base);
+	path_len = strlen(path);
+	if (base_len + path_len + 2 > MAX_PATH)
+		return -ENAMETOOLONG;
+	memcpy(name, base, base_len);
+	if (base_len && name[base_len - 1] != '/')
+		name[base_len++] = '/';
+	memcpy(name + base_len, path, path_len + 1);
+	return 0;
+}
+
 /* ------------------------------------------------------------------ *
  * Shared helpers                                                       *
  * ------------------------------------------------------------------ */
@@ -329,6 +401,83 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	return ret;
 }
 
+static int stat_at(int dirfd, const char *path, int flags, struct stat *st)
+{
+	char *name;
+	int ret;
+
+	if (!path)
+		return -EFAULT;
+	if (!*path) {
+		if (!(flags & AT_EMPTY_PATH))
+			return -ENOENT;
+		if (dirfd == AT_FDCWD)
+			return sys_stat(".", st);
+		return fs_fstat(dirfd, st);
+	}
+	name = name_get();
+	ret = syscall_resolve_at(dirfd, path, name);
+	if (ret == 0)
+		ret = do_stat(NULL, name, st, O_PATH |
+			      ((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0));
+	name_put(name);
+	return ret;
+}
+
+int sys_fstatat64(int dirfd, const char *path, struct stat64 *buf, int flags)
+{
+	struct stat st;
+	int ret;
+
+	if (!buf)
+		return -EFAULT;
+	if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_EMPTY_PATH))
+		return -EINVAL;
+	ret = stat_at(dirfd, path, flags, &st);
+	if (ret == 0) {
+		memset(buf, 0, sizeof(*buf));
+		stat_to_stat64(&st, buf);
+	}
+	return ret;
+}
+
+int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
+	      void *result)
+{
+	struct stat st;
+	struct statx_result *buf = result;
+	int ret;
+
+	if (!buf)
+		return -EFAULT;
+	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
+		       AT_EMPTY_PATH | AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC)) ||
+	    ((flags & AT_STATX_FORCE_SYNC) && (flags & AT_STATX_DONT_SYNC)) ||
+	    (mask & STATX__RESERVED))
+		return -EINVAL;
+	ret = stat_at(dirfd, path, flags, &st);
+	if (ret != 0)
+		return ret;
+	memset(buf, 0, sizeof(*buf));
+	buf->stx_mask = STATX_BASIC_STATS;
+	buf->stx_blksize = st.st_blksize;
+	buf->stx_nlink = st.st_nlink;
+	buf->stx_uid = st.st_uid;
+	buf->stx_gid = st.st_gid;
+	buf->stx_mode = st.st_mode;
+	buf->stx_ino = st.st_ino;
+	buf->stx_size = st.st_size;
+	buf->stx_blocks = st.st_blocks;
+	buf->stx_atime.tv_sec = st.st_atime;
+	buf->stx_ctime.tv_sec = st.st_ctime;
+	buf->stx_mtime.tv_sec = st.st_mtime;
+	buf->stx_rdev_major = MAJOR(st.st_rdev);
+	buf->stx_rdev_minor = MINOR(st.st_rdev);
+	buf->stx_dev_major = MAJOR(st.st_dev);
+	buf->stx_dev_minor = MINOR(st.st_dev);
+	return 0;
+}
+
 int sys_oldstat(const char *filename, struct oldstat *buf)
 {
 	struct stat s;
@@ -513,6 +662,17 @@ int sys_mknod(const char *_path, unsigned mode, unsigned dev)
 		klog("mknod(%s, %o, %x) = %d\n", _path, mode, dev, ret);
 
 	name_put(path);
+	return ret;
+}
+
+int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev)
+{
+	char *name = name_get();
+	int ret = syscall_resolve_at(dirfd, path, name);
+
+	if (ret == 0)
+		ret = vfs_mknod(current->root, name, mode, dev);
+	name_put(name);
 	return ret;
 }
 

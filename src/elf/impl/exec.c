@@ -223,6 +223,7 @@ but that could change... */
 #define AT_PLATFORM 15 /* string identifying CPU for optimizations */
 #define AT_HWCAP 16 /* arch dependent hints at CPU capabilities */
 #define AT_CLKTCK 17 /* Frequency of times() */
+#define AT_RANDOM 25 /* address of 16 random bytes */
 #define AT_SYSINFO 32 /* address of kernel fast-syscall entry (vsyscall) */
 
 /*
@@ -237,6 +238,7 @@ but that could change... */
  *     <envp strings>          ← each NUL-terminated
  *     <argv strings>          ← each NUL-terminated
  *     <ELF_PLATFORM string>   ("i686")
+ *     <16 random bytes>      (AT_RANDOM)
  *     <16-byte alignment pad>
  *     <auxiliary vector>      ← AT_NULL terminator at the top of this block,
  *                               then AT_PLATFORM, AT_HWCAP/PAGESZ/CLKTCK,
@@ -256,7 +258,7 @@ static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
 {
 	int i = 0;
 	vaddr_t esp = top;
-	vaddr_t *sp, *platform = 0;
+	vaddr_t *sp, *platform = 0, *random_bytes;
 	vaddr_t vdso_entry = mm_vdso_fastcall_entry();
 	int argv_buf_len = argc * sizeof(char *);
 	int env_buf_len = envc * sizeof(char *);
@@ -304,6 +306,13 @@ static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
 	strcpy((char *)esp, ELF_PLATFORM);
 	platform = (unsigned *)esp;
 
+	/* The dynamic loader reads AT_RANDOM to initialize stack protection. */
+	esp -= 16;
+	random_bytes = (vaddr_t *)esp;
+	srand((unsigned)time_now_us() ^ (unsigned)(uintptr_t)esp);
+	for (i = 0; i < 16; i++)
+		((unsigned char *)random_bytes)[i] = (unsigned char)rand();
+
 	/* Align stack to 16 bytes (ABI requirement) then step back one slot. */
 	esp = (~15UL & esp) - 16UL;
 	sp = (unsigned *)esp;
@@ -323,6 +332,8 @@ static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
 		sp -= 2;
 		NEW_AUX_ENT(0, AT_PLATFORM, (unsigned long)platform);
 	}
+	sp -= 2;
+	NEW_AUX_ENT(0, AT_RANDOM, (unsigned long)random_bytes);
 
 	/* Hardware capability, page size, clock-tick frequency, optional vsyscall entry. */
 	sp -= (vdso_entry ? 4 : 3) * 2;

@@ -371,6 +371,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 
 	smp_fpu_save(cur);
 	*task = *cur;
+	task->robust_list_head = NULL;
 	*task_intr_frame = *cur_intr_frame;
 
 	if (cur->remain_ticks > DEFAULT_TASK_TIME_SLICE / 2)

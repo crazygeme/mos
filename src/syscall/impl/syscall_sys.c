@@ -134,6 +134,83 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 	return 0;
 }
 
+static int clock_time_ns(int clockid, unsigned long long *ns)
+{
+	unsigned long long us;
+
+	switch (clockid) {
+	case 0: /* CLOCK_REALTIME */
+	case 5: /* CLOCK_REALTIME_COARSE */
+		us = time_wall_us();
+		break;
+	case 1: /* CLOCK_MONOTONIC */
+	case 4: /* CLOCK_MONOTONIC_RAW */
+	case 6: /* CLOCK_MONOTONIC_COARSE */
+	case 7: /* CLOCK_BOOTTIME */
+		us = time_now_us();
+		break;
+	default:
+		return -EINVAL;
+	}
+	*ns = us * 1000ULL;
+	return 0;
+}
+
+int sys_clock_gettime(int clockid, struct timespec *tp)
+{
+	unsigned long long ns;
+	int ret;
+
+	if (!tp)
+		return -EFAULT;
+	ret = clock_time_ns(clockid, &ns);
+	if (ret)
+		return ret;
+	if (ns / 1000000000ULL > 0x7fffffffULL)
+		return -EOVERFLOW;
+	tp->tv_sec = ns / 1000000000ULL;
+	tp->tv_nsec = ns % 1000000000ULL;
+	return 0;
+}
+
+int sys_clock_gettime64(int clockid, void *tp)
+{
+	struct {
+		int64_t tv_sec;
+		int64_t tv_nsec;
+	} *result = tp;
+	unsigned long long ns;
+	int ret;
+
+	if (!result)
+		return -EFAULT;
+	ret = clock_time_ns(clockid, &ns);
+	if (ret)
+		return ret;
+	result->tv_sec = ns / 1000000000ULL;
+	result->tv_nsec = ns % 1000000000ULL;
+	return 0;
+}
+
+int sys_getrandom(void *buf, unsigned len, unsigned flags)
+{
+	unsigned char *bytes = buf;
+	unsigned i;
+	static int seeded;
+
+	if (flags & ~3U)
+		return -EINVAL;
+	if (!buf && len)
+		return -EFAULT;
+	if (!seeded) {
+		srand((unsigned)time_now_us());
+		seeded = 1;
+	}
+	for (i = 0; i < len; i++)
+		bytes[i] = (unsigned char)rand();
+	return len;
+}
+
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
 	if (tv) {
@@ -196,6 +273,30 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 		rem->tv_nsec = 0;
 	}
 	return 0;
+}
+
+int sys_clock_nanosleep(int clockid, int flags, const struct timespec *req,
+			struct timespec *rem)
+{
+	if (clockid != 0 && clockid != 1)
+		return -EINVAL;
+	if (flags != 0)
+		return -EINVAL;
+	return sys_nanosleep(req, rem);
+}
+
+int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
+		      unsigned arg5)
+{
+	(void)arg3;
+	(void)arg4;
+	(void)arg5;
+	/* agetty queries dumpability before opening its console. */
+	if (option == 3) /* PR_GET_DUMPABLE */
+		return 1;
+	if (option == 4) /* PR_SET_DUMPABLE */
+		return arg2 <= 2 ? 0 : -EINVAL;
+	return -EINVAL;
 }
 
 /* Linux reboot(2) magic numbers */

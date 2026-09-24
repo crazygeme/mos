@@ -221,6 +221,7 @@ static void ps_reap_group_thread(task_struct *task)
 		return;
 
 	ps_clear_child_tid(task);
+	ps_release_robust_list(task);
 
 	if (task->fds) {
 		for (i = 0; i < MAX_FD; i++) {
@@ -304,8 +305,6 @@ void ps_kill_thread_group(task_struct *leader)
 		ps_futex_remove_task_locked(task);
 		list_remove_entry(&task->ps_list);
 		ps_remove_mgr_unsafe(task);
-		task->psid = 0xffffffff;
-		task->tgid = 0xffffffff;
 		task->status = ps_dying;
 		task->wait_func = NULL;
 		list_insert_tail(&reap_list, &task->ps_list);
@@ -318,6 +317,8 @@ void ps_kill_thread_group(task_struct *leader)
 
 		list_remove_entry(&task->ps_list);
 		ps_reap_group_thread(task);
+		task->psid = 0xffffffff;
+		task->tgid = 0xffffffff;
 	}
 }
 
@@ -338,6 +339,7 @@ void do_exit(unsigned encoded_status)
 	}
 
 	ps_clear_child_tid(cur);
+	ps_release_robust_list(cur);
 
 	if (cur->user->vm) {
 		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */

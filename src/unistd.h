@@ -211,6 +211,11 @@
 #define __NR_geteuid32 201
 #define __NR_exit_group 252
 #define __NR_set_tid_address 258
+#define __NR_timer_create 259
+#define __NR_timer_settime 260
+#define __NR_timer_gettime 261
+#define __NR_timer_getoverrun 262
+#define __NR_timer_delete 263
 #define __NR_clock_gettime 265
 #define __NR_clock_nanosleep 267
 #define __NR_openat 295

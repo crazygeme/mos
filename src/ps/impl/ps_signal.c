@@ -17,6 +17,28 @@
 #include <int/interrupt.h>
 #include "ps_internal.h"
 
+void ps_timer_notify(unsigned tid, int signo, int timer_id, int value)
+{
+	task_struct *target;
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
+	target = ps_find_process_unsafe(tid);
+	if (target && target->type == ps_user && target->signal) {
+		if (signo == SIGRTMIN_KERNEL) {
+			target->signal->timer_signal_id = timer_id;
+			target->signal->timer_signal_value = value;
+			target->signal->sig_pending |=
+				1UL << (SIGRTMIN_KERNEL - 1);
+		} else {
+			target->signal->sig_pending |= 1UL << (signo - 1);
+		}
+		if (target->status == ps_waiting)
+			ps_put_to_ready_queue_unsafe(target);
+	}
+	spinlock_unlock(&ps_lock, irq);
+}
+
 void do_signal(intr_frame *frame);
 
 #define STOP_SIGNALS_MASK                                  \
@@ -903,6 +925,19 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 
 	for (;;) {
 		sigset_t pending = cur->signal->sig_pending & wait_set;
+		if (pending & (1UL << (SIGRTMIN_KERNEL - 1))) {
+			cur->signal->sig_pending &=
+				~(1UL << (SIGRTMIN_KERNEL - 1));
+			if (info) {
+				unsigned long *words = info;
+				memset(info, 0, 128);
+				words[0] = SIGRTMIN_KERNEL;
+				words[2] = (unsigned long)-2;
+				words[3] = cur->signal->timer_signal_id;
+				words[5] = cur->signal->timer_signal_value;
+			}
+			return SIGRTMIN_KERNEL;
+		}
 
 		if (pending) {
 			int sig;

@@ -20,6 +20,18 @@ struct itimerval {
 	struct timeval it_value;
 };
 
+struct mos_itimerspec {
+	struct timespec it_interval;
+	struct timespec it_value;
+};
+
+struct mos_sigevent {
+	int value;
+	int signo;
+	int notify;
+	int tid;
+};
+
 struct mmap_arg_struct32 {
 	unsigned int addr;
 	unsigned int len;
@@ -252,6 +264,13 @@ int sys_utime(const char *filename, const struct utimbuf *times);
 int sys_time(unsigned *t);
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
 int sys_clock_gettime(int clockid, struct timespec *tp);
+int sys_timer_create(int clockid, const struct mos_sigevent *event, int *timerid);
+int sys_timer_settime(int timerid, int flags,
+		      const struct mos_itimerspec *value,
+		      struct mos_itimerspec *old_value);
+int sys_timer_gettime(int timerid, struct mos_itimerspec *value);
+int sys_timer_getoverrun(int timerid);
+int sys_timer_delete(int timerid);
 int sys_clock_gettime64(int clockid, void *tp);
 int sys_getrandom(void *buf, unsigned len, unsigned flags);
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz);

@@ -201,6 +201,20 @@ int sys_close(unsigned fd)
 	return fs_close(fd);
 }
 
+int sys_close_range(unsigned first, unsigned last, unsigned flags)
+{
+	unsigned fd;
+	if (flags)
+		return -EINVAL;
+	if (first > last || first >= MAX_FD)
+		return first > last ? -EINVAL : 0;
+	if (last >= MAX_FD)
+		last = MAX_FD - 1;
+	for (fd = first; fd <= last; fd++)
+		fs_close((int)fd);
+	return 0;
+}
+
 int sys_lseek(int fd, int offset, int whence)
 {
 	int ret = fs_seek(fd, offset, whence);
@@ -903,6 +917,15 @@ int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)
 		klog("poll(%x, %d, %d)\n", fds, nfds, timeout);
 
 	return do_poll(fds, nfds, timeout);
+}
+
+int sys_ppoll(struct pollfd *fds, unsigned nfds,
+	      const struct timespec *timeout, const sigset_t *sigmask,
+	      unsigned sigsetsize)
+{
+	if (sigmask && sigsetsize != 8)
+		return -EINVAL;
+	return do_ppoll(fds, nfds, timeout, sigmask);
 }
 
 /* 225: readahead — hint to preload file pages; MOS has no page cache, no-op */

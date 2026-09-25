@@ -84,7 +84,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if (flags & CLONE_VFORK) {
 		if ((flags & CSIGNAL) != SIGCHLD)
 			return -EINVAL;
-		return do_vfork();
+		return do_vfork(child_stack);
 	}
 
 	if (thread_group) {

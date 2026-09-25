@@ -23,6 +23,7 @@
 
 #define AT_FDCWD (-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_EACCESS 0x200
 #define AT_NO_AUTOMOUNT 0x800
 #define AT_EMPTY_PATH 0x1000
 #define AT_STATX_FORCE_SYNC 0x2000
@@ -578,6 +579,33 @@ done:
 	return ret;
 }
 
+int sys_faccessat2(int dirfd, const char *path, int mode, int flags)
+{
+	struct stat st;
+	task_struct *cur = CURRENT_TASK();
+	int ret;
+
+	if (mode & ~(R_OK | W_OK | X_OK))
+		return -EINVAL;
+	if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EACCESS | AT_EMPTY_PATH))
+		return -EINVAL;
+
+	ret = stat_at(dirfd, path, flags, &st);
+	if (ret || mode == F_OK)
+		return ret;
+	if (!cur->user)
+		return 0;
+	if (flags & AT_EACCESS)
+		return fs_check_perm_ids(&st, mode, cur->user->euid,
+					 cur->user->egid);
+	return fs_check_perm_ids(&st, mode, cur->user->uid, cur->user->gid);
+}
+
+int sys_faccessat(int dirfd, const char *path, int mode)
+{
+	return sys_faccessat2(dirfd, path, mode, 0);
+}
+
 int sys_chmod(const char *pathname, uint32_t mode)
 {
 	char *name = name_get();
@@ -590,6 +618,23 @@ int sys_chmod(const char *pathname, uint32_t mode)
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("chmod(%s, %d) = %d\n", pathname, mode, ret);
 
+	return ret;
+}
+
+int sys_fchmodat(int dirfd, const char *pathname, uint32_t mode)
+{
+	char *name = name_get();
+	int ret;
+
+	if (!name)
+		return -ENOMEM;
+	ret = syscall_resolve_at(dirfd, pathname, name);
+	if (ret == 0)
+		ret = fs_chmod(name, mode);
+	if (TEST_LOG(TEST_LOG_INFO))
+		klog("fchmodat(%d, %s, %o) = %d\n", dirfd,
+		     pathname ? pathname : "[null]", mode, ret);
+	name_put(name);
 	return ret;
 }
 

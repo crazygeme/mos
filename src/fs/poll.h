@@ -1,6 +1,9 @@
 #ifndef _FS_POLL_H
 #define _FS_POLL_H
 
+#include <hw/time.h>
+#include <ps/signal.h>
+
 /* poll event flags */
 #define POLLIN 0x0001
 #define POLLPRI 0x0002
@@ -37,5 +40,7 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 		   int infinite, unsigned long long deadline);
 
 int do_poll(struct pollfd *fds, unsigned nfds, int timeout);
+int do_ppoll(struct pollfd *fds, unsigned nfds,
+	     const struct timespec *timeout, const sigset_t *sigmask);
 
 #endif

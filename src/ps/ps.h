@@ -75,6 +75,9 @@ typedef struct _user_enviroment {
 	unsigned uid, euid, suid; /* real, effective, saved-set user id */
 	unsigned gid, egid, sgid; /* real, effective, saved-set group id */
 	unsigned fsuid, fsgid; /* filesystem uid/gid */
+	unsigned cap_effective[2], cap_permitted[2], cap_inheritable[2];
+	unsigned cap_initialized;
+	unsigned keep_capabilities;
 	/* Per-process TLS GDT descriptors (GDT_ENTRY_TLS_MIN .. GDT_ENTRY_TLS_MAX) */
 	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
 	unsigned long long ldt_desc[LDT_ENTRY_COUNT];

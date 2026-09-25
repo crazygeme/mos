@@ -57,6 +57,7 @@ int sys_ioctl(int d, int request, char *buf);
 int sys_open(const char *name, int flags, umode_t mode);
 int sys_openat(int dirfd, const char *name, int flags, umode_t mode);
 int sys_close(unsigned fd);
+int sys_close_range(unsigned first, unsigned last, unsigned flags);
 int sys_lseek(int fd, int offset, int whence);
 int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	       uint64_t *result, unsigned int whence);
@@ -83,6 +84,9 @@ int sys_pselect6(int nfds, fd_set *readfds, fd_set *writefds,
 		 fd_set *exceptfds, const struct timespec *timeout,
 		 const void *sigmask_arg);
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout);
+int sys_ppoll(struct pollfd *fds, unsigned nfds,
+	      const struct timespec *timeout, const sigset_t *sigmask,
+	      unsigned sigsetsize);
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count);
 int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		 unsigned int count);
@@ -104,7 +108,10 @@ int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
 int syscall_resolve_at(int dirfd, const char *path, char *name);
 int sys_oldstat(const char *filename, struct oldstat *buf);
 int sys_access(const char *path, int mode);
+int sys_faccessat(int dirfd, const char *path, int mode);
+int sys_faccessat2(int dirfd, const char *path, int mode, int flags);
 int sys_chmod(const char *pathname, uint32_t mode);
+int sys_fchmodat(int dirfd, const char *pathname, uint32_t mode);
 int sys_fchmod(int fd, uint32_t mode);
 int sys_chown(const char *pathname, uint32_t uid, uint32_t gid);
 int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid);
@@ -165,6 +172,8 @@ int sys_setpgid(unsigned pid, unsigned pgid);
 int sys_getsid(unsigned pid);
 int sys_setsid();
 int sys_getuid();
+int sys_capget(void *header, void *data);
+int sys_capset(void *header, const void *data);
 int sys_getgid();
 int sys_geteuid();
 int sys_getegid();
@@ -199,6 +208,10 @@ int sys_sched_yield();
 unsigned sys_alarm(unsigned seconds);
 int sys_getrlimit(int resource, void *limit);
 int sys_setrlimit(int resource, void *limit);
+struct mos_rlimit64;
+int sys_prlimit64(unsigned pid, unsigned resource,
+		  const struct mos_rlimit64 *new_limit,
+		  struct mos_rlimit64 *old_limit);
 long sys_personality(unsigned int personality);
 int sys_getgroups(int size, unsigned *list);
 int sys_setgroups(int size, unsigned short *list);
@@ -289,6 +302,7 @@ int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 	      int fd, unsigned pgoffset);
 int sys_munmap(void *addr, unsigned length);
 int sys_mprotect(void *addr, unsigned len, int prot);
+int sys_madvise(void *addr, unsigned length, int advice);
 int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	       int flags, unsigned new_addr);
 int sys_sched_setparam(int pid, const void *param);
@@ -317,5 +331,8 @@ int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
  * syscall_net.c
  */
 int sys_socketcall(int call, unsigned long *args);
+int sys_sendmmsg(int fd, void *messages, unsigned count, int flags);
+int sys_recvmmsg(int fd, void *messages, unsigned count, int flags,
+		void *timeout);
 
 #endif /* _SYSCALL_INTERNAL_H */

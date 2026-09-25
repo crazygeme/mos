@@ -5,13 +5,33 @@
  * This file contains only the syscall entry point.
  */
 #include <net/sock.h>
+#include <ps/ps.h>
+#include <fs/fcntl.h>
 #include <errno.h>
+
+#define MOS_SOCK_TYPE_MASK 0xf
+#define MOS_SOCK_NONBLOCK 0x800
+#define MOS_SOCK_CLOEXEC 0x80000
 
 int sys_socketcall(int call, unsigned long *args)
 {
 	switch (call) {
-	case SYS_SOCKET:
-		return do_socket((int)args[0], (int)args[1], (int)args[2]);
+	case SYS_SOCKET: {
+		unsigned type = args[1];
+		int fd;
+		if (type & ~(MOS_SOCK_TYPE_MASK | MOS_SOCK_NONBLOCK |
+			     MOS_SOCK_CLOEXEC))
+			return -EINVAL;
+		fd = do_socket((int)args[0], (int)(type & MOS_SOCK_TYPE_MASK),
+			       (int)args[2]);
+		if (fd < 0)
+			return fd;
+		if (type & MOS_SOCK_NONBLOCK)
+			CURRENT_TASK()->fds[fd]->f_flag |= O_NONBLOCK;
+		if (type & MOS_SOCK_CLOEXEC)
+			fd_bitmap_set(CURRENT_TASK()->fd_cloexec, fd);
+		return fd;
+	}
 
 	case SYS_BIND:
 		return do_bind((int)args[0], (const struct sockaddr *)args[1],

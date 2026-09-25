@@ -296,6 +296,14 @@ int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 		return 1;
 	if (option == 4) /* PR_SET_DUMPABLE */
 		return arg2 <= 2 ? 0 : -EINVAL;
+	if (option == 7) /* PR_GET_KEEPCAPS */
+		return current->user->keep_capabilities;
+	if (option == 8) { /* PR_SET_KEEPCAPS */
+		if (arg2 > 1)
+			return -EINVAL;
+		current->user->keep_capabilities = arg2;
+		return 0;
+	}
 	return -EINVAL;
 }
 
@@ -543,6 +551,14 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 	}
 
 	vm_invalidate_user_cache(cur->user);
+	return 0;
+}
+
+int sys_madvise(void *addr, unsigned length, int advice)
+{
+	(void)addr;
+	(void)length;
+	(void)advice;
 	return 0;
 }
 

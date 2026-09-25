@@ -32,6 +32,7 @@ static void ps_system_service_task(void *param)
 		unsigned sleep_ms;
 
 		if (now >= next_lwip_ms) {
+			ps_timer_poll();
 			sys_check_timeouts();
 			netif_poll_all();
 			do {

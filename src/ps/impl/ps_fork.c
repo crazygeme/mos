@@ -450,6 +450,8 @@ void fork_dup_signal(task_struct *cur, task_struct *task)
 	task->signal = zalloc(sizeof(signal_context));
 	memcpy(task->signal, cur->signal, sizeof(signal_context));
 	task->signal->sig_pending = 0;
+	task->signal->timer_signal_id = 0;
+	task->signal->timer_signal_value = 0;
 }
 
 int fork_dup_io(task_struct *cur, task_struct *task)

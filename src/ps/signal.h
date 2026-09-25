@@ -42,8 +42,9 @@
 #define SIGIO 29
 #define SIGPWR 30
 #define SIGSYS 31
+#define SIGRTMIN_KERNEL 32
 
-#define NSIG 32 /* one past the highest signal number */
+#define NSIG 33 /* one past the highest supported signal number */
 
 /* Signal mask type: one bit per signal (bit N-1 = signal N) */
 typedef unsigned long sigset_t;

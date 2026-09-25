@@ -93,6 +93,8 @@ typedef struct _signal_context {
 		sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
 	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
 	sigset_t sig_mask; /* bitmask: blocked signals             */
+	int timer_signal_id;
+	int timer_signal_value;
 	sigset_t saved_sigmask; /* mask to restore after sigsuspend     */
 	int restore_sigmask; /* if set, restore saved_sigmask after signal delivery */
 	stack_t altstack; /* alternate signal stack (sigaltstack)  */
@@ -270,6 +272,9 @@ task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
 int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
+void ps_timer_notify(unsigned tid, int signo, int timer_id, int value);
+void ps_timer_poll(void);
+void ps_timer_discard_group(unsigned tgid);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);
 void ps_send_signal_owner(int owner, int sig);
 

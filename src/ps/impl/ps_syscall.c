@@ -317,8 +317,6 @@ void ps_kill_thread_group(task_struct *leader)
 
 		list_remove_entry(&task->ps_list);
 		ps_reap_group_thread(task);
-		task->psid = 0xffffffff;
-		task->tgid = 0xffffffff;
 	}
 }
 
@@ -328,6 +326,8 @@ void do_exit(unsigned encoded_status)
 	int i;
 
 	cur->exit_status = encoded_status;
+	if (!(cur->fork_flag & FORK_FLAG_THREAD))
+		ps_timer_discard_group(cur->tgid);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("exit(%s, status=%x)\n", cur->user->command,
 		     encoded_status);

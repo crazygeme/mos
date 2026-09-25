@@ -14,38 +14,35 @@
 #define RLIMIT_FSIZE_RESOURCE 1
 
 /*
- * fs_check_perm — check whether the current process may access a file.
+ * fs_check_perm_ids — check file access for the supplied credentials.
  *
  * @s:    stat of the target file
  * @mask: requested access: R_OK (4), W_OK (2), X_OK (1), or 0 for existence
+ * @uid:  user ID used for the check
+ * @gid:  group ID used for the check
  *
  * Returns 0 if allowed, -EACCES if denied.
- * Root (euid == 0) bypasses DAC checks, except execute on a file requires
+ * UID 0 bypasses DAC checks, except execute on a file requires
  * at least one execute bit to be set.
  */
-int fs_check_perm(const struct stat *s, int mask)
+int fs_check_perm_ids(const struct stat *s, int mask, unsigned uid,
+		      unsigned gid)
 {
-	task_struct *cur = CURRENT_TASK();
-	unsigned euid, egid, mode;
+	unsigned mode;
 	int shift;
 
-	if (!cur->user)
-		return 0; /* kernel task — always allowed */
-
-	euid = cur->user->euid;
-	egid = cur->user->egid;
 	mode = s->st_mode;
 
-	if (euid == 0) {
+	if (uid == 0) {
 		/* Root may read/write anything; execute only if some x bit set */
 		if ((mask & X_OK) && !(mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
 			return -EACCES;
 		return 0;
 	}
 
-	if (euid == s->st_uid)
+	if (uid == s->st_uid)
 		shift = 6; /* use owner bits */
-	else if (egid == s->st_gid)
+	else if (gid == s->st_gid)
 		shift = 3; /* use group bits */
 	else
 		shift = 0; /* use other bits */
@@ -58,6 +55,15 @@ int fs_check_perm(const struct stat *s, int mask)
 		return -EACCES;
 
 	return 0;
+}
+
+int fs_check_perm(const struct stat *s, int mask)
+{
+	task_struct *cur = CURRENT_TASK();
+
+	if (!cur->user)
+		return 0;
+	return fs_check_perm_ids(s, mask, cur->user->euid, cur->user->egid);
 }
 
 static int fs_find_empty_fd(file **fds)
@@ -114,7 +120,8 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 		fp->f_pos = offset;
 
 	pos = fp->f_pos;
-	if (cur->user) {
+	if (cur->user && fp->f_inode &&
+	    S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
 			if ((uint64_t)pos >= limit)
@@ -173,7 +180,8 @@ int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
 
 	saved_pos = fp->f_pos;
 	pos = (loff_t)offset;
-	if (cur->user) {
+	if (cur->user && fp->f_inode &&
+	    S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
 			if ((uint64_t)pos >= limit)
@@ -222,11 +230,10 @@ file *fs_open_file(const char *path, int flag, umode_t mode)
 	return fp;
 }
 
-int fs_install_fd(file *fp, int flag)
+int fs_install_fd_unsafe(file *fp, int flag)
 {
 	task_struct *cur = CURRENT_TASK();
 	int fd;
-	mutex_lock(&cur->fd_lock);
 	fd = fs_find_empty_fd(cur->fds);
 	if (fd >= 0) {
 		cur->fds[fd] = fp;
@@ -235,6 +242,16 @@ int fs_install_fd(file *fp, int flag)
 		else
 			fd_bitmap_clear(cur->fd_cloexec, fd);
 	}
+	return fd;
+}
+
+int fs_install_fd(file *fp, int flag)
+{
+	task_struct *cur = CURRENT_TASK();
+	int fd;
+
+	mutex_lock(&cur->fd_lock);
+	fd = fs_install_fd_unsafe(fp, flag);
 	mutex_unlock(&cur->fd_lock);
 	return fd;
 }

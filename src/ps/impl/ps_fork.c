@@ -188,7 +188,7 @@ void ps_dup_fds(task_struct *cur, task_struct *task)
 	mutex_unlock(&cur->fd_lock);
 }
 
-int do_vfork(void);
+int do_vfork(unsigned long child_stack);
 
 /*
  * Static helpers — COW user address-space duplication
@@ -435,6 +435,14 @@ void fork_dup_user_env(task_struct *cur, task_struct *task)
 	task->user->sgid = cur->user->sgid;
 	task->user->fsuid = cur->user->fsuid;
 	task->user->fsgid = cur->user->fsgid;
+	memcpy(task->user->cap_effective, cur->user->cap_effective,
+	       sizeof(cur->user->cap_effective));
+	memcpy(task->user->cap_permitted, cur->user->cap_permitted,
+	       sizeof(cur->user->cap_permitted));
+	memcpy(task->user->cap_inheritable, cur->user->cap_inheritable,
+	       sizeof(cur->user->cap_inheritable));
+	task->user->keep_capabilities = cur->user->keep_capabilities;
+	task->user->cap_initialized = cur->user->cap_initialized;
 	memcpy(task->user->tls_desc, cur->user->tls_desc,
 	       sizeof(cur->user->tls_desc));
 	memcpy(task->user->ldt_desc, cur->user->ldt_desc,
@@ -564,7 +572,7 @@ static int do_fork(void)
  * The child does NOT own page_dir or vm — cleanup() and do_exit() detect
  * FORK_FLAG_VFORK and skip the destroy/unmap paths for those resources.
  */
-int do_vfork(void)
+int do_vfork(unsigned long child_stack)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =
@@ -587,6 +595,12 @@ int do_vfork(void)
 	fork_set_meta(cur, task, FORK_FLAG_VFORK);
 	task->tgid = task->psid;
 	task->exit_signal = SIGCHLD;
+	if (child_stack) {
+		intr_frame *task_intr_frame =
+			(intr_frame *)((char *)task + PAGE_SIZE -
+				       sizeof(intr_frame));
+		task_intr_frame->esp = (void *)child_stack;
+	}
 
 	task->fds = vm_alloc(1);
 	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
@@ -610,5 +624,5 @@ int sys_vfork()
 {
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vfork()\n");
-	return do_vfork();
+	return do_vfork(0);
 }

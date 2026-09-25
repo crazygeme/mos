@@ -81,6 +81,8 @@ int do_socket(int domain, int type, int protocol)
 		return -EAFNOSUPPORT;
 	if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_RAW)
 		return -EPROTONOSUPPORT;
+	if (type == SOCK_DGRAM && protocol == IPPROTO_ICMP)
+		return -EPROTONOSUPPORT;
 	if (type == SOCK_RAW && protocol != IPPROTO_ICMP &&
 	    protocol != IPPROTO_RAW)
 		return -EPROTONOSUPPORT;

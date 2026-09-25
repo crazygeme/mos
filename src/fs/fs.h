@@ -221,11 +221,14 @@ void fs_flock_release(file *f);
 
 /* DAC permission check: returns 0 if allowed, -EACCES if denied */
 int fs_check_perm(const struct stat *s, int mask);
+int fs_check_perm_ids(const struct stat *s, int mask, unsigned uid,
+		      unsigned gid);
 
 int fs_open(const char *path, int flag, umode_t mode);
 file *fs_open_file(const char *path, int flag, umode_t mode);
 int fs_put_file(file *f);
 int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
+int fs_install_fd_unsafe(file *fp, int flag); /* caller holds fd_lock */
 
 int fs_close(int fd);
 

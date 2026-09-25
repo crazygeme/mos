@@ -7,6 +7,7 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <hw/time.h>
+#include <errno.h>
 #include <macro.h>
 #include "pts_internal.h"
 #include "devnums.h"
@@ -203,14 +204,61 @@ static int pts_master_release(file *fp)
 	return 0;
 }
 
+static int ptmx_master_ioctl(file *master, unsigned cmd, void *arg);
+
 static const file_operations ptmx_master_fops = {
 	.release = pts_master_release,
 	.getattr = ptmx_master_getattr,
 	.read = pts_master_read,
 	.write = pts_master_write,
 	.poll = pts_master_poll,
-	.ioctl = pts_master_ioctl,
+	.ioctl = ptmx_master_ioctl,
 };
+
+static int ptmx_open_peer(file *master, unsigned flags)
+{
+	file *slave;
+	pts_pair *p;
+	int irq, fd;
+
+	if ((flags & O_ACCMODE) == O_ACCMODE ||
+	    (flags & ~(O_ACCMODE | O_NOCTTY | O_NONBLOCK | O_CLOEXEC)))
+		return -EINVAL;
+
+	p = master->f_inode->i_private;
+	spinlock_lock(&pts_alloc_lock, &irq);
+	if (!p->used || !p->master_open) {
+		spinlock_unlock(&pts_alloc_lock, irq);
+		return -EIO;
+	}
+	if (p->pt_locked) {
+		spinlock_unlock(&pts_alloc_lock, irq);
+		return -EIO;
+	}
+	__sync_add_and_fetch(&p->slave_count, 1);
+	p->slave_ever_opened = 1;
+	spinlock_unlock(&pts_alloc_lock, irq);
+
+	slave = ptmx_open_slave_pair(p, flags);
+	if (!slave) {
+		__sync_sub_and_fetch(&p->slave_count, 1);
+		return -ENOMEM;
+	}
+	slave->f_mode = flags & O_ACCMODE;
+	slave->f_flag = flags;
+	slave->f_count = 1;
+	fd = fs_install_fd_unsafe(slave, flags & O_CLOEXEC);
+	if (fd < 0)
+		fs_put_file(slave);
+	return fd;
+}
+
+static int ptmx_master_ioctl(file *master, unsigned cmd, void *arg)
+{
+	if (cmd == TIOCGPTPEER)
+		return ptmx_open_peer(master, (unsigned)(uintptr_t)arg);
+	return pts_master_ioctl(master, cmd, arg);
+}
 
 /*
  * Unix98 PTY slaves are accessed via /dev/pts/N.

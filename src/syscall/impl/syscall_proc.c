@@ -164,6 +164,96 @@ int sys_getuid()
 	return cur->user->uid;
 }
 
+struct mos_cap_header {
+	unsigned version;
+	int pid;
+};
+
+struct mos_cap_data {
+	unsigned effective;
+	unsigned permitted;
+	unsigned inheritable;
+};
+
+#define MOS_CAP_VERSION_1 0x19980330U
+#define MOS_CAP_VERSION_2 0x20071026U
+#define MOS_CAP_VERSION_3 0x20080522U
+
+static void cap_initialize(user_enviroment *user)
+{
+	if (user->cap_initialized)
+		return;
+	if (user->euid == 0) {
+		user->cap_effective[0] = 0xffffffffU;
+		user->cap_effective[1] = 0x1ffU;
+		user->cap_permitted[0] = 0xffffffffU;
+		user->cap_permitted[1] = 0x1ffU;
+	}
+	user->cap_initialized = 1;
+}
+
+int sys_capget(void *header_ptr, void *data_ptr)
+{
+	struct mos_cap_header *header = header_ptr;
+	struct mos_cap_data *data = data_ptr;
+	user_enviroment *user = current->user;
+	unsigned count;
+	unsigned i;
+
+	if (!header)
+		return -EFAULT;
+	if (header->version != MOS_CAP_VERSION_1 &&
+	    header->version != MOS_CAP_VERSION_2 &&
+	    header->version != MOS_CAP_VERSION_3) {
+		header->version = MOS_CAP_VERSION_3;
+		return -EINVAL;
+	}
+	if (header->pid != 0 && header->pid != (int)current->tgid)
+		return -ESRCH;
+	if (!data)
+		return 0;
+	cap_initialize(user);
+	count = header->version == MOS_CAP_VERSION_1 ? 1 : 2;
+	for (i = 0; i < count; i++) {
+		data[i].effective = user->cap_effective[i];
+		data[i].permitted = user->cap_permitted[i];
+		data[i].inheritable = user->cap_inheritable[i];
+	}
+	return 0;
+}
+
+int sys_capset(void *header_ptr, const void *data_ptr)
+{
+	const struct mos_cap_header *header = header_ptr;
+	const struct mos_cap_data *data = data_ptr;
+	user_enviroment *user = current->user;
+	unsigned count;
+	unsigned i;
+
+	if (!header || !data)
+		return -EFAULT;
+	if (header->version != MOS_CAP_VERSION_1 &&
+	    header->version != MOS_CAP_VERSION_2 &&
+	    header->version != MOS_CAP_VERSION_3)
+		return -EINVAL;
+	if (header->pid != 0 && header->pid != (int)current->tgid)
+		return -EPERM;
+	cap_initialize(user);
+	count = header->version == MOS_CAP_VERSION_1 ? 1 : 2;
+	for (i = 0; i < count; i++) {
+		if ((data[i].effective & ~data[i].permitted) ||
+		    (data[i].permitted & ~user->cap_permitted[i]) ||
+		    (data[i].inheritable & ~user->cap_permitted[i]))
+			return -EPERM;
+	}
+	for (i = 0; i < count; i++) {
+		user->cap_effective[i] = data[i].effective;
+		user->cap_permitted[i] = data[i].permitted;
+		user->cap_inheritable[i] = data[i].inheritable;
+	}
+	return 0;
+}
+
 int sys_getgid()
 {
 	task_struct *cur = CURRENT_TASK();
@@ -731,6 +821,56 @@ int sys_setrlimit(int resource, void *limit)
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
 		cur->user->rlimits[resource].rlim_cur = rl[0];
 		cur->user->rlimits[resource].rlim_max = rl[1];
+	}
+	return 0;
+}
+
+struct mos_rlimit64 {
+	uint64_t rlim_cur;
+	uint64_t rlim_max;
+};
+
+#define MOS_RLIM64_INFINITY (~(uint64_t)0)
+
+int sys_prlimit64(unsigned pid, unsigned resource,
+		  const struct mos_rlimit64 *new_limit,
+		  struct mos_rlimit64 *old_limit)
+{
+	task_struct *cur = CURRENT_TASK();
+	task_struct *target = pid ? ps_find_process(pid) : cur;
+	rlimit_t *limit;
+	uint64_t soft = 0, hard = 0;
+
+	if (!target)
+		return -ESRCH;
+	if (resource >= RLIM_NLIMITS)
+		return -EINVAL;
+	if (target != cur && cur->user->euid != 0 &&
+	    cur->user->uid != target->user->uid)
+		return -EPERM;
+	limit = &target->user->rlimits[resource];
+	if (new_limit) {
+		soft = new_limit->rlim_cur;
+		hard = new_limit->rlim_max;
+		if (soft > hard)
+			return -EINVAL;
+		if ((soft > RLIM_INFINITY && soft != MOS_RLIM64_INFINITY) ||
+		    (hard > RLIM_INFINITY && hard != MOS_RLIM64_INFINITY))
+			return -EINVAL;
+		if (cur->user->euid != 0 &&
+		    hard > (limit->rlim_max == RLIM_INFINITY ?
+			    MOS_RLIM64_INFINITY : limit->rlim_max))
+			return -EPERM;
+	}
+	if (old_limit) {
+		old_limit->rlim_cur = limit->rlim_cur == RLIM_INFINITY ?
+			MOS_RLIM64_INFINITY : limit->rlim_cur;
+		old_limit->rlim_max = limit->rlim_max == RLIM_INFINITY ?
+			MOS_RLIM64_INFINITY : limit->rlim_max;
+	}
+	if (new_limit) {
+		limit->rlim_cur = soft == MOS_RLIM64_INFINITY ? RLIM_INFINITY : soft;
+		limit->rlim_max = hard == MOS_RLIM64_INFINITY ? RLIM_INFINITY : hard;
 	}
 	return 0;
 }

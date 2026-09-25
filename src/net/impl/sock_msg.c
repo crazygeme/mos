@@ -461,3 +461,44 @@ done:
 	}
 	return (int)delivered;
 }
+
+int sys_sendmmsg(int fd, void *messages_ptr, unsigned count, int flags)
+{
+	struct mmsghdr *messages = messages_ptr;
+	unsigned i;
+	int ret;
+
+	if (!messages)
+		return -EFAULT;
+	if (!count || count > 1024)
+		return -EINVAL;
+	for (i = 0; i < count; i++) {
+		ret = do_sendmsg(fd, &messages[i].msg_hdr, flags);
+		if (ret < 0)
+			return i ? (int)i : ret;
+		messages[i].msg_len = (unsigned)ret;
+	}
+	return (int)i;
+}
+
+int sys_recvmmsg(int fd, void *messages_ptr, unsigned count, int flags,
+		void *timeout)
+{
+	struct mmsghdr *messages = messages_ptr;
+	unsigned i;
+	int ret;
+
+	if (!messages)
+		return -EFAULT;
+	if (!count || count > 1024)
+		return -EINVAL;
+	for (i = 0; i < count; i++) {
+		ret = do_recvmsg(fd, &messages[i].msg_hdr,
+				 flags | (i ? MSG_DONTWAIT : 0));
+		if (ret < 0)
+			return i ? (int)i : ret;
+		messages[i].msg_len = (unsigned)ret;
+	}
+	(void)timeout;
+	return (int)i;
+}

@@ -221,9 +221,14 @@
 #define __NR_openat 295
 #define __NR_mknodat 297
 #define __NR_fstatat64 300
+#define __NR_fchmodat 306
+#define __NR_faccessat 307
 #define __NR_pselect6 308
+#define __NR_ppoll 309
 #define __NR_pipe2 331
 #define __NR_inotify_init1 332
+#define __NR_prlimit64 340
+#define __NR_close_range 436
 #define __NR_inotify_add_watch 292
 #define __NR_inotify_rm_watch 293
 #define __NR_set_robust_list 311
@@ -232,7 +237,8 @@
 #define __NR_statx 383
 #define __NR_rseq 386
 #define __NR_clock_gettime64 403
-#define NR_syscalls 404
+#define __NR_faccessat2 439
+#define NR_syscalls 440
 
 #define _SYS_NAMELEN 65 // in linux 2.1
 

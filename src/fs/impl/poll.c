@@ -221,3 +221,44 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 		free(entries);
 	return ret;
 }
+
+int do_ppoll(struct pollfd *fds, unsigned nfds,
+	     const struct timespec *timeout, const sigset_t *sigmask)
+{
+	task_struct *cur = CURRENT_TASK();
+	sigset_t saved_mask = cur->signal->sig_mask;
+	unsigned long long deadline = 0;
+	struct poll_ctx ctx = { fds, nfds };
+	poll_table_entry *entries = NULL;
+	int just_test = 0, infinite = !timeout, ret;
+
+	if (!fds && nfds)
+		return -EFAULT;
+	if (nfds > MAX_FD)
+		return -EINVAL;
+	if (timeout) {
+		if (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
+		    timeout->tv_nsec >= 1000000000)
+			return -EINVAL;
+		just_test = !timeout->tv_sec && !timeout->tv_nsec;
+		deadline = time_now_ms() +
+			   (unsigned long long)timeout->tv_sec * 1000 +
+			   (timeout->tv_nsec + 999999ULL) / 1000000;
+	}
+	if (nfds) {
+		entries = zalloc(sizeof(*entries) * nfds * 2);
+		if (!entries)
+			return -ENOMEM;
+		poll_table_init(&ctx.wait, cur, entries, nfds * 2);
+	} else {
+		poll_table_init(&ctx.wait, cur, NULL, 0);
+	}
+	if (sigmask)
+		cur->signal->sig_mask = *sigmask;
+	ret = poll_wait_loop(&poll_fops, &ctx, just_test, infinite, deadline);
+	if (sigmask)
+		cur->signal->sig_mask = saved_mask;
+	if (entries)
+		free(entries);
+	return ret;
+}

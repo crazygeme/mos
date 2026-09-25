@@ -214,6 +214,11 @@ struct msghdr {
 	int msg_flags; /* flags on received message      */
 };
 
+struct mmsghdr {
+	struct msghdr msg_hdr;
+	unsigned msg_len;
+};
+
 /* ── Message flags ───────────────────────────────────────────────────────────── */
 #define MSG_OOB 0x01
 #define MSG_PEEK 0x02

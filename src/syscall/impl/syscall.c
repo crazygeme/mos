@@ -312,6 +312,7 @@ static unsigned call_table[NR_syscalls] = {
 	[307] = sys_faccessat,
 	[308] = sys_pselect6,
 	[309] = sys_ppoll,
+	[330] = sys_dup3, // 330 __NR_dup3
 	[331] = sys_pipe2, // 331 __NR_pipe2
 	[332] = sys_inotify_init1, // 332 __NR_inotify_init1
 	[340] = sys_prlimit64,

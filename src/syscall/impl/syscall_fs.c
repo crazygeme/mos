@@ -911,11 +911,15 @@ int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 		return -EINVAL;
 	}
 
-	resolve_path(_path, name);
+	ret = resolve_path(_path, name);
+	if (ret) {
+		name_put(name);
+		return ret;
+	}
 
 	ret = vfs_readlink(cur->root, name, buf, bufsiz, &rcnt);
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("readlink(%s, %s, %d) = %d\n", name, buf, bufsiz,
+		klog("readlink(%s, %x, %d) = %d\n", name, buf, bufsiz,
 		     ret ? ret : rcnt);
 
 	name_put(name);

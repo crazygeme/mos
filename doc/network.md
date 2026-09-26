@@ -243,6 +243,14 @@ Two raw modes exist:
 
 ## AF_UNIX Socket Support
 
+Stream socket shutdown is directional. `SHUT_WR` prevents further writes
+and makes the peer observe EOF after consuming queued data, while the
+opposite direction remains available. `SHUT_RD` closes the receive direction
+and makes peer writes return `EPIPE`. `SHUT_RDWR` closes both directions.
+Peer links remain intact during shutdown and are detached on socket release.
+Read, receive-message, write, send-message, and poll operations observe the
+shutdown state. Invalid shutdown directions return `EINVAL`.
+
 AF_UNIX is implemented entirely in `src/net/sock_un.c`, separate from lwIP.
 
 Supported features:

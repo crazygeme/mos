@@ -443,30 +443,50 @@ int fs_dup_from(int fd, int minfd)
 	return -EMFILE;
 }
 
-int fs_dup2(int fd, int newfd)
+static int fs_dup_to(int fd, int newfd, int flags)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
-	int ret;
-	if (fd < 0 || fd >= MAX_FD)
-		return -EBADF;
+	file *fp, *replaced;
 
-	if (newfd < 0 || newfd >= MAX_FD)
-		return -EBADF;
-
-	if (cur->fds[fd] == NULL)
+	if (fd < 0 || fd >= MAX_FD || newfd < 0 || newfd >= MAX_FD)
 		return -EBADF;
 
 	mutex_lock(&cur->fd_lock);
-	if (cur->fds[newfd])
-		fs_put_file(cur->fds[newfd]);
 	fp = cur->fds[fd];
+	if (!fp) {
+		mutex_unlock(&cur->fd_lock);
+		return -EBADF;
+	}
+	if (fd == newfd) {
+		mutex_unlock(&cur->fd_lock);
+		return newfd;
+	}
+
 	fs_get_file(fp);
+	replaced = cur->fds[newfd];
 	cur->fds[newfd] = fp;
-	fd_bitmap_clear(cur->fd_cloexec, newfd);
-	ret = newfd;
+	if (flags & O_CLOEXEC)
+		fd_bitmap_set(cur->fd_cloexec, newfd);
+	else
+		fd_bitmap_clear(cur->fd_cloexec, newfd);
 	mutex_unlock(&cur->fd_lock);
-	return ret;
+
+	/* Release may block; the descriptor replacement is already complete. */
+	if (replaced)
+		fs_put_file(replaced);
+	return newfd;
+}
+
+int fs_dup2(int fd, int newfd)
+{
+	return fs_dup_to(fd, newfd, 0);
+}
+
+int fs_dup3(int fd, int newfd, int flags)
+{
+	if ((flags & ~O_CLOEXEC) || fd == newfd)
+		return -EINVAL;
+	return fs_dup_to(fd, newfd, flags);
 }
 
 /*

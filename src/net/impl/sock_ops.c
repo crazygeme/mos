@@ -578,15 +578,31 @@ int do_shutdown(int fd, int how)
 	if (!sk)
 		return -ENOTSOCK;
 
+	if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR)
+		return -EINVAL;
+
 	if (sk->domain == AF_UNIX) {
-		(void)how;
 		mos_sock *peer = sk->unix_peer;
+		unsigned mask = 0;
+		unsigned peer_mask = 0;
+
+		if (sk->state == SS_UNCONNECTED)
+			return -ENOTCONN;
+		if (how == SHUT_RD || how == SHUT_RDWR) {
+			mask |= UNIX_SHUT_RD;
+			peer_mask |= UNIX_SHUT_WR;
+		}
+		if (how == SHUT_WR || how == SHUT_RDWR) {
+			mask |= UNIX_SHUT_WR;
+			peer_mask |= UNIX_SHUT_RD;
+		}
+		/* Half-close preserves both peer links until socket release. */
+		__sync_fetch_and_or(&sk->unix_shutdown, mask);
 		if (peer && sk->type == SOCK_STREAM) {
-			peer->unix_peer = NULL;
-			peer->state = SS_DISCONNECTING;
+			__sync_fetch_and_or(&peer->unix_shutdown, peer_mask);
 			sock_wakeup(peer);
 		}
-		sk->state = SS_DISCONNECTING;
+		sock_wakeup(sk);
 		return 0;
 	}
 

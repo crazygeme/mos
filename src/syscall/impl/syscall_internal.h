@@ -69,6 +69,7 @@ int sys_recvmsg(int fd, struct msghdr *msg, int flags);
 int sys_fsync(int fd);
 int sys_dup(int oldfd);
 int sys_dup2(int oldfd, int newfd);
+int sys_dup3(int oldfd, int newfd, int flags);
 int sys_pipe(int pipefd[2]);
 int sys_pipe2(int pipefd[2], int flags);
 int sys_inotify_init1(int flags);

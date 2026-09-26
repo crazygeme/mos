@@ -373,10 +373,17 @@ int sys_dup2(int oldfd, int newfd)
 		return -EBADF;
 	if (oldfd >= MAX_FD || newfd >= MAX_FD)
 		return -EBADF;
-	if (oldfd == newfd)
-		return newfd;
 
 	return fs_dup2(oldfd, newfd);
+}
+
+int sys_dup3(int oldfd, int newfd, int flags)
+{
+	int ret = fs_dup3(oldfd, newfd, flags);
+
+	if (TEST_LOG(TEST_LOG_TRACE))
+		klog("dup3(%d, %d, %x) = %d\n", oldfd, newfd, flags, ret);
+	return ret;
 }
 
 int sys_pipe(int pipefd[2])

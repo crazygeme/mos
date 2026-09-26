@@ -313,6 +313,10 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 	if (sk->type == SOCK_DGRAM) {
 		spinlock_lock(&sk->rxbuf_lock, &irq);
 		while (rx_used(sk) < sizeof(u16_t)) {
+			if (sk->unix_shutdown & UNIX_SHUT_RD) {
+				spinlock_unlock(&sk->rxbuf_lock, irq);
+				return 0;
+			}
 			spinlock_unlock(&sk->rxbuf_lock, irq);
 			if (sk->err)
 				return sk->err;
@@ -346,7 +350,8 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 		spinlock_unlock(&sk->rxbuf_lock, irq);
 		if (sk->err)
 			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->unix_shutdown & UNIX_SHUT_RD))
 			return 0;
 		if (nonblock)
 			return -EAGAIN;
@@ -373,7 +378,7 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	int irq;
 
-	if (!peer)
+	if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR))
 		return -EPIPE;
 	if (sk->type == SOCK_DGRAM) {
 		spinlock_lock(&peer->rxbuf_lock, &irq);
@@ -393,7 +398,7 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 		unsigned n;
 
 		peer = sk->unix_peer;
-		if (!peer)
+		if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR))
 			return done > 0 ? (ssize_t)done : -EPIPE;
 
 		spinlock_lock(&peer->rxbuf_lock, &irq);
@@ -686,7 +691,7 @@ static int unix_sendmsg_wait_for_passfd_room(mos_sock *sk, mos_sock **peer_ptr,
 		}
 
 		peer = sk->unix_peer;
-		if (!peer) {
+		if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR)) {
 			unix_cmsg_put_files(files, nfds);
 			return -EPIPE;
 		}
@@ -736,7 +741,7 @@ static int unix_sendmsg_stream_payload(mos_sock *sk, mos_sock **peer_ptr,
 			}
 
 			peer = sk->unix_peer;
-			if (!peer) {
+			if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR)) {
 				unix_cmsg_put_files(files, nfds);
 				return sent > 0 ? (int)sent : -EPIPE;
 			}
@@ -753,6 +758,8 @@ static int unix_recvmsg_wait_dgram(mos_sock *sk, int flags,
 {
 	spinlock_lock(&sk->rxbuf_lock, irq);
 	while (rx_used(sk) < sizeof(u16_t)) {
+		if (sk->unix_shutdown & UNIX_SHUT_RD)
+			break;
 		if (sk->unix_passfd_head != sk->unix_passfd_tail)
 			break;
 		spinlock_unlock(&sk->rxbuf_lock, *irq);
@@ -798,7 +805,8 @@ static int unix_recvmsg_wait_stream(mos_sock *sk, int flags,
 		spinlock_unlock(&sk->rxbuf_lock, *irq);
 		if (sk->err)
 			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->unix_shutdown & UNIX_SHUT_RD))
 			return 0;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;
@@ -853,7 +861,7 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
 	int ret;
 	int next_tail;
 
-	if (!peer)
+	if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR))
 		return -EPIPE;
 
 	total_len = sock_msg_iov_total_len(msg);
@@ -974,6 +982,7 @@ void unix_release(mos_sock *sk)
 	mos_sock *peer = sk->unix_peer;
 
 	if (peer && sk->type == SOCK_STREAM) {
+		sk->unix_peer = NULL;
 		peer->unix_peer = NULL;
 		peer->state = SS_DISCONNECTING;
 		sock_wakeup(peer);

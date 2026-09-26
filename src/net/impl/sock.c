@@ -668,7 +668,9 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 								0;
 		if (rx_used(sk) > 0)
 			ready |= FS_POLL_READ;
-		if (sk->state == SS_DISCONNECTING)
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->domain == AF_UNIX &&
+		     (sk->unix_shutdown & UNIX_SHUT_RD)))
 			ready |= FS_POLL_READ;
 		if (sk->domain == AF_UNIX) {
 			if (sk->unix_accept_tail != sk->unix_accept_head)
@@ -680,7 +682,9 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 
 	if (events & FS_POLL_WRITE) {
 		if (sk->domain == AF_UNIX) {
-			if (sk->unix_peer) {
+			if (sk->unix_shutdown & UNIX_SHUT_WR) {
+				ready |= FS_POLL_WRITE;
+			} else if (sk->unix_peer) {
 				if (sk->type == SOCK_DGRAM) {
 					ready |= rx_free(sk->unix_peer) >=
 								 sizeof(u16_t) ?
@@ -702,7 +706,10 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 
 	if ((events & FS_POLL_ERR) && sk->err)
 		ready |= FS_POLL_ERR;
-	if ((events & FS_POLL_HUP) && sk->state == SS_DISCONNECTING)
+	if ((events & FS_POLL_HUP) &&
+	    (sk->state == SS_DISCONNECTING ||
+	     (sk->domain == AF_UNIX &&
+	      sk->unix_shutdown == (UNIX_SHUT_RD | UNIX_SHUT_WR))))
 		ready |= FS_POLL_HUP;
 
 	if (!ready && pt) {

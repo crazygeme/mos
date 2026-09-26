@@ -31,6 +31,7 @@
 #include <hw/serial.h>
 #include <hw/tty.h>
 #include <hw/time.h>
+#include <fs/syslog.h>
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */
 
@@ -454,22 +455,44 @@ int sprintf(char *buf, const char *fmt, ...)
 	return n;
 }
 
+/* Capture printk output into bounded records while preserving console output. */
+struct printk_record {
+	char text[512];
+	unsigned length;
+};
+
+static void printk_output(char *text, void *opaque)
+{
+	struct printk_record *record = opaque;
+	tty_print(text, NULL);
+	while (*text) {
+		record->text[record->length++] = *text;
+		if (*text++ == '\n' || record->length == sizeof(record->text) - 1) {
+			syslog_emit(6, record->text, record->length);
+			record->length = 0;
+		}
+	}
+}
+
 /*
- * printk - timestamped kernel log to the TTY.
- * Format: [seconds.milliseconds] message
+ * printk - kernel records and console output.
+ * Console format: [process ID]: message
  * printf() is safe to call under tty_lock because it does not acquire it.
  */
 void printk(const char *fmt, ...)
 {
 	va_list ap;
 	int irq;
+	struct printk_record record = { .length = 0 };
 
 	tty_lock_acquire(&irq);
 	printf("[%d]: ", current->psid);
 
 	va_start(ap, fmt);
-	kvformat(tty_print, fmt, ap, NULL);
+	kvformat(printk_output, fmt, ap, &record);
 	va_end(ap);
+	if (record.length)
+		syslog_emit(6, record.text, record.length);
 	tty_lock_release(irq);
 }
 

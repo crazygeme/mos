@@ -16,6 +16,10 @@
 #define NULL_MAJOR 1 /* /dev/null: major */
 #define NULL_MINOR 3 /* /dev/null: minor */
 
+/* /dev/kmsg */
+#define KMSG_MAJOR 1
+#define KMSG_MINOR 11
+
 /* /dev/zero */
 #define ZERO_MAJOR 1 /* /dev/zero: major */
 #define ZERO_MINOR 5 /* /dev/zero: minor */

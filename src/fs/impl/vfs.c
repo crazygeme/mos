@@ -1,6 +1,7 @@
 #include <mm/mm.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <lib/klib.h>
 #include <lib/rbtree.h>
 #include <lib/lock.h>
@@ -355,8 +356,20 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 		return -EINVAL;
 	if (target_sb != sb)
 		return vfs_readlink(target_sb, rel_path, buf, bufsiz, rcnt);
-	if (!target_sb->s_op || !target_sb->s_op->readlink)
-		return -ENOSYS;
+	if (!target_sb->s_op || !target_sb->s_op->readlink) {
+		file *fp;
+
+		/* A filesystem without symlinks still supports readlink errors
+		 * for existing non-links and missing paths. */
+		if (*rel_path && strcmp(rel_path, "/") != 0 &&
+		    (!target_sb->s_op || !target_sb->s_op->open))
+			return -ENOENT;
+		fp = vfs_open(target_sb, rel_path, O_PATH | O_NOFOLLOW);
+		if (!fp)
+			return -ENOENT;
+		fs_put_file(fp);
+		return -EINVAL;
+	}
 	return target_sb->s_op->readlink(target_sb, rel_path, buf, bufsiz,
 					 rcnt);
 }

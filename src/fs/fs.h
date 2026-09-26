@@ -252,6 +252,7 @@ int fs_dup(int fd);
 int fs_dup_from(int fd, int minfd);
 
 int fs_dup2(int fd, int newfd);
+int fs_dup3(int fd, int newfd, int flags);
 
 int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	      uint64_t *result, unsigned whence);

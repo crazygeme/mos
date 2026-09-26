@@ -238,6 +238,8 @@ struct mmsghdr {
 #define SOCK_RXBUF_UNIX_SIZE (4 * 1024) /* per-AF_UNIX-socket receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
 #define SOCK_TIMEOUT_MS 30000 /* blocking-op timeout (ms) */
+#define UNIX_SHUT_RD 1u
+#define UNIX_SHUT_WR 2u
 #define UNIX_PASSFD_MAX 8 /* max descriptors per SCM_RIGHTS message */
 #define UNIX_PASSFD_QUEUE 16 /* queued ancillary records per AF_UNIX socket */
 
@@ -325,6 +327,7 @@ typedef struct _mos_sock {
 
 	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
 	struct _mos_sock *unix_peer;
+	unsigned unix_shutdown; /* UNIX_SHUT_* directions; peer retained until close */
 
 	/*
 	 * AF_UNIX named socket: filesystem path this socket is bound to.

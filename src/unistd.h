@@ -189,6 +189,8 @@
 #define __NR_capset 185
 #define __NR_sigaltstack 186
 #define __NR_sendfile 187
+#define __NR_sendmsg 370
+#define __NR_recvmsg 372
 #define __NR_getpmsg 188 /* some people actually want streams */
 #define __NR_putpmsg 189 /* some people actually want streams */
 #define __NR_vfork 190

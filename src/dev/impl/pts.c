@@ -146,6 +146,31 @@ int pts_slave_chown(file *fp, uint32_t uid, uint32_t gid)
 	return 0;
 }
 
+static unsigned pts_baud_rate(unsigned code, unsigned custom)
+{
+	static const unsigned rates[] = {
+		0, 50, 75, 110, 134, 150, 200, 300, 600, 1200, 1800,
+		2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400,
+		460800, 500000, 576000, 921600, 1000000, 1152000,
+		1500000, 2000000, 2500000, 3000000, 3500000, 4000000
+	};
+
+	code &= CBAUD;
+	if (code == BOTHER)
+		return custom;
+	if (code & CBAUDEX)
+		code = (code & ~CBAUDEX) + 15;
+	return rates[code];
+}
+
+static void pts_termios_speeds(pts_pair *p)
+{
+	unsigned input = (p->termios.c_cflag & CIBAUD) >> IBSHIFT;
+
+	p->ospeed = pts_baud_rate(p->termios.c_cflag, p->ospeed);
+	p->ispeed = input ? pts_baud_rate(input, p->ispeed) : p->ospeed;
+}
+
 /* ioctl cases shared between master and slave */
 static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
 {
@@ -153,6 +178,28 @@ static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
 	case TCGETS:
 		memcpy(buf, &p->termios, sizeof(p->termios));
 		return 0;
+	case TCGETS2: {
+		struct termios2 *tc = buf;
+		pts_termios_speeds(p);
+		tc->termios = p->termios;
+		tc->c_ispeed = p->ispeed;
+		tc->c_ospeed = p->ospeed;
+		return 0;
+	}
+	case TCSETS2:
+	case TCSETSW2:
+	case TCSETSF2: {
+		const struct termios2 *tc = buf;
+		if (cmd == TCSETSF2) {
+			p->canon.len = 0;
+			cyb_flush(p->m2s);
+		}
+		p->termios = tc->termios;
+		p->ispeed = tc->c_ispeed;
+		p->ospeed = tc->c_ospeed;
+		pts_termios_speeds(p);
+		return 0;
+	}
 	case TCXONC:
 		/* PTYs don't model software flow-control stop/start state yet. */
 		return 0;

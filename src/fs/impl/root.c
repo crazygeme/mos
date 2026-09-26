@@ -1086,6 +1086,19 @@ static int ext4_readlink_op(super_block *sb, const char *path, char *buf,
 	int ret;
 	ext4_full_path(sb, path, full);
 	ret = ext4_readlink(full, buf, bufsiz, rcnt);
+	if (ret == ENOENT) {
+		ext4_file f;
+		struct stat st;
+
+		/* lwext4 reports ENOENT for both absent paths and type mismatches.
+		 * Linux readlink requires EINVAL for an existing non-symlink. */
+		if (ext4_fopen2(&f, full, O_RDONLY) == EOK) {
+			int stat_ret = ext4_fstat(&f, &st);
+			ext4_fclose(&f);
+			if (stat_ret == EOK && !S_ISLNK(st.st_mode))
+				ret = EINVAL;
+		}
+	}
 	name_put(full);
 	return ret ? -ret : 0;
 }

@@ -283,7 +283,7 @@ struct termio {
 	unsigned char c_cc[NCC]; /* control characters */
 };
 
-#define NCCS 17
+#define NCCS 19
 struct termios {
 	tcflag_t c_iflag; /* input mode flags */
 	tcflag_t c_oflag; /* output mode flags */
@@ -291,6 +291,13 @@ struct termios {
 	tcflag_t c_lflag; /* local mode flags */
 	cc_t c_line; /* line discipline */
 	cc_t c_cc[NCCS]; /* control characters */
+};
+
+/* Linux i386 TCGETS2/TCSETS2 payload: 36-byte termios and two speeds. */
+struct termios2 {
+	struct termios termios;
+	unsigned c_ispeed;
+	unsigned c_ospeed;
 };
 
 /* c_cc characters */
@@ -362,7 +369,10 @@ struct termios {
 #define FF1 0040000
 
 /* c_cflag bit meaning */
-#define CBAUD 0000017
+#define CBAUD 0010017
+#define CBAUDEX 0010000
+#define BOTHER 0010000
+#define IBSHIFT 16
 #define B0 0000000 /* hang up */
 #define B50 0000001
 #define B75 0000002
@@ -392,7 +402,7 @@ struct termios {
 #define PARODD 0001000
 #define HUPCL 0002000
 #define CLOCAL 0004000
-#define CIBAUD 03600000 /* input baud rate (not used) */
+#define CIBAUD 002003600000 /* input baud rate */
 #define CRTSCTS 020000000000 /* flow control */
 
 /* c_lflag bits */

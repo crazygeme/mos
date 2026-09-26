@@ -9,6 +9,16 @@
 #include <fs/fcntl.h>
 #include <errno.h>
 
+int sys_sendmsg(int fd, const struct msghdr *msg, int flags)
+{
+	return do_sendmsg(fd, msg, flags);
+}
+
+int sys_recvmsg(int fd, struct msghdr *msg, int flags)
+{
+	return do_recvmsg(fd, msg, flags);
+}
+
 #define MOS_SOCK_TYPE_MASK 0xf
 #define MOS_SOCK_NONBLOCK 0x800
 #define MOS_SOCK_CLOEXEC 0x80000

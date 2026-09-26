@@ -1,21 +1,16 @@
 #ifndef _FS_SYSLOG_H
 #define _FS_SYSLOG_H
 
-/* syslog(2) syscall — kernel ring-buffer interface (klogctl).
- *
- * type actions:
- *   0  CLOSE        — no-op, return 0
- *   1  OPEN         — no-op, return 0
- *   2  READ         — block until data available, read & consume up to len bytes
- *   3  READ_ALL     — non-blocking read & consume up to len available bytes
- *   4  READ_CLEAR   — READ_ALL then discard remaining buffered data
- *   5  CLEAR        — discard all buffered data
- *   6  CONSOLE_OFF  — no-op, return 0
- *   7  CONSOLE_ON   — no-op, return 0
- *   8  CONSOLE_LEVEL— no-op, return 0
- *   9  SIZE_UNREAD  — return number of unread bytes
- *  10  SIZE_BUFFER  — return total ring buffer capacity
- */
+#include <fs/fs.h>
+
+/* Append one record without waiting for readers. Priority includes facility. */
+void syslog_emit(unsigned priority, const char *text, unsigned length);
+
+/* Shared file operations; character devices use independent record cursors. */
+file *syslog_open(unsigned mode, unsigned rdev);
+
+/* READ consumes the proc stream. READ_ALL snapshots retained records.
+ * READ_CLEAR and CLEAR advance the snapshot marker without deleting records. */
 int sys_syslog(int type, char *buf, int len);
 
 #endif

@@ -336,6 +336,23 @@ BSD-style pseudo-terminal pairs, compatible with RH9 / Linux 2.4 naming.
 | `/dev/ptyp0`..`/dev/ptypf` | 2     | 0–15  | PTY master |
 | `/dev/ttyp0`..`/dev/ttypf` | 3     | 0–15  | PTY slave  |
 
+### Unix98 PTY terminal interfaces
+
+`/dev/ptmx` allocates a master with a slave at `/dev/pts/N`.
+`TIOCGPTPEER` returns a slave descriptor whose `/proc/self/fd` link resolves
+to `/dev/pts/N`. The slave directory entry and `stat` results use the same
+inode number.
+
+Both endpoints implement `TCGETS`, `TCSETS`, `TCSETSW`, `TCSETSF`, `TCGETS2`,
+`TCSETS2`, `TCSETSW2`, and `TCSETSF2`. The i386 termios2 payload is 44 bytes,
+with 19 control characters and separate 32-bit input and output speeds.
+Standard baud encodings and explicit `BOTHER` speeds are retained. The flush
+variants clear the pending slave input and canonical input buffer.
+
+The `dev_pts_session` test covers libc terminal identification, PTY path and
+inode identity, termios2 attribute round trips, input flushing, and shell I/O
+through a controlling terminal.
+
 ### `pts_pair` — per-pair state
 
 ```c

@@ -114,6 +114,7 @@ static file *ptmx_open_slave_pair(pts_pair *p, int flag)
 {
 	inode *node;
 	file *fp;
+	char path[32];
 
 	node = zalloc(sizeof(*node));
 	node->i_mode = p->slave_mode;
@@ -123,6 +124,9 @@ static file *ptmx_open_slave_pair(pts_pair *p, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_fop = (flag & O_PATH) ? &pts_slave_path_fops : &pts_slave_fops;
+	/* TIOCGPTPEER bypasses path-based open and still requires a proc fd path. */
+	sprintf(path, "/dev/pts/%d", p->idx);
+	fp->f_name = strdup(path);
 	if (!(flag & O_PATH)) {
 		cyb_reader_open(p->m2s);
 		cyb_writer_open(p->s2m);
@@ -358,7 +362,7 @@ static void ptmx_dir_gen(super_block *sb, memory_dir *rd)
 	for (i = 0; i < MAX_PTS; i++) {
 		if (pts_pairs[i].used) {
 			sprintf(tty_buf, "%d", pts_pairs[i].idx);
-			FILL_ENTRY(tty_buf, 1);
+			FILL_ENTRY(tty_buf, (uint64_t)pts_pairs[i].idx + 2);
 		}
 	}
 	spinlock_unlock(&pts_alloc_lock, irq);

@@ -45,6 +45,7 @@ struct iovec {
 	char *iov_base;
 	unsigned iov_len;
 };
+struct msghdr;
 
 /*
  * syscall_io.c
@@ -63,6 +64,8 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	       uint64_t *result, unsigned int whence);
 int sys_readv(int fildes, const struct iovec *iov, int iovcnt);
 int sys_writev(int fildes, const struct iovec *iov, int iovcnt);
+int sys_sendmsg(int fd, const struct msghdr *msg, int flags);
+int sys_recvmsg(int fd, struct msghdr *msg, int flags);
 int sys_fsync(int fd);
 int sys_dup(int oldfd);
 int sys_dup2(int oldfd, int newfd);

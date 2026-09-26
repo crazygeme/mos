@@ -25,6 +25,8 @@ typedef struct {
 	unsigned char pkt_status;
 
 	struct termios termios;
+	unsigned ispeed;
+	unsigned ospeed;
 	struct winsize winsize;
 	unsigned pgrp;
 

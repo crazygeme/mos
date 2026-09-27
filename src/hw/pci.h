@@ -25,7 +25,7 @@
 
 #define PCI_INTERRUPT_LINE 0x3C // 1
 
-#define PCI_SECONDARY_BUS 0x09 // 1
+#define PCI_SECONDARY_BUS 0x19 // 1
 
 #define PCI_HEADER_TYPE_DEVICE 0
 #define PCI_HEADER_TYPE_BRIDGE 1
@@ -75,5 +75,12 @@ void pci_scan(pci_func_t f, int type, void *extra);
 
 unsigned pci_read_field(unsigned device, int field, int size);
 void pci_write_field(unsigned device, int field, int size, unsigned value);
+
+typedef struct {
+	uint64_t start, size;
+	unsigned flags;
+} pci_resource;
+
+void pci_get_resources(unsigned device, pci_resource resources[7]);
 
 #endif

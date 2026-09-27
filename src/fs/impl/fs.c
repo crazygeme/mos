@@ -137,7 +137,7 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	return (int)n;
 }
 
-int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
+int fs_pread(int fd, loff_t offset, char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
@@ -152,8 +152,10 @@ int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -EBADF;
 
+	if (offset < 0)
+		return -EINVAL;
 	saved_pos = fp->f_pos;
-	pos = (loff_t)offset;
+	pos = offset;
 	n = fp->f_fop->read(fp, buf, len, &pos);
 	fp->f_pos = saved_pos;
 	if (fp->f_fop->llseek)
@@ -161,7 +163,7 @@ int fs_pread(int fd, unsigned offset, char *buf, unsigned len)
 	return (int)n;
 }
 
-int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
+int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
@@ -178,8 +180,10 @@ int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len)
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
 		return -EBADF;
 
+	if (offset < 0)
+		return -EINVAL;
 	saved_pos = fp->f_pos;
-	pos = (loff_t)offset;
+	pos = offset;
 	if (cur->user && fp->f_inode &&
 	    S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
@@ -250,9 +254,9 @@ int fs_install_fd(file *fp, int flag)
 	task_struct *cur = CURRENT_TASK();
 	int fd;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fd = fs_install_fd_unsafe(fp, flag);
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 	return fd;
 }
 
@@ -333,11 +337,11 @@ int fs_close(int fd)
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 	cur->fds[fd] = NULL;
 	fd_bitmap_clear(cur->fd_cloexec, fd);
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
 	if (fp == NULL)
 		return 0; /* used==1 but fp==NULL: already cleaned up */
@@ -372,9 +376,9 @@ int fs_fstat(int fd, struct stat *s)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
 	if (!fp || !fp->f_fop || !fp->f_fop->getattr)
 		return -EBADF;
@@ -417,29 +421,43 @@ int fs_dup(int fd)
 
 int fs_dup_from(int fd, int minfd)
 {
-	task_struct *cur = CURRENT_TASK();
+	return fs_dup_from_flags(fd, minfd, 0);
+}
 
-	if (minfd < 0 || minfd >= MAX_FD)
+int fs_dup_from_flags(int fd, int minfd, int flags)
+{
+	task_struct *cur = CURRENT_TASK();
+	file *fp;
+	int newfd;
+	unsigned limit = MAX_FD;
+
+	if (cur->user && cur->user->rlimits[7].rlim_cur < limit)
+		limit = cur->user->rlimits[7].rlim_cur;
+	if (minfd < 0 || (unsigned)minfd >= limit || (flags & ~O_CLOEXEC))
 		return -EINVAL;
-	if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
+	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	file *fp = cur->fds[fd];
-	fs_get_file(fp);
-	int newfd;
-
-	mutex_lock(&cur->fd_lock);
-	for (newfd = minfd; newfd < MAX_FD; newfd++) {
+	mutex_lock(&cur->files->lock);
+	fp = cur->fds[fd];
+	if (!fp) {
+		mutex_unlock(&cur->files->lock);
+		return -EBADF;
+	}
+	for (newfd = minfd; (unsigned)newfd < limit; newfd++) {
 		if (cur->fds[newfd] == NULL) {
+			fs_get_file(fp);
 			cur->fds[newfd] = fp;
-			fd_bitmap_clear(cur->fd_cloexec, newfd);
-			mutex_unlock(&cur->fd_lock);
+			if (flags & O_CLOEXEC)
+				fd_bitmap_set(cur->fd_cloexec, newfd);
+			else
+				fd_bitmap_clear(cur->fd_cloexec, newfd);
+			mutex_unlock(&cur->files->lock);
 			return newfd;
 		}
 	}
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
-	fs_put_file(fp);
 	return -EMFILE;
 }
 
@@ -451,14 +469,14 @@ static int fs_dup_to(int fd, int newfd, int flags)
 	if (fd < 0 || fd >= MAX_FD || newfd < 0 || newfd >= MAX_FD)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 	if (!fp) {
-		mutex_unlock(&cur->fd_lock);
+		mutex_unlock(&cur->files->lock);
 		return -EBADF;
 	}
 	if (fd == newfd) {
-		mutex_unlock(&cur->fd_lock);
+		mutex_unlock(&cur->files->lock);
 		return newfd;
 	}
 
@@ -469,7 +487,7 @@ static int fs_dup_to(int fd, int newfd, int flags)
 		fd_bitmap_set(cur->fd_cloexec, newfd);
 	else
 		fd_bitmap_clear(cur->fd_cloexec, newfd);
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
 	/* Release may block; the descriptor replacement is already complete. */
 	if (replaced)
@@ -557,7 +575,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
@@ -568,7 +586,7 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 			*result = (uint64_t)pos;
 	}
 done:
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 	return (int)pos;
 }
 
@@ -583,7 +601,7 @@ int fs_seek(int fd, int offset, unsigned whence)
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
@@ -592,7 +610,7 @@ int fs_seek(int fd, int offset, unsigned whence)
 	if (pos >= 0)
 		fp->f_pos = pos;
 done:
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 	return (int)pos;
 }
 
@@ -608,7 +626,7 @@ int fs_sync(int fd)
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 
 	if (!fp || !fp->f_fop)
@@ -619,7 +637,7 @@ int fs_sync(int fd)
 	else
 		ret = 0;
 done:
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 	return ret;
 }
 
@@ -630,14 +648,29 @@ void poll_table_init(poll_table *pt, task_struct *task,
 	pt->nr = 0;
 	pt->cap = cap;
 	pt->unsupported = 0;
+	pt->entries_owned = 0;
 	pt->entries = entries;
 }
 
 void poll_table_cleanup(poll_table *pt)
 {
+	if (pt->task->io_wait == pt) {
+		pt->task->cancel_io_wait = NULL;
+		pt->task->io_wait = NULL;
+	}
 	while (pt->nr > 0) {
 		poll_table_entry *ent = &pt->entries[--pt->nr];
 		ent->dereg(ent->opaque, pt->task);
+	}
+}
+
+static void poll_table_cancel(void *opaque)
+{
+	poll_table *pt = opaque;
+	poll_table_cleanup(pt);
+	if (pt->entries_owned) {
+		free(pt->entries);
+		pt->entries = NULL;
 	}
 }
 
@@ -649,6 +682,8 @@ int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg)
 		pt->unsupported = 1;
 		return -1;
 	}
+	pt->task->io_wait = pt;
+	pt->task->cancel_io_wait = poll_table_cancel;
 	pt->entries[pt->nr].opaque = opaque;
 	pt->entries[pt->nr].dereg = dereg;
 	pt->nr++;
@@ -666,14 +701,14 @@ unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt)
 	if (cur->fds[fd] == NULL)
 		return 0;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->poll)
 		goto done;
 
 	ret = fp->f_fop->poll(fp, events, pt);
 done:
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 	return ret;
 }
 
@@ -688,7 +723,7 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->ioctl) {
 		ret = (cmd == KDKBDREP) ? 0 : -ENOTTY;
@@ -699,7 +734,7 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	if (cmd == KDKBDREP && ret == -ENOTTY)
 		ret = 0;
 done:
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 	return ret;
 }
 
@@ -789,9 +824,9 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
 	if (!fp || !fp->f_fop || !fp->f_fop->chown)
 		return 0;
@@ -826,9 +861,9 @@ int fs_fchmod(int fd, uint32_t mode)
 	if (cur->fds[fd] == NULL)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
 	if (!fp || !fp->f_fop || !fp->f_fop->setattr)
 		return 0;

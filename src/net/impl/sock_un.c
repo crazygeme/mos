@@ -27,12 +27,69 @@
 #include <macro.h>
 #include <stddef.h>
 
+/* Abstract names are encoded as hexadecimal namespace keys, without VFS nodes. */
+static int unix_address_key(const struct sockaddr_un *addr, unsigned len,
+			    char *key)
+{
+	static const char digits[] = "0123456789abcdef";
+	unsigned n, i;
+	char path[UNIX_PATH_MAX + 1];
+	if (!addr || len <= offsetof(struct sockaddr_un, sun_path) ||
+	    len > sizeof(*addr))
+		return -EINVAL;
+	n = len - offsetof(struct sockaddr_un, sun_path);
+	if (!addr->sun_path[0]) {
+		key[0] = '@';
+		for (i = 0; i < n; i++) {
+			unsigned value = (unsigned char)addr->sun_path[i];
+			key[1 + 2 * i] = digits[value >> 4];
+			key[2 + 2 * i] = digits[value & 15];
+		}
+		key[1 + 2 * n] = 0;
+		return 0;
+	}
+	memcpy(path, addr->sun_path, n);
+	path[n] = 0;
+	if (resolve_path(path, key) != 0 || !key[0])
+		return -EINVAL;
+	if (strlen(key) >= UNIX_PATH_MAX)
+		return -ENAMETOOLONG;
+	return 0;
+}
+
+int unix_sockaddr(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen)
+{
+	struct sockaddr_un out;
+	const char *key = sk ? sk->unix_path : "";
+	unsigned n = 0, i, length;
+	if (!addr || !addrlen)
+		return -EFAULT;
+	memset(&out, 0, sizeof(out));
+	out.sun_family = AF_UNIX;
+	if (key[0] == '@') {
+		n = (strlen(key) - 1) / 2;
+		for (i = 0; i < n; i++) {
+			unsigned hi = key[1 + 2 * i], lo = key[2 + 2 * i];
+			hi = hi <= '9' ? hi - '0' : hi - 'a' + 10;
+			lo = lo <= '9' ? lo - '0' : lo - 'a' + 10;
+			out.sun_path[i] = (hi << 4) | lo;
+		}
+	} else if (*key) {
+		n = strlen(key) + 1;
+		memcpy(out.sun_path, key, n);
+	}
+	length = offsetof(struct sockaddr_un, sun_path) + n;
+	memcpy(addr, &out, *addrlen < length ? *addrlen : length);
+	*addrlen = length;
+	return 0;
+}
+
 /* ── Unix socket namespace ───────────────────────────────────────────── */
 
 #define UNIX_NS_MAX 64
 
 typedef struct {
-	char path[UNIX_PATH_MAX];
+	char path[UNIX_KEY_MAX];
 	mos_sock *sk;
 } unix_ns_entry;
 
@@ -60,8 +117,8 @@ static int unix_ns_register_locked(const char *path, mos_sock *sk)
 	int i;
 	for (i = 0; i < UNIX_NS_MAX; i++) {
 		if (!unix_ns[i].sk) {
-			strncpy(unix_ns[i].path, path, UNIX_PATH_MAX - 1);
-			unix_ns[i].path[UNIX_PATH_MAX - 1] = '\0';
+			strncpy(unix_ns[i].path, path, UNIX_KEY_MAX - 1);
+			unix_ns[i].path[UNIX_KEY_MAX - 1] = '\0';
 			unix_ns[i].sk = sk;
 			return 0;
 		}
@@ -118,7 +175,11 @@ int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen)
 		return -EINVAL; /* already bound */
 
 	path = name_get();
-	resolve_path(addr->sun_path, path);
+	ret = unix_address_key(addr, addrlen, path);
+	if (ret) {
+		name_put(path);
+		return ret;
+	}
 
 	mutex_lock(&unix_ns_lock);
 
@@ -127,16 +188,18 @@ int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen)
 		goto out_unlock;
 	}
 
-	ret = vfs_mknod(cur->root, path, S_IFSOCK | 0777, 0);
+	ret = path[0] == '@' ? 0 :
+			       vfs_mknod(cur->root, path, S_IFSOCK | 0777, 0);
 	if (ret != 0)
 		goto out_unlock;
 
-	strncpy(sk->unix_path, path, UNIX_PATH_MAX - 1);
-	sk->unix_path[UNIX_PATH_MAX - 1] = '\0';
+	strncpy(sk->unix_path, path, UNIX_KEY_MAX - 1);
+	sk->unix_path[UNIX_KEY_MAX - 1] = '\0';
 
 	ret = unix_ns_register_locked(path, sk);
 	if (ret != 0) {
-		vfs_umount(cur->root, path);
+		if (path[0] != '@')
+			vfs_umount(cur->root, path);
 		sk->unix_path[0] = '\0';
 	}
 
@@ -148,11 +211,20 @@ out_unlock:
 
 /* ── Listen ──────────────────────────────────────────────────────────── */
 
+static unix_peercred unix_current_cred(void)
+{
+	task_struct *task = CURRENT_TASK();
+	unix_peercred cred = { (int)task->tgid, task->user->euid,
+			       task->user->egid };
+	return cred;
+}
+
 int unix_listen(mos_sock *sk, int backlog)
 {
 	(void)backlog;
 	if (!sk->unix_path[0])
 		return -EDESTADDRREQ;
+	sk->unix_listener_cred = unix_current_cred();
 	sk->state = SS_CONNECTED; /* listening state reuses SS_CONNECTED */
 	return 0;
 }
@@ -172,7 +244,11 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 		return -EISCONN;
 
 	path = name_get();
-	resolve_path(addr->sun_path, path);
+	ret = unix_address_key(addr, addrlen, path);
+	if (ret) {
+		name_put(path);
+		return ret;
+	}
 
 	mutex_lock(&unix_ns_lock);
 
@@ -213,6 +289,10 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 	server_sk->type = client->type;
 	server_sk->state = SS_CONNECTED;
 	server_sk->unix_peer = client;
+	server_sk->unix_peer_cred = unix_current_cred();
+	server_sk->unix_peer_cred_valid = 1;
+	client->unix_peer_cred = listener->unix_listener_cred;
+	client->unix_peer_cred_valid = 1;
 	spinlock_init(&server_sk->wait_lock);
 	list_init(&server_sk->waiters);
 	list_init(&server_sk->poll_waiters);
@@ -224,7 +304,7 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 	 * well-known path.  server_sk is NOT registered in unix_ns, so
 	 * unix_release will not try to unmount it.
 	 */
-	strncpy(server_sk->unix_path, path, UNIX_PATH_MAX - 1);
+	strncpy(server_sk->unix_path, path, UNIX_KEY_MAX - 1);
 
 	client->unix_peer = server_sk;
 	client->state = SS_CONNECTED;
@@ -264,17 +344,8 @@ int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen,
 	listener->unix_accept_head =
 		(listener->unix_accept_head + 1) % SOCK_ACCEPT_BACKLOG;
 
-	if (addr && addrlen && *addrlen >= sizeof(struct sockaddr_un)) {
-		struct sockaddr_un *un = (struct sockaddr_un *)addr;
-		un->sun_family = AF_UNIX;
-		strncpy(un->sun_path,
-			(server_sk->unix_peer &&
-			 server_sk->unix_peer->unix_path[0]) ?
-				server_sk->unix_peer->unix_path :
-				"",
-			UNIX_PATH_MAX - 1);
-		*addrlen = sizeof(struct sockaddr_un);
-	}
+	if (addr && addrlen)
+		unix_sockaddr(server_sk->unix_peer, addr, addrlen);
 
 	fd = sock_to_fd(server_sk);
 	if (fd < 0) {
@@ -448,6 +519,7 @@ static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
 				   unsigned *nfds_out)
 {
 	unsigned nfds = 0;
+	int error = -EINVAL;
 	struct cmsghdr *cm;
 	struct cmsghdr *next;
 
@@ -461,6 +533,27 @@ static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
 		next = cm;
 		if (unix_cmsg_validate_walk(msg, &next) < 0)
 			goto err_drop;
+		if (cm->cmsg_level == SOL_SOCKET &&
+		    cm->cmsg_type == SCM_CREDENTIALS) {
+			unix_peercred cred;
+			task_struct *task = CURRENT_TASK();
+			if (cm->cmsg_len != CMSG_LEN(sizeof(cred)))
+				goto err_drop;
+			memcpy(&cred, CMSG_DATA(cm), sizeof(cred));
+			if (cred.pid != (int)task->tgid ||
+			    (cred.uid != task->user->uid &&
+			     cred.uid != task->user->euid &&
+			     cred.uid != task->user->suid) ||
+			    (cred.gid != task->user->gid &&
+			     cred.gid != task->user->egid &&
+			     cred.gid != task->user->sgid)) {
+				error = -EPERM;
+				goto err_drop;
+			}
+			/* SO_PASSCRED is not enabled; retain only the data payload. */
+			cm = next;
+			continue;
+		}
 		if (cm->cmsg_level != SOL_SOCKET || cm->cmsg_type != SCM_RIGHTS)
 			goto err_drop;
 
@@ -497,7 +590,7 @@ static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
 err_drop:
 	while (nfds > 0)
 		fs_put_file(files[--nfds]);
-	return -EINVAL;
+	return error;
 }
 
 static void unix_cmsg_put_files(file **files, unsigned nfds)
@@ -635,16 +728,8 @@ static void unix_cmsg_install_fds(struct msghdr *msg, file **files,
 
 static void unix_recvmsg_fill_name(struct msghdr *msg, mos_sock *peer)
 {
-	struct sockaddr_un *un;
-
-	if (!msg->msg_name || msg->msg_namelen < sizeof(struct sockaddr_un))
-		return;
-
-	un = (struct sockaddr_un *)msg->msg_name;
-	un->sun_family = AF_UNIX;
-	strncpy(un->sun_path, peer ? peer->unix_path : "", UNIX_PATH_MAX - 1);
-	un->sun_path[UNIX_PATH_MAX - 1] = '\0';
-	msg->msg_namelen = sizeof(*un);
+	if (msg->msg_name)
+		unix_sockaddr(peer, msg->msg_name, &msg->msg_namelen);
 }
 
 static int unix_sendmsg_dgram_locked(mos_sock *peer, const struct msghdr *msg,
@@ -993,7 +1078,7 @@ void unix_release(mos_sock *sk)
 		mutex_lock(&unix_ns_lock);
 		was_registered = unix_ns_unregister_locked(sk);
 		mutex_unlock(&unix_ns_lock);
-		if (was_registered)
+		if (was_registered && sk->unix_path[0] != '@')
 			vfs_umount(cur->root, sk->unix_path);
 	}
 
@@ -1040,6 +1125,8 @@ int do_socketpair(int domain, int type, int protocol, int sv[2])
 	a->type = b->type = type;
 	a->protocol = b->protocol = 0;
 	a->state = b->state = SS_CONNECTED;
+	a->unix_peer_cred = b->unix_peer_cred = unix_current_cred();
+	a->unix_peer_cred_valid = b->unix_peer_cred_valid = 1;
 	a->unix_peer = b;
 	b->unix_peer = a;
 	spinlock_init(&a->wait_lock);

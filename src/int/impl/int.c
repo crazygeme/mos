@@ -1,4 +1,5 @@
 #include <int/int.h>
+#include <int/dsr.h>
 #include <ps/ps.h>
 #include <mm/mm.h>
 #include <lib/port.h>
@@ -16,12 +17,10 @@ If we don't acknowledge the IRQ, it will never be delivered to
 us again, so this is important. */
 static void pic_end_of_interrupt(int irq)
 {
-	/* Acknowledge master PIC. */
-	port_write_byte(0x20, 0x20);
-
-	/* Acknowledge slave PIC if this is a slave interrupt. */
+	/* Complete the slave request before releasing the master's cascade. */
 	if (irq >= 0x28)
 		port_write_byte(0xa0, 0x20);
+	port_write_byte(0x20, 0x20);
 }
 
 static int_callback in_callbacks[IDT_SIZE];
@@ -54,9 +53,11 @@ static void intr_maybe_preempt(void)
 	if (cur->psid == 0xffffffff || !ps_enabled())
 		return;
 
-	if (sched_is_enabled() && cur->remain_ticks <= 0) {
+	if (sched_is_enabled() &&
+	    (cur->remain_ticks <= 0 || dsr_needs_schedule())) {
 		cur->stats->niv_switches++;
-		cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+		if (cur->remain_ticks <= 0)
+			cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		int_intr_enable();
 		task_sched();
 		int_intr_disable();

@@ -154,7 +154,7 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 
 _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 {
-	char *cmdline = (g_cmdline - KERNEL_OFFSET);
+	char *cmdline = GET_BOOT_ADDR(char *, g_cmdline);
 	char *cmdline_src = (char *)mb->cmdline;
 	unsigned long long mem_low, mem_high;
 	unsigned mmap_addr, mmap_len;
@@ -162,9 +162,15 @@ _START void boot_stage1(multiboot_info_t *mb, unsigned int magic)
 	if (magic != MULTIBOOT_BOOTLOADER_MAGIC)
 		return;
 
-	if (mb->cmdline)
-		while ((*cmdline++ = *cmdline_src++) != '\0')
-			;
+	cmdline[0] = '\0';
+	if ((mb->flags & (1U << 2)) && mb->cmdline) {
+		unsigned int i = 0;
+		while (i + 1 < sizeof(g_cmdline) && cmdline_src[i]) {
+			cmdline[i] = cmdline_src[i];
+			i++;
+		}
+		cmdline[i] = '\0';
+	}
 
 	init_interrupt();
 	setup_gdt();

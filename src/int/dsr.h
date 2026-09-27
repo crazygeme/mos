@@ -18,7 +18,10 @@ void dsr_init();
  * the device in a state where it will not generate further interrupts. */
 int dsr_add(dsr_callback fn, void *param);
 
-/* Drain all pending DSR callbacks inline. Called from _task_sched. */
-void dsr_drain();
+/* Start the deferred-callback worker before scheduler kickoff. */
+void dsr_start(void);
+
+/* Report runnable deferred work at interrupt exit. */
+int dsr_needs_schedule(void);
 
 #endif

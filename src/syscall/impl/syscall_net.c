@@ -6,7 +6,9 @@
  */
 #include <net/sock.h>
 #include <ps/ps.h>
+#include <ps/impl/ps_internal.h>
 #include <fs/fcntl.h>
+#include <fs/fs.h>
 #include <errno.h>
 
 int sys_sendmsg(int fd, const struct msghdr *msg, int flags)
@@ -68,9 +70,36 @@ int sys_socketcall(int call, unsigned long *args)
 		return do_getpeername((int)args[0], (struct sockaddr *)args[1],
 				      (unsigned *)args[2]);
 
-	case SYS_SOCKETPAIR:
-		return do_socketpair((int)args[0], (int)args[1], (int)args[2],
-				     (int *)args[3]);
+	case SYS_SOCKETPAIR: {
+		unsigned type = args[1];
+		int pair[2];
+		int ret, i;
+		if (!args[3])
+			return -EFAULT;
+		if (type & ~(MOS_SOCK_TYPE_MASK | MOS_SOCK_NONBLOCK |
+			     MOS_SOCK_CLOEXEC))
+			return -EINVAL;
+		ret = do_socketpair((int)args[0], type & MOS_SOCK_TYPE_MASK,
+				    (int)args[2], pair);
+		if (ret < 0)
+			return ret;
+		for (i = 0; i < 2; i++) {
+			if (type & MOS_SOCK_NONBLOCK)
+				CURRENT_TASK()->fds[pair[i]]->f_flag |=
+					O_NONBLOCK;
+			if (type & MOS_SOCK_CLOEXEC)
+				fd_bitmap_set(CURRENT_TASK()->fd_cloexec,
+					      pair[i]);
+		}
+		ret = ps_write_process_memory(CURRENT_TASK(), (void *)args[3],
+					      pair, sizeof(pair));
+		if (ret < 0) {
+			fs_close(pair[0]);
+			fs_close(pair[1]);
+			return -EFAULT;
+		}
+		return 0;
+	}
 
 	case SYS_SEND:
 		return do_send((int)args[0], (const void *)args[1],

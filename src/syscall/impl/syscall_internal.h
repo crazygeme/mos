@@ -52,8 +52,10 @@ struct msghdr;
  */
 int sys_read(int fd, char *buf, unsigned len);
 int sys_write(int fd, const char *buf, unsigned len);
-int sys_pread64(int fd, void *buf, unsigned count, int offset);
-int sys_pwrite64(int fd, const void *buf, unsigned count, int offset);
+int sys_pread64(int fd, void *buf, unsigned count, unsigned offset_low,
+		 unsigned offset_high);
+int sys_pwrite64(int fd, const void *buf, unsigned count, unsigned offset_low,
+		 unsigned offset_high);
 int sys_ioctl(int d, int request, char *buf);
 int sys_open(const char *name, int flags, umode_t mode);
 int sys_openat(int dirfd, const char *name, int flags, umode_t mode);
@@ -122,6 +124,7 @@ int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid);
 int sys_fchown(int fd, uint32_t uid, uint32_t gid);
 int sys_link(const char *path1, const char *path2);
 int sys_symlink(const char *path1, const char *path2);
+int sys_unlinkat(int dirfd, const char *path, int flags);
 int sys_unlink(const char *pathname);
 int sys_rename(const char *oldpath, const char *newpath);
 int sys_mknod(const char *path, unsigned mode, unsigned dev);
@@ -338,5 +341,8 @@ int sys_socketcall(int call, unsigned long *args);
 int sys_sendmmsg(int fd, void *messages, unsigned count, int flags);
 int sys_recvmmsg(int fd, void *messages, unsigned count, int flags,
 		void *timeout);
+
+int sys_futex_time64(int *uaddr, int op, int val, const void *timeout,
+		    int *uaddr2, int val3);
 
 #endif /* _SYSCALL_INTERNAL_H */

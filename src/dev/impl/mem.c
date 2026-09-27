@@ -11,9 +11,10 @@
 #include <errno.h>
 #include "devnums.h"
 
-static unsigned mem_dev_limit(void)
+/* The x86 physical address space includes PCI MMIO and firmware ROM. */
+static uint64_t mem_dev_limit(void)
 {
-	return phymm_end * PAGE_SIZE;
+	return 1ULL << 32;
 }
 
 static int mem_copy_from_phys(void *dst, unsigned phys, size_t size)
@@ -64,19 +65,19 @@ static int mem_copy_to_phys(unsigned phys, const void *src, size_t size)
 
 static ssize_t mem_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	unsigned limit = mem_dev_limit();
-	size_t avail;
+	uint64_t limit = mem_dev_limit();
+	uint64_t avail;
 
 	if (!buf || size == 0)
 		return 0;
 	if (*pos < 0)
 		return -EINVAL;
-	if ((unsigned)*pos >= limit)
+	if ((uint64_t)*pos >= limit)
 		return 0;
 
-	avail = limit - (unsigned)*pos;
+	avail = limit - (uint64_t)*pos;
 	if (size > avail)
-		size = avail;
+		size = (size_t)avail;
 	if (mem_copy_from_phys(buf, (unsigned)*pos, size) != 0)
 		return -EIO;
 
@@ -86,19 +87,19 @@ static ssize_t mem_read(file *fp, void *buf, size_t size, loff_t *pos)
 
 static ssize_t mem_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
-	unsigned limit = mem_dev_limit();
-	size_t avail;
+	uint64_t limit = mem_dev_limit();
+	uint64_t avail;
 
 	if (!buf || size == 0)
 		return 0;
 	if (*pos < 0)
 		return -EINVAL;
-	if ((unsigned)*pos >= limit)
+	if ((uint64_t)*pos >= limit)
 		return -ENOSPC;
 
-	avail = limit - (unsigned)*pos;
+	avail = limit - (uint64_t)*pos;
 	if (size > avail)
-		size = avail;
+		size = (size_t)avail;
 	if (mem_copy_to_phys((unsigned)*pos, buf, size) != 0)
 		return -EIO;
 
@@ -116,9 +117,14 @@ static loff_t mem_llseek(file *fp, loff_t offset, int whence)
 		new_pos = offset;
 		break;
 	case SEEK_CUR:
+		if (fp->f_pos < 0 || fp->f_pos > limit ||
+		    offset < -fp->f_pos || offset > limit - fp->f_pos)
+			return -EINVAL;
 		new_pos = fp->f_pos + offset;
 		break;
 	case SEEK_END:
+		if (offset < -limit || offset > 0)
+			return -EINVAL;
 		new_pos = limit + offset;
 		break;
 	default:
@@ -128,7 +134,7 @@ static loff_t mem_llseek(file *fp, loff_t offset, int whence)
 	if (new_pos < 0)
 		return -EINVAL;
 	if (new_pos > limit)
-		new_pos = limit;
+		return -EINVAL;
 
 	fp->f_pos = new_pos;
 	return new_pos;
@@ -163,7 +169,7 @@ static int mem_read_page(file *fp, unsigned offset, void *buf)
 	memset(buf, 0, PAGE_SIZE);
 	if (offset >= mem_dev_limit())
 		return 0;
-	if (offset + PAGE_SIZE > mem_dev_limit())
+	if ((uint64_t)offset + PAGE_SIZE > mem_dev_limit())
 		return mem_copy_from_phys(buf, offset,
 					  mem_dev_limit() - offset);
 	return mem_copy_from_phys(buf, offset, PAGE_SIZE);
@@ -174,7 +180,7 @@ static int mem_write_page(file *fp, unsigned offset, const void *buf)
 	(void)fp;
 	if (offset >= mem_dev_limit())
 		return 0;
-	if (offset + PAGE_SIZE > mem_dev_limit())
+	if ((uint64_t)offset + PAGE_SIZE > mem_dev_limit())
 		return mem_copy_to_phys(offset, buf, mem_dev_limit() - offset);
 	return mem_copy_to_phys(offset, buf, PAGE_SIZE);
 }

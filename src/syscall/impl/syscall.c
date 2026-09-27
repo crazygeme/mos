@@ -308,6 +308,7 @@ static unsigned call_table[NR_syscalls] = {
 	[295] = sys_openat,
 	[297] = sys_mknodat,
 	[300] = sys_fstatat64,
+	[301] = sys_unlinkat,
 	[306] = sys_fchmodat, // 306 __NR_fchmodat
 	[307] = sys_faccessat,
 	[308] = sys_pselect6,
@@ -328,6 +329,7 @@ static unsigned call_table[NR_syscalls] = {
 	[383] = sys_statx,
 	[386] = sys_rseq,
 	[403] = sys_clock_gettime64,
+	[422] = sys_futex_time64,
 	[436] = sys_close_range,
 	[439] = sys_faccessat2,
 };

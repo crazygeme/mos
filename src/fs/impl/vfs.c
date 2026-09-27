@@ -424,6 +424,7 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;
 	char *rel_path;
+	file *fp;
 
 	if (!sb || !path)
 		return NULL;
@@ -439,15 +440,20 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	if (*rel_path == '\0' || (rel_path[0] == '/' && rel_path[1] == '\0')) {
 		if (!target_sb->s_op || !target_sb->s_op->open_root)
 			return NULL;
-		return target_sb->s_op->open_root(target_sb, flag);
+		fp = target_sb->s_op->open_root(target_sb, flag);
+		if (fp) fp->f_mount_flags = target_sb->s_flags;
+		return fp;
 	}
 
 	/*
 	 * Real filesystem (e.g. ext4): delegate full path resolution to the
 	 * filesystem's own open operation.
 	 */
-	if (target_sb->s_op && target_sb->s_op->open)
-		return target_sb->s_op->open(target_sb, rel_path, flag);
+	if (target_sb->s_op && target_sb->s_op->open) {
+		fp = target_sb->s_op->open(target_sb, rel_path, flag);
+		if (fp) fp->f_mount_flags = target_sb->s_flags;
+		return fp;
+	}
 
 	/*
 	 * Pseudo-filesystem fallback: the super_block has a root inode but
@@ -455,7 +461,9 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	 * trailing slash).
 	 */
 	if (target_sb->s_op && target_sb->s_op->open_root) {
-		return target_sb->s_op->open_root(target_sb, flag);
+		fp = target_sb->s_op->open_root(target_sb, flag);
+		if (fp) fp->f_mount_flags = target_sb->s_flags;
+		return fp;
 	}
 
 	return NULL;

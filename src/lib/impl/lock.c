@@ -191,8 +191,7 @@ void cond_notify(cond_t *s)
 	/* lock_base_release_locked clears the lock then wakes one waiter. */
 	lock_base_release_locked((lock_base *)&s->base);
 	spinlock_unlock(&s->base.wait_lock, irq);
-
-	/* Yield so the woken task can run without waiting for a timer tick. */
+	/* Yield with the notifier still runnable. */
 	task_sched();
 }
 

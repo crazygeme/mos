@@ -4,6 +4,8 @@
 #include <net/sock.h>
 #include <lib/klib.h>
 #include <errno.h>
+#include <ps/ps.h>
+#include <ps/impl/ps_internal.h>
 
 #include <lwip/tcp.h>
 #include <lwip/udp.h>
@@ -274,6 +276,33 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 	if (level == SOL_SOCKET) {
 		switch (optname) {
+		case SO_PEERCRED: {
+			unix_peercred cred = { 0, ~0U, ~0U };
+			unsigned len;
+			if (sk->domain != AF_UNIX)
+				goto done;
+			if (ps_read_process_memory(CURRENT_TASK(), optlen, &len,
+						   sizeof(len)) < 0) {
+				ret = -EFAULT;
+				goto done;
+			}
+			if ((int)len < 0) {
+				ret = -EINVAL;
+				goto done;
+			}
+			if (sk->unix_peer_cred_valid)
+				cred = sk->unix_peer_cred;
+			if (len > sizeof(cred))
+				len = sizeof(cred);
+			if (ps_write_process_memory(CURRENT_TASK(), optval,
+						    &cred, len) < 0 ||
+			    ps_write_process_memory(CURRENT_TASK(), optlen,
+						    &len, sizeof(len)) < 0)
+				ret = -EFAULT;
+			else
+				ret = 0;
+			goto done;
+		}
 		case SO_ERROR: {
 			int err = sk->err ? -sk->err : 0;
 			sk->err = 0;

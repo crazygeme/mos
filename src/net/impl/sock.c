@@ -288,6 +288,15 @@ void sock_wakeup(mos_sock *sk)
 
 /* Block the current task on sk until woken by sock_wakeup or the deadline.
  * Returns -1 if a deliverable signal is pending after waking, 0 otherwise. */
+static void sock_cancel_wait(void *opaque)
+{
+	sock_waiter *waiter = opaque;
+	int irq;
+	spinlock_lock(&waiter->sk->wait_lock, &irq);
+	sock_waiter_dequeue(waiter);
+	spinlock_unlock(&waiter->sk->wait_lock, irq);
+}
+
 int sock_wait(mos_sock *sk, unsigned long long deadline)
 {
 	unsigned long long now;
@@ -306,9 +315,13 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 
 	spinlock_lock(&sk->wait_lock, &irq);
 	sock_waiter_queue(&sk->waiters, &waiter);
+	cur->io_wait = &waiter;
+	cur->cancel_io_wait = sock_cancel_wait;
 	now = time_now_ms();
 	if (now >= deadline) {
 		sock_waiter_dequeue(&waiter);
+		cur->io_wait = NULL;
+		cur->cancel_io_wait = NULL;
 		spinlock_unlock(&sk->wait_lock, irq);
 		return 0;
 	}
@@ -320,6 +333,8 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 
 	spinlock_lock(&sk->wait_lock, &irq);
 	sock_waiter_dequeue(&waiter);
+	cur->io_wait = NULL;
+	cur->cancel_io_wait = NULL;
 	spinlock_unlock(&sk->wait_lock, irq);
 
 	if (cur->signal && (cur->signal->sig_pending & ~cur->signal->sig_mask))

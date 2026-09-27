@@ -26,6 +26,7 @@
 #define O_PATH 010000000 /* path-only open — no device side-effects */
 
 #define F_DUPFD 0 /* dup */
+#define F_DUPFD_CLOEXEC 1030
 #define F_GETFD 1 /* get f_flags */
 #define F_SETFD 2 /* set f_flags */
 #define F_GETFL 3 /* more flags (cloexec) */

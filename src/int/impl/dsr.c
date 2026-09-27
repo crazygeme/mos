@@ -2,10 +2,16 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <lib/list.h>
+#include <ps/ps.h>
+#include <macro.h>
 
 static list_entry dsr_head;
 static list_entry dsr_cache;
 static spinlock_t dsr_lock;
+static task_struct *dsr_task;
+static int dsr_waiting;
+static void dsr_drain(void);
+
 static int dsr_dropped; /* nodes lost due to cache exhaustion; grown in drain */
 
 void dsr_init()
@@ -41,11 +47,17 @@ int dsr_add(dsr_callback fn, void *param)
 		dsr_dropped++;
 	}
 
+	/* Only wake the empty-queue wait, never a wait inside a callback. */
+	if (node && dsr_waiting) {
+		dsr_waiting = 0;
+		ps_put_to_ready_queue(dsr_task);
+	}
+
 	spinlock_unlock(&dsr_lock, irq);
 	return node != NULL;
 }
 
-void dsr_drain()
+static void dsr_drain(void)
 {
 	dsr_node *dsr;
 	int irq;
@@ -82,4 +94,41 @@ void dsr_drain()
 		list_insert_tail(&dsr_cache, &node->dsr_list);
 		spinlock_unlock(&dsr_lock, irq);
 	}
+}
+
+/* Callbacks own a task stack and may yield or wait without suspending the
+ * scheduler or borrowing the state of an interrupted task. */
+static void dsr_worker(void *param)
+{
+	int irq;
+	(void)param;
+
+	for (;;) {
+		dsr_drain();
+		spinlock_lock(&dsr_lock, &irq);
+		if (!list_is_empty(&dsr_head)) {
+			spinlock_unlock(&dsr_lock, irq);
+			continue;
+		}
+		dsr_waiting = 1;
+		ps_put_to_wait_queue(current, NULL, __func__);
+		spinlock_unlock(&dsr_lock, irq);
+		task_sched();
+	}
+}
+
+/* Called after PID 0 and PID 1 are allocated, before scheduler kickoff. */
+void dsr_start(void)
+{
+	unsigned pid = ps_create(dsr_worker, NULL, ps_deferred, ps_kernel);
+	dsr_task = ps_find_process(pid);
+	if (!dsr_task)
+		DIE();
+}
+
+/* Interrupt exit holds the kernel lock while inspecting scheduler state. */
+int dsr_needs_schedule(void)
+{
+	return dsr_task && dsr_task != current &&
+	       dsr_task->status == ps_ready && !dsr_task->on_cpu;
 }

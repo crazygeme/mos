@@ -585,7 +585,8 @@ static file *ext4_path_open(const char *path, int flag)
 	unsigned uid = current->user->uid;
 	unsigned gid = current->user->gid;
 	char *pre_res = NULL; /* buffer for intermediate symlink resolution */
-	char *resolved = NULL; /* buffer for final symlink following */
+	char *resolved = NULL; /* absolute path of the current final component */
+	char *link_target = NULL; /* target text, separate from cur_path */
 	const char *cur_path = path;
 	size_t link_len;
 	int ret, check;
@@ -657,7 +658,8 @@ retry_open:
 	/* Allocate a resolution buffer only when we actually encounter a symlink */
 	if (S_ISLNK(s.st_mode)) {
 		resolved = name_get();
-		if (!resolved)
+		link_target = name_get();
+		if (!resolved || !link_target)
 			goto fail;
 	}
 
@@ -666,20 +668,17 @@ retry_open:
 		if (++depth > MAX_SYMLINK_DEPTH)
 			goto fail;
 
-		/*
-		 * Read the symlink target into `resolved`.  Note: `resolved`
-		 * and `pre_res` are distinct buffers, so cur_path (which may
-		 * point into pre_res) remains valid for fs_resolve_symlink_path.
-		 */
-		ret = ext4_fread(f, resolved, MAX_PATH - 1, &link_len);
+		/* Preserve cur_path while reading and resolving the next target. */
+		ret = ext4_fread(f, link_target, MAX_PATH - 1, &link_len);
 		ext4_fclose(f);
 		if (ret != EOK)
 			goto fail;
-		resolved[link_len] = '\0';
+		link_target[link_len] = '\0';
 
-		if (fs_resolve_symlink_path(cur_path, resolved, link_len) != 0)
+		if (fs_resolve_symlink_path(cur_path, link_target, link_len) != 0)
 			goto fail;
 
+		strcpy(resolved, link_target);
 		cur_path = resolved;
 
 		ret = ext4_fopen2(f, cur_path, flag);
@@ -744,6 +743,8 @@ done:
 		name_put(pre_res);
 	if (resolved)
 		name_put(resolved);
+	if (link_target)
+		name_put(link_target);
 	return fp;
 }
 

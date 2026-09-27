@@ -84,7 +84,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if (flags & CLONE_VFORK) {
 		if ((flags & CSIGNAL) != SIGCHLD)
 			return -EINVAL;
-		return do_vfork(child_stack);
+		return do_vfork(child_stack, !!(flags & CLONE_FILES));
 	}
 
 	if (thread_group) {
@@ -131,9 +131,8 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		clone_prepare_thread_tls(cur, task, cur_intr_frame->gs);
 	}
 
-	task->fds = vm_alloc(1);
-	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
-	ps_dup_fds(cur, task);
+	if (ps_dup_fds(cur, task, !!(flags & CLONE_FILES)) != 0)
+		return -ENOMEM;
 	if (!share_vm)
 		copy_page_range(cur, task);
 
@@ -153,8 +152,10 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if ((flags & CLONE_SETTLS) && tls) {
 		int rc = ps_set_clone_tls_for(task, tls, cur_intr_frame->gs);
 
-		if (rc != 0)
+		if (rc != 0) {
+			ps_put_fds(task);
 			return rc;
+		}
 	}
 
 	if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
@@ -167,8 +168,10 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 							 &task->psid,
 							 sizeof(task->psid));
 
-			if (rc != 0)
+			if (rc != 0) {
+				ps_put_fds(task);
 				return rc;
+			}
 		}
 	}
 	if ((flags & CLONE_CHILD_CLEARTID) && child_tidptr)

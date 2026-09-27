@@ -366,15 +366,8 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 	if (!sk)
 		return -ENOTSOCK;
 
-	if (sk->domain == AF_UNIX) {
-		struct sockaddr_un *un = (struct sockaddr_un *)addr;
-		unsigned copy = *addrlen < sizeof(*un) ? *addrlen : sizeof(*un);
-		un->sun_family = AF_UNIX;
-		strncpy(un->sun_path, sk->unix_path, UNIX_PATH_MAX - 1);
-		memcpy(addr, un, copy);
-		*addrlen = sizeof(*un);
-		return 0;
-	}
+	if (sk->domain == AF_UNIX)
+		return unix_sockaddr(sk, addr, addrlen);
 
 	sock_refresh_local_inet(sk);
 	unsigned copy = *addrlen < sizeof(sk->local) ? *addrlen :
@@ -396,17 +389,8 @@ int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
 		return -ENOTCONN;
 
-	if (sk->domain == AF_UNIX) {
-		struct sockaddr_un *un = (struct sockaddr_un *)addr;
-		unsigned copy = *addrlen < sizeof(*un) ? *addrlen : sizeof(*un);
-		un->sun_family = AF_UNIX;
-		strncpy(un->sun_path,
-			sk->unix_peer ? sk->unix_peer->unix_path : "",
-			UNIX_PATH_MAX - 1);
-		memcpy(addr, un, copy);
-		*addrlen = sizeof(*un);
-		return 0;
-	}
+	if (sk->domain == AF_UNIX)
+		return unix_sockaddr(sk->unix_peer, addr, addrlen);
 
 	unsigned copy = *addrlen < sizeof(sk->peer) ? *addrlen :
 						      sizeof(sk->peer);
@@ -509,6 +493,25 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		return -ENOTSOCK;
 	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
+
+	if (sk->domain == AF_UNIX) {
+		struct iovec iov = { .iov_base = buf, .iov_len = len };
+		struct msghdr msg = { 0 };
+		int ret;
+
+		if (sk->type == SOCK_STREAM && len == 0)
+			return 0;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		if (from && fromlen) {
+			msg.msg_name = from;
+			msg.msg_namelen = *fromlen;
+		}
+		ret = unix_recvmsg(sk, &msg, flags);
+		if (ret >= 0 && from && fromlen)
+			*fromlen = msg.msg_namelen;
+		return ret;
+	}
 
 	unsigned long long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
 

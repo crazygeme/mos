@@ -208,6 +208,8 @@ typedef struct elf64_sym {
 	Elf64_Xword st_size; /* Associated symbol size */
 } Elf64_Sym;
 
+#define EM_386 3
+
 #define EI_NIDENT 16
 
 typedef struct elf32_hdr {
@@ -418,6 +420,13 @@ typedef struct _mos_binfmt {
 	unsigned interp_bias;
 	unsigned start_brk; /* PAGE_ALIGN(end of BSS) — initial brk value */
 } mos_binfmt;
+
+typedef struct elf_image elf_image;
+
+int elf_prepare(file *fp, elf_image **result);
+void elf_release(elf_image *image);
+unsigned elf_map_prepared(elf_image *image, mos_binfmt *fmt);
+int elf_check_file(file *fp);
 
 unsigned elf_map(char *path, mos_binfmt *fmt);
 unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp);

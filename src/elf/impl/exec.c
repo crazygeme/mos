@@ -405,6 +405,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	struct stat s;
 	file *fp;
 	file *exec_fp = NULL;
+	elf_image *image = NULL;
 	unsigned exec_euid = cur->user->euid;
 	unsigned exec_egid = cur->user->egid;
 	int len = 64; /* max bytes to read for the first line of a script */
@@ -535,8 +536,24 @@ int sys_execve(const char *f, char **argv, char **envp)
 		return -ENOEXEC;
 	}
 
+	/* Reject invalid images before closing descriptors or replacing memory. */
+	if (!exec_fp)
+		exec_fp = fs_open_file(file_name, O_RDONLY, 0);
+	{
+		int ret = elf_prepare(exec_fp, &image);
+		if (ret) {
+			if (exec_fp)
+				fs_put_file(exec_fp);
+			free_v(s_argv, argc);
+			free_v(s_envp, envc);
+			name_put(file_name);
+			return ret;
+		}
+	}
+
 	/* exec owns a private table before applying FD_CLOEXEC. */
 	if (ps_unshare_fds(cur) != 0) {
+		elf_release(image);
 		if (exec_fp)
 			fs_put_file(exec_fp);
 		free_v(s_argv, argc);
@@ -633,7 +650,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * loading / symbol resolve / etc will be handled by interp
 	 * pretty easy ha?
 	 */
-	elf_map_file(file_name, &fmt, exec_fp);
+	elf_map_prepared(image, &fmt);
+	elf_release(image);
 	if (exec_fp)
 		fs_put_file(exec_fp);
 	eip = fmt.interp_load_addr;
@@ -641,8 +659,13 @@ int sys_execve(const char *f, char **argv, char **envp)
 	cur->user->vm->brk = fmt.start_brk;
 	vm_set_brk(cur->user->vm, fmt.start_brk, fmt.start_brk);
 	if (!eip) {
-		printk("fatal error: file %s not found!\n", file_name);
-		HLT();
+		klog("exec: unable to load ELF image %s\n", file_name);
+		free_v(s_argv, argc);
+		free_v(s_envp, envc);
+		name_put(file_name);
+		/* The previous address space has already been released. */
+		do_exit(SIGSEGV);
+		__builtin_unreachable();
 	}
 
 	if (cur->user->vm->start_brk > 0 &&

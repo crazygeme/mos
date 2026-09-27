@@ -414,6 +414,21 @@ static tty_state *tty_find_controlling(task_struct *task)
 	return NULL;
 }
 
+int tty_has_controlling(task_struct *task)
+{
+	file *fp;
+
+	if (tty_find_controlling(task))
+		return 1;
+	fp = pty_open_controlling(task, O_PATH);
+	if (!fp)
+		fp = ptmx_open_controlling(task, O_PATH);
+	if (!fp)
+		return 0;
+	fs_put_file(fp);
+	return 1;
+}
+
 static unsigned short tty_vt_state_mask(void)
 {
 	unsigned short mask = 0;

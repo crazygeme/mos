@@ -42,6 +42,52 @@ static void check(int ok, const char *message)
     }
 }
 
+static void check_automatic_ctty(void)
+{
+    pid_t child = fork();
+    int status;
+
+    check(child >= 0, "fork automatic controlling terminal check");
+    if (child == 0) {
+        int master, slave, tty;
+        char path[64];
+        struct stat st;
+
+        alarm(5);
+        check(setsid() >= 0, "create terminal session");
+        if (getuid() == 0) {
+            check(setgid(1000) == 0, "set terminal test gid");
+            check(setuid(1000) == 0, "set terminal test uid");
+        }
+        check(open("/dev/tty", O_RDWR) == -1, "no controlling terminal");
+        check(stat("/dev/tty", &st) == 0, "stat unattached tty device");
+        master = posix_openpt(O_RDWR | O_NOCTTY);
+        check(master >= 0, "unprivileged posix_openpt");
+        check(grantpt(master) == 0 && unlockpt(master) == 0,
+              "unprivileged slave permissions");
+        check(ptsname_r(master, path, sizeof(path)) == 0, "slave path");
+        slave = open(path, O_RDWR | O_NOCTTY);
+        check(slave >= 0, "open slave without controlling terminal");
+        check(open("/dev/tty", O_RDWR) == -1, "O_NOCTTY suppresses acquisition");
+        close(slave);
+        slave = open(path, O_PATH);
+        check(slave >= 0, "open slave path descriptor");
+        check(open("/dev/tty", O_RDWR) == -1, "O_PATH suppresses acquisition");
+        close(slave);
+        slave = open(path, O_RDWR);
+        check(slave >= 0, "open slave with controlling terminal");
+        tty = open("/dev/tty", O_RDWR);
+        check(tty >= 0 && isatty(tty), "open acquired controlling terminal");
+        check(tcgetpgrp(tty) == getpgrp(), "controlling terminal process group");
+        close(tty);
+        close(slave);
+        close(master);
+        _exit(0);
+    }
+    check(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+          WEXITSTATUS(status) == 0, "automatic controlling terminal status");
+}
+
 int main(void)
 {
     int master, slave, status, found = 0;
@@ -59,6 +105,7 @@ int main(void)
     unsigned i;
 
     alarm(15);
+    check_automatic_ctty();
     master = posix_openpt(O_RDWR | O_NOCTTY);
     check(master >= 0, "posix_openpt");
     check(grantpt(master) == 0 && unlockpt(master) == 0, "unlock slave");

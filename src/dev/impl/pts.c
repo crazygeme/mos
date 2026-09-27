@@ -31,6 +31,32 @@
 #include "tty_ldisc.h"
 #include "pts_internal.h"
 
+void pts_acquire_controlling(file *fp, int flag)
+{
+	task_struct *cur = CURRENT_TASK();
+	pts_pair *p = fp->f_inode->i_private;
+	struct stat s;
+	int mask = 0;
+	int irq;
+
+	if ((flag & (O_NOCTTY | O_PATH)) || !cur->user ||
+	    cur->user->session_id != cur->psid)
+		return;
+	if (fp->f_fop->getattr(fp, &s))
+		return;
+	if ((flag & O_ACCMODE) != O_WRONLY)
+		mask |= R_OK;
+	if ((flag & O_ACCMODE) != O_RDONLY)
+		mask |= W_OK;
+	if (fs_check_perm(&s, mask) || tty_has_controlling(cur))
+		return;
+
+	spinlock_lock(&p->lock, &irq);
+	if (!p->pgrp)
+		p->pgrp = cur->user->group_id;
+	spinlock_unlock(&p->lock, irq);
+}
+
 static int pts_file_nonblock(file *fp)
 {
 	return (fp->f_flag & O_NONBLOCK) != 0;

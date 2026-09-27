@@ -272,7 +272,7 @@ static file *devnode_open_fifo(devnode_info *dn, int flag)
 
 static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 {
-	file *fp = NULL;
+	file *fp;
 	unsigned mt = dn->mode & S_IFMT;
 	unsigned major = MAJOR(dn->rdev);
 	unsigned minor = MINOR(dn->rdev);
@@ -284,12 +284,11 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 		    minor >= e->minor_base &&
 		    minor < e->minor_base + e->minor_count) {
 			fp = e->open(sb, dn->rdev, flag);
-			break;
+			if (!fp && (flag & O_PATH))
+				return devnode_open_stub(sb, dn->mode);
+			return fp;
 		}
 	}
-
-	if (fp)
-		return fp;
 
 	return devnode_open_stub(sb, dn->mode);
 }

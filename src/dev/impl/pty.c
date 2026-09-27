@@ -135,6 +135,7 @@ static file *pty_open_slave_pair(pts_pair *p, int flag)
 		cyb_reader_open(p->m2s);
 		cyb_writer_open(p->s2m);
 	}
+	pts_acquire_controlling(fp, flag);
 	return fp;
 }
 

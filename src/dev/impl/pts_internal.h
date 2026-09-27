@@ -46,6 +46,10 @@ typedef struct {
 
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock);
 
+int tty_has_controlling(task_struct *task);
+
+void pts_acquire_controlling(file *fp, int flag);
+
 int pts_slave_setattr(file *fp, uint32_t mode);
 
 int pts_slave_chown(file *fp, uint32_t uid, uint32_t gid);

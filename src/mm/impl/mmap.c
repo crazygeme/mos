@@ -796,14 +796,16 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 	vaddr_t vir;
 
 	region = vm_find_map(cur->user->vm, addr);
-	if (region) {
-		region->prot = prot;
-		region->flag = flags;
-	}
+	if (!region)
+		return;
+	region->prot = prot;
+	region->flag = flags;
 
 	/* Also update actual mmap flag */
 	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
 		unsigned mmflag = mm_get_map_flag(vir);
+		if (!mmflag)
+			continue;
 		if (prot == PROT_NONE) {
 			mmflag &= ~(PAGE_ENTRY_DPL_USER | PAGE_ENTRY_WRITABLE);
 			mm_set_map_flag(vir, mmflag);
@@ -811,10 +813,10 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 		}
 
 		mmflag |= PAGE_ENTRY_DPL_USER;
-		if (prot & PROT_WRITE)
-			mmflag |= PAGE_ENTRY_WRITABLE;
-		else
+		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
+		else if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
+			mmflag |= PAGE_ENTRY_WRITABLE;
 
 		mm_set_map_flag(vir, mmflag);
 	}

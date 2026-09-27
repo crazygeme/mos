@@ -24,6 +24,7 @@
 #define AT_FDCWD (-100)
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_EACCESS 0x200
+#define AT_REMOVEDIR 0x200
 #define AT_NO_AUTOMOUNT 0x800
 #define AT_EMPTY_PATH 0x1000
 #define AT_STATX_FORCE_SYNC 0x2000
@@ -530,9 +531,9 @@ int sys_fstatfs(int fd, struct statfs *buf)
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
 
-	mutex_lock(&cur->fd_lock);
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
-	mutex_unlock(&cur->fd_lock);
+	mutex_unlock(&cur->files->lock);
 
 	if (!fp)
 		return -EBADF;
@@ -806,14 +807,12 @@ int sys_symlink(const char *path1, const char *path2)
 /* defined in src/net/sock_un.c */
 void unix_ns_remove_path(const char *path);
 
-int sys_unlink(const char *_name)
+static int unlink_resolved(const char *name)
 {
-	char *name = name_get();
 	task_struct *cur = CURRENT_TASK();
 	struct stat s;
 	int ret;
 
-	resolve_path(_name, name);
 	ret = do_stat(NULL, name, &s, O_PATH | O_NOFOLLOW);
 	if (ret != EOK)
 		goto done;
@@ -841,6 +840,30 @@ int sys_unlink(const char *_name)
 done:
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("unlink(%s) = %d\n", name, ret);
+	return ret;
+}
+
+int sys_unlink(const char *path)
+{
+	char *name = name_get();
+	int ret = syscall_resolve_at(AT_FDCWD, path, name);
+	if (!ret)
+		ret = unlink_resolved(name);
+	name_put(name);
+	return ret;
+}
+
+int sys_unlinkat(int dirfd, const char *path, int flags)
+{
+	char *name;
+	int ret;
+
+	if (flags & ~AT_REMOVEDIR)
+		return -EINVAL;
+	name = name_get();
+	ret = syscall_resolve_at(dirfd, path, name);
+	if (!ret)
+		ret = (flags & AT_REMOVEDIR) ? vfs_rmdir(current->root, name) : unlink_resolved(name);
 	name_put(name);
 	return ret;
 }

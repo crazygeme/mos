@@ -128,33 +128,26 @@ Scans `ready_queue[]` from highest priority down:
 
 ### Context switch: `_task_sched`
 
-```
-_task_sched(func_name)
-  1. disable interrupts
-  2. drain pending DSR (deferred interrupt handlers)
-  3. ps_get_next_task → next
-  4. if next == current: re-enable + return   (no-op)
-  5. SAVE_ALL(current, NEXT_LABEL)            // saves registers + resume eip
-  6. RESTORE_ALL(next)                        // loads next task's registers
-  7. sync kernel PDEs into next task's page directory
-  8. update TSS esp0 + CR3 for next task
-  9. JUMP_TO_NEXT_TASK_EIP(next)              // indirect jmp to saved eip
-  -- next task runs from its saved eip --
-  NEXT_LABEL:
-  10. re-enable interrupts                    // resumed here when rescheduled
-```
+`_task_sched()` disables interrupts, acquires the kernel lock, reaps dead
+threads, and selects a runnable task. The current task remains runnable
+unless a caller has explicitly placed it in a waiting or terminal state.
+The switch updates address-space, segment, FPU, and CPU ownership state;
+`ps_context_switch()` saves and restores the kernel call stack. Each task
+restores its own interrupt state when its scheduler call returns.
 
-Macros in `include/macro.h`:
-
-| Macro                        | Effect                                                       |
-| ---------------------------- | ------------------------------------------------------------ |
-| `SAVE_ALL(task, label)`      | Stores all registers to `task->tss`; sets `tss.eip = &label` |
-| `RESTORE_ALL(task)`          | Loads all registers from `task->tss`                         |
-| `JUMP_TO_NEXT_TASK_EIP(eip)` | `jmp *eip` — indirect jump to resume point                   |
+Deferred device callbacks execute on the `dsr_worker` kernel task at
+`ps_deferred` priority, above `ps_normal` and `ps_idle`. Callbacks may yield
+or wait using their own task state. The worker sleeps when its queue is
+empty. Queue insertion wakes that empty-queue wait under the DSR lock;
+it does not interrupt a wait taken inside a callback. Interrupt exit
+requests scheduling when the worker is ready and scheduling is enabled.
 
 ### Time slices
 
-Each task gets `DEFAULT_TICKS` ticks per schedule. The PIT interrupt decrements `remain_ticks`; when it hits 0 the timer ISR calls `task_sched()` (involuntary preemption).
+`DEFAULT_TASK_TIME_SLICE` is 500 ms, or 50 ticks at `HZ = 100`. Timer
+interrupts decrement `remain_ticks`. An expired slice triggers scheduling
+and replenishes the slice. Scheduling for deferred work preserves the
+interrupted task's remaining slice.
 
 ---
 

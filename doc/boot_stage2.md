@@ -11,7 +11,7 @@ Stage 2 is split into two phases:
 
 1. **`kmain_startup()`** — synchronous init: runs on the original boot stack,
    no scheduling yet. Ends with `ps_kickoff()` which starts the scheduler.
-2. **`kmain_process()`** — runs as the first scheduled kernel thread, walks
+2. **`kmain_process()`** — runs as the init kernel thread, walks
    the `KERNEL_INIT` table, then becomes the idle loop.
 
 ---
@@ -50,8 +50,11 @@ TSS. No tasks are runnable yet; scheduling is disabled until `ps_kickoff()`.
 
 ### 4. Deferred Service Routines (`dsr_init`)
 
-Sets up the DSR queue (kernel bottom-half mechanism, depth `DSR_CACHE_DEPTH =
-100`). DSRs are used by drivers to defer work out of interrupt context.
+Sets up the DSR queue (kernel bottom-half mechanism, cache size `DSR_CACHE_DEPTH =
+4096`). Drivers enqueue work for the dedicated `dsr_worker` kernel task.
+`dsr_start()` creates this task after idle and init receive PID 0 and PID 1,
+before `smp_start()` and `ps_kickoff()`. Queued work receives deferred-task
+priority and can trigger scheduling at interrupt exit.
 
 ### 5. Enable interrupts (`int_enable_all`)
 

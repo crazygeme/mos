@@ -5,6 +5,7 @@
 
 /* Standard mount flags (subset of Linux MS_* values) */
 #define MS_RDONLY 1
+#define MS_NOSUID 2
 #define MS_REMOUNT 32
 
 /*

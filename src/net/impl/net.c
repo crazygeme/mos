@@ -147,7 +147,7 @@ static void eth0_rx_free_pbuf(struct pbuf *p)
 	eth0_rx_release_slot(slot);
 }
 
-/* DSR: drain queued frames into lwIP (runs from _task_sched, malloc is safe). */
+/* Drain queued frames into lwIP on the deferred-callback worker. */
 static void eth0_rx_dsr(void *param)
 {
 	(void)param;

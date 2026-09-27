@@ -113,14 +113,22 @@ typedef enum _ps_status {
 
 typedef enum _ps_type { ps_kernel, ps_user } ps_type;
 
-// normal and idle
+/* Higher levels take precedence over lower levels. */
 typedef enum _ps_priority {
 	ps_idle = 0,
 	ps_normal,
+	ps_deferred, /* deferred device callbacks */
 	PS_PRIORITY_MAX
 } ps_priority;
 
 typedef void (*process_fn)(void *param);
+
+typedef struct {
+	unsigned refs;
+	file **fds;
+	unsigned long cloexec[FD_BITMAP_WORDS];
+	mutex_t lock;
+} task_files;
 
 typedef struct _task_struct task_struct;
 struct _task_struct {
@@ -143,10 +151,12 @@ struct _task_struct {
 	list_entry dying_queue; /* dying task holder */
 	ps_status status;
 	const char *wait_func;
+	void (*cancel_io_wait)(void *);
+	void *io_wait;
 	int remain_ticks;
 	file **fds;
 	unsigned long *fd_cloexec;
-	mutex_t fd_lock;
+	task_files *files; /* Owns fds and fd_cloexec. */
 	unsigned exit_status;
 	unsigned exit_signal;
 	unsigned ppid;
@@ -226,6 +236,8 @@ task_struct *__attribute__((noinline)) CURRENT_TASK(void);
 
 #define current CURRENT_TASK()
 
+int ps_unshare_fds(task_struct *task);
+void ps_put_fds(task_struct *task);
 void ps_init();
 
 #define ps_create(fn, param, priority, type) \

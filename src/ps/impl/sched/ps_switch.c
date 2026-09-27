@@ -1,4 +1,3 @@
-#include <int/dsr.h>
 #include <int/int.h>
 #include <ps/ps.h>
 #include <mm/mmap.h>
@@ -31,8 +30,6 @@ void _task_sched(const char *func)
 
 	if (prev->stats)
 		prev->stats->idle = time_now_tickets();
-
-	dsr_drain();
 
 	irq = int_intr_disable();
 	smp_kernel_enter();

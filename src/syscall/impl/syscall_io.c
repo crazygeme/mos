@@ -110,8 +110,10 @@ int sys_write(int fd, const char *buf, unsigned len)
 	return fs_write(fd, -1, buf, len);
 }
 
-int sys_pread64(int fd, void *buf, unsigned count, int offset)
+int sys_pread64(int fd, void *buf, unsigned count, unsigned offset_low,
+		 unsigned offset_high)
 {
+	loff_t offset = (loff_t)(((uint64_t)offset_high << 32) | offset_low);
 	task_struct *cur = CURRENT_TASK();
 	int ret = -EBADF;
 
@@ -125,22 +127,25 @@ int sys_pread64(int fd, void *buf, unsigned count, int offset)
 	ret = fs_pread(fd, offset, buf, count);
 
 	if (TEST_LOG(TEST_LOG_TRACE)) {
-		char *tmp = format_buffer(buf, count);
-		klog("pread(%d, %s, %d, %d) = %d\n", fd, tmp, count, offset,
-		     ret > 0 ? ret : 0);
+		char *tmp = format_buffer(buf, ret > 0 ? (unsigned)ret : 0);
+		klog("pread(%d, %s, %u, 0x%x%08x) = %d\n", fd, tmp, count,
+		     offset_high, offset_low, ret);
 		free(tmp);
 	}
 
 	return ret;
 }
 
-int sys_pwrite64(int fd, const void *buf, unsigned count, int offset)
+int sys_pwrite64(int fd, const void *buf, unsigned count, unsigned offset_low,
+		 unsigned offset_high)
 {
+	loff_t offset = (loff_t)(((uint64_t)offset_high << 32) | offset_low);
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE)) {
 		char *tmp = format_buffer(buf, count);
-		klog("write(%d, %s, %d, %d)\n", fd, tmp, count, offset);
+		klog("pwrite(%d, %s, %u, 0x%x%08x)\n", fd, tmp, count,
+		     offset_high, offset_low);
 		free(tmp);
 	}
 
@@ -472,6 +477,7 @@ int sys_inotify_init1(int flags)
 	fp->f_mode = O_RDONLY;
 	fp->f_flag = O_RDONLY | ((flags & in_nonblock) ? O_NONBLOCK : 0);
 	fp->f_fop = &inotify_fops;
+	fp->f_count = 1;
 	fd = fs_install_fd(fp, (flags & in_cloexec) ? O_CLOEXEC : 0);
 	if (fd < 0) {
 		free(fp);
@@ -696,6 +702,9 @@ int sys_fcntl(int fd, int cmd, int arg)
 	switch (cmd) {
 	case F_DUPFD:
 		ret = fs_dup_from(fd, arg);
+		break;
+	case F_DUPFD_CLOEXEC:
+		ret = fs_dup_from_flags(fd, arg, O_CLOEXEC);
 		break;
 	case F_GETLK:
 	case F_SETLK:

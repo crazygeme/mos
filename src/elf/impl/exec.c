@@ -223,6 +223,7 @@ but that could change... */
 #define AT_PLATFORM 15 /* string identifying CPU for optimizations */
 #define AT_HWCAP 16 /* arch dependent hints at CPU capabilities */
 #define AT_CLKTCK 17 /* Frequency of times() */
+#define AT_SECURE 23 /* secure dynamic loader execution */
 #define AT_RANDOM 25 /* address of 16 random bytes */
 #define AT_SYSINFO 32 /* address of kernel fast-syscall entry (vsyscall) */
 
@@ -351,19 +352,23 @@ static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
 	 *   AT_BASE  — load bias of the interpreter (ld.so)
 	 *   AT_FLAGS — always 0
 	 *   AT_ENTRY — original entry point of the executable
-	 *   AT_UID/EUID/GID/EGID — all 0 (root) for now
+	 *   AT_UID/EUID/GID/EGID — process credentials
+	 *   AT_SECURE — effective credentials differ from real credentials
 	 */
-	sp -= 10 * 2;
+	sp -= 11 * 2;
 	NEW_AUX_ENT(0, AT_PHDR, exec->elf_load_addr + exec->e_phoff);
 	NEW_AUX_ENT(1, AT_PHENT, sizeof(Elf32_Phdr));
 	NEW_AUX_ENT(2, AT_PHNUM, exec->e_phnum);
 	NEW_AUX_ENT(3, AT_BASE, exec->interp_bias);
 	NEW_AUX_ENT(4, AT_FLAGS, 0);
 	NEW_AUX_ENT(5, AT_ENTRY, exec->e_entry);
-	NEW_AUX_ENT(6, AT_UID, 0);
-	NEW_AUX_ENT(7, AT_EUID, 0);
-	NEW_AUX_ENT(8, AT_GID, 0);
-	NEW_AUX_ENT(9, AT_EGID, 0);
+	NEW_AUX_ENT(6, AT_UID, current->user->uid);
+	NEW_AUX_ENT(7, AT_EUID, current->user->euid);
+	NEW_AUX_ENT(8, AT_GID, current->user->gid);
+	NEW_AUX_ENT(9, AT_EGID, current->user->egid);
+	NEW_AUX_ENT(10, AT_SECURE,
+		current->user->uid != current->user->euid ||
+		current->user->gid != current->user->egid);
 
 #undef NEW_AUX_ENT
 
@@ -400,6 +405,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 	struct stat s;
 	file *fp;
 	file *exec_fp = NULL;
+	unsigned exec_euid = cur->user->euid;
+	unsigned exec_egid = cur->user->egid;
 	int len = 64; /* max bytes to read for the first line of a script */
 	char *firstline = NULL;
 	if (!f) {
@@ -429,7 +436,7 @@ int sys_execve(const char *f, char **argv, char **envp)
 	}
 
 	/* if file not executable, just return */
-	if (!(s.st_mode & S_IXUSR) || (s.st_size < 4)) {
+	if (!S_ISREG(s.st_mode) || fs_check_perm(&s, 1) || (s.st_size < 4)) {
 		fs_put_file(fp);
 		name_put(file_name);
 		return -EPERM;
@@ -475,6 +482,12 @@ int sys_execve(const char *f, char **argv, char **envp)
 		s_argv = dup_strv(argv, argc);
 		s_envp = dup_strv(envp, envc);
 		exec_fp = fp;
+		if (!(fp->f_mount_flags & MS_NOSUID) && !cur->user->ptrace_tracer) {
+			if (s.st_mode & S_ISUID)
+				exec_euid = s.st_uid;
+			if ((s.st_mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP))
+				exec_egid = s.st_gid;
+		}
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
 		const char *interp, *interp_arg;
 		unsigned shebang_argc, user_argc, j, dst;
@@ -520,6 +533,16 @@ int sys_execve(const char *f, char **argv, char **envp)
 		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOEXEC;
+	}
+
+	/* exec owns a private table before applying FD_CLOEXEC. */
+	if (ps_unshare_fds(cur) != 0) {
+		if (exec_fp)
+			fs_put_file(exec_fp);
+		free_v(s_argv, argc);
+		free_v(s_envp, envc);
+		name_put(file_name);
+		return -ENOMEM;
 	}
 
 	/* save command line into task struct (bounded to one page) */
@@ -649,6 +672,14 @@ int sys_execve(const char *f, char **argv, char **envp)
 		vm_set_stack(cur->user->vm, stack_init_bottom);
 	}
 
+	/* Commit executable credentials before constructing the auxiliary vector. */
+	cur->user->euid = cur->user->suid = cur->user->fsuid = exec_euid;
+	cur->user->egid = cur->user->sgid = cur->user->fsgid = exec_egid;
+	cur->user->keep_capabilities = 0;
+	memset(cur->user->cap_effective, 0, sizeof(cur->user->cap_effective));
+	memset(cur->user->cap_permitted, 0, sizeof(cur->user->cap_permitted));
+	cur->user->cap_initialized = 0;
+
 	/* setup arguments and enviroments in proper way for interp */
 	esp_top = setup_user_stack(file_name, argc, s_argv, envc, s_envp,
 				   esp_top, &fmt);
@@ -730,7 +761,7 @@ static void prepare_interactive_userspace(task_struct *cur)
  */
 static void kinit_userspace()
 {
-	const char *devault_argv[] = { "/sbin/init", NULL };
+	const char *devault_argv[] = { "/sbin/init", NULL, NULL };
 	const char *default_envp[] = { "TERM=linux", NULL };
 	const char *user_argv[] = { "/bin/bash", "-l", NULL };
 	const char *test_bash_argv[] = {
@@ -745,6 +776,20 @@ static void kinit_userspace()
 	const char **argv = devault_argv;
 	const char **envp = default_envp;
 	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + PAGE_SIZE;
+	const char *arg = g_cmdline;
+
+	/* Pass an explicit supported runlevel to SysV init. */
+	while (*arg) {
+		const char *end;
+		while (*arg == ' ' || *arg == '\t')
+			arg++;
+		end = arg;
+		while (*end && *end != ' ' && *end != '\t')
+			end++;
+		if (end - arg == 1 && (*arg == '3' || *arg == '5'))
+			devault_argv[1] = *arg == '3' ? "3" : "5";
+		arg = end;
+	}
 
 	if (TestControl.bash) {
 		argv = user_argv;

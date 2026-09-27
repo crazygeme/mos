@@ -71,7 +71,7 @@ typedef struct multiboot_info multiboot_info_t;
 
 extern unsigned phymm_end;
 extern unsigned phymm_begin;
-extern char g_cmdline[];
+extern char g_cmdline[256];
 extern unsigned long long gdt[];
 extern unsigned short gdt_size;
 extern unsigned long intr_stubs[];

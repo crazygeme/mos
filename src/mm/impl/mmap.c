@@ -8,6 +8,7 @@
 #include <dev/dev.h>
 #include <ps/ps.h>
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <macro.h>
 #include <mm/mmu.h>
 #include <config.h>
@@ -59,7 +60,8 @@ static unsigned vm_region_flags_for_file(file *fp)
 {
 	if (!fp || !fp->f_inode)
 		return 0;
-	if ((unsigned)(uintptr_t)fp->f_inode->i_private == DEV_MEM_RDEV)
+	if (fp->f_inode->i_phys_size ||
+	    (unsigned)(uintptr_t)fp->f_inode->i_private == DEV_MEM_RDEV)
 		return VM_REGION_F_DIRECT_PHYS;
 	return 0;
 }
@@ -847,6 +849,19 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 		if (!S_ISREG(node->f_inode->i_mode) &&
 		    !S_ISCHR(node->f_inode->i_mode))
 			return -ENODEV;
+	}
+
+	if (node && node->f_inode->i_phys_size) {
+		if (!cur->user || cur->user->euid != 0 || (node->f_flag & O_PATH))
+			return -EACCES;
+		uint64_t end = (uint64_t)offset + _len;
+		if ((node->f_inode->i_phys_base & (PAGE_SIZE - 1)) ||
+		    end > node->f_inode->i_phys_size ||
+		    (uint64_t)node->f_inode->i_phys_base + end > 0x100000000ULL)
+			return -EINVAL;
+		if ((prot & PROT_WRITE) && node->f_mode == O_RDONLY)
+			return -EACCES;
+		offset += node->f_inode->i_phys_base;
 	}
 
 	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);

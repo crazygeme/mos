@@ -25,6 +25,8 @@
 #include "ps_internal.h"
 #include <ps/smp.h>
 
+static int ps_init_fds(task_struct *task);
+
 /* Matches ps_context_switch: flags, edi, esi, ebx, ebp, return address. */
 static void init_switch_frame(task_struct *task)
 {
@@ -86,9 +88,14 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	}
 
 	memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
+	if (ps_init_fds(task) != 0) {
+		vm_free(task, KERNEL_TASK_SIZE);
+		return -ENOMEM;
+	}
 
 	task->user = ps_alloc_user_env();
 	if (!task->user) {
+		ps_put_fds(task);
 		vm_free(task, 1);
 		return -ENOMEM;
 	}
@@ -143,10 +150,6 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->tgid = task->psid;
 	task->ppid = task->psid;
 	task->exit_signal = SIGCHLD;
-	task->fds = vm_alloc(1);
-	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
-	memset(task->fds, 0, PAGE_SIZE);
-	mutex_init(&task->fd_lock);
 	task->magic = 0xdeadbeef;
 
 	task_init_selectors(task);
@@ -171,24 +174,113 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
  * Static helpers — file-descriptor duplication
  */
 
-void ps_dup_fds(task_struct *cur, task_struct *task)
+static task_files *ps_alloc_files(void)
 {
-	int i;
-	memset(task->fds, 0, PAGE_SIZE);
-	memset(task->fd_cloexec, 0, FD_BITMAP_WORDS * sizeof(unsigned long));
-	mutex_lock(&cur->fd_lock);
-	for (i = 0; i < MAX_FD; i++) {
-		if (!cur->fds[i])
-			continue;
-		task->fds[i] = cur->fds[i];
-		fs_get_file(cur->fds[i]);
-		if (fd_bitmap_test(cur->fd_cloexec, i))
-			fd_bitmap_set(task->fd_cloexec, i);
+	task_files *files = zalloc(sizeof(*files));
+
+	if (!files)
+		return NULL;
+	files->fds = vm_alloc(1);
+	if (!files->fds) {
+		kfree(files);
+		return NULL;
 	}
-	mutex_unlock(&cur->fd_lock);
+	memset(files->fds, 0, PAGE_SIZE);
+	files->refs = 1;
+	mutex_init(&files->lock);
+	return files;
 }
 
-int do_vfork(unsigned long child_stack);
+static void ps_attach_files(task_struct *task, task_files *files)
+{
+	task->files = files;
+	task->fds = files ? files->fds : NULL;
+	task->fd_cloexec = files ? files->cloexec : NULL;
+}
+
+static int ps_init_fds(task_struct *task)
+{
+	task_files *files = ps_alloc_files();
+
+	if (!files)
+		return -ENOMEM;
+	ps_attach_files(task, files);
+	return 0;
+}
+
+static task_files *ps_copy_files(task_files *old)
+{
+	task_files *files = ps_alloc_files();
+	int i;
+
+	if (!files)
+		return NULL;
+	mutex_lock(&old->lock);
+	for (i = 0; i < MAX_FD; i++) {
+		if (!old->fds[i])
+			continue;
+		files->fds[i] = old->fds[i];
+		fs_get_file(old->fds[i]);
+	}
+	memcpy(files->cloexec, old->cloexec, sizeof(files->cloexec));
+	mutex_unlock(&old->lock);
+	return files;
+}
+
+int ps_dup_fds(task_struct *cur, task_struct *task, int share)
+{
+	task_files *files;
+
+	if (share) {
+		files = cur->files;
+		__sync_add_and_fetch(&files->refs, 1);
+	} else {
+		files = ps_copy_files(cur->files);
+		if (!files)
+			return -ENOMEM;
+	}
+	ps_attach_files(task, files);
+	return 0;
+}
+
+static void ps_release_files(task_files *files)
+{
+	int i;
+
+	if (!files || __sync_sub_and_fetch(&files->refs, 1) != 0)
+		return;
+	for (i = 0; i < MAX_FD; i++) {
+		if (files->fds[i])
+			fs_put_file(files->fds[i]);
+	}
+	vm_free(files->fds, 1);
+	kfree(files);
+}
+
+void ps_put_fds(task_struct *task)
+{
+	task_files *files = task->files;
+
+	ps_attach_files(task, NULL);
+	ps_release_files(files);
+}
+
+int ps_unshare_fds(task_struct *task)
+{
+	task_files *old = task->files;
+	task_files *files;
+
+	if (old->refs == 1)
+		return 0;
+	files = ps_copy_files(old);
+	if (!files)
+		return -ENOMEM;
+	ps_attach_files(task, files);
+	ps_release_files(old);
+	return 0;
+}
+
+int do_vfork(unsigned long child_stack, int share_files);
 
 /*
  * Static helpers — COW user address-space duplication
@@ -371,6 +463,8 @@ task_struct *fork_alloc_child(task_struct *cur)
 
 	smp_fpu_save(cur);
 	*task = *cur;
+	task->cancel_io_wait = NULL;
+	task->io_wait = NULL;
 	task->robust_list_head = NULL;
 	*task_intr_frame = *cur_intr_frame;
 
@@ -380,7 +474,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 		task->remain_ticks = cur->remain_ticks;
 	task->psid = ps_id_gen();
 	task->tgid = cur->tgid;
-	mutex_init(&task->fd_lock);
+	ps_attach_files(task, NULL);
 
 	task_init_selectors(task);
 	task->tss.eax = 0;
@@ -555,9 +649,8 @@ static int do_fork(void)
 	task->tgid = task->psid;
 	task->exit_signal = SIGCHLD;
 
-	task->fds = vm_alloc(1);
-	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
-	ps_dup_fds(cur, task);
+	if (ps_dup_fds(cur, task, 0) != 0)
+		return -ENOMEM;
 	copy_page_range(cur, task);
 	ps_enqueue_child_first(cur, task);
 	cur_intr_frame->eax = task->psid;
@@ -572,7 +665,7 @@ static int do_fork(void)
  * The child does NOT own page_dir or vm — cleanup() and do_exit() detect
  * FORK_FLAG_VFORK and skip the destroy/unmap paths for those resources.
  */
-int do_vfork(unsigned long child_stack)
+int do_vfork(unsigned long child_stack, int share_files)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =
@@ -602,9 +695,8 @@ int do_vfork(unsigned long child_stack)
 		task_intr_frame->esp = (void *)child_stack;
 	}
 
-	task->fds = vm_alloc(1);
-	task->fd_cloexec = zalloc(FD_BITMAP_WORDS * sizeof(unsigned long));
-	ps_dup_fds(cur, task);
+	if (ps_dup_fds(cur, task, share_files) != 0)
+		return -ENOMEM;
 	cond_init(&task->vfork_event, 1);
 	ps_enqueue_child_first(cur, task);
 	cond_wait(&task->vfork_event, 0);
@@ -624,5 +716,5 @@ int sys_vfork()
 {
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vfork()\n");
-	return do_vfork(0);
+	return do_vfork(0, 0);
 }

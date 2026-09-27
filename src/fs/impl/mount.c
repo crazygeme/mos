@@ -87,15 +87,11 @@ static super_block *stub_get_sb(const char *dev, const char *target, int flags,
 /* "proc" is registered by src/proc/procfs.c (KERNEL_INIT 4) with a real get_sb */
 /* "ext4"/"ext3" are registered by src/fs/root.c (KERNEL_INIT 3) */
 
-static fs_type sysfs_fs_type = { .name = "sysfs", .get_sb = stub_get_sb };
 static fs_type devtmpfs_fs_type = { .name = "devtmpfs", .get_sb = stub_get_sb };
 static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
 
 static void mount_syscall_init(void)
 {
-	printk("mnt: registered sysfs file type\n");
-	fs_register_type(&sysfs_fs_type);
-
 	printk("mnt: registered devtmpfs file type\n");
 	fs_register_type(&devtmpfs_fs_type);
 

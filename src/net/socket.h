@@ -70,6 +70,7 @@ struct sockaddr_in {
 };
 
 #define UNIX_PATH_MAX 108
+#define UNIX_KEY_MAX (2 * UNIX_PATH_MAX + 2)
 
 struct sockaddr_un {
 	sa_family_t sun_family; /* AF_UNIX */
@@ -131,6 +132,7 @@ struct ifconf {
 
 /* ── SOL_SOCKET option names (Linux i386 values) ────────────────────────────── */
 #define SO_REUSEADDR 2 /* allow local address reuse */
+#define SO_PEERCRED 17
 #define SO_TYPE 3 /* get socket type */
 #define SO_ERROR 4 /* get error status and clear */
 #define SO_BROADCAST 6 /* permit sending of broadcast msgs */
@@ -185,6 +187,7 @@ struct in_pktinfo {
 };
 
 /* SOL_SOCKET ancillary types used by AF_UNIX fd passing */
+#define SCM_CREDENTIALS 2
 #define SCM_RIGHTS 1
 
 #define CMSG_ALIGN(len) (((len) + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1))
@@ -268,6 +271,12 @@ typedef struct _sock_waiter {
 	int queued;
 } sock_waiter;
 
+typedef struct {
+	int pid;
+	unsigned uid;
+	unsigned gid;
+} unix_peercred;
+
 typedef struct _mos_sock {
 	int domain;
 	int type;
@@ -327,6 +336,9 @@ typedef struct _mos_sock {
 
 	/* AF_UNIX socketpair: pointer to the other end, or NULL if closed */
 	struct _mos_sock *unix_peer;
+	unix_peercred unix_listener_cred;
+	unix_peercred unix_peer_cred;
+	int unix_peer_cred_valid;
 	unsigned unix_shutdown; /* UNIX_SHUT_* directions; peer retained until close */
 
 	/*
@@ -334,7 +346,7 @@ typedef struct _mos_sock {
 	 * Empty string for anonymous sockets (socketpair, accepted sockets
 	 * where only the server side carries the listener's name for getpeer).
 	 */
-	char unix_path[UNIX_PATH_MAX];
+	char unix_path[UNIX_KEY_MAX];
 
 	/*
 	 * AF_UNIX listen: queue of server-side mos_sock* ready for accept().

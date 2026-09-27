@@ -208,6 +208,7 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 	if (nfds > 0) {
 		entries = zalloc(sizeof(*entries) * nfds * 2);
 		poll_table_init(&ctx.wait, CURRENT_TASK(), entries, nfds * 2);
+		ctx.wait.entries_owned = 1;
 	} else {
 		poll_table_init(&ctx.wait, CURRENT_TASK(), NULL, 0);
 	}
@@ -250,6 +251,7 @@ int do_ppoll(struct pollfd *fds, unsigned nfds,
 		if (!entries)
 			return -ENOMEM;
 		poll_table_init(&ctx.wait, cur, entries, nfds * 2);
+		ctx.wait.entries_owned = 1;
 	} else {
 		poll_table_init(&ctx.wait, cur, NULL, 0);
 	}

@@ -87,7 +87,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	kfree(task->user);
 	kfree(task->signal);
 	kfree(task->stats);
-	kfree(task->fd_cloexec);
+	ps_put_fds(task);
 	kfree(task->io_bitmap);
 	vm_free(task, 1);
 }
@@ -155,15 +155,8 @@ static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
 
 static void close_fp_callback(task_struct *task, void *ctx)
 {
-	int i;
 	(void)ctx;
-	for (i = 0; i < MAX_FD; i++) {
-		if (task->fds == NULL)
-			continue;
-		if (task->fds[i] == NULL)
-			continue;
-		fs_put_file(task->fds[i]);
-	}
+	ps_put_fds(task);
 }
 
 static void system_down(int process)
@@ -213,26 +206,29 @@ out:
 	spinlock_unlock(&ps_lock, irq);
 }
 
+static void ps_cancel_io_wait(task_struct *task)
+{
+	/* Detach I/O waiters before closing files or freeing the kernel stack. */
+	if (task->cancel_io_wait) {
+		void (*cancel)(void *) = task->cancel_io_wait;
+		void *wait = task->io_wait;
+		task->cancel_io_wait = NULL;
+		task->io_wait = NULL;
+		cancel(wait);
+	}
+}
+
 static void ps_reap_group_thread(task_struct *task)
 {
-	int i;
-
 	if (!task)
 		return;
+
+	ps_cancel_io_wait(task);
 
 	ps_clear_child_tid(task);
 	ps_release_robust_list(task);
 
-	if (task->fds) {
-		for (i = 0; i < MAX_FD; i++) {
-			if (!task->fds[i])
-				continue;
-			fs_put_file(task->fds[i]);
-			task->fds[i] = NULL;
-		}
-		vm_free(task->fds, 1);
-		task->fds = NULL;
-	}
+	ps_put_fds(task);
 
 	ps_reap_task(task, NULL);
 }
@@ -323,7 +319,6 @@ void ps_kill_thread_group(task_struct *leader)
 void do_exit(unsigned encoded_status)
 {
 	task_struct *cur = CURRENT_TASK();
-	int i;
 
 	cur->exit_status = encoded_status;
 	if (!(cur->fork_flag & FORK_FLAG_THREAD))
@@ -338,6 +333,7 @@ void do_exit(unsigned encoded_status)
 		cur->user->vm = NULL;
 	}
 
+	ps_cancel_io_wait(cur);
 	ps_clear_child_tid(cur);
 	ps_release_robust_list(cur);
 
@@ -346,14 +342,7 @@ void do_exit(unsigned encoded_status)
 		vm_flush_all_dirty(cur->user->vm);
 	}
 
-	for (i = 0; i < MAX_FD; i++) {
-		if (cur->fds[i])
-			fs_close(i);
-	}
-	vm_free(cur->fds, 1);
-	cur->fds = NULL;
-	kfree(cur->fd_cloexec);
-	cur->fd_cloexec = NULL;
+	ps_put_fds(cur);
 
 	if (cur->psid == 0) {
 		printk("fatal error! process 0 exit\n");

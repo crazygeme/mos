@@ -54,3 +54,23 @@ printf 'new\n' > "$TARGET"
 Actual: test -e failed"
 [ "$(cat "$SYM" 2>/dev/null)" = "new" ] || fail "Expected: symlink contents 'new'
 Actual: '$(cat "$SYM" 2>/dev/null)'"
+
+# Resolve each relative target against the directory of its own link.
+ln -s target.txt "$DIR/middle" || fail "relative middle link creation failed"
+ln -s middle "$DIR/chain" || fail "relative chain creation failed"
+[ "$(cat "$DIR/chain")" = "new" ] || fail "relative chain read failed"
+printf 'updated\n' > "$DIR/chain"
+[ "$(cat "$TARGET")" = "updated" ] || fail "relative chain write failed"
+
+mkdir -p "$BASE/other" || fail "secondary directory creation failed"
+ln -s ../dir/middle "$BASE/other/chain" || fail "cross-directory link creation failed"
+[ "$(cat "$BASE/other/chain")" = "updated" ] || fail "cross-directory chain read failed"
+ln -s "$DIR/middle" "$DIR/absolute-chain" || fail "absolute chain creation failed"
+[ "$(cat "$DIR/absolute-chain")" = "updated" ] || fail "absolute-to-relative chain read failed"
+
+ln -s absent "$DIR/dangling-middle" || fail "dangling middle link creation failed"
+ln -s dangling-middle "$DIR/dangling-chain" || fail "dangling chain creation failed"
+expect_failure cat "$DIR/dangling-chain"
+ln -s loop-b "$DIR/loop-a" || fail "loop link creation failed"
+ln -s loop-a "$DIR/loop-b" || fail "loop link creation failed"
+expect_failure cat "$DIR/loop-a"

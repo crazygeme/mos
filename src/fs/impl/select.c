@@ -127,6 +127,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	if (nfds > 0) {
 		entries = zalloc(sizeof(*entries) * nfds * 2);
 		poll_table_init(&ctx.wait, cur, entries, nfds * 2);
+		ctx.wait.entries_owned = 1;
 	} else {
 		poll_table_init(&ctx.wait, cur, NULL, 0);
 	}

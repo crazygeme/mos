@@ -12,9 +12,76 @@
 #include <lib/cyclebuf.h>
 #include <lib/klib.h>
 #include <config.h>
+#include <fs/fs.h>
+#include <int/int.h>
+#include <int/dsr.h>
+#include <ps/ps.h>
 #include <test/test.h>
 
 /* ── create / destroy ────────────────────────────────────────────── */
+
+struct deferred_poll_test {
+	cy_buf *buf;
+	task_struct *consumer;
+	int own_stack;
+	int completed;
+	int written;
+};
+
+static void deferred_poll_write(void *param)
+{
+	struct deferred_poll_test *ctx = param;
+	unsigned char byte = 0x08;
+
+	ctx->own_stack = current != ctx->consumer &&
+			 current->status == ps_running;
+	ctx->written = cyb_putbuf(ctx->buf, &byte, 1, 0, 0);
+	ctx->completed = 1;
+}
+
+KTEST(cyclebuf, deferred_notify_poll)
+{
+	struct deferred_poll_test *ctx = kmalloc(sizeof(*ctx));
+	poll_table wait;
+	poll_table_entry entry;
+	unsigned irq;
+	int queued, needs_schedule;
+
+	ASSERT_NONNULL(ctx);
+	memset(ctx, 0, sizeof(*ctx));
+	ctx->buf = cyb_create(1);
+	ctx->consumer = current;
+	ASSERT_NONNULL(ctx->buf);
+	poll_table_init(&wait, current, &entry, 1);
+	cyb_poll_read(ctx->buf, &wait);
+
+	/* Queue the producer with the consumer already waiting. The callback
+	 * yields in cond_notify before publishing its poll wakeup. */
+	irq = int_intr_disable();
+	ps_prepare_timed_wait(current, 1000, __func__);
+	queued = dsr_add(deferred_poll_write, ctx);
+	needs_schedule = dsr_needs_schedule();
+	if (!queued)
+		ps_put_to_ready_queue(current);
+	task_sched();
+	ps_finish_timed_wait(current);
+	int_intr_setlevel(irq);
+	poll_table_cleanup(&wait);
+
+	EXPECT_TRUE(queued);
+	EXPECT_TRUE(needs_schedule);
+	EXPECT_TRUE(ctx->own_stack);
+	EXPECT_TRUE(ctx->completed);
+	EXPECT_EQ(ctx->written, 1);
+	EXPECT_EQ(cyb_get_buf_len(ctx->buf), 1);
+	/* A timed-out callback may still reference the context. */
+	if (!queued || ctx->completed) {
+		cyb_writer_close(ctx->buf);
+		cyb_reader_close(ctx->buf);
+		kfree(ctx);
+	}
+	return 0;
+}
 
 KTEST(cyclebuf, create_destroy)
 {

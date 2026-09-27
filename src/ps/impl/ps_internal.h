@@ -61,8 +61,8 @@ void ps_clear_child_tid(task_struct *task);
 void ps_release_robust_list(task_struct *task);
 
 /* Shared task-creation helpers. */
-void ps_dup_fds(task_struct *cur, task_struct *task);
-int do_vfork(unsigned long child_stack);
+int ps_dup_fds(task_struct *cur, task_struct *task, int share);
+int do_vfork(unsigned long child_stack, int share_files);
 task_struct *fork_alloc_child(task_struct *cur);
 void fork_dup_user_env(task_struct *cur, task_struct *task);
 void fork_dup_signal(task_struct *cur, task_struct *task);

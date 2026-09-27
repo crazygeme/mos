@@ -80,6 +80,7 @@ void kmain_startup()
 			continue;
 		ps_create(idle_process, (void *)i, ps_idle, ps_kernel);
 	}
+	dsr_start();
 	smp_start();
 
 	ps_kickoff();
@@ -111,8 +112,9 @@ static void run()
 
 static void parse_kernel_cmdline()
 {
-	char *cmd = g_cmdline;
+	char cmd[sizeof(g_cmdline)];
 	char *token, *end;
+	memcpy(cmd, g_cmdline, sizeof(cmd));
 	token = cmd;
 	memset(&TestControl, 0, sizeof(TestControl));
 
@@ -138,8 +140,8 @@ static void parse_kernel_cmdline()
 		SKIP_CHAR(end);
 		if (*token == '\0')
 			break;
-		*end = '\0';
-		end++;
+		if (*end != '\0')
+			*end++ = '\0';
 		if (strcmp(token, "verbose") == 0)
 			TestControl.verbose = TEST_LOG_INFO;
 		else if (strcmp(token, "verbose=0") == 0)

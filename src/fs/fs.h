@@ -80,6 +80,7 @@ typedef struct _poll_table {
 	unsigned nr;
 	unsigned cap;
 	int unsupported;
+	int entries_owned;
 	poll_table_entry *entries;
 } poll_table;
 
@@ -121,6 +122,8 @@ struct _inode {
 	uint32_t i_mode;
 	uint64_t i_ino;
 	uint64_t i_size;
+	uint32_t i_phys_base;
+	uint64_t i_phys_size; /* MMIO window; zero for ordinary files */
 	void *i_private;
 	void *i_pgcache_tag; /* stable address_space-style identity for page cache */
 
@@ -144,6 +147,7 @@ struct _file {
 	unsigned f_mode; /* O_RDONLY / O_WRONLY / O_RDWR (set by fs_open) */
 	unsigned f_flag; /* file status flags, including O_NONBLOCK */
 	unsigned f_state;
+	unsigned f_mount_flags;
 	int f_owner; /* async I/O owner set via fcntl(F_SETOWN) */
 	int f_sigio; /* signal number for async I/O (0 => SIGIO) */
 	char *f_name;
@@ -228,7 +232,7 @@ int fs_open(const char *path, int flag, umode_t mode);
 file *fs_open_file(const char *path, int flag, umode_t mode);
 int fs_put_file(file *f);
 int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
-int fs_install_fd_unsafe(file *fp, int flag); /* caller holds fd_lock */
+int fs_install_fd_unsafe(file *fp, int flag); /* caller holds files->lock */
 
 int fs_close(int fd);
 
@@ -236,9 +240,9 @@ int fs_read(int fd, unsigned offset, char *buf, unsigned len);
 
 int fs_write(int fd, unsigned offset, const char *buf, unsigned len);
 
-int fs_pread(int fd, unsigned offset, char *buf, unsigned len);
+int fs_pread(int fd, loff_t offset, char *buf, unsigned len);
 
-int fs_pwrite(int fd, unsigned offset, const char *buf, unsigned len);
+int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len);
 
 int fs_stat(const char *path, struct stat *s);
 
@@ -250,6 +254,7 @@ int fs_pipe(int *pipefd);
 
 int fs_dup(int fd);
 int fs_dup_from(int fd, int minfd);
+int fs_dup_from_flags(int fd, int minfd, int flags);
 
 int fs_dup2(int fd, int newfd);
 int fs_dup3(int fd, int newfd, int flags);

@@ -83,6 +83,7 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags);
 
 struct super_block;
 
+int unix_sockaddr(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen);
 int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen);
 int unix_listen(mos_sock *sk, int backlog);
 int unix_connect(mos_sock *sk, const struct sockaddr_un *addr,

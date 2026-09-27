@@ -68,3 +68,27 @@ Actual: exit status $rc
 Output: $(cat "$OUT" 2>/dev/null || printf '<none>')"
 output=$(cat "$OUT" 2>/dev/null) || fail "read output failed"
 expect_eq "hello, world" "$output" "compiled program output"
+
+# Static libc uses the ELF entry %edx as an optional exit callback.
+# A stale stack pointer there crashes after main and atexit handlers return.
+cat > "$SRC" <<'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+
+static void goodbye(void)
+{
+	puts("atexit called");
+}
+
+int main(void)
+{
+	if (atexit(goodbye) != 0)
+		return 1;
+	puts("static main");
+	return 0;
+}
+EOF
+expect_success gcc -static -o "$BIN" "$SRC"
+expect_success "$BIN"
+expect_eq "static main
+atexit called" "$output" "static program exit output"

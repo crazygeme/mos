@@ -253,6 +253,12 @@ USER: nop;
     movl %edx, %esp
     movl %edx, %ebp
     movl %ecx, %eax
+    /* i386 ELF entry: %edx is the dynamic linker's exit callback.
+     * There is no callback when entering a static executable (or ld.so).
+     * Do not leave the initial stack pointer here: libc registers any
+     * nonzero value with atexit and would jump into the stack on exit.
+     */
+    xorl %edx, %edx
     jmp *%eax
 
 

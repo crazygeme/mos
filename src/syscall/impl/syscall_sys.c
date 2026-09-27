@@ -542,10 +542,15 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 		}
 
 		mmflag |= PAGE_ENTRY_DPL_USER;
-		if (prot & PROT_WRITE)
-			mmflag |= PAGE_ENTRY_WRITABLE;
-		else
+		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
+		else {
+			vm_region *region = vm_find_map(cur->user->vm, vir);
+
+			/* Managed pages retain write faults for COW and dirty tracking. */
+			if (region && (region->vm_flags & VM_REGION_F_DIRECT_PHYS))
+				mmflag |= PAGE_ENTRY_WRITABLE;
+		}
 
 		mm_set_map_flag(vir, mmflag);
 	}

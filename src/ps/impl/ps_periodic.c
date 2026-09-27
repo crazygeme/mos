@@ -9,6 +9,7 @@
 
 #include <ps/ps.h>
 #include <hw/tty.h>
+#include <hw/vga.h>
 #include <hw/time.h>
 #include <lwip/timeouts.h>
 #include <lwip/netif.h>
@@ -28,7 +29,7 @@ static void ps_system_service_task(void *param)
 
 	for (;;) {
 		unsigned long long now = time_now_ms();
-		unsigned long long next_due = next_lwip_ms;
+		unsigned long long next_due;
 		unsigned sleep_ms;
 
 		if (now >= next_lwip_ms) {
@@ -40,14 +41,15 @@ static void ps_system_service_task(void *param)
 			} while (next_lwip_ms <= now);
 		}
 
-		if (now >= next_graphics_ms) {
+		if (fb_requires_flush() && now >= next_graphics_ms) {
 			tty_refresh_graphics();
 			do {
 				next_graphics_ms += GRAPHICS_REFRESH_MS;
 			} while (next_graphics_ms <= now);
 		}
 
-		if (next_graphics_ms < next_due)
+		next_due = next_lwip_ms;
+		if (fb_requires_flush() && next_graphics_ms < next_due)
 			next_due = next_graphics_ms;
 
 		now = time_now_ms();

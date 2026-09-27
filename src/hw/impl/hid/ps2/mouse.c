@@ -2,7 +2,6 @@
 #include <fs/fcntl.h>
 #include <fs/fs.h>
 #include <hw/mouse.h>
-#include <int/dsr.h>
 #include <int/int.h>
 #include <lib/cyclebuf.h>
 #include <lib/klib.h>
@@ -57,7 +56,6 @@ static mutex_t mouse_cmd_lock;
 static spinlock_t mouse_state_lock;
 static volatile int mouse_cmd_busy;
 static int mouse_present;
-static int mouse_dsr_armed;
 #define PS2MOUSE_MAX_FILES 8
 static file *mouse_files[PS2MOUSE_MAX_FILES];
 
@@ -71,8 +69,6 @@ static int mouse_expect_param;
 static unsigned char mouse_expect_param_cmd;
 static unsigned char mouse_last_sample[3];
 
-static void ps2mouse_dsr(void *param);
-
 static void mouse_queue_bytes(const unsigned char *buf, unsigned len)
 {
 	int irq;
@@ -83,7 +79,8 @@ static void mouse_queue_bytes(const unsigned char *buf, unsigned len)
 
 	if (!mouse_rxbuf || !buf || len == 0)
 		return;
-	cyb_putbuf(mouse_rxbuf, (unsigned char *)buf, len, 0, 0);
+	if (cyb_put_record(mouse_rxbuf, buf, len) != (int)len)
+		return;
 
 	spinlock_lock(&mouse_state_lock, &irq);
 	for (i = 0; i < PS2MOUSE_MAX_FILES; i++) {
@@ -249,23 +246,27 @@ static int ps2mouse_send_cmd_expect_ack(unsigned char cmd)
 static int ps2mouse_enable_irq12(void)
 {
 	unsigned char cfg;
+	unsigned irq = int_intr_disable();
+	int ret = -ETIMEDOUT;
 
+	/* Bootstrap runs before AP startup. The controller configuration reply
+	 * uses the keyboard data channel; IRQ1 must not consume it as input. */
 	if (i8042_write_cmd(I8042_CMD_ENABLE_AUX) < 0)
-		return -ETIMEDOUT;
+		goto out;
 	if (i8042_write_cmd(I8042_CMD_READ_CONFIG) < 0)
-		return -ETIMEDOUT;
+		goto out;
 	if (i8042_read_data(&cfg, I8042_WAIT_SPINS) < 0)
-		return -ETIMEDOUT;
+		goto out;
 
 	cfg |= I8042_CFG_IRQ12;
 	cfg &= ~I8042_CFG_AUX_CLOCK_DISABLE;
 
 	if (i8042_write_cmd(I8042_CMD_WRITE_CONFIG) < 0)
-		return -ETIMEDOUT;
-	if (i8042_write_data(cfg) < 0)
-		return -ETIMEDOUT;
-
-	return 0;
+		goto out;
+	ret = i8042_write_data(cfg);
+out:
+	int_intr_setlevel(irq);
+	return ret;
 }
 
 static void mouse_track_sample_rate_locked(unsigned char rate)
@@ -311,33 +312,20 @@ static void ps2mouse_process_byte(unsigned char data)
 		mouse_queue_bytes(packet, packet_len);
 }
 
+/* Drain the controller before interrupt exit. Packet publication and wakeups
+ * do not schedule; command replies are owned by the command path. */
 static void ps2mouse_irq(intr_frame *frame)
 {
+	unsigned budget = 64;
 	(void)frame;
 
-	if (mouse_cmd_busy)
-		return;
-
-	if (!mouse_dsr_armed) {
-		mouse_dsr_armed = 1;
-		if (!dsr_add(ps2mouse_dsr, NULL))
-			mouse_dsr_armed = 0;
-	}
-}
-
-static void ps2mouse_dsr(void *param)
-{
-	(void)param;
-	mouse_dsr_armed = 0;
-
-	while (!mouse_cmd_busy) {
+	while (!mouse_cmd_busy && budget--) {
 		unsigned char st = port_read_byte(I8042_STATUS);
 
 		if ((st & (I8042_STATUS_OBF | I8042_STATUS_AUX)) !=
 		    (I8042_STATUS_OBF | I8042_STATUS_AUX))
 			break;
-		unsigned char data = port_read_byte(I8042_DATA);
-		ps2mouse_process_byte(data);
+		ps2mouse_process_byte(port_read_byte(I8042_DATA));
 	}
 }
 

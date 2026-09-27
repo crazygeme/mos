@@ -184,13 +184,18 @@ void cond_reset(cond_t *s)
 }
 
 /* Fire the event: clear the lock and wake one sleeping waiter. */
-void cond_notify(cond_t *s)
+void cond_notify_nosched(cond_t *s)
 {
 	int irq;
 	spinlock_lock(&s->base.wait_lock, &irq);
 	/* lock_base_release_locked clears the lock then wakes one waiter. */
 	lock_base_release_locked((lock_base *)&s->base);
 	spinlock_unlock(&s->base.wait_lock, irq);
+}
+
+void cond_notify(cond_t *s)
+{
+	cond_notify_nosched(s);
 	/* Yield with the notifier still runnable. */
 	task_sched();
 }

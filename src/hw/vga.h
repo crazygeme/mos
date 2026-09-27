@@ -69,6 +69,8 @@ void fb_delete_lines_px(unsigned row, unsigned bot_row, unsigned n);
 void fb_clear_screen(void);
 void fb_change_font(const char *name);
 void fb_sync_mode(void);
+/* Nonzero when mapped framebuffer writes require an explicit update. */
+int fb_requires_flush(void);
 void fb_flush(void);
 void fb_get_phys_window(unsigned *phys, unsigned *size);
 unsigned fb_snapshot_size(void);

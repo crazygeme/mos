@@ -139,6 +139,19 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 
 	page_fault_file++;
 
+	if (f->f_fop && f->f_fop->map_page) {
+		paddr_t phy = f->f_fop->map_page(f, (unsigned)offset);
+		unsigned pte = PAGE_ENTRY_USER_CODE;
+		if (!phy)
+			goto FAIL;
+		if (prot & PROT_WRITE)
+			pte |= PAGE_ENTRY_WRITABLE;
+		if (mm_map_page(address, phy, pte) != 1)
+			goto FAIL;
+		arch_mm_invalidate(address);
+		return 1;
+	}
+
 	/*
 	 * /dev/mem must map the requested physical page directly.  Treating it
 	 * like an ordinary file-backed mapping would populate a cached RAM page

@@ -561,6 +561,7 @@ static const file_operations tmpfs_file_fops = {
 	.read_page = tmpfs_file_read_page,
 	.write_page = tmpfs_file_write_page,
 	.ftruncate = tmpfs_file_ftruncate,
+	.unlink_preserves_open = 1,
 };
 
 /* ── Directory inode/file operations ─────────────────────────────────────── */

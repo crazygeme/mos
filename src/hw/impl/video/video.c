@@ -82,6 +82,11 @@ void fb_sync_mode(void)
 		active_fb_drv->sync_mode();
 }
 
+int fb_requires_flush(void)
+{
+	return active_fb_drv && active_fb_drv->flush;
+}
+
 void fb_flush(void)
 {
 	if (active_fb_drv && active_fb_drv->flush)

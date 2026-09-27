@@ -1513,7 +1513,7 @@ void tty_active_kb_put(unsigned char c)
 		}
 	}
 
-	cyb_putbuf(t->kb_buf, &c, 1, 0, 0);
+	cyb_put_record(t->kb_buf, &c, 1);
 }
 
 int tty_active_kb_mode(void)
@@ -1740,6 +1740,9 @@ void tty_refresh_graphics(void)
 	int irq;
 	int need_queue = 0;
 
+	if (!fb_requires_flush())
+		return;
+
 	spinlock_lock(&tty_switch_lock, &irq);
 	if (this_ttys && this_ttys->kd_mode == KD_GRAPHICS &&
 	    !tty_graphics_refresh_pending &&
@@ -1924,7 +1927,7 @@ static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
 		*(unsigned char *)buf = KB_101;
 		return 0;
 	case KDGETLED:
-		*(int *)buf = state->kb_leds;
+		*(unsigned char *)buf = (unsigned char)(state->kb_leds & 7);
 		return 0;
 	case KDSETLED:
 		state->kb_leds = (int)(uintptr_t)buf;

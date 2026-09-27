@@ -328,3 +328,34 @@ KTEST(cyclebuf, getbuf_partial_read)
 	cyb_reader_close(b);
 	return 0;
 }
+
+/* A rejected packet must not publish a prefix; accepted packets may wrap. */
+KTEST(cyclebuf, record_overflow_and_wrap)
+{
+	cy_buf *b = cyb_create(1);
+	unsigned char *fill = kmalloc(PAGE_SIZE);
+	unsigned char packet[4] = { 0x08, 0x11, 0x22, 0x00 };
+	unsigned char got[4];
+	unsigned i;
+
+	ASSERT_NONNULL(b);
+	ASSERT_NONNULL(fill);
+	memset(fill, 0x5a, PAGE_SIZE);
+	EXPECT_EQ(cyb_put_record(b, fill, PAGE_SIZE - 2), PAGE_SIZE - 2);
+	EXPECT_EQ(cyb_put_record(b, packet, sizeof(packet)), 0);
+	EXPECT_EQ(cyb_get_buf_len(b), PAGE_SIZE - 2);
+	EXPECT_EQ(cyb_getbuf(b, fill, PAGE_SIZE, 0, 0), PAGE_SIZE - 2);
+	for (i = 0; i < PAGE_SIZE - 2; i++) {
+		if (fill[i] != 0x5a)
+			break;
+	}
+	EXPECT_EQ(i, PAGE_SIZE - 2);
+	EXPECT_EQ(cyb_put_record(b, packet, sizeof(packet)), sizeof(packet));
+	EXPECT_EQ(cyb_getbuf(b, got, sizeof(got), 0, 0), sizeof(got));
+	EXPECT_EQ(memcmp(got, packet, sizeof(packet)), 0);
+	EXPECT_TRUE(cyb_isempty(b));
+	kfree(fill);
+	cyb_writer_close(b);
+	cyb_reader_close(b);
+	return 0;
+}

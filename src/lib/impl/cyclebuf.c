@@ -122,6 +122,35 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 	return (int)written;
 }
 
+/* Publish complete records before waking readers, without scheduling. */
+int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len)
+{
+	unsigned i;
+	int irq, notify;
+
+	if (!len)
+		return 0;
+	spinlock_lock(&b->lock, &irq);
+	if (len > b->buf_size - b->length) {
+		spinlock_unlock(&b->lock, irq);
+		return 0;
+	}
+	notify = b->length == 0;
+	for (i = 0; i < len; i++) {
+		b->buf[b->write_idx] = buf[i];
+		b->write_idx = (b->write_idx + 1) % b->buf_size;
+	}
+	b->length += len;
+	if (b->length == b->buf_size)
+		cond_reset(&b->write_event);
+	spinlock_unlock(&b->lock, irq);
+	if (notify) {
+		cond_notify_nosched(&b->read_event);
+		cyb_notify_poll(b, 1);
+	}
+	return (int)len;
+}
+
 /*
  * Read path
  */

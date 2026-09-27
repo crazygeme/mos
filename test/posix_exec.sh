@@ -93,3 +93,54 @@ rc=$?
 set -e
 [ "$rc" -eq 23 ] || fail "Expected: shebang passes script path as argv[1]
 Actual: ${rc}"
+
+# execve rejects invalid ELF and missing interpreters without replacing the caller.
+printf 'int main(void) { return 0; }\n' > "$SRC"
+expect_success gcc -fPIE -pie -Wl,--dynamic-linker=/nonexistent/mos-test-ld -o "$BASE/missing-interp" "$SRC"
+cat > "$SRC" <<'EOF'
+#include <elf.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static int rejected(const char *path, int error)
+{
+	char *args[] = { (char *)path, NULL };
+	char *env[] = { NULL };
+	int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	if (fd < 0) return 1;
+	int result = execve(path, args, env);
+	int saved_errno = errno;
+	int alive = fcntl(fd, F_GETFD);
+	close(fd);
+	return result != -1 || saved_errno != error || alive < 0;
+}
+
+int main(int argc, char **argv)
+{
+	Elf32_Ehdr h = {0};
+	if (argc != 3) return 1;
+	memcpy(h.e_ident, ELFMAG, SELFMAG);
+	h.e_ident[EI_CLASS] = ELFCLASS32;
+	h.e_ident[EI_DATA] = ELFDATA2LSB;
+	h.e_ident[EI_VERSION] = EV_CURRENT;
+	h.e_type = ET_EXEC;
+	h.e_machine = EM_386;
+	h.e_version = EV_CURRENT;
+	h.e_ehsize = sizeof(h);
+	h.e_phoff = sizeof(h);
+	h.e_phentsize = sizeof(Elf32_Phdr);
+	h.e_phnum = 1;
+	int fd = open(argv[1], O_CREAT | O_TRUNC | O_WRONLY, 0700);
+	if (fd < 0 || write(fd, &h, sizeof(h)) != sizeof(h)) return 2;
+	close(fd);
+	if (rejected(argv[1], ENOEXEC)) return 3;
+	if (rejected(argv[2], ENOENT)) return 4;
+	puts("exec errors preserved caller");
+	return 0;
+}
+EOF
+expect_success gcc -fno-pie -no-pie -o "$BIN" "$SRC"
+expect_success "$BIN" "$BASE/invalid-elf" "$BASE/missing-interp"

@@ -6,35 +6,25 @@
 #include <lib/klib.h>
 #include <macro.h>
 #include <mm/mmu.h>
-#include <ext4.h>
+#include <errno.h>
+#include <fs/cache.h>
+
+/* Main PIE images occupy the executable area below the mmap/heap limit. */
+#define ELF_PIE_BIAS 0x08000000U
 
 /* Round x up to the nearest page boundary. */
 #define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & PAGE_SIZE_MASK)
 
-/*
- * elf_read - read bytes from an ELF file at a given offset
- *
- * Seeks to @off in the underlying ext4 file and reads @len bytes into @buf.
- *
- * Returns the number of bytes actually read, or a negative value on error.
- */
+/* Read file bytes without changing the shared file position. */
 static int elf_read(file *fp, unsigned off, void *buf, int len)
 {
-	size_t rcnt;
-	int ret = -1;
-
-	ret = ext4_fseek(fp->f_inode->i_private, off, SEEK_SET);
-	if (ret != EOK)
-		goto DONE;
-
-	ret = ext4_fread(fp->f_inode->i_private, buf, len, &rcnt);
-	if (ret != EOK)
-		goto DONE;
-
-	ret = (int)rcnt;
-DONE:
-
-	return ret;
+	loff_t pos = off;
+	if (!fp || !fp->f_fop || !fp->f_fop->read)
+		return -ENOEXEC;
+	/* Internal ELF reads use cached pages without per-read atime updates. */
+	if (fp->f_inode && fp->f_inode->i_pgcache_tag && fp->f_fop->read_page)
+		return fs_page_cache_read(fp, buf, len, &pos);
+	return fp->f_fop->read(fp, buf, len, &pos);
 }
 
 /* Translate ELF segment permission flags (PF_R/PF_W/PF_X) to mmap PROT_*. */
@@ -238,342 +228,215 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 	}
 }
 
-/*
- * elf_read_interp - read the PT_INTERP segment into @path
- *
- * The PT_INTERP segment contains the NUL-terminated path of the dynamic
- * linker (e.g. "/lib/ld-linux.so.2").  Returns non-zero on success.
- */
-static int elf_read_interp(file *fp, Elf32_Phdr *phdr, char *path)
-{
-	unsigned off = phdr->p_offset;
-	unsigned size = phdr->p_filesz;
-	return (elf_read(fp, off, path, size) >= 0);
-}
+/* Metadata and file references are private to one exec operation. */
+struct elf_image {
+	file *fp;
+	Elf32_Ehdr header;
+	Elf32_Phdr *phdrs;
+	unsigned span;
+	struct elf_image *interpreter;
+};
 
-/*
- * elf_find_interp - scan the program header table for a PT_INTERP entry
- *
- * Iterates over all @num program headers starting at file offset
- * @table_offset (each @size bytes wide).  When PT_INTERP is found its
- * content is read into @path.
- *
- * Returns 1 if an interpreter path was found and read, 0 otherwise.
- */
-static int elf_find_interp(file *fp, unsigned table_offset, unsigned size,
-			   unsigned num, char *path)
+/* Validate the complete load description before replacing the process image. */
+static int elf_validate(elf_image *image, char *interp)
 {
-	int i;
-	for (i = 0; i < num; i++) {
-		unsigned head_offset = table_offset + i * size;
-		Elf32_Phdr phdr;
-		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type == PT_INTERP)
-			return elf_read_interp(fp, &phdr, path);
-	}
-	return 0;
-}
+	file *fp = image->fp;
+	Elf32_Ehdr *elf = &image->header;
+	struct stat st;
+	unsigned i, table_end;
+	int entry_found = 0, headers_mapped = 0;
 
-/*
- * elf_map_programs - map all PT_LOAD segments of a static/plain executable.
- *
- * Each PT_LOAD segment is loaded via elf_load_segment(), which correctly
- * handles the file/BSS split.  fmt->start_brk is set to the page-aligned
- * ceiling of the highest BSS address so the process's initial brk is just
- * past the BSS.
- */
-static unsigned elf_map_programs(file *fp, unsigned table_offset, unsigned size,
-				 unsigned num, mos_binfmt *fmt)
-{
-	int i;
-	unsigned last_bss = 0;
-
-	for (i = 0; i < num; i++) {
-		unsigned head_offset = table_offset + i * size;
-		Elf32_Phdr phdr;
-		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type != PT_LOAD)
+	if (!fp || !fp->f_fop || !fp->f_fop->getattr ||
+	    fp->f_fop->getattr(fp, &st) != 0)
+		return -ENOENT;
+	if (elf_read(fp, 0, elf, sizeof(*elf)) != sizeof(*elf) ||
+	    memcmp(elf->e_ident, "\177ELF", 4) ||
+	    elf->e_ident[EI_CLASS] != ELFCLASS32 ||
+	    elf->e_ident[EI_DATA] != ELFDATA2LSB ||
+	    elf->e_ident[EI_VERSION] != EV_CURRENT ||
+	    elf->e_version != EV_CURRENT || elf->e_machine != EM_386 ||
+	    (elf->e_type != ET_EXEC && elf->e_type != ET_DYN) ||
+	    (elf->e_type == ET_EXEC && !elf->e_entry) ||
+	    elf->e_ehsize != sizeof(*elf) ||
+	    elf->e_phentsize != sizeof(Elf32_Phdr) || !elf->e_phnum)
+		return -ENOEXEC;
+	table_end = elf->e_phoff + elf->e_phnum * sizeof(Elf32_Phdr);
+	if (table_end < elf->e_phoff || table_end > st.st_size)
+		return -ENOEXEC;
+	image->phdrs = kmalloc(table_end - elf->e_phoff);
+	if (!image->phdrs)
+		return -ENOMEM;
+	if (elf_read(fp, elf->e_phoff, image->phdrs,
+		     table_end - elf->e_phoff) != table_end - elf->e_phoff)
+		return -ENOEXEC;
+	interp[0] = 0;
+	for (i = 0; i < elf->e_phnum; i++) {
+		Elf32_Phdr ph = image->phdrs[i];
+		if (ph.p_type != PT_LOAD && ph.p_type != PT_INTERP)
 			continue;
-
-		elf_load_segment(fp, &phdr, 0);
-
-		unsigned k = phdr.p_vaddr + phdr.p_memsz;
-		if (k > last_bss)
-			last_bss = k;
+		if (ph.p_offset > st.st_size ||
+		    ph.p_filesz > st.st_size - ph.p_offset)
+			return -ENOEXEC;
+		if (ph.p_type == PT_INTERP) {
+			if (interp[0] || ph.p_filesz < 2 || ph.p_filesz > MAX_PATH ||
+			    elf_read(fp, ph.p_offset, interp, ph.p_filesz) != ph.p_filesz ||
+			    interp[0] != '/' || interp[ph.p_filesz - 1] != 0)
+				return -ENOEXEC;
+			continue;
+		}
+		if (ph.p_filesz > ph.p_memsz || ph.p_vaddr >= USER_ZONE_END ||
+		    ph.p_memsz > USER_ZONE_END - ph.p_vaddr ||
+		    (ph.p_vaddr & (PAGE_SIZE - 1)) != (ph.p_offset & (PAGE_SIZE - 1)) ||
+		    (ph.p_align > 1 && ((ph.p_align & (ph.p_align - 1)) ||
+		     (ph.p_vaddr - ph.p_offset) % ph.p_align)))
+			return -ENOEXEC;
+		if (PAGE_ALIGN_UP(ph.p_vaddr + ph.p_memsz) > image->span)
+			image->span = PAGE_ALIGN_UP(ph.p_vaddr + ph.p_memsz);
+		if (elf->e_phoff >= ph.p_offset &&
+		    table_end - ph.p_offset <= ph.p_filesz)
+			headers_mapped = 1;
+		if ((ph.p_flags & PF_X) && elf->e_entry >= ph.p_vaddr &&
+		    elf->e_entry - ph.p_vaddr < ph.p_memsz)
+			entry_found = 1;
 	}
-
-	if (fmt)
-		fmt->start_brk = PAGE_ALIGN_UP(last_bss);
-
-	return 1;
+	if ((interp[0] || elf->e_type == ET_DYN) && !headers_mapped)
+		return -ENOEXEC;
+	return entry_found ? 0 : -ENOEXEC;
 }
 
-/*
- * elf_map_elf_hdr - map segments and record auxiliary info for the dynamic case.
- *
- * When the executable has a dynamic linker (PT_INTERP), the kernel must pass
- * certain ELF metadata to the dynamic linker via the auxiliary vector.  This
- * function:
- *   - Records the program-header count (e_phnum), the within-page offset of
- *     the phdr table (e_phoff), and the load address of the first page
- *     (elf_load_addr) into @fmt — the dynamic linker reads these via AT_PHDR,
- *     AT_PHNUM, etc.
- *   - Maps every PT_LOAD segment via elf_load_segment().
- *
- * PT_PHDR, when present, describes where the program header table itself is
- * mapped, which is how we derive the base load address.
- */
-static unsigned elf_map_elf_hdr(file *fp, unsigned table_offset, unsigned size,
-				unsigned num, mos_binfmt *fmt)
+void elf_release(elf_image *image)
 {
-	int i;
-	unsigned last_bss = 0;
+	if (!image)
+		return;
+	elf_release(image->interpreter);
+	if (image->fp)
+		fs_put_file(image->fp);
+	kfree(image->phdrs);
+	kfree(image);
+}
 
-	for (i = 0; i < num; i++) {
-		unsigned head_offset = table_offset + i * size;
-		Elf32_Phdr phdr;
-		elf_read(fp, head_offset, &phdr, sizeof(phdr));
+/* Retain each file and read its load description before replacing memory. */
+int elf_prepare(file *fp, elf_image **result)
+{
+	elf_image *image;
+	char *interp;
+	int ret;
+	unsigned i;
 
-		if (phdr.p_type == PT_PHDR) {
-			/* Save phdr metadata for the auxiliary vector. */
-			fmt->e_phnum = num;
-			fmt->e_phoff = phdr.p_vaddr & ~PAGE_SIZE_MASK;
-			fmt->elf_load_addr = phdr.p_vaddr & PAGE_SIZE_MASK;
-		} else if (phdr.p_type == PT_LOAD) {
-			elf_load_segment(fp, &phdr, 0);
-
-			unsigned k = phdr.p_vaddr + phdr.p_memsz;
-			if (k > last_bss)
-				last_bss = k;
+	*result = NULL;
+	if (!fp)
+		return -ENOENT;
+	image = kmalloc(sizeof(*image));
+	if (!image)
+		return -ENOMEM;
+	memset(image, 0, sizeof(*image));
+	image->fp = fp;
+	fs_get_file(fp);
+	interp = name_get();
+	ret = elf_validate(image, interp);
+	if (ret)
+		goto done;
+	if (image->header.e_type == ET_DYN) {
+		for (i = 0; i < image->header.e_phnum; i++) {
+			Elf32_Phdr *ph = &image->phdrs[i];
+			if (ph->p_type == PT_LOAD &&
+			    (ph->p_align > ELF_PIE_BIAS ||
+			     ph->p_vaddr >= USER_HEAP_END - ELF_PIE_BIAS ||
+			     ph->p_memsz >= USER_HEAP_END - ELF_PIE_BIAS - ph->p_vaddr)) {
+				ret = -ENOEXEC;
+				goto done;
+			}
 		}
 	}
-
-	fmt->start_brk = PAGE_ALIGN_UP(last_bss);
-	return 1;
-}
-
-/*
- * elf_map_get_dynamic_pages - calculate the total page span of a shared object.
- *
- * Scans all PT_LOAD segments and returns the number of pages spanned from the
- * lowest to the highest virtual address.  This is used to reserve a
- * contiguous virtual-address region via vm_disc_map before mapping the
- * interpreter, so that all its segments land in a single coherent window.
- */
-static unsigned elf_map_get_dynamic_pages(file *fp, unsigned table_offset,
-					  unsigned size, unsigned num)
-{
-	unsigned va_page_start = 0xffffffff;
-	unsigned va_page_end = 0;
-	int i;
-
-	for (i = 0; i < num; i++) {
-		unsigned head_offset = table_offset + i * size;
-		Elf32_Phdr phdr;
-		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type != PT_LOAD)
-			continue;
-
-		unsigned va_begin = phdr.p_vaddr & PAGE_SIZE_MASK;
-		unsigned va_end = PAGE_ALIGN_UP(phdr.p_vaddr + phdr.p_memsz);
-
-		if (va_begin < va_page_start)
-			va_page_start = va_begin;
-		if (va_end > va_page_end)
-			va_page_end = va_end;
-	}
-
-	return (va_page_end - va_page_start) / PAGE_SIZE;
-}
-
-/*
- * elf_map_programs_at - map all PT_LOAD segments of a shared object at @bias.
- *
- * Works like elf_map_programs() but applies a load-address @bias so the
- * shared object can be placed at an arbitrary virtual address chosen by
- * vm_disc_map.  Used when loading the dynamic linker (interpreter).
- */
-static unsigned elf_map_programs_at(file *fp, unsigned table_offset,
-				    unsigned size, unsigned num, unsigned bias)
-{
-	int i;
-	for (i = 0; i < num; i++) {
-		unsigned head_offset = table_offset + i * size;
-		Elf32_Phdr phdr;
-		elf_read(fp, head_offset, &phdr, sizeof(phdr));
-		if (phdr.p_type == PT_LOAD)
-			elf_load_segment(fp, &phdr, bias);
-	}
-	return 1;
-}
-
-/*
- * elf_map_dynamic - load the dynamic linker (interpreter) into user space.
- *
- * Opens the ELF shared object at @path (typically "/lib/ld-linux.so.2"),
- * validates its header (must be a 32-bit ET_DYN), then:
- *   1. Computes the total page span of its PT_LOAD segments.
- *   2. Reserves a contiguous virtual-address window via vm_disc_map
- *      and stores the base in fmt->interp_bias.
- *   3. Maps all PT_LOAD segments relative to interp_bias.
- *   4. Records the interpreter's entry point as interp_bias + e_entry so
- *      the kernel can jump to it instead of the executable's entry point.
- *
- * The interpreter then takes over, resolves symbol relocations, and
- * eventually jumps to the executable's actual entry point.
- *
- * Returns 1 on success, 0 on any error.
- */
-static unsigned elf_map_dynamic(char *path, mos_binfmt *fmt)
-{
-	file *fp = fs_open_file(path, 0, 0);
-	Elf32_Ehdr elf;
-	task_struct *cur = CURRENT_TASK();
-	unsigned pages = 0;
-
-	if (fp == NULL)
-		return 0;
-
-	/* ELF header is always at offset 0. */
-	elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
-
-	/* Validate ELF magic number (0x7f 'E' 'L' 'F'). */
-	if (elf.e_ident[0] != 0x7f) {
-		fs_put_file(fp);
-		return 0;
-	}
-
-	/* Only IA-32 (32-bit) ELF is supported. */
-	if (elf.e_ident[4] != ELFCLASS32) {
-		fs_put_file(fp);
-		return 0;
-	}
-
-	/* Must be a shared object (ET_DYN), not an executable. */
-	if (elf.e_type != ET_DYN) {
-		fs_put_file(fp);
-		return 0;
-	}
-
-	/* Reserve virtual address space and map interpreter segments. */
-	pages = elf_map_get_dynamic_pages(fp, elf.e_phoff, elf.e_phentsize,
-					  elf.e_phnum);
-	fmt->interp_bias = vm_disc_map(cur->user->vm, pages * PAGE_SIZE);
-	fmt->interp_load_addr = fmt->interp_bias + elf.e_entry;
-	elf_map_programs_at(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum,
-			    fmt->interp_bias);
-
-	fs_put_file(fp);
-	return 1;
-}
-
-/*
- * elf_map - top-level ELF loader: map an executable into the current process.
- *
- * Opens the ELF at @path, validates it (32-bit ET_EXEC only), and maps its
- * segments.  The behaviour depends on whether the executable has a PT_INTERP
- * (dynamic linker) segment:
- *
- *   No interpreter (static binary):
- *     Map all PT_LOAD segments directly.  fmt->interp_load_addr is set to
- *     the executable's own entry point — the kernel jumps there on exec.
- *
- *   Interpreter path == executable path (the interpreter loads itself):
- *     Same as the static case.  This handles the unusual situation where
- *     the dynamic linker is executed directly.
- *
- *   Interpreter path != executable path (normal dynamically-linked binary):
- *     1. Map the executable's segments via elf_map_elf_hdr(), which also
- *        records PT_PHDR metadata for the auxiliary vector.
- *     2. Load the dynamic linker via elf_map_dynamic(), which sets
- *        fmt->interp_load_addr to the interpreter's biased entry point.
- *        The kernel jumps to the interpreter instead; it will later jump to
- *        the executable's fmt->e_entry after relocation.
- *
- * Returns the executable's raw (unbiased) entry point on success, 0 on error.
- * Callers should use fmt->interp_load_addr as the actual jump target.
- */
-static unsigned elf_map_opened(char *path, mos_binfmt *fmt, file *opened)
-{
-	file *fp = opened ? opened : fs_open_file(path, 0, 0);
-	int owned = opened == NULL;
-	unsigned entry_point = 0;
-	Elf32_Ehdr elf;
-	char *interp = name_get();
-	memset(interp, 0, MAX_PATH);
-
-	if (fp == NULL) {
-		name_put(interp);
-		return 0;
-	}
-
-	/* ELF header is always at offset 0. */
-	elf_read(fp, 0, &elf, sizeof(Elf32_Ehdr));
-	entry_point = elf.e_entry;
-
-	/* Validate ELF magic number (0x7f 'E' 'L' 'F'). */
-	if (elf.e_ident[0] != 0x7f) {
-		if (owned) fs_put_file(fp);
-		name_put(interp);
-		return 0;
-	}
-
-	/* Only IA-32 (32-bit) ELF is supported. */
-	if (elf.e_ident[4] != ELFCLASS32) {
-		if (owned) fs_put_file(fp);
-		name_put(interp);
-		return 0;
-	}
-
-	/* Must be an executable (ET_EXEC), not a shared object. */
-	if (elf.e_type != ET_EXEC) {
-		if (owned) fs_put_file(fp);
-		name_put(interp);
-		return 0;
-	}
-
-	fmt->e_entry = elf.e_entry;
-
-	if (elf_find_interp(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum,
-			    interp)) {
-		if (!strcmp(path, interp)) {
-			/*
-			 * The interpreter is being run directly — treat it as a
-			 * plain static binary and jump straight to its entry.
-			 */
-			elf_map_programs(fp, elf.e_phoff, elf.e_phentsize,
-					 elf.e_phnum, fmt);
-			fmt->interp_load_addr = entry_point;
-		} else {
-			/*
-			 * Normal dynamically-linked executable: map the binary
-			 * and then load the dynamic linker at a separate bias.
-			 * Control will be handed to the interpreter first.
-			 */
-			elf_map_elf_hdr(fp, elf.e_phoff, elf.e_phentsize,
-					elf.e_phnum, fmt);
-			elf_map_dynamic(interp, fmt);
-			/* fmt->interp_load_addr is set by elf_map_dynamic(). */
+	if (interp[0]) {
+		elf_image *ld = kmalloc(sizeof(*ld));
+		if (!ld) {
+			ret = -ENOMEM;
+			goto done;
 		}
-	} else {
-		/* Static binary: no interpreter, jump directly to e_entry. */
-		elf_map_programs(fp, elf.e_phoff, elf.e_phentsize, elf.e_phnum,
-				 fmt);
-		fmt->interp_load_addr = entry_point;
+		memset(ld, 0, sizeof(*ld));
+		image->interpreter = ld;
+		ld->fp = fs_open_file(interp, 0, 0);
+		ret = elf_validate(ld, interp);
+		if (!ret && (ld->header.e_type != ET_DYN || interp[0]))
+			ret = -ENOEXEC;
 	}
-
-	if (owned) fs_put_file(fp);
+done:
 	name_put(interp);
-
-	return entry_point;
+	if (ret)
+		elf_release(image);
+	else
+		*result = image;
+	return ret;
 }
 
-unsigned elf_map(char *path, mos_binfmt *fmt)
+/* Map verified segments; only partial-page contents require eager reads. */
+unsigned elf_map_prepared(elf_image *image, mos_binfmt *fmt)
 {
-	return elf_map_opened(path, fmt, NULL);
+	Elf32_Ehdr *elf = &image->header;
+	unsigned bias = elf->e_type == ET_DYN ? ELF_PIE_BIAS : 0;
+	unsigned table_size = elf->e_phnum * sizeof(Elf32_Phdr);
+	unsigned i;
+
+	memset(fmt, 0, sizeof(*fmt));
+	fmt->e_entry = bias + elf->e_entry;
+	fmt->e_phnum = elf->e_phnum;
+	fmt->start_brk = bias + image->span;
+	for (i = 0; i < elf->e_phnum; i++) {
+		Elf32_Phdr *ph = &image->phdrs[i];
+		if (ph->p_type != PT_LOAD)
+			continue;
+		elf_load_segment(image->fp, ph, bias);
+		/* AT_PHDR is derived from the segment containing the table. */
+		if (elf->e_phoff >= ph->p_offset &&
+		    elf->e_phoff - ph->p_offset <= ph->p_filesz &&
+		    table_size <= ph->p_filesz - (elf->e_phoff - ph->p_offset))
+			fmt->elf_load_addr = bias + ph->p_vaddr +
+					    elf->e_phoff - ph->p_offset;
+	}
+	if (image->interpreter) {
+		elf_image *ld = image->interpreter;
+		unsigned base = vm_disc_map(CURRENT_TASK()->user->vm, ld->span);
+		if (!base || base >= USER_ZONE_END || ld->span > USER_ZONE_END - base)
+			return 0;
+		fmt->interp_bias = base;
+		for (i = 0; i < ld->header.e_phnum; i++) {
+			Elf32_Phdr *ph = &ld->phdrs[i];
+			if (ph->p_type == PT_LOAD)
+				elf_load_segment(ld->fp, ph, base);
+		}
+		fmt->interp_load_addr = base + ld->header.e_entry;
+	} else {
+		fmt->interp_load_addr = fmt->e_entry;
+	}
+	return fmt->e_entry;
+}
+
+int elf_check_file(file *fp)
+{
+	elf_image *image;
+	int ret = elf_prepare(fp, &image);
+	elf_release(image);
+	return ret;
 }
 
 unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp)
 {
-	return elf_map_opened(path, fmt, fp);
+	elf_image *image;
+	unsigned entry = 0;
+	file *opened = fp ? fp : fs_open_file(path, 0, 0);
+
+	memset(fmt, 0, sizeof(*fmt));
+	if (!elf_prepare(opened, &image)) {
+		entry = elf_map_prepared(image, fmt);
+		elf_release(image);
+	}
+	if (!fp && opened)
+		fs_put_file(opened);
+	return entry;
+}
+
+unsigned elf_map(char *path, mos_binfmt *fmt)
+{
+	return elf_map_file(path, fmt, NULL);
 }

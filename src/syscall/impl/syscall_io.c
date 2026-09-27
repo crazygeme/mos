@@ -111,7 +111,7 @@ int sys_write(int fd, const char *buf, unsigned len)
 }
 
 int sys_pread64(int fd, void *buf, unsigned count, unsigned offset_low,
-		 unsigned offset_high)
+		unsigned offset_high)
 {
 	loff_t offset = (loff_t)(((uint64_t)offset_high << 32) | offset_low);
 	task_struct *cur = CURRENT_TASK();
@@ -164,8 +164,8 @@ int sys_ioctl(int fd, int request, char *buf)
 	int ret = fs_ioctl(fd, request, buf);
 
 	if (TEST_LOG(TEST_LOG_TRACE) && request != TCGETS2 &&
-	    request != 0x4b46 &&
-	    request != 0x4b47 && request != 0x4b48 && request != 0x4b49)
+	    request != 0x4b46 && request != 0x4b47 && request != 0x4b48 &&
+	    request != 0x4b49)
 		klog("ioctl(%d, %x, ...) = %d\n", fd, request, ret);
 
 	return ret;
@@ -236,9 +236,8 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	int ret = fs_llseek(fd, offset_high, offset_low, result, whence);
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("llseek(%d, %x, %x, %x, %d) = %d, current %d\n", fd,
-		     offset_high, offset_low, result, whence, ret,
-		     (int)current->fds[fd]->f_pos);
+		klog("llseek(%d, %x, %x, %x, %d) = %d\n", fd, offset_high,
+		     offset_low, result, whence, ret);
 
 	return ret;
 }
@@ -935,9 +934,8 @@ int sys_poll(struct pollfd *fds, unsigned nfds, int timeout)
 	return do_poll(fds, nfds, timeout);
 }
 
-int sys_ppoll(struct pollfd *fds, unsigned nfds,
-	      const struct timespec *timeout, const sigset_t *sigmask,
-	      unsigned sigsetsize)
+int sys_ppoll(struct pollfd *fds, unsigned nfds, const struct timespec *timeout,
+	      const sigset_t *sigmask, unsigned sigsetsize)
 {
 	if (sigmask && sigsetsize != 8)
 		return -EINVAL;

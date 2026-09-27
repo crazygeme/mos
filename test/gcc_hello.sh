@@ -92,3 +92,55 @@ expect_success gcc -static -o "$BIN" "$SRC"
 expect_success "$BIN"
 expect_eq "static main
 atexit called" "$output" "static program exit output"
+
+# PIE relocation, BSS, TLS, auxiliary vectors, and exit callbacks.
+cat > "$SRC" <<'EOF'
+#include <elf.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/auxv.h>
+#include <unistd.h>
+
+static int value = 42;
+static int *pointer = &value;
+static char bss[8192];
+static __thread int tls_value = 7;
+
+static void goodbye(void)
+{
+	puts("pie exit");
+}
+
+int main(void)
+{
+	Elf32_Phdr *ph = (void *)getauxval(AT_PHDR);
+	unsigned long entry = getauxval(AT_ENTRY);
+	unsigned long count = getauxval(AT_PHNUM);
+	unsigned long bias = 0;
+	int found = 0;
+	if (!ph || !entry || !getauxval(AT_BASE) ||
+	    getauxval(AT_PHENT) != sizeof(*ph) || !count)
+		return 1;
+	for (unsigned long i = 0; i < count; i++)
+		if (ph[i].p_type == PT_PHDR)
+			bias = (unsigned long)ph - ph[i].p_vaddr;
+	for (unsigned long i = 0; i < count; i++)
+		if (ph[i].p_type == PT_LOAD && (ph[i].p_flags & PF_X) &&
+		    entry >= bias + ph[i].p_vaddr &&
+		    entry < bias + ph[i].p_vaddr + ph[i].p_memsz)
+			found = 1;
+	if (!bias || !found || *pointer != 42 || tls_value != 7)
+		return 2;
+	for (unsigned i = 0; i < sizeof(bss); i++)
+		if (bss[i]) return 3;
+	if (sbrk(0) <= (void *)(bss + sizeof(bss)))
+		return 4;
+	if (atexit(goodbye)) return 5;
+	puts("pie main");
+	return 0;
+}
+EOF
+expect_success gcc -fPIE -pie -o "$BIN" "$SRC"
+expect_success env -i "$BIN"
+expect_eq "pie main
+pie exit" "$output" "PIE program execution"

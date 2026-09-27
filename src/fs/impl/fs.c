@@ -268,6 +268,14 @@ int fs_open(const char *path, int flag, umode_t mode)
 	int acc, ret;
 	int created = 0;
 
+	/* Anonymous inode creation requires a filesystem tmpfile operation. */
+	if ((flag & __O_TMPFILE) && !(flag & O_PATH)) {
+		if ((flag & O_TMPFILE) != O_TMPFILE ||
+		    (flag & O_ACCMODE) == O_RDONLY || (flag & O_CREAT))
+			return -EINVAL;
+		return -EOPNOTSUPP;
+	}
+
 	/* O_CREAT|O_EXCL: fail with EEXIST if the file already exists. */
 	if ((flag & O_CREAT) && (flag & O_EXCL)) {
 		file *check = fs_open_file(path, O_PATH, NULL);

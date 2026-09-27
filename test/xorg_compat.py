@@ -3,6 +3,8 @@
 
 import ctypes
 import errno
+import fcntl
+import mmap
 import os
 from pathlib import Path
 import socket
@@ -67,6 +69,60 @@ with tempfile.TemporaryDirectory(prefix="mos-xorg-") as directory:
                 rebound.bind(name)
         elif os.path.exists(name):
             os.unlink(name)
+
+# Shared fence storage must remain valid after removal of its directory entry.
+shm_fd, shm_path = tempfile.mkstemp(prefix="mos-fence-", dir="/dev/shm")
+try:
+    os.unlink(shm_path)
+    assert not os.path.exists(shm_path)
+    os.ftruncate(shm_fd, 4096)
+    with mmap.mmap(shm_fd, 4096) as first, mmap.mmap(shm_fd, 4096) as second:
+        first[:4] = b"DRI3"
+        assert second[:4] == b"DRI3"
+finally:
+    os.close(shm_fd)
+    if os.path.exists(shm_path):
+        os.unlink(shm_path)
+
+try:
+    anonymous_fd = os.open("/dev/shm", os.O_TMPFILE | os.O_RDWR, 0o600)
+except OSError as error:
+    assert error.errno == errno.EOPNOTSUPP
+else:
+    os.close(anonymous_fd)
+    raise AssertionError("O_TMPFILE requires anonymous inode support")
+
+fences = ctypes.CDLL("libxshmfence.so.1", use_errno=True)
+fences.xshmfence_alloc_shm.restype = ctypes.c_int
+fences.xshmfence_map_shm.argtypes = [ctypes.c_int]
+fences.xshmfence_map_shm.restype = ctypes.c_void_p
+for function in ("xshmfence_query", "xshmfence_trigger", "xshmfence_reset",
+                 "xshmfence_unmap_shm"):
+    getattr(fences, function).argtypes = [ctypes.c_void_p]
+fence_fd = fences.xshmfence_alloc_shm()
+assert fence_fd >= 0, ("xshmfence allocation", ctypes.get_errno())
+fence_map = None
+try:
+    fence_map = fences.xshmfence_map_shm(fence_fd)
+    assert fence_map, ("xshmfence mapping", ctypes.get_errno())
+    fences.xshmfence_reset(fence_map)
+    assert fences.xshmfence_query(fence_map) == 0
+    fences.xshmfence_trigger(fence_map)
+    assert fences.xshmfence_query(fence_map) != 0
+finally:
+    if fence_map:
+        fences.xshmfence_unmap_shm(fence_map)
+        os.close(fence_fd)
+
+# KDGETLED returns one byte and must preserve adjacent caller memory.
+keyboard_fd = os.open("/dev/tty0", os.O_RDONLY | os.O_NONBLOCK)
+try:
+    leds = bytearray([0xff, 0xa5, 0x5a, 0xc3])
+    fcntl.ioctl(keyboard_fd, 0x4b31, leds, True)
+    assert leds[0] <= 7
+    assert leds[1:] == bytearray([0xa5, 0x5a, 0xc3])
+finally:
+    os.close(keyboard_fd)
 
 ioports = Path("/proc/ioports").read_text()
 assert ioports.endswith("\n")

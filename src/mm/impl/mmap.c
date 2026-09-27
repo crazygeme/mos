@@ -815,7 +815,9 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
-		else if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
+		else if ((region->vm_flags & VM_REGION_F_DIRECT_PHYS) ||
+			 (region->fp && region->fp->f_fop &&
+			  region->fp->f_fop->map_page))
 			mmflag |= PAGE_ENTRY_WRITABLE;
 
 		mm_set_map_flag(vir, mmflag);
@@ -866,6 +868,16 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 		offset += node->f_inode->i_phys_base;
 	}
 
+	if (node && node->f_fop && node->f_fop->mmap_file) {
+		file *backing = NULL;
+		int result = node->f_fop->mmap_file(node, &offset, _len,
+						 prot, flags, &backing);
+		if (result < 0)
+			return result;
+		result = do_mmap_kernel(_addr, _len, prot, flags, backing, offset);
+		fs_put_file(backing);
+		return result;
+	}
 	return do_mmap_kernel(_addr, _len, prot, flags, node, offset);
 }
 
@@ -887,7 +899,8 @@ static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
 	vaddr_t vir;
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)
 		return;
-	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
+	if ((region->vm_flags & VM_REGION_F_DIRECT_PHYS) ||
+	    (region->fp->f_fop && region->fp->f_fop->map_page))
 		return;
 
 	for (vir = begin; vir < end; vir += PAGE_SIZE) {

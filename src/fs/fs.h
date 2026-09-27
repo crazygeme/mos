@@ -112,6 +112,13 @@ typedef struct _file_operations {
 	unsigned (*poll)(file *file, unsigned events, poll_table *pt);
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
 	int (*flush)(file *file);
+	/* Return a referenced backing file and a validated byte offset. */
+	int (*mmap_file)(file *file, unsigned *offset, unsigned size,
+			 unsigned prot, unsigned flags, struct _file **backing);
+	/* Return an allocator-owned physical page for a shared device mapping. */
+	paddr_t (*map_page)(file *file, unsigned offset);
+	/* Unlink removes the name while open references retain the inode. */
+	unsigned unlink_preserves_open;
 } file_operations;
 
 /*

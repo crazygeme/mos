@@ -179,6 +179,8 @@ typedef struct {
 	const char *path;
 	const char *newpath;
 	int found;
+	int native_unlink;
+	int unlinked;
 } open_path_ctx;
 
 static void mark_open_unlinked_files(task_struct *task, void *opaque)
@@ -195,7 +197,12 @@ static void mark_open_unlinked_files(task_struct *task, void *opaque)
 		if (!fp || !fp->f_name || strcmp(fp->f_name, ctx->path) != 0)
 			continue;
 		ctx->found = 1;
-		if (ctx->newpath) {
+		if (!fp->f_fop || !fp->f_fop->unlink_preserves_open)
+			ctx->native_unlink = 0;
+		if (ctx->unlinked) {
+			free(fp->f_name);
+			fp->f_name = NULL;
+		} else if (ctx->newpath) {
 			free(fp->f_name);
 			fp->f_name = strdup(ctx->newpath);
 			fp->f_state |= FS_FILE_UNLINK_ON_CLOSE;
@@ -214,9 +221,18 @@ static int unlink_open_file(task_struct *cur, const char *path)
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.path = path;
+	ctx.native_unlink = 1;
 	ps_enum_all(mark_open_unlinked_files, &ctx);
 	if (!ctx.found)
 		return -ENOENT;
+	if (ctx.native_unlink) {
+		ret = vfs_unlink(cur->root, path);
+		if (!ret) {
+			ctx.unlinked = 1;
+			ps_enum_all(mark_open_unlinked_files, &ctx);
+		}
+		return ret;
+	}
 
 	newpath = name_get();
 	slash = strrchr(path, '/');

@@ -81,6 +81,7 @@ void kmain_startup()
 		ps_create(idle_process, (void *)i, ps_idle, ps_kernel);
 	}
 	dsr_start();
+	kb_start();
 	smp_start();
 
 	ps_kickoff();

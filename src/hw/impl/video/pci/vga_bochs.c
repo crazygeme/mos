@@ -297,10 +297,6 @@ static void bochs_sync_mode(void)
 	}
 }
 
-static void bochs_flush(void)
-{
-}
-
 static int bochs_is_char_visible(unsigned char c)
 {
 	if (isprint(c))
@@ -350,7 +346,10 @@ static void bga_set_video_mode(unsigned int Width, unsigned int Height,
 
 static void bochs_scan_pci(uint32_t device, uint16_t v, uint16_t d, void *extra)
 {
-	if (v == 0x1234 && d == 0x1111) {
+	if ((v == 0x1234 && d == 0x1111) ||
+	    (v == 0x1af4 && d == 0x1050 &&
+	     pci_read_field(device, PCI_CLASS, 1) == 3 &&
+	     pci_read_field(device, PCI_SUBCLASS, 1) == 0)) {
 		unsigned t = pci_read_field(device, PCI_BAR0, 4);
 		if (t > 0)
 			*((unsigned *)extra) = t & 0xFFFFFFF0u;
@@ -409,7 +408,6 @@ static const fb_drv_t bochs_drv = {
 	.clear_screen = bochs_clear_screen,
 	.change_font = bochs_change_font,
 	.sync_mode = bochs_sync_mode,
-	.flush = bochs_flush,
 	.get_phys_window = bochs_get_phys_window,
 	.snapshot_size = bochs_snapshot_size,
 	.snapshot_save = bochs_snapshot_save,

@@ -24,6 +24,8 @@
 #define O_NOFOLLOW 0400000 /* don't follow links */
 #define O_CLOEXEC 02000000 /* set close_on_exec */
 #define O_PATH 010000000 /* path-only open — no device side-effects */
+#define __O_TMPFILE 020000000
+#define O_TMPFILE (__O_TMPFILE | O_DIRECTORY)
 
 #define F_DUPFD 0 /* dup */
 #define F_DUPFD_CLOEXEC 1030

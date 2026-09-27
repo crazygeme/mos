@@ -1,7 +1,7 @@
 #include <errno.h>
 #include <ps/ps.h>
 #include <int/int.h>
-#include <int/dsr.h>
+#include <lib/cyclebuf.h>
 #include <lib/port.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
@@ -307,6 +307,7 @@ static int left_ctrl, right_ctrl; /* Left and right Ctl keys. */
 /* Status of Caps Lock.
    True when on, 0 when off. */
 static int caps_lock;
+static int caps_pressed;
 
 /* Maps a set of contiguous scancodes into characters. */
 struct keymap {
@@ -358,7 +359,8 @@ static const struct keymap special_keymap[] = {
 
 static int map_key(const struct keymap[], unsigned scancode, unsigned char *);
 
-static void kb_dsr(void *param);
+static void kb_worker(void *param);
+static cy_buf *kb_scancodes;
 
 static const char *map_special_key(const struct keymap[], unsigned scancode);
 static int mediumraw_keycode(unsigned scancode);
@@ -426,49 +428,59 @@ void kb_init()
 {
 	kbd_init_keymaps();
 	kbd_init_func_strings();
+	kb_scancodes = cyb_create(1);
 	int_register(0x21, kb_process, 0, 0);
 }
 
-static int kb_dsr_armed = 0;
-static unsigned kb_prefix;
+/* Called after the idle and init tasks have reserved PID 0 and PID 1. */
+void kb_start(void)
+{
+	unsigned pid = ps_create(kb_worker, NULL, ps_deferred, ps_kernel);
 
+	if (!ps_find_process(pid))
+		DIE();
+}
+
+/* Read the shared controller data port in interrupt context. Task-context
+ * decoding must not leave keyboard bytes pending behind mouse interrupts. */
 void kb_process(intr_frame *frame)
 {
-	if (!kb_dsr_armed) {
-		kb_dsr_armed = 1;
-		if (!dsr_add(kb_dsr, 0)) {
-			/* DSR dropped: drain the data port now so the PS/2
-			 * controller can generate the next interrupt, then
-			 * clear the armed flag so the next keypress retries. */
-			port_read_byte(KB_DATA);
-			kb_dsr_armed = 0;
-		}
+	unsigned budget = 64;
+	(void)frame;
+
+	while (budget--) {
+		unsigned char st = port_read_byte(I8042_STATUS);
+		unsigned char code;
+
+		if ((st & (I8042_STATUS_OBF | I8042_STATUS_AUX)) !=
+		    I8042_STATUS_OBF)
+			break;
+		code = port_read_byte(KB_DATA);
+		cyb_put_record(kb_scancodes, &code, 1);
 	}
 }
 
-static void kb_dsr(void *param)
+static void kb_worker(void *param)
 {
-	unsigned char st;
-	int kb_mode = tty_active_kb_mode();
-	kb_dsr_armed = 0;
+	unsigned prefix = 0;
+	(void)param;
 
-	while ((st = port_read_byte(I8042_STATUS)) & I8042_STATUS_OBF) {
+	for (;;) {
+		unsigned char byte;
 		unsigned code;
 
-		if (st & I8042_STATUS_AUX)
-			break;
-
-		code = port_read_byte(KB_DATA);
+		if (cyb_getbuf(kb_scancodes, &byte, 1, 1, 0) != 1)
+			continue;
+		code = byte;
 		if (code == 0xe0 || code == 0xe1) {
-			kb_prefix = code;
+			prefix = code;
 			continue;
 		}
-		if (kb_prefix) {
-			code |= kb_prefix << 8;
-			kb_prefix = 0;
+		if (prefix) {
+			code |= prefix << 8;
+			prefix = 0;
 		}
-
-		kb_handle_scancode(code, kb_mode);
+		kb_handle_scancode(code, tty_active_kb_mode());
 	}
 }
 
@@ -495,6 +507,12 @@ static void kb_handle_scancode(unsigned raw_code, int kb_mode)
 	release = (code & 0x80) != 0;
 	code &= ~0x80u;
 	update_shift_state(code, release);
+	if (code == 0x3a) {
+		if (!release && !caps_pressed &&
+		    (kb_mode == K_XLATE || kb_mode == K_UNICODE))
+			caps_lock = !caps_lock;
+		caps_pressed = !release;
+	}
 
 	/* Keep kernel VT hotkeys working even when userspace requested
 	 * raw keyboard bytes on the active console.
@@ -519,11 +537,7 @@ static void kb_handle_scancode(unsigned raw_code, int kb_mode)
 	}
 
 	/* Interpret key. */
-	if (code == 0x3a) {
-		/* Caps Lock. */
-		if (!release)
-			caps_lock = !caps_lock;
-	} else if (map_key(invariant_keymap, code, &c) ||
+	if (map_key(invariant_keymap, code, &c) ||
 		   (!shift && map_key(unshifted_keymap, code, &c)) ||
 		   (shift && map_key(shifted_keymap, code, &c))) {
 		/* Ordinary character. */

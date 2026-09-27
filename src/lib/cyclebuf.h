@@ -26,6 +26,10 @@ void cyb_destroy(cy_buf *cyb);
 int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 	       int interruptible);
 
+/* Nonblocking whole-record write. Returns len or 0 when space is insufficient.
+ * Reader and poll wakeups do not yield; usable by interrupt producers. */
+int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len);
+
 int cyb_isempty(cy_buf *b);
 
 int cyb_isfull(cy_buf *b);

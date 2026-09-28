@@ -17,6 +17,7 @@
 #include <lib/lock.h>
 #include <lib/list.h>
 #include <hw/time.h>
+#include <ps/ps.h>
 #include <macro.h>
 #include <errno.h>
 #include <unistd.h>
@@ -69,6 +70,7 @@ typedef struct {
 static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 {
 	tmpfs_node *n = zalloc(sizeof(*n));
+	task_struct *cur = CURRENT_TASK();
 	unsigned now = time_now_sec();
 	int irq;
 
@@ -77,6 +79,10 @@ static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 	spinlock_unlock(&sbi->lock, irq);
 
 	n->mode = mode;
+	if (cur && cur->user) {
+		n->uid = cur->user->euid;
+		n->gid = cur->user->egid;
+	}
 	n->ref = 1;
 	n->atime = n->mtime = n->ctime = now;
 	list_init(&n->children);

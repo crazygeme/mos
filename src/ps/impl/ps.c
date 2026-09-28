@@ -530,7 +530,16 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		if (to_read > len)
 			to_read = len;
 
-		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT))
+		/* A valid mapping need not have been touched by userspace yet.
+		 * Resolve both page-table and leaf faults, as the write path does. */
+		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT) &&
+		    !pf_resolve_task_page_fault(task, vaddr, 0))
+			return -EFAULT;
+
+		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
+		pte = pt[pte_idx];
+		if (!(pte & PAGE_ENTRY_PRESENT) &&
+		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
 		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);

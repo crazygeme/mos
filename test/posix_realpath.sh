@@ -67,5 +67,5 @@ int main(int argc, char **argv)
     return 0;
 }
 EOF
-gcc -Wall -Wextra -o "$BASE/check" "$BASE/check.c"
+gcc -Wall -W -o "$BASE/check" "$BASE/check.c"
 "$BASE/check" "$BASE"

@@ -96,7 +96,7 @@ Actual: ${rc}"
 
 # execve rejects invalid ELF and missing interpreters without replacing the caller.
 printf 'int main(void) { return 0; }\n' > "$SRC"
-expect_success gcc -fPIE -pie -Wl,--dynamic-linker=/nonexistent/mos-test-ld -o "$BASE/missing-interp" "$SRC"
+expect_success gcc -Wl,--dynamic-linker=/nonexistent/mos-test-ld -o "$BASE/missing-interp" "$SRC"
 cat > "$SRC" <<'EOF'
 #include <elf.h>
 #include <errno.h>
@@ -109,8 +109,8 @@ static int rejected(const char *path, int error)
 {
 	char *args[] = { (char *)path, NULL };
 	char *env[] = { NULL };
-	int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-	if (fd < 0) return 1;
+	int fd = open("/dev/null", O_RDONLY);
+	if (fd < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) return 1;
 	int result = execve(path, args, env);
 	int saved_errno = errno;
 	int alive = fcntl(fd, F_GETFD);
@@ -142,5 +142,5 @@ int main(int argc, char **argv)
 	return 0;
 }
 EOF
-expect_success gcc -fno-pie -no-pie -o "$BIN" "$SRC"
+expect_success gcc -o "$BIN" "$SRC"
 expect_success "$BIN" "$BASE/invalid-elf" "$BASE/missing-interp"

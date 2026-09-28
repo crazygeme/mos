@@ -7,6 +7,7 @@ struct kbentry;
 void kb_init();
 void kb_start(void);
 void kb_process(intr_frame *frame);
+void kb_receive_byte(unsigned char code);
 int kbd_get_kbentry(struct kbentry *kbe);
 int kbd_set_kbentry(const struct kbentry *kbe);
 struct kbsentry;

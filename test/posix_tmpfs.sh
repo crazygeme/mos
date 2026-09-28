@@ -83,6 +83,45 @@ printf '%s\n' '	}' >> "$SRC"
 printf '%s\n' '	return 0;' >> "$SRC"
 printf '%s\n' '}' >> "$SRC"
 printf '%s\n' '' >> "$SRC"
+cat >> "$SRC" <<'EOF'
+static int test_unprivileged_creation(void)
+{
+	struct stat st;
+	uid_t uid = geteuid();
+	gid_t gid = getegid();
+	int fd;
+	char *mapping;
+
+	if (setegid(65534) != 0 || seteuid(65534) != 0)
+		return fail_errno("set effective credentials");
+	fd = open(FILE_PATH, O_CREAT | O_EXCL | O_RDWR, 0600);
+	if (fd < 0)
+		return fail_errno("create unprivileged shared memory file");
+	if (fstat(fd, &st) != 0)
+		return fail_errno("stat unprivileged file");
+	if (st.st_uid != geteuid() || st.st_gid != getegid())
+		return failf("file ownership differs from effective credentials");
+	if ((st.st_mode & 0777) != 0600)
+		return failf("shared memory file mode differs from 0600");
+	if (unlink(FILE_PATH) != 0 || ftruncate(fd, 8) != 0)
+		return fail_errno("prepare unlinked shared memory file");
+	mapping = mmap(NULL, 8, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (mapping == MAP_FAILED)
+		return fail_errno("map unprivileged shared memory file");
+	mapping[0] = 42;
+	if (munmap(mapping, 8) != 0 || close(fd) != 0)
+		return fail_errno("release shared memory file");
+	if (mkdir(DIR_PATH, 0700) != 0 || stat(DIR_PATH, &st) != 0)
+		return fail_errno("create unprivileged directory");
+	if (st.st_uid != geteuid() || st.st_gid != getegid())
+		return failf("directory ownership differs from effective credentials");
+	if (rmdir(DIR_PATH) != 0)
+		return fail_errno("remove unprivileged directory");
+	if (seteuid(uid) != 0 || setegid(gid) != 0)
+		return fail_errno("restore effective credentials");
+	return 0;
+}
+EOF
 printf '%s\n' 'int main(void)' >> "$SRC"
 printf '%s\n' '{' >> "$SRC"
 printf '%s\n' '	int fd;' >> "$SRC"
@@ -94,6 +133,9 @@ printf '%s\n' '	char c;' >> "$SRC"
 printf '%s\n' '	DIR *dir;' >> "$SRC"
 printf '%s\n' '	struct dirent *de;' >> "$SRC"
 printf '%s\n' '	int saw_dot = 0, saw_dotdot = 0;' >> "$SRC"
+printf '%s\n' '' >> "$SRC"
+printf '%s\n' '	if (test_unprivileged_creation() != 0)' >> "$SRC"
+printf '%s\n' '		return 1;' >> "$SRC"
 printf '%s\n' '' >> "$SRC"
 printf '%s\n' '	unlink(FILE_PATH);' >> "$SRC"
 printf '%s\n' '	rmdir(DIR_PATH);' >> "$SRC"

@@ -98,8 +98,27 @@ cat > "$SRC" <<'EOF'
 #include <elf.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/auxv.h>
 #include <unistd.h>
+
+/* RH9 libc predates getauxval; read the same kernel-provided vector. */
+static unsigned long *auxv;
+static unsigned long aux_value(unsigned long type)
+{
+	unsigned long *p;
+	for (p = auxv; p[0]; p += 2)
+		if (p[0] == type) return p[1];
+	return 0;
+}
+
+#ifdef LEGACY_PIE
+/* Old binutils can build ET_DYN via -shared but need an explicit interpreter. */
+const char interpreter[] __attribute__((section(".interp"))) = "/lib/ld-linux.so.2";
+/* RH9's executable startup expects array bounds absent from its shared linker
+ * script.  This fixture has no init/fini arrays; retain the normal CRT hooks. */
+extern void _init(void), _fini(void);
+void __libc_csu_init(int argc, char **argv, char **envp) { _init(); }
+void __libc_csu_fini(void) { _fini(); }
+#endif
 
 static int value = 42;
 static int *pointer = &value;
@@ -111,19 +130,30 @@ static void goodbye(void)
 	puts("pie exit");
 }
 
-int main(void)
+int main(int argc, char **argv, char **envp)
 {
-	Elf32_Phdr *ph = (void *)getauxval(AT_PHDR);
-	unsigned long entry = getauxval(AT_ENTRY);
-	unsigned long count = getauxval(AT_PHNUM);
+	while (*envp) envp++;
+	auxv = (unsigned long *)(envp + 1);
+	Elf32_Phdr *ph = (void *)aux_value(AT_PHDR);
+	unsigned long entry = aux_value(AT_ENTRY);
+	unsigned long count = aux_value(AT_PHNUM);
 	unsigned long bias = 0;
 	int found = 0;
-	if (!ph || !entry || !getauxval(AT_BASE) ||
-	    getauxval(AT_PHENT) != sizeof(*ph) || !count)
+	if (!ph || !entry || !aux_value(AT_BASE) ||
+	    aux_value(AT_PHENT) != sizeof(*ph) || !count)
 		return 1;
 	for (unsigned long i = 0; i < count; i++)
 		if (ph[i].p_type == PT_PHDR)
 			bias = (unsigned long)ph - ph[i].p_vaddr;
+#ifdef LEGACY_PIE
+	/* The old shared linker script omits PT_PHDR but places the ELF and
+	 * program headers at the start of the first load segment. */
+	Elf32_Ehdr *eh = (void *)((char *)ph - sizeof(Elf32_Ehdr));
+	if (eh->e_phoff != sizeof(*eh)) return 6;
+	for (unsigned long i = 0; i < count; i++)
+		if (ph[i].p_type == PT_LOAD && ph[i].p_offset == 0)
+			bias = (unsigned long)eh - ph[i].p_vaddr;
+#endif
 	for (unsigned long i = 0; i < count; i++)
 		if (ph[i].p_type == PT_LOAD && (ph[i].p_flags & PF_X) &&
 		    entry >= bias + ph[i].p_vaddr &&
@@ -140,7 +170,15 @@ int main(void)
 	return 0;
 }
 EOF
-expect_success gcc -fPIE -pie -o "$BIN" "$SRC"
+# Probe only the driver flags; failures building the actual test remain fatal.
+printf 'int main(void) { return 0; }\n' > "$BASE/probe.c"
+if gcc -fPIE -pie -o "$BASE/probe" "$BASE/probe.c" >/dev/null 2>&1; then
+	expect_success gcc -std=gnu99 -fPIE -pie -o "$BIN" "$SRC"
+else
+	# A shared executable exercises the same ET_DYN loader on the RH9 toolchain.
+	expect_success gcc -std=gnu99 -DLEGACY_PIE -fPIC -shared -Wl,-e,_start \
+		-o "$BIN" /usr/lib/crt1.o "$SRC"
+fi
 expect_success env -i "$BIN"
 expect_eq "pie main
 pie exit" "$output" "PIE program execution"

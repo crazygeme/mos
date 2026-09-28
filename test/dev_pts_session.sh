@@ -19,6 +19,10 @@ cat > "$BASE/session.c" <<'EOF'
 #include <termios.h>
 #include <unistd.h>
 
+#ifndef O_PATH
+#define O_PATH 010000000
+#endif
+
 #define PT_GET2 0x802c542aUL
 #define PT_SET2 0x402c542bUL
 #define PT_SETW2 0x402c542cUL
@@ -203,5 +207,5 @@ int main(void)
     return 0;
 }
 EOF
-gcc -Wall -Wextra -o "$BASE/session" "$BASE/session.c"
+gcc -Wall -W -o "$BASE/session" "$BASE/session.c"
 "$BASE/session"

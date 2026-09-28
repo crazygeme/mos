@@ -6,7 +6,6 @@ mkdir -p "$BASE"
 cat > "$BASE/test.c" <<'SOURCE'
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/futex.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -14,6 +13,11 @@ cat > "$BASE/test.c" <<'SOURCE'
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+
+/* Linux futex ABI; RH9 does not ship linux/futex.h. */
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#define FUTEX_PRIVATE_FLAG 128
 
 #define PATH "/dev/shm/mos-futex-shared-test"
 
@@ -106,5 +110,5 @@ int main(void)
 	return 0;
 }
 SOURCE
-gcc -Wall -Wextra -o "$BASE/test" "$BASE/test.c"
+gcc -Wall -W -o "$BASE/test" "$BASE/test.c"
 "$BASE/test"

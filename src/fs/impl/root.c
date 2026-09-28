@@ -668,8 +668,9 @@ retry_open:
 		if (++depth > MAX_SYMLINK_DEPTH)
 			goto fail;
 
-		/* Preserve cur_path while reading and resolving the next target. */
-		ret = ext4_fread(f, link_target, MAX_PATH - 1, &link_len);
+		/* Preserve cur_path while resolving the next target.  Read the link
+		 * independently: the caller may have opened for writing only. */
+		ret = ext4_readlink(cur_path, link_target, MAX_PATH - 1, &link_len);
 		ext4_fclose(f);
 		if (ret != EOK)
 			goto fail;

@@ -6,14 +6,11 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <hw/keyboard.h>
+#include <hw/mouse.h>
 #include <hw/keymap.h>
 #include <hw/tty.h>
 #include <fs/ioctl.h>
 #include <config.h>
-
-#define I8042_STATUS 0x64
-#define I8042_STATUS_OBF 0x01
-#define I8042_STATUS_AUX 0x20
 
 /* ── Keysym translation table (KDGKBENT / KDSKBENT) ─────────────────────── */
 
@@ -441,23 +438,17 @@ void kb_start(void)
 		DIE();
 }
 
-/* Read the shared controller data port in interrupt context. Task-context
- * decoding must not leave keyboard bytes pending behind mouse interrupts. */
+void kb_receive_byte(unsigned char code)
+{
+	if (kb_scancodes)
+		cyb_put_record(kb_scancodes, &code, 1);
+}
+
+/* Both IRQ lines drain the shared controller output in byte order. */
 void kb_process(intr_frame *frame)
 {
-	unsigned budget = 64;
 	(void)frame;
-
-	while (budget--) {
-		unsigned char st = port_read_byte(I8042_STATUS);
-		unsigned char code;
-
-		if ((st & (I8042_STATUS_OBF | I8042_STATUS_AUX)) !=
-		    I8042_STATUS_OBF)
-			break;
-		code = port_read_byte(KB_DATA);
-		cyb_put_record(kb_scancodes, &code, 1);
-	}
+	ps2_drain_input();
 }
 
 static void kb_worker(void *param)

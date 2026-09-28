@@ -56,7 +56,7 @@ struct gpu_common {
 } __attribute__((packed));
 struct gpu_bo {
 	file *file;
-	unsigned id, size, pages, stride, width, height, named, dumb;
+	unsigned id, slot, size, pages, stride, width, height, named, dumb;
 	unsigned submission_ctx;
 	paddr_t *backing;
 	unsigned host_created;
@@ -77,6 +77,7 @@ static volatile struct gpu_avail *gpu_avail;
 static volatile struct gpu_used *gpu_used;
 static uint16_t gpu_index;
 static unsigned gpu_pci = ~0U, gpu_ready, gpu_next_context = 1;
+static unsigned gpu_next_resource = 1;
 static uint64_t gpu_fence, gpu_submission, gpu_completed;
 static void *gpu_dma_input, *gpu_dma_output;
 static unsigned gpu_pending, gpu_pending_size, gpu_pending_fenced;
@@ -323,7 +324,7 @@ static int gpu_buffer_release(file *fp)
 		rmutex_unlock(&gpu_lock);
 		return 0;
 	}
-	gpu_objects[bo->id - 1] = NULL;
+	gpu_objects[bo->slot] = NULL;
 	gpu_backing_free(bo);
 	free(bo);
 	free(fp->f_inode);
@@ -431,15 +432,17 @@ static int gpu_create(struct gpu_client *client,
 	struct virtio_gpu_mem_entry *entries;
 	struct gpu_bo *bo;
 	file *fp;
-	unsigned id, bytes, i;
+	unsigned id, slot, bytes, i;
 	int result;
 	if (arg->bo_handle || arg->size > GPU_MAX_BYTES || !arg->width ||
 	    arg->flags & ~VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP)
 		return -EINVAL;
-	for (id = 1; id <= GPU_MAX_OBJECTS && gpu_objects[id - 1]; id++) {
+	for (slot = 0; slot < GPU_MAX_OBJECTS && gpu_objects[slot]; slot++) {
 	}
-	if (id > GPU_MAX_OBJECTS)
+	if (slot == GPU_MAX_OBJECTS || !gpu_next_resource)
 		return -ENOSPC;
+	/* Host resource identifiers are not reused during a device lifetime. */
+	id = gpu_next_resource++;
 	fp = zalloc(sizeof(*fp));
 	bo = zalloc(sizeof(*bo));
 	if (!fp || !bo) {
@@ -463,6 +466,7 @@ static int gpu_create(struct gpu_client *client,
 		return -ENOMEM;
 	}
 	bo->id = id;
+	bo->slot = slot;
 	bo->file = fp;
 	bo->stride = arg->stride;
 	bo->width = arg->width;
@@ -477,7 +481,7 @@ static int gpu_create(struct gpu_client *client,
 	fp->f_fop = &gpu_buffer_fops;
 	fp->f_count = 1;
 	fp->f_mode = O_RDWR;
-	gpu_objects[id - 1] = bo;
+	gpu_objects[slot] = bo;
 	create.hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
 	create.resource_id = id;
 	create.target = arg->target;
@@ -1003,9 +1007,15 @@ static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
 		int result;
 		if (MINOR(client->rdev))
 			return -EACCES;
-		if (!r->name || r->name > GPU_MAX_OBJECTS)
+		if (!r->name)
 			return -ENOENT;
-		bo = gpu_objects[r->name - 1];
+		bo = NULL;
+		for (i = 0; i < GPU_MAX_OBJECTS; i++) {
+			if (gpu_objects[i] && gpu_objects[i]->id == r->name) {
+				bo = gpu_objects[i];
+				break;
+			}
+		}
 		if (!bo || !bo->named)
 			return -ENOENT;
 		result = gpu_add_handle(client, bo->file);

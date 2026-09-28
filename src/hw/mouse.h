@@ -4,6 +4,7 @@
 #include <fs/fs.h>
 
 void ps2mouse_init(void);
+void ps2_drain_input(void);
 
 void ps2mouse_reader_open(void);
 void ps2mouse_reader_close(void);

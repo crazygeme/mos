@@ -2,6 +2,7 @@
 #include <fs/fcntl.h>
 #include <fs/fs.h>
 #include <hw/mouse.h>
+#include <hw/keyboard.h>
 #include <int/int.h>
 #include <lib/cyclebuf.h>
 #include <lib/klib.h>
@@ -22,8 +23,13 @@
 #define I8042_CMD_READ_CONFIG 0x20
 #define I8042_CMD_WRITE_CONFIG 0x60
 #define I8042_CMD_ENABLE_AUX 0xA8
+#define I8042_CMD_DISABLE_KBD 0xAD
+#define I8042_CMD_ENABLE_KBD 0xAE
+#define I8042_CMD_DISABLE_AUX 0xA7
 
 #define I8042_CFG_IRQ12 0x02
+#define I8042_CFG_IRQ1 0x01
+#define I8042_CFG_KBD_CLOCK_DISABLE 0x10
 #define I8042_CFG_AUX_CLOCK_DISABLE 0x20
 
 #define PS2_MOUSE_ACK 0xFA
@@ -199,13 +205,19 @@ static int ps2mouse_read_reply(unsigned char *data, int spins)
 	int i;
 
 	for (i = 0; i < spins; i++) {
+		unsigned irq = int_intr_disable();
 		unsigned char st = port_read_byte(I8042_STATUS);
 
-		if ((st & (I8042_STATUS_OBF | I8042_STATUS_AUX)) ==
-		    (I8042_STATUS_OBF | I8042_STATUS_AUX)) {
-			*data = port_read_byte(I8042_DATA);
-			return 0;
+		if (st & I8042_STATUS_OBF) {
+			unsigned char byte = port_read_byte(I8042_DATA);
+			if (st & I8042_STATUS_AUX) {
+				*data = byte;
+				int_intr_setlevel(irq);
+				return 0;
+			}
+			kb_receive_byte(byte);
 		}
+		int_intr_setlevel(irq);
 		PAUSE();
 	}
 
@@ -216,14 +228,18 @@ static void i8042_drain_aux(void)
 {
 	int i;
 
-	for (i = 0; i < 32; i++) {
+	for (i = 0; i < 256; i++) {
+		unsigned irq = int_intr_disable();
 		unsigned char st = port_read_byte(I8042_STATUS);
 
-		if ((st & I8042_STATUS_OBF) == 0)
+		if ((st & I8042_STATUS_OBF) == 0) {
+			int_intr_setlevel(irq);
 			return;
-		if ((st & I8042_STATUS_AUX) == 0)
-			return;
-		(void)port_read_byte(I8042_DATA);
+		}
+		unsigned char byte = port_read_byte(I8042_DATA);
+		if (!(st & I8042_STATUS_AUX))
+			kb_receive_byte(byte);
+		int_intr_setlevel(irq);
 	}
 }
 
@@ -251,20 +267,25 @@ static int ps2mouse_enable_irq12(void)
 
 	/* Bootstrap runs before AP startup. The controller configuration reply
 	 * uses the keyboard data channel; IRQ1 must not consume it as input. */
-	if (i8042_write_cmd(I8042_CMD_ENABLE_AUX) < 0)
+	if (i8042_write_cmd(I8042_CMD_DISABLE_KBD) < 0 ||
+	    i8042_write_cmd(I8042_CMD_DISABLE_AUX) < 0)
 		goto out;
+	/* Quiesce both ports before reading the untagged configuration reply. */
+	i8042_drain_aux();
 	if (i8042_write_cmd(I8042_CMD_READ_CONFIG) < 0)
 		goto out;
 	if (i8042_read_data(&cfg, I8042_WAIT_SPINS) < 0)
 		goto out;
 
-	cfg |= I8042_CFG_IRQ12;
-	cfg &= ~I8042_CFG_AUX_CLOCK_DISABLE;
+	cfg |= I8042_CFG_IRQ1 | I8042_CFG_IRQ12;
+	cfg &= ~(I8042_CFG_KBD_CLOCK_DISABLE | I8042_CFG_AUX_CLOCK_DISABLE);
 
 	if (i8042_write_cmd(I8042_CMD_WRITE_CONFIG) < 0)
 		goto out;
 	ret = i8042_write_data(cfg);
 out:
+	i8042_write_cmd(I8042_CMD_ENABLE_KBD);
+	i8042_write_cmd(I8042_CMD_ENABLE_AUX);
 	int_intr_setlevel(irq);
 	return ret;
 }
@@ -314,19 +335,31 @@ static void ps2mouse_process_byte(unsigned char data)
 
 /* Drain the controller before interrupt exit. Packet publication and wakeups
  * do not schedule; command replies are owned by the command path. */
-static void ps2mouse_irq(intr_frame *frame)
+void ps2_drain_input(void)
 {
 	unsigned budget = 64;
-	(void)frame;
+	unsigned irq = int_intr_disable();
 
-	while (!mouse_cmd_busy && budget--) {
+	while (budget--) {
 		unsigned char st = port_read_byte(I8042_STATUS);
 
-		if ((st & (I8042_STATUS_OBF | I8042_STATUS_AUX)) !=
-		    (I8042_STATUS_OBF | I8042_STATUS_AUX))
+		if (!(st & I8042_STATUS_OBF))
 			break;
-		ps2mouse_process_byte(port_read_byte(I8042_DATA));
+		if (st & I8042_STATUS_AUX) {
+			if (mouse_cmd_busy)
+				break;
+			ps2mouse_process_byte(port_read_byte(I8042_DATA));
+		} else {
+			kb_receive_byte(port_read_byte(I8042_DATA));
+		}
 	}
+	int_intr_setlevel(irq);
+}
+
+static void ps2mouse_irq(intr_frame *frame)
+{
+	(void)frame;
+	ps2_drain_input();
 }
 
 void ps2mouse_init(void)
@@ -369,6 +402,7 @@ void ps2mouse_init(void)
 	mouse_cmd_busy = 0;
 	BARRIER();
 	mouse_present = 1;
+	ps2_drain_input();
 	printk("mouse: PS/2 mouse initialized on IRQ12\n");
 }
 
@@ -597,6 +631,7 @@ ssize_t ps2mouse_write(const void *buf, size_t size)
 		    0) {
 			mouse_cmd_busy = 0;
 			BARRIER();
+			ps2_drain_input();
 			mutex_unlock(&mouse_cmd_lock);
 			return -EIO;
 		}
@@ -605,6 +640,7 @@ ssize_t ps2mouse_write(const void *buf, size_t size)
 	mouse_cmd_busy = 0;
 	BARRIER();
 	mutex_unlock(&mouse_cmd_lock);
+	ps2_drain_input();
 	return (ssize_t)size;
 }
 

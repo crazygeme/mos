@@ -3,6 +3,7 @@
  *
  * Wraps the first registered NIC (eth0) in a lwIP netif and starts DHCP.
  */
+#include <net/core.h>
 #include <net/net.h>
 #include <hw/nic.h>
 #include <lib/klib.h>
@@ -75,7 +76,7 @@ void net_get_stats(net_stats_t *s)
 
 /* Called by lwIP to transmit a packet.
  * Uses a static bounce buffer to linearise the pbuf chain — safe because
- * eth0_linkoutput is only called from DSR/task context (no SMP, no reentry). */
+ * callers hold the kernel lock and suppress task preemption. */
 static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 {
 	static uint8_t txbounce[NET_RX_MAX_FRAME];
@@ -170,6 +171,7 @@ static void eth0_rx_dsr(void *param)
 		g_rx_rd++;
 		spinlock_unlock(&g_rx_lock, irq);
 
+		NET_CORE_GUARD;
 		slot = &g_rx_slots[idx];
 		slot->custom.custom_free_function = eth0_rx_free_pbuf;
 		p = pbuf_alloced_custom(PBUF_RAW, slot->len, PBUF_REF,
@@ -231,6 +233,7 @@ static int eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len,
 /* ── KERNEL_INIT entry point ────────────────────────────────────────────────── */
 void net_init(void)
 {
+	NET_CORE_GUARD;
 	/*
 	 * lwip_init() creates the loopback netif (127.0.0.1) unconditionally
 	 * inside netif_init().  Do this first so that loopback is always

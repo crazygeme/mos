@@ -2,6 +2,7 @@
  * sock_cb.c — lwIP callbacks for TCP, UDP, and RAW sockets,
  *             plus IP_HDRINCL raw send helper.
  */
+#include <net/core.h>
 #include <net/sock.h>
 #include <lib/klib.h>
 #include <errno.h>
@@ -186,6 +187,7 @@ static u8_t raw_on_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p,
 
 int raw_send_hdrincl(const void *buf, unsigned len)
 {
+	NET_CORE_GUARD;
 	if (len < sizeof(struct ip_hdr))
 		return -EINVAL;
 

@@ -2,6 +2,7 @@
  * sock.c — MOS socket core: ring buffer, blocking helpers,
  *          file operations, ioctl, and fd/sock helpers.
  */
+#include <net/core.h>
 #include <net/sock.h>
 #include <net/net.h>
 #include <fs/fs.h>
@@ -346,6 +347,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 
 static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
+	NET_CORE_GUARD;
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 	int nonblock = sock_file_nonblock(fp);
@@ -403,6 +405,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 
 static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 {
+	NET_CORE_GUARD;
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
@@ -449,6 +452,7 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 
 static int sock_release(file *fp)
 {
+	NET_CORE_GUARD;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
 	if (sk->domain == AF_UNIX) {
@@ -591,6 +595,7 @@ static void fill_lo_ifreq(struct ifreq *ifr, unsigned cmd)
 
 static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 {
+	NET_CORE_GUARD;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
 	switch (cmd) {
@@ -674,6 +679,7 @@ static void sock_poll_dereg(void *opaque, task_struct *task)
 
 static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 {
+	NET_CORE_GUARD;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 	unsigned ready = 0;
 

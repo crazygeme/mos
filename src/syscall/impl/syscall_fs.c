@@ -803,21 +803,30 @@ int sys_link(const char *path1, const char *path2)
 	return ret;
 }
 
-int sys_symlink(const char *path1, const char *path2)
+int sys_symlinkat(const char *target, int dirfd, const char *linkpath)
 {
-	char *name2 = name_get();
-	task_struct *cur = CURRENT_TASK();
+	char *name;
 	int ret;
 
-	/* path1 is the symlink target — store verbatim, do not resolve */
-	resolve_path(path2, name2);
-	ret = vfs_symlink(cur->root, path1, name2);
+	if (!target)
+		return -EFAULT;
+	if (!*target)
+		return -ENOENT;
+	if (strlen(target) >= MAX_PATH)
+		return -ENAMETOOLONG;
 
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("symlink(%s, %s) = %d\n", path1, name2, ret);
-
-	name_put(name2);
+	name = name_get();
+	ret = syscall_resolve_at(dirfd, linkpath, name);
+	/* The target is stored verbatim, including relative path components. */
+	if (ret == 0)
+		ret = vfs_symlink(CURRENT_TASK()->root, target, name);
+	name_put(name);
 	return ret;
+}
+
+int sys_symlink(const char *target, const char *linkpath)
+{
+	return sys_symlinkat(target, AT_FDCWD, linkpath);
 }
 
 /* defined in src/net/sock_un.c */
@@ -913,29 +922,27 @@ int sys_utime(const char *filename, const struct utimbuf *times)
 	return ret;
 }
 
-int sys_rename(const char *oldpath, const char *newpath)
+int sys_renameat(int olddirfd, const char *oldpath,
+		 int newdirfd, const char *newpath)
 {
 	char *name1 = name_get();
 	char *name2 = name_get();
-	task_struct *cur = CURRENT_TASK();
 	int ret;
 
-	if (!oldpath || !*oldpath || !newpath || !*newpath) {
-		name_put(name1);
-		name_put(name2);
-		return -ENOENT;
-	}
-
-	resolve_path(oldpath, name1);
-	resolve_path(newpath, name2);
-	ret = vfs_rename(cur->root, name1, name2);
-
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("rename(%s, %s) = %d\n", name1, name2, ret);
+	ret = syscall_resolve_at(olddirfd, oldpath, name1);
+	if (ret == 0)
+		ret = syscall_resolve_at(newdirfd, newpath, name2);
+	if (ret == 0)
+		ret = vfs_rename(CURRENT_TASK()->root, name1, name2);
 
 	name_put(name1);
 	name_put(name2);
 	return ret;
+}
+
+int sys_rename(const char *oldpath, const char *newpath)
+{
+	return sys_renameat(AT_FDCWD, oldpath, AT_FDCWD, newpath);
 }
 
 int sys_readlink(const char *_path, char *buf, unsigned bufsiz)

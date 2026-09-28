@@ -125,7 +125,7 @@ static int futex_get_key(user_enviroment *user, int *uaddr, int private,
 			inode *in = region->fp->f_inode;
 			key->kind = 1;
 			key->identity = in->i_pgcache_tag ? in->i_pgcache_tag :
-							 in->i_private;
+							    in->i_private;
 			key->object = in->i_ino;
 			key->backing = region->fp;
 			fs_get_file(key->backing);
@@ -135,7 +135,8 @@ static int futex_get_key(user_enviroment *user, int *uaddr, int private,
 			key->object = region->anon_id;
 		}
 		if (key->kind)
-			key->offset = (unsigned)region->offset + addr - region->begin;
+			key->offset =
+				(unsigned)region->offset + addr - region->begin;
 	}
 	spinlock_unlock(&vm->vma_lock, irq);
 	return 0;
@@ -188,8 +189,7 @@ static int futex_wake_mask_locked(const futex_key *key, int max_wake,
 	while (entry != &futex_waiters && n < max_wake) {
 		futex_waiter *w = container_of(entry, futex_waiter, list);
 		entry = entry->next;
-		if (!futex_keys_equal(&w->key, key) ||
-		    !(w->bitset & bitset))
+		if (!futex_keys_equal(&w->key, key) || !(w->bitset & bitset))
 			continue;
 		w->woken = 1;
 		list_remove_entry(&w->list);
@@ -250,7 +250,8 @@ void ps_clear_child_tid(task_struct *task)
 }
 
 static int futex_execute(int *uaddr, int op, int val, const void *timeout,
-			 int *uaddr2, int val3, int time64, const futex_key *key)
+			 int *uaddr2, int val3, int time64,
+			 const futex_key *key)
 {
 	task_struct *cur = CURRENT_TASK();
 	futex_waiter waiter;
@@ -413,7 +414,8 @@ static int futex_common(int *uaddr, int op, int val, const void *timeout,
 		return result;
 	cur->cancel_io_wait = futex_release_key;
 	cur->io_wait = &key;
-	result = futex_execute(uaddr, op, val, timeout, uaddr2, val3, time64, &key);
+	result = futex_execute(uaddr, op, val, timeout, uaddr2, val3, time64,
+			       &key);
 	cur->cancel_io_wait = NULL;
 	cur->io_wait = NULL;
 	futex_release_key(&key);

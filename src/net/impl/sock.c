@@ -28,26 +28,21 @@ unsigned sock_default_rxbuf_size(int domain)
 	return domain == AF_UNIX ? SOCK_RXBUF_UNIX_SIZE : SOCK_RXBUF_INET_SIZE;
 }
 
-unsigned sock_recv_timeout_ms(const mos_sock *sk)
+/* A zero socket timeout means an unlimited wait. Keep zero as the
+ * deadline sentinel rather than adding it to the current clock. */
+unsigned long long sock_recv_deadline(const mos_sock *sk)
 {
-	return sk && sk->recv_timeout_ms ? sk->recv_timeout_ms :
-					   SOCK_TIMEOUT_MS;
+	return sk->recv_timeout_ms ? time_now_ms() + sk->recv_timeout_ms : 0;
 }
 
-unsigned sock_send_timeout_ms(const mos_sock *sk)
+unsigned long long sock_send_deadline(const mos_sock *sk)
 {
-	return sk && sk->send_timeout_ms ? sk->send_timeout_ms :
-					   SOCK_TIMEOUT_MS;
+	return sk->send_timeout_ms ? time_now_ms() + sk->send_timeout_ms : 0;
 }
 
-int sock_recv_timeout_errno(const mos_sock *sk)
+int sock_deadline_expired(unsigned long long deadline)
 {
-	return sk && sk->recv_timeout_ms ? -EAGAIN : -ETIMEDOUT;
-}
-
-int sock_send_timeout_errno(const mos_sock *sk)
-{
-	return sk && sk->send_timeout_ms ? -EAGAIN : -ETIMEDOUT;
+	return deadline && time_now_ms() >= deadline;
 }
 
 int sock_alloc_rxbuf(mos_sock *sk, unsigned size)
@@ -101,7 +96,7 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 	const char *p = (const char *)buf;
 	size_t done = 0;
 	int nonblock = sock_file_nonblock(fp);
-	unsigned long long deadline = time_now_ms() + sock_send_timeout_ms(sk);
+	unsigned long long deadline = sock_send_deadline(sk);
 
 	while (done < count) {
 		size_t remain = count - done;
@@ -118,9 +113,8 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 		if (avail == 0) {
 			if (nonblock)
 				return done ? (ssize_t)done : -EAGAIN;
-			if (time_now_ms() > deadline)
-				return done ? (ssize_t)done :
-					      sock_send_timeout_errno(sk);
+			if (sock_deadline_expired(deadline))
+				return done ? (ssize_t)done : -EAGAIN;
 			tcp_output(sk->tcp);
 			if (sock_wait(sk, deadline) < 0)
 				return done ? (ssize_t)done : -EINTR;
@@ -141,9 +135,8 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 			return done ? (ssize_t)done : -EIO;
 		if (nonblock)
 			return done ? (ssize_t)done : -EAGAIN;
-		if (time_now_ms() > deadline)
-			return done ? (ssize_t)done :
-				      sock_send_timeout_errno(sk);
+		if (sock_deadline_expired(deadline))
+			return done ? (ssize_t)done : -EAGAIN;
 
 		tcp_output(sk->tcp);
 		if (sock_wait(sk, deadline) < 0)
@@ -306,7 +299,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	task_struct *cur = CURRENT_TASK();
 
 	now = time_now_ms();
-	if (now >= deadline)
+	if (deadline && now >= deadline)
 		return 0;
 
 	list_init(&waiter.node);
@@ -315,18 +308,24 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	waiter.queued = 0;
 
 	spinlock_lock(&sk->wait_lock, &irq);
+	if (cur->signal &&
+	    (cur->signal->sig_pending & ~cur->signal->sig_mask)) {
+		spinlock_unlock(&sk->wait_lock, irq);
+		return -1;
+	}
 	sock_waiter_queue(&sk->waiters, &waiter);
 	cur->io_wait = &waiter;
 	cur->cancel_io_wait = sock_cancel_wait;
 	now = time_now_ms();
-	if (now >= deadline) {
+	if (deadline && now >= deadline) {
 		sock_waiter_dequeue(&waiter);
 		cur->io_wait = NULL;
 		cur->cancel_io_wait = NULL;
 		spinlock_unlock(&sk->wait_lock, irq);
 		return 0;
 	}
-	ps_prepare_timed_wait(cur, (unsigned)(deadline - now), __func__);
+	ps_prepare_timed_wait(cur, deadline ? (unsigned)(deadline - now) : 0,
+			      __func__);
 	spinlock_unlock(&sk->wait_lock, irq);
 
 	task_sched();
@@ -352,17 +351,21 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 	int nonblock = sock_file_nonblock(fp);
 
+	if (count == 0 && sk->type == SOCK_STREAM)
+		return 0;
+
 	if (sk->domain == AF_UNIX)
 		return unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
-		unsigned long long deadline =
-			time_now_ms() + sock_recv_timeout_ms(sk);
+		unsigned long long deadline = sock_recv_deadline(sk);
 		while (rx_used(sk) < sizeof(u16_t)) {
 			if (sk->err)
 				return sk->err;
-			if (time_now_ms() > deadline)
-				return sock_recv_timeout_errno(sk);
+			if (nonblock)
+				return -EAGAIN;
+			if (sock_deadline_expired(deadline))
+				return -EAGAIN;
 			if (sock_wait(sk, deadline) < 0)
 				return -EINTR;
 		}
@@ -382,7 +385,7 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	}
 
 	/* TCP: block until data or EOF */
-	unsigned long long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
+	unsigned long long deadline = sock_recv_deadline(sk);
 	while (rx_used(sk) == 0) {
 		if (sk->err)
 			return sk->err;
@@ -392,8 +395,8 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 			return -ENOTCONN;
 		if (nonblock)
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return sock_recv_timeout_errno(sk);
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
@@ -450,6 +453,20 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 	return sock_tcp_stream_write(fp, sk, buf, count);
 }
 
+/* Detach callbacks before destroying an unexposed accepted socket. */
+void sock_tcp_abort(mos_sock *sk)
+{
+	struct tcp_pcb *pcb = sk->tcp;
+	if (!pcb)
+		return;
+	sk->tcp = NULL;
+	tcp_arg(pcb, NULL);
+	tcp_recv(pcb, NULL);
+	tcp_sent(pcb, NULL);
+	tcp_err(pcb, NULL);
+	tcp_abort(pcb);
+}
+
 static int sock_release(file *fp)
 {
 	NET_CORE_GUARD;
@@ -468,15 +485,28 @@ static int sock_release(file *fp)
 		if (sk->udp)
 			udp_remove(sk->udp);
 	} else {
+		/* Closing a listener also owns all not-yet-accepted sockets. */
+		while (sk->accept_head != sk->accept_tail) {
+			mos_sock *pending = sk->accept_queue[sk->accept_head];
+			sk->accept_queue[sk->accept_head] = NULL;
+			sk->accept_head =
+				(sk->accept_head + 1) % SOCK_ACCEPT_BACKLOG;
+			sock_tcp_abort(pending);
+			sock_destroy(pending);
+		}
 		if (sk->tcp) {
 			struct tcp_pcb *pcb = sk->tcp;
 			err_t err;
 
 			sk->tcp = NULL;
 			tcp_arg(pcb, NULL);
-			tcp_recv(pcb, NULL);
-			tcp_sent(pcb, NULL);
-			tcp_err(pcb, NULL);
+			if (pcb->state == LISTEN) {
+				tcp_accept(pcb, NULL);
+			} else {
+				tcp_recv(pcb, NULL);
+				tcp_sent(pcb, NULL);
+				tcp_err(pcb, NULL);
+			}
 			err = tcp_close(pcb);
 			if (err != ERR_OK)
 				tcp_abort(pcb);
@@ -608,6 +638,12 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 		return 0;
 
 	case FIONBIO:
+		if (!arg)
+			return -EFAULT;
+		if (*(const int *)arg)
+			fp->f_flag |= O_NONBLOCK;
+		else
+			fp->f_flag &= ~O_NONBLOCK;
 		return 0;
 
 	case SIOCGIFCONF: {

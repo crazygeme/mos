@@ -286,7 +286,7 @@ int sys_clock_nanosleep(int clockid, int flags, const struct timespec *req,
 }
 
 int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
-		      unsigned arg5)
+	      unsigned arg5)
 {
 	(void)arg3;
 	(void)arg4;
@@ -301,7 +301,8 @@ int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 		if (!arg2 || arg2 > KERNEL_OFFSET - sizeof(int))
 			return -EFAULT;
 		for (unsigned offset = 0; offset < sizeof(int); offset++) {
-			vm_region *region = vm_find_map(current->user->vm, arg2 + offset);
+			vm_region *region =
+				vm_find_map(current->user->vm, arg2 + offset);
 			if (!region || !(region->prot & PROT_WRITE))
 				return -EFAULT;
 		}
@@ -532,7 +533,8 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 			vm_region *region = vm_find_map(cur->user->vm, vir);
 
 			/* Managed pages retain write faults for COW and dirty tracking. */
-			if (region && (region->vm_flags & VM_REGION_F_DIRECT_PHYS))
+			if (region &&
+			    (region->vm_flags & VM_REGION_F_DIRECT_PHYS))
 				mmflag |= PAGE_ENTRY_WRITABLE;
 		}
 

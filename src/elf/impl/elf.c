@@ -278,17 +278,21 @@ static int elf_validate(elf_image *image, char *interp)
 		    ph.p_filesz > st.st_size - ph.p_offset)
 			return -ENOEXEC;
 		if (ph.p_type == PT_INTERP) {
-			if (interp[0] || ph.p_filesz < 2 || ph.p_filesz > MAX_PATH ||
-			    elf_read(fp, ph.p_offset, interp, ph.p_filesz) != ph.p_filesz ||
+			if (interp[0] || ph.p_filesz < 2 ||
+			    ph.p_filesz > MAX_PATH ||
+			    elf_read(fp, ph.p_offset, interp, ph.p_filesz) !=
+				    ph.p_filesz ||
 			    interp[0] != '/' || interp[ph.p_filesz - 1] != 0)
 				return -ENOEXEC;
 			continue;
 		}
 		if (ph.p_filesz > ph.p_memsz || ph.p_vaddr >= USER_ZONE_END ||
 		    ph.p_memsz > USER_ZONE_END - ph.p_vaddr ||
-		    (ph.p_vaddr & (PAGE_SIZE - 1)) != (ph.p_offset & (PAGE_SIZE - 1)) ||
-		    (ph.p_align > 1 && ((ph.p_align & (ph.p_align - 1)) ||
-		     (ph.p_vaddr - ph.p_offset) % ph.p_align)))
+		    (ph.p_vaddr & (PAGE_SIZE - 1)) !=
+			    (ph.p_offset & (PAGE_SIZE - 1)) ||
+		    (ph.p_align > 1 &&
+		     ((ph.p_align & (ph.p_align - 1)) ||
+		      (ph.p_vaddr - ph.p_offset) % ph.p_align)))
 			return -ENOEXEC;
 		if (PAGE_ALIGN_UP(ph.p_vaddr + ph.p_memsz) > image->span)
 			image->span = PAGE_ALIGN_UP(ph.p_vaddr + ph.p_memsz);
@@ -342,7 +346,8 @@ int elf_prepare(file *fp, elf_image **result)
 			if (ph->p_type == PT_LOAD &&
 			    (ph->p_align > ELF_PIE_BIAS ||
 			     ph->p_vaddr >= USER_HEAP_END - ELF_PIE_BIAS ||
-			     ph->p_memsz >= USER_HEAP_END - ELF_PIE_BIAS - ph->p_vaddr)) {
+			     ph->p_memsz >= USER_HEAP_END - ELF_PIE_BIAS -
+						    ph->p_vaddr)) {
 				ret = -ENOEXEC;
 				goto done;
 			}
@@ -391,13 +396,14 @@ unsigned elf_map_prepared(elf_image *image, mos_binfmt *fmt)
 		if (elf->e_phoff >= ph->p_offset &&
 		    elf->e_phoff - ph->p_offset <= ph->p_filesz &&
 		    table_size <= ph->p_filesz - (elf->e_phoff - ph->p_offset))
-			fmt->elf_load_addr = bias + ph->p_vaddr +
-					    elf->e_phoff - ph->p_offset;
+			fmt->elf_load_addr = bias + ph->p_vaddr + elf->e_phoff -
+					     ph->p_offset;
 	}
 	if (image->interpreter) {
 		elf_image *ld = image->interpreter;
 		unsigned base = vm_disc_map(CURRENT_TASK()->user->vm, ld->span);
-		if (!base || base >= USER_ZONE_END || ld->span > USER_ZONE_END - base)
+		if (!base || base >= USER_ZONE_END ||
+		    ld->span > USER_ZONE_END - base)
 			return 0;
 		fmt->interp_bias = base;
 		for (i = 0; i < ld->header.e_phnum; i++) {

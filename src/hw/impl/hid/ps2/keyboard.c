@@ -529,8 +529,8 @@ static void kb_handle_scancode(unsigned raw_code, int kb_mode)
 
 	/* Interpret key. */
 	if (map_key(invariant_keymap, code, &c) ||
-		   (!shift && map_key(unshifted_keymap, code, &c)) ||
-		   (shift && map_key(shifted_keymap, code, &c))) {
+	    (!shift && map_key(unshifted_keymap, code, &c)) ||
+	    (shift && map_key(shifted_keymap, code, &c))) {
 		/* Ordinary character. */
 		if (!release) {
 			/* Reboot if Ctrl+Alt+C pressed. */

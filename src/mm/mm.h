@@ -131,7 +131,7 @@ int do_mmap(vaddr_t addr, unsigned int len, unsigned int prot,
 void do_mmap_update(vaddr_t addr, unsigned int prot, unsigned int flags);
 
 vaddr_t do_mmap_kernel(vaddr_t addr, size_t len, unsigned int prot,
-		      unsigned int flags, file *fp, unsigned int offset);
+		       unsigned int flags, file *fp, unsigned int offset);
 
 int do_munmap(void *addr, unsigned length);
 

@@ -43,9 +43,8 @@ void vm_get_stats(task_struct *task, vm_stats_t *out)
 	if (task->user->vm)
 		vm_enum(task->user->vm, statm_region_cb, &ctx);
 	if (task->user->vm->brk > task->user->vm->start_brk)
-		heap_pages =
-			(task->user->vm->brk - task->user->vm->start_brk) /
-			PAGE_SIZE;
+		heap_pages = (task->user->vm->brk - task->user->vm->start_brk) /
+			     PAGE_SIZE;
 
 	unsigned stack_pages =
 		(KERNEL_OFFSET - task->user->vm->start_stack) / PAGE_SIZE;
@@ -71,9 +70,8 @@ void vm_fill_statm(proc_buf_t *pb, task_struct *task)
 		vm_enum(task->user->vm, statm_region_cb, &ctx);
 
 	if (task->user->vm->brk > task->user->vm->start_brk)
-		heap_pages =
-			(task->user->vm->brk - task->user->vm->start_brk) /
-			PAGE_SIZE;
+		heap_pages = (task->user->vm->brk - task->user->vm->start_brk) /
+			     PAGE_SIZE;
 
 	ctx.total += heap_pages + stack_pages;
 	ctx.data += heap_pages + stack_pages;

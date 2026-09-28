@@ -21,7 +21,7 @@ Not implemented or intentionally partial:
 
 - IPv6 is not implemented; `/proc/net/if_inet6` is empty by design.
 - The stack is IPv4-only.
-- The socket layer is synchronous and timeout-based; there are no kernel networking threads.
+- The socket layer uses blocking waits with optional application timeouts; there are no kernel networking threads.
 
 ## Architecture
 
@@ -192,13 +192,26 @@ Supported syscalls:
 
 All socket objects are exposed through the VFS as `S_IFSOCK` files.
 
+Blocking socket waits have no implicit 30-second deadline. Zero (the default)
+for `SO_RCVTIMEO` or `SO_SNDTIMEO` means an unlimited application wait;
+protocol errors, peer closure, and signals can still end the operation.
+Receive and accept waits use `SO_RCVTIMEO`; blocking stream sends use
+`SO_SNDTIMEO`. Explicit I/O timeouts return `EAGAIN` if no data was transferred,
+or the partial byte count otherwise. A connect timeout returns `EINPROGRESS`.
+Accepted sockets inherit the listener's configured timeouts. UNIX socket
+read/write and message operations use the same deadline semantics as INET.
+
+
 ### TCP
 
 Current TCP behavior:
 
-- `connect()` is asynchronous underneath but exposed as a blocking syscall with timeout.
+- `connect()` is asynchronous underneath. Blocking callers wait for completion or a configured `SO_SNDTIMEO`; nonblocking callers receive `EINPROGRESS` while the connection is pending.
 - `listen()` uses lwIP's listen PCB with `SOCK_ACCEPT_BACKLOG`.
-- accepted connections get their own `mos_sock`.
+- incoming connections get their own `mos_sock` and receive/error callbacks at
+  TCP handshake completion, before userspace `accept()`. The listener queues
+  these sockets so early data, EOF and errors survive a delayed accept. Closing
+  the listener aborts and releases any sockets still queued.
 - receive data is byte-stream data stored in the per-socket ring buffer.
 - if the userspace receive ring cannot hold an entire incoming segment, the lwIP callback returns `ERR_MEM` so lwIP retries later instead of truncating the stream.
 - EOF is surfaced by transitioning to `SS_DISCONNECTING`.
@@ -385,7 +398,7 @@ Implemented today:
 
 - `SIOCGSTAMP`
 - `FIONREAD`
-- `FIONBIO` as a compatibility no-op
+- `FIONBIO` sets or clears `O_NONBLOCK` on the shared file description
 - `SIOCGIFCONF`
 - `SIOCGIFFLAGS`
 - `SIOCGIFADDR`

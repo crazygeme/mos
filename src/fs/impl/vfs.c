@@ -441,7 +441,8 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 		if (!target_sb->s_op || !target_sb->s_op->open_root)
 			return NULL;
 		fp = target_sb->s_op->open_root(target_sb, flag);
-		if (fp) fp->f_mount_flags = target_sb->s_flags;
+		if (fp)
+			fp->f_mount_flags = target_sb->s_flags;
 		return fp;
 	}
 
@@ -451,7 +452,8 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	 */
 	if (target_sb->s_op && target_sb->s_op->open) {
 		fp = target_sb->s_op->open(target_sb, rel_path, flag);
-		if (fp) fp->f_mount_flags = target_sb->s_flags;
+		if (fp)
+			fp->f_mount_flags = target_sb->s_flags;
 		return fp;
 	}
 
@@ -462,7 +464,8 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	 */
 	if (target_sb->s_op && target_sb->s_op->open_root) {
 		fp = target_sb->s_op->open_root(target_sb, flag);
-		if (fp) fp->f_mount_flags = target_sb->s_flags;
+		if (fp)
+			fp->f_mount_flags = target_sb->s_flags;
 		return fp;
 	}
 

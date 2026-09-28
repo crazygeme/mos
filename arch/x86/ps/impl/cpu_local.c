@@ -23,7 +23,9 @@ void arch_cpu_local_init(struct smp_cpu *cpu)
 			      KERNEL_PRIVILEGE, SEG_BASE_1);
 	operand = MAKE_GDTR_OPERAND(sizeof(cpu->gdt) - 1, cpu->gdt);
 	SET_GDT(operand);
-	asm volatile("movw %0, %%fs" : : "rm"((unsigned short)CPU_LOCAL_SELECTOR)
+	asm volatile("movw %0, %%fs"
+		     :
+		     : "rm"((unsigned short)CPU_LOCAL_SELECTOR)
 		     : "memory");
 	operand = MAKE_IDTR_OPERAND(idt_size - 1, idt);
 	arch_cpu_load_idt(&operand);

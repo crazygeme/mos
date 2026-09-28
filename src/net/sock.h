@@ -23,15 +23,15 @@ void rx_discard(mos_sock *sk, unsigned len);
 int sock_alloc_rxbuf(mos_sock *sk, unsigned size);
 void sock_destroy(mos_sock *sk);
 unsigned sock_default_rxbuf_size(int domain);
-unsigned sock_recv_timeout_ms(const mos_sock *sk);
-unsigned sock_send_timeout_ms(const mos_sock *sk);
-int sock_recv_timeout_errno(const mos_sock *sk);
-int sock_send_timeout_errno(const mos_sock *sk);
+/* Zero deadline means no application-specified timeout. */
+unsigned long long sock_recv_deadline(const mos_sock *sk);
+unsigned long long sock_send_deadline(const mos_sock *sk);
+int sock_deadline_expired(unsigned long long deadline);
 
 /* ── Blocking helpers (sock.c) ──────────────────────────────────────────── */
 
 void sock_wakeup(mos_sock *sk);
-/* Returns 0 normally, -1 if a deliverable signal is pending. */
+/* Zero deadline waits indefinitely. Returns -1 for a deliverable signal. */
 int sock_wait(mos_sock *sk, unsigned long long deadline);
 
 /* ── FD helpers (sock.c) ────────────────────────────────────────────────── */
@@ -41,6 +41,7 @@ mos_sock *fd_to_sock(int fd);
 
 /* ── lwIP callback helpers (sock_cb.c) ──────────────────────────────────── */
 
+void sock_tcp_abort(mos_sock *sk);
 void tcp_setup_callbacks(struct tcp_pcb *pcb, mos_sock *sk);
 int raw_send_hdrincl(const void *buf, unsigned len);
 err_t sock_tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ip, u16_t port);
@@ -92,7 +93,7 @@ int unix_accept(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen,
 		int nonblock);
 ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count);
 ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count);
-int unix_sendmsg(mos_sock *sk, const struct msghdr *msg);
+int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags);
 int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags);
 void unix_drop_passfds(mos_sock *sk);
 void unix_release(mos_sock *sk);

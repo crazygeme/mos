@@ -26,7 +26,7 @@ static inline void net_core_leave(int *active)
 }
 
 /* Restore the scheduling level on every scope exit, including early returns. */
-#define NET_CORE_GUARD \
+#define NET_CORE_GUARD                                                        \
 	int net_core_guard __attribute__((cleanup(net_core_leave), unused)) = \
 		net_core_enter()
 

@@ -231,17 +231,24 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	if (sk->state == SS_CONNECTED)
 		return -EISCONN;
 
+	if (sk->state == SS_CONNECTING)
+		return -EALREADY;
+	sk->peer = *in;
 	sk->state = SS_CONNECTING;
 	err_t e = sock_tcp_connect(sk->tcp, &ip, port);
-	if (e != ERR_OK)
+	if (e != ERR_OK) {
+		sk->state = SS_UNCONNECTED;
 		return -ECONNREFUSED;
+	}
 
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = sock_send_deadline(sk);
 	while (sk->state == SS_CONNECTING) {
 		if (sk->err)
 			return sk->err;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (CURRENT_TASK()->fds[fd]->f_flag & O_NONBLOCK)
+			return -EINPROGRESS;
+		if (sock_deadline_expired(deadline))
+			return -EINPROGRESS;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
@@ -301,47 +308,25 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
 
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = sock_recv_deadline(sk);
 	while (sk->accept_head == sk->accept_tail) {
 		if (sk->err)
 			return sk->err;
 		if (nonblock)
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
 
-	struct tcp_pcb *newpcb = sk->accept_queue[sk->accept_head];
+	mos_sock *nsk = sk->accept_queue[sk->accept_head];
+	sk->accept_queue[sk->accept_head] = NULL;
 	sk->accept_head = (sk->accept_head + 1) % SOCK_ACCEPT_BACKLOG;
-	tcp_backlog_accepted(sk->tcp);
-
-	mos_sock *nsk = zalloc(sizeof(*nsk));
-	if (!nsk) {
-		tcp_abort(newpcb);
-		return -ENOMEM;
-	}
-	if (sock_alloc_rxbuf(nsk, sock_default_rxbuf_size(AF_INET)) < 0) {
-		tcp_abort(newpcb);
-		sock_destroy(nsk);
-		return -ENOMEM;
-	}
-	nsk->domain = AF_INET;
-	nsk->type = SOCK_STREAM;
-	nsk->state = SS_CONNECTED;
-	nsk->tcp = newpcb;
-	spinlock_init(&nsk->wait_lock);
-	list_init(&nsk->waiters);
-	list_init(&nsk->poll_waiters);
-	tcp_setup_callbacks(newpcb, nsk);
-
-	nsk->peer.sin_family = AF_INET;
-	nsk->peer.sin_port = lwip_htons(newpcb->remote_port);
-	nsk->peer.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->remote_ip);
-	nsk->local.sin_family = AF_INET;
-	nsk->local.sin_port = lwip_htons(newpcb->local_port);
-	nsk->local.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->local_ip);
+	/* A reset may have freed the PCB while this socket was queued. Data,
+	 * EOF and errors already recorded on nsk must survive accept(). */
+	if (nsk->tcp)
+		tcp_backlog_accepted(nsk->tcp);
 
 	if (addr && addrlen) {
 		unsigned copy = *addrlen < sizeof(nsk->peer) ?
@@ -353,7 +338,7 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 	int nfd = sock_to_fd(nsk);
 	if (nfd < 0) {
-		tcp_abort(newpcb);
+		sock_tcp_abort(nsk);
 		sock_destroy(nsk);
 		return -ENOMEM;
 	}
@@ -523,7 +508,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		return ret;
 	}
 
-	unsigned long long deadline = time_now_ms() + sock_recv_timeout_ms(sk);
+	unsigned long long deadline = sock_recv_deadline(sk);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		while (rx_used(sk) < sizeof(u16_t)) {
@@ -531,8 +516,8 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 				return sk->err;
 			if (flags & MSG_DONTWAIT)
 				return -EAGAIN;
-			if (time_now_ms() > deadline)
-				return sock_recv_timeout_errno(sk);
+			if (sock_deadline_expired(deadline))
+				return -EAGAIN;
 			if (sock_wait(sk, deadline) < 0)
 				return -EINTR;
 		}
@@ -565,8 +550,8 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 			return -ENOTCONN;
 		if (flags & MSG_DONTWAIT)
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return sock_recv_timeout_errno(sk);
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}

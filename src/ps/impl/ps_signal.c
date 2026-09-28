@@ -28,8 +28,8 @@ void ps_timer_notify(unsigned tid, int signo, int timer_id, int value)
 		if (signo == SIGRTMIN_KERNEL) {
 			target->signal->timer_signal_id = timer_id;
 			target->signal->timer_signal_value = value;
-			target->signal->sig_pending |=
-				1UL << (SIGRTMIN_KERNEL - 1);
+			target->signal->sig_pending |= 1UL
+						       << (SIGRTMIN_KERNEL - 1);
 		} else {
 			target->signal->sig_pending |= 1UL << (signo - 1);
 		}

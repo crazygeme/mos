@@ -146,7 +146,7 @@ _START void mm_get_phy_mem_bound(multiboot_info_t *mb,
 			if (top > *mem_high)
 				*mem_high = top;
 		}
-	next:
+next:
 		map = (memory_map_t *)((unsigned int)map + map->size +
 				       sizeof(unsigned int));
 	}

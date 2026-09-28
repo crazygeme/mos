@@ -244,7 +244,8 @@ void ps_reap_dead_threads(void)
 	while (node != &dead_threads) {
 		task_struct *task = container_of(node, task_struct, ps_list);
 		node = node->next;
-		if (task->on_cpu) continue;
+		if (task->on_cpu)
+			continue;
 		list_remove_entry(&task->ps_list);
 		ps_reap_group_thread(task);
 		node = dead_threads.next;
@@ -269,7 +270,8 @@ void ps_kill_thread_group(task_struct *leader)
 	for (;;) {
 		int active = 0;
 		spinlock_lock(&ps_lock, &irq);
-		for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
+		for (node = rb_first(&control.mgr_queue); node;
+		     node = rb_next(node)) {
 			task_struct *task = rb_entry(node, task_struct, mgr_rb);
 			if (task != leader && task->tgid == leader->tgid &&
 			    (task->fork_flag & FORK_FLAG_THREAD)) {
@@ -278,7 +280,8 @@ void ps_kill_thread_group(task_struct *leader)
 			}
 		}
 		spinlock_unlock(&ps_lock, irq);
-		if (!active) break;
+		if (!active)
+			break;
 		time_wait(1);
 	}
 
@@ -662,7 +665,7 @@ int sys_getrusage(int who, rusage *usage)
  */
 
 static void qemu_piix4_poweroff(uint32_t device, uint16_t vendor,
-			       uint16_t product, void *unused)
+				uint16_t product, void *unused)
 {
 	unsigned base;
 	unsigned short control;

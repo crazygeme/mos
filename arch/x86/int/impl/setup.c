@@ -16,8 +16,7 @@ void arch_interrupt_activate(void)
 {
 	unsigned long long *current_gdt = smp_gdt();
 	unsigned long long idtr = MAKE_IDTR_OPERAND(idt_size - 1, idt);
-	unsigned long long gdtr =
-		MAKE_GDTR_OPERAND(gdt_size - 1, current_gdt);
+	unsigned long long gdtr = MAKE_GDTR_OPERAND(gdt_size - 1, current_gdt);
 
 	SET_IDT(idtr);
 	SET_GDT(gdtr);

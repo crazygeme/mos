@@ -48,7 +48,8 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 		if ((task->status == ps_ready || task == current) &&
 		    !task->terminate_requested &&
 		    (!task->on_cpu || task == current) &&
-		    (task->priority != ps_idle || task->param == (void *)smp_cpu_id())) {
+		    (task->priority != ps_idle ||
+		     task->param == (void *)smp_cpu_id())) {
 			list_remove_entry(node);
 			list_insert_tail(head, &task->ps_list);
 			return task;

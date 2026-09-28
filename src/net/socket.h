@@ -240,7 +240,6 @@ struct mmsghdr {
 #define SOCK_RXBUF_INET_SIZE (256 * 1024) /* per-INET-socket receive ring */
 #define SOCK_RXBUF_UNIX_SIZE (4 * 1024) /* per-AF_UNIX-socket receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
-#define SOCK_TIMEOUT_MS 30000 /* blocking-op timeout (ms) */
 #define UNIX_SHUT_RD 1u
 #define UNIX_SHUT_WR 2u
 #define UNIX_PASSFD_MAX 8 /* max descriptors per SCM_RIGHTS message */
@@ -300,8 +299,8 @@ typedef struct _mos_sock {
 	/* UDP recvfrom: source of most-recently received datagram */
 	struct sockaddr_in rx_src;
 
-	/* TCP listen: queue of newly-accepted tcp_pcb pointers */
-	struct tcp_pcb *accept_queue[SOCK_ACCEPT_BACKLOG];
+	/* TCP listen: sockets buffer data before userspace calls accept(). */
+	struct _mos_sock *accept_queue[SOCK_ACCEPT_BACKLOG];
 	int accept_head;
 	int accept_tail;
 

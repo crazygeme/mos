@@ -20,7 +20,9 @@ ALWAYS_INLINE void arch_mm_flush_local(void)
 {
 	addr_space_t value;
 	asm volatile("movl %%cr3, %0; movl %0, %%cr3"
-		     : "=&r"(value) : : "memory");
+		     : "=&r"(value)
+		     :
+		     : "memory");
 }
 
 ALWAYS_INLINE void arch_mm_enable_global_pages(void)

@@ -891,18 +891,23 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 			return -EINVAL;
 		if (cur->user->euid != 0 &&
 		    hard > (limit->rlim_max == RLIM_INFINITY ?
-			    MOS_RLIM64_INFINITY : limit->rlim_max))
+				    MOS_RLIM64_INFINITY :
+				    limit->rlim_max))
 			return -EPERM;
 	}
 	if (old_limit) {
 		old_limit->rlim_cur = limit->rlim_cur == RLIM_INFINITY ?
-			MOS_RLIM64_INFINITY : limit->rlim_cur;
+					      MOS_RLIM64_INFINITY :
+					      limit->rlim_cur;
 		old_limit->rlim_max = limit->rlim_max == RLIM_INFINITY ?
-			MOS_RLIM64_INFINITY : limit->rlim_max;
+					      MOS_RLIM64_INFINITY :
+					      limit->rlim_max;
 	}
 	if (new_limit) {
-		limit->rlim_cur = soft == MOS_RLIM64_INFINITY ? RLIM_INFINITY : soft;
-		limit->rlim_max = hard == MOS_RLIM64_INFINITY ? RLIM_INFINITY : hard;
+		limit->rlim_cur = soft == MOS_RLIM64_INFINITY ? RLIM_INFINITY :
+								soft;
+		limit->rlim_max = hard == MOS_RLIM64_INFINITY ? RLIM_INFINITY :
+								hard;
 	}
 	return 0;
 }

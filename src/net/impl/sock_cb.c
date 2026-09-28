@@ -93,7 +93,36 @@ static err_t tcp_on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 	if (next == sk->accept_head)
 		return ERR_MEM;
 
-	sk->accept_queue[sk->accept_tail] = newpcb;
+	/* The peer can send immediately after the TCP handshake, before the
+	 * listener process calls accept(). Install a real receive owner now:
+	 * lwIP's default tcp_recv_null() ACKs and frees such early data. */
+	mos_sock *child = zalloc(sizeof(*child));
+	if (!child)
+		return ERR_MEM;
+	if (sock_alloc_rxbuf(child, sock_default_rxbuf_size(AF_INET)) < 0) {
+		sock_destroy(child);
+		return ERR_MEM;
+	}
+	child->domain = AF_INET;
+	child->type = SOCK_STREAM;
+	child->state = SS_CONNECTED;
+	child->recv_timeout_ms = sk->recv_timeout_ms;
+	child->send_timeout_ms = sk->send_timeout_ms;
+	child->tcp = newpcb;
+	spinlock_init(&child->wait_lock);
+	list_init(&child->waiters);
+	list_init(&child->poll_waiters);
+	spinlock_init(&child->rxbuf_lock);
+	child->peer.sin_family = AF_INET;
+	child->peer.sin_port = lwip_htons(newpcb->remote_port);
+	child->peer.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->remote_ip);
+	child->local.sin_family = AF_INET;
+	child->local.sin_port = lwip_htons(newpcb->local_port);
+	child->local.sin_addr.s_addr = ip4_addr_get_u32(&newpcb->local_ip);
+	tcp_setup_callbacks(newpcb, child);
+	tcp_backlog_delayed(newpcb);
+
+	sk->accept_queue[sk->accept_tail] = child;
 	sk->accept_tail = next;
 	sock_wakeup(sk);
 	return ERR_OK;

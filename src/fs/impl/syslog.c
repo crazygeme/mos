@@ -68,7 +68,8 @@ void syslog_emit(unsigned priority, const char *text, unsigned length)
 	if (next_sequence - first_sequence > LOG_RECORDS)
 		first_sequence = next_sequence - LOG_RECORDS;
 	for (entry = waiters.next; entry != &waiters; entry = entry->next) {
-		struct log_waiter *waiter = container_of(entry, struct log_waiter, node);
+		struct log_waiter *waiter =
+			container_of(entry, struct log_waiter, node);
 		ps_put_to_ready_queue(waiter->task);
 	}
 	spinlock_unlock(&log_lock, irq);
@@ -117,7 +118,8 @@ static int log_wait_check(void *opaque)
 	spinlock_lock(&log_lock, &irq);
 	ready = wait->cursor->sequence < next_sequence;
 	spinlock_unlock(&log_lock, irq);
-	if (!ready && (current->signal->sig_pending & ~current->signal->sig_mask))
+	if (!ready &&
+	    (current->signal->sig_pending & ~current->signal->sig_mask))
 		return -EINTR;
 	return ready;
 }
@@ -139,7 +141,8 @@ static const struct poll_ops log_wait_ops = {
 };
 
 /* Called with log_lock held; device formatting requires LOG_FORMAT bytes. */
-static unsigned log_format(const struct log_record *record, char *buf, int device)
+static unsigned log_format(const struct log_record *record, char *buf,
+			   int device)
 {
 	unsigned length, i;
 	static const char hex[] = "0123456789abcdef";
@@ -188,8 +191,9 @@ static ssize_t log_read(struct log_cursor *cursor, void *buf, size_t size,
 			}
 		}
 		while (cursor->sequence < next_sequence && copied < size) {
-			full = log_format(&records[cursor->sequence % LOG_RECORDS],
-					  formatted, device);
+			full = log_format(
+				&records[cursor->sequence % LOG_RECORDS],
+				formatted, device);
 			length = full;
 			if (device && size < length) {
 				spinlock_unlock(&log_lock, irq);
@@ -198,7 +202,8 @@ static ssize_t log_read(struct log_cursor *cursor, void *buf, size_t size,
 			length -= cursor->offset;
 			if (length > size - copied)
 				length = size - copied;
-			memcpy((char *)buf + copied, formatted + cursor->offset, length);
+			memcpy((char *)buf + copied, formatted + cursor->offset,
+			       length);
 			copied += length;
 			cursor->offset += length;
 			if (cursor->offset == full) {
@@ -228,10 +233,11 @@ static ssize_t log_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	int device = S_ISCHR(fp->f_inode->i_mode);
 	(void)pos;
-	return log_read(device ? fp->f_inode->i_private : &stream_cursor,
-			buf, size, device, (fp->f_flag & O_NONBLOCK) != 0);
+	return log_read(device ? fp->f_inode->i_private : &stream_cursor, buf,
+			size, device, (fp->f_flag & O_NONBLOCK) != 0);
 }
-static ssize_t log_file_write(file *fp, const void *buf, size_t size, loff_t *pos)
+static ssize_t log_file_write(file *fp, const void *buf, size_t size,
+			      loff_t *pos)
 {
 	const char *text = buf;
 	unsigned priority = 14, prefix = 0, value = 0, i;
@@ -245,7 +251,9 @@ static ssize_t log_file_write(file *fp, const void *buf, size_t size, loff_t *po
 	if (!buf)
 		return -EFAULT;
 	if (text[0] == '<') {
-		for (i = 1; i < size && i <= 3 && text[i] >= '0' && text[i] <= '9'; i++)
+		for (i = 1;
+		     i < size && i <= 3 && text[i] >= '0' && text[i] <= '9';
+		     i++)
 			value = value * 10 + text[i] - '0';
 		if (i > 1 && i < size && text[i] == '>' && value <= 191) {
 			priority = value;
@@ -260,7 +268,8 @@ static ssize_t log_file_write(file *fp, const void *buf, size_t size, loff_t *po
 static unsigned log_file_poll(file *fp, unsigned events, poll_table *pt)
 {
 	int device = S_ISCHR(fp->f_inode->i_mode);
-	struct log_cursor *cursor = device ? fp->f_inode->i_private : &stream_cursor;
+	struct log_cursor *cursor = device ? fp->f_inode->i_private :
+					     &stream_cursor;
 	unsigned ready = 0;
 	int irq;
 	spinlock_lock(&log_lock, &irq);
@@ -285,7 +294,8 @@ static loff_t log_file_seek(file *fp, loff_t offset, int whence)
 		       whence != KMSG_SEEK_DATA))
 		return -EINVAL;
 	spinlock_lock(&log_lock, &irq);
-	cursor->sequence = whence == KMSG_SEEK_END ? next_sequence : first_sequence;
+	cursor->sequence = whence == KMSG_SEEK_END ? next_sequence :
+						     first_sequence;
 	if (whence == KMSG_SEEK_DATA && clear_sequence > cursor->sequence)
 		cursor->sequence = clear_sequence;
 	cursor->offset = 0;
@@ -310,8 +320,12 @@ static int log_file_release(file *fp)
 	return 0;
 }
 static const file_operations log_fops = {
-	.read = log_file_read, .write = log_file_write, .poll = log_file_poll,
-	.llseek = log_file_seek, .getattr = log_file_stat, .release = log_file_release,
+	.read = log_file_read,
+	.write = log_file_write,
+	.poll = log_file_poll,
+	.llseek = log_file_seek,
+	.getattr = log_file_stat,
+	.release = log_file_release,
 };
 file *syslog_open(unsigned mode, unsigned rdev)
 {
@@ -320,7 +334,9 @@ file *syslog_open(unsigned mode, unsigned rdev)
 	struct log_cursor *cursor = zalloc(sizeof(*cursor));
 	int irq;
 	if (!fp || !node || !cursor) {
-		free(fp); free(node); free(cursor);
+		free(fp);
+		free(node);
+		free(cursor);
 		return NULL;
 	}
 	spinlock_lock(&log_lock, &irq);
@@ -360,7 +376,8 @@ int sys_syslog(int type, char *buf, int len)
 	if (begin < first_sequence)
 		begin = first_sequence;
 	for (sequence = begin; sequence < next_sequence; sequence++)
-		total += log_format(&records[sequence % LOG_RECORDS], formatted, 0);
+		total += log_format(&records[sequence % LOG_RECORDS], formatted,
+				    0);
 	if (type == 9) {
 		if (stream_cursor.sequence >= first_sequence)
 			total -= stream_cursor.offset;
@@ -370,7 +387,8 @@ int sys_syslog(int type, char *buf, int len)
 	if (type == 3 || type == 4) {
 		skip = total > (unsigned)len ? total - len : 0;
 		for (sequence = begin; sequence < next_sequence; sequence++) {
-			length = log_format(&records[sequence % LOG_RECORDS], formatted, 0);
+			length = log_format(&records[sequence % LOG_RECORDS],
+					    formatted, 0);
 			if (skip >= length) {
 				skip -= length;
 				continue;

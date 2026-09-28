@@ -333,8 +333,7 @@ static int mm_get_valid_page_table(vaddr_t addr, unsigned flag,
 	}
 	info->dir = &page_dir[offset];
 	if (*info->dir)
-		info->table = (pte_t *)PHY_TO_VIRT(*info->dir &
-							  PAGE_SIZE_MASK);
+		info->table = (pte_t *)PHY_TO_VIRT(*info->dir & PAGE_SIZE_MASK);
 	if (info->table)
 		info->entry = &info->table[ADDR_TO_PET_OFFSET(addr)];
 
@@ -388,19 +387,18 @@ static int mm_set_page_table_entry(vaddr_t addr, unsigned flag, pte_t value)
 static void mm_clear_page_table_entry(mm_addr_info *info)
 {
 	paddr_t phy = *info->entry & PAGE_SIZE_MASK;
-	unsigned dir_index =
-		(unsigned)(info->dir - (pte_t *)mm_get_pagedir());
+	unsigned dir_index = (unsigned)(info->dir - (pte_t *)mm_get_pagedir());
 	vaddr_t addr = ((vaddr_t)dir_index << MOS_PGT_SHIFT) |
-		((vaddr_t)(info->entry - info->table) << MOS_PET_SHIFT);
+		       ((vaddr_t)(info->entry - info->table) << MOS_PET_SHIFT);
 
 	*info->entry = 0;
 	arch_mm_invalidate(addr);
 	if (phy) {
 		if (dir_index < KERNEL_PAGE_DIR_OFFSET) {
-			int idx =
-				(PAGE_TABLE_CACHE_END - (uintptr_t)info->table) /
-					PAGE_SIZE -
-				1;
+			int idx = (PAGE_TABLE_CACHE_END -
+				   (uintptr_t)info->table) /
+					  PAGE_SIZE -
+				  1;
 			pgc_entry_count[idx]--;
 			if (pgc_entry_count[idx] == 0) {
 				*info->dir = 0;
@@ -648,8 +646,7 @@ void mm_destroy_user_map(vaddr_t page_dir)
 		 * scanning all 1024 PTEs in that case. */
 		if (pgc_entry_count[cache_idx] != 0)
 			for (j = 0; j < PG_TABLE_SIZE; j++) {
-				paddr_t phy_addr = table[j] &
-							PAGE_SIZE_MASK;
+				paddr_t phy_addr = table[j] & PAGE_SIZE_MASK;
 				unsigned int page_index;
 
 				if (!phy_addr)
@@ -794,8 +791,7 @@ unsigned mm_get_map_flag_pd(vaddr_t page_dir, vaddr_t vir)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir,
-					    &info))
+	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
 		return 0;
 	return *info.entry & ~PAGE_SIZE_MASK;
 }
@@ -815,8 +811,7 @@ void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir,
-					    &info))
+	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
 	if ((pte_t *)page_dir == (pte_t *)mm_get_pagedir())

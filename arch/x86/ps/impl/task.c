@@ -22,9 +22,9 @@ static void load_ldt(task_struct *task, unsigned long long *gdt)
 	}
 
 	unsigned limit = LDT_ENTRY_COUNT * sizeof(unsigned long long) - 1;
-	gdt[LDT_SELECTOR / 8] =
-		MAKE_SEG_DESC((unsigned)task->user->ldt_desc, limit,
-			      SEG_CLASS_SYSTEM, 2, KERNEL_PRIVILEGE, SEG_BASE_1);
+	gdt[LDT_SELECTOR / 8] = MAKE_SEG_DESC((unsigned)task->user->ldt_desc,
+					      limit, SEG_CLASS_SYSTEM, 2,
+					      KERNEL_PRIVILEGE, SEG_BASE_1);
 	SET_LDT(LDT_SELECTOR);
 }
 
@@ -64,8 +64,8 @@ void reset_tss(task_struct *task)
 	}
 	io_tss->io_bitmap[TSS_IO_BITMAP_BYTES] = 0xff;
 	tss->ss0 = KERNEL_DATA_SELECTOR;
-	tss->ss = tss->gs = tss->fs = tss->ds = tss->es =
-		KERNEL_DATA_SELECTOR | 0x3;
+	tss->ss = tss->gs = tss->fs = tss->ds = tss->es = KERNEL_DATA_SELECTOR |
+							  0x3;
 	tss->cs = KERNEL_CODE_SELECTOR | 0x3;
 	int_update_tss((void *)tss);
 }

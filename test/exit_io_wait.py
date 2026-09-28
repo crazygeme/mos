@@ -1,10 +1,33 @@
 #!/usr/bin/env python3
-"""Exercise process exit with threads blocked in socket and poll waits."""
+"""Exercise process exit with active threads and blocked I/O waiters."""
+import ctypes
 import os
 import select
 import socket
 import threading
 import time
+
+libc = ctypes.CDLL(None)
+for _ in range(32):
+    ready_r, ready_w = os.pipe()
+    child = os.fork()
+    if child == 0:
+        os.close(ready_r)
+
+        def active():
+            os.write(ready_w, b"r")
+            while True:
+                libc.getpid()
+
+        threading.Thread(target=active, daemon=True).start()
+        time.sleep(0.02)
+        os._exit(0)
+    os.close(ready_w)
+    try:
+        assert os.read(ready_r, 1) == b"r"
+        assert os.waitpid(child, 0)[1] == 0
+    finally:
+        os.close(ready_r)
 
 for operation in ("poll", "recv"):
     for _ in range(8):

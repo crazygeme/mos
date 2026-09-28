@@ -290,6 +290,8 @@ int sys_setuid(unsigned uid)
 {
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
+	unsigned old_effective = u->euid;
+	unsigned old_filesystem = u->fsuid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setuid(%d)\n", uid);
@@ -305,6 +307,8 @@ int sys_setuid(unsigned uid)
 	} else {
 		return -EPERM;
 	}
+	if (u->euid != old_effective || u->fsuid != old_filesystem)
+		current->pdeath_signal = 0;
 	return 0;
 }
 
@@ -317,6 +321,8 @@ int sys_setgid(unsigned gid)
 {
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
+	unsigned old_effective = u->egid;
+	unsigned old_filesystem = u->fsgid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgid(%d)\n", gid);
@@ -332,6 +338,8 @@ int sys_setgid(unsigned gid)
 	} else {
 		return -EPERM;
 	}
+	if (u->egid != old_effective || u->fsgid != old_filesystem)
+		current->pdeath_signal = 0;
 	return 0;
 }
 
@@ -343,6 +351,8 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 {
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
+	unsigned old_effective = u->euid;
+	unsigned old_filesystem = u->fsuid;
 	unsigned new_ruid = (ruid == (unsigned)-1) ? u->uid : ruid;
 	unsigned new_euid = (euid == (unsigned)-1) ? u->euid : euid;
 
@@ -366,6 +376,8 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	u->uid = new_ruid;
 	u->euid = new_euid;
 	u->fsuid = new_euid;
+	if (u->euid != old_effective || u->fsuid != old_filesystem)
+		current->pdeath_signal = 0;
 	return 0;
 }
 
@@ -377,6 +389,8 @@ int sys_setregid(unsigned rgid, unsigned egid)
 {
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
+	unsigned old_effective = u->egid;
+	unsigned old_filesystem = u->fsgid;
 	unsigned new_rgid = (rgid == (unsigned)-1) ? u->gid : rgid;
 	unsigned new_egid = (egid == (unsigned)-1) ? u->egid : egid;
 
@@ -397,6 +411,8 @@ int sys_setregid(unsigned rgid, unsigned egid)
 	u->gid = new_rgid;
 	u->egid = new_egid;
 	u->fsgid = new_egid;
+	if (u->egid != old_effective || u->fsgid != old_filesystem)
+		current->pdeath_signal = 0;
 	return 0;
 }
 
@@ -408,6 +424,8 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 {
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
+	unsigned old_effective = u->euid;
+	unsigned old_filesystem = u->fsuid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setresuid(%d, %d, %d)\n", ruid, euid, suid);
@@ -433,6 +451,8 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 	}
 	if (suid != (unsigned)-1)
 		u->suid = suid;
+	if (u->euid != old_effective || u->fsuid != old_filesystem)
+		current->pdeath_signal = 0;
 	return 0;
 }
 
@@ -460,6 +480,8 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 {
 	task_struct *cur = CURRENT_TASK();
 	user_enviroment *u = cur->user;
+	unsigned old_effective = u->egid;
+	unsigned old_filesystem = u->fsgid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setresgid(%d, %d, %d)\n", rgid, egid, sgid);
@@ -484,6 +506,8 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 	}
 	if (sgid != (unsigned)-1)
 		u->sgid = sgid;
+	if (u->egid != old_effective || u->fsgid != old_filesystem)
+		current->pdeath_signal = 0;
 	return 0;
 }
 
@@ -510,6 +534,8 @@ int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
 int sys_setfsuid(unsigned fsuid)
 {
 	user_enviroment *u = current->user;
+	unsigned old_effective = u->euid;
+	unsigned old_filesystem = u->fsuid;
 	unsigned old = u->fsuid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -520,12 +546,16 @@ int sys_setfsuid(unsigned fsuid)
 	    fsuid == u->suid || fsuid == u->fsuid)
 		u->fsuid = fsuid;
 
+	if (u->euid != old_effective || u->fsuid != old_filesystem)
+		current->pdeath_signal = 0;
 	return old;
 }
 
 int sys_setfsgid(unsigned fsgid)
 {
 	user_enviroment *u = current->user;
+	unsigned old_effective = u->egid;
+	unsigned old_filesystem = u->fsgid;
 	unsigned old = u->fsgid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -535,6 +565,8 @@ int sys_setfsgid(unsigned fsgid)
 	    fsgid == u->sgid || fsgid == u->fsgid)
 		u->fsgid = fsgid;
 
+	if (u->egid != old_effective || u->fsgid != old_filesystem)
+		current->pdeath_signal = 0;
 	return old;
 }
 

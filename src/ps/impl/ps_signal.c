@@ -92,16 +92,35 @@ static void send_if_pgrp(task_struct *task, void *opaque)
 		c->sent++;
 }
 
-/*
- * ps_send_signal — deliver signal sig to process pid.
- * Sets the pending bit and wakes the target if it is blocked.
- * Called by sys_kill and internally (e.g. SIGCHLD on child exit).
- */
+/* Queue a validated signal while holding ps_lock. */
+void ps_queue_signal_unsafe(task_struct *target, int sig)
+{
+	unsigned long bit;
+
+	bit = 1UL << (sig - 1);
+	if (sig == SIGCONT)
+		target->signal->sig_pending &= ~STOP_SIGNALS_MASK;
+	else if (bit & STOP_SIGNALS_MASK)
+		target->signal->sig_pending &= ~(1UL << (SIGCONT - 1));
+
+	target->signal->sig_pending |= bit;
+
+	if (target->status == ps_stopped &&
+	    (sig == SIGCONT || sig == SIGKILL)) {
+		target->stop_signal = 0;
+		target->stop_report_pending = 0;
+		ps_put_to_ready_queue_unsafe(target);
+	} else if (target->status == ps_waiting &&
+		   !(target->signal->sig_mask & bit)) {
+		ps_put_to_ready_queue_unsafe(target);
+	}
+}
+
+/* Check sender permissions, queue the signal, and wake eligible recipients. */
 int ps_send_signal(unsigned pid, int sig)
 {
 	task_struct *sender = CURRENT_TASK();
 	task_struct *target;
-	unsigned long bit;
 	int irq;
 	int ret = 0;
 
@@ -125,23 +144,7 @@ int ps_send_signal(unsigned pid, int sig)
 		goto done;
 	}
 
-	bit = 1UL << (sig - 1);
-	if (sig == SIGCONT)
-		target->signal->sig_pending &= ~STOP_SIGNALS_MASK;
-	else if (bit & STOP_SIGNALS_MASK)
-		target->signal->sig_pending &= ~(1UL << (SIGCONT - 1));
-
-	target->signal->sig_pending |= bit;
-
-	if (target->status == ps_stopped &&
-	    (sig == SIGCONT || sig == SIGKILL)) {
-		target->stop_signal = 0;
-		target->stop_report_pending = 0;
-		ps_put_to_ready_queue_unsafe(target);
-	} else if (target->status == ps_waiting &&
-		   !(target->signal->sig_mask & bit)) {
-		ps_put_to_ready_queue_unsafe(target);
-	}
+	ps_queue_signal_unsafe(target, sig);
 
 done:
 	spinlock_unlock(&ps_lock, irq);

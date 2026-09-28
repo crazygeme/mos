@@ -291,6 +291,23 @@ int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 	(void)arg3;
 	(void)arg4;
 	(void)arg5;
+	if (option == 1) { /* PR_SET_PDEATHSIG */
+		if (arg2 >= NSIG)
+			return -EINVAL;
+		current->pdeath_signal = arg2;
+		return 0;
+	}
+	if (option == 2) { /* PR_GET_PDEATHSIG */
+		if (!arg2 || arg2 > KERNEL_OFFSET - sizeof(int))
+			return -EFAULT;
+		for (unsigned offset = 0; offset < sizeof(int); offset++) {
+			vm_region *region = vm_find_map(current->user->vm, arg2 + offset);
+			if (!region || !(region->prot & PROT_WRITE))
+				return -EFAULT;
+		}
+		*(int *)arg2 = current->pdeath_signal;
+		return 0;
+	}
 	/* agetty queries dumpability before opening its console. */
 	if (option == 3) /* PR_GET_DUMPABLE */
 		return 1;

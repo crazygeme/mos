@@ -57,7 +57,8 @@ static struct mos_timer *timer_lookup(int id)
 	return NULL;
 }
 
-int sys_timer_create(int clockid, const struct mos_sigevent *event, int *timerid)
+int sys_timer_create(int clockid, const struct mos_sigevent *event,
+		     int *timerid)
 {
 	struct mos_timer *timer = NULL;
 	int i;
@@ -71,8 +72,7 @@ int sys_timer_create(int clockid, const struct mos_sigevent *event, int *timerid
 	if (notify != MOS_SIGEV_NONE && notify != MOS_SIGEV_SIGNAL &&
 	    notify != (MOS_SIGEV_SIGNAL | MOS_SIGEV_THREAD_ID))
 		return -EINVAL;
-	if (notify != MOS_SIGEV_NONE &&
-	    (signo < 1 || signo > SIGRTMIN_KERNEL))
+	if (notify != MOS_SIGEV_NONE && (signo < 1 || signo > SIGRTMIN_KERNEL))
 		return -EINVAL;
 	if ((notify & MOS_SIGEV_THREAD_ID) &&
 	    (!ps_find_process((unsigned)event->tid) ||
@@ -88,7 +88,8 @@ int sys_timer_create(int clockid, const struct mos_sigevent *event, int *timerid
 	memset(timer, 0, sizeof(*timer));
 	timer->owner = current->tgid;
 	timer->target = event && (notify & MOS_SIGEV_THREAD_ID) ?
-			(unsigned)event->tid : current->psid;
+				(unsigned)event->tid :
+				current->psid;
 	timer->clockid = clockid;
 	timer->notify = notify;
 	timer->signo = signo;
@@ -124,10 +125,11 @@ int sys_timer_settime(int timerid, int flags,
 	if (old_value) {
 		timer_ns_timespec(timer->interval_ns, &old_value->it_interval);
 		timer_ns_timespec(timer->due_ns > now ? timer->due_ns - now : 0,
-				   &old_value->it_value);
+				  &old_value->it_value);
 	}
 	timer->interval_ns = interval;
-	timer->due_ns = due ? ((flags & MOS_TIMER_ABSTIME) ? due : now + due) : 0;
+	timer->due_ns = due ? ((flags & MOS_TIMER_ABSTIME) ? due : now + due) :
+			      0;
 	timer->overrun = 0;
 	return 0;
 }
@@ -143,7 +145,7 @@ int sys_timer_gettime(int timerid, struct mos_itimerspec *value)
 	now = timer_now_ns(timer->clockid);
 	timer_ns_timespec(timer->interval_ns, &value->it_interval);
 	timer_ns_timespec(timer->due_ns > now ? timer->due_ns - now : 0,
-			   &value->it_value);
+			  &value->it_value);
 	return 0;
 }
 
@@ -191,7 +193,7 @@ void ps_timer_poll(void)
 		}
 		if (timer->notify == MOS_SIGEV_NONE)
 			continue;
-		ps_timer_notify(timer->target, timer->signo,
-				timer->id, timer->value);
+		ps_timer_notify(timer->target, timer->signo, timer->id,
+				timer->value);
 	}
 }

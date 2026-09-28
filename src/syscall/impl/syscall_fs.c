@@ -436,8 +436,10 @@ static int stat_at(int dirfd, const char *path, int flags, struct stat *st)
 	name = name_get();
 	ret = syscall_resolve_at(dirfd, path, name);
 	if (ret == 0)
-		ret = do_stat(NULL, name, st, O_PATH |
-			      ((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0));
+		ret = do_stat(NULL, name, st,
+			      O_PATH | ((flags & AT_SYMLINK_NOFOLLOW) ?
+						O_NOFOLLOW :
+						0));
 	name_put(name);
 	return ret;
 }
@@ -468,8 +470,8 @@ int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
 
 	if (!buf)
 		return -EFAULT;
-	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
-		       AT_EMPTY_PATH | AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC)) ||
+	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_EMPTY_PATH |
+		       AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC)) ||
 	    ((flags & AT_STATX_FORCE_SYNC) && (flags & AT_STATX_DONT_SYNC)) ||
 	    (mask & STATX__RESERVED))
 		return -EINVAL;
@@ -888,7 +890,8 @@ int sys_unlinkat(int dirfd, const char *path, int flags)
 	name = name_get();
 	ret = syscall_resolve_at(dirfd, path, name);
 	if (!ret)
-		ret = (flags & AT_REMOVEDIR) ? vfs_rmdir(current->root, name) : unlink_resolved(name);
+		ret = (flags & AT_REMOVEDIR) ? vfs_rmdir(current->root, name) :
+					       unlink_resolved(name);
 	name_put(name);
 	return ret;
 }
@@ -922,8 +925,8 @@ int sys_utime(const char *filename, const struct utimbuf *times)
 	return ret;
 }
 
-int sys_renameat(int olddirfd, const char *oldpath,
-		 int newdirfd, const char *newpath)
+int sys_renameat(int olddirfd, const char *oldpath, int newdirfd,
+		 const char *newpath)
 {
 	char *name1 = name_get();
 	char *name2 = name_get();

@@ -467,7 +467,8 @@ static void printk_output(char *text, void *opaque)
 	tty_print(text, NULL);
 	while (*text) {
 		record->text[record->length++] = *text;
-		if (*text++ == '\n' || record->length == sizeof(record->text) - 1) {
+		if (*text++ == '\n' ||
+		    record->length == sizeof(record->text) - 1) {
 			syslog_emit(6, record->text, record->length);
 			record->length = 0;
 		}

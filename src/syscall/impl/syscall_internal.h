@@ -53,7 +53,7 @@ struct msghdr;
 int sys_read(int fd, char *buf, unsigned len);
 int sys_write(int fd, const char *buf, unsigned len);
 int sys_pread64(int fd, void *buf, unsigned count, unsigned offset_low,
-		 unsigned offset_high);
+		unsigned offset_high);
 int sys_pwrite64(int fd, const void *buf, unsigned count, unsigned offset_low,
 		 unsigned offset_high);
 int sys_ioctl(int d, int request, char *buf);
@@ -78,7 +78,7 @@ int sys_inotify_init1(int flags);
 int sys_inotify_add_watch(int fd, const char *path, unsigned mask);
 int sys_inotify_rm_watch(int fd, int wd);
 int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
-		      unsigned arg5);
+	      unsigned arg5);
 int sys_fcntl(int fd, int cmd, int arg);
 int sys_fcntl64(int fd, int cmd, int arg);
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
@@ -86,13 +86,11 @@ int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
 		  fd_set *exceptfds, const struct timeval *timeout,
 		  void *sigmask);
-int sys_pselect6(int nfds, fd_set *readfds, fd_set *writefds,
-		 fd_set *exceptfds, const struct timespec *timeout,
-		 const void *sigmask_arg);
+int sys_pselect6(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
+		 const struct timespec *timeout, const void *sigmask_arg);
 int sys_poll(struct pollfd *fds, unsigned nfds, int timeout);
-int sys_ppoll(struct pollfd *fds, unsigned nfds,
-	      const struct timespec *timeout, const sigset_t *sigmask,
-	      unsigned sigsetsize);
+int sys_ppoll(struct pollfd *fds, unsigned nfds, const struct timespec *timeout,
+	      const sigset_t *sigmask, unsigned sigsetsize);
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count);
 int sys_getdents(unsigned int fd, struct linux_dirent *dirp,
 		 unsigned int count);
@@ -109,8 +107,7 @@ int sys_stat64(const char *pathname, struct stat64 *s);
 int sys_lstat64(const char *path, struct stat64 *s);
 int sys_fstat64(int fd, struct stat64 *s);
 int sys_fstatat64(int dirfd, const char *path, struct stat64 *s, int flags);
-int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
-	      void *buf);
+int sys_statx(int dirfd, const char *path, int flags, unsigned mask, void *buf);
 int syscall_resolve_at(int dirfd, const char *path, char *name);
 int sys_oldstat(const char *filename, struct oldstat *buf);
 int sys_access(const char *path, int mode);
@@ -128,8 +125,8 @@ int sys_symlinkat(const char *target, int dirfd, const char *linkpath);
 int sys_unlinkat(int dirfd, const char *path, int flags);
 int sys_unlink(const char *pathname);
 int sys_rename(const char *oldpath, const char *newpath);
-int sys_renameat(int olddirfd, const char *oldpath,
-		 int newdirfd, const char *newpath);
+int sys_renameat(int olddirfd, const char *oldpath, int newdirfd,
+		 const char *newpath);
 int sys_mknod(const char *path, unsigned mode, unsigned dev);
 int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev);
 int sys_mkdir(const char *path, unsigned mode);
@@ -287,7 +284,8 @@ int sys_utime(const char *filename, const struct utimbuf *times);
 int sys_time(unsigned *t);
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
 int sys_clock_gettime(int clockid, struct timespec *tp);
-int sys_timer_create(int clockid, const struct mos_sigevent *event, int *timerid);
+int sys_timer_create(int clockid, const struct mos_sigevent *event,
+		     int *timerid);
 int sys_timer_settime(int timerid, int flags,
 		      const struct mos_itimerspec *value,
 		      struct mos_itimerspec *old_value);
@@ -299,7 +297,7 @@ int sys_getrandom(void *buf, unsigned len, unsigned flags);
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz);
 int sys_nanosleep(const struct timespec *req, struct timespec *rem);
 int sys_clock_nanosleep(int clockid, int flags, const struct timespec *req,
-                        struct timespec *rem);
+			struct timespec *rem);
 int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg);
 int sys_getpriority(int which, int who);
 int sys_ioperm(unsigned long from, unsigned long num, int turn_on);
@@ -343,9 +341,9 @@ int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
 int sys_socketcall(int call, unsigned long *args);
 int sys_sendmmsg(int fd, void *messages, unsigned count, int flags);
 int sys_recvmmsg(int fd, void *messages, unsigned count, int flags,
-		void *timeout);
+		 void *timeout);
 
 int sys_futex_time64(int *uaddr, int op, int val, const void *timeout,
-		    int *uaddr2, int val3);
+		     int *uaddr2, int val3);
 
 #endif /* _SYSCALL_INTERNAL_H */

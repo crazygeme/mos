@@ -37,26 +37,24 @@ extern "C" {
  * compatibility Keep fields aligned to their size
  */
 
-#define DRM_VIRTGPU_MAP         0x01
-#define DRM_VIRTGPU_EXECBUFFER  0x02
-#define DRM_VIRTGPU_GETPARAM    0x03
+#define DRM_VIRTGPU_MAP 0x01
+#define DRM_VIRTGPU_EXECBUFFER 0x02
+#define DRM_VIRTGPU_GETPARAM 0x03
 #define DRM_VIRTGPU_RESOURCE_CREATE 0x04
-#define DRM_VIRTGPU_RESOURCE_INFO     0x05
+#define DRM_VIRTGPU_RESOURCE_INFO 0x05
 #define DRM_VIRTGPU_TRANSFER_FROM_HOST 0x06
 #define DRM_VIRTGPU_TRANSFER_TO_HOST 0x07
-#define DRM_VIRTGPU_WAIT     0x08
-#define DRM_VIRTGPU_GET_CAPS  0x09
+#define DRM_VIRTGPU_WAIT 0x08
+#define DRM_VIRTGPU_GET_CAPS 0x09
 #define DRM_VIRTGPU_RESOURCE_CREATE_BLOB 0x0a
 #define DRM_VIRTGPU_CONTEXT_INIT 0x0b
 
-#define VIRTGPU_EXECBUF_FENCE_FD_IN	0x01
-#define VIRTGPU_EXECBUF_FENCE_FD_OUT	0x02
-#define VIRTGPU_EXECBUF_RING_IDX	0x04
-#define VIRTGPU_EXECBUF_FLAGS  (\
-		VIRTGPU_EXECBUF_FENCE_FD_IN |\
-		VIRTGPU_EXECBUF_FENCE_FD_OUT |\
-		VIRTGPU_EXECBUF_RING_IDX |\
-		0)
+#define VIRTGPU_EXECBUF_FENCE_FD_IN 0x01
+#define VIRTGPU_EXECBUF_FENCE_FD_OUT 0x02
+#define VIRTGPU_EXECBUF_RING_IDX 0x04
+#define VIRTGPU_EXECBUF_FLAGS                                         \
+	(VIRTGPU_EXECBUF_FENCE_FD_IN | VIRTGPU_EXECBUF_FENCE_FD_OUT | \
+	 VIRTGPU_EXECBUF_RING_IDX | 0)
 
 struct drm_virtgpu_map {
 	__u64 offset; /* use for mmap system call */
@@ -64,10 +62,8 @@ struct drm_virtgpu_map {
 	__u32 pad;
 };
 
-#define VIRTGPU_EXECBUF_SYNCOBJ_RESET		0x01
-#define VIRTGPU_EXECBUF_SYNCOBJ_FLAGS ( \
-		VIRTGPU_EXECBUF_SYNCOBJ_RESET | \
-		0)
+#define VIRTGPU_EXECBUF_SYNCOBJ_RESET 0x01
+#define VIRTGPU_EXECBUF_SYNCOBJ_FLAGS (VIRTGPU_EXECBUF_SYNCOBJ_RESET | 0)
 struct drm_virtgpu_execbuffer_syncobj {
 	__u32 handle;
 	__u32 flags;
@@ -96,8 +92,10 @@ struct drm_virtgpu_execbuffer {
 #define VIRTGPU_PARAM_HOST_VISIBLE 4 /* Host blob resources are mappable */
 #define VIRTGPU_PARAM_CROSS_DEVICE 5 /* Cross virtio-device resource sharing  */
 #define VIRTGPU_PARAM_CONTEXT_INIT 6 /* DRM_VIRTGPU_CONTEXT_INIT */
-#define VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs 7 /* Bitmask of supported capability set ids */
-#define VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME 8 /* Ability to set debug name from userspace */
+#define VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs \
+	7 /* Bitmask of supported capability set ids */
+#define VIRTGPU_PARAM_EXPLICIT_DEBUG_NAME \
+	8 /* Ability to set debug name from userspace */
 
 struct drm_virtgpu_getparam {
 	__u64 param;
@@ -118,9 +116,9 @@ struct drm_virtgpu_resource_create {
 	__u32 nr_samples;
 	__u32 flags;
 	__u32 bo_handle; /* if this is set - recreate a new resource attached to this bo ? */
-	__u32 res_handle;  /* returned by kernel */
-	__u32 size;        /* validate transfer in the host */
-	__u32 stride;      /* validate transfer in the host */
+	__u32 res_handle; /* returned by kernel */
+	__u32 size; /* validate transfer in the host */
+	__u32 stride; /* validate transfer in the host */
 };
 
 struct drm_virtgpu_resource_info {
@@ -178,12 +176,12 @@ struct drm_virtgpu_get_caps {
 };
 
 struct drm_virtgpu_resource_create_blob {
-#define VIRTGPU_BLOB_MEM_GUEST             0x0001
-#define VIRTGPU_BLOB_MEM_HOST3D            0x0002
-#define VIRTGPU_BLOB_MEM_HOST3D_GUEST      0x0003
+#define VIRTGPU_BLOB_MEM_GUEST 0x0001
+#define VIRTGPU_BLOB_MEM_HOST3D 0x0002
+#define VIRTGPU_BLOB_MEM_HOST3D_GUEST 0x0003
 
-#define VIRTGPU_BLOB_FLAG_USE_MAPPABLE     0x0001
-#define VIRTGPU_BLOB_FLAG_USE_SHAREABLE    0x0002
+#define VIRTGPU_BLOB_FLAG_USE_MAPPABLE 0x0001
+#define VIRTGPU_BLOB_FLAG_USE_SHAREABLE 0x0002
 #define VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE 0x0004
 	/* zero is invalid blob_mem */
 	__u32 blob_mem;
@@ -202,10 +200,10 @@ struct drm_virtgpu_resource_create_blob {
 	__u64 blob_id;
 };
 
-#define VIRTGPU_CONTEXT_PARAM_CAPSET_ID       0x0001
-#define VIRTGPU_CONTEXT_PARAM_NUM_RINGS       0x0002
+#define VIRTGPU_CONTEXT_PARAM_CAPSET_ID 0x0001
+#define VIRTGPU_CONTEXT_PARAM_NUM_RINGS 0x0002
 #define VIRTGPU_CONTEXT_PARAM_POLL_RINGS_MASK 0x0003
-#define VIRTGPU_CONTEXT_PARAM_DEBUG_NAME      0x0004
+#define VIRTGPU_CONTEXT_PARAM_DEBUG_NAME 0x0004
 struct drm_virtgpu_context_set_param {
 	__u64 param;
 	__u64 value;
@@ -229,45 +227,45 @@ struct drm_virtgpu_context_init {
 #define DRM_IOCTL_VIRTGPU_MAP \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_MAP, struct drm_virtgpu_map)
 
-#define DRM_IOCTL_VIRTGPU_EXECBUFFER \
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_EXECBUFFER,\
-		struct drm_virtgpu_execbuffer)
+#define DRM_IOCTL_VIRTGPU_EXECBUFFER                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_EXECBUFFER, \
+		 struct drm_virtgpu_execbuffer)
 
-#define DRM_IOCTL_VIRTGPU_GETPARAM \
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_GETPARAM,\
-		struct drm_virtgpu_getparam)
+#define DRM_IOCTL_VIRTGPU_GETPARAM                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_GETPARAM, \
+		 struct drm_virtgpu_getparam)
 
-#define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE			\
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE,	\
-		struct drm_virtgpu_resource_create)
+#define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE, \
+		 struct drm_virtgpu_resource_create)
 
-#define DRM_IOCTL_VIRTGPU_RESOURCE_INFO \
+#define DRM_IOCTL_VIRTGPU_RESOURCE_INFO                        \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_INFO, \
 		 struct drm_virtgpu_resource_info)
 
-#define DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST \
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_FROM_HOST,	\
-		struct drm_virtgpu_3d_transfer_from_host)
+#define DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_FROM_HOST, \
+		 struct drm_virtgpu_3d_transfer_from_host)
 
-#define DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST \
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_TO_HOST,	\
-		struct drm_virtgpu_3d_transfer_to_host)
+#define DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_TRANSFER_TO_HOST, \
+		 struct drm_virtgpu_3d_transfer_to_host)
 
-#define DRM_IOCTL_VIRTGPU_WAIT				\
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_WAIT,	\
-		struct drm_virtgpu_3d_wait)
+#define DRM_IOCTL_VIRTGPU_WAIT                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_WAIT, \
+		 struct drm_virtgpu_3d_wait)
 
-#define DRM_IOCTL_VIRTGPU_GET_CAPS \
+#define DRM_IOCTL_VIRTGPU_GET_CAPS                        \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_GET_CAPS, \
-	struct drm_virtgpu_get_caps)
+		 struct drm_virtgpu_get_caps)
 
-#define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB				\
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE_BLOB,	\
-		struct drm_virtgpu_resource_create_blob)
+#define DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_RESOURCE_CREATE_BLOB, \
+		 struct drm_virtgpu_resource_create_blob)
 
-#define DRM_IOCTL_VIRTGPU_CONTEXT_INIT					\
-	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_CONTEXT_INIT,		\
-		struct drm_virtgpu_context_init)
+#define DRM_IOCTL_VIRTGPU_CONTEXT_INIT                        \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_VIRTGPU_CONTEXT_INIT, \
+		 struct drm_virtgpu_context_init)
 
 #if defined(__cplusplus)
 }

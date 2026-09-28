@@ -129,7 +129,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 	size_t sent = 0;
 	size_t i;
 	int nonblock = sock_msg_is_nonblock(flags);
-	unsigned long long deadline = time_now_ms() + sock_send_timeout_ms(sk);
+	unsigned long long deadline = sock_send_deadline(sk);
 
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
 		return -ENOTCONN;
@@ -152,11 +152,8 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 			if (avail == 0) {
 				if (nonblock)
 					return sent > 0 ? (int)sent : -EAGAIN;
-				if (time_now_ms() > deadline)
-					return sent > 0 ?
-						       (int)sent :
-						       sock_send_timeout_errno(
-							       sk);
+				if (sock_deadline_expired(deadline))
+					return sent > 0 ? (int)sent : -EAGAIN;
 				tcp_output(sk->tcp);
 				if (sock_wait(sk, deadline) < 0)
 					return sent > 0 ? (int)sent : -EINTR;
@@ -179,9 +176,8 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 				return sent > 0 ? (int)sent : -EIO;
 			if (nonblock)
 				return sent > 0 ? (int)sent : -EAGAIN;
-			if (time_now_ms() > deadline)
-				return sent > 0 ? (int)sent :
-						  sock_send_timeout_errno(sk);
+			if (sock_deadline_expired(deadline))
+				return sent > 0 ? (int)sent : -EAGAIN;
 			tcp_output(sk->tcp);
 			if (sock_wait(sk, deadline) < 0)
 				return sent > 0 ? (int)sent : -EINTR;
@@ -270,8 +266,8 @@ static int sock_recv_wait_dgram(mos_sock *sk, int flags,
 			return sk->err;
 		if (sock_msg_is_nonblock(flags))
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return sock_recv_timeout_errno(sk);
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
@@ -290,8 +286,8 @@ static int sock_recv_wait_stream(mos_sock *sk, int flags,
 			return -ENOTCONN;
 		if (sock_msg_is_nonblock(flags))
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return sock_recv_timeout_errno(sk);
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 	}
@@ -352,7 +348,7 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 		goto log;
 	}
 	if (sk->domain == AF_UNIX) {
-		ret = unix_sendmsg(sk, msg);
+		ret = unix_sendmsg(sk, msg, flags);
 		goto log;
 	}
 
@@ -415,7 +411,7 @@ int do_recvmsg(int fd, struct msghdr *msg, int flags)
 		goto done;
 	}
 
-	deadline = time_now_ms() + sock_recv_timeout_ms(sk);
+	deadline = sock_recv_deadline(sk);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		wait_ret = sock_recv_wait_dgram(sk, flags, deadline);
@@ -485,7 +481,7 @@ int sys_sendmmsg(int fd, void *messages_ptr, unsigned count, int flags)
 }
 
 int sys_recvmmsg(int fd, void *messages_ptr, unsigned count, int flags,
-		void *timeout)
+		 void *timeout)
 {
 	struct mmsghdr *messages = messages_ptr;
 	unsigned i;

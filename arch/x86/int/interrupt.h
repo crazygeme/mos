@@ -25,8 +25,7 @@ typedef struct _arch_intr_frame {
 /* Generic kernel name retained for architecture-independent users. */
 typedef arch_intr_frame intr_frame;
 
-void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap,
-			     int dpl);
+void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap, int dpl);
 void arch_interrupt_activate(void);
 void arch_interrupt_set_kernel_stack(void *address);
 ALWAYS_INLINE int arch_interrupt_frame_is_user(const arch_intr_frame *frame)

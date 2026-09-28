@@ -120,8 +120,7 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 		fp->f_pos = offset;
 
 	pos = fp->f_pos;
-	if (cur->user && fp->f_inode &&
-	    S_ISREG(fp->f_inode->i_mode)) {
+	if (cur->user && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
 			if ((uint64_t)pos >= limit)
@@ -184,8 +183,7 @@ int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len)
 		return -EINVAL;
 	saved_pos = fp->f_pos;
 	pos = offset;
-	if (cur->user && fp->f_inode &&
-	    S_ISREG(fp->f_inode->i_mode)) {
+	if (cur->user && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
 			if ((uint64_t)pos >= limit)

@@ -106,7 +106,8 @@ static void pci_probe_resources(unsigned device, pci_resource resources[7])
 			pci_write_raw(device, reg + 4, 4, high);
 		}
 		pci_write_raw(device, reg, 4, low);
-		address = (uint64_t)high << 32 | (low & ((low & 1) ? ~3U : ~15U));
+		address = (uint64_t)high << 32 |
+			  (low & ((low & 1) ? ~3U : ~15U));
 		size_mask = mask & ((low & 1) ? ~3U : ~15U);
 		if (!(low & 1) && (low & 6) == 4)
 			size_mask |= (uint64_t)mask_high << 32;
@@ -116,7 +117,8 @@ static void pci_probe_resources(unsigned device, pci_resource resources[7])
 		if (address && length && mask) {
 			resources[i].start = address;
 			resources[i].size = length;
-			resources[i].flags = (low & 1) ? 0x101 : (0x200 | (low & 15));
+			resources[i].flags = (low & 1) ? 0x101 :
+							 (0x200 | (low & 15));
 		}
 		if (!(low & 1) && (low & 6) == 4)
 			i++;
@@ -267,7 +269,8 @@ void pci_get_resources(unsigned device, pci_resource resources[7])
 	memset(resources, 0, sizeof(pci_resource) * 7);
 	for (i = 0; i < pci_device_count; i++) {
 		if (pci_devices[i].device == device) {
-			memcpy(resources, pci_devices[i].resources, sizeof(pci_resource) * 7);
+			memcpy(resources, pci_devices[i].resources,
+			       sizeof(pci_resource) * 7);
 			return;
 		}
 	}

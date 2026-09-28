@@ -22,7 +22,10 @@ static unsigned char ap_stacks[SMP_MAX_CPUS][PAGE_SIZE]
 static unsigned char clean_fpu[512] __attribute__((aligned(16)));
 extern unsigned char smp_trampoline[], smp_trampoline_end[];
 
-static unsigned apic_read(unsigned reg) { return lapic[reg / 4]; }
+static unsigned apic_read(unsigned reg)
+{
+	return lapic[reg / 4];
+}
 static void apic_write(unsigned reg, unsigned value)
 {
 	lapic[reg / 4] = value;
@@ -56,7 +59,10 @@ unsigned long long *smp_gdt(void)
 	return arch_cpu_local()->gdt;
 }
 
-tss_struct *smp_tss(void) { return &arch_cpu_local()->tss.tss; }
+tss_struct *smp_tss(void)
+{
+	return &arch_cpu_local()->tss.tss;
+}
 
 static void ipi(unsigned id, unsigned value)
 {
@@ -86,7 +92,8 @@ void smp_tlb_flush(void)
 	unsigned irq = int_intr_disable();
 	arch_cpu_reload_tlb();
 	if (ncpu > 1) {
-		unsigned gen = __atomic_add_fetch(&tlb_generation, 1, __ATOMIC_RELEASE);
+		unsigned gen = __atomic_add_fetch(&tlb_generation, 1,
+						  __ATOMIC_RELEASE);
 		smp_cpus[me].tlb_ack = gen;
 		for (i = 0; i < ncpu; i++)
 			if (i != me && smp_cpus[i].online)
@@ -94,7 +101,7 @@ void smp_tlb_flush(void)
 		for (i = 0; i < ncpu; i++)
 			if (i != me && smp_cpus[i].online)
 				while (__atomic_load_n(&smp_cpus[i].tlb_ack,
-						      __ATOMIC_ACQUIRE) != gen)
+						       __ATOMIC_ACQUIRE) != gen)
 					PAUSE();
 	}
 	int_intr_setlevel(irq);
@@ -105,7 +112,8 @@ int smp_kernel_enter(void)
 	struct smp_cpu *cpu;
 	unsigned irq;
 	unsigned owner;
-	if (ncpu == 1) return 1;
+	if (ncpu == 1)
+		return 1;
 	cpu = arch_cpu_local();
 	owner = cpu->index + 1;
 	if (kernel_owner == owner)
@@ -117,7 +125,8 @@ int smp_kernel_enter(void)
 	}
 	{
 		unsigned ticket = __sync_fetch_and_add(&kernel_ticket, 1);
-		while (__atomic_load_n(&kernel_serving, __ATOMIC_ACQUIRE) != ticket) {
+		while (__atomic_load_n(&kernel_serving, __ATOMIC_ACQUIRE) !=
+		       ticket) {
 			smp_tlb_poll();
 			PAUSE();
 		}
@@ -130,7 +139,8 @@ int smp_kernel_enter(void)
 
 void smp_kernel_leave(void)
 {
-	if (ncpu == 1) return;
+	if (ncpu == 1)
+		return;
 	__atomic_store_n(&kernel_owner, 0, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&kernel_serving, 1, __ATOMIC_RELEASE);
 }
@@ -138,7 +148,8 @@ void smp_kernel_leave(void)
 void smp_return(intr_frame *frame)
 {
 	struct smp_cpu *cpu;
-	if (ncpu == 1) return;
+	if (ncpu == 1)
+		return;
 	cpu = arch_cpu_local();
 	DISABLE_INTR();
 	if ((frame->cs & 3) == 3 && kernel_owner == cpu->index + 1)
@@ -234,7 +245,8 @@ static int checksum(const void *ptr, unsigned len)
 {
 	const unsigned char *p = ptr;
 	unsigned char sum = 0;
-	while (len--) sum += *p++;
+	while (len--)
+		sum += *p++;
 	return sum == 0;
 }
 
@@ -246,23 +258,29 @@ static void *firmware(paddr_t addr, unsigned len)
 	if (addr + len > KERNEL_DIRECT_MAP_LIMIT) {
 		paddr_t off = 0;
 		char *copy;
-		if (len > 65536 || firmware_copy_count == 128) return NULL;
+		if (len > 65536 || firmware_copy_count == 128)
+			return NULL;
 		copy = kmalloc(len);
-		if (!copy) return NULL;
+		if (!copy)
+			return NULL;
 		firmware_copies[firmware_copy_count++] = copy;
 		while (off < len) {
 			paddr_t phys = addr + off;
 			unsigned count = PAGE_SIZE - (phys & (PAGE_SIZE - 1));
-			if (count > len - off) count = len - off;
-			if (mm_kmap_phys(phys) != 1) return NULL;
+			if (count > len - off)
+				count = len - off;
+			if (mm_kmap_phys(phys) != 1)
+				return NULL;
 			memcpy(copy + off, (void *)PHY_TO_VIRT(phys), count);
 			mm_kunmap_phys(phys);
 			off += count;
 		}
 		return copy;
 	}
-	for (p = (unsigned)(addr & PAGE_SIZE_MASK); p < addr + len; p += PAGE_SIZE)
-		if (mm_kmap_phys(p) != 1) return NULL;
+	for (p = (unsigned)(addr & PAGE_SIZE_MASK); p < addr + len;
+	     p += PAGE_SIZE)
+		if (mm_kmap_phys(p) != 1)
+			return NULL;
 	return (void *)(addr + KERNEL_OFFSET);
 }
 
@@ -270,7 +288,8 @@ static void add_cpu(unsigned id)
 {
 	unsigned i;
 	for (i = 0; i < ncpu; i++)
-		if (smp_cpus[i].apic_id == id) return;
+		if (smp_cpus[i].apic_id == id)
+			return;
 	if (ncpu == SMP_MAX_CPUS) {
 		klog("SMP: CPU limit exceeded\n");
 		DIE();
@@ -287,25 +306,34 @@ static int acpi_scan(unsigned begin, unsigned end)
 		unsigned char *r = firmware(addr, 20);
 		unsigned *rsdt;
 		unsigned len, i;
-		if (!r || memcmp(r, "RSD PTR ", 8) || !checksum(r, 20)) continue;
+		if (!r || memcmp(r, "RSD PTR ", 8) || !checksum(r, 20))
+			continue;
 		rsdt = firmware(*(unsigned *)(r + 16), 36);
-		if (!rsdt || memcmp(rsdt, "RSDT", 4)) continue;
+		if (!rsdt || memcmp(rsdt, "RSDT", 4))
+			continue;
 		len = rsdt[1];
-		if (len < 36 || len > 65536) continue;
+		if (len < 36 || len > 65536)
+			continue;
 		rsdt = firmware(*(unsigned *)(r + 16), len);
-		if (!rsdt || !checksum(rsdt, len)) continue;
+		if (!rsdt || !checksum(rsdt, len))
+			continue;
 		for (i = 9; i < len / 4; i++) {
 			unsigned char *m = firmware(rsdt[i], 44);
 			unsigned off, size;
-			if (!m || memcmp(m, "APIC", 4)) continue;
+			if (!m || memcmp(m, "APIC", 4))
+				continue;
 			size = *(unsigned *)(m + 4);
-			if (size < 44 || size > 65536) continue;
+			if (size < 44 || size > 65536)
+				continue;
 			m = firmware(rsdt[i], size);
-			if (!m || !checksum(m, size)) continue;
+			if (!m || !checksum(m, size))
+				continue;
 			for (off = 44; off + 2 <= size;) {
 				unsigned char *e = m + off;
-				if (e[1] < 2 || off + e[1] > size) break;
-				if (e[0] == 0 && e[1] >= 8 && (*(unsigned *)(e + 4) & 1))
+				if (e[1] < 2 || off + e[1] > size)
+					break;
+				if (e[0] == 0 && e[1] >= 8 &&
+				    (*(unsigned *)(e + 4) & 1))
 					add_cpu(e[3]);
 				off += e[1];
 			}
@@ -346,7 +374,8 @@ static void ap_main(void)
 	__atomic_add_fetch(&smp_online_count, 1, __ATOMIC_RELEASE);
 	smp_kernel_enter();
 	ps_kickoff();
-	for (;;) PAUSE();
+	for (;;)
+		PAUSE();
 }
 
 void smp_init(void)
@@ -355,15 +384,21 @@ void smp_init(void)
 	unsigned ebda;
 	DISABLE_INTR();
 	arch_cpu_cpuid(1, 0, &a, &b, &c, &d);
-	if (!(d & (1U << 24))) { klog("SMP: FXSR required\n"); DIE(); }
+	if (!(d & (1U << 24))) {
+		klog("SMP: FXSR required\n");
+		DIE();
+	}
 	if (d & (1U << 9)) {
 		arch_cpu_read_msr(0x1b, &low, &high);
 		low = (low | (1U << 11)) & ~(1U << 10);
 		arch_cpu_write_msr(0x1b, low, high);
-		if (mm_map_io(low & PAGE_SIZE_MASK) != 1) DIE();
+		if (mm_map_io(low & PAGE_SIZE_MASK) != 1)
+			DIE();
 		lapic = (void *)(low & PAGE_SIZE_MASK);
 		/* APIC registers must never be cacheable. */
-		mm_set_map_flag((vaddr_t)(uintptr_t)lapic, PAGE_ENTRY_KERNEL_DATA | PAGE_ENTRY_CD | PAGE_ENTRY_WT);
+		mm_set_map_flag((vaddr_t)(uintptr_t)lapic,
+				PAGE_ENTRY_KERNEL_DATA | PAGE_ENTRY_CD |
+					PAGE_ENTRY_WT);
 		smp_cpus[0].apic_id = apic_read(0x20) >> 24;
 		ebda = *(unsigned short *)(KERNEL_OFFSET + 0x40e) << 4;
 		if (!ebda || !acpi_scan(ebda, ebda + 1024))
@@ -387,7 +422,8 @@ void smp_start(void)
 	pte_t *pd = (void *)(boot_pd + KERNEL_OFFSET);
 	pte_t old = pd[0];
 	pte_t *pt = (void *)mm_alloc_page_table();
-	if (!pt) DIE();
+	if (!pt)
+		DIE();
 	pt[7] = 0x7000 | PAGE_ENTRY_KERNEL_DATA;
 	pd[0] = VIRT_TO_PHY(pt) | PAGE_ENTRY_PAGE_TABLE;
 	memcpy((void *)(KERNEL_OFFSET + 0x7000), smp_trampoline,
@@ -406,16 +442,18 @@ void smp_start(void)
 		ipi(smp_cpus[i].apic_id, 0x607);
 		delay(200);
 		ipi(smp_cpus[i].apic_id, 0x607);
-		for (timeout = 0; timeout < 10000 && !smp_cpus[i].online; timeout++)
+		for (timeout = 0; timeout < 10000 && !smp_cpus[i].online;
+		     timeout++)
 			delay(100);
 		if (!smp_cpus[i].online) {
-			klog("SMP: APIC %u failed to start\n", smp_cpus[i].apic_id);
+			klog("SMP: APIC %u failed to start\n",
+			     smp_cpus[i].apic_id);
 			DIE();
 		}
 	}
 	pd[0] = old;
 	smp_tlb_flush();
-		mm_free_page_table((vaddr_t)(uintptr_t)pt);
+	mm_free_page_table((vaddr_t)(uintptr_t)pt);
 	klog("SMP: %u CPUs online\n", smp_cpu_count());
 	int_intr_setlevel(irq);
 }

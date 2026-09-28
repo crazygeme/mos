@@ -130,14 +130,16 @@ static inline void arch_cpu_idle_wait(void)
 {
 	asm volatile("sti; hlt; cli" : : : "memory");
 }
-static inline void arch_cpu_cpuid(unsigned leaf, unsigned subleaf,
-				  unsigned *a, unsigned *b, unsigned *c,
-				  unsigned *d)
+static inline void arch_cpu_cpuid(unsigned leaf, unsigned subleaf, unsigned *a,
+				  unsigned *b, unsigned *c, unsigned *d)
 {
-	asm volatile("cpuid" : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d)
-		     : "a"(leaf), "c"(subleaf) : "memory");
+	asm volatile("cpuid"
+		     : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d)
+		     : "a"(leaf), "c"(subleaf)
+		     : "memory");
 }
-static inline void arch_cpu_read_msr(unsigned msr, unsigned *low, unsigned *high)
+static inline void arch_cpu_read_msr(unsigned msr, unsigned *low,
+				     unsigned *high)
 {
 	asm volatile("rdmsr" : "=a"(*low), "=d"(*high) : "c"(msr));
 }

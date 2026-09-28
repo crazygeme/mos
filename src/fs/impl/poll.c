@@ -223,8 +223,8 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 	return ret;
 }
 
-int do_ppoll(struct pollfd *fds, unsigned nfds,
-	     const struct timespec *timeout, const sigset_t *sigmask)
+int do_ppoll(struct pollfd *fds, unsigned nfds, const struct timespec *timeout,
+	     const sigset_t *sigmask)
 {
 	task_struct *cur = CURRENT_TASK();
 	sigset_t saved_mask = cur->signal->sig_mask;

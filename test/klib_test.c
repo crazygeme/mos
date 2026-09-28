@@ -30,13 +30,11 @@ KTEST(klib, unsigned_64_bit_division)
 
 	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		uint64_t rem = 0;
-		uint64_t quot =
-			__udivmoddi4(cases[i].num, cases[i].den, &rem);
+		uint64_t quot = __udivmoddi4(cases[i].num, cases[i].den, &rem);
 
 		EXPECT_EQ(quot, cases[i].quot);
 		EXPECT_EQ(rem, cases[i].rem);
-		EXPECT_EQ(__udivdi3(cases[i].num, cases[i].den),
-			  cases[i].quot);
+		EXPECT_EQ(__udivdi3(cases[i].num, cases[i].den), cases[i].quot);
 		EXPECT_EQ(__umoddi3(cases[i].num, cases[i].den), cases[i].rem);
 	}
 	return 0;

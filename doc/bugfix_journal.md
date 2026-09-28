@@ -2159,3 +2159,48 @@ glibc uses from `ugetrlimit` at startup — glibc sizes internal tables from
 `setrlimit` call does not resize the already-allocated table. The kernel's
 default must match the real Linux default (`{1024, 1024}` for RLIMIT_NOFILE)
 so all userspace assumptions are met from the start.
+
+
+## 2026-09-29 — Socket waits during GNOME login
+
+- The login trace showed Metacity abandoning its ICE connection after a read
+  returned `ETIMEDOUT`. GNOME then waited out its client-registration deadline
+  before starting the panel and Nautilus; one recorded poll lasted 83.55 seconds.
+- MOS imposed a 30-second deadline on blocking socket operations even when no
+  application timeout was set. Socket `FIONBIO` also returned success without
+  changing the file flags, so programs using it could unexpectedly block.
+- Implemented `FIONBIO`, removed the implicit deadline, applied explicit socket
+  timeouts to UNIX reads/writes/messages and accept, and preserved signal
+  interruption and partial I/O. TCP connect now respects nonblocking mode and
+  `SO_SNDTIMEO`. Datagram reads check nonblocking mode; UNIX sendmsg receives
+  the syscall flags, including the file's `O_NONBLOCK`, rather than msg_flags.
+- Added `posix_socket_wait.sh` for ioctl toggling through dup, nonblocking reads,
+  explicit receive/send/accept timeouts, signals, and successful receipt after
+  a 32-second delay. Runtime validation was stopped at the user's request:
+  QEMU could not acquire the image lock and the host attempt could not bind a
+  socket. No GNOME before/after timing result is claimed.
+
+
+### Follow-up: TCP data lost before userspace accept
+
+The next login trace disproved the timeout-only explanation. SettingsDaemon
+(PID 1610) wrote its 26-byte FAM request at tick 4474; the newly spawned FAM
+(PID 1615) did not call accept until tick 4497. FAM then waited in select, while
+SettingsDaemon waited for its reply and gnome-session waited for SettingsDaemon.
+The trace still showed no progress at tick 31878. Removing the implicit timeout
+had removed the retry escape from this underlying stalled exchange.
+
+`tcp_on_accept()` previously queued only the raw lwIP PCB. MOS installed its
+receive callbacks and allocated a receive buffer later in `do_accept()`. In
+that interval lwIP's default `tcp_recv_null()` acknowledged and freed payloads.
+Thus a client sending before userspace accept could lose its first request
+permanently; faster accept scheduling could avoid the bug.
+
+Allocate and attach the child socket in `tcp_on_accept()` instead, queue that
+socket, and preserve its buffered data, EOF and errors when accepting it.
+Balance lwIP delayed-backlog accounting on the child PCB, and detach callbacks
+before freeing queued sockets on listener close or fd-allocation failure.
+Listener cleanup uses listener callbacks rather than stream-only PCB fields.
+Release compilation and whitespace review completed; no runtime tests were run
+for this follow-up, per the user's instruction. Login improvement remains to be
+verified with the rebuilt kernel.

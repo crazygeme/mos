@@ -287,6 +287,8 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 	}
 	server_sk->domain = AF_UNIX;
 	server_sk->type = client->type;
+	server_sk->recv_timeout_ms = listener->recv_timeout_ms;
+	server_sk->send_timeout_ms = listener->send_timeout_ms;
 	server_sk->state = SS_CONNECTED;
 	server_sk->unix_peer = client;
 	server_sk->unix_peer_cred = unix_current_cred();
@@ -325,7 +327,7 @@ out:
 int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen,
 		int nonblock)
 {
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = sock_recv_deadline(listener);
 	mos_sock *server_sk;
 	int fd;
 
@@ -334,8 +336,8 @@ int unix_accept(mos_sock *listener, struct sockaddr *addr, unsigned *addrlen,
 			return listener->err;
 		if (nonblock)
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(listener, deadline) < 0)
 			return -EINTR;
 	}
@@ -376,7 +378,7 @@ void unix_drop_passfds(mos_sock *sk)
 
 ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 {
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = sock_recv_deadline(sk);
 	int irq;
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	mos_sock *peer;
@@ -391,8 +393,10 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 			spinlock_unlock(&sk->rxbuf_lock, irq);
 			if (sk->err)
 				return sk->err;
-			if (time_now_ms() > deadline)
-				return -ETIMEDOUT;
+			if (nonblock)
+				return -EAGAIN;
+			if (sock_deadline_expired(deadline))
+				return -EAGAIN;
 			if (sock_wait(sk, deadline) < 0)
 				return -EINTR;
 			spinlock_lock(&sk->rxbuf_lock, &irq);
@@ -426,8 +430,8 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 			return 0;
 		if (nonblock)
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 		spinlock_lock(&sk->rxbuf_lock, &irq);
@@ -445,7 +449,7 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 	mos_sock *peer = sk->unix_peer;
 	const char *p = buf;
 	size_t done = 0;
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = sock_send_deadline(sk);
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	int irq;
 
@@ -483,8 +487,8 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 
 		if (nonblock)
 			return done > 0 ? (ssize_t)done : -EAGAIN;
-		if (time_now_ms() > deadline)
-			return done > 0 ? (ssize_t)done : -ETIMEDOUT;
+		if (sock_deadline_expired(deadline))
+			return done > 0 ? (ssize_t)done : -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return done > 0 ? (ssize_t)done : -EINTR;
 	}
@@ -766,9 +770,9 @@ static int unix_sendmsg_wait_for_passfd_room(mos_sock *sk, mos_sock **peer_ptr,
 			unix_cmsg_put_files(files, nfds);
 			return -EAGAIN;
 		}
-		if (time_now_ms() > deadline) {
+		if (sock_deadline_expired(deadline)) {
 			unix_cmsg_put_files(files, nfds);
-			return -ETIMEDOUT;
+			return -EAGAIN;
 		}
 		if (sock_wait(sk, deadline) < 0) {
 			unix_cmsg_put_files(files, nfds);
@@ -790,7 +794,8 @@ static int unix_sendmsg_wait_for_passfd_room(mos_sock *sk, mos_sock **peer_ptr,
 static int unix_sendmsg_stream_payload(mos_sock *sk, mos_sock **peer_ptr,
 				       const struct msghdr *msg, int *irq,
 				       file **files, unsigned nfds,
-				       int nonblock, unsigned long deadline)
+				       int nonblock,
+				       unsigned long long deadline)
 {
 	mos_sock *peer = *peer_ptr;
 	size_t sent = 0;
@@ -816,9 +821,9 @@ static int unix_sendmsg_stream_payload(mos_sock *sk, mos_sock **peer_ptr,
 				unix_cmsg_put_files(files, nfds);
 				return sent > 0 ? (int)sent : -EAGAIN;
 			}
-			if (time_now_ms() > deadline) {
+			if (sock_deadline_expired(deadline)) {
 				unix_cmsg_put_files(files, nfds);
-				return sent > 0 ? (int)sent : -ETIMEDOUT;
+				return sent > 0 ? (int)sent : -EAGAIN;
 			}
 			if (sock_wait(sk, deadline) < 0) {
 				unix_cmsg_put_files(files, nfds);
@@ -852,8 +857,8 @@ static int unix_recvmsg_wait_dgram(mos_sock *sk, int flags,
 			return sk->err;
 		if (sock_msg_is_nonblock(flags))
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 		spinlock_lock(&sk->rxbuf_lock, irq);
@@ -882,7 +887,7 @@ static unsigned unix_recvmsg_dgram_payload(mos_sock *sk, struct msghdr *msg)
 }
 
 static int unix_recvmsg_wait_stream(mos_sock *sk, int flags,
-				    unsigned long deadline, int *irq)
+				    unsigned long long deadline, int *irq)
 {
 	spinlock_lock(&sk->rxbuf_lock, irq);
 	while (rx_used(sk) == 0 &&
@@ -897,8 +902,8 @@ static int unix_recvmsg_wait_stream(mos_sock *sk, int flags,
 			return -ENOTCONN;
 		if (sock_msg_is_nonblock(flags))
 			return -EAGAIN;
-		if (time_now_ms() > deadline)
-			return -ETIMEDOUT;
+		if (sock_deadline_expired(deadline))
+			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
 		spinlock_lock(&sk->rxbuf_lock, irq);
@@ -933,15 +938,15 @@ static unsigned unix_recvmsg_stream_limit(mos_sock *sk)
 	return limit;
 }
 
-int unix_sendmsg(mos_sock *sk, const struct msghdr *msg)
+int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 {
 	mos_sock *peer = sk->unix_peer;
 	file *files[UNIX_PASSFD_MAX] = { NULL };
 	unsigned nfds = 0;
 	size_t total_len = 0;
 	int sent;
-	int nonblock = sock_msg_is_nonblock(msg->msg_flags);
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	int nonblock = sock_msg_is_nonblock(flags);
+	unsigned long long deadline = sock_send_deadline(sk);
 	int irq;
 	int ret;
 	int next_tail;
@@ -1004,7 +1009,7 @@ out_unlock:
 
 int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 {
-	unsigned long long deadline = time_now_ms() + SOCK_TIMEOUT_MS;
+	unsigned long long deadline = sock_recv_deadline(sk);
 	file *files[UNIX_PASSFD_MAX] = { NULL };
 	unsigned nfds = 0;
 	unsigned delivered = 0;

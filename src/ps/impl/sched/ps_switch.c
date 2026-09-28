@@ -40,7 +40,8 @@ void _task_sched(const char *func)
 		prev->status = ps_ready;
 
 	next = ps_get_next_task();
-	if (!next) DIE(); /* one permanent idle task per CPU */
+	if (!next)
+		DIE(); /* one permanent idle task per CPU */
 	next->status = ps_running;
 
 	if (next == prev) {

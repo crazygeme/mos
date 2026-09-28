@@ -585,7 +585,8 @@ static file *ext4_path_open(const char *path, int flag)
 	unsigned uid = current->user->uid;
 	unsigned gid = current->user->gid;
 	char *pre_res = NULL; /* buffer for intermediate symlink resolution */
-	char *resolved = NULL; /* absolute path of the current final component */
+	char *resolved =
+		NULL; /* absolute path of the current final component */
 	char *link_target = NULL; /* target text, separate from cur_path */
 	const char *cur_path = path;
 	size_t link_len;
@@ -670,13 +671,15 @@ retry_open:
 
 		/* Preserve cur_path while resolving the next target.  Read the link
 		 * independently: the caller may have opened for writing only. */
-		ret = ext4_readlink(cur_path, link_target, MAX_PATH - 1, &link_len);
+		ret = ext4_readlink(cur_path, link_target, MAX_PATH - 1,
+				    &link_len);
 		ext4_fclose(f);
 		if (ret != EOK)
 			goto fail;
 		link_target[link_len] = '\0';
 
-		if (fs_resolve_symlink_path(cur_path, link_target, link_len) != 0)
+		if (fs_resolve_symlink_path(cur_path, link_target, link_len) !=
+		    0)
 			goto fail;
 
 		strcpy(resolved, link_target);

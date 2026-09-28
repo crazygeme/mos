@@ -327,8 +327,8 @@ static vm_region *pf_find_vma(task_struct *task, vaddr_t address)
 					     required_grow :
 					     minimal_grow;
 
-	task->user->vm->start_stack -= grow_size;
-	vm_set_stack(task->user->vm, task->user->vm->start_stack);
+		task->user->vm->start_stack -= grow_size;
+		vm_set_stack(task->user->vm, task->user->vm->start_stack);
 		vm_add_map(task->user->vm, task->user->vm->start_stack,
 			   task->user->vm->start_stack + grow_size,
 			   PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0, 0);
@@ -369,7 +369,7 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
 				fault_address);
 	if (!region)
 		region = pf_lock_region(pf_find_vma(task, fault_address),
-				fault_address);
+					fault_address);
 	if (!region)
 		return 0;
 
@@ -387,16 +387,17 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
 	this_offset = region->offset + (fault_address - region->begin);
 
 	if (region->fp != NULL) {
-		if (!pf_handle_invalid_file_map(fault_address, region, region->fp,
-						this_offset, region->prot,
-						region->flag)) {
+		if (!pf_handle_invalid_file_map(fault_address, region,
+						region->fp, this_offset,
+						region->prot, region->flag)) {
 			vm_region_unlock_fault(region);
 			return 0;
 		}
 		if (task->stats)
 			task->stats->pf_major++;
 	} else {
-		if (!pf_handle_invalid_memory(fault_address, region, this_offset)) {
+		if (!pf_handle_invalid_memory(fault_address, region,
+					      this_offset)) {
 			vm_region_unlock_fault(region);
 			return 0;
 		}

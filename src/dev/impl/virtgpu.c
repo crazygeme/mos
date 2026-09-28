@@ -320,7 +320,8 @@ static int gpu_buffer_release(file *fp)
 	req.resource_id = bo->id;
 	if (bo->host_created && gpu_simple(&req, sizeof(req), 1)) {
 		/* Retain DMA backing if host detachment cannot be confirmed. */
-		klog("virtio_gpu: retaining resource %u after unref failure\n", bo->id);
+		klog("virtio_gpu: retaining resource %u after unref failure\n",
+		     bo->id);
 		rmutex_unlock(&gpu_lock);
 		return 0;
 	}
@@ -614,8 +615,8 @@ static int gpu_set_scanout(struct gpu_fb *fb)
 		     req.resource_id, req.r.width, req.r.height, result);
 		return result;
 	}
-	klog("virtio_gpu: scanout resource=%u size=%ux%u\n",
-	     req.resource_id, req.r.width, req.r.height);
+	klog("virtio_gpu: scanout resource=%u size=%ux%u\n", req.resource_id,
+	     req.r.width, req.r.height);
 	if (fb)
 		fs_get_file(fb->buffer);
 	if (gpu_scanout)
@@ -1164,7 +1165,8 @@ static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
 		if (!result) {
 			++gpu_submission;
 			for (i = 0; i < r->num_bo_handles; i++) {
-				struct gpu_bo *bo = gpu_handle(client, handles[i]);
+				struct gpu_bo *bo =
+					gpu_handle(client, handles[i]);
 				bo->submission = gpu_submission;
 				bo->submission_ctx = client->ctx;
 			}

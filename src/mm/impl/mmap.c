@@ -389,8 +389,8 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 	vm_tree_insert(mm, region);
 }
 
-void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot,
-		int flag, file *fp, int offset, unsigned anon_id)
+void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot, int flag,
+		file *fp, int offset, unsigned anon_id)
 {
 	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
 			     NULL);
@@ -401,8 +401,8 @@ void vm_add_map_clone(vm_struct_t vm, vm_region *src)
 	if (!src)
 		return;
 	vm_add_map_with_lock(vm, src->begin, src->end, src->prot, src->flag,
-				     src->fp, src->offset, src->anon_id,
-				     src->fault_lock);
+			     src->fp, src->offset, src->anon_id,
+			     src->fault_lock);
 }
 
 /*
@@ -734,7 +734,7 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
  * is identifiable across fork() for shared-page lookup.
  */
 vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
-		      unsigned int flags, file *fp, unsigned int offset)
+		       unsigned int flags, file *fp, unsigned int offset)
 {
 	vaddr_t addr = _addr & PAGE_SIZE_MASK;
 	vaddr_t last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
@@ -856,7 +856,8 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 	}
 
 	if (node && node->f_inode->i_phys_size) {
-		if (!cur->user || cur->user->euid != 0 || (node->f_flag & O_PATH))
+		if (!cur->user || cur->user->euid != 0 ||
+		    (node->f_flag & O_PATH))
 			return -EACCES;
 		uint64_t end = (uint64_t)offset + _len;
 		if ((node->f_inode->i_phys_base & (PAGE_SIZE - 1)) ||
@@ -870,11 +871,12 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 
 	if (node && node->f_fop && node->f_fop->mmap_file) {
 		file *backing = NULL;
-		int result = node->f_fop->mmap_file(node, &offset, _len,
-						 prot, flags, &backing);
+		int result = node->f_fop->mmap_file(node, &offset, _len, prot,
+						    flags, &backing);
 		if (result < 0)
 			return result;
-		result = do_mmap_kernel(_addr, _len, prot, flags, backing, offset);
+		result = do_mmap_kernel(_addr, _len, prot, flags, backing,
+					offset);
 		fs_put_file(backing);
 		return result;
 	}
@@ -893,8 +895,7 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
  * Called with the user's page tables still active so that (void *)vir is a
  * valid kernel-readable address.
  */
-static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
-				  vaddr_t end)
+static void vm_flush_dirty_region(vm_region *region, vaddr_t begin, vaddr_t end)
 {
 	vaddr_t vir;
 	if (!(region->flag & MAP_SHARED) || region->fp == NULL)

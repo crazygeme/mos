@@ -400,8 +400,7 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 
 	page_dir = (pte_t *)task->user->vm->page_dir;
 	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-		pte_t *page_table =
-			(pte_t *)(page_dir[i] & PAGE_SIZE_MASK);
+		pte_t *page_table = (pte_t *)(page_dir[i] & PAGE_SIZE_MASK);
 		if (!page_table)
 			continue;
 		page_table = (pte_t *)PHY_TO_VIRT((paddr_t)page_table);

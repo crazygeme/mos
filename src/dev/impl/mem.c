@@ -117,8 +117,8 @@ static loff_t mem_llseek(file *fp, loff_t offset, int whence)
 		new_pos = offset;
 		break;
 	case SEEK_CUR:
-		if (fp->f_pos < 0 || fp->f_pos > limit ||
-		    offset < -fp->f_pos || offset > limit - fp->f_pos)
+		if (fp->f_pos < 0 || fp->f_pos > limit || offset < -fp->f_pos ||
+		    offset > limit - fp->f_pos)
 			return -EINVAL;
 		new_pos = fp->f_pos + offset;
 		break;

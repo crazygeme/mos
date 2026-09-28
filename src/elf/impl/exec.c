@@ -255,7 +255,7 @@ but that could change... */
  * Returns the new stack pointer (esp) that should be given to the entry point.
  */
 static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
-				 char **envp, unsigned top, mos_binfmt *exec)
+				char **envp, unsigned top, mos_binfmt *exec)
 {
 	int i = 0;
 	vaddr_t esp = top;
@@ -367,8 +367,8 @@ static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
 	NEW_AUX_ENT(8, AT_GID, current->user->gid);
 	NEW_AUX_ENT(9, AT_EGID, current->user->egid);
 	NEW_AUX_ENT(10, AT_SECURE,
-		current->user->uid != current->user->euid ||
-		current->user->gid != current->user->egid);
+		    current->user->uid != current->user->euid ||
+			    current->user->gid != current->user->egid);
 
 #undef NEW_AUX_ENT
 
@@ -483,10 +483,12 @@ int sys_execve(const char *f, char **argv, char **envp)
 		s_argv = dup_strv(argv, argc);
 		s_envp = dup_strv(envp, envc);
 		exec_fp = fp;
-		if (!(fp->f_mount_flags & MS_NOSUID) && !cur->user->ptrace_tracer) {
+		if (!(fp->f_mount_flags & MS_NOSUID) &&
+		    !cur->user->ptrace_tracer) {
 			if (s.st_mode & S_ISUID)
 				exec_euid = s.st_uid;
-			if ((s.st_mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP))
+			if ((s.st_mode & (S_ISGID | S_IXGRP)) ==
+			    (S_ISGID | S_IXGRP))
 				exec_egid = s.st_gid;
 		}
 	} else if (firstline[0] == '#' && firstline[1] == '!') {
@@ -505,21 +507,25 @@ int sys_execve(const char *f, char **argv, char **envp)
 		{
 			char **src_argv = kmalloc(argc * sizeof(char *));
 			if (!src_argv) {
-				free(firstline); fs_put_file(fp); name_put(file_name);
+				free(firstline);
+				fs_put_file(fp);
+				name_put(file_name);
 				return -ENOMEM;
 			}
 			src_argv[0] = (char *)interp;
-		dst = 1;
-		if (interp_arg)
+			dst = 1;
+			if (interp_arg)
 				src_argv[dst++] = (char *)interp_arg;
 			src_argv[dst++] = file_name;
-		for (j = 1; j < user_argc; j++)
+			for (j = 1; j < user_argc; j++)
 				src_argv[dst++] = argv[j];
 			s_argv = dup_strv(src_argv, argc);
 			kfree(src_argv);
 		}
 		if (!s_argv) {
-			free(firstline); fs_put_file(fp); name_put(file_name);
+			free(firstline);
+			fs_put_file(fp);
+			name_put(file_name);
 			return -ENOMEM;
 		}
 

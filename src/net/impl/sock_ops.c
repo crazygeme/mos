@@ -2,6 +2,7 @@
  * sock_ops.c — individual socket operations: socket/bind/connect/listen/
  *              accept/send/recv/shutdown.
  */
+#include <net/core.h>
 #include <net/sock.h>
 #include <lib/klib.h>
 #include <hw/time.h>
@@ -45,6 +46,7 @@ static void sock_refresh_local_inet(mos_sock *sk)
 
 int do_socket(int domain, int type, int protocol)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("socket(domain=%d, type=%d, protocol=%d)\n", domain, type,
 		     protocol);
@@ -146,6 +148,7 @@ int do_socket(int domain, int type, int protocol)
 
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("bind(fd=%d, addr=%x, addrlen=%u)\n", fd, addr, addrlen);
 
@@ -187,6 +190,7 @@ int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("connect(fd=%d, addr=%x, addrlen=%u)\n", fd, addr,
 		     addrlen);
@@ -253,6 +257,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_listen(int fd, int backlog)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("listen(fd=%d, backlog=%d)\n", fd, backlog);
 
@@ -281,6 +286,7 @@ int do_listen(int fd, int backlog)
 
 int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("accept(fd=%d, addr=%x, addrlen=%x)\n", fd, addr, addrlen);
 
@@ -358,6 +364,7 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getsockname(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
@@ -379,6 +386,7 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getpeername(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
@@ -431,6 +439,7 @@ int do_recv(int fd, void *buf, unsigned len, int flags)
 int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	      const struct sockaddr_in *to, unsigned tolen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sendto(fd=%d, buf=%x, len=%u, flags=%d, to=%x, tolen=%u)\n",
 		     fd, buf, len, flags, to, tolen);
@@ -483,6 +492,7 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		struct sockaddr_in *from, unsigned *fromlen)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("recvfrom(fd=%d, buf=%x, len=%u, flags=%d, from=%x, fromlen=%x)\n",
 		     fd, buf, len, flags, from, fromlen);
@@ -574,6 +584,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 
 int do_shutdown(int fd, int how)
 {
+	NET_CORE_GUARD;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("shutdown(fd=%d, how=%d)\n", fd, how);
 

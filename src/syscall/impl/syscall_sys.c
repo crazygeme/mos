@@ -311,37 +311,6 @@ int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 #define LINUX_REBOOT_MAGIC1 0xfee1dead
 #define LINUX_REBOOT_MAGIC2 0x28121969
 
-static unsigned notify_initctl(unsigned cmd)
-{
-	struct init_request req;
-	file *fp;
-
-	memset(&req, 0, sizeof(req));
-	req.magic = INIT_MAGIC;
-	req.cmd = INIT_CMD_RUNLVL;
-
-	switch (cmd) {
-	case MOS_REBOOT_CMD_RESTART:
-		req.runlevel = '6';
-		break;
-	case MOS_REBOOT_CMD_POWER_OFF:
-	case MOS_REBOOT_CMD_HALT:
-		req.runlevel = '0';
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	fp = fs_open_file("/dev/initctl", O_WRONLY | O_NOFOLLOW, NULL);
-	if (!fp)
-		return -EIO;
-
-	fp->f_fop->write(fp, &req, sizeof(req), &fp->f_pos);
-	fs_put_file(fp);
-
-	return 0;
-}
-
 int sys_sched_setparam(int pid, const void *param)
 {
 	task_struct *task;
@@ -445,13 +414,19 @@ int sys_sched_rr_get_interval(int pid, struct timespec *tp)
 int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 {
 	task_struct *cur = CURRENT_TASK();
+	(void)arg;
+
+	if (!cur->user || cur->user->euid != 0)
+		return -EPERM;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("reboot(magic1=%x, magic2=%x, cmd=%x) from pid %d\n",
 		     magic1, magic2, cmd, cur->psid);
 
 	/* Reject calls that don't carry the Linux magic numbers. */
-	if (magic1 != LINUX_REBOOT_MAGIC1)
+	if (magic1 != LINUX_REBOOT_MAGIC1 ||
+	    (magic2 != LINUX_REBOOT_MAGIC2 && magic2 != 0x05121996 &&
+	     magic2 != 0x16041998 && magic2 != 0x20112000))
 		return -EINVAL;
 
 	/*
@@ -462,10 +437,9 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 		return 0;
 
 	/*
-	 * The final SysV halt/poweroff binary runs from the rc0 script, not as
-	 * PID 1.  Once it issues the terminal reboot command, perform the
-	 * hardware action directly instead of feeding another runlevel request
-	 * back into init.
+	 * Userspace requests runlevel transitions through init. The terminal
+	 * reboot syscall performs the hardware action for any privileged caller,
+	 * including the halt and reboot processes running in the shutdown scripts.
 	 */
 	switch (cmd) {
 	case MOS_REBOOT_CMD_POWER_OFF:
@@ -473,18 +447,11 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 		shutdown();
 		return 0;
 	case MOS_REBOOT_CMD_RESTART:
-		if (cur->psid == 1) {
-			reboot();
-			return 0;
-		}
-		break;
+		reboot();
+		return 0;
+	default:
+		return -EINVAL;
 	}
-
-	/*
-	 * All other callers signal init via /dev/initctl so it can perform
-	 * an orderly shutdown before invoking the hardware action.
-	 */
-	return notify_initctl(cmd);
 }
 
 int sys_mmap(struct mmap_arg_struct32 *arg)

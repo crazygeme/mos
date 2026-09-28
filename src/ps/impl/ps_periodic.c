@@ -8,6 +8,7 @@
  */
 
 #include <ps/ps.h>
+#include <net/core.h>
 #include <hw/tty.h>
 #include <hw/vga.h>
 #include <hw/time.h>
@@ -34,8 +35,11 @@ static void ps_system_service_task(void *param)
 
 		if (now >= next_lwip_ms) {
 			ps_timer_poll();
-			sys_check_timeouts();
-			netif_poll_all();
+			{
+				NET_CORE_GUARD;
+				sys_check_timeouts();
+				netif_poll_all();
+			}
 			do {
 				next_lwip_ms += TICK_MS;
 			} while (next_lwip_ms <= now);

@@ -20,6 +20,7 @@
 #include <lib/port.h>
 #include <hw/time.h>
 #include <hw/hdd.h>
+#include <hw/pci.h>
 #include <config.h>
 #include <macro.h>
 #include <errno.h>
@@ -656,6 +657,26 @@ int sys_getrusage(int who, rusage *usage)
  * Public — shutdown
  */
 
+static void qemu_piix4_poweroff(uint32_t device, uint16_t vendor,
+			       uint16_t product, void *unused)
+{
+	unsigned base;
+	unsigned short control;
+	(void)unused;
+
+	if (vendor != 0x8086 || product != 0x7113)
+		return;
+	if (!(pci_read_field(device, 0x80, 1) & 1))
+		return;
+	base = pci_read_field(device, 0x40, 4) & 0xffc0;
+	if (!base)
+		return;
+
+	/* QEMU PIIX4 uses SLP_TYP 0 and SLP_EN in the PM1 control register. */
+	control = port_read_word(base + 4);
+	port_write_word(base + 4, (control & ~0x1c00) | 0x2000);
+}
+
 void reboot()
 {
 	/**
@@ -675,6 +696,7 @@ void shutdown()
 	system_down(0);
 	int_intr_disable();
 
+	pci_scan(qemu_piix4_poweroff, PCI_SCAN_ALL, NULL);
 	qemu_exit(0x00);
 
 	for (;;)

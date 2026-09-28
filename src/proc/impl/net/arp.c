@@ -5,6 +5,7 @@
  *   IP address       HW type  Flags  HW address            Mask  Device
  *   192.168.1.1      0x1      0x2    52:54:00:12:34:56     *     eth0
  */
+#include <net/core.h>
 #include "proc_net.h"
 #include <net/net.h>
 #include <lib/klib.h>
@@ -15,6 +16,7 @@
 
 file *open_net_arp(void)
 {
+	NET_CORE_GUARD;
 	char *buf = (char *)vm_alloc(1);
 	char *p = buf;
 	memset(buf, 0, PAGE_SIZE);

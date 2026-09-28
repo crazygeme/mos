@@ -1,6 +1,7 @@
 /*
  * sock_msg.c — sendmsg, recvmsg, ancillary data (cmsg), and strace helpers.
  */
+#include <net/core.h>
 #include <net/sock.h>
 #include <lib/klib.h>
 #include <hw/time.h>
@@ -333,6 +334,7 @@ static unsigned sock_recvmsg_stream(mos_sock *sk, struct msghdr *msg)
 
 int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 {
+	NET_CORE_GUARD;
 	mos_sock *sk = fd_to_sock(fd);
 	int ret;
 	size_t totlen;
@@ -387,6 +389,7 @@ log:
 
 int do_recvmsg(int fd, struct msghdr *msg, int flags)
 {
+	NET_CORE_GUARD;
 	mos_sock *sk = fd_to_sock(fd);
 	unsigned delivered;
 	size_t total_len;

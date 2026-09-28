@@ -124,9 +124,12 @@ int sys_lchown(const char *pathname, uint32_t uid, uint32_t gid);
 int sys_fchown(int fd, uint32_t uid, uint32_t gid);
 int sys_link(const char *path1, const char *path2);
 int sys_symlink(const char *path1, const char *path2);
+int sys_symlinkat(const char *target, int dirfd, const char *linkpath);
 int sys_unlinkat(int dirfd, const char *path, int flags);
 int sys_unlink(const char *pathname);
 int sys_rename(const char *oldpath, const char *newpath);
+int sys_renameat(int olddirfd, const char *oldpath,
+		 int newdirfd, const char *newpath);
 int sys_mknod(const char *path, unsigned mode, unsigned dev);
 int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev);
 int sys_mkdir(const char *path, unsigned mode);

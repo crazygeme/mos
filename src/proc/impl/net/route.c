@@ -4,6 +4,7 @@
  * Linux format: hex little-endian 32-bit fields.
  *   Iface  Destination  Gateway  Flags  RefCnt  Use  Metric  Mask  MTU  Window  IRTT
  */
+#include <net/core.h>
 #include "proc_net.h"
 #include <net/net.h>
 #include <lib/klib.h>
@@ -14,6 +15,7 @@
 
 file *open_net_route(void)
 {
+	NET_CORE_GUARD;
 	char *buf = (char *)vm_alloc(1);
 	char *p = buf;
 	memset(buf, 0, PAGE_SIZE);

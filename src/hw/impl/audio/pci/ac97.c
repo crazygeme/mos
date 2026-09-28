@@ -2,10 +2,13 @@
 #include <hw/audio.h>
 #include <hw/driver.h>
 #include <hw/pci.h>
+#include <hw/time.h>
 #include <lib/klib.h>
+#include <lib/lock.h>
 #include <lib/port.h>
 #include <macro.h>
 #include <mm/mm.h>
+#include <ps/ps.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -36,6 +39,7 @@
 #define AC97_BD_IOC (1u << 31)
 
 #define AC97_PLAY_BYTES (64 * 1024)
+#define AC97_PLAY_TIMEOUT_MS 10000
 
 typedef struct {
 	uint32_t addr;
@@ -58,6 +62,7 @@ typedef struct {
 	unsigned pcm_right;
 	unsigned speaker_left;
 	unsigned speaker_right;
+	mutex_t stream_lock;
 	int ready;
 } ac97_dev;
 
@@ -119,19 +124,30 @@ static void ac97_reset_stream(void)
 					   AC97_SR_FIFOE | AC97_SR_CELV);
 }
 
-static void ac97_wait_done(void)
+static int ac97_wait_done(void)
 {
-	unsigned i;
+	unsigned long long deadline = time_now_ms() + AC97_PLAY_TIMEOUT_MS;
+	int ret = 0;
 
-	for (i = 0; i < 2000000; i++) {
+	for (;;) {
 		uint16_t sr = ac97_bm_readw(AC97_PO_SR);
-		if (sr & (AC97_SR_BCIS | AC97_SR_DCH | AC97_SR_FIFOE))
+		if (sr & AC97_SR_FIFOE) {
+			ret = -EIO;
 			break;
-		PAUSE();
+		}
+		if (sr & (AC97_SR_BCIS | AC97_SR_DCH))
+			break;
+		if (time_now_ms() >= deadline) {
+			ret = -ETIMEDOUT;
+			break;
+		}
+		/* DMA completion must not monopolize the global kernel lock. */
+		time_wait(1);
 	}
 	ac97_bm_writeb(AC97_PO_CR, 0);
 	ac97_bm_writew(AC97_PO_SR, AC97_SR_BCIS | AC97_SR_LVBCI |
 					   AC97_SR_FIFOE | AC97_SR_CELV);
+	return ret;
 }
 
 static unsigned ac97_bytes_per_frame(void)
@@ -248,12 +264,15 @@ static ssize_t ac97_write(void *_dev, const void *buf, size_t size)
 {
 	size_t done = 0;
 	unsigned frame_bytes;
+	int ret = 0;
 
 	(void)_dev;
 
 	if (!g_ac97.ready)
 		return -ENODEV;
 
+	/* The descriptor and DMA buffer remain owned while the writer sleeps. */
+	mutex_lock(&g_ac97.stream_lock);
 	frame_bytes = ac97_bytes_per_frame();
 	while (done < size) {
 		size_t chunk = size - done;
@@ -289,21 +308,28 @@ static ssize_t ac97_write(void *_dev, const void *buf, size_t size)
 		ac97_bm_writed(AC97_PO_BDBAR, VIRT_TO_PHY(g_ac97.bd));
 		ac97_bm_writeb(AC97_PO_LVI, 0);
 		ac97_bm_writeb(AC97_PO_CR, AC97_CR_RPBM);
-		ac97_wait_done();
+		ret = ac97_wait_done();
+		if (ret < 0)
+			break;
 
 		done += chunk;
 	}
 
-	return (ssize_t)done;
+	mutex_unlock(&g_ac97.stream_lock);
+	return done ? (ssize_t)done : ret;
 }
 
 static int ac97_sync(void *_dev)
 {
+	int ret;
+
 	(void)_dev;
 	if (!g_ac97.ready)
 		return -ENODEV;
-	ac97_wait_done();
-	return 0;
+	mutex_lock(&g_ac97.stream_lock);
+	ret = ac97_wait_done();
+	mutex_unlock(&g_ac97.stream_lock);
+	return ret;
 }
 
 static int ac97_reset(void *_dev)
@@ -311,16 +337,23 @@ static int ac97_reset(void *_dev)
 	(void)_dev;
 	if (!g_ac97.ready)
 		return -ENODEV;
+	mutex_lock(&g_ac97.stream_lock);
 	ac97_reset_stream();
+	mutex_unlock(&g_ac97.stream_lock);
 	return 0;
 }
 
 static int ac97_set_rate(void *_dev, unsigned *rate)
 {
+	int ret;
+
 	(void)_dev;
 	if (!g_ac97.ready)
 		return -ENODEV;
-	return ac97_set_rate_value(rate);
+	mutex_lock(&g_ac97.stream_lock);
+	ret = ac97_set_rate_value(rate);
+	mutex_unlock(&g_ac97.stream_lock);
+	return ret;
 }
 
 static int ac97_set_channels(void *_dev, unsigned *channels)
@@ -331,9 +364,11 @@ static int ac97_set_channels(void *_dev, unsigned *channels)
 	if (!channels)
 		return -EINVAL;
 
+	mutex_lock(&g_ac97.stream_lock);
 	if (*channels != 1 && *channels != 2)
 		*channels = 2;
 	g_ac97.channels = *channels;
+	mutex_unlock(&g_ac97.stream_lock);
 	return 0;
 }
 
@@ -345,9 +380,11 @@ static int ac97_set_format(void *_dev, unsigned *format)
 	if (!format)
 		return -EINVAL;
 
+	mutex_lock(&g_ac97.stream_lock);
 	if (*format == AUDIO_FMT_U8 || *format == AUDIO_FMT_S16_LE)
 		g_ac97.format = *format;
 	*format = g_ac97.format;
+	mutex_unlock(&g_ac97.stream_lock);
 	return 0;
 }
 
@@ -390,6 +427,7 @@ static int ac97_audio_init(void *_dev)
 	}
 
 	memset(&g_ac97, 0, sizeof(g_ac97));
+	mutex_init(&g_ac97.stream_lock);
 	g_ac97.pci_dev = dev->pci_dev;
 	g_ac97.nam =
 		(uint16_t)(pci_read_field(dev->pci_dev, PCI_BAR0, 4) & ~3u);

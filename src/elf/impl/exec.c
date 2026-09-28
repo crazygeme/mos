@@ -695,6 +695,11 @@ int sys_execve(const char *f, char **argv, char **envp)
 		vm_set_stack(cur->user->vm, stack_init_bottom);
 	}
 
+	/* Privileged executable images clear the parent-death signal. */
+	if ((s.st_mode & S_ISUID) ||
+	    (s.st_mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP))
+		cur->pdeath_signal = 0;
+
 	/* Commit executable credentials before constructing the auxiliary vector. */
 	cur->user->euid = cur->user->suid = cur->user->fsuid = exec_euid;
 	cur->user->egid = cur->user->sgid = cur->user->fsgid = exec_egid;

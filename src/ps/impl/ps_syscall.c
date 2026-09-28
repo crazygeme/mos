@@ -193,6 +193,8 @@ static void ps_reparent_children(task_struct *cur)
 		task_struct *t = rb_entry(node, task_struct, mgr_rb);
 		if (t->ppid != cur->psid)
 			continue;
+		if (t->pdeath_signal && t->signal && t->status != ps_dying)
+			ps_queue_signal_unsafe(t, t->pdeath_signal);
 		t->ppid = init_task->psid;
 		init_task->nchildren++;
 		if (t->status == ps_dying)
@@ -313,6 +315,7 @@ void ps_kill_thread_group(task_struct *leader)
 			container_of(reap_list.next, task_struct, ps_list);
 
 		list_remove_entry(&task->ps_list);
+		ps_reparent_children(task);
 		ps_reap_group_thread(task);
 	}
 }
@@ -364,6 +367,8 @@ void do_exit(unsigned encoded_status)
 		shutdown();
 	}
 
+	ps_reparent_children(cur);
+
 	if (cur->fork_flag & FORK_FLAG_THREAD) {
 		ps_remove_mgr(cur);
 
@@ -376,7 +381,6 @@ void do_exit(unsigned encoded_status)
 	}
 
 	/* ps_put_to_dying_queue queues SIGCHLD on the parent atomically. */
-	ps_reparent_children(cur);
 	ps_put_to_dying_queue(cur);
 
 	task_sched();

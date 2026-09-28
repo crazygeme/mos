@@ -159,6 +159,7 @@ struct _task_struct {
 	task_files *files; /* Owns fds and fd_cloexec. */
 	unsigned exit_status;
 	unsigned exit_signal;
+	unsigned pdeath_signal;
 	unsigned ppid;
 	unsigned nchildren; /* count of children not yet reaped (living + zombie) */
 	unsigned fork_flag;
@@ -287,6 +288,8 @@ task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
 int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
+/* Requires ps_lock; signal delivery is authorized by the kernel caller. */
+void ps_queue_signal_unsafe(task_struct *target, int sig);
 void ps_timer_notify(unsigned tid, int signo, int timer_id, int value);
 void ps_timer_poll(void);
 void ps_timer_discard_group(unsigned tgid);

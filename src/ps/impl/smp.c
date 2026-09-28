@@ -149,6 +149,8 @@ void smp_check_stop(void)
 {
 	if (ps_enabled() && current->terminate_requested) {
 		list_remove_entry(&current->ps_list);
+		/* Group reaping may detach this node again before freeing the task. */
+		list_init(&current->ps_list);
 		current->status = ps_stopped;
 		task_sched();
 		DIE();

@@ -463,6 +463,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 
 	smp_fpu_save(cur);
 	*task = *cur;
+	task->pdeath_signal = 0;
 	task->cancel_io_wait = NULL;
 	task->io_wait = NULL;
 	task->robust_list_head = NULL;

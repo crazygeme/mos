@@ -288,6 +288,8 @@ task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
 int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
+/* Check only the current task's alarm in process context. */
+void ps_check_alarm(task_struct *task);
 /* Requires ps_lock; signal delivery is authorized by the kernel caller. */
 void ps_queue_signal_unsafe(task_struct *target, int sig);
 void ps_timer_notify(unsigned tid, int signo, int timer_id, int value);

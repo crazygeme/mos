@@ -579,7 +579,7 @@ static void build_sigreturn_code(unsigned char retcode[8])
 }
 
 /* Fire SIGALRM if the current task's alarm has expired. */
-static void check_alarm(task_struct *cur)
+void ps_check_alarm(task_struct *cur)
 {
 	if (!cur->alarm_expire_ms || time_now_ms() < cur->alarm_expire_ms)
 		return;
@@ -778,7 +778,7 @@ void do_signal(intr_frame *frame)
 	if (!arch_interrupt_frame_is_user(frame))
 		return;
 
-	check_alarm(cur);
+	ps_check_alarm(cur);
 
 	sig = pick_signal(cur);
 	if (!sig)

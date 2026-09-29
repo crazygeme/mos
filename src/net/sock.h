@@ -10,6 +10,13 @@
 #include <net/socket.h>
 #include <lwip/tcp.h>
 
+/* Only the common PCB prefix is valid on lwIP's smaller listen allocation. */
+static inline int sock_tcp_has_full_pcb(const mos_sock *sk)
+{
+	return sk->domain == AF_INET && sk->type == SOCK_STREAM && sk->tcp &&
+	       sk->tcp->state != LISTEN;
+}
+
 /* ── Ring-buffer helpers (sock.c) ───────────────────────────────────────── */
 
 unsigned rx_used(const mos_sock *sk);

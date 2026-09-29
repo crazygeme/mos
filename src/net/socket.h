@@ -282,6 +282,7 @@ typedef struct _mos_sock {
 	int protocol;
 	int state; /* SS_* */
 	int err; /* pending negative errno, 0 = OK */
+	int tcp_nodelay; /* retained when tcp_listen replaces the full PCB */
 	struct _file *async_file; /* owning file for FASYNC/SIGIO delivery */
 
 	union {

@@ -212,7 +212,16 @@ expect_cell 0 0 54 ffff8040 ff204080
 
 # Character-set designators do not move the cursor or emit text.
 printf '\033c' > "$TTY"
-printf 'A\033(B\033)0\033%%GB\0337\033[3HC\0338D' > "$TTY"
+printf 'A\033(B\033)0\033%%GB' > "$TTY"
+snapshot
+expect_cell 0 0 41 ffffffff ff000000
+expect_cell 0 1 42 ffffffff ff000000
+expect_meta cursor_row 0
+expect_meta cursor_col 2
+
+# Keep the numeric ESC command outside the octal escape: older printf
+# implementations can consume the 7 in \0337 as another octal digit.
+printf '\033%s\033[3HC\033%sD' 7 8 > "$TTY"
 snapshot
 expect_cell 0 0 41 ffffffff ff000000
 expect_cell 0 1 42 ffffffff ff000000

@@ -239,8 +239,9 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 				ret = -EINVAL;
 				goto done;
 			}
-			if (sk->tcp) {
-				if (ival)
+			sk->tcp_nodelay = ival != 0;
+			if (sock_tcp_has_full_pcb(sk)) {
+				if (sk->tcp_nodelay)
 					tcp_nagle_disable(sk->tcp);
 				else
 					tcp_nagle_enable(sk->tcp);
@@ -345,7 +346,8 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 			goto done;
 
 		case SO_SNDBUF: {
-			int val = sk->tcp ? (int)tcp_sndbuf(sk->tcp) : 0;
+			int val = sock_tcp_has_full_pcb(sk) ?
+					(int)tcp_sndbuf(sk->tcp) : TCP_SND_BUF;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}
@@ -425,14 +427,13 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 		switch (optname) {
 		case TCP_NODELAY: {
-			int val = sk->tcp ? (tcp_nagle_disabled(sk->tcp) ? 1 :
-									   0) :
-					    0;
+			int val = sk->tcp_nodelay;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}
 		case TCP_MAXSEG: {
-			int val = sk->tcp ? (int)sk->tcp->mss : 536;
+			int val = sock_tcp_has_full_pcb(sk) ?
+					(int)sk->tcp->mss : 536;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}

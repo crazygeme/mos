@@ -109,6 +109,9 @@ static err_t tcp_on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 	child->recv_timeout_ms = sk->recv_timeout_ms;
 	child->send_timeout_ms = sk->send_timeout_ms;
 	child->tcp = newpcb;
+	child->tcp_nodelay = sk->tcp_nodelay;
+	if (child->tcp_nodelay)
+		tcp_nagle_disable(newpcb);
 	spinlock_init(&child->wait_lock);
 	list_init(&child->waiters);
 	list_init(&child->poll_waiters);

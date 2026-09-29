@@ -228,6 +228,8 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	}
 
 	/* TCP — asynchronous connect */
+	if (sk->tcp && sk->tcp->state == LISTEN)
+		return -EISCONN;
 	if (sk->state == SS_CONNECTED)
 		return -EISCONN;
 
@@ -285,7 +287,8 @@ int do_listen(int fd, int backlog)
 	sk->tcp = lpcb;
 	tcp_arg(sk->tcp, sk);
 	sock_tcp_accept_listen(sk->tcp, sk);
-	sk->state = SS_CONNECTED;
+	/* A listen PCB has no send queue or other connection-only fields. */
+	sk->state = SS_UNCONNECTED;
 	return 0;
 }
 

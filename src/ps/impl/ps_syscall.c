@@ -327,6 +327,7 @@ void do_exit(unsigned encoded_status)
 {
 	task_struct *cur = CURRENT_TASK();
 
+	ps_ptrace_stop_exit(encoded_status);
 	cur->exit_status = encoded_status;
 	if (!(cur->fork_flag & FORK_FLAG_THREAD))
 		ps_timer_discard_group(cur->tgid);

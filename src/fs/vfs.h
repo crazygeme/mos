@@ -52,7 +52,7 @@ struct super_operations {
 		      const char *newpath);
 	int (*readlink)(super_block *sb, const char *path, char *buf,
 			size_t bufsiz, size_t *rcnt);
-	int (*statfs)(super_block *sb, struct statfs *buf);
+	int (*statfs)(super_block *sb, struct statfs64 *buf);
 	int (*utime)(super_block *sb, const char *path, unsigned atime,
 		     unsigned mtime);
 	/* remount: change mount flags on an already-mounted filesystem.
@@ -134,7 +134,7 @@ int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev);
 int vfs_rmnod(super_block *sb, const char *path);
 
 /* Fill buf with filesystem statistics for the filesystem owning path. */
-int vfs_statfs(super_block *sb, const char *path, struct statfs *buf);
+int vfs_statfs(super_block *sb, const char *path, struct statfs64 *buf);
 int vfs_utime(super_block *sb, const char *path, unsigned atime,
 	      unsigned mtime);
 

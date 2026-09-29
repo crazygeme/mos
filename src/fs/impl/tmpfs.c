@@ -901,7 +901,7 @@ static int tmpfs_utime_op(super_block *sb, const char *path, unsigned atime,
 	return 0;
 }
 
-static int tmpfs_statfs_op(super_block *sb, struct statfs *buf)
+static int tmpfs_statfs_op(super_block *sb, struct statfs64 *buf)
 {
 	memset(buf, 0, sizeof(*buf));
 	buf->f_type = 0x01021994; /* TMPFS_MAGIC */

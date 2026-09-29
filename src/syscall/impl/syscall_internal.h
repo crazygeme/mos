@@ -142,6 +142,8 @@ int sys_fchdir(int fd);
 int sys_chroot(const char *path);
 int sys_statfs(const char *path, struct statfs *buf);
 int sys_fstatfs(int fd, struct statfs *buf);
+int sys_statfs64(const char *path, unsigned size, struct statfs64 *buf);
+int sys_fstatfs64(int fd, unsigned size, struct statfs64 *buf);
 int sys_flock(int fd, int operation);
 int sys_ftruncate(int fd, unsigned long length);
 int sys_ftruncate64(int fd, uint64_t length);

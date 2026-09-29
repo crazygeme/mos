@@ -18,6 +18,14 @@
 #define PTRACE_ATTACH 16
 #define PTRACE_DETACH 17
 #define PTRACE_SYSCALL 24
+#define PTRACE_SETOPTIONS 0x4200
+#define PTRACE_GETEVENTMSG 0x4201
+#define PTRACE_SEIZE 0x4206
+#define PTRACE_O_TRACESYSGOOD 0x01
+#define PTRACE_O_TRACEEXEC 0x10
+#define PTRACE_O_TRACEEXIT 0x40
+#define PTRACE_EVENT_EXEC 4
+#define PTRACE_EVENT_EXIT 6
 
 #define PTRACE_MODE_NONE 0
 #define PTRACE_MODE_CONT 1
@@ -264,7 +272,9 @@ void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	}
 
 	spinlock_lock(&ps_lock, &irq);
-	ptrace_stop_task_unsafe(cur, SIGTRAP, saved_frame,
+	ptrace_stop_task_unsafe(cur, SIGTRAP |
+				(cur->user->ptrace_options & PTRACE_O_TRACESYSGOOD ?
+				 0x80 : 0), saved_frame,
 				entering ? "ptrace-sys-enter" :
 					   "ptrace-sys-exit");
 	spinlock_unlock(&ps_lock, irq);
@@ -285,7 +295,26 @@ void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp)
 	cur->user->ptrace_orig_eax = 11; /* __NR_execve on i386 */
 
 	spinlock_lock(&ps_lock, &irq);
-	ptrace_stop_task_unsafe(cur, SIGTRAP, &frame, "ptrace-exec");
+	cur->user->ptrace_eventmsg = cur->psid;
+	ptrace_stop_task_unsafe(cur, SIGTRAP |
+		(cur->user->ptrace_options & PTRACE_O_TRACEEXEC ?
+		 PTRACE_EVENT_EXEC << 8 : 0), &frame, "ptrace-exec");
+	spinlock_unlock(&ps_lock, irq);
+	task_sched();
+}
+
+void ps_ptrace_stop_exit(unsigned status)
+{
+	task_struct *cur = CURRENT_TASK();
+	int irq;
+
+	if (!cur->user || !cur->user->ptrace_tracer ||
+	    !(cur->user->ptrace_options & PTRACE_O_TRACEEXIT))
+		return;
+	spinlock_lock(&ps_lock, &irq);
+	cur->user->ptrace_eventmsg = status;
+	ptrace_stop_task_unsafe(cur, SIGTRAP | (PTRACE_EVENT_EXIT << 8),
+				NULL, "ptrace-exit");
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 }
@@ -311,9 +340,13 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 			return -EPERM;
 		cur->user->ptrace_tracer = cur->ppid;
 		cur->user->ptrace_mode = PTRACE_MODE_NONE;
+		cur->user->ptrace_options = 0;
+		cur->user->ptrace_eventmsg = 0;
 		cur->user->ptrace_orig_eax = 0;
 		return 0;
 
+	case PTRACE_SEIZE:
+		return -EIO;
 	case PTRACE_ATTACH:
 	case PTRACE_DETACH:
 		return -ENOSYS;
@@ -327,6 +360,21 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 		return -EPERM;
 
 	switch (request) {
+	case PTRACE_SETOPTIONS:
+		if (target->status != ps_stopped)
+			return -ESRCH;
+		if ((uintptr_t)data & ~(PTRACE_O_TRACESYSGOOD |
+					 PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT))
+			return -EINVAL;
+		target->user->ptrace_options = (uintptr_t)data;
+		return 0;
+
+	case PTRACE_GETEVENTMSG:
+		if (target->status != ps_stopped)
+			return -ESRCH;
+		*(unsigned long *)data = target->user->ptrace_eventmsg;
+		return 0;
+
 	case PTRACE_PEEKDATA:
 	case PTRACE_PEEKTEXT:
 		memset(&peek, 0, sizeof(peek));

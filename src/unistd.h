@@ -367,8 +367,18 @@ struct statfs {
 	int f_fsid[2]; /* filesystem id */
 	long f_namelen; /* maximum length of filenames */
 	long f_frsize; /* fragment size */
-	long f_spare[5];
+	long f_flags;
+	long f_spare[4];
 };
+
+/* Linux i386 statfs64 syscall ABI. */
+struct statfs64 {
+	unsigned int f_type, f_bsize;
+	unsigned long long f_blocks, f_bfree, f_bavail, f_files, f_ffree;
+	int f_fsid[2];
+	unsigned int f_namelen, f_frsize, f_flags;
+	unsigned int f_spare[4];
+} __attribute__((packed, aligned(4)));
 
 #define R_OK 4 // test read access right
 #define W_OK 2 // test write access right

@@ -10,9 +10,10 @@
 
 /* ── Memory operations ───────────────────────────────────────────────────── */
 
-void memmove(void *dst, void *src, unsigned len)
+void memmove(void *dst, const void *src, unsigned len)
 {
-	char *d = dst, *s = src;
+	char *d = dst;
+	const char *s = src;
 
 	if (d == s || len == 0)
 		return;

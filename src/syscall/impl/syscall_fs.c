@@ -524,23 +524,25 @@ int sys_oldstat(const char *filename, struct oldstat *buf)
  * statfs / fstatfs                                                     *
  * ------------------------------------------------------------------ */
 
-int sys_statfs(const char *_path, struct statfs *buf)
+static int statfs_path(const char *path, struct statfs64 *buf)
 {
 	char *name = name_get();
+	file *fp;
 	int ret;
 
-	resolve_path(_path, name);
-	ret = vfs_statfs(current->root, name, buf);
-
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("statfs(%s, %x) = %d, type=%x, bsize=%d, namelen=%d\n",
-		     name, buf, ret, buf->f_type, buf->f_bsize, buf->f_namelen);
-
+	resolve_path(path, name);
+	fp = fs_open_file(name, O_PATH, 0);
+	if (!fp) {
+		name_put(name);
+		return -ENOENT;
+	}
+	ret = vfs_statfs(current->root, fp->f_name ? fp->f_name : name, buf);
+	fs_put_file(fp);
 	name_put(name);
 	return ret;
 }
 
-int sys_fstatfs(int fd, struct statfs *buf)
+static int statfs_fd(int fd, struct statfs64 *buf)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp;
@@ -548,24 +550,66 @@ int sys_fstatfs(int fd, struct statfs *buf)
 
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
-
 	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
+	if (fp)
+		fs_get_file(fp);
 	mutex_unlock(&cur->files->lock);
-
 	if (!fp)
 		return -EBADF;
-	if (!fp->f_name)
-		return -ENOSYS;
-
-	ret = vfs_statfs(cur->root, fp->f_name, buf);
-
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("fstatfs(%d, %x) = %d, path=%s, type=%x, bsize=%d, namelen=%d\n",
-		     fd, buf, ret, fp->f_name, buf->f_type, buf->f_bsize,
-		     buf->f_namelen);
-
+	ret = fp->f_name ? vfs_statfs(cur->root, fp->f_name, buf) : -ENOSYS;
+	fs_put_file(fp);
 	return ret;
+}
+
+static int statfs_narrow(const struct statfs64 *src, struct statfs *dst)
+{
+	if (src->f_blocks > 0xffffffffULL || src->f_bfree > 0xffffffffULL ||
+	    src->f_bavail > 0xffffffffULL ||
+	    (src->f_files > 0xffffffffULL && src->f_files != ~0ULL) ||
+	    (src->f_ffree > 0xffffffffULL && src->f_ffree != ~0ULL))
+		return -EOVERFLOW;
+	memset(dst, 0, sizeof(*dst));
+	dst->f_type = src->f_type;
+	dst->f_bsize = src->f_bsize;
+	dst->f_blocks = src->f_blocks;
+	dst->f_bfree = src->f_bfree;
+	dst->f_bavail = src->f_bavail;
+	dst->f_files = src->f_files;
+	dst->f_ffree = src->f_ffree;
+	memcpy(dst->f_fsid, src->f_fsid, sizeof(dst->f_fsid));
+	dst->f_namelen = src->f_namelen;
+	dst->f_frsize = src->f_frsize;
+	dst->f_flags = src->f_flags;
+	return 0;
+}
+
+int sys_statfs(const char *path, struct statfs *buf)
+{
+	struct statfs64 stats;
+	int ret = statfs_path(path, &stats);
+	return ret ? ret : statfs_narrow(&stats, buf);
+}
+
+int sys_fstatfs(int fd, struct statfs *buf)
+{
+	struct statfs64 stats;
+	int ret = statfs_fd(fd, &stats);
+	return ret ? ret : statfs_narrow(&stats, buf);
+}
+
+int sys_statfs64(const char *path, unsigned size, struct statfs64 *buf)
+{
+	if (size != sizeof(*buf))
+		return -EINVAL;
+	return statfs_path(path, buf);
+}
+
+int sys_fstatfs64(int fd, unsigned size, struct statfs64 *buf)
+{
+	if (size != sizeof(*buf))
+		return -EINVAL;
+	return statfs_fd(fd, buf);
 }
 
 /* ------------------------------------------------------------------ *

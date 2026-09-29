@@ -84,6 +84,8 @@ typedef struct _user_enviroment {
 	unsigned ldt_present;
 	unsigned ptrace_tracer; /* tracer pid, 0 if not traced */
 	unsigned ptrace_mode; /* run mode requested by tracer */
+	unsigned ptrace_options;
+	unsigned long ptrace_eventmsg;
 	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */
 	unsigned ptrace_frame_valid; /* whether ptrace_frame holds saved state */
 	ptrace_saved_frame
@@ -328,6 +330,7 @@ int sys_ptrace(int request, int pid, void *addr, void *data);
 void ps_stop_current(intr_frame *frame, int sig);
 void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
 void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp);
+void ps_ptrace_stop_exit(unsigned status);
 void qemu_exit(unsigned char code);
 char *sys_getcwd(char *buf, unsigned size);
 int sys_getrusage(int who, rusage *usage);

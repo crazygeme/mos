@@ -36,6 +36,7 @@ static void check(int file_backed, int private)
 {
 	long size = sysconf(_SC_PAGESIZE);
 	int fd = -1, channel[2], status, attempts, n;
+	int reaped = 0;
 	int *mapping;
 	pid_t child;
 	char ready;
@@ -90,11 +91,24 @@ static void check(int file_backed, int private)
 			fail("shared wake result");
 		if (n == 1)
 			break;
+		/* A private waiter cannot be woken by this process. Stop probing
+		 * once it has timed out instead of sleeping through all retries. */
+		if (private) {
+			pid_t done = waitpid(child, &status, WNOHANG);
+			if (done < 0)
+				fail("poll waiter result");
+			if (done == child) {
+				reaped = 1;
+				break;
+			}
+		}
 		nanosleep(&pause, NULL);
 	}
 	if (!private && attempts == 1000)
 		fail("shared wake did not find waiter");
-	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status))
+	if (!reaped && waitpid(child, &status, 0) != child)
+		fail("wait for waiter");
+	if (!WIFEXITED(status) || WEXITSTATUS(status))
 		fail("waiter result");
 	munmap(mapping, size);
 	if (fd >= 0)

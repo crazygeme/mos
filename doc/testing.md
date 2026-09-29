@@ -186,6 +186,19 @@ sh /proc/tests/posix_io       # run one script
 sh /proc/tests/all_script     # run all shell-script tests in sequence
 ```
 
+`posix_socket_wait` runs short smoke checks by default. Its regression for the
+former 30-second receive limit is opt-in inside the guest:
+
+```sh
+MOS_SOCKET_LONG_WAIT=1 sh /proc/tests/posix_socket_wait
+```
+
+The extended run adds three 32-second batches, keeping one socket pair per
+transport active to fit lwIP's PCB pools. Phase markers go directly to
+`/proc/tests/.result` so progress remains visible while ordinary test output
+is captured. The smoke case does not rerun `posix_socket` or
+`posix_nonblock_ipc`; the full script runner already runs them separately.
+
 `all_script` exits with the total failure count (0 = all passed).
 
 ### Writing a Script

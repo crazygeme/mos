@@ -2204,3 +2204,84 @@ Listener cleanup uses listener callbacks rather than stream-only PCB fields.
 Release compilation and whitespace review completed; no runtime tests were run
 for this follow-up, per the user's instruction. Login improvement remains to be
 verified with the rebuilt kernel.
+
+## 2026-09-29 - TCP listener exposed as a connected socket (`fam` crash)
+
+The reported `fam` fault at `eip c026ed3a` resolves in the supplied release
+build to `tcp_output()` reading `seg->tcphdr`. `do_listen()` replaced the full
+TCP PCB with lwIP's smaller `tcp_pcb_listen`, but marked the MOS socket
+`SS_CONNECTED`. This let writes and write-readiness checks read beyond the
+listener allocation, including the send buffer and unsent queue. It also made
+`getpeername()` incorrectly succeed on a listener. Depending on adjacent pool
+contents, sending could block or dereference an invalid segment pointer.
+
+Keep the listener `SS_UNCONNECTED`; accept readiness continues to use its
+pending-connection queue. Preserve the listener rejection in `connect()` so it
+cannot change the socket back to a connection state. Check state before reading
+the send buffer in the vectored send loop, including after a wait.
+
+Socket options also need to respect the smaller allocation. Keep `TCP_NODELAY`
+in the MOS socket, apply it only to full PCBs, and inherit it at accept. Its old
+write overlapped the listener's accept callback. `SO_SNDBUF` and `TCP_MAXSEG`
+queries now use defaults when no full TCP PCB is available.
+
+Validation: a baseline QEMU guest blocked on a listener write; GDB confirmed
+that the socket was `SS_CONNECTED` while pointing into the listen-PCB pool.
+The patched guest passes `posix_tcp_listener` (invalid data operations, peer
+lookup, polling, options, accept, and bidirectional traffic) and the existing
+`posix_socket` suite. The original `fam` session itself was not reproduced.
+The broader `posix_socket_wait` suite stalled in `unix_read()` / `sock_wait()`
+while testing signal interruption; it is not counted as a passing check.
+
+## 2026-09-29 - `posix_socket_wait` blocked forever waiting for SIGALRM
+
+The listener investigation above exposed a separate alarm-delivery bug.
+`check_alarm()` ran only from `do_signal()` on return to userspace. A task
+blocked in `sock_wait()` with no receive timeout never returned to userspace,
+so its `alarm(1)` never became pending and could not interrupt the read.
+The periodic service polled POSIX timers, but not the per-task alarm fields
+shared by `alarm()` and `setitimer(ITIMER_REAL)`.
+
+The service now checks those alarms under `ps_lock` and queues SIGALRM through
+`ps_queue_signal_unsafe()`, waking a waiting recipient when the signal is
+unmasked. The return-to-userspace check uses the same locked helper so the
+same expiration cannot fire twice. Masked alarms become pending without
+waking the task; canceled timers remain inactive.
+
+The socket-wait regression now also covers periodic ITIMER_REAL interruption
+of read/recv/recvmsg, cancellation, and a masked one-shot alarm becoming
+pending during poll and being delivered after unmasking.
+
+## 2026-09-29 - Restore alarm behavior after performance and ping regressions
+
+Restore the alarm check from before ee20379: an unarmed task returns without
+reading the clock or locking, and an armed task checks expiration on return to
+userspace. Remove the periodic alarm poll. Withdraw the subsequent active-alarm
+queue, IRQ0 wakeup/scheduling changes, and all clock-function changes after the
+user reported that ping stopped working. No new clock API remains.
+
+This intentionally restores the known limitation that an indefinitely blocked
+read cannot discover its own alarm expiration. A replacement asynchronous
+wakeup design is not included. The cause of the reported ping regression has
+not been established by runtime diagnosis. No tests or benchmarks were run,
+as requested; ping recovery remains unverified.
+
+## 2026-09-29 - Bound socket waits by the current task's alarm
+
+Restoring the original user-return alarm check also restored the hang in
+`posix_socket_wait`: `alarm(1)` cannot interrupt an indefinite socket read
+when expiration is checked only after that read returns.
+
+Keep the original alarm check and also call it before and after a socket wait.
+Bound that wait by the earlier of the socket timeout and the current task's
+alarm, using the existing timed-wait queue. Leave the socket deadline intact:
+an unmasked, non-ignored alarm yields EINTR rather than a synthetic EAGAIN.
+Masked or ignored alarms may wake the internal wait but do not abort the I/O;
+the socket operation retries with its original deadline. Interval alarms
+retain the original rearming behavior.
+
+This change is limited to socket waits. It does not add asynchronous alarm
+handling to other indefinite waits, nor change clock functions, IRQ handlers,
+the scheduler, or the periodic service. Wakeup latency remains subject to the
+existing timed-wait scheduler. Runtime tests and benchmarks were not run at
+the user's request; the socket suite and ping have not been verified here.

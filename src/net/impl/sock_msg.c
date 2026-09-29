@@ -139,7 +139,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 		size_t left = msg->msg_iov[i].iov_len;
 
 		while (left > 0) {
-			u16_t avail = sk->tcp ? tcp_sndbuf(sk->tcp) : 0;
+			u16_t avail;
 			u16_t chunk;
 			err_t e;
 
@@ -149,6 +149,7 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 			    sk->state != SS_DISCONNECTING)
 				return sent > 0 ? (int)sent : -ENOTCONN;
 
+			avail = sk->tcp ? tcp_sndbuf(sk->tcp) : 0;
 			if (avail == 0) {
 				if (nonblock)
 					return sent > 0 ? (int)sent : -EAGAIN;

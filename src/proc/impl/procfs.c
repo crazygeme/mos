@@ -171,6 +171,7 @@ static void proc_dir_gen(super_block *sb, memory_dir *rd)
 
 	FILL_ENTRY(".", PROC_INODE);
 	FILL_ENTRY("..", PROC_INODE);
+	FILL_ENTRY("self", PROC_INODE);
 
 	mutex_lock(&sb->s_lock);
 	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {

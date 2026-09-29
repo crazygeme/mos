@@ -308,6 +308,7 @@ static unsigned call_table[NR_syscalls] = {
 	[269] = sys_fstatfs64,
 	[265] = sys_clock_gettime,
 	[295] = sys_openat,
+	[296] = sys_mkdirat,
 	[297] = sys_mknodat,
 	[300] = sys_fstatat64,
 	[301] = sys_unlinkat,

@@ -802,6 +802,18 @@ int sys_mkdir(const char *path, unsigned mode)
 	return ret;
 }
 
+int sys_mkdirat(int dirfd, const char *path, unsigned mode)
+{
+	char *name = name_get();
+	int ret = syscall_resolve_at(dirfd, path, name);
+
+	if (ret == 0)
+		ret = vfs_mkdir(current->root, name,
+				mode & ~(current->umask & 0777U));
+	name_put(name);
+	return ret;
+}
+
 int sys_rmdir(const char *path)
 {
 	char *name = name_get();

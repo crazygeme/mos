@@ -1,5 +1,5 @@
 #include <ps/ps.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <mm/mmap.h>
 #include <errno.h>
 #include <macro.h>

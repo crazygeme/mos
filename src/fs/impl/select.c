@@ -4,7 +4,7 @@
 #include <fs/poll.h>
 #include <fs/select.h>
 #include <ps/ps.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <config.h>
 #include <errno.h>
 

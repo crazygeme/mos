@@ -225,7 +225,7 @@ void fs_register_type(fs_type *fst);  // prepend to fs_type_list
 | ---------- | --------------------------------- | ----------------------------------------------- |
 | `ext4`     | `root.c` (`KERNEL_INIT 3`)        | lwext4 `ext4_mount`, wraps in `ext4_mount_info` |
 | `proc`     | `mount.c` (`KERNEL_INIT 2`)       | stub (directory inode only)                     |
-| `sysfs`    | `src/sys/impl/sysfs.c` (`KERNEL_INIT 5`) | registered VFS entries for each mount |
+| `sysfs`    | `src/device/impl/sysfs.c` (`KERNEL_INIT 5`) | registered VFS entries for each mount |
 | `tmpfs`    | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
 | `devtmpfs` | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
 | `none`     | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
@@ -383,7 +383,7 @@ After this, `cur->root` is the root `super_block` for the `kmain_process` task. 
 ## 6. Loop block device (`src/dev/loop.c`)
 
 **Source:** `src/dev/loop.c`  
-**Header:** `include/dev/loopdev.h`
+**Header:** `src/dev/loopdev.h`
 
 The loop device wraps a regular file as a lwext4 block device, enabling image files to be mounted as if they were physical partitions. Up to `LOOP_MAX_DEVS = 8` slots are supported (`/dev/loop0`..`/dev/loop7`), registered at boot with major number 7.
 
@@ -444,20 +444,26 @@ Supported ioctls: `LOOP_SET_FD`, `LOOP_CLR_FD`, `LOOP_GET_STATUS`, `LOOP_SET_STA
 
 ### Sysfs entries
 
-`src/sys/impl/sysfs.c` registers the `sysfs` filesystem type and creates the
-registration root at `KERNEL_INIT 5`. `sysfs_register()` scans PCI devices;
-its callback creates each device's sys attributes with `sys_pci_create()`,
-publishes the device superblock with `vfs_mount()`, and calls
-`hw_probe_pci()` to dispatch registered hardware drivers.
+`/sys` is a filesystem view of device objects, registered drivers, and their
+binding relationships. It neither discovers hardware nor starts drivers.
+`src/device/impl/sysfs.c` builds this view at `KERNEL_INIT 5` from the device
+inventory and driver registry.
 
-PCI drivers register at `KERNEL_INIT 4`, before the sysfs scan.
-`devfs_init()` initializes device nodes at `KERNEL_INIT 6`. The GPU creates
-its DRM sys entries when device initialization succeeds.
+- `/sys/devices/pci0000:00/<BDF>` contains the canonical PCI device entries.
+- `/sys/bus/pci/devices/<BDF>` links to each canonical device.
+- `/sys/bus/pci/drivers/<name>` represents a registered PCI driver.
+- A successfully bound device has a `driver` link; its driver directory has
+  a reciprocal `<BDF>` link. Unbound devices remain visible without that link.
+- `/sys/class/drm` and `/sys/dev/char` index operational DRM endpoints.
 
-`src/sys/impl/pci.c` supplies PCI attributes and MMIO resources.
-`src/sys/impl/drm.c` supplies DRM class entries and device links.
-Mounting `sysfs` creates a root referencing the registered child
-superblocks; it does not scan hardware or initialize devices.
+`src/device/impl/pci/sysfs.c` supplies PCI attributes and cached MMIO resources.
+`src/device/impl/ps2/sysfs.c` exports i8042 ports and driver links under
+`/sys/bus/serio` and `/sys/devices/platform/i8042`.
+`src/driver/impl/video/drm_sysfs.c` supplies DRM class entries and device links
+when ready GPU endpoints are published at `KERNEL_INIT 6`.
+Mounting `sysfs` creates a root referencing the registered child superblocks.
+PCI configuration attributes access the selected device directly; they do
+not enumerate the bus or probe drivers.
 
 `src/fs/entries.h` provides memory entries backed by child superblocks.
 VFS resolves mount paths; entry operations handle data access and delegate
@@ -477,19 +483,27 @@ allocations, until their final reference is released.
 ## 7. Lifecycle summary
 
 ```
+early boot
+  └─ drivers_init: register DRIVER_REGISTER descriptors
+  └─ pci_scan: enumerate devices once, select drivers, initialize consoles
+
 boot (KERNEL_INIT 2)
-  └─ fs_register_type: proc, tmpfs, devtmpfs, none
-
-boot (KERNEL_INIT 4)
-  └─ hw_driver_register: PCI drivers
-
-boot (KERNEL_INIT 5)
-  └─ sysfs_register: register sysfs, scan PCI, mount entries, probe drivers
+  └─ devices_init: probe selected ordinary drivers, including IDE
+  └─ filesystem type and mount syscall registration
 
 boot (KERNEL_INIT 3)
   └─ fs_mount_root
        └─ cur->root = ext4 super_block for "/"
        └─ ext4_mount("hda0", "/")
+
+boot (KERNEL_INIT 4)
+  └─ proc_type_register
+
+boot (KERNEL_INIT 5)
+  └─ sysfs_register: export device attributes and driver bindings
+
+boot (KERNEL_INIT 6)
+  └─ devfs_init: publish device nodes through DEV_INIT callbacks
 
 open("/etc/hosts", O_RDONLY)
   └─ sys_open → fs_open

@@ -2,8 +2,8 @@
 #include <errno.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
-#include <hw/audio.h>
-#include <hw/time.h>
+#include <device/audio.h>
+#include <device/time.h>
 #include <lib/klib.h>
 #include <macro.h>
 #include <stdint.h>

@@ -11,8 +11,8 @@
 #include <fs/vfs.h>
 #include <fs/fcntl.h>
 #include <fs/mount.h>
-#include <hw/hdd.h>
-#include <hw/time.h>
+#include <device/hdd.h>
+#include <device/time.h>
 #include <lib/klib.h>
 #include <dev/dev.h>
 #include <mm/mmap.h>

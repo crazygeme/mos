@@ -6,7 +6,7 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <ps/ps.h>
-#include <hw/hdd.h>
+#include <device/hdd.h>
 #include <unistd.h>
 #include <macro.h>
 #include <errno.h>

@@ -5,13 +5,15 @@
 #include <mm/mm.h>
 #include <mm/pagefault.h>
 #include <ps/ps.h>
-#include <hw/serial.h>
-#include <hw/vga.h>
-#include <hw/time.h>
-#include <hw/keyboard.h>
-#include <hw/mouse.h>
-#include <hw/tty.h>
-#include <hw/font.h>
+#include <device/serial.h>
+#include <device/vga.h>
+#include <device/pci.h>
+#include <driver/driver.h>
+#include <device/time.h>
+#include <device/keyboard.h>
+#include <device/ps2.h>
+#include <dev/tty.h>
+#include <device/font.h>
 #include <lib/klib.h>
 #include <ps/smp.h>
 
@@ -40,7 +42,9 @@ void kmain_startup()
 
 	font_init();
 
-	fb_init();
+	drivers_init();
+
+	pci_scan();
 
 	// after klib_init, kmalloc/kfree/prink/etc are workable
 	tty_init();
@@ -60,9 +64,7 @@ void kmain_startup()
 
 	serial_init_queue();
 
-	kb_init();
-
-	ps2mouse_init();
+	ps2_scan();
 
 	time_init();
 

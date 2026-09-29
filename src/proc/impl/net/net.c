@@ -12,7 +12,7 @@
 #include <fs/vfs.h>
 #include <proc/proc.h>
 #include <lib/klib.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <macro.h>
 #include <ext4.h>
 

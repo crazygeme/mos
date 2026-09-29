@@ -11,7 +11,7 @@
 #include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/port.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <dev/dev.h>
 #include <macro.h>
 #include <errno.h>

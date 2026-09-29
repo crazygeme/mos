@@ -1,7 +1,7 @@
 # TTY / PTY Subsystem
 
 **Source:** `src/dev/tty.c`, `src/dev/tty_ldisc.c`, `src/dev/pts.c`  
-**Headers:** `include/hw/tty.h`, `src/dev/tty_ldisc.h` (internal)
+**Headers:** `src/dev/tty.h`, `src/dev/tty_ldisc.h` (internal)
 
 ---
 

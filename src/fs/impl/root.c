@@ -9,9 +9,9 @@
 #include <fs/fcntl.h>
 #include <fs/mount.h>
 #include <ps/ps.h>
-#include <hw/hdd.h>
+#include <device/hdd.h>
 #include <dev/loopdev.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <stddef.h>
 #include <macro.h>
 #include <config.h>

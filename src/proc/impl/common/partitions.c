@@ -9,7 +9,7 @@
  *
  * Sector → 1 KiB-block conversion: blocks = sectors / 2.
  */
-#include <hw/hdd.h>
+#include <device/hdd.h>
 #include <dev/loopdev.h>
 #include <dev/impl/devnums.h>
 #include "common.h"

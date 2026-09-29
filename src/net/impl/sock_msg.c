@@ -4,7 +4,7 @@
 #include <net/core.h>
 #include <net/sock.h>
 #include <lib/klib.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/ps.h>
 #include <fs/fcntl.h>
 #include <errno.h>

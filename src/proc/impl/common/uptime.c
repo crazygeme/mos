@@ -9,7 +9,7 @@
  * raw boot-relative jiffy counter (HZ=100, so 1 tick == 10 ms == 1 cs).
  */
 #include "common.h"
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/ps.h>
 
 typedef struct {

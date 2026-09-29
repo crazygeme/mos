@@ -18,15 +18,19 @@ Stage 2 is split into two phases:
 
 ## Phase 1 — `kmain_startup()`
 
-### 1. Framebuffer and console (`fb_init`, `fb_enable`, `tty_init`, `klib_init`)
+### 1. Device discovery and console
 
 ```
-fb_init()      — detect and map VGA framebuffer (768×512×32bpp)
-fb_enable()    — switch to graphics mode
-tty_init()     — initialise TTY layer (line discipline, output buffer)
-klib_init()    — initialise kmalloc heap and printk; after this, the full
-                 kernel library (kmalloc/kfree/printk/memcpy…) is usable
+klib_init()       — initialize the kernel heap and library
+font_init()       — register fonts
+drivers_init() — register link-time DRIVER_REGISTER descriptors
+pci_scan()        — enumerate PCI once, cache resources, select drivers,
+                    initialize early framebuffer interfaces
+tty_init()        — initialize the console using the active framebuffer
 ```
+
+Ordinary drivers remain selected until `devices_init()` runs with scheduling
+and interrupts available. PCI inventory queries never trigger discovery.
 
 ### 2. Command line parsing (`parse_kernel_cmdline`)
 
@@ -73,10 +77,14 @@ the TLB. Low virtual addresses are now unmapped; any access to them will fault.
 Initialises COM1 with an interrupt-driven transmit queue. `printk` output is
 mirrored to the serial port for debugging.
 
-### 8. Keyboard (`kb_init`)
+### 8. PS/2 devices (`ps2_scan`)
 
-Registers the PS/2 keyboard interrupt handler (IRQ1 → vector 0x21). Key
-events are fed into the TTY line discipline.
+The device layer configures the i8042 controller once, publishes keyboard and
+auxiliary port objects, and binds their registered drivers. The bus owns IRQ1
+and IRQ12 and routes input bytes to driver callbacks. The keyboard driver
+translates input for the TTY layer; the mouse driver handles PS/2 commands and
+packet assembly. `kb_start()` creates the keyboard worker after idle and init
+have reserved PID 0 and PID 1.
 
 ### 9. PIT timer (`time_init` + `time_calculate_cpu_cycle`)
 
@@ -132,15 +140,14 @@ index argument of each `KERNEL_INIT(index, fn)` macro.
 | Index | Function             | What it does                                                                              |
 | ----- | -------------------- | ----------------------------------------------------------------------------------------- |
 | 0     | `klog_init`          | Opens the kernel log file (`/var/log/kmsg`)                                               |
+| 0     | `tty_fs_init`        | Registers the TTY filesystem type |
 | 1     | `syslog_init`        | Initialises the in-memory syslog ring buffer                                              |
-| 2     | `hdd_init`           | Scans PCI for IDE controllers, initialises ATA driver and 4096-page write-back disk cache |
+| 2     | `devices_init`       | Probes selected PCI drivers, including ATA before root filesystem mounting |
 | 2     | `mount_syscall_init` | Registers `mount`/`umount` syscall handlers                                               |
 | 3     | `fs_mount_root`      | Registers the ext2/4 filesystem driver and mounts the root partition (`/dev/hda`) at `/`  |
-| 4     | `tty_fs_init`        | Mounts the TTY filesystem, creates `/dev/tty`, `/dev/console`                             |
-| 5     | `pts_dev_init`       | Mounts devpts at `/dev/pts`; creates PTY master/slave devices                             |
-| 5     | `procfs_init`        | Mounts procfs at `/proc`; exposes `/proc/<pid>/`, `/proc/meminfo`, etc.                   |
+| 4     | `proc_type_register` | Registers procfs |
+| 5     | `sysfs_register`     | Exports the device inventory and driver binding relationships |
 | 6     | `devfs_init`         | Mounts devfs at `/dev`; populates static device nodes                                     |
-| 6     | `nic_scan_all`       | PCI scan for Intel 82540EM (e1000) NIC; calls `nic_init` per device                       |
 | 7     | `net_init`           | Initialises lwIP, configures the NIC interface, brings up IP                              |
 | 7     | `syscall_init`       | Installs the `int 0x80` syscall dispatch table                                            |
 | 8     | `kinit_userspace`    | Loads and `exec`s the first userspace binary (`/sbin/init` or `init=` override)           |
@@ -175,7 +182,7 @@ klib_init ───────────────────────�
     ├─ int_enable_all ──────────────────────────── (interrupts live)
     ├─ mm_del_user_map ─────────────────────────── (identity map removed)
     ├─ serial_init_queue
-    ├─ kb_init
+    ├─ ps2_scan
     ├─ time_init ───────────────────────────────── (PIT ticks, preemption)
     ├─ pf_init ─────────────────────────────────── (demand paging)
     └─ ps_kickoff ──────────────────────────────── (scheduler running)

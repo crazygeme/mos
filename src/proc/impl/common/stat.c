@@ -24,7 +24,7 @@
  * absent.
  */
 
-#include "hw/time.h"
+#include "device/time.h"
 #include <ps/ps.h>
 #include <ps/smp.h>
 #include "common.h"

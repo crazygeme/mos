@@ -28,9 +28,9 @@
 #include <ps/ps.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
-#include <hw/serial.h>
-#include <hw/tty.h>
-#include <hw/time.h>
+#include <device/serial.h>
+#include <dev/tty.h>
+#include <device/time.h>
 #include <fs/syslog.h>
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */

@@ -44,7 +44,7 @@ GRUB/Multiboot
   └─ entry.S          — sets up a temporary stack, calls stage1
        └─ stage1.c    — sets up GDT, enables paging, jumps to virtual address
             └─ stage2.c / kmain_startup()
-                 ├─ fb_init / tty_init / klib_init
+                 ├─ klib_init / font_init / drivers_init / pci_scan / tty_init
                  ├─ ps_init          — process subsystem
                  ├─ dsr_init         — deferred service routines
                  ├─ int_enable_all   — enable interrupts (IDT, PIC)
@@ -54,13 +54,13 @@ GRUB/Multiboot
                  ├─ ps_create: idle, kmain_process, timer_process
                  └─ ps_kickoff()     — start scheduling
                       └─ kmain_process runs KERNEL_INIT table (ordered 0–8):
-                           0: klog_init
+                           0: klog_init, tty_fs_init
                            1: syslog_init
-                           2: hdd_init, mount_syscall_init
+                           2: devices_init, filesystem types, mount_syscall_init
                            3: fs_mount_root  (ext4 on /dev/hda)
-                           4: tty_fs_init
-                           5: pts_dev_init, procfs_init
-                           6: devfs_init, nic_scan_all
+                           4: proc_type_register
+                           5: sysfs_register
+                           6: devfs_init
                            7: net_init, syscall_init
                            8: kinit_userspace  → exec /sbin/init
 ```
@@ -159,7 +159,7 @@ Mount points are stored in a red-black tree keyed by path for O(log n) lookup.
 
 | FS     | Mount point | Source                           |
 | ------ | ----------- | -------------------------------- |
-| ext2/4 | `/`         | `src/fs/root.c` + `src/hw/hdd.c` |
+| ext2/4 | `/`         | `src/fs/root.c` + `src/driver/impl/storage/ata.c` |
 | devfs  | `/dev`      | `src/dev/devfs.c`                |
 | devpts | `/dev/pts`  | `src/dev/pts.c`                  |
 | procfs | `/proc`     | `src/proc/procfs.c`              |
@@ -169,7 +169,7 @@ Mount points are stored in a red-black tree keyed by path for O(log n) lookup.
 
 `hdd.c` implements a 4096-page write-back LRU block cache (configurable via
 `HDD_CACHE_WRITE_POLICY`). Raw disk I/O goes through the Intel 82540EM
-emulated IDE controller (`src/hw/hdd.c`).
+emulated IDE controller (`src/driver/impl/storage/ata.c`).
 
 ### Poll / select
 
@@ -217,7 +217,7 @@ follows Linux 2.4 numbering (`include/unistd.h`).
 
 MOS integrates **lwIP** (third_party/lwip) in NO_SYS callback mode.
 
-- NIC driver: Intel 82540EM (e1000) via PCI (`src/hw/nic_intel_8254x.c`).
+- NIC driver: Intel 82540EM (e1000) via PCI (`src/driver/impl/net/intel_nic_e1000.c`).
 - `net_init()` (`src/net/net.c`) discovers the NIC, configures lwIP with a
   static IP, and brings up the interface.
 
@@ -247,22 +247,25 @@ Common socket ioctls handled in `sock_ioctl()`:
 
 ---
 
-## 10. Hardware Drivers (`src/hw/`)
+## 10. Devices and drivers
 
-| File                          | Device                                                  |
-| ----------------------------- | ------------------------------------------------------- |
-| `hdd.c`                       | IDE hard disk (ATA PIO) with 4096-page write-back cache |
-| `nic.c` / `nic_intel_8254x.c` | Intel 82540EM (e1000) NIC                               |
-| `pci.c`                       | PCI bus enumeration                                     |
-| `keyboard.c`                  | PS/2 keyboard (IRQ1)                                    |
-| `vga.c`                       | VGA framebuffer (768×512×32bpp)                         |
-| `serial.c`                    | COM1 serial port (debug output)                         |
-| `time.c`                      | PIT (8253/8254) timer driver + `time_now_us`            |
-| `apic.c`                      | LAPIC / IOAPIC (SMP)                                    |
-| `acpi.c`                      | ACPI MADT parser (CPU and IOAPIC discovery)             |
-| `cpu.c`                       | Per-CPU struct init, AP startup                         |
+| File | Responsibility |
+| --- | --- |
+| `src/device/impl/pci/pci.c` | PCI enumeration and cached resources |
+| `src/device/impl/ps2/i8042.c` | PS/2 port discovery and controller transport |
+| `src/device/impl/device.c` | Device inventory and driver binding lifecycle |
+| `src/driver/impl/driver.c` | Driver registry and matching |
+| `src/driver/impl/storage/ata.c` | ATA PIO/DMA and disk cache |
+| `src/driver/impl/net/intel_nic_e1000.c` | Intel e1000-family NIC |
+| `src/driver/impl/input/ps2_keyboard.c` | Keyboard protocol and translation |
+| `src/driver/impl/input/ps2_mouse.c` | Mouse protocol and packet assembly |
+| `src/driver/impl/video` | Bochs, VMware SVGA, VirtIO GPU, and DRM attributes |
+| `src/driver/impl/serial/uart.c` | COM1 serial transport |
+| `src/driver/impl/timer/pit.c` | PIT timer and timekeeping |
 
-### Timer (`time.c`)
+See [Devices and drivers](devices.md) for registration, discovery, and sysfs ownership.
+
+### Timer (`src/driver/impl/timer/pit.c`)
 
 - **PIT:** channel 0, rate mode, HZ=100 (10 ms ticks), LATCH=11932 at
   CLOCK_TICK_RATE=1193180 Hz.

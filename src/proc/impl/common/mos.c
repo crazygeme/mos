@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
-#include <hw/hdd.h>
+#include <device/hdd.h>
 #include "common.h"
 
 /* ---- mm/fault ---- */

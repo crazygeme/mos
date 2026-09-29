@@ -18,9 +18,9 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <lib/port.h>
-#include <hw/time.h>
-#include <hw/hdd.h>
-#include <hw/pci.h>
+#include <device/time.h>
+#include <device/hdd.h>
+#include <device/pci.h>
 #include <config.h>
 #include <macro.h>
 #include <errno.h>
@@ -703,7 +703,7 @@ void shutdown()
 	system_down(0);
 	int_intr_disable();
 
-	pci_scan(qemu_piix4_poweroff, PCI_SCAN_ALL, NULL);
+	pci_for_each(qemu_piix4_poweroff, PCI_SCAN_ALL, NULL);
 	qemu_exit(0x00);
 
 	for (;;)

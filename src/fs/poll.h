@@ -1,7 +1,7 @@
 #ifndef _FS_POLL_H
 #define _FS_POLL_H
 
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/signal.h>
 
 /* poll event flags */

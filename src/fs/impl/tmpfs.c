@@ -16,7 +16,7 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <lib/list.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/ps.h>
 #include <macro.h>
 #include <errno.h>

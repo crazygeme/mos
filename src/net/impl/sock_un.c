@@ -22,7 +22,7 @@
 #include <ps/ps.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <errno.h>
 #include <macro.h>
 #include <stddef.h>

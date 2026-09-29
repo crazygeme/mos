@@ -102,7 +102,7 @@ with open(OUTPUT, "w") as f:
  * Bitmap size: {CHAR_W}x{CHAR_H}, first {NUM_CHARS} characters
  */
 
-#include <hw/font.h>
+#include <device/font.h>
 #include <macro.h>
 
 #define FONTDATAMAX {FONTDATAMAX}

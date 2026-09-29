@@ -29,8 +29,8 @@
 #define GPU_CRTC 1
 #define GPU_ENCODER 2
 #define GPU_CONNECTOR 3
-#define GPU_MODE_WIDTH 1920
-#define GPU_MODE_HEIGHT 1080
+#define GPU_MAX_DIMENSION 4096
+#define GPU_MAX_MODES 40
 
 struct gpu_desc {
 	uint64_t addr;
@@ -73,6 +73,7 @@ struct gpu_fb {
 	file *buffer;
 };
 static volatile struct gpu_common *gpu_common;
+static volatile struct virtio_gpu_config *gpu_config;
 static volatile uint16_t *gpu_notify;
 static struct gpu_desc *gpu_desc;
 static volatile struct gpu_avail *gpu_avail;
@@ -88,7 +89,11 @@ static struct gpu_bo *gpu_objects[GPU_MAX_OBJECTS];
 static struct gpu_fb gpu_fbs[GPU_MAX_FB];
 static struct gpu_client *gpu_master;
 static file *gpu_scanout;
-static unsigned gpu_scanout_fb;
+static unsigned gpu_scanout_fb, gpu_scanout_x, gpu_scanout_y;
+static struct drm_mode_modeinfo gpu_scanout_mode;
+static struct drm_mode_modeinfo gpu_modes[GPU_MAX_MODES];
+static unsigned gpu_mode_count;
+static unsigned gpu_response_size;
 static rmutex_t gpu_lock;
 static const file_operations gpu_buffer_fops;
 
@@ -191,6 +196,7 @@ static int gpu_complete(int wait)
 	used_len = gpu_used->ring[gpu_index % GPU_QUEUE_SIZE].len;
 	gpu_index++;
 	gpu_pending = 0;
+	gpu_response_size = used_len;
 	if (used_len < sizeof(*reply) || used_len > gpu_pending_size ||
 	    reply->type < VIRTIO_GPU_RESP_OK_NODATA ||
 	    reply->type >= VIRTIO_GPU_RESP_ERR_UNSPEC ||
@@ -550,21 +556,102 @@ static int gpu_drm_map(file *fp, unsigned *offset, unsigned size, unsigned prot,
 	return result;
 }
 
-static const struct drm_mode_modeinfo gpu_display_mode = {
-	.clock = 297000,
-	.hdisplay = GPU_MODE_WIDTH,
-	.hsync_start = 2008,
-	.hsync_end = 2052,
-	.htotal = 2200,
-	.vdisplay = GPU_MODE_HEIGHT,
-	.vsync_start = 1084,
-	.vsync_end = 1089,
-	.vtotal = 1125,
-	.vrefresh = 120,
-	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
-	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
-	.name = "1920x1080",
-};
+/* Virtual scanouts have no physical timing generator. These progressive
+ * timings describe nominal refresh rates for userspace mode selection. */
+static void gpu_add_mode(unsigned width, unsigned height, unsigned refresh,
+			 unsigned preferred)
+{
+	struct drm_mode_modeinfo *mode;
+	unsigned i;
+	if (!width || !height || width > GPU_MAX_DIMENSION ||
+	    height > GPU_MAX_DIMENSION || gpu_mode_count == GPU_MAX_MODES)
+		return;
+	for (i = 0; i < gpu_mode_count; i++)
+		if (gpu_modes[i].hdisplay == width &&
+		    gpu_modes[i].vdisplay == height &&
+		    gpu_modes[i].vrefresh == refresh)
+			return;
+	mode = &gpu_modes[gpu_mode_count++];
+	memset(mode, 0, sizeof(*mode));
+	mode->hdisplay = width;
+	mode->hsync_start = width + 48;
+	mode->hsync_end = width + 80;
+	mode->htotal = width + 160;
+	mode->vdisplay = height;
+	mode->vsync_start = height + 3;
+	mode->vsync_end = height + 8;
+	mode->vtotal = height + 60;
+	mode->clock =
+		((uint64_t)mode->htotal * mode->vtotal * refresh + 500) / 1000;
+	mode->vrefresh = refresh;
+	mode->flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC;
+	mode->type = DRM_MODE_TYPE_DRIVER |
+		     (preferred ? DRM_MODE_TYPE_PREFERRED : 0);
+	sprintf(mode->name, "%ux%u", width, height);
+}
+
+/* The single DRM connector represents VirtIO scanout zero. Probe on startup
+ * and on a DRM master's explicit connector probe; cached queries are stable. */
+static int gpu_probe_modes(void)
+{
+	static const unsigned sizes[][2] = {
+		{ 640, 480 },	{ 800, 600 },	{ 1024, 768 },	{ 1280, 720 },
+		{ 1280, 800 },	{ 1280, 1024 }, { 1366, 768 },	{ 1440, 900 },
+		{ 1600, 900 },	{ 1680, 1050 }, { 1920, 1080 }, { 1920, 1200 },
+		{ 2560, 1440 }, { 2560, 1600 }, { 3440, 1440 }, { 3840, 2160 },
+	};
+	struct virtio_gpu_ctrl_hdr req = { 0 };
+	struct virtio_gpu_resp_display_info response;
+	unsigned width = 1024, height = 768, i;
+	int result;
+	if (gpu_config) {
+		gpu_config->events_clear = VIRTIO_GPU_EVENT_DISPLAY;
+		__sync_synchronize();
+	}
+	req.type = VIRTIO_GPU_CMD_GET_DISPLAY_INFO;
+	result = gpu_command(&req, sizeof(req), &response, sizeof(response), 0);
+	if (!result && (gpu_response_size != sizeof(response) ||
+			response.hdr.type != VIRTIO_GPU_RESP_OK_DISPLAY_INFO))
+		result = -EIO;
+	/* A failed refresh preserves the last complete mode list. */
+	if (result && gpu_mode_count)
+		return result;
+	if (!result && response.pmodes[0].enabled &&
+	    response.pmodes[0].r.width && response.pmodes[0].r.height &&
+	    response.pmodes[0].r.width <= GPU_MAX_DIMENSION &&
+	    response.pmodes[0].r.height <= GPU_MAX_DIMENSION) {
+		width = response.pmodes[0].r.width;
+		height = response.pmodes[0].r.height;
+	}
+	gpu_mode_count = 0;
+	gpu_add_mode(width, height, 120, 1);
+	gpu_add_mode(width, height, 60, 0);
+	for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+		gpu_add_mode(sizes[i][0], sizes[i][1], 120, 0);
+		gpu_add_mode(sizes[i][0], sizes[i][1], 60, 0);
+	}
+	return result;
+}
+
+static int gpu_mode_valid(const struct drm_mode_modeinfo *mode)
+{
+	unsigned sync_flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NHSYNC |
+			      DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC;
+	return mode->clock && mode->hdisplay && mode->vdisplay &&
+	       mode->hdisplay <= GPU_MAX_DIMENSION &&
+	       mode->vdisplay <= GPU_MAX_DIMENSION &&
+	       mode->hdisplay < mode->hsync_start &&
+	       mode->hsync_start < mode->hsync_end &&
+	       mode->hsync_end <= mode->htotal &&
+	       mode->vdisplay < mode->vsync_start &&
+	       mode->vsync_start < mode->vsync_end &&
+	       mode->vsync_end <= mode->vtotal && !mode->hskew &&
+	       mode->vscan <= 1 && !(mode->flags & ~sync_flags) &&
+	       (mode->flags & (DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NHSYNC)) !=
+		       (DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NHSYNC) &&
+	       (mode->flags & (DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC)) !=
+		       (DRM_MODE_FLAG_PVSYNC | DRM_MODE_FLAG_NVSYNC);
+}
 
 static int gpu_upload_dumb(struct gpu_fb *fb)
 {
@@ -593,7 +680,9 @@ static int gpu_flush(struct gpu_bo *bo)
 	return gpu_simple(&req, sizeof(req), 0);
 }
 
-static int gpu_set_scanout(struct gpu_fb *fb)
+static int gpu_set_scanout(struct gpu_fb *fb,
+			   const struct drm_mode_modeinfo *mode, unsigned x,
+			   unsigned y)
 {
 	struct virtio_gpu_set_scanout req = { 0 };
 	struct gpu_bo *bo = fb ? fb->buffer->f_inode->i_private : NULL;
@@ -608,8 +697,10 @@ static int gpu_set_scanout(struct gpu_fb *fb)
 		if (result)
 			return result;
 		req.resource_id = bo->id;
-		req.r.width = fb->width;
-		req.r.height = fb->height;
+		req.r.x = x;
+		req.r.y = y;
+		req.r.width = mode->hdisplay;
+		req.r.height = mode->vdisplay;
 	}
 	result = gpu_simple(&req, sizeof(req), 1);
 	if (result) {
@@ -625,6 +716,14 @@ static int gpu_set_scanout(struct gpu_fb *fb)
 		fs_put_file(gpu_scanout);
 	gpu_scanout = fb ? fb->buffer : NULL;
 	gpu_scanout_fb = fb ? fb->id : 0;
+	gpu_scanout_x = fb ? x : 0;
+	gpu_scanout_y = fb ? y : 0;
+	if (fb) {
+		gpu_scanout_mode = *mode;
+		gpu_scanout_mode.name[DRM_DISPLAY_MODE_LEN - 1] = 0;
+	} else {
+		memset(&gpu_scanout_mode, 0, sizeof(gpu_scanout_mode));
+	}
 	return bo ? gpu_flush(bo) : 0;
 }
 
@@ -635,7 +734,8 @@ static int gpu_add_fb(struct gpu_client *client, unsigned handle,
 	struct gpu_bo *bo = gpu_handle(client, handle);
 	unsigned i;
 	if (!bo || width != bo->width || height != bo->height || !width ||
-	    !height || width > 4096 || height > 4096 || pitch < width * 4 ||
+	    !height || width > GPU_MAX_DIMENSION || height > GPU_MAX_DIMENSION ||
+	    pitch < width * 4 ||
 	    (uint64_t)pitch * height > bo->size)
 		return -EINVAL;
 	for (i = 0; i < GPU_MAX_FB; i++)
@@ -665,7 +765,6 @@ static struct gpu_fb *gpu_fb(unsigned id)
 static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 {
 	unsigned value;
-	const struct drm_mode_modeinfo *mode = &gpu_display_mode;
 	switch (cmd) {
 	case DRM_IOCTL_MODE_GETRESOURCES: {
 		struct drm_mode_card_res *r = arg;
@@ -693,7 +792,7 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		r->count_fbs = count;
 		r->count_crtcs = r->count_encoders = r->count_connectors = 1;
 		r->min_width = r->min_height = 1;
-		r->max_width = r->max_height = 4096;
+		r->max_width = r->max_height = GPU_MAX_DIMENSION;
 		return 0;
 	}
 	case DRM_IOCTL_MODE_GETCONNECTOR: {
@@ -703,17 +802,23 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		value = GPU_ENCODER;
 		if (r->count_encoders && gpu_out(r->encoders_ptr, &value, 4))
 			return -EFAULT;
-		if (r->count_modes &&
-		    gpu_out(r->modes_ptr, mode, sizeof(*mode)))
+		if (!r->count_modes && client == gpu_master) {
+			int result = gpu_probe_modes();
+			if (result)
+				return result;
+		}
+		if (r->count_modes >= gpu_mode_count &&
+		    gpu_out(r->modes_ptr, gpu_modes,
+			    gpu_mode_count * sizeof(gpu_modes[0])))
 			return -EFAULT;
-		r->count_modes = r->count_encoders = 1;
+		r->count_modes = gpu_mode_count;
+		r->count_encoders = 1;
 		r->count_props = 0;
 		r->encoder_id = GPU_ENCODER;
 		r->connector_type = DRM_MODE_CONNECTOR_VIRTUAL;
 		r->connector_type_id = 1;
 		r->connection = 1;
-		r->mm_width = 508;
-		r->mm_height = 286;
+		r->mm_width = r->mm_height = 0;
 		r->subpixel = 1;
 		return 0;
 	}
@@ -732,9 +837,11 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		if (r->crtc_id != GPU_CRTC)
 			return -ENOENT;
 		r->fb_id = gpu_scanout_fb;
-		r->x = r->y = r->gamma_size = 0;
+		r->x = gpu_scanout_x;
+		r->y = gpu_scanout_y;
+		r->gamma_size = 0;
 		r->mode_valid = !!gpu_scanout;
-		r->mode = *mode;
+		r->mode = gpu_scanout_mode;
 		return 0;
 	}
 	case DRM_IOCTL_MODE_SETCRTC: {
@@ -742,18 +849,19 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		struct gpu_fb *fb = gpu_fb(r->fb_id);
 		if (client != gpu_master)
 			return -EACCES;
-		if (r->crtc_id != GPU_CRTC || r->x || r->y)
+		if (r->crtc_id != GPU_CRTC)
 			return -EINVAL;
 		if (!r->mode_valid)
-			return gpu_set_scanout(NULL);
-		if (!fb || r->mode.hdisplay != fb->width ||
-		    r->mode.vdisplay != fb->height ||
+			return gpu_set_scanout(NULL, NULL, 0, 0);
+		if (!fb || !gpu_mode_valid(&r->mode) || r->x > fb->width ||
+		    r->y > fb->height || r->mode.hdisplay > fb->width - r->x ||
+		    r->mode.vdisplay > fb->height - r->y ||
 		    r->count_connectors != 1 ||
 		    !gpu_user_range(r->set_connectors_ptr, 4, 0) ||
 		    *(uint32_t *)(uintptr_t)r->set_connectors_ptr !=
 			    GPU_CONNECTOR)
 			return -EINVAL;
-		return gpu_set_scanout(fb);
+		return gpu_set_scanout(fb, &r->mode, r->x, r->y);
 	}
 	case DRM_IOCTL_MODE_GETFB: {
 		struct drm_mode_fb_cmd *r = arg;
@@ -799,7 +907,7 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		if (!fb || fb->owner != client->ctx)
 			return -ENOENT;
 		if (gpu_scanout_fb == fb->id)
-			gpu_set_scanout(NULL);
+			gpu_set_scanout(NULL, NULL, 0, 0);
 		fs_put_file(fb->buffer);
 		memset(fb, 0, sizeof(*fb));
 		return 0;
@@ -825,7 +933,7 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		struct drm_virtgpu_resource_create create = { 0 };
 		int result;
 		if (r->flags || r->bpp != 32 || !r->width || !r->height ||
-		    r->width > 4096 || r->height > 4096)
+		    r->width > GPU_MAX_DIMENSION || r->height > GPU_MAX_DIMENSION)
 			return -EINVAL;
 		r->pitch = (r->width * 4 + 63) & ~63U;
 		r->size = (uint64_t)r->pitch * r->height;
@@ -937,7 +1045,7 @@ static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
 	case DRM_IOCTL_DROP_MASTER:
 		if (gpu_master != client)
 			return -EACCES;
-		gpu_set_scanout(NULL);
+		gpu_set_scanout(NULL, NULL, 0, 0);
 		gpu_master = NULL;
 		return 0;
 	case DRM_IOCTL_GET_CAP: {
@@ -1276,14 +1384,14 @@ static int gpu_release(file *fp)
 	}
 	rmutex_lock(&gpu_lock);
 	if (gpu_master == client) {
-		gpu_set_scanout(NULL);
+		gpu_set_scanout(NULL, NULL, 0, 0);
 		gpu_master = NULL;
 	}
 	gpu_idle(client->ctx);
 	for (i = 0; i < GPU_MAX_FB; i++)
 		if (gpu_fbs[i].buffer && gpu_fbs[i].owner == client->ctx) {
 			if (gpu_scanout_fb == gpu_fbs[i].id)
-				gpu_set_scanout(NULL);
+				gpu_set_scanout(NULL, NULL, 0, 0);
 			fs_put_file(gpu_fbs[i].buffer);
 			memset(&gpu_fbs[i], 0, sizeof(gpu_fbs[i]));
 		}
@@ -1399,7 +1507,10 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 		return -ENODEV;
 	gpu_pci = pci;
 	gpu_common = NULL;
+	gpu_config = NULL;
 	gpu_notify = NULL;
+	gpu_index = 0;
+	gpu_pending = gpu_response_size = gpu_mode_count = 0;
 	rmutex_init(&gpu_lock);
 	resources = zalloc(7 * sizeof(*resources));
 	if (!resources)
@@ -1419,6 +1530,9 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 			if (type == 1 && length >= sizeof(*gpu_common))
 				gpu_common = gpu_pci_map(resources, bar, offset,
 							 sizeof(*gpu_common));
+			if (type == 4 && length >= sizeof(*gpu_config))
+				gpu_config = gpu_pci_map(resources, bar, offset,
+							 sizeof(*gpu_config));
 			if (type == 2 &&
 			    pci_read_field(gpu_pci, cap + 2, 1) >= 20) {
 				notify_base = gpu_pci_map(resources, bar,
@@ -1479,6 +1593,11 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 	gpu_common->queue_enable = 1;
 	gpu_common->device_status = 1 | 2 | 8 | 4;
 	gpu_ready = 1;
+	if (gpu_probe_modes()) {
+		if (!gpu_ready)
+			goto fail;
+		klog("virtio_gpu: display query failed; using fallback modes\n");
+	}
 	free(resources);
 	printk("virtio_gpu: VirGL enabled\n");
 	return 0;
@@ -1499,6 +1618,7 @@ fail:
 	gpu_avail = NULL;
 	gpu_used = NULL;
 	gpu_common = NULL;
+	gpu_config = NULL;
 	gpu_notify = NULL;
 	gpu_ready = 0;
 	gpu_pci = ~0U;

@@ -259,8 +259,8 @@ static void proc_release_super(super_block *sb)
 }
 
 /*
- * proc_readlink — resolve /proc/{pid}/fd/{N} or /proc/self/fd/{N} to the
- * path of the underlying open file, matching Linux /proc/<pid>/fd behaviour.
+ * proc_readlink resolves per-process cwd and fd symlinks.
+ * The self component selects the calling process.
  */
 static int proc_readlink(super_block *sb, const char *path, char *buf,
 			 size_t bufsiz, size_t *rcnt)
@@ -288,6 +288,16 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 		return -1;
 	}
 
+	task = ps_find_process(pid);
+	if (!task)
+		return -1;
+	if (strcmp(p, "/cwd") == 0) {
+		if (!task->user || !task->user->cwd)
+			return -1;
+		fname = task->user->cwd;
+		goto copy_target;
+	}
+
 	if (strncmp(p, "/fd/", 4) != 0)
 		return -1;
 	p += 4;
@@ -298,8 +308,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	if (*p != '\0')
 		return -1;
 
-	task = ps_find_process(pid);
-	if (!task || !task->fds)
+	if (!task->fds)
 		return -1;
 	if (fdno >= MAX_FD || !task->fds[fdno])
 		return -1;
@@ -312,6 +321,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 		fname = anon;
 	}
 
+copy_target:
 	n = strlen(fname);
 	if (n > bufsiz)
 		n = bufsiz;

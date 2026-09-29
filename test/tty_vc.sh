@@ -187,3 +187,36 @@ expect_meta alt_active 0
 expect_meta no_wrap 0
 expect_cell 0 0 4d ffffffff ff000000
 expect_cell 0 "$last_col" 20 ffffffff ff000000
+
+
+# Validate SGR colors and attributes used by terminal multiplexers.
+printf '\033c' > "$TTY"
+printf '\033[30;47mW\033[49mB\033[97;104mH\033[0m' > "$TTY"
+snapshot
+expect_cell 0 0 57 ff000000 ffffffff
+expect_cell 0 1 42 ff000000 ff000000
+expect_cell 0 2 48 ffffffff ff5555ff
+
+printf '\033c' > "$TTY"
+printf '\033[38;5;16;48;5;40mI\033[7mR\033[27mN\033[0mD' > "$TTY"
+snapshot
+expect_cell 0 0 49 ff000000 ff00d700
+expect_cell 0 1 52 ff00d700 ff000000
+expect_cell 0 2 4e ff000000 ff00d700
+expect_cell 0 3 44 ffffffff ff000000
+
+printf '\033c' > "$TTY"
+printf '\033[38;2;255;128;64;48;2;32;64;128mT\033[0m' > "$TTY"
+snapshot
+expect_cell 0 0 54 ffff8040 ff204080
+
+# Character-set designators do not move the cursor or emit text.
+printf '\033c' > "$TTY"
+printf 'A\033(B\033)0\033%%GB\0337\033[3HC\0338D' > "$TTY"
+snapshot
+expect_cell 0 0 41 ffffffff ff000000
+expect_cell 0 1 42 ffffffff ff000000
+expect_cell 0 2 44 ffffffff ff000000
+expect_cell 2 0 43 ffffffff ff000000
+expect_meta cursor_row 0
+expect_meta cursor_col 3

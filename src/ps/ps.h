@@ -328,7 +328,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage);
 int sys_ptrace(int request, int pid, void *addr, void *data);
 void ps_stop_current(intr_frame *frame, int sig);
-void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
+int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
 void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp);
 void ps_ptrace_stop_exit(unsigned status);
 void qemu_exit(unsigned char code);

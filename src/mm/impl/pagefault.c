@@ -111,6 +111,34 @@ static pf_file_page_result pf_get_file_page(file *f, int offset, int flag)
 	return result;
 }
 
+/* Pin the source across allocation/reclaim, including uncached file pages
+ * which do not yet have a mapping reference. The returned page is unreferenced. */
+static paddr_t pf_copy_private_page(paddr_t source)
+{
+	unsigned source_idx = source / PAGE_SIZE;
+	unsigned page_idx;
+	paddr_t phy = 0;
+
+	phymm_reference_page(source_idx);
+	page_idx = phymm_alloc_user();
+	if (page_idx == PHYMM_INVALID) {
+		phymm_reclaim_user_cache(32);
+		page_idx = phymm_alloc_user();
+	}
+	if (page_idx != PHYMM_INVALID) {
+		phy = page_idx * PAGE_SIZE;
+		if (!mm_copy_phys_page(phy, source)) {
+			phymm_free_user(page_idx);
+			phy = 0;
+		}
+	}
+	if (phymm_dereference_page(source_idx) == 0)
+		phymm_free_user(source_idx);
+	if (phy)
+		page_fault_cow++;
+	return phy;
+}
+
 /*
 31                4                             0
 +-----+-...-+-----+-----+-----+-----+-----+-----+
@@ -132,10 +160,12 @@ extern phymm_page *phymm_pages;
  * start from the cached file page, and the semantic split happens on write.
  */
 static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
-				      file *f, int offset, int prot, int flag)
+				      file *f, int offset, int prot, int flag,
+				      int write)
 {
 	pf_file_page_result page;
-	int mmflag;
+	unsigned pte = PAGE_ENTRY_USER_CODE;
+	paddr_t phy;
 
 	page_fault_file++;
 
@@ -148,7 +178,6 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 			pte |= PAGE_ENTRY_WRITABLE;
 		if (mm_map_page(address, phy, pte) != 1)
 			goto FAIL;
-		arch_mm_invalidate(address);
 		return 1;
 	}
 
@@ -167,7 +196,6 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 			pte |= PAGE_ENTRY_WRITABLE;
 		if (mm_map_page_io(address, phy, pte) != 1)
 			goto FAIL;
-		arch_mm_invalidate(address);
 		return 1;
 	}
 
@@ -185,18 +213,24 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	else
 		page_fault_file_read += PAGE_SIZE;
 
-	if (mm_map_page(address, page.phy, PAGE_ENTRY_USER_CODE) != 1)
+	phy = page.phy;
+	if (write && !(flag & MAP_SHARED)) {
+		phy = pf_copy_private_page(page.phy);
+		if (!phy)
+			goto FAIL;
+		pte |= PAGE_ENTRY_WRITABLE;
+	} else if (write) {
+		/* Shared file pages become writable only after dirty accounting. */
+		phymm_mark_dirty(phy / PAGE_SIZE);
+		pte |= PAGE_ENTRY_WRITABLE;
+	}
+	if (mm_map_page(address, phy, pte) != 1) {
+		if (write && !(flag & MAP_SHARED))
+			phymm_free_user(phy / PAGE_SIZE);
 		goto FAIL;
-	arch_mm_invalidate(address);
-
-	if ((flag & MAP_SHARED) || !(prot & PROT_WRITE)) {
-		mmflag = mm_get_map_flag(address);
-		mmflag &= ~PAGE_ENTRY_WRITABLE;
-		mm_set_map_flag(address, mmflag);
-		arch_mm_invalidate(address);
 	}
 	if ((flag & MAP_SHARED) && page.needs_shared_registration)
-		mm_file_shared_add(f, offset, page.phy);
+		mm_file_shared_add(f, offset, phy);
 
 	return 1;
 FAIL:
@@ -234,7 +268,6 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 			if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE) !=
 			    1)
 				goto DONE;
-			arch_mm_invalidate(address);
 			handled = 1;
 			goto DONE;
 		}
@@ -257,7 +290,6 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 			     address, phy);
 			goto DONE;
 		}
-		arch_mm_invalidate(address);
 		memset(address, 0, PAGE_SIZE);
 
 		mm_anon_shared_add(region->anon_id, offset, phy);
@@ -268,7 +300,6 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 	if (prot & PROT_WRITE) {
 		if (mm_map_page(address, 0, PAGE_ENTRY_USER_DATA) != 1)
 			goto DONE;
-		arch_mm_invalidate(address);
 		memset(address, 0, PAGE_SIZE);
 	} else {
 		/*
@@ -280,7 +311,6 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 		if (mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE) !=
 		    1)
 			goto DONE;
-		arch_mm_invalidate(address);
 	}
 	handled = 1;
 
@@ -360,7 +390,8 @@ static int pf_page_already_present(vaddr_t address)
 /*
  * Handle page fault which has no physical page.
  */
-static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
+static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address,
+				  int write)
 {
 	vm_region *region;
 	int this_offset;
@@ -374,7 +405,8 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
 		return 0;
 
 	/* PROT_NONE: no access permitted — treat as unmapped. */
-	if (region->prot == PROT_NONE) {
+	if (region->prot == PROT_NONE ||
+	    (write && !(region->prot & PROT_WRITE))) {
 		vm_region_unlock_fault(region);
 		return 0;
 	}
@@ -387,9 +419,9 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
 	this_offset = region->offset + (fault_address - region->begin);
 
 	if (region->fp != NULL) {
-		if (!pf_handle_invalid_file_map(fault_address, region,
-						region->fp, this_offset,
-						region->prot, region->flag)) {
+		if (!pf_handle_invalid_file_map(
+			    fault_address, region, region->fp, this_offset,
+			    region->prot, region->flag, write)) {
 			vm_region_unlock_fault(region);
 			return 0;
 		}
@@ -415,46 +447,25 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address)
  * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
  * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
  */
-static void wp_page_copy(vaddr_t fault_address)
+static int wp_page_copy(vaddr_t fault_address)
 {
 	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
-	unsigned page_idx;
-	paddr_t phy;
-	int ret;
-	int flag;
+	paddr_t old_phy = mm_virt_to_phys(vir);
+	paddr_t phy = pf_copy_private_page(old_phy);
+	unsigned flag;
 
-	page_fault_cow++;
-
-	page_idx = phymm_alloc_user();
-	if (page_idx == PHYMM_INVALID) {
-		phymm_reclaim_user_cache(32);
-		page_idx = phymm_alloc_user();
-		if (page_idx == PHYMM_INVALID) {
-			klog("pagefault: phymm_alloc_user failed COW addr=%x\n",
-			     fault_address);
-			return;
-		}
+	if (!phy)
+		return 0;
+	flag = mm_get_map_flag(vir) | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+	/* Replace in place: retain the old mapping on allocation failure and
+	 * let mm_map_page invalidate its old translation exactly once. */
+	if (mm_map_page(vir, phy, flag) != 1) {
+		phymm_free_user(phy / PAGE_SIZE);
+		return 0;
 	}
-	phy = page_idx * PAGE_SIZE;
-
-	/* Establish the direct kernel alias and copy the original content. */
-	ret = mm_kmap_phys(phy);
-	if (ret != 1) {
-		phymm_free_user(page_idx);
-		klog("pagefault: mm_kmap_phys failed COW addr=%x phy=%x ret = %d\n",
-		     fault_address, phy, ret);
-		return;
-	}
-	memcpy((void *)PHY_TO_VIRT(phy), (void *)vir, PAGE_SIZE);
-	mm_kunmap_phys(phy);
-
-	/* Swap the shared PTE for a private writable one. */
-	flag = mm_get_map_flag(vir);
-	mm_unmap_page(vir);
-	flag |= PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
-	mm_map_page(vir, phy, flag);
-
-	arch_mm_invalidate(vir);
+	if (phymm_dereference_page(old_phy / PAGE_SIZE) == 0)
+		phymm_free_user(old_phy / PAGE_SIZE);
+	return 1;
 }
 
 /*
@@ -472,7 +483,6 @@ static void wp_page_reuse(vaddr_t fault_address)
 	flag = mm_get_map_flag(vir);
 	flag |= PAGE_ENTRY_WRITABLE;
 	mm_set_map_flag(vir, flag);
-	arch_mm_invalidate(vir);
 }
 
 /*
@@ -530,9 +540,11 @@ static int do_wp_page(task_struct *task, vaddr_t fault_address)
 	}
 
 	page_index = mm_get_attached_page_index(vir);
-	if (phymm_is_cow(page_index))
-		wp_page_copy(vir);
-	else
+	if (phymm_is_cow(page_index)) {
+		int handled = wp_page_copy(vir);
+		vm_region_unlock_fault(region);
+		return handled;
+	} else
 		wp_page_reuse(vir);
 
 	vm_region_unlock_fault(region);
@@ -563,10 +575,10 @@ int pf_resolve_task_page_fault(task_struct *task, vaddr_t addr, int write)
 		arch_mm_activate(target_address_space);
 
 	addr &= PAGE_SIZE_MASK;
-	if (write)
+	if (write && pf_page_already_present(addr))
 		handled = do_wp_page(task, addr);
 	else
-		handled = pf_handle_page_invalid(task, addr);
+		handled = pf_handle_page_invalid(task, addr, write);
 
 	if (old_address_space != target_address_space)
 		arch_mm_activate(old_address_space);
@@ -607,7 +619,8 @@ static void pf_process(intr_frame *frame)
 	fault_address &= PAGE_SIZE_MASK;
 
 	if (!(error & PF_MASK_P)) {
-		if (pf_handle_page_invalid(CURRENT_TASK(), fault_address))
+		if (pf_handle_page_invalid(CURRENT_TASK(), fault_address,
+					   (error & PF_MASK_RW) != 0))
 			goto Done;
 		goto NOT_HANDLED;
 	}

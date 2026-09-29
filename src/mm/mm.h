@@ -92,6 +92,10 @@ int mm_kmap_page(vaddr_t vir);
 int mm_kmap_phys(paddr_t phys);
 void mm_kunmap_phys(paddr_t phys);
 
+/* Copy one aligned RAM page using private per-CPU temporary slots.
+ * Pins neither page: caller must keep both alive. No sleeping or callbacks. */
+int mm_copy_phys_page(paddr_t dst, paddr_t src);
+
 int mm_map_io(paddr_t phy);
 
 vaddr_t mm_phys_to_virt(paddr_t phys);

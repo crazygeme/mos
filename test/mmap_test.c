@@ -7,6 +7,9 @@
 
 #include <mm/mm.h>
 #include <mm/mmap.h>
+#include <mm/pagefault.h>
+#include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <ps/ps.h>
 #include <config.h>
 #include <errno.h>
@@ -448,5 +451,73 @@ KTEST(mmap, mremap_grow_rejects_later_overlap)
 
 	do_munmap((void *)base, PAGE_SIZE);
 	do_munmap((void *)(base + 2 * PAGE_SIZE), PAGE_SIZE);
+	return 0;
+}
+
+/* One resolver call must finish a first-write file fault, without making the
+ * page cache writable. Also exercise a later COW fault and slot reuse. */
+KTEST(mmap, file_first_write_private)
+{
+	int fd = fs_open("/bin/true", O_RDONLY, 0);
+	vaddr_t base = 0x21000000;
+	vaddr_t scratch = vm_alloc(1);
+	paddr_t cached, copied;
+	unsigned char first;
+	int mapped = 0;
+
+	EXPECT_GE(fd, 0);
+	EXPECT_NE(scratch, 0u);
+	if (fd < 0 || !scratch)
+		goto out;
+	for (int i = 0; i < 3; i++) {
+		int prot = i == 2 ? PROT_READ : PROT_READ | PROT_WRITE;
+		int ret = do_mmap(base + i * PAGE_SIZE, PAGE_SIZE, prot,
+				  MAP_PRIVATE | MAP_FIXED, fd, 0);
+		EXPECT_EQ((vaddr_t)ret, base + i * PAGE_SIZE);
+		if ((vaddr_t)ret != base + i * PAGE_SIZE)
+			goto out;
+		mapped++;
+	}
+	EXPECT_EQ(pf_resolve_task_page_fault(current, base, 0), 1);
+	cached = mm_virt_to_phys(base);
+	EXPECT_NE(cached, 0u);
+	if (!cached)
+		goto out;
+	EXPECT_FALSE(mm_get_map_flag(base) & PAGE_ENTRY_WRITABLE);
+	EXPECT_EQ(mm_copy_phys_page(VIRT_TO_PHY(scratch), cached), 1);
+	first = *(unsigned char *)scratch;
+
+	EXPECT_EQ(pf_resolve_task_page_fault(current, base + PAGE_SIZE, 1), 1);
+	EXPECT_TRUE(mm_get_map_flag(base + PAGE_SIZE) & PAGE_ENTRY_WRITABLE);
+	copied = mm_virt_to_phys(base + PAGE_SIZE);
+	EXPECT_NE(copied, cached);
+	EXPECT_NE(copied, 0u);
+	if (!copied || copied == cached)
+		goto out;
+	EXPECT_EQ(mm_copy_phys_page(VIRT_TO_PHY(scratch), copied), 1);
+	EXPECT_EQ(*(unsigned char *)scratch, first);
+	*(unsigned char *)scratch = first ^ 0xff;
+	EXPECT_EQ(mm_copy_phys_page(copied, VIRT_TO_PHY(scratch)), 1);
+	EXPECT_EQ(mm_copy_phys_page(VIRT_TO_PHY(scratch), cached), 1);
+	EXPECT_EQ(*(unsigned char *)scratch, first);
+	EXPECT_EQ(mm_copy_phys_page(VIRT_TO_PHY(scratch), copied), 1);
+	EXPECT_EQ(*(unsigned char *)scratch, (unsigned char)(first ^ 0xff));
+
+	/* A write to an existing read-only private mapping still uses COW. */
+	EXPECT_EQ(pf_resolve_task_page_fault(current, base, 1), 1);
+	EXPECT_TRUE(mm_get_map_flag(base) & PAGE_ENTRY_WRITABLE);
+	EXPECT_NE(mm_virt_to_phys(base), cached);
+	EXPECT_EQ(pf_resolve_task_page_fault(current, base + 2 * PAGE_SIZE, 1),
+		  0);
+	EXPECT_FALSE(mm_get_map_flag(base + 2 * PAGE_SIZE) &
+		     PAGE_ENTRY_PRESENT);
+
+out:
+	while (mapped)
+		do_munmap((void *)(base + --mapped * PAGE_SIZE), PAGE_SIZE);
+	if (scratch)
+		vm_free(scratch, 1);
+	if (fd >= 0)
+		fs_close(fd);
 	return 0;
 }

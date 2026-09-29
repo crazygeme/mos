@@ -350,12 +350,15 @@ static void syscall_process(intr_frame *frame)
 {
 	syscall_fn fn;
 	int ret;
+	int traced;
 
-	ps_ptrace_maybe_stop_syscall(frame, 1);
+	/* A tracer may enable syscall stops while this call is already running. */
+	traced = ps_ptrace_maybe_stop_syscall(frame, 1);
 
 	if (frame->eax >= NR_syscalls) {
 		frame->eax = unhandled_syscall(frame->eax);
-		ps_ptrace_maybe_stop_syscall(frame, 0);
+		if (traced)
+			ps_ptrace_maybe_stop_syscall(frame, 0);
 		return;
 	}
 
@@ -367,7 +370,8 @@ static void syscall_process(intr_frame *frame)
 			 frame->edi, frame->ebp);
 
 	frame->eax = ret;
-	ps_ptrace_maybe_stop_syscall(frame, 0);
+	if (traced)
+		ps_ptrace_maybe_stop_syscall(frame, 0);
 }
 
 static void syscall_init()

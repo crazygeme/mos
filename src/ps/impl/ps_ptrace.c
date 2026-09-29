@@ -247,16 +247,16 @@ void ps_stop_current(intr_frame *frame, int sig)
 	task_sched();
 }
 
-void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
+int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame stop_frame;
 	intr_frame *saved_frame = frame;
 	int irq;
 
-	if (!cur->user->ptrace_tracer ||
+	if (!cur->user || !cur->user->ptrace_tracer ||
 	    cur->user->ptrace_mode != PTRACE_MODE_SYSCALL)
-		return;
+		return 0;
 
 	if (entering) {
 		cur->user->ptrace_orig_eax = frame->eax;
@@ -279,6 +279,7 @@ void ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 					   "ptrace-sys-exit");
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
+	return 1;
 }
 
 void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp)
@@ -301,6 +302,9 @@ void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp)
 		 PTRACE_EVENT_EXEC << 8 : 0), &frame, "ptrace-exec");
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
+
+	/* Successful exec switches to userspace without returning to the dispatcher. */
+	ps_ptrace_maybe_stop_syscall(&frame, 0);
 }
 
 void ps_ptrace_stop_exit(unsigned status)

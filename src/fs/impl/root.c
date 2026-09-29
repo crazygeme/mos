@@ -1113,6 +1113,18 @@ static int ext4_readlink_op(super_block *sb, const char *path, char *buf,
 	ext4_full_path(sb, path, full);
 	ret = ext4_readlink(full, buf, bufsiz, rcnt);
 	if (ret == ENOENT) {
+		char *resolved = name_get();
+
+		/* Resolve directory symlinks while preserving the final link. */
+		if (resolved && ext4_resolve_prefix(full, resolved) == 0 &&
+		    strcmp(full, resolved) != 0) {
+			strcpy(full, resolved);
+			ret = ext4_readlink(full, buf, bufsiz, rcnt);
+		}
+		if (resolved)
+			name_put(resolved);
+	}
+	if (ret == ENOENT) {
 		ext4_file f;
 		struct stat st;
 
@@ -1129,7 +1141,7 @@ static int ext4_readlink_op(super_block *sb, const char *path, char *buf,
 	return ret ? -ret : 0;
 }
 
-static int ext4_statfs_op(super_block *sb, struct statfs *buf)
+static int ext4_statfs_op(super_block *sb, struct statfs64 *buf)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
 	struct ext4_mount_stats stats;

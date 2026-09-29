@@ -316,7 +316,7 @@ static const file_operations ptmx_dir_fops = {
 	.poll = ptmx_dir_poll,
 };
 
-static int ptmx_statfs(super_block *sb, struct statfs *buf)
+static int ptmx_statfs(super_block *sb, struct statfs64 *buf)
 {
 	memset(buf, 0, sizeof(*buf));
 	buf->f_type = 0x1cd1; /* DEVPTS_SUPER_MAGIC */

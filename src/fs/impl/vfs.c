@@ -7,6 +7,7 @@
 #include <lib/lock.h>
 #include <macro.h>
 #include <errno.h>
+#include <ps/ps.h>
 
 /**
  * To make sure sorted by path
@@ -403,10 +404,11 @@ int vfs_rmnod(super_block *sb, const char *path)
 	return vfs_umount(sb, path);
 }
 
-int vfs_statfs(super_block *sb, const char *path, struct statfs *buf)
+int vfs_statfs(super_block *sb, const char *path, struct statfs64 *buf)
 {
 	super_block *target_sb;
 	char *rel_path;
+	int ret;
 
 	if (!sb || !path || !buf)
 		return -EINVAL;
@@ -414,7 +416,10 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs *buf)
 		return -EINVAL;
 	if (!target_sb->s_op || !target_sb->s_op->statfs)
 		return -ENOSYS;
-	return target_sb->s_op->statfs(target_sb, buf);
+	ret = target_sb->s_op->statfs(target_sb, buf);
+	if (!ret)
+		buf->f_flags = 0x20 | (target_sb->s_flags & 3); /* ST_VALID, RO, NOSUID */
+	return ret;
 }
 
 int vfs_utime(super_block *sb, const char *path, unsigned atime, unsigned mtime)
@@ -422,7 +427,7 @@ int vfs_utime(super_block *sb, const char *path, unsigned atime, unsigned mtime)
 	VFS_PATH_OP(vfs_utime, utime, atime, mtime);
 }
 
-file *vfs_open(super_block *sb, const char *path, int flag)
+static file *vfs_open_raw(super_block *sb, const char *path, int flag)
 {
 	super_block *target_sb;
 	char *rel_path;
@@ -436,7 +441,7 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 
 	/* sb_path_resolve descends into children; if target differs, re-enter */
 	if (target_sb != sb)
-		return vfs_open(target_sb, rel_path, flag);
+		return vfs_open_raw(target_sb, rel_path, flag);
 
 	/* Opening the mount root: empty suffix or bare trailing slash */
 	if (*rel_path == '\0' || (rel_path[0] == '/' && rel_path[1] == '\0')) {
@@ -472,4 +477,97 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	}
 
 	return NULL;
+}
+
+/* Follow final symlinks through the mount tree, including ext4-to-proc links. */
+file *vfs_open(super_block *sb, const char *path, int flag)
+{
+	file *fp;
+	char *target = NULL, *joined = NULL;
+	const char *lookup = path;
+	super_block *lookup_sb = sb;
+	unsigned depth;
+
+	if (!sb || !path)
+		return NULL;
+	if (flag & O_NOFOLLOW)
+		return vfs_open_raw(sb, path, flag);
+	for (depth = 0; depth <= 40; depth++) {
+		size_t len = 0;
+		const char *linkpath, *slash;
+		size_t base;
+		int ret;
+
+		fp = vfs_open_raw(lookup_sb, lookup, flag | O_NOFOLLOW);
+		if (!fp || !fp->f_inode || !S_ISLNK(fp->f_inode->i_mode))
+			goto out;
+		if (depth == 40) {
+			fs_put_file(fp);
+			break;
+		}
+		if (!target)
+			target = name_get();
+		if (!joined)
+			joined = name_get();
+		if (!target || !joined) {
+			fs_put_file(fp);
+			break;
+		}
+		ret = vfs_readlink(lookup_sb, lookup, target, MAX_PATH - 1, &len);
+		if (ret || !len || len >= MAX_PATH) {
+			fs_put_file(fp);
+			break;
+		}
+		target[len] = '\0';
+		if (target[0] == '/') {
+			strcpy(joined, target);
+		} else {
+			linkpath = fp->f_name ? fp->f_name : lookup;
+			slash = strrchr(linkpath, '/');
+			base = slash ? (size_t)(slash - linkpath) + 1 : 0;
+			if (!base || base + len >= MAX_PATH) {
+				fs_put_file(fp);
+				break;
+			}
+			memmove(joined, linkpath, base);
+			memcpy(joined + base, target, len + 1);
+		}
+		fs_put_file(fp);
+		/* Normalize dot components before selecting a mount. */
+		{
+			const char *src = joined;
+			char *dst = joined;
+			*dst++ = '/';
+			while (*src) {
+				const char *start;
+				while (*src == '/')
+					src++;
+				start = src;
+				while (*src && *src != '/')
+					src++;
+				len = src - start;
+				if (!len || (len == 1 && start[0] == '.'))
+					continue;
+				if (len == 2 && start[0] == '.' && start[1] == '.') {
+					while (dst > joined + 1 && *--dst != '/')
+						;
+					continue;
+				}
+				if (dst > joined + 1)
+					*dst++ = '/';
+				memmove(dst, start, len);
+				dst += len;
+			}
+			*dst = '\0';
+		}
+		lookup = joined;
+		lookup_sb = current->root;
+	}
+	fp = NULL;
+out:
+	if (joined)
+		name_put(joined);
+	if (target)
+		name_put(target);
+	return fp;
 }

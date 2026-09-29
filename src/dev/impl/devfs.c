@@ -175,7 +175,7 @@ static file *dev_open(super_block *sb, const char *path, int flag)
 	return NULL;
 }
 
-static int dev_statfs(super_block *sb, struct statfs *buf)
+static int dev_statfs(super_block *sb, struct statfs64 *buf)
 {
 	memset(buf, 0, sizeof(*buf));
 	buf->f_type = 0x1373; /* DEVFS_SUPER_MAGIC */

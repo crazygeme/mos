@@ -331,7 +331,7 @@ copy_target:
 	return 0;
 }
 
-static int proc_statfs(super_block *sb, struct statfs *buf)
+static int proc_statfs(super_block *sb, struct statfs64 *buf)
 {
 	memset(buf, 0, sizeof(*buf));
 	buf->f_type = 0x9FA0; /* PROC_SUPER_MAGIC */

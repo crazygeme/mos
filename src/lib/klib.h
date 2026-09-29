@@ -56,7 +56,7 @@ int sprintf(char *buf, const char *fmt, ...);
 /* ── String / memory ──────────────────────────────────────────────────────── */
 
 void memcpy(void *dst, const void *src, unsigned len);
-void memmove(void *dst, void *src, unsigned len);
+void memmove(void *dst, const void *src, unsigned len);
 int memcmp(const void *src, const void *dst, unsigned len);
 void memset(void *src, char val, int len);
 

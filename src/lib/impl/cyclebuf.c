@@ -250,12 +250,17 @@ int cyb_reader_count(cy_buf *b)
 
 void cyb_flush(cy_buf *b)
 {
-	int irq;
+	int irq, was_full;
 	spinlock_lock(&b->lock, &irq);
+	was_full = b->length == b->buf_size;
 	b->read_idx = b->write_idx;
 	b->length = 0;
 	cond_reset(&b->read_event);
 	spinlock_unlock(&b->lock, irq);
+	if (was_full) {
+		cond_notify_nosched(&b->write_event);
+		cyb_notify_poll(b, 0);
+	}
 }
 
 /*

@@ -493,4 +493,4 @@ static void nic_intel_8254x_register(void)
 	hw_driver_register(&nic_intel_8254x_driver);
 }
 
-KERNEL_INIT(5, nic_intel_8254x_register);
+KERNEL_INIT(4, nic_intel_8254x_register);

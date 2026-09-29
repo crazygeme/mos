@@ -33,6 +33,8 @@ static struct log_record records[LOG_RECORDS];
 static unsigned long long first_sequence, next_sequence, clear_sequence;
 static struct log_cursor stream_cursor;
 static spinlock_t log_lock;
+/* Formatting and copying complete under log_lock; no pointer escapes it. */
+static char log_format_buffer[LOG_FORMAT];
 static list_entry waiters;
 static int initialized;
 
@@ -172,7 +174,6 @@ static unsigned log_format(const struct log_record *record, char *buf,
 static ssize_t log_read(struct log_cursor *cursor, void *buf, size_t size,
 			int device, int nonblock)
 {
-	char formatted[LOG_FORMAT];
 	int irq, result;
 	unsigned length, full, copied = 0;
 
@@ -193,7 +194,7 @@ static ssize_t log_read(struct log_cursor *cursor, void *buf, size_t size,
 		while (cursor->sequence < next_sequence && copied < size) {
 			full = log_format(
 				&records[cursor->sequence % LOG_RECORDS],
-				formatted, device);
+				log_format_buffer, device);
 			length = full;
 			if (device && size < length) {
 				spinlock_unlock(&log_lock, irq);
@@ -202,8 +203,8 @@ static ssize_t log_read(struct log_cursor *cursor, void *buf, size_t size,
 			length -= cursor->offset;
 			if (length > size - copied)
 				length = size - copied;
-			memcpy((char *)buf + copied, formatted + cursor->offset,
-			       length);
+			memcpy((char *)buf + copied,
+			       log_format_buffer + cursor->offset, length);
 			copied += length;
 			cursor->offset += length;
 			if (cursor->offset == full) {
@@ -353,7 +354,6 @@ file *syslog_open(unsigned mode, unsigned rdev)
 
 int sys_syslog(int type, char *buf, int len)
 {
-	char formatted[LOG_TEXT + 16];
 	unsigned long long sequence, begin;
 	unsigned length, total = 0, skip, copied = 0;
 	int irq;
@@ -376,8 +376,8 @@ int sys_syslog(int type, char *buf, int len)
 	if (begin < first_sequence)
 		begin = first_sequence;
 	for (sequence = begin; sequence < next_sequence; sequence++)
-		total += log_format(&records[sequence % LOG_RECORDS], formatted,
-				    0);
+		total += log_format(&records[sequence % LOG_RECORDS],
+				    log_format_buffer, 0);
 	if (type == 9) {
 		if (stream_cursor.sequence >= first_sequence)
 			total -= stream_cursor.offset;
@@ -388,12 +388,13 @@ int sys_syslog(int type, char *buf, int len)
 		skip = total > (unsigned)len ? total - len : 0;
 		for (sequence = begin; sequence < next_sequence; sequence++) {
 			length = log_format(&records[sequence % LOG_RECORDS],
-					    formatted, 0);
+					    log_format_buffer, 0);
 			if (skip >= length) {
 				skip -= length;
 				continue;
 			}
-			memcpy(buf + copied, formatted + skip, length - skip);
+			memcpy(buf + copied, log_format_buffer + skip,
+			       length - skip);
 			copied += length - skip;
 			skip = 0;
 		}

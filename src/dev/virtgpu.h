@@ -1,0 +1,6 @@
+#ifndef MOS_DEV_VIRTGPU_H
+#define MOS_DEV_VIRTGPU_H
+#define GPU_MAJOR 226
+#define GPU_RENDER_MINOR 128
+
+#endif

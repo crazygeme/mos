@@ -4,7 +4,9 @@
 #include <ext4_oflags.h>
 #include <fs/fcntl.h>
 #include <hw/pci.h>
-#include <fs/sysfs.h>
+#include <hw/driver.h>
+#include <dev/virtgpu.h>
+#include <sys/sys.h>
 #include <hw/time.h>
 #include <hw/drm/virtgpu_drm.h>
 #include <hw/drm/virtio_gpu.h>
@@ -16,8 +18,6 @@
 #include <mm/phymm.h>
 #include <ps/ps.h>
 
-#define GPU_MAJOR 226
-#define GPU_RENDER_MINOR 128
 #define GPU_QUEUE_SIZE 256
 #define GPU_MAX_OBJECTS 4096
 #define GPU_MAX_HANDLES 2048
@@ -1383,12 +1383,33 @@ static void *gpu_pci_map(const pci_resource *resources, unsigned bar,
 	return (void *)(uintptr_t)start;
 }
 
-static void gpu_find(unsigned pci, uint16_t vendor, uint16_t device, void *arg)
+static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
+		     const hw_pci_id *id)
 {
-	(void)arg;
-	if (gpu_pci == ~0U && vendor == 0x1af4 && device == 0x1050)
+	if (gpu_pci == ~0U)
 		gpu_pci = pci;
+	return 0;
 }
+
+static const hw_pci_id gpu_pci_ids[] = {
+	{ .vendor_id = 0x1af4, .device_id = 0x1050 },
+};
+
+static hw_driver gpu_driver = {
+	.name = "virtio_gpu",
+	.type = HW_TYPE_VIDEO,
+	.bus = HW_BUS_PCI,
+	.pci_ids = gpu_pci_ids,
+	.pci_id_count = sizeof(gpu_pci_ids) / sizeof(gpu_pci_ids[0]),
+	.probe_pci = gpu_probe,
+};
+
+static void gpu_driver_register(void)
+{
+	hw_driver_register(&gpu_driver);
+}
+
+KERNEL_INIT(4, gpu_driver_register);
 
 static int gpu_dir_stat(file *fp, struct stat *st)
 {
@@ -1463,58 +1484,6 @@ static file *gpu_dir_open(super_block *sb, int flags)
 
 static const super_operations gpu_dir_sops = { .open_root = gpu_dir_open };
 
-static int gpu_sysfs(sysfs_tree *tree, void *data)
-{
-	static const struct {
-		const char *name;
-		unsigned minor;
-	} nodes[] = {
-		{ "card0", 0 },
-		{ "renderD128", GPU_RENDER_MINOR },
-	};
-	sysfs_node *device, *devices, *class, *characters;
-	char *text;
-	unsigned i;
-	(void)data;
-	if (!gpu_ready)
-		return 0;
-	device = sysfs_pci_device(tree, gpu_pci);
-	if (!device)
-		return -ENODEV;
-	devices = sysfs_directory(device, "drm");
-	class = sysfs_directory(sysfs_directory(sysfs_root(tree), "class"),
-				"drm");
-	characters = sysfs_directory(sysfs_directory(sysfs_root(tree), "dev"),
-				     "char");
-	if (!devices || !class || !characters)
-		return -ENOMEM;
-	text = name_get();
-	if (!text)
-		return -ENOMEM;
-	for (i = 0; i < sizeof(nodes) / sizeof(nodes[0]); i++) {
-		sysfs_node *node = sysfs_directory(devices, nodes[i].name);
-		if (!node || !sysfs_link(class, nodes[i].name, node) ||
-		    !sysfs_link(node, "device", device) ||
-		    !sysfs_link(node, "subsystem", class))
-			goto fail;
-		sprintf(text, "%u:%u", GPU_MAJOR, nodes[i].minor);
-		if (!sysfs_link(characters, text, node))
-			goto fail;
-		sprintf(text, "%u:%u\n", GPU_MAJOR, nodes[i].minor);
-		if (!sysfs_text(node, "dev", text))
-			goto fail;
-		sprintf(text, "MAJOR=%u\nMINOR=%u\nDEVNAME=dri/%s\n", GPU_MAJOR,
-			nodes[i].minor, nodes[i].name);
-		if (!sysfs_text(node, "uevent", text))
-			goto fail;
-	}
-	name_put(text);
-	return 0;
-fail:
-	name_put(text);
-	return -ENOMEM;
-}
-
 static void gpu_register(super_block *sb)
 {
 	unsigned cap, seen = 0, bar, offset, length, type,
@@ -1525,7 +1494,6 @@ static void gpu_register(super_block *sb)
 	pci_resource *resources = NULL;
 	void *desc = NULL, *avail = NULL, *used = NULL;
 	rmutex_init(&gpu_lock);
-	pci_scan(gpu_find, PCI_SCAN_ALL, NULL);
 	if (gpu_pci == ~0U)
 		return;
 	resources = zalloc(7 * sizeof(*resources));
@@ -1606,8 +1574,8 @@ static void gpu_register(super_block *sb)
 	gpu_common->queue_enable = 1;
 	gpu_common->device_status = 1 | 2 | 8 | 4;
 	gpu_ready = 1;
-	if (sysfs_register_provider(gpu_sysfs, NULL))
-		goto fail;
+	if (sys_drm_register(gpu_pci))
+		printk("virtio_gpu: cannot register sys entries\n");
 	cdev_register_named(S_IFCHR, GPU_MAJOR, 0, 1, "drm", gpu_open);
 	cdev_register_named(S_IFCHR, GPU_MAJOR, GPU_RENDER_MINOR, 1, "drm",
 			    gpu_open);

@@ -38,6 +38,5 @@ typedef struct hw_driver {
 
 void hw_driver_register(hw_driver *driver);
 int hw_probe_pci(uint32_t device, uint16_t vendor_id, uint16_t device_id);
-void hw_pci_probe_all(void);
 
 #endif

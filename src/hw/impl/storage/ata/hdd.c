@@ -488,21 +488,27 @@ static int check_device_type(ata_disk *d)
 static void identify_ata_device(ata_disk *d)
 {
 	channel *c = d->channel;
-	char id[BLOCK_SECTOR_SIZE];
+	char *id = kmalloc(BLOCK_SECTOR_SIZE);
 	unsigned int capacity;
 
+	if (!id) {
+		d->is_ata = 0;
+		return;
+	}
 	select_device(d);
 	port_write_byte(reg_command(c), CMD_IDENTIFY_DEVICE);
 
 	if (!wait_while_busy(d)) {
 		port_read_byte(reg_status(c)); /* ack */
 		d->is_ata = 0;
+		kfree(id);
 		return;
 	}
 	port_read_byte(reg_status(c)); /* ack */
 	input_sector(c, id);
 
 	capacity = *(unsigned int *)&id[60 * 2];
+	kfree(id);
 	printk("hdd: %s: %u sectors (%u MiB)\n", d->name, capacity,
 	       capacity / 2048);
 

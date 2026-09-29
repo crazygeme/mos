@@ -113,7 +113,8 @@ static void run()
 
 static void parse_kernel_cmdline()
 {
-	char cmd[sizeof(g_cmdline)];
+	/* Used only by the single-threaded bootstrap. */
+	static char cmd[sizeof(g_cmdline)];
 	char *token, *end;
 	memcpy(cmd, g_cmdline, sizeof(cmd));
 	token = cmd;

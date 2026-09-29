@@ -239,12 +239,26 @@ static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
 		cyb_flush(p->m2s);
 		memcpy(&p->termios, buf, sizeof(p->termios));
 		return 0;
-	case TIOCGWINSZ:
+	case TIOCGWINSZ: {
+		int irq;
+		spinlock_lock(&p->lock, &irq);
 		memcpy(buf, &p->winsize, sizeof(p->winsize));
+		spinlock_unlock(&p->lock, irq);
 		return 0;
-	case TIOCSWINSZ:
-		memcpy(&p->winsize, buf, sizeof(p->winsize));
+	}
+	case TIOCSWINSZ: {
+		unsigned pgrp = 0;
+		int irq;
+		spinlock_lock(&p->lock, &irq);
+		if (memcmp(&p->winsize, buf, sizeof(p->winsize)) != 0) {
+			memcpy(&p->winsize, buf, sizeof(p->winsize));
+			pgrp = p->pgrp;
+		}
+		spinlock_unlock(&p->lock, irq);
+		if (pgrp)
+			ps_send_signal_pgrp(pgrp, SIGWINCH);
 		return 0;
+	}
 	case TIOCGPGRP:
 		*(unsigned *)buf = p->pgrp;
 		return 0;

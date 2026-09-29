@@ -31,7 +31,7 @@
 
 static const char *const pid_dir_entries[] = { ".",    "..",	  "status",
 					       "stat", "statm",	  "cmdline",
-					       "maps", "environ", "fd",
+					       "maps", "environ", "fd", "cwd",
 					       NULL };
 
 static file *pid_dir_open(task_struct *task)
@@ -103,6 +103,13 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		OPEN_TEXT_FILE(fill_maps);
 
 #undef OPEN_TEXT_FILE
+
+	/* /cwd exposes the process's current working directory as a symlink. */
+	if (strcmp(rest, "/cwd") == 0) {
+		if (!task->user || !task->user->cwd)
+			return NULL;
+		return make_pid_symlink(task->user->cwd);
+	}
 
 	/* /fd or /fd/ → fd directory listing */
 	if (strcmp(rest, "/fd") == 0 || strcmp(rest, "/fd/") == 0)

@@ -64,7 +64,7 @@ typedef struct {
 	unsigned pgrp;
 	/* ANSI escape sequence parser */
 	int ansi_flag;
-	char ansi_buf[24];
+	char ansi_buf[96];
 	int ansi_idx;
 	/* canonical input line buffer */
 	tty_canon_t canon;
@@ -99,6 +99,7 @@ typedef struct {
 	/* current foreground/background colors (set by SGR escape sequences) */
 	unsigned fg_color;
 	unsigned bg_color;
+	int reverse_video;
 	/* keyboard translation mode (K_XLATE, K_RAW, etc.) */
 	int kb_mode;
 	/* keyboard LED bitmap from KDSETLED/KDGETLED */
@@ -469,8 +470,10 @@ static void vga_putchar(tty_state *state, int row, int col, char c)
 	if (col < 0 || col >= (int)MAX_COL || row < 0 || row >= (int)MAX_ROW)
 		return;
 	state->cells[idx].ch = c;
-	state->cells[idx].fg = state->fg_color;
-	state->cells[idx].bg = state->bg_color;
+	state->cells[idx].fg = state->reverse_video ? state->bg_color :
+						    state->fg_color;
+	state->cells[idx].bg = state->reverse_video ? state->fg_color :
+						    state->bg_color;
 	if (tty_fb_text_is_visible(state))
 		fb_putcell(&state->cells[idx], col, row);
 }
@@ -784,17 +787,32 @@ static void ansi_feed(tty_state *state, char c)
 	char *arg = state->ansi_buf + 1;
 	int val, row, col;
 
+	/* Consume character-set designators without interpreting them as CSI. */
+	if (state->ansi_buf[0] == '(' || state->ansi_buf[0] == ')' ||
+	    state->ansi_buf[0] == '%') {
+		ansi_end(state);
+		return;
+	}
+	if (state->ansi_idx == 0 && (c == '7' || c == '8')) {
+		if (c == '7')
+			state->saved_cursor = state->cursor;
+		else
+			cursor_set(state, state->saved_cursor);
+		ansi_end(state);
+		return;
+	}
+
 	switch (c) {
 	case 'm': { /* SGR - select graphic rendition */
 		/* Parse all semicolon-separated params into an array. */
-		int params[8];
+		int params[32];
 		int nparams = 0;
 		char *p = arg;
 		if (*p == '\0') {
 			params[0] = 0;
 			nparams = 1;
 		} else {
-			while (*p && nparams < 8) {
+			while (*p && nparams < 32) {
 				char *semi = strchr(p, ';');
 				if (semi)
 					*semi = '\0';
@@ -818,89 +836,48 @@ static void ansi_feed(tty_state *state, char c)
 				pi += 3;
 				continue;
 			}
-			switch (v) {
-			case 0:
-				state->fg_color = VGA_COLOR_WHITE;
-				state->bg_color = VGA_COLOR_BLACK;
-				break;
-			case 30:
-				state->fg_color = VGA_COLOR_BLACK;
-				break;
-			case 31:
-				state->fg_color = VGA_COLOR_RED;
-				break;
-			case 32:
-				state->fg_color = VGA_COLOR_GREEN;
-				break;
-			case 33:
-				state->fg_color = VGA_COLOR_YELLOW;
-				break;
-			case 34:
-				state->fg_color = VGA_COLOR_BLUE;
-				break;
-			case 35:
-				state->fg_color = VGA_COLOR_MAGENTA;
-				break;
-			case 36:
-				state->fg_color = VGA_COLOR_CYAN;
-				break;
-			case 37:
-			case 39:
-				state->fg_color = VGA_COLOR_WHITE;
-				break;
-			/* background colors */
-			case 40:
-				state->bg_color = VGA_COLOR_BLACK;
-				break;
-			case 41:
-				state->bg_color = VGA_COLOR_RED;
-				break;
-			case 42:
-				state->bg_color = VGA_COLOR_GREEN;
-				break;
-			case 43:
-				state->bg_color = VGA_COLOR_YELLOW;
-				break;
-			case 44:
-				state->bg_color = VGA_COLOR_BLUE;
-				break;
-			case 45:
-				state->bg_color = VGA_COLOR_MAGENTA;
-				break;
-			case 46:
-				state->bg_color = VGA_COLOR_CYAN;
-				break;
-			case 47:
-			case 49:
-				state->bg_color = VGA_COLOR_BLACK;
-				break;
-			/* bright/intense variants */
-			case 90:
-				state->fg_color = VGA_COLOR_GRAY;
-				break;
-			case 91:
-				state->fg_color = VGA_COLOR_RED;
-				break;
-			case 92:
-				state->fg_color = VGA_COLOR_GREEN;
-				break;
-			case 93:
-				state->fg_color = VGA_COLOR_YELLOW;
-				break;
-			case 94:
-				state->fg_color = VGA_COLOR_BLUE;
-				break;
-			case 95:
-				state->fg_color = VGA_COLOR_MAGENTA;
-				break;
-			case 96:
-				state->fg_color = VGA_COLOR_CYAN;
-				break;
-			case 97:
-				state->fg_color = VGA_COLOR_WHITE;
-				break;
-			default:
-				break;
+			/* RGB foreground/background colors use three channel parameters. */
+			if ((v == 38 || v == 48) && pi + 4 < nparams &&
+			    params[pi + 1] == 2) {
+				unsigned rgb = ARGB(0xff, params[pi + 2] & 255,
+						    params[pi + 3] & 255, params[pi + 4] & 255);
+				if (v == 38)
+					state->fg_color = rgb;
+				else
+					state->bg_color = rgb;
+				pi += 5;
+				continue;
+			}
+			if (v >= 30 && v <= 37)
+				state->fg_color = color256(v - 30);
+			else if (v >= 40 && v <= 47)
+				state->bg_color = color256(v - 40);
+			else if (v >= 90 && v <= 97)
+				state->fg_color = color256(v - 90 + 8);
+			else if (v >= 100 && v <= 107)
+				state->bg_color = color256(v - 100 + 8);
+			else {
+				switch (v) {
+				case 0:
+					state->fg_color = VGA_COLOR_WHITE;
+					state->bg_color = VGA_COLOR_BLACK;
+					state->reverse_video = 0;
+					break;
+				case 7:
+					state->reverse_video = 1;
+					break;
+				case 27:
+					state->reverse_video = 0;
+					break;
+				case 39:
+					state->fg_color = VGA_COLOR_WHITE;
+					break;
+				case 49:
+					state->bg_color = VGA_COLOR_BLACK;
+					break;
+				default:
+					break;
+				}
 			}
 			pi++;
 		}
@@ -982,7 +959,7 @@ static void ansi_feed(tty_state *state, char c)
 	case 'f': { /* same as H */
 		char *str_col = strchr(arg, ';');
 		if (!str_col) {
-			row = 0;
+			row = atoi(arg) - 1;
 			col = 0;
 		} else {
 			*str_col++ = '\0';
@@ -1075,6 +1052,7 @@ static void ansi_feed(tty_state *state, char c)
 			/* RIS: reset terminal state and clear screen */
 			state->fg_color = VGA_COLOR_WHITE;
 			state->bg_color = VGA_COLOR_BLACK;
+			state->reverse_video = 0;
 			state->scroll_top = 0;
 			state->scroll_bot = (int)MAX_ROW - 1;
 			state->no_wrap = 0;
@@ -1349,6 +1327,7 @@ void tty_init(void)
 		t->graphics_fb_size = 0;
 		t->fg_color = VGA_COLOR_WHITE;
 		t->bg_color = VGA_COLOR_BLACK;
+		t->reverse_video = 0;
 		t->kb_mode = K_XLATE;
 		t->kb_leds = 0;
 		t->kb_repeat.delay = 250;
@@ -1663,6 +1642,8 @@ static void tty_resize_one(tty_state *state, unsigned new_col, unsigned new_row)
 		state->saved_cursor = state->cursor;
 	state->scroll_top = 0;
 	state->scroll_bot = (int)new_row - 1;
+	if (state->pgrp)
+		ps_send_signal_pgrp(state->pgrp, SIGWINCH);
 }
 
 /*

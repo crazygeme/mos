@@ -29,6 +29,9 @@ def check_link(link, expected):
     assert buf.raw == os.fsencode(expected)[:n] + b'XXXX'[n:], buf.raw
 
 
+assert 'self' in os.listdir('/proc'), '/proc/self directory entry'
+assert sorted(os.listdir('/proc/self')) == sorted(os.listdir(f'/proc/{os.getpid()}'))
+
 original = os.getcwd()
 with tempfile.TemporaryDirectory(prefix='proc-cwd-') as tmp:
     deep = Path(tmp) / 'one' / 'two' / 'three'

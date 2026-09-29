@@ -130,6 +130,7 @@ int sys_renameat(int olddirfd, const char *oldpath, int newdirfd,
 int sys_mknod(const char *path, unsigned mode, unsigned dev);
 int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev);
 int sys_mkdir(const char *path, unsigned mode);
+int sys_mkdirat(int dirfd, const char *path, unsigned mode);
 int sys_rmdir(const char *path);
 int sys_creat(const char *path, unsigned mode);
 int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data);

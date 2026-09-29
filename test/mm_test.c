@@ -287,3 +287,64 @@ KTEST(mm, name_buf_writable)
 	name_put(buf);
 	return 0;
 }
+
+/* Direct-map leaves must translate offsets, remain supervisor-only, and
+ * survive allocator frees without tearing down shared kernel mappings. */
+KTEST(mm, large_direct_map)
+{
+	unsigned cr4, offset;
+	pte_t *pd = (pte_t *)mm_get_pagedir();
+	asm volatile("movl %%cr4, %0" : "=r"(cr4));
+	if (!(cr4 & (1U << 4)))
+		return 0; /* CPU without PSE uses the existing 4 KiB path. */
+	for (offset = 0; offset < KERNEL_DIRECT_MAP_LIMIT;
+	     offset += LARGE_PAGE_SIZE) {
+		unsigned addr = KERNEL_OFFSET + offset;
+		EXPECT_EQ(mm_virt_to_phys(addr), offset);
+		EXPECT_EQ(mm_virt_to_phys(addr + LARGE_PAGE_SIZE - 1),
+			  offset + LARGE_PAGE_SIZE - 1);
+		EXPECT_FALSE(mm_get_map_flag(addr) & PAGE_ENTRY_DPL_USER);
+	}
+	/* The last direct-map PDE is untouched by heap permission tests. */
+	EXPECT_TRUE(pd[ADDR_TO_PGT_OFFSET((KERNEL_KMAP_BEGIN - 1))] &
+		    PAGE_ENTRY_LARGE);
+	unsigned addr = vm_alloc(1);
+	ASSERT_NE(addr, 0u);
+	unsigned phys = mm_virt_to_phys(addr);
+	vm_free(addr, 1);
+	EXPECT_EQ(mm_virt_to_phys(addr), phys);
+	EXPECT_EQ(mm_kmap_phys(phys), 1);
+	return 0;
+}
+
+KTEST(mm, large_split_shared_permissions)
+{
+	unsigned cr4;
+	asm volatile("movl %%cr4, %0" : "=r"(cr4));
+	if (!(cr4 & (1U << 4)))
+		return 0;
+	/* Use an otherwise untouched leaf; no access to physical RAM is needed. */
+	unsigned addr = KERNEL_KMAP_BEGIN - 2 * LARGE_PAGE_SIZE + PAGE_SIZE;
+	unsigned pd_addr = vm_alloc(1);
+	ASSERT_NE(pd_addr, 0u);
+	mm_init_process_page_dir(pd_addr);
+	pte_t *pd = (pte_t *)pd_addr;
+	pte_t *current = (pte_t *)mm_get_pagedir();
+	unsigned index = ADDR_TO_PGT_OFFSET(addr);
+	EXPECT_TRUE(pd[index] & PAGE_ENTRY_LARGE);
+	unsigned flags = mm_get_map_flag(addr);
+	mm_set_map_flag_pd(pd_addr, addr, flags & ~PAGE_ENTRY_WRITABLE);
+	EXPECT_FALSE(current[index] & PAGE_ENTRY_LARGE);
+	EXPECT_EQ(pd[index], current[index]);
+	EXPECT_FALSE(mm_get_map_flag(addr) & PAGE_ENTRY_WRITABLE);
+	EXPECT_FALSE(mm_get_map_flag_pd(pd_addr, addr) & PAGE_ENTRY_WRITABLE);
+	EXPECT_TRUE(mm_get_map_flag(addr - PAGE_SIZE) & PAGE_ENTRY_WRITABLE);
+	EXPECT_TRUE(mm_get_map_flag(addr + PAGE_SIZE) & PAGE_ENTRY_WRITABLE);
+	EXPECT_EQ(mm_virt_to_phys(addr + 123), addr + 123 - KERNEL_OFFSET);
+	EXPECT_EQ(mm_get_attached_page_index(addr),
+		  (addr - KERNEL_OFFSET) / PAGE_SIZE);
+	mm_set_map_flag(addr, flags);
+	EXPECT_TRUE(mm_get_map_flag_pd(pd_addr, addr) & PAGE_ENTRY_WRITABLE);
+	vm_free(pd_addr, 1);
+	return 0;
+}

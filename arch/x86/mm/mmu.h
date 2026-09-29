@@ -25,6 +25,22 @@ ALWAYS_INLINE void arch_mm_flush_local(void)
 		     : "memory");
 }
 
+/* Non-PAE x86 large pages are 4 MiB leaves in the page directory. */
+ALWAYS_INLINE int arch_mm_enable_large_pages(void)
+{
+	unsigned a, b, c, d, value;
+
+	asm volatile("cpuid"
+		     : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+		     : "a"(1), "c"(0));
+	if (!(d & (1U << 3))) /* CPUID.1:EDX.PSE */
+		return 0;
+	asm volatile("movl %%cr4, %0" : "=r"(value));
+	value |= 1U << 4; /* CR4.PSE */
+	asm volatile("movl %0, %%cr4" : : "r"(value) : "memory");
+	return 1;
+}
+
 ALWAYS_INLINE void arch_mm_enable_global_pages(void)
 {
 	unsigned long value;

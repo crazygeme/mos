@@ -88,10 +88,13 @@ void smp_tlb_poll(void)
  * neither interrupt masking nor BKL contention can block acknowledgment. */
 void smp_tlb_flush(void)
 {
-	unsigned i, me = arch_cpu_local()->index;
+	unsigned i;
 	unsigned irq = int_intr_disable();
 	arch_cpu_reload_tlb();
 	if (ncpu > 1) {
+		/* Early boot permission changes need only a local flush. CPU-local
+		 * FS is not restored until cpu_setup() after interrupt setup. */
+		unsigned me = arch_cpu_local()->index;
 		unsigned gen = __atomic_add_fetch(&tlb_generation, 1,
 						  __ATOMIC_RELEASE);
 		smp_cpus[me].tlb_ack = gen;
@@ -434,6 +437,7 @@ void smp_start(void)
 		args[0] = boot_pd;
 		args[1] = (unsigned)&ap_stacks[i][PAGE_SIZE];
 		args[2] = (unsigned)ap_main;
+		asm volatile("movl %%cr4, %0" : "=r"(args[3]));
 		__sync_synchronize();
 		ipi(smp_cpus[i].apic_id, 0xc500);
 		delay(10000);

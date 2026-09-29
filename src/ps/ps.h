@@ -150,6 +150,9 @@ struct _task_struct {
 	struct rb_node mgr_rb; /* management-queue RB-tree node */
 	list_entry dying_queue; /* dying task holder */
 	ps_status status;
+	int wait_interruptible;
+	unsigned long
+		signal_wait_mask; /* signals explicitly awaited by sigtimedwait */
 	const char *wait_func;
 	void (*cancel_io_wait)(void *);
 	void *io_wait;
@@ -167,10 +170,11 @@ struct _task_struct {
 	super_block *root;
 	unsigned umask;
 	task_stats_t *stats;
-	/* alarm: absolute expiry time in ms (0 = no pending alarm) */
+	/* alarm: monotonic expiry in ms (0 = disarmed) */
 	unsigned long long alarm_expire_ms;
 	/* interval for ITIMER_REAL in ms (0 = one-shot) */
 	unsigned long long alarm_interval_ms;
+	struct rb_node alarm_rb; /* separate from a task's I/O timeout */
 	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
 	unsigned long long
 		timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
@@ -288,8 +292,17 @@ task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
 int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
-/* Check only the current task's alarm in process context. */
-void ps_check_alarm(task_struct *task);
+/* Actionable, unmasked signals; ignored signals do not interrupt I/O. */
+unsigned long ps_interrupting_signals(task_struct *task);
+/* Publish an interruptible wait atomically with the pending-signal check.
+ * Return -EINTR without sleeping, or 0; pair success with finish_timed_wait.
+ */
+int ps_prepare_interruptible_wait(task_struct *task, list_entry *queue,
+				  unsigned ms, const char *func);
+/* Relative ms in/out: snapshot old values and optionally replace the alarm. */
+void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
+		     unsigned long long *interval);
+void ps_alarm_tick(void);
 /* Requires ps_lock; signal delivery is authorized by the kernel caller. */
 void ps_queue_signal_unsafe(task_struct *target, int sig);
 void ps_timer_notify(unsigned tid, int signo, int timer_id, int value);

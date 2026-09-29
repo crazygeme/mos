@@ -28,13 +28,8 @@ void ps_timer_notify(unsigned tid, int signo, int timer_id, int value)
 		if (signo == SIGRTMIN_KERNEL) {
 			target->signal->timer_signal_id = timer_id;
 			target->signal->timer_signal_value = value;
-			target->signal->sig_pending |= 1UL
-						       << (SIGRTMIN_KERNEL - 1);
-		} else {
-			target->signal->sig_pending |= 1UL << (signo - 1);
 		}
-		if (target->status == ps_waiting)
-			ps_put_to_ready_queue_unsafe(target);
+		ps_queue_signal_unsafe(target, signo);
 	}
 	spinlock_unlock(&ps_lock, irq);
 }
@@ -92,6 +87,34 @@ static void send_if_pgrp(task_struct *task, void *opaque)
 		c->sent++;
 }
 
+unsigned long ps_interrupting_signals(task_struct *task)
+{
+	signal_context *signal = task->signal;
+	unsigned long pending;
+	int sig;
+
+	if (!signal)
+		return 0;
+	pending = signal->sig_pending & ~signal->sig_mask;
+	if (!pending)
+		return 0;
+	for (sig = 1; sig < NSIG; sig++) {
+		void (*handler)(int);
+		unsigned long bit = 1UL << (sig - 1);
+
+		if (!(pending & bit))
+			continue;
+		handler = signal->sig_handlers[sig].sa_handler;
+		if (sig != SIGKILL && sig != SIGSTOP &&
+		    (handler == SIG_IGN ||
+		     (handler == SIG_DFL &&
+		      (sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH ||
+		       sig == SIGCONT))))
+			pending &= ~bit;
+	}
+	return pending;
+}
+
 /* Queue a validated signal while holding ps_lock. */
 void ps_queue_signal_unsafe(task_struct *target, int sig)
 {
@@ -110,8 +133,9 @@ void ps_queue_signal_unsafe(task_struct *target, int sig)
 		target->stop_signal = 0;
 		target->stop_report_pending = 0;
 		ps_put_to_ready_queue_unsafe(target);
-	} else if (target->status == ps_waiting &&
-		   !(target->signal->sig_mask & bit)) {
+	} else if (target->status == ps_waiting && target->wait_interruptible &&
+		   (ps_interrupting_signals(target) ||
+		    (target->signal_wait_mask & bit))) {
 		ps_put_to_ready_queue_unsafe(target);
 	}
 }
@@ -217,8 +241,8 @@ int sys_pause()
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("pause\n");
 
-	while (!(cur->signal->sig_pending & ~cur->signal->sig_mask))
-		time_wait(0);
+	while (!ps_interrupting_signals(cur))
+		ps_signal_wait();
 
 	return -EINTR;
 }
@@ -578,26 +602,18 @@ static void build_sigreturn_code(unsigned char retcode[8])
 	retcode[7] = 0x80;
 }
 
-/* Fire SIGALRM if the current task's alarm has expired. */
-void ps_check_alarm(task_struct *cur)
-{
-	if (!cur->alarm_expire_ms || time_now_ms() < cur->alarm_expire_ms)
-		return;
-
-	if (cur->alarm_interval_ms)
-		cur->alarm_expire_ms = time_now_ms() + cur->alarm_interval_ms;
-	else
-		cur->alarm_expire_ms = 0;
-	cur->signal->sig_pending |= (1UL << (SIGALRM - 1));
-}
-
 /* Return the lowest-numbered deliverable signal, or 0 if none. */
 static int pick_signal(task_struct *cur)
 {
-	unsigned long deliverable = cur->signal->sig_pending &
-				    ~cur->signal->sig_mask;
+	unsigned long unmasked = cur->signal->sig_pending &
+				 ~cur->signal->sig_mask;
+	unsigned long deliverable = ps_interrupting_signals(cur);
 	int sig;
 
+	/* An ignored low-numbered signal must not hide the handler for the
+	 * signal which just interrupted a syscall. Keep masked signals pending.
+	 */
+	cur->signal->sig_pending &= ~(unmasked & ~deliverable);
 	if (!deliverable)
 		return 0;
 	for (sig = 1; sig < NSIG; sig++) {
@@ -778,8 +794,6 @@ void do_signal(intr_frame *frame)
 	if (!arch_interrupt_frame_is_user(frame))
 		return;
 
-	ps_check_alarm(cur);
-
 	sig = pick_signal(cur);
 	if (!sig)
 		return;
@@ -916,6 +930,10 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 	if (!set)
 		return -EFAULT;
 
+	if (timeout && (timeout->tv_sec < 0 || timeout->tv_nsec < 0 ||
+			timeout->tv_nsec >= 1000000000))
+		return -EINVAL;
+
 	wait_set = *set;
 	wait_set &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 
@@ -927,6 +945,7 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 	}
 
 	for (;;) {
+		unsigned sleep_ms = 0;
 		sigset_t pending = cur->signal->sig_pending & wait_set;
 		if (pending & (1UL << (SIGRTMIN_KERNEL - 1))) {
 			cur->signal->sig_pending &=
@@ -957,8 +976,7 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 		}
 
 		/* A non-waited, unblocked signal interrupts the wait. */
-		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
-		    ~wait_set)
+		if (ps_interrupting_signals(cur) & ~wait_set)
 			return -EINTR;
 
 		if (has_timeout) {
@@ -966,10 +984,18 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 
 			if (now >= deadline)
 				return -EAGAIN;
-			time_wait((unsigned)(deadline - now));
-		} else {
-			time_wait(0);
+			sleep_ms = deadline - now > 0xffffffffULL ?
+					   0xffffffffU :
+					   (unsigned)(deadline - now);
 		}
+		/* Explicitly awaited signals may be blocked in sig_mask. */
+		cur->signal_wait_mask = wait_set;
+		if (!ps_prepare_interruptible_wait(cur, NULL, sleep_ms,
+						   __func__)) {
+			task_sched();
+			ps_finish_timed_wait(cur);
+		}
+		cur->signal_wait_mask = 0;
 	}
 }
 

@@ -20,6 +20,7 @@
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
 #include <device/time.h>
+#include <ps/ps.h>
 #include <dev/dev.h>
 #include <errno.h>
 #include <macro.h>
@@ -173,17 +174,36 @@ static int fifonode_getattr(file *fp, struct stat *s)
 static ssize_t fifonode_read(file *fp, void *buf, size_t len, loff_t *pos)
 {
 	cy_buf *b = fp->f_inode->i_private;
-	return (ssize_t)cyb_getbuf(b, buf, (int)len, 1, 1);
+	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
+	int ret;
+
+	if (!len)
+		return 0;
+	ret = cyb_getbuf(b, buf, (int)len, !nonblock, 1);
+	if (ret < 0)
+		return -EINTR;
+	if (!ret && nonblock && cyb_writer_count(b))
+		return -EAGAIN;
+	return ret;
 }
 
 static ssize_t fifonode_write(file *fp, const void *buf, size_t len,
 			      loff_t *pos)
 {
 	cy_buf *b = fp->f_inode->i_private;
-	if (cyb_reader_count(b) == 0)
-		return -EPIPE;
-	return (ssize_t)cyb_putbuf(b, (unsigned char *)buf, (unsigned)len, 0,
-				   0);
+	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
+	int ret;
+
+	if (!len)
+		return 0;
+	ret = cyb_reader_count(b) ? cyb_putbuf(b, (unsigned char *)buf,
+					       (unsigned)len, !nonblock, 1) :
+				    -EPIPE;
+	if (!ret && nonblock && cyb_reader_count(b))
+		ret = -EAGAIN;
+	if (ret == -EPIPE && current->type == ps_user)
+		ps_send_signal(current->psid, SIGPIPE);
+	return ret;
 }
 
 static unsigned fifonode_poll_common(cy_buf *b, unsigned events, poll_table *pt)

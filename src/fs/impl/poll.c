@@ -68,7 +68,15 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 			unsigned irq = int_intr_disable();
 
 			cur = CURRENT_TASK();
-			ps_prepare_timed_wait(cur, sleep_ms, __func__);
+			if (ps_prepare_interruptible_wait(cur, NULL, sleep_ms,
+							  __func__) < 0) {
+				ret = ops->check(ctx);
+				if (!ret)
+					ret = -EINTR;
+				int_intr_setlevel(irq);
+				ops->dereg(ctx);
+				break;
+			}
 			ret = ops->check(ctx);
 			if (ret != 0) {
 				ps_put_to_ready_queue(cur);
@@ -95,7 +103,7 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 			break;
 
 		cur = CURRENT_TASK();
-		if (cur->signal->sig_pending & ~cur->signal->sig_mask) {
+		if (ps_interrupting_signals(cur)) {
 			ret = -EINTR;
 			break;
 		}

@@ -35,6 +35,8 @@ static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 
 	if (!n->readonly)
 		return -1;
+	if (!len)
+		return 0;
 
 	nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	blocking = nonblock ? 0 : 1;
@@ -53,6 +55,8 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 	int nonblock;
 	int ret;
 	if (n->readonly)
+		return 0;
+	if (!len)
 		return 0;
 	nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	if (cyb_reader_count(n->buf) == 0)

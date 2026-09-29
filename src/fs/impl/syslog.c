@@ -120,8 +120,7 @@ static int log_wait_check(void *opaque)
 	spinlock_lock(&log_lock, &irq);
 	ready = wait->cursor->sequence < next_sequence;
 	spinlock_unlock(&log_lock, irq);
-	if (!ready &&
-	    (current->signal->sig_pending & ~current->signal->sig_mask))
+	if (!ready && ps_interrupting_signals(current))
 		return -EINTR;
 	return ready;
 }

@@ -247,11 +247,23 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 	}
 
 	start_ms = time_now_ms();
-	time_wait(total_millisecond);
+	for (;;) {
+		unsigned long long now = time_now_ms();
+		unsigned long long elapsed = now > start_ms ? now - start_ms :
+							      0;
+		if (elapsed >= total_millisecond ||
+		    ps_interrupting_signals(cur))
+			break;
+		if (!ps_prepare_interruptible_wait(
+			    cur, NULL, total_millisecond - (unsigned)elapsed,
+			    __func__)) {
+			task_sched();
+			ps_finish_timed_wait(cur);
+		}
+	}
 	end_ms = time_now_ms();
 
-	if (cur->signal &&
-	    (cur->signal->sig_pending & ~cur->signal->sig_mask)) {
+	if (ps_interrupting_signals(cur)) {
 		if (rem) {
 			slept_ms = end_ms > start_ms ? end_ms - start_ms : 0;
 			if (slept_ms >= total_millisecond) {

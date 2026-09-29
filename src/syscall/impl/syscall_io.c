@@ -650,9 +650,16 @@ static int sys_fcntl_lock32(int fd, int cmd, struct flock *fl)
 			spinlock_unlock(&in->i_flock_lock, irq);
 			return -EAGAIN;
 		}
-		ps_put_to_wait_queue(cur, &in->i_flock_wait, __func__);
+		if (ps_prepare_interruptible_wait(cur, &in->i_flock_wait, 0,
+						  __func__) < 0) {
+			spinlock_unlock(&in->i_flock_lock, irq);
+			return -EINTR;
+		}
 		spinlock_unlock(&in->i_flock_lock, irq);
 		task_sched();
+		ps_finish_timed_wait(cur);
+		if (ps_interrupting_signals(cur))
+			return -EINTR;
 		spinlock_lock(&in->i_flock_lock, &irq);
 	}
 

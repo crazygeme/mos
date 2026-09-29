@@ -19,6 +19,7 @@
 #include <lib/klib.h>
 #include <macro.h>
 #include <config.h>
+#include <errno.h>
 #include <ps/smp.h>
 
 extern unsigned long long gdt[];
@@ -183,6 +184,7 @@ void ps_put_to_dying_queue_unsafe(task_struct *task)
 	if (task->psid != 0xffffffff && parent)
 		list_insert_tail(&parent->dying_queue, &task->ps_list);
 
+	ps_alarm_disarm_unsafe(task);
 	task->status = ps_dying;
 	task->wait_func = NULL;
 }
@@ -219,6 +221,7 @@ void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
 	if (task->psid != 0xffffffff)
 		list_insert_tail(which_list, &task->ps_list);
 
+	task->wait_interruptible = 0;
 	task->status = ps_waiting;
 	task->wait_func = func;
 }
@@ -243,6 +246,7 @@ void ps_put_to_ready_queue_unsafe(task_struct *task)
 		list_insert_tail(&control.ready_queue[task->priority],
 				 &task->ps_list);
 	}
+	task->wait_interruptible = 0;
 	task->status = ps_ready;
 	task->wait_func = NULL;
 }
@@ -309,6 +313,26 @@ void ps_prepare_timed_wait(task_struct *task, unsigned ms, const char *func)
 	spinlock_unlock(&ps_lock, irq);
 }
 
+int ps_prepare_interruptible_wait(task_struct *task, list_entry *queue,
+				  unsigned ms, const char *func)
+{
+	int irq;
+
+	spinlock_lock(&ps_lock, &irq);
+	if (ps_interrupting_signals(task) ||
+	    (task->signal &&
+	     (task->signal->sig_pending & task->signal_wait_mask))) {
+		spinlock_unlock(&ps_lock, irq);
+		return -EINTR;
+	}
+	if (ms)
+		timer_arm_unsafe(task, ms);
+	ps_put_to_wait_queue_unsafe(task, queue, func);
+	task->wait_interruptible = 1;
+	spinlock_unlock(&ps_lock, irq);
+	return 0;
+}
+
 void ps_finish_timed_wait(task_struct *task)
 {
 	int irq;
@@ -331,14 +355,11 @@ void ps_finish_timed_wait(task_struct *task)
 void ps_signal_wait(void)
 {
 	task_struct *cur = CURRENT_TASK();
-	int irq;
 
-	spinlock_lock(&ps_lock, &irq);
-	if (!(cur->signal->sig_pending & ~cur->signal->sig_mask)) {
-		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-		spinlock_unlock(&ps_lock, irq);
-		task_sched();
-	} else {
-		spinlock_unlock(&ps_lock, irq);
+	while (!ps_interrupting_signals(cur)) {
+		if (!ps_prepare_interruptible_wait(cur, NULL, 0, __func__)) {
+			task_sched();
+			ps_finish_timed_wait(cur);
+		}
 	}
 }

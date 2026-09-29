@@ -638,16 +638,12 @@ int sys_sched_yield()
 unsigned sys_alarm(unsigned seconds)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned long long now = time_now_ms();
-	unsigned remaining = 0;
+	unsigned long long value = (unsigned long long)seconds * 1000;
+	unsigned long long interval = 0;
+	unsigned remaining;
 
-	if (cur->alarm_expire_ms > now)
-		remaining =
-			(unsigned)((cur->alarm_expire_ms - now + 999) / 1000);
-
-	cur->alarm_expire_ms =
-		seconds ? (now + (unsigned long long)seconds * 1000) : 0;
-	cur->alarm_interval_ms = 0;
+	ps_alarm_update(cur, 1, &value, &interval);
+	remaining = (unsigned)((value + 999) / 1000);
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("alarm(%u) = %u\n", seconds, remaining);
@@ -700,40 +696,31 @@ int sys_setitimer(int which, const struct itimerval *new_value,
 		  struct itimerval *old_value)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned long long now = time_now_ms();
-	unsigned long long new_interval_ms = 0;
-	unsigned long long new_value_ms = 0;
-	unsigned long long effective_value_ms = 0;
+	unsigned long long value = 0, interval = 0;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setitimer(%d, %x, %x)\n", which, new_value, old_value);
 
 	if (which != 0)
 		return -EINVAL;
-
-	if (old_value) {
-		unsigned long long remaining = 0;
-
-		if (cur->alarm_expire_ms > now)
-			remaining = cur->alarm_expire_ms - now;
-		ms_to_itimeval(cur->alarm_interval_ms, &old_value->it_interval);
-		ms_to_itimeval(remaining, &old_value->it_value);
+	/* Copy inputs before returning old values, including aliased arguments. */
+	if (new_value) {
+		if (new_value->it_value.tv_sec < 0 ||
+		    new_value->it_value.tv_usec < 0 ||
+		    new_value->it_value.tv_usec >= 1000000 ||
+		    new_value->it_interval.tv_sec < 0 ||
+		    new_value->it_interval.tv_usec < 0 ||
+		    new_value->it_interval.tv_usec >= 1000000)
+			return -EINVAL;
+		value = round_itimer_ms(timeval_to_ms(&new_value->it_value));
+		interval =
+			round_itimer_ms(timeval_to_ms(&new_value->it_interval));
 	}
-
-	if (!new_value)
-		return 0;
-
-	new_interval_ms = timeval_to_ms(&new_value->it_interval);
-	new_value_ms = timeval_to_ms(&new_value->it_value);
-	new_interval_ms = round_itimer_ms(new_interval_ms);
-	new_value_ms = round_itimer_ms(new_value_ms);
-	effective_value_ms = new_value_ms;
-
-	cur->alarm_interval_ms = new_interval_ms;
-	if (effective_value_ms)
-		cur->alarm_expire_ms = now + effective_value_ms;
-	else
-		cur->alarm_expire_ms = 0;
+	ps_alarm_update(cur, new_value != NULL, &value, &interval);
+	if (old_value) {
+		ms_to_itimeval(value, &old_value->it_value);
+		ms_to_itimeval(interval, &old_value->it_interval);
+	}
 
 	return 0;
 }
@@ -741,8 +728,7 @@ int sys_setitimer(int which, const struct itimerval *new_value,
 int sys_getitimer(int which, struct itimerval *value)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned long long now = time_now_ms();
-	unsigned long long remaining = 0;
+	unsigned long long remaining = 0, interval = 0;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getitimer(%d, %x)\n", which, value);
@@ -751,11 +737,8 @@ int sys_getitimer(int which, struct itimerval *value)
 		return -EINVAL;
 	if (!value)
 		return -EFAULT;
-
-	if (cur->alarm_expire_ms > now)
-		remaining = cur->alarm_expire_ms - now;
-
-	ms_to_itimeval(cur->alarm_interval_ms, &value->it_interval);
+	ps_alarm_update(cur, 0, &remaining, &interval);
+	ms_to_itimeval(interval, &value->it_interval);
 	ms_to_itimeval(remaining, &value->it_value);
 	return 0;
 }

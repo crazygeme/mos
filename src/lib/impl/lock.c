@@ -167,12 +167,21 @@ int _cond_wait(cond_t *s, const char *func, int interruptible)
 			spinlock_unlock(&b->wait_lock, irq);
 			return 0;
 		}
-		ps_put_to_wait_queue(cur, &b->wait_list, func);
+		if (interruptible) {
+			if (ps_prepare_interruptible_wait(cur, &b->wait_list, 0,
+							  func) < 0) {
+				spinlock_unlock(&b->wait_lock, irq);
+				return -1;
+			}
+		} else {
+			ps_put_to_wait_queue(cur, &b->wait_list, func);
+		}
 		spinlock_unlock(&b->wait_lock, irq);
 		task_sched();
 
-		if (interruptible &&
-		    (cur->signal->sig_pending & ~cur->signal->sig_mask))
+		if (interruptible)
+			ps_finish_timed_wait(cur);
+		if (interruptible && ps_interrupting_signals(cur))
 			return -1;
 	}
 }

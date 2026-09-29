@@ -55,6 +55,7 @@ user_enviroment *ps_alloc_user_env(void);
 void timer_arm_unsafe(task_struct *task, unsigned ms);
 void timer_disarm_unsafe(task_struct *task);
 void ps_fire_timers_unsafe(void);
+void ps_alarm_disarm_unsafe(task_struct *task);
 int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake);
 void ps_futex_remove_task_locked(task_struct *task);
 void ps_clear_child_tid(task_struct *task);

@@ -1263,10 +1263,19 @@ retry:
 			ret = -EWOULDBLOCK;
 			goto out;
 		}
-		ps_put_to_wait_queue(cur, &in->i_flock_wait, __func__);
+		if (ps_prepare_interruptible_wait(cur, &in->i_flock_wait, 0,
+						  __func__) < 0) {
+			ret = -EINTR;
+			goto out;
+		}
 		spinlock_unlock(&in->i_flock_lock, irq);
 		task_sched();
+		ps_finish_timed_wait(cur);
 		spinlock_lock(&in->i_flock_lock, &irq);
+		if (ps_interrupting_signals(cur)) {
+			ret = -EINTR;
+			goto out;
+		}
 		goto retry;
 	}
 

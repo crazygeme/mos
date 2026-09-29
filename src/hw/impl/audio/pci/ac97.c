@@ -521,4 +521,4 @@ static void ac97_register(void)
 	hw_driver_register(&ac97_driver);
 }
 
-KERNEL_INIT(5, ac97_register);
+KERNEL_INIT(4, ac97_register);

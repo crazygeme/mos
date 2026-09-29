@@ -137,7 +137,7 @@ static void print_human_size(fputstr _putstr, unsigned sz, void *ctx)
 
 /* ── Core formatter ──────────────────────────────────────────────────────── */
 
-#define VBUF_SZ 256
+#define VBUF_SZ 64
 
 /*
  * kvformat - single internal implementation of formatted output.
@@ -461,6 +461,10 @@ struct printk_record {
 	unsigned length;
 };
 
+/* Serializes record storage before acquiring the active TTY lock. */
+static spinlock_t printk_record_lock = { .inited = 1 };
+static struct printk_record printk_record_buffer;
+
 static void printk_output(char *text, void *opaque)
 {
 	struct printk_record *record = opaque;
@@ -483,18 +487,21 @@ static void printk_output(char *text, void *opaque)
 void printk(const char *fmt, ...)
 {
 	va_list ap;
-	int irq;
-	struct printk_record record = { .length = 0 };
+	int irq = 0, record_irq;
+	struct printk_record *record = &printk_record_buffer;
 
+	spinlock_lock(&printk_record_lock, &record_irq);
+	record->length = 0;
 	tty_lock_acquire(&irq);
 	printf("[%d]: ", current->psid);
 
 	va_start(ap, fmt);
-	kvformat(printk_output, fmt, ap, &record);
+	kvformat(printk_output, fmt, ap, record);
 	va_end(ap);
-	if (record.length)
-		syslog_emit(6, record.text, record.length);
+	if (record->length)
+		syslog_emit(6, record->text, record->length);
 	tty_lock_release(irq);
+	spinlock_unlock(&printk_record_lock, record_irq);
 }
 
 /*

@@ -104,6 +104,8 @@ done:
 super_block *sget(const super_operations *s_op)
 {
 	super_block *sb = zalloc(sizeof(*sb));
+	if (!sb)
+		return NULL;
 	mutex_init(&sb->s_lock);
 	sb->s_mounts = _RBTREE_ROOT_INIT;
 	sb->s_op = s_op;

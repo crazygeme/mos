@@ -225,7 +225,7 @@ void fs_register_type(fs_type *fst);  // prepend to fs_type_list
 | ---------- | --------------------------------- | ----------------------------------------------- |
 | `ext4`     | `root.c` (`KERNEL_INIT 3`)        | lwext4 `ext4_mount`, wraps in `ext4_mount_info` |
 | `proc`     | `mount.c` (`KERNEL_INIT 2`)       | stub (directory inode only)                     |
-| `sysfs`    | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
+| `sysfs`    | `src/sys/impl/sysfs.c` (`KERNEL_INIT 5`) | registered VFS entries for each mount |
 | `tmpfs`    | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
 | `devtmpfs` | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
 | `none`     | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
@@ -442,6 +442,30 @@ ioctl(fd, LOOP_CLR_FD, 0)          → loop_detach(minor)
 
 Supported ioctls: `LOOP_SET_FD`, `LOOP_CLR_FD`, `LOOP_GET_STATUS`, `LOOP_SET_STATUS`, `LOOP_GET_STATUS64`, `LOOP_SET_STATUS64`.
 
+### Sysfs entries
+
+`src/sys/impl/sysfs.c` registers the `sysfs` filesystem type and creates the
+registration root at `KERNEL_INIT 5`. `sysfs_register()` scans PCI devices;
+its callback creates each device's sys attributes with `sys_pci_create()`,
+publishes the device superblock with `vfs_mount()`, and calls
+`hw_probe_pci()` to dispatch registered hardware drivers.
+
+PCI drivers register at `KERNEL_INIT 4`, before the sysfs scan.
+`devfs_init()` initializes device nodes at `KERNEL_INIT 6`. The GPU creates
+its DRM sys entries when device initialization succeeds.
+
+`src/sys/impl/pci.c` supplies PCI attributes and MMIO resources.
+`src/sys/impl/drm.c` supplies DRM class entries and device links.
+Mounting `sysfs` creates a root referencing the registered child
+superblocks; it does not scan hardware or initialize devices.
+
+`src/fs/entries.h` provides memory entries backed by child superblocks.
+VFS resolves mount paths; entry operations handle data access and delegate
+link targets to VFS. Directory listings derive from the child mount table.
+Relative link text is independent of the location of the sysfs mount.
+Mounted superblocks and open files retain entry data, including provider
+allocations, until their final reference is released.
+
 ### Boot registration
 
 `loop_dev_register` runs via `DEV_INIT`:
@@ -454,7 +478,13 @@ Supported ioctls: `LOOP_SET_FD`, `LOOP_CLR_FD`, `LOOP_GET_STATUS`, `LOOP_SET_STA
 
 ```
 boot (KERNEL_INIT 2)
-  └─ fs_register_type: proc, sysfs, tmpfs, devtmpfs, none
+  └─ fs_register_type: proc, tmpfs, devtmpfs, none
+
+boot (KERNEL_INIT 4)
+  └─ hw_driver_register: PCI drivers
+
+boot (KERNEL_INIT 5)
+  └─ sysfs_register: register sysfs, scan PCI, mount entries, probe drivers
 
 boot (KERNEL_INIT 3)
   └─ fs_mount_root

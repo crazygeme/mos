@@ -110,39 +110,52 @@ int strncmp(const char *src, const char *dst, int len)
 	return 0;
 }
 
-/* KMP substring search. */
+/* KMP uses heap workspace; allocation failure uses a bounded-stack search. */
 char *strstr(const char *X, const char *Y)
 {
-	int m = strlen(X);
-	int n = strlen(Y);
-	int next[n + 1];
-	int i, j;
+	unsigned m, n, i, j;
+	unsigned *next;
+	char *result = NULL;
 
-	if (*Y == '\0' || n == 0)
+	if (!*Y)
 		return (char *)X;
-	if (*X == '\0' || n > m)
+	m = strlen(X);
+	n = strlen(Y);
+	if (n > m)
 		return NULL;
-
-	for (i = 0; i < n + 1; i++)
-		next[i] = 0;
-	for (i = 1; i < n; i++) {
-		j = next[i + 1];
-		while (j > 0 && Y[j] != Y[i])
-			j = next[j];
-		if (j > 0 || Y[j] == Y[i])
-			next[i + 1] = j + 1;
+	if (n == 1)
+		return strchr(X, *Y);
+	next = n <= (unsigned)-1 / sizeof(*next) ? malloc(n * sizeof(*next)) :
+						   NULL;
+	if (!next) {
+		for (i = 0; i <= m - n; i++) {
+			for (j = 0; j < n && X[i + j] == Y[j]; j++)
+				;
+			if (j == n)
+				return (char *)X + i;
+		}
+		return NULL;
 	}
-
+	next[0] = 0;
+	for (i = 1, j = 0; i < n; i++) {
+		while (j && Y[i] != Y[j])
+			j = next[j - 1];
+		if (Y[i] == Y[j])
+			j++;
+		next[i] = j;
+	}
 	for (i = 0, j = 0; i < m; i++) {
-		if (*(X + i) == *(Y + j)) {
-			if (++j == n)
-				return (char *)(X + i - j + 1);
-		} else if (j > 0) {
-			j = next[j];
-			i--;
+		while (j && X[i] != Y[j])
+			j = next[j - 1];
+		if (X[i] == Y[j])
+			j++;
+		if (j == n) {
+			result = (char *)X + i - n + 1;
+			break;
 		}
 	}
-	return NULL;
+	free(next);
+	return result;
 }
 
 char *strrev(char *src)

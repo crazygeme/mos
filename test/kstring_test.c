@@ -413,3 +413,27 @@ KTEST(kstring, tolower_toupper)
 	EXPECT_EQ(toupper('Z'), 'Z');
 	return 0;
 }
+
+KTEST(kstring, strstr_long_repeated_pattern)
+{
+	char *haystack = malloc(8193);
+	char *needle = malloc(4097);
+	if (!haystack || !needle) {
+		free(haystack);
+		free(needle);
+		ASSERT_TRUE(0);
+	}
+	memset(haystack, 'a', 8192);
+	memset(needle, 'a', 4096);
+	haystack[8191] = needle[4095] = 'b';
+	haystack[8192] = needle[4096] = 0;
+	EXPECT_EQ(strstr(haystack, needle), haystack + 4096);
+	needle[4095] = 'c';
+	EXPECT_NULL(strstr(haystack, needle));
+	EXPECT_NULL(strstr("short", needle));
+	EXPECT_EQ(strstr(haystack, "b"), haystack + 8191);
+	EXPECT_EQ(strstr(haystack, ""), haystack);
+	free(needle);
+	free(haystack);
+	return 0;
+}

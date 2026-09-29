@@ -903,16 +903,20 @@ static int ext4_path_is_descendant(const char *parent, const char *path)
 
 static int ext4_dir_check_empty(const char *full)
 {
-	ext4_dir dir;
+	ext4_dir *dir = zalloc(sizeof(*dir));
 	const ext4_direntry *entry;
 	int ret;
 
-	ret = ext4_dir_open(&dir, full);
-	if (ret != EOK)
+	if (!dir)
+		return ENOMEM;
+	ret = ext4_dir_open(dir, full);
+	if (ret != EOK) {
+		free(dir);
 		return ret;
+	}
 
-	ext4_dir_entry_rewind(&dir);
-	while ((entry = ext4_dir_entry_next(&dir)) != NULL) {
+	ext4_dir_entry_rewind(dir);
+	while ((entry = ext4_dir_entry_next(dir)) != NULL) {
 		if (entry->inode == 0 || entry->name_length == 0 ||
 		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM)
 			continue;
@@ -921,11 +925,13 @@ static int ext4_dir_check_empty(const char *full)
 		if (entry->name_length == 2 && entry->name[0] == '.' &&
 		    entry->name[1] == '.')
 			continue;
-		ext4_dir_close(&dir);
+		ext4_dir_close(dir);
+		free(dir);
 		return ENOTEMPTY;
 	}
 
-	ext4_dir_close(&dir);
+	ext4_dir_close(dir);
+	free(dir);
 	return EOK;
 }
 
@@ -933,13 +939,20 @@ static int ext4_parent_dir_check(const char *full)
 {
 	char *parent = name_get();
 	char *slash;
-	ext4_dir dir;
+	ext4_dir *dir = zalloc(sizeof(*dir));
 	int ret;
 
+	if (!dir || !parent) {
+		free(dir);
+		if (parent)
+			name_put(parent);
+		return ENOMEM;
+	}
 	strcpy(parent, full);
 	slash = strrchr(parent, '/');
 	if (!slash) {
 		name_put(parent);
+		free(dir);
 		return ENOENT;
 	}
 
@@ -948,11 +961,12 @@ static int ext4_parent_dir_check(const char *full)
 	else
 		*slash = '\0';
 
-	ret = ext4_dir_open(&dir, parent);
+	ret = ext4_dir_open(dir, parent);
 	if (ret == EOK)
-		ext4_dir_close(&dir);
+		ext4_dir_close(dir);
 
 	name_put(parent);
+	free(dir);
 	return ret;
 }
 
@@ -962,7 +976,13 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 	unsigned uid = current->user->uid;
 	unsigned gid = current->user->gid;
 	int ret;
-	ext4_dir dir;
+	ext4_dir *dir = zalloc(sizeof(*dir));
+	if (!dir || !full) {
+		free(dir);
+		if (full)
+			name_put(full);
+		return -ENOMEM;
+	}
 	ext4_full_path(sb, path, full);
 	ret = ext4_parent_dir_check(full);
 	if (ret == EOK)
@@ -972,12 +992,13 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
 		ext4_chown(full, uid, gid);
-		if (ext4_dir_open(&dir, full) == EOK) {
-			ext4_fchmod(&dir.f, S_IFDIR | (mode & 0777));
-			ext4_dir_close(&dir);
+		if (ext4_dir_open(dir, full) == EOK) {
+			ext4_fchmod(&dir->f, S_IFDIR | (mode & 0777));
+			ext4_dir_close(dir);
 		}
 	}
 	name_put(full);
+	free(dir);
 	return ret ? -ret : 0;
 }
 

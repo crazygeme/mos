@@ -49,6 +49,75 @@ typedef struct _page_table_cache_t {
 
 static page_table_cache_t page_table_cache;
 static unsigned int kernel_pde_tables[1024 - KERNEL_PAGE_DIR_OFFSET];
+static pte_t *kernel_page_dir;
+static int direct_map_large;
+/* Page directories are allocated from the low kernel pool. Track their PFNs
+ * without allocating memory, including directories not yet attached to tasks.
+ * BKL serializes directory lifetime and changes to shared kernel mappings. */
+static unsigned int process_dirs[KERNEL_DIRECT_MAP_LIMIT / PAGE_SIZE / 32];
+
+static int mm_large_entry(pte_t entry)
+{
+	return (entry & (PAGE_ENTRY_PRESENT | PAGE_ENTRY_LARGE)) ==
+	       (PAGE_ENTRY_PRESENT | PAGE_ENTRY_LARGE);
+}
+
+static void mm_init_direct_map(void)
+{
+	unsigned i;
+
+	kernel_page_dir = (pte_t *)mm_get_pagedir();
+	direct_map_large = arch_mm_enable_large_pages();
+	if (!direct_map_large)
+		return;
+	/* Install before process directories or APs exist. Bootstrap tables live
+	 * outside the page-table cache and must not be returned to that cache. */
+	for (i = 0; i < KERNEL_DIRECT_MAP_LIMIT / LARGE_PAGE_SIZE; i++)
+		kernel_page_dir[KERNEL_PAGE_DIR_OFFSET + i] =
+			i * LARGE_PAGE_SIZE | PAGE_ENTRY_KERNEL_DATA |
+			PAGE_ENTRY_LARGE;
+	arch_mm_flush_local();
+}
+
+/* A permission change needs a 4 KiB leaf. Publish the same table into every
+ * directory, so subsequent PTE changes remain shared across address spaces. */
+static int mm_split_direct_page(pte_t *dir, vaddr_t addr)
+{
+	unsigned index = ADDR_TO_PGT_OFFSET(addr), i, word;
+	pte_t old = dir[index];
+	pte_t *table;
+	vaddr_t table_addr;
+	pte_t entry;
+
+	if (!mm_large_entry(old))
+		return 1;
+	if (addr < KERNEL_OFFSET || addr >= KERNEL_KMAP_BEGIN)
+		return 0;
+	table_addr = mm_alloc_page_table();
+	if (!table_addr)
+		return 0;
+	table = (pte_t *)table_addr;
+	for (i = 0; i < PE_TABLE_SIZE; i++)
+		table[i] = ((old & LARGE_PAGE_MASK) + i * PAGE_SIZE) |
+			   (old & (PAGE_SIZE - 1) & ~PAGE_ENTRY_LARGE);
+	entry = VIRT_TO_PHY(table_addr) | PAGE_ENTRY_PAGE_TABLE;
+	kernel_pde_tables[index - KERNEL_PAGE_DIR_OFFSET] = table_addr;
+	kernel_page_dir[index] = entry;
+	for (word = 0; word < sizeof(process_dirs) / sizeof(process_dirs[0]);
+	     word++) {
+		unsigned bits = process_dirs[word];
+		while (bits) {
+			unsigned bit = __builtin_ctz(bits);
+			pte_t *pd = (pte_t *)(KERNEL_OFFSET +
+					      (word * 32 + bit) * PAGE_SIZE);
+			pd[index] = entry;
+			bits &= bits - 1;
+		}
+	}
+	dir[index] = entry;
+	smp_tlb_flush();
+	return 1;
+}
 
 #define KERNEL_KMAP_PAGES ((KERNEL_KMAP_END - KERNEL_KMAP_BEGIN) / PAGE_SIZE)
 
@@ -191,6 +260,10 @@ static void mm_mark_kernel_pages_global(void)
 
 		if (!(page_dir[i] & PAGE_ENTRY_PRESENT))
 			continue;
+		if (mm_large_entry(page_dir[i])) {
+			page_dir[i] |= PAGE_ENTRY_GLOBAL;
+			continue;
+		}
 		page_table = (pte_t *)PHY_TO_VIRT(page_dir[i] & PAGE_SIZE_MASK);
 		for (j = 0; j < PE_TABLE_SIZE; j++)
 			if (page_table[j] & PAGE_ENTRY_PRESENT)
@@ -218,6 +291,7 @@ void mm_init_cache()
 
 	mm_cache_init((mm_cache_t *)&page_table_cache, PAGE_TABLE_CACHE_BEGIN,
 		      PAGE_TABLE_CACHE_PAGES);
+	mm_init_direct_map();
 	/* The bootstrap mappings predate PAGE_ENTRY_KERNEL_DATA.  Mark their
 	 * high-half aliases global before process page directories copy them. */
 	mm_mark_kernel_pages_global();
@@ -238,11 +312,13 @@ void mm_init_cache()
 void mm_init_process_page_dir(vaddr_t page_dir)
 {
 	pte_t *dst = (pte_t *)page_dir;
-	pte_t *src = (pte_t *)mm_get_pagedir();
+	pte_t *src = kernel_page_dir;
+	unsigned pfn = (page_dir - KERNEL_OFFSET) / PAGE_SIZE;
 
 	memset(dst, 0, PAGE_SIZE);
 	memcpy(&dst[KERNEL_PAGE_DIR_OFFSET], &src[KERNEL_PAGE_DIR_OFFSET],
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(pte_t));
+	process_dirs[pfn / 32] |= 1U << (pfn % 32);
 }
 
 /*
@@ -299,7 +375,7 @@ static int mm_get_valid_page_table_in_dir(pte_t *page_dir, vaddr_t addr,
 		return 0;
 
 	info->dir = &page_dir[offset];
-	if ((*info->dir & PAGE_SIZE_MASK) == 0)
+	if (!(*info->dir & PAGE_ENTRY_PRESENT) || mm_large_entry(*info->dir))
 		return 0;
 
 	info->table = (pte_t *)PHY_TO_VIRT(*info->dir & PAGE_SIZE_MASK);
@@ -319,7 +395,9 @@ static int mm_get_valid_page_table(vaddr_t addr, unsigned flag,
 
 	info->dir = info->table = info->entry = NULL;
 
-	if ((page_dir[offset] & PAGE_SIZE_MASK) == 0) {
+	if (mm_large_entry(page_dir[offset]))
+		return 0;
+	if (!(page_dir[offset] & PAGE_ENTRY_PRESENT)) {
 		if (!alloc_if_none)
 			return 0;
 
@@ -343,6 +421,10 @@ static int mm_get_valid_page_table(vaddr_t addr, unsigned flag,
 paddr_t mm_virt_to_phys(vaddr_t virt)
 {
 	mm_addr_info info;
+	pte_t pde = ((pte_t *)mm_get_pagedir())[ADDR_TO_PGT_OFFSET(virt)];
+
+	if (mm_large_entry(pde))
+		return (pde & LARGE_PAGE_MASK) | (virt & (LARGE_PAGE_SIZE - 1));
 
 	if (!mm_get_valid_page_table(virt, 0, &info, 0) ||
 	    !(*info.entry & PAGE_ENTRY_PRESENT)) {
@@ -426,6 +508,10 @@ int mm_kmap_page(vaddr_t vir)
 	if (vir >= KERNEL_KMAP_BEGIN)
 		return -1;
 
+	/* Large-page direct mappings remain present across allocator reuse. */
+	if (direct_map_large)
+		return 1;
+
 	/* The page-table cache region is permanently mapped */
 	if (vir < PAGE_TABLE_CACHE_END)
 		return 1;
@@ -443,6 +529,9 @@ int mm_kmap_page(vaddr_t vir)
 void mm_kunmap_page(vaddr_t vir)
 {
 	mm_addr_info info;
+
+	if (direct_map_large && vir >= KERNEL_OFFSET && vir < KERNEL_KMAP_BEGIN)
+		return;
 
 	/* The page-table cache region is permanently mapped */
 	if (vir >= KERNEL_OFFSET && vir < PAGE_TABLE_CACHE_END)
@@ -472,6 +561,8 @@ int mm_kmap_phys(paddr_t phys)
 	mm_addr_info info;
 
 	if (page < KERNEL_DIRECT_MAP_LIMIT) {
+		if (direct_map_large)
+			return 1;
 		virt = KERNEL_OFFSET + page;
 		if (!mm_get_valid_page_table(virt, 0, &info, 1)) {
 			klog("mm_kmap_phys: page table alloc failed phys=%x virt=%x\n",
@@ -780,17 +871,22 @@ void mm_unmap_page(vaddr_t vir)
 /* Return the page-table flags (low 12 bits) for the mapping at @vir */
 unsigned mm_get_map_flag(vaddr_t vir)
 {
-	mm_addr_info info;
-
-	if (!mm_get_valid_page_table(vir, 0, &info, 0))
-		return 0;
-	return *info.entry & ~PAGE_SIZE_MASK;
+	return mm_get_map_flag_pd(mm_get_pagedir(), vir);
 }
 
+/* Large-page size is internal; callers see ordinary 4 KiB mapping flags. */
 unsigned mm_get_map_flag_pd(vaddr_t page_dir, vaddr_t vir)
 {
 	mm_addr_info info;
 
+	pte_t pde;
+
+	if (!page_dir)
+		return 0;
+	pde = ((pte_t *)page_dir)[ADDR_TO_PGT_OFFSET(vir)];
+
+	if (mm_large_entry(pde))
+		return pde & (PAGE_SIZE - 1) & ~PAGE_ENTRY_LARGE;
 	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
 		return 0;
 	return *info.entry & ~PAGE_SIZE_MASK;
@@ -799,33 +895,27 @@ unsigned mm_get_map_flag_pd(vaddr_t page_dir, vaddr_t vir)
 /* Update the page-table flags for the mapping at @vir */
 void mm_set_map_flag(vaddr_t vir, unsigned flag)
 {
-	mm_addr_info info;
-
-	if (!mm_get_valid_page_table(vir, 0, &info, 0))
-		return;
-	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
-	arch_mm_invalidate(vir);
+	mm_set_map_flag_pd(mm_get_pagedir(), vir, flag);
 }
 
 void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag)
 {
 	mm_addr_info info;
 
-	if (!mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
+	if (!page_dir || !mm_split_direct_page((pte_t *)page_dir, vir) ||
+	    !mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
 		return;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
-	if ((pte_t *)page_dir == (pte_t *)mm_get_pagedir())
+	if (vir >= KERNEL_OFFSET)
+		smp_tlb_flush();
+	else if (page_dir == mm_get_pagedir())
 		arch_mm_invalidate(vir);
 }
 
 /* Return the physical page index backing the virtual address @vir */
 pfn_t mm_get_attached_page_index(vaddr_t vir)
 {
-	mm_addr_info info;
-
-	if (!mm_get_valid_page_table(vir, 0, &info, 0))
-		return 0;
-	return (*info.entry & PAGE_SIZE_MASK) / PAGE_SIZE;
+	return mm_virt_to_phys(vir) / PAGE_SIZE;
 }
 
 /*
@@ -891,6 +981,12 @@ void vm_free(vaddr_t vm, int page_count)
 
 	spinlock_lock(&mm_lock, &irq);
 	vm &= PAGE_SIZE_MASK;
+	/* Forget page directories before their backing memory can be reused. */
+	if (vm >= KERNEL_OFFSET && vm < KERNEL_KMAP_BEGIN)
+		for (i = 0; i < page_count; i++) {
+			unsigned pfn = (vm - KERNEL_OFFSET) / PAGE_SIZE + i;
+			process_dirs[pfn / 32] &= ~(1U << (pfn % 32));
+		}
 	page_index = VIRT_TO_PAGE_IDX(vm);
 	for (i = 0; i < page_count; i++) {
 		paddr_t phy = VIRT_TO_PHY(vm + i * PAGE_SIZE);

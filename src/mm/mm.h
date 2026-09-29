@@ -33,6 +33,9 @@ typedef struct multiboot_info multiboot_info_t;
 #define PAGE_ENTRY_CD 0x10 // cache disable if set
 #define PAGE_ENTRY_ACCESSED 0x20 // CPU has accessed this page
 #define PAGE_ENTRY_DIRTY 0x40 // CPU has written this page
+#define PAGE_ENTRY_LARGE 0x80 // PDE maps a large page (not a page table)
+#define LARGE_PAGE_SIZE (1UL << MOS_PGT_SHIFT)
+#define LARGE_PAGE_MASK (~(LARGE_PAGE_SIZE - 1))
 #define PAGE_ENTRY_GLOBAL 0x100 // keep translation across CR3 reloads
 
 #define PAGE_ENTRY_PAGE_TABLE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE)

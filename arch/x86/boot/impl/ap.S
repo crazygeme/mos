@@ -25,6 +25,9 @@ ap_protected:
     movw %ax, %ss
     movw %ax, %fs
     movw %ax, %gs
+    /* Match the BSP paging features before accessing high-half leaves. */
+    movl 0x7ffc, %eax
+    movl %eax, %cr4
     movl 0x7ff0, %eax
     movl %eax, %cr3
     movl %cr0, %eax

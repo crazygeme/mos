@@ -226,9 +226,8 @@ switch_to_user_mode:
     mov %ax, %fs; 
     mov %ax, %gs; 
                   
-    mov %esp, %eax; 
     pushl $USER_DATA_SELECTOR; 
-    pushl %eax; 
+    pushl %edx;
     /*
      * Start a freshly exec'd task with a clean user EFLAGS image.
      * Inheriting the kernel's current flags can leak RF/NT/AC and other
@@ -236,21 +235,8 @@ switch_to_user_mode:
      */
     pushl $0x202;
     push $USER_CODE_SELECTOR; 
-    push $USER; 
-    iret; 
-    // before iret, the stack is like this:
-    //        * user ds
-    //        * kernel esp
-    //        * user cs
-    //        * return eip
-    // after iret, all above are poped automatically
-    // so data segment is user ds, code segment is user cs
-    // next instruction is label user, and stack is still kernel
-    // and right after USER label we setup user stack
-    // usually above stack is setup by system call instruction
-    // but here we are trying to "create" a user routine
-USER: nop;
-    movl %edx, %esp
+    /* Enter user text directly: the kernel direct map is supervisor-only. */
+    pushl %ecx;
     movl %edx, %ebp
     movl %ecx, %eax
     /* i386 ELF entry: %edx is the dynamic linker's exit callback.
@@ -259,7 +245,7 @@ USER: nop;
      * nonzero value with atexit and would jump into the stack on exit.
      */
     xorl %edx, %edx
-    jmp *%eax
+    iret
 
 
 .global syscall_handler;

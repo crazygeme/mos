@@ -4,8 +4,9 @@
 #include <fs/fcntl.h>
 #include <fs/ioctl.h>
 #include <fs/vfs.h>
-#include <hw/mouse.h>
-#include <hw/time.h>
+#include <device/mouse.h>
+#include <device/ps2.h>
+#include <device/time.h>
 #include <lib/klib.h>
 #include <macro.h>
 #include <unistd.h>
@@ -157,6 +158,9 @@ static file *mouse_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 static void mouse_dev_register(super_block *dev_sb)
 {
+	const device_t *device = ps2_device(PS2_PORT_AUX);
+	if (!device || !device->driver)
+		return;
 	printk("dev: registered /dev/input/mice\n");
 	cdev_register_named(S_IFCHR, INPUT_MOUSE_MAJOR, INPUT_MOUSE_MINOR, 1,
 			    "input", mouse_cdev_open);

@@ -9,7 +9,7 @@
 #include <ps/ps.h>
 #include <ps/signal.h>
 #include <int/int.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <lib/klib.h>
 #include <config.h>
 #include <errno.h>

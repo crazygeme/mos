@@ -8,7 +8,7 @@
  */
 
 #include <lib/klib.h>
-#include <hw/tty.h>
+#include <dev/tty.h>
 #include <macro.h>
 #include <stdint.h>
 

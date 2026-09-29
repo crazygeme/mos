@@ -19,7 +19,7 @@
 #include <fs/fcntl.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <dev/dev.h>
 #include <errno.h>
 #include <macro.h>

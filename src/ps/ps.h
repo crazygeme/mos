@@ -1,7 +1,7 @@
 #ifndef _PS_PS_H
 #define _PS_PS_H
 
-#include <hw/time.h>
+#include <device/time.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
 #include <lib/list.h>

@@ -9,7 +9,7 @@
 #include <fs/fcntl.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/ps.h>
 #include <errno.h>
 #include <macro.h>

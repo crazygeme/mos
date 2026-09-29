@@ -6,7 +6,7 @@
 #include <dev/dev.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <errno.h>
 #include <macro.h>
 #include "pts_internal.h"

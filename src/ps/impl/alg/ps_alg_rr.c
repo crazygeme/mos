@@ -11,7 +11,7 @@
 #include "fs/fs.h"
 #include <ps/ps.h>
 #include <ps/signal.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <mm/mm.h>
 #include <int/int.h>
 #include <int/dsr.h>

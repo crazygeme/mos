@@ -5,10 +5,10 @@
  */
 #include <net/core.h>
 #include <net/net.h>
-#include <hw/nic.h>
+#include <device/nic.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <macro.h>
 
 #include <ps/ps.h>

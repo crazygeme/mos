@@ -2,7 +2,7 @@
 #include <mm/mm.h>
 #include <boot/multiboot.h>
 #include <fs/cache.h>
-#include <hw/hdd.h>
+#include <device/hdd.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <macro.h>

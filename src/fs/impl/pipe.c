@@ -4,7 +4,7 @@
 #include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <macro.h>
 #include <ps/ps.h>
 #include <unistd.h>

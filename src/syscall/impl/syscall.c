@@ -20,7 +20,7 @@
 #include <elf/exec.h>
 #include <lib/klib.h>
 #include <ps/signal.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <config.h>
 #include <errno.h>
 #include <macro.h>

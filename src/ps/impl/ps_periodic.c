@@ -9,9 +9,9 @@
 
 #include <ps/ps.h>
 #include <net/core.h>
-#include <hw/tty.h>
-#include <hw/vga.h>
-#include <hw/time.h>
+#include <dev/tty.h>
+#include <device/vga.h>
+#include <device/time.h>
 #include <lwip/timeouts.h>
 #include <lwip/netif.h>
 

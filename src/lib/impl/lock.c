@@ -1,5 +1,5 @@
 #include <int/int.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/ps.h>
 #include <lib/klib.h>
 #include <lib/lock.h>

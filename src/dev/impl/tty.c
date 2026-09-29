@@ -11,7 +11,7 @@
  * (bound to Ctrl+Alt+F1..F10).  If TTY n has no live process, /bin/bash is
  * spawned with its stdio wired to /dev/ttyn.
  *
- * Public kernel interface (see include/hw/tty.h):
+ * Public kernel interface (see include/dev/tty.h):
  *   tty_init()                    - early VGA/FB init, called before the VM
  *   tty_default_emit_unsafe(c,ctx)- single-char output callback for kprint
  *   tty_lock_acquire()            - acquire the active TTY spinlock
@@ -27,9 +27,9 @@
 #include <fs/fcntl.h>
 #include <fs/vfs.h>
 #include <fs/ioctl.h>
-#include <hw/tty.h>
-#include <hw/vga.h>
-#include <hw/time.h>
+#include <dev/tty.h>
+#include <device/vga.h>
+#include <device/time.h>
 #include <int/dsr.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
@@ -46,7 +46,7 @@
 #include "devnums.h"
 #include "pts_internal.h"
 #include "tty_ldisc.h"
-#include <hw/keyboard.h>
+#include <device/keyboard.h>
 
 #define TTY_SWITCH_COUNT 10 /* how many TTYs support switching (1-10) */
 

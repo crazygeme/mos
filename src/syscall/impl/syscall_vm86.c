@@ -1,8 +1,8 @@
 #include <lib/klib.h>
 #include <errno.h>
 #include <config.h>
-#include <hw/pci.h>
-#include <hw/vga.h>
+#include <device/pci.h>
+#include <device/vga.h>
 #include <lib/port.h>
 
 #define MOS_VM86_UNKNOWN 1
@@ -178,7 +178,7 @@ static mos_vbe_hw_t mos_vbe_probe_hw(void)
 {
 	mos_vbe_hw_t hw = { 0 };
 
-	pci_scan(mos_vbe_scan_pci, -1, &hw);
+	pci_for_each(mos_vbe_scan_pci, -1, &hw);
 	if (!hw.fb_phys)
 		hw.fb_phys = 0xfd000000u;
 	if (!hw.fb_size)

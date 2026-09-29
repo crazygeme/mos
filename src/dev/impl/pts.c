@@ -22,7 +22,7 @@
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <ps/ps.h>
 #include <macro.h>
 #include <dev/dev.h>

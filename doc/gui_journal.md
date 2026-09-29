@@ -15,7 +15,7 @@ Status at stop:
 Fixes completed in this round:
 - Fixed PIT-based wall-clock sampling so `gettimeofday()` no longer jumps
   backward when the timer IRQ pending check races with the latched counter:
-  - added previous-sample tracking in [time.c](../src/hw/time.c)
+  - added previous-sample tracking in [time.c](../src/driver/impl/timer/pit.c)
   - only compensate for a missing tick when the PIT counter proves a wrap in
     the same `tickets` epoch
 - Adjusted `ITIMER_REAL` semantics to better match RH9/Linux 2.4 behavior:
@@ -149,11 +149,11 @@ Cleanup note:
 
 Status at stop:
 - GUI mouse input now works correctly inside X.
-- The PS/2 mouse path is no longer a fake `/dev/input/mice` stub; it is backed by a real hardware driver under `src/hw`.
+- The PS/2 mouse path is no longer a fake `/dev/input/mice` stub; it is backed by a real hardware driver under `src/driver/impl/input`.
 - Pointer movement was verified after fixing both probe-time compatibility and runtime async delivery issues.
 
 Fixes completed in this round:
-- Implemented a real PS/2 mouse driver in `src/hw/mouse.c` with i8042 auxiliary-port init, IRQ12 handling, DSR-based byte draining, packet assembly, and IMPS/2 wheel-mode negotiation.
+- Implemented a real PS/2 mouse driver in `src/driver/impl/input/ps2_mouse.c` with packet assembly and IMPS/2 wheel-mode negotiation. The device-layer i8042 implementation owns auxiliary-port configuration, IRQ routing, and command transport.
 - Completed `src/dev/mouse.c` as a proper `/dev/input/mice` wrapper over the hardware driver instead of maintaining a separate fake device implementation.
 - Added PS/2 command handling needed by X probe logic, including reset, identify, sample-rate, resolution, status, read-data, defaults, and enable/disable reporting behavior.
 - Added async mouse notification support used by X at runtime, including `fcntl(F_SETOWN/F_GETOWN/F_SETSIG/F_GETSIG)` state on open files and `SIGIO` delivery when new mouse bytes arrive.

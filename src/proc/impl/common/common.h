@@ -20,7 +20,7 @@
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <proc/proc.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <lib/klib.h>
 #include <ext4.h>
 #include <stddef.h>

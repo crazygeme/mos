@@ -1,4 +1,4 @@
-#include <hw/time.h>
+#include <device/time.h>
 #include <elf/elf.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>

@@ -1,7 +1,7 @@
 # ATA/IDE Hard Disk Driver
 
-**Source:** `src/hw/hdd.c`
-**Header:** `include/hw/hdd.h`
+**Source:** `src/driver/impl/storage/ata.c`
+**Header:** `src/device/hdd.h`
 **Config:** `include/config.h` (`HDD_CACHE_*`)
 
 ---
@@ -41,7 +41,8 @@ Above the raw disk layer sits a **write-back LRU block cache** (enabled by `HDD_
 
 ### Detection
 
-During `hdd_init`, `pci_scan` walks all PCI devices looking for:
+The `ata-ide` driver declares a PCI class match. The device layer selects it
+during the single boot scan and calls `ide_probe_pci` at init level 2:
 
 ```
 PCI_CLASS    = 0x01  (Mass Storage)
@@ -217,10 +218,13 @@ Linux ext4 partitions (type `0x83`) are additionally registered with lwext4 via 
 
 ## Initialisation
 
-Registered at boot priority 2 via `KERNEL_INIT(2, hdd_init)`.
+Registered through `DRIVER_REGISTER(ide_driver)`. `devices_init` invokes the
+selected driver at `KERNEL_INIT 2`, before root mounting. The driver supports
+one PCI IDE controller with both channels in compatibility mode. Native-mode
+controllers remain unbound. An absent bus-master BAR selects PIO operation.
 
 ```
-pci_scan → detect IDE Bus Master (g_bm_base)
+ide_probe_pci → inspect the assigned controller BAR4 (g_bm_base)
 enable PCI Bus Master bit on IDE controller
 for each channel (ide0, ide1):
     mutex_init

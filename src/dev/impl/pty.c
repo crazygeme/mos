@@ -4,7 +4,7 @@
 #include <fs/ioctl.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <dev/dev.h>
 #include <ps/ps.h>
 #include "devnums.h"

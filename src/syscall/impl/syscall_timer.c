@@ -1,5 +1,5 @@
 #include <ps/ps.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <errno.h>
 #include <lib/klib.h>
 #include "syscall_internal.h"

@@ -1,7 +1,7 @@
 #include <ps/smp.h>
 #include <int/int.h>
 #include <lib/klib.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <mm/mm.h>
 #include <mm/mmu.h>
 #include <ps/cpu_local.h>

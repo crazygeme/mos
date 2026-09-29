@@ -550,7 +550,7 @@ kernel boundary instead of patching PTY behavior blindly.
   dropped and the next byte was emitted alone as `0x48`/`0xc8`. That made X
   interpret the cursor key as keypad 8.
 - **Fix:**
-  - in [keyboard.c](../src/hw/keyboard.c), make the keyboard DSR drain all
+  - in [keyboard.c](../src/driver/impl/input/ps2_keyboard.c), make the keyboard DSR drain all
     pending keyboard bytes from the i8042 output buffer instead of processing
     only one logical code per callback
   - preserve an `0xe0`/`0xe1` prefix across bytes and combine it with the next
@@ -571,7 +571,7 @@ kernel boundary instead of patching PTY behavior blindly.
 - **Fix:**
   - in [ioctl.h](../include/fs/ioctl.h), switch the keysym type/value encoding
     and exported constants to Linux-compatible values
-  - in [keyboard.c](../src/hw/keyboard.c), populate the default keymap entries
+  - in [keyboard.c](../src/driver/impl/input/ps2_keyboard.c), populate the default keymap entries
     for keypad, cursor, navigation, and right-side modifier keycodes with the
     expected Linux symbols
 
@@ -645,7 +645,7 @@ behaved differently from simpler X clients.
   `ITIMER_REAL` and `SIGALRM` for atimers during GUI startup, so that
   non-monotonic clock made its timer machinery spin instead of progressing
   through the X event loop.
-- **Fix:** in [time.c](../src/hw/time.c), keep the IRQ-pending compensation for
+- **Fix:** in [time.c](../src/driver/impl/timer/pit.c), keep the IRQ-pending compensation for
   the PIT race, but only add a missing tick when the latched counter proves a
   wrap happened inside the same `tickets` epoch. This stopped the false
   one-jiffy jumps caused by noisy PIC IRR reads.
@@ -1508,7 +1508,7 @@ once the script suite was run continuously.
   attached/usable devices as mountable.
 - Switch `ext4_get_sb()`, root mount, and exec-time remount to resolve devices
   through that registry instead of peeking at `hdd_partitions` / `loop_devs`.
-- Make the HDD partition table private to `src/hw/hdd.c` and expose only
+- Make the HDD partition table private to `src/driver/impl/storage/ata.c` and expose only
   accessors used by `/dev/hdd` and `/proc/partitions`.
 
 ### Why this is better

@@ -1,7 +1,7 @@
 # Framebuffer / VGA Driver
 
-**Source:** `src/hw/vga.c`, `src/hw/vga_bochs.c`, `src/hw/vmsvga.c`  
-**Header:** `include/hw/vga.h`
+**Source:** `src/device/impl/video.c`, `src/driver/impl/video/bochs.c`, `src/driver/impl/video/vmware_svga.c`
+**Header:** `src/device/vga.h`
 
 ---
 
@@ -9,7 +9,7 @@
 
 The framebuffer layer provides a hardware-independent character-cell display for the TTY subsystem. It consists of:
 
-1. A **dispatcher** (`vga.c`) that probes available drivers and forwards all calls through the active one.
+1. A **dispatcher** (`src/device/impl/video.c`) that forwards calls through the framebuffer installed by the selected PCI driver.
 2. A **Bochs/QEMU VBE driver** (`vga_bochs.c`) for the Bochs Graphics Adapter (BGA) / QEMU stdvga.
 3. A **VMware SVGA2 driver** (`vmsvga.c`) for VMware and QEMU's `-device vmsvga`.
 
@@ -55,7 +55,6 @@ VGA_COLOR_GRAY     ARGB(ff, aa, aa, aa)
 
 ```c
 typedef struct {
-    int  (*probe)(void);
     void (*get_char_dims)(unsigned *cols, unsigned *rows);
     void (*putcell)(const tty_cell_t *cell, int col, int row);
     void (*redraw)(const tty_cell_t *cells, unsigned cols, unsigned rows,
@@ -75,7 +74,6 @@ typedef struct {
 
 | Operation          | Called when                                                  |
 | ------------------ | ------------------------------------------------------------ |
-| `probe`            | `fb_init()` — returns 1 if hardware detected and initialised |
 | `get_char_dims`    | TTY init — queries usable columns/rows                       |
 | `putcell`          | Single character changed                                     |
 | `redraw`           | Full screen refresh (TTY switch, alt-screen exit)            |
@@ -93,17 +91,15 @@ typedef struct {
 
 ## 3. Dispatcher (`vga.c`)
 
-`fb_init()` probes drivers in priority order and binds the global `_drv`:
+The PCI device layer matches registered Bochs and VMware descriptors during
+boot discovery. Their early probes initialize the assigned PCI function and
+install operations with `fb_activate()`. The first successful framebuffer
+remains active; other display functions do not replace it. Drivers do not
+enumerate PCI themselves.
 
-```c
-void fb_init(void)
-{
-    if (vmsvga_drv.probe()) { _drv = &vmsvga_drv; return; }
-    if (bochs_drv.probe())  { _drv = &bochs_drv;  return; }
-}
-```
-
-VMware SVGA2 is tried first because QEMU emulates both BGA and VMSVGA simultaneously when `-device vmsvga` is used; VMSVGA offers hardware-accelerated rect-copy/fill.
+The VirtIO GPU descriptor supplies `bochs_console_init` for its optional VGA
+console interface. Its VirtIO/DRM probe runs later at init level 2. The console
+interface does not claim a second driver binding for the same PCI function.
 
 All public `fb_*` functions are thin wrappers that forward through `_drv` if non-NULL:
 
@@ -118,7 +114,7 @@ void fb_putcell(const tty_cell_t *cell, int col, int row)
 
 ## 4. Bochs/QEMU VBE driver (`vga_bochs.c`)
 
-**PCI ID:** vendor `0x1234`, device `0x1111`  
+**PCI ID:** vendor `0x1234`, device `0x1111`
 **Interface:** Bochs Graphics Adapter (BGA) I/O ports `0x01CE` (index) / `0x01CF` (data)
 
 ### Initialisation (`bochs_probe`)
@@ -142,9 +138,9 @@ Scroll operations use `memmove` on the framebuffer bytes to shift pixel rows.
 
 ## 5. VMware SVGA2 driver (`vmsvga.c`)
 
-**PCI ID:** vendor `0x15AD`, device `0x0405`  
-**Registers:** I/O ports at BAR0 — index port at `_iobase+0`, value port at `_iobase+1`  
-**FIFO:** MMIO ring buffer at BAR2  
+**PCI ID:** vendor `0x15AD`, device `0x0405`
+**Registers:** I/O ports at BAR0 — index port at `_iobase+0`, value port at `_iobase+1`
+**FIFO:** MMIO ring buffer at BAR2
 **Framebuffer:** MMIO at BAR1
 
 ### Initialisation (`vmsvga_probe`)
@@ -184,10 +180,10 @@ Pixel rendering into VRAM is identical to the Bochs driver (same `render_cell`/`
 ## 6. Lifecycle
 
 ```
-tty_init()          ← called before printk
-  └─ fb_init()
-       └─ vmsvga_probe() → success: _drv = &vmsvga_drv
-          (or bochs_probe() if vmsvga absent)
+drivers_init()
+pci_scan()
+  └─ select descriptor → early probe / console_init → fb_activate()
+tty_init()
   └─ fb_get_char_dims(&max_col, &max_row)  ← per-TTY
   └─ tty_default_emit_unsafe registered as printk callback
 

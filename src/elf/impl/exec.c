@@ -1,10 +1,10 @@
 #include <elf/exec.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <elf/elf.h>
 #include <dev/blockdev.h>
 #include <ps/ps.h>
 #include <int/int.h>
-#include <hw/tty.h>
+#include <dev/tty.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/vdso.h>

@@ -73,15 +73,12 @@ SECTIONS
 		__kinit_end = .;
 	}
 
-	/*
-	 * Early framebuffer driver table.  fb_init() runs before KERNEL_INIT,
-	 * so video drivers register their operation tables here at link time.
-	 */
-	.fb_driver BLOCK(4K) : AT(ADDR(.fb_driver)-0xC0000000)
+	/* Drivers are registered before physical device discovery. */
+	.driver BLOCK(4K) : AT(ADDR(.driver)-0xC0000000)
 	{
-		__fb_driver_start = .;
-		*(SORT_BY_NAME(.fb_driver.*))
-		__fb_driver_end = .;
+		__driver_start = .;
+		KEEP(*(.driver))
+		__driver_end = .;
 	}
 
 	.vdso BLOCK(4K): AT(ADDR(.vdso)-0xC0000000)

@@ -1,7 +1,7 @@
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <lib/klib.h>
-#include <hw/time.h>
+#include <device/time.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
 #include <macro.h>

@@ -27,8 +27,8 @@
 #include <proc/proc.h>
 #include <test/test.h>
 #include <lib/klib.h>
-#include <hw/time.h>
-#include <hw/tty.h>
+#include <device/time.h>
+#include <dev/tty.h>
 #include <macro.h>
 #include <errno.h>
 #include <ext4.h>

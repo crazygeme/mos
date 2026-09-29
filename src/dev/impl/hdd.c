@@ -12,8 +12,8 @@
 #include <fs/fs.h>
 #include <fs/ioctl.h>
 #include <fs/vfs.h>
-#include <hw/hdd.h>
-#include <hw/time.h>
+#include <device/hdd.h>
+#include <device/time.h>
 #include <lib/klib.h>
 #include <ps/ps.h>
 #include <macro.h>

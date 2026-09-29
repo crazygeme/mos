@@ -4,7 +4,7 @@
  * Standard fields match the Linux /proc/meminfo format (values in kB).
  * MOS-specific diagnostics live in /proc/mos.
  */
-#include <hw/hdd.h>
+#include <device/hdd.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
 #include "common.h"

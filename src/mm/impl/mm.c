@@ -12,6 +12,7 @@
 #include <macro.h>
 #include <mm/mmu.h>
 #include <ps/smp.h>
+#include <int/int.h>
 
 extern const unsigned __vdso_start;
 extern const unsigned __vdso_end;
@@ -120,6 +121,9 @@ static int mm_split_direct_page(pte_t *dir, vaddr_t addr)
 }
 
 #define KERNEL_KMAP_PAGES ((KERNEL_KMAP_END - KERNEL_KMAP_BEGIN) / PAGE_SIZE)
+#define COPY_SLOT_PAGES (2 * SMP_MAX_CPUS)
+#define COPY_SLOT_BEGIN (KERNEL_KMAP_END - COPY_SLOT_PAGES * PAGE_SIZE)
+static pte_t *copy_slot_ptes[COPY_SLOT_PAGES];
 
 typedef struct _kmap_cache_t {
 	mm_cache_t hdr;
@@ -297,11 +301,19 @@ void mm_init_cache()
 	mm_mark_kernel_pages_global();
 	memset(kernel_pde_tables, 0, sizeof(kernel_pde_tables));
 	mm_init_kernel_page_dir_template();
+	for (i = 0; i < COPY_SLOT_PAGES; i++) {
+		vaddr_t addr = COPY_SLOT_BEGIN + i * PAGE_SIZE;
+		pte_t pde = kernel_page_dir[ADDR_TO_PGT_OFFSET(addr)];
+		if (pde & PAGE_ENTRY_PRESENT)
+			copy_slot_ptes[i] = (pte_t *)(KERNEL_OFFSET +
+						      (pde & PAGE_SIZE_MASK)) +
+					    ADDR_TO_PET_OFFSET(addr);
+	}
 	for (i = 0; i < PAGE_TABLE_CACHE_PAGES; i++)
 		pgc_entry_count[i] = 0;
 
 	mm_cache_init((mm_cache_t *)&kmap_phy_cache, KERNEL_KMAP_BEGIN,
-		      KERNEL_KMAP_PAGES);
+		      KERNEL_KMAP_PAGES - COPY_SLOT_PAGES);
 
 	spinlock_init(&mm_lock);
 	spinlock_init(&path_lock);
@@ -319,6 +331,39 @@ void mm_init_process_page_dir(vaddr_t page_dir)
 	memcpy(&dst[KERNEL_PAGE_DIR_OFFSET], &src[KERNEL_PAGE_DIR_OFFSET],
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(pte_t));
 	process_dirs[pfn / 32] |= 1U << (pfn % 32);
+}
+
+int mm_copy_phys_page(paddr_t dst, paddr_t src)
+{
+	unsigned irq, slot;
+	vaddr_t addr;
+	pte_t *src_pte, *dst_pte;
+
+	if ((dst | src) & (PAGE_SIZE - 1))
+		return 0;
+	/* The entire mapping lifetime is this non-sleeping copy. With IRQs off
+	 * there is no migration or interrupt nesting that could reuse the slots.
+	 * Slots are disjoint per CPU, shared in all page directories, and never
+	 * handed to callers or entered in the general kmap lookup tree. */
+	irq = int_intr_disable();
+	slot = 2 * smp_cpu_id();
+	addr = COPY_SLOT_BEGIN + slot * PAGE_SIZE;
+	src_pte = copy_slot_ptes[slot];
+	dst_pte = copy_slot_ptes[slot + 1];
+	if (!src_pte || !dst_pte) {
+		int_intr_setlevel(irq);
+		return 0;
+	}
+	*src_pte = src | PAGE_ENTRY_PRESENT;
+	*dst_pte = dst | PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE;
+	arch_mm_invalidate(addr);
+	arch_mm_invalidate(addr + PAGE_SIZE);
+	memcpy((void *)(addr + PAGE_SIZE), (void *)addr, PAGE_SIZE);
+	*src_pte = *dst_pte = 0;
+	arch_mm_invalidate(addr);
+	arch_mm_invalidate(addr + PAGE_SIZE);
+	int_intr_setlevel(irq);
+	return 1;
 }
 
 /*

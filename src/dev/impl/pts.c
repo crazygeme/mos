@@ -342,6 +342,8 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 			return -EINVAL;
 		n = cyb_getbuf(p->s2m, (unsigned char *)buf + 1, (int)size - 1,
 			       !nonblock, 1);
+		if (n < 0)
+			return -EINTR;
 		if (nonblock && n == 0 && cyb_writer_count(p->s2m) > 0)
 			return -EAGAIN;
 		if (n <= 0)
@@ -351,6 +353,8 @@ ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
 	}
 
 	n = cyb_getbuf(p->s2m, buf, (int)size, !nonblock, 1);
+	if (n < 0)
+		return -EINTR;
 	if (nonblock && n == 0 && cyb_writer_count(p->s2m) > 0)
 		return -EAGAIN;
 	return (ssize_t)n;

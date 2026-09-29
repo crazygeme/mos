@@ -141,8 +141,20 @@ static int ac97_wait_done(void)
 			ret = -ETIMEDOUT;
 			break;
 		}
-		/* DMA completion must not monopolize the global kernel lock. */
-		time_wait(1);
+		/* Release the CPU while retaining ownership of the DMA buffer.
+		 * Signal interruption stops the stream through the cleanup below.
+		 */
+		if (ps_prepare_interruptible_wait(current, NULL, 1, __func__) <
+		    0) {
+			ret = -EINTR;
+			break;
+		}
+		task_sched();
+		ps_finish_timed_wait(current);
+		if (ps_interrupting_signals(current)) {
+			ret = -EINTR;
+			break;
+		}
 	}
 	ac97_bm_writeb(AC97_PO_CR, 0);
 	ac97_bm_writew(AC97_PO_SR, AC97_SR_BCIS | AC97_SR_LVBCI |

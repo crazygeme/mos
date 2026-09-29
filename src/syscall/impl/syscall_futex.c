@@ -356,10 +356,15 @@ wait_again:
 			spinlock_unlock(&ps_lock, irq);
 			return -EAGAIN;
 		}
+		if (ps_interrupting_signals(cur)) {
+			spinlock_unlock(&ps_lock, irq);
+			return -EINTR;
+		}
 		list_insert_tail(&futex_waiters, &waiter.list);
 		if (timeout_ms > 0)
 			timer_arm_unsafe(cur, timeout_ms);
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		cur->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 
 		task_sched();
@@ -373,7 +378,7 @@ wait_again:
 
 		if (n)
 			return 0;
-		if (cur->signal->sig_pending & ~cur->signal->sig_mask)
+		if (ps_interrupting_signals(cur))
 			return -EINTR;
 		if (!timeout || time_now_ms() < deadline_ms)
 			goto wait_again;

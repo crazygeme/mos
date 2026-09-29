@@ -92,6 +92,7 @@ void ps_add_mgr(task_struct *task)
 
 void ps_remove_mgr_unsafe(task_struct *task)
 {
+	ps_alarm_disarm_unsafe(task);
 	if (!RB_EMPTY_NODE(&task->mgr_rb)) {
 		rb_erase(&task->mgr_rb, &control.mgr_queue);
 		RB_CLEAR_NODE(&task->mgr_rb);

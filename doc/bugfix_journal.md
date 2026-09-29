@@ -2285,3 +2285,49 @@ handling to other indefinite waits, nor change clock functions, IRQ handlers,
 the scheduler, or the periodic service. Wakeup latency remains subject to the
 existing timed-wait scheduler. Runtime tests and benchmarks were not run at
 the user's request; the socket suite and ping have not been verified here.
+
+## 2026-09-29 - Separate alarm expiration from interruptible I/O waits
+
+Replace the socket-specific alarm deadline workaround with independent alarm
+expiration and a common interruptible-wait contract. `ps_alarm.c` keeps only
+armed alarms in an expiry-ordered RB-tree, protected by `ps_lock`. Set/query
+operations use the existing monotonic clock. IRQ0 exit checks due entries
+using the existing tick counter, queues SIGALRM, and requests scheduling if a
+recipient becomes runnable. No PIT/clock implementation or wall-time setter is
+changed, and interrupt context does not sample PIT ports. Cancellation, fork,
+exit and reaping maintain the alarm-node lifetime. Periodic alarms advance from
+the previous deadline, skipping missed periods rather than drifting.
+
+User return only delivers pending signals. It does not read the clock or scan
+alarms. Empty alarm queues return immediately from the IRQ hook; other ticks
+inspect the earliest expiry rather than scanning every process. Resolution is
+still HZ=100 (10 ms), with handler execution subject to interrupt masking and
+scheduling. This is not a high-resolution-timer implementation.
+
+Tasks explicitly distinguish interruptible waits from internal lock waits.
+The common wait entry checks actionable pending signals and publishes the
+waiting state under `ps_lock`, so a signal cannot be lost between checking and
+sleeping. Signal enqueue only wakes an interruptible recipient (or handles
+stopped-task continuation/termination). Ignored signals do not cause EINTR;
+masked signals remain pending. Sigtimedwait has an explicit awaited-signal
+mask so blocked signals can wake its synchronous wait. Signal selection skips
+ignored signals before choosing the handler for an interrupted syscall.
+
+Socket receive/send paths, pipe and TTY/PTY cyclic-buffer waits, poll/select,
+log reads, pause/sigsuspend, nanosleep, futex and user file-lock waits use the
+common rules. AC97 DMA waits also honor interruption and stop DMA on exit.
+Kernel mutex/semaphore waits remain uninterruptible. Existing partial-I/O
+results and per-socket timeouts remain independent of alarm expiration.
+The audit also fixes FIFO O_NONBLOCK handling, zero-length pipe reads/writes,
+and PTY master read EINTR mapping.
+
+Scope: this unifies alarm expiration and interruptible waiting within MOS's
+existing per-task alarm and signal model. It does not implement Linux's full
+thread-group signal routing, SA_RESTART syscall-restart ABI, or a replacement
+for POSIX timer polling. Pre-existing protocol/driver limitations such as
+recvmmsg's timeout argument and asynchronous nonblocking audio are outside
+this change.
+
+Validation: release kernel and test-kernel compilation plus static review.
+No tests, QEMU sessions, ping checks or performance benchmarks were run, per
+the user's instruction. Runtime correctness and throughput remain unverified.

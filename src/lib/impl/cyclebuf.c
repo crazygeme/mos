@@ -161,6 +161,9 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 	int n = 0;
 	int irq;
 
+	if (len <= 0)
+		return 0;
+
 	/* Block until at least one byte is available or EOF */
 	for (;;) {
 		spinlock_lock(&b->lock, &irq);

@@ -465,8 +465,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		}
 
 		/* Interrupted by a non-SIGCHLD signal: return EINTR. */
-		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
-		    ~(1UL << (SIGCHLD - 1))) {
+		if (ps_interrupting_signals(cur) & ~(1UL << (SIGCHLD - 1))) {
 			ret = -EINTR;
 			goto done;
 		}
@@ -482,6 +481,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		/* Block until a child exits. ps_put_to_dying_queue() will call
 		 * ps_put_to_ready_queue_unsafe(parent) to wake us. */
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		cur->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}
@@ -566,8 +566,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			goto done;
 		}
 
-		if (cur->signal->sig_pending & ~cur->signal->sig_mask &
-		    ~(1UL << (SIGCHLD - 1))) {
+		if (ps_interrupting_signals(cur) & ~(1UL << (SIGCHLD - 1))) {
 			ret = -EINTR;
 			goto done;
 		}
@@ -578,6 +577,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		}
 
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		cur->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}

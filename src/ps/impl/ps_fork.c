@@ -138,6 +138,9 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	list_init(&task->dying_queue);
 	RB_CLEAR_NODE(&task->mgr_rb);
 	RB_CLEAR_NODE(&task->timer_rb);
+	RB_CLEAR_NODE(&task->alarm_rb);
+	task->wait_interruptible = 0;
+	task->signal_wait_mask = 0;
 	task->timer_due_ms = 0;
 	task->fn = fn;
 	task->param = param;
@@ -495,6 +498,9 @@ task_struct *fork_alloc_child(task_struct *cur)
 	list_init(&task->dying_queue);
 	RB_CLEAR_NODE(&task->mgr_rb);
 	RB_CLEAR_NODE(&task->timer_rb);
+	RB_CLEAR_NODE(&task->alarm_rb);
+	task->wait_interruptible = 0;
+	task->signal_wait_mask = 0;
 	task->timer_due_ms = 0;
 	return task;
 }

@@ -291,38 +291,9 @@ static void sock_cancel_wait(void *opaque)
 	spinlock_unlock(&waiter->sk->wait_lock, irq);
 }
 
-/* Ignored signals may wake a waiter, but must not turn its I/O into EINTR. */
-static int sock_wait_interrupted(task_struct *task)
-{
-	signal_context *signal = task->signal;
-	unsigned long pending;
-	int sig;
-
-	if (!signal)
-		return 0;
-	pending = signal->sig_pending & ~signal->sig_mask;
-	for (sig = 1; sig < NSIG; sig++) {
-		void (*handler)(int);
-
-		if (!(pending & (1UL << (sig - 1))))
-			continue;
-		handler = signal->sig_handlers[sig].sa_handler;
-		if (handler == SIG_IGN)
-			continue;
-		if (handler == SIG_DFL &&
-		    (sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH ||
-		     sig == SIGCONT))
-			continue;
-		return 1;
-	}
-	return 0;
-}
-
 int sock_wait(mos_sock *sk, unsigned long long deadline)
 {
 	unsigned long long now;
-	unsigned long long wake_deadline, delay;
-	unsigned wait_ms = 0;
 	sock_waiter waiter;
 	int irq;
 	task_struct *cur = CURRENT_TASK();
@@ -337,8 +308,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	waiter.queued = 0;
 
 	spinlock_lock(&sk->wait_lock, &irq);
-	ps_check_alarm(cur);
-	if (sock_wait_interrupted(cur)) {
+	if (ps_interrupting_signals(cur)) {
 		spinlock_unlock(&sk->wait_lock, irq);
 		return -1;
 	}
@@ -353,19 +323,15 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 		spinlock_unlock(&sk->wait_lock, irq);
 		return 0;
 	}
-	/* A blocked syscall cannot reach the user-return alarm check. Wake at
-	 * the earlier deadline, then make an expired alarm pending below. Keep
-	 * the socket deadline unchanged so SIGALRM is not reported as EAGAIN.
-	 */
-	wake_deadline = deadline;
-	if (cur->alarm_expire_ms &&
-	    (!wake_deadline || cur->alarm_expire_ms < wake_deadline))
-		wake_deadline = cur->alarm_expire_ms;
-	if (wake_deadline) {
-		delay = wake_deadline > now ? wake_deadline - now : 1;
-		wait_ms = delay > (unsigned)~0U ? (unsigned)~0U : (unsigned)delay;
+	if (ps_prepare_interruptible_wait(
+		    cur, NULL, deadline ? (unsigned)(deadline - now) : 0,
+		    __func__) < 0) {
+		sock_waiter_dequeue(&waiter);
+		cur->io_wait = NULL;
+		cur->cancel_io_wait = NULL;
+		spinlock_unlock(&sk->wait_lock, irq);
+		return -1;
 	}
-	ps_prepare_timed_wait(cur, wait_ms, __func__);
 	spinlock_unlock(&sk->wait_lock, irq);
 
 	task_sched();
@@ -377,8 +343,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	cur->cancel_io_wait = NULL;
 	spinlock_unlock(&sk->wait_lock, irq);
 
-	ps_check_alarm(cur);
-	if (sock_wait_interrupted(cur))
+	if (ps_interrupting_signals(cur))
 		return -1;
 	return 0;
 }

@@ -12,6 +12,7 @@
 #include <arch/types.h>
 #include <int/interrupt.h>
 #include <ps/task.h>
+#include <ps/abi.h>
 
 #define FORK_FLAG_VFORK 1
 #define FORK_FLAG_SHARE_VM 2
@@ -52,11 +53,12 @@ typedef struct _task_stats {
 #define RLIM_INFINITY 0xFFFFFFFFu
 
 typedef struct {
-	unsigned long rlim_cur;
-	unsigned long rlim_max;
+	uint32_t rlim_cur;
+	uint32_t rlim_max;
 } rlimit_t;
 
 typedef struct _user_enviroment {
+	enum mos_user_abi abi;
 	unsigned char fpu_storage[512 + 15];
 	unsigned char *fpu;
 	vm_struct_t vm;
@@ -195,23 +197,24 @@ struct _task_struct {
 typedef struct _rusage {
 	struct timeval ru_utime; /* user CPU time used */
 	struct timeval ru_stime; /* system CPU time used */
-	long ru_maxrss; /* maximum resident set size */
-	long ru_ixrss; /* integral shared memory size */
-	long ru_idrss; /* integral unshared data size */
-	long ru_isrss; /* integral unshared stack size */
-	long ru_minflt; /* page reclaims (soft page faults) */
-	long ru_majflt; /* page faults (hard page faults) */
-	long ru_nswap; /* swaps */
-	long ru_inblock; /* block input operations */
-	long ru_oublock; /* block output operations */
-	long ru_msgsnd; /* IPC messages sent */
-	long ru_msgrcv; /* IPC messages received */
-	long ru_nsignals; /* signals received */
-	long ru_nvcsw; /* voluntary context switches */
-	long ru_nivcsw; /* involuntary context switches */
+	int32_t ru_maxrss; /* maximum resident set size */
+	int32_t ru_ixrss; /* integral shared memory size */
+	int32_t ru_idrss; /* integral unshared data size */
+	int32_t ru_isrss; /* integral unshared stack size */
+	int32_t ru_minflt; /* page reclaims (soft page faults) */
+	int32_t ru_majflt; /* page faults (hard page faults) */
+	int32_t ru_nswap; /* swaps */
+	int32_t ru_inblock; /* block input operations */
+	int32_t ru_oublock; /* block output operations */
+	int32_t ru_msgsnd; /* IPC messages sent */
+	int32_t ru_msgrcv; /* IPC messages received */
+	int32_t ru_nsignals; /* signals received */
+	int32_t ru_nvcsw; /* voluntary context switches */
+	int32_t ru_nivcsw; /* involuntary context switches */
 } rusage;
 
-#define KERNEL_TASK_SIZE 1 // 1 pages
+#define KERNEL_TASK_SIZE MOS_KERNEL_TASK_PAGES
+#define KERNEL_TASK_BYTES (KERNEL_TASK_SIZE * PAGE_SIZE)
 
 /*
  * task_utime — corrected user-mode CPU time for a task (in jiffies).

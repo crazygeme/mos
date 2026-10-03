@@ -654,11 +654,19 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 
 	case SIOCGIFCONF: {
 		struct ifconf *ifc = (struct ifconf *)arg;
+		if (!ifc)
+			return -EFAULT;
 		struct ifreq *req = ifc->ifc_req;
+		struct netif *nif = net_get_default_netif();
+		/* Linux permits a NULL buffer to query the required byte count. */
+		if (!req) {
+			ifc->ifc_len = (nif ? 2 : 1) * sizeof(struct ifreq);
+			return 0;
+		}
+		if (ifc->ifc_len < 0)
+			return -EINVAL;
 		int max = ifc->ifc_len / (int)sizeof(struct ifreq);
 		int n = 0;
-
-		struct netif *nif = net_get_default_netif();
 
 		if (n < max && nif) {
 			memset(&req[n], 0, sizeof(struct ifreq));

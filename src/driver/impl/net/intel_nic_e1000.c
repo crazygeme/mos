@@ -107,13 +107,13 @@ typedef struct {
 	uint8_t irq_line;
 
 	struct e1000_rx_desc *rx_descs;
-	uint32_t rx_bufs_va; /* base VA; buf i at rx_bufs_va + i*RX_BUF_SIZE */
+	vaddr_t rx_bufs_va; /* base VA; buf i at rx_bufs_va + i*RX_BUF_SIZE */
 	uint16_t rx_cur;
 	uint16_t rx_reclaim_head;
 	uint8_t rx_reclaim_ready[E1000_NUM_RX_DESC];
 
 	struct e1000_tx_desc *tx_descs;
-	uint32_t tx_bufs_va;
+	vaddr_t tx_bufs_va;
 	uint16_t tx_cur;
 
 	nic_dev *nic; /* pointer to the permanent nic_dev in network_devices[] */
@@ -125,12 +125,12 @@ static e1000_ctx *g_e1000_ctx;
 /* ── MMIO accessors ─────────────────────────────────────────────────────────── */
 static inline uint32_t e1000_rd(e1000_ctx *ctx, uint32_t off)
 {
-	return *(volatile uint32_t *)(ctx->mmio_base + off);
+	return *(volatile uint32_t *)(uintptr_t)(ctx->mmio_base + off);
 }
 
 static inline void e1000_wr(e1000_ctx *ctx, uint32_t off, uint32_t val)
 {
-	*(volatile uint32_t *)(ctx->mmio_base + off) = val;
+	*(volatile uint32_t *)(uintptr_t)(ctx->mmio_base + off) = val;
 }
 
 /* ── EEPROM read (82540EM "old" EERD format) ────────────────────────────────── */
@@ -165,8 +165,10 @@ static void e1000_handle_rx(e1000_ctx *ctx)
 			break;
 
 		uint16_t len = desc->length;
-		uint8_t *buf = (uint8_t *)(ctx->rx_bufs_va +
-					   (uint32_t)idx * E1000_RX_BUF_SIZE);
+		uint8_t *buf =
+			(uint8_t *)(uintptr_t)(ctx->rx_bufs_va +
+					       (uint32_t)idx *
+						       E1000_RX_BUF_SIZE);
 
 		int queued = 0;
 		if (len > 0 && ctx->nic && ctx->nic->rx_notify)
@@ -234,8 +236,9 @@ static int intel_nic_e1000_send(void *_dev, const void *buf, uint16_t len)
 	while (!(desc->status & E1000_TXD_STAT_DD))
 		PAUSE();
 
-	uint8_t *txbuf = (uint8_t *)(ctx->tx_bufs_va +
-				     (uint32_t)tail * E1000_TX_BUF_SIZE);
+	uint8_t *txbuf =
+		(uint8_t *)(uintptr_t)(ctx->tx_bufs_va +
+				       (uint32_t)tail * E1000_TX_BUF_SIZE);
 	if (len > E1000_TX_BUF_SIZE)
 		len = (uint16_t)E1000_TX_BUF_SIZE;
 	memcpy(txbuf, buf, len);
@@ -271,8 +274,8 @@ static int intel_nic_e1000_send_pbuf(void *_dev, const struct pbuf *p)
 	while (!(desc->status & E1000_TXD_STAT_DD))
 		PAUSE();
 
-	txbuf = (uint8_t *)(ctx->tx_bufs_va +
-			    (uint32_t)tail * E1000_TX_BUF_SIZE);
+	txbuf = (uint8_t *)(uintptr_t)(ctx->tx_bufs_va +
+				       (uint32_t)tail * E1000_TX_BUF_SIZE);
 	len = p->tot_len;
 	for (q = p; q && off < len; q = q->next) {
 		uint16_t copy = q->len;
@@ -363,7 +366,7 @@ static int intel_nic_e1000_init(void *_dev)
 	memset(ctx->rx_reclaim_ready, 0, sizeof(ctx->rx_reclaim_ready));
 
 	for (i = 0; i < E1000_NUM_RX_DESC; i++) {
-		uint32_t va = ctx->rx_bufs_va + (uint32_t)i * E1000_RX_BUF_SIZE;
+		vaddr_t va = ctx->rx_bufs_va + (uint32_t)i * E1000_RX_BUF_SIZE;
 		ctx->rx_descs[i].addr = (uint64_t)VIRT_TO_PHY(va);
 	}
 

@@ -1,5 +1,5 @@
 /*
- * test/mm_test.c — unit tests for src/mm/mm.c
+ * test/mm_test.c — unit tests for the architecture memory backends
  *
  * Covers: vm_alloc/vm_free, mm_alloc_page_table/mm_free_page_table,
  *         mm_get_map_flag/mm_set_map_flag, mm_get_attached_page_index,
@@ -13,6 +13,7 @@
  */
 
 #include <mm/mm.h>
+#include <mm/phymm.h>
 #include <lib/klib.h>
 #include <lib/list.h>
 #include <config.h>
@@ -26,7 +27,7 @@ KTEST(mm, vm_alloc_single)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned addr = vm_alloc(1);
+	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
 	EXPECT_GE(addr, KERNEL_OFFSET);
 	EXPECT_EQ(phymm_used, phys_before + 1); /* one page referenced */
@@ -44,7 +45,7 @@ KTEST(mm, vm_alloc_multi_page)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned addr = vm_alloc(4);
+	vaddr_t addr = vm_alloc(4);
 	ASSERT_NE(addr, 0u);
 	EXPECT_GE(addr, KERNEL_OFFSET);
 	EXPECT_EQ(phymm_used, phys_before + 4);
@@ -64,8 +65,8 @@ KTEST(mm, vm_alloc_distinct)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned a = vm_alloc(1);
-	unsigned b = vm_alloc(1);
+	vaddr_t a = vm_alloc(1);
+	vaddr_t b = vm_alloc(1);
 	ASSERT_NE(a, 0u);
 	ASSERT_NE(b, 0u);
 	EXPECT_NE(a, b);
@@ -81,13 +82,13 @@ KTEST(mm, vm_free_reuse)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned a = vm_alloc(1);
+	vaddr_t a = vm_alloc(1);
 	ASSERT_NE(a, 0u);
 	vm_free(a, 1);
 	EXPECT_EQ(phymm_used, phys_before);
 
 	/* Allocator must still hand out pages after a free */
-	unsigned b = vm_alloc(1);
+	vaddr_t b = vm_alloc(1);
 	ASSERT_NE(b, 0u);
 	vm_free(b, 1);
 	EXPECT_EQ(phymm_used, phys_before); /* no leak */
@@ -101,7 +102,7 @@ KTEST(mm, page_table_alloc)
 	unsigned heap_before = heap_quota;
 	unsigned phys_before = phymm_used;
 
-	unsigned pt = mm_alloc_page_table();
+	vaddr_t pt = mm_alloc_page_table();
 	ASSERT_NE(pt, 0u);
 	/* Must fall inside the page-table cache region */
 	EXPECT_GE(pt, PAGE_TABLE_CACHE_BEGIN);
@@ -116,7 +117,7 @@ KTEST(mm, page_table_alloc)
 
 KTEST(mm, page_table_zeroed)
 {
-	unsigned pt = mm_alloc_page_table();
+	vaddr_t pt = mm_alloc_page_table();
 	ASSERT_NE(pt, 0u);
 
 	/* mm_alloc_page_table memsets the page to 0 */
@@ -139,12 +140,12 @@ KTEST(mm, page_table_alloc_free_reuse)
 	unsigned heap_before = heap_quota;
 	unsigned phys_before = phymm_used;
 
-	unsigned a = mm_alloc_page_table();
+	vaddr_t a = mm_alloc_page_table();
 	ASSERT_NE(a, 0u);
 	mm_free_page_table(a);
 
 	/* After freeing, another alloc must succeed */
-	unsigned b = mm_alloc_page_table();
+	vaddr_t b = mm_alloc_page_table();
 	ASSERT_NE(b, 0u);
 	mm_free_page_table(b);
 
@@ -159,7 +160,7 @@ KTEST(mm, map_flag_get_after_alloc)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned addr = vm_alloc(1);
+	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
 
 	unsigned flags = mm_get_map_flag(addr);
@@ -177,7 +178,7 @@ KTEST(mm, map_flag_set)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned addr = vm_alloc(1);
+	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
 
 	/* Remove the writable bit */
@@ -201,7 +202,7 @@ KTEST(mm, attached_page_index)
 {
 	unsigned phys_before = phymm_used;
 
-	unsigned addr = vm_alloc(1);
+	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
 
 	unsigned idx = mm_get_attached_page_index(addr);
@@ -292,23 +293,25 @@ KTEST(mm, name_buf_writable)
  * survive allocator frees without tearing down shared kernel mappings. */
 KTEST(mm, large_direct_map)
 {
-	unsigned cr4, offset;
-	pte_t *pd = (pte_t *)mm_get_pagedir();
-	asm volatile("movl %%cr4, %0" : "=r"(cr4));
+	uintptr_t cr4;
+	unsigned offset;
+	asm volatile("mov %%cr4, %0" : "=r"(cr4));
+#if !MOS_HAS_NATIVE_USER
 	if (!(cr4 & (1U << 4)))
 		return 0; /* CPU without PSE uses the existing 4 KiB path. */
+#endif
 	for (offset = 0; offset < KERNEL_DIRECT_MAP_LIMIT;
 	     offset += LARGE_PAGE_SIZE) {
-		unsigned addr = KERNEL_OFFSET + offset;
+		vaddr_t addr = KERNEL_OFFSET + offset;
 		EXPECT_EQ(mm_virt_to_phys(addr), offset);
 		EXPECT_EQ(mm_virt_to_phys(addr + LARGE_PAGE_SIZE - 1),
 			  offset + LARGE_PAGE_SIZE - 1);
 		EXPECT_FALSE(mm_get_map_flag(addr) & PAGE_ENTRY_DPL_USER);
 	}
-	/* The last direct-map PDE is untouched by heap permission tests. */
-	EXPECT_TRUE(pd[ADDR_TO_PGT_OFFSET((KERNEL_KMAP_BEGIN - 1))] &
-		    PAGE_ENTRY_LARGE);
-	unsigned addr = vm_alloc(1);
+	/* The last direct-map leaf is untouched by heap permission tests. */
+	EXPECT_TRUE(mm_get_map_flag(KERNEL_KMAP_BEGIN - 1) &
+		    PAGE_ENTRY_PRESENT);
+	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
 	unsigned phys = mm_virt_to_phys(addr);
 	vm_free(addr, 1);
@@ -319,23 +322,21 @@ KTEST(mm, large_direct_map)
 
 KTEST(mm, large_split_shared_permissions)
 {
-	unsigned cr4;
-	asm volatile("movl %%cr4, %0" : "=r"(cr4));
+	uintptr_t cr4;
+	asm volatile("mov %%cr4, %0" : "=r"(cr4));
+#if !MOS_HAS_NATIVE_USER
 	if (!(cr4 & (1U << 4)))
 		return 0;
+#endif
 	/* Use an otherwise untouched leaf; no access to physical RAM is needed. */
-	unsigned addr = KERNEL_KMAP_BEGIN - 2 * LARGE_PAGE_SIZE + PAGE_SIZE;
-	unsigned pd_addr = vm_alloc(1);
+	vaddr_t addr = KERNEL_KMAP_BEGIN - 2 * LARGE_PAGE_SIZE + PAGE_SIZE;
+	vaddr_t pd_addr = vm_alloc(1);
 	ASSERT_NE(pd_addr, 0u);
 	mm_init_process_page_dir(pd_addr);
-	pte_t *pd = (pte_t *)pd_addr;
-	pte_t *current = (pte_t *)mm_get_pagedir();
-	unsigned index = ADDR_TO_PGT_OFFSET(addr);
-	EXPECT_TRUE(pd[index] & PAGE_ENTRY_LARGE);
+	EXPECT_TRUE(mm_get_map_flag_pd(pd_addr, addr) & PAGE_ENTRY_PRESENT);
 	unsigned flags = mm_get_map_flag(addr);
 	mm_set_map_flag_pd(pd_addr, addr, flags & ~PAGE_ENTRY_WRITABLE);
-	EXPECT_FALSE(current[index] & PAGE_ENTRY_LARGE);
-	EXPECT_EQ(pd[index], current[index]);
+	EXPECT_EQ(mm_get_map_flag_pd(pd_addr, addr), mm_get_map_flag(addr));
 	EXPECT_FALSE(mm_get_map_flag(addr) & PAGE_ENTRY_WRITABLE);
 	EXPECT_FALSE(mm_get_map_flag_pd(pd_addr, addr) & PAGE_ENTRY_WRITABLE);
 	EXPECT_TRUE(mm_get_map_flag(addr - PAGE_SIZE) & PAGE_ENTRY_WRITABLE);
@@ -345,6 +346,40 @@ KTEST(mm, large_split_shared_permissions)
 		  (addr - KERNEL_OFFSET) / PAGE_SIZE);
 	mm_set_map_flag(addr, flags);
 	EXPECT_TRUE(mm_get_map_flag_pd(pd_addr, addr) & PAGE_ENTRY_WRITABLE);
+	mm_destroy_user_map(pd_addr);
 	vm_free(pd_addr, 1);
 	return 0;
 }
+
+#if MOS_HAS_NATIVE_USER
+KTEST(mm, managed_high_ram_direct_map)
+{
+	unsigned source = phymm_alloc_user();
+	ASSERT_NE(source, PHYMM_INVALID);
+	unsigned dest = phymm_alloc_user();
+	if (dest == PHYMM_INVALID) {
+		phymm_free_user(source);
+		return __LINE__;
+	}
+	paddr_t src = (paddr_t)source * PAGE_SIZE,
+		dst = (paddr_t)dest * PAGE_SIZE;
+	EXPECT_EQ(mm_kmap_phys(src), 1);
+	EXPECT_EQ(mm_kmap_phys(dst), 1);
+	vaddr_t address = mm_phys_to_virt(src);
+	if (src >= KERNEL_DIRECT_MAP_LIMIT)
+		EXPECT_EQ(address, MOS_PHYS_MAP_BEGIN + src);
+	EXPECT_EQ(mm_virt_to_phys(address), src);
+	EXPECT_FALSE(mm_get_map_flag(address) & PAGE_ENTRY_DPL_USER);
+	if (src >= KERNEL_DIRECT_MAP_LIMIT)
+		EXPECT_TRUE(mm_get_map_flag(address) & PAGE_ENTRY_NO_EXEC);
+	*(uint64_t *)address = 0xfedcba9876543210ULL;
+	EXPECT_TRUE(mm_copy_phys_page(dst, src));
+	EXPECT_EQ(*(uint64_t *)mm_phys_to_virt(dst), 0xfedcba9876543210ULL);
+	mm_kunmap_phys(src);
+	mm_kunmap_phys(dst);
+	EXPECT_EQ(mm_phys_to_virt(src), address);
+	phymm_free_user(source);
+	phymm_free_user(dest);
+	return 0;
+}
+#endif

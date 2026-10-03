@@ -31,8 +31,8 @@
 
 static const char *const pid_dir_entries[] = { ".",    "..",	  "status",
 					       "stat", "statm",	  "cmdline",
-					       "maps", "environ", "fd", "cwd",
-					       NULL };
+					       "maps", "environ", "fd",
+					       "cwd",  NULL };
 
 static file *pid_dir_open(task_struct *task)
 {

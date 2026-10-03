@@ -52,7 +52,8 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+		(intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+			       sizeof(intr_frame));
 	task_struct *task;
 	unsigned long unsupported;
 	int share_vm = !!(flags & CLONE_VM);
@@ -62,9 +63,11 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("clone(flags=%x, child_stack=%x, ptid=%x, tls=%x, ctid=%x)\n",
-		     (unsigned)flags, (unsigned)child_stack,
-		     (unsigned)parent_tidptr, (unsigned)tls,
-		     (unsigned)child_tidptr);
+		     (unsigned)(uintptr_t)flags,
+		     (unsigned)(uintptr_t)child_stack,
+		     (unsigned)(uintptr_t)parent_tidptr,
+		     (unsigned)(uintptr_t)tls,
+		     (unsigned)(uintptr_t)child_tidptr);
 
 	unsupported =
 		flags &
@@ -133,8 +136,10 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 
 	if (ps_dup_fds(cur, task, !!(flags & CLONE_FILES)) != 0)
 		return -ENOMEM;
-	if (!share_vm)
-		copy_page_range(cur, task);
+	if (!share_vm && copy_page_range(cur, task)) {
+		fork_abort_child(task);
+		return -ENOMEM;
+	}
 
 	task->ppid = thread_group ? cur->ppid : cur->psid;
 	task->tgid = thread_group ? cur->tgid : task->psid;
@@ -142,7 +147,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 
 	if (child_stack) {
 		intr_frame *task_intr_frame =
-			(intr_frame *)((char *)task + PAGE_SIZE -
+			(intr_frame *)((char *)task + KERNEL_TASK_BYTES -
 				       sizeof(intr_frame));
 		task_intr_frame->esp = (void *)child_stack;
 		task->tss.esp = (uintptr_t)task_intr_frame;

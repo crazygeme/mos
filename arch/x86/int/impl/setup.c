@@ -8,8 +8,9 @@
 
 void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap, int dpl)
 {
-	idt[vector] = trap ? MAKE_TRAP_GATE(entry, dpl) :
-			     MAKE_INTR_GATE(entry, dpl);
+	idt[vector] = !entry ? 0 :
+		      trap   ? MAKE_TRAP_GATE(entry, dpl) :
+			       MAKE_INTR_GATE(entry, dpl);
 }
 
 void arch_interrupt_activate(void)
@@ -18,7 +19,7 @@ void arch_interrupt_activate(void)
 	unsigned long long idtr = MAKE_IDTR_OPERAND(idt_size - 1, idt);
 	unsigned long long gdtr = MAKE_GDTR_OPERAND(gdt_size - 1, current_gdt);
 
-	SET_IDT(idtr);
+	asm volatile("lidt %0" : : "m"(idtr) : "memory");
 	SET_GDT(gdtr);
 	SET_CS(KERNEL_CODE_SELECTOR);
 	SET_DS(KERNEL_DATA_SELECTOR);

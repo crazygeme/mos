@@ -80,7 +80,8 @@ void kmain_startup()
 	for (unsigned i = 1; i < SMP_MAX_CPUS; i++) {
 		if (!smp_cpus[i].apic_id && !smp_cpus[i].online)
 			continue;
-		ps_create(idle_process, (void *)i, ps_idle, ps_kernel);
+		ps_create(idle_process, (void *)(uintptr_t)i, ps_idle,
+			  ps_kernel);
 	}
 	dsr_start();
 	kb_start();

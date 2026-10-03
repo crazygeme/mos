@@ -11,6 +11,8 @@
 struct smp_cpu {
 	/* Kept first so arch_cpu_local() can load it from %fs:0. */
 	struct smp_cpu *self;
+	uintptr_t syscall_sp;
+	uintptr_t user_sp;
 	unsigned index;
 	unsigned apic_id;
 	volatile unsigned online;
@@ -34,6 +36,7 @@ void smp_kernel_leave(void);
 void smp_return(intr_frame *frame);
 void smp_idle(void);
 void smp_tlb_flush(void);
+void smp_tlb_flush_user(vaddr_t page_dir);
 void smp_tlb_poll(void);
 int smp_interrupt(intr_frame *frame);
 void smp_tick(void);

@@ -10,7 +10,7 @@
 
 typedef struct _anon_shared_map_key {
 	unsigned id;
-	unsigned offset;
+	uint64_t offset;
 } anon_shared_map_key;
 
 typedef struct _anon_shared_map_entry {
@@ -28,7 +28,7 @@ typedef struct _anon_shared_ref {
 typedef struct _file_shared_map_key {
 	void *tag;
 	uint64_t ino;
-	unsigned offset;
+	uint64_t offset;
 } file_shared_map_key;
 
 typedef struct _file_shared_map_entry {
@@ -51,7 +51,7 @@ static int anon_shared_map_key_comp(const void *k1, const void *k2)
 	int ret = (int)key1->id - (int)key2->id;
 
 	if (ret == 0)
-		ret = (int)key1->offset - (int)key2->offset;
+		ret = (key1->offset > key2->offset) - (key1->offset < key2->offset);
 	return ret;
 }
 
@@ -89,7 +89,7 @@ static int file_shared_map_key_comp(const void *k1, const void *k2)
 		return -1;
 	if (key1->ino > key2->ino)
 		return 1;
-	return (int)key1->offset - (int)key2->offset;
+	return (key1->offset > key2->offset) - (key1->offset < key2->offset);
 }
 
 static void file_shared_map_evict(file_shared_map_entry *evict)
@@ -139,7 +139,7 @@ DEFINE_CACHE_TREE(anon_shared_refs, anon_shared_ref, unsigned, id,
 DEFINE_CACHE_TREE(file_shared_map, file_shared_map_entry, file_shared_map_key,
 		  key, file_shared_map_key_comp)
 
-static int file_shared_map_make_key(file *f, unsigned offset,
+static int file_shared_map_make_key(file *f, uint64_t offset,
 				    file_shared_map_key *key)
 {
 	void *tag;
@@ -154,7 +154,7 @@ static int file_shared_map_make_key(file *f, unsigned offset,
 
 	key->tag = tag;
 	key->ino = f->f_inode->i_ino;
-	key->offset = offset & PAGE_SIZE_MASK;
+	key->offset = offset & ~(uint64_t)(PAGE_SIZE - 1);
 	return 1;
 }
 
@@ -171,7 +171,7 @@ void mm_cache_init(void)
 	mm_cache_ready = 1;
 }
 
-paddr_t mm_anon_shared_find(unsigned anon_id, unsigned offset)
+paddr_t mm_anon_shared_find(unsigned anon_id, uint64_t offset)
 {
 	anon_shared_map_key tmp;
 	anon_shared_map_entry *entry;
@@ -192,7 +192,7 @@ paddr_t mm_anon_shared_find(unsigned anon_id, unsigned offset)
 	return entry->phy;
 }
 
-void mm_anon_shared_add(unsigned anon_id, unsigned offset, paddr_t phy)
+void mm_anon_shared_add(unsigned anon_id, uint64_t offset, paddr_t phy)
 {
 	anon_shared_map_entry *entry;
 	anon_shared_map_key tmp;
@@ -275,7 +275,7 @@ void mm_anon_shared_put(unsigned anon_id)
 	mutex_unlock(&anon_shared_map_lock);
 }
 
-paddr_t mm_file_shared_find(file *f, unsigned offset)
+paddr_t mm_file_shared_find(file *f, uint64_t offset)
 {
 	file_shared_map_key tmp;
 	file_shared_map_entry *entry;
@@ -293,7 +293,7 @@ paddr_t mm_file_shared_find(file *f, unsigned offset)
 	return entry->phy;
 }
 
-void mm_file_shared_add(file *f, unsigned offset, paddr_t phy)
+void mm_file_shared_add(file *f, uint64_t offset, paddr_t phy)
 {
 	file_shared_map_entry *entry;
 	file_shared_map_key tmp;

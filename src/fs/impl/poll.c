@@ -266,8 +266,14 @@ int do_ppoll(struct pollfd *fds, unsigned nfds, const struct timespec *timeout,
 	if (sigmask)
 		cur->signal->sig_mask = *sigmask;
 	ret = poll_wait_loop(&poll_fops, &ctx, just_test, infinite, deadline);
-	if (sigmask)
-		cur->signal->sig_mask = saved_mask;
+	if (sigmask) {
+		if (ret == -EINTR) {
+			cur->signal->saved_sigmask = saved_mask;
+			cur->signal->restore_sigmask = 1;
+		} else {
+			cur->signal->sig_mask = saved_mask;
+		}
+	}
 	if (entries)
 		free(entries);
 	return ret;

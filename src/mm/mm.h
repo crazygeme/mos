@@ -13,6 +13,8 @@ typedef struct multiboot_info multiboot_info_t;
 #define KERNEL_KMAP_END MOS_KERNEL_KMAP_END
 #define KERNEL_IO_BEGIN MOS_KERNEL_IO_BEGIN
 #define KERNEL_IO_END MOS_KERNEL_IO_END
+#define DEVICE_IO_BEGIN MOS_DEVICE_IO_BEGIN
+#define DEVICE_IO_END MOS_DEVICE_IO_END
 #define KERNEL_DIRECT_MAP_LIMIT (KERNEL_KMAP_BEGIN - KERNEL_OFFSET)
 #define PG_TABLE_SIZE MOS_PG_TABLE_SIZE
 #define PE_TABLE_SIZE MOS_PE_TABLE_SIZE
@@ -37,11 +39,13 @@ typedef struct multiboot_info multiboot_info_t;
 #define LARGE_PAGE_SIZE (1UL << MOS_PGT_SHIFT)
 #define LARGE_PAGE_MASK (~(LARGE_PAGE_SIZE - 1))
 #define PAGE_ENTRY_GLOBAL 0x100 // keep translation across CR3 reloads
+#define PAGE_ENTRY_DIRECT_PHYS 0x200 /* Raw alias; no allocator reference. */
 
 #define PAGE_ENTRY_PAGE_TABLE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE)
 #define PAGE_ENTRY_KERNEL_CODE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_GLOBAL)
 #define PAGE_ENTRY_KERNEL_DATA \
 	(PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_GLOBAL)
+#define PAGE_ENTRY_NO_EXEC MOS_PAGE_NO_EXEC
 #define PAGE_ENTRY_USER_CODE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_DPL_USER)
 #define PAGE_ENTRY_USER_DATA \
 	(PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_DPL_USER)
@@ -132,15 +136,15 @@ void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
-int do_mmap(vaddr_t addr, unsigned int len, unsigned int prot,
-	    unsigned int flags, int fd, unsigned int offset);
+intptr_t do_mmap(vaddr_t addr, size_t len, unsigned int prot,
+		 unsigned int flags, int fd, uint64_t offset);
 
 void do_mmap_update(vaddr_t addr, unsigned int prot, unsigned int flags);
 
 vaddr_t do_mmap_kernel(vaddr_t addr, size_t len, unsigned int prot,
-		       unsigned int flags, file *fp, unsigned int offset);
+		       unsigned int flags, file *fp, uint64_t offset);
 
-int do_munmap(void *addr, unsigned length);
+int do_munmap(void *addr, size_t length);
 
 void *name_get();
 

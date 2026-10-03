@@ -342,7 +342,7 @@ static int gpu_buffer_release(file *fp)
 	return 0;
 }
 
-static paddr_t gpu_buffer_page(file *fp, unsigned offset)
+static paddr_t gpu_buffer_page(file *fp, uint64_t offset)
 {
 	struct gpu_bo *bo = fp->f_inode->i_private;
 	if ((offset & (PAGE_SIZE - 1)) || offset >= bo->size)
@@ -350,7 +350,7 @@ static paddr_t gpu_buffer_page(file *fp, unsigned offset)
 	return bo->backing[offset / PAGE_SIZE];
 }
 
-static int gpu_buffer_map(file *fp, unsigned *offset, unsigned size,
+static int gpu_buffer_map(file *fp, uint64_t *offset, size_t size,
 			  unsigned prot, unsigned flags, file **backing)
 {
 	struct gpu_bo *bo = fp->f_inode->i_private;
@@ -537,12 +537,14 @@ fail:
 	return result;
 }
 
-static int gpu_drm_map(file *fp, unsigned *offset, unsigned size, unsigned prot,
+static int gpu_drm_map(file *fp, uint64_t *offset, size_t size, unsigned prot,
 		       unsigned flags, file **backing)
 {
 	struct gpu_client *client = fp->f_inode->i_private;
 	struct gpu_bo *bo;
 	int result;
+	if (*offset / PAGE_SIZE > 0xffffffffULL)
+		return -EINVAL;
 	rmutex_lock(&gpu_lock);
 	bo = gpu_handle(client, *offset / PAGE_SIZE);
 	if (!bo || (*offset & (PAGE_SIZE - 1)))
@@ -734,8 +736,8 @@ static int gpu_add_fb(struct gpu_client *client, unsigned handle,
 	struct gpu_bo *bo = gpu_handle(client, handle);
 	unsigned i;
 	if (!bo || width != bo->width || height != bo->height || !width ||
-	    !height || width > GPU_MAX_DIMENSION || height > GPU_MAX_DIMENSION ||
-	    pitch < width * 4 ||
+	    !height || width > GPU_MAX_DIMENSION ||
+	    height > GPU_MAX_DIMENSION || pitch < width * 4 ||
 	    (uint64_t)pitch * height > bo->size)
 		return -EINVAL;
 	for (i = 0; i < GPU_MAX_FB; i++)
@@ -933,7 +935,8 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		struct drm_virtgpu_resource_create create = { 0 };
 		int result;
 		if (r->flags || r->bpp != 32 || !r->width || !r->height ||
-		    r->width > GPU_MAX_DIMENSION || r->height > GPU_MAX_DIMENSION)
+		    r->width > GPU_MAX_DIMENSION ||
+		    r->height > GPU_MAX_DIMENSION)
 			return -EINVAL;
 		r->pitch = (r->width * 4 + 63) & ~63U;
 		r->size = (uint64_t)r->pitch * r->height;
@@ -1481,7 +1484,7 @@ static void *gpu_pci_map(const pci_resource *resources, unsigned bar,
 		return NULL;
 	start = resources[bar].start + offset;
 	end = start + length;
-	if (start < KERNEL_IO_BEGIN || end > KERNEL_IO_END || end <= start)
+	if (start < DEVICE_IO_BEGIN || end > DEVICE_IO_END || end <= start)
 		return NULL;
 	for (page = start & PAGE_SIZE_MASK; page < end; page += PAGE_SIZE) {
 		if (mm_map_io(page) != 1)

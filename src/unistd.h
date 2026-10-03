@@ -1,5 +1,6 @@
 #ifndef _UNISTD_H
 #define _UNISTD_H
+#include <stdint.h>
 
 #define __NR_restart_syscall 0
 #define __NR_exit 1
@@ -306,75 +307,75 @@ struct oldstat {
 	unsigned short st_uid;
 	unsigned short st_gid;
 	unsigned short st_rdev;
-	long st_size;
-	unsigned long st_atime;
-	unsigned long st_mtime;
-	unsigned long st_ctime;
+	int32_t st_size;
+	uint32_t st_atime;
+	uint32_t st_mtime;
+	uint32_t st_ctime;
 };
 
 struct stat {
-	unsigned long st_dev;
-	unsigned long st_ino;
+	uint32_t st_dev;
+	uint32_t st_ino;
 	unsigned short st_mode;
 	unsigned short st_nlink;
 	unsigned short st_uid;
 	unsigned short st_gid;
-	unsigned long st_rdev;
-	long st_size;
-	unsigned long st_blksize;
-	unsigned long st_blocks;
-	unsigned long st_atime;
-	unsigned long __unused1;
-	unsigned long st_mtime;
-	unsigned long __unused2;
-	unsigned long st_ctime;
-	unsigned long __unused3;
-	unsigned long __unused4;
-	unsigned long __unused5;
+	uint32_t st_rdev;
+	int32_t st_size;
+	uint32_t st_blksize;
+	uint32_t st_blocks;
+	uint32_t st_atime;
+	uint32_t __unused1;
+	uint32_t st_mtime;
+	uint32_t __unused2;
+	uint32_t st_ctime;
+	uint32_t __unused3;
+	uint32_t __unused4;
+	uint32_t __unused5;
 };
 
 struct stat64 {
-	unsigned long long st_dev;
+	uint64_t st_dev;
 	unsigned char __pad0[4];
-	unsigned long __st_ino; /* 32-bit compat inode */
+	uint32_t __st_ino; /* 32-bit compat inode */
 	unsigned int st_mode;
 	unsigned int st_nlink;
-	unsigned long st_uid;
-	unsigned long st_gid;
-	unsigned long long st_rdev;
+	uint32_t st_uid;
+	uint32_t st_gid;
+	uint64_t st_rdev;
 	unsigned char __pad3[4];
-	long long st_size;
-	unsigned long st_blksize;
-	unsigned long st_blocks; /* Number 512-byte blocks allocated. */
-	unsigned long __pad4;
-	unsigned long st_atime;
-	unsigned long st_atime_nsec;
-	unsigned long st_mtime;
+	int64_t st_size;
+	uint32_t st_blksize;
+	uint32_t st_blocks; /* Number 512-byte blocks allocated. */
+	uint32_t __pad4;
+	uint32_t st_atime;
+	uint32_t st_atime_nsec;
+	uint32_t st_mtime;
 	unsigned int st_mtime_nsec;
-	unsigned long st_ctime;
+	uint32_t st_ctime;
 	unsigned int st_ctime_nsec;
-	unsigned long long st_ino; /* 64-bit inode */
-};
+	uint64_t st_ino; /* 64-bit inode */
+} __attribute__((packed, aligned(4)));
 
 struct statfs {
-	long f_type; /* filesystem type (e.g. 0xEF53 for ext4) */
-	long f_bsize; /* optimal transfer block size */
-	long f_blocks; /* total data blocks in filesystem */
-	long f_bfree; /* free blocks in filesystem */
-	long f_bavail; /* free blocks available to unprivileged user */
-	long f_files; /* total file nodes in filesystem */
-	long f_ffree; /* free file nodes in filesystem */
+	int32_t f_type; /* filesystem type (e.g. 0xEF53 for ext4) */
+	int32_t f_bsize; /* optimal transfer block size */
+	int32_t f_blocks; /* total data blocks in filesystem */
+	int32_t f_bfree; /* free blocks in filesystem */
+	int32_t f_bavail; /* free blocks available to unprivileged user */
+	int32_t f_files; /* total file nodes in filesystem */
+	int32_t f_ffree; /* free file nodes in filesystem */
 	int f_fsid[2]; /* filesystem id */
-	long f_namelen; /* maximum length of filenames */
-	long f_frsize; /* fragment size */
-	long f_flags;
-	long f_spare[4];
+	int32_t f_namelen; /* maximum length of filenames */
+	int32_t f_frsize; /* fragment size */
+	int32_t f_flags;
+	int32_t f_spare[4];
 };
 
 /* Linux i386 statfs64 syscall ABI. */
 struct statfs64 {
 	unsigned int f_type, f_bsize;
-	unsigned long long f_blocks, f_bfree, f_bavail, f_files, f_ffree;
+	uint64_t f_blocks, f_bfree, f_bavail, f_files, f_ffree;
 	int f_fsid[2];
 	unsigned int f_namelen, f_frsize, f_flags;
 	unsigned int f_spare[4];

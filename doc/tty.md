@@ -17,6 +17,12 @@ The TTY subsystem provides:
 
 ## 1. Virtual consoles (`tty.c`)
 
+The Bochs framebuffer driver renders text and performs scrolling in a RAM
+shadow buffer. Each visible terminal write copies its accumulated dirty pixel
+range to video memory after updating the cursor. Terminal redraws flush the
+complete shadow buffer. Graphics snapshots use the physical framebuffer;
+restoration updates both video memory and the text shadow.
+
 ### `tty_state` — per-TTY state
 
 ```c
@@ -233,7 +239,7 @@ ps_create(tty_bash_spawner, state, ps_normal, ps_kernel)
        sb_get(root)
        cur->parent = state->parent         // so waitpid works
        cur->cwd    = "/root"
-       ps_update_tss(cur + PAGE_SIZE)      // set esp0 for user-mode entry
+       ps_update_tss((uintptr_t)cur + KERNEL_TASK_BYTES) // privilege-entry stack
 
        fd 0 = open("/dev/ttyn", O_RDONLY)
        fd 1 = open("/dev/ttyn", O_WRONLY)

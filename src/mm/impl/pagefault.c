@@ -20,8 +20,8 @@ unsigned page_fault_file = 0;
 unsigned page_fault_file_read = 0;
 unsigned page_fault_perm = 0;
 unsigned page_fault_file_cache_hit = 0;
-static unsigned zero_page = 0;
-static unsigned zero_page_phy = 0;
+static vaddr_t zero_page = 0;
+static paddr_t zero_page_phy = 0;
 
 static void pf_process(intr_frame *frame);
 
@@ -34,7 +34,7 @@ void pf_init()
 	zero_page_phy = VIRT_TO_PHY(zero_page);
 }
 
-static paddr_t pf_read_file_page_direct(file *f, unsigned offset)
+static paddr_t pf_read_file_page_direct(file *f, uint64_t offset)
 {
 	unsigned page_idx;
 	paddr_t phy;
@@ -47,8 +47,8 @@ static paddr_t pf_read_file_page_direct(file *f, unsigned offset)
 		phymm_reclaim_user_cache(32);
 		page_idx = phymm_alloc_user();
 		if (page_idx == PHYMM_INVALID) {
-			klog("pagefault: phymm_alloc_user failed reading file page offset=%x\n",
-			     offset);
+			klog("pagefault: phymm_alloc_user failed reading file page offset=%llx\n",
+			     (unsigned long long)offset);
 			return 0;
 		}
 	}
@@ -56,8 +56,8 @@ static paddr_t pf_read_file_page_direct(file *f, unsigned offset)
 	phy = page_idx * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(page_idx);
-		klog("pagefault: mm_kmap_phys failed reading file page phy=%x offset=%x\n",
-		     phy, offset);
+		klog("pagefault: mm_kmap_phys failed reading file page phy=%llx offset=%llx\n",
+		     (unsigned long long)phy, (unsigned long long)offset);
 		return 0;
 	}
 
@@ -87,7 +87,7 @@ typedef struct _pf_file_page_result {
 	int needs_shared_registration;
 } pf_file_page_result;
 
-static pf_file_page_result pf_get_file_page(file *f, int offset, int flag)
+static pf_file_page_result pf_get_file_page(file *f, uint64_t offset, int flag)
 {
 	pf_file_page_result result = { 0 };
 	int shared = (flag & MAP_SHARED) != 0;
@@ -160,7 +160,7 @@ extern phymm_page *phymm_pages;
  * start from the cached file page, and the semantic split happens on write.
  */
 static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
-				      file *f, int offset, int prot, int flag,
+				      file *f, uint64_t offset, int prot, int flag,
 				      int write)
 {
 	pf_file_page_result page;
@@ -170,7 +170,7 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	page_fault_file++;
 
 	if (f->f_fop && f->f_fop->map_page) {
-		paddr_t phy = f->f_fop->map_page(f, (unsigned)offset);
+		paddr_t phy = f->f_fop->map_page(f, offset);
 		unsigned pte = PAGE_ENTRY_USER_CODE;
 		if (!phy)
 			goto FAIL;
@@ -189,8 +189,14 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	 * expects stores to hit the BAR immediately.
 	 */
 	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS) {
+		/* VMA offsets retain the complete physical address. */
 		paddr_t phy = (paddr_t)offset & PAGE_SIZE_MASK;
-		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_CD;
+		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_DIRECT_PHYS;
+		pfn_t page = phy / PAGE_SIZE;
+		/* RAM aliases must share the permanent mirror's WB cache type. */
+		if (page < phymm_begin || page >= phymm_end ||
+		    phymm_pages[page].ref_count == PHYMM_RESERVED)
+			pte |= PAGE_ENTRY_CD;
 
 		if (prot & PROT_WRITE)
 			pte |= PAGE_ENTRY_WRITABLE;
@@ -251,7 +257,7 @@ FAIL:
  *   triggers COW.
  */
 static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
-				    int offset)
+				    uint64_t offset)
 {
 	int prot = region->prot;
 	int flag = region->flag;
@@ -278,16 +284,16 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 			phymm_reclaim_user_cache(32);
 			page_idx = phymm_alloc_user();
 			if (page_idx == PHYMM_INVALID) {
-				klog("pagefault: phymm_alloc_user failed anon shared addr=%x offset=%x\n",
-				     address, offset);
+				klog("pagefault: phymm_alloc_user failed anon shared addr=%lx offset=%llx\n",
+				     (unsigned long)address, (unsigned long long)offset);
 				goto DONE;
 			}
 		}
 		phy = page_idx * PAGE_SIZE;
 		if (mm_map_page(address, phy, PAGE_ENTRY_USER_DATA) != 1) {
 			phymm_free_user(page_idx);
-			klog("pagefault: mm_map_page failed anon shared addr=%x phy=%x\n",
-			     address, phy);
+			klog("pagefault: mm_map_page failed anon shared addr=%lx phy=%llx\n",
+			     (unsigned long)address, (unsigned long long)phy);
 			goto DONE;
 		}
 		memset(address, 0, PAGE_SIZE);
@@ -347,7 +353,9 @@ static vm_region *pf_find_vma(task_struct *task, vaddr_t address)
 	if (!pf_vma_is_stack(task, region))
 		return NULL;
 
-	if (address < USER_ZONE_END || address >= task->user->vm->start_stack)
+	if (address <
+		    task->user->vm->task_size - USER_STACK_PAGES * PAGE_SIZE ||
+	    address >= task->user->vm->start_stack)
 		return NULL;
 
 	{
@@ -390,11 +398,11 @@ static int pf_page_already_present(vaddr_t address)
 /*
  * Handle page fault which has no physical page.
  */
-static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address,
-				  int write)
+static int pf_handle_page_invalid_raw(task_struct *task, vaddr_t fault_address,
+				      int write)
 {
 	vm_region *region;
-	int this_offset;
+	uint64_t this_offset;
 
 	region = pf_lock_region(vm_find_map_cached(task->user, fault_address),
 				fault_address);
@@ -447,6 +455,22 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address,
  * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
  * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
  */
+static int pf_handle_page_invalid(task_struct *task, vaddr_t address, int write)
+{
+	int handled = pf_handle_page_invalid_raw(task, address, write);
+	if (handled && task->user->abi == MOS_ABI_AMD64) {
+		vm_region *region = vm_find_map_cached(task->user, address);
+		if (region) {
+			unsigned flags = mm_get_map_flag(address);
+			flags = region->prot & PROT_EXEC ?
+					flags & ~PAGE_ENTRY_NO_EXEC :
+					flags | PAGE_ENTRY_NO_EXEC;
+			mm_set_map_flag(address, flags);
+		}
+	}
+	return handled;
+}
+
 static int wp_page_copy(vaddr_t fault_address)
 {
 	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
@@ -636,11 +660,12 @@ NOT_HANDLED:
 
 	if ((vaddr_t)(uintptr_t)frame->eip < KERNEL_OFFSET ||
 	    (fault_address < KERNEL_OFFSET && fault_address > 0x1000)) {
-		klog("segfault: %s: error code %x, address %x, eip %x\n",
+		klog("segfault: %s: error code %x, address %lx, eip %lx\n",
 		     cur->user ? cur->user->command ? cur->user->command :
 						      "[none]" :
 				 "[none]",
-		     frame->error_code, fault_address, frame->eip);
+		     (unsigned)frame->error_code, (unsigned long)fault_address,
+		     (unsigned long)(uintptr_t)frame->eip);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);
@@ -649,10 +674,11 @@ NOT_HANDLED:
 		goto Done;
 	}
 
-	klog("segfault: %s: error code %x, address %x, eip %x\n",
+	klog("segfault: %s: error code %x, address %lx, eip %lx\n",
 	     cur->user ? cur->user->command ? cur->user->command : "[none]" :
 			 "[none]",
-	     frame->error_code, fault_address, frame->eip);
+	     (unsigned)frame->error_code, (unsigned long)fault_address,
+	     (unsigned long)(uintptr_t)frame->eip);
 
 	DIE();
 

@@ -27,22 +27,6 @@
 
 static int ps_init_fds(task_struct *task);
 
-/* Matches ps_context_switch: flags, edi, esi, ebx, ebp, return address. */
-static void init_switch_frame(task_struct *task)
-{
-	unsigned *sp = (unsigned *)task->tss.esp;
-	*--sp = task->tss.eip;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 2; /* IF remains clear until the new task entry is ready */
-	task->switch_sp = (uintptr_t)sp;
-	task->on_cpu = 0;
-	task->terminate_requested = 0;
-	task->sched_level = 1;
-}
-
 extern void ret_from_fork();
 extern short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
 
@@ -78,12 +62,12 @@ static void ps_run()
 unsigned _ps_create(process_fn fn, const char *name, void *param,
 		    ps_priority priority, ps_type type)
 {
-	unsigned int stack_bottom;
+	uintptr_t stack_bottom;
 	task_struct *task = (task_struct *)vm_alloc(KERNEL_TASK_SIZE);
 	int irq;
 
 	if (priority >= PS_PRIORITY_MAX) {
-		vm_free(task, 1);
+		vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
 		return 0xffffffff;
 	}
 
@@ -96,7 +80,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->user = ps_alloc_user_env();
 	if (!task->user) {
 		ps_put_fds(task);
-		vm_free(task, 1);
+		vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
 		return -ENOMEM;
 	}
 	task->user->vm = vm_create();
@@ -132,7 +116,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->io_bitmap = NULL;
 
 	task->umask = 0;
-	stack_bottom = (unsigned int)task + PAGE_SIZE;
+	stack_bottom = (uintptr_t)task + KERNEL_TASK_BYTES;
 	task->address_space = arch_mm_current_address_space();
 	list_init(&task->ps_list);
 	list_init(&task->dying_queue);
@@ -160,7 +144,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	task->tss.esp = stack_bottom;
 	task->tss.esp0 = stack_bottom;
 	task->tss.eip = ps_run;
-	init_switch_frame(task);
+	arch_task_init_switch_frame(task);
 	smp_fpu_new(task);
 
 	task->stats = zalloc(sizeof(task_stats_t));
@@ -183,12 +167,12 @@ static task_files *ps_alloc_files(void)
 
 	if (!files)
 		return NULL;
-	files->fds = vm_alloc(1);
+	files->fds = vm_alloc(FD_TABLE_PAGES);
 	if (!files->fds) {
 		kfree(files);
 		return NULL;
 	}
-	memset(files->fds, 0, PAGE_SIZE);
+	memset(files->fds, 0, MAX_FD * sizeof(file *));
 	files->refs = 1;
 	mutex_init(&files->lock);
 	return files;
@@ -256,7 +240,7 @@ static void ps_release_files(task_files *files)
 		if (files->fds[i])
 			fs_put_file(files->fds[i]);
 	}
-	vm_free(files->fds, 1);
+	vm_free((vaddr_t)files->fds, FD_TABLE_PAGES);
 	kfree(files);
 }
 
@@ -299,130 +283,21 @@ int do_vfork(unsigned long child_stack, int share_files);
  * MAP_SHARED writable pages (which it write-protected unconditionally).
  */
 
-/*
- * copy_one_pte — share a single PTE from parent to child.
- *
- * For MAP_PRIVATE writable pages the parent's PTE is cleared of WRITABLE
- * so that the first write by either process triggers a #PF → wp_page_copy().
- * The child inherits the (now read-only) PTE and the page ref_count is bumped.
- */
-static void copy_one_pte(pte_t *src_pte, pte_t *dst_pte, vm_region *vma,
-			 short *pt_count)
-{
-	pte_t pte = *src_pte;
-	paddr_t phy = pte & PAGE_SIZE_MASK;
-	unsigned page_index;
-
-	if (!(pte & PAGE_ENTRY_PRESENT))
-		return;
-
-	/*
-	 * /dev/mem mappings may point at MMIO or reserved physical ranges such
-	 * as the linear framebuffer BAR at 0xFD000000.  Those pages are not
-	 * owned by phymm, so fork must clone the PTE without taking a RAM page
-	 * reference or forcing COW semantics.
-	 */
-	if (vma->vm_flags & VM_REGION_F_DIRECT_PHYS) {
-		if ((*dst_pte & PAGE_SIZE_MASK) == 0)
-			(*pt_count)++;
-		*dst_pte = pte;
-		return;
-	}
-
-	page_index = phy / PAGE_SIZE;
-
-	/*
-	 * Be defensive for any PTE that points outside allocator-managed RAM or
-	 * into a reserved hole.  Those mappings behave like MMIO/firmware pages:
-	 * clone the PTE, but never feed the address into phymm reference counts.
-	 */
-	if (page_index < phymm_begin || page_index >= phymm_end ||
-	    phymm_pages[page_index].ref_count == PHYMM_RESERVED) {
-		if ((*dst_pte & PAGE_SIZE_MASK) == 0)
-			(*pt_count)++;
-		*dst_pte = pte;
-		return;
-	}
-
-	if (!(vma->flag & MAP_SHARED) && (pte & PAGE_ENTRY_WRITABLE)) {
-		pte &= ~PAGE_ENTRY_WRITABLE;
-		*src_pte = pte; /* write-protect parent */
-	}
-
-	if ((*dst_pte & PAGE_SIZE_MASK) == 0)
-		(*pt_count)++;
-
-	*dst_pte = pte;
-	phymm_reference_page(page_index);
-}
-
-/*
- * copy_pte_range — copy all present PTEs within [vma->begin, vma->end)
- * that reside in the page table at src_pd[pde_idx].
- */
-static void copy_pte_range(pte_t *src_pd, pte_t *dst_pd, vm_region *vma,
-			   unsigned pde_idx)
-{
-	pte_t *src_pt;
-	pte_t *dst_pt;
-	vaddr_t pde_base = (vaddr_t)pde_idx << 22;
-	vaddr_t pde_end = pde_base + (1u << 22);
-	unsigned pt_start =
-		(vma->begin > pde_base) ? ADDR_TO_PET_OFFSET(vma->begin) : 0;
-	unsigned pt_end =
-		(vma->end >= pde_end) ?
-			1024 :
-			ADDR_TO_PET_OFFSET((vma->end - PAGE_SIZE)) + 1;
-	pte_t pde_flag = src_pd[pde_idx] & ~PAGE_SIZE_MASK;
-	int cache_idx;
-	unsigned i;
-
-	src_pt = (pte_t *)PHY_TO_VIRT(src_pd[pde_idx] & PAGE_SIZE_MASK);
-
-	if (!(dst_pd[pde_idx] & PAGE_SIZE_MASK))
-		dst_pd[pde_idx] = VIRT_TO_PHY(mm_alloc_page_table()) | pde_flag;
-
-	dst_pt = (pte_t *)PHY_TO_VIRT(dst_pd[pde_idx] & PAGE_SIZE_MASK);
-	cache_idx = (PAGE_TABLE_CACHE_END - (uintptr_t)dst_pt) / PAGE_SIZE - 1;
-
-	for (i = pt_start; i < pt_end; i++) {
-		if (!(src_pt[i] & PAGE_ENTRY_PRESENT))
-			continue;
-		copy_one_pte(&src_pt[i], &dst_pt[i], vma,
-			     &pgc_entry_count[cache_idx]);
-	}
-}
-
-/*
- * copy_vma_pages — copy all PTEs for one VMA.
- *
- * Iterates only the PDE indices covered by the VMA; entries that are not
- * present (pages never faulted in) are skipped without descending.
- */
-static void copy_vma_pages(pte_t *src_pd, pte_t *dst_pd, vm_region *vma)
-{
-	unsigned pde_first = ADDR_TO_PGT_OFFSET(vma->begin);
-	unsigned pde_last = ADDR_TO_PGT_OFFSET((vma->end - PAGE_SIZE));
-	unsigned pde_idx;
-
-	for (pde_idx = pde_first; pde_idx <= pde_last; pde_idx++) {
-		if (!(src_pd[pde_idx] & PAGE_SIZE_MASK))
-			continue;
-		copy_pte_range(src_pd, dst_pd, vma, pde_idx);
-	}
-}
-
 struct copy_page_range_ctx {
 	pte_t *src_pd;
 	pte_t *dst_pd;
 	vm_struct_t child_vm;
+	int error;
 };
 
 static void copy_vma_callback(vm_region *vma, void *data)
 {
 	struct copy_page_range_ctx *ctx = data;
+	if (ctx->error)
+		return;
 	vm_add_map_clone(ctx->child_vm, vma);
-	copy_vma_pages(ctx->src_pd, ctx->dst_pd, vma);
+	if (!arch_mm_clone_region(ctx->src_pd, ctx->dst_pd, vma))
+		ctx->error = -ENOMEM;
 }
 
 /*
@@ -432,7 +307,7 @@ static void copy_vma_callback(vm_region *vma, void *data)
  * and copied with COW semantics.  A full TLB flush is issued at the end
  * because parent PTEs that were writable may now be read-only in the TLB.
  */
-void copy_page_range(task_struct *parent, task_struct *child)
+int copy_page_range(task_struct *parent, task_struct *child)
 {
 	struct copy_page_range_ctx ctx = {
 		.src_pd = (pte_t *)mm_get_pagedir(),
@@ -442,7 +317,8 @@ void copy_page_range(task_struct *parent, task_struct *child)
 
 	mm_init_process_page_dir((vaddr_t)ctx.dst_pd);
 	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
-	arch_mm_flush_local();
+	smp_tlb_flush_user(parent->user->vm->page_dir);
+	return ctx.error;
 }
 
 /*
@@ -455,14 +331,15 @@ task_struct *fork_alloc_child(task_struct *cur)
 {
 	task_struct *task = vm_alloc(KERNEL_TASK_SIZE);
 	intr_frame *cur_intr_frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+		(intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+			       sizeof(intr_frame));
 	intr_frame *task_intr_frame;
 
 	if (!task)
 		return NULL;
 
-	task_intr_frame =
-		(intr_frame *)((char *)task + PAGE_SIZE - sizeof(intr_frame));
+	task_intr_frame = (intr_frame *)((char *)task + KERNEL_TASK_BYTES -
+					 sizeof(intr_frame));
 
 	smp_fpu_save(cur);
 	*task = *cur;
@@ -484,9 +361,9 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->tss.eax = 0;
 	task->tss.ebp = (char *)task_intr_frame;
 	task->tss.esp = (char *)task_intr_frame;
-	task->tss.esp0 = (uintptr_t)task + PAGE_SIZE;
+	task->tss.esp0 = (uintptr_t)task + KERNEL_TASK_BYTES;
 	task->tss.eip = (uintptr_t)ret_from_fork;
-	init_switch_frame(task);
+	arch_task_init_switch_frame(task);
 	task_intr_frame->eax = 0;
 
 	task->ppid = cur->psid;
@@ -511,6 +388,9 @@ task_struct *fork_alloc_child(task_struct *cur)
 void fork_dup_user_env(task_struct *cur, task_struct *task)
 {
 	smp_fpu_copy(cur, task);
+	task->user->abi = cur->user->abi;
+	task->user->vm->task_size = cur->user->vm->task_size;
+	task->user->vm->mmap_base = cur->user->vm->mmap_base;
 	task->user->vm->start_brk = cur->user->vm->start_brk;
 	task->user->vm->brk = cur->user->vm->brk;
 	task->user->vm->start_stack = cur->user->vm->start_stack;
@@ -596,6 +476,24 @@ void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag)
 	sb_get(task->root);
 }
 
+/* Release a fully prepared child that has not entered the task queues. */
+void fork_abort_child(task_struct *task)
+{
+	vm_put(task->user->vm);
+	vm_free(task->user->command, 1);
+	vm_free(task->user->environment, 1);
+	name_put(task->user->cwd);
+	name_put(task->user->root_path);
+	ps_put_fds(task);
+	sb_put(task->root);
+	kfree(task->io_bitmap);
+	kfree(task->signal);
+	kfree(task->stats);
+	kfree(task->user);
+	ps_id_free(task->psid);
+	vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
+}
+
 /* Enqueue the child: increment parent's child count and add to ready+mgr. */
 void fork_enqueue(task_struct *cur, task_struct *task)
 {
@@ -636,7 +534,8 @@ static int do_fork(void)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+		(intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+			       sizeof(intr_frame));
 	task_struct *task = fork_alloc_child(cur);
 
 	if (!task)
@@ -658,7 +557,10 @@ static int do_fork(void)
 
 	if (ps_dup_fds(cur, task, 0) != 0)
 		return -ENOMEM;
-	copy_page_range(cur, task);
+	if (copy_page_range(cur, task)) {
+		fork_abort_child(task);
+		return -ENOMEM;
+	}
 	ps_enqueue_child_first(cur, task);
 	cur_intr_frame->eax = task->psid;
 	task_sched();
@@ -676,7 +578,8 @@ int do_vfork(unsigned long child_stack, int share_files)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+		(intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+			       sizeof(intr_frame));
 	task_struct *task = fork_alloc_child(cur);
 
 	if (!task)
@@ -697,7 +600,7 @@ int do_vfork(unsigned long child_stack, int share_files)
 	task->exit_signal = SIGCHLD;
 	if (child_stack) {
 		intr_frame *task_intr_frame =
-			(intr_frame *)((char *)task + PAGE_SIZE -
+			(intr_frame *)((char *)task + KERNEL_TASK_BYTES -
 				       sizeof(intr_frame));
 		task_intr_frame->esp = (void *)child_stack;
 	}

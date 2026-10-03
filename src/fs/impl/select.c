@@ -159,7 +159,7 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 		if (timeout->tv_sec == 0 && timeout->tv_usec == 0) {
 			just_test = 1;
 		} else {
-			deadline = time_now_ms() + timeout->tv_sec * 1000 +
+			deadline = time_now_ms() + (uint64_t)timeout->tv_sec * 1000 +
 				   timeout->tv_usec / 1000;
 		}
 	} else {
@@ -168,8 +168,16 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 
 	ret = poll_wait_loop(&select_fops, &ctx, just_test, infinite, deadline);
 
-	if (sigmask)
-		cur->signal->sig_mask = saved_mask;
+	if (sigmask) {
+		if (ret == -EINTR) {
+			/* Signal delivery uses the wait mask. The signal frame records
+			 * the original mask for restoration by sigreturn. */
+			cur->signal->saved_sigmask = saved_mask;
+			cur->signal->restore_sigmask = 1;
+		} else {
+			cur->signal->sig_mask = saved_mask;
+		}
+	}
 
 	if (ctx.reads)
 		free(ctx.reads);

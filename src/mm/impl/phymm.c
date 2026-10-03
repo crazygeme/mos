@@ -22,6 +22,12 @@ phymm_page *phymm_pages;
  * removal during coalescing). */
 static unsigned buddy_lists[MAX_BUDDY_ORDER + 1];
 static spinlock_t buddy_lock;
+static unsigned buddy_free_pages;
+static unsigned managed_pages;
+extern unsigned fs_page_cache_pages;
+#if HDD_CACHE_OPEN
+extern unsigned hdd_cache_size;
+#endif
 
 /*
  * Internal helpers
@@ -42,6 +48,7 @@ static unsigned ceil_log2(unsigned n)
 static void buddy_push(unsigned idx, unsigned order)
 {
 	unsigned old_head = buddy_lists[order];
+	buddy_free_pages += 1u << order;
 
 	phymm_pages[idx].order = (unsigned char)order;
 	phymm_pages[idx].prev_free = PHYMM_INVALID;
@@ -57,6 +64,7 @@ static void buddy_remove(unsigned idx)
 	unsigned order = phymm_pages[idx].order;
 	unsigned prev = phymm_pages[idx].prev_free;
 	unsigned next = phymm_pages[idx].next_free;
+	buddy_free_pages -= 1u << order;
 
 	if (prev == PHYMM_INVALID)
 		buddy_lists[order] = next;
@@ -283,7 +291,10 @@ unsigned phymm_alloc_user(void)
 	int irq;
 
 	spinlock_lock(&buddy_lock, &irq);
-	idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
+	/* Preserve addressable low RAM for kernel and legacy DMA allocations. */
+	idx = buddy_alloc_in_range(0, 0x100000U, phymm_end);
+	if (idx == PHYMM_INVALID)
+		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
 	if (idx == PHYMM_INVALID)
 		idx = buddy_alloc_high(0);
 	spinlock_unlock(&buddy_lock, irq);
@@ -296,7 +307,12 @@ unsigned phymm_alloc_cache(void)
 	int irq;
 
 	spinlock_lock(&buddy_lock, &irq);
-	idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
+	idx = buddy_alloc_in_range(0, 0x100000U, phymm_end);
+	if (idx == PHYMM_INVALID)
+		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
+	/* On low-RAM-only machines, reclaim cannot create any high pages. */
+	if (idx == PHYMM_INVALID && phymm_end <= phymm_kernel_page_limit())
+		idx = buddy_alloc_high(0);
 	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
@@ -333,9 +349,72 @@ void phymm_free_user(unsigned page_index)
 	spinlock_unlock(&buddy_lock, irq);
 }
 
+void phymm_cache_budget(unsigned total, unsigned free, unsigned cached,
+			phymm_cache_policy *policy)
+{
+	unsigned budget = total / 4;
+	unsigned available = free + cached;
+	unsigned reserve = total / 8;
+
+	if (budget > (0x100000000ULL / PAGE_SIZE))
+		budget = 0x100000000ULL / PAGE_SIZE;
+	if (reserve < (16 * 1024 * 1024 / PAGE_SIZE))
+		reserve = 16 * 1024 * 1024 / PAGE_SIZE;
+	if (reserve > (256 * 1024 * 1024 / PAGE_SIZE))
+		reserve = 256 * 1024 * 1024 / PAGE_SIZE;
+	if (reserve > total / 2)
+		reserve = total / 2;
+	available = available > reserve ? available - reserve : 0;
+	if (budget > available)
+		budget = available;
+	/* Keep one line per cache so filesystem I/O can still make progress. */
+	if (budget < 2)
+		budget = 2;
+	policy->block_pages = budget / 4;
+	if (!policy->block_pages)
+		policy->block_pages = 1;
+#if !MOS_HAS_NATIVE_USER
+	/* i386 block lines retain aliases in the limited kmap window. */
+	if (policy->block_pages > HDD_CACHE_MAX_PAGES)
+		policy->block_pages = HDD_CACHE_MAX_PAGES;
+#endif
+	policy->file_pages = budget - policy->block_pages;
+	policy->reserve_pages = reserve;
+}
+
+void phymm_get_cache_policy(phymm_cache_policy *policy)
+{
+	unsigned total, free, cached = fs_page_cache_pages;
+	int irq;
+
+#if HDD_CACHE_OPEN
+	cached += hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
+#endif
+	spinlock_lock(&buddy_lock, &irq);
+	total = managed_pages;
+	free = buddy_free_pages;
+	spinlock_unlock(&buddy_lock, irq);
+	phymm_cache_budget(total, free, cached, policy);
+}
+
 unsigned phymm_reclaim_user_cache(unsigned target_pages)
 {
-	return fs_page_cache_reclaim(target_pages);
+	unsigned freed = fs_page_cache_reclaim(target_pages);
+	phymm_cache_policy policy;
+	unsigned free;
+	int irq;
+
+	if (!target_pages)
+		return 0;
+	phymm_get_cache_policy(&policy);
+	spinlock_lock(&buddy_lock, &irq);
+	free = buddy_free_pages;
+	spinlock_unlock(&buddy_lock, irq);
+	/* File pages may remain pinned by mappings; block lines can help too. */
+	if (freed < target_pages || free < policy.reserve_pages)
+		freed += hdd_cache_reclaim(freed < target_pages ?
+					 target_pages - freed : target_pages);
+	return freed;
 }
 
 unsigned phymm_reclaim_kernel_cache(unsigned target_pages)
@@ -461,7 +540,7 @@ unsigned phymm_get_mgmt_pages(unsigned highest_page)
 void phymm_setup_mgmt_pages(unsigned start_page)
 {
 	unsigned i;
-	unsigned addr;
+	vaddr_t addr;
 
 	for (i = (start_page * PAGE_SIZE); i < (phymm_begin * PAGE_SIZE);
 	     i += PAGE_SIZE) {
@@ -516,10 +595,11 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 {
 	unsigned i;
 	memory_map_t *map;
-	unsigned vmap_addr;
+	vaddr_t vmap_addr;
 
 	/* 1. Initialise buddy system */
 	spinlock_init(&buddy_lock);
+	buddy_free_pages = managed_pages = 0;
 	for (i = 0; i <= MAX_BUDDY_ORDER; i++)
 		buddy_lists[i] = PHYMM_INVALID;
 
@@ -542,7 +622,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 	map = (memory_map_t *)vmap_addr;
 
 	/* 3. Walk all type-1 (usable RAM) entries */
-	while ((unsigned)map < vmap_addr + mmap_len) {
+	while ((uintptr_t)map < vmap_addr + mmap_len) {
 		unsigned long long base, top;
 		unsigned page_start, page_end;
 
@@ -571,6 +651,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 
 			/* Clear reserved flag for usable pages */
 			for (i = page_start; i < page_end; i++) {
+				managed_pages++;
 				phymm_pages[i].ref_count = 0;
 				phymm_pages[i].order = PHYMM_ORDER_NONE;
 			}
@@ -579,7 +660,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 			buddy_add_free_range(page_start, page_end);
 		}
 next:
-		map = (memory_map_t *)((unsigned)map + map->size +
+		map = (memory_map_t *)((uintptr_t)map + map->size +
 				       sizeof(unsigned int));
 	}
 }

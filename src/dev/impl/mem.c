@@ -14,16 +14,16 @@
 /* The x86 physical address space includes PCI MMIO and firmware ROM. */
 static uint64_t mem_dev_limit(void)
 {
-	return 1ULL << 32;
+	return PHYMM_ADDRESS_LIMIT;
 }
 
-static int mem_copy_from_phys(void *dst, unsigned phys, size_t size)
+static int mem_copy_from_phys(void *dst, paddr_t phys, size_t size)
 {
 	size_t done = 0;
 
 	while (done < size) {
-		unsigned cur = phys + (unsigned)done;
-		unsigned base = cur & PAGE_SIZE_MASK;
+		paddr_t cur = phys + done;
+		paddr_t base = cur & PAGE_SIZE_MASK;
 		unsigned page_off = cur & ~PAGE_SIZE_MASK;
 		size_t chunk = PAGE_SIZE - page_off;
 
@@ -40,13 +40,13 @@ static int mem_copy_from_phys(void *dst, unsigned phys, size_t size)
 	return 0;
 }
 
-static int mem_copy_to_phys(unsigned phys, const void *src, size_t size)
+static int mem_copy_to_phys(paddr_t phys, const void *src, size_t size)
 {
 	size_t done = 0;
 
 	while (done < size) {
-		unsigned cur = phys + (unsigned)done;
-		unsigned base = cur & PAGE_SIZE_MASK;
+		paddr_t cur = phys + done;
+		paddr_t base = cur & PAGE_SIZE_MASK;
 		unsigned page_off = cur & ~PAGE_SIZE_MASK;
 		size_t chunk = PAGE_SIZE - page_off;
 
@@ -78,7 +78,7 @@ static ssize_t mem_read(file *fp, void *buf, size_t size, loff_t *pos)
 	avail = limit - (uint64_t)*pos;
 	if (size > avail)
 		size = (size_t)avail;
-	if (mem_copy_from_phys(buf, (unsigned)*pos, size) != 0)
+	if (mem_copy_from_phys(buf, (paddr_t)*pos, size) != 0)
 		return -EIO;
 
 	*pos += (loff_t)size;
@@ -100,7 +100,7 @@ static ssize_t mem_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	avail = limit - (uint64_t)*pos;
 	if (size > avail)
 		size = (size_t)avail;
-	if (mem_copy_to_phys((unsigned)*pos, buf, size) != 0)
+	if (mem_copy_to_phys((paddr_t)*pos, buf, size) != 0)
 		return -EIO;
 
 	*pos += (loff_t)size;
@@ -163,7 +163,7 @@ static int mem_getattr(file *fp, struct stat *s)
 	return 0;
 }
 
-static int mem_read_page(file *fp, unsigned offset, void *buf)
+static int mem_read_page(file *fp, uint64_t offset, void *buf)
 {
 	(void)fp;
 	memset(buf, 0, PAGE_SIZE);
@@ -175,7 +175,7 @@ static int mem_read_page(file *fp, unsigned offset, void *buf)
 	return mem_copy_from_phys(buf, offset, PAGE_SIZE);
 }
 
-static int mem_write_page(file *fp, unsigned offset, const void *buf)
+static int mem_write_page(file *fp, uint64_t offset, const void *buf)
 {
 	(void)fp;
 	if (offset >= mem_dev_limit())

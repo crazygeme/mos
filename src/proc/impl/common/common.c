@@ -43,7 +43,7 @@ void proc_buf_printf(proc_buf_t *pb, const char *fmt, ...)
 	int n;
 
 	va_start(ap, fmt);
-	ap_copy = ap;
+	va_copy(ap_copy, ap);
 	n = vsprintf(NULL, fmt, ap);
 	va_end(ap);
 

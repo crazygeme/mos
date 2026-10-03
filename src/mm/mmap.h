@@ -22,7 +22,7 @@ typedef struct _vm_region {
 	vm_fault_lock *
 		fault_lock; /* Shared across fork/splits for fault serialization. */
 	file *fp;
-	int offset;
+	uint64_t offset;
 	unsigned anon_id; /* non-zero for MAP_SHARED|MAP_ANONYMOUS; shared across fork */
 } vm_region;
 
@@ -87,7 +87,7 @@ void vm_destroy(vm_struct_t vm);
  * @param fd
  */
 void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot, int flag,
-		file *fp, int offset, unsigned anon_id);
+		file *fp, uint64_t offset, unsigned anon_id);
 void vm_add_map_clone(vm_struct_t vm, vm_region *src);
 
 /* Extend the mapping that starts at @begin from @old_end to @new_end. */
@@ -144,7 +144,7 @@ void vm_region_unlock_fault(vm_region *region);
  *
  * @return unsigned
  */
-vaddr_t vm_disc_map(vm_struct_t vm, int size);
+vaddr_t vm_disc_map(vm_struct_t vm, size_t size);
 
 /**
  * dup vm maps from cur into new

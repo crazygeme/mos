@@ -53,7 +53,7 @@ static INLINE int vm_region_compare(const void *region1, const void *region2)
 static void vm_flush_dirty_region(vm_region *region, vaddr_t begin,
 				  vaddr_t end);
 static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
-				 int prot, int flag, file *fp, int offset,
+				 int prot, int flag, file *fp, uint64_t offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock);
 
 static unsigned vm_region_flags_for_file(file *fp)
@@ -236,7 +236,7 @@ vm_struct_t vm_create()
 	mm->start_brk = mm->brk = 0;
 	mm->start_stack = 0;
 	mm->mmap_base = TASK_UNMAPPED_BASE;
-	mm->task_size = KERNEL_OFFSET;
+	mm->task_size = MOS_COMPAT_TASK_SIZE;
 	mm->users = 1;
 	mm->count = 1;
 	mm->vma_generation = 1;
@@ -293,7 +293,7 @@ static INLINE vm_region *vm_find_region(mm_struct *mm, vaddr_t addr)
  * until no conflicts remain, then inserts the new region.
  */
 static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
-				 int prot, int flag, file *fp, int offset,
+				 int prot, int flag, file *fp, uint64_t offset,
 				 unsigned anon_id, vm_fault_lock *fault_lock)
 {
 	mm_struct *mm = vm;
@@ -310,17 +310,17 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 	probe.begin = begin;
 	probe.end = end;
 	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
-		unsigned unmap_begin;
-		unsigned unmap_end;
+		vaddr_t unmap_begin;
+		vaddr_t unmap_end;
 		vaddr_t vir;
 
 		/* Snapshot all origin data before vm_del_map frees the structs. */
-		unsigned o_begin = oregion->begin;
-		unsigned o_end = oregion->end;
+		vaddr_t o_begin = oregion->begin;
+		vaddr_t o_end = oregion->end;
 		int o_prot = oregion->prot;
 		int o_flag = oregion->flag;
 		file *o_fp = oregion->fp;
-		int o_offset = oregion->offset;
+		uint64_t o_offset = oregion->offset;
 		unsigned o_anon_id = oregion->anon_id;
 		vm_fault_lock *o_fault_lock = oregion->fault_lock;
 
@@ -353,7 +353,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 		if (o_end > end)
 			vm_add_map_with_lock(vm, end, o_end, o_prot, o_flag,
 					     o_fp,
-					     o_offset + (int)(end - o_begin),
+					     o_offset + (uint64_t)(end - o_begin),
 					     o_anon_id, o_fault_lock);
 
 		if (o_fp)
@@ -390,7 +390,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 }
 
 void vm_add_map(vm_struct_t vm, vaddr_t begin, vaddr_t end, int prot, int flag,
-		file *fp, int offset, unsigned anon_id)
+		file *fp, uint64_t offset, unsigned anon_id)
 {
 	vm_add_map_with_lock(vm, begin, end, prot, flag, fp, offset, anon_id,
 			     NULL);
@@ -540,7 +540,7 @@ vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr)
 		return NULL;
 
 	mm_struct *mm = user->vm;
-	unsigned page = addr & PAGE_SIZE_MASK;
+	vaddr_t page = addr & PAGE_SIZE_MASK;
 	/* Validate generation before touching the cached raw pointer. */
 	if (user->mmap_cache_vm == mm &&
 	    user->mmap_cache_generation == mm->vma_generation &&
@@ -574,15 +574,15 @@ vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr)
  * stack set up by the process loader) are skipped over.  Returns 0 if no
  * suitable gap exists.
  */
-vaddr_t vm_disc_map(vm_struct_t vm, int size)
+vaddr_t vm_disc_map(vm_struct_t vm, size_t size)
 {
 	mm_struct *mm = vm;
 	vm_region *region = vm_tree_first(mm);
-	unsigned candidate = TASK_UNMAPPED_BASE;
+	vaddr_t candidate = mm->mmap_base;
 
 	while (region) {
 		/* Gap before this region is large enough — use it. */
-		if (candidate + (unsigned)size <= region->begin)
+		if (candidate + size <= region->begin)
 			return candidate;
 
 		/* Advance candidate past this region if it overlaps. */
@@ -593,7 +593,7 @@ vaddr_t vm_disc_map(vm_struct_t vm, int size)
 	}
 
 	/* Check for room after the last region. */
-	if (candidate + (unsigned)size <= KERNEL_OFFSET)
+	if (candidate + size <= mm->task_size - USER_STACK_PAGES * PAGE_SIZE)
 		return candidate;
 
 	return 0;
@@ -668,18 +668,18 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 	probe.end = end;
 
 	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
-		unsigned r_begin = oregion->begin;
-		unsigned r_end = oregion->end;
+		vaddr_t r_begin = oregion->begin;
+		vaddr_t r_end = oregion->end;
 		int r_prot = oregion->prot;
 		int r_flag = oregion->flag;
 		file *r_fp = oregion->fp;
-		int r_offset = oregion->offset;
+		uint64_t r_offset = oregion->offset;
 		unsigned r_anon_id = oregion->anon_id;
 		vm_fault_lock *r_fault_lock = oregion->fault_lock;
 
 		/* Intersection of the region with [begin, end) */
-		unsigned upd_begin = r_begin > begin ? r_begin : begin;
-		unsigned upd_end = r_end < end ? r_end : end;
+		vaddr_t upd_begin = r_begin > begin ? r_begin : begin;
+		vaddr_t upd_end = r_end < end ? r_end : end;
 
 		/* Temporarily hold references across descriptor removal. */
 		if (r_fp)
@@ -701,14 +701,14 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 		/* Re-insert updated portion [upd_begin, upd_end) with new prot. */
 		vm_add_map_with_lock(vm, upd_begin, upd_end, new_prot, r_flag,
 				     r_fp,
-				     r_offset + (int)(upd_begin - r_begin),
+				     r_offset + (uint64_t)(upd_begin - r_begin),
 				     r_anon_id, r_fault_lock);
 
 		/* Preserve right remnant [upd_end, r_end) at original prot. */
 		if (upd_end < r_end)
 			vm_add_map_with_lock(
 				vm, upd_end, r_end, r_prot, r_flag, r_fp,
-				r_offset + (int)(upd_end - r_begin), r_anon_id,
+				r_offset + (uint64_t)(upd_end - r_begin), r_anon_id,
 				r_fault_lock);
 
 		if (r_fp)
@@ -734,7 +734,7 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
  * is identifiable across fork() for shared-page lookup.
  */
 vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
-		       unsigned int flags, file *fp, unsigned int offset)
+		       unsigned int flags, file *fp, uint64_t offset)
 {
 	vaddr_t addr = _addr & PAGE_SIZE_MASK;
 	vaddr_t last_addr = (_addr + _len - 1) & PAGE_SIZE_MASK;
@@ -767,6 +767,8 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 			addr = vm_disc_map(cur->user->vm, size);
 	}
 
+	if (!addr || addr >= mm->task_size || size > mm->task_size - addr)
+		return 0;
 	/*
 	 * Assign a unique ID for anonymous MAP_SHARED regions so that all
 	 * processes sharing this mapping (e.g. after fork) can locate the
@@ -780,8 +782,8 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 	vm_invalidate_user_cache(cur->user);
 
 	if (TEST_LOG(TEST_LOG_INFO)) {
-		klog("mmap: file %s, addr %x, offset %x, prot %x, flags %x, len %x at addr %x\n",
-		     fp ? fp->f_name : "ANON", _addr, offset, prot, flags, _len,
+		klog("mmap: file %s, addr %x, offset %llx, prot %x, flags %x, len %x at addr %x\n",
+		     fp ? fp->f_name : "ANON", _addr, (unsigned long long)offset, prot, flags, _len,
 		     addr);
 	}
 
@@ -812,6 +814,10 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 			continue;
 		}
 
+		if (cur->user->abi == MOS_ABI_AMD64)
+			mmflag = prot & PROT_EXEC ?
+					 mmflag & ~PAGE_ENTRY_NO_EXEC :
+					 mmflag | PAGE_ENTRY_NO_EXEC;
 		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
@@ -832,12 +838,28 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
  * Resolves the file descriptor to an inode pointer (NULL for anonymous
  * mappings where fd == -1) and delegates to do_mmap_kernel().
  */
-int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
-	    unsigned int flags, int fd, unsigned int offset)
+intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
+		 unsigned int flags, int fd, uint64_t offset)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *node = NULL;
 
+	if (!_len || _len > cur->user->vm->task_size ||
+	    _addr >= cur->user->vm->task_size ||
+	    _len > cur->user->vm->task_size - _addr)
+		return -EINVAL;
+	if (fd != -1 && (offset > 0x7fffffffffffffffULL ||
+			_len > 0x7fffffffffffffffULL - offset))
+		return -EINVAL;
+#if MOS_HAS_NATIVE_USER
+	/* The legacy driver API uses a shared supervisor device window. */
+	if (_addr < 0x100000000ULL && _addr + _len > MOS_COMPAT_TASK_SIZE) {
+		if (flags & MAP_FIXED)
+			return -EINVAL;
+		/* A hint, including zero, does not fix the resulting range. */
+		_addr = 0;
+	}
+#endif
 	/*
 	 * This kernel historically treats fd == -1 as an anonymous mapping
 	 * even when callers omit MAP_ANONYMOUS (e.g. exec stack setup).
@@ -862,17 +884,22 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 		uint64_t end = (uint64_t)offset + _len;
 		if ((node->f_inode->i_phys_base & (PAGE_SIZE - 1)) ||
 		    end > node->f_inode->i_phys_size ||
-		    (uint64_t)node->f_inode->i_phys_base + end > 0x100000000ULL)
+		    (uint64_t)node->f_inode->i_phys_base + end > PHYMM_ADDRESS_LIMIT)
 			return -EINVAL;
 		if ((prot & PROT_WRITE) && node->f_mode == O_RDONLY)
 			return -EACCES;
 		offset += node->f_inode->i_phys_base;
 	}
+	if (node && vm_region_flags_for_file(node) & VM_REGION_F_DIRECT_PHYS) {
+		if (offset >= PHYMM_ADDRESS_LIMIT ||
+		    _len > PHYMM_ADDRESS_LIMIT - offset)
+			return -EINVAL;
+	}
 
 	if (node && node->f_fop && node->f_fop->mmap_file) {
 		file *backing = NULL;
-		int result = node->f_fop->mmap_file(node, &offset, _len, prot,
-						    flags, &backing);
+		intptr_t result = node->f_fop->mmap_file(node, &offset, _len,
+							 prot, flags, &backing);
 		if (result < 0)
 			return result;
 		result = do_mmap_kernel(_addr, _len, prot, flags, backing,
@@ -906,7 +933,7 @@ static void vm_flush_dirty_region(vm_region *region, vaddr_t begin, vaddr_t end)
 
 	for (vir = begin; vir < end; vir += PAGE_SIZE) {
 		unsigned page_index;
-		int file_offset;
+		uint64_t file_offset;
 
 		/* Skip pages that were never faulted in. */
 		if (mm_get_map_flag(vir) == 0)
@@ -919,7 +946,7 @@ static void vm_flush_dirty_region(vm_region *region, vaddr_t begin, vaddr_t end)
 		if (!phymm_is_dirty(page_index))
 			continue;
 
-		file_offset = region->offset + (int)(vir - region->begin);
+		file_offset = region->offset + (uint64_t)(vir - region->begin);
 
 		if (region->fp->f_fop && region->fp->f_fop->write_page) {
 			if (region->fp->f_fop->write_page(
@@ -1015,20 +1042,26 @@ void vm_flush_file_dirty(vm_struct_t vm, file *fp)
  *
  * Returns 0 on success.
  */
-int do_munmap(void *addr, unsigned length)
+int do_munmap(void *addr, size_t length)
 {
 	task_struct *cur = CURRENT_TASK();
 	vaddr_t begin = ((vaddr_t)(uintptr_t)addr) & PAGE_SIZE_MASK;
 	/* Round length up to a page count, then compute end — avoids the
 	 * off-by-one that (addr+length+PAGE_SIZE-1)&PAGE_MASK produces when
 	 * length is already a multiple of PAGE_SIZE. */
-	unsigned pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+	size_t pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 	vaddr_t end = begin + pages * PAGE_SIZE;
 	mm_struct *mm = cur->user->vm;
 	vm_key probe;
 	vm_region *region;
 	vaddr_t vir;
 
+	if (begin >= mm->task_size || length > mm->task_size - begin)
+		return -EINVAL;
+#if MOS_HAS_NATIVE_USER
+	if (begin < 0x100000000ULL && begin + length > MOS_COMPAT_TASK_SIZE)
+		return -EINVAL;
+#endif
 	if (length == 0)
 		return 0;
 
@@ -1036,18 +1069,18 @@ int do_munmap(void *addr, unsigned length)
 	probe.end = end;
 
 	while ((region = vm_tree_find(mm, &probe)) != NULL) {
-		unsigned r_begin = region->begin;
-		unsigned r_end = region->end;
+		vaddr_t r_begin = region->begin;
+		vaddr_t r_end = region->end;
 		int r_prot = region->prot;
 		int r_flag = region->flag;
 		file *r_fp = region->fp;
-		int r_offset = region->offset;
+		uint64_t r_offset = region->offset;
 		unsigned r_anon_id = region->anon_id;
 		vm_fault_lock *r_fault_lock = region->fault_lock;
 
 		/* Intersection of this region with the unmap range. */
-		unsigned unmap_begin = r_begin > begin ? r_begin : begin;
-		unsigned unmap_end = r_end < end ? r_end : end;
+		vaddr_t unmap_begin = r_begin > begin ? r_begin : begin;
+		vaddr_t unmap_end = r_end < end ? r_end : end;
 
 		/* Flush dirty MAP_SHARED pages before physical unmap. */
 		vm_flush_dirty_region(region, unmap_begin, unmap_end);
@@ -1079,7 +1112,7 @@ int do_munmap(void *addr, unsigned length)
 		if (r_end > unmap_end)
 			vm_add_map_with_lock(
 				cur->user->vm, unmap_end, r_end, r_prot, r_flag,
-				r_fp, r_offset + (int)(unmap_end - r_begin),
+				r_fp, r_offset + (uint64_t)(unmap_end - r_begin),
 				r_anon_id, r_fault_lock);
 
 		if (r_fp)

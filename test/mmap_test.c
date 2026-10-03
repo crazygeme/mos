@@ -8,8 +8,11 @@
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/pagefault.h>
+#include <mm/phymm.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/cache.h>
+#include <lib/klib.h>
 #include <ps/ps.h>
 #include <config.h>
 #include <errno.h>
@@ -28,13 +31,117 @@ static vm_struct_t cur_vm(void)
 	return current->user->vm;
 }
 
+KTEST(mmap, direct_ram_alias)
+{
+	unsigned page = phymm_alloc_user();
+	int fd;
+	intptr_t address;
+	paddr_t physical;
+	unsigned references;
+
+	ASSERT_NE(page, PHYMM_INVALID);
+	physical = (paddr_t)page * PAGE_SIZE;
+	phymm_reference_page(page);
+	references = phymm_pages[page].ref_count;
+	if (phymm_end > 0x100000U)
+		EXPECT_GE(physical, 0x100000000ULL);
+	fd = fs_open("/dev/mem", O_RDWR, 0);
+	if (fd < 0) {
+		EXPECT_GE(fd, 0);
+		goto release;
+	}
+	address = do_mmap(TEST_FIXED_ADDR, PAGE_SIZE, PROT_READ | PROT_WRITE,
+	                  MAP_SHARED | MAP_FIXED, fd, physical);
+	EXPECT_EQ(address, TEST_FIXED_ADDR);
+	if (address != TEST_FIXED_ADDR)
+		goto close;
+	EXPECT_EQ(pf_resolve_task_page_fault(current, address, 1), 1);
+	EXPECT_EQ(mm_virt_to_phys(address), physical);
+	EXPECT_TRUE(mm_get_map_flag(address) & PAGE_ENTRY_DIRECT_PHYS);
+	EXPECT_FALSE(mm_get_map_flag(address) & PAGE_ENTRY_CD);
+	*(volatile unsigned *)address = 0x76543210;
+	EXPECT_EQ(*(unsigned *)PHY_TO_VIRT(physical), 0x76543210U);
+	do_munmap((void *)address, PAGE_SIZE);
+	EXPECT_EQ(phymm_pages[page].ref_count, references);
+close:
+	fs_close(fd);
+release:
+	if (!phymm_dereference_page(page))
+		phymm_free_user(page);
+	return 0;
+}
+
+static int wide_cache_read_page(file *fp, uint64_t offset, void *buffer)
+{
+	(void)fp;
+	memset(buffer, offset >= 0x100000000ULL ? 0xb6 : 0xa5, PAGE_SIZE);
+	return 0;
+}
+
+KTEST(mmap, file_cache_wide_offsets)
+{
+	file_operations operations = { .read_page = wide_cache_read_page };
+	inode node = { .i_ino = 1, .i_pgcache_tag = &node };
+	file fp = { .f_inode = &node, .f_fop = &operations };
+	paddr_t low = fs_page_cache_get(&fp, 0, NULL);
+	paddr_t high = fs_page_cache_get(&fp, 0x100000000ULL, NULL);
+
+	EXPECT_NE(low, 0);
+	EXPECT_NE(high, 0);
+	EXPECT_NE(low, high);
+	if (low && mm_kmap_phys(low) == 1) {
+		EXPECT_EQ(*(unsigned char *)PHY_TO_VIRT(low), 0xa5);
+		mm_kunmap_phys(low);
+	}
+	if (high && mm_kmap_phys(high) == 1) {
+		EXPECT_EQ(*(unsigned char *)PHY_TO_VIRT(high), 0xb6);
+		mm_kunmap_phys(high);
+	}
+	fs_page_cache_invalidate(&fp);
+	return 0;
+}
+
+KTEST(mmap, file_cache_invalidate_only_inode)
+{
+	file_operations operations = { .read_page = wide_cache_read_page };
+	inode nodes[3] = {
+		{ .i_ino = 10, .i_pgcache_tag = &operations },
+		{ .i_ino = 20, .i_pgcache_tag = &operations },
+		{ .i_ino = 30, .i_pgcache_tag = &operations },
+	};
+	file files[3];
+	paddr_t physical[3];
+	int hit;
+
+	memset(files, 0, sizeof(files));
+	for (unsigned i = 0; i < 3; i++) {
+		files[i].f_inode = &nodes[i];
+		files[i].f_fop = &operations;
+		physical[i] = fs_page_cache_get(&files[i], 0, NULL);
+		EXPECT_NE(physical[i], 0);
+	}
+	EXPECT_NE(fs_page_cache_get(&files[1], 0x100000000ULL, NULL), 0);
+	fs_page_cache_invalidate(&files[1]);
+	EXPECT_EQ(fs_page_cache_get(&files[0], 0, &hit), physical[0]);
+	EXPECT_EQ(hit, 1);
+	EXPECT_EQ(fs_page_cache_get(&files[2], 0, &hit), physical[2]);
+	EXPECT_EQ(hit, 1);
+	EXPECT_NE(fs_page_cache_get(&files[1], 0, &hit), 0);
+	EXPECT_EQ(hit, 0);
+	EXPECT_NE(fs_page_cache_get(&files[1], 0x100000000ULL, &hit), 0);
+	EXPECT_EQ(hit, 0);
+	for (unsigned i = 0; i < 3; i++)
+		fs_page_cache_invalidate(&files[i]);
+	return 0;
+}
+
 /* ── AnonAutoAddr ─────────────────────────────────────────────────────────
  * do_mmap with addr=0 picks an address inside the user zone.
  */
 KTEST(mmap, anon_auto_addr)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(addr, 0u);
 	EXPECT_GE(addr, TASK_UNMAPPED_BASE);
@@ -49,9 +156,10 @@ KTEST(mmap, anon_auto_addr)
  */
 KTEST(mmap, anon_fixed)
 {
-	unsigned addr = (unsigned)do_mmap(
-		TEST_FIXED_ADDR, PAGE_SIZE, PROT_READ | PROT_WRITE,
-		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(TEST_FIXED_ADDR, PAGE_SIZE,
+					PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+					-1, 0);
 
 	EXPECT_EQ(addr, TEST_FIXED_ADDR);
 
@@ -64,8 +172,8 @@ KTEST(mmap, anon_fixed)
  */
 KTEST(mmap, region_tracked)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -83,8 +191,8 @@ KTEST(mmap, region_tracked)
 KTEST(mmap, region_prot)
 {
 	int prot = PROT_READ | PROT_WRITE;
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, prot,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, prot,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -100,8 +208,8 @@ KTEST(mmap, region_prot)
  */
 KTEST(mmap, region_anon)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -117,9 +225,9 @@ KTEST(mmap, region_anon)
  */
 KTEST(mmap, size_roundup)
 {
-	unsigned addr = (unsigned)do_mmap(
-		TEST_FIXED_ADDR, 1, PROT_READ,
-		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(TEST_FIXED_ADDR, 1, PROT_READ,
+					MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+					-1, 0);
 	ASSERT_EQ(addr, TEST_FIXED_ADDR);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -137,8 +245,8 @@ KTEST(mmap, size_roundup)
  */
 KTEST(mmap, munmap_removes)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	int ret = do_munmap((void *)addr, PAGE_SIZE);
@@ -156,7 +264,7 @@ KTEST(mmap, munmap_removes)
 KTEST(mmap, munmap_invalid)
 {
 	/* Use an address we know is not mapped. */
-	unsigned addr = 0x30000000u;
+	vaddr_t addr = 0x30000000u;
 
 	/* Make sure it really isn't mapped. */
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -172,10 +280,10 @@ KTEST(mmap, munmap_invalid)
  */
 KTEST(mmap, two_maps_distinct)
 {
-	unsigned a = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-				       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	unsigned b = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-				       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t a = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+				     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t b = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+				     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(a, 0u);
 	ASSERT_NE(b, 0u);
@@ -197,8 +305,8 @@ KTEST(mmap, two_maps_distinct)
 KTEST(mmap, large_mapping)
 {
 	unsigned size = 16 * PAGE_SIZE;
-	unsigned addr = (unsigned)do_mmap(0, size, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, size, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	/* Check the start and end of the region */
@@ -221,7 +329,7 @@ KTEST(mmap, large_mapping)
  */
 KTEST(mmap, merge_adjacent)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -248,7 +356,7 @@ KTEST(mmap, merge_adjacent)
  */
 KTEST(mmap, merge_no_diff_prot)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
 	do_mmap(base, PAGE_SIZE, PROT_READ, flags, -1, 0);
@@ -270,7 +378,7 @@ KTEST(mmap, merge_no_diff_prot)
  */
 KTEST(mmap, merge_three_way)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -303,7 +411,7 @@ KTEST(mmap, merge_three_way)
  */
 KTEST(mmap, split_middle)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -333,7 +441,7 @@ KTEST(mmap, split_middle)
  */
 KTEST(mmap, split_left_trim)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -357,7 +465,7 @@ KTEST(mmap, split_left_trim)
  */
 KTEST(mmap, split_right_trim)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -382,7 +490,7 @@ KTEST(mmap, split_right_trim)
  */
 KTEST(mmap, split_by_fixed)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
 	do_mmap(base, 4 * PAGE_SIZE, PROT_READ, flags, -1, 0);
@@ -414,7 +522,7 @@ KTEST(mmap, split_by_fixed)
 
 KTEST(mmap, mremap_grow_extends_region)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -435,7 +543,7 @@ KTEST(mmap, mremap_grow_extends_region)
 
 KTEST(mmap, mremap_grow_rejects_later_overlap)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 

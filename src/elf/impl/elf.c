@@ -78,20 +78,20 @@ static int elf_pflags_to_prot(unsigned p_flags)
  * The whole page range is mapped anonymous and file data is copied eagerly.
  * BSS bytes are left zero by the anonymous page-fault zero-fill.
  */
-static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
+static void elf_load_segment(file *fp, Elf64_Phdr *phdr, vaddr_t bias)
 {
 	unsigned file_off = phdr->p_offset;
-	unsigned vaddr = phdr->p_vaddr + bias;
+	vaddr_t vaddr = phdr->p_vaddr + bias;
 	unsigned filesz = phdr->p_filesz;
-	unsigned memsz = phdr->p_memsz;
+	size_t memsz = phdr->p_memsz;
 	int prot = elf_pflags_to_prot(phdr->p_flags);
 
-	unsigned va_begin = vaddr & PAGE_SIZE_MASK;
-	unsigned elf_bss = vaddr + filesz; /* first byte of BSS */
-	unsigned last_bss = vaddr + memsz; /* one past last BSS byte */
-	unsigned file_pages_end =
+	vaddr_t va_begin = vaddr & PAGE_SIZE_MASK;
+	vaddr_t elf_bss = vaddr + filesz; /* first byte of BSS */
+	vaddr_t last_bss = vaddr + memsz; /* one past last BSS byte */
+	vaddr_t file_pages_end =
 		PAGE_ALIGN_UP(elf_bss); /* page ceiling of file data */
-	unsigned mem_pages_end =
+	vaddr_t mem_pages_end =
 		PAGE_ALIGN_UP(last_bss); /* page ceiling of memory image */
 
 	if (memsz == 0)
@@ -113,7 +113,7 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 			 * file_page_end: floor(elf_bss) — start of the boundary
 			 *   page (the page that straddles file data and BSS).
 			 */
-			unsigned file_page_end = elf_bss & PAGE_SIZE_MASK;
+			vaddr_t file_page_end = elf_bss & PAGE_SIZE_MASK;
 
 			/*
 			 * Region 1: file-data pages INCLUDING the boundary page,
@@ -208,11 +208,11 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 		 * BSS bytes beyond the copied file image remain zero because the
 		 * backing mapping is anonymous zero-fill.
 		 */
-		unsigned map_size = mem_pages_end - va_begin;
+		size_t map_size = mem_pages_end - va_begin;
 		unsigned file_begin = file_off & PAGE_SIZE_MASK;
 		unsigned copy_size = filesz + (vaddr - va_begin);
-		unsigned mapped;
-		unsigned page;
+		vaddr_t mapped;
+		vaddr_t page;
 
 		mapped = do_mmap_kernel(va_begin, map_size, prot | PROT_WRITE,
 					MAP_FIXED, 0, 0);
@@ -231,9 +231,10 @@ static void elf_load_segment(file *fp, Elf32_Phdr *phdr, unsigned bias)
 /* Metadata and file references are private to one exec operation. */
 struct elf_image {
 	file *fp;
-	Elf32_Ehdr header;
-	Elf32_Phdr *phdrs;
-	unsigned span;
+	Elf64_Ehdr header;
+	Elf64_Phdr *phdrs;
+	vaddr_t span;
+	int abi;
 	struct elf_image *interpreter;
 };
 
@@ -241,7 +242,7 @@ struct elf_image {
 static int elf_validate(elf_image *image, char *interp)
 {
 	file *fp = image->fp;
-	Elf32_Ehdr *elf = &image->header;
+	Elf64_Ehdr *elf = &image->header;
 	struct stat st;
 	unsigned i, table_end;
 	int entry_found = 0, headers_mapped = 0;
@@ -249,29 +250,75 @@ static int elf_validate(elf_image *image, char *interp)
 	if (!fp || !fp->f_fop || !fp->f_fop->getattr ||
 	    fp->f_fop->getattr(fp, &st) != 0)
 		return -ENOENT;
-	if (elf_read(fp, 0, elf, sizeof(*elf)) != sizeof(*elf) ||
-	    memcmp(elf->e_ident, "\177ELF", 4) ||
-	    elf->e_ident[EI_CLASS] != ELFCLASS32 ||
-	    elf->e_ident[EI_DATA] != ELFDATA2LSB ||
-	    elf->e_ident[EI_VERSION] != EV_CURRENT ||
-	    elf->e_version != EV_CURRENT || elf->e_machine != EM_386 ||
+	Elf32_Ehdr h32;
+	if (elf_read(fp, 0, &h32, sizeof(h32)) != sizeof(h32) ||
+	    memcmp(h32.e_ident, "\177ELF", 4) ||
+	    h32.e_ident[EI_DATA] != ELFDATA2LSB ||
+	    h32.e_ident[EI_VERSION] != EV_CURRENT)
+		return -ENOEXEC;
+	if (h32.e_ident[EI_CLASS] == ELFCLASS32 && h32.e_machine == EM_386) {
+		image->abi = MOS_ABI_I386;
+		memset(elf, 0, sizeof(*elf));
+		memcpy(elf->e_ident, h32.e_ident, EI_NIDENT);
+#define COPY_HEADER(field) elf->field = h32.field
+		COPY_HEADER(e_type);
+		COPY_HEADER(e_machine);
+		COPY_HEADER(e_version);
+		COPY_HEADER(e_entry);
+		COPY_HEADER(e_phoff);
+		COPY_HEADER(e_ehsize);
+		COPY_HEADER(e_phentsize);
+		COPY_HEADER(e_phnum);
+#undef COPY_HEADER
+		if (elf->e_ehsize != sizeof(h32) ||
+		    elf->e_phentsize != sizeof(Elf32_Phdr))
+			return -ENOEXEC;
+	} else if (MOS_HAS_NATIVE_USER && h32.e_ident[EI_CLASS] == ELFCLASS64) {
+		image->abi = MOS_ABI_AMD64;
+		if (elf_read(fp, 0, elf, sizeof(*elf)) != sizeof(*elf) ||
+		    elf->e_machine != EM_X86_64 ||
+		    elf->e_ehsize != sizeof(*elf) ||
+		    elf->e_phentsize != sizeof(Elf64_Phdr))
+			return -ENOEXEC;
+	} else
+		return -ENOEXEC;
+	if (elf->e_version != EV_CURRENT || !elf->e_phnum ||
 	    (elf->e_type != ET_EXEC && elf->e_type != ET_DYN) ||
 	    (elf->e_type == ET_EXEC && !elf->e_entry) ||
-	    elf->e_ehsize != sizeof(*elf) ||
-	    elf->e_phentsize != sizeof(Elf32_Phdr) || !elf->e_phnum)
+	    elf->e_phoff > 0x7fffffff)
 		return -ENOEXEC;
-	table_end = elf->e_phoff + elf->e_phnum * sizeof(Elf32_Phdr);
+	table_end = elf->e_phoff + elf->e_phnum * elf->e_phentsize;
 	if (table_end < elf->e_phoff || table_end > st.st_size)
 		return -ENOEXEC;
-	image->phdrs = kmalloc(table_end - elf->e_phoff);
+	image->phdrs = kmalloc(elf->e_phnum * sizeof(Elf64_Phdr));
 	if (!image->phdrs)
 		return -ENOMEM;
-	if (elf_read(fp, elf->e_phoff, image->phdrs,
-		     table_end - elf->e_phoff) != table_end - elf->e_phoff)
-		return -ENOEXEC;
+	for (i = 0; i < elf->e_phnum; i++) {
+		Elf64_Phdr *ph = &image->phdrs[i];
+		unsigned off = elf->e_phoff + i * elf->e_phentsize;
+		if (image->abi == MOS_ABI_I386) {
+			Elf32_Phdr p32;
+			if (elf_read(fp, off, &p32, sizeof(p32)) != sizeof(p32))
+				return -ENOEXEC;
+#define COPY_PH(field) ph->field = p32.field
+			COPY_PH(p_type);
+			COPY_PH(p_flags);
+			COPY_PH(p_offset);
+			COPY_PH(p_vaddr);
+			COPY_PH(p_paddr);
+			COPY_PH(p_filesz);
+			COPY_PH(p_memsz);
+			COPY_PH(p_align);
+#undef COPY_PH
+		} else if (elf_read(fp, off, ph, sizeof(*ph)) != sizeof(*ph))
+			return -ENOEXEC;
+	}
+	vaddr_t limit = image->abi == MOS_ABI_I386 ? MOS_COMPAT_TASK_SIZE :
+						     MOS_NATIVE_TASK_SIZE;
+	limit -= USER_STACK_PAGES * PAGE_SIZE;
 	interp[0] = 0;
 	for (i = 0; i < elf->e_phnum; i++) {
-		Elf32_Phdr ph = image->phdrs[i];
+		Elf64_Phdr ph = image->phdrs[i];
 		if (ph.p_type != PT_LOAD && ph.p_type != PT_INTERP)
 			continue;
 		if (ph.p_offset > st.st_size ||
@@ -286,8 +333,11 @@ static int elf_validate(elf_image *image, char *interp)
 				return -ENOEXEC;
 			continue;
 		}
-		if (ph.p_filesz > ph.p_memsz || ph.p_vaddr >= USER_ZONE_END ||
-		    ph.p_memsz > USER_ZONE_END - ph.p_vaddr ||
+		if (MOS_HAS_NATIVE_USER && ph.p_vaddr < 0x100000000ULL &&
+		    ph.p_vaddr + ph.p_memsz > MOS_COMPAT_TASK_SIZE)
+			return -ENOEXEC;
+		if (ph.p_filesz > ph.p_memsz || ph.p_vaddr >= limit ||
+		    ph.p_memsz > limit - ph.p_vaddr ||
 		    (ph.p_vaddr & (PAGE_SIZE - 1)) !=
 			    (ph.p_offset & (PAGE_SIZE - 1)) ||
 		    (ph.p_align > 1 &&
@@ -342,7 +392,7 @@ int elf_prepare(file *fp, elf_image **result)
 		goto done;
 	if (image->header.e_type == ET_DYN) {
 		for (i = 0; i < image->header.e_phnum; i++) {
-			Elf32_Phdr *ph = &image->phdrs[i];
+			Elf64_Phdr *ph = &image->phdrs[i];
 			if (ph->p_type == PT_LOAD &&
 			    (ph->p_align > ELF_PIE_BIAS ||
 			     ph->p_vaddr >= USER_HEAP_END - ELF_PIE_BIAS ||
@@ -363,7 +413,8 @@ int elf_prepare(file *fp, elf_image **result)
 		image->interpreter = ld;
 		ld->fp = fs_open_file(interp, 0, 0);
 		ret = elf_validate(ld, interp);
-		if (!ret && (ld->header.e_type != ET_DYN || interp[0]))
+		if (!ret && (ld->header.e_type != ET_DYN ||
+			     ld->abi != image->abi || interp[0]))
 			ret = -ENOEXEC;
 	}
 done:
@@ -376,19 +427,21 @@ done:
 }
 
 /* Map verified segments; only partial-page contents require eager reads. */
-unsigned elf_map_prepared(elf_image *image, mos_binfmt *fmt)
+vaddr_t elf_map_prepared(elf_image *image, mos_binfmt *fmt)
 {
-	Elf32_Ehdr *elf = &image->header;
-	unsigned bias = elf->e_type == ET_DYN ? ELF_PIE_BIAS : 0;
-	unsigned table_size = elf->e_phnum * sizeof(Elf32_Phdr);
+	Elf64_Ehdr *elf = &image->header;
+	vaddr_t bias = elf->e_type == ET_DYN ? ELF_PIE_BIAS : 0;
+	unsigned table_size = elf->e_phnum * elf->e_phentsize;
 	unsigned i;
 
 	memset(fmt, 0, sizeof(*fmt));
 	fmt->e_entry = bias + elf->e_entry;
 	fmt->e_phnum = elf->e_phnum;
+	fmt->e_phoff = 0;
+	fmt->e_phent = elf->e_phentsize;
 	fmt->start_brk = bias + image->span;
 	for (i = 0; i < elf->e_phnum; i++) {
-		Elf32_Phdr *ph = &image->phdrs[i];
+		Elf64_Phdr *ph = &image->phdrs[i];
 		if (ph->p_type != PT_LOAD)
 			continue;
 		elf_load_segment(image->fp, ph, bias);
@@ -401,13 +454,13 @@ unsigned elf_map_prepared(elf_image *image, mos_binfmt *fmt)
 	}
 	if (image->interpreter) {
 		elf_image *ld = image->interpreter;
-		unsigned base = vm_disc_map(CURRENT_TASK()->user->vm, ld->span);
-		if (!base || base >= USER_ZONE_END ||
-		    ld->span > USER_ZONE_END - base)
+		vaddr_t base = vm_disc_map(CURRENT_TASK()->user->vm, ld->span);
+		if (!base || base >= CURRENT_TASK()->user->vm->task_size ||
+		    ld->span > CURRENT_TASK()->user->vm->task_size - base)
 			return 0;
 		fmt->interp_bias = base;
 		for (i = 0; i < ld->header.e_phnum; i++) {
-			Elf32_Phdr *ph = &ld->phdrs[i];
+			Elf64_Phdr *ph = &ld->phdrs[i];
 			if (ph->p_type == PT_LOAD)
 				elf_load_segment(ld->fp, ph, base);
 		}
@@ -426,10 +479,10 @@ int elf_check_file(file *fp)
 	return ret;
 }
 
-unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp)
+vaddr_t elf_map_file(char *path, mos_binfmt *fmt, file *fp)
 {
 	elf_image *image;
-	unsigned entry = 0;
+	vaddr_t entry = 0;
 	file *opened = fp ? fp : fs_open_file(path, 0, 0);
 
 	memset(fmt, 0, sizeof(*fmt));
@@ -442,7 +495,12 @@ unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp)
 	return entry;
 }
 
-unsigned elf_map(char *path, mos_binfmt *fmt)
+vaddr_t elf_map(char *path, mos_binfmt *fmt)
 {
 	return elf_map_file(path, fmt, NULL);
+}
+
+int elf_image_abi(elf_image *image)
+{
+	return image->abi;
 }

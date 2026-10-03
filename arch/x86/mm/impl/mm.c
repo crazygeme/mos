@@ -785,7 +785,7 @@ void mm_destroy_user_map(vaddr_t page_dir)
 				paddr_t phy_addr = table[j] & PAGE_SIZE_MASK;
 				unsigned int page_index;
 
-				if (!phy_addr)
+				if (!phy_addr || (table[j] & PAGE_ENTRY_DIRECT_PHYS))
 					continue;
 
 				page_index = PHY_TO_PAGE_IDX(phy_addr);
@@ -896,16 +896,19 @@ void mm_unmap_page(vaddr_t vir)
 	paddr_t phy_addr;
 	int page_index;
 	int irq;
+	unsigned flags;
 
 	if (!mm_get_valid_page_table(vir, 0, &info, 0))
 		return;
 
 	phy_addr = *info.entry & PAGE_SIZE_MASK;
+	flags = *info.entry;
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
 	spinlock_lock(&mm_lock, &irq);
 	mm_clear_page_table_entry(&info);
-	if (mm_dynamic_region(phy_addr) || mm_vdso_region(phy_addr)) {
+	if (!(flags & PAGE_ENTRY_DIRECT_PHYS) &&
+	    (mm_dynamic_region(phy_addr) || mm_vdso_region(phy_addr))) {
 		if (phymm_is_used(page_index) &&
 		    phymm_dereference_page(page_index) == 0)
 			phymm_free_user(page_index);

@@ -24,56 +24,76 @@ struct robust_list_head_compat {
 	unsigned list_op_pending;
 };
 
-static int robust_read(task_struct *task, unsigned addr, void *dst,
+static int robust_read(task_struct *task, uintptr_t addr, void *dst,
 		       unsigned len)
 {
-	return ps_read_process_memory(task, (void *)addr, dst, len);
+	return ps_read_process_memory(task, (void *)(uintptr_t)addr, dst, len);
 }
 
-static void robust_release_futex(task_struct *task, unsigned entry, int offset)
+static void robust_release_futex(task_struct *task, uintptr_t entry,
+				 intptr_t offset)
 {
-	unsigned addr;
+	uintptr_t addr;
 	unsigned value, owner_died;
 	int irq;
 
-	if (!entry || (unsigned)(entry + offset) < PAGE_SIZE)
+	if (!entry || (uintptr_t)(entry + offset) < PAGE_SIZE)
 		return;
 	addr = entry + offset;
 	if (robust_read(task, addr, &value, sizeof(value)) != 0 ||
 	    (value & FUTEX_TID_MASK) != task->psid)
 		return;
 	owner_died = (value & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
-	if (ps_write_process_memory(task, (void *)addr, &owner_died,
+	if (ps_write_process_memory(task, (void *)(uintptr_t)addr, &owner_died,
 				    sizeof(owner_died)) != 0)
 		return;
 	if (value & FUTEX_WAITERS) {
 		spinlock_lock(&ps_lock, &irq);
-		ps_futex_wake_locked(task->user, (int *)addr, 1);
+		ps_futex_wake_locked(task->user, (int *)(uintptr_t)addr, 1);
 		spinlock_unlock(&ps_lock, irq);
 	}
 }
 
 void ps_release_robust_list(task_struct *task)
 {
-	struct robust_list_head_compat head;
-	unsigned base = (unsigned)task->robust_list_head;
-	unsigned entry, next, pending;
-	unsigned count;
-
-	if (!base || robust_read(task, base, &head, sizeof(head)) != 0)
+	uintptr_t base = (uintptr_t)task->robust_list_head, entry, next,
+		  pending;
+	intptr_t offset;
+	unsigned width = task->user->abi == MOS_ABI_AMD64 ? 8 : 4;
+	if (!base)
 		return;
-	entry = head.list_next & ~1U;
-	pending = head.list_op_pending & ~1U;
-	for (count = 0; entry && entry != base && count < ROBUST_LIST_LIMIT;
-	     count++) {
-		if (robust_read(task, entry, &next, sizeof(next)) != 0)
+	if (width == 4) {
+		struct robust_list_head_compat head;
+		if (robust_read(task, base, &head, sizeof(head)))
+			return;
+		entry = head.list_next;
+		pending = head.list_op_pending;
+		offset = head.futex_offset;
+	} else {
+		struct {
+			uint64_t next;
+			int64_t offset;
+			uint64_t pending;
+		} head;
+		if (robust_read(task, base, &head, sizeof(head)))
+			return;
+		entry = head.next;
+		pending = head.pending;
+		offset = head.offset;
+	}
+	entry &= ~(uintptr_t)1;
+	pending &= ~(uintptr_t)1;
+	for (unsigned count = 0;
+	     entry && entry != base && count < ROBUST_LIST_LIMIT; count++) {
+		next = 0;
+		if (robust_read(task, entry, &next, width))
 			break;
 		if (entry != pending)
-			robust_release_futex(task, entry, head.futex_offset);
-		entry = next & ~1U;
+			robust_release_futex(task, entry, offset);
+		entry = next & ~(uintptr_t)1;
 	}
 	if (pending)
-		robust_release_futex(task, pending, head.futex_offset);
+		robust_release_futex(task, pending, offset);
 	task->robust_list_head = NULL;
 }
 
@@ -81,7 +101,7 @@ typedef struct futex_key {
 	unsigned kind;
 	void *identity;
 	uint64_t object;
-	unsigned offset;
+	uintptr_t offset;
 	file *backing;
 } futex_key;
 
@@ -92,7 +112,7 @@ static int futex_get_key(user_enviroment *user, int *uaddr, int private,
 	vm_struct_t vm = user->vm;
 	struct rb_node *node;
 	vm_region *region = NULL;
-	unsigned addr = (unsigned)uaddr;
+	uintptr_t addr = (uintptr_t)uaddr;
 	int irq;
 
 	memset(key, 0, sizeof(*key));
@@ -204,7 +224,7 @@ int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake)
 {
 	futex_key key = { 0 };
 	key.identity = user->vm;
-	key.offset = (unsigned)uaddr;
+	key.offset = (uintptr_t)uaddr;
 	return futex_wake_mask_locked(&key, max_wake, ~0U);
 }
 
@@ -230,10 +250,10 @@ void ps_clear_child_tid(task_struct *task)
 
 	region = task->user->vm ?
 			 vm_find_map_cached(task->user,
-					    (unsigned)task->clear_child_tid) :
+					    (uintptr_t)task->clear_child_tid) :
 			 NULL;
-	if (region && region->begin <= (unsigned)task->clear_child_tid &&
-	    (unsigned)task->clear_child_tid + sizeof(int) <= region->end &&
+	if (region && region->begin <= (uintptr_t)task->clear_child_tid &&
+	    (uintptr_t)task->clear_child_tid + sizeof(int) <= region->end &&
 	    (region->prot & PROT_WRITE)) {
 		int zero = 0;
 		if (ps_write_process_memory(task, task->clear_child_tid, &zero,
@@ -273,7 +293,7 @@ static int futex_execute(int *uaddr, int op, int val, const void *timeout,
 
 	if (!uaddr)
 		return -EFAULT;
-	if ((unsigned)uaddr & 3)
+	if ((unsigned)(uintptr_t)uaddr & 3)
 		return -EINVAL;
 	if ((op & FUTEX_CLOCK_REALTIME) && cmd != FUTEX_WAIT_BITSET)
 		return -ENOSYS;
@@ -409,7 +429,7 @@ static int futex_common(int *uaddr, int op, int val, const void *timeout,
 
 	if (!uaddr)
 		return -EFAULT;
-	if ((unsigned)uaddr & 3)
+	if ((unsigned)(uintptr_t)uaddr & 3)
 		return -EINVAL;
 	if (cmd != FUTEX_WAIT && cmd != FUTEX_WAIT_BITSET &&
 	    cmd != FUTEX_WAKE && cmd != FUTEX_WAKE_BITSET)

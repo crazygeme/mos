@@ -43,7 +43,7 @@ struct mmap_arg_struct32 {
 
 struct iovec {
 	char *iov_base;
-	unsigned iov_len;
+	size_t iov_len;
 };
 struct msghdr;
 
@@ -79,8 +79,8 @@ int sys_inotify_add_watch(int fd, const char *path, unsigned mask);
 int sys_inotify_rm_watch(int fd, int wd);
 int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 	      unsigned arg5);
-int sys_fcntl(int fd, int cmd, int arg);
-int sys_fcntl64(int fd, int cmd, int arg);
+int sys_fcntl(int fd, int cmd, intptr_t arg);
+int sys_fcntl64(int fd, int cmd, intptr_t arg);
 int sys_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 	       const struct timeval *timeout);
 int sys_newselect(int nfds, fd_set *readfds, fd_set *writefds,
@@ -213,7 +213,7 @@ int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s);
 int sys_setfsuid32(unsigned fsuid);
 int sys_setfsgid32(unsigned fsgid);
 int sys_wait4(int pid, int *status, int options, void *rusage);
-int sys_brk(unsigned top);
+intptr_t sys_brk(vaddr_t top);
 int sys_sched_yield();
 unsigned sys_alarm(unsigned seconds);
 int sys_getrlimit(int resource, void *limit);
@@ -273,10 +273,10 @@ int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize);
  * syscall_sys.c
  */
 struct tms {
-	long tms_utime;
-	long tms_stime;
-	long tms_cutime;
-	long tms_cstime;
+	int32_t tms_utime;
+	int32_t tms_stime;
+	int32_t tms_cutime;
+	int32_t tms_cstime;
 };
 long sys_times(struct tms *buf);
 int sys_setpriority(int which, int who, int prio);
@@ -311,8 +311,8 @@ int sys_quotactl(int cmd, const char *special, int id, void *addr);
 int sys_mmap(struct mmap_arg_struct32 *arg);
 int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 	      int fd, unsigned pgoffset);
-int sys_munmap(void *addr, unsigned length);
-int sys_mprotect(void *addr, unsigned len, int prot);
+int sys_munmap(void *addr, size_t length);
+int sys_mprotect(void *addr, size_t len, int prot);
 int sys_madvise(void *addr, unsigned length, int advice);
 int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	       int flags, unsigned new_addr);
@@ -341,7 +341,7 @@ int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
 /*
  * syscall_net.c
  */
-int sys_socketcall(int call, unsigned long *args);
+int sys_socketcall(int call, uint32_t *args);
 int sys_sendmmsg(int fd, void *messages, unsigned count, int flags);
 int sys_recvmmsg(int fd, void *messages, unsigned count, int flags,
 		 void *timeout);

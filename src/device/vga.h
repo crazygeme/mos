@@ -29,6 +29,7 @@ typedef struct {
 	void (*change_font)(const char *name);
 	void (*sync_mode)(void);
 	void (*flush)(void);
+	void (*flush_text)(void);
 	void (*get_phys_window)(unsigned *phys, unsigned *size);
 	unsigned (*snapshot_size)(void);
 	void (*snapshot_save)(void *dst, unsigned size);
@@ -58,6 +59,7 @@ void fb_sync_mode(void);
 /* Nonzero when mapped framebuffer writes require an explicit update. */
 int fb_requires_flush(void);
 void fb_flush(void);
+void fb_flush_text(void);
 void fb_get_phys_window(unsigned *phys, unsigned *size);
 unsigned fb_snapshot_size(void);
 void fb_snapshot_save(void *dst, unsigned size);

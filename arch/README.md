@@ -4,7 +4,8 @@ Each target architecture owns its toolchain flags, linker script, private
 headers, and architecture-specific sources under `arch/<arch>/`.
 
 - `x86`: existing 32-bit i686 kernel; output in `out/x86/<build>`.
-- `x64`: reserved x86-64 backend; output in `out/x64/<build>` once enabled.
+- `x64`: AMD64 kernel with i386 compatibility and APIC SMP.
+  See [architecture and validation status](../doc/x64.md). Output is in `out/x64/<build>`.
 
 Common kernel code remains under `src/`. Architecture-specific code is grouped
 directly by subsystem, for example `arch/x86/mm` and `arch/x86/ps`. Public

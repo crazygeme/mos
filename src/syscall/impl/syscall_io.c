@@ -695,7 +695,7 @@ static int sys_fcntl_lock64(int fd, int cmd, struct flock64 *fl)
 	return ret;
 }
 
-int sys_fcntl(int fd, int cmd, int arg)
+int sys_fcntl(int fd, int cmd, intptr_t arg)
 {
 	task_struct *cur = CURRENT_TASK();
 	int ret = 0;
@@ -715,7 +715,7 @@ int sys_fcntl(int fd, int cmd, int arg)
 	case F_GETLK:
 	case F_SETLK:
 	case F_SETLKW:
-		ret = sys_fcntl_lock32(fd, cmd, (struct flock *)arg);
+		ret = sys_fcntl_lock32(fd, cmd, (struct flock *)(uintptr_t)arg);
 		break;
 	case F_GETFD:
 		ret = fd_bitmap_test(cur->fd_cloexec, fd) ? FD_CLOEXEC : 0;
@@ -760,13 +760,14 @@ int sys_fcntl(int fd, int cmd, int arg)
 	return ret;
 }
 
-int sys_fcntl64(int fd, int cmd, int arg)
+int sys_fcntl64(int fd, int cmd, intptr_t arg)
 {
 	switch (cmd) {
 	case F_GETLK64:
 	case F_SETLK64:
 	case F_SETLKW64:
-		return sys_fcntl_lock64(fd, cmd, (struct flock64 *)arg);
+		return sys_fcntl_lock64(fd, cmd,
+					(struct flock64 *)(uintptr_t)arg);
 	default:
 		return sys_fcntl(fd, cmd, arg);
 	}

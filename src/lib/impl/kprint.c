@@ -332,7 +332,9 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 		case 'p': {
 			unsigned long v = flag_l ? va_arg(ap, unsigned long) :
 						   va_arg(ap, unsigned);
-			char *s = itoa((int)v, 16, 0);
+			char *s = flag_l && sizeof(v) > sizeof(unsigned) ?
+					lltoa((long long)v, 16, 0) :
+					itoa((int)v, 16, 0);
 
 			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
 			free(s);

@@ -1,5 +1,7 @@
 #ifndef _ELF_ELF_H_
 #define _ELF_ELF_H_
+#include <arch/types.h>
+#define EM_X86_64 62
 
 typedef struct _file file;
 
@@ -412,23 +414,25 @@ typedef struct elf64_note {
 } Elf64_Nhdr;
 
 typedef struct _mos_binfmt {
-	unsigned elf_load_addr;
-	unsigned e_phoff;
-	unsigned e_phnum;
-	unsigned interp_load_addr;
-	unsigned e_entry;
-	unsigned interp_bias;
-	unsigned start_brk; /* PAGE_ALIGN(end of BSS) — initial brk value */
+	vaddr_t elf_load_addr;
+	vaddr_t e_phoff;
+	vaddr_t e_phnum;
+	vaddr_t e_phent;
+	vaddr_t interp_load_addr;
+	vaddr_t e_entry;
+	vaddr_t interp_bias;
+	vaddr_t start_brk; /* PAGE_ALIGN(end of BSS) — initial brk value */
 } mos_binfmt;
 
 typedef struct elf_image elf_image;
+int elf_image_abi(elf_image *image);
 
 int elf_prepare(file *fp, elf_image **result);
 void elf_release(elf_image *image);
-unsigned elf_map_prepared(elf_image *image, mos_binfmt *fmt);
+vaddr_t elf_map_prepared(elf_image *image, mos_binfmt *fmt);
 int elf_check_file(file *fp);
 
-unsigned elf_map(char *path, mos_binfmt *fmt);
-unsigned elf_map_file(char *path, mos_binfmt *fmt, file *fp);
+vaddr_t elf_map(char *path, mos_binfmt *fmt);
+vaddr_t elf_map_file(char *path, mos_binfmt *fmt, file *fp);
 
 #endif

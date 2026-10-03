@@ -299,8 +299,8 @@ static void tty_graphics_refresh_dsr(void *unused)
 
 typedef struct {
 	vaddr_t page_dir;
-	paddr_t fb_phys;
-	paddr_t fb_end;
+	uint32_t fb_phys;
+	uint32_t fb_end;
 	int dirty;
 } tty_graphics_dirty_ctx;
 
@@ -471,9 +471,9 @@ static void vga_putchar(tty_state *state, int row, int col, char c)
 		return;
 	state->cells[idx].ch = c;
 	state->cells[idx].fg = state->reverse_video ? state->bg_color :
-						    state->fg_color;
+						      state->fg_color;
 	state->cells[idx].bg = state->reverse_video ? state->fg_color :
-						    state->bg_color;
+						      state->bg_color;
 	if (tty_fb_text_is_visible(state))
 		fb_putcell(&state->cells[idx], col, row);
 }
@@ -840,7 +840,8 @@ static void ansi_feed(tty_state *state, char c)
 			if ((v == 38 || v == 48) && pi + 4 < nparams &&
 			    params[pi + 1] == 2) {
 				unsigned rgb = ARGB(0xff, params[pi + 2] & 255,
-						    params[pi + 3] & 255, params[pi + 4] & 255);
+						    params[pi + 3] & 255,
+						    params[pi + 4] & 255);
 				if (v == 38)
 					state->fg_color = rgb;
 				else
@@ -1560,7 +1561,7 @@ static void tty_bash_spawner(void *p)
 	strcpy(cur->user->root_path, "/");
 
 	/* Set up TSS esp0 for user-mode entry. */
-	ps_update_tss((unsigned)cur + PAGE_SIZE);
+	ps_update_tss((unsigned)(uintptr_t)cur + PAGE_SIZE);
 
 	/* Open stdin (0), stdout (1), stderr (2) on this TTY. */
 	fs_open(tty_path, O_RDONLY, 0);

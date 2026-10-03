@@ -20,8 +20,8 @@ unsigned page_fault_file = 0;
 unsigned page_fault_file_read = 0;
 unsigned page_fault_perm = 0;
 unsigned page_fault_file_cache_hit = 0;
-static unsigned zero_page = 0;
-static unsigned zero_page_phy = 0;
+static vaddr_t zero_page = 0;
+static paddr_t zero_page_phy = 0;
 
 static void pf_process(intr_frame *frame);
 
@@ -347,7 +347,9 @@ static vm_region *pf_find_vma(task_struct *task, vaddr_t address)
 	if (!pf_vma_is_stack(task, region))
 		return NULL;
 
-	if (address < USER_ZONE_END || address >= task->user->vm->start_stack)
+	if (address <
+		    task->user->vm->task_size - USER_STACK_PAGES * PAGE_SIZE ||
+	    address >= task->user->vm->start_stack)
 		return NULL;
 
 	{
@@ -390,8 +392,8 @@ static int pf_page_already_present(vaddr_t address)
 /*
  * Handle page fault which has no physical page.
  */
-static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address,
-				  int write)
+static int pf_handle_page_invalid_raw(task_struct *task, vaddr_t fault_address,
+				      int write)
 {
 	vm_region *region;
 	int this_offset;
@@ -447,6 +449,22 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t fault_address,
  * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
  * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
  */
+static int pf_handle_page_invalid(task_struct *task, vaddr_t address, int write)
+{
+	int handled = pf_handle_page_invalid_raw(task, address, write);
+	if (handled && task->user->abi == MOS_ABI_AMD64) {
+		vm_region *region = vm_find_map_cached(task->user, address);
+		if (region) {
+			unsigned flags = mm_get_map_flag(address);
+			flags = region->prot & PROT_EXEC ?
+					flags & ~PAGE_ENTRY_NO_EXEC :
+					flags | PAGE_ENTRY_NO_EXEC;
+			mm_set_map_flag(address, flags);
+		}
+	}
+	return handled;
+}
+
 static int wp_page_copy(vaddr_t fault_address)
 {
 	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
@@ -636,11 +654,12 @@ NOT_HANDLED:
 
 	if ((vaddr_t)(uintptr_t)frame->eip < KERNEL_OFFSET ||
 	    (fault_address < KERNEL_OFFSET && fault_address > 0x1000)) {
-		klog("segfault: %s: error code %x, address %x, eip %x\n",
+		klog("segfault: %s: error code %x, address %lx, eip %lx\n",
 		     cur->user ? cur->user->command ? cur->user->command :
 						      "[none]" :
 				 "[none]",
-		     frame->error_code, fault_address, frame->eip);
+		     (unsigned)frame->error_code, (unsigned long)fault_address,
+		     (unsigned long)(uintptr_t)frame->eip);
 
 		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
 		do_signal(frame);
@@ -649,10 +668,11 @@ NOT_HANDLED:
 		goto Done;
 	}
 
-	klog("segfault: %s: error code %x, address %x, eip %x\n",
+	klog("segfault: %s: error code %x, address %lx, eip %lx\n",
 	     cur->user ? cur->user->command ? cur->user->command : "[none]" :
 			 "[none]",
-	     frame->error_code, fault_address, frame->eip);
+	     (unsigned)frame->error_code, (unsigned long)fault_address,
+	     (unsigned long)(uintptr_t)frame->eip);
 
 	DIE();
 

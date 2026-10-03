@@ -164,8 +164,8 @@ struct _file {
 #define FS_FILE_UNLINK_ON_CLOSE 0x1u
 
 struct linux_dirent {
-	unsigned long d_ino; /* Inode number */
-	unsigned long d_off; /* Offset to next linux_dirent */
+	uint32_t d_ino; /* Inode number */
+	uint32_t d_off; /* Offset to next linux_dirent */
 	unsigned short d_reclen; /* Length of this linux_dirent */
 	char d_name[]; /* Filename (null-terminated) */
 };
@@ -182,7 +182,8 @@ struct linux_dirent64 {
 
 #define NAME64_OFFSET() offset_of(struct linux_dirent64, d_name)
 
-#define MAX_FD ((PAGE_SIZE) / sizeof(file *))
+#define MAX_FD 1024
+#define FD_TABLE_PAGES ((MAX_FD * sizeof(file *) + PAGE_SIZE - 1) / PAGE_SIZE)
 #define FD_BITMAP_BITS (8 * sizeof(unsigned long))
 #define FD_BITMAP_WORDS ((MAX_FD + FD_BITMAP_BITS - 1) / FD_BITMAP_BITS)
 

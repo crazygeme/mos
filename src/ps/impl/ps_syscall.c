@@ -90,7 +90,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	kfree(task->stats);
 	ps_put_fds(task);
 	kfree(task->io_bitmap);
-	vm_free(task, 1);
+	vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
 }
 
 static int has_child_unsafe(task_struct *parent, unsigned pid)

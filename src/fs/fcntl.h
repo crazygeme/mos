@@ -80,6 +80,6 @@ struct flock64 {
 	int64_t l_start;
 	int64_t l_len;
 	int l_pid;
-};
+} __attribute__((packed, aligned(4)));
 
 #endif

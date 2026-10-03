@@ -63,6 +63,17 @@ KTEST(kprint, sprintf_x_zero)
 	return 0;
 }
 
+KTEST(kprint, sprintf_lx_kernel_address)
+{
+	char buf[32];
+	unsigned long address = (unsigned long)0xffffffffc0253256ULL;
+	sprintf(buf, "%lx", address);
+	EXPECT_EQ(strcmp(buf, sizeof(address) == 8 ? "ffffffffc0253256" :
+						   "c0253256"),
+		  0);
+	return 0;
+}
+
 KTEST(kprint, sprintf_p_same_as_x)
 {
 	char xbuf[32], pbuf[32];

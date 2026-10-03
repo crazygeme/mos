@@ -236,7 +236,7 @@ vm_struct_t vm_create()
 	mm->start_brk = mm->brk = 0;
 	mm->start_stack = 0;
 	mm->mmap_base = TASK_UNMAPPED_BASE;
-	mm->task_size = KERNEL_OFFSET;
+	mm->task_size = MOS_COMPAT_TASK_SIZE;
 	mm->users = 1;
 	mm->count = 1;
 	mm->vma_generation = 1;
@@ -310,13 +310,13 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 	probe.begin = begin;
 	probe.end = end;
 	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
-		unsigned unmap_begin;
-		unsigned unmap_end;
+		vaddr_t unmap_begin;
+		vaddr_t unmap_end;
 		vaddr_t vir;
 
 		/* Snapshot all origin data before vm_del_map frees the structs. */
-		unsigned o_begin = oregion->begin;
-		unsigned o_end = oregion->end;
+		vaddr_t o_begin = oregion->begin;
+		vaddr_t o_end = oregion->end;
 		int o_prot = oregion->prot;
 		int o_flag = oregion->flag;
 		file *o_fp = oregion->fp;
@@ -540,7 +540,7 @@ vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr)
 		return NULL;
 
 	mm_struct *mm = user->vm;
-	unsigned page = addr & PAGE_SIZE_MASK;
+	vaddr_t page = addr & PAGE_SIZE_MASK;
 	/* Validate generation before touching the cached raw pointer. */
 	if (user->mmap_cache_vm == mm &&
 	    user->mmap_cache_generation == mm->vma_generation &&
@@ -574,15 +574,15 @@ vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr)
  * stack set up by the process loader) are skipped over.  Returns 0 if no
  * suitable gap exists.
  */
-vaddr_t vm_disc_map(vm_struct_t vm, int size)
+vaddr_t vm_disc_map(vm_struct_t vm, size_t size)
 {
 	mm_struct *mm = vm;
 	vm_region *region = vm_tree_first(mm);
-	unsigned candidate = TASK_UNMAPPED_BASE;
+	vaddr_t candidate = mm->mmap_base;
 
 	while (region) {
 		/* Gap before this region is large enough — use it. */
-		if (candidate + (unsigned)size <= region->begin)
+		if (candidate + size <= region->begin)
 			return candidate;
 
 		/* Advance candidate past this region if it overlaps. */
@@ -593,7 +593,7 @@ vaddr_t vm_disc_map(vm_struct_t vm, int size)
 	}
 
 	/* Check for room after the last region. */
-	if (candidate + (unsigned)size <= KERNEL_OFFSET)
+	if (candidate + size <= mm->task_size - USER_STACK_PAGES * PAGE_SIZE)
 		return candidate;
 
 	return 0;
@@ -668,8 +668,8 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 	probe.end = end;
 
 	while ((oregion = vm_tree_find(mm, &probe)) != NULL) {
-		unsigned r_begin = oregion->begin;
-		unsigned r_end = oregion->end;
+		vaddr_t r_begin = oregion->begin;
+		vaddr_t r_end = oregion->end;
 		int r_prot = oregion->prot;
 		int r_flag = oregion->flag;
 		file *r_fp = oregion->fp;
@@ -678,8 +678,8 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 		vm_fault_lock *r_fault_lock = oregion->fault_lock;
 
 		/* Intersection of the region with [begin, end) */
-		unsigned upd_begin = r_begin > begin ? r_begin : begin;
-		unsigned upd_end = r_end < end ? r_end : end;
+		vaddr_t upd_begin = r_begin > begin ? r_begin : begin;
+		vaddr_t upd_end = r_end < end ? r_end : end;
 
 		/* Temporarily hold references across descriptor removal. */
 		if (r_fp)
@@ -767,6 +767,8 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 			addr = vm_disc_map(cur->user->vm, size);
 	}
 
+	if (!addr || addr >= mm->task_size || size > mm->task_size - addr)
+		return 0;
 	/*
 	 * Assign a unique ID for anonymous MAP_SHARED regions so that all
 	 * processes sharing this mapping (e.g. after fork) can locate the
@@ -812,6 +814,10 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 			continue;
 		}
 
+		if (cur->user->abi == MOS_ABI_AMD64)
+			mmflag = prot & PROT_EXEC ?
+					 mmflag & ~PAGE_ENTRY_NO_EXEC :
+					 mmflag | PAGE_ENTRY_NO_EXEC;
 		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
@@ -832,12 +838,21 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
  * Resolves the file descriptor to an inode pointer (NULL for anonymous
  * mappings where fd == -1) and delegates to do_mmap_kernel().
  */
-int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
-	    unsigned int flags, int fd, unsigned int offset)
+intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
+		 unsigned int flags, int fd, unsigned int offset)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *node = NULL;
 
+	if (!_len || _len > cur->user->vm->task_size ||
+	    _addr >= cur->user->vm->task_size ||
+	    _len > cur->user->vm->task_size - _addr)
+		return -EINVAL;
+#if MOS_HAS_NATIVE_USER
+	/* The legacy driver API uses a shared supervisor device window. */
+	if (_addr < 0x100000000ULL && _addr + _len > MOS_COMPAT_TASK_SIZE)
+		return -EINVAL;
+#endif
 	/*
 	 * This kernel historically treats fd == -1 as an anonymous mapping
 	 * even when callers omit MAP_ANONYMOUS (e.g. exec stack setup).
@@ -871,8 +886,8 @@ int do_mmap(vaddr_t _addr, unsigned int _len, unsigned int prot,
 
 	if (node && node->f_fop && node->f_fop->mmap_file) {
 		file *backing = NULL;
-		int result = node->f_fop->mmap_file(node, &offset, _len, prot,
-						    flags, &backing);
+		intptr_t result = node->f_fop->mmap_file(node, &offset, _len,
+							 prot, flags, &backing);
 		if (result < 0)
 			return result;
 		result = do_mmap_kernel(_addr, _len, prot, flags, backing,
@@ -1015,20 +1030,26 @@ void vm_flush_file_dirty(vm_struct_t vm, file *fp)
  *
  * Returns 0 on success.
  */
-int do_munmap(void *addr, unsigned length)
+int do_munmap(void *addr, size_t length)
 {
 	task_struct *cur = CURRENT_TASK();
 	vaddr_t begin = ((vaddr_t)(uintptr_t)addr) & PAGE_SIZE_MASK;
 	/* Round length up to a page count, then compute end — avoids the
 	 * off-by-one that (addr+length+PAGE_SIZE-1)&PAGE_MASK produces when
 	 * length is already a multiple of PAGE_SIZE. */
-	unsigned pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+	size_t pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 	vaddr_t end = begin + pages * PAGE_SIZE;
 	mm_struct *mm = cur->user->vm;
 	vm_key probe;
 	vm_region *region;
 	vaddr_t vir;
 
+	if (begin >= mm->task_size || length > mm->task_size - begin)
+		return -EINVAL;
+#if MOS_HAS_NATIVE_USER
+	if (begin < 0x100000000ULL && begin + length > MOS_COMPAT_TASK_SIZE)
+		return -EINVAL;
+#endif
 	if (length == 0)
 		return 0;
 
@@ -1036,8 +1057,8 @@ int do_munmap(void *addr, unsigned length)
 	probe.end = end;
 
 	while ((region = vm_tree_find(mm, &probe)) != NULL) {
-		unsigned r_begin = region->begin;
-		unsigned r_end = region->end;
+		vaddr_t r_begin = region->begin;
+		vaddr_t r_end = region->end;
 		int r_prot = region->prot;
 		int r_flag = region->flag;
 		file *r_fp = region->fp;
@@ -1046,8 +1067,8 @@ int do_munmap(void *addr, unsigned length)
 		vm_fault_lock *r_fault_lock = region->fault_lock;
 
 		/* Intersection of this region with the unmap range. */
-		unsigned unmap_begin = r_begin > begin ? r_begin : begin;
-		unsigned unmap_end = r_end < end ? r_end : end;
+		vaddr_t unmap_begin = r_begin > begin ? r_begin : begin;
+		vaddr_t unmap_end = r_end < end ? r_end : end;
 
 		/* Flush dirty MAP_SHARED pages before physical unmap. */
 		vm_flush_dirty_region(region, unmap_begin, unmap_end);

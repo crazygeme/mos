@@ -347,7 +347,8 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 		case SO_SNDBUF: {
 			int val = sock_tcp_has_full_pcb(sk) ?
-					(int)tcp_sndbuf(sk->tcp) : TCP_SND_BUF;
+					  (int)tcp_sndbuf(sk->tcp) :
+					  TCP_SND_BUF;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}
@@ -433,7 +434,8 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 		}
 		case TCP_MAXSEG: {
 			int val = sock_tcp_has_full_pcb(sk) ?
-					(int)sk->tcp->mss : 536;
+					  (int)sk->tcp->mss :
+					  536;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}

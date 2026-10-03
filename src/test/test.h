@@ -54,12 +54,12 @@ extern ktest_script_t __ktest_script_end[];
  * The function must return int: 0 = pass, non-zero = fail line.
  * ASSERT_* macros return __LINE__ automatically; add "return 0;" at the end.
  */
-#define KTEST(suite, name)                                        \
-	static int _ktest_fn_##suite##_##name(void);              \
-	static ktest_t _ktest_entry_##suite##_##name              \
-		__attribute__((used, section(".ktest"))) = {      \
-			#suite, #name, _ktest_fn_##suite##_##name \
-		};                                                \
+#define KTEST(suite, name)                                             \
+	static int _ktest_fn_##suite##_##name(void);                   \
+	static ktest_t _ktest_entry_##suite##_##name __attribute__((   \
+		used, section(".ktest"), aligned(sizeof(void *)))) = { \
+		#suite, #name, _ktest_fn_##suite##_##name              \
+	};                                                             \
 	static int _ktest_fn_##suite##_##name(void)
 
 #define __KTEST_SCRIPT_CAT2(a, b) a##b
@@ -70,9 +70,9 @@ extern ktest_script_t __ktest_script_end[];
 #define KTEST_SCRIPT_NAMED(name_literal, content)                            \
 	static const ktest_script_t __KTEST_SCRIPT_CAT(_ktest_script_entry_, \
 						       __LINE__)             \
-		__attribute__((used, section(".ktest_script"))) = {          \
-			name_literal, content                                \
-		}
+		__attribute__((used, section(".ktest_script"),               \
+			       aligned(sizeof(void *)))) = { name_literal,   \
+							     content }
 
 /* ── Non-fatal failure accumulator (set by EXPECT_*, read by .runner) ─────── */
 

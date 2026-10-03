@@ -144,7 +144,7 @@ void vm_region_unlock_fault(vm_region *region);
  *
  * @return unsigned
  */
-vaddr_t vm_disc_map(vm_struct_t vm, int size);
+vaddr_t vm_disc_map(vm_struct_t vm, size_t size);
 
 /**
  * dup vm maps from cur into new

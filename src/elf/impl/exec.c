@@ -39,8 +39,8 @@ static void cleanup()
 	task_struct *cur = CURRENT_TASK();
 	mm_struct *old_mm = cur->user->vm;
 	mm_struct *new_mm;
-	intr_frame *frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(*frame));
+	intr_frame *frame = (intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+					   sizeof(*frame));
 	vaddr_t new_pd;
 	int i = 0;
 
@@ -254,147 +254,98 @@ but that could change... */
  *
  * Returns the new stack pointer (esp) that should be given to the entry point.
  */
-static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
-				char **envp, unsigned top, mos_binfmt *exec)
+static void stack_word(vaddr_t address, uintptr_t value, unsigned width)
 {
-	int i = 0;
-	vaddr_t esp = top;
-	vaddr_t *sp, *platform = 0, *random_bytes;
-	vaddr_t vdso_entry = mm_vdso_fastcall_entry();
-	int argv_buf_len = argc * sizeof(char *);
-	int env_buf_len = envc * sizeof(char *);
-	char **tmp_array_argv = 0;
-	char **tmp_array_env = 0;
-	vaddr_t argvp, envpp;
-	int len;
-
-	/* Temporary kernel-side pointer arrays; filled while copying strings. */
-	tmp_array_argv = kmalloc(argv_buf_len + 4);
-	tmp_array_env = kmalloc(env_buf_len + 4);
-
-	/* 4-byte sentinel at the very top of the stack region. */
-	esp -= 4;
-	memcpy((void *)esp, &(unsigned){ 0 }, sizeof(unsigned));
-
-	/* Push the executable filename as a string. */
-	len = strlen(file) + 1;
-	esp -= len;
-	strcpy((char *)esp, file);
-
-	/* Push environment strings in reverse order, recording pointers. */
-	for (i = envc - 1; i >= 0; i--) {
-		int len = strlen(envp[i]) + 1;
-		esp -= len;
-		strcpy((char *)esp, envp[i]);
-		tmp_array_env[i] = (char *)esp;
-		((char *)esp)[len - 1] = '\0';
-	}
-	tmp_array_env[envc] = 0; /* NULL terminator for envp array */
-
-	/* Push argument strings in reverse order, recording pointers. */
-	for (i = argc - 1; i >= 0; i--) {
-		int len = strlen(argv[i]) + 1;
-		esp -= len;
-		strcpy((char *)esp, argv[i]);
-		tmp_array_argv[i] = (char *)esp;
-		((char *)esp)[len - 1] = '\0';
-	}
-	tmp_array_argv[argc] = 0; /* NULL terminator for argv array */
-
-	/* Push the ELF platform string (used by AT_PLATFORM). */
-	len = sizeof(ELF_PLATFORM);
-	esp -= len;
-	strcpy((char *)esp, ELF_PLATFORM);
-	platform = (unsigned *)esp;
-
-	/* The dynamic loader reads AT_RANDOM to initialize stack protection. */
-	esp -= 16;
-	random_bytes = (vaddr_t *)esp;
-	srand((unsigned)time_now_us() ^ (unsigned)(uintptr_t)esp);
-	for (i = 0; i < 16; i++)
-		((unsigned char *)random_bytes)[i] = (unsigned char)rand();
-
-	/* Align stack to 16 bytes (ABI requirement) then step back one slot. */
-	esp = (~15UL & esp) - 16UL;
-	sp = (unsigned *)esp;
-
-#define __put_user(val, addr) (*(unsigned long *)(addr) = (unsigned long)(val))
-
-/* Write one auxiliary vector entry (id, val) at slot @nr relative to sp. */
-#define NEW_AUX_ENT(nr, id, val)         \
-	__put_user((id), sp + (nr * 2)); \
-	__put_user((val), sp + (nr * 2 + 1));
-
-	/* AT_NULL terminates the auxiliary vector. */
-	sp -= 2;
-	NEW_AUX_ENT(0, AT_NULL, 0);
-
-	if (platform) {
-		sp -= 2;
-		NEW_AUX_ENT(0, AT_PLATFORM, (unsigned long)platform);
-	}
-	sp -= 2;
-	NEW_AUX_ENT(0, AT_RANDOM, (unsigned long)random_bytes);
-
-	/* Hardware capability, page size, clock-tick frequency, optional vsyscall entry. */
-	sp -= (vdso_entry ? 4 : 3) * 2;
-	NEW_AUX_ENT(0, AT_HWCAP, ELF_HWCAP);
-	NEW_AUX_ENT(1, AT_PAGESZ, 4096);
-	NEW_AUX_ENT(2, AT_CLKTCK, 100);
-	if (vdso_entry)
-		NEW_AUX_ENT(3, AT_SYSINFO, vdso_entry);
-
-	/*
-	 * Core auxiliary entries consumed by the dynamic linker:
-	 *   AT_PHDR  — virtual address of the program header table
-	 *   AT_PHENT — size of one program header entry
-	 *   AT_PHNUM — number of program headers
-	 *   AT_BASE  — load bias of the interpreter (ld.so)
-	 *   AT_FLAGS — always 0
-	 *   AT_ENTRY — original entry point of the executable
-	 *   AT_UID/EUID/GID/EGID — process credentials
-	 *   AT_SECURE — effective credentials differ from real credentials
-	 */
-	sp -= 11 * 2;
-	NEW_AUX_ENT(0, AT_PHDR, exec->elf_load_addr + exec->e_phoff);
-	NEW_AUX_ENT(1, AT_PHENT, sizeof(Elf32_Phdr));
-	NEW_AUX_ENT(2, AT_PHNUM, exec->e_phnum);
-	NEW_AUX_ENT(3, AT_BASE, exec->interp_bias);
-	NEW_AUX_ENT(4, AT_FLAGS, 0);
-	NEW_AUX_ENT(5, AT_ENTRY, exec->e_entry);
-	NEW_AUX_ENT(6, AT_UID, current->user->uid);
-	NEW_AUX_ENT(7, AT_EUID, current->user->euid);
-	NEW_AUX_ENT(8, AT_GID, current->user->gid);
-	NEW_AUX_ENT(9, AT_EGID, current->user->egid);
-	NEW_AUX_ENT(10, AT_SECURE,
-		    current->user->uid != current->user->euid ||
-			    current->user->gid != current->user->egid);
-
-#undef NEW_AUX_ENT
-
-	/* Copy the envp and argv pointer arrays onto the stack. */
-	esp = (unsigned long)sp;
-	esp -= (env_buf_len + 4);
-	envpp = esp;
-	memcpy((void *)envpp, tmp_array_env, env_buf_len + 4);
-	esp -= (argv_buf_len + 4);
-	argvp = esp;
-	memcpy((void *)argvp, tmp_array_argv, argv_buf_len + 4);
-
-	kfree(tmp_array_argv);
-	kfree(tmp_array_env);
-
-	/* Push argc — this is what the entry point (or crt0) reads first. */
-	esp -= 4;
-	memcpy((void *)esp, &argc, sizeof(argc));
-	return (vaddr_t)esp;
+	if (width == 4)
+		*(uint32_t *)address = value;
+	else
+		*(uint64_t *)address = value;
 }
 
-int sys_execve(const char *f, char **argv, char **envp)
+static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
+				char **envp, vaddr_t top, mos_binfmt *exec)
+{
+	unsigned width = current->user->abi == MOS_ABI_I386 ? 4 : 8;
+	const char *platform = width == 4 ? "i686" : "x86_64";
+	vaddr_t sp = top;
+	vaddr_t *av = kmalloc((argc + envc) * sizeof(vaddr_t));
+	if (!av && argc + envc)
+		do_exit(SIGKILL);
+	for (int i = envc - 1; i >= 0; i--) {
+		sp -= strlen(envp[i]) + 1;
+		strcpy((char *)sp, envp[i]);
+		av[argc + i] = sp;
+	}
+	for (int i = argc - 1; i >= 0; i--) {
+		sp -= strlen(argv[i]) + 1;
+		strcpy((char *)sp, argv[i]);
+		av[i] = sp;
+	}
+	sp -= strlen(file) + 1;
+	strcpy((char *)sp, file);
+	vaddr_t filename = sp;
+	sp -= strlen(platform) + 1;
+	strcpy((char *)sp, platform);
+	vaddr_t plat = sp;
+	sp -= 16;
+	vaddr_t random = sp;
+	srand((unsigned)time_now_us());
+	for (unsigned i = 0; i < 16; i++)
+		((unsigned char *)sp)[i] = rand();
+	uintptr_t aux[][2] = { { AT_PHDR, exec->elf_load_addr },
+			       { AT_PHENT, exec->e_phent },
+			       { AT_PHNUM, exec->e_phnum },
+			       { AT_PAGESZ, PAGE_SIZE },
+			       { AT_BASE, exec->interp_bias },
+			       { AT_FLAGS, 0 },
+			       { AT_ENTRY, exec->e_entry },
+			       { AT_UID, current->user->uid },
+			       { AT_EUID, current->user->euid },
+			       { AT_GID, current->user->gid },
+			       { AT_EGID, current->user->egid },
+			       { AT_PLATFORM, plat },
+			       { AT_HWCAP, width == 4 ? ELF_HWCAP : 0 },
+			       { AT_CLKTCK, 100 },
+			       { width == 4 ? AT_SYSINFO : AT_IGNORE,
+				 width == 4 ? mm_vdso_fastcall_entry() : 0 },
+			       { AT_RANDOM, random },
+			       { 31, filename },
+			       { AT_SECURE,
+				 current->user->uid != current->user->euid ||
+					 current->user->gid !=
+						 current->user->egid },
+			       { AT_NULL, 0 } };
+	unsigned words =
+		1 + argc + 1 + envc + 1 + sizeof(aux) / sizeof(uintptr_t);
+	sp = (sp - words * width) & ~(vaddr_t)15;
+	vaddr_t cursor = sp;
+#define PUSH_WORD(value)                                       \
+	do {                                                   \
+		stack_word(cursor, (uintptr_t)(value), width); \
+		cursor += width;                               \
+	} while (0)
+	PUSH_WORD(argc);
+	for (int i = 0; i < argc; i++)
+		PUSH_WORD(av[i]);
+	PUSH_WORD(0);
+	for (int i = 0; i < envc; i++)
+		PUSH_WORD(av[argc + i]);
+	PUSH_WORD(0);
+	for (unsigned i = 0; i < sizeof(aux) / sizeof(aux[0]); i++) {
+		PUSH_WORD(aux[i][0]);
+		PUSH_WORD(aux[i][1]);
+	}
+#undef PUSH_WORD
+	kfree(av);
+	return sp;
+}
+
+static int execve_common(const char *f, char **argv, char **envp,
+			 int owned_vectors)
 {
 	vaddr_t eip = 0;
 	int i = 0;
-	vaddr_t esp_top = KERNEL_OFFSET;
+	vaddr_t esp_top;
 	char *file_name;
 	unsigned argc = 0, envc = 0;
 	char **s_argv = 0;
@@ -643,7 +594,18 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * note that we will trigger vfork event if this task is
 	 * created by vfork syscall
 	 */
+	if (owned_vectors) {
+		kfree(argv);
+		kfree(envp);
+	}
+	int abi = elf_image_abi(image);
 	cleanup();
+	cur->user->abi = abi;
+	esp_top = abi == MOS_ABI_I386 ? MOS_COMPAT_TASK_SIZE :
+					MOS_NATIVE_TASK_SIZE;
+	cur->user->vm->task_size = esp_top;
+	cur->user->vm->mmap_base = abi == MOS_ABI_I386 ? USER_HEAP_END :
+							 0x100000000ULL;
 
 	/*
 	 * now we parse and load elf file.
@@ -678,7 +640,8 @@ int sys_execve(const char *f, char **argv, char **envp)
 	    cur->user->vm->start_brk < USER_HEAP_END) {
 		do_mmap(cur->user->vm->start_brk, PAGE_SIZE,
 			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
-		cur->user->vm->brk = cur->user->vm->start_brk + PAGE_SIZE;
+		cur->user->vm->brk =
+			cur->user->vm->start_brk + KERNEL_TASK_BYTES;
 		vm_set_brk(cur->user->vm, cur->user->vm->start_brk,
 			   cur->user->vm->brk);
 	}
@@ -687,14 +650,15 @@ int sys_execve(const char *f, char **argv, char **envp)
 	 * map a kernel code region into user land, usually used in
 	 * signal deliver and signal return.
 	 */
-	mm_vdso_map();
+	if (abi == MOS_ABI_I386)
+		mm_vdso_map();
 
 	/* Map only the top USER_STACK_INIT_PAGES pages initially.
 	 * The stack grows downward automatically via the page fault handler.
 	 */
 	{
-		unsigned stack_init_bottom =
-			KERNEL_OFFSET - USER_STACK_INIT_PAGES * PAGE_SIZE;
+		vaddr_t stack_init_bottom =
+			esp_top - USER_STACK_INIT_PAGES * PAGE_SIZE;
 		do_mmap(stack_init_bottom, USER_STACK_INIT_PAGES * PAGE_SIZE,
 			PROT_READ | PROT_WRITE, MAP_FIXED, -1, 0);
 		cur->user->vm->start_stack = stack_init_bottom;
@@ -809,7 +773,7 @@ static void kinit_userspace()
 	task_struct *cur = CURRENT_TASK();
 	const char **argv = devault_argv;
 	const char **envp = default_envp;
-	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + PAGE_SIZE;
+	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + KERNEL_TASK_BYTES;
 	const char *arg = g_cmdline;
 
 	/* Pass an explicit supported runlevel to SysV init. */
@@ -850,3 +814,12 @@ static void kinit_userspace()
 }
 
 KERNEL_INIT(8, kinit_userspace);
+
+int sys_execve(const char *file, char **argv, char **envp)
+{
+	return execve_common(file, argv, envp, 0);
+}
+int sys_execve_owned(const char *file, char **argv, char **envp)
+{
+	return execve_common(file, argv, envp, 1);
+}

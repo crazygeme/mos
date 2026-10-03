@@ -1,0 +1,2 @@
+CFLAGS-$(DEBUG) += -O0
+CFLAGS-$(RELEASE) += -O2

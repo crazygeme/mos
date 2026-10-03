@@ -3,6 +3,7 @@
 _ramsize="4096"
 diskfile="rh9.qcow2"
 _build="release"
+_arch="x86"
 kernel_file=""
 _debug=""
 _window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
@@ -37,7 +38,10 @@ fi
 
 for arg in "$@"
 do
-if [ "$arg" == "test" ]; then
+if [[ "$arg" == arch=* ]]; then
+ _arch="${arg#arch=}"
+ if [[ "$_arch" != "x86" && "$_arch" != "x64" ]]; then echo "arch must be x86 or x64" >&2; exit 1; fi
+elif [ "$arg" == "test" ]; then
 	_test="test"
 elif [[ "$arg" == smp=* ]]; then
 	_smp="${arg#smp=}"
@@ -71,6 +75,7 @@ elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
 	echo "param:"
+ echo -e "\t arch=x86|x64: select kernel architecture (default x86)"
 	echo -e "\t test: build and run the test kernel for the selected build"
 	echo -e "\t debug: use the debug build and wait for gdb before running"
 	echo -e "\t logtofile: write kernel log to out/x86/<build>/krn.log instead of stdio"
@@ -79,12 +84,16 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t verbose=1: run with full syscall trace logging"
 	echo -e "\t verbose=2: run with focused diagnostic logging"
 	echo -e "\t kvm: enable kvm"
-	echo -e "\t smp=N: start N CPUs (1..32, default 1)"
+	echo -e "\t smp=N: start N CPUs (1..32, default 2)"
 	exit
 fi
 done
 
-_outdir="out/x86/$_build"
+if [ "$_arch" == "x64" ]; then
+ _qemu="qemu-system-x86_64"
+ if [ -z "$_kvm" ]; then _cpu="qemu64"; fi
+fi
+_outdir="out/$_arch/$_build"
 if [ "$_test" == "test" ]; then
 	kernel_file="$_outdir/kernel-test"
 else
@@ -93,6 +102,11 @@ fi
 
 if [ "$_debug" == "-monitor unix:/tmp/qemu-profiler.sock,server,nowait" ] && [ "$_test" != "test" ]; then
 	kernel_file="$_outdir/kernel.dbg"
+fi
+
+if [ "$_arch" == "x64" ]; then
+ if [ "$_test" == "test" ]; then kernel_file="$_outdir/kernel-test.boot";
+ else kernel_file="$_outdir/kernel.boot"; fi
 fi
 
 if [ "$_logtofile" == "pending" ]; then
@@ -176,7 +190,7 @@ if [ "$_test" != "test" ]; then
 	setup_nat
 fi
 
-make -s -j8 BUILD="$_build" $_test || { echo "Error: build failed" >&2; exit 1; }
+make -s -j8 ARCH="$_arch" BUILD="$_build" $_test || { echo "Error: build failed" >&2; exit 1; }
 
 if [ ! -f "$diskfile" ]; then
 	unzip redhat9.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }

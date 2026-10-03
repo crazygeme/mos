@@ -8,7 +8,7 @@ TARGET	= kernel
 include $(MAINPATH)/build/helpers.mk
 
 SCRIPTS   = $(MAINPATH)/build/config.mk $(ARCH_DIR)/config.mk $(MAINPATH)/build/helpers.mk $(MAINPATH)/Makefile $(SUBDIR_CFLAGS_FILES)
-SOURCE_DIRS = src arch/$(ARCH)
+SOURCE_DIRS = src arch/$(ARCH) arch/abi
 SRCS      = $(shell find $(SOURCE_DIRS) -name '*.c')
 ASMS      = $(shell find $(SOURCE_DIRS) -name '*.S')
 TEST_SRCS = $(shell find test/ -name '*.c')
@@ -27,8 +27,8 @@ TEST_DEPS += $(patsubst test/%.sh,$(DST)/obj/generated/test/%.c.d,$(TEST_SCRIPTS
 GENERATED_TEST_SCRIPT_CS = $(patsubst test/%.sh,$(DST)/generated/test/%.c,$(TEST_SCRIPTS))
 BUILD_GENERATED = $(OBJS) $(TEST_OBJS) $(DEPS) $(TEST_DEPS) \
 		    $(GENERATED_TEST_SCRIPT_CS) $(LIBS) \
-		    $(DST)/kernel $(DST)/kernel.dbg $(DST)/assemble.s \
-		    $(DST)/kernel-test $(DST)/kernel-test.dbg \
+		    $(DST)/kernel $(DST)/kernel.boot $(DST)/kernel.dbg $(DST)/assemble.s \
+		    $(DST)/kernel-test $(DST)/kernel-test.boot $(DST)/kernel-test.dbg \
 		    $(DST)/assemble-test.s
 
 LIBS    = $(DST)/obj/third_party/lwext4/libext4.a $(DST)/obj/third_party/lwip/liblwip.a
@@ -61,14 +61,14 @@ help:
 	@echo "Output directories:"
 	@echo "  x86 release -> out/x86/release"
 	@echo "  x86 debug   -> out/x86/debug"
-	@echo "  x64 release -> out/x64/release (backend pending)"
-	@echo "  x64 debug   -> out/x64/debug (backend pending)"
+	@echo "  x64 release -> out/x64/release"
+	@echo "  x64 debug   -> out/x64/debug"
 
 else
 
 # ── Default build (no test code) ────────────────────────────────────────────
 
-all: $(DST)/kernel
+all: $(DST)/kernel $(if $(filter x64,$(ARCH)),$(DST)/kernel.boot)
 	@:
 
 release:
@@ -79,7 +79,7 @@ debug:
 
 # ── Test build (kernel + test/ sources) ─────────────────────────────────────
 
-test: $(DST)/kernel-test
+test: $(DST)/kernel-test $(if $(filter x64,$(ARCH)),$(DST)/kernel-test.boot)
 	@:
 
 test-debug:
@@ -102,6 +102,11 @@ $(DST)/kernel-test: $(OBJS) $(TEST_OBJS) $(LIBS) $(ARCH_LINKER_SCRIPT)
 	@cp $(DST)/kernel-test $(DST)/kernel-test.dbg
 	@$(SP) $(DST)/kernel-test
 	@$(DS) -d $(DST)/kernel-test.dbg > $(DST)/assemble-test.s
+
+# ELF64 remains available for symbols; the Multiboot entry uses a flat image.
+$(DST)/%.boot: $(DST)/%
+	@echo "OC  $@"
+	@$(OC) -O binary $< $@
 
 # ── Compile rules ────────────────────────────────────────────────────────────
 
@@ -132,6 +137,13 @@ $(DST)/obj/third_party/lwext4/libext4.a $(DST)/obj/third_party/lwip/liblwip.a: t
 third_party: $(SCRIPTS)
 	@$(MAKE) -C third_party
 
+# Freestanding native userspace probe, built separately from kernel tests.
+.PHONY: user64-smoke
+user64-smoke: $(DST)/user/x64-smoke
+$(DST)/user/x64-smoke: tools/user/x64_smoke.c
+	@mkdir -p $(dir $@)
+	@$(CC) -m64 -O0 -fno-pie -no-pie -fno-stack-protector -mno-red-zone -mgeneral-regs-only -nostdlib -static -Wl,-e,_start -o $@ $<
+
 # ── Utility ──────────────────────────────────────────────────────────────────
 
 clean:
@@ -156,8 +168,8 @@ help:
 	@echo "Output directories:"
 	@echo "  x86 release -> out/x86/release"
 	@echo "  x86 debug   -> out/x86/debug"
-	@echo "  x64 release -> out/x64/release (backend pending)"
-	@echo "  x64 debug   -> out/x64/debug (backend pending)"
+	@echo "  x64 release -> out/x64/release"
+	@echo "  x64 debug   -> out/x64/debug"
 
 -include $(DEPS)
 -include $(TEST_DEPS)

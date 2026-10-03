@@ -33,8 +33,8 @@ static vm_struct_t cur_vm(void)
  */
 KTEST(mmap, anon_auto_addr)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(addr, 0u);
 	EXPECT_GE(addr, TASK_UNMAPPED_BASE);
@@ -49,9 +49,10 @@ KTEST(mmap, anon_auto_addr)
  */
 KTEST(mmap, anon_fixed)
 {
-	unsigned addr = (unsigned)do_mmap(
-		TEST_FIXED_ADDR, PAGE_SIZE, PROT_READ | PROT_WRITE,
-		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(TEST_FIXED_ADDR, PAGE_SIZE,
+					PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+					-1, 0);
 
 	EXPECT_EQ(addr, TEST_FIXED_ADDR);
 
@@ -64,8 +65,8 @@ KTEST(mmap, anon_fixed)
  */
 KTEST(mmap, region_tracked)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -83,8 +84,8 @@ KTEST(mmap, region_tracked)
 KTEST(mmap, region_prot)
 {
 	int prot = PROT_READ | PROT_WRITE;
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, prot,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, prot,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -100,8 +101,8 @@ KTEST(mmap, region_prot)
  */
 KTEST(mmap, region_anon)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -117,9 +118,9 @@ KTEST(mmap, region_anon)
  */
 KTEST(mmap, size_roundup)
 {
-	unsigned addr = (unsigned)do_mmap(
-		TEST_FIXED_ADDR, 1, PROT_READ,
-		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(TEST_FIXED_ADDR, 1, PROT_READ,
+					MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+					-1, 0);
 	ASSERT_EQ(addr, TEST_FIXED_ADDR);
 
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -137,8 +138,8 @@ KTEST(mmap, size_roundup)
  */
 KTEST(mmap, munmap_removes)
 {
-	unsigned addr = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	int ret = do_munmap((void *)addr, PAGE_SIZE);
@@ -156,7 +157,7 @@ KTEST(mmap, munmap_removes)
 KTEST(mmap, munmap_invalid)
 {
 	/* Use an address we know is not mapped. */
-	unsigned addr = 0x30000000u;
+	vaddr_t addr = 0x30000000u;
 
 	/* Make sure it really isn't mapped. */
 	vm_region *r = vm_find_map(cur_vm(), addr);
@@ -172,10 +173,10 @@ KTEST(mmap, munmap_invalid)
  */
 KTEST(mmap, two_maps_distinct)
 {
-	unsigned a = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-				       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	unsigned b = (unsigned)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
-				       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t a = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+				     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t b = (vaddr_t)do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+				     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	ASSERT_NE(a, 0u);
 	ASSERT_NE(b, 0u);
@@ -197,8 +198,8 @@ KTEST(mmap, two_maps_distinct)
 KTEST(mmap, large_mapping)
 {
 	unsigned size = 16 * PAGE_SIZE;
-	unsigned addr = (unsigned)do_mmap(0, size, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	vaddr_t addr = (vaddr_t)do_mmap(0, size, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	ASSERT_NE(addr, 0u);
 
 	/* Check the start and end of the region */
@@ -221,7 +222,7 @@ KTEST(mmap, large_mapping)
  */
 KTEST(mmap, merge_adjacent)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -248,7 +249,7 @@ KTEST(mmap, merge_adjacent)
  */
 KTEST(mmap, merge_no_diff_prot)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
 	do_mmap(base, PAGE_SIZE, PROT_READ, flags, -1, 0);
@@ -270,7 +271,7 @@ KTEST(mmap, merge_no_diff_prot)
  */
 KTEST(mmap, merge_three_way)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -303,7 +304,7 @@ KTEST(mmap, merge_three_way)
  */
 KTEST(mmap, split_middle)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -333,7 +334,7 @@ KTEST(mmap, split_middle)
  */
 KTEST(mmap, split_left_trim)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -357,7 +358,7 @@ KTEST(mmap, split_left_trim)
  */
 KTEST(mmap, split_right_trim)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -382,7 +383,7 @@ KTEST(mmap, split_right_trim)
  */
 KTEST(mmap, split_by_fixed)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
 	do_mmap(base, 4 * PAGE_SIZE, PROT_READ, flags, -1, 0);
@@ -414,7 +415,7 @@ KTEST(mmap, split_by_fixed)
 
 KTEST(mmap, mremap_grow_extends_region)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 
@@ -435,7 +436,7 @@ KTEST(mmap, mremap_grow_extends_region)
 
 KTEST(mmap, mremap_grow_rejects_later_overlap)
 {
-	unsigned base = TEST_MERGE_BASE;
+	vaddr_t base = TEST_MERGE_BASE;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 

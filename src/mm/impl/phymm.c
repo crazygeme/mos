@@ -461,7 +461,7 @@ unsigned phymm_get_mgmt_pages(unsigned highest_page)
 void phymm_setup_mgmt_pages(unsigned start_page)
 {
 	unsigned i;
-	unsigned addr;
+	vaddr_t addr;
 
 	for (i = (start_page * PAGE_SIZE); i < (phymm_begin * PAGE_SIZE);
 	     i += PAGE_SIZE) {
@@ -516,7 +516,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 {
 	unsigned i;
 	memory_map_t *map;
-	unsigned vmap_addr;
+	vaddr_t vmap_addr;
 
 	/* 1. Initialise buddy system */
 	spinlock_init(&buddy_lock);
@@ -542,7 +542,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 	map = (memory_map_t *)vmap_addr;
 
 	/* 3. Walk all type-1 (usable RAM) entries */
-	while ((unsigned)map < vmap_addr + mmap_len) {
+	while ((uintptr_t)map < vmap_addr + mmap_len) {
 		unsigned long long base, top;
 		unsigned page_start, page_end;
 
@@ -579,7 +579,7 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 			buddy_add_free_range(page_start, page_end);
 		}
 next:
-		map = (memory_map_t *)((unsigned)map + map->size +
+		map = (memory_map_t *)((uintptr_t)map + map->size +
 				       sizeof(unsigned int));
 	}
 }

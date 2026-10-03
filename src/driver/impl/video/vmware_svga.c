@@ -81,13 +81,13 @@ static unsigned vmsvga_map_mmio_window(unsigned phys, unsigned size)
 		return 0;
 
 	for (a = begin; a < end; a += PAGE_SIZE) {
-		vaddr_t virt = mm_phys_to_virt(a);
-		if (virt == 0)
+		vaddr_t virt = a;
+		if (mm_map_io(a) != 1)
 			return 0;
 		arch_mm_invalidate(virt & PAGE_SIZE_MASK);
 	}
 
-	return mm_phys_to_virt(phys);
+	return phys;
 }
 
 static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
@@ -104,8 +104,8 @@ static void vmsvga_ensure_fb_mapping(unsigned width, unsigned height)
 
 	for (a = _fb_phys + _fb_mapped_bytes; a < _fb_phys + need_bytes;
 	     a += PAGE_SIZE) {
-		vaddr_t virt = mm_phys_to_virt(a);
-		if (virt == 0)
+		vaddr_t virt = a;
+		if (mm_map_io(a) != 1)
 			return;
 		arch_mm_invalidate(virt & PAGE_SIZE_MASK);
 	}
@@ -131,7 +131,7 @@ static void vmsvga_snapshot_save(void *dst, unsigned size)
 
 	if (!dst || size < need)
 		return;
-	memcpy(dst, (const void *)_fb_buffer, need);
+	memcpy(dst, (const void *)(uintptr_t)_fb_buffer, need);
 }
 
 static void vmsvga_snapshot_restore(const void *src, unsigned size)
@@ -140,7 +140,7 @@ static void vmsvga_snapshot_restore(const void *src, unsigned size)
 
 	if (!src || size < need)
 		return;
-	memcpy((void *)_fb_buffer, src, need);
+	memcpy((void *)(uintptr_t)_fb_buffer, src, need);
 	svga_update(0, 0, _hw_resolution_x, _hw_resolution_y);
 }
 
@@ -224,7 +224,7 @@ static void svga_rect_fill(unsigned color, unsigned x, unsigned y, unsigned w,
 		fifo_sync();
 		return;
 	}
-	unsigned *fb = (unsigned *)_fb_buffer;
+	unsigned *fb = (unsigned *)(uintptr_t)_fb_buffer;
 	unsigned row, col;
 	for (row = y; row < y + h; row++)
 		for (col = x; col < x + w; col++)
@@ -239,7 +239,7 @@ static void render_cell(const tty_cell_t *cell, int col, int row)
 	if (!_font)
 		return;
 
-	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned *disp = (unsigned *)(uintptr_t)_fb_buffer;
 	int px = col * (int)_font->width;
 	int py = row * (int)_font->height;
 	int i, j;
@@ -260,7 +260,7 @@ static void render_cursor_cell(int col, int row, char ch, unsigned fg,
 	if (!_font)
 		return;
 
-	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned *disp = (unsigned *)(uintptr_t)_fb_buffer;
 	int px = col * (int)_font->width;
 	int py = row * (int)_font->height;
 	int i, j;
@@ -331,7 +331,7 @@ static void vmsvga_redraw(const tty_cell_t *cells, unsigned cols, unsigned rows,
 	unsigned i;
 	unsigned total = cols * rows;
 
-	memset((char *)_fb_buffer, 0,
+	memset((char *)(uintptr_t)_fb_buffer, 0,
 	       _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8));
 
 	for (i = 0; i < total; i++)
@@ -505,7 +505,7 @@ static int vmsvga_probe(unsigned device)
 	uint32_t fifo_virt = vmsvga_map_mmio_window(pci.fifo_phys, fifo_size);
 	if (fifo_virt == 0)
 		return 0;
-	_fifo = (uint32_t *)fifo_virt;
+	_fifo = (uint32_t *)(uintptr_t)fifo_virt;
 
 	_fifo[SVGA_FIFO_MIN] = 4 * sizeof(uint32_t);
 	_fifo[SVGA_FIFO_MAX] = fifo_size;
@@ -529,7 +529,7 @@ static int vmsvga_probe(unsigned device)
 	_fb_buffer = fb_virt;
 	_fb_mapped_bytes = fb_size;
 
-	memset((char *)_fb_buffer, 0, fb_size);
+	memset((char *)(uintptr_t)_fb_buffer, 0, fb_size);
 
 	_hw_resolution_x = VGA_RESOLUTION_X;
 	_hw_resolution_y = VGA_RESOLUTION_Y;

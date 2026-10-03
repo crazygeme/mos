@@ -2331,3 +2331,184 @@ this change.
 Validation: release kernel and test-kernel compilation plus static review.
 No tests, QEMU sessions, ping checks or performance benchmarks were run, per
 the user's instruction. Runtime correctness and throughput remain unverified.
+
+## 2026-10-04 - RPC statd interface ioctl compatibility
+
+### Reported fault
+
+The AMD64 kernel reported the following fault during RH9 service startup:
+
+```text
+[609][1203]: segfault: /sbin/rpc.statd: error code 2, address 74706000, eip c0253256
+```
+
+In the corresponding AMD64 release symbol file, instruction
+`0xffffffffc0253256` is the `rep stosl` instruction in `memset`. Page-fault
+error code 2 denotes a supervisor write to a non-present page. The original
+diagnostic used `%x` for both addresses, losing their upper 32 bits. The fault
+diagnostic now uses `%lx`, and the formatter preserves the full unsigned-long
+value for hexadecimal output instead of converting it through a 32-bit int.
+
+### Source analysis
+
+The nfs-utils 1.0.1 implementation of `rpc.statd` calls
+`pmap_unset(SM_PROG, SM_VERS)` in its startup loop. In glibc 2.3.2,
+`pmap_unset()` calls `__get_myaddress()`, which obtains interfaces through
+`ioctl(fd, SIOCGIFCONF, &ifc)` before requesting interface flags.
+
+Sources:
+
+- [nfs-utils 1.0.1 source archive](https://downloads.sourceforge.net/project/nfs/nfs-utils/1.0.1/nfs-utils-1.0.1.tar.gz),
+  `utils/statd/statd.c`.
+- [glibc 2.3.2 source archive](https://ftp.gnu.org/gnu/glibc/glibc-2.3.2.tar.gz),
+  `sunrpc/pmap_clnt.c` and `sysdeps/gnu/net/if.h`.
+
+The exact installed RH9 package revisions have not been established. These
+upstream versions establish the RPC interface-enumeration path and ABI layout;
+distribution-specific patches remain outside this verification.
+
+| Layout | i386 | AMD64 |
+| --- | --- | --- |
+| `ifconf` size | 8 bytes | 16 bytes |
+| Buffer pointer offset | 4 bytes | 8 bytes |
+| Buffer pointer width | 4 bytes | 8 bytes |
+| `ifreq` array stride | 32 bytes | 40 bytes |
+
+Previously, the i386 syscall table dispatched ioctl directly to the common
+handler. The AMD64 socket implementation interpreted an i386 `ifconf` as a
+native structure, loading unrelated bytes beyond the object as a buffer
+pointer. Interface enumeration then passed that pointer to `memset`. This is
+a confirmed ABI defect on the service's startup path and is consistent with
+the reported fault. A subsequent RH9 startup reports no further
+`rpc.statd` fault after the interface-ioctl correction.
+
+### Correction
+
+The i386 syscall table now selects `compat_ioctl`. On the x86 kernel this
+aliases the existing handler. On the AMD64 kernel the implementation resides
+in `arch/x64/syscall/impl/compat_ioctl.c`.
+
+For `SIOCGIFCONF`, the compatibility handler reads an explicit eight-byte
+i386 structure, queries the available interface count, and allocates a native
+buffer bounded by that count and the caller's capacity. It copies each
+returned name and socket address into a 32-byte i386 entry and returns an
+i386 byte count. The original buffer pointer remains unchanged. Other ioctl
+requests retain their existing dispatch.
+
+The native `ifreq` includes the pointer-width `ifmap` union member, restoring
+the AMD64 40-byte stride while preserving the x86 32-byte stride. Native
+`ifconf` buffer pointers retain all 64 bits. Interface enumeration also
+supports a NULL buffer for the Linux byte-count query and returns only whole
+entries when capacity is limited.
+
+### Validation
+
+Source syntax checks pass for both kernel architectures. The native probe
+passes its syntax check, the guest test passes shell syntax validation, and
+the patch passes whitespace validation. The rebuilt kernel completes the
+RPC startup path without the reported fault. The regression scripts, native
+probe, and full-width formatter test remain pending guest execution.
+
+`test/posix_ifconf.sh` checks enumeration, interface flags, returned byte
+counts, unchanged buffer pointers, surrounding sentinel bytes, NULL-buffer
+queries, short buffers, single-entry buffers, and glibc's RPC local-address
+helper. For an i386 process it places `0x74706000` immediately after `ifconf`
+to reproduce the incorrect pointer load deterministically.
+
+The `kprint.sprintf_lx_kernel_address` kernel test checks that hexadecimal
+fault addresses preserve all bits on AMD64 and retain the x86 representation.
+
+The native `tools/user/x64_smoke.c` probe checks 40-byte interface entries,
+buffer bounds, size queries, and short-buffer behavior using a destination
+above 4 GiB. Its interface checks use exit codes 21 through 31.
+
+Runtime verification consists of normal RH9 startup with `rpc.statd`, the
+interface regression script on both kernels, and the AMD64 probe on x64.
+
+## 2026-10-04 - XFree86 SHMAT result pointer sign extension on AMD64
+
+### Symptom
+
+RH9 X server startup repeatedly faults while storing a shared-memory
+attachment result:
+
+```text
+[1201][1483]: segfault: /usr/X11R6/bin/X: error code 2, address bffff000, eip c0235eb5
+```
+
+The corresponding AMD64 release symbol file resolves the instruction to
+`mos_shmat()` at the `*user_raddr = mapped` assignment. Disassembly shows
+`movslq` extending the saved third IPC argument before the four-byte store.
+
+### Root cause
+
+glibc 2.3.2 implements i386 `shmat()` using the IPC multiplexer. Its third
+argument is the address of a local stack variable used to receive the mapped
+address. The kernel declares that argument as `int`. Casting it directly to
+AMD64 `uintptr_t` sign-extends a pointer with bit 31 set, converting
+`0xbffffxxx` into `0xffffffffbffffxxx`. The store then targets an unmapped
+supervisor address rather than the i386 stack. The original 32-bit fault
+diagnostic hides the extension.
+
+XFree86 4.3.0 uses `shmat()` in its Linux int10 initialization and shared-memory
+extensions. The source establishes these call sites; the particular X startup
+caller has not been established by a runtime backtrace.
+
+Sources:
+
+- [XFree86 4.3.0 source](https://ftp.xfree86.org/pub/XFree86/4.3.0/source/),
+  `programs/Xserver/hw/xfree86/os-support/linux/int10/linux.c` and
+  `programs/Xserver/Xext/xf86bigfont.c`.
+- [glibc 2.3.2 source](https://ftp.gnu.org/gnu/glibc/glibc-2.3.2.tar.gz),
+  `sysdeps/unix/sysv/linux/shmat.c`.
+
+### Correction and validation
+
+The IPC SHMAT branch converts the argument through `uint32_t` before widening
+to `uintptr_t`. This preserves the complete i386 address as an unsigned
+32-bit value. The result store remains four bytes wide. Native AMD64 shared
+memory syscalls remain outside the existing i386 IPC multiplexer.
+
+`test/posix_sysv_shm.sh` exercises a raw IPC SHMAT with a result pointer whose
+bit 31 is set, verifies the result-store bounds, then exercises glibc SHMAT,
+shared backing, IPC_RMID while attached, and detach. Runtime verification of
+the correction remains pending. A subsequent X startup reaches VESA
+initialization and reports an unsupported vm86 call rather than this store
+fault.
+
+## 2026-10-04 - Missing VBE emulation in the AMD64 compatibility kernel
+
+### Symptom and root cause
+
+After the SHMAT correction, XFree86 reaches its VESA initialization and exits
+with `unknown type(0xffffffff)=0xff`, followed by `no screens found`.
+
+XFree86's `linux_vm86.c` calls the vm86old syscall and switches on the low byte
+of its return value. The syscall wrapper converts an error to `-1`, whose low
+byte is `0xff`; the default case prints exactly this diagnostic. The AMD64
+backend had unconditional `-ENOSYS` stubs for both vm86 syscalls. The x86
+backend already implements selected VBE calls through software emulation, so
+the required behavior does not depend on hardware virtual-8086 mode being
+available in long mode.
+
+### Correction
+
+The existing VBE emulator moves from `arch/x86/syscall/impl/syscall_vm86.c`
+to `arch/abi/i386/syscall_vm86.c`, where both kernels build it. The AMD64
+stubs are removed. Flags, bitmap fields, CPU type, and interrupt vectors use
+explicit 32-bit wire values; static assertions require an 84-byte register
+block and 160-byte i386 vm86 structure. Segment-address conversion widens
+the calculated unsigned address through `uintptr_t`.
+
+The supported BIOS calls, VMware port programming, and fallback behavior
+retain the existing x86 implementation. This provides the i386 VBE syscall
+contract on AMD64; it does not implement arbitrary real-mode instruction
+execution or a native AMD64 vm86 syscall.
+
+### Validation
+
+Both architecture source trees pass syntax validation after sharing the
+emulator. `test/posix_vm86_vbe.sh` exercises both entry points, controller
+and mode information, output buffer bounds, returned register state, and
+save-state size queries. Guest execution and X startup verification remain
+pending.

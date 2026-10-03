@@ -47,7 +47,7 @@
 /* heap is bounded by the mmap zone, matching Linux classic VM layout */
 #define USER_HEAP_END TASK_UNMAPPED_BASE
 /* mmap zone: [TASK_UNMAPPED_BASE, USER_ZONE_END), top is the max stack floor */
-#define USER_ZONE_END (KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE)
+#define USER_ZONE_END (MOS_COMPAT_TASK_SIZE - USER_STACK_PAGES * PAGE_SIZE)
 
 // supported resolution
 #define VGA_RESOLUTION_X 800

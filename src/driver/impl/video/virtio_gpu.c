@@ -734,8 +734,8 @@ static int gpu_add_fb(struct gpu_client *client, unsigned handle,
 	struct gpu_bo *bo = gpu_handle(client, handle);
 	unsigned i;
 	if (!bo || width != bo->width || height != bo->height || !width ||
-	    !height || width > GPU_MAX_DIMENSION || height > GPU_MAX_DIMENSION ||
-	    pitch < width * 4 ||
+	    !height || width > GPU_MAX_DIMENSION ||
+	    height > GPU_MAX_DIMENSION || pitch < width * 4 ||
 	    (uint64_t)pitch * height > bo->size)
 		return -EINVAL;
 	for (i = 0; i < GPU_MAX_FB; i++)
@@ -933,7 +933,8 @@ static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 		struct drm_virtgpu_resource_create create = { 0 };
 		int result;
 		if (r->flags || r->bpp != 32 || !r->width || !r->height ||
-		    r->width > GPU_MAX_DIMENSION || r->height > GPU_MAX_DIMENSION)
+		    r->width > GPU_MAX_DIMENSION ||
+		    r->height > GPU_MAX_DIMENSION)
 			return -EINVAL;
 		r->pitch = (r->width * 4 + 63) & ~63U;
 		r->size = (uint64_t)r->pitch * r->height;

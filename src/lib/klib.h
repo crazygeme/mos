@@ -15,13 +15,7 @@ typedef struct _kblock {
 	struct _kblock *next;
 } kblock;
 
-#ifndef _STDARG_H
-typedef __builtin_va_list va_list;
-
-#define va_start(ap, v) __builtin_va_start(ap, v)
-#define va_arg(ap, t) __builtin_va_arg(ap, t)
-#define va_end(ap) __builtin_va_end(ap)
-#endif /* _STDARG_H */
+#include <stdarg.h>
 
 #define kmalloc(size) malloc(size)
 #define kfree(p) free(p)

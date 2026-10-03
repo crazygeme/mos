@@ -110,6 +110,12 @@ void smp_tlb_flush(void)
 	int_intr_setlevel(irq);
 }
 
+void smp_tlb_flush_user(vaddr_t page_dir)
+{
+	(void)page_dir;
+	smp_tlb_flush();
+}
+
 int smp_kernel_enter(void)
 {
 	struct smp_cpu *cpu;

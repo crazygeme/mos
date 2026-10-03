@@ -75,7 +75,7 @@ static void bochs_snapshot_save(void *dst, unsigned size)
 
 	if (!dst || size < need)
 		return;
-	memcpy(dst, (const void *)_fb_buffer, need);
+	memcpy(dst, (const void *)(uintptr_t)_fb_buffer, need);
 }
 
 static void bochs_snapshot_restore(const void *src, unsigned size)
@@ -84,7 +84,7 @@ static void bochs_snapshot_restore(const void *src, unsigned size)
 
 	if (!src || size < need)
 		return;
-	memcpy((void *)_fb_buffer, src, need);
+	memcpy((void *)(uintptr_t)_fb_buffer, src, need);
 }
 
 static unsigned short bga_read_register(unsigned short idx);
@@ -96,7 +96,7 @@ static void render_cell(const tty_cell_t *cell, int col, int row)
 	if (!_font)
 		return;
 
-	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned *disp = (unsigned *)(uintptr_t)_fb_buffer;
 	int px = col * (int)_font->width;
 	int py = row * (int)_font->height;
 	int i, j;
@@ -117,7 +117,7 @@ static void render_cursor_cell(int col, int row, char ch, unsigned fg,
 	if (!_font)
 		return;
 
-	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned *disp = (unsigned *)(uintptr_t)_fb_buffer;
 	int px = col * (int)_font->width;
 	int py = row * (int)_font->height;
 	int i, j;
@@ -176,7 +176,7 @@ static void bochs_redraw(const tty_cell_t *cells, unsigned cols, unsigned rows,
 	unsigned i;
 	unsigned total = cols * rows;
 
-	memset((char *)_fb_buffer, 0,
+	memset((char *)(uintptr_t)_fb_buffer, 0,
 	       _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8));
 
 	for (i = 0; i < total; i++)
@@ -205,7 +205,7 @@ static void bochs_scroll_line_px(void)
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
 	unsigned copy_size = bpr * (_window_char_height - 1);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
 	memmove(fb, fb + bpr, copy_size);
 	memset(fb + copy_size, 0, bpr);
@@ -218,7 +218,7 @@ static void bochs_scroll_region_px(unsigned top_row, unsigned bot_row)
 
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
 	memmove(fb + top_row * bpr, fb + (top_row + 1) * bpr,
 		(bot_row - top_row) * bpr);
@@ -232,7 +232,7 @@ static void bochs_insert_lines_px(unsigned row, unsigned bot_row, unsigned n)
 
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
 	if (n >= bot_row - row + 1) {
 		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
@@ -250,7 +250,7 @@ static void bochs_delete_lines_px(unsigned row, unsigned bot_row, unsigned n)
 
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
 	if (n >= bot_row - row + 1) {
 		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
@@ -263,7 +263,7 @@ static void bochs_delete_lines_px(unsigned row, unsigned bot_row, unsigned n)
 
 static void bochs_clear_screen(void)
 {
-	memset((char *)_fb_buffer, 0,
+	memset((char *)(uintptr_t)_fb_buffer, 0,
 	       _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8));
 }
 

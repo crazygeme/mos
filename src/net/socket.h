@@ -104,6 +104,12 @@ struct sockaddr_un {
 #define IFNAMSIZ 16
 
 /* ── ifreq / ifconf ─────────────────────────────────────────────────────────── */
+struct ifmap {
+	unsigned long mem_start, mem_end;
+	unsigned short base_addr;
+	unsigned char irq, dma, port;
+};
+
 struct ifreq {
 	char ifr_name[IFNAMSIZ];
 	union {
@@ -116,6 +122,8 @@ struct ifreq {
 		int ifr_ifindex;
 		int ifr_metric;
 		int ifr_mtu;
+		struct ifmap ifr_map;
+		void *ifr_data;
 	};
 };
 

@@ -34,10 +34,10 @@
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
-#define HDR_SZ 4u
+#define HDR_SZ ((unsigned)sizeof(uintptr_t))
 #define ALLOC_BIT 1u
 /* Free block needs header + two pointers; must be at least 12 bytes total. */
-#define MIN_BLK 12u
+#define MIN_BLK (HDR_SZ + 2u * sizeof(void *))
 /* Round up to nearest 8-byte boundary. */
 #define ALIGN8(n) (((unsigned)(n) + 7u) & ~7u)
 #define NUM_BINS 16
@@ -84,7 +84,7 @@ static inline void **fl_next(void *b)
 
 static inline void **fl_prev(void *b)
 {
-	return (void **)((char *)b + HDR_SZ + 4);
+	return (void **)((char *)b + HDR_SZ + sizeof(void *));
 }
 
 /* ── Segregated bins ─────────────────────────────────────────────────────── */
@@ -97,7 +97,7 @@ static inline void **fl_prev(void *b)
  *   offset 8  : prev (== fl_prev on &bins[i])
  */
 typedef struct {
-	unsigned h;
+	uintptr_t h;
 	void *next, *prev;
 } bin_t;
 
@@ -149,7 +149,7 @@ static void bins_init(void)
 
 static vaddr_t kblk_raw(unsigned page_count)
 {
-	unsigned ret = cur_block_top;
+	vaddr_t ret = cur_block_top;
 
 	if (page_count == 0)
 		return 0;

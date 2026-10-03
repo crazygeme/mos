@@ -42,6 +42,7 @@ typedef struct multiboot_info multiboot_info_t;
 #define PAGE_ENTRY_KERNEL_CODE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_GLOBAL)
 #define PAGE_ENTRY_KERNEL_DATA \
 	(PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_GLOBAL)
+#define PAGE_ENTRY_NO_EXEC MOS_PAGE_NO_EXEC
 #define PAGE_ENTRY_USER_CODE (PAGE_ENTRY_PRESENT | PAGE_ENTRY_DPL_USER)
 #define PAGE_ENTRY_USER_DATA \
 	(PAGE_ENTRY_PRESENT | PAGE_ENTRY_WRITABLE | PAGE_ENTRY_DPL_USER)
@@ -132,15 +133,15 @@ void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag);
 
 void mm_set_phy_page_mask(unsigned int page_index, unsigned int used);
 
-int do_mmap(vaddr_t addr, unsigned int len, unsigned int prot,
-	    unsigned int flags, int fd, unsigned int offset);
+intptr_t do_mmap(vaddr_t addr, size_t len, unsigned int prot,
+		 unsigned int flags, int fd, unsigned int offset);
 
 void do_mmap_update(vaddr_t addr, unsigned int prot, unsigned int flags);
 
 vaddr_t do_mmap_kernel(vaddr_t addr, size_t len, unsigned int prot,
 		       unsigned int flags, file *fp, unsigned int offset);
 
-int do_munmap(void *addr, unsigned length);
+int do_munmap(void *addr, size_t length);
 
 void *name_get();
 

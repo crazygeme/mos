@@ -24,7 +24,8 @@
 #include <config.h>
 #include <errno.h>
 #include <macro.h>
-#include "syscall_internal.h"
+#include <arch/abi/i386/compat.h>
+#include <syscall/impl/syscall_internal.h>
 
 /* handlers defined in other subsystems */
 int sys_getrusage(int who, rusage *usage);
@@ -38,7 +39,7 @@ static int test_call(unsigned arg0, unsigned arg1, unsigned arg2)
 	return 0;
 }
 
-static unsigned call_table[NR_syscalls] = {
+static uintptr_t call_table[NR_syscalls] = {
 	[0] = test_call, // 0   __NR_restart_syscall
 	[1] = sys_exit, // 1   __NR_exit
 	[2] = sys_fork, // 2   __NR_fork
@@ -50,7 +51,7 @@ static unsigned call_table[NR_syscalls] = {
 	[8] = sys_creat, // 8   __NR_creat
 	[9] = sys_link, // 9   __NR_link
 	[10] = sys_unlink, // 10  __NR_unlink
-	[11] = sys_execve, // 11  __NR_execve
+	[11] = compat_execve, // 11  __NR_execve
 	[12] = sys_chdir, // 12  __NR_chdir
 	[13] = sys_time, // 13  __NR_time
 	[14] = sys_mknod, // 14  __NR_mknod
@@ -93,7 +94,7 @@ static unsigned call_table[NR_syscalls] = {
 	[51] = sys_acct, // 51  __NR_acct
 	[52] = sys_umount2, // 52  __NR_umount2
 	[53] = sys_lock, // 53  __NR_lock
-	[54] = sys_ioctl, // 54  __NR_ioctl
+	[54] = compat_ioctl, // 54  __NR_ioctl
 	[55] = sys_fcntl, // 55  __NR_fcntl
 	[56] = 0, // __NR_mpx
 	[57] = sys_setpgid, // 57  __NR_setpgid
@@ -106,7 +107,7 @@ static unsigned call_table[NR_syscalls] = {
 	[64] = sys_getppid, // 64  __NR_getppid
 	[65] = sys_getpgrp, // 65  __NR_getpgrp
 	[66] = sys_setsid, // 66  __NR_setsid
-	[67] = sys_sigaction, // 67  __NR_sigaction
+	[67] = compat_sigaction, // 67  __NR_sigaction
 	[68] = 0, // __NR_sgetmask
 	[69] = 0, // __NR_ssetmask
 	[70] = sys_setreuid, // 70  __NR_setreuid
@@ -184,8 +185,8 @@ static unsigned call_table[NR_syscalls] = {
 	[142] = sys_newselect, // 142 __NR__newselect
 	[143] = sys_flock, // 143 __NR_flock
 	[144] = 0, // __NR_msync
-	[145] = sys_readv, // 145 __NR_readv
-	[146] = sys_writev, // 146 __NR_writev
+	[145] = compat_readv, // 145 __NR_readv
+	[146] = compat_writev, // 146 __NR_writev
 	[147] = sys_getsid, // 147 __NR_getsid
 	[148] = 0, // __NR_fdatasync
 	[149] = sys__sysctl, // 149 __NR__sysctl
@@ -225,7 +226,7 @@ static unsigned call_table[NR_syscalls] = {
 	[183] = sys_getcwd, // 183 __NR_getcwd
 	[184] = sys_capget, // __NR_capget
 	[185] = sys_capset, // __NR_capset
-	[186] = sys_sigaltstack, // 186 __NR_sigaltstack
+	[186] = compat_sigaltstack, // 186 __NR_sigaltstack
 	[187] = 0, // __NR_sendfile
 	[188] = 0, // __NR_getpmsg
 	[189] = 0, // __NR_putpmsg
@@ -322,15 +323,15 @@ static unsigned call_table[NR_syscalls] = {
 	[331] = sys_pipe2, // 331 __NR_pipe2
 	[332] = sys_inotify_init1, // 332 __NR_inotify_init1
 	[340] = sys_prlimit64,
-	[337] = sys_recvmmsg, // 337 __NR_recvmmsg
-	[345] = sys_sendmmsg, // 345 __NR_sendmmsg
+	[337] = compat_recvmmsg, // 337 __NR_recvmmsg
+	[345] = compat_sendmmsg, // 345 __NR_sendmmsg
 	[292] = sys_inotify_add_watch, // 292 __NR_inotify_add_watch
 	[293] = sys_inotify_rm_watch, // 293 __NR_inotify_rm_watch
 	[311] = sys_set_robust_list,
 	[312] = sys_get_robust_list,
 	[355] = sys_getrandom,
-	[370] = sys_sendmsg, // 370 __NR_sendmsg
-	[372] = sys_recvmsg, // 372 __NR_recvmsg
+	[370] = compat_sendmsg, // 370 __NR_sendmsg
+	[372] = compat_recvmsg, // 372 __NR_recvmsg
 	[383] = sys_statx,
 	[386] = sys_rseq,
 	[403] = sys_clock_gettime64,
@@ -346,7 +347,7 @@ static int unhandled_syscall(unsigned callno)
 	return -ENOSYS;
 }
 
-static void syscall_process(intr_frame *frame)
+void i386_syscall_process(intr_frame *frame)
 {
 	syscall_fn fn;
 	int ret;
@@ -373,10 +374,3 @@ static void syscall_process(intr_frame *frame)
 	if (traced)
 		ps_ptrace_maybe_stop_syscall(frame, 0);
 }
-
-static void syscall_init()
-{
-	int_register(SYSCALL_INT_NO, syscall_process, 0, 3);
-}
-
-KERNEL_INIT(7, syscall_init);

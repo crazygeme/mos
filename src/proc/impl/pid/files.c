@@ -35,8 +35,8 @@ static void maps_region_cb(vm_region *region, void *data)
 	maps_ctx *ctx = data;
 	char perms[5];
 	const char *name;
-	unsigned stack_begin = ctx->task->user->vm->start_stack;
-	unsigned stack_end = KERNEL_OFFSET;
+	vaddr_t stack_begin = ctx->task->user->vm->start_stack;
+	vaddr_t stack_end = ctx->task->user->vm->task_size;
 	int ino = 0;
 
 	perms[0] = (region->prot & PROT_READ) ? 'r' : '-';

@@ -1,9 +1,14 @@
-# x64 backend
+# AMD64 backend
 
-This directory owns the future x86-64 implementation. Code will be grouped by
-subsystem (`boot`, `int`, `mm`, `ps`, and so on), with headers at the module
-root and source below its `impl/` directory.
+The x64 backend includes long-mode boot, four-level paging, compatibility and
+native syscall entry, per-CPU task state, and APIC-based SMP. Output is placed
+in `out/x64/<build>`. The flat `kernel.boot` image is used for Multiboot launch;
+`kernel.dbg` retains ELF64 debugging symbols.
 
-The common build reserves `out/x64/<build>` and supplies the x86-64 compiler
-and linker flags. `ARCH_READY` remains disabled until the backend has a valid
-entry point and linker script.
+Architecture sources are grouped by subsystem, with public headers at module
+roots and implementations under `impl/`. The shared i386 syscall namespace
+resides in `arch/abi/i386`.
+
+[Architecture and validation status](../../doc/x64.md) describes ABI layouts,
+memory ownership, SMP, launch commands, verified runtime configurations, and
+current limits.

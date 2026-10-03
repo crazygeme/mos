@@ -28,7 +28,8 @@
 
 static const unsigned char bit_mask[8] = { 128, 64, 32, 16, 8, 4, 2, 1 };
 
-static unsigned _fb_buffer;
+static uintptr_t _fb_buffer;
+static unsigned shadow_bytes, dirty_begin, dirty_end;
 static unsigned _fb_phys;
 static unsigned _fb_mapped_bytes;
 static unsigned _hw_resolution_x;
@@ -36,6 +37,41 @@ static unsigned _hw_resolution_y;
 static unsigned _window_char_width;
 static unsigned _window_char_height;
 static const fb_font_t *_font = NULL;
+
+static void bochs_dirty(unsigned begin, unsigned end)
+{
+	if (!dirty_end || begin < dirty_begin)
+		dirty_begin = begin;
+	if (end > dirty_end)
+		dirty_end = end;
+}
+
+static void bochs_flush_text(void)
+{
+	if (!dirty_end)
+		return;
+	memcpy((void *)(uintptr_t)(_fb_phys + dirty_begin),
+	       (const void *)(_fb_buffer + dirty_begin), dirty_end - dirty_begin);
+	dirty_begin = dirty_end = 0;
+}
+
+static int bochs_resize_shadow(unsigned width, unsigned height)
+{
+	unsigned bytes = width * height * (VGA_COLOR_DEPTH / 8);
+	unsigned pages = (bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+	if (pages * PAGE_SIZE > shadow_bytes) {
+		vaddr_t buffer = vm_alloc(pages);
+		if (!buffer)
+			return 0;
+		if (_fb_buffer)
+			vm_free(_fb_buffer, shadow_bytes / PAGE_SIZE);
+		_fb_buffer = buffer;
+		shadow_bytes = pages * PAGE_SIZE;
+	}
+	memset((void *)_fb_buffer, 0, bytes);
+	dirty_begin = dirty_end = 0;
+	return 1;
+}
 
 static void bochs_ensure_fb_mapping(unsigned width, unsigned height)
 {
@@ -75,7 +111,7 @@ static void bochs_snapshot_save(void *dst, unsigned size)
 
 	if (!dst || size < need)
 		return;
-	memcpy(dst, (const void *)_fb_buffer, need);
+	memcpy(dst, (const void *)(uintptr_t)_fb_phys, need);
 }
 
 static void bochs_snapshot_restore(const void *src, unsigned size)
@@ -84,7 +120,9 @@ static void bochs_snapshot_restore(const void *src, unsigned size)
 
 	if (!src || size < need)
 		return;
+	memcpy((void *)(uintptr_t)_fb_phys, src, need);
 	memcpy((void *)_fb_buffer, src, need);
+	dirty_begin = dirty_end = 0;
 }
 
 static unsigned short bga_read_register(unsigned short idx);
@@ -96,10 +134,13 @@ static void render_cell(const tty_cell_t *cell, int col, int row)
 	if (!_font)
 		return;
 
-	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned *disp = (unsigned *)(uintptr_t)_fb_buffer;
 	int px = col * (int)_font->width;
 	int py = row * (int)_font->height;
 	int i, j;
+	bochs_dirty((py * _hw_resolution_x + px) * 4,
+		    ((py + _font->height - 1) * _hw_resolution_x + px +
+		     _font->width) * 4);
 
 	for (i = 0; i < _font->height; i++) {
 		unsigned char bits =
@@ -117,10 +158,13 @@ static void render_cursor_cell(int col, int row, char ch, unsigned fg,
 	if (!_font)
 		return;
 
-	unsigned *disp = (unsigned *)_fb_buffer;
+	unsigned *disp = (unsigned *)(uintptr_t)_fb_buffer;
 	int px = col * (int)_font->width;
 	int py = row * (int)_font->height;
 	int i, j;
+	bochs_dirty((py * _hw_resolution_x + px) * 4,
+		    ((py + _font->height - 1) * _hw_resolution_x + px +
+		     _font->width) * 4);
 
 	for (i = 0; i < _font->height; i++) {
 		unsigned char bits_ch =
@@ -175,8 +219,9 @@ static void bochs_redraw(const tty_cell_t *cells, unsigned cols, unsigned rows,
 {
 	unsigned i;
 	unsigned total = cols * rows;
+	bochs_dirty(0, bochs_snapshot_size());
 
-	memset((char *)_fb_buffer, 0,
+	memset((char *)(uintptr_t)_fb_buffer, 0,
 	       _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8));
 
 	for (i = 0; i < total; i++)
@@ -195,6 +240,7 @@ static void bochs_redraw(const tty_cell_t *cells, unsigned cols, unsigned rows,
 			render_cursor_cell((int)nc, (int)nr, c->ch, c->fg,
 					   c->bg, VGA_COLOR_WHITE);
 	}
+	bochs_flush_text();
 }
 
 static void bochs_scroll_line_px(void)
@@ -205,10 +251,11 @@ static void bochs_scroll_line_px(void)
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
 	unsigned copy_size = bpr * (_window_char_height - 1);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
 	memmove(fb, fb + bpr, copy_size);
 	memset(fb + copy_size, 0, bpr);
+	bochs_dirty(0, copy_size + bpr);
 }
 
 static void bochs_scroll_region_px(unsigned top_row, unsigned bot_row)
@@ -218,11 +265,12 @@ static void bochs_scroll_region_px(unsigned top_row, unsigned bot_row)
 
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
 	memmove(fb + top_row * bpr, fb + (top_row + 1) * bpr,
 		(bot_row - top_row) * bpr);
 	memset(fb + bot_row * bpr, 0, bpr);
+	bochs_dirty(top_row * bpr, (bot_row + 1) * bpr);
 }
 
 static void bochs_insert_lines_px(unsigned row, unsigned bot_row, unsigned n)
@@ -232,8 +280,9 @@ static void bochs_insert_lines_px(unsigned row, unsigned bot_row, unsigned n)
 
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
+	bochs_dirty(row * bpr, (bot_row + 1) * bpr);
 	if (n >= bot_row - row + 1) {
 		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
 		return;
@@ -250,8 +299,9 @@ static void bochs_delete_lines_px(unsigned row, unsigned bot_row, unsigned n)
 
 	unsigned bpr = _hw_resolution_x * (unsigned)_font->height *
 		       (VGA_COLOR_DEPTH / 8);
-	char *fb = (char *)_fb_buffer;
+	char *fb = (char *)(uintptr_t)_fb_buffer;
 
+	bochs_dirty(row * bpr, (bot_row + 1) * bpr);
 	if (n >= bot_row - row + 1) {
 		memset(fb + row * bpr, 0, (bot_row - row + 1) * bpr);
 		return;
@@ -263,7 +313,8 @@ static void bochs_delete_lines_px(unsigned row, unsigned bot_row, unsigned n)
 
 static void bochs_clear_screen(void)
 {
-	memset((char *)_fb_buffer, 0,
+	bochs_dirty(0, bochs_snapshot_size());
+	memset((char *)(uintptr_t)_fb_buffer, 0,
 	       _hw_resolution_x * _hw_resolution_y * (VGA_COLOR_DEPTH / 8));
 }
 
@@ -287,6 +338,10 @@ static void bochs_sync_mode(void)
 
 	width = bga_read_register(VBE_DISPI_INDEX_XRES);
 	height = bga_read_register(VBE_DISPI_INDEX_YRES);
+	if (width && height &&
+	    (width != _hw_resolution_x || height != _hw_resolution_y) &&
+	    !bochs_resize_shadow(width, height))
+		return;
 	if (width > 0 && height > 0)
 		bochs_ensure_fb_mapping(width, height);
 	if (width > 0)
@@ -351,6 +406,8 @@ static int bochs_probe(unsigned device)
 {
 	if (!fb_available() || !bga_is_available())
 		return 0;
+	if (!bochs_resize_shadow(VGA_RESOLUTION_X, VGA_RESOLUTION_Y))
+		return 0;
 
 	bga_set_video_mode(VGA_RESOLUTION_X, VGA_RESOLUTION_Y, VGA_COLOR_DEPTH,
 			   1, 1);
@@ -367,7 +424,6 @@ static int bochs_probe(unsigned device)
 		if (mm_map_io(a) == 1)
 			arch_mm_invalidate(a);
 	_fb_phys = fb_phys;
-	_fb_buffer = fb_phys;
 	_fb_mapped_bytes = fb_size;
 
 	_hw_resolution_x = VGA_RESOLUTION_X;
@@ -395,6 +451,7 @@ static const fb_drv_t bochs_drv = {
 	.clear_screen = bochs_clear_screen,
 	.change_font = bochs_change_font,
 	.sync_mode = bochs_sync_mode,
+	.flush_text = bochs_flush_text,
 	.get_phys_window = bochs_get_phys_window,
 	.snapshot_size = bochs_snapshot_size,
 	.snapshot_save = bochs_snapshot_save,

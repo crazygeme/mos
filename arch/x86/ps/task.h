@@ -60,6 +60,7 @@ typedef struct _ptrace_saved_frame {
 
 /* Keep architecture task pointers width-neutral at common call sites. */
 
+void arch_task_init_switch_frame(struct _task_struct *task);
 void arch_task_init(struct _task_struct *task);
 void arch_task_activate(struct _task_struct *task);
 void arch_task_reset_tls(struct _task_struct *task,

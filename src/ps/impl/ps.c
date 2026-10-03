@@ -231,7 +231,7 @@ void ps_init()
 	memset(tss_address_storage, 0xff, sizeof(tss_io_struct));
 	tss_address = &tss_address_storage->tss;
 	tss_address->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
-	int_update_tss((unsigned int)tss_address);
+	int_update_tss((void *)tss_address);
 }
 
 int ps_enabled()
@@ -331,7 +331,7 @@ user_enviroment *ps_alloc_user_env(void)
 	user_enviroment *user = zalloc(sizeof(user_enviroment));
 	if (user) {
 		uintptr_t p = (uintptr_t)user->fpu_storage;
-		user->fpu = (unsigned char *)((p + 15U) & ~15U);
+		user->fpu = (unsigned char *)((p + 15U) & ~(uintptr_t)15);
 	}
 	return user;
 }
@@ -375,7 +375,7 @@ void ps_send_signal_owner(int owner, int sig)
 	}
 
 	spinlock_lock(&ps_lock, &irq);
-	task = ps_find_process_unsafe((unsigned)owner);
+	task = ps_find_process_unsafe((unsigned)(uintptr_t)owner);
 	if (task && task->type == ps_user && task->user && task->signal) {
 		task->signal->sig_pending |= (1UL << (sig - 1));
 		if (task->status == ps_waiting &&
@@ -389,30 +389,10 @@ void ps_send_signal_owner(int owner, int sig)
  * Public — user address-space management
  */
 
-/* Walk every mapped user page and invoke fn(aux, vir, phy) for each.
- * Only covers the user portion (indices 0..KERNEL_PAGE_DIR_OFFSET-1). */
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 {
-	unsigned i, j;
-	pte_t *page_dir;
-
-	if (!fn || !task->user->vm || !task->user->vm->page_dir)
-		return;
-
-	page_dir = (pte_t *)task->user->vm->page_dir;
-	for (i = 0; i < KERNEL_PAGE_DIR_OFFSET; i++) {
-		pte_t *page_table = (pte_t *)(page_dir[i] & PAGE_SIZE_MASK);
-		if (!page_table)
-			continue;
-		page_table = (pte_t *)PHY_TO_VIRT((paddr_t)page_table);
-		for (j = 0; j < 1024; j++) {
-			if ((page_table[j] & PAGE_SIZE_MASK) == 0)
-				continue;
-			vaddr_t vir = ((vaddr_t)i << 22) + (j << 12);
-			paddr_t phy = page_table[j] & PAGE_SIZE_MASK;
-			fn(aux, vir, phy);
-		}
-	}
+	if (task && task->user && task->user->vm)
+		arch_mm_enum_user(task->user->vm->page_dir, fn, aux);
 }
 
 /* Unmap all user pages of an inactive task. */
@@ -441,11 +421,16 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 	if (!task || !task->user)
 		return -EFAULT;
 
+	if (!task->user->vm || vaddr >= task->user->vm->task_size ||
+	    len > task->user->vm->task_size - vaddr)
+		return -EFAULT;
+#if MOS_HAS_NATIVE_USER
+	if (vaddr < 0x100000000ULL && vaddr + len > MOS_COMPAT_TASK_SIZE)
+		return -EFAULT;
+#endif
 	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {
-		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
-		unsigned pte_idx = ADDR_TO_PET_OFFSET(vaddr);
 		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
 		unsigned to_write = PAGE_SIZE - page_off;
 		pte_t *pt;
@@ -465,12 +450,12 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		 * every successful resolution attempt instead of assuming one call can
 		 * satisfy all three conditions.
 		 */
-		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT) &&
+		if (!arch_mm_lookup_leaf((vaddr_t)pd, vaddr) &&
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
-		pte = pt[pte_idx];
+		pt = arch_mm_lookup_leaf((vaddr_t)pd, vaddr);
+		pte = pt ? *pt : 0;
 
 		/* The page-table page exists now, but the target leaf mapping can
 		 * still be absent until the target task's fault handler installs it. */
@@ -478,8 +463,8 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
-		pte = pt[pte_idx];
+		pt = arch_mm_lookup_leaf((vaddr_t)pd, vaddr);
+		pte = pt ? *pt : 0;
 
 		/* Present is not enough for a store: private forked pages arrive
 		 * read-only and must go through the target task's write-fault path
@@ -488,17 +473,18 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		    !pf_resolve_task_page_fault(task, vaddr, 1))
 			return -EFAULT;
 
-		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
-		pte = pt[pte_idx];
+		pt = arch_mm_lookup_leaf((vaddr_t)pd, vaddr);
+		pte = pt ? *pt : 0;
 		if (!(pte & PAGE_ENTRY_PRESENT) || !(pte & PAGE_ENTRY_WRITABLE))
 			return -EFAULT;
 
-		if (mm_kmap_phys(pte & PAGE_SIZE_MASK) != 1)
+		if (mm_kmap_phys(arch_mm_entry_address(pte)) != 1)
 			return -EFAULT;
 
-		memcpy((char *)PHY_TO_VIRT(pte & PAGE_SIZE_MASK) + page_off,
+		memcpy((char *)PHY_TO_VIRT(arch_mm_entry_address(pte)) +
+			       page_off,
 		       csrc, to_write);
-		mm_kunmap_phys(pte & PAGE_SIZE_MASK);
+		mm_kunmap_phys(arch_mm_entry_address(pte));
 
 		vaddr += to_write;
 		csrc += to_write;
@@ -517,11 +503,16 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 	if (!task || !task->user)
 		return -EFAULT;
 
+	if (!task->user->vm || vaddr >= task->user->vm->task_size ||
+	    len > task->user->vm->task_size - vaddr)
+		return -EFAULT;
+#if MOS_HAS_NATIVE_USER
+	if (vaddr < 0x100000000ULL && vaddr + len > MOS_COMPAT_TASK_SIZE)
+		return -EFAULT;
+#endif
 	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {
-		unsigned pde_idx = ADDR_TO_PGT_OFFSET(vaddr);
-		unsigned pte_idx = ADDR_TO_PET_OFFSET(vaddr);
 		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
 		unsigned to_read = PAGE_SIZE - page_off;
 		pte_t *pt;
@@ -532,22 +523,22 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 
 		/* A valid mapping need not have been touched by userspace yet.
 		 * Resolve both page-table and leaf faults, as the write path does. */
-		if (!(pd[pde_idx] & PAGE_ENTRY_PRESENT) &&
+		if (!arch_mm_lookup_leaf((vaddr_t)pd, vaddr) &&
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
-		pte = pt[pte_idx];
+		pt = arch_mm_lookup_leaf((vaddr_t)pd, vaddr);
+		pte = pt ? *pt : 0;
 		if (!(pte & PAGE_ENTRY_PRESENT) &&
 		    !pf_resolve_task_page_fault(task, vaddr, 0))
 			return -EFAULT;
 
-		pt = (pte_t *)PHY_TO_VIRT(pd[pde_idx] & PAGE_SIZE_MASK);
-		pte = pt[pte_idx];
+		pt = arch_mm_lookup_leaf((vaddr_t)pd, vaddr);
+		pte = pt ? *pt : 0;
 		if (!(pte & PAGE_ENTRY_PRESENT))
 			return -EFAULT;
 
-		if (mm_kmap_phys(pte & PAGE_SIZE_MASK) != 1)
+		if (mm_kmap_phys(arch_mm_entry_address(pte)) != 1)
 			return -EFAULT;
 
 		/*
@@ -555,9 +546,10 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		 * dereference their physical backing page.
 		 */
 		memcpy(cdst,
-		       (char *)PHY_TO_VIRT(pte & PAGE_SIZE_MASK) + page_off,
+		       (char *)PHY_TO_VIRT(arch_mm_entry_address(pte)) +
+			       page_off,
 		       to_read);
-		mm_kunmap_phys(pte & PAGE_SIZE_MASK);
+		mm_kunmap_phys(arch_mm_entry_address(pte));
 		vaddr += to_read;
 		cdst += to_read;
 		len -= to_read;
@@ -571,5 +563,5 @@ task_struct *__attribute__((noinline)) CURRENT_TASK(void)
 	unsigned long esp;
 
 	LOAD_ESP(esp);
-	return (task_struct *)(esp & PAGE_SIZE_MASK);
+	return (task_struct *)(esp & ~(uintptr_t)(KERNEL_TASK_BYTES - 1));
 }

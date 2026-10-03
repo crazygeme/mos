@@ -17,12 +17,12 @@ unsigned fs_page_cache_hits = 0;
 typedef struct _fs_page_cache_key {
 	void *tag;
 	uint64_t ino;
-	unsigned offset;
+	uint64_t offset;
 } fs_page_cache_key;
 
 typedef struct _fs_page_cache_entry {
 	fs_page_cache_key key;
-	unsigned phy;
+	paddr_t phy;
 	struct rb_node rb_node;
 	list_entry lru;
 } fs_page_cache_entry;
@@ -116,10 +116,10 @@ static int fs_page_cache_can_use(file *fp)
 	       fp->f_fop->read_page;
 }
 
-static unsigned fs_page_cache_load(file *fp, unsigned offset)
+static paddr_t fs_page_cache_load(file *fp, uint64_t offset)
 {
 	unsigned page_index;
-	unsigned phy;
+	paddr_t phy;
 
 	/* Reclaimable file data should not consume scarce lowmem while highmem
 	 * is available.  Reclaim before using the small-machine fallback. */
@@ -130,8 +130,8 @@ static unsigned fs_page_cache_load(file *fp, unsigned offset)
 		if (page_index == PHYMM_INVALID)
 			page_index = phymm_alloc_user();
 		if (page_index == PHYMM_INVALID) {
-			klog("fs_page_cache: phymm_alloc_user failed offset=%x\n",
-			     offset);
+			klog("fs_page_cache: phymm_alloc_user failed offset=%llx\n",
+			     (unsigned long long)offset);
 			return 0;
 		}
 	}
@@ -139,8 +139,8 @@ static unsigned fs_page_cache_load(file *fp, unsigned offset)
 	phy = page_index * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(page_index);
-		klog("fs_page_cache: mm_kmap_phys failed phy=%x offset=%x\n",
-		     phy, offset);
+		klog("fs_page_cache: mm_kmap_phys failed phy=%llx offset=%llx\n",
+		     (unsigned long long)phy, (unsigned long long)offset);
 		return 0;
 	}
 
@@ -166,12 +166,13 @@ static void fs_page_cache_evict_one_locked(void)
 	fs_page_cache_remove(evict);
 }
 
-unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
+paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 {
 	fs_page_cache_key tmp;
 	fs_page_cache_entry *entry;
-	unsigned phy;
+	paddr_t phy;
 	inode *inode;
+	phymm_cache_policy policy;
 
 	if (cache_hit)
 		*cache_hit = 0;
@@ -183,7 +184,7 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 	fs_page_cache_ensure_init();
 	tmp.tag = inode->i_pgcache_tag;
 	tmp.ino = inode->i_ino;
-	tmp.offset = offset & PAGE_SIZE_MASK;
+	tmp.offset = offset & ~(uint64_t)(PAGE_SIZE - 1);
 	fs_page_cache_searches++;
 
 	mutex_lock(&fs_page_cache_lock);
@@ -199,6 +200,14 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 		return phy;
 	}
 
+	mutex_unlock(&fs_page_cache_lock);
+
+	phymm_get_cache_policy(&policy);
+	mutex_lock(&fs_page_cache_lock);
+	/* Bound miss latency while gradually trimming a reduced cache budget. */
+	for (unsigned n = 0; n < 32 && fs_page_cache_pages >= policy.file_pages;
+	     n++)
+		fs_page_cache_evict_one_locked();
 	mutex_unlock(&fs_page_cache_lock);
 
 	phy = fs_page_cache_load(fp, tmp.offset);
@@ -238,23 +247,38 @@ unsigned fs_page_cache_get(file *fp, unsigned offset, int *cache_hit)
 
 void fs_page_cache_invalidate(file *fp)
 {
-	struct rb_node *node, *next;
+	struct rb_node *node, *next, *first = NULL;
 	inode *inode;
+	fs_page_cache_key key;
 
 	if (!fs_page_cache_can_use(fp) || !fs_page_cache_ready)
 		return;
 
 	inode = fp->f_inode;
+	key.tag = inode->i_pgcache_tag;
+	key.ino = inode->i_ino;
+	key.offset = 0;
 	mutex_lock(&fs_page_cache_lock);
-	for (node = rb_first(&fs_page_cache); node; node = next) {
+	/* Seek the inode's first page instead of walking every cached file. */
+	node = fs_page_cache.rb_node;
+	while (node) {
 		fs_page_cache_entry *entry =
 			rb_entry(node, fs_page_cache_entry, rb_node);
-		next = rb_next(node);
-		if (entry->key.tag == inode->i_pgcache_tag &&
-		    entry->key.ino == inode->i_ino) {
-			list_remove_entry(&entry->lru);
-			fs_page_cache_remove(entry);
+		if (fs_page_cache_key_comp(&key, &entry->key) <= 0) {
+			first = node;
+			node = node->rb_left;
+		} else {
+			node = node->rb_right;
 		}
+	}
+	for (node = first; node; node = next) {
+		fs_page_cache_entry *entry =
+			rb_entry(node, fs_page_cache_entry, rb_node);
+		if (entry->key.tag != key.tag || entry->key.ino != key.ino)
+			break;
+		next = rb_next(node);
+		list_remove_entry(&entry->lru);
+		fs_page_cache_remove(entry);
 	}
 	mutex_unlock(&fs_page_cache_lock);
 }
@@ -288,10 +312,10 @@ ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos)
 		return -EINVAL;
 
 	while (done < size && (uint64_t)(*pos) < inode->i_size) {
-		unsigned base = ((unsigned)(*pos)) & PAGE_SIZE_MASK;
+		uint64_t base = (uint64_t)*pos & ~(uint64_t)(PAGE_SIZE - 1);
 		unsigned page_off = ((unsigned)(*pos)) & ~PAGE_SIZE_MASK;
 		size_t chunk = PAGE_SIZE - page_off;
-		unsigned phy;
+		paddr_t phy;
 
 		if (chunk > size - done)
 			chunk = size - done;

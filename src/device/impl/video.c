@@ -102,6 +102,12 @@ void fb_get_phys_window(unsigned *phys, unsigned *size)
 		active_fb_drv->get_phys_window(phys, size);
 }
 
+void fb_flush_text(void)
+{
+	if (active_fb_drv && active_fb_drv->flush_text)
+		active_fb_drv->flush_text();
+}
+
 unsigned fb_snapshot_size(void)
 {
 	if (active_fb_drv && active_fb_drv->snapshot_size)

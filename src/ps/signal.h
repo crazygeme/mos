@@ -47,7 +47,7 @@
 #define NSIG 33 /* one past the highest supported signal number */
 
 /* Signal mask type: one bit per signal (bit N-1 = signal N) */
-typedef unsigned long sigset_t;
+typedef uint32_t sigset_t;
 
 /* Special sa_handler values */
 #define SIG_DFL ((void (*)(int))0) /* default action  */

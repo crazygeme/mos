@@ -9,11 +9,11 @@
  * after the handler has consumed the return address and signal argument.
  */
 typedef struct _arch_signal_frame {
-	arch_reg_t return_addr;
+	uint32_t return_addr;
 	int signo;
-	arch_reg_t saved_eip;
+	uint32_t saved_eip;
 	unsigned int saved_eflags;
-	arch_reg_t saved_esp;
+	uint32_t saved_esp;
 	unsigned int saved_eax;
 	unsigned int saved_ebx;
 	unsigned int saved_ecx;
@@ -25,7 +25,7 @@ typedef struct _arch_signal_frame {
 	unsigned int saved_es;
 	unsigned int saved_fs;
 	unsigned int saved_gs;
-	unsigned long saved_mask;
+	uint32_t saved_mask;
 	unsigned char trampoline[8];
 } arch_signal_frame;
 

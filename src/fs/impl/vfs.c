@@ -418,7 +418,8 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs64 *buf)
 		return -ENOSYS;
 	ret = target_sb->s_op->statfs(target_sb, buf);
 	if (!ret)
-		buf->f_flags = 0x20 | (target_sb->s_flags & 3); /* ST_VALID, RO, NOSUID */
+		buf->f_flags = 0x20 | (target_sb->s_flags &
+				       3); /* ST_VALID, RO, NOSUID */
 	return ret;
 }
 
@@ -513,7 +514,8 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 			fs_put_file(fp);
 			break;
 		}
-		ret = vfs_readlink(lookup_sb, lookup, target, MAX_PATH - 1, &len);
+		ret = vfs_readlink(lookup_sb, lookup, target, MAX_PATH - 1,
+				   &len);
 		if (ret || !len || len >= MAX_PATH) {
 			fs_put_file(fp);
 			break;
@@ -548,8 +550,10 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 				len = src - start;
 				if (!len || (len == 1 && start[0] == '.'))
 					continue;
-				if (len == 2 && start[0] == '.' && start[1] == '.') {
-					while (dst > joined + 1 && *--dst != '/')
+				if (len == 2 && start[0] == '.' &&
+				    start[1] == '.') {
+					while (dst > joined + 1 &&
+					       *--dst != '/')
 						;
 					continue;
 				}

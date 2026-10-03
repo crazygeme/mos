@@ -54,8 +54,8 @@ enum ptrace_user_reg_index {
 };
 
 struct ptrace_user_regs {
-	arch_reg_t ebx, ecx, edx, esi, edi, ebp, eax;
-	arch_reg_t xds, xes, xfs, xgs, orig_eax, eip, xcs, eflags, esp, xss;
+	uint32_t ebx, ecx, edx, esi, edi, ebp, eax;
+	uint32_t xds, xes, xfs, xgs, orig_eax, eip, xcs, eflags, esp, xss;
 };
 
 static int ptrace_is_traced_by(task_struct *target, task_struct *tracer)
@@ -144,7 +144,7 @@ static int ptrace_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 	return 0;
 }
 
-static int ptrace_peekuser(task_struct *task, unsigned addr, long *out)
+static int ptrace_peekuser(task_struct *task, unsigned addr, int32_t *out)
 {
 	ptrace_saved_frame *frame = &task->user->ptrace_frame;
 	unsigned index = addr / sizeof(unsigned);
@@ -272,11 +272,12 @@ int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	}
 
 	spinlock_lock(&ps_lock, &irq);
-	ptrace_stop_task_unsafe(cur, SIGTRAP |
-				(cur->user->ptrace_options & PTRACE_O_TRACESYSGOOD ?
-				 0x80 : 0), saved_frame,
-				entering ? "ptrace-sys-enter" :
-					   "ptrace-sys-exit");
+	ptrace_stop_task_unsafe(
+		cur,
+		SIGTRAP | (cur->user->ptrace_options & PTRACE_O_TRACESYSGOOD ?
+				   0x80 :
+				   0),
+		saved_frame, entering ? "ptrace-sys-enter" : "ptrace-sys-exit");
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 	return 1;
@@ -297,9 +298,12 @@ void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp)
 
 	spinlock_lock(&ps_lock, &irq);
 	cur->user->ptrace_eventmsg = cur->psid;
-	ptrace_stop_task_unsafe(cur, SIGTRAP |
-		(cur->user->ptrace_options & PTRACE_O_TRACEEXEC ?
-		 PTRACE_EVENT_EXEC << 8 : 0), &frame, "ptrace-exec");
+	ptrace_stop_task_unsafe(cur,
+				SIGTRAP | (cur->user->ptrace_options &
+							   PTRACE_O_TRACEEXEC ?
+						   PTRACE_EVENT_EXEC << 8 :
+						   0),
+				&frame, "ptrace-exec");
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 
@@ -317,8 +321,8 @@ void ps_ptrace_stop_exit(unsigned status)
 		return;
 	spinlock_lock(&ps_lock, &irq);
 	cur->user->ptrace_eventmsg = status;
-	ptrace_stop_task_unsafe(cur, SIGTRAP | (PTRACE_EVENT_EXIT << 8),
-				NULL, "ptrace-exit");
+	ptrace_stop_task_unsafe(cur, SIGTRAP | (PTRACE_EVENT_EXIT << 8), NULL,
+				"ptrace-exit");
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 }
@@ -328,10 +332,10 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 	task_struct *cur = CURRENT_TASK();
 	task_struct *target;
 	struct ptrace_user_regs regs;
-	long peek_word;
+	int32_t peek_word;
 	union {
-		long word;
-		char bytes[sizeof(long)];
+		int32_t word;
+		char bytes[sizeof(int32_t)];
 	} peek;
 	int ret;
 
@@ -356,7 +360,7 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 		return -ENOSYS;
 	}
 
-	target = ps_find_process((unsigned)pid);
+	target = ps_find_process((unsigned)(uintptr_t)pid);
 	if (!target)
 		return -ESRCH;
 
@@ -367,8 +371,9 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 	case PTRACE_SETOPTIONS:
 		if (target->status != ps_stopped)
 			return -ESRCH;
-		if ((uintptr_t)data & ~(PTRACE_O_TRACESYSGOOD |
-					 PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT))
+		if ((uintptr_t)data &
+		    ~(PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC |
+		      PTRACE_O_TRACEEXIT))
 			return -EINVAL;
 		target->user->ptrace_options = (uintptr_t)data;
 		return 0;
@@ -376,7 +381,7 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 	case PTRACE_GETEVENTMSG:
 		if (target->status != ps_stopped)
 			return -ESRCH;
-		*(unsigned long *)data = target->user->ptrace_eventmsg;
+		*(uint32_t *)data = target->user->ptrace_eventmsg;
 		return 0;
 
 	case PTRACE_PEEKDATA:
@@ -386,14 +391,15 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 					     sizeof(peek.bytes));
 		if (ret < 0)
 			return ret;
-		*(long *)data = peek.word;
+		*(int32_t *)data = peek.word;
 		return 0;
 
 	case PTRACE_PEEKUSER:
-		ret = ptrace_peekuser(target, (unsigned)addr, &peek_word);
+		ret = ptrace_peekuser(target, (unsigned)(uintptr_t)addr,
+				      &peek_word);
 		if (ret < 0)
 			return ret;
-		*(long *)data = peek_word;
+		*(int32_t *)data = peek_word;
 		return 0;
 
 	case PTRACE_GETREGS:

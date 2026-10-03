@@ -581,19 +581,21 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 		return do_waitpid(pid, status, options, rusage);
 }
 
-int sys_brk(unsigned _top)
+intptr_t sys_brk(vaddr_t _top)
 {
 	task_struct *task = CURRENT_TASK();
 	mm_struct *mm = task->user->vm;
-	unsigned top, ret;
-	unsigned old_brk = mm->brk;
-	unsigned old_page_end;
-	unsigned new_page_end;
+	vaddr_t top, ret;
+	vaddr_t old_brk = mm->brk;
+	vaddr_t old_page_end;
+	vaddr_t new_page_end;
 
 	top = _top;
 	if (top == 0) {
 		ret = mm->brk;
-	} else if (top >= USER_HEAP_END) {
+	} else if (top >= (task->user->abi == MOS_ABI_I386 ?
+				   USER_HEAP_END :
+				   MOS_COMPAT_TASK_SIZE)) {
 		ret = mm->brk;
 	} else {
 		if (top < mm->start_brk)
@@ -806,7 +808,7 @@ int sys_setgroups32(int size, unsigned *list)
 int sys_ugetrlimit(int resource, void *limit)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned long *rl = (unsigned long *)limit;
+	uint32_t *rl = (uint32_t *)limit;
 	if (!rl)
 		return -EFAULT;
 
@@ -825,7 +827,7 @@ int sys_ugetrlimit(int resource, void *limit)
 int sys_setrlimit(int resource, void *limit)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned long *rl = (unsigned long *)limit;
+	uint32_t *rl = (uint32_t *)limit;
 	if (!rl)
 		return -EFAULT;
 
@@ -987,7 +989,7 @@ int sys_set_tid_address(int *tidptr)
 
 int sys_set_robust_list(void *head, unsigned len)
 {
-	if (len != 12)
+	if (len != (current->user->abi == MOS_ABI_AMD64 ? 24 : 12))
 		return -EINVAL;
 	if (!head)
 		return -EFAULT;
@@ -1004,8 +1006,13 @@ int sys_get_robust_list(int pid, void **head, unsigned *len)
 	task = pid ? ps_find_process(pid) : CURRENT_TASK();
 	if (!task)
 		return -ESRCH;
-	*head = task->robust_list_head;
-	*len = 12;
+	if (current->user->abi == MOS_ABI_I386) {
+		*(uint32_t *)head = (uintptr_t)task->robust_list_head;
+		*len = task->user->abi == MOS_ABI_AMD64 ? 24 : 12;
+	} else {
+		*head = task->robust_list_head;
+		*(uint64_t *)len = task->user->abi == MOS_ABI_AMD64 ? 24 : 12;
+	}
 	return 0;
 }
 

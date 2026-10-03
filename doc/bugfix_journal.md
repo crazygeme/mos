@@ -2331,3 +2331,379 @@ this change.
 Validation: release kernel and test-kernel compilation plus static review.
 No tests, QEMU sessions, ping checks or performance benchmarks were run, per
 the user's instruction. Runtime correctness and throughput remain unverified.
+
+## 2026-10-04 - RPC statd interface ioctl compatibility
+
+### Reported fault
+
+The AMD64 kernel reported the following fault during RH9 service startup:
+
+```text
+[609][1203]: segfault: /sbin/rpc.statd: error code 2, address 74706000, eip c0253256
+```
+
+In the corresponding AMD64 release symbol file, instruction
+`0xffffffffc0253256` is the `rep stosl` instruction in `memset`. Page-fault
+error code 2 denotes a supervisor write to a non-present page. The original
+diagnostic used `%x` for both addresses, losing their upper 32 bits. The fault
+diagnostic now uses `%lx`, and the formatter preserves the full unsigned-long
+value for hexadecimal output instead of converting it through a 32-bit int.
+
+### Source analysis
+
+The nfs-utils 1.0.1 implementation of `rpc.statd` calls
+`pmap_unset(SM_PROG, SM_VERS)` in its startup loop. In glibc 2.3.2,
+`pmap_unset()` calls `__get_myaddress()`, which obtains interfaces through
+`ioctl(fd, SIOCGIFCONF, &ifc)` before requesting interface flags.
+
+Sources:
+
+- [nfs-utils 1.0.1 source archive](https://downloads.sourceforge.net/project/nfs/nfs-utils/1.0.1/nfs-utils-1.0.1.tar.gz),
+  `utils/statd/statd.c`.
+- [glibc 2.3.2 source archive](https://ftp.gnu.org/gnu/glibc/glibc-2.3.2.tar.gz),
+  `sunrpc/pmap_clnt.c` and `sysdeps/gnu/net/if.h`.
+
+The exact installed RH9 package revisions have not been established. These
+upstream versions establish the RPC interface-enumeration path and ABI layout;
+distribution-specific patches remain outside this verification.
+
+| Layout | i386 | AMD64 |
+| --- | --- | --- |
+| `ifconf` size | 8 bytes | 16 bytes |
+| Buffer pointer offset | 4 bytes | 8 bytes |
+| Buffer pointer width | 4 bytes | 8 bytes |
+| `ifreq` array stride | 32 bytes | 40 bytes |
+
+Previously, the i386 syscall table dispatched ioctl directly to the common
+handler. The AMD64 socket implementation interpreted an i386 `ifconf` as a
+native structure, loading unrelated bytes beyond the object as a buffer
+pointer. Interface enumeration then passed that pointer to `memset`. This is
+a confirmed ABI defect on the service's startup path and is consistent with
+the reported fault. A subsequent RH9 startup reports no further
+`rpc.statd` fault after the interface-ioctl correction.
+
+### Correction
+
+The i386 syscall table now selects `compat_ioctl`. On the x86 kernel this
+aliases the existing handler. On the AMD64 kernel the implementation resides
+in `arch/x64/syscall/impl/compat_ioctl.c`.
+
+For `SIOCGIFCONF`, the compatibility handler reads an explicit eight-byte
+i386 structure, queries the available interface count, and allocates a native
+buffer bounded by that count and the caller's capacity. It copies each
+returned name and socket address into a 32-byte i386 entry and returns an
+i386 byte count. The original buffer pointer remains unchanged. Other ioctl
+requests retain their existing dispatch.
+
+The native `ifreq` includes the pointer-width `ifmap` union member, restoring
+the AMD64 40-byte stride while preserving the x86 32-byte stride. Native
+`ifconf` buffer pointers retain all 64 bits. Interface enumeration also
+supports a NULL buffer for the Linux byte-count query and returns only whole
+entries when capacity is limited.
+
+### Validation
+
+Source syntax checks pass for both kernel architectures. The native probe
+passes its syntax check, the guest test passes shell syntax validation, and
+the patch passes whitespace validation. The rebuilt kernel completes the
+RPC startup path without the reported fault. The regression scripts, native
+probe, and full-width formatter test remain pending guest execution.
+
+`test/posix_ifconf.sh` checks enumeration, interface flags, returned byte
+counts, unchanged buffer pointers, surrounding sentinel bytes, NULL-buffer
+queries, short buffers, single-entry buffers, and glibc's RPC local-address
+helper. For an i386 process it places `0x74706000` immediately after `ifconf`
+to reproduce the incorrect pointer load deterministically.
+
+The `kprint.sprintf_lx_kernel_address` kernel test checks that hexadecimal
+fault addresses preserve all bits on AMD64 and retain the x86 representation.
+
+The native `tools/user/x64_smoke.c` probe checks 40-byte interface entries,
+buffer bounds, size queries, and short-buffer behavior using a destination
+above 4 GiB. Its interface checks use exit codes 21 through 31.
+
+Runtime verification consists of normal RH9 startup with `rpc.statd`, the
+interface regression script on both kernels, and the AMD64 probe on x64.
+
+## 2026-10-04 - XFree86 SHMAT result pointer sign extension on AMD64
+
+### Symptom
+
+RH9 X server startup repeatedly faults while storing a shared-memory
+attachment result:
+
+```text
+[1201][1483]: segfault: /usr/X11R6/bin/X: error code 2, address bffff000, eip c0235eb5
+```
+
+The corresponding AMD64 release symbol file resolves the instruction to
+`mos_shmat()` at the `*user_raddr = mapped` assignment. Disassembly shows
+`movslq` extending the saved third IPC argument before the four-byte store.
+
+### Root cause
+
+glibc 2.3.2 implements i386 `shmat()` using the IPC multiplexer. Its third
+argument is the address of a local stack variable used to receive the mapped
+address. The kernel declares that argument as `int`. Casting it directly to
+AMD64 `uintptr_t` sign-extends a pointer with bit 31 set, converting
+`0xbffffxxx` into `0xffffffffbffffxxx`. The store then targets an unmapped
+supervisor address rather than the i386 stack. The original 32-bit fault
+diagnostic hides the extension.
+
+XFree86 4.3.0 uses `shmat()` in its Linux int10 initialization and shared-memory
+extensions. The source establishes these call sites; the particular X startup
+caller has not been established by a runtime backtrace.
+
+Sources:
+
+- [XFree86 4.3.0 source](https://ftp.xfree86.org/pub/XFree86/4.3.0/source/),
+  `programs/Xserver/hw/xfree86/os-support/linux/int10/linux.c` and
+  `programs/Xserver/Xext/xf86bigfont.c`.
+- [glibc 2.3.2 source](https://ftp.gnu.org/gnu/glibc/glibc-2.3.2.tar.gz),
+  `sysdeps/unix/sysv/linux/shmat.c`.
+
+### Correction and validation
+
+The IPC SHMAT branch converts the argument through `uint32_t` before widening
+to `uintptr_t`. This preserves the complete i386 address as an unsigned
+32-bit value. The result store remains four bytes wide. Native AMD64 shared
+memory syscalls remain outside the existing i386 IPC multiplexer.
+
+`test/posix_sysv_shm.sh` exercises a raw IPC SHMAT with a result pointer whose
+bit 31 is set, verifies the result-store bounds, then exercises glibc SHMAT,
+shared backing, IPC_RMID while attached, and detach. Runtime verification of
+the correction remains pending. A subsequent X startup reaches VESA
+initialization and reports an unsupported vm86 call rather than this store
+fault.
+
+## 2026-10-04 - Missing VBE emulation in the AMD64 compatibility kernel
+
+### Symptom and root cause
+
+After the SHMAT correction, XFree86 reaches its VESA initialization and exits
+with `unknown type(0xffffffff)=0xff`, followed by `no screens found`.
+
+XFree86's `linux_vm86.c` calls the vm86old syscall and switches on the low byte
+of its return value. The syscall wrapper converts an error to `-1`, whose low
+byte is `0xff`; the default case prints exactly this diagnostic. The AMD64
+backend had unconditional `-ENOSYS` stubs for both vm86 syscalls. The x86
+backend already implements selected VBE calls through software emulation, so
+the required behavior does not depend on hardware virtual-8086 mode being
+available in long mode.
+
+### Correction
+
+The existing VBE emulator moves from `arch/x86/syscall/impl/syscall_vm86.c`
+to `arch/abi/i386/syscall_vm86.c`, where both kernels build it. The AMD64
+stubs are removed. Flags, bitmap fields, CPU type, and interrupt vectors use
+explicit 32-bit wire values; static assertions require an 84-byte register
+block and 160-byte i386 vm86 structure. Segment-address conversion widens
+the calculated unsigned address through `uintptr_t`.
+
+The supported BIOS calls, VMware port programming, and fallback behavior
+retain the existing x86 implementation. This provides the i386 VBE syscall
+contract on AMD64; it does not implement arbitrary real-mode instruction
+execution or a native AMD64 vm86 syscall.
+
+### Validation
+
+Both architecture source trees pass syntax validation after sharing the
+emulator. `test/posix_vm86_vbe.sh` exercises both entry points, controller
+and mode information, output buffer bounds, returned register state, and
+save-state size queries. Guest execution and X startup verification remain
+pending.
+
+
+## 2026-10-04 - AMD64 desktop framebuffer faults and large-memory support
+
+### Failure and diagnosis
+
+RH9 XFree86 progressed through VBE, keyboard, mouse, and font initialization,
+then repeatedly faulted at its first framebuffer store. Debugger inspection
+identified a write to virtual address `0x40156000`, with a leaf PTE of
+`0x000ffffffd000017`. The intended physical framebuffer address was
+`0xfd000000`. A signed 32-bit VMA offset had been widened to an unsigned
+64-bit physical address after sign extension, setting reserved physical
+address bits. The fault handler treated the existing mapping as resolved,
+so the same instruction faulted repeatedly without making progress.
+
+Normal SysV startup exposed a second independent failure. The filesystem
+checker reached byte offset `0x80002000`, where `_llseek` returned
+`-2147475456`. The kernel had stored the correct 64-bit position but returned
+its truncated low word instead of the required zero success status. glibc's
+`llseek` implementation uses a nonzero status as its return value; e2fsprogs
+therefore could not read the next inode block and entered maintenance mode.
+
+### Corrections
+
+VMA offsets, split-region offsets, fault offsets, shared-page cache keys,
+and filesystem page callbacks now retain 64 bits. Framebuffer offsets no
+longer undergo signed 32-bit extension, and native mmap no longer rejects
+valid offsets solely because they exceed `0x7fffffff`. Automatic mappings
+larger than 4 GiB are allowed to select a native address above the shared
+supervisor device window; explicitly fixed mappings still cannot overlap
+that window. The i386 mmap2 page offset is widened before multiplication.
+
+The x64 RAM mirror and physical-memory discovery ceiling now extend to
+128 GiB of physical address space. Page-cache and SysV shared-memory backing
+addresses use the architecture's physical-address type. User and cache
+allocation prefer available RAM above 4 GiB, retaining low RAM for kernel
+objects and legacy DMA buffers. Kernel and DMA allocations retain their
+existing low-address constraints. The i386 kernel remains non-PAE.
+
+Raw physical aliases carry a software PTE flag so unmapping or destroying
+an alias cannot decrement an allocator reference owned by another mapping.
+RAM aliases use the permanent mirror's write-back cache type; MMIO mappings
+retain cache-disable semantics. The i386 sysinfo result uses page-sized units
+and allocator RAM totals, preventing byte-count overflow and excluding
+reserved physical holes. `_llseek` returns zero on success and reports the
+complete position only through its result pointer.
+
+The native socket creation syscall now dispatches its three integer arguments
+to the existing socket backend. This enables the native ABI probe's interface
+ioctl checks, which previously stopped at an unsupported socket syscall.
+The runner accepts `ram=N` in MiB, with an unchanged 4096 MiB default.
+Hexadecimal diagnostics consume full-width `long long` arguments, preserving
+physical addresses above 4 GiB and subsequent arguments on both architectures.
+
+### Regression coverage
+
+`test/posix_llseek.sh` checks raw syscall status, full result values, result
+buffer bounds, libc seek behavior, negative seeks, and agreement between
+sysinfo and `/proc/meminfo`. `test/posix_vm86_vbe.sh` faults two framebuffer
+pages above 2 GiB without changing display contents.
+
+The mmap suite checks a writable raw RAM alias, full physical address
+translation, cache attributes, reference preservation after unmapping, and
+distinct file-cache entries separated by 4 GiB. The AMD64 ABI probe checks
+physical mapping offsets above 4 GiB and a shared anonymous region exceeding
+4 GiB, including independent endpoint contents, protection changes, and
+partial unmapping.
+
+### Sources
+
+- [XFree86 4.3.0 source](https://www.xfree86.org/pub/XFree86/4.3.0/source/),
+  VESA framebuffer mapping and Linux int10 initialization.
+- [glibc 2.3.2 source](https://ftp.gnu.org/gnu/glibc/glibc-2.3.2.tar.gz),
+  `sysdeps/unix/sysv/linux/llseek.c`.
+- [e2fsprogs 1.32 source](https://sourceforge.net/projects/e2fsprogs/files/e2fsprogs/1.32/),
+  `lib/ext2fs/llseek.c` and `lib/ext2fs/unix_io.c`.
+
+### Validation
+
+Both architecture release kernels and test kernels build successfully.
+Shell syntax and whitespace validation pass. An 8 GiB AMD64 guest reaches
+the graphical RH9 login screen after completing filesystem checks. The native
+ABI probe passes, including physical offsets above 4 GiB and a shared mapping
+larger than 4 GiB. The mmap, mm, and physical allocator suites pass all 22,
+18, and 12 tests respectively. All 59 formatter tests pass, including
+full-width physical address diagnostics. Large seeks, sysinfo accounting, VESA
+framebuffer mappings, System V shared memory, pthreads, and shared futex
+compatibility checks also pass. The raw RAM alias test confirms allocation
+and translation above 4 GiB. Full physical capacity beyond 8 GiB has not
+been tested in a guest.
+
+
+### Authenticated desktop startup and invalid disk blocks
+
+The initial 8 GiB check established arrival at the graphical login screen,
+without validating completion of an authenticated session. An authenticated
+run subsequently froze while GConf read `/root/.gconfd/saved_state`.
+
+A debugger trace located the blocked CPU in the ATA DMA completion loop.
+GConf's file read resolved to sector 14819236616, beyond the partition's
+41929587 sectors. The block-device adapter narrowed this sector to 32 bits
+before validation and issued an invalid ATA command. The DMA active bit
+remained set, holding the global kernel lock and preventing other CPUs from
+making progress. The adapter also discarded partition I/O failures and
+reported success to the filesystem.
+
+Filesystem checking identified illegal block pointers in inode 44, the
+saved-state file, and cleared that inode in a disposable test snapshot.
+Normal boots with both 4 GiB and 8 GiB encountered filesystem-check failures
+from the same base image. This damage must be distinguished from physical
+address truncation in memory mappings.
+
+The block-device callbacks now validate the full 64-bit sector range against
+the partition capacity before narrowing it for ATA. Read and write callbacks
+return EIO for invalid ranges and incomplete partition transfers. The
+[GConf 2.2.0 source](https://download.gnome.org/sources/GConf/2.2/GConf-2.2.0.tar.gz)
+confirms that saved-state read errors terminate parsing and are logged;
+they do not require an indefinite kernel I/O wait.
+
+The lwext4 write cleanup also replaced a failed transfer's error with the
+inode release result. Successful release consequently converted an I/O
+failure into a zero-byte successful write. glibc 2.3.2's
+`libio/fileops.c:_IO_new_file_write` subtracts successful write counts and
+retries remaining bytes, so zero progress caused an endless retry loop.
+Cleanup now preserves the transfer error, and the filesystem adapter returns
+the corresponding negative errno.
+
+Host regressions execute the actual block callbacks and `ext4_fwrite` body
+with injected failures. They cover full-width invalid sector numbers,
+partition-end crossing, valid final-sector transfers, failed and incomplete
+transfers, and preservation of the original error through inode cleanup.
+The write regression fails against the original cleanup behavior and passes
+with the fix. Both architecture release and test kernels build successfully.
+
+A persistent repair was performed inside the guest after preserving QEMU
+snapshot `mos-before-desktop-repair-20261004` in `rh9.qcow2`. The filesystem
+checker cleared the damaged saved-state inode and corrected allocation
+bitmaps and counters. The repaired guest was then started normally with
+8 GiB, two CPUs, and KVM, without bypassing startup filesystem checks. Root
+login reached the complete GNOME desktop. A graphical terminal reported
+`x86_64`, over 8 billion bytes of managed RAM, and `DESKTOP_LOGIN_OK`.
+The native AMD64 ABI probe also passed from the graphical terminal, including
+its file I/O, mappings above 4 GiB, and signal checks. The screenshot is
+[8 GiB desktop](screenshot/x64_8g_desktop.png).
+
+
+## Adaptive filesystem and block cache budgets
+
+### Policy and implementation
+
+Filesystem page caching previously lacked an explicit size budget, while
+block caching retained a fixed 64 MiB ceiling. AMD64 now assigns a combined
+budget of one quarter of allocator-managed RAM, capped at 4 GiB. Three
+quarters of this budget serve filesystem pages and one quarter serves block
+lines. An 8 GiB guest with 8521646080 bytes of managed RAM receives budgets
+of 1597808640 bytes for filesystem pages and 532602880 bytes for block data.
+These are demand-driven ceilings; cache contents are not allocated at boot.
+
+Cache growth also leaves a free-memory target of one eighth of managed RAM,
+bounded between 16 and 256 MiB and at most half of managed RAM. As application
+allocations consume headroom, the budget is reduced using current free pages
+and existing cache pages. Cache misses shed excess LRU entries in batches of
+up to 32 pages. Block lines are flushed before normal eviction. At least one
+line per cache, and one block line per active partition, remain eligible so
+filesystem I/O can make progress at small budgets. Allocator-driven user
+reclaim can recover both file and block pages when file pages remain pinned.
+
+Buddy list insertions and removals maintain a free-page counter; managed RAM
+is counted from usable memory-map ranges, excluding holes. Budget calculation
+therefore has constant cost instead of rescanning physical page metadata on
+every cache miss. Current budgets appear in `/proc/mos` alongside usage and
+peak counters. File invalidation searches for the affected inode
+and removes only that inode's pages, avoiding a complete cache scan on every
+write. A regression verifies invalidation at offsets 0 and 4 GiB while
+preserving neighboring inodes. The i386 block cache retains its 64 MiB ceiling
+because block lines hold aliases in the limited kmap window. On machines
+without high memory, cache allocation directly uses available low-memory
+pages. Previously the high-memory miss triggered reclamation on each cache
+allocation, discarding earlier entries even when free low RAM was available.
+
+### Validation
+
+Both architecture release and test builds pass. In an 8 GiB, two-CPU KVM
+guest, all 16 physical allocator tests and 23 mmap tests pass. New policy
+checks cover large RAM, pressure, the aggregate ceiling, and agreement with
+allocator accounting. `test/posix_cache_growth.sh` writes a temporary 256 MiB
+file, synchronizes it, reads it twice, and verifies every byte. The probe
+passes with block-cache usage exceeding the previous 64 MiB ceiling.
+Subsequent memory statistics report 277377024 bytes of block buffers and
+276422656 bytes of filesystem page cache.
+
+A 512 MiB i386 guest also passes all 16 physical allocator tests and 23 mmap
+tests, including cache retention and inode invalidation. The final AMD64
+release kernel reaches the complete GNOME desktop after root login with
+8 GiB and two CPUs. Validation guests use temporary disk snapshots.

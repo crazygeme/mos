@@ -8,8 +8,12 @@
 #define PHYMM_INVALID 0xFFFFFFFFu /* end-of-list / invalid page index */
 #define PHYMM_RESERVED 0xFFFFFFFEu /* ref_count: page is non-RAM / firmware */
 
-/* Non-PAE i386 page tables encode a 32-bit physical frame address. */
+/* The AMD64 RAM mirror bounds managed frames; i386 remains non-PAE. */
+#if MOS_HAS_NATIVE_USER
+#define PHYMM_ADDRESS_LIMIT MOS_PHYS_MAP_SIZE
+#else
 #define PHYMM_ADDRESS_LIMIT 0x100000000ULL
+#endif
 
 /* Values stored in phymm_page.order */
 #define MAX_BUDDY_ORDER 10 /* largest block = 2^10 = 1024 pages (4 MB) */
@@ -35,6 +39,17 @@ typedef struct _phymm_usage {
 	unsigned high_used_pages;
 	unsigned high_free_pages;
 } phymm_usage;
+
+typedef struct _phymm_cache_policy {
+	unsigned file_pages;
+	unsigned block_pages;
+	unsigned reserve_pages;
+} phymm_cache_policy;
+
+/* Cache budgets are page counts; no data pages are reserved up front. */
+void phymm_cache_budget(unsigned total, unsigned free, unsigned cached,
+			phymm_cache_policy *policy);
+void phymm_get_cache_policy(phymm_cache_policy *policy);
 
 extern phymm_page *phymm_pages;
 

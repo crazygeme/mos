@@ -593,7 +593,8 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	}
 done:
 	mutex_unlock(&cur->files->lock);
-	return (int)pos;
+	/* _llseek returns status; the full position is written through result. */
+	return pos < 0 ? (int)pos : 0;
 }
 
 int fs_seek(int fd, int offset, unsigned whence)

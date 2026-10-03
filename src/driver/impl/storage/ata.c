@@ -760,8 +760,17 @@ unsigned hdd_cache_max_size = 0;
 static block_cache_item *block_cache_item_create(void)
 {
 	unsigned buf_pages = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
-	unsigned phy;
+	paddr_t phy;
 	block_cache_item *item;
+	phymm_cache_policy policy;
+	unsigned cached;
+
+	phymm_get_cache_policy(&policy);
+	cached = hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
+	if (cached > policy.block_pages) {
+		unsigned excess = cached - policy.block_pages;
+		hdd_cache_reclaim(excess < 32 ? excess : 32);
+	}
 
 	if (buf_pages != 1)
 		return NULL;
@@ -789,8 +798,8 @@ static block_cache_item *block_cache_item_create(void)
 	if (mm_kmap_phys(phy) != 1) {
 		phymm_free_user(item->page_index);
 		kfree(item);
-		klog("hdd: mm_kmap_phys failed for block cache item phy=%x\n",
-		     phy);
+		klog("hdd: mm_kmap_phys failed for block cache item phy=%llx\n",
+		     (unsigned long long)phy);
 		return NULL;
 	}
 
@@ -900,9 +909,12 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 			      int *old_dirty, block_cache_item *new_item)
 {
 	block_cache_item *item;
-	unsigned cached_pages = hdd_cache_size * BLOCK_SECTOR_SIZE / PAGE_SIZE;
+	unsigned cached_pages = hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
+	phymm_cache_policy policy;
 
-	if (new_item && cached_pages >= HDD_CACHE_MAX_PAGES) {
+	phymm_get_cache_policy(&policy);
+
+	if (new_item && cached_pages >= policy.block_pages && p->cache.sectors) {
 		block_cache_item_remove(new_item);
 		new_item = NULL;
 	}
@@ -1260,12 +1272,18 @@ static int hdd_bdev_bread(struct ext4_blockdev *bdev, void *buf,
 	char *dst = (char *)buf;
 	uint32_t i;
 
+	/* Validate the complete sector number before narrowing to the ATA API. */
+	if (blk_id > bdev->bdif->ph_bcnt ||
+	    blk_cnt > bdev->bdif->ph_bcnt - blk_id)
+		return EIO;
+
 	for (i = 0; i < blk_cnt;)
 #if HDD_CACHE_OPEN
 	{
-		partition_cache_read(p, (unsigned)(blk_id + i),
+		if (partition_cache_read(p, (unsigned)(blk_id + i),
 				     dst + i * BLOCK_SECTOR_SIZE,
-				     BLOCK_SECTOR_SIZE);
+				     BLOCK_SECTOR_SIZE) != BLOCK_SECTOR_SIZE)
+			return EIO;
 		i++;
 	}
 #else
@@ -1274,9 +1292,11 @@ static int hdd_bdev_bread(struct ext4_blockdev *bdev, void *buf,
 
 		if (chunk > HDD_IO_MAX_SECTORS)
 			chunk = HDD_IO_MAX_SECTORS;
-		partition_read(p, (unsigned)(blk_id + i),
+		if (partition_read(p, (unsigned)(blk_id + i),
 			       dst + i * BLOCK_SECTOR_SIZE,
-			       chunk * BLOCK_SECTOR_SIZE);
+			       chunk * BLOCK_SECTOR_SIZE) !=
+		    chunk * BLOCK_SECTOR_SIZE)
+			return EIO;
 		i += chunk;
 	}
 #endif
@@ -1290,12 +1310,18 @@ static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 	char *src = (char *)buf;
 	uint32_t i;
 
+	/* Validate the complete sector number before narrowing to the ATA API. */
+	if (blk_id > bdev->bdif->ph_bcnt ||
+	    blk_cnt > bdev->bdif->ph_bcnt - blk_id)
+		return EIO;
+
 	for (i = 0; i < blk_cnt;)
 #if HDD_CACHE_OPEN
 	{
-		partition_cache_write(p, (unsigned)(blk_id + i),
+		if (partition_cache_write(p, (unsigned)(blk_id + i),
 				      src + i * BLOCK_SECTOR_SIZE,
-				      BLOCK_SECTOR_SIZE);
+				      BLOCK_SECTOR_SIZE) != BLOCK_SECTOR_SIZE)
+			return EIO;
 		i++;
 	}
 #else
@@ -1304,9 +1330,11 @@ static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 
 		if (chunk > HDD_IO_MAX_SECTORS)
 			chunk = HDD_IO_MAX_SECTORS;
-		partition_write(p, (unsigned)(blk_id + i),
+		if (partition_write(p, (unsigned)(blk_id + i),
 				src + i * BLOCK_SECTOR_SIZE,
-				chunk * BLOCK_SECTOR_SIZE);
+				chunk * BLOCK_SECTOR_SIZE) !=
+		    chunk * BLOCK_SECTOR_SIZE)
+			return EIO;
 		i += chunk;
 	}
 #endif

@@ -25,8 +25,6 @@ void klib_init(void)
 
 /* ── 64-bit arithmetic helpers (libgcc replacements) ─────────────────────── */
 
-typedef unsigned long long uint64_t;
-
 uint64_t __udivmoddi4(uint64_t num, uint64_t den, uint64_t *rem_p)
 {
 	uint64_t quot = 0, qbit = 1;
@@ -82,7 +80,6 @@ uint64_t __udivdi3(uint64_t num, uint64_t den)
  *   quotient  : negative iff operands have opposite signs
  *   remainder : same sign as the dividend
  */
-typedef signed long long int64_t;
 
 int64_t __divdi3(int64_t a, int64_t b)
 {

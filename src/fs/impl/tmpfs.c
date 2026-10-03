@@ -343,8 +343,12 @@ static int tmpfs_ensure_page(tmpfs_node *tn, unsigned offset)
 	return 0;
 }
 
-static int tmpfs_file_read_page(file *fp, unsigned offset, void *buf)
+static int tmpfs_file_read_page(file *fp, uint64_t offset, void *buf)
 {
+	if (offset >= 0x100000000ULL) {
+		memset(buf, 0, PAGE_SIZE);
+		return 0;
+	}
 	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 	unsigned page_idx = (offset / PAGE_SIZE);
@@ -357,8 +361,10 @@ static int tmpfs_file_read_page(file *fp, unsigned offset, void *buf)
 	return 0;
 }
 
-static int tmpfs_file_write_page(file *fp, unsigned offset, const void *buf)
+static int tmpfs_file_write_page(file *fp, uint64_t offset, const void *buf)
 {
+	if (offset > 0xffffffffULL - PAGE_SIZE)
+		return -EFBIG;
 	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
 	unsigned page_idx = offset / PAGE_SIZE;
@@ -387,6 +393,8 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 
 	if (size < 0)
 		return -EINVAL;
+	if ((uint64_t)size > 0xffffffffULL)
+		return -EFBIG;
 
 	fs_page_cache_invalidate(fp);
 

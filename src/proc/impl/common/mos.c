@@ -112,6 +112,7 @@ static void mos_print_usage(proc_buf_t *pb, const char *name, unsigned pages,
 static void fill(proc_buf_t *pb)
 {
 	phymm_usage mem;
+	phymm_cache_policy cache_policy;
 	unsigned pf_cache_rate =
 		page_fault_file ?
 			page_fault_file_cache_hit * 100 / page_fault_file :
@@ -163,7 +164,9 @@ static void fill(proc_buf_t *pb)
 	mos_table_end(pb);
 
 	/* ---- Inode / filesystem page cache ---- */
+	phymm_get_cache_policy(&cache_policy);
 	mos_table_begin(pb, "Inode/filesystem page cache");
+	mos_print_bytes(pb, "budget", cache_policy.file_pages * PAGE_SIZE);
 	mos_print_bytes(pb, "current", fs_page_cache_pages * PAGE_SIZE);
 	mos_print_bytes(pb, "peak", fs_page_cache_max_pages * PAGE_SIZE);
 	mos_print_count(pb, "lookups", fs_page_cache_searches);
@@ -173,6 +176,7 @@ static void fill(proc_buf_t *pb)
 #if HDD_CACHE_OPEN
 	/* ---- HDD block cache ---- */
 	mos_table_begin(pb, "HDD block cache");
+	mos_print_bytes(pb, "budget", cache_policy.block_pages * PAGE_SIZE);
 	mos_print_bytes(pb, "cached sectors",
 			hdd_cache_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "peak sectors",

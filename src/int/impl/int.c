@@ -44,7 +44,7 @@ void int_unregister(int vec_no)
 	}
 
 	in_callbacks[vec_no] = 0;
-	idt[vec_no] = 0;
+	arch_interrupt_set_gate(vec_no, 0, 0, 0);
 }
 static void intr_maybe_preempt(void)
 {
@@ -241,6 +241,7 @@ void int_enable_all(void)
 	}
 	int_register(6, handle_invalid_opcode, 0, 3);
 	int_register(INT_VECTOR_PROTECTION, handle_general_protection, 0, 0);
+	ENABLE_INTR();
 }
 
 /*

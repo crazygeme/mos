@@ -100,8 +100,8 @@ typedef struct _file_operations {
 	/* llseek: return new position or -errno */
 	loff_t (*llseek)(file *file, loff_t offset, int whence);
 	/* read_page/write_page: transfer one PAGE_SIZE chunk at file offset @offset */
-	int (*read_page)(file *file, unsigned offset, void *buf);
-	int (*write_page)(file *file, unsigned offset, const void *buf);
+	int (*read_page)(file *file, uint64_t offset, void *buf);
+	int (*write_page)(file *file, uint64_t offset, const void *buf);
 	int (*ftruncate)(file *file, loff_t size);
 	/*
 	 * poll: return an FS_POLL_* readiness bitmask for the requested @events.
@@ -113,10 +113,10 @@ typedef struct _file_operations {
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
 	int (*flush)(file *file);
 	/* Return a referenced backing file and a validated byte offset. */
-	int (*mmap_file)(file *file, unsigned *offset, unsigned size,
+	int (*mmap_file)(file *file, uint64_t *offset, size_t size,
 			 unsigned prot, unsigned flags, struct _file **backing);
 	/* Return an allocator-owned physical page for a shared device mapping. */
-	paddr_t (*map_page)(file *file, unsigned offset);
+	paddr_t (*map_page)(file *file, uint64_t offset);
 	/* Unlink removes the name while open references retain the inode. */
 	unsigned unlink_preserves_open;
 } file_operations;
@@ -164,8 +164,8 @@ struct _file {
 #define FS_FILE_UNLINK_ON_CLOSE 0x1u
 
 struct linux_dirent {
-	unsigned long d_ino; /* Inode number */
-	unsigned long d_off; /* Offset to next linux_dirent */
+	uint32_t d_ino; /* Inode number */
+	uint32_t d_off; /* Offset to next linux_dirent */
 	unsigned short d_reclen; /* Length of this linux_dirent */
 	char d_name[]; /* Filename (null-terminated) */
 };
@@ -182,7 +182,8 @@ struct linux_dirent64 {
 
 #define NAME64_OFFSET() offset_of(struct linux_dirent64, d_name)
 
-#define MAX_FD ((PAGE_SIZE) / sizeof(file *))
+#define MAX_FD 1024
+#define FD_TABLE_PAGES ((MAX_FD * sizeof(file *) + PAGE_SIZE - 1) / PAGE_SIZE)
 #define FD_BITMAP_BITS (8 * sizeof(unsigned long))
 #define FD_BITMAP_WORDS ((MAX_FD + FD_BITMAP_BITS - 1) / FD_BITMAP_BITS)
 

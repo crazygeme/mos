@@ -23,17 +23,17 @@
 extern unsigned phymm_used;
 
 struct sysinfo {
-	long uptime;
-	unsigned long loads[3];
-	unsigned long totalram;
-	unsigned long freeram;
-	unsigned long sharedram;
-	unsigned long bufferram;
-	unsigned long totalswap;
-	unsigned long freeswap;
+	int32_t uptime;
+	uint32_t loads[3];
+	uint32_t totalram;
+	uint32_t freeram;
+	uint32_t sharedram;
+	uint32_t bufferram;
+	uint32_t totalswap;
+	uint32_t freeswap;
 	unsigned short procs;
-	unsigned long totalhigh;
-	unsigned long freehigh;
+	uint32_t totalhigh;
+	uint32_t freehigh;
 	unsigned int mem_unit;
 	char _f[8];
 };
@@ -318,7 +318,7 @@ int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 			if (!region || !(region->prot & PROT_WRITE))
 				return -EFAULT;
 		}
-		*(int *)arg2 = current->pdeath_signal;
+		*(int *)(uintptr_t)arg2 = current->pdeath_signal;
 		return 0;
 	}
 	/* agetty queries dumpability before opening its console. */
@@ -493,10 +493,11 @@ int sys_mmap(struct mmap_arg_struct32 *arg)
 int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 	      int fd, unsigned pgoffset)
 {
-	return do_mmap(addr, len, prot, flags, fd, pgoffset * PAGE_SIZE);
+	return do_mmap(addr, len, prot, flags, fd,
+		       (uint64_t)pgoffset * PAGE_SIZE);
 }
 
-int sys_munmap(void *addr, unsigned length)
+int sys_munmap(void *addr, size_t length)
 {
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("munmap (%x, %x)\n", addr, length);
@@ -504,7 +505,7 @@ int sys_munmap(void *addr, unsigned length)
 	return do_munmap(addr, length);
 }
 
-int sys_mprotect(void *addr, unsigned len, int prot)
+int sys_mprotect(void *addr, size_t len, int prot)
 {
 	task_struct *cur = CURRENT_TASK();
 	vaddr_t begin = (vaddr_t)(uintptr_t)addr;
@@ -513,6 +514,13 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
 
+	if (begin >= cur->user->vm->task_size ||
+	    len > cur->user->vm->task_size - begin)
+		return -EINVAL;
+#if MOS_HAS_NATIVE_USER
+	if (begin < 0x100000000ULL && begin + len > MOS_COMPAT_TASK_SIZE)
+		return -EINVAL;
+#endif
 	/* POSIX: addr must be page-aligned */
 	if (begin & ~PAGE_SIZE_MASK)
 		return -EINVAL;
@@ -538,6 +546,10 @@ int sys_mprotect(void *addr, unsigned len, int prot)
 			continue;
 		}
 
+		if (cur->user->abi == MOS_ABI_AMD64)
+			mmflag = prot & PROT_EXEC ?
+					 mmflag & ~PAGE_ENTRY_NO_EXEC :
+					 mmflag | PAGE_ENTRY_NO_EXEC;
 		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
@@ -612,22 +624,28 @@ int sys_vhangup(void)
 int sys_sysinfo(void *buf)
 {
 	struct sysinfo *info = (struct sysinfo *)buf;
-	unsigned total_pages = phymm_end - phymm_begin;
-	unsigned free_pages =
-		total_pages > phymm_used ? total_pages - phymm_used : 0;
+	phymm_usage usage;
+	unsigned total_pages, free_pages;
 
 	if (!info)
 		return -EFAULT;
+	phymm_get_usage(&usage);
+	total_pages = usage.low_total_pages + usage.high_total_pages;
+	free_pages = usage.low_free_pages + usage.high_free_pages;
 
 	memset(info, 0, sizeof(*info));
 	info->uptime = (long)(time_wall_us() / 1000000ULL);
-	info->totalram = (unsigned long)total_pages * PAGE_SIZE;
-	info->freeram = (unsigned long)free_pages * PAGE_SIZE;
-	info->mem_unit = 1;
+	/* i386 counts remain representable above 4 GiB by using page units. */
+	info->totalram = total_pages;
+	info->freeram = free_pages;
+	info->totalhigh = usage.high_total_pages;
+	info->freehigh = usage.high_free_pages;
+	info->mem_unit = PAGE_SIZE;
 
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("sysinfo: total=%luKB free=%luKB\n", info->totalram / 1024,
-		     info->freeram / 1024);
+		klog("sysinfo: total=%luKB free=%luKB\n",
+		     (unsigned long)total_pages * (PAGE_SIZE / 1024),
+		     (unsigned long)free_pages * (PAGE_SIZE / 1024));
 
 	return 0;
 }
@@ -712,7 +730,7 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 		return (int)old_addr;
 
 	if (new_size_pg < old_size_pg) {
-		do_munmap((void *)(old_addr + new_size_pg),
+		do_munmap((void *)(uintptr_t)(old_addr + new_size_pg),
 			  old_size_pg - new_size_pg);
 		return (int)old_addr;
 	}
@@ -734,8 +752,9 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	if (ret < 0)
 		return ret;
 
-	memcpy((void *)ret, (void *)old_addr, old_size_pg);
-	do_munmap((void *)old_addr, old_size_pg);
+	memcpy((void *)(uintptr_t)ret, (void *)(uintptr_t)old_addr,
+	       old_size_pg);
+	do_munmap((void *)(uintptr_t)old_addr, old_size_pg);
 	return ret;
 }
 

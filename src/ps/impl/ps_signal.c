@@ -184,16 +184,18 @@ int sys_kill(int pid, int sig)
 		klog("kill(%d, %d)\n", pid, sig);
 
 	if (sig == 0)
-		return pid > 0 ? (ps_find_process((unsigned)pid) ? 0 : -ESRCH) :
+		return pid > 0 ? (ps_find_process((unsigned)(uintptr_t)pid) ?
+					  0 :
+					  -ESRCH) :
 				 0;
 
 	if (pid > 0) {
-		ret = ps_send_signal((unsigned)pid, sig);
+		ret = ps_send_signal((unsigned)(uintptr_t)pid, sig);
 		if (ret == 0 && cur->type == ps_user &&
-		    (unsigned)pid == cur->psid && cur->signal &&
+		    (unsigned)(uintptr_t)pid == cur->psid && cur->signal &&
 		    !(cur->signal->sig_mask & (1UL << (sig - 1)))) {
 			intr_frame *frame =
-				(intr_frame *)((char *)cur + PAGE_SIZE -
+				(intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
 					       sizeof(intr_frame));
 			frame->eax = 0;
 			do_signal(frame);
@@ -296,10 +298,10 @@ void *sys_signal(int sig, void *handler)
  * clear the high word on writeback.
  */
 struct rt_sigaction_user {
-	void (*sa_handler)(int);
-	unsigned long sa_flags;
-	void (*sa_restorer)(void);
-	unsigned long sa_mask[2];
+	uint32_t sa_handler;
+	uint32_t sa_flags;
+	uint32_t sa_restorer;
+	uint32_t sa_mask[2];
 };
 
 typedef struct _rt_siginfo_user {
@@ -314,23 +316,27 @@ typedef struct _rt_sigcontext_user {
 	unsigned short fs, __fsh;
 	unsigned short es, __esh;
 	unsigned short ds, __dsh;
-	arch_reg_t edi, esi, ebp, esp, ebx, edx, ecx, eax;
-	unsigned long trapno;
-	unsigned long err;
-	arch_reg_t eip;
+	uint32_t edi, esi, ebp, esp, ebx, edx, ecx, eax;
+	uint32_t trapno;
+	uint32_t err;
+	uint32_t eip;
 	unsigned short cs, __csh;
-	arch_reg_t eflags;
-	arch_reg_t esp_at_signal;
+	uint32_t eflags;
+	uint32_t esp_at_signal;
 	unsigned short ss, __ssh;
-	void *fpstate;
-	unsigned long oldmask;
-	unsigned long cr2;
+	uint32_t fpstate;
+	uint32_t oldmask;
+	uint32_t cr2;
 } rt_sigcontext_user;
 
 typedef struct _rt_ucontext_user {
-	unsigned long uc_flags;
-	struct _rt_ucontext_user *uc_link;
-	stack_t uc_stack;
+	uint32_t uc_flags;
+	uint32_t uc_link;
+	struct {
+		uint32_t ss_sp;
+		int32_t ss_flags;
+		uint32_t ss_size;
+	} uc_stack;
 	rt_sigcontext_user uc_mcontext;
 	sigset_t uc_sigmask;
 } rt_ucontext_user;
@@ -341,22 +347,22 @@ typedef struct _rt_fpreg_user {
 } rt_fpreg_user;
 
 typedef struct _rt_fpstate_user {
-	unsigned long cw;
-	unsigned long sw;
-	unsigned long tag;
-	unsigned long ipoff;
-	unsigned long cssel;
-	unsigned long dataoff;
-	unsigned long datasel;
+	uint32_t cw;
+	uint32_t sw;
+	uint32_t tag;
+	uint32_t ipoff;
+	uint32_t cssel;
+	uint32_t dataoff;
+	uint32_t datasel;
 	rt_fpreg_user _st[8];
-	unsigned long status;
+	uint32_t status;
 } rt_fpstate_user;
 
 typedef struct _rt_signal_frame {
-	arch_reg_t pretcode;
+	uint32_t pretcode;
 	int sig;
-	arch_reg_t pinfo;
-	arch_reg_t puc;
+	uint32_t pinfo;
+	uint32_t puc;
 	rt_siginfo_user info;
 	rt_ucontext_user uc;
 	rt_fpstate_user fpstate;
@@ -379,17 +385,17 @@ int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 
 	if (oact) {
 		struct rt_sigaction_user *u = (struct rt_sigaction_user *)oact;
-		u->sa_handler = sa->sa_handler;
+		u->sa_handler = (uint32_t)(uintptr_t)sa->sa_handler;
 		u->sa_flags = sa->sa_flags;
-		u->sa_restorer = sa->sa_restorer;
+		u->sa_restorer = (uint32_t)(uintptr_t)sa->sa_restorer;
 		u->sa_mask[0] = sa->sa_mask;
 		u->sa_mask[1] = 0;
 	}
 	if (act) {
 		struct rt_sigaction_user *u = (struct rt_sigaction_user *)act;
-		sa->sa_handler = u->sa_handler;
+		sa->sa_handler = (void *)(uintptr_t)u->sa_handler;
 		sa->sa_flags = u->sa_flags;
-		sa->sa_restorer = u->sa_restorer;
+		sa->sa_restorer = (void *)(uintptr_t)u->sa_restorer;
 		sa->sa_mask = (unsigned long)u->sa_mask[0];
 	}
 
@@ -405,12 +411,12 @@ int sys_sigprocmask(int how, void *set, void *oset)
 	unsigned long newmask;
 
 	if (oset)
-		*(unsigned long *)oset = cur->signal->sig_mask;
+		*(uint32_t *)oset = cur->signal->sig_mask;
 
 	if (!set)
 		return 0;
 
-	newmask = *(unsigned long *)set;
+	newmask = *(uint32_t *)set;
 
 	switch (how) {
 	case SIG_BLOCK:
@@ -448,14 +454,14 @@ int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 	unsigned long newmask;
 
 	if (oset) {
-		((unsigned long *)oset)[0] = cur->signal->sig_mask;
-		((unsigned long *)oset)[1] = 0;
+		((uint32_t *)oset)[0] = cur->signal->sig_mask;
+		((uint32_t *)oset)[1] = 0;
 	}
 
 	if (!set)
 		return 0;
 
-	newmask = ((unsigned long *)set)[0];
+	newmask = ((uint32_t *)set)[0];
 
 	switch (how) {
 	case SIG_BLOCK:
@@ -492,14 +498,14 @@ int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 int sys_sigreturn()
 {
 	task_struct *cur = CURRENT_TASK();
-	intr_frame *frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+	intr_frame *frame = (intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+					   sizeof(intr_frame));
 	signal_frame *sf = (signal_frame *)((unsigned char *)frame->esp - 8);
 
 	/* Restore original user registers and EIP into the interrupt frame. */
-	frame->eip = (void *)sf->saved_eip;
+	frame->eip = (void *)(uintptr_t)sf->saved_eip;
 	frame->eflags = sf->saved_eflags;
-	frame->esp = (void *)sf->saved_esp;
+	frame->esp = (void *)(uintptr_t)sf->saved_esp;
 	frame->eax = sf->saved_eax;
 	frame->ebx = sf->saved_ebx;
 	frame->ecx = sf->saved_ecx;
@@ -542,15 +548,15 @@ int sys_sigreturn()
 int sys_rt_sigreturn()
 {
 	task_struct *cur = CURRENT_TASK();
-	intr_frame *frame =
-		(intr_frame *)((char *)cur + PAGE_SIZE - sizeof(intr_frame));
+	intr_frame *frame = (intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
+					   sizeof(intr_frame));
 	rt_signal_frame *sf =
 		(rt_signal_frame *)((unsigned char *)frame->esp - 4);
 	rt_sigcontext_user *sc = &sf->uc.uc_mcontext;
 
-	frame->eip = (void *)sc->eip;
+	frame->eip = (void *)(uintptr_t)sc->eip;
 	frame->eflags = sc->eflags;
-	frame->esp = (void *)sc->esp_at_signal;
+	frame->esp = (void *)(uintptr_t)sc->esp_at_signal;
 	frame->eax = sc->eax;
 	frame->ebx = sc->ebx;
 	frame->ecx = sc->ecx;
@@ -567,7 +573,7 @@ int sys_rt_sigreturn()
 	{
 		stack_t *alt = &cur->signal->altstack;
 		if (alt->ss_flags & SS_ONSTACK) {
-			unsigned alt_base = (unsigned)alt->ss_sp;
+			unsigned alt_base = (unsigned)(uintptr_t)alt->ss_sp;
 			unsigned alt_top = alt_base + alt->ss_size;
 			unsigned restored = sc->esp_at_signal;
 			if (restored < alt_base || restored >= alt_top)
@@ -700,7 +706,7 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 		rt_sf->pretcode = (arch_reg_t)(uintptr_t)sa->sa_restorer;
 	} else {
 		build_rt_sigreturn_code(rt_sf->retcode);
-		rt_sf->pretcode = (unsigned int)&rt_sf->retcode[0];
+		rt_sf->pretcode = (unsigned int)(uintptr_t)&rt_sf->retcode[0];
 	}
 	rt_sf->sig = sig;
 	rt_sf->pinfo = (arch_reg_t)(uintptr_t)&rt_sf->info;
@@ -709,7 +715,10 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	rt_sf->info.si_signo = sig;
 	rt_sf->uc.uc_flags = 0;
 	rt_sf->uc.uc_link = NULL;
-	rt_sf->uc.uc_stack = cur->signal->altstack;
+	rt_sf->uc.uc_stack.ss_sp =
+		(uint32_t)(uintptr_t)cur->signal->altstack.ss_sp;
+	rt_sf->uc.uc_stack.ss_flags = cur->signal->altstack.ss_flags;
+	rt_sf->uc.uc_stack.ss_size = cur->signal->altstack.ss_size;
 	rt_sf->uc.uc_sigmask = saved_mask;
 	memset(&rt_sf->fpstate, 0, sizeof(rt_sf->fpstate));
 	memset(sc, 0, sizeof(*sc));
@@ -732,7 +741,7 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	sc->eflags = frame->eflags;
 	sc->esp_at_signal = (arch_reg_t)(uintptr_t)frame->esp;
 	sc->ss = frame->ss;
-	sc->fpstate = &rt_sf->fpstate;
+	sc->fpstate = (uint32_t)(uintptr_t)&rt_sf->fpstate;
 	sc->oldmask = saved_mask;
 	sc->cr2 = 0;
 	cur->signal->restore_sigmask = 0;
@@ -821,6 +830,14 @@ void do_signal(intr_frame *frame)
 		return;
 	}
 
+#if MOS_HAS_NATIVE_USER
+	if (cur->user->abi == MOS_ABI_AMD64) {
+		extern void arch_signal_deliver_native(
+			task_struct *, intr_frame *, struct sigaction *, int);
+		arch_signal_deliver_native(cur, frame, sa, sig);
+		return;
+	}
+#endif
 	/*
 	 * Linux/i386 chooses the rt signal frame based on SA_SIGINFO, not on
 	 * whether the handler was installed via rt_sigaction().
@@ -829,8 +846,9 @@ void do_signal(intr_frame *frame)
 
 	new_esp = resolve_sigstack(cur, frame, sa);
 	new_esp -= is_rt ? sizeof(rt_signal_frame) : sizeof(signal_frame);
-	new_esp = (unsigned char *)((unsigned)new_esp &
-				    ~0xfU); /* 16-byte align */
+	new_esp =
+		(unsigned char *)(uintptr_t)((uintptr_t)new_esp &
+					     ~(uintptr_t)0xf); /* 16-byte align */
 
 	if (is_rt)
 		build_rt_frame(cur, frame, (rt_signal_frame *)new_esp, sa, sig);
@@ -951,10 +969,10 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 			cur->signal->sig_pending &=
 				~(1UL << (SIGRTMIN_KERNEL - 1));
 			if (info) {
-				unsigned long *words = info;
+				uint32_t *words = info;
 				memset(info, 0, 128);
 				words[0] = SIGRTMIN_KERNEL;
-				words[2] = (unsigned long)-2;
+				words[2] = (uint32_t)-2;
 				words[3] = cur->signal->timer_signal_id;
 				words[5] = cur->signal->timer_signal_value;
 			}

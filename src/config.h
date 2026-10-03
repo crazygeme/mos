@@ -31,8 +31,7 @@
 
 #define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
 
-/* Block-cache pages hold persistent kmap aliases.  Bound them well below the
- * kmap window size so fault-time temporary mappings cannot be starved. */
+/* i386 alias ceiling; AMD64 block-cache budgets scale with available RAM. */
 #define HDD_CACHE_MAX_PAGES 16384 /* 64 MiB */
 
 #define USER_STACK_PAGES 4096
@@ -47,7 +46,7 @@
 /* heap is bounded by the mmap zone, matching Linux classic VM layout */
 #define USER_HEAP_END TASK_UNMAPPED_BASE
 /* mmap zone: [TASK_UNMAPPED_BASE, USER_ZONE_END), top is the max stack floor */
-#define USER_ZONE_END (KERNEL_OFFSET - USER_STACK_PAGES * PAGE_SIZE)
+#define USER_ZONE_END (MOS_COMPAT_TASK_SIZE - USER_STACK_PAGES * PAGE_SIZE)
 
 // supported resolution
 #define VGA_RESOLUTION_X 800

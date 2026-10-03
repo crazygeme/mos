@@ -59,7 +59,7 @@ struct mos_shm_segment {
 	int shmid;
 	unsigned size;
 	unsigned page_count;
-	unsigned *pages;
+	paddr_t *pages;
 	unsigned owner_pid;
 	unsigned creator_uid;
 	unsigned creator_gid;
@@ -89,7 +89,7 @@ static void mos_shm_release_pages(struct mos_shm_segment *seg)
 		return;
 
 	for (i = 0; i < seg->page_count; ++i) {
-		unsigned phy = seg->pages[i];
+		paddr_t phy = seg->pages[i];
 		unsigned page_index;
 
 		if (!phy)
@@ -151,7 +151,7 @@ static int mos_shm_create(int key, unsigned size, unsigned mode)
 	task_struct *cur = CURRENT_TASK();
 	int i;
 	unsigned page_count;
-	unsigned *pages;
+	paddr_t *pages;
 
 	page_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 	if (page_count == 0)
@@ -190,10 +190,10 @@ static int mos_shm_create(int key, unsigned size, unsigned mode)
 }
 
 static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
-			       unsigned *phy_out)
+			       paddr_t *phy_out)
 {
 	unsigned page_index;
-	unsigned phy;
+	paddr_t phy;
 
 	if (!seg || page_no >= seg->page_count || !phy_out)
 		return -EINVAL;
@@ -214,8 +214,8 @@ static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
 		phy = page_index * PAGE_SIZE;
 		if (mm_kmap_phys(phy) != 1) {
 			phymm_free_user(page_index);
-			klog("shm: mm_kmap_phys failed shmid=%d page=%u phy=%x\n",
-			     seg->shmid, page_no, phy);
+			klog("shm: mm_kmap_phys failed shmid=%d page=%u phy=%llx\n",
+			     seg->shmid, page_no, (unsigned long long)phy);
 			return -ENOMEM;
 		}
 		memset((void *)PHY_TO_VIRT(phy), 0, PAGE_SIZE);
@@ -239,7 +239,7 @@ static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg,
 						  PAGE_ENTRY_USER_CODE;
 
 	for (vir = addr; vir < addr + seg->size; vir += PAGE_SIZE, ++page_no) {
-		unsigned phy;
+		paddr_t phy;
 
 		if (mos_shm_ensure_page(seg, page_no, &phy) != 0)
 			return -ENOMEM;
@@ -295,7 +295,7 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 	task_struct *cur = CURRENT_TASK();
 	struct mos_shm_segment *seg;
 	struct mos_shm_attach *attach = NULL;
-	unsigned addr = (unsigned)shmaddr;
+	unsigned addr = (unsigned)(uintptr_t)shmaddr;
 	unsigned mapped;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_SHARED | MAP_ANONYMOUS;
@@ -340,7 +340,7 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 		return (int)mapped;
 
 	if (mos_shm_map_pages(mapped, seg, prot) != 0) {
-		do_munmap((void *)mapped, seg->size);
+		do_munmap((void *)(uintptr_t)mapped, seg->size);
 		return -ENOMEM;
 	}
 
@@ -350,7 +350,8 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 	seg = mos_shm_find_by_id(shmid);
 	if (!seg || seg->removed) {
 		spinlock_unlock(&mos_shm_lock, irq);
-		do_munmap((void *)mapped, seg ? seg->size : PAGE_SIZE);
+		do_munmap((void *)(uintptr_t)mapped,
+			  seg ? seg->size : PAGE_SIZE);
 		return -EINVAL;
 	}
 
@@ -369,7 +370,7 @@ static int mos_shmdt(const void *shmaddr)
 {
 	task_struct *cur = CURRENT_TASK();
 	struct mos_shm_segment *seg;
-	unsigned addr = (unsigned)shmaddr;
+	unsigned addr = (unsigned)(uintptr_t)shmaddr;
 	unsigned size = 0;
 	int shmid = -1;
 	int i;
@@ -404,7 +405,7 @@ static int mos_shmdt(const void *shmaddr)
 	}
 	spinlock_unlock(&mos_shm_lock, irq);
 
-	return do_munmap((void *)addr, size);
+	return do_munmap((void *)(uintptr_t)addr, size);
 }
 
 static int mos_shmctl(int shmid, int cmd, void *buf)
@@ -469,7 +470,10 @@ int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
 	case MOS_SHMGET:
 		return mos_shmget(first, (unsigned)second, third);
 	case MOS_SHMAT:
-		return mos_shmat(first, ptr, second, (unsigned *)third);
+		/* The i386 IPC multiplexer carries this pointer in a signed int.
+		 * Preserve its 32-bit address bits before widening to uintptr_t. */
+		return mos_shmat(first, ptr, second,
+				 (unsigned *)(uintptr_t)(uint32_t)third);
 	case MOS_SHMDT:
 		return mos_shmdt(ptr);
 	case MOS_SHMCTL:

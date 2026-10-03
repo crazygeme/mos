@@ -221,7 +221,7 @@ static void tty_complete_switch_locked(int n, int spawn_shell)
 	else if (this_ttys->kd_mode == KD_GRAPHICS)
 		tty_restore_graphics_locked(this_ttys);
 
-	if (spawn_shell && n > 1) {
+	if (spawn_shell && n > 1 && except_tty->kd_mode == KD_TEXT) {
 		int need_spawn = 0;
 
 		if (except_tty->bash_pid == 0) {
@@ -299,8 +299,8 @@ static void tty_graphics_refresh_dsr(void *unused)
 
 typedef struct {
 	vaddr_t page_dir;
-	paddr_t fb_phys;
-	paddr_t fb_end;
+	uint32_t fb_phys;
+	uint32_t fb_end;
 	int dirty;
 } tty_graphics_dirty_ctx;
 
@@ -471,9 +471,9 @@ static void vga_putchar(tty_state *state, int row, int col, char c)
 		return;
 	state->cells[idx].ch = c;
 	state->cells[idx].fg = state->reverse_video ? state->bg_color :
-						    state->fg_color;
+						      state->fg_color;
 	state->cells[idx].bg = state->reverse_video ? state->fg_color :
-						    state->bg_color;
+						      state->bg_color;
 	if (tty_fb_text_is_visible(state))
 		fb_putcell(&state->cells[idx], col, row);
 }
@@ -840,7 +840,8 @@ static void ansi_feed(tty_state *state, char c)
 			if ((v == 38 || v == 48) && pi + 4 < nparams &&
 			    params[pi + 1] == 2) {
 				unsigned rgb = ARGB(0xff, params[pi + 2] & 255,
-						    params[pi + 3] & 255, params[pi + 4] & 255);
+						    params[pi + 3] & 255,
+						    params[pi + 4] & 255);
 				if (v == 38)
 					state->fg_color = rgb;
 				else
@@ -1252,6 +1253,8 @@ static void tty_do_write(tty_state *state, const char *buf, unsigned len)
 	for (i = 0; i < len; i++)
 		output_char(state, (unsigned char)buf[i]);
 	tty_hw_cursor(state, (unsigned)state->cursor);
+	if (tty_fb_text_is_visible(state))
+		fb_flush_text();
 	spinlock_unlock(&state->lock, irq);
 }
 
@@ -1547,20 +1550,14 @@ static void tty_bash_spawner(void *p)
 	cur->user->session_id = 0;
 	cur->user->group_id = 0;
 
-	if (!TestControl.bash)
-		/* On System V init system, VT is enabled and tty is dynamically allocated */
-		sprintf(tty_path, "/dev/tty%d", tty_vt_find_free());
-
-	else
-		/* But in bare metal bash mode, we just simplly use ttyN for sessionN without login */
-		sprintf(tty_path, "/dev/tty%d", state->tty_idx);
+	sprintf(tty_path, "/dev/tty%d", state->tty_idx);
 
 	/* Set working directory. */
 	strcpy(cur->user->cwd, "/root");
 	strcpy(cur->user->root_path, "/");
 
 	/* Set up TSS esp0 for user-mode entry. */
-	ps_update_tss((unsigned)cur + PAGE_SIZE);
+	ps_update_tss((uintptr_t)cur + KERNEL_TASK_BYTES);
 
 	/* Open stdin (0), stdout (1), stderr (2) on this TTY. */
 	fs_open(tty_path, O_RDONLY, 0);

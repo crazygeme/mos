@@ -74,14 +74,14 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	if ((uint64_t)write_pos > f->fsize) {
 		ret = ext4_fenlarge(f, (uint64_t)write_pos);
 		if (ret != EOK)
-			return -1;
+			return -ret;
 	}
 	if ((loff_t)ext4_ftell(f) != write_pos)
 		ext4_fseek(f, write_pos, SEEK_SET);
 	ret = ext4_fwrite(f, buf, size, &wcnt);
 	fs_write_size += wcnt;
 	if (ret != EOK)
-		return -1;
+		return -ret;
 	*pos = write_pos + (loff_t)wcnt;
 	if (fp->f_inode)
 		fp->f_inode->i_size = f->fsize;
@@ -193,7 +193,7 @@ static int ext4_file_chown(file *fp, uint32_t uid, uint32_t gid)
 	return ext4_fchown(f, uid, gid);
 }
 
-static int ext4_file_read_page(file *fp, unsigned offset, void *buf)
+static int ext4_file_read_page(file *fp, uint64_t offset, void *buf)
 {
 	ext4_file *ff = fp->f_inode->i_private;
 	loff_t saved_pos = (loff_t)ext4_ftell(ff);
@@ -211,7 +211,7 @@ static int ext4_file_read_page(file *fp, unsigned offset, void *buf)
 	return 0;
 }
 
-static int ext4_file_write_page(file *fp, unsigned offset, const void *buf)
+static int ext4_file_write_page(file *fp, uint64_t offset, const void *buf)
 {
 	ext4_file *ff = fp->f_inode->i_private;
 	loff_t saved_pos = (loff_t)ext4_ftell(ff);

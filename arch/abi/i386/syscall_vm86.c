@@ -1,3 +1,5 @@
+/* IA-32 VBE compatibility emulation shared by both kernel architectures.
+ * This services selected BIOS calls without entering hardware VM86 mode. */
 #include <lib/klib.h>
 #include <errno.h>
 #include <config.h>
@@ -66,17 +68,20 @@ struct mos_vm86_regs {
 } __attribute__((packed));
 
 struct mos_revectored_struct {
-	unsigned long map[8];
+	uint32_t map[8];
 } __attribute__((packed));
 
 struct mos_vm86_struct {
 	struct mos_vm86_regs regs;
-	unsigned long flags;
-	unsigned long screen_bitmap;
-	unsigned long cpu_type;
+	uint32_t flags;
+	uint32_t screen_bitmap;
+	uint32_t cpu_type;
 	struct mos_revectored_struct int_revectored;
 	struct mos_revectored_struct int21_revectored;
 } __attribute__((packed));
+
+_Static_assert(sizeof(struct mos_vm86_regs) == 84, "IA-32 vm86 registers");
+_Static_assert(sizeof(struct mos_vm86_struct) == 160, "IA-32 vm86 structure");
 
 struct mos_vbe_info_block {
 	char signature[4];
@@ -188,7 +193,7 @@ static mos_vbe_hw_t mos_vbe_probe_hw(void)
 
 static void *mos_vm86_ptr(unsigned short seg, unsigned off)
 {
-	return (void *)(((unsigned)seg << 4) + (off & 0xffffu));
+	return (void *)(uintptr_t)(((unsigned)seg << 4) + (off & 0xffffu));
 }
 
 static unsigned mos_vm86_far_ptr(unsigned linear)
@@ -559,7 +564,7 @@ int sys_vm86old(void *user_vm86)
 	struct mos_vm86_struct *vm = (struct mos_vm86_struct *)user_vm86;
 
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("vm86old(%x)\n", user_vm86);
+		klog("vm86old(%lx)\n", (unsigned long)(uintptr_t)user_vm86);
 
 	if (!user_vm86)
 		return -EFAULT;
@@ -576,7 +581,8 @@ int sys_vm86old(void *user_vm86)
 int sys_vm86(unsigned long fn, void *user_vm86plus)
 {
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("vm86(fn=%x, %x)\n", fn, user_vm86plus);
+		klog("vm86(fn=%lx, %lx)\n", fn,
+		     (unsigned long)(uintptr_t)user_vm86plus);
 
 	if (!user_vm86plus)
 		return -EFAULT;

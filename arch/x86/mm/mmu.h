@@ -62,4 +62,15 @@ ALWAYS_INLINE vaddr_t arch_mm_fault_address(void)
 	return value;
 }
 
+ALWAYS_INLINE paddr_t arch_mm_entry_address(pte_t entry)
+{
+	return entry & PAGE_SIZE_MASK;
+}
+
+struct _vm_region;
+int arch_mm_clone_region(pte_t *src, pte_t *dst, struct _vm_region *region);
+pte_t *arch_mm_lookup_leaf(vaddr_t root, vaddr_t address);
+void arch_mm_enum_user(vaddr_t root, void (*fn)(void *, vaddr_t, paddr_t),
+		       void *aux);
+
 #endif

@@ -2032,8 +2032,12 @@ out_fsize:
 		ref.dirty = true;
 	}
 
-Finish:
-	r = ext4_fs_put_inode_ref(&ref);
+Finish: {
+	/* Releasing the inode must not hide a failed data transfer. */
+	int put_ret = ext4_fs_put_inode_ref(&ref);
+	if (r == EOK)
+		r = put_ret;
+}
 
 	if (r != EOK)
 		ext4_trans_abort(f->mp);

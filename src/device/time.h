@@ -18,8 +18,8 @@ __attribute__((aligned(1))) typedef struct _time_control {
 typedef struct _time_t {
 	union {
 		struct {
-			unsigned long seconds;
-			unsigned long milliseconds;
+			unsigned seconds;
+			unsigned milliseconds;
 		};
 		unsigned long long time;
 	};

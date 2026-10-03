@@ -57,7 +57,8 @@ static void set_saved_user_selector(task_struct *task, unsigned short selector)
 	 * installing the descriptor is not enough: the task's next return to
 	 * user mode must also restore the matching selector.
 	 */
-	frame = (intr_frame *)((char *)task + PAGE_SIZE - sizeof(*frame));
+	frame = (intr_frame *)((char *)task + KERNEL_TASK_BYTES -
+			       sizeof(*frame));
 	frame->gs = selector;
 	task->tss.gs = selector;
 }

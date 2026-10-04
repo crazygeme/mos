@@ -284,8 +284,13 @@ static int ext4_dir_release(file *fp)
 static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	ext4_dir *dir = fp->f_inode->i_private;
+	struct stat state;
 	unsigned out = 0;
-	if ((uint64_t)*pos == 0xffffffffULL)
+	int ret = ext4_fstat(&dir->f, &state);
+	if (ret != EOK)
+		return -ret;
+	uint64_t end = state.st_size;
+	if ((uint64_t)*pos >= end)
 		return 0;
 	/* Directory offsets are opaque backing-store cookies. */
 	dir->next_off = *pos;
@@ -293,12 +298,12 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		uint64_t cookie = dir->next_off;
 		const ext4_direntry *entry = ext4_dir_entry_next(dir);
 		if (!entry) {
-			*pos = 0xffffffffULL;
+			*pos = end;
 			break;
 		}
 		if (!entry->inode || !entry->name_length ||
 		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM) {
-			*pos = dir->next_off == ~0ULL ? 0xffffffffULL :
+			*pos = dir->next_off == ~0ULL ? end :
 							dir->next_off;
 			continue;
 		}
@@ -313,7 +318,8 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		memset(record, 0, size);
 		record->d_ino = entry->inode;
 		record->d_reclen = size;
-		record->d_off = dir->next_off == ~0ULL ? 0xffffffffULL :
+		/* Export the backing-store end offset, not the iterator sentinel. */
+		record->d_off = dir->next_off == ~0ULL ? end :
 							 dir->next_off;
 		memcpy(record->d_name, entry->name, entry->name_length);
 		*pos = record->d_off;
@@ -329,7 +335,7 @@ static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 		return -EACCES;
 	if (offset < 0 || (uint64_t)offset > 0xffffffffULL)
 		return -EINVAL;
-	dir->next_off = (uint64_t)offset == 0xffffffffULL ? ~0ULL : offset;
+	dir->next_off = offset;
 	fp->f_pos = offset;
 	return offset;
 }

@@ -62,6 +62,10 @@ last emitted record when the output buffer cannot hold the next converted
 record. Ext4 directory offsets identify backing-store positions directly;
 seeking restores the cookie without replaying preceding directory entries.
 The shared legacy directory service retains 32-bit inode and cookie fields.
+The final ext4 directory record uses the directory's byte size as its next
+offset. Seeking to that offset returns end-of-directory. Internal iterator
+termination values are not exported as directory offsets. IA-32 libc directory
+enumeration requires offsets representable by its signed 32-bit `off_t`.
 
 Ext4 mount registration supplies the complete VFS target pathname with a
 trailing slash to lwext4. Its temporary pathname buffer is bounded by
@@ -126,6 +130,6 @@ kernel. These checks require compilation and kernel execution. Guest
 regressions include `dev_pts.sh`, `tty_basic.sh`, `tty_vc.sh`,
 `posix_sysv_shm.sh`, `posix_fd_pass.sh`, `posix_mount_state.sh`,
 `posix_exec_signal.sh`, `posix_signal.sh`,
-`xorg_compat.py`, and `x64_console_abi.py`.
+`posix_dirent.sh`, `xorg_compat.py`, and `x64_console_abi.py`.
 
 Source audits do not establish compilation or runtime correctness.

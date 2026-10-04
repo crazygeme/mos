@@ -73,7 +73,8 @@ static void cleanup()
 	/*
 	 * Signal state is handled by execve() itself using Linux semantics:
 	 * caught handlers reset to SIG_DFL, ignored handlers stay SIG_IGN,
-	 * pending signals are cleared, and the altstack is disabled.
+	 * pending signals and the signal mask are preserved, and the altstack
+	 * is disabled.
 	 * Do not wipe the whole signal context here or we'd lose SIG_IGN.
 	 */
 
@@ -567,7 +568,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 	/*
 	 * Linux execve semantics for signal state:
 	 * caught handlers reset to SIG_DFL, ignored handlers stay ignored,
-	 * pending signals are cleared, and the alt signal stack is disabled.
+	 * pending signals and the signal mask are preserved, and the alt signal
+	 * stack is disabled.
 	 */
 	{
 		int sig;
@@ -581,7 +583,6 @@ static int execve_common(const char *f, char **argv, char **envp,
 			sa->sa_restorer = NULL;
 			sa->sa_mask = 0;
 		}
-		cur->signal->sig_pending = 0;
 		cur->signal->restore_sigmask = 0;
 		cur->signal->saved_sigmask = 0;
 		cur->signal->altstack.ss_sp = NULL;

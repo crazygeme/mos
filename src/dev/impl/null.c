@@ -5,7 +5,7 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <unistd.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 
 static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
 {

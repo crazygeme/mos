@@ -41,4 +41,7 @@ void tty_refresh_graphics(void);
  * The caller owns the returned buffer and must free it with kfree(). */
 char *tty_test_snapshot(unsigned *len_out);
 
+struct console_font_op;
+int tty_font_ioctl(struct console_font_op *operation);
+
 #endif

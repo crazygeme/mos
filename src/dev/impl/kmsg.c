@@ -1,6 +1,6 @@
 #include <dev/dev.h>
 #include <fs/syslog.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 
 static file *kmsg_open(super_block *sb, unsigned rdev, int flag)
 {

@@ -76,10 +76,6 @@ int copy_page_range(task_struct *parent, task_struct *child);
 int ps_set_thread_area_for(task_struct *task, void *info);
 int ps_set_clone_tls_for(task_struct *task, void *info,
 			 unsigned short parent_gs);
-int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
-			   unsigned len);
-int ps_write_process_memory(task_struct *task, void *addr, const void *src,
-			    unsigned len);
 void ps_stop_current(intr_frame *frame, int sig);
 int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
 

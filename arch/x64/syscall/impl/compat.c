@@ -3,7 +3,7 @@
 #include <elf/exec.h>
 #include <lib/klib.h>
 #include <errno.h>
-#include <syscall/impl/syscall_internal.h>
+#include <syscall/syscall.h>
 #include <arch/abi/i386/compat.h>
 struct iovec32 {
 	uint32_t base, len;

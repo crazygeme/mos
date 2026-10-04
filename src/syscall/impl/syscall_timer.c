@@ -2,7 +2,9 @@
 #include <device/time.h>
 #include <errno.h>
 #include <lib/klib.h>
-#include "syscall_internal.h"
+#include <lib/rbtree.h>
+#include <macro.h>
+#include <syscall/syscall.h>
 
 #define MOS_TIMER_COUNT 128
 #define MOS_SIGEV_NONE 1
@@ -17,14 +19,27 @@ struct mos_timer {
 	int clockid;
 	int notify;
 	int signo;
-	int value;
+	uintptr_t value;
 	int overrun;
 	unsigned long long due_ns;
 	unsigned long long interval_ns;
+	struct rb_node id_node;
+	struct mos_timer *free_next;
 };
 
 static struct mos_timer timers[MOS_TIMER_COUNT];
 static int next_timer_id = 1;
+static struct rb_root timer_ids = _RBTREE_ROOT_INIT;
+static struct mos_timer *free_timers;
+
+static void timers_init(void)
+{
+	for (unsigned i = MOS_TIMER_COUNT; i; i--) {
+		timers[i - 1].free_next = free_timers;
+		free_timers = &timers[i - 1];
+	}
+}
+KERNEL_INIT(7, timers_init);
 
 static unsigned long long timer_now_ns(int clockid)
 {
@@ -50,18 +65,45 @@ static void timer_ns_timespec(unsigned long long value, struct timespec *result)
 
 static struct mos_timer *timer_lookup(int id)
 {
-	int i;
-	for (i = 0; i < MOS_TIMER_COUNT; ++i)
-		if (timers[i].id == id && timers[i].owner == current->tgid)
-			return &timers[i];
+	struct rb_node *node = timer_ids.rb_node;
+	while (node) {
+		struct mos_timer *timer =
+			rb_entry(node, struct mos_timer, id_node);
+		if (timer->id == id)
+			return timer->owner == current->tgid ? timer : NULL;
+		node = id < timer->id ? node->rb_left : node->rb_right;
+	}
 	return NULL;
 }
 
-int sys_timer_create(int clockid, const struct mos_sigevent *event,
-		     int *timerid)
+static void timer_insert(struct mos_timer *timer)
 {
-	struct mos_timer *timer = NULL;
-	int i;
+	struct rb_node **link = &timer_ids.rb_node, *parent = NULL;
+	while (*link) {
+		struct mos_timer *other =
+			rb_entry(*link, struct mos_timer, id_node);
+		parent = *link;
+		link = timer->id < other->id ? &parent->rb_left :
+					       &parent->rb_right;
+	}
+	rb_init_node(&timer->id_node);
+	rb_link_node(&timer->id_node, parent, link);
+	rb_insert_color(&timer->id_node, &timer_ids);
+}
+
+static void timer_release(struct mos_timer *timer)
+{
+	rb_erase(&timer->id_node, &timer_ids);
+	memset(timer, 0, sizeof(*timer));
+	timer->free_next = free_timers;
+	free_timers = timer;
+}
+
+int do_timer_create(int clockid, const struct mos_sigevent *event, int *timerid,
+		    uintptr_t value)
+{
+	struct mos_timer *timer;
+	task_struct *target;
 	int notify = event ? event->notify : MOS_SIGEV_SIGNAL;
 	int signo = event ? event->signo : SIGALRM;
 
@@ -74,17 +116,15 @@ int sys_timer_create(int clockid, const struct mos_sigevent *event,
 		return -EINVAL;
 	if (notify != MOS_SIGEV_NONE && (signo < 1 || signo > SIGRTMIN_KERNEL))
 		return -EINVAL;
-	if ((notify & MOS_SIGEV_THREAD_ID) &&
-	    (!ps_find_process((unsigned)event->tid) ||
-	     ps_find_process((unsigned)event->tid)->tgid != current->tgid))
-		return -EINVAL;
-	for (i = 0; i < MOS_TIMER_COUNT; ++i)
-		if (!timers[i].id) {
-			timer = &timers[i];
-			break;
-		}
+	if (notify & MOS_SIGEV_THREAD_ID) {
+		target = ps_find_process((unsigned)event->tid);
+		if (!target || target->tgid != current->tgid)
+			return -EINVAL;
+	}
+	timer = free_timers;
 	if (!timer)
 		return -EAGAIN;
+	free_timers = timer->free_next;
 	memset(timer, 0, sizeof(*timer));
 	timer->owner = current->tgid;
 	timer->target = event && (notify & MOS_SIGEV_THREAD_ID) ?
@@ -93,12 +133,20 @@ int sys_timer_create(int clockid, const struct mos_sigevent *event,
 	timer->clockid = clockid;
 	timer->notify = notify;
 	timer->signo = signo;
-	timer->value = event ? event->value : 0;
+	timer->value = value;
 	timer->id = next_timer_id++;
 	if (next_timer_id <= 0)
 		next_timer_id = 1;
+	timer_insert(timer);
 	*timerid = timer->id;
 	return 0;
+}
+
+int sys_timer_create(int clockid, const struct mos_sigevent *event,
+		     int *timerid)
+{
+	return do_timer_create(clockid, event, timerid,
+			       event ? (unsigned)event->value : 0);
 }
 
 int sys_timer_settime(int timerid, int flags,
@@ -160,23 +208,28 @@ int sys_timer_delete(int timerid)
 	struct mos_timer *timer = timer_lookup(timerid);
 	if (!timer)
 		return -EINVAL;
-	memset(timer, 0, sizeof(*timer));
+	timer_release(timer);
 	return 0;
 }
 
 void ps_timer_discard_group(unsigned tgid)
 {
-	int i;
-	for (i = 0; i < MOS_TIMER_COUNT; ++i)
-		if (timers[i].owner == tgid)
-			memset(&timers[i], 0, sizeof(timers[i]));
+	struct rb_node *node, *next;
+	for (node = rb_first(&timer_ids); node; node = next) {
+		struct mos_timer *timer =
+			rb_entry(node, struct mos_timer, id_node);
+		next = rb_next(node);
+		if (timer->owner == tgid)
+			timer_release(timer);
+	}
 }
 
 void ps_timer_poll(void)
 {
-	int i;
-	for (i = 0; i < MOS_TIMER_COUNT; ++i) {
-		struct mos_timer *timer = &timers[i];
+	struct rb_node *node;
+	for (node = rb_first(&timer_ids); node; node = rb_next(node)) {
+		struct mos_timer *timer =
+			rb_entry(node, struct mos_timer, id_node);
 		unsigned long long now;
 		if (!timer->id || !timer->due_ns)
 			continue;

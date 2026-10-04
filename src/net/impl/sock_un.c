@@ -11,8 +11,8 @@
  * that socket and wraps it in a new fd.  This avoids any synchronous
  * handshake between the two tasks.
  *
- * The Unix socket namespace is a flat array protected by a mutex.  It maps
- * resolved filesystem paths to the mos_sock that bound that path.
+ * A mutex protects the namespace tree and slot pool. Resolved filesystem
+ * paths and abstract address keys identify bound sockets.
  */
 #include <net/sock.h>
 #include <fs/vfs.h>
@@ -26,6 +26,8 @@
 #include <errno.h>
 #include <macro.h>
 #include <stddef.h>
+#include <lib/rbtree.h>
+#include <lib/slots.h>
 
 /* Abstract names are encoded as hexadecimal namespace keys, without VFS nodes. */
 static int unix_address_key(const struct sockaddr_un *addr, unsigned len,
@@ -91,10 +93,13 @@ int unix_sockaddr(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen)
 typedef struct {
 	char path[UNIX_KEY_MAX];
 	mos_sock *sk;
+	struct rb_node name_node;
 } unix_ns_entry;
 
 static unix_ns_entry unix_ns[UNIX_NS_MAX];
 static mutex_t unix_ns_lock;
+static struct rb_root unix_ns_names = _RBTREE_ROOT_INIT;
+static slot_pool unix_ns_slots;
 
 static void unix_ns_init(void)
 {
@@ -102,61 +107,73 @@ static void unix_ns_init(void)
 }
 KERNEL_INIT(2, unix_ns_init);
 
-static mos_sock *unix_ns_lookup_locked(const char *path)
+static unix_ns_entry *unix_ns_find_locked(const char *path)
 {
-	int i;
-	for (i = 0; i < UNIX_NS_MAX; i++) {
-		if (unix_ns[i].sk && strcmp(unix_ns[i].path, path) == 0)
-			return unix_ns[i].sk;
+	struct rb_node *node = unix_ns_names.rb_node;
+	while (node) {
+		unix_ns_entry *entry = rb_entry(node, unix_ns_entry, name_node);
+		int order = strcmp(path, entry->path);
+		if (!order)
+			return entry;
+		node = order < 0 ? node->rb_left : node->rb_right;
 	}
 	return NULL;
 }
 
-static int unix_ns_register_locked(const char *path, mos_sock *sk)
+static mos_sock *unix_ns_lookup_locked(const char *path)
 {
-	int i;
-	for (i = 0; i < UNIX_NS_MAX; i++) {
-		if (!unix_ns[i].sk) {
-			strncpy(unix_ns[i].path, path, UNIX_KEY_MAX - 1);
-			unix_ns[i].path[UNIX_KEY_MAX - 1] = '\0';
-			unix_ns[i].sk = sk;
-			return 0;
-		}
-	}
-	return -ENFILE;
+	unix_ns_entry *entry = unix_ns_find_locked(path);
+	return entry ? entry->sk : NULL;
 }
 
-/* Returns 1 if found and removed, 0 if not found. */
-static int unix_ns_unregister_locked(mos_sock *sk)
+static int unix_ns_register_locked(const char *path, mos_sock *sk)
 {
-	int i;
-	for (i = 0; i < UNIX_NS_MAX; i++) {
-		if (unix_ns[i].sk == sk) {
-			unix_ns[i].sk = NULL;
-			unix_ns[i].path[0] = '\0';
-			return 1;
-		}
+	struct rb_node **link = &unix_ns_names.rb_node, *parent = NULL;
+	int slot = slot_take(&unix_ns_slots, UNIX_NS_MAX);
+	if (slot < 0)
+		return -ENFILE;
+	unix_ns_entry *entry = &unix_ns[slot];
+	strncpy(entry->path, path, UNIX_KEY_MAX - 1);
+	entry->path[UNIX_KEY_MAX - 1] = 0;
+	entry->sk = sk;
+	sk->unix_namespace_slot = slot + 1;
+	while (*link) {
+		unix_ns_entry *other =
+			rb_entry(*link, unix_ns_entry, name_node);
+		parent = *link;
+		link = strcmp(path, other->path) < 0 ? &parent->rb_left :
+						       &parent->rb_right;
 	}
+	rb_init_node(&entry->name_node);
+	rb_link_node(&entry->name_node, parent, link);
+	rb_insert_color(&entry->name_node, &unix_ns_names);
 	return 0;
 }
 
-/*
- * unix_ns_remove_path — remove a path from the namespace by name.
- * Called by sys_unlink when unlinking a socket file while the socket may
- * still be open.  Clears unix_path on the owning socket so unix_release
- * will not attempt a second vfs_umount.
- */
+/* Returns one only for the socket owning a namespace binding. */
+static int unix_ns_unregister_locked(mos_sock *sk)
+{
+	if (!sk->unix_namespace_slot)
+		return 0;
+	unsigned slot = sk->unix_namespace_slot - 1;
+	unix_ns_entry *entry = &unix_ns[slot];
+	rb_erase(&entry->name_node, &unix_ns_names);
+	entry->sk = NULL;
+	entry->path[0] = 0;
+	sk->unix_namespace_slot = 0;
+	slot_return(&unix_ns_slots, slot);
+	return 1;
+}
+
+/* Unlink removes the namespace binding while open sockets retain their state. */
 void unix_ns_remove_path(const char *path)
 {
-	int i;
 	mutex_lock(&unix_ns_lock);
-	for (i = 0; i < UNIX_NS_MAX; i++) {
-		if (unix_ns[i].sk && strcmp(unix_ns[i].path, path) == 0) {
-			unix_ns[i].sk->unix_path[0] = '\0';
-			unix_ns[i].sk = NULL;
-			unix_ns[i].path[0] = '\0';
-			break;
-		}
+	unix_ns_entry *entry = unix_ns_find_locked(path);
+	if (entry) {
+		mos_sock *sk = entry->sk;
+		unix_ns_unregister_locked(sk);
+		sk->unix_path[0] = 0;
 	}
 	mutex_unlock(&unix_ns_lock);
 }

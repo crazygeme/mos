@@ -1,5 +1,6 @@
 #include <dev/dev.h>
 #include <errno.h>
+#include <lib/command.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
 #include <fs/ioctl.h>
@@ -10,7 +11,7 @@
 #include <lib/klib.h>
 #include <macro.h>
 #include <unistd.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 
 #include "tty_ldisc.h"
 
@@ -55,64 +56,125 @@ static int mouse_getattr(file *fp, struct stat *s)
 	return 0;
 }
 
+static int mouse_ioctl_tcsbrk(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *buf __attribute__((unused)))
+{
+	/* PS/2 probe code expects tty-style flow-control ioctls to exist. */
+	return 0;
+}
+
+static int mouse_ioctl_tcflsh(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *buf __attribute__((unused)))
+{
+	int sel = (int)(uintptr_t)buf;
+
+	if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+		sel = TCIOFLUSH;
+	if (sel == TCIFLUSH || sel == TCIOFLUSH)
+		ps2mouse_flush();
+	return 0;
+}
+
+static int mouse_ioctl_tcgets(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *buf __attribute__((unused)))
+{
+	memcpy(buf, &tty_default_termios, sizeof(struct termios));
+	return 0;
+}
+
+static int mouse_ioctl_tcsets(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int mouse_ioctl_tcgeta(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *buf __attribute__((unused)))
+{
+	struct termio *t = (struct termio *)buf;
+
+	memset(t, 0, sizeof(*t));
+	t->c_iflag = (unsigned short)tty_default_termios.c_iflag;
+	t->c_oflag = (unsigned short)tty_default_termios.c_oflag;
+	t->c_cflag = (unsigned short)tty_default_termios.c_cflag;
+	t->c_lflag = (unsigned short)tty_default_termios.c_lflag;
+	t->c_line = tty_default_termios.c_line;
+	memcpy(t->c_cc, tty_default_termios.c_cc, NCC);
+	return 0;
+}
+
+static int mouse_ioctl_tcseta(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int mouse_ioctl_tiocgwinsz(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	struct winsize *ws = (struct winsize *)buf;
+
+	memset(ws, 0, sizeof(*ws));
+	return 0;
+}
+
+static int mouse_ioctl_tiocswinsz(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int mouse_ioctl_tiocmget(void *context __attribute__((unused)),
+				unsigned cmd __attribute__((unused)),
+				void *buf __attribute__((unused)))
+{
+	*(int *)buf = 0;
+	return 0;
+}
+
+static int mouse_ioctl_fionread(void *context __attribute__((unused)),
+				unsigned cmd __attribute__((unused)),
+				void *buf __attribute__((unused)))
+{
+	*(int *)buf = ps2mouse_fionread();
+	return 0;
+}
+
+static const command_operation mouse_terminal_commands[256] = {
+	[TCSBRK & 255] = { TCSBRK, mouse_ioctl_tcsbrk },
+	[TCXONC & 255] = { TCXONC, mouse_ioctl_tcsbrk },
+	[TCFLSH & 255] = { TCFLSH, mouse_ioctl_tcflsh },
+	[TCGETS & 255] = { TCGETS, mouse_ioctl_tcgets },
+	[TCSETS & 255] = { TCSETS, mouse_ioctl_tcsets },
+	[TCSETSW & 255] = { TCSETSW, mouse_ioctl_tcsets },
+	[TCSETSF & 255] = { TCSETSF, mouse_ioctl_tcsets },
+	[TCGETA & 255] = { TCGETA, mouse_ioctl_tcgeta },
+	[TCSETA & 255] = { TCSETA, mouse_ioctl_tcseta },
+	[TCSETAW & 255] = { TCSETAW, mouse_ioctl_tcseta },
+	[TCSETAF & 255] = { TCSETAF, mouse_ioctl_tcseta },
+	[TIOCGWINSZ & 255] = { TIOCGWINSZ, mouse_ioctl_tiocgwinsz },
+	[TIOCSWINSZ & 255] = { TIOCSWINSZ, mouse_ioctl_tiocswinsz },
+	[TIOCMGET & 255] = { TIOCMGET, mouse_ioctl_tiocmget },
+	[FIONREAD & 255] = { FIONREAD, mouse_ioctl_fionread },
+};
+
+static const command_operation *const mouse_command_groups[256] = {
+	[(TCSBRK >> 8) & 255] = mouse_terminal_commands,
+};
+
 static int mouse_ioctl(file *fp, unsigned cmd, void *buf)
 {
 	(void)fp;
 
-	switch (cmd) {
-	case TCSBRK:
-	case TCXONC:
-		/* PS/2 probe code expects tty-style flow-control ioctls to exist. */
-		return 0;
-	case TCFLSH: {
-		int sel = (int)(uintptr_t)buf;
-
-		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
-			sel = TCIOFLUSH;
-		if (sel == TCIFLUSH || sel == TCIOFLUSH)
-			ps2mouse_flush();
-		return 0;
-	}
-	case TCGETS:
-		memcpy(buf, &tty_default_termios, sizeof(struct termios));
-		return 0;
-	case TCSETS:
-	case TCSETSW:
-	case TCSETSF:
-		return 0;
-	case TCGETA: {
-		struct termio *t = (struct termio *)buf;
-
-		memset(t, 0, sizeof(*t));
-		t->c_iflag = (unsigned short)tty_default_termios.c_iflag;
-		t->c_oflag = (unsigned short)tty_default_termios.c_oflag;
-		t->c_cflag = (unsigned short)tty_default_termios.c_cflag;
-		t->c_lflag = (unsigned short)tty_default_termios.c_lflag;
-		t->c_line = tty_default_termios.c_line;
-		memcpy(t->c_cc, tty_default_termios.c_cc, NCC);
-		return 0;
-	}
-	case TCSETA:
-	case TCSETAW:
-	case TCSETAF:
-		return 0;
-	case TIOCGWINSZ: {
-		struct winsize *ws = (struct winsize *)buf;
-
-		memset(ws, 0, sizeof(*ws));
-		return 0;
-	}
-	case TIOCSWINSZ:
-		return 0;
-	case TIOCMGET:
-		*(int *)buf = 0;
-		return 0;
-	case FIONREAD:
-		*(int *)buf = ps2mouse_fionread();
-		return 0;
-	default:
-		return -ENOTTY;
-	}
+	return command_dispatch(mouse_command_groups, fp, cmd, buf, -ENOTTY);
 }
 
 static int mouse_release(file *fp)

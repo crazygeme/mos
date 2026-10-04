@@ -14,7 +14,7 @@
 #include <device/time.h>
 #include <lib/klib.h>
 #include <errno.h>
-#include "syscall_internal.h"
+#include <syscall/syscall.h>
 
 /* personality flags */
 enum {

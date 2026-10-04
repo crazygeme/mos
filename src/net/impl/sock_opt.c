@@ -6,7 +6,6 @@
 #include <lib/klib.h>
 #include <errno.h>
 #include <ps/ps.h>
-#include <ps/impl/ps_internal.h>
 
 #include <lwip/tcp.h>
 #include <lwip/udp.h>

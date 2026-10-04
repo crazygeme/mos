@@ -9,6 +9,7 @@
 #include <ps/ps.h>
 #include <unistd.h>
 #include <errno.h>
+#include <lib/command.h>
 
 typedef struct _pipe_inode {
 	cy_buf *buf;
@@ -113,17 +114,27 @@ static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 	return -ESPIPE;
 }
 
+static int pipe_ioctl_fionread(void *context __attribute__((unused)),
+			       unsigned cmd __attribute__((unused)),
+			       void *arg __attribute__((unused)))
+{
+	file *fp = context;
+	pipe_inode *n = fp->f_inode->i_private;
+	*(int *)arg = cyb_get_buf_len(n->buf);
+	return 0;
+}
+
+static const command_operation pipe_commands[256] = {
+	[FIONREAD & 255] = { FIONREAD, pipe_ioctl_fionread },
+};
+
+static const command_operation *const pipe_command_groups[256] = {
+	[(FIONREAD >> 8) & 255] = pipe_commands,
+};
+
 static int pipe_ioctl(file *fp, unsigned cmd, void *arg)
 {
-	pipe_inode *n = fp->f_inode->i_private;
-
-	switch (cmd) {
-	case FIONREAD:
-		*(int *)arg = cyb_get_buf_len(n->buf);
-		return 0;
-	default:
-		return -ENOTTY;
-	}
+	return command_dispatch(pipe_command_groups, fp, cmd, arg, -ENOTTY);
 }
 
 static int pipe_getattr(file *fp, struct stat *s)

@@ -2,6 +2,7 @@
 #define _DEV_PTS_INTERNAL_H_
 
 #include <lib/lock.h>
+#include <lib/rbtree.h>
 #include <lib/cyclebuf.h>
 #include <fs/ioctl.h>
 #include <fs/fs.h>
@@ -13,7 +14,11 @@
 #define TIOCSPTLCK 0x40045431 /* lock/unlock slave */
 #define TIOCGPTLCK 0x80045439 /* query slave lock state */
 
-typedef struct {
+typedef struct pts_pair {
+	struct rb_node group_node;
+	int group_indexed;
+	void (*group_changed)(struct pts_pair *, unsigned);
+	void (*on_free)(struct pts_pair *);
 	int idx;
 	int used;
 	spinlock_t lock;
@@ -43,6 +48,9 @@ typedef struct {
 	int slave_count;
 	int slave_ever_opened; /* set when first slave open; gates master HUP */
 } pts_pair;
+
+void pts_pair_set_group(pts_pair *p, unsigned group);
+void pts_pair_close_master(pts_pair *p);
 
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock);
 

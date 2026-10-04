@@ -2,8 +2,11 @@
 #include <ps/ps.h>
 #include <lib/klib.h>
 #include <errno.h>
-#include <syscall/impl/syscall_internal.h>
+#include <syscall/syscall.h>
 #include <fs/fcntl.h>
+#include <mm/phymm.h>
+#include <mm/mmap.h>
+#include "native.h"
 #define INT_MAX 0x7fffffff
 struct native_time {
 	int64_t sec, fraction;
@@ -17,15 +20,9 @@ struct native_stat {
 	int64_t reserved[3];
 };
 _Static_assert(sizeof(struct native_stat) == 144, "AMD64 stat layout");
-int native_stat(unsigned call, uintptr_t arg, void *buf, int dirfd, int flags)
+static void native_stat_copy(void *buf, const struct stat64 *source)
 {
-	struct stat64 st;
-	int ret = call == 5   ? sys_fstat64(arg, &st) :
-		  call == 6   ? sys_lstat64((void *)arg, &st) :
-		  call == 262 ? sys_fstatat64(dirfd, (void *)arg, &st, flags) :
-				sys_stat64((void *)arg, &st);
-	if (ret < 0)
-		return ret;
+	struct stat64 st = *source;
 	struct native_stat *out = buf;
 	memset(out, 0, sizeof(*out));
 	out->dev = st.st_dev;
@@ -41,16 +38,46 @@ int native_stat(unsigned call, uintptr_t arg, void *buf, int dirfd, int flags)
 	out->atime = (struct native_time){ st.st_atime, st.st_atime_nsec };
 	out->mtime = (struct native_time){ st.st_mtime, st.st_mtime_nsec };
 	out->ctime = (struct native_time){ st.st_ctime, st.st_ctime_nsec };
-	return 0;
 }
+int native_stat_path(const char *path, void *buf)
+{
+	struct stat64 st;
+	int ret = sys_stat64(path, &st);
+	if (!ret)
+		native_stat_copy(buf, &st);
+	return ret;
+}
+
+int native_stat_link(const char *path, void *buf)
+{
+	struct stat64 st;
+	int ret = sys_lstat64(path, &st);
+	if (!ret)
+		native_stat_copy(buf, &st);
+	return ret;
+}
+
+int native_stat_fd(int fd, void *buf)
+{
+	struct stat64 st;
+	int ret = sys_fstat64(fd, &st);
+	if (!ret)
+		native_stat_copy(buf, &st);
+	return ret;
+}
+
+int native_stat_at(int fd, const char *path, void *buf, int flags)
+{
+	struct stat64 st;
+	int ret = sys_fstatat64(fd, path, &st, flags);
+	if (!ret)
+		native_stat_copy(buf, &st);
+	return ret;
+}
+
 int native_clock_gettime(int id, void *out)
 {
-	struct timespec time;
-	int ret = sys_clock_gettime(id, &time);
-	if (!ret)
-		*(struct native_time *)out =
-			(struct native_time){ time.tv_sec, time.tv_nsec };
-	return ret;
+	return sys_clock_gettime64(id, out);
 }
 int native_gettimeofday(void *out, struct timezone *zone)
 {
@@ -127,12 +154,14 @@ static int select64(int nfds, fd_set *reads, fd_set *writes, fd_set *excepts,
 	}
 	if (mask) {
 		temporary_mask = *mask & ~((1U << (SIGKILL - 1)) |
-					 (1U << (SIGSTOP - 1)));
+					   (1U << (SIGSTOP - 1)));
 		mask = &temporary_mask;
 	}
-	int ret = do_select(nfds, local[0], local[1], local[2], timep, (void *)mask);
+	int ret = do_select(nfds, local[0], local[1], local[2], timep,
+			    (void *)mask);
 	if (ret >= 0) {
-		unsigned shared_bytes = ((unsigned)nfds + 31) / 32 * sizeof(uint32_t);
+		unsigned shared_bytes =
+			((unsigned)nfds + 31) / 32 * sizeof(uint32_t);
 		for (unsigned i = 0; i < 3; i++) {
 			if (wire[i]) {
 				memset(wire[i], 0, bytes);
@@ -183,7 +212,7 @@ int native_ppoll(struct pollfd *fds, uintptr_t nfds, void *timeout,
 	}
 	if (mask) {
 		temporary_mask = *mask & ~((1U << (SIGKILL - 1)) |
-					 (1U << (SIGSTOP - 1)));
+					   (1U << (SIGSTOP - 1)));
 		mask = &temporary_mask;
 	}
 	int ret = do_ppoll(fds, nfds, timep, mask);
@@ -303,4 +332,362 @@ int native_fcntl(int fd, int cmd, uintptr_t argument)
 		return ret;
 	}
 	return sys_fcntl(fd, cmd, argument);
+}
+
+intptr_t native_lseek(int fd, int64_t offset, int whence)
+{
+	uint64_t result;
+	int ret =
+		sys_llseek(fd, (uint64_t)offset >> 32, offset, &result, whence);
+	return ret < 0 ? ret : (intptr_t)result;
+}
+
+intptr_t native_mmap(vaddr_t addr, size_t size, unsigned prot, unsigned flags,
+		     int fd, uint64_t offset)
+{
+	if (offset > 0x7fffffffffffffffULL || (offset & (PAGE_SIZE - 1)))
+		return -EINVAL;
+	return do_mmap(addr, size, prot, flags, fd, offset);
+}
+
+static intptr_t arch_set_gs(uintptr_t address)
+{
+	if (address >= MOS_NATIVE_TASK_SIZE)
+		return -EPERM;
+	current->tss.gs_base = address;
+	ps_load_task_segments(current);
+	return 0;
+}
+
+static intptr_t arch_set_fs(uintptr_t address)
+{
+	if (address >= MOS_NATIVE_TASK_SIZE)
+		return -EPERM;
+	current->tss.fs_base = address;
+	ps_load_task_segments(current);
+	return 0;
+}
+
+static intptr_t arch_get_fs(uintptr_t address)
+{
+	uint64_t value = current->tss.fs_base;
+	return ps_write_process_memory(current, (void *)address, &value,
+				       sizeof(value));
+}
+
+static intptr_t arch_get_gs(uintptr_t address)
+{
+	uint64_t value = current->tss.gs_base;
+	return ps_write_process_memory(current, (void *)address, &value,
+				       sizeof(value));
+}
+
+intptr_t native_arch_prctl(unsigned operation, uintptr_t address)
+{
+	static intptr_t (*const calls[])(uintptr_t) = {
+		arch_set_gs,
+		arch_set_fs,
+		arch_get_fs,
+		arch_get_gs,
+	};
+	unsigned index = operation - 0x1001;
+	if (index >= sizeof(calls) / sizeof(calls[0]))
+		return -EINVAL;
+	return calls[index](address);
+}
+
+intptr_t native_time(void *output)
+{
+	unsigned seconds;
+	/* The shared service returns an i386 time_t in EAX; use its output value. */
+	sys_time(&seconds);
+	if (output)
+		*(int64_t *)output = seconds;
+	return seconds;
+}
+
+int native_utime(const char *path, const void *input)
+{
+	const int64_t *wire = input;
+	struct utimbuf value;
+	if (wire) {
+		if (wire[0] < 0 || wire[0] > 0xffffffffULL || wire[1] < 0 ||
+		    wire[1] > 0xffffffffULL)
+			return -EOVERFLOW;
+		value.actime = wire[0];
+		value.modtime = wire[1];
+	}
+	return sys_utime(path, wire ? &value : NULL);
+}
+
+static int timeval32(const struct native_time *in, struct timeval *out)
+{
+	if (in->sec < 0 || in->sec > INT_MAX || in->fraction < 0 ||
+	    in->fraction >= 1000000)
+		return -EINVAL;
+	out->tv_sec = in->sec;
+	out->tv_usec = in->fraction;
+	return 0;
+}
+
+int native_settimeofday(const void *input, const struct timezone *zone)
+{
+	struct timeval value;
+	if (input) {
+		int ret = timeval32(input, &value);
+		if (ret)
+			return ret;
+	}
+	return sys_settimeofday(input ? &value : NULL, zone);
+}
+
+struct native_itimer {
+	struct native_time interval, value;
+};
+_Static_assert(sizeof(struct native_itimer) == 32,
+	       "AMD64 interval timer layout");
+
+static void itimerval64(void *output, const struct itimerval *value)
+{
+	*(struct native_itimer *)output = (struct native_itimer){
+		{ value->it_interval.tv_sec, value->it_interval.tv_usec },
+		{ value->it_value.tv_sec, value->it_value.tv_usec },
+	};
+}
+
+int native_getitimer(int which, void *output)
+{
+	struct itimerval value;
+	if (!output)
+		return -EFAULT;
+	int ret = sys_getitimer(which, &value);
+	if (!ret)
+		itimerval64(output, &value);
+	return ret;
+}
+
+int native_setitimer(int which, const void *input, void *output)
+{
+	const struct native_itimer *wire = input;
+	struct itimerval value, old;
+	if (wire) {
+		int ret = timeval32(&wire->interval, &value.it_interval);
+		if (!ret)
+			ret = timeval32(&wire->value, &value.it_value);
+		if (ret)
+			return ret;
+	}
+	int ret = sys_setitimer(which, wire ? &value : NULL,
+				output ? &old : NULL);
+	if (!ret && output)
+		itimerval64(output, &old);
+	return ret;
+}
+
+static void itimerspec64(void *output, const struct mos_itimerspec *value)
+{
+	*(struct native_itimer *)output = (struct native_itimer){
+		{ value->it_interval.tv_sec, value->it_interval.tv_nsec },
+		{ value->it_value.tv_sec, value->it_value.tv_nsec },
+	};
+}
+
+int native_timer_create(int clockid, const void *input, int *timerid)
+{
+	const struct {
+		uint64_t value;
+		int32_t signo, notify, tid;
+		unsigned char reserved[44];
+	} *wire = input;
+	struct mos_sigevent event;
+	if (wire)
+		event = (struct mos_sigevent){ wire->value, wire->signo,
+					       wire->notify, wire->tid };
+	return do_timer_create(clockid, wire ? &event : NULL, timerid,
+			       wire ? wire->value : 0);
+}
+
+int native_timer_gettime(int id, void *output)
+{
+	struct mos_itimerspec value;
+	if (!output)
+		return -EFAULT;
+	int ret = sys_timer_gettime(id, &value);
+	if (!ret)
+		itimerspec64(output, &value);
+	return ret;
+}
+
+int native_timer_settime(int id, int flags, const void *input, void *output)
+{
+	const struct native_itimer *wire = input;
+	struct mos_itimerspec value, old;
+	if (!wire)
+		return -EFAULT;
+	int ret = timespec32(&wire->interval, &value.it_interval);
+	if (!ret)
+		ret = timespec32(&wire->value, &value.it_value);
+	if (ret)
+		return ret;
+	ret = sys_timer_settime(id, flags, &value, output ? &old : NULL);
+	if (!ret && output)
+		itimerspec64(output, &old);
+	return ret;
+}
+
+int native_sched_rr_get_interval(int pid, void *output)
+{
+	struct timespec value;
+	if (!output)
+		return -EFAULT;
+	int ret = sys_sched_rr_get_interval(pid, &value);
+	if (!ret)
+		*(struct native_time *)output =
+			(struct native_time){ value.tv_sec, value.tv_nsec };
+	return ret;
+}
+
+int native_sigpending(void *output, unsigned size)
+{
+	sigset_t value;
+	if (!output)
+		return -EFAULT;
+	if (size != sizeof(uint64_t))
+		return -EINVAL;
+	int ret = sys_rt_sigpending(&value, size);
+	if (!ret)
+		*(uint64_t *)output = value;
+	return ret;
+}
+
+int native_sigtimedwait(const sigset_t *set, void *output, const void *timeout,
+			unsigned size)
+{
+	struct timespec value;
+	uint32_t info[32];
+	if (size != sizeof(uint64_t))
+		return -EINVAL;
+	if (timeout) {
+		int ret = timespec32(timeout, &value);
+		if (ret)
+			return ret;
+	}
+	memset(info, 0, sizeof(info));
+	int ret = sys_rt_sigtimedwait(set, output ? info : NULL,
+				      timeout ? &value : NULL, size);
+	if (ret > 0 && output) {
+		uint32_t *wire = output;
+		memset(output, 0, 128);
+		wire[0] = ret;
+		wire[1] = info[1];
+		wire[2] = info[2];
+		/* AMD64 aligns the siginfo payload to eight bytes. */
+		wire[4] = info[3];
+		wire[5] = info[4];
+		if (ret == SIGRTMIN_KERNEL)
+			*(uint64_t *)&wire[6] =
+				current->signal->timer_signal_value;
+	}
+	return ret;
+}
+
+struct native_statfs {
+	int64_t type, bsize;
+	uint64_t blocks, bfree, bavail, files, ffree;
+	int32_t fsid[2];
+	int64_t namelen, frsize, flags, spare[4];
+};
+_Static_assert(sizeof(struct native_statfs) == 120, "AMD64 statfs layout");
+
+static void statfs64(void *output, const struct statfs64 *value)
+{
+	struct native_statfs *wire = output;
+	memset(wire, 0, sizeof(*wire));
+	wire->type = value->f_type;
+	wire->bsize = value->f_bsize;
+	wire->blocks = value->f_blocks;
+	wire->bfree = value->f_bfree;
+	wire->bavail = value->f_bavail;
+	wire->files = value->f_files;
+	wire->ffree = value->f_ffree;
+	memcpy(wire->fsid, value->f_fsid, sizeof(wire->fsid));
+	wire->namelen = value->f_namelen;
+	wire->frsize = value->f_frsize;
+	wire->flags = value->f_flags;
+}
+
+int native_statfs(const char *path, void *output)
+{
+	struct statfs64 value;
+	if (!output)
+		return -EFAULT;
+	int ret = sys_statfs64(path, sizeof(value), &value);
+	if (!ret)
+		statfs64(output, &value);
+	return ret;
+}
+
+int native_fstatfs(int fd, void *output)
+{
+	struct statfs64 value;
+	if (!output)
+		return -EFAULT;
+	int ret = sys_fstatfs64(fd, sizeof(value), &value);
+	if (!ret)
+		statfs64(output, &value);
+	return ret;
+}
+
+int native_sysinfo(void *output)
+{
+	struct native_sysinfo {
+		int64_t uptime;
+		uint64_t loads[3], totalram, freeram, sharedram, bufferram,
+			totalswap, freeswap;
+		uint16_t procs, pad;
+		uint64_t totalhigh, freehigh;
+		uint32_t mem_unit;
+	} *wire = output;
+	struct mos_sysinfo value;
+	_Static_assert(sizeof(struct native_sysinfo) == 112,
+		       "AMD64 sysinfo layout");
+	if (!wire)
+		return -EFAULT;
+	int ret = sys_sysinfo(&value);
+	if (ret)
+		return ret;
+	memset(wire, 0, sizeof(*wire));
+	wire->uptime = value.uptime;
+	for (unsigned i = 0; i < 3; i++)
+		wire->loads[i] = value.loads[i];
+	wire->totalram = value.totalram;
+	wire->freeram = value.freeram;
+	wire->sharedram = value.sharedram;
+	wire->bufferram = value.bufferram;
+	wire->totalswap = value.totalswap;
+	wire->freeswap = value.freeswap;
+	wire->procs = value.procs;
+	wire->totalhigh = value.totalhigh;
+	wire->freehigh = value.freehigh;
+	wire->mem_unit = value.mem_unit;
+	return 0;
+}
+
+intptr_t native_times(void *output)
+{
+	struct tms value;
+	long ret = sys_times(output ? &value : NULL);
+	if (output) {
+		int64_t *wire = output;
+		wire[0] = value.tms_utime;
+		wire[1] = value.tms_stime;
+		wire[2] = value.tms_cutime;
+		wire[3] = value.tms_cstime;
+	}
+	return ret;
+}
+
+int native_getdents(unsigned fd, void *output, unsigned count)
+{
+	return do_getdents_native(fd, output, count);
 }

@@ -101,7 +101,7 @@ typedef struct _signal_context {
 	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
 	sigset_t sig_mask; /* bitmask: blocked signals             */
 	int timer_signal_id;
-	int timer_signal_value;
+	uintptr_t timer_signal_value;
 	sigset_t saved_sigmask; /* mask to restore after sigsuspend     */
 	int restore_sigmask; /* if set, restore saved_sigmask after signal delivery */
 	stack_t altstack; /* alternate signal stack (sigaltstack)  */
@@ -283,6 +283,15 @@ void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
 
 void ps_cleanup_all_user_map(task_struct *task);
 
+/* Copy between kernel buffers and a task's user address space.
+ * Return 0 on completion or -EFAULT; earlier pages may have been copied.
+ * Missing pages and write faults are resolved in the target task's mappings.
+ */
+int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
+			   unsigned len);
+int ps_write_process_memory(task_struct *task, void *addr, const void *src,
+			    unsigned len);
+
 void ps_put_to_ready_queue_unsafe(task_struct *task);
 void ps_put_to_ready_queue(task_struct *task);
 
@@ -310,7 +319,7 @@ void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 void ps_alarm_tick(void);
 /* Requires ps_lock; signal delivery is authorized by the kernel caller. */
 void ps_queue_signal_unsafe(task_struct *target, int sig);
-void ps_timer_notify(unsigned tid, int signo, int timer_id, int value);
+void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value);
 void ps_timer_poll(void);
 void ps_timer_discard_group(unsigned tgid);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);

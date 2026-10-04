@@ -5,7 +5,7 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <unistd.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 
 static int random_seeded = 0;
 

@@ -232,14 +232,8 @@ void pci_for_each(pci_func_t f, int type, void *extra)
 
 void pci_get_resources(unsigned address, pci_resource resources[7])
 {
-	const device_t *device;
+	const device_t *device = device_find(DEVICE_BUS_PCI, address);
 	memset(resources, 0, sizeof(pci_resource) * 7);
-	for (device = device_first(); device; device = device->next) {
-		if (device->bus == DEVICE_BUS_PCI &&
-		    device->address == address) {
-			memcpy(resources, device->resources,
-			       sizeof(device->resources));
-			return;
-		}
-	}
+	if (device)
+		memcpy(resources, device->resources, sizeof(device->resources));
 }

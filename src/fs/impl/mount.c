@@ -10,21 +10,33 @@
  * Filesystem type registry
  * ====================================================================== */
 
-static fs_type *fs_type_list = NULL;
+static struct rb_root fs_types = _RBTREE_ROOT_INIT;
 
 void fs_register_type(fs_type *fst)
 {
-	fst->next = fs_type_list;
-	fs_type_list = fst;
+	struct rb_node **link = &fs_types.rb_node, *parent = NULL;
+	while (*link) {
+		fs_type *existing = rb_entry(*link, fs_type, name_node);
+		int order = strcmp(fst->name, existing->name);
+		if (!order)
+			return;
+		parent = *link;
+		link = order < 0 ? &parent->rb_left : &parent->rb_right;
+	}
+	rb_init_node(&fst->name_node);
+	rb_link_node(&fst->name_node, parent, link);
+	rb_insert_color(&fst->name_node, &fs_types);
 }
 
 static fs_type *fs_find_type(const char *name)
 {
-	fs_type *t;
-
-	for (t = fs_type_list; t; t = t->next) {
-		if (strcmp(t->name, name) == 0)
-			return t;
+	struct rb_node *node = fs_types.rb_node;
+	while (node) {
+		fs_type *type = rb_entry(node, fs_type, name_node);
+		int order = strcmp(name, type->name);
+		if (!order)
+			return type;
+		node = order < 0 ? node->rb_left : node->rb_right;
 	}
 	return NULL;
 }

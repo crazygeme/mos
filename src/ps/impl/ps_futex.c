@@ -5,7 +5,8 @@
 #include <macro.h>
 #include <lib/klib.h>
 
-#include <ps/impl/ps_internal.h>
+#include <syscall/syscall.h>
+#include "ps_internal.h"
 
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1

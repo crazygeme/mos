@@ -25,8 +25,7 @@ struct fs_type {
 	 */
 	super_block *(*get_sb)(const char *dev, const char *target, int flags,
 			       void *data);
-	struct fs_type
-		*next; /* intrusive linked list — set by fs_register_type */
+	struct rb_node name_node;
 };
 
 /* Add a filesystem type to the global registry. */

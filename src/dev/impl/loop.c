@@ -29,7 +29,8 @@
 #include <ext4_blockdev.h>
 #include <ext4.h>
 #include <errno.h>
-#include "devnums.h"
+#include <lib/command.h>
+#include <dev/devnums.h>
 
 /* ── Loop ioctl numbers (linux/loop.h) ──────────────────────────────────────── */
 #define LOOP_SET_FD 0x4C00
@@ -247,115 +248,184 @@ void loop_teardown(const char *name)
 
 /* ── cdev interface — open /dev/loopN ──────────────────────────────────────── */
 
-static int loop_ioctl(file *fp, unsigned cmd, void *buf)
+static int loop_ioctl_blkgetsize(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
 {
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+	uint64_t size_bytes = loop_devs[minor].size_bytes;
+	if (!buf)
+		return -EINVAL;
+	if (!loop_devices[minor].fp)
+		return -ENXIO;
+	*(unsigned long *)buf = (unsigned long)(size_bytes / 512);
+	return 0;
+}
+
+static int loop_ioctl_blkgetsize64(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+	uint64_t size_bytes = loop_devs[minor].size_bytes;
+	if (!buf)
+		return -EINVAL;
+	if (!loop_devices[minor].fp)
+		return -ENXIO;
+	*(uint64_t *)buf = size_bytes;
+	return 0;
+}
+
+static int loop_ioctl_blksszget(void *context __attribute__((unused)),
+				unsigned cmd __attribute__((unused)),
+				void *buf __attribute__((unused)))
+{
+	if (!buf)
+		return -EINVAL;
+	*(int *)buf = 512;
+	return 0;
+}
+
+static int loop_ioctl_loop_set_fd(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
 	int minor = (int)(uintptr_t)fp->f_inode->i_private;
 	task_struct *cur = CURRENT_TASK();
-	uint64_t size_bytes = loop_devs[minor].size_bytes;
 
-	switch (cmd) {
-	case BLKGETSIZE:
-		if (!buf)
-			return -EINVAL;
-		if (!loop_devices[minor].fp)
-			return -ENXIO;
-		*(unsigned long *)buf = (unsigned long)(size_bytes / 512);
-		return 0;
+	int img_fd = (int)(uintptr_t)buf;
+	file *img_fp;
 
-	case BLKGETSIZE64:
-		if (!buf)
-			return -EINVAL;
-		if (!loop_devices[minor].fp)
-			return -ENXIO;
-		*(uint64_t *)buf = size_bytes;
-		return 0;
+	if (loop_devs[minor].backing[0])
+		return -EBUSY;
+	if (img_fd < 0 || img_fd >= (int)MAX_FD || !cur->fds[img_fd])
+		return -EBADF;
 
-	case BLKSSZGET:
-		if (!buf)
-			return -EINVAL;
-		*(int *)buf = 512;
-		return 0;
-
-	case LOOP_SET_FD: {
-		int img_fd = (int)(uintptr_t)buf;
-		file *img_fp;
-
-		if (loop_devs[minor].backing[0])
-			return -EBUSY;
-		if (img_fd < 0 || img_fd >= (int)MAX_FD || !cur->fds[img_fd])
-			return -EBADF;
-
-		img_fp = cur->fds[img_fd];
-		fs_get_file(img_fp);
-		if (loop_attach(minor, img_fp, NULL) < 0) {
-			fs_put_file(img_fp);
-			return -EINVAL;
-		}
-		return 0;
+	img_fp = cur->fds[img_fd];
+	fs_get_file(img_fp);
+	if (loop_attach(minor, img_fp, NULL) < 0) {
+		fs_put_file(img_fp);
+		return -EINVAL;
 	}
+	return 0;
+}
 
-	case LOOP_CLR_FD:
-		if (!loop_devs[minor].backing[0] &&
-		    loop_devices[minor].fp == NULL)
-			return -ENXIO;
-		loop_detach(minor);
-		return 0;
+static int loop_ioctl_loop_clr_fd(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+	if (!loop_devs[minor].backing[0] && loop_devices[minor].fp == NULL)
+		return -ENXIO;
+	loop_detach(minor);
+	return 0;
+}
 
-	case LOOP_SET_STATUS: {
-		struct loop_info *li = (struct loop_info *)buf;
-		if (!li)
-			return -EINVAL;
-		/* Accept but only store the backing name if provided */
-		if (li->lo_name[0])
-			strncpy(loop_devs[minor].backing, li->lo_name,
-				sizeof(loop_devs[minor].backing) - 1);
-		return 0;
-	}
+static int loop_ioctl_loop_set_status(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
 
-	case LOOP_GET_STATUS: {
-		struct loop_info *li = (struct loop_info *)buf;
-		if (!li)
-			return -EINVAL;
-		if (!loop_devs[minor].backing[0])
-			return -ENXIO;
-		memset(li, 0, sizeof(*li));
-		li->lo_number = minor;
-		li->lo_device = (unsigned short)MKDEV(3, 1); /* hda1 */
-		li->lo_rdevice = (unsigned short)MKDEV(LOOP_MAJOR, minor);
-		strncpy(li->lo_name, loop_devs[minor].backing,
-			LO_NAME_SIZE - 1);
-		return 0;
-	}
+	struct loop_info *li = (struct loop_info *)buf;
+	if (!li)
+		return -EINVAL;
+	/* Accept but only store the backing name if provided */
+	if (li->lo_name[0])
+		strncpy(loop_devs[minor].backing, li->lo_name,
+			sizeof(loop_devs[minor].backing) - 1);
+	return 0;
+}
 
-	case LOOP_SET_STATUS64: {
-		struct loop_info64 *li = (struct loop_info64 *)buf;
-		if (!li)
-			return -EINVAL;
-		if (li->lo_file_name[0])
-			strncpy(loop_devs[minor].backing,
-				(char *)li->lo_file_name,
-				sizeof(loop_devs[minor].backing) - 1);
-		return 0;
-	}
+static int loop_ioctl_loop_get_status(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
 
-	case LOOP_GET_STATUS64: {
-		struct loop_info64 *li = (struct loop_info64 *)buf;
-		if (!li)
-			return -EINVAL;
-		if (!loop_devs[minor].backing[0])
-			return -ENXIO;
-		memset(li, 0, sizeof(*li));
-		li->lo_number = (uint32_t)minor;
-		li->lo_rdevice = MKDEV(LOOP_MAJOR, minor);
-		li->lo_sizelimit = loop_devs[minor].size_bytes;
-		strncpy((char *)li->lo_file_name, loop_devs[minor].backing,
-			LO_NAME_SIZE - 1);
-		return 0;
-	}
+	struct loop_info *li = (struct loop_info *)buf;
+	if (!li)
+		return -EINVAL;
+	if (!loop_devs[minor].backing[0])
+		return -ENXIO;
+	memset(li, 0, sizeof(*li));
+	li->lo_number = minor;
+	li->lo_device = (unsigned short)MKDEV(3, 1); /* hda1 */
+	li->lo_rdevice = (unsigned short)MKDEV(LOOP_MAJOR, minor);
+	strncpy(li->lo_name, loop_devs[minor].backing, LO_NAME_SIZE - 1);
+	return 0;
+}
 
-	default:
-		return -ENOTTY;
-	}
+static int loop_ioctl_loop_set_status64(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+
+	struct loop_info64 *li = (struct loop_info64 *)buf;
+	if (!li)
+		return -EINVAL;
+	if (li->lo_file_name[0])
+		strncpy(loop_devs[minor].backing, (char *)li->lo_file_name,
+			sizeof(loop_devs[minor].backing) - 1);
+	return 0;
+}
+
+static int loop_ioctl_loop_get_status64(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	int minor = (int)(uintptr_t)fp->f_inode->i_private;
+
+	struct loop_info64 *li = (struct loop_info64 *)buf;
+	if (!li)
+		return -EINVAL;
+	if (!loop_devs[minor].backing[0])
+		return -ENXIO;
+	memset(li, 0, sizeof(*li));
+	li->lo_number = (uint32_t)minor;
+	li->lo_rdevice = MKDEV(LOOP_MAJOR, minor);
+	li->lo_sizelimit = loop_devs[minor].size_bytes;
+	strncpy((char *)li->lo_file_name, loop_devs[minor].backing,
+		LO_NAME_SIZE - 1);
+	return 0;
+}
+
+static const command_operation loop_block_commands[256] = {
+	[BLKGETSIZE & 255] = { BLKGETSIZE, loop_ioctl_blkgetsize },
+	[BLKGETSIZE64 & 255] = { BLKGETSIZE64, loop_ioctl_blkgetsize64 },
+	[BLKSSZGET & 255] = { BLKSSZGET, loop_ioctl_blksszget },
+};
+
+static const command_operation loop_control_commands[256] = {
+	[LOOP_SET_FD & 255] = { LOOP_SET_FD, loop_ioctl_loop_set_fd },
+	[LOOP_CLR_FD & 255] = { LOOP_CLR_FD, loop_ioctl_loop_clr_fd },
+	[LOOP_SET_STATUS & 255] = { LOOP_SET_STATUS,
+				    loop_ioctl_loop_set_status },
+	[LOOP_GET_STATUS & 255] = { LOOP_GET_STATUS,
+				    loop_ioctl_loop_get_status },
+	[LOOP_SET_STATUS64 & 255] = { LOOP_SET_STATUS64,
+				      loop_ioctl_loop_set_status64 },
+	[LOOP_GET_STATUS64 & 255] = { LOOP_GET_STATUS64,
+				      loop_ioctl_loop_get_status64 },
+};
+
+static const command_operation *const loop_command_groups[256] = {
+	[(BLKGETSIZE >> 8) & 255] = loop_block_commands,
+	[(LOOP_SET_FD >> 8) & 255] = loop_control_commands,
+};
+
+static int loop_ioctl(file *fp, unsigned cmd, void *buf)
+{
+	return command_dispatch(loop_command_groups, fp, cmd, buf, -ENOTTY);
 }
 
 static int loop_cdev_getattr(file *fp, struct stat *s)

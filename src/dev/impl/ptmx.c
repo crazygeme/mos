@@ -6,17 +6,78 @@
 #include <dev/dev.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
+#include <lib/command.h>
 #include <device/time.h>
 #include <errno.h>
 #include <macro.h>
 #include "pts_internal.h"
-#include "devnums.h"
+#include <dev/devnums.h>
 
 #define MAX_PTS 16
 #define PTS_INO_MASK 0x00040000
 
 static spinlock_t pts_alloc_lock;
 static pts_pair pts_pairs[MAX_PTS];
+static unsigned pts_used;
+static struct rb_root pts_groups = _RBTREE_ROOT_INIT;
+
+static void ptmx_group_insert_locked(pts_pair *p)
+{
+	struct rb_node **link = &pts_groups.rb_node, *parent = NULL;
+	while (*link) {
+		pts_pair *other = rb_entry(*link, pts_pair, group_node);
+		parent = *link;
+		link = p->pgrp < other->pgrp || (p->pgrp == other->pgrp &&
+						 p->idx < other->idx) ?
+			       &parent->rb_left :
+			       &parent->rb_right;
+	}
+	rb_init_node(&p->group_node);
+	rb_link_node(&p->group_node, parent, link);
+	rb_insert_color(&p->group_node, &pts_groups);
+	p->group_indexed = 1;
+}
+
+static void ptmx_group_changed(pts_pair *p, unsigned group)
+{
+	int irq;
+	spinlock_lock(&pts_alloc_lock, &irq);
+	if (p->group_indexed) {
+		rb_erase(&p->group_node, &pts_groups);
+		p->group_indexed = 0;
+	}
+	p->pgrp = group;
+	if (p->used && p->master_open)
+		ptmx_group_insert_locked(p);
+	spinlock_unlock(&pts_alloc_lock, irq);
+}
+
+/* The pair allocator lock protects both the group index and allocation bits. */
+static void ptmx_pair_free_locked(pts_pair *p)
+{
+	if (p->group_indexed) {
+		rb_erase(&p->group_node, &pts_groups);
+		p->group_indexed = 0;
+	}
+	pts_used &= ~(1U << p->idx);
+}
+
+static pts_pair *ptmx_group_find_locked(unsigned group)
+{
+	struct rb_node *node = pts_groups.rb_node;
+	pts_pair *match = NULL;
+	while (node) {
+		pts_pair *p = rb_entry(node, pts_pair, group_node);
+		if (group <= p->pgrp) {
+			if (group == p->pgrp)
+				match = p;
+			node = node->rb_left;
+		} else {
+			node = node->rb_right;
+		}
+	}
+	return match;
+}
 
 static int ptmx_dir_getattr(file *fp, struct stat *s)
 {
@@ -166,30 +227,17 @@ file *ptmx_slave_open(super_block *sb, const char *path, int flag)
 
 file *ptmx_open_controlling(task_struct *task, int flag)
 {
-	int i;
 	int irq;
-	pts_pair *match = NULL;
-
+	pts_pair *match;
 	if (!task || !task->user)
 		return NULL;
-
 	spinlock_lock(&pts_alloc_lock, &irq);
-	for (i = 0; i < MAX_PTS; i++) {
-		pts_pair *p = &pts_pairs[i];
-
-		if (!p->used || !p->master_open)
-			continue;
-		if (p->pgrp != task->user->group_id)
-			continue;
-		if (!(flag & O_PATH)) {
-			__sync_add_and_fetch(&p->slave_count, 1);
-			p->slave_ever_opened = 1;
-		}
-		match = p;
-		break;
+	match = ptmx_group_find_locked(task->user->group_id);
+	if (match && !(flag & O_PATH)) {
+		__sync_add_and_fetch(&match->slave_count, 1);
+		match->slave_ever_opened = 1;
 	}
 	spinlock_unlock(&pts_alloc_lock, irq);
-
 	return match ? ptmx_open_slave_pair(match, flag) : NULL;
 }
 
@@ -201,7 +249,7 @@ static int pts_master_release(file *fp)
 	cyb_writer_close(p->m2s);
 	cyb_reader_close(p->s2m);
 
-	p->master_open = 0;
+	pts_pair_close_master(p);
 	pts_pair_check_free(p, &pts_alloc_lock);
 
 	kfree(fp->f_inode);
@@ -258,11 +306,23 @@ static int ptmx_open_peer(file *master, unsigned flags)
 	return fd;
 }
 
+static int ptmx_peer_ioctl(void *context, unsigned cmd, void *arg)
+{
+	(void)cmd;
+	return ptmx_open_peer(context, (unsigned)(uintptr_t)arg);
+}
+
 static int ptmx_master_ioctl(file *master, unsigned cmd, void *arg)
 {
-	if (cmd == TIOCGPTPEER)
-		return ptmx_open_peer(master, (unsigned)(uintptr_t)arg);
-	return pts_master_ioctl(master, cmd, arg);
+	static const command_operation commands[256] = {
+		[TIOCGPTPEER & 255] = { TIOCGPTPEER, ptmx_peer_ioctl },
+	};
+	static const command_operation *const groups[256] = {
+		[(TIOCGPTPEER >> 8) & 255] = commands,
+	};
+	command_fn invoke = command_lookup(groups, cmd);
+	return invoke ? invoke(master, cmd, arg) :
+			pts_master_ioctl(master, cmd, arg);
 }
 
 /*
@@ -327,46 +387,33 @@ static int ptmx_statfs(super_block *sb, struct statfs64 *buf)
 
 static void ptmx_dir_gen(super_block *sb, memory_dir *rd)
 {
-	unsigned size = 0;
-	int i;
+	unsigned active;
+	int irq;
 	char tty_buf[12];
 	char *buf, *p;
-	int irq;
 	const char *begin;
 	struct linux_dirent *dirp;
-
-	/* ---- Size calculation ---- */
-	size += ROUND_UP(NAME_OFFSET() + 2); /* "."    strlen=1 +1 */
-	size += ROUND_UP(NAME_OFFSET() + 3); /* ".."   strlen=2 +1 */
-
+	(void)sb;
+	/* A fixed upper bound permits one traversal of a consistent snapshot. */
+	unsigned capacity = ROUND_UP(NAME_OFFSET() + 2) +
+			    ROUND_UP(NAME_OFFSET() + 3) +
+			    MAX_PTS * ROUND_UP(NAME_OFFSET() + sizeof(tty_buf));
 	spinlock_lock(&pts_alloc_lock, &irq);
-	for (i = 0; i < MAX_PTS; i++) {
-		if (pts_pairs[i].used) {
-			size += ROUND_UP(
-				NAME_OFFSET() +
-				sprintf(tty_buf, "%d", pts_pairs[i].idx) + 1);
-		}
-	}
+	active = pts_used;
 	spinlock_unlock(&pts_alloc_lock, irq);
-
-	/* ---- Allocate and fill ---- */
-	buf = p = kmalloc(size);
+	buf = p = kmalloc(capacity);
 	begin = buf;
-	memset(buf, 0, size);
+	memset(buf, 0, capacity);
 	rd->buf = (struct linux_dirent *)buf;
-	rd->length = size;
-
 	FILL_ENTRY(".", 1);
 	FILL_ENTRY("..", 1);
-
-	spinlock_lock(&pts_alloc_lock, &irq);
-	for (i = 0; i < MAX_PTS; i++) {
-		if (pts_pairs[i].used) {
-			sprintf(tty_buf, "%d", pts_pairs[i].idx);
-			FILL_ENTRY(tty_buf, (uint64_t)pts_pairs[i].idx + 2);
-		}
+	while (active) {
+		unsigned idx = __builtin_ctz(active);
+		active &= active - 1;
+		sprintf(tty_buf, "%u", idx);
+		FILL_ENTRY(tty_buf, (uint64_t)idx + 2);
 	}
-	spinlock_unlock(&pts_alloc_lock, irq);
+	rd->length = p - begin;
 }
 
 static file *ptmx_dir_open_root(super_block *sb, int flag)
@@ -401,21 +448,22 @@ static file *ptmx_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	int irq;
 
 	spinlock_lock(&pts_alloc_lock, &irq);
-	for (i = 0; i < MAX_PTS; i++) {
-		if (!pts_pairs[i].used) {
-			p = &pts_pairs[i];
-			break;
-		}
-	}
-	if (!p) {
+	unsigned available = ((1U << MAX_PTS) - 1) & ~pts_used;
+	if (!available) {
 		spinlock_unlock(&pts_alloc_lock, irq);
-		return NULL; /* -EAGAIN: no free pairs */
+		return NULL;
 	}
+	i = __builtin_ctz(available);
+	pts_used |= 1U << i;
+	p = &pts_pairs[i];
 
 	memset(p, 0, sizeof(*p));
 	p->idx = i;
 	p->used = 1;
 	p->master_open = 1;
+	p->group_changed = ptmx_group_changed;
+	p->on_free = ptmx_pair_free_locked;
+	ptmx_group_insert_locked(p);
 	p->pt_locked = 1;
 	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IWGRP;
 	if (current->user) {

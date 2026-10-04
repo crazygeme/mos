@@ -18,25 +18,9 @@
 #include <unistd.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
-#include "syscall_internal.h"
+#include <syscall/syscall.h>
 
 extern unsigned phymm_used;
-
-struct sysinfo {
-	int32_t uptime;
-	uint32_t loads[3];
-	uint32_t totalram;
-	uint32_t freeram;
-	uint32_t sharedram;
-	uint32_t bufferram;
-	uint32_t totalswap;
-	uint32_t freeswap;
-	unsigned short procs;
-	uint32_t totalhigh;
-	uint32_t freehigh;
-	unsigned int mem_unit;
-	char _f[8];
-};
 
 static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
 
@@ -297,8 +281,8 @@ int sys_clock_nanosleep(int clockid, int flags, const struct timespec *req,
 	return sys_nanosleep(req, rem);
 }
 
-int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
-	      unsigned arg5)
+int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
+	      uintptr_t arg5)
 {
 	(void)arg3;
 	(void)arg4;
@@ -310,16 +294,9 @@ int sys_prctl(int option, unsigned arg2, unsigned arg3, unsigned arg4,
 		return 0;
 	}
 	if (option == 2) { /* PR_GET_PDEATHSIG */
-		if (!arg2 || arg2 > KERNEL_OFFSET - sizeof(int))
-			return -EFAULT;
-		for (unsigned offset = 0; offset < sizeof(int); offset++) {
-			vm_region *region =
-				vm_find_map(current->user->vm, arg2 + offset);
-			if (!region || !(region->prot & PROT_WRITE))
-				return -EFAULT;
-		}
-		*(int *)(uintptr_t)arg2 = current->pdeath_signal;
-		return 0;
+		int value = current->pdeath_signal;
+		return ps_write_process_memory(current, (void *)arg2, &value,
+					       sizeof(value));
 	}
 	/* agetty queries dumpability before opening its console. */
 	if (option == 3) /* PR_GET_DUMPABLE */
@@ -623,7 +600,7 @@ int sys_vhangup(void)
 
 int sys_sysinfo(void *buf)
 {
-	struct sysinfo *info = (struct sysinfo *)buf;
+	struct mos_sysinfo *info = buf;
 	phymm_usage usage;
 	unsigned total_pages, free_pages;
 
@@ -699,19 +676,21 @@ int sys_quotactl(int cmd, const char *special, int id, void *addr)
 
 #define MREMAP_MAYMOVE 1
 
-int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
-	       int flags, unsigned new_addr)
+intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
+		    int flags, vaddr_t new_addr)
 {
 	task_struct *cur = CURRENT_TASK();
 	vm_region *region;
-	unsigned old_size_pg, new_size_pg, old_end, new_end;
-	int ret;
+	size_t old_size_pg, new_size_pg;
+	vaddr_t old_end, new_end;
+	intptr_t ret;
 
 	(void)new_addr;
 
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("mremap(%x, %x, %x, flags=%x)\n", old_addr, old_size,
-		     new_size, flags);
+		klog("mremap(%lx, %lu, %lu, flags=%x)\n",
+		     (unsigned long)old_addr, (unsigned long)old_size,
+		     (unsigned long)new_size, flags);
 
 	if (old_addr & (PAGE_SIZE - 1))
 		return -EINVAL;
@@ -727,12 +706,12 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 		return -EFAULT;
 
 	if (new_size_pg == old_size_pg)
-		return (int)old_addr;
+		return (intptr_t)old_addr;
 
 	if (new_size_pg < old_size_pg) {
 		do_munmap((void *)(uintptr_t)(old_addr + new_size_pg),
 			  old_size_pg - new_size_pg);
-		return (int)old_addr;
+		return (intptr_t)old_addr;
 	}
 
 	/* Grow: extend the existing VMA if the full new range is free. */
@@ -740,7 +719,7 @@ int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
 	new_end = old_addr + new_size_pg;
 	if (vm_extend_map(cur->user->vm, old_addr, old_end, new_end)) {
 		vm_invalidate_user_cache(cur->user);
-		return (int)old_addr;
+		return (intptr_t)old_addr;
 	}
 
 	if (!(flags & MREMAP_MAYMOVE))

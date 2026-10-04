@@ -12,6 +12,7 @@
 #include <device/time.h>
 #include <ps/ps.h>
 #include <errno.h>
+#include <lib/command.h>
 #include <macro.h>
 
 #include <lwip/tcp.h>
@@ -535,50 +536,216 @@ static void fill_ifr_sin(struct ifreq *ifr, uint32_t addr_nbo)
 	sin->sin_addr.s_addr = addr_nbo;
 }
 
+static int fill_eth0_ifreq_siocgifflags(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg)
+{
+	struct ifreq *ifr = arg;
+	short f = IFF_UP | IFF_RUNNING | IFF_BROADCAST | IFF_MULTICAST;
+	ifr->ifr_flags = f;
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifaddr(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *nif = context;
+	fill_ifr_sin(ifr, ip4_addr_get_u32(netif_ip4_addr(nif)));
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifnetmask(void *context __attribute__((unused)),
+					  unsigned cmd __attribute__((unused)),
+					  void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *nif = context;
+	fill_ifr_sin(ifr, ip4_addr_get_u32(netif_ip4_netmask(nif)));
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifbrdaddr(void *context __attribute__((unused)),
+					  unsigned cmd __attribute__((unused)),
+					  void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *nif = context;
+	uint32_t ip = ip4_addr_get_u32(netif_ip4_addr(nif));
+	uint32_t mask = ip4_addr_get_u32(netif_ip4_netmask(nif));
+	fill_ifr_sin(ifr, ip | ~mask);
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifhwaddr(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *nif = context;
+	struct sockaddr *sa = &ifr->ifr_hwaddr;
+	memset(sa, 0, sizeof(*sa));
+	sa->sa_family = ARPHRD_ETHER;
+	memcpy(sa->sa_data, nif->hwaddr, 6);
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifmtu(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *nif = context;
+	ifr->ifr_mtu = nif->mtu;
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifindex(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *nif = context;
+	ifr->ifr_ifindex = (int)(nif->num + 1);
+	return 0;
+}
+
+static int fill_eth0_ifreq_siocgifmetric(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *arg)
+{
+	struct ifreq *ifr = arg;
+	ifr->ifr_metric = 0;
+	return 0;
+}
+
+static const command_operation fill_eth0_ifreq_operations[256] = {
+	[SIOCGIFFLAGS & 255] = { SIOCGIFFLAGS, fill_eth0_ifreq_siocgifflags },
+	[SIOCGIFADDR & 255] = { SIOCGIFADDR, fill_eth0_ifreq_siocgifaddr },
+	[SIOCGIFCONF & 255] = { SIOCGIFCONF, fill_eth0_ifreq_siocgifaddr },
+	[SIOCGIFNETMASK & 255] = { SIOCGIFNETMASK,
+				   fill_eth0_ifreq_siocgifnetmask },
+	[SIOCGIFBRDADDR & 255] = { SIOCGIFBRDADDR,
+				   fill_eth0_ifreq_siocgifbrdaddr },
+	[SIOCGIFHWADDR & 255] = { SIOCGIFHWADDR,
+				  fill_eth0_ifreq_siocgifhwaddr },
+	[SIOCGIFMTU & 255] = { SIOCGIFMTU, fill_eth0_ifreq_siocgifmtu },
+	[SIOCGIFINDEX & 255] = { SIOCGIFINDEX, fill_eth0_ifreq_siocgifindex },
+	[SIOCGIFMETRIC & 255] = { SIOCGIFMETRIC,
+				  fill_eth0_ifreq_siocgifmetric },
+};
+static const command_operation *const fill_eth0_ifreq_groups[256] = {
+	[(SIOCGIFFLAGS >> 8) & 255] = fill_eth0_ifreq_operations,
+};
+
 static void fill_eth0_ifreq(struct ifreq *ifr, struct netif *nif, unsigned cmd)
 {
 	sprintf(ifr->ifr_name, "%c%c%u", nif->name[0], nif->name[1],
 		(unsigned)nif->num);
 
-	switch (cmd) {
-	case SIOCGIFFLAGS: {
-		short f = IFF_UP | IFF_RUNNING | IFF_BROADCAST | IFF_MULTICAST;
-		ifr->ifr_flags = f;
-		break;
-	}
-	case SIOCGIFADDR:
-	case SIOCGIFCONF:
-		fill_ifr_sin(ifr, ip4_addr_get_u32(netif_ip4_addr(nif)));
-		break;
-	case SIOCGIFNETMASK:
-		fill_ifr_sin(ifr, ip4_addr_get_u32(netif_ip4_netmask(nif)));
-		break;
-	case SIOCGIFBRDADDR: {
-		uint32_t ip = ip4_addr_get_u32(netif_ip4_addr(nif));
-		uint32_t mask = ip4_addr_get_u32(netif_ip4_netmask(nif));
-		fill_ifr_sin(ifr, ip | ~mask);
-		break;
-	}
-	case SIOCGIFHWADDR: {
-		struct sockaddr *sa = &ifr->ifr_hwaddr;
-		memset(sa, 0, sizeof(*sa));
-		sa->sa_family = ARPHRD_ETHER;
-		memcpy(sa->sa_data, nif->hwaddr, 6);
-		break;
-	}
-	case SIOCGIFMTU:
-		ifr->ifr_mtu = nif->mtu;
-		break;
-	case SIOCGIFINDEX:
-		ifr->ifr_ifindex = (int)(nif->num + 1);
-		break;
-	case SIOCGIFMETRIC:
-		ifr->ifr_metric = 0;
-		break;
-	default:
-		break;
-	}
+	command_dispatch(fill_eth0_ifreq_groups, nif, cmd, ifr, 0);
 }
+
+static int fill_lo_ifreq_siocgifflags(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *arg)
+{
+	struct ifreq *ifr = arg;
+	ifr->ifr_flags = IFF_UP | IFF_RUNNING | IFF_LOOPBACK;
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifaddr(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *lo = context;
+	uint32_t addr = lo ? ip4_addr_get_u32(netif_ip4_addr(lo)) :
+			     lwip_htonl(0x7F000001UL);
+	fill_ifr_sin(ifr, addr);
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifnetmask(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *lo = context;
+	uint32_t mask = lo ? ip4_addr_get_u32(netif_ip4_netmask(lo)) :
+			     lwip_htonl(0xFF000000UL);
+	struct sockaddr_in *sin = (struct sockaddr_in *)&ifr->ifr_addr;
+	memset(sin, 0, sizeof(*sin));
+	sin->sin_family = AF_INET;
+	sin->sin_addr.s_addr = mask;
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifbrdaddr(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg)
+{
+	struct ifreq *ifr = arg;
+	fill_ifr_sin(ifr, 0);
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifhwaddr(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg)
+{
+	struct ifreq *ifr = arg;
+	memset(&ifr->ifr_hwaddr, 0, sizeof(struct sockaddr));
+	ifr->ifr_hwaddr.sa_family = ARPHRD_ETHER;
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifmtu(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *arg)
+{
+	struct ifreq *ifr = arg;
+	ifr->ifr_mtu = 65536;
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifindex(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *arg)
+{
+	struct ifreq *ifr = arg;
+	struct netif *lo = context;
+	ifr->ifr_ifindex = lo ? (int)(lo->num + 1) : 1;
+	return 0;
+}
+
+static int fill_lo_ifreq_siocgifmetric(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg)
+{
+	struct ifreq *ifr = arg;
+	ifr->ifr_metric = 0;
+	return 0;
+}
+
+static const command_operation fill_lo_ifreq_operations[256] = {
+	[SIOCGIFFLAGS & 255] = { SIOCGIFFLAGS, fill_lo_ifreq_siocgifflags },
+	[SIOCGIFADDR & 255] = { SIOCGIFADDR, fill_lo_ifreq_siocgifaddr },
+	[SIOCGIFCONF & 255] = { SIOCGIFCONF, fill_lo_ifreq_siocgifaddr },
+	[SIOCGIFNETMASK & 255] = { SIOCGIFNETMASK,
+				   fill_lo_ifreq_siocgifnetmask },
+	[SIOCGIFBRDADDR & 255] = { SIOCGIFBRDADDR,
+				   fill_lo_ifreq_siocgifbrdaddr },
+	[SIOCGIFHWADDR & 255] = { SIOCGIFHWADDR, fill_lo_ifreq_siocgifhwaddr },
+	[SIOCGIFMTU & 255] = { SIOCGIFMTU, fill_lo_ifreq_siocgifmtu },
+	[SIOCGIFINDEX & 255] = { SIOCGIFINDEX, fill_lo_ifreq_siocgifindex },
+	[SIOCGIFMETRIC & 255] = { SIOCGIFMETRIC, fill_lo_ifreq_siocgifmetric },
+};
+static const command_operation *const fill_lo_ifreq_groups[256] = {
+	[(SIOCGIFFLAGS >> 8) & 255] = fill_lo_ifreq_operations,
+};
 
 static void fill_lo_ifreq(struct ifreq *ifr, unsigned cmd)
 {
@@ -586,133 +753,138 @@ static void fill_lo_ifreq(struct ifreq *ifr, unsigned cmd)
 
 	struct netif *lo = netif_find("lo0");
 
-	switch (cmd) {
-	case SIOCGIFFLAGS:
-		ifr->ifr_flags = IFF_UP | IFF_RUNNING | IFF_LOOPBACK;
-		break;
-	case SIOCGIFADDR:
-	case SIOCGIFCONF: {
-		uint32_t addr = lo ? ip4_addr_get_u32(netif_ip4_addr(lo)) :
-				     lwip_htonl(0x7F000001UL);
-		fill_ifr_sin(ifr, addr);
-		break;
-	}
-	case SIOCGIFNETMASK: {
-		uint32_t mask = lo ? ip4_addr_get_u32(netif_ip4_netmask(lo)) :
-				     lwip_htonl(0xFF000000UL);
-		struct sockaddr_in *sin = (struct sockaddr_in *)&ifr->ifr_addr;
-		memset(sin, 0, sizeof(*sin));
-		sin->sin_family = AF_INET;
-		sin->sin_addr.s_addr = mask;
-		break;
-	}
-	case SIOCGIFBRDADDR:
-		fill_ifr_sin(ifr, 0);
-		break;
-	case SIOCGIFHWADDR:
-		memset(&ifr->ifr_hwaddr, 0, sizeof(struct sockaddr));
-		ifr->ifr_hwaddr.sa_family = ARPHRD_ETHER;
-		break;
-	case SIOCGIFMTU:
-		ifr->ifr_mtu = 65536;
-		break;
-	case SIOCGIFINDEX:
-		ifr->ifr_ifindex = lo ? (int)(lo->num + 1) : 1;
-		break;
-	case SIOCGIFMETRIC:
-		ifr->ifr_metric = 0;
-		break;
-	default:
-		break;
-	}
+	command_dispatch(fill_lo_ifreq_groups, lo, cmd, ifr, 0);
 }
 
 /* ── sock_ioctl ──────────────────────────────────────────────────────────── */
 
+static int sock_ioctl_siocgstamp(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *arg __attribute__((unused)))
+{
+	file *fp = context;
+	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+#if MOS_HAS_NATIVE_USER
+	if (current->user->abi == MOS_ABI_AMD64) {
+		int64_t *wire = arg;
+		wire[0] = sk->rx_stamp.tv_sec;
+		wire[1] = sk->rx_stamp.tv_usec;
+		return 0;
+	}
+#endif
+	*(struct timeval *)arg = sk->rx_stamp;
+	return 0;
+}
+
+static int sock_ioctl_fionread(void *context __attribute__((unused)),
+			       unsigned cmd __attribute__((unused)),
+			       void *arg __attribute__((unused)))
+{
+	file *fp = context;
+	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	*(int *)arg = (int)rx_used(sk);
+	return 0;
+}
+
+static int sock_ioctl_fionbio(void *context __attribute__((unused)),
+			      unsigned cmd __attribute__((unused)),
+			      void *arg __attribute__((unused)))
+{
+	file *fp = context;
+	if (!arg)
+		return -EFAULT;
+	if (*(const int *)arg)
+		fp->f_flag |= O_NONBLOCK;
+	else
+		fp->f_flag &= ~O_NONBLOCK;
+	return 0;
+}
+
+static int sock_ioctl_siocgifconf(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *arg __attribute__((unused)))
+{
+	struct ifconf *ifc = (struct ifconf *)arg;
+	if (!ifc)
+		return -EFAULT;
+	struct ifreq *req = ifc->ifc_req;
+	struct netif *nif = net_get_default_netif();
+	/* Linux permits a NULL buffer to query the required byte count. */
+	if (!req) {
+		ifc->ifc_len = (nif ? 2 : 1) * sizeof(struct ifreq);
+		return 0;
+	}
+	if (ifc->ifc_len < 0)
+		return -EINVAL;
+	int max = ifc->ifc_len / (int)sizeof(struct ifreq);
+	int n = 0;
+
+	if (n < max && nif) {
+		memset(&req[n], 0, sizeof(struct ifreq));
+		fill_eth0_ifreq(&req[n], nif, SIOCGIFCONF);
+		n++;
+	}
+	if (n < max) {
+		memset(&req[n], 0, sizeof(struct ifreq));
+		fill_lo_ifreq(&req[n], SIOCGIFCONF);
+		n++;
+	}
+
+	ifc->ifc_len = n * (int)sizeof(struct ifreq);
+	return 0;
+}
+
+static int sock_ioctl_siocgifflags(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *arg __attribute__((unused)))
+{
+	struct ifreq *ifr = (struct ifreq *)arg;
+	struct netif *nif = net_get_default_netif();
+
+	if (nif) {
+		char eth_name[IFNAMSIZ];
+		sprintf(eth_name, "%c%c%u", nif->name[0], nif->name[1],
+			(unsigned)nif->num);
+		if (strncmp(ifr->ifr_name, eth_name, IFNAMSIZ) == 0) {
+			fill_eth0_ifreq(ifr, nif, cmd);
+			return 0;
+		}
+	}
+	if (strncmp(ifr->ifr_name, "lo", IFNAMSIZ) == 0) {
+		fill_lo_ifreq(ifr, cmd);
+		return 0;
+	}
+	return -ENODEV;
+}
+
+static const command_operation socket_network_commands[256] = {
+	[SIOCGSTAMP & 255] = { SIOCGSTAMP, sock_ioctl_siocgstamp },
+	[SIOCGIFCONF & 255] = { SIOCGIFCONF, sock_ioctl_siocgifconf },
+	[SIOCGIFFLAGS & 255] = { SIOCGIFFLAGS, sock_ioctl_siocgifflags },
+	[SIOCGIFADDR & 255] = { SIOCGIFADDR, sock_ioctl_siocgifflags },
+	[SIOCGIFNETMASK & 255] = { SIOCGIFNETMASK, sock_ioctl_siocgifflags },
+	[SIOCGIFBRDADDR & 255] = { SIOCGIFBRDADDR, sock_ioctl_siocgifflags },
+	[SIOCGIFHWADDR & 255] = { SIOCGIFHWADDR, sock_ioctl_siocgifflags },
+	[SIOCGIFMTU & 255] = { SIOCGIFMTU, sock_ioctl_siocgifflags },
+	[SIOCGIFINDEX & 255] = { SIOCGIFINDEX, sock_ioctl_siocgifflags },
+	[SIOCGIFMETRIC & 255] = { SIOCGIFMETRIC, sock_ioctl_siocgifflags },
+};
+
+static const command_operation socket_file_commands[256] = {
+	[FIONREAD & 255] = { FIONREAD, sock_ioctl_fionread },
+	[FIONBIO & 255] = { FIONBIO, sock_ioctl_fionbio },
+};
+
+static const command_operation *const socket_command_groups[256] = {
+	[(SIOCGSTAMP >> 8) & 255] = socket_network_commands,
+	[(FIONREAD >> 8) & 255] = socket_file_commands,
+};
+
 static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 {
 	NET_CORE_GUARD;
-	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 
-	switch (cmd) {
-	case SIOCGSTAMP:
-		*(struct timeval *)arg = sk->rx_stamp;
-		return 0;
-
-	case FIONREAD:
-		*(int *)arg = (int)rx_used(sk);
-		return 0;
-
-	case FIONBIO:
-		if (!arg)
-			return -EFAULT;
-		if (*(const int *)arg)
-			fp->f_flag |= O_NONBLOCK;
-		else
-			fp->f_flag &= ~O_NONBLOCK;
-		return 0;
-
-	case SIOCGIFCONF: {
-		struct ifconf *ifc = (struct ifconf *)arg;
-		if (!ifc)
-			return -EFAULT;
-		struct ifreq *req = ifc->ifc_req;
-		struct netif *nif = net_get_default_netif();
-		/* Linux permits a NULL buffer to query the required byte count. */
-		if (!req) {
-			ifc->ifc_len = (nif ? 2 : 1) * sizeof(struct ifreq);
-			return 0;
-		}
-		if (ifc->ifc_len < 0)
-			return -EINVAL;
-		int max = ifc->ifc_len / (int)sizeof(struct ifreq);
-		int n = 0;
-
-		if (n < max && nif) {
-			memset(&req[n], 0, sizeof(struct ifreq));
-			fill_eth0_ifreq(&req[n], nif, SIOCGIFCONF);
-			n++;
-		}
-		if (n < max) {
-			memset(&req[n], 0, sizeof(struct ifreq));
-			fill_lo_ifreq(&req[n], SIOCGIFCONF);
-			n++;
-		}
-
-		ifc->ifc_len = n * (int)sizeof(struct ifreq);
-		return 0;
-	}
-
-	case SIOCGIFFLAGS:
-	case SIOCGIFADDR:
-	case SIOCGIFNETMASK:
-	case SIOCGIFBRDADDR:
-	case SIOCGIFHWADDR:
-	case SIOCGIFMTU:
-	case SIOCGIFINDEX:
-	case SIOCGIFMETRIC: {
-		struct ifreq *ifr = (struct ifreq *)arg;
-		struct netif *nif = net_get_default_netif();
-
-		if (nif) {
-			char eth_name[IFNAMSIZ];
-			sprintf(eth_name, "%c%c%u", nif->name[0], nif->name[1],
-				(unsigned)nif->num);
-			if (strncmp(ifr->ifr_name, eth_name, IFNAMSIZ) == 0) {
-				fill_eth0_ifreq(ifr, nif, cmd);
-				return 0;
-			}
-		}
-		if (strncmp(ifr->ifr_name, "lo", IFNAMSIZ) == 0) {
-			fill_lo_ifreq(ifr, cmd);
-			return 0;
-		}
-		return -ENODEV;
-	}
-
-	default:
-		return -ENOTTY;
-	}
+	return command_dispatch(socket_command_groups, fp, cmd, arg, -ENOTTY);
 }
 
 static void sock_poll_dereg(void *opaque, task_struct *task)

@@ -802,68 +802,96 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 	return (size_t)n;
 }
 
-int sys_getdents64(unsigned int fd, struct linux_dirent64 *dirp,
-		   unsigned int count)
+struct native_dirent {
+	uint64_t ino, offset;
+	uint16_t reclen;
+	char name[];
+};
+
+static void dirent64_emit(void *buffer, const struct linux_dirent *source,
+			  unsigned length, unsigned size)
 {
-	struct stat s;
+	struct linux_dirent64 *entry = buffer;
+	entry->d_ino = source->d_ino;
+	entry->d_off = source->d_off;
+	entry->d_reclen = size;
+	entry->d_type = 0;
+	memcpy(entry->d_name, source->d_name, length + 1);
+}
+
+static void native_dirent_emit(void *buffer, const struct linux_dirent *source,
+			       unsigned length, unsigned size)
+{
+	struct native_dirent *entry = buffer;
+	entry->ino = source->d_ino;
+	entry->offset = source->d_off;
+	entry->reclen = size;
+	memcpy(entry->name, source->d_name, length + 1);
+	((unsigned char *)buffer)[size - 1] = 0; /* DT_UNKNOWN */
+}
+
+static int getdents_convert(unsigned fd, void *output, unsigned count,
+			    unsigned name_offset, unsigned trailer,
+			    void (*emit)(void *, const struct linux_dirent *,
+					 unsigned, unsigned))
+{
 	file *fp;
-	char *tmp;
-	ssize_t n;
-	char *src, *dst;
-	int out;
-
-	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getdents64(%d, %x, %d)\n", fd, dirp, count);
-
-	if (fd < 0 || fd >= MAX_FD)
+	char *buffer, *source;
+	unsigned out = 0;
+	loff_t position;
+	int bytes;
+	if (fd >= MAX_FD || !current->fds[fd])
 		return -ENOENT;
-	if (fs_fstat(fd, &s) != EOK)
-		return -ENOENT;
-	if (!S_ISDIR(s.st_mode))
-		return -EISDIR;
-
-	fp = current->fds[fd];
-
-	if (count < sizeof(struct linux_dirent64))
-		return -22;
-	if (!fp->f_fop || !fp->f_fop->read)
-		return -1;
-
-	tmp = malloc(count);
-	if (!tmp)
+	if (!output)
+		return -EFAULT;
+	if (count < name_offset + 2)
+		return -EINVAL;
+	buffer = malloc(count);
+	if (!buffer)
 		return -ENOMEM;
-
-	n = fp->f_fop->read(fp, tmp, count, &fp->f_pos);
-	if (n < 0) {
-		free(tmp);
-		return -1;
+	fp = current->fds[fd];
+	position = fp->f_pos;
+	bytes = sys_getdents(fd, (void *)buffer, count);
+	if (bytes < 0) {
+		free(buffer);
+		return bytes;
 	}
-
-	src = tmp;
-	dst = (char *)dirp;
-	out = 0;
-	while (src < tmp + n) {
-		struct linux_dirent *d = (struct linux_dirent *)src;
-		struct linux_dirent64 *d64 = (struct linux_dirent64 *)dst;
-		unsigned namelen = strlen(d->d_name);
-		unsigned reclen64 = ROUND_UP(NAME64_OFFSET() + namelen + 1);
-
-		if (out + (int)reclen64 > (int)count)
+	for (source = buffer; source < buffer + bytes;) {
+		struct linux_dirent *entry = (void *)source;
+		/* Byte-backed virtual directories can end a read within a record. */
+		if (buffer + bytes - source < NAME_OFFSET() ||
+		    entry->d_reclen > buffer + bytes - source) {
+			fp->f_pos = position;
 			break;
-
-		d64->d_ino = d->d_ino;
-		d64->d_off = d->d_off;
-		d64->d_reclen = reclen64;
-		d64->d_type = 0; /* DT_UNKNOWN */
-		memcpy(d64->d_name, d->d_name, namelen + 1);
-
-		src += d->d_reclen;
-		dst += reclen64;
-		out += reclen64;
+		}
+		unsigned length = strlen(entry->d_name);
+		unsigned size = (name_offset + length + trailer + 7) & ~7U;
+		if (size > count - out) {
+			/* Retain the first record that does not fit for the next call. */
+			fp->f_pos = position;
+			break;
+		}
+		memset((char *)output + out, 0, size);
+		emit((char *)output + out, entry, length, size);
+		position = entry->d_off;
+		source += entry->d_reclen;
+		out += size;
 	}
+	free(buffer);
+	return bytes && !out ? -EINVAL : (int)out;
+}
 
-	free(tmp);
-	return out;
+int sys_getdents64(unsigned fd, struct linux_dirent64 *output, unsigned count)
+{
+	return getdents_convert(fd, output, count, NAME64_OFFSET(), 1,
+				dirent64_emit);
+}
+
+int do_getdents_native(unsigned fd, void *output, unsigned count)
+{
+	return getdents_convert(fd, output, count,
+				offset_of(struct native_dirent, name), 2,
+				native_dirent_emit);
 }
 
 int sys_readdir(unsigned fd, struct linux_dirent *dirp, unsigned count)

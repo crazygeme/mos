@@ -17,7 +17,7 @@
 #include <int/interrupt.h>
 #include "ps_internal.h"
 
-void ps_timer_notify(unsigned tid, int signo, int timer_id, int value)
+void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value)
 {
 	task_struct *target;
 	int irq;
@@ -225,15 +225,13 @@ int sys_kill(int pid, int sig)
 		return ctx.sent ? 0 : -ESRCH;
 	}
 
-	{
-		struct kill_all_ctx ctx;
-		ctx.self = cur;
-		ctx.sig = sig;
-		ctx.pgrp = (unsigned)(-pid);
-		ctx.sent = 0;
-		ps_enum_all(send_if_pgrp, &ctx);
-		return ctx.sent ? 0 : -ESRCH;
-	}
+	struct kill_all_ctx ctx;
+	ctx.self = cur;
+	ctx.sig = sig;
+	ctx.pgrp = (unsigned)(-pid);
+	ctx.sent = 0;
+	ps_enum_all(send_if_pgrp, &ctx);
+	return ctx.sent ? 0 : -ESRCH;
 }
 
 int sys_pause()
@@ -525,15 +523,14 @@ int sys_sigreturn()
 	 * If we delivered on the altstack, check whether the restored esp
 	 * falls outside the altstack range; if so we're leaving it.
 	 */
-	{
-		stack_t *alt = &cur->signal->altstack;
-		if (alt->ss_flags & SS_ONSTACK) {
-			uintptr_t alt_base = (uintptr_t)alt->ss_sp;
-			uintptr_t alt_top = alt_base + alt->ss_size;
-			uintptr_t restored = (uintptr_t)sf->saved_esp;
-			if (restored < alt_base || restored >= alt_top)
-				alt->ss_flags &= ~SS_ONSTACK;
-		}
+
+	stack_t *alt = &cur->signal->altstack;
+	if (alt->ss_flags & SS_ONSTACK) {
+		uintptr_t alt_base = (uintptr_t)alt->ss_sp;
+		uintptr_t alt_top = alt_base + alt->ss_size;
+		uintptr_t restored = (uintptr_t)sf->saved_esp;
+		if (restored < alt_base || restored >= alt_top)
+			alt->ss_flags &= ~SS_ONSTACK;
 	}
 
 	/*
@@ -570,15 +567,13 @@ int sys_rt_sigreturn()
 	frame->gs = sc->gs;
 	cur->signal->sig_mask = sf->uc.uc_sigmask;
 
-	{
-		stack_t *alt = &cur->signal->altstack;
-		if (alt->ss_flags & SS_ONSTACK) {
-			unsigned alt_base = (unsigned)(uintptr_t)alt->ss_sp;
-			unsigned alt_top = alt_base + alt->ss_size;
-			unsigned restored = sc->esp_at_signal;
-			if (restored < alt_base || restored >= alt_top)
-				alt->ss_flags &= ~SS_ONSTACK;
-		}
+	stack_t *alt = &cur->signal->altstack;
+	if (alt->ss_flags & SS_ONSTACK) {
+		unsigned alt_base = (unsigned)(uintptr_t)alt->ss_sp;
+		unsigned alt_top = alt_base + alt->ss_size;
+		unsigned restored = sc->esp_at_signal;
+		if (restored < alt_base || restored >= alt_top)
+			alt->ss_flags &= ~SS_ONSTACK;
 	}
 
 	return (int)sc->eax;
@@ -980,17 +975,11 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 		}
 
 		if (pending) {
-			int sig;
-
-			for (sig = 1; sig < NSIG; sig++) {
-				if (pending & (1UL << (sig - 1))) {
-					cur->signal->sig_pending &=
-						~(1UL << (sig - 1));
-					if (info)
-						memset(info, 0, sigsetsize);
-					return sig;
-				}
-			}
+			int sig = __builtin_ctz((unsigned)pending) + 1;
+			cur->signal->sig_pending &= ~(1U << (sig - 1));
+			if (info)
+				memset(info, 0, sigsetsize);
+			return sig;
 		}
 
 		/* A non-waited, unblocked signal interrupts the wait. */

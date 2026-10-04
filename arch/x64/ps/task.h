@@ -25,7 +25,7 @@ typedef volatile struct {
 	uintptr_t fs_base, gs_base;
 } task_frame;
 
-/* Register image exported by the x86 ptrace implementation. */
+/* Stopped register image used by IA-32 and AMD64 ptrace layouts. */
 typedef struct _ptrace_saved_frame {
 	uintptr_t edi, esi, ebp, ebx, edx, ecx, eax;
 	unsigned short gs, fs, es, ds;
@@ -35,6 +35,8 @@ typedef struct _ptrace_saved_frame {
 	unsigned eflags;
 	uintptr_t esp;
 	unsigned short ss;
+	uintptr_t r8, r9, r10, r11, r12, r13, r14, r15;
+	uintptr_t fs_base, gs_base;
 } ptrace_saved_frame;
 
 /* Keep architecture task pointers width-neutral at common call sites. */

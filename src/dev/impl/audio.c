@@ -1,5 +1,6 @@
 #include <dev/dev.h>
 #include <errno.h>
+#include <lib/command.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <device/audio.h>
@@ -9,7 +10,7 @@
 #include <stdint.h>
 #include <unistd.h>
 
-#include "devnums.h"
+#include <dev/devnums.h>
 
 #define SNDCTL_DSP_RESET 0x00005000
 #define SNDCTL_DSP_SYNC 0x00005001
@@ -33,6 +34,9 @@
 #define OSS_MIXER_AGC 103
 #define OSS_MIXER_3DSE 104
 #define OSS_MIXER_PRIVATE1 111
+#define OSS_MIXER_PRIVATE2 112
+#define OSS_MIXER_PRIVATE3 113
+#define OSS_MIXER_PRIVATE4 114
 #define OSS_MIXER_PRIVATE5 115
 #define OSS_MIXER_GETLEVELS 116
 #define OSS_MIXER_SETLEVELS 117
@@ -137,54 +141,76 @@ static int oss_mixer_get_volume(unsigned nr, int *arg)
 	return 0;
 }
 
+static int mixer_version(unsigned cmd __attribute__((unused)), void *buf)
+{
+	*(int *)buf = OSS_SOUND_VERSION;
+	return 0;
+}
+
+static int mixer_get_info(unsigned cmd __attribute__((unused)), void *buf)
+{
+	oss_fill_mixer_info(buf, (cmd >> 16) & 0x3fff);
+	return 0;
+}
+
+static int mixer_levels(unsigned cmd __attribute__((unused)), void *buf)
+{
+	oss_fill_mixer_levels(buf);
+	return 0;
+}
+
+static int mixer_accept(unsigned cmd __attribute__((unused)),
+			void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int mixer_zero(unsigned cmd __attribute__((unused)), void *buf)
+{
+	*(int *)buf = 0;
+	return 0;
+}
+
+static int mixer_mask(unsigned cmd __attribute__((unused)), void *buf)
+{
+	*(int *)buf = OSS_MIXER_SUPPORTED;
+	return 0;
+}
+
 static int oss_mixer_ioctl(file *fp, unsigned cmd, void *buf)
 {
-	int *arg = (int *)buf;
-	unsigned dir = cmd >> 30;
-	unsigned type = (cmd >> 8) & 0xff;
+	static int (*const commands[256])(unsigned, void *) = {
+		[OSS_GETVERSION] = mixer_version,
+		[OSS_MIXER_INFO] = mixer_get_info,
+		[OSS_MIXER_GETLEVELS] = mixer_levels,
+		[OSS_MIXER_SETLEVELS] = mixer_accept,
+		[OSS_MIXER_ACCESS] = mixer_zero,
+		[OSS_MIXER_AGC] = mixer_zero,
+		[OSS_MIXER_3DSE] = mixer_zero,
+		[OSS_MIXER_PRIVATE1] = mixer_zero,
+		[OSS_MIXER_PRIVATE2] = mixer_zero,
+		[OSS_MIXER_PRIVATE3] = mixer_zero,
+		[OSS_MIXER_PRIVATE4] = mixer_zero,
+		[OSS_MIXER_PRIVATE5] = mixer_zero,
+		[OSS_MIXER_DEVMASK] = mixer_mask,
+		[OSS_MIXER_STEREODEVS] = mixer_mask,
+		[OSS_MIXER_RECMASK] = mixer_zero,
+		[OSS_MIXER_CAPS] = mixer_zero,
+		[OSS_MIXER_RECSRC] = mixer_zero,
+	};
+	static int (*const volumes[2])(unsigned, int *) = {
+		oss_mixer_get_volume,
+		oss_mixer_set_volume,
+	};
 	unsigned nr = cmd & 0xff;
-	unsigned size = (cmd >> 16) & 0x3fff;
-
 	(void)fp;
-
-	if (!buf || type != 'M')
+	if (!buf || ((cmd >> 8) & 0xff) != 'M')
 		return -EINVAL;
-
-	if (nr == OSS_GETVERSION) {
-		*arg = OSS_SOUND_VERSION;
-		return 0;
-	}
-	if (nr == OSS_MIXER_INFO) {
-		oss_fill_mixer_info(buf, size);
-		return 0;
-	}
-	if (nr == OSS_MIXER_GETLEVELS) {
-		oss_fill_mixer_levels((mixer_vol_table *)buf);
-		return 0;
-	}
-	if (nr == OSS_MIXER_SETLEVELS)
-		return 0;
-	if (nr == OSS_MIXER_ACCESS || nr == OSS_MIXER_AGC ||
-	    nr == OSS_MIXER_3DSE ||
-	    (nr >= OSS_MIXER_PRIVATE1 && nr <= OSS_MIXER_PRIVATE5)) {
-		*arg = 0;
-		return 0;
-	}
-	if (nr == OSS_MIXER_DEVMASK || nr == OSS_MIXER_STEREODEVS) {
-		*arg = OSS_MIXER_SUPPORTED;
-		return 0;
-	}
-	if (nr == OSS_MIXER_RECMASK || nr == OSS_MIXER_CAPS ||
-	    nr == OSS_MIXER_RECSRC) {
-		*arg = 0;
-		return 0;
-	}
+	if (commands[nr])
+		return commands[nr](cmd, buf);
 	if (nr > 31 || !(OSS_MIXER_SUPPORTED & (1u << nr)))
 		return -EINVAL;
-
-	if (dir & 1)
-		return oss_mixer_set_volume(nr, arg);
-	return oss_mixer_get_volume(nr, arg);
+	return volumes[(cmd >> 30) & 1](nr, buf);
 }
 
 static int mixer_getattr(file *fp, struct stat *s)
@@ -283,59 +309,149 @@ static int dsp_getattr(file *fp, struct stat *s)
 	return 0;
 }
 
-static int dsp_ioctl(file *fp, unsigned cmd, void *buf)
+static int dsp_ioctl_sndctl_dsp_reset(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
 {
+	file *fp = context;
+	dsp_file_ctx *ctx = fp->f_inode->i_private;
+	audio_dev *dev = ctx ? ctx->dev : NULL;
+	return audio_reset(dev);
+}
+
+static int dsp_ioctl_sndctl_dsp_sync(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	dsp_file_ctx *ctx = fp->f_inode->i_private;
+	audio_dev *dev = ctx ? ctx->dev : NULL;
+	return audio_sync(dev);
+}
+
+static int dsp_ioctl_sndctl_dsp_getblksize(void *context
+					   __attribute__((unused)),
+					   unsigned cmd __attribute__((unused)),
+					   void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	dsp_file_ctx *ctx = fp->f_inode->i_private;
+	audio_dev *dev = ctx ? ctx->dev : NULL;
+	int *arg = (int *)buf;
+	if (arg)
+		*arg = (int)audio_block_size(dev);
+	return 0;
+}
+
+static int dsp_ioctl_sndctl_dsp_getfmts(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *buf __attribute__((unused)))
+{
+	int *arg = (int *)buf;
+	if (!arg)
+		return -EINVAL;
+	*arg = AUDIO_FMT_U8 | AUDIO_FMT_S16_LE;
+	return 0;
+}
+
+static int dsp_ioctl_sndctl_dsp_speed(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	file *fp = context;
 	dsp_file_ctx *ctx = fp->f_inode->i_private;
 	audio_dev *dev = ctx ? ctx->dev : NULL;
 	int *arg = (int *)buf;
 	unsigned val;
 	int ret;
-
-	switch (cmd) {
-	case SNDCTL_DSP_RESET:
-		return audio_reset(dev);
-	case SNDCTL_DSP_SYNC:
-		return audio_sync(dev);
-	case SNDCTL_DSP_GETBLKSIZE:
-		if (arg)
-			*arg = (int)audio_block_size(dev);
-		return 0;
-	case SNDCTL_DSP_GETFMTS:
-		if (!arg)
-			return -EINVAL;
-		*arg = AUDIO_FMT_U8 | AUDIO_FMT_S16_LE;
-		return 0;
-	case SNDCTL_DSP_SPEED:
-		if (!arg)
-			return -EINVAL;
-		val = (unsigned)*arg;
-		ret = audio_set_rate(dev, &val);
-		*arg = (int)val;
-		return ret;
-	case SNDCTL_DSP_STEREO:
-		if (!arg)
-			return -EINVAL;
-		val = *arg ? 2u : 1u;
-		ret = audio_set_channels(dev, &val);
-		*arg = val == 2;
-		return ret;
-	case SNDCTL_DSP_CHANNELS:
-		if (!arg)
-			return -EINVAL;
-		val = (unsigned)*arg;
-		ret = audio_set_channels(dev, &val);
-		*arg = (int)val;
-		return ret;
-	case SNDCTL_DSP_SETFMT:
-		if (!arg)
-			return -EINVAL;
-		val = (unsigned)*arg;
-		ret = audio_set_format(dev, &val);
-		*arg = (int)val;
-		return ret;
-	default:
+	if (!arg)
 		return -EINVAL;
-	}
+	val = (unsigned)*arg;
+	ret = audio_set_rate(dev, &val);
+	*arg = (int)val;
+	return ret;
+}
+
+static int dsp_ioctl_sndctl_dsp_stereo(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	dsp_file_ctx *ctx = fp->f_inode->i_private;
+	audio_dev *dev = ctx ? ctx->dev : NULL;
+	int *arg = (int *)buf;
+	unsigned val;
+	int ret;
+	if (!arg)
+		return -EINVAL;
+	val = *arg ? 2u : 1u;
+	ret = audio_set_channels(dev, &val);
+	*arg = val == 2;
+	return ret;
+}
+
+static int dsp_ioctl_sndctl_dsp_channels(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	dsp_file_ctx *ctx = fp->f_inode->i_private;
+	audio_dev *dev = ctx ? ctx->dev : NULL;
+	int *arg = (int *)buf;
+	unsigned val;
+	int ret;
+	if (!arg)
+		return -EINVAL;
+	val = (unsigned)*arg;
+	ret = audio_set_channels(dev, &val);
+	*arg = (int)val;
+	return ret;
+}
+
+static int dsp_ioctl_sndctl_dsp_setfmt(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	dsp_file_ctx *ctx = fp->f_inode->i_private;
+	audio_dev *dev = ctx ? ctx->dev : NULL;
+	int *arg = (int *)buf;
+	unsigned val;
+	int ret;
+	if (!arg)
+		return -EINVAL;
+	val = (unsigned)*arg;
+	ret = audio_set_format(dev, &val);
+	*arg = (int)val;
+	return ret;
+}
+
+static const command_operation dsp_commands[256] = {
+	[SNDCTL_DSP_RESET & 255] = { SNDCTL_DSP_RESET,
+				     dsp_ioctl_sndctl_dsp_reset },
+	[SNDCTL_DSP_SYNC & 255] = { SNDCTL_DSP_SYNC,
+				    dsp_ioctl_sndctl_dsp_sync },
+	[SNDCTL_DSP_GETBLKSIZE & 255] = { SNDCTL_DSP_GETBLKSIZE,
+					  dsp_ioctl_sndctl_dsp_getblksize },
+	[SNDCTL_DSP_GETFMTS & 255] = { SNDCTL_DSP_GETFMTS,
+				       dsp_ioctl_sndctl_dsp_getfmts },
+	[SNDCTL_DSP_SPEED & 255] = { SNDCTL_DSP_SPEED,
+				     dsp_ioctl_sndctl_dsp_speed },
+	[SNDCTL_DSP_STEREO & 255] = { SNDCTL_DSP_STEREO,
+				      dsp_ioctl_sndctl_dsp_stereo },
+	[SNDCTL_DSP_CHANNELS & 255] = { SNDCTL_DSP_CHANNELS,
+					dsp_ioctl_sndctl_dsp_channels },
+	[SNDCTL_DSP_SETFMT & 255] = { SNDCTL_DSP_SETFMT,
+				      dsp_ioctl_sndctl_dsp_setfmt },
+};
+
+static const command_operation *const dsp_command_groups[256] = {
+	[(SNDCTL_DSP_RESET >> 8) & 255] = dsp_commands,
+};
+
+static int dsp_ioctl(file *fp, unsigned cmd, void *buf)
+{
+	return command_dispatch(dsp_command_groups, fp, cmd, buf, -EINVAL);
 }
 
 static int dsp_release(file *fp)

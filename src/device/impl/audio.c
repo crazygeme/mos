@@ -3,27 +3,22 @@
 #include <lib/klib.h>
 
 static audio_dev audio_devices[MAX_AUDIO_DEV];
+static unsigned audio_device_count;
 
 audio_dev *audio_register_device(audio_dev *dev)
 {
-	int i;
-
-	if (!dev || !dev->ops || !dev->ops->init)
+	if (!dev || !dev->ops || !dev->ops->init ||
+	    audio_device_count == MAX_AUDIO_DEV)
 		return NULL;
 
 	if (dev->ops->init(dev) != 0)
 		return NULL;
 
-	for (i = 0; i < MAX_AUDIO_DEV; i++) {
-		if (audio_devices[i].ven == 0 && audio_devices[i].dev == 0) {
-			audio_devices[i] = *dev;
-			if (audio_devices[i].ops->on_register)
-				audio_devices[i].ops->on_register(
-					&audio_devices[i]);
-			return &audio_devices[i];
-		}
-	}
-	return NULL;
+	audio_dev *registered = &audio_devices[audio_device_count++];
+	*registered = *dev;
+	if (registered->ops->on_register)
+		registered->ops->on_register(registered);
+	return registered;
 }
 
 audio_dev *audio_getdev(int index)

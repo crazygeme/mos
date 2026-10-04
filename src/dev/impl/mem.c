@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <ext4_oflags.h>
 #include <errno.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 
 /* The x86 physical address space includes PCI MMIO and firmware ROM. */
 static uint64_t mem_dev_limit(void)

@@ -27,6 +27,8 @@
 #include <macro.h>
 #include <dev/dev.h>
 #include <errno.h>
+#include <dev/tty.h>
+#include <lib/command.h>
 #include <unistd.h>
 #include "tty_ldisc.h"
 #include "pts_internal.h"
@@ -53,7 +55,7 @@ void pts_acquire_controlling(file *fp, int flag)
 
 	spinlock_lock(&p->lock, &irq);
 	if (!p->pgrp)
-		p->pgrp = cur->user->group_id;
+		pts_pair_set_group(p, cur->user->group_id);
 	spinlock_unlock(&p->lock, irq);
 }
 
@@ -124,13 +126,30 @@ static int pts_slave_fionread(pts_pair *p)
 	return cyb_get_buf_len(p->m2s);
 }
 
+void pts_pair_set_group(pts_pair *p, unsigned group)
+{
+	if (p->group_changed)
+		p->group_changed(p, group);
+	else
+		p->pgrp = group;
+}
+
+void pts_pair_close_master(pts_pair *p)
+{
+	p->master_open = 0;
+	if (p->group_changed)
+		p->group_changed(p, p->pgrp);
+}
+
 void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 {
 	cy_buf *m2s = NULL, *s2m = NULL;
 	int irq;
 
 	spinlock_lock(lock, &irq);
-	if (!p->master_open && p->slave_count == 0) {
+	if (p->used && !p->master_open && p->slave_count == 0) {
+		if (p->on_free)
+			p->on_free(p);
 		p->used = 0;
 		m2s = p->m2s;
 		s2m = p->s2m;
@@ -199,91 +218,260 @@ static void pts_termios_speeds(pts_pair *p)
 }
 
 /* ioctl cases shared between master and slave */
-static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
+static int pts_pair_ioctl_tcgets(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
 {
-	switch (cmd) {
-	case TCGETS:
-		memcpy(buf, &p->termios, sizeof(p->termios));
-		return 0;
-	case TCGETS2: {
-		struct termios2 *tc = buf;
-		pts_termios_speeds(p);
-		tc->termios = p->termios;
-		tc->c_ispeed = p->ispeed;
-		tc->c_ospeed = p->ospeed;
-		return 0;
-	}
-	case TCSETS2:
-	case TCSETSW2:
-	case TCSETSF2: {
-		const struct termios2 *tc = buf;
-		if (cmd == TCSETSF2) {
-			p->canon.len = 0;
-			cyb_flush(p->m2s);
-		}
-		p->termios = tc->termios;
-		p->ispeed = tc->c_ispeed;
-		p->ospeed = tc->c_ospeed;
-		pts_termios_speeds(p);
-		return 0;
-	}
-	case TCXONC:
-		/* PTYs don't model software flow-control stop/start state yet. */
-		return 0;
-	case TCSETS:
-	case TCSETSW:
-		memcpy(&p->termios, buf, sizeof(p->termios));
-		return 0;
-	case TCSETSF:
+	pts_pair *p = context;
+	memcpy(buf, &p->termios, sizeof(p->termios));
+	return 0;
+}
+
+static int pts_pair_ioctl_tcgets2(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+
+	struct termios2 *tc = buf;
+	pts_termios_speeds(p);
+	tc->termios = p->termios;
+	tc->c_ispeed = p->ispeed;
+	tc->c_ospeed = p->ospeed;
+	return 0;
+}
+
+static int pts_pair_ioctl_tcsets2(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+
+	const struct termios2 *tc = buf;
+	if (cmd == TCSETSF2) {
 		p->canon.len = 0;
 		cyb_flush(p->m2s);
-		memcpy(&p->termios, buf, sizeof(p->termios));
-		return 0;
-	case TIOCGWINSZ: {
-		int irq;
-		spinlock_lock(&p->lock, &irq);
-		memcpy(buf, &p->winsize, sizeof(p->winsize));
-		spinlock_unlock(&p->lock, irq);
-		return 0;
 	}
-	case TIOCSWINSZ: {
-		unsigned pgrp = 0;
-		int irq;
-		spinlock_lock(&p->lock, &irq);
-		if (memcmp(&p->winsize, buf, sizeof(p->winsize)) != 0) {
-			memcpy(&p->winsize, buf, sizeof(p->winsize));
-			pgrp = p->pgrp;
-		}
-		spinlock_unlock(&p->lock, irq);
-		if (pgrp)
-			ps_send_signal_pgrp(pgrp, SIGWINCH);
-		return 0;
-	}
-	case TIOCGPGRP:
-		*(unsigned *)buf = p->pgrp;
-		return 0;
-	case TIOCSPGRP:
-		p->pgrp = *(unsigned *)buf;
-		return 0;
-	case TIOCSCTTY: {
-		task_struct *cur = CURRENT_TASK();
-		int steal = (int)(uintptr_t)buf;
-		if (!cur->user || cur->user->session_id != cur->psid)
-			return -EPERM;
-		if (p->pgrp && !steal)
-			return -EPERM;
-		p->pgrp = cur->user->group_id;
-		return 0;
-	}
-	case TIOCNOTTY: {
-		task_struct *cur = CURRENT_TASK();
-		if (cur->user && p->pgrp == cur->user->group_id)
-			p->pgrp = 0;
-		return 0;
-	}
-	}
-	return -ENOSYS;
+	p->termios = tc->termios;
+	p->ispeed = tc->c_ispeed;
+	p->ospeed = tc->c_ospeed;
+	pts_termios_speeds(p);
+	return 0;
 }
+
+static int pts_pair_ioctl_tcxonc(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	/* PTYs don't model software flow-control stop/start state yet. */
+	return 0;
+}
+
+static int pts_pair_ioctl_tcsets(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+	memcpy(&p->termios, buf, sizeof(p->termios));
+	return 0;
+}
+
+static int pts_pair_ioctl_tcsetsf(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+	p->canon.len = 0;
+	cyb_flush(p->m2s);
+	memcpy(&p->termios, buf, sizeof(p->termios));
+	return 0;
+}
+
+static int pts_pair_ioctl_tiocgwinsz(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+
+	int irq;
+	spinlock_lock(&p->lock, &irq);
+	memcpy(buf, &p->winsize, sizeof(p->winsize));
+	spinlock_unlock(&p->lock, irq);
+	return 0;
+}
+
+static int pts_pair_ioctl_tiocswinsz(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+
+	unsigned pgrp = 0;
+	int irq;
+	spinlock_lock(&p->lock, &irq);
+	if (memcmp(&p->winsize, buf, sizeof(p->winsize)) != 0) {
+		memcpy(&p->winsize, buf, sizeof(p->winsize));
+		pgrp = p->pgrp;
+	}
+	spinlock_unlock(&p->lock, irq);
+	if (pgrp)
+		ps_send_signal_pgrp(pgrp, SIGWINCH);
+	return 0;
+}
+
+static int pts_pair_ioctl_tiocgpgrp(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+	*(unsigned *)buf = p->pgrp;
+	return 0;
+}
+
+static int pts_pair_ioctl_tiocspgrp(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+	pts_pair_set_group(p, *(unsigned *)buf);
+	return 0;
+}
+
+static int pts_pair_ioctl_tiocsctty(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+
+	task_struct *cur = CURRENT_TASK();
+	int steal = (int)(uintptr_t)buf;
+	if (!cur->user || cur->user->session_id != cur->psid)
+		return -EPERM;
+	if (p->pgrp && !steal)
+		return -EPERM;
+	pts_pair_set_group(p, cur->user->group_id);
+	return 0;
+}
+
+static int pts_pair_ioctl_tiocnotty(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	pts_pair *p = context;
+
+	task_struct *cur = CURRENT_TASK();
+	if (cur->user && p->pgrp == cur->user->group_id)
+		pts_pair_set_group(p, 0);
+	return 0;
+}
+
+static const command_operation pts_terminal_commands[256] = {
+	[TCGETS & 255] = { TCGETS, pts_pair_ioctl_tcgets },
+	[TCGETS2 & 255] = { TCGETS2, pts_pair_ioctl_tcgets2 },
+	[TCSETS2 & 255] = { TCSETS2, pts_pair_ioctl_tcsets2 },
+	[TCSETSW2 & 255] = { TCSETSW2, pts_pair_ioctl_tcsets2 },
+	[TCSETSF2 & 255] = { TCSETSF2, pts_pair_ioctl_tcsets2 },
+	[TCXONC & 255] = { TCXONC, pts_pair_ioctl_tcxonc },
+	[TCSETS & 255] = { TCSETS, pts_pair_ioctl_tcsets },
+	[TCSETSW & 255] = { TCSETSW, pts_pair_ioctl_tcsets },
+	[TCSETSF & 255] = { TCSETSF, pts_pair_ioctl_tcsetsf },
+	[TIOCGWINSZ & 255] = { TIOCGWINSZ, pts_pair_ioctl_tiocgwinsz },
+	[TIOCSWINSZ & 255] = { TIOCSWINSZ, pts_pair_ioctl_tiocswinsz },
+	[TIOCGPGRP & 255] = { TIOCGPGRP, pts_pair_ioctl_tiocgpgrp },
+	[TIOCSPGRP & 255] = { TIOCSPGRP, pts_pair_ioctl_tiocspgrp },
+	[TIOCSCTTY & 255] = { TIOCSCTTY, pts_pair_ioctl_tiocsctty },
+	[TIOCNOTTY & 255] = { TIOCNOTTY, pts_pair_ioctl_tiocnotty },
+};
+
+static const command_operation *const pts_terminal_command_groups[256] = {
+	[(TCGETS >> 8) & 255] = pts_terminal_commands,
+};
+
+static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
+{
+	return command_dispatch(pts_terminal_command_groups, p, cmd, buf, -ENOSYS);
+}
+
+static int pts_master_ioctl_tiocgptn(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+	*(unsigned *)buf = (unsigned)p->idx;
+	return 0;
+}
+
+static int pts_master_ioctl_fionread(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+	*(int *)buf = cyb_get_buf_len(p->s2m);
+	return 0;
+}
+
+static int pts_master_ioctl_tiocsptlck(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+	p->pt_locked = buf ? (*(int *)buf != 0) : 0;
+	return 0;
+}
+
+static int pts_master_ioctl_tiocgptlck(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+	*(int *)buf = p->pt_locked;
+	return 0;
+}
+
+static int pts_master_ioctl_tcflsh(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+
+	int sel = (int)(uintptr_t)buf;
+	if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+		sel = TCIOFLUSH;
+	if (sel == TCIFLUSH || sel == TCIOFLUSH)
+		cyb_flush(p->s2m);
+	if (sel == TCOFLUSH || sel == TCIOFLUSH)
+		cyb_flush(p->m2s);
+	return 0;
+}
+
+static int pts_master_ioctl_tiocpkt(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+	p->pkt_mode = buf ? (*(int *)buf != 0) : 0;
+	p->pkt_status = 0;
+	return 0;
+}
+
+static const command_operation pts_master_commands[256] = {
+	[TIOCGPTN & 255] = { TIOCGPTN, pts_master_ioctl_tiocgptn },
+	[FIONREAD & 255] = { FIONREAD, pts_master_ioctl_fionread },
+	[TIOCSPTLCK & 255] = { TIOCSPTLCK, pts_master_ioctl_tiocsptlck },
+	[TIOCGPTLCK & 255] = { TIOCGPTLCK, pts_master_ioctl_tiocgptlck },
+	[TCFLSH & 255] = { TCFLSH, pts_master_ioctl_tcflsh },
+	[TIOCPKT & 255] = { TIOCPKT, pts_master_ioctl_tiocpkt },
+};
+
+static const command_operation *const pts_master_command_groups[256] = {
+	[(TIOCGPTN >> 8) & 255] = pts_master_commands,
+};
 
 int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 {
@@ -291,35 +479,8 @@ int pts_master_ioctl(file *fp, unsigned cmd, void *buf)
 	int ret = pts_pair_ioctl(p, cmd, buf);
 	if (ret != -ENOSYS)
 		return ret;
-	switch (cmd) {
-	case TIOCGPTN:
-		*(unsigned *)buf = (unsigned)p->idx;
-		return 0;
-	case FIONREAD:
-		*(int *)buf = cyb_get_buf_len(p->s2m);
-		return 0;
-	case TIOCSPTLCK:
-		p->pt_locked = buf ? (*(int *)buf != 0) : 0;
-		return 0;
-	case TIOCGPTLCK:
-		*(int *)buf = p->pt_locked;
-		return 0;
-	case TCFLSH: {
-		int sel = (int)(uintptr_t)buf;
-		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
-			sel = TCIOFLUSH;
-		if (sel == TCIFLUSH || sel == TCIOFLUSH)
-			cyb_flush(p->s2m);
-		if (sel == TCOFLUSH || sel == TCIOFLUSH)
-			cyb_flush(p->m2s);
-		return 0;
-	}
-	case TIOCPKT:
-		p->pkt_mode = buf ? (*(int *)buf != 0) : 0;
-		p->pkt_status = 0;
-		return 0;
-	}
-	return -ENOSYS;
+	return command_dispatch(pts_master_command_groups, fp, cmd, buf,
+				-ENOSYS);
 }
 
 ssize_t pts_master_read(file *fp, void *buf, size_t size, loff_t *pos)
@@ -415,76 +576,138 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 	return ready;
 }
 
+static int pts_slave_ioctl_tcflsh(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+
+	int sel = (int)(uintptr_t)buf;
+	if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
+		sel = TCIOFLUSH;
+	if (sel == TCIFLUSH || sel == TCIOFLUSH)
+		cyb_flush(p->m2s);
+	if (sel == TCOFLUSH || sel == TCIOFLUSH)
+		cyb_flush(p->s2m);
+	return 0;
+}
+
+static int pts_slave_ioctl_fionread(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	pts_pair *p = fp->f_inode->i_private;
+	*(int *)buf = pts_slave_fionread(p);
+	return 0;
+}
+
+static int pts_slave_ioctl_kdgetmode(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	*(int *)buf = KD_TEXT;
+	return 0;
+}
+
+static int pts_slave_ioctl_kdsetmode(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int pts_slave_ioctl_gio_font(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	memset(buf, 0, 256 * 8);
+	return 0;
+}
+
+static int pts_slave_ioctl_pio_font(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int pts_slave_ioctl_gio_fontx(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	struct consolefontdesc *cfd = (struct consolefontdesc *)buf;
+	if (cfd->chardata)
+		memset(cfd->chardata, 0,
+		       (size_t)cfd->charcount * cfd->charheight);
+	cfd->charcount = 256;
+	cfd->charheight = 16;
+	return 0;
+}
+
+static int pts_slave_ioctl_pio_fontx(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int pts_slave_ioctl_kdfontop(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf)
+{
+	return tty_font_ioctl(buf);
+}
+
+static int pts_slave_ioctl_pio_unimapclr(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int pts_slave_ioctl_gio_unimap(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	struct unimapdesc *ud = (struct unimapdesc *)buf;
+	ud->entry_ct = 0;
+	return 0;
+}
+
+static const command_operation pts_slave_terminal_commands[256] = {
+	[TCFLSH & 255] = { TCFLSH, pts_slave_ioctl_tcflsh },
+	[FIONREAD & 255] = { FIONREAD, pts_slave_ioctl_fionread },
+};
+
+static const command_operation pts_slave_console_commands[256] = {
+	[KDGETMODE & 255] = { KDGETMODE, pts_slave_ioctl_kdgetmode },
+	[KDSETMODE & 255] = { KDSETMODE, pts_slave_ioctl_kdsetmode },
+	[GIO_FONT & 255] = { GIO_FONT, pts_slave_ioctl_gio_font },
+	[PIO_FONT & 255] = { PIO_FONT, pts_slave_ioctl_pio_font },
+	[GIO_FONTX & 255] = { GIO_FONTX, pts_slave_ioctl_gio_fontx },
+	[PIO_FONTX & 255] = { PIO_FONTX, pts_slave_ioctl_pio_fontx },
+	[KDFONTOP & 255] = { KDFONTOP, pts_slave_ioctl_kdfontop },
+	[PIO_UNIMAPCLR & 255] = { PIO_UNIMAPCLR,
+				  pts_slave_ioctl_pio_unimapclr },
+	[PIO_UNIMAP & 255] = { PIO_UNIMAP, pts_slave_ioctl_pio_unimapclr },
+	[GIO_UNIMAP & 255] = { GIO_UNIMAP, pts_slave_ioctl_gio_unimap },
+};
+
+static const command_operation *const pts_slave_command_groups[256] = {
+	[(TCFLSH >> 8) & 255] = pts_slave_terminal_commands,
+	[(KDGETMODE >> 8) & 255] = pts_slave_console_commands,
+};
+
 int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 {
 	pts_pair *p = fp->f_inode->i_private;
 	int ret = pts_pair_ioctl(p, cmd, buf);
 	if (ret != -ENOSYS)
 		return ret;
-	switch (cmd) {
-	case TCFLSH: {
-		int sel = (int)(uintptr_t)buf;
-		if (sel != TCIFLUSH && sel != TCOFLUSH && sel != TCIOFLUSH)
-			sel = TCIOFLUSH;
-		if (sel == TCIFLUSH || sel == TCIOFLUSH)
-			cyb_flush(p->m2s);
-		if (sel == TCOFLUSH || sel == TCIOFLUSH)
-			cyb_flush(p->s2m);
-		return 0;
-	}
-	case FIONREAD:
-		*(int *)buf = pts_slave_fionread(p);
-		return 0;
-	case KDGETMODE:
-		*(int *)buf = KD_TEXT;
-		return 0;
-	case KDSETMODE:
-		return 0;
-	case GIO_FONT:
-		memset(buf, 0, 256 * 8);
-		return 0;
-	case PIO_FONT:
-		return 0;
-	case GIO_FONTX: {
-		struct consolefontdesc *cfd = (struct consolefontdesc *)buf;
-		if (cfd->chardata)
-			memset(cfd->chardata, 0,
-			       (size_t)cfd->charcount * cfd->charheight);
-		cfd->charcount = 256;
-		cfd->charheight = 16;
-		return 0;
-	}
-	case PIO_FONTX:
-		return 0;
-	case KDFONTOP: {
-		struct console_font_op *cfo = (struct console_font_op *)buf;
-		switch (cfo->op) {
-		case KD_FONT_OP_SET:
-		case KD_FONT_OP_SET_DEFAULT:
-		case KD_FONT_OP_COPY:
-			return 0;
-		case KD_FONT_OP_GET:
-			cfo->width = 8;
-			cfo->height = 16;
-			cfo->charcount = 256;
-			if (cfo->data)
-				memset(cfo->data, 0,
-				       cfo->charcount * ((cfo->width + 7) / 8) *
-					       cfo->height);
-			return 0;
-		}
-		return -EINVAL;
-	}
-	case PIO_UNIMAPCLR:
-	case PIO_UNIMAP:
-		return 0;
-	case GIO_UNIMAP: {
-		struct unimapdesc *ud = (struct unimapdesc *)buf;
-		ud->entry_ct = 0;
-		return 0;
-	}
-	}
-	return -ENOSYS;
+	return command_dispatch(pts_slave_command_groups, fp, cmd, buf,
+				-ENOSYS);
 }
 
 /* O_PATH open: metadata only, no cycbuf refs taken. */

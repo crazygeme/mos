@@ -6,6 +6,28 @@
 static device_t *devices;
 static device_t **device_tail = &devices;
 static unsigned boot_vga;
+static struct rb_root device_addresses = _RBTREE_ROOT_INIT;
+
+static int device_compare(device_bus_t bus, uint32_t address,
+			  const device_t *device)
+{
+	if (bus != device->bus)
+		return bus < device->bus ? -1 : 1;
+	return address < device->address ? -1 : address != device->address;
+}
+
+const device_t *device_find(device_bus_t bus, uint32_t address)
+{
+	struct rb_node *node = device_addresses.rb_node;
+	while (node) {
+		device_t *device = rb_entry(node, device_t, address_node);
+		int order = device_compare(bus, address, device);
+		if (!order)
+			return device;
+		node = order < 0 ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
 
 const device_t *device_first(void)
 {
@@ -15,40 +37,29 @@ const device_t *device_first(void)
 void device_probe(device_t *device)
 {
 	driver_t *driver = device->selected_driver;
-	const pci_device_id *id;
 	if (!driver || device->probe_done)
 		return;
 	device->probe_done = 1;
-	device->probe_error = -ENODEV;
-	if (device->bus != driver->bus)
-		return;
-	switch (device->bus) {
-	case DEVICE_BUS_PCI:
-		id = driver_match_pci(driver, device);
-		if (id)
-			device->probe_error = driver->probe_pci(
-				device->address, device->vendor_id,
-				device->device_id, id);
-		break;
-	case DEVICE_BUS_PS2:
-		if (driver->probe_ps2 && driver->ps2_port == device->address)
-			device->probe_error =
-				driver->probe_ps2(device->address);
-		break;
-	default:
-		break;
-	}
+	device->probe_error = driver_probe(device);
 	if (!device->probe_error)
 		device->driver = driver;
 }
 
 void device_register(device_t *device)
 {
-	device_t *existing;
-	for (existing = devices; existing; existing = existing->next)
-		if (existing->bus == device->bus &&
-		    existing->address == device->address)
+	struct rb_node **link = &device_addresses.rb_node, *parent = NULL;
+	while (*link) {
+		device_t *existing = rb_entry(*link, device_t, address_node);
+		int order =
+			device_compare(device->bus, device->address, existing);
+		if (!order)
 			return;
+		parent = *link;
+		link = order < 0 ? &parent->rb_left : &parent->rb_right;
+	}
+	rb_init_node(&device->address_node);
+	rb_link_node(&device->address_node, parent, link);
+	rb_insert_color(&device->address_node, &device_addresses);
 	device->next = 0;
 	*device_tail = device;
 	device_tail = &device->next;

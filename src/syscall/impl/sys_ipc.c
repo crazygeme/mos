@@ -8,6 +8,9 @@
 #include <macro.h>
 #include <mm/mmu.h>
 #include <errno.h>
+#include <lib/rbtree.h>
+#include <lib/slots.h>
+#include <syscall/syscall.h>
 
 #define MOS_IPC_PRIVATE 0
 #define MOS_IPC_CREAT 01000
@@ -57,8 +60,8 @@ struct mos_shm_segment {
 	int removed;
 	int key;
 	int shmid;
-	unsigned size;
-	unsigned page_count;
+	size_t size;
+	size_t page_count;
 	paddr_t *pages;
 	unsigned owner_pid;
 	unsigned creator_uid;
@@ -66,24 +69,69 @@ struct mos_shm_segment {
 	unsigned mode;
 	unsigned ctime;
 	unsigned attach_count;
+	struct rb_node id_node, key_node;
 };
 
 struct mos_shm_attach {
+	struct rb_node address_node;
 	int used;
 	int shmid;
 	unsigned owner_pid;
-	unsigned addr;
-	unsigned size;
+	vaddr_t addr;
+	size_t size;
 };
 
 static struct mos_shm_segment mos_shm_segments[MOS_SHM_SEGMENT_MAX];
 static struct mos_shm_attach mos_shm_attaches[MOS_SHM_ATTACH_MAX];
 static spinlock_t mos_shm_lock;
 static int mos_shm_next_id = 1;
+static struct rb_root shm_ids = _RBTREE_ROOT_INIT;
+static struct rb_root shm_keys = _RBTREE_ROOT_INIT;
+static struct rb_root shm_addresses = _RBTREE_ROOT_INIT;
+static slot_pool shm_segment_slots, shm_attach_slots;
+
+static struct mos_shm_attach *shm_address_find(unsigned owner, vaddr_t address)
+{
+	struct rb_node *node = shm_addresses.rb_node;
+	struct mos_shm_attach *match = NULL;
+	while (node) {
+		struct mos_shm_attach *attach =
+			rb_entry(node, struct mos_shm_attach, address_node);
+		if (owner == attach->owner_pid && address == attach->addr) {
+			match = attach;
+			node = node->rb_left;
+		} else {
+			int before = owner < attach->owner_pid ||
+				     (owner == attach->owner_pid &&
+				      address < attach->addr);
+			node = before ? node->rb_left : node->rb_right;
+		}
+	}
+	return match;
+}
+
+static void shm_address_insert(struct mos_shm_attach *attach)
+{
+	struct rb_node **link = &shm_addresses.rb_node, *parent = NULL;
+	while (*link) {
+		struct mos_shm_attach *other =
+			rb_entry(*link, struct mos_shm_attach, address_node);
+		parent = *link;
+		int before =
+			attach->owner_pid < other->owner_pid ||
+			(attach->owner_pid == other->owner_pid &&
+			 (attach->addr < other->addr ||
+			  (attach->addr == other->addr && attach < other)));
+		link = before ? &parent->rb_left : &parent->rb_right;
+	}
+	rb_init_node(&attach->address_node);
+	rb_link_node(&attach->address_node, parent, link);
+	rb_insert_color(&attach->address_node, &shm_addresses);
+}
 
 static void mos_shm_release_pages(struct mos_shm_segment *seg)
 {
-	unsigned i;
+	size_t i;
 
 	if (!seg || !seg->pages)
 		return;
@@ -109,7 +157,11 @@ static void mos_shm_destroy_segment(struct mos_shm_segment *seg)
 	if (!seg)
 		return;
 
+	rb_erase(&seg->id_node, &shm_ids);
+	if (seg->key != MOS_IPC_PRIVATE && !seg->removed)
+		rb_erase(&seg->key_node, &shm_keys);
 	mos_shm_release_pages(seg);
+	slot_return(&shm_segment_slots, seg - mos_shm_segments);
 	memset(seg, 0, sizeof(*seg));
 }
 
@@ -120,37 +172,65 @@ static void mos_shm_init(void)
 
 KERNEL_INIT(7, mos_shm_init);
 
-static struct mos_shm_segment *mos_shm_find_by_id(int shmid)
+static struct mos_shm_segment *shm_ids_find(int key)
 {
-	int i;
-
-	for (i = 0; i < MOS_SHM_SEGMENT_MAX; ++i) {
-		if (mos_shm_segments[i].used &&
-		    mos_shm_segments[i].shmid == shmid)
-			return &mos_shm_segments[i];
+	struct rb_node *node = shm_ids.rb_node;
+	while (node) {
+		struct mos_shm_segment *seg =
+			rb_entry(node, struct mos_shm_segment, id_node);
+		if (key == seg->shmid)
+			return seg;
+		node = key < seg->shmid ? node->rb_left : node->rb_right;
 	}
-
 	return NULL;
 }
-
-static struct mos_shm_segment *mos_shm_find_by_key(int key)
+static void shm_ids_insert(struct mos_shm_segment *seg)
 {
-	int i;
-
-	for (i = 0; i < MOS_SHM_SEGMENT_MAX; ++i) {
-		if (mos_shm_segments[i].used && !mos_shm_segments[i].removed &&
-		    mos_shm_segments[i].key == key)
-			return &mos_shm_segments[i];
+	struct rb_node **link = &shm_ids.rb_node, *parent = NULL;
+	while (*link) {
+		struct mos_shm_segment *other =
+			rb_entry(*link, struct mos_shm_segment, id_node);
+		parent = *link;
+		link = seg->shmid < other->shmid ? &parent->rb_left :
+						   &parent->rb_right;
 	}
-
-	return NULL;
+	rb_init_node(&seg->id_node);
+	rb_link_node(&seg->id_node, parent, link);
+	rb_insert_color(&seg->id_node, &shm_ids);
 }
 
-static int mos_shm_create(int key, unsigned size, unsigned mode)
+static struct mos_shm_segment *shm_keys_find(int key)
+{
+	struct rb_node *node = shm_keys.rb_node;
+	while (node) {
+		struct mos_shm_segment *seg =
+			rb_entry(node, struct mos_shm_segment, key_node);
+		if (key == seg->key)
+			return seg;
+		node = key < seg->key ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
+static void shm_keys_insert(struct mos_shm_segment *seg)
+{
+	struct rb_node **link = &shm_keys.rb_node, *parent = NULL;
+	while (*link) {
+		struct mos_shm_segment *other =
+			rb_entry(*link, struct mos_shm_segment, key_node);
+		parent = *link;
+		link = seg->key < other->key ? &parent->rb_left :
+					       &parent->rb_right;
+	}
+	rb_init_node(&seg->key_node);
+	rb_link_node(&seg->key_node, parent, link);
+	rb_insert_color(&seg->key_node, &shm_keys);
+}
+
+static int mos_shm_create(int key, size_t size, unsigned mode)
 {
 	task_struct *cur = CURRENT_TASK();
 	int i;
-	unsigned page_count;
+	size_t page_count;
 	paddr_t *pages;
 
 	page_count = (size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -162,34 +242,33 @@ static int mos_shm_create(int key, unsigned size, unsigned mode)
 		return -ENOMEM;
 	memset(pages, 0, sizeof(*pages) * page_count);
 
-	for (i = 0; i < MOS_SHM_SEGMENT_MAX; ++i) {
-		struct mos_shm_segment *seg = &mos_shm_segments[i];
-
-		if (seg->used)
-			continue;
-
-		memset(seg, 0, sizeof(*seg));
-		seg->used = 1;
-		seg->key = key;
-		seg->shmid = mos_shm_next_id++;
-		seg->size = (size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
-		if (seg->size == 0)
-			seg->size = PAGE_SIZE;
-		seg->page_count = page_count;
-		seg->pages = pages;
-		seg->owner_pid = cur->psid;
-		seg->creator_uid = cur->user ? cur->user->euid : 0;
-		seg->creator_gid = cur->user ? cur->user->egid : 0;
-		seg->mode = mode & 0777;
-		seg->ctime = (unsigned)(time_wall_us() / 1000000ULL);
-		return seg->shmid;
+	i = slot_take(&shm_segment_slots, MOS_SHM_SEGMENT_MAX);
+	if (i < 0) {
+		kfree(pages);
+		return -ENOSPC;
 	}
-
-	kfree(pages);
-	return -ENOSPC;
+	struct mos_shm_segment *seg = &mos_shm_segments[i];
+	memset(seg, 0, sizeof(*seg));
+	seg->used = 1;
+	seg->key = key;
+	seg->shmid = mos_shm_next_id++;
+	seg->size = (size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	if (seg->size == 0)
+		seg->size = PAGE_SIZE;
+	seg->page_count = page_count;
+	seg->pages = pages;
+	seg->owner_pid = cur->psid;
+	seg->creator_uid = cur->user ? cur->user->euid : 0;
+	seg->creator_gid = cur->user ? cur->user->egid : 0;
+	seg->mode = mode & 0777;
+	seg->ctime = (unsigned)(time_wall_us() / 1000000ULL);
+	shm_ids_insert(seg);
+	if (key != MOS_IPC_PRIVATE)
+		shm_keys_insert(seg);
+	return seg->shmid;
 }
 
-static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
+static int mos_shm_ensure_page(struct mos_shm_segment *seg, size_t page_no,
 			       paddr_t *phy_out)
 {
 	unsigned page_index;
@@ -230,11 +309,11 @@ static int mos_shm_ensure_page(struct mos_shm_segment *seg, unsigned page_no,
 	return 0;
 }
 
-static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg,
+static int mos_shm_map_pages(vaddr_t addr, struct mos_shm_segment *seg,
 			     int prot)
 {
-	unsigned vir;
-	unsigned page_no = 0;
+	vaddr_t vir;
+	size_t page_no = 0;
 	unsigned pte_flag = (prot & PROT_WRITE) ? PAGE_ENTRY_USER_DATA :
 						  PAGE_ENTRY_USER_CODE;
 
@@ -251,7 +330,7 @@ static int mos_shm_map_pages(unsigned addr, struct mos_shm_segment *seg,
 	return 0;
 }
 
-static int mos_shmget(int key, unsigned size, int shmflg)
+int sys_shmget(int key, size_t size, int shmflg)
 {
 	struct mos_shm_segment *seg;
 	int irq;
@@ -263,7 +342,7 @@ static int mos_shmget(int key, unsigned size, int shmflg)
 	spinlock_lock(&mos_shm_lock, &irq);
 
 	if (key != MOS_IPC_PRIVATE) {
-		seg = mos_shm_find_by_key(key);
+		seg = shm_keys_find(key);
 		if (seg) {
 			if ((shmflg & MOS_IPC_CREAT) &&
 			    (shmflg & MOS_IPC_EXCL)) {
@@ -290,13 +369,13 @@ static int mos_shmget(int key, unsigned size, int shmflg)
 }
 
 static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
-		     unsigned *user_raddr)
+		     vaddr_t *user_raddr)
 {
 	task_struct *cur = CURRENT_TASK();
 	struct mos_shm_segment *seg;
 	struct mos_shm_attach *attach = NULL;
-	unsigned addr = (unsigned)(uintptr_t)shmaddr;
-	unsigned mapped;
+	vaddr_t addr = (uintptr_t)shmaddr;
+	intptr_t mapped;
 	int prot = PROT_READ | PROT_WRITE;
 	int flags = MAP_SHARED | MAP_ANONYMOUS;
 	int i;
@@ -317,38 +396,42 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 		prot = PROT_READ;
 
 	spinlock_lock(&mos_shm_lock, &irq);
-	seg = mos_shm_find_by_id(shmid);
+	seg = shm_ids_find(shmid);
 	if (!seg || seg->removed) {
 		spinlock_unlock(&mos_shm_lock, irq);
 		return -EINVAL;
 	}
 
-	for (i = 0; i < MOS_SHM_ATTACH_MAX; ++i) {
-		if (!mos_shm_attaches[i].used) {
-			attach = &mos_shm_attaches[i];
-			break;
-		}
-	}
-	if (!attach) {
+	i = slot_take(&shm_attach_slots, MOS_SHM_ATTACH_MAX);
+	if (i < 0) {
 		spinlock_unlock(&mos_shm_lock, irq);
 		return -ENOSPC;
 	}
+	attach = &mos_shm_attaches[i];
 	spinlock_unlock(&mos_shm_lock, irq);
 
 	mapped = do_mmap(addr, seg->size, prot, flags, -1, 0);
-	if ((int)mapped < 0)
-		return (int)mapped;
+	if (mapped < 0) {
+		spinlock_lock(&mos_shm_lock, &irq);
+		slot_return(&shm_attach_slots, i);
+		spinlock_unlock(&mos_shm_lock, irq);
+		return mapped;
+	}
 
 	if (mos_shm_map_pages(mapped, seg, prot) != 0) {
 		do_munmap((void *)(uintptr_t)mapped, seg->size);
+		spinlock_lock(&mos_shm_lock, &irq);
+		slot_return(&shm_attach_slots, i);
+		spinlock_unlock(&mos_shm_lock, irq);
 		return -ENOMEM;
 	}
 
 	*user_raddr = mapped;
 
 	spinlock_lock(&mos_shm_lock, &irq);
-	seg = mos_shm_find_by_id(shmid);
+	seg = shm_ids_find(shmid);
 	if (!seg || seg->removed) {
+		slot_return(&shm_attach_slots, i);
 		spinlock_unlock(&mos_shm_lock, irq);
 		do_munmap((void *)(uintptr_t)mapped,
 			  seg ? seg->size : PAGE_SIZE);
@@ -361,34 +444,29 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 	attach->owner_pid = cur->psid;
 	attach->addr = mapped;
 	attach->size = seg->size;
+	shm_address_insert(attach);
 	seg->attach_count++;
 	spinlock_unlock(&mos_shm_lock, irq);
 	return 0;
 }
 
-static int mos_shmdt(const void *shmaddr)
+int sys_shmdt(const void *shmaddr)
 {
 	task_struct *cur = CURRENT_TASK();
 	struct mos_shm_segment *seg;
-	unsigned addr = (unsigned)(uintptr_t)shmaddr;
-	unsigned size = 0;
+	vaddr_t addr = (uintptr_t)shmaddr;
+	size_t size = 0;
 	int shmid = -1;
-	int i;
 	int irq;
 
 	spinlock_lock(&mos_shm_lock, &irq);
-	for (i = 0; i < MOS_SHM_ATTACH_MAX; ++i) {
-		if (!mos_shm_attaches[i].used)
-			continue;
-		if (mos_shm_attaches[i].owner_pid != cur->psid)
-			continue;
-		if (mos_shm_attaches[i].addr != addr)
-			continue;
-
-		size = mos_shm_attaches[i].size;
-		shmid = mos_shm_attaches[i].shmid;
-		memset(&mos_shm_attaches[i], 0, sizeof(mos_shm_attaches[i]));
-		break;
+	struct mos_shm_attach *attach = shm_address_find(cur->psid, addr);
+	if (attach) {
+		size = attach->size;
+		shmid = attach->shmid;
+		rb_erase(&attach->address_node, &shm_addresses);
+		slot_return(&shm_attach_slots, attach - mos_shm_attaches);
+		memset(attach, 0, sizeof(*attach));
 	}
 
 	if (size == 0) {
@@ -396,7 +474,7 @@ static int mos_shmdt(const void *shmaddr)
 		return -EINVAL;
 	}
 
-	seg = mos_shm_find_by_id(shmid);
+	seg = shm_ids_find(shmid);
 	if (seg) {
 		if (seg->attach_count > 0)
 			seg->attach_count--;
@@ -408,50 +486,114 @@ static int mos_shmdt(const void *shmaddr)
 	return do_munmap((void *)(uintptr_t)addr, size);
 }
 
-static int mos_shmctl(int shmid, int cmd, void *buf)
+static int shm_remove(struct mos_shm_segment *seg, void *buf)
 {
+	if (!seg->removed && seg->key != MOS_IPC_PRIVATE)
+		rb_erase(&seg->key_node, &shm_keys);
+	seg->removed = 1;
+	if (!seg->attach_count)
+		mos_shm_destroy_segment(seg);
+	return 0;
+}
+
+static int shm_stat(struct mos_shm_segment *seg, void *buf)
+{
+	if (!buf)
+		return -EFAULT;
+#if MOS_HAS_NATIVE_USER
+	if (current->user->abi == MOS_ABI_AMD64) {
+		struct native_shmid_ds {
+			struct {
+				int32_t key;
+				uint32_t uid, gid, cuid, cgid;
+				uint16_t mode, pad1, seq, pad2;
+				uint64_t unused[2];
+			} perm;
+			uint64_t size, atime, dtime, ctime;
+			int32_t cpid, lpid;
+			uint64_t nattch, unused[2];
+		} *wire = buf;
+		_Static_assert(sizeof(struct native_shmid_ds) == 112,
+			       "AMD64 shmid_ds layout");
+		memset(wire, 0, sizeof(*wire));
+		wire->perm.key = seg->key;
+		wire->perm.uid = wire->perm.cuid = seg->creator_uid;
+		wire->perm.gid = wire->perm.cgid = seg->creator_gid;
+		wire->perm.mode = seg->mode;
+		wire->size = seg->size;
+		wire->ctime = seg->ctime;
+		wire->cpid = seg->owner_pid;
+		wire->nattch = seg->attach_count;
+		return 0;
+	}
+#endif
+	struct mos_shmid_ds *wire = buf;
+	memset(wire, 0, sizeof(*wire));
+	wire->shm_perm.key = seg->key;
+	wire->shm_perm.uid = wire->shm_perm.cuid = seg->creator_uid;
+	wire->shm_perm.gid = wire->shm_perm.cgid = seg->creator_gid;
+	wire->shm_perm.mode = seg->mode;
+	wire->shm_segsz = seg->size;
+	wire->shm_ctime = seg->ctime;
+	wire->shm_cpid = seg->owner_pid;
+	wire->shm_nattch = seg->attach_count;
+	return 0;
+}
+
+int sys_shmctl(int shmid, int cmd, void *buf)
+{
+	static int (*const calls[])(struct mos_shm_segment *, void *) = {
+		[MOS_IPC_RMID] = shm_remove,
+		[MOS_IPC_STAT] = shm_stat,
+	};
 	struct mos_shm_segment *seg;
-	int irq;
-
+	int irq, ret;
 	cmd &= ~MOS_IPC_64;
-
 	spinlock_lock(&mos_shm_lock, &irq);
-	seg = mos_shm_find_by_id(shmid);
-	if (!seg) {
-		spinlock_unlock(&mos_shm_lock, irq);
-		return -EINVAL;
-	}
+	seg = shm_ids_find(shmid);
+	if (!seg)
+		ret = -EINVAL;
+	else if ((unsigned)cmd >= sizeof(calls) / sizeof(calls[0]) ||
+		 !calls[cmd])
+		ret = -ENOSYS;
+	else
+		ret = calls[cmd](seg, buf);
+	spinlock_unlock(&mos_shm_lock, irq);
+	return ret;
+}
 
-	switch (cmd) {
-	case MOS_IPC_RMID:
-		seg->removed = 1;
-		if (seg->attach_count == 0)
-			mos_shm_destroy_segment(seg);
-		spinlock_unlock(&mos_shm_lock, irq);
-		return 0;
-	case MOS_IPC_STAT:
-		if (!buf) {
-			spinlock_unlock(&mos_shm_lock, irq);
-			return -EFAULT;
-		}
+intptr_t sys_shmat(int shmid, const void *address, int flags)
+{
+	vaddr_t mapped;
+	int ret = mos_shmat(shmid, address, flags, &mapped);
+	return ret ? ret : (intptr_t)mapped;
+}
 
-		memset(buf, 0, sizeof(struct mos_shmid_ds));
-		((struct mos_shmid_ds *)buf)->shm_perm.key = seg->key;
-		((struct mos_shmid_ds *)buf)->shm_perm.uid = seg->creator_uid;
-		((struct mos_shmid_ds *)buf)->shm_perm.gid = seg->creator_gid;
-		((struct mos_shmid_ds *)buf)->shm_perm.cuid = seg->creator_uid;
-		((struct mos_shmid_ds *)buf)->shm_perm.cgid = seg->creator_gid;
-		((struct mos_shmid_ds *)buf)->shm_perm.mode = seg->mode;
-		((struct mos_shmid_ds *)buf)->shm_segsz = seg->size;
-		((struct mos_shmid_ds *)buf)->shm_ctime = seg->ctime;
-		((struct mos_shmid_ds *)buf)->shm_cpid = seg->owner_pid;
-		((struct mos_shmid_ds *)buf)->shm_nattch = seg->attach_count;
-		spinlock_unlock(&mos_shm_lock, irq);
-		return 0;
-	default:
-		spinlock_unlock(&mos_shm_lock, irq);
-		return -ENOSYS;
-	}
+static int ipc_shmget(int first, int second, int third, void *ptr)
+{
+	return sys_shmget(first, (unsigned)second, third);
+}
+
+static int ipc_shmat(int first, int second, int third, void *ptr)
+{
+	vaddr_t mapped;
+	unsigned *output = (void *)(uintptr_t)(uint32_t)third;
+	if (!output)
+		return -EFAULT;
+	int ret = mos_shmat(first, ptr, second, &mapped);
+	if (!ret)
+		*output = mapped;
+	return ret;
+}
+
+static int ipc_shmdt(int first, int second, int third, void *ptr)
+{
+	return sys_shmdt(ptr);
+}
+
+static int ipc_shmctl(int first, int second, int third, void *ptr)
+{
+	return sys_shmctl(first, second, ptr);
 }
 
 int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
@@ -466,19 +608,13 @@ int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
 		klog("ipc(call=%u, version=%u, first=%x, second=%x, third=%x, ptr=%x, fifth=%x)\n",
 		     call, version, first, second, third, ptr, fifth);
 
-	switch (call) {
-	case MOS_SHMGET:
-		return mos_shmget(first, (unsigned)second, third);
-	case MOS_SHMAT:
-		/* The i386 IPC multiplexer carries this pointer in a signed int.
-		 * Preserve its 32-bit address bits before widening to uintptr_t. */
-		return mos_shmat(first, ptr, second,
-				 (unsigned *)(uintptr_t)(uint32_t)third);
-	case MOS_SHMDT:
-		return mos_shmdt(ptr);
-	case MOS_SHMCTL:
-		return mos_shmctl(first, second, ptr);
-	default:
+	static int (*const calls[])(int, int, int, void *) = {
+		[MOS_SHMGET] = ipc_shmget,
+		[MOS_SHMAT] = ipc_shmat,
+		[MOS_SHMDT] = ipc_shmdt,
+		[MOS_SHMCTL] = ipc_shmctl,
+	};
+	if (call >= sizeof(calls) / sizeof(calls[0]) || !calls[call])
 		return -ENOSYS;
-	}
+	return calls[call](first, second, third, ptr);
 }

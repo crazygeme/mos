@@ -45,13 +45,16 @@ vfs_entry_node *vfs_entry_child(vfs_entry_node *parent, const char *name)
 	struct rb_node *cursor;
 	if (!parent)
 		return NULL;
-	for (cursor = rb_first(&parent->sb->s_mounts); cursor;
-	     cursor = rb_next(cursor)) {
+	cursor = parent->sb->s_mounts.rb_node;
+	while (cursor) {
 		vfs_mount_node *mount =
 			rb_entry(cursor, vfs_mount_node, rb_node);
-		if (mount->sb->s_op == &entry_sops &&
-		    !strcmp(mount->path + 1, name))
-			return mount->sb->s_fs_info;
+		int order = strcmp(mount->path + 1, name);
+		if (!order)
+			return mount->sb->s_op == &entry_sops ?
+				       mount->sb->s_fs_info :
+				       NULL;
+		cursor = order < 0 ? cursor->rb_left : cursor->rb_right;
 	}
 	return NULL;
 }

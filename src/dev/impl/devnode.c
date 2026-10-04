@@ -8,10 +8,9 @@
  * S_IFIFO  : a cy_buf shared across all opens; reader/writer counts are
  *            managed by cyb_reader_open/cyb_writer_open so that EOF
  *            propagates correctly when all writers close.
- * S_IFCHR /
- * S_IFBLK /
- * S_IFSOCK : stat returns the right mode and rdev; actual I/O returns
- *            -ENXIO (no central char-device registry exists).
+ * S_IFCHR / S_IFBLK: registered major/minor ranges dispatch to device
+ *                   callbacks; unregistered nodes return -ENXIO for I/O.
+ * S_IFSOCK: metadata is available; I/O returns -ENXIO.
  */
 
 #include <fs/fs.h>
@@ -31,17 +30,40 @@
 
 #define MAX_CDEVS 32
 
-typedef struct {
+typedef struct cdev_entry {
 	unsigned mode_type; /* S_IFCHR or S_IFBLK */
 	unsigned major;
 	unsigned minor_base;
 	unsigned minor_count;
 	const char *name;
 	file *(*open)(super_block *sb, unsigned rdev, int flag);
+	struct rb_node major_node;
+	struct cdev_entry *major_next, **major_tail;
 } cdev_entry;
 
 static cdev_entry cdev_table[MAX_CDEVS];
 static int cdev_count;
+static struct rb_root cdev_majors = _RBTREE_ROOT_INIT;
+
+static int cdev_compare(unsigned mode, unsigned major, const cdev_entry *entry)
+{
+	if (mode != entry->mode_type)
+		return mode < entry->mode_type ? -1 : 1;
+	return major < entry->major ? -1 : major != entry->major;
+}
+
+static cdev_entry *cdev_find_major(unsigned mode, unsigned major)
+{
+	struct rb_node *node = cdev_majors.rb_node;
+	while (node) {
+		cdev_entry *entry = rb_entry(node, cdev_entry, major_node);
+		int order = cdev_compare(mode, major, entry);
+		if (!order)
+			return entry;
+		node = order < 0 ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
 
 static const file_operations devnode_fops;
 static const file_operations fifonode_reader_fops;
@@ -53,38 +75,47 @@ void cdev_register_named(unsigned mode_type, unsigned major,
 			 file *(*open)(super_block *sb, unsigned rdev,
 				       int flag))
 {
+	struct rb_node **link = &cdev_majors.rb_node, *parent = NULL;
+	cdev_entry *entry, *head = NULL;
 	if (cdev_count >= MAX_CDEVS)
 		return;
-	cdev_table[cdev_count].mode_type = mode_type;
-	cdev_table[cdev_count].major = major;
-	cdev_table[cdev_count].minor_base = minor_base;
-	cdev_table[cdev_count].minor_count = minor_count;
-	cdev_table[cdev_count].name = name;
-	cdev_table[cdev_count].open = open;
-	cdev_count++;
+	entry = &cdev_table[cdev_count++];
+	entry->mode_type = mode_type;
+	entry->major = major;
+	entry->minor_base = minor_base;
+	entry->minor_count = minor_count;
+	entry->name = name;
+	entry->open = open;
+	while (*link) {
+		cdev_entry *existing = rb_entry(*link, cdev_entry, major_node);
+		int order = cdev_compare(mode_type, major, existing);
+		if (!order) {
+			head = existing;
+			break;
+		}
+		parent = *link;
+		link = order < 0 ? &parent->rb_left : &parent->rb_right;
+	}
+	if (head) {
+		*head->major_tail = entry;
+		head->major_tail = &entry->major_next;
+		return;
+	}
+	entry->major_tail = &entry->major_next;
+	rb_init_node(&entry->major_node);
+	rb_link_node(&entry->major_node, parent, link);
+	rb_insert_color(&entry->major_node, &cdev_majors);
 }
 
 void cdev_for_each_major(cdev_major_iter_fn fn, void *data)
 {
-	int i, j, seen;
-
+	int i;
 	if (!fn)
 		return;
-
-	for (i = 0; i < cdev_count; i++) {
-		seen = 0;
-		for (j = 0; j < i; j++) {
-			if (cdev_table[j].mode_type ==
-				    cdev_table[i].mode_type &&
-			    cdev_table[j].major == cdev_table[i].major) {
-				seen = 1;
-				break;
-			}
-		}
-		if (!seen)
+	for (i = 0; i < cdev_count; i++)
+		if (cdev_table[i].major_tail)
 			fn(cdev_table[i].mode_type, cdev_table[i].major,
 			   cdev_table[i].name, data);
-	}
 }
 
 static file *devnode_open_stub(super_block *sb, unsigned mode)
@@ -296,12 +327,10 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 	unsigned mt = dn->mode & S_IFMT;
 	unsigned major = MAJOR(dn->rdev);
 	unsigned minor = MINOR(dn->rdev);
-	int i;
+	cdev_entry *e;
 
-	for (i = 0; i < cdev_count; i++) {
-		cdev_entry *e = &cdev_table[i];
-		if (e->open && e->mode_type == mt && e->major == major &&
-		    minor >= e->minor_base &&
+	for (e = cdev_find_major(mt, major); e; e = e->major_next) {
+		if (e->open && minor >= e->minor_base &&
 		    minor < e->minor_base + e->minor_count) {
 			fp = e->open(sb, dn->rdev, flag);
 			if (!fp && (flag & O_PATH))
@@ -317,16 +346,31 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
  * super_operations                                                     *
  * ------------------------------------------------------------------ */
 
+static file *devnode_open_fifo_root(super_block *sb, devnode_info *dn, int flag)
+{
+	return devnode_open_fifo(dn, flag);
+}
+
+static file *devnode_open_stub_root(super_block *sb, devnode_info *dn, int flag)
+{
+	return devnode_open_stub(sb, dn->mode);
+}
+
+static file *(*const devnode_openers[16])(super_block *, devnode_info *,
+					  int) = {
+	[S_IFIFO >> 12] = devnode_open_fifo_root,
+	[S_IFCHR >> 12] = devnode_open_node,
+	[S_IFBLK >> 12] = devnode_open_node,
+};
+
 static file *devnode_open_root(super_block *sb, int flag)
 {
 	devnode_info *dn = sb->s_fs_info;
-
-	if (S_ISFIFO(dn->mode))
-		return devnode_open_fifo(dn, flag);
-	else if (S_ISCHR(dn->mode) || S_ISBLK(dn->mode))
-		return devnode_open_node(sb, dn, flag);
-
-	return devnode_open_stub(sb, dn->mode);
+	file *(*open)(super_block *, devnode_info *, int) =
+		devnode_openers[(dn->mode & S_IFMT) >> 12];
+	if (!open)
+		open = devnode_open_stub_root;
+	return open(sb, dn, flag);
 }
 
 static void devnode_release_super(super_block *sb)

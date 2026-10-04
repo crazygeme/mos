@@ -15,8 +15,9 @@
 #include <dev/dev.h>
 #include <macro.h>
 #include <errno.h>
+#include <lib/command.h>
 #include <unistd.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 
 /* ── Linux-compatible RTC ioctls ─────────────────────────────────────────── */
 
@@ -130,23 +131,45 @@ static unsigned rtc_poll(file *fp, unsigned events, poll_table *pt)
 	return (events & FS_POLL_WRITE) ? FS_POLL_WRITE : 0;
 }
 
-static int rtc_ioctl(file *fp, unsigned cmd, void *buf)
+static int rtc_ioctl_rtc_rd_time(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
 {
 	struct rtc_time t;
+	rtc_read_time(&t);
+	memcpy(buf, &t, sizeof(t));
+	return 0;
+}
 
-	switch (cmd) {
-	case RTC_RD_TIME:
-		rtc_read_time(&t);
-		memcpy(buf, &t, sizeof(t));
-		return 0;
-	case RTC_UIE_ON:
-		rtc_uie_enabled = 1;
-		return 0;
-	case RTC_UIE_OFF:
-		rtc_uie_enabled = 0;
-		return 0;
-	}
-	return -ENOSYS;
+static int rtc_ioctl_rtc_uie_on(void *context __attribute__((unused)),
+				unsigned cmd __attribute__((unused)),
+				void *buf __attribute__((unused)))
+{
+	rtc_uie_enabled = 1;
+	return 0;
+}
+
+static int rtc_ioctl_rtc_uie_off(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	rtc_uie_enabled = 0;
+	return 0;
+}
+
+static const command_operation rtc_commands[256] = {
+	[RTC_RD_TIME & 255] = { RTC_RD_TIME, rtc_ioctl_rtc_rd_time },
+	[RTC_UIE_ON & 255] = { RTC_UIE_ON, rtc_ioctl_rtc_uie_on },
+	[RTC_UIE_OFF & 255] = { RTC_UIE_OFF, rtc_ioctl_rtc_uie_off },
+};
+
+static const command_operation *const rtc_command_groups[256] = {
+	[(RTC_RD_TIME >> 8) & 255] = rtc_commands,
+};
+
+static int rtc_ioctl(file *fp, unsigned cmd, void *buf)
+{
+	return command_dispatch(rtc_command_groups, fp, cmd, buf, -ENOSYS);
 }
 
 static int rtc_getattr(file *fp, struct stat *s)

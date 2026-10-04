@@ -1,6 +1,9 @@
 /* VirtIO 1.0 PCI GPU transport and Linux-compatible VirGL/DRM interfaces. */
 #include <dev/dev.h>
 #include <errno.h>
+#include <lib/command.h>
+#include <lib/rbtree.h>
+#include <lib/slots.h>
 #include <ext4_oflags.h>
 #include <fs/fcntl.h>
 #include <device/pci.h>
@@ -57,6 +60,7 @@ struct gpu_common {
 	uint64_t queue_desc, queue_driver, queue_device;
 } __attribute__((packed));
 struct gpu_bo {
+	struct rb_node id_node;
 	file *file;
 	unsigned id, slot, size, pages, stride, width, height, named, dumb;
 	unsigned submission_ctx;
@@ -64,9 +68,18 @@ struct gpu_bo {
 	unsigned host_created;
 	uint64_t submission;
 };
+struct gpu_handle_entry {
+	struct rb_node id_node;
+	file *file;
+	unsigned handle, id;
+};
 struct gpu_client {
+	struct rb_node ctx_node;
+	unsigned slot;
+	slot_pool handle_slots;
+	struct rb_root resource_handles;
 	unsigned ctx, rdev, authenticated, busid;
-	file *handles[GPU_MAX_HANDLES];
+	struct gpu_handle_entry *handles[GPU_MAX_HANDLES];
 };
 struct gpu_fb {
 	unsigned id, owner, width, height, pitch, depth;
@@ -85,9 +98,12 @@ static uint64_t gpu_fence, gpu_submission, gpu_completed;
 static void *gpu_dma_input, *gpu_dma_output;
 static unsigned gpu_pending, gpu_pending_size, gpu_pending_fenced;
 static uint64_t gpu_pending_fence, gpu_pending_submission, gpu_deadline;
-static struct gpu_bo *gpu_objects[GPU_MAX_OBJECTS];
+static struct rb_root gpu_objects = _RBTREE_ROOT_INIT;
+static slot_pool gpu_object_slots;
 static struct gpu_fb gpu_fbs[GPU_MAX_FB];
 static struct gpu_client *gpu_master;
+static struct rb_root gpu_clients = _RBTREE_ROOT_INIT;
+static slot_pool gpu_client_slots;
 static file *gpu_scanout;
 static unsigned gpu_scanout_fb, gpu_scanout_x, gpu_scanout_y;
 static struct drm_mode_modeinfo gpu_scanout_mode;
@@ -96,6 +112,87 @@ static unsigned gpu_mode_count;
 static unsigned gpu_response_size;
 static rmutex_t gpu_lock;
 static const file_operations gpu_buffer_fops;
+
+static struct gpu_bo *gpu_object_find(struct rb_root *root, unsigned id)
+{
+	struct rb_node *node = root->rb_node;
+	while (node) {
+		struct gpu_bo *entry = rb_entry(node, struct gpu_bo, id_node);
+		if (id == entry->id)
+			return entry;
+		node = id < entry->id ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
+static void gpu_object_insert(struct rb_root *root, struct gpu_bo *entry)
+{
+	struct rb_node **link = &root->rb_node, *parent = NULL;
+	while (*link) {
+		struct gpu_bo *other = rb_entry(*link, struct gpu_bo, id_node);
+		parent = *link;
+		link = entry->id < other->id ? &parent->rb_left :
+					       &parent->rb_right;
+	}
+	rb_init_node(&entry->id_node);
+	rb_link_node(&entry->id_node, parent, link);
+	rb_insert_color(&entry->id_node, root);
+}
+
+static struct gpu_client *gpu_client_find(struct rb_root *root, unsigned id)
+{
+	struct rb_node *node = root->rb_node;
+	while (node) {
+		struct gpu_client *entry =
+			rb_entry(node, struct gpu_client, ctx_node);
+		if (id == entry->ctx)
+			return entry;
+		node = id < entry->ctx ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
+static void gpu_client_insert(struct rb_root *root, struct gpu_client *entry)
+{
+	struct rb_node **link = &root->rb_node, *parent = NULL;
+	while (*link) {
+		struct gpu_client *other =
+			rb_entry(*link, struct gpu_client, ctx_node);
+		parent = *link;
+		link = entry->ctx < other->ctx ? &parent->rb_left :
+						 &parent->rb_right;
+	}
+	rb_init_node(&entry->ctx_node);
+	rb_link_node(&entry->ctx_node, parent, link);
+	rb_insert_color(&entry->ctx_node, root);
+}
+
+static struct gpu_handle_entry *gpu_resource_handle_find(struct rb_root *root,
+							 unsigned id)
+{
+	struct rb_node *node = root->rb_node;
+	while (node) {
+		struct gpu_handle_entry *entry =
+			rb_entry(node, struct gpu_handle_entry, id_node);
+		if (id == entry->id)
+			return entry;
+		node = id < entry->id ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
+static void gpu_resource_handle_insert(struct rb_root *root,
+				       struct gpu_handle_entry *entry)
+{
+	struct rb_node **link = &root->rb_node, *parent = NULL;
+	while (*link) {
+		struct gpu_handle_entry *other =
+			rb_entry(*link, struct gpu_handle_entry, id_node);
+		parent = *link;
+		link = entry->id < other->id ? &parent->rb_left :
+					       &parent->rb_right;
+	}
+	rb_init_node(&entry->id_node);
+	rb_link_node(&entry->id_node, parent, link);
+	rb_insert_color(&entry->id_node, root);
+}
 
 /* User ranges are checked against VM regions before any ioctl data access. */
 static int gpu_user_range(uint64_t pointer, unsigned size, unsigned write)
@@ -333,7 +430,8 @@ static int gpu_buffer_release(file *fp)
 		rmutex_unlock(&gpu_lock);
 		return 0;
 	}
-	gpu_objects[bo->slot] = NULL;
+	rb_erase(&bo->id_node, &gpu_objects);
+	slot_return(&gpu_object_slots, bo->slot);
 	gpu_backing_free(bo);
 	free(bo);
 	free(fp->f_inode);
@@ -395,41 +493,53 @@ static struct gpu_bo *gpu_handle(struct gpu_client *client, unsigned handle)
 {
 	if (!handle || handle >= GPU_MAX_HANDLES || !client->handles[handle])
 		return NULL;
-	return client->handles[handle]->f_inode->i_private;
+	return client->handles[handle]->file->f_inode->i_private;
 }
 
 static int gpu_add_handle(struct gpu_client *client, file *fp)
 {
 	struct gpu_bo *bo = fp->f_inode->i_private;
-	unsigned i;
-	for (i = 1; i < GPU_MAX_HANDLES; i++)
-		if (client->handles[i] == fp)
-			return i;
-	for (i = 1; i < GPU_MAX_HANDLES; i++)
-		if (!client->handles[i]) {
-			int result = gpu_context_resource(
-				VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE, client->ctx,
-				bo->id);
-			if (result)
-				return result;
-			fs_get_file(fp);
-			client->handles[i] = fp;
-			return i;
-		}
-	return -EMFILE;
+	struct gpu_handle_entry *entry =
+		gpu_resource_handle_find(&client->resource_handles, bo->id);
+	if (entry)
+		return entry->handle;
+	int slot = slot_take(&client->handle_slots, GPU_MAX_HANDLES - 1);
+	if (slot < 0)
+		return -EMFILE;
+	entry = zalloc(sizeof(*entry));
+	if (!entry) {
+		slot_return(&client->handle_slots, slot);
+		return -ENOMEM;
+	}
+	int result = gpu_context_resource(VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
+					  client->ctx, bo->id);
+	if (result) {
+		free(entry);
+		slot_return(&client->handle_slots, slot);
+		return result;
+	}
+	entry->file = fp;
+	entry->handle = slot + 1;
+	entry->id = bo->id;
+	fs_get_file(fp);
+	client->handles[entry->handle] = entry;
+	gpu_resource_handle_insert(&client->resource_handles, entry);
+	return entry->handle;
 }
 
 static int gpu_drop_handle(struct gpu_client *client, unsigned handle)
 {
 	struct gpu_bo *bo = gpu_handle(client, handle);
-	file *fp;
 	if (!bo)
 		return -ENOENT;
-	fp = client->handles[handle];
+	struct gpu_handle_entry *entry = client->handles[handle];
 	client->handles[handle] = NULL;
+	rb_erase(&entry->id_node, &client->resource_handles);
+	slot_return(&client->handle_slots, handle - 1);
 	gpu_context_resource(VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE, client->ctx,
 			     bo->id);
-	fs_put_file(fp);
+	fs_put_file(entry->file);
+	free(entry);
 	return 0;
 }
 
@@ -441,14 +551,15 @@ static int gpu_create(struct gpu_client *client,
 	struct virtio_gpu_mem_entry *entries;
 	struct gpu_bo *bo;
 	file *fp;
-	unsigned id, slot, bytes, i;
-	int result;
+	unsigned id, bytes, i;
+	int result, slot;
 	if (arg->bo_handle || arg->size > GPU_MAX_BYTES || !arg->width ||
 	    arg->flags & ~VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP)
 		return -EINVAL;
-	for (slot = 0; slot < GPU_MAX_OBJECTS && gpu_objects[slot]; slot++) {
-	}
-	if (slot == GPU_MAX_OBJECTS || !gpu_next_resource)
+	if (!gpu_next_resource)
+		return -ENOSPC;
+	slot = slot_take(&gpu_object_slots, GPU_MAX_OBJECTS);
+	if (slot < 0)
 		return -ENOSPC;
 	/* Host resource identifiers are not reused during a device lifetime. */
 	id = gpu_next_resource++;
@@ -457,12 +568,14 @@ static int gpu_create(struct gpu_client *client,
 	if (!fp || !bo) {
 		free(fp);
 		free(bo);
+		slot_return(&gpu_object_slots, slot);
 		return -ENOMEM;
 	}
 	fp->f_inode = zalloc(sizeof(*fp->f_inode));
 	if (!fp->f_inode) {
 		free(fp);
 		free(bo);
+		slot_return(&gpu_object_slots, slot);
 		return -ENOMEM;
 	}
 	bo->size = (arg->size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
@@ -472,6 +585,7 @@ static int gpu_create(struct gpu_client *client,
 		free(fp->f_inode);
 		free(fp);
 		free(bo);
+		slot_return(&gpu_object_slots, slot);
 		return -ENOMEM;
 	}
 	bo->id = id;
@@ -490,7 +604,7 @@ static int gpu_create(struct gpu_client *client,
 	fp->f_fop = &gpu_buffer_fops;
 	fp->f_count = 1;
 	fp->f_mode = O_RDWR;
-	gpu_objects[slot] = bo;
+	gpu_object_insert(&gpu_objects, bo);
 	create.hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_3D;
 	create.resource_id = id;
 	create.target = arg->target;
@@ -764,211 +878,339 @@ static struct gpu_fb *gpu_fb(unsigned id)
 	return &gpu_fbs[id - 16];
 }
 
+static int
+gpu_kms_drm_ioctl_mode_getresources(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	unsigned value;
+
+	struct drm_mode_card_res *r = arg;
+	unsigned count = 0, index;
+	for (index = 0; index < GPU_MAX_FB; index++) {
+		if (!gpu_fbs[index].buffer ||
+		    gpu_fbs[index].owner != client->ctx)
+			continue;
+		if (count < r->count_fbs &&
+		    gpu_out(r->fb_id_ptr + count * 4, &gpu_fbs[index].id, 4))
+			return -EFAULT;
+		count++;
+	}
+	value = GPU_CRTC;
+	if (r->count_crtcs && gpu_out(r->crtc_id_ptr, &value, 4))
+		return -EFAULT;
+	value = GPU_ENCODER;
+	if (r->count_encoders && gpu_out(r->encoder_id_ptr, &value, 4))
+		return -EFAULT;
+	value = GPU_CONNECTOR;
+	if (r->count_connectors && gpu_out(r->connector_id_ptr, &value, 4))
+		return -EFAULT;
+	r->count_fbs = count;
+	r->count_crtcs = r->count_encoders = r->count_connectors = 1;
+	r->min_width = r->min_height = 1;
+	r->max_width = r->max_height = GPU_MAX_DIMENSION;
+	return 0;
+}
+
+static int
+gpu_kms_drm_ioctl_mode_getconnector(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	unsigned value;
+
+	struct drm_mode_get_connector *r = arg;
+	if (r->connector_id != GPU_CONNECTOR)
+		return -ENOENT;
+	value = GPU_ENCODER;
+	if (r->count_encoders && gpu_out(r->encoders_ptr, &value, 4))
+		return -EFAULT;
+	if (!r->count_modes && client == gpu_master) {
+		int result = gpu_probe_modes();
+		if (result)
+			return result;
+	}
+	if (r->count_modes >= gpu_mode_count &&
+	    gpu_out(r->modes_ptr, gpu_modes,
+		    gpu_mode_count * sizeof(gpu_modes[0])))
+		return -EFAULT;
+	r->count_modes = gpu_mode_count;
+	r->count_encoders = 1;
+	r->count_props = 0;
+	r->encoder_id = GPU_ENCODER;
+	r->connector_type = DRM_MODE_CONNECTOR_VIRTUAL;
+	r->connector_type_id = 1;
+	r->connection = 1;
+	r->mm_width = r->mm_height = 0;
+	r->subpixel = 1;
+	return 0;
+}
+
+static int gpu_kms_drm_ioctl_mode_getencoder(void *context
+					     __attribute__((unused)),
+					     unsigned cmd
+					     __attribute__((unused)),
+					     void *arg __attribute__((unused)))
+{
+	struct drm_mode_get_encoder *r = arg;
+	if (r->encoder_id != GPU_ENCODER)
+		return -ENOENT;
+	r->encoder_type = DRM_MODE_ENCODER_VIRTUAL;
+	r->crtc_id = GPU_CRTC;
+	r->possible_crtcs = 1;
+	r->possible_clones = 0;
+	return 0;
+}
+
+static int gpu_kms_drm_ioctl_mode_getcrtc(void *context __attribute__((unused)),
+					  unsigned cmd __attribute__((unused)),
+					  void *arg __attribute__((unused)))
+{
+	struct drm_mode_crtc *r = arg;
+	if (r->crtc_id != GPU_CRTC)
+		return -ENOENT;
+	r->fb_id = gpu_scanout_fb;
+	r->x = gpu_scanout_x;
+	r->y = gpu_scanout_y;
+	r->gamma_size = 0;
+	r->mode_valid = !!gpu_scanout;
+	r->mode = gpu_scanout_mode;
+	return 0;
+}
+
+static int gpu_kms_drm_ioctl_mode_setcrtc(void *context __attribute__((unused)),
+					  unsigned cmd __attribute__((unused)),
+					  void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_crtc *r = arg;
+	struct gpu_fb *fb = gpu_fb(r->fb_id);
+	if (client != gpu_master)
+		return -EACCES;
+	if (r->crtc_id != GPU_CRTC)
+		return -EINVAL;
+	if (!r->mode_valid)
+		return gpu_set_scanout(NULL, NULL, 0, 0);
+	if (!fb || !gpu_mode_valid(&r->mode) || r->x > fb->width ||
+	    r->y > fb->height || r->mode.hdisplay > fb->width - r->x ||
+	    r->mode.vdisplay > fb->height - r->y || r->count_connectors != 1 ||
+	    !gpu_user_range(r->set_connectors_ptr, 4, 0) ||
+	    *(uint32_t *)(uintptr_t)r->set_connectors_ptr != GPU_CONNECTOR)
+		return -EINVAL;
+	return gpu_set_scanout(fb, &r->mode, r->x, r->y);
+}
+
+static int gpu_kms_drm_ioctl_mode_getfb(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_fb_cmd *r = arg;
+	struct gpu_fb *fb = gpu_fb(r->fb_id);
+	int handle;
+	if (!fb)
+		return -ENOENT;
+	r->width = fb->width;
+	r->height = fb->height;
+	r->pitch = fb->pitch;
+	r->depth = fb->depth;
+	r->bpp = 32;
+	r->handle = 0;
+	if (client == gpu_master) {
+		handle = gpu_add_handle(client, fb->buffer);
+		if (handle < 0)
+			return handle;
+		r->handle = handle;
+	}
+	return 0;
+}
+
+static int gpu_kms_drm_ioctl_mode_addfb(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_fb_cmd *r = arg;
+	if (r->bpp != 32 || (r->depth != 24 && r->depth != 32))
+		return -EINVAL;
+	return gpu_add_fb(client, r->handle, r->width, r->height, r->pitch,
+			  r->depth, &r->fb_id);
+}
+
+static int gpu_kms_drm_ioctl_mode_addfb2(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_fb_cmd2 *r = arg;
+	if (r->flags || r->offsets[0] || r->modifier[0] || r->handles[1] ||
+	    r->handles[2] || r->handles[3] ||
+	    (r->pixel_format != 0x34325258U && r->pixel_format != 0x34325241U))
+		return -EINVAL;
+	return gpu_add_fb(client, r->handles[0], r->width, r->height,
+			  r->pitches[0],
+			  r->pixel_format == 0x34325258U ? 24 : 32, &r->fb_id);
+}
+
+static int gpu_kms_drm_ioctl_mode_rmfb(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct gpu_fb *fb = gpu_fb(*(unsigned *)arg);
+	if (!fb || fb->owner != client->ctx)
+		return -ENOENT;
+	if (gpu_scanout_fb == fb->id)
+		gpu_set_scanout(NULL, NULL, 0, 0);
+	fs_put_file(fb->buffer);
+	memset(fb, 0, sizeof(*fb));
+	return 0;
+}
+
+static int gpu_kms_drm_ioctl_mode_dirtyfb(void *context __attribute__((unused)),
+					  unsigned cmd __attribute__((unused)),
+					  void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_fb_dirty_cmd *r = arg;
+	struct gpu_fb *fb = gpu_fb(r->fb_id);
+	int result;
+	if (!fb || fb->owner != client->ctx)
+		return -ENOENT;
+	result = gpu_upload_dumb(fb);
+	return result ? result : gpu_flush(fb->buffer->f_inode->i_private);
+}
+
+static int
+gpu_kms_drm_ioctl_mode_getplaneresources(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *arg __attribute__((unused)))
+{
+	((struct drm_mode_get_plane_res *)arg)->count_planes = 0;
+	return 0;
+}
+
+static int
+gpu_kms_drm_ioctl_mode_obj_getproperties(void *context __attribute__((unused)),
+					 unsigned cmd __attribute__((unused)),
+					 void *arg __attribute__((unused)))
+{
+	((struct drm_mode_obj_get_properties *)arg)->count_props = 0;
+	return 0;
+}
+
+static int gpu_kms_drm_ioctl_mode_create_dumb(void *context
+					      __attribute__((unused)),
+					      unsigned cmd
+					      __attribute__((unused)),
+					      void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_create_dumb *r = arg;
+	struct drm_virtgpu_resource_create create = { 0 };
+	int result;
+	if (r->flags || r->bpp != 32 || !r->width || !r->height ||
+	    r->width > GPU_MAX_DIMENSION || r->height > GPU_MAX_DIMENSION)
+		return -EINVAL;
+	r->pitch = (r->width * 4 + 63) & ~63U;
+	r->size = (uint64_t)r->pitch * r->height;
+	create.target = 2;
+	create.format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
+	create.bind = (1U << 1) | (1U << 17) | (1U << 18);
+	create.width = r->width;
+	create.height = r->height;
+	create.depth = create.array_size = 1;
+	create.stride = r->pitch;
+	create.size = r->size;
+	result = gpu_create(client, &create, 1);
+	r->handle = create.bo_handle;
+	return result;
+}
+
+static int gpu_kms_drm_ioctl_mode_map_dumb(void *context
+					   __attribute__((unused)),
+					   unsigned cmd __attribute__((unused)),
+					   void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_mode_map_dumb *r = arg;
+	if (!gpu_handle(client, r->handle))
+		return -ENOENT;
+	r->offset = (uint64_t)r->handle * PAGE_SIZE;
+	return 0;
+}
+
+static int
+gpu_kms_drm_ioctl_mode_destroy_dumb(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	return gpu_drop_handle(client,
+			       ((struct drm_mode_destroy_dumb *)arg)->handle);
+}
+
+static const command_operation gpu_kms_commands[256] = {
+	[DRM_IOCTL_MODE_GETRESOURCES &
+	 255] = { DRM_IOCTL_MODE_GETRESOURCES,
+		  gpu_kms_drm_ioctl_mode_getresources },
+	[DRM_IOCTL_MODE_GETCONNECTOR &
+		255] = { DRM_IOCTL_MODE_GETCONNECTOR,
+			 gpu_kms_drm_ioctl_mode_getconnector },
+	[DRM_IOCTL_MODE_GETENCODER &
+		255] = { DRM_IOCTL_MODE_GETENCODER,
+			 gpu_kms_drm_ioctl_mode_getencoder },
+	[DRM_IOCTL_MODE_GETCRTC & 255] = { DRM_IOCTL_MODE_GETCRTC,
+					   gpu_kms_drm_ioctl_mode_getcrtc },
+	[DRM_IOCTL_MODE_SETCRTC & 255] = { DRM_IOCTL_MODE_SETCRTC,
+					   gpu_kms_drm_ioctl_mode_setcrtc },
+	[DRM_IOCTL_MODE_GETFB & 255] = { DRM_IOCTL_MODE_GETFB,
+					 gpu_kms_drm_ioctl_mode_getfb },
+	[DRM_IOCTL_MODE_ADDFB & 255] = { DRM_IOCTL_MODE_ADDFB,
+					 gpu_kms_drm_ioctl_mode_addfb },
+	[DRM_IOCTL_MODE_ADDFB2 & 255] = { DRM_IOCTL_MODE_ADDFB2,
+					  gpu_kms_drm_ioctl_mode_addfb2 },
+	[DRM_IOCTL_MODE_RMFB & 255] = { DRM_IOCTL_MODE_RMFB,
+					gpu_kms_drm_ioctl_mode_rmfb },
+	[DRM_IOCTL_MODE_DIRTYFB & 255] = { DRM_IOCTL_MODE_DIRTYFB,
+					   gpu_kms_drm_ioctl_mode_dirtyfb },
+	[DRM_IOCTL_MODE_GETPLANERESOURCES &
+		255] = { DRM_IOCTL_MODE_GETPLANERESOURCES,
+			 gpu_kms_drm_ioctl_mode_getplaneresources },
+	[DRM_IOCTL_MODE_OBJ_GETPROPERTIES &
+		255] = { DRM_IOCTL_MODE_OBJ_GETPROPERTIES,
+			 gpu_kms_drm_ioctl_mode_obj_getproperties },
+	[DRM_IOCTL_MODE_CREATE_DUMB &
+		255] = { DRM_IOCTL_MODE_CREATE_DUMB,
+			 gpu_kms_drm_ioctl_mode_create_dumb },
+	[DRM_IOCTL_MODE_MAP_DUMB & 255] = { DRM_IOCTL_MODE_MAP_DUMB,
+					    gpu_kms_drm_ioctl_mode_map_dumb },
+	[DRM_IOCTL_MODE_DESTROY_DUMB &
+		255] = { DRM_IOCTL_MODE_DESTROY_DUMB,
+			 gpu_kms_drm_ioctl_mode_destroy_dumb },
+};
+
+static const command_operation *const gpu_kms_command_groups[256] = {
+	[(DRM_IOCTL_MODE_GETRESOURCES >> 8) & 255] = gpu_kms_commands,
+};
+
 static int gpu_kms(struct gpu_client *client, unsigned cmd, void *arg)
 {
-	unsigned value;
-	switch (cmd) {
-	case DRM_IOCTL_MODE_GETRESOURCES: {
-		struct drm_mode_card_res *r = arg;
-		unsigned count = 0, index;
-		for (index = 0; index < GPU_MAX_FB; index++) {
-			if (!gpu_fbs[index].buffer ||
-			    gpu_fbs[index].owner != client->ctx)
-				continue;
-			if (count < r->count_fbs &&
-			    gpu_out(r->fb_id_ptr + count * 4,
-				    &gpu_fbs[index].id, 4))
-				return -EFAULT;
-			count++;
-		}
-		value = GPU_CRTC;
-		if (r->count_crtcs && gpu_out(r->crtc_id_ptr, &value, 4))
-			return -EFAULT;
-		value = GPU_ENCODER;
-		if (r->count_encoders && gpu_out(r->encoder_id_ptr, &value, 4))
-			return -EFAULT;
-		value = GPU_CONNECTOR;
-		if (r->count_connectors &&
-		    gpu_out(r->connector_id_ptr, &value, 4))
-			return -EFAULT;
-		r->count_fbs = count;
-		r->count_crtcs = r->count_encoders = r->count_connectors = 1;
-		r->min_width = r->min_height = 1;
-		r->max_width = r->max_height = GPU_MAX_DIMENSION;
-		return 0;
-	}
-	case DRM_IOCTL_MODE_GETCONNECTOR: {
-		struct drm_mode_get_connector *r = arg;
-		if (r->connector_id != GPU_CONNECTOR)
-			return -ENOENT;
-		value = GPU_ENCODER;
-		if (r->count_encoders && gpu_out(r->encoders_ptr, &value, 4))
-			return -EFAULT;
-		if (!r->count_modes && client == gpu_master) {
-			int result = gpu_probe_modes();
-			if (result)
-				return result;
-		}
-		if (r->count_modes >= gpu_mode_count &&
-		    gpu_out(r->modes_ptr, gpu_modes,
-			    gpu_mode_count * sizeof(gpu_modes[0])))
-			return -EFAULT;
-		r->count_modes = gpu_mode_count;
-		r->count_encoders = 1;
-		r->count_props = 0;
-		r->encoder_id = GPU_ENCODER;
-		r->connector_type = DRM_MODE_CONNECTOR_VIRTUAL;
-		r->connector_type_id = 1;
-		r->connection = 1;
-		r->mm_width = r->mm_height = 0;
-		r->subpixel = 1;
-		return 0;
-	}
-	case DRM_IOCTL_MODE_GETENCODER: {
-		struct drm_mode_get_encoder *r = arg;
-		if (r->encoder_id != GPU_ENCODER)
-			return -ENOENT;
-		r->encoder_type = DRM_MODE_ENCODER_VIRTUAL;
-		r->crtc_id = GPU_CRTC;
-		r->possible_crtcs = 1;
-		r->possible_clones = 0;
-		return 0;
-	}
-	case DRM_IOCTL_MODE_GETCRTC: {
-		struct drm_mode_crtc *r = arg;
-		if (r->crtc_id != GPU_CRTC)
-			return -ENOENT;
-		r->fb_id = gpu_scanout_fb;
-		r->x = gpu_scanout_x;
-		r->y = gpu_scanout_y;
-		r->gamma_size = 0;
-		r->mode_valid = !!gpu_scanout;
-		r->mode = gpu_scanout_mode;
-		return 0;
-	}
-	case DRM_IOCTL_MODE_SETCRTC: {
-		struct drm_mode_crtc *r = arg;
-		struct gpu_fb *fb = gpu_fb(r->fb_id);
-		if (client != gpu_master)
-			return -EACCES;
-		if (r->crtc_id != GPU_CRTC)
-			return -EINVAL;
-		if (!r->mode_valid)
-			return gpu_set_scanout(NULL, NULL, 0, 0);
-		if (!fb || !gpu_mode_valid(&r->mode) || r->x > fb->width ||
-		    r->y > fb->height || r->mode.hdisplay > fb->width - r->x ||
-		    r->mode.vdisplay > fb->height - r->y ||
-		    r->count_connectors != 1 ||
-		    !gpu_user_range(r->set_connectors_ptr, 4, 0) ||
-		    *(uint32_t *)(uintptr_t)r->set_connectors_ptr !=
-			    GPU_CONNECTOR)
-			return -EINVAL;
-		return gpu_set_scanout(fb, &r->mode, r->x, r->y);
-	}
-	case DRM_IOCTL_MODE_GETFB: {
-		struct drm_mode_fb_cmd *r = arg;
-		struct gpu_fb *fb = gpu_fb(r->fb_id);
-		int handle;
-		if (!fb)
-			return -ENOENT;
-		r->width = fb->width;
-		r->height = fb->height;
-		r->pitch = fb->pitch;
-		r->depth = fb->depth;
-		r->bpp = 32;
-		r->handle = 0;
-		if (client == gpu_master) {
-			handle = gpu_add_handle(client, fb->buffer);
-			if (handle < 0)
-				return handle;
-			r->handle = handle;
-		}
-		return 0;
-	}
-	case DRM_IOCTL_MODE_ADDFB: {
-		struct drm_mode_fb_cmd *r = arg;
-		if (r->bpp != 32 || (r->depth != 24 && r->depth != 32))
-			return -EINVAL;
-		return gpu_add_fb(client, r->handle, r->width, r->height,
-				  r->pitch, r->depth, &r->fb_id);
-	}
-	case DRM_IOCTL_MODE_ADDFB2: {
-		struct drm_mode_fb_cmd2 *r = arg;
-		if (r->flags || r->offsets[0] || r->modifier[0] ||
-		    r->handles[1] || r->handles[2] || r->handles[3] ||
-		    (r->pixel_format != 0x34325258U &&
-		     r->pixel_format != 0x34325241U))
-			return -EINVAL;
-		return gpu_add_fb(client, r->handles[0], r->width, r->height,
-				  r->pitches[0],
-				  r->pixel_format == 0x34325258U ? 24 : 32,
-				  &r->fb_id);
-	}
-	case DRM_IOCTL_MODE_RMFB: {
-		struct gpu_fb *fb = gpu_fb(*(unsigned *)arg);
-		if (!fb || fb->owner != client->ctx)
-			return -ENOENT;
-		if (gpu_scanout_fb == fb->id)
-			gpu_set_scanout(NULL, NULL, 0, 0);
-		fs_put_file(fb->buffer);
-		memset(fb, 0, sizeof(*fb));
-		return 0;
-	}
-	case DRM_IOCTL_MODE_DIRTYFB: {
-		struct drm_mode_fb_dirty_cmd *r = arg;
-		struct gpu_fb *fb = gpu_fb(r->fb_id);
-		int result;
-		if (!fb || fb->owner != client->ctx)
-			return -ENOENT;
-		result = gpu_upload_dumb(fb);
-		return result ? result :
-				gpu_flush(fb->buffer->f_inode->i_private);
-	}
-	case DRM_IOCTL_MODE_GETPLANERESOURCES:
-		((struct drm_mode_get_plane_res *)arg)->count_planes = 0;
-		return 0;
-	case DRM_IOCTL_MODE_OBJ_GETPROPERTIES:
-		((struct drm_mode_obj_get_properties *)arg)->count_props = 0;
-		return 0;
-	case DRM_IOCTL_MODE_CREATE_DUMB: {
-		struct drm_mode_create_dumb *r = arg;
-		struct drm_virtgpu_resource_create create = { 0 };
-		int result;
-		if (r->flags || r->bpp != 32 || !r->width || !r->height ||
-		    r->width > GPU_MAX_DIMENSION ||
-		    r->height > GPU_MAX_DIMENSION)
-			return -EINVAL;
-		r->pitch = (r->width * 4 + 63) & ~63U;
-		r->size = (uint64_t)r->pitch * r->height;
-		create.target = 2;
-		create.format = VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM;
-		create.bind = (1U << 1) | (1U << 17) | (1U << 18);
-		create.width = r->width;
-		create.height = r->height;
-		create.depth = create.array_size = 1;
-		create.stride = r->pitch;
-		create.size = r->size;
-		result = gpu_create(client, &create, 1);
-		r->handle = create.bo_handle;
-		return result;
-	}
-	case DRM_IOCTL_MODE_MAP_DUMB: {
-		struct drm_mode_map_dumb *r = arg;
-		if (!gpu_handle(client, r->handle))
-			return -ENOENT;
-		r->offset = (uint64_t)r->handle * PAGE_SIZE;
-		return 0;
-	}
-	case DRM_IOCTL_MODE_DESTROY_DUMB:
-		return gpu_drop_handle(
-			client, ((struct drm_mode_destroy_dumb *)arg)->handle);
-	default:
-		return -EOPNOTSUPP;
-	}
+	return command_dispatch(gpu_kms_command_groups, client, cmd, arg,
+				-EOPNOTSUPP);
 }
 
 #define GPU_MAX_CLIENTS 128
-static struct gpu_client *gpu_clients[GPU_MAX_CLIENTS];
 
 static int gpu_string(char *dst, size_t *length, const char *src)
 {
@@ -981,116 +1223,530 @@ static int gpu_string(char *dst, size_t *length, const char *src)
 	return 0;
 }
 
+static int gpu_ioctl_locked_drm_ioctl_version(void *context
+					      __attribute__((unused)),
+					      unsigned cmd
+					      __attribute__((unused)),
+					      void *arg __attribute__((unused)))
+{
+	struct drm_version *r = arg;
+	r->version_major = 0;
+	r->version_minor = 0;
+	r->version_patchlevel = 1;
+	if (gpu_string(r->name, &r->name_len, "virtio_gpu") ||
+	    gpu_string(r->date, &r->date_len, "20260928") ||
+	    gpu_string(r->desc, &r->desc_len, "MOS VirtIO GPU"))
+		return -EFAULT;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_get_unique(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_unique *r = arg;
+	char *busid = name_get();
+	int result;
+	if (!busid)
+		return -ENOMEM;
+	busid[0] = 0;
+	if (client->busid)
+		sprintf(busid, "pci:0000:%02x:%02x.%u",
+			pci_extract_bus(gpu_pci), pci_extract_slot(gpu_pci),
+			pci_extract_func(gpu_pci));
+	result = gpu_string(r->unique, &r->unique_len, busid);
+	name_put(busid);
+	return result;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_set_version(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_set_version *r = arg;
+	client->busid = 1;
+	r->drm_di_major = 1;
+	r->drm_di_minor = 4;
+	r->drm_dd_major = 0;
+	r->drm_dd_minor = 0;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_get_magic(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	if (MINOR(client->rdev))
+		return -EACCES;
+	((struct drm_auth *)arg)->magic = client->ctx;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_auth_magic(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	if (gpu_master != client)
+		return -EACCES;
+	struct gpu_client *target =
+		gpu_client_find(&gpu_clients, ((struct drm_auth *)arg)->magic);
+	if (target) {
+		target->authenticated = 1;
+		return 0;
+	}
+	return -EINVAL;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_set_master(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	if (MINOR(client->rdev) != 0 || current->user->euid)
+		return -EACCES;
+	if (gpu_master && gpu_master != client)
+		return -EBUSY;
+	gpu_master = client;
+	client->authenticated = 1;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_drop_master(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	if (gpu_master != client)
+		return -EACCES;
+	gpu_set_scanout(NULL, NULL, 0, 0);
+	gpu_master = NULL;
+	return 0;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_get_cap(void *context
+					      __attribute__((unused)),
+					      unsigned cmd
+					      __attribute__((unused)),
+					      void *arg)
+{
+	static const struct {
+		unsigned valid;
+		uint64_t value;
+	} capabilities[] = {
+		[DRM_CAP_DUMB_BUFFER] = { 1, 1 },
+		[DRM_CAP_DUMB_PREFERRED_DEPTH] = { 1, 24 },
+		[DRM_CAP_DUMB_PREFER_SHADOW] = { 1, 0 },
+		[DRM_CAP_PRIME] = { 1, DRM_PRIME_CAP_IMPORT |
+					       DRM_PRIME_CAP_EXPORT },
+		[DRM_CAP_TIMESTAMP_MONOTONIC] = { 1, 1 },
+		[DRM_CAP_CURSOR_WIDTH] = { 1, 64 },
+		[DRM_CAP_CURSOR_HEIGHT] = { 1, 64 },
+		[DRM_CAP_ASYNC_PAGE_FLIP] = { 1, 0 },
+		[DRM_CAP_ADDFB2_MODIFIERS] = { 1, 0 },
+	};
+	struct drm_get_cap *r = arg;
+	if (r->capability >= sizeof(capabilities) / sizeof(capabilities[0]) ||
+	    !capabilities[r->capability].valid)
+		return -EINVAL;
+	r->value = capabilities[r->capability].value;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_set_client_cap(void *context __attribute__((unused)),
+					  unsigned cmd __attribute__((unused)),
+					  void *arg __attribute__((unused)))
+{
+	struct drm_set_client_cap *r = arg;
+	if (r->capability == DRM_CLIENT_CAP_UNIVERSAL_PLANES && r->value <= 1)
+		return 0;
+	return -EOPNOTSUPP;
+}
+
+static const command_operation gpu_public_commands[256] = {
+	[DRM_IOCTL_VERSION & 255] = { DRM_IOCTL_VERSION,
+				      gpu_ioctl_locked_drm_ioctl_version },
+	[DRM_IOCTL_GET_UNIQUE &
+		255] = { DRM_IOCTL_GET_UNIQUE,
+			 gpu_ioctl_locked_drm_ioctl_get_unique },
+	[DRM_IOCTL_SET_VERSION &
+		255] = { DRM_IOCTL_SET_VERSION,
+			 gpu_ioctl_locked_drm_ioctl_set_version },
+	[DRM_IOCTL_GET_MAGIC & 255] = { DRM_IOCTL_GET_MAGIC,
+					gpu_ioctl_locked_drm_ioctl_get_magic },
+	[DRM_IOCTL_AUTH_MAGIC &
+		255] = { DRM_IOCTL_AUTH_MAGIC,
+			 gpu_ioctl_locked_drm_ioctl_auth_magic },
+	[DRM_IOCTL_SET_MASTER &
+		255] = { DRM_IOCTL_SET_MASTER,
+			 gpu_ioctl_locked_drm_ioctl_set_master },
+	[DRM_IOCTL_DROP_MASTER &
+		255] = { DRM_IOCTL_DROP_MASTER,
+			 gpu_ioctl_locked_drm_ioctl_drop_master },
+	[DRM_IOCTL_GET_CAP & 255] = { DRM_IOCTL_GET_CAP,
+				      gpu_ioctl_locked_drm_ioctl_get_cap },
+	[DRM_IOCTL_SET_CLIENT_CAP &
+		255] = { DRM_IOCTL_SET_CLIENT_CAP,
+			 gpu_ioctl_locked_drm_ioctl_set_client_cap },
+};
+
+static const command_operation *const gpu_public_command_groups[256] = {
+	[(DRM_IOCTL_VERSION >> 8) & 255] = gpu_public_commands,
+};
+
+static int
+gpu_ioctl_locked_drm_ioctl_gem_close(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	return gpu_drop_handle(client, ((struct drm_gem_close *)arg)->handle);
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_gem_flink(void *context __attribute__((unused)),
+				     unsigned cmd __attribute__((unused)),
+				     void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_gem_flink *r = arg;
+	struct gpu_bo *bo = gpu_handle(client, r->handle);
+	if (MINOR(client->rdev))
+		return -EACCES;
+	if (!bo)
+		return -ENOENT;
+	bo->named = 1;
+	r->name = bo->id;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_gem_open(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_gem_open *r = arg;
+	struct gpu_bo *bo;
+	int result;
+	if (MINOR(client->rdev))
+		return -EACCES;
+	if (!r->name)
+		return -ENOENT;
+	bo = gpu_object_find(&gpu_objects, r->name);
+	if (!bo || !bo->named)
+		return -ENOENT;
+	result = gpu_add_handle(client, bo->file);
+	if (result < 0)
+		return result;
+	r->handle = result;
+	r->size = bo->size;
+	return 0;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_prime_handle_to_fd(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_prime_handle *r = arg;
+	struct gpu_bo *bo = gpu_handle(client, r->handle);
+	int fd;
+	if (!bo)
+		return -ENOENT;
+	if (r->flags & ~(DRM_CLOEXEC | DRM_RDWR))
+		return -EINVAL;
+	fs_get_file(bo->file);
+	/* fs_ioctl holds the descriptor-table lock. */
+	fd = fs_install_fd_unsafe(bo->file,
+				  (r->flags & DRM_CLOEXEC) ? O_CLOEXEC : 0);
+	if (fd < 0) {
+		fs_put_file(bo->file);
+		return fd;
+	}
+	r->fd = fd;
+	return 0;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_prime_handle *r = arg;
+	file *fp;
+	int result;
+	if (r->flags || r->fd < 0 || r->fd >= MAX_FD)
+		return -EINVAL;
+	fp = current->fds[r->fd];
+	if (!fp || fp->f_fop != &gpu_buffer_fops)
+		return -EINVAL;
+	result = gpu_add_handle(client, fp);
+	if (result < 0)
+		return result;
+	r->handle = result;
+	return 0;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_virtgpu_getparam(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct drm_virtgpu_getparam *r = arg;
+	uint64_t value = 0;
+	if (r->param == VIRTGPU_PARAM_3D_FEATURES ||
+	    r->param == VIRTGPU_PARAM_CAPSET_QUERY_FIX)
+		value = 1;
+	return gpu_out(r->value, &value, sizeof(value));
+}
+
+static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_create(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	return gpu_create(client, arg, 0);
+}
+
+static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_info(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_virtgpu_resource_info *r = arg;
+	struct gpu_bo *bo = gpu_handle(client, r->bo_handle);
+	if (!bo)
+		return -ENOENT;
+	r->res_handle = bo->id;
+	r->size = bo->size;
+	r->blob_mem = 0;
+	return 0;
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_virtgpu_map(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_virtgpu_map *r = arg;
+	if (!gpu_handle(client, r->handle))
+		return -ENOENT;
+	r->offset = (uint64_t)r->handle * PAGE_SIZE;
+	return 0;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_virtgpu_get_caps(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct drm_virtgpu_get_caps *r = arg;
+	struct virtio_gpu_get_capset req = { 0 };
+	void *response;
+	unsigned size;
+	int result;
+	if ((r->cap_set_id != VIRTIO_GPU_CAPSET_VIRGL &&
+	     r->cap_set_id != VIRTIO_GPU_CAPSET_VIRGL2) ||
+	    !r->size || r->size > 65536 || !gpu_user_range(r->addr, r->size, 1))
+		return -EINVAL;
+	req.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
+	req.capset_id = r->cap_set_id;
+	req.capset_version = r->cap_set_ver;
+	size = sizeof(struct virtio_gpu_ctrl_hdr) + r->size;
+	response = gpu_pages(size);
+	if (!response)
+		return -ENOMEM;
+	result = gpu_command(&req, sizeof(req), response, size, 0);
+	if (!result)
+		result = gpu_out(r->addr,
+				 (char *)response +
+					 sizeof(struct virtio_gpu_ctrl_hdr),
+				 r->size);
+	gpu_free_pages(response, size);
+	return result;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+	unsigned i;
+
+	struct drm_virtgpu_execbuffer *r = arg;
+	struct virtio_gpu_cmd_submit *req;
+	uint32_t *handles;
+	unsigned size;
+	int result;
+	if (r->flags || r->num_in_syncobjs || r->num_out_syncobjs ||
+	    (r->size & 3) || r->size > GPU_MAX_COMMAND - sizeof(*req) ||
+	    r->num_bo_handles >= GPU_MAX_HANDLES ||
+	    !gpu_user_range(r->command, r->size, 0) ||
+	    !gpu_user_range(r->bo_handles, r->num_bo_handles * 4, 0))
+		return -EINVAL;
+	size = sizeof(*req) + r->size;
+	/* Snapshot the handle list before commands can yield to another task. */
+	handles = zalloc(r->num_bo_handles ? r->num_bo_handles * 4 : 1);
+	if (!handles)
+		return -ENOMEM;
+	memcpy(handles, (void *)(uintptr_t)r->bo_handles,
+	       r->num_bo_handles * 4);
+	for (i = 0; i < r->num_bo_handles; i++) {
+		if (!gpu_handle(client, handles[i])) {
+			free(handles);
+			return -ENOENT;
+		}
+	}
+	req = gpu_pages(size);
+	if (!req) {
+		free(handles);
+		return -ENOMEM;
+	}
+	req->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
+	req->hdr.ctx_id = client->ctx;
+	req->size = r->size;
+	memcpy(req + 1, (void *)(uintptr_t)r->command, r->size);
+	/* Shared resources must complete their producer's work before another
+		 * VirGL context consumes them. Same-context submissions stay ordered
+		 * on the host command stream without a CPU wait. */
+	result = 0;
+	for (i = 0; i < r->num_bo_handles; i++) {
+		struct gpu_bo *bo = gpu_handle(client, handles[i]);
+		if (bo->submission_ctx != client->ctx &&
+		    bo->submission > gpu_completed) {
+			result = gpu_idle(bo->submission_ctx);
+			if (result)
+				break;
+		}
+	}
+	if (!result) {
+		++gpu_submission;
+		for (i = 0; i < r->num_bo_handles; i++) {
+			struct gpu_bo *bo = gpu_handle(client, handles[i]);
+			bo->submission = gpu_submission;
+			bo->submission_ctx = client->ctx;
+		}
+		result = gpu_simple(req, size, 0);
+	}
+	gpu_free_pages(req, size);
+	free(handles);
+	return result;
+}
+
+static int gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host(
+	void *context __attribute__((unused)),
+	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_virtgpu_3d_transfer_to_host *r = arg;
+	struct gpu_bo *bo = gpu_handle(client, r->bo_handle);
+	struct virtio_gpu_transfer_host_3d req = { 0 };
+	if (!bo || r->offset >= bo->size)
+		return -EINVAL;
+	req.hdr.type = cmd == DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST ?
+			       VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D :
+			       VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
+	req.hdr.ctx_id = client->ctx;
+	memcpy(&req.box, &r->box, sizeof(req.box));
+	req.offset = r->offset;
+	req.resource_id = bo->id;
+	req.level = r->level;
+	req.stride = r->stride;
+	req.layer_stride = r->layer_stride;
+	return gpu_simple(&req, sizeof(req), 1);
+}
+
+static int
+gpu_ioctl_locked_drm_ioctl_virtgpu_wait(void *context __attribute__((unused)),
+					unsigned cmd __attribute__((unused)),
+					void *arg __attribute__((unused)))
+{
+	struct gpu_client *client = context;
+
+	struct drm_virtgpu_3d_wait *r = arg;
+	struct gpu_bo *bo = gpu_handle(client, r->handle);
+	int result;
+	if (!bo || (r->flags & ~VIRTGPU_WAIT_NOWAIT))
+		return -EINVAL;
+	result = gpu_complete(!(r->flags & VIRTGPU_WAIT_NOWAIT));
+	if (result)
+		return result;
+	if (bo->submission <= gpu_completed)
+		return 0;
+	return gpu_idle_mode(client->ctx,
+			     (r->flags & VIRTGPU_WAIT_NOWAIT) ? 2 : 1);
+}
+
+static const command_operation gpu_authenticated_commands[256] = {
+	[DRM_IOCTL_GEM_CLOSE & 255] = { DRM_IOCTL_GEM_CLOSE,
+					gpu_ioctl_locked_drm_ioctl_gem_close },
+	[DRM_IOCTL_GEM_FLINK & 255] = { DRM_IOCTL_GEM_FLINK,
+					gpu_ioctl_locked_drm_ioctl_gem_flink },
+	[DRM_IOCTL_GEM_OPEN & 255] = { DRM_IOCTL_GEM_OPEN,
+				       gpu_ioctl_locked_drm_ioctl_gem_open },
+	[DRM_IOCTL_PRIME_HANDLE_TO_FD &
+		255] = { DRM_IOCTL_PRIME_HANDLE_TO_FD,
+			 gpu_ioctl_locked_drm_ioctl_prime_handle_to_fd },
+	[DRM_IOCTL_PRIME_FD_TO_HANDLE &
+		255] = { DRM_IOCTL_PRIME_FD_TO_HANDLE,
+			 gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle },
+	[DRM_IOCTL_VIRTGPU_GETPARAM &
+		255] = { DRM_IOCTL_VIRTGPU_GETPARAM,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_getparam },
+	[DRM_IOCTL_VIRTGPU_RESOURCE_CREATE &
+		255] = { DRM_IOCTL_VIRTGPU_RESOURCE_CREATE,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_resource_create },
+	[DRM_IOCTL_VIRTGPU_RESOURCE_INFO &
+		255] = { DRM_IOCTL_VIRTGPU_RESOURCE_INFO,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_resource_info },
+	[DRM_IOCTL_VIRTGPU_MAP &
+		255] = { DRM_IOCTL_VIRTGPU_MAP,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_map },
+	[DRM_IOCTL_VIRTGPU_GET_CAPS &
+		255] = { DRM_IOCTL_VIRTGPU_GET_CAPS,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_get_caps },
+	[DRM_IOCTL_VIRTGPU_EXECBUFFER &
+		255] = { DRM_IOCTL_VIRTGPU_EXECBUFFER,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer },
+	[DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST &
+		255] = { DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host },
+	[DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST &
+		255] = { DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host },
+	[DRM_IOCTL_VIRTGPU_WAIT &
+		255] = { DRM_IOCTL_VIRTGPU_WAIT,
+			 gpu_ioctl_locked_drm_ioctl_virtgpu_wait },
+};
+
+static const command_operation *const gpu_authenticated_command_groups[256] = {
+	[(DRM_IOCTL_GEM_CLOSE >> 8) & 255] = gpu_authenticated_commands,
+};
+
 static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
 {
-	unsigned i;
-	switch (cmd) {
-	case DRM_IOCTL_VERSION: {
-		struct drm_version *r = arg;
-		r->version_major = 0;
-		r->version_minor = 0;
-		r->version_patchlevel = 1;
-		if (gpu_string(r->name, &r->name_len, "virtio_gpu") ||
-		    gpu_string(r->date, &r->date_len, "20260928") ||
-		    gpu_string(r->desc, &r->desc_len, "MOS VirtIO GPU"))
-			return -EFAULT;
-		return 0;
-	}
-	case DRM_IOCTL_GET_UNIQUE: {
-		struct drm_unique *r = arg;
-		char *busid = name_get();
-		int result;
-		if (!busid)
-			return -ENOMEM;
-		busid[0] = 0;
-		if (client->busid)
-			sprintf(busid, "pci:0000:%02x:%02x.%u",
-				pci_extract_bus(gpu_pci),
-				pci_extract_slot(gpu_pci),
-				pci_extract_func(gpu_pci));
-		result = gpu_string(r->unique, &r->unique_len, busid);
-		name_put(busid);
-		return result;
-	}
-	case DRM_IOCTL_SET_VERSION: {
-		struct drm_set_version *r = arg;
-		client->busid = 1;
-		r->drm_di_major = 1;
-		r->drm_di_minor = 4;
-		r->drm_dd_major = 0;
-		r->drm_dd_minor = 0;
-		return 0;
-	}
-	case DRM_IOCTL_GET_MAGIC:
-		if (MINOR(client->rdev))
-			return -EACCES;
-		((struct drm_auth *)arg)->magic = client->ctx;
-		return 0;
-	case DRM_IOCTL_AUTH_MAGIC:
-		if (gpu_master != client)
-			return -EACCES;
-		for (i = 0; i < GPU_MAX_CLIENTS; i++)
-			if (gpu_clients[i] &&
-			    gpu_clients[i]->ctx ==
-				    ((struct drm_auth *)arg)->magic) {
-				gpu_clients[i]->authenticated = 1;
-				return 0;
-			}
-		return -EINVAL;
-	case DRM_IOCTL_SET_MASTER:
-		if (MINOR(client->rdev) != 0 || current->user->euid)
-			return -EACCES;
-		if (gpu_master && gpu_master != client)
-			return -EBUSY;
-		gpu_master = client;
-		client->authenticated = 1;
-		return 0;
-	case DRM_IOCTL_DROP_MASTER:
-		if (gpu_master != client)
-			return -EACCES;
-		gpu_set_scanout(NULL, NULL, 0, 0);
-		gpu_master = NULL;
-		return 0;
-	case DRM_IOCTL_GET_CAP: {
-		struct drm_get_cap *r = arg;
-		r->value = 0;
-		switch (r->capability) {
-		case DRM_CAP_DUMB_BUFFER:
-			r->value = 1;
-			break;
-		case DRM_CAP_DUMB_PREFERRED_DEPTH:
-			r->value = 24;
-			break;
-		case DRM_CAP_DUMB_PREFER_SHADOW:
-			break;
-		case DRM_CAP_PRIME:
-			r->value = DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT;
-			break;
-		case DRM_CAP_TIMESTAMP_MONOTONIC:
-			r->value = 1;
-			break;
-		case DRM_CAP_CURSOR_WIDTH:
-		case DRM_CAP_CURSOR_HEIGHT:
-			r->value = 64;
-			break;
-		case DRM_CAP_ASYNC_PAGE_FLIP:
-		case DRM_CAP_ADDFB2_MODIFIERS:
-			break;
-		default:
-			return -EINVAL;
-		}
-		return 0;
-	}
-	case DRM_IOCTL_SET_CLIENT_CAP: {
-		struct drm_set_client_cap *r = arg;
-		if (r->capability == DRM_CLIENT_CAP_UNIVERSAL_PLANES &&
-		    r->value <= 1)
-			return 0;
-		return -EOPNOTSUPP;
-	}
-	default:
-		break;
-	}
+	command_fn invoke = command_lookup(gpu_public_command_groups, cmd);
+	if (invoke)
+		return invoke(client, cmd, arg);
 	if (!client->authenticated)
 		return -EACCES;
 	if (((cmd >> 8) & 255) != 'd')
@@ -1100,231 +1756,8 @@ static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
 			return -EACCES;
 		return gpu_kms(client, cmd, arg);
 	}
-	switch (cmd) {
-	case DRM_IOCTL_GEM_CLOSE:
-		return gpu_drop_handle(client,
-				       ((struct drm_gem_close *)arg)->handle);
-	case DRM_IOCTL_GEM_FLINK: {
-		struct drm_gem_flink *r = arg;
-		struct gpu_bo *bo = gpu_handle(client, r->handle);
-		if (MINOR(client->rdev))
-			return -EACCES;
-		if (!bo)
-			return -ENOENT;
-		bo->named = 1;
-		r->name = bo->id;
-		return 0;
-	}
-	case DRM_IOCTL_GEM_OPEN: {
-		struct drm_gem_open *r = arg;
-		struct gpu_bo *bo;
-		int result;
-		if (MINOR(client->rdev))
-			return -EACCES;
-		if (!r->name)
-			return -ENOENT;
-		bo = NULL;
-		for (i = 0; i < GPU_MAX_OBJECTS; i++) {
-			if (gpu_objects[i] && gpu_objects[i]->id == r->name) {
-				bo = gpu_objects[i];
-				break;
-			}
-		}
-		if (!bo || !bo->named)
-			return -ENOENT;
-		result = gpu_add_handle(client, bo->file);
-		if (result < 0)
-			return result;
-		r->handle = result;
-		r->size = bo->size;
-		return 0;
-	}
-	case DRM_IOCTL_PRIME_HANDLE_TO_FD: {
-		struct drm_prime_handle *r = arg;
-		struct gpu_bo *bo = gpu_handle(client, r->handle);
-		int fd;
-		if (!bo)
-			return -ENOENT;
-		if (r->flags & ~(DRM_CLOEXEC | DRM_RDWR))
-			return -EINVAL;
-		fs_get_file(bo->file);
-		/* fs_ioctl holds the descriptor-table lock. */
-		fd = fs_install_fd_unsafe(
-			bo->file, (r->flags & DRM_CLOEXEC) ? O_CLOEXEC : 0);
-		if (fd < 0) {
-			fs_put_file(bo->file);
-			return fd;
-		}
-		r->fd = fd;
-		return 0;
-	}
-	case DRM_IOCTL_PRIME_FD_TO_HANDLE: {
-		struct drm_prime_handle *r = arg;
-		file *fp;
-		int result;
-		if (r->flags || r->fd < 0 || r->fd >= MAX_FD)
-			return -EINVAL;
-		fp = current->fds[r->fd];
-		if (!fp || fp->f_fop != &gpu_buffer_fops)
-			return -EINVAL;
-		result = gpu_add_handle(client, fp);
-		if (result < 0)
-			return result;
-		r->handle = result;
-		return 0;
-	}
-	case DRM_IOCTL_VIRTGPU_GETPARAM: {
-		struct drm_virtgpu_getparam *r = arg;
-		uint64_t value = 0;
-		if (r->param == VIRTGPU_PARAM_3D_FEATURES ||
-		    r->param == VIRTGPU_PARAM_CAPSET_QUERY_FIX)
-			value = 1;
-		return gpu_out(r->value, &value, sizeof(value));
-	}
-	case DRM_IOCTL_VIRTGPU_RESOURCE_CREATE:
-		return gpu_create(client, arg, 0);
-	case DRM_IOCTL_VIRTGPU_RESOURCE_INFO: {
-		struct drm_virtgpu_resource_info *r = arg;
-		struct gpu_bo *bo = gpu_handle(client, r->bo_handle);
-		if (!bo)
-			return -ENOENT;
-		r->res_handle = bo->id;
-		r->size = bo->size;
-		r->blob_mem = 0;
-		return 0;
-	}
-	case DRM_IOCTL_VIRTGPU_MAP: {
-		struct drm_virtgpu_map *r = arg;
-		if (!gpu_handle(client, r->handle))
-			return -ENOENT;
-		r->offset = (uint64_t)r->handle * PAGE_SIZE;
-		return 0;
-	}
-	case DRM_IOCTL_VIRTGPU_GET_CAPS: {
-		struct drm_virtgpu_get_caps *r = arg;
-		struct virtio_gpu_get_capset req = { 0 };
-		void *response;
-		unsigned size;
-		int result;
-		if ((r->cap_set_id != VIRTIO_GPU_CAPSET_VIRGL &&
-		     r->cap_set_id != VIRTIO_GPU_CAPSET_VIRGL2) ||
-		    !r->size || r->size > 65536 ||
-		    !gpu_user_range(r->addr, r->size, 1))
-			return -EINVAL;
-		req.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
-		req.capset_id = r->cap_set_id;
-		req.capset_version = r->cap_set_ver;
-		size = sizeof(struct virtio_gpu_ctrl_hdr) + r->size;
-		response = gpu_pages(size);
-		if (!response)
-			return -ENOMEM;
-		result = gpu_command(&req, sizeof(req), response, size, 0);
-		if (!result)
-			result = gpu_out(
-				r->addr,
-				(char *)response +
-					sizeof(struct virtio_gpu_ctrl_hdr),
-				r->size);
-		gpu_free_pages(response, size);
-		return result;
-	}
-	case DRM_IOCTL_VIRTGPU_EXECBUFFER: {
-		struct drm_virtgpu_execbuffer *r = arg;
-		struct virtio_gpu_cmd_submit *req;
-		uint32_t *handles;
-		unsigned size;
-		int result;
-		if (r->flags || r->num_in_syncobjs || r->num_out_syncobjs ||
-		    (r->size & 3) || r->size > GPU_MAX_COMMAND - sizeof(*req) ||
-		    r->num_bo_handles >= GPU_MAX_HANDLES ||
-		    !gpu_user_range(r->command, r->size, 0) ||
-		    !gpu_user_range(r->bo_handles, r->num_bo_handles * 4, 0))
-			return -EINVAL;
-		size = sizeof(*req) + r->size;
-		/* Snapshot the handle list before commands can yield to another task. */
-		handles = zalloc(r->num_bo_handles ? r->num_bo_handles * 4 : 1);
-		if (!handles)
-			return -ENOMEM;
-		memcpy(handles, (void *)(uintptr_t)r->bo_handles,
-		       r->num_bo_handles * 4);
-		for (i = 0; i < r->num_bo_handles; i++) {
-			if (!gpu_handle(client, handles[i])) {
-				free(handles);
-				return -ENOENT;
-			}
-		}
-		req = gpu_pages(size);
-		if (!req) {
-			free(handles);
-			return -ENOMEM;
-		}
-		req->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
-		req->hdr.ctx_id = client->ctx;
-		req->size = r->size;
-		memcpy(req + 1, (void *)(uintptr_t)r->command, r->size);
-		/* Shared resources must complete their producer's work before another
-		 * VirGL context consumes them. Same-context submissions stay ordered
-		 * on the host command stream without a CPU wait. */
-		result = 0;
-		for (i = 0; i < r->num_bo_handles; i++) {
-			struct gpu_bo *bo = gpu_handle(client, handles[i]);
-			if (bo->submission_ctx != client->ctx &&
-			    bo->submission > gpu_completed) {
-				result = gpu_idle(bo->submission_ctx);
-				if (result)
-					break;
-			}
-		}
-		if (!result) {
-			++gpu_submission;
-			for (i = 0; i < r->num_bo_handles; i++) {
-				struct gpu_bo *bo =
-					gpu_handle(client, handles[i]);
-				bo->submission = gpu_submission;
-				bo->submission_ctx = client->ctx;
-			}
-			result = gpu_simple(req, size, 0);
-		}
-		gpu_free_pages(req, size);
-		free(handles);
-		return result;
-	}
-	case DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST:
-	case DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST: {
-		struct drm_virtgpu_3d_transfer_to_host *r = arg;
-		struct gpu_bo *bo = gpu_handle(client, r->bo_handle);
-		struct virtio_gpu_transfer_host_3d req = { 0 };
-		if (!bo || r->offset >= bo->size)
-			return -EINVAL;
-		req.hdr.type = cmd == DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST ?
-				       VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D :
-				       VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D;
-		req.hdr.ctx_id = client->ctx;
-		memcpy(&req.box, &r->box, sizeof(req.box));
-		req.offset = r->offset;
-		req.resource_id = bo->id;
-		req.level = r->level;
-		req.stride = r->stride;
-		req.layer_stride = r->layer_stride;
-		return gpu_simple(&req, sizeof(req), 1);
-	}
-	case DRM_IOCTL_VIRTGPU_WAIT: {
-		struct drm_virtgpu_3d_wait *r = arg;
-		struct gpu_bo *bo = gpu_handle(client, r->handle);
-		int result;
-		if (!bo || (r->flags & ~VIRTGPU_WAIT_NOWAIT))
-			return -EINVAL;
-		result = gpu_complete(!(r->flags & VIRTGPU_WAIT_NOWAIT));
-		if (result)
-			return result;
-		if (bo->submission <= gpu_completed)
-			return 0;
-		return gpu_idle_mode(client->ctx,
-				     (r->flags & VIRTGPU_WAIT_NOWAIT) ? 2 : 1);
-	}
-	default:
-		return -ENOTTY;
-	}
+	return command_dispatch(gpu_authenticated_command_groups, client, cmd, arg,
+				-ENOTTY);
 }
 
 static int gpu_ioctl(file *fp, unsigned cmd, void *arg)
@@ -1398,15 +1831,17 @@ static int gpu_release(file *fp)
 			fs_put_file(gpu_fbs[i].buffer);
 			memset(&gpu_fbs[i], 0, sizeof(gpu_fbs[i]));
 		}
-	for (i = 1; i < GPU_MAX_HANDLES; i++)
-		if (client->handles[i])
-			gpu_drop_handle(client, i);
+	while (client->resource_handles.rb_node) {
+		struct gpu_handle_entry *entry =
+			rb_entry(rb_first(&client->resource_handles),
+				 struct gpu_handle_entry, id_node);
+		gpu_drop_handle(client, entry->handle);
+	}
 	req.hdr.type = VIRTIO_GPU_CMD_CTX_DESTROY;
 	req.hdr.ctx_id = client->ctx;
 	gpu_simple(&req, sizeof(req), 1);
-	for (i = 0; i < GPU_MAX_CLIENTS; i++)
-		if (gpu_clients[i] == client)
-			gpu_clients[i] = NULL;
+	rb_erase(&client->ctx_node, &gpu_clients);
+	slot_return(&gpu_client_slots, client->slot);
 	free(client);
 	free(fp->f_inode);
 	free(fp);
@@ -1427,12 +1862,13 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	struct virtio_gpu_ctx_create req = { 0 };
 	struct gpu_client *client = NULL;
 	file *fp = NULL;
-	unsigned slot;
+	int slot = -1;
 	(void)sb;
 	rmutex_lock(&gpu_lock);
-	for (slot = 0; slot < GPU_MAX_CLIENTS && gpu_clients[slot]; slot++) {
-	}
-	if (!gpu_ready || slot == GPU_MAX_CLIENTS || gpu_next_context == 0)
+	if (!gpu_ready || gpu_next_context == 0)
+		goto fail;
+	slot = slot_take(&gpu_client_slots, GPU_MAX_CLIENTS);
+	if (slot < 0)
 		goto fail;
 	client = zalloc(sizeof(*client));
 	fp = zalloc(sizeof(*fp));
@@ -1442,6 +1878,7 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	if (!fp->f_inode)
 		goto fail;
 	client->ctx = (flags & O_PATH) ? 0 : gpu_next_context++;
+	client->slot = slot;
 	client->rdev = rdev;
 	client->authenticated = MINOR(rdev) == GPU_RENDER_MINOR ||
 				current->user->euid == 0;
@@ -1452,6 +1889,7 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	fp->f_mode = flags & O_ACCMODE;
 	fp->f_flag = flags;
 	if (flags & O_PATH) {
+		slot_return(&gpu_client_slots, slot);
 		rmutex_unlock(&gpu_lock);
 		return fp;
 	}
@@ -1461,12 +1899,14 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	memcpy(req.debug_name, "MOS", 3);
 	if (gpu_simple(&req, sizeof(req), 0))
 		goto fail;
-	gpu_clients[slot] = client;
+	gpu_client_insert(&gpu_clients, client);
 	if (!MINOR(rdev) && !gpu_master && !current->user->euid)
 		gpu_master = client;
 	rmutex_unlock(&gpu_lock);
 	return fp;
 fail:
+	if (slot >= 0)
+		slot_return(&gpu_client_slots, slot);
 	if (fp)
 		free(fp->f_inode);
 	free(fp);

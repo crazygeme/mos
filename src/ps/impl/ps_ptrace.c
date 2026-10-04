@@ -107,6 +107,18 @@ static void ptrace_stop_task_unsafe(task_struct *task, int sig,
 		task->user->ptrace_frame.eflags = frame->eflags;
 		task->user->ptrace_frame.esp = (uintptr_t)frame->esp;
 		task->user->ptrace_frame.ss = frame->ss;
+#if MOS_HAS_NATIVE_USER
+		task->user->ptrace_frame.r8 = frame->r8;
+		task->user->ptrace_frame.r9 = frame->r9;
+		task->user->ptrace_frame.r10 = frame->r10;
+		task->user->ptrace_frame.r11 = frame->r11;
+		task->user->ptrace_frame.r12 = frame->r12;
+		task->user->ptrace_frame.r13 = frame->r13;
+		task->user->ptrace_frame.r14 = frame->r14;
+		task->user->ptrace_frame.r15 = frame->r15;
+		task->user->ptrace_frame.fs_base = task->tss.fs_base;
+		task->user->ptrace_frame.gs_base = task->tss.gs_base;
+#endif
 		task->user->ptrace_frame_valid = 1;
 	} else {
 		memset(&task->user->ptrace_frame, 0,
@@ -144,69 +156,58 @@ static int ptrace_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 	return 0;
 }
 
-static int ptrace_peekuser(task_struct *task, unsigned addr, int32_t *out)
+static size_t ptrace_regs_size(void)
 {
-	ptrace_saved_frame *frame = &task->user->ptrace_frame;
-	unsigned index = addr / sizeof(unsigned);
+#if MOS_HAS_NATIVE_USER
+	if (current->user->abi == MOS_ABI_AMD64)
+		return 27 * sizeof(uint64_t);
+#endif
+	return sizeof(struct ptrace_user_regs);
+}
 
-	if (!task->user->ptrace_frame_valid || (addr & (sizeof(unsigned) - 1)))
-		return -EIO;
-
-	switch (index) {
-	case PTRACE_REG_EBX:
-		*out = frame->ebx;
+static int ptrace_getregs(task_struct *task, void *output)
+{
+#if MOS_HAS_NATIVE_USER
+	if (current->user->abi == MOS_ABI_AMD64) {
+		ptrace_saved_frame *f = &task->user->ptrace_frame;
+		if (!task->user->ptrace_frame_valid)
+			return -EIO;
+		const uint64_t regs[27] = {
+			f->r15,	    f->r14,
+			f->r13,	    f->r12,
+			f->ebp,	    f->ebx,
+			f->r11,	    f->r10,
+			f->r9,	    f->r8,
+			f->eax,	    f->ecx,
+			f->edx,	    f->esi,
+			f->edi,	    task->user->ptrace_orig_eax,
+			f->eip,	    f->cs,
+			f->eflags,  f->esp,
+			f->ss,	    f->fs_base,
+			f->gs_base, f->ds,
+			f->es,	    f->fs,
+			f->gs,
+		};
+		memcpy(output, regs, sizeof(regs));
 		return 0;
-	case PTRACE_REG_ECX:
-		*out = frame->ecx;
-		return 0;
-	case PTRACE_REG_EDX:
-		*out = frame->edx;
-		return 0;
-	case PTRACE_REG_ESI:
-		*out = frame->esi;
-		return 0;
-	case PTRACE_REG_EDI:
-		*out = frame->edi;
-		return 0;
-	case PTRACE_REG_EBP:
-		*out = frame->ebp;
-		return 0;
-	case PTRACE_REG_EAX:
-		*out = frame->eax;
-		return 0;
-	case PTRACE_REG_DS:
-		*out = frame->ds;
-		return 0;
-	case PTRACE_REG_ES:
-		*out = frame->es;
-		return 0;
-	case PTRACE_REG_FS:
-		*out = frame->fs;
-		return 0;
-	case PTRACE_REG_GS:
-		*out = frame->gs;
-		return 0;
-	case PTRACE_REG_ORIG_EAX:
-		*out = task->user->ptrace_orig_eax;
-		return 0;
-	case PTRACE_REG_EIP:
-		*out = (long)frame->eip;
-		return 0;
-	case PTRACE_REG_CS:
-		*out = frame->cs;
-		return 0;
-	case PTRACE_REG_EFL:
-		*out = frame->eflags;
-		return 0;
-	case PTRACE_REG_UESP:
-		*out = (long)frame->esp;
-		return 0;
-	case PTRACE_REG_SS:
-		*out = frame->ss;
-		return 0;
-	default:
-		return -EIO;
 	}
+#endif
+	return ptrace_copy_regs(task, output);
+}
+
+static int ptrace_peekuser(task_struct *task, uintptr_t address, void *output)
+{
+	union {
+		struct ptrace_user_regs _i386;
+		uint64_t amd64[27];
+	} regs;
+	size_t width = current->user->abi == MOS_ABI_AMD64 ? 8 : 4;
+	if ((address & (width - 1)) || address >= ptrace_regs_size())
+		return -EIO;
+	int ret = ptrace_getregs(task, &regs);
+	if (!ret)
+		memcpy(output, (char *)&regs + address, width);
+	return ret;
 }
 
 static int ptrace_resume(task_struct *tracer, task_struct *target, int mode,
@@ -294,7 +295,7 @@ void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp)
 
 	arch_task_init_user_frame(&frame, eip, esp);
 	frame.eax = 0;
-	cur->user->ptrace_orig_eax = 11; /* __NR_execve on i386 */
+	cur->user->ptrace_orig_eax = cur->user->abi == MOS_ABI_AMD64 ? 59 : 11;
 
 	spinlock_lock(&ps_lock, &irq);
 	cur->user->ptrace_eventmsg = cur->psid;
@@ -331,12 +332,8 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 {
 	task_struct *cur = CURRENT_TASK();
 	task_struct *target;
-	struct ptrace_user_regs regs;
-	int32_t peek_word;
-	union {
-		int32_t word;
-		char bytes[sizeof(int32_t)];
-	} peek;
+	uintptr_t peek = 0;
+	size_t word_size = cur->user->abi == MOS_ABI_AMD64 ? 8 : 4;
 	int ret;
 
 	if (TEST_LOG(TEST_LOG_INFO))
@@ -381,33 +378,23 @@ int sys_ptrace(int request, int pid, void *addr, void *data)
 	case PTRACE_GETEVENTMSG:
 		if (target->status != ps_stopped)
 			return -ESRCH;
-		*(uint32_t *)data = target->user->ptrace_eventmsg;
+		memcpy(data, &target->user->ptrace_eventmsg, word_size);
 		return 0;
 
 	case PTRACE_PEEKDATA:
 	case PTRACE_PEEKTEXT:
-		memset(&peek, 0, sizeof(peek));
-		ret = ps_read_process_memory(target, addr, peek.bytes,
-					     sizeof(peek.bytes));
+		peek = 0;
+		ret = ps_read_process_memory(target, addr, &peek, word_size);
 		if (ret < 0)
 			return ret;
-		*(int32_t *)data = peek.word;
+		memcpy(data, &peek, word_size);
 		return 0;
 
 	case PTRACE_PEEKUSER:
-		ret = ptrace_peekuser(target, (unsigned)(uintptr_t)addr,
-				      &peek_word);
-		if (ret < 0)
-			return ret;
-		*(int32_t *)data = peek_word;
-		return 0;
+		return ptrace_peekuser(target, (uintptr_t)addr, data);
 
 	case PTRACE_GETREGS:
-		ret = ptrace_copy_regs(target, &regs);
-		if (ret < 0)
-			return ret;
-		memcpy(data, &regs, sizeof(regs));
-		return 0;
+		return ptrace_getregs(target, data);
 
 	case PTRACE_CONT:
 		return ptrace_resume(cur, target, PTRACE_MODE_CONT,

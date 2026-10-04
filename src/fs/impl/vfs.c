@@ -17,18 +17,40 @@ static int sb_path_comp(const char *left, const char *right)
 	return 0 - strcmp(left, right);
 }
 
-static vfs_mount_node *sb_mount_find(super_block *sb, const char *path)
+static vfs_mount_node *sb_mount_find_n(super_block *sb, const char *path,
+				       size_t length)
 {
 	struct rb_node *node = sb->s_mounts.rb_node;
 	while (node) {
 		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
-		int comp = sb_path_comp(path, mount->path);
-		if (comp < 0)
-			node = node->rb_left;
-		else if (comp > 0)
-			node = node->rb_right;
-		else
+		int comp = strncmp(mount->path, path, length);
+		if (!comp && mount->path[length])
+			comp = 1;
+		if (!comp)
 			return mount;
+		node = comp < 0 ? node->rb_left : node->rb_right;
+	}
+	return NULL;
+}
+
+static vfs_mount_node *sb_mount_find(super_block *sb, const char *path)
+{
+	return sb_mount_find_n(sb, path, strlen(path));
+}
+
+/* Search complete path components, from the deepest mount toward the root. */
+static vfs_mount_node *sb_mount_prefix(super_block *sb, const char *path,
+				       size_t *length)
+{
+	size_t end = strlen(path);
+	while (end) {
+		vfs_mount_node *mount = sb_mount_find_n(sb, path, end);
+		if (mount) {
+			*length = end;
+			return mount;
+		}
+		while (end && path[--end] != '/')
+			;
 	}
 	return NULL;
 }
@@ -69,31 +91,21 @@ static void sb_mount_remove(super_block *sb, vfs_mount_node *mount)
 static int sb_path_resolve(super_block *sb, const char *path,
 			   super_block **out_sb, char **out_path)
 {
-	struct rb_node *node;
-	super_block *child;
-	const char *rest;
-	size_t klen;
+	size_t length;
+	vfs_mount_node *mount;
 
 	if (!sb || !path)
 		return 0;
 
-	if (*path == '\0')
+	if (!*path)
 		goto done;
-
 	mutex_lock(&sb->s_lock);
-
-	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
-		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
-		klen = strlen(mount->path);
-		if (strncmp(path, mount->path, klen) == 0 &&
-		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = mount->sb;
-			rest = path + klen;
-			mutex_unlock(&sb->s_lock);
-			return sb_path_resolve(child, rest, out_sb, out_path);
-		}
+	mount = sb_mount_prefix(sb, path, &length);
+	if (mount) {
+		super_block *child = mount->sb;
+		mutex_unlock(&sb->s_lock);
+		return sb_path_resolve(child, path + length, out_sb, out_path);
 	}
-
 	mutex_unlock(&sb->s_lock);
 
 done:
@@ -141,7 +153,7 @@ void sb_put(super_block *sb)
 
 int vfs_mount(super_block *sb, const char *path, super_block *next)
 {
-	struct rb_node *node;
+	vfs_mount_node *prefix;
 	super_block *child;
 	char *key;
 	size_t klen;
@@ -160,16 +172,12 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 		return -EEXIST;
 	}
 
-	/* Delegate to an existing child that is a strict prefix of path */
-	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
-		vfs_mount_node *mount = rb_entry(node, vfs_mount_node, rb_node);
-		klen = strlen(mount->path);
-		if (strncmp(path, mount->path, klen) == 0 &&
-		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = mount->sb;
-			mutex_unlock(&sb->s_lock);
-			return vfs_mount(child, path + klen, next);
-		}
+	/* Delegate through the indexed child mount. */
+	prefix = sb_mount_prefix(sb, path, &klen);
+	if (prefix) {
+		child = prefix->sb;
+		mutex_unlock(&sb->s_lock);
+		return vfs_mount(child, path + klen, next);
 	}
 
 	/* No prefix match: register as a direct child */
@@ -185,13 +193,13 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 	}
 
 	key = strdup(path);
-	{
-		vfs_mount_node *mount = kmalloc(sizeof(*mount));
-		mount->path = key;
-		mount->sb = child;
-		rb_init_node(&mount->rb_node);
-		sb_mount_insert(sb, mount);
-	}
+
+	vfs_mount_node *mount = kmalloc(sizeof(*mount));
+	mount->path = key;
+	mount->sb = child;
+	rb_init_node(&mount->rb_node);
+	sb_mount_insert(sb, mount);
+
 	mutex_unlock(&sb->s_lock);
 	return 0;
 }
@@ -224,7 +232,6 @@ void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
 int vfs_umount(super_block *sb, const char *path)
 {
 	vfs_mount_node *mount;
-	struct rb_node *node;
 	super_block *child;
 	size_t klen;
 
@@ -242,16 +249,12 @@ int vfs_umount(super_block *sb, const char *path)
 		return 0;
 	}
 
-	/* Prefix match: delegate to child */
-	for (node = rb_first(&sb->s_mounts); node; node = rb_next(node)) {
-		mount = rb_entry(node, vfs_mount_node, rb_node);
-		klen = strlen(mount->path);
-		if (strncmp(path, mount->path, klen) == 0 &&
-		    (path[klen] == '/' || path[klen] == '\0')) {
-			child = mount->sb;
-			mutex_unlock(&sb->s_lock);
-			return vfs_umount(child, path + klen);
-		}
+	/* Delegate through the indexed child mount. */
+	mount = sb_mount_prefix(sb, path, &klen);
+	if (mount) {
+		child = mount->sb;
+		mutex_unlock(&sb->s_lock);
+		return vfs_umount(child, path + klen);
 	}
 
 	mutex_unlock(&sb->s_lock);
@@ -261,11 +264,10 @@ int vfs_umount(super_block *sb, const char *path)
 /*
  * VFS_PATH_OP - resolve a single path through the mount tree and dispatch
  * to the matching super_block's operation.
- * @fn:        the vfs_* function name (used for the recursive descent call)
  * @sop_field: field name in super_operations to invoke
  * @...:       extra arguments forwarded after (sb, path)
  */
-#define VFS_PATH_OP(fn, sop_field, ...)                                 \
+#define VFS_PATH_OP(sop_field, ...)                                     \
 	do {                                                            \
 		super_block *_tsb;                                      \
 		char *_rp;                                              \
@@ -273,8 +275,6 @@ int vfs_umount(super_block *sb, const char *path)
 			return -EINVAL;                                 \
 		if (!sb_path_resolve(sb, path, &_tsb, &_rp))            \
 			return -EINVAL;                                 \
-		if (_tsb != sb)                                         \
-			return fn(_tsb, _rp, ##__VA_ARGS__);            \
 		if (!_tsb->s_op || !_tsb->s_op->sop_field)              \
 			return -ENOSYS;                                 \
 		return _tsb->s_op->sop_field(_tsb, _rp, ##__VA_ARGS__); \
@@ -304,17 +304,17 @@ int vfs_umount(super_block *sb, const char *path)
 
 int vfs_mkdir(super_block *sb, const char *path, unsigned mode)
 {
-	VFS_PATH_OP(vfs_mkdir, mkdir, mode);
+	VFS_PATH_OP(mkdir, mode);
 }
 
 int vfs_rmdir(super_block *sb, const char *path)
 {
-	VFS_PATH_OP(vfs_rmdir, rmdir);
+	VFS_PATH_OP(rmdir);
 }
 
 int vfs_unlink(super_block *sb, const char *path)
 {
-	VFS_PATH_OP(vfs_unlink, unlink);
+	VFS_PATH_OP(unlink);
 }
 
 int vfs_link(super_block *sb, const char *oldpath, const char *newpath)
@@ -340,8 +340,6 @@ int vfs_symlink(super_block *sb, const char *target, const char *linkpath)
 		return -EINVAL;
 	if (!sb_path_resolve(sb, linkpath, &target_sb, &rel_path))
 		return -EINVAL;
-	if (target_sb != sb)
-		return vfs_symlink(target_sb, target, rel_path);
 	if (!target_sb->s_op || !target_sb->s_op->symlink)
 		return -ENOSYS;
 	return target_sb->s_op->symlink(target_sb, target, rel_path);
@@ -357,8 +355,6 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 		return -EINVAL;
 	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
 		return -EINVAL;
-	if (target_sb != sb)
-		return vfs_readlink(target_sb, rel_path, buf, bufsiz, rcnt);
 	if (!target_sb->s_op || !target_sb->s_op->readlink) {
 		file *fp;
 
@@ -425,7 +421,7 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs64 *buf)
 
 int vfs_utime(super_block *sb, const char *path, unsigned atime, unsigned mtime)
 {
-	VFS_PATH_OP(vfs_utime, utime, atime, mtime);
+	VFS_PATH_OP(utime, atime, mtime);
 }
 
 static file *vfs_open_raw(super_block *sb, const char *path, int flag)
@@ -439,10 +435,6 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag)
 
 	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
 		return NULL;
-
-	/* sb_path_resolve descends into children; if target differs, re-enter */
-	if (target_sb != sb)
-		return vfs_open_raw(target_sb, rel_path, flag);
 
 	/* Opening the mount root: empty suffix or bare trailing slash */
 	if (*rel_path == '\0' || (rel_path[0] == '/' && rel_path[1] == '\0')) {

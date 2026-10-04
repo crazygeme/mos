@@ -21,7 +21,8 @@
 #include <unistd.h>
 #include <ext4.h>
 #include <errno.h>
-#include "devnums.h"
+#include <lib/command.h>
+#include <dev/devnums.h>
 
 /* ── File operations ─────────────────────────────────────────────────────── */
 
@@ -166,28 +167,54 @@ static unsigned hdd_dev_poll(file *fp, unsigned events, poll_table *pt)
 	return events & (FS_POLL_READ | FS_POLL_WRITE);
 }
 
-static int hdd_dev_ioctl(file *fp, unsigned cmd, void *buf)
+static int hdd_dev_ioctl_blkgetsize(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
 {
+	file *fp = context;
 	unsigned idx = (unsigned)(uintptr_t)fp->f_inode->i_private;
 	uint64_t size_bytes =
 		(uint64_t)hdd_partition_size_sectors(idx) * BLOCK_SECTOR_SIZE;
+	*(unsigned long *)buf = (unsigned long)(size_bytes / 512);
+	return 0;
+}
 
+static int hdd_dev_ioctl_blkgetsize64(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	unsigned idx = (unsigned)(uintptr_t)fp->f_inode->i_private;
+	uint64_t size_bytes =
+		(uint64_t)hdd_partition_size_sectors(idx) * BLOCK_SECTOR_SIZE;
+	*(uint64_t *)buf = size_bytes;
+	return 0;
+}
+
+static int hdd_dev_ioctl_blksszget(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	*(int *)buf = BLOCK_SECTOR_SIZE;
+	return 0;
+}
+
+static const command_operation hdd_commands[256] = {
+	[BLKGETSIZE & 255] = { BLKGETSIZE, hdd_dev_ioctl_blkgetsize },
+	[BLKGETSIZE64 & 255] = { BLKGETSIZE64, hdd_dev_ioctl_blkgetsize64 },
+	[BLKSSZGET & 255] = { BLKSSZGET, hdd_dev_ioctl_blksszget },
+};
+
+static const command_operation *const hdd_command_groups[256] = {
+	[(BLKGETSIZE >> 8) & 255] = hdd_commands,
+};
+
+static int hdd_dev_ioctl(file *fp, unsigned cmd, void *buf)
+{
 	if (!buf)
 		return -EINVAL;
 
-	switch (cmd) {
-	case BLKGETSIZE:
-		*(unsigned long *)buf = (unsigned long)(size_bytes / 512);
-		return 0;
-	case BLKGETSIZE64:
-		*(uint64_t *)buf = size_bytes;
-		return 0;
-	case BLKSSZGET:
-		*(int *)buf = BLOCK_SECTOR_SIZE;
-		return 0;
-	default:
-		return -ENOTTY;
-	}
+	return command_dispatch(hdd_command_groups, fp, cmd, buf, -ENOTTY);
 }
 
 static int hdd_dev_getattr(file *fp, struct stat *s)

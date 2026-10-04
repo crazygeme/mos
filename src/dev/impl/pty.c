@@ -7,7 +7,7 @@
 #include <device/time.h>
 #include <dev/dev.h>
 #include <ps/ps.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 #include "pts_internal.h"
 
 #define MAX_PTS 16
@@ -15,6 +15,64 @@
 
 static pts_pair pts_pairs[MAX_PTS];
 static spinlock_t pts_alloc_lock;
+static struct rb_root pts_groups = _RBTREE_ROOT_INIT;
+
+static void pty_group_insert_locked(pts_pair *p)
+{
+	struct rb_node **link = &pts_groups.rb_node, *parent = NULL;
+	while (*link) {
+		pts_pair *other = rb_entry(*link, pts_pair, group_node);
+		parent = *link;
+		link = p->pgrp < other->pgrp || (p->pgrp == other->pgrp &&
+						 p->idx < other->idx) ?
+			       &parent->rb_left :
+			       &parent->rb_right;
+	}
+	rb_init_node(&p->group_node);
+	rb_link_node(&p->group_node, parent, link);
+	rb_insert_color(&p->group_node, &pts_groups);
+	p->group_indexed = 1;
+}
+
+static void pty_group_changed(pts_pair *p, unsigned group)
+{
+	int irq;
+	spinlock_lock(&pts_alloc_lock, &irq);
+	if (p->group_indexed) {
+		rb_erase(&p->group_node, &pts_groups);
+		p->group_indexed = 0;
+	}
+	p->pgrp = group;
+	if (p->used && p->master_open)
+		pty_group_insert_locked(p);
+	spinlock_unlock(&pts_alloc_lock, irq);
+}
+
+/* The pair allocator lock protects the process-group index. */
+static void pty_pair_free_locked(pts_pair *p)
+{
+	if (p->group_indexed) {
+		rb_erase(&p->group_node, &pts_groups);
+		p->group_indexed = 0;
+	}
+}
+
+static pts_pair *pty_group_find_locked(unsigned group)
+{
+	struct rb_node *node = pts_groups.rb_node;
+	pts_pair *match = NULL;
+	while (node) {
+		pts_pair *p = rb_entry(node, pts_pair, group_node);
+		if (group <= p->pgrp) {
+			if (group == p->pgrp)
+				match = p;
+			node = node->rb_left;
+		} else {
+			node = node->rb_right;
+		}
+	}
+	return match;
+}
 
 static int pts_master_getattr(file *fp, struct stat *s)
 {
@@ -101,7 +159,7 @@ static int pts_master_release(file *fp)
 	cyb_writer_close(p->m2s);
 	cyb_reader_close(p->s2m);
 
-	p->master_open = 0;
+	pts_pair_close_master(p);
 	pts_pair_check_free(p, &pts_alloc_lock);
 
 	kfree(fp->f_inode);
@@ -158,6 +216,9 @@ static file *ptm_cdev_open(super_block *sb, unsigned rdev, int flag)
 	p->idx = idx;
 	p->used = 1;
 	p->master_open = 1;
+	p->group_changed = pty_group_changed;
+	p->on_free = pty_pair_free_locked;
+	pty_group_insert_locked(p);
 	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 	if (current->user) {
 		p->slave_uid = current->user->uid;
@@ -206,30 +267,17 @@ static file *pts_cdev_open(super_block *sb, unsigned rdev, int flag)
 
 file *pty_open_controlling(task_struct *task, int flag)
 {
-	int i;
 	int irq;
-	pts_pair *match = NULL;
-
+	pts_pair *match;
 	if (!task || !task->user)
 		return NULL;
-
 	spinlock_lock(&pts_alloc_lock, &irq);
-	for (i = 0; i < MAX_PTS; i++) {
-		pts_pair *p = &pts_pairs[i];
-
-		if (!p->used || !p->master_open)
-			continue;
-		if (p->pgrp != task->user->group_id)
-			continue;
-		if (!(flag & O_PATH)) {
-			__sync_add_and_fetch(&p->slave_count, 1);
-			p->slave_ever_opened = 1;
-		}
-		match = p;
-		break;
+	match = pty_group_find_locked(task->user->group_id);
+	if (match && !(flag & O_PATH)) {
+		__sync_add_and_fetch(&match->slave_count, 1);
+		match->slave_ever_opened = 1;
 	}
 	spinlock_unlock(&pts_alloc_lock, irq);
-
 	return match ? pty_open_slave_pair(match, flag) : NULL;
 }
 

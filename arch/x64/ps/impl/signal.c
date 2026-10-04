@@ -1,10 +1,9 @@
 #include <ps/ps.h>
-#include <ps/impl/ps_internal.h>
 #include <ps/smp.h>
 #include <int/int.h>
 #include <lib/klib.h>
 #include <errno.h>
-#include <syscall/impl/syscall_internal.h>
+#include <syscall/syscall.h>
 
 struct native_stack {
 	uint64_t sp;

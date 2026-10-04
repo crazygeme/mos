@@ -4,8 +4,8 @@
 /*
  * Central device-number registry.
  *
- * Keep character/block device majors and fixed minors here so new nodes do not
- * accidentally reuse an existing number that is already registered elsewhere.
+ * Character and block device majors and fixed minors shared by device
+ * registration and procfs.
  */
 
 /* /dev/mem */

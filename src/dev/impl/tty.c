@@ -39,11 +39,12 @@
 #include <elf/exec.h>
 #include <unistd.h>
 #include <errno.h>
+#include <lib/command.h>
 #include <macro.h>
 #include <mm/mmu.h>
 #include <dev/dev.h>
 #include <ext4_oflags.h>
-#include "devnums.h"
+#include <dev/devnums.h>
 #include "pts_internal.h"
 #include "tty_ldisc.h"
 #include <device/keyboard.h>
@@ -1830,282 +1831,572 @@ static unsigned tty_fs_poll(file *fp, unsigned events, poll_table *pt)
 	return ready;
 }
 
-static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
+static int tty_fs_ioctl_fionread(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
 {
+	file *fp = context;
 	tty_state *state = fp->f_inode->i_private;
-	switch (cmd) {
-	case FIONREAD:
-		*(int *)buf = cyb_get_buf_len(state->kb_buf);
-		return 0;
-	case TCGETS:
-	case TCGETA:
-	case TCGETS2:
-		memcpy(buf, &state->termios, sizeof(state->termios));
-		return 0;
-	case TCSETS:
-	case TCSETSW:
-	case TCSETA:
-	case TCSETAW:
-	case TCSETS2:
-	case TCSETSW2:
-		memcpy(&state->termios, buf, sizeof(state->termios));
-		return 0;
-	case TCSETSF:
-	case TCSETAF:
-	case TCSETSF2:
-		/* Flush pending input before applying new settings. */
-		state->canon.len = 0;
-		state->canon_ready = 0;
-		cyb_flush(state->kb_buf);
-		memcpy(&state->termios, buf, sizeof(state->termios));
-		return 0;
-	case TIOCGWINSZ: {
-		struct winsize *ws = (struct winsize *)buf;
-		ws->ws_row = (unsigned short)MAX_ROW;
-		ws->ws_col = (unsigned short)MAX_COL;
-		ws->ws_xpixel = ws->ws_ypixel = 0;
-		return 0;
-	}
-	case TIOCSWINSZ:
-		/* window size is hardware-fixed; accept silently */
-		return 0;
-	case TIOCGPGRP:
-		*(unsigned *)buf = state->pgrp;
-		return 0;
-	case TIOCGSID:
-		/* The active virtual console is controlled by the caller's session. */
-		*(unsigned *)buf = CURRENT_TASK()->user->session_id;
-		return 0;
-	case TIOCSPGRP:
-		state->pgrp = *(unsigned *)buf;
-		return 0;
-	case TIOCSCTTY: {
-		/*
+	*(int *)buf = cyb_get_buf_len(state->kb_buf);
+	return 0;
+}
+
+static int tty_fs_ioctl_tcgets(void *context __attribute__((unused)),
+			       unsigned cmd __attribute__((unused)),
+			       void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	memcpy(buf, &state->termios, sizeof(state->termios));
+	return 0;
+}
+
+static int tty_fs_ioctl_tcsets(void *context __attribute__((unused)),
+			       unsigned cmd __attribute__((unused)),
+			       void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	memcpy(&state->termios, buf, sizeof(state->termios));
+	return 0;
+}
+
+static int tty_fs_ioctl_tcsetsf(void *context __attribute__((unused)),
+				unsigned cmd __attribute__((unused)),
+				void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	/* Flush pending input before applying new settings. */
+	state->canon.len = 0;
+	state->canon_ready = 0;
+	cyb_flush(state->kb_buf);
+	memcpy(&state->termios, buf, sizeof(state->termios));
+	return 0;
+}
+
+static int tty_fs_ioctl_tiocgwinsz(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	struct winsize *ws = (struct winsize *)buf;
+	ws->ws_row = (unsigned short)state->max_row;
+	ws->ws_col = (unsigned short)state->max_col;
+	ws->ws_xpixel = ws->ws_ypixel = 0;
+	return 0;
+}
+
+static int tty_fs_ioctl_tiocswinsz(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	/* window size is hardware-fixed; accept silently */
+	return 0;
+}
+
+static int tty_fs_ioctl_tiocgpgrp(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	*(unsigned *)buf = state->pgrp;
+	return 0;
+}
+
+static int tty_fs_ioctl_tiocgsid(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	/* The active virtual console is controlled by the caller's session. */
+	*(unsigned *)buf = CURRENT_TASK()->user->session_id;
+	return 0;
+}
+
+static int tty_fs_ioctl_tiocspgrp(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	state->pgrp = *(unsigned *)buf;
+	return 0;
+}
+
+static int tty_fs_ioctl_tiocsctty(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+
+	/*
 		 * Make this TTY the controlling terminal for the calling
 		 * process's session.  The process must be a session leader.
 		 * arg==1 allows stealing from another session.
 		 */
-		task_struct *cur = CURRENT_TASK();
-		int steal = (int)(uintptr_t)buf;
-		if (!cur->user || cur->user->session_id != cur->psid)
-			return -EPERM; /* must be session leader */
-		if (state->pgrp && !steal)
-			return -EPERM; /* already owned, not stealing */
-		state->pgrp = cur->user->group_id;
-		return 0;
-	}
-	case TIOCNOTTY: {
-		task_struct *cur = CURRENT_TASK();
+	task_struct *cur = CURRENT_TASK();
+	int steal = (int)(uintptr_t)buf;
+	if (!cur->user || cur->user->session_id != cur->psid)
+		return -EPERM; /* must be session leader */
+	if (state->pgrp && !steal)
+		return -EPERM; /* already owned, not stealing */
+	state->pgrp = cur->user->group_id;
+	return 0;
+}
 
-		if (cur->user && state->pgrp == cur->user->group_id)
-			state->pgrp = 0;
-		return 0;
-	}
-	case KDGKBTYPE:
-		*(unsigned char *)buf = KB_101;
-		return 0;
-	case KDGETLED:
-		*(unsigned char *)buf = (unsigned char)(state->kb_leds & 7);
-		return 0;
-	case KDSETLED:
-		state->kb_leds = (int)(uintptr_t)buf;
-		return 0;
-	case KDGKBMODE:
-		*(int *)buf = state->kb_mode;
-		return 0;
-	case KDSKBMODE:
-		state->kb_mode = (int)(uintptr_t)buf;
-		return 0;
-	case KDGKBENT:
-		return kbd_get_kbentry((struct kbentry *)buf);
-	case KDSKBENT:
-		return kbd_set_kbentry((const struct kbentry *)buf);
-	case KDGKBSENT:
-		return kbd_get_kbsentry((struct kbsentry *)buf);
-	case KDSKBSENT:
-		return kbd_set_kbsentry((const struct kbsentry *)buf);
-	case KDGKBDIACR: {
-		struct kbdiacrs *d = (struct kbdiacrs *)buf;
-		d->kb_cnt = 0;
-		return 0;
-	}
-	case KDSKBDIACR:
-		return 0;
-	case KDKBDREP: {
-		struct kbd_repeat *rep = (struct kbd_repeat *)buf;
+static int tty_fs_ioctl_tiocnotty(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
 
-		if (rep->delay > 0)
-			state->kb_repeat.delay = rep->delay;
-		if (rep->period > 0)
-			state->kb_repeat.period = rep->period;
-		rep->delay = state->kb_repeat.delay;
-		rep->period = state->kb_repeat.period;
-		return 0;
-	}
-	case TIOCLINUX: {
-		/*
+	task_struct *cur = CURRENT_TASK();
+
+	if (cur->user && state->pgrp == cur->user->group_id)
+		state->pgrp = 0;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdgkbtype(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	*(unsigned char *)buf = KB_101;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdgetled(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	*(unsigned char *)buf = (unsigned char)(state->kb_leds & 7);
+	return 0;
+}
+
+static int tty_fs_ioctl_kdsetled(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	state->kb_leds = (int)(uintptr_t)buf;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdgkbmode(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	*(int *)buf = state->kb_mode;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdskbmode(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	state->kb_mode = (int)(uintptr_t)buf;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdgkbent(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	return kbd_get_kbentry((struct kbentry *)buf);
+}
+
+static int tty_fs_ioctl_kdskbent(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	return kbd_set_kbentry((const struct kbentry *)buf);
+}
+
+static int tty_fs_ioctl_kdgkbsent(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	return kbd_get_kbsentry((struct kbsentry *)buf);
+}
+
+static int tty_fs_ioctl_kdskbsent(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	return kbd_set_kbsentry((const struct kbsentry *)buf);
+}
+
+static int tty_fs_ioctl_kdgkbdiacr(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	struct kbdiacrs *d = (struct kbdiacrs *)buf;
+	d->kb_cnt = 0;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdskbdiacr(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int tty_fs_ioctl_kdkbdrep(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+
+	struct kbd_repeat *rep = (struct kbd_repeat *)buf;
+
+	if (rep->delay > 0)
+		state->kb_repeat.delay = rep->delay;
+	if (rep->period > 0)
+		state->kb_repeat.period = rep->period;
+	rep->delay = state->kb_repeat.delay;
+	rep->period = state->kb_repeat.period;
+	return 0;
+}
+
+static int tty_fs_ioctl_tioclinux(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	/*
 		 * Linux virtual-console ioctl; subcommand is the first byte.
 		 * Accept the call silently.
 		 */
-		return 0;
-	}
-	case KDSIGACCEPT:
-		return 0;
-	case KDADDIO:
-	case KDDELIO: {
-		unsigned long port = (unsigned long)(uintptr_t)buf;
-		int rc;
+	return 0;
+}
 
-		if (port < VGA_IO_FIRST || port > VGA_IO_LAST)
-			return -EINVAL;
-		rc = ps_set_ioperm(CURRENT_TASK(), port, 1, cmd == KDADDIO);
-		return rc ? -ENXIO : 0;
-	}
-	case KDENABIO:
-	case KDDISABIO: {
-		int rc = ps_set_ioperm(CURRENT_TASK(), VGA_IO_FIRST,
-				       VGA_IO_COUNT, cmd == KDENABIO);
-		return rc ? -ENXIO : 0;
-	}
-	case KDGETMODE:
-		*(int *)buf = state->kd_mode;
-		return 0;
-	case KDSETMODE: {
-		int mode = (int)(uintptr_t)buf;
-		task_struct *cur = CURRENT_TASK();
+static int tty_fs_ioctl_kdsigaccept(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	return 0;
+}
 
-		if (mode != KD_TEXT && mode != KD_GRAPHICS)
-			return -EINVAL;
-		if (mode == KD_GRAPHICS) {
-			/*
+static int tty_fs_ioctl_kdaddio(void *context __attribute__((unused)),
+				unsigned cmd __attribute__((unused)),
+				void *buf __attribute__((unused)))
+{
+	unsigned long port = (unsigned long)(uintptr_t)buf;
+	int rc;
+
+	if (port < VGA_IO_FIRST || port > VGA_IO_LAST)
+		return -EINVAL;
+	rc = ps_set_ioperm(CURRENT_TASK(), port, 1, cmd == KDADDIO);
+	return rc ? -ENXIO : 0;
+}
+
+static int tty_fs_ioctl_kdenabio(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	int rc = ps_set_ioperm(CURRENT_TASK(), VGA_IO_FIRST, VGA_IO_COUNT,
+			       cmd == KDENABIO);
+	return rc ? -ENXIO : 0;
+}
+
+static int tty_fs_ioctl_kdgetmode(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	*(int *)buf = state->kd_mode;
+	return 0;
+}
+
+static int tty_fs_ioctl_kdsetmode(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+
+	int mode = (int)(uintptr_t)buf;
+	task_struct *cur = CURRENT_TASK();
+
+	if (mode != KD_TEXT && mode != KD_GRAPHICS)
+		return -EINVAL;
+	if (mode == KD_GRAPHICS) {
+		/*
 			 * Record who entered graphics mode so close/exit cleanup can
 			 * restore the VT later if that same graphics owner dies.
 			 */
-			state->kd_mode = KD_GRAPHICS;
-			state->kd_owner_pid = cur ? cur->psid : 0;
-		} else {
-			tty_restore_text_console_locked(state);
-			if (tty_fb_text_is_visible(state)) {
-				/*
+		state->kd_mode = KD_GRAPHICS;
+		state->kd_owner_pid = cur ? cur->psid : 0;
+	} else {
+		tty_restore_text_console_locked(state);
+		if (tty_fb_text_is_visible(state)) {
+			/*
 				 * Returning to KD_TEXT may happen after X changed the
 				 * hardware resolution. Resync geometry before we draw the
 				 * saved console buffer back onto the visible screen.
 				 */
-				tty_sync_fb_mode_all();
-				_displayed_cursor = (unsigned)state->cursor;
-				fb_redraw(state->cells, state->max_col,
-					  state->max_row,
-					  (unsigned)state->cursor);
-			}
+			tty_sync_fb_mode_all();
+			_displayed_cursor = (unsigned)state->cursor;
+			fb_redraw(state->cells, state->max_col, state->max_row,
+				  (unsigned)state->cursor);
 		}
-		return 0;
 	}
-	case VT_OPENQRY:
-		*(int *)buf = tty_vt_find_free();
-		return 0;
-	case VT_GETMODE:
-		memcpy(buf, &state->vt_mode, sizeof(state->vt_mode));
-		return 0;
-	case VT_SETMODE: {
-		const struct vt_mode *mode = (const struct vt_mode *)buf;
-		if (mode->mode != VT_AUTO && mode->mode != VT_PROCESS)
-			return -EINVAL;
-		memcpy(&state->vt_mode, mode, sizeof(state->vt_mode));
-		return 0;
-	}
-	case VT_GETSTATE: {
-		struct vt_stat *stat = (struct vt_stat *)buf;
+	return 0;
+}
 
-		stat->v_active = (unsigned short)active_tty_idx;
-		stat->v_signal = 0;
-		stat->v_state = tty_vt_state_mask();
-		return 0;
-	}
-	case VT_ACTIVATE: {
-		int tty_idx = (int)(uintptr_t)buf;
+static int tty_fs_ioctl_vt_openqry(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	*(int *)buf = tty_vt_find_free();
+	return 0;
+}
 
-		if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
-			return -EINVAL;
-		/* This starts and completes a visible VT switch immediately. */
-		tty_switch_internal(tty_idx, 0);
-		return 0;
-	}
-	case VT_WAITACTIVE: {
-		int tty_idx = (int)(uintptr_t)buf;
+static int tty_fs_ioctl_vt_getmode(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
+	memcpy(buf, &state->vt_mode, sizeof(state->vt_mode));
+	return 0;
+}
 
-		if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
-			return -EINVAL;
-		while (active_tty_idx != tty_idx)
-			time_wait(10);
-		return 0;
-	}
-	case VT_RELDISP: {
-		int arg = (int)(uintptr_t)buf;
+static int tty_fs_ioctl_vt_setmode(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	file *fp = context;
+	tty_state *state = fp->f_inode->i_private;
 
-		if (arg == VT_ACKACQ)
-			/* Linux uses VT_ACKACQ as a post-acquire acknowledgement.
+	const struct vt_mode *mode = (const struct vt_mode *)buf;
+	if (mode->mode != VT_AUTO && mode->mode != VT_PROCESS)
+		return -EINVAL;
+	memcpy(&state->vt_mode, mode, sizeof(state->vt_mode));
+	return 0;
+}
+
+static int tty_fs_ioctl_vt_getstate(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	struct vt_stat *stat = (struct vt_stat *)buf;
+
+	stat->v_active = (unsigned short)active_tty_idx;
+	stat->v_signal = 0;
+	stat->v_state = tty_vt_state_mask();
+	return 0;
+}
+
+static int tty_fs_ioctl_vt_activate(void *context __attribute__((unused)),
+				    unsigned cmd __attribute__((unused)),
+				    void *buf __attribute__((unused)))
+{
+	int tty_idx = (int)(uintptr_t)buf;
+
+	if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
+		return -EINVAL;
+	/* This starts and completes a visible VT switch immediately. */
+	tty_switch_internal(tty_idx, 0);
+	return 0;
+}
+
+static int tty_fs_ioctl_vt_waitactive(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	int tty_idx = (int)(uintptr_t)buf;
+
+	if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
+		return -EINVAL;
+	while (active_tty_idx != tty_idx)
+		time_wait(10);
+	return 0;
+}
+
+static int tty_fs_ioctl_vt_reldisp(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	int arg = (int)(uintptr_t)buf;
+
+	if (arg == VT_ACKACQ)
+		/* Linux uses VT_ACKACQ as a post-acquire acknowledgement.
 			 * We do not gate any further state on it yet, so accept it. */
-			return 0;
-		if (arg == 0) {
-			/* Linux allows userspace to refuse a deferred switch. We do
+		return 0;
+	if (arg == 0) {
+		/* Linux allows userspace to refuse a deferred switch. We do
 			 * not defer visibility anymore, so this is just an ack. */
-			return 0;
-		}
-		if (arg == 1) {
-			/* Completion acknowledgement from userspace; the visible switch
+		return 0;
+	}
+	if (arg == 1) {
+		/* Completion acknowledgement from userspace; the visible switch
 			 * already happened, so there is nothing further to do here. */
-			return 0;
-		}
-		return -EINVAL;
-	}
-	case VT_DISALLOCATE:
-		return 0;
-	case GIO_FONT:
-		memset(buf, 0, 256 * 8); /* 256 chars, 8 bytes each */
-		return 0;
-	case PIO_FONT:
-		return 0;
-	case GIO_FONTX: {
-		struct consolefontdesc *cfd = (struct consolefontdesc *)buf;
-		if (cfd->chardata)
-			memset(cfd->chardata, 0,
-			       (size_t)cfd->charcount * cfd->charheight);
-		cfd->charcount = 256;
-		cfd->charheight = 16;
 		return 0;
 	}
-	case PIO_FONTX:
-		return 0;
-	case KDFONTOP: {
-		struct console_font_op *cfo = (struct console_font_op *)buf;
-		switch (cfo->op) {
-		case KD_FONT_OP_SET:
-		case KD_FONT_OP_SET_DEFAULT:
-		case KD_FONT_OP_COPY:
-			return 0;
-		case KD_FONT_OP_GET:
-			cfo->width = 8;
-			cfo->height = 16;
-			cfo->charcount = 256;
-			if (cfo->data)
-				memset(cfo->data, 0,
-				       cfo->charcount * ((cfo->width + 7) / 8) *
-					       cfo->height);
-			return 0;
-		}
-		return -EINVAL;
-	}
-	case PIO_UNIMAPCLR:
-		return 0;
-	case PIO_UNIMAP:
-		return 0;
-	case GIO_UNIMAP: {
-		struct unimapdesc *ud = (struct unimapdesc *)buf;
-		ud->entry_ct = 0;
-		return 0;
-	}
-	}
-	return -ENOSYS;
+	return -EINVAL;
+}
+
+static int tty_fs_ioctl_vt_disallocate(void *context __attribute__((unused)),
+				       unsigned cmd __attribute__((unused)),
+				       void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int tty_fs_ioctl_gio_font(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	memset(buf, 0, 256 * 8); /* 256 chars, 8 bytes each */
+	return 0;
+}
+
+static int tty_fs_ioctl_pio_font(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int tty_fs_ioctl_gio_fontx(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	struct consolefontdesc *cfd = (struct consolefontdesc *)buf;
+	if (cfd->chardata)
+		memset(cfd->chardata, 0,
+		       (size_t)cfd->charcount * cfd->charheight);
+	cfd->charcount = 256;
+	cfd->charheight = 16;
+	return 0;
+}
+
+static int tty_fs_ioctl_pio_fontx(void *context __attribute__((unused)),
+				  unsigned cmd __attribute__((unused)),
+				  void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int tty_fs_ioctl_kdfontop(void *context __attribute__((unused)),
+				 unsigned cmd __attribute__((unused)),
+				 void *buf)
+{
+	return tty_font_ioctl(buf);
+}
+
+static int tty_fs_ioctl_pio_unimapclr(void *context __attribute__((unused)),
+				      unsigned cmd __attribute__((unused)),
+				      void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int tty_fs_ioctl_pio_unimap(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	return 0;
+}
+
+static int tty_fs_ioctl_gio_unimap(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *buf __attribute__((unused)))
+{
+	struct unimapdesc *ud = (struct unimapdesc *)buf;
+	ud->entry_ct = 0;
+	return 0;
+}
+
+static const command_operation tty_terminal_commands[256] = {
+	[FIONREAD & 255] = { FIONREAD, tty_fs_ioctl_fionread },
+	[TCGETS & 255] = { TCGETS, tty_fs_ioctl_tcgets },
+	[TCGETA & 255] = { TCGETA, tty_fs_ioctl_tcgets },
+	[TCGETS2 & 255] = { TCGETS2, tty_fs_ioctl_tcgets },
+	[TCSETS & 255] = { TCSETS, tty_fs_ioctl_tcsets },
+	[TCSETSW & 255] = { TCSETSW, tty_fs_ioctl_tcsets },
+	[TCSETA & 255] = { TCSETA, tty_fs_ioctl_tcsets },
+	[TCSETAW & 255] = { TCSETAW, tty_fs_ioctl_tcsets },
+	[TCSETS2 & 255] = { TCSETS2, tty_fs_ioctl_tcsets },
+	[TCSETSW2 & 255] = { TCSETSW2, tty_fs_ioctl_tcsets },
+	[TCSETSF & 255] = { TCSETSF, tty_fs_ioctl_tcsetsf },
+	[TCSETAF & 255] = { TCSETAF, tty_fs_ioctl_tcsetsf },
+	[TCSETSF2 & 255] = { TCSETSF2, tty_fs_ioctl_tcsetsf },
+	[TIOCGWINSZ & 255] = { TIOCGWINSZ, tty_fs_ioctl_tiocgwinsz },
+	[TIOCSWINSZ & 255] = { TIOCSWINSZ, tty_fs_ioctl_tiocswinsz },
+	[TIOCGPGRP & 255] = { TIOCGPGRP, tty_fs_ioctl_tiocgpgrp },
+	[TIOCGSID & 255] = { TIOCGSID, tty_fs_ioctl_tiocgsid },
+	[TIOCSPGRP & 255] = { TIOCSPGRP, tty_fs_ioctl_tiocspgrp },
+	[TIOCSCTTY & 255] = { TIOCSCTTY, tty_fs_ioctl_tiocsctty },
+	[TIOCNOTTY & 255] = { TIOCNOTTY, tty_fs_ioctl_tiocnotty },
+	[TIOCLINUX & 255] = { TIOCLINUX, tty_fs_ioctl_tioclinux },
+};
+
+static const command_operation tty_keyboard_commands[256] = {
+	[KDGKBTYPE & 255] = { KDGKBTYPE, tty_fs_ioctl_kdgkbtype },
+	[KDGETLED & 255] = { KDGETLED, tty_fs_ioctl_kdgetled },
+	[KDSETLED & 255] = { KDSETLED, tty_fs_ioctl_kdsetled },
+	[KDGKBMODE & 255] = { KDGKBMODE, tty_fs_ioctl_kdgkbmode },
+	[KDSKBMODE & 255] = { KDSKBMODE, tty_fs_ioctl_kdskbmode },
+	[KDGKBENT & 255] = { KDGKBENT, tty_fs_ioctl_kdgkbent },
+	[KDSKBENT & 255] = { KDSKBENT, tty_fs_ioctl_kdskbent },
+	[KDGKBSENT & 255] = { KDGKBSENT, tty_fs_ioctl_kdgkbsent },
+	[KDSKBSENT & 255] = { KDSKBSENT, tty_fs_ioctl_kdskbsent },
+	[KDGKBDIACR & 255] = { KDGKBDIACR, tty_fs_ioctl_kdgkbdiacr },
+	[KDSKBDIACR & 255] = { KDSKBDIACR, tty_fs_ioctl_kdskbdiacr },
+	[KDKBDREP & 255] = { KDKBDREP, tty_fs_ioctl_kdkbdrep },
+	[KDSIGACCEPT & 255] = { KDSIGACCEPT, tty_fs_ioctl_kdsigaccept },
+	[KDADDIO & 255] = { KDADDIO, tty_fs_ioctl_kdaddio },
+	[KDDELIO & 255] = { KDDELIO, tty_fs_ioctl_kdaddio },
+	[KDENABIO & 255] = { KDENABIO, tty_fs_ioctl_kdenabio },
+	[KDDISABIO & 255] = { KDDISABIO, tty_fs_ioctl_kdenabio },
+	[KDGETMODE & 255] = { KDGETMODE, tty_fs_ioctl_kdgetmode },
+	[KDSETMODE & 255] = { KDSETMODE, tty_fs_ioctl_kdsetmode },
+	[GIO_FONT & 255] = { GIO_FONT, tty_fs_ioctl_gio_font },
+	[PIO_FONT & 255] = { PIO_FONT, tty_fs_ioctl_pio_font },
+	[GIO_FONTX & 255] = { GIO_FONTX, tty_fs_ioctl_gio_fontx },
+	[PIO_FONTX & 255] = { PIO_FONTX, tty_fs_ioctl_pio_fontx },
+	[KDFONTOP & 255] = { KDFONTOP, tty_fs_ioctl_kdfontop },
+	[PIO_UNIMAPCLR & 255] = { PIO_UNIMAPCLR, tty_fs_ioctl_pio_unimapclr },
+	[PIO_UNIMAP & 255] = { PIO_UNIMAP, tty_fs_ioctl_pio_unimap },
+	[GIO_UNIMAP & 255] = { GIO_UNIMAP, tty_fs_ioctl_gio_unimap },
+};
+
+static const command_operation tty_virtual_console_commands[256] = {
+	[VT_OPENQRY & 255] = { VT_OPENQRY, tty_fs_ioctl_vt_openqry },
+	[VT_GETMODE & 255] = { VT_GETMODE, tty_fs_ioctl_vt_getmode },
+	[VT_SETMODE & 255] = { VT_SETMODE, tty_fs_ioctl_vt_setmode },
+	[VT_GETSTATE & 255] = { VT_GETSTATE, tty_fs_ioctl_vt_getstate },
+	[VT_ACTIVATE & 255] = { VT_ACTIVATE, tty_fs_ioctl_vt_activate },
+	[VT_WAITACTIVE & 255] = { VT_WAITACTIVE, tty_fs_ioctl_vt_waitactive },
+	[VT_RELDISP & 255] = { VT_RELDISP, tty_fs_ioctl_vt_reldisp },
+	[VT_DISALLOCATE & 255] = { VT_DISALLOCATE,
+				   tty_fs_ioctl_vt_disallocate },
+};
+
+static const command_operation *const tty_command_groups[256] = {
+	[(FIONREAD >> 8) & 255] = tty_terminal_commands,
+	[(KDGKBTYPE >> 8) & 255] = tty_keyboard_commands,
+	[(VT_OPENQRY >> 8) & 255] = tty_virtual_console_commands,
+};
+
+static int tty_fs_ioctl(file *fp, unsigned cmd, void *buf)
+{
+	return command_dispatch(tty_command_groups, fp, cmd, buf, -ENOSYS);
 }
 
 static int tty_fs_getattr(file *fp, struct stat *s)
@@ -2188,7 +2479,7 @@ static const file_operations tty_fops = {
 
 /*
  * tty_open_state — open a file struct backed by the given tty_state.
- * Called from tty_cdev_open().
+ * Registered device callbacks select the terminal state.
  */
 static file *tty_open_state(tty_state *state, int flag)
 {
@@ -2210,47 +2501,40 @@ static file *tty_open_state(tty_state *state, int flag)
 	return fp;
 }
 
-/*
- * tty_cdev_open — cdev dispatch callback.
- *   major 4, minor 1-10  → tty1..tty10 (1-based; minor maps to ttys[minor-1])
- *   major 11, minor 0    → /dev/tty0   (active virtual console)
- *   major 11, minor 1    → /dev/console (system console, mapped to tty1)
- *   major 11, minor 2    → /dev/tty    (calling task's controlling terminal)
- */
-static file *tty_cdev_open(super_block *sb, unsigned rdev, int flag)
+static file *tty_vc_open(super_block *sb, unsigned rdev, int flag)
 {
-	unsigned major = MAJOR(rdev);
 	unsigned minor = MINOR(rdev);
-	tty_state *state;
+	(void)sb;
+	if (minor < 1 || minor - 1 >= TTY_MAX_VDEV)
+		return NULL;
+	return tty_open_state(&ttys[minor - 1], flag);
+}
+
+static file *tty_active_open(super_block *sb, unsigned rdev, int flag)
+{
+	(void)sb;
+	(void)rdev;
+	return tty_open_state(&ttys[active_tty_idx - 1], flag);
+}
+
+static file *tty_console_open(super_block *sb, unsigned rdev, int flag)
+{
+	(void)sb;
+	(void)rdev;
+	return tty_open_state(&ttys[DEFAULT_TTY - 1], flag);
+}
+
+static file *tty_controlling_open(super_block *sb, unsigned rdev, int flag)
+{
 	task_struct *cur = CURRENT_TASK();
-
-	if (major == TTY_VC_MAJOR) {
-		/* /dev/ttyN uses 1-based minor: tty1→ttys[0] (active), tty2→ttys[1], … */
-		if (minor < 1 || minor - 1 >= TTY_MAX_VDEV)
-			return NULL;
-		state = &ttys[minor - 1];
-	} else if (major != TTY_AUX_MAJOR) {
-		return NULL;
-	} else if (minor == 0) {
-		state = &ttys[active_tty_idx - 1];
-	} else if (minor == 1) {
-		state = &ttys[DEFAULT_TTY - 1];
-	} else if (minor == 2) {
-		state = tty_find_controlling(cur);
-		if (!state) {
-			file *fp = pty_open_controlling(cur, flag);
-
-			if (fp)
-				return fp;
-			fp = ptmx_open_controlling(cur, flag);
-			if (fp)
-				return fp;
-			return NULL;
-		}
-	} else {
-		return NULL;
-	}
-	return tty_open_state(state, flag);
+	tty_state *state = tty_find_controlling(cur);
+	file *fp;
+	(void)sb;
+	(void)rdev;
+	if (state)
+		return tty_open_state(state, flag);
+	fp = pty_open_controlling(cur, flag);
+	return fp ? fp : ptmx_open_controlling(cur, flag);
 }
 
 /*
@@ -2287,7 +2571,7 @@ static void tty_dev_register(super_block *dev_sb)
 	printk("dev: registered /dev/tty[1-%d]\n", TTY_MAX_VDEV);
 	/* major 4: tty1..tty10 (1-based minors matching tty_idx) */
 	cdev_register_named(S_IFCHR, TTY_VC_MAJOR, 1, TTY_MAX_VDEV, "tty",
-			    tty_cdev_open);
+			    tty_vc_open);
 	for (i = 1; i <= TTY_MAX_VDEV; i++) {
 		sprintf(path, "/tty%x", i);
 		vfs_mknod(dev_sb, path, S_IFCHR | 0620, MKDEV(TTY_VC_MAJOR, i));
@@ -2297,7 +2581,12 @@ static void tty_dev_register(super_block *dev_sb)
 	printk("dev: registered /dev/console\n");
 	printk("dev: registered /dev/tty\n");
 	/* major 11: /dev/tty0, /dev/console, /dev/tty */
-	cdev_register_named(S_IFCHR, TTY_AUX_MAJOR, 0, 3, "vc", tty_cdev_open);
+	cdev_register_named(S_IFCHR, TTY_AUX_MAJOR, 0, 1, "vc",
+			    tty_active_open);
+	cdev_register_named(S_IFCHR, TTY_AUX_MAJOR, 1, 1, "vc",
+			    tty_console_open);
+	cdev_register_named(S_IFCHR, TTY_AUX_MAJOR, 2, 1, "vc",
+			    tty_controlling_open);
 	vfs_mknod(dev_sb, "/tty0", S_IFCHR | 0620, MKDEV(TTY_AUX_MAJOR, 0));
 	vfs_mknod(dev_sb, "/console", S_IFCHR | 0600, MKDEV(TTY_AUX_MAJOR, 1));
 	vfs_mknod(dev_sb, "/tty", S_IFCHR | 0620, MKDEV(TTY_AUX_MAJOR, 2));

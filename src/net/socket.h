@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <fs/iovec.h>
 #include <device/time.h>
 #include <lib/lock.h>
 
@@ -208,12 +209,6 @@ struct in_pktinfo {
 		 (struct cmsghdr *)(mhdr)->msg_control :            \
 		 (struct cmsghdr *)0)
 
-/* ── Scatter/gather I/O ─────────────────────────────────────────────────────── */
-struct iovec {
-	void *iov_base;
-	size_t iov_len;
-};
-
 /* ── Message header (sendmsg / recvmsg) ─────────────────────────────────────── */
 struct msghdr {
 	void *msg_name; /* optional peer address          */
@@ -355,6 +350,7 @@ typedef struct _mos_sock {
 	 * where only the server side carries the listener's name for getpeer).
 	 */
 	char unix_path[UNIX_KEY_MAX];
+	unsigned unix_namespace_slot; /* one-based slot; zero denotes no binding */
 
 	/*
 	 * AF_UNIX listen: queue of server-side mos_sock* ready for accept().

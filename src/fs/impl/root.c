@@ -284,80 +284,54 @@ static int ext4_dir_release(file *fp)
 static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	ext4_dir *dir = fp->f_inode->i_private;
-	struct linux_dirent *dirp = buf;
-	const ext4_direntry *entry = NULL;
-	struct linux_dirent *prev = NULL;
-	int retcount = 0;
-	int len;
-	int cur_pos = 0;
-
-	while (count > 0) {
-		unsigned namelen;
-
-		entry = ext4_dir_entry_next(dir);
-		if (entry == NULL) {
-			if (prev)
-				prev->d_off = retcount;
+	unsigned out = 0;
+	if ((uint64_t)*pos == 0xffffffffULL)
+		return 0;
+	/* Directory offsets are opaque backing-store cookies. */
+	dir->next_off = *pos;
+	while (count > out) {
+		uint64_t cookie = dir->next_off;
+		const ext4_direntry *entry = ext4_dir_entry_next(dir);
+		if (!entry) {
+			*pos = 0xffffffffULL;
 			break;
 		}
-		if (entry->inode == 0 || entry->name_length == 0 ||
-		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM)
+		if (!entry->inode || !entry->name_length ||
+		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM) {
+			*pos = dir->next_off == ~0ULL ? 0xffffffffULL :
+							dir->next_off;
 			continue;
-		namelen = entry->name_length;
-		len = ROUND_UP(NAME_OFFSET() + namelen + 1);
-		if (count < len) {
-			if (prev)
-				prev->d_off = retcount;
+		}
+		unsigned size =
+			ROUND_UP(NAME_OFFSET() + entry->name_length + 1);
+		if (size > count - out) {
+			dir->next_off = cookie;
+			*pos = cookie;
 			break;
 		}
-		memset(dirp, 0, len);
-		dirp->d_ino = entry->inode;
-		memcpy(dirp->d_name, entry->name, namelen);
-		dirp->d_name[namelen] = '\0';
-		dirp->d_reclen = (unsigned short)len;
-		cur_pos += dirp->d_reclen;
-		dirp->d_off = cur_pos;
-		retcount += dirp->d_reclen;
-		count -= dirp->d_reclen;
-		prev = dirp;
-		dirp = (struct linux_dirent *)((char *)dirp + dirp->d_reclen);
+		struct linux_dirent *record = (void *)((char *)buf + out);
+		memset(record, 0, size);
+		record->d_ino = entry->inode;
+		record->d_reclen = size;
+		record->d_off = dir->next_off == ~0ULL ? 0xffffffffULL :
+							 dir->next_off;
+		memcpy(record->d_name, entry->name, entry->name_length);
+		*pos = record->d_off;
+		out += size;
 	}
-	*pos += retcount;
-	return (ssize_t)retcount;
+	return out;
 }
 
 static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 {
 	ext4_dir *dir = fp->f_inode->i_private;
-	const ext4_direntry *entry = NULL;
-	int len;
-	int cur_pos = 0;
-	int count = (int)offset;
-
 	if (whence != SEEK_SET)
 		return -EACCES;
-
-	if (offset < (loff_t)sizeof(struct linux_dirent))
-		return 0;
-
-	ext4_dir_entry_rewind(dir);
-	while (count > 0) {
-		unsigned namelen;
-
-		entry = ext4_dir_entry_next(dir);
-		if (entry == NULL)
-			break;
-		if (entry->inode == 0 || entry->name_length == 0 ||
-		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM)
-			continue;
-		namelen = entry->name_length;
-		len = ROUND_UP(NAME_OFFSET() + namelen + 1);
-		if (count < len)
-			return (loff_t)(cur_pos + len);
-		cur_pos += len;
-		count -= len;
-	}
-	return (loff_t)cur_pos;
+	if (offset < 0 || (uint64_t)offset > 0xffffffffULL)
+		return -EINVAL;
+	dir->next_off = (uint64_t)offset == 0xffffffffULL ? ~0ULL : offset;
+	fp->f_pos = offset;
+	return offset;
 }
 
 static int ext4_dir_getattr(file *fp, struct stat *s)

@@ -212,37 +212,48 @@ static uint16_t ac97_stereo_atten(unsigned left, unsigned right)
 	return (uint16_t)((l_att << 8) | r_att);
 }
 
+static void ac97_apply_master(unsigned left, unsigned right)
+{
+	ac97_mixer_write(AC97_NAM_MASTER_VOL, ac97_stereo_atten(left, right));
+}
+
+static void ac97_apply_pcm(unsigned left, unsigned right)
+{
+	ac97_mixer_write(AC97_NAM_PCM_VOL, ac97_stereo_atten(left, right));
+}
+
+static const struct ac97_volume_control {
+	unsigned *left, *right;
+	void (*apply)(unsigned, unsigned);
+} ac97_volume_controls[] = {
+	[AUDIO_MIXER_VOLUME] = { &g_ac97.master_left, &g_ac97.master_right,
+				 ac97_apply_master },
+	[AUDIO_MIXER_PCM] = { &g_ac97.pcm_left, &g_ac97.pcm_right,
+			      ac97_apply_pcm },
+	[AUDIO_MIXER_SPEAKER] = { &g_ac97.speaker_left, &g_ac97.speaker_right,
+				  NULL },
+};
+
+static const struct ac97_volume_control *ac97_volume_control(unsigned control)
+{
+	if (control >= sizeof(ac97_volume_controls) /
+			       sizeof(ac97_volume_controls[0]) ||
+	    !ac97_volume_controls[control].left)
+		return NULL;
+	return &ac97_volume_controls[control];
+}
+
 static int ac97_set_volume_values(unsigned control, unsigned *left,
 				  unsigned *right)
 {
-	unsigned l;
-	unsigned r;
-
-	if (!left || !right)
+	const struct ac97_volume_control *volume = ac97_volume_control(control);
+	if (!left || !right || !volume)
 		return -EINVAL;
-
-	l = ac97_clamp_volume(*left);
-	r = ac97_clamp_volume(*right);
-
-	switch (control) {
-	case AUDIO_MIXER_VOLUME:
-		g_ac97.master_left = l;
-		g_ac97.master_right = r;
-		ac97_mixer_write(AC97_NAM_MASTER_VOL, ac97_stereo_atten(l, r));
-		break;
-	case AUDIO_MIXER_PCM:
-		g_ac97.pcm_left = l;
-		g_ac97.pcm_right = r;
-		ac97_mixer_write(AC97_NAM_PCM_VOL, ac97_stereo_atten(l, r));
-		break;
-	case AUDIO_MIXER_SPEAKER:
-		g_ac97.speaker_left = l;
-		g_ac97.speaker_right = r;
-		break;
-	default:
-		return -EINVAL;
-	}
-
+	unsigned l = ac97_clamp_volume(*left), r = ac97_clamp_volume(*right);
+	*volume->left = l;
+	*volume->right = r;
+	if (volume->apply)
+		volume->apply(l, r);
 	*left = l;
 	*right = r;
 	return 0;
@@ -251,25 +262,12 @@ static int ac97_set_volume_values(unsigned control, unsigned *left,
 static int ac97_get_volume_values(unsigned control, unsigned *left,
 				  unsigned *right)
 {
-	if (!left || !right)
+	const struct ac97_volume_control *volume = ac97_volume_control(control);
+	if (!left || !right || !volume)
 		return -EINVAL;
-
-	switch (control) {
-	case AUDIO_MIXER_VOLUME:
-		*left = g_ac97.master_left;
-		*right = g_ac97.master_right;
-		return 0;
-	case AUDIO_MIXER_PCM:
-		*left = g_ac97.pcm_left;
-		*right = g_ac97.pcm_right;
-		return 0;
-	case AUDIO_MIXER_SPEAKER:
-		*left = g_ac97.speaker_left;
-		*right = g_ac97.speaker_right;
-		return 0;
-	default:
-		return -EINVAL;
-	}
+	*left = *volume->left;
+	*right = *volume->right;
+	return 0;
 }
 
 static ssize_t ac97_write(void *_dev, const void *buf, size_t size)

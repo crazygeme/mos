@@ -15,8 +15,8 @@
  *   %%  literal percent
  *
  * Length modifiers:
- *   l    long / unsigned long  (%ld, %lu, %lx, %lo) — same as Linux i386
- *   ll   long long             (%lld, %llu, %llx)
+ *   l    long / unsigned long  (%ld, %lu, %lx, %lo, %lh)
+ *   ll   long long             (%lld, %llu, %llx, %llh)
  *
  * Flags, width, and precision (subset of C99):
  *   -    left-align within field width
@@ -100,9 +100,9 @@ static void putstr_count(char *str, void *ctx)
 
 typedef void (*fputstr)(char *str, void *ctx);
 
-static void print_human_size(fputstr _putstr, unsigned sz, void *ctx)
+static void print_human_size(fputstr _putstr, unsigned long long sz, void *ctx)
 {
-	static const char *units[] = { "", "k", "M", "G", NULL };
+	static const char *units[] = { "", "k", "M", "G", "T", "P", "E", NULL };
 	const char **up = units;
 	unsigned frac = 0;
 	char buf[32];
@@ -375,7 +375,10 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			break;
 		}
 		case 'h': {
-			unsigned v = va_arg(ap, unsigned);
+			unsigned long long v = flag_ll ?
+				va_arg(ap, unsigned long long) :
+				(flag_l ? va_arg(ap, unsigned long) :
+					  va_arg(ap, unsigned));
 
 			FLUSH();
 			print_human_size(_putstr, v, ctx);

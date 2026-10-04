@@ -1,7 +1,7 @@
 /*
  * /proc/mos — MOS kernel internals snapshot and control toggle.
  *
- * Reads return the same kernel counters snapshot as before.
+ * Reads return a snapshot of kernel counters.
  * Writes accept:
  *   "verbose"    -> TestControl.verbos = TEST_LOG_INFO
  *   "verbose=N"  -> TestControl.verbos = N
@@ -46,6 +46,7 @@ extern unsigned task_schedule_count;
 
 #define MOS_TABLE_LINE \
 	"+------------------------+--------------+--------------+--------------+\n"
+#define MOS_PAGE_BYTES(pages) ((unsigned long long)(pages) * PAGE_SIZE)
 
 static void mos_table_begin(proc_buf_t *pb, const char *title)
 {
@@ -63,17 +64,18 @@ static void mos_table_end(proc_buf_t *pb)
 }
 
 static void mos_print_row(proc_buf_t *pb, const char *name, const char *value,
-			  unsigned raw, const char *notes)
+			  unsigned long long raw, const char *notes)
 {
-	proc_buf_printf(pb, "| %-22s | %12s | %12u | %-12s |\n", name, value,
+	proc_buf_printf(pb, "| %-22s | %12s | %12llu | %-12s |\n", name, value,
 			raw, notes);
 }
 
-static void mos_print_bytes(proc_buf_t *pb, const char *name, unsigned bytes)
+static void mos_print_bytes(proc_buf_t *pb, const char *name,
+			    unsigned long long bytes)
 {
 	char value[32];
 
-	sprintf(value, "%h", bytes);
+	sprintf(value, "%llh", bytes);
 	mos_print_row(pb, name, value, bytes, "bytes");
 }
 
@@ -99,12 +101,12 @@ static void mos_print_count_rate(proc_buf_t *pb, const char *name,
 static void mos_print_usage(proc_buf_t *pb, const char *name, unsigned pages,
 			    unsigned total_pages)
 {
-	unsigned bytes = pages * PAGE_SIZE;
+	unsigned long long bytes = MOS_PAGE_BYTES(pages);
 	unsigned pct = total_pages ? pages * 100 / total_pages : 0;
 	char value[32];
 	char notes[16];
 
-	sprintf(value, "%h", bytes);
+	sprintf(value, "%llh", bytes);
 	sprintf(notes, "%u%% used", pct);
 	mos_print_row(pb, name, value, bytes, notes);
 }
@@ -133,15 +135,15 @@ static void fill(proc_buf_t *pb)
 	mos_table_begin(pb, "Memory");
 	mos_print_bytes(pb, "kmalloc current", heap_quota);
 	mos_print_bytes(pb, "kmalloc peak", heap_quota_high);
-	mos_print_bytes(pb, "low phys total", mem.low_total_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "low phys total", MOS_PAGE_BYTES(mem.low_total_pages));
 	mos_print_usage(pb, "low phys used", mem.low_used_pages,
 			mem.low_total_pages);
-	mos_print_bytes(pb, "low phys free", mem.low_free_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "low phys free", MOS_PAGE_BYTES(mem.low_free_pages));
 	mos_print_bytes(pb, "high phys total",
-			mem.high_total_pages * PAGE_SIZE);
+			MOS_PAGE_BYTES(mem.high_total_pages));
 	mos_print_usage(pb, "high phys used", mem.high_used_pages,
 			mem.high_total_pages);
-	mos_print_bytes(pb, "high phys free", mem.high_free_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "high phys free", MOS_PAGE_BYTES(mem.high_free_pages));
 	mos_table_end(pb);
 
 	/* ---- Page fault counters ---- */
@@ -166,9 +168,9 @@ static void fill(proc_buf_t *pb)
 	/* ---- Inode / filesystem page cache ---- */
 	phymm_get_cache_policy(&cache_policy);
 	mos_table_begin(pb, "Inode/filesystem page cache");
-	mos_print_bytes(pb, "budget", cache_policy.file_pages * PAGE_SIZE);
-	mos_print_bytes(pb, "current", fs_page_cache_pages * PAGE_SIZE);
-	mos_print_bytes(pb, "peak", fs_page_cache_max_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "budget", MOS_PAGE_BYTES(cache_policy.file_pages));
+	mos_print_bytes(pb, "current", MOS_PAGE_BYTES(fs_page_cache_pages));
+	mos_print_bytes(pb, "peak", MOS_PAGE_BYTES(fs_page_cache_max_pages));
 	mos_print_count(pb, "lookups", fs_page_cache_searches);
 	mos_print_count_rate(pb, "hits", fs_page_cache_hits, inode_cache_rate);
 	mos_table_end(pb);
@@ -176,11 +178,11 @@ static void fill(proc_buf_t *pb)
 #if HDD_CACHE_OPEN
 	/* ---- HDD block cache ---- */
 	mos_table_begin(pb, "HDD block cache");
-	mos_print_bytes(pb, "budget", cache_policy.block_pages * PAGE_SIZE);
+	mos_print_bytes(pb, "budget", MOS_PAGE_BYTES(cache_policy.block_pages));
 	mos_print_bytes(pb, "cached sectors",
-			hdd_cache_size * BLOCK_SECTOR_SIZE);
+			(unsigned long long)hdd_cache_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "peak sectors",
-			hdd_cache_max_size * BLOCK_SECTOR_SIZE);
+			(unsigned long long)hdd_cache_max_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "read served", hdd_cache_read_size);
 	mos_print_bytes(pb, "write served", hdd_cache_write_size);
 	mos_print_count(pb, "lookups", hdd_cache_search_count);

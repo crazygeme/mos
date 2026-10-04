@@ -384,6 +384,39 @@ KTEST(kprint, sprintf_h_gigabytes)
 	return 0;
 }
 
+KTEST(kprint, sprintf_llh_four_gigabytes)
+{
+	char buf[32];
+	sprintf(buf, "%llh", 4ULL << 30);
+	EXPECT_EQ(strcmp(buf, "4.0G"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_llh_high_memory_row)
+{
+	char buf[64];
+	unsigned long long bytes = (8ULL << 30) - (768ULL << 20);
+	sprintf(buf, "%llh %12llu %u", bytes, bytes, 42u);
+	EXPECT_EQ(strcmp(buf, "7.2G   7784628224 42"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_llh_physical_map_limit)
+{
+	char buf[32];
+	sprintf(buf, "%llh", 128ULL << 30);
+	EXPECT_EQ(strcmp(buf, "128.0G"), 0);
+	return 0;
+}
+
+KTEST(kprint, sprintf_lh)
+{
+	char buf[32];
+	sprintf(buf, "%lh %u", 1024ul, 42u);
+	EXPECT_EQ(strcmp(buf, "1.0k 42"), 0);
+	return 0;
+}
+
 /* ── %lld (signed 64-bit) ────────────────────────────────────────────────── */
 
 KTEST(kprint, sprintf_lld_zero)

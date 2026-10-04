@@ -1223,8 +1223,8 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 		dev_name = bdev.name;
 	}
 	/* lwext4 requires the mount point to end with '/' */
-	strncpy(mp, target, sizeof(mp) - 2);
-	mp[sizeof(mp) - 2] = '\0';
+	strncpy(mp, target, MAX_PATH - 2);
+	mp[MAX_PATH - 2] = '\0';
 	n = strlen(mp);
 	if (n > 0 && mp[n - 1] != '/') {
 		mp[n] = '/';

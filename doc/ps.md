@@ -128,11 +128,13 @@ Scans `ready_queue[]` from highest priority down:
 
 ### Context switch: `_task_sched`
 
-`_task_sched()` disables interrupts, acquires the kernel lock, reaps dead
-threads, and selects a runnable task. The current task remains runnable
+`_task_sched()` disables interrupts and reaps inactive dead threads. It holds
+`ps_lock` while selecting and activating a runnable task. The current task remains runnable
 unless a caller has explicitly placed it in a waiting or terminal state.
 The switch updates address-space, segment, FPU, and CPU ownership state;
-`ps_context_switch()` saves and restores the kernel call stack. Each task
+`ps_context_switch()` saves and restores the kernel call stack. Assembly calls
+`ps_switch_finish()` on the incoming stack to clear outgoing CPU ownership,
+wake a waiting zombie parent, and release `ps_lock`. Each task
 restores its own interrupt state when its scheduler call returns.
 
 Deferred device callbacks execute on the `dsr_worker` kernel task at

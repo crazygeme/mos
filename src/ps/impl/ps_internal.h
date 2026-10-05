@@ -39,7 +39,8 @@ extern tss_struct *tss_address;
  * Cross-file non-public functions
  */
 
-task_struct *ps_get_next_task();
+/* Requires ps_lock across selection and task activation. */
+task_struct *ps_get_next_task_unsafe(void);
 
 /* ps.c */
 void ps_add_mgr_unsafe(task_struct *task);

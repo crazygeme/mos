@@ -4,33 +4,19 @@ Implementation records are ordered by date, with the newest entries first.
 
 ---
 
-## 2026-10-05 - i386 address space TLB shootdowns
+## 2026-10-05 - Address space TLB shootdowns
 
-The i386 user TLB flush previously ignored its page-directory argument and
-invalidated all translations on every online CPU. Ordinary fork therefore
-sent remote interrupts and waited for acknowledgments even when the other
-CPUs were running unrelated address spaces. The reported 1,000-launch
-benchmark measured approximately 0.15 s with two CPUs and 0.12 s with one CPU;
-the corresponding Linux result was approximately 0.10 s. These measurements
-identify aggregate SMP overhead, not the isolated cost of TLB invalidation.
+TLB requests contain the physical page-directory address for user mappings.
+Every online remote CPU acknowledges each published request. A CPU flushes
+non-global user translations only when its active CR3 matches that address.
+A zero request root invalidates global and non-global translations on every
+online CPU. CR3 activation discards translations when entering another address
+space; PCID is not enabled.
 
-User shootdowns now follow the AMD64 backend: the request carries the physical
-page-directory address, and only remote CPUs currently using that address
-space receive an interrupt. Local user flushes reload CR3 without discarding
-global kernel translations. Kernel flushes retain the full broadcast and
-global-entry invalidation. Requests with no remote targets do not publish a
-new generation or wait for acknowledgments.
-
-The big kernel lock serializes request publication and task/address-space
-changes while the target set is selected and acknowledged. Waiting CPUs poll
-requests with interrupts disabled. CPUs that later enter the affected address
-space reload CR3, discarding previous non-global user translations. Threads
-sharing the affected address space remain shootdown targets.
-
-Source review and patch whitespace checks are complete. Build, guest
-correctness tests, and post-change timings remain pending. Validation must
-cover ordinary fork isolation, fork while another thread shares the parent
-address space, and the existing benchmark with one and two CPUs.
+A dedicated lock serializes request publication through final acknowledgment.
+Spinlock waiters and AP startup waiters poll requests with interrupts disabled.
+The target set depends only on CPU availability and does not dereference remote
+task or VM objects. Scheduler state remains independent of request publication.
 
 ## 2026-10-05 - Ext4 open-inode lifetime
 
@@ -689,8 +675,9 @@ Newly present user mappings do not need translation invalidation. Replaced
 mappings, permission changes, and unmaps synchronously invalidate CPUs using
 the affected address space. User shootdowns reload CR3 and retain global
 kernel translations. Shared kernel mapping changes still invalidate global
-translations on every online CPU. This targeting depends on BKL serialization
-of task/address-space switches and on CR3 activation without PCID.
+translations on every online CPU. A dedicated request lock serializes
+publication and acknowledgments; user invalidation checks active CR3 without
+PCID.
 
 Kernel stacks occupy four pages with matching buddy alignment. Heap headers,
 free-list pointers, file-descriptor tables, FPU-buffer alignment, and variadic
@@ -704,19 +691,19 @@ long mode, activate a dedicated bootstrap stack, and install per-CPU descriptor
 state before joining the scheduler. The trampoline mapping is removed after
 startup acknowledgement. The supported processor count is 1–32.
 
-A big kernel lock serializes common kernel execution while multiple CPUs can
-execute userspace concurrently. The existing global scheduler prevents a task
-from running on two CPUs. APIC tick IPIs drive remote scheduling, and TLB IPIs
-or lock-wait polling acknowledge invalidation generations even with IF clear.
-This is SMP support with kernel serialization, not a fine-grained parallel
-kernel implementation.
+Kernel and userspace execution can proceed concurrently on multiple CPUs.
+The scheduler holds `ps_lock` through stack handoff to prevent concurrent
+execution or reclamation of an active task. APIC tick IPIs drive remote
+scheduling. TLB IPIs and lock-wait polling acknowledge invalidation generations
+even with IF clear. Subsystem locks protect networking, page-table allocation,
+shared mappings, PIT sampling, and serial transmission.
 
 Kernel GS points to the current CPU. Native userspace GS and FS bases are
 preserved separately; compatibility selectors are restored after swapping out
 the kernel GS base. Interrupt entry tests the active GS base rather than only
 CS, covering NMIs in the SYSCALL stack-transition window. NMI, double fault,
 and machine check have independent per-CPU IST stacks. Critical interrupt
-handlers avoid the scheduler and big kernel lock. Native return uses IRETQ;
+handlers avoid the scheduler and subsystem locks. Native return uses IRETQ;
 SYSRET address and flag constraints are therefore not assumed.
 
 Authenticated RH9 root login has also been validated with 8 GiB and two KVM
@@ -1105,9 +1092,7 @@ run subsequently froze while GConf read `/root/.gconfd/saved_state`.
 A debugger trace located the blocked CPU in the ATA DMA completion loop.
 GConf's file read resolved to sector 14819236616, beyond the partition's
 41929587 sectors. The block-device adapter narrowed this sector to 32 bits
-before validation and issued an invalid ATA command. The DMA active bit
-remained set, holding the global kernel lock and preventing other CPUs from
-making progress. The adapter also discarded partition I/O failures and
+before validation and issued an invalid ATA command. The adapter also discarded partition I/O failures and
 reported success to the filesystem.
 
 Filesystem checking identified illegal block pointers in inode 44, the

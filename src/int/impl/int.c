@@ -59,9 +59,9 @@ static void intr_maybe_preempt(void)
 		cur->stats->niv_switches++;
 		if (cur->remain_ticks <= 0)
 			cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-		int_intr_enable();
-		task_sched();
+		/* Preserve interrupt masking through scheduler entry and stack handoff. */
 		int_intr_disable();
+		task_sched();
 	}
 }
 
@@ -119,10 +119,8 @@ void intr_handler(intr_frame *frame)
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
 	int_callback fn = 0;
 	int special = smp_interrupt(frame);
-	int owned;
 	if (special == 1)
 		return;
-	owned = smp_kernel_enter();
 	smp_check_stop();
 	if (special == 2 && ps_enabled())
 		current->remain_ticks--;
@@ -146,7 +144,7 @@ void intr_handler(intr_frame *frame)
 	 */
 	if (frame->vec_no == 0x0e) {
 		intr_sanitize_user_return(frame);
-		goto done;
+		return;
 	}
 
 	if (frame->vec_no == 0x20 && ps_enabled()) {
@@ -155,14 +153,10 @@ void intr_handler(intr_frame *frame)
 	}
 	intr_maybe_preempt();
 	intr_prepare_user_return(frame);
-done:
-	if (!owned && (frame->cs & 3) == 0)
-		smp_kernel_leave();
 }
 
 void intr_syscall_handler(intr_frame *frame)
 {
-	smp_kernel_enter();
 	smp_check_stop();
 	int_intr_enable();
 	int_callback fn = 0;

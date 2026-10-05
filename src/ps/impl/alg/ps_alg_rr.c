@@ -119,13 +119,11 @@ void ps_fire_timers_unsafe(void)
 }
 
 /* Scan ready levels from highest to lowest and return the next task to run. */
-task_struct *ps_get_next_task()
+task_struct *ps_get_next_task_unsafe(void)
 {
 	task_struct *task = NULL;
 	int i = PS_PRIORITY_MAX - 1;
-	int irq;
 
-	spinlock_lock(&ps_lock, &irq);
 	if (current->psid != 0xffffffff)
 		ps_fire_timers_unsafe();
 	for (; i >= 0; i--) {
@@ -135,7 +133,6 @@ task_struct *ps_get_next_task()
 		if (task)
 			break;
 	}
-	spinlock_unlock(&ps_lock, irq);
 	return task;
 }
 

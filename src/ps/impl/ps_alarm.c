@@ -59,7 +59,7 @@ void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 	spinlock_unlock(&ps_lock, irq);
 }
 
-/* IRQ0 has advanced the tick counter and holds the kernel lock. Never sample
+/* IRQ0 has advanced the tick counter. Never sample
  * PIT ports here: an interrupted clock read may be between its low/high reads.
  * Expiration is tick-granular, independent of service-task scheduling.
  */

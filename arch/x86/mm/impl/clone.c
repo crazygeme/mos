@@ -2,6 +2,9 @@
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <mm/mmu.h>
+#include <lib/lock.h>
+
+extern spinlock_t mm_lock;
 
 extern short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
 
@@ -108,12 +111,17 @@ int arch_mm_clone_region(pte_t *src_pd, pte_t *dst_pd, vm_region *vma)
 	unsigned pde_first = ADDR_TO_PGT_OFFSET(vma->begin);
 	unsigned pde_last = ADDR_TO_PGT_OFFSET((vma->end - PAGE_SIZE));
 	unsigned pde_idx;
+	int irq, result = 1;
+	spinlock_lock(&mm_lock, &irq);
 
 	for (pde_idx = pde_first; pde_idx <= pde_last; pde_idx++) {
 		if (!(src_pd[pde_idx] & PAGE_SIZE_MASK))
 			continue;
-		if (!copy_pte_range(src_pd, dst_pd, vma, pde_idx))
-			return 0;
+		if (!copy_pte_range(src_pd, dst_pd, vma, pde_idx)) {
+			result = 0;
+			break;
+		}
 	}
-	return 1;
+	spinlock_unlock(&mm_lock, irq);
+	return result;
 }

@@ -18,7 +18,6 @@
    We "fall through" to intr_exit to return from the interrupt.
 */
 .globl intr_entry
-.extern smp_online_count
 intr_entry:
     /* Save caller's registers. */
     push %ds
@@ -54,13 +53,7 @@ intr_entry:
    userprog/process.c). */
 .globl intr_exit
 intr_exit:
-    /* TLB IPIs must not drop a BKL owned by interrupted kernel code. */
-    cmpl $1, smp_online_count
-    je 1f
-    pushl %esp
-    call smp_return
-    addl $4, %esp
-1:
+    cli
     /* Restore caller's registers. */
     popal
     pop %gs
@@ -215,11 +208,6 @@ switch_to_user_mode:
     cld;
     movl 4(%esp), %ecx
     movl 8(%esp), %edx
-    pushl %ecx
-    pushl %edx
-    call smp_kernel_leave
-    popl %edx
-    popl %ecx
     mov $USER_DATA_SELECTOR, %ax; 
     mov %ax, %ds; 
     mov %ax, %es; 
@@ -291,12 +279,7 @@ ret_from_fork:
 
 .global ret_from_syscall;
 ret_from_syscall:
-    cmpl $1, smp_online_count
-    je 2f
-    pushl %esp
-    call smp_return
-    addl $4, %esp
-2:
+    cli
     /* Restore caller's registers. */
     popal
     pop %gs

@@ -2,7 +2,7 @@
 #include <ps/smp.h>
 #include <macro.h>
 #include <lib/port.h>
-/* Critical interrupts do not enter the scheduler or take the big kernel lock.
+/* Critical interrupts do not enter the scheduler or acquire subsystem locks.
  * Their IST stack is independent of an interrupted SYSCALL's stack switch. */
 void arch_critical_interrupt(arch_intr_frame *frame)
 {

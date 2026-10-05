@@ -240,16 +240,35 @@ static list_entry dead_threads = { &dead_threads, &dead_threads };
 
 void ps_reap_dead_threads(void)
 {
-	list_entry *node = dead_threads.next;
-	while (node != &dead_threads) {
-		task_struct *task = container_of(node, task_struct, ps_list);
-		node = node->next;
-		if (task->on_cpu)
-			continue;
-		list_remove_entry(&task->ps_list);
+	int irq;
+	for (;;) {
+		task_struct *task = NULL;
+		spinlock_lock(&ps_lock, &irq);
+		for (list_entry *node = dead_threads.next;
+		     node != &dead_threads; node = node->next) {
+			task_struct *candidate =
+				container_of(node, task_struct, ps_list);
+			if (!candidate->on_cpu) {
+				task = candidate;
+				list_remove_entry(node);
+				break;
+			}
+		}
+		spinlock_unlock(&ps_lock, irq);
+		if (!task)
+			return;
 		ps_reap_group_thread(task);
-		node = dead_threads.next;
 	}
+}
+
+void ps_stop_terminated_task(void)
+{
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	list_remove_entry(&current->ps_list);
+	list_init(&current->ps_list);
+	current->status = ps_stopped;
+	spinlock_unlock(&ps_lock, irq);
 }
 
 void ps_kill_thread_group(task_struct *leader)
@@ -265,8 +284,7 @@ void ps_kill_thread_group(task_struct *leader)
 	list_init(&reap_list);
 
 	/* Stop remote users before touching their VM, descriptors or stack.
-	 * Do not wait while holding ps_lock or the BKL: timer IPIs bring them
-	 * into smp_check_stop(), and sleeping lets that entry acquire the BKL. */
+	 * Release ps_lock before waiting so remote timer entries can stop tasks. */
 	for (;;) {
 		int active = 0;
 		spinlock_lock(&ps_lock, &irq);
@@ -374,13 +392,16 @@ void do_exit(unsigned encoded_status)
 	ps_reparent_children(cur);
 
 	if (cur->fork_flag & FORK_FLAG_THREAD) {
-		ps_remove_mgr(cur);
+		int irq;
+		spinlock_lock(&ps_lock, &irq);
+		ps_remove_mgr_unsafe(cur);
 
 		cur->psid = 0xffffffff;
 		cur->tgid = 0xffffffff;
 		cur->status = ps_dying;
 		list_remove_entry(&cur->ps_list);
 		list_insert_tail(&dead_threads, &cur->ps_list);
+		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}
 

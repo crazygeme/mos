@@ -7,6 +7,8 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 
+static spinlock_t table_lock;
+
 #define ADDRESS_MASK MOS_PTE_ADDRESS_MASK
 #define ALIAS_PAGES ((KERNEL_KMAP_END - KERNEL_KMAP_BEGIN) / PAGE_SIZE)
 unsigned phymm_begin, phymm_end;
@@ -42,22 +44,29 @@ vaddr_t mm_get_pagedir(void)
 }
 vaddr_t mm_alloc_page_table(void)
 {
-	if (!table_count)
-		return 0;
-	vaddr_t result = table_free[--table_count];
-	memset((void *)result, 0, PAGE_SIZE);
-	pgc_top = table_count;
-	cache_count++;
+	int irq;
+	vaddr_t result = 0;
+	spinlock_lock(&table_lock, &irq);
+	if (table_count) {
+		result = table_free[--table_count];
+		pgc_top = table_count;
+		cache_count++;
+	}
+	spinlock_unlock(&table_lock, irq);
+	if (result)
+		memset((void *)result, 0, PAGE_SIZE);
 	return result;
 }
 void mm_free_page_table(vaddr_t address)
 {
+	int irq;
+	spinlock_lock(&table_lock, &irq);
 	table_free[table_count++] = address;
 	pgc_top = table_count;
 	cache_count--;
+	spinlock_unlock(&table_lock, irq);
 }
-/* Called under the big kernel lock. Roll back all tables
- * allocated by this walk if a later level cannot be allocated. */
+/* Requires mm_lock. Allocation failure rolls back the tables from this walk. */
 static pte_t *ensure_leaf(pte_t *root, vaddr_t address)
 {
 	pte_t *table = root, *created[3];
@@ -126,6 +135,7 @@ paddr_t mm_virt_to_phys(vaddr_t address)
 }
 void mm_init_cache(void)
 {
+	spinlock_init(&table_lock);
 	table_count = PAGE_TABLE_CACHE_PAGES;
 	for (unsigned i = 0; i < table_count; i++)
 		table_free[i] = PAGE_TABLE_CACHE_BEGIN + i * PAGE_SIZE;
@@ -279,13 +289,18 @@ int mm_map_io(paddr_t physical)
 {
 	if (physical < DEVICE_IO_BEGIN || physical >= DEVICE_IO_END)
 		return -1;
+	int irq, result = -1;
+	spinlock_lock(&mm_lock, &irq);
 	pte_t *entry = ensure_leaf(kernel_root, physical);
 	if (!entry)
-		return -1;
+		goto out;
 	*entry = (physical & ADDRESS_MASK) | PAGE_ENTRY_KERNEL_DATA |
 		 PAGE_ENTRY_CD | PAGE_ENTRY_WT;
 	smp_tlb_flush();
-	return 1;
+	result = 1;
+out:
+	spinlock_unlock(&mm_lock, irq);
+	return result;
 }
 static pte_t encode_flags(unsigned flags)
 {
@@ -425,8 +440,11 @@ static void destroy(pte_t *table, unsigned shift, unsigned count)
 }
 void mm_destroy_user_map(vaddr_t root)
 {
+	int irq;
+	spinlock_lock(&mm_lock, &irq);
 	if (root)
 		destroy((pte_t *)root, 39, 256);
+	spinlock_unlock(&mm_lock, irq);
 }
 unsigned mm_get_map_flag_pd(vaddr_t root, vaddr_t address)
 {
@@ -455,11 +473,15 @@ unsigned mm_get_map_flag(vaddr_t address)
 }
 void mm_set_map_flag_pd(vaddr_t root, vaddr_t address, unsigned flags)
 {
+	int irq;
+	spinlock_lock(&mm_lock, &irq);
 	pte_t *entry = ensure_leaf((pte_t *)root, address);
 	if (!entry || !(*entry & PAGE_ENTRY_PRESENT))
-		return;
+		goto out;
 	*entry = (*entry & ADDRESS_MASK) | encode_flags(flags);
 	flush_mapping(root, address);
+out:
+	spinlock_unlock(&mm_lock, irq);
 }
 void mm_set_map_flag(vaddr_t address, unsigned flags)
 {
@@ -531,14 +553,18 @@ void name_put(void *buffer)
 }
 int arch_mm_clone_region(pte_t *src, pte_t *dst, vm_region *region)
 {
+	int irq, result = 1;
+	spinlock_lock(&mm_lock, &irq);
 	for (vaddr_t address = region->begin; address < region->end;
 	     address += PAGE_SIZE) {
 		pte_t *parent = arch_mm_lookup_leaf((vaddr_t)src, address);
 		if (!parent || !(*parent & PAGE_ENTRY_PRESENT))
 			continue;
 		pte_t *child = ensure_leaf(dst, address);
-		if (!child)
-			return 0;
+		if (!child) {
+			result = 0;
+			break;
+		}
 		pte_t entry = *parent;
 		int managed = !(region->vm_flags & VM_REGION_F_DIRECT_PHYS) &&
 			      owned(entry & ADDRESS_MASK);
@@ -551,5 +577,6 @@ int arch_mm_clone_region(pte_t *src, pte_t *dst, vm_region *region)
 			phymm_reference_page((entry & ADDRESS_MASK) /
 					     PAGE_SIZE);
 	}
-	return 1;
+	spinlock_unlock(&mm_lock, irq);
+	return result;
 }

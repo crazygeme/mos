@@ -20,6 +20,8 @@ struct smp_cpu {
 	unsigned long long gdt[SELECTOR_COUNT];
 	tss_io_struct tss;
 	task_struct *task;
+	/* Protected by the TLB request lock after CPU publication. */
+	addr_space_t active_root;
 };
 
 extern struct smp_cpu smp_cpus[SMP_MAX_CPUS];
@@ -31,10 +33,8 @@ tss_struct *smp_tss(void);
 void smp_init(void);
 void smp_bootstrap(void);
 void smp_start(void);
-int smp_kernel_enter(void);
-void smp_kernel_leave(void);
-void smp_return(intr_frame *frame);
 void smp_idle(void);
+void smp_mm_activate(addr_space_t root);
 void smp_tlb_flush(void);
 void smp_tlb_flush_user(vaddr_t page_dir);
 void smp_tlb_poll(void);

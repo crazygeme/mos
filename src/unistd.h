@@ -170,6 +170,12 @@
 #define __NR_getresuid 165
 #define __NR_vm86 166
 #define __NR_query_module 167
+#define __NR_epoll_create 254
+#define __NR_epoll_ctl 255
+#define __NR_epoll_wait 256
+#define __NR_epoll_pwait 319
+#define __NR_epoll_create1 329
+#define __NR_epoll_pwait2 441
 #define __NR_poll 168
 #define __NR_nfsservctl 169
 #define __NR_setresgid 170
@@ -241,7 +247,7 @@
 #define __NR_rseq 386
 #define __NR_clock_gettime64 403
 #define __NR_faccessat2 439
-#define NR_syscalls 440
+#define NR_syscalls 442
 
 #define _SYS_NAMELEN 65 // in linux 2.1
 

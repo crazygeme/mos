@@ -25,10 +25,6 @@ struct log_cursor {
 	unsigned long long sequence;
 	unsigned offset, rdev;
 };
-struct log_waiter {
-	list_entry node;
-	task_struct *task;
-};
 static struct log_record records[LOG_RECORDS];
 static unsigned long long first_sequence, next_sequence, clear_sequence;
 static struct log_cursor stream_cursor;
@@ -50,7 +46,6 @@ KERNEL_INIT(1, syslog_init);
 void syslog_emit(unsigned priority, const char *text, unsigned length)
 {
 	struct log_record *record;
-	list_entry *entry;
 	int irq;
 
 	if (!initialized || !length)
@@ -69,44 +64,13 @@ void syslog_emit(unsigned priority, const char *text, unsigned length)
 	next_sequence++;
 	if (next_sequence - first_sequence > LOG_RECORDS)
 		first_sequence = next_sequence - LOG_RECORDS;
-	for (entry = waiters.next; entry != &waiters; entry = entry->next) {
-		struct log_waiter *waiter =
-			container_of(entry, struct log_waiter, node);
-		ps_put_to_ready_queue(waiter->task);
-	}
+	poll_notify(&waiters);
 	spinlock_unlock(&log_lock, irq);
-}
-
-static void log_deregister(void *opaque, task_struct *task)
-{
-	struct log_waiter *waiter = opaque;
-	int irq;
-	(void)task;
-	spinlock_lock(&log_lock, &irq);
-	list_remove_entry(&waiter->node);
-	spinlock_unlock(&log_lock, irq);
-	free(waiter);
 }
 
 static void log_register(poll_table *pt)
 {
-	struct log_waiter *waiter;
-	int irq;
-
-	if (!pt)
-		return;
-	waiter = zalloc(sizeof(*waiter));
-	if (!waiter) {
-		pt->unsupported = 1;
-		return;
-	}
-	waiter->task = pt->task;
-	list_init(&waiter->node);
-	spinlock_lock(&log_lock, &irq);
-	list_insert_tail(&waiters, &waiter->node);
-	spinlock_unlock(&log_lock, irq);
-	if (poll_table_add(pt, waiter, log_deregister) < 0)
-		log_deregister(waiter, pt->task);
+	poll_subscribe(pt, &waiters, &log_lock);
 }
 
 struct log_wait {

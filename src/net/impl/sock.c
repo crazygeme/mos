@@ -251,7 +251,6 @@ static void sock_waiter_dequeue(sock_waiter *waiter)
  * Safe to call from lwIP callbacks (NIC IRQ context). */
 void sock_wakeup(mos_sock *sk)
 {
-	list_entry *entry;
 	file *async_fp;
 	int owner = 0;
 	int sig = SIGIO;
@@ -266,12 +265,7 @@ void sock_wakeup(mos_sock *sk)
 		ps_put_to_ready_queue(waiter->task);
 	}
 
-	entry = sk->poll_waiters.next;
-	while (entry != &sk->poll_waiters) {
-		sock_waiter *waiter = container_of(entry, sock_waiter, node);
-		entry = entry->next;
-		ps_put_to_ready_queue(waiter->task);
-	}
+	poll_notify(&sk->poll_waiters);
 	async_fp = sk->async_file;
 	if (async_fp && (async_fp->f_flag & FASYNC) && async_fp->f_owner) {
 		owner = async_fp->f_owner;
@@ -892,18 +886,6 @@ static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 	return command_dispatch(socket_command_groups, fp, cmd, arg, -ENOTTY);
 }
 
-static void sock_poll_dereg(void *opaque, task_struct *task)
-{
-	sock_waiter *waiter = opaque;
-	int irq;
-
-	(void)task;
-	spinlock_lock(&waiter->sk->wait_lock, &irq);
-	sock_waiter_dequeue(waiter);
-	spinlock_unlock(&waiter->sk->wait_lock, irq);
-	free(waiter);
-}
-
 static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 {
 	NET_CORE_GUARD;
@@ -960,30 +942,13 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 	      sk->unix_shutdown == (UNIX_SHUT_RD | UNIX_SHUT_WR))))
 		ready |= FS_POLL_HUP;
 
-	if (!ready && pt) {
-		sock_waiter *waiter = zalloc(sizeof(*waiter));
-		int irq;
+	if ((events & FS_POLL_RDHUP) && sk->type == SOCK_STREAM &&
+	    (sk->state == SS_DISCONNECTING ||
+	     (sk->domain == AF_UNIX && (sk->unix_shutdown & UNIX_SHUT_RD))))
+		ready |= FS_POLL_RDHUP;
+	if (pt)
+		poll_subscribe(pt, &sk->poll_waiters, &sk->wait_lock);
 
-		if (!waiter) {
-			pt->unsupported = 1;
-			return ready;
-		}
-
-		list_init(&waiter->node);
-		waiter->task = pt->task;
-		waiter->sk = sk;
-		waiter->queued = 0;
-		spinlock_lock(&sk->wait_lock, &irq);
-		sock_waiter_queue(&sk->poll_waiters, waiter);
-		spinlock_unlock(&sk->wait_lock, irq);
-
-		if (poll_table_add(pt, waiter, sock_poll_dereg) < 0) {
-			spinlock_lock(&sk->wait_lock, &irq);
-			sock_waiter_dequeue(waiter);
-			spinlock_unlock(&sk->wait_lock, irq);
-			free(waiter);
-		}
-	}
 	return ready;
 }
 

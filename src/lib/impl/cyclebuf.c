@@ -1,4 +1,5 @@
 #include <lib/cyclebuf.h>
+#include <fs/fs.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <ps/ps.h>
@@ -20,9 +21,9 @@ typedef struct _cy_buf {
 	unsigned ref_count;
 	char *buf;
 	unsigned buf_size;
-	/* poll/select wakeup: woken when read or write becomes possible */
-	task_struct *poll_read_task;
-	task_struct *poll_write_task;
+	/* Readiness subscriptions for task waits and persistent event queues. */
+	list_entry poll_readers;
+	list_entry poll_writers;
 	spinlock_t poll_lock;
 } cy_buf;
 
@@ -39,6 +40,8 @@ cy_buf *cyb_create(int pages)
 	cond_init(&b->write_event, 0); /* space available initially */
 	spinlock_init(&b->lock);
 	spinlock_init(&b->poll_lock);
+	list_init(&b->poll_readers);
+	list_init(&b->poll_writers);
 	return b;
 }
 
@@ -55,6 +58,8 @@ cy_buf *cyb_create_named(int pages)
 	cond_init(&b->write_event, 0); /* space available initially */
 	spinlock_init(&b->lock);
 	spinlock_init(&b->poll_lock);
+	list_init(&b->poll_readers);
+	list_init(&b->poll_writers);
 	return b;
 }
 
@@ -66,18 +71,13 @@ void cyb_destroy(cy_buf *b)
 	}
 }
 
-/* Notify a poll/select waiter if one is registered.  Must be called without
- * poll_lock held, and after the data state has been updated. */
+/* Notify readiness subscribers after publishing the buffer state. */
 static void cyb_notify_poll(cy_buf *b, int read)
 {
-	task_struct *t;
 	int irq;
-
 	spinlock_lock(&b->poll_lock, &irq);
-	t = read ? b->poll_read_task : b->poll_write_task;
+	poll_notify(read ? &b->poll_readers : &b->poll_writers);
 	spinlock_unlock(&b->poll_lock, irq);
-	if (t)
-		ps_put_to_ready_queue(t);
 }
 
 /*
@@ -136,10 +136,11 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 		if (b->length == b->buf_size)
 			cond_reset(&b->write_event);
 		spinlock_unlock(&b->lock, irq);
-		if (notify && i > 0) {
+		if (notify && i > 0)
 			cond_notify(&b->read_event);
+		/* New input notifies edge subscribers even while input remains. */
+		if (i > 0)
 			cyb_notify_poll(b, 1);
-		}
 		written += i;
 		if (!blocking || written == len)
 			break;
@@ -168,10 +169,9 @@ int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len)
 	if (b->length == b->buf_size)
 		cond_reset(&b->write_event);
 	spinlock_unlock(&b->lock, irq);
-	if (notify) {
+	if (notify)
 		cond_notify(&b->read_event);
-		cyb_notify_poll(b, 1);
-	}
+	cyb_notify_poll(b, 1);
 	return (int)len;
 }
 
@@ -321,64 +321,12 @@ void cyb_reader_close(cy_buf *b)
  * Poll registration helpers.
  */
 
-static void cyb_set_poll_read(cy_buf *b, task_struct *task)
-{
-	int irq;
-	spinlock_lock(&b->poll_lock, &irq);
-	b->poll_read_task = task;
-	spinlock_unlock(&b->poll_lock, irq);
-}
-
-static void cyb_clear_poll_read(cy_buf *b)
-{
-	int irq;
-	spinlock_lock(&b->poll_lock, &irq);
-	b->poll_read_task = NULL;
-	spinlock_unlock(&b->poll_lock, irq);
-}
-
-static void cyb_set_poll_write(cy_buf *b, task_struct *task)
-{
-	int irq;
-	spinlock_lock(&b->poll_lock, &irq);
-	b->poll_write_task = task;
-	spinlock_unlock(&b->poll_lock, irq);
-}
-
-static void cyb_clear_poll_write(cy_buf *b)
-{
-	int irq;
-	spinlock_lock(&b->poll_lock, &irq);
-	b->poll_write_task = NULL;
-	spinlock_unlock(&b->poll_lock, irq);
-}
-
-static void cyb_poll_read_dereg(void *opaque, task_struct *task)
-{
-	(void)task;
-	cyb_clear_poll_read(opaque);
-}
-
-static void cyb_poll_write_dereg(void *opaque, task_struct *task)
-{
-	(void)task;
-	cyb_clear_poll_write(opaque);
-}
-
 void cyb_poll_read(cy_buf *b, poll_table *pt)
 {
-	if (!pt)
-		return;
-	cyb_set_poll_read(b, pt->task);
-	if (poll_table_add(pt, b, cyb_poll_read_dereg) < 0)
-		cyb_clear_poll_read(b);
+	poll_subscribe(pt, &b->poll_readers, &b->poll_lock);
 }
 
 void cyb_poll_write(cy_buf *b, poll_table *pt)
 {
-	if (!pt)
-		return;
-	cyb_set_poll_write(b, pt->task);
-	if (poll_table_add(pt, b, cyb_poll_write_dereg) < 0)
-		cyb_clear_poll_write(b);
+	poll_subscribe(pt, &b->poll_writers, &b->poll_lock);
 }

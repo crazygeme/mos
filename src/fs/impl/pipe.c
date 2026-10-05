@@ -87,7 +87,7 @@ static unsigned pipe_poll_common(pipe_inode *n, unsigned events, poll_table *pt)
 	if ((events & FS_POLL_WRITE) && cyb_reader_count(n->buf) > 0 &&
 	    !cyb_isfull(n->buf))
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt) {
+	if (pt) {
 		if (events & (FS_POLL_READ | FS_POLL_HUP))
 			cyb_poll_read(n->buf, pt);
 		if (events & FS_POLL_WRITE)

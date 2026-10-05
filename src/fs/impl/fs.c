@@ -3,6 +3,7 @@
 #include <fs/fcntl.h>
 #include <fs/ioctl.h>
 #include <fs/pipe.h>
+#include <fs/epoll.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <ps/ps.h>
@@ -554,6 +555,7 @@ void fs_flock_release(file *f)
 int fs_put_file(file *f)
 {
 	if (__sync_add_and_fetch(&f->f_count, -1) == 0) {
+		epoll_release_file(f);
 		fs_flock_release(f);
 		if (f->f_name)
 			free(f->f_name);
@@ -657,11 +659,13 @@ void poll_table_init(poll_table *pt, task_struct *task,
 	pt->unsupported = 0;
 	pt->entries_owned = 0;
 	pt->entries = entries;
+	pt->wake = NULL;
+	pt->wake_arg = NULL;
 }
 
 void poll_table_cleanup(poll_table *pt)
 {
-	if (pt->task->io_wait == pt) {
+	if (pt->task && pt->task->io_wait == pt) {
 		pt->task->cancel_io_wait = NULL;
 		pt->task->io_wait = NULL;
 	}
@@ -689,12 +693,59 @@ int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg)
 		pt->unsupported = 1;
 		return -1;
 	}
-	pt->task->io_wait = pt;
-	pt->task->cancel_io_wait = poll_table_cancel;
+	if (pt->task) {
+		pt->task->io_wait = pt;
+		pt->task->cancel_io_wait = poll_table_cancel;
+	}
 	pt->entries[pt->nr].opaque = opaque;
 	pt->entries[pt->nr].dereg = dereg;
 	pt->nr++;
 	return 0;
+}
+
+static void poll_subscription_remove(void *opaque, task_struct *task)
+{
+	poll_table_entry *entry = opaque;
+	int irq;
+	(void)task;
+	spinlock_lock(entry->lock, &irq);
+	list_remove_entry(&entry->node);
+	spinlock_unlock(entry->lock, irq);
+}
+
+void poll_subscribe(poll_table *pt, list_entry *head, spinlock_t *lock)
+{
+	poll_table_entry *entry;
+	int irq;
+	if (!pt)
+		return;
+	if (pt->nr >= pt->cap) {
+		pt->unsupported = 1;
+		return;
+	}
+	entry = &pt->entries[pt->nr];
+	entry->lock = lock;
+	entry->wake = pt->wake;
+	entry->wake_arg = pt->wake_arg;
+	entry->task = pt->task;
+	list_init(&entry->node);
+	poll_table_add(pt, entry, poll_subscription_remove);
+	spinlock_lock(lock, &irq);
+	list_insert_tail(head, &entry->node);
+	spinlock_unlock(lock, irq);
+}
+
+void poll_notify(list_entry *head)
+{
+	list_entry *node;
+	for (node = head->next; node != head; node = node->next) {
+		poll_table_entry *entry =
+			container_of(node, poll_table_entry, node);
+		if (entry->wake)
+			entry->wake(entry->wake_arg);
+		else if (entry->task)
+			ps_put_to_ready_queue(entry->task);
+	}
 }
 
 unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt)

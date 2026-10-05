@@ -75,6 +75,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Devices and Drivers](doc/devices.md) | PCI discovery, driver matching, initialization, and `/dev` / `/sys` ownership |
 | [Framebuffer / VGA](doc/vga.md)             | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                            |
 | [X Bring-Up Requirements](doc/x_bringup.md) | Practical checklist for building the kernel features needed to boot an old Linux/XFree86-style graphical desktop |
+| [Epoll](doc/epoll.md)                      | Persistent readiness subscriptions, level and edge delivery, one-shot rearming, Linux ABI, and performance validation |
 | [Poll / Select](doc/poll.md)                | Four-phase wait loop, lost-wakeup prevention, poll_wait driver interface, socket integration                     |
 | [ELF Loader](doc/elf_exec.md)               | Segment mapping, BSS handling, dynamic linker loading, execve lifecycle, initial stack layout                    |
 | [Signal Handling](doc/signals.md)           | Delivery engine, inline trampoline, signal frame layout, sigaction/sigprocmask/sigreturn, altstack, sigsuspend   |

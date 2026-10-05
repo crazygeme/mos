@@ -3,6 +3,7 @@
 #include <fs/vfs.h>
 #include <fs/select.h>
 #include <fs/poll.h>
+#include <fs/epoll.h>
 #include <fs/iovec.h>
 #include <ps/signal.h>
 #include <stdint.h>

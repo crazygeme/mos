@@ -436,7 +436,7 @@ unsigned ps2mouse_poll(unsigned events, poll_table *pt)
 		ready |= FS_POLL_READ;
 	if (events & FS_POLL_WRITE)
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt && (events & FS_POLL_READ) && mouse_rxbuf)
+	if (pt && (events & FS_POLL_READ) && mouse_rxbuf)
 		cyb_poll_read(mouse_rxbuf, pt);
 	return ready;
 }

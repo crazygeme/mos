@@ -245,7 +245,7 @@ static unsigned fifonode_poll_common(cy_buf *b, unsigned events, poll_table *pt)
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_WRITE) && !cyb_isfull(b))
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt) {
+	if (pt) {
 		if (events & FS_POLL_READ)
 			cyb_poll_read(b, pt);
 		if (events & FS_POLL_WRITE)

@@ -568,7 +568,7 @@ unsigned pts_master_poll(file *fp, unsigned events, poll_table *pt)
 		ready |= FS_POLL_HUP;
 	if ((events & FS_POLL_WRITE) && !cyb_isfull(p->m2s))
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt) {
+	if (pt) {
 		if (events & (FS_POLL_READ | FS_POLL_HUP))
 			cyb_poll_read(p->s2m, pt);
 		if (events & FS_POLL_WRITE)
@@ -849,7 +849,7 @@ unsigned pts_slave_poll(file *fp, unsigned events, poll_table *pt)
 		ready |= FS_POLL_HUP;
 	if ((events & FS_POLL_WRITE) && !cyb_isfull(p->s2m))
 		ready |= FS_POLL_WRITE;
-	if (!ready && pt) {
+	if (pt) {
 		if (events & (FS_POLL_READ | FS_POLL_HUP))
 			cyb_poll_read(p->m2s, pt);
 		if (events & FS_POLL_WRITE)

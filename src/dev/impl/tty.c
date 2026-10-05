@@ -1826,7 +1826,7 @@ static unsigned tty_fs_poll(file *fp, unsigned events, poll_table *pt)
 			ready |= FS_POLL_READ;
 		}
 	}
-	if (!ready && pt && (events & FS_POLL_READ) && fp->f_mode != O_WRONLY)
+	if (pt && (events & FS_POLL_READ) && fp->f_mode != O_WRONLY)
 		cyb_poll_read(state->kb_buf, pt);
 	return ready;
 }

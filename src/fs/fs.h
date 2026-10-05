@@ -58,6 +58,7 @@ typedef struct _block block;
 #define FS_POLL_EXCEPT (1U << 2)
 #define FS_POLL_HUP (1U << 3)
 #define FS_POLL_ERR (1U << 4)
+#define FS_POLL_RDHUP (1U << 5)
 
 typedef int64_t loff_t;
 typedef int off_t;
@@ -66,13 +67,20 @@ typedef int ssize_t;
 typedef struct _inode inode;
 typedef struct _file file;
 
-/* Forward declarations for poll/select hooks */
+/* Readiness subscription interfaces. */
 typedef struct _task_struct task_struct;
 typedef void (*poll_dereg_fn)(void *opaque, task_struct *task);
+
+typedef void (*poll_wake_fn)(void *opaque);
 
 typedef struct _poll_table_entry {
 	void *opaque;
 	poll_dereg_fn dereg;
+	list_entry node;
+	spinlock_t *lock;
+	poll_wake_fn wake;
+	void *wake_arg;
+	task_struct *task;
 } poll_table_entry;
 
 typedef struct _poll_table {
@@ -82,6 +90,8 @@ typedef struct _poll_table {
 	int unsupported;
 	int entries_owned;
 	poll_table_entry *entries;
+	poll_wake_fn wake;
+	void *wake_arg;
 } poll_table;
 
 /*
@@ -105,9 +115,8 @@ typedef struct _file_operations {
 	int (*ftruncate)(file *file, loff_t size);
 	/*
 	 * poll: return an FS_POLL_* readiness bitmask for the requested @events.
-	 * If @pt is non-NULL, the implementation may register wakeups for the
-	 * current task through poll_table helpers; deregistration is handled by
-	 * the generic poll/select layer.
+	 * If @pt is non-NULL, register the requested readiness queues even if
+	 * ready. The table owns each subscription until poll_table_cleanup().
 	 */
 	unsigned (*poll)(file *file, unsigned events, poll_table *pt);
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
@@ -156,6 +165,7 @@ struct _file {
 	int f_owner; /* async I/O owner set via fcntl(F_SETOWN) */
 	int f_sigio; /* signal number for async I/O (0 => SIGIO) */
 	char *f_name;
+	struct epitem *f_ep_links;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
 
@@ -278,6 +288,9 @@ void poll_table_init(poll_table *pt, task_struct *task,
 void poll_table_cleanup(poll_table *pt);
 
 int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg);
+/* Queue callbacks execute with the supplied producer lock held. */
+void poll_subscribe(poll_table *pt, list_entry *head, spinlock_t *lock);
+void poll_notify(list_entry *head);
 
 int fs_chmod(const char *pathname, uint32_t mode);
 

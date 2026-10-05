@@ -39,7 +39,7 @@ typedef intptr_t (*native_fn)(intr_frame *);
 #include "calls.def"
 #undef NATIVE_SYSCALL
 
-static const native_fn native_calls[440] = {
+static const native_fn native_calls[442] = {
 #define NATIVE_SYSCALL(number, name, service) [number] = entry_##name,
 #include "calls.def"
 #undef NATIVE_SYSCALL

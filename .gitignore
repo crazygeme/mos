@@ -13,3 +13,4 @@ compile_commands.json
 .claude
 .codex
 .codex-data
+__pycache__

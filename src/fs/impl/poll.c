@@ -52,7 +52,9 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 				ret = 0;
 				break;
 			}
-			sleep_ms = deadline - now;
+			sleep_ms = deadline - now > 0xffffffffULL ?
+					   0xffffffffU :
+					   (unsigned)(deadline - now);
 			if (has_unsupported && sleep_ms > TICK_MS)
 				sleep_ms = TICK_MS;
 		} else if (has_unsupported) {

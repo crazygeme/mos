@@ -9,8 +9,8 @@
 
 /* ── Shared file/dir/symlink constructors (common.c) ─────────────────── */
 
-file *make_pid_file(proc_buf_t *pb);
-file *make_pid_dir(proc_buf_t *pb);
+file *make_pid_file(proc_buf_t *pb, task_struct *task);
+file *make_pid_dir(proc_buf_t *pb, task_struct *task);
 file *make_pid_symlink(const char *target);
 
 /* ── State helpers (common.c) ────────────────────────────────────────── */
@@ -21,12 +21,12 @@ const char *pid_state_name(ps_status st);
 /* ── VM stats (vm.c) ─────────────────────────────────────────────────── */
 
 typedef struct {
-	unsigned total_kb;
-	unsigned text_kb;
-	unsigned data_kb;
-	unsigned stk_kb;
-	unsigned rss_file_kb;
-	unsigned rss_anon_kb;
+	uint64_t total_kb;
+	uint64_t text_kb;
+	uint64_t data_kb;
+	uint64_t stk_kb;
+	uint64_t rss_file_kb;
+	uint64_t rss_anon_kb;
 } vm_stats_t;
 
 void vm_get_stats(task_struct *task, vm_stats_t *out);

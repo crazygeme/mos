@@ -102,13 +102,17 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 			task->user->egid, task->user->sgid, task->user->egid);
 	proc_buf_printf(pb, "FDSize:    %u\n", fdsize);
 	proc_buf_printf(pb, "Groups:    %u\n", task->user->gid);
-	proc_buf_printf(pb, "VmSize:    %u kB\n", vm.total_kb);
+	proc_buf_printf(pb, "VmSize:    %llu kB\n",
+			(unsigned long long)vm.total_kb);
 	proc_buf_printf(pb, "VmLck:     %u kB\n", 0);
-	proc_buf_printf(pb, "VmRSS:     %u kB\n",
-			vm.rss_anon_kb + vm.rss_file_kb);
-	proc_buf_printf(pb, "VmData:    %u kB\n", vm.data_kb);
-	proc_buf_printf(pb, "VmStk:     %u kB\n", vm.stk_kb);
-	proc_buf_printf(pb, "VmExe:     %u kB\n", vm.text_kb);
+	proc_buf_printf(pb, "VmRSS:     %llu kB\n",
+			(unsigned long long)(vm.rss_anon_kb + vm.rss_file_kb));
+	proc_buf_printf(pb, "VmData:    %llu kB\n",
+			(unsigned long long)vm.data_kb);
+	proc_buf_printf(pb, "VmStk:     %llu kB\n",
+			(unsigned long long)vm.stk_kb);
+	proc_buf_printf(pb, "VmExe:     %llu kB\n",
+			(unsigned long long)vm.text_kb);
 	proc_buf_printf(pb, "VmLib:     %u kB\n", 0);
 	proc_buf_printf(pb, "SigPnd: %016lx\n", sig_pending);
 	proc_buf_printf(pb, "SigBlk: %016lx\n", sig_blocked);
@@ -144,8 +148,9 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 	unsigned tty_nr;
 	int tpgid;
 	vm_stats_t vm;
-	unsigned vsize, rss_pages;
-	unsigned stack_start;
+	vm_struct_t mm = task->user->vm;
+	uint64_t vsize, rss_pages;
+	vaddr_t stack_start;
 	unsigned long utime, stime;
 
 	strncpy(comm, base, 15);
@@ -155,9 +160,9 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 	tpgid = tty_nr ? (int)task->user->group_id : -1;
 
 	vm_get_stats(task, &vm);
-	vsize = vm.total_kb * 1024u;
-	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) * 1024u / PAGE_SIZE;
-	stack_start = task->user->vm->start_stack;
+	vsize = vm.total_kb * 1024;
+	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) / (PAGE_SIZE / 1024);
+	stack_start = mm ? mm->start_stack : 0;
 
 	stime = task->stats->kernel_tickets;
 	utime = task_utime(task);
@@ -166,7 +171,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		pb,
 		"%u (%s) %c %u %u %u %u %d %lu "
 		"%lu %lu %lu %lu %lu %lu %ld %ld "
-		"%ld %ld %ld %ld %lu %lu %ld "
+		"%ld %ld %ld %ld %lu %llu %lld "
 		"%lu %lu %lu %lu %lu %lu %lu %lu "
 		"%lu %lu %lu %lu %d %d\n",
 		/* 1  pid         */ task->psid,
@@ -191,11 +196,11 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		/* 20 num_threads */ (long)1,
 		/* 21 itrealvalue */ (long)0,
 		/* 22 starttime   */ (unsigned long)task->stats->start_tickets,
-		/* 23 vsize       */ (unsigned long)vsize,
-		/* 24 rss         */ (long)rss_pages,
+		/* 23 vsize       */ (unsigned long long)vsize,
+		/* 24 rss         */ (long long)rss_pages,
 		/* 25 rlim        */ (unsigned long)0x7ffffffful,
-		/* 26 startcode   */ (unsigned long)task->user->vm->start_brk,
-		/* 27 endcode     */ (unsigned long)task->user->vm->brk,
+		/* 26 startcode   */ (unsigned long)(mm ? mm->start_brk : 0),
+		/* 27 endcode     */ (unsigned long)(mm ? mm->brk : 0),
 		/* 28 startstack  */ (unsigned long)stack_start,
 		/* 29 kstkesp     */ (unsigned long)0,
 		/* 30 kstkeip     */ (unsigned long)0,

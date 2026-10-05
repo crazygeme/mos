@@ -55,7 +55,7 @@ file *pid_fd_dir_open(task_struct *task)
 	pb = proc_buf_new();
 	proc_buf_copy(pb, buf, size);
 	free(buf);
-	return make_pid_dir(pb);
+	return make_pid_dir(pb, task);
 }
 
 #undef PID_FILL_DIRENT

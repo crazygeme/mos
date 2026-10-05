@@ -777,6 +777,9 @@ static void kinit_userspace()
 	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + KERNEL_TASK_BYTES;
 	const char *arg = g_cmdline;
 
+	/* The initial userspace process has no userspace parent. */
+	cur->ppid = 0;
+
 	/* Pass an explicit supported runlevel to SysV init. */
 	while (*arg) {
 		const char *end;

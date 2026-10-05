@@ -16,15 +16,13 @@
 #include <ps/ps.h>
 #include <config.h>
 #include <errno.h>
+#include <syscall/syscall.h>
 #include <test/test.h>
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
 /* A fixed user-space address well within the user zone, page-aligned. */
 #define TEST_FIXED_ADDR 0x20000000u
-
-int sys_mremap(unsigned old_addr, unsigned old_size, unsigned new_size,
-	       int flags, unsigned new_addr);
 
 static vm_struct_t cur_vm(void)
 {
@@ -145,7 +143,7 @@ KTEST(mmap, anon_auto_addr)
 
 	ASSERT_NE(addr, 0u);
 	EXPECT_GE(addr, TASK_UNMAPPED_BASE);
-	EXPECT_LT(addr, USER_ZONE_END);
+	EXPECT_LT(addr, cur_vm()->task_size - USER_STACK_PAGES * PAGE_SIZE);
 
 	do_munmap((void *)addr, PAGE_SIZE);
 	return 0;
@@ -627,5 +625,34 @@ out:
 		vm_free(scratch, 1);
 	if (fd >= 0)
 		fs_close(fd);
+	return 0;
+}
+
+KTEST(mmap, execute_permissions)
+{
+	intptr_t result = do_mmap(0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+				  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	ASSERT_GT(result, 0);
+	vaddr_t address = (vaddr_t)result;
+	EXPECT_EQ(pf_resolve_task_page_fault(current, address, 0), 1);
+	EXPECT_EQ((mm_get_map_flag(address) & PAGE_ENTRY_NO_EXEC) != 0,
+		  MOS_PAGE_NO_EXEC != 0);
+
+	EXPECT_EQ(sys_mprotect((void *)address, PAGE_SIZE,
+			       PROT_READ | PROT_EXEC),
+		  0);
+	EXPECT_EQ(mm_get_map_flag(address) & PAGE_ENTRY_NO_EXEC, 0);
+	EXPECT_EQ(sys_mprotect((void *)address, PAGE_SIZE, PROT_READ), 0);
+	EXPECT_EQ((mm_get_map_flag(address) & PAGE_ENTRY_NO_EXEC) != 0,
+		  MOS_PAGE_NO_EXEC != 0);
+
+	do_mmap_update(address, PROT_READ | PROT_EXEC,
+		       MAP_PRIVATE | MAP_ANONYMOUS);
+	EXPECT_EQ(mm_get_map_flag(address) & PAGE_ENTRY_NO_EXEC, 0);
+	do_mmap_update(address, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS);
+	EXPECT_EQ((mm_get_map_flag(address) & PAGE_ENTRY_NO_EXEC) != 0,
+		  MOS_PAGE_NO_EXEC != 0);
+	do_munmap((void *)address, PAGE_SIZE);
 	return 0;
 }

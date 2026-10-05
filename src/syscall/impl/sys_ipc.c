@@ -11,6 +11,7 @@
 #include <lib/rbtree.h>
 #include <lib/slots.h>
 #include <syscall/syscall.h>
+#include <syscall/ipc.h>
 
 #define MOS_IPC_PRIVATE 0
 #define MOS_IPC_CREAT 01000
@@ -24,36 +25,8 @@
 #define MOS_SHM_RDONLY 010000
 #define MOS_SHM_RND 020000
 
-#define MOS_SHMGET 23
-#define MOS_SHMAT 21
-#define MOS_SHMDT 22
-#define MOS_SHMCTL 24
-
 #define MOS_SHM_SEGMENT_MAX 32
 #define MOS_SHM_ATTACH_MAX 64
-
-struct mos_ipc_perm {
-	int key;
-	unsigned uid;
-	unsigned gid;
-	unsigned cuid;
-	unsigned cgid;
-	unsigned short mode;
-	unsigned short seq;
-};
-
-struct mos_shmid_ds {
-	struct mos_ipc_perm shm_perm;
-	unsigned shm_segsz;
-	unsigned shm_atime;
-	unsigned shm_dtime;
-	unsigned shm_ctime;
-	unsigned shm_cpid;
-	unsigned shm_lpid;
-	unsigned shm_nattch;
-	unsigned short unused1;
-	unsigned short unused2;
-};
 
 struct mos_shm_segment {
 	int used;
@@ -368,8 +341,8 @@ int sys_shmget(int key, size_t size, int shmflg)
 	return ret;
 }
 
-static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
-		     vaddr_t *user_raddr)
+static intptr_t mos_shmat(int shmid, const void *shmaddr, int shmflg,
+			  vaddr_t *user_raddr)
 {
 	task_struct *cur = CURRENT_TASK();
 	struct mos_shm_segment *seg;
@@ -411,7 +384,7 @@ static int mos_shmat(int shmid, const void *shmaddr, int shmflg,
 	spinlock_unlock(&mos_shm_lock, irq);
 
 	mapped = do_mmap(addr, seg->size, prot, flags, -1, 0);
-	if (mapped < 0) {
+	if ((uintptr_t)mapped >= (uintptr_t)-4095) {
 		spinlock_lock(&mos_shm_lock, &irq);
 		slot_return(&shm_attach_slots, i);
 		spinlock_unlock(&mos_shm_lock, irq);
@@ -500,47 +473,19 @@ static int shm_stat(struct mos_shm_segment *seg, void *buf)
 {
 	if (!buf)
 		return -EFAULT;
-#if MOS_HAS_NATIVE_USER
-	if (current->user->abi == MOS_ABI_AMD64) {
-		struct native_shmid_ds {
-			struct {
-				int32_t key;
-				uint32_t uid, gid, cuid, cgid;
-				uint16_t mode, pad1, seq, pad2;
-				uint64_t unused[2];
-			} perm;
-			uint64_t size, atime, dtime, ctime;
-			int32_t cpid, lpid;
-			uint64_t nattch, unused[2];
-		} *wire = buf;
-		_Static_assert(sizeof(struct native_shmid_ds) == 112,
-			       "AMD64 shmid_ds layout");
-		memset(wire, 0, sizeof(*wire));
-		wire->perm.key = seg->key;
-		wire->perm.uid = wire->perm.cuid = seg->creator_uid;
-		wire->perm.gid = wire->perm.cgid = seg->creator_gid;
-		wire->perm.mode = seg->mode;
-		wire->size = seg->size;
-		wire->ctime = seg->ctime;
-		wire->cpid = seg->owner_pid;
-		wire->nattch = seg->attach_count;
-		return 0;
-	}
-#endif
-	struct mos_shmid_ds *wire = buf;
-	memset(wire, 0, sizeof(*wire));
-	wire->shm_perm.key = seg->key;
-	wire->shm_perm.uid = wire->shm_perm.cuid = seg->creator_uid;
-	wire->shm_perm.gid = wire->shm_perm.cgid = seg->creator_gid;
-	wire->shm_perm.mode = seg->mode;
-	wire->shm_segsz = seg->size;
-	wire->shm_ctime = seg->ctime;
-	wire->shm_cpid = seg->owner_pid;
-	wire->shm_nattch = seg->attach_count;
+	struct shm_status *status = buf;
+	*status = (struct shm_status){ .key = seg->key,
+				       .uid = seg->creator_uid,
+				       .gid = seg->creator_gid,
+				       .mode = seg->mode,
+				       .ctime = seg->ctime,
+				       .cpid = seg->owner_pid,
+				       .nattch = seg->attach_count,
+				       .size = seg->size };
 	return 0;
 }
 
-int sys_shmctl(int shmid, int cmd, void *buf)
+int ps_shmctl(int shmid, int cmd, struct shm_status *buf)
 {
 	static int (*const calls[])(struct mos_shm_segment *, void *) = {
 		[MOS_IPC_RMID] = shm_remove,
@@ -565,56 +510,6 @@ int sys_shmctl(int shmid, int cmd, void *buf)
 intptr_t sys_shmat(int shmid, const void *address, int flags)
 {
 	vaddr_t mapped;
-	int ret = mos_shmat(shmid, address, flags, &mapped);
+	intptr_t ret = mos_shmat(shmid, address, flags, &mapped);
 	return ret ? ret : (intptr_t)mapped;
-}
-
-static int ipc_shmget(int first, int second, int third, void *ptr)
-{
-	return sys_shmget(first, (unsigned)second, third);
-}
-
-static int ipc_shmat(int first, int second, int third, void *ptr)
-{
-	vaddr_t mapped;
-	unsigned *output = (void *)(uintptr_t)(uint32_t)third;
-	if (!output)
-		return -EFAULT;
-	int ret = mos_shmat(first, ptr, second, &mapped);
-	if (!ret)
-		*output = mapped;
-	return ret;
-}
-
-static int ipc_shmdt(int first, int second, int third, void *ptr)
-{
-	return sys_shmdt(ptr);
-}
-
-static int ipc_shmctl(int first, int second, int third, void *ptr)
-{
-	return sys_shmctl(first, second, ptr);
-}
-
-int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
-	    long fifth)
-{
-	unsigned version = call >> 16;
-
-	call &= 0xffff;
-	(void)fifth;
-
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("ipc(call=%u, version=%u, first=%x, second=%x, third=%x, ptr=%x, fifth=%x)\n",
-		     call, version, first, second, third, ptr, fifth);
-
-	static int (*const calls[])(int, int, int, void *) = {
-		[MOS_SHMGET] = ipc_shmget,
-		[MOS_SHMAT] = ipc_shmat,
-		[MOS_SHMDT] = ipc_shmdt,
-		[MOS_SHMCTL] = ipc_shmctl,
-	};
-	if (call >= sizeof(calls) / sizeof(calls[0]) || !calls[call])
-		return -ENOSYS;
-	return calls[call](first, second, third, ptr);
 }

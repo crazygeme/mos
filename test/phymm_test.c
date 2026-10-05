@@ -209,7 +209,7 @@ KTEST(phymm, cache_budget_large_ram)
 	phymm_cache_budget(total, total, 0, &policy);
 	EXPECT_EQ(policy.file_pages + policy.block_pages, total / 4);
 	EXPECT_EQ(policy.reserve_pages, 256 * 1024 * 1024 / PAGE_SIZE);
-#if MOS_HAS_NATIVE_USER
+#if MOS_PAGING_LEVELS == 4
 	EXPECT_EQ(policy.block_pages, total / 16);
 #else
 	EXPECT_EQ(policy.block_pages, HDD_CACHE_MAX_PAGES);

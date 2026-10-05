@@ -691,3 +691,20 @@ int native_getdents(unsigned fd, void *output, unsigned count)
 {
 	return do_getdents_native(fd, output, count);
 }
+
+int native_ioctl(int fd, unsigned command, void *arg)
+{
+	if (command == 0x8906) {
+		struct timeval stamp;
+		int ret = sys_ioctl(fd, command, (char *)&stamp);
+		if (!ret) {
+			if (!arg)
+				return -EFAULT;
+			int64_t *out = arg;
+			out[0] = stamp.tv_sec;
+			out[1] = stamp.tv_usec;
+		}
+		return ret;
+	}
+	return sys_ioctl(fd, command, arg);
+}

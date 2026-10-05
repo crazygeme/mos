@@ -236,11 +236,7 @@ static unsigned buddy_alloc_in_range(unsigned order, unsigned min_idx,
 
 static unsigned phymm_kernel_page_limit(void)
 {
-#if MOS_HAS_NATIVE_USER
-	unsigned limit = PHYMM_ADDRESS_LIMIT / PAGE_SIZE;
-#else
-	unsigned limit = KERNEL_DIRECT_MAP_LIMIT / PAGE_SIZE;
-#endif
+	unsigned limit = MOS_KERNEL_RAM_LIMIT / PAGE_SIZE;
 
 	return limit < phymm_end ? limit : phymm_end;
 }
@@ -283,10 +279,10 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 		return PHYMM_INVALID;
 
 	spinlock_lock(&buddy_lock, &irq);
-#if MOS_HAS_NATIVE_USER
-	idx = buddy_alloc_in_range(order, 0x100000U, phymm_end);
+	idx = buddy_alloc_in_range(order,
+				   MOS_KERNEL_ALLOC_PREFERRED_BASE / PAGE_SIZE,
+				   phymm_kernel_page_limit());
 	if (idx == PHYMM_INVALID)
-#endif
 		idx = buddy_alloc_in_range(order, phymm_begin,
 					   phymm_kernel_page_limit());
 	spinlock_unlock(&buddy_lock, irq);
@@ -296,13 +292,10 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 unsigned phymm_alloc_dma(unsigned page_count)
 {
 	unsigned order = ceil_log2(page_count ? page_count : 1);
-	unsigned limit = 0x100000U;
+	unsigned limit = MOS_DMA_RAM_LIMIT / PAGE_SIZE;
 	unsigned idx;
 	int irq;
 
-#if !MOS_HAS_NATIVE_USER
-	limit = phymm_kernel_page_limit();
-#endif
 	if (order > MAX_BUDDY_ORDER)
 		return PHYMM_INVALID;
 	if (limit > phymm_end)
@@ -403,11 +396,8 @@ void phymm_cache_budget(unsigned total, unsigned free, unsigned cached,
 	policy->block_pages = budget / 4;
 	if (!policy->block_pages)
 		policy->block_pages = 1;
-#if !MOS_HAS_NATIVE_USER
-	/* i386 block lines retain aliases in the limited kmap window. */
-	if (policy->block_pages > HDD_CACHE_MAX_PAGES)
-		policy->block_pages = HDD_CACHE_MAX_PAGES;
-#endif
+	if (policy->block_pages > MOS_BLOCK_CACHE_MAX_PAGES)
+		policy->block_pages = MOS_BLOCK_CACHE_MAX_PAGES;
 	policy->file_pages = budget - policy->block_pages;
 	policy->reserve_pages = reserve;
 }

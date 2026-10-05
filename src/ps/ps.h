@@ -12,7 +12,6 @@
 #include <arch/types.h>
 #include <int/interrupt.h>
 #include <ps/task.h>
-#include <ps/abi.h>
 
 #define FORK_FLAG_VFORK 1
 #define FORK_FLAG_SHARE_VM 2
@@ -58,7 +57,6 @@ typedef struct {
 } rlimit_t;
 
 typedef struct _user_enviroment {
-	enum mos_user_abi abi;
 	unsigned char fpu_storage[512 + 15];
 	unsigned char *fpu;
 	vm_struct_t vm;
@@ -188,7 +186,11 @@ struct _task_struct {
 		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
 	unsigned char *io_bitmap; /* per-task I/O-permission bitmap */
 	int *clear_child_tid; /* Linux set_tid_address / CLONE_CHILD_CLEARTID */
-	void *robust_list_head; /* Per-thread robust futex list. */
+	/* The registering syscall supplies the robust-list wire reader. */
+	void *robust_list_head;
+	size_t robust_list_size;
+	int (*robust_list_reader)(struct _task_struct *, uintptr_t, uintptr_t *,
+				  intptr_t *, uintptr_t *);
 	unsigned stop_signal; /* last job-control/ptrace stop signal */
 	unsigned stop_report_pending; /* waitpid() has not consumed this stop yet */
 	unsigned int magic; // to avoid stack overflow
@@ -338,10 +340,9 @@ int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);
 int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage);
-int sys_ptrace(int request, int pid, void *addr, void *data);
 void ps_stop_current(intr_frame *frame, int sig);
 int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
-void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp);
+void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp, unsigned syscall_number);
 void ps_ptrace_stop_exit(unsigned status);
 void qemu_exit(unsigned char code);
 char *sys_getcwd(char *buf, unsigned size);

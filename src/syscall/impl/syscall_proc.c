@@ -593,9 +593,7 @@ intptr_t sys_brk(vaddr_t _top)
 	top = _top;
 	if (top == 0) {
 		ret = mm->brk;
-	} else if (top >= (task->user->abi == MOS_ABI_I386 ?
-				   USER_HEAP_END :
-				   MOS_COMPAT_TASK_SIZE)) {
+	} else if (top >= mm->brk_limit) {
 		ret = mm->brk;
 	} else {
 		if (top < mm->start_brk)
@@ -985,35 +983,6 @@ int sys_set_tid_address(int *tidptr)
 
 	cur->clear_child_tid = tidptr;
 	return cur->psid;
-}
-
-int sys_set_robust_list(void *head, unsigned len)
-{
-	if (len != (current->user->abi == MOS_ABI_AMD64 ? 24 : 12))
-		return -EINVAL;
-	if (!head)
-		return -EFAULT;
-	current->robust_list_head = head;
-	return 0;
-}
-
-int sys_get_robust_list(int pid, void **head, unsigned *len)
-{
-	task_struct *task;
-
-	if (!head || !len)
-		return -EFAULT;
-	task = pid ? ps_find_process(pid) : CURRENT_TASK();
-	if (!task)
-		return -ESRCH;
-	if (current->user->abi == MOS_ABI_I386) {
-		*(uint32_t *)head = (uintptr_t)task->robust_list_head;
-		*len = task->user->abi == MOS_ABI_AMD64 ? 24 : 12;
-	} else {
-		*head = task->robust_list_head;
-		*(uint64_t *)len = task->user->abi == MOS_ABI_AMD64 ? 24 : 12;
-	}
-	return 0;
 }
 
 int sys_rseq(void *rseq, unsigned len, int flags, unsigned signature)

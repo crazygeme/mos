@@ -18,6 +18,7 @@ typedef struct {
 #define TSS_SEG_LIMIT (sizeof(tss_io_struct) - 1)
 _Static_assert(sizeof(tss_struct) == 104, "IA-32e TSS size");
 typedef volatile struct {
+	/* cs stores the executable user code selector after exec. */
 	uint16_t ds, ss, es, gs, fs, cs;
 	uintptr_t edi, esi, edx, ecx, ebx, eax, ebp;
 	uintptr_t eip, esp0, esp;
@@ -43,6 +44,8 @@ typedef struct _ptrace_saved_frame {
 
 void arch_task_init_switch_frame(struct _task_struct *task);
 void arch_task_init(struct _task_struct *task);
+void arch_task_copy_user_context(struct _task_struct *child,
+				 const struct _task_struct *parent);
 void arch_task_activate(struct _task_struct *task);
 void arch_task_reset_tls(struct _task_struct *task,
 			 struct _arch_intr_frame *frame);

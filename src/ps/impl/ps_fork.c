@@ -347,6 +347,8 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->cancel_io_wait = NULL;
 	task->io_wait = NULL;
 	task->robust_list_head = NULL;
+	task->robust_list_size = cur->robust_list_size;
+	task->robust_list_reader = NULL;
 	*task_intr_frame = *cur_intr_frame;
 
 	if (cur->remain_ticks > DEFAULT_TASK_TIME_SLICE / 2)
@@ -358,6 +360,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	ps_attach_files(task, NULL);
 
 	task_init_selectors(task);
+	arch_task_copy_user_context(task, cur);
 	task->tss.eax = 0;
 	task->tss.ebp = (char *)task_intr_frame;
 	task->tss.esp = (char *)task_intr_frame;
@@ -388,9 +391,9 @@ task_struct *fork_alloc_child(task_struct *cur)
 void fork_dup_user_env(task_struct *cur, task_struct *task)
 {
 	smp_fpu_copy(cur, task);
-	task->user->abi = cur->user->abi;
 	task->user->vm->task_size = cur->user->vm->task_size;
 	task->user->vm->mmap_base = cur->user->vm->mmap_base;
+	task->user->vm->brk_limit = cur->user->vm->brk_limit;
 	task->user->vm->start_brk = cur->user->vm->start_brk;
 	task->user->vm->brk = cur->user->vm->brk;
 	task->user->vm->start_stack = cur->user->vm->start_stack;

@@ -208,3 +208,12 @@ bad:
 	do_exit(SIGSEGV);
 	return -EFAULT;
 }
+
+void arch_signal_deliver(task_struct *task, intr_frame *frame,
+			 struct sigaction *action, int signal)
+{
+	if (frame->cs == USER64_CODE_SELECTOR)
+		arch_signal_deliver_native(task, frame, action, signal);
+	else
+		i386_signal_deliver(task, frame, action, signal);
+}

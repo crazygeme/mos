@@ -26,6 +26,7 @@
 #include <macro.h>
 #include <arch/abi/i386/compat.h>
 #include <syscall/syscall.h>
+#include "services.h"
 
 /* handlers defined in other subsystems */
 int sys_getrusage(int who, rusage *usage);

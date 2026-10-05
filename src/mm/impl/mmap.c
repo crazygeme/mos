@@ -237,6 +237,7 @@ vm_struct_t vm_create()
 	mm->start_stack = 0;
 	mm->mmap_base = TASK_UNMAPPED_BASE;
 	mm->task_size = MOS_COMPAT_TASK_SIZE;
+	mm->brk_limit = USER_HEAP_END;
 	mm->users = 1;
 	mm->count = 1;
 	mm->vma_generation = 1;
@@ -814,10 +815,10 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 			continue;
 		}
 
-		if (cur->user->abi == MOS_ABI_AMD64)
-			mmflag = prot & PROT_EXEC ?
-					 mmflag & ~PAGE_ENTRY_NO_EXEC :
-					 mmflag | PAGE_ENTRY_NO_EXEC;
+#if MOS_PAGE_NO_EXEC
+		mmflag = prot & PROT_EXEC ? mmflag & ~PAGE_ENTRY_NO_EXEC :
+					    mmflag | PAGE_ENTRY_NO_EXEC;
+#endif
 		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
@@ -851,15 +852,13 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	if (fd != -1 && (offset > 0x7fffffffffffffffULL ||
 			 _len > 0x7fffffffffffffffULL - offset))
 		return -EINVAL;
-#if MOS_HAS_NATIVE_USER
-	/* The legacy driver API uses a shared supervisor device window. */
-	if (_addr < 0x100000000ULL && _addr + _len > MOS_COMPAT_TASK_SIZE) {
+	/* A fixed mapping must avoid the architecture's reserved ranges. */
+	if (!arch_mm_user_range_valid(_addr, _len)) {
 		if (flags & MAP_FIXED)
 			return -EINVAL;
 		/* A hint, including zero, does not fix the resulting range. */
 		_addr = 0;
 	}
-#endif
 	/*
 	 * This kernel historically treats fd == -1 as an anonymous mapping
 	 * even when callers omit MAP_ANONYMOUS (e.g. exec stack setup).
@@ -1059,10 +1058,8 @@ int do_munmap(void *addr, size_t length)
 
 	if (begin >= mm->task_size || length > mm->task_size - begin)
 		return -EINVAL;
-#if MOS_HAS_NATIVE_USER
-	if (begin < 0x100000000ULL && begin + length > MOS_COMPAT_TASK_SIZE)
+	if (!arch_mm_user_range_valid(begin, length))
 		return -EINVAL;
-#endif
 	if (length == 0)
 		return 0;
 

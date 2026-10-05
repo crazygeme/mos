@@ -191,14 +191,16 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 }
 
 int ps_set_clone_tls_for(task_struct *task, void *info,
-			 unsigned short parent_gs)
+			 const intr_frame *parent_frame)
+
 {
-	if (task && task->user && task->user->abi == MOS_ABI_AMD64) {
+	if (task && task->user && parent_frame->cs == USER64_CODE_SELECTOR) {
 		if ((uintptr_t)info >= MOS_NATIVE_TASK_SIZE)
 			return -EINVAL;
 		task->tss.fs_base = (uintptr_t)info;
 		return 0;
 	}
+	unsigned short parent_gs = parent_frame->gs;
 	struct user_desc *u_info = (struct user_desc *)info;
 	unsigned int entry;
 

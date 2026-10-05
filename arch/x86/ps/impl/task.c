@@ -6,6 +6,11 @@
 #include <ps/ps.h>
 #include <ps/smp.h>
 
+void arch_task_copy_user_context(task_struct *child, const task_struct *parent)
+{
+	child->tss.cs = parent->tss.cs;
+}
+
 void arch_task_init(task_struct *task)
 {
 	task->tss.fs = CPU_LOCAL_SELECTOR;

@@ -201,8 +201,10 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 }
 
 int ps_set_clone_tls_for(task_struct *task, void *info,
-			 unsigned short parent_gs)
+			 const intr_frame *parent_frame)
+
 {
+	unsigned short parent_gs = parent_frame->gs;
 	struct user_desc *u_info = (struct user_desc *)info;
 	unsigned int entry;
 

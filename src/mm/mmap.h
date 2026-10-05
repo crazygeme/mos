@@ -33,6 +33,7 @@ struct _mm_struct {
 	vaddr_t page_dir;
 	vaddr_t start_brk;
 	vaddr_t brk;
+	vaddr_t brk_limit;
 	vaddr_t start_stack;
 	vaddr_t mmap_base;
 	vaddr_t task_size;

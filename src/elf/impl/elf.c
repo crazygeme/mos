@@ -1,5 +1,6 @@
 #include <device/time.h>
 #include <elf/elf.h>
+#include <elf/format.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <ps/ps.h>
@@ -16,7 +17,7 @@
 #define PAGE_ALIGN_UP(x) (((x) + PAGE_SIZE - 1) & PAGE_SIZE_MASK)
 
 /* Read file bytes without changing the shared file position. */
-static int elf_read(file *fp, unsigned off, void *buf, int len)
+int elf_read(file *fp, unsigned off, void *buf, int len)
 {
 	loff_t pos = off;
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
@@ -231,10 +232,10 @@ static void elf_load_segment(file *fp, Elf64_Phdr *phdr, vaddr_t bias)
 /* Metadata and file references are private to one exec operation. */
 struct elf_image {
 	file *fp;
+	const struct elf_format *format;
 	Elf64_Ehdr header;
 	Elf64_Phdr *phdrs;
 	vaddr_t span;
-	int abi;
 	struct elf_image *interpreter;
 };
 
@@ -256,31 +257,8 @@ static int elf_validate(elf_image *image, char *interp)
 	    h32.e_ident[EI_DATA] != ELFDATA2LSB ||
 	    h32.e_ident[EI_VERSION] != EV_CURRENT)
 		return -ENOEXEC;
-	if (h32.e_ident[EI_CLASS] == ELFCLASS32 && h32.e_machine == EM_386) {
-		image->abi = MOS_ABI_I386;
-		memset(elf, 0, sizeof(*elf));
-		memcpy(elf->e_ident, h32.e_ident, EI_NIDENT);
-#define COPY_HEADER(field) elf->field = h32.field
-		COPY_HEADER(e_type);
-		COPY_HEADER(e_machine);
-		COPY_HEADER(e_version);
-		COPY_HEADER(e_entry);
-		COPY_HEADER(e_phoff);
-		COPY_HEADER(e_ehsize);
-		COPY_HEADER(e_phentsize);
-		COPY_HEADER(e_phnum);
-#undef COPY_HEADER
-		if (elf->e_ehsize != sizeof(h32) ||
-		    elf->e_phentsize != sizeof(Elf32_Phdr))
-			return -ENOEXEC;
-	} else if (MOS_HAS_NATIVE_USER && h32.e_ident[EI_CLASS] == ELFCLASS64) {
-		image->abi = MOS_ABI_AMD64;
-		if (elf_read(fp, 0, elf, sizeof(*elf)) != sizeof(*elf) ||
-		    elf->e_machine != EM_X86_64 ||
-		    elf->e_ehsize != sizeof(*elf) ||
-		    elf->e_phentsize != sizeof(Elf64_Phdr))
-			return -ENOEXEC;
-	} else
+	image->format = arch_elf_format(h32.e_ident[EI_CLASS]);
+	if (!image->format || image->format->read_header(fp, elf))
 		return -ENOEXEC;
 	if (elf->e_version != EV_CURRENT || !elf->e_phnum ||
 	    (elf->e_type != ET_EXEC && elf->e_type != ET_DYN) ||
@@ -296,25 +274,10 @@ static int elf_validate(elf_image *image, char *interp)
 	for (i = 0; i < elf->e_phnum; i++) {
 		Elf64_Phdr *ph = &image->phdrs[i];
 		unsigned off = elf->e_phoff + i * elf->e_phentsize;
-		if (image->abi == MOS_ABI_I386) {
-			Elf32_Phdr p32;
-			if (elf_read(fp, off, &p32, sizeof(p32)) != sizeof(p32))
-				return -ENOEXEC;
-#define COPY_PH(field) ph->field = p32.field
-			COPY_PH(p_type);
-			COPY_PH(p_flags);
-			COPY_PH(p_offset);
-			COPY_PH(p_vaddr);
-			COPY_PH(p_paddr);
-			COPY_PH(p_filesz);
-			COPY_PH(p_memsz);
-			COPY_PH(p_align);
-#undef COPY_PH
-		} else if (elf_read(fp, off, ph, sizeof(*ph)) != sizeof(*ph))
+		if (image->format->read_phdr(fp, off, ph))
 			return -ENOEXEC;
 	}
-	vaddr_t limit = image->abi == MOS_ABI_I386 ? MOS_COMPAT_TASK_SIZE :
-						     MOS_NATIVE_TASK_SIZE;
+	vaddr_t limit = image->format->task_size;
 	limit -= USER_STACK_PAGES * PAGE_SIZE;
 	interp[0] = 0;
 	for (i = 0; i < elf->e_phnum; i++) {
@@ -333,8 +296,7 @@ static int elf_validate(elf_image *image, char *interp)
 				return -ENOEXEC;
 			continue;
 		}
-		if (MOS_HAS_NATIVE_USER && ph.p_vaddr < 0x100000000ULL &&
-		    ph.p_vaddr + ph.p_memsz > MOS_COMPAT_TASK_SIZE)
+		if (!arch_mm_user_range_valid(ph.p_vaddr, ph.p_memsz))
 			return -ENOEXEC;
 		if (ph.p_filesz > ph.p_memsz || ph.p_vaddr >= limit ||
 		    ph.p_memsz > limit - ph.p_vaddr ||
@@ -414,7 +376,7 @@ int elf_prepare(file *fp, elf_image **result)
 		ld->fp = fs_open_file(interp, 0, 0);
 		ret = elf_validate(ld, interp);
 		if (!ret && (ld->header.e_type != ET_DYN ||
-			     ld->abi != image->abi || interp[0]))
+			     ld->format != image->format || interp[0]))
 			ret = -ENOEXEC;
 	}
 done:
@@ -500,7 +462,7 @@ vaddr_t elf_map(char *path, mos_binfmt *fmt)
 	return elf_map_file(path, fmt, NULL);
 }
 
-int elf_image_abi(elf_image *image)
+const struct elf_format *elf_image_format(const elf_image *image)
 {
-	return image->abi;
+	return image->format;
 }

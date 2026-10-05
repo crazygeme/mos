@@ -4,6 +4,34 @@ Implementation records are ordered by date, with the newest entries first.
 
 ---
 
+## 2026-10-05 - i386 address space TLB shootdowns
+
+The i386 user TLB flush previously ignored its page-directory argument and
+invalidated all translations on every online CPU. Ordinary fork therefore
+sent remote interrupts and waited for acknowledgments even when the other
+CPUs were running unrelated address spaces. The reported 1,000-launch
+benchmark measured approximately 0.15 s with two CPUs and 0.12 s with one CPU;
+the corresponding Linux result was approximately 0.10 s. These measurements
+identify aggregate SMP overhead, not the isolated cost of TLB invalidation.
+
+User shootdowns now follow the AMD64 backend: the request carries the physical
+page-directory address, and only remote CPUs currently using that address
+space receive an interrupt. Local user flushes reload CR3 without discarding
+global kernel translations. Kernel flushes retain the full broadcast and
+global-entry invalidation. Requests with no remote targets do not publish a
+new generation or wait for acknowledgments.
+
+The big kernel lock serializes request publication and task/address-space
+changes while the target set is selected and acknowledged. Waiting CPUs poll
+requests with interrupts disabled. CPUs that later enter the affected address
+space reload CR3, discarding previous non-global user translations. Threads
+sharing the affected address space remain shootdown targets.
+
+Source review and patch whitespace checks are complete. Build, guest
+correctness tests, and post-change timings remain pending. Validation must
+cover ordinary fork isolation, fork while another thread shares the parent
+address space, and the existing benchmark with one and two CPUs.
+
 ## 2026-10-05 - Ext4 open-inode lifetime
 
 Ext4 open file objects are registered by filesystem and inode number under the

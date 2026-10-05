@@ -157,9 +157,9 @@ static int mem_getattr(file *fp, struct stat *s)
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = (loff_t)((mem_dev_limit() + 511) / 512);
 	s->st_nlink = 1;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	return 0;
 }
 

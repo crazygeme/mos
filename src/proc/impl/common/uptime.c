@@ -4,9 +4,7 @@
  * Format (Linux-compatible):
  *   <uptime_secs>.<centisecs> <idle_secs>.<centisecs>
  *
- * time_now_ms() goes through time_wall_us() which adds g_wall_offset_us,
- * returning calendar time rather than uptime.  time_now_tickets() is the
- * raw boot-relative jiffy counter (HZ=100, so 1 tick == 10 ms == 1 cs).
+ * Uptime follows the monotonic clock, including delayed timer interrupts.
  */
 #include "common.h"
 #include <device/time.h>
@@ -26,9 +24,9 @@ static void sum_idle(task_struct *task, void *ctx)
 
 static void fill(proc_buf_t *pb)
 {
-	unsigned long long ticks = time_now_tickets();
-	unsigned up_sec = (unsigned)(ticks / HZ);
-	unsigned up_cs = (unsigned)(ticks % HZ);
+	unsigned long long ms = time_now_ms();
+	unsigned up_sec = (unsigned)(ms / 1000);
+	unsigned up_cs = (unsigned)((ms % 1000) / 10);
 
 	idle_ctx_t ic = { 0 };
 	ps_enum_all(sum_idle, &ic);

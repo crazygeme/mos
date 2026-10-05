@@ -42,7 +42,7 @@ void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	now = time_now_us() / 1000;
+	now = time_now_ms();
 	remaining = task->alarm_expire_ms > now ? task->alarm_expire_ms - now :
 						  0;
 	old_interval = task->alarm_interval_ms;
@@ -50,7 +50,7 @@ void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 		ps_alarm_disarm_unsafe(task);
 		task->alarm_interval_ms = *interval;
 		if (*value) {
-			task->alarm_expire_ms = now + *value;
+			task->alarm_expire_ms = time_deadline_ms(*value);
 			alarm_arm_unsafe(task);
 		}
 	}
@@ -59,9 +59,9 @@ void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 	spinlock_unlock(&ps_lock, irq);
 }
 
-/* IRQ0 has advanced the tick counter. Never sample
- * PIT ports here: an interrupted clock read may be between its low/high reads.
- * Expiration is tick-granular, independent of service-task scheduling.
+/* IRQ0 has published a monotonic clock sample.
+ * Expiration uses that sample without accessing clock hardware again and is
+ * independent of service-task scheduling.
  */
 void ps_alarm_tick(void)
 {
@@ -72,7 +72,7 @@ void ps_alarm_tick(void)
 	if (RB_EMPTY_ROOT(&alarms))
 		return;
 	spinlock_lock(&ps_lock, &irq);
-	now = time_now_tickets() * TICK_MS;
+	now = time_coarse_ms();
 	while ((node = rb_first(&alarms))) {
 		task_struct *task = rb_entry(node, task_struct, alarm_rb);
 		unsigned long long due = task->alarm_expire_ms;

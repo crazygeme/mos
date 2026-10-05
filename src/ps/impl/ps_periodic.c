@@ -32,16 +32,15 @@ static void ps_system_service_task(void *param)
 		if (now >= next_timer_ms) {
 			ps_timer_poll();
 
-			do {
-				next_timer_ms += TICK_MS;
-			} while (next_timer_ms <= now);
+			next_timer_ms +=
+				((now - next_timer_ms) / TICK_MS + 1) * TICK_MS;
 		}
 
 		if (fb_requires_flush() && now >= next_graphics_ms) {
 			tty_refresh_graphics();
-			do {
-				next_graphics_ms += GRAPHICS_REFRESH_MS;
-			} while (next_graphics_ms <= now);
+			next_graphics_ms +=
+				((now - next_graphics_ms) / GRAPHICS_REFRESH_MS + 1) *
+				GRAPHICS_REFRESH_MS;
 		}
 
 		next_due = next_timer_ms;

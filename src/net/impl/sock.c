@@ -36,12 +36,12 @@ unsigned sock_default_rxbuf_size(int domain, int type)
  * deadline sentinel rather than adding it to the current clock. */
 unsigned long long sock_recv_deadline(const mos_sock *sk)
 {
-	return sk->recv_timeout_ms ? time_now_ms() + sk->recv_timeout_ms : 0;
+	return sk->recv_timeout_ms ? time_deadline_ms(sk->recv_timeout_ms) : 0;
 }
 
 unsigned long long sock_send_deadline(const mos_sock *sk)
 {
-	return sk->send_timeout_ms ? time_now_ms() + sk->send_timeout_ms : 0;
+	return sk->send_timeout_ms ? time_deadline_ms(sk->send_timeout_ms) : 0;
 }
 
 int sock_deadline_expired(unsigned long long deadline)
@@ -968,9 +968,9 @@ static int sock_getattr(file *fp, struct stat *s)
 	s->st_mode = S_IFSOCK | 0600;
 	s->st_nlink = 1;
 	s->st_blksize = PAGE_SIZE;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	return 0;
 }
 

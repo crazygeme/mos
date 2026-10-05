@@ -198,6 +198,8 @@ int sys_getrandom(void *buf, unsigned len, unsigned flags)
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 {
 	if (tv) {
+		if (tv->tv_usec < 0 || tv->tv_usec >= 1000000)
+			return -EINVAL;
 		long long wall_us = (long long)tv->tv_sec * 1000000LL +
 				    (long long)tv->tv_usec;
 		time_set_wall_offset(wall_us);
@@ -208,67 +210,36 @@ int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
 int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned int total_millisecond;
-	unsigned long long start_ms, end_ms, slept_ms;
+	unsigned long long duration_us, start_us, end_us;
 
 	if (!req)
 		return -EFAULT;
 	if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec > 999999999)
 		return -EINVAL;
-
-	total_millisecond = req->tv_sec * 1000 + req->tv_nsec / 1000000;
-
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("nanosleep(%d.%09d) = %ums\n", req->tv_sec, req->tv_nsec,
-		     total_millisecond);
-
-	if (total_millisecond == 0) {
-		if (rem) {
-			rem->tv_sec = 0;
-			rem->tv_nsec = 0;
-		}
-		return 0;
-	}
-
-	start_ms = time_now_ms();
+	duration_us = (unsigned long long)req->tv_sec * 1000000ULL +
+		      (req->tv_nsec + 999ULL) / 1000;
+	start_us = time_now_us();
 	for (;;) {
-		unsigned long long now = time_now_ms();
-		unsigned long long elapsed = now > start_ms ? now - start_ms :
-							      0;
-		if (elapsed >= total_millisecond ||
-		    ps_interrupting_signals(cur))
+		unsigned long long elapsed = time_now_us() - start_us;
+		if (elapsed >= duration_us || ps_interrupting_signals(cur))
 			break;
-		if (!ps_prepare_interruptible_wait(
-			    cur, NULL, total_millisecond - (unsigned)elapsed,
-			    __func__)) {
+		unsigned long long left_ms = (duration_us - elapsed + 999) / 1000;
+		unsigned wait_ms = left_ms > 0xffffffffULL ? 0xffffffffU :
+							   (unsigned)left_ms;
+		if (!ps_prepare_interruptible_wait(cur, NULL, wait_ms, __func__)) {
 			task_sched();
 			ps_finish_timed_wait(cur);
 		}
 	}
-	end_ms = time_now_ms();
-
-	if (ps_interrupting_signals(cur)) {
-		if (rem) {
-			slept_ms = end_ms > start_ms ? end_ms - start_ms : 0;
-			if (slept_ms >= total_millisecond) {
-				rem->tv_sec = 0;
-				rem->tv_nsec = 0;
-			} else {
-				unsigned long long left_ms =
-					total_millisecond - slept_ms;
-				rem->tv_sec = (int)(left_ms / 1000);
-				rem->tv_nsec =
-					(int)((left_ms % 1000) * 1000000);
-			}
-		}
-		return -EINTR;
-	}
-
+	end_us = time_now_us();
 	if (rem) {
-		rem->tv_sec = 0;
-		rem->tv_nsec = 0;
+		unsigned long long elapsed = end_us - start_us;
+		unsigned long long left = duration_us > elapsed ?
+					  duration_us - elapsed : 0;
+		rem->tv_sec = left / 1000000ULL;
+		rem->tv_nsec = (left % 1000000ULL) * 1000;
 	}
-	return 0;
+	return duration_us && ps_interrupting_signals(cur) ? -EINTR : 0;
 }
 
 int sys_clock_nanosleep(int clockid, int flags, const struct timespec *req,
@@ -575,7 +546,7 @@ long sys_times(struct tms *buf)
 		buf->tms_cstime = 0;
 	}
 	/* Return clock ticks since boot; HZ=100 → divide µs by 10000. */
-	return (long)(time_wall_us() / (1000000ULL / HZ));
+	return (long)(time_now_us() / (1000000ULL / HZ));
 }
 
 int sys_setpriority(int which, int who, int prio)
@@ -609,7 +580,7 @@ int sys_sysinfo(void *buf)
 	free_pages = usage.low_free_pages + usage.high_free_pages;
 
 	memset(info, 0, sizeof(*info));
-	info->uptime = (long)(time_wall_us() / 1000000ULL);
+	info->uptime = (long)(time_now_us() / 1000000ULL);
 	/* i386 counts remain representable above 4 GiB by using page units. */
 	info->totalram = total_pages;
 	info->freeram = free_pages;

@@ -85,9 +85,9 @@ static int pts_master_getattr(file *fp, struct stat *s)
 	s->st_rdev = MKDEV(BSD_PTM_MAJOR, BSD_PTM_MINOR + p->idx);
 	s->st_ino = PTS_INO_MASK | MAX_PTS;
 	s->st_nlink = 1;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_blksize = PAGE_SIZE;
 	s->st_size = PAGE_SIZE;
 	s->st_blocks = 1;
@@ -104,9 +104,9 @@ static int pts_slave_getattr(file *fp, struct stat *s)
 	s->st_rdev = MKDEV(BSD_PTS_MAJOR, p->idx + 2);
 	s->st_ino = (uint64_t)p->idx + 2;
 	s->st_nlink = 1;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_uid = p->slave_uid;
 	s->st_gid = p->slave_gid;
 	s->st_blksize = PAGE_SIZE;

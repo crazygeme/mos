@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <lib/klib.h>
 #include <lib/rbtree.h>
+#include <lib/lock.h>
 #include <macro.h>
 #include <syscall/syscall.h>
 
@@ -17,6 +18,7 @@ struct mos_timer {
 	unsigned target;
 	int id;
 	int clockid;
+	int wall_deadline;
 	int notify;
 	int signo;
 	uintptr_t value;
@@ -31,9 +33,24 @@ static struct mos_timer timers[MOS_TIMER_COUNT];
 static int next_timer_id = 1;
 static struct rb_root timer_ids = _RBTREE_ROOT_INIT;
 static struct mos_timer *free_timers;
+static mutex_t timer_lock;
+
+/* Timer syscalls, process exit and the service task may run on different CPUs.
+ * A task-owned mutex also permits demand faults on syscall argument buffers. */
+static void timer_scope_unlock(mutex_t **lock)
+{
+	mutex_unlock(*lock);
+}
+
+#define TIMER_GUARD                                                    \
+	mutex_t *timer_guard                                           \
+		__attribute__((cleanup(timer_scope_unlock), unused)) = \
+			&timer_lock;                                   \
+	mutex_lock(timer_guard)
 
 static void timers_init(void)
 {
+	mutex_init(&timer_lock);
 	for (unsigned i = MOS_TIMER_COUNT; i; i--) {
 		timers[i - 1].free_next = free_timers;
 		free_timers = &timers[i - 1];
@@ -41,9 +58,12 @@ static void timers_init(void)
 }
 KERNEL_INIT(7, timers_init);
 
-static unsigned long long timer_now_ns(int clockid)
+static unsigned long long timer_now_ns(const struct mos_timer *timer)
 {
-	return (clockid == 0 ? time_wall_us() : time_now_us()) * 1000ULL;
+	/* Relative timers measure elapsed time even when created on REALTIME.
+	 * Only absolute REALTIME deadlines follow wall-clock adjustments. */
+	return (timer->wall_deadline ? time_wall_us() : time_now_us()) *
+	       1000ULL;
 }
 
 static int timer_timespec_ns(const struct timespec *value,
@@ -102,6 +122,7 @@ static void timer_release(struct mos_timer *timer)
 int do_timer_create(int clockid, const struct mos_sigevent *event, int *timerid,
 		    uintptr_t value)
 {
+	TIMER_GUARD;
 	struct mos_timer *timer;
 	task_struct *target;
 	int notify = event ? event->notify : MOS_SIGEV_SIGNAL;
@@ -153,6 +174,7 @@ int sys_timer_settime(int timerid, int flags,
 		      const struct mos_itimerspec *value,
 		      struct mos_itimerspec *old_value)
 {
+	TIMER_GUARD;
 	struct mos_timer *timer = timer_lookup(timerid);
 	unsigned long long due, interval, now;
 	int ret;
@@ -169,12 +191,15 @@ int sys_timer_settime(int timerid, int flags,
 	ret = timer_timespec_ns(&value->it_interval, &interval);
 	if (ret)
 		return ret;
-	now = timer_now_ns(timer->clockid);
+	now = timer_now_ns(timer);
 	if (old_value) {
 		timer_ns_timespec(timer->interval_ns, &old_value->it_interval);
 		timer_ns_timespec(timer->due_ns > now ? timer->due_ns - now : 0,
 				  &old_value->it_value);
 	}
+	timer->wall_deadline = timer->clockid == 0 &&
+			       (flags & MOS_TIMER_ABSTIME);
+	now = timer_now_ns(timer);
 	timer->interval_ns = interval;
 	timer->due_ns = due ? ((flags & MOS_TIMER_ABSTIME) ? due : now + due) :
 			      0;
@@ -184,13 +209,14 @@ int sys_timer_settime(int timerid, int flags,
 
 int sys_timer_gettime(int timerid, struct mos_itimerspec *value)
 {
+	TIMER_GUARD;
 	struct mos_timer *timer = timer_lookup(timerid);
 	unsigned long long now;
 	if (!timer)
 		return -EINVAL;
 	if (!value)
 		return -EFAULT;
-	now = timer_now_ns(timer->clockid);
+	now = timer_now_ns(timer);
 	timer_ns_timespec(timer->interval_ns, &value->it_interval);
 	timer_ns_timespec(timer->due_ns > now ? timer->due_ns - now : 0,
 			  &value->it_value);
@@ -199,12 +225,14 @@ int sys_timer_gettime(int timerid, struct mos_itimerspec *value)
 
 int sys_timer_getoverrun(int timerid)
 {
+	TIMER_GUARD;
 	struct mos_timer *timer = timer_lookup(timerid);
 	return timer ? timer->overrun : -EINVAL;
 }
 
 int sys_timer_delete(int timerid)
 {
+	TIMER_GUARD;
 	struct mos_timer *timer = timer_lookup(timerid);
 	if (!timer)
 		return -EINVAL;
@@ -214,6 +242,7 @@ int sys_timer_delete(int timerid)
 
 void ps_timer_discard_group(unsigned tgid)
 {
+	TIMER_GUARD;
 	struct rb_node *node, *next;
 	for (node = rb_first(&timer_ids); node; node = next) {
 		struct mos_timer *timer =
@@ -226,6 +255,7 @@ void ps_timer_discard_group(unsigned tgid)
 
 void ps_timer_poll(void)
 {
+	TIMER_GUARD;
 	struct rb_node *node;
 	for (node = rb_first(&timer_ids); node; node = rb_next(node)) {
 		struct mos_timer *timer =
@@ -233,7 +263,7 @@ void ps_timer_poll(void)
 		unsigned long long now;
 		if (!timer->id || !timer->due_ns)
 			continue;
-		now = timer_now_ns(timer->clockid);
+		now = timer_now_ns(timer);
 		if (now < timer->due_ns)
 			continue;
 		if (timer->interval_ns) {

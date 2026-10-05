@@ -58,7 +58,7 @@ static void ext4_touch_file(file *fp, int write)
 {
 	ext4_open_file *open = fp->f_inode->i_private;
 	struct ext4_inode_ref ref;
-	unsigned now = time_now_sec();
+	unsigned now = time_wall_sec();
 
 	root_lock_lock();
 	if (open->fs && !open->fs->read_only &&
@@ -111,7 +111,7 @@ static int ext4_file_release(file *fp)
 					if (ret == EOK) {
 						ext4_inode_set_del_time(
 							ref.inode,
-							time_now_sec());
+							time_wall_sec());
 						ref.dirty = true;
 						ret = ext4_fs_free_inode(&ref);
 					}
@@ -707,7 +707,7 @@ retry_open:
 	ret = ext4_fopen2(f, cur_path, flag);
 	if (check != EOK && ret == EOK) {
 		ext4_fchown(f, uid, gid);
-		ext4_file_set_ctime(cur_path, time_now_sec());
+		ext4_file_set_ctime(cur_path, time_wall_sec());
 	}
 
 	if (ret != EOK)
@@ -1069,7 +1069,7 @@ static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 	if (ret == EOK)
 		ret = ext4_dir_mk(full);
 	if (ret == EOK) {
-		uint32_t t = (uint32_t)time_now_sec();
+		uint32_t t = (uint32_t)time_wall_sec();
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
 		ext4_chown(full, uid, gid);
@@ -1159,7 +1159,7 @@ static int ext4_unlink(super_block *sb, const char *path)
 	slash = strrchr(full, '/');
 	ret = ext4_dir_remove_entry(&parent, slash + 1, strlen(slash + 1));
 	if (!ret) {
-		unsigned now = time_now_sec();
+		unsigned now = time_wall_sec();
 		ext4_fs_inode_links_count_dec(&child);
 		ext4_inode_set_change_inode_time(child.inode, now);
 		ext4_inode_set_change_inode_time(parent.inode, now);
@@ -1220,7 +1220,7 @@ static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
 	ext4_full_path(sb, newpath, full2);
 	ret = ext4_flink(full1, full2);
 	if (ret == EOK) {
-		ext4_file_set_ctime(full1, (uint32_t)time_now_sec());
+		ext4_file_set_ctime(full1, (uint32_t)time_wall_sec());
 		ext4_chown(full2, uid, gid);
 	}
 	name_put(full1);
@@ -1238,7 +1238,7 @@ static int ext4_symlink_op(super_block *sb, const char *target,
 	ext4_full_path(sb, linkpath, full);
 	ret = ext4_fsymlink(target, full);
 	if (ret == EOK) {
-		uint32_t t = (uint32_t)time_now_sec();
+		uint32_t t = (uint32_t)time_wall_sec();
 		ext4_file_set_mtime(full, t);
 		ext4_file_set_ctime(full, t);
 		ext4_chown(full, uid, gid);
@@ -1301,7 +1301,7 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 				fp->f_name = strdup(full2);
 			}
 		}
-		uint32_t t = (uint32_t)time_now_sec();
+		uint32_t t = (uint32_t)time_wall_sec();
 		ext4_file_set_mtime(full2, t);
 		ext4_file_set_ctime(full2, t);
 		ext4_chown(full2, uid, gid);

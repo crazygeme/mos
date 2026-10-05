@@ -590,7 +590,7 @@ int sys_epoll_pwait(int epfd, struct epoll_event *events, int maxevents,
 		    int timeout, const sigset_t *mask, unsigned masksize)
 {
 	unsigned long long deadline =
-		timeout > 0 ? time_now_ms() + (unsigned)timeout : 0;
+		timeout > 0 ? time_deadline_ms((unsigned)timeout) : 0;
 	return epoll_wait_common(epfd, events, maxevents, !timeout, timeout < 0,
 				 deadline, mask, masksize);
 }
@@ -619,9 +619,8 @@ int sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 		    (0x7fffffffffffffffULL - ms) / 1000)
 			deadline = 0x7fffffffffffffffULL;
 		else
-			deadline = time_now_ms() +
-				   (unsigned long long)timeout->tv_sec * 1000 +
-				   ms;
+			deadline = time_deadline_ms(
+				(unsigned long long)timeout->tv_sec * 1000 + ms);
 	}
 	return epoll_wait_common(epfd, events, maxevents, just_test, !timeout,
 				 deadline, mask, masksize);

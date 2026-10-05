@@ -71,7 +71,7 @@ static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 {
 	tmpfs_node *n = zalloc(sizeof(*n));
 	task_struct *cur = CURRENT_TASK();
-	unsigned now = time_now_sec();
+	unsigned now = time_wall_sec();
 	int irq;
 
 	spinlock_lock(&sbi->lock, &irq);
@@ -91,7 +91,7 @@ static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 
 static void tmpfs_touch_mctime(tmpfs_node *n)
 {
-	unsigned now = time_now_sec();
+	unsigned now = time_wall_sec();
 
 	n->mtime = now;
 	n->ctime = now;
@@ -99,7 +99,7 @@ static void tmpfs_touch_mctime(tmpfs_node *n)
 
 static void tmpfs_touch_ctime(tmpfs_node *n)
 {
-	n->ctime = time_now_sec();
+	n->ctime = time_wall_sec();
 }
 
 static void tmpfs_node_get(tmpfs_node *n)
@@ -473,7 +473,7 @@ static ssize_t tmpfs_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 		transferred += (ssize_t)copy;
 	}
 
-	tn->atime = time_now_sec();
+	tn->atime = time_wall_sec();
 	*pos += transferred;
 	return transferred;
 }
@@ -678,7 +678,7 @@ static ssize_t tmpfs_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 	}
 
 	*pos = idx;
-	dir->atime = time_now_sec();
+	dir->atime = time_wall_sec();
 	return (ssize_t)off;
 }
 

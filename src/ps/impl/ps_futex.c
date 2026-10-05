@@ -326,10 +326,7 @@ static int futex_execute(int *uaddr, int op, int val, const void *timeout,
 			else
 				ms = (uint64_t)ts.tv_sec * 1000 +
 				     (ts.tv_nsec + 999999) / 1000000;
-			deadline_ms = time_now_ms();
-			deadline_ms = ms > ~0ULL - deadline_ms ?
-					      ~0ULL :
-					      deadline_ms + ms;
+			deadline_ms = time_deadline_ms(ms);
 		}
 wait_again:
 		if (timeout) {

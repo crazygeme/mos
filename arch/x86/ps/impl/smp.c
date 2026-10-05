@@ -369,6 +369,7 @@ static void ap_main(void)
 	struct smp_cpu *cpu;
 	cpu_setup();
 	cpu = arch_cpu_local();
+	time_cpu_init();
 	cpu->tlb_ack = tlb_generation;
 	__atomic_store_n(&cpu->online, 1, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&smp_online_count, 1, __ATOMIC_RELEASE);
@@ -412,6 +413,7 @@ void smp_init(void)
 	}
 	cpu_setup();
 	smp_cpus[0].online = 1;
+	time_cpu_init();
 	smp_online_count = 1;
 	arch_cpu_fpu_save(clean_fpu);
 	boot_pd = arch_mm_current_address_space();

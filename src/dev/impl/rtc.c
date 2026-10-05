@@ -11,7 +11,7 @@
 #include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/port.h>
-#include <device/time.h>
+#include <device/time_internal.h>
 #include <dev/dev.h>
 #include <macro.h>
 #include <errno.h>
@@ -24,21 +24,6 @@
 #define RTC_RD_TIME 0x80247009 /* read time */
 #define RTC_UIE_ON 0x7003 /* update interrupt enable on  */
 #define RTC_UIE_OFF 0x7004 /* update interrupt enable off */
-
-/* ── CMOS / MC146818A register map ───────────────────────────────────────── */
-
-#define CMOS_REG_SET 0x70 /* index port */
-#define CMOS_REG_IO 0x71 /* data port  */
-
-#define RTC_REG_SEC 0x00
-#define RTC_REG_MIN 0x02
-#define RTC_REG_HOUR 0x04
-#define RTC_REG_MDAY 0x07
-#define RTC_REG_MON 0x08
-#define RTC_REG_YEAR 0x09
-#define RTC_REG_A 0x0a /* Register A */
-
-#define RTCSA_UIP 0x80 /* update-in-progress flag in Register A */
 
 /* ── struct rtc_time — matches Linux uapi ────────────────────────────────── */
 
@@ -54,53 +39,23 @@ struct rtc_time {
 	int tm_isdst;
 };
 
-/* ── CMOS helpers ────────────────────────────────────────────────────────── */
-
-static unsigned char cmos_read(unsigned char reg)
-{
-	port_write_byte(CMOS_REG_SET, reg);
-	return port_read_byte(CMOS_REG_IO);
-}
-
-static int bcd_to_bin(unsigned char x)
-{
-	return (x & 0x0f) + ((x >> 4) * 10);
-}
-
-/*
- * rtc_read_time — read wall-clock fields from CMOS into *t.
- *
- * Waits for the update-in-progress flag to clear, then re-reads until two
- * consecutive seconds values agree (same strategy as Linux and time.c).
- * CMOS delivers BCD values; we convert to binary.
- * Two-digit years < 70 are assumed to be 2000+.
- */
+/* Share the hardware snapshot and calendar conversion with boot timekeeping. */
 static void rtc_read_time(struct rtc_time *t)
 {
-	int sec, min, hour, mday, mon, year;
-
-	do {
-		while (cmos_read(RTC_REG_A) & RTCSA_UIP)
-			; /* wait for update to finish */
-		sec = bcd_to_bin(cmos_read(RTC_REG_SEC));
-		min = bcd_to_bin(cmos_read(RTC_REG_MIN));
-		hour = bcd_to_bin(cmos_read(RTC_REG_HOUR));
-		mday = bcd_to_bin(cmos_read(RTC_REG_MDAY));
-		mon = bcd_to_bin(cmos_read(RTC_REG_MON));
-		year = bcd_to_bin(cmos_read(RTC_REG_YEAR));
-	} while (sec != bcd_to_bin(cmos_read(RTC_REG_SEC)));
-
-	if (year < 70)
-		year += 100; /* 2000-2069: CMOS gives 0-69, map to 100-169 */
-
-	t->tm_sec = sec;
-	t->tm_min = min;
-	t->tm_hour = hour;
-	t->tm_mday = mday;
-	t->tm_mon = mon - 1; /* CMOS is 1-based; Linux wants 0-based */
-	t->tm_year = year; /* years since 1900 */
-	t->tm_wday = 0;
-	t->tm_yday = 0;
+	struct time_calendar calendar, jan1;
+	time_rtc_calendar(&calendar);
+	t->tm_sec = calendar.sec;
+	t->tm_min = calendar.min;
+	t->tm_hour = calendar.hour;
+	t->tm_mday = calendar.mday;
+	t->tm_mon = calendar.mon - 1;
+	t->tm_year = calendar.year - 1900;
+	unsigned long epoch = time_rtc_epoch(&calendar);
+	jan1 = calendar;
+	jan1.mon = jan1.mday = 1;
+	jan1.hour = jan1.min = jan1.sec = 0;
+	t->tm_wday = (epoch / 86400 + 4) % 7;
+	t->tm_yday = (epoch - time_rtc_epoch(&jan1)) / 86400;
 	t->tm_isdst = 0;
 }
 
@@ -177,7 +132,7 @@ static int rtc_getattr(file *fp, struct stat *s)
 	inode *node = fp->f_inode;
 
 	memset(s, 0, sizeof(*s));
-	s->st_atime = s->st_mtime = s->st_ctime = time_now_sec();
+	s->st_atime = s->st_mtime = s->st_ctime = time_wall_sec();
 	s->st_mode = node->i_mode;
 	s->st_dev = MKDEV(10, 0);
 	s->st_rdev = MKDEV(10, 135);

@@ -70,18 +70,26 @@ struct timespec {
 #define LATCH ((CLOCK_TICK_RATE + HZ / 2) / HZ)
 
 void time_init();
+void time_cpu_init(void);
+const char *time_clock_name(void);
 
 void time_calculate_cpu_cycle();
 
 unsigned time_get_cpu_mhz(void);
 
-unsigned long long time_now_us();
+/* Boot-relative monotonic time. Wall-clock changes never move deadlines. */
+unsigned long long time_now_us(void);
 
-unsigned long long time_now_ms();
+unsigned long long time_now_ms(void);
+/* Last IRQ0 sample; safe for timer expiration checks without device I/O. */
+unsigned long long time_coarse_ms(void);
+/* Round a relative deadline upward; saturate on overflow. */
+unsigned long long time_deadline_ms(unsigned long long delay_ms);
 
 unsigned long long time_now_tickets();
 
-unsigned long time_now_sec(void);
+/* Calendar time for inode timestamps, sampled at tick resolution. */
+unsigned long time_wall_sec(void);
 
 void time_set_wall_offset(long long wall_us);
 void time_sync_rtc(void);

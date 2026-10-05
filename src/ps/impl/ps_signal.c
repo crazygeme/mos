@@ -570,9 +570,9 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 	wait_set &= ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 
 	if (timeout) {
-		deadline = time_now_ms() +
-			   (unsigned long long)timeout->tv_sec * 1000 +
-			   (unsigned long long)timeout->tv_nsec / 1000000;
+		deadline = time_deadline_ms(
+			(unsigned long long)timeout->tv_sec * 1000 +
+			(timeout->tv_nsec + 999999ULL) / 1000000);
 		has_timeout = 1;
 	}
 

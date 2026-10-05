@@ -50,7 +50,7 @@ void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len);
 	static int _getattr_##name(file *file, struct stat *s)            \
 	{                                                                 \
 		inode *inode = file->f_inode;                             \
-		unsigned long _now = time_now_sec();                      \
+		unsigned long _now = time_wall_sec();                      \
 		s->st_atime = _now;                                       \
 		s->st_mode = inode->i_mode;                               \
 		s->st_size = (loff_t)inode->i_size;                       \

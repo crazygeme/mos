@@ -2403,9 +2403,9 @@ static int tty_fs_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
 	tty_state *state = node->i_private;
-	s->st_atime = time_now_sec();
-	s->st_mtime = time_now_sec();
-	s->st_ctime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;

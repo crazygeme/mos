@@ -32,9 +32,9 @@ static int null_getattr(file *fp, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_rdev = MKDEV(NULL_MAJOR, NULL_MINOR);
 	s->st_blksize = PAGE_SIZE;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_nlink = 1;
 	return 0;
 }
@@ -99,9 +99,9 @@ static int zero_getattr(file *fp, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_rdev = MKDEV(ZERO_MAJOR, ZERO_MINOR);
 	s->st_blksize = PAGE_SIZE;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_nlink = 1;
 	return 0;
 }

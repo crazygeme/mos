@@ -4,6 +4,7 @@
 #include <device/time.h>
 #include <mm/mm.h>
 #include <mm/mmu.h>
+#include <mm/mmap.h>
 #include <ps/cpu_local.h>
 
 struct smp_cpu smp_cpus[SMP_MAX_CPUS];
@@ -14,6 +15,7 @@ static volatile unsigned kernel_owner;
 static volatile unsigned kernel_ticket;
 static volatile unsigned kernel_serving;
 static volatile unsigned tlb_generation;
+static addr_space_t tlb_root;
 static addr_space_t boot_pd;
 static void *firmware_copies[128];
 static unsigned firmware_copy_count;
@@ -79,41 +81,66 @@ void smp_tlb_poll(void)
 	struct smp_cpu *cpu = arch_cpu_local();
 	unsigned gen = __atomic_load_n(&tlb_generation, __ATOMIC_ACQUIRE);
 	if (cpu->tlb_ack != gen) {
-		arch_cpu_reload_tlb();
+		if (!tlb_root)
+			arch_cpu_reload_tlb();
+		else if (arch_mm_current_address_space() == tlb_root)
+			arch_mm_flush_local();
 		__atomic_store_n(&cpu->tlb_ack, gen, __ATOMIC_RELEASE);
 	}
 }
 
 /* Only the BKL owner publishes requests. Waiters poll with IF clear, so
- * neither interrupt masking nor BKL contention can block acknowledgment. */
-void smp_tlb_flush(void)
+ * neither interrupt masking nor BKL contention can block acknowledgment.
+ * Task/CR3 changes also hold the BKL, keeping the target mask stable.
+ * Switching CR3 discards non-global user translations, so CPUs running a
+ * different VM need no user shootdown. Root zero denotes a kernel flush,
+ * which must include global translations on every online CPU. */
+static void tlb_flush(addr_space_t root)
 {
-	unsigned i;
 	unsigned irq = int_intr_disable();
-	arch_cpu_reload_tlb();
+	if (!root)
+		arch_cpu_reload_tlb();
+	else if (arch_mm_current_address_space() == root)
+		arch_mm_flush_local();
 	if (ncpu > 1) {
-		/* Early boot permission changes need only a local flush. CPU-local
-		 * FS is not restored until cpu_setup() after interrupt setup. */
-		unsigned me = arch_cpu_local()->index;
-		unsigned gen = __atomic_add_fetch(&tlb_generation, 1,
-						  __ATOMIC_RELEASE);
-		smp_cpus[me].tlb_ack = gen;
-		for (i = 0; i < ncpu; i++)
-			if (i != me && smp_cpus[i].online)
-				ipi(smp_cpus[i].apic_id, SMP_TLB_VECTOR);
-		for (i = 0; i < ncpu; i++)
-			if (i != me && smp_cpus[i].online)
-				while (__atomic_load_n(&smp_cpus[i].tlb_ack,
+		unsigned me = arch_cpu_local()->index, targets = 0;
+		for (unsigned i = 0; i < ncpu; i++) {
+			if (i == me || !smp_cpus[i].online)
+				continue;
+			task_struct *task = smp_cpus[i].task;
+			if (!root ||
+			    (task && task->user && task->user->vm &&
+			     VIRT_TO_PHY(task->user->vm->page_dir) == root))
+				targets |= 1U << i;
+		}
+		if (targets) {
+			tlb_root = root;
+			unsigned gen = __atomic_add_fetch(&tlb_generation, 1,
+							  __ATOMIC_RELEASE);
+			smp_cpus[me].tlb_ack = gen;
+			for (unsigned i = 0; i < ncpu; i++)
+				if (targets & (1U << i))
+					ipi(smp_cpus[i].apic_id,
+					    SMP_TLB_VECTOR);
+			for (unsigned i = 0; i < ncpu; i++)
+				if (targets & (1U << i))
+					while (__atomic_load_n(
+						       &smp_cpus[i].tlb_ack,
 						       __ATOMIC_ACQUIRE) != gen)
-					PAUSE();
+						PAUSE();
+		}
 	}
 	int_intr_setlevel(irq);
 }
 
+void smp_tlb_flush(void)
+{
+	tlb_flush(0);
+}
+
 void smp_tlb_flush_user(vaddr_t page_dir)
 {
-	(void)page_dir;
-	smp_tlb_flush();
+	tlb_flush(VIRT_TO_PHY(page_dir));
 }
 
 int smp_kernel_enter(void)

@@ -11,9 +11,7 @@ struct smp_cpu smp_cpus[SMP_MAX_CPUS];
 static unsigned ncpu = 1;
 volatile unsigned smp_online_count = 1;
 static volatile unsigned *lapic;
-static volatile unsigned kernel_owner;
-static volatile unsigned kernel_ticket;
-static volatile unsigned kernel_serving;
+static volatile unsigned tlb_lock;
 static volatile unsigned tlb_generation;
 static addr_space_t tlb_root;
 static addr_space_t boot_pd;
@@ -78,6 +76,8 @@ static void ipi(unsigned id, unsigned value)
 
 void smp_tlb_poll(void)
 {
+	if (__atomic_load_n(&smp_online_count, __ATOMIC_ACQUIRE) == 1)
+		return;
 	struct smp_cpu *cpu = arch_cpu_local();
 	unsigned gen = __atomic_load_n(&tlb_generation, __ATOMIC_ACQUIRE);
 	if (cpu->tlb_ack != gen) {
@@ -89,35 +89,48 @@ void smp_tlb_poll(void)
 	}
 }
 
-/* Only the BKL owner publishes requests. Waiters poll with IF clear, so
- * neither interrupt masking nor BKL contention can block acknowledgment.
- * Task/CR3 changes also hold the BKL, keeping the target mask stable.
- * Switching CR3 discards non-global user translations, so CPUs running a
- * different VM need no user shootdown. Root zero denotes a kernel flush,
- * which must include global translations on every online CPU. */
-static void tlb_flush(addr_space_t root)
+static unsigned tlb_lock_acquire(void)
 {
 	unsigned irq = int_intr_disable();
+	while (__sync_lock_test_and_set(&tlb_lock, 1)) {
+		smp_tlb_poll();
+		PAUSE();
+	}
+	return irq;
+}
+
+/* Address-space activation and target selection share the request lock.
+ * A CPU cannot enter or leave a target root until its shootdown completes.
+ * CR3 activation discards non-global translations; PCID is not enabled. */
+void smp_mm_activate(addr_space_t root)
+{
+	unsigned irq = tlb_lock_acquire();
+	arch_mm_activate(root);
+	arch_cpu_local()->active_root = root;
+	__sync_lock_release(&tlb_lock);
+	int_intr_setlevel(irq);
+}
+
+static void tlb_flush(addr_space_t root)
+{
+	unsigned irq = tlb_lock_acquire();
 	if (!root)
 		arch_cpu_reload_tlb();
 	else if (arch_mm_current_address_space() == root)
 		arch_mm_flush_local();
 	if (ncpu > 1) {
 		unsigned me = arch_cpu_local()->index, targets = 0;
-		for (unsigned i = 0; i < ncpu; i++) {
-			if (i == me || !smp_cpus[i].online)
-				continue;
-			task_struct *task = smp_cpus[i].task;
-			if (!root ||
-			    (task && task->user && task->user->vm &&
-			     VIRT_TO_PHY(task->user->vm->page_dir) == root))
+		for (unsigned i = 0; i < ncpu; i++)
+			if (i != me && __atomic_load_n(&smp_cpus[i].online,
+						       __ATOMIC_ACQUIRE) &&
+			    (!root || smp_cpus[i].active_root == root))
 				targets |= 1U << i;
-		}
 		if (targets) {
 			tlb_root = root;
 			unsigned gen = __atomic_add_fetch(&tlb_generation, 1,
 							  __ATOMIC_RELEASE);
-			smp_cpus[me].tlb_ack = gen;
+			__atomic_store_n(&smp_cpus[me].tlb_ack, gen,
+					 __ATOMIC_RELEASE);
 			for (unsigned i = 0; i < ncpu; i++)
 				if (targets & (1U << i))
 					ipi(smp_cpus[i].apic_id,
@@ -126,10 +139,14 @@ static void tlb_flush(addr_space_t root)
 				if (targets & (1U << i))
 					while (__atomic_load_n(
 						       &smp_cpus[i].tlb_ack,
-						       __ATOMIC_ACQUIRE) != gen)
+						       __ATOMIC_ACQUIRE) !=
+					       gen) {
+						smp_tlb_poll();
 						PAUSE();
+					}
 		}
 	}
+	__sync_lock_release(&tlb_lock);
 	int_intr_setlevel(irq);
 }
 
@@ -143,62 +160,10 @@ void smp_tlb_flush_user(vaddr_t page_dir)
 	tlb_flush(VIRT_TO_PHY(page_dir));
 }
 
-int smp_kernel_enter(void)
-{
-	struct smp_cpu *cpu;
-	unsigned irq;
-	unsigned owner;
-	if (ncpu == 1)
-		return 1;
-	cpu = arch_cpu_local();
-	owner = cpu->index + 1;
-	if (kernel_owner == owner)
-		return 1;
-	irq = int_intr_disable();
-	if (kernel_owner == owner) {
-		int_intr_setlevel(irq);
-		return 1;
-	}
-	{
-		unsigned ticket = __sync_fetch_and_add(&kernel_ticket, 1);
-		while (__atomic_load_n(&kernel_serving, __ATOMIC_ACQUIRE) !=
-		       ticket) {
-			smp_tlb_poll();
-			PAUSE();
-		}
-		kernel_owner = owner;
-		smp_tlb_poll();
-	}
-	int_intr_setlevel(irq);
-	return 0;
-}
-
-void smp_kernel_leave(void)
-{
-	if (ncpu == 1)
-		return;
-	__atomic_store_n(&kernel_owner, 0, __ATOMIC_RELEASE);
-	__atomic_add_fetch(&kernel_serving, 1, __ATOMIC_RELEASE);
-}
-
-void smp_return(intr_frame *frame)
-{
-	struct smp_cpu *cpu;
-	if (ncpu == 1)
-		return;
-	cpu = arch_cpu_local();
-	DISABLE_INTR();
-	if ((frame->cs & 3) == 3 && kernel_owner == cpu->index + 1)
-		smp_kernel_leave();
-}
-
 void smp_check_stop(void)
 {
 	if (ps_enabled() && current->terminate_requested) {
-		list_remove_entry(&current->ps_list);
-		/* Group reaping may detach this node again before freeing the task. */
-		list_init(&current->ps_list);
-		current->status = ps_stopped;
+		ps_stop_terminated_task();
 		task_sched();
 		DIE();
 	}
@@ -207,10 +172,8 @@ void smp_check_stop(void)
 void smp_idle(void)
 {
 	DISABLE_INTR();
-	smp_kernel_leave();
 	/* PIT broadcasts guarantee a wake even if a ready transition races hlt. */
 	arch_cpu_idle_wait();
-	smp_kernel_enter();
 	ENABLE_INTR();
 }
 
@@ -384,6 +347,7 @@ static void cpu_setup(void)
 	struct smp_cpu *cpu = &smp_cpus[smp_lapic_cpu_id()];
 	arch_mm_enable_global_pages();
 	arch_cpu_local_init(cpu);
+	cpu->active_root = arch_mm_current_address_space();
 	smp_fpu_init();
 	if (lapic) {
 		apic_write(0xf0, 0x100 | SMP_SPURIOUS_VECTOR);
@@ -408,7 +372,11 @@ static void ap_main(void)
 	cpu->tlb_ack = tlb_generation;
 	__atomic_store_n(&cpu->online, 1, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&smp_online_count, 1, __ATOMIC_RELEASE);
-	smp_kernel_enter();
+	/* The BSP publishes scheduler readiness after completing AP startup. */
+	while (!ps_enabled()) {
+		smp_tlb_poll();
+		PAUSE();
+	}
 	ps_kickoff();
 	for (;;)
 		PAUSE();
@@ -445,8 +413,6 @@ void smp_init(void)
 	cpu_setup();
 	smp_cpus[0].online = 1;
 	smp_online_count = 1;
-	kernel_owner = 1;
-	kernel_ticket = kernel_serving + 1;
 	arch_cpu_fpu_save(clean_fpu);
 	boot_pd = arch_mm_current_address_space();
 	ENABLE_INTR();

@@ -1,6 +1,7 @@
 #include <int/int.h>
 #include <device/time.h>
 #include <ps/ps.h>
+#include <ps/smp.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <macro.h>
@@ -39,6 +40,7 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 	/* Slow path: stay in a true spin loop. We already disabled interrupts
 	 * above, so HLT here can deadlock the CPU forever if IF stays clear. */
 	do {
+		smp_tlb_poll();
 		PAUSE();
 	} while (__sync_lock_test_and_set(&lock->lock, 1) == 1);
 
@@ -204,8 +206,10 @@ void cond_notify(cond_t *s)
 /* Interrupt-context variants: poll instead of sleep. */
 void cond_wait_at_intr(cond_t *s)
 {
-	while (__sync_lock_test_and_set(&s->base.lock, 1) == 1)
-		;
+	while (__sync_lock_test_and_set(&s->base.lock, 1) == 1) {
+		smp_tlb_poll();
+		PAUSE();
+	}
 }
 
 void cond_notify_at_intr(cond_t *s)
@@ -461,9 +465,14 @@ void sem_post(sem_t *s)
  */
 void sem_wait_at_intr(sem_t *s)
 {
-	while (__sync_fetch_and_add(&s->count, 0) == 0)
-		;
-	__sync_fetch_and_sub(&s->count, 1);
+	for (;;) {
+		int count = __atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
+		if (count > 0 &&
+		    __sync_bool_compare_and_swap(&s->count, count, count - 1))
+			return;
+		smp_tlb_poll();
+		PAUSE();
+	}
 }
 
 void sem_post_at_intr(sem_t *s)

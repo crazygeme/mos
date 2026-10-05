@@ -30,6 +30,45 @@ u32_t sys_now(void)
 	return (u32_t)(time_now_us() / 1000);
 }
 
+static mutex_t net_core_lock;
+static spinlock_t net_service_lock;
+
+int net_core_enter(void)
+{
+	if (!ps_enabled())
+		return 0;
+	sched_disable();
+	if (!current->net_core_depth)
+		mutex_lock(&net_core_lock);
+	current->net_core_depth++;
+	return 1;
+}
+
+void net_core_unlock(void)
+{
+	if (!--current->net_core_depth)
+		mutex_unlock(&net_core_lock);
+	sched_enable();
+}
+
+unsigned net_core_suspend(void)
+{
+	unsigned depth = current->net_core_depth;
+	if (depth) {
+		current->net_core_depth = 0;
+		mutex_unlock(&net_core_lock);
+	}
+	return depth;
+}
+
+void net_core_resume(unsigned depth)
+{
+	if (depth) {
+		mutex_lock(&net_core_lock);
+		current->net_core_depth = depth;
+	}
+}
+
 static int net_service_initialized;
 static int net_service_queued;
 static unsigned long long net_service_due = ~0ULL;
@@ -38,13 +77,15 @@ static void net_service_run(void *param)
 {
 	(void)param;
 	NET_CORE_GUARD;
+	int irq;
+	spinlock_lock(&net_service_lock, &irq);
 	net_service_queued = 0;
+	spinlock_unlock(&net_service_lock, irq);
 	sys_check_timeouts();
 	netif_poll_all();
 }
 
-/* The kernel lock serializes lwIP. IRQ masking protects deadline publication
- * and queue state against the PIT interrupt on the current CPU. */
+/* Requires net_service_lock; interrupt context only publishes deferred work. */
 static void net_service_queue(void)
 {
 	if (!net_service_queued) {
@@ -78,18 +119,21 @@ void net_service_update(void)
 			break;
 		}
 	}
-	irq = int_intr_disable();
+	spinlock_lock(&net_service_lock, &irq);
 	net_service_due = due;
 	if (loopback || !delay)
 		net_service_queue();
-	int_intr_setlevel(irq);
+	spinlock_unlock(&net_service_lock, irq);
 }
 
 /* IRQ context only queues due work. lwIP callbacks run on the DSR worker. */
 void net_service_tick(void)
 {
+	int irq;
+	spinlock_lock(&net_service_lock, &irq);
 	if (net_service_initialized && time_now_tickets() >= net_service_due)
 		net_service_queue();
+	spinlock_unlock(&net_service_lock, irq);
 }
 
 /* ── RX ring buffer (IRQ → DSR context) ─────────────────────────────────────
@@ -139,7 +183,7 @@ void net_get_stats(net_stats_t *s)
 
 /* Called by lwIP to transmit a packet.
  * Uses a static bounce buffer to linearise the pbuf chain — safe because
- * callers hold the kernel lock and suppress task preemption. */
+ * callers hold the network-core mutex and suppress task preemption. */
 static err_t eth0_linkoutput(struct netif *netif, struct pbuf *p)
 {
 	static uint8_t txbounce[NET_RX_MAX_FRAME];
@@ -217,7 +261,10 @@ static void eth0_rx_dsr(void *param)
 	(void)param;
 	/* Clear armed flag first so new IRQs that fire during drain will
 	 * re-arm and not lose the notification. */
+	int armed_irq;
+	spinlock_lock(&g_rx_lock, &armed_irq);
 	g_rx_dsr_armed = 0;
+	spinlock_unlock(&g_rx_lock, armed_irq);
 
 	while (g_rx_rd != g_rx_wr) {
 		int irq;
@@ -296,6 +343,8 @@ static int eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len,
 /* ── KERNEL_INIT entry point ────────────────────────────────────────────────── */
 void net_init(void)
 {
+	mutex_init(&net_core_lock);
+	spinlock_init(&net_service_lock);
 	NET_CORE_GUARD;
 	/*
 	 * lwip_init() creates the loopback netif (127.0.0.1) unconditionally

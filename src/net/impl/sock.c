@@ -336,7 +336,9 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	/* Publish stack work before sleeping inside a network guard. */
 	if (sk->domain != AF_UNIX)
 		net_service_update();
+	unsigned core_depth = net_core_suspend();
 	task_sched();
+	net_core_resume(core_depth);
 	ps_finish_timed_wait(cur);
 
 	spinlock_lock(&sk->wait_lock, &irq);

@@ -79,11 +79,6 @@ ret_from_fork:
 ret_from_syscall:
 intr_exit:
  cli
- movq %rsp, %rdi
- movq %rsp, %rbx
- andq $-16, %rsp
- call smp_return
- movq %rbx, %rsp
  testb $3, 192(%rsp)
  jnz 7f
  cmpq $0, 88(%rsp)

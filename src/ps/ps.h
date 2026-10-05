@@ -136,6 +136,7 @@ typedef struct _task_struct task_struct;
 struct _task_struct {
 	task_frame tss;
 	uintptr_t switch_sp;
+	unsigned net_core_depth; /* Recursive network-core ownership by this task. */
 	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
 	unsigned terminate_requested;
 	int sched_level;
@@ -319,6 +320,9 @@ int ps_prepare_interruptible_wait(task_struct *task, list_entry *queue,
 void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 		     unsigned long long *interval);
 void ps_alarm_tick(void);
+void ps_stop_terminated_task(void);
+int ps_task_ready(task_struct *task);
+
 /* Requires ps_lock; signal delivery is authorized by the kernel caller. */
 void ps_queue_signal_unsafe(task_struct *target, int sig);
 void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value);

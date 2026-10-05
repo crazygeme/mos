@@ -1,6 +1,8 @@
 #include <lib/klib.h>
 #include <lib/port.h>
 #include <int/int.h>
+#include <lib/lock.h>
+#include <ps/smp.h>
 
 /* Register definitions for the 16550A UART used in PCs.
    The 16550A has a lot more going on than shown here, but this
@@ -48,7 +50,8 @@
 /* Transmission mode. */
 static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 
-/* TX ring buffer. All accesses occur with interrupts disabled. */
+/* UART registers and the TX ring are protected by serial_lock. */
+static spinlock_t serial_lock = { .inited = 1 };
 #define TXQ_SIZE 4096
 static unsigned char txq_buf[TXQ_SIZE];
 static unsigned txq_head = 0; /* read index */
@@ -102,22 +105,23 @@ static void init_poll(void)
    waiting for the serial device to become ready. */
 void serial_init_queue(void)
 {
-	unsigned old_level;
+	int old_level;
+	spinlock_lock(&serial_lock, &old_level);
 
 	if (mode == UNINIT)
 		init_poll();
 
 	int_register(0x20 + 4, serial_interrupt, 0, 0);
 	mode = QUEUE;
-	old_level = int_intr_disable();
 	write_ier();
-	int_intr_setlevel(old_level);
+	spinlock_unlock(&serial_lock, old_level);
 }
 
 /* Sends BYTE to the serial port. */
 void serial_putc(unsigned char byte)
 {
-	unsigned old_level = int_intr_disable();
+	int old_level;
+	spinlock_lock(&serial_lock, &old_level);
 
 	if (mode != QUEUE) {
 		/* If we're not set up for interrupt-driven I/O yet,
@@ -141,17 +145,18 @@ void serial_putc(unsigned char byte)
 		write_ier();
 	}
 
-	int_intr_setlevel(old_level);
+	spinlock_unlock(&serial_lock, old_level);
 }
 
 /* Flushes anything in the serial buffer out the port in polling
    mode. */
 void serial_flush(void)
 {
-	unsigned old_level = int_intr_disable();
+	int old_level;
+	spinlock_lock(&serial_lock, &old_level);
 	while (!txq_isempty())
 		putc_poll(txq_getc());
-	int_intr_setlevel(old_level);
+	spinlock_unlock(&serial_lock, old_level);
 }
 
 /* The fullness of the input buffer may have changed.  Reassess
@@ -160,8 +165,11 @@ void serial_flush(void)
    to or removed from the buffer. */
 void serial_notify(void)
 {
+	int irq;
+	spinlock_lock(&serial_lock, &irq);
 	if (mode == QUEUE)
 		write_ier();
+	spinlock_unlock(&serial_lock, irq);
 }
 
 /* Configures the serial port for BPS bits per second. */
@@ -203,14 +211,18 @@ static void write_ier(void)
    and then transmits BYTE. */
 static void putc_poll(unsigned char byte)
 {
-	while ((inb(LSR_REG) & LSR_THRE) == 0)
-		continue;
+	while ((inb(LSR_REG) & LSR_THRE) == 0) {
+		smp_tlb_poll();
+		PAUSE();
+	}
 	outb(THR_REG, byte);
 }
 
 /* Serial interrupt handler. */
 static void serial_interrupt(intr_frame *f)
 {
+	int irq;
+	spinlock_lock(&serial_lock, &irq);
 	/* Inquire about interrupt in UART.  Without this, we can
 	   occasionally miss an interrupt running under QEMU. */
 	inb(IIR_REG);
@@ -227,4 +239,5 @@ static void serial_interrupt(intr_frame *f)
 
 	/* Update interrupt enable register based on queue status. */
 	write_ier();
+	spinlock_unlock(&serial_lock, irq);
 }

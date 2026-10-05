@@ -12,6 +12,11 @@ ps_context_switch:
  pushfq
  movq %rsp, (%rdi)
  movq %rsi, %rsp
+ movq %rsp, %rbx
+ movq %rdx, %rdi
+ andq $-16, %rsp
+ call ps_switch_finish
+ movq %rbx, %rsp
  popfq
  popq %r15
  popq %r14

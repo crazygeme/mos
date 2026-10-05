@@ -236,7 +236,7 @@ void ps_init()
 
 int ps_enabled()
 {
-	return _ps_enabled;
+	return __atomic_load_n(&_ps_enabled, __ATOMIC_ACQUIRE);
 }
 
 /*
@@ -253,7 +253,7 @@ void ps_kickoff()
 	cur->stats = NULL;
 	cur->sched_level = 1;
 	cur->on_cpu = smp_cpu_id() + 1;
-	_ps_enabled = 1;
+	__atomic_store_n(&_ps_enabled, 1, __ATOMIC_RELEASE);
 	task_sched();
 }
 
@@ -560,4 +560,13 @@ task_struct *__attribute__((noinline)) CURRENT_TASK(void)
 
 	LOAD_ESP(esp);
 	return (task_struct *)(esp & ~(uintptr_t)(KERNEL_TASK_BYTES - 1));
+}
+
+int ps_task_ready(task_struct *task)
+{
+	int irq, ready;
+	spinlock_lock(&ps_lock, &irq);
+	ready = task->status == ps_ready && !task->on_cpu;
+	spinlock_unlock(&ps_lock, irq);
+	return ready;
 }

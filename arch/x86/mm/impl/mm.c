@@ -4,6 +4,8 @@
 #include <lib/klib.h>
 #include <lib/list.h>
 #include <lib/lock.h>
+
+static spinlock_t table_lock;
 #include <ps/ps.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
@@ -54,7 +56,7 @@ static pte_t *kernel_page_dir;
 static int direct_map_large;
 /* Page directories are allocated from the low kernel pool. Track their PFNs
  * without allocating memory, including directories not yet attached to tasks.
- * BKL serializes directory lifetime and changes to shared kernel mappings. */
+ * mm_lock protects directory lifetime and shared kernel mappings. */
 static unsigned int process_dirs[KERNEL_DIRECT_MAP_LIMIT / PAGE_SIZE / 32];
 
 static int mm_large_entry(pte_t entry)
@@ -207,7 +209,10 @@ static void mm_cache_free(mm_cache_t *cache, unsigned int val)
 
 vaddr_t mm_alloc_page_table(void)
 {
+	int irq;
+	spinlock_lock(&table_lock, &irq);
 	unsigned int ret = mm_cache_alloc((mm_cache_t *)&page_table_cache);
+	spinlock_unlock(&table_lock, irq);
 
 	if (ret == 0) {
 		klog("mm_alloc_page_table: page table cache exhausted\n");
@@ -219,7 +224,10 @@ vaddr_t mm_alloc_page_table(void)
 
 void mm_free_page_table(vaddr_t vir)
 {
+	int irq;
+	spinlock_lock(&table_lock, &irq);
 	mm_cache_free((mm_cache_t *)&page_table_cache, vir);
+	spinlock_unlock(&table_lock, irq);
 }
 
 static void kmap_cache_erase(paddr_t phy_address)
@@ -279,7 +287,7 @@ static void mm_mark_kernel_pages_global(void)
  * Locks and initialisation
  */
 
-static spinlock_t mm_lock;
+spinlock_t mm_lock;
 static spinlock_t path_lock;
 static spinlock_t kmap_lock;
 static int mm_dynamic_region(paddr_t phy);
@@ -291,6 +299,7 @@ static list_entry name_cache_head;
 /* Called once at boot: set up the page-table cache and related state */
 void mm_init_cache()
 {
+	spinlock_init(&table_lock);
 	int i;
 
 	mm_cache_init((mm_cache_t *)&page_table_cache, PAGE_TABLE_CACHE_BEGIN,
@@ -327,10 +336,13 @@ void mm_init_process_page_dir(vaddr_t page_dir)
 	pte_t *src = kernel_page_dir;
 	unsigned pfn = (page_dir - KERNEL_OFFSET) / PAGE_SIZE;
 
+	int irq;
+	spinlock_lock(&mm_lock, &irq);
 	memset(dst, 0, PAGE_SIZE);
 	memcpy(&dst[KERNEL_PAGE_DIR_OFFSET], &src[KERNEL_PAGE_DIR_OFFSET],
 	       (1024 - KERNEL_PAGE_DIR_OFFSET) * sizeof(pte_t));
 	process_dirs[pfn / 32] |= 1U << (pfn % 32);
+	spinlock_unlock(&mm_lock, irq);
 }
 
 int mm_copy_phys_page(paddr_t dst, paddr_t src)
@@ -899,14 +911,16 @@ void mm_unmap_page(vaddr_t vir)
 	int irq;
 	unsigned flags;
 
-	if (!mm_get_valid_page_table(vir, 0, &info, 0))
+	spinlock_lock(&mm_lock, &irq);
+	if (!mm_get_valid_page_table(vir, 0, &info, 0)) {
+		spinlock_unlock(&mm_lock, irq);
 		return;
+	}
 
 	phy_addr = *info.entry & PAGE_SIZE_MASK;
 	flags = *info.entry;
 	page_index = PHY_TO_PAGE_IDX(phy_addr);
 
-	spinlock_lock(&mm_lock, &irq);
 	mm_clear_page_table_entry(&info);
 	if (!(flags & PAGE_ENTRY_DIRECT_PHYS) &&
 	    (mm_dynamic_region(phy_addr) || mm_vdso_region(phy_addr))) {
@@ -950,15 +964,21 @@ void mm_set_map_flag(vaddr_t vir, unsigned flag)
 void mm_set_map_flag_pd(vaddr_t page_dir, vaddr_t vir, unsigned flag)
 {
 	mm_addr_info info;
-
-	if (!page_dir || !mm_split_direct_page((pte_t *)page_dir, vir) ||
-	    !mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
+	int irq;
+	if (!page_dir)
 		return;
+	spinlock_lock(&mm_lock, &irq);
+
+	if (!mm_split_direct_page((pte_t *)page_dir, vir) ||
+	    !mm_get_valid_page_table_in_dir((pte_t *)page_dir, vir, &info))
+		goto out;
 	*info.entry = (*info.entry & PAGE_SIZE_MASK) | flag;
 	if (vir >= KERNEL_OFFSET)
 		smp_tlb_flush();
-	else if (page_dir == mm_get_pagedir())
-		arch_mm_invalidate(vir);
+	else
+		smp_tlb_flush_user(page_dir);
+out:
+	spinlock_unlock(&mm_lock, irq);
 }
 
 /* Return the physical page index backing the virtual address @vir */

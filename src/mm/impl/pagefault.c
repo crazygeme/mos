@@ -5,6 +5,7 @@
 #include <mm/mmap.h>
 #include <mm/phymm.h>
 #include <ps/ps.h>
+#include <ps/smp.h>
 #include <fs/cache.h>
 #include <fs/fs.h>
 #include <lib/klib.h>
@@ -600,7 +601,7 @@ int pf_resolve_task_page_fault(task_struct *task, vaddr_t addr, int write)
 	sched_disable();
 	old_address_space = arch_mm_current_address_space();
 	if (old_address_space != target_address_space)
-		arch_mm_activate(target_address_space);
+		smp_mm_activate(target_address_space);
 
 	addr &= PAGE_SIZE_MASK;
 	if (write && pf_page_already_present(addr))
@@ -609,7 +610,7 @@ int pf_resolve_task_page_fault(task_struct *task, vaddr_t addr, int write)
 		handled = pf_handle_page_invalid(task, addr, write);
 
 	if (old_address_space != target_address_space)
-		arch_mm_activate(old_address_space);
+		smp_mm_activate(old_address_space);
 	sched_enable();
 	int_intr_setlevel(old_level);
 	return handled;

@@ -4,6 +4,7 @@
 #include <elf/elf.h>
 #include <dev/blockdev.h>
 #include <ps/ps.h>
+#include <ps/smp.h>
 #include <int/int.h>
 #include <dev/tty.h>
 #include <mm/mm.h>
@@ -61,7 +62,7 @@ static void cleanup()
 	mm_init_process_page_dir(new_pd);
 	vm_set_page_dir(new_mm, new_pd);
 	cur->user->vm = new_mm;
-	arch_mm_activate(VIRT_TO_PHY(new_pd));
+	smp_mm_activate(VIRT_TO_PHY(new_pd));
 	vm_put(old_mm);
 
 	/* Close all O_CLOEXEC file descriptors. */

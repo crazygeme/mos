@@ -6,8 +6,11 @@
 #include <config.h>
 #include <macro.h>
 #include <ps/smp.h>
+#include <lib/lock.h>
 
-static unsigned long tickets;
+static volatile unsigned long tickets;
+static spinlock_t pit_lock = { .inited = 1 };
+static spinlock_t wall_lock = { .inited = 1 };
 static unsigned long cycle_per_ticket;
 static unsigned long boot_epoch;
 static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
@@ -17,7 +20,7 @@ static unsigned long rtc_get_time(void);
 
 static void time_process(intr_frame *frame)
 {
-	tickets++;
+	__atomic_add_fetch(&tickets, 1, __ATOMIC_RELEASE);
 	smp_tick();
 	if (ps_enabled())
 		current->remain_ticks--;
@@ -150,7 +153,8 @@ unsigned long long time_now_us()
 #define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
 	unsigned long long t1, t2;
 	unsigned count;
-	int wrapped_without_irq;
+	int wrapped_without_irq, irq;
+	spinlock_lock(&pit_lock, &irq);
 
 	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
 	do {
@@ -179,6 +183,7 @@ unsigned long long time_now_us()
 
 	last_time_sample_tickets = t2;
 	last_time_sample_count = count;
+	spinlock_unlock(&pit_lock, irq);
 
 	/* PIT counts DOWN from LATCH to 0; convert remaining count to elapsed us.
 	 * Resolution: 1 / CLOCK_TICK_RATE ≈ 0.84 μs, no calibration needed. */
@@ -192,8 +197,12 @@ unsigned long long time_now_us()
 
 unsigned long long time_wall_us(void)
 {
-	return (unsigned long long)((long long)time_now_us() +
-				    g_wall_offset_us);
+	int irq;
+	long long offset;
+	spinlock_lock(&wall_lock, &irq);
+	offset = g_wall_offset_us;
+	spinlock_unlock(&wall_lock, irq);
+	return (unsigned long long)((long long)time_now_us() + offset);
 }
 
 /*
@@ -202,7 +211,11 @@ unsigned long long time_wall_us(void)
  */
 void time_set_wall_offset(long long wall_us)
 {
-	g_wall_offset_us = wall_us - (long long)time_now_us();
+	long long offset = wall_us - (long long)time_now_us();
+	int irq;
+	spinlock_lock(&wall_lock, &irq);
+	g_wall_offset_us = offset;
+	spinlock_unlock(&wall_lock, irq);
 }
 
 /* Re-read the RTC and sync the wall clock. Called at exec time for PID 1
@@ -210,8 +223,7 @@ void time_set_wall_offset(long long wall_us)
 void time_sync_rtc(void)
 {
 	unsigned long epoch = rtc_get_time();
-	g_wall_offset_us =
-		(long long)epoch * 1000000LL - (long long)time_now_us();
+	time_set_wall_offset((long long)epoch * 1000000LL);
 }
 
 unsigned long long cycle_to_us(unsigned long long dur_cycles)

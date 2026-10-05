@@ -1,6 +1,17 @@
 # Kernel Locking Primitives
 
-All four primitives are declared in `include/lib/lock.h` and implemented in `src/lib/lock.c`.
+Locking primitives are declared in `src/lib/lock.h` and implemented in
+`src/lib/impl/lock.c`.
+
+Kernel entry and return permit concurrent execution on multiple CPUs.
+Subsystem locks protect shared state. The scheduler retains `ps_lock` through
+stack handoff and releases it on the incoming stack. TLB request publication
+uses a separate lock, and interrupt-masked spinlock waiters poll shootdowns.
+Address-space activation uses the same TLB lock and records the active CR3
+root in CPU-local state. User shootdowns target only online CPUs using that
+root; shared kernel mappings target all online CPUs. Scheduler switches,
+exec image replacement, and borrowed address spaces use `smp_mm_activate()`.
+The target CPUs cannot change address spaces before acknowledging the request.
 
 ---
 
@@ -18,8 +29,9 @@ Do **not** use for long critical sections; busy-waiting wastes CPU cycles.
 ```c
 spinlock_t lock;
 spinlock_init(&lock);       // must be called before first use
-spinlock_lock(&lock);       // acquire; disables interrupts, records holder
-spinlock_unlock(&lock);     // release; restores interrupt level
+int irq;
+spinlock_lock(&lock, &irq);  // acquire and save the interrupt level
+spinlock_unlock(&lock, irq); // release and restore the interrupt level
 spinlock_uninit(&lock);     // tear down (e.g. on device removal)
 ```
 
@@ -29,9 +41,9 @@ spinlock_uninit(&lock);     // tear down (e.g. on device removal)
 
 - Uses `__sync_lock_test_and_set` (atomic XCHG) for acquire and `__sync_lock_release` for release.
 - Fast path: a single TAS that succeeds immediately, no `PAUSE`.
-- Slow path: spins with `PAUSE` (x86 `rep nop`) to reduce memory-bus contention.
-- On lock: saves the current interrupt-enable flag in `lock->old_int` via `sched_disable()`.
-- On unlock: restores `old_int` via `sched_set_level()`, then clears the lock word.
+- Slow path: polls TLB requests and executes `PAUSE` with local interrupts disabled.
+- Acquisition saves the interrupt-enable flag in caller-owned storage.
+- Release clears the holder and lock word before restoring the saved interrupt level.
 
 ### Rules
 

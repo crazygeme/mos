@@ -126,9 +126,8 @@ void dsr_start(void)
 		DIE();
 }
 
-/* Interrupt exit holds the kernel lock while inspecting scheduler state. */
+/* Scheduler state is sampled under ps_lock. */
 int dsr_needs_schedule(void)
 {
-	return dsr_task && dsr_task != current &&
-	       dsr_task->status == ps_ready && !dsr_task->on_cpu;
+	return dsr_task && dsr_task != current && ps_task_ready(dsr_task);
 }

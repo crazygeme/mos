@@ -117,8 +117,6 @@ typedef struct _file_operations {
 			 unsigned prot, unsigned flags, struct _file **backing);
 	/* Return an allocator-owned physical page for a shared device mapping. */
 	paddr_t (*map_page)(file *file, uint64_t offset);
-	/* Unlink removes the name while open references retain the inode. */
-	unsigned unlink_preserves_open;
 } file_operations;
 
 /*
@@ -160,8 +158,6 @@ struct _file {
 	char *f_name;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
-
-#define FS_FILE_UNLINK_ON_CLOSE 0x1u
 
 struct linux_dirent {
 	uint32_t d_ino; /* Inode number */

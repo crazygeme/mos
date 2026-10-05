@@ -63,7 +63,6 @@ int _cond_wait(cond_t *s, const char *func, int interruptible);
 void cond_wait_at_intr(cond_t *s);
 void cond_reset(cond_t *s);
 /* Wake a waiter without switching away from the notifying task. */
-void cond_notify_nosched(cond_t *s);
 void cond_notify(cond_t *s);
 void cond_notify_at_intr(cond_t *s);
 

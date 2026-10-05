@@ -351,10 +351,10 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 		 * Its file offset advances by (end - o_begin) bytes.
 		 */
 		if (o_end > end)
-			vm_add_map_with_lock(vm, end, o_end, o_prot, o_flag,
-					     o_fp,
-					     o_offset + (uint64_t)(end - o_begin),
-					     o_anon_id, o_fault_lock);
+			vm_add_map_with_lock(
+				vm, end, o_end, o_prot, o_flag, o_fp,
+				o_offset + (uint64_t)(end - o_begin), o_anon_id,
+				o_fault_lock);
 
 		if (o_fp)
 			fs_put_file(o_fp);
@@ -505,7 +505,7 @@ vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr)
 		 * out rather than faulting again while holding table->lock and
 		 * deadlocking in the nested page-fault path.
 		 */
-		if ((uintptr_t)region < KERNEL_OFFSET) {
+		if ((uintptr_t)region < MOS_NATIVE_TASK_SIZE) {
 			spinlock_unlock(&mm->vma_lock, irq);
 			return NULL;
 		}
@@ -708,8 +708,8 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 		if (upd_end < r_end)
 			vm_add_map_with_lock(
 				vm, upd_end, r_end, r_prot, r_flag, r_fp,
-				r_offset + (uint64_t)(upd_end - r_begin), r_anon_id,
-				r_fault_lock);
+				r_offset + (uint64_t)(upd_end - r_begin),
+				r_anon_id, r_fault_lock);
 
 		if (r_fp)
 			fs_put_file(r_fp);
@@ -783,8 +783,8 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 
 	if (TEST_LOG(TEST_LOG_INFO)) {
 		klog("mmap: file %s, addr %x, offset %llx, prot %x, flags %x, len %x at addr %x\n",
-		     fp ? fp->f_name : "ANON", _addr, (unsigned long long)offset, prot, flags, _len,
-		     addr);
+		     fp ? fp->f_name : "ANON", _addr,
+		     (unsigned long long)offset, prot, flags, _len, addr);
 	}
 
 	return addr;
@@ -849,7 +849,7 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	    _len > cur->user->vm->task_size - _addr)
 		return -EINVAL;
 	if (fd != -1 && (offset > 0x7fffffffffffffffULL ||
-			_len > 0x7fffffffffffffffULL - offset))
+			 _len > 0x7fffffffffffffffULL - offset))
 		return -EINVAL;
 #if MOS_HAS_NATIVE_USER
 	/* The legacy driver API uses a shared supervisor device window. */
@@ -884,7 +884,8 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 		uint64_t end = (uint64_t)offset + _len;
 		if ((node->f_inode->i_phys_base & (PAGE_SIZE - 1)) ||
 		    end > node->f_inode->i_phys_size ||
-		    (uint64_t)node->f_inode->i_phys_base + end > PHYMM_ADDRESS_LIMIT)
+		    (uint64_t)node->f_inode->i_phys_base + end >
+			    PHYMM_ADDRESS_LIMIT)
 			return -EINVAL;
 		if ((prot & PROT_WRITE) && node->f_mode == O_RDONLY)
 			return -EACCES;
@@ -1112,7 +1113,8 @@ int do_munmap(void *addr, size_t length)
 		if (r_end > unmap_end)
 			vm_add_map_with_lock(
 				cur->user->vm, unmap_end, r_end, r_prot, r_flag,
-				r_fp, r_offset + (uint64_t)(unmap_end - r_begin),
+				r_fp,
+				r_offset + (uint64_t)(unmap_end - r_begin),
 				r_anon_id, r_fault_lock);
 
 		if (r_fp)

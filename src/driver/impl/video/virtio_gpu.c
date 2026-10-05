@@ -1756,8 +1756,8 @@ static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
 			return -EACCES;
 		return gpu_kms(client, cmd, arg);
 	}
-	return command_dispatch(gpu_authenticated_command_groups, client, cmd, arg,
-				-ENOTTY);
+	return command_dispatch(gpu_authenticated_command_groups, client, cmd,
+				arg, -ENOTTY);
 }
 
 static int gpu_ioctl(file *fp, unsigned cmd, void *arg)

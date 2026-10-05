@@ -29,7 +29,7 @@ unsigned sock_default_rxbuf_size(int domain, int type)
 	if (domain != AF_UNIX)
 		return SOCK_RXBUF_INET_SIZE;
 	return type == SOCK_STREAM ? SOCK_RXBUF_UNIX_STREAM_SIZE :
-				    SOCK_RXBUF_UNIX_SIZE;
+				     SOCK_RXBUF_UNIX_SIZE;
 }
 
 /* A zero socket timeout means an unlimited wait. Keep zero as the
@@ -338,6 +338,8 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	}
 	spinlock_unlock(&sk->wait_lock, irq);
 
+	/* Publish stack work before sleeping inside a network guard. */
+	net_service_update();
 	task_sched();
 	ps_finish_timed_wait(cur);
 

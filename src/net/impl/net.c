@@ -22,11 +22,74 @@
 #include <lwip/pbuf.h>
 #include <netif/ethernet.h>
 #include <int/dsr.h>
+#include <int/int.h>
 
 /* ── sys_now() required by lwIP in NO_SYS mode ─────────────────────────────── */
 u32_t sys_now(void)
 {
 	return (u32_t)(time_now_us() / 1000);
+}
+
+static int net_service_initialized;
+static int net_service_queued;
+static unsigned long long net_service_due = ~0ULL;
+
+static void net_service_run(void *param)
+{
+	(void)param;
+	NET_CORE_GUARD;
+	net_service_queued = 0;
+	sys_check_timeouts();
+	netif_poll_all();
+}
+
+/* The kernel lock serializes lwIP. IRQ masking protects deadline publication
+ * and queue state against the PIT interrupt on the current CPU. */
+static void net_service_queue(void)
+{
+	if (!net_service_queued) {
+		net_service_queued = 1;
+		if (!dsr_add(net_service_run, NULL)) {
+			net_service_queued = 0;
+			net_service_due = time_now_tickets() + 1;
+		}
+	}
+}
+
+/* Refresh the deadline after every stack operation, including new TCP timers.
+ * Loopback packets enter deferred work immediately rather than waiting for PIT. */
+void net_service_update(void)
+{
+	struct netif *nif;
+	u32_t delay;
+	unsigned long long due;
+	int irq, loopback = 0;
+
+	if (!net_service_initialized)
+		return;
+	delay = sys_timeouts_sleeptime();
+	due = delay == SYS_TIMEOUTS_SLEEPTIME_INFINITE ?
+		      ~0ULL :
+		      (time_now_ms() + delay + TICK_MS - 1) / TICK_MS;
+	NETIF_FOREACH(nif)
+	{
+		if (nif->loop_first) {
+			loopback = 1;
+			break;
+		}
+	}
+	irq = int_intr_disable();
+	net_service_due = due;
+	if (loopback || !delay)
+		net_service_queue();
+	int_intr_setlevel(irq);
+}
+
+/* IRQ context only queues due work. lwIP callbacks run on the DSR worker. */
+void net_service_tick(void)
+{
+	if (net_service_initialized && time_now_tickets() >= net_service_due)
+		net_service_queue();
 }
 
 /* ── RX ring buffer (IRQ → DSR context) ─────────────────────────────────────
@@ -240,6 +303,7 @@ void net_init(void)
 	 * available, even when no physical NIC is present.
 	 */
 	lwip_init();
+	net_service_initialized = 1;
 	spinlock_init(&g_rx_lock);
 	g_rx_wr = 0;
 	g_rx_rd = 0;

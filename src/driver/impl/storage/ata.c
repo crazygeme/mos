@@ -319,7 +319,7 @@ static void dma_init_channel(channel *c, int chan_no)
 
 	/* One-page (4 KiB) bounce buffer — always page-aligned, never
 	 * crosses a 64 KiB boundary, suitable for single-sector DMA.    */
-	c->dma_buf = (void *)vm_alloc(1);
+	c->dma_buf = (void *)vm_alloc_dma(1);
 	c->dma_buf_phys = VIRT_TO_PHY(c->dma_buf);
 
 	printk("hdd: %s DMA enabled, bm=0x%x buf_phys=0x%x\n", c->name,
@@ -909,12 +909,14 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 			      int *old_dirty, block_cache_item *new_item)
 {
 	block_cache_item *item;
-	unsigned cached_pages = hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
+	unsigned cached_pages =
+		hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
 	phymm_cache_policy policy;
 
 	phymm_get_cache_policy(&policy);
 
-	if (new_item && cached_pages >= policy.block_pages && p->cache.sectors) {
+	if (new_item && cached_pages >= policy.block_pages &&
+	    p->cache.sectors) {
 		block_cache_item_remove(new_item);
 		new_item = NULL;
 	}
@@ -1281,8 +1283,9 @@ static int hdd_bdev_bread(struct ext4_blockdev *bdev, void *buf,
 #if HDD_CACHE_OPEN
 	{
 		if (partition_cache_read(p, (unsigned)(blk_id + i),
-				     dst + i * BLOCK_SECTOR_SIZE,
-				     BLOCK_SECTOR_SIZE) != BLOCK_SECTOR_SIZE)
+					 dst + i * BLOCK_SECTOR_SIZE,
+					 BLOCK_SECTOR_SIZE) !=
+		    BLOCK_SECTOR_SIZE)
 			return EIO;
 		i++;
 	}
@@ -1293,8 +1296,8 @@ static int hdd_bdev_bread(struct ext4_blockdev *bdev, void *buf,
 		if (chunk > HDD_IO_MAX_SECTORS)
 			chunk = HDD_IO_MAX_SECTORS;
 		if (partition_read(p, (unsigned)(blk_id + i),
-			       dst + i * BLOCK_SECTOR_SIZE,
-			       chunk * BLOCK_SECTOR_SIZE) !=
+				   dst + i * BLOCK_SECTOR_SIZE,
+				   chunk * BLOCK_SECTOR_SIZE) !=
 		    chunk * BLOCK_SECTOR_SIZE)
 			return EIO;
 		i += chunk;
@@ -1319,8 +1322,9 @@ static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 #if HDD_CACHE_OPEN
 	{
 		if (partition_cache_write(p, (unsigned)(blk_id + i),
-				      src + i * BLOCK_SECTOR_SIZE,
-				      BLOCK_SECTOR_SIZE) != BLOCK_SECTOR_SIZE)
+					  src + i * BLOCK_SECTOR_SIZE,
+					  BLOCK_SECTOR_SIZE) !=
+		    BLOCK_SECTOR_SIZE)
 			return EIO;
 		i++;
 	}
@@ -1331,8 +1335,8 @@ static int hdd_bdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 		if (chunk > HDD_IO_MAX_SECTORS)
 			chunk = HDD_IO_MAX_SECTORS;
 		if (partition_write(p, (unsigned)(blk_id + i),
-				src + i * BLOCK_SECTOR_SIZE,
-				chunk * BLOCK_SECTOR_SIZE) !=
+				    src + i * BLOCK_SECTOR_SIZE,
+				    chunk * BLOCK_SECTOR_SIZE) !=
 		    chunk * BLOCK_SECTOR_SIZE)
 			return EIO;
 		i += chunk;
@@ -1401,7 +1405,7 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 	}
 
 	z = sizeof(*p) / PAGE_SIZE + 1;
-	p = (partition *)vm_alloc(z);
+	p = (partition *)vm_alloc_dma(z);
 	if (!p) {
 		klog("hdd: failed to allocate partition descriptor\n");
 		return;

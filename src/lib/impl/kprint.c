@@ -330,14 +330,15 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 		}
 		case 'x':
 		case 'p': {
-			unsigned long long v = flag_ll ?
-				va_arg(ap, unsigned long long) :
-				(flag_l ? va_arg(ap, unsigned long) :
-					  va_arg(ap, unsigned));
-			char *s = flag_ll ||
-					  (flag_l && sizeof(unsigned long) > sizeof(unsigned)) ?
-					lltoa((long long)v, 16, 0) :
-					itoa((int)v, 16, 0);
+			unsigned long long v =
+				flag_ll ? va_arg(ap, unsigned long long) :
+					  (flag_l ? va_arg(ap, unsigned long) :
+						    va_arg(ap, unsigned));
+			char *s = flag_ll || (flag_l &&
+					      sizeof(unsigned long) >
+						      sizeof(unsigned)) ?
+					  lltoa((long long)v, 16, 0) :
+					  itoa((int)v, 16, 0);
 
 			EMIT_PADDED(s, (int)strlen(s), width, fill, flag_left);
 			free(s);
@@ -375,10 +376,10 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 			break;
 		}
 		case 'h': {
-			unsigned long long v = flag_ll ?
-				va_arg(ap, unsigned long long) :
-				(flag_l ? va_arg(ap, unsigned long) :
-					  va_arg(ap, unsigned));
+			unsigned long long v =
+				flag_ll ? va_arg(ap, unsigned long long) :
+					  (flag_l ? va_arg(ap, unsigned long) :
+						    va_arg(ap, unsigned));
 
 			FLUSH();
 			print_human_size(_putstr, v, ctx);

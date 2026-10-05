@@ -450,9 +450,9 @@ static int ac97_audio_init(void *_dev)
 	pci_write_field(dev->pci_dev, PCI_COMMAND, 2, cmd | 0x05);
 
 	pages = (AC97_PLAY_BYTES + PAGE_SIZE - 1) / PAGE_SIZE;
-	g_ac97.play_buf = (uint8_t *)vm_alloc(pages);
+	g_ac97.play_buf = (uint8_t *)vm_alloc_dma(pages);
 	g_ac97.play_phys = VIRT_TO_PHY(g_ac97.play_buf);
-	g_ac97.bd = (ac97_bd *)vm_alloc(1);
+	g_ac97.bd = (ac97_bd *)vm_alloc_dma(1);
 	memset(g_ac97.bd, 0, PAGE_SIZE);
 
 	g_ac97.channels = 2;

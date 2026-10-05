@@ -1,6 +1,6 @@
 # MOS Kernel
 
-> A 32-bit x86 (i686) educational OS kernel with Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility, running in QEMU via GRUB/Multiboot.
+> An x86 and AMD64 educational OS kernel with Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility, running in QEMU via GRUB/Multiboot.
 
 MOS now reaches a visible Red Hat 9 graphical desktop.
 
@@ -37,8 +37,8 @@ brew tap nativeos/i386-elf-toolchain && brew install i386-elf-gcc i386-elf-binut
 ```sh
 make -j$(nproc)                 # x86 release -> out/x86/release/
 make ARCH=x86 BUILD=debug       # x86 debug   -> out/x86/debug/
-make ARCH=x64                   # reserved x64 backend (not implemented yet)
-./run.sh          # boot release build into Red Hat 9
+make ARCH=x64                   # AMD64 release -> out/x64/release/
+./run.sh          # boot AMD64 release build into Red Hat 9
 ./run.sh bash     # boot release build directly into bash
 ./run.sh debug    # build and boot the debug kernel from out/x86/debug/
 ```
@@ -64,7 +64,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | Document                                    | Summary                                                                                                          |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | [Architecture Overview](doc/overall.md)     | Memory layout, boot sequence, all subsystems, key constants                                                      |
-| [Boot Stage 1](doc/boot_stage1.md)          | GDT/IDT setup, PIC init, initial 8 MB page tables, paging enable, EIP/ESP transition, physical memory allocator  |
+| [Boot Stage 1](doc/boot_stage1.md)          | GDT/IDT setup, PIC init, initial page tables, paging enable, EIP/ESP transition, physical memory allocator  |
 | [Boot Stage 2](doc/boot_stage2.md)          | Subsystem init order, `KERNEL_INIT` table, SMP startup, first userspace process                                  |
 | [Interrupt Handling](doc/interrupts.md)     | IDT setup, entry stubs, stack layout, dispatcher, syscall/page-fault/IRQ/IPI paths, IF timeline                  |
 | [Physical Memory](doc/mm_physical.md)       | Buddy allocator, page descriptors, reference counting, CoW, dirty tracking                                       |

@@ -132,10 +132,10 @@ static void lock_base_acquire(lock_base *s, const char *func)
  * The lock word is cleared first so that when the woken task retries the
  * CAS in lock_base_acquire it immediately succeeds.
  */
-static void lock_base_release_locked(lock_base *s)
+static int lock_base_release_locked(lock_base *s)
 {
 	__sync_lock_release(&s->lock);
-	lock_wake_one_locked(&s->wait_list);
+	return lock_wake_one_locked(&s->wait_list);
 }
 
 /* ===========================================================================
@@ -193,20 +193,15 @@ void cond_reset(cond_t *s)
 }
 
 /* Fire the event: clear the lock and wake one sleeping waiter. */
-void cond_notify_nosched(cond_t *s)
-{
-	int irq;
-	spinlock_lock(&s->base.wait_lock, &irq);
-	/* lock_base_release_locked clears the lock then wakes one waiter. */
-	lock_base_release_locked((lock_base *)&s->base);
-	spinlock_unlock(&s->base.wait_lock, irq);
-}
-
 void cond_notify(cond_t *s)
 {
-	cond_notify_nosched(s);
-	/* Yield with the notifier still runnable. */
-	task_sched();
+	int irq, woke;
+	spinlock_lock(&s->base.wait_lock, &irq);
+	woke = lock_base_release_locked((lock_base *)&s->base);
+	spinlock_unlock(&s->base.wait_lock, irq);
+	/* Outer spinlocks and deferred callbacks retain their scheduling state. */
+	if (woke && irq && ps_enabled() && sched_is_enabled())
+		task_sched();
 }
 
 /* Interrupt-context variants: poll instead of sleep. */

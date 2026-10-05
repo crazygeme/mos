@@ -10,6 +10,9 @@
  * callback inside lwIP must not yield. The scheduling level belongs to the
  * current task, so a waiting socket does not inhibit its peers.
  */
+void net_service_update(void);
+void net_service_tick(void);
+
 static inline int net_core_enter(void)
 {
 	if (!ps_enabled())
@@ -21,6 +24,7 @@ static inline int net_core_enter(void)
 
 static inline void net_core_leave(int *active)
 {
+	net_service_update();
 	if (*active)
 		sched_enable();
 }

@@ -297,8 +297,8 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 		ret = -ENOMEM;
 		goto out;
 	}
-	if (sock_alloc_rxbuf(server_sk,
-			     sock_default_rxbuf_size(AF_UNIX, client->type)) < 0) {
+	if (sock_alloc_rxbuf(server_sk, sock_default_rxbuf_size(
+						AF_UNIX, client->type)) < 0) {
 		sock_destroy(server_sk);
 		ret = -ENOMEM;
 		goto out;

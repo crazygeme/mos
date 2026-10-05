@@ -22,15 +22,23 @@ static int owned(paddr_t physical);
 
 static pte_t *table_pointer(pte_t entry)
 {
-	return (pte_t *)(KERNEL_OFFSET + (entry & ADDRESS_MASK));
+	paddr_t physical = entry & ADDRESS_MASK;
+	return (pte_t *)(physical < KERNEL_DIRECT_MAP_LIMIT ?
+				 KERNEL_OFFSET + physical :
+				 MOS_PHYS_MAP_BEGIN + physical);
 }
 static paddr_t table_address(const void *table)
 {
-	return (uintptr_t)table - KERNEL_OFFSET;
+	vaddr_t address = (uintptr_t)table;
+	return address >= MOS_PHYS_MAP_BEGIN &&
+			       address <
+				       MOS_PHYS_MAP_BEGIN + MOS_PHYS_MAP_SIZE ?
+		       address - MOS_PHYS_MAP_BEGIN :
+		       address - KERNEL_OFFSET;
 }
 vaddr_t mm_get_pagedir(void)
 {
-	return KERNEL_OFFSET + arch_mm_current_address_space();
+	return (vaddr_t)table_pointer(arch_mm_current_address_space());
 }
 vaddr_t mm_alloc_page_table(void)
 {
@@ -461,25 +469,34 @@ pfn_t mm_get_attached_page_index(vaddr_t address)
 {
 	return mm_virt_to_phys(address) / PAGE_SIZE;
 }
-vaddr_t vm_alloc(int count)
+static vaddr_t vm_alloc_pool(int count, int dma)
 {
 	if (count <= 0)
 		return 0;
-	unsigned page = phymm_alloc_kernel(count);
+	unsigned page = dma ? phymm_alloc_dma(count) :
+			      phymm_alloc_kernel(count);
 	if (page == PHYMM_INVALID) {
 		phymm_reclaim_kernel_cache(32);
-		page = phymm_alloc_kernel(count);
+		page = dma ? phymm_alloc_dma(count) : phymm_alloc_kernel(count);
 		if (page == PHYMM_INVALID)
 			return 0;
 	}
 	for (int i = 0; i < count; i++)
 		phymm_reference_page(page + i);
 	buffer_count += count;
-	return KERNEL_OFFSET + (paddr_t)page * PAGE_SIZE;
+	return PHY_TO_VIRT((paddr_t)page * PAGE_SIZE);
+}
+vaddr_t vm_alloc(int count)
+{
+	return vm_alloc_pool(count, 0);
+}
+vaddr_t vm_alloc_dma(int count)
+{
+	return vm_alloc_pool(count, 1);
 }
 void vm_free(vaddr_t address, int count)
 {
-	unsigned page = (address - KERNEL_OFFSET) / PAGE_SIZE;
+	unsigned page = VIRT_TO_PHY(address) / PAGE_SIZE;
 	for (int i = 0; i < count; i++)
 		phymm_dereference_page(page + i);
 	phymm_free_kernel(page, count);

@@ -389,7 +389,8 @@ static const command_operation *const pts_terminal_command_groups[256] = {
 
 static int pts_pair_ioctl(pts_pair *p, unsigned cmd, void *buf)
 {
-	return command_dispatch(pts_terminal_command_groups, p, cmd, buf, -ENOSYS);
+	return command_dispatch(pts_terminal_command_groups, p, cmd, buf,
+				-ENOSYS);
 }
 
 static int pts_master_ioctl_tiocgptn(void *context __attribute__((unused)),

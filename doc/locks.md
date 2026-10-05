@@ -66,7 +66,7 @@ int r = cond_wait(&cv, 1);  // block; returns -1 if signal pending
 cond_reset(&cv);            // re-arm after consuming the event
 
 // ── producer (process or interrupt context) ───────────
-cond_notify(&cv);           // fire event + wake one waiter + sched()
+cond_notify(&cv);           // fire event; schedule only after waking a waiter
 cond_notify_at_intr(&cv);   // fire event only (no sleep, no sched)
 cond_wait_at_intr(&cv);     // poll-wait (no sleep) for interrupt ctx
 ```
@@ -77,7 +77,7 @@ cond_wait_at_intr(&cv);     // poll-wait (no sleep) for interrupt ctx
 
 - Internally a `lock_base` with a TAS word and a wait queue.
 - **Lost-wakeup prevention**: before sleeping, the task re-checks the lock word while holding `wait_lock` (the same lock held by `cond_notify`). This closes the TOCTOU window between "lock is taken" and "enqueue self".
-- `cond_notify` calls `task_sched()` after waking to give the woken task CPU time without waiting for the next timer tick.
+- `cond_notify` calls `task_sched()` only after waking a waiter and only when interrupts and task scheduling are enabled. An empty wait list preserves the event without scheduling.
 - `cond_notify_at_intr` / `cond_wait_at_intr` are for interrupt handlers where calling `task_sched()` to sleep is forbidden.
 
 ### Rules

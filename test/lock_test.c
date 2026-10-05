@@ -10,6 +10,7 @@
  */
 
 #include <lib/lock.h>
+#include <int/int.h>
 #include <ps/ps.h>
 #include <test/test.h>
 
@@ -312,5 +313,19 @@ KTEST(lock, cond_notify_then_wait)
 	cond_notify(&c); /* fires event: lock→0 */
 	cond_wait(&c, 0); /* consumes it: lock→1 */
 	EXPECT_EQ((int)c.base.lock, 1);
+	return 0;
+}
+
+KTEST(lock, notify_without_waiter_does_not_schedule)
+{
+	extern unsigned task_schedule_count;
+	cond_t event;
+	cond_init(&event, 1);
+	int irq = int_intr_disable();
+	unsigned before = task_schedule_count;
+	cond_notify(&event);
+	EXPECT_EQ(task_schedule_count, before);
+	EXPECT_EQ(event.base.lock, 0u);
+	int_intr_setlevel(irq);
 	return 0;
 }

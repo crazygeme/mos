@@ -51,7 +51,8 @@ static void bochs_flush_text(void)
 	if (!dirty_end)
 		return;
 	memcpy((void *)(uintptr_t)(_fb_phys + dirty_begin),
-	       (const void *)(_fb_buffer + dirty_begin), dirty_end - dirty_begin);
+	       (const void *)(_fb_buffer + dirty_begin),
+	       dirty_end - dirty_begin);
 	dirty_begin = dirty_end = 0;
 }
 
@@ -140,7 +141,8 @@ static void render_cell(const tty_cell_t *cell, int col, int row)
 	int i, j;
 	bochs_dirty((py * _hw_resolution_x + px) * 4,
 		    ((py + _font->height - 1) * _hw_resolution_x + px +
-		     _font->width) * 4);
+		     _font->width) *
+			    4);
 
 	for (i = 0; i < _font->height; i++) {
 		unsigned char bits =
@@ -164,7 +166,8 @@ static void render_cursor_cell(int col, int row, char ch, unsigned fg,
 	int i, j;
 	bochs_dirty((py * _hw_resolution_x + px) * 4,
 		    ((py + _font->height - 1) * _hw_resolution_x + px +
-		     _font->width) * 4);
+		     _font->width) *
+			    4);
 
 	for (i = 0; i < _font->height; i++) {
 		unsigned char bits_ch =

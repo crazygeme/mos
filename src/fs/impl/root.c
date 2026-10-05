@@ -16,6 +16,9 @@
 #include <macro.h>
 #include <config.h>
 #include <ext4.h>
+#include <ext4_fs.h>
+#include <ext4_inode.h>
+#include <ext4_dir.h>
 
 unsigned fs_read_size = 0;
 unsigned fs_write_size = 0;
@@ -24,23 +27,115 @@ unsigned fs_write_size = 0;
  * ext4 file / directory operations
  * ====================================================================== */
 
+static void root_lock_lock(void);
+static void root_lock_unlock(void);
+
+typedef struct {
+	ext4_file handle;
+	struct ext4_fs *fs;
+	file *owner;
+	list_entry link;
+} ext4_open_file;
+
+/* Independent opens retain one entry each; mappings and passed descriptors
+ * retain their file object through f_count. Protected by the mount lock. */
+static list_entry ext4_open_files;
+
+static int ext4_refresh_size(file *fp)
+{
+	ext4_file *handle = fp->f_inode->i_private;
+	struct stat st;
+	int ret = ext4_fstat(handle, &st);
+
+	if (!ret) {
+		handle->fsize = st.st_size;
+		fp->f_inode->i_size = st.st_size;
+	}
+	return ret ? -ret : 0;
+}
+
+static void ext4_touch_file(file *fp, int write)
+{
+	ext4_open_file *open = fp->f_inode->i_private;
+	struct ext4_inode_ref ref;
+	unsigned now = time_now_sec();
+
+	root_lock_lock();
+	if (open->fs && !open->fs->read_only &&
+	    ext4_fs_get_inode_ref(open->fs, open->handle.inode, &ref) == EOK) {
+		if (write) {
+			ext4_inode_set_modif_time(ref.inode, now);
+			ext4_inode_set_change_inode_time(ref.inode, now);
+		} else {
+			ext4_inode_set_access_time(ref.inode, now);
+		}
+		ref.dirty = true;
+		ext4_fs_put_inode_ref(&ref);
+	}
+	root_lock_unlock();
+}
+
 static int ext4_file_release(file *fp)
 {
-	ext4_file *f = fp->f_inode->i_private;
+	ext4_open_file *open = fp->f_inode->i_private;
+	ext4_file *f = &open->handle;
+	struct ext4_inode_ref ref;
+	list_entry *entry;
+	int ret = EOK, remaining = 0;
 
-	if ((fp->f_state & FS_FILE_UNLINK_ON_CLOSE) && fp->f_name)
-		ext4_fremove(fp->f_name);
+	root_lock_lock();
+	list_remove_entry(&open->link);
+	for (entry = ext4_open_files.next; entry != &ext4_open_files;
+	     entry = entry->next) {
+		ext4_open_file *other =
+			container_of(entry, ext4_open_file, link);
+		if (other->fs == open->fs && other->handle.inode == f->inode) {
+			remaining = 1;
+			break;
+		}
+	}
+	if (!remaining && open->fs) {
+		ret = ext4_fs_get_inode_ref(open->fs, f->inode, &ref);
+		if (ret == EOK) {
+			int orphan = !ext4_inode_get_links_cnt(ref.inode);
+			ext4_fs_put_inode_ref(&ref);
+			if (orphan) {
+				/* Cache reads acquire the mount lock after the cache lock. */
+				root_lock_unlock();
+				fs_page_cache_invalidate(fp);
+				root_lock_lock();
+				ret = ext4_fs_get_inode_ref(open->fs, f->inode,
+							    &ref);
+				if (ret == EOK) {
+					ret = ext4_fs_truncate_inode(&ref, 0);
+					if (ret == EOK) {
+						ext4_inode_set_del_time(
+							ref.inode,
+							time_now_sec());
+						ref.dirty = true;
+						ret = ext4_fs_free_inode(&ref);
+					}
+					ext4_fs_put_inode_ref(&ref);
+				}
+			}
+		}
+	}
+	root_lock_unlock();
+	if (ret)
+		klog("ext4: inode %u release failed: %d\n", f->inode, ret);
 	ext4_fclose(f);
-	free(f);
+	free(open);
 	free(fp->f_inode);
 	free(fp);
-	return 0;
+	return ret ? -ret : 0;
 }
 
 static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	ext4_file *f = fp->f_inode->i_private;
-	ssize_t rcnt = fs_page_cache_read(fp, buf, size, pos);
+	ssize_t rcnt = ext4_refresh_size(fp);
+	if (!rcnt)
+		rcnt = fs_page_cache_read(fp, buf, size, pos);
 
 	if (rcnt < 0)
 		return rcnt;
@@ -54,8 +149,7 @@ static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 		ext4_fseek(f, *pos, SEEK_SET);
 
 	fs_read_size += (unsigned)rcnt;
-	if (fp->f_name)
-		ext4_file_set_atime(fp->f_name, (uint32_t)time_now_sec());
+	ext4_touch_file(fp, 0);
 	return rcnt;
 }
 
@@ -67,6 +161,9 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	loff_t write_pos = *pos;
 	int ret;
 
+	ret = ext4_refresh_size(fp);
+	if (ret)
+		return ret;
 	if (fp->f_inode)
 		fs_page_cache_invalidate(fp);
 	if (fp->f_flag & O_APPEND)
@@ -85,10 +182,7 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	*pos = write_pos + (loff_t)wcnt;
 	if (fp->f_inode)
 		fp->f_inode->i_size = f->fsize;
-	if (fp->f_name) {
-		uint32_t t = (uint32_t)time_now_sec();
-		ext4_file_set_mtime(fp->f_name, t);
-	}
+	ext4_touch_file(fp, 1);
 	return (ssize_t)wcnt;
 }
 
@@ -106,6 +200,8 @@ static loff_t ext4_file_llseek(file *fp, loff_t offset, int whence)
 		new_pos = cur + offset;
 		break;
 	case SEEK_END:
+		if (ext4_refresh_size(fp))
+			return -EIO;
 		new_pos = (loff_t)f->fsize + offset;
 		break;
 	default:
@@ -145,10 +241,10 @@ static int ext4_file_flush(file *fp)
 	if (fp->f_inode && fp->f_inode->i_pgcache_tag)
 		sb = fp->f_inode->i_pgcache_tag;
 
-	if (fp->f_name)
-		path = fp->f_name;
-	else if (sb)
+	if (sb)
 		path = sb->s_mountpoint;
+	else if (fp->f_name)
+		path = fp->f_name;
 
 	if (!path)
 		return 0;
@@ -248,11 +344,7 @@ static int ext4_file_ftruncate(file *fp, loff_t size)
 		fp->f_inode->i_size = f->fsize;
 	if (fp->f_pos > size)
 		fp->f_pos = size;
-	if (fp->f_name) {
-		uint32_t t = (uint32_t)time_now_sec();
-		ext4_file_set_mtime(fp->f_name, t);
-		ext4_file_set_ctime(fp->f_name, t);
-	}
+	ext4_touch_file(fp, 1);
 	return 0;
 }
 
@@ -303,8 +395,7 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		}
 		if (!entry->inode || !entry->name_length ||
 		    entry->inode_type == EXT4_DIRENTRY_DIR_CSUM) {
-			*pos = dir->next_off == ~0ULL ? end :
-							dir->next_off;
+			*pos = dir->next_off == ~0ULL ? end : dir->next_off;
 			continue;
 		}
 		unsigned size =
@@ -319,8 +410,7 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		record->d_ino = entry->inode;
 		record->d_reclen = size;
 		/* Export the backing-store end offset, not the iterator sentinel. */
-		record->d_off = dir->next_off == ~0ULL ? end :
-							 dir->next_off;
+		record->d_off = dir->next_off == ~0ULL ? end : dir->next_off;
 		memcpy(record->d_name, entry->name, entry->name_length);
 		*pos = record->d_off;
 		out += size;
@@ -602,7 +692,7 @@ retry_open:
 	}
 
 	/* ---- Case 2: regular open, with final symlink following ---- */
-	f = zalloc(sizeof(*f));
+	f = zalloc(sizeof(ext4_open_file));
 	/*
 	 * The pre-check (open without O_CREAT) is only needed when O_CREAT is
 	 * set, to detect whether the file was just created so we can assign
@@ -757,12 +847,23 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 
 	/* mp ends with '/'; path starts with '/' — skip path's leading '/' */
 	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+	root_lock_lock();
 	file *ret = ext4_path_open(full, flag);
+	if (ret && ret->f_fop == &ext4_file_fops) {
+		ext4_open_file *open = ret->f_inode->i_private;
+		struct ext4_sblock *disk_sb;
+		if (ext4_get_sblock(mi->mp, &disk_sb) == EOK)
+			open->fs = container_of(disk_sb, struct ext4_fs, sb);
+		open->owner = ret;
+		list_init(&open->link);
+		list_insert_tail(&ext4_open_files, &open->link);
+	}
 	if (ret && ret->f_inode) {
 		ret->f_inode->i_pgcache_tag = sb;
 		if (flag & O_TRUNC)
 			fs_page_cache_invalidate(ret);
 	}
+	root_lock_unlock();
 	name_put(full);
 	return ret;
 }
@@ -996,11 +1097,104 @@ static int ext4_rmdir(super_block *sb, const char *path)
 
 static int ext4_unlink(super_block *sb, const char *path)
 {
-	char *full = name_get();
-	int ret;
+	char *full = name_get(), *parent_path = name_get();
+	ext4_file child_file, parent_file;
+	struct ext4_sblock *disk_sb;
+	struct ext4_fs *fs;
+	struct ext4_inode_ref child, parent;
+	char *slash;
+	list_entry *entry;
+	int ret, retained = 0;
+
+	if (!full || !parent_path) {
+		ret = ENOMEM;
+		goto done;
+	}
 	ext4_full_path(sb, path, full);
-	ret = ext4_fremove(full);
-	name_put(full);
+	root_lock_lock();
+	ret = ext4_get_sblock(full, &disk_sb);
+	if (ret)
+		goto unlock;
+	fs = container_of(disk_sb, struct ext4_fs, sb);
+	if (fs->read_only) {
+		ret = EROFS;
+		goto unlock;
+	}
+	ret = ext4_fopen2(&child_file, full, O_RDONLY);
+	if (ret)
+		goto unlock;
+	for (entry = ext4_open_files.next; entry != &ext4_open_files;
+	     entry = entry->next) {
+		ext4_open_file *open =
+			container_of(entry, ext4_open_file, link);
+		if (open->fs == fs && open->handle.inode == child_file.inode) {
+			retained = 1;
+			break;
+		}
+	}
+	if (!retained) {
+		ret = ext4_fremove(full);
+		goto close_child;
+	}
+	strcpy(parent_path, full);
+	slash = strrchr(parent_path, '/');
+	if (slash == parent_path)
+		parent_path[1] = '\0';
+	else
+		*slash = '\0';
+	ret = ext4_fopen2(&parent_file, parent_path, O_RDONLY);
+	if (ret)
+		goto close_child;
+	ret = ext4_fs_get_inode_ref(fs, parent_file.inode, &parent);
+	if (ret)
+		goto close_parent;
+	ret = ext4_fs_get_inode_ref(fs, child_file.inode, &child);
+	if (ret)
+		goto put_parent;
+	if (ext4_inode_is_type(&fs->sb, child.inode,
+			       EXT4_INODE_MODE_DIRECTORY)) {
+		ret = EISDIR;
+		goto put_child;
+	}
+	slash = strrchr(full, '/');
+	ret = ext4_dir_remove_entry(&parent, slash + 1, strlen(slash + 1));
+	if (!ret) {
+		unsigned now = time_now_sec();
+		ext4_fs_inode_links_count_dec(&child);
+		ext4_inode_set_change_inode_time(child.inode, now);
+		ext4_inode_set_change_inode_time(parent.inode, now);
+		ext4_inode_set_modif_time(parent.inode, now);
+		child.dirty = parent.dirty = true;
+		for (entry = ext4_open_files.next; entry != &ext4_open_files;
+		     entry = entry->next) {
+			ext4_open_file *open =
+				container_of(entry, ext4_open_file, link);
+			file *fp = open->owner;
+			if (open->fs == fs &&
+			    open->handle.inode == child_file.inode &&
+			    fp->f_name &&
+			    (!ext4_inode_get_links_cnt(child.inode) ||
+			     !strcmp(fp->f_name, full))) {
+				free(fp->f_name);
+				fp->f_name = NULL;
+			}
+		}
+	}
+put_child:
+	ext4_fs_put_inode_ref(&child);
+put_parent:
+	ext4_fs_put_inode_ref(&parent);
+close_parent:
+	ext4_fclose(&parent_file);
+close_child:
+	ext4_fclose(&child_file);
+unlock:
+	root_lock_unlock();
+done:
+	if (full)
+		name_put(full);
+	if (parent_path)
+		name_put(parent_path);
 	return ret ? -ret : 0;
 }
 
@@ -1068,18 +1262,51 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 		name_put(full2);
 		return -EINVAL;
 	}
+	root_lock_lock();
+	ext4_file source, target;
+	if (ext4_fopen2(&source, full1, O_RDONLY) == EOK) {
+		if (ext4_fopen2(&target, full2, O_RDONLY) == EOK) {
+			int same = source.mp == target.mp &&
+				   source.inode == target.inode;
+			ext4_fclose(&target);
+			ext4_fclose(&source);
+			if (same) {
+				root_lock_unlock();
+				name_put(full1);
+				name_put(full2);
+				return 0;
+			}
+		} else {
+			ext4_fclose(&source);
+		}
+	}
 	ret = ext4_frename(full1, full2);
 	if (ret == EEXIST) {
 		/* POSIX rename(2) must replace the destination if it exists */
-		ext4_fremove(full2);
-		ret = ext4_frename(full1, full2);
+		ret = ext4_unlink(sb, newpath);
+		if (!ret)
+			ret = ext4_frename(full1, full2);
+		else
+			ret = -ret;
 	}
 	if (ret == EOK) {
+		list_entry *entry;
+		for (entry = ext4_open_files.next; entry != &ext4_open_files;
+		     entry = entry->next) {
+			ext4_open_file *open =
+				container_of(entry, ext4_open_file, link);
+			file *fp = open->owner;
+			if (fp->f_name && !strcmp(fp->f_name, full1)) {
+				free(fp->f_name);
+				fp->f_name = strdup(full2);
+			}
+		}
 		uint32_t t = (uint32_t)time_now_sec();
 		ext4_file_set_mtime(full2, t);
 		ext4_file_set_ctime(full2, t);
 		ext4_chown(full2, uid, gid);
 	}
+	root_lock_unlock();
 	name_put(full1);
 	name_put(full2);
 	return ret ? -ret : 0;
@@ -1273,7 +1500,7 @@ static fs_type vfat_fs_type = { .name = "vfat", .get_sb = ext4_get_sb };
  * ====================================================================== */
 static rmutex_t root_lock_;
 
-static void root_lock_lock()
+static void root_lock_lock(void)
 {
 	rmutex_lock(&root_lock_);
 }
@@ -1346,6 +1573,7 @@ static void ext_fs_type_init()
 	printk("mnt: registered vfat file type\n");
 	fs_register_type(&vfat_fs_type);
 	rmutex_init(&root_lock_);
+	list_init(&ext4_open_files);
 }
 
 KERNEL_INIT(2, ext_fs_type_init);

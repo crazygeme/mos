@@ -128,10 +128,11 @@ unsigned phymm_alloc_user(void);
 ```
 
 `phymm_alloc_kernel` rounds `page_count` up to the next power of two via
-`ceil_log2`, then allocates from the physical range that can be represented by
-the kernel direct map. Kernel-owned memory therefore has stable
-`KERNEL_OFFSET + physical` addresses and can be returned directly by
-`vm_alloc()`.
+`ceil_log2`. The i386 backend allocates from its kernel direct-map range.
+The AMD64 backend can allocate from all managed RAM, preferring frames above
+4 GiB. `vm_alloc()` returns a permanent kernel alias through the architecture
+address conversion. `vm_alloc_dma()` constrains contiguous allocations to
+physical addresses below 4 GiB for devices with 32-bit DMA addresses.
 
 `phymm_alloc_user` allocates one page and prefers the high physical range above
 the kernel direct-map limit. If no high page is available, it falls back to the

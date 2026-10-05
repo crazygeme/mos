@@ -3,29 +3,25 @@
  *
  * Owns:
  *   - a shared periodic kernel task for process-context housekeeping
- *   - lwIP NO_SYS timer polling
  *   - graphics-VT refresh pacing
  */
 
 #include <ps/ps.h>
-#include <net/core.h>
 #include <dev/tty.h>
 #include <device/vga.h>
 #include <device/time.h>
-#include <lwip/timeouts.h>
-#include <lwip/netif.h>
 
 #define GRAPHICS_REFRESH_FPS 60
 #define GRAPHICS_REFRESH_MS (1000 / GRAPHICS_REFRESH_FPS)
 
 static void ps_system_service_task(void *param)
 {
-	unsigned long long next_lwip_ms;
+	unsigned long long next_timer_ms;
 	unsigned long long next_graphics_ms;
 
 	(void)param;
 
-	next_lwip_ms = time_now_ms() + TICK_MS;
+	next_timer_ms = time_now_ms() + TICK_MS;
 	next_graphics_ms = time_now_ms() + GRAPHICS_REFRESH_MS;
 
 	for (;;) {
@@ -33,16 +29,12 @@ static void ps_system_service_task(void *param)
 		unsigned long long next_due;
 		unsigned sleep_ms;
 
-		if (now >= next_lwip_ms) {
+		if (now >= next_timer_ms) {
 			ps_timer_poll();
-			{
-				NET_CORE_GUARD;
-				sys_check_timeouts();
-				netif_poll_all();
-			}
+
 			do {
-				next_lwip_ms += TICK_MS;
-			} while (next_lwip_ms <= now);
+				next_timer_ms += TICK_MS;
+			} while (next_timer_ms <= now);
 		}
 
 		if (fb_requires_flush() && now >= next_graphics_ms) {
@@ -52,7 +44,7 @@ static void ps_system_service_task(void *param)
 			} while (next_graphics_ms <= now);
 		}
 
-		next_due = next_lwip_ms;
+		next_due = next_timer_ms;
 		if (fb_requires_flush() && next_graphics_ms < next_due)
 			next_due = next_graphics_ms;
 

@@ -247,13 +247,13 @@ KTEST(phymm, cache_budget_matches_allocator)
 	phymm_cache_policy actual, expected;
 	extern unsigned fs_page_cache_pages;
 	extern unsigned hdd_cache_size;
-	unsigned cached = fs_page_cache_pages +
-		hdd_cache_size / (PAGE_SIZE / 512);
+	unsigned cached =
+		fs_page_cache_pages + hdd_cache_size / (PAGE_SIZE / 512);
 
 	phymm_get_usage(&usage);
 	phymm_cache_budget(usage.low_total_pages + usage.high_total_pages,
-			   usage.low_free_pages + usage.high_free_pages,
-			   cached, &expected);
+			   usage.low_free_pages + usage.high_free_pages, cached,
+			   &expected);
 	phymm_get_cache_policy(&actual);
 	EXPECT_EQ(actual.file_pages, expected.file_pages);
 	EXPECT_EQ(actual.block_pages, expected.block_pages);

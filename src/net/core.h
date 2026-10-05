@@ -22,16 +22,26 @@ static inline int net_core_enter(void)
 	return 1;
 }
 
-static inline void net_core_leave(int *active)
+typedef struct {
+	int active;
+	int service;
+} net_core_scope;
+
+static inline void net_core_leave(net_core_scope *scope)
 {
-	net_service_update();
-	if (*active)
+	if (scope->service)
+		net_service_update();
+	if (scope->active)
 		sched_enable();
 }
 
 /* Restore the scheduling level on every scope exit, including early returns. */
-#define NET_CORE_GUARD                                                        \
-	int net_core_guard __attribute__((cleanup(net_core_leave), unused)) = \
-		net_core_enter()
+/* Local sockets retain preemption protection without refreshing lwIP timers. */
+#define NET_CORE_GUARD_IF(needs_service)                                     \
+	net_core_scope net_core_guard                                        \
+		__attribute__((cleanup(net_core_leave), unused)) = {         \
+			net_core_enter(), !!(needs_service)                  \
+		}
+#define NET_CORE_GUARD NET_CORE_GUARD_IF(1)
 
 #endif

@@ -62,7 +62,8 @@ void cond_init(cond_t *s, unsigned int initstat);
 int _cond_wait(cond_t *s, const char *func, int interruptible);
 void cond_wait_at_intr(cond_t *s);
 void cond_reset(cond_t *s);
-/* Wake a waiter without switching away from the notifying task. */
+/* Publish the event and wake a waiter without switching tasks.
+ * Call task_sched explicitly after publishing all state when a handoff is needed. */
 void cond_notify(cond_t *s);
 void cond_notify_at_intr(cond_t *s);
 

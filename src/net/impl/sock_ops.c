@@ -427,14 +427,14 @@ int do_recv(int fd, void *buf, unsigned len, int flags)
 int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	      const struct sockaddr_in *to, unsigned tolen)
 {
-	NET_CORE_GUARD;
+	mos_sock *sk = fd_to_sock(fd);
+	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sendto(fd=%d, buf=%x, len=%u, flags=%d, to=%x, tolen=%u)\n",
 		     fd, buf, len, flags, to, tolen);
 
 	(void)flags;
 	(void)tolen;
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->err)
@@ -480,12 +480,12 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		struct sockaddr_in *from, unsigned *fromlen)
 {
-	NET_CORE_GUARD;
+	mos_sock *sk = fd_to_sock(fd);
+	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("recvfrom(fd=%d, buf=%x, len=%u, flags=%d, from=%x, fromlen=%x)\n",
 		     fd, buf, len, flags, from, fromlen);
 
-	mos_sock *sk = fd_to_sock(fd);
 	task_struct *cur = CURRENT_TASK();
 	if (!sk)
 		return -ENOTSOCK;

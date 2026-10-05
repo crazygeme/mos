@@ -26,7 +26,7 @@ static int sockopt_put_int(void *optval, unsigned *optlen, int val)
 	if (!optval || !optlen)
 		return -EFAULT;
 	unsigned copy = *optlen < sizeof(int) ? *optlen : sizeof(int);
-	__builtin_memcpy(optval, &val, copy);
+	memcpy(optval, &val, copy);
 	*optlen = sizeof(int);
 	return 0;
 }
@@ -60,7 +60,7 @@ static int sockopt_put_timeval_ms(void *optval, unsigned *optlen, unsigned ms)
 	tv.tv_sec = (int)(ms / 1000);
 	tv.tv_usec = (int)((ms % 1000) * 1000);
 	copy = *optlen < sizeof(tv) ? *optlen : sizeof(tv);
-	__builtin_memcpy(optval, &tv, copy);
+	memcpy(optval, &tv, copy);
 	*optlen = sizeof(tv);
 	return 0;
 }

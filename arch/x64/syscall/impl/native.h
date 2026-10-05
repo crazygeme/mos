@@ -48,5 +48,7 @@ int native_socketpair(int, unsigned, int, int *);
 struct sockaddr;
 int native_accept4(int, struct sockaddr *, unsigned *, unsigned);
 int native_sendto(int, const void *, size_t, int, const void *, unsigned);
+int native_setsockopt(int, int, int, const void *, unsigned);
+int native_getsockopt(int, int, int, void *, unsigned *);
 
 #endif

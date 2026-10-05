@@ -175,90 +175,6 @@ static int rooted_path_to_cwd(task_struct *cur, const char *path, char *cwd)
 	return 0;
 }
 
-typedef struct {
-	const char *path;
-	const char *newpath;
-	int found;
-	int native_unlink;
-	int unlinked;
-} open_path_ctx;
-
-static void mark_open_unlinked_files(task_struct *task, void *opaque)
-{
-	open_path_ctx *ctx = opaque;
-	int i;
-
-	if (!task || !task->fds)
-		return;
-
-	for (i = 0; i < MAX_FD; i++) {
-		file *fp = task->fds[i];
-
-		if (!fp || !fp->f_name || strcmp(fp->f_name, ctx->path) != 0)
-			continue;
-		ctx->found = 1;
-		if (!fp->f_fop || !fp->f_fop->unlink_preserves_open)
-			ctx->native_unlink = 0;
-		if (ctx->unlinked) {
-			free(fp->f_name);
-			fp->f_name = NULL;
-		} else if (ctx->newpath) {
-			free(fp->f_name);
-			fp->f_name = strdup(ctx->newpath);
-			fp->f_state |= FS_FILE_UNLINK_ON_CLOSE;
-		}
-	}
-}
-
-static int unlink_open_file(task_struct *cur, const char *path)
-{
-	static unsigned tombstone_seq;
-	open_path_ctx ctx;
-	char *newpath;
-	const char *slash;
-	unsigned seq;
-	int ret;
-
-	memset(&ctx, 0, sizeof(ctx));
-	ctx.path = path;
-	ctx.native_unlink = 1;
-	ps_enum_all(mark_open_unlinked_files, &ctx);
-	if (!ctx.found)
-		return -ENOENT;
-	if (ctx.native_unlink) {
-		ret = vfs_unlink(cur->root, path);
-		if (!ret) {
-			ctx.unlinked = 1;
-			ps_enum_all(mark_open_unlinked_files, &ctx);
-		}
-		return ret;
-	}
-
-	newpath = name_get();
-	slash = strrchr(path, '/');
-	seq = ++tombstone_seq;
-
-	if (!slash || slash == path) {
-		sprintf(newpath, "/.mos-unlinked-%u-%u", current->psid, seq);
-	} else {
-		unsigned dir_len = (unsigned)(slash - path);
-
-		memcpy(newpath, path, dir_len);
-		newpath[dir_len] = '\0';
-		sprintf(newpath + dir_len, "/.mos-unlinked-%u-%u",
-			current->psid, seq);
-	}
-
-	ret = vfs_rename(cur->root, path, newpath);
-	if (ret == 0) {
-		ctx.newpath = newpath;
-		ps_enum_all(mark_open_unlinked_files, &ctx);
-	}
-
-	name_put(newpath);
-	return ret;
-}
-
 static int do_stat(const char *func, const char *name, struct stat *buf,
 		   int flag)
 {
@@ -917,9 +833,7 @@ static int unlink_resolved(const char *name)
 		 */
 	}
 
-	ret = unlink_open_file(cur, name);
-	if (ret == -ENOENT)
-		ret = vfs_unlink(cur->root, name);
+	ret = vfs_unlink(cur->root, name);
 done:
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("unlink(%s) = %d\n", name, ret);

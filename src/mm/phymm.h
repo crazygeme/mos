@@ -72,6 +72,9 @@ int phymm_is_cow(unsigned page_index);
  * Returns the starting page index, or PHYMM_INVALID on failure. */
 unsigned phymm_alloc_kernel(unsigned page_count);
 
+/* Allocate contiguous storage addressable by 32-bit DMA engines. */
+unsigned phymm_alloc_dma(unsigned page_count);
+
 /* Allocate a single physical page for user space.
  * Returns the page index, or PHYMM_INVALID on failure. */
 unsigned phymm_alloc_user(void);

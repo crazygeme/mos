@@ -236,7 +236,11 @@ static unsigned buddy_alloc_in_range(unsigned order, unsigned min_idx,
 
 static unsigned phymm_kernel_page_limit(void)
 {
+#if MOS_HAS_NATIVE_USER
+	unsigned limit = PHYMM_ADDRESS_LIMIT / PAGE_SIZE;
+#else
 	unsigned limit = KERNEL_DIRECT_MAP_LIMIT / PAGE_SIZE;
+#endif
 
 	return limit < phymm_end ? limit : phymm_end;
 }
@@ -279,8 +283,32 @@ unsigned phymm_alloc_kernel(unsigned page_count)
 		return PHYMM_INVALID;
 
 	spinlock_lock(&buddy_lock, &irq);
-	idx = buddy_alloc_in_range(order, phymm_begin,
-				   phymm_kernel_page_limit());
+#if MOS_HAS_NATIVE_USER
+	idx = buddy_alloc_in_range(order, 0x100000U, phymm_end);
+	if (idx == PHYMM_INVALID)
+#endif
+		idx = buddy_alloc_in_range(order, phymm_begin,
+					   phymm_kernel_page_limit());
+	spinlock_unlock(&buddy_lock, irq);
+	return idx;
+}
+
+unsigned phymm_alloc_dma(unsigned page_count)
+{
+	unsigned order = ceil_log2(page_count ? page_count : 1);
+	unsigned limit = 0x100000U;
+	unsigned idx;
+	int irq;
+
+#if !MOS_HAS_NATIVE_USER
+	limit = phymm_kernel_page_limit();
+#endif
+	if (order > MAX_BUDDY_ORDER)
+		return PHYMM_INVALID;
+	if (limit > phymm_end)
+		limit = phymm_end;
+	spinlock_lock(&buddy_lock, &irq);
+	idx = buddy_alloc_in_range(order, phymm_begin, limit);
 	spinlock_unlock(&buddy_lock, irq);
 	return idx;
 }
@@ -294,7 +322,8 @@ unsigned phymm_alloc_user(void)
 	/* Preserve addressable low RAM for kernel and legacy DMA allocations. */
 	idx = buddy_alloc_in_range(0, 0x100000U, phymm_end);
 	if (idx == PHYMM_INVALID)
-		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
+		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(),
+					   phymm_end);
 	if (idx == PHYMM_INVALID)
 		idx = buddy_alloc_high(0);
 	spinlock_unlock(&buddy_lock, irq);
@@ -309,7 +338,8 @@ unsigned phymm_alloc_cache(void)
 	spinlock_lock(&buddy_lock, &irq);
 	idx = buddy_alloc_in_range(0, 0x100000U, phymm_end);
 	if (idx == PHYMM_INVALID)
-		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(), phymm_end);
+		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(),
+					   phymm_end);
 	/* On low-RAM-only machines, reclaim cannot create any high pages. */
 	if (idx == PHYMM_INVALID && phymm_end <= phymm_kernel_page_limit())
 		idx = buddy_alloc_high(0);
@@ -413,7 +443,8 @@ unsigned phymm_reclaim_user_cache(unsigned target_pages)
 	/* File pages may remain pinned by mappings; block lines can help too. */
 	if (freed < target_pages || free < policy.reserve_pages)
 		freed += hdd_cache_reclaim(freed < target_pages ?
-					 target_pages - freed : target_pages);
+						   target_pages - freed :
+						   target_pages);
 	return freed;
 }
 

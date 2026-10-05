@@ -1,3 +1,4 @@
+#include <net/core.h>
 #include <int/int.h>
 #include <int/dsr.h>
 #include <ps/ps.h>
@@ -148,8 +149,10 @@ void intr_handler(intr_frame *frame)
 		goto done;
 	}
 
-	if (frame->vec_no == 0x20 && ps_enabled())
+	if (frame->vec_no == 0x20 && ps_enabled()) {
 		ps_alarm_tick();
+		net_service_tick();
+	}
 	intr_maybe_preempt();
 	intr_prepare_user_return(frame);
 done:

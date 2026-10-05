@@ -135,15 +135,18 @@ static void fill(proc_buf_t *pb)
 	mos_table_begin(pb, "Memory");
 	mos_print_bytes(pb, "kmalloc current", heap_quota);
 	mos_print_bytes(pb, "kmalloc peak", heap_quota_high);
-	mos_print_bytes(pb, "low phys total", MOS_PAGE_BYTES(mem.low_total_pages));
+	mos_print_bytes(pb, "low phys total",
+			MOS_PAGE_BYTES(mem.low_total_pages));
 	mos_print_usage(pb, "low phys used", mem.low_used_pages,
 			mem.low_total_pages);
-	mos_print_bytes(pb, "low phys free", MOS_PAGE_BYTES(mem.low_free_pages));
+	mos_print_bytes(pb, "low phys free",
+			MOS_PAGE_BYTES(mem.low_free_pages));
 	mos_print_bytes(pb, "high phys total",
 			MOS_PAGE_BYTES(mem.high_total_pages));
 	mos_print_usage(pb, "high phys used", mem.high_used_pages,
 			mem.high_total_pages);
-	mos_print_bytes(pb, "high phys free", MOS_PAGE_BYTES(mem.high_free_pages));
+	mos_print_bytes(pb, "high phys free",
+			MOS_PAGE_BYTES(mem.high_free_pages));
 	mos_table_end(pb);
 
 	/* ---- Page fault counters ---- */
@@ -182,7 +185,8 @@ static void fill(proc_buf_t *pb)
 	mos_print_bytes(pb, "cached sectors",
 			(unsigned long long)hdd_cache_size * BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "peak sectors",
-			(unsigned long long)hdd_cache_max_size * BLOCK_SECTOR_SIZE);
+			(unsigned long long)hdd_cache_max_size *
+				BLOCK_SECTOR_SIZE);
 	mos_print_bytes(pb, "read served", hdd_cache_read_size);
 	mos_print_bytes(pb, "write served", hdd_cache_write_size);
 	mos_print_count(pb, "lookups", hdd_cache_search_count);

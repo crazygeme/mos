@@ -51,7 +51,8 @@ static int anon_shared_map_key_comp(const void *k1, const void *k2)
 	int ret = (int)key1->id - (int)key2->id;
 
 	if (ret == 0)
-		ret = (key1->offset > key2->offset) - (key1->offset < key2->offset);
+		ret = (key1->offset > key2->offset) -
+		      (key1->offset < key2->offset);
 	return ret;
 }
 

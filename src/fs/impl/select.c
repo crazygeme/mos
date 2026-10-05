@@ -159,7 +159,8 @@ int do_select(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 		if (timeout->tv_sec == 0 && timeout->tv_usec == 0) {
 			just_test = 1;
 		} else {
-			deadline = time_now_ms() + (uint64_t)timeout->tv_sec * 1000 +
+			deadline = time_now_ms() +
+				   (uint64_t)timeout->tv_sec * 1000 +
 				   timeout->tv_usec / 1000;
 		}
 	} else {

@@ -71,8 +71,9 @@ Virtual address space
 Physical memory classes:
 
 - Allocator RAM: usable Multiboot memory in `[phymm_begin, phymm_end)`.
-- Kernel direct-map RAM: allocator RAM below `KERNEL_DIRECT_MAP_LIMIT`, used
-  for kernel-owned allocations.
+- Kernel direct-map RAM: allocator RAM below `KERNEL_DIRECT_MAP_LIMIT`.
+  AMD64 also permanently maps managed RAM through `MOS_PHYS_MAP_BEGIN`;
+  ordinary kernel allocations may use that mirror.
 - High user/cache RAM: allocator RAM above `KERNEL_DIRECT_MAP_LIMIT`, preferred
   for user pages and caches.
 - vDSO pages: kernel image pages from the `.vdso` section, mapped read/execute

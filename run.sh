@@ -81,7 +81,7 @@ elif [ "$arg" == "-h" ]; then
 	echo "usage:"
 	echo "./run.sh param1 param2 param2 ..."
 	echo "param:"
- echo -e "\t arch=x86|x64: select kernel architecture (default x86)"
+ echo -e "\t arch=x86|x64: select kernel architecture (default x64)"
 	echo -e "\t test: build and run the test kernel for the selected build"
 	echo -e "\t debug: use the debug build and wait for gdb before running"
 	echo -e "\t logtofile: write kernel log to out/x86/<build>/krn.log instead of stdio"
@@ -91,7 +91,7 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t verbose=2: run with focused diagnostic logging"
 	echo -e "\t kvm: enable kvm"
 	echo -e "\t smp=N: start N CPUs (1..32, default 2)"
-	echo -e "\t ram=N: guest memory in MiB (32..65536, default 4096)"
+	echo -e "\t ram=N: guest memory in MiB (32..65536, default 8192)"
 	exit
 fi
 done

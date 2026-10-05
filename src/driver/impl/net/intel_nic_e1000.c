@@ -353,14 +353,14 @@ static int intel_nic_e1000_init(void *_dev)
 		(sizeof(struct e1000_rx_desc) * E1000_NUM_RX_DESC + PAGE_SIZE -
 		 1) /
 		PAGE_SIZE;
-	ctx->rx_descs = (struct e1000_rx_desc *)vm_alloc(rx_desc_pages);
+	ctx->rx_descs = (struct e1000_rx_desc *)vm_alloc_dma(rx_desc_pages);
 	memset(ctx->rx_descs, 0,
 	       sizeof(struct e1000_rx_desc) * E1000_NUM_RX_DESC);
 
 	unsigned rx_buf_pages =
 		(E1000_RX_BUF_SIZE * E1000_NUM_RX_DESC + PAGE_SIZE - 1) /
 		PAGE_SIZE;
-	ctx->rx_bufs_va = vm_alloc(rx_buf_pages);
+	ctx->rx_bufs_va = vm_alloc_dma(rx_buf_pages);
 	ctx->rx_cur = 0;
 	ctx->rx_reclaim_head = 0;
 	memset(ctx->rx_reclaim_ready, 0, sizeof(ctx->rx_reclaim_ready));
@@ -387,14 +387,14 @@ static int intel_nic_e1000_init(void *_dev)
 		(sizeof(struct e1000_tx_desc) * E1000_NUM_TX_DESC + PAGE_SIZE -
 		 1) /
 		PAGE_SIZE;
-	ctx->tx_descs = (struct e1000_tx_desc *)vm_alloc(tx_desc_pages);
+	ctx->tx_descs = (struct e1000_tx_desc *)vm_alloc_dma(tx_desc_pages);
 	memset(ctx->tx_descs, 0,
 	       sizeof(struct e1000_tx_desc) * E1000_NUM_TX_DESC);
 
 	unsigned tx_buf_pages =
 		(E1000_TX_BUF_SIZE * E1000_NUM_TX_DESC + PAGE_SIZE - 1) /
 		PAGE_SIZE;
-	ctx->tx_bufs_va = vm_alloc(tx_buf_pages);
+	ctx->tx_bufs_va = vm_alloc_dma(tx_buf_pages);
 	ctx->tx_cur = 0;
 
 	/* Pre-mark all TX descriptors as done so the first send doesn't stall. */

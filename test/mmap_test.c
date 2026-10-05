@@ -51,7 +51,7 @@ KTEST(mmap, direct_ram_alias)
 		goto release;
 	}
 	address = do_mmap(TEST_FIXED_ADDR, PAGE_SIZE, PROT_READ | PROT_WRITE,
-	                  MAP_SHARED | MAP_FIXED, fd, physical);
+			  MAP_SHARED | MAP_FIXED, fd, physical);
 	EXPECT_EQ(address, TEST_FIXED_ADDR);
 	if (address != TEST_FIXED_ADDR)
 		goto close;

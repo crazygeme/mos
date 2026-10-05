@@ -9,6 +9,6 @@ Architecture sources are grouped by subsystem, with public headers at module
 roots and implementations under `impl/`. The shared i386 syscall namespace
 resides in `arch/abi/i386`.
 
-[Architecture and validation status](../../doc/x64.md) describes ABI layouts,
+[Architecture and validation status](../../doc/bugfix_journal.md#2026-10-05---amd64-kernel-and-process-abi) describes ABI layouts,
 memory ownership, SMP, launch commands, verified runtime configurations, and
 current limits.

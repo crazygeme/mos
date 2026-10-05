@@ -116,6 +116,9 @@ void mm_free_page_table(vaddr_t vir);
 
 vaddr_t vm_alloc(int page_count);
 
+/* Contiguous allocation with physical addresses below 4 GiB. */
+vaddr_t vm_alloc_dma(int page_count);
+
 void vm_free(vaddr_t vm, int page_count);
 
 int mm_map_page(vaddr_t vir, paddr_t phy, unsigned flag);

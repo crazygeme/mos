@@ -29,7 +29,7 @@ KTEST(mm, vm_alloc_single)
 
 	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
-	EXPECT_GE(addr, KERNEL_OFFSET);
+	EXPECT_GE(addr, MOS_NATIVE_TASK_SIZE);
 	EXPECT_EQ(phymm_used, phys_before + 1); /* one page referenced */
 
 	/* Page must be writable */
@@ -47,7 +47,7 @@ KTEST(mm, vm_alloc_multi_page)
 
 	vaddr_t addr = vm_alloc(4);
 	ASSERT_NE(addr, 0u);
-	EXPECT_GE(addr, KERNEL_OFFSET);
+	EXPECT_GE(addr, MOS_NATIVE_TASK_SIZE);
 	EXPECT_EQ(phymm_used, phys_before + 4);
 
 	/* Touch first and last page */
@@ -206,8 +206,7 @@ KTEST(mm, attached_page_index)
 	ASSERT_NE(addr, 0u);
 
 	unsigned idx = mm_get_attached_page_index(addr);
-	/* Kernel heap addresses are direct-map aliases. */
-	unsigned expected = (addr - KERNEL_OFFSET) / PAGE_SIZE;
+	unsigned expected = VIRT_TO_PHY(addr) / PAGE_SIZE;
 	EXPECT_EQ(idx, expected);
 
 	vm_free(addr, 1);
@@ -313,7 +312,7 @@ KTEST(mm, large_direct_map)
 		    PAGE_ENTRY_PRESENT);
 	vaddr_t addr = vm_alloc(1);
 	ASSERT_NE(addr, 0u);
-	unsigned phys = mm_virt_to_phys(addr);
+	paddr_t phys = mm_virt_to_phys(addr);
 	vm_free(addr, 1);
 	EXPECT_EQ(mm_virt_to_phys(addr), phys);
 	EXPECT_EQ(mm_kmap_phys(phys), 1);
@@ -380,6 +379,36 @@ KTEST(mm, managed_high_ram_direct_map)
 	EXPECT_EQ(mm_phys_to_virt(src), address);
 	phymm_free_user(source);
 	phymm_free_user(dest);
+	return 0;
+}
+#endif
+
+KTEST(mm, dma_physical_limit)
+{
+	vaddr_t addr = vm_alloc_dma(4);
+	ASSERT_NE(addr, 0u);
+	EXPECT_LT(VIRT_TO_PHY(addr) + 4 * PAGE_SIZE, 0x100000000ULL);
+	*(volatile unsigned *)addr = 0x12345678;
+	EXPECT_EQ(*(volatile unsigned *)addr, 0x12345678u);
+	vm_free(addr, 4);
+	return 0;
+}
+
+#if MOS_HAS_NATIVE_USER
+KTEST(mm, kernel_ram_mirror)
+{
+	phymm_usage usage;
+	phymm_get_usage(&usage);
+	EXPECT_EQ(usage.high_total_pages, 0u);
+	vaddr_t addr = vm_alloc(1);
+	ASSERT_NE(addr, 0u);
+	paddr_t phys = VIRT_TO_PHY(addr);
+	EXPECT_EQ(PHY_TO_VIRT(phys), addr);
+	if (phys >= KERNEL_DIRECT_MAP_LIMIT)
+		EXPECT_EQ(addr, MOS_PHYS_MAP_BEGIN + phys);
+	*(volatile unsigned *)addr = 0xaabbccdd;
+	EXPECT_EQ(*(volatile unsigned *)addr, 0xaabbccddu);
+	vm_free(addr, 1);
 	return 0;
 }
 #endif

@@ -51,7 +51,7 @@ static loff_t plain_llseek(file *fp, loff_t offset, int whence)
 
 static int plain_release(file *fp)
 {
-	vm_free((unsigned int)(uintptr_t)fp->f_inode->i_private, 1);
+	vm_free((vaddr_t)(uintptr_t)fp->f_inode->i_private, 1);
 	free(fp->f_inode);
 	free(fp);
 	return 0;

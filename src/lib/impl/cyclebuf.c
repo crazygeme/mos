@@ -137,7 +137,7 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 			cond_reset(&b->write_event);
 		spinlock_unlock(&b->lock, irq);
 		if (notify && i > 0) {
-			cond_notify_nosched(&b->read_event);
+			cond_notify(&b->read_event);
 			cyb_notify_poll(b, 1);
 		}
 		written += i;
@@ -151,7 +151,7 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 	return (int)written;
 }
 
-/* Publish complete records before waking readers, without scheduling. */
+/* Publish complete records before waking readers. */
 int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len)
 {
 	int irq, notify;
@@ -169,7 +169,7 @@ int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len)
 		cond_reset(&b->write_event);
 	spinlock_unlock(&b->lock, irq);
 	if (notify) {
-		cond_notify_nosched(&b->read_event);
+		cond_notify(&b->read_event);
 		cyb_notify_poll(b, 1);
 	}
 	return (int)len;
@@ -222,7 +222,7 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 		cond_reset(&b->read_event);
 	spinlock_unlock(&b->lock, irq);
 	if (was_full) {
-		cond_notify_nosched(&b->write_event);
+		cond_notify(&b->write_event);
 		cyb_notify_poll(b, 0);
 	}
 	return n;
@@ -279,7 +279,7 @@ void cyb_flush(cy_buf *b)
 	cond_reset(&b->read_event);
 	spinlock_unlock(&b->lock, irq);
 	if (was_full) {
-		cond_notify_nosched(&b->write_event);
+		cond_notify(&b->write_event);
 		cyb_notify_poll(b, 0);
 	}
 }

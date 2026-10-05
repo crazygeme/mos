@@ -160,8 +160,8 @@ extern phymm_page *phymm_pages;
  * start from the cached file page, and the semantic split happens on write.
  */
 static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
-				      file *f, uint64_t offset, int prot, int flag,
-				      int write)
+				      file *f, uint64_t offset, int prot,
+				      int flag, int write)
 {
 	pf_file_page_result page;
 	unsigned pte = PAGE_ENTRY_USER_CODE;
@@ -285,7 +285,8 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 			page_idx = phymm_alloc_user();
 			if (page_idx == PHYMM_INVALID) {
 				klog("pagefault: phymm_alloc_user failed anon shared addr=%lx offset=%llx\n",
-				     (unsigned long)address, (unsigned long long)offset);
+				     (unsigned long)address,
+				     (unsigned long long)offset);
 				goto DONE;
 			}
 		}
@@ -658,8 +659,8 @@ static void pf_process(intr_frame *frame)
 NOT_HANDLED:
 	cur = CURRENT_TASK();
 
-	if ((vaddr_t)(uintptr_t)frame->eip < KERNEL_OFFSET ||
-	    (fault_address < KERNEL_OFFSET && fault_address > 0x1000)) {
+	if ((frame->cs & 3) == USER_PRIVILEGE ||
+	    (fault_address < MOS_NATIVE_TASK_SIZE && fault_address > 0x1000)) {
 		klog("segfault: %s: error code %x, address %lx, eip %lx\n",
 		     cur->user ? cur->user->command ? cur->user->command :
 						      "[none]" :

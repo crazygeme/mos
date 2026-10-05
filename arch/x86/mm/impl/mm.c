@@ -785,7 +785,8 @@ void mm_destroy_user_map(vaddr_t page_dir)
 				paddr_t phy_addr = table[j] & PAGE_SIZE_MASK;
 				unsigned int page_index;
 
-				if (!phy_addr || (table[j] & PAGE_ENTRY_DIRECT_PHYS))
+				if (!phy_addr ||
+				    (table[j] & PAGE_ENTRY_DIRECT_PHYS))
 					continue;
 
 				page_index = PHY_TO_PAGE_IDX(phy_addr);
@@ -1021,6 +1022,11 @@ vaddr_t vm_alloc(int page_count)
 }
 
 /* Release @page_count pages starting at kernel virtual address @vm */
+vaddr_t vm_alloc_dma(int page_count)
+{
+	return vm_alloc(page_count);
+}
+
 void vm_free(vaddr_t vm, int page_count)
 {
 	int i;

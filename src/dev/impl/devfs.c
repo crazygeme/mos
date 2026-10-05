@@ -61,9 +61,9 @@ static int dev_root_getattr(file *fp, struct stat *s)
 	inode *node = fp->f_inode;
 	memory_dir *rd = node->i_private;
 	memset(s, 0, sizeof(*s));
-	s->st_atime = time_now_sec();
-	s->st_mtime = time_now_sec();
-	s->st_ctime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = rd->node_count;

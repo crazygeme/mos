@@ -187,9 +187,9 @@ static int tests_getattr(file *fp, struct stat *s)
 	s->st_size = (loff_t)node->i_size;
 	s->st_blksize = PAGE_SIZE;
 	s->st_ino = PROC_INODE;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_nlink = S_ISDIR(node->i_mode) ? 2 : 1;
 	return 0;
 }

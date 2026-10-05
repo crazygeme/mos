@@ -27,7 +27,7 @@
 /* ── sys_now() required by lwIP in NO_SYS mode ─────────────────────────────── */
 u32_t sys_now(void)
 {
-	return (u32_t)(time_now_us() / 1000);
+	return (u32_t)time_now_ms();
 }
 
 static mutex_t net_core_lock;
@@ -92,7 +92,7 @@ static void net_service_queue(void)
 		net_service_queued = 1;
 		if (!dsr_add(net_service_run, NULL)) {
 			net_service_queued = 0;
-			net_service_due = time_now_tickets() + 1;
+			net_service_due = time_now_ms() + TICK_MS;
 		}
 	}
 }
@@ -111,7 +111,7 @@ void net_service_update(void)
 	delay = sys_timeouts_sleeptime();
 	due = delay == SYS_TIMEOUTS_SLEEPTIME_INFINITE ?
 		      ~0ULL :
-		      (time_now_ms() + delay + TICK_MS - 1) / TICK_MS;
+		      time_now_ms() + delay;
 	NETIF_FOREACH(nif)
 	{
 		if (nif->loop_first) {
@@ -131,7 +131,7 @@ void net_service_tick(void)
 {
 	int irq;
 	spinlock_lock(&net_service_lock, &irq);
-	if (net_service_initialized && time_now_tickets() >= net_service_due)
+	if (net_service_initialized && time_coarse_ms() >= net_service_due)
 		net_service_queue();
 	spinlock_unlock(&net_service_lock, irq);
 }

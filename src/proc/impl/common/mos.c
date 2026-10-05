@@ -203,7 +203,7 @@ static void fill(proc_buf_t *pb)
 static int mos_getattr(file *file, struct stat *s)
 {
 	inode *inode = file->f_inode;
-	unsigned long now = time_now_sec();
+	unsigned long now = time_wall_sec();
 
 	s->st_atime = now;
 	s->st_mode = inode->i_mode;

@@ -224,7 +224,7 @@ int do_poll(struct pollfd *fds, unsigned nfds, int timeout)
 	}
 
 	if (!just_test && !infinite)
-		deadline = time_now_ms() + (unsigned)timeout;
+		deadline = time_deadline_ms((unsigned)timeout);
 
 	int ret =
 		poll_wait_loop(&poll_fops, &ctx, just_test, infinite, deadline);
@@ -252,9 +252,9 @@ int do_ppoll(struct pollfd *fds, unsigned nfds, const struct timespec *timeout,
 		    timeout->tv_nsec >= 1000000000)
 			return -EINVAL;
 		just_test = !timeout->tv_sec && !timeout->tv_nsec;
-		deadline = time_now_ms() +
-			   (unsigned long long)timeout->tv_sec * 1000 +
-			   (timeout->tv_nsec + 999999ULL) / 1000000;
+		deadline = time_deadline_ms(
+			(unsigned long long)timeout->tv_sec * 1000 +
+			(timeout->tv_nsec + 999999ULL) / 1000000);
 	}
 	if (nfds) {
 		entries = zalloc(sizeof(*entries) * nfds * 2);

@@ -880,7 +880,7 @@ int sys_utime(const char *filename, const struct utimbuf *times)
 		atime = times->actime;
 		mtime = times->modtime;
 	} else {
-		atime = mtime = (unsigned)time_now_sec();
+		atime = mtime = (unsigned)time_wall_sec();
 	}
 
 	name = name_get();

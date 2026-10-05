@@ -1,4 +1,4 @@
-#include <device/time.h>
+#include <device/time_internal.h>
 #include <dev/tty.h>
 #include <int/int.h>
 #include <ps/ps.h>
@@ -6,21 +6,16 @@
 #include <config.h>
 #include <macro.h>
 #include <ps/smp.h>
-#include <lib/lock.h>
 
-static volatile unsigned long tickets;
-static spinlock_t pit_lock = { .inited = 1 };
-static spinlock_t wall_lock = { .inited = 1 };
+static volatile unsigned long long tickets;
 static unsigned long cycle_per_ticket;
-static unsigned long boot_epoch;
-static long long g_wall_offset_us; /* set by settimeofday; 0 = use RTC only */
-static unsigned long long last_time_sample_tickets;
-static unsigned last_time_sample_count = LATCH;
-static unsigned long rtc_get_time(void);
+static unsigned long long sample_ticks;
+static unsigned sample_count = LATCH;
+static int pending_wrap;
 
 static void time_process(intr_frame *frame)
 {
-	__atomic_add_fetch(&tickets, 1, __ATOMIC_RELEASE);
+	time_tick();
 	smp_tick();
 	if (ps_enabled())
 		current->remain_ticks--;
@@ -35,17 +30,17 @@ static void __attribute__((noinline)) busy_wait(unsigned int loops)
 static int too_many_loops(unsigned loops)
 {
 	/* Wait for a time tick. */
-	unsigned int start = tickets;
-	while (tickets == start)
+	unsigned long long start = time_now_tickets();
+	while (time_now_tickets() == start)
 		BARRIER();
 
 	/* Run LOOPS loops. */
-	start = tickets;
+	start = time_now_tickets();
 	busy_wait(loops);
 
 	/* If the tick count changed, we iterated too long. */
 	BARRIER();
-	return start != tickets;
+	return start != time_now_tickets();
 }
 
 static void time_calibrate(void)
@@ -80,14 +75,12 @@ unsigned time_get_cpu_mhz(void)
 	return (unsigned)(cycle_per_ticket / 10000);
 }
 
-void time_init()
+void time_pit_init(void)
 {
 	time_control control;
 
 	tickets = 0;
 	cycle_per_ticket = 0;
-	boot_epoch = rtc_get_time();
-	g_wall_offset_us = (long long)boot_epoch * 1000000LL;
 
 	int_register(0x20, time_process, 0, 0);
 
@@ -101,274 +94,67 @@ void time_init()
 	port_write_byte(TIME_CHANNEL_0, LATCH >> 8);
 }
 
-void ms_to_timeval(unsigned ms, struct timeval *tv)
+/* The time core's IRQ-masked lock serializes ticks and all PIT port reads.
+ * A proven reload is remembered until IRQ0 advances the raw tick epoch. */
+unsigned long long time_pit_read_us(void)
 {
-	tv->tv_sec = (long)(ms / 1000);
-	tv->tv_usec = (long)(ms - (unsigned long long)tv->tv_sec * 1000) * 1000;
+	unsigned long long epoch = tickets;
+	unsigned count;
+
+	port_write_byte(TIME_CONTROL_MASK, 0x00);
+	count = port_read_byte(TIME_CHANNEL_0);
+	count |= (unsigned)port_read_byte(TIME_CHANNEL_0) << 8;
+	if (epoch != sample_ticks)
+		pending_wrap = 0;
+	else if (count > sample_count) {
+		port_write_byte(0x20, 0x0a);
+		if (port_read_byte(0x20) & 1)
+			pending_wrap = 1;
+	}
+	sample_ticks = epoch;
+	sample_count = count;
+	if (pending_wrap)
+		epoch++;
+	unsigned elapsed = count <= LATCH ? LATCH - count : 0;
+	unsigned long long counts = epoch * LATCH + elapsed;
+	/* Use the actual programmed divisor and avoid overflow after months of
+	 * uptime by scaling only the remainder into microseconds. */
+	return (counts / CLOCK_TICK_RATE) * 1000000ULL +
+	       (counts % CLOCK_TICK_RATE) * 1000000ULL / CLOCK_TICK_RATE;
 }
 
-void us_to_timeval(unsigned long long us, struct timeval *tv)
-{
-	tv->tv_sec = (int)(us / 1000000ULL);
-	tv->tv_usec = (int)(us - (unsigned long long)tv->tv_sec * 1000000ULL);
-}
-
-/* Read the current PIT channel-0 countdown value (LATCH..0). */
-static unsigned pit_read_count(void)
-{
-	port_write_byte(TIME_CONTROL_MASK, 0x00); /* latch channel 0 */
-	unsigned lo = port_read_byte(TIME_CHANNEL_0);
-	unsigned hi = port_read_byte(TIME_CHANNEL_0);
-	return (hi << 8) | lo;
-}
-
-/* Return non-zero if IRQ0 (timer) is pending in the PIC IRR but not yet
- * serviced.  This detects the race where the PIT has fired and reloaded
- * but total_tickets has not been incremented yet. */
-static int pic_timer_irq_pending(void)
-{
-#define PIC1_CMD 0x20
-	port_write_byte(PIC1_CMD, 0x0A); /* OCW3: read IRR */
-	return port_read_byte(PIC1_CMD) & 0x01; /* bit 0 = IRQ0 */
-#undef PIC1_CMD
-}
-
-unsigned long long time_now_ms()
-{
-	return time_wall_us() / 1000;
-}
-
-unsigned long long time_now_tickets()
+unsigned long long time_pit_ticks(void)
 {
 	return tickets;
 }
 
-unsigned long time_now_sec(void)
+void time_pit_tick(void)
 {
-	return (unsigned long)(time_wall_us() / 1000000ULL);
+	tickets++;
 }
 
-unsigned long long time_now_us()
+unsigned long long cycle_to_us(unsigned long long loops)
 {
-#define TICK_US (1000000ULL / HZ) /* microseconds per PIT tick (10000) */
-	unsigned long long t1, t2;
-	unsigned count;
-	int wrapped_without_irq, irq;
-	spinlock_lock(&pit_lock, &irq);
-
-	/* Re-read if a tick fires between sampling total_tickets and the PIT. */
-	do {
-		BARRIER();
-		t1 = tickets;
-		count = pit_read_count();
-		BARRIER();
-		t2 = tickets;
-	} while (t1 != t2);
-
-	/*
-	 * Handle the race where the PIT has already reloaded for the next period
-	 * but IRQ0 has not been serviced yet, leaving tickets unchanged.
-	 *
-	 * Reading the PIC IRR alone is too noisy here: unrelated interrupt timing
-	 * can make bit 0 transiently visible and spuriously add a whole tick,
-	 * which makes gettimeofday() jump backwards on the next sample.  Only
-	 * compensate when the hardware counter proves we wrapped inside the same
-	 * ticket epoch, i.e. the down-counter becomes larger than the previous
-	 * latched value without tickets advancing.
-	 */
-	wrapped_without_irq = (t1 == last_time_sample_tickets &&
-			       count > last_time_sample_count);
-	if (wrapped_without_irq && pic_timer_irq_pending())
-		t1++;
-
-	last_time_sample_tickets = t2;
-	last_time_sample_count = count;
-	spinlock_unlock(&pit_lock, irq);
-
-	/* PIT counts DOWN from LATCH to 0; convert remaining count to elapsed us.
-	 * Resolution: 1 / CLOCK_TICK_RATE ≈ 0.84 μs, no calibration needed. */
-	unsigned elapsed = (count <= LATCH) ? (LATCH - count) : 0;
-	unsigned long long frac =
-		(unsigned long long)elapsed * 1000000ULL / CLOCK_TICK_RATE;
-
-	return t1 * TICK_US + frac;
-#undef TICK_US
+	return cycle_per_ticket ? loops * (1000000ULL / HZ) / cycle_per_ticket :
+				  0;
 }
 
-unsigned long long time_wall_us(void)
+unsigned long long cycle_to_ms(unsigned long long loops)
 {
-	int irq;
-	long long offset;
-	spinlock_lock(&wall_lock, &irq);
-	offset = g_wall_offset_us;
-	spinlock_unlock(&wall_lock, irq);
-	return (unsigned long long)((long long)time_now_us() + offset);
-}
-
-/*
- * Set the wall clock to the given absolute time (microseconds since epoch).
- * Adjusts g_wall_offset_us so that time_wall_us() immediately returns wall_us.
- */
-void time_set_wall_offset(long long wall_us)
-{
-	long long offset = wall_us - (long long)time_now_us();
-	int irq;
-	spinlock_lock(&wall_lock, &irq);
-	g_wall_offset_us = offset;
-	spinlock_unlock(&wall_lock, irq);
-}
-
-/* Re-read the RTC and sync the wall clock. Called at exec time for PID 1
- * so that bash-as-init gets the correct time without calling settimeofday. */
-void time_sync_rtc(void)
-{
-	unsigned long epoch = rtc_get_time();
-	time_set_wall_offset((long long)epoch * 1000000LL);
-}
-
-unsigned long long cycle_to_us(unsigned long long dur_cycles)
-{
-	unsigned long long cycle_per_micro_second;
-	unsigned long long tick;
-	cycle_per_micro_second = (unsigned long long)cycle_per_ticket / 10000;
-	if (cycle_per_micro_second)
-		tick = dur_cycles / cycle_per_micro_second;
-	else
-		tick = 0;
-	return tick;
-}
-
-unsigned long long cycle_to_ms(unsigned long long dur_cycles)
-{
-	return cycle_to_us(dur_cycles) / 1000;
-}
-
-void msleep(unsigned int ms)
-{
-	if (ms == 0)
-		return;
-	if (ms < (1000 / HZ)) {
-		usleep(ms * 1000);
-		return;
-	}
-	time_wait(ms);
-}
-
-void usleep(unsigned int us)
-{
-	if (us >= ((1000 / HZ) * 1000))
-		return msleep(us / 1000);
-
-	delay(us);
+	return cycle_to_us(loops) / 1000;
 }
 
 void delay(unsigned int us)
 {
-	unsigned cycles = 0;
-	cycles = (unsigned)((unsigned long long)cycle_per_ticket * HZ * us /
-			    1000000ULL);
-	// printk("usleep %d us equals %d cycles\n", us, cycles);
-	busy_wait(cycles);
-}
-
-/* This code is an interface to the MC146818A-compatible real
-   time clock found on PC motherboards.  See [MC146818A] for
-   hardware details. */
-
-/* I/O register addresses. */
-#define CMOS_REG_SET 0x70 /* Selects CMOS register exposed by REG_IO. */
-#define CMOS_REG_IO 0x71 /* Contains the selected data byte. */
-
-/* Indexes of CMOS registers with real-time clock functions.
-   Note that all of these registers are in BCD format,
-   so that 0x59 means 59, not 89. */
-#define RTC_REG_SEC 0 /* Second: 0x00...0x59. */
-#define RTC_REG_MIN 2 /* Minute: 0x00...0x59. */
-#define RTC_REG_HOUR 4 /* Hour: 0x00...0x23. */
-#define RTC_REG_MDAY 7 /* Day of the month: 0x01...0x31. */
-#define RTC_REG_MON 8 /* Month: 0x01...0x12. */
-#define RTC_REG_YEAR 9 /* Year: 0x00...0x99. */
-
-/* Indexes of CMOS control registers. */
-#define RTC_REG_A 0x0a /* Register A: update-in-progress. */
-#define RTC_REG_B 0x0b /* Register B: 24/12 hour time, irq enables. */
-#define RTC_REG_C 0x0c /* Register C: pending interrupts. */
-#define RTC_REG_D 0x0d /* Register D: valid time? */
-
-/* Register A. */
-#define RTCSA_UIP 0x80 /* Set while time update in progress. */
-
-/* Register B. */
-#define RTCSB_SET 0x80 /* Disables update to let time be set. */
-#define RTCSB_DM 0x04 /* 0 = BCD time format, 1 = binary format. */
-#define RTCSB_24HR 0x02 /* 0 = 12-hour format, 1 = 24-hour format. */
-
-static int bcd_to_bin(unsigned char);
-static unsigned char cmos_read(unsigned char index);
-
-/* Returns number of seconds since Unix epoch of January 1,
-   1970. */
-static unsigned long rtc_get_time(void)
-{
-	static const int days_per_month[12] = { 31, 28, 31, 30, 31, 30,
-						31, 31, 30, 31, 30, 31 };
-	int sec, min, hour, mday, mon, year;
-	unsigned long time;
-	int i;
-
-	/* Get time components.
-
-       We repeatedly read the time until it is stable from one read
-       to another, in case we start our initial read in the middle
-       of an update.  This strategy is not recommended by the
-       MC146818A datasheet, but it is simpler than any of their
-       suggestions and, furthermore, it is also used by Linux.
-
-       The MC146818A can be configured for BCD or binary format,
-       but for historical reasons everyone always uses BCD format
-       except on obscure non-PC platforms, so we don't bother
-       trying to detect the format in use. */
-	do {
-		sec = bcd_to_bin(cmos_read(RTC_REG_SEC));
-		min = bcd_to_bin(cmos_read(RTC_REG_MIN));
-		hour = bcd_to_bin(cmos_read(RTC_REG_HOUR));
-		mday = bcd_to_bin(cmos_read(RTC_REG_MDAY));
-		mon = bcd_to_bin(cmos_read(RTC_REG_MON));
-		year = bcd_to_bin(cmos_read(RTC_REG_YEAR));
-	} while (sec != bcd_to_bin(cmos_read(RTC_REG_SEC)));
-
-	/* Translate years-since-1900 into years-since-1970.
-       If it's before the epoch, assume that it has passed 2000.
-       This will break at 2070, but that's long after our 31-bit
-       time_t breaks in 2038. */
-	if (year < 70)
-		year += 100;
-	year -= 70;
-
-	/* Break down all components into seconds. */
-	time = (year * 365 + (year - 1) / 4) * 24 * 60 * 60;
-	for (i = 1; i < mon; i++)
-		time += days_per_month[i - 1] * 24 * 60 * 60;
-	if (mon > 2 && year % 4 == 0)
-		time += 24 * 60 * 60;
-	time += (mday - 1) * 24 * 60 * 60;
-	time += hour * 60 * 60;
-	time += min * 60;
-	time += sec;
-
-	return time;
-}
-
-/* Returns the integer value of the given BCD byte. */
-static int bcd_to_bin(unsigned char x)
-{
-	return (x & 0x0f) + ((x >> 4) * 10);
-}
-
-/* Reads a byte from the CMOS register with the given INDEX and
-   returns the byte read. */
-static unsigned char cmos_read(unsigned char index)
-{
-	port_write_byte(CMOS_REG_SET, index);
-	return port_read_byte(CMOS_REG_IO);
+	/* Chunking bounds the loop count and multiplication for long delays. */
+	while (us) {
+		unsigned chunk = us > 1000 ? 1000 : us;
+		unsigned loops =
+			(unsigned)(((unsigned long long)cycle_per_ticket * HZ *
+					    chunk +
+				    999999) /
+				   1000000);
+		busy_wait(loops);
+		us -= chunk;
+	}
 }

@@ -222,9 +222,9 @@ static int mixer_getattr(file *fp, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_rdev = ctx ? ctx->rdev : 0;
 	s->st_blksize = PAGE_SIZE;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_nlink = 1;
 	return 0;
 }
@@ -302,9 +302,9 @@ static int dsp_getattr(file *fp, struct stat *s)
 	s->st_mode = node->i_mode;
 	s->st_rdev = ctx ? ctx->rdev : 0;
 	s->st_blksize = ctx ? audio_block_size(ctx->dev) : PAGE_SIZE;
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_nlink = 1;
 	return 0;
 }

@@ -141,9 +141,9 @@ static int pipe_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
 
-	s->st_atime = time_now_sec();
-	s->st_ctime = time_now_sec();
-	s->st_mtime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
 	s->st_mode = node->i_mode;
 	s->st_size = 0;
 	s->st_blksize = PAGE_SIZE;

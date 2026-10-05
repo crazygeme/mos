@@ -89,9 +89,9 @@ static int proc_root_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
 	memset(s, 0, sizeof(*s));
-	s->st_atime = time_now_sec();
-	s->st_mtime = time_now_sec();
-	s->st_ctime = time_now_sec();
+	s->st_atime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
 	s->st_mode = node->i_mode;
 	s->st_blksize = PAGE_SIZE;
 	s->st_dev = 0xb;

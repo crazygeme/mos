@@ -14,9 +14,25 @@
 
 /* ── File operations shared by regular files and directories ─────────── */
 
+typedef struct {
+	proc_buf_t *buffer;
+	unsigned uid;
+	unsigned gid;
+} pid_file_data;
+
+static pid_file_data *pid_data_new(proc_buf_t *pb, task_struct *task)
+{
+	pid_file_data *data = zalloc(sizeof(*data));
+	data->buffer = pb;
+	data->uid = task->user->euid;
+	data->gid = task->user->egid;
+	return data;
+}
+
 static ssize_t pid_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	proc_buf_t *pb = fp->f_inode->i_private;
+	pid_file_data *data = fp->f_inode->i_private;
+	proc_buf_t *pb = data->buffer;
 	loff_t off = *pos;
 	ssize_t left = (ssize_t)pb->len - (ssize_t)off;
 	ssize_t n = (ssize_t)count < left ? (ssize_t)count : left;
@@ -30,7 +46,8 @@ static ssize_t pid_read(file *fp, void *buf, size_t count, loff_t *pos)
 
 static loff_t pid_llseek(file *fp, loff_t offset, int whence)
 {
-	proc_buf_t *pb = fp->f_inode->i_private;
+	pid_file_data *data = fp->f_inode->i_private;
+	proc_buf_t *pb = data->buffer;
 	loff_t fsize = (loff_t)pb->len;
 	loff_t newpos;
 
@@ -62,7 +79,9 @@ static unsigned pid_poll(file *fp, unsigned events, poll_table *pt)
 
 static int pid_release(file *fp)
 {
-	proc_buf_free(fp->f_inode->i_private);
+	pid_file_data *data = fp->f_inode->i_private;
+	proc_buf_free(data->buffer);
+	free(data);
 	free(fp->f_inode);
 	free(fp);
 	return 0;
@@ -71,9 +90,12 @@ static int pid_release(file *fp)
 static int pid_file_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
-	proc_buf_t *pb = node->i_private;
+	pid_file_data *data = node->i_private;
+	proc_buf_t *pb = data->buffer;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
+	s->st_uid = data->uid;
+	s->st_gid = data->gid;
 	s->st_size = (loff_t)pb->len;
 	s->st_blksize = PAGE_SIZE;
 	s->st_nlink = 1;
@@ -85,8 +107,11 @@ static int pid_file_getattr(file *fp, struct stat *s)
 static int pid_dir_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
+	pid_file_data *data = node->i_private;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode;
+	s->st_uid = data->uid;
+	s->st_gid = data->gid;
 	s->st_blksize = PAGE_SIZE;
 	s->st_nlink = 2;
 	s->st_dev = 0xb;
@@ -140,13 +165,13 @@ static const file_operations pid_symlink_fops = {
 
 /* ── Public constructors ─────────────────────────────────────────────── */
 
-file *make_pid_file(proc_buf_t *pb)
+file *make_pid_file(proc_buf_t *pb, task_struct *task)
 {
 	inode *nd = zalloc(sizeof(*nd));
 	file *fp = zalloc(sizeof(*fp));
 
 	nd->i_mode = S_IFREG | S_IRUSR | S_IRGRP | S_IROTH;
-	nd->i_private = pb;
+	nd->i_private = pid_data_new(pb, task);
 
 	fp->f_inode = nd;
 	fp->f_count = 1;
@@ -154,14 +179,14 @@ file *make_pid_file(proc_buf_t *pb)
 	return fp;
 }
 
-file *make_pid_dir(proc_buf_t *pb)
+file *make_pid_dir(proc_buf_t *pb, task_struct *task)
 {
 	inode *nd = zalloc(sizeof(*nd));
 	file *fp = zalloc(sizeof(*fp));
 
 	nd->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR | S_IXGRP |
 		     S_IXOTH;
-	nd->i_private = pb;
+	nd->i_private = pid_data_new(pb, task);
 
 	fp->f_inode = nd;
 	fp->f_count = 1;

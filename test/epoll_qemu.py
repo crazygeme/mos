@@ -60,7 +60,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kernel", type=Path, required=True)
     parser.add_argument("--probe", type=Path, required=True,
-                        help="Statically linked C program from test/posix_epoll.sh")
+                        help="Statically linked epoll regression probe")
     parser.add_argument("--linux", action="store_true", help="Use a Linux initramfs")
     parser.add_argument("--cpus", type=int, default=2)
     parser.add_argument("--qemu", default="qemu-system-x86_64")

@@ -110,9 +110,24 @@ static int proc_root_release(file *fp)
 	return 0;
 }
 
+static unsigned char proc_root_dirent_type(file *fp, const char *name)
+{
+	const char *p = name;
+	(void)fp;
+	if (!strcmp(name, ".") || !strcmp(name, "..") ||
+	    !strcmp(name, "self"))
+		return S_IFDIR >> 12;
+	if (*p < '0' || *p > '9')
+		return 0;
+	while (*p >= '0' && *p <= '9')
+		p++;
+	return *p == '\0' ? S_IFDIR >> 12 : 0;
+}
+
 static const file_operations proc_root_fops = {
 	.getattr = proc_root_getattr,
 	.read = proc_root_read,
+	.dirent_type = proc_root_dirent_type,
 	.poll = proc_root_poll,
 	.release = proc_root_release,
 };
@@ -127,8 +142,8 @@ static const file_operations proc_root_fops = {
  * The static mounts come from sb->s_mounts whose keys are absolute paths
  * like "/meminfo"; we strip the leading '/' when emitting the dirent name.
  *
- * Live PIDs are collected via ps_enum_all into the module-static array
- * (proc_pid_list / pid_ctx.count); acceptable for a single-CPU context.
+ * Live PIDs are collected via ps_enum_all into an array private to this
+ * directory snapshot.
  */
 static void proc_dir_gen(super_block *sb, memory_dir *rd)
 {

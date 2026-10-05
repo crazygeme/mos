@@ -106,6 +106,8 @@ typedef struct _file_operations {
 	int (*chown)(file *file, uint32_t uid, uint32_t gid);
 	/* read/write: update *pos on success, return bytes transferred or -errno */
 	ssize_t (*read)(file *file, void *buf, size_t size, loff_t *pos);
+	/* Linux directory-entry type; absent callbacks report DT_UNKNOWN. */
+	unsigned char (*dirent_type)(file *file, const char *name);
 	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
 	/* llseek: return new position or -errno */
 	loff_t (*llseek)(file *file, loff_t offset, int whence);

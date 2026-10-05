@@ -69,8 +69,10 @@ returns `EINVAL`. Power-management wake locks are not provided.
 
 ## Validation
 
-`test/posix_epoll.sh` is the guest regression test. It contains the canonical C
-program and compiles it with the guest compiler. The checks cover control
+The gnu-mos sysroot installs `posix_epoll.sh` in `/root` and `/home/ezheng`.
+The script contains the C regression program and compiles it with the
+configured LFS userspace toolchain. Its working directory is
+`${HOME}/tests/posix_epoll`. The checks cover control
 errors, opaque data, level and edge delivery, one-shot rearming, duplicate
 lifetime, descriptor reuse, ready-before-add subscriptions, fairness, nesting,
 UNIX and TCP sockets, PTYs, timeouts, signals, concurrent waiters, and process

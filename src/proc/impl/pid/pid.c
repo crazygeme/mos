@@ -54,7 +54,7 @@ static file *pid_dir_open(task_struct *task)
 	pb = proc_buf_new();
 	proc_buf_copy(pb, buf, size);
 	free(buf);
-	return make_pid_dir(pb);
+	return make_pid_dir(pb, task);
 }
 
 #undef PID_FILL_DIRENT
@@ -82,11 +82,11 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 	if (rest[0] == '\0' || (rest[0] == '/' && rest[1] == '\0'))
 		return pid_dir_open(task);
 
-#define OPEN_TEXT_FILE(fill_fn)           \
-	do {                              \
-		pb = proc_buf_new();      \
-		fill_fn(pb, task);        \
-		return make_pid_file(pb); \
+#define OPEN_TEXT_FILE(fill_fn)                    \
+	do {                                       \
+		pb = proc_buf_new();               \
+		fill_fn(pb, task);                 \
+		return make_pid_file(pb, task);    \
 	} while (0)
 
 	if (strcmp(rest, "/status") == 0)

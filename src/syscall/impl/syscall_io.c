@@ -809,31 +809,31 @@ struct native_dirent {
 };
 
 static void dirent64_emit(void *buffer, const struct linux_dirent *source,
-			  unsigned length, unsigned size)
+			  unsigned length, unsigned size, unsigned char type)
 {
 	struct linux_dirent64 *entry = buffer;
 	entry->d_ino = source->d_ino;
 	entry->d_off = source->d_off;
 	entry->d_reclen = size;
-	entry->d_type = 0;
+	entry->d_type = type;
 	memcpy(entry->d_name, source->d_name, length + 1);
 }
 
 static void native_dirent_emit(void *buffer, const struct linux_dirent *source,
-			       unsigned length, unsigned size)
+			       unsigned length, unsigned size, unsigned char type)
 {
 	struct native_dirent *entry = buffer;
 	entry->ino = source->d_ino;
 	entry->offset = source->d_off;
 	entry->reclen = size;
 	memcpy(entry->name, source->d_name, length + 1);
-	((unsigned char *)buffer)[size - 1] = 0; /* DT_UNKNOWN */
+	((unsigned char *)buffer)[size - 1] = type;
 }
 
 static int getdents_convert(unsigned fd, void *output, unsigned count,
 			    unsigned name_offset, unsigned trailer,
 			    void (*emit)(void *, const struct linux_dirent *,
-					 unsigned, unsigned))
+					 unsigned, unsigned, unsigned char))
 {
 	file *fp;
 	char *buffer, *source;
@@ -872,7 +872,9 @@ static int getdents_convert(unsigned fd, void *output, unsigned count,
 			break;
 		}
 		memset((char *)output + out, 0, size);
-		emit((char *)output + out, entry, length, size);
+		unsigned char type = fp->f_fop->dirent_type ?
+			fp->f_fop->dirent_type(fp, entry->d_name) : 0;
+		emit((char *)output + out, entry, length, size, type);
 		position = entry->d_off;
 		source += entry->d_reclen;
 		out += size;

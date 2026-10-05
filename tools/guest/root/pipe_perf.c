@@ -4,7 +4,12 @@
  * Run:   ./pipe_perf
  * Help:  ./pipe_perf --help
  *
- * Separate processes measure one-way throughput and request/reply latency.
+ * Separate processes measure one-way throughput, small-write operation rate,
+ * and request/reply latency. Operations count successful write() calls;
+ * partial writes count individually and interrupted calls do not count.
+ * The operation-rate workload uses 64-byte chunks for at least one second.
+ * Setup, warmup, and the final acknowledgement are excluded from operation
+ * counts. The timed interval includes receiver drain and acknowledgement.
  * Two unidirectional pipes carry requests and replies.
  * Pipe creation, allocation, warmup, and process teardown are excluded
  * from measurements. Each throughput repetition transfers for at least two
@@ -30,11 +35,18 @@
 #include <string.h>
 
 typedef unsigned long long count_t;
+enum benchmark_mode {
+    BENCH_ALL = -1, BENCH_THROUGHPUT, BENCH_LATENCY, BENCH_OPERATIONS
+};
 static count_t byte_count = 16ULL * 1024 * 1024;
 static count_t roundtrips = 10000;
 static count_t warmup_roundtrips = 1000;
 static size_t block_size = 65536;
 static size_t message_size = 64;
+static size_t operation_size = 64;
+static unsigned int operation_seconds = 1;
+static count_t write_calls;
+static int benchmark = BENCH_ALL;
 static unsigned int repetitions = 3, timeout_seconds = 120;
 static unsigned int throughput_seconds = 2;
 static pid_t owner_pid;
@@ -73,15 +85,21 @@ static void usage(const char *name)
            "  --bytes N                   Minimum throughput bytes (16777216)\n"
            "  --seconds N                 Minimum throughput seconds, at least 2 (2)\n"
            "  --block N                   Throughput block bytes (65536)\n"
+           "  --ops-chunk N               Operation-rate chunk bytes (64)\n"
+           "  --ops-seconds N             Minimum operation-rate seconds (1)\n"
+           "  --benchmark MODE            all|throughput|operations|latency (all)\n"
            "  --roundtrips N              Measured request/reply exchanges (10000)\n"
            "  --message N                 Bytes in each request and reply (64)\n"
            "  --warmup N                  Latency warmup exchanges (1000)\n"
            "  --repeats N                 Samples per benchmark (3)\n"
            "  --timeout N                 Seconds allowed per sample (120)\n"
            "  --help                      Display usage\n"
-           "Numeric arguments are decimal integers; block and message sizes\n"
-           "must be between 1 and 1048576 bytes. Throughput warmup transfers\n"
+           "Numeric arguments are decimal integers; block, message, and ops-chunk\n"
+           "sizes must be between 1 and 1048576 bytes. Throughput warmup transfers\n"
+
            "up to 262144 bytes. Each sample uses new pipes and a new process.\n"
+           "Operations count successful measured writes, including partial writes.\n"
+           "Operation-rate timing is checked every 256 chunks.\n"
            "Output is CSV; MB uses 1000000 bytes and MiB uses 1048576 bytes.\n"
            "Throughput runs until both --seconds and --bytes are satisfied.\n"
            "Setup and warmup are excluded. Round-trip time includes both\n"
@@ -123,6 +141,8 @@ static void transfer(int fd, char *buffer, size_t length, int sending)
             errno = sending ? EIO : ECONNRESET;
             fail(sending ? "zero-length write" : "unexpected end of stream");
         }
+        if (sending)
+            ++write_calls;
         buffer += result;
         length -= (size_t)result;
     }
@@ -177,18 +197,19 @@ static double elapsed(const struct timeval *start, const struct timeval *end)
     return seconds;
 }
 
-static void peer(int receive_fd, int send_fd, char *buffer, int latency)
+static void peer(int receive_fd, int send_fd, char *buffer, int mode)
 {
     count_t i, warm_bytes;
     char acknowledgement = 0;
     alarm(timeout_seconds);
-    if (latency) {
+    if (mode == BENCH_LATENCY) {
         for (i = 0; i < warmup_roundtrips + roundtrips; ++i) {
             transfer(receive_fd, buffer, message_size, 0);
             transfer(send_fd, buffer, message_size, 1);
         }
     } else {
-        warm_bytes = byte_count < 262144 ? byte_count : 262144;
+        warm_bytes = mode == BENCH_OPERATIONS ? (count_t)block_size * 256 :
+            (byte_count < 262144 ? byte_count : 262144);
         bulk(receive_fd, buffer, warm_bytes, 0);
         transfer(send_fd, &acknowledgement, 1, 1);
         drain(receive_fd, buffer);
@@ -199,7 +220,7 @@ static void peer(int receive_fd, int send_fd, char *buffer, int latency)
     _exit(0);
 }
 
-static void connection(int endpoints[2], char *buffer, int latency)
+static void connection(int endpoints[2], char *buffer, int mode)
 {
     int request[2], reply[2];
     pid_t pid;
@@ -213,7 +234,7 @@ static void connection(int endpoints[2], char *buffer, int latency)
     if (pid == 0) {
         close(request[1]);
         close(reply[0]);
-        peer(request[0], reply[1], buffer, latency);
+        peer(request[0], reply[1], buffer, mode);
     }
     child_pid = pid;
     close(request[0]);
@@ -223,7 +244,7 @@ static void connection(int endpoints[2], char *buffer, int latency)
     /* endpoints[0] sends requests; endpoints[1] receives replies. */
 }
 
-static void sample(int latency, unsigned int repetition,
+static void sample(int mode, unsigned int repetition,
                    char *buffer)
 {
     int endpoints[2], status;
@@ -233,35 +254,45 @@ static void sample(int latency, unsigned int repetition,
     struct timeval start, end;
     double seconds;
 
+    size_t saved_block_size = block_size;
+    count_t measured_calls;
+    if (mode == BENCH_OPERATIONS)
+        block_size = operation_size;
+
     fflush(stdout);
     alarm(timeout_seconds);
-    connection(endpoints, buffer, latency);
-    if (latency) {
+    connection(endpoints, buffer, mode);
+    if (mode == BENCH_LATENCY) {
         for (i = 0; i < warmup_roundtrips; ++i) {
             transfer(endpoints[0], buffer, message_size, 1);
             transfer(endpoints[1], buffer, message_size, 0);
         }
         timestamp(&start);
+        write_calls = 0;
         for (i = 0; i < roundtrips; ++i) {
             transfer(endpoints[0], buffer, message_size, 1);
             transfer(endpoints[1], buffer, message_size, 0);
         }
         timestamp(&end);
     } else {
-        warm_bytes = byte_count < 262144 ? byte_count : 262144;
+        warm_bytes = mode == BENCH_OPERATIONS ? (count_t)block_size * 256 :
+            (byte_count < 262144 ? byte_count : 262144);
         bulk(endpoints[0], buffer, warm_bytes, 1);
         transfer(endpoints[1], &acknowledgement, 1, 0);
         timestamp(&start);
-        batch_bytes = block_size < 262144 ?
+        write_calls = 0;
+        batch_bytes = mode == BENCH_OPERATIONS ? (count_t)block_size * 256 :
+            block_size < 262144 ?
             (262144 / block_size) * block_size : block_size;
         do {
             bulk(endpoints[0], buffer, batch_bytes, 1);
             transferred += batch_bytes;
             timestamp(&end);
-        } while (interval(&start, &end) < (double)throughput_seconds ||
-                 transferred < byte_count);
+        } while (interval(&start, &end) < (double)(mode == BENCH_OPERATIONS ?
+                    operation_seconds : throughput_seconds) ||
+                 (mode == BENCH_THROUGHPUT && transferred < byte_count));
         if (close(endpoints[0]) < 0)
-            fail("close throughput writer");
+            fail("close stream writer");
         endpoints[0] = -1;
         transfer(endpoints[1], &acknowledgement, 1, 0);
         timestamp(&end);
@@ -282,18 +313,23 @@ static void sample(int latency, unsigned int repetition,
         exit(1);
     }
     seconds = elapsed(&start, &end);
-    if (latency)
-        printf("pipe,latency,%lu,%llu,%u,%.6f,,,%.3f,%.3f\n",
+    measured_calls = write_calls;
+    if (mode == BENCH_LATENCY)
+        printf("pipe,latency,%lu,%llu,%u,%.6f,,,%.3f,%.3f,%llu,%.3f\n",
                (unsigned long)message_size,
                roundtrips, repetition, seconds,
                (double)roundtrips / seconds,
-               seconds * 1000000.0 / (double)roundtrips);
+               seconds * 1000000.0 / (double)roundtrips,
+               measured_calls, (double)measured_calls / seconds);
     else
-        printf("pipe,throughput,%lu,%llu,%u,%.6f,%.3f,%.3f,,\n",
+        printf("pipe,%s,%lu,%llu,%u,%.6f,%.3f,%.3f,,,%llu,%.3f\n",
+               mode == BENCH_OPERATIONS ? "operations" : "throughput",
                (unsigned long)block_size,
                transferred, repetition, seconds,
                (double)transferred / 1000000.0 / seconds,
-               (double)transferred / 1048576.0 / seconds);
+               (double)transferred / 1048576.0 / seconds,
+               measured_calls, (double)measured_calls / seconds);
+    block_size = saved_block_size;
     fflush(stdout);
 }
 
@@ -323,7 +359,17 @@ int main(int argc, char **argv)
             throughput_seconds = (unsigned int)number(value, 86400);
         else if (!strcmp(option, "--block"))
             block_size = (size_t)number(value, 1048576);
-        else if (!strcmp(option, "--message"))
+        else if (!strcmp(option, "--ops-chunk"))
+            operation_size = (size_t)number(value, 1048576);
+        else if (!strcmp(option, "--ops-seconds"))
+            operation_seconds = (unsigned int)number(value, 86400);
+        else if (!strcmp(option, "--benchmark")) {
+            if (!strcmp(value, "all")) benchmark = BENCH_ALL;
+            else if (!strcmp(value, "throughput")) benchmark = BENCH_THROUGHPUT;
+            else if (!strcmp(value, "latency")) benchmark = BENCH_LATENCY;
+            else if (!strcmp(value, "operations")) benchmark = BENCH_OPERATIONS;
+            else { fputs("Invalid benchmark mode.\n", stderr); return 2; }
+        } else if (!strcmp(option, "--message"))
             message_size = (size_t)number(value, 1048576);
         else if (!strcmp(option, "--roundtrips"))
             roundtrips = number(value, 1000000000);
@@ -336,7 +382,8 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "Unknown option: %s\n", option); return 2; }
     }
     if (!byte_count || !block_size || !message_size || !roundtrips ||
-        !repetitions || !timeout_seconds) {
+        !repetitions || !timeout_seconds || !operation_size ||
+        !operation_seconds) {
         fputs("All numeric options except --warmup must be positive.\n", stderr);
         return 2;
     }
@@ -356,15 +403,19 @@ int main(int argc, char **argv)
     if (sigaction(SIGPIPE, &action, NULL) < 0)
         fail("sigaction SIGPIPE");
     allocation = block_size > message_size ? block_size : message_size;
+    if (operation_size > allocation)
+        allocation = operation_size;
     buffer = malloc(allocation);
     if (!buffer)
         fail("malloc");
     memset(buffer, 0x5a, allocation);
-    puts("transport,benchmark,payload_bytes,bytes_or_roundtrips,repeat,seconds,MB_per_s,MiB_per_s,roundtrips_per_s,mean_rtt_us");
-    for (repetition = 1; repetition <= repetitions; ++repetition)
-        sample(0, repetition, buffer);
-    for (repetition = 1; repetition <= repetitions; ++repetition)
-        sample(1, repetition, buffer);
+    puts("transport,benchmark,payload_bytes,bytes_or_roundtrips,repeat,seconds,MB_per_s,MiB_per_s,roundtrips_per_s,mean_rtt_us,write_ops,ops_per_s");
+    for (i = BENCH_THROUGHPUT; i <= BENCH_OPERATIONS; ++i) {
+        if (benchmark >= 0 && benchmark != i)
+            continue;
+        for (repetition = 1; repetition <= repetitions; ++repetition)
+            sample(i, repetition, buffer);
+    }
     cleanup();
     free(buffer);
     return 0;

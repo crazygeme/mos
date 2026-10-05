@@ -69,3 +69,70 @@ int native_socket(int domain, unsigned type, int protocol)
 	uint32_t args[] = { domain, type, protocol };
 	return sys_socketcall(SYS_SOCKET, args);
 }
+
+struct native_socket_timeval {
+	int64_t seconds, microseconds;
+};
+
+static int native_socket_timeout_option(int level, int option)
+{
+	return level == SOL_SOCKET &&
+	       (option == SO_RCVTIMEO || option == SO_SNDTIMEO);
+}
+
+int native_setsockopt(int fd, int level, int option, const void *input,
+		     unsigned length)
+{
+	struct native_socket_timeval wire;
+	struct timeval value;
+	uint64_t ms;
+
+	if (!native_socket_timeout_option(level, option))
+		return do_setsockopt(fd, level, option, input, length);
+	if (length < sizeof(wire))
+		return -EINVAL;
+	if (ps_read_process_memory(current, input, &wire, sizeof(wire)) < 0)
+		return -EFAULT;
+	if (wire.seconds < 0 || wire.microseconds < 0 ||
+	    wire.microseconds >= 1000000)
+		return -EINVAL;
+	/* The shared socket deadline is bounded to unsigned milliseconds. */
+	ms = (uint64_t)wire.seconds > 0xffffffffULL / 1000ULL ?
+		     0xffffffffULL :
+		     (uint64_t)wire.seconds * 1000ULL +
+			     ((uint64_t)wire.microseconds + 999ULL) / 1000ULL;
+	if (ms > 0xffffffffULL)
+		ms = 0xffffffffULL;
+	value.tv_sec = ms / 1000ULL;
+	value.tv_usec = (ms % 1000ULL) * 1000ULL;
+	return do_setsockopt(fd, level, option, &value, sizeof(value));
+}
+
+int native_getsockopt(int fd, int level, int option, void *output,
+		     unsigned *length)
+{
+	struct native_socket_timeval wire;
+	struct timeval value;
+	unsigned capacity, size = sizeof(value);
+	int ret;
+
+	if (!native_socket_timeout_option(level, option))
+		return do_getsockopt(fd, level, option, output, length);
+	if (!output ||
+	    ps_read_process_memory(current, length, &capacity,
+				   sizeof(capacity)) < 0)
+		return -EFAULT;
+	ret = do_getsockopt(fd, level, option, &value, &size);
+	if (ret)
+		return ret;
+	wire.seconds = value.tv_sec;
+	wire.microseconds = value.tv_usec;
+	size = sizeof(wire);
+	if (capacity > size)
+		capacity = size;
+	if ((capacity && ps_write_process_memory(current, output, &wire,
+						capacity) < 0) ||
+	    ps_write_process_memory(current, length, &size, sizeof(size)) < 0)
+		return -EFAULT;
+	return 0;
+}

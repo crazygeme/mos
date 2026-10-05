@@ -166,7 +166,8 @@ unsigned rx_write(mos_sock *sk, const void *src, unsigned len)
 		if (first < n)
 			memcpy(sk->rxbuf, (const char *)src + first, n - first);
 		sk->rx_tail += n;
-		us_to_timeval(time_wall_us(), &sk->rx_stamp);
+		if (sk->domain != AF_UNIX || sk->type != SOCK_STREAM)
+			us_to_timeval(time_wall_us(), &sk->rx_stamp);
 	}
 	return n;
 }
@@ -333,7 +334,8 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	spinlock_unlock(&sk->wait_lock, irq);
 
 	/* Publish stack work before sleeping inside a network guard. */
-	net_service_update();
+	if (sk->domain != AF_UNIX)
+		net_service_update();
 	task_sched();
 	ps_finish_timed_wait(cur);
 
@@ -352,9 +354,9 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 
 static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
-	NET_CORE_GUARD;
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	NET_CORE_GUARD_IF(sk->domain != AF_UNIX);
 	int nonblock = sock_file_nonblock(fp);
 
 	if (count == 0 && sk->type == SOCK_STREAM)
@@ -414,9 +416,9 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 
 static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 {
-	NET_CORE_GUARD;
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	NET_CORE_GUARD_IF(sk->domain != AF_UNIX);
 
 	if (sk->err)
 		return sk->err;
@@ -763,6 +765,8 @@ static int sock_ioctl_siocgstamp(void *context __attribute__((unused)),
 {
 	file *fp = context;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	if (sk->domain == AF_UNIX && sk->type == SOCK_STREAM)
+		return -ENOTTY;
 #if MOS_HAS_NATIVE_USER
 	if (current->user->abi == MOS_ABI_AMD64) {
 		int64_t *wire = arg;

@@ -331,8 +331,8 @@ static unsigned sock_recvmsg_stream(mos_sock *sk, struct msghdr *msg)
 
 int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 {
-	NET_CORE_GUARD;
 	mos_sock *sk = fd_to_sock(fd);
+	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
 	int ret;
 	size_t totlen;
 	const struct sockaddr_in *to;
@@ -386,8 +386,8 @@ log:
 
 int do_recvmsg(int fd, struct msghdr *msg, int flags)
 {
-	NET_CORE_GUARD;
 	mos_sock *sk = fd_to_sock(fd);
+	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
 	unsigned delivered;
 	size_t total_len;
 	unsigned long long deadline;

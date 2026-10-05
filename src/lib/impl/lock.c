@@ -195,13 +195,10 @@ void cond_reset(cond_t *s)
 /* Fire the event: clear the lock and wake one sleeping waiter. */
 void cond_notify(cond_t *s)
 {
-	int irq, woke;
+	int irq;
 	spinlock_lock(&s->base.wait_lock, &irq);
-	woke = lock_base_release_locked((lock_base *)&s->base);
+	lock_base_release_locked((lock_base *)&s->base);
 	spinlock_unlock(&s->base.wait_lock, irq);
-	/* Outer spinlocks and deferred callbacks retain their scheduling state. */
-	if (woke && irq && ps_enabled() && sched_is_enabled())
-		task_sched();
 }
 
 /* Interrupt-context variants: poll instead of sleep. */

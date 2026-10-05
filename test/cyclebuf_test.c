@@ -55,8 +55,8 @@ KTEST(cyclebuf, deferred_notify_poll)
 	poll_table_init(&wait, current, &entry, 1);
 	cyb_poll_read(ctx->buf, &wait);
 
-	/* Queue the producer with the consumer already waiting. The callback
-	 * yields in cond_notify before publishing its poll wakeup. */
+	/* Queue the producer with the consumer waiting. Data and readiness
+	 * notifications must be published before the callback completes. */
 	irq = int_intr_disable();
 	ps_prepare_timed_wait(current, 1000, __func__);
 	queued = dsr_add(deferred_poll_write, ctx);

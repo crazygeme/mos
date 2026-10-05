@@ -256,6 +256,48 @@ def socket_calls(base):
                 os.close(accepted)
 
 
+def socket_timeouts():
+    left, right = socket.socketpair()
+    signal.alarm(5)
+    try:
+        timeout = Time(0, 20000)
+        returned = Time(-1, -1)
+        length = C.c_uint(C.sizeof(returned))
+        for endpoint, option in ((left, socket.SO_RCVTIMEO),
+                                 (right, socket.SO_SNDTIMEO)):
+            call(54, endpoint.fileno(), socket.SOL_SOCKET, option,
+                 C.byref(timeout), C.sizeof(timeout))
+            call(55, endpoint.fileno(), socket.SOL_SOCKET, option,
+                 C.byref(returned), C.byref(length))
+            assert length.value == C.sizeof(returned)
+            assert (returned.sec, returned.fraction) == (0, 20000)
+        buffer = C.create_string_buffer(65536)
+        call(0, left.fileno(), buffer, 1, error=errno.EAGAIN)
+        right.setblocking(False)
+        while True:
+            try:
+                os.write(right.fileno(), buffer.raw)
+            except BlockingIOError:
+                break
+        right.setblocking(True)
+        call(1, right.fileno(), buffer, 1, error=errno.EAGAIN)
+        invalid = Time(0, 1000000)
+        call(54, left.fileno(), socket.SOL_SOCKET, socket.SO_RCVTIMEO,
+             C.byref(invalid), C.sizeof(invalid), error=errno.EINVAL)
+        call(54, left.fileno(), socket.SOL_SOCKET, socket.SO_RCVTIMEO,
+             C.byref(timeout), 8, error=errno.EINVAL)
+        short = C.c_uint(8)
+        returned = Time(-1, -1)
+        call(55, left.fileno(), socket.SOL_SOCKET, socket.SO_RCVTIMEO,
+             C.byref(returned), C.byref(short))
+        assert short.value == C.sizeof(returned)
+        assert returned.sec == 0 and returned.fraction == -1
+    finally:
+        signal.alarm(0)
+        left.close()
+        right.close()
+
+
 def timed_futex():
     word = C.c_int(0)
     call(202, C.byref(word), 128, 1, None, None, 0, error=errno.EAGAIN)
@@ -297,4 +339,5 @@ if __name__ == "__main__":
     libc_sleep()
     pipe_wakeup()
     timed_futex()
+    socket_timeouts()
     print("AMD64 console ABI: PASS")

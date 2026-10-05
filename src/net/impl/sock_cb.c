@@ -99,7 +99,7 @@ static err_t tcp_on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 	mos_sock *child = zalloc(sizeof(*child));
 	if (!child)
 		return ERR_MEM;
-	if (sock_alloc_rxbuf(child, sock_default_rxbuf_size(AF_INET)) < 0) {
+	if (sock_alloc_rxbuf(child, sock_default_rxbuf_size(AF_INET, SOCK_STREAM)) < 0) {
 		sock_destroy(child);
 		return ERR_MEM;
 	}

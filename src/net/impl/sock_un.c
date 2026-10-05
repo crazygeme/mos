@@ -297,7 +297,8 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 		ret = -ENOMEM;
 		goto out;
 	}
-	if (sock_alloc_rxbuf(server_sk, sock_default_rxbuf_size(AF_UNIX)) < 0) {
+	if (sock_alloc_rxbuf(server_sk,
+			     sock_default_rxbuf_size(AF_UNIX, client->type)) < 0) {
 		sock_destroy(server_sk);
 		ret = -ENOMEM;
 		goto out;
@@ -1136,8 +1137,8 @@ int do_socketpair(int domain, int type, int protocol, int sv[2])
 		sock_destroy(b);
 		return -ENOMEM;
 	}
-	if (sock_alloc_rxbuf(a, sock_default_rxbuf_size(AF_UNIX)) < 0 ||
-	    sock_alloc_rxbuf(b, sock_default_rxbuf_size(AF_UNIX)) < 0) {
+	if (sock_alloc_rxbuf(a, sock_default_rxbuf_size(AF_UNIX, type)) < 0 ||
+	    sock_alloc_rxbuf(b, sock_default_rxbuf_size(AF_UNIX, type)) < 0) {
 		sock_destroy(a);
 		sock_destroy(b);
 		return -ENOMEM;

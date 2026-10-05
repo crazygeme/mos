@@ -1,5 +1,5 @@
-#ifndef MOS_X86_ARCH_SIGNAL_H
-#define MOS_X86_ARCH_SIGNAL_H
+#ifndef MOS_I386_SIGNAL_FRAME_H
+#define MOS_I386_SIGNAL_FRAME_H
 
 #include <arch/types.h>
 

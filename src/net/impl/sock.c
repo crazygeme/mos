@@ -767,14 +767,7 @@ static int sock_ioctl_siocgstamp(void *context __attribute__((unused)),
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
 	if (sk->domain == AF_UNIX && sk->type == SOCK_STREAM)
 		return -ENOTTY;
-#if MOS_HAS_NATIVE_USER
-	if (current->user->abi == MOS_ABI_AMD64) {
-		int64_t *wire = arg;
-		wire[0] = sk->rx_stamp.tv_sec;
-		wire[1] = sk->rx_stamp.tv_usec;
-		return 0;
-	}
-#endif
+
 	*(struct timeval *)arg = sk->rx_stamp;
 	return 0;
 }

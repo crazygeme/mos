@@ -450,16 +450,12 @@ static int pf_handle_page_invalid_raw(task_struct *task, vaddr_t fault_address,
 	return 1;
 }
 
-/*
- * wp_page_copy — COW resolution: allocate a private page and copy content.
- *
- * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
- * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
- */
+/* Resolve a missing page and apply architecture execute permissions. */
 static int pf_handle_page_invalid(task_struct *task, vaddr_t address, int write)
 {
 	int handled = pf_handle_page_invalid_raw(task, address, write);
-	if (handled && task->user->abi == MOS_ABI_AMD64) {
+#if MOS_PAGE_NO_EXEC
+	if (handled) {
 		vm_region *region = vm_find_map_cached(task->user, address);
 		if (region) {
 			unsigned flags = mm_get_map_flag(address);
@@ -469,9 +465,16 @@ static int pf_handle_page_invalid(task_struct *task, vaddr_t address, int write)
 			mm_set_map_flag(address, flags);
 		}
 	}
+#endif
 	return handled;
 }
 
+/*
+ * wp_page_copy — COW resolution: allocate a private page and copy content.
+ *
+ * Called when a write fault hits a shared (ref_count > 1) page.  Mirrors
+ * Linux's wp_page_copy(): allocate, copy, swap in the new PTE.
+ */
 static int wp_page_copy(vaddr_t fault_address)
 {
 	vaddr_t vir = fault_address & PAGE_SIZE_MASK;

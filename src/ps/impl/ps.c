@@ -424,10 +424,8 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 	if (!task->user->vm || vaddr >= task->user->vm->task_size ||
 	    len > task->user->vm->task_size - vaddr)
 		return -EFAULT;
-#if MOS_HAS_NATIVE_USER
-	if (vaddr < 0x100000000ULL && vaddr + len > MOS_COMPAT_TASK_SIZE)
+	if (!arch_mm_user_range_valid(vaddr, len))
 		return -EFAULT;
-#endif
 	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {
@@ -506,10 +504,8 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 	if (!task->user->vm || vaddr >= task->user->vm->task_size ||
 	    len > task->user->vm->task_size - vaddr)
 		return -EFAULT;
-#if MOS_HAS_NATIVE_USER
-	if (vaddr < 0x100000000ULL && vaddr + len > MOS_COMPAT_TASK_SIZE)
+	if (!arch_mm_user_range_valid(vaddr, len))
 		return -EFAULT;
-#endif
 	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {

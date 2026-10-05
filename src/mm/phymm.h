@@ -8,12 +8,8 @@
 #define PHYMM_INVALID 0xFFFFFFFFu /* end-of-list / invalid page index */
 #define PHYMM_RESERVED 0xFFFFFFFEu /* ref_count: page is non-RAM / firmware */
 
-/* The AMD64 RAM mirror bounds managed frames; i386 remains non-PAE. */
-#if MOS_HAS_NATIVE_USER
-#define PHYMM_ADDRESS_LIMIT MOS_PHYS_MAP_SIZE
-#else
-#define PHYMM_ADDRESS_LIMIT 0x100000000ULL
-#endif
+/* Managed physical frames are bounded by the architecture memory model. */
+#define PHYMM_ADDRESS_LIMIT MOS_PHYSICAL_ADDRESS_LIMIT
 
 /* Values stored in phymm_page.order */
 #define MAX_BUDDY_ORDER 10 /* largest block = 2^10 = 1024 pages (4 MB) */

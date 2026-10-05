@@ -295,7 +295,7 @@ KTEST(mm, large_direct_map)
 	uintptr_t cr4;
 	unsigned offset;
 	asm volatile("mov %%cr4, %0" : "=r"(cr4));
-#if !MOS_HAS_NATIVE_USER
+#if MOS_PAGING_LEVELS == 2
 	if (!(cr4 & (1U << 4)))
 		return 0; /* CPU without PSE uses the existing 4 KiB path. */
 #endif
@@ -323,7 +323,7 @@ KTEST(mm, large_split_shared_permissions)
 {
 	uintptr_t cr4;
 	asm volatile("mov %%cr4, %0" : "=r"(cr4));
-#if !MOS_HAS_NATIVE_USER
+#if MOS_PAGING_LEVELS == 2
 	if (!(cr4 & (1U << 4)))
 		return 0;
 #endif
@@ -350,7 +350,7 @@ KTEST(mm, large_split_shared_permissions)
 	return 0;
 }
 
-#if MOS_HAS_NATIVE_USER
+#if MOS_PAGING_LEVELS == 4
 KTEST(mm, managed_high_ram_direct_map)
 {
 	unsigned source = phymm_alloc_user();
@@ -394,7 +394,7 @@ KTEST(mm, dma_physical_limit)
 	return 0;
 }
 
-#if MOS_HAS_NATIVE_USER
+#if MOS_PAGING_LEVELS == 4
 KTEST(mm, kernel_ram_mirror)
 {
 	phymm_usage usage;

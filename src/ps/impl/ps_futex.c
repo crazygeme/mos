@@ -19,12 +19,6 @@
 #define FUTEX_TID_MASK 0x3fffffffU
 #define ROBUST_LIST_LIMIT 2048
 
-struct robust_list_head_compat {
-	unsigned list_next;
-	int futex_offset;
-	unsigned list_op_pending;
-};
-
 static int robust_read(task_struct *task, uintptr_t addr, void *dst,
 		       unsigned len)
 {
@@ -60,34 +54,16 @@ void ps_release_robust_list(task_struct *task)
 	uintptr_t base = (uintptr_t)task->robust_list_head, entry, next,
 		  pending;
 	intptr_t offset;
-	unsigned width = task->user->abi == MOS_ABI_AMD64 ? 8 : 4;
-	if (!base)
+	if (!base || !task->robust_list_reader)
 		return;
-	if (width == 4) {
-		struct robust_list_head_compat head;
-		if (robust_read(task, base, &head, sizeof(head)))
-			return;
-		entry = head.list_next;
-		pending = head.list_op_pending;
-		offset = head.futex_offset;
-	} else {
-		struct {
-			uint64_t next;
-			int64_t offset;
-			uint64_t pending;
-		} head;
-		if (robust_read(task, base, &head, sizeof(head)))
-			return;
-		entry = head.next;
-		pending = head.pending;
-		offset = head.offset;
-	}
+	if (task->robust_list_reader(task, base, &entry, &offset, &pending))
+		return;
 	entry &= ~(uintptr_t)1;
 	pending &= ~(uintptr_t)1;
 	for (unsigned count = 0;
 	     entry && entry != base && count < ROBUST_LIST_LIMIT; count++) {
 		next = 0;
-		if (robust_read(task, entry, &next, width))
+		if (task->robust_list_reader(task, entry, &next, NULL, NULL))
 			break;
 		if (entry != pending)
 			robust_release_futex(task, entry, offset);

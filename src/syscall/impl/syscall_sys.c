@@ -494,10 +494,8 @@ int sys_mprotect(void *addr, size_t len, int prot)
 	if (begin >= cur->user->vm->task_size ||
 	    len > cur->user->vm->task_size - begin)
 		return -EINVAL;
-#if MOS_HAS_NATIVE_USER
-	if (begin < 0x100000000ULL && begin + len > MOS_COMPAT_TASK_SIZE)
+	if (!arch_mm_user_range_valid(begin, len))
 		return -EINVAL;
-#endif
 	/* POSIX: addr must be page-aligned */
 	if (begin & ~PAGE_SIZE_MASK)
 		return -EINVAL;
@@ -523,10 +521,10 @@ int sys_mprotect(void *addr, size_t len, int prot)
 			continue;
 		}
 
-		if (cur->user->abi == MOS_ABI_AMD64)
-			mmflag = prot & PROT_EXEC ?
-					 mmflag & ~PAGE_ENTRY_NO_EXEC :
-					 mmflag | PAGE_ENTRY_NO_EXEC;
+#if MOS_PAGE_NO_EXEC
+		mmflag = prot & PROT_EXEC ? mmflag & ~PAGE_ENTRY_NO_EXEC :
+					    mmflag | PAGE_ENTRY_NO_EXEC;
+#endif
 		mmflag |= PAGE_ENTRY_DPL_USER;
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;

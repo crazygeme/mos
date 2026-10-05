@@ -1,4 +1,5 @@
 #include <elf/exec.h>
+#include <elf/format.h>
 #include <device/time.h>
 #include <elf/elf.h>
 #include <dev/blockdev.h>
@@ -189,156 +190,6 @@ static void free_v(char **v, unsigned size)
 		return;
 	}
 	kfree(v);
-}
-
-/* TODO; fix this */
-/* bit 29: HWCAP_I386_TLS — kernel supports set_thread_area; causes ld-linux
- * to search /lib/tls/ for NPTL-optimised libraries (e.g. /lib/tls/libc.so.6) */
-#define ELF_HWCAP (0x0183FBFF | (1 << 29))
-
-/* This yields a string that ld.so will use to load implementation
-specific libraries for optimization.  This is more specific in
-intent than poking at uname or /proc/cpuinfo.
-
-For the moment, we have only optimizations for the Intel generations,
-but that could change... */
-
-#define ELF_PLATFORM "i686"
-/* Symbolic values for the entries in the auxiliary table
-   put on the initial stack */
-#define AT_NULL 0 /* end of vector */
-#define AT_IGNORE 1 /* entry should be ignored */
-#define AT_EXECFD 2 /* file descriptor of program */
-#define AT_PHDR 3 /* program headers for program */
-#define AT_PHENT 4 /* size of program header entry */
-#define AT_PHNUM 5 /* number of program headers */
-#define AT_PAGESZ 6 /* system page size */
-#define AT_BASE 7 /* base address of interpreter */
-#define AT_FLAGS 8 /* flags */
-#define AT_ENTRY 9 /* entry point of program */
-#define AT_NOTELF 10 /* program is not ELF */
-#define AT_UID 11 /* real uid */
-#define AT_EUID 12 /* effective uid */
-#define AT_GID 13 /* real gid */
-#define AT_EGID 14 /* effective gid */
-#define AT_PLATFORM 15 /* string identifying CPU for optimizations */
-#define AT_HWCAP 16 /* arch dependent hints at CPU capabilities */
-#define AT_CLKTCK 17 /* Frequency of times() */
-#define AT_SECURE 23 /* secure dynamic loader execution */
-#define AT_RANDOM 25 /* address of 16 random bytes */
-#define AT_SYSINFO 32 /* address of kernel fast-syscall entry (vsyscall) */
-
-/*
- * setup_user_stack - build the initial user stack layout required by the ELF ABI
- *
- * Constructs the stack that the dynamic linker (or a static binary) expects
- * when it receives control.  The layout, growing downward from @top, is:
- *
- *   [high address = top]
- *     <4-byte end sentinel (0)>
- *     <filename string>
- *     <envp strings>          ← each NUL-terminated
- *     <argv strings>          ← each NUL-terminated
- *     <ELF_PLATFORM string>   ("i686")
- *     <16 random bytes>      (AT_RANDOM)
- *     <16-byte alignment pad>
- *     <auxiliary vector>      ← AT_NULL terminator at the top of this block,
- *                               then AT_PLATFORM, AT_HWCAP/PAGESZ/CLKTCK,
- *                               and the 10 AT_* entries the linker needs
- *     <envp pointer array>    ← NULL-terminated array of pointers into strings
- *     <argv pointer array>    ← NULL-terminated array of pointers into strings
- *     <argc>                  ← pushed last (lowest address)
- *   [returned esp]
- *
- * NEW_AUX_ENT writes one (type, value) pair into the auxiliary vector.
- * The macro __put_user writes a single word at a given stack address.
- *
- * Returns the new stack pointer (esp) that should be given to the entry point.
- */
-static void stack_word(vaddr_t address, uintptr_t value, unsigned width)
-{
-	if (width == 4)
-		*(uint32_t *)address = value;
-	else
-		*(uint64_t *)address = value;
-}
-
-static vaddr_t setup_user_stack(char *file, int argc, char **argv, int envc,
-				char **envp, vaddr_t top, mos_binfmt *exec)
-{
-	unsigned width = current->user->abi == MOS_ABI_I386 ? 4 : 8;
-	const char *platform = width == 4 ? "i686" : "x86_64";
-	vaddr_t sp = top;
-	vaddr_t *av = kmalloc((argc + envc) * sizeof(vaddr_t));
-	if (!av && argc + envc)
-		do_exit(SIGKILL);
-	for (int i = envc - 1; i >= 0; i--) {
-		sp -= strlen(envp[i]) + 1;
-		strcpy((char *)sp, envp[i]);
-		av[argc + i] = sp;
-	}
-	for (int i = argc - 1; i >= 0; i--) {
-		sp -= strlen(argv[i]) + 1;
-		strcpy((char *)sp, argv[i]);
-		av[i] = sp;
-	}
-	sp -= strlen(file) + 1;
-	strcpy((char *)sp, file);
-	vaddr_t filename = sp;
-	sp -= strlen(platform) + 1;
-	strcpy((char *)sp, platform);
-	vaddr_t plat = sp;
-	sp -= 16;
-	vaddr_t random = sp;
-	srand((unsigned)time_now_us());
-	for (unsigned i = 0; i < 16; i++)
-		((unsigned char *)sp)[i] = rand();
-	uintptr_t aux[][2] = { { AT_PHDR, exec->elf_load_addr },
-			       { AT_PHENT, exec->e_phent },
-			       { AT_PHNUM, exec->e_phnum },
-			       { AT_PAGESZ, PAGE_SIZE },
-			       { AT_BASE, exec->interp_bias },
-			       { AT_FLAGS, 0 },
-			       { AT_ENTRY, exec->e_entry },
-			       { AT_UID, current->user->uid },
-			       { AT_EUID, current->user->euid },
-			       { AT_GID, current->user->gid },
-			       { AT_EGID, current->user->egid },
-			       { AT_PLATFORM, plat },
-			       { AT_HWCAP, width == 4 ? ELF_HWCAP : 0 },
-			       { AT_CLKTCK, 100 },
-			       { width == 4 ? AT_SYSINFO : AT_IGNORE,
-				 width == 4 ? mm_vdso_fastcall_entry() : 0 },
-			       { AT_RANDOM, random },
-			       { 31, filename },
-			       { AT_SECURE,
-				 current->user->uid != current->user->euid ||
-					 current->user->gid !=
-						 current->user->egid },
-			       { AT_NULL, 0 } };
-	unsigned words =
-		1 + argc + 1 + envc + 1 + sizeof(aux) / sizeof(uintptr_t);
-	sp = (sp - words * width) & ~(vaddr_t)15;
-	vaddr_t cursor = sp;
-#define PUSH_WORD(value)                                       \
-	do {                                                   \
-		stack_word(cursor, (uintptr_t)(value), width); \
-		cursor += width;                               \
-	} while (0)
-	PUSH_WORD(argc);
-	for (int i = 0; i < argc; i++)
-		PUSH_WORD(av[i]);
-	PUSH_WORD(0);
-	for (int i = 0; i < envc; i++)
-		PUSH_WORD(av[argc + i]);
-	PUSH_WORD(0);
-	for (unsigned i = 0; i < sizeof(aux) / sizeof(aux[0]); i++) {
-		PUSH_WORD(aux[i][0]);
-		PUSH_WORD(aux[i][1]);
-	}
-#undef PUSH_WORD
-	kfree(av);
-	return sp;
 }
 
 static int execve_common(const char *f, char **argv, char **envp,
@@ -599,14 +450,12 @@ static int execve_common(const char *f, char **argv, char **envp,
 		kfree(argv);
 		kfree(envp);
 	}
-	int abi = elf_image_abi(image);
+	const struct elf_format *format = elf_image_format(image);
 	cleanup();
-	cur->user->abi = abi;
-	esp_top = abi == MOS_ABI_I386 ? MOS_COMPAT_TASK_SIZE :
-					MOS_NATIVE_TASK_SIZE;
+	esp_top = format->task_size;
 	cur->user->vm->task_size = esp_top;
-	cur->user->vm->mmap_base = abi == MOS_ABI_I386 ? USER_HEAP_END :
-							 0x100000000ULL;
+	cur->user->vm->mmap_base = format->mmap_base;
+	cur->user->vm->brk_limit = format->brk_limit;
 
 	/*
 	 * now we parse and load elf file.
@@ -647,12 +496,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 			   cur->user->vm->brk);
 	}
 
-	/*
-	 * map a kernel code region into user land, usually used in
-	 * signal deliver and signal return.
-	 */
-	if (abi == MOS_ABI_I386)
-		mm_vdso_map();
+	/* Install the executable's user register context and helper mappings. */
+	format->activate(cur);
 
 	/* Map only the top USER_STACK_INIT_PAGES pages initially.
 	 * The stack grows downward automatically via the page fault handler.
@@ -680,15 +525,15 @@ static int execve_common(const char *f, char **argv, char **envp,
 	cur->user->cap_initialized = 0;
 
 	/* setup arguments and enviroments in proper way for interp */
-	esp_top = setup_user_stack(file_name, argc, s_argv, envc, s_envp,
-				   esp_top, &fmt);
+	esp_top = format->setup_stack(file_name, argc, s_argv, envc, s_envp,
+				      esp_top, &fmt);
 
 	/*
 	 * A traced task that reaches execve without a prior startup SIGSTOP
 	 * still needs a visible stop so the tracer can take control before
 	 * first user instruction in the new image.
 	 */
-	ps_ptrace_stop_exec(eip, esp_top);
+	ps_ptrace_stop_exec(eip, esp_top, format->exec_syscall);
 
 	/* that's all */
 	free_v(s_argv, argc);

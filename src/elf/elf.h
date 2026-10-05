@@ -425,7 +425,6 @@ typedef struct _mos_binfmt {
 } mos_binfmt;
 
 typedef struct elf_image elf_image;
-int elf_image_abi(elf_image *image);
 
 int elf_prepare(file *fp, elf_image **result);
 void elf_release(elf_image *image);

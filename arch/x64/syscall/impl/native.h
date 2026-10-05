@@ -51,4 +51,9 @@ int native_sendto(int, const void *, size_t, int, const void *, unsigned);
 int native_setsockopt(int, int, int, const void *, unsigned);
 int native_getsockopt(int, int, int, void *, unsigned *);
 
+int native_set_robust_list(void *, size_t);
+int native_get_robust_list(int, void *, void *);
+int native_shmctl(int, int, void *);
+int native_ptrace(int, int, void *, void *);
+int native_ioctl(int, unsigned, void *);
 #endif

@@ -155,7 +155,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	}
 
 	if ((flags & CLONE_SETTLS) && tls) {
-		int rc = ps_set_clone_tls_for(task, tls, cur_intr_frame->gs);
+		int rc = ps_set_clone_tls_for(task, tls, cur_intr_frame);
 
 		if (rc != 0) {
 			ps_put_fds(task);

@@ -10,6 +10,11 @@ static void set_base(unsigned msr, uintptr_t base)
 {
 	arch_cpu_write_msr(msr, (uint32_t)base, (uint32_t)(base >> 32));
 }
+void arch_task_copy_user_context(task_struct *child, const task_struct *parent)
+{
+	child->tss.cs = parent->tss.cs;
+}
+
 void arch_task_init(task_struct *task)
 {
 	task->tss.ds = task->tss.es = task->tss.ss = KERNEL_DATA_SELECTOR;
@@ -38,7 +43,7 @@ void ps_load_task_segments(task_struct *task)
 	for (unsigned i = 0; i < GDT_ENTRY_TLS_COUNT; i++)
 		gdt[GDT_ENTRY_TLS_MIN + i] = task->user->tls_desc[i];
 	ps_update_ldt(task);
-	if (task->user->abi == MOS_ABI_AMD64) {
+	if (task->tss.cs == USER64_CODE_SELECTOR) {
 		set_base(0xc0000100, task->tss.fs_base);
 		set_base(0xc0000102, task->tss.gs_base);
 	}
@@ -82,10 +87,9 @@ void arch_task_init_user_frame(intr_frame *frame, vaddr_t ip, vaddr_t sp)
 	memset(frame, 0, sizeof(*frame));
 	frame->eip = (void *)ip;
 	frame->esp = (void *)sp;
-	frame->cs = current->user->abi == MOS_ABI_AMD64 ? USER64_CODE_SELECTOR :
-							  USER_CODE_SELECTOR;
+	frame->cs = current->tss.cs;
 	frame->ss = frame->ds = frame->es = USER_DATA_SELECTOR;
 	frame->fs = frame->gs =
-		current->user->abi == MOS_ABI_AMD64 ? 0 : USER_DATA_SELECTOR;
+		frame->cs == USER64_CODE_SELECTOR ? 0 : USER_DATA_SELECTOR;
 	frame->eflags = 0x202;
 }

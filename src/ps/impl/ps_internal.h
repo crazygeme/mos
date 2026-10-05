@@ -75,7 +75,7 @@ void fork_abort_child(task_struct *task);
 int copy_page_range(task_struct *parent, task_struct *child);
 int ps_set_thread_area_for(task_struct *task, void *info);
 int ps_set_clone_tls_for(task_struct *task, void *info,
-			 unsigned short parent_gs);
+			 const intr_frame *parent_frame);
 void ps_stop_current(intr_frame *frame, int sig);
 int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
 

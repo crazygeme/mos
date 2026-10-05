@@ -2,7 +2,9 @@
 #define MOS_X86_ARCH_MMU_H
 
 #include <arch/types.h>
+#include <stddef.h>
 #include <compiler.h>
+#include <config.h>
 
 ALWAYS_INLINE addr_space_t arch_mm_current_address_space(void)
 {
@@ -68,6 +70,15 @@ ALWAYS_INLINE paddr_t arch_mm_entry_address(pte_t entry)
 }
 
 struct _vm_region;
+/* Validate the architecture's user range and reserved device window. */
+ALWAYS_INLINE int arch_mm_user_range_valid(vaddr_t address, size_t length)
+{
+	if (address >= MOS_NATIVE_TASK_SIZE ||
+	    length > MOS_NATIVE_TASK_SIZE - address)
+		return 0;
+	return 1;
+}
+
 int arch_mm_clone_region(pte_t *src, pte_t *dst, struct _vm_region *region);
 pte_t *arch_mm_lookup_leaf(vaddr_t root, vaddr_t address);
 void arch_mm_enum_user(vaddr_t root, void (*fn)(void *, vaddr_t, paddr_t),

@@ -241,8 +241,6 @@ int sys_futex_time64(int *uaddr, int op, int val, const void *timeout,
 int sys_set_thread_area(void *u_info);
 int sys_get_thread_area(void *u_info);
 int sys_set_tid_address(int *tidptr);
-int sys_set_robust_list(void *head, unsigned len);
-int sys_get_robust_list(int pid, void **head, unsigned *len);
 int sys_rseq(void *rseq, unsigned len, int flags, unsigned signature);
 int sys_modify_ldt(int func, void *ptr, unsigned long bytecount);
 int sys_setitimer(int which, const struct itimerval *new_value,
@@ -354,7 +352,6 @@ int sys_lock(void);
 int sys_shmget(int key, size_t size, int flags);
 intptr_t sys_shmat(int id, const void *address, int flags);
 int sys_shmdt(const void *address);
-int sys_shmctl(int id, int command, void *buf);
 int sys_ipc(unsigned call, int first, int second, int third, void *ptr,
 	    long fifth);
 

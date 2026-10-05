@@ -6,7 +6,6 @@
 #define _PS_SIGNAL_H
 
 #include <arch/types.h>
-#include <arch/signal.h>
 
 /* -----------------------------------------------------------------------
  * Signal numbers (Linux/i386 ABI)
@@ -87,5 +86,11 @@ struct sigaction {
 	void (*sa_restorer)(void);
 };
 
-/* The concrete user-stack signal-frame layout is supplied by the architecture. */
+/* Architecture signal delivery consumes the saved user register context. */
+struct _task_struct;
+struct _arch_intr_frame;
+void arch_signal_deliver(struct _task_struct *, struct _arch_intr_frame *,
+			 struct sigaction *, int);
+void i386_signal_deliver(struct _task_struct *, struct _arch_intr_frame *,
+			 struct sigaction *, int);
 #endif /* _SIGNAL_H */

@@ -84,6 +84,37 @@ static void cyb_notify_poll(cy_buf *b, int read)
  * Write path
  */
 
+/* Copy a bounded span in at most two contiguous transfers. */
+static void cyb_copy_in(cy_buf *b, const unsigned char *src, unsigned len)
+{
+	unsigned first = b->buf_size - b->write_idx;
+
+	if (first > len)
+		first = len;
+	memcpy(b->buf + b->write_idx, src, first);
+	if (first < len)
+		memcpy(b->buf, src + first, len - first);
+	b->write_idx += len;
+	if (b->write_idx >= b->buf_size)
+		b->write_idx -= b->buf_size;
+	b->length += len;
+}
+
+static void cyb_copy_out(cy_buf *b, unsigned char *dst, unsigned len)
+{
+	unsigned first = b->buf_size - b->read_idx;
+
+	if (first > len)
+		first = len;
+	memcpy(dst, b->buf + b->read_idx, first);
+	if (first < len)
+		memcpy(dst + first, b->buf, len - first);
+	b->read_idx += len;
+	if (b->read_idx >= b->buf_size)
+		b->read_idx -= b->buf_size;
+	b->length -= len;
+}
+
 int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 	       int interruptible)
 {
@@ -97,18 +128,16 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 			return 0;
 		spinlock_lock(&b->lock, &irq);
 		notify = (b->length == 0);
-		for (i = 0; i < len - written; i++) {
-			if (b->length == b->buf_size)
-				break;
-			b->buf[b->write_idx] = buf[written + i];
-			b->write_idx = (b->write_idx + 1) % b->buf_size;
-			b->length++;
-		}
+		i = b->buf_size - b->length;
+		if (i > len - written)
+			i = len - written;
+		if (i)
+			cyb_copy_in(b, buf + written, i);
 		if (b->length == b->buf_size)
 			cond_reset(&b->write_event);
 		spinlock_unlock(&b->lock, irq);
 		if (notify && i > 0) {
-			cond_notify(&b->read_event);
+			cond_notify_nosched(&b->read_event);
 			cyb_notify_poll(b, 1);
 		}
 		written += i;
@@ -125,7 +154,6 @@ int cyb_putbuf(cy_buf *b, unsigned char *buf, unsigned len, int blocking,
 /* Publish complete records before waking readers, without scheduling. */
 int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len)
 {
-	unsigned i;
 	int irq, notify;
 
 	if (!len)
@@ -136,11 +164,7 @@ int cyb_put_record(cy_buf *b, const unsigned char *buf, unsigned len)
 		return 0;
 	}
 	notify = b->length == 0;
-	for (i = 0; i < len; i++) {
-		b->buf[b->write_idx] = buf[i];
-		b->write_idx = (b->write_idx + 1) % b->buf_size;
-	}
-	b->length += len;
+	cyb_copy_in(b, buf, len);
 	if (b->length == b->buf_size)
 		cond_reset(&b->write_event);
 	spinlock_unlock(&b->lock, irq);
@@ -192,16 +216,13 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 
 	/* Drain up to len bytes while they are immediately available */
 	int was_full = (b->length == b->buf_size);
-	while (n < len && b->length > 0) {
-		dst[n++] = b->buf[b->read_idx];
-		b->read_idx = (b->read_idx + 1) % b->buf_size;
-		b->length--;
-	}
+	n = b->length < (unsigned)len ? (int)b->length : len;
+	cyb_copy_out(b, dst, (unsigned)n);
 	if (b->length == 0)
 		cond_reset(&b->read_event);
 	spinlock_unlock(&b->lock, irq);
 	if (was_full) {
-		cond_notify(&b->write_event); /* wake any blocked writer */
+		cond_notify_nosched(&b->write_event);
 		cyb_notify_poll(b, 0);
 	}
 	return n;

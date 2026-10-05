@@ -62,7 +62,7 @@ int do_socket(int domain, int type, int protocol)
 		sk->domain = AF_UNIX;
 		sk->type = type;
 		sk->state = SS_UNCONNECTED;
-		if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_UNIX)) <
+		if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_UNIX, type)) <
 		    0) {
 			sock_destroy(sk);
 			return -ENOMEM;
@@ -92,7 +92,7 @@ int do_socket(int domain, int type, int protocol)
 	mos_sock *sk = zalloc(sizeof(*sk));
 	if (!sk)
 		return -ENOMEM;
-	if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_INET)) < 0) {
+	if (sock_alloc_rxbuf(sk, sock_default_rxbuf_size(AF_INET, type)) < 0) {
 		sock_destroy(sk);
 		return -ENOMEM;
 	}

@@ -24,9 +24,12 @@
 
 /* ── Ring-buffer helpers ─────────────────────────────────────────────────── */
 
-unsigned sock_default_rxbuf_size(int domain)
+unsigned sock_default_rxbuf_size(int domain, int type)
 {
-	return domain == AF_UNIX ? SOCK_RXBUF_UNIX_SIZE : SOCK_RXBUF_INET_SIZE;
+	if (domain != AF_UNIX)
+		return SOCK_RXBUF_INET_SIZE;
+	return type == SOCK_STREAM ? SOCK_RXBUF_UNIX_STREAM_SIZE :
+				    SOCK_RXBUF_UNIX_SIZE;
 }
 
 /* A zero socket timeout means an unlimited wait. Keep zero as the
@@ -299,7 +302,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	int irq;
 	task_struct *cur = CURRENT_TASK();
 
-	now = time_now_ms();
+	now = deadline ? time_now_ms() : 0;
 	if (deadline && now >= deadline)
 		return 0;
 
@@ -316,7 +319,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 	sock_waiter_queue(&sk->waiters, &waiter);
 	cur->io_wait = &waiter;
 	cur->cancel_io_wait = sock_cancel_wait;
-	now = time_now_ms();
+	now = deadline ? time_now_ms() : 0;
 	if (deadline && now >= deadline) {
 		sock_waiter_dequeue(&waiter);
 		cur->io_wait = NULL;

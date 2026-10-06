@@ -278,12 +278,9 @@ static int elf_validate(elf_image *image, char *interp)
 	image->phdrs = kmalloc(elf->e_phnum * sizeof(Elf64_Phdr));
 	if (!image->phdrs)
 		return -ENOMEM;
-	for (i = 0; i < elf->e_phnum; i++) {
-		Elf64_Phdr *ph = &image->phdrs[i];
-		unsigned off = elf->e_phoff + i * elf->e_phentsize;
-		if (image->format->read_phdr(fp, off, ph))
-			return -ENOEXEC;
-	}
+	if (image->format->read_phdrs(fp, elf->e_phoff, elf->e_phnum,
+				    image->phdrs))
+		return -ENOEXEC;
 	vaddr_t limit = image->format->task_size;
 	limit -= USER_STACK_PAGES * PAGE_SIZE;
 	interp[0] = 0;

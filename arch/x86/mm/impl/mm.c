@@ -776,6 +776,7 @@ void mm_destroy_user_map(vaddr_t page_dir)
 		pte_t *table;
 		paddr_t table_phy;
 		unsigned int j;
+		unsigned int remaining;
 		int cache_idx;
 
 		table_phy = dir[i] & PAGE_SIZE_MASK;
@@ -788,32 +789,31 @@ void mm_destroy_user_map(vaddr_t page_dir)
 			1;
 		/* The address space is inactive before its last reference is dropped. */
 		dir[i] = 0;
-		/* The live-entry counter is maintained for every user mapping.  Most
-		 * page tables created during short-lived exec/clone paths are already
-		 * empty by the time the address space is destroyed; avoid needlessly
-		 * scanning all 1024 PTEs in that case. */
-		if (pgc_entry_count[cache_idx] != 0)
-			for (j = 0; j < PG_TABLE_SIZE; j++) {
-				paddr_t phy_addr = table[j] & PAGE_SIZE_MASK;
-				unsigned int page_index;
+		/* Stop after the final live entry; trailing empty PTEs own no pages. */
+		remaining = pgc_entry_count[cache_idx];
+		for (j = 0; j < PG_TABLE_SIZE && remaining; j++) {
+			paddr_t phy_addr = table[j] & PAGE_SIZE_MASK;
+			unsigned int page_index;
 
-				if (!phy_addr ||
-				    (table[j] & PAGE_ENTRY_DIRECT_PHYS))
-					continue;
+			if (!phy_addr)
+				continue;
+			remaining--;
+			if (table[j] & PAGE_ENTRY_DIRECT_PHYS)
+				continue;
 
-				page_index = PHY_TO_PAGE_IDX(phy_addr);
-				if ((phy_addr >= dynamic_begin &&
-				     phy_addr < dynamic_end) ||
-				    (phy_addr >= vdso_begin &&
-				     phy_addr < vdso_end)) {
-					/* Every page installed through mm_map_page carries a reference;
-				 * decrement once directly instead of doing a separate atomic
-				 * read via phymm_is_used(). */
-					if (phymm_dereference_page(
-						    page_index) == 0)
-						phymm_free_user(page_index);
-				}
+			page_index = PHY_TO_PAGE_IDX(phy_addr);
+			if ((phy_addr >= dynamic_begin &&
+			     phy_addr < dynamic_end) ||
+			    (phy_addr >= vdso_begin &&
+			     phy_addr < vdso_end)) {
+				/* Every page installed through mm_map_page carries a reference;
+			 * decrement once directly instead of doing a separate atomic
+			 * read via phymm_is_used(). */
+				if (phymm_dereference_page(
+					    page_index) == 0)
+					phymm_free_user(page_index);
 			}
+		}
 
 		pgc_entry_count[cache_idx] = 0;
 		mm_free_page_table((unsigned int)table);

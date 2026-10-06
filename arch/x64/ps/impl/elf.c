@@ -31,7 +31,7 @@ const struct elf_format elf_amd64_format = {
 	.brk_limit = MOS_COMPAT_TASK_SIZE,
 	.exec_syscall = 59,
 	.read_header = read_header,
-	.read_phdr = read_phdr,
+	.read_phdrs = read_phdrs,
 	.setup_stack = setup_stack,
 	.activate = activate,
 };

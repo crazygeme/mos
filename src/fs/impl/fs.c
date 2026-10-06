@@ -4,6 +4,7 @@
 #include <fs/ioctl.h>
 #include <fs/pipe.h>
 #include <fs/epoll.h>
+#include <fs/inotify.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <ps/ps.h>
@@ -77,45 +78,109 @@ static int fs_find_empty_fd(file **fds)
 	return -1;
 }
 
-int fs_read(int fd, unsigned offset, char *buf, unsigned len)
+/* Active transfers retain descriptions independently of descriptor closure. */
+struct file_io_scope {
+	file *fp;
+	struct file_io_scope *previous;
+};
+
+static file *fs_io_begin(int fd, struct file_io_scope *scope)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
-	ssize_t n;
-
+	file *fp;
 	if (fd < 0 || fd >= MAX_FD)
-		return -EBADF;
-
+		return NULL;
+	mutex_lock(&cur->files->lock);
 	fp = cur->fds[fd];
-	if (!fp || !fp->f_fop || !fp->f_fop->read)
+	if (fp)
+		fs_get_file(fp);
+	mutex_unlock(&cur->files->lock);
+	if (fp) {
+		scope->fp = fp;
+		scope->previous = cur->io_files;
+		cur->io_files = scope;
+	}
+	return fp;
+}
+
+static void fs_io_end(struct file_io_scope *scope)
+{
+	CURRENT_TASK()->io_files = scope->previous;
+	fs_put_file(scope->fp);
+}
+
+void fs_cancel_io(task_struct *task)
+{
+	while (task->io_files) {
+		struct file_io_scope *scope = task->io_files;
+		file *fp = scope->fp;
+		task->io_files = scope->previous;
+		fs_put_file(fp);
+	}
+}
+
+int fs_read(int fd, unsigned offset, char *buf, unsigned len)
+{
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	ssize_t n = -EBADF;
+	if (!fp)
 		return -EBADF;
+	if (!fp->f_fop || !fp->f_fop->read)
+		goto out;
 	if (fp->f_mode == O_WRONLY)
-		return -EBADF;
+		goto out;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
 
 	n = fp->f_fop->read(fp, buf, len, &fp->f_pos);
+	if (n > 0)
+		inotify_file_event(fp, IN_ACCESS);
+out:
+	fs_io_end(&scope);
 	return (int)n;
+}
+
+int fs_readv_special(int fd, const struct iovec *iov, int count, int *handled)
+{
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	ssize_t result = -EBADF;
+	*handled = 1;
+	if (!fp)
+		return result;
+	if (!fp->f_fop || fp->f_mode == O_WRONLY)
+		goto out;
+	if (!fp->f_fop->readv) {
+		*handled = 0;
+		result = 0;
+		goto out;
+	}
+	result = fp->f_fop->readv(fp, iov, count);
+	if (result > 0)
+		inotify_file_event(fp, IN_ACCESS);
+out:
+	fs_io_end(&scope);
+	return result;
 }
 
 int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
-	ssize_t n;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	ssize_t n = -EBADF;
 	size_t size = len;
 	unsigned long limit;
 	loff_t pos;
 
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return -EBADF;
-
-	fp = cur->fds[fd];
-	if (!fp || !fp->f_fop || !fp->f_fop->write)
-		return -EBADF;
+	if (!fp->f_fop || !fp->f_fop->write)
+		goto out;
 	if (fp->f_mode == O_RDONLY)
-		return -EBADF;
+		goto out;
 
 	if (offset != (unsigned)-1)
 		fp->f_pos = offset;
@@ -124,81 +189,100 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	if (cur->user && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
-			if ((uint64_t)pos >= limit)
-				return -EFBIG;
+			if ((uint64_t)pos >= limit) {
+				n = -EFBIG;
+				goto out;
+			}
 			if ((uint64_t)pos + size > limit)
 				size = (size_t)(limit - (uint64_t)pos);
-			if (!size)
-				return -EFBIG;
+			if (!size) {
+				n = -EFBIG;
+				goto out;
+			}
 		}
 	}
 
 	n = fp->f_fop->write(fp, buf, size, &fp->f_pos);
+	if (n > 0)
+		inotify_file_event(fp, IN_MODIFY);
+out:
+	fs_io_end(&scope);
 	return (int)n;
 }
 
 int fs_pread(int fd, loff_t offset, char *buf, unsigned len)
 {
-	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
-	ssize_t n;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	ssize_t n = -EBADF;
 	loff_t saved_pos;
 	loff_t pos;
 
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return -EBADF;
-
-	fp = cur->fds[fd];
-	if (!fp || !fp->f_fop || !fp->f_fop->read)
-		return -EBADF;
-
-	if (offset < 0)
-		return -EINVAL;
+	if (!fp->f_fop || !fp->f_fop->read)
+		goto out;
+	if (offset < 0) {
+		n = -EINVAL;
+		goto out;
+	}
 	saved_pos = fp->f_pos;
 	pos = offset;
 	n = fp->f_fop->read(fp, buf, len, &pos);
 	fp->f_pos = saved_pos;
 	if (fp->f_fop->llseek)
 		fp->f_fop->llseek(fp, saved_pos, 0);
+	if (n > 0)
+		inotify_file_event(fp, IN_ACCESS);
+out:
+	fs_io_end(&scope);
 	return (int)n;
 }
 
 int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
-	ssize_t n;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	ssize_t n = -EBADF;
 	loff_t saved_pos;
 	loff_t pos;
 	size_t size = len;
 	unsigned long limit;
 
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return -EBADF;
-
-	fp = cur->fds[fd];
-	if (!fp || !fp->f_fop || !fp->f_fop->write)
-		return -EBADF;
-
-	if (offset < 0)
-		return -EINVAL;
+	if (!fp->f_fop || !fp->f_fop->write)
+		goto out;
+	if (offset < 0) {
+		n = -EINVAL;
+		goto out;
+	}
 	saved_pos = fp->f_pos;
 	pos = offset;
 	if (cur->user && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
 		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
-			if ((uint64_t)pos >= limit)
-				return -EFBIG;
+			if ((uint64_t)pos >= limit) {
+				n = -EFBIG;
+				goto out;
+			}
 			if ((uint64_t)pos + size > limit)
 				size = (size_t)(limit - (uint64_t)pos);
-			if (!size)
-				return -EFBIG;
+			if (!size) {
+				n = -EFBIG;
+				goto out;
+			}
 		}
 	}
 	n = fp->f_fop->write(fp, buf, size, &pos);
 	fp->f_pos = saved_pos;
 	if (fp->f_fop->llseek)
 		fp->f_fop->llseek(fp, saved_pos, 0);
+	if (n > 0)
+		inotify_file_event(fp, IN_MODIFY);
+out:
+	fs_io_end(&scope);
 	return (int)n;
 }
 
@@ -310,6 +394,8 @@ int fs_open(const char *path, int flag, umode_t mode)
 		}
 	}
 
+	if (created)
+		inotify_created(cur->root, fp->f_name ? fp->f_name : path);
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
 	fp->f_flag = (unsigned)flag;
 	if ((flag & O_APPEND) && fp->f_inode)
@@ -318,16 +404,23 @@ int fs_open(const char *path, int flag, umode_t mode)
 		unsigned create_mode;
 
 		create_mode = (mode & 0777U) & ~(cur->umask & 0777U);
-		ret = fs_chmod(path, create_mode);
+		/* Initial creation permissions do not constitute a separate attribute change. */
+		ret = fp->f_fop && fp->f_fop->setattr ?
+			      fp->f_fop->setattr(fp, create_mode) :
+			      0;
 		if (ret) {
 			fs_put_file(fp);
-			return ret;
+			return ret > 0 ? -ret : ret;
 		}
 		if (fp->f_inode)
 			fp->f_inode->i_mode = (fp->f_inode->i_mode & S_IFMT) |
 					      create_mode;
 	}
 
+	inotify_file_open(fp, cur->root);
+	if ((flag & O_TRUNC) && S_ISREG(fp->f_inode->i_mode) && fp->f_fop &&
+	    fp->f_fop->ftruncate)
+		inotify_file_event(fp, IN_MODIFY);
 	int fd = fs_install_fd(fp, flag & O_CLOEXEC);
 	if (fd < 0)
 		fs_put_file(fp);
@@ -555,10 +648,13 @@ void fs_flock_release(file *f)
 int fs_put_file(file *f)
 {
 	if (__sync_add_and_fetch(&f->f_count, -1) == 0) {
+		super_block *owner = f->f_sb;
 		epoll_release_file(f);
 		fs_flock_release(f);
+		inotify_file_close(f);
 		if (f->f_name)
 			free(f->f_name);
+		free(f->f_relative_path);
 		if (f->f_fop && f->f_fop->release)
 			f->f_fop->release(f);
 		else {
@@ -566,6 +662,8 @@ int fs_put_file(file *f)
 				free(f->f_inode);
 			free(f);
 		}
+		if (owner)
+			sb_put(owner);
 	}
 	return 0;
 }
@@ -821,6 +919,10 @@ int fs_chmod(const char *pathname, uint32_t mode)
 	}
 
 	ret = fp->f_fop->setattr(fp, mode);
+	if (!ret)
+		inotify_path_event(cur->root,
+				   fp->f_name ? fp->f_name : pathname,
+				   IN_ATTRIB);
 	fs_put_file(fp);
 	return (0 - ret);
 }
@@ -865,6 +967,10 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	}
 
 	ret = fp->f_fop->chown(fp, uid, gid);
+	if (!ret)
+		inotify_path_event(cur->root,
+				   fp->f_name ? fp->f_name : pathname,
+				   IN_ATTRIB);
 	fs_put_file(fp);
 	return (0 - ret);
 }
@@ -872,69 +978,103 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
 	struct stat s;
 	int ret = -EACCES;
 
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return -EBADF;
-
-	if (cur->fds[fd] == NULL)
-		return -EBADF;
-
-	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
-	mutex_unlock(&cur->files->lock);
-
-	if (!fp || !fp->f_fop || !fp->f_fop->chown)
-		return 0;
+	if (!fp->f_fop || !fp->f_fop->chown) {
+		ret = 0;
+		goto out;
+	}
 
 	/* Only root may change owner; owner may change group to own group */
 	if (cur->user && cur->user->euid != 0) {
 		if (fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
-			if (uid != (uint32_t)-1 && uid != s.st_uid)
-				return -EPERM;
-			if (cur->user->euid != s.st_uid)
-				return -EPERM;
+			if (uid != (uint32_t)-1 && uid != s.st_uid) {
+				ret = -EPERM;
+				goto out;
+			}
+			if (cur->user->euid != s.st_uid) {
+				ret = -EPERM;
+				goto out;
+			}
 			if (gid != (uint32_t)-1 && gid != cur->user->egid &&
-			    gid != cur->user->gid)
-				return -EPERM;
+			    gid != cur->user->gid) {
+				ret = -EPERM;
+				goto out;
+			}
 		}
 	}
 
 	ret = fp->f_fop->chown(fp, uid, gid);
-	return (0 - ret);
+	if (!ret)
+		inotify_file_event(fp, IN_ATTRIB);
+	ret = 0 - ret;
+out:
+	fs_io_end(&scope);
+	return ret;
 }
 
 int fs_fchmod(int fd, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
 	struct stat s;
 	int ret = -EACCES;
 
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return -EBADF;
-
-	if (cur->fds[fd] == NULL)
-		return -EBADF;
-
-	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
-	mutex_unlock(&cur->files->lock);
-
-	if (!fp || !fp->f_fop || !fp->f_fop->setattr)
-		return 0;
+	if (!fp->f_fop || !fp->f_fop->setattr) {
+		ret = 0;
+		goto out;
+	}
 
 	/* Only file owner or root may fchmod */
 	if (cur->user && cur->user->euid != 0 && fp->f_fop &&
 	    fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
-		if (cur->user->euid != s.st_uid)
-			return -EPERM;
+		if (cur->user->euid != s.st_uid) {
+			ret = -EPERM;
+			goto out;
+		}
 	}
 
 	ret = fp->f_fop->setattr(fp, mode);
-	return (0 - ret);
+	if (!ret)
+		inotify_file_event(fp, IN_ATTRIB);
+	ret = 0 - ret;
+out:
+	fs_io_end(&scope);
+	return ret;
+}
+
+int fs_ftruncate(int fd, uint64_t length)
+{
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	int result = -EINVAL;
+	if (!fp)
+		return -EBADF;
+	if (fp->f_flag & O_PATH) {
+		result = -EBADF;
+		goto out;
+	}
+	if (fp->f_mode == O_RDONLY)
+		goto out;
+	if (length > 0x7fffffffffffffffULL || !fp->f_fop ||
+	    !fp->f_fop->ftruncate)
+		goto out;
+	result = fp->f_fop->ftruncate(fp, (loff_t)length);
+	if (!result) {
+		fp->f_inode->i_size = length;
+		inotify_file_event(fp, IN_MODIFY);
+	}
+out:
+	fs_io_end(&scope);
+	return result;
 }
 
 /*

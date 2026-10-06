@@ -2,6 +2,7 @@
 #include <fs/vfs.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/inotify.h>
 #include <lib/klib.h>
 #include <lib/rbtree.h>
 #include <lib/lock.h>
@@ -88,8 +89,8 @@ static void sb_mount_remove(super_block *sb, vfs_mount_node *mount)
  *
  * Returns 1 on success, 0 if sb or path are NULL.
  */
-static int sb_path_resolve(super_block *sb, const char *path,
-			   super_block **out_sb, char **out_path)
+int sb_path_resolve(super_block *sb, const char *path, super_block **out_sb,
+		    char **out_path)
 {
 	size_t length;
 	vfs_mount_node *mount;
@@ -234,9 +235,11 @@ int vfs_umount(super_block *sb, const char *path)
 	vfs_mount_node *mount;
 	super_block *child;
 	size_t klen;
+	inotify_node *removed;
 
 	if (!sb || !path || *path != '/')
 		return -EINVAL;
+	removed = inotify_snapshot(sb, path);
 
 	mutex_lock(&sb->s_lock);
 
@@ -244,8 +247,14 @@ int vfs_umount(super_block *sb, const char *path)
 	mount = sb_mount_find(sb, path);
 	if (mount) {
 		child = mount->sb;
+		sb_get(child);
 		sb_mount_remove(sb, mount);
 		mutex_unlock(&sb->s_lock);
+		if (!child->s_fstype[0])
+			inotify_removed(removed);
+		inotify_unmounted(child);
+		inotify_snapshot_put(removed);
+		sb_put(child);
 		return 0;
 	}
 
@@ -253,78 +262,112 @@ int vfs_umount(super_block *sb, const char *path)
 	mount = sb_mount_prefix(sb, path, &klen);
 	if (mount) {
 		child = mount->sb;
+		sb_get(child);
 		mutex_unlock(&sb->s_lock);
-		return vfs_umount(child, path + klen);
+		inotify_snapshot_put(removed);
+		int ret = vfs_umount(child, path + klen);
+		sb_put(child);
+		return ret;
 	}
 
 	mutex_unlock(&sb->s_lock);
+	inotify_snapshot_put(removed);
 	return -ENOENT;
 }
 
 /*
- * VFS_PATH_OP - resolve a single path through the mount tree and dispatch
+ * VFS_PATH_RESULT - resolve a single path through the mount tree and dispatch
  * to the matching super_block's operation.
  * @sop_field: field name in super_operations to invoke
  * @...:       extra arguments forwarded after (sb, path)
  */
-#define VFS_PATH_OP(sop_field, ...)                                     \
-	do {                                                            \
-		super_block *_tsb;                                      \
-		char *_rp;                                              \
-		if (!sb || !path)                                       \
-			return -EINVAL;                                 \
-		if (!sb_path_resolve(sb, path, &_tsb, &_rp))            \
-			return -EINVAL;                                 \
-		if (!_tsb->s_op || !_tsb->s_op->sop_field)              \
-			return -ENOSYS;                                 \
-		return _tsb->s_op->sop_field(_tsb, _rp, ##__VA_ARGS__); \
+#define VFS_PATH_RESULT(result, sop_field, ...)                              \
+	do {                                                                 \
+		super_block *_tsb;                                           \
+		char *_rp;                                                   \
+		if (!sb || !path || !sb_path_resolve(sb, path, &_tsb, &_rp)) \
+			(result) = -EINVAL;                                  \
+		else if (!_tsb->s_op || !_tsb->s_op->sop_field)              \
+			(result) = -ENOSYS;                                  \
+		else                                                         \
+			(result) = _tsb->s_op->sop_field(_tsb, _rp,          \
+							 ##__VA_ARGS__);     \
 	} while (0)
 
 /*
- * VFS_PATH2_OP - resolve two paths through the mount tree, require them to
+ * VFS_PATH2_RESULT - resolve two paths through the mount tree, require them to
  * land on the same super_block (-EXDEV otherwise), and dispatch.
  * @sop_field: field name in super_operations to invoke
  */
-#define VFS_PATH2_OP(sop_field)                                  \
-	do {                                                     \
-		super_block *_osb, *_nsb;                        \
-		char *_orp, *_nrp;                               \
-		if (!sb || !oldpath || !newpath)                 \
-			return -EINVAL;                          \
-		if (!sb_path_resolve(sb, oldpath, &_osb, &_orp)) \
-			return -EINVAL;                          \
-		if (!sb_path_resolve(sb, newpath, &_nsb, &_nrp)) \
-			return -EINVAL;                          \
-		if (_osb != _nsb)                                \
-			return -EXDEV;                           \
-		if (!_osb->s_op || !_osb->s_op->sop_field)       \
-			return -ENOSYS;                          \
-		return _osb->s_op->sop_field(_osb, _orp, _nrp);  \
+#define VFS_PATH2_RESULT(result, sop_field)                                 \
+	do {                                                                \
+		super_block *_osb, *_nsb;                                   \
+		char *_orp, *_nrp;                                          \
+		if (!sb || !oldpath || !newpath ||                          \
+		    !sb_path_resolve(sb, oldpath, &_osb, &_orp) ||          \
+		    !sb_path_resolve(sb, newpath, &_nsb, &_nrp))            \
+			(result) = -EINVAL;                                 \
+		else if (_osb != _nsb)                                      \
+			(result) = -EXDEV;                                  \
+		else if (!_osb->s_op || !_osb->s_op->sop_field)             \
+			(result) = -ENOSYS;                                 \
+		else                                                        \
+			(result) = _osb->s_op->sop_field(_osb, _orp, _nrp); \
 	} while (0)
 
 int vfs_mkdir(super_block *sb, const char *path, unsigned mode)
 {
-	VFS_PATH_OP(mkdir, mode);
+	int ret;
+	VFS_PATH_RESULT(ret, mkdir, mode);
+	if (!ret)
+		inotify_created(sb, path);
+	return ret;
 }
 
 int vfs_rmdir(super_block *sb, const char *path)
 {
-	VFS_PATH_OP(rmdir);
+	inotify_node *node = inotify_snapshot(sb, path);
+	int ret;
+	VFS_PATH_RESULT(ret, rmdir);
+	if (!ret)
+		inotify_removed(node);
+	inotify_snapshot_put(node);
+	return ret;
 }
 
 int vfs_unlink(super_block *sb, const char *path)
 {
-	VFS_PATH_OP(unlink);
+	inotify_node *node = inotify_snapshot(sb, path);
+	int ret;
+	VFS_PATH_RESULT(ret, unlink);
+	if (!ret)
+		inotify_removed(node);
+	inotify_snapshot_put(node);
+	return ret;
 }
 
 int vfs_link(super_block *sb, const char *oldpath, const char *newpath)
 {
-	VFS_PATH2_OP(link);
+	inotify_node *node = inotify_snapshot(sb, oldpath);
+	int ret;
+	VFS_PATH2_RESULT(ret, link);
+	if (!ret)
+		inotify_linked(node, sb, newpath);
+	inotify_snapshot_put(node);
+	return ret;
 }
 
 int vfs_rename(super_block *sb, const char *oldpath, const char *newpath)
 {
-	VFS_PATH2_OP(rename);
+	inotify_node *source = inotify_snapshot(sb, oldpath);
+	inotify_node *replacement = inotify_snapshot(sb, newpath);
+	int ret;
+	VFS_PATH2_RESULT(ret, rename);
+	if (!ret)
+		inotify_renamed(source, replacement, sb, newpath);
+	inotify_snapshot_put(source);
+	inotify_snapshot_put(replacement);
+	return ret;
 }
 
 /*
@@ -342,7 +385,10 @@ int vfs_symlink(super_block *sb, const char *target, const char *linkpath)
 		return -EINVAL;
 	if (!target_sb->s_op || !target_sb->s_op->symlink)
 		return -ENOSYS;
-	return target_sb->s_op->symlink(target_sb, target, rel_path);
+	int ret = target_sb->s_op->symlink(target_sb, target, rel_path);
+	if (!ret)
+		inotify_created(sb, linkpath);
+	return ret;
 }
 
 int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
@@ -391,6 +437,8 @@ int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
 	ret = vfs_mount(sb, path, node_sb);
 	if (ret != 0)
 		sb_put(node_sb);
+	else
+		inotify_created(sb, path);
 
 	return ret;
 }
@@ -421,7 +469,30 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs64 *buf)
 
 int vfs_utime(super_block *sb, const char *path, unsigned atime, unsigned mtime)
 {
-	VFS_PATH_OP(utime, atime, mtime);
+	int ret;
+	VFS_PATH_RESULT(ret, utime, atime, mtime);
+	if (!ret)
+		inotify_path_event(sb, path, IN_ATTRIB);
+	return ret;
+}
+
+void vfs_set_file_origin(file *fp, super_block *sb, const char *relative_path)
+{
+	size_t length;
+	if (!fp || fp->f_sb || !sb)
+		return;
+	fp->f_sb = sb;
+	sb_get(sb);
+	if (fp->f_inode && fp->f_inode->i_ino)
+		return;
+	length = strlen(relative_path);
+	while (length && relative_path[length - 1] == '/')
+		length--;
+	fp->f_relative_path = malloc(length + 1);
+	if (fp->f_relative_path) {
+		memcpy(fp->f_relative_path, relative_path, length);
+		fp->f_relative_path[length] = 0;
+	}
 }
 
 static file *vfs_open_raw(super_block *sb, const char *path, int flag)
@@ -441,8 +512,10 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag)
 		if (!target_sb->s_op || !target_sb->s_op->open_root)
 			return NULL;
 		fp = target_sb->s_op->open_root(target_sb, flag);
-		if (fp)
+		if (fp) {
+			vfs_set_file_origin(fp, target_sb, rel_path);
 			fp->f_mount_flags = target_sb->s_flags;
+		}
 		return fp;
 	}
 
@@ -452,20 +525,10 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag)
 	 */
 	if (target_sb->s_op && target_sb->s_op->open) {
 		fp = target_sb->s_op->open(target_sb, rel_path, flag);
-		if (fp)
+		if (fp) {
+			vfs_set_file_origin(fp, target_sb, rel_path);
 			fp->f_mount_flags = target_sb->s_flags;
-		return fp;
-	}
-
-	/*
-	 * Pseudo-filesystem fallback: the super_block has a root inode but
-	 * no path-aware open (e.g. a block device mount accessed via a
-	 * trailing slash).
-	 */
-	if (target_sb->s_op && target_sb->s_op->open_root) {
-		fp = target_sb->s_op->open_root(target_sb, flag);
-		if (fp)
-			fp->f_mount_flags = target_sb->s_flags;
+		}
 		return fp;
 	}
 
@@ -494,6 +557,12 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 		fp = vfs_open_raw(lookup_sb, lookup, flag | O_NOFOLLOW);
 		if (!fp || !fp->f_inode || !S_ISLNK(fp->f_inode->i_mode))
 			goto out;
+		if (fp->f_fop && fp->f_fop->follow_link) {
+			file *target_file = fp->f_fop->follow_link(fp, flag);
+			fs_put_file(fp);
+			fp = target_file;
+			goto out;
+		}
 		if (depth == 40) {
 			fs_put_file(fp);
 			break;
@@ -561,6 +630,8 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	}
 	fp = NULL;
 out:
+	if (fp && !fp->f_name)
+		fp->f_name = strdup(lookup);
 	if (joined)
 		name_put(joined);
 	if (target)

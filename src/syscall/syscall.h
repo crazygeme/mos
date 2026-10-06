@@ -74,6 +74,9 @@ int sys_dup3(int oldfd, int newfd, int flags);
 int sys_pipe(int pipefd[2]);
 int sys_pipe2(int pipefd[2], int flags);
 int sys_inotify_init1(int flags);
+int sys_inotify_init(void);
+int sys_eventfd(unsigned initval);
+int sys_eventfd2(unsigned initval, int flags);
 int sys_inotify_add_watch(int fd, const char *path, unsigned mask);
 int sys_inotify_rm_watch(int fd, int wd);
 int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
@@ -136,6 +139,7 @@ int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data);
 int sys_umount(char *name, int flag);
 int sys_umount2(char *name, int flags);
 int sys_readlink(const char *path, char *buf, unsigned bufsiz);
+int sys_readlinkat(int dirfd, const char *path, char *buf, unsigned bufsiz);
 int sys_sync();
 int sys_chdir(const char *path);
 int sys_fchdir(int fd);

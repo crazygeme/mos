@@ -307,6 +307,7 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 	server_sk->type = client->type;
 	server_sk->recv_timeout_ms = listener->recv_timeout_ms;
 	server_sk->send_timeout_ms = listener->send_timeout_ms;
+	server_sk->unix_passcred = listener->unix_passcred;
 	server_sk->state = SS_CONNECTED;
 	server_sk->unix_peer = client;
 	server_sk->unix_peer_cred = unix_current_cred();
@@ -400,6 +401,13 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 	int irq;
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	mos_sock *peer;
+	if (sk->type == SOCK_SEQPACKET) {
+		struct iovec iov = { .iov_base = buf, .iov_len = count };
+		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+		if (!count)
+			return 0;
+		return unix_recvmsg(sk, &msg, nonblock ? MSG_DONTWAIT : 0);
+	}
 
 	if (sk->type == SOCK_DGRAM) {
 		spinlock_lock(&sk->rxbuf_lock, &irq);
@@ -470,6 +478,11 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 	unsigned long long deadline = sock_send_deadline(sk);
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	int irq;
+	if (sk->type == SOCK_SEQPACKET) {
+		struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
+		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+		return unix_sendmsg(sk, &msg, nonblock ? MSG_DONTWAIT : 0);
+	}
 
 	if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR))
 		return -EPIPE;
@@ -538,7 +551,7 @@ static int unix_cmsg_validate_walk(const struct msghdr *msg,
 }
 
 static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
-				   unsigned *nfds_out)
+				   unsigned *nfds_out, unix_peercred *credentials)
 {
 	unsigned nfds = 0;
 	int error = -EINVAL;
@@ -572,7 +585,7 @@ static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
 				error = -EPERM;
 				goto err_drop;
 			}
-			/* SO_PASSCRED is not enabled; retain only the data payload. */
+			*credentials = cred;
 			cm = next;
 			continue;
 		}
@@ -956,6 +969,126 @@ static unsigned unix_recvmsg_stream_limit(mos_sock *sk)
 	return limit;
 }
 
+/* A complete record and its ancillary entry are committed under one lock. */
+static int unix_sendmsg_seqpacket(mos_sock *sk, const struct msghdr *msg,
+				file **files, unsigned nfds, size_t total_len,
+				int nonblock, unsigned long long deadline,
+				const unix_peercred *credentials)
+{
+	mos_sock *peer;
+	unix_seqpacket_header record;
+	int irq, ret;
+
+	for (;;) {
+		peer = sk->unix_peer;
+		if (sk->state == SS_UNCONNECTED) {
+			ret = -ENOTCONN;
+			break;
+		}
+		if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR)) {
+			ret = -EPIPE;
+			break;
+		}
+		if (total_len > peer->rxbuf_size - 1 - sizeof(record)) {
+			ret = -EMSGSIZE;
+			break;
+		}
+		spinlock_lock(&peer->rxbuf_lock, &irq);
+		int next = (peer->unix_passfd_tail + 1) % UNIX_PASSFD_QUEUE;
+		if (rx_free(peer) >= sizeof(record) + total_len &&
+		    (!nfds || next != peer->unix_passfd_head)) {
+			record.length = (uint32_t)total_len;
+			record.credentials = *credentials;
+			rx_write(peer, &record, sizeof(record));
+			rx_iov_write(peer, msg->msg_iov, msg->msg_iovlen);
+			unix_queue_passfds(peer, files, nfds, peer->rx_tail);
+			spinlock_unlock(&peer->rxbuf_lock, irq);
+			sock_wakeup(peer);
+			return (int)total_len;
+		}
+		spinlock_unlock(&peer->rxbuf_lock, irq);
+		if (nonblock || sock_deadline_expired(deadline)) {
+			ret = -EAGAIN;
+			break;
+		}
+		if (sock_wait(sk, deadline) < 0) {
+			ret = -EINTR;
+			break;
+		}
+	}
+	unix_cmsg_put_files(files, nfds);
+	return ret;
+}
+
+static int unix_recvmsg_seqpacket(mos_sock *sk, struct msghdr *msg, int flags)
+{
+	unsigned long long deadline = sock_recv_deadline(sk);
+	file *files[UNIX_PASSFD_MAX] = { NULL };
+	unsigned nfds = 0, delivered, head;
+	unix_seqpacket_header record;
+	mos_sock *peer;
+	int irq;
+
+	spinlock_lock(&sk->rxbuf_lock, &irq);
+	while (rx_used(sk) < sizeof(record)) {
+		spinlock_unlock(&sk->rxbuf_lock, irq);
+		if (sk->err)
+			return sk->err;
+		if (sk->state == SS_UNCONNECTED)
+			return -ENOTCONN;
+		if (sk->state == SS_DISCONNECTING || (sk->unix_shutdown & UNIX_SHUT_RD)) {
+			msg->msg_flags = 0;
+			msg->msg_controllen = 0;
+			return 0;
+		}
+		if (sock_msg_is_nonblock(flags) || sock_deadline_expired(deadline))
+			return -EAGAIN;
+		if (sock_wait(sk, deadline) < 0)
+			return -EINTR;
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+	}
+	head = sk->rx_head;
+	rx_read(sk, &record, sizeof(record));
+	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, record.length);
+	rx_discard(sk, record.length - delivered);
+	msg->msg_flags = delivered < record.length ? MSG_TRUNC : 0;
+	if (flags & MSG_PEEK) {
+		if (sk->unix_passfd_head != sk->unix_passfd_tail) {
+			unix_passfd_msg *next = &sk->unix_passfd_queue[sk->unix_passfd_head];
+			if (next->ready_head <= sk->rx_head) {
+				nfds = next->nfds;
+				for (unsigned i = 0; i < nfds; i++) {
+					files[i] = next->files[i];
+					fs_get_file(files[i]);
+				}
+			}
+		}
+		sk->rx_head = head;
+	} else {
+		nfds = unix_collect_one_ready_passfd(sk, files);
+	}
+	peer = sk->unix_peer;
+	spinlock_unlock(&sk->rxbuf_lock, irq);
+	if (peer && !(flags & MSG_PEEK))
+		sock_wakeup(peer);
+	unix_recvmsg_fill_name(msg, peer);
+	void *control = msg->msg_control;
+	size_t capacity = msg->msg_controllen, off = 0;
+	if (sk->unix_passcred) {
+		if (control)
+			sock_msg_cmsg_append(msg, &off, SOL_SOCKET, SCM_CREDENTIALS,
+					     &record.credentials, sizeof(record.credentials));
+		else
+			msg->msg_flags |= MSG_CTRUNC;
+	}
+	msg->msg_control = control ? (char *)control + off : NULL;
+	msg->msg_controllen = capacity - off;
+	unix_cmsg_install_fds(msg, files, nfds);
+	msg->msg_control = control;
+	msg->msg_controllen += off;
+	return (flags & MSG_TRUNC) ? (int)record.length : (int)delivered;
+}
+
 int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 {
 	mos_sock *peer = sk->unix_peer;
@@ -968,15 +1101,22 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 	int irq;
 	int ret;
 	int next_tail;
+	task_struct *task = CURRENT_TASK();
+	unix_peercred credentials = { (int)task->tgid, task->user->uid, task->user->gid };
 
+	if (sk->type == SOCK_SEQPACKET && sk->state == SS_UNCONNECTED)
+		return -ENOTCONN;
 	if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR))
 		return -EPIPE;
 
 	total_len = sock_msg_iov_total_len(msg);
 
-	ret = unix_cmsg_collect_files(msg, files, &nfds);
+	ret = unix_cmsg_collect_files(msg, files, &nfds, &credentials);
 	if (ret < 0)
 		return ret;
+	if (sk->type == SOCK_SEQPACKET)
+		return unix_sendmsg_seqpacket(sk, msg, files, nfds, total_len,
+					     nonblock, deadline, &credentials);
 
 	spinlock_lock(&peer->rxbuf_lock, &irq);
 	next_tail = (peer->unix_passfd_tail + 1) % UNIX_PASSFD_QUEUE;
@@ -1034,6 +1174,8 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 	int irq;
 	mos_sock *peer;
 	int wait_ret;
+	if (sk->type == SOCK_SEQPACKET)
+		return unix_recvmsg_seqpacket(sk, msg, flags);
 
 	if (sk->type == SOCK_DGRAM) {
 		wait_ret = unix_recvmsg_wait_dgram(sk, flags, deadline, &irq);
@@ -1089,7 +1231,7 @@ void unix_release(mos_sock *sk)
 	task_struct *cur = CURRENT_TASK();
 	mos_sock *peer = sk->unix_peer;
 
-	if (peer && sk->type == SOCK_STREAM) {
+	if (peer && (sk->type == SOCK_STREAM || sk->type == SOCK_SEQPACKET)) {
 		sk->unix_peer = NULL;
 		peer->unix_peer = NULL;
 		peer->state = SS_DISCONNECTING;
@@ -1125,7 +1267,7 @@ int do_socketpair(int domain, int type, int protocol, int sv[2])
 {
 	if (domain != AF_UNIX)
 		return -EAFNOSUPPORT;
-	if (type != SOCK_STREAM && type != SOCK_DGRAM)
+	if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_SEQPACKET)
 		return -EPROTONOSUPPORT;
 	if (protocol != 0)
 		return -EPROTONOSUPPORT;

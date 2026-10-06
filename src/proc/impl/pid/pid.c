@@ -32,24 +32,30 @@
 static const char *const pid_dir_entries[] = { ".",    "..",	  "status",
 					       "stat", "statm",	  "cmdline",
 					       "maps", "environ", "fd",
-					       "cwd",  NULL };
+					       "cwd",  "exe",     "task", NULL };
 
-static file *pid_dir_open(task_struct *task)
+static file *pid_dir_open(task_struct *task, int include_task)
 {
 	unsigned size = 0;
 	int i;
 	char *buf, *p;
 	proc_buf_t *pb;
 
-	for (i = 0; pid_dir_entries[i]; i++)
+	for (i = 0; pid_dir_entries[i]; i++) {
+		if (!include_task && !strcmp(pid_dir_entries[i], "task"))
+			continue;
 		size += ROUND_UP(NAME_OFFSET() + strlen(pid_dir_entries[i]) +
 				 1);
+	}
 
 	buf = p = kmalloc(size);
 	memset(buf, 0, size);
 
-	for (i = 0; pid_dir_entries[i]; i++)
+	for (i = 0; pid_dir_entries[i]; i++) {
+		if (!include_task && !strcmp(pid_dir_entries[i], "task"))
+			continue;
 		PID_FILL_DIRENT(&p, buf, pid_dir_entries[i]);
+	}
 
 	pb = proc_buf_new();
 	proc_buf_copy(pb, buf, size);
@@ -74,13 +80,19 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 {
 	task_struct *task = ps_find_process(pid);
 	proc_buf_t *pb;
+	int include_task = strncmp(rest, "/task/", 6) != 0;
 
+	if (!task)
+		return NULL;
+	if (!strcmp(rest, "/task") || !strcmp(rest, "/task/"))
+		return pid_task_dir_open(task);
+	task = proc_resolve_thread(task, &rest);
 	if (!task)
 		return NULL;
 
 	/* "" or "/" → per-PID directory listing */
 	if (rest[0] == '\0' || (rest[0] == '/' && rest[1] == '\0'))
-		return pid_dir_open(task);
+		return pid_dir_open(task, include_task);
 
 #define OPEN_TEXT_FILE(fill_fn)                    \
 	do {                                       \
@@ -103,6 +115,14 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		OPEN_TEXT_FILE(fill_maps);
 
 #undef OPEN_TEXT_FILE
+
+	/* /exe exposes the main executable rather than its ELF interpreter. */
+	if (strcmp(rest, "/exe") == 0) {
+		if (!task->user || !task->user->executable ||
+		    !task->user->executable->f_name)
+			return NULL;
+		return make_pid_symlink(task->user->executable->f_name);
+	}
 
 	/* /cwd exposes the process's current working directory as a symlink. */
 	if (strcmp(rest, "/cwd") == 0) {
@@ -139,7 +159,7 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 			sprintf(anon, "pipe:[%d]", fdno);
 			target = anon;
 		}
-		return make_pid_symlink(target);
+		return make_pid_fd_symlink(target, task->fds[fdno]);
 	}
 
 	return NULL;

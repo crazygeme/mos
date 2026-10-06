@@ -12,6 +12,7 @@
  */
 
 #include <fs/fs.h>
+#include <fs/fcntl.h>
 #include <fs/vfs.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
@@ -20,6 +21,8 @@
 #include <dev/dev.h>
 #include <macro.h>
 #include <ext4.h>
+#include <proc/proc.h>
+#include <errno.h>
 
 /* ------------------------------------------------------------------ *
  * Root-directory private state (one per open(2) call on /dev)         *
@@ -156,6 +159,8 @@ static file *dev_open_root(super_block *sb, int flag)
 
 	node->i_mode = S_IFDIR | S_IRUSR | S_IRGRP | S_IROTH | S_IXUSR |
 		       S_IXGRP | S_IXOTH;
+	if (sb->s_fs_info)
+		node->i_mode = (unsigned)(uintptr_t)sb->s_fs_info;
 	node->i_private = rd;
 
 	fp->f_inode = node;
@@ -184,11 +189,62 @@ static int dev_statfs(super_block *sb, struct statfs64 *buf)
 	return 0;
 }
 
+static super_operations dev_sops;
+
+/* Each directory owns the child mounts enumerated by its open operation. */
+static int dev_mkdir(super_block *sb, const char *path, unsigned mode)
+{
+	super_block *directory;
+	file *existing;
+	char *name;
+	size_t length;
+	int result;
+	struct stat parent = { .st_mode = S_IFDIR | 0555 };
+	if (!path || path[0] != '/')
+		return -EINVAL;
+	if (sb->s_fs_info)
+		parent.st_mode = (unsigned)(uintptr_t)sb->s_fs_info;
+	result = fs_check_perm(&parent, W_OK | X_OK);
+	if (result)
+		return result;
+	length = strlen(path);
+	while (length > 1 && path[length - 1] == '/')
+		length--;
+	if (length == 1)
+		return -EEXIST;
+	/* VFS resolves existing parent directories before dispatching mkdir. */
+	for (size_t index = 1; index < length; index++)
+		if (path[index] == '/')
+			return -ENOENT;
+	existing = vfs_open(sb, path, O_PATH | O_NOFOLLOW);
+	if (existing) {
+		fs_put_file(existing);
+		return -EEXIST;
+	}
+	name = malloc(length + 1);
+	directory = sget(&dev_sops);
+	if (!name || !directory) {
+		free(name);
+		if (directory)
+			sb_put(directory);
+		return -ENOMEM;
+	}
+	memcpy(name, path, length);
+	name[length] = 0;
+	directory->s_fs_info = (void *)(uintptr_t)(S_IFDIR | (mode & 0777));
+	result = vfs_mount(sb, name, directory);
+	free(name);
+	if (result)
+		sb_put(directory);
+	return result;
+}
+
 static super_operations dev_sops = {
 	.open_root = dev_open_root,
 	.open = dev_open,
 	.release = dev_release_super,
 	.statfs = dev_statfs,
+	.mkdir = dev_mkdir,
 };
 
 /* ------------------------------------------------------------------ *
@@ -196,6 +252,50 @@ static super_operations dev_sops = {
  * ------------------------------------------------------------------ */
 
 static super_block *devfs_sb;
+
+/* /dev/fd is a descriptor directory for the calling process. */
+static file *dev_fd_open_root(super_block *sb, int flag)
+{
+	return proc_pid_lookup(CURRENT_TASK()->psid, "/fd", flag);
+}
+
+static file *dev_fd_open(super_block *sb, const char *path, int flag)
+{
+	char *name = name_get();
+	file *fp;
+	if (!name || strlen(path) + 4 >= MAX_PATH) {
+		if (name)
+			name_put(name);
+		return NULL;
+	}
+	sprintf(name, "/fd%s", path);
+	fp = proc_pid_lookup(CURRENT_TASK()->psid, name, flag);
+	name_put(name);
+	return fp;
+}
+
+static int dev_fd_readlink(super_block *sb, const char *path, char *buf,
+			   size_t bufsiz, size_t *rcnt)
+{
+	char *name = name_get();
+	int ret;
+	if (!name || strlen(path) + sizeof("/proc/self/fd") > MAX_PATH) {
+		if (name)
+			name_put(name);
+		return -ENOENT;
+	}
+	sprintf(name, "/proc/self/fd%s", path);
+	ret = vfs_readlink(CURRENT_TASK()->root, name, buf, bufsiz, rcnt);
+	name_put(name);
+	return ret;
+}
+
+static const super_operations dev_fd_sops = {
+	.open_root = dev_fd_open_root,
+	.open = dev_fd_open,
+	.readlink = dev_fd_readlink,
+	.release = dev_release_super,
+};
 
 void dev_node_add(const char *name, unsigned mode, unsigned devno)
 {
@@ -228,6 +328,7 @@ static void devfs_init(void)
 	devfs_sb = sb;
 	printk("mnt: Mounting devfs on /dev\n");
 	vfs_mount(cur->root, "/dev", sb);
+	vfs_mount(sb, "/fd", sget(&dev_fd_sops));
 
 	/* Let each device self-register under the devfs superblock. */
 	for (fn = __devfs_init_start; fn < __devfs_init_end; fn++)

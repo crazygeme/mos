@@ -63,7 +63,13 @@ enumeration are not implemented, so USB peripherals are not discovered.
 `DEV_INIT` callbacks publish available device interfaces after `/dev` is mounted
 at init level 6. Hardware initialization completes before node publication.
 The mouse node is published only for a bound auxiliary device. Virtual devices
-such as null, zero, PTYs, and loop devices also use this layer. Physical devices
+such as null, zero, PTYs, and loop devices also use this layer. Devfs directory
+creation publishes a directory superblock with its requested permission bits
+and its own child mounts. `/dev/input` and `/dev/dri` expose their device
+children through directory lookup and enumeration. Parent directory lookup
+also supplies the identities used by inotify directory watches. Notification
+capture does not veto a successful device open; capture allocation failure is
+reported through notification queue overflow. Physical devices
 without character or block interfaces appear in `/sys` without `/dev` nodes.
 
 `device/impl/sysfs.c` owns the shared sysfs tree and filesystem mount entry.
@@ -83,3 +89,8 @@ both devices and drivers; it does not own hardware discovery or initialization.
 `test/device_test.c` covers matching conflicts, duplicate registration, probe results,
 bus isolation, and repeated scan calls. `test/sys_devices.sh` checks device
 aliases, binding links, and inventory stability across sysfs mounts.
+
+`python3 test/input_device_open.py` validates the PS/2 endpoint's parent
+hierarchy, character-device metadata, the access flags used by Xorg, and
+inotify open/close delivery to a directory watch. The test does not read mouse
+packets or send device commands and can run during a graphical session.

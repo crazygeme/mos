@@ -15,10 +15,9 @@ typedef struct super_operations super_operations;
  */
 struct super_operations {
 	/*
-	 * get_root: allocate and return the root inode for
-	 * mounts (devices, proc entries).  Called when the mount root or a
-	 * sub-path with no specific match is opened.  The returned inode is
-	 * owned by the caller and freed via i_fop->release.
+	 * open_root: open the exact mount root, with an optional trailing slash.
+	 * Descendant lookup requires the open operation. The returned file is
+	 * owned by the caller and released through fs_put_file().
 	 */
 	file *(*open_root)(super_block *sb, int flag);
 
@@ -27,7 +26,7 @@ struct super_operations {
 	 * Used by real filesystems (e.g. ext4) that own path traversal
 	 * internally.  path is relative to this super_block's mount root.
 	 * Returns an open file * on success, NULL on failure.
-	 * Mutually exclusive with get_root: use one or the other.
+	 * Mount-root and descendant operations may coexist.
 	 */
 	file *(*open)(super_block *sb, const char *path, int flag);
 
@@ -95,6 +94,10 @@ void sb_get(super_block *sb);
  */
 void sb_put(super_block *sb);
 
+/* Resolve filesystem identity and its path suffix without acquiring a reference. */
+int sb_path_resolve(super_block *sb, const char *path, super_block **out_sb,
+		    char **out_path);
+
 /* Mount a filesystem with operations child at path under sb. */
 int vfs_mount(super_block *sb, const char *path, super_block *child);
 
@@ -106,6 +109,9 @@ int vfs_umount(super_block *sb, const char *path);
  * Returns an open file * on success, NULL on failure.
  */
 file *vfs_open(super_block *sb, const char *path, int flag);
+
+/* Record backend provenance once; delegated lookups preserve the inner owner. */
+void vfs_set_file_origin(file *fp, super_block *sb, const char *relative_path);
 
 /* VFS-level directory and link operations.  All paths are absolute.
  * Return 0 on success, -errno on failure.

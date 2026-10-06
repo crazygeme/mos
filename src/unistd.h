@@ -239,6 +239,7 @@
 #define __NR_prlimit64 340
 #define __NR_close_range 436
 #define __NR_inotify_add_watch 292
+#define __NR_inotify_init 291
 #define __NR_inotify_rm_watch 293
 #define __NR_set_robust_list 311
 #define __NR_get_robust_list 312

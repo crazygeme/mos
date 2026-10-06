@@ -8,6 +8,7 @@
 
 #include <ps/ps.h>
 #include <fs/fs.h>
+#include <fs/inotify.h>
 #include <fs/vfs.h>
 #include <fs/select.h>
 #include <fs/poll.h>
@@ -245,7 +246,7 @@ int sys_llseek(int fd, unsigned offset_high, unsigned offset_low,
 int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i;
-	int ret;
+	int ret, handled;
 	size_t total_len = 0;
 	size_t copied = 0;
 	task_struct *cur = CURRENT_TASK();
@@ -274,11 +275,15 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 	if (total_len == 0)
 		return 0;
 
+	ret = fs_readv_special(fildes, iov, iovcnt, &handled);
+	if (handled)
+		return ret;
+
 	buf = malloc(total_len);
 	if (!buf)
 		return -ENOMEM;
 
-	ret = (int)fp->f_fop->read(fp, buf, total_len, &fp->f_pos);
+	ret = fs_read(fildes, -1, buf, total_len);
 	if (ret <= 0) {
 		free(buf);
 		return ret;
@@ -340,7 +345,7 @@ int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 		copied += iov[i].iov_len;
 	}
 
-	ret = (int)fp->f_fop->write(fp, buf, total_len, &fp->f_pos);
+	ret = fs_write(fildes, -1, buf, total_len);
 	free(buf);
 	return ret;
 }
@@ -417,89 +422,6 @@ int sys_pipe2(int pipefd[2], int flags)
 		fd_bitmap_set(cur->fd_cloexec, pipefd[0]);
 		fd_bitmap_set(cur->fd_cloexec, pipefd[1]);
 	}
-	return 0;
-}
-
-static ssize_t inotify_read(file *fp, void *buf, size_t len, loff_t *pos)
-{
-	(void)fp;
-	(void)buf;
-	(void)pos;
-	(void)len;
-	/* The minimal instance has no queued events. A nonblocking instance
-	 * reports the standard empty-queue result; a blocking read waits until
-	 * an event exists, which never occurs for this implementation. */
-	return -EAGAIN;
-}
-
-static unsigned inotify_poll(file *fp, unsigned events, poll_table *pt)
-{
-	(void)fp;
-	(void)events;
-	(void)pt;
-	return 0;
-}
-
-static int inotify_release(file *fp)
-{
-	free(fp->f_inode);
-	free(fp);
-	return 0;
-}
-
-static const file_operations inotify_fops = {
-	.release = inotify_release,
-	.read = inotify_read,
-	.poll = inotify_poll,
-};
-
-int sys_inotify_init1(int flags)
-{
-	const int in_nonblock = 0x800;
-	const int in_cloexec = 0x80000;
-	file *fp;
-	inode *node;
-	int fd;
-
-	if (flags & ~(in_nonblock | in_cloexec))
-		return -EINVAL;
-	node = zalloc(sizeof(*node));
-	if (!node)
-		return -ENOMEM;
-	node->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
-	fp = zalloc(sizeof(*fp));
-	if (!fp) {
-		free(node);
-		return -ENOMEM;
-	}
-	fp->f_inode = node;
-	fp->f_mode = O_RDONLY;
-	fp->f_flag = O_RDONLY | ((flags & in_nonblock) ? O_NONBLOCK : 0);
-	fp->f_fop = &inotify_fops;
-	fp->f_count = 1;
-	fd = fs_install_fd(fp, (flags & in_cloexec) ? O_CLOEXEC : 0);
-	if (fd < 0) {
-		free(fp);
-		free(node);
-		return -EMFILE;
-	}
-	return fd;
-}
-
-int sys_inotify_add_watch(int fd, const char *path, unsigned mask)
-{
-	(void)path;
-	(void)mask;
-	if (fd < 0 || fd >= MAX_FD || !CURRENT_TASK()->fds[fd])
-		return -EBADF;
-	return 1;
-}
-
-int sys_inotify_rm_watch(int fd, int wd)
-{
-	(void)wd;
-	if (fd < 0 || fd >= MAX_FD || !CURRENT_TASK()->fds[fd])
-		return -EBADF;
 	return 0;
 }
 
@@ -797,6 +719,8 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 		return -1;
 
 	n = fp->f_fop->read(fp, dirp, count, &fp->f_pos);
+	if (n > 0)
+		inotify_file_event(fp, IN_ACCESS);
 	if (n < 0)
 		return -1;
 	return (size_t)n;
@@ -820,7 +744,8 @@ static void dirent64_emit(void *buffer, const struct linux_dirent *source,
 }
 
 static void native_dirent_emit(void *buffer, const struct linux_dirent *source,
-			       unsigned length, unsigned size, unsigned char type)
+			       unsigned length, unsigned size,
+			       unsigned char type)
 {
 	struct native_dirent *entry = buffer;
 	entry->ino = source->d_ino;
@@ -872,8 +797,10 @@ static int getdents_convert(unsigned fd, void *output, unsigned count,
 			break;
 		}
 		memset((char *)output + out, 0, size);
-		unsigned char type = fp->f_fop->dirent_type ?
-			fp->f_fop->dirent_type(fp, entry->d_name) : 0;
+		unsigned char type =
+			fp->f_fop->dirent_type ?
+				fp->f_fop->dirent_type(fp, entry->d_name) :
+				0;
 		emit((char *)output + out, entry, length, size, type);
 		position = entry->d_off;
 		source += entry->d_reclen;

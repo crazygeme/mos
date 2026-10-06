@@ -20,6 +20,16 @@
 #define CLONE_CHILD_SETTID 0x01000000
 #define CLONE_SYSVSEM 0x00040000
 #define CLONE_DETACHED 0x00400000
+#define CLONE_NEWNS 0x00020000
+#define CLONE_NEWCGROUP 0x02000000
+#define CLONE_NEWUTS 0x04000000
+#define CLONE_NEWIPC 0x08000000
+#define CLONE_NEWUSER 0x10000000
+#define CLONE_NEWPID 0x20000000
+#define CLONE_NEWNET 0x40000000
+/* Namespace flags are recognized, but namespace isolation is unavailable. */
+#define CLONE_NAMESPACE_FLAGS (CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | \
+			       CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)
 
 static void clone_prepare_thread_tls(task_struct *cur, task_struct *task,
 				     unsigned short parent_gs)
@@ -77,7 +87,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 				 CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS |
 				 CLONE_SYSVSEM | CLONE_DETACHED);
 	if (unsupported)
-		return -ENOSYS;
+		return (unsupported & CLONE_NAMESPACE_FLAGS) ? -EINVAL : -ENOSYS;
 
 	if ((flags & CLONE_SIGHAND) && !share_vm)
 		return -EINVAL;

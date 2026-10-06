@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <fs/iovec.h>
 
 typedef struct _block block;
 #define S_IFMT 00170000
@@ -66,6 +67,7 @@ typedef int ssize_t;
 
 typedef struct _inode inode;
 typedef struct _file file;
+struct super_block;
 
 /* Readiness subscription interfaces. */
 typedef struct _task_struct task_struct;
@@ -102,10 +104,19 @@ typedef struct _file_operations {
 	/* Custom dtor of file struct, will call regular kfree if not provided */
 	int (*release)(file *file);
 	int (*getattr)(file *file, struct stat *s);
+	/* Borrowed parent identity and entry name: 1 for a parent, 0 for a root. */
+	int (*notify_parent)(file *file, struct super_block **owner,
+			     uint64_t *ino, const char **name);
+	/* Follow a virtual link to an open object without resolving display text. */
+	file *(*follow_link)(file *file, int flags);
+	/* Allocate an independent open description for an anonymous object. */
+	file *(*reopen)(file *file, int flags);
 	int (*setattr)(file *file, uint32_t mode);
 	int (*chown)(file *file, uint32_t uid, uint32_t gid);
 	/* read/write: update *pos on success, return bytes transferred or -errno */
 	ssize_t (*read)(file *file, void *buf, size_t size, loff_t *pos);
+	/* Optional vectored reader for backends with per-buffer record semantics. */
+	ssize_t (*readv)(file *file, const struct iovec *iov, int count);
 	/* Linux directory-entry type; absent callbacks report DT_UNKNOWN. */
 	unsigned char (*dirent_type)(file *file, const char *name);
 	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
@@ -167,6 +178,13 @@ struct _file {
 	int f_owner; /* async I/O owner set via fcntl(F_SETOWN) */
 	int f_sigio; /* signal number for async I/O (0 => SIGIO) */
 	char *f_name;
+	/* The owning backend is retained independently of aliases and mount views. */
+	struct super_block *f_sb;
+	char *f_relative_path;
+	struct super_block *f_notify_root;
+	list_entry f_notify_node;
+	unsigned f_notify_epoch;
+	struct inotify_node *f_notify;
 	struct epitem *f_ep_links;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
@@ -248,11 +266,14 @@ int fs_open(const char *path, int flag, umode_t mode);
 file *fs_open_file(const char *path, int flag, umode_t mode);
 int fs_put_file(file *f);
 int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
+void fs_cancel_io(task_struct *task);
 int fs_install_fd_unsafe(file *fp, int flag); /* caller holds files->lock */
 
 int fs_close(int fd);
 
 int fs_read(int fd, unsigned offset, char *buf, unsigned len);
+int fs_ftruncate(int fd, uint64_t length);
+int fs_readv_special(int fd, const struct iovec *iov, int count, int *handled);
 
 int fs_write(int fd, unsigned offset, const char *buf, unsigned len);
 

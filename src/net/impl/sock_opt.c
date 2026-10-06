@@ -82,6 +82,15 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 
 	if (level == SOL_SOCKET) {
 		switch (optname) {
+		case SO_PASSCRED:
+			if (sk->domain != AF_UNIX || sk->type != SOCK_SEQPACKET) {
+				ret = -ENOPROTOOPT;
+				goto done;
+			}
+			ret = sockopt_get_int(optval, optlen, &ival);
+			if (!ret)
+				sk->unix_passcred = !!ival;
+			goto done;
 		case SO_REUSEADDR:
 			if (sockopt_get_int(optval, optlen, &ival) < 0) {
 				ret = -EINVAL;
@@ -279,6 +288,13 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 	if (level == SOL_SOCKET) {
 		switch (optname) {
+		case SO_PASSCRED:
+			if (sk->domain != AF_UNIX || sk->type != SOCK_SEQPACKET) {
+				ret = -ENOPROTOOPT;
+				goto done;
+			}
+			ret = sockopt_put_int(optval, optlen, sk->unix_passcred);
+			goto done;
 		case SO_PEERCRED: {
 			unix_peercred cred = { 0, ~0U, ~0U };
 			unsigned len;

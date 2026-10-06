@@ -4,5 +4,6 @@
 #include <fs/fs.h>
 
 int pipe_open(file **pipes);
+file *pipe_reopen(file *original, int flags);
 
 #endif

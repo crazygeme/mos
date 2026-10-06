@@ -12,6 +12,7 @@
 #include <mm/vdso.h>
 #include <fs/fcntl.h>
 #include <fs/fs.h>
+#include <fs/inotify.h>
 #include <fs/mount.h>
 #include <lib/klib.h>
 #include <config.h>
@@ -247,6 +248,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 		return -EPERM;
 	}
 
+	inotify_file_open(fp, cur->root);
 	/* read first line via VFS file ops */
 	len = len > (int)s.st_size ? (int)s.st_size : len;
 	firstline = malloc(64);
@@ -258,6 +260,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 	} else {
 		loff_t pos = 0;
 		ssize_t n = fp->f_fop->read(fp, firstline, len, &pos);
+		if (n > 0)
+			inotify_file_event(fp, IN_ACCESS);
 		if (n < 0) {
 			free(firstline);
 			fs_put_file(fp);
@@ -471,8 +475,11 @@ static int execve_common(const char *f, char **argv, char **envp,
 	 */
 	elf_map_prepared(image, &fmt);
 	elf_release(image);
-	if (exec_fp)
-		fs_put_file(exec_fp);
+	/* Retain the main image for /proc/PID/exe, including its resolved path. */
+	if (cur->user->executable)
+		fs_put_file(cur->user->executable);
+	cur->user->executable = exec_fp;
+	exec_fp = NULL;
 	eip = fmt.interp_load_addr;
 	cur->user->vm->start_brk = fmt.start_brk;
 	cur->user->vm->brk = fmt.start_brk;

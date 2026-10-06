@@ -74,6 +74,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		name_put(task->user->cwd);
 		task->user->cwd = NULL;
 	}
+	if (task->user->executable) {
+		fs_put_file(task->user->executable);
+		task->user->executable = NULL;
+	}
 	if (task->user->root_path) {
 		name_put(task->user->root_path);
 		task->user->root_path = NULL;
@@ -219,6 +223,7 @@ static void ps_cancel_io_wait(task_struct *task)
 		task->io_wait = NULL;
 		cancel(wait);
 	}
+	fs_cancel_io(task);
 }
 
 static void ps_reap_group_thread(task_struct *task)
@@ -369,6 +374,10 @@ void do_exit(unsigned encoded_status)
 	}
 
 	ps_put_fds(cur);
+	if (cur->user->executable) {
+		fs_put_file(cur->user->executable);
+		cur->user->executable = NULL;
+	}
 
 	if (cur->psid == 0) {
 		printk("fatal error! process 0 exit\n");

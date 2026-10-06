@@ -148,7 +148,7 @@ int ps_send_signal(unsigned pid, int sig)
 	int irq;
 	int ret = 0;
 
-	if (sig <= 0 || sig >= NSIG)
+	if (sig < 0 || sig >= NSIG)
 		return -EINVAL;
 
 	spinlock_lock(&ps_lock, &irq);
@@ -168,7 +168,8 @@ int ps_send_signal(unsigned pid, int sig)
 		goto done;
 	}
 
-	ps_queue_signal_unsafe(target, sig);
+	if (sig)
+		ps_queue_signal_unsafe(target, sig);
 
 done:
 	spinlock_unlock(&ps_lock, irq);
@@ -433,7 +434,7 @@ static int handle_sig_dfl(task_struct *cur, intr_frame *frame, int sig)
 		ps_stop_current(frame, sig);
 		return 1;
 	default:
-		do_exit(sig);
+		do_group_exit(sig);
 		return 1;
 	}
 }
@@ -456,6 +457,7 @@ void do_signal(intr_frame *frame)
 	if (!arch_interrupt_frame_is_user(frame))
 		return;
 
+next_signal:
 	sig = pick_signal(cur);
 	if (!sig)
 		return;
@@ -467,7 +469,7 @@ void do_signal(intr_frame *frame)
 			maybe_restore_sigmask(cur);
 			return;
 		}
-		sys_exit(sig | 0x80);
+		do_group_exit(sig);
 		return;
 	}
 
@@ -480,10 +482,33 @@ void do_signal(intr_frame *frame)
 
 	if (sa->sa_handler == SIG_DFL) {
 		handle_sig_dfl(cur, frame, sig);
-		return;
+		goto next_signal;
 	}
 
-	arch_signal_deliver(cur, frame, sa, sig);
+	arch_signal_deliver(cur, frame, sa, sig, NULL);
+}
+
+/* Synchronous faults deliver their own context before unrelated pending signals. */
+void ps_fault_signal(intr_frame *frame, int sig,
+		     const struct signal_fault *fault)
+{
+	task_struct *cur = CURRENT_TASK();
+	struct sigaction *sa = &cur->signal->sig_handlers[sig];
+	unsigned long bit = 1UL << (sig - 1);
+	if (!arch_interrupt_frame_is_user(frame)) {
+		do_group_exit(sig);
+		return;
+	}
+	if ((cur->signal->sig_mask & bit) || sa->sa_handler == SIG_IGN) {
+		cur->signal->sig_mask &= ~bit;
+		sa->sa_handler = SIG_DFL;
+	}
+	cur->signal->sig_pending &= ~bit;
+	if (sa->sa_handler == SIG_DFL) {
+		do_group_exit(sig);
+		return;
+	}
+	arch_signal_deliver(cur, frame, sa, sig, fault);
 }
 
 int sys_sigaltstack(const stack_t *ss, stack_t *old_ss)

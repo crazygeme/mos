@@ -82,7 +82,8 @@ int native_sigaltstack(const void *input, void *output)
 	return ret;
 }
 void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
-				struct sigaction *action, int sig)
+				struct sigaction *action, int sig,
+				const struct signal_fault *fault)
 {
 	struct native_signal_frame saved;
 	memset(&saved, 0, sizeof(saved));
@@ -96,7 +97,7 @@ void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
 	uintptr_t fp = (sp - 512) & ~(uintptr_t)15;
 	sp = ((fp - sizeof(saved)) & ~(uintptr_t)15) - 8;
 	if (sp >= MOS_NATIVE_TASK_SIZE || !action->sa_restorer) {
-		do_exit(SIGSEGV);
+		do_group_exit(SIGSEGV);
 		return;
 	}
 	saved.restorer = (uintptr_t)action->sa_restorer;
@@ -133,12 +134,19 @@ void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
 	sc->oldmask = saved.uc.mask;
 	sc->error = frame->error_code;
 	*(int *)saved.info = sig;
+	if (fault) {
+		sc->trap = fault->trap;
+		sc->cr2 = fault->address;
+		memcpy(saved.info + 8, &fault->code, sizeof(fault->code));
+		memcpy(saved.info + 16, &fault->address,
+		       sizeof(fault->address));
+	}
 	smp_fpu_save(task);
 	if (ps_write_process_memory(task, (void *)fp, task->user->fpu, 512) <
 		    0 ||
 	    ps_write_process_memory(task, (void *)sp, &saved, sizeof(saved)) <
 		    0) {
-		do_exit(SIGSEGV);
+		do_group_exit(SIGSEGV);
 		return;
 	}
 	task->signal->restore_sigmask = 0;
@@ -205,15 +213,16 @@ intptr_t native_sigreturn(intr_frame *frame)
 		alt->ss_flags &= ~SS_ONSTACK;
 	return sc->rax;
 bad:
-	do_exit(SIGSEGV);
+	do_group_exit(SIGSEGV);
 	return -EFAULT;
 }
 
 void arch_signal_deliver(task_struct *task, intr_frame *frame,
-			 struct sigaction *action, int signal)
+			 struct sigaction *action, int signal,
+			 const struct signal_fault *fault)
 {
 	if (frame->cs == USER64_CODE_SELECTOR)
-		arch_signal_deliver_native(task, frame, action, signal);
+		arch_signal_deliver_native(task, frame, action, signal, fault);
 	else
-		i386_signal_deliver(task, frame, action, signal);
+		i386_signal_deliver(task, frame, action, signal, fault);
 }

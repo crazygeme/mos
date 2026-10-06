@@ -257,7 +257,7 @@ static unsigned char *resolve_sigstack(task_struct *cur, intr_frame *frame,
 /* Build the rt (SA_SIGINFO) signal frame on the user stack. */
 static void build_rt_frame(task_struct *cur, intr_frame *frame,
 			   rt_signal_frame *rt_sf, struct sigaction *sa,
-			   int sig)
+			   int sig, const struct signal_fault *fault)
 {
 	rt_sigcontext_user *sc = &rt_sf->uc.uc_mcontext;
 	unsigned long saved_mask = cur->signal->restore_sigmask ?
@@ -275,6 +275,10 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	rt_sf->puc = (arch_reg_t)(uintptr_t)&rt_sf->uc;
 	memset(&rt_sf->info, 0, sizeof(rt_sf->info));
 	rt_sf->info.si_signo = sig;
+	if (fault) {
+		rt_sf->info.si_code = fault->code;
+		rt_sf->info._pad[0] = (uint32_t)fault->address;
+	}
 	rt_sf->uc.uc_flags = 0;
 	rt_sf->uc.uc_link = NULL;
 	rt_sf->uc.uc_stack.ss_sp =
@@ -296,7 +300,7 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	sc->edx = frame->edx;
 	sc->ecx = frame->ecx;
 	sc->eax = frame->eax;
-	sc->trapno = 0;
+	sc->trapno = fault ? fault->trap : 0;
 	sc->err = frame->error_code;
 	sc->eip = (arch_reg_t)(uintptr_t)frame->eip;
 	sc->cs = frame->cs;
@@ -305,7 +309,7 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	sc->ss = frame->ss;
 	sc->fpstate = (uint32_t)(uintptr_t)&rt_sf->fpstate;
 	sc->oldmask = saved_mask;
-	sc->cr2 = 0;
+	sc->cr2 = fault ? (uint32_t)fault->address : 0;
 	cur->signal->restore_sigmask = 0;
 }
 
@@ -346,7 +350,8 @@ static void build_legacy_frame(task_struct *cur, intr_frame *frame,
 }
 
 void i386_signal_deliver(task_struct *cur, intr_frame *frame,
-			 struct sigaction *sa, int sig)
+			 struct sigaction *sa, int sig,
+			 const struct signal_fault *fault)
 {
 	unsigned char *new_esp;
 	void (*handler)(int);
@@ -364,7 +369,8 @@ void i386_signal_deliver(task_struct *cur, intr_frame *frame,
 					     ~(uintptr_t)0xf); /* 16-byte align */
 
 	if (is_rt)
-		build_rt_frame(cur, frame, (rt_signal_frame *)new_esp, sa, sig);
+		build_rt_frame(cur, frame, (rt_signal_frame *)new_esp, sa, sig,
+			       fault);
 	else
 		build_legacy_frame(cur, frame, (signal_frame *)new_esp, sa,
 				   sig);

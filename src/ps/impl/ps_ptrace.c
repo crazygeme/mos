@@ -65,11 +65,16 @@ static int ptrace_resume(task_struct *tracer, task_struct *target, int mode,
 	if (sig < 0 || sig >= NSIG)
 		return -EINVAL;
 
+	spinlock_lock(&ps_lock, &irq);
 	if (sig > 0 && target->signal)
 		target->signal->sig_pending |= (1UL << (sig - 1));
-
-	spinlock_lock(&ps_lock, &irq);
 	target->user->ptrace_mode = mode;
+	if (mode == PTRACE_MODE_NONE) {
+		target->user->ptrace_tracer = 0;
+		target->user->ptrace_options = 0;
+		target->user->ptrace_eventmsg = 0;
+		target->user->ptrace_orig_eax = 0;
+	}
 	target->user->ptrace_frame_valid = 0;
 	memset(&target->user->ptrace_frame, 0,
 	       sizeof(target->user->ptrace_frame));
@@ -193,7 +198,6 @@ int ps_ptrace_control(int request, int pid, void *addr, void *data)
 	case PTRACE_SEIZE:
 		return -EIO;
 	case PTRACE_ATTACH:
-	case PTRACE_DETACH:
 		return -ENOSYS;
 	}
 
@@ -221,6 +225,9 @@ int ps_ptrace_control(int request, int pid, void *addr, void *data)
 
 	case PTRACE_SYSCALL:
 		return ptrace_resume(cur, target, PTRACE_MODE_SYSCALL,
+				     (int)(unsigned long)data);
+	case PTRACE_DETACH:
+		return ptrace_resume(cur, target, PTRACE_MODE_NONE,
 				     (int)(unsigned long)data);
 
 	case PTRACE_KILL:

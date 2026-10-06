@@ -53,11 +53,45 @@ architecture selects delivery from the saved user code selector and interprets
 clone TLS at the register-context boundary. Shared signal disposition logic
 does not select an executable format.
 
+Synchronous page faults deliver `SIGSEGV` directly from the faulting register
+context. Caught faults return through the installed handler; ignored or blocked
+fault signals use the default fatal disposition. `SA_SIGINFO` frames contain
+the exact fault address, `SEGV_MAPERR` or `SEGV_ACCERR`, the page-fault trap
+number, and the processor error code. Fault reports include the exact address
+and instruction pointer.
+
+Default fatal signals and `exit_group` terminate all members of the thread
+group, including its leader when initiated by a worker. The leader retains the
+encoded signal or exit status for the parent's wait operation. Ordinary thread
+exit preserves the remaining group. Signal zero with `tkill` checks the target
+and sender credentials without queuing a signal.
+
+`PTRACE_DETACH` requires a stopped tracee, clears its tracing state, and resumes
+execution with an optional signal. Detaching a running tracee returns `ESRCH`.
+A signal queued during a stopped task's resumption is processed before returning
+to userspace.
+
+Both syscall namespaces provide `clock_getres`; i386 additionally provides the
+64-bit time variant. Realtime, monotonic, raw monotonic, boottime, and coarse
+aliases report the microsecond time core's 1000-nanosecond resolution. A null
+output pointer validates the clock ID without writing a result. Unsupported
+clock IDs return `EINVAL`.
+
 Memory services validate reserved ranges through the architecture backend.
 Physical allocation limits, DMA limits, allocation preferences, and block-cache
 limits are architecture configuration values. NX enforcement follows the paging
 hardware and applies to both i386 and AMD64 processes on x64. Non-PAE x86 page
 tables do not provide NX support.
+
+File-page cache lookup returns a retained physical page. Mapping installation
+and buffered reads release that reference only after acquiring the mapping
+reference or completing the copy. Cache invalidation and eviction release the
+cache's reference independently of active readers. Concurrent cache misses
+retain the selected existing page before releasing the cache lock.
+
+Ext4 page reads and writeback use operation-local handles with independent file
+positions. Page faults do not seek or restore the shared descriptor's ext4
+cursor, including while filesystem I/O waits for a mount lock.
 
 ## Procfs thread groups
 
@@ -182,6 +216,19 @@ support. Namespace sandbox operation requires kernel interfaces beyond the
 configured MOS implementation.
 
 ## Validation
+
+`python3 test/page_cache_reads.py --directory PATH` validates concurrent
+file-backed faults against distinct deterministic page contents. Eight workers
+read disjoint shuffled pages through one private mapping. The probe also checks
+that page reads preserve the descriptor offset; the selected directory must
+support regular files and mappings.
+
+`python3 test/thread_faults.py` compiles and runs a probe in the target system.
+It validates recovery from synchronous faults on ordinary and alternate stacks,
+fault metadata, default and blocked or ignored fatal faults in worker threads,
+group exit from a worker, signal-zero probing, clock resolution, and trace
+detachment with signal injection. Parent waits are bounded to detect retained
+threads and unavailable exit status.
 
 `python3 test/proc_exe.py` validates executable links in the running system:
 symbolic-link metadata, target identity, buffer truncation, `readlinkat`

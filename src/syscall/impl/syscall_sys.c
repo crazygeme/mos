@@ -176,6 +176,46 @@ int sys_clock_gettime64(int clockid, void *tp)
 	return 0;
 }
 
+/* All exposed clock IDs use the microsecond time core, including coarse aliases. */
+static int clock_resolution(int clockid)
+{
+	switch (clockid) {
+	case 0:
+	case 1:
+	case 4:
+	case 5:
+	case 6:
+	case 7:
+		return 1000;
+	default:
+		return -EINVAL;
+	}
+}
+
+int sys_clock_getres(int clockid, struct timespec *tp)
+{
+	int ns = clock_resolution(clockid);
+	struct timespec result = { .tv_sec = 0, .tv_nsec = ns };
+	if (ns < 0)
+		return ns;
+	return tp ? ps_write_process_memory(CURRENT_TASK(), tp, &result,
+					    sizeof(result)) :
+		    0;
+}
+
+int sys_clock_getres_time64(int clockid, void *tp)
+{
+	int ns = clock_resolution(clockid);
+	struct {
+		int64_t tv_sec, tv_nsec;
+	} result = { 0, ns };
+	if (ns < 0)
+		return ns;
+	return tp ? ps_write_process_memory(CURRENT_TASK(), tp, &result,
+					    sizeof(result)) :
+		    0;
+}
+
 int sys_getrandom(void *buf, unsigned len, unsigned flags)
 {
 	unsigned char *bytes = buf;
@@ -223,10 +263,12 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 		unsigned long long elapsed = time_now_us() - start_us;
 		if (elapsed >= duration_us || ps_interrupting_signals(cur))
 			break;
-		unsigned long long left_ms = (duration_us - elapsed + 999) / 1000;
+		unsigned long long left_ms =
+			(duration_us - elapsed + 999) / 1000;
 		unsigned wait_ms = left_ms > 0xffffffffULL ? 0xffffffffU :
-							   (unsigned)left_ms;
-		if (!ps_prepare_interruptible_wait(cur, NULL, wait_ms, __func__)) {
+							     (unsigned)left_ms;
+		if (!ps_prepare_interruptible_wait(cur, NULL, wait_ms,
+						   __func__)) {
 			task_sched();
 			ps_finish_timed_wait(cur);
 		}
@@ -234,8 +276,8 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 	end_us = time_now_us();
 	if (rem) {
 		unsigned long long elapsed = end_us - start_us;
-		unsigned long long left = duration_us > elapsed ?
-					  duration_us - elapsed : 0;
+		unsigned long long left =
+			duration_us > elapsed ? duration_us - elapsed : 0;
 		rem->tv_sec = left / 1000000ULL;
 		rem->tv_nsec = (left % 1000000ULL) * 1000;
 	}

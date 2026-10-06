@@ -955,13 +955,10 @@ int sys_setfsgid32(unsigned fsgid)
 
 int sys_exit_group(int status)
 {
-	task_struct *cur = CURRENT_TASK();
-
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("exit_group(%d)\n", status);
 
-	ps_kill_thread_group(cur);
-	sys_exit((unsigned)status);
+	do_group_exit((unsigned)status << 8);
 	return 0; /* unreachable */
 }
 
@@ -972,7 +969,7 @@ int sys_gettid(void)
 
 int sys_tkill(int tid, int sig)
 {
-	if (sig <= 0 || sig >= NSIG)
+	if (sig < 0 || sig >= NSIG)
 		return -EINVAL;
 	return ps_send_signal((unsigned)tid, sig);
 }

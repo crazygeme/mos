@@ -13,6 +13,7 @@
 #include <mm/mmu.h>
 #include <config.h>
 #include <errno.h>
+#include <int/int.h>
 #include <ext4.h>
 
 /*
@@ -30,6 +31,35 @@ struct _vm_fault_lock {
 	rmutex_t lock;
 	unsigned refs;
 };
+
+/* A stopped VM-lock owner cannot complete a mapping transaction. Publish
+ * ownership before enabling interrupts and retire it only after unlock. */
+static void vm_lock_enter(rmutex_t *lock)
+{
+	unsigned irq = int_intr_disable();
+	rmutex_lock(lock);
+	__sync_fetch_and_add(&current->vm_lock_depth, 1);
+	int_intr_setlevel(irq);
+}
+
+static void vm_lock_leave(rmutex_t *lock)
+{
+	unsigned irq = int_intr_disable();
+	rmutex_unlock(lock);
+	__sync_fetch_and_sub(&current->vm_lock_depth, 1);
+	int_intr_setlevel(irq);
+}
+
+mm_struct *vm_mapping_enter(mm_struct *mm)
+{
+	vm_lock_enter(&mm->mapping_lock);
+	return mm;
+}
+
+void vm_mapping_leave(mm_struct **mm)
+{
+	vm_lock_leave(&(*mm)->mapping_lock);
+}
 
 /*
  * vm_region_compare - interval comparator for the VM region tree.
@@ -86,14 +116,14 @@ static void vm_fault_lock_lock(vm_fault_lock *fault_lock)
 {
 	if (!fault_lock)
 		return;
-	rmutex_lock(&fault_lock->lock);
+	vm_lock_enter(&fault_lock->lock);
 }
 
 static void vm_fault_lock_unlock(vm_fault_lock *fault_lock)
 {
 	if (!fault_lock)
 		return;
-	rmutex_unlock(&fault_lock->lock);
+	vm_lock_leave(&fault_lock->lock);
 }
 
 static void vm_fault_lock_put(vm_fault_lock *fault_lock)
@@ -121,10 +151,11 @@ static void vm_region_free(vm_region *region)
 
 static vm_region *vm_tree_find(mm_struct *mm, const vm_key *key)
 {
-	struct rb_node *node = mm->vma_index.rb_node;
+	struct rb_node *node;
 	int irq;
 
 	spinlock_lock(&mm->vma_lock, &irq);
+	node = mm->vma_index.rb_node;
 	while (node) {
 		vm_region *region = rb_entry(node, vm_region, rb_node);
 		vm_key node_key = { region->begin, region->end };
@@ -232,6 +263,7 @@ vm_struct_t vm_create()
 		return NULL;
 	mm->vma_index = _RBTREE_ROOT_INIT;
 	spinlock_init(&mm->vma_lock);
+	rmutex_init(&mm->mapping_lock);
 	mm->page_dir = 0;
 	mm->start_brk = mm->brk = 0;
 	mm->start_stack = 0;
@@ -298,6 +330,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 				 unsigned anon_id, vm_fault_lock *fault_lock)
 {
 	mm_struct *mm = vm;
+	VM_MAPPING_GUARD(mm);
 	vm_key probe;
 	vm_region *oregion;
 
@@ -423,6 +456,7 @@ int vm_extend_map(vm_struct_t vm, vaddr_t begin, vaddr_t old_end,
 
 	if (!vm || begin >= old_end || old_end >= new_end)
 		return 0;
+	VM_MAPPING_GUARD(mm);
 
 	region = vm_find_region(mm, begin);
 	if (!region)
@@ -453,6 +487,7 @@ int vm_extend_map(vm_struct_t vm, vaddr_t begin, vaddr_t old_end,
 void vm_del_map(vm_struct_t vm, vaddr_t addr)
 {
 	mm_struct *mm = vm;
+	VM_MAPPING_GUARD(mm);
 	vm_region *region;
 	vaddr_t vir;
 
@@ -578,6 +613,7 @@ vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr)
 vaddr_t vm_disc_map(vm_struct_t vm, size_t size)
 {
 	mm_struct *mm = vm;
+	VM_MAPPING_GUARD(mm);
 	vm_region *region = vm_tree_first(mm);
 	vaddr_t candidate = mm->mmap_base;
 
@@ -610,6 +646,7 @@ vaddr_t vm_disc_map(vm_struct_t vm, size_t size)
 void vm_dup(vm_struct_t src, vm_struct_t dst)
 {
 	mm_struct *mm = src;
+	VM_MAPPING_GUARD(mm);
 	vm_region *region = vm_tree_first(mm);
 
 	while (region) {
@@ -625,14 +662,14 @@ void vm_region_lock_fault(vm_region *region)
 {
 	if (!region || !region->fault_lock)
 		return;
-	rmutex_lock(&region->fault_lock->lock);
+	vm_fault_lock_lock(region->fault_lock);
 }
 
 void vm_region_unlock_fault(vm_region *region)
 {
 	if (!region || !region->fault_lock)
 		return;
-	rmutex_unlock(&region->fault_lock->lock);
+	vm_fault_lock_unlock(region->fault_lock);
 }
 
 void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
@@ -642,6 +679,7 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
 
 	if (!vm || !fn)
 		return;
+	VM_MAPPING_GUARD(mm);
 	for (region = vm_tree_first(mm); region;
 	     region = vm_tree_next(mm, region))
 		fn(region, data);
@@ -662,6 +700,7 @@ void vm_enum(vm_struct_t vm, vm_enum_fn fn, void *data)
 void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 {
 	mm_struct *mm = vm;
+	VM_MAPPING_GUARD(mm);
 	vm_key probe;
 	vm_region *oregion;
 
@@ -743,6 +782,7 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 	size_t size = page_count * PAGE_SIZE;
 	task_struct *cur = CURRENT_TASK();
 	mm_struct *mm = cur->user->vm;
+	VM_MAPPING_GUARD(mm);
 	vm_key probe;
 	unsigned anon_id = 0;
 
@@ -795,6 +835,7 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 {
 	vaddr_t addr = _addr & PAGE_SIZE_MASK;
 	task_struct *cur = CURRENT_TASK();
+	VM_MAPPING_GUARD(cur->user->vm);
 	vm_region *region;
 	vaddr_t vir;
 
@@ -1052,6 +1093,7 @@ int do_munmap(void *addr, size_t length)
 	size_t pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 	vaddr_t end = begin + pages * PAGE_SIZE;
 	mm_struct *mm = cur->user->vm;
+	VM_MAPPING_GUARD(mm);
 	vm_key probe;
 	vm_region *region;
 	vaddr_t vir;

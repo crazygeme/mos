@@ -161,7 +161,8 @@ void smp_tlb_flush_user(vaddr_t page_dir)
 
 void smp_check_stop(void)
 {
-	if (ps_enabled() && current->terminate_requested) {
+	if (ps_enabled() && current->terminate_requested &&
+	    !current->vm_lock_depth) {
 		ps_stop_terminated_task();
 		task_sched();
 		DIE();

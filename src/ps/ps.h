@@ -138,6 +138,7 @@ struct _task_struct {
 	task_frame tss;
 	uintptr_t switch_sp;
 	unsigned net_core_depth; /* Recursive network-core ownership by this task. */
+	unsigned vm_lock_depth; /* VM locks released before forced thread removal. */
 	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
 	unsigned terminate_requested;
 	int sched_level;

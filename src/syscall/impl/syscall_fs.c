@@ -918,7 +918,8 @@ int sys_rename(const char *oldpath, const char *newpath)
 	return sys_renameat(AT_FDCWD, oldpath, AT_FDCWD, newpath);
 }
 
-int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
+static int readlink_common(int dirfd, const char *path, char *buf,
+			   unsigned bufsiz, int at)
 {
 	char *name = name_get();
 	task_struct *cur = CURRENT_TASK();
@@ -930,16 +931,21 @@ int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 		return -EINVAL;
 	}
 
-	ret = resolve_path(_path, name);
+	ret = syscall_resolve_at(dirfd, path, name);
 	if (ret) {
 		name_put(name);
 		return ret;
 	}
 
 	ret = vfs_readlink(cur->root, name, buf, bufsiz, &rcnt);
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("readlink(%s, %x, %d) = %d\n", name, buf, bufsiz,
-		     ret ? ret : rcnt);
+	if (TEST_LOG(TEST_LOG_INFO)) {
+		if (at)
+			klog("readlinkat(%d, %s, %x, %d) = %d\n", dirfd, name,
+			     buf, bufsiz, ret ? ret : rcnt);
+		else
+			klog("readlink(%s, %x, %d) = %d\n", name, buf, bufsiz,
+			     ret ? ret : rcnt);
+	}
 
 	name_put(name);
 
@@ -947,6 +953,16 @@ int sys_readlink(const char *_path, char *buf, unsigned bufsiz)
 		return ret;
 
 	return (int)rcnt;
+}
+
+int sys_readlink(const char *path, char *buf, unsigned bufsiz)
+{
+	return readlink_common(AT_FDCWD, path, buf, bufsiz, 0);
+}
+
+int sys_readlinkat(int dirfd, const char *path, char *buf, unsigned bufsiz)
+{
+	return readlink_common(dirfd, path, buf, bufsiz, 1);
 }
 
 /* ------------------------------------------------------------------ *
@@ -1271,46 +1287,16 @@ out:
 
 int sys_ftruncate(int fd, unsigned long length)
 {
-	task_struct *cur = CURRENT_TASK();
-	file *fp;
-	int ret;
-
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ftruncate(%d, %lu)\n", fd, length);
-
-	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
-		return -EBADF;
-
-	fp = cur->fds[fd];
-	if (!fp->f_fop || !fp->f_fop->ftruncate)
-		return -EINVAL;
-
-	ret = fp->f_fop->ftruncate(fp, (loff_t)length);
-	if (ret == 0)
-		fp->f_inode->i_size = length;
-	return ret;
+	return fs_ftruncate(fd, length);
 }
 
 int sys_ftruncate64(int fd, uint64_t length)
 {
-	task_struct *cur = CURRENT_TASK();
-	file *fp;
-	int ret;
-
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ftruncate64(%d, %llu)\n", fd, length);
-
-	if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
-		return -EBADF;
-
-	fp = cur->fds[fd];
-	if (!fp->f_fop || !fp->f_fop->ftruncate)
-		return -EINVAL;
-
-	ret = fp->f_fop->ftruncate(fp, (loff_t)length);
-	if (ret == 0)
-		fp->f_inode->i_size = length;
-	return ret;
+	return fs_ftruncate(fd, length);
 }
 
 int sys__sysctl(void *args)

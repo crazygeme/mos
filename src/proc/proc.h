@@ -4,6 +4,8 @@
 #include <fs/vfs.h>
 
 #define PROC_INODE 0x80
+file *proc_pid_lookup(unsigned pid, const char *rest, int flag);
+task_struct *proc_resolve_thread(task_struct *task, const char **rest);
 
 /*
  * PROC_INIT(fn) registers a void (*)(super_block *) function to be called

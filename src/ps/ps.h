@@ -64,6 +64,7 @@ typedef struct _user_enviroment {
 	mm_struct *mmap_cache_vm;
 	unsigned mmap_cache_generation;
 	char *command;
+	file *executable; /* retained main image, independent of argv and PT_INTERP */
 	size_t cmd_len;
 	char *environment;
 	size_t env_len;
@@ -159,6 +160,7 @@ struct _task_struct {
 	const char *wait_func;
 	void (*cancel_io_wait)(void *);
 	void *io_wait;
+	struct file_io_scope *io_files;
 	int remain_ticks;
 	file **fds;
 	unsigned long *fd_cloexec;

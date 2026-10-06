@@ -18,6 +18,8 @@ typedef struct {
 	proc_buf_t *buffer;
 	unsigned uid;
 	unsigned gid;
+	unsigned task_group;
+	int task_directory;
 } pid_file_data;
 
 static pid_file_data *pid_data_new(proc_buf_t *pb, task_struct *task)
@@ -113,7 +115,8 @@ static int pid_dir_getattr(file *fp, struct stat *s)
 	s->st_uid = data->uid;
 	s->st_gid = data->gid;
 	s->st_blksize = PAGE_SIZE;
-	s->st_nlink = 2;
+	s->st_nlink = data->task_directory ?
+			      2 + proc_thread_count(data->task_group) : 2;
 	s->st_dev = 0xb;
 	s->st_ino = PROC_INODE;
 	return 0;
@@ -127,9 +130,23 @@ static const file_operations pid_file_fops = {
 	.release = pid_release,
 };
 
+static unsigned char pid_dirent_type(file *fp, const char *name)
+{
+	pid_file_data *data = fp->f_inode->i_private;
+	if (!strcmp(name, ".") || !strcmp(name, "..") ||
+	    !strcmp(name, "fd") || !strcmp(name, "task"))
+		return S_IFDIR >> 12;
+	if (data->task_directory && *name >= '0' && *name <= '9')
+		return S_IFDIR >> 12;
+	if (!strcmp(name, "cwd") || !strcmp(name, "exe"))
+		return S_IFLNK >> 12;
+	return 0;
+}
+
 static const file_operations pid_dir_fops = {
 	.getattr = pid_dir_getattr,
 	.read = pid_read,
+	.dirent_type = pid_dirent_type,
 	.llseek = pid_llseek,
 	.poll = pid_poll,
 	.release = pid_release,
@@ -163,6 +180,50 @@ static const file_operations pid_symlink_fops = {
 	.release = pid_symlink_release,
 };
 
+typedef struct {
+	char *name;
+	file *target;
+} pid_fd_link;
+
+static int pid_fd_link_getattr(file *fp, struct stat *s)
+{
+	pid_fd_link *link = fp->f_inode->i_private;
+	memset(s, 0, sizeof(*s));
+	s->st_mode = fp->f_inode->i_mode;
+	s->st_size = strlen(link->name);
+	s->st_nlink = 1;
+	s->st_dev = 0xb;
+	s->st_ino = PROC_INODE;
+	return 0;
+}
+
+static file *pid_fd_link_follow(file *fp, int flags)
+{
+	pid_fd_link *link = fp->f_inode->i_private;
+	if (link->target->f_fop && link->target->f_fop->reopen)
+		return link->target->f_fop->reopen(link->target, flags);
+	if (link->target->f_name && link->target->f_name[0] == '/')
+		return vfs_open(CURRENT_TASK()->root, link->target->f_name, flags);
+	return NULL;
+}
+
+static int pid_fd_link_release(file *fp)
+{
+	pid_fd_link *link = fp->f_inode->i_private;
+	fs_put_file(link->target);
+	free(link->name);
+	free(link);
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+
+static const file_operations pid_fd_link_fops = {
+	.getattr = pid_fd_link_getattr,
+	.follow_link = pid_fd_link_follow,
+	.release = pid_fd_link_release,
+};
+
 /* ── Public constructors ─────────────────────────────────────────────── */
 
 file *make_pid_file(proc_buf_t *pb, task_struct *task)
@@ -194,6 +255,15 @@ file *make_pid_dir(proc_buf_t *pb, task_struct *task)
 	return fp;
 }
 
+file *make_pid_task_dir(proc_buf_t *pb, task_struct *task)
+{
+	file *fp = make_pid_dir(pb, task);
+	pid_file_data *data = fp->f_inode->i_private;
+	data->task_directory = 1;
+	data->task_group = task->tgid;
+	return fp;
+}
+
 file *make_pid_symlink(const char *target)
 {
 	inode *nd = zalloc(sizeof(*nd));
@@ -205,6 +275,22 @@ file *make_pid_symlink(const char *target)
 	fp->f_inode = nd;
 	fp->f_count = 1;
 	fp->f_fop = &pid_symlink_fops;
+	return fp;
+}
+
+file *make_pid_fd_symlink(const char *name, file *target)
+{
+	file *fp = make_pid_symlink(name);
+	pid_fd_link *link = zalloc(sizeof(*link));
+	if (!link) {
+		fs_put_file(fp);
+		return NULL;
+	}
+	link->name = fp->f_inode->i_private;
+	link->target = target;
+	fs_get_file(target);
+	fp->f_inode->i_private = link;
+	fp->f_fop = &pid_fd_link_fops;
 	return fp;
 }
 

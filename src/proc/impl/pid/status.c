@@ -92,7 +92,7 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 	proc_buf_printf(pb, "State:     %c (%s)\n",
 			pid_state_char(task->status),
 			pid_state_name(task->status));
-	proc_buf_printf(pb, "Tgid:      %u\n", task->psid);
+	proc_buf_printf(pb, "Tgid:      %u\n", task->tgid);
 	proc_buf_printf(pb, "Pid:       %u\n", task->psid);
 	proc_buf_printf(pb, "PPid:      %u\n", task->ppid);
 	proc_buf_printf(pb, "TracerPid: 0\n");
@@ -101,6 +101,7 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 	proc_buf_printf(pb, "Gid:       %u\t%u\t%u\t%u\n", task->user->gid,
 			task->user->egid, task->user->sgid, task->user->egid);
 	proc_buf_printf(pb, "FDSize:    %u\n", fdsize);
+	proc_buf_printf(pb, "Threads:   %u\n", proc_thread_count(task->tgid));
 	proc_buf_printf(pb, "Groups:    %u\n", task->user->gid);
 	proc_buf_printf(pb, "VmSize:    %llu kB\n",
 			(unsigned long long)vm.total_kb);
@@ -193,7 +194,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		/* 17 cstime      */ (long)task->stats->child_stime,
 		/* 18 priority    */ (long)20,
 		/* 19 nice        */ (long)0,
-		/* 20 num_threads */ (long)1,
+		/* 20 num_threads */ (long)proc_thread_count(task->tgid),
 		/* 21 itrealvalue */ (long)0,
 		/* 22 starttime   */ (unsigned long)task->stats->start_tickets,
 		/* 23 vsize       */ (unsigned long long)vsize,

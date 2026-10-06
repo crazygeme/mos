@@ -16,6 +16,7 @@
 #define SOCK_STREAM 1
 #define SOCK_DGRAM 2
 #define SOCK_RAW 3
+#define SOCK_SEQPACKET 5
 
 /* ── IP protocols ───────────────────────────────────────────────────────────── */
 #define IPPROTO_IP 0
@@ -142,6 +143,7 @@ struct ifconf {
 /* ── SOL_SOCKET option names (Linux i386 values) ────────────────────────────── */
 #define SO_REUSEADDR 2 /* allow local address reuse */
 #define SO_PEERCRED 17
+#define SO_PASSCRED 16
 #define SO_TYPE 3 /* get socket type */
 #define SO_ERROR 4 /* get error status and clear */
 #define SO_BROADCAST 6 /* permit sending of broadcast msgs */
@@ -243,10 +245,11 @@ struct mmsghdr {
 #define SOCK_RXBUF_INET_SIZE (256 * 1024) /* per-INET-socket receive ring */
 #define SOCK_RXBUF_UNIX_SIZE (4 * 1024) /* Unix datagram receive ring */
 #define SOCK_RXBUF_UNIX_STREAM_SIZE (256 * 1024) /* Unix stream receive ring */
+#define SOCK_RXBUF_UNIX_SEQPACKET_SIZE (256 * 1024) /* Unix record receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
 #define UNIX_SHUT_RD 1u
 #define UNIX_SHUT_WR 2u
-#define UNIX_PASSFD_MAX 8 /* max descriptors per SCM_RIGHTS message */
+#define UNIX_PASSFD_MAX 16 /* max descriptors per SCM_RIGHTS message */
 #define UNIX_PASSFD_QUEUE 16 /* queued ancillary records per AF_UNIX socket */
 
 /* ── Per-socket cmsg option flags (stored in mos_sock::cmsg_flags) ─────────── */
@@ -279,6 +282,11 @@ typedef struct {
 	unsigned uid;
 	unsigned gid;
 } unix_peercred;
+
+typedef struct {
+	uint32_t length;
+	unix_peercred credentials;
+} unix_seqpacket_header;
 
 typedef struct _mos_sock {
 	int domain;
@@ -342,6 +350,7 @@ typedef struct _mos_sock {
 	struct _mos_sock *unix_peer;
 	unix_peercred unix_listener_cred;
 	unix_peercred unix_peer_cred;
+	int unix_passcred;
 	int unix_peer_cred_valid;
 	unsigned unix_shutdown; /* UNIX_SHUT_* directions; peer retained until close */
 

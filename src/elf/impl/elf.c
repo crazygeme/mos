@@ -9,6 +9,7 @@
 #include <mm/mmu.h>
 #include <errno.h>
 #include <fs/cache.h>
+#include <fs/inotify.h>
 
 /* Main PIE images occupy the executable area below the mmap/heap limit. */
 #define ELF_PIE_BIAS 0x08000000U
@@ -20,12 +21,17 @@
 int elf_read(file *fp, unsigned off, void *buf, int len)
 {
 	loff_t pos = off;
+	int count;
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -ENOEXEC;
 	/* Internal ELF reads use cached pages without per-read atime updates. */
 	if (fp->f_inode && fp->f_inode->i_pgcache_tag && fp->f_fop->read_page)
-		return fs_page_cache_read(fp, buf, len, &pos);
-	return fp->f_fop->read(fp, buf, len, &pos);
+		count = fs_page_cache_read(fp, buf, len, &pos);
+	else
+		count = fp->f_fop->read(fp, buf, len, &pos);
+	if (count > 0)
+		inotify_file_event(fp, IN_ACCESS);
+	return count;
 }
 
 /* Translate ELF segment permission flags (PF_R/PF_W/PF_X) to mmap PROT_*. */
@@ -251,6 +257,7 @@ static int elf_validate(elf_image *image, char *interp)
 	if (!fp || !fp->f_fop || !fp->f_fop->getattr ||
 	    fp->f_fop->getattr(fp, &st) != 0)
 		return -ENOENT;
+	inotify_file_open(fp, current->root);
 	Elf32_Ehdr h32;
 	if (elf_read(fp, 0, &h32, sizeof(h32)) != sizeof(h32) ||
 	    memcmp(h32.e_ident, "\177ELF", 4) ||

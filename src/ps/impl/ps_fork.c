@@ -346,6 +346,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->pdeath_signal = 0;
 	task->cancel_io_wait = NULL;
 	task->io_wait = NULL;
+	task->io_files = NULL;
 	task->robust_list_head = NULL;
 	task->robust_list_size = cur->robust_list_size;
 	task->robust_list_reader = NULL;
@@ -405,6 +406,9 @@ void fork_dup_user_env(task_struct *cur, task_struct *task)
 	memcpy(task->user->command, cur->user->command, cur->user->cmd_len);
 	memcpy(task->user->environment, cur->user->environment,
 	       cur->user->env_len);
+	task->user->executable = cur->user->executable;
+	if (task->user->executable)
+		fs_get_file(task->user->executable);
 	task->user->cwd = name_get();
 	strcpy(task->user->cwd, cur->user->cwd);
 	task->user->root_path = name_get();
@@ -485,6 +489,8 @@ void fork_abort_child(task_struct *task)
 	vm_put(task->user->vm);
 	vm_free(task->user->command, 1);
 	vm_free(task->user->environment, 1);
+	if (task->user->executable)
+		fs_put_file(task->user->executable);
 	name_put(task->user->cwd);
 	name_put(task->user->root_path);
 	ps_put_fds(task);

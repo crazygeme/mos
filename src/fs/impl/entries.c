@@ -34,6 +34,7 @@ struct vfs_entry_tree {
 
 struct vfs_entry_open_file {
 	vfs_entry_node *node;
+	super_block *parent;
 	char *buffer;
 	unsigned length;
 };
@@ -331,16 +332,42 @@ static loff_t vfs_entry_seek(file *fp, loff_t offset, int whence)
 static int vfs_entry_release(file *fp)
 {
 	struct vfs_entry_open_file *opened = fp->f_inode->i_private;
+	super_block *parent = opened->parent;
 	vfs_entry_tree_put(opened->node->tree);
 	free(opened->buffer);
 	free(opened);
 	free(fp->f_inode);
 	free(fp);
+	if (parent)
+		sb_put(parent);
 	return 0;
+}
+
+static file *entry_open_root(super_block *sb, int flags);
+
+static file *vfs_entry_follow_link(file *fp, int flags)
+{
+	struct vfs_entry_open_file *opened = fp->f_inode->i_private;
+	vfs_entry_node *target = opened->node->target;
+	return target && target->sb ? entry_open_root(target->sb, flags) : NULL;
+}
+
+static int vfs_entry_notify_parent(file *fp, super_block **owner, uint64_t *ino,
+				   const char **name)
+{
+	struct vfs_entry_open_file *opened = fp->f_inode->i_private;
+	if (!opened->parent)
+		return 0;
+	*owner = opened->parent;
+	*ino = opened->node->parent->number;
+	*name = opened->node->name;
+	return 1;
 }
 
 static const file_operations vfs_entry_fops = {
 	.getattr = vfs_entry_getattr,
+	.notify_parent = vfs_entry_notify_parent,
+	.follow_link = vfs_entry_follow_link,
 	.read = vfs_entry_read,
 	.write = vfs_entry_write,
 	.llseek = vfs_entry_seek,
@@ -436,6 +463,11 @@ static file *entry_open_root(super_block *sb, int flags)
 	fp->f_mode = flags & O_ACCMODE;
 	fp->f_flag = flags;
 	__sync_add_and_fetch(&tree->references, 1);
+	if (node->parent && node->parent->sb) {
+		opened->parent = node->parent->sb;
+		sb_get(opened->parent);
+	}
+	vfs_set_file_origin(fp, node->sb, "");
 	return fp;
 fail:
 	if (opened)
@@ -491,6 +523,8 @@ static void entry_release_super(super_block *sb)
 	vfs_entry_tree *tree = node->tree;
 	if (node->sb == sb)
 		node->sb = NULL;
+	else
+		sb_put(node->sb);
 	free(sb);
 	vfs_entry_tree_put(tree);
 }
@@ -568,6 +602,7 @@ super_block *vfs_entry_tree_mount(vfs_entry_tree *tree)
 		return NULL;
 	sb->s_fs_info = tree->root;
 	__sync_add_and_fetch(&tree->references, 1);
+	sb_get(tree->root->sb);
 	for (cursor = rb_first(&tree->root->sb->s_mounts); cursor;
 	     cursor = rb_next(cursor)) {
 		vfs_mount_node *mount =

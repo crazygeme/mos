@@ -27,6 +27,7 @@
 #include <device/time.h>
 #include <macro.h>
 #include <ext4.h>
+#include <errno.h>
 
 /* Implemented in proc_pid.c */
 file *proc_pid_lookup(unsigned pid, const char *rest, int flag);
@@ -50,6 +51,7 @@ static void proc_collect_pid(task_struct *task, void *ctx)
 {
 	pid_ctx_t *c = (pid_ctx_t *)ctx;
 	if (task->psid != 0xffffffff && task->type != ps_kernel &&
+	    task->psid == task->tgid &&
 	    c->count < PROC_MAX_PIDS)
 		c->list[c->count++] = task->psid;
 }
@@ -252,7 +254,7 @@ static file *proc_open(super_block *sb, const char *path, int flag)
 
 	/* /self or /self/... */
 	if (strncmp(p, "self", 4) == 0 && (p[4] == '/' || p[4] == '\0')) {
-		pid = current->psid;
+		pid = current->tgid;
 		rest = p + 4; /* "" or "/status" etc. */
 		return proc_pid_lookup(pid, rest, flag);
 	}
@@ -275,7 +277,7 @@ static void proc_release_super(super_block *sb)
 }
 
 /*
- * proc_readlink resolves per-process cwd and fd symlinks.
+ * proc_readlink resolves per-process exe, cwd and fd symlinks.
  * The self component selects the calling process.
  */
 static int proc_readlink(super_block *sb, const char *path, char *buf,
@@ -294,7 +296,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	p++;
 
 	if (strncmp(p, "self", 4) == 0 && p[4] == '/') {
-		pid = current->psid;
+		pid = current->tgid;
 		p += 4;
 	} else if (*p >= '0' && *p <= '9') {
 		pid = 0;
@@ -307,6 +309,16 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	task = ps_find_process(pid);
 	if (!task)
 		return -1;
+	task = proc_resolve_thread(task, &p);
+	if (!task)
+		return -ENOENT;
+	if (strcmp(p, "/exe") == 0) {
+		if (!task->user || !task->user->executable ||
+		    !task->user->executable->f_name)
+			return -ENOENT;
+		fname = task->user->executable->f_name;
+		goto copy_target;
+	}
 	if (strcmp(p, "/cwd") == 0) {
 		if (!task->user || !task->user->cwd)
 			return -1;

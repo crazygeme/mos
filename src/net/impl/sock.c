@@ -28,6 +28,8 @@ unsigned sock_default_rxbuf_size(int domain, int type)
 {
 	if (domain != AF_UNIX)
 		return SOCK_RXBUF_INET_SIZE;
+	if (type == SOCK_SEQPACKET)
+		return SOCK_RXBUF_UNIX_SEQPACKET_SIZE;
 	return type == SOCK_STREAM ? SOCK_RXBUF_UNIX_STREAM_SIZE :
 				     SOCK_RXBUF_UNIX_SIZE;
 }
@@ -780,6 +782,23 @@ static int sock_ioctl_fionread(void *context __attribute__((unused)),
 {
 	file *fp = context;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET) {
+		unix_seqpacket_header record;
+		unsigned total = 0;
+		unsigned head;
+		int irq;
+		spinlock_lock(&sk->rxbuf_lock, &irq);
+		head = sk->rx_head;
+		while (rx_used(sk) >= sizeof(record)) {
+			rx_read(sk, &record, sizeof(record));
+			total += record.length;
+			sk->rx_head += record.length;
+		}
+		sk->rx_head = head;
+		spinlock_unlock(&sk->rxbuf_lock, irq);
+		*(int *)arg = (int)total;
+		return 0;
+	}
 	*(int *)arg = (int)rx_used(sk);
 	return 0;
 }
@@ -914,7 +933,10 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 			if (sk->unix_shutdown & UNIX_SHUT_WR) {
 				ready |= FS_POLL_WRITE;
 			} else if (sk->unix_peer) {
-				if (sk->type == SOCK_DGRAM) {
+				if (sk->type == SOCK_SEQPACKET) {
+					ready |= rx_free(sk->unix_peer) >= sizeof(unix_seqpacket_header) ?
+							 FS_POLL_WRITE : 0;
+				} else if (sk->type == SOCK_DGRAM) {
 					ready |= rx_free(sk->unix_peer) >=
 								 sizeof(u16_t) ?
 							 FS_POLL_WRITE :
@@ -941,7 +963,8 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 	      sk->unix_shutdown == (UNIX_SHUT_RD | UNIX_SHUT_WR))))
 		ready |= FS_POLL_HUP;
 
-	if ((events & FS_POLL_RDHUP) && sk->type == SOCK_STREAM &&
+	if ((events & FS_POLL_RDHUP) &&
+	    (sk->type == SOCK_STREAM || sk->type == SOCK_SEQPACKET) &&
 	    (sk->state == SS_DISCONNECTING ||
 	     (sk->domain == AF_UNIX && (sk->unix_shutdown & UNIX_SHUT_RD))))
 		ready |= FS_POLL_RDHUP;

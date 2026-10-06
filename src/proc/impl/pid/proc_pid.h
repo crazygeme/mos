@@ -11,7 +11,9 @@
 
 file *make_pid_file(proc_buf_t *pb, task_struct *task);
 file *make_pid_dir(proc_buf_t *pb, task_struct *task);
+file *make_pid_task_dir(proc_buf_t *pb, task_struct *task);
 file *make_pid_symlink(const char *target);
+file *make_pid_fd_symlink(const char *name, file *target);
 
 /* ── State helpers (common.c) ────────────────────────────────────────── */
 
@@ -47,5 +49,7 @@ void fill_maps(proc_buf_t *pb, task_struct *task);
 /* ── fd directory (fd.c) ─────────────────────────────────────────────── */
 
 file *pid_fd_dir_open(task_struct *task);
+file *pid_task_dir_open(task_struct *task);
+unsigned proc_thread_count(unsigned tgid);
 
 #endif /* _PROC_PID_PROC_PID_H */

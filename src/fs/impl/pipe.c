@@ -1,4 +1,5 @@
 #include <fs/fs.h>
+#include <fs/pipe.h>
 #include <fs/fcntl.h>
 #include <fs/ioctl.h>
 #include <fs/vfs.h>
@@ -13,15 +14,16 @@
 
 typedef struct _pipe_inode {
 	cy_buf *buf;
-	int readonly;
+	int mode;
+	unsigned uid, gid;
 } pipe_inode;
 
 static int pipe_release(file *fp)
 {
 	pipe_inode *n = fp->f_inode->i_private;
-	if (!n->readonly)
+	if (n->mode != O_RDONLY)
 		cyb_writer_close(n->buf);
-	else
+	if (n->mode != O_WRONLY)
 		cyb_reader_close(n->buf);
 	free(n);
 	free(fp->f_inode);
@@ -34,8 +36,8 @@ static ssize_t pipe_read(file *fp, void *buf, size_t len, loff_t *pos)
 	pipe_inode *n = fp->f_inode->i_private;
 	int blocking, nonblock;
 
-	if (!n->readonly)
-		return -1;
+	if (n->mode == O_WRONLY)
+		return -EBADF;
 	if (!len)
 		return 0;
 
@@ -55,8 +57,8 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 	task_struct *cur = CURRENT_TASK();
 	int nonblock;
 	int ret;
-	if (n->readonly)
-		return 0;
+	if (n->mode == O_RDONLY)
+		return -EBADF;
 	if (!len)
 		return 0;
 	nonblock = (fp->f_flag & O_NONBLOCK) != 0;
@@ -108,6 +110,11 @@ static unsigned pipe_write_poll(file *fp, unsigned events, poll_table *pt)
 	return pipe_poll_common(n, events & (FS_POLL_WRITE | FS_POLL_ERR), pt);
 }
 
+static unsigned pipe_rw_poll(file *fp, unsigned events, poll_table *pt)
+{
+	return pipe_poll_common(fp->f_inode->i_private, events, pt);
+}
+
 static loff_t pipe_llseek(file *fp, loff_t offset, int whence)
 {
 	/* pipes are not seekable */
@@ -149,15 +156,17 @@ static int pipe_getattr(file *fp, struct stat *s)
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
 	s->st_dev = 0;
-	s->st_gid = 0;
+	pipe_inode *n = node->i_private;
+	s->st_gid = n->gid;
 	s->st_ino = 0;
 
-	s->st_uid = 0;
+	s->st_uid = n->uid;
 	return 0;
 }
 
 static const file_operations pipe_read_fops = {
 	.release = pipe_release,
+	.reopen = pipe_reopen,
 	.getattr = pipe_getattr,
 	.read = pipe_read,
 	.poll = pipe_read_poll,
@@ -167,12 +176,66 @@ static const file_operations pipe_read_fops = {
 
 static const file_operations pipe_write_fops = {
 	.release = pipe_release,
+	.reopen = pipe_reopen,
 	.getattr = pipe_getattr,
 	.write = pipe_write,
 	.poll = pipe_write_poll,
 	.llseek = pipe_llseek,
 	.ioctl = pipe_ioctl,
 };
+
+static const file_operations pipe_rw_fops = {
+	.release = pipe_release,
+	.reopen = pipe_reopen,
+	.getattr = pipe_getattr,
+	.read = pipe_read,
+	.write = pipe_write,
+	.poll = pipe_rw_poll,
+	.llseek = pipe_llseek,
+	.ioctl = pipe_ioctl,
+};
+
+/* Reopening an anonymous pipe creates independent flags and endpoint counts. */
+file *pipe_reopen(file *original, int flags)
+{
+	pipe_inode *source, *node;
+	inode *in;
+	file *fp;
+	int mode = flags & O_ACCMODE;
+	if (!original || (original->f_fop != &pipe_read_fops &&
+			  original->f_fop != &pipe_write_fops &&
+			  original->f_fop != &pipe_rw_fops))
+		return NULL;
+	if (mode != O_RDONLY && mode != O_WRONLY && mode != O_RDWR)
+		return NULL;
+	node = zalloc(sizeof(*node));
+	in = zalloc(sizeof(*in));
+	fp = zalloc(sizeof(*fp));
+	if (!node || !in || !fp) {
+		free(node);
+		free(in);
+		free(fp);
+		return NULL;
+	}
+	source = original->f_inode->i_private;
+	node->buf = source->buf;
+	node->mode = mode;
+	node->uid = source->uid;
+	node->gid = source->gid;
+	if (mode != O_WRONLY)
+		cyb_reader_open(node->buf);
+	if (mode != O_RDONLY)
+		cyb_writer_open(node->buf);
+	in->i_mode = original->f_inode->i_mode;
+	in->i_private = node;
+	fp->f_inode = in;
+	fp->f_count = 1;
+	fp->f_mode = mode;
+	fp->f_flag = flags;
+	fp->f_fop = mode == O_RDONLY ? &pipe_read_fops :
+		    mode == O_WRONLY ? &pipe_write_fops : &pipe_rw_fops;
+	return fp;
+}
 
 int pipe_open(file **pipes)
 {
@@ -181,7 +244,9 @@ int pipe_open(file **pipes)
 
 	pipe_inode *rn = zalloc(sizeof(*rn));
 	rn->buf = buf;
-	rn->readonly = 1;
+	rn->mode = O_RDONLY;
+	rn->uid = CURRENT_TASK()->user->euid;
+	rn->gid = CURRENT_TASK()->user->egid;
 
 	inode *ri = zalloc(sizeof(*ri));
 	ri->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;
@@ -196,7 +261,9 @@ int pipe_open(file **pipes)
 
 	pipe_inode *wn = zalloc(sizeof(*wn));
 	wn->buf = buf;
-	wn->readonly = 0;
+	wn->mode = O_WRONLY;
+	wn->uid = rn->uid;
+	wn->gid = rn->gid;
 
 	inode *wi = zalloc(sizeof(*wi));
 	wi->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;

@@ -52,7 +52,8 @@ int do_socket(int domain, int type, int protocol)
 		     protocol);
 
 	if (domain == AF_UNIX) {
-		if (type != SOCK_STREAM && type != SOCK_DGRAM)
+		if (type != SOCK_STREAM && type != SOCK_DGRAM &&
+		    type != SOCK_SEQPACKET)
 			return -EPROTONOSUPPORT;
 		if (protocol != 0)
 			return -EPROTONOSUPPORT;
@@ -407,6 +408,8 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET)
+		return do_sendto(fd, buf, len, flags, NULL, 0);
 	loff_t pos = 0;
 	task_struct *cur = CURRENT_TASK();
 	return (int)cur->fds[fd]->f_fop->write(cur->fds[fd], buf, (size_t)len,
@@ -439,6 +442,13 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 		return -ENOTSOCK;
 	if (sk->err)
 		return sk->err;
+	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET) {
+		struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
+		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+		if (CURRENT_TASK()->fds[fd]->f_flag & O_NONBLOCK)
+			flags |= MSG_DONTWAIT;
+		return unix_sendmsg(sk, &msg, flags);
+	}
 
 	if (sk->type == SOCK_STREAM) {
 		loff_t pos = 0;
@@ -600,7 +610,7 @@ int do_shutdown(int fd, int how)
 		}
 		/* Half-close preserves both peer links until socket release. */
 		__sync_fetch_and_or(&sk->unix_shutdown, mask);
-		if (peer && sk->type == SOCK_STREAM) {
+		if (peer && (sk->type == SOCK_STREAM || sk->type == SOCK_SEQPACKET)) {
 			__sync_fetch_and_or(&peer->unix_shutdown, peer_mask);
 			sock_wakeup(peer);
 		}

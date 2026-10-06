@@ -30,6 +30,7 @@ typedef struct _vm_region {
 struct _mm_struct {
 	struct rb_root vma_index;
 	spinlock_t vma_lock;
+	rmutex_t mapping_lock; /* Serializes complete mapping transactions. */
 	vaddr_t page_dir;
 	vaddr_t start_brk;
 	vaddr_t brk;
@@ -42,6 +43,15 @@ struct _mm_struct {
 	/* Incremented whenever the VMA tree changes; used by fault-time cache. */
 	unsigned vma_generation;
 };
+
+mm_struct *vm_mapping_enter(mm_struct *mm);
+void vm_mapping_leave(mm_struct **mm);
+
+/* Mapping selection, replacement, and region splitting share one scope. */
+#define VM_MAPPING_GUARD(mm)                                                \
+	mm_struct *vm_mapping_scope                                        \
+		__attribute__((cleanup(vm_mapping_leave), unused)) =       \
+			vm_mapping_enter(mm)
 
 static inline mm_struct *vm_mm(vm_struct_t vm)
 {

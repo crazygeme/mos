@@ -770,6 +770,11 @@ void poll_table_cleanup(poll_table *pt)
 	while (pt->nr > 0) {
 		poll_table_entry *ent = &pt->entries[--pt->nr];
 		ent->dereg(ent->opaque, pt->task);
+		if (ent->fp) {
+			file *fp = ent->fp;
+			ent->fp = NULL;
+			fs_put_file(fp);
+		}
 	}
 }
 
@@ -797,6 +802,7 @@ int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg)
 	}
 	pt->entries[pt->nr].opaque = opaque;
 	pt->entries[pt->nr].dereg = dereg;
+	pt->entries[pt->nr].fp = NULL;
 	pt->nr++;
 	return 0;
 }
@@ -848,40 +854,38 @@ void poll_notify(list_entry *head)
 
 unsigned fs_fd_poll(int fd, unsigned events, poll_table *pt)
 {
-	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	unsigned first = pt ? pt->nr : 0;
 	unsigned ret = 0;
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return 0;
 
-	if (cur->fds[fd] == NULL)
-		return 0;
-
-	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
-	if (!fp || !fp->f_fop || !fp->f_fop->poll)
+	if (!fp->f_fop || !fp->f_fop->poll)
 		goto done;
 
+	/* Socket callbacks acquire the network core, which also installs fds.
+	 * Retain the description without holding the descriptor-table mutex. */
 	ret = fp->f_fop->poll(fp, events, pt);
+	if (pt && pt->nr > first) {
+		/* Cleanup runs in reverse order; release after all new subscriptions. */
+		fs_get_file(fp);
+		pt->entries[first].fp = fp;
+	}
 done:
-	mutex_unlock(&cur->files->lock);
+	fs_io_end(&scope);
 	return ret;
 }
 
 int fs_ioctl(int fd, unsigned cmd, void *buf)
 {
-	task_struct *cur = CURRENT_TASK();
-	file *fp = NULL;
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
 	int ret = -EBADF;
-	if (fd < 0 || fd >= MAX_FD)
+	if (!fp)
 		return -EBADF;
 
-	if (cur->fds[fd] == NULL)
-		return -EBADF;
-
-	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
-	if (!fp || !fp->f_fop || !fp->f_fop->ioctl) {
+	if (!fp->f_fop || !fp->f_fop->ioctl) {
 		ret = (cmd == KDKBDREP) ? 0 : -ENOTTY;
 		goto done;
 	}
@@ -890,7 +894,7 @@ int fs_ioctl(int fd, unsigned cmd, void *buf)
 	if (cmd == KDKBDREP && ret == -ENOTTY)
 		ret = 0;
 done:
-	mutex_unlock(&cur->files->lock);
+	fs_io_end(&scope);
 	return ret;
 }
 

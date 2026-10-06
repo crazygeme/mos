@@ -47,7 +47,7 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 	while (node != head) {
 		task_struct *task = container_of(node, task_struct, ps_list);
 		if ((task->status == ps_ready || task == current) &&
-		    !task->terminate_requested &&
+		    (!task->terminate_requested || task->vm_lock_depth) &&
 		    (!task->on_cpu || task == current) &&
 		    (task->priority != ps_idle ||
 		     task->param == (void *)(uintptr_t)smp_cpu_id())) {

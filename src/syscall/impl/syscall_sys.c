@@ -498,6 +498,7 @@ int sys_munmap(void *addr, size_t length)
 int sys_mprotect(void *addr, size_t len, int prot)
 {
 	task_struct *cur = CURRENT_TASK();
+	VM_MAPPING_GUARD(cur->user->vm);
 	vaddr_t begin = (vaddr_t)(uintptr_t)addr;
 	vaddr_t end, vir;
 
@@ -691,6 +692,7 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		    int flags, vaddr_t new_addr)
 {
 	task_struct *cur = CURRENT_TASK();
+	VM_MAPPING_GUARD(cur->user->vm);
 	vm_region *region;
 	size_t old_size_pg, new_size_pg;
 	vaddr_t old_end, new_end;

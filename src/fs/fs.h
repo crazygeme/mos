@@ -78,6 +78,7 @@ typedef void (*poll_wake_fn)(void *opaque);
 typedef struct _poll_table_entry {
 	void *opaque;
 	poll_dereg_fn dereg;
+	file *fp; /* Retained until this subscription is removed. */
 	list_entry node;
 	spinlock_t *lock;
 	poll_wake_fn wake;

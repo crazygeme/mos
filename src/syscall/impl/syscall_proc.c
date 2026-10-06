@@ -585,6 +585,7 @@ intptr_t sys_brk(vaddr_t _top)
 {
 	task_struct *task = CURRENT_TASK();
 	mm_struct *mm = task->user->vm;
+	VM_MAPPING_GUARD(mm);
 	vaddr_t top, ret;
 	vaddr_t old_brk = mm->brk;
 	vaddr_t old_page_end;

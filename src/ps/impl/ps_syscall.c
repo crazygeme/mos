@@ -300,7 +300,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 			if (task != leader && task->tgid == leader->tgid &&
 			    task->type == ps_user) {
 				task->terminate_requested = 1;
-				active |= task->on_cpu != 0;
+				active |= task->on_cpu != 0 || task->vm_lock_depth != 0;
 			}
 		}
 		spinlock_unlock(&ps_lock, irq);

@@ -14,26 +14,20 @@
  *   procs_blocked <N>
  *   softirq <total> ...
  *
- * Time units are USER_HZ (= 100 ticks/second).  Our task->user_tickets and
- * task->kernel_tickets are already in 10 ms units (100/s), so they map 1:1.
- *
- * Per-CPU breakdown: the scheduler currently keeps aggregate task accounting
- * rather than separate user/system counters for each CPU.  Split the
- * aggregate evenly across online CPUs so consumers such as procps/top see a
- * valid, advancing sample for every CPU instead of treating secondary CPUs as
- * absent.
+ * CPU counters are cumulative per-CPU timer samples in USER_HZ units.
+ * They include kernel tasks and retain usage after tasks are reaped.
  */
 
 #include "device/time.h"
 #include <ps/ps.h>
 #include <ps/smp.h>
+#include <ps/usage.h>
 #include "common.h"
 
 /* Externs from ps_sched.c */
 extern unsigned task_schedule_count;
 
 typedef struct {
-	unsigned user, system;
 	unsigned procs_running, procs_blocked, processes;
 } stat_ctx_t;
 
@@ -48,11 +42,6 @@ static void stat_collect(task_struct *task, void *ctx)
 
 	c->processes++;
 
-	if (task->priority != ps_idle) {
-		c->user += task_utime(task);
-		c->system += task->stats->kernel_tickets;
-	}
-
 	if (task->status == ps_running || task->status == ps_ready)
 		c->procs_running++;
 	else if (task->status == ps_waiting)
@@ -62,36 +51,23 @@ static void stat_collect(task_struct *task, void *ctx)
 static void fill(proc_buf_t *pb)
 {
 	int i, ncpu;
-	stat_ctx_t c = { 0, 0, 0, 0, 0 };
-	unsigned wall, idle;
+	stat_ctx_t c = { 0, 0, 0 };
+	cpu_usage_t samples[SMP_MAX_CPUS];
+	cpu_usage_t total = { 0, 0, 0 };
 
 	ps_enum_all(stat_collect, &c);
-
-	/* Idle = wall-clock jiffies since boot minus all busy (user+system) time. */
-	wall = (unsigned)time_now_tickets() * smp_cpu_count();
-	idle = (wall > c.user + c.system) ? wall - c.user - c.system : 0;
-
 	ncpu = smp_cpu_count();
-
-	/* ---- aggregate cpu line ---- */
-	proc_buf_printf(pb, "cpu  %u 0 %u %u 0 0 0 0 0 0\n", c.user, c.system,
-			idle);
-
-	/* ---- per-CPU lines ----
-	 * Keep each field's sum close to the aggregate.  Remainders are assigned
-	 * to the first CPUs, matching integer-jiffy accounting semantics. */
-	unsigned user_each = c.user / (unsigned)ncpu;
-	unsigned user_rem = c.user % (unsigned)ncpu;
-	unsigned system_each = c.system / (unsigned)ncpu;
-	unsigned system_rem = c.system % (unsigned)ncpu;
-	unsigned idle_each = idle / (unsigned)ncpu;
-	unsigned idle_rem = idle % (unsigned)ncpu;
 	for (i = 0; i < ncpu; i++) {
-		proc_buf_printf(pb, "cpu%d %u 0 %u %u 0 0 0 0 0 0\n", i,
-				user_each + (i < (int)user_rem),
-				system_each + (i < (int)system_rem),
-				idle_each + (i < (int)idle_rem));
+		ps_cpu_usage(i, &samples[i]);
+		total.user += samples[i].user;
+		total.system += samples[i].system;
+		total.idle += samples[i].idle;
 	}
+	proc_buf_printf(pb, "cpu  %llu 0 %llu %llu 0 0 0 0 0 0\n",
+			total.user, total.system, total.idle);
+	for (i = 0; i < ncpu; i++)
+		proc_buf_printf(pb, "cpu%d %llu 0 %llu %llu 0 0 0 0 0 0\n", i,
+				samples[i].user, samples[i].system, samples[i].idle);
 
 	proc_buf_printf(pb, "intr 0\n");
 	proc_buf_printf(pb, "ctxt %u\n", task_schedule_count);

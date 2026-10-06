@@ -28,6 +28,7 @@
 
 #include "ps_internal.h"
 #include <ps/smp.h>
+#include <ps/usage.h>
 
 #define W_STOPCODE(sig) (((sig) << 8) | 0x7f)
 
@@ -37,10 +38,10 @@
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
-	task_struct *parent = ps_find_process(task->ppid);
-	unsigned long long child_utime =
-		time_now_tickets() - task->stats->start_tickets -
-		task->stats->kernel_tickets - task->stats->idle_tickets;
+	unsigned long long child_utime = ps_usage_read(&task->usage->user_tickets) +
+		ps_usage_read(&task->usage->child_utime);
+	unsigned long long child_stime = ps_usage_read(&task->usage->kernel_tickets) +
+		ps_usage_read(&task->usage->child_stime);
 
 	if (rusage) {
 		memset(rusage, 0, sizeof(*rusage));
@@ -49,15 +50,20 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		rusage->ru_nvcsw =
 			task->stats->total_switches - task->stats->niv_switches;
 		rusage->ru_nivcsw = task->stats->niv_switches;
-		ms_to_timeval(task->stats->kernel_tickets * 10,
-			      &rusage->ru_stime);
-		ms_to_timeval(child_utime * 10, &rusage->ru_utime);
+		us_to_timeval(child_stime * (1000000ULL / HZ), &rusage->ru_stime);
+		us_to_timeval(child_utime * (1000000ULL / HZ), &rusage->ru_utime);
 	}
 
 	/* Accumulate child CPU time into parent for cutime/cstime. */
-	if (parent && parent->stats) {
-		parent->stats->child_utime += child_utime;
-		parent->stats->child_stime += task->stats->kernel_tickets;
+	if (!(task->fork_flag & FORK_FLAG_THREAD)) {
+		int irq;
+		spinlock_lock(&ps_lock, &irq);
+		task_struct *parent = ps_find_process_unsafe(task->ppid);
+		if (parent && parent->usage) {
+			__sync_fetch_and_add(&parent->usage->child_utime, child_utime);
+			__sync_fetch_and_add(&parent->usage->child_stime, child_stime);
+		}
+		spinlock_unlock(&ps_lock, irq);
 	}
 
 	if (task->user->command) {
@@ -91,6 +97,7 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 
 	kfree(task->user);
 	kfree(task->signal);
+	ps_usage_put(task);
 	kfree(task->stats);
 	ps_put_fds(task);
 	kfree(task->io_bitmap);
@@ -681,26 +688,27 @@ int sys_getrusage(int who, rusage *usage)
 	task_struct *cur = CURRENT_TASK();
 
 	if (!usage)
-		return -1;
+		return -EFAULT;
+	if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN)
+		return -EINVAL;
 
 	memset(usage, 0, sizeof(*usage));
 
 	if (who == RUSAGE_SELF) {
-		ms_to_timeval((time_now_tickets() - cur->stats->start_tickets -
-			       cur->stats->kernel_tickets -
-			       cur->stats->idle_tickets) *
-				      10,
-			      &usage->ru_utime);
-		ms_to_timeval(cur->stats->kernel_tickets * 10,
-			      &usage->ru_stime);
+		us_to_timeval(ps_usage_read(&cur->usage->user_tickets) *
+			     (1000000ULL / HZ), &usage->ru_utime);
+		us_to_timeval(ps_usage_read(&cur->usage->kernel_tickets) *
+			     (1000000ULL / HZ), &usage->ru_stime);
 		usage->ru_majflt = cur->stats->pf_major;
 		usage->ru_minflt = cur->stats->pf_minor;
 		usage->ru_nvcsw =
 			cur->stats->total_switches - cur->stats->niv_switches;
 		usage->ru_nivcsw = cur->stats->niv_switches;
 	} else if (who == RUSAGE_CHILDREN) {
-		ms_to_timeval(cur->stats->child_utime * 10, &usage->ru_utime);
-		ms_to_timeval(cur->stats->child_stime * 10, &usage->ru_stime);
+		us_to_timeval(ps_usage_read(&cur->usage->child_utime) *
+			     (1000000ULL / HZ), &usage->ru_utime);
+		us_to_timeval(ps_usage_read(&cur->usage->child_stime) *
+			     (1000000ULL / HZ), &usage->ru_stime);
 	}
 
 	if (TEST_LOG(TEST_LOG_INFO))

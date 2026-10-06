@@ -251,6 +251,7 @@ void ps_kickoff()
 	cur->psid = 0xffffffff;
 	cur->ps_list.prev = cur->ps_list.next = 0;
 	cur->stats = NULL;
+	cur->usage = NULL;
 	cur->sched_level = 1;
 	cur->on_cpu = smp_cpu_id() + 1;
 	__atomic_store_n(&_ps_enabled, 1, __ATOMIC_RELEASE);

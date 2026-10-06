@@ -38,7 +38,7 @@ void vm_fill_statm(proc_buf_t *pb, task_struct *task);
 
 /* status.c */
 void fill_status(proc_buf_t *pb, task_struct *task);
-void fill_stat(proc_buf_t *pb, task_struct *task);
+void fill_stat(proc_buf_t *pb, task_struct *task, int group);
 void fill_statm(proc_buf_t *pb, task_struct *task);
 
 /* files.c */

@@ -61,12 +61,8 @@ typedef struct _task_struct {
     cond_t vfork_event;          // blocks parent during vfork
     super_block *root;           // root filesystem
     unsigned umask;
-    unsigned niv_switches;       // involuntary context switches
-    unsigned total_switches;
-    unsigned user_tickets;       // user-mode time (10 ms units)
-    unsigned kernel_tickets;     // kernel-mode time (10 ms units)
-    unsigned pf_major;
-    unsigned pf_minor;
+    task_stats_t *stats;         // per-thread sampled CPU and fault counters
+    task_usage_t *usage;         // reference-counted thread-group CPU totals
     unsigned long long alarm_expire_ms;
     unsigned int magic;          // 0xDEADBEEF — stack overflow sentinel
 } task_struct;
@@ -361,3 +357,6 @@ signal delivery (on return to user mode)
   └─ push signal frame on user stack → jmp to handler
   └─ trampoline → sys_sigreturn → restore context
 ```
+
+CPU usage and reporting interfaces are defined in
+[CPU usage accounting](cpu-accounting.md).

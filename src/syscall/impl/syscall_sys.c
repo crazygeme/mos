@@ -6,6 +6,7 @@
  */
 
 #include <ps/ps.h>
+#include <ps/usage.h>
 #include <mm/mmap.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
@@ -133,6 +134,16 @@ static int clock_time_ns(int clockid, unsigned long long *ns)
 	case 7: /* CLOCK_BOOTTIME */
 		us = time_now_us();
 		break;
+	case 2: /* CLOCK_PROCESS_CPUTIME_ID */
+		us = (ps_usage_read(&current->usage->user_tickets) +
+		      ps_usage_read(&current->usage->kernel_tickets)) *
+		     (1000000ULL / HZ);
+		break;
+	case 3: /* CLOCK_THREAD_CPUTIME_ID */
+		us = (task_utime(current) +
+		      ps_usage_read(&current->stats->kernel_tickets)) *
+		     (1000000ULL / HZ);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -176,10 +187,13 @@ int sys_clock_gettime64(int clockid, void *tp)
 	return 0;
 }
 
-/* All exposed clock IDs use the microsecond time core, including coarse aliases. */
+/* CPU clocks retain the timer sample resolution. */
 static int clock_resolution(int clockid)
 {
 	switch (clockid) {
+	case 2:
+	case 3:
+		return 1000000000 / HZ;
 	case 0:
 	case 1:
 	case 4:
@@ -583,10 +597,11 @@ long sys_times(struct tms *buf)
 		klog("times\n");
 
 	if (buf) {
-		buf->tms_utime = 0;
-		buf->tms_stime = 0;
-		buf->tms_cutime = 0;
-		buf->tms_cstime = 0;
+		task_usage_t *usage = current->usage;
+		buf->tms_utime = ps_usage_read(&usage->user_tickets);
+		buf->tms_stime = ps_usage_read(&usage->kernel_tickets);
+		buf->tms_cutime = ps_usage_read(&usage->child_utime);
+		buf->tms_cstime = ps_usage_read(&usage->child_stime);
 	}
 	/* Return clock ticks since boot; HZ=100 → divide µs by 10000. */
 	return (long)(time_now_us() / (1000000ULL / HZ));

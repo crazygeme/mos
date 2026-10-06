@@ -23,6 +23,7 @@
 #include <mm/mmu.h>
 
 #include "ps_internal.h"
+#include <ps/usage.h>
 #include <ps/smp.h>
 
 static int ps_init_fds(task_struct *task);
@@ -149,6 +150,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 
 	task->stats = zalloc(sizeof(task_stats_t));
 	task->stats->start_tickets = time_now_tickets();
+	ps_usage_init(task, NULL, 0);
 
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
@@ -480,6 +482,7 @@ void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag)
 	task->root = cur->root;
 	task->stats = zalloc(sizeof(task_stats_t));
 	task->stats->start_tickets = time_now_tickets();
+	ps_usage_init(task, cur, fork_flag & FORK_FLAG_THREAD);
 	sb_get(task->root);
 }
 
@@ -497,6 +500,7 @@ void fork_abort_child(task_struct *task)
 	sb_put(task->root);
 	kfree(task->io_bitmap);
 	kfree(task->signal);
+	ps_usage_put(task);
 	kfree(task->stats);
 	kfree(task->user);
 	ps_id_free(task->psid);

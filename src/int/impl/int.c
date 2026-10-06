@@ -9,6 +9,7 @@
 #include <macro.h>
 #include <errno.h>
 #include <ps/smp.h>
+#include <ps/usage.h>
 #include <int/interrupt.h>
 extern void do_signal(intr_frame *frame);
 #define gdt (smp_gdt())
@@ -122,6 +123,8 @@ void intr_handler(intr_frame *frame)
 	if (special == 1)
 		return;
 	smp_check_stop();
+	if (special == 2 || frame->vec_no == 0x20)
+		ps_account_tick(frame);
 	if (special == 2 && ps_enabled())
 		current->remain_ticks--;
 
@@ -160,17 +163,9 @@ void intr_syscall_handler(intr_frame *frame)
 	smp_check_stop();
 	int_intr_enable();
 	int_callback fn = 0;
-	task_struct *cur = CURRENT_TASK();
-	unsigned long long start = 0;
-	unsigned long long idle_start = cur->stats->idle_tickets;
 	fn = in_callbacks[frame->vec_no];
-	if (fn) {
-		start = time_now_tickets();
+	if (fn)
 		fn(frame);
-		cur->stats->kernel_tickets +=
-			time_now_tickets() - start -
-			(cur->stats->idle_tickets - idle_start);
-	}
 
 	intr_prepare_user_return(frame);
 }

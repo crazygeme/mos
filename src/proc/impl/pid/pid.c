@@ -103,8 +103,11 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 
 	if (strcmp(rest, "/status") == 0)
 		OPEN_TEXT_FILE(fill_status);
-	if (strcmp(rest, "/stat") == 0)
-		OPEN_TEXT_FILE(fill_stat);
+	if (strcmp(rest, "/stat") == 0) {
+		pb = proc_buf_new();
+		fill_stat(pb, task, include_task && task->psid == task->tgid);
+		return make_pid_file(pb, task);
+	}
 	if (strcmp(rest, "/statm") == 0)
 		OPEN_TEXT_FILE(fill_statm);
 	if (strcmp(rest, "/cmdline") == 0)

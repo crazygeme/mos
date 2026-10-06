@@ -127,7 +127,8 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;
-	fork_set_meta(cur, task, share_vm ? FORK_FLAG_SHARE_VM : 0);
+	fork_set_meta(cur, task, (share_vm ? FORK_FLAG_SHARE_VM : 0) |
+				(thread_group ? FORK_FLAG_THREAD : 0));
 	if (share_vm)
 		task->fork_flag |= FORK_FLAG_SHARE_VM;
 	if (thread_group)

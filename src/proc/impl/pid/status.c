@@ -5,6 +5,7 @@
 #include <config.h>
 #include <macro.h>
 #include <mm/mmap.h>
+#include <ps/usage.h>
 
 /* ── TTY helper ──────────────────────────────────────────────────────── */
 
@@ -139,7 +140,7 @@ void fill_status(proc_buf_t *pb, task_struct *task)
  *   startcode endcode startstack kstkesp kstkeip signal blocked
  *   sigignore sigcatch wchan nswap cnswap exit_signal processor
  */
-void fill_stat(proc_buf_t *pb, task_struct *task)
+void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 {
 	const char *cmd =
 		task->user->command ? (const char *)task->user->command : "";
@@ -152,7 +153,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 	vm_struct_t mm = task->user->vm;
 	uint64_t vsize, rss_pages;
 	vaddr_t stack_start;
-	unsigned long utime, stime;
+	unsigned long long utime, stime;
 
 	strncpy(comm, base, 15);
 	comm[15] = '\0';
@@ -165,13 +166,14 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) / (PAGE_SIZE / 1024);
 	stack_start = mm ? mm->start_stack : 0;
 
-	stime = task->stats->kernel_tickets;
-	utime = task_utime(task);
+	stime = ps_usage_read(group ? &task->usage->kernel_tickets :
+				     &task->stats->kernel_tickets);
+	utime = group ? ps_usage_read(&task->usage->user_tickets) : task_utime(task);
 
 	proc_buf_printf(
 		pb,
 		"%u (%s) %c %u %u %u %u %d %lu "
-		"%lu %lu %lu %lu %lu %lu %ld %ld "
+		"%lu %lu %lu %lu %llu %llu %llu %llu "
 		"%ld %ld %ld %ld %lu %llu %lld "
 		"%lu %lu %lu %lu %lu %lu %lu %lu "
 		"%lu %lu %lu %lu %d %d\n",
@@ -188,10 +190,10 @@ void fill_stat(proc_buf_t *pb, task_struct *task)
 		/* 11 cminflt     */ (unsigned long)0,
 		/* 12 majflt      */ (unsigned long)task->stats->pf_major,
 		/* 13 cmajflt     */ (unsigned long)0,
-		/* 14 utime       */ (unsigned long)utime,
-		/* 15 stime       */ (unsigned long)stime,
-		/* 16 cutime      */ (long)task->stats->child_utime,
-		/* 17 cstime      */ (long)task->stats->child_stime,
+		/* 14 utime       */ utime,
+		/* 15 stime       */ stime,
+		/* 16 cutime      */ ps_usage_read(&task->usage->child_utime),
+		/* 17 cstime      */ ps_usage_read(&task->usage->child_stime),
 		/* 18 priority    */ (long)20,
 		/* 19 nice        */ (long)0,
 		/* 20 num_threads */ (long)proc_thread_count(task->tgid),

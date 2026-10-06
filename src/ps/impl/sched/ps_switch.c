@@ -30,9 +30,6 @@ void _task_sched(const char *func)
 	(void)func;
 	__sync_fetch_and_add(&task_schedule_count, 1);
 
-	if (prev->stats)
-		prev->stats->idle = time_now_tickets();
-
 	irq = int_intr_disable();
 	ps_reap_dead_threads();
 	spinlock_lock(&ps_lock, &lock_irq);
@@ -48,7 +45,7 @@ void _task_sched(const char *func)
 		spinlock_unlock(&ps_lock, lock_irq);
 		ps_load_task_segments(next);
 		int_intr_setlevel(irq);
-		goto out;
+		return;
 	}
 
 	if (prev->stats)
@@ -74,11 +71,6 @@ void _task_sched(const char *func)
 	/* Release the scheduler lock only after the outgoing stack is inactive. */
 	ps_context_switch(&prev->switch_sp, next->switch_sp, prev);
 	int_intr_setlevel(irq);
-
-out:
-	if (prev->stats)
-		prev->stats->idle_tickets +=
-			time_now_tickets() - prev->stats->idle;
 }
 
 /* Invoked by assembly on the incoming stack with local interrupts disabled. */

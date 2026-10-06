@@ -1,5 +1,6 @@
 /* Explicit AMD64 wire conversions for shared kernel services. */
 #include <ps/ps.h>
+#include <ps/usage.h>
 #include <lib/klib.h>
 #include <errno.h>
 #include <syscall/syscall.h>
@@ -675,14 +676,14 @@ int native_sysinfo(void *output)
 
 intptr_t native_times(void *output)
 {
-	struct tms value;
-	long ret = sys_times(output ? &value : NULL);
+	long ret = sys_times(NULL);
 	if (output) {
+		task_usage_t *usage = current->usage;
 		int64_t *wire = output;
-		wire[0] = value.tms_utime;
-		wire[1] = value.tms_stime;
-		wire[2] = value.tms_cutime;
-		wire[3] = value.tms_cstime;
+		wire[0] = ps_usage_read(&usage->user_tickets);
+		wire[1] = ps_usage_read(&usage->kernel_tickets);
+		wire[2] = ps_usage_read(&usage->child_utime);
+		wire[3] = ps_usage_read(&usage->child_stime);
 	}
 	return ret;
 }

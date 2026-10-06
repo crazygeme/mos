@@ -39,13 +39,10 @@ typedef struct _task_stats {
 	unsigned niv_switches; /* involuntary context switches */
 	unsigned total_switches; /* total context switches       */
 	unsigned long long start_tickets; /* start time (jiffies)        */
-	unsigned kernel_tickets; /* jiffies in kernel (stime)    */
-	unsigned long long idle; /* temp: tick when sched began  */
-	unsigned idle_tickets; /* jiffies off-CPU              */
+	unsigned long long user_tickets __attribute__((aligned(8))); /* sampled user CPU ticks */
+	unsigned long long kernel_tickets; /* sampled system CPU ticks */
 	unsigned pf_major; /* major page faults            */
 	unsigned pf_minor; /* minor page faults            */
-	unsigned long long child_utime; /* reaped children user ticks   */
-	unsigned child_stime; /* reaped children system ticks */
 } task_stats_t;
 
 #define RLIM_NLIMITS 16
@@ -133,10 +130,18 @@ typedef struct {
 	mutex_t lock;
 } task_files;
 
+typedef struct _task_usage {
+	unsigned refs;
+	unsigned long long user_tickets __attribute__((aligned(8)));
+	unsigned long long kernel_tickets;
+	unsigned long long child_utime, child_stime;
+} task_usage_t;
+
 typedef struct _task_struct task_struct;
 struct _task_struct {
 	task_frame tss;
 	uintptr_t switch_sp;
+	task_usage_t *usage; /* CPU totals shared by a thread group. */
 	unsigned net_core_depth; /* Recursive network-core ownership by this task. */
 	unsigned vm_lock_depth; /* VM locks released before forced thread removal. */
 	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
@@ -222,30 +227,10 @@ typedef struct _rusage {
 #define KERNEL_TASK_SIZE MOS_KERNEL_TASK_PAGES
 #define KERNEL_TASK_BYTES (KERNEL_TASK_SIZE * PAGE_SIZE)
 
-/*
- * task_utime — corrected user-mode CPU time for a task (in jiffies).
- *
- * idle_tickets is only flushed on the resume path in _task_sched(), i.e. when
- * the task is rescheduled back in.  For a sleeping or ready task the current
- * off-CPU period has NOT yet been added to idle_tickets.  We correct for that
- * by adding (now - stats->idle), where stats->idle was stamped at the top of
- * _task_sched() when the task last yielded.
- *
- * Guard stats->idle > 0: a newly created task that has never called
- * _task_sched() has stats->idle == 0 (from zalloc); adding (now - 0) would
- * wildly overcount.
- */
+/* Sampled CPU time does not advance while a task is off CPU. */
 static inline unsigned long long task_utime(task_struct *task)
 {
-	task_stats_t *s = task->stats;
-	unsigned long long eff_idle = s->idle_tickets;
-
-	if (task->status != ps_running && s->idle > 0)
-		eff_idle += time_now_tickets() - s->idle;
-
-	unsigned long long elapsed = time_now_tickets() - s->start_tickets;
-	unsigned long long busy = s->kernel_tickets + eff_idle;
-	return elapsed > busy ? elapsed - busy : 0;
+	return __sync_fetch_and_add(&task->stats->user_tickets, 0);
 }
 
 task_struct *__attribute__((noinline)) CURRENT_TASK(void);

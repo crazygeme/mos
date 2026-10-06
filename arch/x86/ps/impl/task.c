@@ -22,7 +22,12 @@ void arch_task_init(task_struct *task)
 static void load_ldt(task_struct *task, unsigned long long *gdt)
 {
 	if (!task || !task->user || !task->user->ldt_present) {
-		SET_LDT(0);
+		unsigned short selector;
+
+		/* Retain an empty LDTR across interrupt returns and task switches. */
+		asm volatile("sldt %0" : "=rm"(selector));
+		if (selector)
+			SET_LDT(0);
 		return;
 	}
 

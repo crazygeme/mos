@@ -7,7 +7,7 @@ struct elf_format {
 	vaddr_t task_size, mmap_base, brk_limit;
 	unsigned exec_syscall;
 	int (*read_header)(file *, Elf64_Ehdr *);
-	int (*read_phdr)(file *, unsigned, Elf64_Phdr *);
+	int (*read_phdrs)(file *, unsigned, unsigned, Elf64_Phdr *);
 	vaddr_t (*setup_stack)(char *, int, char **, int, char **, vaddr_t,
 			       mos_binfmt *);
 	void (*activate)(struct _task_struct *);

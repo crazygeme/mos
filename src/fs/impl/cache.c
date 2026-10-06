@@ -249,6 +249,34 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 	return phy;
 }
 
+void fs_page_cache_get_cached_range(file *fp, uint64_t offset,
+				  paddr_t *pages, unsigned count)
+{
+	fs_page_cache_key key;
+	unsigned i;
+
+	memset(pages, 0, count * sizeof(*pages));
+	if (!fs_page_cache_ready || !fs_page_cache_can_use(fp))
+		return;
+	key.tag = fp->f_inode->i_pgcache_tag;
+	key.ino = fp->f_inode->i_ino;
+	key.offset = offset & ~(uint64_t)(PAGE_SIZE - 1);
+	mutex_lock(&fs_page_cache_lock);
+	fs_page_cache_searches += count;
+	for (i = 0; i < count; i++, key.offset += PAGE_SIZE) {
+		fs_page_cache_entry *entry = fs_page_cache_find(&key);
+
+		if (!entry)
+			continue;
+		pages[i] = entry->phy;
+		phymm_reference_page(PHY_TO_PAGE_IDX(entry->phy));
+		list_remove_entry(&entry->lru);
+		list_insert_tail(&fs_page_cache_lru, &entry->lru);
+		fs_page_cache_hits++;
+	}
+	mutex_unlock(&fs_page_cache_lock);
+}
+
 void fs_page_cache_put(paddr_t phy)
 {
 	unsigned page = PHY_TO_PAGE_IDX(phy);

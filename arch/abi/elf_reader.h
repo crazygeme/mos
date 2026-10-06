@@ -19,20 +19,30 @@ static int read_header(file *fp, Elf64_Ehdr *output)
 #undef COPY
 	return 0;
 }
-static int read_phdr(file *fp, unsigned offset, Elf64_Phdr *output)
+static int read_phdrs(file *fp, unsigned offset, unsigned count,
+		      Elf64_Phdr *output)
 {
-	ELF_PHDR input;
-	if (elf_read(fp, offset, &input, sizeof(input)) != sizeof(input))
+	unsigned size = count * sizeof(ELF_PHDR);
+
+	if (elf_read(fp, offset, output, size) != size)
 		return -ENOEXEC;
-#define COPY(field) output->field = input.field
-	COPY(p_type);
-	COPY(p_flags);
-	COPY(p_offset);
-	COPY(p_vaddr);
-	COPY(p_paddr);
-	COPY(p_filesz);
-	COPY(p_memsz);
-	COPY(p_align);
+	/* Expand compact wire headers backwards within the output allocation. */
+	while (count) {
+		ELF_PHDR input;
+		Elf64_Phdr *ph = &output[--count];
+
+		memcpy(&input, (char *)output + count * sizeof(input),
+		       sizeof(input));
+#define COPY(field) ph->field = input.field
+		COPY(p_type);
+		COPY(p_flags);
+		COPY(p_offset);
+		COPY(p_vaddr);
+		COPY(p_paddr);
+		COPY(p_filesz);
+		COPY(p_memsz);
+		COPY(p_align);
 #undef COPY
+	}
 	return 0;
 }

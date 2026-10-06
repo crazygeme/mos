@@ -21,6 +21,7 @@ unsigned page_fault_file = 0;
 unsigned page_fault_file_read = 0;
 unsigned page_fault_perm = 0;
 unsigned page_fault_file_cache_hit = 0;
+unsigned page_fault_file_around = 0;
 static vaddr_t zero_page = 0;
 static paddr_t zero_page_phy = 0;
 
@@ -155,6 +156,43 @@ static paddr_t pf_copy_private_page(paddr_t source)
 #define PF_MASK_RSVD 0x00000008
 extern phymm_page *phymm_pages;
 
+#define FILE_FAULT_AROUND_PAGES 16
+
+/* The region fault lock protects existing PTEs and the mapping boundaries. */
+static void pf_map_cached_neighbors(vaddr_t address, vm_region *region)
+{
+	vaddr_t begin = address &
+			~((vaddr_t)FILE_FAULT_AROUND_PAGES * PAGE_SIZE - 1);
+	vaddr_t end = begin + FILE_FAULT_AROUND_PAGES * PAGE_SIZE;
+	paddr_t pages[FILE_FAULT_AROUND_PAGES];
+	unsigned count, i;
+	unsigned pte = PAGE_ENTRY_USER_CODE;
+	uint64_t offset;
+
+	if (begin < region->begin)
+		begin = region->begin;
+	if (end > region->end)
+		end = region->end;
+	count = (end - begin) / PAGE_SIZE;
+	offset = region->offset + (begin - region->begin);
+#if MOS_PAGE_NO_EXEC
+	if (!(region->prot & PROT_EXEC))
+		pte |= PAGE_ENTRY_NO_EXEC;
+#endif
+	fs_page_cache_get_cached_range(region->fp, offset, pages, count);
+	for (i = 0; i < count; i++) {
+		vaddr_t vir = begin + i * PAGE_SIZE;
+
+		if (!pages[i])
+			continue;
+		/* Preserve populated pages, including private copies and protections. */
+		if (!mm_get_map_flag(vir) &&
+		    mm_map_page(vir, pages[i], pte) == 1)
+			page_fault_file_around++;
+		fs_page_cache_put(pages[i]);
+	}
+}
+
 /*
  * Handle page fault with fd attached.
  *
@@ -240,6 +278,8 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	}
 	if ((flag & MAP_SHARED) && page.needs_shared_registration)
 		mm_file_shared_add(f, offset, phy);
+	if (!write && page.cache_hit && page.retained)
+		pf_map_cached_neighbors(address, region);
 
 	if (page.retained)
 		fs_page_cache_put(page.phy);

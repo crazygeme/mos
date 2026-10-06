@@ -32,7 +32,7 @@ const struct elf_format elf_i386_format = {
 	.brk_limit = USER_HEAP_END,
 	.exec_syscall = 11,
 	.read_header = read_header,
-	.read_phdr = read_phdr,
+	.read_phdrs = read_phdrs,
 	.setup_stack = setup_stack,
 	.activate = activate,
 };

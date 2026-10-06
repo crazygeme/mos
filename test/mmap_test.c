@@ -112,6 +112,90 @@ static paddr_t cache_lookup_address(file *fp, uint64_t offset, int *hit)
 	return phy;
 }
 
+static unsigned cached_range_reads;
+
+static int cached_range_read_page(file *fp, uint64_t offset, void *buffer)
+{
+	cached_range_reads++;
+	return wide_cache_read_page(fp, offset, buffer);
+}
+
+KTEST(mmap, file_cache_cached_range)
+{
+	file_operations operations = { .read_page = cached_range_read_page };
+	inode node = { .i_ino = 1, .i_pgcache_tag = &node };
+	file fp = { .f_inode = &node, .f_fop = &operations };
+	paddr_t pages[4], first, last;
+
+	cached_range_reads = 0;
+	fs_page_cache_get_cached_range(&fp, 0x100000000ULL, pages, 4);
+	for (unsigned i = 0; i < 4; i++)
+		EXPECT_EQ(pages[i], 0);
+	EXPECT_EQ(cached_range_reads, 0);
+	first = fs_page_cache_get(&fp, 0x100000000ULL + PAGE_SIZE, NULL);
+	last = fs_page_cache_get(&fp, 0x100000000ULL + 3 * PAGE_SIZE, NULL);
+	ASSERT_NE(first, 0);
+	ASSERT_NE(last, 0);
+	fs_page_cache_put(first);
+	fs_page_cache_put(last);
+	EXPECT_EQ(cached_range_reads, 2);
+	fs_page_cache_get_cached_range(&fp, 0x100000000ULL, pages, 4);
+	EXPECT_EQ(pages[0], 0);
+	EXPECT_EQ(pages[1], first);
+	EXPECT_EQ(pages[2], 0);
+	EXPECT_EQ(pages[3], last);
+	EXPECT_EQ(cached_range_reads, 2);
+	fs_page_cache_invalidate(&fp);
+	for (unsigned i = 0; i < 4; i++) {
+		if (!pages[i])
+			continue;
+		unsigned page = PHY_TO_PAGE_IDX(pages[i]);
+		EXPECT_EQ(phymm_pages[page].ref_count, 1);
+		fs_page_cache_put(pages[i]);
+		EXPECT_EQ(phymm_is_used(page), 0);
+	}
+	return 0;
+}
+
+extern int copy_page_range(task_struct *parent, task_struct *child);
+
+KTEST(mmap, sparse_clone_teardown)
+{
+	const vaddr_t base = TEST_FIXED_ADDR;
+	const unsigned indexes[] = { 0, 127, 1023 };
+	user_enviroment user = { 0 };
+	task_struct child = { .user = &user };
+	pfn_t pages[3];
+	unsigned references[3];
+	int ret;
+
+	ASSERT_EQ(do_mmap(base, 1024 * PAGE_SIZE, PROT_READ | PROT_WRITE,
+			 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0), base);
+	for (unsigned i = 0; i < 3; i++) {
+		vaddr_t address = base + indexes[i] * PAGE_SIZE;
+		ASSERT_EQ(pf_resolve_task_page_fault(current, address, 1), 1);
+		pages[i] = PHY_TO_PAGE_IDX(mm_virt_to_phys(address));
+		references[i] = phymm_pages[pages[i]].ref_count;
+	}
+	user.vm = vm_create();
+	ASSERT_NE(user.vm, NULL);
+	user.vm->page_dir = vm_alloc(1);
+	ASSERT_NE(user.vm->page_dir, 0);
+	vm_set_page_dir(user.vm, user.vm->page_dir);
+	ret = copy_page_range(current, &child);
+	EXPECT_EQ(ret, 0);
+	if (!ret)
+		for (unsigned i = 0; i < 3; i++)
+			EXPECT_EQ(phymm_pages[pages[i]].ref_count, references[i] + 1);
+	vm_put(user.vm);
+	for (unsigned i = 0; i < 3; i++)
+		EXPECT_EQ(phymm_pages[pages[i]].ref_count, references[i]);
+	do_munmap((void *)base, 1024 * PAGE_SIZE);
+	for (unsigned i = 0; i < 3; i++)
+		EXPECT_EQ(phymm_is_used(pages[i]), 0);
+	return 0;
+}
+
 KTEST(mmap, file_cache_invalidate_only_inode)
 {
 	file_operations operations = { .read_page = wide_cache_read_page };

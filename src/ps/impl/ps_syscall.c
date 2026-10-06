@@ -276,7 +276,7 @@ void ps_stop_terminated_task(void)
 	spinlock_unlock(&ps_lock, irq);
 }
 
-void ps_kill_thread_group(task_struct *leader)
+void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 {
 	struct rb_node *node;
 	struct rb_node *next;
@@ -285,6 +285,7 @@ void ps_kill_thread_group(task_struct *leader)
 
 	if (!leader)
 		return;
+	ps_timer_discard_group(leader->tgid);
 
 	list_init(&reap_list);
 
@@ -297,7 +298,7 @@ void ps_kill_thread_group(task_struct *leader)
 		     node = rb_next(node)) {
 			task_struct *task = rb_entry(node, task_struct, mgr_rb);
 			if (task != leader && task->tgid == leader->tgid &&
-			    (task->fork_flag & FORK_FLAG_THREAD)) {
+			    task->type == ps_user) {
 				task->terminate_requested = 1;
 				active |= task->on_cpu != 0;
 			}
@@ -314,8 +315,6 @@ void ps_kill_thread_group(task_struct *leader)
 		next = rb_next(node);
 
 		if (task == leader)
-			continue;
-		if (!(task->fork_flag & FORK_FLAG_THREAD))
 			continue;
 		if (task->type != ps_user || !task->signal)
 			continue;
@@ -342,8 +341,28 @@ void ps_kill_thread_group(task_struct *leader)
 
 		list_remove_entry(&task->ps_list);
 		ps_reparent_children(task);
-		ps_reap_group_thread(task);
+		if (task->fork_flag & FORK_FLAG_THREAD) {
+			ps_reap_group_thread(task);
+		} else {
+			/* Retain the process leader as the parent's waitable zombie. */
+			ps_cancel_io_wait(task);
+			ps_clear_child_tid(task);
+			ps_release_robust_list(task);
+			ps_put_fds(task);
+			if (task->user->executable) {
+				fs_put_file(task->user->executable);
+				task->user->executable = NULL;
+			}
+			task->exit_status = encoded_status;
+			ps_put_to_dying_queue(task);
+		}
 	}
+}
+
+void do_group_exit(unsigned encoded_status)
+{
+	ps_kill_thread_group(CURRENT_TASK(), encoded_status);
+	do_exit(encoded_status);
 }
 
 void do_exit(unsigned encoded_status)

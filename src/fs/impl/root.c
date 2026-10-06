@@ -291,17 +291,16 @@ static int ext4_file_chown(file *fp, uint32_t uid, uint32_t gid)
 
 static int ext4_file_read_page(file *fp, uint64_t offset, void *buf)
 {
-	ext4_file *ff = fp->f_inode->i_private;
-	loff_t saved_pos = (loff_t)ext4_ftell(ff);
+	/* Page I/O owns its cursor independently of other faults and descriptor I/O. */
+	ext4_file page = *(ext4_file *)fp->f_inode->i_private;
 	size_t rcnt = 0;
 	int ret;
 
-	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
+	if (ext4_fseek(&page, offset, SEEK_SET) != EOK)
 		return -EIO;
-	ret = ext4_fread(ff, buf, PAGE_SIZE, &rcnt);
+	ret = ext4_fread(&page, buf, PAGE_SIZE, &rcnt);
 	if (rcnt < PAGE_SIZE)
 		memset((char *)buf + rcnt, 0, PAGE_SIZE - rcnt);
-	ext4_fseek(ff, saved_pos, SEEK_SET);
 	if (ret != EOK)
 		return -EIO;
 	return 0;
@@ -309,16 +308,14 @@ static int ext4_file_read_page(file *fp, uint64_t offset, void *buf)
 
 static int ext4_file_write_page(file *fp, uint64_t offset, const void *buf)
 {
-	ext4_file *ff = fp->f_inode->i_private;
-	loff_t saved_pos = (loff_t)ext4_ftell(ff);
+	ext4_file page = *(ext4_file *)fp->f_inode->i_private;
 	size_t wcnt = 0;
 	int ret;
 
 	fs_page_cache_invalidate(fp);
-	if (ext4_fseek(ff, offset, SEEK_SET) != EOK)
+	if (ext4_fseek(&page, offset, SEEK_SET) != EOK)
 		return -EIO;
-	ret = ext4_fwrite(ff, buf, PAGE_SIZE, &wcnt);
-	ext4_fseek(ff, saved_pos, SEEK_SET);
+	ret = ext4_fwrite(&page, buf, PAGE_SIZE, &wcnt);
 	if (ret != EOK)
 		return -EIO;
 	return 0;

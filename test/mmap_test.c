@@ -95,8 +95,21 @@ KTEST(mmap, file_cache_wide_offsets)
 		EXPECT_EQ(*(unsigned char *)PHY_TO_VIRT(high), 0xb6);
 		mm_kunmap_phys(high);
 	}
+	if (low)
+		fs_page_cache_put(low);
+	if (high)
+		fs_page_cache_put(high);
 	fs_page_cache_invalidate(&fp);
 	return 0;
+}
+
+/* This probe observes cache identity without retaining an I/O reference. */
+static paddr_t cache_lookup_address(file *fp, uint64_t offset, int *hit)
+{
+	paddr_t phy = fs_page_cache_get(fp, offset, hit);
+	if (phy)
+		fs_page_cache_put(phy);
+	return phy;
 }
 
 KTEST(mmap, file_cache_invalidate_only_inode)
@@ -115,21 +128,46 @@ KTEST(mmap, file_cache_invalidate_only_inode)
 	for (unsigned i = 0; i < 3; i++) {
 		files[i].f_inode = &nodes[i];
 		files[i].f_fop = &operations;
-		physical[i] = fs_page_cache_get(&files[i], 0, NULL);
+		physical[i] = cache_lookup_address(&files[i], 0, NULL);
 		EXPECT_NE(physical[i], 0);
 	}
-	EXPECT_NE(fs_page_cache_get(&files[1], 0x100000000ULL, NULL), 0);
+	EXPECT_NE(cache_lookup_address(&files[1], 0x100000000ULL, NULL), 0);
 	fs_page_cache_invalidate(&files[1]);
-	EXPECT_EQ(fs_page_cache_get(&files[0], 0, &hit), physical[0]);
+	EXPECT_EQ(cache_lookup_address(&files[0], 0, &hit), physical[0]);
 	EXPECT_EQ(hit, 1);
-	EXPECT_EQ(fs_page_cache_get(&files[2], 0, &hit), physical[2]);
+	EXPECT_EQ(cache_lookup_address(&files[2], 0, &hit), physical[2]);
 	EXPECT_EQ(hit, 1);
-	EXPECT_NE(fs_page_cache_get(&files[1], 0, &hit), 0);
+	EXPECT_NE(cache_lookup_address(&files[1], 0, &hit), 0);
 	EXPECT_EQ(hit, 0);
-	EXPECT_NE(fs_page_cache_get(&files[1], 0x100000000ULL, &hit), 0);
+	EXPECT_NE(cache_lookup_address(&files[1], 0x100000000ULL, &hit), 0);
 	EXPECT_EQ(hit, 0);
 	for (unsigned i = 0; i < 3; i++)
 		fs_page_cache_invalidate(&files[i]);
+	return 0;
+}
+
+KTEST(mmap, file_cache_retained_during_invalidation)
+{
+	file_operations operations = { .read_page = wide_cache_read_page };
+	inode node = { .i_ino = 1, .i_pgcache_tag = &node };
+	file fp = { .f_inode = &node, .f_fop = &operations };
+	paddr_t phy = fs_page_cache_get(&fp, 0, NULL);
+	EXPECT_NE(phy, 0);
+	if (!phy)
+		return 0;
+	unsigned page = PHY_TO_PAGE_IDX(phy);
+	fs_page_cache_invalidate(&fp);
+	EXPECT_EQ(phymm_pages[page].ref_count, 1);
+	unsigned other = phymm_alloc_cache();
+	EXPECT_NE(other, page);
+	if (mm_kmap_phys(phy) == 1) {
+		EXPECT_EQ(*(unsigned char *)PHY_TO_VIRT(phy), 0xa5);
+		mm_kunmap_phys(phy);
+	}
+	if (other != PHYMM_INVALID)
+		phymm_free_user(other);
+	fs_page_cache_put(phy);
+	EXPECT_EQ(phymm_is_used(page), 0);
 	return 0;
 }
 

@@ -193,6 +193,7 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 		list_remove_entry(&entry->lru);
 		list_insert_tail(&fs_page_cache_lru, &entry->lru);
 		phy = entry->phy;
+		phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 		mutex_unlock(&fs_page_cache_lock);
 		if (cache_hit)
 			*cache_hit = 1;
@@ -217,12 +218,14 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 	mutex_lock(&fs_page_cache_lock);
 	entry = fs_page_cache_find(&tmp);
 	if (entry) {
+		paddr_t existing = entry->phy;
+		phymm_reference_page(PHY_TO_PAGE_IDX(existing));
 		mutex_unlock(&fs_page_cache_lock);
 		phymm_free_user(PHY_TO_PAGE_IDX(phy));
 		if (cache_hit)
 			*cache_hit = 1;
 		fs_page_cache_hits++;
-		return entry->phy;
+		return existing;
 	}
 
 	entry = malloc(sizeof(*entry));
@@ -237,12 +240,20 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 	list_insert_tail(&fs_page_cache_lru, &entry->lru);
 	fs_page_cache_insert(entry);
 	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
+	phymm_reference_page(PHY_TO_PAGE_IDX(phy));
 	cache_count++;
 	fs_page_cache_pages++;
 	if (fs_page_cache_max_pages < fs_page_cache_pages)
 		fs_page_cache_max_pages = fs_page_cache_pages;
 	mutex_unlock(&fs_page_cache_lock);
 	return phy;
+}
+
+void fs_page_cache_put(paddr_t phy)
+{
+	unsigned page = PHY_TO_PAGE_IDX(phy);
+	if (!phymm_dereference_page(page))
+		phymm_free_user(page);
 }
 
 void fs_page_cache_invalidate(file *fp)
@@ -326,12 +337,15 @@ ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos)
 		if (phy == 0)
 			return done ? (ssize_t)done : -EIO;
 
-		if (mm_kmap_phys(phy) != 1)
+		if (mm_kmap_phys(phy) != 1) {
+			fs_page_cache_put(phy);
 			return done ? (ssize_t)done : -EIO;
+		}
 
 		memcpy((char *)buf + done,
 		       (void *)(PHY_TO_VIRT(phy) + page_off), chunk);
 		mm_kunmap_phys(phy);
+		fs_page_cache_put(phy);
 		done += chunk;
 		*pos += (loff_t)chunk;
 	}

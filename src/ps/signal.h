@@ -89,8 +89,13 @@ struct sigaction {
 /* Architecture signal delivery consumes the saved user register context. */
 struct _task_struct;
 struct _arch_intr_frame;
+struct signal_fault {
+	uintptr_t address;
+	int code;
+	unsigned trap;
+};
 void arch_signal_deliver(struct _task_struct *, struct _arch_intr_frame *,
-			 struct sigaction *, int);
+			 struct sigaction *, int, const struct signal_fault *);
 void i386_signal_deliver(struct _task_struct *, struct _arch_intr_frame *,
-			 struct sigaction *, int);
+			 struct sigaction *, int, const struct signal_fault *);
 #endif /* _SIGNAL_H */

@@ -86,6 +86,7 @@ typedef struct _pf_file_page_result {
 	paddr_t phy;
 	int cache_hit;
 	int needs_shared_registration;
+	int retained;
 } pf_file_page_result;
 
 static pf_file_page_result pf_get_file_page(file *f, uint64_t offset, int flag)
@@ -95,6 +96,7 @@ static pf_file_page_result pf_get_file_page(file *f, uint64_t offset, int flag)
 
 	if (pf_file_uses_fs_page_cache(f)) {
 		result.phy = fs_page_cache_get(f, offset, &result.cache_hit);
+		result.retained = result.phy != 0;
 		return result;
 	}
 
@@ -164,7 +166,7 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 				      file *f, uint64_t offset, int prot,
 				      int flag, int write)
 {
-	pf_file_page_result page;
+	pf_file_page_result page = { 0 };
 	unsigned pte = PAGE_ENTRY_USER_CODE;
 	paddr_t phy;
 
@@ -239,8 +241,12 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	if ((flag & MAP_SHARED) && page.needs_shared_registration)
 		mm_file_shared_add(f, offset, phy);
 
+	if (page.retained)
+		fs_page_cache_put(page.phy);
 	return 1;
 FAIL:
+	if (page.retained)
+		fs_page_cache_put(page.phy);
 	return 0;
 }
 
@@ -627,7 +633,7 @@ static int pf_stack_addr_valid(vaddr_t addr, vaddr_t stack_base,
 
 static void pf_process(intr_frame *frame)
 {
-	vaddr_t fault_address;
+	vaddr_t fault_address, fault_exact;
 	unsigned error = frame->error_code;
 	task_struct *cur;
 	int int_enable = 0;
@@ -635,7 +641,7 @@ static void pf_process(intr_frame *frame)
 	/*
 	 * Save old interrupt state first.
 	 */
-	fault_address = arch_mm_fault_address();
+	fault_address = fault_exact = arch_mm_fault_address();
 	sched_disable();
 	int_enable = int_intr_enable();
 
@@ -669,13 +675,14 @@ NOT_HANDLED:
 		     cur->user ? cur->user->command ? cur->user->command :
 						      "[none]" :
 				 "[none]",
-		     (unsigned)frame->error_code, (unsigned long)fault_address,
+		     (unsigned)frame->error_code, (unsigned long)fault_exact,
 		     (unsigned long)(uintptr_t)frame->eip);
-
-		cur->signal->sig_pending |= (1UL << (SIGSEGV - 1));
-		do_signal(frame);
-		/* Falls through only if SIGSEGV is masked or SIG_IGN; force-terminate. */
-		do_exit(SIGSEGV);
+		struct signal_fault fault = {
+			.address = fault_exact,
+			.code = (error & PF_MASK_P) ? 2 : 1,
+			.trap = 14,
+		};
+		ps_fault_signal(frame, SIGSEGV, &fault);
 		goto Done;
 	}
 

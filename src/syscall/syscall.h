@@ -306,6 +306,7 @@ int sys_utime(const char *filename, const struct utimbuf *times);
 int sys_time(unsigned *t);
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz);
 int sys_clock_gettime(int clockid, struct timespec *tp);
+int sys_clock_getres(int clockid, struct timespec *tp);
 int do_timer_create(int clockid, const struct mos_sigevent *event, int *timerid,
 		    uintptr_t value);
 int sys_timer_create(int clockid, const struct mos_sigevent *event,
@@ -317,6 +318,7 @@ int sys_timer_gettime(int timerid, struct mos_itimerspec *value);
 int sys_timer_getoverrun(int timerid);
 int sys_timer_delete(int timerid);
 int sys_clock_gettime64(int clockid, void *tp);
+int sys_clock_getres_time64(int clockid, void *tp);
 int sys_getrandom(void *buf, unsigned len, unsigned flags);
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz);
 int sys_nanosleep(const struct timespec *req, struct timespec *rem);

@@ -341,7 +341,10 @@ int sys_vfork();
 void ps_update_ldt(task_struct *task);
 void ps_load_task_segments(task_struct *task);
 void do_exit(unsigned encoded_status);
-void ps_kill_thread_group(task_struct *leader);
+void do_group_exit(unsigned encoded_status);
+void ps_kill_thread_group(task_struct *caller, unsigned encoded_status);
+void ps_fault_signal(intr_frame *frame, int sig,
+		     const struct signal_fault *fault);
 int sys_exit(unsigned status);
 int sys_waitpid(unsigned pid, int *status, int options);
 int do_waitpid(unsigned pid, int *status, int options, rusage *rusage);

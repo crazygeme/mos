@@ -38,9 +38,10 @@ static void ps_system_service_task(void *param)
 
 		if (fb_requires_flush() && now >= next_graphics_ms) {
 			tty_refresh_graphics();
-			next_graphics_ms +=
-				((now - next_graphics_ms) / GRAPHICS_REFRESH_MS + 1) *
-				GRAPHICS_REFRESH_MS;
+			next_graphics_ms += ((now - next_graphics_ms) /
+						     GRAPHICS_REFRESH_MS +
+					     1) *
+					    GRAPHICS_REFRESH_MS;
 		}
 
 		next_due = next_timer_ms;

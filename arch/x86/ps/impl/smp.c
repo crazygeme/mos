@@ -121,8 +121,9 @@ static void tlb_flush(addr_space_t root)
 	if (ncpu > 1) {
 		unsigned me = arch_cpu_local()->index, targets = 0;
 		for (unsigned i = 0; i < ncpu; i++)
-			if (i != me && __atomic_load_n(&smp_cpus[i].online,
-						       __ATOMIC_ACQUIRE) &&
+			if (i != me &&
+			    __atomic_load_n(&smp_cpus[i].online,
+					    __ATOMIC_ACQUIRE) &&
 			    (!root || smp_cpus[i].active_root == root))
 				targets |= 1U << i;
 		if (targets) {

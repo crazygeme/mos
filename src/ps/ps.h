@@ -39,7 +39,8 @@ typedef struct _task_stats {
 	unsigned niv_switches; /* involuntary context switches */
 	unsigned total_switches; /* total context switches       */
 	unsigned long long start_tickets; /* start time (jiffies)        */
-	unsigned long long user_tickets __attribute__((aligned(8))); /* sampled user CPU ticks */
+	unsigned long long user_tickets
+		__attribute__((aligned(8))); /* sampled user CPU ticks */
 	unsigned long long kernel_tickets; /* sampled system CPU ticks */
 	unsigned pf_major; /* major page faults            */
 	unsigned pf_minor; /* minor page faults            */

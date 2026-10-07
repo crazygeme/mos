@@ -32,7 +32,7 @@ static void statm_region_cb(vm_region *region, void *arg)
 	if (stack_begin && region->end > stack_begin &&
 	    region->begin < stack_end) {
 		vaddr_t begin = region->begin > stack_begin ? region->begin :
-							     stack_begin;
+							      stack_begin;
 		vaddr_t end = region->end < stack_end ? region->end : stack_end;
 		stack_pages = (end - begin) / PAGE_SIZE;
 	}
@@ -85,7 +85,8 @@ void vm_fill_statm(proc_buf_t *pb, task_struct *task)
 	vm_stats_t stats;
 	const unsigned kb_per_page = PAGE_SIZE / 1024;
 	vm_get_stats(task, &stats);
-	proc_buf_printf(pb, "%llu %llu %llu %llu 0 %llu 0\n",
+	proc_buf_printf(
+		pb, "%llu %llu %llu %llu 0 %llu 0\n",
 		(unsigned long long)(stats.total_kb / kb_per_page),
 		(unsigned long long)((stats.rss_file_kb + stats.rss_anon_kb) /
 				     kb_per_page),

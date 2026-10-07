@@ -48,9 +48,9 @@ mm_struct *vm_mapping_enter(mm_struct *mm);
 void vm_mapping_leave(mm_struct **mm);
 
 /* Mapping selection, replacement, and region splitting share one scope. */
-#define VM_MAPPING_GUARD(mm)                                                \
-	mm_struct *vm_mapping_scope                                        \
-		__attribute__((cleanup(vm_mapping_leave), unused)) =       \
+#define VM_MAPPING_GUARD(mm)                                         \
+	mm_struct *vm_mapping_scope                                  \
+		__attribute__((cleanup(vm_mapping_leave), unused)) = \
 			vm_mapping_enter(mm)
 
 static inline mm_struct *vm_mm(vm_struct_t vm)

@@ -109,9 +109,8 @@ void net_service_update(void)
 	if (!net_service_initialized)
 		return;
 	delay = sys_timeouts_sleeptime();
-	due = delay == SYS_TIMEOUTS_SLEEPTIME_INFINITE ?
-		      ~0ULL :
-		      time_now_ms() + delay;
+	due = delay == SYS_TIMEOUTS_SLEEPTIME_INFINITE ? ~0ULL :
+							 time_now_ms() + delay;
 	NETIF_FOREACH(nif)
 	{
 		if (nif->loop_first) {

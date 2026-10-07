@@ -81,7 +81,7 @@ static int native_socket_timeout_option(int level, int option)
 }
 
 int native_setsockopt(int fd, int level, int option, const void *input,
-		     unsigned length)
+		      unsigned length)
 {
 	struct native_socket_timeval wire;
 	struct timeval value;
@@ -109,7 +109,7 @@ int native_setsockopt(int fd, int level, int option, const void *input,
 }
 
 int native_getsockopt(int fd, int level, int option, void *output,
-		     unsigned *length)
+		      unsigned *length)
 {
 	struct native_socket_timeval wire;
 	struct timeval value;
@@ -118,9 +118,8 @@ int native_getsockopt(int fd, int level, int option, void *output,
 
 	if (!native_socket_timeout_option(level, option))
 		return do_getsockopt(fd, level, option, output, length);
-	if (!output ||
-	    ps_read_process_memory(current, length, &capacity,
-				   sizeof(capacity)) < 0)
+	if (!output || ps_read_process_memory(current, length, &capacity,
+					      sizeof(capacity)) < 0)
 		return -EFAULT;
 	ret = do_getsockopt(fd, level, option, &value, &size);
 	if (ret)
@@ -130,8 +129,8 @@ int native_getsockopt(int fd, int level, int option, void *output,
 	size = sizeof(wire);
 	if (capacity > size)
 		capacity = size;
-	if ((capacity && ps_write_process_memory(current, output, &wire,
-						capacity) < 0) ||
+	if ((capacity &&
+	     ps_write_process_memory(current, output, &wire, capacity) < 0) ||
 	    ps_write_process_memory(current, length, &size, sizeof(size)) < 0)
 		return -EFAULT;
 	return 0;

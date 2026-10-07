@@ -170,7 +170,8 @@ KTEST(mmap, sparse_clone_teardown)
 	int ret;
 
 	ASSERT_EQ(do_mmap(base, 1024 * PAGE_SIZE, PROT_READ | PROT_WRITE,
-			 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0), base);
+			  MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0),
+		  base);
 	for (unsigned i = 0; i < 3; i++) {
 		vaddr_t address = base + indexes[i] * PAGE_SIZE;
 		ASSERT_EQ(pf_resolve_task_page_fault(current, address, 1), 1);
@@ -186,7 +187,8 @@ KTEST(mmap, sparse_clone_teardown)
 	EXPECT_EQ(ret, 0);
 	if (!ret)
 		for (unsigned i = 0; i < 3; i++)
-			EXPECT_EQ(phymm_pages[pages[i]].ref_count, references[i] + 1);
+			EXPECT_EQ(phymm_pages[pages[i]].ref_count,
+				  references[i] + 1);
 	vm_put(user.vm);
 	for (unsigned i = 0; i < 3; i++)
 		EXPECT_EQ(phymm_pages[pages[i]].ref_count, references[i]);

@@ -167,8 +167,9 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 	stack_start = mm ? mm->start_stack : 0;
 
 	stime = ps_usage_read(group ? &task->usage->kernel_tickets :
-				     &task->stats->kernel_tickets);
-	utime = group ? ps_usage_read(&task->usage->user_tickets) : task_utime(task);
+				      &task->stats->kernel_tickets);
+	utime = group ? ps_usage_read(&task->usage->user_tickets) :
+			task_utime(task);
 
 	proc_buf_printf(
 		pb,

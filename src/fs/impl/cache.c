@@ -249,8 +249,8 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 	return phy;
 }
 
-void fs_page_cache_get_cached_range(file *fp, uint64_t offset,
-				  paddr_t *pages, unsigned count)
+void fs_page_cache_get_cached_range(file *fp, uint64_t offset, paddr_t *pages,
+				    unsigned count)
 {
 	fs_page_cache_key key;
 	unsigned i;

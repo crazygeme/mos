@@ -63,11 +63,12 @@ static void fill(proc_buf_t *pb)
 		total.system += samples[i].system;
 		total.idle += samples[i].idle;
 	}
-	proc_buf_printf(pb, "cpu  %llu 0 %llu %llu 0 0 0 0 0 0\n",
-			total.user, total.system, total.idle);
+	proc_buf_printf(pb, "cpu  %llu 0 %llu %llu 0 0 0 0 0 0\n", total.user,
+			total.system, total.idle);
 	for (i = 0; i < ncpu; i++)
 		proc_buf_printf(pb, "cpu%d %llu 0 %llu %llu 0 0 0 0 0 0\n", i,
-				samples[i].user, samples[i].system, samples[i].idle);
+				samples[i].user, samples[i].system,
+				samples[i].idle);
 
 	proc_buf_printf(pb, "intr 0\n");
 	proc_buf_printf(pb, "ctxt %u\n", task_schedule_count);

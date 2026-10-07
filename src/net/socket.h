@@ -245,7 +245,8 @@ struct mmsghdr {
 #define SOCK_RXBUF_INET_SIZE (256 * 1024) /* per-INET-socket receive ring */
 #define SOCK_RXBUF_UNIX_SIZE (4 * 1024) /* Unix datagram receive ring */
 #define SOCK_RXBUF_UNIX_STREAM_SIZE (256 * 1024) /* Unix stream receive ring */
-#define SOCK_RXBUF_UNIX_SEQPACKET_SIZE (256 * 1024) /* Unix record receive ring */
+#define SOCK_RXBUF_UNIX_SEQPACKET_SIZE \
+	(256 * 1024) /* Unix record receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
 #define UNIX_SHUT_RD 1u
 #define UNIX_SHUT_WR 2u

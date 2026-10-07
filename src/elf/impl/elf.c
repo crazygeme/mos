@@ -279,7 +279,7 @@ static int elf_validate(elf_image *image, char *interp)
 	if (!image->phdrs)
 		return -ENOMEM;
 	if (image->format->read_phdrs(fp, elf->e_phoff, elf->e_phnum,
-				    image->phdrs))
+				      image->phdrs))
 		return -ENOEXEC;
 	vaddr_t limit = image->format->task_size;
 	limit -= USER_STACK_PAGES * PAGE_SIZE;

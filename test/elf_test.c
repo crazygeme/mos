@@ -128,17 +128,19 @@ static int phdr_table_fixture(unsigned elf_class)
 		return 0;
 	fixture.fp.f_fop = &fixture_ops;
 	offset = elf_class == ELFCLASS32 ? sizeof(Elf32_Ehdr) :
-						  sizeof(Elf64_Ehdr);
+					   sizeof(Elf64_Ehdr);
 	fixture.size = elf_class == ELFCLASS32 ? sizeof(fixture.bytes.elf32) :
-						       sizeof(fixture.bytes.elf64);
+						 sizeof(fixture.bytes.elf64);
 	for (i = 0; i < 3; i++) {
 		Elf64_Phdr *ph = &expected[i];
 
 		ph->p_type = PT_LOAD + i;
 		ph->p_flags = PF_R | (i == 1 ? PF_W : PF_X);
 		ph->p_offset = 0x12345678U + i;
-		ph->p_vaddr = (elf_class == ELFCLASS32 ? 0x87654321ULL :
-						  0x1234567887654321ULL) + i;
+		ph->p_vaddr = (elf_class == ELFCLASS32 ?
+				       0x87654321ULL :
+				       0x1234567887654321ULL) +
+			      i;
 		ph->p_paddr = ph->p_vaddr + 0x100;
 		ph->p_filesz = 0x333 + i;
 		ph->p_memsz = ph->p_filesz + 0x200;

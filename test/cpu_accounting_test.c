@@ -9,7 +9,9 @@ KTEST(CPUAccounting, UserSystemAndIdle)
 {
 	task_stats_t stats = { 0 };
 	task_usage_t group = { 0 };
-	task_struct task = { .stats = &stats, .usage = &group, .type = ps_user };
+	task_struct task = { .stats = &stats,
+			     .usage = &group,
+			     .type = ps_user };
 	cpu_usage_t cpu = { 0 };
 	ps_usage_charge(&task, &cpu, 1);
 	ps_usage_charge(&task, &cpu, 0);
@@ -69,8 +71,10 @@ KTEST(CPUAccounting, GroupLifetimeAndForkReset)
 
 KTEST(CPUAccounting, ReportingAndCPUClockResolution)
 {
-	task_usage_t group = { .user_tickets = 123, .kernel_tickets = 45,
-		.child_utime = 67, .child_stime = 89 };
+	task_usage_t group = { .user_tickets = 123,
+			       .kernel_tickets = 45,
+			       .child_utime = 67,
+			       .child_stime = 89 };
 	task_struct *task = current;
 	int irq = int_intr_disable();
 	task_usage_t *saved = task->usage;
@@ -117,8 +121,9 @@ static void charge_parallel(void *opaque)
 {
 	struct concurrent_usage *state = opaque;
 	task_stats_t stats = { 0 };
-	task_struct task = { .stats = &stats, .usage = &state->group,
-		.type = ps_user };
+	task_struct task = { .stats = &stats,
+			     .usage = &state->group,
+			     .type = ps_user };
 	cpu_usage_t cpu = { 0 };
 	current->ppid = state->parent;
 	current->exit_signal = 0;

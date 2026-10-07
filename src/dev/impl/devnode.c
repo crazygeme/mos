@@ -138,6 +138,7 @@ static file *devnode_open_stub(super_block *sb, unsigned mode)
 typedef struct {
 	unsigned mode; /* full mode bits, e.g. S_IFCHR | 0666 */
 	unsigned rdev; /* encoded major/minor (for char/block) */
+	unsigned uid, gid;
 	cy_buf *fifo; /* non-NULL for S_IFIFO */
 } devnode_info;
 
@@ -153,6 +154,8 @@ static int devnode_getattr(file *fp, struct stat *s)
 	memset(s, 0, sizeof(*s));
 	s->st_mode = dn->mode;
 	s->st_rdev = dn->rdev;
+	s->st_uid = dn->uid;
+	s->st_gid = dn->gid;
 	s->st_nlink = 1;
 	s->st_atime = time_wall_sec();
 	s->st_ctime = time_wall_sec();
@@ -192,8 +195,11 @@ static const file_operations devnode_fops = {
 static int fifonode_getattr(file *fp, struct stat *s)
 {
 	inode *node = fp->f_inode;
+	devnode_info *dn = fp->f_sb->s_fs_info;
 	memset(s, 0, sizeof(*s));
 	s->st_mode = node->i_mode; /* mode was copied into i_mode at open */
+	s->st_uid = dn->uid;
+	s->st_gid = dn->gid;
 	s->st_nlink = 1;
 	s->st_atime = time_wall_sec();
 	s->st_ctime = time_wall_sec();
@@ -396,10 +402,15 @@ static const super_operations devnode_sops = {
 super_block *devnode_create(unsigned mode, unsigned rdev)
 {
 	devnode_info *dn = zalloc(sizeof(*dn));
+	task_struct *cur = CURRENT_TASK();
 	super_block *sb;
 
 	dn->mode = mode;
 	dn->rdev = rdev;
+	if (cur && cur->user) {
+		dn->uid = cur->user->euid;
+		dn->gid = cur->user->egid;
+	}
 	if (S_ISFIFO(mode))
 		dn->fifo = cyb_create_named(0);
 

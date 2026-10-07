@@ -21,8 +21,7 @@ void spinlock_uninit(spinlock_t *lock)
 {
 	lock->inited = 0;
 	lock->holder = 0;
-	/* Release the lock word and restore the saved interrupt level. */
-	__sync_lock_test_and_set(&lock->lock, 0);
+	__atomic_store_n(&lock->lock, 0, __ATOMIC_RELEASE);
 }
 
 void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
@@ -30,11 +29,12 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 	if (!lock->inited)
 		return;
 
-	__sync_lock_test_and_set(saved_irq, int_intr_disable());
+	/* Caller-local state: this store needs no atomic read/modify/write. */
+	*saved_irq = int_intr_disable();
 
 	/* Fast path: optimistically try once before entering the retry loop.
 	 * On an uncontended lock this avoids the HLT overhead entirely. */
-	if (LIKELY(__sync_lock_test_and_set(&lock->lock, 1) == 0))
+	if (LIKELY(__atomic_exchange_n(&lock->lock, 1, __ATOMIC_ACQUIRE) == 0))
 		goto locked;
 
 	/* Slow path: stay in a true spin loop. We already disabled interrupts
@@ -42,7 +42,8 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 	do {
 		smp_tlb_poll();
 		PAUSE();
-	} while (__sync_lock_test_and_set(&lock->lock, 1) == 1);
+	} while (__atomic_load_n(&lock->lock, __ATOMIC_RELAXED) != 0 ||
+		 __atomic_exchange_n(&lock->lock, 1, __ATOMIC_ACQUIRE) != 0);
 
 locked:
 	lock->holder = func;
@@ -54,7 +55,7 @@ void spinlock_unlock(spinlock_t *lock, int irq)
 		return;
 
 	lock->holder = 0xff;
-	__sync_lock_test_and_set(&lock->lock, 0);
+	__atomic_store_n(&lock->lock, 0, __ATOMIC_RELEASE);
 	int_intr_setlevel(irq);
 }
 

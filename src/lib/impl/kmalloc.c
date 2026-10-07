@@ -6,18 +6,18 @@
  *
  * Block layout (allocated):
  *   ┌──────────┬─────────────────────────────┐
- *   │ hdr (4B) │ user data (8-aligned, n B)  │
+ *   │ hdr (8B) │ user data (8-aligned, n B)  │
  *   └──────────┴─────────────────────────────┘
  *   hdr = (total_block_size | ALLOC_BIT)
- *   total_block_size = HDR_SZ + ALIGN8(n)
+ *   total_block_size = max(MIN_BLK, ALIGN8(HDR_SZ + n))
  *   malloc(n) returns (blk + HDR_SZ); free(p) derives blk = p - HDR_SZ.
  *
- * Free block layout (total_size >= MIN_BLK = 12):
+ * Free block layout (total_size >= MIN_BLK, pointer-sized links):
  *   ┌──────────┬──────────┬──────────┬───────────┐
- *   │ hdr (4B) │ next (4) │ prev (4) │  padding  │
+ *   │ hdr (8B) │ next     │ prev     │  padding  │
  *   └──────────┴──────────┴──────────┴───────────┘
  *
- * Each new heap chunk gets a 4-byte epilogue sentinel (ALLOC_BIT only) at
+ * Each new heap chunk gets an 8-byte epilogue sentinel (ALLOC_BIT only) at
  * its end, which stops right-coalescing at chunk boundaries.
  *
  * Bins: bin[i] holds free blocks of total size in (MIN_BLK<<(i-1), MIN_BLK<<i],
@@ -34,9 +34,13 @@
 
 /* ── Constants ───────────────────────────────────────────────────────────── */
 
-#define HDR_SZ ((unsigned)sizeof(uintptr_t))
+/* Keep payloads and every split block 8-aligned, including on i386.
+ * A 4-byte header misaligns heap-backed 64-bit atomic CPU counters and can
+ * make locked updates straddle cache lines (split locks).
+ */
+#define HDR_SZ 8u
 #define ALLOC_BIT 1u
-/* Free block needs header + two pointers; must be at least 12 bytes total. */
+/* Header and two pointers total 16 bytes on i386, 24 bytes on x86-64. */
 #define MIN_BLK (HDR_SZ + 2u * sizeof(void *))
 /* Round up to nearest 8-byte boundary. */
 #define ALIGN8(n) (((unsigned)(n) + 7u) & ~7u)
@@ -93,11 +97,11 @@ static inline void **fl_prev(void *b)
  * Sentinel node for each bin.  Layout is intentionally compatible with a
  * real free block so that fl_next/fl_prev work uniformly:
  *   offset 0  : h    (dummy header, not a real size)
- *   offset 4  : next (== fl_next on &bins[i])
- *   offset 8  : prev (== fl_prev on &bins[i])
+ *   offset 8  : next (== fl_next on &bins[i])
+ *   offset 8 + sizeof(void *) : prev (== fl_prev on &bins[i])
  */
 typedef struct {
-	uintptr_t h;
+	unsigned long long h;
 	void *next, *prev;
 } bin_t;
 

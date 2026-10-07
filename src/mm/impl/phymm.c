@@ -467,14 +467,14 @@ unsigned phymm_dereference_page(unsigned page_index)
 
 int phymm_is_cow(unsigned page_index)
 {
-	return ((int)__sync_add_and_fetch(&phymm_pages[page_index].ref_count,
-					  0) > 1);
+	return ((int)__atomic_load_n(&phymm_pages[page_index].ref_count,
+				    __ATOMIC_ACQUIRE) > 1);
 }
 
 int phymm_is_used(unsigned page_index)
 {
-	return ((int)__sync_add_and_fetch(&phymm_pages[page_index].ref_count,
-					  0) > 0);
+	return ((int)__atomic_load_n(&phymm_pages[page_index].ref_count,
+				    __ATOMIC_ACQUIRE) > 0);
 }
 
 void phymm_get_usage(phymm_usage *usage)

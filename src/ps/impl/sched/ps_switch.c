@@ -28,7 +28,7 @@ void _task_sched(const char *func)
 	int lock_irq;
 
 	(void)func;
-	__sync_fetch_and_add(&task_schedule_count, 1);
+	__atomic_fetch_add(&task_schedule_count, 1, __ATOMIC_RELAXED);
 
 	irq = int_intr_disable();
 	ps_reap_dead_threads();

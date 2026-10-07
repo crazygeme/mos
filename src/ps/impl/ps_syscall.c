@@ -64,10 +64,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		spinlock_lock(&ps_lock, &irq);
 		task_struct *parent = ps_find_process_unsafe(task->ppid);
 		if (parent && parent->usage) {
-			__sync_fetch_and_add(&parent->usage->child_utime,
-					     child_utime);
-			__sync_fetch_and_add(&parent->usage->child_stime,
-					     child_stime);
+			ps_usage_add_local(&parent->usage->child_utime,
+					   child_utime);
+			ps_usage_add_local(&parent->usage->child_stime,
+					   child_stime);
 		}
 		spinlock_unlock(&ps_lock, irq);
 	}

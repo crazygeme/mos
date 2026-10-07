@@ -670,20 +670,30 @@ int sys_waitpid(unsigned pid, int *status, int options)
  * Public — misc syscalls
  */
 
-char *sys_getcwd(char *buf, unsigned size)
+intptr_t sys_getcwd(char *buf, size_t size)
 {
 	task_struct *cur = CURRENT_TASK();
 	const char *cwd = "/";
+	size_t length;
+
+	if (!size)
+		return -EINVAL;
+	if (!buf)
+		return -EFAULT;
 
 	if (cur && cur->user && cur->user->cwd && cur->user->cwd[0])
 		cwd = cur->user->cwd;
 
-	strcpy(buf, cwd);
+	length = strlen(cwd) + 1;
+	if (length > size)
+		return -ERANGE;
+	memcpy(buf, cwd, length);
 
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("getcwd(%s, %d) = %s\n", buf, size, buf);
+		klog("getcwd(%s, %u) = %u\n", buf, (unsigned)size,
+		     (unsigned)length);
 
-	return buf;
+	return (intptr_t)length;
 }
 
 /*

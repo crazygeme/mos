@@ -379,6 +379,11 @@ int fs_open(const char *path, int flag, umode_t mode)
 	if (!fp)
 		return -ENOENT;
 
+	if ((flag & O_DIRECTORY) && !S_ISDIR(fp->f_inode->i_mode)) {
+		fs_put_file(fp);
+		return -ENOTDIR;
+	}
+
 	/* Check DAC permissions based on requested access mode. */
 	if (fp->f_fop && fp->f_fop->getattr &&
 	    fp->f_fop->getattr(fp, &s) == 0) {

@@ -341,7 +341,7 @@ int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering);
 void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp, unsigned syscall_number);
 void ps_ptrace_stop_exit(unsigned status);
 void qemu_exit(unsigned char code);
-char *sys_getcwd(char *buf, unsigned size);
+intptr_t sys_getcwd(char *buf, size_t size);
 int sys_getrusage(int who, rusage *usage);
 void reboot();
 void shutdown();

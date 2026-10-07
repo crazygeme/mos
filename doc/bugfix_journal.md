@@ -4,6 +4,77 @@ Implementation records are ordered by date, with the newest entries first.
 
 ---
 
+## 2026-10-07 - Directory-only open enforcement
+
+After commit `11d9a69bb282ef47f331cfab6b8e7e4b7bc36441`, copying
+`./kernel` to `/boot/kernel` attempts to use `/boot/kernel/kernel` as the
+destination. That commit changes special-file ownership and the shared
+`getcwd` return value. Regular-file stat conversion and open dispatch are
+unchanged. Internal pathname-resolution calls discard the `getcwd` return
+value and consume the populated buffer. The temporal association does not
+establish which change exposed the copy path.
+
+The open path through `sys_openat`, `fs_open`, and `ext4_path_open` does not
+enforce `O_DIRECTORY`. An SSH session on the x64 guest reproduced the failure
+with GNU coreutils 9.7 and temporary source and destination files. The trace
+shows `openat(AT_FDCWD, destination, O_RDONLY | O_PATH | O_DIRECTORY)` returning
+descriptor 3 for a regular file. The subsequent `newfstatat(3, "source", ..., 0)`
+fails with `ENOTDIR`, and the copy diagnostic names `destination/source`.
+Independent stat output identifies `/boot/kernel` as a regular file.
+
+`fs_open` now checks the resolved inode type whenever `O_DIRECTORY` is set.
+For a non-directory, it releases the opened file and returns `ENOTDIR` before
+permission checks and descriptor installation. Both `O_PATH` and ordinary
+opens use this check, including targets reached through final symlinks.
+
+The regression script `test/directory_open.py` checks rejection of regular
+files, file symlinks, and FIFOs; successful directory and directory-symlink
+opens; file replacement by `cp`; and copying into a directory. It passes on
+the host. Compiler syntax checks pass for x86 and x64, and patch whitespace
+checks pass. The guest reproduction failed as expected before the correction.
+The guest shut down before further probes; corrected kernel build and guest
+runtime validation remain pending. The boot kernel was not overwritten.
+
+## 2026-10-07 - FIFO ownership and getcwd syscall return value
+
+GNU Make 4.4.1 initializes its FIFO jobserver by creating a named pipe with
+mode `0600`, opening the read endpoint with `O_RDONLY | O_NONBLOCK`, and
+opening the write endpoint with `O_WRONLY`. MOS previously cleared the stat
+structure without filling its ownership fields. The resulting UID and GID
+were zero, so the discretionary access check selected group or other bits
+for a non-root creator and rejected the read open with `EACCES`.
+
+Special-file metadata now retains the creator's effective UID and GID, matching
+the existing tmpfs credential convention. FIFO and generic special-file stat
+handlers return those stored credentials. FIFO metadata uses the backend
+superblock retained by the VFS before the open permission check.
+
+The Linux `getcwd` syscall returns the pathname length including its terminating
+NUL. MOS previously returned the destination address. The shared handler now
+returns the length, rejects a zero size with `EINVAL`, and returns `ERANGE`
+without copying when the destination is too small. A null destination with a
+nonzero size returns `EFAULT`. Both syscall namespaces use the shared handler;
+internal pathname-resolution callers continue to consume its output buffer.
+
+glibc 2.37 stores the syscall result in an `int`, tests for a positive result,
+and uses the result as an allocation size for `getcwd(NULL, 0)`. Returning an
+x64 buffer address violates these assumptions. The reported `getcwd: No such
+file or directory` still requires a syscall trace to establish its exact path;
+the return-value correction does not establish that the directory exists.
+
+The regression script `test/fifo_jobserver.sh` requires a non-root account and
+checks FIFO path and descriptor ownership, the jobserver open sequence, token
+transfer, the raw `getcwd` return length, the libc wrapper, and undersized-buffer
+errors. Compiler syntax checks passed for both x86 and x64, covering the
+modified implementations, internal pathname-resolution callers, and syscall
+dispatchers. Shell syntax and patch whitespace checks passed. Kernel build
+and guest execution remain pending.
+
+References: GNU Make 4.4.1 `src/posixos.c`, `jobserver_setup()`;
+glibc 2.37 `sysdeps/unix/sysv/linux/getcwd.c`, `__getcwd()`.
+Source archives: [GNU Make 4.4.1](https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz),
+[glibc 2.37](https://ftp.gnu.org/gnu/glibc/glibc-2.37.tar.xz).
+
 ## 2026-10-05 - Address space TLB shootdowns
 
 TLB requests contain the physical page-directory address for user mappings.

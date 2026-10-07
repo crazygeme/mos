@@ -90,7 +90,7 @@ static int eventfd_transfer_wait(eventfd_wait *wait)
 	fs_get_file(wait->fp);
 	poll_table_init(&wait->table, current, &wait->entry, 1);
 	result = poll_wait_loop(&eventfd_wait_ops, wait,
-			       !!(wait->fp->f_flag & O_NONBLOCK), 1, 0);
+				!!(wait->fp->f_flag & O_NONBLOCK), 1, 0);
 	fs_put_file(wait->fp);
 	return result ? result : -EAGAIN;
 }
@@ -103,7 +103,7 @@ static ssize_t eventfd_read(file *fp, void *buf, size_t count, loff_t *pos)
 		return -EINVAL;
 	result = eventfd_transfer_wait(&wait);
 	if (result > 0 && ps_write_process_memory(current, buf, &wait.value,
-						 sizeof(wait.value)) < 0)
+						  sizeof(wait.value)) < 0)
 		return -EFAULT;
 	return result;
 }
@@ -111,10 +111,13 @@ static ssize_t eventfd_read(file *fp, void *buf, size_t count, loff_t *pos)
 static ssize_t eventfd_write(file *fp, const void *buf, size_t count,
 			     loff_t *pos)
 {
-	eventfd_wait wait = { .fp = fp, .state = fp->f_inode->i_private, .write = 1 };
+	eventfd_wait wait = { .fp = fp,
+			      .state = fp->f_inode->i_private,
+			      .write = 1 };
 	if (count != sizeof(wait.value))
 		return -EINVAL;
-	if (ps_read_process_memory(current, buf, &wait.value, sizeof(wait.value)) < 0)
+	if (ps_read_process_memory(current, buf, &wait.value,
+				   sizeof(wait.value)) < 0)
 		return -EFAULT;
 	if (wait.value == UINT64_MAX)
 		return -EINVAL;

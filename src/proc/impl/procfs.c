@@ -51,8 +51,7 @@ static void proc_collect_pid(task_struct *task, void *ctx)
 {
 	pid_ctx_t *c = (pid_ctx_t *)ctx;
 	if (task->psid != 0xffffffff && task->type != ps_kernel &&
-	    task->psid == task->tgid &&
-	    c->count < PROC_MAX_PIDS)
+	    task->psid == task->tgid && c->count < PROC_MAX_PIDS)
 		c->list[c->count++] = task->psid;
 }
 
@@ -116,8 +115,7 @@ static unsigned char proc_root_dirent_type(file *fp, const char *name)
 {
 	const char *p = name;
 	(void)fp;
-	if (!strcmp(name, ".") || !strcmp(name, "..") ||
-	    !strcmp(name, "self"))
+	if (!strcmp(name, ".") || !strcmp(name, "..") || !strcmp(name, "self"))
 		return S_IFDIR >> 12;
 	if (*p < '0' || *p > '9')
 		return 0;

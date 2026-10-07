@@ -28,8 +28,9 @@
 #define CLONE_NEWPID 0x20000000
 #define CLONE_NEWNET 0x40000000
 /* Namespace flags are recognized, but namespace isolation is unavailable. */
-#define CLONE_NAMESPACE_FLAGS (CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | \
-			       CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)
+#define CLONE_NAMESPACE_FLAGS                                          \
+	(CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC | \
+	 CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)
 
 static void clone_prepare_thread_tls(task_struct *cur, task_struct *task,
 				     unsigned short parent_gs)
@@ -87,7 +88,8 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 				 CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS |
 				 CLONE_SYSVSEM | CLONE_DETACHED);
 	if (unsupported)
-		return (unsupported & CLONE_NAMESPACE_FLAGS) ? -EINVAL : -ENOSYS;
+		return (unsupported & CLONE_NAMESPACE_FLAGS) ? -EINVAL :
+							       -ENOSYS;
 
 	if ((flags & CLONE_SIGHAND) && !share_vm)
 		return -EINVAL;
@@ -127,8 +129,9 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	fork_dup_signal(cur, task);
 	if (fork_dup_io(cur, task) != 0)
 		return -ENOMEM;
-	fork_set_meta(cur, task, (share_vm ? FORK_FLAG_SHARE_VM : 0) |
-				(thread_group ? FORK_FLAG_THREAD : 0));
+	fork_set_meta(cur, task,
+		      (share_vm ? FORK_FLAG_SHARE_VM : 0) |
+			      (thread_group ? FORK_FLAG_THREAD : 0));
 	if (share_vm)
 		task->fork_flag |= FORK_FLAG_SHARE_VM;
 	if (thread_group)

@@ -116,7 +116,8 @@ static int pid_dir_getattr(file *fp, struct stat *s)
 	s->st_gid = data->gid;
 	s->st_blksize = PAGE_SIZE;
 	s->st_nlink = data->task_directory ?
-			      2 + proc_thread_count(data->task_group) : 2;
+			      2 + proc_thread_count(data->task_group) :
+			      2;
 	s->st_dev = 0xb;
 	s->st_ino = PROC_INODE;
 	return 0;
@@ -133,8 +134,8 @@ static const file_operations pid_file_fops = {
 static unsigned char pid_dirent_type(file *fp, const char *name)
 {
 	pid_file_data *data = fp->f_inode->i_private;
-	if (!strcmp(name, ".") || !strcmp(name, "..") ||
-	    !strcmp(name, "fd") || !strcmp(name, "task"))
+	if (!strcmp(name, ".") || !strcmp(name, "..") || !strcmp(name, "fd") ||
+	    !strcmp(name, "task"))
 		return S_IFDIR >> 12;
 	if (data->task_directory && *name >= '0' && *name <= '9')
 		return S_IFDIR >> 12;
@@ -203,7 +204,8 @@ static file *pid_fd_link_follow(file *fp, int flags)
 	if (link->target->f_fop && link->target->f_fop->reopen)
 		return link->target->f_fop->reopen(link->target, flags);
 	if (link->target->f_name && link->target->f_name[0] == '/')
-		return vfs_open(CURRENT_TASK()->root, link->target->f_name, flags);
+		return vfs_open(CURRENT_TASK()->root, link->target->f_name,
+				flags);
 	return NULL;
 }
 

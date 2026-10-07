@@ -38,9 +38,11 @@
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
-	unsigned long long child_utime = ps_usage_read(&task->usage->user_tickets) +
+	unsigned long long child_utime =
+		ps_usage_read(&task->usage->user_tickets) +
 		ps_usage_read(&task->usage->child_utime);
-	unsigned long long child_stime = ps_usage_read(&task->usage->kernel_tickets) +
+	unsigned long long child_stime =
+		ps_usage_read(&task->usage->kernel_tickets) +
 		ps_usage_read(&task->usage->child_stime);
 
 	if (rusage) {
@@ -50,8 +52,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		rusage->ru_nvcsw =
 			task->stats->total_switches - task->stats->niv_switches;
 		rusage->ru_nivcsw = task->stats->niv_switches;
-		us_to_timeval(child_stime * (1000000ULL / HZ), &rusage->ru_stime);
-		us_to_timeval(child_utime * (1000000ULL / HZ), &rusage->ru_utime);
+		us_to_timeval(child_stime * (1000000ULL / HZ),
+			      &rusage->ru_stime);
+		us_to_timeval(child_utime * (1000000ULL / HZ),
+			      &rusage->ru_utime);
 	}
 
 	/* Accumulate child CPU time into parent for cutime/cstime. */
@@ -60,8 +64,10 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 		spinlock_lock(&ps_lock, &irq);
 		task_struct *parent = ps_find_process_unsafe(task->ppid);
 		if (parent && parent->usage) {
-			__sync_fetch_and_add(&parent->usage->child_utime, child_utime);
-			__sync_fetch_and_add(&parent->usage->child_stime, child_stime);
+			__sync_fetch_and_add(&parent->usage->child_utime,
+					     child_utime);
+			__sync_fetch_and_add(&parent->usage->child_stime,
+					     child_stime);
 		}
 		spinlock_unlock(&ps_lock, irq);
 	}
@@ -307,7 +313,8 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 			if (task != leader && task->tgid == leader->tgid &&
 			    task->type == ps_user) {
 				task->terminate_requested = 1;
-				active |= task->on_cpu != 0 || task->vm_lock_depth != 0;
+				active |= task->on_cpu != 0 ||
+					  task->vm_lock_depth != 0;
 			}
 		}
 		spinlock_unlock(&ps_lock, irq);
@@ -696,9 +703,11 @@ int sys_getrusage(int who, rusage *usage)
 
 	if (who == RUSAGE_SELF) {
 		us_to_timeval(ps_usage_read(&cur->usage->user_tickets) *
-			     (1000000ULL / HZ), &usage->ru_utime);
+				      (1000000ULL / HZ),
+			      &usage->ru_utime);
 		us_to_timeval(ps_usage_read(&cur->usage->kernel_tickets) *
-			     (1000000ULL / HZ), &usage->ru_stime);
+				      (1000000ULL / HZ),
+			      &usage->ru_stime);
 		usage->ru_majflt = cur->stats->pf_major;
 		usage->ru_minflt = cur->stats->pf_minor;
 		usage->ru_nvcsw =
@@ -706,9 +715,11 @@ int sys_getrusage(int who, rusage *usage)
 		usage->ru_nivcsw = cur->stats->niv_switches;
 	} else if (who == RUSAGE_CHILDREN) {
 		us_to_timeval(ps_usage_read(&cur->usage->child_utime) *
-			     (1000000ULL / HZ), &usage->ru_utime);
+				      (1000000ULL / HZ),
+			      &usage->ru_utime);
 		us_to_timeval(ps_usage_read(&cur->usage->child_stime) *
-			     (1000000ULL / HZ), &usage->ru_stime);
+				      (1000000ULL / HZ),
+			      &usage->ru_stime);
 	}
 
 	if (TEST_LOG(TEST_LOG_INFO))

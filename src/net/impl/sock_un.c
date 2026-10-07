@@ -479,7 +479,8 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 	int nonblock = (fp->f_flag & O_NONBLOCK) != 0;
 	int irq;
 	if (sk->type == SOCK_SEQPACKET) {
-		struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
+		struct iovec iov = { .iov_base = (void *)buf,
+				     .iov_len = count };
 		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
 		return unix_sendmsg(sk, &msg, nonblock ? MSG_DONTWAIT : 0);
 	}
@@ -551,7 +552,8 @@ static int unix_cmsg_validate_walk(const struct msghdr *msg,
 }
 
 static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
-				   unsigned *nfds_out, unix_peercred *credentials)
+				   unsigned *nfds_out,
+				   unix_peercred *credentials)
 {
 	unsigned nfds = 0;
 	int error = -EINVAL;
@@ -971,9 +973,9 @@ static unsigned unix_recvmsg_stream_limit(mos_sock *sk)
 
 /* A complete record and its ancillary entry are committed under one lock. */
 static int unix_sendmsg_seqpacket(mos_sock *sk, const struct msghdr *msg,
-				file **files, unsigned nfds, size_t total_len,
-				int nonblock, unsigned long long deadline,
-				const unix_peercred *credentials)
+				  file **files, unsigned nfds, size_t total_len,
+				  int nonblock, unsigned long long deadline,
+				  const unix_peercred *credentials)
 {
 	mos_sock *peer;
 	unix_seqpacket_header record;
@@ -1036,12 +1038,14 @@ static int unix_recvmsg_seqpacket(mos_sock *sk, struct msghdr *msg, int flags)
 			return sk->err;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;
-		if (sk->state == SS_DISCONNECTING || (sk->unix_shutdown & UNIX_SHUT_RD)) {
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->unix_shutdown & UNIX_SHUT_RD)) {
 			msg->msg_flags = 0;
 			msg->msg_controllen = 0;
 			return 0;
 		}
-		if (sock_msg_is_nonblock(flags) || sock_deadline_expired(deadline))
+		if (sock_msg_is_nonblock(flags) ||
+		    sock_deadline_expired(deadline))
 			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
@@ -1049,12 +1053,14 @@ static int unix_recvmsg_seqpacket(mos_sock *sk, struct msghdr *msg, int flags)
 	}
 	head = sk->rx_head;
 	rx_read(sk, &record, sizeof(record));
-	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, record.length);
+	delivered =
+		rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, record.length);
 	rx_discard(sk, record.length - delivered);
 	msg->msg_flags = delivered < record.length ? MSG_TRUNC : 0;
 	if (flags & MSG_PEEK) {
 		if (sk->unix_passfd_head != sk->unix_passfd_tail) {
-			unix_passfd_msg *next = &sk->unix_passfd_queue[sk->unix_passfd_head];
+			unix_passfd_msg *next =
+				&sk->unix_passfd_queue[sk->unix_passfd_head];
 			if (next->ready_head <= sk->rx_head) {
 				nfds = next->nfds;
 				for (unsigned i = 0; i < nfds; i++) {
@@ -1076,8 +1082,10 @@ static int unix_recvmsg_seqpacket(mos_sock *sk, struct msghdr *msg, int flags)
 	size_t capacity = msg->msg_controllen, off = 0;
 	if (sk->unix_passcred) {
 		if (control)
-			sock_msg_cmsg_append(msg, &off, SOL_SOCKET, SCM_CREDENTIALS,
-					     &record.credentials, sizeof(record.credentials));
+			sock_msg_cmsg_append(msg, &off, SOL_SOCKET,
+					     SCM_CREDENTIALS,
+					     &record.credentials,
+					     sizeof(record.credentials));
 		else
 			msg->msg_flags |= MSG_CTRUNC;
 	}
@@ -1102,7 +1110,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 	int ret;
 	int next_tail;
 	task_struct *task = CURRENT_TASK();
-	unix_peercred credentials = { (int)task->tgid, task->user->uid, task->user->gid };
+	unix_peercred credentials = { (int)task->tgid, task->user->uid,
+				      task->user->gid };
 
 	if (sk->type == SOCK_SEQPACKET && sk->state == SS_UNCONNECTED)
 		return -ENOTCONN;
@@ -1116,7 +1125,7 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 		return ret;
 	if (sk->type == SOCK_SEQPACKET)
 		return unix_sendmsg_seqpacket(sk, msg, files, nfds, total_len,
-					     nonblock, deadline, &credentials);
+					      nonblock, deadline, &credentials);
 
 	spinlock_lock(&peer->rxbuf_lock, &irq);
 	next_tail = (peer->unix_passfd_tail + 1) % UNIX_PASSFD_QUEUE;

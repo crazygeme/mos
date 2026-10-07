@@ -610,7 +610,8 @@ int do_shutdown(int fd, int how)
 		}
 		/* Half-close preserves both peer links until socket release. */
 		__sync_fetch_and_or(&sk->unix_shutdown, mask);
-		if (peer && (sk->type == SOCK_STREAM || sk->type == SOCK_SEQPACKET)) {
+		if (peer &&
+		    (sk->type == SOCK_STREAM || sk->type == SOCK_SEQPACKET)) {
 			__sync_fetch_and_or(&peer->unix_shutdown, peer_mask);
 			sock_wakeup(peer);
 		}

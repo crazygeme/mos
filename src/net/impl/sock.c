@@ -934,8 +934,11 @@ static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
 				ready |= FS_POLL_WRITE;
 			} else if (sk->unix_peer) {
 				if (sk->type == SOCK_SEQPACKET) {
-					ready |= rx_free(sk->unix_peer) >= sizeof(unix_seqpacket_header) ?
-							 FS_POLL_WRITE : 0;
+					ready |=
+						rx_free(sk->unix_peer) >=
+								sizeof(unix_seqpacket_header) ?
+							FS_POLL_WRITE :
+							0;
 				} else if (sk->type == SOCK_DGRAM) {
 					ready |= rx_free(sk->unix_peer) >=
 								 sizeof(u16_t) ?

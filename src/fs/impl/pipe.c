@@ -233,7 +233,8 @@ file *pipe_reopen(file *original, int flags)
 	fp->f_mode = mode;
 	fp->f_flag = flags;
 	fp->f_fop = mode == O_RDONLY ? &pipe_read_fops :
-		    mode == O_WRONLY ? &pipe_write_fops : &pipe_rw_fops;
+		    mode == O_WRONLY ? &pipe_write_fops :
+				       &pipe_rw_fops;
 	return fp;
 }
 

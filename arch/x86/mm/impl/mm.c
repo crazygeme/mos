@@ -804,13 +804,11 @@ void mm_destroy_user_map(vaddr_t page_dir)
 			page_index = PHY_TO_PAGE_IDX(phy_addr);
 			if ((phy_addr >= dynamic_begin &&
 			     phy_addr < dynamic_end) ||
-			    (phy_addr >= vdso_begin &&
-			     phy_addr < vdso_end)) {
+			    (phy_addr >= vdso_begin && phy_addr < vdso_end)) {
 				/* Every page installed through mm_map_page carries a reference;
 			 * decrement once directly instead of doing a separate atomic
 			 * read via phymm_is_used(). */
-				if (phymm_dereference_page(
-					    page_index) == 0)
+				if (phymm_dereference_page(page_index) == 0)
 					phymm_free_user(page_index);
 			}
 		}

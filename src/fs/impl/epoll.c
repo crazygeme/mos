@@ -620,7 +620,8 @@ int sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
 			deadline = 0x7fffffffffffffffULL;
 		else
 			deadline = time_deadline_ms(
-				(unsigned long long)timeout->tv_sec * 1000 + ms);
+				(unsigned long long)timeout->tv_sec * 1000 +
+				ms);
 	}
 	return epoll_wait_common(epfd, events, maxevents, just_test, !timeout,
 				 deadline, mask, masksize);

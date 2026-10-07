@@ -1,8 +1,134 @@
 # Bug Fix Journal
 
 Implementation records are ordered by date, with the newest entries first.
+Each entry describes its dated revision; validation limits and implementation
+details in older entries may be superseded by later fixes.
 
 ---
+
+## 2026-10-08 - CPU usage accounting and atomic operation widths
+
+CPU usage is sampled at `HZ=100`. IRQ0 supplies the bootstrap CPU sample, and
+`SMP_TICK_VECTOR` supplies a sample on each additional online CPU. Accounting
+runs before timer callbacks and scheduling. The saved interrupt frame selects
+user or system time according to the interrupted privilege level. A kernel
+idle task contributes to the receiving CPU's idle counter.
+
+Each sample increments three native-width counters (`unsigned long`): the
+executing task, its thread group, and its CPU. i386 uses 32-bit counters and
+AMD64 uses 64-bit counters. Only thread-group increments require locked atomic
+adds because threads may execute simultaneously on different CPUs. Task and
+per-CPU counters have one timer writer and use relaxed atomic loads/stores;
+task migration is serialized by the scheduler. Child-total writers are
+serialized by the scheduler lock. Snapshots use untorn native-width loads,
+then widen to 64 bits for aggregation and time conversion. Per-CPU storage
+occupies separate cache lines. The heap returns eight-byte-aligned payloads.
+Accounting takes no clock
+lock and reads no hardware clock. Syscall entry, syscall return, and context
+switches perform no CPU-time timestamp measurements.
+
+### Ownership and Lifetime
+
+`task_stats_t` holds per-thread user and system ticks and the process start
+stamp. `task_usage_t` holds thread-group user and system totals, waited-for
+child totals, and an ownership reference count. Process creation and fork
+allocate zeroed group totals. `CLONE_THREAD` retains the existing group totals;
+sharing an address space without `CLONE_THREAD` does not share CPU totals.
+Exec preserves CPU usage.
+
+Thread exit releases a group reference without adding usage to child totals.
+The group's cumulative counters retain the contribution of exited threads.
+Reaping a child process transfers its group CPU usage and waited-for descendant
+usage into the parent's group child counters. Parent lookup and transfer occur
+under the scheduler lock, preserving the parent accounting object's lifetime.
+Sleeping tasks and zombies accrue no time while off CPU.
+
+Per-CPU counters persist independently of task lifetime. Kernel task execution
+contributes system time. CPU totals remain present after task removal and
+reaping. CPU counters begin when scheduling is enabled.
+
+### Reporting Interfaces
+
+| Interface | CPU-time fields |
+| --- | --- |
+| `times()` | Calling group's user/system ticks and waited-for child ticks |
+| `getrusage(RUSAGE_SELF)` | Calling group's user/system timevals |
+| `getrusage(RUSAGE_CHILDREN)` | Waited-for child and descendant CPU timevals |
+| `wait4()` | Reaped group's CPU usage and waited-for descendant CPU usage |
+| `CLOCK_PROCESS_CPUTIME_ID` | Calling group's user plus system time |
+| `CLOCK_THREAD_CPUTIME_ID` | Calling thread's user plus system time |
+| `/proc/<tgid>/stat` | Thread-group CPU ticks |
+| `/proc/<tgid>/task/<tid>/stat` | Individual thread CPU ticks |
+| `/proc/stat` | Cumulative samples for each CPU and their aggregate |
+| `/proc/uptime` | Monotonic uptime and cumulative CPU idle samples |
+
+The i386 `times()` wire fields retain 32-bit clock values; native AMD64 fields
+retain 64-bit values. Timeval and timespec conversions use 64-bit arithmetic.
+Invalid resource-usage selectors return `EINVAL`. CPU clock resolution queries
+return 10,000,000 nanoseconds. Other resource-usage fields retain their
+independent accounting paths.
+
+### Sampling Constraints
+
+A sample represents one 10 ms interval. Execution shorter than an interval may
+receive no sample, and repeated workloads can alias with the periodic timer.
+CPU clocks measure sampled execution rather than exact sub-tick duration.
+Delayed or coalesced timer interrupts can reduce the number of samples; uptime
+continues to follow the monotonic clock. IRQ and deferred interrupt work are not
+reported as separate CPU categories. Nice, iowait, and steal fields remain zero.
+
+Counters wrap modulo their native width. At 100 Hz an i386 counter wraps after
+approximately 497 accumulated CPU-days; thread-group and child totals can
+reach that limit sooner in wall time through parallel execution. This is an
+explicit performance tradeoff: i386 accounting uses no 64-bit locked operations.
+64-bit reporting and time conversion do not extend the underlying counter range.
+
+### Atomic Operation Widths
+
+The shared kernel and both architecture backends use these widths:
+
+| State | i386 | AMD64 | Operation |
+| --- | --- | --- | --- |
+| Sampled task/group/CPU/child ticks | 32 bits | 64 bits | Relaxed native-width loads; locked adds only for shared group ticks |
+| Reference counts, lock words, semaphore counts | 32 bits | 32 bits | Locked updates retain synchronization and lifetime ordering |
+| SMP online counts, TLB generations/acknowledgments | 32 bits | 32 bits | Acquire/release publication and native-width updates |
+| Physical-page dirty flags | 8 bits | 8 bits | Locked bit operations on byte flags |
+| Socket shutdown flags and umask | 32 bits | 32 bits | Native-width locked bit updates/exchange |
+| Scheduler call count | 32 bits | 32 bits | Relaxed locked increment |
+
+Reference counts and lock words do not benefit from being widened to 64 bits
+on AMD64. Read-only physical-page reference and pipe endpoint count queries
+use acquire loads instead of locked adds of zero. Spinlock release uses a
+32-bit release store; saving the caller's interrupt level uses a plain local
+store. Contended spinlocks poll with relaxed loads before retrying the acquire
+exchange. Other reference updates and synchronization barriers retain their
+existing ordering requirements.
+
+### Validation
+
+`CPUAccounting` covers mode attribution, idle accounting, stable off-CPU totals,
+native-width rollover, widened time conversion, thread-group reference lifetime,
+fork reset, syscall reporting,
+CPU clock IDs, native AMD64 clock field width, and simultaneous updates on two
+CPUs. `Timekeeping` covers clock domains, wall-clock changes, delayed interrupts,
+and concurrent clocks and timers.
+
+`tools/user/cpu_accounting_probe.c` validates userspace accounting, sleeping,
+thread exit, delayed child reaping, descendant usage, CPU clock resolution,
+invalid selectors, and agreement between reporting interfaces. Source staging
+before guest launch uses:
+
+```sh
+cp tools/user/cpu_accounting_probe.c tools/guest/root/
+```
+
+Guest compilation
+and execution use:
+
+```sh
+gcc -O2 -std=gnu99 -pthread -o /tmp/cpu_probe cpu_accounting_probe.c
+/tmp/cpu_probe
+```
 
 ## 2026-10-07 - Directory-only open enforcement
 
@@ -16,7 +142,7 @@ establish which change exposed the copy path.
 
 The open path through `sys_openat`, `fs_open`, and `ext4_path_open` does not
 enforce `O_DIRECTORY`. An SSH session on the x64 guest reproduced the failure
-with GNU coreutils 9.7 and temporary source and destination files. The trace
+with GNU coreutils 9.7 and regular source and destination files. The trace
 shows `openat(AT_FDCWD, destination, O_RDONLY | O_PATH | O_DIRECTORY)` returning
 descriptor 3 for a regular file. The subsequent `newfstatat(3, "source", ..., 0)`
 fails with `ENOTDIR`, and the copy diagnostic names `destination/source`.
@@ -32,8 +158,7 @@ files, file symlinks, and FIFOs; successful directory and directory-symlink
 opens; file replacement by `cp`; and copying into a directory. It passes on
 the host. Compiler syntax checks pass for x86 and x64, and patch whitespace
 checks pass. The guest reproduction failed as expected before the correction.
-The guest shut down before further probes; corrected kernel build and guest
-runtime validation remain pending. The boot kernel was not overwritten.
+Corrected kernel build and guest runtime validation remain pending.
 
 ## 2026-10-07 - FIFO ownership and getcwd syscall return value
 
@@ -74,6 +199,578 @@ References: GNU Make 4.4.1 `src/posixos.c`, `jobserver_setup()`;
 glibc 2.37 `sysdeps/unix/sysv/linux/getcwd.c`, `__getcwd()`.
 Source archives: [GNU Make 4.4.1](https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz),
 [glibc 2.37](https://ftp.gnu.org/gnu/glibc/glibc-2.37.tar.xz).
+
+## 2026-10-07 - Descriptor callback lifetimes and concurrent mapping transactions
+
+The descriptor-table mutex protects descriptor lookup, installation, removal,
+and close-on-exec flags. Socket descriptor installation acquires this mutex
+while the task owns the network-core mutex. File readiness and ioctl callbacks
+therefore execute without ownership of the descriptor-table mutex.
+
+`fs_fd_poll` and `fs_ioctl` obtain a referenced file description through
+`fs_io_begin`, release the descriptor-table mutex, and invoke the backend
+callback. `fs_io_end` releases the reference after the callback. The active
+scope is linked to the task's I/O scopes so process termination releases the
+reference through `fs_cancel_io`.
+
+A readiness callback may register multiple subscriptions in a poll table.
+`fs_fd_poll` retains one additional file reference on the first subscription
+registered by that callback. `poll_table_cleanup` removes subscriptions in
+reverse registration order and releases this reference after all subscriptions
+from that callback have been removed. Concurrent descriptor closure cannot
+release the backing file or readiness queues while those subscriptions remain
+registered. Each reused poll entry initializes its retained reference to null.
+
+The same reference and subscription cleanup applies to normal completion,
+timeouts, interrupted waits, and process termination. The implementation is
+shared by the x86 and x64 syscall backends.
+
+### Address-space mapping transactions
+
+Each address space contains a recursive mapping mutex. Anonymous mapping
+allocation holds this mutex from address selection through region insertion.
+Region replacement, splitting, removal, protection changes, heap adjustment,
+and mapping relocation use the same mutex. Enumeration retains ownership while
+callbacks inspect or duplicate regions. The VMA spinlock protects individual
+tree accesses; the mapping mutex protects operations that span multiple tree
+accesses. Recursion permits mapping helpers to participate in an enclosing
+transaction without releasing ownership between steps.
+
+VM mapping and fault-lock ownership is counted per task. Forced thread-group
+termination permits lock owners to continue scheduling until they release their
+VM locks. Reaping waits for both active CPU execution and VM-lock ownership to
+end, preventing an abandoned lock from blocking address-space cleanup.
+
+### Validation
+
+`test/fd_callback_lifetime_host.py` executes the production descriptor and
+poll-table functions with AddressSanitizer and UndefinedBehaviorSanitizer.
+The checks cover callback lock ownership, descriptor installation from a
+callback, descriptor closure during an ioctl, multiple readiness subscriptions,
+poll-table reuse, subscription cancellation, and task I/O cancellation.
+
+`test/fd_callback_threads.py` executes inside the guest. It transfers 5,000
+file descriptors with `SCM_RIGHTS` while another thread polls the socket and
+executes `FIONREAD`. It also exercises 64 descriptor-closure races with active
+readiness subscriptions. Each transfer receives an acknowledgement before the
+next ancillary message is sent.
+
+`test/mmap_threads.c` allocates mappings concurrently in eight threads across
+512 rounds. The checks require disjoint returned ranges, independent stored
+values, successful protection changes, and successful unmapping.
+
+`test/mmap_exit_threads.c` executes 32 child-process runs with eight mapping
+threads per child. Each child exits while its threads allocate, protect, and
+release mappings. Completion requires successful child reaping in every run.
+
+## 2026-10-07 - Process ABI, fault delivery, and page-cache lifetime corrections
+
+The x86 backend accepts ELF32 images with machine type `EM_386`. The x64
+backend accepts ELF32/i386 and ELF64/AMD64 images. The executable and its
+interpreter must select the same format.
+
+### Executable pathname interfaces
+
+`/proc/self/exe` and `/proc/<pid>/exe` are symbolic links to the resolved
+pathname stored on the process's main executable file. The link identifies
+the main ELF image, independently of `argv[0]`, the working directory, and
+the `PT_INTERP` dynamic linker. Script execution identifies the shebang
+interpreter. Fork, vfork, and clone retain a reference to the executable;
+successful execution replaces the reference, rejected execution preserves
+it, and process cleanup releases it.
+
+Both i386 and AMD64 syscall namespaces provide `readlink` and `readlinkat`.
+`readlinkat` resolves relative paths against a directory descriptor or
+`AT_FDCWD`; absolute paths ignore the descriptor. Returned pathname bytes
+are truncated to the buffer size and do not include a terminating NUL.
+The glibc dynamic linker uses `readlinkat` on `/proc/self/exe` to resolve
+`$ORIGIN` in an executable's `DT_RPATH` or `DT_RUNPATH`.
+
+The stored executable pathname is not reconstructed after renaming or
+unlinking the executable and is not rebased for a chroot caller. Empty-path
+`readlinkat` operations are not supported and return `ENOENT`.
+
+### Image and namespace layouts
+
+ELF preparation selects a format descriptor from the architecture's supported
+format table. The descriptor provides typed header and program-header readers,
+an initial-stack builder, user register initialization, and VM limits. Stack
+construction uses a fixed word type for each format. The VM retains its task
+size, mmap base, and brk limit. Fork and clone copy these limits and the saved
+user register context.
+
+The i386 and AMD64 syscall namespaces select their wire adapters directly.
+Shared-memory control returns an internal status record. Its adapters serialize
+56-byte i386 and 112-byte AMD64 records. Socket timestamp retrieval returns an
+internal timeval, which the AMD64 ioctl adapter converts to two signed 64-bit
+fields. Ptrace adapters use fixed-width memory words and register layouts for
+the caller's namespace, independently of the traced task's execution mode.
+The architecture backend captures the stopped CPU register context.
+
+Robust-list registration records the head address, head size, and typed reader
+on the thread. Exit cleanup traverses the list with that reader. The getter
+serializes the registered address and size using its syscall namespace.
+Executable initialization supplies a 12-byte i386 or 24-byte AMD64 default
+head size. Fork and clone clear the registered head and reader.
+
+Signal frame construction resides in the interface implementations. The
+architecture selects delivery from the saved user code selector and interprets
+clone TLS at the register-context boundary. Shared signal disposition logic
+does not select an executable format.
+
+Synchronous page faults deliver `SIGSEGV` directly from the faulting register
+context. Caught faults return through the installed handler; ignored or blocked
+fault signals use the default fatal disposition. `SA_SIGINFO` frames contain
+the exact fault address, `SEGV_MAPERR` or `SEGV_ACCERR`, the page-fault trap
+number, and the processor error code. Fault reports include the exact address
+and instruction pointer.
+
+Default fatal signals and `exit_group` terminate all members of the thread
+group, including its leader when initiated by a worker. The leader retains the
+encoded signal or exit status for the parent's wait operation. Ordinary thread
+exit preserves the remaining group. Signal zero with `tkill` checks the target
+and sender credentials without queuing a signal.
+
+`PTRACE_DETACH` requires a stopped tracee, clears its tracing state, and resumes
+execution with an optional signal. Detaching a running tracee returns `ESRCH`.
+A signal queued during a stopped task's resumption is processed before returning
+to userspace.
+
+Both syscall namespaces provide `clock_getres`; i386 additionally provides the
+64-bit time variant. Realtime, monotonic, raw monotonic, boottime, and coarse
+aliases report the microsecond time core's 1000-nanosecond resolution. A null
+output pointer validates the clock ID without writing a result. Unsupported
+clock IDs return `EINVAL`.
+
+Memory services validate reserved ranges through the architecture backend.
+Physical allocation limits, DMA limits, allocation preferences, and block-cache
+limits are architecture configuration values. NX enforcement follows the paging
+hardware and applies to both i386 and AMD64 processes on x64. Non-PAE x86 page
+tables do not provide NX support.
+
+File-page cache lookup returns a retained physical page. Mapping installation
+and buffered reads release that reference only after acquiring the mapping
+reference or completing the copy. Cache invalidation and eviction release the
+cache's reference independently of active readers. Concurrent cache misses
+retain the selected existing page before releasing the cache lock.
+
+Ext4 page reads and writeback use operation-local handles with independent file
+positions. Page faults do not seek or restore the shared descriptor's ext4
+cursor, including while filesystem I/O waits for a mount lock.
+
+### Procfs thread groups
+
+`/proc/self` selects the calling task's thread-group ID. Root process
+enumeration includes thread-group leaders; threads remain accessible by their
+numeric IDs. `/proc/<pid>/task` lists live member thread IDs. The directory's
+`st_nlink` is two plus the live member count, and metadata queries on an open
+directory descriptor recompute that count. Directory entries use `DT_DIR`.
+`/proc/<pid>/task/<tid>` exposes per-thread files and symbolic links only when
+the thread belongs to the selected group. Exited threads disappear from the
+task directory. Status records report the thread ID as `Pid`, group ID as
+`Tgid`, and live member count as `Threads`. Stat records report the same live
+count in `num_threads`. Chromium's thread helper uses directory-relative stat
+and this link count to determine whether a process has one thread.
+
+### Unix IPC and descriptor directories
+
+Unix `SOCK_SEQPACKET` sockets provide ordered records for socket pairs and
+named connections. Each endpoint has a 256 KiB receive ring. A send commits
+the complete payload, sender credentials, and associated descriptor references
+under the receive lock. The maximum payload is 262127 bytes. Full queues
+block until room is available or return `EAGAIN` for nonblocking operations;
+oversized records return `EMSGSIZE` without queuing a partial record.
+
+Receives consume one record, discard any truncated tail, and set `MSG_TRUNC`
+when the payload exceeds the supplied buffers. `MSG_TRUNC` input requests
+the full record length as the return value. `MSG_PEEK` preserves the queued
+record and duplicates any returned descriptor references. Descriptor passing
+supports 16 descriptors per message. `SO_PASSCRED` is supported on Unix
+sequenced-packet sockets and enables `SCM_CREDENTIALS` records containing
+the sending process ID, user ID, and group ID captured at send time.
+`FIONREAD` reports the sum of queued payload lengths. Peer closure and
+write shutdown make EOF readable after buffered records are consumed.
+
+`/dev/fd` is a descriptor directory for the calling process. Procfs descriptor
+links retain their target while the link handle exists. Following a link
+reopens an anonymous pipe through its backend with independent file status
+flags and reader/writer counts. Named targets are reopened by pathname;
+unlinked targets without an anonymous-object reopen operation cannot be
+reopened. These operations support Bash process-substitution pipes.
+
+### Filesystem notifications
+
+The i386 and AMD64 syscall namespaces provide `inotify_init`, `inotify_init1`,
+`inotify_add_watch`, and `inotify_rm_watch`. Inotify descriptors provide
+filesystem event queues, blocking and nonblocking reads, close-on-exec flags,
+`FIONREAD`, asynchronous `SIGIO`, and poll/select/epoll subscriptions. Events
+contain the Linux 16-byte header and a NUL-terminated name padded to a multiple
+of 16 bytes. Each read consumes complete records; an undersized first buffer
+returns `EINVAL` without consuming the record. Consecutive identical unread
+events are coalesced. Queue overflow produces `IN_Q_OVERFLOW` with descriptor
+`-1`, and watch removal produces `IN_IGNORED`.
+
+Watch identity uses the backend recorded by the opened file and its inode
+number. Hard links and virtual-entry aliases share a watch descriptor within
+an instance. Sysfs mount views retain the same canonical entry identity.
+Virtual entries supply their parent identity and child name directly.
+Renames retain inode watches and
+produce paired `IN_MOVED_FROM` and `IN_MOVED_TO` records with a nonzero matching
+cookie, together with `IN_MOVE_SELF` on the moved inode. Removing the last
+link produces `IN_DELETE_SELF` and removes the watch when the last tracked
+open reference closes. Open references include `O_PATH` descriptors and
+references retained by executable images and memory mappings. `O_PATH`
+operations do not produce open, access, or close events. Unmount produces
+`IN_UNMOUNT` followed by `IN_IGNORED` for watches within the removed filesystem.
+
+Successful filesystem operations produce access, modification, attribute,
+open, close, creation, deletion, link, and rename notifications. Directory
+watches include the immediate child name and `IN_ISDIR` for directory events;
+self-deletion and self-movement events do not include `IN_ISDIR`. Watch masks
+support replacement, `IN_MASK_ADD`, `IN_MASK_CREATE`, `IN_ONESHOT`,
+`IN_ONLYDIR`, `IN_DONT_FOLLOW`, and `IN_EXCL_UNLINK`. Duplicate descriptors and
+forked processes share one watch set and queue. Instance closure releases all
+remaining watches and quota charges. Wait cancellation removes subscriptions
+and releases borrowed file references.
+
+Open files retain registration state independently of installed watches.
+Without active watches, open registration performs no notification metadata
+lookup or allocation, and access and modification hooks return without taking
+the notification lock. Metadata capture occurs when a watch is installed or
+before a namespace mutation. Files opened before watch installation therefore
+participate in subsequent notifications, including after rename or unlink.
+Notification capture failures do not invalidate a successful filesystem open.
+
+The `/proc/sys/fs/inotify` directory exposes three root-owned controls with
+mode `0644`: `max_user_watches` defaults to 8192, `max_user_instances` defaults
+to 128, and `max_queued_events` defaults to 16384. Values accept decimal
+integers from zero through `INT_MAX`. Watch and instance limits apply across
+all instances charged to the creating real UID. New watches exceeding the
+watch limit return `ENOSPC`; new instances exceeding the instance limit return
+`EMFILE`. Changing either limit preserves existing resources. Queue capacity
+is captured when an instance is created. `/proc/sys/kernel/osrelease` reports
+the configured kernel release through the same directory hierarchy.
+
+Directory watches do not recurse; recursive clients register individual
+directories. Memory-mapped access and modification do not generate inotify
+events. Notification operations depend on the filesystem's supported
+operations: tmpfs does not provide hard-link or rename operations. Filesystems
+without numeric inode identity use filesystem-relative pathname identity.
+Allocation failures during notification capture or queuing produce queue
+overflow notifications.
+
+Mount-root callbacks accept only the exact mount root, with an optional
+trailing slash. Descendant lookup requires a path-aware operation; unmatched
+descendants of device nodes and static proc entries cannot open the root node.
+
+### Event counters and namespace probes
+
+The i386 and AMD64 namespaces provide `eventfd` and `eventfd2`. Counter
+descriptors are shared by duplicate descriptors and forked processes. The
+counter's maximum value is `UINT64_MAX - 1`; writing `UINT64_MAX` returns
+`EINVAL`. Reads require at least eight bytes and return eight bytes. Writes
+require exactly eight bytes. Empty reads and overflow writes block, or return
+`EAGAIN` with `EFD_NONBLOCK`. `EFD_SEMAPHORE` reads consume one counter unit;
+ordinary reads drain the counter. `EFD_CLOEXEC` controls descriptor inheritance
+across execution. Readiness subscriptions support poll, select, and epoll.
+
+Clone namespace flags are recognized but unsupported and return `EINVAL`.
+No user, PID, mount, network, IPC, UTS, or cgroup namespace isolation is
+created. Chromium's user-namespace probe interprets this result as unavailable
+support. Namespace sandbox operation requires kernel interfaces beyond the
+configured MOS implementation.
+
+### Validation
+
+`python3 test/page_cache_reads.py --directory PATH` validates concurrent
+file-backed faults against distinct deterministic page contents. Eight workers
+read disjoint shuffled pages through one private mapping. The probe also checks
+that page reads preserve the descriptor offset; the selected directory must
+support regular files and mappings.
+
+`python3 test/thread_faults.py` compiles and runs a probe in the target system.
+It validates recovery from synchronous faults on ordinary and alternate stacks,
+fault metadata, default and blocked or ignored fatal faults in worker threads,
+group exit from a worker, signal-zero probing, clock resolution, and trace
+detachment with signal injection. Parent waits are bounded to detect retained
+threads and unavailable exit status.
+
+`python3 test/proc_exe.py` validates executable links in the running system:
+symbolic-link metadata, target identity, buffer truncation, `readlinkat`
+directory resolution, fork inheritance, rejected execution, and execution
+through a relative symlink with an independent argument-zero string.
+`python3 test/proc_tasks.py` validates live thread enumeration, thread-group
+membership, status identities, directory-relative metadata, link counts on
+open directory descriptors, and thread creation and termination.
+
+`python3 test/unix_seqpacket.py` validates record boundaries, truncation,
+peeking, empty records, large records, descriptor and credential delivery,
+nonblocking queue exhaustion, shutdown, named connections, and socket flags.
+`python3 test/dev_fd.py` validates pipe reopening and endpoint lifetime,
+regular-file positions, and Bash process substitution in the running system.
+`python3 test/inotify.py` validates event records, masks, rename cookies,
+hard-link identity, unlinked inode lifetime, watch installation after open and
+namespace changes, `O_PATH` references, vectored
+reads, queue byte counts, asynchronous signals, poll/epoll subscriptions,
+descriptor sharing, and blocking reads. Its working directory must support
+hard links and renames; `--directory PATH` selects that directory. The
+root-only guest command `python3 test/inotify.py --guest --limits --mounts`
+also validates quota controls, queue overflow, capacity capture, and unmount
+notifications. These options temporarily modify and restore inotify controls
+and create and remove a tmpfs mount.
+
+`python3 test/filesystem_notifications_host.py` compiles the production VFS,
+virtual-entry, and notification code against isolated host services. Address
+and undefined-behavior checks cover unmatched descendant lookup, canonical
+alias identity, parent events, mount-view lifetime, late watch installation,
+and allocation-free notification registration with no active watches.
+
+`python3 test/eventfd.py` validates counters, descriptor flags, semaphore mode,
+epoll notifications, and blocking operations across fork. The MOS-only
+`python3 test/clone_namespaces.py` validates `EINVAL` for namespace flags.
+
+`python3 test/abi_adapters.py` compiles production adapters against isolated
+host-side kernel services and runs them with undefined-behavior checks. It
+validates robust readers and cross-layout getters, ptrace word and register
+serialization, shared-memory records, ELF header conversion, initial stacks,
+and executable register initialization. These checks do not exercise kernel
+scheduling or privilege transitions.
+
+`python3 test/syscall_tables.py` validates syscall numbers and service coverage
+for both namespaces. The embedded kernel tests validate ELF image acceptance
+and page execute permissions. Guest validation uses `./run.sh kvm test` from
+the MOS source directory with the configured RH9 image. Native AMD64 guest
+interfaces require an AMD64 userspace image.
+
+## 2026-10-07 - Concurrent timekeeping and timer synchronization
+
+The timing subsystem separates elapsed time from calendar time. Network,
+scheduler and relative timer deadlines use monotonic time, so changes to the
+wall clock cannot prolong or prematurely expire a wait. Filesystem timestamps
+and absolute `CLOCK_REALTIME` timers use calendar time.
+
+### Clock Sources and Domains
+
+`src/device/time.c` owns the clock origin, monotonic clamp, IRQ sample and wall
+offset. PIT supplies the boot clock and remains the interrupt source. KVM
+pvclock is selected after CPU setup enables SSE2; each additional CPU registers
+its own clock slot before becoming online. Systems without that facility keep
+the PIT fallback. Switching sources preserves elapsed boot time.
+
+| Interface | Domain and purpose |
+| --- | --- |
+| `time_now_us()`, `time_now_ms()` | Precise monotonic elapsed time |
+| `time_coarse_ms()` | Last monotonic IRQ sample for deadline expiration |
+| `time_deadline_ms()` | Rounded, saturating monotonic millisecond deadline |
+| `time_now_tickets()` | 64-bit serviced PIT ticks for boot stamps and diagnostics |
+| `time_wall_us()`, `time_wall_sec()` | Calendar time for syscalls and metadata |
+
+RTC snapshots support binary and BCD encodings, 12-hour and 24-hour formats,
+and Gregorian leap years. The same conversion serves initialization and
+`/dev/rtc`. Relative POSIX timers remain monotonic even when created with
+`CLOCK_REALTIME`; absolute realtime timers follow wall-clock adjustments.
+
+### Concurrent Clock Synchronization
+
+The timing change originally relied on serialized kernel entry. Removing that
+serialization permits simultaneous reads and updates on different CPUs. Local
+interrupt masking alone cannot protect shared state: i386 can tear 64-bit
+values, concurrent monotonic updates can regress the published sample, and
+interleaved PIT or CMOS port transactions can return incorrect hardware data.
+
+An IRQ-masked `time_lock` protects the shared clock state, PIT tick
+increment, pending-wrap tracking and PIT latch transaction. The IRQ path
+publishes the coarse sample and releases this lock before broadcasting ticks,
+processing alarms or queuing network work. Clock operations never acquire
+the scheduler or network locks. Scheduler and network callers may acquire
+`time_lock` while holding their own locks, without a reverse acquisition path.
+Spinlock contention continues to poll pending TLB shootdowns through the common
+locking implementation.
+
+A separate `rtc_lock` serializes CMOS index/data transactions. RTC
+resynchronization reads the calendar before acquiring `time_lock`. A task-owned
+`timer_lock` serializes POSIX timer allocation, lookup, rearming, deletion,
+process-exit cleanup and service-task polling. Its scope cleanup releases the
+mutex on every ordinary return, including syscall errors.
+
+Network core ownership, deferred-service locking, concurrent scheduler
+handoff and address-space shootdown coordination coordinate simultaneous execution. Network service
+deadlines and IRQ comparisons both use monotonic milliseconds; converting one
+side to raw ticks would prevent timely lwIP timeout processing.
+
+### Validation
+
+`Timekeeping` covers calendar conversion, clock domains, wall-clock changes,
+repeated reads, delayed IRQ handling and parallel clock/RTC readers. The parallel
+test rendezvous requires simultaneous kernel execution on two CPUs and checks
+monotonic samples, coherent tick counts, valid calendar fields and concurrent
+POSIX timer creation, rearming, lookup and deletion. The `smp` suite covers parallel execution and TLB shootdowns.
+
+`tools/user/timing_probe.c` retains wall-clock jump, sleep, polling, socket
+timeout, interval timer, POSIX timer and ping regression coverage.
+
+The x86 and AMD64 release kernels and targeted test kernels build successfully.
+The `CPUAccounting` and `Timekeeping` suites pass in two-CPU KVM guests for both
+architectures. The RH9 CPU accounting probe passes on both kernels.
+
+Build both test kernels:
+
+```sh
+make ARCH=x86 BUILD=release all test
+make ARCH=x64 BUILD=release all test
+```
+
+Run the following in each booted test kernel with at least two CPUs:
+
+```sh
+echo Timekeeping > /proc/tests/.runner
+echo smp > /proc/tests/.runner
+```
+
+Run the timing probe and existing epoll regressions separately to verify
+userspace waits and networking.
+
+### CPU Usage
+
+[CPU usage accounting](bugfix_journal.md#2026-10-08---cpu-usage-accounting-and-atomic-operation-widths) uses per-CPU timer samples and
+separate task and thread-group totals. Elapsed and wall-clock reads do not
+provide CPU usage measurements. CPU clocks advertise a 10 ms resolution.
+
+## 2026-10-06 - x86 process-launch performance validation
+
+Date: 2026-10-06. Revision: `2e6426d` (`refine multi-arch codes`).
+
+The release x86 kernel completed the 1,000-process benchmark in a median of
+0.13 seconds with one virtual CPU and 0.12 seconds with two. PIT clock access
+accounted for approximately 10% of active samples in both configurations.
+Explicit TLB-flush routines were rarely sampled. These measurements identify
+clock access as an optimization candidate; they do not establish the benefit
+of PCID on x64.
+
+### Configuration and workload
+
+The kernel was built with `make -j8 ARCH=x86 BUILD=release`. The host processor
+was an AMD Ryzen 9 7950X. QEMU used KVM, the `coreduo` CPU model, 4 GiB RAM,
+VMware VGA, and one or two virtual CPUs. The RH9 disk was opened with
+`snapshot=on`; temporary disk changes were discarded when each VM exited.
+
+The guest reported Bash 2.05b.0, GNU coreutils 4.5.3, and glibc 2.3.2. The benchmark scripts were:
+
+```sh
+# test.sh
+for i in $(seq 1000); do /bin/true; done
+
+# full.sh
+for i in $(seq 10); do echo $i; time -p ./test.sh; done
+```
+
+Each timed run included the shell executing `test.sh`, its `seq` invocation,
+and 1,000 executions of `/bin/true`. Timings were captured from an ordinary
+`full.sh` execution without monitor sampling. Output was redirected in the
+guest and read after all ten runs completed.
+
+The kernel was booted directly using `-kernel out/x86/release/kernel -append
+'bash verbose=0'`. This starts the benchmark without the complete RH9 init
+and desktop workload used by the GRUB boot path. Networking used QEMU user
+networking. Consequently, these results are not a controlled reproduction of
+the earlier Linux comparison. No fresh Linux measurement or pre-optimization
+MOS comparison was performed.
+
+### Elapsed times
+
+| Virtual CPUs | Ten reported real times, seconds | Median | Mean | Range |
+| --- | --- | --- | --- | --- |
+| 1 | .14, .14, .14, .14, .13, .12, .12, .12, .12, .13 | .130 | .130 | .12–.14 |
+| 2 | .14, .14, .14, .13, .12, .12, .12, .12, .12, .12 | .120 | .127 | .12–.14 |
+
+Both sequences show a warm-up trend. The 0.01-second reporting precision and
+overlapping ranges prevent attributing a small difference to CPU count.
+The reported user and system times were not used to estimate kernel costs.
+
+### Sampling results
+
+Separate profiling runs repeatedly executed `test.sh`. A QMP monitor driver
+paused the VM, read each CPU's registers using an explicit `cpu-index`, and
+resumed execution after each sample. The running interval was randomized
+between 1 and 5 milliseconds. Symbols came from the matching release
+`kernel.dbg`, including assembly symbols without size metadata.
+
+Each main capture lasted 40 seconds of host wall time, including monitor
+overhead. The one-CPU capture contained 4,429 active samples. The two-CPU
+capture contained 5,812 samples, of which 2,906 were in `smp_idle`. The table
+excludes idle samples; userspace remains part of the denominator.
+
+| Sample location | One CPU, % active | Two CPUs, % active |
+| --- | ---: | ---: |
+| Userspace | 16.26 | 17.00 |
+| Page-fault entry (`intr0e_stub`) | 9.19 | 8.12 |
+| Port reads and writes from `time_now_us` | 9.80 | 10.50 |
+| `_spinlock_lock.part.0` | 5.80 | 6.13 |
+| `load_ldt` | 3.61 | 3.58 |
+| `mm_destroy_user_map` | 3.25 | 3.65 |
+| `mm_copy_phys_page` | 2.48 | 2.34 |
+| `tlb_flush` | 0 samples | 0.07 |
+
+These are sampled instruction locations, not hardware cycle measurements.
+Privileged instructions and emulated device access may stop at recognizable
+instruction boundaries. The sampling pauses also perturb execution. The
+figures therefore provide prioritization evidence rather than exact savings
+predictions or a complete attribution of KVM host work.
+
+### Clock callers and other costs
+
+All port samples in the main captures returned into `time_now_us`. The ports
+were PIT data at `0x40` and the latch command at `0x43`.
+[The PIT clock implementation](../src/driver/impl/timer/pit.c) latches and reads
+the hardware counter on each clock query.
+
+A supplementary 20-second two-CPU capture collected 1,394 active samples,
+including 165 PIT port samples. Caller addresses were read using stack offsets
+verified against the exact release disassembly, rather than a general frame
+pointer walk. Clock origins accounted for those 165 samples as follows:
+
+| Origin | PIT samples |
+| --- | ---: |
+| `ps_fire_timers_unsafe` | 68 |
+| `ext4_touch_file` | 63 |
+| `setup_stack` | 29 |
+| `timer_arm_unsafe` | 3 |
+| Network service update | 1 |
+| System service task | 1 |
+
+[Scheduler timer checking](../src/ps/impl/alg/ps_alg_rr.c) reads the clock before
+examining timer deadlines. [Filesystem timestamp updates](../src/fs/impl/root.c)
+read the clock before updating inode timestamps. [ELF stack setup](../arch/abi/elf_stack.h)
+reads the clock to seed the random generator. Reducing PIT queries in these
+paths, or supplying a faster clock source, is a concrete next investigation.
+Timer accuracy and filesystem timestamp semantics must remain correct.
+
+[LDT loading](../arch/x86/ps/impl/task.c) performs `LLDT 0` even when a task has
+no LDT. Nearly every `load_ldt` sample was at the return immediately after that
+instruction. Tracking the loaded LDT per CPU is another candidate, subject to
+correct task and descriptor lifecycle handling.
+
+The sampled [spinlock acquisition](../src/lib/impl/lock.c) costs appear on one
+CPU as well as two. Samples concentrated around atomic exchanges, including
+the exchange used to save interrupt state; none appeared in the retry loop.
+This evidence indicates acquisition overhead rather than measured contention.
+Page-fault entry and memory copying also warrant investigation. A page fault
+is not an ordinary TLB miss.
+
+
+### Implications for PCID
+
+PCID is not available in this 32-bit execution mode. A low sample count inside
+`tlb_flush` does not measure translation refill costs after CR3 changes;
+those costs occur at subsequent memory accesses. Hardware TLB-miss counters were not collected.
+
+An x64 comparison with PCID enabled and disabled, together with translation
+miss counters, is needed to quantify its benefit. This x86 profile supports
+investigating PIT clock queries first, without ruling out a PCID improvement.
+
+The measurement driver used build-specific memory addresses, structure offsets,
+and caller stack offsets. Reproducing these measurements on another revision
+requires recalculating those offsets.
 
 ## 2026-10-05 - Address space TLB shootdowns
 
@@ -148,7 +845,6 @@ socket waits, including TCP timer creation and DHCP setup. The periodic process 
 polling and graphics refresh pacing.
 
 Reference: [lwIP timeout interface](https://www.nongnu.org/lwip/2_1_x/timeouts_8h.html).
-
 
 ---
 
@@ -1063,7 +1759,6 @@ and mode information, output buffer bounds, returned register state, and
 save-state size queries. Guest execution and X startup verification remain
 pending.
 
-
 ## 2026-10-04 - AMD64 desktop framebuffer faults and large-memory support
 
 ### Failure and diagnosis
@@ -1153,7 +1848,6 @@ compatibility checks also pass. The raw RAM alias test confirms allocation
 and translation above 4 GiB. Full physical capacity beyond 8 GiB has not
 been tested in a guest.
 
-
 ### Authenticated desktop startup and invalid disk blocks
 
 The initial 8 GiB check established arrival at the graphical login screen,
@@ -1205,7 +1899,6 @@ The native AMD64 ABI probe also passed from the graphical terminal, including
 its file I/O, mappings above 4 GiB, and signal checks. The screenshot is
 [8 GiB desktop](screenshot/x64_8g_desktop.png).
 
-
 ## 2026-10-04 - Adaptive filesystem and block cache budgets
 
 ### Policy and implementation
@@ -1255,6 +1948,7 @@ A 512 MiB i386 guest also passes all 16 physical allocator tests and 23 mmap
 tests, including cache retention and inode invalidation. The final AMD64
 release kernel reaches the complete GNOME desktop after root login with
 8 GiB and two CPUs. Validation guests use temporary disk snapshots.
+
 ## 2026-09-29 — Socket waits during GNOME login
 
 - The login trace showed Metacity abandoning its ICE connection after a read
@@ -1270,10 +1964,8 @@ release kernel reaches the complete GNOME desktop after root login with
   the syscall flags, including the file's `O_NONBLOCK`, rather than msg_flags.
 - Added `posix_socket_wait.sh` for ioctl toggling through dup, nonblocking reads,
   explicit receive/send/accept timeouts, signals, and successful receipt after
-  a 32-second delay. Runtime validation was stopped at the user's request:
-  QEMU could not acquire the image lock and the host attempt could not bind a
-  socket. No GNOME before/after timing result is claimed.
-
+  a 32-second delay. Runtime validation was blocked by a disk-image lock and a host socket
+  bind failure. No GNOME before/after timing result is claimed.
 
 ### Follow-up: TCP data lost before userspace accept
 
@@ -1296,7 +1988,7 @@ Balance lwIP delayed-backlog accounting on the child PCB, and detach callbacks
 before freeing queued sockets on listener close or fd-allocation failure.
 Listener cleanup uses listener callbacks rather than stream-only PCB fields.
 Release compilation and whitespace review completed; no runtime tests were run
-for this follow-up, per the user's instruction. Login improvement remains to be
+for this follow-up. Login improvement remains to be
 verified with the rebuilt kernel.
 
 ## 2026-09-29 - TCP listener exposed as a connected socket (`fam` crash)
@@ -1351,14 +2043,13 @@ pending during poll and being delivered after unmasking.
 Restore the alarm check from before ee20379: an unarmed task returns without
 reading the clock or locking, and an armed task checks expiration on return to
 userspace. Remove the periodic alarm poll. Withdraw the subsequent active-alarm
-queue, IRQ0 wakeup/scheduling changes, and all clock-function changes after the
-user reported that ping stopped working. No new clock API remains.
+queue, IRQ0 wakeup/scheduling changes, and clock-function changes following
+a ping regression.
 
 This intentionally restores the known limitation that an indefinitely blocked
 read cannot discover its own alarm expiration. A replacement asynchronous
 wakeup design is not included. The cause of the reported ping regression has
-not been established by runtime diagnosis. No tests or benchmarks were run,
-as requested; ping recovery remains unverified.
+not been established by runtime diagnosis. Ping recovery was not validated by runtime tests or benchmarks.
 
 ## 2026-09-29 - Bound socket waits by the current task's alarm
 
@@ -1377,8 +2068,8 @@ retain the original rearming behavior.
 This change is limited to socket waits. It does not add asynchronous alarm
 handling to other indefinite waits, nor change clock functions, IRQ handlers,
 the scheduler, or the periodic service. Wakeup latency remains subject to the
-existing timed-wait scheduler. Runtime tests and benchmarks were not run at
-the user's request; the socket suite and ping have not been verified here.
+existing timed-wait scheduler. Runtime tests and benchmarks were not run; socket behavior and ping
+remain unverified for this revision.
 
 ## 2026-09-29 - Separate alarm expiration from interruptible I/O waits
 
@@ -1423,8 +2114,8 @@ recvmmsg's timeout argument and asynchronous nonblocking audio are outside
 this change.
 
 Validation: release kernel and test-kernel compilation plus static review.
-No tests, QEMU sessions, ping checks or performance benchmarks were run, per
-the user's instruction. Runtime correctness and throughput remain unverified.
+Runtime correctness, ping behavior, and throughput remain unverified
+for this revision.
 
 ## 2026-04-30 - Consolehelper-launched GUI tools failed through broken shebang argv
 
@@ -2004,7 +2695,6 @@ faithful consequence of MOS occasionally dropping the `0xe0` extended-key
 prefix, and the `Ctrl-C` delay was a separate `-EINTR` wakeup bug in raw tty
 reads.
 
-
 ## 2026-04-26 - `strace ps aux` over SSH could #GP on `intr_exit: pop %gs`
 
 Initial triage suggested a ptrace or TLS setup bug because the visible crash
@@ -2043,7 +2733,6 @@ state and the live hardware GDT entries at fault time.
     and `ps_tls.c` so new threads inherit only the active
     TLS state and plain `set_thread_area()` does not silently rewrite the
     saved user `%gs`
-
 
 ## 2026-04-26 - GUI Emacs mapped a frame but stalled before usable content
 
@@ -2120,7 +2809,6 @@ big crash. Emacs needed:
 Once all three matched old Linux expectations closely enough, GUI Emacs worked
 normally instead of stopping at a blank or half-alive frame.
 
-
 ## 2026-04-26 - Nautilus text preview crashed after `exit_group()` left sibling threads alive
 
 Initial triage suggested a stack-limit or signal-trampoline bug because the
@@ -2183,7 +2871,6 @@ crash, a VDSO fault, or even a scheduler hang. When the log shows a helper
 thread surviving past `exit_group(0)`, debug thread-group teardown first.
 
 ---
-
 
 ## 2026-04-19 - Nautilus hung in `nautilus_self_check_directory()` and later crashed in GLib allocation
 
@@ -2252,7 +2939,6 @@ the active TLS selector and the current program break. If those metadata stay
 per-task while mappings are shared, old NPTL and GLib code will fail in ways
 that look like random userspace hangs or allocation bugs.
 
-
 ## 2026-04-17 - SSH large output stalls until keypress (`tcp_on_sent` missing)
 
 **Symptom**: Running `ls -alh /usr/lib` over SSH would stall partway through
@@ -2279,7 +2965,6 @@ there is no TCP socket at all.
 
 ---
 
-
 ## 2026-04-17 - `gnome-terminal` PTY poll wakeups could go stale
 
 **Symptom**: Large output such as `ls -alh /usr/lib` could stall in
@@ -2305,7 +2990,6 @@ that verbose kernel logging could mask.
   stop perturbing runnable tasks
 
 ---
-
 
 ## 2026-04-14 - PTY controlling `/dev/tty` lookup broke `man`, and `strncpy()` still overflowed
 
@@ -2357,7 +3041,6 @@ was a stale libc helper overflow that could scribble on adjacent state.
   real contract: copy at most `len` bytes, pad with NULs only inside that
   range, and never append a byte past the caller-provided buffer.
 
-
 ## 2026-04-14 - AF_UNIX stream `SCM_RIGHTS` coalescing stalled `gnome-terminal` for 30 seconds
 
 This issue first looked like a slow GNOME Terminal startup problem in
@@ -2392,7 +3075,6 @@ merged two adjacent fd-passing records into one stream receive.
     sends two consecutive `SCM_RIGHTS` messages over a Unix stream socket and
     verifies they are received one-at-a-time
 
-
 ## 2026-04-11 - TCP receive callback dropped tail bytes, corrupting SSH streams
 
 This issue appeared as an intermittent OpenSSH client failure rather than a
@@ -2419,7 +3101,6 @@ itself was corrupted.
   pbuf unconsumed so lwIP can retry later. Only copy, acknowledge, and free the
   pbuf once the whole segment fits.
 
-
 ## 2026-04-11 - fs page-cache refill allocated before evicting, breaking `gcc` under tighter cache pressure
 
 Initial triage suggested an `execve()` or early-userspace startup problem
@@ -2444,7 +3125,6 @@ The real trigger was the filesystem page-cache replacement order.
 - **Fix:** in [cache.c](../src/fs/impl/cache.c), evict one LRU fs page-cache entry
   before calling `fs_page_cache_load()` on a miss when the cache size has already
   reached `PAGE_CACHE_SIZE`.
-
 
 ## 2026-04-11 — PTY writes silently truncated output beyond one buffer page
 
@@ -2483,7 +3163,6 @@ PTY layer was dropping data once the stream grew past the 4 KiB cyclic buffer.
 - **Fix:** update [posix_nonblock_ipc.sh](../test/posix_nonblock_ipc.sh) to
   fork a child writer while the parent drains the PTY master, and add
   `<sys/wait.h>` for the child exit check.
-
 
 ## 2026-04-11 — PTY master spurious HUP breaks `screen`; `ssh` client can't exit
 
@@ -2538,7 +3217,6 @@ forever after the remote session closed.
   not masked in select.c.
 
 ---
-
 
 ## 2026-04-10 — Pipe and PTY EOF readiness split for `select()` vs `poll()`
 
@@ -2610,7 +3288,6 @@ EOF through `poll()` versus `select()` on byte-stream IPC objects.
 - Regression verification:
   - `./run.sh kvm test logtofile`
   - result: `rc=0`
-
 
 ## 2026-04-10 — SSH `vim` burst, SSH `exit` hang, and nonblocking IPC semantics
 
@@ -2703,7 +3380,6 @@ unrelated, but both surfaced through OpenSSH.
   - result: `rc=0`
 
 ---
-
 
 ## 2026-04-10 — POSIX script-suite fixes from the long `./run.sh test` loop
 
@@ -2811,7 +3487,6 @@ filesystem and inode identity.
 
 ---
 
-
 ## 2026-04-07 — Page-fault VMA lookup now uses a Linux-style `mmap_cache`
 
 ### Symptom
@@ -2861,7 +3536,6 @@ filesystem and inode identity.
 
 ---
 
-
 ## 2026-04-07 — Shared-mapping cleanup after the boot/MM fixes
 
 ### Symptom
@@ -2899,7 +3573,6 @@ filesystem and inode identity.
 
 ---
 
-
 ## 2026-04-07 — Generic block-device lookup for ext mounts
 
 ### Symptom
@@ -2934,7 +3607,6 @@ filesystem and inode identity.
   editing ext4 mount code again.
 
 ---
-
 
 ## 2026-04-07 — Bugs flushed out by the new `/proc/tests` script suite
 
@@ -3057,8 +3729,6 @@ features already work.
 
 ---
 
-
-
 ## 2026-04-06 — OpenSSH 3.5p1 `sshd` crash / privilege-separation bring-up
 
 ### Symptoms
@@ -3164,9 +3834,7 @@ that assumed every userspace `fd_set` was a full `FD_SETSIZE` object.  Once the
 memory corruption was gone, the next blockers were ordinary ABI completeness
 items (`chroot`, path-root semantics, legacy `rt_sigaction` layout).
 
-
 ---
-
 
 ## 2026-04-06 — GNU `screen` failed with `"No more PTYs"` and later hung blank
 
@@ -3341,9 +4009,7 @@ must have explicit ownership. If buffer lifetime is inferred indirectly from
 `master_open` / `slave_count`, it is very easy to free the transport while a
 poll or read path still holds the raw pointer.
 
-
 ---
-
 
 ## 2026-04-05 — `man` doesn't work (stderr opened O_WRONLY)
 
@@ -3392,7 +4058,6 @@ fd must allow reads because pagers and interactive programs re-use fd 2 as
 their terminal input channel when stdin is a pipe.
 
 ---
-
 
 ## 2026-04-05 — xinetd crash + "not enough memory" (ugetrlimit / setrlimit / fs_close)
 

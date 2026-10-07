@@ -1,15 +1,24 @@
 # MOS Kernel
 
-> An x86 and AMD64 educational OS kernel with Linux 2.4.20-8 (Red Hat 9) userspace binary compatibility, running in QEMU via GRUB/Multiboot.
+MOS is an educational monolithic kernel for 32-bit x86 (i686) and 64-bit
+x86 (AMD64), with Linux syscall and ELF binary compatibility. It boots through
+GRUB/Multiboot and runs in QEMU, with SMP and optional KVM acceleration.
 
-MOS now reaches a visible Red Hat 9 graphical desktop.
+MOS runs modern GNU userspace through [GNU/MOS](https://github.com/crazygeme/gnu-mos),
+which builds x86 and x64 systems with glibc 2.42, GNU utilities, SysV init, and
+an Xfce desktop. The x64 kernel also runs i386 binaries in compatibility mode.
+Linux compatibility is incomplete; application support depends on the kernel
+interfaces each program requires.
+
+The bundled `run.sh` workflow boots the Red Hat 9 image, including its GNOME
+desktop. The screenshots below show that environment.
 
 ![MOS GUI desktop](doc/screenshot/gui1.png)
 ![MOS GUI desktop](doc/screenshot/gui2.png)
 
 > [!NOTE]
-> The GUI stack still has a number of known issues and is not a current focus of development.
-> SMP support would be a valuable addition, but it is not a near-term priority.
+> Desktop applications can still encounter compatibility issues. See the
+> [Bug Fix Journal](doc/bugfix_journal.md) for fixes and validation limits.
 
 | Boot                             | Login Prompt                              |
 | -------------------------------- | ----------------------------------------- |
@@ -23,35 +32,38 @@ MOS now reaches a visible Red Hat 9 graphical desktop.
 
 **Ubuntu / Debian**
 ```sh
-sudo apt install build-essential gcc-multilib qemu-system-x86 python3
+sudo apt install build-essential gcc-multilib qemu-system-x86 qemu-utils python3 dnsmasq unzip iproute2 iptables
 ```
 
 **macOS**
 ```sh
 brew install qemu python
-brew tap nativeos/i386-elf-toolchain && brew install i386-elf-gcc i386-elf-binutils
+# Install i686-elf-* for x86 or x86_64-elf-* for x64, including GCC and binutils.
 ```
 
 ### Build & Run
 
 ```sh
-make -j$(nproc)                 # x86 release -> out/x86/release/
-make ARCH=x86 BUILD=debug       # x86 debug   -> out/x86/debug/
-make ARCH=x64                   # AMD64 release -> out/x64/release/
-./run.sh          # boot AMD64 release build into Red Hat 9
-./run.sh bash     # boot release build directly into bash
-./run.sh debug    # build and boot the debug kernel from out/x86/debug/
+make ARCH=x86                 # x86 release -> out/x86/release/
+make ARCH=x64                 # AMD64 release -> out/x64/release/
+make ARCH=x64 BUILD=debug      # AMD64 debug -> out/x64/debug/
+./run.sh                      # build and boot AMD64 release with Red Hat 9
+./run.sh arch=x86              # build and boot x86 release with Red Hat 9
+./run.sh bash                  # boot directly into bash
+./run.sh debug                 # boot AMD64 debug, paused for GDB on port 8888
+./run.sh test kvm              # build and boot AMD64 tests with KVM
 ```
 
-> [!NOTE]
-> The `root` user has a password 123456.
+`make` defaults to x86; `run.sh` defaults to x64, two CPUs, and 8192 MiB RAM.
+Select a launch configuration with `arch=x86|x64`, `smp=N`, and `ram=N`.
+The script uses `rh9.qcow2`, extracts `redhat9.img.zip` if needed, and stages
+files from `tools/guest/` before booting. Linux launches require `sudo` for
+disk setup and, outside test mode, TAP networking. The RH9 root password is
+`123456`. On Linux hosts with KVM support, add `kvm` for hardware acceleration.
 
-> [!TIP]
-> On Linux with KVM support, add `kvm` for **10×** faster emulation:
-> ```sh
-> ./run.sh kvm
-> ./run.sh bash kvm
-> ```
+For a modern GNU system, use the build and image instructions in
+[GNU/MOS](https://github.com/crazygeme/gnu-mos). Its launcher manages separate
+x86 and x64 userspace images.
 
 See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and disk image management.
 
@@ -63,7 +75,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 
 | Document                                    | Summary                                                                                                          |
 | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| [Architecture Overview](doc/overall.md)     | Memory layout, boot sequence, all subsystems, key constants                                                      |
+| [Architecture Overview](doc/overall.md)     | x86 and AMD64 backends, memory layout, boot sequence, subsystems, key constants                                                      |
 | [Boot Stage 1](doc/boot_stage1.md)          | GDT/IDT setup, PIC init, initial page tables, paging enable, EIP/ESP transition, physical memory allocator  |
 | [Boot Stage 2](doc/boot_stage2.md)          | Subsystem init order, `KERNEL_INIT` table, SMP startup, first userspace process                                  |
 | [Interrupt Handling](doc/interrupts.md)     | IDT setup, entry stubs, stack layout, dispatcher, syscall/page-fault/IRQ/IPI paths, IF timeline                  |
@@ -90,11 +102,11 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | ---------------------------------------- | -------------------------------------------------------------------------------------------- |
 | [Testing](doc/testing.md)                | Kernel-mode KTEST framework, shell script tests, /proc/tests/ interface                      |
 | [Build Guide](doc/build.md)              | Build dependencies, compiler setup, run modes, debugging, profiling, disk image              |
-| [Profiling](doc/profiling.md)            | Flat EIP histogram and flamegraph profiler, reading flamegraphs, example analysis            |
+| [Profiling](doc/profiling.md)            | Sampling profilers, flamegraphs, and process-launch measurements            |
 | [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch                 |
 | [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                                       |
 | [NPTL Journal](doc/nptl_journal.md)      | `clone()`/NPTL debugging notes, `CLONE_CHILD_SETTID` fixes, and `posix_signal` race analysis |
-| [Bug Fix Journal](doc/bugfix_journal.md) | Running log of non-obvious bugs: root causes, investigation steps, and fixes                 |
+| [Bug Fix Journal](doc/bugfix_journal.md) | Dated fixes, ABI and concurrency records, root causes, and validation                 |
 | [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status           |
 | [Screenshots](doc/screenshots.md)        | Screenshots of MOS running, including the GUI desktop                                        |
 | [Todo](doc/todo.md)                      | Feature checklist                                                                            |

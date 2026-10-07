@@ -2,13 +2,31 @@
 
 ## 1. Overview
 
-MOS is a 32-bit x86 (i686) monolithic kernel targeting Linux 2.4.20-8 (Red Hat 9)
-userspace binary compatibility. It runs in QEMU and boots via GRUB/Multiboot.
+MOS is a monolithic kernel with x86 (i686) and x64 (AMD64) backends. Both
+support SMP and Linux userspace interfaces. The x86 kernel loads ELF32/i386;
+the x64 kernel loads both ELF64/AMD64 and ELF32/i386 compatibility images.
+GRUB/Multiboot supplies boot information, and QEMU provides the development
+platform.
 
-- **Architecture:** i686, 32-bit protected mode, single address space
-- **Compatibility target:** Linux 2.4.20-8 (RH9), ELF32 dynamic binaries
-- **Build:** `make` / `make rebuild` / `make run`
-- **Compiler:** gcc -m32 -march=i686
+[GNU/MOS](https://github.com/crazygeme/gnu-mos) provides modern GNU userspace
+and desktop images for both architectures. The bundled `run.sh` launches the
+older Red Hat 9 environment for compatibility testing.
+
+Each backend owns its compiler flags, linker script, headers, and sources
+under `arch/<arch>/`. Shared kernel code lives under `src/`, and the shared
+i386 syscall namespace lives under `arch/abi/i386`. Public headers sit at
+module roots; private implementations live under `impl/`. The build places
+the selected architecture's headers before common headers on the include path.
+
+- **Build:** `make ARCH=x86|x64 BUILD=release|debug`; output in `out/<arch>/<build>/`.
+- **Launch:** `./run.sh arch=x86|x64`; default x64, two CPUs, 8 GiB RAM.
+- **x86 flags:** `-march=i686 -m32`.
+- **x64 flags:** `-march=x86-64 -m64 -mno-red-zone -mcmodel=kernel`.
+- **x64 boot artifact:** flat `kernel.boot`; ELF64 symbols remain in `kernel.dbg`.
+
+The layouts and register diagrams below describe x86 unless explicitly marked.
+See the [AMD64 architecture record](bugfix_journal.md#2026-10-05---amd64-kernel-and-process-abi)
+for long-mode layouts and the validation status at that date.
 
 ---
 
@@ -285,16 +303,19 @@ transfers control to the entry point.
 
 ---
 
-## 12. SMP (infrastructure present, single-CPU in practice)
+## 12. SMP
 
-AP startup code lives in `src/boot/ap_trampoline.S`. The BSP:
+AP startup and per-CPU scheduling live in `arch/x86/ps/impl/smp.c` and
+`arch/x64/ps/impl/smp.c`. The BSP:
 1. Parses ACPI MADT to find CPUs and IOAPIC address.
 2. Initialises BSP LAPIC, IOAPIC (masked), and per-CPU TSS.
 3. Sends INIT/SIPI IPIs to each AP; APs start at physical 0x8000, receive
    parameters from the page at 0x9000, then jump to the high-address kernel.
 
-The design uses virtual-wire mode: the 8259A PIC remains active for external
-IRQs; the IOAPIC is used only for IPI delivery.
+The design uses virtual-wire mode: the 8259A PIC handles external IRQs, and
+the local APIC delivers IPIs and secondary-CPU ticks. CPUs execute kernel and
+userspace work concurrently. Shared locks and address-space TLB shootdowns
+coordinate cross-CPU access. `run.sh smp=N` selects one to 32 virtual CPUs.
 
 ---
 

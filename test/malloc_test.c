@@ -71,6 +71,37 @@ KTEST(malloc, multiple)
 #undef N
 }
 
+/* Exercise splits, reuse/coalescing, and fresh chunks with odd sizes too.
+ * Heap-backed 64-bit atomics require this even on the 32-bit kernel.
+ */
+KTEST(malloc, alignment)
+{
+	void *ptrs[64];
+	unsigned before = heap_quota;
+	for (unsigned round = 0; round < 3; round++) {
+		for (unsigned i = 0; i < 64; i++) {
+			unsigned size = i == 63 ? 4096 : i + 1;
+			ptrs[i] = malloc(size);
+			ASSERT_NONNULL(ptrs[i]);
+			EXPECT_EQ((uintptr_t)ptrs[i] & 7u, 0u);
+			memset(ptrs[i], (char)i, size);
+		}
+		for (unsigned i = 0; i < 64; i++) {
+			unsigned size = i == 63 ? 4096 : i + 1;
+			unsigned char *p = ptrs[i];
+			for (unsigned j = 0; j < size; j++)
+				EXPECT_EQ(p[j], (unsigned char)i);
+		}
+		/* Leave holes, then free right-to-left to exercise coalescing. */
+		for (unsigned i = 0; i < 64; i += 2)
+			free(ptrs[i]);
+		for (int i = 63; i >= 1; i -= 2)
+			free(ptrs[i]);
+		EXPECT_EQ(heap_quota, before);
+	}
+	return 0;
+}
+
 /* free(NULL) must be a silent no-op */
 KTEST(malloc, free_null)
 {

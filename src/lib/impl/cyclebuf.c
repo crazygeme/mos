@@ -193,7 +193,7 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 		spinlock_lock(&b->lock, &irq);
 		if (b->length > 0)
 			break;
-		if (__sync_add_and_fetch(&b->writer_count, 0) == 0) {
+		if (__atomic_load_n(&b->writer_count, __ATOMIC_ACQUIRE) == 0) {
 			spinlock_unlock(&b->lock, irq);
 			return 0;
 		}
@@ -208,7 +208,7 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 			 * just before writer_count is decremented to 0).
 			 * If so, loop back so the EOF check at the top fires
 			 * cleanly instead of returning -EINTR. */
-			if (__sync_add_and_fetch(&b->writer_count, 0) == 0)
+			if (__atomic_load_n(&b->writer_count, __ATOMIC_ACQUIRE) == 0)
 				continue;
 			return -1; /* genuine EINTR */
 		}
@@ -261,12 +261,12 @@ int cyb_get_buf_len(cy_buf *b)
 
 int cyb_writer_count(cy_buf *b)
 {
-	return __sync_add_and_fetch(&b->writer_count, 0);
+	return __atomic_load_n(&b->writer_count, __ATOMIC_ACQUIRE);
 }
 
 int cyb_reader_count(cy_buf *b)
 {
-	return __sync_add_and_fetch(&b->reader_count, 0);
+	return __atomic_load_n(&b->reader_count, __ATOMIC_ACQUIRE);
 }
 
 void cyb_flush(cy_buf *b)

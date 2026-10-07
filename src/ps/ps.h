@@ -35,13 +35,15 @@ struct _mm_struct;
 typedef struct _mm_struct mm_struct;
 typedef mm_struct *vm_struct_t;
 
+/* Native-width sampled ticks: modulo 2^32 on i386, 2^64 on AMD64. */
+typedef unsigned long ps_tick_t;
+
 typedef struct _task_stats {
 	unsigned niv_switches; /* involuntary context switches */
 	unsigned total_switches; /* total context switches       */
 	unsigned long long start_tickets; /* start time (jiffies)        */
-	unsigned long long user_tickets
-		__attribute__((aligned(8))); /* sampled user CPU ticks */
-	unsigned long long kernel_tickets; /* sampled system CPU ticks */
+	ps_tick_t user_tickets; /* sampled user CPU ticks */
+	ps_tick_t kernel_tickets; /* sampled system CPU ticks */
 	unsigned pf_major; /* major page faults            */
 	unsigned pf_minor; /* minor page faults            */
 } task_stats_t;
@@ -133,9 +135,9 @@ typedef struct {
 
 typedef struct _task_usage {
 	unsigned refs;
-	unsigned long long user_tickets __attribute__((aligned(8)));
-	unsigned long long kernel_tickets;
-	unsigned long long child_utime, child_stime;
+	ps_tick_t user_tickets;
+	ps_tick_t kernel_tickets;
+	ps_tick_t child_utime, child_stime;
 } task_usage_t;
 
 typedef struct _task_struct task_struct;
@@ -231,7 +233,7 @@ typedef struct _rusage {
 /* Sampled CPU time does not advance while a task is off CPU. */
 static inline unsigned long long task_utime(task_struct *task)
 {
-	return __sync_fetch_and_add(&task->stats->user_tickets, 0);
+	return __atomic_load_n(&task->stats->user_tickets, __ATOMIC_RELAXED);
 }
 
 task_struct *__attribute__((noinline)) CURRENT_TASK(void);

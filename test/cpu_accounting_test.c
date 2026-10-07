@@ -12,7 +12,7 @@ KTEST(CPUAccounting, UserSystemAndIdle)
 	task_struct task = { .stats = &stats,
 			     .usage = &group,
 			     .type = ps_user };
-	cpu_usage_t cpu = { 0 };
+	cpu_ticks_t cpu = { 0 };
 	ps_usage_charge(&task, &cpu, 1);
 	ps_usage_charge(&task, &cpu, 0);
 	EXPECT_EQ(task_utime(&task), 1ULL);
@@ -43,9 +43,42 @@ KTEST(CPUAccounting, SleepingAndZombieCounters)
 	task_usage_t group = { 0 };
 	task.usage = &group;
 	task.type = ps_user;
-	cpu_usage_t cpu = { 0 };
+	cpu_ticks_t cpu = { 0 };
 	ps_usage_charge(&task, &cpu, 1);
-	EXPECT_EQ(task_utime(&task), 0x100000000ULL);
+	EXPECT_EQ(task_utime(&task),
+		  sizeof(ps_tick_t) == 4 ? 0ULL : 0x100000000ULL);
+	return 0;
+}
+
+KTEST(CPUAccounting, NativeWidthRollover)
+{
+	EXPECT_EQ(sizeof(ps_tick_t), sizeof(uintptr_t));
+	ps_tick_t max = (ps_tick_t)-1;
+	task_stats_t stats = { .user_tickets = max,
+			       .kernel_tickets = max };
+	task_usage_t group = { .user_tickets = max,
+			       .kernel_tickets = max,
+			       .child_utime = max };
+	task_struct task = { .stats = &stats, .usage = &group, .type = ps_user };
+	cpu_ticks_t cpu = { .user = max, .system = max, .idle = max };
+	ps_usage_charge(&task, &cpu, 1);
+	ps_usage_charge(&task, &cpu, 0);
+	EXPECT_EQ(task_utime(&task), 0ULL);
+	EXPECT_EQ(ps_usage_read(&stats.kernel_tickets), 0ULL);
+	EXPECT_EQ(ps_usage_read(&group.user_tickets), 0ULL);
+	EXPECT_EQ(ps_usage_read(&group.kernel_tickets), 0ULL);
+	EXPECT_EQ(cpu.user, 0UL);
+	EXPECT_EQ(cpu.system, 0UL);
+	task.type = ps_kernel;
+	task.priority = ps_idle;
+	ps_usage_charge(&task, &cpu, 0);
+	EXPECT_EQ(cpu.idle, 0UL);
+	ps_usage_add_local(&group.child_utime, 2);
+	EXPECT_EQ(ps_usage_read(&group.child_utime), 1ULL);
+	/* Snapshots widen before conversions, even on i386. */
+	group.child_stime = 0xffffffffUL;
+	EXPECT_EQ(ps_usage_read(&group.child_stime) * (1000000ULL / HZ),
+		  42949672950000ULL);
 	return 0;
 }
 
@@ -124,7 +157,7 @@ static void charge_parallel(void *opaque)
 	task_struct task = { .stats = &stats,
 			     .usage = &state->group,
 			     .type = ps_user };
-	cpu_usage_t cpu = { 0 };
+	cpu_ticks_t cpu = { 0 };
 	current->ppid = state->parent;
 	current->exit_signal = 0;
 	sched_disable();
@@ -145,12 +178,16 @@ KTEST(CPUAccounting, ConcurrentThreadGroupCounters)
 {
 	if (smp_cpu_count() < 2)
 		return 0;
-	struct concurrent_usage state = { .parent = current->psid };
+	/* Cross the native counter boundary while both CPUs update the group. */
+	struct concurrent_usage state = {
+		.group = { .user_tickets = (ps_tick_t)-25000 },
+		.parent = current->psid
+	};
 	ps_create(charge_parallel, &state, ps_normal, ps_kernel);
 	ps_create(charge_parallel, &state, ps_normal, ps_kernel);
 	while (__sync_fetch_and_add(&state.completed, 0) != 2)
 		time_wait(10);
-	EXPECT_EQ(ps_usage_read(&state.group.user_tickets), 50000ULL);
+	EXPECT_EQ(ps_usage_read(&state.group.user_tickets), 25000ULL);
 	EXPECT_EQ(ps_usage_read(&state.group.kernel_tickets), 0ULL);
 	EXPECT_NE(state.cpus & (state.cpus - 1), 0U);
 	return 0;

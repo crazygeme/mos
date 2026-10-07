@@ -3,7 +3,10 @@
 #include <int/interrupt.h>
 #include <lib/klib.h>
 
-static cpu_usage_t cpu_usage[SMP_MAX_CPUS];
+/* Keep independently written CPU counters on separate cache lines. */
+static struct {
+	cpu_ticks_t ticks;
+} __attribute__((aligned(64))) cpu_usage[SMP_MAX_CPUS];
 
 void ps_usage_init(task_struct *task, task_struct *parent, int share)
 {
@@ -23,35 +26,41 @@ void ps_usage_put(task_struct *task)
 	task->usage = NULL;
 }
 
-/* A timer sample charges only the task executing on its receiving CPU. */
-void ps_usage_charge(task_struct *task, cpu_usage_t *cpu, int user)
+/* A timer sample charges only the task executing on its receiving CPU.
+ * The timer runs with local interrupts disabled; scheduler ownership prevents
+ * another CPU from charging this task until it migrates. Callers supplying
+ * synthetic tasks/counters must likewise keep their local counters private.
+ */
+void ps_usage_charge(task_struct *task, cpu_ticks_t *cpu, int user)
 {
 	if (!task->stats ||
 	    (task->type == ps_kernel && task->priority == ps_idle)) {
-		__sync_fetch_and_add(&cpu->idle, 1);
+		ps_usage_add_local(&cpu->idle, 1);
 		return;
 	}
 	if (user) {
-		__sync_fetch_and_add(&task->stats->user_tickets, 1);
-		__sync_fetch_and_add(&task->usage->user_tickets, 1);
-		__sync_fetch_and_add(&cpu->user, 1);
+		ps_usage_add_local(&task->stats->user_tickets, 1);
+		__atomic_fetch_add(&task->usage->user_tickets, 1,
+				   __ATOMIC_RELAXED);
+		ps_usage_add_local(&cpu->user, 1);
 	} else {
-		__sync_fetch_and_add(&task->stats->kernel_tickets, 1);
-		__sync_fetch_and_add(&task->usage->kernel_tickets, 1);
-		__sync_fetch_and_add(&cpu->system, 1);
+		ps_usage_add_local(&task->stats->kernel_tickets, 1);
+		__atomic_fetch_add(&task->usage->kernel_tickets, 1,
+				   __ATOMIC_RELAXED);
+		ps_usage_add_local(&cpu->system, 1);
 	}
 }
 
 void ps_account_tick(intr_frame *frame)
 {
 	if (ps_enabled())
-		ps_usage_charge(current, &cpu_usage[smp_cpu_id()],
+		ps_usage_charge(current, &cpu_usage[smp_cpu_id()].ticks,
 				arch_interrupt_frame_is_user(frame));
 }
 
 void ps_cpu_usage(unsigned cpu, cpu_usage_t *usage)
 {
-	usage->user = ps_usage_read(&cpu_usage[cpu].user);
-	usage->system = ps_usage_read(&cpu_usage[cpu].system);
-	usage->idle = ps_usage_read(&cpu_usage[cpu].idle);
+	usage->user = ps_usage_read(&cpu_usage[cpu].ticks.user);
+	usage->system = ps_usage_read(&cpu_usage[cpu].ticks.system);
+	usage->idle = ps_usage_read(&cpu_usage[cpu].ticks.idle);
 }

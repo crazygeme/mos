@@ -6,10 +6,16 @@ runs before timer callbacks and scheduling. The saved interrupt frame selects
 user or system time according to the interrupted privilege level. A kernel
 idle task contributes to the receiving CPU's idle counter.
 
-Each sample increments three cumulative 64-bit counters: the executing task,
-its thread group, and its CPU. Atomic operations serialize concurrent thread
-group updates and provide untorn snapshots on i386. Counter storage is aligned to eight bytes
-to prevent split locked accesses. Accounting takes no clock
+Each sample increments three native-width counters (`unsigned long`): the
+executing task, its thread group, and its CPU. i386 uses 32-bit counters and
+AMD64 uses 64-bit counters. Only thread-group increments require locked atomic
+adds because threads may execute simultaneously on different CPUs. Task and
+per-CPU counters have one timer writer and use relaxed atomic loads/stores;
+task migration is serialized by the scheduler. Child-total writers are
+serialized by the scheduler lock. Snapshots use untorn native-width loads,
+then widen to 64 bits for aggregation and time conversion. Per-CPU storage
+occupies separate cache lines. The heap returns eight-byte-aligned payloads.
+Accounting takes no clock
 lock and reads no hardware clock. Syscall entry, syscall return, and context
 switches perform no CPU-time timestamp measurements.
 
@@ -63,10 +69,38 @@ Delayed or coalesced timer interrupts can reduce the number of samples; uptime
 continues to follow the monotonic clock. IRQ and deferred interrupt work are not
 reported as separate CPU categories. Nice, iowait, and steal fields remain zero.
 
+Counters wrap modulo their native width. At 100 Hz an i386 counter wraps after
+approximately 497 accumulated CPU-days; thread-group and child totals can
+reach that limit sooner in wall time through parallel execution. This is an
+explicit performance tradeoff: i386 accounting uses no 64-bit locked operations.
+64-bit reporting and time conversion do not extend the underlying counter range.
+
+## Atomic Operation Widths
+
+The shared kernel and both architecture backends use these widths:
+
+| State | i386 | AMD64 | Operation |
+| --- | --- | --- | --- |
+| Sampled task/group/CPU/child ticks | 32 bits | 64 bits | Relaxed native-width loads; locked adds only for shared group ticks |
+| Reference counts, lock words, semaphore counts | 32 bits | 32 bits | Locked updates retain synchronization and lifetime ordering |
+| SMP online counts, TLB generations/acknowledgments | 32 bits | 32 bits | Acquire/release publication and native-width updates |
+| Physical-page dirty flags | 8 bits | 8 bits | Locked bit operations on byte flags |
+| Socket shutdown flags and umask | 32 bits | 32 bits | Native-width locked bit updates/exchange |
+| Scheduler call count | 32 bits | 32 bits | Relaxed locked increment |
+
+Reference counts and lock words do not benefit from being widened to 64 bits
+on AMD64. Read-only physical-page reference and pipe endpoint count queries
+use acquire loads instead of locked adds of zero. Spinlock release uses a
+32-bit release store; saving the caller's interrupt level uses a plain local
+store. Contended spinlocks poll with relaxed loads before retrying the acquire
+exchange. Other reference updates and synchronization barriers retain their
+existing ordering requirements.
+
 ## Validation
 
 `CPUAccounting` covers mode attribution, idle accounting, stable off-CPU totals,
-64-bit rollover, thread-group reference lifetime, fork reset, syscall reporting,
+native-width rollover, widened time conversion, thread-group reference lifetime,
+fork reset, syscall reporting,
 CPU clock IDs, native AMD64 clock field width, and simultaneous updates on two
 CPUs. `Timekeeping` covers clock domains, wall-clock changes, delayed interrupts,
 and concurrent clocks and timers.

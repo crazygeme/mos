@@ -179,7 +179,7 @@ if (major == 4) {
 }
 ```
 
-**Part B — full 1-based overhaul** (this session):
+**Part B — full 1-based overhaul**:
 
 | Location | Before | After |
 |---|---|---|

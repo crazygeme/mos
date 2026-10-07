@@ -359,4 +359,4 @@ signal delivery (on return to user mode)
 ```
 
 CPU usage and reporting interfaces are defined in
-[CPU usage accounting](cpu-accounting.md).
+[CPU usage accounting](bugfix_journal.md#2026-10-08---cpu-usage-accounting-and-atomic-operation-widths).

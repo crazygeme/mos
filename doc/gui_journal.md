@@ -2,17 +2,17 @@
 
 ## 2026-04-26
 
-Status at stop:
+Observed status:
 - GUI `emacs` now works.
 - The original "no Emacs window" failure is gone.
 - The intermediate "window frame appears but content never becomes usable"
   phase is also gone.
-- `xclock` was already rendering correctly during this round, which helped
+- `xclock` was already rendering correctly in this configuration, which helped
   separate generic X rendering from Emacs-specific compatibility issues.
 - `xterm` was still slower than ideal during investigation, but Emacs itself
   is no longer blocked.
 
-Fixes completed in this round:
+Fixes:
 - Fixed PIT-based wall-clock sampling so `gettimeofday()` no longer jumps
   backward when the timer IRQ pending check races with the latched counter:
   - added previous-sample tracking in [time.c](../src/driver/impl/timer/pit.c)
@@ -20,18 +20,18 @@ Fixes completed in this round:
     the same `tickets` epoch
 - Adjusted `ITIMER_REAL` semantics to better match RH9/Linux 2.4 behavior:
   - rounded nonzero timer values and intervals up to the next jiffy in
-    [syscall_proc.c](../src/syscall/syscall_proc.c)
+    [syscall_proc.c](../src/syscall/impl/syscall_proc.c)
   - this matches the coarser `HZ=100` behavior old Emacs expects for its
     `SIGALRM` retry path
 - Added async `SIGIO` delivery for sockets:
   - stored the owning open file on each socket in
-    [socket.h](../include/net/socket.h)
+    [socket.h](../src/net/socket.h)
   - wired `sock_to_fd()` to preserve that link in
-    [sock.c](../src/net/sock.c)
-  - taught `sock_wakeup()` in [sock.c](../src/net/sock.c) to send the
+    [sock.c](../src/net/impl/sock.c)
+  - taught `sock_wakeup()` in [sock.c](../src/net/impl/sock.c) to send the
     configured async signal to the `F_SETOWN` owner when `FASYNC` is enabled
 
-Observed failure progression during this round:
+Failure progression:
 - Initially, GUI Emacs did not show at all. The log showed a `SIGALRM` /
   `setitimer()` / `gettimeofday()` storm while Emacs was still bringing up its
   X connection.
@@ -56,18 +56,14 @@ Working conclusion:
 - With those three fixed, MOS is significantly closer to the timing and async
   I/O expectations of old RH9 desktop software.
 
-Suggested next step:
-- Return to the remaining GUI polish issue around `xterm` slowness, which now
-  looks independent from the Emacs bring-up path that was blocking this round.
-
 ## 2026-04-19
 
-Status at stop:
+Observed status:
 - `nautilus -c` now runs through `nautilus_self_check_directory()` instead of hanging in early startup.
 - The old Nautilus/FAM-triggered thread startup block is fixed.
 - Nautilus also no longer dies later in GLib heap allocation once helper threads are running.
 
-Fixes completed in this round:
+Fixes:
 - Fixed i386 TLS setup so `set_thread_area()` updates the saved user `%gs` selector alongside the descriptor install.
 - Fixed `CLONE_SETTLS` for the RH9/NPTL case where the parent thread is still using an LDT-backed `%gs`, so child threads inherit valid TLS instead of stalling in the startup futex handshake.
 - Fixed TLS slot lifetime issues:
@@ -76,9 +72,8 @@ Fixes completed in this round:
   - `execve()` clears old TLS/LDT descriptor state before a new image starts
 - Reworked heap bookkeeping so `CLONE_VM` tasks share `start_brk/brk` through a shared heap-state object instead of keeping per-task copies that drift apart.
 - Updated `/proc` heap reporting and teardown paths to use the shared heap-state model.
-- Removed the temporary TLS/clone debugging logs after the fix was verified.
 
-Observed failure progression during this round:
+Failure progression:
 - The original Nautilus failure looked like a hang in `nautilus_self_check_directory()`, but the real block was a helper-thread startup futex wait after GNOME VFS tried to monitor `/etc/fstab`.
 - Once TLS setup was corrected, the hang moved forward into a later `GLib-ERROR **: gmem.c:173: failed to allocate 32774 bytes`.
 - That later allocation failure came from `CLONE_VM` threads sharing mappings but not sharing `brk` bookkeeping.
@@ -91,10 +86,9 @@ Current working conclusion:
   - shared heap bookkeeping semantics for `CLONE_VM`
 - With both fixed, the GUI stack is materially closer to RH9/NPTL-compatible desktop behavior.
 
-
 ## 2026-04-12
 
-Status at stop:
+Observed status:
 - The graphical desktop is now visible.
 - `startx` no longer dies in the old X loader/config/input paths.
 - GNOME session startup now gets through X, ICE, Bonobo activation, and into the desktop bring-up sequence.
@@ -126,7 +120,7 @@ Fixes completed since the last journal update:
   - preserve the historical `fd == -1` anonymous behavior used by MOS exec stack setup
   - continue allowing character-device mappings such as `/dev/mem`, which XFree86/VESA needs
 
-Observed failure progression during this round:
+Failure progression:
 - The old `/dev/psaux` core-pointer failure was replaced by successful X input setup once the config matched `/dev/input/mice`.
 - The dynamic linker crash in `ld-2.3.2.so` while loading `libnss_files.so.2` was eliminated by the VM unmap/overlap fixes.
 - The GThread abort on `pthread_getschedparam()` moved the failure forward into GNOME session startup once scheduler syscalls existed.
@@ -139,20 +133,14 @@ Current working conclusion:
 - The GUI bring-up path is now substantially functional.
 - The remaining work, if any, should be treated as incremental desktop polish or narrower application/runtime issues rather than foundational X startup failure.
 
-Cleanup note:
-- Temporary investigation-only loader/page-fault tracing added during the earlier `_dl_lookup_symbol` and `libnss_files` debugging has already been removed.
-- No additional one-off GUI debugging stubs were found in the current tree during this cleanup pass beyond the normal configurable syscall/kernel logging already used by the project.
-
-
-
 ## 2026-04-12
 
-Status at stop:
+Observed status:
 - GUI mouse input now works correctly inside X.
 - The PS/2 mouse path is no longer a fake `/dev/input/mice` stub; it is backed by a real hardware driver under `src/driver/impl/input`.
 - Pointer movement was verified after fixing both probe-time compatibility and runtime async delivery issues.
 
-Fixes completed in this round:
+Fixes:
 - Implemented a real PS/2 mouse driver in `src/driver/impl/input/ps2_mouse.c` with packet assembly and IMPS/2 wheel-mode negotiation. The device-layer i8042 implementation owns auxiliary-port configuration, IRQ routing, and command transport.
 - Completed `src/dev/mouse.c` as a proper `/dev/input/mice` wrapper over the hardware driver instead of maintaining a separate fake device implementation.
 - Added PS/2 command handling needed by X probe logic, including reset, identify, sample-rate, resolution, status, read-data, defaults, and enable/disable reporting behavior.
@@ -160,23 +148,21 @@ Fixes completed in this round:
 - Fixed a runtime input stall where X stopped receiving wakeups after probe by honoring async notification ownership on the mouse fd.
 - Fixed a second async-design bug where only one global mouse file was tracked, so unrelated opens/closes could break X input delivery.
 - Fixed a follow-up deadlock in the packet completion path by moving async queue/notify work out from under `mouse_state_lock`.
-- Removed temporary mouse debugging stubs after the input path was confirmed working.
 
 Working conclusion:
 - XFree86 expects `/dev/input/mice` to behave like a real PS/2-compatible endpoint during probe and like an async signal-driven input source afterward.
 - The remaining GUI bring-up work is no longer blocked on mouse input; MOS now has stable end-to-end pointer delivery from IRQ12 through `/dev/input/mice` into X.
 
-
 ## 2026-04-09
 
-Status at stop:
+Observed status:
 - `startx` now reaches a visible X screen.
 - X, `twm`, and `xterm` can all start under the current kernel.
 - A large black X cursor is visible, which confirms the graphics VT and framebuffer present path are alive.
 - The original X server death on `SIGALRM` is fixed.
 - The remaining blockers are helper-process crashes in `xkbcomp` and `tradcpp0`/`cpp`, which degrade XKB and `xrdb` resource loading but do not prevent the X session itself from coming up.
 
-Fixes completed in this round:
+Fixes:
 - Fixed `fork()` so child tasks do not inherit an already-armed real-time alarm from the parent.
 - Corrected the `rt_sigaction` userspace ABI layout to decode `handler, mask, flags, restorer` in the order Linux/i386 userspace expects.
 - Implemented `rt_sigreturn` support and an RT signal frame path for `SA_SIGINFO` handlers.
@@ -207,10 +193,6 @@ Working conclusion:
   - `tradcpp0`/`cpp`, which still fail under `xrdb`, leaving `.Xresources` preprocessing incomplete
 - Current evidence rules out missing user stack mappings and bad user segment selectors for those helper crashes; the remaining issue appears to be lower-level user execution-state corruption on some helper process paths.
 
-Suggested next step:
-- Resume from the helper-process crash path rather than the old X-server timeout path, starting with `xkbcomp`'s early `XkbOpenDisplay` / glibc locale initialization and the corresponding low-level user-context restore/return machinery in MOS.
-
-
 ## 2026-04-08
 
 Observed behavior today:
@@ -220,17 +202,17 @@ Observed behavior today:
   - `bind(fd=3, addr=..., addrlen=19)`
   - `listen(fd=3, backlog=128)`
 - So the pathname listener for `/tmp/.X11-unix/X0` exists at least briefly.
-- The stronger finding is that `/usr/X11R6/bin/X` exits through the user-mode general-protection path in [int.c](src/int/int.c) line 151.
+- The stronger finding is that `/usr/X11R6/bin/X` exits through the user-mode general-protection path in [int.c](../src/int/impl/int.c) line 151.
 - That means X takes a user-space `#GP`, MOS kills it with `sys_exit(-EFAULT)`, and only after that do later client `connect()` attempts see `unix_ns` empty and return `ECONNREFUSED`.
 
 Startx-related VM/MMIO bugs found and fixed today:
-- The framebuffer mapping path was confirmed to be `/dev/mem` MMIO, not normal RAM-backed file cache. The relevant fault path in [pagefault.c](src/mm/pagefault.c#L140) already maps `/dev/mem` directly with `mm_map_page_io()` and `PAGE_ENTRY_CD`, which is correct for VRAM/MMIO.
-- A later `fork()` crash showed a child PTE value of `0xFD000077` in [ps_fork.c](src/ps/ps_fork.c#L190). That decodes to physical `0xFD000000` with present, writable, user, and cache-disabled bits, i.e. the VESA/VMware linear framebuffer BAR.
+- The framebuffer mapping path was confirmed to be `/dev/mem` MMIO, not normal RAM-backed file cache. The relevant fault path in [pagefault.c](../src/mm/impl/pagefault.c) already maps `/dev/mem` directly with `mm_map_page_io()` and `PAGE_ENTRY_CD`, which is correct for VRAM/MMIO.
+- A later `fork()` crash showed a child PTE value of `0xFD000077` in [ps_fork.c](../src/ps/impl/ps_fork.c). That decodes to physical `0xFD000000` with present, writable, user, and cache-disabled bits, i.e. the VESA/VMware linear framebuffer BAR.
 - The bug in `copy_one_pte()` was that it assumed every present user PTE belonged to allocator-managed RAM and unconditionally fed the derived page index into `phymm_reference_page()`.
-- Fixed [ps_fork.c](src/ps/ps_fork.c#L200) so `copy_one_pte()` clones `/dev/mem` mappings directly, and more defensively skips `phymm_reference_page()` for any attached physical page outside `[phymm_begin, phymm_end)` or marked `PHYMM_RESERVED`.
+- Fixed [ps_fork.c](../src/ps/impl/ps_fork.c) so `copy_one_pte()` clones `/dev/mem` mappings directly, and more defensively skips `phymm_reference_page()` for any attached physical page outside `[phymm_begin, phymm_end)` or marked `PHYMM_RESERVED`.
 - A second crash appeared later in `vm_flush_region_cb()` / `vm_flush_dirty_region()` while tearing down or flushing X mappings. The failing virtual address was `0x4028A000`, but its attached page index again resolved to `1036288`, which is physical `0xFD000000`.
 - The bug in `vm_flush_dirty_region()` was the same assumption in a different place: it treated every `MAP_SHARED` file-backed mapped page as if it had a valid `phymm` page and could be checked with `phymm_is_dirty()` and written back like normal cache-backed file data.
-- Fixed [mmap.c](src/mm/mmap.c#L654) so `vm_flush_dirty_region()` skips `/dev/mem` mappings entirely and also ignores attached pages that are outside allocator-managed RAM or marked `PHYMM_RESERVED`.
+- Fixed [mmap.c](../src/mm/impl/mmap.c) so `vm_flush_dirty_region()` skips `/dev/mem` mappings entirely and also ignores attached pages that are outside allocator-managed RAM or marked `PHYMM_RESERVED`.
 
 Refined conclusion:
 - Today exposed two separate VM-layer assumptions that were invalid for `startx` framebuffer mappings.
@@ -239,18 +221,14 @@ Refined conclusion:
 - Both assumptions were false for the X framebuffer mapping at physical `0xFD000000`.
 - The AF_UNIX `ECONNREFUSED` symptom still looks downstream of X crashing, but the MMIO/framebuffer crashes in fork and dirty-flush paths are now guarded and should no longer take the kernel down during `startx`.
 
-Suggested next step:
-- Resume by identifying what user-mode operation in `/usr/X11R6/bin/X` triggers the `#GP` shortly after the late XKB/keyboard path, now that the framebuffer/MMIO crashes in the VM layer are covered.
-
-
 ## 2026-04-07
 
-Status at stop:
+Observed status:
 - `startx` still does not complete.
 - `tty1` remains responsive.
 - `xinit` now reports `Connection refused (errno 111): unable to connect to X server`.
 
-Fixes completed in this round:
+Fixes:
 - Added Linux VT/console ioctls and basic VT state handling so X can allocate and switch VTs instead of failing at `xf86OpenConsole`.
 - Implemented missing tty compatibility calls used during X startup, including `TIOCNOTTY`, `KDSETMODE`/`KDGETMODE` state handling, LED/repeat keyboard ioctls, and related tty compatibility behavior.
 - Stopped the tty text layer from redrawing over a VT while it is in `KD_GRAPHICS`.
@@ -281,7 +259,3 @@ Current observable state:
 Working conclusion:
 - General system interrupt handling appears okay because `tty1` continues running normally.
 - The remaining issue is still in the late GUI/X startup path, after socket publication and before the server becomes usable for `xinit`.
-
-Suggested next step:
-- Resume from the late X server control flow around the final wait/sleep/listener path and correlate it with the later `ECONNREFUSED`.
-

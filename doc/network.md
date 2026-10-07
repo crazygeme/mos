@@ -201,7 +201,6 @@ or the partial byte count otherwise. A connect timeout returns `EINPROGRESS`.
 Accepted sockets inherit the listener's configured timeouts. UNIX socket
 read/write and message operations use the same deadline semantics as INET.
 
-
 ### TCP
 
 Current TCP behavior:

@@ -12,12 +12,12 @@ Both are opt-in: they are only compiled and linked when building `kernel-test` (
 ## Build and Run
 
 ```sh
-make test          # build out/x86/release/kernel-test
-make test-debug    # build out/x86/debug/kernel-test
-make run-test      # build and boot the release test kernel
-make run-test-debug # build and boot the debug test kernel
-./run.sh test      # same as run-test
-./run.sh test debug # same as run-test-debug
+make ARCH=x86 test              # out/x86/release/kernel-test
+make ARCH=x64 test              # out/x64/release/kernel-test.boot
+make ARCH=x64 test-debug        # AMD64 debug test build
+./run.sh test                   # build and boot AMD64 release tests
+./run.sh arch=x86 test          # build and boot x86 release tests
+./run.sh test debug             # AMD64 debug tests, paused for GDB
 ```
 
 The kernel command line receives `"test"`, which sets `TestControl.test = 1`.

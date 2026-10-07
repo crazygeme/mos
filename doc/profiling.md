@@ -1,7 +1,7 @@
 # Kernel Profiling
 
 For release x86 process-launch measurements, see the
-[2026-10-06 benchmark report](x86_launch_profile.md).
+[2026-10-06 benchmark report](bugfix_journal.md#2026-10-06---x86-process-launch-performance-validation).
 
 MOS includes two sampling profilers that attach to QEMU's HMP monitor socket.
 Both work by repeatedly pausing the VM, reading CPU registers, then resuming —
@@ -19,7 +19,7 @@ so they add no instrumentation to the kernel itself.
 Start the kernel with the monitor socket exposed:
 
 ```sh
-./run.sh profile
+./run.sh arch=x86 profile
 ```
 
 This passes `-monitor unix:/tmp/qemu-profiler.sock,server,nowait` to QEMU.
@@ -102,7 +102,7 @@ The result is written to `out/profile-YYYYMMDD-HHMMSS.svg`.
 | `--sock PATH`   | `/tmp/qemu-profiler.sock` | QEMU monitor socket          |
 | `--kernel PATH` | `out/x86/debug/kernel.dbg` | Debug symbol binary         |
 
-**Requirements:** use the debug build (`./run.sh profile` or `make BUILD=debug`)
+**Requirements:** use the debug build (`./run.sh arch=x86 profile` or `make BUILD=debug`)
 so the kernel is built with the explicit `-O0` debug settings. Optimised release
 builds may omit the frame layout needed for reliable stack walking.
 

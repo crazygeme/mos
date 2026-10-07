@@ -2,8 +2,7 @@
 
 A focused log of the NPTL-related debugging and fixes done on 2026-04-17.
 This document is narrower than `bugfix_journal.md`: it records the `clone()`,
-`CLONE_CHILD_SETTID`, `script.posix_signal`, and `startx`/VDSO work from this
-session.
+`CLONE_CHILD_SETTID`, `script.posix_signal`, and `startx`/VDSO compatibility fixes.
 
 ---
 
@@ -60,7 +59,7 @@ was the scheduling/first-run behavior of non-thread `clone(SIGCHLD...)`.
 
 ### Fix
 
-In [`src/ps/ps_clone.c`](../src/ps/ps_clone.c):
+In [`src/ps/impl/ps_clone.c`](../src/ps/impl/ps_clone.c):
 
 - process-style `clone()` now uses a dedicated enqueue helper
 - the new child is inserted at the head of its ready queue for its first run
@@ -99,14 +98,14 @@ case, the pointer is meaningful in the child address space.
 
 ### Final implementation
 
-In [`src/ps/ps.c`](../src/ps/ps.c), added:
+In [`src/ps/impl/ps.c`](../src/ps/impl/ps.c), added:
 
 ```c
 int ps_write_process_memory(task_struct *task, void *addr,
                             const void *src, unsigned len);
 ```
 
-In [`src/ps/ps_clone.c`](../src/ps/ps_clone.c):
+In [`src/ps/impl/ps_clone.c`](../src/ps/impl/ps_clone.c):
 
 - thread-group/shared-VM clones still write `*child_tidptr` directly
 - process-style clones now call `ps_write_process_memory(...)`
@@ -207,8 +206,8 @@ same regression.
 
 ### Fix
 
-In [`src/mm/vdso.c`](../src/mm/vdso.c) and
-[`include/mm/vdso.h`](../include/mm/vdso.h):
+In [`arch/x86/mm/impl/vdso.c`](../arch/x86/mm/impl/vdso.c) and
+[`src/mm/vdso.h`](../src/mm/vdso.h):
 
 - removed the fixed low-memory VDSO address
 - made the VDSO base dynamic
@@ -229,17 +228,17 @@ mapping collide with software that still expects to own legacy low memory.
 
 ## Files changed in the final working version
 
-- [`src/ps/ps_clone.c`](../src/ps/ps_clone.c)
+- [`src/ps/impl/ps_clone.c`](../src/ps/impl/ps_clone.c)
   - process-style `clone()` child-first enqueue path
   - one-time post-enqueue yield
   - correct `CLONE_CHILD_SETTID` handling for non-`CLONE_VM`
-- [`src/ps/ps.c`](../src/ps/ps.c)
+- [`src/ps/impl/ps.c`](../src/ps/impl/ps.c)
   - `ps_write_process_memory(...)`
-- [`src/ps/ps_internal.h`](../src/ps/ps_internal.h)
+- [`src/ps/impl/ps_internal.h`](../src/ps/impl/ps_internal.h)
   - internal declaration for `ps_write_process_memory(...)`
-- [`src/mm/vdso.c`](../src/mm/vdso.c)
+- [`arch/x86/mm/impl/vdso.c`](../arch/x86/mm/impl/vdso.c)
   - VDSO relocated out of low memory into high user mmap space
-- [`include/mm/vdso.h`](../include/mm/vdso.h)
+- [`src/mm/vdso.h`](../src/mm/vdso.h)
   - removed the fixed `0x00010000` VDSO address
 
 ---

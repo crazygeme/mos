@@ -103,7 +103,7 @@ The server, `xinit`, helper tools, and clients all rely on normal Unix process s
 - `alarm`, `setitimer`, `nanosleep`
 - scheduler state surviving preemption and syscall return
 
-In MOS, this matters directly because X startup exercises signal and timer paths heavily, and user-return state is restored in [src/int/int.c](/home/zhengjia/project/mos/src/int/int.c:64).
+In MOS, this matters directly because X startup exercises signal and timer paths heavily, and user-return state is restored in [src/int/impl/int.c](../src/int/impl/int.c).
 
 #### 2. VT and tty ownership
 
@@ -124,7 +124,7 @@ Old XFree86 video paths often work by discovering a mode through BIOS/VBE-style 
 - `/dev/mem` plus `mmap()` exposes the physical BAR / linear framebuffer
 - userspace stores hit MMIO or VRAM directly
 
-MOS handles that in the page-fault path by mapping `/dev/mem` requests as direct I/O pages instead of ordinary cached file pages in [src/mm/pagefault.c](/home/zhengjia/project/mos/src/mm/pagefault.c:118).
+MOS handles that in the page-fault path by mapping `/dev/mem` requests as direct I/O pages instead of ordinary cached file pages in [src/mm/impl/pagefault.c](../src/mm/impl/pagefault.c).
 
 #### 3a. How the final image reaches the screen
 
@@ -176,7 +176,7 @@ For this codebase, old X startup is not only "draw pixels"; it also touches x86 
 - `iopl` / port-I/O permissions
 - VMware SVGA/VBE mode setup assumptions
 
-MOS carries explicit VBE/vm86 compatibility shims for that path in [src/syscall/syscall_vm86.c](/home/zhengjia/project/mos/src/syscall/syscall_vm86.c:1).
+MOS carries explicit VBE/vm86 compatibility shims for that path in [arch/abi/i386/syscall_vm86.c](../arch/abi/i386/syscall_vm86.c).
 
 #### 5. Input path
 

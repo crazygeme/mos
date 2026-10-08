@@ -106,6 +106,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Disk Image](doc/disk_image.md)          | Mount `rh9.qcow2` via qemu-nbd, copy binaries into it, recreate from scratch                 |
 | [SysV Init Boot Journal](doc/systemv.md) | Six bugs fixed to boot RH9 userspace to a login prompt                                       |
 | [NPTL Journal](doc/nptl_journal.md)      | `clone()`/NPTL debugging notes, `CLONE_CHILD_SETTID` fixes, and `posix_signal` race analysis |
+| [Performance Journal](doc/perf_journal.md) | Dated performance measurements, profiling findings, and optimization records |
 | [Bug Fix Journal](doc/bugfix_journal.md) | Dated fixes, ABI and concurrency records, root causes, and validation                 |
 | [GUI Journal](doc/gui_journal.md)        | XFree86 / `startx` debugging progress, compatibility fixes, and current GUI status           |
 | [Screenshots](doc/screenshots.md)        | Screenshots of MOS running, including the GUI desktop                                        |

@@ -1,0 +1,11 @@
+processor	: 0
+vendor_id	: AuthenticAMD
+cpu family	: 6
+model		: 14
+model name	: Genuine Intel(R) CPU           T2600  @ 2.16GHz
+stepping	: 8
+cpu MHz		: 10053
+cache size	: unknown
+bogomips	: 20106
+flags		: fpu vme tsc msr cx8 sep cmov clflush mmx fxsr sse sse2 sse3
+

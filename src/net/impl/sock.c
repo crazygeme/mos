@@ -259,6 +259,19 @@ void sock_wakeup(mos_sock *sk)
 	int sig = SIGIO;
 	int irq;
 
+	/* Unix callers own net_core_lock. New blocking and poll waiters also
+	 * enroll under core ownership, so no new observer can appear here.
+	 * Cancellation/unsubscription may remove observers using wait_lock;
+	 * only inspect the atomic head pointers, never traverse unlocked nodes.
+	 * Keep every notification when poll or asynchronous I/O is in use. */
+	if (sk->domain == AF_UNIX &&
+	    __atomic_load_n(&sk->waiters.prev, __ATOMIC_ACQUIRE) ==
+		    &sk->waiters &&
+	    __atomic_load_n(&sk->poll_waiters.prev, __ATOMIC_ACQUIRE) ==
+		    &sk->poll_waiters &&
+	    (!sk->async_file || !(sk->async_file->f_flag & FASYNC)))
+		return;
+
 	spinlock_lock(&sk->wait_lock, &irq);
 	while (!list_is_empty(&sk->waiters)) {
 		sock_waiter *waiter = container_of(

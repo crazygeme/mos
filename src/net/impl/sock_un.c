@@ -446,9 +446,11 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 		return (ssize_t)n;
 	}
 
-	spinlock_lock(&sk->rxbuf_lock, &irq);
+	/* The caller holds net_core_lock, including across this readiness check
+	 * and wait enrollment. sock_wait publishes the waiter before releasing
+	 * core ownership. No IRQ accesses Unix rings, so an additional ring
+	 * spinlock only adds overhead and disables interrupts during the copy. */
 	while (rx_used(sk) == 0) {
-		spinlock_unlock(&sk->rxbuf_lock, irq);
 		if (sk->err)
 			return sk->err;
 		if (sk->state == SS_DISCONNECTING ||
@@ -460,11 +462,9 @@ ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count)
 			return -EAGAIN;
 		if (sock_wait(sk, deadline) < 0)
 			return -EINTR;
-		spinlock_lock(&sk->rxbuf_lock, &irq);
 	}
 	unsigned n = rx_read(sk, buf, (unsigned)count);
 	peer = sk->unix_peer;
-	spinlock_unlock(&sk->rxbuf_lock, irq);
 	if (peer)
 		sock_wakeup(peer);
 	return (ssize_t)n;
@@ -508,9 +508,7 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 		if (!peer || (sk->unix_shutdown & UNIX_SHUT_WR))
 			return done > 0 ? (ssize_t)done : -EPIPE;
 
-		spinlock_lock(&peer->rxbuf_lock, &irq);
 		n = rx_write(peer, p + done, (unsigned)(count - done));
-		spinlock_unlock(&peer->rxbuf_lock, irq);
 		if (n > 0) {
 			done += n;
 			sock_wakeup(peer);

@@ -371,25 +371,10 @@ typedef struct _mos_sock {
 	int unix_accept_head;
 	int unix_accept_tail;
 
-	/*
-	 * Protects rx_head, rx_tail, and rxbuf for AF_UNIX sockets.
-	 * Also serialises unix_passfd_* ancillary queues so SCM_RIGHTS records
-	 * stay ordered with the byte stream / datagram data they accompany.
-	 *
-	 * Network sockets (AF_INET) are safe without this lock because their
-	 * ring buffer follows a strict SPSC discipline: rx_write is only ever
-	 * called from the NIC IRQ handler (single producer) and rx_read from
-	 * a single task (single consumer).  A uniprocessor guarantee means
-	 * the ISR cannot be re-entered, so no concurrent modification occurs.
-	 *
-	 * AF_UNIX sockets break that assumption: after fork() both the parent
-	 * and the child hold a reference to the same mos_sock.  Either task
-	 * can call sock_write concurrently, making rx_write a multi-producer
-	 * operation.  A preemption mid-loop in rx_write would corrupt rx_tail
-	 * and interleave bytes from the two callers.  The spinlock prevents
-	 * that by disabling interrupts (and thus preemption) for the duration
-	 * of every ring-buffer access on the AF_UNIX path.
-	 */
+	/* Unix datagram/ancillary helpers take this lock while updating records.
+	 * All Unix operations also require net_core_lock, which protects peer
+	 * lifetime and serializes ring access. Stream read/write rely on core
+	 * ownership alone; Unix rings are never accessed from IRQ context. */
 	spinlock_t rxbuf_lock;
 
 	unix_passfd_msg unix_passfd_queue[UNIX_PASSFD_QUEUE];

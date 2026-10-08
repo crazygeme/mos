@@ -1,7 +1,7 @@
 # Kernel Profiling
 
 For release x86 process-launch measurements, see the
-[2026-10-06 benchmark report](bugfix_journal.md#2026-10-06---x86-process-launch-performance-validation).
+[2026-10-06 benchmark report](perf_journal.md#2026-10-06---x86-process-launch-performance-validation).
 
 MOS includes two sampling profilers that attach to QEMU's HMP monitor socket.
 Both work by repeatedly pausing the VM, reading CPU registers, then resuming —

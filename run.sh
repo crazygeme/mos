@@ -24,8 +24,8 @@ _power="-device isa-debug-exit,iobase=0xf4,iosize=0x04"
 _kvm=""
 _cpu="coreduo"
 _smp=2
-_bash=""
 _test=""
+_text=""
 _priviledge=""
 _qemu="qemu-system-x86_64"
 _is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
@@ -43,6 +43,8 @@ if [[ "$arg" == arch=* ]]; then
  if [[ "$_arch" != "x86" && "$_arch" != "x64" ]]; then echo "arch must be x86 or x64" >&2; exit 1; fi
 elif [ "$arg" == "test" ]; then
 	_test="test"
+elif [ "$arg" == "text" ]; then
+	_text="text"
 elif [[ "$arg" == ram=* ]]; then
 	_ramsize="${arg#ram=}"
 	if ! [[ "$_ramsize" =~ ^[1-9][0-9]*$ ]] || [ "${#_ramsize}" -gt 5 ] || [ "$_ramsize" -lt 32 ] || [ "$_ramsize" -gt 65536 ]; then
@@ -73,8 +75,6 @@ elif [ "$arg" == "profile" ]; then
 elif [ "$arg" == "kvm" ]; then
 	_kvm="-enable-kvm"
 	_cpu="host"
-elif [ "$arg" == "bash" ]; then
-	_bash="bash"
 elif [ "$arg" == "logtofile" ]; then
 	_logtofile="pending"
 elif [ "$arg" == "-h" ]; then
@@ -83,6 +83,7 @@ elif [ "$arg" == "-h" ]; then
 	echo "param:"
  echo -e "\t arch=x86|x64: select kernel architecture (default x64)"
 	echo -e "\t test: build and run the test kernel for the selected build"
+	echo -e "\t text: boot through init into text mode (runlevel 3)"
 	echo -e "\t debug: use the debug build and wait for gdb before running"
 	echo -e "\t logtofile: write kernel log to out/x86/<build>/krn.log instead of stdio"
 	echo -e "\t verbose: run with focused diagnostic logging (level 2)"
@@ -93,6 +94,9 @@ elif [ "$arg" == "-h" ]; then
 	echo -e "\t smp=N: start N CPUs (1..32, default 2)"
 	echo -e "\t ram=N: guest memory in MiB (32..65536, default 8192)"
 	exit
+else
+	echo "Error: unsupported argument '$arg'" >&2
+	exit 1
 fi
 done
 
@@ -211,7 +215,7 @@ $_priviledge $_qemu -cpu $_cpu \
 	-m $_ramsize \
 	-drive file="$diskfile",format=qcow2,if=ide,index=0,media=disk \
 	-kernel $kernel_file \
-	-append "$_verbose $_bash $_test" \
+	-append "$_verbose $_test $_text" \
 	-serial $_logtofile \
 	$_vga \
 	$_power \

@@ -56,7 +56,7 @@ retain their own build flags.
 ./run.sh                       # AMD64 release, two CPUs, 8192 MiB RAM
 ./run.sh arch=x86 ram=1024      # x86 release with 1 GiB RAM
 ./run.sh smp=4 ram=8192 kvm     # AMD64 with four CPUs and KVM
-./run.sh bash                   # direct /bin/bash boot
+./run.sh text                   # SysV init startup and text login (runlevel 3)
 ./run.sh test                   # selected architecture's test kernel
 ./run.sh arch=x86 test debug    # x86 debug tests, paused for GDB
 ```
@@ -77,9 +77,9 @@ NIC with MAC `52:54:00:12:34:56`.
 | `ram=N` | Guest memory in MiB, 32–65536; default 8192 |
 | `smp=N` | Virtual CPUs, 1–32; default 2 |
 | `test` | Build and boot tests; use QEMU user-mode networking |
+| `text` | Boot through SysV init into text mode (runlevel 3); default boot uses the image's configured runlevel |
 | `debug` | Select debug build; pause at startup with GDB on port 8888 |
 | `profile` | Select debug build; expose `/tmp/qemu-profiler.sock` |
-| `bash` | Boot directly into `/bin/bash` |
 | `verbose` or `verbose=2` | Focused diagnostics |
 | `verbose=1` | Full syscall tracing |
 | `verbose=0` | Disable verbose logging |
@@ -103,7 +103,7 @@ use QEMU user-mode networking and skip TAP setup.
 ## Debugging and profiling
 
 ```sh
-./run.sh bash debug
+./run.sh debug
 # In another terminal on Linux:
 gdb-multiarch out/x64/debug/kernel.dbg
 ```

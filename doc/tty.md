@@ -40,7 +40,6 @@ typedef struct {
     tty_cell_t *cells;           // main screen cell buffer (rows*cols)
     tty_cell_t *alt_cells;       // alternate screen buffer (?1049h/l)
     int tty_idx;                 // 0..TTY_MAX_VDEV-1
-    unsigned bash_pid;           // PID of bash on this TTY (0 = none)
     int open_count;              // number of open file structs
     int released;                // set when last fd is closed
     int saved_cursor;            // ESC[s / ESC[u saved position
@@ -217,43 +216,17 @@ tty_switch(n):
 
     spinlock_unlock(&tty_switch_lock)
 
-    if n > 0:                                // TTY 0 is always owned by init
-        need_spawn = (bash_pid == 0)
-                  || ps_find_process(bash_pid) == NULL
-                  || ps_find_process(bash_pid)->status == ps_dying
-        if need_spawn:
-            ttys[n].bash_pid = ps_create(tty_bash_spawner, &ttys[n],
-                                         ps_normal, ps_kernel)
 ```
 
 **Why no explicit save on switch-out**: every TTY always keeps its `cells[]` in sync regardless of whether it is active. Inactive-TTY writes update `cells[]` but skip `fb_putcell` (the `tty_idx == active_tty_idx` guard in `vga_putchar`). So the cell buffer is always an accurate shadow of what the TTY would show. `fb_redraw` on switch-in just repaints it all.
 
-**`tty_switch_lock` scope**: held only for the pointer flip + `fb_redraw`. The bash spawn is outside the lock because `ps_create` may allocate memory. `tty_active_kb_put` also acquires this lock briefly to snapshot `this_ttys` — this guarantees keyboard bytes are never routed to the old TTY after the flip.
+**`tty_switch_lock` scope**: protects the active-terminal pointer and framebuffer
+save/restore. `tty_active_kb_put` also acquires this lock so keyboard bytes are
+routed to the active TTY.
 
-**Bash spawner** (`tty_bash_spawner`):
-
-```
-ps_create(tty_bash_spawner, state, ps_normal, ps_kernel)
-  └─ new kernel task:
-       cur->root   = state->parent->root   // inherit root filesystem
-       sb_get(root)
-       cur->parent = state->parent         // so waitpid works
-       cur->cwd    = "/root"
-       ps_update_tss((uintptr_t)cur + KERNEL_TASK_BYTES) // privilege-entry stack
-
-       fd 0 = open("/dev/ttyn", O_RDONLY)
-       fd 1 = open("/dev/ttyn", O_WRONLY)
-       fd 2 = open("/dev/ttyn", O_WRONLY)
-
-       if fs_stat("/bin/bash") == 0:
-           sys_execve("/bin/bash",
-                      argv = {"/bin/bash", "-l", NULL},
-                      envp = {"PATH=/bin:/usr/bin:/sbin",
-                              "TERM=linux", "HOME=/root",
-                              "LANG=en_US", NULL})
-       // bash not found → task exits; bash_pid stays set
-       // next switch-in detects dead PID and re-spawns
-```
+Terminal switching does not create processes. SysV init starts and respawns
+getty according to `/etc/inittab`; getty and login handle authentication before
+starting the user's shell.
 
 ### Supported ioctls
 

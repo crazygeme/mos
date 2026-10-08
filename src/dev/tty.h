@@ -21,8 +21,8 @@ void tty_lock_release(int irq);
  * the first user process. */
 void tty_default_clear(void);
 
-/* Switch the active virtual terminal to index n (0-9).
- * If TTY n has no process, a /bin/bash is spawned on it. */
+/* Switch the active virtual terminal to index n (1-10).
+ * Userspace init manages login processes on these terminals. */
 void tty_switch(int n);
 
 /* Route a key byte to the active TTY's keyboard buffer.

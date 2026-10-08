@@ -85,7 +85,7 @@ unsigned int rand(void);
 
 typedef struct _TEST_CONTROL {
 	int verbose; /* verbose level: 0=off, 1=trace, 2=info */
-	int bash;
+	int text; /* boot SysV init in text mode (runlevel 3) */
 	int test;
 } TEST_CONTROL;
 extern TEST_CONTROL TestControl;

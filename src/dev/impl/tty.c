@@ -8,8 +8,7 @@
  * input queue; only the active TTY receives keystrokes.
  *
  * TTY switching is triggered by the keyboard driver calling tty_switch(n)
- * (bound to Ctrl+Alt+F1..F10).  If TTY n has no live process, /bin/bash is
- * spawned with its stdio wired to /dev/ttyn.
+ * (bound to Ctrl+Alt+F1..F10). Login terminals are managed by userspace init.
  *
  * Public kernel interface (see include/dev/tty.h):
  *   tty_init()                    - early VGA/FB init, called before the VM
@@ -36,7 +35,6 @@
 #include <lib/cyclebuf.h>
 #include <mm/mmap.h>
 #include <ps/ps.h>
-#include <elf/exec.h>
 #include <unistd.h>
 #include <errno.h>
 #include <lib/command.h>
@@ -76,10 +74,6 @@ typedef struct {
 	tty_cell_t *cells;
 	/* TTY index (1..TTY_MAX_VDEV) */
 	int tty_idx;
-	/* PID of the bash process running on this TTY (0 = none) */
-	unsigned bash_pid;
-	/* Parent task for this TTY, used for setting root and waitpid */
-	task_struct *parent;
 	/* number of open file structs referencing this TTY */
 	int open_count;
 	/* set when last fd is closed; guards read/write against stale access */
@@ -133,10 +127,9 @@ static volatile int tty_graphics_refresh_pending;
 
 static int tty_fb_text_is_visible(const tty_state *state);
 static void tty_exit_alt_screen(tty_state *state);
-static void tty_bash_spawner(void *p);
 static void tty_sync_fb_mode_all(void);
-static void tty_switch_internal(int n, int spawn_shell);
-static void tty_complete_switch_locked(int n, int spawn_shell);
+static void tty_switch_internal(int n);
+static void tty_complete_switch_locked(int n);
 static void tty_capture_graphics_locked(tty_state *state);
 static void tty_restore_graphics_locked(tty_state *state);
 static void tty_graphics_refresh_dsr(void *unused);
@@ -192,12 +185,11 @@ static void tty_restore_text_console_locked(tty_state *state)
  * - reconcile tty geometry with the live framebuffer mode if the destination
  *   VT is a text VT
  * - redraw the destination text console if text is visible there
- * - lazily spawn the default shell on unopened text VTs when requested
  *
  * Keeping this in one helper is important because every switch path must
  * perform the exact same state transition.
  */
-static void tty_complete_switch_locked(int n, int spawn_shell)
+static void tty_complete_switch_locked(int n)
 {
 	tty_state *except_tty = &ttys[n - 1];
 
@@ -221,23 +213,6 @@ static void tty_complete_switch_locked(int n, int spawn_shell)
 			  this_ttys->max_row, (unsigned)this_ttys->cursor);
 	else if (this_ttys->kd_mode == KD_GRAPHICS)
 		tty_restore_graphics_locked(this_ttys);
-
-	if (spawn_shell && n > 1 && except_tty->kd_mode == KD_TEXT) {
-		int need_spawn = 0;
-
-		if (except_tty->bash_pid == 0) {
-			need_spawn = 1;
-		} else {
-			task_struct *t = ps_find_process(except_tty->bash_pid);
-			if (!t || t->status == ps_dying)
-				need_spawn = 1;
-		}
-
-		if (need_spawn)
-			except_tty->bash_pid = ps_create(tty_bash_spawner,
-							 except_tty, ps_normal,
-							 ps_kernel);
-	}
 }
 
 static int tty_fb_text_is_visible(const tty_state *state)
@@ -370,7 +345,6 @@ static int tty_graphics_owner_fb_dirty(const tty_state *state)
 static int tty_vt_is_available(int tty_idx)
 {
 	tty_state *state;
-	task_struct *task;
 
 	if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
 		return 0;
@@ -378,13 +352,7 @@ static int tty_vt_is_available(int tty_idx)
 		return 0;
 
 	state = &ttys[tty_idx - 1];
-	if (state->open_count > 0)
-		return 0;
-	if (state->bash_pid == 0)
-		return 1;
-
-	task = ps_find_process(state->bash_pid);
-	return !task || task->status == ps_dying;
+	return state->open_count == 0;
 }
 
 static int tty_vt_find_free(void)
@@ -438,13 +406,8 @@ static unsigned short tty_vt_state_mask(void)
 
 	for (tty_idx = 1; tty_idx <= TTY_MAX_VDEV; tty_idx++) {
 		tty_state *state = &ttys[tty_idx - 1];
-		task_struct *task = state->bash_pid ?
-					    ps_find_process(state->bash_pid) :
-					    NULL;
 		int allocated = (tty_idx == active_tty_idx) ||
-				(state->open_count > 0) ||
-				(state->bash_pid != 0 && task &&
-				 task->status != ps_dying);
+				(state->open_count > 0);
 
 		if (allocated)
 			mask |= (unsigned short)(1U << (tty_idx - 1));
@@ -1322,7 +1285,6 @@ void tty_init(void)
 		t->termios = tty_default_termios;
 		t->canon_ready = 0;
 		t->tty_idx = i + 1;
-		t->bash_pid = 0;
 		t->scroll_top = 0;
 		t->scroll_bot = (int)t->max_row - 1;
 		t->saved_cursor = 0;
@@ -1515,63 +1477,6 @@ int tty_active_kb_mode(void)
 	return mode;
 }
 
-/* ── Bash spawner helpers ────────────────────────────────────────────────── */
-
-/*
- * tty_bash_spawner_body - kernel-thread body that execs /bin/bash on TTY n.
- *
- * Runs as a fresh kernel task created by ps_create().  Sets up the root
- * filesystem reference, opens stdin/stdout/stderr on /dev/ttyn, then
- * replaces itself with /bin/bash via sys_execve().
- */
-static void tty_bash_spawner(void *p)
-{
-	tty_state *state = (tty_state *)p;
-	char tty_path[16];
-	char *argv[] = { "/bin/bash", "-l", NULL };
-	char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux", "HOME=/root",
-			 "LANG=en_US", NULL };
-	struct stat st;
-	task_struct *cur = CURRENT_TASK();
-
-	/* Wire this task to the root filesystem. */
-	cur->root = state->parent->root;
-	sb_get(cur->root);
-
-	/* set parent of current so that wait can work */
-	cur->ppid = state->parent->psid;
-	cur->user->gid = state->parent->user->gid;
-	cur->user->uid = state->parent->user->uid;
-	cur->user->euid = state->parent->user->euid;
-	cur->user->suid = state->parent->user->suid;
-	cur->user->egid = state->parent->user->egid;
-	cur->user->sgid = state->parent->user->sgid;
-	cur->user->fsuid = state->parent->user->fsuid;
-	cur->user->fsgid = state->parent->user->fsgid;
-	cur->user->session_id = 0;
-	cur->user->group_id = 0;
-
-	sprintf(tty_path, "/dev/tty%d", state->tty_idx);
-
-	/* Set working directory. */
-	strcpy(cur->user->cwd, "/root");
-	strcpy(cur->user->root_path, "/");
-
-	/* Set up TSS esp0 for user-mode entry. */
-	ps_update_tss((uintptr_t)cur + KERNEL_TASK_BYTES);
-
-	/* Open stdin (0), stdout (1), stderr (2) on this TTY. */
-	fs_open(tty_path, O_RDONLY, 0);
-	fs_open(tty_path, O_WRONLY, 0);
-	fs_open(tty_path, O_RDWR, 0);
-
-	/* Exec bash if it exists. */
-	if (fs_stat("/bin/bash", &st) == 0)
-		sys_execve("/bin/bash", argv, envp);
-
-	/* bash not found — task will exit naturally. */
-}
-
 /*
  * tty_resize_one - resize one VT's saved text buffers to a new character grid.
  *
@@ -1690,7 +1595,7 @@ static void tty_sync_fb_mode_all(void)
  * The function is called from keyboard-triggered switching paths, so it must
  * not sleep while holding tty_switch_lock.
  */
-static void tty_switch_internal(int n, int spawn_shell)
+static void tty_switch_internal(int n)
 {
 	int irq;
 	tty_state *old_tty;
@@ -1704,14 +1609,14 @@ static void tty_switch_internal(int n, int spawn_shell)
 	old_graphics = old_tty && old_tty->kd_mode == KD_GRAPHICS;
 	if (old_graphics)
 		tty_capture_graphics_locked(old_tty);
-	tty_complete_switch_locked(n, spawn_shell);
+	tty_complete_switch_locked(n);
 
 	spinlock_unlock(&tty_switch_lock, irq);
 }
 
 void tty_switch(int n)
 {
-	tty_switch_internal(n, 1);
+	tty_switch_internal(n);
 }
 
 void tty_refresh_graphics(void)
@@ -2210,7 +2115,7 @@ static int tty_fs_ioctl_vt_activate(void *context __attribute__((unused)),
 	if (tty_idx < 1 || tty_idx > TTY_MAX_VDEV)
 		return -EINVAL;
 	/* This starts and completes a visible VT switch immediately. */
-	tty_switch_internal(tty_idx, 0);
+	tty_switch_internal(tty_idx);
 	return 0;
 }
 
@@ -2556,8 +2461,6 @@ static void tty_fs_init(void)
 			t->cells[j].fg = VGA_COLOR_WHITE;
 			t->cells[j].bg = VGA_COLOR_BLACK;
 		}
-		if (i > 0)
-			t->parent = ps_find_process(1);
 	}
 
 	this_ttys = &ttys[DEFAULT_TTY - 1];

@@ -44,7 +44,12 @@ space/tab-separated tokens. Recognised options populate the global
 | `verbose=0`   | `TestControl.verbose = 0` — disables verbose logging                   |
 | `verbose=1`   | `TestControl.verbose = 1` — enables the noisiest syscall trace logging |
 | `verbose=2`   | `TestControl.verbose = 2` — same as `verbose`                          |
-| `init=<path>` | `TestControl.bash = 1` — overrides `/sbin/init`                        |
+| `text`        | `TestControl.text = 1` — starts `/sbin/init 3` for text login          |
+| `test`        | `TestControl.test = 1` — executes the test runner                      |
+
+The kernel command line is parsed once here. `kinit_userspace` uses the parsed
+flags: `text` starts `/sbin/init 3`; otherwise `/sbin/init` uses the image's
+configured default runlevel, including graphical startup.
 
 ### 3. Process subsystem (`ps_init`)
 

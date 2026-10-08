@@ -132,7 +132,7 @@ tools/guest/setup.sh "$kernel_file" || { echo "Error: failed to set up guest dis
 
 setup_nat
 
-$_priviledge qemu-system-i386 -cpu "$_cpu" \
+$_priviledge qemu-system-x86_64 -cpu "$_cpu" \
 	-smp "$_smp" \
 	-display $_window \
 	-m $_ramsize \

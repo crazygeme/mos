@@ -49,7 +49,7 @@ make ARCH=x64                 # AMD64 release -> out/x64/release/
 make ARCH=x64 BUILD=debug      # AMD64 debug -> out/x64/debug/
 ./run.sh                      # build and boot AMD64 release with Red Hat 9
 ./run.sh arch=x86              # build and boot x86 release with Red Hat 9
-./run.sh bash                  # boot directly into bash
+./run.sh text                  # boot through init to a text login (runlevel 3)
 ./run.sh debug                 # boot AMD64 debug, paused for GDB on port 8888
 ./run.sh test kvm              # build and boot AMD64 tests with KVM
 ```
@@ -83,7 +83,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Virtual Memory](doc/mm_virtual.md)         | Page table management, VM region map, mmap/munmap, demand paging, CoW, page cache                                |
 | [Process & Scheduler](doc/ps.md)            | MPRQ, context switch, fork/exit/waitpid, signals, synchronization primitives                                     |
 | [Virtual File System](doc/vfs.md)           | Inode/file object model, mount tree, fs type registry, fd API, ext4 backend, loop device                         |
-| [TTY / PTY](doc/tty.md)                     | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, bash spawner                          |
+| [TTY / PTY](doc/tty.md)                     | Virtual consoles, line discipline (termios/ANSI), PTY pairs, VT switching, userspace login terminals                          |
 | [Devices and Drivers](doc/devices.md) | PCI discovery, driver matching, initialization, and `/dev` / `/sys` ownership |
 | [Framebuffer / VGA](doc/vga.md)             | fb_drv_t interface, Bochs/VBE driver, VMware SVGA2 driver, font rendering, cell model                            |
 | [X Bring-Up Requirements](doc/x_bringup.md) | Practical checklist for building the kernel features needed to boot an old Linux/XFree86-style graphical desktop |

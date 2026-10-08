@@ -609,13 +609,14 @@ static void prepare_interactive_userspace(task_struct *cur)
  *        fd 0 — /dev/tty1 O_RDONLY (keyboard input)
  *        fd 1 — /dev/tty1 O_WRONLY (terminal output)
  *        fd 2 — /dev/tty1 O_WRONLY (terminal error output)
- *   3. exec /bin/bash as the init process.
+ *   3. exec /sbin/init, or the test runner in test mode.
  */
 static void kinit_userspace()
 {
-	const char *devault_argv[] = { "/sbin/init", NULL, NULL };
+	const char *default_argv[] = {
+		"/sbin/init", TestControl.text ? "3" : NULL, NULL
+	};
 	const char *default_envp[] = { "TERM=linux", NULL };
-	const char *user_argv[] = { "/bin/bash", "-l", NULL };
 	const char *test_bash_argv[] = {
 		"/bin/bash",
 		"-c",
@@ -625,32 +626,12 @@ static void kinit_userspace()
 	const char *user_envp[] = { "PATH=/bin:/usr/bin:/sbin", "TERM=linux",
 				    "HOME=/root", "LANG=en_US", NULL };
 	task_struct *cur = CURRENT_TASK();
-	const char **argv = devault_argv;
+	const char **argv = default_argv;
 	const char **envp = default_envp;
 	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + KERNEL_TASK_BYTES;
-	const char *arg = g_cmdline;
 
 	/* The initial userspace process has no userspace parent. */
 	cur->ppid = 0;
-
-	/* Pass an explicit supported runlevel to SysV init. */
-	while (*arg) {
-		const char *end;
-		while (*arg == ' ' || *arg == '\t')
-			arg++;
-		end = arg;
-		while (*end && *end != ' ' && *end != '\t')
-			end++;
-		if (end - arg == 1 && (*arg == '3' || *arg == '5'))
-			devault_argv[1] = *arg == '3' ? "3" : "5";
-		arg = end;
-	}
-
-	if (TestControl.bash) {
-		argv = user_argv;
-		envp = user_envp;
-		prepare_interactive_userspace(cur);
-	}
 
 	if (TestControl.test) {
 		argv = test_bash_argv;

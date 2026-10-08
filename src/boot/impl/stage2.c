@@ -155,8 +155,8 @@ static void parse_kernel_cmdline()
 			TestControl.verbose = TEST_LOG_TRACE;
 		else if (strcmp(token, "verbose=2") == 0)
 			TestControl.verbose = TEST_LOG_INFO;
-		else if (strcmp(token, "bash") == 0)
-			TestControl.bash = 1;
+		else if (strcmp(token, "text") == 0)
+			TestControl.text = 1;
 		else if (strcmp(token, "test") == 0)
 			TestControl.test = 1;
 

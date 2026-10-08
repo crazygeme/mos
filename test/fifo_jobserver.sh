@@ -24,8 +24,14 @@ int main(int argc, char **argv)
     long n;
     int reader, writer;
 
+    CHECK(argc == 2);
+    if (geteuid() == 0) {
+        CHECK(chown(argv[1], 65534, 65534) == 0);
+        CHECK(setgid(65534) == 0);
+        CHECK(setuid(65534) == 0);
+    }
     CHECK(geteuid() != 0);
-    CHECK(argc == 2 && chdir(argv[1]) == 0);
+    CHECK(chdir(argv[1]) == 0);
     n = syscall(SYS_getcwd, cwd, sizeof(cwd));
     CHECK(n > 0 && n == (long)strlen(argv[1]) + 1);
     CHECK(strcmp(cwd, argv[1]) == 0);
@@ -48,11 +54,15 @@ int main(int argc, char **argv)
     writer = open("fifo", O_WRONLY);
     CHECK(writer >= 0 && write(writer, "+", 1) == 1);
     CHECK(read(reader, &token, 1) == 1 && token == '+');
-    CHECK(close(writer) == 0 && close(reader) == 0);
     CHECK(unlink("fifo") == 0);
+    errno = 0;
+    CHECK(stat("fifo", &st) == -1 && errno == ENOENT);
+    CHECK(write(writer, "-", 1) == 1);
+    CHECK(read(reader, &token, 1) == 1 && token == '-');
+    CHECK(close(writer) == 0 && close(reader) == 0);
     puts("FIFO jobserver and getcwd checks passed.");
     return 0;
 }
 EOF
-gcc -Wall -Wextra -O2 "$BASE/probe.c" -o "$BASE/probe"
+gcc -Wall -O2 "$BASE/probe.c" -o "$BASE/probe"
 "$BASE/probe" "$BASE"

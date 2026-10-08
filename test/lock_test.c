@@ -12,6 +12,7 @@
 #include <lib/lock.h>
 #include <int/int.h>
 #include <ps/ps.h>
+#include <ps/smp.h>
 #include <test/test.h>
 
 /* ── spinlock ────────────────────────────────────────────────────── */
@@ -322,10 +323,104 @@ KTEST(lock, notify_without_waiter_does_not_schedule)
 	cond_t event;
 	cond_init(&event, 1);
 	int irq = int_intr_disable();
-	unsigned before = task_schedule_count;
+	unsigned before =
+		__atomic_load_n(&task_schedule_count, __ATOMIC_RELAXED);
+	unsigned switches = current->stats->total_switches;
 	cond_notify(&event);
-	EXPECT_EQ(task_schedule_count, before);
+	EXPECT_EQ(current->stats->total_switches, switches);
+	/* Other CPUs may schedule while this task has interrupts masked. */
+	if (smp_cpu_count() == 1)
+		EXPECT_EQ(__atomic_load_n(&task_schedule_count,
+					  __ATOMIC_RELAXED),
+			  before);
 	EXPECT_EQ(event.base.lock, 0u);
+	int_intr_setlevel(irq);
+	return 0;
+}
+
+KTEST(lock, rmutex_nested_release)
+{
+	rmutex_t m;
+	rmutex_init(&m);
+	rmutex_lock(&m);
+	rmutex_lock(&m);
+	EXPECT_EQ(m.depth, 2u);
+	rmutex_unlock(&m);
+	EXPECT_EQ(m.depth, 1u);
+	EXPECT_EQ(m.base.lock, 1u);
+	EXPECT_EQ(m.holder, current->psid);
+	rmutex_unlock(&m);
+	EXPECT_EQ(m.base.lock, 0u);
+	EXPECT_EQ(m.holder, 0u);
+	EXPECT_EQ(m.base.waiters, 0u);
+	return 0;
+}
+
+KTEST(lock, semaphore_consumes_each_permit)
+{
+	sem_t s;
+	sem_init(&s, 2);
+	sem_wait(&s);
+	sem_wait(&s);
+	EXPECT_EQ(s.count, 0);
+	sem_post(&s);
+	sem_wait(&s);
+	EXPECT_EQ(s.count, 0);
+	EXPECT_EQ(s.waiters, 0u);
+	return 0;
+}
+
+KTEST(lock, polling_variants_publish_and_consume)
+{
+	cond_t c;
+	sem_t s;
+	cond_init(&c, 1);
+	sem_init(&s, 0);
+	int irq = int_intr_disable();
+	cond_notify_at_intr(&c);
+	cond_wait_at_intr(&c);
+	EXPECT_EQ(c.base.lock, 1u);
+	sem_post_at_intr(&s);
+	sem_wait_at_intr(&s);
+	EXPECT_EQ(s.count, 0);
+	int_intr_setlevel(irq);
+	return 0;
+}
+
+KTEST(lock, rwlock_uncontended_write_unlock_does_not_schedule)
+{
+	extern unsigned task_schedule_count;
+	rwlock_t rw;
+	rwlock_init(&rw);
+	int irq = int_intr_disable();
+	unsigned before =
+		__atomic_load_n(&task_schedule_count, __ATOMIC_RELAXED);
+	unsigned switches = current->stats->total_switches;
+	rwlock_write_lock(&rw);
+	rwlock_write_unlock(&rw);
+	EXPECT_EQ(current->stats->total_switches, switches);
+	if (smp_cpu_count() == 1)
+		EXPECT_EQ(__atomic_load_n(&task_schedule_count,
+					  __ATOMIC_RELAXED),
+			  before);
+	EXPECT_EQ(rw.state, 0u);
+	int_intr_setlevel(irq);
+	return 0;
+}
+
+KTEST(lock, spinlock_restores_nested_irq_state)
+{
+	spinlock_t outer, inner;
+	int outer_irq, inner_irq;
+	spinlock_init(&outer);
+	spinlock_init(&inner);
+	int irq = int_intr_disable();
+	spinlock_lock(&outer, &outer_irq);
+	spinlock_lock(&inner, &inner_irq);
+	EXPECT_EQ(outer_irq, 0);
+	EXPECT_EQ(inner_irq, 0);
+	spinlock_unlock(&inner, inner_irq);
+	spinlock_unlock(&outer, outer_irq);
 	int_intr_setlevel(irq);
 	return 0;
 }

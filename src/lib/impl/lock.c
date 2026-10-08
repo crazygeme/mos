@@ -32,18 +32,25 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 	/* Caller-local state: this store needs no atomic read/modify/write. */
 	*saved_irq = int_intr_disable();
 
-	/* Fast path: optimistically try once before entering the retry loop.
-	 * On an uncontended lock this avoids the HLT overhead entirely. */
+	/* Fast path: one acquire operation suffices without contention. */
 	if (LIKELY(__atomic_exchange_n(&lock->lock, 1, __ATOMIC_ACQUIRE) == 0))
 		goto locked;
 
-	/* Slow path: stay in a true spin loop. We already disabled interrupts
-	 * above, so HLT here can deadlock the CPU forever if IF stays clear. */
-	do {
-		smp_tlb_poll();
-		PAUSE();
-	} while (__atomic_load_n(&lock->lock, __ATOMIC_RELAXED) != 0 ||
-		 __atomic_exchange_n(&lock->lock, 1, __ATOMIC_ACQUIRE) != 0);
+	/* Read-only polling avoids bouncing the cache line while held. A
+	 * bounded backoff also spreads out competing acquisitions. Keep
+	 * servicing shootdowns on every pause while interrupts are disabled. */
+	unsigned backoff = 1;
+	for (;;) {
+		for (unsigned i = 0; i < backoff; i++) {
+			smp_tlb_poll();
+			PAUSE();
+		}
+		if (__atomic_load_n(&lock->lock, __ATOMIC_RELAXED) == 0 &&
+		    __atomic_exchange_n(&lock->lock, 1, __ATOMIC_ACQUIRE) == 0)
+			break;
+		if (backoff < 32)
+			backoff <<= 1;
+	}
 
 locked:
 	lock->holder = func;
@@ -54,7 +61,7 @@ void spinlock_unlock(spinlock_t *lock, int irq)
 	if (!lock->inited)
 		return;
 
-	lock->holder = 0xff;
+	lock->holder = (const char *)0xff;
 	__atomic_store_n(&lock->lock, 0, __ATOMIC_RELEASE);
 	int_intr_setlevel(irq);
 }
@@ -66,10 +73,8 @@ void spinlock_unlock(spinlock_t *lock, int irq)
 static void lock_init(lock_base *b, unsigned int initstat)
 {
 	b->lock = initstat;
+	b->waiters = 0;
 	list_init(&b->wait_list);
-	/* The wait_lock itself must not disable interrupts; cond_notify and
-	 * mutex_unlock may be called from contexts where interrupts are
-	 * already managed by an outer spinlock. */
 	spinlock_init(&b->wait_lock);
 }
 
@@ -85,60 +90,62 @@ static int lock_wake_one_locked(list_entry *wait_list)
 	if (list_is_empty(wait_list))
 		return 0;
 
-	entry = list_remove_tail(wait_list);
+	entry = list_remove_head(wait_list);
 	task = container_of(entry, task_struct, ps_list);
 	ps_put_to_ready_queue(task);
 	return 1;
 }
 
-/*
- * Acquire binary lock @s, sleeping if it is already taken.
- *
- * Lost-wakeup fix: the lock state is re-checked while holding wait_lock
- * before the current task is enqueued.  The paired release in
- * lock_base_release_locked also runs under wait_lock, so one of these two
- * orderings always holds:
- *
- *   Acquirer sees lock==0 on the inner CAS  -> returns without sleeping
- *   Acquirer enqueues before releaser scans -> releaser wakes acquirer
- */
+/* Avoid an atomic write when an already-owned lock is being probed. */
+static int lock_try_acquire(lock_base *s)
+{
+	unsigned int expected = 0;
+	return __atomic_load_n(&s->lock, __ATOMIC_RELAXED) == 0 &&
+	       __atomic_compare_exchange_n(&s->lock, &expected, 1, 0,
+					   __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+}
+
+/* Registration precedes the inner state check. Paired sequentially
+ * consistent operations in release prevent both sides from missing each
+ * other; the queue lock then serializes enqueue with dequeue. Registrations
+ * include woken tasks until they acquire or abandon their wait. */
+static int lock_try_acquire_registered(lock_base *s)
+{
+	unsigned int expected = 0;
+	return __atomic_compare_exchange_n(&s->lock, &expected, 1, 0,
+					   __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
 static void lock_base_acquire(lock_base *s, const char *func)
 {
+	if (LIKELY(lock_try_acquire(s)))
+		return;
+
 	task_struct *cur = CURRENT_TASK();
 	int irq;
-
-	while (1) {
-		/* Fast path: uncontended. */
-		if (__sync_lock_test_and_set(&s->lock, 1) == 0)
-			return;
-
-		/* Slow path: take wait_lock to avoid a lost wakeup. */
+	__atomic_add_fetch(&s->waiters, 1, __ATOMIC_SEQ_CST);
+	for (;;) {
 		spinlock_lock(&s->wait_lock, &irq);
-
-		/* Re-check: lock may have been released while we took wait_lock. */
-		if (__sync_lock_test_and_set(&s->lock, 1) == 0) {
+		if (lock_try_acquire_registered(s)) {
+			__atomic_sub_fetch(&s->waiters, 1, __ATOMIC_SEQ_CST);
 			spinlock_unlock(&s->wait_lock, irq);
 			return;
 		}
-
-		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
+		ps_put_to_wait_queue(cur, &s->wait_list, func);
 		spinlock_unlock(&s->wait_lock, irq);
 		task_sched();
-		/* After wakeup, retry from the top of the loop. */
 	}
 }
 
-/*
- * Release binary lock @s and wake one waiter.
- * Caller must hold s->wait_lock; must unlock it after returning.
- *
- * The lock word is cleared first so that when the woken task retries the
- * CAS in lock_base_acquire it immediately succeeds.
- */
-static int lock_base_release_locked(lock_base *s)
+static void lock_base_release(lock_base *s)
 {
-	__sync_lock_release(&s->lock);
-	return lock_wake_one_locked(&s->wait_list);
+	int irq;
+	__atomic_store_n(&s->lock, 0, __ATOMIC_SEQ_CST);
+	if (LIKELY(__atomic_load_n(&s->waiters, __ATOMIC_SEQ_CST) == 0))
+		return;
+	spinlock_lock(&s->wait_lock, &irq);
+	lock_wake_one_locked(&s->wait_list);
+	spinlock_unlock(&s->wait_lock, irq);
 }
 
 /* ===========================================================================
@@ -161,18 +168,22 @@ int _cond_wait(cond_t *s, const char *func, int interruptible)
 	lock_base *b = (lock_base *)&s->base;
 	int irq;
 
-	while (1) {
-		if (__sync_lock_test_and_set(&b->lock, 1) == 0)
-			return 0;
+	if (LIKELY(lock_try_acquire(b)))
+		return 0;
 
+	__atomic_add_fetch(&b->waiters, 1, __ATOMIC_SEQ_CST);
+	for (;;) {
 		spinlock_lock(&b->wait_lock, &irq);
-		if (__sync_lock_test_and_set(&b->lock, 1) == 0) {
+		if (lock_try_acquire_registered(b)) {
+			__atomic_sub_fetch(&b->waiters, 1, __ATOMIC_SEQ_CST);
 			spinlock_unlock(&b->wait_lock, irq);
 			return 0;
 		}
 		if (interruptible) {
 			if (ps_prepare_interruptible_wait(cur, &b->wait_list, 0,
 							  func) < 0) {
+				__atomic_sub_fetch(&b->waiters, 1,
+						   __ATOMIC_SEQ_CST);
 				spinlock_unlock(&b->wait_lock, irq);
 				return -1;
 			}
@@ -184,30 +195,35 @@ int _cond_wait(cond_t *s, const char *func, int interruptible)
 
 		if (interruptible)
 			ps_finish_timed_wait(cur);
-		if (interruptible && ps_interrupting_signals(cur))
+		if (interruptible && ps_interrupting_signals(cur)) {
+			/* A signalled waiter may have consumed the only wakeup.
+			 * Pass it on if the event is still available. */
+			spinlock_lock(&b->wait_lock, &irq);
+			__atomic_sub_fetch(&b->waiters, 1, __ATOMIC_SEQ_CST);
+			if (__atomic_load_n(&b->lock, __ATOMIC_ACQUIRE) == 0)
+				lock_wake_one_locked(&b->wait_list);
+			spinlock_unlock(&b->wait_lock, irq);
 			return -1;
+		}
 	}
 }
 
 /* Re-arm the event so the next cond_wait will block (lock = 1). */
 void cond_reset(cond_t *s)
 {
-	__sync_lock_test_and_set(&s->base.lock, 1);
+	__atomic_store_n(&s->base.lock, 1, __ATOMIC_RELAXED);
 }
 
 /* Fire the event: clear the lock and wake one sleeping waiter. */
 void cond_notify(cond_t *s)
 {
-	int irq;
-	spinlock_lock(&s->base.wait_lock, &irq);
-	lock_base_release_locked((lock_base *)&s->base);
-	spinlock_unlock(&s->base.wait_lock, irq);
+	lock_base_release((lock_base *)&s->base);
 }
 
 /* Interrupt-context variants: poll instead of sleep. */
 void cond_wait_at_intr(cond_t *s)
 {
-	while (__sync_lock_test_and_set(&s->base.lock, 1) == 1) {
+	while (!lock_try_acquire((lock_base *)&s->base)) {
 		smp_tlb_poll();
 		PAUSE();
 	}
@@ -215,7 +231,7 @@ void cond_wait_at_intr(cond_t *s)
 
 void cond_notify_at_intr(cond_t *s)
 {
-	__sync_lock_release(&s->base.lock);
+	__atomic_store_n(&s->base.lock, 0, __ATOMIC_RELEASE);
 }
 
 /* ===========================================================================
@@ -225,33 +241,29 @@ void cond_notify_at_intr(cond_t *s)
 void mutex_init(mutex_t *m)
 {
 	lock_init((lock_base *)&m->base, 0);
-	m->holder = 0;
+	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
+	m->holder_func = NULL;
 }
 
 void _mutex_lock(mutex_t *m, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
 	lock_base_acquire((lock_base *)&m->base, func);
-	m->holder = cur->psid;
+	__atomic_store_n(&m->holder, cur->psid, __ATOMIC_RELAXED);
 	m->holder_func = func;
 }
 
 void mutex_unlock(mutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
-	int irq;
 
 	if (m->holder != cur->psid)
 		DIE();
 
-	m->holder = 0;
+	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
 	m->holder_func = NULL;
 
-	/* Release the lock and wake the next waiter atomically under
-	 * wait_lock so that no wakeup is lost between the two steps. */
-	spinlock_lock(&m->base.wait_lock, &irq);
-	lock_base_release_locked((lock_base *)&m->base);
-	spinlock_unlock(&m->base.wait_lock, irq);
+	lock_base_release((lock_base *)&m->base);
 }
 
 /* ===========================================================================
@@ -261,7 +273,7 @@ void mutex_unlock(mutex_t *m)
 void rmutex_init(rmutex_t *m)
 {
 	lock_init((lock_base *)&m->base, 0);
-	m->holder = 0;
+	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
 	m->depth = 0;
 	m->holder_func = NULL;
 }
@@ -271,13 +283,13 @@ void _rmutex_lock(rmutex_t *m, const char *func)
 	task_struct *cur = CURRENT_TASK();
 
 	/* Re-entrant: same task locks again, just deepen. */
-	if (m->holder == cur->psid) {
+	if (__atomic_load_n(&m->holder, __ATOMIC_RELAXED) == cur->psid) {
 		m->depth++;
 		return;
 	}
 
 	lock_base_acquire((lock_base *)&m->base, func);
-	m->holder = cur->psid;
+	__atomic_store_n(&m->holder, cur->psid, __ATOMIC_RELAXED);
 	m->depth = 1;
 	m->holder_func = func;
 }
@@ -285,7 +297,6 @@ void _rmutex_lock(rmutex_t *m, const char *func)
 void rmutex_unlock(rmutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
-	int irq;
 
 	if (m->holder != cur->psid)
 		DIE();
@@ -293,12 +304,10 @@ void rmutex_unlock(rmutex_t *m)
 	if (--m->depth > 0)
 		return;
 
-	m->holder = 0;
+	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
 	m->holder_func = NULL;
 
-	spinlock_lock(&m->base.wait_lock, &irq);
-	lock_base_release_locked((lock_base *)&m->base);
-	spinlock_unlock(&m->base.wait_lock, irq);
+	lock_base_release((lock_base *)&m->base);
 }
 
 /* ===========================================================================
@@ -310,95 +319,112 @@ void rmutex_unlock(rmutex_t *m)
  *                          else:               wake all waiting readers
  * ===========================================================================*/
 
+#define RW_WRITER (1U << 30)
+#define RW_PENDING (1U << 31)
+#define RW_READERS (RW_WRITER - 1)
+
 void rwlock_init(rwlock_t *rw)
 {
-	rw->readers = 0;
-	rw->writer = 0;
+	rw->state = 0;
 	rw->writers_waiting = 0;
 	list_init((list_entry *)&rw->reader_wait_list);
 	list_init((list_entry *)&rw->writer_wait_list);
 	spinlock_init(&rw->wait_lock);
 }
 
+static int rwlock_try_read(rwlock_t *rw)
+{
+	unsigned int state = __atomic_load_n(&rw->state, __ATOMIC_RELAXED);
+	while (!(state & (RW_WRITER | RW_PENDING))) {
+		if ((state & RW_READERS) == RW_READERS)
+			DIE();
+		if (__atomic_compare_exchange_n(&rw->state, &state, state + 1,
+						1, __ATOMIC_ACQUIRE,
+						__ATOMIC_RELAXED))
+			return 1;
+		PAUSE();
+	}
+	return 0;
+}
+
 void _rwlock_read_lock(rwlock_t *rw, const char *func)
 {
+	if (LIKELY(rwlock_try_read(rw)))
+		return;
+
 	task_struct *cur = CURRENT_TASK();
 	int irq;
-
 	spinlock_lock(&rw->wait_lock, &irq);
-
-	/* Block if a writer holds the lock or a writer is waiting (write-
-	 * preferring: we queue behind the writer to prevent its starvation). */
-	while (rw->writer || rw->writers_waiting > 0) {
+	while (!rwlock_try_read(rw)) {
 		ps_put_to_wait_queue(cur, (list_entry *)&rw->reader_wait_list,
 				     func);
 		spinlock_unlock(&rw->wait_lock, irq);
 		task_sched();
 		spinlock_lock(&rw->wait_lock, &irq);
 	}
-
-	rw->readers++;
 	spinlock_unlock(&rw->wait_lock, irq);
 }
 
 void rwlock_read_unlock(rwlock_t *rw)
 {
+	unsigned int state =
+		__atomic_fetch_sub(&rw->state, 1, __ATOMIC_RELEASE);
+	/* Only the last reader with a pending writer needs the queue lock. */
+	if (LIKELY(state != (RW_PENDING | 1)))
+		return;
+
 	int irq;
 	spinlock_lock(&rw->wait_lock, &irq);
-
-	rw->readers--;
-
-	/* Last reader leaving: hand off to a waiting writer if one exists. */
-	if (rw->readers == 0 && rw->writers_waiting > 0)
+	if (__atomic_load_n(&rw->state, __ATOMIC_ACQUIRE) == RW_PENDING)
 		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
-
 	spinlock_unlock(&rw->wait_lock, irq);
 }
 
 void _rwlock_write_lock(rwlock_t *rw, const char *func)
 {
+	unsigned int state = 0;
+	if (LIKELY(__atomic_compare_exchange_n(&rw->state, &state, RW_WRITER, 0,
+					       __ATOMIC_ACQUIRE,
+					       __ATOMIC_RELAXED)))
+		return;
+
 	task_struct *cur = CURRENT_TASK();
 	int irq;
-
 	spinlock_lock(&rw->wait_lock, &irq);
 	rw->writers_waiting++;
-
-	/* Wait until the lock is completely idle (no readers, no other writer). */
-	while (rw->writer || rw->readers > 0) {
+	/* Close the reader gate in the same word used by reader CAS. Readers
+	 * already admitted drain normally; later readers cannot bypass us. */
+	__atomic_fetch_or(&rw->state, RW_PENDING, __ATOMIC_RELAXED);
+	for (;;) {
+		state = RW_PENDING;
+		if (__atomic_compare_exchange_n(
+			    &rw->state, &state, RW_PENDING | RW_WRITER, 0,
+			    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+			break;
 		ps_put_to_wait_queue(cur, (list_entry *)&rw->writer_wait_list,
 				     func);
 		spinlock_unlock(&rw->wait_lock, irq);
 		task_sched();
 		spinlock_lock(&rw->wait_lock, &irq);
 	}
-
-	rw->writers_waiting--;
-	rw->writer = 1;
+	if (--rw->writers_waiting == 0)
+		__atomic_fetch_and(&rw->state, ~RW_PENDING, __ATOMIC_RELAXED);
 	spinlock_unlock(&rw->wait_lock, irq);
 }
 
 void rwlock_write_unlock(rwlock_t *rw)
 {
 	int irq;
-
 	spinlock_lock(&rw->wait_lock, &irq);
-
-	rw->writer = 0;
-
+	__atomic_fetch_and(&rw->state, ~RW_WRITER, __ATOMIC_RELEASE);
 	if (rw->writers_waiting > 0) {
-		/* Prefer waking a waiting writer to avoid writer starvation. */
 		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
 	} else {
-		/* No writers pending: release all queued readers simultaneously
-		 * so they can proceed concurrently. */
 		while (lock_wake_one_locked(
 			(list_entry *)&rw->reader_wait_list))
 			;
 	}
-
 	spinlock_unlock(&rw->wait_lock, irq);
-	/* Yield so newly woken tasks get CPU time without waiting for a tick. */
-	task_sched();
 }
 
 /* ===========================================================================
@@ -408,69 +434,61 @@ void rwlock_write_unlock(rwlock_t *rw)
 void sem_init(sem_t *s, int count)
 {
 	s->count = count;
+	s->waiters = 0;
 	list_init((list_entry *)&s->wait_list);
 	spinlock_init((spinlock_t *)&s->wait_lock);
 }
 
-/*
- * Decrement the semaphore count.  If the count is already zero, sleep
- * until sem_post increments it.
- *
- * Lost-wakeup fix: count is re-checked under wait_lock before sleeping,
- * mirroring the same pattern used in lock_base_acquire.
- */
+static inline int sem_try_wait(sem_t *s, int order)
+	__attribute__((always_inline));
+static inline int sem_try_wait(sem_t *s, int order)
+{
+	int count = __atomic_load_n(&s->count, order);
+	while (count > 0) {
+		if (__atomic_compare_exchange_n(&s->count, &count, count - 1, 1,
+						order, order))
+			return 1;
+		PAUSE();
+	}
+	return 0;
+}
+
 void _sem_wait(sem_t *s, const char *func)
 {
+	if (LIKELY(sem_try_wait(s, __ATOMIC_ACQUIRE)))
+		return;
+
 	task_struct *cur = CURRENT_TASK();
 	int irq;
-
-	while (1) {
+	__atomic_add_fetch(&s->waiters, 1, __ATOMIC_SEQ_CST);
+	for (;;) {
 		spinlock_lock((spinlock_t *)&s->wait_lock, &irq);
-
-		if (s->count > 0) {
-			s->count--;
+		if (sem_try_wait(s, __ATOMIC_SEQ_CST)) {
+			__atomic_sub_fetch(&s->waiters, 1, __ATOMIC_SEQ_CST);
 			spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 			return;
 		}
-
 		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
 		spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 		task_sched();
 	}
 }
 
-/*
- * Increment the semaphore count.  Wake one sleeper if any are queued.
- */
 void sem_post(sem_t *s)
 {
 	int irq;
+	__atomic_fetch_add(&s->count, 1, __ATOMIC_SEQ_CST);
+	if (LIKELY(__atomic_load_n(&s->waiters, __ATOMIC_SEQ_CST) == 0))
+		return;
 	spinlock_lock((spinlock_t *)&s->wait_lock, &irq);
-	s->count++;
 	lock_wake_one_locked((list_entry *)&s->wait_list);
 	spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 }
 
-/*
- * Interrupt-compatible pair.
- *
- * sem_wait_at_intr: poll by yielding via task_sched() without entering the
- * wait queue.  The task stays in the ready queue so sem_post_at_intr's
- * atomic increment is sufficient to unblock it on the next reschedule.
- *
- * sem_post_at_intr: only atomically increment the count.  Safe in interrupt
- * context because it never touches the wait queue or the spinlock.
- *
- * These two must always be used together; mixing with sem_wait/sem_post is
- * unsafe.
- */
+/* Polling variants deliberately do not manipulate sleeping wait queues. */
 void sem_wait_at_intr(sem_t *s)
 {
-	for (;;) {
-		int count = __atomic_load_n(&s->count, __ATOMIC_ACQUIRE);
-		if (count > 0 &&
-		    __sync_bool_compare_and_swap(&s->count, count, count - 1))
-			return;
+	while (!sem_try_wait(s, __ATOMIC_ACQUIRE)) {
 		smp_tlb_poll();
 		PAUSE();
 	}
@@ -478,5 +496,5 @@ void sem_wait_at_intr(sem_t *s)
 
 void sem_post_at_intr(sem_t *s)
 {
-	__sync_fetch_and_add(&s->count, 1);
+	__atomic_fetch_add(&s->count, 1, __ATOMIC_RELEASE);
 }

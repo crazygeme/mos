@@ -180,14 +180,16 @@ int main(void)
     file f32 = { (void *)&h32_elf, sizeof(h32_elf) };
     file f64 = { (void *)&h64_elf, sizeof(h64_elf) };
     Elf64_Ehdr decoded;
-    assert(elf_i386_format.read_header(&f32, &decoded) == 0);
+    assert(elf_i386_format.decode_header(f32.bytes, sizeof(h32_elf) - 1, &decoded) == -ENOEXEC);
+    assert(elf_amd64_format.decode_header(f64.bytes, sizeof(h64_elf) - 1, &decoded) == -ENOEXEC);
+    assert(elf_i386_format.decode_header(f32.bytes, f32.length, &decoded) == 0);
     assert(decoded.e_entry == h32_elf.e_entry && decoded.e_phnum == 1);
-    assert(elf_amd64_format.read_header(&f64, &decoded) == 0);
+    assert(elf_amd64_format.decode_header(f64.bytes, f64.length, &decoded) == 0);
     assert(decoded.e_entry == h64_elf.e_entry);
     h32_elf.e_machine = EM_X86_64;
-    assert(elf_i386_format.read_header(&f32, &decoded) == -ENOEXEC);
+    assert(elf_i386_format.decode_header(f32.bytes, f32.length, &decoded) == -ENOEXEC);
     h64_elf.e_phentsize = sizeof(Elf32_Phdr);
-    assert(elf_amd64_format.read_header(&f64, &decoded) == -ENOEXEC);
+    assert(elf_amd64_format.decode_header(f64.bytes, f64.length, &decoded) == -ENOEXEC);
 
     _Alignas(uint64_t) unsigned char stack[4096];
     char *argv[] = { "program", "arg" }, *envp[] = { "KEY=value" };

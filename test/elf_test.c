@@ -98,9 +98,19 @@ static int prepare_fixture(int elf_class)
 	ret = elf_prepare(&fixture.fp, &image);
 	EXPECT_EQ(image != NULL, ret == 0);
 	if (ret == 0)
-		EXPECT_EQ(fixture.reads, 3);
+		EXPECT_EQ(fixture.reads, 2);
 	elf_release(image);
 	EXPECT_EQ(fixture.fp.f_count, 1);
+	if (ret == 0) {
+		struct stat st;
+		fixture_getattr(&fixture.fp, &st);
+		fixture.reads = 0;
+		EXPECT_EQ(elf_prepare_header(&fixture.fp, &image, &fixture.bytes,
+					    sizeof(Elf64_Ehdr), &st), 0);
+		EXPECT_EQ(fixture.reads, 1);
+		elf_release(image);
+		EXPECT_EQ(fixture.fp.f_count, 1);
+	}
 	return ret;
 }
 

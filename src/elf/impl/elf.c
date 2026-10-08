@@ -246,7 +246,8 @@ struct elf_image {
 };
 
 /* Validate the complete load description before replacing the process image. */
-static int elf_validate(elf_image *image, char *interp)
+static int elf_validate(elf_image *image, char *interp, const void *header,
+			unsigned length, const struct stat *known_stat)
 {
 	file *fp = image->fp;
 	Elf64_Ehdr *elf = &image->header;
@@ -254,18 +255,29 @@ static int elf_validate(elf_image *image, char *interp)
 	unsigned i, table_end;
 	int entry_found = 0, headers_mapped = 0;
 
-	if (!fp || !fp->f_fop || !fp->f_fop->getattr ||
-	    fp->f_fop->getattr(fp, &st) != 0)
-		return -ENOENT;
-	inotify_file_open(fp, current->root);
-	Elf32_Ehdr h32;
-	if (elf_read(fp, 0, &h32, sizeof(h32)) != sizeof(h32) ||
-	    memcmp(h32.e_ident, "\177ELF", 4) ||
-	    h32.e_ident[EI_DATA] != ELFDATA2LSB ||
-	    h32.e_ident[EI_VERSION] != EV_CURRENT)
+	Elf64_Ehdr wire;
+	const unsigned char *ident;
+	if (known_stat) {
+		st = *known_stat;
+	} else {
+		if (!fp || !fp->f_fop || !fp->f_fop->getattr ||
+		    fp->f_fop->getattr(fp, &st) != 0)
+			return -ENOENT;
+		inotify_file_open(fp, current->root);
+	}
+	if (!header) {
+		int n = elf_read(fp, 0, &wire, sizeof(wire));
+		if (n < 0 || n > sizeof(wire))
+			return -ENOEXEC;
+		header = &wire;
+		length = n;
+	}
+	ident = header;
+	if (length < EI_NIDENT || memcmp(ident, "\177ELF", 4) ||
+	    ident[EI_DATA] != ELFDATA2LSB || ident[EI_VERSION] != EV_CURRENT)
 		return -ENOEXEC;
-	image->format = arch_elf_format(h32.e_ident[EI_CLASS]);
-	if (!image->format || image->format->read_header(fp, elf))
+	image->format = arch_elf_format(ident[EI_CLASS]);
+	if (!image->format || image->format->decode_header(header, length, elf))
 		return -ENOEXEC;
 	if (elf->e_version != EV_CURRENT || !elf->e_phnum ||
 	    (elf->e_type != ET_EXEC && elf->e_type != ET_DYN) ||
@@ -336,7 +348,8 @@ void elf_release(elf_image *image)
 }
 
 /* Retain each file and read its load description before replacing memory. */
-int elf_prepare(file *fp, elf_image **result)
+int elf_prepare_header(file *fp, elf_image **result, const void *header,
+		       unsigned length, const struct stat *known_stat)
 {
 	elf_image *image;
 	char *interp;
@@ -353,7 +366,11 @@ int elf_prepare(file *fp, elf_image **result)
 	image->fp = fp;
 	fs_get_file(fp);
 	interp = name_get();
-	ret = elf_validate(image, interp);
+	if (!interp) {
+		elf_release(image);
+		return -ENOMEM;
+	}
+	ret = elf_validate(image, interp, header, length, known_stat);
 	if (ret)
 		goto done;
 	if (image->header.e_type == ET_DYN) {
@@ -378,7 +395,7 @@ int elf_prepare(file *fp, elf_image **result)
 		memset(ld, 0, sizeof(*ld));
 		image->interpreter = ld;
 		ld->fp = fs_open_file(interp, 0, 0);
-		ret = elf_validate(ld, interp);
+		ret = elf_validate(ld, interp, NULL, 0, NULL);
 		if (!ret && (ld->header.e_type != ET_DYN ||
 			     ld->format != image->format || interp[0]))
 			ret = -ENOEXEC;
@@ -390,6 +407,11 @@ done:
 	else
 		*result = image;
 	return ret;
+}
+
+int elf_prepare(file *fp, elf_image **result)
+{
+	return elf_prepare_header(fp, result, NULL, 0, NULL);
 }
 
 /* Map verified segments; only partial-page contents require eager reads. */

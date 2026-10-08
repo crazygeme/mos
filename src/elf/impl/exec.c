@@ -45,7 +45,7 @@ static void cleanup()
 	intr_frame *frame = (intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
 					   sizeof(*frame));
 	vaddr_t new_pd;
-	int i = 0;
+	unsigned word;
 
 	if (cur->fork_flag & FORK_FLAG_VFORK) {
 		cond_notify(&cur->vfork_event);
@@ -67,9 +67,14 @@ static void cleanup()
 	vm_put(old_mm);
 
 	/* Close all O_CLOEXEC file descriptors. */
-	for (i = 0; i < MAX_FD; i++) {
-		if (cur->fds[i] && fd_bitmap_test(cur->fd_cloexec, i)) {
-			fs_close(i);
+	/* ps_unshare_fds() makes this bitmap private before cleanup. */
+	for (word = 0; cur->fd_cloexec && word < FD_BITMAP_WORDS; word++) {
+		unsigned long pending = cur->fd_cloexec[word];
+		while (pending) {
+			unsigned fd = word * FD_BITMAP_BITS + __builtin_ctzl(pending);
+			pending &= pending - 1;
+			if (fd < MAX_FD && cur->fds[fd])
+				fs_close(fd);
 		}
 	}
 
@@ -93,7 +98,7 @@ static void cleanup()
 /*
  * count_strv - count entries in a NULL-terminated string array
  *
- * Stops at a NULL pointer or an empty string, matching execve ABI convention.
+ * Empty strings are arguments; only a NULL pointer ends the vector.
  */
 static unsigned count_strv(char **v)
 {
@@ -108,27 +113,98 @@ static unsigned count_strv(char **v)
  * dup_strv - deep-copy @n strings from @v into kernel heap memory
  *
  * User-supplied pointers become invalid after cleanup() tears down the
- * address space, so every string is strdup()'d here.  Returns a
+ * address space, so every string is copied here. Returns a
  * heap-allocated array of @n strings, or NULL if @n is zero.
  * Free with free_v(). The pointer array and all strings share one allocation.
  */
 static char **dup_strv(char **v, unsigned n)
 {
-	unsigned i, bytes = 0;
+	unsigned i, bytes, lengths[32];
 	char **ret;
-	if (!n)
+	char *strings;
+	if (!n || n > UINT32_MAX / sizeof(char *))
 		return NULL;
-	for (i = 0; i < n; i++)
-		bytes += strlen(v[i]) + 1;
-	ret = kmalloc(n * sizeof(char *) + bytes);
+	bytes = n * sizeof(char *);
+	for (i = 0; i < n; i++) {
+		size_t len = strlen(v[i]) + 1;
+		if (len > UINT32_MAX - bytes)
+			return NULL;
+		if (n <= (sizeof(lengths) / sizeof(lengths[0])))
+			lengths[i] = len;
+		bytes += len;
+	}
+	ret = kmalloc(bytes);
 	if (!ret)
 		return NULL;
-	char *strings = (char *)(ret + n);
+	strings = (char *)(ret + n);
 	for (i = 0; i < n; i++) {
-		unsigned len = strlen(v[i]) + 1;
+		size_t len = n <= (sizeof(lengths) / sizeof(lengths[0])) ?
+			lengths[i] : strlen(v[i]) + 1;
+		if (len > bytes - (unsigned)(strings - (char *)ret)) {
+			kfree(ret);
+			return NULL;
+		}
 		ret[i] = strings;
 		memcpy(strings, v[i], len);
+		/* Keep copied strings terminated even if another thread changed them. */
+		strings[len - 1] = 0;
 		strings += len;
+	}
+	return ret;
+}
+
+/* Copy the interpreter prefix and argv[1..] directly into one arena, avoiding
+ * a temporary pointer vector. Prefix lengths are reused when copying. */
+static char **dup_script_argv(const char *interp, const char *interp_arg,
+			      const char *script, char **argv,
+			      unsigned user_argc, unsigned *argc)
+{
+	const char *prefix[3];
+	unsigned lengths[3], prefixes = 0, bytes = 0, i;
+	unsigned tail = user_argc ? user_argc - 1 : 0;
+	char **ret;
+	char *strings;
+
+	prefix[prefixes++] = interp;
+	if (interp_arg)
+		prefix[prefixes++] = interp_arg;
+	prefix[prefixes++] = script;
+	*argc = prefixes + tail;
+	if (*argc < tail || *argc > UINT32_MAX / sizeof(char *))
+		return NULL;
+	bytes = *argc * sizeof(char *);
+	for (i = 0; i < prefixes; i++) {
+		size_t length = strlen(prefix[i]) + 1;
+		if (length > UINT32_MAX - bytes)
+			return NULL;
+		lengths[i] = length;
+		bytes += length;
+	}
+	for (i = 1; i < user_argc; i++) {
+		size_t length = strlen(argv[i]) + 1;
+		if (length > UINT32_MAX - bytes)
+			return NULL;
+		bytes += length;
+	}
+	ret = kmalloc(bytes);
+	if (!ret)
+		return NULL;
+	strings = (char *)(ret + *argc);
+	for (i = 0; i < prefixes; i++) {
+		ret[i] = strings;
+		memcpy(strings, prefix[i], lengths[i]);
+		strings += lengths[i];
+	}
+	for (i = 1; i < user_argc; i++) {
+		size_t length = strlen(argv[i]) + 1;
+		/* User strings can change between sizing and copying. */
+		if (length > bytes - (unsigned)(strings - (char *)ret)) {
+			kfree(ret);
+			return NULL;
+		}
+		ret[prefixes + i - 1] = strings;
+		memcpy(strings, argv[i], length);
+		strings += length;
 	}
 	return ret;
 }
@@ -146,23 +222,26 @@ static char **dup_strv(char **v, unsigned n)
  * matching Linux kernel behaviour (unlike FreeBSD which splits it).  So
  * "#!/usr/bin/python -u -O" yields interp_arg = "-u -O", not two tokens.
  *
- * Caller must copy the results (e.g. with strdup) before freeing @line.
+ * @length is the number of bytes actually read; line[length] is writable.
+ * @truncated means more file data follows the read window. Reject a directive
+ * without a terminator in that window rather than use a cut-off path or arg.
+ * The returned pointers remain valid while the caller's buffer is alive.
  */
-static void parse_shebang(char *line, const char **interp,
-			  const char **interp_arg)
+static int parse_shebang(char *line, unsigned length, int truncated,
+			 const char **interp, const char **interp_arg)
 {
-	char *p, *lf, *cr;
-
-	lf = strchr(line, '\n');
-	if (lf)
-		*lf = '\0';
-	cr = strchr(line, '\r');
-	if (cr)
-		*cr = '\0';
+	char *p = line, *end = line + length;
+	while (p < end && *p && *p != '\n' && *p != '\r')
+		p++;
+	if (p == end && truncated)
+		return -ENOEXEC;
+	*p = '\0';
 
 	p = line + 2;
 	while (*p == ' ' || *p == '\t')
 		p++;
+	if (!*p)
+		return -ENOEXEC;
 	*interp = p;
 
 	while (*p && *p != ' ' && *p != '\t')
@@ -176,13 +255,11 @@ static void parse_shebang(char *line, const char **interp,
 		if (*p)
 			*interp_arg = p;
 	}
+	return 0;
 }
 
 /*
- * free_v - free a deep-copied argv/envp array previously made by
- *             save_argv() or save_envp()
- *
- * Frees each individual string and then the pointer array itself.
+ * free_v - free the single arena containing an argv/envp array and its strings.
  * Safe to call with a NULL @v (no-op).
  */
 static void free_v(char **v, unsigned size)
@@ -213,14 +290,19 @@ static int execve_common(const char *f, char **argv, char **envp,
 	elf_image *image = NULL;
 	unsigned exec_euid = cur->user->euid;
 	unsigned exec_egid = cur->user->egid;
-	int len = 64; /* max bytes to read for the first line of a script */
-	char *firstline = NULL;
+	enum { HEADER_BYTES = 64 };
+	char firstline[HEADER_BYTES + 1];
+	unsigned header_length;
+	int header_is_elf = 0;
+	const char *interp = NULL, *interp_arg = NULL;
 	if (!f) {
 		return -ENOENT;
 	}
 
 	/* resolve path into full path */
 	file_name = name_get();
+	if (!file_name)
+		return -ENOMEM;
 	resolve_path(f, file_name);
 
 	/* make script interp as first argument if file starts with #! */
@@ -250,47 +332,30 @@ static int execve_common(const char *f, char **argv, char **envp,
 
 	inotify_file_open(fp, cur->root);
 	/* read first line via VFS file ops */
-	len = len > (int)s.st_size ? (int)s.st_size : len;
-	firstline = malloc(64);
 	if (!fp->f_fop || !fp->f_fop->read) {
-		free(firstline);
 		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOENT;
 	} else {
 		loff_t pos = 0;
-		ssize_t n = fp->f_fop->read(fp, firstline, len, &pos);
+		size_t length = s.st_size < HEADER_BYTES ? s.st_size : HEADER_BYTES;
+		ssize_t n = fp->f_fop->read(fp, firstline, length, &pos);
 		if (n > 0)
 			inotify_file_event(fp, IN_ACCESS);
-		if (n < 0) {
-			free(firstline);
+		if (n < 0 || (size_t)n > length) {
 			fs_put_file(fp);
 			name_put(file_name);
 			return -ENOENT;
 		}
+		header_length = n;
+		firstline[header_length] = '\0';
 	}
-	/*
-	 * Determine binary type and build the final argc/argv/envp.
-	 *
-	 * ELF: file_name unchanged, argv/envp deep-copied as-is.
-	 *
-	 * #!: parse "#!/path/to/interp[ optional_arg]", update file_name
-	 *     to the interpreter. Linux passes the script pathname, not the
-	 *     caller's argv[0], as the first script argument:
-	 *       [interp, optional_arg?, script_path, argv[1], ...]
-	 *
-	 * After this block: file_name is the executable to load; argc/s_argv
-	 * and envc/s_envp are fully set and ready for setup_user_stack().
-	 */
-	if (firstline[0] == 0x7f && firstline[1] == 'E' &&
+	/* Identify the image before copying any user vectors. For scripts keep
+	 * file_name as the script pathname until its interpreter is validated. */
+	if (header_length >= 4 && firstline[0] == 0x7f && firstline[1] == 'E' &&
 	    firstline[2] == 'L' && firstline[3] == 'F') {
-		free(firstline);
-		firstline = NULL;
-		argc = count_strv(argv);
-		envc = count_strv(envp);
-		s_argv = dup_strv(argv, argc);
-		s_envp = dup_strv(envp, envc);
 		exec_fp = fp;
+		header_is_elf = 1;
 		if (!(fp->f_mount_flags & MS_NOSUID) &&
 		    !cur->user->ptrace_tracer) {
 			if (s.st_mode & S_ISUID)
@@ -299,62 +364,28 @@ static int execve_common(const char *f, char **argv, char **envp,
 			    (S_ISGID | S_IXGRP))
 				exec_egid = s.st_gid;
 		}
-	} else if (firstline[0] == '#' && firstline[1] == '!') {
-		const char *interp, *interp_arg;
-		unsigned shebang_argc, user_argc, j, dst;
-
-		parse_shebang(firstline, &interp, &interp_arg);
-
-		user_argc = count_strv(argv);
-		envc = count_strv(envp);
-
-		shebang_argc = 1 + (interp_arg ? 1 : 0);
-		argc = shebang_argc + 1 + (user_argc ? user_argc - 1 : 0);
-
-		/* Build the interpreter argv in one arena allocation. */
-		{
-			char **src_argv = kmalloc(argc * sizeof(char *));
-			if (!src_argv) {
-				free(firstline);
-				fs_put_file(fp);
-				name_put(file_name);
-				return -ENOMEM;
-			}
-			src_argv[0] = (char *)interp;
-			dst = 1;
-			if (interp_arg)
-				src_argv[dst++] = (char *)interp_arg;
-			src_argv[dst++] = file_name;
-			for (j = 1; j < user_argc; j++)
-				src_argv[dst++] = argv[j];
-			s_argv = dup_strv(src_argv, argc);
-			kfree(src_argv);
-		}
-		if (!s_argv) {
-			free(firstline);
+	} else if (header_length >= 2 && firstline[0] == '#' && firstline[1] == '!') {
+		int ret = parse_shebang(firstline, header_length,
+				       s.st_size > header_length, &interp, &interp_arg);
+		if (ret) {
 			fs_put_file(fp);
 			name_put(file_name);
-			return -ENOMEM;
+			return ret;
 		}
 
-		strcpy(file_name, interp);
-
-		free(firstline);
-		firstline = NULL;
+		exec_fp = fs_open_file(interp, O_RDONLY, 0);
 		fs_put_file(fp);
-		s_envp = dup_strv(envp, envc);
 	} else {
-		free(firstline);
 		fs_put_file(fp);
 		name_put(file_name);
 		return -ENOEXEC;
 	}
-
-	/* Reject invalid images before closing descriptors or replacing memory. */
-	if (!exec_fp)
-		exec_fp = fs_open_file(file_name, O_RDONLY, 0);
+	/* Reject invalid images before allocating vectors, closing descriptors,
+	 * or replacing memory. */
 	{
-		int ret = elf_prepare(exec_fp, &image);
+		int ret = header_is_elf ?
+			elf_prepare_header(exec_fp, &image, firstline, header_length, &s) :
+			elf_prepare(exec_fp, &image);
 		if (ret) {
 			if (exec_fp)
 				fs_put_file(exec_fp);
@@ -363,6 +394,26 @@ static int execve_common(const char *f, char **argv, char **envp,
 			name_put(file_name);
 			return ret;
 		}
+	}
+
+	argc = count_strv(argv);
+	envc = count_strv(envp);
+	if (header_is_elf) {
+		s_argv = dup_strv(argv, argc);
+	} else {
+		unsigned user_argc = argc;
+		s_argv = dup_script_argv(interp, interp_arg, file_name, argv,
+					 user_argc, &argc);
+		strcpy(file_name, interp);
+	}
+	s_envp = dup_strv(envp, envc);
+	if (((argc || !header_is_elf) && !s_argv) || (envc && !s_envp)) {
+		elf_release(image);
+		fs_put_file(exec_fp);
+		free_v(s_argv, argc);
+		free_v(s_envp, envc);
+		name_put(file_name);
+		return -ENOMEM;
 	}
 
 	/* exec owns a private table before applying FD_CLOEXEC. */

@@ -1,8 +1,10 @@
-static int read_header(file *fp, Elf64_Ehdr *output)
+static int decode_header(const void *bytes, unsigned length, Elf64_Ehdr *output)
 {
 	ELF_HEADER input;
-	if (elf_read(fp, 0, &input, sizeof(input)) != sizeof(input) ||
-	    input.e_machine != ELF_MACHINE || input.e_ehsize != sizeof(input) ||
+	if (length < sizeof(input))
+		return -ENOEXEC;
+	memcpy(&input, bytes, sizeof(input));
+	if (input.e_machine != ELF_MACHINE || input.e_ehsize != sizeof(input) ||
 	    input.e_phentsize != sizeof(ELF_PHDR))
 		return -ENOEXEC;
 	memset(output, 0, sizeof(*output));

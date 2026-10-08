@@ -6,6 +6,8 @@
 #include <ps/ps.h>
 #include <macro.h>
 #include <mm/mmu.h>
+#include <ps/cpu_local.h>
+#include <ps/smp.h>
 
 #define _VDSO __attribute__((used, section(".vdso")))
 extern const unsigned __vdso_start;
@@ -16,6 +18,25 @@ _VDSO NAKED void __kernel_vsyscall(void)
 	asm volatile("int $0x80\n\t"
 		     "ret");
 }
+
+/* Linux i386 vDSO convention: EBP points at saved EBP/EDX/ECX.
+ * Keep INT immediately before the landing pad for syscall restart tools. */
+_VDSO NAKED void __kernel_sysenter(void)
+{
+	asm volatile("pushl %ecx\n\t"
+		     "pushl %edx\n\t"
+		     "pushl %ebp\n\t"
+		     "movl %esp, %ebp\n\t"
+		     "sysenter\n\t"
+		     "int $0x80\n\t"
+		     ".global __kernel_sysenter_return\n"
+		     "__kernel_sysenter_return:\n\t"
+		     "popl %ebp\n\t"
+		     "popl %edx\n\t"
+		     "popl %ecx\n\t"
+		     "ret");
+}
+extern void __kernel_sysenter_return(void);
 
 static unsigned mm_vdso_size(void)
 {
@@ -44,6 +65,12 @@ static unsigned mm_vdso_base(void)
 	 * placing it in low memory created an NPTL-only regression.
 	 */
 	return USER_ZONE_END - page_count * PAGE_SIZE;
+}
+
+unsigned mm_vdso_sysenter_return(void)
+{
+	return mm_vdso_base() +
+	       ((uintptr_t)__kernel_sysenter_return - (uintptr_t)&__vdso_start);
 }
 
 void mm_vdso_map()
@@ -81,7 +108,10 @@ unsigned mm_vdso_fastcall_entry(void)
 	if (base == 0)
 		return 0;
 
-	return base + ((unsigned)&__kernel_vsyscall - vdso_start);
+	uintptr_t entry = arch_cpu_local()->sysenter_enabled ?
+				  (uintptr_t)__kernel_sysenter :
+				  (uintptr_t)__kernel_vsyscall;
+	return base + (entry - vdso_start);
 }
 
 int mm_vdso_region(int phy)

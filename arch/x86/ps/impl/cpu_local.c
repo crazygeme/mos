@@ -5,6 +5,8 @@
 #include <mm/mm.h>
 #include <ps/smp.h>
 
+extern void sysenter_entry(void);
+
 void arch_cpu_local_init(struct smp_cpu *cpu)
 {
 	unsigned long long operand;
@@ -24,6 +26,18 @@ void arch_cpu_local_init(struct smp_cpu *cpu)
 	cpu->loaded_ldt_valid = 0;
 	operand = MAKE_GDTR_OPERAND(sizeof(cpu->gdt) - 1, cpu->gdt);
 	SET_GDT(operand);
+	unsigned a, b, c, d;
+	arch_cpu_cpuid(1, 0, &a, &b, &c, &d);
+	cpu->sysenter_enabled = (d >> 11) & 1;
+	if (cpu->sysenter_enabled) {
+		cpu->gdt[SYSENTER_CODE_SELECTOR / 8] =
+			cpu->gdt[KERNEL_CODE_SELECTOR / 8];
+		cpu->gdt[SYSENTER_CODE_SELECTOR / 8 + 1] =
+			cpu->gdt[KERNEL_DATA_SELECTOR / 8];
+		arch_cpu_write_msr(0x174, SYSENTER_CODE_SELECTOR, 0);
+		arch_cpu_write_msr(0x175, cpu->tss.tss.esp0, 0);
+		arch_cpu_write_msr(0x176, (uintptr_t)sysenter_entry, 0);
+	}
 	asm volatile("movw %0, %%fs"
 		     :
 		     : "rm"((unsigned short)CPU_LOCAL_SELECTOR)

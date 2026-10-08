@@ -22,6 +22,7 @@ struct smp_cpu {
 	task_struct *task;
 	/* Protected by the TLB request lock after CPU publication. */
 	addr_space_t active_root;
+	unsigned sysenter_enabled;
 	/* Local IRQs protect loaded segment state against CPU migration.
 	 * The per-CPU GDT itself caches installed TLS descriptors. */
 	uintptr_t loaded_ldt_base;

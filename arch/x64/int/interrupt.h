@@ -34,6 +34,16 @@ _Static_assert(sizeof(struct arch_descriptor_pointer) == 10,
 	       "IA-32e table pointer size");
 _Static_assert(sizeof(arch_intr_frame) == 224, "interrupt entry save layout");
 
+/* Fast-return assembly compares these fields before restoring registers. */
+_Static_assert(__builtin_offsetof(arch_intr_frame, r11) == 32 &&
+		       __builtin_offsetof(arch_intr_frame, ecx) == 112 &&
+		       __builtin_offsetof(arch_intr_frame, eip) == 184 &&
+		       __builtin_offsetof(arch_intr_frame, cs) == 192 &&
+		       __builtin_offsetof(arch_intr_frame, eflags) == 200 &&
+		       __builtin_offsetof(arch_intr_frame, esp) == 208 &&
+		       __builtin_offsetof(arch_intr_frame, ss) == 216,
+	       "SYSRET frame offsets");
+
 void arch_interrupt_set_gate(int vector, vaddr_t entry, int trap, int dpl);
 void arch_interrupt_activate(void);
 void arch_interrupt_set_kernel_stack(void *address);

@@ -9,7 +9,7 @@
 char g_cmdline[256];
 unsigned long long gdt[SELECTOR_COUNT] = {
 	[1] = 0x00af9a000000ffffULL, [2] = 0x00cf92000000ffffULL,
-	[3] = 0x00cff2000000ffffULL, [4] = 0x00cffa000000ffffULL,
+	[3] = 0x00cffa000000ffffULL, [4] = 0x00cff2000000ffffULL,
 	[5] = 0x00affa000000ffffULL,
 };
 unsigned short gdt_size = sizeof(gdt);

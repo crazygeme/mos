@@ -236,12 +236,30 @@ switch_to_user_mode:
     iret
 
 
+/* SYSENTER supplies no privilege frame. EBP is the vDSO user stack;
+ * preserve arithmetic/DF flags before any instruction changes them. */
+.global sysenter_entry
+sysenter_entry:
+    pushl $USER_DATA_SELECTOR
+    pushl %ebp
+    pushfl
+    pushl $2
+    popfl /* clear live TF/DF/NT/AC before entering kernel C */
+    orl $0x200, (%esp) /* SYSENTER cleared IF; user returns with IF set. */
+    pushl $USER_CODE_SELECTOR
+    pushl $0 /* C fills in the mapped vDSO landing address. */
+    pushl %ebp
+    pushl $1 /* select the SYSENTER frame fixup */
+    pushl $0x80
+    jmp syscall_save
+
 .global syscall_handler;
 syscall_handler:
     cli
     pushl %ebp
     pushl $0
     pushl $0x80
+syscall_save:
     /* Save caller's registers. */
     push %ds
     push %es
@@ -264,8 +282,15 @@ syscall_handler:
     /* Call interrupt handler. */
     pushl %esp
     .globl intr_syscall_handler
+    cmpl $1, 56(%esp) /* includes the pushed C argument */
+    jne 1f
+    call arch_sysenter_handler
+    jmp 2f
+1:
     call intr_syscall_handler
+2:
     addl $4, %esp
+    jmp ret_from_syscall
 
 /* Entry point for newly-forked child processes.
  * The normal syscall path already called do_signal() inside syscall_process;

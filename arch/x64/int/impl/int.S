@@ -33,6 +33,14 @@ intr_entry:
  pushq %r13
  pushq %r14
  pushq %r15
+ /* SYSCALL already installed the CPU base with interrupts masked. */
+ cmpq $0x80, 160(%rsp)
+ jne 10f
+ cmpq $1, 168(%rsp)
+ jne 10f
+ movq $0, 168(%rsp)
+ jmp 9f
+10:
  /* Maskable IRQs cannot enter the interrupt-masked SWAPGS windows.
   * Saved CS identifies their active GS base. CPU exceptions retain the
   * MSR check: NMI/#DB can interrupt entry and #GP can fault on user exit. */
@@ -84,6 +92,31 @@ ret_from_fork:
 ret_from_syscall:
 intr_exit:
  cli
+ /* SYSRET overwrites RCX/R11 and fixes CS/SS. Signals, ptrace and
+  * sigreturn may have edited these fields, so require a matching frame.
+  * Both pointers must be in the lower canonical user half: noncanonical
+  * RCX on Intel would fault in ring 0 after the user stack is installed. */
+ cmpq $0x80, 160(%rsp)
+ jne 11f
+ cmpq $USER64_CODE_SELECTOR, 192(%rsp)
+ jne 11f
+ cmpq $USER_DATA_SELECTOR, 216(%rsp)
+ jne 11f
+ movq 184(%rsp), %rcx
+ cmpq 112(%rsp), %rcx
+ jne 11f
+ shrq $47, %rcx
+ jnz 11f
+ movq 208(%rsp), %rcx
+ shrq $47, %rcx
+ jnz 11f
+ movq 200(%rsp), %r11
+ cmpq 32(%rsp), %r11
+ jne 11f
+ testq $0x10100, %r11 /* TF/RF require IRET semantics. */
+ jnz 11f
+ jmp native_syscall_return
+11:
  testb $3, 192(%rsp)
  jnz 7f
  cmpq $0, 88(%rsp)
@@ -240,8 +273,28 @@ native_syscall_entry:
  pushq $USER64_CODE_SELECTOR
  pushq %rcx
  pushq %rbp
- pushq $0
+ pushq $1 /* marks that GS already contains the CPU base */
  pushq $0x80
- swapgs
  jmp intr_entry
+/* Validated native frame; no C calls or unmasked IRQs beyond this point. */
+native_syscall_return:
+ popq %r15
+ popq %r14
+ popq %r13
+ popq %r12
+ popq %r11
+ popq %r10
+ popq %r9
+ popq %r8
+ popq %rdi
+ popq %rsi
+ popq %rbp
+ addq $8, %rsp
+ popq %rbx
+ popq %rdx
+ popq %rcx
+ popq %rax
+ swapgs
+ movq 80(%rsp), %rsp
+ sysretq
 .section .note.GNU-stack,"",@progbits

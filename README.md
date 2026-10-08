@@ -79,6 +79,7 @@ See [Build Guide](doc/build.md) for debugging, profiling, TAP networking, and di
 | [Boot Stage 1](doc/boot_stage1.md)          | GDT/IDT setup, PIC init, initial page tables, paging enable, EIP/ESP transition, physical memory allocator  |
 | [Boot Stage 2](doc/boot_stage2.md)          | Subsystem init order, `KERNEL_INIT` table, SMP startup, first userspace process                                  |
 | [Interrupt Handling](doc/interrupts.md)     | IDT setup, entry stubs, stack layout, dispatcher, syscall/page-fault/IRQ/IPI paths, IF timeline                  |
+| [Fast System Calls](doc/fast_syscall.md) | i386 SYSENTER/vDSO selection, AMD64 SYSRETQ checks, compatibility returns, and isolated QEMU validation |
 | [Physical Memory](doc/mm_physical.md)       | Buddy allocator, page descriptors, reference counting, CoW, dirty tracking                                       |
 | [Virtual Memory](doc/mm_virtual.md)         | Page table management, VM region map, mmap/munmap, demand paging, CoW, page cache                                |
 | [Process & Scheduler](doc/ps.md)            | MPRQ, context switch, fork/exit/waitpid, signals, synchronization primitives                                     |

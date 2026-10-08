@@ -34,11 +34,13 @@ def initramfs(probe, destination):
     destination.write_bytes(archive)
 
 
-def disk_image(probe, directory):
+def disk_image(probe, directory, files=()):
     stage = directory / "root"
     for name in ("sbin", "bin", "dev", "proc", "tmp", "root", "etc"):
         (stage / name).mkdir(parents=True, exist_ok=True)
     shutil.copy2(probe, stage / "sbin/init")
+    for source, name in files:
+        shutil.copy2(source, stage / name)
     part = directory / "partition.img"
     with part.open("wb") as stream:
         stream.truncate(128 * 1024 * 1024)

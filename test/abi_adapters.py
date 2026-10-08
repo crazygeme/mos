@@ -52,6 +52,7 @@ int sys_shmdt(const void *);
 }
 PROBE = r'''
 #include <assert.h>
+#include <arch/config.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,7 +132,7 @@ int main(void)
     user.ptrace_frame_valid = 1;
     user.ptrace_frame.ebx = 0x123456789abcdef0ULL;
     user.ptrace_frame.eip = 0x100000010ULL;
-    user.ptrace_frame.cs = 0x2b;
+    user.ptrace_frame.cs = USER64_CODE_SELECTOR;
     user.ptrace_orig_eax = 59;
     _Alignas(uint64_t) unsigned char output[256];
     memset(output, 0xa5, sizeof(output));
@@ -143,7 +144,7 @@ int main(void)
     assert(native_ptrace(PTRACE_GETREGS, 7, NULL, output) == 0);
     uint64_t *regs64 = (void *)output;
     assert(regs64[5] == user.ptrace_frame.ebx && regs64[15] == 59);
-    assert(regs64[16] == user.ptrace_frame.eip && regs64[17] == 0x2b);
+    assert(regs64[16] == user.ptrace_frame.eip && regs64[17] == USER64_CODE_SELECTOR);
     canary(output, 216, sizeof(output));
     uint64_t memory = 0x1122334455667788ULL;
     memset(output, 0xa5, sizeof(output));
@@ -212,9 +213,9 @@ int main(void)
     assert(words64[18] == 9 && words64[19] == fmt.e_entry);
     assert(words64[34] == 1 && words64[35] == 0);
     elf_i386_format.activate(&task);
-    assert(task.tss.cs == 0x23 && task.robust_list_size == 12 && vdso_maps == 1);
+    assert(task.tss.cs == USER_CODE_SELECTOR && task.robust_list_size == 12 && vdso_maps == 1);
     elf_amd64_format.activate(&task);
-    assert(task.tss.cs == 0x2b && task.robust_list_size == 24 && vdso_maps == 1);
+    assert(task.tss.cs == USER64_CODE_SELECTOR && task.robust_list_size == 24 && vdso_maps == 1);
     puts("ABI adapter checks passed: robust readers/getters, ptrace, SHM, ELF headers and initial stacks.");
     return 0;
 }

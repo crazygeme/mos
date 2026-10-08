@@ -37,7 +37,12 @@ void arch_cpu_local_init(struct smp_cpu *cpu)
 	unsigned low, high;
 	arch_cpu_read_msr(0xc0000080, &low, &high);
 	arch_cpu_write_msr(0xc0000080, low | 1, high);
-	arch_cpu_write_msr(0xc0000081, 0, KERNEL_CODE_SELECTOR);
+	/* SYSRET adds 16 for CS and 8 for SS to STAR[63:48]. */
+	_Static_assert(USER64_CODE_SELECTOR == USER_DATA_SELECTOR + 8,
+		       "SYSRET user selector order");
+	arch_cpu_write_msr(0xc0000081, 0,
+			   KERNEL_CODE_SELECTOR |
+				   ((USER_DATA_SELECTOR - 8) << 16));
 	uintptr_t entry = (uintptr_t)native_syscall_entry;
 	arch_cpu_write_msr(0xc0000082, entry, entry >> 32);
 	arch_cpu_write_msr(0xc0000084, 0x47700,

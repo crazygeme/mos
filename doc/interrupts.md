@@ -331,6 +331,12 @@ After `intr_handler` returns, `intr_entry` continues:
 
 ## 8. Syscall Path (INT 0x80)
 
+The current backends register INT 0x80 as a DPL-3 **interrupt gate**.
+Entry runs with IF cleared, and `intr_syscall_handler()` enables interrupts
+after the kernel stack and register frame are established. The older trap-gate
+walkthrough below describes the original design. For current fast entries
+and return rules, see [Fast System Calls](fast_syscall.md).
+
 The syscall entry has its own stub (`syscall_handler` in `int.S`) that bypasses `intr_entry` but builds the same `intr_frame` on the stack. It calls `intr_syscall_handler` instead of `intr_handler`.
 
 Because the IDT entry is a **trap gate**, the CPU does **not** clear IF on entry. Hardware interrupts can fire freely during a syscall.

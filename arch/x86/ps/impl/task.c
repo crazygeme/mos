@@ -74,6 +74,8 @@ void reset_tss(task_struct *task)
 
 	tss->cr3 = task->address_space;
 	tss->esp0 = task->tss.esp0;
+	if (arch_cpu_local()->sysenter_enabled)
+		arch_cpu_write_msr(0x175, task->tss.esp0, 0);
 	if (task->io_allow_all) {
 		tss->iomap = (unsigned short)offsetof(tss_io_struct, io_bitmap);
 		memset(io_tss->io_bitmap, 0x00, TSS_IO_BITMAP_BYTES);

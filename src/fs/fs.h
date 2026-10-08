@@ -270,6 +270,10 @@ int fs_install_fd(file *fp, int flag); /* install a pre-built file as an fd */
 void fs_cancel_io(task_struct *task);
 int fs_install_fd_unsafe(file *fp, int flag); /* caller holds files->lock */
 
+struct flock64;
+int fs_posix_lock(file *fp, int cmd, struct flock64 *fl);
+int fs_posix_lock_fd(int fd, int cmd, struct flock64 *fl);
+void fs_posix_lock_release(file *fp, unsigned owner);
 int fs_close(int fd);
 
 int fs_read(int fd, unsigned offset, char *buf, unsigned len);

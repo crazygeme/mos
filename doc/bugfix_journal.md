@@ -6,6 +6,28 @@ details in older entries may be superseded by later fixes.
 
 ---
 
+## 2026-10-08 - SQLite byte-range locks and transaction synchronization
+
+POSIX advisory locks use process-owned byte ranges identified by filesystem and
+inode. Read locks permit shared access; write locks exclude overlapping ranges
+owned by other processes. Range replacement and partial unlocking preserve
+unaffected intervals. Blocking requests wait interruptibly. Descriptor closure,
+descriptor replacement, and process exit release the corresponding process
+locks. BSD open-file locks remain independent. Native AMD64 and IA-32 lock
+interfaces preserve their respective structure layouts and offset widths.
+
+The AMD64 and IA-32 `fdatasync` system calls use the file synchronization path,
+including the metadata synchronization provided by `fsync`. SQLite can acquire
+its pending, reserved, and shared lock ranges and commit user dictionary
+transactions.
+
+Runtime validation on the AMD64 guest covers file synchronization and SQLite
+integrity checks for both user dictionaries. Process isolation, non-overlapping
+locks, partial unlocking, and offsets above 4 GiB are verified with separate
+processes.
+
+---
+
 ## 2026-10-08 - CPU usage accounting and atomic operation widths
 
 CPU usage is sampled at `HZ=100`. IRQ0 supplies the bootstrap CPU sample, and

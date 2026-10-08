@@ -37,8 +37,9 @@ void spinlock_unlock(spinlock_t *lock, int irq);
 
 typedef struct _lock_base {
 	unsigned int lock; /* 0 = available, 1 = taken               */
+	unsigned int waiters; /* registered slow-path acquirers          */
 	list_entry wait_list; /* queue of sleeping task_struct entries   */
-	spinlock_t wait_lock; /* guards wait_list and lock transitions   */
+	spinlock_t wait_lock; /* serializes wait queue enrollment/wakeup */
 } lock_base;
 
 /* ===========================================================================
@@ -97,12 +98,20 @@ void mutex_unlock(mutex_t *m);
  * ===========================================================================*/
 
 typedef volatile struct _rwlock {
-	int readers; /* number of active readers             */
-	int writer; /* 1 = a writer currently holds lock    */
+	/* Both supported x86 ABIs allocate these bitfields from the low bit.
+	 * Ownership and the writer gate share one atomic word. */
+	union {
+		unsigned int state; /* atomically updated ownership and gate */
+		struct {
+			unsigned int readers : 30;
+			unsigned int writer : 1;
+			unsigned int writers_pending : 1;
+		};
+	};
 	int writers_waiting; /* number of writers queued             */
 	list_entry reader_wait_list; /* readers blocked on a writer          */
 	list_entry writer_wait_list; /* writers blocked on readers/writer    */
-	spinlock_t wait_lock; /* guards all fields above              */
+	spinlock_t wait_lock; /* guards wait queues and writers_waiting */
 } rwlock_t;
 
 void rwlock_init(rwlock_t *rw);
@@ -142,8 +151,9 @@ void rmutex_unlock(rmutex_t *m);
 
 typedef volatile struct _sem {
 	int count; /* available resource count               */
+	unsigned int waiters; /* registered slow-path acquirers          */
 	list_entry wait_list; /* tasks sleeping in sem_wait             */
-	spinlock_t wait_lock; /* guards count and wait_list             */
+	spinlock_t wait_lock; /* serializes wait queue enrollment/wakeup */
 } sem_t;
 
 void sem_init(sem_t *s, int count);

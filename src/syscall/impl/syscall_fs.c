@@ -821,6 +821,15 @@ static int unlink_resolved(const char *name)
 		goto done;
 	}
 
+	if (S_ISFIFO(s.st_mode)) {
+		/* Named FIFOs created by vfs_mknod are mounted devnodes. Open
+		 * files retain the superblock after its pathname is detached. */
+		ret = vfs_umount(cur->root, name);
+		if (ret != -ENOENT)
+			goto done;
+		/* A filesystem-backed FIFO still uses the normal unlink path. */
+	}
+
 	if (S_ISSOCK(s.st_mode)) {
 		unix_ns_remove_path(name);
 		ret = vfs_umount(cur->root, name);

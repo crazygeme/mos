@@ -16,6 +16,8 @@
 #include <int/int.h>
 #include <int/dsr.h>
 #include <ps/ps.h>
+#include <ps/smp.h>
+#include <device/time.h>
 #include <test/test.h>
 
 /* ── create / destroy ────────────────────────────────────────────── */
@@ -36,7 +38,9 @@ static void deferred_poll_write(void *param)
 	ctx->own_stack = current != ctx->consumer &&
 			 current->status == ps_running;
 	ctx->written = cyb_putbuf(ctx->buf, &byte, 1, 0, 0);
-	ctx->completed = 1;
+	/* Exercise a consumer resuming before the callback finishes. */
+	task_sched();
+	__atomic_store_n(&ctx->completed, 1, __ATOMIC_RELEASE);
 }
 
 KTEST(cyclebuf, deferred_notify_poll)
@@ -45,7 +49,8 @@ KTEST(cyclebuf, deferred_notify_poll)
 	poll_table wait;
 	poll_table_entry entry;
 	unsigned irq;
-	int queued, needs_schedule;
+	int queued, needs_schedule, completed;
+	unsigned long long deadline;
 
 	ASSERT_NONNULL(ctx);
 	memset(ctx, 0, sizeof(*ctx));
@@ -58,6 +63,7 @@ KTEST(cyclebuf, deferred_notify_poll)
 	/* Queue the producer with the consumer waiting. Data and readiness
 	 * notifications must be published before the callback completes. */
 	irq = int_intr_disable();
+	deadline = time_deadline_ms(1000);
 	ps_prepare_timed_wait(current, 1000, __func__);
 	queued = dsr_add(deferred_poll_write, ctx);
 	needs_schedule = dsr_needs_schedule();
@@ -68,14 +74,26 @@ KTEST(cyclebuf, deferred_notify_poll)
 	int_intr_setlevel(irq);
 	poll_table_cleanup(&wait);
 
+	/* Poll notification precedes callback completion. The producer may
+	 * still be running on another CPU, or have yielded after the write. */
+	while (queued && !__atomic_load_n(&ctx->completed, __ATOMIC_ACQUIRE) &&
+	       time_now_ms() < deadline)
+		time_wait(1);
+	completed = __atomic_load_n(&ctx->completed, __ATOMIC_ACQUIRE);
+
 	EXPECT_TRUE(queued);
-	EXPECT_TRUE(needs_schedule);
-	EXPECT_TRUE(ctx->own_stack);
-	EXPECT_TRUE(ctx->completed);
-	EXPECT_EQ(ctx->written, 1);
+	/* With local IRQs masked, only a single-CPU system guarantees the
+	 * worker stays ready until the scheduling hint is sampled. */
+	if (smp_cpu_count() == 1)
+		EXPECT_TRUE(needs_schedule);
+	EXPECT_TRUE(completed);
+	if (completed) {
+		EXPECT_TRUE(ctx->own_stack);
+		EXPECT_EQ(ctx->written, 1);
+	}
 	EXPECT_EQ(cyb_get_buf_len(ctx->buf), 1);
 	/* A timed-out callback may still reference the context. */
-	if (!queued || ctx->completed) {
+	if (!queued || completed) {
 		cyb_writer_close(ctx->buf);
 		cyb_reader_close(ctx->buf);
 		kfree(ctx);

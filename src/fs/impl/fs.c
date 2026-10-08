@@ -432,6 +432,18 @@ int fs_open(const char *path, int flag, umode_t mode)
 	return fd < 0 ? -EMFILE : fd;
 }
 
+int fs_posix_lock_fd(int fd, int cmd, struct flock64 *fl)
+{
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	int ret;
+	if (!fp)
+		return -EBADF;
+	ret = fs_posix_lock(fp, cmd, fl);
+	fs_io_end(&scope);
+	return ret;
+}
+
 int fs_close(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -451,6 +463,7 @@ int fs_close(int fd)
 	if (fp == NULL)
 		return 0; /* used==1 but fp==NULL: already cleaned up */
 
+	fs_posix_lock_release(fp, cur->tgid);
 	return fs_put_file(fp);
 }
 
@@ -595,8 +608,10 @@ static int fs_dup_to(int fd, int newfd, int flags)
 	mutex_unlock(&cur->files->lock);
 
 	/* Release may block; the descriptor replacement is already complete. */
-	if (replaced)
+	if (replaced) {
+		fs_posix_lock_release(replaced, cur->tgid);
 		fs_put_file(replaced);
+	}
 	return newfd;
 }
 

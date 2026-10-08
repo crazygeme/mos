@@ -375,6 +375,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 
 void do_group_exit(unsigned encoded_status)
 {
+	fs_posix_lock_release(NULL, CURRENT_TASK()->tgid);
 	ps_kill_thread_group(CURRENT_TASK(), encoded_status);
 	do_exit(encoded_status);
 }
@@ -385,8 +386,10 @@ void do_exit(unsigned encoded_status)
 
 	ps_ptrace_stop_exit(encoded_status);
 	cur->exit_status = encoded_status;
-	if (!(cur->fork_flag & FORK_FLAG_THREAD))
+	if (!(cur->fork_flag & FORK_FLAG_THREAD)) {
+		fs_posix_lock_release(NULL, cur->tgid);
 		ps_timer_discard_group(cur->tgid);
+	}
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("exit(%s, status=%x)\n", cur->user->command,
 		     encoded_status);

@@ -35,6 +35,9 @@ typedef struct {
 	struct ext4_fs *fs;
 	file *owner;
 	list_entry link;
+	int orphan;
+	file file;
+	inode inode;
 } ext4_open_file;
 
 /* Independent opens retain one entry each; mappings and passed descriptors
@@ -85,7 +88,8 @@ static int ext4_file_release(file *fp)
 
 	root_lock_lock();
 	list_remove_entry(&open->link);
-	for (entry = ext4_open_files.next; entry != &ext4_open_files;
+	for (entry = ext4_open_files.next; open->orphan &&
+	     entry != &ext4_open_files;
 	     entry = entry->next) {
 		ext4_open_file *other =
 			container_of(entry, ext4_open_file, link);
@@ -94,7 +98,7 @@ static int ext4_file_release(file *fp)
 			break;
 		}
 	}
-	if (!remaining && open->fs) {
+	if (open->orphan && !remaining && open->fs) {
 		ret = ext4_fs_get_inode_ref(open->fs, f->inode, &ref);
 		if (ret == EOK) {
 			int orphan = !ext4_inode_get_links_cnt(ref.inode);
@@ -125,8 +129,6 @@ static int ext4_file_release(file *fp)
 		klog("ext4: inode %u release failed: %d\n", f->inode, ret);
 	ext4_fclose(f);
 	free(open);
-	free(fp->f_inode);
-	free(fp);
 	return ret ? -ret : 0;
 }
 
@@ -277,6 +279,18 @@ static int ext4_file_getattr(file *fp, struct stat *s)
 	return ext4_fstat(f, s);
 }
 
+static int ext4_file_readlink(file *fp, char *buf, size_t size, size_t *length)
+{
+	ext4_file handle = *(ext4_file *)fp->f_inode->i_private;
+	int ret;
+	if (!S_ISLNK(fp->f_inode->i_mode))
+		return -EINVAL;
+	handle.flags = O_RDONLY;
+	handle.fpos = 0;
+	ret = ext4_fread(&handle, buf, size, length);
+	return ret ? -ret : 0;
+}
+
 static int ext4_file_setattr(file *fp, uint32_t mode)
 {
 	ext4_file *f = fp->f_inode->i_private;
@@ -348,6 +362,7 @@ static int ext4_file_ftruncate(file *fp, loff_t size)
 static const file_operations ext4_file_fops = {
 	.release = ext4_file_release,
 	.getattr = ext4_file_getattr,
+	.readlink = ext4_file_readlink,
 	.setattr = ext4_file_setattr,
 	.chown = ext4_file_chown,
 	.read = ext4_file_read,
@@ -458,10 +473,13 @@ static const file_operations ext4_dir_fops = {
 
 static file *ext4_alloc_file(void *content)
 {
-	inode *node = zalloc(sizeof(*node));
-	node->i_private = content;
-
-	file *fp = zalloc(sizeof(*fp));
+	ext4_open_file *open = zalloc(sizeof(*open));
+	if (!open)
+		return NULL;
+	open->handle = *(ext4_file *)content;
+	inode *node = &open->inode;
+	file *fp = &open->file;
+	node->i_private = open;
 	fp->f_fop = &ext4_file_fops;
 	fp->f_inode = node;
 	fp->f_count = 1;
@@ -645,8 +663,10 @@ err:
 	return -1;
 }
 
-static file *ext4_path_open(const char *path, int flag)
+static file *ext4_path_open(const char *path, int flag, char **target_path)
 {
+	ext4_file handle;
+	struct ext4_inline_link inline_link;
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
 	unsigned uid = current->user->uid;
@@ -689,7 +709,8 @@ retry_open:
 	}
 
 	/* ---- Case 2: regular open, with final symlink following ---- */
-	f = zalloc(sizeof(ext4_open_file));
+	f = &handle;
+	memset(f, 0, sizeof(*f));
 	/*
 	 * The pre-check (open without O_CREAT) is only needed when O_CREAT is
 	 * set, to detect whether the file was just created so we can assign
@@ -701,7 +722,8 @@ retry_open:
 	} else {
 		check = EOK;
 	}
-	ret = ext4_fopen2(f, cur_path, flag);
+	ret = ext4_fopen2_stat(f, cur_path, flag, &s,
+			       target_path ? &inline_link : NULL);
 	if (check != EOK && ret == EOK) {
 		ext4_fchown(f, uid, gid);
 		ext4_file_set_ctime(cur_path, time_wall_sec());
@@ -710,12 +732,38 @@ retry_open:
 	if (ret != EOK)
 		goto resolve_prefix;
 
-	ret = ext4_fstat(f, &s);
-	if (ret != EOK)
-		goto fail;
 	/* O_NOFOLLOW: return the symlink itself without following it. */
 	if (S_ISLNK(s.st_mode) && (flag & O_NOFOLLOW)) {
+		if (target_path) {
+			char *text = name_get();
+			ext4_file link_handle = *f;
+			if (!text)
+				goto fail;
+			link_handle.flags = O_RDONLY;
+			link_handle.fpos = 0;
+			if (inline_link.length) {
+				link_len = inline_link.length;
+				memcpy(text, inline_link.target, link_len);
+				ret = EOK;
+			} else {
+				ret = ext4_fread(&link_handle, text, MAX_PATH - 1,
+						 &link_len);
+			}
+			if (ret || !link_len || link_len >= MAX_PATH) {
+				name_put(text);
+				goto fail;
+			}
+			text[link_len] = 0;
+			if (fs_resolve_symlink_path(cur_path, text, link_len)) {
+				name_put(text);
+				goto fail;
+			}
+			*target_path = text;
+			goto done;
+		}
 		fp = ext4_alloc_file(f);
+		if (!fp)
+			goto fail;
 		fp->f_inode->i_mode = s.st_mode;
 		fp->f_inode->i_ino = s.st_ino;
 		fp->f_inode->i_size = s.st_size;
@@ -736,10 +784,12 @@ retry_open:
 		if (++depth > MAX_SYMLINK_DEPTH)
 			goto fail;
 
-		/* Preserve cur_path while resolving the next target.  Read the link
-		 * independently: the caller may have opened for writing only. */
-		ret = ext4_readlink(cur_path, link_target, MAX_PATH - 1,
-				    &link_len);
+		/* Preserve cur_path and read the open link independently of access mode. */
+		ext4_file link_handle = *f;
+		link_handle.flags = O_RDONLY;
+		link_handle.fpos = 0;
+		ret = ext4_fread(&link_handle, link_target, MAX_PATH - 1,
+				 &link_len);
 		ext4_fclose(f);
 		if (ret != EOK)
 			goto fail;
@@ -752,11 +802,7 @@ retry_open:
 		strcpy(resolved, link_target);
 		cur_path = resolved;
 
-		ret = ext4_fopen2(f, cur_path, flag);
-		if (ret != EOK)
-			goto fail;
-
-		ret = ext4_fstat(f, &s);
+		ret = ext4_fopen2_stat(f, cur_path, flag, &s, NULL);
 		if (ret != EOK)
 			goto fail;
 	}
@@ -764,7 +810,6 @@ retry_open:
 	/* ---- Case 3: final target is a directory ---- */
 	if (S_ISDIR(s.st_mode)) {
 		ext4_fclose(f);
-		free(f);
 		f = NULL;
 
 		dir = zalloc(sizeof(*dir));
@@ -775,6 +820,8 @@ retry_open:
 		fp = ext4_alloc_dir(dir);
 	} else {
 		fp = ext4_alloc_file(f);
+		if (!fp)
+			goto fail;
 	}
 
 	fp->f_inode->i_mode = s.st_mode;
@@ -785,7 +832,8 @@ retry_open:
 
 resolve_prefix:
 	if (f) {
-		free(f);
+		if (f->mp)
+			ext4_fclose(f);
 		f = NULL;
 	}
 	if (pre_res)
@@ -805,11 +853,11 @@ resolve_prefix:
 
 fail:
 	fp = NULL;
-	if (f)
-		free(f);
 	if (dir)
 		free(dir);
 done:
+	if (f && f->mp)
+		ext4_fclose(f);
 	if (pre_res)
 		name_put(pre_res);
 	if (resolved)
@@ -837,15 +885,24 @@ typedef struct {
 	char loop_name[16]; /* non-empty if mount auto-attached a loop device */
 } ext4_mount_info;
 
-static file *ext4_open(super_block *sb, const char *path, int flag)
+static file *ext4_open_link(super_block *sb, const char *path, int flag,
+			    char **target)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
-	char *full = name_get();
+	char *storage = NULL;
+	const char *full = path;
 
-	/* mp ends with '/'; path starts with '/' — skip path's leading '/' */
-	sprintf(full, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+	/* Root paths already have the form expected by lwext4. Only secondary
+	 * mounts need a temporary buffer to prepend their lwext4 mount name. */
+	if (strcmp(mi->mp, "/") || path[0] != '/') {
+		storage = name_get();
+		if (!storage)
+			return NULL;
+		sprintf(storage, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+		full = storage;
+	}
 	root_lock_lock();
-	file *ret = ext4_path_open(full, flag);
+	file *ret = ext4_path_open(full, flag, target);
 	if (ret && ret->f_fop == &ext4_file_fops) {
 		ext4_open_file *open = ret->f_inode->i_private;
 		struct ext4_sblock *disk_sb;
@@ -861,14 +918,20 @@ static file *ext4_open(super_block *sb, const char *path, int flag)
 			fs_page_cache_invalidate(ret);
 	}
 	root_lock_unlock();
-	name_put(full);
+	if (storage)
+		name_put(storage);
 	return ret;
+}
+
+static file *ext4_open(super_block *sb, const char *path, int flag)
+{
+	return ext4_open_link(sb, path, flag, NULL);
 }
 
 static file *ext4_open_root(super_block *sb, int flag)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
-	file *ret = ext4_path_open(mi->mp, O_RDONLY);
+	file *ret = ext4_path_open(mi->mp, O_RDONLY, NULL);
 
 	if (ret && ret->f_inode)
 		ret->f_inode->i_pgcache_tag = sb;
@@ -1169,6 +1232,10 @@ static int ext4_unlink(super_block *sb, const char *path)
 			file *fp = open->owner;
 			if (open->fs == fs &&
 			    open->handle.inode == child_file.inode &&
+			    !ext4_inode_get_links_cnt(child.inode))
+				open->orphan = 1;
+			if (open->fs == fs &&
+			    open->handle.inode == child_file.inode &&
 			    fp->f_name &&
 			    (!ext4_inode_get_links_cnt(child.inode) ||
 			     !strcmp(fp->f_name, full))) {
@@ -1373,6 +1440,7 @@ static int ext4_remount(super_block *sb, int flags);
 static super_operations ext4_sops = {
 	.open_root = ext4_open_root,
 	.open = ext4_open,
+	.open_link = ext4_open_link,
 	.release = ext4_release,
 	.mkdir = ext4_mkdir,
 	.rmdir = ext4_rmdir,

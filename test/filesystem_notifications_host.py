@@ -108,7 +108,7 @@ static test_user user;
 static typeof(*((task_struct *)0)->files) files;
 static task_struct task = { .user = &user, .files = &files };
 task_struct *current = &task;
-char *name_get(void) { return zalloc(MAX_PATH); }
+char *name_get(void) { char *p = malloc(MAX_PATH); if (p) { memset(p, 0xa5, MAX_PATH); p[0] = 0; } return p; }
 void name_put(char *name) { free(name); }
 int resolve_path(const char *source, char *dest) { assert(source[0] == '/'); strcpy(dest, source); return 0; }
 int fs_check_perm(const struct stat *st, int mask) { (void)st; (void)mask; return 0; }

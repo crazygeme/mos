@@ -65,6 +65,8 @@ struct ext4_block {
 
 struct ext4_bcache;
 
+#define EXT4_BCACHE_LOOKUP_SLOTS 16
+
 /**@brief   Single block descriptor*/
 struct ext4_buf {
 	/**@brief   Flags*/
@@ -140,6 +142,8 @@ struct ext4_bcache {
 
 	/**@brief   A tree holding all bufs*/
 	RB_HEAD(ext4_buf_lba, ext4_buf) lba_root;
+	/* Borrowed buffer pointers; drop_buf clears a hint before freeing it. */
+	struct ext4_buf *lookup[EXT4_BCACHE_LOOKUP_SLOTS];
 
 	/**@brief   A tree holding unreferenced bufs*/
 	RB_HEAD(ext4_buf_lru, ext4_buf) lru_root;

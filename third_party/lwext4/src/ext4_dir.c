@@ -341,6 +341,8 @@ int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
 	int r;
 	struct ext4_fs *fs = parent->fs;
 	struct ext4_sblock *sb = &parent->fs->sb;
+	/* Invalidate before attempting a mutation, including partial failures. */
+	fs->namespace_seq++;
 
 #if CONFIG_DIR_INDEX_ENABLE
 	/* Index adding (if allowed) */
@@ -521,6 +523,7 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
 			  uint32_t name_len)
 {
 	struct ext4_sblock *sb = &parent->fs->sb;
+	parent->fs->namespace_seq++;
 	/* Check if removing from directory */
 	if (!ext4_inode_is_type(sb, parent->inode, EXT4_INODE_MODE_DIRECTORY))
 		return ENOTDIR;

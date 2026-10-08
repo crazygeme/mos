@@ -495,7 +495,8 @@ void vfs_set_file_origin(file *fp, super_block *sb, const char *relative_path)
 	}
 }
 
-static file *vfs_open_raw(super_block *sb, const char *path, int flag)
+static file *vfs_open_raw(super_block *sb, const char *path, int flag,
+			  char **link_target)
 {
 	super_block *target_sb;
 	char *rel_path;
@@ -524,7 +525,11 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag)
 	 * filesystem's own open operation.
 	 */
 	if (target_sb->s_op && target_sb->s_op->open) {
-		fp = target_sb->s_op->open(target_sb, rel_path, flag);
+		if (link_target && target_sb->s_op->open_link)
+			fp = target_sb->s_op->open_link(target_sb, rel_path, flag,
+						       link_target);
+		else
+			fp = target_sb->s_op->open(target_sb, rel_path, flag);
 		if (fp) {
 			vfs_set_file_origin(fp, target_sb, rel_path);
 			fp->f_mount_flags = target_sb->s_flags;
@@ -547,14 +552,26 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	if (!sb || !path)
 		return NULL;
 	if (flag & O_NOFOLLOW)
-		return vfs_open_raw(sb, path, flag);
+		return vfs_open_raw(sb, path, flag, NULL);
 	for (depth = 0; depth <= 40; depth++) {
 		size_t len = 0;
 		const char *linkpath, *slash;
 		size_t base;
 		int ret;
+		char *resolved_target = NULL;
 
-		fp = vfs_open_raw(lookup_sb, lookup, flag | O_NOFOLLOW);
+		fp = vfs_open_raw(lookup_sb, lookup, flag | O_NOFOLLOW,
+				  &resolved_target);
+		if (resolved_target) {
+			if (depth == 40) {
+				name_put(resolved_target);
+				break;
+			}
+			if (joined)
+				name_put(joined);
+			joined = resolved_target;
+			goto normalize_link;
+		}
 		if (!fp || !fp->f_inode || !S_ISLNK(fp->f_inode->i_mode))
 			goto out;
 		if (fp->f_fop && fp->f_fop->follow_link) {
@@ -575,8 +592,11 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 			fs_put_file(fp);
 			break;
 		}
-		ret = vfs_readlink(lookup_sb, lookup, target, MAX_PATH - 1,
-				   &len);
+		if (fp->f_fop && fp->f_fop->readlink)
+			ret = fp->f_fop->readlink(fp, target, MAX_PATH - 1, &len);
+		else
+			ret = vfs_readlink(lookup_sb, lookup, target, MAX_PATH - 1,
+					   &len);
 		if (ret || !len || len >= MAX_PATH) {
 			fs_put_file(fp);
 			break;
@@ -596,6 +616,7 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 			memcpy(joined + base, target, len + 1);
 		}
 		fs_put_file(fp);
+	normalize_link:
 		/* Normalize dot components before selecting a mount. */
 		{
 			const char *src = joined;

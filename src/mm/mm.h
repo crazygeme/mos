@@ -149,7 +149,8 @@ vaddr_t do_mmap_kernel(vaddr_t addr, size_t len, unsigned int prot,
 
 int do_munmap(void *addr, size_t length);
 
-void *name_get();
+/* Pathname scratch: byte zero is NUL; overwrite the remainder before reading. */
+void *name_get(void);
 
 void name_put(void *name);
 

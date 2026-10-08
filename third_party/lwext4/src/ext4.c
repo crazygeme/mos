@@ -70,6 +70,16 @@
 			(_m)->os_locks->unlock(); \
 	} while (0)
 
+/* Small, allocation-free positive lookup cache, protected by the mount lock.
+ * Metadata is always read afresh; only namespace traversal is cached. */
+#define EXT4_PATH_CACHE_SLOTS 64
+#define EXT4_PATH_CACHE_LENGTH 256
+struct ext4_path_cache_entry {
+	uint64_t namespace_seq;
+	uint32_t inode;
+	char path[EXT4_PATH_CACHE_LENGTH];
+};
+
 /**@brief   Mount point descriptor.*/
 struct ext4_mountpoint {
 	/**@brief   Mount done flag.*/
@@ -83,6 +93,7 @@ struct ext4_mountpoint {
 
 	/**@brief   Ext4 filesystem internals.*/
 	struct ext4_fs fs;
+	struct ext4_path_cache_entry path_cache[EXT4_PATH_CACHE_SLOTS];
 
 	/**@brief   Dynamic allocation cache flag.*/
 	bool cache_dynamic;
@@ -396,6 +407,7 @@ int ext4_mount(const char *dev_name, const char *mount_point, bool read_only)
 		ext4_block_fini(bd);
 		return r;
 	}
+	memset(mp->path_cache, 0, sizeof(mp->path_cache));
 
 	bsize = ext4_sb_get_block_size(&mp->fs.sb);
 	ext4_block_set_lb_size(bd, bsize);
@@ -908,9 +920,41 @@ static int ext4_trunc_dir(struct ext4_mountpoint *mp,
  * NOTICE: if filetype is equal to EXT4_DIRENTRY_UNKNOWN,
  * any filetype of the target dir entry will be accepted.
  */
-static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
-			      int ftype, uint32_t *parent_inode,
-			      uint32_t *name_off)
+static void ext4_inode_stat(struct ext4_inode_ref *ref, struct stat *st)
+{
+	struct ext4_sblock *sb = &ref->fs->sb;
+	st->st_dev = ext4_inode_get_dev(ref->inode);
+	st->st_ino = ref->index;
+	st->st_mode = ext4_inode_get_mode(sb, ref->inode);
+	st->st_nlink = ext4_inode_get_links_cnt(ref->inode);
+	st->st_uid = ext4_inode_get_uid(ref->inode);
+	st->st_gid = ext4_inode_get_gid(ref->inode);
+	st->st_rdev = 0;
+	st->st_size = ext4_inode_get_size(sb, ref->inode);
+	st->st_blocks = ext4_inode_get_blocks_count(sb, ref->inode);
+	st->st_blksize = st->st_blocks * 512;
+	st->st_atime = ext4_inode_get_access_time(ref->inode);
+	st->st_mtime = ext4_inode_get_modif_time(ref->inode);
+	st->st_ctime = ext4_inode_get_change_inode_time(ref->inode);
+}
+
+static struct ext4_path_cache_entry *ext4_path_cache_slot(
+	struct ext4_mountpoint *mp, const char *path)
+{
+	uint32_t hash = 2166136261U;
+	size_t length = 0;
+	while (path[length]) {
+		if (length >= EXT4_PATH_CACHE_LENGTH - 1)
+			return NULL;
+		hash = (hash ^ (uint8_t)path[length++]) * 16777619U;
+	}
+	return &mp->path_cache[hash % EXT4_PATH_CACHE_SLOTS];
+}
+
+static int ext4_generic_open2_stat(ext4_file *f, const char *path, int flags,
+				   int ftype, uint32_t *parent_inode,
+				   uint32_t *name_off, struct stat *st,
+				   struct ext4_inline_link *link)
 {
 	bool is_goal = false;
 	uint32_t imode = EXT4_INODE_MODE_DIRECTORY;
@@ -921,6 +965,8 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
 	struct ext4_dir_search_result result;
 	struct ext4_inode_ref ref;
+	struct ext4_path_cache_entry *cached = NULL;
+	const char *cache_path;
 
 	f->mp = 0;
 
@@ -937,6 +983,22 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 
 	/*Skip mount point*/
 	path += strlen(mp->name);
+	cache_path = path;
+	/* Operations needing a parent or creating entries must walk the tree. */
+	if (ftype == EXT4_DE_UNKNOWN && !(flags & O_CREAT) &&
+	    !parent_inode && !name_off) {
+		cached = ext4_path_cache_slot(mp, path);
+		if (cached && cached->inode &&
+		    cached->namespace_seq == fs->namespace_seq &&
+		    !strcmp(cached->path, path)) {
+			r = ext4_fs_get_inode_ref(fs, cached->inode, &ref);
+			if (r != EOK)
+				return r;
+			imode = ext4_inode_type(sb, ref.inode);
+			is_goal = true;
+			goto loaded;
+		}
+	}
 
 	if (name_off)
 		*name_off = strlen(mp->name);
@@ -1055,6 +1117,7 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 		return r;
 	}
 
+loaded:
 	if (is_goal) {
 		if ((f->flags & O_TRUNC) && (imode == EXT4_INODE_MODE_FILE)) {
 			r = ext4_trunc_inode(mp, ref.index, 0);
@@ -1071,6 +1134,19 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 
 		if (f->flags & O_APPEND)
 			f->fpos = f->fsize;
+		if (st)
+			ext4_inode_stat(&ref, st);
+		if (link && imode == EXT4_INODE_MODE_SOFTLINK &&
+		    f->fsize < sizeof(link->target) &&
+		    !ext4_inode_get_blocks_count(sb, ref.inode)) {
+			link->length = (size_t)f->fsize;
+			memcpy(link->target, ref.inode->blocks, link->length);
+		}
+		if (cached) {
+			cached->namespace_seq = fs->namespace_seq;
+			cached->inode = ref.index;
+			strcpy(cached->path, cache_path);
+		}
 	}
 
 	r = ext4_fs_put_inode_ref(&ref);
@@ -1082,6 +1158,14 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 	}
 
 	return r;
+}
+
+static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
+			      int ftype, uint32_t *parent_inode,
+			      uint32_t *name_off)
+{
+	return ext4_generic_open2_stat(f, path, flags, ftype, parent_inode,
+				       name_off, NULL, NULL);
 }
 
 /****************************************************************************/
@@ -1549,25 +1633,33 @@ int ext4_fopen(ext4_file *f, const char *path, const char *flags)
 
 int ext4_fopen2(ext4_file *f, const char *path, int flags)
 {
+	return ext4_fopen2_stat(f, path, flags, NULL, NULL);
+}
+
+int ext4_fopen2_stat(ext4_file *f, const char *path, int flags, struct stat *st,
+		     struct ext4_inline_link *link)
+{
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
 	int r;
-	int filetypes[] = { EXT4_DE_REG_FILE, EXT4_DE_SYMLINK, EXT4_DE_DIR,
-			    EXT4_DE_CHRDEV,   EXT4_DE_BLKDEV,  EXT4_DE_SOCK,
-			    EXT4_DE_FIFO };
-	int i;
+	if (link)
+		link->length = 0;
 	if (!mp)
 		return ENOENT;
+	if (mp->fs.read_only && (flags & O_CREAT))
+		return EROFS;
 
 	EXT4_MP_LOCK(mp);
 
-	for (i = 0; i < sizeof(filetypes) / sizeof(filetypes[0]); i++) {
-		ext4_block_cache_write_back(mp->fs.bdev, 1);
-		r = ext4_generic_open2(f, path, flags, filetypes[i], NULL,
-				       NULL);
-		ext4_block_cache_write_back(mp->fs.bdev, 0);
-		if (r == EOK)
-			break;
-	}
+	/* Accept any existing type in one traversal. New files are regular. */
+	ext4_block_cache_write_back(mp->fs.bdev, 1);
+	r = ext4_generic_open2_stat(f, path, flags & ~O_CREAT, EXT4_DE_UNKNOWN,
+				    NULL, NULL, st, link);
+	if (r == ENOENT && (flags & O_CREAT))
+		r = ext4_generic_open2_stat(f, path, flags, EXT4_DE_REG_FILE,
+					    NULL, NULL, st, link);
+	if (r == EOK)
+		f->flags = flags;
+	ext4_block_cache_write_back(mp->fs.bdev, 0);
 
 	EXT4_MP_UNLOCK(mp);
 	return r;
@@ -1762,6 +1854,37 @@ int ext4_fread(ext4_file *f, void *buf, size_t size, size_t *rcnt)
 		}
 
 		r = EOK;
+		goto Finish;
+	}
+	if (softlink) {
+		/* Symlink creation may leave target data in the writeback cache.
+		 * Raw byte reads from the device would return the old block data. */
+		while (size) {
+			struct ext4_block block;
+			uint32_t offset = (uint32_t)(f->fpos % block_size);
+			size_t length = size < block_size - offset ?
+				       size : block_size - offset;
+			r = ext4_fs_get_inode_dblk_idx(&ref,
+				(uint32_t)(f->fpos / block_size), &fblock, false);
+			if (r != EOK)
+				goto Finish;
+			if (!fblock) {
+				r = EIO;
+				goto Finish;
+			}
+			r = ext4_block_get(fs->bdev, &block, fblock);
+			if (r != EOK)
+				goto Finish;
+			memcpy(u8_buf, block.data + offset, length);
+			r = ext4_block_set(fs->bdev, &block);
+			if (r != EOK)
+				goto Finish;
+			u8_buf += length;
+			size -= length;
+			f->fpos += length;
+			if (rcnt)
+				*rcnt += length;
+		}
 		goto Finish;
 	}
 
@@ -2089,8 +2212,7 @@ uint64_t ext4_fsize(ext4_file *f)
 int ext4_fstat(ext4_file *f, struct stat *stat)
 {
 	int r;
-	uint32_t ino, orig_mode;
-	struct ext4_sblock *sb;
+	uint32_t ino;
 	struct ext4_inode_ref inode_ref;
 
 	if (!f->mp)
@@ -2100,7 +2222,6 @@ int ext4_fstat(ext4_file *f, struct stat *stat)
 	ext4_trans_start(f->mp);
 
 	ino = f->inode;
-	sb = &f->mp->fs.sb;
 	r = ext4_fs_get_inode_ref(&f->mp->fs, ino, &inode_ref);
 	if (r != EOK) {
 		ext4_trans_abort(f->mp);
@@ -2108,22 +2229,7 @@ int ext4_fstat(ext4_file *f, struct stat *stat)
 		return r;
 	}
 
-	// FIXME: no user now!
-	stat->st_dev = ext4_inode_get_dev(inode_ref.inode);
-	stat->st_ino = ino;
-	stat->st_mode = ext4_inode_get_mode(sb, inode_ref.inode);
-	stat->st_nlink = ext4_inode_get_links_cnt(inode_ref.inode);
-	stat->st_uid = ext4_inode_get_uid(inode_ref.inode);
-	stat->st_gid = ext4_inode_get_gid(inode_ref.inode);
-	stat->st_rdev = 0;
-	stat->st_size = ext4_inode_get_size(sb, inode_ref.inode);
-	stat->st_blocks = ext4_inode_get_blocks_count(sb, inode_ref.inode);
-	stat->st_blksize =
-		stat->st_blocks *
-		512; /* This is the optimal IO size (for stat), not the fs block size */
-	stat->st_atime = ext4_inode_get_access_time(inode_ref.inode);
-	stat->st_mtime = ext4_inode_get_modif_time(inode_ref.inode);
-	stat->st_ctime = ext4_inode_get_change_inode_time(inode_ref.inode);
+	ext4_inode_stat(&inode_ref, stat);
 
 	r = ext4_fs_put_inode_ref(&inode_ref);
 
@@ -2484,12 +2590,20 @@ static int ext4_fsymlink_set(ext4_file *f, const void *buf, uint32_t size)
 		memcpy(ref.inode->blocks, buf, size);
 		ext4_inode_clear_flag(ref.inode, EXT4_INODE_FLAG_EXTENTS);
 	} else {
+		struct ext4_block block;
 		ext4_fs_inode_blocks_init(&f->mp->fs, &ref);
 		r = ext4_fs_append_inode_dblk(&ref, &fblock, &sblock);
 		if (r != EOK)
 			goto Finish;
 
-		r = ext4_block_writebytes(f->mp->fs.bdev, 0, buf, size);
+		/* Allocation can leave a zeroed block in the cache. Update that
+		 * buffer so a later writeback cannot overwrite the target text. */
+		r = ext4_block_get(f->mp->fs.bdev, &block, fblock);
+		if (r != EOK)
+			goto Finish;
+		memcpy(block.data, buf, size);
+		ext4_trans_set_block_dirty(block.buf);
+		r = ext4_block_set(f->mp->fs.bdev, &block);
 		if (r != EOK)
 			goto Finish;
 	}

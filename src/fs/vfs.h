@@ -30,6 +30,13 @@ struct super_operations {
 	 */
 	file *(*open)(super_block *sb, const char *path, int flag);
 
+	/* Optional lookup for followed final symlinks. Return an open file, or
+	 * NULL with *target set to an absolute target pathname owned by the
+	 * caller (release with name_put). NULL with no target means failure.
+	 * Explicit O_NOFOLLOW opens use open instead, preserving link objects. */
+	file *(*open_link)(super_block *sb, const char *path, int flag,
+			   char **target);
+
 	/*
 	 * put_super: Custom dtor of super_block.
 	 * Called when the super_block's reference count drops to zero.

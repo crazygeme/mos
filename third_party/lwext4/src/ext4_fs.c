@@ -67,6 +67,8 @@ int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev, bool read_only)
 	ext4_assert(fs && bdev);
 
 	fs->bdev = bdev;
+	fs->namespace_seq = 0;
+	memset(fs->inode_locations, 0, sizeof(fs->inode_locations));
 
 	fs->read_only = read_only;
 
@@ -722,6 +724,16 @@ static bool ext4_fs_verify_inode_csum(struct ext4_inode_ref *inode_ref)
 static int __ext4_fs_get_inode_ref(struct ext4_fs *fs, uint32_t index,
 				   struct ext4_inode_ref *ref, bool initialized)
 {
+	struct ext4_inode_location *location =
+		&fs->inode_locations[index % EXT4_INODE_LOCATION_CACHE_SLOTS];
+	ext4_fsblk_t block_id;
+	uint32_t offset_in_block;
+	int rc;
+	if (location->block_id && location->index == index) {
+		block_id = location->block_id;
+		offset_in_block = location->offset;
+		goto load_inode;
+	}
 	/* Compute number of i-nodes, that fits in one data block */
 	uint32_t inodes_per_group = ext4_get32(&fs->sb, inodes_per_group);
 
@@ -729,14 +741,14 @@ static int __ext4_fs_get_inode_ref(struct ext4_fs *fs, uint32_t index,
 	 * Inode numbers are 1-based, but it is simpler to work with 0-based
 	 * when computing indices
 	 */
-	index -= 1;
-	uint32_t block_group = index / inodes_per_group;
-	uint32_t offset_in_group = index % inodes_per_group;
+	uint32_t zero_based = index - 1;
+	uint32_t block_group = zero_based / inodes_per_group;
+	uint32_t offset_in_group = zero_based % inodes_per_group;
 
 	/* Load block group, where i-node is located */
 	struct ext4_block_group_ref bg_ref;
 
-	int rc = ext4_fs_get_block_group_ref(fs, block_group, &bg_ref);
+	rc = ext4_fs_get_block_group_ref(fs, block_group, &bg_ref);
 	if (rc != EOK) {
 		return rc;
 	}
@@ -757,22 +769,25 @@ static int __ext4_fs_get_inode_ref(struct ext4_fs *fs, uint32_t index,
 	uint32_t byte_offset_in_group = offset_in_group * inode_size;
 
 	/* Compute block address */
-	ext4_fsblk_t block_id =
-		inode_table_start + (byte_offset_in_group / block_size);
+	block_id = inode_table_start + (byte_offset_in_group / block_size);
+	offset_in_block = byte_offset_in_group % block_size;
 
+load_inode:
 	rc = ext4_trans_block_get(fs->bdev, &ref->block, block_id);
 	if (rc != EOK) {
 		return rc;
 	}
 
 	/* Compute position of i-node in the data block */
-	uint32_t offset_in_block = byte_offset_in_group % block_size;
 	ref->inode = (struct ext4_inode *)(ref->block.data + offset_in_block);
 
 	/* We need to store the original value of index in the reference */
-	ref->index = index + 1;
+	ref->index = index;
 	ref->fs = fs;
 	ref->dirty = false;
+	location->block_id = block_id;
+	location->index = index;
+	location->offset = offset_in_block;
 
 	if (initialized && !ext4_fs_verify_inode_csum(ref)) {
 		ext4_dbg(DEBUG_FS,

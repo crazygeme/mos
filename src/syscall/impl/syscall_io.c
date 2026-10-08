@@ -176,6 +176,8 @@ int sys_open(const char *_name, int flags, umode_t mode)
 {
 	char *name = name_get();
 	int fd;
+	if (!name)
+		return -ENOMEM;
 
 	resolve_path(_name, name);
 
@@ -191,6 +193,8 @@ int sys_open(const char *_name, int flags, umode_t mode)
 int sys_openat(int dirfd, const char *path, int flags, umode_t mode)
 {
 	char *name = name_get();
+	if (!name)
+		return -ENOMEM;
 	int ret = syscall_resolve_at(dirfd, path, name);
 
 	if (ret == 0)

@@ -5,6 +5,7 @@
 #include <macro.h>
 #include <ps/ps.h>
 #include <ps/smp.h>
+#include <ps/cpu_local.h>
 
 void arch_task_copy_user_context(task_struct *child, const task_struct *parent)
 {
@@ -19,40 +20,51 @@ void arch_task_init(task_struct *task)
 	task->tss.cs = KERNEL_CODE_SELECTOR;
 }
 
-static void load_ldt(task_struct *task, unsigned long long *gdt)
+static void load_ldt(struct smp_cpu *cpu, task_struct *task)
 {
-	if (!task || !task->user || !task->user->ldt_present) {
-		unsigned short selector;
-
-		/* Retain an empty LDTR across interrupt returns and task switches. */
-		asm volatile("sldt %0" : "=rm"(selector));
-		if (selector)
-			SET_LDT(0);
+	uintptr_t base = task && task->user && task->user->ldt_present ?
+				 (uintptr_t)task->user->ldt_desc :
+				 0;
+	if (cpu->loaded_ldt_valid && cpu->loaded_ldt_base == base)
 		return;
-	}
-
-	unsigned limit = LDT_ENTRY_COUNT * sizeof(unsigned long long) - 1;
-	gdt[LDT_SELECTOR / 8] = MAKE_SEG_DESC((unsigned)task->user->ldt_desc,
-					      limit, SEG_CLASS_SYSTEM, 2,
-					      KERNEL_PRIVILEGE, SEG_BASE_1);
-	SET_LDT(LDT_SELECTOR);
+	if (base) {
+		unsigned limit =
+			LDT_ENTRY_COUNT * sizeof(unsigned long long) - 1;
+		cpu->gdt[LDT_SELECTOR / 8] =
+			MAKE_SEG_DESC(base, limit, SEG_CLASS_SYSTEM, 2,
+				      KERNEL_PRIVILEGE, SEG_BASE_1);
+		SET_LDT(LDT_SELECTOR);
+	} else
+		SET_LDT(0);
+	cpu->loaded_ldt_base = base;
+	cpu->loaded_ldt_valid = 1;
 }
 
 void ps_update_ldt(task_struct *task)
 {
-	load_ldt(task, smp_gdt());
+	unsigned irq = int_intr_disable();
+	load_ldt(arch_cpu_local(), task);
+	int_intr_setlevel(irq);
 }
 
 void ps_load_task_segments(task_struct *task)
 {
-	unsigned long long *gdt = smp_gdt();
-
 	if (!task || !task->user)
 		return;
-	gdt[GDT_ENTRY_TLS_MIN + 0] = task->user->tls_desc[0];
-	gdt[GDT_ENTRY_TLS_MIN + 1] = task->user->tls_desc[1];
-	gdt[GDT_ENTRY_TLS_MIN + 2] = task->user->tls_desc[2];
-	load_ldt(task, gdt);
+	unsigned irq = int_intr_disable();
+	struct smp_cpu *cpu = arch_cpu_local();
+	for (unsigned i = 0; i < GDT_ENTRY_TLS_COUNT; i++)
+		if (cpu->gdt[GDT_ENTRY_TLS_MIN + i] != task->user->tls_desc[i])
+			cpu->gdt[GDT_ENTRY_TLS_MIN + i] =
+				task->user->tls_desc[i];
+	load_ldt(cpu, task);
+	int_intr_setlevel(irq);
+}
+
+void arch_task_save_user_segments(task_struct *task)
+{
+	/* i386 selectors are saved by interrupt/context-switch assembly. */
+	(void)task;
 }
 
 void reset_tss(task_struct *task)
@@ -88,13 +100,15 @@ void arch_task_activate(task_struct *task)
 
 void arch_task_reset_tls(task_struct *task, intr_frame *frame)
 {
+	unsigned irq = int_intr_disable();
 	memset(task->user->tls_desc, 0, sizeof(task->user->tls_desc));
 	memset(task->user->ldt_desc, 0, sizeof(task->user->ldt_desc));
 	task->user->ldt_present = 0;
 	frame->gs = 0;
 	task->tss.gs = 0;
 	SET_GS(0);
-	load_ldt(task, smp_gdt());
+	ps_load_task_segments(task);
+	int_intr_setlevel(irq);
 }
 
 void arch_task_init_user_frame(intr_frame *frame, vaddr_t ip, vaddr_t sp)

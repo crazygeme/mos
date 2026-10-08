@@ -21,6 +21,7 @@ void arch_cpu_local_init(struct smp_cpu *cpu)
 	cpu->gdt[CPU_LOCAL_SELECTOR / 8] =
 		MAKE_SEG_DESC((unsigned)cpu, limit, SEG_CLASS_DATA, 2,
 			      KERNEL_PRIVILEGE, SEG_BASE_1);
+	cpu->loaded_ldt_valid = 0;
 	operand = MAKE_GDTR_OPERAND(sizeof(cpu->gdt) - 1, cpu->gdt);
 	SET_GDT(operand);
 	asm volatile("movw %0, %%fs"

@@ -51,6 +51,8 @@ void _task_sched(const char *func)
 	if (prev->stats)
 		prev->stats->total_switches++;
 
+	/* Read native bases once at a real switch, not at each interrupt. */
+	arch_task_save_user_segments(prev);
 	smp_fpu_save(prev);
 
 	/*

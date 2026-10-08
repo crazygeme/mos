@@ -4,24 +4,20 @@
 .global intr_entry
 intr_entry:
  cld
- /* Preserve segment selectors independently of FS/GS base state. */
+ /* Keep the GS/FS/ES/DS/RAX layout without locked memory XCHG.
+  * Copy RAX below its original slot before DS overwrites that slot. */
  pushq %rax
+ subq $32, %rsp
+ movq %rax, (%rsp)
  xorl %eax, %eax
  movw %ds, %ax
- xchgq %rax, (%rsp)
- pushq %rax
- xorl %eax, %eax
+ movq %rax, 32(%rsp)
  movw %es, %ax
- xchgq %rax, (%rsp)
- pushq %rax
- xorl %eax, %eax
+ movq %rax, 24(%rsp)
  movw %fs, %ax
- xchgq %rax, (%rsp)
- pushq %rax
- xorl %eax, %eax
+ movq %rax, 16(%rsp)
  movw %gs, %ax
- xchgq %rax, (%rsp)
- pushq %rax
+ movq %rax, 8(%rsp)
  pushq %rcx
  pushq %rdx
  pushq %rbx
@@ -37,8 +33,16 @@ intr_entry:
  pushq %r13
  pushq %r14
  pushq %r15
- /* Test the active base rather than CS: an NMI can interrupt SYSCALL
-  * between SWAPGS and the privilege-frame construction. */
+ /* Maskable IRQs cannot enter the interrupt-masked SWAPGS windows.
+  * Saved CS identifies their active GS base. CPU exceptions retain the
+  * MSR check: NMI/#DB can interrupt entry and #GP can fault on user exit. */
+ cmpq $32, 160(%rsp)
+ jb intr_paranoid_gs
+ testb $3, 192(%rsp)
+ jz 9f
+ swapgs
+ jmp 9f
+intr_paranoid_gs:
  movl $0xc0000101, %ecx
  rdmsr
  testl %edx, %edx
@@ -46,6 +50,7 @@ intr_entry:
  swapgs
  movq $1, 88(%rsp)
 9:
+ lfence /* settle the GS decision before CPU-local accesses */
  movq %rsp, %rdi
  movq %rsp, %rbx
  andq $-16, %rsp

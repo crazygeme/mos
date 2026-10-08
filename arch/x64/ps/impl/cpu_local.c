@@ -28,6 +28,8 @@ void arch_cpu_local_init(struct smp_cpu *cpu)
 				(uintptr_t)&critical_stacks[cpu->index][i][4096];
 		cpu->self = cpu;
 	}
+	cpu->loaded_ldt_valid = 0;
+	cpu->native_bases_valid = 0;
 	struct arch_descriptor_pointer gdtr = {
 		.limit = sizeof(cpu->gdt) - 1,
 		.base = (uintptr_t)cpu->gdt,

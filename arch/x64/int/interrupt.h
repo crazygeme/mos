@@ -41,4 +41,11 @@ ALWAYS_INLINE int arch_interrupt_frame_is_user(const arch_intr_frame *frame)
 {
 	return (frame->cs & 3) == 3;
 }
+/* i386 restores selectors on kernel exits too; AMD64 only on user exits. */
+ALWAYS_INLINE int
+arch_interrupt_frame_restores_segments(const arch_intr_frame *frame)
+{
+	return arch_interrupt_frame_is_user(frame);
+}
+
 #endif

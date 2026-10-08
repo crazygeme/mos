@@ -37,6 +37,8 @@ int sock_deadline_expired(unsigned long long deadline);
 
 /* ── Blocking helpers (sock.c) ──────────────────────────────────────────── */
 
+/* Unix callers must own net_core_lock. Wait enrollment precedes the
+ * ownership release in sock_wait; sock_wakeup relies on that ordering. */
 void sock_wakeup(mos_sock *sk);
 /* Zero deadline waits indefinitely. Returns -1 for a deliverable signal. */
 int sock_wait(mos_sock *sk, unsigned long long deadline);
@@ -98,6 +100,7 @@ int unix_connect(mos_sock *sk, const struct sockaddr_un *addr,
 		 unsigned addrlen);
 int unix_accept(mos_sock *sk, struct sockaddr *addr, unsigned *addrlen,
 		int nonblock);
+/* Data-path operations require the caller's network core guard. */
 ssize_t unix_read(file *fp, mos_sock *sk, void *buf, size_t count);
 ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count);
 int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags);

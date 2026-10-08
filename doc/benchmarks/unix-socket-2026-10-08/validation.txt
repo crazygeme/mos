@@ -1,0 +1,27 @@
+Unix-only socket and wait scripts were filtered as described in the journal.
+Exit status 0 means success. Empty output is normal for socket and fd-pass tests.
+
+MOS x86 release, 1 guest CPU(s)
+stress: five required PASS markers observed
+Unix concurrent stream chunk=64 PASS
+Unix concurrent stream chunk=4097 PASS
+Unix concurrent stream chunk=65536 PASS
+Unix concurrent stream chunk=262145 PASS
+Unix stream poll and SIGIO notifications PASS
+socket-unix: 0
+socket-wait: 0
+socket wait regressions passed
+fd-pass: 0
+
+MOS x86 release, 2 guest CPU(s)
+stress: 0
+Unix concurrent stream chunk=64 PASS
+Unix concurrent stream chunk=4097 PASS
+Unix concurrent stream chunk=65536 PASS
+Unix concurrent stream chunk=262145 PASS
+Unix stream poll and SIGIO notifications PASS
+socket-unix: 0
+socket-wait: 0
+socket wait regressions passed
+fd-pass: 0
+

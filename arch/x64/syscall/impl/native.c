@@ -1,6 +1,7 @@
 /* Explicit AMD64 wire conversions for shared kernel services. */
 #include <ps/ps.h>
 #include <ps/usage.h>
+#include <int/int.h>
 #include <lib/klib.h>
 #include <errno.h>
 #include <syscall/syscall.h>
@@ -355,8 +356,11 @@ static intptr_t arch_set_gs(uintptr_t address)
 {
 	if (address >= MOS_NATIVE_TASK_SIZE)
 		return -EPERM;
+	unsigned irq = int_intr_disable();
+	arch_task_save_user_segments(current);
 	current->tss.gs_base = address;
-	ps_load_task_segments(current);
+	arch_task_set_user_bases(current);
+	int_intr_setlevel(irq);
 	return 0;
 }
 
@@ -364,13 +368,17 @@ static intptr_t arch_set_fs(uintptr_t address)
 {
 	if (address >= MOS_NATIVE_TASK_SIZE)
 		return -EPERM;
+	unsigned irq = int_intr_disable();
+	arch_task_save_user_segments(current);
 	current->tss.fs_base = address;
-	ps_load_task_segments(current);
+	arch_task_set_user_bases(current);
+	int_intr_setlevel(irq);
 	return 0;
 }
 
 static intptr_t arch_get_fs(uintptr_t address)
 {
+	arch_task_save_user_segments(current);
 	uint64_t value = current->tss.fs_base;
 	return ps_write_process_memory(current, (void *)address, &value,
 				       sizeof(value));
@@ -378,6 +386,7 @@ static intptr_t arch_get_fs(uintptr_t address)
 
 static intptr_t arch_get_gs(uintptr_t address)
 {
+	arch_task_save_user_segments(current);
 	uint64_t value = current->tss.gs_base;
 	return ps_write_process_memory(current, (void *)address, &value,
 				       sizeof(value));

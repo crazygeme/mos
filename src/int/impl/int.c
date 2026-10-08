@@ -66,53 +66,42 @@ static void intr_maybe_preempt(void)
 	}
 }
 
-static void intr_sanitize_user_return(intr_frame *frame)
+static task_struct *intr_sanitize_user_return(intr_frame *frame)
 {
+	/* Keep the i386 nested-return GDT refresh before POP GS. AMD64
+	 * kernel returns neither restore user selectors nor change TLS bases. */
+	if (!arch_interrupt_frame_restores_segments(frame))
+		return NULL;
 	task_struct *cur = CURRENT_TASK();
 	const unsigned user_eflags_clear = 0x00054000U;
-
 	if (cur->psid == 0xffffffff || !ps_enabled())
-		return;
+		return NULL;
 
-	/*
-	 * TLS slots 6..8 live in the shared CPU GDT, but their contents are
-	 * per-task. If kernel execution returns to user mode without taking the
-	 * normal scheduler path that reloads them, "pop %gs" in intr_exit can
-	 * resolve selector 0x33 against stale or zeroed descriptors and fault.
-	 * This can happen even on a nested kernel interrupt, because MOS keeps
-	 * the current task's user %gs live while executing in ring 0. Refresh
-	 * them on every interrupt/syscall exit so the live GDT always matches
-	 * the current task before any saved %gs is restored.
-	 */
+	/* Descriptor changes without a context switch must still be visible.
+	 * The architecture skips loads when the installed CPU state matches. */
 	ps_load_task_segments(cur);
-
 	if (!arch_interrupt_frame_is_user(frame))
-		return;
+		return NULL;
 
-	/*
-	 * Never reflect privileged/special control bits back into ring 3.
-	 * RF/NT/AC/VM are not part of normal user execution for MOS and can
-	 * produce hard-to-explain traps in freshly exec'd helper processes.
-	 */
-	frame->eflags &= ~user_eflags_clear;
-
-	/*
-	 * Restore the task's requested IOPL on every return to user mode.
-	 * XFree86 uses iopl(3) on i386 to reach PCI config ports such as
-	 * 0xcf8/0xcfc. We still recompute the flags here so preemption,
-	 * signals, and nested syscalls do not silently drop that request.
-	 */
-	frame->eflags &= ~0x3000U;
+	/* Sanitize special control flags and restore the task's requested IOPL. */
+	frame->eflags &= ~(user_eflags_clear | 0x3000U);
 	frame->eflags |= ((unsigned)(cur->io_priv_level & 0x3) << 12);
+	return cur;
 }
 
 static void intr_prepare_user_return(intr_frame *frame)
 {
-	intr_sanitize_user_return(frame);
+	task_struct *cur = intr_sanitize_user_return(frame);
+	if (!cur || cur->type != ps_user || !cur->signal)
+		return;
 
-	/* Deliver pending signals when returning to user space.
-	 * This ensures alarm() and kill() work even in tight user-space loops. */
-	do_signal(frame);
+	/* Use the existing bitmap so every signal source already publishes
+	 * work for this check. Ignored unmasked signals retain their cleanup
+	 * path, and saved-mask restoration still reaches signal processing. */
+	unsigned pending =
+		__atomic_load_n(&cur->signal->sig_pending, __ATOMIC_ACQUIRE);
+	if ((pending & ~cur->signal->sig_mask) || cur->signal->restore_sigmask)
+		do_signal(frame);
 }
 
 void intr_handler(intr_frame *frame)

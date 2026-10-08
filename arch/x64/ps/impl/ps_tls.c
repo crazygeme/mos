@@ -157,6 +157,9 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 	if (!task || !task->user || !u_info)
 		return -EFAULT;
 
+	struct user_desc input = *u_info;
+	struct user_desc *user_info = u_info;
+	u_info = &input;
 	entry = u_info->entry_number;
 
 	if (entry == (unsigned int)-1) {
@@ -170,23 +173,22 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 		if (entry > GDT_ENTRY_TLS_MAX)
 			return -ESRCH;
 		u_info->entry_number = entry;
+		user_info->entry_number = entry;
 	}
 
 	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
 		return -EINVAL;
 
-	if (user_desc_empty(u_info)) {
-		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = 0;
+	/* Read user input before masking IRQs, then publish complete state. */
+	int empty = user_desc_empty(u_info);
+	unsigned long long desc = empty ? 0 : build_tls_desc(u_info);
+	unsigned irq = int_intr_disable();
+	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = desc;
+	if (empty)
 		clear_tls_selector_if_matches(task, entry);
-		if (task == CURRENT_TASK())
-			gdt[entry] = 0;
-	} else {
-		task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
-			build_tls_desc(u_info);
-		if (task == CURRENT_TASK())
-			gdt[entry] =
-				task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
-	}
+	if (task == CURRENT_TASK())
+		ps_load_task_segments(task);
+	int_intr_setlevel(irq);
 	return 0;
 }
 
@@ -289,25 +291,27 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 			return -EFAULT;
 		if (bytecount != sizeof(*u_info))
 			return -EINVAL;
-		if (u_info->entry_number >= LDT_ENTRY_COUNT)
+		struct user_desc input = *u_info;
+		u_info = &input;
+		unsigned entry = u_info->entry_number;
+		if (entry >= LDT_ENTRY_COUNT)
 			return -EINVAL;
-		if (!user_desc_empty(u_info)) {
-			if (!u_info->seg_32bit ||
-			    u_info->contents == USER_DESC_CONTENTS_RESERVED)
-				return -EINVAL;
-			cur->user->ldt_desc[u_info->entry_number] =
-				build_ldt_desc(u_info);
-			cur->user->ldt_present = 1;
-		} else {
-			cur->user->ldt_desc[u_info->entry_number] = 0;
-			cur->user->ldt_present = 0;
+		int empty = user_desc_empty(u_info);
+		if (!empty && (!u_info->seg_32bit ||
+			       u_info->contents == USER_DESC_CONTENTS_RESERVED))
+			return -EINVAL;
+		unsigned long long desc = empty ? 0 : build_ldt_desc(u_info);
+		unsigned irq = int_intr_disable();
+		cur->user->ldt_desc[entry] = desc;
+		cur->user->ldt_present = !empty;
+		if (empty)
 			for (unsigned i = 0; i < LDT_ENTRY_COUNT; i++)
 				if (cur->user->ldt_desc[i]) {
 					cur->user->ldt_present = 1;
 					break;
 				}
-		}
 		ps_update_ldt(cur);
+		int_intr_setlevel(irq);
 		return 0;
 	default:
 		return -ENOSYS;

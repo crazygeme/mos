@@ -143,9 +143,15 @@ static void ext4_buf_free(struct ext4_buf *buf)
 
 static struct ext4_buf *ext4_buf_lookup(struct ext4_bcache *bc, uint64_t lba)
 {
+	unsigned slot = (unsigned)(lba ^ (lba >> 32)) % EXT4_BCACHE_LOOKUP_SLOTS;
+	struct ext4_buf *buf = bc->lookup[slot];
 	struct ext4_buf tmp = { .lba = lba };
 
-	return RB_FIND(ext4_buf_lba, &bc->lba_root, &tmp);
+	if (buf && buf->lba == lba)
+		return buf;
+	buf = RB_FIND(ext4_buf_lba, &bc->lba_root, &tmp);
+	bc->lookup[slot] = buf;
+	return buf;
 }
 
 struct ext4_buf *ext4_buf_lowest_lru(struct ext4_bcache *bc)
@@ -155,6 +161,10 @@ struct ext4_buf *ext4_buf_lowest_lru(struct ext4_bcache *bc)
 
 void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
 {
+	unsigned slot = (unsigned)(buf->lba ^ (buf->lba >> 32)) %
+			EXT4_BCACHE_LOOKUP_SLOTS;
+	if (bc->lookup[slot] == buf)
+		bc->lookup[slot] = NULL;
 	/* Warn on dropping any referenced buffers.*/
 	if (buf->refctr) {
 		ext4_dbg(DEBUG_BCACHE,

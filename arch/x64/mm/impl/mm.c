@@ -536,10 +536,11 @@ void *name_get(void)
 	if (!region)
 		return 0;
 	void *buffer = (char *)region + sizeof(list_entry);
-	memset(buffer, 0, MAX_PATH);
+	*(char *)buffer = 0;
 	cache_count++;
 	return buffer;
 }
+
 void name_put(void *buffer)
 {
 	if (!buffer)

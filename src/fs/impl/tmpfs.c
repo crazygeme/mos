@@ -559,7 +559,6 @@ static loff_t tmpfs_file_llseek(file *fp, loff_t offset, int whence)
 static int tmpfs_file_release(file *fp)
 {
 	tmpfs_node_put(fp->f_inode->i_private);
-	free(fp->f_inode);
 	free(fp);
 	return 0;
 }
@@ -685,7 +684,6 @@ static ssize_t tmpfs_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 static int tmpfs_dir_release(file *fp)
 {
 	tmpfs_node_put(fp->f_inode->i_private);
-	free(fp->f_inode);
 	free(fp);
 	return 0;
 }
@@ -700,10 +698,19 @@ static const file_operations tmpfs_dir_fops = {
 
 /* ── Helper: build file * from tmpfs_node ─────────────────────────────────── */
 
+/* The file is first so release can free the description and inode together. */
+typedef struct {
+	file file;
+	inode inode;
+} tmpfs_open_file;
+
 static file *tmpfs_make_file(tmpfs_node *tn)
 {
-	inode *node = zalloc(sizeof(*node));
-	file *fp = zalloc(sizeof(*fp));
+	tmpfs_open_file *opened = zalloc(sizeof(*opened));
+	if (!opened)
+		return NULL;
+	inode *node = &opened->inode;
+	file *fp = &opened->file;
 
 	tmpfs_node_get(tn);
 	node->i_mode = tn->mode;
@@ -719,8 +726,11 @@ static file *tmpfs_make_file(tmpfs_node *tn)
 
 static file *tmpfs_make_dir(tmpfs_node *tn)
 {
-	inode *node = zalloc(sizeof(*node));
-	file *fp = zalloc(sizeof(*fp));
+	tmpfs_open_file *opened = zalloc(sizeof(*opened));
+	if (!opened)
+		return NULL;
+	inode *node = &opened->inode;
+	file *fp = &opened->file;
 
 	tmpfs_node_get(tn);
 	node->i_mode = tn->mode;
@@ -780,6 +790,8 @@ static file *tmpfs_open(super_block *sb, const char *path, int flag)
 
 	{
 		file *fp = tmpfs_make_file(tn);
+		if (!fp)
+			return NULL;
 
 		if (flag & O_TRUNC)
 			tmpfs_file_ftruncate(fp, 0);

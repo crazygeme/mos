@@ -384,8 +384,9 @@ int fs_open(const char *path, int flag, umode_t mode)
 		return -ENOTDIR;
 	}
 
-	/* Check DAC permissions based on requested access mode. */
-	if (fp->f_fop && fp->f_fop->getattr &&
+	/* Open requests only read/write access, which UID 0 always passes. */
+	if (cur->user && cur->user->euid != 0 &&
+	    fp->f_fop && fp->f_fop->getattr &&
 	    fp->f_fop->getattr(fp, &s) == 0) {
 		acc = 0;
 		if ((flag & O_ACCMODE) != O_WRONLY)
@@ -1128,10 +1129,13 @@ int resolve_path(const char *old, char *new)
 	if (!old || !*old)
 		return -1;
 
-	plain_old = strdup(old);
-
 	/* stat("#!/bin/bash") will also be called */
 	if (strncmp(old, "#!", 2) == 0) {
+		plain_old = strdup(old);
+		if (!plain_old) {
+			new[0] = '\0';
+			return -1;
+		}
 		old += 2;
 		while (*old == ' ' || *old == '\t')
 			old++;

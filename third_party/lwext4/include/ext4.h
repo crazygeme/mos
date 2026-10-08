@@ -286,6 +286,17 @@ int ext4_fopen(ext4_file *f, const char *path, const char *flags);
  * @return  standard error code*/
 int ext4_fopen2(ext4_file *f, const char *path, int flags);
 
+/* Optional inline target snapshot, valid at the time of this lookup. */
+struct ext4_inline_link {
+	size_t length;
+	char target[EXT4_INODE_BLOCKS * sizeof(uint32_t)];
+};
+
+/* Return metadata and an optional inline symlink target from the inode already
+ * acquired during lookup. Non-inline targets have link->length == 0. */
+int ext4_fopen2_stat(ext4_file *f, const char *path, int flags, struct stat *st,
+		     struct ext4_inline_link *link);
+
 /**@brief   Get file status
  * @param   filename, (has to start from mount point)
  *          /my_partition/my_file

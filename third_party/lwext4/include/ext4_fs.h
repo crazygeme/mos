@@ -53,6 +53,13 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
+#define EXT4_INODE_LOCATION_CACHE_SLOTS 16
+struct ext4_inode_location {
+	ext4_fsblk_t block_id;
+	uint32_t index;
+	uint32_t offset;
+};
+
 struct ext4_fs {
 	bool read_only;
 
@@ -63,6 +70,11 @@ struct ext4_fs {
 	uint64_t inode_blocks_per_level[4];
 
 	uint32_t last_inode_bg_id;
+	/* Directory mutations invalidate cached path-to-inode lookups. */
+	uint64_t namespace_seq;
+	/* Inode-table locations are immutable until unmount. No inode data is
+	 * retained here, so reuse, chmod, and writes still load fresh metadata. */
+	struct ext4_inode_location inode_locations[EXT4_INODE_LOCATION_CACHE_SLOTS];
 
 	struct jbd_fs *jbd_fs;
 	struct jbd_journal *jbd_journal;

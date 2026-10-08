@@ -1081,7 +1081,7 @@ void vm_free(vaddr_t vm, int page_count)
  */
 
 /* Acquire a pathname buffer (allocates a new one if the cache is empty) */
-void *name_get()
+void *name_get(void)
 {
 	char *buf, *region;
 	int irq;
@@ -1090,13 +1090,15 @@ void *name_get()
 	if (list_is_empty(&name_cache_head)) {
 		spinlock_unlock(&path_lock, irq);
 		region = (void *)vm_alloc(1);
+		if (!region)
+			return NULL;
 		buf = region + sizeof(list_entry);
 	} else {
 		region = (char *)list_remove_tail(&name_cache_head);
 		spinlock_unlock(&path_lock, irq);
 		buf = region + sizeof(list_entry);
 	}
-	memset(buf, 0, MAX_PATH);
+	buf[0] = 0;
 	cache_count++;
 	return buf;
 }

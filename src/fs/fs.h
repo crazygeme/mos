@@ -110,6 +110,8 @@ typedef struct _file_operations {
 			     uint64_t *ino, const char **name);
 	/* Follow a virtual link to an open object without resolving display text. */
 	file *(*follow_link)(file *file, int flags);
+	/* Read a symlink through its open handle, avoiding a second path lookup. */
+	int (*readlink)(file *file, char *buf, size_t size, size_t *length);
 	/* Allocate an independent open description for an anonymous object. */
 	file *(*reopen)(file *file, int flags);
 	int (*setattr)(file *file, uint32_t mode);

@@ -1,198 +1,51 @@
-# Framebuffer / VGA Driver
+# Console rendering and display devices
 
-**Source:** `src/device/impl/video.c`, `src/driver/impl/video/bochs.c`, `src/driver/impl/video/vmware_svga.c`
-**Header:** `src/device/vga.h`
+Terminal semantics and display hardware have separate interfaces.
 
----
+| Source | Responsibility |
+| --- | --- |
+| `src/driver/tty/tty.c` | ANSI/termios state, virtual terminals, character endpoints, graphics VT ownership |
+| `src/console/render.c` | Font rasterization, text colors, cursor drawing, character geometry and text-row operations |
+| `src/console/fonts` | Read-only built-in fonts |
+| `src/device/core/framebuffer.c` | Pixel-device registration and dispatch, rectangle bounds and CPU fallbacks |
+| `src/driver/video/bochs.c` | VBE registers, memory mapping, shadow surface and dirty-byte presentation |
+| `src/driver/video/vmware_svga.c` | SVGA registers, VRAM mapping, FIFO updates and pixel copy/fill acceleration |
 
-## Overview
+`console/render.h` defines `console_cell`, font data and rendering operations.
+`device/framebuffer.h` defines an XRGB8888 pixel surface and `framebuffer_ops`.
+The generic driver registration header contains no console or framebuffer types.
 
-The framebuffer layer provides a hardware-independent character-cell display for the TTY subsystem. It consists of:
+## Text output
 
-1. A **dispatcher** (`src/device/impl/video.c`) that forwards calls through the framebuffer installed by the selected PCI driver.
-2. A **Bochs/QEMU VBE driver** (`vga_bochs.c`) for the Bochs Graphics Adapter (BGA) / QEMU stdvga.
-3. A **VMware SVGA2 driver** (`vmsvga.c`) for VMware and QEMU's `-device vmsvga`.
+The TTY driver maintains its cell buffer even when inactive. Active-terminal
+writes call `console_putcell`; cursor movement calls `console_cursor_update`.
+The renderer converts cells into pixels using the selected font and the surface's
+byte pitch, then reports damaged byte ranges to the display device. A completed
+write calls `console_present`, which submits the accumulated update. Kernel
+console output also flushes at its output boundary through the console provider.
 
-Resolution and depth are compile-time constants in `include/config.h`:
+Text scrolling and line insertion/deletion translate row counts into pixel
+rectangles. Display devices may accelerate rectangle copying and filling.
+Otherwise the pixel core uses overlap-safe CPU operations without allocating a
+scratch image. Neither concrete display driver knows the font or cell structure.
 
-```c
-#define VGA_RESOLUTION_X  720
-#define VGA_RESOLUTION_Y  540
-#define VGA_COLOR_DEPTH    32   /* bits per pixel */
-```
+## Modes and terminal switching
 
----
+Display probes register the pixel device through the ordinary PCI binding flow.
+The virtual TTY probe then obtains character dimensions from the renderer.
+`console_sync_mode` asks the display device to synchronize its live mode; the
+renderer reacquires the surface because a resize may replace its pixel buffer.
 
-## 1. Cell type
+Returning to a text VT redraws its saved cells using `console_redraw`.
+Graphics VTs use pixel snapshots through the framebuffer service. The Bochs
+snapshot reads physical scanout memory so userspace writes are preserved, and
+restoration updates both scanout memory and its shadow surface. VMware restores
+VRAM and submits a device update.
 
-```c
-typedef struct {
-    char     ch;   /* character (ASCII) */
-    unsigned fg;   /* foreground color (ARGB) */
-    unsigned bg;   /* background color (ARGB) */
-} tty_cell_t;
-```
+The periodic process service asks the registered console provider whether it
+needs refresh. The TTY driver schedules graphics updates when the owner has
+written to the mapped framebuffer. The process service has no display-specific
+imports or calls.
 
-Colors are 32-bit ARGB values. Predefined constants:
-
-```c
-#define ARGB(a,r,g,b)  ((0xFF*0x1000000ULL) + (r<<16) + (g<<8) + b)
-
-VGA_COLOR_BLACK    ARGB(ff, 00, 00, 00)
-VGA_COLOR_WHITE    ARGB(ff, ff, ff, ff)
-VGA_COLOR_RED      ARGB(ff, ff, 00, 00)
-VGA_COLOR_GREEN    ARGB(ff, 00, ff, 00)
-VGA_COLOR_BLUE     ARGB(ff, 00, 00, ff)
-VGA_COLOR_YELLOW   ARGB(ff, ff, ff, 00)
-VGA_COLOR_CYAN     ARGB(ff, 00, ff, ff)
-VGA_COLOR_MAGENTA  ARGB(ff, ff, 00, ff)
-VGA_COLOR_GRAY     ARGB(ff, aa, aa, aa)
-```
-
----
-
-## 2. Driver interface (`fb_drv_t`)
-
-```c
-typedef struct {
-    void (*get_char_dims)(unsigned *cols, unsigned *rows);
-    void (*putcell)(const tty_cell_t *cell, int col, int row);
-    void (*redraw)(const tty_cell_t *cells, unsigned cols, unsigned rows,
-                   unsigned cursor_pos);
-    void (*cursor_update)(unsigned old_pos, unsigned new_pos,
-                          const tty_cell_t *cells, unsigned cols);
-    void (*scroll_line_px)(void);
-    void (*scroll_region_px)(unsigned top_row, unsigned bot_row);
-    void (*insert_lines_px)(unsigned row, unsigned bot_row, unsigned n);
-    void (*delete_lines_px)(unsigned row, unsigned bot_row, unsigned n);
-    void (*clear_screen)(void);
-    void (*change_font)(const char *name);
-    int  (*is_char_visible)(unsigned char c);
-    void (*cursor_erase)(unsigned pos, const tty_cell_t *cells, unsigned cols);
-} fb_drv_t;
-```
-
-| Operation          | Called when                                                  |
-| ------------------ | ------------------------------------------------------------ |
-| `get_char_dims`    | TTY init — queries usable columns/rows                       |
-| `putcell`          | Single character changed                                     |
-| `redraw`           | Full screen refresh (TTY switch, alt-screen exit)            |
-| `cursor_update`    | Cursor moved — redraws old and new cell                      |
-| `cursor_erase`     | Erase cursor highlight at a position                         |
-| `scroll_line_px`   | Whole-screen scroll by one line                              |
-| `scroll_region_px` | DECSTBM region scroll by one line                            |
-| `insert_lines_px`  | IL escape: insert n blank lines at row                       |
-| `delete_lines_px`  | DL escape: delete n lines at row                             |
-| `clear_screen`     | Erase entire display                                         |
-| `change_font`      | Load named bitmap font (e.g. `"vga16"`)                      |
-| `is_char_visible`  | Check if a character has a glyph in the loaded font          |
-
----
-
-## 3. Dispatcher (`vga.c`)
-
-The PCI device layer matches registered Bochs and VMware descriptors during
-boot discovery. Their early probes initialize the assigned PCI function and
-install operations with `fb_activate()`. The first successful framebuffer
-remains active; other display functions do not replace it. Drivers do not
-enumerate PCI themselves.
-
-The VirtIO GPU descriptor supplies `bochs_console_init` for its optional VGA
-console interface. Its VirtIO/DRM probe runs later at init level 2. The console
-interface does not claim a second driver binding for the same PCI function.
-
-All public `fb_*` functions are thin wrappers that forward through `_drv` if non-NULL:
-
-```c
-void fb_putcell(const tty_cell_t *cell, int col, int row)
-{
-    if (_drv) _drv->putcell(cell, col, row);
-}
-```
-
----
-
-## 4. Bochs/QEMU VBE driver (`vga_bochs.c`)
-
-**PCI ID:** vendor `0x1234`, device `0x1111`
-**Interface:** Bochs Graphics Adapter (BGA) I/O ports `0x01CE` (index) / `0x01CF` (data)
-
-### Initialisation (`bochs_probe`)
-
-1. Check BGA availability: write/read `VBE_DISPI_ID5 (0xB0C5)` to index register 0.
-2. Set video mode: `VGA_RESOLUTION_X × VGA_RESOLUTION_Y × VGA_COLOR_DEPTH` with LFB enabled.
-3. Scan PCI for device `0x1234:0x1111`, read BAR0 as framebuffer physical base.
-4. Identity-map framebuffer pages via `mm_map_io`.
-5. Load font `"vga16"`, compute `_window_char_width/height`.
-
-### Rendering
-
-All rendering is CPU-side pixel writes into the linear framebuffer (`_fb_buffer`).
-
-- `render_cell`: rasterises a `tty_cell_t` using the bitmap font glyph, writing fg/bg pixels.
-- `render_cursor_cell`: overlays a cursor glyph (from `font->cursor_glyphs`) on top of the character.
-
-Scroll operations use `memmove` on the framebuffer bytes to shift pixel rows.
-
----
-
-## 5. VMware SVGA2 driver (`vmsvga.c`)
-
-**PCI ID:** vendor `0x15AD`, device `0x0405`
-**Registers:** I/O ports at BAR0 — index port at `_iobase+0`, value port at `_iobase+1`
-**FIFO:** MMIO ring buffer at BAR2
-**Framebuffer:** MMIO at BAR1
-
-### Initialisation (`vmsvga_probe`)
-
-1. Scan PCI for `0x15AD:0x0405`; extract BAR0 (I/O), BAR1 (FB), BAR2 (FIFO).
-2. Write `SVGA_ID_2 (0x90000002)` to `SVGA_REG_ID`; verify it reads back.
-3. Map FIFO pages, initialise FIFO header (`MIN`/`MAX`/`NEXT_CMD`/`STOP`).
-4. Set `SVGA_REG_WIDTH`, `HEIGHT`, `BPP`, `ENABLE=1`, `CONFIG_DONE=1`.
-5. Read `SVGA_REG_CAPABILITIES` into `_caps`.
-6. Map framebuffer pages, zero it, load font `"vga16"`.
-
-### FIFO commands
-
-| Command                  | Usage                                                      |
-| ------------------------ | ---------------------------------------------------------- |
-| `SVGA_CMD_UPDATE` (1)    | Mark a pixel rectangle dirty → host repaints               |
-| `SVGA_CMD_RECT_COPY` (3) | Hardware blit: scroll lines                                |
-| `SVGA_CMD_RECT_FILL` (2) | Hardware fill: clear regions (if `SVGA_CAP_RECT_FILL` set) |
-
-`RECT_COPY`/`RECT_FILL` are followed by `fifo_sync()` (spin on `SVGA_REG_BUSY`) to ensure ordering before subsequent writes. `SVGA_CMD_UPDATE` is fire-and-forget.
-
-### Rendering vs. Bochs
-
-Pixel rendering into VRAM is identical to the Bochs driver (same `render_cell`/`render_cursor_cell` logic). The key difference is scroll/insert/delete operations:
-
-| Operation     | Bochs                     | VMSVGA                                           |
-| ------------- | ------------------------- | ------------------------------------------------ |
-| Scroll line   | CPU `memmove` on FB bytes | `SVGA_CMD_RECT_COPY`                             |
-| Scroll region | CPU `memmove`             | `SVGA_CMD_RECT_COPY`                             |
-| Insert lines  | CPU `memmove`             | `SVGA_CMD_RECT_COPY`                             |
-| Delete lines  | CPU `memmove`             | `SVGA_CMD_RECT_COPY`                             |
-| Clear         | CPU `memset`              | `SVGA_CMD_RECT_FILL` (or CPU fill if cap absent) |
-| Putcell       | Write pixels              | Write pixels + `SVGA_CMD_UPDATE`                 |
-
----
-
-## 6. Lifecycle
-
-```
-drivers_init()
-pci_scan()
-  └─ select descriptor → early probe / console_init → fb_activate()
-tty_init()
-  └─ fb_get_char_dims(&max_col, &max_row)  ← per-TTY
-  └─ tty_default_emit_unsafe registered as printk callback
-
-printk("hello\n")
-  └─ tty_lock_acquire / tty_default_emit_unsafe / tty_lock_release
-       └─ process_one_char → vga_putchar → fb_putcell
-            └─ _drv->putcell → render_cell (+ SVGA_CMD_UPDATE for vmsvga)
-
-tty_switch(n)
-  └─ fb_redraw(ttys[n].cells, cols, rows, cursor)
-       └─ _drv->redraw  ← full repaint of new TTY's cell buffer
-```
+The current surface format is XRGB8888 and the built-in font is VGA 8x16.
+Other pixel formats and multiple active displays are not implemented.

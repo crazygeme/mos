@@ -18,7 +18,7 @@
  * They include kernel tasks and retain usage after tasks are reaped.
  */
 
-#include "device/time.h"
+#include <lib/klib.h>
 #include <ps/ps.h>
 #include <ps/smp.h>
 #include <ps/usage.h>

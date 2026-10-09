@@ -1,5 +1,7 @@
+#include <device/chardev.h>
+#include <device/blockdev.h>
+#include <device/devnode.h>
 #include <errno.h>
-#include <ext4_oflags.h>
 #include <fs/fcntl.h>
 #include <fs/entries.h>
 #include <fs/vfs.h>
@@ -13,7 +15,8 @@ struct vfs_entry_node {
 	struct vfs_entry_tree *tree;
 	struct vfs_entry_node *parent, *target;
 	list_entry list;
-	super_block *sb;
+	super_block *sb, *provider;
+	const super_operations *provider_ops;
 	char *name, *text;
 	unsigned mode, number, tag;
 	uint32_t physical_base;
@@ -31,6 +34,8 @@ struct vfs_entry_tree {
 	list_entry nodes, allocations;
 	unsigned references, next_number;
 	int error;
+	unsigned magic;
+	mutex_t lock;
 };
 
 struct vfs_entry_open_file {
@@ -45,20 +50,24 @@ static const super_operations entry_sops;
 vfs_entry_node *vfs_entry_child(vfs_entry_node *parent, const char *name)
 {
 	struct rb_node *cursor;
-	if (!parent)
+	vfs_entry_node *result = NULL;
+	if (!parent || !parent->sb || !name)
 		return NULL;
+	mutex_lock(&parent->sb->s_lock);
 	cursor = parent->sb->s_mounts.rb_node;
 	while (cursor) {
 		vfs_mount_node *mount =
 			rb_entry(cursor, vfs_mount_node, rb_node);
 		int order = strcmp(mount->path + 1, name);
-		if (!order)
-			return mount->sb->s_op == &entry_sops ?
-				       mount->sb->s_fs_info :
-				       NULL;
+		if (!order) {
+			if (mount->sb->s_op == &entry_sops)
+				result = mount->sb->s_fs_info;
+			break;
+		}
 		cursor = order < 0 ? cursor->rb_left : cursor->rb_right;
 	}
-	return NULL;
+	mutex_unlock(&parent->sb->s_lock);
+	return result;
 }
 
 static vfs_entry_node *vfs_entry_new_node(vfs_entry_tree *tree,
@@ -69,6 +78,10 @@ static vfs_entry_node *vfs_entry_new_node(vfs_entry_tree *tree,
 	vfs_entry_node *node;
 	if (!tree || tree->error)
 		return NULL;
+	if (!name) {
+		tree->error = -EINVAL;
+		return NULL;
+	}
 	if (strlen(name) > 255 ||
 	    (parent && strlen(parent->sb->s_mountpoint) + strlen(name) + 1 >=
 			       sizeof(parent->sb->s_mountpoint))) {
@@ -94,6 +107,8 @@ static vfs_entry_node *vfs_entry_new_node(vfs_entry_tree *tree,
 	}
 	node->sb = sget(&entry_sops);
 	if (!node->sb) {
+		if (node->provider)
+			sb_put(node->provider);
 		free(node->name);
 		free(node);
 		tree->error = -ENOMEM;
@@ -103,8 +118,10 @@ static vfs_entry_node *vfs_entry_new_node(vfs_entry_tree *tree,
 	node->tree = tree;
 	node->parent = parent;
 	node->mode = mode;
+	mutex_lock(&tree->lock);
 	node->number = ++tree->next_number;
 	list_insert_head(&tree->nodes, &node->list);
+	mutex_unlock(&tree->lock);
 	if (parent && attach) {
 		char *path = name_get();
 		int result;
@@ -396,6 +413,18 @@ static file *entry_open_root(super_block *sb, int flags)
 	file *fp = NULL;
 	unsigned capacity;
 	int length;
+	if (node->provider && node->provider->s_op->open_root) {
+		fp = node->provider->s_op->open_root(node->provider, flags);
+		if (fp && fp->f_inode && !fp->f_inode->i_ino)
+			fp->f_inode->i_ino = node->number;
+		return fp;
+	}
+	if (node->provider_ops && node->provider_ops->open_root) {
+		fp = node->provider_ops->open_root(sb, flags);
+		if (fp && fp->f_inode && !fp->f_inode->i_ino)
+			fp->f_inode->i_ino = node->number;
+		return fp;
+	}
 	if (S_ISLNK(node->mode) && !(flags & O_NOFOLLOW))
 		return vfs_open(node->target->sb, "", flags);
 	if (!(flags & O_PATH) && (flags & O_ACCMODE) != O_RDONLY &&
@@ -410,6 +439,7 @@ static file *entry_open_root(super_block *sb, int flags)
 		goto fail;
 	opened->node = node;
 	if (S_ISDIR(node->mode)) {
+		mutex_lock(&sb->s_lock);
 		capacity = ROUND_UP(NAME_OFFSET() + 2) +
 			   ROUND_UP(NAME_OFFSET() + 3);
 		for (cursor = rb_first(&sb->s_mounts); cursor;
@@ -420,8 +450,10 @@ static file *entry_open_root(super_block *sb, int flags)
 					     strlen(mount->path + 1) + 1);
 		}
 		opened->buffer = zalloc(capacity);
-		if (!opened->buffer)
+		if (!opened->buffer) {
+			mutex_unlock(&sb->s_lock);
 			goto fail;
+		}
 		vfs_entry_dirent(opened, ".", node->number);
 		vfs_entry_dirent(opened, "..",
 				 node->parent ? node->parent->number :
@@ -436,6 +468,12 @@ static file *entry_open_root(super_block *sb, int flags)
 						 child->number :
 						 0);
 		}
+		mutex_unlock(&sb->s_lock);
+	} else if (node->ops && node->ops->snapshot) {
+		opened->buffer = node->ops->snapshot(node->data, node->tag,
+						     &opened->length);
+		if (!opened->buffer)
+			goto fail;
 	} else if (S_ISLNK(node->mode) || (node->ops && node->ops->show)) {
 		capacity = S_ISLNK(node->mode) ? MAX_PATH :
 						 ENTRY_ATTRIBUTE_SIZE;
@@ -486,6 +524,11 @@ static int vfs_entry_readlink(super_block *sb, const char *path, char *buf,
 	vfs_entry_node *node = sb->s_fs_info;
 	char *text;
 	int length;
+	if (node->provider && node->provider->s_op->readlink)
+		return node->provider->s_op->readlink(node->provider, path, buf,
+						      size, count);
+	if (node->provider_ops && node->provider_ops->readlink)
+		return node->provider_ops->readlink(sb, path, buf, size, count);
 	if (*path && strcmp(path, "/")) {
 		if (S_ISLNK(node->mode))
 			return vfs_readlink(node->target->sb, path, buf, size,
@@ -513,6 +556,10 @@ static int vfs_entry_readlink(super_block *sb, const char *path, char *buf,
 static file *entry_open(super_block *sb, const char *path, int flags)
 {
 	vfs_entry_node *node = sb->s_fs_info;
+	if (node->provider && node->provider->s_op->open)
+		return node->provider->s_op->open(node->provider, path, flags);
+	if (node->provider_ops && node->provider_ops->open)
+		return node->provider_ops->open(sb, path, flags);
 	if (S_ISLNK(node->mode))
 		return vfs_open(node->target->sb, path, flags);
 	return NULL;
@@ -530,11 +577,43 @@ static void entry_release_super(super_block *sb)
 	vfs_entry_tree_put(tree);
 }
 
+static int entry_mkdir(super_block *sb, const char *path, unsigned mode)
+{
+	vfs_entry_node *parent = sb->s_fs_info;
+	struct stat metadata = { .st_mode = parent->mode };
+	int error = fs_check_perm(&metadata, W_OK | X_OK);
+	if (error)
+		return error;
+	if (parent->tree->magic != 0x1373)
+		return -EROFS;
+	if (!path || path[0] != '/' || !path[1] || strchr(path + 1, '/'))
+		return -EINVAL;
+	if (vfs_entry_child(parent, path + 1))
+		return -EEXIST;
+	return vfs_entry_directory_mode(parent, path + 1, mode) ?
+		       0 :
+		       parent->tree->error;
+}
+
+static int entry_statfs(super_block *sb, struct statfs64 *buf)
+{
+	vfs_entry_node *node = sb->s_fs_info;
+	if (node->provider_ops && node->provider_ops->statfs)
+		return node->provider_ops->statfs(sb, buf);
+	memset(buf, 0, sizeof(*buf));
+	buf->f_type = node->tree->magic;
+	buf->f_bsize = PAGE_SIZE;
+	buf->f_namelen = 255;
+	return 0;
+}
+
 static const super_operations entry_sops = {
 	.open = entry_open,
 	.open_root = entry_open_root,
 	.readlink = vfs_entry_readlink,
 	.release = entry_release_super,
+	.mkdir = entry_mkdir,
+	.statfs = entry_statfs,
 };
 
 vfs_entry_tree *vfs_entry_tree_create(void)
@@ -543,6 +622,7 @@ vfs_entry_tree *vfs_entry_tree_create(void)
 	if (!tree)
 		return NULL;
 	tree->references = 1;
+	mutex_init(&tree->lock);
 	list_init(&tree->nodes);
 	list_init(&tree->allocations);
 	tree->root = vfs_entry_new_node(tree, NULL, "", S_IFDIR | 0555, 0);
@@ -571,7 +651,9 @@ void *vfs_entry_tree_alloc(vfs_entry_tree *tree, unsigned size)
 		tree->error = -ENOMEM;
 		return NULL;
 	}
+	mutex_lock(&tree->lock);
 	list_insert_head(&tree->allocations, &allocation->list);
+	mutex_unlock(&tree->lock);
 	return allocation + 1;
 }
 
@@ -617,4 +699,129 @@ super_block *vfs_entry_tree_mount(vfs_entry_tree *tree)
 		}
 	}
 	return sb;
+}
+
+vfs_entry_node *vfs_entry_directory_mode(vfs_entry_node *parent,
+					 const char *name, unsigned mode)
+{
+	vfs_entry_node *node = vfs_entry_directory(parent, name);
+	if (node)
+		node->mode = S_IFDIR | (mode & 0777);
+	return node;
+}
+
+vfs_entry_node *vfs_entry_directory_path(vfs_entry_node *parent, const char *path,
+				       unsigned mode)
+{
+	char *component = malloc(256);
+	if (!component || !path) { free(component); return NULL; }
+	while (*path) {
+		unsigned length = 0;
+		while (*path == '/') path++;
+		if (!*path) break;
+		while (*path && *path != '/') {
+			if (length == 255) { free(component); return NULL; }
+			component[length++] = *path++;
+		}
+		component[length] = 0;
+		parent = vfs_entry_directory_mode(parent, component, mode);
+		if (!parent) break;
+	}
+	free(component);
+	return parent;
+}
+
+vfs_entry_node *vfs_entry_mount(vfs_entry_node *parent, const char *name,
+				unsigned mode, super_block *provider)
+{
+	vfs_entry_node *node;
+	if (!parent || !provider)
+		return NULL;
+	node = vfs_entry_new_node(parent->tree, parent, name, mode, 1);
+	if (node)
+		node->provider = provider;
+	return node;
+}
+
+void vfs_entry_set_provider(vfs_entry_node *node, const super_operations *ops)
+{
+	if (node)
+		node->provider_ops = ops;
+}
+
+void vfs_entry_tree_type(vfs_entry_tree *tree, unsigned magic)
+{
+	if (tree)
+		tree->magic = magic;
+}
+
+/* The generic node backend is also used by ordinary filesystem mknod. */
+
+vfs_entry_node *vfs_entry_device(vfs_entry_node *parent, const char *path,
+				 unsigned mode, unsigned devno,
+				 const char *class_name,
+				 file *(*open)(super_block *, unsigned, int))
+{
+	char *copy, *leaf;
+	vfs_entry_node *node;
+	super_block *provider;
+	if (!parent || !path || !*path)
+		return NULL;
+	while (*path == '/')
+		path++;
+	copy = strdup(path);
+	if (!copy)
+		return NULL;
+	leaf = copy;
+	for (char *cursor = copy; *cursor; cursor++) {
+		if (*cursor != '/')
+			continue;
+		*cursor = 0;
+		parent = vfs_entry_directory(parent, leaf);
+		leaf = cursor + 1;
+		if (!parent) {
+			free(copy);
+			return NULL;
+		}
+	}
+	provider = devnode_create(mode, devno);
+	node = vfs_entry_mount(parent, leaf, mode, provider);
+	free(copy);
+	if (!node) {
+		if (provider)
+			sb_put(provider);
+		return NULL;
+	}
+	if (S_ISCHR(mode) || S_ISBLK(mode)) {
+		int error =
+			S_ISCHR(mode) ?
+				chardev_register(devno, class_name, open) :
+				blockdev_register_node(devno, class_name, open);
+		if (error) {
+			parent->tree->error = error;
+			return NULL;
+		}
+	}
+	return node;
+}
+
+void vfs_entry_remove(vfs_entry_node *parent, const char *path)
+{
+	if (parent && path) {
+		char *canonical = malloc(strlen(path) + 2);
+		if (!canonical)
+			return;
+		if (*path == '/')
+			strcpy(canonical, path);
+		else
+			sprintf(canonical, "/%s", path);
+		vfs_umount(parent->sb, canonical);
+		free(canonical);
+	}
+}
+
+void vfs_entry_set_mode(vfs_entry_node *node, unsigned mode)
+{
+	if (node)
+		node->mode = mode;
 }

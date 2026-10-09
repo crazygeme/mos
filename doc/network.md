@@ -1,6 +1,6 @@
 # Network Stack
 
-**Source:** `src/net/net.c`, `src/net/sock.c`, `src/net/sock_cb.c`, `src/net/sock_msg.c`, `src/net/sock_opt.c`, `src/net/sock_un.c`, `src/device/impl/net.c`, `src/driver/impl/net/intel_nic_e1000.c`, `src/proc/net/*`, `src/syscall/syscall_net.c`
+**Source:** `src/net/net.c`, `src/net/sock.c`, `src/net/sock_cb.c`, `src/net/sock_msg.c`, `src/net/sock_opt.c`, `src/net/sock_un.c`, `src/net/impl/interfaces.c`, `src/driver/net/intel_nic_e1000.c`, `src/proc/net/*`, `src/syscall/syscall_net.c`
 
 ## Status
 
@@ -33,7 +33,7 @@ user space
   -> src/net/sock*.c
   -> lwIP (NO_SYS)
   -> src/net/net.c netif glue
-  -> src/device/impl/net.c + src/driver/impl/net/intel_nic_e1000.c
+  -> src/net/impl/interfaces.c + src/driver/net/intel_nic_e1000.c
 ```
 
 Key design choice: lwIP runs in `NO_SYS` mode, so all protocol work happens from:
@@ -68,7 +68,7 @@ The exported default netif from `net_get_default_netif()` is the physical `eth0`
 
 ## NIC Driver Status
 
-Current in-tree hardware support is the Intel 8254x family in `src/driver/impl/net/intel_nic_e1000.c`.
+Current in-tree hardware support is the Intel 8254x family in `src/driver/net/intel_nic_e1000.c`.
 
 Known supported IDs:
 

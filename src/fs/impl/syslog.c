@@ -4,7 +4,6 @@
 #include <fs/poll.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <device/time.h>
 #include <ps/ps.h>
 #include <macro.h>
 #include <errno.h>

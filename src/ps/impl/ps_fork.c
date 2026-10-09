@@ -7,7 +7,7 @@
  *   - Real vfork (do_vfork, sys_vfork)
  */
 
-#include "device/time.h"
+#include <lib/klib.h>
 #include <ps/ps.h>
 #include <ps/clone.h>
 #include <int/int.h>

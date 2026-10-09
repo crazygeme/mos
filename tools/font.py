@@ -102,8 +102,7 @@ with open(OUTPUT, "w") as f:
  * Bitmap size: {CHAR_W}x{CHAR_H}, first {NUM_CHARS} characters
  */
 
-#include <device/font.h>
-#include <macro.h>
+#include <console/render.h>
 
 #define FONTDATAMAX {FONTDATAMAX}
 
@@ -138,7 +137,7 @@ static const unsigned char _{font_name}_cursor_glyphs[] = {{
     f.write(f"""\
 }};
 
-const fb_font_t font_{font_name} = {{
+const console_font font_{font_name} = {{
 \t.name\t= "{font_name}",
 \t.width\t= {CHAR_W},
 \t.height\t= {CHAR_H},

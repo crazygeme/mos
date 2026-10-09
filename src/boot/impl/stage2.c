@@ -5,16 +5,8 @@
 #include <mm/mm.h>
 #include <mm/pagefault.h>
 #include <ps/ps.h>
-#include <device/serial.h>
-#include <device/vga.h>
-#include <device/pci.h>
-#include <driver/driver.h>
-#include <device/time.h>
-#include <device/keyboard.h>
-#include <device/ps2.h>
-#include <dev/tty.h>
-#include <device/font.h>
 #include <lib/klib.h>
+#include <driver/driver.h>
 #include <ps/smp.h>
 
 #include <macro.h>
@@ -41,14 +33,13 @@ void kmain_startup()
 	klib_init();
 	ps_init_bootstrap_task();
 
-	font_init();
-
 	drivers_init();
 
 	pci_scan();
+	virtual_scan();
+	drivers_bind_early();
 
 	// after klib_init, kmalloc/kfree/prink/etc are workable
-	tty_init();
 
 	parse_kernel_cmdline();
 
@@ -63,9 +54,12 @@ void kmain_startup()
 
 	mm_del_user_map();
 
-	serial_init_queue();
+	klog_backend_init();
 
 	ps2_scan();
+	platform_scan();
+	drivers_bind_early();
+	ps2_drain_input();
 
 	time_init();
 
@@ -85,7 +79,7 @@ void kmain_startup()
 			  ps_kernel);
 	}
 	dsr_start();
-	kb_start();
+	drivers_start_workers();
 	smp_start();
 
 	ps_kickoff();

@@ -1,7 +1,7 @@
 # ATA/IDE Hard Disk Driver
 
-**Source:** `src/driver/impl/storage/ata.c`
-**Header:** `src/device/hdd.h`
+**Source:** `src/driver/storage/ata.c`
+**Header:** `src/device/blockdev.h`
 **Config:** `include/config.h` (`HDD_CACHE_*`)
 
 ---

@@ -23,7 +23,7 @@ Files written by MOS therefore got an mtime of ~30 seconds.  The RH9 man
 pages on disk have 2003-era mtimes (~1.07 billion seconds).  `makewhatis`
 compared the two and always concluded the database was stale.
 
-### Fix — `src/driver/impl/timer/pit.c`
+### Fix — `src/driver/timer/time.c`
 Initialize `g_wall_offset_us` from the RTC value before starting the PIT
 interrupt:
 
@@ -193,7 +193,7 @@ if (major == 4) {
 | `tty_dev_register()` | minors 0..9, `/tty0`..`/tty9` | minors 1..10, `/tty1`..`/tty10` |
 | `kinit_userspace()` in `exec.c` | `fs_open("/dev/tty0", …)` | `fs_open("/dev/tty1", …)` |
 
-**`src/driver/impl/input/ps2_keyboard.c`** — Ctrl+*N* now calls `tty_switch(N)` instead of
+**`src/driver/input/ps2_keyboard.c`** — Ctrl+*N* now calls `tty_switch(N)` instead of
 `tty_switch(N-1)`:
 
 ```c

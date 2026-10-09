@@ -1,3 +1,4 @@
+#include <device/blockdev.h>
 /*
  * test/phymm_test.c — unit tests for the physical memory buddy allocator.
  *
@@ -246,9 +247,7 @@ KTEST(phymm, cache_budget_matches_allocator)
 	phymm_usage usage;
 	phymm_cache_policy actual, expected;
 	extern unsigned fs_page_cache_pages;
-	extern unsigned hdd_cache_size;
-	unsigned cached =
-		fs_page_cache_pages + hdd_cache_size / (PAGE_SIZE / 512);
+	unsigned cached = fs_page_cache_pages + blockdev_cached_pages();
 
 	phymm_get_usage(&usage);
 	phymm_cache_budget(usage.low_total_pages + usage.high_total_pages,

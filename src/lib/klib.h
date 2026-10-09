@@ -4,6 +4,70 @@
 #include <config.h>
 #include <macro.h>
 
+#define HZ 100
+#define TICK_MS (1000 / HZ)
+#define DEFAULT_TASK_TIME_SLICE (500 / TICK_MS)
+struct timeval {
+	int tv_sec; /* seconds */
+	int tv_usec; /* microseconds */
+};
+
+struct timezone {
+	int tz_minuteswest; /* minutes west of Greenwich */
+	int tz_dsttime; /* type of DST correction */
+};
+
+struct timespec {
+	int tv_sec; /* seconds */
+	int tv_nsec; /* nanoseconds */
+};
+
+void time_init();
+void time_cpu_init(void);
+const char *time_clock_name(void);
+
+void time_calculate_cpu_cycle();
+
+unsigned time_get_cpu_mhz(void);
+
+/* Boot-relative monotonic time. Wall-clock changes never move deadlines. */
+unsigned long long time_now_us(void);
+
+unsigned long long time_now_ms(void);
+/* Last IRQ0 sample; safe for timer expiration checks without device I/O. */
+unsigned long long time_coarse_ms(void);
+/* Round a relative deadline upward; saturate on overflow. */
+unsigned long long time_deadline_ms(unsigned long long delay_ms);
+
+unsigned long long time_now_tickets();
+
+/* Calendar time for inode timestamps, sampled at tick resolution. */
+unsigned long time_wall_sec(void);
+
+void time_set_wall_offset(long long wall_us);
+void time_sync_rtc(void);
+
+unsigned long long time_wall_us(void);
+
+unsigned long long cycle_to_ms(unsigned long long dur_cycles);
+
+unsigned long long cycle_to_us(unsigned long long dur_cycles);
+
+void ms_to_timeval(unsigned ms, struct timeval *tv);
+void us_to_timeval(unsigned long long us, struct timeval *tv);
+
+void msleep(unsigned int ms);
+
+void usleep(unsigned int us);
+
+void delay(unsigned int us);
+
+struct time_calendar {
+	unsigned sec, min, hour, mday, mon, year;
+};
+void time_rtc_calendar(struct time_calendar *calendar);
+unsigned long time_rtc_epoch(const struct time_calendar *calendar);
+
 /* ── Heap ─────────────────────────────────────────────────────────────────── */
 
 #ifndef NULL
@@ -32,10 +96,14 @@ void klib_init(void);
 
 void klog(char *str, ...);
 void klog_close(void);
+void klog_backend_init(void);
+void klog_backend_putc(unsigned char byte);
+void klog_backend_flush(void);
 
 /* ── Formatted output ─────────────────────────────────────────────────────── */
 
 void printk(const char *str, ...);
+int printk_console_ready(void);
 
 void vprintf(const char *fmt, va_list ap);
 int vsprintf(char *buf, const char *fmt, va_list ap);

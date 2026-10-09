@@ -74,7 +74,7 @@ GRUB/Multiboot
                       └─ kmain_process runs KERNEL_INIT table (ordered 0–8):
                            0: klog_init, tty_fs_init
                            1: syslog_init
-                           2: devices_init, filesystem types, mount_syscall_init
+                           2: drivers_probe_remaining, filesystem types, mount_syscall_init
                            3: fs_mount_root  (ext4 on /dev/hda)
                            4: proc_type_register
                            5: sysfs_register
@@ -177,9 +177,9 @@ Mount points are stored in a red-black tree keyed by path for O(log n) lookup.
 
 | FS     | Mount point | Source                           |
 | ------ | ----------- | -------------------------------- |
-| ext2/4 | `/`         | `src/fs/root.c` + `src/driver/impl/storage/ata.c` |
-| devfs  | `/dev`      | `src/dev/devfs.c`                |
-| devpts | `/dev/pts`  | `src/dev/pts.c`                  |
+| ext2/4 | `/`         | `src/fs/root.c` + `src/driver/storage/ata.c` |
+| devfs  | `/dev`      | `src/fs/impl/devfs.c`                |
+| devpts | `/dev/pts`  | `src/driver/tty/pts.c`                  |
 | procfs | `/proc`     | `src/proc/procfs.c`              |
 | pipefs | (internal)  | `src/fs/pipe.c`                  |
 
@@ -187,7 +187,7 @@ Mount points are stored in a red-black tree keyed by path for O(log n) lookup.
 
 `hdd.c` implements a 4096-page write-back LRU block cache (configurable via
 `HDD_CACHE_WRITE_POLICY`). Raw disk I/O goes through the Intel 82540EM
-emulated IDE controller (`src/driver/impl/storage/ata.c`).
+emulated IDE controller (`src/driver/storage/ata.c`).
 
 ### Poll / select
 
@@ -235,7 +235,7 @@ follows Linux 2.4 numbering (`include/unistd.h`).
 
 MOS integrates **lwIP** (third_party/lwip) in NO_SYS callback mode.
 
-- NIC driver: Intel 82540EM (e1000) via PCI (`src/driver/impl/net/intel_nic_e1000.c`).
+- NIC driver: Intel 82540EM (e1000) via PCI (`src/driver/net/intel_nic_e1000.c`).
 - `net_init()` (`src/net/net.c`) discovers the NIC, configures lwIP with a
   static IP, and brings up the interface.
 
@@ -269,21 +269,21 @@ Common socket ioctls handled in `sock_ioctl()`:
 
 | File | Responsibility |
 | --- | --- |
-| `src/device/impl/pci/pci.c` | PCI enumeration and cached resources |
-| `src/device/impl/ps2/i8042.c` | PS/2 port discovery and controller transport |
-| `src/device/impl/device.c` | Device inventory and driver binding lifecycle |
-| `src/driver/impl/driver.c` | Driver registry and matching |
-| `src/driver/impl/storage/ata.c` | ATA PIO/DMA and disk cache |
-| `src/driver/impl/net/intel_nic_e1000.c` | Intel e1000-family NIC |
-| `src/driver/impl/input/ps2_keyboard.c` | Keyboard protocol and translation |
-| `src/driver/impl/input/ps2_mouse.c` | Mouse protocol and packet assembly |
-| `src/driver/impl/video` | Bochs, VMware SVGA, VirtIO GPU, and DRM attributes |
-| `src/driver/impl/serial/uart.c` | COM1 serial transport |
-| `src/driver/impl/timer/pit.c` | PIT timer and timekeeping |
+| `src/device/pci/pci.c` | PCI enumeration and cached resources |
+| `src/device/ps2/i8042.c` | PS/2 port discovery and controller transport |
+| `src/device/core/device.c` | Hardware inventory (registration only) |
+| `src/driver/driver.c` | Driver registry and matching |
+| `src/driver/storage/ata.c` | ATA PIO/DMA and disk cache |
+| `src/driver/net/intel_nic_e1000.c` | Intel e1000-family NIC |
+| `src/driver/input/ps2_keyboard.c` | Keyboard protocol and translation |
+| `src/driver/input/ps2_mouse.c` | Mouse protocol and packet assembly |
+| `src/driver/video` | Bochs, VMware SVGA, VirtIO GPU, and DRM attributes |
+| `src/driver/serial/uart.c` | COM1 serial transport |
+| `src/driver/timer/time.c` | PIT timer and timekeeping |
 
 See [Devices and drivers](devices.md) for registration, discovery, and sysfs ownership.
 
-### Timer (`src/driver/impl/timer/pit.c`)
+### Timer (`src/driver/timer/time.c`)
 
 - **PIT:** channel 0, rate mode, HZ=100 (10 ms ticks), LATCH=11932 at
   CLOCK_TICK_RATE=1193180 Hz.

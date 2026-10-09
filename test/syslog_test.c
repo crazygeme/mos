@@ -3,7 +3,6 @@
 #include <fs/fcntl.h>
 #include <errno.h>
 
-enum { SEEK_SET = 0, SEEK_END = 2 };
 
 static int check_IndependentRecords(char *scratch)
 {

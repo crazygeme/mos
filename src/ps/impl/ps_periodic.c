@@ -7,9 +7,8 @@
  */
 
 #include <ps/ps.h>
-#include <dev/tty.h>
-#include <device/vga.h>
-#include <device/time.h>
+#include <device/chardev.h>
+#include <lib/klib.h>
 
 #define GRAPHICS_REFRESH_FPS 60
 #define GRAPHICS_REFRESH_MS (1000 / GRAPHICS_REFRESH_FPS)
@@ -36,8 +35,8 @@ static void ps_system_service_task(void *param)
 				((now - next_timer_ms) / TICK_MS + 1) * TICK_MS;
 		}
 
-		if (fb_requires_flush() && now >= next_graphics_ms) {
-			tty_refresh_graphics();
+		if (chardev_console_needs_refresh() && now >= next_graphics_ms) {
+			chardev_console_refresh();
 			next_graphics_ms += ((now - next_graphics_ms) /
 						     GRAPHICS_REFRESH_MS +
 					     1) *
@@ -45,7 +44,7 @@ static void ps_system_service_task(void *param)
 		}
 
 		next_due = next_timer_ms;
-		if (fb_requires_flush() && next_graphics_ms < next_due)
+		if (chardev_console_needs_refresh() && next_graphics_ms < next_due)
 			next_due = next_graphics_ms;
 
 		now = time_now_ms();

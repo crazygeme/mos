@@ -8,7 +8,7 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <ps/ps.h>
-#include <device/hdd.h>
+#include <device/blockdev.h>
 #include <unistd.h>
 #include <macro.h>
 #include <errno.h>

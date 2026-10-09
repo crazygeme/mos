@@ -6,7 +6,6 @@
 #include <mm/mm.h>
 #include <lib/port.h>
 #include <lib/klib.h>
-#include <device/time.h>
 #include <macro.h>
 #include <errno.h>
 #include <ps/smp.h>

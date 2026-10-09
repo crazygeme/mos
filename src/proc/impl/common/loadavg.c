@@ -15,7 +15,7 @@
  */
 #include "common.h"
 #include <ps/ps.h>
-#include <device/time.h>
+#include <lib/klib.h>
 
 /* ── Fixed-point constants (identical to Linux) ─────────────────────── */
 

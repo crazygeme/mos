@@ -1,6 +1,6 @@
 /* ITIMER_REAL belongs to the group, independently of task sleep timers. */
 #include <ps/ps.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include "ps_internal.h"
 static struct rb_root alarms;
 

@@ -1,6 +1,6 @@
 #include <mm/mm.h>
 #include <mm/mmap.h>
-#include <dev/blockdev.h>
+#include <device/blockdev.h>
 #include <fs/cache.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
@@ -9,9 +9,8 @@
 #include <fs/fcntl.h>
 #include <fs/mount.h>
 #include <ps/ps.h>
-#include <device/hdd.h>
-#include <dev/loopdev.h>
-#include <device/time.h>
+#include <device/blockdev.h>
+#include <device/blockdev.h>
 #include <stddef.h>
 #include <macro.h>
 #include <config.h>
@@ -268,7 +267,7 @@ static int ext4_file_flush(file *fp)
 			return -EIO;
 	}
 
-	hdd_flush();
+	blockdev_flush_all();
 	return 0;
 }
 
@@ -945,7 +944,7 @@ static void ext4_release(super_block *sb)
 	ext4_cache_write_back(mi->mp, false);
 	ext4_umount(mi->mp);
 	if (mi->loop_name[0])
-		loop_teardown(mi->loop_name);
+		blockdev_detach_file(mi->loop_name);
 	free(mi);
 	kfree(sb);
 }
@@ -1483,6 +1482,98 @@ static super_block *ext4_get(const char *devname)
  * @target: VFS mount point, e.g. "/mnt"  (must not be "/")
  * @flags:  MS_RDONLY etc.
  */
+/* Filesystem-specific adapter: storage drivers never call lwext4. */
+#define EXT4_BLOCK_ADAPTERS 32
+struct ext4_block_adapter {
+	char name[32];
+	struct ext4_blockdev device;
+	struct ext4_blockdev_iface iface;
+	blockdev_handle *handle;
+};
+static struct ext4_block_adapter ext4_adapters[EXT4_BLOCK_ADAPTERS];
+
+static int ext4_block_open(struct ext4_blockdev *device)
+{
+	struct ext4_block_adapter *adapter = device->aux;
+	adapter->handle = blockdev_open(adapter->name);
+	if (!adapter->handle) return ENODEV;
+	unsigned size = blockdev_sector_size(adapter->handle);
+	if (size != adapter->iface.ph_bsize) {
+		uint8_t *buffer = malloc(size);
+		if (!buffer) { blockdev_close(adapter->handle); adapter->handle = NULL; return ENOMEM; }
+		free(adapter->iface.ph_bbuf);
+		adapter->iface.ph_bbuf = buffer;
+		adapter->iface.ph_bsize = size;
+	}
+	adapter->iface.ph_bcnt = blockdev_sector_count(adapter->handle);
+	device->part_size = adapter->iface.ph_bcnt * adapter->iface.ph_bsize;
+	return EOK;
+}
+
+static int ext4_block_close(struct ext4_blockdev *device)
+{
+	struct ext4_block_adapter *adapter = device->aux;
+	blockdev_close(adapter->handle);
+	adapter->handle = NULL;
+	return EOK;
+}
+
+static int ext4_block_read(struct ext4_blockdev *device, void *buffer, uint64_t sector, uint32_t count)
+{
+	struct ext4_block_adapter *adapter = device->aux;
+	int result = blockdev_read(adapter->handle, buffer, sector, count);
+	return result < 0 ? -result : result;
+}
+
+static int ext4_block_write(struct ext4_blockdev *device, const void *buffer, uint64_t sector, uint32_t count)
+{
+	struct ext4_block_adapter *adapter = device->aux;
+	int result = blockdev_write(adapter->handle, buffer, sector, count);
+	return result < 0 ? -result : result;
+}
+
+static int ext4_prepare_block_device(const char *name)
+{
+	struct ext4_block_adapter *adapter = NULL;
+	blockdev_handle *handle;
+	unsigned size;
+	int result = EOK;
+	root_lock_lock();
+	for (unsigned i = 0; i < EXT4_BLOCK_ADAPTERS; i++) {
+		if (!strcmp(ext4_adapters[i].name, name)) {
+			root_lock_unlock();
+			return EOK;
+		}
+		if (!adapter && !ext4_adapters[i].name[0]) adapter = &ext4_adapters[i];
+	}
+	if (!adapter) { root_lock_unlock(); return ENOSPC; }
+	handle = blockdev_open(name);
+	if (!handle) { root_lock_unlock(); return ENODEV; }
+	size = blockdev_sector_size(handle);
+	adapter->iface.ph_bbuf = malloc(size);
+	if (!adapter->iface.ph_bbuf) result = ENOMEM;
+	else {
+		strncpy(adapter->name, name, sizeof(adapter->name) - 1);
+		adapter->iface.ph_bsize = size;
+		adapter->iface.ph_bcnt = blockdev_sector_count(handle);
+		adapter->iface.open = ext4_block_open;
+		adapter->iface.close = ext4_block_close;
+		adapter->iface.bread = ext4_block_read;
+		adapter->iface.bwrite = ext4_block_write;
+		adapter->device.bdif = &adapter->iface;
+		adapter->device.part_size = adapter->iface.ph_bcnt * size;
+		adapter->device.aux = adapter;
+		result = ext4_device_register(&adapter->device, NULL, name);
+		if (result) {
+			free(adapter->iface.ph_bbuf);
+			memset(adapter, 0, sizeof(*adapter));
+		}
+	}
+	blockdev_close(handle);
+	root_lock_unlock();
+	return result;
+}
+
 static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 				void *data)
 {
@@ -1507,14 +1598,14 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	if (blockdev_lookup_mountable(dev, &bdev)) {
 		dev_name = bdev.name;
 	} else {
-		const char *ln = loop_setup(dev);
+		const char *ln = blockdev_attach_file(dev);
 		if (!ln) {
 			name_put(mp);
 			return NULL;
 		}
 		strncpy(loop_auto, ln, sizeof(loop_auto) - 1);
 		if (!blockdev_lookup_mountable(loop_auto, &bdev)) {
-			loop_teardown(loop_auto);
+			blockdev_detach_file(loop_auto);
 			name_put(mp);
 			return NULL;
 		}
@@ -1531,10 +1622,12 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 
 	read_only = (flags & MS_RDONLY) != 0;
 
-	ret = ext4_mount(dev_name, mp, read_only);
+	ret = ext4_prepare_block_device(dev_name);
+	if (ret == EOK)
+		ret = ext4_mount(dev_name, mp, read_only);
 	if (ret != EOK) {
 		if (loop_auto[0])
-			loop_teardown(loop_auto);
+			blockdev_detach_file(loop_auto);
 		name_put(mp);
 		return NULL;
 	}
@@ -1615,8 +1708,10 @@ static void fs_mount_root(void)
 
 	printk("mnt: Mount rootfs (ro)\n");
 	cur->fs->root = ext4_get(devname);
-	/* bdev already registered by found_partition at discovery time */
-	ext4_mount(devname, "/", true); /* read-only until init remounts rw */
+	if (ext4_prepare_block_device(devname) != EOK || ext4_mount(devname, "/", true) != EOK) {
+		printk("ext4: cannot mount root block device %s\n", devname);
+		return;
+	} /* read-only until init remounts rw */
 	ext4_mount_setup_locks("/", &root_lock);
 
 	/* Populate root sb metadata for /proc/mounts. */

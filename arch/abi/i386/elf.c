@@ -4,7 +4,6 @@
 #include <lib/klib.h>
 #include <mm/mm.h>
 #include <mm/vdso.h>
-#include <device/time.h>
 #include <errno.h>
 #define ELF_HEADER Elf32_Ehdr
 #define ELF_PHDR Elf32_Phdr

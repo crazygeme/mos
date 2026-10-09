@@ -1,8 +1,7 @@
 #include <int/int.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <ps/ps.h>
 #include <ps/smp.h>
-#include <lib/klib.h>
 #include <lib/lock.h>
 #include <macro.h>
 

@@ -1,6 +1,5 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <device/time.h>
 
 static spinlock_t random_lock;
 static uint64_t random_state;

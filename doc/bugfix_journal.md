@@ -613,7 +613,7 @@ and absolute `CLOCK_REALTIME` timers use calendar time.
 
 ### Clock Sources and Domains
 
-`src/device/time.c` owns the clock origin, monotonic clamp, IRQ sample and wall
+`src/driver/timer/time.c` owns the clock origin, monotonic clamp, IRQ sample and wall
 offset. PIT supplies the boot clock and remains the interrupt source. KVM
 pvclock is selected after CPU setup enables SSE2; each additional CPU registers
 its own clock slot before becoming online. Systems without that facility keep
@@ -2038,9 +2038,9 @@ ioctl(4, 1260, ...) = -25
 - **Fix:**
   - in [ioctl.h](../src/fs/ioctl.h), define Linux-compatible
     `BLKGETSIZE`, `BLKSSZGET`, and `BLKGETSIZE64`
-  - in [hdd.c](../src/dev/impl/hdd.c), implement those ioctls for IDE partition
+  - in [hdd.c](../src/driver/storage/ata.c), implement those ioctls for IDE partition
     block devices using the discovered partition sector count
-  - in [loop.c](../src/dev/impl/loop.c), implement the same block-size ioctls for
+  - in [loop.c](../src/driver/storage/loop.c), implement the same block-size ioctls for
     configured loop devices so label and filesystem probes see normal block
     device behavior there as well
 
@@ -2096,7 +2096,7 @@ read path.
   all. The `^C` byte therefore remained queued in the PTY input buffer and no
   `SIGINT` reached the foreground process group.
 - **Fix:**
-  - in [pts.c](../src/dev/impl/pts.c), move PTY signal-character handling to
+  - in [pts.c](../src/driver/tty/pts.c), move PTY signal-character handling to
     `pts_master_write()` so the line discipline interprets `VINTR`, `VQUIT`,
     and `VSUSP` at input-arrival time, matching real terminal behavior more
     closely
@@ -2127,10 +2127,10 @@ keystroke, and lost PS/2 extended-key prefixes convert cursor-Up into keypad
   signal byte. That left the caller asleep until another input byte woke the
   read path.
 - **Fix:**
-  - in [tty_ldisc.c](../src/dev/impl/tty.c) and
-    [tty_ldisc.h](../src/dev/impl/tty_ldisc.h), add a shared helper that recognizes
+  - in [tty_ldisc.c](../src/driver/tty/tty.c) and
+    [tty_ldisc.h](../src/driver/tty/tty_ldisc.h), add a shared helper that recognizes
     `VINTR`, `VQUIT`, and `VSUSP` and signals the foreground process group
-  - in [tty.c](../src/dev/impl/tty.c) and [pts.c](../src/dev/impl/pts.c), return
+  - in [tty.c](../src/driver/tty/tty.c) and [pts.c](../src/driver/tty/pts.c), return
     `-EINTR` immediately when a raw read consumes only a signal character, or
     return the already-collected byte count when the signal arrives after data
   - in canonical handling, stop treating signal characters like ordinary input
@@ -2155,7 +2155,7 @@ keystroke, and lost PS/2 extended-key prefixes convert cursor-Up into keypad
   dropped and the next byte was emitted alone as `0x48`/`0xc8`. That made X
   interpret the cursor key as keypad 8.
 - **Fix:**
-  - in [keyboard.c](../src/driver/impl/input/ps2_keyboard.c), make the keyboard DSR drain all
+  - in [keyboard.c](../src/driver/input/ps2_keyboard.c), make the keyboard DSR drain all
     pending keyboard bytes from the i8042 output buffer instead of processing
     only one logical code per callback
   - preserve an `0xe0`/`0xe1` prefix across bytes and combine it with the next
@@ -2174,7 +2174,7 @@ keystroke, and lost PS/2 extended-key prefixes convert cursor-Up into keypad
 - **Fix:**
   - in [ioctl.h](../src/fs/ioctl.h), switch the keysym type/value encoding
     and exported constants to Linux-compatible values
-  - in [keyboard.c](../src/driver/impl/input/ps2_keyboard.c), populate the default keymap entries
+  - in [keyboard.c](../src/driver/input/ps2_keyboard.c), populate the default keymap entries
     for keypad, cursor, navigation, and right-side modifier keycodes with the
     expected Linux symbols
 
@@ -2228,7 +2228,7 @@ interfaces produce a blank window, repeated alarms, or delayed input.
   `ITIMER_REAL` and `SIGALRM` for atimers during GUI startup, so that
   non-monotonic clock made its timer machinery spin instead of progressing
   through the X event loop.
-- **Fix:** in [time.c](../src/driver/impl/timer/pit.c), keep the IRQ-pending compensation for
+- **Fix:** in [time.c](../src/driver/timer/time.c), keep the IRQ-pending compensation for
   the PIT race, but only add a missing tick when the latched counter proves a
   wrap happened inside the same `tickets` epoch. This stopped the false
   one-jiffy jumps caused by noisy PIC IRR reads.
@@ -2418,18 +2418,18 @@ packet-framing errors.
   the pager then failed while reopening `/dev/tty`, after which `man` printed
   `Error executing formatting or display command`.
 - **Root cause:** MOS only resolved `/dev/tty` through the virtual-console
-  table in [tty.c](../src/dev/impl/tty.c). That works for local VTs, but an SSH
+  table in [tty.c](../src/driver/tty/tty.c). That works for local VTs, but an SSH
   shell runs on a PTY slave. When `less` reopened `/dev/tty` from that PTY
   session, the kernel could not map the calling process group back to the PTY
   controlling terminal, so it fell through to the wrong device path and the
   pager lost its real tty.
 - **Fix:**
-  - in [tty.c](../src/dev/impl/tty.c), teach `/dev/tty` lookup to fall back from
+  - in [tty.c](../src/driver/tty/tty.c), teach `/dev/tty` lookup to fall back from
     virtual consoles to PTY-backed controlling terminals
-  - in [pty.c](../src/dev/impl/pty.c) and [ptmx.c](../src/dev/impl/ptmx.c), add helpers
+  - in [pty.c](../src/driver/tty/pty.c) and [ptmx.c](../src/driver/tty/ptmx.c), add helpers
     that reopen the PTY slave corresponding to the caller's controlling
     process group
-  - in [pts_internal.h](../src/dev/impl/pts_internal.h), expose the shared helper
+  - in [pts_internal.h](../src/driver/tty/pts_internal.h), expose the shared helper
     declarations needed by that lookup path
   - extend [dev_pts.sh](../test/dev_pts.sh) with a regression that creates a
     PTY session, makes it controlling via `TIOCSCTTY`, and verifies a child can
@@ -2537,14 +2537,14 @@ then truncated despite the command exiting normally.
 
 - **Symptom:** `ls` exited normally, but the client only displayed the first
   part of the directory listing.
-- **Root cause:** [pts.c](../src/dev/impl/pts.c) used `cyb_putbuf(..., 0, 0)` in
+- **Root cause:** [pts.c](../src/driver/tty/pts.c) used `cyb_putbuf(..., 0, 0)` in
   both `pts_master_write()` and `pts_slave_write()`, which made the cyclic
   buffer act as nonblocking. Those functions then unconditionally returned the
   caller's requested size even when `cyb_putbuf()` had accepted only a partial
   write. Once the PTY buffer filled, the tail of the stream was silently
   discarded.
 - **Fix:**
-  - in [pts.c](../src/dev/impl/pts.c), honor the file's `O_NONBLOCK` state in
+  - in [pts.c](../src/driver/tty/pts.c), honor the file's `O_NONBLOCK` state in
     `pts_master_write()` and `pts_slave_write()`
   - return the actual byte count from `cyb_putbuf()` instead of pretending the
     whole request succeeded
@@ -2586,15 +2586,15 @@ select read readiness leaves SSH clients waiting after session closure.
   buffer endpoint counts and marking it as opened before the shell acquired the
   terminal.
 - **Fix:**
-  - [pts_internal.h](../src/dev/impl/pts_internal.h): add `slave_ever_opened` to
+  - [pts_internal.h](../src/driver/tty/pts_internal.h): add `slave_ever_opened` to
     `pts_pair`.
   - [fs.c](../src/fs/impl/fs.c): change `fs_stat`, `fs_chmod`, and `fs_chown` to
     open with `O_PATH` instead of `O_RDONLY`. These functions only need inode
     access; `O_PATH` is the correct flag, and it already gates the cyclic
     buffer and slave-count operations in the slave open path.
-  - [pty.c](../src/dev/impl/pty.c) and [ptmx.c](../src/dev/impl/ptmx.c): set
+  - [pty.c](../src/driver/tty/pty.c) and [ptmx.c](../src/driver/tty/ptmx.c): set
     `slave_ever_opened = 1` only for opens without `O_PATH`.
-  - [pts.c](../src/dev/impl/pts.c): gate master HUP on
+  - [pts.c](../src/driver/tty/pts.c): gate master HUP on
     `p->slave_ever_opened && cyb_writer_count(p->s2m) == 0`.
 
 ### 2. `ssh` client could not exit after the remote session closed
@@ -2634,7 +2634,7 @@ readiness reporting for `poll` and `select`.
     `FS_POLL_HUP` readiness bit
   - in [pipe.c](../src/fs/impl/pipe.c), report buffered
     data as `FS_POLL_READ` and closed-writer EOF as `FS_POLL_HUP`
-  - in [pts.c](../src/dev/impl/pts.c), apply the same split
+  - in [pts.c](../src/driver/tty/pts.c), apply the same split
     to PTY master/slave poll readiness so pseudo-terminals behave consistently
     with pipes
   - in [select.c](../src/fs/impl/select.c), treat
@@ -2707,7 +2707,7 @@ and peer-close EOF.
   distinguish "try again later" from real EOF.
 - **Root cause:** PTY master/slave read paths always called `cyb_getbuf(..., 1,
   1)`, which forced blocking behavior and collapsed nonblocking semantics.
-- **Fix:** in [pts.c](../src/dev/impl/pts.c), teach both
+- **Fix:** in [pts.c](../src/driver/tty/pts.c), teach both
   master and slave read paths to honor `O_NONBLOCK`, return `-EAGAIN` on empty
   PTYs with a live peer, and preserve `0` for peer-close EOF. PTY poll
   readiness was also updated to treat EOF as readable.
@@ -2884,12 +2884,12 @@ Failed`. The `curses` option belongs to that dated launcher configuration.
 
 ### Fix
 
-- Add a small generic block-device registry in `src/dev/impl/blockdev.c`.
+- Add a small generic block-device registry in `src/device/core/blockdev.c`.
 - Register discovered HDD partitions and loop slots there, marking only
   attached/usable devices as mountable.
 - Switch `ext4_get_sb()`, root mount, and exec-time remount to resolve devices
   through that registry instead of peeking at `hdd_partitions` / `loop_devs`.
-- Make the HDD partition table private to `src/driver/impl/storage/ata.c` and expose only
+- Make the HDD partition table private to `src/driver/storage/ata.c` and expose only
   accessors used by `/dev/hdd` and `/proc/partitions`.
 
 ---
@@ -2960,7 +2960,7 @@ corrections for those interfaces.
 - **Regression coverage:** `test/dev_pts.sh`
 - **Symptom:** PTY paths under `/dev/pts` used hex-like names instead of the
   normal decimal numbering expected by userspace.
-- **Root cause:** `src/dev/impl/ptmx.c` formatted PTY indices with `%x`.
+- **Root cause:** `src/driver/tty/ptmx.c` formatted PTY indices with `%x`.
 - **Fix:** emit PTY names with `%d` so `/dev/pts/0`, `/dev/pts/1`, ... match
   normal Unix behaviour.
 
@@ -3074,7 +3074,7 @@ set_bytes = (((unsigned)(nfds ? nfds : 1) + NFDBITS - 1) / NFDBITS) *
   implements
 
 **`src/ps/ps.h`, `src/ps/impl/ps_fork.c`, `src/ps/impl/ps_syscall.c`,
-`src/dev/impl/tty.c`**
+`src/driver/tty/tty.c`**
 
 - Add per-process `root_path`
 - Initialize it to `"/"` for new tasks
@@ -3143,9 +3143,9 @@ release balance the references acquired by their corresponding opens.
 
 ### Correction
 
-`src/dev/impl/ptmx.c` supplies the devpts statfs identity, PTY indices,
-persistent slave metadata, and explicit endpoint ownership. `src/dev/impl/pty.c`
-applies the same lifetime rules to BSD PTYs. `src/dev/impl/pts.c` provides
+`src/driver/tty/ptmx.c` supplies the devpts statfs identity, PTY indices,
+persistent slave metadata, and explicit endpoint ownership. `src/driver/tty/pty.c`
+applies the same lifetime rules to BSD PTYs. `src/driver/tty/pts.c` provides
 persistent chmod/chown, `TIOCSPTLCK`, `TIOCGPTLCK`, `TCFLSH`, `TIOCPKT`, and
 pair-owned buffer cleanup. `src/fs/ioctl.h` declares the packet-mode constants.
 
@@ -3191,7 +3191,7 @@ and writing, matching real Linux behaviour:
 fs_open("/dev/tty1", O_RDWR, 0);  // fd 2 — stderr
 ```
 
-Changed in `src/elf/impl/exec.c` and `src/dev/impl/tty.c`.
+Changed in `src/elf/impl/exec.c` and `src/driver/tty/tty.c`.
 
 ---
 

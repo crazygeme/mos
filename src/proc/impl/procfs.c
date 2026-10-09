@@ -5,12 +5,10 @@
  *   /proc            — directory listing (registered entries + live PIDs + "self")
  *   /proc/{pid}/     — per-PID directory (→ proc_pid.c)
  *   /proc/self/      — alias for /proc/{current_pid}/
- *   /proc/{name}     — static entries registered via PROC_INIT (cpuinfo, meminfo, ...)
+ *   /proc/{name}     — static entries registered by their providers (cpuinfo, meminfo, ...)
  *
- * Static entries self-register by placing a pointer in the ".procfs_init"
- * ELF section (PROC_INIT macro).  procfs_init() iterates that section and
- * calls each function with the procfs superblock, which mounts the entry as
- * a child superblock at its chosen path.
+ * Providers populate the shared entries tree during kernel initialization.
+ * Mounting procfs creates a view; it never initializes providers.
  *
  * Per-PID paths are caught by proc_open(): anything that is not found in the
  * static child-mount table is treated as a potential PID or "self" alias and
@@ -25,7 +23,6 @@
 #include <mm/mmap.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
-#include <device/time.h>
 #include <macro.h>
 #include <ext4.h>
 #include <errno.h>
@@ -98,7 +95,7 @@ static int proc_root_getattr(file *fp, struct stat *s)
 	s->st_blksize = PAGE_SIZE;
 	s->st_dev = 0xb;
 	s->st_nlink = 2;
-	s->st_ino = PROC_INODE;
+	s->st_ino = node->i_ino;
 	return 0;
 }
 
@@ -382,18 +379,33 @@ static super_operations proc_sops = {
 /*
  * proc_get_sb — called by fs_do_mount() when "proc" is requested.
  * Creates a real procfs superblock with proc_sops and registers all
- * static entries (meminfo, cpuinfo, ...) via PROC_INIT callbacks.
+ * a view of the static entries and dynamic process lookup.
  */
+static vfs_entry_tree *proc_tree;
+
+vfs_entry_node *procfs_entries(void)
+{
+	if (!proc_tree) {
+		proc_tree = vfs_entry_tree_create();
+		if (proc_tree) {
+			vfs_entry_tree_type(proc_tree, 0x9fa0);
+			vfs_entry_set_provider(vfs_entry_root(proc_tree),
+					       &proc_sops);
+		}
+	}
+	return proc_tree ? vfs_entry_root(proc_tree) : NULL;
+}
+
 static super_block *proc_get_sb(const char *dev, const char *target, int flags,
 				void *data)
 {
-	proc_init_fn_t *fn;
-	super_block *sb = sget(&proc_sops);
-
-	for (fn = __procfs_init_start; fn < __procfs_init_end; fn++)
-		(*fn)(sb);
-
-	return sb;
+	(void)dev;
+	(void)target;
+	(void)flags;
+	(void)data;
+	if (!procfs_entries() || vfs_entry_tree_error(proc_tree))
+		return NULL;
+	return vfs_entry_tree_mount(proc_tree);
 }
 
 static fs_type proc_fs_type = { .name = "proc", .get_sb = proc_get_sb };

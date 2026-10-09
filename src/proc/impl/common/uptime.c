@@ -7,7 +7,7 @@
  * Uptime follows the monotonic clock, including delayed timer interrupts.
  */
 #include "common.h"
-#include <device/time.h>
+#include <lib/klib.h>
 #include <ps/ps.h>
 #include <ps/usage.h>
 #include <ps/smp.h>

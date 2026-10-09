@@ -339,10 +339,16 @@ Guest regression entry points are `test/*.sh`. They are embedded in the test
 kernel and exposed as `/proc/tests/<name>`. They can also run from a checkout
 inside the guest with `sh test/<name>.sh [arguments]`.
 
-Most syscall probes require Python 3 and the standard-library modules imported
-in the embedded program. Each shell entry point creates a temporary Python file,
-passes arguments to it, preserves its exit status, and removes the file on exit.
-The temporary file remains available for probes that execute their own entry
-point. `thread_faults.sh` compiles a C probe in the guest and requires a C
-compiler, pthread headers, and the `timeout` command. GUI, tmux, graphics, and
-filesystem probes require the corresponding guest services and tools.
+Syscall probes are shell scripts with embedded C programs compiled by the GCC
+shipped in the Red Hat 9 guest. They require no Python runtime. Each script
+creates a temporary directory, compiles its probe, preserves the probe's exit
+status, and removes its artifacts on exit. The C sources use GNU C99 and the
+guest's libc and pthread headers; bounded probes use alarms rather than an
+external `timeout` command.
+
+`tmux_output` reports an explicit skip when tmux is absent. `virtgpu_modes`
+reports a skip when the default device is absent; its `--device`,
+`--expect-preferred`, and `--modeset` options require the specified graphics
+device. The Xorg probe always tests kernel interfaces and shared fence storage,
+and reports a skip for the additional libxshmfence integration when that library
+is absent. Native AMD64 executable probes are not part of the guest suite.

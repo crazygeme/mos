@@ -34,6 +34,7 @@ static unsigned releases, removals;
 static int close_in_callback;
 void epoll_release_file(file *fp) { (void)fp; }
 void fs_flock_release(file *fp) { (void)fp; }
+void fs_posix_lock_release(file *fp, unsigned tgid) { (void)fp; (void)tgid; }
 void inotify_file_close(file *fp) { (void)fp; }
 void sb_put(super_block *sb) { (void)sb; }
 void ps_put_to_ready_queue(task_struct *t) { (void)t; }
@@ -141,7 +142,7 @@ def main():
         work = Path(directory)
         shims = dict(SHIMS)
         shims['ps/ps.h'] = shims['ps/ps.h'].replace(
-            'void *io_wait;', 'unsigned long *fd_cloexec;\n    struct file_io_scope *io_files;\n    void *io_wait;')
+            'void *io_wait;', 'unsigned tgid;\n    unsigned long *fd_cloexec;\n    struct file_io_scope *io_files;\n    void *io_wait;')
         for name, content in shims.items():
             path = work / name
             path.parent.mkdir(parents=True, exist_ok=True)

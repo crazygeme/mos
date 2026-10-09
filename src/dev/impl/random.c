@@ -14,7 +14,8 @@ static ssize_t random_read(file *fp, void *buf, size_t size, loff_t *pos)
 	(void)fp;
 	(void)pos;
 	while (copied < size) {
-		unsigned count = size - copied < sizeof(bytes) ? size - copied : sizeof(bytes);
+		unsigned count = size - copied < sizeof(bytes) ? size - copied :
+								 sizeof(bytes);
 		kernel_random_bytes(bytes, count);
 		memcpy((char *)buf + copied, bytes, count);
 		copied += count;

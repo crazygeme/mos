@@ -1,112 +1,139 @@
 #!/bin/sh
 # Verify mapping isolation and shared writes after mprotect transitions.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-mprotect_cow.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
-import contextlib
-import ctypes
-import mmap
-import os
-import tempfile
-import unittest
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
+static void child_ok(pid_t pid)
+{
+	int status;
+	CHECK(pid > 0);
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+static int temp_file(void)
+{
+	char path[] = "/tmp/mos-probe.XXXXXX";
+	int fd = mkstemp(path);
+	CHECK(fd >= 0);
+	CHECK(!unlink(path));
+	return fd;
+}
 
-
-PAGE = mmap.PAGESIZE
-READ = mmap.PROT_READ
-WRITE = mmap.PROT_WRITE
-libc = ctypes.CDLL(None, use_errno=True)
-libc.mmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
-                      ctypes.c_int, ctypes.c_int, ctypes.c_long]
-libc.mmap.restype = ctypes.c_void_p
-libc.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
-libc.mprotect.restype = ctypes.c_int
-libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-libc.munmap.restype = ctypes.c_int
-
-
-def protect(address, prot):
-    if libc.mprotect(address, PAGE, prot) != 0:
-        raise OSError(ctypes.get_errno(), 'mprotect')
-
-
-@contextlib.contextmanager
-def mapping(fd=-1, flags=mmap.MAP_PRIVATE, prot=READ):
-    if fd == -1:
-        flags |= mmap.MAP_ANONYMOUS
-    address = libc.mmap(None, PAGE, prot, flags, fd, 0)
-    if address == ctypes.c_void_p(-1).value:
-        raise OSError(ctypes.get_errno(), 'mmap')
-    try:
-        yield address
-    finally:
-        libc.munmap(address, PAGE)
-
-
-def byte(address):
-    return ctypes.c_ubyte.from_address(address)
-
-
-class MprotectCow(unittest.TestCase):
-    def test_private_file_keeps_cache_and_other_mappings_unchanged(self):
-        with tempfile.TemporaryFile() as source:
-            source.write(b'A' * PAGE)
-            source.flush()
-            with mapping(source.fileno()) as private, \
-                    mapping(source.fileno()) as observer:
-                self.assertEqual(byte(private).value, ord('A'))
-                self.assertEqual(byte(observer).value, ord('A'))
-                protect(private, READ | WRITE)
-                byte(private).value = ord('B')
-                protect(private, READ)
-                self.assertEqual(byte(observer).value, ord('A'))
-                self.assertEqual(os.pread(source.fileno(), 1, 0), b'A')
-                with mapping(source.fileno()) as fresh:
-                    self.assertEqual(byte(fresh).value, ord('A'))
-
-    def test_anonymous_zero_page_remains_zero(self):
-        with mapping() as private, mapping() as observer:
-            self.assertEqual(byte(private).value, 0)
-            self.assertEqual(byte(observer).value, 0)
-            protect(private, READ | WRITE)
-            byte(private).value = 123
-            self.assertEqual(byte(observer).value, 0)
-            with mapping() as fresh:
-                self.assertEqual(byte(fresh).value, 0)
-
-    def test_fork_private_page_survives_protection_changes(self):
-        with mapping(prot=READ | WRITE) as private:
-            byte(private).value = 45
-            child = os.fork()
-            if child == 0:
-                try:
-                    protect(private, 0)
-                    protect(private, READ | WRITE)
-                    byte(private).value = 67
-                    os._exit(0 if byte(private).value == 67 else 1)
-                except BaseException:
-                    os._exit(2)
-            self.assertEqual(os.waitpid(child, 0)[1], 0)
-            self.assertEqual(byte(private).value, 45)
-
-    def test_shared_mapping_propagates_writes(self):
-        with tempfile.TemporaryFile() as source:
-            source.write(b'A' * PAGE)
-            source.flush()
-            with mapping(source.fileno(), mmap.MAP_SHARED) as writer, \
-                    mapping(source.fileno(), mmap.MAP_SHARED) as observer:
-                self.assertEqual(byte(writer).value, ord('A'))
-                self.assertEqual(byte(observer).value, ord('A'))
-                protect(writer, READ | WRITE)
-                byte(writer).value = ord('B')
-                self.assertEqual(byte(observer).value, ord('B'))
-
-
-if __name__ == '__main__':
-    unittest.main()
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+static unsigned char *map(int fd, int flags, int prot)
+{
+	void *p = mmap(0, getpagesize(), prot,
+		       flags | (fd < 0 ? MAP_ANONYMOUS : 0), fd, 0);
+	CHECK(p != MAP_FAILED);
+	return p;
+}
+int main(void)
+{
+	int fd = temp_file();
+	size_t page = getpagesize();
+	unsigned char *data = malloc(page), *p, *o, *fresh, c;
+	pid_t child;
+	CHECK(data);
+	memset(data, 'A', page);
+	CHECK(write(fd, data, page) == page);
+	free(data);
+	p = map(fd, MAP_PRIVATE, 1);
+	o = map(fd, MAP_PRIVATE, 1);
+	CHECK(*p == 'A' && *o == 'A');
+	CHECK(!mprotect(p, page, 3));
+	*p = 'B';
+	CHECK(!mprotect(p, page, 1));
+	CHECK(*o == 'A' && pread(fd, &c, 1, 0) == 1 && c == 'A');
+	fresh = map(fd, MAP_PRIVATE, 1);
+	CHECK(*fresh == 'A');
+	munmap(fresh, page);
+	munmap(p, page);
+	munmap(o, page);
+	p = map(-1, MAP_PRIVATE, 1);
+	o = map(-1, MAP_PRIVATE, 1);
+	CHECK(!*p && !*o);
+	CHECK(!mprotect(p, page, 3));
+	*p = 123;
+	CHECK(!*o);
+	fresh = map(-1, MAP_PRIVATE, 1);
+	CHECK(!*fresh);
+	munmap(fresh, page);
+	munmap(p, page);
+	munmap(o, page);
+	p = map(-1, MAP_PRIVATE, 3);
+	*p = 45;
+	child = fork();
+	CHECK(child >= 0);
+	if (!child) {
+		CHECK(!mprotect(p, page, 0) && !mprotect(p, page, 3));
+		*p = 67;
+		CHECK(*p == 67);
+		_exit(0);
+	}
+	child_ok(child);
+	CHECK(*p == 45);
+	munmap(p, page);
+	p = map(fd, MAP_SHARED, 1);
+	o = map(fd, MAP_SHARED, 1);
+	CHECK(*p == 'A' && *o == 'A');
+	CHECK(!mprotect(p, page, 3));
+	*p = 'B';
+	CHECK(*o == 'B');
+	munmap(p, page);
+	munmap(o, page);
+	close(fd);
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

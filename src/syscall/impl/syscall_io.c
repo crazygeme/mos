@@ -783,15 +783,43 @@ int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
 	return 0;
 }
 
+ssize_t sys_sendfile(int out_fd, int in_fd, int32_t *offset, size_t count)
+{
+	int32_t old_position = 0;
+	if (offset && (ps_read_process_memory(current, offset, &old_position,
+					      sizeof(old_position)) < 0 ||
+		       ps_write_process_memory(current, offset, &old_position,
+					       sizeof(old_position)) < 0))
+		return -EFAULT;
+	if (offset && old_position < 0)
+		return -EINVAL;
+	if (offset && count > 0x7fffffffU - (unsigned)old_position)
+		count = 0x7fffffffU - (unsigned)old_position;
+	int64_t position = old_position;
+	ssize_t result =
+		fs_sendfile(out_fd, in_fd, offset ? &position : NULL, count);
+	if (offset && result >= 0) {
+		old_position = position;
+		if (ps_write_process_memory(current, offset, &old_position,
+					    sizeof(old_position)) < 0)
+			return -EFAULT;
+	}
+	return result;
+}
+
 ssize_t sys_sendfile64(int out_fd, int in_fd, int64_t *offset, size_t count)
 {
 	int64_t position = 0;
-	if (offset && (ps_read_process_memory(current, offset, &position, sizeof(position)) < 0 ||
-		       ps_write_process_memory(current, offset, &position, sizeof(position)) < 0))
+	if (offset && (ps_read_process_memory(current, offset, &position,
+					      sizeof(position)) < 0 ||
+		       ps_write_process_memory(current, offset, &position,
+					       sizeof(position)) < 0))
 		return -EFAULT;
-	ssize_t result = fs_sendfile(out_fd, in_fd, offset ? &position : NULL, count);
+	ssize_t result =
+		fs_sendfile(out_fd, in_fd, offset ? &position : NULL, count);
 	if (offset && result >= 0 &&
-	    ps_write_process_memory(current, offset, &position, sizeof(position)) < 0)
+	    ps_write_process_memory(current, offset, &position,
+				    sizeof(position)) < 0)
 		return -EFAULT;
 	return result;
 }

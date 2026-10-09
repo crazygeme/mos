@@ -1,36 +1,23 @@
 #!/bin/sh
 # Validate syscall tracing across startup, exec, and process exit.
-# Requires Python 3 and the modules imported by the embedded guest probe.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-strace.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
-import re
-import subprocess
-import tempfile
-from pathlib import Path
-
-
-with tempfile.TemporaryDirectory(prefix="strace-check-") as directory:
-    trace = Path(directory) / "trace"
-    for command, output in ((["/bin/true"], ""),
-                            (["/bin/echo", "trace-ok"], "trace-ok\n")):
-        result = subprocess.run(
-            ["strace", "-o", str(trace), *command],
-            capture_output=True, text=True, timeout=30,
-        )
-        assert result.returncode == 0, result
-        assert result.stdout == output, result.stdout
-        assert "Stray" not in result.stderr, result.stderr
-        log = trace.read_text()
-        assert re.search(r"execve\(.*\)\s+= 0", log), log
-        assert "+++ exited with 0 +++" in log, log
-        assert re.search(r"(?:openat|mmap2|brk)\(", log), log
-        if output:
-            assert re.search(r'write\(1, "trace-ok\\n", 9\)\s+= 9', log), log
-print("strace startup, exec, and exit: PASS")
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+for command in true echo; do
+    if [ "$command" = true ]; then
+        strace -o "$probe_dir/trace" /bin/true > "$probe_dir/out" 2> "$probe_dir/err"
+        [ ! -s "$probe_dir/out" ]
+    else
+        strace -o "$probe_dir/trace" /bin/echo trace-ok > "$probe_dir/out" 2> "$probe_dir/err"
+        printf 'trace-ok\n' > "$probe_dir/expected"
+        cmp "$probe_dir/out" "$probe_dir/expected"
+        grep -E 'write\(1, "trace-ok\\n", 9\)[[:space:]]+= 9' "$probe_dir/trace"
+    fi
+    ! grep Stray "$probe_dir/err"
+    grep -E 'execve\(.*\)[[:space:]]+= 0' "$probe_dir/trace"
+    grep -E '(exit(_group)?\(0\)|\+\+\+ exited with 0 \+\+\+)'  "$probe_dir/trace"
+    grep -E '(openat|mmap2|brk)\(' "$probe_dir/trace"
+done

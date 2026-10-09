@@ -1,553 +1,678 @@
 #!/bin/sh
 # Validate filesystem notifications, watch lifetime, queues, and proc controls.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-inotify.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
+static void child_ok(pid_t pid)
+{
+	int status;
+	CHECK(pid > 0);
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
 
-import argparse
-import array
-import ctypes
-import errno
-import fcntl
-import os
-from pathlib import Path
-import select
-import signal
-import struct
-import tempfile
-import time
+#include <sys/mount.h>
 
-ACCESS, MODIFY, ATTRIB, CLOSE_WRITE, CLOSE_NOWRITE, OPEN = 1, 2, 4, 8, 16, 32
-MOVED_FROM, MOVED_TO, CREATE, DELETE, DELETE_SELF, MOVE_SELF = 64, 128, 256, 512, 1024, 2048
-UNMOUNT, Q_OVERFLOW, IGNORED = 0x2000, 0x4000, 0x8000
-ONLYDIR, DONT_FOLLOW, EXCL_UNLINK = 0x1000000, 0x2000000, 0x4000000
-MASK_CREATE, MASK_ADD, ISDIR, ONESHOT = 0x10000000, 0x20000000, 0x40000000, 0x80000000
-ALL = 0xfff
-FIONREAD = 0x541b
-HEADER = struct.Struct('=iIII')
-libc = ctypes.CDLL(None, use_errno=True)
-libc.inotify_init1.argtypes = [ctypes.c_int]
-libc.inotify_init1.restype = ctypes.c_int
-libc.inotify_add_watch.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-libc.inotify_add_watch.restype = ctypes.c_int
-libc.inotify_rm_watch.argtypes = [ctypes.c_int, ctypes.c_int]
-libc.inotify_rm_watch.restype = ctypes.c_int
-libc.syscall.restype = ctypes.c_long
-
-
-def checked(value):
-    if value < 0:
-        error = ctypes.get_errno()
-        raise OSError(error, os.strerror(error))
-    return value
-
-
-def create(flags=os.O_NONBLOCK | os.O_CLOEXEC):
-    return checked(libc.inotify_init1(flags))
-
-
-def watch(fd, path, mask=ALL):
-    return checked(libc.inotify_add_watch(fd, os.fsencode(path), mask))
-
-
-def remove(fd, wd):
-    checked(libc.inotify_rm_watch(fd, wd))
-
-
-def error(expected, call):
-    try:
-        call()
-    except OSError as exc:
-        assert exc.errno == expected, (exc, expected)
-    else:
-        raise AssertionError(f'Expected errno {expected}')
-
-
-def decode(data):
-    result = []
-    offset = 0
-    while offset < len(data):
-        assert len(data) - offset >= HEADER.size, data
-        wd, mask, cookie, length = HEADER.unpack_from(data, offset)
-        assert length % HEADER.size == 0
-        end = offset + HEADER.size + length
-        assert end <= len(data), data
-        name = data[offset + HEADER.size:end].split(b'\0', 1)[0]
-        result.append((wd, mask, cookie, os.fsdecode(name)))
-        offset = end
-    return result
-
-
-def drain(fd):
-    events = []
-    while True:
-        try:
-            events.extend(decode(os.read(fd, 65536)))
-        except BlockingIOError:
-            return events
-
-
-def contains(events, wd, mask, name=''):
-    assert any(w == wd and m & mask == mask and n == name
-               for w, m, c, n in events), (wd, hex(mask), name, events)
-
-
-def queued(fd):
-    value = array.array('i', [0])
-    fcntl.ioctl(fd, FIONREAD, value, True)
-    return value[0]
-
-
-def filesystem_checks(root):
-    directory = root / 'basic'
-    directory.mkdir()
-    fd = create()
-    try:
-        assert fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_NONBLOCK
-        assert fcntl.fcntl(fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC
-        assert os.lseek(fd, 1, os.SEEK_SET) == 0
-        assert queued(fd) == 0
-        error(errno.EAGAIN, lambda: os.read(fd, 65536))
-        wd = watch(fd, directory)
-        target = directory / 'file'
-        file_fd = os.open(target, os.O_CREAT | os.O_RDWR, 0o600)
-        events = drain(fd)
-        assert not any(e[1] & ATTRIB for e in events), events
-        os.write(file_fd, b'abc')
-        os.lseek(file_fd, 0, os.SEEK_SET)
-        assert os.read(file_fd, 3) == b'abc'
-        os.fchmod(file_fd, 0o640)
-        os.ftruncate(file_fd, 1)
-        os.close(file_fd)
-        events.extend(drain(fd))
-        for mask in (CREATE, OPEN, MODIFY, ACCESS, ATTRIB, CLOSE_WRITE):
-            contains(events, wd, mask, 'file')
-        with open(target, 'rb') as stream:
-            stream.read()
-        contains(drain(fd), wd, CLOSE_NOWRITE, 'file')
-        readonly = os.open(target, os.O_RDONLY)
-        drain(fd)
-        try:
-            error(errno.EINVAL, lambda: os.ftruncate(readonly, 0))
-            assert not drain(fd), 'Rejected truncation must not emit events'
-        finally:
-            os.close(readonly)
-        drain(fd)
-        child = directory / 'dir'
-        child.mkdir()
-        contains(drain(fd), wd, CREATE | ISDIR, 'dir')
-        (child / 'nested').touch()
-        assert not drain(fd), 'Directory watches must not recurse'
-        (child / 'nested').unlink()
-        child.rmdir()
-        contains(drain(fd), wd, DELETE | ISDIR, 'dir')
-
-        file_wd = watch(fd, target)
-        renamed = directory / 'renamed'
-        file_fd = os.open(target, os.O_RDWR)
-        drain(fd)
-        target.rename(renamed)
-        events = drain(fd)
-        contains(events, wd, MOVED_FROM, 'file')
-        contains(events, wd, MOVED_TO, 'renamed')
-        contains(events, file_wd, MOVE_SELF)
-        first = next(e for e in events if e[0] == wd and e[1] & MOVED_FROM)
-        second = next(e for e in events if e[0] == wd and e[1] & MOVED_TO)
-        assert first[2] and first[2] == second[2], events
-        os.write(file_fd, b'x')
-        os.close(file_fd)
-        events = drain(fd)
-        contains(events, file_wd, MODIFY)
-        contains(events, wd, CLOSE_WRITE, 'renamed')
-
-        alias = directory / 'alias'
-        os.link(renamed, alias)
-        contains(drain(fd), file_wd, ATTRIB)
-        assert watch(fd, alias, MODIFY | DELETE_SELF | ATTRIB | CLOSE_WRITE) == file_wd
-        error(errno.EEXIST, lambda: watch(fd, alias, MODIFY | MASK_CREATE))
-        renamed.unlink()
-        events = drain(fd)
-        contains(events, file_wd, ATTRIB)
-        assert not any(e[0] == file_wd and e[1] & IGNORED for e in events)
-        file_fd = os.open(alias, os.O_RDWR)
-        drain(fd)
-        alias.unlink()
-        events = drain(fd)
-        contains(events, file_wd, ATTRIB)
-        assert not any(e[0] == file_wd and e[1] & (DELETE_SELF | IGNORED) for e in events)
-        os.close(file_fd)
-        events = drain(fd)
-        contains(events, file_wd, CLOSE_WRITE)
-        contains(events, file_wd, DELETE_SELF)
-        contains(events, file_wd, IGNORED)
-        error(errno.EINVAL, lambda: remove(fd, file_wd))
-
-        # A rename replacement keeps its inode watch while open references exist.
-        old = directory / 'old'
-        replacement = directory / 'replacement'
-        old.touch()
-        replacement.touch()
-        replacement_wd = watch(fd, replacement)
-        held = os.open(replacement, os.O_RDONLY)
-        drain(fd)
-        old.rename(replacement)
-        events = drain(fd)
-        contains(events, replacement_wd, ATTRIB)
-        assert not any(e[0] == replacement_wd and e[1] & IGNORED for e in events)
-        os.close(held)
-        events = drain(fd)
-        contains(events, replacement_wd, DELETE_SELF)
-        contains(events, replacement_wd, IGNORED)
-        remove(fd, wd)
-        contains(drain(fd), wd, IGNORED)
-    finally:
-        os.close(fd)
-
-
-def path_reference_checks(root):
-    item = root / 'path-reference'
-    item.touch()
-    fd = create()
-    held = -1
-    try:
-        wd = watch(fd, item)
-        held = os.open(item, os.O_PATH)
-        assert not drain(fd), 'O_PATH must not produce open notifications'
-        item.unlink()
-        events = drain(fd)
-        contains(events, wd, ATTRIB)
-        assert not any(e[1] & (DELETE_SELF | IGNORED) for e in events), events
-        os.close(held)
-        held = -1
-        events = drain(fd)
-        contains(events, wd, DELETE_SELF)
-        contains(events, wd, IGNORED)
-        assert not any(e[1] & (CLOSE_WRITE | CLOSE_NOWRITE) for e in events), events
-    finally:
-        if held >= 0:
-            os.close(held)
-        os.close(fd)
-
-
-def late_watch_checks(root):
-    path = root / 'late-watch'
-    path.mkdir()
-    for action in ('rename', 'unlink'):
-        item = path / action
-        item.touch()
-        held = os.open(item, os.O_RDWR)
-        fd = -1
-        try:
-            name = action
-            if action == 'rename':
-                name = 'renamed'
-                item.rename(path / name)
-            else:
-                item.unlink()
-            fd = create()
-            wd = watch(fd, path, MODIFY | CLOSE_WRITE)
-            assert not drain(fd), 'Watch registration must not emit earlier events'
-            os.write(held, b'x')
-            os.close(held)
-            held = -1
-            events = drain(fd)
-            contains(events, wd, MODIFY, name)
-            contains(events, wd, CLOSE_WRITE, name)
-            assert not any(e[1] & Q_OVERFLOW for e in events), events
-        finally:
-            if held >= 0:
-                os.close(held)
-            if fd >= 0:
-                os.close(fd)
-
-
-def async_checks(root):
-    path = root / 'async'
-    path.mkdir()
-    fd = create()
-    received = []
-    previous = signal.signal(signal.SIGIO, lambda signo, frame: received.append(signo))
-    try:
-        wd = watch(fd, path, CREATE)
-        fcntl.fcntl(fd, fcntl.F_SETOWN, os.getpid())
-        fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK | os.O_ASYNC)
-        (path / 'signal').touch()
-        deadline = time.monotonic() + 2
-        while not received and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert received, 'Asynchronous notification timed out'
-        contains(drain(fd), wd, CREATE, 'signal')
-    finally:
-        os.close(fd)
-        signal.signal(signal.SIGIO, previous)
-
-
-def mask_checks(root):
-    path = root / 'masks'
-    path.mkdir()
-    fd = create()
-    try:
-        error(errno.EINVAL, lambda: watch(fd, path, 0))
-        error(errno.EINVAL, lambda: watch(fd, path, 0x1000))
-        error(errno.EINVAL, lambda: watch(fd, path, CREATE | MASK_ADD | MASK_CREATE))
-        error(errno.EBADF, lambda: watch(-1, path))
-        error(errno.ENOENT, lambda: watch(fd, path / 'missing'))
-        error(errno.ENOENT, lambda: watch(fd, ''))
-        error(errno.EFAULT, lambda: checked(libc.inotify_add_watch(fd, None, ALL)))
-        ordinary = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            error(errno.EINVAL, lambda: watch(ordinary, path))
-        finally:
-            os.close(ordinary)
-        wd = watch(fd, path, CREATE)
-        assert watch(fd, path, DELETE | MASK_ADD) == wd
-        item = path / 'item'
-        item.touch()
-        item.unlink()
-        events = drain(fd)
-        contains(events, wd, CREATE, 'item')
-        contains(events, wd, DELETE, 'item')
-        assert watch(fd, path, OPEN) == wd
-        item.touch()
-        events = drain(fd)
-        assert events and all(e[1] & OPEN for e in events), events
-        error(errno.ENOTDIR, lambda: watch(fd, item, MODIFY | ONLYDIR))
-        link = path / 'link'
-        link.symlink_to(item.name)
-        item_wd = watch(fd, item)
-        assert watch(fd, link) == item_wd
-        link_wd = watch(fd, link, ALL | DONT_FOLLOW)
-        assert link_wd != item_wd
-        drain(fd)
-        link.unlink()
-        contains(drain(fd), link_wd, IGNORED)
-        remove(fd, wd)
-        drain(fd)
-        wd = watch(fd, path, CREATE | ONESHOT)
-        (path / 'once').touch()
-        (path / 'twice').touch()
-        events = drain(fd)
-        contains(events, wd, CREATE, 'once')
-        contains(events, wd, IGNORED)
-        assert not any(e[0] == wd and e[3] == 'twice' for e in events)
-        error(errno.EINVAL, lambda: remove(fd, wd))
-    finally:
-        os.close(fd)
-
-    # EXCL_UNLINK suppresses subsequent events for the deleted directory entry.
-    for exclude in (False, True):
-        fd = create()
-        item = path / 'unlinked'
-        item.touch()
-        try:
-            wd = watch(fd, path, CLOSE_WRITE | (EXCL_UNLINK if exclude else 0))
-            held = os.open(item, os.O_RDWR)
-            item.unlink()
-            os.close(held)
-            events = drain(fd)
-            assert any(e[0] == wd and e[1] & CLOSE_WRITE for e in events) != exclude, events
-        finally:
-            os.close(fd)
-
-
-def queue_checks(root):
-    path = root / 'queues'
-    path.mkdir()
-    fd = create()
-    duplicate = os.dup(fd)
-    try:
-        wd = watch(fd, path, CREATE)
-        with select.epoll() as epoll:
-            epoll.register(fd, select.EPOLLIN)
-            assert epoll.poll(0) == []
-            (path / 'a').touch()
-            assert epoll.poll(1) == [(fd, select.EPOLLIN)]
-            assert select.select([fd], [], [], 0)[0] == [fd]
-            count = queued(fd)
-            assert count == 32, count
-            error(errno.EINVAL, lambda: os.read(fd, 16))
-            assert queued(fd) == count
-            # Legacy inotify reads require a complete record in each iovec.
-            error(errno.EINVAL, lambda: os.readv(duplicate, [bytearray(7), bytearray(count)]))
-            assert queued(fd) == count
-            buffers = [bytearray(count), bytearray(0)]
-            assert os.readv(duplicate, buffers) == count
-            contains(decode(b''.join(buffers)), wd, CREATE, 'a')
-            assert queued(fd) == 0 and epoll.poll(0) == []
-            (path / 'b').touch()
-            (path / 'c').touch()
-            events = decode(os.read(fd, 32))
-            contains(events, wd, CREATE, 'b')
-            contains(drain(duplicate), wd, CREATE, 'c')
-        os.close(fd)
-        fd = -1
-        (path / 'd').touch()
-        contains(drain(duplicate), wd, CREATE, 'd')
-    finally:
-        os.close(duplicate)
-        if fd >= 0:
-            os.close(fd)
-
-    # Identical consecutive events are coalesced until consumed.
-    item = path / 'coalesced'
-    item.touch()
-    fd = create()
-    held = os.open(item, os.O_WRONLY)
-    try:
-        wd = watch(fd, item, MODIFY)
-        os.write(held, b'a')
-        os.write(held, b'b')
-        events = drain(fd)
-        assert len(events) == 1, events
-        contains(events, wd, MODIFY)
-    finally:
-        os.close(held)
-        os.close(fd)
-
-
-def wait_checks(root):
-    path = root / 'waits'
-    path.mkdir()
-    number = 253 if ctypes.sizeof(ctypes.c_void_p) == 8 else 291
-    fd = checked(libc.syscall(ctypes.c_long(number)))
-    try:
-        assert not fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_NONBLOCK
-        assert not fcntl.fcntl(fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC
-        wd = watch(fd, path, CREATE)
-        child = os.fork()
-        if child == 0:
-            try:
-                time.sleep(0.05)
-                (path / 'wake').touch()
-                os._exit(0)
-            except BaseException:
-                os._exit(1)
-        contains(decode(os.read(fd, 65536)), wd, CREATE, 'wake')
-        assert os.waitpid(child, 0)[1] == 0
-        child = os.fork()
-        if child == 0:
-            os.read(fd, 65536)
-            os._exit(1)
-        time.sleep(0.05)
-        os.kill(child, signal.SIGKILL)
-        assert os.WIFSIGNALED(os.waitpid(child, 0)[1])
-    finally:
-        os.close(fd)
-
-
-def limit_checks(root):
-    controls = Path('/proc/sys/fs/inotify')
-    saved = {name: (controls / name).read_text() for name in
-             ('max_user_watches', 'max_user_instances', 'max_queued_events')}
-    def setting(name, value):
-        (controls / name).write_text(str(value) + '\n')
-        assert int((controls / name).read_text()) == value
-    path = root / 'limits'
-    path.mkdir()
-    descriptors = []
-    try:
-        for value in ('-1\n', '2147483648\n', '1x\n', '\n'):
-            error(errno.EINVAL, lambda: (controls / 'max_user_watches').write_text(value))
-        fd = create()
-        descriptors.append(fd)
-        wd = watch(fd, path, CREATE)
-        setting('max_user_watches', 0)
-        assert watch(fd, path, CREATE | MASK_ADD) == wd
-        item = path / 'watched'
-        item.touch()
-        error(errno.ENOSPC, lambda: watch(fd, item))
-        setting('max_user_instances', 0)
-        error(errno.EMFILE, create)
-        for name in ('max_user_watches', 'max_user_instances'):
-            (controls / name).write_text(saved[name])
-        setting('max_queued_events', 4)
-        fd = create()
-        descriptors.append(fd)
-        wd = watch(fd, path, CREATE)
-        # Queue capacity is captured at initialization, independent of later writes.
-        setting('max_queued_events', 0)
-        for index in range(8):
-            (path / str(index)).touch()
-        events = drain(fd)
-        assert len(events) == 5, events
-        assert sum(e[1] == Q_OVERFLOW and e[0] == -1 for e in events) == 1, events
-        (path / 'after-overflow').touch()
-        contains(drain(fd), wd, CREATE, 'after-overflow')
-        zero_fd = create()
-        descriptors.append(zero_fd)
-        watch(zero_fd, path, CREATE)
-        (path / 'zero-limit').touch()
-        events = drain(zero_fd)
-        assert events == [(-1, Q_OVERFLOW, 0, '')], events
-    finally:
-        for fd in descriptors:
-            os.close(fd)
-        for name, value in saved.items():
-            (controls / name).write_text(value)
-
-
-def mount_checks(root):
-    path = root / 'mounted'
-    path.mkdir()
-    libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p,
-                           ctypes.c_ulong, ctypes.c_void_p]
-    libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
-    checked(libc.mount(b'tmpfs', os.fsencode(path), b'tmpfs', 0, None))
-    mounted = True
-    fd = create()
-    try:
-        wd = watch(fd, path, ALL)
-        checked(libc.umount2(os.fsencode(path), 0))
-        mounted = False
-        events = drain(fd)
-        contains(events, wd, UNMOUNT)
-        contains(events, wd, IGNORED)
-        error(errno.EINVAL, lambda: remove(fd, wd))
-    finally:
-        os.close(fd)
-        if mounted:
-            checked(libc.umount2(os.fsencode(path), 0))
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--directory', default='.', help='Filesystem with hard-link and rename support')
-    parser.add_argument('--guest', action='store_true', help='Enable explicit guest-only system tests')
-    parser.add_argument('--limits', action='store_true', help='Temporarily modify and restore inotify controls')
-    parser.add_argument('--mounts', action='store_true', help='Temporarily mount tmpfs to validate unmount notifications')
-    args = parser.parse_args()
-    if (args.limits or args.mounts) and not args.guest:
-        parser.error('--limits and --mounts require --guest')
-    if (args.limits or args.mounts) and os.geteuid() != 0:
-        parser.error('System tests require root privileges')
-    signal.alarm(30)
-    error(errno.EINVAL, lambda: create(1))
-    controls = Path('/proc/sys/fs/inotify')
-    for name in ('max_user_watches', 'max_user_instances', 'max_queued_events'):
-        assert int((controls / name).read_text()) >= 0
-    with tempfile.TemporaryDirectory(prefix='inotify-', dir=args.directory) as directory:
-        root = Path(directory).resolve()
-        filesystem_checks(root)
-        path_reference_checks(root)
-        late_watch_checks(root)
-        mask_checks(root)
-        queue_checks(root)
-        wait_checks(root)
-        async_checks(root)
-        if args.limits:
-            limit_checks(root)
-        if args.mounts:
-            mount_checks(root)
-    signal.alarm(0)
-    print('Filesystem notification checks: PASS')
-
-
-if __name__ == '__main__':
-    main()
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+#define ACCESS 1
+#define MODIFY 2
+#define ATTRIB 4
+#define CLOSE_WRITE 8
+#define CLOSE_NOWRITE 16
+#define OPEN 32
+#define MOVED_FROM 64
+#define MOVED_TO 128
+#define CREATE 256
+#define DELETE 512
+#define DELETE_SELF 1024
+#define MOVE_SELF 2048
+#define UNMOUNT 0x2000
+#define Q_OVERFLOW 0x4000
+#define IGNORED 0x8000
+#define ONLYDIR 0x1000000
+#define DONT_FOLLOW 0x2000000
+#define EXCL_UNLINK 0x4000000
+#define MASK_CREATE 0x10000000
+#define MASK_ADD 0x20000000
+#define ISDIR 0x40000000
+#define ONESHOT 0x80000000
+#define ALL 0xfff
+struct event {
+	int wd;
+	uint32_t mask, cookie, len;
+};
+static unsigned char events[131072];
+static size_t event_size;
+static int create(int flags)
+{
+	int fd = syscall(332, flags);
+	CHECK(fd >= 0);
+	return fd;
+}
+static int watch(int fd, const char *path, unsigned mask)
+{
+	int wd = syscall(292, fd, path, mask);
+	CHECK(wd >= 0);
+	return wd;
+}
+static void remove_watch(int fd, int wd)
+{
+	CHECK(!syscall(293, fd, wd));
+}
+static void decode(void)
+{
+	size_t offset = 0;
+	struct event *e;
+	while (offset < event_size) {
+		CHECK(event_size - offset >= 16);
+		e = (void *)(events + offset);
+		CHECK(e->len % 16 == 0 && offset + 16 + e->len <= event_size);
+		if (e->len)
+			CHECK(memchr(events + offset + 16, 0, e->len));
+		offset += 16 + e->len;
+	}
+}
+static void drain(int fd, int append)
+{
+	ssize_t n;
+	if (!append)
+		event_size = 0;
+	while ((n = read(fd, events + event_size,
+			 sizeof(events) - event_size)) > 0) {
+		event_size += n;
+		CHECK(event_size < sizeof(events));
+	}
+	CHECK(n == -1 && errno == EAGAIN);
+	decode();
+}
+static int has(int wd, unsigned mask, const char *name)
+{
+	size_t offset;
+	struct event *e;
+	for (offset = 0; offset < event_size; offset += 16 + e->len) {
+		e = (void *)(events + offset);
+		if (e->wd == wd && (e->mask & mask) == mask &&
+		    !strcmp(e->len ? (char *)e + 16 : "", name))
+			return 1;
+	}
+	return 0;
+}
+static int any(int wd, unsigned mask)
+{
+	size_t offset;
+	struct event *e;
+	for (offset = 0; offset < event_size; offset += 16 + e->len) {
+		e = (void *)(events + offset);
+		if ((wd == -2 || e->wd == wd) && (e->mask & mask))
+			return 1;
+	}
+	return 0;
+}
+static void contains(int wd, unsigned mask, const char *name)
+{
+	CHECK(has(wd, mask, name));
+}
+static int queued(int fd)
+{
+	int n;
+	CHECK(!ioctl(fd, FIONREAD, &n));
+	return n;
+}
+static void touch(const char *path)
+{
+	int fd = open(path, O_CREAT | O_WRONLY, 0600);
+	CHECK(fd >= 0);
+	CHECK(!close(fd));
+}
+static void filesystem(void)
+{
+	int fd = create(O_NONBLOCK | O_CLOEXEC), wd, file, file_wd, held,
+	    replacement_wd;
+	unsigned cookie = 0;
+	size_t offset;
+	struct event *e;
+	char b[3];
+	CHECK(!mkdir("basic", 0700));
+	CHECK((fcntl(fd, F_GETFL) & O_NONBLOCK) &&
+	      (fcntl(fd, F_GETFD) & FD_CLOEXEC));
+	CHECK(lseek(fd, 1, SEEK_SET) == 0 && !queued(fd));
+	CHECK(read(fd, b, sizeof(b)) == -1 && errno == EAGAIN);
+	wd = watch(fd, "basic", ALL);
+	CHECK((file = open("basic/file", O_CREAT | O_RDWR, 0600)) >= 0);
+	drain(fd, 0);
+	CHECK(!any(-2, ATTRIB));
+	CHECK(write(file, "abc", 3) == 3 && lseek(file, 0, SEEK_SET) == 0 &&
+	      read(file, b, 3) == 3 && !memcmp(b, "abc", 3));
+	CHECK(!fchmod(file, 0640) && !ftruncate(file, 1));
+	close(file);
+	drain(fd, 1);
+	contains(wd, CREATE, "file");
+	contains(wd, OPEN, "file");
+	contains(wd, MODIFY, "file");
+	contains(wd, ACCESS, "file");
+	contains(wd, ATTRIB, "file");
+	contains(wd, CLOSE_WRITE, "file");
+	CHECK((file = open("basic/file", O_RDONLY)) >= 0);
+	CHECK(read(file, b, 3) == 1);
+	close(file);
+	drain(fd, 0);
+	contains(wd, CLOSE_NOWRITE, "file");
+	CHECK((file = open("basic/file", O_RDONLY)) >= 0);
+	drain(fd, 0);
+	CHECK(ftruncate(file, 0) == -1 && errno == EINVAL);
+	drain(fd, 0);
+	CHECK(!event_size);
+	close(file);
+	drain(fd, 0);
+	CHECK(!mkdir("basic/dir", 0700));
+	drain(fd, 0);
+	contains(wd, CREATE | ISDIR, "dir");
+	touch("basic/dir/nested");
+	drain(fd, 0);
+	CHECK(!event_size);
+	unlink("basic/dir/nested");
+	CHECK(!rmdir("basic/dir"));
+	drain(fd, 0);
+	contains(wd, DELETE | ISDIR, "dir");
+	file_wd = watch(fd, "basic/file", ALL);
+	CHECK((file = open("basic/file", O_RDWR)) >= 0);
+	drain(fd, 0);
+	CHECK(!rename("basic/file", "basic/renamed"));
+	drain(fd, 0);
+	contains(wd, MOVED_FROM, "file");
+	contains(wd, MOVED_TO, "renamed");
+	contains(file_wd, MOVE_SELF, "");
+	for (offset = 0; offset < event_size; offset += 16 + e->len) {
+		e = (void *)(events + offset);
+		if (e->wd == wd && (e->mask & MOVED_FROM))
+			cookie = e->cookie;
+	}
+	CHECK(cookie);
+	for (offset = 0; offset < event_size; offset += 16 + e->len) {
+		e = (void *)(events + offset);
+		if (e->wd == wd && (e->mask & MOVED_TO))
+			CHECK(e->cookie == cookie);
+	}
+	CHECK(write(file, "x", 1) == 1);
+	close(file);
+	drain(fd, 0);
+	contains(file_wd, MODIFY, "");
+	contains(wd, CLOSE_WRITE, "renamed");
+	CHECK(!link("basic/renamed", "basic/alias"));
+	drain(fd, 0);
+	contains(file_wd, ATTRIB, "");
+	CHECK(watch(fd, "basic/alias",
+		    MODIFY | DELETE_SELF | ATTRIB | CLOSE_WRITE) == file_wd);
+	CHECK(syscall(292, fd, "basic/alias", MODIFY | MASK_CREATE) == -1 &&
+	      errno == EEXIST);
+	CHECK(!unlink("basic/renamed"));
+	drain(fd, 0);
+	contains(file_wd, ATTRIB, "");
+	CHECK(!any(file_wd, IGNORED));
+	CHECK((file = open("basic/alias", O_RDWR)) >= 0);
+	drain(fd, 0);
+	CHECK(!unlink("basic/alias"));
+	drain(fd, 0);
+	contains(file_wd, ATTRIB, "");
+	CHECK(!any(file_wd, DELETE_SELF | IGNORED));
+	close(file);
+	drain(fd, 0);
+	contains(file_wd, CLOSE_WRITE, "");
+	contains(file_wd, DELETE_SELF, "");
+	contains(file_wd, IGNORED, "");
+	CHECK(syscall(293, fd, file_wd) == -1 && errno == EINVAL);
+	touch("basic/old");
+	touch("basic/replacement");
+	replacement_wd = watch(fd, "basic/replacement", ALL);
+	CHECK((held = open("basic/replacement", O_RDONLY)) >= 0);
+	drain(fd, 0);
+	CHECK(!rename("basic/old", "basic/replacement"));
+	drain(fd, 0);
+	contains(replacement_wd, ATTRIB, "");
+	CHECK(!any(replacement_wd, IGNORED));
+	close(held);
+	drain(fd, 0);
+	contains(replacement_wd, DELETE_SELF, "");
+	contains(replacement_wd, IGNORED, "");
+	remove_watch(fd, wd);
+	drain(fd, 0);
+	contains(wd, IGNORED, "");
+	close(fd);
+}
+static void references(void)
+{
+	int fd, wd, held, action;
+	const char *name;
+	touch("path-reference");
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	wd = watch(fd, "path-reference", ALL);
+	CHECK((held = open("path-reference", 010000000)) >= 0);
+	drain(fd, 0);
+	CHECK(!event_size);
+	unlink("path-reference");
+	drain(fd, 0);
+	contains(wd, ATTRIB, "");
+	CHECK(!any(-2, DELETE_SELF | IGNORED));
+	close(held);
+	drain(fd, 0);
+	contains(wd, DELETE_SELF, "");
+	contains(wd, IGNORED, "");
+	CHECK(!any(-2, CLOSE_WRITE | CLOSE_NOWRITE));
+	close(fd);
+	CHECK(!mkdir("late-watch", 0700));
+	for (action = 0; action < 2; action++) {
+		touch("late-watch/item");
+		CHECK((held = open("late-watch/item", O_RDWR)) >= 0);
+		if (!action) {
+			CHECK(!rename("late-watch/item", "late-watch/renamed"));
+			name = "renamed";
+		} else {
+			CHECK(!unlink("late-watch/item"));
+			name = "item";
+		}
+		fd = create(O_NONBLOCK | O_CLOEXEC);
+		wd = watch(fd, "late-watch", MODIFY | CLOSE_WRITE);
+		drain(fd, 0);
+		CHECK(!event_size);
+		CHECK(write(held, "x", 1) == 1);
+		close(held);
+		drain(fd, 0);
+		contains(wd, MODIFY, name);
+		contains(wd, CLOSE_WRITE, name);
+		CHECK(!any(-2, Q_OVERFLOW));
+		close(fd);
+	}
+}
+static volatile sig_atomic_t received;
+static void sigio(int sig)
+{
+	received = 1;
+}
+static void async_check(void)
+{
+	int fd, wd, i;
+	CHECK(!mkdir("async", 0700));
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	signal(SIGIO, sigio);
+	wd = watch(fd, "async", CREATE);
+	CHECK(!fcntl(fd, F_SETOWN, getpid()));
+	CHECK(!fcntl(fd, F_SETFL, O_NONBLOCK | O_ASYNC));
+	touch("async/signal");
+	for (i = 0; i < 200 && !received; i++)
+		usleep(10000);
+	CHECK(received);
+	drain(fd, 0);
+	contains(wd, CREATE, "signal");
+	close(fd);
+	signal(SIGIO, SIG_DFL);
+}
+static void masks(void)
+{
+	int fd, wd, ordinary, item_wd, link_wd, exclude, held;
+	size_t offset;
+	struct event *e;
+	CHECK(!mkdir("masks", 0700));
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	CHECK(syscall(292, fd, "masks", 0) == -1 && errno == EINVAL);
+	CHECK(syscall(292, fd, "masks", 0x1000) == -1 && errno == EINVAL);
+	CHECK(syscall(292, fd, "masks", CREATE | MASK_ADD | MASK_CREATE) ==
+		      -1 &&
+	      errno == EINVAL);
+	CHECK(syscall(292, -1, "masks", ALL) == -1 && errno == EBADF);
+	CHECK(syscall(292, fd, "masks/missing", ALL) == -1 && errno == ENOENT);
+	CHECK(syscall(292, fd, "", ALL) == -1 && errno == ENOENT);
+	CHECK(syscall(292, fd, 0, ALL) == -1 && errno == EFAULT);
+	ordinary = open("masks", O_RDONLY | O_DIRECTORY);
+	CHECK(ordinary >= 0);
+	CHECK(syscall(292, ordinary, "masks", ALL) == -1 && errno == EINVAL);
+	close(ordinary);
+	wd = watch(fd, "masks", CREATE);
+	CHECK(watch(fd, "masks", DELETE | MASK_ADD) == wd);
+	touch("masks/item");
+	unlink("masks/item");
+	drain(fd, 0);
+	contains(wd, CREATE, "item");
+	contains(wd, DELETE, "item");
+	CHECK(watch(fd, "masks", OPEN) == wd);
+	touch("masks/item");
+	drain(fd, 0);
+	CHECK(event_size);
+	for (offset = 0; offset < event_size; offset += 16 + e->len) {
+		e = (void *)(events + offset);
+		CHECK(e->mask & OPEN);
+	}
+	CHECK(syscall(292, fd, "masks/item", MODIFY | ONLYDIR) == -1 &&
+	      errno == ENOTDIR);
+	CHECK(!symlink("item", "masks/link"));
+	item_wd = watch(fd, "masks/item", ALL);
+	CHECK(watch(fd, "masks/link", ALL) == item_wd);
+	link_wd = watch(fd, "masks/link", ALL | DONT_FOLLOW);
+	CHECK(link_wd != item_wd);
+	drain(fd, 0);
+	unlink("masks/link");
+	drain(fd, 0);
+	contains(link_wd, IGNORED, "");
+	remove_watch(fd, wd);
+	drain(fd, 0);
+	wd = watch(fd, "masks", CREATE | ONESHOT);
+	touch("masks/once");
+	touch("masks/twice");
+	drain(fd, 0);
+	contains(wd, CREATE, "once");
+	contains(wd, IGNORED, "");
+	CHECK(!has(wd, CREATE, "twice"));
+	CHECK(syscall(293, fd, wd) == -1 && errno == EINVAL);
+	close(fd);
+	for (exclude = 0; exclude < 2; exclude++) {
+		fd = create(O_NONBLOCK | O_CLOEXEC);
+		touch("masks/unlinked");
+		wd = watch(fd, "masks",
+			   CLOSE_WRITE | (exclude ? EXCL_UNLINK : 0));
+		CHECK((held = open("masks/unlinked", O_RDWR)) >= 0);
+		unlink("masks/unlinked");
+		close(held);
+		drain(fd, 0);
+		CHECK(!!any(wd, CLOSE_WRITE) != exclude);
+		close(fd);
+	}
+}
+struct ep_event {
+	uint32_t events;
+	uint64_t data;
+} __attribute__((packed));
+static void queues(void)
+{
+	int fd, duplicate, wd, ep, count, file;
+	struct ep_event e, out;
+	struct pollfd p;
+	struct iovec v[2];
+	char b[65536];
+	ssize_t n;
+	CHECK(!mkdir("queues", 0700));
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	CHECK((duplicate = dup(fd)) >= 0);
+	wd = watch(fd, "queues", CREATE);
+	CHECK((ep = syscall(254, 1)) >= 0);
+	e.events = 1;
+	e.data = fd;
+	CHECK(!syscall(255, ep, 1, fd, &e));
+	CHECK(!syscall(256, ep, &out, 1, 0));
+	touch("queues/a");
+	CHECK(syscall(256, ep, &out, 1, 1000) == 1 && out.events == 1 &&
+	      out.data == fd);
+	p.fd = fd;
+	p.events = POLLIN;
+	CHECK(poll(&p, 1, 0) == 1 && (p.revents & POLLIN));
+	count = queued(fd);
+	CHECK(count == 32);
+	CHECK(read(fd, b, 16) == -1 && errno == EINVAL && queued(fd) == count);
+	v[0].iov_base = b;
+	v[0].iov_len = 7;
+	v[1].iov_base = b + 7;
+	v[1].iov_len = count;
+	CHECK(readv(duplicate, v, 2) == -1 && errno == EINVAL &&
+	      queued(fd) == count);
+	v[0].iov_base = events;
+	v[0].iov_len = count;
+	v[1].iov_len = 0;
+	CHECK(readv(duplicate, v, 2) == count);
+	event_size = count;
+	decode();
+	contains(wd, CREATE, "a");
+	CHECK(!queued(fd) && !syscall(256, ep, &out, 1, 0));
+	touch("queues/b");
+	touch("queues/c");
+	CHECK((n = read(fd, events, 32)) == 32);
+	event_size = n;
+	decode();
+	contains(wd, CREATE, "b");
+	drain(duplicate, 0);
+	contains(wd, CREATE, "c");
+	close(ep);
+	close(fd);
+	touch("queues/d");
+	drain(duplicate, 0);
+	contains(wd, CREATE, "d");
+	close(duplicate);
+	touch("queues/coalesced");
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	CHECK((file = open("queues/coalesced", O_WRONLY)) >= 0);
+	wd = watch(fd, "queues/coalesced", MODIFY);
+	CHECK(write(file, "a", 1) == 1 && write(file, "b", 1) == 1);
+	drain(fd, 0);
+	CHECK(event_size == 16);
+	contains(wd, MODIFY, "");
+	close(file);
+	close(fd);
+}
+static void waits(void)
+{
+	int fd, wd, status;
+	pid_t child;
+	ssize_t n;
+	CHECK(!mkdir("waits", 0700));
+	CHECK((fd = syscall(291)) >= 0);
+	CHECK(!(fcntl(fd, F_GETFL) & O_NONBLOCK) &&
+	      !(fcntl(fd, F_GETFD) & FD_CLOEXEC));
+	wd = watch(fd, "waits", CREATE);
+	child = fork();
+	CHECK(child >= 0);
+	if (!child) {
+		usleep(50000);
+		touch("waits/wake");
+		_exit(0);
+	}
+	CHECK((n = read(fd, events, sizeof(events))) > 0);
+	event_size = n;
+	decode();
+	contains(wd, CREATE, "wake");
+	child_ok(child);
+	child = fork();
+	CHECK(child >= 0);
+	if (!child) {
+		read(fd, events, sizeof(events));
+		_exit(1);
+	}
+	usleep(50000);
+	CHECK(!kill(child, SIGKILL));
+	CHECK(waitpid(child, &status, 0) == child && WIFSIGNALED(status));
+	close(fd);
+}
+static long setting_read(const char *name)
+{
+	char path[128];
+	long n;
+	FILE *f;
+	snprintf(path, sizeof(path), "/proc/sys/fs/inotify/%s", name);
+	CHECK((f = fopen(path, "r")));
+	CHECK(fscanf(f, "%ld", &n) == 1 && n >= 0);
+	fclose(f);
+	return n;
+}
+static void setting(const char *name, long n)
+{
+	char path[128], text[64];
+	int fd, len;
+	snprintf(path, sizeof(path), "/proc/sys/fs/inotify/%s", name);
+	len = snprintf(text, sizeof(text), "%ld\n", n);
+	CHECK((fd = open(path, O_WRONLY)) >= 0);
+	CHECK(write(fd, text, len) == len);
+	close(fd);
+	CHECK(setting_read(name) == n);
+}
+static long saved[3];
+static int restore_limits;
+static const char *controls[] = { "max_user_watches", "max_user_instances",
+				  "max_queued_events" };
+static void restore(void)
+{
+	int i;
+	if (restore_limits)
+		for (i = 0; i < 3; i++)
+			setting(controls[i], saved[i]);
+}
+static void limits(void)
+{
+	int i, fd, other, zero, wd, control, overflows = 0, count = 0;
+	size_t offset;
+	struct event *e;
+	const char *bad[] = { "-1\n", "2147483648\n", "1x\n", "\n" };
+	char path[64];
+	for (i = 0; i < 3; i++)
+		saved[i] = setting_read(controls[i]);
+	restore_limits = 1;
+	atexit(restore);
+	CHECK(!mkdir("limits", 0700));
+	CHECK((control = open("/proc/sys/fs/inotify/max_user_watches",
+			      O_WRONLY)) >= 0);
+	for (i = 0; i < 4; i++)
+		CHECK(write(control, bad[i], strlen(bad[i])) == -1 &&
+		      errno == EINVAL);
+	close(control);
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	wd = watch(fd, "limits", CREATE);
+	setting(controls[0], 0);
+	CHECK(watch(fd, "limits", CREATE | MASK_ADD) == wd);
+	touch("limits/watched");
+	CHECK(syscall(292, fd, "limits/watched", ALL) == -1 && errno == ENOSPC);
+	setting(controls[1], 0);
+	CHECK(syscall(332, O_NONBLOCK | O_CLOEXEC) == -1 && errno == EMFILE);
+	setting(controls[0], saved[0]);
+	setting(controls[1], saved[1]);
+	setting(controls[2], 4);
+	other = create(O_NONBLOCK | O_CLOEXEC);
+	wd = watch(other, "limits", CREATE);
+	setting(controls[2], 0);
+	for (i = 0; i < 8; i++) {
+		snprintf(path, sizeof(path), "limits/%d", i);
+		touch(path);
+	}
+	drain(other, 0);
+	for (offset = 0; offset < event_size; offset += 16 + e->len) {
+		e = (void *)(events + offset);
+		count++;
+		if (e->wd == -1 && e->mask == Q_OVERFLOW)
+			overflows++;
+	}
+	CHECK(count == 5 && overflows == 1);
+	touch("limits/after-overflow");
+	drain(other, 0);
+	contains(wd, CREATE, "after-overflow");
+	zero = create(O_NONBLOCK | O_CLOEXEC);
+	watch(zero, "limits", CREATE);
+	touch("limits/zero-limit");
+	drain(zero, 0);
+	CHECK(event_size == 16);
+	contains(-1, Q_OVERFLOW, "");
+	close(zero);
+	close(other);
+	close(fd);
+	restore();
+	restore_limits = 0;
+}
+static void mounts(void)
+{
+	int fd, wd;
+	CHECK(!mkdir("mounted", 0700));
+	CHECK(!mount("tmpfs", "mounted", "tmpfs", 0, 0));
+	fd = create(O_NONBLOCK | O_CLOEXEC);
+	wd = watch(fd, "mounted", ALL);
+	CHECK(!umount2("mounted", 0));
+	drain(fd, 0);
+	contains(wd, UNMOUNT, "");
+	contains(wd, IGNORED, "");
+	CHECK(syscall(293, fd, wd) == -1 && errno == EINVAL);
+	close(fd);
+}
+int main(int argc, char **argv)
+{
+	int i, guest = 0, do_limits = 0, do_mounts = 0;
+	const char *directory = 0;
+	alarm(30);
+	for (i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "--guest"))
+			guest = 1;
+		else if (!strcmp(argv[i], "--limits"))
+			do_limits = 1;
+		else if (!strcmp(argv[i], "--mounts"))
+			do_mounts = 1;
+		else if (!strcmp(argv[i], "--directory") && i + 1 < argc)
+			directory = argv[++i];
+		else
+			CHECK(0);
+	}
+	CHECK(!(do_limits || do_mounts) || (guest && !geteuid()));
+	if (directory) {
+		char path[4096];
+		snprintf(path, sizeof(path), "%s/mos-inotify.XXXXXX",
+			 directory);
+		CHECK(mkdtemp(path) && !chdir(path));
+	}
+	CHECK(syscall(332, 1) == -1 && errno == EINVAL);
+	for (i = 0; i < 3; i++)
+		setting_read(controls[i]);
+	filesystem();
+	references();
+	masks();
+	queues();
+	waits();
+	async_check();
+	if (do_limits)
+		limits();
+	if (do_mounts)
+		mounts();
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

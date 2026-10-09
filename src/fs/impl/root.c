@@ -88,9 +88,8 @@ static int ext4_file_release(file *fp)
 
 	root_lock_lock();
 	list_remove_entry(&open->link);
-	for (entry = ext4_open_files.next; open->orphan &&
-	     entry != &ext4_open_files;
-	     entry = entry->next) {
+	for (entry = ext4_open_files.next;
+	     open->orphan && entry != &ext4_open_files; entry = entry->next) {
 		ext4_open_file *other =
 			container_of(entry, ext4_open_file, link);
 		if (other->fs == open->fs && other->handle.inode == f->inode) {
@@ -746,8 +745,8 @@ retry_open:
 				memcpy(text, inline_link.target, link_len);
 				ret = EOK;
 			} else {
-				ret = ext4_fread(&link_handle, text, MAX_PATH - 1,
-						 &link_len);
+				ret = ext4_fread(&link_handle, text,
+						 MAX_PATH - 1, &link_len);
 			}
 			if (ret || !link_len || link_len >= MAX_PATH) {
 				name_put(text);
@@ -898,7 +897,8 @@ static file *ext4_open_link(super_block *sb, const char *path, int flag,
 		storage = name_get();
 		if (!storage)
 			return NULL;
-		sprintf(storage, "%s%s", mi->mp, path[0] == '/' ? path + 1 : path);
+		sprintf(storage, "%s%s", mi->mp,
+			path[0] == '/' ? path + 1 : path);
 		full = storage;
 	}
 	root_lock_lock();

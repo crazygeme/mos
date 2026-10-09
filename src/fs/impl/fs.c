@@ -158,8 +158,8 @@ ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count)
 	if (!output)
 		goto out_input;
 	if (input->f_mode == O_WRONLY || output->f_mode == O_RDONLY ||
-	    !input->f_fop || !input->f_fop->read ||
-	    !output->f_fop || !output->f_fop->write)
+	    !input->f_fop || !input->f_fop->read || !output->f_fop ||
+	    !output->f_fop->write)
 		goto out;
 	result = -EINVAL;
 	if (!S_ISREG(input->f_inode->i_mode) || input == output ||
@@ -182,24 +182,29 @@ ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count)
 		loff_t read_position = position;
 		if (chunk > 16384)
 			chunk = 16384;
-		ssize_t n = input->f_fop->read(input, buffer, chunk, &read_position);
+		ssize_t n = input->f_fop->read(input, buffer, chunk,
+					       &read_position);
 		if (n <= 0) {
 			result = n;
 			break;
 		}
 		if (current->user && S_ISREG(output->f_inode->i_mode)) {
-			unsigned long limit = current->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
+			unsigned long limit =
+				current->user->rlimits[RLIMIT_FSIZE_RESOURCE]
+					.rlim_cur;
 			if (limit != RLIM_INFINITY) {
 				if ((uint64_t)output->f_pos >= limit) {
 					result = -EFBIG;
 					break;
 				}
-				if ((uint64_t)n > limit - (uint64_t)output->f_pos)
+				if ((uint64_t)n >
+				    limit - (uint64_t)output->f_pos)
 					n = limit - (uint64_t)output->f_pos;
 			}
 		}
 
-		ssize_t written = output->f_fop->write(output, buffer, n, &output->f_pos);
+		ssize_t written =
+			output->f_fop->write(output, buffer, n, &output->f_pos);
 		if (written <= 0) {
 			result = written < 0 ? written : -EIO;
 			break;
@@ -494,9 +499,8 @@ int fs_open(const char *path, int flag, umode_t mode)
 	}
 
 	/* Open requests only read/write access, which UID 0 always passes. */
-	if (cur->user && cur->user->euid != 0 &&
-	    fp->f_fop && fp->f_fop->getattr &&
-	    fp->f_fop->getattr(fp, &s) == 0) {
+	if (cur->user && cur->user->euid != 0 && fp->f_fop &&
+	    fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
 		acc = 0;
 		if ((flag & O_ACCMODE) != O_WRONLY)
 			acc |= R_OK;

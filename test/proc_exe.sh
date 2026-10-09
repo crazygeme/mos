@@ -1,114 +1,196 @@
 #!/bin/sh
 # Validate procfs executable links and readlinkat in the running system.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-proc_exe.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
+static void child_ok(pid_t pid)
+{
+	int status;
+	CHECK(pid > 0);
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
 
-import ctypes
-import errno
-import os
-from pathlib import Path
-import stat
-import sys
-import tempfile
+#include <dirent.h>
+static int names(const char *path, const char *wanted, int numeric)
+{
+	DIR *d = opendir(path);
+	struct dirent *e;
+	int count = 0, found = 0;
+	CHECK(d);
+	while ((e = readdir(d))) {
+		const char *p = e->d_name;
+		if (!strcmp(p, ".") || !strcmp(p, ".."))
+			continue;
+		count++;
+		if (wanted && !strcmp(p, wanted))
+			found = 1;
+		if (numeric) {
+			CHECK(*p);
+			while (*p)
+				CHECK(*p >= '0' && *p++ <= '9');
+		}
+	}
+	closedir(d);
+	if (wanted)
+		CHECK(found);
+	return count;
+}
 
-libc = ctypes.CDLL(None, use_errno=True)
-libc.readlink.argtypes = [ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t]
-libc.readlink.restype = ctypes.c_ssize_t
-libc.readlinkat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p,
-                          ctypes.c_size_t]
-libc.readlinkat.restype = ctypes.c_ssize_t
+static void link_check(const char *link, const char *expected, int at)
+{
+	struct stat a, b;
+	char buf[4097], parent[4096], *slash;
+	int fd;
+	size_t len = strlen(expected), n, i, capacity;
+	CHECK(!lstat(link, &a) && S_ISLNK(a.st_mode));
+	CHECK(!stat(link, &a) && !stat(expected, &b) && a.st_ino == b.st_ino);
+	strcpy(parent, link);
+	slash = strrchr(parent, '/');
+	*slash = 0;
+	names(parent, slash + 1, 0);
+	for (capacity = 2; capacity <= 4096; capacity *= 2048) {
+		memset(buf, 'X', sizeof(buf));
+		n = len < capacity ? len : capacity;
+		CHECK(readlink(link, buf, capacity) == n &&
+		      !memcmp(buf, expected, n));
+		for (i = n; i < capacity + 1; i++)
+			CHECK(buf[i] == 'X');
+		if (at) {
+			CHECK(syscall(305, -100, link, buf, capacity) == n &&
+			      !memcmp(buf, expected, n));
+		}
+	}
+	if (at) {
+		CHECK((fd = open(parent, O_RDONLY | O_DIRECTORY)) >= 0);
+		CHECK(syscall(305, fd, slash + 1, buf, sizeof(buf)) == len &&
+		      !memcmp(buf, expected, len));
+		close(fd);
+	}
+}
 
-
-def check_link(link, expected):
-    assert stat.S_ISLNK(os.lstat(link).st_mode), link
-    assert os.readlink(link) == expected, (link, os.readlink(link), expected)
-    assert os.stat(link).st_ino == os.stat(expected).st_ino, link
-    assert 'exe' in os.listdir(str(Path(link).parent)), link
-    encoded = os.fsencode(expected)
-    for capacity in (2, 4096):
-        buffer = ctypes.create_string_buffer(b'X' * (capacity + 1))
-        length = libc.readlink(os.fsencode(link), buffer, capacity)
-        count = min(capacity, len(encoded))
-        assert length == count, (link, length, ctypes.get_errno())
-        assert buffer.raw[:count] == encoded[:count], buffer.raw
-        assert buffer.raw[count:capacity + 1] == b'X' * (capacity + 1 - count)
-        length = libc.readlinkat(-100, os.fsencode(link), buffer, capacity)
-        assert length == count, (link, length, ctypes.get_errno())
-        assert buffer.raw[:count] == encoded[:count], buffer.raw
-    fd = os.open(str(Path(link).parent), os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        buffer = ctypes.create_string_buffer(4096)
-        length = libc.readlinkat(fd, b'exe', buffer, len(buffer))
-        assert length == len(encoded), (length, ctypes.get_errno())
-        assert buffer.raw[:length] == encoded, buffer.raw
-    finally:
-        os.close(fd)
-
-
-def check_self(expected):
-    check_link('/proc/self/exe', expected)
-    check_link(f'/proc/{os.getpid()}/exe', expected)
-
-
-if len(sys.argv) == 3 and sys.argv[1] == '--exec-check':
-    os.chdir('/')
-    check_self(sys.argv[2])
-    print('procfs executable links: PASS')
-    sys.exit(0)
-
-expected = str(Path(sys.executable).resolve())
-check_self(expected)
-script = str(Path(__file__).resolve())
-with tempfile.TemporaryDirectory(prefix='proc-exe-') as tmp:
-    invalid = Path(tmp) / 'invalid'
-    invalid.write_text('invalid executable\n')
-    invalid.chmod(0o700)
-    for path, error in ((str(invalid), errno.ENOEXEC),
-                        (str(Path(tmp) / 'missing'), errno.ENOENT)):
-        try:
-            os.execve(path, ['unrelated-name'], os.environ.copy())
-        except OSError as exc:
-            assert exc.errno == error, exc
-        else:
-            raise AssertionError('Invalid executable accepted')
-        check_self(expected)
-
-    alias = Path(tmp) / 'python-alias'
-    alias.symlink_to(expected)
-    ready_r, ready_w = os.pipe()
-    done_r, done_w = os.pipe()
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.close(ready_r)
-            os.close(done_w)
-            os.chdir(tmp)
-            check_self(expected)
-            os.write(ready_w, b'R')
-            os.read(done_r, 1)
-            os.close(ready_w)
-            os.close(done_r)
-            os.execve('./python-alias', ['unrelated-name', script,
-                       '--exec-check', expected], os.environ.copy())
-        except BaseException:
-            import traceback
-            traceback.print_exc()
-            os._exit(1)
-    os.close(ready_w)
-    os.close(done_r)
-    try:
-        assert os.read(ready_r, 1) == b'R'
-        check_link(f'/proc/{pid}/exe', expected)
-    finally:
-        os.close(ready_r)
-        os.close(done_w)
-        _, status = os.waitpid(pid, 0)
-        assert status == 0, status
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+static void self(const char *expected)
+{
+	char p[64];
+	link_check("/proc/self/exe", expected, 1);
+	snprintf(p, sizeof(p), "/proc/%d/exe", getpid());
+	link_check(p, expected, 1);
+}
+int main(int argc, char **argv)
+{
+	char expected[4096], tmp[] = "/tmp/mos-exe.XXXXXX", path[4096],
+			     link[64], c;
+	int fd, ready[2], done[2];
+	pid_t pid;
+	ssize_t n;
+	alarm(10);
+	if (argc == 3) {
+		CHECK(!chdir("/"));
+		self(argv[2]);
+		return 0;
+	}
+	n = readlink("/proc/self/exe", expected, sizeof(expected) - 1);
+	CHECK(n > 0);
+	expected[n] = 0;
+	self(expected);
+	CHECK(mkdtemp(tmp));
+	snprintf(path, sizeof(path), "%s/invalid", tmp);
+	CHECK((fd = open(path, O_CREAT | O_WRONLY, 0700)) >= 0);
+	CHECK(write(fd, "invalid executable\n", 19) == 19);
+	close(fd);
+	{
+		char *args[] = { "unrelated-name", 0 };
+		execv(path, args);
+		CHECK(errno == ENOEXEC);
+		self(expected);
+		snprintf(path, sizeof(path), "%s/missing", tmp);
+		execv(path, args);
+		CHECK(errno == ENOENT);
+		self(expected);
+	}
+	snprintf(path, sizeof(path), "%s/probe-alias", tmp);
+	CHECK(!symlink(expected, path));
+	CHECK(!pipe(ready) && !pipe(done));
+	pid = fork();
+	CHECK(pid >= 0);
+	if (!pid) {
+		close(ready[0]);
+		close(done[1]);
+		CHECK(!chdir(tmp));
+		self(expected);
+		CHECK(write(ready[1], "R", 1) == 1);
+		read(done[0], &c, 1);
+		close(ready[1]);
+		close(done[0]);
+		execl("./probe-alias", "unrelated-name", "--exec-check",
+		      expected, (char *)0);
+		_exit(1);
+	}
+	close(ready[1]);
+	close(done[0]);
+	CHECK(read(ready[0], &c, 1) == 1);
+	snprintf(link, sizeof(link), "/proc/%d/exe", pid);
+	link_check(link, expected, 1);
+	close(ready[0]);
+	close(done[1]);
+	child_ok(pid);
+	unlink(path);
+	snprintf(path, sizeof(path), "%s/invalid", tmp);
+	unlink(path);
+	rmdir(tmp);
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

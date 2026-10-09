@@ -268,7 +268,8 @@ void ps_reap_dead_threads(void)
 		     node != &dead_threads; node = node->next) {
 			task_struct *candidate =
 				container_of(node, task_struct, ps_list);
-			if (!candidate->on_cpu && !candidate->enumeration_refs) {
+			if (!candidate->on_cpu &&
+			    !candidate->enumeration_refs) {
 				task = candidate;
 				list_remove_entry(node);
 				break;

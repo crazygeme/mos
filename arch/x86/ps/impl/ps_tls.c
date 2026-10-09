@@ -1,4 +1,5 @@
 #include <ps/ps.h>
+#include <mm/mmap.h>
 #include <int/int.h>
 #include <config.h>
 #include <errno.h>
@@ -47,7 +48,7 @@ static void set_saved_user_selector(task_struct *task, unsigned short selector)
 {
 	intr_frame *frame;
 
-	if (!task || !task->user)
+	if (!task || !task->execution)
 		return;
 
 	/*
@@ -60,7 +61,7 @@ static void set_saved_user_selector(task_struct *task, unsigned short selector)
 	frame = (intr_frame *)((char *)task + KERNEL_TASK_BYTES -
 			       sizeof(*frame));
 	frame->gs = selector;
-	task->tss.gs = selector;
+	task->execution->arch.gs = selector;
 }
 
 static void clear_tls_selector_if_matches(task_struct *task, unsigned int entry)
@@ -71,16 +72,11 @@ static void clear_tls_selector_if_matches(task_struct *task, unsigned int entry)
 		return;
 
 	selector = (unsigned short)((entry << 3) | USER_PRIVILEGE);
-	if (task->tss.gs == selector)
+	if (task->execution->arch.gs == selector)
 		set_saved_user_selector(task, 0);
 
-	/*
-	 * The running task keeps the user %gs value live in the CPU while it is
-	 * executing kernel code. If userspace deletes the active TLS slot and we
-	 * leave %gs as-is, SAVE_ALL later snapshots the stale selector back into
-	 * task->tss.gs and the next RESTORE_ALL faults on "mov %gs, 0x33" with
-	 * #GP(error_code = selector index). Clear the live register too.
-	 */
+	/* The interrupt return restores the selector from the saved frame;
+  * clear a deleted live selector before any later user return. */
 	if (task == CURRENT_TASK() && read_gs_selector() == selector)
 		asm volatile("movw %0, %%gs" : : "rm"((unsigned short)0));
 }
@@ -164,7 +160,7 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 	unsigned int entry;
 	struct user_desc *u_info = (struct user_desc *)info;
 
-	if (!task || !task->user || !u_info)
+	if (!task || !task->execution || !u_info)
 		return -EFAULT;
 
 	struct user_desc input = *u_info;
@@ -177,7 +173,8 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 			return -EINVAL;
 		for (entry = GDT_ENTRY_TLS_MIN; entry <= GDT_ENTRY_TLS_MAX;
 		     entry++) {
-			if (!task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN])
+			if (!task->execution
+				     ->tls_desc[entry - GDT_ENTRY_TLS_MIN])
 				break;
 		}
 		if (entry > GDT_ENTRY_TLS_MAX)
@@ -193,7 +190,7 @@ int ps_set_thread_area_for(task_struct *task, void *info)
 	int empty = user_desc_empty(u_info);
 	unsigned long long desc = empty ? 0 : build_tls_desc(u_info);
 	unsigned irq = int_intr_disable();
-	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] = desc;
+	task->execution->tls_desc[entry - GDT_ENTRY_TLS_MIN] = desc;
 	if (empty)
 		clear_tls_selector_if_matches(task, entry);
 	if (task == CURRENT_TASK())
@@ -210,7 +207,7 @@ int ps_set_clone_tls_for(task_struct *task, void *info,
 	struct user_desc *u_info = (struct user_desc *)info;
 	unsigned int entry;
 
-	if (!task || !task->user || !u_info)
+	if (!task || !task->execution || !u_info)
 		return -EFAULT;
 
 	/*
@@ -230,8 +227,10 @@ int ps_set_clone_tls_for(task_struct *task, void *info,
 		if (!u_info->seg_32bit || u_info->contents == 3)
 			return -EINVAL;
 
-		task->user->ldt_desc[entry] = build_ldt_desc(u_info);
-		task->user->ldt_present = 1;
+		LOCK_GUARD(&task->memory->mapping_lock);
+		__atomic_store_n(&task->memory->ldt_desc[entry],
+				 build_ldt_desc(u_info), __ATOMIC_RELEASE);
+		task->memory->ldt_present = 1;
 		set_saved_user_selector(task,
 					(unsigned short)((entry << 3) | 0x7));
 		return 0;
@@ -261,7 +260,8 @@ int sys_get_thread_area(void *info)
 	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
 		return -EINVAL;
 
-	decode_tls_desc(cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN], u_info);
+	decode_tls_desc(cur->execution->tls_desc[entry - GDT_ENTRY_TLS_MIN],
+			u_info);
 	u_info->entry_number = entry;
 	return 0;
 }
@@ -275,14 +275,16 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("modify_ldt(%d, %x, %x)\n", func, ptr, bytecount);
 
+	LOCK_GUARD(&cur->memory->mapping_lock);
+
 	switch (func) {
 	case MODIFY_LDT_READ:
 		if (!ptr)
 			return -EFAULT;
 		copy_len = bytecount;
-		if (copy_len > sizeof(cur->user->ldt_desc))
-			copy_len = sizeof(cur->user->ldt_desc);
-		memcpy(ptr, cur->user->ldt_desc, copy_len);
+		if (copy_len > sizeof(cur->memory->ldt_desc))
+			copy_len = sizeof(cur->memory->ldt_desc);
+		memcpy(ptr, cur->memory->ldt_desc, copy_len);
 		return (int)copy_len;
 	case MODIFY_LDT_READ_DEFAULT:
 		if (!ptr)
@@ -306,12 +308,13 @@ int sys_modify_ldt(int func, void *ptr, unsigned long bytecount)
 			return -EINVAL;
 		unsigned long long desc = empty ? 0 : build_ldt_desc(u_info);
 		unsigned irq = int_intr_disable();
-		cur->user->ldt_desc[entry] = desc;
-		cur->user->ldt_present = !empty;
+		__atomic_store_n(&cur->memory->ldt_desc[entry], desc,
+				 __ATOMIC_RELEASE);
+		cur->memory->ldt_present = !empty;
 		if (empty)
 			for (unsigned i = 0; i < LDT_ENTRY_COUNT; i++)
-				if (cur->user->ldt_desc[i]) {
-					cur->user->ldt_present = 1;
+				if (cur->memory->ldt_desc[i]) {
+					cur->memory->ldt_present = 1;
 					break;
 				}
 		ps_update_ldt(cur);

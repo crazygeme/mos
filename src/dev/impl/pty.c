@@ -220,9 +220,9 @@ static file *ptm_cdev_open(super_block *sb, unsigned rdev, int flag)
 	p->on_free = pty_pair_free_locked;
 	pty_group_insert_locked(p);
 	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
-	if (current->user) {
-		p->slave_uid = current->user->uid;
-		p->slave_gid = current->user->gid;
+	if (current->execution) {
+		p->slave_uid = current->credentials->uid;
+		p->slave_gid = current->credentials->gid;
 	}
 	p->termios = tty_default_termios;
 	p->winsize.ws_row = 24;
@@ -269,10 +269,10 @@ file *pty_open_controlling(task_struct *task, int flag)
 {
 	int irq;
 	pts_pair *match;
-	if (!task || !task->user)
+	if (!task || !task->execution)
 		return NULL;
 	spinlock_lock(&pts_alloc_lock, &irq);
-	match = pty_group_find_locked(task->user->group_id);
+	match = pty_group_find_locked(task->thread->group_id);
 	if (match && !(flag & O_PATH)) {
 		__sync_add_and_fetch(&match->slave_count, 1);
 		match->slave_ever_opened = 1;

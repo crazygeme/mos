@@ -26,8 +26,6 @@ static inline void ps_usage_add_local(ps_tick_t *ticks, ps_tick_t delta)
 	__atomic_store_n(ticks, value + delta, __ATOMIC_RELAXED);
 }
 
-void ps_usage_init(task_struct *task, task_struct *parent, int share);
-void ps_usage_put(task_struct *task);
 void ps_usage_charge(task_struct *task, cpu_ticks_t *cpu, int user);
 void ps_account_tick(intr_frame *frame);
 void ps_cpu_usage(unsigned cpu, cpu_usage_t *usage);

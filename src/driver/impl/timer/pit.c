@@ -18,7 +18,7 @@ static void time_process(intr_frame *frame)
 	time_tick();
 	smp_tick();
 	if (ps_enabled())
-		current->remain_ticks--;
+		current->sched->remain_ticks--;
 }
 
 static void __attribute__((noinline)) busy_wait(unsigned int loops)

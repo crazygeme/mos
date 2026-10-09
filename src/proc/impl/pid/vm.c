@@ -65,7 +65,7 @@ static void statm_resident_cb(void *arg, vaddr_t address, paddr_t physical)
 
 void vm_get_stats(task_struct *task, vm_stats_t *out)
 {
-	statm_ctx ctx = { .vm = task->user->vm };
+	statm_ctx ctx = { .vm = task->memory };
 
 	memset(out, 0, sizeof(*out));
 	if (!ctx.vm)

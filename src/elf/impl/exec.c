@@ -37,44 +37,31 @@
  *   4. Reset the heap pointer and replace the VM descriptor with a fresh one
  *      so the new image starts with a clean address space.
  */
-static void cleanup()
+static void cleanup(mm_struct *old_mm)
 {
 	task_struct *cur = CURRENT_TASK();
-	mm_struct *old_mm = cur->user->vm;
-	mm_struct *new_mm;
 	intr_frame *frame = (intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
 					   sizeof(*frame));
-	vaddr_t new_pd;
 	unsigned word;
 
-	if (cur->fork_flag & FORK_FLAG_VFORK) {
-		cond_notify(&cur->vfork_event);
-		cur->fork_flag &= ~FORK_FLAG_VFORK;
+	if (cur->life->fork_flag & FORK_FLAG_VFORK) {
+		cond_notify(&cur->life->vfork_event);
+		cur->life->fork_flag &= ~FORK_FLAG_VFORK;
 	}
 
-	/* Build and activate a completely new address space before dropping the
-	 * old one.  This is the exec-time equivalent of Linux's exec_mmap(). */
-	new_mm = vm_create();
-	if (!new_mm)
-		DIE();
-	new_pd = vm_alloc(1);
-	if (!new_pd)
-		DIE();
-	mm_init_process_page_dir(new_pd);
-	vm_set_page_dir(new_mm, new_pd);
-	cur->user->vm = new_mm;
-	smp_mm_activate(VIRT_TO_PHY(new_pd));
-	vm_put(old_mm);
+	smp_mm_activate(VIRT_TO_PHY(cur->memory->page_dir));
+	ref_count_put(old_mm);
+	vm_invalidate_task_cache(cur);
 
 	/* Close all O_CLOEXEC file descriptors. */
 	/* ps_unshare_fds() makes this bitmap private before cleanup. */
-	for (word = 0; cur->fd_cloexec && word < FD_BITMAP_WORDS; word++) {
-		unsigned long pending = cur->fd_cloexec[word];
+	for (word = 0; cur->files && word < FD_BITMAP_WORDS; word++) {
+		unsigned long pending = cur->files->cloexec[word];
 		while (pending) {
 			unsigned fd =
 				word * FD_BITMAP_BITS + __builtin_ctzl(pending);
 			pending &= pending - 1;
-			if (fd < MAX_FD && cur->fds[fd])
+			if (fd < MAX_FD && cur->files->fds[fd])
 				fs_close(fd);
 		}
 	}
@@ -290,8 +277,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 	file *fp;
 	file *exec_fp = NULL;
 	elf_image *image = NULL;
-	unsigned exec_euid = cur->user->euid;
-	unsigned exec_egid = cur->user->egid;
+	unsigned exec_euid = cur->credentials->euid;
+	unsigned exec_egid = cur->credentials->egid;
 	enum { HEADER_BYTES = 64 };
 	char firstline[HEADER_BYTES + 1];
 	unsigned header_length;
@@ -332,7 +319,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 		return -EPERM;
 	}
 
-	inotify_file_open(fp, cur->root);
+	inotify_file_open(fp, cur->fs->root);
 	/* read first line via VFS file ops */
 	if (!fp->f_fop || !fp->f_fop->read) {
 		fs_put_file(fp);
@@ -360,7 +347,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 		exec_fp = fp;
 		header_is_elf = 1;
 		if (!(fp->f_mount_flags & MS_NOSUID) &&
-		    !cur->user->ptrace_tracer) {
+		    !cur->execution->ptrace_tracer) {
 			if (s.st_mode & S_ISUID)
 				exec_euid = s.st_uid;
 			if ((s.st_mode & (S_ISGID | S_IXGRP)) ==
@@ -423,7 +410,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 	}
 
 	/* exec owns a private table before applying FD_CLOEXEC. */
-	if (ps_unshare_fds(cur) != 0) {
+	if (ps_unshare_fds(cur) != 0 || ps_unshare_exec_context(cur) != 0) {
 		elf_release(image);
 		if (exec_fp)
 			fs_put_file(exec_fp);
@@ -433,12 +420,29 @@ static int execve_common(const char *f, char **argv, char **envp,
 		return -ENOMEM;
 	}
 
+	/* Prepare the whole CLONE_VM resource before replacing the old image. */
+	mm_struct *old_mm = cur->memory;
+	mm_struct *new_mm = vm_create();
+	if (new_mm)
+		new_mm->page_dir = vm_alloc(1);
+	if (!new_mm || !new_mm->page_dir) {
+		ref_count_put(new_mm);
+		elf_release(image);
+		fs_put_file(exec_fp);
+		free_v(s_argv, argc);
+		free_v(s_envp, envc);
+		name_put(file_name);
+		return -ENOMEM;
+	}
+	mm_init_process_page_dir(new_mm->page_dir);
+	cur->memory = new_mm;
+
 	/* save command line into task struct (bounded to one page) */
 	{
-		char *end = cur->user->command + PAGE_SIZE - 1;
+		char *end = cur->memory->command + PAGE_SIZE - 1;
 		unsigned len;
 
-		tmp = cur->user->command;
+		tmp = cur->memory->command;
 		len = strlen(file_name);
 		if (len > (unsigned)(end - tmp))
 			len = (unsigned)(end - tmp);
@@ -454,15 +458,15 @@ static int execve_common(const char *f, char **argv, char **envp,
 			tmp[len] = '\0';
 			tmp += len + 1;
 		}
-		cur->user->cmd_len = tmp - cur->user->command;
+		cur->memory->cmd_len = tmp - cur->memory->command;
 	}
 
 	/* save environment into task struct (bounded to one page) */
 	{
-		char *end = cur->user->environment + PAGE_SIZE - 1;
+		char *end = cur->memory->environment + PAGE_SIZE - 1;
 		unsigned len;
 
-		tmp = cur->user->environment;
+		tmp = cur->memory->environment;
 		for (i = 0; i < (int)envc && tmp < end; i++) {
 			len = strlen(s_envp[i]);
 			if (len > (unsigned)(end - tmp))
@@ -471,12 +475,12 @@ static int execve_common(const char *f, char **argv, char **envp,
 			tmp[len] = '\0';
 			tmp += len + 1;
 		}
-		cur->user->env_len = tmp - cur->user->environment;
+		cur->memory->env_len = tmp - cur->memory->environment;
 	}
 
 	/* log if needed */
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("execve(%s)\n", cur->user->command);
+		klog("execve(%s)\n", cur->memory->command);
 
 	/*
 	 * Linux execve semantics for signal state:
@@ -488,7 +492,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 		int sig;
 
 		for (sig = 1; sig < NSIG; sig++) {
-			struct sigaction *sa = &cur->signal->sig_handlers[sig];
+			struct sigaction *sa = &cur->sighand->actions[sig];
 
 			if (sa->sa_handler != SIG_IGN)
 				sa->sa_handler = SIG_DFL;
@@ -513,11 +517,11 @@ static int execve_common(const char *f, char **argv, char **envp,
 		kfree(envp);
 	}
 	const struct elf_format *format = elf_image_format(image);
-	cleanup();
+	cleanup(old_mm);
 	esp_top = format->task_size;
-	cur->user->vm->task_size = esp_top;
-	cur->user->vm->mmap_base = format->mmap_base;
-	cur->user->vm->brk_limit = format->brk_limit;
+	cur->memory->task_size = esp_top;
+	cur->memory->mmap_base = format->mmap_base;
+	cur->memory->brk_limit = format->brk_limit;
 
 	/*
 	 * now we parse and load elf file.
@@ -533,14 +537,14 @@ static int execve_common(const char *f, char **argv, char **envp,
 	elf_map_prepared(image, &fmt);
 	elf_release(image);
 	/* Retain the main image for /proc/PID/exe, including its resolved path. */
-	if (cur->user->executable)
-		fs_put_file(cur->user->executable);
-	cur->user->executable = exec_fp;
+	if (cur->memory->executable)
+		fs_put_file(cur->memory->executable);
+	cur->memory->executable = exec_fp;
 	exec_fp = NULL;
 	eip = fmt.interp_load_addr;
-	cur->user->vm->start_brk = fmt.start_brk;
-	cur->user->vm->brk = fmt.start_brk;
-	vm_set_brk(cur->user->vm, fmt.start_brk, fmt.start_brk);
+	cur->memory->start_brk = fmt.start_brk;
+	cur->memory->brk = fmt.start_brk;
+	vm_set_brk(cur->memory, fmt.start_brk, fmt.start_brk);
 	if (!eip) {
 		klog("exec: unable to load ELF image %s\n", file_name);
 		free_v(s_argv, argc);
@@ -551,14 +555,13 @@ static int execve_common(const char *f, char **argv, char **envp,
 		__builtin_unreachable();
 	}
 
-	if (cur->user->vm->start_brk > 0 &&
-	    cur->user->vm->start_brk < USER_HEAP_END) {
-		do_mmap(cur->user->vm->start_brk, PAGE_SIZE,
+	if (cur->memory->start_brk > 0 &&
+	    cur->memory->start_brk < USER_HEAP_END) {
+		do_mmap(cur->memory->start_brk, PAGE_SIZE,
 			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_FIXED, -1, 0);
-		cur->user->vm->brk =
-			cur->user->vm->start_brk + KERNEL_TASK_BYTES;
-		vm_set_brk(cur->user->vm, cur->user->vm->start_brk,
-			   cur->user->vm->brk);
+		cur->memory->brk = cur->memory->start_brk + KERNEL_TASK_BYTES;
+		vm_set_brk(cur->memory, cur->memory->start_brk,
+			   cur->memory->brk);
 	}
 
 	/* Install the executable's user register context and helper mappings. */
@@ -572,22 +575,26 @@ static int execve_common(const char *f, char **argv, char **envp,
 			esp_top - USER_STACK_INIT_PAGES * PAGE_SIZE;
 		do_mmap(stack_init_bottom, USER_STACK_INIT_PAGES * PAGE_SIZE,
 			PROT_READ | PROT_WRITE, MAP_FIXED, -1, 0);
-		cur->user->vm->start_stack = stack_init_bottom;
-		vm_set_stack(cur->user->vm, stack_init_bottom);
+		cur->memory->start_stack = stack_init_bottom;
+		vm_set_stack(cur->memory, stack_init_bottom);
 	}
 
 	/* Privileged executable images clear the parent-death signal. */
 	if ((s.st_mode & S_ISUID) ||
 	    (s.st_mode & (S_ISGID | S_IXGRP)) == (S_ISGID | S_IXGRP))
-		cur->pdeath_signal = 0;
+		cur->life->pdeath_signal = 0;
 
 	/* Commit executable credentials before constructing the auxiliary vector. */
-	cur->user->euid = cur->user->suid = cur->user->fsuid = exec_euid;
-	cur->user->egid = cur->user->sgid = cur->user->fsgid = exec_egid;
-	cur->user->keep_capabilities = 0;
-	memset(cur->user->cap_effective, 0, sizeof(cur->user->cap_effective));
-	memset(cur->user->cap_permitted, 0, sizeof(cur->user->cap_permitted));
-	cur->user->cap_initialized = 0;
+	cur->credentials->euid = cur->credentials->suid =
+		cur->credentials->fsuid = exec_euid;
+	cur->credentials->egid = cur->credentials->sgid =
+		cur->credentials->fsgid = exec_egid;
+	cur->credentials->keep_capabilities = 0;
+	memset(cur->credentials->cap_effective, 0,
+	       sizeof(cur->credentials->cap_effective));
+	memset(cur->credentials->cap_permitted, 0,
+	       sizeof(cur->credentials->cap_permitted));
+	cur->credentials->cap_initialized = 0;
 
 	/* setup arguments and enviroments in proper way for interp */
 	esp_top = format->setup_stack(file_name, argc, s_argv, envc, s_envp,
@@ -604,7 +611,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 	free_v(s_argv, argc);
 	free_v(s_envp, envc);
 	name_put(file_name);
-	cur->type = ps_user;
+	cur->life->type = ps_user;
 	extern void switch_to_user_mode(vaddr_t eip, vaddr_t esp);
 	switch_to_user_mode(eip, esp_top);
 	// never return here
@@ -632,7 +639,7 @@ static void run_if_exist(const char *path, const char *argv[],
 
 static void prepare_interactive_userspace(task_struct *cur)
 {
-	strcpy(cur->user->cwd, "/root");
+	strcpy(cur->fs->cwd, "/root");
 
 	printk("rtc: Sync local time\n");
 	time_sync_rtc();
@@ -684,10 +691,9 @@ static void kinit_userspace()
 	task_struct *cur = CURRENT_TASK();
 	const char **argv = default_argv;
 	const char **envp = default_envp;
-	vaddr_t esp0 = (vaddr_t)(uintptr_t)cur + KERNEL_TASK_BYTES;
 
 	/* The initial userspace process has no userspace parent. */
-	cur->ppid = 0;
+	cur->life->ppid = 0;
 
 	if (TestControl.test) {
 		argv = test_bash_argv;
@@ -697,7 +703,7 @@ static void kinit_userspace()
 
 	printk("Now bringup first user process %s\n", argv[0]);
 
-	ps_update_tss(esp0);
+	reset_tss(cur);
 
 	/* Open stdin, stdout, stderr (fds 0, 1, 2) — all on /dev/tty1. */
 	fs_open("/dev/tty1", O_RDONLY, 0);

@@ -4,9 +4,10 @@
 #include <fs/fs.h>
 #include <lib/lock.h>
 #include <lib/rbtree.h>
+#include <lib/ref_count.h>
 
-typedef struct _user_enviroment user_enviroment;
-typedef struct _mm_struct mm_struct;
+typedef struct _task_memory task_memory;
+typedef task_memory mm_struct;
 typedef mm_struct *vm_struct_t;
 typedef struct _vm_fault_lock vm_fault_lock;
 
@@ -27,7 +28,8 @@ typedef struct _vm_region {
 } vm_region;
 
 /* Process address-space descriptor. */
-struct _mm_struct {
+struct _task_memory {
+	ref_count_t ref;
 	struct rb_root vma_index;
 	spinlock_t vma_lock;
 	rmutex_t mapping_lock; /* Serializes complete mapping transactions. */
@@ -38,10 +40,14 @@ struct _mm_struct {
 	vaddr_t start_stack;
 	vaddr_t mmap_base;
 	vaddr_t task_size;
-	unsigned users;
-	unsigned count;
 	/* Incremented whenever the VMA tree changes; used by fault-time cache. */
 	unsigned vma_generation;
+	unsigned long long ldt_desc[LDT_ENTRY_COUNT]
+		__attribute__((aligned(8)));
+	unsigned ldt_present;
+	char *command, *environment;
+	size_t cmd_len, env_len;
+	file *executable;
 };
 
 static inline mm_struct *vm_mm(vm_struct_t vm)
@@ -71,11 +77,6 @@ static inline void vm_set_stack(vm_struct_t vm, vaddr_t bottom)
 }
 
 vm_struct_t vm_create();
-
-void vm_get(vm_struct_t vm);
-void vm_put(vm_struct_t vm);
-
-void vm_destroy(vm_struct_t vm);
 
 /**
  * map begin <= addr < end to virtual, with related fd fd can be
@@ -130,9 +131,9 @@ vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr);
  * The cache stores the last vm_find_vma() result, which may be a containing
  * VMA or the next VMA above the probed address.
  */
-vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr);
-vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr);
-void vm_invalidate_user_cache(user_enviroment *user);
+vm_region *vm_find_vma_cached(task_struct *task, vaddr_t addr);
+vm_region *vm_find_map_cached(task_struct *task, vaddr_t addr);
+void vm_invalidate_task_cache(task_struct *task);
 void vm_region_lock_fault(vm_region *region);
 void vm_region_unlock_fault(vm_region *region);
 

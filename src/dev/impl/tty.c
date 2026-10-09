@@ -325,18 +325,17 @@ static int tty_graphics_owner_fb_dirty(const tty_state *state)
 		return 0;
 
 	owner = ps_find_process(state->kd_owner_pid);
-	if (!owner || !owner->user || !owner->user->vm ||
-	    !owner->user->vm->page_dir)
+	if (!owner || !owner->memory || !owner->memory->page_dir)
 		return 0;
 
 	fb_get_phys_window(&ctx.fb_phys, &ctx.fb_end);
 	if (ctx.fb_phys == 0 || ctx.fb_end == 0)
 		return 1;
 
-	ctx.page_dir = owner->user->vm->page_dir;
+	ctx.page_dir = owner->memory->page_dir;
 	ctx.fb_end += ctx.fb_phys;
 	ctx.dirty = 0;
-	vm_enum(owner->user->vm, tty_graphics_dirty_region_cb, &ctx);
+	vm_enum(owner->memory, tty_graphics_dirty_region_cb, &ctx);
 	if (ctx.dirty)
 		arch_mm_flush_local();
 	return ctx.dirty;
@@ -371,13 +370,13 @@ static tty_state *tty_find_controlling(task_struct *task)
 {
 	int tty_idx;
 
-	if (!task || !task->user)
+	if (!task || !task->execution)
 		return NULL;
 
 	for (tty_idx = 1; tty_idx <= TTY_MAX_VDEV; tty_idx++) {
 		tty_state *state = &ttys[tty_idx - 1];
 
-		if (state->pgrp == task->user->group_id)
+		if (state->pgrp == task->thread->group_id)
 			return state;
 	}
 
@@ -1694,8 +1693,8 @@ static ssize_t tty_fs_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	/* TOSTOP: if set, background processes get SIGTTOU instead of writing. */
 	if ((state->termios.c_lflag & TOSTOP) && state->pgrp) {
 		task_struct *cur = CURRENT_TASK();
-		if (cur->user && cur->user->group_id != state->pgrp) {
-			ps_send_signal_pgrp(cur->user->group_id, SIGTTOU);
+		if (cur->execution && cur->thread->group_id != state->pgrp) {
+			ps_send_signal_pgrp(cur->thread->group_id, SIGTTOU);
 			return -EINTR;
 		}
 	}
@@ -1816,7 +1815,7 @@ static int tty_fs_ioctl_tiocgsid(void *context __attribute__((unused)),
 				 void *buf __attribute__((unused)))
 {
 	/* The active virtual console is controlled by the caller's session. */
-	*(unsigned *)buf = CURRENT_TASK()->user->session_id;
+	*(unsigned *)buf = CURRENT_TASK()->thread->session_id;
 	return 0;
 }
 
@@ -1844,11 +1843,11 @@ static int tty_fs_ioctl_tiocsctty(void *context __attribute__((unused)),
 		 */
 	task_struct *cur = CURRENT_TASK();
 	int steal = (int)(uintptr_t)buf;
-	if (!cur->user || cur->user->session_id != cur->psid)
+	if (!cur->execution || cur->thread->session_id != cur->thread->tgid)
 		return -EPERM; /* must be session leader */
 	if (state->pgrp && !steal)
 		return -EPERM; /* already owned, not stealing */
-	state->pgrp = cur->user->group_id;
+	state->pgrp = cur->thread->group_id;
 	return 0;
 }
 
@@ -1861,7 +1860,7 @@ static int tty_fs_ioctl_tiocnotty(void *context __attribute__((unused)),
 
 	task_struct *cur = CURRENT_TASK();
 
-	if (cur->user && state->pgrp == cur->user->group_id)
+	if (cur->execution && state->pgrp == cur->thread->group_id)
 		state->pgrp = 0;
 	return 0;
 }
@@ -2044,7 +2043,7 @@ static int tty_fs_ioctl_kdsetmode(void *context __attribute__((unused)),
 			 * restore the VT later if that same graphics owner dies.
 			 */
 		state->kd_mode = KD_GRAPHICS;
-		state->kd_owner_pid = cur ? cur->psid : 0;
+		state->kd_owner_pid = cur ? cur->life->psid : 0;
 	} else {
 		tty_restore_text_console_locked(state);
 		if (tty_fb_text_is_visible(state)) {
@@ -2329,7 +2328,7 @@ static int tty_fs_release(file *fp)
 {
 	tty_state *state = fp->f_inode->i_private;
 	task_struct *cur = CURRENT_TASK();
-	unsigned owner_pid = cur ? cur->psid : 0;
+	unsigned owner_pid = cur ? cur->life->psid : 0;
 	int new_count = __sync_add_and_fetch(&state->open_count, -1);
 
 	if (new_count == 0 || (state->kd_mode == KD_GRAPHICS &&

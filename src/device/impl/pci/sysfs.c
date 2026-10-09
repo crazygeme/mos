@@ -300,10 +300,10 @@ void pci_sysfs_register(void)
 {
 	const device_t *device;
 	driver_t *driver;
-	for (driver = driver_first(); driver; driver = driver->next)
+	for (driver = driver_first(); driver; driver = driver_next(driver))
 		if (driver->bus == DEVICE_BUS_PCI)
 			vfs_entry_directory(pci_sysfs_drivers(), driver->name);
-	for (device = device_first(); device; device = device->next)
+	for (device = device_first(); device; device = device_next(device))
 		if (device->bus == DEVICE_BUS_PCI)
 			sysfs_register_pci(device);
 }

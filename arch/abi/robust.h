@@ -24,9 +24,9 @@ int ROBUST_PREFIX(set_robust_list)(void *head, size_t length)
 		return -EINVAL;
 	if (!head)
 		return -EFAULT;
-	current->robust_list_head = head;
-	current->robust_list_size = length;
-	current->robust_list_reader = ROBUST_PREFIX(reader);
+	current->execution->robust_list_head = head;
+	current->execution->robust_list_size = length;
+	current->execution->robust_list_reader = ROBUST_PREFIX(reader);
 	return 0;
 }
 int ROBUST_PREFIX(get_robust_list)(int pid, void *head, void *length)
@@ -36,8 +36,8 @@ int ROBUST_PREFIX(get_robust_list)(int pid, void *head, void *length)
 	task_struct *task = pid ? ps_find_process(pid) : current;
 	if (!task)
 		return -ESRCH;
-	*(ROBUST_WORD *)head = (uintptr_t)task->robust_list_head;
-	*(ROBUST_WORD *)length = task->robust_list_size;
+	*(ROBUST_WORD *)head = (uintptr_t)task->execution->robust_list_head;
+	*(ROBUST_WORD *)length = task->execution->robust_list_size;
 	return 0;
 }
 #undef ROBUST_WORD

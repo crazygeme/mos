@@ -38,14 +38,15 @@
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
-	while (__atomic_load_n(&task->enumeration_refs, __ATOMIC_ACQUIRE))
+	while (__atomic_load_n(&task->sched->enumeration_refs,
+			       __ATOMIC_ACQUIRE))
 		time_wait(1);
 	unsigned long long child_utime =
-		ps_usage_read(&task->usage->user_tickets) +
-		ps_usage_read(&task->usage->child_utime);
+		ps_usage_read(&task->thread->user_tickets) +
+		ps_usage_read(&task->thread->child_utime);
 	unsigned long long child_stime =
-		ps_usage_read(&task->usage->kernel_tickets) +
-		ps_usage_read(&task->usage->child_stime);
+		ps_usage_read(&task->thread->kernel_tickets) +
+		ps_usage_read(&task->thread->child_stime);
 
 	if (rusage) {
 		memset(rusage, 0, sizeof(*rusage));
@@ -61,55 +62,20 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	}
 
 	/* Accumulate child CPU time into parent for cutime/cstime. */
-	if (!(task->fork_flag & FORK_FLAG_THREAD)) {
+	if (!(task->life->fork_flag & FORK_FLAG_THREAD)) {
 		int irq;
 		spinlock_lock(&ps_lock, &irq);
-		task_struct *parent = ps_find_process_unsafe(task->ppid);
-		if (parent && parent->usage) {
-			ps_usage_add_local(&parent->usage->child_utime,
+		task_struct *parent = ps_find_process_unsafe(task->life->ppid);
+		if (parent && parent->execution && parent->thread) {
+			ps_usage_add_local(&parent->thread->child_utime,
 					   child_utime);
-			ps_usage_add_local(&parent->usage->child_stime,
+			ps_usage_add_local(&parent->thread->child_stime,
 					   child_stime);
 		}
 		spinlock_unlock(&ps_lock, irq);
 	}
 
-	if (task->user->command) {
-		vm_free(task->user->command, 1);
-		task->user->command = NULL;
-		task->user->cmd_len = 0;
-	}
-	if (task->user->environment) {
-		vm_free(task->user->environment, 1);
-		task->user->environment = NULL;
-		task->user->env_len = 0;
-	}
-	if (task->user->cwd) {
-		name_put(task->user->cwd);
-		task->user->cwd = NULL;
-	}
-	if (task->user->executable) {
-		fs_put_file(task->user->executable);
-		task->user->executable = NULL;
-	}
-	if (task->user->root_path) {
-		name_put(task->user->root_path);
-		task->user->root_path = NULL;
-	}
-	if (task->user->vm) {
-		vm_put(task->user->vm);
-		task->user->vm = NULL;
-	}
-	if (task->root)
-		sb_put(task->root);
-
-	kfree(task->user);
-	kfree(task->signal);
-	ps_usage_put(task);
-	kfree(task->stats);
-	ps_put_fds(task);
-	kfree(task->io_bitmap);
-	vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
+	ps_free_task(task);
 }
 
 static int has_child_unsafe(task_struct *parent, unsigned pid)
@@ -117,11 +83,12 @@ static int has_child_unsafe(task_struct *parent, unsigned pid)
 	struct rb_node *node;
 
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		task_struct *task =
+			(rb_entry(node, task_schedule, mgr_rb)->task);
 
-		if (task->ppid != parent->psid)
+		if (task->life->ppid != parent->life->psid)
 			continue;
-		if (pid && task->psid != pid)
+		if (pid && task->life->psid != pid)
 			continue;
 		return 1;
 	}
@@ -135,16 +102,18 @@ static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
 	struct rb_node *node;
 
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		task_struct *task =
+			(rb_entry(node, task_schedule, mgr_rb)->task);
 
-		if (task->ppid != parent->psid)
+		if (task->life->ppid != parent->life->psid)
 			continue;
-		if (pid && task->psid != pid)
+		if (pid && task->life->psid != pid)
 			continue;
-		if (!task->stop_report_pending)
+		if (!task->life->stop_report_pending)
 			continue;
 		if (!(options & WUNTRACED) &&
-		    (!task->user || task->user->ptrace_tracer != parent->psid))
+		    (!task->execution ||
+		     task->execution->ptrace_tracer != parent->life->psid))
 			continue;
 		return task;
 	}
@@ -157,11 +126,12 @@ static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
 	struct rb_node *node;
 
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		task_struct *task =
+			(rb_entry(node, task_schedule, mgr_rb)->task);
 
-		if (task->ppid != parent->psid || !task->user)
+		if (task->life->ppid != parent->life->psid || !task->execution)
 			continue;
-		if (task->user->group_id != pgrp)
+		if (task->thread->group_id != pgrp)
 			continue;
 		return 1;
 	}
@@ -209,19 +179,20 @@ static void ps_reparent_children(task_struct *cur)
 		goto out;
 
 	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *t = rb_entry(node, task_struct, mgr_rb);
-		if (t->ppid != cur->psid)
+		task_struct *t = (rb_entry(node, task_schedule, mgr_rb)->task);
+		if (t->life->ppid != cur->life->psid)
 			continue;
-		if (t->pdeath_signal && t->signal && t->status != ps_dying)
-			ps_queue_signal_unsafe(t, t->pdeath_signal);
-		t->ppid = init_task->psid;
-		init_task->nchildren++;
-		if (t->status == ps_dying)
+		if (t->life->pdeath_signal && t->sighand &&
+		    t->sched->status != ps_dying)
+			ps_queue_signal_unsafe(t, t->life->pdeath_signal);
+		t->life->ppid = init_task->life->psid;
+		init_task->life->nchildren++;
+		if (t->sched->status == ps_dying)
 			notify_init = 1;
 	}
 	if (notify_init) {
-		init_task->signal->sig_pending |= (1UL << (SIGCHLD - 1));
-		if (init_task->status == ps_waiting)
+		ps_queue_group_signal_unsafe(init_task, SIGCHLD);
+		if (init_task->sched->status == ps_waiting)
 			ps_put_to_ready_queue_unsafe(init_task);
 	}
 out:
@@ -231,11 +202,11 @@ out:
 static void ps_cancel_io_wait(task_struct *task)
 {
 	/* Detach I/O waiters before closing files or freeing the kernel stack. */
-	if (task->cancel_io_wait) {
-		void (*cancel)(void *) = task->cancel_io_wait;
-		void *wait = task->io_wait;
-		task->cancel_io_wait = NULL;
-		task->io_wait = NULL;
+	if (task->wait->cancel_io_wait) {
+		void (*cancel)(void *) = task->wait->cancel_io_wait;
+		void *wait = task->wait->io_wait;
+		task->wait->cancel_io_wait = NULL;
+		task->wait->io_wait = NULL;
 		cancel(wait);
 	}
 	fs_cancel_io(task);
@@ -267,9 +238,10 @@ void ps_reap_dead_threads(void)
 		for (list_entry *node = dead_threads.next;
 		     node != &dead_threads; node = node->next) {
 			task_struct *candidate =
-				container_of(node, task_struct, ps_list);
-			if (!candidate->on_cpu &&
-			    !candidate->enumeration_refs) {
+				(container_of(node, task_schedule, ps_list)
+					 ->task);
+			if (!candidate->sched->on_cpu &&
+			    !candidate->sched->enumeration_refs) {
 				task = candidate;
 				list_remove_entry(node);
 				break;
@@ -286,9 +258,9 @@ void ps_stop_terminated_task(void)
 {
 	int irq;
 	spinlock_lock(&ps_lock, &irq);
-	list_remove_entry(&current->ps_list);
-	list_init(&current->ps_list);
-	current->status = ps_stopped;
+	list_remove_entry(&current->sched->ps_list);
+	list_init(&current->sched->ps_list);
+	current->sched->status = ps_stopped;
 	spinlock_unlock(&ps_lock, irq);
 }
 
@@ -301,7 +273,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 
 	if (!leader)
 		return;
-	ps_timer_discard_group(leader->tgid);
+	ps_timer_discard_group(leader->thread->tgid);
 
 	list_init(&reap_list);
 
@@ -312,12 +284,14 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 		spinlock_lock(&ps_lock, &irq);
 		for (node = rb_first(&control.mgr_queue); node;
 		     node = rb_next(node)) {
-			task_struct *task = rb_entry(node, task_struct, mgr_rb);
-			if (task != leader && task->tgid == leader->tgid &&
-			    task->type == ps_user) {
-				task->terminate_requested = 1;
-				active |= task->on_cpu != 0 ||
-					  task->vm_lock_depth != 0;
+			task_struct *task =
+				(rb_entry(node, task_schedule, mgr_rb)->task);
+			if (task != leader &&
+			    task->thread->tgid == leader->thread->tgid &&
+			    task->life->type == ps_user) {
+				task->sched->terminate_requested = 1;
+				active |= task->sched->on_cpu != 0 ||
+					  task->sched->vm_lock_depth != 0;
 			}
 		}
 		spinlock_unlock(&ps_lock, irq);
@@ -328,14 +302,15 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 
 	spinlock_lock(&ps_lock, &irq);
 	for (node = rb_first(&control.mgr_queue); node; node = next) {
-		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		task_struct *task =
+			(rb_entry(node, task_schedule, mgr_rb)->task);
 		next = rb_next(node);
 
 		if (task == leader)
 			continue;
-		if (task->type != ps_user || !task->signal)
+		if (task->life->type != ps_user || !task->sighand)
 			continue;
-		if (task->tgid != leader->tgid)
+		if (task->thread->tgid != leader->thread->tgid)
 			continue;
 
 		/*
@@ -344,21 +319,22 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 		 */
 		timer_disarm_unsafe(task);
 		ps_futex_remove_task_locked(task);
-		list_remove_entry(&task->ps_list);
+		list_remove_entry(&task->sched->ps_list);
 		ps_remove_mgr_unsafe(task);
-		task->status = ps_dying;
-		task->wait_func = NULL;
-		list_insert_tail(&reap_list, &task->ps_list);
+		task->sched->status = ps_dying;
+		task->wait->wait_func = NULL;
+		list_insert_tail(&reap_list, &task->sched->ps_list);
 	}
 	spinlock_unlock(&ps_lock, irq);
 
 	while (!list_is_empty(&reap_list)) {
 		task_struct *task =
-			container_of(reap_list.next, task_struct, ps_list);
+			(container_of(reap_list.next, task_schedule, ps_list)
+				 ->task);
 
-		list_remove_entry(&task->ps_list);
+		list_remove_entry(&task->sched->ps_list);
 		ps_reparent_children(task);
-		if (task->fork_flag & FORK_FLAG_THREAD) {
+		if (task->life->fork_flag & FORK_FLAG_THREAD) {
 			ps_reap_group_thread(task);
 		} else {
 			/* Retain the process leader as the parent's waitable zombie. */
@@ -366,11 +342,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 			ps_clear_child_tid(task);
 			ps_release_robust_list(task);
 			ps_put_fds(task);
-			if (task->user->executable) {
-				fs_put_file(task->user->executable);
-				task->user->executable = NULL;
-			}
-			task->exit_status = encoded_status;
+			task->life->exit_status = encoded_status;
 			ps_put_to_dying_queue(task);
 		}
 	}
@@ -378,7 +350,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 
 void do_group_exit(unsigned encoded_status)
 {
-	fs_posix_lock_release(NULL, CURRENT_TASK()->tgid);
+	fs_posix_lock_release(NULL, CURRENT_TASK()->thread->tgid);
 	ps_kill_thread_group(CURRENT_TASK(), encoded_status);
 	do_exit(encoded_status);
 }
@@ -388,41 +360,35 @@ void do_exit(unsigned encoded_status)
 	task_struct *cur = CURRENT_TASK();
 
 	ps_ptrace_stop_exit(encoded_status);
-	cur->exit_status = encoded_status;
-	if (!(cur->fork_flag & FORK_FLAG_THREAD)) {
-		fs_posix_lock_release(NULL, cur->tgid);
-		ps_timer_discard_group(cur->tgid);
+	cur->life->exit_status = encoded_status;
+	if (!(cur->life->fork_flag & FORK_FLAG_THREAD)) {
+		fs_posix_lock_release(NULL, cur->thread->tgid);
+		ps_timer_discard_group(cur->thread->tgid);
 	}
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("exit(%s, status=%x)\n", cur->user->command,
+		klog("exit(%s, status=%x)\n", cur->memory->command,
 		     encoded_status);
 
-	if (cur->fork_flag & FORK_FLAG_VFORK) {
-		cond_notify(&cur->vfork_event);
-		vm_put(cur->user->vm);
-		cur->user->vm = NULL;
+	if (cur->life->fork_flag & FORK_FLAG_VFORK) {
+		cond_notify(&cur->life->vfork_event);
 	}
 
 	ps_cancel_io_wait(cur);
 	ps_clear_child_tid(cur);
 	ps_release_robust_list(cur);
 
-	if (cur->user->vm) {
+	if (cur->memory) {
 		/* Flush dirty MAP_SHARED pages while user pages are still mapped. */
-		vm_flush_all_dirty(cur->user->vm);
+		vm_flush_all_dirty(cur->memory);
 	}
 
 	ps_put_fds(cur);
-	if (cur->user->executable) {
-		fs_put_file(cur->user->executable);
-		cur->user->executable = NULL;
-	}
 
-	if (cur->psid == 0) {
+	if (cur->life->psid == 0) {
 		printk("fatal error! process 0 exit\n");
 		DIE();
 	}
-	if (cur->psid == 1) {
+	if (cur->life->psid == 1) {
 		if (TestControl.test) {
 			unsigned char code =
 				(unsigned char)((encoded_status >> 8) & 0xff);
@@ -439,16 +405,15 @@ void do_exit(unsigned encoded_status)
 
 	ps_reparent_children(cur);
 
-	if (cur->fork_flag & FORK_FLAG_THREAD) {
+	if (cur->life->fork_flag & FORK_FLAG_THREAD) {
 		int irq;
 		spinlock_lock(&ps_lock, &irq);
 		ps_remove_mgr_unsafe(cur);
 
-		cur->psid = 0xffffffff;
-		cur->tgid = 0xffffffff;
-		cur->status = ps_dying;
-		list_remove_entry(&cur->ps_list);
-		list_insert_tail(&dead_threads, &cur->ps_list);
+		cur->life->psid = 0xffffffff;
+		cur->sched->status = ps_dying;
+		list_remove_entry(&cur->sched->ps_list);
+		list_insert_tail(&dead_threads, &cur->sched->ps_list);
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}
@@ -490,35 +455,36 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 	for (;;) {
 		task = NULL;
 		spinlock_lock(&ps_lock, &irq);
-		dying_task_entry = cur->dying_queue.next;
-		while (dying_task_entry != &cur->dying_queue) {
-			task = container_of(dying_task_entry, task_struct,
-					    ps_list);
+		dying_task_entry = cur->life->dying_queue.next;
+		while (dying_task_entry != &cur->life->dying_queue) {
+			task = (container_of(dying_task_entry, task_schedule,
+					     ps_list)
+					->task);
 			dying_task_entry = dying_task_entry->next;
-			if (task->ppid != cur->psid)
+			if (task->life->ppid != cur->life->psid)
 				continue;
-			if (task->on_cpu)
-				continue;
-
-			if (pid && pid != task->psid)
+			if (task->sched->on_cpu)
 				continue;
 
-			ret = task->psid;
+			if (pid && pid != task->life->psid)
+				continue;
+
+			ret = task->life->psid;
 			if (status)
-				*status = task->exit_status;
+				*status = task->life->exit_status;
 
-			list_remove_entry(&task->ps_list);
+			list_remove_entry(&task->sched->ps_list);
 			ps_remove_mgr_unsafe(task);
-			cur->nchildren--;
+			cur->life->nchildren--;
 			goto done;
 		}
 
 		task = find_stopped_child_unsafe(cur, pid, options);
 		if (task) {
-			ret = task->psid;
+			ret = task->life->psid;
 			if (status)
-				*status = W_STOPCODE(task->stop_signal);
-			task->stop_report_pending = 0;
+				*status = W_STOPCODE(task->life->stop_signal);
+			task->life->stop_report_pending = 0;
 			task = NULL;
 			goto done;
 		}
@@ -551,7 +517,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		/* Block until a child exits. ps_put_to_dying_queue() will call
 		 * ps_put_to_ready_queue_unsafe(parent) to wake us. */
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-		cur->wait_interruptible = 1;
+		cur->wait->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}
@@ -587,43 +553,46 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		has_group_child = 0;
 		spinlock_lock(&ps_lock, &irq);
 
-		dying_task_entry = cur->dying_queue.next;
-		while (dying_task_entry != &cur->dying_queue) {
-			task = container_of(dying_task_entry, task_struct,
-					    ps_list);
+		dying_task_entry = cur->life->dying_queue.next;
+		while (dying_task_entry != &cur->life->dying_queue) {
+			task = (container_of(dying_task_entry, task_schedule,
+					     ps_list)
+					->task);
 			dying_task_entry = dying_task_entry->next;
-			if (task->ppid != cur->psid || !task->user ||
-			    task->user->group_id != pgrp)
+			if (task->life->ppid != cur->life->psid ||
+			    !task->execution || task->thread->group_id != pgrp)
 				continue;
 
 			has_group_child = 1;
-			ret = task->psid;
+			ret = task->life->psid;
 			if (status)
-				*status = task->exit_status;
+				*status = task->life->exit_status;
 
-			list_remove_entry(&task->ps_list);
+			list_remove_entry(&task->sched->ps_list);
 			ps_remove_mgr_unsafe(task);
-			cur->nchildren--;
+			cur->life->nchildren--;
 			goto done;
 		}
 
 		for (node = rb_first(&control.mgr_queue); node;
 		     node = rb_next(node)) {
-			task_struct *st = rb_entry(node, task_struct, mgr_rb);
+			task_struct *st =
+				(rb_entry(node, task_schedule, mgr_rb)->task);
 
-			if (st->ppid != cur->psid || !st->user ||
-			    st->user->group_id != pgrp)
+			if (st->life->ppid != cur->life->psid ||
+			    !st->execution || st->thread->group_id != pgrp)
 				continue;
 			has_group_child = 1;
-			if (!st->stop_report_pending)
+			if (!st->life->stop_report_pending)
 				continue;
 			if (!(options & WUNTRACED) &&
-			    (!st->user || st->user->ptrace_tracer != cur->psid))
+			    (!st->execution ||
+			     st->execution->ptrace_tracer != cur->life->psid))
 				continue;
-			ret = st->psid;
+			ret = st->life->psid;
 			if (status)
-				*status = W_STOPCODE(st->stop_signal);
-			st->stop_report_pending = 0;
+				*status = W_STOPCODE(st->life->stop_signal);
+			st->life->stop_report_pending = 0;
 			task = NULL;
 			goto done;
 		}
@@ -647,7 +616,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		}
 
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-		cur->wait_interruptible = 1;
+		cur->wait->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}
@@ -687,13 +656,21 @@ intptr_t sys_getcwd(char *buf, size_t size)
 	if (!buf)
 		return -EFAULT;
 
-	if (cur && cur->user && cur->user->cwd && cur->user->cwd[0])
-		cwd = cur->user->cwd;
+	if (cur && cur->execution && cur->fs) {
+		LOCK_GUARD(&cur->fs->lock);
+		if (cur->fs->cwd && cur->fs->cwd[0])
+			cwd = cur->fs->cwd;
 
-	length = strlen(cwd) + 1;
-	if (length > size)
-		return -ERANGE;
-	memcpy(buf, cwd, length);
+		length = strlen(cwd) + 1;
+		if (length > size)
+			return -ERANGE;
+		memcpy(buf, cwd, length);
+	} else {
+		length = strlen(cwd) + 1;
+		if (length > size)
+			return -ERANGE;
+		memcpy(buf, cwd, length);
+	}
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getcwd(%s, %u) = %u\n", buf, (unsigned)size,
@@ -718,10 +695,10 @@ int sys_getrusage(int who, rusage *usage)
 	memset(usage, 0, sizeof(*usage));
 
 	if (who == RUSAGE_SELF) {
-		us_to_timeval(ps_usage_read(&cur->usage->user_tickets) *
+		us_to_timeval(ps_usage_read(&cur->thread->user_tickets) *
 				      (1000000ULL / HZ),
 			      &usage->ru_utime);
-		us_to_timeval(ps_usage_read(&cur->usage->kernel_tickets) *
+		us_to_timeval(ps_usage_read(&cur->thread->kernel_tickets) *
 				      (1000000ULL / HZ),
 			      &usage->ru_stime);
 		usage->ru_majflt = cur->stats->pf_major;
@@ -730,10 +707,10 @@ int sys_getrusage(int who, rusage *usage)
 			cur->stats->total_switches - cur->stats->niv_switches;
 		usage->ru_nivcsw = cur->stats->niv_switches;
 	} else if (who == RUSAGE_CHILDREN) {
-		us_to_timeval(ps_usage_read(&cur->usage->child_utime) *
+		us_to_timeval(ps_usage_read(&cur->thread->child_utime) *
 				      (1000000ULL / HZ),
 			      &usage->ru_utime);
-		us_to_timeval(ps_usage_read(&cur->usage->child_stime) *
+		us_to_timeval(ps_usage_read(&cur->thread->child_stime) *
 				      (1000000ULL / HZ),
 			      &usage->ru_stime);
 	}

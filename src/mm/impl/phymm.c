@@ -18,9 +18,9 @@ phymm_page *phymm_pages;
 
 /* Buddy free lists: one singly-linked list per order (0..MAX_BUDDY_ORDER).
  * Each entry holds the index of the head page of a free block; the chain is
- * threaded through phymm_page.next_free / prev_free (doubly linked for O(1)
+ * threaded through phymm_page.free_list (list_entry for O(1)
  * removal during coalescing). */
-static unsigned buddy_lists[MAX_BUDDY_ORDER + 1];
+static list_entry buddy_lists[MAX_BUDDY_ORDER + 1];
 static spinlock_t buddy_lock;
 static unsigned buddy_free_pages;
 static unsigned managed_pages;
@@ -45,59 +45,53 @@ static unsigned ceil_log2(unsigned n)
 }
 
 /* Push a free block at @idx of @order onto the head of the free list. */
+static unsigned buddy_index(list_entry *entry)
+{
+	return container_of(entry, phymm_page, free_list) - phymm_pages;
+}
+
+static unsigned buddy_first(unsigned order)
+{
+	return list_is_empty(&buddy_lists[order]) ?
+		       PHYMM_INVALID :
+		       buddy_index(buddy_lists[order].next);
+}
+
+static unsigned buddy_next(unsigned idx, unsigned order)
+{
+	list_entry *next = phymm_pages[idx].free_list.next;
+	return next == &buddy_lists[order] ? PHYMM_INVALID : buddy_index(next);
+}
+
 static void buddy_push(unsigned idx, unsigned order)
 {
-	unsigned old_head = buddy_lists[order];
 	buddy_free_pages += 1u << order;
-
 	phymm_pages[idx].order = (unsigned char)order;
-	phymm_pages[idx].prev_free = PHYMM_INVALID;
-	phymm_pages[idx].next_free = old_head;
-	if (old_head != PHYMM_INVALID)
-		phymm_pages[old_head].prev_free = idx;
-	buddy_lists[order] = idx;
+	list_insert_head(&buddy_lists[order], &phymm_pages[idx].free_list);
 }
 
-/* Unlink @idx from its current free list (order stored in phymm_pages[idx]). */
 static void buddy_remove(unsigned idx)
 {
-	unsigned order = phymm_pages[idx].order;
-	unsigned prev = phymm_pages[idx].prev_free;
-	unsigned next = phymm_pages[idx].next_free;
-	buddy_free_pages -= 1u << order;
-
-	if (prev == PHYMM_INVALID)
-		buddy_lists[order] = next;
-	else
-		phymm_pages[prev].next_free = next;
-
-	if (next != PHYMM_INVALID)
-		phymm_pages[next].prev_free = prev;
-
-	phymm_pages[idx].next_free = PHYMM_INVALID;
-	phymm_pages[idx].prev_free = PHYMM_INVALID;
+	buddy_free_pages -= 1u << phymm_pages[idx].order;
+	list_remove_entry(&phymm_pages[idx].free_list);
+	list_init(&phymm_pages[idx].free_list);
 }
 
-/* Pop the head of the free list for @order. Returns PHYMM_INVALID if empty. */
 static unsigned buddy_pop(unsigned order)
 {
-	unsigned idx = buddy_lists[order];
-	if (idx == PHYMM_INVALID)
-		return PHYMM_INVALID;
-	buddy_remove(idx);
+	unsigned idx = buddy_first(order);
+	if (idx != PHYMM_INVALID)
+		buddy_remove(idx);
 	return idx;
 }
 
-/* Is @idx a free block head at exactly @order (ready to coalesce)? */
 static int buddy_is_free_at_order(unsigned idx, unsigned order)
 {
 	if (idx < phymm_begin || idx >= phymm_end)
 		return 0;
-	return (phymm_pages[idx].ref_count == 0 &&
-		phymm_pages[idx].order == (unsigned char)order &&
-		(buddy_lists[order] == idx ||
-		 phymm_pages[idx].next_free != PHYMM_INVALID ||
-		 phymm_pages[idx].prev_free != PHYMM_INVALID));
+	return phymm_pages[idx].ref_count == 0 &&
+	       phymm_pages[idx].order == order &&
+	       !list_is_empty(&phymm_pages[idx].free_list);
 }
 
 /*
@@ -152,8 +146,8 @@ static unsigned buddy_alloc_high(unsigned order)
 		unsigned idx, best;
 
 		best = PHYMM_INVALID;
-		for (idx = buddy_lists[o]; idx != PHYMM_INVALID;
-		     idx = phymm_pages[idx].next_free)
+		for (idx = buddy_first(o); idx != PHYMM_INVALID;
+		     idx = buddy_next(idx, o))
 			if (best == PHYMM_INVALID || idx > best)
 				best = idx;
 
@@ -204,8 +198,8 @@ static unsigned buddy_alloc_in_range(unsigned order, unsigned min_idx,
 	for (o = order; o <= MAX_BUDDY_ORDER; o++) {
 		unsigned idx;
 
-		for (idx = buddy_lists[o]; idx != PHYMM_INVALID;
-		     idx = phymm_pages[idx].next_free) {
+		for (idx = buddy_first(o); idx != PHYMM_INVALID;
+		     idx = buddy_next(idx, o)) {
 			unsigned half;
 			unsigned cur_order = o;
 
@@ -502,8 +496,8 @@ void phymm_get_usage(phymm_usage *usage)
 		unsigned pages = 1u << order;
 		unsigned idx;
 
-		for (idx = buddy_lists[order]; idx != PHYMM_INVALID;
-		     idx = phymm_pages[idx].next_free) {
+		for (idx = buddy_first(order); idx != PHYMM_INVALID;
+		     idx = buddy_next(idx, order)) {
 			unsigned end = idx + pages;
 			unsigned low_start, low_end;
 			unsigned high_start, high_end;
@@ -622,14 +616,13 @@ void phymm_init(unsigned mmap_addr, unsigned mmap_len)
 	spinlock_init(&buddy_lock);
 	buddy_free_pages = managed_pages = 0;
 	for (i = 0; i <= MAX_BUDDY_ORDER; i++)
-		buddy_lists[i] = PHYMM_INVALID;
+		list_init(&buddy_lists[i]);
 
 	/* 2. Presume every page in the managed range is reserved/non-RAM */
 	for (i = phymm_begin; i < phymm_end; i++) {
 		phymm_pages[i].ref_count = PHYMM_RESERVED;
 		phymm_pages[i].order = PHYMM_ORDER_NONE;
-		phymm_pages[i].next_free = PHYMM_INVALID;
-		phymm_pages[i].prev_free = PHYMM_INVALID;
+		list_init(&phymm_pages[i].free_list);
 	}
 
 	if (!mmap_addr || !mmap_len)

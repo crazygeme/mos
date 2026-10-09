@@ -24,8 +24,8 @@ static void smp_test_worker(void *param)
 {
 	struct smp_test_state *state = param;
 	unsigned long long deadline = time_now_tickets() + 200;
-	current->ppid = state->parent;
-	current->exit_signal = 0;
+	current->life->ppid = state->parent;
+	current->life->exit_signal = 0;
 	sched_disable();
 	addr_space_t original_root = arch_mm_current_address_space();
 	smp_mm_activate(VIRT_TO_PHY(state->page_dir));
@@ -73,8 +73,8 @@ KTEST(smp, parallel_kernel_and_shootdown)
 	struct smp_test_state *state = zalloc(sizeof(*state));
 	ASSERT_NONNULL(state);
 	spinlock_init(&state->lock);
-	state->parent = current->psid;
-	state->page_dir = current->user->vm->page_dir;
+	state->parent = current->life->psid;
+	state->page_dir = current->memory->page_dir;
 	unsigned pids[2], created = 0;
 	for (unsigned i = 0; i < 2; i++) {
 		unsigned pid =
@@ -82,7 +82,7 @@ KTEST(smp, parallel_kernel_and_shootdown)
 		if ((int)pid < 0)
 			break;
 		pids[created++] = pid;
-		current->nchildren++;
+		current->life->nchildren++;
 	}
 	while (__atomic_load_n(&state->completed, __ATOMIC_ACQUIRE) < created)
 		time_wait(1);

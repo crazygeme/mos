@@ -4,17 +4,24 @@
 typedef uint64_t native_regs[27];
 static int native_copy_regs(task_struct *task, native_regs *output)
 {
-	ptrace_saved_frame *f = &task->user->ptrace_frame;
-	if (!task->user->ptrace_frame_valid)
+	ptrace_saved_frame *f = &task->execution->ptrace_frame;
+	if (!task->execution->ptrace_frame_valid)
 		return -EIO;
 	const uint64_t regs[27] = {
-		f->r15, f->r14,	    f->r13,	f->r12,
-		f->ebp, f->ebx,	    f->r11,	f->r10,
-		f->r9,	f->r8,	    f->eax,	f->ecx,
-		f->edx, f->esi,	    f->edi,	task->user->ptrace_orig_eax,
-		f->eip, f->cs,	    f->eflags,	f->esp,
-		f->ss,	f->fs_base, f->gs_base, f->ds,
-		f->es,	f->fs,	    f->gs,
+		f->r15,	    f->r14,
+		f->r13,	    f->r12,
+		f->ebp,	    f->ebx,
+		f->r11,	    f->r10,
+		f->r9,	    f->r8,
+		f->eax,	    f->ecx,
+		f->edx,	    f->esi,
+		f->edi,	    task->execution->ptrace_orig_eax,
+		f->eip,	    f->cs,
+		f->eflags,  f->esp,
+		f->ss,	    f->fs_base,
+		f->gs_base, f->ds,
+		f->es,	    f->fs,
+		f->gs,
 	};
 	memcpy(output, regs, sizeof(regs));
 	return 0;

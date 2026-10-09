@@ -205,8 +205,9 @@ int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen)
 		goto out_unlock;
 	}
 
-	ret = path[0] == '@' ? 0 :
-			       vfs_mknod(cur->root, path, S_IFSOCK | 0777, 0);
+	ret = path[0] == '@' ?
+		      0 :
+		      vfs_mknod(cur->fs->root, path, S_IFSOCK | 0777, 0);
 	if (ret != 0)
 		goto out_unlock;
 
@@ -216,7 +217,7 @@ int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen)
 	ret = unix_ns_register_locked(path, sk);
 	if (ret != 0) {
 		if (path[0] != '@')
-			vfs_umount(cur->root, path);
+			vfs_umount(cur->fs->root, path);
 		sk->unix_path[0] = '\0';
 	}
 
@@ -231,8 +232,8 @@ out_unlock:
 static unix_peercred unix_current_cred(void)
 {
 	task_struct *task = CURRENT_TASK();
-	unix_peercred cred = { (int)task->tgid, task->user->euid,
-			       task->user->egid };
+	unix_peercred cred = { (int)task->thread->tgid, task->credentials->euid,
+			       task->credentials->egid };
 	return cred;
 }
 
@@ -511,13 +512,13 @@ static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
 			if (cm->cmsg_len != CMSG_LEN(sizeof(cred)))
 				goto err_drop;
 			memcpy(&cred, CMSG_DATA(cm), sizeof(cred));
-			if (cred.pid != (int)task->tgid ||
-			    (cred.uid != task->user->uid &&
-			     cred.uid != task->user->euid &&
-			     cred.uid != task->user->suid) ||
-			    (cred.gid != task->user->gid &&
-			     cred.gid != task->user->egid &&
-			     cred.gid != task->user->sgid)) {
+			if (cred.pid != (int)task->thread->tgid ||
+			    (cred.uid != task->credentials->uid &&
+			     cred.uid != task->credentials->euid &&
+			     cred.uid != task->credentials->suid) ||
+			    (cred.gid != task->credentials->gid &&
+			     cred.gid != task->credentials->egid &&
+			     cred.gid != task->credentials->sgid)) {
 				error = -EPERM;
 				goto err_drop;
 			}
@@ -545,9 +546,9 @@ static int unix_cmsg_collect_files(const struct msghdr *msg, file **files,
 			task_struct *cur = CURRENT_TASK();
 			int fd = fds[i];
 			file *fp;
-			if (fd < 0 || fd >= MAX_FD || !cur->fds[fd])
+			if (fd < 0 || fd >= MAX_FD || !cur->files->fds[fd])
 				goto err_drop;
-			fp = cur->fds[fd];
+			fp = cur->files->fds[fd];
 			fs_get_file(fp);
 			files[nfds++] = fp;
 		}
@@ -1052,8 +1053,9 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 	int ret;
 	int next_tail;
 	task_struct *task = CURRENT_TASK();
-	unix_peercred credentials = { (int)task->tgid, task->user->uid,
-				      task->user->gid };
+	unix_peercred credentials = { (int)task->thread->tgid,
+				      task->credentials->uid,
+				      task->credentials->gid };
 
 	if (sk->type == SOCK_SEQPACKET && sk->state == SS_UNCONNECTED)
 		return -ENOTCONN;
@@ -1203,7 +1205,7 @@ void unix_release(mos_sock *sk)
 		was_registered = unix_ns_unregister_locked(sk);
 		mutex_unlock(&unix_ns_lock);
 		if (was_registered && sk->unix_path[0] != '@')
-			vfs_umount(cur->root, sk->unix_path);
+			vfs_umount(cur->fs->root, sk->unix_path);
 	}
 
 	while (sk->unix_accept_head != sk->unix_accept_tail) {

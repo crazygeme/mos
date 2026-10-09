@@ -13,9 +13,9 @@ int PTRACE_PREFIX(ptrace)(int request, int pid, void *addr, void *data)
 	PTRACE_REGS regs;
 	switch (request) {
 	case PTRACE_GETEVENTMSG:
-		if (target->status != ps_stopped)
+		if (target->sched->status != ps_stopped)
 			return -ESRCH;
-		word = target->user->ptrace_eventmsg;
+		word = target->execution->ptrace_eventmsg;
 		break;
 	case PTRACE_PEEKDATA:
 	case PTRACE_PEEKTEXT:

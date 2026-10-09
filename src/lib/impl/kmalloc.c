@@ -14,7 +14,7 @@
  *
  * Free block layout (total_size >= MIN_BLK, pointer-sized links):
  *   ┌──────────┬──────────┬──────────┬───────────┐
- *   │ hdr (8B) │ next     │ prev     │  padding  │
+ *   │ hdr (8B) │ list_entry links  │  padding  │
  *   └──────────┴──────────┴──────────┴───────────┘
  *
  * Each new heap chunk gets an 8-byte epilogue sentinel (ALLOC_BIT only) at
@@ -23,7 +23,7 @@
  * Bins: bin[i] holds free blocks of total size in (MIN_BLK<<(i-1), MIN_BLK<<i],
  * bin[NUM_BINS-1] is the catch-all for large blocks.
  * Each bin is a circular doubly-linked list with a sentinel head node
- * (bin_t, which shares the hdr+next+prev layout of real free blocks).
+ * (list_entry embedded after the header of each free block).
  *
  * Complexity: O(1) free (with right-coalesce), O(k) malloc (k = blocks scanned).
  */
@@ -81,31 +81,17 @@ static inline void *blk_next(void *b)
 
 /* ── Free-list pointers (stored after header inside free blocks) ─────────── */
 
-static inline void **fl_next(void *b)
+static inline list_entry *free_link(void *block)
 {
-	return (void **)((char *)b + HDR_SZ);
+	return (list_entry *)((char *)block + HDR_SZ);
 }
 
-static inline void **fl_prev(void *b)
+static inline void *free_block(list_entry *link)
 {
-	return (void **)((char *)b + HDR_SZ + sizeof(void *));
+	return (char *)link - HDR_SZ;
 }
 
-/* ── Segregated bins ─────────────────────────────────────────────────────── */
-
-/*
- * Sentinel node for each bin.  Layout is intentionally compatible with a
- * real free block so that fl_next/fl_prev work uniformly:
- *   offset 0  : h    (dummy header, not a real size)
- *   offset 8  : next (== fl_next on &bins[i])
- *   offset 8 + sizeof(void *) : prev (== fl_prev on &bins[i])
- */
-typedef struct {
-	unsigned long long h;
-	void *next, *prev;
-} bin_t;
-
-static bin_t bins[NUM_BINS];
+static list_entry bins[NUM_BINS];
 
 /* Return the bin index for a block of the given total size. */
 static int size_to_bin(unsigned sz)
@@ -120,33 +106,20 @@ static int size_to_bin(unsigned sz)
 	return NUM_BINS - 1;
 }
 
-static void fl_insert(void *b)
+static void fl_insert(void *block)
 {
-	int i = size_to_bin(blk_sz(b));
-	void *head = &bins[i];
-	void *first = *fl_next(head);
-
-	*fl_next(b) = first;
-	*fl_prev(b) = head;
-	*fl_next(head) = b;
-	*fl_prev(first) = b;
+	list_insert_head(&bins[size_to_bin(blk_sz(block))], free_link(block));
 }
 
-static void fl_remove(void *b)
+static void fl_remove(void *block)
 {
-	void *nx = *fl_next(b);
-	void *pv = *fl_prev(b);
-
-	*fl_next(pv) = nx;
-	*fl_prev(nx) = pv;
+	list_remove_entry(free_link(block));
 }
 
 static void bins_init(void)
 {
-	int i;
-
-	for (i = 0; i < NUM_BINS; i++)
-		bins[i].next = bins[i].prev = &bins[i];
+	for (unsigned i = 0; i < NUM_BINS; i++)
+		list_init(&bins[i]);
 }
 
 /* ── Heap extension ──────────────────────────────────────────────────────── */
@@ -223,29 +196,17 @@ static void *coalesce_right(void *b)
 static void *find_free(unsigned need)
 {
 	int start = size_to_bin(need);
-	void *head, *b;
-	int i;
-
-	/* First-fit scan within the starting bin */
-	head = &bins[start];
-	b = *fl_next(head);
-	while (b != head) {
-		if (blk_sz(b) >= need) {
-			fl_remove(b);
-			return b;
-		}
-		b = *fl_next(b);
-	}
-
-	/* Higher bins: any block is guaranteed >= need; take the first. */
-	for (i = start + 1; i < NUM_BINS; i++) {
-		head = &bins[i];
-		b = *fl_next(head);
-		if (b != head) {
-			fl_remove(b);
-			return b;
+	for (list_entry *node = bins[start].next; node != &bins[start];
+	     node = node->next) {
+		void *block = free_block(node);
+		if (blk_sz(block) >= need) {
+			list_remove_entry(node);
+			return block;
 		}
 	}
+	for (int i = start + 1; i < NUM_BINS; i++)
+		if (!list_is_empty(&bins[i]))
+			return free_block(list_remove_head(&bins[i]));
 	return NULL;
 }
 

@@ -13,42 +13,42 @@
 
 static int ptrace_is_traced_by(task_struct *target, task_struct *tracer)
 {
-	return target && tracer && target->user &&
-	       target->user->ptrace_tracer == tracer->psid;
+	return target && tracer && target->execution &&
+	       target->execution->ptrace_tracer == tracer->life->psid;
 }
 
 static void ptrace_notify_parent_unsafe(task_struct *task)
 {
 	task_struct *parent;
 
-	if (!task->ppid)
+	if (!task->life->ppid)
 		return;
 
-	parent = ps_find_process_unsafe(task->ppid);
-	if (!parent || !parent->signal)
+	parent = ps_find_process_unsafe(task->life->ppid);
+	if (!parent || !parent->sighand)
 		return;
 
-	parent->signal->sig_pending |= (1UL << (SIGCHLD - 1));
+	ps_queue_group_signal_unsafe(parent, SIGCHLD);
 	ps_put_to_ready_queue_unsafe(parent);
 }
 
 static void ptrace_stop_task_unsafe(task_struct *task, int sig,
 				    intr_frame *frame, const char *func)
 {
-	list_remove_entry(&task->ps_list);
-	if (task->psid != 0xffffffff)
-		list_insert_tail(&control.wait_queue, &task->ps_list);
-	task->status = ps_stopped;
-	task->wait_func = func;
-	task->stop_signal = sig;
-	task->stop_report_pending = 1;
+	list_remove_entry(&task->sched->ps_list);
+	if (task->life->psid != 0xffffffff)
+		list_insert_tail(&control.wait_queue, &task->sched->ps_list);
+	task->sched->status = ps_stopped;
+	task->wait->wait_func = func;
+	task->life->stop_signal = sig;
+	task->life->stop_report_pending = 1;
 	if (frame) {
 		arch_ptrace_save(task, frame);
-		task->user->ptrace_frame_valid = 1;
+		task->execution->ptrace_frame_valid = 1;
 	} else {
-		memset(&task->user->ptrace_frame, 0,
-		       sizeof(task->user->ptrace_frame));
-		task->user->ptrace_frame_valid = 0;
+		memset(&task->execution->ptrace_frame, 0,
+		       sizeof(task->execution->ptrace_frame));
+		task->execution->ptrace_frame_valid = 0;
 	}
 	ptrace_notify_parent_unsafe(task);
 }
@@ -59,27 +59,27 @@ static int ptrace_resume(task_struct *tracer, task_struct *target, int mode,
 	int irq;
 
 	if (!ptrace_is_traced_by(target, tracer) ||
-	    target->status != ps_stopped)
+	    target->sched->status != ps_stopped)
 		return -ESRCH;
 
 	if (sig < 0 || sig >= NSIG)
 		return -EINVAL;
 
 	spinlock_lock(&ps_lock, &irq);
-	if (sig > 0 && target->signal)
-		target->signal->sig_pending |= (1UL << (sig - 1));
-	target->user->ptrace_mode = mode;
+	if (sig > 0 && target->sighand)
+		ps_queue_signal_unsafe(target, sig);
+	target->execution->ptrace_mode = mode;
 	if (mode == PTRACE_MODE_NONE) {
-		target->user->ptrace_tracer = 0;
-		target->user->ptrace_options = 0;
-		target->user->ptrace_eventmsg = 0;
-		target->user->ptrace_orig_eax = 0;
+		target->execution->ptrace_tracer = 0;
+		target->execution->ptrace_options = 0;
+		target->execution->ptrace_eventmsg = 0;
+		target->execution->ptrace_orig_eax = 0;
 	}
-	target->user->ptrace_frame_valid = 0;
-	memset(&target->user->ptrace_frame, 0,
-	       sizeof(target->user->ptrace_frame));
-	target->stop_signal = 0;
-	target->stop_report_pending = 0;
+	target->execution->ptrace_frame_valid = 0;
+	memset(&target->execution->ptrace_frame, 0,
+	       sizeof(target->execution->ptrace_frame));
+	target->life->stop_signal = 0;
+	target->life->stop_report_pending = 0;
 	ps_put_to_ready_queue_unsafe(target);
 	spinlock_unlock(&ps_lock, irq);
 	return 0;
@@ -103,12 +103,12 @@ int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	intr_frame *saved_frame = frame;
 	int irq;
 
-	if (!cur->user || !cur->user->ptrace_tracer ||
-	    cur->user->ptrace_mode != PTRACE_MODE_SYSCALL)
+	if (!cur->execution || !cur->execution->ptrace_tracer ||
+	    cur->execution->ptrace_mode != PTRACE_MODE_SYSCALL)
 		return 0;
 
 	if (entering) {
-		cur->user->ptrace_orig_eax = frame->eax;
+		cur->execution->ptrace_orig_eax = frame->eax;
 		/*
 		 * Linux reports EAX as -ENOSYS at syscall-entry ptrace
 		 * stops on i386. strace uses ORIG_EAX for the syscall
@@ -123,7 +123,8 @@ int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	spinlock_lock(&ps_lock, &irq);
 	ptrace_stop_task_unsafe(
 		cur,
-		SIGTRAP | (cur->user->ptrace_options & PTRACE_O_TRACESYSGOOD ?
+		SIGTRAP | (cur->execution->ptrace_options &
+					   PTRACE_O_TRACESYSGOOD ?
 				   0x80 :
 				   0),
 		saved_frame, entering ? "ptrace-sys-enter" : "ptrace-sys-exit");
@@ -138,17 +139,17 @@ void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp, unsigned syscall_number)
 	intr_frame frame;
 	int irq;
 
-	if (!cur->user->ptrace_tracer)
+	if (!cur->execution->ptrace_tracer)
 		return;
 
 	arch_task_init_user_frame(&frame, eip, esp);
 	frame.eax = 0;
-	cur->user->ptrace_orig_eax = syscall_number;
+	cur->execution->ptrace_orig_eax = syscall_number;
 
 	spinlock_lock(&ps_lock, &irq);
-	cur->user->ptrace_eventmsg = cur->psid;
+	cur->execution->ptrace_eventmsg = cur->life->psid;
 	ptrace_stop_task_unsafe(cur,
-				SIGTRAP | (cur->user->ptrace_options &
+				SIGTRAP | (cur->execution->ptrace_options &
 							   PTRACE_O_TRACEEXEC ?
 						   PTRACE_EVENT_EXEC << 8 :
 						   0),
@@ -165,11 +166,11 @@ void ps_ptrace_stop_exit(unsigned status)
 	task_struct *cur = CURRENT_TASK();
 	int irq;
 
-	if (!cur->user || !cur->user->ptrace_tracer ||
-	    !(cur->user->ptrace_options & PTRACE_O_TRACEEXIT))
+	if (!cur->execution || !cur->execution->ptrace_tracer ||
+	    !(cur->execution->ptrace_options & PTRACE_O_TRACEEXIT))
 		return;
 	spinlock_lock(&ps_lock, &irq);
-	cur->user->ptrace_eventmsg = status;
+	cur->execution->ptrace_eventmsg = status;
 	ptrace_stop_task_unsafe(cur, SIGTRAP | (PTRACE_EVENT_EXIT << 8), NULL,
 				"ptrace-exit");
 	spinlock_unlock(&ps_lock, irq);
@@ -186,13 +187,13 @@ int ps_ptrace_control(int request, int pid, void *addr, void *data)
 
 	switch (request) {
 	case PTRACE_TRACEME:
-		if (cur->user->ptrace_tracer)
+		if (cur->execution->ptrace_tracer)
 			return -EPERM;
-		cur->user->ptrace_tracer = cur->ppid;
-		cur->user->ptrace_mode = PTRACE_MODE_NONE;
-		cur->user->ptrace_options = 0;
-		cur->user->ptrace_eventmsg = 0;
-		cur->user->ptrace_orig_eax = 0;
+		cur->execution->ptrace_tracer = cur->life->ppid;
+		cur->execution->ptrace_mode = PTRACE_MODE_NONE;
+		cur->execution->ptrace_options = 0;
+		cur->execution->ptrace_eventmsg = 0;
+		cur->execution->ptrace_orig_eax = 0;
 		return 0;
 
 	case PTRACE_SEIZE:
@@ -210,13 +211,13 @@ int ps_ptrace_control(int request, int pid, void *addr, void *data)
 
 	switch (request) {
 	case PTRACE_SETOPTIONS:
-		if (target->status != ps_stopped)
+		if (target->sched->status != ps_stopped)
 			return -ESRCH;
 		if ((uintptr_t)data &
 		    ~(PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACEEXEC |
 		      PTRACE_O_TRACEEXIT))
 			return -EINVAL;
-		target->user->ptrace_options = (uintptr_t)data;
+		target->execution->ptrace_options = (uintptr_t)data;
 		return 0;
 
 	case PTRACE_CONT:
@@ -231,10 +232,10 @@ int ps_ptrace_control(int request, int pid, void *addr, void *data)
 				     (int)(unsigned long)data);
 
 	case PTRACE_KILL:
-		if (target->status != ps_stopped)
+		if (target->sched->status != ps_stopped)
 			return -ESRCH;
-		if (target->signal)
-			target->signal->sig_pending |= (1UL << (SIGKILL - 1));
+		if (target->sighand)
+			ps_queue_signal_unsafe(target, SIGKILL);
 		return ptrace_resume(cur, target, PTRACE_MODE_CONT, 0);
 
 	default:

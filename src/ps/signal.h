@@ -93,6 +93,8 @@ struct signal_fault {
 	uintptr_t address;
 	int code;
 	unsigned trap;
+	int timer_id;
+	uintptr_t value;
 };
 void arch_signal_deliver(struct _task_struct *, struct _arch_intr_frame *,
 			 struct sigaction *, int, const struct signal_fault *);

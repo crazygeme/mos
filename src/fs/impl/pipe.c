@@ -70,8 +70,9 @@ static ssize_t pipe_write(file *fp, const void *buf, size_t len, loff_t *pos)
 	if (nonblock && ret == 0 && cyb_reader_count(n->buf) > 0)
 		ret = -EAGAIN;
 
-	if (ret == -EPIPE && cur && cur->type == ps_user)
-		cur->signal->sig_pending |= (1UL << (SIGPIPE - 1));
+	if (ret == -EPIPE && cur && cur->life->type == ps_user)
+		__atomic_fetch_or(&cur->signal->sig_pending,
+				  1UL << (SIGPIPE - 1), __ATOMIC_RELEASE);
 	return (ssize_t)ret;
 }
 
@@ -260,8 +261,8 @@ int pipe_open(file **pipes)
 	pipe_inode *rn = zalloc(sizeof(*rn));
 	rn->buf = buf;
 	rn->mode = O_RDONLY;
-	rn->uid = CURRENT_TASK()->user->euid;
-	rn->gid = CURRENT_TASK()->user->egid;
+	rn->uid = CURRENT_TASK()->credentials->euid;
+	rn->gid = CURRENT_TASK()->credentials->egid;
 
 	inode *ri = zalloc(sizeof(*ri));
 	ri->i_mode = S_IFIFO | S_IRUSR | S_IWUSR;

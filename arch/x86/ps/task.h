@@ -38,13 +38,9 @@ typedef struct _tss_io_struct {
 #define TSS_SEG_LIMIT ((unsigned)(sizeof(tss_io_struct) - 1))
 
 /* Stack layout consumed by arch/x86/ps/sched/switch.S. */
-typedef volatile struct _task_frame {
-	unsigned short ds, ss, es, gs, fs, cs;
-	unsigned long edi, esi, edx, ecx, ebx, eax, ebp;
-	unsigned long eip;
-	unsigned long esp0;
-	unsigned long esp;
-} task_frame;
+typedef struct {
+	uint16_t cs, gs;
+} task_arch_context;
 
 /* Register image exported by the x86 ptrace implementation. */
 typedef struct _ptrace_saved_frame {
@@ -60,7 +56,8 @@ typedef struct _ptrace_saved_frame {
 
 /* Keep architecture task pointers width-neutral at common call sites. */
 
-void arch_task_init_switch_frame(struct _task_struct *task);
+void arch_task_init_switch_frame(struct _task_struct *task, uintptr_t ip,
+				 uintptr_t sp);
 void arch_task_init(struct _task_struct *task);
 void arch_task_copy_user_context(struct _task_struct *child,
 				 const struct _task_struct *parent);

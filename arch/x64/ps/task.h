@@ -17,14 +17,10 @@ typedef struct {
 } __attribute__((packed)) tss_io_struct;
 #define TSS_SEG_LIMIT (sizeof(tss_io_struct) - 1)
 _Static_assert(sizeof(tss_struct) == 104, "IA-32e TSS size");
-typedef volatile struct {
-	/* cs stores the executable user code selector after exec. */
-	uint16_t ds, ss, es, gs, fs, cs;
-	uintptr_t edi, esi, edx, ecx, ebx, eax, ebp;
-	uintptr_t eip, esp0, esp;
-	uintptr_t r12, r13, r14, r15;
+typedef struct {
+	uint16_t cs, gs;
 	uintptr_t fs_base, gs_base;
-} task_frame;
+} task_arch_context;
 
 /* Stopped register image used by IA-32 and AMD64 ptrace layouts. */
 typedef struct _ptrace_saved_frame {
@@ -42,7 +38,8 @@ typedef struct _ptrace_saved_frame {
 
 /* Keep architecture task pointers width-neutral at common call sites. */
 
-void arch_task_init_switch_frame(struct _task_struct *task);
+void arch_task_init_switch_frame(struct _task_struct *task, uintptr_t ip,
+				 uintptr_t sp);
 void arch_task_init(struct _task_struct *task);
 void arch_task_copy_user_context(struct _task_struct *child,
 				 const struct _task_struct *parent);

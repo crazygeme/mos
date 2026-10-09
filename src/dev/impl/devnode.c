@@ -38,7 +38,7 @@ typedef struct cdev_entry {
 	const char *name;
 	file *(*open)(super_block *sb, unsigned rdev, int flag);
 	struct rb_node major_node;
-	struct cdev_entry *major_next, **major_tail;
+	list_entry major_ranges;
 } cdev_entry;
 
 static cdev_entry cdev_table[MAX_CDEVS];
@@ -96,12 +96,12 @@ void cdev_register_named(unsigned mode_type, unsigned major,
 		parent = *link;
 		link = order < 0 ? &parent->rb_left : &parent->rb_right;
 	}
+	list_init(&entry->major_ranges);
 	if (head) {
-		*head->major_tail = entry;
-		head->major_tail = &entry->major_next;
+		list_insert_tail(&head->major_ranges, &entry->major_ranges);
+		RB_CLEAR_NODE(&entry->major_node);
 		return;
 	}
-	entry->major_tail = &entry->major_next;
 	rb_init_node(&entry->major_node);
 	rb_link_node(&entry->major_node, parent, link);
 	rb_insert_color(&entry->major_node, &cdev_majors);
@@ -113,7 +113,7 @@ void cdev_for_each_major(cdev_major_iter_fn fn, void *data)
 	if (!fn)
 		return;
 	for (i = 0; i < cdev_count; i++)
-		if (cdev_table[i].major_tail)
+		if (!RB_EMPTY_NODE(&cdev_table[i].major_node))
 			fn(cdev_table[i].mode_type, cdev_table[i].major,
 			   cdev_table[i].name, data);
 }
@@ -238,8 +238,8 @@ static ssize_t fifonode_write(file *fp, const void *buf, size_t len,
 				    -EPIPE;
 	if (!ret && nonblock && cyb_reader_count(b))
 		ret = -EAGAIN;
-	if (ret == -EPIPE && current->type == ps_user)
-		ps_send_signal(current->psid, SIGPIPE);
+	if (ret == -EPIPE && current->life->type == ps_user)
+		ps_send_signal(current->life->psid, SIGPIPE);
 	return ret;
 }
 
@@ -335,7 +335,11 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 	unsigned minor = MINOR(dn->rdev);
 	cdev_entry *e;
 
-	for (e = cdev_find_major(mt, major); e; e = e->major_next) {
+	cdev_entry *head = cdev_find_major(mt, major);
+	if (!head)
+		return devnode_open_stub(sb, dn->mode);
+	e = head;
+	do {
 		if (e->open && minor >= e->minor_base &&
 		    minor < e->minor_base + e->minor_count) {
 			fp = e->open(sb, dn->rdev, flag);
@@ -343,8 +347,8 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 				return devnode_open_stub(sb, dn->mode);
 			return fp;
 		}
-	}
-
+	} while ((e = container_of(e->major_ranges.next, cdev_entry,
+				   major_ranges)) != head);
 	return devnode_open_stub(sb, dn->mode);
 }
 
@@ -407,9 +411,9 @@ super_block *devnode_create(unsigned mode, unsigned rdev)
 
 	dn->mode = mode;
 	dn->rdev = rdev;
-	if (cur && cur->user) {
-		dn->uid = cur->user->euid;
-		dn->gid = cur->user->egid;
+	if (cur && cur->execution) {
+		dn->uid = cur->credentials->euid;
+		dn->gid = cur->credentials->egid;
 	}
 	if (S_ISFIFO(mode))
 		dn->fifo = cyb_create_named(0);

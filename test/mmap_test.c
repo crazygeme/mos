@@ -26,7 +26,7 @@
 
 static vm_struct_t cur_vm(void)
 {
-	return current->user->vm;
+	return current->memory;
 }
 
 KTEST(mmap, direct_ram_alias)
@@ -277,8 +277,7 @@ KTEST(mmap, sparse_clone_teardown)
 {
 	const vaddr_t base = TEST_FIXED_ADDR;
 	const unsigned indexes[] = { 0, 127, 1023 };
-	user_enviroment user = { 0 };
-	task_struct child = { .user = &user };
+	task_struct child = { 0 };
 	pfn_t pages[3];
 	unsigned references[3];
 	int ret;
@@ -292,18 +291,18 @@ KTEST(mmap, sparse_clone_teardown)
 		pages[i] = PHY_TO_PAGE_IDX(mm_virt_to_phys(address));
 		references[i] = phymm_pages[pages[i]].ref_count;
 	}
-	user.vm = vm_create();
-	ASSERT_NE(user.vm, NULL);
-	user.vm->page_dir = vm_alloc(1);
-	ASSERT_NE(user.vm->page_dir, 0);
-	vm_set_page_dir(user.vm, user.vm->page_dir);
+	child.memory = vm_create();
+	ASSERT_NE(child.memory, NULL);
+	child.memory->page_dir = vm_alloc(1);
+	ASSERT_NE(child.memory->page_dir, 0);
+	vm_set_page_dir(child.memory, child.memory->page_dir);
 	ret = copy_page_range(current, &child);
 	EXPECT_EQ(ret, 0);
 	if (!ret)
 		for (unsigned i = 0; i < 3; i++)
 			EXPECT_EQ(phymm_pages[pages[i]].ref_count,
 				  references[i] + 1);
-	vm_put(user.vm);
+	ref_count_put(child.memory);
 	for (unsigned i = 0; i < 3; i++)
 		EXPECT_EQ(phymm_pages[pages[i]].ref_count, references[i]);
 	do_munmap((void *)base, 1024 * PAGE_SIZE);

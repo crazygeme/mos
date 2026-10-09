@@ -36,7 +36,7 @@ static void robust_release_futex(task_struct *task, uintptr_t entry,
 		return;
 	addr = entry + offset;
 	if (robust_read(task, addr, &value, sizeof(value)) != 0 ||
-	    (value & FUTEX_TID_MASK) != task->psid)
+	    (value & FUTEX_TID_MASK) != task->life->psid)
 		return;
 	owner_died = (value & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
 	if (ps_write_process_memory(task, (void *)(uintptr_t)addr, &owner_died,
@@ -44,26 +44,28 @@ static void robust_release_futex(task_struct *task, uintptr_t entry,
 		return;
 	if (value & FUTEX_WAITERS) {
 		spinlock_lock(&ps_lock, &irq);
-		ps_futex_wake_locked(task->user, (int *)(uintptr_t)addr, 1);
+		ps_futex_wake_locked(task->memory, (int *)(uintptr_t)addr, 1);
 		spinlock_unlock(&ps_lock, irq);
 	}
 }
 
 void ps_release_robust_list(task_struct *task)
 {
-	uintptr_t base = (uintptr_t)task->robust_list_head, entry, next,
-		  pending;
+	uintptr_t base = (uintptr_t)task->execution->robust_list_head, entry,
+		  next, pending;
 	intptr_t offset;
-	if (!base || !task->robust_list_reader)
+	if (!base || !task->execution->robust_list_reader)
 		return;
-	if (task->robust_list_reader(task, base, &entry, &offset, &pending))
+	if (task->execution->robust_list_reader(task, base, &entry, &offset,
+						&pending))
 		return;
 	entry &= ~(uintptr_t)1;
 	pending &= ~(uintptr_t)1;
 	for (unsigned count = 0;
 	     entry && entry != base && count < ROBUST_LIST_LIMIT; count++) {
 		next = 0;
-		if (task->robust_list_reader(task, entry, &next, NULL, NULL))
+		if (task->execution->robust_list_reader(task, entry, &next,
+							NULL, NULL))
 			break;
 		if (entry != pending)
 			robust_release_futex(task, entry, offset);
@@ -71,7 +73,7 @@ void ps_release_robust_list(task_struct *task)
 	}
 	if (pending)
 		robust_release_futex(task, pending, offset);
-	task->robust_list_head = NULL;
+	task->execution->robust_list_head = NULL;
 }
 
 typedef struct futex_key {
@@ -83,10 +85,10 @@ typedef struct futex_key {
 } futex_key;
 
 /* Shared mappings use backing-object offsets, independent of virtual address. */
-static int futex_get_key(user_enviroment *user, int *uaddr, int private,
+static int futex_get_key(task_memory *user, int *uaddr, int private,
 			 futex_key *key)
 {
-	vm_struct_t vm = user->vm;
+	vm_struct_t vm = user;
 	struct rb_node *node;
 	vm_region *region = NULL;
 	uintptr_t addr = (uintptr_t)uaddr;
@@ -197,10 +199,10 @@ static int futex_wake_mask_locked(const futex_key *key, int max_wake,
 	return n;
 }
 
-int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake)
+int ps_futex_wake_locked(task_memory *user, int *uaddr, int max_wake)
 {
 	futex_key key = { 0 };
-	key.identity = user->vm;
+	key.identity = user;
 	key.offset = (uintptr_t)uaddr;
 	return futex_wake_mask_locked(&key, max_wake, ~0U);
 }
@@ -222,28 +224,33 @@ void ps_clear_child_tid(task_struct *task)
 	int irq;
 	vm_region *region;
 
-	if (!task->clear_child_tid)
+	if (!task->execution->clear_child_tid)
 		return;
 
-	region = task->user->vm ?
-			 vm_find_map_cached(task->user,
-					    (uintptr_t)task->clear_child_tid) :
+	region = task->memory ?
+			 vm_find_map_cached(
+				 task,
+				 (uintptr_t)task->execution->clear_child_tid) :
 			 NULL;
-	if (region && region->begin <= (uintptr_t)task->clear_child_tid &&
-	    (uintptr_t)task->clear_child_tid + sizeof(int) <= region->end &&
+	if (region &&
+	    region->begin <= (uintptr_t)task->execution->clear_child_tid &&
+	    (uintptr_t)task->execution->clear_child_tid + sizeof(int) <=
+		    region->end &&
 	    (region->prot & PROT_WRITE)) {
 		int zero = 0;
-		if (ps_write_process_memory(task, task->clear_child_tid, &zero,
-					    sizeof(zero)) < 0) {
-			task->clear_child_tid = NULL;
+		if (ps_write_process_memory(task,
+					    task->execution->clear_child_tid,
+					    &zero, sizeof(zero)) < 0) {
+			task->execution->clear_child_tid = NULL;
 			return;
 		}
 		spinlock_lock(&ps_lock, &irq);
-		ps_futex_wake_locked(task->user, task->clear_child_tid, 1);
+		ps_futex_wake_locked(task->memory,
+				     task->execution->clear_child_tid, 1);
 		spinlock_unlock(&ps_lock, irq);
 	}
 
-	task->clear_child_tid = NULL;
+	task->execution->clear_child_tid = NULL;
 }
 
 static int futex_execute(int *uaddr, int op, int val, const void *timeout,
@@ -358,7 +365,7 @@ wait_again:
 		if (timeout_ms > 0)
 			timer_arm_unsafe(cur, timeout_ms);
 		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
-		cur->wait_interruptible = 1;
+		cur->wait->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 
 		task_sched();
@@ -408,15 +415,16 @@ static int futex_common(int *uaddr, int op, int val, const void *timeout,
 	if (cmd != FUTEX_WAIT && cmd != FUTEX_WAIT_BITSET &&
 	    cmd != FUTEX_WAKE && cmd != FUTEX_WAKE_BITSET)
 		return -ENOSYS;
-	result = futex_get_key(cur->user, uaddr, op & FUTEX_PRIVATE_FLAG, &key);
+	result = futex_get_key(cur->memory, uaddr, op & FUTEX_PRIVATE_FLAG,
+			       &key);
 	if (result < 0)
 		return result;
-	cur->cancel_io_wait = futex_release_key;
-	cur->io_wait = &key;
+	cur->wait->cancel_io_wait = futex_release_key;
+	cur->wait->io_wait = &key;
 	result = futex_execute(uaddr, op, val, timeout, uaddr2, val3, time64,
 			       &key);
-	cur->cancel_io_wait = NULL;
-	cur->io_wait = NULL;
+	cur->wait->cancel_io_wait = NULL;
+	cur->wait->io_wait = NULL;
 	futex_release_key(&key);
 	return result;
 }

@@ -22,6 +22,7 @@
 #include <fs/mount.h>
 #include <proc/proc.h>
 #include <ps/ps.h>
+#include <mm/mmap.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <device/time.h>
@@ -50,9 +51,9 @@ typedef struct {
 static void proc_collect_pid(task_struct *task, void *ctx)
 {
 	pid_ctx_t *c = (pid_ctx_t *)ctx;
-	if (task->psid != 0xffffffff && task->type != ps_kernel &&
-	    task->psid == task->tgid && c->count < PROC_MAX_PIDS)
-		c->list[c->count++] = task->psid;
+	if (task->life->psid != 0xffffffff && task->life->type != ps_kernel &&
+	    task->life->psid == task->thread->tgid && c->count < PROC_MAX_PIDS)
+		c->list[c->count++] = task->life->psid;
 }
 
 /* ------------------------------------------------------------------ *
@@ -252,7 +253,7 @@ static file *proc_open(super_block *sb, const char *path, int flag)
 
 	/* /self or /self/... */
 	if (strncmp(p, "self", 4) == 0 && (p[4] == '/' || p[4] == '\0')) {
-		pid = current->tgid;
+		pid = current->thread->tgid;
 		rest = p + 4; /* "" or "/status" etc. */
 		return proc_pid_lookup(pid, rest, flag);
 	}
@@ -294,7 +295,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	p++;
 
 	if (strncmp(p, "self", 4) == 0 && p[4] == '/') {
-		pid = current->tgid;
+		pid = current->thread->tgid;
 		p += 4;
 	} else if (*p >= '0' && *p <= '9') {
 		pid = 0;
@@ -311,16 +312,16 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	if (!task)
 		return -ENOENT;
 	if (strcmp(p, "/exe") == 0) {
-		if (!task->user || !task->user->executable ||
-		    !task->user->executable->f_name)
+		if (!task->execution || !task->memory->executable ||
+		    !task->memory->executable->f_name)
 			return -ENOENT;
-		fname = task->user->executable->f_name;
+		fname = task->memory->executable->f_name;
 		goto copy_target;
 	}
 	if (strcmp(p, "/cwd") == 0) {
-		if (!task->user || !task->user->cwd)
+		if (!task->execution || !task->fs->cwd)
 			return -1;
-		fname = task->user->cwd;
+		fname = task->fs->cwd;
 		goto copy_target;
 	}
 
@@ -334,13 +335,13 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	if (*p != '\0')
 		return -1;
 
-	if (!task->fds)
+	if (!task->files)
 		return -1;
-	if (fdno >= MAX_FD || !task->fds[fdno])
+	if (fdno >= MAX_FD || !task->files->fds[fdno])
 		return -1;
 
-	fname = (task->fds[fdno] && task->fds[fdno]->f_name) ?
-			task->fds[fdno]->f_name :
+	fname = (task->files->fds[fdno] && task->files->fds[fdno]->f_name) ?
+			task->files->fds[fdno]->f_name :
 			NULL;
 	if (!fname || !fname[0]) {
 		sprintf(anon, "pipe:[%d]", fdno);

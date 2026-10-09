@@ -10,8 +10,9 @@ typedef struct {
 
 static int task_group_member(task_struct *task, unsigned tgid)
 {
-	return task->tgid == tgid && task->type != ps_kernel &&
-	       task->psid != 0xffffffff && task->status != ps_dying;
+	return task->thread->tgid == tgid && task->life->type != ps_kernel &&
+	       task->life->psid != 0xffffffff &&
+	       task->sched->status != ps_dying;
 }
 
 static void count_thread(task_struct *task, void *opaque)
@@ -49,14 +50,15 @@ static void list_thread(task_struct *task, void *opaque)
 	char name[12];
 	if (!task_group_member(task, directory->tgid))
 		return;
-	sprintf(name, "%u", task->psid);
+	sprintf(name, "%u", task->life->psid);
 	task_directory_entry(directory->buffer, name);
 }
 
 file *pid_task_dir_open(task_struct *task)
 {
 	proc_buf_t *buffer = proc_buf_new();
-	task_directory directory = { .tgid = task->tgid, .buffer = buffer };
+	task_directory directory = { .tgid = task->thread->tgid,
+				     .buffer = buffer };
 	task_directory_entry(buffer, ".");
 	task_directory_entry(buffer, "..");
 	ps_enum_all(list_thread, &directory);
@@ -83,7 +85,7 @@ task_struct *proc_resolve_thread(task_struct *task, const char **rest)
 	if (*path && *path != '/')
 		return NULL;
 	thread = ps_find_process(tid);
-	if (!thread || !task_group_member(thread, task->tgid))
+	if (!thread || !task_group_member(thread, task->thread->tgid))
 		return NULL;
 	*rest = path;
 	return thread;

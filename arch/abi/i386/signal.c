@@ -89,7 +89,6 @@ typedef struct _rt_signal_frame {
 int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 {
 	task_struct *cur = CURRENT_TASK();
-	struct sigaction *sa;
 
 	if (sig <= 0 || sig >= NSIG)
 		return -EINVAL;
@@ -98,22 +97,25 @@ int sys_rt_sigaction(int sig, void *act, void *oact, unsigned sigsetsize)
 	if (sigsetsize != 8)
 		return -EINVAL;
 
-	sa = &cur->signal->sig_handlers[sig];
-
-	if (oact) {
-		struct rt_sigaction_user *u = (struct rt_sigaction_user *)oact;
-		u->sa_handler = (uint32_t)(uintptr_t)sa->sa_handler;
-		u->sa_flags = sa->sa_flags;
-		u->sa_restorer = (uint32_t)(uintptr_t)sa->sa_restorer;
-		u->sa_mask[0] = sa->sa_mask;
-		u->sa_mask[1] = 0;
-	}
+	struct sigaction action, old_action;
 	if (act) {
-		struct rt_sigaction_user *u = (struct rt_sigaction_user *)act;
-		sa->sa_handler = (void *)(uintptr_t)u->sa_handler;
-		sa->sa_flags = u->sa_flags;
-		sa->sa_restorer = (void *)(uintptr_t)u->sa_restorer;
-		sa->sa_mask = (unsigned long)u->sa_mask[0];
+		struct rt_sigaction_user u = *(struct rt_sigaction_user *)act;
+		action = (struct sigaction){
+			.sa_handler = (void *)(uintptr_t)u.sa_handler,
+			.sa_flags = u.sa_flags,
+			.sa_restorer = (void *)(uintptr_t)u.sa_restorer,
+			.sa_mask = u.sa_mask[0]
+		};
+	}
+	ps_signal_action(cur, sig, act ? &action : NULL,
+			 oact ? &old_action : NULL);
+	if (oact) {
+		struct rt_sigaction_user *u = oact;
+		u->sa_handler = (uint32_t)(uintptr_t)old_action.sa_handler;
+		u->sa_flags = old_action.sa_flags;
+		u->sa_restorer = (uint32_t)(uintptr_t)old_action.sa_restorer;
+		u->sa_mask[0] = old_action.sa_mask;
+		u->sa_mask[1] = 0;
 	}
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -277,7 +279,11 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 	rt_sf->info.si_signo = sig;
 	if (fault) {
 		rt_sf->info.si_code = fault->code;
-		rt_sf->info._pad[0] = (uint32_t)fault->address;
+		if (fault->code == -2) {
+			rt_sf->info._pad[0] = fault->timer_id;
+			rt_sf->info._pad[2] = (uint32_t)fault->value;
+		} else
+			rt_sf->info._pad[0] = (uint32_t)fault->address;
 	}
 	rt_sf->uc.uc_flags = 0;
 	rt_sf->uc.uc_link = NULL;
@@ -381,8 +387,6 @@ void i386_signal_deliver(task_struct *cur, intr_frame *frame,
 	cur->signal->sig_mask |= sa->sa_mask;
 
 	handler = sa->sa_handler;
-	if (sa->sa_flags & SA_RESETHAND)
-		sa->sa_handler = SIG_DFL;
 
 	frame->eip = (void *)handler;
 	frame->esp = (void *)new_esp;

@@ -3,8 +3,7 @@
 #include <macro.h>
 #include <errno.h>
 
-static device_t *devices;
-static device_t **device_tail = &devices;
+static list_entry devices = { &devices, &devices };
 static unsigned boot_vga;
 static struct rb_root device_addresses = _RBTREE_ROOT_INIT;
 
@@ -31,7 +30,16 @@ const device_t *device_find(device_bus_t bus, uint32_t address)
 
 const device_t *device_first(void)
 {
-	return devices;
+	return list_is_empty(&devices) ?
+		       NULL :
+		       container_of(devices.next, device_t, list);
+}
+
+const device_t *device_next(const device_t *device)
+{
+	return device->list.next == &devices ?
+		       NULL :
+		       container_of(device->list.next, device_t, list);
 }
 
 void device_probe(device_t *device)
@@ -60,9 +68,7 @@ void device_register(device_t *device)
 	rb_init_node(&device->address_node);
 	rb_link_node(&device->address_node, parent, link);
 	rb_insert_color(&device->address_node, &device_addresses);
-	device->next = 0;
-	*device_tail = device;
-	device_tail = &device->next;
+	list_insert_tail(&devices, &device->list);
 	if (device->bus == DEVICE_BUS_PCI && !boot_vga &&
 	    device->type == 0x0300)
 		device->boot_vga = boot_vga = 1;
@@ -79,7 +85,8 @@ void device_register(device_t *device)
 static void devices_init(void)
 {
 	device_t *device;
-	for (device = devices; device; device = device->next)
+	for (device = (device_t *)device_first(); device;
+	     device = (device_t *)device_next(device))
 		device_probe(device);
 }
 

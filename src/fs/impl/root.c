@@ -250,8 +250,8 @@ static int ext4_file_flush(file *fp)
 	if (!path)
 		return 0;
 
-	if (CURRENT_TASK() && current->user)
-		vm_flush_file_dirty(current->user->vm, fp);
+	if (CURRENT_TASK() && current->fs)
+		vm_flush_file_dirty(current->memory, fp);
 
 	/*
 	 * rw lwext4 mounts keep delayed write-back enabled. Toggle it off once
@@ -668,8 +668,8 @@ static file *ext4_path_open(const char *path, int flag, char **target_path)
 	struct ext4_inline_link inline_link;
 	ext4_file *f = NULL;
 	ext4_dir *dir = NULL;
-	unsigned uid = current->user->uid;
-	unsigned gid = current->user->gid;
+	unsigned uid = current->credentials->uid;
+	unsigned gid = current->credentials->gid;
 	char *pre_res = NULL; /* buffer for intermediate symlink resolution */
 	char *resolved =
 		NULL; /* absolute path of the current final component */
@@ -1114,8 +1114,8 @@ static int ext4_parent_dir_check(const char *full)
 static int ext4_mkdir(super_block *sb, const char *path, unsigned mode)
 {
 	char *full = name_get();
-	unsigned uid = current->user->uid;
-	unsigned gid = current->user->gid;
+	unsigned uid = current->credentials->uid;
+	unsigned gid = current->credentials->gid;
 	int ret;
 	ext4_dir *dir = zalloc(sizeof(*dir));
 	if (!dir || !full) {
@@ -1277,8 +1277,8 @@ static int ext4_link(super_block *sb, const char *oldpath, const char *newpath)
 {
 	char *full1 = name_get();
 	char *full2 = name_get();
-	unsigned uid = current->user->uid;
-	unsigned gid = current->user->gid;
+	unsigned uid = current->credentials->uid;
+	unsigned gid = current->credentials->gid;
 	int ret;
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
@@ -1296,8 +1296,8 @@ static int ext4_symlink_op(super_block *sb, const char *target,
 			   const char *linkpath)
 {
 	char *full = name_get();
-	unsigned uid = current->user->uid;
-	unsigned gid = current->user->gid;
+	unsigned uid = current->credentials->uid;
+	unsigned gid = current->credentials->gid;
 	int ret;
 	ext4_full_path(sb, linkpath, full);
 	ret = ext4_fsymlink(target, full);
@@ -1316,8 +1316,8 @@ static int ext4_rename(super_block *sb, const char *oldpath,
 {
 	char *full1 = name_get();
 	char *full2 = name_get();
-	unsigned uid = current->user->uid;
-	unsigned gid = current->user->gid;
+	unsigned uid = current->credentials->uid;
+	unsigned gid = current->credentials->gid;
 	int ret;
 	ext4_full_path(sb, oldpath, full1);
 	ext4_full_path(sb, newpath, full2);
@@ -1614,17 +1614,18 @@ static void fs_mount_root(void)
 	devname = rootdev.name;
 
 	printk("mnt: Mount rootfs (ro)\n");
-	cur->root = ext4_get(devname);
+	cur->fs->root = ext4_get(devname);
 	/* bdev already registered by found_partition at discovery time */
 	ext4_mount(devname, "/", true); /* read-only until init remounts rw */
 	ext4_mount_setup_locks("/", &root_lock);
 
 	/* Populate root sb metadata for /proc/mounts. */
-	sprintf(cur->root->s_devname, "/dev/%s", devname);
-	strncpy(cur->root->s_fstype, "ext3", sizeof(cur->root->s_fstype) - 1);
-	strncpy(cur->root->s_mountpoint, "/",
-		sizeof(cur->root->s_mountpoint) - 1);
-	cur->root->s_flags = MS_RDONLY;
+	sprintf(cur->fs->root->s_devname, "/dev/%s", devname);
+	strncpy(cur->fs->root->s_fstype, "ext3",
+		sizeof(cur->fs->root->s_fstype) - 1);
+	strncpy(cur->fs->root->s_mountpoint, "/",
+		sizeof(cur->fs->root->s_mountpoint) - 1);
+	cur->fs->root->s_flags = MS_RDONLY;
 }
 
 static void ext_fs_type_init()

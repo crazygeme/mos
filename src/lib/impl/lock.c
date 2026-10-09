@@ -98,7 +98,7 @@ static int lock_wake_one_locked(list_entry *wait_list)
 		return 0;
 
 	entry = list_remove_head(wait_list);
-	task = container_of(entry, task_struct, ps_list);
+	task = (container_of(entry, task_schedule, ps_list)->task);
 	ps_put_to_ready_queue(task);
 	return 1;
 }
@@ -257,7 +257,7 @@ void _mutex_lock(mutex_t *m, const char *func)
 {
 	task_struct *cur = CURRENT_TASK();
 	lock_base_acquire((lock_base *)&m->base, func);
-	__atomic_store_n(&m->holder, cur->psid, __ATOMIC_RELAXED);
+	__atomic_store_n(&m->holder, cur->life->psid, __ATOMIC_RELAXED);
 	m->holder_func = func;
 }
 
@@ -265,7 +265,7 @@ void mutex_unlock(mutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (m->holder != cur->psid)
+	if (m->holder != cur->life->psid)
 		DIE();
 
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
@@ -292,13 +292,13 @@ void _rmutex_lock(rmutex_t *m, const char *func)
 	task_struct *cur = CURRENT_TASK();
 
 	/* Re-entrant: same task locks again, just deepen. */
-	if (__atomic_load_n(&m->holder, __ATOMIC_RELAXED) == cur->psid) {
+	if (__atomic_load_n(&m->holder, __ATOMIC_RELAXED) == cur->life->psid) {
 		m->depth++;
 		return;
 	}
 
 	lock_base_acquire((lock_base *)&m->base, func);
-	__atomic_store_n(&m->holder, cur->psid, __ATOMIC_RELAXED);
+	__atomic_store_n(&m->holder, cur->life->psid, __ATOMIC_RELAXED);
 	m->depth = 1;
 	m->holder_func = func;
 }
@@ -307,7 +307,7 @@ void rmutex_unlock(rmutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (m->holder != cur->psid)
+	if (m->holder != cur->life->psid)
 		DIE();
 
 	if (--m->depth > 0)
@@ -520,7 +520,7 @@ void vm_lock_enter(rmutex_t *lock, const char *func)
 {
 	unsigned irq = int_intr_disable();
 	_rmutex_lock(lock, func);
-	__sync_fetch_and_add(&current->vm_lock_depth, 1);
+	__sync_fetch_and_add(&current->sched->vm_lock_depth, 1);
 	int_intr_setlevel(irq);
 }
 
@@ -528,7 +528,7 @@ void vm_lock_leave(rmutex_t *lock)
 {
 	unsigned irq = int_intr_disable();
 	rmutex_unlock(lock);
-	__sync_fetch_and_sub(&current->vm_lock_depth, 1);
+	__sync_fetch_and_sub(&current->sched->vm_lock_depth, 1);
 	int_intr_setlevel(irq);
 }
 

@@ -77,7 +77,7 @@ int syscall_resolve_at(int dirfd, const char *path, char *name)
 		return resolve_path(path, name) == 0 ? 0 : -ENAMETOOLONG;
 	if (dirfd == AT_FDCWD)
 		return resolve_path(path, name) == 0 ? 0 : -ENAMETOOLONG;
-	if (dirfd < 0 || dirfd >= MAX_FD || !(fp = current->fds[dirfd]))
+	if (dirfd < 0 || dirfd >= MAX_FD || !(fp = current->files->fds[dirfd]))
 		return -EBADF;
 	if (fs_fstat(dirfd, &st) != 0 || !S_ISDIR(st.st_mode))
 		return -ENOTDIR;
@@ -150,8 +150,9 @@ static int rooted_path_to_cwd(task_struct *cur, const char *path, char *cwd)
 	const char *root_path = "/";
 	int root_len;
 
-	if (cur && cur->user && cur->user->root_path && cur->user->root_path[0])
-		root_path = cur->user->root_path;
+	if (cur && cur->execution && cur->fs->root_path &&
+	    cur->fs->root_path[0])
+		root_path = cur->fs->root_path;
 
 	if (!strcmp(root_path, "/")) {
 		strcpy(cwd, path);
@@ -452,7 +453,8 @@ static int statfs_path(const char *path, struct statfs64 *buf)
 		name_put(name);
 		return -ENOENT;
 	}
-	ret = vfs_statfs(current->root, fp->f_name ? fp->f_name : name, buf);
+	ret = vfs_statfs(current->fs->root, fp->f_name ? fp->f_name : name,
+			 buf);
 	fs_put_file(fp);
 	name_put(name);
 	return ret;
@@ -467,13 +469,13 @@ static int statfs_fd(int fd, struct statfs64 *buf)
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (fp)
 		fs_get_file(fp);
 	mutex_unlock(&cur->files->lock);
 	if (!fp)
 		return -EBADF;
-	ret = fp->f_name ? vfs_statfs(cur->root, fp->f_name, buf) : -ENOSYS;
+	ret = fp->f_name ? vfs_statfs(cur->fs->root, fp->f_name, buf) : -ENOSYS;
 	fs_put_file(fp);
 	return ret;
 }
@@ -572,12 +574,13 @@ int sys_faccessat2(int dirfd, const char *path, int mode, int flags)
 	ret = stat_at(dirfd, path, flags, &st);
 	if (ret || mode == F_OK)
 		return ret;
-	if (!cur->user)
+	if (!cur->execution)
 		return 0;
 	if (flags & AT_EACCESS)
-		return fs_check_perm_ids(&st, mode, cur->user->euid,
-					 cur->user->egid);
-	return fs_check_perm_ids(&st, mode, cur->user->uid, cur->user->gid);
+		return fs_check_perm_ids(&st, mode, cur->credentials->euid,
+					 cur->credentials->egid);
+	return fs_check_perm_ids(&st, mode, cur->credentials->uid,
+				 cur->credentials->gid);
 }
 
 int sys_faccessat(int dirfd, const char *path, int mode)
@@ -680,7 +683,7 @@ int sys_mknod(const char *_path, unsigned mode, unsigned dev)
 	int ret;
 
 	resolve_path(_path, path);
-	ret = vfs_mknod(cur->root, path, mode, dev);
+	ret = vfs_mknod(cur->fs->root, path, mode, dev);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mknod(%s, %o, %x) = %d\n", _path, mode, dev, ret);
@@ -695,7 +698,7 @@ int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev)
 	int ret = syscall_resolve_at(dirfd, path, name);
 
 	if (ret == 0)
-		ret = vfs_mknod(current->root, name, mode, dev);
+		ret = vfs_mknod(current->fs->root, name, mode, dev);
 	name_put(name);
 	return ret;
 }
@@ -708,8 +711,8 @@ int sys_mkdir(const char *path, unsigned mode)
 	unsigned masked_mode;
 
 	resolve_path(path, name);
-	masked_mode = mode & ~(cur->umask & 0777U);
-	ret = vfs_mkdir(cur->root, name, masked_mode);
+	masked_mode = mode & ~(cur->fs->umask & 0777U);
+	ret = vfs_mkdir(cur->fs->root, name, masked_mode);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mkdir(%s, %d) = %d\n", name, mode, ret);
@@ -724,8 +727,8 @@ int sys_mkdirat(int dirfd, const char *path, unsigned mode)
 	int ret = syscall_resolve_at(dirfd, path, name);
 
 	if (ret == 0)
-		ret = vfs_mkdir(current->root, name,
-				mode & ~(current->umask & 0777U));
+		ret = vfs_mkdir(current->fs->root, name,
+				mode & ~(current->fs->umask & 0777U));
 	name_put(name);
 	return ret;
 }
@@ -737,7 +740,7 @@ int sys_rmdir(const char *path)
 	int ret;
 
 	resolve_path(path, name);
-	ret = vfs_rmdir(cur->root, name);
+	ret = vfs_rmdir(cur->fs->root, name);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("rmdir(%s) = %d\n", name, ret);
@@ -760,7 +763,7 @@ int sys_link(const char *path1, const char *path2)
 
 	resolve_path(path1, name1);
 	resolve_path(path2, name2);
-	ret = vfs_link(cur->root, name1, name2);
+	ret = vfs_link(cur->fs->root, name1, name2);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("link(%s, %s) = %d\n", name1, name2, ret);
@@ -786,7 +789,7 @@ int sys_symlinkat(const char *target, int dirfd, const char *linkpath)
 	ret = syscall_resolve_at(dirfd, linkpath, name);
 	/* The target is stored verbatim, including relative path components. */
 	if (ret == 0)
-		ret = vfs_symlink(CURRENT_TASK()->root, target, name);
+		ret = vfs_symlink(CURRENT_TASK()->fs->root, target, name);
 	name_put(name);
 	return ret;
 }
@@ -817,7 +820,7 @@ static int unlink_resolved(const char *name)
 	if (S_ISFIFO(s.st_mode)) {
 		/* Named FIFOs created by vfs_mknod are mounted devnodes. Open
 		 * files retain the superblock after its pathname is detached. */
-		ret = vfs_umount(cur->root, name);
+		ret = vfs_umount(cur->fs->root, name);
 		if (ret != -ENOENT)
 			goto done;
 		/* A filesystem-backed FIFO still uses the normal unlink path. */
@@ -825,7 +828,7 @@ static int unlink_resolved(const char *name)
 
 	if (S_ISSOCK(s.st_mode)) {
 		unix_ns_remove_path(name);
-		ret = vfs_umount(cur->root, name);
+		ret = vfs_umount(cur->fs->root, name);
 		if (ret != -ENOENT)
 			goto done;
 		/*
@@ -835,7 +838,7 @@ static int unlink_resolved(const char *name)
 		 */
 	}
 
-	ret = vfs_unlink(cur->root, name);
+	ret = vfs_unlink(cur->fs->root, name);
 done:
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("unlink(%s) = %d\n", name, ret);
@@ -862,8 +865,9 @@ int sys_unlinkat(int dirfd, const char *path, int flags)
 	name = name_get();
 	ret = syscall_resolve_at(dirfd, path, name);
 	if (!ret)
-		ret = (flags & AT_REMOVEDIR) ? vfs_rmdir(current->root, name) :
-					       unlink_resolved(name);
+		ret = (flags & AT_REMOVEDIR) ?
+			      vfs_rmdir(current->fs->root, name) :
+			      unlink_resolved(name);
 	name_put(name);
 	return ret;
 }
@@ -892,7 +896,7 @@ int sys_utime(const char *filename, const struct utimbuf *times)
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("utime(%s, atime=%u mtime=%u)\n", name, atime, mtime);
 
-	ret = vfs_utime(cur->root, name, atime, mtime);
+	ret = vfs_utime(cur->fs->root, name, atime, mtime);
 	name_put(name);
 	return ret;
 }
@@ -908,7 +912,7 @@ int sys_renameat(int olddirfd, const char *oldpath, int newdirfd,
 	if (ret == 0)
 		ret = syscall_resolve_at(newdirfd, newpath, name2);
 	if (ret == 0)
-		ret = vfs_rename(CURRENT_TASK()->root, name1, name2);
+		ret = vfs_rename(CURRENT_TASK()->fs->root, name1, name2);
 
 	name_put(name1);
 	name_put(name2);
@@ -939,7 +943,7 @@ static int readlink_common(int dirfd, const char *path, char *buf,
 		return ret;
 	}
 
-	ret = vfs_readlink(cur->root, name, buf, bufsiz, &rcnt);
+	ret = vfs_readlink(cur->fs->root, name, buf, bufsiz, &rcnt);
 	if (TEST_LOG(TEST_LOG_INFO)) {
 		if (at)
 			klog("readlinkat(%d, %s, %x, %d) = %d\n", dirfd, name,
@@ -1011,11 +1015,11 @@ int sys_sync()
 	 * sync(2) must also push dirty MAP_SHARED pages that still live only in
 	 * the caller's VM mappings before flushing filesystem/device caches.
 	 */
-	if (cur && cur->user && cur->user->vm)
-		vm_flush_all_dirty(cur->user->vm);
+	if (cur && cur->execution && cur->memory)
+		vm_flush_all_dirty(cur->memory);
 
-	if (cur && cur->root)
-		fs_sync_super(cur->root);
+	if (cur && cur->fs->root)
+		fs_sync_super(cur->fs->root);
 	hdd_flush();
 	return 0;
 }
@@ -1033,7 +1037,7 @@ int sys_chdir(const char *path)
 		ret = -ENOENT;
 		goto done;
 	}
-	if (!cur || !cur->user || !cur->user->cwd) {
+	if (!cur || !cur->execution || !cur->fs->cwd) {
 		ret = -EINVAL;
 		goto done;
 	}
@@ -1047,7 +1051,9 @@ int sys_chdir(const char *path)
 		p = path + 1;
 	} else {
 		int len;
-		strcpy(cwd, cur->user->cwd);
+		rmutex_lock(&cur->fs->lock);
+		strcpy(cwd, cur->fs->cwd);
+		rmutex_unlock(&cur->fs->lock);
 		len = strlen(cwd);
 		if (!len || cwd[len - 1] != '/')
 			strcat(cwd, "/");
@@ -1103,7 +1109,9 @@ int sys_chdir(const char *path)
 	}
 
 	trim_trailing_slash(cwd);
-	strcpy(cur->user->cwd, cwd);
+	rmutex_lock(&cur->fs->lock);
+	strcpy(cur->fs->cwd, cwd);
+	rmutex_unlock(&cur->fs->lock);
 done:
 	name_put(full);
 	name_put(cwd);
@@ -1116,26 +1124,29 @@ int sys_fchdir(int fd)
 	struct stat s;
 	file *fp;
 
-	if (!cur || !cur->user || !cur->user->cwd)
+	if (!cur || !cur->execution || !cur->fs->cwd)
 		return -EINVAL;
 
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return -EBADF;
-	if (!cur->fds[fd])
+	if (!cur->files->fds[fd])
 		return -EBADF;
 	if (fs_fstat(fd, &s) != EOK)
 		return -EBADF;
 	if (!S_ISDIR(s.st_mode))
 		return -ENOTDIR;
 
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (!fp || !fp->f_name)
 		return -EBADF;
 	{
 		char *cwd = name_get();
 		int ret = rooted_path_to_cwd(cur, fp->f_name, cwd);
-		if (ret == 0)
-			strcpy(cur->user->cwd, cwd);
+		if (ret == 0) {
+			rmutex_lock(&cur->fs->lock);
+			strcpy(cur->fs->cwd, cwd);
+			rmutex_unlock(&cur->fs->lock);
+		}
 		name_put(cwd);
 		return ret;
 	}
@@ -1152,12 +1163,12 @@ int sys_chroot(const char *path)
 		ret = -ENOENT;
 		goto done;
 	}
-	if (!cur || !cur->user || !cur->user->cwd || !cur->user->root_path) {
+	if (!cur || !cur->execution || !cur->fs->cwd || !cur->fs->root_path) {
 		ret = -EINVAL;
 		goto done;
 	}
 
-	if (cur->user->euid != 0) {
+	if (cur->credentials->euid != 0) {
 		ret = -EPERM;
 		goto done;
 	}
@@ -1177,8 +1188,10 @@ int sys_chroot(const char *path)
 	}
 
 	trim_trailing_slash(name);
-	strcpy(cur->user->root_path, name[0] ? name : "/");
-	strcpy(cur->user->cwd, "/");
+	rmutex_lock(&cur->fs->lock);
+	strcpy(cur->fs->root_path, name[0] ? name : "/");
+	strcpy(cur->fs->cwd, "/");
+	rmutex_unlock(&cur->fs->lock);
 	ret = 0;
 
 done:
@@ -1200,10 +1213,10 @@ int sys_flock(int fd, int operation)
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("flock(%d, %d)\n", fd, operation);
 
-	if (fd < 0 || fd >= (int)MAX_FD || !cur->fds[fd])
+	if (fd < 0 || fd >= (int)MAX_FD || !cur->files->fds[fd])
 		return -EBADF;
 
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	in = fp->f_inode;
 
 	if (!in)

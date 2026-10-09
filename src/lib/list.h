@@ -20,9 +20,9 @@ void list_insert_head(list_entry *head, list_entry *entry);
 
 void list_insert_tail(list_entry *head, list_entry *entry);
 
-#define offset_of(type, field) (unsigned long)(&(((type *)0)->field))
+#define offset_of(type, field) __builtin_offsetof(type, field)
 
 #define container_of(node, type, field) \
-	(type *)((char *)node - offset_of(type, field))
+	((type *)((char *)(node) - offset_of(type, field)))
 
 #endif

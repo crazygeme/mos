@@ -191,7 +191,7 @@ struct _file {
 	list_entry f_notify_node;
 	unsigned f_notify_epoch;
 	struct inotify_node *f_notify;
-	struct epitem *f_ep_links;
+	list_entry f_ep_links;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
 };
 

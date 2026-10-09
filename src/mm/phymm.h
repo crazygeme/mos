@@ -1,6 +1,7 @@
 #ifndef _MM_PHYMM_H
 #define _MM_PHYMM_H
 #include <config.h>
+#include <lib/list.h>
 
 #define PHYMM_PAGE_COW 0x00000001 /* kept for legacy compat (unused) */
 #define PHYMM_PAGE_DIRTY 0x01 /* page written via MAP_SHARED mapping */
@@ -18,10 +19,7 @@
 typedef struct _phymm_page {
 	unsigned int
 		ref_count; /* 0=free, PHYMM_RESERVED=non-RAM, >0=in use      */
-	unsigned int
-		next_free; /* buddy free list: next page idx, PHYMM_INVALID   */
-	unsigned int
-		prev_free; /* buddy free list: prev page idx, PHYMM_INVALID   */
+	list_entry free_list;
 	unsigned char order; /* buddy order of this block (head page only)      */
 	unsigned char flags; /* PHYMM_PAGE_* flags                              */
 	unsigned char _pad[2];

@@ -10,11 +10,6 @@
 #define NULL (void *)0
 #endif
 
-typedef struct _kblock {
-	unsigned int size;
-	struct _kblock *next;
-} kblock;
-
 #include <stdarg.h>
 
 #define kmalloc(size) malloc(size)

@@ -263,7 +263,7 @@ static int elf_validate(elf_image *image, char *interp, const void *header,
 		if (!fp || !fp->f_fop || !fp->f_fop->getattr ||
 		    fp->f_fop->getattr(fp, &st) != 0)
 			return -ENOENT;
-		inotify_file_open(fp, current->root);
+		inotify_file_open(fp, current->fs->root);
 	}
 	if (!header) {
 		int n = elf_read(fp, 0, &wire, sizeof(wire));
@@ -442,9 +442,9 @@ vaddr_t elf_map_prepared(elf_image *image, mos_binfmt *fmt)
 	}
 	if (image->interpreter) {
 		elf_image *ld = image->interpreter;
-		vaddr_t base = vm_disc_map(CURRENT_TASK()->user->vm, ld->span);
-		if (!base || base >= CURRENT_TASK()->user->vm->task_size ||
-		    ld->span > CURRENT_TASK()->user->vm->task_size - base)
+		vaddr_t base = vm_disc_map(CURRENT_TASK()->memory, ld->span);
+		if (!base || base >= CURRENT_TASK()->memory->task_size ||
+		    ld->span > CURRENT_TASK()->memory->task_size - base)
 			return 0;
 		fmt->interp_bias = base;
 		for (i = 0; i < ld->header.e_phnum; i++) {

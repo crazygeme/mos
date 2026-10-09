@@ -301,10 +301,10 @@ static int loop_ioctl_loop_set_fd(void *context __attribute__((unused)),
 
 	if (loop_devs[minor].backing[0])
 		return -EBUSY;
-	if (img_fd < 0 || img_fd >= (int)MAX_FD || !cur->fds[img_fd])
+	if (img_fd < 0 || img_fd >= (int)MAX_FD || !cur->files->fds[img_fd])
 		return -EBADF;
 
-	img_fp = cur->fds[img_fd];
+	img_fp = cur->files->fds[img_fd];
 	fs_get_file(img_fp);
 	if (loop_attach(minor, img_fp, NULL) < 0) {
 		fs_put_file(img_fp);

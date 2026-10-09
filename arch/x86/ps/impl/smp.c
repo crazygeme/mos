@@ -163,8 +163,8 @@ void smp_tlb_flush_user(vaddr_t page_dir)
 
 void smp_check_stop(void)
 {
-	if (ps_enabled() && current->terminate_requested &&
-	    !current->vm_lock_depth) {
+	if (ps_enabled() && current->sched->terminate_requested &&
+	    !current->sched->vm_lock_depth) {
 		ps_stop_terminated_task();
 		task_sched();
 		DIE();
@@ -212,34 +212,34 @@ void smp_fpu_init(void)
 
 void smp_fpu_save(task_struct *task)
 {
-	if (!task || !task->user) {
+	if (!task || !task->execution) {
 		arch_cpu_fpu_save(clean_fpu);
 		return;
 	}
-	arch_cpu_fpu_save((void *)task->user->fpu);
+	arch_cpu_fpu_save((void *)task_fpu(task));
 }
 
 void smp_fpu_restore(task_struct *task)
 {
-	if (!task || !task->user) {
+	if (!task || !task->execution) {
 		arch_cpu_fpu_restore(clean_fpu);
 		return;
 	}
-	arch_cpu_fpu_restore((const void *)task->user->fpu);
+	arch_cpu_fpu_restore((const void *)task_fpu(task));
 }
 
 void smp_fpu_new(task_struct *task)
 {
-	if (!task || !task->user)
+	if (!task || !task->execution)
 		return;
-	memcpy(task->user->fpu, clean_fpu, sizeof(clean_fpu));
+	memcpy(task_fpu(task), clean_fpu, sizeof(clean_fpu));
 }
 
 void smp_fpu_copy(task_struct *from, task_struct *to)
 {
-	if (!from || !from->user || !to || !to->user)
+	if (!from || !from->execution || !to || !to->execution)
 		return;
-	memcpy(to->user->fpu, from->user->fpu, sizeof(clean_fpu));
+	memcpy(task_fpu(to), task_fpu(from), sizeof(clean_fpu));
 }
 
 static int checksum(const void *ptr, unsigned len)
@@ -371,6 +371,7 @@ static void ap_main(void)
 	struct smp_cpu *cpu;
 	cpu_setup();
 	cpu = arch_cpu_local();
+	ps_init_bootstrap_task();
 	time_cpu_init();
 	cpu->tlb_ack = tlb_generation;
 	__atomic_store_n(&cpu->online, 1, __ATOMIC_RELEASE);

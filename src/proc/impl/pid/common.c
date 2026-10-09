@@ -27,8 +27,8 @@ static pid_file_data *pid_data_new(proc_buf_t *pb, task_struct *task)
 {
 	pid_file_data *data = zalloc(sizeof(*data));
 	data->buffer = pb;
-	data->uid = task->user->euid;
-	data->gid = task->user->egid;
+	data->uid = task->credentials->euid;
+	data->gid = task->credentials->egid;
 	return data;
 }
 
@@ -242,7 +242,7 @@ static file *pid_fd_link_follow(file *fp, int flags)
 	if (link->target->f_fop && link->target->f_fop->reopen)
 		return link->target->f_fop->reopen(link->target, flags);
 	if (link->target->f_name && link->target->f_name[0] == '/')
-		return vfs_open(CURRENT_TASK()->root, link->target->f_name,
+		return vfs_open(CURRENT_TASK()->fs->root, link->target->f_name,
 				flags);
 	return NULL;
 }
@@ -300,7 +300,7 @@ file *make_pid_task_dir(proc_buf_t *pb, task_struct *task)
 	file *fp = make_pid_dir(pb, task);
 	pid_file_data *data = fp->f_inode->i_private;
 	data->task_directory = 1;
-	data->task_group = task->tgid;
+	data->task_group = task->thread->tgid;
 	return fp;
 }
 

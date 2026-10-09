@@ -9,6 +9,7 @@
 
 #include "device/time.h"
 #include <ps/ps.h>
+#include <ps/clone.h>
 #include <int/int.h>
 #include <mm/mmap.h>
 #include <mm/phymm.h>
@@ -27,6 +28,7 @@
 #include <ps/smp.h>
 
 static int ps_init_fds(task_struct *task);
+static void ps_release_files(ref_count_t *ref);
 
 extern void ret_from_fork();
 extern short pgc_entry_count[PAGE_TABLE_CACHE_PAGES];
@@ -44,10 +46,10 @@ static void ps_run()
 
 	int_intr_enable();
 	_ps_enabled = 1;
-	task->status = ps_running;
-	fn = task->fn;
+	task->sched->status = ps_running;
+	fn = task->life->fn;
 	if (fn)
-		fn(task->param);
+		fn(task->life->param);
 
 	ps_put_to_dying_queue(task);
 	ps_remove_mgr(task);
@@ -72,91 +74,87 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 		return 0xffffffff;
 	}
 
+	if (!task)
+		return -ENOMEM;
 	memset(task, 0, KERNEL_TASK_SIZE * PAGE_SIZE);
 	if (ps_init_fds(task) != 0) {
 		vm_free(task, KERNEL_TASK_SIZE);
 		return -ENOMEM;
 	}
 
-	task->user = ps_alloc_user_env();
-	if (!task->user) {
-		ps_put_fds(task);
-		vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
+	if (ps_init_resources(task)) {
+		ps_free_task(task);
 		return -ENOMEM;
 	}
-	task->user->vm = vm_create();
-	task->user->vm->page_dir = vm_alloc(1);
-	task->user->command = vm_alloc(1);
-	task->user->environment = vm_alloc(1);
-	sprintf(task->user->command, "sys-%s", name);
-	task->user->cmd_len = strlen(task->user->command) + 1;
-	*((char *)task->user->environment) = '\0';
-	task->user->env_len = 0;
-	mm_init_process_page_dir(task->user->vm->page_dir);
-	task->user->cwd = name_get();
-	memset(task->user->cwd, 0, MAX_PATH);
-	task->user->root_path = name_get();
-	strcpy(task->user->root_path, "/");
+	task->memory = vm_create();
+	if (task->memory)
+		task->memory->page_dir = vm_alloc(1);
+	if (!task->memory || !task->memory->page_dir) {
+		ps_free_task(task);
+		return -ENOMEM;
+	}
+	sprintf(task->memory->command, "sys-%s", name);
+	task->memory->cmd_len = strlen(task->memory->command) + 1;
+	*((char *)task->memory->environment) = '\0';
+	task->memory->env_len = 0;
+	mm_init_process_page_dir(task->memory->page_dir);
+	memset(task->fs->cwd, 0, MAX_PATH);
+	strcpy(task->fs->root_path, "/");
 	/* Default rlimits: RLIM_INFINITY for all, except known constraints. */
 	for (int i = 0; i < RLIM_NLIMITS; i++) {
-		task->user->rlimits[i].rlim_cur = RLIM_INFINITY;
-		task->user->rlimits[i].rlim_max = RLIM_INFINITY;
+		task->thread->rlimits[i].rlim_cur = RLIM_INFINITY;
+		task->thread->rlimits[i].rlim_max = RLIM_INFINITY;
 	}
-	task->user->rlimits[3].rlim_cur =
+	task->thread->rlimits[3].rlim_cur =
 		USER_STACK_PAGES * PAGE_SIZE; /* RLIMIT_STACK */
-	task->user->rlimits[3].rlim_max = USER_STACK_PAGES * PAGE_SIZE;
-	task->user->rlimits[4].rlim_cur = 0; /* RLIMIT_CORE: no core dumps */
-	task->user->rlimits[4].rlim_max = 0;
+	task->thread->rlimits[3].rlim_max = USER_STACK_PAGES * PAGE_SIZE;
+	task->thread->rlimits[4].rlim_cur = 0; /* RLIMIT_CORE: no core dumps */
+	task->thread->rlimits[4].rlim_max = 0;
 	/* RLIMIT_NOFILE: match Linux default of 1024/1024.  Services that do
 	 * malloc(rl_cur * ...) won't OOM, and glibc sizes its fd table to 1024
 	 * which matches xinetd's max_descriptors after its setrlimit call. */
-	task->user->rlimits[7].rlim_cur = 1024;
-	task->user->rlimits[7].rlim_max = 1024;
+	task->thread->rlimits[7].rlim_cur = 1024;
+	task->thread->rlimits[7].rlim_max = 1024;
 
-	task->signal = zalloc(sizeof(signal_context));
-	task->io_bitmap = NULL;
-
-	task->umask = 0;
 	stack_bottom = (uintptr_t)task + KERNEL_TASK_BYTES;
-	task->address_space = arch_mm_current_address_space();
-	list_init(&task->ps_list);
-	list_init(&task->dying_queue);
-	RB_CLEAR_NODE(&task->mgr_rb);
-	RB_CLEAR_NODE(&task->timer_rb);
-	RB_CLEAR_NODE(&task->alarm_rb);
-	task->wait_interruptible = 0;
-	task->signal_wait_mask = 0;
-	task->timer_due_ms = 0;
-	task->fn = fn;
-	task->param = param;
-	task->priority = priority;
-	task->type = type;
-	task->status = ps_ready;
-	task->umask = 0;
-	task->remain_ticks = DEFAULT_TASK_TIME_SLICE;
-	task->psid = ps_id_gen();
-	task->tgid = task->psid;
-	task->ppid = task->psid;
-	task->exit_signal = SIGCHLD;
+	list_init(&task->sched->ps_list);
+	list_init(&task->life->dying_queue);
+	list_init(&task->wait->io_files);
+	RB_CLEAR_NODE(&task->sched->mgr_rb);
+	RB_CLEAR_NODE(&task->wait->timer_rb);
+	task->wait->wait_interruptible = 0;
+	task->wait->signal_wait_mask = 0;
+	task->wait->timer_due_ms = 0;
+	task->life->fn = fn;
+	task->life->param = param;
+	task->sched->priority = priority;
+	task->life->type = type;
+	task->sched->status = ps_ready;
+	task->fs->umask = 0;
+	task->sched->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+	task->life->psid = ps_id_gen();
+	task->thread->tgid = task->life->psid;
+	task->life->ppid = task->life->psid;
+	task->life->exit_signal = SIGCHLD;
 	task->magic = 0xdeadbeef;
 
 	task_init_selectors(task);
-	task->tss.ebp = stack_bottom;
-	task->tss.esp = stack_bottom;
-	task->tss.esp0 = stack_bottom;
-	task->tss.eip = ps_run;
-	arch_task_init_switch_frame(task);
+	arch_task_init_switch_frame(task, (uintptr_t)ps_run, stack_bottom);
 	smp_fpu_new(task);
 
 	task->stats = zalloc(sizeof(task_stats_t));
+	if (!task->stats) {
+		ps_id_free(task->life->psid);
+		ps_free_task(task);
+		return -ENOMEM;
+	}
 	task->stats->start_tickets = time_now_tickets();
-	ps_usage_init(task, NULL, 0);
 
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
-	return task->psid;
+	return task->life->psid;
 }
 
 /*
@@ -175,16 +173,9 @@ static task_files *ps_alloc_files(void)
 		return NULL;
 	}
 	memset(files->fds, 0, MAX_FD * sizeof(file *));
-	files->refs = 1;
+	ref_count_init(&files->ref, ps_release_files);
 	mutex_init(&files->lock);
 	return files;
-}
-
-static void ps_attach_files(task_struct *task, task_files *files)
-{
-	task->files = files;
-	task->fds = files ? files->fds : NULL;
-	task->fd_cloexec = files ? files->cloexec : NULL;
 }
 
 static int ps_init_fds(task_struct *task)
@@ -193,7 +184,7 @@ static int ps_init_fds(task_struct *task)
 
 	if (!files)
 		return -ENOMEM;
-	ps_attach_files(task, files);
+	task->files = files;
 	return 0;
 }
 
@@ -221,23 +212,20 @@ int ps_dup_fds(task_struct *cur, task_struct *task, int share)
 	task_files *files;
 
 	if (share) {
-		files = cur->files;
-		__sync_add_and_fetch(&files->refs, 1);
+		files = ref_count_get(cur->files);
 	} else {
 		files = ps_copy_files(cur->files);
 		if (!files)
 			return -ENOMEM;
 	}
-	ps_attach_files(task, files);
+	task->files = files;
 	return 0;
 }
 
-static void ps_release_files(task_files *files)
+static void ps_release_files(ref_count_t *ref)
 {
+	task_files *files = container_of(ref, task_files, ref);
 	int i;
-
-	if (!files || __sync_sub_and_fetch(&files->refs, 1) != 0)
-		return;
 	for (i = 0; i < MAX_FD; i++) {
 		if (files->fds[i])
 			fs_put_file(files->fds[i]);
@@ -250,8 +238,9 @@ void ps_put_fds(task_struct *task)
 {
 	task_files *files = task->files;
 
-	ps_attach_files(task, NULL);
-	ps_release_files(files);
+	task->files = NULL;
+	if (files)
+		ref_count_put(files);
 }
 
 int ps_unshare_fds(task_struct *task)
@@ -259,17 +248,15 @@ int ps_unshare_fds(task_struct *task)
 	task_files *old = task->files;
 	task_files *files;
 
-	if (old->refs == 1)
+	if (ref_count_read(old) == 1)
 		return 0;
 	files = ps_copy_files(old);
 	if (!files)
 		return -ENOMEM;
-	ps_attach_files(task, files);
-	ps_release_files(old);
+	task->files = files;
+	ref_count_put(old);
 	return 0;
 }
-
-int do_vfork(unsigned long child_stack, int share_files);
 
 /*
  * Static helpers — COW user address-space duplication
@@ -313,13 +300,13 @@ int copy_page_range(task_struct *parent, task_struct *child)
 {
 	struct copy_page_range_ctx ctx = {
 		.src_pd = (pte_t *)mm_get_pagedir(),
-		.dst_pd = (pte_t *)child->user->vm->page_dir,
-		.child_vm = child->user->vm,
+		.dst_pd = (pte_t *)child->memory->page_dir,
+		.child_vm = child->memory,
 	};
 
 	mm_init_process_page_dir((vaddr_t)ctx.dst_pd);
-	vm_enum(parent->user->vm, copy_vma_callback, &ctx);
-	smp_tlb_flush_user(parent->user->vm->page_dir);
+	vm_enum(parent->memory, copy_vma_callback, &ctx);
+	smp_tlb_flush_user(parent->memory->page_dir);
 	return ctx.error;
 }
 
@@ -344,168 +331,115 @@ task_struct *fork_alloc_child(task_struct *cur)
 					 sizeof(intr_frame));
 
 	smp_fpu_save(cur);
-	*task = *cur;
-	task->enumeration_refs = 0;
-	task->pdeath_signal = 0;
-	task->cancel_io_wait = NULL;
-	task->io_wait = NULL;
-	task->io_files = NULL;
-	task->robust_list_head = NULL;
-	task->robust_list_size = cur->robust_list_size;
-	task->robust_list_reader = NULL;
+	memset(task, 0, sizeof(*task));
+	if (ps_init_private(task)) {
+		ps_free_task(task);
+		return NULL;
+	}
+	task->execution->arch = cur->execution->arch;
+	task->execution->io_priv_level = cur->execution->io_priv_level;
+	task->execution->io_allow_all = cur->execution->io_allow_all;
+	task->execution->robust_list_size = cur->execution->robust_list_size;
+	task->sched->remain_ticks = cur->sched->remain_ticks;
+	task->magic = 0xdeadbeef;
+	list_init(&task->wait->io_files);
+	list_init(&task->signal->pending_queue);
 	*task_intr_frame = *cur_intr_frame;
 
-	if (cur->remain_ticks > DEFAULT_TASK_TIME_SLICE / 2)
-		cur->remain_ticks = task->remain_ticks = cur->remain_ticks / 2;
+	if (cur->sched->remain_ticks > DEFAULT_TASK_TIME_SLICE / 2)
+		cur->sched->remain_ticks = task->sched->remain_ticks =
+			cur->sched->remain_ticks / 2;
 	else
-		task->remain_ticks = cur->remain_ticks;
-	task->psid = ps_id_gen();
-	task->tgid = cur->tgid;
-	ps_attach_files(task, NULL);
+		task->sched->remain_ticks = cur->sched->remain_ticks;
+	task->life->psid = ps_id_gen();
+	task->files = NULL;
 
 	task_init_selectors(task);
 	arch_task_copy_user_context(task, cur);
-	task->tss.eax = 0;
-	task->tss.ebp = (char *)task_intr_frame;
-	task->tss.esp = (char *)task_intr_frame;
-	task->tss.esp0 = (uintptr_t)task + KERNEL_TASK_BYTES;
-	task->tss.eip = (uintptr_t)ret_from_fork;
-	arch_task_init_switch_frame(task);
+	arch_task_init_switch_frame(task, (uintptr_t)ret_from_fork,
+				    (uintptr_t)task_intr_frame);
 	task_intr_frame->eax = 0;
 
-	task->ppid = cur->psid;
-	task->exit_signal = SIGCHLD;
-	task->nchildren = 0;
-	task->fd_cloexec = NULL;
-	task->io_bitmap = NULL;
-	list_init(&task->ps_list);
-	list_init(&task->dying_queue);
-	RB_CLEAR_NODE(&task->mgr_rb);
-	RB_CLEAR_NODE(&task->timer_rb);
-	RB_CLEAR_NODE(&task->alarm_rb);
-	task->wait_interruptible = 0;
-	task->signal_wait_mask = 0;
-	task->timer_due_ms = 0;
+	task->life->ppid = cur->life->psid;
+	task->life->exit_signal = SIGCHLD;
+	task->life->nchildren = 0;
+	task->execution->io_bitmap = NULL;
+	list_init(&task->sched->ps_list);
+	list_init(&task->life->dying_queue);
+	list_init(&task->wait->io_files);
+	RB_CLEAR_NODE(&task->sched->mgr_rb);
+	RB_CLEAR_NODE(&task->wait->timer_rb);
+	task->wait->wait_interruptible = 0;
+	task->wait->signal_wait_mask = 0;
+	task->wait->timer_due_ms = 0;
 	return task;
 }
 
-/* Copy the user environment fields that are identical for both fork and
- * vfork: address-space bookkeeping, command line, environment string, cwd,
- * and all credentials. */
-void fork_dup_user_env(task_struct *cur, task_struct *task)
+/* Copy private execution state and initialize newly copied VM metadata. */
+void ps_copy_thread_state(task_struct *cur, task_struct *task)
 {
 	smp_fpu_copy(cur, task);
-	task->user->vm->task_size = cur->user->vm->task_size;
-	task->user->vm->mmap_base = cur->user->vm->mmap_base;
-	task->user->vm->brk_limit = cur->user->vm->brk_limit;
-	task->user->vm->start_brk = cur->user->vm->start_brk;
-	task->user->vm->brk = cur->user->vm->brk;
-	task->user->vm->start_stack = cur->user->vm->start_stack;
+	if (task->memory != cur->memory) {
+		task->memory->task_size = cur->memory->task_size;
+		task->memory->mmap_base = cur->memory->mmap_base;
+		task->memory->brk_limit = cur->memory->brk_limit;
+		task->memory->start_brk = cur->memory->start_brk;
+		task->memory->brk = cur->memory->brk;
+		task->memory->start_stack = cur->memory->start_stack;
+		task->memory->cmd_len = cur->memory->cmd_len;
+		task->memory->env_len = cur->memory->env_len;
+		memcpy(task->memory->command, cur->memory->command,
+		       cur->memory->cmd_len);
+		memcpy(task->memory->environment, cur->memory->environment,
+		       cur->memory->env_len);
+		task->memory->executable = cur->memory->executable;
+		if (task->memory->executable)
+			fs_get_file(task->memory->executable);
+	}
 
-	task->user->command = vm_alloc(1);
-	task->user->cmd_len = cur->user->cmd_len;
-	task->user->environment = vm_alloc(1);
-	task->user->env_len = cur->user->env_len;
-	memcpy(task->user->command, cur->user->command, cur->user->cmd_len);
-	memcpy(task->user->environment, cur->user->environment,
-	       cur->user->env_len);
-	task->user->executable = cur->user->executable;
-	if (task->user->executable)
-		fs_get_file(task->user->executable);
-	task->user->cwd = name_get();
-	strcpy(task->user->cwd, cur->user->cwd);
-	task->user->root_path = name_get();
-	strcpy(task->user->root_path, cur->user->root_path);
-	task->user->group_id = cur->user->group_id;
-	task->user->session_id = cur->user->session_id;
-	task->user->uid = cur->user->uid;
-	task->user->euid = cur->user->euid;
-	task->user->suid = cur->user->suid;
-	task->user->gid = cur->user->gid;
-	task->user->egid = cur->user->egid;
-	task->user->sgid = cur->user->sgid;
-	task->user->fsuid = cur->user->fsuid;
-	task->user->fsgid = cur->user->fsgid;
-	memcpy(task->user->cap_effective, cur->user->cap_effective,
-	       sizeof(cur->user->cap_effective));
-	memcpy(task->user->cap_permitted, cur->user->cap_permitted,
-	       sizeof(cur->user->cap_permitted));
-	memcpy(task->user->cap_inheritable, cur->user->cap_inheritable,
-	       sizeof(cur->user->cap_inheritable));
-	task->user->keep_capabilities = cur->user->keep_capabilities;
-	task->user->cap_initialized = cur->user->cap_initialized;
-	memcpy(task->user->tls_desc, cur->user->tls_desc,
-	       sizeof(cur->user->tls_desc));
-	memcpy(task->user->ldt_desc, cur->user->ldt_desc,
-	       sizeof(cur->user->ldt_desc));
-	task->user->ldt_present = cur->user->ldt_present;
-	memcpy(task->user->rlimits, cur->user->rlimits,
-	       sizeof(cur->user->rlimits));
+	*task->credentials = *cur->credentials;
+	memcpy(task->execution->tls_desc, cur->execution->tls_desc,
+	       sizeof(cur->execution->tls_desc));
+	if (task->memory != cur->memory) {
+		memcpy(task->memory->ldt_desc, cur->memory->ldt_desc,
+		       sizeof(cur->memory->ldt_desc));
+		task->memory->ldt_present = cur->memory->ldt_present;
+	}
 }
 
 /* Duplicate the signal context; child starts with no pending signals. */
-void fork_dup_signal(task_struct *cur, task_struct *task)
-{
-	task->signal = zalloc(sizeof(signal_context));
-	memcpy(task->signal, cur->signal, sizeof(signal_context));
-	task->signal->sig_pending = 0;
-	task->signal->timer_signal_id = 0;
-	task->signal->timer_signal_value = 0;
-}
-
 int fork_dup_io(task_struct *cur, task_struct *task)
 {
-	if (!cur->io_bitmap) {
-		task->io_bitmap = NULL;
+	if (!cur->execution->io_bitmap) {
+		task->execution->io_bitmap = NULL;
 		return 0;
 	}
-	task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
-	if (!task->io_bitmap)
+	task->execution->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
+	if (!task->execution->io_bitmap)
 		return -ENOMEM;
-	memcpy(task->io_bitmap, cur->io_bitmap, TSS_IO_BITMAP_BYTES);
+	memcpy(task->execution->io_bitmap, cur->execution->io_bitmap,
+	       TSS_IO_BITMAP_BYTES);
 	return 0;
 }
 
 /* Copy scheduling metadata and ownership fields from parent to child. */
-void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag)
+int fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag)
 {
-	task->umask = cur->umask;
-	task->priority = cur->priority;
-	task->type = cur->type;
-	task->fork_flag = fork_flag;
-	/*
-	 * Interval timers are per-process and must not survive into the child.
-	 * We clone the full task_struct up front, so reset the inherited alarm
-	 * state here before the task becomes runnable.
-	 */
-	task->alarm_expire_ms = 0;
-	task->alarm_interval_ms = 0;
-	task->root = cur->root;
+	task->sched->priority = cur->sched->priority;
+	task->life->type = cur->life->type;
+	task->life->fork_flag = fork_flag;
 	task->stats = zalloc(sizeof(task_stats_t));
+	if (!task->stats)
+		return -ENOMEM;
 	task->stats->start_tickets = time_now_tickets();
-	ps_usage_init(task, cur, fork_flag & FORK_FLAG_THREAD);
-	sb_get(task->root);
+	return 0;
 }
 
 /* Release a fully prepared child that has not entered the task queues. */
 void fork_abort_child(task_struct *task)
 {
-	vm_put(task->user->vm);
-	vm_free(task->user->command, 1);
-	vm_free(task->user->environment, 1);
-	if (task->user->executable)
-		fs_put_file(task->user->executable);
-	name_put(task->user->cwd);
-	name_put(task->user->root_path);
-	ps_put_fds(task);
-	sb_put(task->root);
-	kfree(task->io_bitmap);
-	kfree(task->signal);
-	ps_usage_put(task);
-	kfree(task->stats);
-	kfree(task->user);
-	ps_id_free(task->psid);
-	vm_free((vaddr_t)task, KERNEL_TASK_SIZE);
+	ps_id_free(task->life->psid);
+	ps_free_task(task);
 }
 
 /* Enqueue the child: increment parent's child count and add to ready+mgr. */
@@ -514,7 +448,7 @@ void fork_enqueue(task_struct *cur, task_struct *task)
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	cur->nchildren++;
+	cur->life->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
@@ -530,10 +464,11 @@ void ps_enqueue_child_first(task_struct *cur, task_struct *task)
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	cur->nchildren++;
+	cur->life->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
-	list_remove_entry(&task->ps_list);
-	list_insert_head(&control.ready_queue[task->priority], &task->ps_list);
+	list_remove_entry(&task->sched->ps_list);
+	list_insert_head(&control.ready_queue[task->sched->priority],
+			 &task->sched->ps_list);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
 }
@@ -555,40 +490,23 @@ static int do_fork(void)
 	if (!task)
 		return -ENOMEM;
 
-	task->user = ps_alloc_user_env();
-	if (!task->user)
-		return -ENOMEM;
-	task->user->vm = vm_create();
-	task->user->vm->page_dir = vm_alloc(1);
-	vm_set_page_dir(task->user->vm, task->user->vm->page_dir);
-	fork_dup_user_env(cur, task);
-	fork_dup_signal(cur, task);
-	if (fork_dup_io(cur, task) != 0)
-		return -ENOMEM;
-	fork_set_meta(cur, task, 0);
-	task->tgid = task->psid;
-	task->exit_signal = SIGCHLD;
-
-	if (ps_dup_fds(cur, task, 0) != 0)
-		return -ENOMEM;
-	if (copy_page_range(cur, task)) {
+	if (ps_clone_resources(cur, task, SIGCHLD) ||
+	    fork_set_meta(cur, task, 0)) {
 		fork_abort_child(task);
 		return -ENOMEM;
 	}
+	task->thread->tgid = task->life->psid;
+	task->life->exit_signal = SIGCHLD;
+
 	ps_enqueue_child_first(cur, task);
-	cur_intr_frame->eax = task->psid;
+	cur_intr_frame->eax = task->life->psid;
 	task_sched();
-	return task->psid;
+	return task->life->psid;
 }
 
-/*
- * Real vfork: child shares the parent's address space (same page_dir and vm)
- * without any copying.  Parent blocks until child calls exec() or exit().
- *
- * The child does NOT own page_dir or vm — cleanup() and do_exit() detect
- * FORK_FLAG_VFORK and skip the destroy/unmap paths for those resources.
- */
-int do_vfork(unsigned long child_stack, int share_files)
+/* vfork blocks the parent until exec/exit. Each clone flag still selects
+ * its own resource owner; sys_vfork always requests CLONE_VM. */
+int do_vfork(unsigned long child_stack, unsigned long flags)
 {
 	task_struct *cur = CURRENT_TASK();
 	intr_frame *cur_intr_frame =
@@ -599,19 +517,13 @@ int do_vfork(unsigned long child_stack, int share_files)
 	if (!task)
 		return -ENOMEM;
 
-	task->user = ps_alloc_user_env();
-	if (!task->user)
+	if (ps_clone_resources(cur, task, flags) ||
+	    fork_set_meta(cur, task, FORK_FLAG_VFORK)) {
+		fork_abort_child(task);
 		return -ENOMEM;
-	/* Share the parent's address space until vfork exec/exit. */
-	task->user->vm = cur->user->vm;
-	vm_get(task->user->vm);
-	fork_dup_user_env(cur, task);
-	fork_dup_signal(cur, task);
-	if (fork_dup_io(cur, task) != 0)
-		return -ENOMEM;
-	fork_set_meta(cur, task, FORK_FLAG_VFORK);
-	task->tgid = task->psid;
-	task->exit_signal = SIGCHLD;
+	}
+	task->thread->tgid = task->life->psid;
+	task->life->exit_signal = SIGCHLD;
 	if (child_stack) {
 		intr_frame *task_intr_frame =
 			(intr_frame *)((char *)task + KERNEL_TASK_BYTES -
@@ -619,14 +531,12 @@ int do_vfork(unsigned long child_stack, int share_files)
 		task_intr_frame->esp = (void *)child_stack;
 	}
 
-	if (ps_dup_fds(cur, task, share_files) != 0)
-		return -ENOMEM;
-	cond_init(&task->vfork_event, 1);
+	cond_init(&task->life->vfork_event, 1);
 	ps_enqueue_child_first(cur, task);
-	cond_wait(&task->vfork_event, 0);
+	cond_wait(&task->life->vfork_event, 0);
 
-	cur_intr_frame->eax = task->psid;
-	return task->psid;
+	cur_intr_frame->eax = task->life->psid;
+	return task->life->psid;
 }
 
 int sys_fork()
@@ -640,5 +550,5 @@ int sys_vfork()
 {
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("vfork()\n");
-	return do_vfork(0, 0);
+	return do_vfork(0, CLONE_VM | CLONE_VFORK | SIGCHLD);
 }

@@ -389,7 +389,7 @@ static file *instance_file(int fd)
 	if (fd < 0 || fd >= MAX_FD)
 		return NULL;
 	mutex_lock(&current->files->lock);
-	fp = current->fds[fd];
+	fp = current->files->fds[fd];
 	if (fp)
 		fs_get_file(fp);
 	mutex_unlock(&current->files->lock);
@@ -580,7 +580,7 @@ int sys_inotify_add_watch(int fd, const char *path, unsigned mask)
 		result = -ENAMETOOLONG;
 		goto out;
 	}
-	target = vfs_open(current->root, name,
+	target = vfs_open(current->fs->root, name,
 			  O_PATH | ((mask & IN_DONT_FOLLOW) ? O_NOFOLLOW : 0));
 	if (!target) {
 		result = -ENOENT;
@@ -594,7 +594,7 @@ int sys_inotify_add_watch(int fd, const char *path, unsigned mask)
 	else
 		result = fs_check_perm(&st, 4);
 	if (!result)
-		result = key_from_file(&key, current->root, name, target);
+		result = key_from_file(&key, current->fs->root, name, target);
 	fs_put_file(target);
 	if (result)
 		goto out;
@@ -742,8 +742,8 @@ static int read_register(void *opaque)
 	notify_read *read = opaque;
 	poll_subscribe(&read->table, &read->instance->waiters,
 		       &read->instance->queue_lock);
-	current->io_wait = read;
-	current->cancel_io_wait = read_cancel;
+	current->wait->io_wait = read;
+	current->wait->cancel_io_wait = read_cancel;
 	return read->table.unsupported;
 }
 
@@ -751,8 +751,8 @@ static void read_unregister(void *opaque)
 {
 	notify_read *read = opaque;
 	poll_table_cleanup(&read->table);
-	current->io_wait = read;
-	current->cancel_io_wait = read_cancel;
+	current->wait->io_wait = read;
+	current->wait->cancel_io_wait = read_cancel;
 }
 
 static const struct poll_ops read_wait_ops = {
@@ -767,8 +767,8 @@ static ssize_t inotify_read(file *fp, void *buf, size_t count, loff_t *pos)
 	size_t copied = 0;
 	int result;
 	/* The VFS transfer scope retains fp through waits and userspace copies. */
-	current->io_wait = &read;
-	current->cancel_io_wait = read_cancel;
+	current->wait->io_wait = &read;
+	current->wait->cancel_io_wait = read_cancel;
 	for (;;) {
 		read.capacity = count - copied;
 		read.event = NULL;
@@ -797,9 +797,9 @@ static ssize_t inotify_read(file *fp, void *buf, size_t count, loff_t *pos)
 		read_event_free(&read);
 		copied += result;
 	}
-	if (current->io_wait == &read) {
-		current->io_wait = NULL;
-		current->cancel_io_wait = NULL;
+	if (current->wait->io_wait == &read) {
+		current->wait->io_wait = NULL;
+		current->wait->cancel_io_wait = NULL;
 	}
 	return result;
 }
@@ -919,7 +919,7 @@ int sys_inotify_init1(int flags)
 		goto fail;
 	}
 	mutex_lock(&notify_lock);
-	instance->user = user_get(current->user->uid);
+	instance->user = user_get(current->credentials->uid);
 	if (!instance->user) {
 		result = -ENOMEM;
 		goto unlock_fail;
@@ -930,8 +930,8 @@ int sys_inotify_init1(int flags)
 		goto unlock_fail;
 	}
 	instance->user->instances++;
-	instance->uid = current->user->euid;
-	instance->gid = current->user->egid;
+	instance->uid = current->credentials->euid;
+	instance->gid = current->credentials->egid;
 	instance->max_events = limits[INOTIFY_MAX_QUEUED_EVENTS];
 	instance->fp = fp;
 	list_init(&instance->watch_list);

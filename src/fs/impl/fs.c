@@ -63,9 +63,10 @@ int fs_check_perm(const struct stat *s, int mask)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (!cur->user)
+	if (!cur->fs)
 		return 0;
-	return fs_check_perm_ids(s, mask, cur->user->euid, cur->user->egid);
+	return fs_check_perm_ids(s, mask, cur->credentials->euid,
+				 cur->credentials->egid);
 }
 
 static int fs_find_empty_fd(file **fds)
@@ -81,7 +82,7 @@ static int fs_find_empty_fd(file **fds)
 /* Active transfers retain descriptions independently of descriptor closure. */
 struct file_io_scope {
 	file *fp;
-	struct file_io_scope *previous;
+	list_entry list;
 };
 
 static file *fs_io_begin(int fd, struct file_io_scope *scope)
@@ -91,31 +92,34 @@ static file *fs_io_begin(int fd, struct file_io_scope *scope)
 	if (fd < 0 || fd >= MAX_FD)
 		return NULL;
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (fp)
 		fs_get_file(fp);
 	mutex_unlock(&cur->files->lock);
 	if (fp) {
 		scope->fp = fp;
-		scope->previous = cur->io_files;
-		cur->io_files = scope;
+		list_init(&scope->list);
+		list_insert_head(&cur->wait->io_files, &scope->list);
 	}
 	return fp;
 }
 
 static void fs_io_end(struct file_io_scope *scope)
 {
-	CURRENT_TASK()->io_files = scope->previous;
-	fs_put_file(scope->fp);
+	list_remove_entry(&scope->list);
+	list_init(&scope->list);
+	file *fp = scope->fp;
+	scope->fp = NULL;
+	if (fp)
+		fs_put_file(fp);
 }
 
 void fs_cancel_io(task_struct *task)
 {
-	while (task->io_files) {
-		struct file_io_scope *scope = task->io_files;
-		file *fp = scope->fp;
-		task->io_files = scope->previous;
-		fs_put_file(fp);
+	while (!list_is_empty(&task->wait->io_files)) {
+		struct file_io_scope *scope = container_of(
+			task->wait->io_files.next, struct file_io_scope, list);
+		fs_io_end(scope);
 	}
 }
 
@@ -188,9 +192,9 @@ ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count)
 			result = n;
 			break;
 		}
-		if (current->user && S_ISREG(output->f_inode->i_mode)) {
+		if (current->fs && S_ISREG(output->f_inode->i_mode)) {
 			unsigned long limit =
-				current->user->rlimits[RLIMIT_FSIZE_RESOURCE]
+				current->thread->rlimits[RLIMIT_FSIZE_RESOURCE]
 					.rlim_cur;
 			if (limit != RLIM_INFINITY) {
 				if ((uint64_t)output->f_pos >= limit) {
@@ -300,8 +304,8 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 		fp->f_pos = offset;
 
 	pos = fp->f_pos;
-	if (cur->user && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
-		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
+	if (cur->fs && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
+		limit = cur->thread->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
 			if ((uint64_t)pos >= limit) {
 				n = -EFBIG;
@@ -374,8 +378,8 @@ int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len)
 	}
 	saved_pos = fp->f_pos;
 	pos = offset;
-	if (cur->user && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
-		limit = cur->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
+	if (cur->fs && fp->f_inode && S_ISREG(fp->f_inode->i_mode)) {
+		limit = cur->thread->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
 		if (limit != RLIM_INFINITY) {
 			if ((uint64_t)pos >= limit) {
 				n = -EFBIG;
@@ -405,10 +409,10 @@ file *fs_open_file(const char *path, int flag, umode_t mode)
 	task_struct *cur = CURRENT_TASK();
 	file *fp = NULL;
 
-	if (!cur->root)
+	if (!cur->fs->root)
 		return NULL;
 
-	fp = vfs_open(cur->root, path, flag);
+	fp = vfs_open(cur->fs->root, path, flag);
 
 	/* Follow symlinks (e.g. /proc/{pid}/fd/{N}) unless O_NOFOLLOW. */
 	if (fp && !(flag & O_NOFOLLOW) && fp->f_inode &&
@@ -417,7 +421,7 @@ file *fs_open_file(const char *path, int flag, umode_t mode)
 		if (target && target[0] == '/') {
 			char *t = strdup(target);
 			fs_put_file(fp);
-			fp = vfs_open(cur->root, t, flag);
+			fp = vfs_open(cur->fs->root, t, flag);
 			free(t);
 		} else {
 			fs_put_file(fp);
@@ -435,13 +439,13 @@ int fs_install_fd_unsafe(file *fp, int flag)
 {
 	task_struct *cur = CURRENT_TASK();
 	int fd;
-	fd = fs_find_empty_fd(cur->fds);
+	fd = fs_find_empty_fd(cur->files->fds);
 	if (fd >= 0) {
-		cur->fds[fd] = fp;
+		cur->files->fds[fd] = fp;
 		if (flag & O_CLOEXEC)
-			fd_bitmap_set(cur->fd_cloexec, fd);
+			fd_bitmap_set(cur->files->cloexec, fd);
 		else
-			fd_bitmap_clear(cur->fd_cloexec, fd);
+			fd_bitmap_clear(cur->files->cloexec, fd);
 	}
 	return fd;
 }
@@ -499,7 +503,7 @@ int fs_open(const char *path, int flag, umode_t mode)
 	}
 
 	/* Open requests only read/write access, which UID 0 always passes. */
-	if (cur->user && cur->user->euid != 0 && fp->f_fop &&
+	if (cur->fs && cur->credentials->euid != 0 && fp->f_fop &&
 	    fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
 		acc = 0;
 		if ((flag & O_ACCMODE) != O_WRONLY)
@@ -514,7 +518,7 @@ int fs_open(const char *path, int flag, umode_t mode)
 	}
 
 	if (created)
-		inotify_created(cur->root, fp->f_name ? fp->f_name : path);
+		inotify_created(cur->fs->root, fp->f_name ? fp->f_name : path);
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
 	fp->f_flag = (unsigned)flag;
 	if ((flag & O_APPEND) && fp->f_inode)
@@ -522,7 +526,7 @@ int fs_open(const char *path, int flag, umode_t mode)
 	if (created) {
 		unsigned create_mode;
 
-		create_mode = (mode & 0777U) & ~(cur->umask & 0777U);
+		create_mode = (mode & 0777U) & ~(cur->fs->umask & 0777U);
 		/* Initial creation permissions do not constitute a separate attribute change. */
 		ret = fp->f_fop && fp->f_fop->setattr ?
 			      fp->f_fop->setattr(fp, create_mode) :
@@ -536,7 +540,7 @@ int fs_open(const char *path, int flag, umode_t mode)
 					      create_mode;
 	}
 
-	inotify_file_open(fp, cur->root);
+	inotify_file_open(fp, cur->fs->root);
 	if ((flag & O_TRUNC) && S_ISREG(fp->f_inode->i_mode) && fp->f_fop &&
 	    fp->f_fop->ftruncate)
 		inotify_file_event(fp, IN_MODIFY);
@@ -565,26 +569,26 @@ int fs_close(int fd)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
-	cur->fds[fd] = NULL;
-	fd_bitmap_clear(cur->fd_cloexec, fd);
+	fp = cur->files->fds[fd];
+	cur->files->fds[fd] = NULL;
+	fd_bitmap_clear(cur->files->cloexec, fd);
 	mutex_unlock(&cur->files->lock);
 
 	if (fp == NULL)
 		return 0; /* used==1 but fp==NULL: already cleaned up */
 
-	fs_posix_lock_release(fp, cur->tgid);
+	fs_posix_lock_release(fp, cur->thread->tgid);
 	return fs_put_file(fp);
 }
 
 int fs_stat(const char *path, struct stat *s)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->root, path, O_PATH);
+	file *fp = vfs_open(cur->fs->root, path, O_PATH);
 	int ret;
 
 	if (!fp)
@@ -609,7 +613,7 @@ int fs_fstat(int fd, struct stat *s)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	mutex_unlock(&cur->files->lock);
 
 	if (!fp || !fp->f_fop || !fp->f_fop->getattr)
@@ -663,27 +667,27 @@ int fs_dup_from_flags(int fd, int minfd, int flags)
 	int newfd;
 	unsigned limit = MAX_FD;
 
-	if (cur->user && cur->user->rlimits[7].rlim_cur < limit)
-		limit = cur->user->rlimits[7].rlim_cur;
+	if (cur->fs && cur->thread->rlimits[7].rlim_cur < limit)
+		limit = cur->thread->rlimits[7].rlim_cur;
 	if (minfd < 0 || (unsigned)minfd >= limit || (flags & ~O_CLOEXEC))
 		return -EINVAL;
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (!fp) {
 		mutex_unlock(&cur->files->lock);
 		return -EBADF;
 	}
 	for (newfd = minfd; (unsigned)newfd < limit; newfd++) {
-		if (cur->fds[newfd] == NULL) {
+		if (cur->files->fds[newfd] == NULL) {
 			fs_get_file(fp);
-			cur->fds[newfd] = fp;
+			cur->files->fds[newfd] = fp;
 			if (flags & O_CLOEXEC)
-				fd_bitmap_set(cur->fd_cloexec, newfd);
+				fd_bitmap_set(cur->files->cloexec, newfd);
 			else
-				fd_bitmap_clear(cur->fd_cloexec, newfd);
+				fd_bitmap_clear(cur->files->cloexec, newfd);
 			mutex_unlock(&cur->files->lock);
 			return newfd;
 		}
@@ -702,7 +706,7 @@ static int fs_dup_to(int fd, int newfd, int flags)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (!fp) {
 		mutex_unlock(&cur->files->lock);
 		return -EBADF;
@@ -713,17 +717,17 @@ static int fs_dup_to(int fd, int newfd, int flags)
 	}
 
 	fs_get_file(fp);
-	replaced = cur->fds[newfd];
-	cur->fds[newfd] = fp;
+	replaced = cur->files->fds[newfd];
+	cur->files->fds[newfd] = fp;
 	if (flags & O_CLOEXEC)
-		fd_bitmap_set(cur->fd_cloexec, newfd);
+		fd_bitmap_set(cur->files->cloexec, newfd);
 	else
-		fd_bitmap_clear(cur->fd_cloexec, newfd);
+		fd_bitmap_clear(cur->files->cloexec, newfd);
 	mutex_unlock(&cur->files->lock);
 
 	/* Release may block; the descriptor replacement is already complete. */
 	if (replaced) {
-		fs_posix_lock_release(replaced, cur->tgid);
+		fs_posix_lock_release(replaced, cur->thread->tgid);
 		fs_put_file(replaced);
 	}
 	return newfd;
@@ -749,7 +753,8 @@ void flock_wake_all_locked(inode *in)
 {
 	while (!list_is_empty(&in->i_flock_wait)) {
 		list_entry *e = list_remove_tail(&in->i_flock_wait);
-		task_struct *t = container_of(e, task_struct, ps_list);
+		task_struct *t =
+			(container_of(e, task_schedule, ps_list)->task);
 		ps_put_to_ready_queue_unsafe(t);
 	}
 }
@@ -812,11 +817,11 @@ int fs_llseek(int fd, unsigned offset_high, unsigned offset_low,
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
 	pos = fp->f_fop->llseek(fp, offset, whence);
@@ -839,11 +844,11 @@ int fs_seek(int fd, int offset, unsigned whence)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 	if (!fp || !fp->f_fop || !fp->f_fop->llseek)
 		goto done;
 
@@ -864,11 +869,11 @@ int fs_sync(int fd)
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
 
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
 
 	mutex_lock(&cur->files->lock);
-	fp = cur->fds[fd];
+	fp = cur->files->fds[fd];
 
 	if (!fp || !fp->f_fop)
 		goto done;
@@ -897,9 +902,9 @@ void poll_table_init(poll_table *pt, task_struct *task,
 
 void poll_table_cleanup(poll_table *pt)
 {
-	if (pt->task && pt->task->io_wait == pt) {
-		pt->task->cancel_io_wait = NULL;
-		pt->task->io_wait = NULL;
+	if (pt->task && pt->task->wait->io_wait == pt) {
+		pt->task->wait->cancel_io_wait = NULL;
+		pt->task->wait->io_wait = NULL;
 	}
 	while (pt->nr > 0) {
 		poll_table_entry *ent = &pt->entries[--pt->nr];
@@ -931,8 +936,8 @@ int poll_table_add(poll_table *pt, void *opaque, poll_dereg_fn dereg)
 		return -1;
 	}
 	if (pt->task) {
-		pt->task->io_wait = pt;
-		pt->task->cancel_io_wait = poll_table_cancel;
+		pt->task->wait->io_wait = pt;
+		pt->task->wait->cancel_io_wait = poll_table_cancel;
 	}
 	pt->entries[pt->nr].opaque = opaque;
 	pt->entries[pt->nr].dereg = dereg;
@@ -1035,7 +1040,7 @@ done:
 int fs_chmod(const char *pathname, uint32_t mode)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->root, pathname, O_PATH);
+	file *fp = vfs_open(cur->fs->root, pathname, O_PATH);
 	struct stat s;
 	int ret;
 
@@ -1049,8 +1054,8 @@ int fs_chmod(const char *pathname, uint32_t mode)
 
 	/* Only file owner or root may chmod */
 	if (fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
-		if (cur->user && cur->user->euid != 0 &&
-		    cur->user->euid != s.st_uid) {
+		if (cur->fs && cur->credentials->euid != 0 &&
+		    cur->credentials->euid != s.st_uid) {
 			fs_put_file(fp);
 			return -EPERM;
 		}
@@ -1058,7 +1063,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 
 	ret = fp->f_fop->setattr(fp, mode);
 	if (!ret)
-		inotify_path_event(cur->root,
+		inotify_path_event(cur->fs->root,
 				   fp->f_name ? fp->f_name : pathname,
 				   IN_ATTRIB);
 	fs_put_file(fp);
@@ -1068,7 +1073,7 @@ int fs_chmod(const char *pathname, uint32_t mode)
 int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->root, pathname, O_PATH);
+	file *fp = vfs_open(cur->fs->root, pathname, O_PATH);
 	struct stat s;
 	int ret;
 
@@ -1081,8 +1086,8 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	}
 
 	/* Only root may change owner; owner may change group to own group */
-	if (cur->user) {
-		if (cur->user->euid != 0) {
+	if (cur->fs) {
+		if (cur->credentials->euid != 0) {
 			/* non-root: may only change group, not owner */
 			if (uid != (uint32_t)-1 && uid != s.st_uid) {
 				fs_put_file(fp);
@@ -1090,13 +1095,13 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 			}
 			if (fp->f_fop->getattr &&
 			    fp->f_fop->getattr(fp, &s) == 0) {
-				if (cur->user->euid != s.st_uid) {
+				if (cur->credentials->euid != s.st_uid) {
 					fs_put_file(fp);
 					return -EPERM;
 				}
 				if (gid != (uint32_t)-1 &&
-				    gid != cur->user->egid &&
-				    gid != cur->user->gid) {
+				    gid != cur->credentials->egid &&
+				    gid != cur->credentials->gid) {
 					fs_put_file(fp);
 					return -EPERM;
 				}
@@ -1106,7 +1111,7 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 
 	ret = fp->f_fop->chown(fp, uid, gid);
 	if (!ret)
-		inotify_path_event(cur->root,
+		inotify_path_event(cur->fs->root,
 				   fp->f_name ? fp->f_name : pathname,
 				   IN_ATTRIB);
 	fs_put_file(fp);
@@ -1129,18 +1134,19 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 	}
 
 	/* Only root may change owner; owner may change group to own group */
-	if (cur->user && cur->user->euid != 0) {
+	if (cur->fs && cur->credentials->euid != 0) {
 		if (fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
 			if (uid != (uint32_t)-1 && uid != s.st_uid) {
 				ret = -EPERM;
 				goto out;
 			}
-			if (cur->user->euid != s.st_uid) {
+			if (cur->credentials->euid != s.st_uid) {
 				ret = -EPERM;
 				goto out;
 			}
-			if (gid != (uint32_t)-1 && gid != cur->user->egid &&
-			    gid != cur->user->gid) {
+			if (gid != (uint32_t)-1 &&
+			    gid != cur->credentials->egid &&
+			    gid != cur->credentials->gid) {
 				ret = -EPERM;
 				goto out;
 			}
@@ -1172,9 +1178,9 @@ int fs_fchmod(int fd, uint32_t mode)
 	}
 
 	/* Only file owner or root may fchmod */
-	if (cur->user && cur->user->euid != 0 && fp->f_fop &&
+	if (cur->fs && cur->credentials->euid != 0 && fp->f_fop &&
 	    fp->f_fop->getattr && fp->f_fop->getattr(fp, &s) == 0) {
-		if (cur->user->euid != s.st_uid) {
+		if (cur->credentials->euid != s.st_uid) {
 			ret = -EPERM;
 			goto out;
 		}
@@ -1242,11 +1248,17 @@ int resolve_path(const char *old, char *new)
 	if (!old || !*old)
 		return -1;
 
+	task_fs *fs = cur && cur->fs ? cur->fs : NULL;
+	if (fs)
+		rmutex_lock(&fs->lock);
+
 	/* stat("#!/bin/bash") will also be called */
 	if (strncmp(old, "#!", 2) == 0) {
 		plain_old = strdup(old);
 		if (!plain_old) {
 			new[0] = '\0';
+			if (fs)
+				rmutex_unlock(&fs->lock);
 			return -1;
 		}
 		old += 2;
@@ -1345,8 +1357,8 @@ done:
 		*dst = '\0';
 	}
 
-	if (cur && cur->user && cur->user->root_path && cur->user->root_path[0])
-		root_path = cur->user->root_path;
+	if (cur && cur->fs && cur->fs->root_path && cur->fs->root_path[0])
+		root_path = cur->fs->root_path;
 
 	if (strcmp(root_path, "/") != 0) {
 		size_t root_len = strlen(root_path);
@@ -1373,10 +1385,14 @@ done:
 	if (plain_old)
 		free(plain_old);
 
+	if (fs)
+		rmutex_unlock(&fs->lock);
 	return 0;
 
 fail:
 	if (plain_old)
 		free(plain_old);
+	if (fs)
+		rmutex_unlock(&fs->lock);
 	return 0;
 }

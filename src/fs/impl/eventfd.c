@@ -63,8 +63,8 @@ static int eventfd_wait_register(void *opaque)
 {
 	eventfd_wait *wait = opaque;
 	poll_subscribe(&wait->table, &wait->state->waiters, &wait->state->lock);
-	current->io_wait = wait;
-	current->cancel_io_wait = eventfd_wait_cancel;
+	current->wait->io_wait = wait;
+	current->wait->cancel_io_wait = eventfd_wait_cancel;
 	return wait->table.unsupported;
 }
 
@@ -72,9 +72,9 @@ static void eventfd_wait_unregister(void *opaque)
 {
 	eventfd_wait *wait = opaque;
 	poll_table_cleanup(&wait->table);
-	if (current->io_wait == wait) {
-		current->io_wait = NULL;
-		current->cancel_io_wait = NULL;
+	if (current->wait->io_wait == wait) {
+		current->wait->io_wait = NULL;
+		current->wait->cancel_io_wait = NULL;
 	}
 }
 
@@ -192,8 +192,8 @@ int sys_eventfd2(unsigned initval, int flags)
 	}
 	state->counter = initval;
 	state->semaphore = !!(flags & EFD_SEMAPHORE);
-	state->uid = current->user->euid;
-	state->gid = current->user->egid;
+	state->uid = current->credentials->euid;
+	state->gid = current->credentials->egid;
 	spinlock_init(&state->lock);
 	list_init(&state->waiters);
 	node->i_private = state;

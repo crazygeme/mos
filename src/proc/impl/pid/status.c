@@ -18,16 +18,16 @@ static unsigned get_tty_nr(task_struct *task)
 {
 	int i;
 
-	if (!task->fds)
+	if (!task->files)
 		return 0;
 	for (i = 0; i < 3; i++) {
 		const char *name;
 		const char *p;
 		int idx;
 
-		if (!task->fds[i])
+		if (!task->files->fds[i])
 			continue;
-		name = task->fds[i]->f_name;
+		name = task->files->fds[i]->f_name;
 		if (!name || strncmp(name, "/dev/tty", 8) != 0)
 			continue;
 		p = name + 8;
@@ -50,10 +50,10 @@ static unsigned long sig_ignored_mask(task_struct *task)
 	unsigned long mask = 0;
 	int sig;
 
-	if (!task->signal)
+	if (!task->sighand)
 		return 0;
 	for (sig = 1; sig < NSIG; sig++)
-		if (task->signal->sig_handlers[sig].sa_handler == SIG_IGN)
+		if (task->sighand->actions[sig].sa_handler == SIG_IGN)
 			mask |= 1UL << (sig - 1);
 	return mask;
 }
@@ -63,10 +63,10 @@ static unsigned long sig_caught_mask(task_struct *task)
 	unsigned long mask = 0;
 	int sig;
 
-	if (!task->signal)
+	if (!task->sighand)
 		return 0;
 	for (sig = 1; sig < NSIG; sig++) {
-		void (*h)(int) = task->signal->sig_handlers[sig].sa_handler;
+		void (*h)(int) = task->sighand->actions[sig].sa_handler;
 		if (h != SIG_DFL && h != SIG_IGN)
 			mask |= 1UL << (sig - 1);
 	}
@@ -77,33 +77,37 @@ static unsigned long sig_caught_mask(task_struct *task)
 
 void fill_status(proc_buf_t *pb, task_struct *task)
 {
-	const char *cmd =
-		task->user->command ? (const char *)task->user->command : "";
+	const char *cmd = task->memory->command ?
+				  (const char *)task->memory->command :
+				  "";
 	const char *slash = strrchr(cmd, '/');
 	const char *name = slash ? slash + 1 : cmd;
 	vm_stats_t vm;
-	unsigned fdsize = task->fds ? MAX_FD : 0;
-	unsigned long sig_pending = task->signal ? task->signal->sig_pending :
-						   0;
-	unsigned long sig_blocked = task->signal ? task->signal->sig_mask : 0;
+	unsigned fdsize = task->files ? MAX_FD : 0;
+	unsigned long sig_pending = task->sighand ? ps_pending_signals(task) :
+						    0;
+	unsigned long sig_blocked = task->sighand ? task->signal->sig_mask : 0;
 
 	vm_get_stats(task, &vm);
 
 	proc_buf_printf(pb, "Name:      %s\n", name);
 	proc_buf_printf(pb, "State:     %c (%s)\n",
-			pid_state_char(task->status),
-			pid_state_name(task->status));
-	proc_buf_printf(pb, "Tgid:      %u\n", task->tgid);
-	proc_buf_printf(pb, "Pid:       %u\n", task->psid);
-	proc_buf_printf(pb, "PPid:      %u\n", task->ppid);
+			pid_state_char(task->sched->status),
+			pid_state_name(task->sched->status));
+	proc_buf_printf(pb, "Tgid:      %u\n", task->thread->tgid);
+	proc_buf_printf(pb, "Pid:       %u\n", task->life->psid);
+	proc_buf_printf(pb, "PPid:      %u\n", task->life->ppid);
 	proc_buf_printf(pb, "TracerPid: 0\n");
-	proc_buf_printf(pb, "Uid:       %u\t%u\t%u\t%u\n", task->user->uid,
-			task->user->euid, task->user->suid, task->user->euid);
-	proc_buf_printf(pb, "Gid:       %u\t%u\t%u\t%u\n", task->user->gid,
-			task->user->egid, task->user->sgid, task->user->egid);
+	proc_buf_printf(pb, "Uid:       %u\t%u\t%u\t%u\n",
+			task->credentials->uid, task->credentials->euid,
+			task->credentials->suid, task->credentials->euid);
+	proc_buf_printf(pb, "Gid:       %u\t%u\t%u\t%u\n",
+			task->credentials->gid, task->credentials->egid,
+			task->credentials->sgid, task->credentials->egid);
 	proc_buf_printf(pb, "FDSize:    %u\n", fdsize);
-	proc_buf_printf(pb, "Threads:   %u\n", proc_thread_count(task->tgid));
-	proc_buf_printf(pb, "Groups:    %u\n", task->user->gid);
+	proc_buf_printf(pb, "Threads:   %u\n",
+			proc_thread_count(task->thread->tgid));
+	proc_buf_printf(pb, "Groups:    %u\n", task->credentials->gid);
 	proc_buf_printf(pb, "VmSize:    %llu kB\n",
 			(unsigned long long)vm.total_kb);
 	proc_buf_printf(pb, "VmLck:     %u kB\n", 0);
@@ -142,15 +146,16 @@ void fill_status(proc_buf_t *pb, task_struct *task)
  */
 void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 {
-	const char *cmd =
-		task->user->command ? (const char *)task->user->command : "";
+	const char *cmd = task->memory->command ?
+				  (const char *)task->memory->command :
+				  "";
 	const char *slash = strrchr(cmd, '/');
 	const char *base = slash ? slash + 1 : cmd;
 	char comm[16];
 	unsigned tty_nr;
 	int tpgid;
 	vm_stats_t vm;
-	vm_struct_t mm = task->user->vm;
+	vm_struct_t mm = task->memory;
 	uint64_t vsize, rss_pages;
 	vaddr_t stack_start;
 	unsigned long long utime, stime;
@@ -159,16 +164,16 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 	comm[15] = '\0';
 
 	tty_nr = get_tty_nr(task);
-	tpgid = tty_nr ? (int)task->user->group_id : -1;
+	tpgid = tty_nr ? (int)task->thread->group_id : -1;
 
 	vm_get_stats(task, &vm);
 	vsize = vm.total_kb * 1024;
 	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) / (PAGE_SIZE / 1024);
 	stack_start = mm ? mm->start_stack : 0;
 
-	stime = ps_usage_read(group ? &task->usage->kernel_tickets :
+	stime = ps_usage_read(group ? &task->thread->kernel_tickets :
 				      &task->stats->kernel_tickets);
-	utime = group ? ps_usage_read(&task->usage->user_tickets) :
+	utime = group ? ps_usage_read(&task->thread->user_tickets) :
 			task_utime(task);
 
 	proc_buf_printf(
@@ -178,12 +183,12 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 		"%ld %ld %ld %ld %lu %llu %lld "
 		"%lu %lu %lu %lu %lu %lu %lu %lu "
 		"%lu %lu %lu %lu %d %d\n",
-		/* 1  pid         */ task->psid,
+		/* 1  pid         */ task->life->psid,
 		/* 2  comm        */ comm,
-		/* 3  state       */ pid_state_char(task->status),
-		/* 4  ppid        */ task->ppid,
-		/* 5  pgrp        */ task->user->group_id,
-		/* 6  session     */ task->user->session_id,
+		/* 3  state       */ pid_state_char(task->sched->status),
+		/* 4  ppid        */ task->life->ppid,
+		/* 5  pgrp        */ task->thread->group_id,
+		/* 6  session     */ task->thread->session_id,
 		/* 7  tty_nr      */ tty_nr,
 		/* 8  tpgid       */ tpgid,
 		/* 9  flags       */ (unsigned long)0,
@@ -193,11 +198,11 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 		/* 13 cmajflt     */ (unsigned long)0,
 		/* 14 utime       */ utime,
 		/* 15 stime       */ stime,
-		/* 16 cutime      */ ps_usage_read(&task->usage->child_utime),
-		/* 17 cstime      */ ps_usage_read(&task->usage->child_stime),
+		/* 16 cutime      */ ps_usage_read(&task->thread->child_utime),
+		/* 17 cstime      */ ps_usage_read(&task->thread->child_stime),
 		/* 18 priority    */ (long)20,
 		/* 19 nice        */ (long)0,
-		/* 20 num_threads */ (long)proc_thread_count(task->tgid),
+		/* 20 num_threads */ (long)proc_thread_count(task->thread->tgid),
 		/* 21 itrealvalue */ (long)0,
 		/* 22 starttime   */ (unsigned long)task->stats->start_tickets,
 		/* 23 vsize       */ (unsigned long long)vsize,
@@ -209,9 +214,9 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 		/* 29 kstkesp     */ (unsigned long)0,
 		/* 30 kstkeip     */ (unsigned long)0,
 		/* 31 signal      */
-		(unsigned long)(task->signal ? task->signal->sig_pending : 0),
+		(unsigned long)(task->sighand ? ps_pending_signals(task) : 0),
 		/* 32 blocked     */
-		(unsigned long)(task->signal ? task->signal->sig_mask : 0),
+		(unsigned long)(task->sighand ? task->signal->sig_mask : 0),
 		/* 33 sigignore   */ sig_ignored_mask(task),
 		/* 34 sigcatch    */ sig_caught_mask(task),
 		/* 35 wchan       */ (unsigned long)0,

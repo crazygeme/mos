@@ -50,26 +50,28 @@ void ps_remove_mgr(task_struct *task);
 void reset_tss(task_struct *task);
 unsigned ps_id_gen();
 void ps_id_free(unsigned pid);
-user_enviroment *ps_alloc_user_env(void);
+signal_handlers *ps_copy_sighand(signal_handlers *old);
+void ps_alarm_release_thread_group(task_thread *process);
+int ps_clone_resources(task_struct *, task_struct *, unsigned long flags);
+void ps_free_signal_queue(list_entry *);
 
 /* ps_sched.c — timer helpers (called under ps_lock) */
 void timer_arm_unsafe(task_struct *task, unsigned ms);
 void timer_disarm_unsafe(task_struct *task);
 void ps_fire_timers_unsafe(void);
 void ps_alarm_disarm_unsafe(task_struct *task);
-int ps_futex_wake_locked(user_enviroment *user, int *uaddr, int max_wake);
+int ps_futex_wake_locked(task_memory *user, int *uaddr, int max_wake);
 void ps_futex_remove_task_locked(task_struct *task);
 void ps_clear_child_tid(task_struct *task);
 void ps_release_robust_list(task_struct *task);
 
 /* Shared task-creation helpers. */
 int ps_dup_fds(task_struct *cur, task_struct *task, int share);
-int do_vfork(unsigned long child_stack, int share_files);
+int do_vfork(unsigned long child_stack, unsigned long flags);
 task_struct *fork_alloc_child(task_struct *cur);
-void fork_dup_user_env(task_struct *cur, task_struct *task);
-void fork_dup_signal(task_struct *cur, task_struct *task);
+void ps_copy_thread_state(task_struct *cur, task_struct *task);
 int fork_dup_io(task_struct *cur, task_struct *task);
-void fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag);
+int fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag);
 void fork_enqueue(task_struct *cur, task_struct *task);
 void ps_enqueue_child_first(task_struct *cur, task_struct *task);
 void fork_abort_child(task_struct *task);

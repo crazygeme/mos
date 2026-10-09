@@ -94,7 +94,7 @@ void mm_vdso_map()
 	/* Register a VMA so fork's copy_page_range includes these pages. */
 	{
 		task_struct *cur = CURRENT_TASK();
-		vm_add_map(cur->user->vm, base, base + page_count * PAGE_SIZE,
+		vm_add_map(cur->memory, base, base + page_count * PAGE_SIZE,
 			   PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS,
 			   NULL, 0, 0);
 	}

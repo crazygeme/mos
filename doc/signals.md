@@ -14,35 +14,30 @@ MOS currently supports the Linux/i386-style signal model needed by the RH9/glibc
 - `rt_sigpending`, `rt_sigtimedwait`, `rt_sigqueueinfo`, `rt_sigsuspend`
 - `alarm`, `setitimer(ITIMER_REAL)`, and `getitimer(ITIMER_REAL)`
 
-Delivery is process-local and bitmask-based: standard signals are pending or not pending, with no queued multiplicity and no queued `siginfo` payloads.
+Standard signals use pending bitmaps. Process-directed pending state belongs
+to the shared `task_thread` block; thread-directed state belongs to the private
+`task_signal` block. Timer notifications retain their ID and value in intrusive
+`list_entry` queues, with one outstanding notification per timer.
 
-## Per-Task Signal State
+## Signal ownership
 
-Each user task owns a `signal_context`:
+`CLONE_SIGHAND` shares only the `signal_handlers` table. Masks, saved masks,
+alternate stacks, and thread pending signals remain private. `CLONE_VM` without
+`CLONE_VFORK` disables the child's alternate stack. Fork creates a fresh pending
+set and clears transient saved-mask restoration.
 
-```c
-typedef struct _signal_context {
-    struct sigaction sig_handlers[NSIG];
-    sigset_t sig_pending;
-    sigset_t sig_mask;
-    sigset_t saved_sigmask;
-    int restore_sigmask;
-    stack_t altstack;
-} signal_context;
-```
+`task_thread` is the `CLONE_THREAD` resource, including process-directed pending
+signals and ITIMER_REAL. `task_execution` holds private execution and ptrace
+state. Shared owners embed `ref_count_t` as their first member.
 
-Important points:
-
-- `sig_pending` is a bitmask, not a queue.
-- `sig_mask` is the currently blocked set.
-- `saved_sigmask` and `restore_sigmask` are used by `rt_sigsuspend`.
-- `altstack` tracks `sigaltstack(2)` state, including `SS_ONSTACK`.
-
-`sigset_t` is effectively a 32-bit low-word mask in the current implementation.
+`kill()` and group alarms queue to the shared pending set and wake eligible
+threads. `tkill()` queues to one task. Signal consumption and timer payload
+removal are serialized together by `ps_lock`; delivery observes the union of
+group and thread pending sets. `sigset_t` supports the low 32 signal bits.
 
 ## Signal Numbers and Default Actions
 
-The tree uses Linux/i386 signal numbers `1..31` with `NSIG = 32`.
+The tree uses Linux/i386 signal numbers `1..31` plus timer signal 32, with `NSIG = 33`.
 
 Important defaults in the current code:
 
@@ -61,8 +56,8 @@ For `SIGKILL` and `SIGSTOP`, the kernel exits immediately with an encoded wait s
 - validates the signal number
 - finds the target task
 - checks permission with Unix-style uid/euid rules
-- sets the pending bit
-- wakes the target only if it is sleeping and the signal is not masked
+- sets the group pending bit
+- wakes eligible threads that can receive or explicitly await the signal
 
 That last rule is important for `rt_sigsuspend`: a masked signal should remain pending without spuriously waking the waiter.
 

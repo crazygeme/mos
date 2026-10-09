@@ -34,17 +34,18 @@ typedef struct {
 static void stat_collect(task_struct *task, void *ctx)
 {
 	stat_ctx_t *c = (stat_ctx_t *)ctx;
-	if (task->psid == 0xffffffff)
+	if (task->life->psid == 0xffffffff)
 		return;
 
-	if (task->type == ps_kernel)
+	if (task->life->type == ps_kernel)
 		return;
 
 	c->processes++;
 
-	if (task->status == ps_running || task->status == ps_ready)
+	if (task->sched->status == ps_running ||
+	    task->sched->status == ps_ready)
 		c->procs_running++;
-	else if (task->status == ps_waiting)
+	else if (task->sched->status == ps_waiting)
 		c->procs_blocked++;
 }
 

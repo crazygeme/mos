@@ -358,7 +358,7 @@ static intptr_t arch_set_gs(uintptr_t address)
 		return -EPERM;
 	unsigned irq = int_intr_disable();
 	arch_task_save_user_segments(current);
-	current->tss.gs_base = address;
+	current->execution->arch.gs_base = address;
 	arch_task_set_user_bases(current);
 	int_intr_setlevel(irq);
 	return 0;
@@ -370,7 +370,7 @@ static intptr_t arch_set_fs(uintptr_t address)
 		return -EPERM;
 	unsigned irq = int_intr_disable();
 	arch_task_save_user_segments(current);
-	current->tss.fs_base = address;
+	current->execution->arch.fs_base = address;
 	arch_task_set_user_bases(current);
 	int_intr_setlevel(irq);
 	return 0;
@@ -379,7 +379,7 @@ static intptr_t arch_set_fs(uintptr_t address)
 static intptr_t arch_get_fs(uintptr_t address)
 {
 	arch_task_save_user_segments(current);
-	uint64_t value = current->tss.fs_base;
+	uint64_t value = current->execution->arch.fs_base;
 	return ps_write_process_memory(current, (void *)address, &value,
 				       sizeof(value));
 }
@@ -387,7 +387,7 @@ static intptr_t arch_get_fs(uintptr_t address)
 static intptr_t arch_get_gs(uintptr_t address)
 {
 	arch_task_save_user_segments(current);
-	uint64_t value = current->tss.gs_base;
+	uint64_t value = current->execution->arch.gs_base;
 	return ps_write_process_memory(current, (void *)address, &value,
 				       sizeof(value));
 }
@@ -594,9 +594,9 @@ int native_sigtimedwait(const sigset_t *set, void *output, const void *timeout,
 		/* AMD64 aligns the siginfo payload to eight bytes. */
 		wire[4] = info[3];
 		wire[5] = info[4];
-		if (ret == SIGRTMIN_KERNEL)
-			*(uint64_t *)&wire[6] =
-				current->signal->timer_signal_value;
+		if ((int)info[2] == -2)
+			*(uint64_t *)&wire[6] = info[5] |
+						((uint64_t)info[6] << 32);
 	}
 	return ret;
 }
@@ -687,7 +687,7 @@ intptr_t native_times(void *output)
 {
 	long ret = sys_times(NULL);
 	if (output) {
-		task_usage_t *usage = current->usage;
+		task_thread *usage = current->thread;
 		int64_t *wire = output;
 		wire[0] = ps_usage_read(&usage->user_tickets);
 		wire[1] = ps_usage_read(&usage->kernel_tickets);

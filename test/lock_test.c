@@ -108,7 +108,7 @@ KTEST(lock, mutex_lock_sets_holder)
 	mutex_init(&m);
 	mutex_lock(&m);
 	/* holder must equal the current task's psid */
-	EXPECT_EQ((int)m.holder, (int)current->psid);
+	EXPECT_EQ((int)m.holder, (int)current->life->psid);
 	mutex_unlock(&m);
 	return 0;
 }
@@ -151,7 +151,7 @@ KTEST(lock, mutex_reacquire)
 	mutex_lock(&m);
 	mutex_unlock(&m);
 	mutex_lock(&m);
-	EXPECT_EQ((int)m.holder, (int)current->psid);
+	EXPECT_EQ((int)m.holder, (int)current->life->psid);
 	mutex_unlock(&m);
 	EXPECT_EQ((int)m.holder, 0);
 	return 0;
@@ -348,7 +348,7 @@ KTEST(lock, rmutex_nested_release)
 	rmutex_unlock(&m);
 	EXPECT_EQ(m.depth, 1u);
 	EXPECT_EQ(m.base.lock, 1u);
-	EXPECT_EQ(m.holder, current->psid);
+	EXPECT_EQ(m.holder, current->life->psid);
 	rmutex_unlock(&m);
 	EXPECT_EQ(m.base.lock, 0u);
 	EXPECT_EQ(m.holder, 0u);
@@ -447,17 +447,17 @@ KTEST(lock, guard_return_and_single_evaluation)
 KTEST(lock, guard_recursive_vm_ownership)
 {
 	rmutex_t lock;
-	unsigned before = current->vm_lock_depth;
+	unsigned before = current->sched->vm_lock_depth;
 	vm_lock_init(&lock);
 	{
 		LOCK_GUARD(&lock);
 		LOCK_GUARD(&lock);
 		EXPECT_EQ(lock.depth, 2u);
-		EXPECT_EQ(current->vm_lock_depth, before + 2);
+		EXPECT_EQ(current->sched->vm_lock_depth, before + 2);
 	}
 	EXPECT_EQ(lock.depth, 0u);
 	EXPECT_EQ(lock.base.lock, 0u);
-	EXPECT_EQ(current->vm_lock_depth, before);
+	EXPECT_EQ(current->sched->vm_lock_depth, before);
 	return 0;
 }
 

@@ -45,6 +45,8 @@ int sock_wait(mos_sock *sk, unsigned long long deadline);
 
 /* ── FD helpers (sock.c) ────────────────────────────────────────────────── */
 
+ssize_t sock_recvmsg_file_iov(file *fp, const struct iovec *iov, int count);
+ssize_t sock_sendmsg_file_iov(file *fp, const struct iovec *iov, int count);
 int sock_to_fd(mos_sock *sk);
 mos_sock *fd_to_sock(int fd);
 
@@ -61,6 +63,12 @@ void sock_raw_recv_setup(struct raw_pcb *pcb, mos_sock *sk);
 /* ── Socket operations (sock_ops.c) ─────────────────────────────────────── */
 
 int do_socket(int domain, int type, int protocol);
+int netlink_socket(int type, int protocol);
+int netlink_bind(mos_sock *, const struct sockaddr *, unsigned);
+int netlink_sockaddr(mos_sock *, struct sockaddr *, unsigned *);
+int netlink_sendmsg(mos_sock *, const struct msghdr *, int);
+int netlink_recvmsg(mos_sock *, struct msghdr *, int);
+void netlink_release(mos_sock *);
 int do_socketpair(int domain, int type, int protocol, int sv[2]);
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen);
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen);

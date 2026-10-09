@@ -48,7 +48,7 @@ static unsigned pci_read_raw(unsigned device, int field, int size)
 	return 0xFFFF;
 }
 
-static spinlock_t pci_config_lock = { .inited = 1 };
+static spinlock_t pci_config_lock = SPINLOCK_INITIALIZER;
 
 void pci_write_field(unsigned device, int field, int size, unsigned value)
 {

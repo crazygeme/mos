@@ -131,8 +131,22 @@ static int pipe_ioctl_fionread(void *context __attribute__((unused)),
 	return 0;
 }
 
+static int pipe_ioctl_fionbio(void *context, unsigned cmd, void *arg)
+{
+	file *fp = context;
+	(void)cmd;
+	if (!arg)
+		return -EFAULT;
+	if (*(int *)arg)
+		__sync_fetch_and_or(&fp->f_flag, O_NONBLOCK);
+	else
+		__sync_fetch_and_and(&fp->f_flag, ~O_NONBLOCK);
+	return 0;
+}
+
 static const command_operation pipe_commands[256] = {
 	[FIONREAD & 255] = { FIONREAD, pipe_ioctl_fionread },
+	[FIONBIO & 255] = { FIONBIO, pipe_ioctl_fionbio },
 };
 
 static const command_operation *const pipe_command_groups[256] = {

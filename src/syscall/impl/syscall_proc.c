@@ -601,7 +601,7 @@ intptr_t sys_brk(vaddr_t _top)
 {
 	task_struct *task = CURRENT_TASK();
 	mm_struct *mm = task->user->vm;
-	VM_MAPPING_GUARD(mm);
+	LOCK_GUARD(&mm->mapping_lock);
 	vaddr_t top, ret;
 	vaddr_t old_brk = mm->brk;
 	vaddr_t old_page_end;
@@ -874,6 +874,7 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 	task_struct *cur = CURRENT_TASK();
 	task_struct *target = pid ? ps_find_process(pid) : cur;
 	rlimit_t *limit;
+	struct mos_rlimit64 input, output;
 	uint64_t soft = 0, hard = 0;
 
 	if (!target)
@@ -885,8 +886,11 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 		return -EPERM;
 	limit = &target->user->rlimits[resource];
 	if (new_limit) {
-		soft = new_limit->rlim_cur;
-		hard = new_limit->rlim_max;
+		if (ps_read_process_memory(cur, new_limit, &input,
+					   sizeof(input)) < 0)
+			return -EFAULT;
+		soft = input.rlim_cur;
+		hard = input.rlim_max;
 		if (soft > hard)
 			return -EINVAL;
 		if ((soft > RLIM_INFINITY && soft != MOS_RLIM64_INFINITY) ||
@@ -899,12 +903,15 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 			return -EPERM;
 	}
 	if (old_limit) {
-		old_limit->rlim_cur = limit->rlim_cur == RLIM_INFINITY ?
-					      MOS_RLIM64_INFINITY :
-					      limit->rlim_cur;
-		old_limit->rlim_max = limit->rlim_max == RLIM_INFINITY ?
-					      MOS_RLIM64_INFINITY :
-					      limit->rlim_max;
+		output.rlim_cur = limit->rlim_cur == RLIM_INFINITY ?
+					  MOS_RLIM64_INFINITY :
+					  limit->rlim_cur;
+		output.rlim_max = limit->rlim_max == RLIM_INFINITY ?
+					  MOS_RLIM64_INFINITY :
+					  limit->rlim_max;
+		if (ps_write_process_memory(cur, old_limit, &output,
+					    sizeof(output)) < 0)
+			return -EFAULT;
 	}
 	if (new_limit) {
 		limit->rlim_cur = soft == MOS_RLIM64_INFINITY ? RLIM_INFINITY :

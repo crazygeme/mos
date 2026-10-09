@@ -57,6 +57,7 @@ int sys_pwrite64(int fd, const void *buf, unsigned count, unsigned offset_low,
 		 unsigned offset_high);
 int sys_ioctl(int d, int request, char *buf);
 int sys_open(const char *name, int flags, umode_t mode);
+ssize_t sys_sendfile64(int out_fd, int in_fd, int64_t *offset, size_t count);
 int sys_openat(int dirfd, const char *name, int flags, umode_t mode);
 int sys_close(unsigned fd);
 int sys_close_range(unsigned first, unsigned last, unsigned flags);
@@ -336,7 +337,7 @@ int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 	      int fd, unsigned pgoffset);
 int sys_munmap(void *addr, size_t length);
 int sys_mprotect(void *addr, size_t len, int prot);
-int sys_madvise(void *addr, unsigned length, int advice);
+int sys_madvise(void *addr, size_t length, int advice);
 intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		    int flags, vaddr_t new_addr);
 int sys_sched_setparam(int pid, const void *param);

@@ -232,21 +232,22 @@ int sys_clock_getres_time64(int clockid, void *tp)
 
 int sys_getrandom(void *buf, unsigned len, unsigned flags)
 {
-	unsigned char *bytes = buf;
-	unsigned i;
-	static int seeded;
-
+	unsigned char bytes[64];
+	unsigned copied = 0;
 	if (flags & ~3U)
 		return -EINVAL;
 	if (!buf && len)
 		return -EFAULT;
-	if (!seeded) {
-		srand((unsigned)time_now_us());
-		seeded = 1;
+	while (copied < len) {
+		unsigned count = len - copied < sizeof(bytes) ? len - copied :
+								sizeof(bytes);
+		kernel_random_bytes(bytes, count);
+		if (ps_write_process_memory(current, (char *)buf + copied,
+					    bytes, count) < 0)
+			return copied ? (int)copied : -EFAULT;
+		copied += count;
 	}
-	for (i = 0; i < len; i++)
-		bytes[i] = (unsigned char)rand();
-	return len;
+	return copied;
 }
 
 int sys_settimeofday(const struct timeval *tv, const struct timezone *tz)
@@ -512,7 +513,7 @@ int sys_munmap(void *addr, size_t length)
 int sys_mprotect(void *addr, size_t len, int prot)
 {
 	task_struct *cur = CURRENT_TASK();
-	VM_MAPPING_GUARD(cur->user->vm);
+	LOCK_GUARD(&cur->user->vm->mapping_lock);
 	vaddr_t begin = (vaddr_t)(uintptr_t)addr;
 	vaddr_t end, vir;
 
@@ -572,12 +573,61 @@ int sys_mprotect(void *addr, size_t len, int prot)
 	return 0;
 }
 
-int sys_madvise(void *addr, unsigned length, int advice)
+int sys_madvise(void *addr, size_t length, int advice)
 {
-	(void)addr;
-	(void)length;
-	(void)advice;
-	return 0;
+	task_struct *cur = CURRENT_TASK();
+	mm_struct *mm = cur->user->vm;
+	vaddr_t begin = (vaddr_t)addr, end, cursor;
+	int result = 0;
+	LOCK_GUARD(&mm->mapping_lock);
+
+	if (begin & (PAGE_SIZE - 1))
+		return -EINVAL;
+	if (begin >= mm->task_size || length > mm->task_size - begin ||
+	    !arch_mm_user_range_valid(begin, length))
+		return -EINVAL;
+	/* Advisory access patterns and dump selection require no page changes. */
+	switch (advice) {
+	case 0:
+	case 1:
+	case 2:
+	case 3:
+	case 4:
+	case 12:
+	case 16:
+	case 17:
+		break;
+	default:
+		return -EINVAL;
+	}
+	end = begin + ((length + PAGE_SIZE - 1) & PAGE_SIZE_MASK);
+	for (cursor = begin; cursor < end;) {
+		vm_region *region = vm_find_vma(mm, cursor);
+		vaddr_t limit;
+
+		if (!region || region->begin >= end) {
+			result = -ENOMEM;
+			break;
+		}
+		if (region->begin > cursor) {
+			result = -ENOMEM;
+			cursor = region->begin;
+		}
+		limit = region->end < end ? region->end : end;
+		if (advice == 4) { /* MADV_DONTNEED retains the VMA. */
+			if (region->vm_flags & VM_REGION_F_DIRECT_PHYS)
+				return -EINVAL;
+			if ((region->flag & MAP_SHARED) && region->fp)
+				vm_flush_file_dirty(mm, region->fp);
+			vm_region_lock_fault(region);
+			for (; cursor < limit; cursor += PAGE_SIZE)
+				mm_unmap_page(cursor);
+			vm_region_unlock_fault(region);
+		} else {
+			cursor = limit;
+		}
+	}
+	return result;
 }
 
 int sys_umask(unsigned mask)
@@ -707,7 +757,7 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		    int flags, vaddr_t new_addr)
 {
 	task_struct *cur = CURRENT_TASK();
-	VM_MAPPING_GUARD(cur->user->vm);
+	LOCK_GUARD(&cur->user->vm->mapping_lock);
 	vm_region *region;
 	size_t old_size_pg, new_size_pg;
 	vaddr_t old_end, new_end;

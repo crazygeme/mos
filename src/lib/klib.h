@@ -80,6 +80,8 @@ char *lltoa(long long num, int base, int sign);
 int atoi(const char *str);
 void srand(unsigned _seed);
 unsigned int rand(void);
+void kernel_random_bytes(void *buffer, unsigned size);
+void kernel_random_mix(uint64_t value);
 
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 

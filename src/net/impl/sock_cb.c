@@ -220,7 +220,7 @@ static u8_t raw_on_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p,
 
 int raw_send_hdrincl(const void *buf, unsigned len)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (len < sizeof(struct ip_hdr))
 		return -EINVAL;
 

@@ -2,8 +2,7 @@
 """Sample release-kernel open/close hotspots on a disposable QEMU disk.
 
 Uses HMP stop/register sampling, so results indicate hotspots rather than
-precise CPU percentages. Monitor pauses distort elapsed time: use
-test/open_close_qemu.py for throughput comparisons. One CPU keeps the workload
+precise CPU percentages. Monitor pauses distort elapsed time. One CPU keeps the workload
 on the sampled CPU. Frame pointers and debug builds are not required.
 """
 import argparse

@@ -15,7 +15,7 @@
 
 file *open_net_route(void)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	char *buf = (char *)vm_alloc(1);
 	char *p = buf;
 	memset(buf, 0, PAGE_SIZE);

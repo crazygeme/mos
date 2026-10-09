@@ -329,21 +329,24 @@ static unsigned sock_recvmsg_stream(mos_sock *sk, struct msghdr *msg)
 
 /* ── do_sendmsg ──────────────────────────────────────────────────────────── */
 
-int do_sendmsg(int fd, const struct msghdr *msg, int flags)
+static int sock_sendmsg_file(file *fp, int fd, const struct msghdr *msg,
+			     int flags)
 {
-	mos_sock *sk = fd_to_sock(fd);
-	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
+	mos_sock *sk = fp ? fp->f_inode->i_private : NULL;
+	LOCK_GUARD((sk && sk->domain != AF_UNIX) ? &net_core_lock :
+						   &net_local_lock);
 	int ret;
 	size_t totlen;
 	const struct sockaddr_in *to;
-	task_struct *cur = CURRENT_TASK();
 
 	if (!sk) {
 		ret = -ENOTSOCK;
 		goto log;
 	}
-	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
+	if (fp && (fp->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
+	if (sk->domain == AF_NETLINK)
+		return netlink_sendmsg(sk, msg, flags);
 	if (sk->err) {
 		ret = sk->err;
 		goto log;
@@ -364,7 +367,7 @@ int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 	ret = sock_send_datagram(sk, msg, to, totlen);
 
 log:
-	if (TEST_LOG(TEST_LOG_INFO)) {
+	if (fd >= 0 && TEST_LOG(TEST_LOG_INFO)) {
 		char *addr_buf = malloc(80);
 		char *iov_buf = malloc(64);
 		char *flag_buf = malloc(64);
@@ -382,24 +385,39 @@ log:
 	return ret;
 }
 
+int do_sendmsg(int fd, const struct msghdr *msg, int flags)
+{
+	file *fp = fd_to_sock(fd) ? CURRENT_TASK()->fds[fd] : NULL;
+	return sock_sendmsg_file(fp, fd, msg, flags);
+}
+
+ssize_t sock_sendmsg_file_iov(file *fp, const struct iovec *iov, int count)
+{
+	struct msghdr msg = { .msg_iov = (struct iovec *)iov,
+			      .msg_iovlen = count };
+	return sock_sendmsg_file(fp, -1, &msg, 0);
+}
+
 /* ── do_recvmsg ──────────────────────────────────────────────────────────── */
 
-int do_recvmsg(int fd, struct msghdr *msg, int flags)
+static int sock_recvmsg_file(file *fp, int fd, struct msghdr *msg, int flags)
 {
-	mos_sock *sk = fd_to_sock(fd);
-	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
+	mos_sock *sk = fp ? fp->f_inode->i_private : NULL;
+	LOCK_GUARD((sk && sk->domain != AF_UNIX) ? &net_core_lock :
+						   &net_local_lock);
 	unsigned delivered;
 	size_t total_len;
 	unsigned long long deadline;
 	int wait_ret;
-	task_struct *cur = CURRENT_TASK();
 
 	if (!sk) {
 		delivered = -ENOTSOCK;
 		goto done;
 	}
-	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
+	if (fp && (fp->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
+	if (sk->domain == AF_NETLINK)
+		return netlink_recvmsg(sk, msg, flags);
 	if (sk->domain == AF_UNIX) {
 		delivered = unix_recvmsg(sk, msg, flags);
 		goto done;
@@ -437,7 +455,7 @@ done:
 	else if (msg->msg_control && (!sk || sk->domain != AF_UNIX))
 		msg->msg_controllen = 0;
 
-	if (TEST_LOG(TEST_LOG_INFO)) {
+	if (fd >= 0 && TEST_LOG(TEST_LOG_INFO)) {
 		char *addr_buf = malloc(80);
 		char *iov_buf = malloc(64);
 		char *flag_buf = malloc(64);
@@ -460,6 +478,19 @@ done:
 		free(addr_buf);
 	}
 	return (int)delivered;
+}
+
+int do_recvmsg(int fd, struct msghdr *msg, int flags)
+{
+	file *fp = fd_to_sock(fd) ? CURRENT_TASK()->fds[fd] : NULL;
+	return sock_recvmsg_file(fp, fd, msg, flags);
+}
+
+ssize_t sock_recvmsg_file_iov(file *fp, const struct iovec *iov, int count)
+{
+	struct msghdr msg = { .msg_iov = (struct iovec *)iov,
+			      .msg_iovlen = count };
+	return sock_recvmsg_file(fp, -1, &msg, 0);
 }
 
 int sys_sendmmsg(int fd, void *messages_ptr, unsigned count, int flags)

@@ -142,6 +142,92 @@ out:
 	return (int)n;
 }
 
+ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count)
+{
+	struct file_io_scope in_scope, out_scope;
+	file *input = fs_io_begin(in_fd, &in_scope);
+	file *output;
+	ssize_t result = -EBADF;
+	char *buffer = NULL;
+	size_t copied = 0;
+	loff_t position;
+
+	if (!input)
+		return result;
+	output = fs_io_begin(out_fd, &out_scope);
+	if (!output)
+		goto out_input;
+	if (input->f_mode == O_WRONLY || output->f_mode == O_RDONLY ||
+	    !input->f_fop || !input->f_fop->read ||
+	    !output->f_fop || !output->f_fop->write)
+		goto out;
+	result = -EINVAL;
+	if (!S_ISREG(input->f_inode->i_mode) || input == output ||
+	    (output->f_flag & O_APPEND))
+		goto out;
+	position = offset ? *offset : input->f_pos;
+	if (position < 0)
+		goto out;
+	result = 0;
+	if (!count)
+		goto out;
+	if (count > 0x7ffff000U)
+		count = 0x7ffff000U;
+	buffer = malloc(16384);
+	result = -ENOMEM;
+	if (!buffer)
+		goto out;
+	while (copied < count) {
+		size_t chunk = count - copied;
+		loff_t read_position = position;
+		if (chunk > 16384)
+			chunk = 16384;
+		ssize_t n = input->f_fop->read(input, buffer, chunk, &read_position);
+		if (n <= 0) {
+			result = n;
+			break;
+		}
+		if (current->user && S_ISREG(output->f_inode->i_mode)) {
+			unsigned long limit = current->user->rlimits[RLIMIT_FSIZE_RESOURCE].rlim_cur;
+			if (limit != RLIM_INFINITY) {
+				if ((uint64_t)output->f_pos >= limit) {
+					result = -EFBIG;
+					break;
+				}
+				if ((uint64_t)n > limit - (uint64_t)output->f_pos)
+					n = limit - (uint64_t)output->f_pos;
+			}
+		}
+
+		ssize_t written = output->f_fop->write(output, buffer, n, &output->f_pos);
+		if (written <= 0) {
+			result = written < 0 ? written : -EIO;
+			break;
+		}
+		position += written;
+		copied += written;
+		if (written < n)
+			break;
+	}
+	if (offset)
+		*offset = position;
+	else
+		input->f_pos = position;
+	if (input->f_fop->llseek)
+		input->f_fop->llseek(input, input->f_pos, 0);
+	if (copied) {
+		inotify_file_event(input, IN_ACCESS);
+		inotify_file_event(output, IN_MODIFY);
+		result = copied;
+	}
+	free(buffer);
+out:
+	fs_io_end(&out_scope);
+out_input:
+	fs_io_end(&in_scope);
+	return result;
+}
+
 int fs_readv_special(int fd, const struct iovec *iov, int count, int *handled)
 {
 	struct file_io_scope scope;
@@ -160,6 +246,29 @@ int fs_readv_special(int fd, const struct iovec *iov, int count, int *handled)
 	result = fp->f_fop->readv(fp, iov, count);
 	if (result > 0)
 		inotify_file_event(fp, IN_ACCESS);
+out:
+	fs_io_end(&scope);
+	return result;
+}
+
+int fs_writev_special(int fd, const struct iovec *iov, int count, int *handled)
+{
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	ssize_t result = -EBADF;
+	*handled = 1;
+	if (!fp)
+		return result;
+	if (!fp->f_fop || fp->f_mode == O_RDONLY)
+		goto out;
+	if (!fp->f_fop->writev) {
+		*handled = 0;
+		result = 0;
+		goto out;
+	}
+	result = fp->f_fop->writev(fp, iov, count);
+	if (result > 0)
+		inotify_file_event(fp, IN_MODIFY);
 out:
 	fs_io_end(&scope);
 	return result;

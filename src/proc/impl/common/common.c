@@ -60,6 +60,7 @@ done:
 void proc_buf_copy(proc_buf_t *pb, const void *src, size_t len)
 {
 	proc_buf_ensure(pb, len);
-	memcpy(pb->buf, src, len);
+	memcpy(pb->buf + pb->len, src, len);
 	pb->len += len;
+	pb->buf[pb->len] = '\0';
 }

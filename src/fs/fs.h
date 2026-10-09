@@ -118,8 +118,9 @@ typedef struct _file_operations {
 	int (*chown)(file *file, uint32_t uid, uint32_t gid);
 	/* read/write: update *pos on success, return bytes transferred or -errno */
 	ssize_t (*read)(file *file, void *buf, size_t size, loff_t *pos);
-	/* Optional vectored reader for backends with per-buffer record semantics. */
+	/* Optional vector operations preserve backend record semantics. */
 	ssize_t (*readv)(file *file, const struct iovec *iov, int count);
+	ssize_t (*writev)(file *file, const struct iovec *iov, int count);
 	/* Linux directory-entry type; absent callbacks report DT_UNKNOWN. */
 	unsigned char (*dirent_type)(file *file, const char *name);
 	ssize_t (*write)(file *file, const void *buf, size_t size, loff_t *pos);
@@ -142,6 +143,8 @@ typedef struct _file_operations {
 			 unsigned prot, unsigned flags, struct _file **backing);
 	/* Return an allocator-owned physical page for a shared device mapping. */
 	paddr_t (*map_page)(file *file, uint64_t offset);
+	/* Release a reference retained by map_page, when provided. */
+	void (*map_page_put)(file *file, paddr_t page);
 } file_operations;
 
 /*
@@ -279,8 +282,10 @@ void fs_posix_lock_release(file *fp, unsigned owner);
 int fs_close(int fd);
 
 int fs_read(int fd, unsigned offset, char *buf, unsigned len);
+ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count);
 int fs_ftruncate(int fd, uint64_t length);
 int fs_readv_special(int fd, const struct iovec *iov, int count, int *handled);
+int fs_writev_special(int fd, const struct iovec *iov, int count, int *handled);
 
 int fs_write(int fd, unsigned offset, const char *buf, unsigned len);
 

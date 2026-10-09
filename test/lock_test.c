@@ -424,3 +424,116 @@ KTEST(lock, spinlock_restores_nested_irq_state)
 	int_intr_setlevel(irq);
 	return 0;
 }
+
+/* Scope release remains observable after returning from guarded helpers. */
+static int guarded_mutex_return(mutex_t *lock, unsigned *evaluations)
+{
+	LOCK_GUARD(((*evaluations)++, lock));
+	return lock->base.lock == 1;
+}
+
+KTEST(lock, guard_return_and_single_evaluation)
+{
+	mutex_t lock;
+	unsigned evaluations = 0;
+	mutex_init(&lock);
+	EXPECT_EQ(guarded_mutex_return(&lock, &evaluations), 1);
+	EXPECT_EQ(evaluations, 1u);
+	EXPECT_EQ(lock.base.lock, 0u);
+	EXPECT_EQ(lock.holder, 0u);
+	return 0;
+}
+
+KTEST(lock, guard_recursive_vm_ownership)
+{
+	rmutex_t lock;
+	unsigned before = current->vm_lock_depth;
+	vm_lock_init(&lock);
+	{
+		LOCK_GUARD(&lock);
+		LOCK_GUARD(&lock);
+		EXPECT_EQ(lock.depth, 2u);
+		EXPECT_EQ(current->vm_lock_depth, before + 2);
+	}
+	EXPECT_EQ(lock.depth, 0u);
+	EXPECT_EQ(lock.base.lock, 0u);
+	EXPECT_EQ(current->vm_lock_depth, before);
+	return 0;
+}
+
+KTEST(lock, guard_spinlock_restores_interrupts)
+{
+	spinlock_t lock = SPINLOCK_INITIALIZER;
+	int irq = int_intr_disable();
+	{
+		LOCK_GUARD(&lock);
+		EXPECT_EQ(lock.lock, 1u);
+	}
+	EXPECT_EQ(lock.lock, 0u);
+	EXPECT_EQ(int_intr_disable(), 0);
+	int_intr_setlevel(irq);
+	return 0;
+}
+
+KTEST(lock, guard_rmutex_and_rwlock)
+{
+	rmutex_t mutex;
+	rwlock_t rw;
+	rmutex_init(&mutex);
+	rwlock_init(&rw);
+	{
+		LOCK_GUARD(&mutex);
+		LOCK_GUARD(&rw);
+		EXPECT_EQ(mutex.depth, 1u);
+		EXPECT_EQ(rw.writer, 1u);
+	}
+	EXPECT_EQ(mutex.depth, 0u);
+	EXPECT_EQ(rw.state, 0u);
+	return 0;
+}
+
+struct guard_policy_probe {
+	unsigned *order;
+	unsigned id;
+	int state;
+};
+
+static int guard_policy_enter(void *context, const char *func)
+{
+	const scoped_lock_t *lock = context;
+	struct guard_policy_probe *probe = lock->context;
+	*probe->order = *probe->order * 10 + probe->id;
+	return func && *func ? probe->id : 0;
+}
+
+static void guard_policy_leave(void *context, int state)
+{
+	const scoped_lock_t *lock = context;
+	struct guard_policy_probe *probe = lock->context;
+	probe->state = state;
+	*probe->order = *probe->order * 10 + probe->id;
+}
+
+static void guarded_policy_return(const scoped_lock_t *first,
+				  scoped_lock_t *second)
+{
+	LOCK_GUARD(first);
+	LOCK_GUARD(second);
+	return;
+}
+
+KTEST(lock, guard_policy_state_and_reverse_release)
+{
+	unsigned order = 0;
+	struct guard_policy_probe first = { &order, 1, 0 };
+	struct guard_policy_probe second = { &order, 2, 0 };
+	const lock_operations_t operations = { guard_policy_enter,
+					       guard_policy_leave };
+	const scoped_lock_t first_lock = { { &operations }, &first };
+	scoped_lock_t second_lock = { { &operations }, &second };
+	guarded_policy_return(&first_lock, &second_lock);
+	EXPECT_EQ(order, 1221u);
+	EXPECT_EQ(first.state, 1);
+	EXPECT_EQ(second.state, 2);
+	return 0;
+}

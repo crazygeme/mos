@@ -46,7 +46,9 @@ static void sock_refresh_local_inet(mos_sock *sk)
 
 int do_socket(int domain, int type, int protocol)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
+	if (domain == AF_NETLINK)
+		return netlink_socket(type, protocol);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("socket(domain=%d, type=%d, protocol=%d)\n", domain, type,
 		     protocol);
@@ -149,13 +151,15 @@ int do_socket(int domain, int type, int protocol)
 
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("bind(fd=%d, addr=%x, addrlen=%u)\n", fd, addr, addrlen);
 
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_NETLINK)
+		return netlink_bind(sk, addr, addrlen);
 
 	if (addr->sa_family == AF_UNIX)
 		return unix_bind(sk, (const struct sockaddr_un *)addr, addrlen);
@@ -191,7 +195,7 @@ int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("connect(fd=%d, addr=%x, addrlen=%u)\n", fd, addr,
 		     addrlen);
@@ -199,6 +203,16 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_NETLINK) {
+		if (addrlen < 12 || addr->sa_family != AF_NETLINK)
+			return -EINVAL;
+		uint32_t port;
+		memcpy(&port, (const char *)addr + 4, sizeof(port));
+		if (port)
+			return -ECONNREFUSED;
+		sk->state = SS_CONNECTED;
+		return 0;
+	}
 
 	if (addr->sa_family == AF_UNIX)
 		return unix_connect(sk, (const struct sockaddr_un *)addr,
@@ -267,7 +281,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_listen(int fd, int backlog)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("listen(fd=%d, backlog=%d)\n", fd, backlog);
 
@@ -297,7 +311,7 @@ int do_listen(int fd, int backlog)
 
 int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("accept(fd=%d, addr=%x, addrlen=%x)\n", fd, addr, addrlen);
 
@@ -353,7 +367,7 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getsockname(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
@@ -361,6 +375,8 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_NETLINK)
+		return netlink_sockaddr(sk, addr, addrlen);
 
 	if (sk->domain == AF_UNIX)
 		return unix_sockaddr(sk, addr, addrlen);
@@ -375,7 +391,7 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getpeername(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
@@ -431,7 +447,8 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	      const struct sockaddr_in *to, unsigned tolen)
 {
 	mos_sock *sk = fd_to_sock(fd);
-	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
+	LOCK_GUARD((sk && sk->domain != AF_UNIX) ? &net_core_lock :
+						   &net_local_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("sendto(fd=%d, buf=%x, len=%u, flags=%d, to=%x, tolen=%u)\n",
 		     fd, buf, len, flags, to, tolen);
@@ -440,6 +457,14 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	(void)tolen;
 	if (!sk)
 		return -ENOTSOCK;
+	if (sk->domain == AF_NETLINK) {
+		struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
+		struct msghdr msg = { .msg_name = (void *)to,
+				      .msg_namelen = tolen,
+				      .msg_iov = &iov,
+				      .msg_iovlen = 1 };
+		return netlink_sendmsg(sk, &msg, flags);
+	}
 	if (sk->err)
 		return sk->err;
 	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET) {
@@ -491,7 +516,8 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		struct sockaddr_in *from, unsigned *fromlen)
 {
 	mos_sock *sk = fd_to_sock(fd);
-	NET_CORE_GUARD_IF(sk && sk->domain != AF_UNIX);
+	LOCK_GUARD((sk && sk->domain != AF_UNIX) ? &net_core_lock :
+						   &net_local_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("recvfrom(fd=%d, buf=%x, len=%u, flags=%d, from=%x, fromlen=%x)\n",
 		     fd, buf, len, flags, from, fromlen);
@@ -501,6 +527,18 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		return -ENOTSOCK;
 	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
+	if (sk->domain == AF_NETLINK) {
+		struct iovec iov = { .iov_base = buf, .iov_len = len };
+		struct msghdr msg = { .msg_name = from,
+				      .msg_namelen =
+					      from && fromlen ? *fromlen : 0,
+				      .msg_iov = &iov,
+				      .msg_iovlen = 1 };
+		int ret = netlink_recvmsg(sk, &msg, flags);
+		if (ret >= 0 && from && fromlen)
+			*fromlen = msg.msg_namelen;
+		return ret;
+	}
 
 	if (sk->domain == AF_UNIX) {
 		struct iovec iov = { .iov_base = buf, .iov_len = len };
@@ -582,7 +620,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 
 int do_shutdown(int fd, int how)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("shutdown(fd=%d, how=%d)\n", fd, how);
 

@@ -12,7 +12,7 @@
 #define RTC_24H 0x02
 
 /* CMOS index/data ports are shared by all CPUs, including /dev/rtc reads. */
-static spinlock_t rtc_lock = { .inited = 1 };
+static spinlock_t rtc_lock = SPINLOCK_INITIALIZER;
 
 static unsigned char rtc_register(unsigned reg)
 {

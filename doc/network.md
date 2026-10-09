@@ -400,6 +400,7 @@ Implemented today:
 - `FIONBIO` sets or clears `O_NONBLOCK` on the shared file description
 - `SIOCGIFCONF`
 - `SIOCGIFFLAGS`
+- `SIOCSIFFLAGS` sets the administrative `IFF_UP` state for root callers
 - `SIOCGIFADDR`
 - `SIOCGIFNETMASK`
 - `SIOCGIFBRDADDR`
@@ -412,6 +413,25 @@ The interface view currently consists of:
 
 - loopback as `lo`
 - the default physical interface as the lwIP-derived name for `eth0`
+
+## Route Netlink Configuration
+
+Route netlink provides link and IPv4 address snapshots through `RTM_GETLINK`
+and `RTM_GETADDR`. Address dumps honor the requested address family. A single
+send may contain multiple aligned requests.
+
+Root callers can configure a single IPv4 address per interface through
+`RTM_NEWADDR` and remove it through `RTM_DELADDR`. Removing the address clears
+the interface address, netmask, and gateway. `RTM_NEWLINK` changes `IFF_UP` by
+interface index; other link changes and link attributes return `EOPNOTSUPP`.
+Bringing an interface down stops its kernel DHCP client. `SIOCSIFFLAGS` provides
+the administrative state operation for ioctl-based callers. Interface flag
+queries report the current administrative and physical link states.
+
+Successful mutations produce acknowledgments when `NLM_F_ACK` is set. Errors
+produce `NLMSG_ERROR` replies containing the error code and original request.
+`sh test/netlink_shutdown.sh` checks loopback address flushing and down/up
+transitions, and restores the configured `127.0.0.1/8` address and up state.
 
 ## Limitations and Notes
 

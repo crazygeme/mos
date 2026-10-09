@@ -149,6 +149,7 @@ struct _task_struct {
 	unsigned vm_lock_depth; /* VM locks released before forced thread removal. */
 	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
 	unsigned terminate_requested;
+	unsigned enumeration_refs; /* Retains tasks across unlocked callbacks. */
 	int sched_level;
 	addr_space_t address_space;
 	unsigned int psid;

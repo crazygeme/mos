@@ -51,7 +51,7 @@
 static enum { UNINIT, POLL, QUEUE } mode = UNINIT;
 
 /* UART registers and the TX ring are protected by serial_lock. */
-static spinlock_t serial_lock = { .inited = 1 };
+static spinlock_t serial_lock = SPINLOCK_INITIALIZER;
 #define TXQ_SIZE 4096
 static unsigned char txq_buf[TXQ_SIZE];
 static unsigned txq_head = 0; /* read index */

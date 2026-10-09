@@ -30,7 +30,17 @@ u32_t sys_now(void)
 	return (u32_t)time_now_ms();
 }
 
-static mutex_t net_core_lock;
+void net_set_interface_up(struct netif *nif, int up)
+{
+	if (up) {
+		netif_set_up(nif);
+	} else {
+		dhcp_stop(nif);
+		netif_set_down(nif);
+	}
+}
+
+static mutex_t net_core_mutex;
 static spinlock_t net_service_lock;
 
 int net_core_enter(void)
@@ -39,7 +49,7 @@ int net_core_enter(void)
 		return 0;
 	sched_disable();
 	if (!current->net_core_depth)
-		mutex_lock(&net_core_lock);
+		mutex_lock(&net_core_mutex);
 	current->net_core_depth++;
 	return 1;
 }
@@ -47,16 +57,43 @@ int net_core_enter(void)
 void net_core_unlock(void)
 {
 	if (!--current->net_core_depth)
-		mutex_unlock(&net_core_lock);
+		mutex_unlock(&net_core_mutex);
 	sched_enable();
 }
+
+static int net_guard_enter(void *context __attribute__((unused)),
+			   const char *func __attribute__((unused)))
+{
+	return net_core_enter();
+}
+
+static void net_local_guard_leave(void *context __attribute__((unused)),
+				  int active)
+{
+	if (active)
+		net_core_unlock();
+}
+
+static void net_core_guard_leave(void *context, int active)
+{
+	net_service_update();
+	net_local_guard_leave(context, active);
+}
+
+static const lock_operations_t net_core_operations = { net_guard_enter,
+						       net_core_guard_leave };
+static const lock_operations_t net_local_operations = { net_guard_enter,
+							net_local_guard_leave };
+
+const scoped_lock_t net_core_lock = { .header = { &net_core_operations } };
+const scoped_lock_t net_local_lock = { .header = { &net_local_operations } };
 
 unsigned net_core_suspend(void)
 {
 	unsigned depth = current->net_core_depth;
 	if (depth) {
 		current->net_core_depth = 0;
-		mutex_unlock(&net_core_lock);
+		mutex_unlock(&net_core_mutex);
 	}
 	return depth;
 }
@@ -64,7 +101,7 @@ unsigned net_core_suspend(void)
 void net_core_resume(unsigned depth)
 {
 	if (depth) {
-		mutex_lock(&net_core_lock);
+		mutex_lock(&net_core_mutex);
 		current->net_core_depth = depth;
 	}
 }
@@ -76,7 +113,7 @@ static unsigned long long net_service_due = ~0ULL;
 static void net_service_run(void *param)
 {
 	(void)param;
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	int irq;
 	spinlock_lock(&net_service_lock, &irq);
 	net_service_queued = 0;
@@ -280,7 +317,7 @@ static void eth0_rx_dsr(void *param)
 		g_rx_rd++;
 		spinlock_unlock(&g_rx_lock, irq);
 
-		NET_CORE_GUARD;
+		LOCK_GUARD(&net_core_lock);
 		slot = &g_rx_slots[idx];
 		slot->custom.custom_free_function = eth0_rx_free_pbuf;
 		p = pbuf_alloced_custom(PBUF_RAW, slot->len, PBUF_REF,
@@ -342,9 +379,9 @@ static int eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len,
 /* ── KERNEL_INIT entry point ────────────────────────────────────────────────── */
 void net_init(void)
 {
-	mutex_init(&net_core_lock);
+	mutex_init(&net_core_mutex);
 	spinlock_init(&net_service_lock);
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	/*
 	 * lwip_init() creates the loopback netif (127.0.0.1) unconditionally
 	 * inside netif_init().  Do this first so that loopback is always

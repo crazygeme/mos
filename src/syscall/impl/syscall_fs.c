@@ -748,14 +748,7 @@ int sys_rmdir(const char *path)
 
 int sys_creat(const char *path, unsigned mode)
 {
-	int fd;
-	if (TEST_LOG(TEST_LOG_INFO))
-		klog("creat(%s, %d)\n", path, mode);
-
-	fd = fs_open(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
-	if (fd < 0)
-		return fd;
-	return fs_close(fd);
+	return sys_open(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
 }
 
 int sys_link(const char *path1, const char *path2)

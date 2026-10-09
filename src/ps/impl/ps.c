@@ -309,20 +309,45 @@ task_struct *ps_find_process(unsigned psid)
 void ps_enum_all(ps_enum_callback callback, void *ctx)
 {
 	struct rb_node *node;
+	unsigned cursor = 0;
+	int first = 1;
 	int irq;
 
 	if (!callback)
 		return;
 
 	spinlock_lock(&ps_lock, &irq);
-	node = rb_first(&control.mgr_queue);
-	while (node) {
-		struct rb_node *next = rb_next(node);
-		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+	for (;;) {
+		task_struct *task = NULL;
+		/* Resolve the next ID from the current tree after every callback. */
+		node = control.mgr_queue.rb_node;
+		while (node) {
+			task_struct *candidate =
+				rb_entry(node, task_struct, mgr_rb);
+			if (first || candidate->psid > cursor) {
+				task = candidate;
+				node = node->rb_left;
+			} else {
+				node = node->rb_right;
+			}
+		}
+		if (!task)
+			break;
+		cursor = task->psid;
+		first = 0;
+		task->enumeration_refs++;
+		__sync_fetch_and_add(&current->vm_lock_depth, 1);
 		spinlock_unlock(&ps_lock, irq);
 		callback(task, ctx);
 		spinlock_lock(&ps_lock, &irq);
-		node = next;
+		task->enumeration_refs--;
+		__sync_fetch_and_sub(&current->vm_lock_depth, 1);
+		if (!task->enumeration_refs && task->status == ps_dying) {
+			task_struct *parent =
+				ps_find_process_unsafe(task->ppid);
+			if (parent && parent->status == ps_waiting)
+				ps_put_to_ready_queue_unsafe(parent);
+		}
 	}
 	spinlock_unlock(&ps_lock, irq);
 }
@@ -427,6 +452,7 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 		return -EFAULT;
 	if (!arch_mm_user_range_valid(vaddr, len))
 		return -EFAULT;
+	LOCK_GUARD(&task->user->vm->mapping_lock);
 	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {
@@ -507,6 +533,7 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 		return -EFAULT;
 	if (!arch_mm_user_range_valid(vaddr, len))
 		return -EFAULT;
+	LOCK_GUARD(&task->user->vm->mapping_lock);
 	pd = (pte_t *)task->user->vm->page_dir;
 
 	while (len > 0) {

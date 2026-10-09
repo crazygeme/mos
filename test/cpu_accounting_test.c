@@ -54,12 +54,13 @@ KTEST(CPUAccounting, NativeWidthRollover)
 {
 	EXPECT_EQ(sizeof(ps_tick_t), sizeof(uintptr_t));
 	ps_tick_t max = (ps_tick_t)-1;
-	task_stats_t stats = { .user_tickets = max,
-			       .kernel_tickets = max };
+	task_stats_t stats = { .user_tickets = max, .kernel_tickets = max };
 	task_usage_t group = { .user_tickets = max,
 			       .kernel_tickets = max,
 			       .child_utime = max };
-	task_struct task = { .stats = &stats, .usage = &group, .type = ps_user };
+	task_struct task = { .stats = &stats,
+			     .usage = &group,
+			     .type = ps_user };
 	cpu_ticks_t cpu = { .user = max, .system = max, .idle = max };
 	ps_usage_charge(&task, &cpu, 1);
 	ps_usage_charge(&task, &cpu, 0);

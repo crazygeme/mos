@@ -105,8 +105,10 @@ static int prepare_fixture(int elf_class)
 		struct stat st;
 		fixture_getattr(&fixture.fp, &st);
 		fixture.reads = 0;
-		EXPECT_EQ(elf_prepare_header(&fixture.fp, &image, &fixture.bytes,
-					    sizeof(Elf64_Ehdr), &st), 0);
+		EXPECT_EQ(elf_prepare_header(&fixture.fp, &image,
+					     &fixture.bytes, sizeof(Elf64_Ehdr),
+					     &st),
+			  0);
 		EXPECT_EQ(fixture.reads, 1);
 		elf_release(image);
 		EXPECT_EQ(fixture.fp.f_count, 1);

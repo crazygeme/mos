@@ -58,6 +58,7 @@ int sys_pwrite64(int fd, const void *buf, unsigned count, unsigned offset_low,
 int sys_ioctl(int d, int request, char *buf);
 int sys_open(const char *name, int flags, umode_t mode);
 ssize_t sys_sendfile64(int out_fd, int in_fd, int64_t *offset, size_t count);
+ssize_t sys_sendfile(int out_fd, int in_fd, int32_t *offset, size_t count);
 int sys_openat(int dirfd, const char *name, int flags, umode_t mode);
 int sys_close(unsigned fd);
 int sys_close_range(unsigned first, unsigned last, unsigned flags);

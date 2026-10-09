@@ -71,7 +71,8 @@ static void cleanup()
 	for (word = 0; cur->fd_cloexec && word < FD_BITMAP_WORDS; word++) {
 		unsigned long pending = cur->fd_cloexec[word];
 		while (pending) {
-			unsigned fd = word * FD_BITMAP_BITS + __builtin_ctzl(pending);
+			unsigned fd =
+				word * FD_BITMAP_BITS + __builtin_ctzl(pending);
 			pending &= pending - 1;
 			if (fd < MAX_FD && cur->fds[fd])
 				fs_close(fd);
@@ -139,7 +140,8 @@ static char **dup_strv(char **v, unsigned n)
 	strings = (char *)(ret + n);
 	for (i = 0; i < n; i++) {
 		size_t len = n <= (sizeof(lengths) / sizeof(lengths[0])) ?
-			lengths[i] : strlen(v[i]) + 1;
+				     lengths[i] :
+				     strlen(v[i]) + 1;
 		if (len > bytes - (unsigned)(strings - (char *)ret)) {
 			kfree(ret);
 			return NULL;
@@ -338,7 +340,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 		return -ENOENT;
 	} else {
 		loff_t pos = 0;
-		size_t length = s.st_size < HEADER_BYTES ? s.st_size : HEADER_BYTES;
+		size_t length = s.st_size < HEADER_BYTES ? s.st_size :
+							   HEADER_BYTES;
 		ssize_t n = fp->f_fop->read(fp, firstline, length, &pos);
 		if (n > 0)
 			inotify_file_event(fp, IN_ACCESS);
@@ -364,9 +367,11 @@ static int execve_common(const char *f, char **argv, char **envp,
 			    (S_ISGID | S_IXGRP))
 				exec_egid = s.st_gid;
 		}
-	} else if (header_length >= 2 && firstline[0] == '#' && firstline[1] == '!') {
+	} else if (header_length >= 2 && firstline[0] == '#' &&
+		   firstline[1] == '!') {
 		int ret = parse_shebang(firstline, header_length,
-				       s.st_size > header_length, &interp, &interp_arg);
+					s.st_size > header_length, &interp,
+					&interp_arg);
 		if (ret) {
 			fs_put_file(fp);
 			name_put(file_name);
@@ -384,8 +389,9 @@ static int execve_common(const char *f, char **argv, char **envp,
 	 * or replacing memory. */
 	{
 		int ret = header_is_elf ?
-			elf_prepare_header(exec_fp, &image, firstline, header_length, &s) :
-			elf_prepare(exec_fp, &image);
+				  elf_prepare_header(exec_fp, &image, firstline,
+						     header_length, &s) :
+				  elf_prepare(exec_fp, &image);
 		if (ret) {
 			if (exec_fp)
 				fs_put_file(exec_fp);
@@ -664,9 +670,8 @@ static void prepare_interactive_userspace(task_struct *cur)
  */
 static void kinit_userspace()
 {
-	const char *default_argv[] = {
-		"/sbin/init", TestControl.text ? "3" : NULL, NULL
-	};
+	const char *default_argv[] = { "/sbin/init",
+				       TestControl.text ? "3" : NULL, NULL };
 	const char *default_envp[] = { "TERM=linux", NULL };
 	const char *test_bash_argv[] = {
 		"/bin/bash",

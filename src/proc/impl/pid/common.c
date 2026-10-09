@@ -203,7 +203,8 @@ static int pid_fd_metadata_getattr(file *fp, struct stat *s)
 {
 	file *target = fp->f_inode->i_private;
 	return target->f_fop && target->f_fop->getattr ?
-		target->f_fop->getattr(target, s) : -EIO;
+		       target->f_fop->getattr(target, s) :
+		       -EIO;
 }
 
 static int pid_fd_metadata_release(file *fp)

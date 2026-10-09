@@ -13,7 +13,7 @@ ALIASES = {
     'oldstat': 'stat', 'stat64': 'stat', 'fstat64': 'fstat',
     'lstat64': 'lstat', '_llseek': 'lseek', '_newselect': 'select',
     'waitpid': 'wait4', 'mmap2': 'mmap', 'readdir': 'getdents',
-    'fcntl64': 'fcntl', 'ftruncate64': 'ftruncate',
+    'fcntl64': 'fcntl', 'ftruncate64': 'ftruncate', 'sendfile64': 'sendfile',
     'ugetrlimit': 'getrlimit', 'statfs64': 'statfs', 'fstatfs64': 'fstatfs',
     'fstatat64': 'newfstatat', 'clock_gettime64': 'clock_gettime',
     'futex_time64': 'futex', 'clock_getres_time64': 'clock_getres',

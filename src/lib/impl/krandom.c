@@ -36,7 +36,8 @@ void kernel_random_bytes(void *buffer, unsigned size)
 		unsigned char ready = 0;
 		if (random_hardware) {
 			for (unsigned retry = 0; retry < 10 && !ready; retry++)
-				asm volatile("rdrand %0; setc %1" : "=r"(value), "=qm"(ready));
+				asm volatile("rdrand %0; setc %1"
+					     : "=r"(value), "=qm"(ready));
 		}
 		if (!ready)
 			value = (unsigned)random_fallback();

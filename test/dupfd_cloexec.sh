@@ -1,94 +1,116 @@
 #!/bin/sh
 # Verify F_DUPFD_CLOEXEC allocation, file sharing, and exec semantics.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-dupfd_cloexec.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
-import errno
-import fcntl
-import os
-import resource
-import sys
-import tempfile
-import unittest
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
+static void child_ok(pid_t pid)
+{
+	int status;
+	CHECK(pid > 0);
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+static int temp_file(void)
+{
+	char path[] = "/tmp/mos-probe.XXXXXX";
+	int fd = mkstemp(path);
+	CHECK(fd >= 0);
+	CHECK(!unlink(path));
+	return fd;
+}
 
-F_DUPFD_CLOEXEC = 1030
-
-
-class DupfdCloexec(unittest.TestCase):
-    def test_lowest_free_descriptor_and_shared_offset(self):
-        with tempfile.TemporaryFile() as source:
-            source.write(b'abcd')
-            source.flush()
-            source.seek(0)
-            fd = source.fileno()
-            fcntl.fcntl(fd, fcntl.F_SETFD, 0)
-            occupied = fcntl.fcntl(fd, fcntl.F_DUPFD, 64)
-            duplicate = -1
-            try:
-                duplicate = fcntl.fcntl(fd, F_DUPFD_CLOEXEC, occupied)
-                self.assertGreater(duplicate, occupied)
-                self.assertEqual(fcntl.fcntl(duplicate, fcntl.F_GETFD),
-                                 fcntl.FD_CLOEXEC)
-                self.assertEqual(fcntl.fcntl(fd, fcntl.F_GETFD), 0)
-                self.assertEqual(fcntl.fcntl(occupied, fcntl.F_GETFD), 0)
-                self.assertEqual(os.read(duplicate, 1), b'a')
-                self.assertEqual(os.read(fd, 1), b'b')
-                os.close(occupied)
-                occupied = -1
-                replacement = fcntl.fcntl(fd, F_DUPFD_CLOEXEC, 64)
-                try:
-                    self.assertLess(replacement, duplicate)
-                finally:
-                    os.close(replacement)
-            finally:
-                if occupied >= 0:
-                    os.close(occupied)
-                if duplicate >= 0:
-                    os.close(duplicate)
-
-    def test_exec_closes_duplicate(self):
-        source = os.open('/dev/null', os.O_RDONLY | os.O_CLOEXEC)
-        duplicate = -1
-        try:
-            duplicate = fcntl.fcntl(source, F_DUPFD_CLOEXEC, 64)
-            pid = os.fork()
-            if pid == 0:
-                code = '''import errno, fcntl, sys
-try:
-    fcntl.fcntl(int(sys.argv[1]), fcntl.F_GETFD)
-except OSError as exc:
-    sys.exit(0 if exc.errno == errno.EBADF else 2)
-sys.exit(1)
-'''
-                os.execl(sys.executable, sys.executable, '-c', code,
-                         str(duplicate))
-            self.assertEqual(os.waitpid(pid, 0)[1], 0)
-            self.assertEqual(os.read(duplicate, 1), b'')
-        finally:
-            if duplicate >= 0:
-                os.close(duplicate)
-            os.close(source)
-
-    def test_invalid_fd_and_minimum(self):
-        with self.assertRaises(OSError) as result:
-            fcntl.fcntl(0x7fffffff, F_DUPFD_CLOEXEC, 0)
-        self.assertEqual(result.exception.errno, errno.EBADF)
-        fd = os.open('/dev/null', os.O_RDONLY)
-        try:
-            for minimum in (-1, resource.getrlimit(resource.RLIMIT_NOFILE)[0]):
-                with self.assertRaises(OSError) as result:
-                    fcntl.fcntl(fd, F_DUPFD_CLOEXEC, minimum)
-                self.assertEqual(result.exception.errno, errno.EINVAL)
-        finally:
-            os.close(fd)
-
-
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+int main(int argc, char **argv)
+{
+	int fd, occupied, duplicate, replacement;
+	char c, number[32];
+	struct rlimit lim;
+	pid_t pid;
+	if (argc == 2) {
+		CHECK(fcntl(atoi(argv[1]), F_GETFD) == -1 && errno == EBADF);
+		return 0;
+	}
+	fd = temp_file();
+	CHECK(write(fd, "abcd", 4) == 4);
+	CHECK(lseek(fd, 0, SEEK_SET) == 0);
+	CHECK(!fcntl(fd, F_SETFD, 0));
+	CHECK((occupied = fcntl(fd, F_DUPFD, 64)) >= 64);
+	CHECK((duplicate = fcntl(fd, F_DUPFD_CLOEXEC, occupied)) > occupied);
+	CHECK(fcntl(duplicate, F_GETFD) == FD_CLOEXEC);
+	CHECK(!fcntl(fd, F_GETFD) && !fcntl(occupied, F_GETFD));
+	CHECK(read(duplicate, &c, 1) == 1 && c == 'a');
+	CHECK(read(fd, &c, 1) == 1 && c == 'b');
+	close(occupied);
+	CHECK((replacement = fcntl(fd, F_DUPFD_CLOEXEC, 64)) < duplicate &&
+	      replacement >= 64);
+	close(replacement);
+	snprintf(number, sizeof(number), "%d", duplicate);
+	pid = fork();
+	CHECK(pid >= 0);
+	if (!pid) {
+		execl(argv[0], argv[0], number, (char *)0);
+		_exit(2);
+	}
+	child_ok(pid);
+	close(duplicate);
+	CHECK(fcntl(0x7fffffff, F_DUPFD_CLOEXEC, 0) == -1 && errno == EBADF);
+	CHECK(!getrlimit(RLIMIT_NOFILE, &lim));
+	CHECK(fcntl(fd, F_DUPFD_CLOEXEC, -1) == -1 && errno == EINVAL);
+	CHECK(fcntl(fd, F_DUPFD_CLOEXEC, lim.rlim_cur) == -1 &&
+	      errno == EINVAL);
+	close(fd);
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

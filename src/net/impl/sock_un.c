@@ -672,8 +672,8 @@ static void unix_cmsg_install_fds(struct msghdr *msg, file **files,
 		fit = nfds;
 
 	for (i = 0; i < fit; i++) {
-		int fd = fs_install_fd(files[i],
-			flags & MSG_CMSG_CLOEXEC ? O_CLOEXEC : 0);
+		int fd = fs_install_fd(
+			files[i], flags & MSG_CMSG_CLOEXEC ? O_CLOEXEC : 0);
 		if (fd < 0)
 			break;
 		fds[installed++] = fd;
@@ -727,8 +727,7 @@ static int unix_sendmsg_dgram_locked(mos_sock *peer, const struct msghdr *msg,
 
 static int unix_sendmsg_wait_for_passfd_room(mos_sock *sk, mos_sock **peer_ptr,
 					     int *irq, file **files,
-					     unsigned nfds,
-					     int nonblock,
+					     unsigned nfds, int nonblock,
 					     unsigned long long deadline)
 {
 	mos_sock *peer = *peer_ptr;
@@ -1094,8 +1093,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 	}
 
 	if (nfds > 0) {
-		ret = unix_sendmsg_wait_for_passfd_room(sk, &peer, &irq, files,
-							nfds, nonblock, deadline);
+		ret = unix_sendmsg_wait_for_passfd_room(
+			sk, &peer, &irq, files, nfds, nonblock, deadline);
 		if (ret < 0)
 			return ret;
 	}
@@ -1110,7 +1109,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 	if (ret < 0)
 		goto out_unlock;
 	if (nfds && sent > 0) {
-		unsigned slot = (peer->unix_passfd_tail + UNIX_PASSFD_QUEUE - 1) %
+		unsigned slot =
+			(peer->unix_passfd_tail + UNIX_PASSFD_QUEUE - 1) %
 			UNIX_PASSFD_QUEUE;
 		peer->unix_passfd_queue[slot].ready_head = stream_start + 1;
 	}

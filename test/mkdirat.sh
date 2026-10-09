@@ -1,62 +1,113 @@
 #!/bin/sh
 # Validate the i386 mkdirat interface on persistent and runtime filesystems.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-mkdirat.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
-import ctypes
-import errno
-import os
-from pathlib import Path
-import stat
-import tempfile
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
 
+static int temp_file(void)
+{
+	char path[] = "/tmp/mos-probe.XXXXXX";
+	int fd = mkstemp(path);
+	CHECK(fd >= 0);
+	CHECK(!unlink(path));
+	return fd;
+}
 
-def main():
-    assert ctypes.sizeof(ctypes.c_void_p) == 4, "An i386 userspace is required."
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.syscall.restype = ctypes.c_long
-
-    def mkdirat(fd, path, mode, expected=0):
-        result = libc.syscall(296, fd, path, mode)
-        assert result == (0 if expected == 0 else -1), (result, ctypes.get_errno())
-        if expected:
-            assert ctypes.get_errno() == expected, ctypes.get_errno()
-
-    for root in ("/root", "/run"):
-        with tempfile.TemporaryDirectory(dir=root) as directory:
-            base = Path(directory)
-            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-            mask = os.umask(0o027)
-            try:
-                mkdirat(fd, b"child", 0o777)
-                assert stat.S_IMODE((base / "child").stat().st_mode) == 0o750
-                mkdirat(fd, b"child", 0o700, errno.EEXIST)
-                mkdirat(-1, b"relative", 0o700, errno.EBADF)
-                mkdirat(fd, b"", 0o700, errno.ENOENT)
-                mkdirat(fd, b"missing/child", 0o700, errno.ENOENT)
-                mkdirat(-1, os.fsencode(base / "absolute"), 0o700)
-                with (base / "file").open("w") as file:
-                    mkdirat(file.fileno(), b"child", 0o700, errno.ENOTDIR)
-                cwd = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
-                try:
-                    os.chdir(directory)
-                    mkdirat(-100, b"cwd", 0o700)
-                    assert (base / "cwd").is_dir()
-                finally:
-                    os.fchdir(cwd)
-                    os.close(cwd)
-            finally:
-                os.umask(mask)
-                os.close(fd)
-    print("mkdirat: PASS")
-
-
-if __name__ == "__main__":
-    main()
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+static void make(int fd, const char *p, int mode, int error)
+{
+	int r = syscall(296, fd, p, mode);
+	CHECK(error ? (r == -1 && errno == error) : r == 0);
+}
+int main(void)
+{
+	const char *roots[] = { "/root", "/dev/shm" };
+	int i, fd, file, cwd;
+	char path[128], absolute[160];
+	struct stat st;
+	mode_t mask;
+	for (i = 0; i < 2; i++) {
+		snprintf(path, sizeof(path), "%s/mos-mkdirat.XXXXXX", roots[i]);
+		CHECK(mkdtemp(path));
+		CHECK((fd = open(path, O_RDONLY | O_DIRECTORY)) >= 0);
+		mask = umask(027);
+		make(fd, "child", 0777, 0);
+		snprintf(absolute, sizeof(absolute), "%s/child", path);
+		CHECK(!stat(absolute, &st) && (st.st_mode & 0777) == 0750);
+		make(fd, "child", 0700, EEXIST);
+		make(-1, "relative", 0700, EBADF);
+		make(fd, "", 0700, ENOENT);
+		make(fd, "missing/child", 0700, ENOENT);
+		snprintf(absolute, sizeof(absolute), "%s/absolute", path);
+		make(-1, absolute, 0700, 0);
+		file = temp_file();
+		make(file, "child", 0700, ENOTDIR);
+		close(file);
+		cwd = open(".", O_RDONLY);
+		CHECK(cwd >= 0 && !chdir(path));
+		make(-100, "cwd", 0700, 0);
+		CHECK(!stat("cwd", &st) && S_ISDIR(st.st_mode));
+		rmdir("child");
+		rmdir("absolute");
+		rmdir("cwd");
+		CHECK(!fchdir(cwd));
+		close(cwd);
+		close(fd);
+		umask(mask);
+		CHECK(!rmdir(path));
+	}
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

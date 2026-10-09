@@ -208,7 +208,8 @@ int cyb_getbuf(cy_buf *b, void *buf, int len, int blocking, int interruptible)
 			 * just before writer_count is decremented to 0).
 			 * If so, loop back so the EOF check at the top fires
 			 * cleanly instead of returning -EINTR. */
-			if (__atomic_load_n(&b->writer_count, __ATOMIC_ACQUIRE) == 0)
+			if (__atomic_load_n(&b->writer_count,
+					    __ATOMIC_ACQUIRE) == 0)
 				continue;
 			return -1; /* genuine EINTR */
 		}

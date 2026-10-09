@@ -526,8 +526,8 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag,
 	 */
 	if (target_sb->s_op && target_sb->s_op->open) {
 		if (link_target && target_sb->s_op->open_link)
-			fp = target_sb->s_op->open_link(target_sb, rel_path, flag,
-						       link_target);
+			fp = target_sb->s_op->open_link(target_sb, rel_path,
+							flag, link_target);
 		else
 			fp = target_sb->s_op->open(target_sb, rel_path, flag);
 		if (fp) {
@@ -593,10 +593,11 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 			break;
 		}
 		if (fp->f_fop && fp->f_fop->readlink)
-			ret = fp->f_fop->readlink(fp, target, MAX_PATH - 1, &len);
+			ret = fp->f_fop->readlink(fp, target, MAX_PATH - 1,
+						  &len);
 		else
-			ret = vfs_readlink(lookup_sb, lookup, target, MAX_PATH - 1,
-					   &len);
+			ret = vfs_readlink(lookup_sb, lookup, target,
+					   MAX_PATH - 1, &len);
 		if (ret || !len || len >= MAX_PATH) {
 			fs_put_file(fp);
 			break;
@@ -616,7 +617,7 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 			memcpy(joined + base, target, len + 1);
 		}
 		fs_put_file(fp);
-	normalize_link:
+normalize_link:
 		/* Normalize dot components before selecting a mount. */
 		{
 			const char *src = joined;

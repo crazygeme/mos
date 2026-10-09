@@ -1,173 +1,175 @@
 #!/bin/sh
 # Exercise shared descriptor tables, fork isolation, and inotify lifetime.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-shared_fds.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
-import ctypes
-import errno
-import fcntl
-import os
-import select
-import threading
-import unittest
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
+static void child_ok(pid_t pid)
+{
+	int status;
+	CHECK(pid > 0);
+	CHECK(waitpid(pid, &status, 0) == pid);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
 
-
-class SharedDescriptors(unittest.TestCase):
-    def run_thread(self, action):
-        errors = []
-
-        def run():
-            try:
-                action()
-            except BaseException as exc:
-                errors.append(exc)
-
-        thread = threading.Thread(target=run)
-        thread.start()
-        thread.join(10)
-        self.assertFalse(thread.is_alive(), 'descriptor worker timed out')
-        if errors:
-            raise errors[0]
-
-    def test_worker_created_pipe_survives_thread_exit(self):
-        descriptors = []
-
-        def create():
-            descriptors.extend(os.pipe())
-            os.write(descriptors[1], b'worker')
-
-        self.run_thread(create)
-        read_fd, write_fd = descriptors
-        try:
-            self.assertEqual(os.read(read_fd, 6), b'worker')
-            os.write(write_fd, b'main')
-            self.assertEqual(os.read(read_fd, 4), b'main')
-        finally:
-            os.close(read_fd)
-            os.close(write_fd)
-
-    def test_main_created_fd_visible_to_existing_thread(self):
-        ready = threading.Event()
-        created = threading.Event()
-        descriptors = []
-        errors = []
-
-        def consume():
-            ready.set()
-            if not created.wait(5):
-                errors.append(AssertionError('pipe creation timed out'))
-                return
-            try:
-                self.assertEqual(os.read(descriptors[0], 4), b'data')
-            except BaseException as exc:
-                errors.append(exc)
-
-        thread = threading.Thread(target=consume)
-        thread.start()
-        self.assertTrue(ready.wait(5))
-        descriptors.extend(os.pipe())
-        try:
-            os.write(descriptors[1], b'data')
-            created.set()
-            thread.join(10)
-            self.assertFalse(thread.is_alive(), 'pipe reader timed out')
-            if errors:
-                raise errors[0]
-        finally:
-            for fd in descriptors:
-                os.close(fd)
-
-    def test_cloexec_and_close_are_shared(self):
-        fd = os.open('/dev/null', os.O_RDONLY)
-        closed = False
-        try:
-            fcntl.fcntl(fd, fcntl.F_SETFD, 0)
-            self.run_thread(lambda: fcntl.fcntl(fd, fcntl.F_SETFD,
-                                              fcntl.FD_CLOEXEC))
-            self.assertEqual(fcntl.fcntl(fd, fcntl.F_GETFD), fcntl.FD_CLOEXEC)
-            self.run_thread(lambda: os.close(fd))
-            closed = True
-            with self.assertRaises(OSError) as result:
-                fcntl.fcntl(fd, fcntl.F_GETFD)
-            self.assertEqual(result.exception.errno, errno.EBADF)
-        finally:
-            if not closed:
-                os.close(fd)
-
-    def test_fork_close_is_private(self):
-        fd = os.open('/dev/null', os.O_RDONLY)
-        try:
-            pid = os.fork()
-            if pid == 0:
-                os.close(fd)
-                os._exit(0)
-            self.assertEqual(os.waitpid(pid, 0)[1], 0)
-            self.assertEqual(os.read(fd, 1), b'')
-        finally:
-            os.close(fd)
-
-    def test_exec_unshares_clone_files(self):
-        libc = ctypes.CDLL(None, use_errno=True)
-        callback_type = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
-        libc.clone.argtypes = [callback_type, ctypes.c_void_p,
-                               ctypes.c_int, ctypes.c_void_p]
-        libc.clone.restype = ctypes.c_int
-        stack = ctypes.create_string_buffer(256 * 1024)
-        stack_top = (ctypes.addressof(stack) + len(stack)) & ~15
-        fd = os.open('/dev/null', os.O_RDONLY | os.O_CLOEXEC)
-
-        @callback_type
-        def child(_):
-            os.execl('/bin/true', 'true')
-            return 127
-
-        try:
-            # CLONE_FILES | SIGCHLD, with a separate address space.
-            pid = libc.clone(child, stack_top, 0x400 | 17, None)
-            self.assertGreater(pid, 0, os.strerror(ctypes.get_errno()))
-            self.assertEqual(os.waitpid(pid, 0)[1], 0)
-            self.assertEqual(os.read(fd, 1), b'')
-            self.assertEqual(fcntl.fcntl(fd, fcntl.F_GETFD), fcntl.FD_CLOEXEC)
-        finally:
-            os.close(fd)
-
-    def test_inotify_survives_child_close_and_exec(self):
-        libc = ctypes.CDLL(None, use_errno=True)
-        libc.inotify_init1.argtypes = [ctypes.c_int]
-        libc.inotify_init1.restype = ctypes.c_int
-        fd = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
-        self.assertGreaterEqual(fd, 0, os.strerror(ctypes.get_errno()))
-        try:
-            for exec_child in (False, True):
-                pid = os.fork()
-                if pid == 0:
-                    if exec_child:
-                        os.execl('/bin/true', 'true')
-                    os.close(fd)
-                    os._exit(0)
-                self.assertEqual(os.waitpid(pid, 0)[1], 0)
-                temporary = [os.open('/dev/null', os.O_RDONLY)
-                             for _ in range(32)]
-                try:
-                    poller = select.poll()
-                    poller.register(fd, select.POLLIN)
-                    self.assertEqual(poller.poll(0), [])
-                    with self.assertRaises(OSError) as result:
-                        os.read(fd, 4096)
-                    self.assertEqual(result.exception.errno, errno.EAGAIN)
-                finally:
-                    for other in temporary:
-                        os.close(other)
-        finally:
-            os.close(fd)
-
-
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+#include <sched.h>
+static int p[2], fd, action;
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+static int ready, created;
+static void *worker(void *unused)
+{
+	char b[8];
+	if (action == 0) {
+		CHECK(!pipe(p));
+		CHECK(write(p[1], "worker", 6) == 6);
+	} else if (action == 1) {
+		pthread_mutex_lock(&lock);
+		ready = 1;
+		pthread_cond_broadcast(&cond);
+		while (!created)
+			pthread_cond_wait(&cond, &lock);
+		pthread_mutex_unlock(&lock);
+		CHECK(read(p[0], b, 4) == 4 && !memcmp(b, "data", 4));
+	} else if (action == 2)
+		CHECK(!fcntl(fd, F_SETFD, FD_CLOEXEC));
+	else
+		CHECK(!close(fd));
+	return 0;
+}
+static int exec_child(void *unused)
+{
+	execl("/bin/true", "true", (char *)0);
+	return 127;
+}
+int main(void)
+{
+	pthread_t t;
+	char b[8];
+	pid_t pid;
+	int i, j, other[32];
+	struct pollfd poller;
+	void *stack;
+	alarm(20);
+	action = 0;
+	CHECK(!pthread_create(&t, 0, worker, 0));
+	CHECK(!pthread_join(t, 0));
+	CHECK(read(p[0], b, 6) == 6 && !memcmp(b, "worker", 6));
+	CHECK(write(p[1], "main", 4) == 4 && read(p[0], b, 4) == 4 &&
+	      !memcmp(b, "main", 4));
+	close(p[0]);
+	close(p[1]);
+	action = 1;
+	CHECK(!pthread_create(&t, 0, worker, 0));
+	pthread_mutex_lock(&lock);
+	while (!ready)
+		pthread_cond_wait(&cond, &lock);
+	CHECK(!pipe(p) && write(p[1], "data", 4) == 4);
+	created = 1;
+	pthread_cond_broadcast(&cond);
+	pthread_mutex_unlock(&lock);
+	CHECK(!pthread_join(t, 0));
+	close(p[0]);
+	close(p[1]);
+	CHECK((fd = open("/dev/null", O_RDONLY)) >= 0);
+	action = 2;
+	CHECK(!pthread_create(&t, 0, worker, 0) && !pthread_join(t, 0));
+	CHECK(fcntl(fd, F_GETFD) == FD_CLOEXEC);
+	action = 3;
+	CHECK(!pthread_create(&t, 0, worker, 0) && !pthread_join(t, 0));
+	CHECK(fcntl(fd, F_GETFD) == -1 && errno == EBADF);
+	CHECK((fd = open("/dev/null", O_RDONLY)) >= 0);
+	pid = fork();
+	CHECK(pid >= 0);
+	if (!pid) {
+		close(fd);
+		_exit(0);
+	}
+	child_ok(pid);
+	CHECK(read(fd, b, 1) == 0);
+	CHECK(!fcntl(fd, F_SETFD, FD_CLOEXEC));
+	stack = malloc(256 * 1024);
+	CHECK(stack);
+	pid = clone(exec_child, (char *)stack + 256 * 1024,
+		    CLONE_FILES | SIGCHLD, 0);
+	child_ok(pid);
+	CHECK(read(fd, b, 1) == 0 && fcntl(fd, F_GETFD) == FD_CLOEXEC);
+	close(fd);
+	free(stack);
+	fd = syscall(332, O_NONBLOCK | O_CLOEXEC);
+	CHECK(fd >= 0);
+	for (i = 0; i < 2; i++) {
+		pid = fork();
+		CHECK(pid >= 0);
+		if (!pid) {
+			if (i)
+				execl("/bin/true", "true", (char *)0);
+			close(fd);
+			_exit(i ? 127 : 0);
+		}
+		child_ok(pid);
+		for (j = 0; j < 32; j++)
+			CHECK((other[j] = open("/dev/null", O_RDONLY)) >= 0);
+		poller.fd = fd;
+		poller.events = POLLIN;
+		CHECK(!poll(&poller, 1, 0));
+		CHECK(read(fd, b, sizeof(b)) == -1 && errno == EAGAIN);
+		for (j = 0; j < 32; j++)
+			close(other[j]);
+	}
+	close(fd);
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

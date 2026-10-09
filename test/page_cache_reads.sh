@@ -1,75 +1,125 @@
 #!/bin/sh
 # Validate concurrent file-backed faults and descriptor offset preservation.
-# Requires Python 3 and the modules imported by the embedded guest probe.
+# The syscall probe uses the C compiler shipped with the guest.
 set -eu
 probe_dir=$(mktemp -d /tmp/mos-page_cache_reads.XXXXXX)
 trap 'rm -rf "$probe_dir"' 0
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-cat > "$probe_dir/probe.py" <<'MOS_GUEST_PYTHON'
-import argparse
-import concurrent.futures
-import ctypes
-import mmap
-import os
-from pathlib import Path
-import random
-import struct
-import tempfile
-import threading
+cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
+#include <sys/un.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <pthread.h>
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC O_CLOEXEC
+#define SOCK_NONBLOCK O_NONBLOCK
+#endif
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC 1030
+#endif
+#ifndef MSG_CMSG_CLOEXEC
+#define MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define CHECK(x)                                                            \
+	do {                                                                \
+		if (!(x)) {                                                 \
+			fprintf(stderr, "%s:%d: %s (errno=%d)\n", __FILE__, \
+				__LINE__, #x, errno);                       \
+			exit(1);                                            \
+		}                                                           \
+	} while (0)
 
-PAGE = 4096
-PAGES = 4096
-WORKERS = 8
-libc = ctypes.CDLL(None)
-libc.memcmp.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
-libc.memcmp.restype = ctypes.c_int
-
-
-def page_content(index):
-    word = struct.pack("<QQ", index, index ^ 0x9E3779B97F4A7C15)
-    return word * (PAGE // len(word))
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--directory", default=".", help="Directory for the mapped regular file")
-    args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="page-cache-", dir=args.directory) as directory:
-        path = Path(directory) / "pages"
-        with path.open("wb") as stream:
-            for index in range(PAGES):
-                stream.write(page_content(index))
-        fd = os.open(path, os.O_RDONLY)
-        try:
-            offset = 0x1237
-            assert os.lseek(fd, offset, os.SEEK_SET) == offset
-            with mmap.mmap(fd, PAGE * PAGES, access=mmap.ACCESS_COPY) as view:
-                address = ctypes.addressof(ctypes.c_char.from_buffer(view))
-                barrier = threading.Barrier(WORKERS)
-
-                def check_pages(worker):
-                    indices = list(range(worker, PAGES, WORKERS))
-                    random.Random(worker).shuffle(indices)
-                    barrier.wait(timeout=15)
-                    for index in indices:
-                        expected = ctypes.create_string_buffer(page_content(index))
-                        # CDLL calls release the interpreter lock during the memory read.
-                        if libc.memcmp(address + index * PAGE, expected, PAGE):
-                            raise AssertionError(f"Mapped page {index} contains incorrect file data")
-
-                with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
-                    futures = [executor.submit(check_pages, worker) for worker in range(WORKERS)]
-                    for future in futures:
-                        future.result(timeout=60)
-            assert os.lseek(fd, 0, os.SEEK_CUR) == offset, "Page faults changed the descriptor offset"
-        finally:
-            os.close(fd)
-    print("Concurrent page-cache read checks: PASS")
-
-
-if __name__ == "__main__":
-    main()
-MOS_GUEST_PYTHON
-python3 "$probe_dir/probe.py" "$@"
+static unsigned char *view;
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+static int ready;
+static void content(unsigned char *p, int index)
+{
+	uint64_t word[2];
+	size_t n;
+	word[0] = index;
+	word[1] = index ^ UINT64_C(0x9E3779B97F4A7C15);
+	for (n = 0; n < 4096; n += 16)
+		memcpy(p + n, word, 16);
+}
+static void *worker(void *arg)
+{
+	unsigned char expected[4096];
+	int index = (int)(intptr_t)arg, k, indices[512], i, j, tmp;
+	unsigned seed = index + 1;
+	for (k = 0; k < 512; k++)
+		indices[k] = index + k * 8;
+	for (i = 511; i > 0; i--) {
+		j = rand_r(&seed) % (i + 1);
+		tmp = indices[i];
+		indices[i] = indices[j];
+		indices[j] = tmp;
+	}
+	pthread_mutex_lock(&lock);
+	if (++ready == 8)
+		pthread_cond_broadcast(&cond);
+	while (ready < 8)
+		pthread_cond_wait(&cond, &lock);
+	pthread_mutex_unlock(&lock);
+	for (k = 0; k < 512; k++) {
+		content(expected, indices[k]);
+		CHECK(!memcmp(view + indices[k] * 4096, expected, 4096));
+	}
+	return 0;
+}
+int main(int argc, char **argv)
+{
+	char path[4096];
+	int fd, i;
+	unsigned char b[4096];
+	pthread_t t[8];
+	alarm(60);
+	snprintf(path, sizeof(path), "%s/mos-pages.XXXXXX",
+		 argc == 3 && !strcmp(argv[1], "--directory") ? argv[2] : ".");
+	CHECK((fd = mkstemp(path)) >= 0);
+	unlink(path);
+	for (i = 0; i < 4096; i++) {
+		content(b, i);
+		CHECK(write(fd, b, sizeof(b)) == sizeof(b));
+	}
+	CHECK(lseek(fd, 0x1237, SEEK_SET) == 0x1237);
+	view = mmap(0, 4096 * 4096, 3, MAP_PRIVATE, fd, 0);
+	CHECK(view != MAP_FAILED);
+	for (i = 0; i < 8; i++)
+		CHECK(!pthread_create(&t[i], 0, worker, (void *)(intptr_t)i));
+	for (i = 0; i < 8; i++)
+		CHECK(!pthread_join(t[i], 0));
+	CHECK(lseek(fd, 0, SEEK_CUR) == 0x1237);
+	munmap(view, 4096 * 4096);
+	close(fd);
+	return 0;
+}
+MOS_GUEST_C
+"${CC:-gcc}" -std=gnu99 -O2 -Wall -pthread "$probe_dir/probe.c" -o "$probe_dir/probe"
+(cd "$probe_dir"; exec "$probe_dir/probe" "$@")

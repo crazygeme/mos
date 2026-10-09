@@ -1,2 +1,2 @@
 #!/bin/bash
-for i in $(seq 1000); do /bin/true; done
+for i in $(seq 10000); do /bin/true; done

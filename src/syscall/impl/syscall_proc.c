@@ -581,6 +581,22 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 		return do_waitpid(pid, status, options, rusage);
 }
 
+/* Heap growth reuses the compatible tail VMA so fork work does not grow
+ * with the number of brk calls. Protection changes retain separate regions. */
+static int brk_extend_tail(mm_struct *mm, vaddr_t old_end, vaddr_t new_end)
+{
+	vm_region *tail;
+
+	if (!old_end)
+		return 0;
+	tail = vm_find_map(mm, old_end - 1);
+	if (!tail || tail->end != old_end || tail->begin < mm->start_brk ||
+	    tail->fp || tail->flag != MAP_FIXED ||
+	    tail->prot != (PROT_READ | PROT_WRITE | PROT_EXEC))
+		return 0;
+	return vm_extend_map(mm, tail->begin, old_end, new_end);
+}
+
 intptr_t sys_brk(vaddr_t _top)
 {
 	task_struct *task = CURRENT_TASK();
@@ -605,10 +621,13 @@ intptr_t sys_brk(vaddr_t _top)
 
 		if (top > old_brk) {
 			if (new_page_end > old_page_end) {
-				do_mmap(old_page_end,
-					new_page_end - old_page_end,
-					PROT_READ | PROT_WRITE | PROT_EXEC,
-					MAP_FIXED, -1, 0);
+				if (!brk_extend_tail(mm, old_page_end,
+						     new_page_end))
+					do_mmap(old_page_end,
+						new_page_end - old_page_end,
+						PROT_READ | PROT_WRITE |
+							PROT_EXEC,
+						MAP_FIXED, -1, 0);
 			}
 		} else if (top < old_brk) {
 			if (new_page_end < old_page_end) {

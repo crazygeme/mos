@@ -159,6 +159,79 @@ KTEST(mmap, file_cache_cached_range)
 
 extern int copy_page_range(task_struct *parent, task_struct *child);
 
+KTEST(mmap, brk_contiguous_growth)
+{
+	mm_struct *mm = cur_vm();
+	vaddr_t saved_start = mm->start_brk;
+	vaddr_t saved_brk = mm->brk;
+	vaddr_t saved_limit = mm->brk_limit;
+	const vaddr_t base = TEST_FIXED_ADDR;
+	vm_region *region;
+	vm_fault_lock *fault_lock;
+
+	vm_set_brk(mm, base, base);
+	mm->brk_limit = base + 64 * PAGE_SIZE;
+	EXPECT_EQ(sys_brk(base + PAGE_SIZE), base + PAGE_SIZE);
+	region = vm_find_map(mm, base);
+	EXPECT_NONNULL(region);
+	if (!region)
+		goto cleanup;
+	fault_lock = region->fault_lock;
+	EXPECT_EQ(pf_resolve_task_page_fault(current, base, 1), 1);
+	*(volatile unsigned *)base = 0x12345678;
+	for (unsigned i = 2; i <= 16; i++) {
+		EXPECT_EQ(sys_brk(base + i * PAGE_SIZE), base + i * PAGE_SIZE);
+		EXPECT_EQ(vm_find_map(mm, base + (i - 1) * PAGE_SIZE), region);
+		EXPECT_EQ(region->end, base + i * PAGE_SIZE);
+		EXPECT_EQ(region->fault_lock, fault_lock);
+	}
+	EXPECT_EQ(*(volatile unsigned *)base, 0x12345678u);
+	/* Shrink to a partial page, then extend the surviving region again. */
+	EXPECT_EQ(sys_brk(base + 3 * PAGE_SIZE + 7), base + 3 * PAGE_SIZE + 7);
+	region = vm_find_map(mm, base);
+	EXPECT_EQ(region->end, base + 4 * PAGE_SIZE);
+	EXPECT_EQ(vm_find_map(mm, base + 4 * PAGE_SIZE), NULL);
+	EXPECT_EQ(sys_brk(base + 20 * PAGE_SIZE), base + 20 * PAGE_SIZE);
+	EXPECT_EQ(vm_find_map(mm, base + 19 * PAGE_SIZE), region);
+	EXPECT_EQ(region->end, base + 20 * PAGE_SIZE);
+	EXPECT_EQ(*(volatile unsigned *)base, 0x12345678u);
+cleanup:
+	do_munmap((void *)base, 64 * PAGE_SIZE);
+	mm->start_brk = saved_start;
+	mm->brk = saved_brk;
+	mm->brk_limit = saved_limit;
+	return 0;
+}
+
+KTEST(mmap, brk_preserves_protected_tail)
+{
+	mm_struct *mm = cur_vm();
+	vaddr_t saved_start = mm->start_brk;
+	vaddr_t saved_brk = mm->brk;
+	vaddr_t saved_limit = mm->brk_limit;
+	const vaddr_t base = TEST_FIXED_ADDR;
+	vm_region *tail;
+	vm_region *growth;
+
+	vm_set_brk(mm, base, base);
+	mm->brk_limit = base + 8 * PAGE_SIZE;
+	EXPECT_EQ(sys_brk(base + 2 * PAGE_SIZE), base + 2 * PAGE_SIZE);
+	vm_mprotect(mm, base + PAGE_SIZE, base + 2 * PAGE_SIZE, PROT_READ);
+	tail = vm_find_map(mm, base + PAGE_SIZE);
+	EXPECT_EQ(sys_brk(base + 3 * PAGE_SIZE), base + 3 * PAGE_SIZE);
+	growth = vm_find_map(mm, base + 2 * PAGE_SIZE);
+	EXPECT_NE(growth, tail);
+	EXPECT_EQ(tail->prot, PROT_READ);
+	EXPECT_EQ(tail->end, base + 2 * PAGE_SIZE);
+	EXPECT_EQ(growth->prot, PROT_READ | PROT_WRITE | PROT_EXEC);
+
+	do_munmap((void *)base, 8 * PAGE_SIZE);
+	mm->start_brk = saved_start;
+	mm->brk = saved_brk;
+	mm->brk_limit = saved_limit;
+	return 0;
+}
+
 KTEST(mmap, sparse_clone_teardown)
 {
 	const vaddr_t base = TEST_FIXED_ADDR;

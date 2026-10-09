@@ -1,6 +1,8 @@
 # Testing
 
-MOS has two test facilities that work together:
+MOS provides kernel tests, guest shell tests, and host unit tests.
+
+The kernel and guest facilities are:
 
 1. **Kernel-mode tests** (`test/*.c`) — C functions compiled into the kernel, exercising kernel internals directly via the `KTEST` framework.
 2. **User-mode shell script tests** (`test/*.sh`) — POSIX shell scripts that run inside the booted VM, testing syscall behaviour and user-space interfaces.
@@ -32,8 +34,8 @@ In test mode:
 
 ### Framework
 
-**Header:** `include/test/test.h`  
-**Runner:** `src/proc/common/test.c`  
+**Header:** `src/test/test.h`
+**Runner:** `src/proc/impl/common/test.c`
 **Source files:** `test/*.c`
 
 Tests are written in C and linked directly into the kernel image. They run in kernel mode — ring 0, with full access to kernel memory and APIs.
@@ -167,7 +169,7 @@ KTEST(mm, vm_alloc_no_leak)
 
 **Source files:** `test/*.sh`  
 **Code generator:** `tools/gen_ktest_scripts.sh`  
-**Runner integration:** `src/proc/common/test.c`
+**Runner integration:** `src/proc/impl/common/test.c`
 
 Each `.sh` file is a POSIX shell script that runs inside the booted OS under a normal user-space `sh` process. The Makefile converts every `.sh` into a C source file (using `tools/gen_ktest_scripts.sh`) and links it into the kernel via the `KTEST_SCRIPT_NAMED` macro. The script body is embedded as a string literal in the `.ktest_script` ELF section.
 
@@ -187,7 +189,7 @@ sh /proc/tests/all_script     # run all shell-script tests in sequence
 ```
 
 `posix_socket_wait` runs short smoke checks by default. Its regression for the
-former 30-second receive limit is opt-in inside the guest:
+unlimited blocking receive behavior is opt-in inside the guest:
 
 ```sh
 MOS_SOCKET_LONG_WAIT=1 sh /proc/tests/posix_socket_wait
@@ -306,3 +308,41 @@ These appear in `/proc/tests/` alongside `.sh`-derived scripts and are included 
 | `<script_name>` | executable | Wrapped shell script from `test/<script_name>.sh`         |
 
 `/proc/tests/` is only mounted when at least one `KTEST` or `KTEST_SCRIPT` entry exists in the image.
+
+## Host Unit Tests
+
+`test/test_*.py` modules use Python's `unittest` framework. Importing these
+modules does not execute probes. Test discovery runs the configured checks:
+
+```sh
+python3 -m unittest discover -s test -p 'test_*.py'
+```
+
+The adapter, descriptor lifetime, VFS notification, lwext4 lookup, and shebang
+suites compile isolated C probes against production code. They require a host C
+compiler; the shebang suite also requires AddressSanitizer and
+UndefinedBehaviorSanitizer support. The syscall table suite reads source
+and Linux ABI headers without compilation:
+
+```sh
+python3 -m unittest discover -s test -p 'test_syscall_tables.py'
+```
+
+`MOS_I386_SYSCALL_HEADER` and `MOS_AMD64_SYSCALL_HEADER` select ABI headers for
+the syscall table suite. Their default paths are
+`/usr/include/x86_64-linux-gnu/asm/unistd_32.h` and
+`/usr/include/x86_64-linux-gnu/asm/unistd_64.h`.
+
+## Guest Regression Scripts
+
+Guest regression entry points are `test/*.sh`. They are embedded in the test
+kernel and exposed as `/proc/tests/<name>`. They can also run from a checkout
+inside the guest with `sh test/<name>.sh [arguments]`.
+
+Most syscall probes require Python 3 and the standard-library modules imported
+in the embedded program. Each shell entry point creates a temporary Python file,
+passes arguments to it, preserves its exit status, and removes the file on exit.
+The temporary file remains available for probes that execute their own entry
+point. `thread_faults.sh` compiles a C probe in the guest and requires a C
+compiler, pthread headers, and the `timeout` command. GUI, tmux, graphics, and
+filesystem probes require the corresponding guest services and tools.

@@ -223,6 +223,46 @@ sem_post_at_intr(&s); // atomic increment only; no task_sched call
 
 ---
 
+## Scope Guards
+
+`LOCK_GUARD(lock_pointer)` acquires the supplied lock and releases it when the
+containing lexical scope exits, including an early `return`, `break`, or `goto`
+that leaves the scope. The lock expression is evaluated once. Multiple guards
+in the same scope have independent state and release in reverse declaration
+order. The pointed-to lock must remain valid until the guard releases it.
+
+```c
+LOCK_GUARD(&timer_lock);
+LOCK_GUARD(&mm->mapping_lock);
+LOCK_GUARD(&node->file_lock);
+LOCK_GUARD(&net_core_lock);
+```
+
+The interface is defined in `src/lib/lock_guard.h`. Guarded lock objects place a
+`lock_header_t` at the beginning of the object. The header selects an
+acquisition and release operation table. Primitive initializers configure this
+header; static spinlocks use `SPINLOCK_INITIALIZER`. Initialized locks retain
+their object identity and must not be copied or relocated.
+
+Mutexes, recursive mutexes, spinlocks, readers-writer locks, and scoped policies
+use the same interface. A spinlock guard preserves the local interrupt level.
+A readers-writer guard acquires exclusive ownership.
+
+Mapping transactions, mapping fault serialization, and tmpfs file transactions
+use `rmutex_t` initialized with `vm_lock_init()`. Their operation table selects
+VM ownership tracking. Acquisition and release update the current task's
+`vm_lock_depth` with interrupts disabled during ownership transitions. Explicit
+acquisition and release use `vm_lock_enter()` and `vm_lock_leave()`.
+
+`scoped_lock_t` contains a common header and an optional policy context.
+Acquisition returns an integer state passed to the release callback. Both
+`net_core_lock` and `net_local_lock` manage recursive network core ownership and
+scheduling levels. The `net_core_lock` release policy also refreshes lwIP service
+deadlines before unlocking; `net_local_lock` omits that refresh for local socket
+operations.
+
+The macro requires the GNU cleanup attribute.
+
 ## Quick-reference table
 
 | Primitive    | Sleeps?             | Interrupt-safe? | Recursive? | Multiple holders? |

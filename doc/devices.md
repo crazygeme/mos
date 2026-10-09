@@ -90,7 +90,7 @@ both devices and drivers; it does not own hardware discovery or initialization.
 bus isolation, and repeated scan calls. `test/sys_devices.sh` checks device
 aliases, binding links, and inventory stability across sysfs mounts.
 
-`python3 test/input_device_open.py` validates the PS/2 endpoint's parent
+`sh test/input_device_open.sh` validates the PS/2 endpoint's parent
 hierarchy, character-device metadata, the access flags used by Xorg, and
 inotify open/close delivery to a directory watch. The test does not read mouse
 packets or send device commands and can run during a graphical session.

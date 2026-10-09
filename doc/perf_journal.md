@@ -58,14 +58,9 @@ measurements compare these two MOS heap-growth configurations.
 
 ### Validation
 
-`test/fork_scale_qemu.py` builds a freestanding native probe and creates an
-isolated filesystem. Each case touches 256 pages, runs 1,000 fork/wait pairs,
-checks inherited page contents, and verifies that a child's write does not
-change the parent's page. Anonymous mmap cases create 1, 8, or 64 regions; heap
-cases request the same number of `brk` growth steps. At a fixed resident size,
-the one-vCPU x86 heap cases take 11.3/12.4/19.9 ms with separate VMAs and
-11.2/11.1/11.2 ms with heap-tail extension. Contiguous growth uses one heap
-region for all three step counts.
+`sh /proc/tests/sparse_fork` checks sparse address-space cloning and
+copy-on-write isolation. `tools/user/fork_scale_probe.c` provides a freestanding
+fork scaling probe.
 
 Release and test kernels build for x86 and AMD64. All 29 mmap and 10 heap tests
 pass on x86 with one and two CPUs, and AMD64 with two and four CPUs. The tests
@@ -74,10 +69,6 @@ preservation of a protected tail. Native fork/COW probes pass in those
 configurations; ELF/shebang exec probes pass on both architectures with two
 CPUs.
 
-```sh
-python3 test/fork_scale_qemu.py --arch x86 --kernel-tests
-python3 test/fork_scale_qemu.py --arch x64 --kernel-tests --cpus 4
-```
 
 Raw timings, profiles, and configuration are written under
 `out/benchmarks/process-launch-2026-10-09/`. Kernel unit-test and probe logs are
@@ -139,12 +130,6 @@ lifetimes, fresh metadata, and filesystem notifications pass for the filesystem
 implementation in `94ca69f`. The measured comparison covers x86; AMD64
 throughput is not measured in this record.
 
-```sh
-python3 test/open_close_qemu.py --arch x86 --accel kvm \
-    --pairs 100000 --repeats 3 \
-    --baseline-kernel /path/to/7f58566/kernel \
-    --kernel /path/to/94ca69f/kernel
-```
 
 Raw samples, kernel hashes, probe source, and validation logs are stored under
 `out/benchmarks/commit-performance-2026-10-09/`.
@@ -548,7 +533,7 @@ not scan the complete inventory.
 Run the host-side namespace audit with Python 3:
 
 ```sh
-python3 test/syscall_tables.py
+python3 test/test_syscall_tables.py
 ```
 
 The audit compares declarations against Linux i386 and AMD64 UAPI headers,
@@ -628,9 +613,9 @@ measured transfer interval.
 Run the following commands inside a MOS guest with Python 3:
 
 ```sh
-python3 test/ipc_buffers.py
-python3 test/unix_peercred.py
-python3 test/unix_send_credentials.py
+sh test/ipc_buffers.sh
+sh test/unix_peercred.sh
+sh test/unix_send_credentials.sh
 ```
 
 `ipc_buffers.py` validates complete payloads through pipes, named FIFOs, socket

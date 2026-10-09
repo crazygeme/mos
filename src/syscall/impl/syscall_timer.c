@@ -37,17 +37,6 @@ static mutex_t timer_lock;
 
 /* Timer syscalls, process exit and the service task may run on different CPUs.
  * A task-owned mutex also permits demand faults on syscall argument buffers. */
-static void timer_scope_unlock(mutex_t **lock)
-{
-	mutex_unlock(*lock);
-}
-
-#define TIMER_GUARD                                                    \
-	mutex_t *timer_guard                                           \
-		__attribute__((cleanup(timer_scope_unlock), unused)) = \
-			&timer_lock;                                   \
-	mutex_lock(timer_guard)
-
 static void timers_init(void)
 {
 	mutex_init(&timer_lock);
@@ -122,7 +111,7 @@ static void timer_release(struct mos_timer *timer)
 int do_timer_create(int clockid, const struct mos_sigevent *event, int *timerid,
 		    uintptr_t value)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct mos_timer *timer;
 	task_struct *target;
 	int notify = event ? event->notify : MOS_SIGEV_SIGNAL;
@@ -174,7 +163,7 @@ int sys_timer_settime(int timerid, int flags,
 		      const struct mos_itimerspec *value,
 		      struct mos_itimerspec *old_value)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct mos_timer *timer = timer_lookup(timerid);
 	unsigned long long due, interval, now;
 	int ret;
@@ -209,7 +198,7 @@ int sys_timer_settime(int timerid, int flags,
 
 int sys_timer_gettime(int timerid, struct mos_itimerspec *value)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct mos_timer *timer = timer_lookup(timerid);
 	unsigned long long now;
 	if (!timer)
@@ -225,14 +214,14 @@ int sys_timer_gettime(int timerid, struct mos_itimerspec *value)
 
 int sys_timer_getoverrun(int timerid)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct mos_timer *timer = timer_lookup(timerid);
 	return timer ? timer->overrun : -EINVAL;
 }
 
 int sys_timer_delete(int timerid)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct mos_timer *timer = timer_lookup(timerid);
 	if (!timer)
 		return -EINVAL;
@@ -242,7 +231,7 @@ int sys_timer_delete(int timerid)
 
 void ps_timer_discard_group(unsigned tgid)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct rb_node *node, *next;
 	for (node = rb_first(&timer_ids); node; node = next) {
 		struct mos_timer *timer =
@@ -255,7 +244,7 @@ void ps_timer_discard_group(unsigned tgid)
 
 void ps_timer_poll(void)
 {
-	TIMER_GUARD;
+	LOCK_GUARD(&timer_lock);
 	struct rb_node *node;
 	for (node = rb_first(&timer_ids); node; node = rb_next(node)) {
 		struct mos_timer *timer =

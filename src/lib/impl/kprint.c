@@ -471,7 +471,7 @@ struct printk_record {
 };
 
 /* Serializes record storage before acquiring the active TTY lock. */
-static spinlock_t printk_record_lock = { .inited = 1 };
+static spinlock_t printk_record_lock = SPINLOCK_INITIALIZER;
 static struct printk_record printk_record_buffer;
 
 static void printk_output(char *text, void *opaque)

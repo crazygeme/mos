@@ -38,6 +38,8 @@
 
 static void ps_reap_task(task_struct *task, rusage *rusage)
 {
+	while (__atomic_load_n(&task->enumeration_refs, __ATOMIC_ACQUIRE))
+		time_wait(1);
 	unsigned long long child_utime =
 		ps_usage_read(&task->usage->user_tickets) +
 		ps_usage_read(&task->usage->child_utime);
@@ -266,7 +268,7 @@ void ps_reap_dead_threads(void)
 		     node != &dead_threads; node = node->next) {
 			task_struct *candidate =
 				container_of(node, task_struct, ps_list);
-			if (!candidate->on_cpu) {
+			if (!candidate->on_cpu && !candidate->enumeration_refs) {
 				task = candidate;
 				list_remove_entry(node);
 				break;

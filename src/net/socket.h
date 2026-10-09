@@ -11,6 +11,7 @@
 #define AF_UNSPEC 0
 #define AF_UNIX 1
 #define AF_INET 2
+#define AF_NETLINK 16
 
 /* ── Socket types ───────────────────────────────────────────────────────────── */
 #define SOCK_STREAM 1
@@ -85,6 +86,7 @@ struct sockaddr_un {
 
 #define SIOCGSTAMP 0x8906 /* get timestamp of last received pkt */
 #define SIOCGIFCONF 0x8912 /* get interface list                 */
+#define SIOCSIFFLAGS 0x8914 /* set administrative interface state */
 #define SIOCGIFFLAGS 0x8913 /* get interface flags                */
 #define SIOCGIFADDR 0x8915 /* get interface address              */
 #define SIOCGIFDSTADDR 0x8917 /* get point-to-point address         */
@@ -234,6 +236,7 @@ struct mmsghdr {
 #define MSG_DONTWAIT 0x40
 #define MSG_TRUNC 0x20
 #define MSG_CTRUNC 0x08
+#define MSG_CMSG_CLOEXEC 0x40000000
 
 /* ── Socket state ───────────────────────────────────────────────────────────── */
 #define SS_UNCONNECTED 0
@@ -267,6 +270,7 @@ struct _file;
 
 typedef struct _unix_passfd_msg {
 	unsigned ready_head;
+	unsigned end_head;
 	unsigned nfds;
 	struct _file *files[UNIX_PASSFD_MAX];
 } unix_passfd_msg;
@@ -293,6 +297,8 @@ typedef struct _mos_sock {
 	int domain;
 	int type;
 	int protocol;
+	uint32_t netlink_port, netlink_groups;
+	struct _mos_sock *netlink_next;
 	int state; /* SS_* */
 	int err; /* pending negative errno, 0 = OK */
 	int tcp_nodelay; /* retained when tcp_listen replaces the full PCB */

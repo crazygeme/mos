@@ -15,7 +15,7 @@ typedef struct posix_range {
 } posix_range;
 
 static posix_range *ranges;
-static spinlock_t range_lock = { .inited = 1 };
+static spinlock_t range_lock = SPINLOCK_INITIALIZER;
 static list_entry range_wait = { &range_wait, &range_wait };
 
 static void *lock_identity(file *fp)

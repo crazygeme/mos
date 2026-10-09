@@ -47,11 +47,13 @@ static const native_fn native_calls[442] = {
 
 static intptr_t native_process(intr_frame *frame)
 {
-	if (frame->eax >= sizeof(native_calls) / sizeof(native_calls[0]) ||
-	    !native_calls[frame->eax])
+	unsigned long number = frame->eax;
+	if (number >= sizeof(native_calls) / sizeof(native_calls[0]) ||
+	    !native_calls[number])
 		return -ENOSYS;
-	return native_calls[frame->eax](frame);
+	return native_calls[number](frame);
 }
+
 static void syscall_process(intr_frame *frame)
 {
 	if (frame->cs != USER64_CODE_SELECTOR) {

@@ -6,12 +6,19 @@
 #include <lib/lock.h>
 #include <macro.h>
 
+const lock_operations_t spinlock_guard_operations;
+const lock_operations_t mutex_guard_operations;
+const lock_operations_t rmutex_guard_operations;
+const lock_operations_t rwlock_guard_operations;
+const lock_operations_t vm_guard_operations;
+
 /* ===========================================================================
  * Spinlock
  * ===========================================================================*/
 
 void spinlock_init(spinlock_t *lock)
 {
+	lock->header.operations = &spinlock_guard_operations;
 	lock->lock = 0;
 	lock->inited = 1;
 	lock->holder = 0;
@@ -240,6 +247,7 @@ void cond_notify_at_intr(cond_t *s)
 
 void mutex_init(mutex_t *m)
 {
+	m->header.operations = &mutex_guard_operations;
 	lock_init((lock_base *)&m->base, 0);
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
 	m->holder_func = NULL;
@@ -272,6 +280,7 @@ void mutex_unlock(mutex_t *m)
 
 void rmutex_init(rmutex_t *m)
 {
+	m->header.operations = &rmutex_guard_operations;
 	lock_init((lock_base *)&m->base, 0);
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
 	m->depth = 0;
@@ -325,6 +334,7 @@ void rmutex_unlock(rmutex_t *m)
 
 void rwlock_init(rwlock_t *rw)
 {
+	rw->header.operations = &rwlock_guard_operations;
 	rw->state = 0;
 	rw->writers_waiting = 0;
 	list_init((list_entry *)&rw->reader_wait_list);
@@ -498,3 +508,93 @@ void sem_post_at_intr(sem_t *s)
 {
 	__atomic_fetch_add(&s->count, 1, __ATOMIC_RELEASE);
 }
+
+/* VM transactions publish ownership before restoring local interrupts. */
+void vm_lock_init(rmutex_t *lock)
+{
+	rmutex_init(lock);
+	lock->header.operations = &vm_guard_operations;
+}
+
+void vm_lock_enter(rmutex_t *lock, const char *func)
+{
+	unsigned irq = int_intr_disable();
+	_rmutex_lock(lock, func);
+	__sync_fetch_and_add(&current->vm_lock_depth, 1);
+	int_intr_setlevel(irq);
+}
+
+void vm_lock_leave(rmutex_t *lock)
+{
+	unsigned irq = int_intr_disable();
+	rmutex_unlock(lock);
+	__sync_fetch_and_sub(&current->vm_lock_depth, 1);
+	int_intr_setlevel(irq);
+}
+
+static int guard_mutex_enter(void *lock, const char *func)
+{
+	_mutex_lock(lock, func);
+	return 0;
+}
+
+static void guard_mutex_leave(void *lock, int state __attribute__((unused)))
+{
+	mutex_unlock(lock);
+}
+
+static int guard_rmutex_enter(void *lock, const char *func)
+{
+	_rmutex_lock(lock, func);
+	return 0;
+}
+
+static void guard_rmutex_leave(void *lock, int state __attribute__((unused)))
+{
+	rmutex_unlock(lock);
+}
+
+static int guard_vm_enter(void *lock, const char *func)
+{
+	vm_lock_enter(lock, func);
+	return 0;
+}
+
+static void guard_vm_leave(void *lock, int state __attribute__((unused)))
+{
+	vm_lock_leave(lock);
+}
+
+static int guard_spinlock_enter(void *lock, const char *func)
+{
+	int irq = 0;
+	_spinlock_lock(lock, &irq, func);
+	return irq;
+}
+
+static void guard_spinlock_leave(void *lock, int state)
+{
+	spinlock_unlock(lock, state);
+}
+
+static int guard_rwlock_enter(void *lock, const char *func)
+{
+	_rwlock_write_lock(lock, func);
+	return 0;
+}
+
+static void guard_rwlock_leave(void *lock, int state __attribute__((unused)))
+{
+	rwlock_write_unlock(lock);
+}
+
+const lock_operations_t mutex_guard_operations = { guard_mutex_enter,
+						   guard_mutex_leave };
+const lock_operations_t rmutex_guard_operations = { guard_rmutex_enter,
+						    guard_rmutex_leave };
+const lock_operations_t vm_guard_operations = { guard_vm_enter,
+						guard_vm_leave };
+const lock_operations_t spinlock_guard_operations = { guard_spinlock_enter,
+						      guard_spinlock_leave };
+const lock_operations_t rwlock_guard_operations = { guard_rwlock_enter,
+						    guard_rwlock_leave };

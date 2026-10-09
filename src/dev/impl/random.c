@@ -7,29 +7,25 @@
 #include <unistd.h>
 #include <dev/devnums.h>
 
-static int random_seeded = 0;
-
-static void random_ensure_seeded(void)
-{
-	if (!random_seeded) {
-		srand((unsigned)time_now_ms());
-		random_seeded = 1;
-	}
-}
-
 static ssize_t random_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
-	random_ensure_seeded();
-	unsigned char *p = buf;
-	for (size_t i = 0; i < size; i++)
-		p[i] = (unsigned char)(rand() & 0xff);
-	return (ssize_t)size;
+	unsigned char bytes[64];
+	size_t copied = 0;
+	(void)fp;
+	(void)pos;
+	while (copied < size) {
+		unsigned count = size - copied < sizeof(bytes) ? size - copied : sizeof(bytes);
+		kernel_random_bytes(bytes, count);
+		memcpy((char *)buf + copied, bytes, count);
+		copied += count;
+	}
+	return (ssize_t)copied;
 }
 
 static ssize_t random_write(file *fp, const void *buf, size_t size, loff_t *pos)
 {
-	/* Treat writes as entropy feed: re-seed with the current time */
-	srand((unsigned)time_now_ms());
+	/* Mix the current clock into fallback state. */
+	kernel_random_mix(time_now_us());
 	return (ssize_t)size;
 }
 

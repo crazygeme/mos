@@ -5,6 +5,12 @@
 #include <compiler.h>
 #include <config.h>
 
+/* Four-level AMD64 translation: 9 index bits per level above 4 KiB pages. */
+#define MMU_PAGE_SHIFT 12U
+#define MMU_TABLE_INDEX_BITS 9U
+#define MMU_TABLE_INDEX_MASK ((1U << MMU_TABLE_INDEX_BITS) - 1)
+#define MMU_ROOT_SHIFT (MMU_PAGE_SHIFT + 3 * MMU_TABLE_INDEX_BITS)
+
 ALWAYS_INLINE addr_space_t arch_mm_current_address_space(void)
 {
 	addr_space_t root;

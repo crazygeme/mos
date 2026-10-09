@@ -22,6 +22,8 @@
 /* ── Memory ─────────────────────────────────────────────────────────────── */
 #define MEM_LIBC_MALLOC 0
 #define MEMP_MEM_MALLOC 0
+#define MEMP_NUM_TCP_PCB 128
+#define MEMP_NUM_UDP_PCB 64
 #define MEM_SIZE (256 * 1024)
 #define PBUF_POOL_SIZE 256
 #define PBUF_POOL_BUFSIZE 1600

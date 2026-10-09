@@ -11,7 +11,7 @@ static unsigned long long clock_start_us;
 static unsigned long long last_us;
 static unsigned long long coarse_us;
 static long long wall_offset_us;
-static spinlock_t time_lock = { .inited = 1 };
+static spinlock_t time_lock = SPINLOCK_INITIALIZER;
 
 /* time_lock protects shared clock state and PIT ports across CPUs. Its IRQ
  * masking prevents local preemption and torn i386 64-bit accesses. Clock

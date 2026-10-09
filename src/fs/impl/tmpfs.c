@@ -13,6 +13,9 @@
 #include <fs/vfs.h>
 #include <fs/mount.h>
 #include <fs/fcntl.h>
+#include <mm/mm.h>
+#include <mm/phymm.h>
+#include <int/int.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <lib/list.h>
@@ -49,8 +52,9 @@ struct _tmpfs_node {
 	unsigned mtime;
 	unsigned ctime;
 	/* Files: lazily-allocated PAGE_SIZE blocks */
-	char **pages;
+	paddr_t *pages;
 	unsigned n_pages;
+	rmutex_t file_lock;
 	tmpfs_node *parent;
 	/* Dirs: sentinel head of child dirent list */
 	list_entry children;
@@ -64,6 +68,59 @@ typedef struct {
 	unsigned next_ino;
 	spinlock_t lock;
 } tmpfs_sb_info;
+
+static int tmpfs_page_read(paddr_t page, unsigned offset, void *out,
+			   unsigned size)
+{
+	if (mm_kmap_phys(page) != 1)
+		return -EIO;
+	memcpy(out, (char *)PHY_TO_VIRT(page) + offset, size);
+	mm_kunmap_phys(page);
+	return 0;
+}
+
+static int tmpfs_page_write(paddr_t page, unsigned offset, const void *in,
+			    unsigned size)
+{
+	if (mm_kmap_phys(page) != 1)
+		return -EIO;
+	memcpy((char *)PHY_TO_VIRT(page) + offset, in, size);
+	mm_kunmap_phys(page);
+	return 0;
+}
+
+static int tmpfs_page_zero(paddr_t page, unsigned offset, unsigned size)
+{
+	if (mm_kmap_phys(page) != 1)
+		return -EIO;
+	memset((char *)PHY_TO_VIRT(page) + offset, 0, size);
+	mm_kunmap_phys(page);
+	return 0;
+}
+
+static void tmpfs_page_put(paddr_t page)
+{
+	if (page && phymm_dereference_page(page / PAGE_SIZE) == 0)
+		phymm_free_user(page / PAGE_SIZE);
+}
+
+static paddr_t tmpfs_page_alloc(void)
+{
+	unsigned index = phymm_alloc_user();
+	if (index == PHYMM_INVALID) {
+		phymm_reclaim_user_cache(32);
+		index = phymm_alloc_user();
+		if (index == PHYMM_INVALID)
+			return 0;
+	}
+	paddr_t page = (paddr_t)index * PAGE_SIZE;
+	phymm_reference_page(index);
+	if (tmpfs_page_zero(page, 0, PAGE_SIZE) < 0) {
+		tmpfs_page_put(page);
+		return 0;
+	}
+	return page;
+}
 
 /* ── Node lifecycle ───────────────────────────────────────────────────────── */
 
@@ -84,6 +141,7 @@ static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 		n->gid = cur->user->egid;
 	}
 	n->ref = 1;
+	vm_lock_init(&n->file_lock);
 	n->atime = n->mtime = n->ctime = now;
 	list_init(&n->children);
 	return n;
@@ -116,7 +174,7 @@ static void tmpfs_node_put(tmpfs_node *n)
 
 	if (n->pages) {
 		for (i = 0; i < n->n_pages; i++)
-			free(n->pages[i]);
+			tmpfs_page_put(n->pages[i]);
 		free(n->pages);
 	}
 	free(n);
@@ -314,7 +372,7 @@ static int tmpfs_ensure_page(tmpfs_node *tn, unsigned offset)
 
 	if (page_idx < tn->n_pages) {
 		if (!tn->pages[page_idx]) {
-			tn->pages[page_idx] = zalloc(PAGE_SIZE);
+			tn->pages[page_idx] = tmpfs_page_alloc();
 			if (!tn->pages[page_idx])
 				return -ENOMEM;
 		}
@@ -323,24 +381,42 @@ static int tmpfs_ensure_page(tmpfs_node *tn, unsigned offset)
 
 	{
 		unsigned new_n = page_idx + 1;
-		char **np = malloc(new_n * sizeof(char *));
+		paddr_t *np = malloc(new_n * sizeof(paddr_t));
 
 		if (!np)
 			return -ENOMEM;
 		if (tn->pages) {
-			memcpy(np, tn->pages, tn->n_pages * sizeof(char *));
+			memcpy(np, tn->pages, tn->n_pages * sizeof(paddr_t));
 			free(tn->pages);
 		}
 		memset(np + tn->n_pages, 0,
-		       (new_n - tn->n_pages) * sizeof(char *));
+		       (new_n - tn->n_pages) * sizeof(paddr_t));
 		tn->pages = np;
 		tn->n_pages = new_n;
 
-		tn->pages[page_idx] = zalloc(PAGE_SIZE);
+		tn->pages[page_idx] = tmpfs_page_alloc();
 		if (!tn->pages[page_idx])
 			return -ENOMEM;
 	}
 	return 0;
+}
+
+static paddr_t tmpfs_file_map_page(file *fp, uint64_t offset)
+{
+	tmpfs_node *tn = fp->f_inode->i_private;
+	LOCK_GUARD(&tn->file_lock);
+	if (offset >= tn->size || offset > UINT32_MAX ||
+	    tmpfs_ensure_page(tn, (unsigned)offset) < 0)
+		return 0;
+	paddr_t page = tn->pages[offset / PAGE_SIZE];
+	phymm_reference_page(page / PAGE_SIZE);
+	return page;
+}
+
+static void tmpfs_file_map_page_put(file *fp, paddr_t page)
+{
+	(void)fp;
+	tmpfs_page_put(page);
 }
 
 static int tmpfs_file_read_page(file *fp, uint64_t offset, void *buf)
@@ -351,14 +427,14 @@ static int tmpfs_file_read_page(file *fp, uint64_t offset, void *buf)
 	}
 	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
+	LOCK_GUARD(&tn->file_lock);
 	unsigned page_idx = (offset / PAGE_SIZE);
 
 	if (page_idx >= tn->n_pages || !tn->pages[page_idx]) {
 		memset(buf, 0, PAGE_SIZE);
 		return 0;
 	}
-	memcpy(buf, tn->pages[page_idx], PAGE_SIZE);
-	return 0;
+	return tmpfs_page_read(tn->pages[page_idx], 0, buf, PAGE_SIZE);
 }
 
 static int tmpfs_file_write_page(file *fp, uint64_t offset, const void *buf)
@@ -367,6 +443,7 @@ static int tmpfs_file_write_page(file *fp, uint64_t offset, const void *buf)
 		return -EFBIG;
 	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
+	LOCK_GUARD(&tn->file_lock);
 	unsigned page_idx = offset / PAGE_SIZE;
 	int ret;
 
@@ -375,7 +452,8 @@ static int tmpfs_file_write_page(file *fp, uint64_t offset, const void *buf)
 	if (ret < 0)
 		return ret;
 
-	memcpy(tn->pages[page_idx], buf, PAGE_SIZE);
+	if (tmpfs_page_write(tn->pages[page_idx], 0, buf, PAGE_SIZE) < 0)
+		return -EIO;
 	if (page_idx * PAGE_SIZE + PAGE_SIZE > tn->size)
 		tn->size = page_idx * PAGE_SIZE + PAGE_SIZE;
 	tmpfs_touch_mctime(tn);
@@ -387,6 +465,7 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 {
 	inode *node = fp->f_inode;
 	tmpfs_node *tn = node->i_private;
+	LOCK_GUARD(&tn->file_lock);
 	unsigned old_size = tn->size;
 	unsigned new_size = (unsigned)size;
 	unsigned new_npages = (new_size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -401,29 +480,31 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 	if (new_size < old_size && new_npages > 0 &&
 	    (new_size % PAGE_SIZE) != 0 && new_npages <= tn->n_pages &&
 	    tn->pages[new_npages - 1]) {
-		memset(tn->pages[new_npages - 1] + (new_size % PAGE_SIZE), 0,
-		       PAGE_SIZE - (new_size % PAGE_SIZE));
+		if (tmpfs_page_zero(tn->pages[new_npages - 1],
+				    new_size % PAGE_SIZE,
+				    PAGE_SIZE - (new_size % PAGE_SIZE)) < 0)
+			return -EIO;
 	}
 
 	if (new_npages < tn->n_pages) {
 		unsigned i;
 
 		for (i = new_npages; i < tn->n_pages; i++) {
-			free(tn->pages[i]);
+			tmpfs_page_put(tn->pages[i]);
 			tn->pages[i] = NULL;
 		}
 		tn->n_pages = new_npages;
 	} else if (new_npages > tn->n_pages) {
-		char **np = malloc(new_npages * sizeof(char *));
+		paddr_t *np = malloc(new_npages * sizeof(paddr_t));
 
 		if (!np)
 			return -ENOMEM;
 		if (tn->pages) {
-			memcpy(np, tn->pages, tn->n_pages * sizeof(char *));
+			memcpy(np, tn->pages, tn->n_pages * sizeof(paddr_t));
 			free(tn->pages);
 		}
 		memset(np + tn->n_pages, 0,
-		       (new_npages - tn->n_pages) * sizeof(char *));
+		       (new_npages - tn->n_pages) * sizeof(paddr_t));
 		tn->pages = np;
 		tn->n_pages = new_npages;
 	}
@@ -433,8 +514,10 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 	    (old_size % PAGE_SIZE) != 0 &&
 	    (old_size / PAGE_SIZE) < tn->n_pages &&
 	    tn->pages[old_size / PAGE_SIZE]) {
-		memset(tn->pages[old_size / PAGE_SIZE] + (old_size % PAGE_SIZE),
-		       0, new_size - old_size);
+		if (tmpfs_page_zero(tn->pages[old_size / PAGE_SIZE],
+				    old_size % PAGE_SIZE,
+				    new_size - old_size) < 0)
+			return -EIO;
 	}
 
 	tn->size = new_size;
@@ -448,6 +531,7 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 static ssize_t tmpfs_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
 	tmpfs_node *tn = fp->f_inode->i_private;
+	LOCK_GUARD(&tn->file_lock);
 	char *dst = (char *)buf;
 	ssize_t transferred = 0;
 
@@ -466,9 +550,9 @@ static ssize_t tmpfs_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 
 		if (page_idx >= tn->n_pages || !tn->pages[page_idx])
 			memset(dst + transferred, 0, copy);
-		else
-			memcpy(dst + transferred,
-			       tn->pages[page_idx] + byte_off, copy);
+		else if (tmpfs_page_read(tn->pages[page_idx], byte_off,
+					 dst + transferred, copy) < 0)
+			return transferred ? transferred : -EIO;
 
 		transferred += (ssize_t)copy;
 	}
@@ -482,6 +566,7 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 				loff_t *pos)
 {
 	tmpfs_node *tn = fp->f_inode->i_private;
+	LOCK_GUARD(&tn->file_lock);
 	const char *src = (const char *)buf;
 	ssize_t transferred = 0;
 
@@ -510,12 +595,19 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 				if (zero_end > (old_page + 1) * PAGE_SIZE)
 					zero_end = (old_page + 1) * PAGE_SIZE;
 				if (zero_end > old_size)
-					memset(tn->pages[old_page] + old_off, 0,
-					       zero_end - old_size);
+					if (tmpfs_page_zero(
+						    tn->pages[old_page],
+						    old_off,
+						    zero_end - old_size) < 0)
+						return transferred ?
+							       transferred :
+							       -EIO;
 			}
 		}
 
-		memcpy(tn->pages[page_idx] + byte_off, src + transferred, copy);
+		if (tmpfs_page_write(tn->pages[page_idx], byte_off,
+				     src + transferred, copy) < 0)
+			return transferred ? transferred : -EIO;
 		transferred += (ssize_t)copy;
 	}
 
@@ -564,6 +656,8 @@ static int tmpfs_file_release(file *fp)
 }
 
 static const file_operations tmpfs_file_fops = {
+	.map_page = tmpfs_file_map_page,
+	.map_page_put = tmpfs_file_map_page_put,
 	.release = tmpfs_file_release,
 	.getattr = tmpfs_file_getattr,
 	.setattr = tmpfs_inode_setattr,

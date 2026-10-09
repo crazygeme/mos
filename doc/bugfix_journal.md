@@ -215,7 +215,7 @@ non-directory, it releases the opened file and returns `ENOTDIR` before
 permission checks and descriptor installation. Both `O_PATH` and ordinary opens
 use this check, including targets reached through final symlinks.
 
-The regression script `test/directory_open.py` checks rejection of regular
+The regression script `test/directory_open.sh` checks rejection of regular
 files, file symlinks, and FIFOs; successful directory and directory-symlink
 opens; file replacement by `cp`; and copying into a directory. It passes on the
 host. Compiler syntax checks pass for x86 and x64. Guest validation records the
@@ -305,13 +305,13 @@ end, preventing an abandoned lock from blocking address-space cleanup.
 
 ### Validation
 
-`test/fd_callback_lifetime_host.py` executes the production descriptor and
+`test/test_fd_callback_lifetime_host.py` executes the production descriptor and
 poll-table functions with AddressSanitizer and UndefinedBehaviorSanitizer.
 The checks cover callback lock ownership, descriptor installation from a
 callback, descriptor closure during an ioctl, multiple readiness subscriptions,
 poll-table reuse, subscription cancellation, and task I/O cancellation.
 
-`test/fd_callback_threads.py` executes inside the guest. It transfers 5,000
+`test/fd_callback_threads.sh` executes inside the guest. It transfers 5,000
 file descriptors with `SCM_RIGHTS` while another thread polls the socket and
 executes `FIONREAD`. It also exercises 64 descriptor-closure races with active
 readiness subscriptions. Each transfer receives an acknowledgement before the
@@ -544,61 +544,61 @@ configured MOS implementation.
 
 ### Validation
 
-`python3 test/page_cache_reads.py --directory PATH` validates concurrent
+`sh test/page_cache_reads.sh --directory PATH` validates concurrent
 file-backed faults against distinct deterministic page contents. Eight workers
 read disjoint shuffled pages through one private mapping. The probe also checks
 that page reads preserve the descriptor offset; the selected directory must
 support regular files and mappings.
 
-`python3 test/thread_faults.py` compiles and runs a probe in the target system.
+`sh test/thread_faults.sh` compiles and runs a probe in the target system.
 It validates recovery from synchronous faults on ordinary and alternate stacks,
 fault metadata, default and blocked or ignored fatal faults in worker threads,
 group exit from a worker, signal-zero probing, clock resolution, and trace
 detachment with signal injection. Parent waits are bounded to detect retained
 threads and unavailable exit status.
 
-`python3 test/proc_exe.py` validates executable links in the running system:
+`sh test/proc_exe.sh` validates executable links in the running system:
 symbolic-link metadata, target identity, buffer truncation, `readlinkat`
 directory resolution, fork inheritance, rejected execution, and execution
 through a relative symlink with an independent argument-zero string.
-`python3 test/proc_tasks.py` validates live thread enumeration, thread-group
+`sh test/proc_tasks.sh` validates live thread enumeration, thread-group
 membership, status identities, directory-relative metadata, link counts on
 open directory descriptors, and thread creation and termination.
 
-`python3 test/unix_seqpacket.py` validates record boundaries, truncation,
+`sh test/unix_seqpacket.sh` validates record boundaries, truncation,
 peeking, empty records, large records, descriptor and credential delivery,
 nonblocking queue exhaustion, shutdown, named connections, and socket flags.
-`python3 test/dev_fd.py` validates pipe reopening and endpoint lifetime,
+`sh test/dev_fd.sh` validates pipe reopening and endpoint lifetime,
 regular-file positions, and Bash process substitution in the running system.
-`python3 test/inotify.py` validates event records, masks, rename cookies,
+`sh test/inotify.sh` validates event records, masks, rename cookies,
 hard-link identity, unlinked inode lifetime, watch installation after open and
 namespace changes, `O_PATH` references, vectored
 reads, queue byte counts, asynchronous signals, poll/epoll subscriptions,
 descriptor sharing, and blocking reads. Its working directory must support
 hard links and renames; `--directory PATH` selects that directory. The
-root-only guest command `python3 test/inotify.py --guest --limits --mounts`
+root-only guest command `sh test/inotify.sh --guest --limits --mounts`
 also validates quota controls, queue overflow, capacity capture, and unmount
 notifications. These options temporarily modify and restore inotify controls
 and create and remove a tmpfs mount.
 
-`python3 test/filesystem_notifications_host.py` compiles the production VFS,
+`python3 test/test_filesystem_notifications_host.py` compiles the production VFS,
 virtual-entry, and notification code against isolated host services. Address
 and undefined-behavior checks cover unmatched descendant lookup, canonical
 alias identity, parent events, mount-view lifetime, late watch installation,
 and allocation-free notification registration with no active watches.
 
-`python3 test/eventfd.py` validates counters, descriptor flags, semaphore mode,
+`sh test/eventfd.sh` validates counters, descriptor flags, semaphore mode,
 epoll notifications, and blocking operations across fork. The MOS-only
-`python3 test/clone_namespaces.py` validates `EINVAL` for namespace flags.
+`sh test/clone_namespaces.sh` validates `EINVAL` for namespace flags.
 
-`python3 test/abi_adapters.py` compiles production adapters against isolated
+`python3 test/test_abi_adapters.py` compiles production adapters against isolated
 host-side kernel services and runs them with undefined-behavior checks. It
 validates robust readers and cross-layout getters, ptrace word and register
 serialization, shared-memory records, ELF header conversion, initial stacks,
 and executable register initialization. These checks do not exercise kernel
 scheduling or privilege transitions.
 
-`python3 test/syscall_tables.py` validates syscall numbers and service coverage
+`python3 test/test_syscall_tables.py` validates syscall numbers and service coverage
 for both namespaces. The embedded kernel tests validate ELF image acceptance
 and page execute permissions. Guest validation uses `./run.sh kvm test` from
 the MOS source directory with the configured RH9 image. Native AMD64 guest
@@ -838,7 +838,7 @@ The server log `/var/log/XFree86.0.log` reports framebuffer bpp, virtual
 dimensions, pitch in pixels, BIOS identification, and selected VBE modes.
 Those values describe the server's selected format; the display device's
 active format must agree. Syscall namespace validation is available through
-`python3 test/syscall_tables.py`. That audit checks declarations and service
+`python3 test/test_syscall_tables.py`. That audit checks declarations and service
 coverage; display correctness requires guest execution.
 
 ---
@@ -1048,7 +1048,7 @@ Native `ppoll` converts 64-bit timeouts to the shared poll wait service and
 validates the full-width signal-mask size. Its interrupted waits use the same
 signal-mask restoration contract as `pselect6`.
 
-`test/x64_console_abi.py` validates pathname flags, descriptor readiness across
+`test/x64_console_abi.sh` validates pathname flags, descriptor readiness across
 word boundaries, timeouts, temporary signal masks, pipe wakeups, and libc sleep
 calls. The test requires AMD64 userspace and Python 3.
 
@@ -1061,7 +1061,7 @@ Native `sendto` uses the message service for both Unix-domain and IPv4 sockets.
 Native futex timeouts use the shared 64-bit userspace timeout reader.
 Native `ftruncate` passes its 64-bit length to the shared file truncation
 service. DRI3 shared-fence files support sizing before shared memory mapping.
-`test/x64_console_abi.py` verifies relative `FUTEX_WAIT` and absolute
+`test/x64_console_abi.sh` verifies relative `FUTEX_WAIT` and absolute
 `FUTEX_WAIT_BITSET` timeout completion, as well as shared-fence file truncation
 and visibility between mappings of an unlinked file.
 

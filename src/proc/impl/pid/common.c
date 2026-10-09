@@ -11,6 +11,7 @@
 #include "proc_pid.h"
 #include <macro.h>
 #include <ext4.h>
+#include <fs/fcntl.h>
 
 /* ── File operations shared by regular files and directories ─────────── */
 
@@ -198,9 +199,45 @@ static int pid_fd_link_getattr(file *fp, struct stat *s)
 	return 0;
 }
 
+static int pid_fd_metadata_getattr(file *fp, struct stat *s)
+{
+	file *target = fp->f_inode->i_private;
+	return target->f_fop && target->f_fop->getattr ?
+		target->f_fop->getattr(target, s) : -EIO;
+}
+
+static int pid_fd_metadata_release(file *fp)
+{
+	fs_put_file(fp->f_inode->i_private);
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+
+static const file_operations pid_fd_metadata_fops = {
+	.getattr = pid_fd_metadata_getattr,
+	.release = pid_fd_metadata_release,
+};
+
 static file *pid_fd_link_follow(file *fp, int flags)
 {
 	pid_fd_link *link = fp->f_inode->i_private;
+	if (flags & O_PATH) {
+		file *metadata = zalloc(sizeof(*metadata));
+		inode *node = zalloc(sizeof(*node));
+		if (!metadata || !node) {
+			free(metadata);
+			free(node);
+			return NULL;
+		}
+		node->i_mode = link->target->f_inode->i_mode;
+		node->i_private = link->target;
+		metadata->f_inode = node;
+		metadata->f_count = 1;
+		metadata->f_fop = &pid_fd_metadata_fops;
+		fs_get_file(link->target);
+		return metadata;
+	}
 	if (link->target->f_fop && link->target->f_fop->reopen)
 		return link->target->f_fop->reopen(link->target, flags);
 	if (link->target->f_name && link->target->f_name[0] == '/')

@@ -212,13 +212,28 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 
 	if (f->f_fop && f->f_fop->map_page) {
 		paddr_t phy = f->f_fop->map_page(f, offset);
+		paddr_t source = phy;
 		unsigned pte = PAGE_ENTRY_USER_CODE;
 		if (!phy)
 			goto FAIL;
-		if (prot & PROT_WRITE)
+		if (write && !(flag & MAP_SHARED)) {
+			phy = pf_copy_private_page(phy);
+			if (!phy) {
+				if (f->f_fop->map_page_put)
+					f->f_fop->map_page_put(f, source);
+				goto FAIL;
+			}
 			pte |= PAGE_ENTRY_WRITABLE;
-		if (mm_map_page(address, phy, pte) != 1)
+		} else if ((prot & PROT_WRITE) && (flag & MAP_SHARED))
+			pte |= PAGE_ENTRY_WRITABLE;
+		int mapped = mm_map_page(address, phy, pte);
+		if (f->f_fop->map_page_put)
+			f->f_fop->map_page_put(f, source);
+		if (mapped != 1) {
+			if (write && !(flag & MAP_SHARED))
+				phymm_free_user(phy / PAGE_SIZE);
 			goto FAIL;
+		}
 		return 1;
 	}
 
@@ -500,6 +515,7 @@ static int pf_handle_page_invalid_raw(task_struct *task, vaddr_t fault_address,
 /* Resolve a missing page and apply architecture execute permissions. */
 static int pf_handle_page_invalid(task_struct *task, vaddr_t address, int write)
 {
+	LOCK_GUARD(&task->user->vm->mapping_lock);
 	int handled = pf_handle_page_invalid_raw(task, address, write);
 #if MOS_PAGE_NO_EXEC
 	if (handled) {
@@ -578,6 +594,7 @@ static void wp_page_reuse(vaddr_t fault_address)
  */
 static int do_wp_page(task_struct *task, vaddr_t fault_address)
 {
+	LOCK_GUARD(&task->user->vm->mapping_lock);
 	vm_region *region;
 	unsigned page_index;
 	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
@@ -641,6 +658,7 @@ int pf_resolve_task_page_fault(task_struct *task, vaddr_t addr, int write)
 
 	if (!task || !task->user)
 		return 0;
+	LOCK_GUARD(&task->user->vm->mapping_lock);
 
 	target_address_space = VIRT_TO_PHY(task->user->vm->page_dir);
 	old_level = int_intr_disable();

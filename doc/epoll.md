@@ -85,26 +85,6 @@ pipes. Empty and single-ready waits execute 100,000 iterations per size;
 poll and modification execute 10,000 iterations. Diagnostic syscall tracing
 must be disabled during timing.
 
-`test/epoll_qemu.py` runs a statically linked copy of this program as init in
-an isolated 512 MiB KVM guest. MOS uses a temporary ext3 disk; Linux uses a
-temporary initramfs. The harness creates all guest storage independently of
-system images and writes serial output plus a JSON report. MOS test kernels
-also execute the circular-buffer and syslog unit suites. The default
-performance checks allow at most 50 percent plus 50 ns growth between the
-smallest and largest sets. `--baseline` compares wait and control timings
-against a Linux report with the same virtual CPU count; `--max-slowdown`
-defaults to 1.5.
-
-Example comparison for native AMD64:
-
-```sh
-python3 test/epoll_qemu.py --linux --kernel /path/to/linux-vmlinuz \
-  --probe /path/to/static-epoll-probe --output /tmp/linux-epoll.txt
-python3 test/epoll_qemu.py --kernel out/x64/release/kernel-test.boot \
-  --probe /path/to/static-epoll-probe --output /tmp/mos-epoll.txt \
-  --baseline /tmp/linux-epoll.json
-```
-
 Libevent 2.1.12 and Xorg 21.1.18 package configurations enable their epoll
 backends. Package build versions are maintained in their respective version
 files.

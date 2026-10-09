@@ -369,18 +369,14 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 
 /* ── Socket file operations ──────────────────────────────────────────────── */
 
-static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
+static ssize_t inet_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-	NET_CORE_GUARD_IF(sk->domain != AF_UNIX);
+	LOCK_GUARD(&net_core_lock);
 	int nonblock = sock_file_nonblock(fp);
-
 	if (count == 0 && sk->type == SOCK_STREAM)
 		return 0;
-
-	if (sk->domain == AF_UNIX)
-		return unix_read(fp, sk, buf, count);
 
 	if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW) {
 		unsigned long long deadline = sock_recv_deadline(sk);
@@ -431,17 +427,13 @@ static ssize_t sock_read(file *fp, void *buf, size_t count, loff_t *pos)
 	return (ssize_t)n;
 }
 
-static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
+static ssize_t inet_write(file *fp, const void *buf, size_t count, loff_t *pos)
 {
 	(void)pos;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-	NET_CORE_GUARD_IF(sk->domain != AF_UNIX);
-
+	LOCK_GUARD(&net_core_lock);
 	if (sk->err)
 		return sk->err;
-
-	if (sk->domain == AF_UNIX)
-		return unix_write(fp, sk, buf, count);
 
 	if (sk->type == SOCK_RAW) {
 		if (sk->hdrincl)
@@ -478,6 +470,49 @@ static ssize_t sock_write(file *fp, const void *buf, size_t count, loff_t *pos)
 	return sock_tcp_stream_write(fp, sk, buf, count);
 }
 
+static ssize_t unix_file_read(file *fp, void *buf, size_t count, loff_t *pos)
+{
+	(void)pos;
+	mos_sock *sk = fp->f_inode->i_private;
+	LOCK_GUARD(&net_local_lock);
+	if (count == 0 && sk->type == SOCK_STREAM)
+		return 0;
+	return unix_read(fp, sk, buf, count);
+}
+
+static ssize_t unix_file_write(file *fp, const void *buf, size_t count,
+			       loff_t *pos)
+{
+	(void)pos;
+	mos_sock *sk = fp->f_inode->i_private;
+	LOCK_GUARD(&net_local_lock);
+	if (sk->err)
+		return sk->err;
+	return unix_write(fp, sk, buf, count);
+}
+
+static ssize_t netlink_file_read(file *fp, void *buf, size_t count, loff_t *pos)
+{
+	(void)pos;
+	mos_sock *sk = fp->f_inode->i_private;
+	LOCK_GUARD(&net_core_lock);
+	struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+	return netlink_recvmsg(sk, &msg,
+			       sock_file_nonblock(fp) ? MSG_DONTWAIT : 0);
+}
+
+static ssize_t netlink_file_write(file *fp, const void *buf, size_t count,
+				  loff_t *pos)
+{
+	(void)pos;
+	mos_sock *sk = fp->f_inode->i_private;
+	LOCK_GUARD(&net_core_lock);
+	struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+	return netlink_sendmsg(sk, &msg, 0);
+}
+
 /* Detach callbacks before destroying an unexposed accepted socket. */
 void sock_tcp_abort(mos_sock *sk)
 {
@@ -492,18 +527,19 @@ void sock_tcp_abort(mos_sock *sk)
 	tcp_abort(pcb);
 }
 
-static int sock_release(file *fp)
+static int sock_release_storage(file *fp)
 {
-	NET_CORE_GUARD;
-	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
+	sock_destroy(fp->f_inode->i_private);
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
 
-	if (sk->domain == AF_UNIX) {
-		int irq;
-		spinlock_lock(&sk->rxbuf_lock, &irq);
-		unix_drop_passfds(sk);
-		spinlock_unlock(&sk->rxbuf_lock, irq);
-		unix_release(sk);
-	} else if (sk->type == SOCK_RAW) {
+static int inet_release(file *fp)
+{
+	LOCK_GUARD(&net_core_lock);
+	mos_sock *sk = fp->f_inode->i_private;
+	if (sk->type == SOCK_RAW) {
 		if (sk->raw)
 			raw_remove(sk->raw);
 	} else if (sk->type == SOCK_DGRAM) {
@@ -538,10 +574,26 @@ static int sock_release(file *fp)
 		}
 	}
 
-	sock_destroy(sk);
-	free(fp->f_inode);
-	free(fp);
-	return 0;
+	return sock_release_storage(fp);
+}
+
+static int unix_file_release(file *fp)
+{
+	LOCK_GUARD(&net_core_lock);
+	mos_sock *sk = fp->f_inode->i_private;
+	int irq;
+	spinlock_lock(&sk->rxbuf_lock, &irq);
+	unix_drop_passfds(sk);
+	spinlock_unlock(&sk->rxbuf_lock, irq);
+	unix_release(sk);
+	return sock_release_storage(fp);
+}
+
+static int netlink_file_release(file *fp)
+{
+	LOCK_GUARD(&net_core_lock);
+	netlink_release(fp->f_inode->i_private);
+	return sock_release_storage(fp);
 }
 
 /* ── helpers for filling ifreq fields ───────────────────────────────────── */
@@ -559,7 +611,12 @@ static int fill_eth0_ifreq_siocgifflags(void *context __attribute__((unused)),
 					void *arg)
 {
 	struct ifreq *ifr = arg;
-	short f = IFF_UP | IFF_RUNNING | IFF_BROADCAST | IFF_MULTICAST;
+	struct netif *nif = context;
+	short f = IFF_BROADCAST | IFF_MULTICAST;
+	if (netif_is_up(nif))
+		f |= IFF_UP;
+	if (netif_is_link_up(nif))
+		f |= IFF_RUNNING;
 	ifr->ifr_flags = f;
 	return 0;
 }
@@ -670,7 +727,12 @@ static int fill_lo_ifreq_siocgifflags(void *context __attribute__((unused)),
 				      void *arg)
 {
 	struct ifreq *ifr = arg;
-	ifr->ifr_flags = IFF_UP | IFF_RUNNING | IFF_LOOPBACK;
+	struct netif *nif = context;
+	ifr->ifr_flags = IFF_LOOPBACK;
+	if (nif && netif_is_up(nif))
+		ifr->ifr_flags |= IFF_UP;
+	if (nif && netif_is_link_up(nif))
+		ifr->ifr_flags |= IFF_RUNNING;
 	return 0;
 }
 
@@ -782,20 +844,35 @@ static int sock_ioctl_siocgstamp(void *context __attribute__((unused)),
 {
 	file *fp = context;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-	if (sk->domain == AF_UNIX && sk->type == SOCK_STREAM)
-		return -ENOTTY;
-
 	*(struct timeval *)arg = sk->rx_stamp;
 	return 0;
 }
 
-static int sock_ioctl_fionread(void *context __attribute__((unused)),
+static int sock_ioctl_fionread(void *context,
+			       unsigned cmd __attribute__((unused)), void *arg)
+{
+	file *fp = context;
+	mos_sock *sk = fp->f_inode->i_private;
+	*(int *)arg = (int)rx_used(sk);
+	return 0;
+}
+
+static int unix_ioctl_siocgstamp(void *context, unsigned cmd, void *arg)
+{
+	file *fp = context;
+	mos_sock *sk = fp->f_inode->i_private;
+	if (sk->type == SOCK_STREAM)
+		return -ENOTTY;
+	return sock_ioctl_siocgstamp(context, cmd, arg);
+}
+
+static int unix_ioctl_fionread(void *context __attribute__((unused)),
 			       unsigned cmd __attribute__((unused)),
 			       void *arg __attribute__((unused)))
 {
 	file *fp = context;
 	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET) {
+	if (sk->type == SOCK_SEQPACKET) {
 		unix_seqpacket_header record;
 		unsigned total = 0;
 		unsigned head;
@@ -887,9 +964,35 @@ static int sock_ioctl_siocgifflags(void *context __attribute__((unused)),
 	return -ENODEV;
 }
 
+static int sock_ioctl_siocsifflags(void *context __attribute__((unused)),
+				   unsigned cmd __attribute__((unused)),
+				   void *arg)
+{
+	struct ifreq *ifr = arg;
+	if (!ifr)
+		return -EFAULT;
+	if (!current->user || current->user->euid != 0)
+		return -EPERM;
+	for (struct netif *nif = netif_list; nif; nif = nif->next) {
+		char name[IFNAMSIZ];
+		if (nif->name[0] == 'l' && nif->name[1] == 'o')
+			strcpy(name, "lo");
+		else
+			sprintf(name, "%c%c%u", nif->name[0], nif->name[1],
+				(unsigned)nif->num);
+		if (strncmp(ifr->ifr_name, name, IFNAMSIZ) == 0) {
+			net_set_interface_up(nif,
+					     (ifr->ifr_flags & IFF_UP) != 0);
+			return 0;
+		}
+	}
+	return -ENODEV;
+}
+
 static const command_operation socket_network_commands[256] = {
 	[SIOCGSTAMP & 255] = { SIOCGSTAMP, sock_ioctl_siocgstamp },
 	[SIOCGIFCONF & 255] = { SIOCGIFCONF, sock_ioctl_siocgifconf },
+	[SIOCSIFFLAGS & 255] = { SIOCSIFFLAGS, sock_ioctl_siocsifflags },
 	[SIOCGIFFLAGS & 255] = { SIOCGIFFLAGS, sock_ioctl_siocgifflags },
 	[SIOCGIFADDR & 255] = { SIOCGIFADDR, sock_ioctl_siocgifflags },
 	[SIOCGIFNETMASK & 255] = { SIOCGIFNETMASK, sock_ioctl_siocgifflags },
@@ -912,91 +1015,131 @@ static const command_operation *const socket_command_groups[256] = {
 
 static int sock_ioctl(file *fp, unsigned cmd, void *arg)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 
 	return command_dispatch(socket_command_groups, fp, cmd, arg, -ENOTTY);
 }
 
-static unsigned sock_poll(file *fp, unsigned events, poll_table *pt)
+static const command_operation unix_network_commands[256] = {
+	[SIOCGSTAMP & 255] = { SIOCGSTAMP, unix_ioctl_siocgstamp },
+};
+static const command_operation unix_file_commands[256] = {
+	[FIONREAD & 255] = { FIONREAD, unix_ioctl_fionread },
+};
+static const command_operation *const unix_command_groups[256] = {
+	[(SIOCGSTAMP >> 8) & 255] = unix_network_commands,
+	[(FIONREAD >> 8) & 255] = unix_file_commands,
+};
+
+static int unix_file_ioctl(file *fp, unsigned cmd, void *arg)
 {
-	NET_CORE_GUARD;
-	mos_sock *sk = (mos_sock *)fp->f_inode->i_private;
-	unsigned ready = 0;
+	LOCK_GUARD(&net_core_lock);
+	command_fn invoke = command_lookup(unix_command_groups, cmd);
+	if (!invoke)
+		invoke = command_lookup(socket_command_groups, cmd);
+	return invoke ? invoke(fp, cmd, arg) : -ENOTTY;
+}
 
-	if (events & FS_POLL_READ) {
-		if (sk->type == SOCK_DGRAM || sk->type == SOCK_RAW)
-			ready |= rx_used(sk) >= sizeof(u16_t) ? FS_POLL_READ :
-								0;
-		if (rx_used(sk) > 0)
-			ready |= FS_POLL_READ;
-		if (sk->state == SS_DISCONNECTING ||
-		    (sk->domain == AF_UNIX &&
-		     (sk->unix_shutdown & UNIX_SHUT_RD)))
-			ready |= FS_POLL_READ;
-		if (sk->domain == AF_UNIX) {
-			if (sk->unix_accept_tail != sk->unix_accept_head)
-				ready |= FS_POLL_READ;
-		} else if (sk->accept_tail != sk->accept_head) {
-			ready |= FS_POLL_READ;
-		}
-	}
-
-	if (events & FS_POLL_WRITE) {
-		if (sk->domain == AF_UNIX) {
-			if (sk->unix_shutdown & UNIX_SHUT_WR) {
-				ready |= FS_POLL_WRITE;
-			} else if (sk->unix_peer) {
-				if (sk->type == SOCK_SEQPACKET) {
-					ready |=
-						rx_free(sk->unix_peer) >=
-								sizeof(unix_seqpacket_header) ?
-							FS_POLL_WRITE :
-							0;
-				} else if (sk->type == SOCK_DGRAM) {
-					ready |= rx_free(sk->unix_peer) >=
-								 sizeof(u16_t) ?
-							 FS_POLL_WRITE :
-							 0;
-				} else {
-					ready |= rx_free(sk->unix_peer) > 0 ?
-							 FS_POLL_WRITE :
-							 0;
-				}
-			}
-		} else if (sk->type == SOCK_STREAM) {
-			if (sk->state == SS_CONNECTED && sk->tcp &&
-			    tcp_sndbuf(sk->tcp) > 0)
-				ready |= FS_POLL_WRITE;
-		} else
-			ready |= FS_POLL_WRITE;
-	}
-
+static unsigned sock_poll_common(mos_sock *sk, unsigned events, poll_table *pt,
+				 unsigned ready, unsigned shutdown)
+{
+	if ((events & FS_POLL_READ) &&
+	    (rx_used(sk) > 0 || sk->state == SS_DISCONNECTING ||
+	     (shutdown & UNIX_SHUT_RD)))
+		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_ERR) && sk->err)
 		ready |= FS_POLL_ERR;
 	if ((events & FS_POLL_HUP) &&
 	    (sk->state == SS_DISCONNECTING ||
-	     (sk->domain == AF_UNIX &&
-	      sk->unix_shutdown == (UNIX_SHUT_RD | UNIX_SHUT_WR))))
+	     shutdown == (UNIX_SHUT_RD | UNIX_SHUT_WR)))
 		ready |= FS_POLL_HUP;
-
 	if ((events & FS_POLL_RDHUP) &&
 	    (sk->type == SOCK_STREAM || sk->type == SOCK_SEQPACKET) &&
-	    (sk->state == SS_DISCONNECTING ||
-	     (sk->domain == AF_UNIX && (sk->unix_shutdown & UNIX_SHUT_RD))))
+	    (sk->state == SS_DISCONNECTING || (shutdown & UNIX_SHUT_RD)))
 		ready |= FS_POLL_RDHUP;
 	if (pt)
 		poll_subscribe(pt, &sk->poll_waiters, &sk->wait_lock);
-
 	return ready;
 }
 
-static const file_operations sock_fops = {
+static unsigned inet_poll(file *fp, unsigned events, poll_table *pt)
+{
+	LOCK_GUARD(&net_core_lock);
+	mos_sock *sk = fp->f_inode->i_private;
+	unsigned ready = 0;
+	if ((events & FS_POLL_READ) && sk->accept_tail != sk->accept_head)
+		ready |= FS_POLL_READ;
+	if ((events & FS_POLL_WRITE) &&
+	    (sk->type != SOCK_STREAM ||
+	     (sk->state == SS_CONNECTED && sk->tcp && tcp_sndbuf(sk->tcp) > 0)))
+		ready |= FS_POLL_WRITE;
+	return sock_poll_common(sk, events, pt, ready, 0);
+}
+
+static unsigned unix_file_poll(file *fp, unsigned events, poll_table *pt)
+{
+	LOCK_GUARD(&net_core_lock);
+	mos_sock *sk = fp->f_inode->i_private;
+	unsigned ready = 0;
+	if ((events & FS_POLL_READ) &&
+	    sk->unix_accept_tail != sk->unix_accept_head)
+		ready |= FS_POLL_READ;
+	if (events & FS_POLL_WRITE) {
+		if (sk->unix_shutdown & UNIX_SHUT_WR) {
+			ready |= FS_POLL_WRITE;
+		} else if (sk->unix_peer &&
+			   (sk->unix_peer->unix_passfd_tail + 1) %
+					   UNIX_PASSFD_QUEUE !=
+				   sk->unix_peer->unix_passfd_head) {
+			unsigned minimum =
+				sk->type == SOCK_SEQPACKET ?
+					sizeof(unix_seqpacket_header) :
+				sk->type == SOCK_DGRAM ? sizeof(u16_t) :
+							 1;
+			if (rx_free(sk->unix_peer) >= minimum)
+				ready |= FS_POLL_WRITE;
+		}
+	}
+	return sock_poll_common(sk, events, pt, ready, sk->unix_shutdown);
+}
+
+static const file_operations inet_fops = {
 	.getattr = sock_getattr,
-	.read = sock_read,
-	.write = sock_write,
+	.read = inet_read,
+	.write = inet_write,
+	.readv = sock_recvmsg_file_iov,
+	.writev = sock_sendmsg_file_iov,
 	.ioctl = sock_ioctl,
-	.poll = sock_poll,
-	.release = sock_release,
+	.poll = inet_poll,
+	.release = inet_release,
+};
+
+static const file_operations unix_fops = {
+	.getattr = sock_getattr,
+	.read = unix_file_read,
+	.write = unix_file_write,
+	.readv = sock_recvmsg_file_iov,
+	.writev = sock_sendmsg_file_iov,
+	.ioctl = unix_file_ioctl,
+	.poll = unix_file_poll,
+	.release = unix_file_release,
+};
+
+static const file_operations netlink_fops = {
+	.getattr = sock_getattr,
+	.read = netlink_file_read,
+	.write = netlink_file_write,
+	.readv = sock_recvmsg_file_iov,
+	.writev = sock_sendmsg_file_iov,
+	.ioctl = sock_ioctl,
+	.poll = inet_poll,
+	.release = netlink_file_release,
+};
+
+static const file_operations *const socket_family_fops[] = {
+	[AF_INET] = &inet_fops,
+	[AF_UNIX] = &unix_fops,
+	[AF_NETLINK] = &netlink_fops,
 };
 
 static int sock_getattr(file *fp, struct stat *s)
@@ -1017,6 +1160,11 @@ static int sock_getattr(file *fp, struct stat *s)
 
 int sock_to_fd(mos_sock *sk)
 {
+	if (!sk ||
+	    (unsigned)sk->domain >= sizeof(socket_family_fops) /
+					    sizeof(socket_family_fops[0]) ||
+	    !socket_family_fops[sk->domain])
+		return -EAFNOSUPPORT;
 	inode *node = zalloc(sizeof(*node));
 	node->i_mode = S_IFSOCK | 0600;
 	node->i_private = sk;
@@ -1024,7 +1172,7 @@ int sock_to_fd(mos_sock *sk)
 	file *fp = zalloc(sizeof(*fp));
 	fp->f_inode = node;
 	fp->f_count = 1;
-	fp->f_fop = &sock_fops;
+	fp->f_fop = socket_family_fops[sk->domain];
 	fp->f_mode = O_RDWR;
 	fp->f_flag = O_RDWR;
 	sk->async_file = fp;

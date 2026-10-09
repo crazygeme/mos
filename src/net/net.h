@@ -11,6 +11,8 @@ typedef struct {
 } net_stats_t;
 
 void net_init(void);
+/* Requires network core ownership. */
+void net_set_interface_up(struct netif *nif, int up);
 struct netif *net_get_default_netif(void);
 void net_get_stats(net_stats_t *s);
 

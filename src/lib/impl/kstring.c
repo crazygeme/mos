@@ -538,14 +538,15 @@ static unsigned int klib_random_num = 1;
 
 void srand(unsigned seed)
 {
-	klib_random_num = seed;
+	__atomic_store_n(&klib_random_num, seed, __ATOMIC_RELEASE);
 }
 
 unsigned int rand()
 {
-	unsigned int ret = klib_random_num * 0x343fd + 0x269EC3;
-
-	klib_random_num = ret;
-	ret = (ret >> 16) & 0x7fff;
-	return ret;
+	unsigned old, next;
+	do {
+		old = __atomic_load_n(&klib_random_num, __ATOMIC_RELAXED);
+		next = old * 0x343fd + 0x269EC3;
+	} while (!__sync_bool_compare_and_swap(&klib_random_num, old, next));
+	return (next >> 16) & 0x7fff;
 }

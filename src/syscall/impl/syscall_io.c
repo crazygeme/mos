@@ -14,6 +14,7 @@
 #include <fs/poll.h>
 #include <fs/fcntl.h>
 #include <fs/ioctl.h>
+#include <net/sock.h>
 #include <lib/klib.h>
 #include <config.h>
 #include <errno.h>
@@ -309,7 +310,7 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 {
 	int i;
-	int ret;
+	int ret, handled;
 	size_t total_len = 0;
 	size_t copied = 0;
 	task_struct *cur = CURRENT_TASK();
@@ -337,6 +338,9 @@ int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 
 	if (total_len == 0)
 		return 0;
+	ret = fs_writev_special(fildes, iov, iovcnt, &handled);
+	if (handled)
+		return ret;
 
 	buf = malloc(total_len);
 	if (!buf)
@@ -777,4 +781,17 @@ int sys_readahead(int fd, unsigned offset_hi, unsigned offset_lo,
 	(void)offset_lo;
 	(void)count;
 	return 0;
+}
+
+ssize_t sys_sendfile64(int out_fd, int in_fd, int64_t *offset, size_t count)
+{
+	int64_t position = 0;
+	if (offset && (ps_read_process_memory(current, offset, &position, sizeof(position)) < 0 ||
+		       ps_write_process_memory(current, offset, &position, sizeof(position)) < 0))
+		return -EFAULT;
+	ssize_t result = fs_sendfile(out_fd, in_fd, offset ? &position : NULL, count);
+	if (offset && result >= 0 &&
+	    ps_write_process_memory(current, offset, &position, sizeof(position)) < 0)
+		return -EFAULT;
+	return result;
 }

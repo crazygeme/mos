@@ -1,4 +1,4 @@
-/* Freestanding entry/return regression, built by test/fast_syscall.py. */
+/* Freestanding entry/return regression for x86 syscall entry paths. */
 typedef unsigned long word;
 typedef long result;
 #ifdef __x86_64__

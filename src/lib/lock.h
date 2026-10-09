@@ -1,6 +1,7 @@
 #ifndef _LIB_LOCK_H
 #define _LIB_LOCK_H
 #include <lib/list.h>
+#include <lib/lock_guard.h>
 
 /* ===========================================================================
  * Spinlock
@@ -16,10 +17,16 @@
  * ===========================================================================*/
 
 typedef volatile struct _spinlock {
+	lock_header_t header;
 	unsigned int lock; /* 0 = free, 1 = held (TAS word)         */
 	int inited; /* 1 after spinlock_init                  */
 	const char *holder;
 } spinlock_t;
+
+extern const lock_operations_t spinlock_guard_operations;
+
+#define SPINLOCK_INITIALIZER \
+	{ .header = { &spinlock_guard_operations }, .inited = 1 }
 
 void spinlock_init(spinlock_t *lock);
 void spinlock_uninit(spinlock_t *lock);
@@ -76,6 +83,7 @@ void cond_notify_at_intr(cond_t *s);
  * ===========================================================================*/
 
 typedef volatile struct _mutex {
+	lock_header_t header;
 	lock_base base;
 	unsigned holder; /* psid of the holding task, 0 if free     */
 	const char *holder_func; /* name of the holding task, 0 if free     */
@@ -98,6 +106,7 @@ void mutex_unlock(mutex_t *m);
  * ===========================================================================*/
 
 typedef volatile struct _rwlock {
+	lock_header_t header;
 	/* Both supported x86 ABIs allocate these bitfields from the low bit.
 	 * Ownership and the writer gate share one atomic word. */
 	union {
@@ -131,6 +140,7 @@ void rwlock_write_unlock(rwlock_t *rw);
  * ===========================================================================*/
 
 typedef volatile struct _rmutex {
+	lock_header_t header;
 	lock_base base;
 	unsigned holder; /* psid of the holding task, 0 if free     */
 	unsigned depth; /* re-lock depth, 0 when free              */
@@ -141,6 +151,11 @@ void rmutex_init(rmutex_t *m);
 #define rmutex_lock(x) _rmutex_lock((x), __func__)
 void _rmutex_lock(rmutex_t *m, const char *func);
 void rmutex_unlock(rmutex_t *m);
+
+/* Recursive VM transactions retain task ownership tracking. */
+void vm_lock_init(rmutex_t *lock);
+void vm_lock_enter(rmutex_t *lock, const char *func);
+void vm_lock_leave(rmutex_t *lock);
 
 /* ===========================================================================
  * Semaphore (sem_t)

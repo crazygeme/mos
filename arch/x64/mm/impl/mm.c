@@ -73,8 +73,10 @@ static pte_t *ensure_leaf(pte_t *root, vaddr_t address)
 	unsigned count = 0;
 	if (!root || !arch_mm_is_canonical(address))
 		return 0;
-	for (unsigned shift = 39; shift > 12; shift -= 9) {
-		pte_t *entry = &table[(address >> shift) & 511];
+	for (unsigned shift = MMU_ROOT_SHIFT; shift > MMU_PAGE_SHIFT;
+	     shift -= MMU_TABLE_INDEX_BITS) {
+		pte_t *entry =
+			&table[(address >> shift) & MMU_TABLE_INDEX_MASK];
 		if (!(*entry & PAGE_ENTRY_PRESENT)) {
 			vaddr_t child = mm_alloc_page_table();
 			if (!child)
@@ -106,7 +108,7 @@ static pte_t *ensure_leaf(pte_t *root, vaddr_t address)
 		}
 		table = table_pointer(*entry);
 	}
-	return &table[(address >> 12) & 511];
+	return &table[(address >> MMU_PAGE_SHIFT) & MMU_TABLE_INDEX_MASK];
 failed:
 	while (count) {
 		pte_t *entry = created[--count];
@@ -120,11 +122,12 @@ paddr_t mm_virt_to_phys(vaddr_t address)
 	pte_t *table = (pte_t *)mm_get_pagedir();
 	if (!arch_mm_is_canonical(address))
 		return 0;
-	for (unsigned shift = 39; shift >= 12; shift -= 9) {
-		pte_t entry = table[(address >> shift) & 511];
+	for (unsigned shift = MMU_ROOT_SHIFT; shift >= MMU_PAGE_SHIFT;
+	     shift -= MMU_TABLE_INDEX_BITS) {
+		pte_t entry = table[(address >> shift) & MMU_TABLE_INDEX_MASK];
 		if (!(entry & PAGE_ENTRY_PRESENT))
 			return 0;
-		if (shift == 12 || (entry & PAGE_ENTRY_LARGE)) {
+		if (shift == MMU_PAGE_SHIFT || (entry & PAGE_ENTRY_LARGE)) {
 			paddr_t mask = (1ULL << shift) - 1;
 			return ((entry & ADDRESS_MASK) & ~mask) |
 			       (address & mask);
@@ -155,8 +158,9 @@ void mm_init_cache(void)
 	 * Managed high pages no longer require temporary, globally invalidated
 	 * aliases for every COW copy. Device/firmware mappings keep their APIs. */
 	pte_t *ram_pdpt = (pte_t *)mm_alloc_page_table();
-	kernel_root[(MOS_PHYS_MAP_BEGIN >> 39) & 511] =
-		table_address(ram_pdpt) | PAGE_ENTRY_PAGE_TABLE;
+	kernel_root[(MOS_PHYS_MAP_BEGIN >> MMU_ROOT_SHIFT) &
+		    MMU_TABLE_INDEX_MASK] = table_address(ram_pdpt) |
+					    PAGE_ENTRY_PAGE_TABLE;
 	for (unsigned gigabyte = 0; gigabyte < MOS_PHYS_MAP_SIZE >> 30;
 	     gigabyte++) {
 		pte_t *ram_pd = (pte_t *)mm_alloc_page_table();
@@ -383,8 +387,10 @@ static void prune_user_tables(vaddr_t address)
 		return;
 	pte_t *parents[3], *tables[3], *table = (pte_t *)mm_get_pagedir();
 	unsigned count = 0;
-	for (unsigned shift = 39; shift > 12; shift -= 9) {
-		pte_t *entry = &table[(address >> shift) & 511];
+	for (unsigned shift = MMU_ROOT_SHIFT; shift > MMU_PAGE_SHIFT;
+	     shift -= MMU_TABLE_INDEX_BITS) {
+		pte_t *entry =
+			&table[(address >> shift) & MMU_TABLE_INDEX_MASK];
 		if (!(*entry & PAGE_ENTRY_PRESENT) ||
 		    (*entry & PAGE_ENTRY_LARGE))
 			return;
@@ -429,11 +435,11 @@ static void destroy(pte_t *table, unsigned shift, unsigned count)
 		if (!(entry & PAGE_ENTRY_PRESENT))
 			continue;
 		table[i] = 0;
-		if (shift == 12)
+		if (shift == MMU_PAGE_SHIFT)
 			release(entry);
 		else if (!(entry & PAGE_ENTRY_LARGE)) {
 			pte_t *child = table_pointer(entry);
-			destroy(child, shift - 9, 512);
+			destroy(child, shift - MMU_TABLE_INDEX_BITS, 512);
 			mm_free_page_table((vaddr_t)child);
 		}
 	}
@@ -443,7 +449,7 @@ void mm_destroy_user_map(vaddr_t root)
 	int irq;
 	spinlock_lock(&mm_lock, &irq);
 	if (root)
-		destroy((pte_t *)root, 39, 256);
+		destroy((pte_t *)root, MMU_ROOT_SHIFT, 256);
 	spinlock_unlock(&mm_lock, irq);
 }
 unsigned mm_get_map_flag_pd(vaddr_t root, vaddr_t address)
@@ -451,15 +457,16 @@ unsigned mm_get_map_flag_pd(vaddr_t root, vaddr_t address)
 	pte_t *table = (pte_t *)root;
 	if (!table || !arch_mm_is_canonical(address))
 		return 0;
-	for (unsigned shift = 39; shift >= 12; shift -= 9) {
-		pte_t entry = table[(address >> shift) & 511];
+	for (unsigned shift = MMU_ROOT_SHIFT; shift >= MMU_PAGE_SHIFT;
+	     shift -= MMU_TABLE_INDEX_BITS) {
+		pte_t entry = table[(address >> shift) & MMU_TABLE_INDEX_MASK];
 		if (!(entry & PAGE_ENTRY_PRESENT))
 			return 0;
-		if (shift == 12 || (entry & PAGE_ENTRY_LARGE)) {
+		if (shift == MMU_PAGE_SHIFT || (entry & PAGE_ENTRY_LARGE)) {
 			unsigned flags = entry & 0xfff;
 			/* Large-page size is a hardware layout bit, not a caller
 			 * permission. Do not carry it into a split 4 KiB PTE. */
-			if (shift != 12)
+			if (shift != MMU_PAGE_SHIFT)
 				flags &= ~PAGE_ENTRY_LARGE;
 			return flags | ((entry >> 63) ? PAGE_ENTRY_NO_EXEC : 0);
 		}
@@ -552,13 +559,30 @@ void name_put(void *buffer)
 	spinlock_unlock(&path_lock, irq);
 	cache_count--;
 }
+/* Skip absent page-table subtrees when cloning sparse reservations. */
+static pte_t *clone_leaf(pte_t *table, vaddr_t address, vaddr_t *next)
+{
+	for (unsigned shift = MMU_ROOT_SHIFT; shift > MMU_PAGE_SHIFT;
+	     shift -= MMU_TABLE_INDEX_BITS) {
+		pte_t entry = table[(address >> shift) & MMU_TABLE_INDEX_MASK];
+		if (!(entry & PAGE_ENTRY_PRESENT) ||
+		    (entry & PAGE_ENTRY_LARGE)) {
+			*next = (address | (((vaddr_t)1 << shift) - 1)) + 1;
+			return NULL;
+		}
+		table = table_pointer(entry);
+	}
+	*next = address + PAGE_SIZE;
+	return &table[(address >> MMU_PAGE_SHIFT) & MMU_TABLE_INDEX_MASK];
+}
+
 int arch_mm_clone_region(pte_t *src, pte_t *dst, vm_region *region)
 {
 	int irq, result = 1;
 	spinlock_lock(&mm_lock, &irq);
-	for (vaddr_t address = region->begin; address < region->end;
-	     address += PAGE_SIZE) {
-		pte_t *parent = arch_mm_lookup_leaf((vaddr_t)src, address);
+	for (vaddr_t address = region->begin, next; address < region->end;
+	     address = next) {
+		pte_t *parent = clone_leaf(src, address, &next);
 		if (!parent || !(*parent & PAGE_ENTRY_PRESENT))
 			continue;
 		pte_t *child = ensure_leaf(dst, address);

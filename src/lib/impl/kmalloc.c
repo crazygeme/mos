@@ -153,14 +153,19 @@ static void bins_init(void)
 
 static vaddr_t kblk_raw(unsigned page_count)
 {
-	vaddr_t ret = cur_block_top;
+	vaddr_t ret = 0;
+	int irq;
 
 	if (page_count == 0)
 		return 0;
-	if (cur_block_top + page_count * PAGE_SIZE >= KHEAP_END)
-		return vm_alloc(page_count);
-	cur_block_top += page_count * PAGE_SIZE;
-	return ret;
+	spinlock_lock(&heap_lock, &irq);
+	if (cur_block_top + page_count * PAGE_SIZE < KHEAP_END) {
+		ret = cur_block_top;
+		cur_block_top += page_count * PAGE_SIZE;
+	}
+	spinlock_unlock(&heap_lock, irq);
+	/* Physical allocation may reclaim caches whose records use free(). */
+	return ret ? ret : vm_alloc(page_count);
 }
 
 /*
@@ -263,11 +268,11 @@ void *malloc(unsigned size)
 
 	blk = find_free(need);
 	if (!blk) {
+		spinlock_unlock(&heap_lock, irq);
 		blk = extend_heap(need);
-		if (!blk) {
-			spinlock_unlock(&heap_lock, irq);
+		if (!blk)
 			return NULL;
-		}
+		spinlock_lock(&heap_lock, &irq);
 	}
 
 	/* Split if the remainder would form a valid free block. */

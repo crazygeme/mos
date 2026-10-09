@@ -70,7 +70,7 @@ static int sockopt_put_timeval_ms(void *optval, unsigned *optlen, unsigned ms)
 int do_setsockopt(int fd, int level, int optname, const void *optval,
 		  unsigned optlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	mos_sock *sk = fd_to_sock(fd);
 	int ret = 0;
 	int ival = 0;
@@ -278,7 +278,7 @@ done:
 int do_getsockopt(int fd, int level, int optname, void *optval,
 		  unsigned *optlen)
 {
-	NET_CORE_GUARD;
+	LOCK_GUARD(&net_core_lock);
 	mos_sock *sk = fd_to_sock(fd);
 	int ret = -ENOPROTOOPT;
 

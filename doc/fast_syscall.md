@@ -67,27 +67,13 @@ the assembly's frame offsets and selector relationships.
 
 ## Validation
 
-Build kernels, then run the isolated freestanding probes:
+Host adapter unit tests exercise production wire adapters with isolated kernel
+services. The tests require a C compiler and compile their probes when invoked.
 
 ```sh
-make ARCH=x86
-make ARCH=x64
-python3 test/fast_syscall.py --arch x86
-python3 test/fast_syscall.py --arch x64
-python3 test/fast_syscall.py --arch x64 --compat
-python3 test/fast_syscall.py --arch x86 --tcg --no-sep
-python3 test/fast_syscall.py --arch x64 --tcg
-python3 test/abi_adapters.py
+python3 -m unittest discover -s test -p 'test_abi_adapters.py'
 ```
 
-The runner creates temporary ext3 disks and leaves the normal guest images
-untouched. KVM runs use two CPUs by default; `--tcg` uses emulation and records
-instruction traces. The native TCG test verifies that SYSRETQ actually ran.
-Logs are saved under `out/<arch>/<build>/fast-syscall-*.log`.
-
-The probes cover AT_SYSINFO selection, ENOSYS, DF restoration, all six mmap
-arguments using a file offset, signal return, native signal-context edits to
-RCX/R11, fork/wait across scheduling, syscall entry/exit ptrace stops, legacy
-INT 0x80, and invalid SYSENTER user stacks. Use `--build debug` after building
-a debug kernel to run the same checks against it. These are correctness
-checks, not syscall-latency benchmarks.
+`tools/user/fast_syscall_probe.c` contains the freestanding entry-path probe.
+It covers AT_SYSINFO selection, ENOSYS, DF restoration, mmap arguments,
+signal return, scheduling, ptrace stops, and legacy INT 0x80 entry.

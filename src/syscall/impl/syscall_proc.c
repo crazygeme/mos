@@ -11,7 +11,6 @@
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/vdso.h>
-#include <device/time.h>
 #include <lib/klib.h>
 #include <errno.h>
 #include <syscall/syscall.h>

@@ -28,9 +28,7 @@
 #include <ps/ps.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
-#include <device/serial.h>
-#include <dev/tty.h>
-#include <device/time.h>
+#include <device/chardev.h>
 #include <fs/syslog.h>
 
 /* ── Locks ───────────────────────────────────────────────────────────────── */
@@ -50,7 +48,7 @@ static void klog_write(char c, void *ctx)
 	if (!klog_inited)
 		return;
 	if (isprint(c))
-		serial_putc(c);
+		klog_backend_putc(c);
 }
 
 static void klog_writestr(char *str, void *ctx)
@@ -64,7 +62,7 @@ static void klog_writestr(char *str, void *ctx)
 void klog_close(void)
 {
 	if (klog_inited)
-		serial_flush();
+		klog_backend_flush();
 }
 
 /* ── sprintf helpers ─────────────────────────────────────────────────────── */
@@ -405,16 +403,16 @@ static void kvformat(fputstr _putstr, const char *fmt, va_list ap, void *ctx)
 /* vprintf/vsprintf are the standard variadic-list entrypoints; all va_list
  * callers use these so there is no duplication of the format loop. */
 
-static void tty_print(char *str, void *ctx)
+static void console_print(char *str, void *ctx)
 {
 	if (!str || !*str)
 		return;
 	while (*str) {
 		if (*str == '\n') {
-			tty_default_emit_unsafe('\r', ctx);
-			tty_default_emit_unsafe('\n', ctx);
+			chardev_console_emit('\r', ctx);
+			chardev_console_emit('\n', ctx);
 		} else
-			tty_default_emit_unsafe(*str, ctx);
+			chardev_console_emit(*str, ctx);
 
 		str++;
 	}
@@ -422,7 +420,8 @@ static void tty_print(char *str, void *ctx)
 
 void vprintf(const char *fmt, va_list ap)
 {
-	kvformat(tty_print, fmt, ap, NULL);
+	kvformat(console_print, fmt, ap, NULL);
+	chardev_console_flush();
 }
 
 int vsprintf(char *buf, const char *fmt, va_list ap)
@@ -477,7 +476,7 @@ static struct printk_record printk_record_buffer;
 static void printk_output(char *text, void *opaque)
 {
 	struct printk_record *record = opaque;
-	tty_print(text, NULL);
+	console_print(text, NULL);
 	while (*text) {
 		record->text[record->length++] = *text;
 		if (*text++ == '\n' ||
@@ -491,8 +490,13 @@ static void printk_output(char *text, void *opaque)
 /*
  * printk - kernel records and console output.
  * Console format: [process ID]: message
- * printf() is safe to call under tty_lock because it does not acquire it.
+ * printf() is safe to call under console_lock because it does not acquire it.
  */
+int printk_console_ready(void)
+{
+	return chardev_console_ready();
+}
+
 void printk(const char *fmt, ...)
 {
 	va_list ap;
@@ -501,7 +505,7 @@ void printk(const char *fmt, ...)
 
 	spinlock_lock(&printk_record_lock, &record_irq);
 	record->length = 0;
-	tty_lock_acquire(&irq);
+	chardev_console_lock(&irq);
 	printf("[%d]: ", current->life->psid);
 
 	va_start(ap, fmt);
@@ -509,7 +513,7 @@ void printk(const char *fmt, ...)
 	va_end(ap);
 	if (record->length)
 		syslog_emit(6, record->text, record->length);
-	tty_lock_release(irq);
+	chardev_console_unlock(irq);
 	spinlock_unlock(&printk_record_lock, record_irq);
 }
 

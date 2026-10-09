@@ -4,15 +4,12 @@
  * Standard fields match the Linux /proc/meminfo format (values in kB).
  * MOS-specific diagnostics live in /proc/mos.
  */
-#include <device/hdd.h>
+#include <device/blockdev.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
 #include "common.h"
 
 extern unsigned fs_page_cache_pages;
-#if HDD_CACHE_OPEN
-extern unsigned hdd_cache_size;
-#endif
 
 /* Convert pages to kB */
 #define PG_KB(n) (((unsigned long)(n)) * (PAGE_SIZE / 1024))
@@ -48,9 +45,7 @@ static void fill(proc_buf_t *pb)
 
 	/* Cache counters cover physical file and block data only. */
 	cached_pages = fs_page_cache_pages;
-#if HDD_CACHE_OPEN
-	buffer_pages = hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
-#endif
+	buffer_pages = blockdev_cached_pages();
 	/* Independently sampled counters must fit the allocator snapshot. */
 	if (cached_pages > used_pages)
 		cached_pages = used_pages;

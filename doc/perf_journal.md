@@ -327,7 +327,7 @@ or a complete attribution of KVM host work.
 
 All port samples in the main captures returned into `time_now_us`. The ports
 were PIT data at `0x40` and the latch command at `0x43`. [The PIT clock
-implementation](../src/driver/impl/timer/pit.c) latches and reads the hardware
+implementation](../src/driver/timer/time.c) latches and reads the hardware
 counter on each clock query.
 
 A supplementary 20-second two-CPU capture collected 1,394 active samples,
@@ -432,7 +432,7 @@ may occur after preceding pages have been copied. Scheduler locks, futex wait
 queues, and timer helpers remain private to `ps/impl`. Futex services and
 thread-exit cleanup are implemented in `ps/impl/ps_futex.c`.
 
-`dev/devnums.h` defines device major numbers and fixed minor numbers shared by
+`device/devnums.h` defines device major numbers and fixed minor numbers shared by
 device registration and procfs.
 
 ### Syscall namespaces

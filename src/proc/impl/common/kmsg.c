@@ -10,8 +10,11 @@ static file *kmsg_open(super_block *sb, int flag)
 static const super_operations kmsg_ops = {
 	.open_root = kmsg_open,
 };
-static void kmsg_register(super_block *sb)
+static void kmsg_register(void)
 {
-	vfs_mount(sb, "/kmsg", sget(&kmsg_ops));
+	vfs_entry_node *root = procfs_entries();
+	if (!root)
+		return;
+	vfs_entry_mount(root, "kmsg", S_IFREG | 0400, sget(&kmsg_ops));
 }
-PROC_INIT(kmsg_register);
+KERNEL_INIT(4, kmsg_register);

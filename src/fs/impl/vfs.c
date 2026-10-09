@@ -1,3 +1,4 @@
+#include <device/devnode.h>
 #include <mm/mm.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
@@ -419,8 +420,6 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 					 rcnt);
 }
 
-/* Defined in src/dev/devnode.c */
-super_block *devnode_create(unsigned mode, unsigned rdev);
 
 int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
 {

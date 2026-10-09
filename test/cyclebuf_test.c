@@ -17,7 +17,6 @@
 #include <int/dsr.h>
 #include <ps/ps.h>
 #include <ps/smp.h>
-#include <device/time.h>
 #include <test/test.h>
 
 /* ── create / destroy ────────────────────────────────────────────── */

@@ -3,7 +3,7 @@
 #include <fs/poll.h>
 #include <lib/rbtree.h>
 #include <ps/ps.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <macro.h>
 #include <mm/mmap.h>
 #include <errno.h>

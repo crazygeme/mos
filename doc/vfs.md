@@ -225,11 +225,11 @@ void fs_register_type(fs_type *fst);  // prepend to fs_type_list
 | ---------- | --------------------------------- | ----------------------------------------------- |
 | `ext4`     | `root.c` (`KERNEL_INIT 3`)        | lwext4 `ext4_mount`, wraps in `ext4_mount_info` |
 | `proc`     | `mount.c` (`KERNEL_INIT 2`)       | stub (directory inode only)                     |
-| `sysfs`    | `src/device/impl/sysfs.c` (`KERNEL_INIT 5`) | registered VFS entries for each mount |
+| `sysfs`    | `src/fs/impl/sysfs.c` (`KERNEL_INIT 5`) | registered VFS entries for each mount |
 | `tmpfs`    | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
 | `devtmpfs` | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
 | `none`     | `mount.c` (`KERNEL_INIT 2`)       | stub                                            |
-| `devpts`   | `src/dev/pts.c` (`KERNEL_INIT 5`) | real get_sb                                     |
+| `devpts`   | `src/driver/tty/pts.c` (`KERNEL_INIT 5`) | real get_sb                                     |
 
 Stub filesystems return a `super_block` whose `open_root` returns a directory inode (so `stat` on the mount point works). Sub-path opens return `NULL` (`ENOENT`).
 
@@ -380,12 +380,12 @@ After this, `cur->root` is the root `super_block` for the `kmain_process` task. 
 
 ---
 
-## 6. Loop block device (`src/dev/loop.c`)
+## 6. Loop block device (`src/driver/storage/loop.c`)
 
-**Source:** `src/dev/loop.c`  
-**Header:** `src/dev/loopdev.h`
+**Source:** `src/driver/storage/loop.c`
+**Header:** `src/device/blockdev.h`
 
-The loop device wraps a regular file as a lwext4 block device, enabling image files to be mounted as if they were physical partitions. Up to `LOOP_MAX_DEVS = 8` slots are supported (`/dev/loop0`..`/dev/loop7`), registered at boot with major number 7.
+The loop driver exposes a regular file through the generic block-device interface, enabling image files to be mounted as if they were physical partitions. Up to `LOOP_MAX_DEVS = 8` slots are supported (`/dev/loop0`..`/dev/loop7`), registered at boot with major number 7.
 
 ### Data structures
 
@@ -436,7 +436,7 @@ On umount, `ext4_mount_info.loop_name` is checked and `loop_teardown` is called 
 ```
 open("/dev/loop0", O_RDWR)          → loop_cdev_open (major=7)
 ioctl(fd, LOOP_SET_FD, img_fd)      → loop_attach(minor, img_fp, NULL)
-mount("/dev/loop0", "/mnt", "ext3") → ext4_get_sb finds loop_devs[0]
+mount("/dev/loop0", "/mnt", "ext3") → ext4_get_sb opens the generic loop block device
 ioctl(fd, LOOP_CLR_FD, 0)          → loop_detach(minor)
 ```
 
@@ -446,7 +446,7 @@ Supported ioctls: `LOOP_SET_FD`, `LOOP_CLR_FD`, `LOOP_GET_STATUS`, `LOOP_SET_STA
 
 `/sys` is a filesystem view of device objects, registered drivers, and their
 binding relationships. It neither discovers hardware nor starts drivers.
-`src/device/impl/sysfs.c` builds this view at `KERNEL_INIT 5` from the device
+`src/fs/impl/sysfs.c` builds this view at `KERNEL_INIT 5` from the device
 inventory and driver registry.
 
 - `/sys/devices/pci0000:00/<BDF>` contains the canonical PCI device entries.
@@ -456,10 +456,10 @@ inventory and driver registry.
   a reciprocal `<BDF>` link. Unbound devices remain visible without that link.
 - `/sys/class/drm` and `/sys/dev/char` index operational DRM endpoints.
 
-`src/device/impl/pci/sysfs.c` supplies PCI attributes and cached MMIO resources.
-`src/device/impl/ps2/sysfs.c` exports i8042 ports and driver links under
+`src/device/pci/pci.c` supplies PCI attributes and cached MMIO resources.
+`src/device/ps2/i8042.c` exports i8042 ports and driver links under
 `/sys/bus/serio` and `/sys/devices/platform/i8042`.
-`src/driver/impl/video/drm_sysfs.c` supplies DRM class entries and device links
+`src/driver/video/drm_sysfs.c` supplies DRM class entries and device links
 when ready GPU endpoints are published at `KERNEL_INIT 6`.
 Mounting `sysfs` creates a root referencing the registered child superblocks.
 PCI configuration attributes access the selected device directly; they do
@@ -474,9 +474,9 @@ allocations, until their final reference is released.
 
 ### Boot registration
 
-`loop_dev_register` runs via `DEV_INIT`:
-1. Calls `cdev_register(S_IFBLK, 7, 0, LOOP_MAX_DEVS, loop_cdev_open)` to register the character device handler.
-2. Creates `/dev/loop0`..`/dev/loop7` in devtmpfs via `vfs_mknod`.
+The registered virtual loop driver loads through the normal device-binding
+flow and declares `/dev/loop0`..`/dev/loop7` with `vfs_entry_device()`. Block
+device-number dispatch lives in `device/core/blockdev.c`.
 
 ---
 
@@ -485,10 +485,10 @@ allocations, until their final reference is released.
 ```
 early boot
   └─ drivers_init: register DRIVER_REGISTER descriptors
-  └─ pci_scan: enumerate devices once, select drivers, initialize consoles
+  └─ pci_scan and virtual_scan: record devices; then drivers_bind_early loads early drivers
 
 boot (KERNEL_INIT 2)
-  └─ devices_init: probe selected ordinary drivers, including IDE
+  └─ drivers_probe_remaining: load ordinary drivers, including IDE
   └─ filesystem type and mount syscall registration
 
 boot (KERNEL_INIT 3)
@@ -500,10 +500,10 @@ boot (KERNEL_INIT 4)
   └─ proc_type_register
 
 boot (KERNEL_INIT 5)
-  └─ sysfs_register: export device attributes and driver bindings
+  └─ sysfs_register: register the filesystem type; providers already populated the tree
 
 boot (KERNEL_INIT 6)
-  └─ devfs_init: publish device nodes through DEV_INIT callbacks
+  └─ devfs_init: mount the entries tree already populated by drivers
 
 open("/etc/hosts", O_RDONLY)
   └─ sys_open → fs_open

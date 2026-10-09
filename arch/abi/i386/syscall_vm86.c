@@ -3,8 +3,8 @@
 #include <lib/klib.h>
 #include <errno.h>
 #include <config.h>
-#include <device/pci.h>
-#include <device/vga.h>
+#include <driver/driver.h>
+#include <device/framebuffer.h>
 #include <lib/port.h>
 
 #define MOS_VM86_UNKNOWN 1
@@ -459,7 +459,7 @@ static int mos_vm86_vbe_set_mode(struct mos_vm86_struct *vm)
 
 	mos_vbe_current_mode = mode->mode_id;
 	mos_vbe_hw_set_mode(mode);
-	fb_sync_mode();
+	framebuffer_sync_mode();
 	mos_vm86_finish(vm, 0x004f);
 	return 1;
 }

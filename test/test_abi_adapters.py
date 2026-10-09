@@ -37,11 +37,10 @@ task_struct *ps_find_process(int);
 int ps_read_process_memory(task_struct *, const void *, void *, unsigned);
 #endif
 ''',
-    'lib/klib.h': '#include <string.h>\n#include <stdlib.h>\n#define kmalloc malloc\n#define kfree free\n',
+    'lib/klib.h': '#include <string.h>\n#include <stdlib.h>\n#define kmalloc malloc\n#define kfree free\n#include <stdint.h>\nuint64_t time_now_us(void);\n',
     'int/int.h': '#include <arch/config.h>\n',
     'mm/mm.h': '#include <arch/config.h>\n#define PAGE_SIZE MOS_PAGE_SIZE\n#define USER_HEAP_END 0x40000000U\n',
     'mm/vdso.h': '#include <stdint.h>\nuintptr_t mm_vdso_fastcall_entry(void);\nvoid mm_vdso_map(void);\n',
-    'device/time.h': '#include <stdint.h>\nuint64_t time_now_us(void);\n',
     'syscall/syscall.h': r'''
 #include <stdint.h>
 int sys_shmget(int, unsigned, int);

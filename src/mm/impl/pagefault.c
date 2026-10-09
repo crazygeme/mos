@@ -10,7 +10,6 @@
 #include <fs/fs.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
-#include <device/time.h>
 #include <config.h>
 #include <macro.h>
 #include <mm/mmu.h>

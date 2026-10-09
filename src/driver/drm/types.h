@@ -1,5 +1,6 @@
 #ifndef MOS_DRM_TYPES_H
 #define MOS_DRM_TYPES_H
+
 #include <stdint.h>
 #include <stddef.h>
 typedef int8_t __s8;

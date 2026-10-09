@@ -36,6 +36,8 @@
 #define _DRM_H_
 
 #include "types.h"
+#include "drm_mode.h"
+
 typedef unsigned int drm_handle_t;
 
 #if defined(__cplusplus)
@@ -1005,8 +1007,6 @@ struct drm_crtc_queue_sequence {
 #if defined(__cplusplus)
 }
 #endif
-
-#include "drm_mode.h"
 
 #if defined(__cplusplus)
 extern "C" {

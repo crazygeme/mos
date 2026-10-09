@@ -1,7 +1,6 @@
 #include <ps/smp.h>
 #include <int/int.h>
 #include <lib/klib.h>
-#include <device/time.h>
 #include <mm/mm.h>
 #include <mm/mmu.h>
 #include <mm/mmap.h>

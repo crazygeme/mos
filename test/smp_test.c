@@ -5,7 +5,7 @@
 #include <mm/mmu.h>
 #include <mm/mmap.h>
 #include <lib/lock.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <macro.h>
 
 struct smp_test_state {

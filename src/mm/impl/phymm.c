@@ -2,7 +2,7 @@
 #include <mm/mm.h>
 #include <boot/multiboot.h>
 #include <fs/cache.h>
-#include <device/hdd.h>
+#include <device/blockdev.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
 #include <macro.h>
@@ -25,9 +25,6 @@ static spinlock_t buddy_lock;
 static unsigned buddy_free_pages;
 static unsigned managed_pages;
 extern unsigned fs_page_cache_pages;
-#if HDD_CACHE_OPEN
-extern unsigned hdd_cache_size;
-#endif
 
 /*
  * Internal helpers
@@ -401,9 +398,7 @@ void phymm_get_cache_policy(phymm_cache_policy *policy)
 	unsigned total, free, cached = fs_page_cache_pages;
 	int irq;
 
-#if HDD_CACHE_OPEN
-	cached += hdd_cache_size / (PAGE_SIZE / BLOCK_SECTOR_SIZE);
-#endif
+	cached += blockdev_cached_pages();
 	spinlock_lock(&buddy_lock, &irq);
 	total = managed_pages;
 	free = buddy_free_pages;
@@ -426,7 +421,7 @@ unsigned phymm_reclaim_user_cache(unsigned target_pages)
 	spinlock_unlock(&buddy_lock, irq);
 	/* File pages may remain pinned by mappings; block lines can help too. */
 	if (freed < target_pages || free < policy.reserve_pages)
-		freed += hdd_cache_reclaim(freed < target_pages ?
+		freed += blockdev_reclaim(freed < target_pages ?
 						   target_pages - freed :
 						   target_pages);
 	return freed;
@@ -434,7 +429,7 @@ unsigned phymm_reclaim_user_cache(unsigned target_pages)
 
 unsigned phymm_reclaim_kernel_cache(unsigned target_pages)
 {
-	return hdd_cache_reclaim(target_pages);
+	return blockdev_reclaim(target_pages);
 }
 
 /*

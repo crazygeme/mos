@@ -1,5 +1,4 @@
-#include <device/time.h>
-#include <device/time_internal.h>
+#include <lib/klib.h>
 #include <int/int.h>
 #include <ps/ps.h>
 #include <ps/smp.h>

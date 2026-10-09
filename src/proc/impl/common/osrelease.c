@@ -57,13 +57,13 @@ static const vfs_entry_attribute_ops limit_ops = {
 	.write = limit_write,
 };
 
-static void proc_sys_register(super_block *proc_sb)
+static void proc_sys_register(void)
 {
-	vfs_entry_tree *tree = vfs_entry_tree_create();
-	vfs_entry_node *root, *kernel, *fs, *inotify;
-	if (!tree)
+	vfs_entry_node *root = procfs_entries();
+	if (!root)
 		return;
-	root = vfs_entry_root(tree);
+	vfs_entry_node *kernel, *fs, *inotify;
+	root = vfs_entry_directory(root, "sys");
 	kernel = vfs_entry_directory(root, "kernel");
 	vfs_entry_text(kernel, "osrelease", UTS_RELEASE "\n");
 	fs = vfs_entry_directory(root, "fs");
@@ -74,8 +74,5 @@ static void proc_sys_register(super_block *proc_sb)
 			    NULL, INOTIFY_MAX_USER_INSTANCES);
 	vfs_entry_attribute(inotify, "max_queued_events", 0644, &limit_ops,
 			    NULL, INOTIFY_MAX_QUEUED_EVENTS);
-	if (vfs_entry_tree_error(tree) ||
-	    vfs_mount(proc_sb, "/sys", vfs_entry_tree_super(tree)))
-		sb_put(vfs_entry_tree_super(tree));
 }
-PROC_INIT(proc_sys_register);
+KERNEL_INIT(4, proc_sys_register);

@@ -11,12 +11,11 @@
 #include "fs/fs.h"
 #include <ps/ps.h>
 #include <ps/signal.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <mm/mm.h>
 #include <int/int.h>
 #include <int/dsr.h>
 #include <lib/list.h>
-#include <lib/klib.h>
 #include <macro.h>
 #include <config.h>
 #include <errno.h>

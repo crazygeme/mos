@@ -1,7 +1,7 @@
 #ifndef _FS_SELECT_H
 #define _FS_SELECT_H
 
-#include <device/time.h>
+#include <lib/klib.h>
 #include <unistd.h>
 
 typedef int __fd_mask;

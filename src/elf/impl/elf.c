@@ -1,10 +1,9 @@
-#include <device/time.h>
+#include <lib/klib.h>
 #include <elf/elf.h>
 #include <elf/format.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <ps/ps.h>
-#include <lib/klib.h>
 #include <macro.h>
 #include <mm/mmu.h>
 #include <errno.h>

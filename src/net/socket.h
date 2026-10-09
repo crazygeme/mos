@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <fs/iovec.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <lib/lock.h>
 
 /* ── Address families ───────────────────────────────────────────────────────── */

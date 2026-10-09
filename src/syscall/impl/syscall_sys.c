@@ -10,7 +10,6 @@
 #include <mm/mmap.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
-#include <device/time.h>
 #include <lib/klib.h>
 #include <config.h>
 #include <errno.h>

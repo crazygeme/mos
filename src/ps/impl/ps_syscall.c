@@ -18,9 +18,8 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <lib/port.h>
-#include <device/time.h>
-#include <device/hdd.h>
-#include <device/pci.h>
+#include <device/blockdev.h>
+#include <driver/driver.h>
 #include <config.h>
 #include <macro.h>
 #include <errno.h>
@@ -155,7 +154,7 @@ static void system_down(int process)
 	if (process)
 		ps_enum_all(close_fp_callback, NULL);
 	ext4_umount("/");
-	hdd_close();
+	blockdev_close_all();
 }
 
 void qemu_exit(unsigned char code)

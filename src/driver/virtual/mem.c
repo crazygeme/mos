@@ -1,0 +1,243 @@
+#include <fs/entries.h>
+#include <driver/driver.h>
+#include <fs/fs.h>
+#include <fs/vfs.h>
+#include <lib/klib.h>
+#include <mm/mm.h>
+#include <mm/phymm.h>
+#include <macro.h>
+#include <device/devnode.h>
+#include <unistd.h>
+#include <ext4_oflags.h>
+#include <errno.h>
+#include <device/devnums.h>
+
+/* The x86 physical address space includes PCI MMIO and firmware ROM. */
+static uint64_t mem_dev_limit(void)
+{
+	return PHYMM_ADDRESS_LIMIT;
+}
+
+static int mem_copy_from_phys(void *dst, paddr_t phys, size_t size)
+{
+	size_t done = 0;
+
+	while (done < size) {
+		paddr_t cur = phys + done;
+		paddr_t base = cur & PAGE_SIZE_MASK;
+		unsigned page_off = cur & ~PAGE_SIZE_MASK;
+		size_t chunk = PAGE_SIZE - page_off;
+
+		if (chunk > size - done)
+			chunk = size - done;
+		if (mm_kmap_phys(base) != 1)
+			return -EIO;
+		memcpy((char *)dst + done,
+		       (void *)(PHY_TO_VIRT(base) + page_off), chunk);
+		mm_kunmap_phys(base);
+		done += chunk;
+	}
+
+	return 0;
+}
+
+static int mem_copy_to_phys(paddr_t phys, const void *src, size_t size)
+{
+	size_t done = 0;
+
+	while (done < size) {
+		paddr_t cur = phys + done;
+		paddr_t base = cur & PAGE_SIZE_MASK;
+		unsigned page_off = cur & ~PAGE_SIZE_MASK;
+		size_t chunk = PAGE_SIZE - page_off;
+
+		if (chunk > size - done)
+			chunk = size - done;
+		if (mm_kmap_phys(base) != 1)
+			return -EIO;
+		memcpy((void *)(PHY_TO_VIRT(base) + page_off),
+		       (const char *)src + done, chunk);
+		mm_kunmap_phys(base);
+		done += chunk;
+	}
+
+	return 0;
+}
+
+static ssize_t mem_read(file *fp, void *buf, size_t size, loff_t *pos)
+{
+	uint64_t limit = mem_dev_limit();
+	uint64_t avail;
+
+	if (!buf || size == 0)
+		return 0;
+	if (*pos < 0)
+		return -EINVAL;
+	if ((uint64_t)*pos >= limit)
+		return 0;
+
+	avail = limit - (uint64_t)*pos;
+	if (size > avail)
+		size = (size_t)avail;
+	if (mem_copy_from_phys(buf, (paddr_t)*pos, size) != 0)
+		return -EIO;
+
+	*pos += (loff_t)size;
+	return (ssize_t)size;
+}
+
+static ssize_t mem_write(file *fp, const void *buf, size_t size, loff_t *pos)
+{
+	uint64_t limit = mem_dev_limit();
+	uint64_t avail;
+
+	if (!buf || size == 0)
+		return 0;
+	if (*pos < 0)
+		return -EINVAL;
+	if ((uint64_t)*pos >= limit)
+		return -ENOSPC;
+
+	avail = limit - (uint64_t)*pos;
+	if (size > avail)
+		size = (size_t)avail;
+	if (mem_copy_to_phys((paddr_t)*pos, buf, size) != 0)
+		return -EIO;
+
+	*pos += (loff_t)size;
+	return (ssize_t)size;
+}
+
+static loff_t mem_llseek(file *fp, loff_t offset, int whence)
+{
+	loff_t limit = (loff_t)mem_dev_limit();
+	loff_t new_pos;
+
+	switch (whence) {
+	case SEEK_SET:
+		new_pos = offset;
+		break;
+	case SEEK_CUR:
+		if (fp->f_pos < 0 || fp->f_pos > limit || offset < -fp->f_pos ||
+		    offset > limit - fp->f_pos)
+			return -EINVAL;
+		new_pos = fp->f_pos + offset;
+		break;
+	case SEEK_END:
+		if (offset < -limit || offset > 0)
+			return -EINVAL;
+		new_pos = limit + offset;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (new_pos < 0)
+		return -EINVAL;
+	if (new_pos > limit)
+		return -EINVAL;
+
+	fp->f_pos = new_pos;
+	return new_pos;
+}
+
+static unsigned mem_poll(file *fp, unsigned events, poll_table *pt)
+{
+	(void)fp;
+	(void)pt;
+	return events & (FS_POLL_READ | FS_POLL_WRITE);
+}
+
+static int mem_getattr(file *fp, struct stat *s)
+{
+	inode *node = fp->f_inode;
+	memset(s, 0, sizeof(*s));
+	s->st_mode = node->i_mode;
+	s->st_rdev = (unsigned)(uintptr_t)node->i_private;
+	s->st_size = (loff_t)mem_dev_limit();
+	s->st_blksize = PAGE_SIZE;
+	s->st_blocks = (loff_t)((mem_dev_limit() + 511) / 512);
+	s->st_nlink = 1;
+	s->st_atime = time_wall_sec();
+	s->st_ctime = time_wall_sec();
+	s->st_mtime = time_wall_sec();
+	return 0;
+}
+
+static int mem_read_page(file *fp, uint64_t offset, void *buf)
+{
+	(void)fp;
+	memset(buf, 0, PAGE_SIZE);
+	if (offset >= mem_dev_limit())
+		return 0;
+	if ((uint64_t)offset + PAGE_SIZE > mem_dev_limit())
+		return mem_copy_from_phys(buf, offset,
+					  mem_dev_limit() - offset);
+	return mem_copy_from_phys(buf, offset, PAGE_SIZE);
+}
+
+static int mem_write_page(file *fp, uint64_t offset, const void *buf)
+{
+	(void)fp;
+	if (offset >= mem_dev_limit())
+		return 0;
+	if ((uint64_t)offset + PAGE_SIZE > mem_dev_limit())
+		return mem_copy_to_phys(offset, buf, mem_dev_limit() - offset);
+	return mem_copy_to_phys(offset, buf, PAGE_SIZE);
+}
+
+static int mem_release(file *fp)
+{
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+
+static const file_operations mem_fops = {
+	.release = mem_release,
+	.getattr = mem_getattr,
+	.read = mem_read,
+	.write = mem_write,
+	.llseek = mem_llseek,
+	.poll = mem_poll,
+	.read_page = mem_read_page,
+	.write_page = mem_write_page,
+};
+
+static file *mem_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
+{
+	inode *node = zalloc(sizeof(*node));
+	file *fp = zalloc(sizeof(*fp));
+
+	(void)dev_sb;
+	(void)rdev;
+	(void)flag;
+
+	node->i_mode = S_IFCHR | S_IRUSR | S_IWUSR;
+	node->i_private = (void *)(uintptr_t)MKDEV(MEM_MAJOR, MEM_MINOR);
+
+	fp->f_inode = node;
+	fp->f_count = 1;
+	fp->f_fop = &mem_fops;
+	return fp;
+}
+
+static void mem_dev_register(void)
+{
+	
+	vfs_entry_device(devfs_entries(), "/mem", S_IFCHR | 0600, MKDEV(MEM_MAJOR, MEM_MINOR), "mem", mem_cdev_open);
+}
+
+static int mem_dev_register_probe(void)
+{
+	mem_dev_register();
+	return 0;
+}
+
+static driver_t mem_dev_register_driver = {
+	.name = "mem",
+	.bus = DEVICE_BUS_VIRTUAL,
+	.virtual_id = VDEV_MEM,
+	.probe_virtual = mem_dev_register_probe,
+};
+DRIVER_REGISTER(mem_dev_register_driver);

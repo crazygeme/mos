@@ -5,9 +5,9 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[2]
-source = (root / 'src/driver/impl/storage/ata.c').read_text()
-start = source.rindex('static int hdd_bdev_bread(')
-end = source.index('static int hdd_bdev_close(', start)
+source = (root / 'src/driver/storage/ata.c').read_text()
+start = source.index('static int ata_block_read(')
+end = source.index('static const blockdev_io ata_block_ops', start)
 functions = source[start:end]
 prelude = r'''
 #include <stdint.h>
@@ -17,29 +17,27 @@ prelude = r'''
 #define BLOCK_SECTOR_SIZE 512
 #define HDD_IO_MAX_SECTORS 8
 typedef struct { int unused; } partition;
-struct iface { uint64_t ph_bcnt; };
-struct ext4_blockdev { void *aux; struct iface *bdif; };
+typedef struct { unsigned size; void *aux; int (*read)(void *,unsigned,void *,unsigned); int (*write)(void *,unsigned,void *,unsigned); } hdd_partition_info;
 static int calls, transfer = 512;
-static int partition_cache_read(partition *p,unsigned sector,void *buf,unsigned len)
+static int partition_cache_read(void *p,unsigned sector,void *buf,unsigned len)
 { calls++; return transfer; }
-static int partition_cache_write(partition *p,unsigned sector,void *buf,unsigned len)
+static int partition_cache_write(void *p,unsigned sector,void *buf,unsigned len)
 { calls++; return transfer; }
 '''
 main = r'''
 int main(void) {
- partition p={0}; struct iface iface={100};
- struct ext4_blockdev bdev={&p,&iface}; char buf[1024];
- assert(hdd_bdev_bread(&bdev,buf,14819236616ULL,1)==EIO);
- assert(hdd_bdev_bwrite(&bdev,buf,0x100000001ULL,1)==EIO);
- assert(hdd_bdev_bread(&bdev,buf,UINT64_MAX,2)==EIO);
- assert(hdd_bdev_bwrite(&bdev,buf,99,2)==EIO);
+ partition p={0}; hdd_partition_info bdev={100,&p,partition_cache_read,partition_cache_write}; char buf[1024];
+ assert(ata_block_read(&bdev,buf,14819236616ULL,1)==-EIO);
+ assert(ata_block_write(&bdev,buf,0x100000001ULL,1)==-EIO);
+ assert(ata_block_read(&bdev,buf,UINT64_MAX,2)==-EIO);
+ assert(ata_block_write(&bdev,buf,99,2)==-EIO);
  assert(calls==0);
- assert(hdd_bdev_bread(&bdev,buf,99,1)==0 && calls==1);
- assert(hdd_bdev_bwrite(&bdev,buf,99,1)==0 && calls==2);
+ assert(ata_block_read(&bdev,buf,99,1)==0 && calls==1);
+ assert(ata_block_write(&bdev,buf,99,1)==0 && calls==2);
  transfer=-1;
- assert(hdd_bdev_bread(&bdev,buf,0,1)==EIO);
+ assert(ata_block_read(&bdev,buf,0,1)==-EIO);
  transfer=0;
- assert(hdd_bdev_bwrite(&bdev,buf,0,1)==EIO);
+ assert(ata_block_write(&bdev,buf,0,1)==-EIO);
  return 0;
 }
 '''

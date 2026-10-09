@@ -11,10 +11,9 @@
 #include <fs/vfs.h>
 #include <fs/fcntl.h>
 #include <fs/mount.h>
-#include <device/hdd.h>
-#include <device/time.h>
+#include <device/blockdev.h>
 #include <lib/klib.h>
-#include <dev/dev.h>
+#include <device/devnode.h>
 #include <mm/mmap.h>
 #include <config.h>
 #include <errno.h>
@@ -1020,7 +1019,7 @@ int sys_sync()
 
 	if (cur && cur->fs->root)
 		fs_sync_super(cur->fs->root);
-	hdd_flush();
+	blockdev_flush_all();
 	return 0;
 }
 

@@ -2,7 +2,7 @@
 #include <ps/smp.h>
 #include <int/int.h>
 #include <syscall/syscall.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <test/test.h>
 
 KTEST(CPUAccounting, UserSystemAndIdle)

@@ -35,19 +35,7 @@ SECTIONS
 		*(.rodata .rodata.*)
 	}
 
-	.procfs_init BLOCK(4K) : AT(ADDR(.procfs_init)-0xffffffffc0000000)
-	{
-		__procfs_init_start = .;
-		*(.procfs_init)
-		__procfs_init_end = .;
-	}
 
-	.devfs_init BLOCK(4K) : AT(ADDR(.devfs_init)-0xffffffffc0000000)
-	{
-		__devfs_init_start = .;
-		*(.devfs_init)
-		__devfs_init_end = .;
-	}
 
 	/*
 	 * Kernel test table.  Each KTEST(name, fn) declaration drops a

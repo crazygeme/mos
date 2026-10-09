@@ -1,12 +1,11 @@
 #include <elf/exec.h>
 #include <elf/format.h>
-#include <device/time.h>
+#include <lib/klib.h>
 #include <elf/elf.h>
-#include <dev/blockdev.h>
+#include <device/blockdev.h>
 #include <ps/ps.h>
 #include <ps/smp.h>
 #include <int/int.h>
-#include <dev/tty.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
 #include <mm/vdso.h>
@@ -14,7 +13,6 @@
 #include <fs/fs.h>
 #include <fs/inotify.h>
 #include <fs/mount.h>
-#include <lib/klib.h>
 #include <config.h>
 #include <unistd.h>
 #include <macro.h>

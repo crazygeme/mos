@@ -5,7 +5,7 @@
 #include <lib/rbtree.h>
 #include <lib/klib.h>
 #include <mm/mmap.h>
-#include <dev/dev.h>
+#include <device/devnode.h>
 #include <ps/ps.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>

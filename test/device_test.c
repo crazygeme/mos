@@ -1,6 +1,4 @@
 #include <test/test.h>
-#include <device/device.h>
-#include <device/ps2.h>
 #include <driver/driver.h>
 #include <errno.h>
 
@@ -52,8 +50,8 @@ KTEST(DeviceTest, ProbesOnceAndRecordsFailure)
 	};
 	probe_calls = 0;
 	probe_result = 0;
-	device_probe(&device);
-	device_probe(&device);
+	driver_bind(&device);
+	driver_bind(&device);
 	EXPECT_EQ(probe_calls, 1);
 	EXPECT_TRUE(device.driver == &mock_driver);
 	EXPECT_EQ(device.probe_error, 0);
@@ -61,8 +59,8 @@ KTEST(DeviceTest, ProbesOnceAndRecordsFailure)
 	device.driver = NULL;
 	device.probe_done = 0;
 	probe_result = -ENODEV;
-	device_probe(&device);
-	device_probe(&device);
+	driver_bind(&device);
+	driver_bind(&device);
 	EXPECT_EQ(probe_calls, 2);
 	EXPECT_NULL(device.driver);
 	EXPECT_EQ(device.probe_error, -ENODEV);
@@ -126,14 +124,14 @@ KTEST(DeviceTest, BusIdentitySeparatesMatching)
 	/* PCI ID collisions cannot match devices on another bus. */
 	EXPECT_NULL(driver_match_pci(&mock_driver, &device));
 	probe_calls = 0;
-	device_probe(&device);
-	device_probe(&device);
+	driver_bind(&device);
+	driver_bind(&device);
 	EXPECT_EQ(probe_calls, 1);
 	EXPECT_TRUE(device.driver == &ps2_driver);
 	device.probe_done = 0;
 	device.driver = NULL;
 	device.bus = DEVICE_BUS_PCI;
-	device_probe(&device);
+	driver_bind(&device);
 	EXPECT_EQ(probe_calls, 1);
 	EXPECT_NULL(device.driver);
 	EXPECT_EQ(device.probe_error, -ENODEV);
@@ -261,8 +259,48 @@ KTEST(DeviceTest, ConflictingPs2DriversRemainUnbound)
 	probe_calls = 0;
 	device.selected_driver = driver_select(&device);
 	EXPECT_NULL(device.selected_driver);
-	device_probe(&device);
+	driver_bind(&device);
 	EXPECT_NULL(device.driver);
 	EXPECT_EQ(probe_calls, 0);
+	return 0;
+}
+
+KTEST(DeviceTest, RegistrationOnlyRecordsHardware)
+{
+	static device_t device = {
+		.bus = DEVICE_BUS_PCI,
+		.address = 0xfffffffe,
+		.vendor_id = 0xfffe,
+		.device_id = 0x1234,
+	};
+	driver_register(&mock_driver);
+	probe_calls = 0;
+	device_register(&device);
+	EXPECT_TRUE(device_find(device.bus, device.address) == &device);
+	EXPECT_NULL(device.selected_driver);
+	EXPECT_NULL(device.driver);
+	EXPECT_EQ(device.match_done, 0);
+	EXPECT_EQ(device.probe_done, 0);
+	EXPECT_EQ(probe_calls, 0);
+	return 0;
+}
+
+KTEST(DeviceTest, VirtualDevicesUseRegisteredDrivers)
+{
+	const device_t *tty = device_find(DEVICE_BUS_VIRTUAL, VDEV_TTY);
+	ASSERT_NONNULL(tty);
+	ASSERT_NONNULL(tty->driver);
+	EXPECT_TRUE(tty->driver->early);
+	EXPECT_TRUE(tty->driver->probe_virtual);
+	EXPECT_EQ(tty->driver->virtual_id, VDEV_TTY);
+	for (unsigned i = 0; i < VDEV_COUNT; i++) {
+		const device_t *device = device_find(DEVICE_BUS_VIRTUAL, i);
+		ASSERT_NONNULL(device);
+		ASSERT_NONNULL(device->driver);
+		EXPECT_EQ(device->probe_error, 0);
+		EXPECT_TRUE(device->probe_done);
+	}
+	virtual_scan();
+	EXPECT_TRUE(tty == device_find(DEVICE_BUS_VIRTUAL, VDEV_TTY));
 	return 0;
 }

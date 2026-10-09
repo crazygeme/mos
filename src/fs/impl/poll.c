@@ -2,7 +2,6 @@
 #include <fs/fs.h>
 #include <fs/poll.h>
 #include <ps/ps.h>
-#include <device/time.h>
 #include <errno.h>
 #include <config.h>
 #include <int/int.h>

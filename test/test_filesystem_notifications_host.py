@@ -30,6 +30,7 @@ typedef struct _file file;
 #include <lib/list.h>
 typedef struct { int held; } mutex_t;
 typedef struct { int held; } spinlock_t;
+#define SPINLOCK_INITIALIZER { 0 }
 static inline void mutex_init(mutex_t *lock) { lock->held = 0; }
 static inline void mutex_lock(mutex_t *lock) { assert(!lock->held); lock->held = 1; }
 static inline void mutex_unlock(mutex_t *lock) { assert(lock->held); lock->held = 0; }
@@ -38,6 +39,7 @@ static inline void spinlock_lock(spinlock_t *lock, int *irq) { assert(!lock->hel
 static inline void spinlock_unlock(spinlock_t *lock, int irq) { (void)irq; assert(lock->held); lock->held = 0; }
 ''',
     'lib/klib.h': '''#pragma once
+struct timespec { int tv_sec, tv_nsec; };
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -59,9 +61,6 @@ static inline char *test_strdup(const char *s) { size_t n = strlen(s) + 1; char 
 #define klog(...) ((void)0)
 char *name_get(void);
 void name_put(char *);
-''',
-    'device/time.h': '''#pragma once
-struct timespec { int tv_sec, tv_nsec; };
 ''',
     'ps/signal.h': '''#pragma once
 typedef unsigned long sigset_t;
@@ -303,6 +302,7 @@ def main():
         probe.write_text(PROBE.replace('@@FS_PUT@@', file_release_source()))
         sources = [ROOT / name for name in (
             'src/fs/impl/vfs.c', 'src/fs/impl/entries.c', 'src/fs/impl/inotify.c',
+            'src/device/core/chardev.c', 'src/device/core/blockdev.c',
             'src/lib/impl/rbtree.c', 'src/lib/impl/list.c')]
         executable = work / 'probe'
         command = [os.environ.get('CC', 'cc'), '-std=gnu11', '-O1', '-g',

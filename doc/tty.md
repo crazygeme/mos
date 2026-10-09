@@ -1,7 +1,7 @@
 # TTY / PTY Subsystem
 
-**Source:** `src/dev/tty.c`, `src/dev/tty_ldisc.c`, `src/dev/pts.c`  
-**Headers:** `src/dev/tty.h`, `src/dev/tty_ldisc.h` (internal)
+**Source:** `src/driver/tty/tty.c`, `src/driver/tty/tty_ldisc.c`, `src/driver/tty/pts.c`
+**Interfaces:** `src/console/render.h`, `src/device/chardev.h`; private terminal headers stay under `src/driver/tty`
 
 ---
 
@@ -51,13 +51,13 @@ typedef struct {
 } tty_state;
 ```
 
-`TTY_MAX_VDEV = 10` instances are statically allocated.  
-`active_tty_idx` tracks which TTY owns the real framebuffer.  
+`TTY_MAX_VDEV = 10` instances are statically allocated.
+`active_tty_idx` tracks which TTY owns the real framebuffer.
 `tty_switch_lock` serialises TTY switches and keyboard routing.
 
 ### Device nodes
 
-Registered at boot by `tty_dev_register` (via `DEV_INIT`):
+The virtual TTY driver declares these entries when its probe succeeds:
 
 | Device                   | Major | Minor | Maps to                          |
 | ------------------------ | ----- | ----- | -------------------------------- |
@@ -99,7 +99,7 @@ write(fd, buf, n)
                            │  printable char:
                            │    vga_putchar(state, CUR_ROW, CUR_COL, c)
                            │      → state->cells[idx] = {c, fg_color, bg_color}
-                           │      → if active TTY: fb_putcell(&cell, col, row)
+                           │      → if active TTY: console_putcell(&cell, col, row)
                            │    if no_wrap && at last col → cursor stays
                            │    otherwise                 → cursor += 1
                            │
@@ -143,13 +143,13 @@ cursor_forward(state, pos):
 ```c
 tty_hw_cursor(state, pos):
     if cursor_hidden || tty_idx != active_tty_idx: return
-    fb_cursor_update(_displayed_cursor, pos, state->cells, MAX_COL)
+    console_cursor_update(_displayed_cursor, pos, state->cells, MAX_COL)
     _displayed_cursor = pos
 ```
 
-`fb_cursor_update` redraws the old cursor cell to erase the highlight, then draws the new cell with the cursor color overlay. `_displayed_cursor` tracks the screen position so the old highlight can be erased; it is only valid for the active TTY.
+`console_cursor_update` redraws the old cursor cell to erase the highlight, then draws the new cell with the cursor color overlay. `_displayed_cursor` tracks the screen position so the old highlight can be erased; it is only valid for the active TTY.
 
-**Scroll and cursor**: `tty_roll_line` / `tty_roll_region` must erase the on-screen cursor before shifting pixels (otherwise a stale cursor artifact remains). They call `fb_cursor_erase(_displayed_cursor, ...)` before `fb_scroll_*_px()`.
+**Scroll and cursor**: `tty_roll_line` / `tty_roll_region` must erase the on-screen cursor before shifting pixels (otherwise a stale cursor artifact remains). They call `console_cursor_erase(_displayed_cursor, ...)` before `console_scroll_*()`.
 
 **Saved cursor** (`ESC[s` / `ESC[u`): stored in `state->saved_cursor`. Does not save/restore colors or attributes — cursor position only.
 
@@ -209,7 +209,7 @@ tty_switch(n):
                                              // now target new TTY's cells[]
         _displayed_cursor = ttys[n].cursor   // sync global cursor tracker
 
-        fb_redraw(ttys[n].cells,             // repaint entire framebuffer
+        console_redraw(ttys[n].cells,             // repaint entire framebuffer
                   ttys[n].max_col,           // from new TTY's cell buffer
                   ttys[n].max_row,
                   ttys[n].cursor)
@@ -218,7 +218,7 @@ tty_switch(n):
 
 ```
 
-**Why no explicit save on switch-out**: every TTY always keeps its `cells[]` in sync regardless of whether it is active. Inactive-TTY writes update `cells[]` but skip `fb_putcell` (the `tty_idx == active_tty_idx` guard in `vga_putchar`). So the cell buffer is always an accurate shadow of what the TTY would show. `fb_redraw` on switch-in just repaints it all.
+**Why no explicit save on switch-out**: every TTY always keeps its `cells[]` in sync regardless of whether it is active. Inactive-TTY writes update `cells[]` but skip `console_putcell` (the `tty_idx == active_tty_idx` guard in `vga_putchar`). So the cell buffer is always an accurate shadow of what the TTY would show. `console_redraw` on switch-in just repaints it all.
 
 **`tty_switch_lock` scope**: protects the active-terminal pointer and framebuffer
 save/restore. `tty_active_kb_put` also acquires this lock so keyboard bytes are

@@ -145,3 +145,97 @@ KTEST(VfsEntriesTest, DevicePublicationAndMountViews)
 	sb_put(registry);
 	return 0;
 }
+
+static int device_test_release(file *fp)
+{
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+static int device_test_stat(file *fp, struct stat *st)
+{
+	memset(st, 0, sizeof(*st));
+	st->st_mode = S_IFCHR | 0600;
+	st->st_rdev = (250 << 8) | 2;
+	return 0;
+}
+static const file_operations device_test_fops = {
+	.getattr = device_test_stat,
+	.release = device_test_release,
+};
+static file *device_test_open(super_block *sb, unsigned devno, int flags)
+{
+	file *fp = zalloc(sizeof(*fp));
+	(void)sb;
+	(void)devno;
+	(void)flags;
+	fp->f_inode = zalloc(sizeof(*fp->f_inode));
+	fp->f_inode->i_mode = S_IFCHR | 0600;
+	fp->f_count = 1;
+	fp->f_fop = &device_test_fops;
+	return fp;
+}
+
+KTEST(VfsEntriesTest, DeviceNodesAndOrdinaryMknodShareDispatch)
+{
+	vfs_entry_tree *tree = vfs_entry_tree_create();
+	super_block *sb;
+	file *fp;
+	struct stat st;
+	ASSERT_NONNULL(tree);
+	ASSERT_NONNULL(vfs_entry_device(vfs_entry_root(tree), "input/test",
+					S_IFCHR | 0600, (250 << 8) | 2,
+					"test-entries", device_test_open));
+	sb = vfs_entry_tree_super(tree);
+	fp = vfs_open(sb, "/input/test", O_RDWR);
+	ASSERT_NONNULL(fp);
+	EXPECT_TRUE(fp->f_fop == &device_test_fops);
+	fs_put_file(fp);
+	ASSERT_EQ(vfs_mknod(sb, "/alias", S_IFCHR | 0600, (250 << 8) | 2), 0);
+	fp = vfs_open(sb, "/alias", O_RDONLY);
+	ASSERT_NONNULL(fp);
+	EXPECT_TRUE(fp->f_fop == &device_test_fops);
+	fs_put_file(fp);
+	ASSERT_NONNULL(vfs_entry_device(vfs_entry_root(tree), "pipe",
+					S_IFIFO | 0600, 0, NULL, NULL));
+	fp = vfs_open(sb, "/pipe", O_RDONLY | O_NONBLOCK);
+	ASSERT_NONNULL(fp);
+	EXPECT_EQ(fp->f_fop->getattr(fp, &st), 0);
+	EXPECT_TRUE(S_ISFIFO(st.st_mode));
+	fs_put_file(fp);
+	sb_put(sb);
+	return 0;
+}
+
+static char *large_snapshot(void *data, unsigned tag, unsigned *length)
+{
+	char *buffer = malloc(6000);
+	(void)data;
+	(void)tag;
+	if (buffer)
+		memset(buffer, 'x', 6000);
+	*length = 6000;
+	return buffer;
+}
+static const vfs_entry_attribute_ops large_snapshot_ops = {
+	.snapshot = large_snapshot
+};
+
+KTEST(VfsEntriesTest, SnapshotsCanExceedOnePage)
+{
+	vfs_entry_tree *tree = vfs_entry_tree_create();
+	file *fp;
+	char bytes[16];
+	loff_t pos = 5990;
+	ASSERT_NONNULL(tree);
+	ASSERT_NONNULL(vfs_entry_attribute(vfs_entry_root(tree), "snapshot",
+					   0444, &large_snapshot_ops, NULL, 0));
+	fp = vfs_open(vfs_entry_tree_super(tree), "/snapshot", O_RDONLY);
+	ASSERT_NONNULL(fp);
+	EXPECT_EQ(fp->f_inode->i_size, 6000);
+	EXPECT_EQ(fp->f_fop->read(fp, bytes, sizeof(bytes), &pos), 10);
+	EXPECT_EQ(bytes[0], 'x');
+	fs_put_file(fp);
+	sb_put(vfs_entry_tree_super(tree));
+	return 0;
+}

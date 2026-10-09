@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
-#include <device/hdd.h>
+#include <device/blockdev.h>
 #include "common.h"
 
 /* ---- mm/fault ---- */
@@ -25,21 +25,10 @@ extern unsigned int heap_quota_high;
 /* ---- fs/cache ---- */
 extern unsigned fs_read_size;
 extern unsigned fs_write_size;
-extern unsigned disk_read_size;
-extern unsigned disk_write_size;
 extern unsigned fs_page_cache_pages;
 extern unsigned fs_page_cache_max_pages;
 extern unsigned fs_page_cache_searches;
 extern unsigned fs_page_cache_hits;
-
-#if HDD_CACHE_OPEN
-extern unsigned hdd_cache_hit;
-extern unsigned hdd_cache_read_size;
-extern unsigned hdd_cache_write_size;
-extern unsigned hdd_cache_size;
-extern unsigned hdd_cache_max_size;
-extern unsigned hdd_cache_search_count;
-#endif
 
 /* ---- scheduler ---- */
 extern unsigned task_schedule_count;
@@ -123,12 +112,12 @@ static void fill(proc_buf_t *pb)
 		fs_page_cache_searches ?
 			fs_page_cache_hits * 100 / fs_page_cache_searches :
 			0;
-#if HDD_CACHE_OPEN
+	blockdev_stats block_stats;
+	blockdev_get_stats(&block_stats);
 	unsigned hdd_cache_rate =
-		hdd_cache_search_count ?
-			hdd_cache_hit * 100 / hdd_cache_search_count :
+		block_stats.searches ?
+			block_stats.hits * 100 / block_stats.searches :
 			0;
-#endif
 	phymm_get_usage(&mem);
 
 	/* ---- Memory / kernel heap ---- */
@@ -164,8 +153,8 @@ static void fill(proc_buf_t *pb)
 	mos_table_begin(pb, "I/O");
 	mos_print_bytes(pb, "fs read", fs_read_size);
 	mos_print_bytes(pb, "fs write", fs_write_size);
-	mos_print_bytes(pb, "disk read", disk_read_size);
-	mos_print_bytes(pb, "disk write", disk_write_size);
+	mos_print_bytes(pb, "disk read", block_stats.physical_read_bytes);
+	mos_print_bytes(pb, "disk write", block_stats.physical_write_bytes);
 	mos_table_end(pb);
 
 	/* ---- Inode / filesystem page cache ---- */
@@ -178,21 +167,16 @@ static void fill(proc_buf_t *pb)
 	mos_print_count_rate(pb, "hits", fs_page_cache_hits, inode_cache_rate);
 	mos_table_end(pb);
 
-#if HDD_CACHE_OPEN
 	/* ---- HDD block cache ---- */
-	mos_table_begin(pb, "HDD block cache");
+	mos_table_begin(pb, "Block cache");
 	mos_print_bytes(pb, "budget", MOS_PAGE_BYTES(cache_policy.block_pages));
-	mos_print_bytes(pb, "cached sectors",
-			(unsigned long long)hdd_cache_size * BLOCK_SECTOR_SIZE);
-	mos_print_bytes(pb, "peak sectors",
-			(unsigned long long)hdd_cache_max_size *
-				BLOCK_SECTOR_SIZE);
-	mos_print_bytes(pb, "read served", hdd_cache_read_size);
-	mos_print_bytes(pb, "write served", hdd_cache_write_size);
-	mos_print_count(pb, "lookups", hdd_cache_search_count);
-	mos_print_count_rate(pb, "hits", hdd_cache_hit, hdd_cache_rate);
+	mos_print_bytes(pb, "cached sectors", block_stats.cached_bytes);
+	mos_print_bytes(pb, "peak sectors", block_stats.peak_bytes);
+	mos_print_bytes(pb, "read served", block_stats.read_bytes);
+	mos_print_bytes(pb, "write served", block_stats.write_bytes);
+	mos_print_count(pb, "lookups", block_stats.searches);
+	mos_print_count_rate(pb, "hits", block_stats.hits, hdd_cache_rate);
 	mos_table_end(pb);
-#endif
 
 	/* ---- Scheduler ---- */
 	mos_table_begin(pb, "Scheduler");
@@ -342,9 +326,12 @@ static super_operations mos_sops = {
 	.open_root = mos_open_root,
 };
 
-static void mos_proc_register(super_block *proc_sb)
+static void mos_proc_register(void)
 {
-	vfs_mount(proc_sb, "/mos", sget(&mos_sops));
+	vfs_entry_node *root = procfs_entries();
+	if (!root)
+		return;
+	vfs_entry_mount(root, "mos", S_IFREG | 0666, sget(&mos_sops));
 }
 
-PROC_INIT(mos_proc_register);
+KERNEL_INIT(4, mos_proc_register);

@@ -27,8 +27,7 @@
 #include <proc/proc.h>
 #include <test/test.h>
 #include <lib/klib.h>
-#include <device/time.h>
-#include <dev/tty.h>
+#include <device/chardev.h>
 #include <macro.h>
 #include <errno.h>
 #include <ext4.h>
@@ -307,7 +306,7 @@ static file *make_tty_state_file(void)
 	unsigned length;
 	file *fp;
 
-	content = tty_test_snapshot(&length);
+	content = chardev_console_snapshot(&length);
 	if (!content)
 		content = strdup("meta unavailable=1\n");
 	if (!content)
@@ -661,11 +660,15 @@ static const super_operations tests_sops = {
 	.open = tests_open,
 };
 
-static void tests_proc_register(super_block *proc_sb)
+static void tests_proc_register(void)
 {
+	vfs_entry_node *root = procfs_entries();
+	if (!root)
+		return;
 	if ((uintptr_t)__ktest_start != (uintptr_t)__ktest_end ||
 	    (uintptr_t)__ktest_script_start != (uintptr_t)__ktest_script_end)
-		vfs_mount(proc_sb, "/tests", sget(&tests_sops));
+		vfs_entry_mount(root, "tests", S_IFDIR | 0555,
+				sget(&tests_sops));
 }
 
-PROC_INIT(tests_proc_register);
+KERNEL_INIT(4, tests_proc_register);

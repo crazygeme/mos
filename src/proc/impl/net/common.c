@@ -7,7 +7,6 @@
 #include "proc_net.h"
 #include <fs/fs.h>
 #include <lib/klib.h>
-#include <device/time.h>
 #include <macro.h>
 #include <ext4.h>
 

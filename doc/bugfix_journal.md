@@ -1,11 +1,52 @@
 # Bug Fix Journal
 
-Implementation records are ordered by date, with the newest entries first.
-Each entry describes its dated revision; validation limits and implementation
-details in older entries may be superseded by later fixes.
+Implementation records describe failure conditions, diagnostic evidence,
+corrections, and validation coverage. Each entry records its dated
+implementation; later entries may supersede its behavior or validation limits.
 
 Performance and optimization records are maintained in the
 [Performance Journal](perf_journal.md).
+
+---
+
+## 2026-10-09 - Procfs maps format widths and Vim read faults
+
+Reading `/proc/self/maps` with Vim on the i386 kernel can fault while the kernel
+formats a pathname. The recorded fault is:
+
+```text
+[3150][3344]: segfault: /usr/bin/vim: error code 0, address 50467, eip c024ab26
+```
+
+In the corresponding release symbol file, `c024ab26` resolves to `strlen`. The
+fault address `0x50467` equals Vim's inode number, 328807.
+
+`maps_region_cb` passed the 64-bit VMA file offset to `%08x`. On i386, that
+conversion consumes four bytes instead of eight: the inode conversion reads the
+offset's high word, and the final `%s` consumes the inode value as a pointer.
+The formatter then dereferences that value while measuring the pathname. AMD64's
+variadic argument slots avoid this particular parameter shift, but `%x`
+truncates native addresses and 64-bit offsets.
+
+`src/proc/impl/pid/files.c` formats addresses with `%08lx`, offsets with
+`%08llx`, and inode numbers with `%-10llu`. Explicit casts match each variadic
+argument to its conversion. The inode accumulator retains 64 bits. Field widths
+are minimum widths, so native addresses and large file offsets can expand beyond
+eight hexadecimal digits.
+
+The `mmap.proc_maps_format_widths` regression reads the actual procfs file with
+a fixture containing offset `0x1234567800001000`, inode `0x10000050467`, and a
+pathname. Native AMD64 validation also checks addresses above 4 GiB. Both
+release and test kernels build for x86 and AMD64; two-CPU KVM guests pass all 30
+mmap and 10 heap tests. An RH9 x86 snapshot guest successfully reads maps with
+`cat` and with Vim in Ex mode, saves the rendered buffer, and exits with status
+zero:
+
+```sh
+cat /proc/self/maps
+vim -Nu NONE -i NONE -n -es \
+    -c 'w! /tmp/maps-vim.txt' -c 'qa!' /proc/self/maps
+```
 
 ---
 
@@ -157,13 +198,9 @@ gcc -O2 -std=gnu99 -pthread -o /tmp/cpu_probe cpu_accounting_probe.c
 
 ## 2026-10-07 - Directory-only open enforcement
 
-After commit `11d9a69bb282ef47f331cfab6b8e7e4b7bc36441`, copying
-`./kernel` to `/boot/kernel` attempts to use `/boot/kernel/kernel` as the
-destination. That commit changes special-file ownership and the shared
-`getcwd` return value. Regular-file stat conversion and open dispatch are
-unchanged. Internal pathname-resolution calls discard the `getcwd` return
-value and consume the populated buffer. The temporal association does not
-establish which change exposed the copy path.
+Copying `./kernel` over the regular file `/boot/kernel` produces a diagnostic
+for `/boot/kernel/kernel` when the destination is incorrectly accepted as a
+directory.
 
 The open path through `sys_openat`, `fs_open`, and `ext4_path_open` does not
 enforce `O_DIRECTORY`. An SSH session on the x64 guest reproduced the failure
@@ -173,17 +210,17 @@ descriptor 3 for a regular file. The subsequent `newfstatat(3, "source", ..., 0)
 fails with `ENOTDIR`, and the copy diagnostic names `destination/source`.
 Independent stat output identifies `/boot/kernel` as a regular file.
 
-`fs_open` now checks the resolved inode type whenever `O_DIRECTORY` is set.
-For a non-directory, it releases the opened file and returns `ENOTDIR` before
-permission checks and descriptor installation. Both `O_PATH` and ordinary
-opens use this check, including targets reached through final symlinks.
+`fs_open` checks the resolved inode type whenever `O_DIRECTORY` is set. For a
+non-directory, it releases the opened file and returns `ENOTDIR` before
+permission checks and descriptor installation. Both `O_PATH` and ordinary opens
+use this check, including targets reached through final symlinks.
 
 The regression script `test/directory_open.py` checks rejection of regular
 files, file symlinks, and FIFOs; successful directory and directory-symlink
-opens; file replacement by `cp`; and copying into a directory. It passes on
-the host. Compiler syntax checks pass for x86 and x64, and patch whitespace
-checks pass. The guest reproduction failed as expected before the correction.
-Corrected kernel build and guest runtime validation remain pending.
+opens; file replacement by `cp`; and copying into a directory. It passes on the
+host. Compiler syntax checks pass for x86 and x64. Guest validation records the
+regular-file open defect; this entry contains no guest run of the corrected
+kernel.
 
 ## 2026-10-07 - FIFO ownership and getcwd syscall return value
 
@@ -194,31 +231,31 @@ structure without filling its ownership fields. The resulting UID and GID
 were zero, so the discretionary access check selected group or other bits
 for a non-root creator and rejected the read open with `EACCES`.
 
-Special-file metadata now retains the creator's effective UID and GID, matching
-the existing tmpfs credential convention. FIFO and generic special-file stat
-handlers return those stored credentials. FIFO metadata uses the backend
-superblock retained by the VFS before the open permission check.
+Special-file metadata retains the creator's effective UID and GID, matching the
+tmpfs credential convention. FIFO and generic special-file stat handlers return
+those stored credentials. FIFO metadata uses the backend superblock retained by
+the VFS before the open permission check.
 
 The Linux `getcwd` syscall returns the pathname length including its terminating
-NUL. MOS previously returned the destination address. The shared handler now
-returns the length, rejects a zero size with `EINVAL`, and returns `ERANGE`
-without copying when the destination is too small. A null destination with a
-nonzero size returns `EFAULT`. Both syscall namespaces use the shared handler;
-internal pathname-resolution callers continue to consume its output buffer.
+NUL. MOS previously returned the destination address. The shared handler returns
+the length, rejects a zero size with `EINVAL`, and returns `ERANGE` without
+copying when the destination is too small. A null destination with a nonzero
+size returns `EFAULT`. Both syscall namespaces use the shared handler; internal
+pathname-resolution callers continue to consume its output buffer.
 
 glibc 2.37 stores the syscall result in an `int`, tests for a positive result,
 and uses the result as an allocation size for `getcwd(NULL, 0)`. Returning an
-x64 buffer address violates these assumptions. The reported `getcwd: No such
-file or directory` still requires a syscall trace to establish its exact path;
-the return-value correction does not establish that the directory exists.
+x64 buffer address violates these assumptions. The record contains no syscall
+trace establishing the cause of `getcwd: No such file or directory`; correcting
+the return value does not establish the directory's existence.
 
 The regression script `test/fifo_jobserver.sh` requires a non-root account and
 checks FIFO path and descriptor ownership, the jobserver open sequence, token
-transfer, the raw `getcwd` return length, the libc wrapper, and undersized-buffer
-errors. Compiler syntax checks passed for both x86 and x64, covering the
-modified implementations, internal pathname-resolution callers, and syscall
-dispatchers. Shell syntax and patch whitespace checks passed. Kernel build
-and guest execution remain pending.
+transfer, the raw `getcwd` return length, the libc wrapper, and
+undersized-buffer errors. Compiler syntax checks passed for both x86 and x64,
+covering the modified implementations, internal pathname-resolution callers, and
+syscall dispatchers. Shell syntax checks passed. The dated record contains no
+kernel build or guest execution result for this correction.
 
 References: GNU Make 4.4.1 `src/posixos.c`, `jobserver_setup()`;
 glibc 2.37 `sysdeps/unix/sysv/linux/getcwd.c`, `__getcwd()`.
@@ -597,8 +634,7 @@ and Gregorian leap years. The same conversion serves initialization and
 
 ### Concurrent Clock Synchronization
 
-The timing change originally relied on serialized kernel entry. Removing that
-serialization permits simultaneous reads and updates on different CPUs. Local
+Kernel clocks can be read and updated simultaneously on different CPUs. Local
 interrupt masking alone cannot protect shared state: i386 can tear 64-bit
 values, concurrent monotonic updates can regress the published sample, and
 interleaved PIT or CMOS port transactions can return incorrect hardware data.
@@ -652,8 +688,7 @@ echo Timekeeping > /proc/tests/.runner
 echo smp > /proc/tests/.runner
 ```
 
-Run the timing probe and existing epoll regressions separately to verify
-userspace waits and networking.
+The timing probe and epoll regressions verify userspace waits and networking.
 
 ### CPU Usage
 
@@ -952,10 +987,9 @@ For a normal launch with two CPUs and 8 GiB of guest RAM:
 ```
 
 The runner builds the release kernel and selects a long-mode-capable QEMU CPU.
-The `ram=N` argument selects memory in MiB; its default is 8192.
-The `debug` argument selects the debug image and pauses execution for a debugger
-on TCP port 8888. One-CPU and two-CPU launches should both be checked before
-increasing the CPU count. The existing runner performs guest disk preparation.
+The `ram=N` argument selects memory in MiB; its default is 8192. The `debug`
+argument selects the debug image and pauses execution for a debugger on TCP port
+8888. The runner performs guest disk preparation.
 
 The native probe is built independently of kernel tests:
 
@@ -964,12 +998,12 @@ make ARCH=x64 BUILD=debug user64-smoke
 ```
 
 Install `out/x64/debug/user/x64-smoke` into the guest filesystem and execute it
-from the RH9 shell. It uses direct AMD64 syscalls without a libc dependency.
-Its checks cover mappings above 4 GiB, FS and GS bases, signal delivery and
-return, concurrent child processes, scheduling, COW isolation, and wait. A
-successful run prints `AMD64 ABI smoke: PASS`; a failure exits with a numbered
-check code. The existing guest exec, process, shared-futex, signal, descriptor,
-and socket tests provide i386 regression coverage.
+from the RH9 shell. It uses direct AMD64 syscalls without a libc dependency. Its
+checks cover mappings above 4 GiB, FS and GS bases, signal delivery and return,
+concurrent child processes, scheduling, COW isolation, and wait. A successful
+run prints `AMD64 ABI smoke: PASS`; a failure exits with a numbered check code.
+Guest exec, process, shared-futex, signal, descriptor, and socket tests provide
+i386 regression coverage.
 
 ### CPU mode and ABI separation
 
@@ -1113,7 +1147,7 @@ SYSRET address and flag constraints are therefore not assumed.
 Authenticated RH9 root login has also been validated with 8 GiB and two KVM
 CPUs, reaching the GNOME desktop and a working graphical terminal. This check
 required repair of a damaged GConf saved-state inode in the guest filesystem.
-The ATA block callbacks and lwext4 write cleanup now propagate I/O failures
+The ATA block callbacks and lwext4 write cleanup propagate I/O failures
 instead of hanging on invalid disk blocks or reporting zero-byte success.
 See the [8 GiB desktop screenshot](screenshot/x64_8g_desktop.png) and
 [fix journal](bugfix_journal.md) for the diagnosis and repair record.
@@ -1134,14 +1168,14 @@ offsets through VMA splitting, page faults, shared caches, and filesystem page
 callbacks. Native mmap accepts aligned nonnegative 64-bit offsets. Several
 other file and syscall services, including tmpfs file size, retain legacy
 limits; native wrappers reject unsupported representations where implemented.
-Signal support remains limited to the existing signals 1–32. Native ptrace,
+Signal support is limited to signals 1–32. Native ptrace,
 complete IPC/network/time syscall coverage, XSAVE/AVX state, and modern libc
 compatibility are not established. VM86 is unavailable in long mode and returns
 ENOSYS; applications requiring that interface remain on the x86 backend.
 
-Runtime validation used QEMU 10.2.1 with `qemu64`, 4 GiB RAM, VMware SVGA,
-IDE storage, and snapshot-backed RH9 storage. No persistent guest changes were
-required. The following checks completed successfully:
+Runtime validation used QEMU 10.2.1 with `qemu64`, 4 GiB RAM, VMware SVGA, IDE
+storage, and snapshot-backed RH9 storage. Guest writes use disposable snapshots.
+Recorded checks are:
 
 | Configuration | Result |
 | --- | --- |
@@ -1155,13 +1189,13 @@ required. The following checks completed successfully:
 | x86 and x64 debug test builds | Successful compile and link |
 | x64 debug test kernel, 2 CPUs | 17 MM, 20 mmap, 12 physical allocation, and 9 heap allocation tests passed; native probe PASS |
 
-Boot debugging corrected the fixed-width Multiboot information layout,
-interrupt enabling after IDT initialization, explicit VMware PCI memory
-mapping, and the i386 resource-limit buffer width. These faults respectively
-prevented valid boot data access, timer progress, console initialization, and
-safe Bash startup. Test support uses full-width addresses and explicitly
-aligned registration records. Large-page flag lookup preserves permissions
-when shared kernel mappings split into individual pages.
+Boot corrections cover the fixed-width Multiboot information layout, interrupt
+enabling after IDT initialization, explicit VMware PCI memory mapping, and the
+i386 resource-limit buffer width. These faults respectively prevented valid boot
+data access, timer progress, console initialization, and safe Bash startup. Test
+support uses full-width addresses and explicitly aligned registration records.
+Large-page flag lookup preserves permissions when shared kernel mappings split
+into individual pages.
 
 The full guest regression suite, additional processor counts, KVM, and modern
 64-bit libc distributions remain outside this validation. Native programs must
@@ -1195,12 +1229,12 @@ The AMD64 kernel reported the following fault during RH9 service startup:
 [609][1203]: segfault: /sbin/rpc.statd: error code 2, address 74706000, eip c0253256
 ```
 
-In the corresponding AMD64 release symbol file, instruction
-`0xffffffffc0253256` is the `rep stosl` instruction in `memset`. Page-fault
-error code 2 denotes a supervisor write to a non-present page. The original
-diagnostic used `%x` for both addresses, losing their upper 32 bits. The fault
-diagnostic now uses `%lx`, and the formatter preserves the full unsigned-long
-value for hexadecimal output instead of converting it through a 32-bit int.
+In the corresponding AMD64 release symbol file, instruction `0xffffffffc0253256`
+is the `rep stosl` instruction in `memset`. Page-fault error code 2 denotes a
+supervisor write to a non-present page. The fault diagnostic used `%x` for both
+addresses, losing their upper 32 bits. The corrected fault diagnostic uses
+`%lx`, and the formatter preserves the full unsigned-long value for hexadecimal
+output instead of converting it through a 32-bit int.
 
 ### Source analysis
 
@@ -1229,24 +1263,24 @@ distribution-specific patches remain outside this verification.
 
 Previously, the i386 syscall table dispatched ioctl directly to the common
 handler. The AMD64 socket implementation interpreted an i386 `ifconf` as a
-native structure, loading unrelated bytes beyond the object as a buffer
-pointer. Interface enumeration then passed that pointer to `memset`. This is
-a confirmed ABI defect on the service's startup path and is consistent with
-the reported fault. A subsequent RH9 startup reports no further
-`rpc.statd` fault after the interface-ioctl correction.
+native structure, loading unrelated bytes beyond the object as a buffer pointer.
+Interface enumeration then passed that pointer to `memset`. This is a confirmed
+ABI defect on the service's startup path and is consistent with the reported
+fault. RH9 startup with the interface-ioctl correction completes without the
+recorded `rpc.statd` fault.
 
 ### Correction
 
-The i386 syscall table now selects `compat_ioctl`. On the x86 kernel this
-aliases the existing handler. On the AMD64 kernel the implementation resides
-in `arch/x64/syscall/impl/compat_ioctl.c`.
+The i386 syscall table selects `compat_ioctl`. On the x86 kernel this aliases
+the existing handler. On the AMD64 kernel the implementation resides in
+`arch/x64/syscall/impl/compat_ioctl.c`.
 
-For `SIOCGIFCONF`, the compatibility handler reads an explicit eight-byte
-i386 structure, queries the available interface count, and allocates a native
-buffer bounded by that count and the caller's capacity. It copies each
-returned name and socket address into a 32-byte i386 entry and returns an
-i386 byte count. The original buffer pointer remains unchanged. Other ioctl
-requests retain their existing dispatch.
+For `SIOCGIFCONF`, the compatibility handler reads an explicit eight-byte i386
+structure, queries the available interface count, and allocates a native buffer
+bounded by that count and the caller's capacity. It copies each returned name
+and socket address into a 32-byte i386 entry and returns an i386 byte count. The
+compatibility operation preserves the caller's buffer pointer. Other ioctls use
+their namespace-specific dispatch.
 
 The native `ifreq` includes the pointer-width `ifmap` union member, restoring
 the AMD64 40-byte stride while preserving the x86 32-byte stride. Native
@@ -1256,17 +1290,17 @@ entries when capacity is limited.
 
 ### Validation
 
-Source syntax checks pass for both kernel architectures. The native probe
-passes its syntax check, the guest test passes shell syntax validation, and
-the patch passes whitespace validation. The rebuilt kernel completes the
-RPC startup path without the reported fault. The regression scripts, native
-probe, and full-width formatter test remain pending guest execution.
+Source syntax checks pass for both kernel architectures. The native probe passes
+its syntax check, the guest test passes shell syntax validation, and the
+formatter changes pass whitespace validation. The corrected kernel completes RPC
+startup without the recorded fault. The dated record contains no guest execution
+results for the interface regression or formatter test.
 
 `test/posix_ifconf.sh` checks enumeration, interface flags, returned byte
-counts, unchanged buffer pointers, surrounding sentinel bytes, NULL-buffer
+counts, preserved buffer pointers, surrounding sentinel bytes, NULL-buffer
 queries, short buffers, single-entry buffers, and glibc's RPC local-address
-helper. For an i386 process it places `0x74706000` immediately after `ifconf`
-to reproduce the incorrect pointer load deterministically.
+helper. For an i386 process it places `0x74706000` immediately after `ifconf` to
+reproduce the incorrect pointer load deterministically.
 
 The `kprint.sprintf_lx_kernel_address` kernel test checks that hexadecimal
 fault addresses preserve all bits on AMD64 and retain the x86 representation.
@@ -1300,8 +1334,8 @@ argument is the address of a local stack variable used to receive the mapped
 address. The kernel declares that argument as `int`. Casting it directly to
 AMD64 `uintptr_t` sign-extends a pointer with bit 31 set, converting
 `0xbffffxxx` into `0xffffffffbffffxxx`. The store then targets an unmapped
-supervisor address rather than the i386 stack. The original 32-bit fault
-diagnostic hides the extension.
+supervisor address rather than the i386 stack. A 32-bit fault diagnostic omits
+the sign-extended upper bits.
 
 XFree86 4.3.0 uses `shmat()` in its Linux int10 initialization and shared-memory
 extensions. The source establishes these call sites; the particular X startup
@@ -1317,24 +1351,23 @@ Sources:
 
 ### Correction and validation
 
-The IPC SHMAT branch converts the argument through `uint32_t` before widening
-to `uintptr_t`. This preserves the complete i386 address as an unsigned
-32-bit value. The result store remains four bytes wide. Native AMD64 shared
-memory syscalls remain outside the existing i386 IPC multiplexer.
+The IPC SHMAT branch converts the argument through `uint32_t` before widening to
+`uintptr_t`. This preserves the complete i386 address as an unsigned 32-bit
+value. The result store remains four bytes wide. Native AMD64 shared memory
+syscalls use direct entry points rather than the i386 IPC multiplexer.
 
 `test/posix_sysv_shm.sh` exercises a raw IPC SHMAT with a result pointer whose
 bit 31 is set, verifies the result-store bounds, then exercises glibc SHMAT,
-shared backing, IPC_RMID while attached, and detach. Runtime verification of
-the correction remains pending. A subsequent X startup reaches VESA
-initialization and reports an unsupported vm86 call rather than this store
-fault.
+shared backing, IPC_RMID while attached, and detach. The recorded X startup
+reaches VESA initialization without this store fault. The entry contains no
+runtime result for the shared-memory regression script.
 
 ## 2026-10-04 - Missing VBE emulation in the AMD64 compatibility kernel
 
 ### Symptom and root cause
 
-After the SHMAT correction, XFree86 reaches its VESA initialization and exits
-with `unknown type(0xffffffff)=0xff`, followed by `no screens found`.
+XFree86 VESA initialization exits with `unknown type(0xffffffff)=0xff`, followed
+by `no screens found`.
 
 XFree86's `linux_vm86.c` calls the vm86old syscall and switches on the low byte
 of its return value. The syscall wrapper converts an error to `-1`, whose low
@@ -1346,25 +1379,25 @@ available in long mode.
 
 ### Correction
 
-The existing VBE emulator moves from `arch/x86/syscall/impl/syscall_vm86.c`
-to `arch/abi/i386/syscall_vm86.c`, where both kernels build it. The AMD64
-stubs are removed. Flags, bitmap fields, CPU type, and interrupt vectors use
-explicit 32-bit wire values; static assertions require an 84-byte register
-block and 160-byte i386 vm86 structure. Segment-address conversion widens
-the calculated unsigned address through `uintptr_t`.
+The VBE emulator moves from `arch/x86/syscall/impl/syscall_vm86.c` to
+`arch/abi/i386/syscall_vm86.c`, where both kernels build it. The AMD64 stubs are
+removed. Flags, bitmap fields, CPU type, and interrupt vectors use explicit
+32-bit wire values; static assertions require an 84-byte register block and
+160-byte i386 vm86 structure. Segment-address conversion widens the calculated
+unsigned address through `uintptr_t`.
 
-The supported BIOS calls, VMware port programming, and fallback behavior
-retain the existing x86 implementation. This provides the i386 VBE syscall
-contract on AMD64; it does not implement arbitrary real-mode instruction
-execution or a native AMD64 vm86 syscall.
+The supported BIOS calls, VMware port programming, and fallback behavior match
+the x86 implementation. This provides the i386 VBE syscall contract on AMD64; it
+does not implement arbitrary real-mode instruction execution or a native AMD64
+vm86 syscall.
 
 ### Validation
 
 Both architecture source trees pass syntax validation after sharing the
-emulator. `test/posix_vm86_vbe.sh` exercises both entry points, controller
-and mode information, output buffer bounds, returned register state, and
-save-state size queries. Guest execution and X startup verification remain
-pending.
+emulator. `test/posix_vm86_vbe.sh` exercises both entry points, controller and
+mode information, output buffer bounds, returned register state, and save-state
+size queries. The dated record contains source syntax validation but no emulator
+regression or X startup runtime result.
 
 ## 2026-10-04 - AMD64 desktop framebuffer faults and large-memory support
 
@@ -1389,19 +1422,19 @@ therefore could not read the next inode block and entered maintenance mode.
 ### Corrections
 
 VMA offsets, split-region offsets, fault offsets, shared-page cache keys,
-and filesystem page callbacks now retain 64 bits. Framebuffer offsets no
+and filesystem page callbacks retain 64 bits. Framebuffer offsets no
 longer undergo signed 32-bit extension, and native mmap no longer rejects
 valid offsets solely because they exceed `0x7fffffff`. Automatic mappings
 larger than 4 GiB are allowed to select a native address above the shared
 supervisor device window; explicitly fixed mappings still cannot overlap
 that window. The i386 mmap2 page offset is widened before multiplication.
 
-The x64 RAM mirror and physical-memory discovery ceiling now extend to
-128 GiB of physical address space. Page-cache and SysV shared-memory backing
-addresses use the architecture's physical-address type. User and cache
-allocation prefer available RAM above 4 GiB, retaining low RAM for kernel
-objects and legacy DMA buffers. Kernel and DMA allocations retain their
-existing low-address constraints. The i386 kernel remains non-PAE.
+The x64 RAM mirror and physical-memory discovery ceiling extend to 128 GiB
+of physical address space. Page-cache and SysV shared-memory backing addresses
+use the architecture's physical-address type. User and cache allocation prefer
+available RAM above 4 GiB, retaining low RAM for kernel objects and legacy DMA
+buffers. Kernel and DMA allocations in this revision have low-address
+constraints. The i386 kernel remains non-PAE.
 
 Raw physical aliases carry a software PTE flag so unmapping or destroying
 an alias cannot decrement an allocator reference owned by another mapping.
@@ -1411,12 +1444,12 @@ and allocator RAM totals, preventing byte-count overflow and excluding
 reserved physical holes. `_llseek` returns zero on success and reports the
 complete position only through its result pointer.
 
-The native socket creation syscall now dispatches its three integer arguments
-to the existing socket backend. This enables the native ABI probe's interface
-ioctl checks, which previously stopped at an unsupported socket syscall.
-The runner accepts `ram=N` in MiB, with an unchanged 4096 MiB default.
-Hexadecimal diagnostics consume full-width `long long` arguments, preserving
-physical addresses above 4 GiB and subsequent arguments on both architectures.
+The native socket creation syscall dispatches its three integer arguments to the
+socket backend. The native ABI probe exercises interface ioctls through that
+entry point. In the dated launcher configuration, `ram=N` selects MiB and
+defaults to 4096 MiB. Hexadecimal diagnostics consume full-width `long long`
+arguments, preserving physical addresses above 4 GiB and subsequent arguments on
+both architectures.
 
 ### Regression coverage
 
@@ -1457,9 +1490,8 @@ been tested in a guest.
 
 ### Authenticated desktop startup and invalid disk blocks
 
-The initial 8 GiB check established arrival at the graphical login screen,
-without validating completion of an authenticated session. An authenticated
-run subsequently froze while GConf read `/root/.gconfd/saved_state`.
+An 8 GiB AMD64 guest reaches the graphical login screen but freezes during
+authenticated session startup while GConf reads `/root/.gconfd/saved_state`.
 
 A debugger trace located the blocked CPU in the ATA DMA completion loop.
 GConf's file read resolved to sector 14819236616, beyond the partition's
@@ -1473,38 +1505,36 @@ Normal boots with both 4 GiB and 8 GiB encountered filesystem-check failures
 from the same base image. This damage must be distinguished from physical
 address truncation in memory mappings.
 
-The block-device callbacks now validate the full 64-bit sector range against
-the partition capacity before narrowing it for ATA. Read and write callbacks
-return EIO for invalid ranges and incomplete partition transfers. The
-[GConf 2.2.0 source](https://download.gnome.org/sources/GConf/2.2/GConf-2.2.0.tar.gz)
-confirms that saved-state read errors terminate parsing and are logged;
-they do not require an indefinite kernel I/O wait.
+The block-device callbacks validate the full 64-bit sector range against the
+partition capacity before narrowing it for ATA. Read and write callbacks return
+EIO for invalid ranges and incomplete partition transfers. The [GConf 2.2.0
+source](https://download.gnome.org/sources/GConf/2.2/GConf-2.2.0.tar.gz)
+confirms that saved-state read errors terminate parsing and are logged; they do
+not require an indefinite kernel I/O wait.
 
-The lwext4 write cleanup also replaced a failed transfer's error with the
-inode release result. Successful release consequently converted an I/O
-failure into a zero-byte successful write. glibc 2.3.2's
-`libio/fileops.c:_IO_new_file_write` subtracts successful write counts and
-retries remaining bytes, so zero progress caused an endless retry loop.
-Cleanup now preserves the transfer error, and the filesystem adapter returns
-the corresponding negative errno.
+The lwext4 write cleanup also replaced a failed transfer's error with the inode
+release result. Successful release consequently converted an I/O failure into a
+zero-byte successful write. glibc 2.3.2's `libio/fileops.c:_IO_new_file_write`
+subtracts successful write counts and retries remaining bytes, so zero progress
+caused an endless retry loop. Cleanup preserves the transfer error, and the
+filesystem adapter returns the corresponding negative errno.
 
-Host regressions execute the actual block callbacks and `ext4_fwrite` body
-with injected failures. They cover full-width invalid sector numbers,
-partition-end crossing, valid final-sector transfers, failed and incomplete
-transfers, and preservation of the original error through inode cleanup.
-The write regression fails against the original cleanup behavior and passes
-with the fix. Both architecture release and test kernels build successfully.
+Host regressions execute the actual block callbacks and `ext4_fwrite` body with
+injected failures. They cover full-width invalid sector numbers, partition-end
+crossing, valid final-sector transfers, failed and incomplete transfers, and
+preservation of the original error through inode cleanup. The write regression
+rejects cleanup that replaces a transfer error with a successful inode-release
+result and passes with error preservation. Both architecture release and test
+kernels build successfully.
 
-A persistent repair was performed inside the guest after preserving QEMU
-snapshot `mos-before-desktop-repair-20261004` in `rh9.qcow2`. The filesystem
-checker cleared the damaged saved-state inode and corrected allocation
-bitmaps and counters. The repaired guest was then started normally with
-8 GiB, two CPUs, and KVM, without bypassing startup filesystem checks. Root
-login reached the complete GNOME desktop. A graphical terminal reported
-`x86_64`, over 8 billion bytes of managed RAM, and `DESKTOP_LOGIN_OK`.
-The native AMD64 ABI probe also passed from the graphical terminal, including
-its file I/O, mappings above 4 GiB, and signal checks. The screenshot is
-[8 GiB desktop](screenshot/x64_8g_desktop.png).
+The desktop validation image has its damaged saved-state inode removed and
+allocation bitmaps and counters repaired by the filesystem checker. With 8 GiB,
+two CPUs, and KVM, it completes normal startup filesystem checks. Root login
+reached the complete GNOME desktop. A graphical terminal reported `x86_64`, over
+8 billion bytes of managed RAM, and `DESKTOP_LOGIN_OK`. The native AMD64 ABI
+probe also passed from the graphical terminal, including its file I/O, mappings
+above 4 GiB, and signal checks. The screenshot is [8 GiB
+desktop](screenshot/x64_8g_desktop.png).
 
 ## 2026-09-29 — Socket waits during GNOME login
 
@@ -1516,7 +1546,7 @@ its file I/O, mappings above 4 GiB, and signal checks. The screenshot is
   changing the file flags, so programs using it could unexpectedly block.
 - Implemented `FIONBIO`, removed the implicit deadline, applied explicit socket
   timeouts to UNIX reads/writes/messages and accept, and preserved signal
-  interruption and partial I/O. TCP connect now respects nonblocking mode and
+  interruption and partial I/O. TCP connect respects nonblocking mode and
   `SO_SNDTIMEO`. Datagram reads check nonblocking mode; UNIX sendmsg receives
   the syscall flags, including the file's `O_NONBLOCK`, rather than msg_flags.
 - Added `posix_socket_wait.sh` for ioctl toggling through dup, nonblocking reads,
@@ -1524,14 +1554,13 @@ its file I/O, mappings above 4 GiB, and signal checks. The screenshot is
   a 32-second delay. Runtime validation was blocked by a disk-image lock and a host socket
   bind failure. No GNOME before/after timing result is claimed.
 
-### Follow-up: TCP data lost before userspace accept
+### TCP data lost before userspace accept
 
-The next login trace disproved the timeout-only explanation. SettingsDaemon
-(PID 1610) wrote its 26-byte FAM request at tick 4474; the newly spawned FAM
-(PID 1615) did not call accept until tick 4497. FAM then waited in select, while
+SettingsDaemon (PID 1610) writes its 26-byte FAM request at tick 4474; FAM (PID
+1615) did not call accept until tick 4497. FAM then waited in select, while
 SettingsDaemon waited for its reply and gnome-session waited for SettingsDaemon.
-The trace still showed no progress at tick 31878. Removing the implicit timeout
-had removed the retry escape from this underlying stalled exchange.
+The trace shows no progress at tick 31878. A missing receive callback loses the
+request sent before userspace accept.
 
 `tcp_on_accept()` previously queued only the raw lwIP PCB. MOS installed its
 receive callbacks and allocated a receive buffer later in `do_accept()`. In
@@ -1544,9 +1573,8 @@ socket, and preserve its buffered data, EOF and errors when accepting it.
 Balance lwIP delayed-backlog accounting on the child PCB, and detach callbacks
 before freeing queued sockets on listener close or fd-allocation failure.
 Listener cleanup uses listener callbacks rather than stream-only PCB fields.
-Release compilation and whitespace review completed; no runtime tests were run
-for this follow-up. Login improvement remains to be
-verified with the rebuilt kernel.
+Release compilation passes. This entry contains no runtime validation of
+pre-accept data retention or GNOME login timing.
 
 ## 2026-09-29 - TCP listener exposed as a connected socket (`fam` crash)
 
@@ -1566,84 +1594,83 @@ the send buffer in the vectored send loop, including after a wait.
 Socket options also need to respect the smaller allocation. Keep `TCP_NODELAY`
 in the MOS socket, apply it only to full PCBs, and inherit it at accept. Its old
 write overlapped the listener's accept callback. `SO_SNDBUF` and `TCP_MAXSEG`
-queries now use defaults when no full TCP PCB is available.
+queries use defaults when no full TCP PCB is available.
 
 Validation: a baseline QEMU guest blocked on a listener write; GDB confirmed
-that the socket was `SS_CONNECTED` while pointing into the listen-PCB pool.
-The patched guest passes `posix_tcp_listener` (invalid data operations, peer
-lookup, polling, options, accept, and bidirectional traffic) and the existing
-`posix_socket` suite. The original `fam` session itself was not reproduced.
-The broader `posix_socket_wait` suite stalled in `unix_read()` / `sock_wait()`
-while testing signal interruption; it is not counted as a passing check.
+that the socket was `SS_CONNECTED` while pointing into the listen-PCB pool. The
+patched guest passes `posix_tcp_listener` (invalid data operations, peer lookup,
+polling, options, accept, and bidirectional traffic) and the existing
+`posix_socket` suite. The validation record contains no direct reproduction of
+the `fam` session. The broader `posix_socket_wait` suite stalled in
+`unix_read()` / `sock_wait()` while testing signal interruption; it is not
+counted as a passing check.
 
 ## 2026-09-29 - `posix_socket_wait` blocked forever waiting for SIGALRM
 
-The listener investigation above exposed a separate alarm-delivery bug.
 `check_alarm()` ran only from `do_signal()` on return to userspace. A task
-blocked in `sock_wait()` with no receive timeout never returned to userspace,
-so its `alarm(1)` never became pending and could not interrupt the read.
-The periodic service polled POSIX timers, but not the per-task alarm fields
-shared by `alarm()` and `setitimer(ITIMER_REAL)`.
+blocked in `sock_wait()` with no receive timeout never returned to userspace, so
+its `alarm(1)` never became pending and could not interrupt the read. The
+periodic service polled POSIX timers, but not the per-task alarm fields shared
+by `alarm()` and `setitimer(ITIMER_REAL)`.
 
-The service now checks those alarms under `ps_lock` and queues SIGALRM through
+The service checks those alarms under `ps_lock` and queues SIGALRM through
 `ps_queue_signal_unsafe()`, waking a waiting recipient when the signal is
-unmasked. The return-to-userspace check uses the same locked helper so the
-same expiration cannot fire twice. Masked alarms become pending without
-waking the task; canceled timers remain inactive.
+unmasked. The return-to-userspace check uses the same locked helper so the same
+expiration cannot fire twice. Masked alarms become pending without waking the
+task; canceled timers remain inactive.
 
-The socket-wait regression now also covers periodic ITIMER_REAL interruption
-of read/recv/recvmsg, cancellation, and a masked one-shot alarm becoming
-pending during poll and being delivered after unmasking.
+The socket-wait regression covers periodic ITIMER_REAL interruption of
+read/recv/recvmsg, cancellation, and a masked one-shot alarm becoming pending
+during poll and being delivered after unmasking.
 
-## 2026-09-29 - Restore alarm behavior after performance and ping regressions
+## 2026-09-29 - Return-path alarm expiration
 
-Restore the alarm check from before ee20379: an unarmed task returns without
-reading the clock or locking, and an armed task checks expiration on return to
-userspace. Remove the periodic alarm poll. Withdraw the subsequent active-alarm
-queue, IRQ0 wakeup/scheduling changes, and clock-function changes following
-a ping regression.
+The return-path alarm design checks expiration when an armed task returns to
+userspace. Unarmed tasks return without reading the clock or taking the alarm
+lock. There is no periodic alarm poll or IRQ-driven alarm wakeup in this
+configuration.
 
-This intentionally restores the known limitation that an indefinitely blocked
-read cannot discover its own alarm expiration. A replacement asynchronous
-wakeup design is not included. The cause of the reported ping regression has
-not been established by runtime diagnosis. Ping recovery was not validated by runtime tests or benchmarks.
+A task blocked indefinitely in a read cannot reach its user-return check and
+therefore cannot discover expiration of its own alarm. The record contains no
+runtime validation of ping recovery or performance for this configuration; the
+associated ping regression has no established runtime diagnosis.
 
-## 2026-09-29 - Bound socket waits by the current task's alarm
+---
 
-Restoring the original user-return alarm check also restored the hang in
-`posix_socket_wait`: `alarm(1)` cannot interrupt an indefinite socket read
-when expiration is checked only after that read returns.
+## 2026-09-29 - Socket waits bounded by task alarms
 
-Keep the original alarm check and also call it before and after a socket wait.
-Bound that wait by the earlier of the socket timeout and the current task's
-alarm, using the existing timed-wait queue. Leave the socket deadline intact:
-an unmasked, non-ignored alarm yields EINTR rather than a synthetic EAGAIN.
-Masked or ignored alarms may wake the internal wait but do not abort the I/O;
-the socket operation retries with its original deadline. Interval alarms
-retain the original rearming behavior.
+A user-return alarm check cannot interrupt an indefinitely blocked socket read
+because expiration is examined only after that read returns. The socket-wait
+design checks alarms before and after waiting and bounds the wait by the earlier
+of the socket timeout and the task's alarm deadline.
 
-This change is limited to socket waits. It does not add asynchronous alarm
-handling to other indefinite waits, nor change clock functions, IRQ handlers,
-the scheduler, or the periodic service. Wakeup latency remains subject to the
-existing timed-wait scheduler. Runtime tests and benchmarks were not run; socket behavior and ping
-remain unverified for this revision.
+An unmasked, non-ignored alarm returns `EINTR`. Masked or ignored alarms may
+wake the internal wait without aborting I/O; the operation retries against its
+configured socket deadline. Interval alarms retain their rearming behavior. The
+implementation uses the timed scheduler wait queue, so wakeup latency depends on
+its scheduling resolution.
+
+This design covers socket waits only. Other indefinite waits have no
+asynchronous alarm expiration in this configuration. The record contains no
+runtime socket, ping, or throughput results for it.
+
+---
 
 ## 2026-09-29 - Separate alarm expiration from interruptible I/O waits
 
-Replace the socket-specific alarm deadline workaround with independent alarm
-expiration and a common interruptible-wait contract. `ps_alarm.c` keeps only
-armed alarms in an expiry-ordered RB-tree, protected by `ps_lock`. Set/query
-operations use the existing monotonic clock. IRQ0 exit checks due entries
-using the existing tick counter, queues SIGALRM, and requests scheduling if a
-recipient becomes runnable. No PIT/clock implementation or wall-time setter is
-changed, and interrupt context does not sample PIT ports. Cancellation, fork,
-exit and reaping maintain the alarm-node lifetime. Periodic alarms advance from
-the previous deadline, skipping missed periods rather than drifting.
+Alarm expiration is independent of the common interruptible-wait contract.
+`ps_alarm.c` keeps only armed alarms in an expiry-ordered RB-tree, protected by
+`ps_lock`. Set/query operations use the existing monotonic clock. IRQ0 exit
+checks due entries using the existing tick counter, queues SIGALRM, and requests
+scheduling if a recipient becomes runnable. The IRQ hook uses published tick
+state rather than sampling PIT ports. Cancellation, fork, exit and reaping
+maintain the alarm-node lifetime. Periodic alarms advance from the previous
+deadline, skipping missed periods rather than drifting.
 
 User return only delivers pending signals. It does not read the clock or scan
 alarms. Empty alarm queues return immediately from the IRQ hook; other ticks
 inspect the earliest expiry rather than scanning every process. Resolution is
-still HZ=100 (10 ms), with handler execution subject to interrupt masking and
+HZ=100 (10 ms), with handler execution subject to interrupt masking and
 scheduling. This is not a high-resolution-timer implementation.
 
 Tasks explicitly distinguish interruptible waits from internal lock waits.
@@ -1659,20 +1686,18 @@ Socket receive/send paths, pipe and TTY/PTY cyclic-buffer waits, poll/select,
 log reads, pause/sigsuspend, nanosleep, futex and user file-lock waits use the
 common rules. AC97 DMA waits also honor interruption and stop DMA on exit.
 Kernel mutex/semaphore waits remain uninterruptible. Existing partial-I/O
-results and per-socket timeouts remain independent of alarm expiration.
-The audit also fixes FIFO O_NONBLOCK handling, zero-length pipe reads/writes,
-and PTY master read EINTR mapping.
+results and per-socket timeouts remain independent of alarm expiration. FIFO
+`O_NONBLOCK`, zero-length pipe reads/writes, and PTY master `EINTR` results
+follow the same wait contract.
 
-Scope: this unifies alarm expiration and interruptible waiting within MOS's
-existing per-task alarm and signal model. It does not implement Linux's full
-thread-group signal routing, SA_RESTART syscall-restart ABI, or a replacement
-for POSIX timer polling. Pre-existing protocol/driver limitations such as
-recvmmsg's timeout argument and asynchronous nonblocking audio are outside
-this change.
+Alarm expiration and interruptible waits use MOS's per-task alarm and signal
+model. It does not implement Linux's full thread-group signal routing,
+SA_RESTART syscall-restart ABI, or a replacement for POSIX timer polling.
+Pre-existing protocol/driver limitations such as recvmmsg's timeout argument and
+asynchronous nonblocking audio are outside this change.
 
-Validation: release kernel and test-kernel compilation plus static review.
-Runtime correctness, ping behavior, and throughput remain unverified
-for this revision.
+Validation covers release and test-kernel compilation and source checks. The
+dated record contains no runtime wait, ping, or throughput results.
 
 ## 2026-04-30 - Consolehelper-launched GUI tools failed through broken shebang argv
 
@@ -1727,24 +1752,16 @@ the shell, and emitted `cannot execute binary file`.
 
 ### Fix
 
-`execve` shebang handling now inserts the resolved script pathname after the
+`execve` shebang handling inserts the resolved script pathname after the
 interpreter and optional interpreter argument, then appends the original
 arguments starting at `argv[1]`. This matches Linux behavior and allows shells,
 Python, and other interpreters to open the actual script regardless of the
 caller's chosen `argv[0]`.
 
-The `posix_exec` test now includes a compiled regression helper that calls
+The `posix_exec` test includes a compiled regression helper that calls
 `execve()` on a script with a deliberately misleading `argv[0]`. The script
 verifies that `$0` is the script pathname and exits with a distinct status.
 `make` and shell syntax validation pass.
-
-### Key lesson
-
-Shebang execution is an ABI boundary, not an implementation detail. Preserving
-the caller's `argv[0]` is correct for native ELF execution, but scripts require
-the kernel-supplied script path so the interpreter can open the intended file.
-Desktop wrappers and privilege helpers often depend on this distinction because
-their service name and executable path are deliberately different.
 
 ---
 
@@ -1788,7 +1805,7 @@ made stale loader/allocator state observable as an X server crash.
 ### Fix
 
 `mremap` growth now extends the existing VM descriptor in place when the full
-target range is free. The new `vm_extend_map()` helper validates that the
+target range is free. The `vm_extend_map()` helper validates that the
 mapping starts and ends at the expected addresses, checks the whole extension
 range for overlap, then updates the VM key and region end together.
 
@@ -1796,32 +1813,23 @@ If in-place extension is not possible, `mremap` falls back to the existing
 move-and-copy path when `MREMAP_MAYMOVE` is present, or returns `ENOMEM` when
 movement is not allowed.
 
-Focused mmap tests now cover successful in-place growth and rejection of growth
+The mmap tests cover successful in-place growth and rejection of growth
 across a later overlapping VMA. `make` and `make test` both build successfully.
-
-### Key lesson
-
-`mremap` is not just an allocation convenience. Userspace loaders and allocators
-depend on Linux's resized-mapping semantics, including coherent VMA identity
-and full-range collision checks. Representing one resized mapping as adjacent
-independent VMAs can corrupt higher-level assumptions even when individual page
-fault handling appears correct.
 
 ---
 
 ## 2026-04-30 - Loopback `ping` could hang or print timeout errors after very fast replies
 
-Loopback ICMP echo could stop making progress after a reply with a
-sub-millisecond round-trip time. After the initial blocking issue was exposed,
-the same path could also print intermittent `ping: recvmsg: Connection timed
-out` messages between successful replies.
+Loopback ICMP echo can stop making progress after a sub-millisecond reply or
+report intermittent `ping: recvmsg: Connection timed out` errors between
+successful replies.
 
 ### Symptom
 
 `ping 127.0.0.1` usually printed replies normally, but could hang immediately
 after an unusually small RTT such as `0.034 ms`. Enabling verbose kernel
-logging made the hang disappear. Once socket receive timeouts were honored, the
-hang changed into visible `recvmsg` timeout errors after similarly fast replies.
+logging changes the race timing and can mask the hang. A receive timeout
+reported as `ETIMEDOUT` produces a visible ping error.
 
 ### Root cause
 
@@ -1834,41 +1842,31 @@ Two timing-sensitive socket behaviors were involved:
 - RH9 `iputils` `ping` uses `SO_RCVTIMEO` to let `recvmsg()` wait only until the
   next probe should be sent. MOS accepted `SO_RCVTIMEO` but did not apply it, so
   `ping` could block in `recvmsg()` instead of returning to send the next echo
-  request. The first timeout implementation returned `ETIMEDOUT`; Linux returns
-  `EAGAIN`/`EWOULDBLOCK` for socket receive timeout expiry, and RH9 `ping`
-  treats only that result as a normal timeout.
+  request. The timeout path returned `ETIMEDOUT`, while Linux returns
+  `EAGAIN`/`EWOULDBLOCK`. RH9 ping recognizes the latter as a normal timeout.
 
 ### Fix
 
-Socket waits now prepare the timed scheduler wait while holding the socket wait
+Socket waits prepare the timed scheduler wait while holding the socket wait
 lock, then release the socket lock and schedule. This closes the lost-wakeup
 window between waiter registration and sleeping.
 
-INET sockets now store `SO_RCVTIMEO` and `SO_SNDTIMEO`, and receive/send paths
+INET sockets store `SO_RCVTIMEO` and `SO_SNDTIMEO`, and receive/send paths
 use those values instead of always using the internal socket guard timeout.
 Application-requested socket timeout expiry returns `EAGAIN`; the internal
 30-second guard still returns `ETIMEDOUT`.
-
-### Key lesson
-
-Loopback networking can expose scheduler races because the reply may be
-generated before the sender has fully entered its sleep path. Socket timeout
-ABI details also matter: returning the wrong errno can turn a normal user-space
-polling strategy into a visible application error.
 
 ---
 
 ## 2026-04-30 - RH9 `shutdown -h now` stalled across xinetd, killall5, and final halt
 
-The RH9 shutdown path progressed through several separate compatibility
-boundaries before reaching the final halt. Each failure looked like a hang in
-the shutdown UI, but the syscall log showed a different missing Linux behavior
-at each stage.
+RH9 shutdown requires signal-pipe ioctls, stopped-task continuation, PID 1
+signal protection, and direct halt/poweroff commands. Defects in these
+interfaces stall service termination or terminate init before `/sbin/halt`.
 
 ### 1. `xinetd` stayed alive after `SIGTERM`
 
-- **Caught by:** tracing the shutdown log around `/etc/rc0.d/K50xinetd` and
-  comparing it with RH9 `xinetd` 2.3.11 signal handling.
+- **Reference:** RH9 xinetd 2.3.11 signal handling.
 - **Symptom:** the service script printed `Stopping xinetd:` and sent
   `kill(1303, 15)`, but `xinetd` repeatedly woke from `select()` and never
   exited.
@@ -1892,8 +1890,7 @@ ioctl(3, 541b, ...) = -25
 
 ### 2. `killall5` left the shutdown shell stopped
 
-- **Caught by:** tracing `/etc/rc0.d/S01halt` after the service shutdown phase
-  and reading RH9 SysVinit `killall5` source.
+- **Reference:** RH9 SysVinit `killall5`.
 - **Symptom:** the script reached
   `Sending all processes the TERM signal...`, then PID 1 resumed polling
   `/dev/initctl` while the rc0 shell stopped making progress.
@@ -1912,14 +1909,11 @@ kill(-1, 18)
   `SIGCONT` only behaved as an ignored signal and did not resume tasks in
   `ps_stopped`.
 - **Fix:** in [ps_signal.c](../src/ps/impl/ps_signal.c), make `SIGCONT` clear
-  pending stop signals and wake stopped tasks. Stop signals now clear pending
+  pending stop signals and wake stopped tasks. Stop signals clear pending
   `SIGCONT`, and `SIGKILL` wakes stopped tasks so they can terminate.
 
 ### 3. `killall5 -9` killed PID 1
 
-- **Caught by:** the next shutdown attempt progressed through the TERM/KILL
-  phase, then printed the kernel-side shutdown message before `/sbin/halt`
-  issued the terminal reboot syscall.
 - **Symptom:** after `Sending all processes the KILL signal...`, init exited
   and MOS entered the kernel shutdown helper early.
 - **Key log evidence:**
@@ -1939,8 +1933,6 @@ exit(/sbin/init, status=8900)
 
 ### 4. Final `reboot(2)` calls came from the rc0 shell, not PID 1
 
-- **Caught by:** enabling durable reboot syscall logging and tracing the final
-  `/sbin/halt` calls.
 - **Symptom:** `/sbin/halt` issued `BMAGIC_POWEROFF` and `BMAGIC_HALT`, but
   MOS treated them as another request to init rather than powering off.
 - **Key log evidence:**
@@ -1960,14 +1952,6 @@ reboot(magic1=fee1dead, magic2=28121969, cmd=0) from pid 1478
   `POWER_OFF` and `HALT` reboot commands as direct hardware actions regardless
   of caller PID. Restart remains routed conservatively unless issued by PID 1.
 
-### Key lesson
-
-Orderly SysV shutdown depends on several old Linux process and device
-semantics outside the final `reboot(2)` syscall. Signal-pipe ioctls, job-control
-resume behavior, PID 1 signal immunity, and forced halt command handling all
-need to match Linux closely or the same shutdown command can appear to hang at
-different user-visible messages.
-
 ---
 
 ## 2026-04-29 - GNOME desktop home and trash links lost their icons
@@ -1979,9 +1963,7 @@ startup.
 
 ### 1. Nautilus truncated special desktop links, then aborted the rewrite
 
-- **Caught by:** tracing the syscall log around `/root/.gnome-desktop` and
-  comparing the observed operations with Nautilus 2.2 and GNOME desktop item
-  save behavior.
+- **References:** Nautilus 2.2 and GNOME desktop-item save operations.
 - **Symptom:** both special desktop entries initially contained valid
   `X-Nautilus-Icon` keys, but later became zero-length regular files. After
   that, Nautilus could no longer parse the entries as special links, so the
@@ -2015,13 +1997,6 @@ ftruncate64(19, 0)
   - invalidate the shared page cache, update the VFS inode size, clamp the file
     position when needed, and refresh file modification/change timestamps
 
-### Key lesson
-
-`O_TRUNC` support alone is not enough for Linux desktop compatibility. Old
-GNOME userspace performs an explicit `ftruncate64()` as part of saving
-`.desktop` files, and failure after a successful truncating open can destroy
-the original metadata before the replacement contents are written.
-
 ---
 
 ## 2026-04-29 - RH9 `LABEL=/` fstab root remount failed before `mount(2)`
@@ -2038,9 +2013,7 @@ replacement was not compatible with the real Linux boot path.
 
 ### 1. `mount` failed while resolving the label in userspace
 
-- **Caught by:** tracing the boot log around the
-  `Remounting root filesystem in read-write mode` step and comparing it with
-  the Red Hat 9 util-linux 2.11y `mount` source.
+- **Reference:** RH9 util-linux 2.11y `mount` label resolution.
 - **Symptom:** `/bin/mount` printed `mount: no such partition found` and
   exited with status `100` during `mount -n -o remount,rw /`. No kernel
   `mount(2)` syscall for the root remount appeared after the failure.
@@ -2071,13 +2044,6 @@ ioctl(4, 1260, ...) = -25
     configured loop devices so label and filesystem probes see normal block
     device behavior there as well
 
-### Key lesson
-
-Boot compatibility with old Linux userspace can depend on pre-syscall probing
-behavior. A failing `mount` command does not necessarily mean the kernel
-rejected `mount(2)`; it may mean userspace could not resolve an fstab source
-because a block-device compatibility ioctl was missing.
-
 ---
 
 ## 2026-04-29 - `exit_group()` could leave stale futex waiters on killed thread stacks
@@ -2089,10 +2055,6 @@ the global futex waiter list.
 
 ### 1. Futex wake dereferenced a stale waiter node
 
-- **Caught by:** resolving `c022f039` against the release kernel symbols and
-  checking the generated instruction stream, which showed the faulting
-  instruction loading the waiter state from the list entry being walked by
-  `ps_futex_wake_locked()`.
 - **Symptom:** the kernel faulted at `ps_futex_wake_locked()` while reading
   through an address near `0xeedad000`, below the kmap window and not in a
   normal user mapping.
@@ -2115,31 +2077,18 @@ the global futex waiter list.
     `ps_kill_thread_group()` before removing a killed sibling thread from the
     process manager and before its kernel stack can be reaped
 
-### Key lesson
-
-Any wait object stored on a task's kernel stack must be unlinked from global
-wait queues before asynchronous thread teardown can free that stack. Scheduler
-queue removal and timer disarming are not enough when a blocking syscall also
-publishes a stack-local waiter through a subsystem-specific list.
-
 ---
 
-## 2026-04-29 - `gnome-terminal` `Ctrl-C` still could not interrupt `ping`
+## 2026-04-29 - PTY signal characters were delayed until slave reads
 
-This failure looked at first like the earlier raw-read wakeup bug, but the
-remaining symptom was narrower: interactive programs that do not read stdin
-still ignored `Ctrl-C` while running behind a PTY. The right approach was to
-follow where MOS actually interprets PTY input bytes instead of assuming the
-existing `ISIG` checks were enough.
+Foreground programs that do not read stdin, such as `ping`, fail to receive
+`SIGINT` from PTY input when signal characters are processed only by the slave
+read path.
 
 ### 1. PTY `Ctrl-C` depended on the foreground program reading stdin
 
-- **Caught by:** tracing the PTY line-discipline path and comparing it with
-  the already-working virtual-console path in
-  [tty.c](../src/dev/impl/tty.c).
-- **Symptom:** pressing `Ctrl-C` in `gnome-terminal` still failed to stop
-  `ping` immediately even though `Ctrl-C` worked better for programs blocked in
-  terminal reads.
+- **Symptom:** pressing `Ctrl-C` in `gnome-terminal` did not stop `ping`,
+  while programs blocked in terminal reads could receive the signal.
 - **Root cause:** MOS handled PTY signal characters too late. On the PTY path,
   `VINTR`, `VQUIT`, and `VSUSP` were recognized only when the slave side later
   executed `read()`. That works for shells or utilities actively reading the
@@ -2159,25 +2108,15 @@ existing `ISIG` checks were enough.
   - remove the duplicate PTY read-side signal-generation path so the same byte
     cannot raise the signal a second time later
 
-### Key lesson
-
-For PTYs, `ISIG` handling must happen when input is delivered to the terminal,
-not only when a process eventually reads from it. Otherwise foreground jobs
-that do not consume stdin, such as `ping`, can never see `Ctrl-C` even though
-the signal-character logic exists in the read path.
-
 ## 2026-04-29 - `gnome-terminal` lost immediate `Ctrl-C` and turned Up-arrow into `8`
 
-This bug looked at first like a terminal-emulator or readline problem because
-the visible failures happened inside `gnome-terminal` and bash. The useful
-approach was to separate the two symptoms and follow each one down to the
-kernel boundary instead of patching PTY behavior blindly.
+In `gnome-terminal`, signal-character reads delay `SIGINT` until another
+keystroke, and lost PS/2 extended-key prefixes convert cursor-Up into keypad
+8. Linux console keysym mismatches also affect XFree86 key interpretation.
 
-### 1. `Ctrl-C` generated `SIGINT` only after a follow-up key
+### 1. `Ctrl-C` generated `SIGINT` only after another keystroke
 
-- **Caught by:** reproducing the shell behavior in `gnome-terminal`, then
-  comparing MOS raw TTY/PTTY reads with bash 2.05b's real tty setup in
-  `rltty.c`.
+- **Reference:** Bash 2.05b `rltty.c` noncanonical terminal setup.
 - **Symptom:** pressing `Ctrl-C` did not interrupt the foreground program
   immediately. No visible effect occurred until a subsequent keystroke such as
   Backspace or an arrow key arrived.
@@ -2199,9 +2138,6 @@ kernel boundary instead of patching PTY behavior blindly.
 
 ### 2. Up-arrow intermittently arrived as keypad `8`
 
-- **Caught by:** reading
-  `out/x86/release/krn.log`, then correlating the
-  raw keyboard reads with the X server's output into the PTY.
 - **Symptom:** Up-arrow in `gnome-terminal` sometimes produced the expected
   cursor sequence, but often inserted a literal `8`.
 - **Key log evidence:**
@@ -2229,11 +2165,9 @@ kernel boundary instead of patching PTY behavior blindly.
 
 ### 3. Linux console keyboard compatibility also needed Linux-style keysyms
 
-- **Caught by:** checking how XFree86 4.3.0 reads `KDGKBENT` and keyboard mode
-  ioctls from a Linux console.
-- **Symptom:** even before the prefix-loss bug was isolated, MOS was exporting
-  keyboard symbols that did not match Linux `keyboard.h`, which made extended
-  key interpretation fragile for X.
+- **Reference:** XFree86 4.3.0 console keyboard ioctls.
+- **Symptom:** MOS exported keyboard symbols that did not match Linux
+  `keyboard.h`, affecting XFree86 extended-key interpretation.
 - **Root cause:** MOS's `KDGKBENT` encoding and default keymap entries did not
   match the Linux console values that XFree86 expects for keypad, cursor, and
   modifier symbols.
@@ -2244,37 +2178,24 @@ kernel boundary instead of patching PTY behavior blindly.
     for keypad, cursor, navigation, and right-side modifier keycodes with the
     expected Linux symbols
 
-### Key lesson
-
-When an old X stack turns an arrow key into a printable digit, inspect the raw
-keyboard bytes before blaming the PTY or shell. Here the visible `"8"` was a
-faithful consequence of MOS occasionally dropping the `0xe0` extended-key
-prefix, and the `Ctrl-C` delay was a separate `-EINTR` wakeup bug in raw tty
-reads.
-
 ## 2026-04-26 - `strace ps aux` over SSH could #GP on `intr_exit: pop %gs`
 
-Initial triage suggested a ptrace or TLS setup bug because the visible crash
-was always a user task dying with `#GP(error_code = 0x30)` while traced
-through SSH. The decisive clue came from logging both the task's saved TLS
-state and the live hardware GDT entries at fault time.
+Tracing a user task over SSH can trigger `#GP(error_code = 0x30)` in `intr_exit:
+pop %gs`. At the fault, the task's saved TLS descriptor and the CPU's installed
+GDT descriptor disagree.
 
 ### 1. Traced `/usr/sbin/sshd` and `/bin/ps` faulted in `intr_exit`
 
-- **Caught by:** logging `#GP` state in [int.c](../src/int/impl/int.c) and matching
-  the faulting EIP against [assemble.s](../out/x86/debug/assemble.s), which
-  showed the crash at `intr_exit: pop %gs`.
 - **Symptom:** `strace ps aux` in an SSH session could kill either `sshd` or
   the traced `/bin/ps` with logs like `gs=0x33` or `gs=0x1b`, always faulting
   in the interrupt-exit path rather than in ordinary userspace code.
 - **Root cause:** MOS stores Linux TLS slots 6..8 in the shared CPU GDT even
   though their contents are per-task. Some ptrace-stop and nested
-  interrupt/syscall-return paths reached `intr_exit` without refreshing those
-  live GDT entries for the current task first. The logs showed the mismatch
-  directly: the task's `tls_desc[0]` for slot 6 was valid while live `gdt[6]`
-  was zero, so `pop %gs` revalidated selector `0x33` against an empty
-  descriptor and raised `#GP(error_code = 0x30)`. The later `/bin/ps` traces
-  also exposed a second half of the problem: MOS left user `%fs/%gs` live in
+  interrupt/syscall-return paths reached `intr_exit` without refreshing those live
+  GDT entries for the current task first. The logs showed the mismatch directly:
+  the task's `tls_desc[0]` for slot 6 was valid while live `gdt[6]` was zero, so
+  `pop %gs` revalidated selector `0x33` against an empty descriptor and raised
+  `#GP(error_code = 0x30)`. The `/bin/ps` trace also shows user `%fs/%gs` live in
   ring 0, making nested interrupt returns depend on user selectors while still
   executing kernel code.
 - **Fix:**
@@ -2286,24 +2207,19 @@ state and the live hardware GDT entries at fault time.
   - in [ps.c](../src/ps/impl/ps.c), centralize that live TLS/LDT reload logic in
     `ps_load_task_segments()` so both the scheduler and interrupt-exit path use
     the same code
-  - keep the already-needed clone/TLS fixes in [ps_clone.c](../src/ps/impl/ps_clone.c)
-    and `ps_tls.c` so new threads inherit only the active
-    TLS state and plain `set_thread_area()` does not silently rewrite the
-    saved user `%gs`
+  - preserve clone/TLS handling in [ps_clone.c](../src/ps/impl/ps_clone.c)
+    and `ps_tls.c` so new threads inherit only the active TLS state and plain
+    `set_thread_area()` does not silently rewrite the saved user `%gs`
 
 ## 2026-04-26 - GUI Emacs mapped a frame but stalled before usable content
 
-This issue required three separate kernel fixes because the visible symptom
-changed as each blocker was removed. The important part was not to patch
-around the blank window directly, but to keep explaining why old RH9 Emacs
-behaved differently from simpler X clients.
+Emacs 21.2 GUI startup depends on clock sampling, RH9 interval-timer
+granularity, and asynchronous X-socket notification. Defects in these three
+interfaces produce a blank window, repeated alarms, or delayed input.
 
 ### 1. `gettimeofday()` could move backward and trap Emacs in `SIGALRM`
 
-- **Caught by:** reading `out/x86/release/krn.log`
-  during the GUI Emacs investigation, then comparing the timer path with the
-  real Emacs 21.2 sources under
-  `emacs-21.2-rh9-src`.
+- **Reference:** Emacs 21.2 atimer implementation.
 - **Symptom:** GUI `emacs` did not appear at all, and the syscall log showed a
   hot loop of `sig_deliver(14)`, `setitimer()`, and `gettimeofday()` during X
   startup.
@@ -2317,13 +2233,10 @@ behaved differently from simpler X clients.
   wrap happened inside the same `tickets` epoch. This stopped the false
   one-jiffy jumps caused by noisy PIC IRR reads.
 
-### 2. `ITIMER_REAL` was too fine-grained compared with RH9/Linux 2.4
+### 2. Interval-timer granularity differed from RH9/Linux 2.4
 
-- **Caught by:** rerunning after the timekeeping fix and observing that Emacs
-  now got much farther into X setup but still spent excessive time in
-  `SIGALRM`/`setitimer()` churn.
-- **Symptom:** a frame began to appear, but Emacs still behaved as if its timer
-  retries were far more aggressive than on the target RH9 userspace.
+- **Symptom:** Emacs repeatedly rearms short interval timers during GUI startup,
+  delaying X event processing.
 - **Root cause:** old Linux 2.4 i386 `ITIMER_REAL` behavior is effectively
   jiffy-based at `HZ=100`. MOS was honoring very small nonzero timer values too
   precisely. Emacs's deferred 1 ms retry path in its atimer code therefore ran
@@ -2334,11 +2247,7 @@ behaved differently from simpler X clients.
 
 ### 3. X sockets accepted `FASYNC`/`F_SETOWN` but never delivered `SIGIO`
 
-- **Caught by:** reading the updated Emacs-focused log once a frame existed and
-  correlating it with the X input path in
-  `xterm.c`
-  and the `SIGIO` setup in
-  `keyboard.c`.
+- **References:** Emacs `xterm.c` X input and `keyboard.c` SIGIO setup.
 - **Symptom:** Emacs mapped a window and exchanged real X traffic, but it kept
   falling back to sluggish polling / sync-style behavior instead of using its
   intended async X input path. The log showed pid `1632` installing a `SIGIO`
@@ -2355,60 +2264,34 @@ behaved differently from simpler X clients.
   - in [sock.c](../src/net/impl/sock.c), teach `sock_wakeup()` to send the async
     owner `SIGIO` (or the configured alternate signal) when `FASYNC` is set
 
-### Key lesson
-
-Old GUI applications often fail through compatibility layering rather than one
-big crash. Emacs needed:
-- a monotonic `gettimeofday()`
-- Linux-2.4-like `ITIMER_REAL` granularity
-- actual `SIGIO` delivery on X sockets after accepting `F_SETOWN`/`FASYNC`
-
-Once all three matched old Linux expectations closely enough, GUI Emacs worked
-normally instead of stopping at a blank or half-alive frame.
-
 ## 2026-04-26 - Nautilus text preview crashed after `exit_group()` left sibling threads alive
 
-Initial triage suggested a stack-limit or signal-trampoline bug because the
-visible fault address tracked `MAX_USER_STACK`, and the first crash always
-landed on a page boundary near the top of user memory. The decisive clue was
-following the thread-group lifetime all the way through
-`nautilus-text-view` shutdown instead of stopping at the first `SIGSEGV`.
+`nautilus-text-view` sibling threads can survive `exit_group(0)` and execute
+after shared VM or file state has been released. The recorded fault occurs in
+the VDSO helper at the mmap/stack boundary.
 
 ### 1. File preview worker crashed at `befff000` / `befff002`
 
-- **Caught by:** reading
-  `out/x86/release/krn.log` during the Nautilus
-  file-preview investigation, then mapping the faulting addresses against the
-  kernel signal and VDSO code.
 - **Symptom:** previewing simple files such as `hello.c` in Nautilus could run
   for a long time, but opening file contents through `nautilus-text-view`
   eventually ended with `segfault: address befff000, eip befff002`.
-- **What made it misleading:** `befff000` moved when `MAX_USER_STACK` changed,
-  so it initially looked like the kernel was always walking one page past the
-  allowed user stack floor.
-- **Why that interpretation was wrong:** on MOS, the VDSO helper page is mapped
-  just below the mmap/stack boundary in
-  [vdso.c](../arch/x86/mm/impl/vdso.c), so `befff000` was actually the VDSO page, and
-  `eip = befff002` landed inside `__kernel_vsyscall` rather than inside a true
-  stack-growth fault.
+- **Address identity:** the VDSO helper page is mapped
+  just below the mmap/stack boundary in [vdso.c](../arch/x86/mm/impl/vdso.c), so
+  `befff000` was actually the VDSO page, and `eip = befff002` landed inside
+  `__kernel_vsyscall` rather than inside a true stack-growth fault.
 
-### 2. The real failure was thread-group exit, not stack growth
+### 2. Thread-group exit released shared state before sibling termination
 
-- **Caught by:** correlating the crash with the earlier `exit_group(0)` lines
-  from the same `nautilus-text-view` instance in the syscall log.
 - **Symptom:** pid `1637` called `exit_group(0)` and exited cleanly, but sibling
-  thread `1638` remained alive and later faulted while returning through the
-  VDSO helper. An intermediate attempt to kill siblings by queuing `SIGKILL`
-  removed the VDSO crash but exposed a new debug-build hang in
-  [_task_sched()](../src/ps/impl/sched/ps_switch.c) while the scheduler tried to
-  consider threads whose shared process state had already been torn down.
+  thread `1638` remained alive and later faulted while returning through the VDSO
+  helper. Scheduler access to threads with released shared state can also hang in
+  [_task_sched()](../src/ps/impl/sched/ps_switch.c).
 - **Root cause:** `sys_exit_group()` only routed through `sys_exit()`, so the
   caller destroyed process-wide state in `do_exit()` while same-`tgid`
   `CLONE_THREAD` siblings still existed. Because MOS shares the VM and higher
   process state across NPTL threads, any surviving sibling could later run with
-  freed address-space or file-table state. The first visible fallout happened
-  to be a VDSO fault; after a partial fix, the same bug surfaced as a scheduler
-  hang.
+  freed address-space or file-table state. Access to that released state can cause
+  VDSO faults or scheduler hangs.
 - **Fix:**
   - in [syscall_proc.c](../src/syscall/impl/syscall_proc.c), teach
     `sys_exit_group()` to terminate the whole thread group instead of only the
@@ -2419,32 +2302,17 @@ following the thread-group lifetime all the way through
   - reap those sibling threads' per-thread resources immediately, while
     explicitly preventing the shared VM from being freed multiple times
 
-### Key lesson
-
-For old RH9/NPTL userspace, `exit_group()` compatibility is not optional. If a
-thread-group leader exits and frees shared process state before sibling threads
-are actually gone, the eventual symptom may look like a random signal-frame
-crash, a VDSO fault, or even a scheduler hang. When the log shows a helper
-thread surviving past `exit_group(0)`, debug thread-group teardown first.
-
 ---
 
 ## 2026-04-19 - Nautilus hung in `nautilus_self_check_directory()` and later crashed in GLib allocation
 
-This issue initially presented as a GUI application hang, but the useful clue
-was that the hang consistently appeared while Nautilus was walking its
-self-check startup path around directory and volume monitoring. The userspace
-source and syscall log showed that the real failure was in old RH9/NPTL thread
-setup, with a second bug waiting behind it in shared heap bookkeeping.
+Nautilus self-check startup can block in the NPTL thread-creation handshake when
+TLS state is inconsistent. A separate heap-bookkeeping defect causes GLib
+allocation failures in processes with a shared address space.
 
 ### 1. `nautilus -c` blocked during `nautilus_self_check_directory()`
 
-- **Caught by:** reading `out/x86/release/krn.log` during investigation of
-  `nautilus_self_check_directory`, then correlating that with the RH9 Nautilus
-  and `gnome-vfs` sources under
-  `nautilus-2.4.2`
-  and
-  `gnome-vfs-2.4.2`.
+- **References:** Nautilus 2.4.2 and gnome-vfs 2.4.2 file-monitor startup.
 - **Symptom:** Nautilus loaded `libfam.so`, went through the file-monitor
   setup path used to watch `/etc/fstab`, issued `clone(...)`, and then the
   parent thread stopped in a futex handshake instead of continuing.
@@ -2463,14 +2331,11 @@ setup, with a second bug waiting behind it in shared heap bookkeeping.
     threads
   - clear stale TLS/LDT descriptor state across `execve()`
 
-### 2. After the TLS fix, Nautilus moved forward and then crashed with `GLib-ERROR **: gmem.c:173: failed to allocate 32774 bytes`
+### 2. Per-task heap metadata caused GLib allocation failure
 
-- **Caught by:** rerunning after the TLS/thread fix and reading the next
-  failure in `out/x86/release/krn.log`.
-- **Symptom:** Nautilus no longer hung in helper-thread startup. It progressed
-  into later desktop initialization, but a helper thread eventually aborted in
-  GLib allocation and the main client then reported follow-on GUI protocol
-  fallout such as an unexpected Xlib async reply.
+- **Symptom:** a Nautilus helper aborts with `GLib-ERROR **: gmem.c:173:
+  failed to allocate 32774 bytes`; the main client may then report an unexpected
+  Xlib async reply.
 - **Root cause:** MOS treated `start_brk/brk` as per-task state inside
   `user_enviroment` even for `CLONE_VM` threads. That meant multiple threads
   in one shared address space could grow or shrink the heap mapping while still
@@ -2486,15 +2351,6 @@ setup, with a second bug waiting behind it in shared heap bookkeeping.
     image's `start_brk/brk`
   - update [syscall_proc.c](../src/syscall/impl/syscall_proc.c) and `/proc` heap
     reporting paths to use the shared heap-state object
-
-### Key lesson
-
-For old RH9 desktop software, "threads share an address space" is not just
-about sharing page tables. The kernel also has to share the higher-level
-address-space bookkeeping that userspace expects to be process-wide, such as
-the active TLS selector and the current program break. If those metadata stay
-per-task while mappings are shared, old NPTL and GLib code will fail in ways
-that look like random userspace hangs or allocation bugs.
 
 ## 2026-04-17 - SSH large output stalls until keypress (`tcp_on_sent` missing)
 
@@ -2514,7 +2370,8 @@ data packet (e.g. an SSH window-adjust or keystroke from the client), which
 fired `tcp_on_recv` → `sock_wakeup` as a side effect.
 
 **Fix**: Added `tcp_on_sent` callback (calls `sock_wakeup`) and registered it
-via `tcp_sent(pcb, tcp_on_sent)` in `tcp_setup_callbacks` (`src/net/sock_cb.c`).
+via `tcp_sent(pcb, tcp_on_sent)` in `tcp_setup_callbacks`
+(`src/net/impl/sock_cb.c`).
 
 **Why only SSH and not file redirect**: File redirect sends no terminal output
 over the TCP connection, so the TCP send buffer never fills. Inside the guest
@@ -2541,25 +2398,22 @@ that verbose kernel logging could mask.
 - in [ps_alg_rr.c](../src/ps/impl/alg/ps_alg_rr.c), make the public
   `ps_put_to_ready_queue()` wake helper transition tasks only when they are
   still in `ps_waiting`
-- leave `ps_put_to_ready_queue_unsafe()` unchanged for internal scheduler paths
+- use `ps_put_to_ready_queue_unsafe()` for internal scheduler paths
   that intentionally enqueue newly created or timer-expired tasks
 - keep PTY/socket/lock wakeups on the public helper so stale poll notifications
   stop perturbing runnable tasks
 
 ---
 
-## 2026-04-14 - PTY controlling `/dev/tty` lookup broke `man`, and `strncpy()` still overflowed
+## 2026-04-14 - PTY controlling-terminal lookup and `strncpy` bounds
 
-This entry addresses two user-visible regressions in SSH-backed sessions:
-`man ping` consistently failed once it invoked `less`, and the SSH client still
-occasionally reported a bogus packet length even after the TCP tail-drop fix.
-The first issue was a controlling-terminal resolution bug on PTYs; the second
-was a stale libc helper overflow that could scribble on adjacent state.
+SSH-backed sessions expose two defects: `/dev/tty` lookup does not resolve a PTY
+controlling terminal, and `strncpy` writes one byte beyond a full destination
+buffer. The recorded symptoms are pager failure and intermittent SSH
+packet-framing errors.
 
 ### 1. `man ping` failed in SSH sessions with `Error executing formatting or display command`
 
-- **Caught by:** reading `out/krn.log` around the `man`/`less`
-  pipeline after reproducing `man ping` from an SSH-backed shell
 - **Symptom:** `man` successfully formatted the page and `less` started, but
   the pager then failed while reopening `/dev/tty`, after which `man` printed
   `Error executing formatting or display command`.
@@ -2581,13 +2435,10 @@ was a stale libc helper overflow that could scribble on adjacent state.
     PTY session, makes it controlling via `TIOCSCTTY`, and verifies a child can
     reopen `/dev/tty`
 
-### 2. An old `strncpy()` bug could still corrupt nearby state
+### 2. `strncpy` wrote beyond the destination buffer
 
-- **Caught by:** reviewing low-level helpers while chasing the remaining
-  intermittent SSH corruption symptom
-- **Symptom:** the failure mode was sporadic and looked like memory corruption:
-  the SSH client would sometimes decode nonsense packet framing even though the
-  earlier TCP receive truncation bug had already been fixed.
+- **Symptom:** the SSH client intermittently reports invalid packet framing
+  when adjacent state is overwritten.
 - **Root cause:** [kstring.c](../src/lib/impl/kstring.c) implemented `strncpy()`
   incorrectly. When the source length was at least `len`, the function copied
   `len` bytes and then still wrote a terminating NUL at `dst[len]`, one byte
@@ -2600,16 +2451,13 @@ was a stale libc helper overflow that could scribble on adjacent state.
 
 ## 2026-04-14 - AF_UNIX stream `SCM_RIGHTS` coalescing stalled `gnome-terminal` for 30 seconds
 
-This issue first looked like a slow GNOME Terminal startup problem in
-userspace, but the log/source correlation pointed to a kernel protocol bug.
-The helper was not slow at opening PTYs; it was getting stuck because MOS
-merged two adjacent fd-passing records into one stream receive.
+GNOME Terminal startup waits about 30 seconds when a Unix stream receive
+consumes both descriptor-passing records from `gnome-pty-helper`, leaving VTE's
+second receive blocked.
 
 ### 1. `gnome-terminal` paused for about 30 seconds before opening
 
-- **Caught by:** reading `out/krn.log` around the
-  `gnome-pty-helper` exchange and matching it against the old VTE helper source
-  in `vte-0.11.11`
+- **Reference:** VTE 0.11.11 `gnome-pty-helper` protocol.
 - **Symptom:** the helper successfully opened `/dev/pts/0` and updated
   `utmp`/`wtmp`, but GNOME Terminal did not continue until the helper timed out
   roughly 30 seconds later and VTE fell back to plain `/dev/ptmx` allocation.
@@ -2641,8 +2489,6 @@ itself was corrupted.
 
 ### 1. SSH occasionally failed with `Bad packet length 1349676916`
 
-- **Caught by:** running an SSH client against the guest and seeing sporadic
-  packet framing failures instead of a stable session
 - **Symptom:** the client reported `Bad packet length 1349676916.` This is not
   a normal SSH protocol rejection; it means the client decoded garbage where a
   valid packet header should have been.
@@ -2660,14 +2506,12 @@ itself was corrupted.
 
 ## 2026-04-11 - fs page-cache refill allocated before evicting, breaking `gcc` under tighter cache pressure
 
-Initial triage suggested an `execve()` or early-userspace startup problem
-because `cc1` crashed very early during `gcc -o hello hello.c` under the full
-System V boot, while the same command worked in a simpler `/bin/bash` boot.
-The real trigger was the filesystem page-cache replacement order.
+`gcc -o hello hello.c` can fail during `cc1` startup under SysV init memory
+pressure when a full filesystem cache allocates a replacement page before
+reclaiming an evictable entry.
 
 ### 1. `gcc` failed under System V boot when `PAGE_CACHE_SIZE` was small
 
-- **Caught by:** comparing the `gcc` repro under SysV init vs direct bash boot
 - **Symptom:** `cc1` segfaulted during early startup under the normal init
   boot, but succeeded when the system booted straight to bash. Increasing
   `PAGE_CACHE_SIZE` made the problem disappear.
@@ -2685,14 +2529,12 @@ The real trigger was the filesystem page-cache replacement order.
 
 ## 2026-04-11 — PTY writes silently truncated output beyond one buffer page
 
-Initial triage suggested an `ssh`/`select()` wakeup problem because the client
-showed only the first chunk of `ls -alh /bin`. The trace was more direct: the
-PTY layer was dropping data once the stream grew past the 4 KiB cyclic buffer.
+PTY writes exceeding the 4 KiB cyclic-buffer capacity can discard data while
+reporting the full requested byte count. SSH output such as `ls -alh /bin` is
+then truncated despite the command exiting normally.
 
 ### 1. `ssh` showed only the first 4096 bytes of PTY output
 
-- **Caught by:** running `ls -alh /bin` in an SSH session and reading
-  `out/krn.log`
 - **Symptom:** `ls` exited normally, but the client only displayed the first
   part of the directory listing.
 - **Root cause:** [pts.c](../src/dev/impl/pts.c) used `cyb_putbuf(..., 0, 0)` in
@@ -2710,10 +2552,11 @@ PTY layer was dropping data once the stream grew past the 4 KiB cyclic buffer.
   - keep the `ONLCR` translation path consistent with the same partial-write
     rules
 
-### 2. The first large-transfer regression test deadlocked
+### 2. Large-transfer regression required concurrent reading
 
-- **Caught by:** running `script.posix_nonblock_ipc`
-- **Symptom:** the new PTY large-write test blocked forever.
+- **Regression coverage:** `script.posix_nonblock_ipc`.
+- **Symptom:** a blocking 8 KiB PTY write cannot complete with a 4 KiB
+  buffer and no concurrent reader.
 - **Root cause:** the test tried to do a blocking 8 KiB write into a 4 KiB PTY
   buffer with no concurrent reader. That is valid kernel behavior, so the test
   itself was wrong.
@@ -2723,13 +2566,12 @@ PTY layer was dropping data once the stream grew past the 4 KiB cyclic buffer.
 
 ## 2026-04-11 — PTY master spurious HUP breaks `screen`; `ssh` client can't exit
 
-Two regressions from the same select/HUP change pulled in opposite directions:
-`screen` killed its window immediately after forking the shell, and `ssh` hung
-forever after the remote session closed.
+PTY hangup reporting must distinguish a slave that has never opened from a
+closed slave. Premature master HUP closes `screen` windows; omitting HUP from
+select read readiness leaves SSH clients waiting after session closure.
 
 ### 1. `screen` window died immediately after creation
 
-- **Caught by:** running `screen` from a login shell
 - **Symptom:** screen created one window, printed the shell prompt briefly, then
   exited cleanly (status 0). Kernel log showed `read(ptmx_master) = 0` at the
   first `select()` after the `fork()`.
@@ -2739,11 +2581,10 @@ forever after the remote session closed.
   `cyb_writer_count(s2m) == 0` and HUP fired. Screen read 0 bytes (EOF),
   interpreted it as window exit, and tore the window down.
 - **Root cause (deeper):** `cyb_writer_count(s2m) == 0` cannot distinguish
-  "no slave has ever written" from "a slave opened and then exited". A plain
-  flag `slave_ever_opened` would fix this, *but* `fs_chown` calls
-  `vfs_open(O_RDONLY)` on the slave path, which (unconditionally) called
-  `cyb_writer_open(s2m)` and would have set that flag — silently defeating the
-  gate before the real shell opened the slave.
+  "no slave has ever written" from "a slave opened and then exited". Metadata
+  operations such as `fs_chown` opened the slave with `O_RDONLY`, incrementing
+  buffer endpoint counts and marking it as opened before the shell acquired the
+  terminal.
 - **Fix:**
   - [pts_internal.h](../src/dev/impl/pts_internal.h): add `slave_ever_opened` to
     `pts_pair`.
@@ -2752,49 +2593,42 @@ forever after the remote session closed.
     access; `O_PATH` is the correct flag, and it already gates the cyclic
     buffer and slave-count operations in the slave open path.
   - [pty.c](../src/dev/impl/pty.c) and [ptmx.c](../src/dev/impl/ptmx.c): set
-    `slave_ever_opened = 1` inside the existing `if (!(flag & O_PATH))` block —
-    no new conditionals needed.
+    `slave_ever_opened = 1` only for opens without `O_PATH`.
   - [pts.c](../src/dev/impl/pts.c): gate master HUP on
     `p->slave_ever_opened && cyb_writer_count(p->s2m) == 0`.
 
 ### 2. `ssh` client could not exit after the remote session closed
 
-- **Caught by:** running `ssh user@host`, logging out, observing the client
-  hanging.
 - **Symptom:** the ssh client process stayed alive indefinitely after the server
   session ended.
-- **Root cause:** an earlier attempt to fix the screen regression suppressed
-  CHR HUP from `readfds` in `select()`. The ssh client's controlling terminal
-  is a pty slave; when the master is closed, the slave gets HUP. Without HUP
-  in `readfds`, the client's `select()` returned but stdin showed nothing, so
-  the client did not know to exit.
-- **Fix:** revert [select.c](../src/fs/impl/select.c) to the unified rule: any
+- **Root cause:** excluding character-device HUP from `readfds` in `select()`
+  prevents EOF detection. The ssh client's controlling terminal is a pty slave;
+  when the master is closed, the slave gets HUP. Without HUP in `readfds`, the
+  client's `select()` returned but stdin showed nothing, so the client did not
+  know to exit.
+- **Fix:** [select.c](../src/fs/impl/select.c) uses the unified rule: any
   `FS_POLL_HUP` on a READ-subscribed fd sets `readfds`. No per-file-type
-  special-casing. The spurious HUP is prevented at the source (pts.c gate),
-  not masked in select.c.
+  special-casing. The spurious HUP is prevented at the source (pts.c gate), not
+  masked in select.c.
 
 ---
 
 ## 2026-04-10 — Pipe and PTY EOF readiness split for `select()` vs `poll()`
 
-This bug showed up during full System V boot rather than in the smaller POSIX
-tests. `xinetd` was launched under `initlog`, and the system could burn
-through nearly all RAM while boot still looked superficially alive. The real
-problem was not `xinetd` itself; it was a subtle mismatch in how MOS exposed
-EOF through `poll()` versus `select()` on byte-stream IPC objects.
+During SysV startup, `initlog` can loop on a closed capture pipe after `xinetd`
+daemonizes, repeatedly allocating memory. Pipe and PTY EOF requires different
+readiness reporting for `poll` and `select`.
 
 ### 1. `initlog` spun forever after daemon startup and consumed memory
 
-- **Caught by:** booting RH9 userspace with `xinetd` enabled
 - **Symptom:** `initlog` repeatedly looped on its capture pipe after
   `xinetd` daemonized, steadily growing heap via `brk()`/`mmap()` and
   eventually exhausting RAM.
-- **Root cause:** the earlier SSH/self-pipe work taught anonymous pipes to
-  surface EOF through readiness, but it did so too bluntly: empty closed
+- **Root cause:** anonymous pipes reported EOF as ordinary read readiness: empty closed
   streams looked like ordinary read-ready data to both `select()` and `poll()`.
   That was acceptable for EOF-observing `select()` users, but it broke
-  `poll(POLLIN)` callers like `initlog`, which then woke immediately on EOF
-  and spun.
+  `poll(POLLIN)` callers like `initlog`, which then woke immediately on EOF and
+  spun.
 - **Fix:** split EOF/HUP from ordinary read readiness:
   - in [fs.h](../src/fs/fs.h), add an internal
     `FS_POLL_HUP` readiness bit
@@ -2810,53 +2644,38 @@ EOF through `poll()` versus `select()` on byte-stream IPC objects.
     `FS_POLL_HUP` to `POLLHUP` instead of `POLLIN`, matching the behavior
     expected by daemon-monitoring loops
 
-### 2. The fix had to preserve the earlier SSH `vim` and `exit` behavior
+### 2. EOF readiness differs between select and poll
 
-- **Caught by:** regression review immediately after the first attempt
-- **Symptom:** simply hiding EOF from pipe poll readiness would have avoided
-  the `initlog` spin, but it would also have regressed the SSH fixes that rely
-  on `select()` waking when a pipe reaches EOF.
+- **Symptom:** OpenSSH requires `select` to wake when a pipe reaches EOF,
+  while `initlog` requires closed empty pipes to report `POLLHUP` without
+  `POLLIN`.
 - **Root cause:** `select()` and `poll()` were sharing one anonymous-pipe
   readiness signal, even though user space relied on different interpretations
   of EOF.
-- **Fix:** keep nonblocking `read()` semantics unchanged, and teach the common
-  polling layer to expose EOF differently for the two APIs instead of removing
-  EOF readiness entirely.
+- **Fix:** the polling layer maps EOF to each API's readiness convention.
+  Nonblocking reads return `EAGAIN` while peers are live and zero at EOF.
 
-### 3. Regression coverage now checks the split explicitly
+### 3. Readiness regression coverage
 
-- **Caught by:** the need to keep both the boot fix and SSH fix at once
-- **Symptom:** the previous `posix_nonblock_ipc` test covered `EAGAIN` versus
-  EOF on `read()`, but it did not verify how EOF appeared through `select()`
-  and `poll()`.
-- **Root cause:** readiness semantics had no direct script coverage.
-- **Fix:** extend [posix_nonblock_ipc.sh](../test/posix_nonblock_ipc.sh)
-  to verify:
-  - `select()` reports EOF on pipes and PTYs as readable
-  - `poll(POLLIN)` reports EOF via `POLLHUP` without `POLLIN`
-  - ordinary nonblocking `read()` behavior remains `-EAGAIN` with live peers
-    and `0` only on real EOF
+`test/posix_nonblock_ipc.sh` checks that `select` reports EOF on pipes and
+PTYs as readable, while `poll(POLLIN)` reports `POLLHUP` without `POLLIN`.
+Nonblocking reads return `EAGAIN` with live peers and zero only at EOF.
 
 ### Result
 
-- Manual verification:
-  - boot with `xinetd` no longer runs `initlog` into a memory spiral
-  - SSH `vim` still works
-- Regression verification:
-  - `./run.sh kvm test logtofile`
-  - result: `rc=0`
+A SysV boot with xinetd completes without the initlog allocation loop, and Vim
+works over SSH. The recorded regression command `./run.sh kvm test logtofile`
+exits with `rc=0`.
 
 ## 2026-04-10 — SSH `vim` burst, SSH `exit` hang, and nonblocking IPC semantics
 
-This entry began with `vim` disconnecting over SSH and exposed two separate
-POSIX-visible bugs: stream sockets treated temporary TCP backpressure as a
-hard write failure, and nonblocking anonymous pipes/PTYs reported EOF too
-eagerly instead of `EAGAIN`. The visible symptoms initially appeared
-unrelated, but both surfaced through OpenSSH.
+OpenSSH sessions expose TCP backpressure and nonblocking IPC defects: large
+screen redraws can disconnect, and a closed shell can leave the server looping
+on an empty self-pipe. PTY reads require the same distinction between `EAGAIN`
+and peer-close EOF.
 
 ### 1. `vim` over SSH failed on the first full-screen redraw
 
-- **Caught by:** manual SSH session using `vim`
 - **Symptom:** interactive shell traffic worked, but starting `vim` caused the
   SSH session to drop during the first large terminal repaint.
 - **Root cause:** the TCP stream send path tried to enqueue one large write at
@@ -2871,7 +2690,6 @@ unrelated, but both surfaced through OpenSSH.
 
 ### 2. SSH `exit` hung because OpenSSH's self-pipe saw false EOF
 
-- **Caught by:** manual SSH session exiting the remote shell
 - **Symptom:** the shell exited, but the SSH connection stayed open and the
   server spun inside OpenSSH's `notify_done()` loop.
 - **Root cause:** MOS anonymous pipe reads returned `0` for an empty
@@ -2885,7 +2703,6 @@ unrelated, but both surfaced through OpenSSH.
 
 ### 3. PTYs had the same nonblocking-read mismatch
 
-- **Caught by:** follow-up review after fixing anonymous pipes
 - **Symptom:** PTY reads ignored `O_NONBLOCK`, and empty PTYs could not cleanly
   distinguish "try again later" from real EOF.
 - **Root cause:** PTY master/slave read paths always called `cyb_getbuf(..., 1,
@@ -2895,67 +2712,45 @@ unrelated, but both surfaced through OpenSSH.
   PTYs with a live peer, and preserve `0` for peer-close EOF. PTY poll
   readiness was also updated to treat EOF as readable.
 
-### 4. `sendmsg()` / `recvmsg()` had duplicated logic across AF_INET and AF_UNIX
+### 4. Shared message helpers
 
-- **Caught by:** refactor after the bug fixes stabilized
-- **Symptom:** the generic and AF_UNIX message paths each had their own copies
-  of iovec sizing, scatter/gather ring-buffer copies, `MSG_DONTWAIT` checks,
-  and cmsg append logic, which made the bug fixes easy to apply inconsistently.
-- **Root cause:** message-socket helpers had grown independently in
-  `sock_msg.c` and `sock_un.c`.
-- **Fix:** factor shared helpers into the socket layer:
-  - in [sock.h](../src/net/sock.h) and
-    [sock.c](../src/net/impl/sock.c), add `rx_iov_write()`,
-    `rx_iov_read()`, and `rx_discard()`
-  - in [sock_msg.c](../src/net/impl/sock_msg.c), expose
-    shared helpers for iovec total length, nonblocking flag handling, and cmsg
-    append
-  - in [sock_un.c](../src/net/impl/sock_un.c), reuse those
-    helpers instead of maintaining local duplicates
+AF_INET and AF_UNIX message paths share iovec sizing, nonblocking flag
+handling, scatter/gather copies, and control-message append helpers.
+`rx_iov_write`, `rx_iov_read`, and `rx_discard` are declared in
+`src/net/sock.h` and implemented in `src/net/impl/sock.c`.
+`src/net/impl/sock_msg.c` supplies iovec-length and cmsg helpers, and
+`src/net/impl/sock_un.c` uses them for Unix message operations.
 
-### 5. Regression coverage was missing for this exact class of bug
+### 5. Nonblocking endpoint regression coverage
 
-- **Caught by:** the need to make the SSH fixes stick
-- **Symptom:** nothing in the script suite directly checked the crucial
-  `-EAGAIN` versus EOF distinction for nonblocking pipes and PTYs.
-- **Root cause:** existing tests covered basic pipes and PTYs, but not the
-  OpenSSH-triggering edge case where an empty nonblocking endpoint must not
-  look like EOF while the writer side is still alive.
-- **Fix:** add [posix_nonblock_ipc.sh](../test/posix_nonblock_ipc.sh),
-  which verifies:
-  - anonymous pipe nonblocking reads return `-EAGAIN` while the writer is open
-  - anonymous pipe reads return `0` only after writer close
-  - PTY master/slave reads follow the same rule
+`test/posix_nonblock_ipc.sh` verifies `EAGAIN` on empty anonymous pipes with
+live writers, zero after writer closure, and the corresponding PTY master
+and slave behavior.
 
 ### Result
 
-- Manual verification:
-  - `vim` now works over SSH
-  - remote `exit` now closes the SSH session correctly
-- Regression verification:
-  - `./run.sh kvm test logtofile`
-  - result: `rc=0`
+Vim works over SSH, and exiting the remote shell closes the session. The
+recorded regression command `./run.sh kvm test logtofile` exits with `rc=0`.
 
 ---
 
-## 2026-04-10 — POSIX script-suite fixes from the long `./run.sh test` loop
+## 2026-04-10 - POSIX wait, file, resource-limit, and signal semantics
 
-This entry began as a hang in `posix_wait.sh` and ended with a full green run
-of the `/proc/tests/all_script` suite. The failures were mostly not hard
-crashes; they were quiet POSIX-visible mismatches that only became obvious
-once the script suite was run continuously.
+The POSIX script suite covers wait options, zero-duration sleep, file lifetimes,
+positional I/O, resource limits, creation modes, and signal semantics. The
+recorded suite result is 40 cases with zero failures.
 
 ### 1. `waitpid()` and `sleep 0` combined into a false hang
 
-- **Caught by:** `test/posix_wait.sh`
+- **Regression coverage:** `test/posix_wait.sh`
 - **Symptom:** the suite could get stuck forever in the wait test.
 - **Root cause:** two issues compounded:
   - `waitpid(..., WNOHANG)` treated `WNOHANG` like an exact option value
     instead of a bit flag
   - `nanosleep()` with zero duration blocked instead of returning immediately
-- **Fix:** in `src/ps/ps_syscall.c`, make `WNOHANG` checks use
-  `options & WNOHANG` and replace stale child-count checks with live scans of
-  the parent/child tree; in `src/syscall/syscall_sys.c`, make zero-length
+- **Fix:** in `src/ps/impl/ps_syscall.c`, make `WNOHANG` checks use
+  `options & WNOHANG` and replace stale child-count checks with live scans of the
+  parent/child tree; in `src/syscall/impl/syscall_sys.c`, make zero-length
   `nanosleep()` return immediately.
 
 ### 2. Open-file deletion lifetime
@@ -2967,36 +2762,37 @@ filesystem and inode identity.
 
 ### 3. Append, positional I/O, and inode size tracking were incomplete
 
-- **Caught by:** `test/posix_fcntl.sh`
+- **Regression coverage:** `test/posix_fcntl.sh`
 - **Symptom:** append writes could overwrite existing bytes, and positional I/O
   could disturb the live file cursor or backend cursor.
 - **Root cause:** `pread()` / `pwrite()` used the file position incorrectly,
   and ext4 writes did not fully honor `O_APPEND` or refresh inode size.
-- **Fix:** in `src/fs/fs.c`, make `pread()` and `pwrite()` operate on a
+- **Fix:** in `src/fs/impl/fs.c`, make `pread()` and `pwrite()` operate on a
   temporary position and restore the underlying seek position; in
-  `src/fs/root.c`, make append writes use EOF and update inode size on growth.
+  `src/fs/impl/root.c`, make append writes use EOF and update inode size on
+  growth.
 
 ### 4. `RLIMIT_FSIZE`, `umask`, and `creat()` semantics were too weak
 
-- **Caught by:** `test/posix_rlimit.sh` and `test/posix_umask.sh`
+- **Regression coverage:** `test/posix_rlimit.sh` and `test/posix_umask.sh`
 - **Symptom:**
   - writes past `RLIMIT_FSIZE` succeeded instead of failing with `EFBIG`
   - files and directories ignored the process umask on creation
   - `creat()` bypassed the normal open/create path
 - **Root cause:** those paths were either stubs or incomplete shortcuts.
 - **Fix:**
-  - in `src/fs/fs.c`, enforce `RLIMIT_FSIZE` in write paths
-  - in `src/syscall/syscall_proc.c`, implement `getrlimit()` by delegating to
+  - in `src/fs/impl/fs.c`, enforce `RLIMIT_FSIZE` in write paths
+  - in `src/syscall/impl/syscall_proc.c`, implement `getrlimit()` by delegating to
     `ugetrlimit()`
-  - in `src/fs/fs.c` and `src/syscall/syscall_fs.c`, apply umask to newly
+  - in `src/fs/impl/fs.c` and `src/syscall/impl/syscall_fs.c`, apply umask to newly
     created files and directories
-  - in `src/syscall/syscall_fs.c`, route `creat()` through the normal
+  - in `src/syscall/impl/syscall_fs.c`, route `creat()` through the normal
     `fs_open(..., O_CREAT | O_TRUNC, mode)` path
-  - in `src/fs/root.c`, explicitly fix ext4 directory mode after creation
+  - in `src/fs/impl/root.c`, explicitly fix ext4 directory mode after creation
 
 ### 5. Legacy `signal(2)` and self-signal delivery were missing edge behavior
 
-- **Caught by:** `test/posix_signal.sh`
+- **Regression coverage:** `test/posix_signal.sh`
 - **Symptom:** shell trap/self-signal cases did not behave like normal Unix
   signal delivery.
 - **Root cause:**
@@ -3004,26 +2800,26 @@ filesystem and inode identity.
   - self-directed `kill(getpid(), sig)` did not reliably deliver soon enough
     for the shell trap expectations used by the test harness
 - **Fix:**
-  - implement `signal(2)` in `src/ps/ps_signal.c` and register it in
+  - implement `signal(2)` in `src/ps/impl/ps_signal.c` and register it in
     `src/syscall/syscall.c`
   - for self-directed unmasked signals, trigger delivery immediately on the
-    current user return frame in `src/ps/ps_signal.c`
+    current user return frame in `src/ps/impl/ps_signal.c`
   - update `test/posix_signal.sh` to signal the current shell via a helper
     process using `PPID`, which is stable under the wrapper script model
 
 ### 6. Broken pipes returned `EPIPE` but did not raise `SIGPIPE`
 
-- **Caught by:** `test/posix_pipe.sh`
+- **Regression coverage:** `test/posix_pipe.sh`
 - **Symptom:** shell pipelines such as `cat file | head -n 1` failed even
   though the pipe buffer code detected the broken-pipe condition.
 - **Root cause:** pipe writes returned `-EPIPE` but never queued `SIGPIPE` for
   the writer.
-- **Fix:** in `src/fs/pipe.c`, when `cyb_putbuf()` reports `-EPIPE`, queue
+- **Fix:** in `src/fs/impl/pipe.c`, when `cyb_putbuf()` reports `-EPIPE`, queue
   `SIGPIPE` for the current user task.
 
 ### 7. A couple of test scripts were asserting the wrong shell semantics
 
-- **Caught by:** `test/posix_environ.sh` and `test/posix_signal.sh`
+- **Regression coverage:** `test/posix_environ.sh` and `test/posix_signal.sh`
 - **Symptom:** some failures were in the tests themselves rather than the
   kernel.
 - **Root cause:**
@@ -3037,20 +2833,18 @@ filesystem and inode identity.
 
 ### Result
 
-- Final verification command:
-  - `./run.sh test curses logtofile`
-- Final result:
-  - `Total 40 Cases, 0 Failed`
+The recorded command `./run.sh test curses logtofile` reports `Total 40 Cases, 0
+Failed`. The `curses` option belongs to that dated launcher configuration.
 
 ---
 
-## 2026-04-07 — Shared-mapping cleanup after the boot/MM fixes
+## 2026-04-07 - Shared-mapping lifetime and fallback selection
 
 ### Symptom
 
-- After the boot fix, anonymous `MAP_SHARED` pages still lived forever once
-  faulted in, and the emergency file-backed `MAP_SHARED` fallback in
-  `src/mm/pagefault.c` was broader than intended.
+- Anonymous `MAP_SHARED` pages remained allocated after the last mapping
+  disappeared, and the file-backed `MAP_SHARED` fallback in
+  `src/mm/impl/pagefault.c` was broader than intended.
 
 ### Root cause
 
@@ -3064,20 +2858,12 @@ filesystem and inode identity.
 ### Fix
 
 - Add `mm_anon_shared_get()` / `mm_anon_shared_put()` and a small
-  `anon_shared_refs` table in `src/mm/cache.c`.
+  `anon_shared_refs` table in `src/mm/impl/cache.c`.
 - Wire those refs through `vm_add_map`, `vm_region_invalid`, `vm_mprotect`,
   `do_munmap`, and VMA coalescing so shared anonymous objects survive transient
   descriptor surgery but are reclaimed when the last live mapping goes away.
 - Narrow the MM-cache-layer `file_shared_map` fallback so it is only used for
   `MAP_SHARED` files that cannot participate in the filesystem page cache.
-
-### Why this is better
-
-- Shared anonymous pages now have a real lifetime tied to live VM mappings
-  instead of kernel uptime.
-- The file fault path is closer to Linux: use the filesystem page cache when
-  available, and keep the local fallback strictly as a compatibility escape
-  hatch rather than a shadow cache.
 
 ---
 
@@ -3085,7 +2871,7 @@ filesystem and inode identity.
 
 ### Symptom
 
-- `ext4_get_sb()` in `src/fs/root.c` knew too much about storage internals: it
+- `ext4_get_sb()` in `src/fs/impl/root.c` knew too much about storage internals: it
   stripped `/dev/` by hand, walked `hdd_partitions`, checked loop-device state
   directly, and special-cased root-device selection with `hdd_partitions[0]`.
 
@@ -3098,7 +2884,7 @@ filesystem and inode identity.
 
 ### Fix
 
-- Add a small generic block-device registry in `src/dev/blockdev.c`.
+- Add a small generic block-device registry in `src/dev/impl/blockdev.c`.
 - Register discovered HDD partitions and loop slots there, marking only
   attached/usable devices as mountable.
 - Switch `ext4_get_sb()`, root mount, and exec-time remount to resolve devices
@@ -3106,27 +2892,18 @@ filesystem and inode identity.
 - Make the HDD partition table private to `src/driver/impl/storage/ata.c` and expose only
   accessors used by `/dev/hdd` and `/proc/partitions`.
 
-### Why this is better
-
-- The ext mount path is closer to Linux: filesystems consume a generic block
-  device abstraction instead of parsing driver-private tables.
-- HDD bookkeeping is no longer exported as a global array.
-- Future block devices can become mount sources by registering once, without
-  editing ext4 mount code again.
-
 ---
 
-## 2026-04-07 — Bugs flushed out by the new `/proc/tests` script suite
+## 2026-04-07 - POSIX filesystem and procfs script regressions
 
-After moving guest tests into `test/*.sh` and wiring them into
-`/proc/tests/all_script`, the expanded script coverage started finding a
-different class of bugs: not just kernel panics, but quiet POSIX-visible
-semantic mismatches.  This section is a compact summary of the issues the new
-script suite exposed and the fixes that landed.
+The scripts exposed through `/proc/tests/all_script` cover directory operations,
+append writes, loop mounts, PTY naming, page-cache lifetime, procfs formatting,
+and tmpfs metadata. The following records describe the failure conditions and
+corrections for those interfaces.
 
 ### 1. Existing-directory `mkdir` succeeded instead of failing
 
-- **Caught by:** `test/ret_fs.sh`
+- **Regression coverage:** `test/ret_fs.sh`
 - **Symptom:** `mkdir existing-dir` succeeded silently instead of failing with
   the usual `EEXIST` behaviour.
 - **Root cause:** `lwext4` directory creation checked whether the path already
@@ -3135,16 +2912,16 @@ script suite exposed and the fixes that landed.
 
 ### 2. `mkdir` with a missing parent incorrectly succeeded
 
-- **Caught by:** `test/posix_mkdir.sh`
+- **Regression coverage:** `test/posix_mkdir.sh`
 - **Symptom:** creating `/a/missing/child` worked when the parent directory did
   not exist.
 - **Root cause:** the root filesystem `mkdir` path delegated too early into the
   ext4 layer without first validating the parent directory.
-- **Fix:** validate the parent in `src/fs/root.c` before issuing the create.
+- **Fix:** validate the parent in `src/fs/impl/root.c` before issuing the create.
 
 ### 3. `rmdir` allowed non-empty directories
 
-- **Caught by:** `test/posix_dirs.sh`
+- **Regression coverage:** `test/posix_dirs.sh`
 - **Symptom:** removing a non-empty directory succeeded.
 - **Root cause:** the removal path did not enforce the standard
   `ENOTEMPTY` check before unlinking the directory entry.
@@ -3152,7 +2929,7 @@ script suite exposed and the fixes that landed.
 
 ### 4. `O_APPEND` opens did not actually append
 
-- **Caught by:** `test/posix_io.sh`
+- **Regression coverage:** `test/posix_io.sh`
 - **Symptom:** writes to an `O_APPEND` descriptor could overwrite existing
   contents instead of always landing at EOF.
 - **Root cause:** open/write handling did not consistently move the file
@@ -3162,7 +2939,7 @@ script suite exposed and the fixes that landed.
 
 ### 5. Re-mounting an image as a loop device could crash the kernel
 
-- **Caught by:** `test/loopdev.sh` and `test/ret_mount.sh`
+- **Regression coverage:** `test/loopdev.sh` and `test/ret_mount.sh`
 - **Symptom:** mounting the same image again, or exercising duplicate-mount
   paths, could crash partway through the guest test run.
 - **Root cause:** loop-device and mount-state handling did not reject duplicate
@@ -3172,7 +2949,7 @@ script suite exposed and the fixes that landed.
 
 ### 6. Renaming a directory into its own descendant was not rejected
 
-- **Caught by:** `test/posix_rename.sh`
+- **Regression coverage:** `test/posix_rename.sh`
 - **Symptom:** invalid rename patterns that should fail could corrupt the tree
   or behave unpredictably.
 - **Root cause:** the rename path did not detect the ancestor/descendant case.
@@ -3180,17 +2957,16 @@ script suite exposed and the fixes that landed.
 
 ### 7. `/dev/pts` names were generated in hexadecimal
 
-- **Caught by:** `test/dev_pts.sh`
+- **Regression coverage:** `test/dev_pts.sh`
 - **Symptom:** PTY paths under `/dev/pts` used hex-like names instead of the
   normal decimal numbering expected by userspace.
-- **Root cause:** `src/dev/ptmx.c` formatted PTY indices with `%x`.
+- **Root cause:** `src/dev/impl/ptmx.c` formatted PTY indices with `%x`.
 - **Fix:** emit PTY names with `%d` so `/dev/pts/0`, `/dev/pts/1`, ... match
   normal Unix behaviour.
 
 ### 8. Read-only mmap cache eviction leaked pages and later caused crashes
 
-- **Caught by:** heavy userspace tests such as
-  `test/dev_subsystem.sh`, `test/emacs_smoke.sh`, and `test/gcc_hello.sh`
+- **Regression coverage:** `test/dev_subsystem.sh`, `test/emacs_smoke.sh`, and `test/gcc_hello.sh`
 - **Symptom:** long script runs would eventually die in unrelated places after
   enough exec/mmap churn.
 - **Root cause:** cached file-backed pages were dereferenced on eviction but not
@@ -3200,7 +2976,6 @@ script suite exposed and the fixes that landed.
 
 ### 9. `proc_buf_printf()` silently truncated large generated `/proc/tests` files
 
-- **Caught by:** the generated script infrastructure itself
 - **Symptom:** larger synthetic files such as the combined test wrappers could
   hang or produce incomplete content once formatting exceeded the old 512-byte
   scratch space.
@@ -3211,7 +2986,7 @@ script suite exposed and the fixes that landed.
 
 ### 10. tmpfs had several quiet POSIX mismatches
 
-- **Caught by:** `test/posix_tmpfs.sh`
+- **Regression coverage:** `test/posix_tmpfs.sh`
 - **Symptoms:**
   - `ftruncate()` shrink/regrow could expose stale bytes
   - sparse writes past EOF could leave uninitialized data in the gap
@@ -3226,15 +3001,6 @@ script suite exposed and the fixes that landed.
   accurately, reject directory unlink, and make `rmdir()` remove directories
   through the correct path.
 
-### Key Lesson
-
-Guest shell-script coverage is excellent at finding the "boring" bugs that are
-easy to miss during kernel bring-up: wrong errno values, stale data exposure
-after truncate, malformed `/dev` naming, directory edge cases, and metadata
-operations that quietly return success without doing the right thing.  These
-are precisely the bugs that make a system feel non-POSIX even when the big
-features already work.
-
 ---
 
 ## 2026-04-06 — OpenSSH 3.5p1 `sshd` crash / privilege-separation bring-up
@@ -3245,8 +3011,8 @@ features already work.
   per-connection `sshd` child immediately after `fork()`.
 - The kernel log showed the child resetting signal handlers with
   `rt_sigaction(...)` and then dying in libc.
-- After the crash was fixed, `sshd` still rejected connections because
-  privilege separation reached an unimplemented `chroot(2)`.
+- OpenSSH privilege separation also rejected connections when `chroot(2)`
+  was unimplemented.
 
 ### Root Causes
 
@@ -3273,8 +3039,7 @@ object layout.
 
 #### 4. Privilege separation required `chroot(2)` plus jail-aware path lookup
 
-After the memory corruption issues were fixed, OpenSSH reached its privsep
-preauth child and attempted to:
+OpenSSH's privilege-separated preauthentication child executes:
 
 ```text
 chroot(/var/empty/sshd)
@@ -3288,7 +3053,7 @@ process CWD, not a per-process jailed root.
 
 ### Fixes
 
-**`src/fs/select.c`**
+**`src/fs/impl/select.c`**
 
 - Reject `nfds > FD_SETSIZE`
 - Size all snapshots and zeroing by the actual bitset size:
@@ -3301,21 +3066,22 @@ set_bytes = (((unsigned)(nfds ? nfds : 1) + NFDBITS - 1) / NFDBITS) *
 - Replace `FD_ZERO()` on output buffers with `memset(..., set_bytes)` so the
   kernel never clears beyond the caller's allocation
 
-**`src/syscall/syscall_proc.c`**
+**`src/syscall/impl/syscall_proc.c`**
 
-- Make `sys_brk(0)` a pure query again
+- Make `sys_brk(0)` a pure query
 - Model `rt_sigaction` using a 32-word userspace mask (`1024 / 32`)
 - Zero all returned mask words and copy only the low word that MOS currently
   implements
 
-**`include/ps/ps.h`, `src/ps/ps_fork.c`, `src/ps/ps_syscall.c`, `src/dev/tty.c`**
+**`src/ps/ps.h`, `src/ps/impl/ps_fork.c`, `src/ps/impl/ps_syscall.c`,
+`src/dev/impl/tty.c`**
 
 - Add per-process `root_path`
 - Initialize it to `"/"` for new tasks
 - Copy it across `fork()`
 - Free it on task reap
 
-**`src/fs/fs.c` and `src/syscall/syscall_fs.c`**
+**`src/fs/impl/fs.c` and `src/syscall/impl/syscall_fs.c`**
 
 - Teach `resolve_path()` to prepend `root_path`
 - Keep `cwd` jail-relative while VFS lookups use the rooted absolute path
@@ -3326,50 +3092,20 @@ set_bytes = (((unsigned)(nfds ? nfds : 1) + NFDBITS - 1) / NFDBITS) *
 ### Result
 
 - `sshd` no longer crashes on incoming connections
-- OpenSSH privilege separation now completes its `chroot()` + UID/GID drop path
+- OpenSSH privilege separation completes its `chroot()` + UID/GID drop path
 - SSH negotiation proceeds normally until modern-client compatibility checks
   reject old KEX / host-key / cipher algorithms
 
-At this point the remaining interoperability issues are protocol-age policy
-differences in the client, not kernel crashes in MOS.
-
-### Key Lesson
-
-When a legacy daemon crashes "later" inside libc, look for earlier kernel
-overwrites of user-owned variable-length buffers.  Here the visible crash was
-inside malloc, but the first real bug was a kernel `select()` implementation
-that assumed every userspace `fd_set` was a full `FD_SETSIZE` object.  Once the
-memory corruption was gone, the next blockers were ordinary ABI completeness
-items (`chroot`, path-root semantics, legacy `rt_sigaction` layout).
-
 ---
 
-## 2026-04-06 — GNU `screen` failed with `"No more PTYs"` and later hung blank
+## 2026-04-06 - GNU screen devpts, packet-mode, and buffer-lifetime compatibility
 
-### Symptoms
+### Failure conditions and evidence
 
-- `screen` initially failed immediately with:
-  ```text
-  No more PTYs.
-  ```
-- After the first PTY fixes, `screen` got further but stopped with:
-  ```text
-  TIOCPKT ioctl: Function not implemented
-  ```
-- After that, `screen` started and cleared the display, but the UI stayed
-  blank and keyboard input appeared dead.
-
-### Investigation
-
-#### Step 1 — `"No more PTYs"` did not mean PTY allocation failed
-
-The kernel log showed:
-
-- `open("/dev/ptmx")` succeeded
-- `ioctl(TIOCGPTN)` succeeded
-- `stat64("/dev/pts/0")` succeeded
-
-Old `screen` reports `"No more PTYs"` whenever its `OpenPTY()` helper fails:
+GNU screen can report `No more PTYs`, reject `TIOCPKT` with `Function not
+implemented`, or clear the display and remain unresponsive. The allocation trace
+shows successful `/dev/ptmx` open, `TIOCGPTN`, and `/dev/pts/0` stat. The `No
+more PTYs` message is the generic failure result of `OpenPTY`:
 
 ```c
 if ((m = ptsname(f)) == NULL || grantpt(f) || unlockpt(f)) {
@@ -3378,144 +3114,43 @@ if ((m = ptsname(f)) == NULL || grantpt(f) || unlockpt(f)) {
 }
 ```
 
-So the message was just a generic userspace error path, not evidence that the
-kernel had run out of PTY slots.
+### devpts identity and slave metadata
 
-#### Step 2 — `grantpt()` was falling back because `/dev/pts` did not look like `devpts`
+RH9 glibc 2.3.2 `grantpt` recognizes `DEVPTS_SUPER_MAGIC` (`0x1cd1`) or
+`DEVFS_SUPER_MAGIC` through `statfs`. Without a devpts statfs callback, it falls
+back to legacy ownership handling. Slave UID, GID, mode, and lock state must
+persist in the PTY pair rather than depend on the task performing stat.
 
-Guest `glibc-2.3.2` `grantpt()` does:
+### Packet mode
 
-1. `ptsname()`
-2. `statfs("/dev/pts/N")`
-3. If `f_type` is `DEVPTS_SUPER_MAGIC` (`0x1cd1`) or `DEVFS_SUPER_MAGIC`,
-   return success
-4. Otherwise fall back to old legacy PTY ownership code
+Screen enables `TIOCPKT` on the master and aborts if the ioctl is unsupported.
+The recorded trace also contains a one-byte `0x03` read after `TCFLSH`; this is
+a synthetic `TIOCPKT_FLUSHREAD | TIOCPKT_FLUSHWRITE` packet that leaves screen
+waiting for PTY traffic. The correction implements packet mode and removes those
+synthetic flush notifications.
 
-Our `/dev/pts` implementation had no `statfs` callback, so glibc could not
-recognize it as a real `devpts` mount. That kept `screen` on the wrong
-compatibility path.
+### Buffer ownership
 
-#### Step 3 — slave inode metadata also had to be persistent
+Implicit endpoint references in `cyb_create` and additional closes in
+`pts_pair_check_free` can release `p->s2m` or `p->m2s` while the pair still
+contains their pointers. Poll and read paths then access freed `cy_buf` objects,
+including through `cyb_isempty` or `cyb_set_poll_read`.
 
-`/dev/pts/N` metadata was synthesized from the current task doing `stat()`
-instead of stored per PTY pair. That broke the Linux/Unix98 expectation that
-the slave node has stable owner/mode state after `grantpt()`.
+Unix98 and BSD PTYs use pair-owned named buffers and explicit endpoint
+references for open handles. Final pair cleanup destroys the named buffers
+without closing inferred hidden slave references. Slave release and master
+release balance the references acquired by their corresponding opens.
 
-The PTY pair needed persistent:
+### Correction
 
-- slave mode
-- slave uid
-- slave gid
-- PTY lock state
+`src/dev/impl/ptmx.c` supplies the devpts statfs identity, PTY indices,
+persistent slave metadata, and explicit endpoint ownership. `src/dev/impl/pty.c`
+applies the same lifetime rules to BSD PTYs. `src/dev/impl/pts.c` provides
+persistent chmod/chown, `TIOCSPTLCK`, `TIOCGPTLCK`, `TCFLSH`, `TIOCPKT`, and
+pair-owned buffer cleanup. `src/fs/ioctl.h` declares the packet-mode constants.
 
-#### Step 4 — `screen` requires packet mode on the PTY master
-
-Once `grantpt()` and `unlockpt()` worked, `screen` failed on:
-
-```text
-ioctl(fd, TIOCPKT, ...) = -ENOSYS
-```
-
-`screen` enables `TIOCPKT` on the master and aborts if it is unsupported.
-So basic Unix98 PTY allocation was not enough; packet mode support was also
-required.
-
-#### Step 5 — the first `TIOCPKT` implementation was too eager
-
-After adding `TIOCPKT`, the trace showed:
-
-```text
-write(3, "\x1b[H\x1b[J...", 12)
-read(6, "\x03", 4096) = 1
-pselect(...)
-```
-
-That `0x03` was generated by our own PTY code as a synthetic
-`TIOCPKT_FLUSHREAD | TIOCPKT_FLUSHWRITE` control packet after `TCFLSH`.
-`screen` then sat in its event loop waiting for real PTY traffic.
-
-Removing those fabricated flush packets let startup progress further.
-
-#### Step 6 — the final hang was a PTY buffer lifetime bug
-
-The remaining blank-screen hang turned out not to be packet mode at all.
-The real bug was PTY buffer ownership.
-
-The original PTY pair lifecycle used `cyb_create()` and then tried to infer
-when to drop hidden reader/writer references later in `pts_pair_check_free()`.
-That was incorrect:
-
-- `pts_slave_release()` closed `p->s2m` and `p->m2s` only when
-  `slave_count` reached zero
-- `pts_master_release()` also closed its side
-- `pts_pair_check_free()` then closed additional implicit refs again
-
-This created two problems:
-
-1. **Double-close / premature free**
-   The shared `cy_buf` objects could be freed while pointers remained stored
-   in `p->s2m` / `p->m2s`.
-
-2. **Use-after-free in poll/read paths**
-   Later code such as:
-   ```c
-   cyb_isempty(p->s2m)
-   cyb_set_poll_read(p->s2m, task)
-   ```
-   could touch a freed `cy_buf`, which explained the observed hang inside the
-   lock path.
-
-### Root Causes
-
-1. **`/dev/pts` did not implement `statfs()` with `DEVPTS_SUPER_MAGIC`**, so
-   old glibc `grantpt()` took the wrong path.
-
-2. **Unix98 slave metadata was not stored per PTY pair**, so ownership/mode
-   checks did not behave like Linux `devpts`.
-
-3. **`TIOCPKT` support was missing**, but `screen` requires it.
-
-4. **The first packet-mode implementation injected fake flush packets**, which
-   confused `screen` during startup.
-
-5. **PTY buffer ownership was wrong**, causing freed `cy_buf` pointers to be
-   reused from `p->s2m` / `p->m2s`.
-
-### Fixes
-
-**`src/dev/ptmx.c`**
-
-- Added `statfs()` for `/dev/pts` returning `0x1cd1`
-- Fixed `/dev/pts` directory entries to use the real PTY index
-- Stored persistent slave metadata in each PTY pair
-- Made slave open take explicit `cy_buf` endpoint refs
-- Switched Unix98 PTY buffer allocation to `cyb_create_named()`
-
-**`src/dev/pty.c`**
-
-- Mirrored the same buffer lifetime fixes for BSD PTYs
-
-**`src/dev/pts.c`**
-
-- Added persistent slave `chmod` / `chown` support
-- Implemented `TIOCSPTLCK`, `TIOCGPTLCK`, `TCFLSH`, and `TIOCPKT`
-- Removed synthetic packet-mode flush notifications
-- Changed `pts_pair_check_free()` to destroy only the pair-owned named buffers,
-  instead of closing imaginary hidden slave refs
-
-**`include/fs/ioctl.h`**
-
-- Added missing `TIOCPKT` constants
-
-### Key Lesson
-
-PTY bugs are often two layers deep: the first visible error may be a libc
-compatibility check (`grantpt`, `statfs`, ownership metadata), but once that
-is fixed, interactive programs like `screen` also depend on Linux-specific
-TTY behavior such as `TIOCPKT`. Most importantly, shared PTY transport objects
-must have explicit ownership. If buffer lifetime is inferred indirectly from
-`master_open` / `slave_count`, it is very easy to free the transport while a
-poll or read path still holds the raw pointer.
+The record contains the allocation and packet-mode traces above, but no complete
+screen-session regression result.
 
 ---
 
@@ -3556,193 +3191,64 @@ and writing, matching real Linux behaviour:
 fs_open("/dev/tty1", O_RDWR, 0);  // fd 2 — stderr
 ```
 
-Changed in `src/elf/exec.c` and `src/dev/tty.c`.
-
-### Key Lesson
-
-The TTY fd used as the controlling terminal must be `O_RDWR`.  Even though
-`stderr` is conventionally write-only for application output, the kernel-side
-fd must allow reads because pagers and interactive programs re-use fd 2 as
-their terminal input channel when stdin is a pipe.
+Changed in `src/elf/impl/exec.c` and `src/dev/impl/tty.c`.
 
 ---
 
-## 2026-04-05 — xinetd crash + "not enough memory" (ugetrlimit / setrlimit / fs_close)
+## 2026-04-05 - xinetd resource-limit handling and invalid descriptor closure
 
-### Symptoms
+### Failure conditions
 
-- `/usr/sbin/xinetd` segfaults immediately after startup:
-  ```
-  [899]: segfault: error code 4, address 0, eip 806114f, cmd /usr/sbin/xinetd
-  ```
-  The crash is a NULL dereference inside xinetd's own code, not in a library.
+The recorded xinetd startup fault is a user-mode NULL dereference:
 
-- Some other services log `"not enough memory"` at startup.
-
-- Both symptoms appeared together and seemed contradictory: the value that
-  fixed the crash caused the OOM, and vice versa.
-
-### Investigation
-
-#### Step 1 — identify which resources are queried
-
-The kernel log showed `ugetrlimit(3)`, `ugetrlimit(4)`, and `ugetrlimit(7)`
-being called. Resources 3 and 4 were returning `RLIM_INFINITY` (the default
-fallback). Resource 7 (RLIMIT_NOFILE) was the only one with special handling.
-
-#### Step 2 — narrow down by varying the return value
-
-| `rl[0]` (cur)   | `rl[1]` (max)   | xinetd result | other services      |
-| --------------- | --------------- | ------------- | ------------------- |
-| `MAX_FD`(341)   | `RLIM_INFINITY` | segfault      | ok                  |
-| `RLIM_INFINITY` | `MAX_FD`(341)   | **no crash**  | "not enough memory" |
-| `RLIM_INFINITY` | `RLIM_INFINITY` | **no crash**  | "not enough memory" |
-
-The value of `rl[0]` (soft limit / `rlim_cur`) was the decisive variable.
-
-#### Step 3 — understand xinetd's startup sequence
-
-Reading xinetd's source (`init.c`, `set_fd_limit()`):
-
-```c
-getrlimit(RLIMIT_NOFILE, &rl);
-maxfd = rl.rlim_max;
-if (rl.rlim_max == RLIM_INFINITY)
-    rl.rlim_max = FD_SETSIZE;   // cap to 1024
-if (rl.rlim_max > FD_SETSIZE)
-    rl.rlim_max = FD_SETSIZE;
-rl.rlim_cur = rl.rlim_max;
-setrlimit(RLIMIT_NOFILE, &rl);  // sets both to min(rl_max, 1024)
-ps.ros.max_descriptors = rl.rlim_max;
+```text
+[899]: segfault: error code 4, address 0, eip 806114f, cmd /usr/sbin/xinetd
 ```
 
-Then:
+Other services report `not enough memory` when `RLIMIT_NOFILE.rlim_cur` is
+`RLIM_INFINITY`. The recorded limit configurations have these results:
+
+| Soft limit | Hard limit | xinetd result | Other services |
+| --- | --- | --- | --- |
+| `MAX_FD` (341) | `RLIM_INFINITY` | Segfault | Startup succeeds |
+| `RLIM_INFINITY` | `MAX_FD` (341) | No crash | `not enough memory` |
+| `RLIM_INFINITY` | `RLIM_INFINITY` | No crash | `not enough memory` |
+
+### Resource-limit interface
+
+Xinetd `init.c:set_fd_limit` reads `RLIMIT_NOFILE`, caps the hard limit at
+`FD_SETSIZE`, sets the soft limit to that value, and calls `setrlimit`. It then
+closes descriptors from 3 through `max_descriptors - 1`.
+
+The kernel returned a descriptor limit inconsistent with the RH9-compatible
+1024-descriptor configuration, and `setrlimit` did not store the process's
+requested values. An infinite soft limit also permits services to request an
+impractically large allocation proportional to the descriptor count. The limit
+experiments correlate the startup fault with the soft-limit value; they do not
+establish a complete runtime backtrace of the userspace fault.
+
+The correction stores resource limits per process, initializes `RLIMIT_NOFILE`
+to `{1024, 1024}`, initializes `RLIMIT_STACK` from the user stack limit, and
+sets `RLIMIT_CORE` to zero. Fork inherits the parent's configured limits.
+`ugetrlimit` returns stored values, and `setrlimit` updates them.
+
+### Invalid descriptor closure
+
+`fs_close` returned `ENOENT` for descriptors that were not open. Xinetd's close
+loop accepts only `EBADF` for such failures:
+
 ```c
-for (fd = 3; fd < ps.ros.max_descriptors; fd++)
-    Sclose(fd);   // close all fds above stderr
-```
-
-#### Step 4 — find why rl_cur matters
-
-glibc reads `RLIMIT_NOFILE` **once at startup** (before `main()`) and uses
-`rl_cur` to size its internal fd table. With `rl_cur = 341` glibc allocates
-a 341-slot table. Then xinetd calls `setrlimit({1024, 1024})` which our
-kernel was **silently ignoring** (setrlimit was a no-op). xinetd believed
-`max_descriptors = 1024` and its close loop ran up to fd 1023. When fd 342
-was accessed, glibc's table was out of bounds → NULL dereference → segfault.
-
-With `rl_cur = RLIM_INFINITY`, glibc takes a different code path and does
-not allocate a fixed-size table, so no out-of-bounds access.
-
-#### Step 5 — understand the "not enough memory" service
-
-That service does roughly:
-```c
-getrlimit(RLIMIT_NOFILE, &rl);
-table = malloc(rl.rlim_cur * sizeof(ptr));
-if (!table) log("not enough memory");
-```
-With `rl_cur = RLIM_INFINITY = 0xFFFFFFFF`, `malloc` fails. On real Linux,
-`RLIMIT_NOFILE` defaults to `{1024, 1024}` — not `RLIM_INFINITY` — so this
-never happens there.
-
-#### Step 6 — the real Linux default is {1024, 1024}
-
-Linux kernel default for `RLIMIT_NOFILE` is soft=1024, hard=1024.
-With `{1024, 1024}`:
-- glibc allocates a 1024-slot table
-- xinetd gets `rl_max = 1024`, no capping needed, `max_descriptors = 1024`
-- xinetd's `setrlimit({1024, 1024})` matches what we already return
-- The table size and `max_descriptors` agree → no out-of-bounds
-- `malloc(1024 * sizeof(...))` succeeds → no OOM
-
-#### Step 7 — setrlimit must track values per-process
-
-Even with the correct default, `setrlimit` must actually store the new
-value. A child process forked after xinetd calls `setrlimit({1024, 1024})`
-should inherit `{1024, 1024}`, not the default. Without tracking, children
-read the initial default and glibc allocates the wrong table size again.
-
-#### Step 8 — fs_close returning wrong errno
-
-`fs_close` was returning `-ENOENT` for fds that are not open. Linux returns
-`-EBADF` for all invalid `close()` calls. xinetd's close loop is:
-```c
-if (Sclose(fd) && errno != EBADF) { exit(1); }
-```
-`ENOENT ≠ EBADF` would cause a premature `exit(1)`. This is correct POSIX
-behavior that was simply wrong in our implementation.
-
-### Root Causes
-
-1. **`RLIMIT_NOFILE` default was not `{1024, 1024}`** — we returned either
-   `MAX_FD` (too small, glibc table mismatch) or `RLIM_INFINITY` (services
-   OOM on malloc). The Linux default of `{1024, 1024}` satisfies both.
-
-2. **`setrlimit` was a no-op** — it did not store the new limit. Children
-   would inherit the initial default instead of what the parent set.
-
-3. **`fs_close` returned `-ENOENT` for unopened fds** instead of `-EBADF`.
-
-### Fixes
-
-**`include/ps/ps.h`** — add per-process rlimit storage:
-```c
-#define RLIM_NLIMITS 16
-#define RLIM_INFINITY 0xFFFFFFFFu
-
-typedef struct { unsigned long rlim_cur, rlim_max; } rlimit_t;
-
-struct _task_struct {
-    ...
-    rlimit_t rlimits[RLIM_NLIMITS];
-};
-```
-
-**`src/ps/ps_fork.c`** (`_ps_create`) — initialize defaults:
-```c
-for (int i = 0; i < RLIM_NLIMITS; i++)
-    task->rlimits[i] = {RLIM_INFINITY, RLIM_INFINITY};
-task->rlimits[3] = {USER_STACK_PAGES * PAGE_SIZE, ...}; // RLIMIT_STACK
-task->rlimits[4] = {0, 0};                              // RLIMIT_CORE
-task->rlimits[7] = {1024, 1024};                        // RLIMIT_NOFILE
-```
-Fork inherits automatically because `fork_alloc_child` does `*task = *cur`.
-
-**`src/syscall/syscall_proc.c`** — wire up reads and writes:
-```c
-int sys_ugetrlimit(int resource, void *limit) {
-    task_struct *cur = CURRENT_TASK();
-    unsigned long *rl = limit;
-    if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-        rl[0] = cur->rlimits[resource].rlim_cur;
-        rl[1] = cur->rlimits[resource].rlim_max;
-    }
-    return 0;
-}
-
-int sys_setrlimit(int resource, void *limit) {
-    task_struct *cur = CURRENT_TASK();
-    unsigned long *rl = limit;
-    if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-        cur->rlimits[resource].rlim_cur = rl[0];
-        cur->rlimits[resource].rlim_max = rl[1];
-    }
-    return 0;
+if (Sclose(fd) && errno != EBADF) {
+    exit(1);
 }
 ```
 
-**`src/fs/fs.c`** (`fs_close`) — return correct errno:
-```c
-if (cur->fds[fd].used == 0)
-    return -EBADF;   // was -ENOENT
-```
+Returning `EBADF` allows the loop to skip unused descriptors without aborting
+service startup. The correction is in `src/fs/impl/fs.c`; limit handlers reside
+in `src/syscall/impl/syscall_proc.c`, and task initialization and inheritance
+reside in `src/ps/impl/ps_fork.c`.
 
-### Key Lesson
+The record contains the limit experiments above but no complete startup
+regression result for all corrected interfaces.
 
-When a service crashes at address 0 right after `execve`, check what value
-glibc uses from `ugetrlimit` at startup — glibc sizes internal tables from
-`rl_cur` before `main()` runs, and that sizing is permanent. Any subsequent
-`setrlimit` call does not resize the already-allocated table. The kernel's
-default must match the real Linux default (`{1024, 1024}` for RLIMIT_NOFILE)
-so all userspace assumptions are met from the start.
+---

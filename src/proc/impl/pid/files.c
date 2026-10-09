@@ -37,7 +37,7 @@ static void maps_region_cb(vm_region *region, void *data)
 	const char *name;
 	vaddr_t stack_begin = ctx->task->user->vm->start_stack;
 	vaddr_t stack_end = ctx->task->user->vm->task_size;
-	int ino = 0;
+	uint64_t ino = 0;
 
 	perms[0] = (region->prot & PROT_READ) ? 'r' : '-';
 	perms[1] = (region->prot & PROT_WRITE) ? 'w' : '-';
@@ -56,9 +56,11 @@ static void maps_region_cb(vm_region *region, void *data)
 	else
 		name = "";
 
-	proc_buf_printf(ctx->pb, "%08x-%08x %s %08x 00:00 %-10d %s\n",
-			region->begin, region->end, perms, region->offset, ino,
-			name);
+	proc_buf_printf(ctx->pb, "%08lx-%08lx %s %08llx 00:00 %-10llu %s\n",
+			(unsigned long)region->begin,
+			(unsigned long)region->end, perms,
+			(unsigned long long)region->offset,
+			(unsigned long long)ino, name);
 }
 
 void fill_maps(proc_buf_t *pb, task_struct *task)

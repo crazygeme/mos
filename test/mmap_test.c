@@ -159,6 +159,47 @@ KTEST(mmap, file_cache_cached_range)
 
 extern int copy_page_range(task_struct *parent, task_struct *child);
 
+KTEST(mmap, proc_maps_format_widths)
+{
+	mm_struct *mm = cur_vm();
+	vaddr_t base = mm->task_size > 0x100000000ULL ?
+			       (vaddr_t)0x123450000ULL :
+			       (vaddr_t)0x21000000;
+	inode node = { .i_ino = 0x10000050467ULL };
+	file backing = { .f_inode = &node,
+			 .f_name = "/maps-width-probe",
+			 .f_count = 1 };
+	char *buffer = (char *)vm_alloc(2);
+	int fd;
+	int count;
+
+	ASSERT_NONNULL(buffer);
+	vm_add_map(mm, base, base + PAGE_SIZE, PROT_READ, MAP_PRIVATE, &backing,
+		   0x1234567800001000ULL, 0);
+	fd = fs_open("/proc/self/maps", O_RDONLY, 0);
+	EXPECT_GE(fd, 0);
+	if (fd < 0)
+		goto cleanup;
+	count = fs_read(fd, 0, buffer, 2 * PAGE_SIZE - 1);
+	EXPECT_GT(count, 0);
+	if (count > 0) {
+		buffer[count] = 0;
+		EXPECT_NONNULL(strstr(
+			buffer,
+			"r--p 1234567800001000 00:00 1099511956583 /maps-width-probe\n"));
+		if (mm->task_size > 0x100000000ULL)
+			EXPECT_NONNULL(strstr(buffer, "123450000-123451000 "));
+		else
+			EXPECT_NONNULL(strstr(buffer, "21000000-21001000 "));
+	}
+	fs_close(fd);
+cleanup:
+	do_munmap((void *)base, PAGE_SIZE);
+	EXPECT_EQ(backing.f_count, 1);
+	vm_free((vaddr_t)buffer, 2);
+	return 0;
+}
+
 KTEST(mmap, brk_contiguous_growth)
 {
 	mm_struct *mm = cur_vm();

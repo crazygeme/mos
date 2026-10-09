@@ -648,7 +648,7 @@ normalize_link:
 			*dst = '\0';
 		}
 		lookup = joined;
-		lookup_sb = current->root;
+		lookup_sb = current->fs->root;
 	}
 	fp = NULL;
 out:

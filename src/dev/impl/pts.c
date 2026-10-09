@@ -41,8 +41,8 @@ void pts_acquire_controlling(file *fp, int flag)
 	int mask = 0;
 	int irq;
 
-	if ((flag & (O_NOCTTY | O_PATH)) || !cur->user ||
-	    cur->user->session_id != cur->psid)
+	if ((flag & (O_NOCTTY | O_PATH)) || !cur->execution ||
+	    cur->thread->session_id != cur->thread->tgid)
 		return;
 	if (fp->f_fop->getattr(fp, &s))
 		return;
@@ -55,7 +55,7 @@ void pts_acquire_controlling(file *fp, int flag)
 
 	spinlock_lock(&p->lock, &irq);
 	if (!p->pgrp)
-		pts_pair_set_group(p, cur->user->group_id);
+		pts_pair_set_group(p, cur->thread->group_id);
 	spinlock_unlock(&p->lock, irq);
 }
 
@@ -345,11 +345,11 @@ static int pts_pair_ioctl_tiocsctty(void *context __attribute__((unused)),
 
 	task_struct *cur = CURRENT_TASK();
 	int steal = (int)(uintptr_t)buf;
-	if (!cur->user || cur->user->session_id != cur->psid)
+	if (!cur->execution || cur->thread->session_id != cur->thread->tgid)
 		return -EPERM;
 	if (p->pgrp && !steal)
 		return -EPERM;
-	pts_pair_set_group(p, cur->user->group_id);
+	pts_pair_set_group(p, cur->thread->group_id);
 	return 0;
 }
 
@@ -360,7 +360,7 @@ static int pts_pair_ioctl_tiocnotty(void *context __attribute__((unused)),
 	pts_pair *p = context;
 
 	task_struct *cur = CURRENT_TASK();
-	if (cur->user && p->pgrp == cur->user->group_id)
+	if (cur->execution && p->pgrp == cur->thread->group_id)
 		pts_pair_set_group(p, 0);
 	return 0;
 }

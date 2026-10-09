@@ -60,10 +60,10 @@ static vaddr_t ELF_STACK(char *file, int argc, char **argv, int envc,
 			       { AT_BASE, exec->interp_bias },
 			       { AT_FLAGS, 0 },
 			       { AT_ENTRY, exec->e_entry },
-			       { AT_UID, current->user->uid },
-			       { AT_EUID, current->user->euid },
-			       { AT_GID, current->user->gid },
-			       { AT_EGID, current->user->egid },
+			       { AT_UID, current->credentials->uid },
+			       { AT_EUID, current->credentials->euid },
+			       { AT_GID, current->credentials->gid },
+			       { AT_EGID, current->credentials->egid },
 			       { AT_PLATFORM, plat },
 			       { AT_HWCAP, ELF_CPU_HWCAP },
 			       { AT_CLKTCK, 100 },
@@ -71,9 +71,10 @@ static vaddr_t ELF_STACK(char *file, int argc, char **argv, int envc,
 			       { AT_RANDOM, random },
 			       { 31, filename },
 			       { AT_SECURE,
-				 current->user->uid != current->user->euid ||
-					 current->user->gid !=
-						 current->user->egid },
+				 current->credentials->uid !=
+						 current->credentials->euid ||
+					 current->credentials->gid !=
+						 current->credentials->egid },
 			       { AT_NULL, 0 } };
 	unsigned words =
 		1 + argc + 1 + envc + 1 + sizeof(aux) / sizeof(uintptr_t);

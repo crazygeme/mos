@@ -11,7 +11,8 @@
 
 struct vfs_entry_node {
 	struct vfs_entry_tree *tree;
-	struct vfs_entry_node *parent, *next, *target;
+	struct vfs_entry_node *parent, *target;
+	list_entry list;
 	super_block *sb;
 	char *name, *text;
 	unsigned mode, number, tag;
@@ -22,12 +23,12 @@ struct vfs_entry_node {
 };
 
 struct entry_allocation {
-	struct entry_allocation *next;
+	list_entry list;
 };
 
 struct vfs_entry_tree {
-	vfs_entry_node *root, *nodes;
-	struct entry_allocation *allocations;
+	vfs_entry_node *root;
+	list_entry nodes, allocations;
 	unsigned references, next_number;
 	int error;
 };
@@ -103,8 +104,7 @@ static vfs_entry_node *vfs_entry_new_node(vfs_entry_tree *tree,
 	node->parent = parent;
 	node->mode = mode;
 	node->number = ++tree->next_number;
-	node->next = tree->nodes;
-	tree->nodes = node;
+	list_insert_head(&tree->nodes, &node->list);
 	if (parent && attach) {
 		char *path = name_get();
 		int result;
@@ -247,16 +247,17 @@ static void vfs_entry_tree_put(vfs_entry_tree *tree)
 {
 	if (__sync_sub_and_fetch(&tree->references, 1))
 		return;
-	while (tree->nodes) {
-		vfs_entry_node *node = tree->nodes;
-		tree->nodes = node->next;
+	while (!list_is_empty(&tree->nodes)) {
+		vfs_entry_node *node = container_of(
+			list_remove_head(&tree->nodes), vfs_entry_node, list);
 		free(node->name);
 		free(node->text);
 		free(node);
 	}
-	while (tree->allocations) {
-		struct entry_allocation *allocation = tree->allocations;
-		tree->allocations = allocation->next;
+	while (!list_is_empty(&tree->allocations)) {
+		struct entry_allocation *allocation =
+			container_of(list_remove_head(&tree->allocations),
+				     struct entry_allocation, list);
 		free(allocation);
 	}
 	free(tree);
@@ -301,7 +302,7 @@ static ssize_t vfs_entry_write(file *fp, const void *buf, size_t size,
 {
 	struct vfs_entry_open_file *opened = fp->f_inode->i_private;
 	vfs_entry_node *node = opened->node;
-	if (!current->user || current->user->euid || !node->ops ||
+	if (!current->fs || current->credentials->euid || !node->ops ||
 	    !node->ops->write)
 		return -EACCES;
 	if (*pos < 0)
@@ -542,6 +543,8 @@ vfs_entry_tree *vfs_entry_tree_create(void)
 	if (!tree)
 		return NULL;
 	tree->references = 1;
+	list_init(&tree->nodes);
+	list_init(&tree->allocations);
 	tree->root = vfs_entry_new_node(tree, NULL, "", S_IFDIR | 0555, 0);
 	if (!tree->root) {
 		vfs_entry_tree_put(tree);
@@ -568,8 +571,7 @@ void *vfs_entry_tree_alloc(vfs_entry_tree *tree, unsigned size)
 		tree->error = -ENOMEM;
 		return NULL;
 	}
-	allocation->next = tree->allocations;
-	tree->allocations = allocation;
+	list_insert_head(&tree->allocations, &allocation->list);
 	return allocation + 1;
 }
 

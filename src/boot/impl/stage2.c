@@ -39,6 +39,7 @@ static void idle_process(void *param);
 void kmain_startup()
 {
 	klib_init();
+	ps_init_bootstrap_task();
 
 	font_init();
 

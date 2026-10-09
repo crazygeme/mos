@@ -298,7 +298,7 @@ typedef struct _mos_sock {
 	int type;
 	int protocol;
 	uint32_t netlink_port, netlink_groups;
-	struct _mos_sock *netlink_next;
+	list_entry netlink_list;
 	int state; /* SS_* */
 	int err; /* pending negative errno, 0 = OK */
 	int tcp_nodelay; /* retained when tcp_listen replaces the full PCB */

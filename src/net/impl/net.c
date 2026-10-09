@@ -48,15 +48,15 @@ int net_core_enter(void)
 	if (!ps_enabled())
 		return 0;
 	sched_disable();
-	if (!current->net_core_depth)
+	if (!current->sched->net_core_depth)
 		mutex_lock(&net_core_mutex);
-	current->net_core_depth++;
+	current->sched->net_core_depth++;
 	return 1;
 }
 
 void net_core_unlock(void)
 {
-	if (!--current->net_core_depth)
+	if (!--current->sched->net_core_depth)
 		mutex_unlock(&net_core_mutex);
 	sched_enable();
 }
@@ -90,9 +90,9 @@ const scoped_lock_t net_local_lock = { .header = { &net_local_operations } };
 
 unsigned net_core_suspend(void)
 {
-	unsigned depth = current->net_core_depth;
+	unsigned depth = current->sched->net_core_depth;
 	if (depth) {
-		current->net_core_depth = 0;
+		current->sched->net_core_depth = 0;
 		mutex_unlock(&net_core_mutex);
 	}
 	return depth;
@@ -102,7 +102,7 @@ void net_core_resume(unsigned depth)
 {
 	if (depth) {
 		mutex_lock(&net_core_mutex);
-		current->net_core_depth = depth;
+		current->sched->net_core_depth = depth;
 	}
 }
 
@@ -188,7 +188,7 @@ typedef struct {
 	const uint8_t *data;
 	uint16_t len;
 	void *cookie;
-	int next_free;
+	list_entry free_list;
 } net_rx_slot_t;
 
 static net_rx_slot_t g_rx_slots[NET_RX_RING_SIZE];
@@ -196,7 +196,7 @@ static uint16_t g_rx_queue[NET_RX_RING_SIZE];
 static volatile unsigned g_rx_wr; /* written by IRQ   */
 static volatile unsigned g_rx_rd; /* read by DSR      */
 static volatile int g_rx_dsr_armed; /* 1 = DSR queued   */
-static int g_rx_free_head = -1;
+static list_entry g_rx_free_list;
 static spinlock_t g_rx_lock;
 
 /* ── Single eth0 netif + counters ───────────────────────────────────────────── */
@@ -268,7 +268,6 @@ static err_t eth0_init_fn(struct netif *netif)
 static void eth0_rx_release_slot(net_rx_slot_t *slot)
 {
 	int irq;
-	int idx = (int)(slot - g_rx_slots);
 
 	if (slot->nic && slot->nic->ops && slot->nic->ops->rx_reclaim)
 		slot->nic->ops->rx_reclaim(slot->nic, slot->cookie);
@@ -279,8 +278,7 @@ static void eth0_rx_release_slot(net_rx_slot_t *slot)
 	slot->cookie = NULL;
 
 	spinlock_lock(&g_rx_lock, &irq);
-	slot->next_free = g_rx_free_head;
-	g_rx_free_head = idx;
+	list_insert_head(&g_rx_free_list, &slot->free_list);
 	spinlock_unlock(&g_rx_lock, irq);
 }
 
@@ -348,14 +346,15 @@ static int eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len,
 
 	spinlock_lock(&g_rx_lock, &irq);
 	/* Drop if the queue is full or there are no free tracking slots. */
-	if (g_rx_wr - g_rx_rd >= NET_RX_RING_SIZE || g_rx_free_head < 0) {
+	if (g_rx_wr - g_rx_rd >= NET_RX_RING_SIZE ||
+	    list_is_empty(&g_rx_free_list)) {
 		spinlock_unlock(&g_rx_lock, irq);
 		return 0;
 	}
 
-	idx = g_rx_free_head;
-	g_rx_free_head = g_rx_slots[idx].next_free;
-	net_rx_slot_t *slot = &g_rx_slots[idx];
+	net_rx_slot_t *slot = container_of(list_remove_head(&g_rx_free_list),
+					   net_rx_slot_t, free_list);
+	idx = slot - g_rx_slots;
 	slot->nic = (nic_dev *)eth0.state;
 	slot->data = data;
 	slot->len = len;
@@ -367,7 +366,7 @@ static int eth0_rx_enqueue(void *ctx, const uint8_t *data, uint16_t len,
 		if (!dsr_add(eth0_rx_dsr, NULL)) {
 			g_rx_dsr_armed = 0;
 			g_rx_wr--;
-			g_rx_free_head = idx;
+			list_insert_head(&g_rx_free_list, &slot->free_list);
 			spinlock_unlock(&g_rx_lock, irq);
 			return 0;
 		}
@@ -393,14 +392,13 @@ void net_init(void)
 	g_rx_wr = 0;
 	g_rx_rd = 0;
 	g_rx_dsr_armed = 0;
-	g_rx_free_head = 0;
+	list_init(&g_rx_free_list);
 	for (int i = 0; i < NET_RX_RING_SIZE; i++) {
 		g_rx_slots[i].nic = NULL;
 		g_rx_slots[i].data = NULL;
 		g_rx_slots[i].len = 0;
 		g_rx_slots[i].cookie = NULL;
-		g_rx_slots[i].next_free = (i + 1 < NET_RX_RING_SIZE) ? (i + 1) :
-								       -1;
+		list_insert_tail(&g_rx_free_list, &g_rx_slots[i].free_list);
 	}
 
 	/* Start shared periodic services after lwIP is initialized. */

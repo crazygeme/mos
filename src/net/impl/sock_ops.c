@@ -262,7 +262,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	while (sk->state == SS_CONNECTING) {
 		if (sk->err)
 			return sk->err;
-		if (CURRENT_TASK()->fds[fd]->f_flag & O_NONBLOCK)
+		if (CURRENT_TASK()->files->fds[fd]->f_flag & O_NONBLOCK)
 			return -EINPROGRESS;
 		if (sock_deadline_expired(deadline))
 			return -EINPROGRESS;
@@ -320,7 +320,8 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 	int nonblock;
 	if (!sk)
 		return -ENOTSOCK;
-	nonblock = cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK) != 0;
+	nonblock = cur->files->fds[fd] &&
+		   (cur->files->fds[fd]->f_flag & O_NONBLOCK) != 0;
 	if (sk->domain == AF_UNIX)
 		return unix_accept(sk, addr, addrlen, nonblock);
 	if (sk->type != SOCK_STREAM)
@@ -428,8 +429,8 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 		return do_sendto(fd, buf, len, flags, NULL, 0);
 	loff_t pos = 0;
 	task_struct *cur = CURRENT_TASK();
-	return (int)cur->fds[fd]->f_fop->write(cur->fds[fd], buf, (size_t)len,
-					       &pos);
+	return (int)cur->files->fds[fd]->f_fop->write(cur->files->fds[fd], buf,
+						      (size_t)len, &pos);
 }
 
 int do_recv(int fd, void *buf, unsigned len, int flags)
@@ -470,7 +471,7 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET) {
 		struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
 		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
-		if (CURRENT_TASK()->fds[fd]->f_flag & O_NONBLOCK)
+		if (CURRENT_TASK()->files->fds[fd]->f_flag & O_NONBLOCK)
 			flags |= MSG_DONTWAIT;
 		return unix_sendmsg(sk, &msg, flags);
 	}
@@ -478,8 +479,8 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	if (sk->type == SOCK_STREAM) {
 		loff_t pos = 0;
 		task_struct *cur = CURRENT_TASK();
-		return (int)cur->fds[fd]->f_fop->write(cur->fds[fd], buf, len,
-						       &pos);
+		return (int)cur->files->fds[fd]->f_fop->write(
+			cur->files->fds[fd], buf, len, &pos);
 	}
 
 	if (sk->type == SOCK_RAW) {
@@ -525,7 +526,7 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 	task_struct *cur = CURRENT_TASK();
 	if (!sk)
 		return -ENOTSOCK;
-	if (cur->fds[fd] && (cur->fds[fd]->f_flag & O_NONBLOCK))
+	if (cur->files->fds[fd] && (cur->files->fds[fd]->f_flag & O_NONBLOCK))
 		flags |= MSG_DONTWAIT;
 	if (sk->domain == AF_NETLINK) {
 		struct iovec iov = { .iov_base = buf, .iov_len = len };

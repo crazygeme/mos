@@ -81,8 +81,8 @@ struct clock_readers {
 static void parallel_clock_reader(void *param)
 {
 	struct clock_readers *state = param;
-	current->ppid = state->parent;
-	current->exit_signal = 0;
+	current->life->ppid = state->parent;
+	current->life->exit_signal = 0;
 	sched_disable();
 	unsigned long long deadline = time_deadline_ms(2000);
 	__sync_or_and_fetch(&state->cpus, 1U << smp_cpu_id());
@@ -137,7 +137,7 @@ KTEST(Timekeeping, ParallelClocksAndTimers)
 		return 0;
 	struct clock_readers *state = zalloc(sizeof(*state));
 	ASSERT_NONNULL(state);
-	state->parent = current->psid;
+	state->parent = current->life->psid;
 	unsigned pids[2], created = 0;
 	for (unsigned i = 0; i < 2; i++) {
 		unsigned pid = ps_create(parallel_clock_reader, state,
@@ -145,7 +145,7 @@ KTEST(Timekeeping, ParallelClocksAndTimers)
 		if ((int)pid < 0)
 			break;
 		pids[created++] = pid;
-		current->nchildren++;
+		current->life->nchildren++;
 	}
 	while (__atomic_load_n(&state->completed, __ATOMIC_ACQUIRE) < created)
 		time_wait(1);

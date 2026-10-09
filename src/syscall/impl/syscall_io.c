@@ -77,9 +77,9 @@ int sys_read(int fd, char *buf, unsigned len)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
-	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
+	if (S_ISDIR(cur->files->fds[fd]->f_inode->i_mode))
 		return -EISDIR;
 
 	ret = fs_read(fd, -1, buf, len);
@@ -104,9 +104,9 @@ int sys_write(int fd, const char *buf, unsigned len)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
-	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
+	if (S_ISDIR(cur->files->fds[fd]->f_inode->i_mode))
 		return -EISDIR;
 
 	return fs_write(fd, -1, buf, len);
@@ -121,9 +121,9 @@ int sys_pread64(int fd, void *buf, unsigned count, unsigned offset_low,
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
-	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
+	if (S_ISDIR(cur->files->fds[fd]->f_inode->i_mode))
 		return -EISDIR;
 
 	ret = fs_pread(fd, offset, buf, count);
@@ -153,9 +153,9 @@ int sys_pwrite64(int fd, const void *buf, unsigned count, unsigned offset_low,
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
-	if (S_ISDIR(cur->fds[fd]->f_inode->i_mode))
+	if (S_ISDIR(cur->files->fds[fd]->f_inode->i_mode))
 		return -EISDIR;
 
 	return fs_pwrite(fd, offset, buf, count);
@@ -265,10 +265,10 @@ int sys_readv(int fildes, const struct iovec *iov, int iovcnt)
 		return -EBADF;
 	if (iovcnt < 0)
 		return -EINVAL;
-	if (cur->fds[fildes] == NULL)
+	if (cur->files->fds[fildes] == NULL)
 		return -EBADF;
 
-	fp = cur->fds[fildes];
+	fp = cur->files->fds[fildes];
 	if (!fp || !fp->f_fop || !fp->f_fop->read)
 		return -EBADF;
 	if (S_ISDIR(fp->f_inode->i_mode))
@@ -324,10 +324,10 @@ int sys_writev(int fildes, const struct iovec *iov, int iovcnt)
 		return -EBADF;
 	if (iovcnt < 0)
 		return -EINVAL;
-	if (cur->fds[fildes] == NULL)
+	if (cur->files->fds[fildes] == NULL)
 		return -EBADF;
 
-	fp = cur->fds[fildes];
+	fp = cur->files->fds[fildes];
 	if (!fp || !fp->f_fop || !fp->f_fop->write)
 		return -EBADF;
 	if (S_ISDIR(fp->f_inode->i_mode))
@@ -424,11 +424,11 @@ int sys_pipe2(int pipefd[2], int flags)
 	if (ret < 0)
 		return ret;
 	cur = CURRENT_TASK();
-	cur->fds[pipefd[0]]->f_flag |= flags & O_NONBLOCK;
-	cur->fds[pipefd[1]]->f_flag |= flags & O_NONBLOCK;
+	cur->files->fds[pipefd[0]]->f_flag |= flags & O_NONBLOCK;
+	cur->files->fds[pipefd[1]]->f_flag |= flags & O_NONBLOCK;
 	if (flags & O_CLOEXEC) {
-		fd_bitmap_set(cur->fd_cloexec, pipefd[0]);
-		fd_bitmap_set(cur->fd_cloexec, pipefd[1]);
+		fd_bitmap_set(cur->files->cloexec, pipefd[0]);
+		fd_bitmap_set(cur->files->cloexec, pipefd[1]);
 	}
 	return 0;
 }
@@ -489,7 +489,7 @@ int sys_fcntl(int fd, int cmd, intptr_t arg)
 
 	if (fd < 0 || fd >= MAX_FD)
 		return -EBADF;
-	if (cur->fds[fd] == NULL)
+	if (cur->files->fds[fd] == NULL)
 		return -EBADF;
 
 	switch (cmd) {
@@ -505,36 +505,37 @@ int sys_fcntl(int fd, int cmd, intptr_t arg)
 		ret = sys_fcntl_lock32(fd, cmd, (struct flock *)(uintptr_t)arg);
 		break;
 	case F_GETFD:
-		ret = fd_bitmap_test(cur->fd_cloexec, fd) ? FD_CLOEXEC : 0;
+		ret = fd_bitmap_test(cur->files->cloexec, fd) ? FD_CLOEXEC : 0;
 		break;
 	case F_SETFD:
 		if (arg & FD_CLOEXEC)
-			fd_bitmap_set(cur->fd_cloexec, fd);
+			fd_bitmap_set(cur->files->cloexec, fd);
 		else
-			fd_bitmap_clear(cur->fd_cloexec, fd);
+			fd_bitmap_clear(cur->files->cloexec, fd);
 		ret = 0;
 		break;
 	case F_GETFL:
-		ret = cur->fds[fd]->f_flag;
+		ret = cur->files->fds[fd]->f_flag;
 		break;
 	case F_SETFL:
-		cur->fds[fd]->f_flag = (cur->fds[fd]->f_flag & O_ACCMODE) |
-				       (arg & ~(O_ACCMODE | O_CLOEXEC));
+		cur->files->fds[fd]->f_flag =
+			(cur->files->fds[fd]->f_flag & O_ACCMODE) |
+			(arg & ~(O_ACCMODE | O_CLOEXEC));
 		ret = 0;
 		break;
 	case F_SETOWN:
-		cur->fds[fd]->f_owner = arg;
+		cur->files->fds[fd]->f_owner = arg;
 		ret = 0;
 		break;
 	case F_GETOWN:
-		ret = cur->fds[fd]->f_owner;
+		ret = cur->files->fds[fd]->f_owner;
 		break;
 	case F_SETSIG:
-		cur->fds[fd]->f_sigio = arg;
+		cur->files->fds[fd]->f_sigio = arg;
 		ret = 0;
 		break;
 	case F_GETSIG:
-		ret = cur->fds[fd]->f_sigio;
+		ret = cur->files->fds[fd]->f_sigio;
 		break;
 	default:
 		ret = -EINVAL;
@@ -576,7 +577,7 @@ int sys_getdents(unsigned int fd, struct linux_dirent *dirp, unsigned int count)
 	if (!S_ISDIR(s.st_mode))
 		return -EISDIR;
 
-	fp = current->fds[fd];
+	fp = current->files->fds[fd];
 
 	if (count < sizeof(struct linux_dirent))
 		return -22;
@@ -630,7 +631,7 @@ static int getdents_convert(unsigned fd, void *output, unsigned count,
 	unsigned out = 0;
 	loff_t position;
 	int bytes;
-	if (fd >= MAX_FD || !current->fds[fd])
+	if (fd >= MAX_FD || !current->files->fds[fd])
 		return -ENOENT;
 	if (!output)
 		return -EFAULT;
@@ -639,7 +640,7 @@ static int getdents_convert(unsigned fd, void *output, unsigned count,
 	buffer = malloc(count);
 	if (!buffer)
 		return -ENOMEM;
-	fp = current->fds[fd];
+	fp = current->files->fds[fd];
 	position = fp->f_pos;
 	bytes = sys_getdents(fd, (void *)buffer, count);
 	if (bytes < 0) {

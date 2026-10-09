@@ -137,7 +137,7 @@ static int poll_ctx_check(void *arg)
 			ctx->fds[i].revents = 0;
 			continue;
 		}
-		if (fd >= MAX_FD || current->fds[fd] == NULL) {
+		if (fd >= MAX_FD || current->files->fds[fd] == NULL) {
 			ctx->fds[i].revents = POLLNVAL;
 			ready++;
 			continue;

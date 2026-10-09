@@ -19,16 +19,15 @@ typedef struct {
     ptrace_saved_frame ptrace_frame;
     int ptrace_frame_valid;
     uintptr_t ptrace_orig_eax, ptrace_eventmsg;
-    unsigned uid, euid, gid, egid;
-} test_user;
-typedef struct _task_struct {
+    task_arch_context arch;
     void *robust_list_head;
     size_t robust_list_size;
-    int (*robust_list_reader)(struct _task_struct *, uintptr_t,
-                             uintptr_t *, intptr_t *, uintptr_t *);
-    test_user *user;
-    struct { unsigned short cs; } tss;
-    int status;
+    int (*robust_list_reader)(struct _task_struct *, uintptr_t, uintptr_t *, intptr_t *, uintptr_t *);
+} test_thread;
+typedef struct _task_struct {
+    test_thread *execution;
+    struct { unsigned uid, euid, gid, egid; } *credentials;
+    struct { int status; } *sched;
 } task_struct;
 extern task_struct *current;
 enum { ps_stopped = 1 };
@@ -66,8 +65,9 @@ int native_set_robust_list(void *, size_t);
 int native_get_robust_list(int, void *, void *);
 int native_ptrace(int, int, void *, void *);
 int native_shmctl(int, int, void *);
-static test_user user;
-static task_struct task = { .user = &user, .status = ps_stopped };
+static test_thread user;
+static task_struct task = { .execution = &user, .sched = &(typeof(*((task_struct *)0)->sched)){ .status = ps_stopped },
+ .credentials = &(typeof(*((task_struct *)0)->credentials)){0} };
 task_struct *current = &task;
 task_struct *ps_find_process(int pid) { return pid == 7 ? &task : NULL; }
 int ps_read_process_memory(task_struct *target, const void *src, void *dst, unsigned n)
@@ -114,15 +114,15 @@ int main(void)
     intptr_t offset;
     assert(i386_set_robust_list(&h32, 24) == -EINVAL);
     assert(i386_set_robust_list(&h32, 12) == 0);
-    assert(task.robust_list_reader(&task, (uintptr_t)&h32, &next, &offset, &pending) == 0);
+    assert(task.execution->robust_list_reader(&task, (uintptr_t)&h32, &next, &offset, &pending) == 0);
     assert(next == h32.next && offset == -8 && pending == h32.pending);
-    assert(task.robust_list_reader(&task, (uintptr_t)&h32, &next, NULL, NULL) == 0);
+    assert(task.execution->robust_list_reader(&task, (uintptr_t)&h32, &next, NULL, NULL) == 0);
     assert(next == h32.next);
     uint64_t head = 0, length = 0;
     assert(native_get_robust_list(7, &head, &length) == 0);
     assert(head == (uintptr_t)&h32 && length == 12);
     assert(native_set_robust_list(&h64, 24) == 0);
-    assert(task.robust_list_reader(&task, (uintptr_t)&h64, &next, &offset, &pending) == 0);
+    assert(task.execution->robust_list_reader(&task, (uintptr_t)&h64, &next, &offset, &pending) == 0);
     assert(next == h64.next && offset == -16 && pending == h64.pending);
     uint32_t compat_head[2] = { 0, 0xa5a5a5a5 }, compat_len[2] = { 0, 0xa5a5a5a5 };
     assert(i386_get_robust_list(7, compat_head, compat_len) == 0);
@@ -216,9 +216,9 @@ int main(void)
     assert(words64[18] == 9 && words64[19] == fmt.e_entry);
     assert(words64[34] == 1 && words64[35] == 0);
     elf_i386_format.activate(&task);
-    assert(task.tss.cs == USER_CODE_SELECTOR && task.robust_list_size == 12 && vdso_maps == 1);
+    assert(task.execution->arch.cs == USER_CODE_SELECTOR && task.execution->robust_list_size == 12 && vdso_maps == 1);
     elf_amd64_format.activate(&task);
-    assert(task.tss.cs == USER64_CODE_SELECTOR && task.robust_list_size == 24 && vdso_maps == 1);
+    assert(task.execution->arch.cs == USER64_CODE_SELECTOR && task.execution->robust_list_size == 24 && vdso_maps == 1);
     puts("ABI adapter checks passed: robust readers/getters, ptrace, SHM, ELF headers and initial stacks.");
     return 0;
 }

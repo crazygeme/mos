@@ -6,7 +6,7 @@
 
 /* Process-owned byte ranges are independent of BSD open-file locks. */
 typedef struct posix_range {
-	struct posix_range *next;
+	list_entry list;
 	void *identity;
 	uint64_t ino;
 	unsigned owner;
@@ -14,7 +14,7 @@ typedef struct posix_range {
 	int64_t start, end;
 } posix_range;
 
-static posix_range *ranges;
+static list_entry ranges = { &ranges, &ranges };
 static spinlock_t range_lock = SPINLOCK_INITIALIZER;
 static list_entry range_wait = { &range_wait, &range_wait };
 
@@ -33,45 +33,42 @@ static void wake_waiters(void)
 {
 	while (!list_is_empty(&range_wait)) {
 		list_entry *entry = list_remove_tail(&range_wait);
-		task_struct *task = container_of(entry, task_struct, ps_list);
+		task_struct *task =
+			(container_of(entry, task_schedule, ps_list)->task);
 		ps_put_to_ready_queue(task);
 	}
 }
 
-static void free_ranges(posix_range *r)
+static void free_ranges(list_entry *list)
 {
-	while (r) {
-		posix_range *next = r->next;
-		free(r);
-		r = next;
-	}
+	while (!list_is_empty(list))
+		free(container_of(list_remove_head(list), posix_range, list));
 }
 
 void fs_posix_lock_release(file *fp, unsigned owner)
 {
-	posix_range **link, *garbage = NULL;
+	list_entry garbage = { &garbage, &garbage };
 	int irq;
 	spinlock_lock(&range_lock, &irq);
-	for (link = &ranges; *link;) {
-		posix_range *r = *link;
+	for (list_entry *node = ranges.next; node != &ranges;) {
+		posix_range *r = container_of(node, posix_range, list);
+		node = node->next;
 		if (r->owner == owner && (!fp || same_file(r, fp))) {
-			*link = r->next;
-			r->next = garbage;
-			garbage = r;
-		} else {
-			link = &r->next;
+			list_remove_entry(&r->list);
+			list_insert_head(&garbage, &r->list);
 		}
 	}
-	if (garbage)
+	if (!list_is_empty(&garbage))
 		wake_waiters();
 	spinlock_unlock(&range_lock, irq);
-	free_ranges(garbage);
+	free_ranges(&garbage);
 }
 
 int fs_posix_lock(file *fp, int cmd, struct flock64 *fl)
 {
 	task_struct *cur = CURRENT_TASK();
-	posix_range *fresh = NULL, *split = NULL, *garbage = NULL;
+	posix_range *fresh = NULL, *split = NULL;
+	list_entry garbage = { &garbage, &garbage };
 	int64_t base, start, end;
 	int irq, ret = 0;
 	if (fl->l_type != F_RDLCK && fl->l_type != F_WRLCK &&
@@ -128,8 +125,10 @@ int fs_posix_lock(file *fp, int cmd, struct flock64 *fl)
 	spinlock_lock(&range_lock, &irq);
 	for (;;) {
 		posix_range *conflict = NULL;
-		for (posix_range *r = ranges; r; r = r->next) {
-			if (r->owner != cur->tgid && same_file(r, fp) &&
+		for (list_entry *node = ranges.next; node != &ranges;
+		     node = node->next) {
+			posix_range *r = container_of(node, posix_range, list);
+			if (r->owner != cur->thread->tgid && same_file(r, fp) &&
 			    start <= r->end && end >= r->start &&
 			    (fl->l_type == F_WRLCK || r->type == F_WRLCK)) {
 				conflict = r;
@@ -171,42 +170,36 @@ int fs_posix_lock(file *fp, int cmd, struct flock64 *fl)
 		spinlock_lock(&range_lock, &irq);
 	}
 	/* Replacement or unlocking preserves the portions outside the request. */
-	for (posix_range **link = &ranges; *link;) {
-		posix_range *r = *link;
-		if (r->owner != cur->tgid || !same_file(r, fp) ||
-		    start > r->end || end < r->start) {
-			link = &r->next;
+	for (list_entry *node = ranges.next; node != &ranges;) {
+		posix_range *r = container_of(node, posix_range, list);
+		node = node->next;
+		if (r->owner != cur->thread->tgid || !same_file(r, fp) ||
+		    start > r->end || end < r->start)
 			continue;
-		}
 		if (r->start < start && r->end > end) {
 			*split = *r;
 			split->start = end + 1;
-			split->next = r->next;
-			r->next = split;
+			list_insert_head(&r->list, &split->list);
 			r->end = start - 1;
 			split = NULL;
 			break;
-		} else if (r->start < start) {
+		} else if (r->start < start)
 			r->end = start - 1;
-			link = &r->next;
-		} else if (r->end > end) {
+		else if (r->end > end)
 			r->start = end + 1;
-			link = &r->next;
-		} else {
-			*link = r->next;
-			r->next = garbage;
-			garbage = r;
+		else {
+			list_remove_entry(&r->list);
+			list_insert_head(&garbage, &r->list);
 		}
 	}
 	if (fl->l_type != F_UNLCK) {
-		*fresh = (posix_range){ .next = ranges,
-					.identity = lock_identity(fp),
+		*fresh = (posix_range){ .identity = lock_identity(fp),
 					.ino = fp->f_inode->i_ino,
-					.owner = cur->tgid,
+					.owner = cur->thread->tgid,
 					.type = fl->l_type,
 					.start = start,
 					.end = end };
-		ranges = fresh;
+		list_insert_head(&ranges, &fresh->list);
 		fresh = NULL;
 	}
 	wake_waiters();
@@ -214,6 +207,6 @@ out:
 	spinlock_unlock(&range_lock, irq);
 	free(fresh);
 	free(split);
-	free_ranges(garbage);
+	free_ranges(&garbage);
 	return ret;
 }

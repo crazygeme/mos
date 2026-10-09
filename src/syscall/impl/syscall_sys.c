@@ -135,8 +135,8 @@ static int clock_time_ns(int clockid, unsigned long long *ns)
 		us = time_now_us();
 		break;
 	case 2: /* CLOCK_PROCESS_CPUTIME_ID */
-		us = (ps_usage_read(&current->usage->user_tickets) +
-		      ps_usage_read(&current->usage->kernel_tickets)) *
+		us = (ps_usage_read(&current->thread->user_tickets) +
+		      ps_usage_read(&current->thread->kernel_tickets)) *
 		     (1000000ULL / HZ);
 		break;
 	case 3: /* CLOCK_THREAD_CPUTIME_ID */
@@ -318,11 +318,11 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 	if (option == 1) { /* PR_SET_PDEATHSIG */
 		if (arg2 >= NSIG)
 			return -EINVAL;
-		current->pdeath_signal = arg2;
+		current->life->pdeath_signal = arg2;
 		return 0;
 	}
 	if (option == 2) { /* PR_GET_PDEATHSIG */
-		int value = current->pdeath_signal;
+		int value = current->life->pdeath_signal;
 		return ps_write_process_memory(current, (void *)arg2, &value,
 					       sizeof(value));
 	}
@@ -332,11 +332,11 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 	if (option == 4) /* PR_SET_DUMPABLE */
 		return arg2 <= 2 ? 0 : -EINVAL;
 	if (option == 7) /* PR_GET_KEEPCAPS */
-		return current->user->keep_capabilities;
+		return current->credentials->keep_capabilities;
 	if (option == 8) { /* PR_SET_KEEPCAPS */
 		if (arg2 > 1)
 			return -EINVAL;
-		current->user->keep_capabilities = arg2;
+		current->credentials->keep_capabilities = arg2;
 		return 0;
 	}
 	return -EINVAL;
@@ -451,12 +451,12 @@ int sys_reboot(unsigned magic1, unsigned magic2, unsigned cmd, void *arg)
 	task_struct *cur = CURRENT_TASK();
 	(void)arg;
 
-	if (!cur->user || cur->user->euid != 0)
+	if (!cur->execution || cur->credentials->euid != 0)
 		return -EPERM;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("reboot(magic1=%x, magic2=%x, cmd=%x) from pid %d\n",
-		     magic1, magic2, cmd, cur->psid);
+		     magic1, magic2, cmd, cur->life->psid);
 
 	/* Reject calls that don't carry the Linux magic numbers. */
 	if (magic1 != LINUX_REBOOT_MAGIC1 ||
@@ -513,15 +513,15 @@ int sys_munmap(void *addr, size_t length)
 int sys_mprotect(void *addr, size_t len, int prot)
 {
 	task_struct *cur = CURRENT_TASK();
-	LOCK_GUARD(&cur->user->vm->mapping_lock);
+	LOCK_GUARD(&cur->memory->mapping_lock);
 	vaddr_t begin = (vaddr_t)(uintptr_t)addr;
 	vaddr_t end, vir;
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mprotect: addr %x, len %x, prot %x\n", addr, len, prot);
 
-	if (begin >= cur->user->vm->task_size ||
-	    len > cur->user->vm->task_size - begin)
+	if (begin >= cur->memory->task_size ||
+	    len > cur->memory->task_size - begin)
 		return -EINVAL;
 	if (!arch_mm_user_range_valid(begin, len))
 		return -EINVAL;
@@ -535,7 +535,7 @@ int sys_mprotect(void *addr, size_t len, int prot)
 	end = (begin + len + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 
 	/* Update VM region descriptors, splitting regions at boundaries. */
-	vm_mprotect(cur->user->vm, begin, end, prot);
+	vm_mprotect(cur->memory, begin, end, prot);
 
 	/* Update hardware page-table entries for already-faulted-in pages. */
 	for (vir = begin; vir < end; vir += PAGE_SIZE) {
@@ -558,7 +558,7 @@ int sys_mprotect(void *addr, size_t len, int prot)
 		if (!(prot & PROT_WRITE))
 			mmflag &= ~PAGE_ENTRY_WRITABLE;
 		else {
-			vm_region *region = vm_find_map(cur->user->vm, vir);
+			vm_region *region = vm_find_map(cur->memory, vir);
 
 			/* Managed pages retain write faults for COW and dirty tracking. */
 			if (region &&
@@ -569,14 +569,14 @@ int sys_mprotect(void *addr, size_t len, int prot)
 		mm_set_map_flag(vir, mmflag);
 	}
 
-	vm_invalidate_user_cache(cur->user);
+	vm_invalidate_task_cache(cur);
 	return 0;
 }
 
 int sys_madvise(void *addr, size_t length, int advice)
 {
 	task_struct *cur = CURRENT_TASK();
-	mm_struct *mm = cur->user->vm;
+	mm_struct *mm = cur->memory;
 	vaddr_t begin = (vaddr_t)addr, end, cursor;
 	int result = 0;
 	LOCK_GUARD(&mm->mapping_lock);
@@ -633,7 +633,7 @@ int sys_madvise(void *addr, size_t length, int advice)
 int sys_umask(unsigned mask)
 {
 	task_struct *cur = CURRENT_TASK();
-	int ret = __sync_lock_test_and_set(&cur->umask, (mask & S_IRWXOGU));
+	int ret = __sync_lock_test_and_set(&cur->fs->umask, (mask & S_IRWXOGU));
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("umask(%d) = %d\n", mask, ret);
@@ -647,7 +647,7 @@ long sys_times(struct tms *buf)
 		klog("times\n");
 
 	if (buf) {
-		task_usage_t *usage = current->usage;
+		task_thread *usage = current->thread;
 		buf->tms_utime = ps_usage_read(&usage->user_tickets);
 		buf->tms_stime = ps_usage_read(&usage->kernel_tickets);
 		buf->tms_cutime = ps_usage_read(&usage->child_utime);
@@ -720,7 +720,7 @@ int sys_ioperm(unsigned long from, unsigned long num, int turn_on)
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("ioperm(%lx, %lx, %d)\n", from, num, turn_on);
 
-	if (!cur->user || cur->user->euid != 0)
+	if (!cur->execution || cur->credentials->euid != 0)
 		return -EPERM;
 	return ps_set_ioperm(cur, from, num, turn_on);
 }
@@ -732,13 +732,14 @@ int sys_iopl(int level)
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("iopl(%d)\n", level);
 
-	if (!cur->user || cur->user->euid != 0)
+	if (!cur->execution || cur->credentials->euid != 0)
 		return -EPERM;
 	if (level < 0 || level > 3)
 		return -EINVAL;
 
-	cur->io_priv_level = (unsigned char)level;
-	cur->io_allow_all = level ? 1 : 0;
+	cur->execution->io_priv_level = (unsigned char)level;
+	cur->execution->io_allow_all = level != 0;
+
 	reset_tss(cur);
 	return 0;
 }
@@ -757,7 +758,7 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		    int flags, vaddr_t new_addr)
 {
 	task_struct *cur = CURRENT_TASK();
-	LOCK_GUARD(&cur->user->vm->mapping_lock);
+	LOCK_GUARD(&cur->memory->mapping_lock);
 	vm_region *region;
 	size_t old_size_pg, new_size_pg;
 	vaddr_t old_end, new_end;
@@ -779,7 +780,7 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 	if (!new_size_pg)
 		return -EINVAL;
 
-	region = vm_find_map(cur->user->vm, old_addr);
+	region = vm_find_map(cur->memory, old_addr);
 	if (!region)
 		return -EFAULT;
 
@@ -795,8 +796,8 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 	/* Grow: extend the existing VMA if the full new range is free. */
 	old_end = old_addr + old_size_pg;
 	new_end = old_addr + new_size_pg;
-	if (vm_extend_map(cur->user->vm, old_addr, old_end, new_end)) {
-		vm_invalidate_user_cache(cur->user);
+	if (vm_extend_map(cur->memory, old_addr, old_end, new_end)) {
+		vm_invalidate_task_cache(cur);
 		return (intptr_t)old_addr;
 	}
 
@@ -872,7 +873,7 @@ int sys_stime(unsigned *t)
 
 	if (!t)
 		return -EFAULT;
-	if (cur->user->euid != 0)
+	if (cur->credentials->euid != 0)
 		return -EPERM;
 
 	time_set_wall_offset((long long)(*t) * 1000000LL);

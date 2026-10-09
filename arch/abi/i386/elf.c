@@ -19,10 +19,10 @@
 #include <arch/abi/elf_stack.h>
 static void activate(task_struct *task)
 {
-	task->robust_list_head = NULL;
-	task->robust_list_reader = NULL;
-	task->robust_list_size = 12;
-	task->tss.cs = USER_CODE_SELECTOR;
+	task->execution->robust_list_head = NULL;
+	task->execution->robust_list_reader = NULL;
+	task->execution->robust_list_size = 12;
+	task->execution->arch.cs = USER_CODE_SELECTOR;
 	mm_vdso_map();
 }
 const struct elf_format elf_i386_format = {

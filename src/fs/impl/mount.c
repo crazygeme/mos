@@ -135,9 +135,9 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 
 	if ((strcmp(target, "LABEL=/") == 0 || target[1] == '\0') &&
 	    (flags & MS_REMOUNT)) {
-		if (!cur->root->s_op || !cur->root->s_op->remount)
+		if (!cur->fs->root->s_op || !cur->fs->root->s_op->remount)
 			return -ENOSYS;
-		return cur->root->s_op->remount(cur->root, (int)flags);
+		return cur->fs->root->s_op->remount(cur->fs->root, (int)flags);
 	}
 
 	/* Non-remount mount of "/" is a no-op (already mounted at boot). */
@@ -152,7 +152,7 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	if (!sb)
 		return -ENOMEM;
 
-	ret = vfs_mount(cur->root, target, sb);
+	ret = vfs_mount(cur->fs->root, target, sb);
 	if (ret == -EEXIST) {
 		sb_put(sb);
 		return -EBUSY;
@@ -182,5 +182,5 @@ int fs_do_umount(const char *target, int flags)
 	if (target[1] == '\0')
 		return -EBUSY;
 
-	return vfs_umount(cur->root, target);
+	return vfs_umount(cur->fs->root, target);
 }

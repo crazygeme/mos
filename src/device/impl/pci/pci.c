@@ -223,7 +223,7 @@ void pci_for_each(pci_func_t f, int type, void *extra)
 	const device_t *device;
 	if (!f)
 		return;
-	for (device = device_first(); device; device = device->next)
+	for (device = device_first(); device; device = device_next(device))
 		if (device->bus == DEVICE_BUS_PCI &&
 		    (type == PCI_SCAN_ALL || type == device->type))
 			f(device->address, device->vendor_id, device->device_id,

@@ -76,7 +76,7 @@ KTEST(DeviceTest, DuplicateDriverRegistration)
 	driver_register(&mock_driver);
 	driver_register(&mock_driver);
 	for (driver = driver_first(); driver && count < 256;
-	     driver = driver->next, count++)
+	     driver = driver_next(driver), count++)
 		if (driver == &mock_driver)
 			matches++;
 	EXPECT_NULL(driver);
@@ -88,11 +88,11 @@ KTEST(DeviceTest, ScanPreservesBootInventory)
 {
 	const device_t *first = device_first(), *device;
 	unsigned count = 0, after = 0;
-	for (device = first; device; device = device->next)
+	for (device = first; device; device = device_next(device))
 		count++;
 	pci_scan();
 	EXPECT_TRUE(first == device_first());
-	for (device = device_first(); device; device = device->next) {
+	for (device = device_first(); device; device = device_next(device)) {
 		after++;
 		if (device->selected_driver)
 			EXPECT_TRUE(device->probe_done);
@@ -150,7 +150,7 @@ KTEST(DeviceTest, PciQueriesExcludePs2Ports)
 {
 	const device_t *device;
 	unsigned expected = 0, actual = 0;
-	for (device = device_first(); device; device = device->next)
+	for (device = device_first(); device; device = device_next(device))
 		if (device->bus == DEVICE_BUS_PCI)
 			expected++;
 	pci_for_each(count_pci, PCI_SCAN_ALL, &actual);

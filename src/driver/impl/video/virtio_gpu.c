@@ -200,13 +200,13 @@ static int gpu_user_range(uint64_t pointer, unsigned size, unsigned write)
 	vaddr_t pos, end;
 	if (!size)
 		return 1;
-	if (!current || !current->user || pointer < PAGE_SIZE ||
+	if (!current || !current->execution || pointer < PAGE_SIZE ||
 	    pointer >= KERNEL_OFFSET || size > KERNEL_OFFSET - pointer)
 		return 0;
 	pos = pointer;
 	end = pos + size;
 	while (pos < end) {
-		vm_region *region = vm_find_map(current->user->vm, pos);
+		vm_region *region = vm_find_map(current->memory, pos);
 		if (!region ||
 		    !(region->prot & (write ? PROT_WRITE : PROT_READ)))
 			return 0;
@@ -1313,7 +1313,7 @@ gpu_ioctl_locked_drm_ioctl_set_master(void *context __attribute__((unused)),
 				      void *arg __attribute__((unused)))
 {
 	struct gpu_client *client = context;
-	if (MINOR(client->rdev) != 0 || current->user->euid)
+	if (MINOR(client->rdev) != 0 || current->credentials->euid)
 		return -EACCES;
 	if (gpu_master && gpu_master != client)
 		return -EBUSY;
@@ -1494,7 +1494,7 @@ static int gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle(
 	int result;
 	if (r->flags || r->fd < 0 || r->fd >= MAX_FD)
 		return -EINVAL;
-	fp = current->fds[r->fd];
+	fp = current->files->fds[r->fd];
 	if (!fp || fp->f_fop != &gpu_buffer_fops)
 		return -EINVAL;
 	result = gpu_add_handle(client, fp);
@@ -1881,7 +1881,7 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	client->slot = slot;
 	client->rdev = rdev;
 	client->authenticated = MINOR(rdev) == GPU_RENDER_MINOR ||
-				current->user->euid == 0;
+				current->credentials->euid == 0;
 	fp->f_inode->i_mode = S_IFCHR | 0666;
 	fp->f_inode->i_private = client;
 	fp->f_fop = &gpu_fops;
@@ -1900,7 +1900,7 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	if (gpu_simple(&req, sizeof(req), 0))
 		goto fail;
 	gpu_client_insert(&gpu_clients, client);
-	if (!MINOR(rdev) && !gpu_master && !current->user->euid)
+	if (!MINOR(rdev) && !gpu_master && !current->credentials->euid)
 		gpu_master = client;
 	rmutex_unlock(&gpu_lock);
 	return fp;

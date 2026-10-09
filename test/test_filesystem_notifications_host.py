@@ -70,14 +70,13 @@ typedef unsigned long sigset_t;
     'ps/ps.h': '''#pragma once
 #include <fs/vfs.h>
 #include <ps/signal.h>
-typedef struct { unsigned uid, euid, gid, egid; } test_user;
+
 struct _task_struct {
-    super_block *root;
-    struct { mutex_t lock; } *files;
-    file *fds[MAX_FD];
-    test_user *user;
-    void *io_wait;
-    void (*cancel_io_wait)(void *);
+    struct { mutex_t lock; file *fds[MAX_FD]; unsigned long cloexec[FD_BITMAP_WORDS]; } *files;
+    struct { unsigned uid, euid, gid, egid; } *credentials;
+    struct { super_block *root; } *fs;
+    struct { unsigned tgid; } *thread;
+    struct { list_entry io_files; void *io_wait; void (*cancel_io_wait)(void *); } *wait;
 };
 extern task_struct *current;
 #define CURRENT_TASK() current
@@ -105,9 +104,12 @@ PROBE = r'''
 #include <errno.h>
 #include <macro.h>
 unsigned allocations;
-static test_user user;
+static typeof(*((task_struct *)0)->fs) fs_context;
+static typeof(*((task_struct *)0)->credentials) credentials;
+static typeof(*((task_struct *)0)->thread) thread;
+static typeof(*((task_struct *)0)->wait) wait;
 static typeof(*((task_struct *)0)->files) files;
-static task_struct task = { .user = &user, .files = &files };
+static task_struct task = { .credentials = &credentials, .fs = &fs_context, .thread = &thread, .wait = &wait, .files = &files };
 task_struct *current = &task;
 char *name_get(void) { char *p = malloc(MAX_PATH); if (p) { memset(p, 0xa5, MAX_PATH); p[0] = 0; } return p; }
 void name_put(char *name) { free(name); }
@@ -129,16 +131,16 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int test, int infinite
 void epoll_release_file(file *fp) { (void)fp; }
 void fs_flock_release(file *fp) { (void)fp; }
 int fs_install_fd(file *fp, int flags)
-{ (void)flags; for (int fd = 0; fd < MAX_FD; fd++) if (!task.fds[fd]) { task.fds[fd] = fp; return fd; } return -1; }
+{ (void)flags; for (int fd = 0; fd < MAX_FD; fd++) if (!files.fds[fd]) { files.fds[fd] = fp; return fd; } return -1; }
 super_block *devnode_create(unsigned mode, unsigned dev) { (void)mode; (void)dev; assert(0); return NULL; }
 
 @@FS_PUT@@
 
-static void close_fd(int fd) { file *fp = task.fds[fd]; assert(fp); task.fds[fd] = NULL; fs_put_file(fp); }
+static void close_fd(int fd) { file *fp = files.fds[fd]; assert(fp); files.fds[fd] = NULL; fs_put_file(fp); }
 static unsigned collect(int fd, unsigned expected, int wd, const char *name)
 {
     char buffer[4096];
-    file *fp = task.fds[fd];
+    file *fp = files.fds[fd];
     loff_t pos = 0;
     int length = fp->f_fop->read(fp, buffer, sizeof(buffer), &pos);
     if (!expected) { assert(length == -EAGAIN); return 0; }
@@ -164,9 +166,9 @@ static const file_operations *original_fops;
 static int spy_getattr(file *fp, struct stat *st) { metadata_calls++; return original_fops->getattr(fp, st); }
 static file *tracked_open(const char *path)
 {
-    file *fp = vfs_open(task.root, path, O_RDONLY);
+    file *fp = vfs_open(fs_context.root, path, O_RDONLY);
     assert(fp);
-    inotify_file_open(fp, task.root);
+    inotify_file_open(fp, fs_context.root);
     return fp;
 }
 static file *leaf_open(super_block *sb, int flags)
@@ -185,7 +187,7 @@ static const super_operations leaf_sops = { .open_root = leaf_open };
 int main(void)
 {
     super_block *host = sget(NULL);
-    task.root = host;
+    fs_context.root = host;
     vfs_entry_tree *tree = vfs_entry_tree_create();
     vfs_entry_node *root = vfs_entry_root(tree);
     vfs_entry_node *device = vfs_entry_directory(root, "device");
@@ -255,7 +257,7 @@ int main(void)
     super_block *first = vfs_entry_tree_mount(tree);
     super_block *second = vfs_entry_tree_mount(tree);
     host = sget(NULL);
-    task.root = host;
+    fs_context.root = host;
     assert(!vfs_mount(host, "/first", first));
     assert(!vfs_mount(host, "/second", second));
     sb_put(registry);

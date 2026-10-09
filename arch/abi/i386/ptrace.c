@@ -7,9 +7,9 @@ struct ptrace_user_regs {
 };
 static int i386_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 {
-	ptrace_saved_frame *frame = &task->user->ptrace_frame;
+	ptrace_saved_frame *frame = &task->execution->ptrace_frame;
 
-	if (!task->user->ptrace_frame_valid)
+	if (!task->execution->ptrace_frame_valid)
 		return -EIO;
 
 	memset(regs, 0, sizeof(*regs));
@@ -24,7 +24,7 @@ static int i386_copy_regs(task_struct *task, struct ptrace_user_regs *regs)
 	regs->xes = frame->es;
 	regs->xfs = frame->fs;
 	regs->xgs = frame->gs;
-	regs->orig_eax = task->user->ptrace_orig_eax;
+	regs->orig_eax = task->execution->ptrace_orig_eax;
 	regs->eip = frame->eip;
 	regs->xcs = frame->cs;
 	regs->eflags = frame->eflags;

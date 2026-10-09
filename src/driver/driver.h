@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <device/bus.h>
+#include <lib/list.h>
 #include <device/pci.h>
 
 struct device_t;
@@ -34,13 +35,14 @@ typedef struct driver_t {
 	unsigned ps2_port;
 	int (*probe_ps2)(unsigned port);
 	void (*receive_ps2)(unsigned char byte);
-	struct driver_t *next;
+	list_entry list;
 	unsigned registered;
 } driver_t;
 
 void driver_register(driver_t *driver);
 void drivers_init(void);
 driver_t *driver_first(void);
+driver_t *driver_next(const driver_t *driver);
 /* Returns the unique matching driver; conflicting matches remain unbound. */
 driver_t *driver_select(struct device_t *device);
 int driver_probe(struct device_t *device);

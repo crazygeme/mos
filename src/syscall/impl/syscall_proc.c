@@ -62,9 +62,9 @@ int sys_getpid()
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getpid() = %d\n", cur->tgid);
+		klog("getpid() = %d\n", cur->thread->tgid);
 
-	return cur->tgid;
+	return cur->thread->tgid;
 }
 
 int sys_getppid()
@@ -72,9 +72,9 @@ int sys_getppid()
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getppid() = %d\n", cur->ppid);
+		klog("getppid() = %d\n", cur->life->ppid);
 
-	return cur->ppid;
+	return cur->life->ppid;
 }
 
 int sys_getpgrp(unsigned pid)
@@ -82,9 +82,9 @@ int sys_getpgrp(unsigned pid)
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getpgrp() = %d\n", cur->user->group_id);
+		klog("getpgrp() = %d\n", cur->thread->group_id);
 
-	return cur->user->group_id;
+	return cur->thread->group_id;
 }
 
 int sys_getpgid(unsigned pid)
@@ -95,12 +95,12 @@ int sys_getpgid(unsigned pid)
 		klog("getpgid(%d)\n", pid);
 
 	if (pid == 0)
-		return current->user->group_id;
+		return current->thread->group_id;
 
 	t = ps_find_process(pid);
 	if (!t)
 		return -ESRCH;
-	return t->user->group_id;
+	return t->thread->group_id;
 }
 
 int sys_setpgid(unsigned pid, unsigned pgid)
@@ -121,9 +121,9 @@ int sys_setpgid(unsigned pid, unsigned pgid)
 
 	/* pgid 0 means use the target process's own pid as pgid */
 	if (pgid == 0)
-		pgid = t->psid;
+		pgid = t->thread->tgid;
 
-	t->user->group_id = pgid;
+	t->thread->group_id = pgid;
 	return 0;
 }
 
@@ -135,12 +135,12 @@ int sys_getsid(unsigned pid)
 		klog("getsid(%d)\n", pid);
 
 	if (pid == 0)
-		return current->user->session_id;
+		return current->thread->session_id;
 
 	t = ps_find_process(pid);
 	if (!t)
 		return -ESRCH;
-	return t->user->session_id;
+	return t->thread->session_id;
 }
 
 int sys_setsid()
@@ -148,20 +148,20 @@ int sys_setsid()
 	task_struct *cur = CURRENT_TASK();
 
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("setsid() = %d\n", cur->psid);
+		klog("setsid() = %d\n", cur->life->psid);
 
-	cur->user->session_id = cur->psid;
-	cur->user->group_id = cur->psid;
-	return cur->psid;
+	cur->thread->session_id = cur->thread->tgid;
+	cur->thread->group_id = cur->thread->tgid;
+	return cur->thread->tgid;
 }
 
 int sys_getuid()
 {
 	task_struct *cur = CURRENT_TASK();
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getuid() = %d\n", cur->user->uid);
+		klog("getuid() = %d\n", cur->credentials->uid);
 
-	return cur->user->uid;
+	return cur->credentials->uid;
 }
 
 struct mos_cap_header {
@@ -179,7 +179,7 @@ struct mos_cap_data {
 #define MOS_CAP_VERSION_2 0x20071026U
 #define MOS_CAP_VERSION_3 0x20080522U
 
-static void cap_initialize(user_enviroment *user)
+static void cap_initialize(task_credentials *user)
 {
 	if (user->cap_initialized)
 		return;
@@ -196,7 +196,7 @@ int sys_capget(void *header_ptr, void *data_ptr)
 {
 	struct mos_cap_header *header = header_ptr;
 	struct mos_cap_data *data = data_ptr;
-	user_enviroment *user = current->user;
+	task_credentials *user = current->credentials;
 	unsigned count;
 	unsigned i;
 
@@ -208,7 +208,7 @@ int sys_capget(void *header_ptr, void *data_ptr)
 		header->version = MOS_CAP_VERSION_3;
 		return -EINVAL;
 	}
-	if (header->pid != 0 && header->pid != (int)current->tgid)
+	if (header->pid != 0 && header->pid != (int)current->thread->tgid)
 		return -ESRCH;
 	if (!data)
 		return 0;
@@ -226,7 +226,7 @@ int sys_capset(void *header_ptr, const void *data_ptr)
 {
 	const struct mos_cap_header *header = header_ptr;
 	const struct mos_cap_data *data = data_ptr;
-	user_enviroment *user = current->user;
+	task_credentials *user = current->credentials;
 	unsigned count;
 	unsigned i;
 
@@ -236,7 +236,7 @@ int sys_capset(void *header_ptr, const void *data_ptr)
 	    header->version != MOS_CAP_VERSION_2 &&
 	    header->version != MOS_CAP_VERSION_3)
 		return -EINVAL;
-	if (header->pid != 0 && header->pid != (int)current->tgid)
+	if (header->pid != 0 && header->pid != (int)current->thread->tgid)
 		return -EPERM;
 	cap_initialize(user);
 	count = header->version == MOS_CAP_VERSION_1 ? 1 : 2;
@@ -258,27 +258,27 @@ int sys_getgid()
 {
 	task_struct *cur = CURRENT_TASK();
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getgid() = %d\n", cur->user->gid);
+		klog("getgid() = %d\n", cur->credentials->gid);
 
-	return cur->user->gid;
+	return cur->credentials->gid;
 }
 
 int sys_geteuid()
 {
 	task_struct *cur = CURRENT_TASK();
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("geteuid() = %d\n", cur->user->euid);
+		klog("geteuid() = %d\n", cur->credentials->euid);
 
-	return cur->user->euid;
+	return cur->credentials->euid;
 }
 
 int sys_getegid()
 {
 	task_struct *cur = CURRENT_TASK();
 	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("getegid() = %d\n", cur->user->egid);
+		klog("getegid() = %d\n", cur->credentials->egid);
 
-	return cur->user->egid;
+	return cur->credentials->egid;
 }
 
 /*
@@ -289,7 +289,7 @@ int sys_getegid()
 int sys_setuid(unsigned uid)
 {
 	task_struct *cur = CURRENT_TASK();
-	user_enviroment *u = cur->user;
+	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->euid;
 	unsigned old_filesystem = u->fsuid;
 
@@ -308,7 +308,7 @@ int sys_setuid(unsigned uid)
 		return -EPERM;
 	}
 	if (u->euid != old_effective || u->fsuid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return 0;
 }
 
@@ -320,7 +320,7 @@ int sys_setuid(unsigned uid)
 int sys_setgid(unsigned gid)
 {
 	task_struct *cur = CURRENT_TASK();
-	user_enviroment *u = cur->user;
+	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->egid;
 	unsigned old_filesystem = u->fsgid;
 
@@ -339,7 +339,7 @@ int sys_setgid(unsigned gid)
 		return -EPERM;
 	}
 	if (u->egid != old_effective || u->fsgid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return 0;
 }
 
@@ -350,7 +350,7 @@ int sys_setgid(unsigned gid)
 int sys_setreuid(unsigned ruid, unsigned euid)
 {
 	task_struct *cur = CURRENT_TASK();
-	user_enviroment *u = cur->user;
+	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->euid;
 	unsigned old_filesystem = u->fsuid;
 	unsigned new_ruid = (ruid == (unsigned)-1) ? u->uid : ruid;
@@ -377,7 +377,7 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	u->euid = new_euid;
 	u->fsuid = new_euid;
 	if (u->euid != old_effective || u->fsuid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return 0;
 }
 
@@ -388,7 +388,7 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 int sys_setregid(unsigned rgid, unsigned egid)
 {
 	task_struct *cur = CURRENT_TASK();
-	user_enviroment *u = cur->user;
+	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->egid;
 	unsigned old_filesystem = u->fsgid;
 	unsigned new_rgid = (rgid == (unsigned)-1) ? u->gid : rgid;
@@ -412,7 +412,7 @@ int sys_setregid(unsigned rgid, unsigned egid)
 	u->egid = new_egid;
 	u->fsgid = new_egid;
 	if (u->egid != old_effective || u->fsgid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return 0;
 }
 
@@ -423,7 +423,7 @@ int sys_setregid(unsigned rgid, unsigned egid)
 int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 {
 	task_struct *cur = CURRENT_TASK();
-	user_enviroment *u = cur->user;
+	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->euid;
 	unsigned old_filesystem = u->fsuid;
 
@@ -452,13 +452,13 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 	if (suid != (unsigned)-1)
 		u->suid = suid;
 	if (u->euid != old_effective || u->fsuid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return 0;
 }
 
 int sys_getresuid(unsigned *ruid, unsigned *euid, unsigned *suid)
 {
-	user_enviroment *u = current->user;
+	task_credentials *u = current->credentials;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getresuid\n");
@@ -479,7 +479,7 @@ int sys_getresuid(unsigned *ruid, unsigned *euid, unsigned *suid)
 int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 {
 	task_struct *cur = CURRENT_TASK();
-	user_enviroment *u = cur->user;
+	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->egid;
 	unsigned old_filesystem = u->fsgid;
 
@@ -507,13 +507,13 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 	if (sgid != (unsigned)-1)
 		u->sgid = sgid;
 	if (u->egid != old_effective || u->fsgid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return 0;
 }
 
 int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
 {
-	user_enviroment *u = current->user;
+	task_credentials *u = current->credentials;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getresgid\n");
@@ -533,7 +533,7 @@ int sys_getresgid(unsigned *rgid, unsigned *egid, unsigned *sgid)
  */
 int sys_setfsuid(unsigned fsuid)
 {
-	user_enviroment *u = current->user;
+	task_credentials *u = current->credentials;
 	unsigned old_effective = u->euid;
 	unsigned old_filesystem = u->fsuid;
 	unsigned old = u->fsuid;
@@ -547,13 +547,13 @@ int sys_setfsuid(unsigned fsuid)
 		u->fsuid = fsuid;
 
 	if (u->euid != old_effective || u->fsuid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return old;
 }
 
 int sys_setfsgid(unsigned fsgid)
 {
-	user_enviroment *u = current->user;
+	task_credentials *u = current->credentials;
 	unsigned old_effective = u->egid;
 	unsigned old_filesystem = u->fsgid;
 	unsigned old = u->fsgid;
@@ -566,7 +566,7 @@ int sys_setfsgid(unsigned fsgid)
 		u->fsgid = fsgid;
 
 	if (u->egid != old_effective || u->fsgid != old_filesystem)
-		current->pdeath_signal = 0;
+		current->life->pdeath_signal = 0;
 	return old;
 }
 
@@ -600,7 +600,7 @@ static int brk_extend_tail(mm_struct *mm, vaddr_t old_end, vaddr_t new_end)
 intptr_t sys_brk(vaddr_t _top)
 {
 	task_struct *task = CURRENT_TASK();
-	mm_struct *mm = task->user->vm;
+	mm_struct *mm = task->memory;
 	LOCK_GUARD(&mm->mapping_lock);
 	vaddr_t top, ret;
 	vaddr_t old_brk = mm->brk;
@@ -790,7 +790,7 @@ int sys_getgroups(int size, unsigned *list)
 
 int sys_setgroups(int size, unsigned short *list)
 {
-	user_enviroment *u = current->user;
+	task_credentials *u = current->credentials;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgroups(%d)\n", size);
@@ -812,7 +812,7 @@ int sys_getgroups32(int size, unsigned *list)
 
 int sys_setgroups32(int size, unsigned *list)
 {
-	user_enviroment *u = current->user;
+	task_credentials *u = current->credentials;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgroups32(%d)\n", size);
@@ -831,8 +831,8 @@ int sys_ugetrlimit(int resource, void *limit)
 		return -EFAULT;
 
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-		rl[0] = cur->user->rlimits[resource].rlim_cur;
-		rl[1] = cur->user->rlimits[resource].rlim_max;
+		rl[0] = cur->thread->rlimits[resource].rlim_cur;
+		rl[1] = cur->thread->rlimits[resource].rlim_max;
 	}
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -854,8 +854,8 @@ int sys_setrlimit(int resource, void *limit)
 		     rl ? rl[0] : 0, rl ? rl[1] : 0);
 
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-		cur->user->rlimits[resource].rlim_cur = rl[0];
-		cur->user->rlimits[resource].rlim_max = rl[1];
+		cur->thread->rlimits[resource].rlim_cur = rl[0];
+		cur->thread->rlimits[resource].rlim_max = rl[1];
 	}
 	return 0;
 }
@@ -881,10 +881,10 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 		return -ESRCH;
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
-	if (target != cur && cur->user->euid != 0 &&
-	    cur->user->uid != target->user->uid)
+	if (target != cur && cur->credentials->euid != 0 &&
+	    cur->credentials->uid != target->credentials->uid)
 		return -EPERM;
-	limit = &target->user->rlimits[resource];
+	limit = &target->thread->rlimits[resource];
 	if (new_limit) {
 		if (ps_read_process_memory(cur, new_limit, &input,
 					   sizeof(input)) < 0)
@@ -896,7 +896,7 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 		if ((soft > RLIM_INFINITY && soft != MOS_RLIM64_INFINITY) ||
 		    (hard > RLIM_INFINITY && hard != MOS_RLIM64_INFINITY))
 			return -EINVAL;
-		if (cur->user->euid != 0 &&
+		if (cur->credentials->euid != 0 &&
 		    hard > (limit->rlim_max == RLIM_INFINITY ?
 				    MOS_RLIM64_INFINITY :
 				    limit->rlim_max))
@@ -991,22 +991,22 @@ int sys_exit_group(int status)
 
 int sys_gettid(void)
 {
-	return current->psid;
+	return current->life->psid;
 }
 
 int sys_tkill(int tid, int sig)
 {
 	if (sig < 0 || sig >= NSIG)
 		return -EINVAL;
-	return ps_send_signal((unsigned)tid, sig);
+	return ps_send_thread_signal((unsigned)tid, sig);
 }
 
 int sys_set_tid_address(int *tidptr)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	cur->clear_child_tid = tidptr;
-	return cur->psid;
+	cur->execution->clear_child_tid = tidptr;
+	return cur->life->psid;
 }
 
 int sys_rseq(void *rseq, unsigned len, int flags, unsigned signature)

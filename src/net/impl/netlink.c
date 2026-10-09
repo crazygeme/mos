@@ -30,15 +30,18 @@ struct nl_ip {
 	uint8_t family, prefix, flags, scope;
 	uint32_t index;
 };
-static mos_sock *netlink_sockets;
+static list_entry netlink_sockets = { &netlink_sockets, &netlink_sockets };
 static uint32_t next_port = 0x40000000U;
 #define NL_ALIGN(n) (((n) + 3U) & ~3U)
 
 static int port_used(uint32_t port, mos_sock *self)
 {
-	for (mos_sock *s = netlink_sockets; s; s = s->netlink_next)
+	for (list_entry *node = netlink_sockets.next; node != &netlink_sockets;
+	     node = node->next) {
+		mos_sock *s = container_of(node, mos_sock, netlink_list);
 		if (s != self && s->netlink_port == port)
 			return 1;
+	}
 	return 0;
 }
 
@@ -46,7 +49,7 @@ static void autobind(mos_sock *sk)
 {
 	if (sk->netlink_port)
 		return;
-	uint32_t port = current->tgid;
+	uint32_t port = current->thread->tgid;
 	while (!port || port_used(port, sk))
 		port = next_port++;
 	sk->netlink_port = port;
@@ -60,6 +63,7 @@ int netlink_socket(int type, int protocol)
 	if (!sk)
 		return -ENOMEM;
 	sk->domain = AF_NETLINK;
+	list_init(&sk->netlink_list);
 	sk->type = type;
 	spinlock_init(&sk->wait_lock);
 	spinlock_init(&sk->rxbuf_lock);
@@ -74,18 +78,14 @@ int netlink_socket(int type, int protocol)
 		sock_destroy(sk);
 		return fd;
 	}
-	sk->netlink_next = netlink_sockets;
-	netlink_sockets = sk;
+	list_insert_head(&netlink_sockets, &sk->netlink_list);
 	return fd;
 }
 
 void netlink_release(mos_sock *sk)
 {
-	mos_sock **p = &netlink_sockets;
-	while (*p && *p != sk)
-		p = &(*p)->netlink_next;
-	if (*p)
-		*p = sk->netlink_next;
+	list_remove_entry(&sk->netlink_list);
+	list_init(&sk->netlink_list);
 }
 
 int netlink_bind(mos_sock *sk, const struct sockaddr *address, unsigned length)
@@ -245,7 +245,7 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 		       request.type == RTM_DELADDR;
 	int error = 0;
 	if (mutation) {
-		if (!current->user || current->user->euid != 0)
+		if (!current->execution || current->credentials->euid != 0)
 			error = -EPERM;
 		else if (request.type == RTM_NEWLINK)
 			error = netlink_change_link(input);

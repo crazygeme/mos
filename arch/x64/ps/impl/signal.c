@@ -38,27 +38,30 @@ int native_sigaction(int sig, const void *input, void *output, unsigned size)
 	if (size != 8 || sig <= 0 || sig >= NSIG || sig == SIGKILL ||
 	    sig == SIGSTOP)
 		return -EINVAL;
-	struct sigaction *action = &current->signal->sig_handlers[sig];
-	if (output) {
-		struct native_action *out = output;
-		*out = (struct native_action){ (uintptr_t)action->sa_handler,
-					       action->sa_flags,
-					       (uintptr_t)action->sa_restorer,
-					       action->sa_mask };
-	}
+	struct sigaction action, old;
 	if (input) {
-		const struct native_action *in = input;
-		if (in->handler > 1 &&
-		    (!(in->flags & SA_RESTORER) || !in->restorer))
+		struct native_action in = *(const struct native_action *)input;
+		if (in.handler > 1 &&
+		    (!(in.flags & SA_RESTORER) || !in.restorer))
 			return -EINVAL;
-		if (in->handler >= MOS_NATIVE_TASK_SIZE ||
-		    in->restorer >= MOS_NATIVE_TASK_SIZE)
+		if (in.handler >= MOS_NATIVE_TASK_SIZE ||
+		    in.restorer >= MOS_NATIVE_TASK_SIZE)
 			return -EFAULT;
-		action->sa_handler = (void *)(uintptr_t)in->handler;
-		action->sa_flags = in->flags;
-		action->sa_restorer = (void *)(uintptr_t)in->restorer;
-		action->sa_mask = in->mask;
+		action = (struct sigaction){
+			.sa_handler = (void *)(uintptr_t)in.handler,
+			.sa_flags = in.flags,
+			.sa_restorer = (void *)(uintptr_t)in.restorer,
+			.sa_mask = in.mask
+		};
 	}
+	ps_signal_action(current, sig, input ? &action : NULL,
+			 output ? &old : NULL);
+	if (output)
+		*(struct native_action *)output = (struct native_action){
+			(uintptr_t)old.sa_handler, old.sa_flags,
+			(uintptr_t)old.sa_restorer, old.sa_mask
+		};
+
 	return 0;
 }
 int native_sigaltstack(const void *input, void *output)
@@ -138,11 +141,17 @@ void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
 		sc->trap = fault->trap;
 		sc->cr2 = fault->address;
 		memcpy(saved.info + 8, &fault->code, sizeof(fault->code));
-		memcpy(saved.info + 16, &fault->address,
-		       sizeof(fault->address));
+		if (fault->code == -2) {
+			memcpy(saved.info + 16, &fault->timer_id,
+			       sizeof(fault->timer_id));
+			memcpy(saved.info + 24, &fault->value,
+			       sizeof(fault->value));
+		} else
+			memcpy(saved.info + 16, &fault->address,
+			       sizeof(fault->address));
 	}
 	smp_fpu_save(task);
-	if (ps_write_process_memory(task, (void *)fp, task->user->fpu, 512) <
+	if (ps_write_process_memory(task, (void *)fp, task_fpu(task), 512) <
 		    0 ||
 	    ps_write_process_memory(task, (void *)sp, &saved, sizeof(saved)) <
 		    0) {
@@ -162,8 +171,6 @@ void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
 	frame->eax = 0;
 	frame->eip = (void *)action->sa_handler;
 	frame->esp = (void *)sp;
-	if (action->sa_flags & SA_RESETHAND)
-		action->sa_handler = SIG_DFL;
 }
 intptr_t native_sigreturn(intr_frame *frame)
 {
@@ -201,10 +208,10 @@ intptr_t native_sigreturn(intr_frame *frame)
 	if (sc->fpstate) {
 		if (ps_read_process_memory(current,
 					   (void *)(uintptr_t)sc->fpstate,
-					   current->user->fpu, 512) < 0)
+					   task_fpu(current), 512) < 0)
 			goto bad;
 		/* Unsupported MXCSR bits cause #GP in FXRSTOR. */
-		*(uint32_t *)(current->user->fpu + 24) &= 0xffbf;
+		*(uint32_t *)(task_fpu(current) + 24) &= 0xffbf;
 		smp_fpu_restore(current);
 	}
 	stack_t *alt = &current->signal->altstack;

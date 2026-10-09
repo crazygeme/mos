@@ -2,6 +2,7 @@
 #include <int/int.h>
 #include <int/dsr.h>
 #include <ps/ps.h>
+#include <mm/mmap.h>
 #include <mm/mm.h>
 #include <lib/port.h>
 #include <lib/klib.h>
@@ -52,14 +53,14 @@ static void intr_maybe_preempt(void)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	if (cur->psid == 0xffffffff || !ps_enabled())
+	if (cur->life->psid == 0xffffffff || !ps_enabled())
 		return;
 
 	if (sched_is_enabled() &&
-	    (cur->remain_ticks <= 0 || dsr_needs_schedule())) {
+	    (cur->sched->remain_ticks <= 0 || dsr_needs_schedule())) {
 		cur->stats->niv_switches++;
-		if (cur->remain_ticks <= 0)
-			cur->remain_ticks = DEFAULT_TASK_TIME_SLICE;
+		if (cur->sched->remain_ticks <= 0)
+			cur->sched->remain_ticks = DEFAULT_TASK_TIME_SLICE;
 		/* Preserve interrupt masking through scheduler entry and stack handoff. */
 		int_intr_disable();
 		task_sched();
@@ -74,7 +75,7 @@ static task_struct *intr_sanitize_user_return(intr_frame *frame)
 		return NULL;
 	task_struct *cur = CURRENT_TASK();
 	const unsigned user_eflags_clear = 0x00054000U;
-	if (cur->psid == 0xffffffff || !ps_enabled())
+	if (cur->life->psid == 0xffffffff || !ps_enabled())
 		return NULL;
 
 	/* Descriptor changes without a context switch must still be visible.
@@ -85,21 +86,21 @@ static task_struct *intr_sanitize_user_return(intr_frame *frame)
 
 	/* Sanitize special control flags and restore the task's requested IOPL. */
 	frame->eflags &= ~(user_eflags_clear | 0x3000U);
-	frame->eflags |= ((unsigned)(cur->io_priv_level & 0x3) << 12);
+	frame->eflags |=
+		((unsigned)(cur->execution->io_priv_level & 0x3) << 12);
 	return cur;
 }
 
 static void intr_prepare_user_return(intr_frame *frame)
 {
 	task_struct *cur = intr_sanitize_user_return(frame);
-	if (!cur || cur->type != ps_user || !cur->signal)
+	if (!cur || cur->life->type != ps_user || !cur->sighand)
 		return;
 
 	/* Use the existing bitmap so every signal source already publishes
 	 * work for this check. Ignored unmasked signals retain their cleanup
 	 * path, and saved-mask restoration still reaches signal processing. */
-	unsigned pending =
-		__atomic_load_n(&cur->signal->sig_pending, __ATOMIC_ACQUIRE);
+	unsigned pending = ps_pending_signals(cur);
 	if ((pending & ~cur->signal->sig_mask) || cur->signal->restore_sigmask)
 		do_signal(frame);
 }
@@ -115,7 +116,7 @@ void intr_handler(intr_frame *frame)
 	if (special == 2 || frame->vec_no == 0x20)
 		ps_account_tick(frame);
 	if (special == 2 && ps_enabled())
-		current->remain_ticks--;
+		current->sched->remain_ticks--;
 
 	if (frame->vec_no < 0 || frame->vec_no >= IDT_SIZE) {
 		return;
@@ -176,24 +177,25 @@ static void handle_general_protection(intr_frame *frame)
 	vaddr_t ptrace_eip = 0;
 	vaddr_t ptrace_esp = 0;
 
-	if (cur->user) {
-		tls0 = cur->user->tls_desc[0];
-		tls1 = cur->user->tls_desc[1];
-		tls2 = cur->user->tls_desc[2];
-		ptrace_mode = cur->user->ptrace_mode;
-		ptrace_frame_valid = cur->user->ptrace_frame_valid;
-		ptrace_gs = cur->user->ptrace_frame.gs;
-		ptrace_eip = cur->user->ptrace_frame.eip;
-		ptrace_esp = cur->user->ptrace_frame.esp;
+	if (cur->execution) {
+		tls0 = cur->execution->tls_desc[0];
+		tls1 = cur->execution->tls_desc[1];
+		tls2 = cur->execution->tls_desc[2];
+		ptrace_mode = cur->execution->ptrace_mode;
+		ptrace_frame_valid = cur->execution->ptrace_frame_valid;
+		ptrace_gs = cur->execution->ptrace_frame.gs;
+		ptrace_eip = cur->execution->ptrace_frame.eip;
+		ptrace_esp = cur->execution->ptrace_frame.esp;
 	}
 
 	klog("#GP happens for pid %d, command %s, eip %lx, esp %lx, ebp %x, eax %x, ebx %x, ecx %x, edx %x, ds %x, cs %x, gs %x, fs %x, error_code %x\n",
-	     cur->psid, cur->user->command, frame->eip, frame->esp, frame->ebp,
-	     frame->eax, frame->ebx, frame->ecx, frame->edx, frame->ds,
-	     frame->cs, frame->gs, frame->fs, frame->error_code);
+	     cur->life->psid, cur->memory->command, frame->eip, frame->esp,
+	     frame->ebp, frame->eax, frame->ebx, frame->ecx, frame->edx,
+	     frame->ds, frame->cs, frame->gs, frame->fs, frame->error_code);
 	klog("#GP state: status %d, ptrace_mode %u, stop_signal %u, ptrace_frame_valid %u, tss.gs %x, ptrace.gs %x, ptrace.eip %x, ptrace.esp %x\n",
-	     cur->status, ptrace_mode, cur->stop_signal, ptrace_frame_valid,
-	     cur->tss.gs, ptrace_gs, ptrace_eip, ptrace_esp);
+	     cur->sched->status, ptrace_mode, cur->life->stop_signal,
+	     ptrace_frame_valid, cur->execution->arch.gs, ptrace_gs, ptrace_eip,
+	     ptrace_esp);
 	klog("#GP tls: slot6 %x:%x slot7 %x:%x slot8 %x:%x\n",
 	     (unsigned)(tls0 >> 32), (unsigned)tls0, (unsigned)(tls1 >> 32),
 	     (unsigned)tls1, (unsigned)(tls2 >> 32), (unsigned)tls2);

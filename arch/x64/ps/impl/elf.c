@@ -19,10 +19,10 @@
 #include <arch/abi/elf_stack.h>
 static void activate(task_struct *task)
 {
-	task->robust_list_head = NULL;
-	task->robust_list_reader = NULL;
-	task->robust_list_size = 24;
-	task->tss.cs = USER64_CODE_SELECTOR;
+	task->execution->robust_list_head = NULL;
+	task->execution->robust_list_reader = NULL;
+	task->execution->robust_list_size = 24;
+	task->execution->arch.cs = USER64_CODE_SELECTOR;
 }
 const struct elf_format elf_amd64_format = {
 	.elf_class = ELFCLASS64,

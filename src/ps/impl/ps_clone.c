@@ -7,37 +7,14 @@
 
 #include "ps_internal.h"
 
-#define CSIGNAL 0x000000ff
-#define CLONE_VM 0x00000100
-#define CLONE_FS 0x00000200
-#define CLONE_FILES 0x00000400
-#define CLONE_SIGHAND 0x00000800
-#define CLONE_THREAD 0x00010000
-#define CLONE_SETTLS 0x00080000
-#define CLONE_VFORK 0x00004000
-#define CLONE_PARENT_SETTID 0x00100000
-#define CLONE_CHILD_CLEARTID 0x00200000
-#define CLONE_CHILD_SETTID 0x01000000
-#define CLONE_SYSVSEM 0x00040000
-#define CLONE_DETACHED 0x00400000
-#define CLONE_NEWNS 0x00020000
-#define CLONE_NEWCGROUP 0x02000000
-#define CLONE_NEWUTS 0x04000000
-#define CLONE_NEWIPC 0x08000000
-#define CLONE_NEWUSER 0x10000000
-#define CLONE_NEWPID 0x20000000
-#define CLONE_NEWNET 0x40000000
-/* Namespace flags are recognized, but namespace isolation is unavailable. */
-#define CLONE_NAMESPACE_FLAGS                                          \
-	(CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC | \
-	 CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)
+#include <ps/clone.h>
 
 static void clone_prepare_thread_tls(task_struct *cur, task_struct *task,
 				     unsigned short parent_gs)
 {
 	unsigned entry;
 
-	memset(task->user->tls_desc, 0, sizeof(task->user->tls_desc));
+	memset(task->execution->tls_desc, 0, sizeof(task->execution->tls_desc));
 
 	/*
 	 * A CLONE_THREAD child should not inherit every historical GDT TLS slot
@@ -54,8 +31,8 @@ static void clone_prepare_thread_tls(task_struct *cur, task_struct *task,
 	if (entry < GDT_ENTRY_TLS_MIN || entry > GDT_ENTRY_TLS_MAX)
 		return;
 
-	task->user->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
-		cur->user->tls_desc[entry - GDT_ENTRY_TLS_MIN];
+	task->execution->tls_desc[entry - GDT_ENTRY_TLS_MIN] =
+		cur->execution->tls_desc[entry - GDT_ENTRY_TLS_MIN];
 }
 
 static int do_clone(unsigned long flags, unsigned long child_stack,
@@ -99,7 +76,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if (flags & CLONE_VFORK) {
 		if ((flags & CSIGNAL) != SIGCHLD)
 			return -EINVAL;
-		return do_vfork(child_stack, !!(flags & CLONE_FILES));
+		return do_vfork(child_stack, flags);
 	}
 
 	if (thread_group) {
@@ -113,29 +90,14 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if (!task)
 		return -ENOMEM;
 
-	task->user = ps_alloc_user_env();
-	if (!task->user)
+	if (ps_clone_resources(cur, task, flags)) {
+		fork_abort_child(task);
 		return -ENOMEM;
-
-	if (share_vm) {
-		task->user->vm = cur->user->vm;
-		vm_get(task->user->vm);
-	} else {
-		task->user->vm = vm_create();
-		task->user->vm->page_dir = vm_alloc(1);
-		vm_set_page_dir(task->user->vm, task->user->vm->page_dir);
 	}
-	fork_dup_user_env(cur, task);
-	fork_dup_signal(cur, task);
-	if (fork_dup_io(cur, task) != 0)
+	if (fork_set_meta(cur, task, thread_group ? FORK_FLAG_THREAD : 0)) {
+		fork_abort_child(task);
 		return -ENOMEM;
-	fork_set_meta(cur, task,
-		      (share_vm ? FORK_FLAG_SHARE_VM : 0) |
-			      (thread_group ? FORK_FLAG_THREAD : 0));
-	if (share_vm)
-		task->fork_flag |= FORK_FLAG_SHARE_VM;
-	if (thread_group)
-		task->fork_flag |= FORK_FLAG_THREAD;
+	}
 
 	if (thread_group) {
 		/*
@@ -148,53 +110,45 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		clone_prepare_thread_tls(cur, task, cur_intr_frame->gs);
 	}
 
-	if (ps_dup_fds(cur, task, !!(flags & CLONE_FILES)) != 0)
-		return -ENOMEM;
-	if (!share_vm && copy_page_range(cur, task)) {
-		fork_abort_child(task);
-		return -ENOMEM;
-	}
-
-	task->ppid = thread_group ? cur->ppid : cur->psid;
-	task->tgid = thread_group ? cur->tgid : task->psid;
-	task->exit_signal = exit_signal;
+	task->life->ppid = thread_group ? cur->life->ppid : cur->life->psid;
+	task->thread->tgid = thread_group ? cur->thread->tgid :
+					    task->life->psid;
+	task->life->exit_signal = exit_signal;
 
 	if (child_stack) {
 		intr_frame *task_intr_frame =
 			(intr_frame *)((char *)task + KERNEL_TASK_BYTES -
 				       sizeof(intr_frame));
 		task_intr_frame->esp = (void *)child_stack;
-		task->tss.esp = (uintptr_t)task_intr_frame;
-		task->tss.ebp = (uintptr_t)task_intr_frame;
 	}
 
 	if ((flags & CLONE_SETTLS) && tls) {
 		int rc = ps_set_clone_tls_for(task, tls, cur_intr_frame);
 
 		if (rc != 0) {
-			ps_put_fds(task);
+			fork_abort_child(task);
 			return rc;
 		}
 	}
 
 	if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
-		*parent_tidptr = task->psid;
+		*parent_tidptr = task->life->psid;
 	if ((flags & CLONE_CHILD_SETTID) && child_tidptr) {
 		if (share_vm)
-			*child_tidptr = task->psid;
+			*child_tidptr = task->life->psid;
 		else {
-			int rc = ps_write_process_memory(task, child_tidptr,
-							 &task->psid,
-							 sizeof(task->psid));
+			int rc = ps_write_process_memory(
+				task, child_tidptr, &task->life->psid,
+				sizeof(task->life->psid));
 
 			if (rc != 0) {
-				ps_put_fds(task);
+				fork_abort_child(task);
 				return rc;
 			}
 		}
 	}
 	if ((flags & CLONE_CHILD_CLEARTID) && child_tidptr)
-		task->clear_child_tid = child_tidptr;
+		task->execution->clear_child_tid = child_tidptr;
 
 	if (!thread_group)
 		ps_enqueue_child_first(cur, task);
@@ -204,7 +158,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		ps_add_mgr_unsafe(task);
 		spinlock_unlock(&ps_lock, irq);
 	}
-	cur_intr_frame->eax = task->psid;
+	cur_intr_frame->eax = task->life->psid;
 	/*
 	 * Process-style clone() is used by glibc/NPTL for fork-like children
 	 * with CLONE_CHILD_SETTID/CLEARTID. Yield once after enqueue so the
@@ -213,7 +167,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	 */
 	if (!thread_group)
 		task_sched();
-	return task->psid;
+	return task->life->psid;
 }
 
 int sys_clone(unsigned long flags, unsigned long child_stack,

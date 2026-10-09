@@ -28,7 +28,9 @@ PROBE = r'''
 #include <errno.h>
 unsigned allocations;
 static typeof(*((task_struct *)0)->files) files;
-static task_struct task = { .files = &files };
+static typeof(*((task_struct *)0)->thread) thread;
+static typeof(*((task_struct *)0)->wait) wait;
+static task_struct task = { .files = &files, .thread = &thread, .wait = &wait };
 task_struct *current = &task;
 static unsigned releases, removals;
 static int close_in_callback;
@@ -38,7 +40,7 @@ void fs_posix_lock_release(file *fp, unsigned tgid) { (void)fp; (void)tgid; }
 void inotify_file_close(file *fp) { (void)fp; }
 void sb_put(super_block *sb) { (void)sb; }
 void ps_put_to_ready_queue(task_struct *t) { (void)t; }
-struct file_io_scope { file *fp; struct file_io_scope *previous; };
+struct file_io_scope { file *fp; list_entry list; };
 @@FUNCTIONS@@
 static int release(file *fp) {
     assert(!files.lock.held);
@@ -79,23 +81,24 @@ static const file_operations ops = {
 static file *install(void) {
     file *fp = zalloc(sizeof(*fp));
     fp->f_count = 1; fp->f_fop = &ops;
-    assert(!task.fds[7]); task.fds[7] = fp;
+    assert(!files.fds[7]); files.fds[7] = fp;
     return fp;
 }
 int main(void) {
     unsigned long cloexec[FD_BITMAP_WORDS] = {0};
-    task.fd_cloexec = cloexec;
+    (void)cloexec;
     mutex_init(&files.lock);
+    list_init(&task.wait->io_files);
     assert(fs_fd_poll(-1, FS_POLL_READ, NULL) == 0);
     assert(fs_ioctl(MAX_FD, 0, NULL) == -EBADF);
     file *fp = install();
     assert(fs_fd_poll(7, FS_POLL_READ, NULL) == FS_POLL_READ);
-    assert(fp->f_count == 1 && !task.io_files);
+    assert(fp->f_count == 1 && list_is_empty(&task.wait->io_files));
     assert(!fs_close(7) && releases == 1);
 
     install();
     assert(fs_ioctl(7, 0, NULL) == 23);
-    assert(releases == 2 && !task.io_files);
+    assert(releases == 2 && list_is_empty(&task.wait->io_files));
 
     poll_table pt;
     poll_table_entry entries[2];
@@ -105,23 +108,29 @@ int main(void) {
         poll_table_init(&pt, &task, entries, 2);
         close_in_callback = 1;
         assert(fs_fd_poll(7, FS_POLL_READ, &pt) == FS_POLL_READ);
-        assert(!task.fds[7] && fp->f_count == 1 && pt.nr == 2);
-        assert(releases == 2 + i && task.cancel_io_wait);
+        assert(!files.fds[7] && fp->f_count == 1 && pt.nr == 2);
+        assert(releases == 2 + i && task.wait->cancel_io_wait);
         if (i % 2)
-            task.cancel_io_wait(task.io_wait);
+            task.wait->cancel_io_wait(task.wait->io_wait);
         else
             poll_table_cleanup(&pt);
         assert(releases == 3 + i && removals == 2 * (i + 1));
-        assert(!pt.nr && !task.io_wait && !task.cancel_io_wait);
+        assert(!pt.nr && !task.wait->io_wait && !task.wait->cancel_io_wait);
         poll_table_cleanup(&pt);
     }
     close_in_callback = 0;
     install();
-    struct file_io_scope scope;
+    struct file_io_scope scope, nested;
     assert(fs_io_begin(7, &scope));
+    assert(fs_io_begin(7, &nested));
+    assert(task.wait->io_files.next == &nested.list);
+    fs_io_end(&nested);
+    assert(task.wait->io_files.next == &scope.list);
     assert(!fs_close(7));
     fs_cancel_io(&task);
-    assert(releases == 7 && !task.io_files);
+    assert(releases == 7 && list_is_empty(&task.wait->io_files));
+    fs_io_end(&scope); /* Cancellation detached and released it exactly once. */
+    assert(releases == 7);
     puts("Descriptor callback lock order and lifetime checks: PASS");
     return 0;
 }
@@ -141,8 +150,6 @@ def main():
     with tempfile.TemporaryDirectory(prefix='mos-fd-callback-') as directory:
         work = Path(directory)
         shims = dict(SHIMS)
-        shims['ps/ps.h'] = shims['ps/ps.h'].replace(
-            'void *io_wait;', 'unsigned tgid;\n    unsigned long *fd_cloexec;\n    struct file_io_scope *io_files;\n    void *io_wait;')
         for name, content in shims.items():
             path = work / name
             path.parent.mkdir(parents=True, exist_ok=True)

@@ -136,9 +136,9 @@ static tmpfs_node *tmpfs_node_alloc(tmpfs_sb_info *sbi, uint32_t mode)
 	spinlock_unlock(&sbi->lock, irq);
 
 	n->mode = mode;
-	if (cur && cur->user) {
-		n->uid = cur->user->euid;
-		n->gid = cur->user->egid;
+	if (cur && cur->fs) {
+		n->uid = cur->credentials->euid;
+		n->gid = cur->credentials->egid;
 	}
 	n->ref = 1;
 	vm_lock_init(&n->file_lock);

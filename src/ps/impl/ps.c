@@ -67,18 +67,18 @@ void ps_add_mgr_unsafe(task_struct *task)
 
 	link = &root->rb_node;
 	while (*link) {
-		task_struct *t = rb_entry(*link, task_struct, mgr_rb);
+		task_struct *t = (rb_entry(*link, task_schedule, mgr_rb)->task);
 		parent = *link;
-		if (task->psid < t->psid)
+		if (task->life->psid < t->life->psid)
 			link = &(*link)->rb_left;
-		else if (task->psid > t->psid)
+		else if (task->life->psid > t->life->psid)
 			link = &(*link)->rb_right;
 		else {
 			return; /* psid already present */
 		}
 	}
-	rb_link_node(&task->mgr_rb, parent, link);
-	rb_insert_color(&task->mgr_rb, root);
+	rb_link_node(&task->sched->mgr_rb, parent, link);
+	rb_insert_color(&task->sched->mgr_rb, root);
 	control.ps_count++;
 }
 
@@ -93,12 +93,12 @@ void ps_add_mgr(task_struct *task)
 void ps_remove_mgr_unsafe(task_struct *task)
 {
 	ps_alarm_disarm_unsafe(task);
-	if (!RB_EMPTY_NODE(&task->mgr_rb)) {
-		rb_erase(&task->mgr_rb, &control.mgr_queue);
-		RB_CLEAR_NODE(&task->mgr_rb);
+	if (!RB_EMPTY_NODE(&task->sched->mgr_rb)) {
+		rb_erase(&task->sched->mgr_rb, &control.mgr_queue);
+		RB_CLEAR_NODE(&task->sched->mgr_rb);
 	}
 	control.ps_count--;
-	ps_id_free(task->psid);
+	ps_id_free(task->life->psid);
 }
 
 void ps_remove_mgr(task_struct *task)
@@ -139,22 +139,22 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 	end = from + num;
 	if (end <= from || end > (TSS_IO_BITMAP_BYTES * 8))
 		return -EINVAL;
-	if (!task->io_bitmap) {
-		task->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
-		if (!task->io_bitmap)
+	if (!task->execution->io_bitmap) {
+		task->execution->io_bitmap = kmalloc(TSS_IO_BITMAP_BYTES);
+		if (!task->execution->io_bitmap)
 			return -ENOMEM;
-		memset(task->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
+		memset(task->execution->io_bitmap, 0xff, TSS_IO_BITMAP_BYTES);
 	}
 
-	task->io_allow_all = 0;
+	task->execution->io_allow_all = 0;
 	for (port = from; port < end; port++) {
 		unsigned long byte = port >> 3;
 		unsigned char bit = (unsigned char)(1U << (port & 0x7));
 
 		if (turn_on)
-			task->io_bitmap[byte] &= (unsigned char)~bit;
+			task->execution->io_bitmap[byte] &= (unsigned char)~bit;
 		else
-			task->io_bitmap[byte] |= bit;
+			task->execution->io_bitmap[byte] |= bit;
 	}
 
 	reset_tss(task);
@@ -244,16 +244,21 @@ int ps_enabled()
  */
 
 /* Mark the bootstrap task as non-schedulable and enter the task queue. */
+void ps_init_bootstrap_task(void)
+{
+	task_struct *cur = current;
+	memset(cur, 0, sizeof(*cur));
+	if (ps_init_private(cur))
+		DIE();
+	cur->life->psid = (unsigned)-1;
+	cur->sched->sched_level = 1;
+	cur->life->type = ps_kernel;
+}
+
 void ps_kickoff()
 {
-	task_struct *cur = CURRENT_TASK();
-	memset(cur, 0, sizeof(*cur));
-	cur->psid = 0xffffffff;
-	cur->ps_list.prev = cur->ps_list.next = 0;
-	cur->stats = NULL;
-	cur->usage = NULL;
-	cur->sched_level = 1;
-	cur->on_cpu = smp_cpu_id() + 1;
+	task_struct *cur = current;
+	cur->sched->on_cpu = smp_cpu_id() + 1;
 	__atomic_store_n(&_ps_enabled, 1, __ATOMIC_RELEASE);
 	task_sched();
 }
@@ -261,13 +266,6 @@ void ps_kickoff()
 /*
  * Public — TSS management
  */
-
-void ps_update_tss(uintptr_t sp0)
-{
-	task_struct *task = CURRENT_TASK();
-	task->tss.esp0 = sp0;
-	reset_tss(task);
-}
 
 /*
  * Public — process lookup and enumeration
@@ -281,10 +279,10 @@ task_struct *ps_find_process_unsafe(unsigned psid)
 
 	node = control.mgr_queue.rb_node;
 	while (node) {
-		task_struct *t = rb_entry(node, task_struct, mgr_rb);
-		if (psid < t->psid)
+		task_struct *t = (rb_entry(node, task_schedule, mgr_rb)->task);
+		if (psid < t->life->psid)
 			node = node->rb_left;
-		else if (psid > t->psid)
+		else if (psid > t->life->psid)
 			node = node->rb_right;
 		else {
 			task = t;
@@ -323,8 +321,8 @@ void ps_enum_all(ps_enum_callback callback, void *ctx)
 		node = control.mgr_queue.rb_node;
 		while (node) {
 			task_struct *candidate =
-				rb_entry(node, task_struct, mgr_rb);
-			if (first || candidate->psid > cursor) {
+				(rb_entry(node, task_schedule, mgr_rb)->task);
+			if (first || candidate->life->psid > cursor) {
 				task = candidate;
 				node = node->rb_left;
 			} else {
@@ -333,33 +331,24 @@ void ps_enum_all(ps_enum_callback callback, void *ctx)
 		}
 		if (!task)
 			break;
-		cursor = task->psid;
+		cursor = task->life->psid;
 		first = 0;
-		task->enumeration_refs++;
-		__sync_fetch_and_add(&current->vm_lock_depth, 1);
+		task->sched->enumeration_refs++;
+		__sync_fetch_and_add(&current->sched->vm_lock_depth, 1);
 		spinlock_unlock(&ps_lock, irq);
 		callback(task, ctx);
 		spinlock_lock(&ps_lock, &irq);
-		task->enumeration_refs--;
-		__sync_fetch_and_sub(&current->vm_lock_depth, 1);
-		if (!task->enumeration_refs && task->status == ps_dying) {
+		task->sched->enumeration_refs--;
+		__sync_fetch_and_sub(&current->sched->vm_lock_depth, 1);
+		if (!task->sched->enumeration_refs &&
+		    task->sched->status == ps_dying) {
 			task_struct *parent =
-				ps_find_process_unsafe(task->ppid);
-			if (parent && parent->status == ps_waiting)
+				ps_find_process_unsafe(task->life->ppid);
+			if (parent && parent->sched->status == ps_waiting)
 				ps_put_to_ready_queue_unsafe(parent);
 		}
 	}
 	spinlock_unlock(&ps_lock, irq);
-}
-
-user_enviroment *ps_alloc_user_env(void)
-{
-	user_enviroment *user = zalloc(sizeof(user_enviroment));
-	if (user) {
-		uintptr_t p = (uintptr_t)user->fpu_storage;
-		user->fpu = (unsigned char *)((p + 15U) & ~(uintptr_t)15);
-	}
-	return user;
 }
 
 /* Send signal sig to every user task whose group_id matches pgrp. */
@@ -374,14 +363,13 @@ void ps_send_signal_pgrp(unsigned pgrp, int sig)
 	spinlock_lock(&ps_lock, &irq);
 	node = rb_first(&control.mgr_queue);
 	while (node) {
-		task_struct *task = rb_entry(node, task_struct, mgr_rb);
+		task_struct *task =
+			(rb_entry(node, task_schedule, mgr_rb)->task);
 		node = rb_next(node);
-		if (task->type == ps_user && task->user &&
-		    task->user->group_id == pgrp) {
-			task->signal->sig_pending |= (1UL << (sig - 1));
-			if (task->status == ps_waiting &&
-			    !(task->signal->sig_mask & (1UL << (sig - 1))))
-				ps_put_to_ready_queue_unsafe(task);
+		if (task->life->type == ps_user && task->memory &&
+		    task->life->psid == task->thread->tgid &&
+		    task->thread->group_id == pgrp) {
+			ps_queue_group_signal_unsafe(task, sig);
 		}
 	}
 	spinlock_unlock(&ps_lock, irq);
@@ -402,11 +390,9 @@ void ps_send_signal_owner(int owner, int sig)
 
 	spinlock_lock(&ps_lock, &irq);
 	task = ps_find_process_unsafe((unsigned)(uintptr_t)owner);
-	if (task && task->type == ps_user && task->user && task->signal) {
-		task->signal->sig_pending |= (1UL << (sig - 1));
-		if (task->status == ps_waiting &&
-		    !(task->signal->sig_mask & (1UL << (sig - 1))))
-			ps_put_to_ready_queue_unsafe(task);
+	if (task && task->life->type == ps_user && task->memory &&
+	    task->sighand) {
+		ps_queue_group_signal_unsafe(task, sig);
 	}
 	spinlock_unlock(&ps_lock, irq);
 }
@@ -417,17 +403,17 @@ void ps_send_signal_owner(int owner, int sig)
 
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux)
 {
-	if (task && task->user && task->user->vm)
-		arch_mm_enum_user(task->user->vm->page_dir, fn, aux);
+	if (task && task->memory && task->memory)
+		arch_mm_enum_user(task->memory->page_dir, fn, aux);
 }
 
 /* Unmap all user pages of an inactive task. */
 void ps_cleanup_all_user_map(task_struct *task)
 {
-	if (!task || !task->user || !task->user->vm)
+	if (!task || !task->memory || !task->memory)
 		return;
 
-	mm_destroy_user_map(task->user->vm->page_dir);
+	mm_destroy_user_map(task->memory->page_dir);
 }
 
 /*
@@ -444,16 +430,16 @@ int ps_write_process_memory(task_struct *task, void *addr, const void *src,
 	const char *csrc = (const char *)src;
 	pte_t *pd;
 
-	if (!task || !task->user)
+	if (!task || !task->memory)
 		return -EFAULT;
 
-	if (!task->user->vm || vaddr >= task->user->vm->task_size ||
-	    len > task->user->vm->task_size - vaddr)
+	if (!task->memory || vaddr >= task->memory->task_size ||
+	    len > task->memory->task_size - vaddr)
 		return -EFAULT;
 	if (!arch_mm_user_range_valid(vaddr, len))
 		return -EFAULT;
-	LOCK_GUARD(&task->user->vm->mapping_lock);
-	pd = (pte_t *)task->user->vm->page_dir;
+	LOCK_GUARD(&task->memory->mapping_lock);
+	pd = (pte_t *)task->memory->page_dir;
 
 	while (len > 0) {
 		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
@@ -525,16 +511,16 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 	char *cdst = (char *)dst;
 	pte_t *pd;
 
-	if (!task || !task->user)
+	if (!task || !task->memory)
 		return -EFAULT;
 
-	if (!task->user->vm || vaddr >= task->user->vm->task_size ||
-	    len > task->user->vm->task_size - vaddr)
+	if (!task->memory || vaddr >= task->memory->task_size ||
+	    len > task->memory->task_size - vaddr)
 		return -EFAULT;
 	if (!arch_mm_user_range_valid(vaddr, len))
 		return -EFAULT;
-	LOCK_GUARD(&task->user->vm->mapping_lock);
-	pd = (pte_t *)task->user->vm->page_dir;
+	LOCK_GUARD(&task->memory->mapping_lock);
+	pd = (pte_t *)task->memory->page_dir;
 
 	while (len > 0) {
 		unsigned page_off = ADDR_TO_PAGE_OFFSET(vaddr);
@@ -594,7 +580,7 @@ int ps_task_ready(task_struct *task)
 {
 	int irq, ready;
 	spinlock_lock(&ps_lock, &irq);
-	ready = task->status == ps_ready && !task->on_cpu;
+	ready = task->sched->status == ps_ready && !task->sched->on_cpu;
 	spinlock_unlock(&ps_lock, irq);
 	return ready;
 }

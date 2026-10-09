@@ -28,8 +28,8 @@ typedef struct _vm_key {
 } vm_key;
 
 struct _vm_fault_lock {
+	ref_count_t ref;
 	rmutex_t lock;
-	unsigned refs;
 };
 
 /*
@@ -67,20 +67,20 @@ static unsigned vm_region_flags_for_file(file *fp)
 	return 0;
 }
 
+static void release_fault_lock(ref_count_t *ref)
+{
+	kfree(container_of(ref, vm_fault_lock, ref));
+}
+
+static void release_mm(ref_count_t *ref);
+
 static vm_fault_lock *vm_fault_lock_new()
 {
 	vm_fault_lock *fault_lock = kmalloc(sizeof(*fault_lock));
 
 	vm_lock_init(&fault_lock->lock);
-	fault_lock->refs = 1;
+	ref_count_init(&fault_lock->ref, release_fault_lock);
 	return fault_lock;
-}
-
-static void vm_fault_lock_get(vm_fault_lock *fault_lock)
-{
-	if (!fault_lock)
-		return;
-	__sync_add_and_fetch(&fault_lock->refs, 1);
 }
 
 static void vm_fault_lock_lock(vm_fault_lock *fault_lock)
@@ -97,14 +97,6 @@ static void vm_fault_lock_unlock(vm_fault_lock *fault_lock)
 	vm_lock_leave(&fault_lock->lock);
 }
 
-static void vm_fault_lock_put(vm_fault_lock *fault_lock)
-{
-	if (!fault_lock)
-		return;
-	if (__sync_sub_and_fetch(&fault_lock->refs, 1) == 0)
-		kfree(fault_lock);
-}
-
 /* Counter for unique anonymous MAP_SHARED region identifiers. */
 static unsigned g_anon_id_next = 0;
 
@@ -115,7 +107,7 @@ static void vm_region_free(vm_region *region)
 	if ((region->flag & MAP_SHARED) && region->fp == NULL &&
 	    region->anon_id)
 		mm_anon_shared_put(region->anon_id);
-	vm_fault_lock_put(region->fault_lock);
+	ref_count_put(region->fault_lock);
 
 	kfree(region);
 }
@@ -229,7 +221,7 @@ static void vm_tree_destroy(mm_struct *mm)
 
 vm_struct_t vm_create()
 {
-	mm_struct *mm = kmalloc(sizeof(*mm));
+	mm_struct *mm = zalloc(sizeof(*mm));
 	if (!mm)
 		return NULL;
 	mm->vma_index = _RBTREE_ROOT_INIT;
@@ -241,37 +233,35 @@ vm_struct_t vm_create()
 	mm->mmap_base = TASK_UNMAPPED_BASE;
 	mm->task_size = MOS_COMPAT_TASK_SIZE;
 	mm->brk_limit = USER_HEAP_END;
-	mm->users = 1;
-	mm->count = 1;
+	ref_count_init(&mm->ref, release_mm);
+	memset(mm->ldt_desc, 0, sizeof(mm->ldt_desc));
+	mm->ldt_present = 0;
 	mm->vma_generation = 1;
+	mm->command = vm_alloc(1);
+	mm->environment = vm_alloc(1);
+	if (!mm->command || !mm->environment) {
+		ref_count_put(mm);
+		return NULL;
+	}
+	mm->command[0] = mm->environment[0] = '\0';
 	return mm;
 }
 
-void vm_get(vm_struct_t vm)
+static void release_mm(ref_count_t *ref)
 {
-	if (vm)
-		__sync_add_and_fetch(&vm->users, 1);
-}
-
-void vm_put(vm_struct_t vm)
-{
-	mm_struct *mm = vm;
-	if (!mm)
-		return;
-	if (__sync_sub_and_fetch(&mm->users, 1) != 0)
-		return;
+	mm_struct *mm = container_of(ref, mm_struct, ref);
 	if (mm->page_dir) {
 		mm_destroy_user_map(mm->page_dir);
 		vm_free(mm->page_dir, 1);
-		mm->page_dir = 0;
 	}
 	vm_tree_destroy(mm);
+	if (mm->command)
+		vm_free(mm->command, 1);
+	if (mm->environment)
+		vm_free(mm->environment, 1);
+	if (mm->executable)
+		fs_put_file(mm->executable);
 	kfree(mm);
-}
-
-void vm_destroy(vm_struct_t vm)
-{
-	vm_put(vm);
 }
 
 /*
@@ -333,7 +323,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 			fs_get_file(o_fp);
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_get(o_anon_id);
-		vm_fault_lock_get(o_fault_lock);
+		ref_count_get(o_fault_lock);
 		vm_fault_lock_lock(o_fault_lock);
 
 		unmap_begin = o_begin > begin ? o_begin : begin;
@@ -366,7 +356,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 		if ((o_flag & MAP_SHARED) && o_fp == NULL && o_anon_id)
 			mm_anon_shared_put(o_anon_id);
 		vm_fault_lock_unlock(o_fault_lock);
-		vm_fault_lock_put(o_fault_lock);
+		ref_count_put(o_fault_lock);
 	}
 
 	/* No conflicts remain: insert the new region. */
@@ -380,7 +370,7 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 	if (fault_lock == NULL)
 		fault_lock = vm_fault_lock_new();
 	else
-		vm_fault_lock_get(fault_lock);
+		ref_count_get(fault_lock);
 	region->fault_lock = fault_lock;
 	region->fp = fp;
 	region->offset = offset;
@@ -471,7 +461,7 @@ void vm_del_map(vm_struct_t vm, vaddr_t addr)
 
 	/* FIXME(Ender:) flush file if has one */
 
-	vm_fault_lock_get(fault_lock);
+	ref_count_get(fault_lock);
 	vm_fault_lock_lock(fault_lock);
 
 	/* Unmap every page in the region from the hardware page tables. */
@@ -479,7 +469,7 @@ void vm_del_map(vm_struct_t vm, vaddr_t addr)
 		mm_unmap_page(vir);
 	vm_tree_remove(mm, region);
 	vm_fault_lock_unlock(fault_lock);
-	vm_fault_lock_put(fault_lock);
+	ref_count_put(fault_lock);
 }
 
 /*
@@ -532,39 +522,40 @@ vm_region *vm_find_vma(vm_struct_t vm, vaddr_t addr)
 	return candidate;
 }
 
-void vm_invalidate_user_cache(user_enviroment *user)
+void vm_invalidate_task_cache(task_struct *task)
 {
-	if (user) {
-		user->mmap_cache = NULL;
-		user->mmap_cache_vm = NULL;
-		user->mmap_cache_generation = 0;
+	if (task && task->execution) {
+		task->execution->mmap_cache = NULL;
+		task->execution->mmap_cache_vm = NULL;
+		task->execution->mmap_cache_generation = 0;
 	}
 }
 
-vm_region *vm_find_vma_cached(user_enviroment *user, vaddr_t addr)
+vm_region *vm_find_vma_cached(task_struct *task, vaddr_t addr)
 {
-	if (!user || !user->vm)
+	if (!task || !task->execution || !task->memory)
 		return NULL;
 
-	mm_struct *mm = user->vm;
+	mm_struct *mm = task->memory;
 	LOCK_GUARD(&mm->mapping_lock);
 	vaddr_t page = addr & PAGE_SIZE_MASK;
 	/* Validate generation before touching the cached raw pointer. */
-	if (user->mmap_cache_vm == mm &&
-	    user->mmap_cache_generation == mm->vma_generation &&
-	    user->mmap_cache && user->mmap_cache->begin <= page &&
-	    page < user->mmap_cache->end)
-		return user->mmap_cache;
+	if (task->execution->mmap_cache_vm == mm &&
+	    task->execution->mmap_cache_generation == mm->vma_generation &&
+	    task->execution->mmap_cache &&
+	    task->execution->mmap_cache->begin <= page &&
+	    page < task->execution->mmap_cache->end)
+		return task->execution->mmap_cache;
 	vm_region *region = vm_find_vma(mm, page);
-	user->mmap_cache = region;
-	user->mmap_cache_vm = mm;
-	user->mmap_cache_generation = mm->vma_generation;
+	task->execution->mmap_cache = region;
+	task->execution->mmap_cache_vm = mm;
+	task->execution->mmap_cache_generation = mm->vma_generation;
 	return region;
 }
 
-vm_region *vm_find_map_cached(user_enviroment *user, vaddr_t addr)
+vm_region *vm_find_map_cached(task_struct *task, vaddr_t addr)
 {
-	vm_region *region = vm_find_vma_cached(user, addr);
+	vm_region *region = vm_find_vma_cached(task, addr);
 
 	addr &= PAGE_SIZE_MASK;
 	if (region && region->begin <= addr && addr < region->end)
@@ -700,7 +691,7 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 			fs_get_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_get(r_anon_id);
-		vm_fault_lock_get(r_fault_lock);
+		ref_count_get(r_fault_lock);
 		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove descriptor only — physical pages stay mapped. */
@@ -730,7 +721,7 @@ void vm_mprotect(vm_struct_t vm, vaddr_t begin, vaddr_t end, int new_prot)
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_put(r_anon_id);
 		vm_fault_lock_unlock(r_fault_lock);
-		vm_fault_lock_put(r_fault_lock);
+		ref_count_put(r_fault_lock);
 
 		/* Advance probe past the portion we just handled. */
 		probe.begin = upd_end;
@@ -755,7 +746,7 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 	size_t page_count = (last_addr - addr) / PAGE_SIZE + 1;
 	size_t size = page_count * PAGE_SIZE;
 	task_struct *cur = CURRENT_TASK();
-	mm_struct *mm = cur->user->vm;
+	mm_struct *mm = cur->memory;
 	LOCK_GUARD(&mm->mapping_lock);
 	vm_key probe;
 	unsigned anon_id = 0;
@@ -779,7 +770,7 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 				addr = 0; /* fall through to vm_disc_map */
 		}
 		if (addr == 0)
-			addr = vm_disc_map(cur->user->vm, size);
+			addr = vm_disc_map(cur->memory, size);
 	}
 
 	if (!addr || addr >= mm->task_size || size > mm->task_size - addr)
@@ -792,9 +783,9 @@ vaddr_t do_mmap_kernel(vaddr_t _addr, size_t _len, unsigned int prot,
 	if ((flags & MAP_SHARED) && fp == NULL)
 		anon_id = ++g_anon_id_next;
 
-	vm_add_map(cur->user->vm, addr, addr + size, prot, flags, fp, offset,
+	vm_add_map(cur->memory, addr, addr + size, prot, flags, fp, offset,
 		   anon_id);
-	vm_invalidate_user_cache(cur->user);
+	vm_invalidate_task_cache(cur);
 
 	if (TEST_LOG(TEST_LOG_INFO)) {
 		klog("mmap: file %s, addr %x, offset %llx, prot %x, flags %x, len %x at addr %x\n",
@@ -809,11 +800,11 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 {
 	vaddr_t addr = _addr & PAGE_SIZE_MASK;
 	task_struct *cur = CURRENT_TASK();
-	LOCK_GUARD(&cur->user->vm->mapping_lock);
+	LOCK_GUARD(&cur->memory->mapping_lock);
 	vm_region *region;
 	vaddr_t vir;
 
-	region = vm_find_map(cur->user->vm, addr);
+	region = vm_find_map(cur->memory, addr);
 	if (!region)
 		return;
 	region->prot = prot;
@@ -845,7 +836,7 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 		mm_set_map_flag(vir, mmflag);
 	}
 
-	vm_invalidate_user_cache(cur->user);
+	vm_invalidate_task_cache(cur);
 }
 
 /*
@@ -860,9 +851,9 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	task_struct *cur = CURRENT_TASK();
 	file *node = NULL;
 
-	if (!_len || _len > cur->user->vm->task_size ||
-	    _addr >= cur->user->vm->task_size ||
-	    _len > cur->user->vm->task_size - _addr)
+	if (!_len || _len > cur->memory->task_size ||
+	    _addr >= cur->memory->task_size ||
+	    _len > cur->memory->task_size - _addr)
 		return -EINVAL;
 	if (fd != -1 && (offset > 0x7fffffffffffffffULL ||
 			 _len > 0x7fffffffffffffffULL - offset))
@@ -880,10 +871,10 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	 * Preserve that behavior and only validate an fd when one is supplied.
 	 */
 	if (fd != -1) {
-		if (fd < 0 || fd >= MAX_FD || cur->fds[fd] == NULL)
+		if (fd < 0 || fd >= MAX_FD || cur->files->fds[fd] == NULL)
 			return -EBADF;
 
-		node = cur->fds[fd];
+		node = cur->files->fds[fd];
 		if (node->f_inode == NULL)
 			return -ENODEV;
 		if (!S_ISREG(node->f_inode->i_mode) &&
@@ -892,7 +883,7 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	}
 
 	if (node && node->f_inode->i_phys_size) {
-		if (!cur->user || cur->user->euid != 0 ||
+		if (!cur->memory || cur->credentials->euid != 0 ||
 		    (node->f_flag & O_PATH))
 			return -EACCES;
 		uint64_t end = (uint64_t)offset + _len;
@@ -1066,7 +1057,7 @@ int do_munmap(void *addr, size_t length)
 	 * length is already a multiple of PAGE_SIZE. */
 	size_t pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 	vaddr_t end = begin + pages * PAGE_SIZE;
-	mm_struct *mm = cur->user->vm;
+	mm_struct *mm = cur->memory;
 	LOCK_GUARD(&mm->mapping_lock);
 	vm_key probe;
 	vm_region *region;
@@ -1109,7 +1100,7 @@ int do_munmap(void *addr, size_t length)
 			fs_get_file(r_fp);
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_get(r_anon_id);
-		vm_fault_lock_get(r_fault_lock);
+		ref_count_get(r_fault_lock);
 		vm_fault_lock_lock(r_fault_lock);
 
 		/* Remove this vm_region descriptor from the tree. */
@@ -1118,14 +1109,14 @@ int do_munmap(void *addr, size_t length)
 		/* Preserve the left remnant [r_begin, unmap_begin) if any.
 		 * Its physical pages were not unmapped above. */
 		if (r_begin < unmap_begin)
-			vm_add_map_with_lock(cur->user->vm, r_begin,
-					     unmap_begin, r_prot, r_flag, r_fp,
-					     r_offset, r_anon_id, r_fault_lock);
+			vm_add_map_with_lock(cur->memory, r_begin, unmap_begin,
+					     r_prot, r_flag, r_fp, r_offset,
+					     r_anon_id, r_fault_lock);
 
 		/* Preserve the right remnant [unmap_end, r_end) if any. */
 		if (r_end > unmap_end)
 			vm_add_map_with_lock(
-				cur->user->vm, unmap_end, r_end, r_prot, r_flag,
+				cur->memory, unmap_end, r_end, r_prot, r_flag,
 				r_fp,
 				r_offset + (uint64_t)(unmap_end - r_begin),
 				r_anon_id, r_fault_lock);
@@ -1135,9 +1126,9 @@ int do_munmap(void *addr, size_t length)
 		if ((r_flag & MAP_SHARED) && r_fp == NULL && r_anon_id)
 			mm_anon_shared_put(r_anon_id);
 		vm_fault_lock_unlock(r_fault_lock);
-		vm_fault_lock_put(r_fault_lock);
+		ref_count_put(r_fault_lock);
 	}
 
-	vm_invalidate_user_cache(cur->user);
+	vm_invalidate_task_cache(cur);
 	return 0;
 }

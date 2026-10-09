@@ -327,13 +327,13 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 		return -1;
 	}
 	sock_waiter_queue(&sk->waiters, &waiter);
-	cur->io_wait = &waiter;
-	cur->cancel_io_wait = sock_cancel_wait;
+	cur->wait->io_wait = &waiter;
+	cur->wait->cancel_io_wait = sock_cancel_wait;
 	now = deadline ? time_now_ms() : 0;
 	if (deadline && now >= deadline) {
 		sock_waiter_dequeue(&waiter);
-		cur->io_wait = NULL;
-		cur->cancel_io_wait = NULL;
+		cur->wait->io_wait = NULL;
+		cur->wait->cancel_io_wait = NULL;
 		spinlock_unlock(&sk->wait_lock, irq);
 		return 0;
 	}
@@ -341,8 +341,8 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 		    cur, NULL, deadline ? (unsigned)(deadline - now) : 0,
 		    __func__) < 0) {
 		sock_waiter_dequeue(&waiter);
-		cur->io_wait = NULL;
-		cur->cancel_io_wait = NULL;
+		cur->wait->io_wait = NULL;
+		cur->wait->cancel_io_wait = NULL;
 		spinlock_unlock(&sk->wait_lock, irq);
 		return -1;
 	}
@@ -358,8 +358,8 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 
 	spinlock_lock(&sk->wait_lock, &irq);
 	sock_waiter_dequeue(&waiter);
-	cur->io_wait = NULL;
-	cur->cancel_io_wait = NULL;
+	cur->wait->io_wait = NULL;
+	cur->wait->cancel_io_wait = NULL;
 	spinlock_unlock(&sk->wait_lock, irq);
 
 	if (ps_interrupting_signals(cur))
@@ -971,7 +971,7 @@ static int sock_ioctl_siocsifflags(void *context __attribute__((unused)),
 	struct ifreq *ifr = arg;
 	if (!ifr)
 		return -EFAULT;
-	if (!current->user || current->user->euid != 0)
+	if (!current->execution || current->credentials->euid != 0)
 		return -EPERM;
 	for (struct netif *nif = netif_list; nif; nif = nif->next) {
 		char name[IFNAMSIZ];
@@ -1191,9 +1191,9 @@ mos_sock *fd_to_sock(int fd)
 	task_struct *cur = CURRENT_TASK();
 	if (fd < 0 || fd >= (int)MAX_FD)
 		return NULL;
-	if (!cur->fds[fd])
+	if (!cur->files->fds[fd])
 		return NULL;
-	file *fp = cur->fds[fd];
+	file *fp = cur->files->fds[fd];
 	if (!fp || !fp->f_inode || !S_ISSOCK(fp->f_inode->i_mode))
 		return NULL;
 	return (mos_sock *)fp->f_inode->i_private;

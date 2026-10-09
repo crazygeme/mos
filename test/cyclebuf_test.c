@@ -36,7 +36,7 @@ static void deferred_poll_write(void *param)
 	unsigned char byte = 0x08;
 
 	ctx->own_stack = current != ctx->consumer &&
-			 current->status == ps_running;
+			 current->sched->status == ps_running;
 	ctx->written = cyb_putbuf(ctx->buf, &byte, 1, 0, 0);
 	/* Exercise a consumer resuming before the callback finishes. */
 	task_sched();

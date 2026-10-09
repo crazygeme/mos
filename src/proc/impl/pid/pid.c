@@ -13,6 +13,7 @@
  */
 #include "proc_pid.h"
 #include <ps/ps.h>
+#include <mm/mmap.h>
 #include <config.h>
 #include <macro.h>
 #include <ext4.h>
@@ -105,7 +106,9 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		OPEN_TEXT_FILE(fill_status);
 	if (strcmp(rest, "/stat") == 0) {
 		pb = proc_buf_new();
-		fill_stat(pb, task, include_task && task->psid == task->tgid);
+		fill_stat(pb, task,
+			  include_task &&
+				  task->life->psid == task->thread->tgid);
 		return make_pid_file(pb, task);
 	}
 	if (strcmp(rest, "/statm") == 0)
@@ -121,17 +124,17 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 
 	/* /exe exposes the main executable rather than its ELF interpreter. */
 	if (strcmp(rest, "/exe") == 0) {
-		if (!task->user || !task->user->executable ||
-		    !task->user->executable->f_name)
+		if (!task->execution || !task->memory->executable ||
+		    !task->memory->executable->f_name)
 			return NULL;
-		return make_pid_symlink(task->user->executable->f_name);
+		return make_pid_symlink(task->memory->executable->f_name);
 	}
 
 	/* /cwd exposes the process's current working directory as a symlink. */
 	if (strcmp(rest, "/cwd") == 0) {
-		if (!task->user || !task->user->cwd)
+		if (!task->execution || !task->fs->cwd)
 			return NULL;
-		return make_pid_symlink(task->user->cwd);
+		return make_pid_symlink(task->fs->cwd);
 	}
 
 	/* /fd or /fd/ → fd directory listing */
@@ -152,17 +155,18 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		if (*p != '\0')
 			return NULL; /* trailing garbage */
 
-		if (!task->fds || fdno >= MAX_FD || !task->fds[fdno])
+		if (!task->files || fdno >= MAX_FD || !task->files->fds[fdno])
 			return NULL;
 
-		target = (task->fds[fdno] && task->fds[fdno]->f_name) ?
-				 task->fds[fdno]->f_name :
+		target = (task->files->fds[fdno] &&
+			  task->files->fds[fdno]->f_name) ?
+				 task->files->fds[fdno]->f_name :
 				 NULL;
 		if (!target || !target[0]) {
 			sprintf(anon, "pipe:[%d]", fdno);
 			target = anon;
 		}
-		return make_pid_fd_symlink(target, task->fds[fdno]);
+		return make_pid_fd_symlink(target, task->files->fds[fdno]);
 	}
 
 	return NULL;

@@ -37,9 +37,9 @@ static int socketcall_socket(uint32_t *args)
 	if (fd < 0)
 		return fd;
 	if (type & MOS_SOCK_NONBLOCK)
-		CURRENT_TASK()->fds[fd]->f_flag |= O_NONBLOCK;
+		CURRENT_TASK()->files->fds[fd]->f_flag |= O_NONBLOCK;
 	if (type & MOS_SOCK_CLOEXEC)
-		fd_bitmap_set(CURRENT_TASK()->fd_cloexec, fd);
+		fd_bitmap_set(CURRENT_TASK()->files->cloexec, fd);
 	return fd;
 }
 
@@ -98,9 +98,10 @@ static int socketcall_socketpair(uint32_t *args)
 		return ret;
 	for (i = 0; i < 2; i++) {
 		if (type & MOS_SOCK_NONBLOCK)
-			CURRENT_TASK()->fds[pair[i]]->f_flag |= O_NONBLOCK;
+			CURRENT_TASK()->files->fds[pair[i]]->f_flag |=
+				O_NONBLOCK;
 		if (type & MOS_SOCK_CLOEXEC)
-			fd_bitmap_set(CURRENT_TASK()->fd_cloexec, pair[i]);
+			fd_bitmap_set(CURRENT_TASK()->files->cloexec, pair[i]);
 	}
 	ret = ps_write_process_memory(
 		CURRENT_TASK(), (void *)(uintptr_t)args[3], pair, sizeof(pair));

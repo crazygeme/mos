@@ -31,7 +31,7 @@ struct epitem {
 	int fd, queued, armed;
 	uint32_t events;
 	uint64_t data;
-	struct epitem *file_next, **file_prev;
+	list_entry file_list;
 	poll_table subscriptions;
 	poll_table_entry channels[EPOLL_CHANNELS];
 };
@@ -53,14 +53,14 @@ static int epoll_access(const void *ptr, size_t size, int write)
 	mm_struct *mm;
 	if (!ptr)
 		return 0;
-	if (current->type != ps_user)
+	if (current->life->type != ps_user)
 		return 1;
-	mm = current->user->vm;
+	mm = current->memory;
 	if (addr >= mm->task_size || size > mm->task_size - addr)
 		return 0;
 	end = addr + size;
 	while (addr < end) {
-		vm_region *region = vm_find_map_cached(current->user, addr);
+		vm_region *region = vm_find_map_cached(current, addr);
 		if (!region ||
 		    !(region->prot & (write ? PROT_WRITE : PROT_READ)))
 			return 0;
@@ -75,7 +75,7 @@ static file *epoll_get_fd(int fd)
 	if (fd < 0 || fd >= MAX_FD)
 		return NULL;
 	mutex_lock(&current->files->lock);
-	fp = current->fds[fd];
+	fp = current->files->fds[fd];
 	if (fp && !(fp->f_flag & O_PATH))
 		fs_get_file(fp);
 	else
@@ -156,19 +156,18 @@ static void epoll_remove(struct epitem *item)
 	poll_table_cleanup(&item->subscriptions);
 	epoll_unqueue(item);
 	rb_erase(&item->tree, &item->ep->interests);
-	*item->file_prev = item->file_next;
-	if (item->file_next)
-		item->file_next->file_prev = item->file_prev;
+	list_remove_entry(&item->file_list);
 	free(item);
 }
 
 void epoll_release_file(file *fp)
 {
-	if (!fp->f_ep_links)
+	if (!fp->f_ep_links.next || list_is_empty(&fp->f_ep_links))
 		return;
 	rmutex_lock(&epoll_mutex);
-	while (fp->f_ep_links)
-		epoll_remove(fp->f_ep_links);
+	while (!list_is_empty(&fp->f_ep_links))
+		epoll_remove(container_of(fp->f_ep_links.next, struct epitem,
+					  file_list));
 	rmutex_unlock(&epoll_mutex);
 }
 
@@ -342,11 +341,15 @@ static int epoll_down(struct eventpoll *ep, struct eventpoll *target, int depth)
 }
 static int epoll_up(struct eventpoll *ep, int depth)
 {
-	struct epitem *item;
 	int longest = 0;
+	if (!ep->fp->f_ep_links.next)
+		return 0;
 	if (depth >= EPOLL_DEPTH)
 		return EPOLL_DEPTH;
-	for (item = ep->fp->f_ep_links; item; item = item->file_next) {
+	for (list_entry *node = ep->fp->f_ep_links.next;
+	     node != &ep->fp->f_ep_links; node = node->next) {
+		struct epitem *item =
+			container_of(node, struct epitem, file_list);
 		int n = 1 + epoll_up(item->ep, depth + 1);
 		if (n > longest)
 			longest = n;
@@ -423,11 +426,9 @@ int sys_epoll_ctl(int epfd, int op, int fd, const struct epoll_event *event)
 		}
 		rb_link_node(&item->tree, parent, slot);
 		rb_insert_color(&item->tree, &ep->interests);
-		item->file_next = fp->f_ep_links;
-		item->file_prev = &fp->f_ep_links;
-		if (item->file_next)
-			item->file_next->file_prev = &item->file_next;
-		fp->f_ep_links = item;
+		if (!fp->f_ep_links.next)
+			list_init(&fp->f_ep_links);
+		list_insert_head(&fp->f_ep_links, &item->file_list);
 	} else {
 		result = -ENOENT;
 		if (!item)
@@ -518,17 +519,17 @@ static int epoll_wait_register(void *opaque)
 {
 	struct epoll_wait_context *ctx = opaque;
 	poll_subscribe(&ctx->table, &ctx->ep->waiters, &ctx->ep->wait_lock);
-	current->io_wait = ctx;
-	current->cancel_io_wait = epoll_wait_cancel;
+	current->wait->io_wait = ctx;
+	current->wait->cancel_io_wait = epoll_wait_cancel;
 	return ctx->table.unsupported;
 }
 static void epoll_wait_unregister(void *opaque)
 {
 	struct epoll_wait_context *ctx = opaque;
 	poll_table_cleanup(&ctx->table);
-	if (current->io_wait == ctx) {
-		current->io_wait = NULL;
-		current->cancel_io_wait = NULL;
+	if (current->wait->io_wait == ctx) {
+		current->wait->io_wait = NULL;
+		current->wait->cancel_io_wait = NULL;
 	}
 }
 static const struct poll_ops epoll_wait_ops = {
@@ -548,9 +549,9 @@ static int epoll_wait_common(int epfd, struct epoll_event *events,
 	if (maxevents <= 0 ||
 	    (unsigned)maxevents > 0x7fffffffU / sizeof(*events))
 		return -EINVAL;
-	if (current->type == ps_user) {
+	if (current->life->type == ps_user) {
 		vaddr_t addr = (vaddr_t)(uintptr_t)events;
-		vaddr_t limit = current->user->vm->task_size;
+		vaddr_t limit = current->memory->task_size;
 		if (addr >= limit ||
 		    (size_t)maxevents * sizeof(*events) > limit - addr)
 			return -EFAULT;

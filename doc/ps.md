@@ -1,7 +1,7 @@
 # Process Management & Scheduler
 
-**Source:** `src/ps/ps.c`, `src/ps/ps_sched.c`, `src/ps/ps_syscall.c`
-**Headers:** `include/ps/ps.h`, `include/ps/signal.h`, `src/ps/ps_internal.h`
+**Source:** `src/ps/impl/` and `arch/{x86,x64}/ps/impl/`
+**Headers:** `src/ps/ps.h`, `src/ps/clone.h`, `src/lib/ref_count.h`, `src/mm/mmap.h`
 
 ---
 
@@ -15,69 +15,69 @@
 
 ---
 
-## 1. Task structure
+## 1. Task structure and resource ownership
 
-Every task (kernel thread or user process) lives in a single `KERNEL_TASK_SIZE`-aligned page:
-
-```
-┌──────────────────────────────┐  page base  (task_struct *)
-│  task_struct                 │
-│    tss  (register save area) │
-│    cr3, psid, priority, ...  │
-│    signal_context *          │
-│    user_enviroment *         │
-├──────────────────────────────┤
-│  kernel stack (grows down)   │
-└──────────────────────────────┘  page top  = initial esp0
-```
-
-`CURRENT_TASK()` derives the pointer by masking the low bits of ESP — no per-CPU variable needed.
-
-### `task_struct` fields
+The task header sits at the base of a `KERNEL_TASK_BYTES`-aligned kernel stack
+allocation. `CURRENT_TASK()` masks the stack pointer to find it. State blocks
+are allocated separately, leaving more space for the kernel call stack.
 
 ```c
-typedef struct _task_struct {
-    task_frame tss;              // CPU register save area (see below)
-    unsigned long cr3;           // page directory base
-    unsigned int psid;           // process ID
-    process_fn fn;               // kernel entry function
-    void *param;                 // parameter for entry function
-    user_enviroment *user;       // user-mode context (argv, env, cwd, …)
-    signal_context *signal;      // signal handlers + pending/masked sets
-    int priority;                // ps_idle=0 | ps_normal=1
-    int type;                    // ps_kernel | ps_user
-    list_entry ps_list;          // node in ready / wait / dying queue
-    struct rb_node mgr_rb;       // node in mgr_queue RB-tree (keyed by psid)
-    ps_status status;            // ps_ready | ps_running | ps_waiting | ps_dying
-    const char *wait_func;       // debugging: name of blocking call
-    int remain_ticks;            // time-slice counter (reset to DEFAULT_TICKS on each schedule)
-    unsigned timeout;            // wake-up time for timed sleep (ms)
-    file_descriptor *fds;        // open file descriptors
-    mutex_t fd_lock;
-    unsigned exit_status;        // status word for waitpid
-    task_struct *parent;
-    unsigned nchildren;          // count of unreapped children
-    unsigned fork_flag;          // FORK_FLAG_VFORK
-    cond_t vfork_event;          // blocks parent during vfork
-    super_block *root;           // root filesystem
-    unsigned umask;
-    task_stats_t *stats;         // per-thread sampled CPU and fault counters
-    task_usage_t *usage;         // reference-counted thread-group CPU totals
-    unsigned long long alarm_expire_ms;
-    unsigned int magic;          // 0xDEADBEEF — stack overflow sentinel
-} task_struct;
+struct _task_struct {
+    task_schedule *sched;
+    task_wait *wait;
+    task_lifecycle *life;
+    task_execution *execution;
+    task_credentials *credentials;
+    task_signal *signal;
+    task_stats_t *stats;
+    task_memory *memory;
+    task_files *files;
+    task_fs *fs;
+    signal_handlers *sighand;
+    task_thread *thread;
+    unsigned magic;
+};
 ```
 
-### Register save area (`task_frame`)
+Each clone flag controls one shared resource independently:
 
-Holds the full x86 user/kernel context:
+| Flag | Block | Owned state |
+| --- | --- | --- |
+| `CLONE_VM` | `task_memory` | Mappings, page-table root, heap/stack bounds, image metadata, LDT |
+| `CLONE_FILES` | `task_files` | Descriptor table, close-on-exec bitmap, descriptor lock |
+| `CLONE_FS` | `task_fs` | Filesystem root, chroot prefix, cwd, umask |
+| `CLONE_SIGHAND` | `signal_handlers` | Signal dispositions |
+| `CLONE_THREAD` | `task_thread` | TGID, PGID/SID, limits, group CPU totals, process pending signals, ITIMER_REAL |
 
-```
-eax ebx ecx edx edi esi ebp esp   — general purpose
-ds  ss  es  gs  fs  cs            — segment registers
-eip eflags                        — instruction pointer + flags
-esp0                              — kernel stack top (written to TSS)
-```
+Without a flag, the child receives an independent copy; a new thread-group
+block starts with fresh accounting, pending signals, and timers. Private blocks
+are always distinct. In particular, `task_execution` owns FPU/TLS/ptrace state,
+I/O permissions, robust-list registration, clear-child-TID state, and the VMA
+cache. `task_signal` owns the thread mask, thread pending signals, saved-mask
+restoration, and alternate stack.
+
+All shared blocks begin with `ref_count_t ref`, defined in `lib/ref_count.h`.
+`ref_count_init`, `ref_count_get`, `ref_count_put`, and `ref_count_read` provide
+the common lifetime API; the final put calls the resource's release callback.
+`ref_count_get(resource)` returns the same pointer, so cloning can use
+`child->sighand = ref_count_get(parent->sighand);`.
+There is one VM reference count, and group accounting belongs to `task_thread`.
+
+`ps_clone_resources()` selects owners from the clone flags. Exec detaches the
+filesystem and handler blocks as needed, prepares a fresh `task_memory`, then
+activates it before dropping the old memory reference. The VMA cache remains
+private and validates both memory identity and VMA generation.
+
+Scheduler and wait nodes use `list_entry` or RB-tree nodes embedded in their
+blocks, with an owner pointer back to the task. Active I/O scopes use a private
+intrusive list under `task_wait`: each scope retains an open description even
+if its descriptor closes. They cannot share the descriptor table's lifetime,
+because `CLONE_FILES` must not let one thread cancel another thread's transfers.
+
+Architecture switches save registers on the kernel stack and retain the stack
+pointer in `task_schedule`. `task_execution.arch` contains only persistent
+selector/base state. Initial instruction and stack pointers are passed directly
+to frame construction; the kernel stack top is derived from the task allocation.
 
 ---
 
@@ -195,27 +195,20 @@ task_struct *ps_create(process_fn fn, void *param, int priority, int type);
 ## 6. Fork: `do_fork`
 
 ```c
-int do_fork(int flag);   // flag = 0 (fork) or FORK_FLAG_VFORK (vfork)
+static int do_fork(void);
+int do_vfork(unsigned long child_stack, unsigned long flags);
 ```
 
 Steps:
 
-1. Allocate and `memcpy` current `task_struct` into child.
-2. Assign new psid; clear per-task stats.
-3. **Duplicate user address space** (CoW):
-   - Allocate a new page directory for the child.
-   - For every mapped user page:
-     - Clear `PAGE_ENTRY_WRITABLE` in **both** parent and child PTEs.
-     - Map the same physical page into child (increment `ref_count`).
-   - First write fault in either process triggers `pf_handle_cow` (see `doc/mm_virtual.md`).
-4. Duplicate `fds` array (increment file `ref_count` for each open fd).
-5. Duplicate `signal_context`; clear pending signals in child.
-6. Set `child->parent = current`; increment `current->nchildren`.
-7. Set child `tss.eax = 0` (child gets 0 from fork).
-8. Set child `tss.eip = ret_from_fork`.
-9. Enqueue child in `ready_queue` + `mgr_queue`.
-10. **vfork**: if `FORK_FLAG_VFORK`, parent calls `cond_wait(&child->vfork_event)` and blocks until child calls `exec` or `exit`.
-11. Return child psid to parent.
+1. Allocate fresh task-private blocks and a child PID.
+2. Use `ps_clone_resources()` to select independent resource owners.
+3. For a new VM, copy metadata and establish copy-on-write user mappings.
+4. Copy credentials, FPU/TLS state, and the inherited signal mask. Reset
+   transient waits, pending thread signals, robust registration, and clear-child-TID.
+5. Build the child return frame with a zero syscall result.
+6. Add the child to the ready and management queues.
+7. For vfork, block the parent on the child's event until exec or exit.
 
 ---
 
@@ -259,7 +252,7 @@ loop:
   goto loop
 ```
 
-**Reaping** (`ps_reap_task`): copies rusage, frees command/env/cwd, page directory, `user_enviroment`, `signal_context`, `task_struct` page.
+**Reaping** (`ps_reap_task`): records usage, drops resource references, and frees task-private blocks and the kernel stack. Shared resources survive until their final reference is released.
 
 ---
 
@@ -267,15 +260,13 @@ loop:
 
 ### Data structures
 
-```c
-typedef struct _signal_context {
-    struct sigaction sig_handlers[NSIG];  // per-signal handler + flags
-    sigset_t sig_pending;                 // bitmask: bit N-1 = signal N pending
-    sigset_t sig_mask;                    // bitmask: blocked signals
-} signal_context;
-```
+`signal_handlers` is shared according to `CLONE_SIGHAND`; `task_signal` is
+private. `task_thread` holds process-directed pending signals and timer events.
+Delivery consumes one signal from the union of group and thread pending sets
+under `ps_lock`. Timer payloads use `list_entry` queues so different timers do
+not overwrite one shared payload slot.
 
-Standard POSIX signals (1–31). `NSIG = 32`.
+Standard signals are 1–31; the supported timer signal is 32 (`NSIG = 33`).
 
 ### Delivery
 

@@ -17,21 +17,162 @@
 #include <int/interrupt.h>
 #include "ps_internal.h"
 
-void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value)
+void ps_signal_action(task_struct *task, int sig, const struct sigaction *in,
+		      struct sigaction *out)
 {
-	task_struct *target;
 	int irq;
-
 	spinlock_lock(&ps_lock, &irq);
-	target = ps_find_process_unsafe(tid);
-	if (target && target->type == ps_user && target->signal) {
-		if (signo == SIGRTMIN_KERNEL) {
-			target->signal->timer_signal_id = timer_id;
-			target->signal->timer_signal_value = value;
+	struct sigaction *action = &task->sighand->actions[sig];
+	if (out)
+		*out = *action;
+	if (in)
+		*action = *in;
+	spinlock_unlock(&ps_lock, irq);
+}
+
+void ps_claim_signal_action(task_struct *task, int sig, struct sigaction *out)
+{
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	*out = task->sighand->actions[sig];
+	if (out->sa_flags & SA_RESETHAND)
+		task->sighand->actions[sig].sa_handler = SIG_DFL;
+	spinlock_unlock(&ps_lock, irq);
+}
+
+unsigned long ps_pending_signals(task_struct *task)
+{
+	unsigned long pending =
+		task->sighand ? __atomic_load_n(&task->signal->sig_pending,
+						__ATOMIC_ACQUIRE) :
+				0;
+	if (task->execution && task->thread)
+		pending |= __atomic_load_n(&task->thread->sig_pending,
+					   __ATOMIC_ACQUIRE);
+	return pending;
+}
+
+static void wake_signal_target(task_struct *task, int sig)
+{
+	unsigned long bit = 1UL << (sig - 1);
+	if (task->sched->status == ps_stopped &&
+	    (sig == SIGCONT || sig == SIGKILL)) {
+		task->life->stop_signal = task->life->stop_report_pending = 0;
+		ps_put_to_ready_queue_unsafe(task);
+	} else if (task->sched->status == ps_waiting &&
+		   task->wait->wait_interruptible &&
+		   (ps_interrupting_signals(task) ||
+		    (task->wait->signal_wait_mask & bit)))
+		ps_put_to_ready_queue_unsafe(task);
+}
+
+/* Process pending state remains available to every eligible thread. */
+void ps_queue_group_signal_unsafe(task_struct *task, int sig)
+{
+	task_thread *group = task->thread;
+	unsigned long bit = 1UL << (sig - 1);
+	if (sig == SIGCONT)
+		__atomic_fetch_and(
+			&group->sig_pending,
+			~((1UL << (SIGSTOP - 1)) | (1UL << (SIGTSTP - 1)) |
+			  (1UL << (SIGTTIN - 1)) | (1UL << (SIGTTOU - 1))),
+			__ATOMIC_RELEASE);
+	else if (sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN ||
+		 sig == SIGTTOU)
+		__atomic_fetch_and(&group->sig_pending, ~(1UL << (SIGCONT - 1)),
+				   __ATOMIC_RELEASE);
+	__atomic_fetch_or(&group->sig_pending, bit, __ATOMIC_RELEASE);
+	for (struct rb_node *node = rb_first(&control.mgr_queue); node;
+	     node = rb_next(node)) {
+		task_struct *peer =
+			(rb_entry(node, task_schedule, mgr_rb)->task);
+		if (peer->execution && peer->thread == group && peer->sighand &&
+		    peer->sched->status != ps_dying)
+			wake_signal_target(peer, sig);
+	}
+}
+
+void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value,
+		     int thread)
+{
+	signal_queue_entry *entry = kmalloc(sizeof(*entry));
+	if (!entry)
+		return;
+	*entry = (signal_queue_entry){ .signo = signo,
+				       .timer_id = timer_id,
+				       .value = value };
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	task_struct *target = ps_find_process_unsafe(tid);
+	if (target && target->life->type == ps_user && target->sighand &&
+	    target->sched->status != ps_dying) {
+		list_entry *queue = thread ? &target->signal->pending_queue :
+					     &target->thread->pending_queue;
+		for (list_entry *node = queue->next; node != queue;
+		     node = node->next) {
+			signal_queue_entry *pending =
+				container_of(node, signal_queue_entry, list);
+			if (pending->timer_id == timer_id &&
+			    pending->signo == signo) {
+				kfree(entry);
+				spinlock_unlock(&ps_lock, irq);
+				return;
+			}
 		}
-		ps_queue_signal_unsafe(target, signo);
+		list_insert_tail(queue, &entry->list);
+		if (thread)
+			ps_queue_signal_unsafe(target, signo);
+		else
+			ps_queue_group_signal_unsafe(target, signo);
+	} else
+		kfree(entry);
+	spinlock_unlock(&ps_lock, irq);
+}
+
+/* Consume bit and payload together under ps_lock. Keep the bit set while
+ * another event for that signal is queued. Thread-directed events win ties. */
+int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
+		   uintptr_t *value)
+{
+	int irq, sig = 0;
+	spinlock_lock(&ps_lock, &irq);
+	sigset_t pending = ps_pending_signals(task) & mask;
+	if (pending) {
+		sig = __builtin_ctzl(pending) + 1;
+		unsigned long bit = 1UL << (sig - 1);
+		int local = !!(task->signal->sig_pending & bit);
+		sigset_t *bits = local ? &task->signal->sig_pending :
+					 &task->thread->sig_pending;
+		list_entry *queue = local ? &task->signal->pending_queue :
+					    &task->thread->pending_queue;
+		if (timer_id)
+			*timer_id = -1;
+		if (value)
+			*value = 0;
+		for (list_entry *node = queue->next; node != queue;
+		     node = node->next) {
+			signal_queue_entry *entry =
+				container_of(node, signal_queue_entry, list);
+			if (entry->signo != sig)
+				continue;
+			if (timer_id)
+				*timer_id = entry->timer_id;
+			if (value)
+				*value = entry->value;
+			list_remove_entry(node);
+			kfree(entry);
+			break;
+		}
+		int more = 0;
+		for (list_entry *node = queue->next; node != queue;
+		     node = node->next)
+			more |= container_of(node, signal_queue_entry, list)
+					->signo == sig;
+		if (!more)
+			__atomic_fetch_and(bits, ~bit, __ATOMIC_RELEASE);
 	}
 	spinlock_unlock(&ps_lock, irq);
+	return sig;
 }
 
 void do_signal(intr_frame *frame);
@@ -49,13 +190,13 @@ struct kill_all_ctx {
 
 static int can_send_signal(task_struct *sender, task_struct *target)
 {
-	user_enviroment *su, *tu;
+	task_credentials *su, *tu;
 
-	if (!sender || !target || !target->user)
+	if (!sender || !target || !target->execution)
 		return 0;
 
-	su = sender->user;
-	tu = target->user;
+	su = sender->credentials;
+	tu = target->credentials;
 	if (!su)
 		return 0;
 	if (su->euid == 0)
@@ -69,9 +210,11 @@ static void send_if_other(task_struct *task, void *opaque)
 {
 	struct kill_all_ctx *c = opaque;
 
-	if (task->type != ps_user || task->psid == c->self->psid)
+	if (task->life->type != ps_user ||
+	    task->life->psid != task->thread->tgid ||
+	    task->life->psid == c->self->life->psid)
 		return;
-	if (ps_send_signal(task->psid, c->sig) == 0)
+	if (ps_send_signal(task->life->psid, c->sig) == 0)
 		c->sent++;
 }
 
@@ -79,23 +222,25 @@ static void send_if_pgrp(task_struct *task, void *opaque)
 {
 	struct kill_all_ctx *c = opaque;
 
-	if (task->type != ps_user || !task->user || task->psid == c->self->psid)
+	if (task->life->type != ps_user || !task->execution ||
+	    task->life->psid != task->thread->tgid ||
+	    task->life->psid == c->self->life->psid)
 		return;
-	if (task->user->group_id != c->pgrp)
+	if (task->thread->group_id != c->pgrp)
 		return;
-	if (ps_send_signal(task->psid, c->sig) == 0)
+	if (ps_send_signal(task->life->psid, c->sig) == 0)
 		c->sent++;
 }
 
 unsigned long ps_interrupting_signals(task_struct *task)
 {
-	signal_context *signal = task->signal;
+	task_signal *signal = task->signal;
 	unsigned long pending;
 	int sig;
 
-	if (!signal)
+	if (!task->sighand)
 		return 0;
-	pending = signal->sig_pending & ~signal->sig_mask;
+	pending = ps_pending_signals(task) & ~signal->sig_mask;
 	if (!pending)
 		return 0;
 	for (sig = 1; sig < NSIG; sig++) {
@@ -104,7 +249,9 @@ unsigned long ps_interrupting_signals(task_struct *task)
 
 		if (!(pending & bit))
 			continue;
-		handler = signal->sig_handlers[sig].sa_handler;
+		handler =
+			__atomic_load_n(&task->sighand->actions[sig].sa_handler,
+					__ATOMIC_RELAXED);
 		if (sig != SIGKILL && sig != SIGSTOP &&
 		    (handler == SIG_IGN ||
 		     (handler == SIG_DFL &&
@@ -122,26 +269,18 @@ void ps_queue_signal_unsafe(task_struct *target, int sig)
 
 	bit = 1UL << (sig - 1);
 	if (sig == SIGCONT)
-		target->signal->sig_pending &= ~STOP_SIGNALS_MASK;
+		__atomic_fetch_and(&target->signal->sig_pending,
+				   ~STOP_SIGNALS_MASK, __ATOMIC_RELEASE);
 	else if (bit & STOP_SIGNALS_MASK)
-		target->signal->sig_pending &= ~(1UL << (SIGCONT - 1));
+		__atomic_fetch_and(&target->signal->sig_pending,
+				   ~(1UL << (SIGCONT - 1)), __ATOMIC_RELEASE);
 
-	target->signal->sig_pending |= bit;
-
-	if (target->status == ps_stopped &&
-	    (sig == SIGCONT || sig == SIGKILL)) {
-		target->stop_signal = 0;
-		target->stop_report_pending = 0;
-		ps_put_to_ready_queue_unsafe(target);
-	} else if (target->status == ps_waiting && target->wait_interruptible &&
-		   (ps_interrupting_signals(target) ||
-		    (target->signal_wait_mask & bit))) {
-		ps_put_to_ready_queue_unsafe(target);
-	}
+	__atomic_fetch_or(&target->signal->sig_pending, bit, __ATOMIC_RELEASE);
+	wake_signal_target(target, sig);
 }
 
 /* Check sender permissions, queue the signal, and wake eligible recipients. */
-int ps_send_signal(unsigned pid, int sig)
+static int send_signal(unsigned pid, int sig, int thread)
 {
 	task_struct *sender = CURRENT_TASK();
 	task_struct *target;
@@ -158,7 +297,8 @@ int ps_send_signal(unsigned pid, int sig)
 		goto done;
 	}
 
-	if (target->type != ps_user || !target->user || !target->signal) {
+	if (target->life->type != ps_user || !target->execution ||
+	    !target->sighand) {
 		ret = -ESRCH;
 		goto done;
 	}
@@ -168,12 +308,25 @@ int ps_send_signal(unsigned pid, int sig)
 		goto done;
 	}
 
-	if (sig)
-		ps_queue_signal_unsafe(target, sig);
+	if (sig) {
+		if (thread)
+			ps_queue_signal_unsafe(target, sig);
+		else
+			ps_queue_group_signal_unsafe(target, sig);
+	}
 
 done:
 	spinlock_unlock(&ps_lock, irq);
 	return ret;
+}
+
+int ps_send_signal(unsigned pid, int sig)
+{
+	return send_signal(pid, sig, 0);
+}
+int ps_send_thread_signal(unsigned tid, int sig)
+{
+	return send_signal(tid, sig, 1);
 }
 
 int sys_kill(int pid, int sig)
@@ -192,8 +345,9 @@ int sys_kill(int pid, int sig)
 
 	if (pid > 0) {
 		ret = ps_send_signal((unsigned)(uintptr_t)pid, sig);
-		if (ret == 0 && cur->type == ps_user &&
-		    (unsigned)(uintptr_t)pid == cur->psid && cur->signal &&
+		if (ret == 0 && cur->life->type == ps_user &&
+		    (unsigned)(uintptr_t)pid == cur->life->psid &&
+		    cur->sighand &&
 		    !(cur->signal->sig_mask & (1UL << (sig - 1)))) {
 			intr_frame *frame =
 				(intr_frame *)((char *)cur + KERNEL_TASK_BYTES -
@@ -206,11 +360,11 @@ int sys_kill(int pid, int sig)
 
 	if (pid == 0) {
 		struct kill_all_ctx ctx;
-		if (!cur->user)
+		if (!cur->execution)
 			return -ESRCH;
 		ctx.self = cur;
 		ctx.sig = sig;
-		ctx.pgrp = cur->user->group_id;
+		ctx.pgrp = cur->thread->group_id;
 		ctx.sent = 0;
 		ps_enum_all(send_if_pgrp, &ctx);
 		return ctx.sent ? 0 : -ESRCH;
@@ -251,19 +405,18 @@ int sys_pause()
 int sys_sigaction(int sig, void *act, void *oact)
 {
 	task_struct *cur = CURRENT_TASK();
-	struct sigaction *sa;
 
 	if (sig <= 0 || sig >= NSIG)
 		return -EINVAL;
 	if (sig == SIGKILL || sig == SIGSTOP)
 		return -EINVAL;
 
-	sa = &cur->signal->sig_handlers[sig];
-
-	if (oact)
-		*(struct sigaction *)oact = *sa;
+	struct sigaction input, output;
 	if (act)
-		*sa = *(struct sigaction *)act;
+		input = *(struct sigaction *)act;
+	ps_signal_action(cur, sig, act ? &input : NULL, oact ? &output : NULL);
+	if (oact)
+		*(struct sigaction *)oact = output;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("sigaction(%d, %x, %x)\n", sig, act, oact);
@@ -370,24 +523,20 @@ int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 }
 
 /* Return the lowest-numbered deliverable signal, or 0 if none. */
-static int pick_signal(task_struct *cur)
+static int pick_signal(task_struct *cur, int *timer_id, uintptr_t *value)
 {
-	unsigned long unmasked = cur->signal->sig_pending &
-				 ~cur->signal->sig_mask;
-	unsigned long deliverable = ps_interrupting_signals(cur);
-	int sig;
-
-	/* An ignored low-numbered signal must not hide the handler for the
-	 * signal which just interrupted a syscall. Keep masked signals pending.
-	 */
-	cur->signal->sig_pending &= ~(unmasked & ~deliverable);
-	if (!deliverable)
-		return 0;
-	for (sig = 1; sig < NSIG; sig++) {
-		if (deliverable & (1UL << (sig - 1)))
-			return sig;
+	unsigned long ignored = ps_pending_signals(cur) &
+				~cur->signal->sig_mask &
+				~ps_interrupting_signals(cur);
+	while (ignored) {
+		int sig = ps_take_signal(cur, ignored, NULL, NULL);
+		if (!sig)
+			break;
+		ignored = ps_pending_signals(cur) & ~cur->signal->sig_mask &
+			  ~ps_interrupting_signals(cur);
 	}
-	return 0;
+	return ps_take_signal(cur, ps_interrupting_signals(cur), timer_id,
+			      value);
 }
 
 /*
@@ -414,7 +563,7 @@ static int handle_sig_dfl(task_struct *cur, intr_frame *frame, int sig)
 	 * SysV killall5 broadcasts SIGSTOP/SIGKILL during shutdown and relies
 	 * on PID 1 surviving; init catches the signals it intentionally handles.
 	 */
-	if (cur->psid == 1) {
+	if (cur->life->psid == 1) {
 		maybe_restore_sigmask(cur);
 		return 1;
 	}
@@ -452,20 +601,21 @@ void do_signal(intr_frame *frame)
 	struct sigaction *sa;
 	int sig;
 
-	if (cur->type != ps_user)
+	if (cur->life->type != ps_user)
 		return;
 	if (!arch_interrupt_frame_is_user(frame))
 		return;
 
 next_signal:
-	sig = pick_signal(cur);
+	int timer_id;
+	uintptr_t timer_value;
+	sig = pick_signal(cur, &timer_id, &timer_value);
 	if (!sig)
 		return;
-	cur->signal->sig_pending &= ~(1UL << (sig - 1));
 
 	/* SIGKILL cannot be caught. Global init is protected above SIG_DFL. */
 	if (sig == SIGKILL) {
-		if (cur->psid == 1) {
+		if (cur->life->psid == 1) {
 			maybe_restore_sigmask(cur);
 			return;
 		}
@@ -473,7 +623,9 @@ next_signal:
 		return;
 	}
 
-	sa = &cur->signal->sig_handlers[sig];
+	struct sigaction action;
+	ps_claim_signal_action(cur, sig, &action);
+	sa = &action;
 
 	if (sa->sa_handler == SIG_IGN) {
 		maybe_restore_sigmask(cur);
@@ -485,7 +637,10 @@ next_signal:
 		goto next_signal;
 	}
 
-	arch_signal_deliver(cur, frame, sa, sig, NULL);
+	struct signal_fault event = { .code = -2,
+				      .timer_id = timer_id,
+				      .value = timer_value };
+	arch_signal_deliver(cur, frame, sa, sig, timer_id >= 0 ? &event : NULL);
 }
 
 /* Synchronous faults deliver their own context before unrelated pending signals. */
@@ -493,7 +648,9 @@ void ps_fault_signal(intr_frame *frame, int sig,
 		     const struct signal_fault *fault)
 {
 	task_struct *cur = CURRENT_TASK();
-	struct sigaction *sa = &cur->signal->sig_handlers[sig];
+	struct sigaction action;
+	ps_claim_signal_action(cur, sig, &action);
+	struct sigaction *sa = &action;
 	unsigned long bit = 1UL << (sig - 1);
 	if (!arch_interrupt_frame_is_user(frame)) {
 		do_group_exit(sig);
@@ -502,8 +659,9 @@ void ps_fault_signal(intr_frame *frame, int sig,
 	if ((cur->signal->sig_mask & bit) || sa->sa_handler == SIG_IGN) {
 		cur->signal->sig_mask &= ~bit;
 		sa->sa_handler = SIG_DFL;
+		ps_signal_action(cur, sig, sa, NULL);
 	}
-	cur->signal->sig_pending &= ~bit;
+	__atomic_fetch_and(&cur->signal->sig_pending, ~bit, __ATOMIC_RELEASE);
 	if (sa->sa_handler == SIG_DFL) {
 		do_group_exit(sig);
 		return;
@@ -559,7 +717,7 @@ int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize)
 	if (!set)
 		return -EFAULT;
 
-	*set = cur->signal->sig_pending & cur->signal->sig_mask;
+	*set = ps_pending_signals(cur) & cur->signal->sig_mask;
 	return 0;
 }
 
@@ -603,26 +761,23 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 
 	for (;;) {
 		unsigned sleep_ms = 0;
-		sigset_t pending = cur->signal->sig_pending & wait_set;
-		if (pending & (1UL << (SIGRTMIN_KERNEL - 1))) {
-			cur->signal->sig_pending &=
-				~(1UL << (SIGRTMIN_KERNEL - 1));
+		int timer_id;
+		uintptr_t value;
+		int sig = ps_take_signal(cur, wait_set, &timer_id, &value);
+		if (sig) {
 			if (info) {
 				uint32_t *words = info;
 				memset(info, 0, 128);
-				words[0] = SIGRTMIN_KERNEL;
-				words[2] = (uint32_t)-2;
-				words[3] = cur->signal->timer_signal_id;
-				words[5] = cur->signal->timer_signal_value;
+				words[0] = sig;
+				if (timer_id >= 0) {
+					words[2] = (uint32_t)-2;
+					words[3] = timer_id;
+					words[5] = (uint32_t)value;
+#if defined(__x86_64__)
+					words[6] = (uint32_t)(value >> 32);
+#endif
+				}
 			}
-			return SIGRTMIN_KERNEL;
-		}
-
-		if (pending) {
-			int sig = __builtin_ctz((unsigned)pending) + 1;
-			cur->signal->sig_pending &= ~(1U << (sig - 1));
-			if (info)
-				memset(info, 0, sigsetsize);
 			return sig;
 		}
 
@@ -640,18 +795,18 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 					   (unsigned)(deadline - now);
 		}
 		/* Explicitly awaited signals may be blocked in sig_mask. */
-		cur->signal_wait_mask = wait_set;
+		cur->wait->signal_wait_mask = wait_set;
 		if (!ps_prepare_interruptible_wait(cur, NULL, sleep_ms,
 						   __func__)) {
 			task_sched();
 			ps_finish_timed_wait(cur);
 		}
-		cur->signal_wait_mask = 0;
+		cur->wait->signal_wait_mask = 0;
 	}
 }
 
 /*
- * rt_sigqueueinfo (178) — send a signal with siginfo to a process.
+ * rt_sigqueueinfo (178) — send a signal with siginfo to a group.
  *
  * We don't queue siginfo payloads; just deliver the signal.
  */

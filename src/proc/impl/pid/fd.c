@@ -29,9 +29,9 @@ file *pid_fd_dir_open(task_struct *task)
 	size += ROUND_UP(NAME_OFFSET() + 2); /* "."  */
 	size += ROUND_UP(NAME_OFFSET() + 3); /* ".." */
 
-	if (task->fds) {
+	if (task->files) {
 		for (i = 0; i < MAX_FD; i++) {
-			if (task->fds[i])
+			if (task->files->fds[i])
 				size += ROUND_UP(NAME_OFFSET() +
 						 sprintf(name, "%d", i) + 1);
 		}
@@ -43,9 +43,9 @@ file *pid_fd_dir_open(task_struct *task)
 	PID_FILL_DIRENT(&p, buf, ".");
 	PID_FILL_DIRENT(&p, buf, "..");
 
-	if (task->fds) {
+	if (task->files) {
 		for (i = 0; i < MAX_FD; i++) {
-			if (task->fds[i]) {
+			if (task->files->fds[i]) {
 				sprintf(name, "%d", i);
 				PID_FILL_DIRENT(&p, buf, name);
 			}

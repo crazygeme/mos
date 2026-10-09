@@ -15,11 +15,11 @@ void ps2_sysfs_register(void)
 		vfs_entry_directory(vfs_entry_root(tree), "bus"), "serio");
 	devices = vfs_entry_directory(bus, "devices");
 	drivers = vfs_entry_directory(bus, "drivers");
-	for (driver = driver_first(); driver; driver = driver->next)
+	for (driver = driver_first(); driver; driver = driver_next(driver))
 		if (driver->bus == DEVICE_BUS_PS2)
 			vfs_entry_directory(drivers, driver->name);
 	controller = NULL;
-	for (device = device_first(); device; device = device->next) {
+	for (device = device_first(); device; device = device_next(device)) {
 		vfs_entry_node *node, *binding;
 		char name[16];
 		if (device->bus != DEVICE_BUS_PS2)

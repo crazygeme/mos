@@ -230,9 +230,9 @@ static int mos_shm_create(int key, size_t size, unsigned mode)
 		seg->size = PAGE_SIZE;
 	seg->page_count = page_count;
 	seg->pages = pages;
-	seg->owner_pid = cur->psid;
-	seg->creator_uid = cur->user ? cur->user->euid : 0;
-	seg->creator_gid = cur->user ? cur->user->egid : 0;
+	seg->owner_pid = cur->life->psid;
+	seg->creator_uid = cur->execution ? cur->credentials->euid : 0;
+	seg->creator_gid = cur->execution ? cur->credentials->egid : 0;
 	seg->mode = mode & 0777;
 	seg->ctime = (unsigned)(time_wall_us() / 1000000ULL);
 	shm_ids_insert(seg);
@@ -414,7 +414,7 @@ static intptr_t mos_shmat(int shmid, const void *shmaddr, int shmflg,
 	memset(attach, 0, sizeof(*attach));
 	attach->used = 1;
 	attach->shmid = shmid;
-	attach->owner_pid = cur->psid;
+	attach->owner_pid = cur->life->psid;
 	attach->addr = mapped;
 	attach->size = seg->size;
 	shm_address_insert(attach);
@@ -433,7 +433,7 @@ int sys_shmdt(const void *shmaddr)
 	int irq;
 
 	spinlock_lock(&mos_shm_lock, &irq);
-	struct mos_shm_attach *attach = shm_address_find(cur->psid, addr);
+	struct mos_shm_attach *attach = shm_address_find(cur->life->psid, addr);
 	if (attach) {
 		size = attach->size;
 		shmid = attach->shmid;

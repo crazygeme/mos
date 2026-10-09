@@ -58,15 +58,16 @@ static void count_task(task_struct *task, void *ctx)
 {
 	loadavg_ctx_t *c = (loadavg_ctx_t *)ctx;
 
-	if (task->psid == 0xffffffff)
+	if (task->life->psid == 0xffffffff)
 		return;
-	if (task->type == ps_kernel || task->priority == ps_idle)
+	if (task->life->type == ps_kernel || task->sched->priority == ps_idle)
 		return;
 
 	c->total++;
-	if (task->psid > c->last_pid)
-		c->last_pid = task->psid;
-	if (task->status == ps_running || task->status == ps_ready) {
+	if (task->life->psid > c->last_pid)
+		c->last_pid = task->life->psid;
+	if (task->sched->status == ps_running ||
+	    task->sched->status == ps_ready) {
 		c->running++;
 		c->active++;
 	}
@@ -102,7 +103,7 @@ static void fill(proc_buf_t *pb)
 			LOAD_INT(avenrun[0]), LOAD_FRAC(avenrun[0]),
 			LOAD_INT(avenrun[1]), LOAD_FRAC(avenrun[1]),
 			LOAD_INT(avenrun[2]), LOAD_FRAC(avenrun[2]), c.running,
-			c.total, c.last_pid ? c.last_pid : cur->psid);
+			c.total, c.last_pid ? c.last_pid : cur->life->psid);
 }
 
 DEFINE_PROC_FILE(loadavg, fill);

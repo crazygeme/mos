@@ -3,8 +3,7 @@
 #include <lib/klib.h>
 #include <errno.h>
 
-static driver_t *driver_list;
-static driver_t **driver_tail = &driver_list;
+static list_entry driver_list = { &driver_list, &driver_list };
 extern driver_t *const __driver_start[];
 extern driver_t *const __driver_end[];
 
@@ -13,9 +12,7 @@ void driver_register(driver_t *driver)
 	if (!driver || driver->registered)
 		return;
 	driver->registered = 1;
-	driver->next = 0;
-	*driver_tail = driver;
-	driver_tail = &driver->next;
+	list_insert_tail(&driver_list, &driver->list);
 }
 
 void drivers_init(void)
@@ -27,7 +24,16 @@ void drivers_init(void)
 
 driver_t *driver_first(void)
 {
-	return driver_list;
+	return list_is_empty(&driver_list) ?
+		       NULL :
+		       container_of(driver_list.next, driver_t, list);
+}
+
+driver_t *driver_next(const driver_t *driver)
+{
+	return driver->list.next == &driver_list ?
+		       NULL :
+		       container_of(driver->list.next, driver_t, list);
 }
 
 const pci_device_id *driver_match_pci(const driver_t *driver,
@@ -92,7 +98,7 @@ driver_t *driver_select(device_t *device)
 	if ((unsigned)device->bus >= sizeof(bus_ops) / sizeof(bus_ops[0]) ||
 	    !bus_ops[device->bus].match)
 		return NULL;
-	for (driver = driver_list; driver; driver = driver->next) {
+	for (driver = driver_first(); driver; driver = driver_next(driver)) {
 		if (driver->bus != device->bus ||
 		    !bus_ops[device->bus].match(driver, device))
 			continue;

@@ -391,7 +391,7 @@ static int pf_vma_is_stack(task_struct *task, vm_region *region)
 {
 	return region != NULL && region->fp == NULL &&
 	       !(region->flag & MAP_SHARED) &&
-	       region->begin == task->user->vm->start_stack &&
+	       region->begin == task->memory->start_stack &&
 	       (region->prot & PROT_WRITE);
 }
 
@@ -406,7 +406,7 @@ static vm_region *pf_find_vma(task_struct *task, vaddr_t address)
 {
 	vm_region *region;
 
-	region = vm_find_vma_cached(task->user, address);
+	region = vm_find_vma_cached(task, address);
 	if (!region)
 		return NULL;
 
@@ -416,27 +416,26 @@ static vm_region *pf_find_vma(task_struct *task, vaddr_t address)
 	if (!pf_vma_is_stack(task, region))
 		return NULL;
 
-	if (address <
-		    task->user->vm->task_size - USER_STACK_PAGES * PAGE_SIZE ||
-	    address >= task->user->vm->start_stack)
+	if (address < task->memory->task_size - USER_STACK_PAGES * PAGE_SIZE ||
+	    address >= task->memory->start_stack)
 		return NULL;
 
 	{
 		unsigned minimal_grow = USER_STACK_INIT_PAGES * PAGE_SIZE;
-		unsigned required_grow = task->user->vm->start_stack - address;
+		unsigned required_grow = task->memory->start_stack - address;
 		unsigned grow_size = required_grow > minimal_grow ?
 					     required_grow :
 					     minimal_grow;
 
-		task->user->vm->start_stack -= grow_size;
-		vm_set_stack(task->user->vm, task->user->vm->start_stack);
-		vm_add_map(task->user->vm, task->user->vm->start_stack,
-			   task->user->vm->start_stack + grow_size,
+		task->memory->start_stack -= grow_size;
+		vm_set_stack(task->memory, task->memory->start_stack);
+		vm_add_map(task->memory, task->memory->start_stack,
+			   task->memory->start_stack + grow_size,
 			   PROT_READ | PROT_WRITE, MAP_FIXED, NULL, 0, 0);
-		vm_invalidate_user_cache(task->user);
+		vm_invalidate_task_cache(task);
 	}
 
-	return vm_find_map_cached(task->user, address);
+	return vm_find_map_cached(task, address);
 }
 
 static vm_region *pf_lock_region(vm_region *region, vaddr_t address)
@@ -467,7 +466,7 @@ static int pf_handle_page_invalid_raw(task_struct *task, vaddr_t fault_address,
 	vm_region *region;
 	uint64_t this_offset;
 
-	region = pf_lock_region(vm_find_map_cached(task->user, fault_address),
+	region = pf_lock_region(vm_find_map_cached(task, fault_address),
 				fault_address);
 	if (!region)
 		region = pf_lock_region(pf_find_vma(task, fault_address),
@@ -515,11 +514,11 @@ static int pf_handle_page_invalid_raw(task_struct *task, vaddr_t fault_address,
 /* Resolve a missing page and apply architecture execute permissions. */
 static int pf_handle_page_invalid(task_struct *task, vaddr_t address, int write)
 {
-	LOCK_GUARD(&task->user->vm->mapping_lock);
+	LOCK_GUARD(&task->memory->mapping_lock);
 	int handled = pf_handle_page_invalid_raw(task, address, write);
 #if MOS_PAGE_NO_EXEC
 	if (handled) {
-		vm_region *region = vm_find_map_cached(task->user, address);
+		vm_region *region = vm_find_map_cached(task, address);
 		if (region) {
 			unsigned flags = mm_get_map_flag(address);
 			flags = region->prot & PROT_EXEC ?
@@ -594,12 +593,12 @@ static void wp_page_reuse(vaddr_t fault_address)
  */
 static int do_wp_page(task_struct *task, vaddr_t fault_address)
 {
-	LOCK_GUARD(&task->user->vm->mapping_lock);
+	LOCK_GUARD(&task->memory->mapping_lock);
 	vm_region *region;
 	unsigned page_index;
 	vaddr_t vir = fault_address & PAGE_SIZE_MASK;
 
-	region = pf_lock_region(vm_find_map_cached(task->user, vir), vir);
+	region = pf_lock_region(vm_find_map_cached(task, vir), vir);
 
 	if (!region || !(region->prot & PROT_WRITE)) {
 		if (region)
@@ -656,11 +655,11 @@ int pf_resolve_task_page_fault(task_struct *task, vaddr_t addr, int write)
 	unsigned old_level;
 	int handled;
 
-	if (!task || !task->user)
+	if (!task || !task->memory)
 		return 0;
-	LOCK_GUARD(&task->user->vm->mapping_lock);
+	LOCK_GUARD(&task->memory->mapping_lock);
 
-	target_address_space = VIRT_TO_PHY(task->user->vm->page_dir);
+	target_address_space = VIRT_TO_PHY(task->memory->page_dir);
 	old_level = int_intr_disable();
 	sched_disable();
 	old_address_space = arch_mm_current_address_space();
@@ -730,9 +729,9 @@ NOT_HANDLED:
 	if ((frame->cs & 3) == USER_PRIVILEGE ||
 	    (fault_address < MOS_NATIVE_TASK_SIZE && fault_address > 0x1000)) {
 		klog("segfault: %s: error code %x, address %lx, eip %lx\n",
-		     cur->user ? cur->user->command ? cur->user->command :
-						      "[none]" :
-				 "[none]",
+		     cur->memory ? cur->memory->command ? cur->memory->command :
+							  "[none]" :
+				   "[none]",
 		     (unsigned)frame->error_code, (unsigned long)fault_exact,
 		     (unsigned long)(uintptr_t)frame->eip);
 		struct signal_fault fault = {
@@ -745,8 +744,9 @@ NOT_HANDLED:
 	}
 
 	klog("segfault: %s: error code %x, address %lx, eip %lx\n",
-	     cur->user ? cur->user->command ? cur->user->command : "[none]" :
-			 "[none]",
+	     cur->memory ?
+		     cur->memory->command ? cur->memory->command : "[none]" :
+		     "[none]",
 	     (unsigned)frame->error_code, (unsigned long)fault_address,
 	     (unsigned long)(uintptr_t)frame->eip);
 

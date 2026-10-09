@@ -14,9 +14,9 @@ extern int sys_socketcall(int, uint32_t *);
 static void native_socket_flags(int fd, unsigned flags)
 {
 	if (flags & NATIVE_SOCK_NONBLOCK)
-		current->fds[fd]->f_flag |= O_NONBLOCK;
+		current->files->fds[fd]->f_flag |= O_NONBLOCK;
 	if (flags & NATIVE_SOCK_CLOEXEC)
-		fd_bitmap_set(current->fd_cloexec, fd);
+		fd_bitmap_set(current->files->cloexec, fd);
 }
 
 int native_socketpair(int domain, unsigned type, int protocol, int *out)

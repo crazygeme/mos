@@ -502,7 +502,7 @@ void printk(const char *fmt, ...)
 	spinlock_lock(&printk_record_lock, &record_irq);
 	record->length = 0;
 	tty_lock_acquire(&irq);
-	printf("[%d]: ", current->psid);
+	printf("[%d]: ", current->life->psid);
 
 	va_start(ap, fmt);
 	kvformat(printk_output, fmt, ap, record);
@@ -539,7 +539,7 @@ void klog(char *fmt, ...)
 		return;
 
 	mutex_lock(&klog_lock);
-	klog_printf("[%lld][%d]: ", time_now_tickets(), cur->psid);
+	klog_printf("[%lld][%d]: ", time_now_tickets(), cur->life->psid);
 	va_start(ap, fmt);
 	kvformat(klog_writestr, fmt, ap, NULL);
 	va_end(ap);

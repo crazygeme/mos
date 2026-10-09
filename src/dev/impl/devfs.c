@@ -256,7 +256,7 @@ static super_block *devfs_sb;
 /* /dev/fd is a descriptor directory for the calling process. */
 static file *dev_fd_open_root(super_block *sb, int flag)
 {
-	return proc_pid_lookup(CURRENT_TASK()->psid, "/fd", flag);
+	return proc_pid_lookup(CURRENT_TASK()->life->psid, "/fd", flag);
 }
 
 static file *dev_fd_open(super_block *sb, const char *path, int flag)
@@ -269,7 +269,7 @@ static file *dev_fd_open(super_block *sb, const char *path, int flag)
 		return NULL;
 	}
 	sprintf(name, "/fd%s", path);
-	fp = proc_pid_lookup(CURRENT_TASK()->psid, name, flag);
+	fp = proc_pid_lookup(CURRENT_TASK()->life->psid, name, flag);
 	name_put(name);
 	return fp;
 }
@@ -285,7 +285,7 @@ static int dev_fd_readlink(super_block *sb, const char *path, char *buf,
 		return -ENOENT;
 	}
 	sprintf(name, "/proc/self/fd%s", path);
-	ret = vfs_readlink(CURRENT_TASK()->root, name, buf, bufsiz, rcnt);
+	ret = vfs_readlink(CURRENT_TASK()->fs->root, name, buf, bufsiz, rcnt);
 	name_put(name);
 	return ret;
 }
@@ -327,7 +327,7 @@ static void devfs_init(void)
 
 	devfs_sb = sb;
 	printk("mnt: Mounting devfs on /dev\n");
-	vfs_mount(cur->root, "/dev", sb);
+	vfs_mount(cur->fs->root, "/dev", sb);
 	vfs_mount(sb, "/fd", sget(&dev_fd_sops));
 
 	/* Let each device self-register under the devfs superblock. */

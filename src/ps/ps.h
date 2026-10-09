@@ -5,6 +5,7 @@
 #include <fs/vfs.h>
 #include <fs/fs.h>
 #include <lib/list.h>
+#include <lib/ref_count.h>
 #include <lib/lock.h>
 #include <ps/signal.h>
 #include <stddef.h>
@@ -14,26 +15,12 @@
 #include <ps/task.h>
 
 #define FORK_FLAG_VFORK 1
-#define FORK_FLAG_SHARE_VM 2
 #define FORK_FLAG_THREAD 4
 typedef struct _vm_region vm_region;
 
-typedef struct _page_table_list_entry {
-	unsigned int addr;
-	list_entry list;
-} page_table_list_entry;
-
-struct _region_elem {
-	int fd;
-	int file_off;
-	unsigned start;
-	unsigned end;
-	struct _region_elem *next;
-};
-
-struct _mm_struct;
-typedef struct _mm_struct mm_struct;
-typedef mm_struct *vm_struct_t;
+typedef struct _task_memory task_memory;
+typedef task_memory mm_struct;
+typedef task_memory *vm_struct_t;
 
 /* Native-width sampled ticks: modulo 2^32 on i386, 2^64 on AMD64. */
 typedef unsigned long ps_tick_t;
@@ -56,55 +43,77 @@ typedef struct {
 	uint32_t rlim_max;
 } rlimit_t;
 
-typedef struct _user_enviroment {
-	unsigned char fpu_storage[512 + 15];
-	unsigned char *fpu;
-	vm_struct_t vm;
-	struct _vm_region *mmap_cache;
-	mm_struct *mmap_cache_vm;
-	unsigned mmap_cache_generation;
-	char *command;
-	file *executable; /* retained main image, independent of argv and PT_INTERP */
-	size_t cmd_len;
-	char *environment;
-	size_t env_len;
-	unsigned group_id; /* process group id (pgid) */
-	unsigned session_id; /* session id (sid) */
+/* Filesystem state is shared only by CLONE_FS. */
+typedef struct _task_fs {
+	ref_count_t ref;
+	rmutex_t lock;
+	super_block *root;
+	unsigned umask;
 	char *cwd;
-	char *root_path; /* absolute chroot prefix within cur->root */
-	/* process credentials */
-	unsigned uid, euid, suid; /* real, effective, saved-set user id */
-	unsigned gid, egid, sgid; /* real, effective, saved-set group id */
-	unsigned fsuid, fsgid; /* filesystem uid/gid */
-	unsigned cap_effective[2], cap_permitted[2], cap_inheritable[2];
-	unsigned cap_initialized;
-	unsigned keep_capabilities;
-	/* Per-process TLS GDT descriptors (GDT_ENTRY_TLS_MIN .. GDT_ENTRY_TLS_MAX) */
-	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
-	unsigned long long ldt_desc[LDT_ENTRY_COUNT];
-	unsigned ldt_present;
-	unsigned ptrace_tracer; /* tracer pid, 0 if not traced */
-	unsigned ptrace_mode; /* run mode requested by tracer */
-	unsigned ptrace_options;
-	unsigned long ptrace_eventmsg;
-	unsigned ptrace_orig_eax; /* saved syscall number for PTRACE_PEEKUSER */
-	unsigned ptrace_frame_valid; /* whether ptrace_frame holds saved state */
-	ptrace_saved_frame
-		ptrace_frame; /* saved stopped state for ptrace reads */
-	rlimit_t rlimits[RLIM_NLIMITS];
-} user_enviroment;
+	char *root_path;
+} task_fs;
 
-typedef struct _signal_context {
-	struct sigaction
-		sig_handlers[NSIG]; /* indexed by signal number 1..NSIG-1 */
-	sigset_t sig_pending; /* bitmask: bit (sig-1) set = pending  */
-	sigset_t sig_mask; /* bitmask: blocked signals             */
-	int timer_signal_id;
-	uintptr_t timer_signal_value;
-	sigset_t saved_sigmask; /* mask to restore after sigsuspend     */
-	int restore_sigmask; /* if set, restore saved_sigmask after signal delivery */
-	stack_t altstack; /* alternate signal stack (sigaltstack)  */
-} signal_context;
+typedef struct _signal_queue_entry {
+	list_entry list;
+	int signo, timer_id;
+	uintptr_t value;
+} signal_queue_entry;
+
+/* Protected by ps_lock; shared by all members of a thread group. */
+typedef struct _task_thread {
+	ref_count_t ref;
+	unsigned tgid, group_id, session_id;
+	ps_tick_t user_tickets, kernel_tickets, child_utime, child_stime;
+	rlimit_t rlimits[RLIM_NLIMITS];
+	sigset_t sig_pending;
+	list_entry pending_queue;
+	unsigned long long alarm_expire_ms, alarm_interval_ms;
+	struct rb_node alarm_rb;
+} task_thread;
+
+/* Raw kernel credentials are per task, inherited by value on clone. */
+typedef struct _task_credentials {
+	unsigned uid, euid, suid;
+	unsigned gid, egid, sgid;
+	unsigned fsuid, fsgid;
+	unsigned cap_effective[2], cap_permitted[2], cap_inheritable[2];
+	unsigned cap_initialized, keep_capabilities;
+} task_credentials;
+
+/* Private execution and ABI state: never shared by clone. */
+typedef struct _task_execution {
+	task_arch_context arch;
+	struct _vm_region *mmap_cache;
+	task_memory *mmap_cache_vm;
+	unsigned mmap_cache_generation;
+	unsigned char fpu_storage[512 + 15];
+	unsigned long long tls_desc[GDT_ENTRY_TLS_COUNT];
+	unsigned ptrace_tracer, ptrace_mode, ptrace_options;
+	unsigned long ptrace_eventmsg;
+	unsigned ptrace_orig_eax, ptrace_frame_valid;
+	ptrace_saved_frame ptrace_frame;
+	unsigned char io_priv_level, io_allow_all;
+	unsigned char *io_bitmap;
+	int *clear_child_tid;
+	void *robust_list_head;
+	size_t robust_list_size;
+	int (*robust_list_reader)(struct _task_struct *, uintptr_t, uintptr_t *,
+				  intptr_t *, uintptr_t *);
+} task_execution;
+
+typedef struct _signal_handlers {
+	ref_count_t ref;
+	struct sigaction actions[NSIG];
+} signal_handlers;
+
+typedef struct _task_signal {
+	sigset_t sig_pending;
+	sigset_t sig_mask;
+	list_entry pending_queue;
+	sigset_t saved_sigmask;
+	int restore_sigmask;
+	stack_t altstack;
+} task_signal;
 
 typedef enum _ps_status {
 	ps_running,
@@ -127,87 +136,82 @@ typedef enum _ps_priority {
 typedef void (*process_fn)(void *param);
 
 typedef struct {
-	unsigned refs;
+	ref_count_t ref;
 	file **fds;
 	unsigned long cloexec[FD_BITMAP_WORDS];
 	mutex_t lock;
 } task_files;
 
-typedef struct _task_usage {
-	unsigned refs;
-	ps_tick_t user_tickets;
-	ps_tick_t kernel_tickets;
-	ps_tick_t child_utime, child_stime;
-} task_usage_t;
-
 typedef struct _task_struct task_struct;
-struct _task_struct {
-	task_frame tss;
+/* Scheduler and blocking state are private even when all resources are shared. */
+typedef struct _task_schedule {
+	task_struct *task;
 	uintptr_t switch_sp;
-	task_usage_t *usage; /* CPU totals shared by a thread group. */
-	unsigned net_core_depth; /* Recursive network-core ownership by this task. */
-	unsigned vm_lock_depth; /* VM locks released before forced thread removal. */
-	unsigned on_cpu; /* CPU index + 1; zero only after its stack is inactive */
-	unsigned terminate_requested;
-	unsigned enumeration_refs; /* Retains tasks across unlocked callbacks. */
-	int sched_level;
-	addr_space_t address_space;
-	unsigned int psid;
-	unsigned int tgid;
-	process_fn fn;
-	void *param;
-	user_enviroment *user;
-	signal_context *signal;
-	int priority;
-	int type;
-	list_entry ps_list; /* dying-queue or wait-queue list node */
-	struct rb_node mgr_rb; /* management-queue RB-tree node */
-	list_entry dying_queue; /* dying task holder */
+	unsigned on_cpu, terminate_requested, enumeration_refs;
+	unsigned net_core_depth, vm_lock_depth;
+	int sched_level, priority, remain_ticks;
 	ps_status status;
+	list_entry ps_list;
+	struct rb_node mgr_rb;
+} task_schedule;
+
+typedef struct _task_wait {
+	task_struct *task;
 	int wait_interruptible;
-	unsigned long
-		signal_wait_mask; /* signals explicitly awaited by sigtimedwait */
+	unsigned long signal_wait_mask;
 	const char *wait_func;
 	void (*cancel_io_wait)(void *);
 	void *io_wait;
-	struct file_io_scope *io_files;
-	int remain_ticks;
-	file **fds;
-	unsigned long *fd_cloexec;
-	task_files *files; /* Owns fds and fd_cloexec. */
-	unsigned exit_status;
-	unsigned exit_signal;
-	unsigned pdeath_signal;
-	unsigned ppid;
-	unsigned nchildren; /* count of children not yet reaped (living + zombie) */
-	unsigned fork_flag;
+	list_entry io_files;
+	struct rb_node timer_rb;
+	unsigned long long timer_due_ms;
+} task_wait;
+
+typedef struct _task_lifecycle {
+	ps_type type;
+	unsigned psid, ppid;
+	unsigned exit_status, exit_signal, pdeath_signal;
+	unsigned nchildren, fork_flag;
+	unsigned stop_signal, stop_report_pending;
+	process_fn fn;
+	void *param;
 	cond_t vfork_event;
-	super_block *root;
-	unsigned umask;
+	list_entry dying_queue;
+} task_lifecycle;
+
+struct _task_struct {
+	/* Private execution, scheduling, identity, and waits. */
+	task_schedule *sched;
+	task_wait *wait;
+	task_lifecycle *life;
+	task_execution *execution;
+	task_credentials *credentials;
+	task_signal *signal;
 	task_stats_t *stats;
-	/* alarm: monotonic expiry in ms (0 = disarmed) */
-	unsigned long long alarm_expire_ms;
-	/* interval for ITIMER_REAL in ms (0 = one-shot) */
-	unsigned long long alarm_interval_ms;
-	struct rb_node alarm_rb; /* separate from a task's I/O timeout */
-	struct rb_node timer_rb; /* node in control.timer_queue when sleeping */
-	unsigned long long
-		timer_due_ms; /* expiry time in ms; 0 = not in timer queue */
-	unsigned char
-		io_priv_level; /* requested iopl(2) level for compatibility */
-	unsigned char
-		io_allow_all; /* allow all port I/O via the TSS I/O bitmap */
-	unsigned char *io_bitmap; /* per-task I/O-permission bitmap */
-	int *clear_child_tid; /* Linux set_tid_address / CLONE_CHILD_CLEARTID */
-	/* The registering syscall supplies the robust-list wire reader. */
-	void *robust_list_head;
-	size_t robust_list_size;
-	int (*robust_list_reader)(struct _task_struct *, uintptr_t, uintptr_t *,
-				  intptr_t *, uintptr_t *);
-	unsigned stop_signal; /* last job-control/ptrace stop signal */
-	unsigned stop_report_pending; /* waitpid() has not consumed this stop yet */
-	unsigned int magic; // to avoid stack overflow
+
+	/* Independent shared owners, selected by the corresponding clone flag. */
+	task_memory *memory; /* CLONE_VM: mappings, image metadata and LDT. */
+	task_files *files; /* CLONE_FILES */
+	task_fs *fs; /* CLONE_FS */
+	signal_handlers *sighand; /* CLONE_SIGHAND */
+	task_thread *thread; /* CLONE_THREAD */
+	unsigned magic; /* Kernel-stack overflow sentinel. */
 };
+
+#define KERNEL_TASK_SIZE MOS_KERNEL_TASK_PAGES
+#define KERNEL_TASK_BYTES (KERNEL_TASK_SIZE * PAGE_SIZE)
+
+static inline uintptr_t task_stack_top(const task_struct *task)
+{
+	return (uintptr_t)task + KERNEL_TASK_BYTES;
+}
+
+static inline unsigned char *task_fpu(const task_struct *task)
+{
+	return (unsigned char *)(((uintptr_t)task->execution->fpu_storage +
+				  15) &
+				 ~(uintptr_t)15);
+}
 
 typedef struct _rusage {
 	struct timeval ru_utime; /* user CPU time used */
@@ -228,9 +232,6 @@ typedef struct _rusage {
 	int32_t ru_nivcsw; /* involuntary context switches */
 } rusage;
 
-#define KERNEL_TASK_SIZE MOS_KERNEL_TASK_PAGES
-#define KERNEL_TASK_BYTES (KERNEL_TASK_SIZE * PAGE_SIZE)
-
 /* Sampled CPU time does not advance while a task is off CPU. */
 static inline unsigned long long task_utime(task_struct *task)
 {
@@ -242,6 +243,20 @@ task_struct *__attribute__((noinline)) CURRENT_TASK(void);
 #define current CURRENT_TASK()
 
 int ps_unshare_fds(task_struct *task);
+int ps_unshare_exec_context(task_struct *task);
+int ps_init_private(task_struct *task);
+void ps_free_task(task_struct *task);
+int ps_init_resources(task_struct *task);
+void ps_put_resources(task_struct *task);
+unsigned long ps_pending_signals(task_struct *task);
+void ps_queue_group_signal_unsafe(task_struct *task, int sig);
+int ps_send_thread_signal(unsigned tid, int sig);
+int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
+		   uintptr_t *value);
+void ps_signal_action(task_struct *task, int sig, const struct sigaction *in,
+		      struct sigaction *out);
+void ps_claim_signal_action(task_struct *task, int sig, struct sigaction *out);
+
 void ps_put_fds(task_struct *task);
 void ps_init();
 
@@ -251,11 +266,11 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 		    ps_priority priority, ps_type type);
 void ps_start_system_services(void);
 
+void ps_init_bootstrap_task(void);
 void ps_kickoff();
 
 int ps_enabled();
 
-void ps_update_tss(uintptr_t sp0);
 void reset_tss(task_struct *task);
 int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 		  int turn_on);
@@ -317,7 +332,8 @@ int ps_task_ready(task_struct *task);
 
 /* Requires ps_lock; signal delivery is authorized by the kernel caller. */
 void ps_queue_signal_unsafe(task_struct *target, int sig);
-void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value);
+void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value,
+		     int thread);
 void ps_timer_poll(void);
 void ps_timer_discard_group(unsigned tgid);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);

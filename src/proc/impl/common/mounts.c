@@ -26,11 +26,11 @@ static void emit_mount(const super_block *sb, void *arg)
 
 static void fill(proc_buf_t *pb)
 {
-	const char *rootfs_opts = (current->root->s_flags & MS_RDONLY) ? "ro" :
-									 "rw";
+	const char *rootfs_opts =
+		(current->fs->root->s_flags & MS_RDONLY) ? "ro" : "rw";
 
 	proc_buf_printf(pb, "rootfs / rootfs %s 0 0\n", rootfs_opts);
-	vfs_mount_walk(current->root, emit_mount, pb);
+	vfs_mount_walk(current->fs->root, emit_mount, pb);
 }
 
 DEFINE_PROC_FILE(mounts, fill);

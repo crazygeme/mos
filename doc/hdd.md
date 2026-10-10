@@ -2,7 +2,7 @@
 
 **Source:** `src/driver/storage/ata.c`
 **Header:** `src/device/blockdev.h`
-**Config:** `include/config.h` (`HDD_CACHE_*`)
+**Config:** `src/config.h` (`HDD_CACHE_*`)
 
 ---
 
@@ -64,8 +64,8 @@ The PCI Command register is then updated to enable both **I/O space** (bit 0) an
 
 | Resource                  | Size           | Notes                                                      |
 | ------------------------- | -------------- | ---------------------------------------------------------- |
-| `prdt` (PRDT entry)       | 8 bytes        | Heap-allocated; phys = virt − `KERNEL_OFFSET`              |
-| `dma_buf` (bounce buffer) | 4 KiB (1 page) | `vm_alloc(1)`; page-aligned, never crosses 64 KiB boundary |
+| `prdt` (PRDT entry)       | 8 bytes        | Heap-allocated; physical address resolved with `VIRT_TO_PHY` |
+| `dma_buf` (bounce buffer) | 32 KiB on AMD64; 4 KiB on IA-32 | `vm_alloc_dma`; buddy-aligned within one 64 KiB boundary |
 
 Channel BM base offsets:
 
@@ -84,7 +84,7 @@ typedef struct {
 } __attribute__((packed, aligned(4))) prdt_entry_t;
 ```
 
-Each transfer uses a single-entry PRDT covering up to one page (4 KiB, 8 sectors). The current implementation batches contiguous requests up to the size of the per-channel bounce buffer.
+Each transfer uses a single-entry PRDT covering up to 32 KiB (64 sectors) on AMD64 or 4 KiB (8 sectors) on IA-32. The current implementation batches contiguous requests up to the size of the per-channel bounce buffer.
 
 ### Bus Master registers
 
@@ -104,7 +104,7 @@ read reg_status (ack IRQ) → check BM_STATUS for error →
 memcpy dma_buf → caller
 ```
 
-The transfer length is the requested contiguous byte count, capped at one page.
+The transfer length is the requested contiguous byte count, capped at the per-channel bounce-buffer size.
 
 ### DMA write sequence
 
@@ -116,7 +116,7 @@ poll BM_STATUS bit 0 until clear → BM_CMD = 0 (stop) →
 read reg_status (ack IRQ) → check BM_STATUS for error
 ```
 
-Like reads, writes are batched for contiguous requests up to one page.
+Like reads, writes are batched for contiguous requests up to the per-channel bounce-buffer size.
 
 ---
 
@@ -167,15 +167,19 @@ Enabled by `HDD_CACHE_OPEN 1` in `config.h`.
 
 | Constant         | Value | Meaning                         |
 | ---------------- | ----- | ------------------------------- |
-| `PREREAD_SECTOR` | 8     | Read-ahead group size (sectors) |
+| `PREREAD_SECTOR` | 64 on AMD64; 8 on IA-32 | Read-ahead group size (sectors) |
 
-The cache has no fixed compile-time capacity. It grows while low kernel memory
-is available and reclaims least-recently-used clean or flushed entries when
-kernel-page allocation requests need memory back.
+The cache capacity follows the physical-memory cache budget. Cache extents
+prefer high physical memory and use DMA-addressable memory when necessary.
+Reclamation releases complete least-recently-used extents after flushing
+dirty contents.
 
 ### Organisation
 
-Cache entries are keyed on the **head sector** of each 8-sector group (`HEAD_SECTOR(s) = s / 8 * 8`). Each `block_cache_item` holds 8 × 512 = 4096 bytes, one dirty bit covering the whole group, and a `loading` flag used while miss refill/evict I/O is in flight.
+Cache entries are keyed on aligned `PREREAD_SECTOR` groups. Each
+`block_cache_item` holds 32 KiB on AMD64 or 4 KiB on IA-32, one dirty bit
+covering the whole group, and a `loading` flag for refill or eviction I/O.
+The final extent is read and written only within the partition boundary.
 
 - **Hash table** (`rb-tree`): O(log n) lookup by head sector.
 - **LRU list**: newest at head, oldest at tail. On miss, the tail entry is reused and flushed if dirty.
@@ -189,13 +193,13 @@ Controlled by `HDD_CACHE_WRITE_POLICY`:
 | Write-back (default) | `HDD_CACHE_WRITE_BACK`   | Writes update cache + dirty bit; flushed on eviction or `hdd_flush()` |
 | Write-through        | `HDD_CACHE_WRITE_THOUGH` | Every write immediately calls `partition_write`                       |
 
-On a write miss, the cache performs **read-for-ownership**: it first fills the full 8-sector cache line from disk, then patches the modified sector. This avoids later write-back corrupting the untouched sectors in the same cache line.
+On a write miss, the cache performs **read-for-ownership**: it first fills the full cache extent from disk, then patches the modified sector. This avoids later write-back corrupting the untouched sectors in the same cache line.
 
 ### Cache operations
 
 | Function                | Description                                                                      |
 | ----------------------- | -------------------------------------------------------------------------------- |
-| `partition_cache_read`  | Hit: copy from cache, promote to MRU. Miss: reserve/reuse a slot, flush old dirty data, refill 8 sectors |
+| `partition_cache_read`  | Hit: copy from cache, promote to MRU. Miss: reserve/reuse a slot, flush old dirty data, refill one extent |
 | `partition_cache_write` | Hit: update cache, mark dirty. Miss: reserve/reuse a slot, flush old dirty data, read-for-ownership, then patch one sector |
 | `partition_cache_flush` | Walk LRU list and write all dirty entries to disk                                |
 | `partition_cache_evict` | Free all cache entries for a partition (called on close)                         |
@@ -244,3 +248,14 @@ To expose a DMA-capable IDE disk:
 ```
 
 With the default `pc` (i440FX + PIIX3) machine, SeaBIOS assigns BAR4 at `0xc040`; the primary channel Bus Master base becomes `0xc040`, secondary `0xc048`.
+
+## Extent validation
+
+`test/ata_extent_image.py create IMAGE` produces an isolated 8 MiB test disk
+with a 14329-sector partition and a sentinel region beyond the partition.
+`test/ata_extent.c` accepts the corresponding guest block-device path and
+validates extent reads, writes crossing a 32 KiB boundary, and the final
+partition sector. After guest cache flushing and QEMU shutdown,
+`test/ata_extent_image.py verify IMAGE` checks write-back contents, adjacent
+sector preservation, and the sentinel region. The probe requires the
+prepared test disk and modifies its partition contents.

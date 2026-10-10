@@ -314,21 +314,27 @@ unsigned phymm_alloc_user(void)
 	return idx;
 }
 
-unsigned phymm_alloc_cache(void)
+unsigned phymm_alloc_cache_pages(unsigned page_count)
 {
+	unsigned order = ceil_log2(page_count ? page_count : 1);
 	unsigned idx;
 	int irq;
-
+	if (order > MAX_BUDDY_ORDER)
+		return PHYMM_INVALID;
 	spinlock_lock(&buddy_lock, &irq);
-	idx = buddy_alloc_in_range(0, 0x100000U, phymm_end);
+	idx = buddy_alloc_in_range(order, 0x100000U, phymm_end);
 	if (idx == PHYMM_INVALID)
-		idx = buddy_alloc_in_range(0, phymm_kernel_page_limit(),
+		idx = buddy_alloc_in_range(order, phymm_kernel_page_limit(),
 					   phymm_end);
-	/* On low-RAM-only machines, reclaim cannot create any high pages. */
 	if (idx == PHYMM_INVALID && phymm_end <= phymm_kernel_page_limit())
-		idx = buddy_alloc_high(0);
+		idx = buddy_alloc_high(order);
 	spinlock_unlock(&buddy_lock, irq);
 	return idx;
+}
+
+unsigned phymm_alloc_cache(void)
+{
+	return phymm_alloc_cache_pages(1);
 }
 
 void phymm_free_kernel(unsigned page_index, unsigned page_count)

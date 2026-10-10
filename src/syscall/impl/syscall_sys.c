@@ -536,7 +536,8 @@ int sys_mprotect(void *addr, size_t len, int prot)
 	vm_mprotect(cur->memory, begin, end, prot);
 
 	/* Update hardware page-table entries for already-faulted-in pages. */
-	for (vir = begin; vir < end; vir += PAGE_SIZE) {
+	for (vir = mm_next_mapped_page(begin, end); vir < end;
+	     vir = mm_next_mapped_page(vir + PAGE_SIZE, end)) {
 		unsigned mmflag = mm_get_map_flag(vir);
 		if (mmflag == 0)
 			continue; /* not yet mapped; vm descriptor update is enough */
@@ -618,7 +619,8 @@ int sys_madvise(void *addr, size_t length, int advice)
 			if ((region->flag & MAP_SHARED) && region->fp)
 				vm_flush_file_dirty(mm, region->fp);
 			vm_region_lock_fault(region);
-			for (; cursor < limit; cursor += PAGE_SIZE)
+			for (cursor = mm_next_mapped_page(cursor, limit); cursor < limit;
+			     cursor = mm_next_mapped_page(cursor + PAGE_SIZE, limit))
 				mm_unmap_page(cursor);
 			vm_region_unlock_fault(region);
 		} else {

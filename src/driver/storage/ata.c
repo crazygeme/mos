@@ -32,11 +32,11 @@ static void hdd_dev_register(void);
  * (PCI BAR4).  Falls back to PIO if DMA is unavailable.
  *
  * PIO:  interrupt-driven, multi-sector per operation when contiguous.
- * DMA:  PRDT-based bus master DMA with a per-channel one-page bounce buffer
+ * DMA:  PRDT-based bus master DMA with a per-channel aligned bounce buffer
  *       (no alignment constraint on caller buffer).
  *
  * Partition discovery: MBR + recursive extended partition tables.
- * Block cache: LRU write-back, indexed by 8-sector head groups.
+ * Block cache: LRU write-back, indexed by aligned DMA-sized extents.
  */
 #define BLOCK_SECTOR_SIZE 512
 #define HDD_MAX_PARTITIONS 16
@@ -121,16 +121,21 @@ typedef struct _channel {
 	/* Bus Master DMA (all zero when DMA unavailable) */
 	unsigned short bm_base; /* BM I/O base for this channel     */
 	prdt_entry_t *prdt; /* PRDT table (kernel virt addr)    */
-	void *dma_buf; /* 512-byte bounce buffer (virt)    */
+	void *dma_buf; /* contiguous DMA bounce buffer */
 	unsigned int dma_buf_phys; /* physical address of dma_buf      */
 } channel;
 
-#define HDD_IO_MAX_SECTORS (PAGE_SIZE / BLOCK_SECTOR_SIZE)
+#if __SIZEOF_POINTER__ == 8
+#define HDD_DMA_PAGES 8
+#else
+#define HDD_DMA_PAGES 1
+#endif
+#define HDD_IO_MAX_SECTORS (HDD_DMA_PAGES * PAGE_SIZE / BLOCK_SECTOR_SIZE)
 
 /* ── Block cache structures ───────────────────────────────────────────────────── */
 #if HDD_CACHE_OPEN
 #define SECTOR_PER_PAGE (PAGE_SIZE / BLOCK_SECTOR_SIZE)
-#define PREREAD_SECTOR 8
+#define PREREAD_SECTOR HDD_IO_MAX_SECTORS
 #define HEAD_SECTOR(s) ((s) / PREREAD_SECTOR * PREREAD_SECTOR)
 #define SECTOR_OFF(s) ((s) - HEAD_SECTOR(s))
 
@@ -193,6 +198,7 @@ static void hdd_cache_tree_remove(block_cache *cache, block_cache_item *item)
 typedef struct _partition {
 	ata_disk *disk;
 	unsigned int start; /* first sector within the disk device  */
+	unsigned int sector_count;
 	unsigned char bootable;
 #if HDD_CACHE_OPEN
 	block_cache cache;
@@ -318,9 +324,14 @@ static void dma_init_channel(channel *c, int chan_no)
 	c->prdt = (prdt_entry_t *)kmalloc(sizeof(prdt_entry_t));
 	memset(c->prdt, 0, sizeof(prdt_entry_t));
 
-	/* One-page (4 KiB) bounce buffer — always page-aligned, never
-	 * crosses a 64 KiB boundary, suitable for single-sector DMA.    */
-	c->dma_buf = (void *)vm_alloc_dma(1);
+	/* Power-of-two buddy alignment keeps the buffer within a 64 KiB boundary. */
+	c->dma_buf = (void *)vm_alloc_dma(HDD_DMA_PAGES);
+	if (!c->dma_buf) {
+		kfree(c->prdt);
+		c->prdt = NULL;
+		c->bm_base = 0;
+		return;
+	}
 	c->dma_buf_phys = VIRT_TO_PHY(c->dma_buf);
 
 	printk("hdd: %s DMA enabled, bm=0x%x buf_phys=0x%x\n", c->name,
@@ -773,21 +784,18 @@ static block_cache_item *block_cache_item_create(void)
 		hdd_cache_reclaim(excess < 32 ? excess : 32);
 	}
 
-	if (buf_pages != 1)
-		return NULL;
-
 	item = kmalloc(sizeof(*item));
 	if (!item)
 		return NULL;
 	item->sector = -1;
 	item->dirty = 0;
 	item->loading = 0;
-	item->page_index = phymm_alloc_cache();
+	item->page_index = phymm_alloc_cache_pages(buf_pages);
 	if (item->page_index == PHYMM_INVALID) {
 		phymm_reclaim_kernel_cache(32);
-		item->page_index = phymm_alloc_cache();
+		item->page_index = phymm_alloc_cache_pages(buf_pages);
 		if (item->page_index == PHYMM_INVALID)
-			item->page_index = phymm_alloc_user();
+			item->page_index = phymm_alloc_dma(buf_pages);
 		if (item->page_index == PHYMM_INVALID) {
 			kfree(item);
 			klog("hdd: physical allocation failed for block cache item\n");
@@ -797,7 +805,7 @@ static block_cache_item *block_cache_item_create(void)
 
 	phy = item->page_index * PAGE_SIZE;
 	if (mm_kmap_phys(phy) != 1) {
-		phymm_free_user(item->page_index);
+		phymm_free_kernel(item->page_index, buf_pages);
 		kfree(item);
 		klog("hdd: mm_kmap_phys failed for block cache item phy=%llx\n",
 		     (unsigned long long)phy);
@@ -807,12 +815,13 @@ static block_cache_item *block_cache_item_create(void)
 	item->buf = (void *)PHY_TO_VIRT(phy);
 	if (!item->buf) {
 		mm_kunmap_phys(phy);
-		phymm_free_user(item->page_index);
+		phymm_free_kernel(item->page_index, buf_pages);
 		kfree(item);
 		return NULL;
 	}
 
-	phymm_reference_page(item->page_index);
+	for (unsigned i = 0; i < buf_pages; i++)
+		phymm_reference_page(item->page_index + i);
 	cache_count += buf_pages;
 	rb_init_node(&item->hash_node);
 	list_init(&item->time_list);
@@ -828,9 +837,11 @@ static void block_cache_item_remove(block_cache_item *item)
 		return;
 	if (item->page_index != PHYMM_INVALID)
 		mm_kunmap_phys(item->page_index * PAGE_SIZE);
-	if (item->page_index != PHYMM_INVALID &&
-	    phymm_dereference_page(item->page_index) == 0)
-		phymm_free_user(item->page_index);
+	if (item->page_index != PHYMM_INVALID) {
+		for (unsigned i = 0; i < buf_pages; i++)
+			phymm_dereference_page(item->page_index + i);
+		phymm_free_kernel(item->page_index, buf_pages);
+	}
 	cache_count -= buf_pages;
 	kfree(item);
 }
@@ -884,8 +895,10 @@ static void hdd_cache_flush_buf(partition *p, int head_sector, void *buf,
 {
 	if (head_sector < 0 || !dirty)
 		return;
-	partition_write(p, head_sector, buf,
-			PREREAD_SECTOR * BLOCK_SECTOR_SIZE);
+	unsigned sectors = p->sector_count - head_sector;
+	if (sectors > PREREAD_SECTOR)
+		sectors = PREREAD_SECTOR;
+	partition_write(p, head_sector, buf, sectors * BLOCK_SECTOR_SIZE);
 }
 
 static void hdd_cache_flush(partition *p, block_cache_item *item)
@@ -898,11 +911,17 @@ static void hdd_cache_flush(partition *p, block_cache_item *item)
 
 static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
 {
-	return partition_read(aux, head_sector, buf,
-			      PREREAD_SECTOR * BLOCK_SECTOR_SIZE) ==
-			       PREREAD_SECTOR * BLOCK_SECTOR_SIZE ?
-		       0 :
-		       -1;
+	partition *p = aux;
+	unsigned sectors;
+	if (head_sector < 0 || (unsigned)head_sector >= p->sector_count)
+		return -1;
+	sectors = p->sector_count - head_sector;
+	if (sectors > PREREAD_SECTOR)
+		sectors = PREREAD_SECTOR;
+	if (sectors < PREREAD_SECTOR)
+		memset(buf, 0, PREREAD_SECTOR * BLOCK_SECTOR_SIZE);
+	return partition_read(aux, head_sector, buf, sectors * BLOCK_SECTOR_SIZE) ==
+		       sectors * BLOCK_SECTOR_SIZE ? 0 : -1;
 }
 
 static block_cache_item *
@@ -1056,7 +1075,7 @@ static unsigned hdd_cache_reclaim(unsigned target_pages)
 		mutex_lock(&p->cache_lock);
 		while (freed < target_pages &&
 		       partition_cache_reclaim_one_locked(p))
-			freed++;
+			freed += PREREAD_SECTOR / SECTOR_PER_PAGE;
 		mutex_unlock(&p->cache_lock);
 	}
 
@@ -1362,6 +1381,7 @@ static void found_partition(ata_disk *disk, unsigned capacity,
 	}
 	p->disk = disk;
 	p->start = start;
+	p->sector_count = size;
 	p->bootable = bootable;
 
 	strcpy(name, disk->name);

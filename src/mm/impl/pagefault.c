@@ -204,7 +204,8 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 				      int flag, int write)
 {
 	pf_file_page_result page = { 0 };
-	unsigned pte = PAGE_ENTRY_USER_CODE;
+	unsigned pte = PAGE_ENTRY_USER_CODE |
+		       ((prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC);
 	paddr_t phy;
 
 	page_fault_file++;
@@ -212,7 +213,8 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	if (f->f_fop && f->f_fop->map_page) {
 		paddr_t phy = f->f_fop->map_page(f, offset);
 		paddr_t source = phy;
-		unsigned pte = PAGE_ENTRY_USER_CODE;
+		unsigned pte = PAGE_ENTRY_USER_CODE |
+		       ((prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC);
 		if (!phy)
 			goto FAIL;
 		if (write && !(flag & MAP_SHARED)) {
@@ -246,7 +248,8 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 	if (region->vm_flags & VM_REGION_F_DIRECT_PHYS) {
 		/* VMA offsets retain the complete physical address. */
 		paddr_t phy = (paddr_t)offset & PAGE_SIZE_MASK;
-		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_DIRECT_PHYS;
+		unsigned pte = PAGE_ENTRY_USER_CODE | PAGE_ENTRY_DIRECT_PHYS |
+			       ((prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC);
 		pfn_t page = phy / PAGE_SIZE;
 		/* RAM aliases must share the permanent mirror's WB cache type. */
 		if (page < phymm_begin || page >= phymm_end ||
@@ -323,6 +326,7 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 	int prot = region->prot;
 	int flag = region->flag;
 	unsigned page_idx;
+	unsigned nx = (prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC;
 	int handled = 0;
 
 	page_fault_invalid++;
@@ -332,7 +336,7 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 
 		if (phy != 0) {
 			/* Hit — map read-only so writes go through pf_handle_permission. */
-			if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE) !=
+			if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE | nx) !=
 			    1)
 				goto DONE;
 			handled = 1;
@@ -352,7 +356,7 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 			}
 		}
 		phy = page_idx * PAGE_SIZE;
-		if (mm_map_page(address, phy, PAGE_ENTRY_USER_DATA) != 1) {
+		if (mm_map_page(address, phy, PAGE_ENTRY_USER_DATA | nx) != 1) {
 			phymm_free_user(page_idx);
 			klog("pagefault: mm_map_page failed anon shared addr=%lx phy=%llx\n",
 			     (unsigned long)address, (unsigned long long)phy);
@@ -366,7 +370,7 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 	}
 
 	if (prot & PROT_WRITE) {
-		if (mm_map_page(address, 0, PAGE_ENTRY_USER_DATA) != 1)
+		if (mm_map_page(address, 0, PAGE_ENTRY_USER_DATA | nx) != 1)
 			goto DONE;
 		memset(address, 0, PAGE_SIZE);
 	} else {
@@ -376,7 +380,7 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 		 * phymm_is_cow() fires on the next write fault and COW kicks
 		 * in — the shared zero page is never dirtied.
 		 */
-		if (mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE) !=
+		if (mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE | nx) !=
 		    1)
 			goto DONE;
 	}

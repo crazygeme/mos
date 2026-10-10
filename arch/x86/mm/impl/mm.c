@@ -900,7 +900,28 @@ static int mm_dynamic_region(paddr_t phy)
 	return phy >= begin && phy < end;
 }
 
-/* Remove a dynamic user mapping and free the physical page if unreferenced */
+/* Skip absent page-directory entries while locating resident pages. */
+vaddr_t mm_next_mapped_page(vaddr_t begin, vaddr_t end)
+{
+	vaddr_t address = begin;
+	int irq;
+	spinlock_lock(&mm_lock, &irq);
+	while (address < end) {
+		pte_t entry = ((pte_t *)mm_get_pagedir())[ADDR_TO_PGT_OFFSET(address)];
+		vaddr_t next;
+		if (!(entry & PAGE_ENTRY_PRESENT))
+			next = (address | (((vaddr_t)1 << 22) - 1)) + 1;
+		else if (mm_get_map_flag(address) & PAGE_ENTRY_PRESENT)
+			break;
+		else
+			next = address + PAGE_SIZE;
+		address = next > address && next < end ? next : end;
+	}
+	spinlock_unlock(&mm_lock, irq);
+	return address;
+}
+
+/* Remove a dynamic user mapping and release unreferenced physical pages. */
 void mm_unmap_page(vaddr_t vir)
 {
 	mm_addr_info info;

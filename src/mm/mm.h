@@ -127,6 +127,9 @@ int mm_map_page_io(vaddr_t vir, paddr_t phy, unsigned flag);
 
 void mm_unmap_page(vaddr_t vir);
 
+/* Return the first present page in [begin, end), or end. */
+vaddr_t mm_next_mapped_page(vaddr_t begin, vaddr_t end);
+
 pfn_t mm_get_attached_page_index(vaddr_t vir);
 
 unsigned int mm_get_free_phy_page_index();

@@ -1,7 +1,7 @@
 #include <device/chardev.h>
 #include <fs/entries.h>
 #include <driver/driver.h>
-#include <console/render.h>
+#include <device/console/render.h>
 #include <device/framebuffer.h>
 #include <config.h>
 #include <int/int.h>
@@ -198,7 +198,7 @@ static void tty_complete_switch_locked(int n)
 	 * saved console buffer through the framebuffer text renderer. */
 	if (tty_fb_text_is_visible(this_ttys))
 		console_redraw(this_ttys->cells, this_ttys->max_col,
-			  this_ttys->max_row, (unsigned)this_ttys->cursor);
+			       this_ttys->max_row, (unsigned)this_ttys->cursor);
 	else if (this_ttys->kd_mode == KD_GRAPHICS)
 		tty_restore_graphics_locked(this_ttys);
 }
@@ -239,7 +239,8 @@ static void tty_restore_graphics_locked(tty_state *state)
 	console_sync_mode();
 	if (framebuffer_snapshot_size() > state->graphics_fb_size)
 		return;
-	framebuffer_snapshot_restore(state->graphics_fb, state->graphics_fb_size);
+	framebuffer_snapshot_restore(state->graphics_fb,
+				     state->graphics_fb_size);
 }
 
 /*
@@ -488,7 +489,7 @@ static void tty_hw_cursor(tty_state *state, unsigned pos)
 	if (state->cursor_hidden || !tty_fb_text_is_visible(state))
 		return;
 	console_cursor_update(_displayed_cursor, pos, state->cells,
-			 (unsigned)MAX_COL);
+			      (unsigned)MAX_COL);
 	_displayed_cursor = pos;
 }
 
@@ -542,7 +543,7 @@ static void tty_insert_lines(tty_state *state, int n)
 	}
 	if (tty_fb_text_is_visible(state)) {
 		console_cursor_erase(_displayed_cursor, state->cells,
-				(unsigned)MAX_COL);
+				     (unsigned)MAX_COL);
 		console_insert_lines((unsigned)row, (unsigned)bot, (unsigned)n);
 	}
 }
@@ -575,7 +576,7 @@ static void tty_delete_lines(tty_state *state, int n)
 	}
 	if (tty_fb_text_is_visible(state)) {
 		console_cursor_erase(_displayed_cursor, state->cells,
-				(unsigned)MAX_COL);
+				     (unsigned)MAX_COL);
 		console_delete_lines((unsigned)row, (unsigned)bot, (unsigned)n);
 	}
 }
@@ -670,7 +671,7 @@ static void tty_exit_alt_screen(tty_state *state)
 	state->alt_active = 0;
 	if (tty_fb_text_is_visible(state))
 		console_redraw(state->cells, state->max_col, state->max_row,
-			  (unsigned)state->cursor);
+			       (unsigned)state->cursor);
 	tty_hw_cursor(state, (unsigned)state->cursor);
 }
 
@@ -1321,8 +1322,8 @@ static void tty_lock_acquire(int *irq)
 
 static void tty_console_flush(void)
 {
-    if (this_ttys && tty_fb_text_is_visible(this_ttys))
-        console_present();
+	if (this_ttys && tty_fb_text_is_visible(this_ttys))
+		console_present();
 }
 
 static void tty_lock_release(int irq)
@@ -1717,7 +1718,6 @@ static unsigned tty_fs_poll(file *fp, unsigned events, poll_table *pt)
 	return ready;
 }
 
-
 static int font_accept(struct console_font_op *operation)
 {
 	(void)operation;
@@ -2068,8 +2068,8 @@ static int tty_fs_ioctl_kdsetmode(void *context __attribute__((unused)),
 				 */
 			tty_sync_fb_mode_all();
 			_displayed_cursor = (unsigned)state->cursor;
-			console_redraw(state->cells, state->max_col, state->max_row,
-				  (unsigned)state->cursor);
+			console_redraw(state->cells, state->max_col,
+				       state->max_row, (unsigned)state->cursor);
 		}
 	}
 	return 0;
@@ -2371,8 +2371,8 @@ static int tty_fs_release(file *fp)
 				tty_sync_fb_mode_all();
 				_displayed_cursor = (unsigned)state->cursor;
 				console_redraw(state->cells, state->max_col,
-					  state->max_row,
-					  (unsigned)state->cursor);
+					       state->max_row,
+					       (unsigned)state->cursor);
 			}
 			spinlock_unlock(&state->lock, irq);
 		}
@@ -2468,7 +2468,8 @@ static void tty_fs_init(void)
 
 		t->kb_buf = cyb_create(1);
 		t->cells = (console_cell *)zalloc(sz * sizeof(console_cell));
-		t->alt_cells = (console_cell *)zalloc(sz * sizeof(console_cell));
+		t->alt_cells =
+			(console_cell *)zalloc(sz * sizeof(console_cell));
 		for (j = 0; j < sz; j++) {
 			t->cells[j].ch = ' ';
 			t->cells[j].fg = VGA_COLOR_WHITE;

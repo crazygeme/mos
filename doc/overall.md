@@ -107,7 +107,7 @@ GRUB/Multiboot
   via `force_switch()`.
 - **Priorities:** `ps_idle < ps_normal`; kernel and user tasks share the same
   queue structure.
-- **Context switch:** `_task_sched()` in `ps_sched.c` — saves/restores
+- **Context switch:** `task_sched()` in `ps_sched.c` — saves/restores
   registers via `intr_frame`, switches CR3 (page directory), reloads TSS ESP0.
 - **Wait / sleep:** tasks set `task->timer_due_ms = time_now_ms() + ms` and call
   `task_sched()`; the scheduler skips tasks whose timeout is in the future.

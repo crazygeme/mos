@@ -795,8 +795,7 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 		}
 		/* Explicitly awaited signals may be blocked in sig_mask. */
 		cur->wait->signal_wait_mask = wait_set;
-		if (!ps_prepare_interruptible_wait(cur, NULL, sleep_ms,
-						   __func__)) {
+		if (!ps_prepare_interruptible_wait(cur, NULL, sleep_ms)) {
 			task_sched();
 			ps_finish_timed_wait(cur);
 		}

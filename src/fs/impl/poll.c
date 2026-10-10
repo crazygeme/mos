@@ -69,8 +69,8 @@ int poll_wait_loop(const struct poll_ops *ops, void *ctx, int just_test,
 			unsigned irq = int_intr_disable();
 
 			cur = CURRENT_TASK();
-			if (ps_prepare_interruptible_wait(cur, NULL, sleep_ms,
-							  __func__) < 0) {
+			if (ps_prepare_interruptible_wait(cur, NULL, sleep_ms) <
+			    0) {
 				ret = ops->check(ctx);
 				if (!ret)
 					ret = -EINTR;

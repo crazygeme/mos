@@ -4,7 +4,7 @@
  * Owns:
  *   - Ready/wait/dying queue transitions
  *   - MPRQ pick algorithm (RB-tree per priority level)
- *   - Context switch (_task_sched)
+ *   - Context switch (task_sched)
  *   - Scheduling instrumentation
  */
 
@@ -186,7 +186,6 @@ void ps_put_to_dying_queue_unsafe(task_struct *task)
 
 	ps_alarm_disarm_unsafe(task);
 	task->sched->status = ps_dying;
-	task->wait->wait_func = NULL;
 }
 
 void ps_put_to_dying_queue(task_struct *task)
@@ -211,8 +210,7 @@ out:
 	spinlock_unlock(&ps_lock, irq);
 }
 
-void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
-				 const char *func)
+void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list)
 {
 	if (!which_list)
 		which_list = &control.wait_queue;
@@ -224,17 +222,15 @@ void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
 
 	task->wait->wait_interruptible = 0;
 	task->sched->status = ps_waiting;
-	task->wait->wait_func = func;
 }
 
 /* Move task to the wait queue (blocked on a lock or waitpid). */
-void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
-			  const char *func)
+void ps_put_to_wait_queue(task_struct *task, list_entry *which_list)
 {
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	ps_put_to_wait_queue_unsafe(task, which_list, func);
+	ps_put_to_wait_queue_unsafe(task, which_list);
 	spinlock_unlock(&ps_lock, irq);
 }
 
@@ -249,7 +245,6 @@ void ps_put_to_ready_queue_unsafe(task_struct *task)
 	}
 	task->wait->wait_interruptible = 0;
 	task->sched->status = ps_ready;
-	task->wait->wait_func = NULL;
 }
 
 /* Enqueue task in the ready queue at its current priority. */
@@ -298,24 +293,24 @@ void time_wait(unsigned ms)
 {
 	task_struct *cur = CURRENT_TASK();
 
-	ps_prepare_timed_wait(cur, ms, __func__);
+	ps_prepare_timed_wait(cur, ms);
 	task_sched();
 	ps_finish_timed_wait(cur);
 }
 
-void ps_prepare_timed_wait(task_struct *task, unsigned ms, const char *func)
+void ps_prepare_timed_wait(task_struct *task, unsigned ms)
 {
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
 	if (ms > 0)
 		timer_arm_unsafe(task, ms);
-	ps_put_to_wait_queue_unsafe(task, NULL, func);
+	ps_put_to_wait_queue_unsafe(task, NULL);
 	spinlock_unlock(&ps_lock, irq);
 }
 
 int ps_prepare_interruptible_wait(task_struct *task, list_entry *queue,
-				  unsigned ms, const char *func)
+				  unsigned ms)
 {
 	int irq;
 
@@ -328,7 +323,7 @@ int ps_prepare_interruptible_wait(task_struct *task, list_entry *queue,
 	}
 	if (ms)
 		timer_arm_unsafe(task, ms);
-	ps_put_to_wait_queue_unsafe(task, queue, func);
+	ps_put_to_wait_queue_unsafe(task, queue);
 	task->wait->wait_interruptible = 1;
 	spinlock_unlock(&ps_lock, irq);
 	return 0;
@@ -358,7 +353,7 @@ void ps_signal_wait(void)
 	task_struct *cur = CURRENT_TASK();
 
 	while (!ps_interrupting_signals(cur)) {
-		if (!ps_prepare_interruptible_wait(cur, NULL, 0, __func__)) {
+		if (!ps_prepare_interruptible_wait(cur, NULL, 0)) {
 			task_sched();
 			ps_finish_timed_wait(cur);
 		}

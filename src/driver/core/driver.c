@@ -203,7 +203,8 @@ static void driver_report_boot_devices(void)
 		if (!driver || !device->probe_done || device->boot_logged)
 			continue;
 		information = name_get();
-		if (!information) return;
+		if (!information)
+			return;
 		name = device->sysfs_entry ?
 			       vfs_entry_name(device->sysfs_entry) :
 			       "unnamed";
@@ -242,7 +243,7 @@ static void driver_report_boot_devices(void)
 		else
 			strcpy(result, "loaded");
 		/* One printk holds the console lock across both lines. */
-		printk("%s\n    driver: %s (%s)\n", information,
+		printk("%s\n        |- driver: %s (%s)\n", information,
 		       driver->name ? driver->name : "unnamed", result);
 		name_put(information);
 		device->boot_logged = 1;

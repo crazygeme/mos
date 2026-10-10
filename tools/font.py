@@ -7,21 +7,24 @@ from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw, ImageFont
 
 TTF_PATH = sys.argv[1]
-OUTPUT   =sys.argv[2]
+OUTPUT = sys.argv[2]
 NUM_CHARS = 256
 
 # ── Read metrics from the font file ──────────────────────────────────────────
 tt = TTFont(TTF_PATH)
-upm        = tt['head'].unitsPerEm
-ascent     = tt['hhea'].ascent          # positive, above baseline
-descent    = -tt['hhea'].descent        # make positive (descent is negative)
-adv_width  = tt['hmtx'].metrics['A'][0] # monospace: all glyphs share same advance
+upm = tt['head'].unitsPerEm
+ascent = tt['hhea'].ascent          # positive, above baseline
+descent = -tt['hhea'].descent        # make positive (descent is negative)
+# monospace: all glyphs share same advance
+adv_width = tt['hmtx'].metrics['A'][0]
 
 cell_h_units = ascent + descent         # total cell height in font units
 cell_w_units = adv_width
 
 # Choose a bitmap height that keeps integer width.
 # Walk candidate heights (16..64) and pick the smallest that gives integer width.
+
+
 def best_size(w_units, h_units):
     ratio = w_units / h_units           # e.g. 0.5  → width is half height
     for h in range(16, 65):             # start at 16 — minimum usable height
@@ -35,6 +38,7 @@ def best_size(w_units, h_units):
             return int(w), h
     return 8, 16
 
+
 CHAR_W, CHAR_H = best_size(cell_w_units, cell_h_units)
 print(f"Font metrics: upm={upm}, ascent={ascent}, descent={descent}, "
       f"adv={adv_width}")
@@ -45,13 +49,15 @@ print(f"Bitmap cell: {CHAR_W}×{CHAR_H}")
 # We want ascent+descent == CHAR_H, so:
 #   scale = CHAR_H / cell_h_units
 #   pil_size = upm * scale  (em in pixels)
-scale    = CHAR_H / cell_h_units
+scale = CHAR_H / cell_h_units
 pil_size = max(4, round(upm * scale))
 baseline = round(ascent * scale)        # pixel row of the baseline inside cell
 
 pil_font = ImageFont.truetype(TTF_PATH, size=pil_size)
 
 # ── Render each character ────────────────────────────────────────────────────
+
+
 def render_char(cp: int) -> list[int]:
     """Return CHAR_H bytes, each byte = one row of CHAR_W pixels (MSB = left)."""
     img = Image.new("L", (CHAR_W, CHAR_H), 0)
@@ -78,15 +84,19 @@ def render_char(cp: int) -> list[int]:
     return rows
 
 # ── Format helpers ────────────────────────────────────────────────────────────
+
+
 def char_label(cp: int) -> str:
     ch = chr(cp)
     if ch.isprintable() and ch not in ("'", "\\"):
         return f"'{ch}'"
     return f"0x{cp:02X}"
 
+
 def bitmap_comment(byte: int, width: int) -> str:
     bits = bin(byte)[2:].zfill(width)
     return bits.replace('0', '.').replace('1', '#')
+
 
 # ── Write C file ─────────────────────────────────────────────────────────────
 FONTDATAMAX = NUM_CHARS * CHAR_H
@@ -102,7 +112,7 @@ with open(OUTPUT, "w") as f:
  * Bitmap size: {CHAR_W}x{CHAR_H}, first {NUM_CHARS} characters
  */
 
-#include <console/render.h>
+#include <device/console/render.h>
 
 #define FONTDATAMAX {FONTDATAMAX}
 
@@ -133,7 +143,7 @@ static const unsigned char _{font_name}_cursor_glyphs[] = {{
     f.write(f"\t/* index 1: blank */\n")
     for i in range(CHAR_H):
         f.write(f"\t0x00,\n")
-    
+
     f.write(f"""\
 }};
 
@@ -147,4 +157,5 @@ const console_font font_{font_name} = {{
 }};
 """)
 
-print(f"Written {OUTPUT}  ({NUM_CHARS} chars × {CHAR_H} rows = {FONTDATAMAX} bytes)")
+print(
+    f"Written {OUTPUT}  ({NUM_CHARS} chars × {CHAR_H} rows = {FONTDATAMAX} bytes)")

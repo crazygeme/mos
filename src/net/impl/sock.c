@@ -337,8 +337,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline)
 		return 0;
 	}
 	if (ps_prepare_interruptible_wait(
-		    cur, NULL, deadline ? (unsigned)(deadline - now) : 0,
-		    __func__) < 0) {
+		    cur, NULL, deadline ? (unsigned)(deadline - now) : 0) < 0) {
 		sock_waiter_dequeue(&waiter);
 		cur->wait->io_wait = NULL;
 		cur->wait->cancel_io_wait = NULL;

@@ -63,7 +63,7 @@ KTEST(cyclebuf, deferred_notify_poll)
 	 * notifications must be published before the callback completes. */
 	irq = int_intr_disable();
 	deadline = time_deadline_ms(1000);
-	ps_prepare_timed_wait(current, 1000, __func__);
+	ps_prepare_timed_wait(current, 1000);
 	queued = dsr_add(deferred_poll_write, ctx);
 	needs_schedule = dsr_needs_schedule();
 	if (!queued)

@@ -1,4 +1,4 @@
-#include <console/render.h>
+#include <device/console/render.h>
 #include <lib/klib.h>
 
 extern const console_font font_vga16;

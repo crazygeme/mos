@@ -363,7 +363,7 @@ wait_again:
 		list_insert_tail(&futex_waiters, &waiter.list);
 		if (timeout_ms > 0)
 			timer_arm_unsafe(cur, timeout_ms);
-		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		ps_put_to_wait_queue_unsafe(cur, NULL);
 		cur->wait->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 

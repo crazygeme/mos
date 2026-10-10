@@ -26,7 +26,7 @@ node backend used by entries and ordinary filesystem `mknod`.
 
 Per-hardware audio, mouse, disk, keyboard, serial, font, and timing headers
 have been removed. Audio, mouse, and ATA protocol helpers are private to their
-drivers. TTY state and helpers are private. `console/render.h` owns character
+drivers. TTY state and helpers are private. `device/device/console/render.h` owns character
 rendering and fonts; `device/framebuffer.h` owns pixel-device operations.
 `driver/driver.h` owns discovery and driver binding, without display contracts.
 Network drivers use `net/net.h`; clocks and logging use the kernel utility interface.

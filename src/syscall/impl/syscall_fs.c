@@ -1263,8 +1263,8 @@ retry:
 			ret = -EWOULDBLOCK;
 			goto out;
 		}
-		if (ps_prepare_interruptible_wait(cur, &in->i_flock_wait, 0,
-						  __func__) < 0) {
+		if (ps_prepare_interruptible_wait(cur, &in->i_flock_wait, 0) <
+		    0) {
 			ret = -EINTR;
 			goto out;
 		}

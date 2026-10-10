@@ -33,13 +33,13 @@ static void ptrace_notify_parent_unsafe(task_struct *task)
 }
 
 static void ptrace_stop_task_unsafe(task_struct *task, int sig,
-				    intr_frame *frame, const char *func)
+				    intr_frame *frame)
 {
 	list_remove_entry(&task->sched->ps_list);
 	if (task->life->psid != 0xffffffff)
 		list_insert_tail(&control.wait_queue, &task->sched->ps_list);
 	task->sched->status = ps_stopped;
-	task->wait->wait_func = func;
+
 	task->life->stop_signal = sig;
 	task->life->stop_report_pending = 1;
 	if (frame) {
@@ -91,7 +91,7 @@ void ps_stop_current(intr_frame *frame, int sig)
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	ptrace_stop_task_unsafe(cur, sig, frame, __func__);
+	ptrace_stop_task_unsafe(cur, sig, frame);
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 }
@@ -121,13 +121,13 @@ int ps_ptrace_maybe_stop_syscall(intr_frame *frame, int entering)
 	}
 
 	spinlock_lock(&ps_lock, &irq);
-	ptrace_stop_task_unsafe(
-		cur,
-		SIGTRAP | (cur->execution->ptrace_options &
-					   PTRACE_O_TRACESYSGOOD ?
-				   0x80 :
-				   0),
-		saved_frame, entering ? "ptrace-sys-enter" : "ptrace-sys-exit");
+	ptrace_stop_task_unsafe(cur,
+				SIGTRAP |
+					(cur->execution->ptrace_options &
+							 PTRACE_O_TRACESYSGOOD ?
+						 0x80 :
+						 0),
+				saved_frame);
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 	return 1;
@@ -153,7 +153,7 @@ void ps_ptrace_stop_exec(vaddr_t eip, vaddr_t esp, unsigned syscall_number)
 							   PTRACE_O_TRACEEXEC ?
 						   PTRACE_EVENT_EXEC << 8 :
 						   0),
-				&frame, "ptrace-exec");
+				&frame);
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 
@@ -171,8 +171,7 @@ void ps_ptrace_stop_exit(unsigned status)
 		return;
 	spinlock_lock(&ps_lock, &irq);
 	cur->execution->ptrace_eventmsg = status;
-	ptrace_stop_task_unsafe(cur, SIGTRAP | (PTRACE_EVENT_EXIT << 8), NULL,
-				"ptrace-exit");
+	ptrace_stop_task_unsafe(cur, SIGTRAP | (PTRACE_EVENT_EXIT << 8), NULL);
 	spinlock_unlock(&ps_lock, irq);
 	task_sched();
 }

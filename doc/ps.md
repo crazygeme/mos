@@ -122,9 +122,9 @@ Scans `ready_queue[]` from highest priority down:
 4. First suitable task wins — moved to **tail** of its queue (round-robin fairness).
 5. Falls back to `ps_idle` if nothing else is runnable.
 
-### Context switch: `_task_sched`
+### Context switch: `task_sched`
 
-`_task_sched()` disables interrupts and reaps inactive dead threads. It holds
+`task_sched()` disables interrupts and reaps inactive dead threads. It holds
 `ps_lock` while selecting and activating a runnable task. The current task remains runnable
 unless a caller has explicitly placed it in a waiting or terminal state.
 The switch updates address-space, segment, FPU, and CPU ownership state;
@@ -327,7 +327,7 @@ PIT interrupt (every 10 ms)
   └─ remain_ticks == 0 → task_sched()
 
 task_sched()
-  └─ _task_sched → SAVE_ALL(current) → pick next → RESTORE_ALL(next) → jmp
+  └─ task_sched → SAVE_ALL(current) → pick next → RESTORE_ALL(next) → jmp
 
 fork()
   └─ do_fork → CoW duplicate address space + fds + signal context

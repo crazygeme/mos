@@ -3,7 +3,7 @@
 
 /* Every guarded lock places this header at the beginning of its object. */
 typedef struct {
-	int (*enter)(void *lock, const char *func);
+	int (*enter)(void *lock);
 	void (*leave)(void *lock, int state);
 } lock_operations_t;
 
@@ -24,11 +24,11 @@ typedef struct {
 } lock_guard_t;
 
 static inline lock_guard_t
-lock_guard_enter(const volatile lock_header_t *header, const char *func)
+lock_guard_enter(const volatile lock_header_t *header)
 {
 	const lock_operations_t *operations = header->operations;
 	void *object = (void *)header;
-	int state = operations->enter(object, func);
+	int state = operations->enter(object);
 	return (lock_guard_t){ object, operations->leave, state };
 }
 
@@ -45,6 +45,6 @@ static inline void lock_guard_leave(lock_guard_t *guard)
 #define LOCK_GUARD(lock)                                             \
 	lock_guard_t _LOCK_GUARD_NAME(__COUNTER__)                   \
 		__attribute__((cleanup(lock_guard_leave), unused)) = \
-			lock_guard_enter(&(lock) -> header, __func__)
+			lock_guard_enter(&(lock) -> header)
 
 #endif

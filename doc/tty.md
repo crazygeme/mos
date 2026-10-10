@@ -1,7 +1,7 @@
 # TTY / PTY Subsystem
 
 **Source:** `src/driver/tty/tty.c`, `src/driver/tty/tty_ldisc.c`, `src/driver/tty/pts.c`
-**Interfaces:** `src/console/render.h`, `src/device/chardev.h`; private terminal headers stay under `src/driver/tty`
+**Interfaces:** `src/device/console/render.h`, `src/device/chardev.h`; private terminal headers stay under `src/driver/tty`
 
 ---
 

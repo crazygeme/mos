@@ -154,8 +154,7 @@ int fs_posix_lock(file *fp, int cmd, struct flock64 *fl)
 			ret = -EAGAIN;
 			goto out;
 		}
-		if (ps_prepare_interruptible_wait(cur, &range_wait, 0,
-						  __func__) < 0) {
+		if (ps_prepare_interruptible_wait(cur, &range_wait, 0) < 0) {
 			ret = -EINTR;
 			goto out;
 		}

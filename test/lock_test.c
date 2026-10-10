@@ -50,31 +50,6 @@ KTEST(lock, spinlock_unlock_clears_word)
 	return 0;
 }
 
-KTEST(lock, spinlock_holder_set_on_lock)
-{
-	spinlock_t s;
-	int irq;
-
-	spinlock_init(&s);
-	spinlock_lock(&s, &irq);
-	EXPECT_NONNULL(s.holder);
-	spinlock_unlock(&s, irq);
-	return 0;
-}
-
-KTEST(lock, spinlock_holder_cleared_on_unlock)
-{
-	spinlock_t s;
-	int irq;
-
-	spinlock_init(&s);
-	spinlock_lock(&s, &irq);
-	spinlock_unlock(&s, irq);
-	/* Current implementation leaves a debug sentinel on unlock. */
-	EXPECT_EQ(s.holder, (const char *)0xff);
-	return 0;
-}
-
 KTEST(lock, spinlock_reacquire)
 {
 	/* Lock can be taken again after unlock. */
@@ -498,12 +473,12 @@ struct guard_policy_probe {
 	int state;
 };
 
-static int guard_policy_enter(void *context, const char *func)
+static int guard_policy_enter(void *context)
 {
 	const scoped_lock_t *lock = context;
 	struct guard_policy_probe *probe = lock->context;
 	*probe->order = *probe->order * 10 + probe->id;
-	return func && *func ? probe->id : 0;
+	return probe->id;
 }
 
 static void guard_policy_leave(void *context, int state)

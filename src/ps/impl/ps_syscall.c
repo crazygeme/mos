@@ -321,7 +321,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 		list_remove_entry(&task->sched->ps_list);
 		ps_remove_mgr_unsafe(task);
 		task->sched->status = ps_dying;
-		task->wait->wait_func = NULL;
+
 		list_insert_tail(&reap_list, &task->sched->ps_list);
 	}
 	spinlock_unlock(&ps_lock, irq);
@@ -515,7 +515,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 
 		/* Block until a child exits. ps_put_to_dying_queue() will call
 		 * ps_put_to_ready_queue_unsafe(parent) to wake us. */
-		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		ps_put_to_wait_queue_unsafe(cur, NULL);
 		cur->wait->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
@@ -614,7 +614,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 			goto done;
 		}
 
-		ps_put_to_wait_queue_unsafe(cur, NULL, __func__);
+		ps_put_to_wait_queue_unsafe(cur, NULL);
 		cur->wait->wait_interruptible = 1;
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();

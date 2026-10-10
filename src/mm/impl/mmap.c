@@ -330,7 +330,8 @@ static void vm_add_map_with_lock(vm_struct_t vm, vaddr_t begin, vaddr_t end,
 		unmap_end = o_end < end ? o_end : end;
 
 		vm_flush_dirty_region(oregion, unmap_begin, unmap_end);
-		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
+		for (vir = mm_next_mapped_page(unmap_begin, unmap_end); vir < unmap_end;
+		     vir = mm_next_mapped_page(vir + PAGE_SIZE, unmap_end))
 			mm_unmap_page(vir);
 
 		vm_tree_remove(mm, oregion);
@@ -465,7 +466,8 @@ void vm_del_map(vm_struct_t vm, vaddr_t addr)
 	vm_fault_lock_lock(fault_lock);
 
 	/* Unmap every page in the region from the hardware page tables. */
-	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE)
+	for (vir = mm_next_mapped_page(region->begin, region->end); vir < region->end;
+	     vir = mm_next_mapped_page(vir + PAGE_SIZE, region->end))
 		mm_unmap_page(vir);
 	vm_tree_remove(mm, region);
 	vm_fault_lock_unlock(fault_lock);
@@ -811,7 +813,8 @@ void do_mmap_update(vaddr_t _addr, unsigned int prot, unsigned int flags)
 	region->flag = flags;
 
 	/* Also update actual mmap flag */
-	for (vir = region->begin; vir < region->end; vir += PAGE_SIZE) {
+	for (vir = mm_next_mapped_page(region->begin, region->end); vir < region->end;
+	     vir = mm_next_mapped_page(vir + PAGE_SIZE, region->end)) {
 		unsigned mmflag = mm_get_map_flag(vir);
 		if (!mmflag)
 			continue;
@@ -937,7 +940,8 @@ static void vm_flush_dirty_region(vm_region *region, vaddr_t begin, vaddr_t end)
 	    (region->fp->f_fop && region->fp->f_fop->map_page))
 		return;
 
-	for (vir = begin; vir < end; vir += PAGE_SIZE) {
+	for (vir = mm_next_mapped_page(begin, end); vir < end;
+	     vir = mm_next_mapped_page(vir + PAGE_SIZE, end)) {
 		unsigned page_index;
 		uint64_t file_offset;
 
@@ -1092,7 +1096,8 @@ int do_munmap(void *addr, size_t length)
 
 		/* Unmap physical pages only in the intersection [unmap_begin, unmap_end).
 		 * Pages in remnant portions are left untouched in the page tables. */
-		for (vir = unmap_begin; vir < unmap_end; vir += PAGE_SIZE)
+		for (vir = mm_next_mapped_page(unmap_begin, unmap_end); vir < unmap_end;
+		     vir = mm_next_mapped_page(vir + PAGE_SIZE, unmap_end))
 			mm_unmap_page(vir);
 
 		/* Hold references across descriptor removal. */

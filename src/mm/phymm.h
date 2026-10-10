@@ -76,6 +76,7 @@ unsigned phymm_alloc_user(void);
 /* Allocate reclaimable cache storage from highmem only.  Callers may reclaim
  * and explicitly fall back to phymm_alloc_user() for small-memory systems. */
 unsigned phymm_alloc_cache(void);
+unsigned phymm_alloc_cache_pages(unsigned page_count);
 
 /* Return a kernel block (starting at page_index) to the allocator. */
 void phymm_free_kernel(unsigned page_index, unsigned page_count);

@@ -50,21 +50,33 @@ vaddr_t mm_alloc_page_table(void)
 	if (table_count) {
 		result = table_free[--table_count];
 		pgc_top = table_count;
-		cache_count++;
 	}
 	spinlock_unlock(&table_lock, irq);
-	if (result)
-		memset((void *)result, 0, PAGE_SIZE);
+	if (!result) {
+		unsigned page = phymm_alloc_kernel(1);
+		if (page == PHYMM_INVALID)
+			return 0;
+		phymm_reference_page(page);
+		result = PHY_TO_VIRT((paddr_t)page * PAGE_SIZE);
+	}
+	__sync_add_and_fetch(&cache_count, 1);
+	memset((void *)result, 0, PAGE_SIZE);
 	return result;
 }
 void mm_free_page_table(vaddr_t address)
 {
-	int irq;
-	spinlock_lock(&table_lock, &irq);
-	table_free[table_count++] = address;
-	pgc_top = table_count;
-	cache_count--;
-	spinlock_unlock(&table_lock, irq);
+	if (address >= PAGE_TABLE_CACHE_BEGIN && address < PAGE_TABLE_CACHE_END) {
+		int irq;
+		spinlock_lock(&table_lock, &irq);
+		table_free[table_count++] = address;
+		pgc_top = table_count;
+		spinlock_unlock(&table_lock, irq);
+	} else {
+		unsigned page = VIRT_TO_PHY(address) / PAGE_SIZE;
+		if (!phymm_dereference_page(page))
+			phymm_free_kernel(page, 1);
+	}
+	__sync_sub_and_fetch(&cache_count, 1);
 }
 /* Requires mm_lock. Allocation failure rolls back the tables from this walk. */
 static pte_t *ensure_leaf(pte_t *root, vaddr_t address)
@@ -412,6 +424,31 @@ static void prune_user_tables(vaddr_t address)
 		mm_free_page_table((vaddr_t)tables[i]);
 	}
 }
+vaddr_t mm_next_mapped_page(vaddr_t begin, vaddr_t end)
+{
+	vaddr_t address = begin;
+	int irq;
+	spinlock_lock(&mm_lock, &irq);
+	while (address < end) {
+		pte_t *table = (pte_t *)mm_get_pagedir();
+		unsigned shift;
+		for (shift = MMU_ROOT_SHIFT; ; shift -= MMU_TABLE_INDEX_BITS) {
+			pte_t entry = table[(address >> shift) & MMU_TABLE_INDEX_MASK];
+			if (!(entry & PAGE_ENTRY_PRESENT)) {
+				vaddr_t next = (address | (((vaddr_t)1 << shift) - 1)) + 1;
+				address = next > address && next < end ? next : end;
+				break;
+			}
+			if (shift == MMU_PAGE_SHIFT || (entry & PAGE_ENTRY_LARGE))
+				goto out;
+			table = table_pointer(entry);
+		}
+	}
+out:
+	spinlock_unlock(&mm_lock, irq);
+	return address;
+}
+
 void mm_unmap_page(vaddr_t address)
 {
 	int irq;
@@ -485,8 +522,11 @@ void mm_set_map_flag_pd(vaddr_t root, vaddr_t address, unsigned flags)
 	pte_t *entry = ensure_leaf((pte_t *)root, address);
 	if (!entry || !(*entry & PAGE_ENTRY_PRESENT))
 		goto out;
-	*entry = (*entry & ADDRESS_MASK) | encode_flags(flags);
-	flush_mapping(root, address);
+	pte_t updated = (*entry & ADDRESS_MASK) | encode_flags(flags);
+	if (*entry != updated) {
+		*entry = updated;
+		flush_mapping(root, address);
+	}
 out:
 	spinlock_unlock(&mm_lock, irq);
 }

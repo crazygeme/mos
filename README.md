@@ -10,19 +10,35 @@ an Xfce desktop. The x64 kernel also runs i386 binaries in compatibility mode.
 Linux compatibility is incomplete; application support depends on the kernel
 interfaces each program requires.
 
-The bundled `run.sh` workflow boots the Red Hat 9 image, including its GNOME
-desktop. The screenshots below show that environment.
+The screenshots show the x64 GNU/MOS system with XDM login, an Xfce desktop,
+GNU applications, Visual Studio Code, and Microsoft Edge. GNU/MOS launches the
+system with `./lfs run`; the graphical configuration uses two virtual CPUs,
+8192 MiB RAM, and a VirGL-capable VirtIO GPU. See the
+[screenshot gallery](doc/screenshots.md) for application and terminal views.
 
-![MOS GUI desktop](doc/screenshot/gui1.png)
-![MOS GUI desktop](doc/screenshot/gui2.png)
+The bundled `run.sh` workflow uses a separate Red Hat 9 image with GNOME.
+
+[![GNU/MOS Xfce desktop](doc/screenshot/framed/gui1.svg)](doc/screenshot/gui1.png)
+
+| Visual Studio Code | Microsoft Edge · Baidu |
+| --- | --- |
+| [![Visual Studio Code on GNU/MOS](doc/screenshot/framed/vscode.svg)](doc/screenshot/vscode.png) | [![Microsoft Edge displaying Baidu](doc/screenshot/framed/browser.svg)](doc/screenshot/browser.png) |
+
+<details>
+<summary>Desktop applications</summary>
+
+[![GNU/MOS desktop applications](doc/screenshot/framed/gui2.svg)](doc/screenshot/gui2.png)
+
+</details>
 
 > [!NOTE]
-> Desktop applications can still encounter compatibility issues. See the
-> [Bug Fix Journal](doc/bugfix_journal.md) for fixes and validation limits.
+> Linux compatibility is incomplete. The GNU/MOS launchers for Visual Studio
+> Code and Microsoft Edge supply `--no-sandbox` because Chromium namespace
+> and seccomp isolation are unavailable.
 
 | Boot                             | Login Prompt                              |
 | -------------------------------- | ----------------------------------------- |
-| ![Boot](doc/screenshot/boot.png) | ![Login](doc/screenshot/login_prompt.png) |
+| [![Boot](doc/screenshot/framed/boot.svg)](doc/screenshot/boot.png) | [![Login](doc/screenshot/framed/login_prompt.svg)](doc/screenshot/login_prompt.png) |
 
 ---
 

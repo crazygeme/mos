@@ -1144,13 +1144,10 @@ and machine check have independent per-CPU IST stacks. Critical interrupt
 handlers avoid the scheduler and subsystem locks. Native return uses IRETQ;
 SYSRET address and flag constraints are therefore not assumed.
 
-Authenticated RH9 root login has also been validated with 8 GiB and two KVM
-CPUs, reaching the GNOME desktop and a working graphical terminal. This check
-required repair of a damaged GConf saved-state inode in the guest filesystem.
-The ATA block callbacks and lwext4 write cleanup propagate I/O failures
-instead of hanging on invalid disk blocks or reporting zero-byte success.
-See the [8 GiB desktop screenshot](screenshot/x64_8g_desktop.png) and
-[fix journal](bugfix_journal.md) for the diagnosis and repair record.
+The x64 GNU/MOS desktop configuration uses 8 GiB RAM and two KVM CPUs.
+The [AMD64 desktop memory view](screenshot/x64_8g_desktop.png) shows an Xfce
+session, the native architecture, and the memory statistics exposed by procfs.
+The ATA block callbacks and lwext4 write cleanup propagate I/O failures.
 
 Filesystem and block caches grow on demand within an adaptive combined budget
 of 25% of managed RAM, capped at 4 GiB. On an 8 GiB guest this is approximately
@@ -1527,14 +1524,9 @@ rejects cleanup that replaces a transfer error with a successful inode-release
 result and passes with error preservation. Both architecture release and test
 kernels build successfully.
 
-The desktop validation image has its damaged saved-state inode removed and
-allocation bitmaps and counters repaired by the filesystem checker. With 8 GiB,
-two CPUs, and KVM, it completes normal startup filesystem checks. Root login
-reached the complete GNOME desktop. A graphical terminal reported `x86_64`, over
-8 billion bytes of managed RAM, and `DESKTOP_LOGIN_OK`. The native AMD64 ABI
-probe also passed from the graphical terminal, including its file I/O, mappings
-above 4 GiB, and signal checks. The screenshot is [8 GiB
-desktop](screenshot/x64_8g_desktop.png).
+The [AMD64 desktop memory view](screenshot/x64_8g_desktop.png) shows the
+GNU/MOS Xfce session with 8 GiB configured RAM and the native `x86_64`
+architecture. `/proc/meminfo` reports managed memory after kernel reservations.
 
 ## 2026-09-29 — Socket waits during GNOME login
 

@@ -41,7 +41,7 @@ static rmutex_t epoll_mutex;
 static const file_operations epoll_fops;
 static void epoll_init(void)
 {
-	rmutex_init(&epoll_mutex);
+	vm_lock_init(&epoll_mutex);
 }
 KERNEL_INIT(1, epoll_init);
 
@@ -164,11 +164,11 @@ void epoll_release_file(file *fp)
 {
 	if (!fp->f_ep_links.next || list_is_empty(&fp->f_ep_links))
 		return;
-	rmutex_lock(&epoll_mutex);
+	vm_lock_enter(&epoll_mutex);
 	while (!list_is_empty(&fp->f_ep_links))
 		epoll_remove(container_of(fp->f_ep_links.next, struct epitem,
 					  file_list));
-	rmutex_unlock(&epoll_mutex);
+	vm_lock_leave(&epoll_mutex);
 }
 
 static unsigned epoll_mask(struct epitem *item)
@@ -245,9 +245,9 @@ static unsigned epoll_poll(file *fp, unsigned events, poll_table *pt)
 	unsigned ready;
 	if (pt)
 		poll_subscribe(pt, &ep->waiters, &ep->wait_lock);
-	rmutex_lock(&epoll_mutex);
+	vm_lock_enter(&epoll_mutex);
 	ready = (events & FS_POLL_READ) && epoll_ready(ep) ? FS_POLL_READ : 0;
-	rmutex_unlock(&epoll_mutex);
+	vm_lock_leave(&epoll_mutex);
 	return ready;
 }
 
@@ -255,10 +255,10 @@ static int epoll_release(file *fp)
 {
 	struct eventpoll *ep = fp->f_inode->i_private;
 	struct rb_node *node;
-	rmutex_lock(&epoll_mutex);
+	vm_lock_enter(&epoll_mutex);
 	while ((node = rb_first(&ep->interests)))
 		epoll_remove(rb_entry(node, struct epitem, tree));
-	rmutex_unlock(&epoll_mutex);
+	vm_lock_leave(&epoll_mutex);
 	free(ep);
 	free(fp->f_inode);
 	free(fp);
@@ -389,7 +389,7 @@ int sys_epoll_ctl(int epfd, int op, int fd, const struct epoll_event *event)
 	     (S_ISREG(fp->f_inode->i_mode) || S_ISDIR(fp->f_inode->i_mode))))
 		goto done;
 	ep = epfp->f_inode->i_private;
-	rmutex_lock(&epoll_mutex);
+	vm_lock_enter(&epoll_mutex);
 	item = epoll_find(ep, fp, fd, &slot, &parent);
 	if (op == EPOLL_CTL_ADD) {
 		result = -EEXIST;
@@ -448,7 +448,7 @@ int sys_epoll_ctl(int epfd, int op, int fd, const struct epoll_event *event)
 		epoll_queue(item);
 	result = 0;
 unlock:
-	rmutex_unlock(&epoll_mutex);
+	vm_lock_leave(&epoll_mutex);
 done:
 	if (fp)
 		fs_put_file(fp);
@@ -470,7 +470,7 @@ static int epoll_deliver(void *opaque)
 	struct eventpoll *ep = ctx->ep;
 	unsigned budget;
 	int count = 0;
-	rmutex_lock(&epoll_mutex);
+	vm_lock_enter(&epoll_mutex);
 	budget = epoll_ready_count(ep);
 	while (budget-- && count < ctx->maxevents) {
 		struct epitem *item = epoll_pop(ep);
@@ -505,7 +505,7 @@ static int epoll_deliver(void *opaque)
 			spinlock_unlock(&ep->ready_lock, irq);
 		}
 	}
-	rmutex_unlock(&epoll_mutex);
+	vm_lock_leave(&epoll_mutex);
 	return count;
 }
 static void epoll_wait_cancel(void *opaque)

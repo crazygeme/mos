@@ -854,6 +854,12 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	task_struct *cur = CURRENT_TASK();
 	file *node = NULL;
 
+	/* Anonymous mappings do not retain or validate a supplied descriptor. */
+	if (flags & MAP_ANONYMOUS) {
+		fd = -1;
+		offset = 0;
+	}
+
 	if (!_len || _len > cur->memory->task_size ||
 	    _addr >= cur->memory->task_size ||
 	    _len > cur->memory->task_size - _addr)

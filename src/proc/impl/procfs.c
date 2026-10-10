@@ -26,6 +26,7 @@
 #include <macro.h>
 #include <ext4.h>
 #include <errno.h>
+#include "pid/proc_pid.h"
 
 /* Implemented in proc_pid.c */
 file *proc_pid_lookup(unsigned pid, const char *rest, int flag);
@@ -282,7 +283,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	const char *p = path;
 	unsigned pid;
 	int fdno;
-	task_struct *task;
+	task_struct *task __attribute__((cleanup(proc_put_task))) = NULL;
 	const char *fname;
 	char anon[32];
 	size_t n;
@@ -302,7 +303,7 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 		return -1;
 	}
 
-	task = ps_find_process(pid);
+	task = ps_find_process_ref(pid);
 	if (!task)
 		return -1;
 	task = proc_resolve_thread(task, &p);

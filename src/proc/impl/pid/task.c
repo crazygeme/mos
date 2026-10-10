@@ -73,6 +73,7 @@ task_struct *proc_resolve_thread(task_struct *task, const char **rest)
 	task_struct *thread;
 	if (strncmp(path, "/task/", 6) != 0)
 		return task;
+	task_struct *owner __attribute__((cleanup(proc_put_task))) = task;
 	path += 6;
 	if (*path < '0' || *path > '9')
 		return NULL;
@@ -84,9 +85,11 @@ task_struct *proc_resolve_thread(task_struct *task, const char **rest)
 	}
 	if (*path && *path != '/')
 		return NULL;
-	thread = ps_find_process(tid);
-	if (!thread || !task_group_member(thread, task->thread->tgid))
+	thread = ps_find_process_ref(tid);
+	if (!thread || !task_group_member(thread, task->thread->tgid)) {
+		ps_put_process_ref(thread);
 		return NULL;
+	}
 	*rest = path;
 	return thread;
 }

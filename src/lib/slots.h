@@ -9,6 +9,13 @@ typedef struct {
 	unsigned capacity;
 } slot_pool;
 
+/* value must be nonzero. Use native 32-bit scans to avoid __ctzdi2 on x86. */
+static inline unsigned slot_ctz64(uint64_t value)
+{
+	uint32_t low = (uint32_t)value;
+	return low ? __builtin_ctz(low) : 32 + __builtin_ctz((uint32_t)(value >> 32));
+}
+
 static inline int slot_take(slot_pool *pool, unsigned capacity)
 {
 	if (!pool->capacity) {
@@ -21,8 +28,8 @@ static inline int slot_take(slot_pool *pool, unsigned capacity)
 	}
 	if (!pool->available)
 		return -1;
-	unsigned word = __builtin_ctzll(pool->available);
-	unsigned bit = __builtin_ctzll(pool->free[word]);
+	unsigned word = slot_ctz64(pool->available);
+	unsigned bit = slot_ctz64(pool->free[word]);
 	pool->free[word] &= ~(1ULL << bit);
 	if (!pool->free[word])
 		pool->available &= ~(1ULL << word);

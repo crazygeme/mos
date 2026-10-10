@@ -753,6 +753,7 @@ int sys_quotactl(int cmd, const char *special, int id, void *addr)
 }
 
 #define MREMAP_MAYMOVE 1
+#define MREMAP_FIXED 2
 
 intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		    int flags, vaddr_t new_addr)
@@ -760,18 +761,22 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 	task_struct *cur = CURRENT_TASK();
 	LOCK_GUARD(&cur->memory->mapping_lock);
 	vm_region *region;
+	vm_region moved;
 	size_t old_size_pg, new_size_pg;
-	vaddr_t old_end, new_end;
+	vaddr_t old_end, new_end, cursor, copy_end;
 	intptr_t ret;
-
-	(void)new_addr;
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mremap(%lx, %lu, %lu, flags=%x)\n",
 		     (unsigned long)old_addr, (unsigned long)old_size,
 		     (unsigned long)new_size, flags);
 
-	if (old_addr & (PAGE_SIZE - 1))
+	if ((flags & ~(MREMAP_MAYMOVE | MREMAP_FIXED)) ||
+	    ((flags & MREMAP_FIXED) && !(flags & MREMAP_MAYMOVE)) ||
+	    (old_addr & (PAGE_SIZE - 1)) || !old_size || !new_size ||
+	    old_addr >= cur->memory->task_size ||
+	    old_size > cur->memory->task_size - old_addr ||
+	    new_size > cur->memory->task_size - PAGE_SIZE)
 		return -EINVAL;
 
 	old_size_pg = (old_size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
@@ -779,24 +784,34 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 
 	if (!new_size_pg)
 		return -EINVAL;
+	old_end = old_addr + old_size_pg;
+	if (!arch_mm_user_range_valid(old_addr, old_size_pg))
+		return -EINVAL;
+	if (flags & MREMAP_FIXED) {
+		if ((new_addr & (PAGE_SIZE - 1)) ||
+		    !arch_mm_user_range_valid(new_addr, new_size_pg) ||
+		    (new_addr < old_end && old_addr < new_addr + new_size_pg))
+			return -EINVAL;
+	}
 
 	region = vm_find_map(cur->memory, old_addr);
-	if (!region)
+	if (!region || old_end > region->end)
 		return -EFAULT;
 
-	if (new_size_pg == old_size_pg)
+	if (!(flags & MREMAP_FIXED) && new_size_pg == old_size_pg)
 		return (intptr_t)old_addr;
 
-	if (new_size_pg < old_size_pg) {
+	if (!(flags & MREMAP_FIXED) && new_size_pg < old_size_pg) {
 		do_munmap((void *)(uintptr_t)(old_addr + new_size_pg),
 			  old_size_pg - new_size_pg);
 		return (intptr_t)old_addr;
 	}
 
 	/* Grow: extend the existing VMA if the full new range is free. */
-	old_end = old_addr + old_size_pg;
 	new_end = old_addr + new_size_pg;
-	if (vm_extend_map(cur->memory, old_addr, old_end, new_end)) {
+	if (!(flags & MREMAP_FIXED) && new_end >= old_addr &&
+	    arch_mm_user_range_valid(old_addr, new_size_pg) &&
+	    vm_extend_map(cur->memory, old_addr, old_end, new_end)) {
 		vm_invalidate_task_cache(cur);
 		return (intptr_t)old_addr;
 	}
@@ -804,15 +819,38 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 	if (!(flags & MREMAP_MAYMOVE))
 		return -ENOMEM;
 
-	/* Move: allocate a new region, copy, free the old one. */
-	ret = do_mmap(0, new_size_pg, region->prot, MAP_PRIVATE | MAP_ANONYMOUS,
+	/* Preserve backing metadata and page permissions without user-memory I/O. */
+	moved = *region;
+	ret = do_mmap(flags & MREMAP_FIXED ? new_addr : 0, new_size_pg,
+		      region->prot, MAP_PRIVATE | MAP_ANONYMOUS |
+				    (flags & MREMAP_FIXED ? MAP_FIXED : 0),
 		      -1, 0);
 	if (ret < 0)
 		return ret;
-
-	memcpy((void *)(uintptr_t)ret, (void *)(uintptr_t)old_addr,
-	       old_size_pg);
+	moved.offset += old_addr - moved.begin;
+	moved.begin = (vaddr_t)ret;
+	moved.end = moved.begin + new_size_pg;
+	vm_add_map_clone(cur->memory, &moved);
+	copy_end = old_addr + (old_size_pg < new_size_pg ? old_size_pg : new_size_pg);
+	for (cursor = mm_next_mapped_page(old_addr, copy_end); cursor < copy_end;
+	     cursor = mm_next_mapped_page(cursor + PAGE_SIZE, copy_end)) {
+		vaddr_t target = moved.begin + cursor - old_addr;
+		paddr_t physical = mm_virt_to_phys(cursor);
+		unsigned page_flags = mm_get_map_flag(cursor);
+		/* Source removal flushes shared files; subsequent writes must dirty again. */
+		if ((moved.flag & MAP_SHARED) && moved.fp &&
+		    !(moved.vm_flags & VM_REGION_F_DIRECT_PHYS))
+			page_flags &= ~PAGE_ENTRY_WRITABLE;
+		int installed = moved.vm_flags & VM_REGION_F_DIRECT_PHYS ?
+			mm_map_page_io(target, physical, page_flags) :
+			mm_map_page(target, physical, page_flags);
+		if (installed != 1) {
+			do_munmap((void *)moved.begin, new_size_pg);
+			return -ENOMEM;
+		}
+	}
 	do_munmap((void *)(uintptr_t)old_addr, old_size_pg);
+	vm_invalidate_task_cache(cur);
 	return ret;
 }
 

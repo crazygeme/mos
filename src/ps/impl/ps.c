@@ -303,6 +303,37 @@ task_struct *ps_find_process(unsigned psid)
 	return task;
 }
 
+/* Retain task resources through a scoped process lookup. */
+task_struct *ps_find_process_ref(unsigned psid)
+{
+	task_struct *task;
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	task = ps_find_process_unsafe(psid);
+	if (task) {
+		task->sched->enumeration_refs++;
+		__sync_fetch_and_add(&current->sched->vm_lock_depth, 1);
+	}
+	spinlock_unlock(&ps_lock, irq);
+	return task;
+}
+
+void ps_put_process_ref(task_struct *task)
+{
+	int irq;
+	if (!task)
+		return;
+	spinlock_lock(&ps_lock, &irq);
+	task->sched->enumeration_refs--;
+	__sync_fetch_and_sub(&current->sched->vm_lock_depth, 1);
+	if (!task->sched->enumeration_refs && task->sched->status == ps_dying) {
+		task_struct *parent = ps_find_process_unsafe(task->life->ppid);
+		if (parent && parent->sched->status == ps_waiting)
+			ps_put_to_ready_queue_unsafe(parent);
+	}
+	spinlock_unlock(&ps_lock, irq);
+}
+
 /* Invoke callback(task, ctx) for every live task (in psid order). */
 void ps_enum_all(ps_enum_callback callback, void *ctx)
 {

@@ -310,6 +310,8 @@ void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list);
 void ps_put_to_wait_queue(task_struct *task, list_entry *which_list);
 task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
+task_struct *ps_find_process_ref(unsigned psid);
+void ps_put_process_ref(task_struct *task);
 int ps_total_count();
 int ps_send_signal(unsigned pid, int sig);
 /* Actionable, unmasked signals; ignored signals do not interrupt I/O. */

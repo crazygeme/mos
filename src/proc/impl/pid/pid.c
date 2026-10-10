@@ -79,7 +79,8 @@ static file *pid_dir_open(task_struct *task, int include_task)
  */
 file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 {
-	task_struct *task = ps_find_process(pid);
+	task_struct *task __attribute__((cleanup(proc_put_task))) =
+		ps_find_process_ref(pid);
 	proc_buf_t *pb;
 	int include_task = strncmp(rest, "/task/", 6) != 0;
 

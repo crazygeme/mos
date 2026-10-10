@@ -28,6 +28,7 @@ unsigned fs_write_size = 0;
 
 static void root_lock_lock(void);
 static void root_lock_unlock(void);
+static rmutex_t root_lock_;
 
 typedef struct {
 	ext4_file handle;
@@ -153,6 +154,40 @@ static ssize_t ext4_file_read(file *fp, void *buf, size_t size, loff_t *pos)
 	return rcnt;
 }
 
+struct ext4_write_buffer {
+	struct ext4_write_buffer *next;
+	size_t size;
+	char bytes[];
+};
+
+static int ext4_write_copy(const void *input, void *output, size_t size)
+{
+	mm_struct *mm = current->memory;
+	vaddr_t cursor = (vaddr_t)input, end;
+	LOCK_GUARD(&mm->mapping_lock);
+	if (cursor >= mm->task_size || size > mm->task_size - cursor)
+		return -EFAULT;
+	end = cursor + size;
+	while (cursor < end) {
+		vm_region *region = vm_find_map_cached(current, cursor);
+		if (!region || !(region->prot & PROT_READ))
+			return -EFAULT;
+		cursor = region->end < end ? region->end : end;
+	}
+	return ps_read_process_memory(current, input, output, size);
+}
+
+static void ext4_write_finish(struct ext4_write_buffer **snapshot)
+{
+	struct ext4_write_buffer *block = *snapshot;
+	while (block) {
+		struct ext4_write_buffer *next = block->next;
+		free(block);
+		block = next;
+	}
+	__sync_fetch_and_sub(&current->sched->vm_lock_depth, 1);
+}
+
 static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 			       loff_t *pos)
 {
@@ -160,6 +195,34 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	size_t wcnt = 0;
 	loff_t write_pos = *pos;
 	int ret;
+	struct ext4_write_buffer *snapshot
+		__attribute__((cleanup(ext4_write_finish))) = NULL;
+
+	/* Retain transfer storage until filesystem I/O and cleanup complete. */
+	__sync_fetch_and_add(&current->sched->vm_lock_depth, 1);
+	if (size && current->life->type == ps_user &&
+	    (uintptr_t)buf < current->memory->task_size) {
+		struct ext4_write_buffer **tail = &snapshot;
+		size_t copied = 0;
+		while (copied < size) {
+			size_t chunk = size - copied;
+			if (chunk > 64 * 1024)
+				chunk = 64 * 1024;
+			struct ext4_write_buffer *block =
+				malloc(sizeof(*block) + chunk);
+			if (!block)
+				return -ENOMEM;
+			block->next = NULL;
+			block->size = chunk;
+			*tail = block;
+			tail = &block->next;
+			if (ext4_write_copy((const char *)buf + copied,
+					    block->bytes, chunk) < 0)
+				return -EFAULT;
+			copied += chunk;
+		}
+	}
+	LOCK_GUARD(&root_lock_);
 
 	ret = ext4_refresh_size(fp);
 	if (ret)
@@ -175,7 +238,18 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	}
 	if ((loff_t)ext4_ftell(f) != write_pos)
 		ext4_fseek(f, write_pos, SEEK_SET);
-	ret = ext4_fwrite(f, buf, size, &wcnt);
+	if (snapshot) {
+		for (struct ext4_write_buffer *block = snapshot; block;
+		     block = block->next) {
+			size_t count = 0;
+			ret = ext4_fwrite(f, block->bytes, block->size, &count);
+			wcnt += count;
+			if (ret != EOK || count < block->size)
+				break;
+		}
+	} else {
+		ret = ext4_fwrite(f, buf, size, &wcnt);
+	}
 	fs_write_size += wcnt;
 	if (ret != EOK)
 		return -ret;
@@ -1656,16 +1730,14 @@ static fs_type vfat_fs_type = { .name = "vfat", .get_sb = ext4_get_sb };
 /* =========================================================================
  * Boot-time root filesystem init
  * ====================================================================== */
-static rmutex_t root_lock_;
-
 static void root_lock_lock(void)
 {
-	rmutex_lock(&root_lock_);
+	vm_lock_enter(&root_lock_);
 }
 
 static void root_lock_unlock(void)
 {
-	rmutex_unlock(&root_lock_);
+	vm_lock_leave(&root_lock_);
 }
 
 static struct ext4_lock root_lock = {
@@ -1733,7 +1805,7 @@ static void ext_fs_type_init()
 
 	printk("mnt: registered vfat file type\n");
 	fs_register_type(&vfat_fs_type);
-	rmutex_init(&root_lock_);
+	vm_lock_init(&root_lock_);
 	list_init(&ext4_open_files);
 }
 

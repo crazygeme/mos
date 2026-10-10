@@ -3,6 +3,11 @@
 
 #include <fs/fs.h>
 #include <ps/ps.h>
+
+static inline void proc_put_task(task_struct **task)
+{
+	ps_put_process_ref(*task);
+}
 #include <proc/proc.h>
 #include <lib/klib.h>
 #include "../common/common.h"

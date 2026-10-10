@@ -122,46 +122,6 @@ The root bar (`all`) spans the full width and represents 100 % of samples.
 
 ---
 
-## Example flamegraph
-
-The flamegraph below was captured during a full SysV init boot of RH9
-(22 159 samples, 10 ms interval).
-
-![Flamegraph example](screenshot/flamegraph-example.svg)
-
-**What this flamegraph shows:**
-
-- **`idle_process` / `ps_run` (58.2 %)** — the system spends most of its time
-  idle. SysV init runs shell scripts sequentially; the kernel is waiting for
-  child processes between script steps. This is the expected profile for an
-  init-dominated workload.
-
-- **`sys_open` (7.3 %)** — the dominant active syscall. The chain
-  `fs_open → vfs_open → ext4_open → ext4_path_open → ext4_generic_open2` is
-  driven by shell scripts opening configuration files, device nodes, and
-  executables.
-
-- **`sys_stat64` / `sys_lstat64` (3.1 % each)** — SysV shell scripts call
-  `stat` heavily to check for file existence before executing commands.
-  Both resolve through the same `ext4_path_open` path as `open`.
-
-- **`sys_execve` (3.2 %)** — spawning new processes for each init script step.
-
-- **Page faults (`intr0e_stub`, 3.5 %)** — demand-paging during process startup.
-
-- **`(userspace)` (6.4 %)** — samples where the CPU was in user mode (shell,
-  init scripts, spawned processes).
-
-- **`ext4_resolve_prefix` (3.2 %)** — intermediate symlink resolution called
-  on every `open` and `stat`; visible as a separate tower because it opens each
-  path component once just to confirm it is not a symlink.
-
-The active (non-idle) kernel time is dominated by filesystem operations —
-`open` and `stat` together account for roughly half of all non-idle samples,
-all rooted in ext4 directory traversal.
-
----
-
 ## Tips
 
 **Increase sampling density for short workloads**

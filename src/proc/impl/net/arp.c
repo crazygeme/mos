@@ -32,8 +32,9 @@ file *open_net_arp(void)
 		int i;
 		for (i = 0; i < ARP_TABLE_SIZE; i++) {
 			ip4_addr_t *entry_ip = NULL;
+			struct netif *entry_netif = NULL;
 			struct eth_addr *entry_mac = NULL;
-			if (etharp_get_entry((size_t)i, &entry_ip, NULL,
+			if (etharp_get_entry((size_t)i, &entry_ip, &entry_netif,
 					     &entry_mac) == 1) {
 				p += sprintf(p,
 					     "%-16s 0x1         0x2         "

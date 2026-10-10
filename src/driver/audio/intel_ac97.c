@@ -157,8 +157,7 @@ static int ac97_wait_done(void)
 		/* Release the CPU while retaining ownership of the DMA buffer.
 		 * Signal interruption stops the stream through the cleanup below.
 		 */
-		if (ps_prepare_interruptible_wait(current, NULL, 1, __func__) <
-		    0) {
+		if (ps_prepare_interruptible_wait(current, NULL, 1) < 0) {
 			ret = -EINTR;
 			break;
 		}

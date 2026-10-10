@@ -35,15 +35,13 @@ spinlock_unlock(&lock, irq); // release and restore the interrupt level
 spinlock_uninit(&lock);     // tear down (e.g. on device removal)
 ```
 
-`spinlock_lock` is a macro that forwards to `_spinlock_lock` and automatically passes `__func__` as the holder name for debugging.
-
 ### Behaviour
 
 - Uses `__sync_lock_test_and_set` (atomic XCHG) for acquire and `__sync_lock_release` for release.
 - Fast path: a single TAS that succeeds immediately, no `PAUSE`.
 - Slow path: polls TLB requests and executes `PAUSE` with local interrupts disabled.
 - Acquisition saves the interrupt-enable flag in caller-owned storage.
-- Release clears the holder and lock word before restoring the saved interrupt level.
+- Release clears the lock word before restoring the saved interrupt level.
 
 ### Rules
 
@@ -83,8 +81,6 @@ cond_notify_at_intr(&cv);   // fire event only (no sleep, no sched)
 cond_wait_at_intr(&cv);     // poll-wait (no sleep) for interrupt ctx
 ```
 
-`cond_wait` is a macro that passes `__func__` to the underlying implementation.
-
 ### Behaviour
 
 - Internally a `lock_base` with a TAS word and a wait queue.
@@ -117,8 +113,6 @@ mutex_init(&m);     // must be called before first use
 mutex_lock(&m);     // acquire; sleeps if contended
 mutex_unlock(&m);   // release; DIE() if called by non-holder
 ```
-
-`mutex_lock` is a macro that forwards to `_mutex_lock` and passes `__func__`.
 
 ### Behaviour
 
@@ -156,8 +150,6 @@ rwlock_read_unlock(&rw);  // release shared
 rwlock_write_lock(&rw);   // acquire exclusive; blocks until no readers/writers
 rwlock_write_unlock(&rw); // release exclusive
 ```
-
-Both `rwlock_read_lock` and `rwlock_write_lock` are macros that pass `__func__`.
 
 ### Behaviour
 
@@ -205,8 +197,6 @@ sem_wait_at_intr(&s); // poll via task_sched — does NOT sleep; for use inside
                       // an interrupt handler or where sleeping is forbidden
 sem_post_at_intr(&s); // atomic increment only; no task_sched call
 ```
-
-`sem_wait` is a macro that passes `__func__` to the underlying implementation.
 
 ### Behaviour
 

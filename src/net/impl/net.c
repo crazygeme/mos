@@ -59,8 +59,7 @@ void net_core_unlock(void)
 	sched_enable();
 }
 
-static int net_guard_enter(void *context __attribute__((unused)),
-			   const char *func __attribute__((unused)))
+static int net_guard_enter(void *context __attribute__((unused)))
 {
 	return net_core_enter();
 }

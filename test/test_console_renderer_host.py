@@ -9,7 +9,7 @@ PROBE = r'''
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
-#include <console/render.h>
+#include <device/console/render.h>
 #include <device/framebuffer.h>
 
 static framebuffer_surface current;
@@ -131,4 +131,5 @@ class ConsoleRendererHost(unittest.TestCase):
                 str(ROOT / "src/console/fonts/font_vga16.c"),
                 "-o", str(binary),
             ], check=True, capture_output=True, text=True)
-            subprocess.run([str(binary)], check=True, capture_output=True, text=True)
+            subprocess.run([str(binary)], check=True,
+                           capture_output=True, text=True)

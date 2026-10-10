@@ -111,7 +111,7 @@ static void dsr_worker(void *param)
 			continue;
 		}
 		dsr_waiting = 1;
-		ps_put_to_wait_queue(current, NULL, __func__);
+		ps_put_to_wait_queue(current, NULL);
 		spinlock_unlock(&dsr_lock, irq);
 		task_sched();
 	}

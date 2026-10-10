@@ -20,7 +20,6 @@ typedef volatile struct _spinlock {
 	lock_header_t header;
 	unsigned int lock; /* 0 = free, 1 = held (TAS word)         */
 	int inited; /* 1 after spinlock_init                  */
-	const char *holder;
 } spinlock_t;
 
 extern const lock_operations_t spinlock_guard_operations;
@@ -30,9 +29,7 @@ extern const lock_operations_t spinlock_guard_operations;
 
 void spinlock_init(spinlock_t *lock);
 void spinlock_uninit(spinlock_t *lock);
-#define spinlock_lock(x, irq) _spinlock_lock((x), irq, __func__)
-void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq,
-		    const char *func);
+void spinlock_lock(spinlock_t *lock, volatile int *saved_irq);
 void spinlock_unlock(spinlock_t *lock, int irq);
 
 /* ===========================================================================
@@ -66,8 +63,7 @@ typedef volatile struct _cond {
 void cond_init(cond_t *s, unsigned int initstat);
 /* Block until the event fires.  If interruptible is non-zero, returns -1
  * immediately when a deliverable signal is pending; returns 0 on success. */
-#define cond_wait(x, intr) _cond_wait((x), __func__, (intr))
-int _cond_wait(cond_t *s, const char *func, int interruptible);
+int cond_wait(cond_t *s, int interruptible);
 void cond_wait_at_intr(cond_t *s);
 void cond_reset(cond_t *s);
 /* Publish the event and wake a waiter without switching tasks.
@@ -86,13 +82,10 @@ typedef volatile struct _mutex {
 	lock_header_t header;
 	lock_base base;
 	unsigned holder; /* psid of the holding task, 0 if free     */
-	const char *holder_func; /* name of the holding task, 0 if free     */
-
 } mutex_t;
 
 void mutex_init(mutex_t *m);
-#define mutex_lock(x) _mutex_lock((x), __func__)
-void _mutex_lock(mutex_t *m, const char *func);
+void mutex_lock(mutex_t *m);
 void mutex_unlock(mutex_t *m);
 
 /* ===========================================================================
@@ -124,11 +117,9 @@ typedef volatile struct _rwlock {
 } rwlock_t;
 
 void rwlock_init(rwlock_t *rw);
-#define rwlock_read_lock(x) _rwlock_read_lock((x), __func__)
-void _rwlock_read_lock(rwlock_t *rw, const char *func);
+void rwlock_read_lock(rwlock_t *rw);
 void rwlock_read_unlock(rwlock_t *rw);
-#define rwlock_write_lock(x) _rwlock_write_lock((x), __func__)
-void _rwlock_write_lock(rwlock_t *rw, const char *func);
+void rwlock_write_lock(rwlock_t *rw);
 void rwlock_write_unlock(rwlock_t *rw);
 
 /* ===========================================================================
@@ -144,17 +135,15 @@ typedef volatile struct _rmutex {
 	lock_base base;
 	unsigned holder; /* psid of the holding task, 0 if free     */
 	unsigned depth; /* re-lock depth, 0 when free              */
-	const char *holder_func;
 } rmutex_t;
 
 void rmutex_init(rmutex_t *m);
-#define rmutex_lock(x) _rmutex_lock((x), __func__)
-void _rmutex_lock(rmutex_t *m, const char *func);
+void rmutex_lock(rmutex_t *m);
 void rmutex_unlock(rmutex_t *m);
 
 /* Recursive VM transactions retain task ownership tracking. */
 void vm_lock_init(rmutex_t *lock);
-void vm_lock_enter(rmutex_t *lock, const char *func);
+void vm_lock_enter(rmutex_t *lock);
 void vm_lock_leave(rmutex_t *lock);
 
 /* ===========================================================================
@@ -172,8 +161,7 @@ typedef volatile struct _sem {
 } sem_t;
 
 void sem_init(sem_t *s, int count);
-#define sem_wait(x) _sem_wait((x), __func__)
-void _sem_wait(sem_t *s, const char *func);
+void sem_wait(sem_t *s);
 void sem_post(sem_t *s);
 
 /* Interrupt-compatible pair: the waiter stays in the ready queue (polls via

@@ -159,7 +159,6 @@ typedef struct _task_wait {
 	task_struct *task;
 	int wait_interruptible;
 	unsigned long signal_wait_mask;
-	const char *wait_func;
 	void (*cancel_io_wait)(void *);
 	void *io_wait;
 	list_entry io_files;
@@ -276,8 +275,7 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 		  int turn_on);
 
 // task functions
-void _task_sched(const char *func);
-#define task_sched() _task_sched(__func__)
+void task_sched(void);
 
 int sched_enable();
 
@@ -308,10 +306,8 @@ void ps_put_to_ready_queue(task_struct *task);
 void ps_put_to_dying_queue_unsafe(task_struct *task);
 void ps_put_to_dying_queue(task_struct *task);
 
-void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list,
-				 const char *func);
-void ps_put_to_wait_queue(task_struct *task, list_entry *which_list,
-			  const char *func);
+void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list);
+void ps_put_to_wait_queue(task_struct *task, list_entry *which_list);
 task_struct *ps_find_process_unsafe(unsigned psid);
 task_struct *ps_find_process(unsigned psid);
 int ps_total_count();
@@ -322,7 +318,7 @@ unsigned long ps_interrupting_signals(task_struct *task);
  * Return -EINTR without sleeping, or 0; pair success with finish_timed_wait.
  */
 int ps_prepare_interruptible_wait(task_struct *task, list_entry *queue,
-				  unsigned ms, const char *func);
+				  unsigned ms);
 /* Relative ms in/out: snapshot old values and optionally replace the alarm. */
 void ps_alarm_update(task_struct *task, int set, unsigned long long *value,
 		     unsigned long long *interval);
@@ -366,7 +362,7 @@ void reboot();
 void shutdown();
 
 void time_wait(unsigned ms);
-void ps_prepare_timed_wait(task_struct *task, unsigned ms, const char *func);
+void ps_prepare_timed_wait(task_struct *task, unsigned ms);
 void ps_finish_timed_wait(task_struct *task);
 void ps_signal_wait(void);
 

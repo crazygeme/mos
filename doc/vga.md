@@ -11,7 +11,7 @@ Terminal semantics and display hardware have separate interfaces.
 | `src/driver/video/bochs.c` | VBE registers, memory mapping, shadow surface and dirty-byte presentation |
 | `src/driver/video/vmware_svga.c` | SVGA registers, VRAM mapping, FIFO updates and pixel copy/fill acceleration |
 
-`console/render.h` defines `console_cell`, font data and rendering operations.
+`device/console/render.h` defines `console_cell`, font data and rendering operations.
 `device/framebuffer.h` defines an XRGB8888 pixel surface and `framebuffer_ops`.
 The generic driver registration header contains no console or framebuffer types.
 

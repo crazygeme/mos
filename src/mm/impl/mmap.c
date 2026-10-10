@@ -87,7 +87,7 @@ static void vm_fault_lock_lock(vm_fault_lock *fault_lock)
 {
 	if (!fault_lock)
 		return;
-	vm_lock_enter(&fault_lock->lock, __func__);
+	vm_lock_enter(&fault_lock->lock);
 }
 
 static void vm_fault_lock_unlock(vm_fault_lock *fault_lock)

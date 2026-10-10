@@ -1,4 +1,4 @@
-#include <console/render.h>
+#include <device/console/render.h>
 #include <device/framebuffer.h>
 #include <lib/klib.h>
 

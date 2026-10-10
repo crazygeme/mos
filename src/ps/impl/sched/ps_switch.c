@@ -19,7 +19,7 @@ extern void ps_context_switch(uintptr_t *old_sp, uintptr_t new_sp,
 			      task_struct *prev);
 extern void ps_reap_dead_threads(void);
 
-void _task_sched(const char *func)
+void task_sched(void)
 {
 	task_struct *prev = current;
 	task_struct *next;
@@ -27,7 +27,6 @@ void _task_sched(const char *func)
 	unsigned cpu;
 	int lock_irq;
 
-	(void)func;
 	__atomic_fetch_add(&task_schedule_count, 1, __ATOMIC_RELAXED);
 
 	irq = int_intr_disable();

@@ -20,17 +20,15 @@ void spinlock_init(spinlock_t *lock)
 	lock->header.operations = &spinlock_guard_operations;
 	lock->lock = 0;
 	lock->inited = 1;
-	lock->holder = 0;
 }
 
 void spinlock_uninit(spinlock_t *lock)
 {
 	lock->inited = 0;
-	lock->holder = 0;
 	__atomic_store_n(&lock->lock, 0, __ATOMIC_RELEASE);
 }
 
-void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
+void spinlock_lock(spinlock_t *lock, volatile int *saved_irq)
 {
 	if (!lock->inited)
 		return;
@@ -40,7 +38,7 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 
 	/* Fast path: one acquire operation suffices without contention. */
 	if (LIKELY(__atomic_exchange_n(&lock->lock, 1, __ATOMIC_ACQUIRE) == 0))
-		goto locked;
+		return;
 
 	/* Read-only polling avoids bouncing the cache line while held. A
 	 * bounded backoff also spreads out competing acquisitions. Keep
@@ -57,9 +55,6 @@ void _spinlock_lock(spinlock_t *lock, volatile int *saved_irq, const char *func)
 		if (backoff < 32)
 			backoff <<= 1;
 	}
-
-locked:
-	lock->holder = func;
 }
 
 void spinlock_unlock(spinlock_t *lock, int irq)
@@ -67,7 +62,6 @@ void spinlock_unlock(spinlock_t *lock, int irq)
 	if (!lock->inited)
 		return;
 
-	lock->holder = (const char *)0xff;
 	__atomic_store_n(&lock->lock, 0, __ATOMIC_RELEASE);
 	int_intr_setlevel(irq);
 }
@@ -122,7 +116,7 @@ static int lock_try_acquire_registered(lock_base *s)
 					   __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-static void lock_base_acquire(lock_base *s, const char *func)
+static void lock_base_acquire(lock_base *s)
 {
 	if (LIKELY(lock_try_acquire(s)))
 		return;
@@ -137,7 +131,7 @@ static void lock_base_acquire(lock_base *s, const char *func)
 			spinlock_unlock(&s->wait_lock, irq);
 			return;
 		}
-		ps_put_to_wait_queue(cur, &s->wait_list, func);
+		ps_put_to_wait_queue(cur, &s->wait_list);
 		spinlock_unlock(&s->wait_lock, irq);
 		task_sched();
 	}
@@ -168,7 +162,7 @@ void cond_init(cond_t *s, unsigned int initstat)
  * If interruptible is non-zero, returns -1 when a deliverable signal wakes
  * the task instead of re-blocking; returns 0 on normal acquisition.
  */
-int _cond_wait(cond_t *s, const char *func, int interruptible)
+int cond_wait(cond_t *s, int interruptible)
 {
 	task_struct *cur = CURRENT_TASK();
 	lock_base *b = (lock_base *)&s->base;
@@ -186,15 +180,15 @@ int _cond_wait(cond_t *s, const char *func, int interruptible)
 			return 0;
 		}
 		if (interruptible) {
-			if (ps_prepare_interruptible_wait(cur, &b->wait_list, 0,
-							  func) < 0) {
+			if (ps_prepare_interruptible_wait(cur, &b->wait_list,
+							  0) < 0) {
 				__atomic_sub_fetch(&b->waiters, 1,
 						   __ATOMIC_SEQ_CST);
 				spinlock_unlock(&b->wait_lock, irq);
 				return -1;
 			}
 		} else {
-			ps_put_to_wait_queue(cur, &b->wait_list, func);
+			ps_put_to_wait_queue(cur, &b->wait_list);
 		}
 		spinlock_unlock(&b->wait_lock, irq);
 		task_sched();
@@ -249,15 +243,13 @@ void mutex_init(mutex_t *m)
 	m->header.operations = &mutex_guard_operations;
 	lock_init((lock_base *)&m->base, 0);
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
-	m->holder_func = NULL;
 }
 
-void _mutex_lock(mutex_t *m, const char *func)
+void mutex_lock(mutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
-	lock_base_acquire((lock_base *)&m->base, func);
+	lock_base_acquire((lock_base *)&m->base);
 	__atomic_store_n(&m->holder, cur->life->psid, __ATOMIC_RELAXED);
-	m->holder_func = func;
 }
 
 void mutex_unlock(mutex_t *m)
@@ -268,7 +260,6 @@ void mutex_unlock(mutex_t *m)
 		DIE();
 
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
-	m->holder_func = NULL;
 
 	lock_base_release((lock_base *)&m->base);
 }
@@ -283,10 +274,9 @@ void rmutex_init(rmutex_t *m)
 	lock_init((lock_base *)&m->base, 0);
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
 	m->depth = 0;
-	m->holder_func = NULL;
 }
 
-void _rmutex_lock(rmutex_t *m, const char *func)
+void rmutex_lock(rmutex_t *m)
 {
 	task_struct *cur = CURRENT_TASK();
 
@@ -296,10 +286,9 @@ void _rmutex_lock(rmutex_t *m, const char *func)
 		return;
 	}
 
-	lock_base_acquire((lock_base *)&m->base, func);
+	lock_base_acquire((lock_base *)&m->base);
 	__atomic_store_n(&m->holder, cur->life->psid, __ATOMIC_RELAXED);
 	m->depth = 1;
-	m->holder_func = func;
 }
 
 void rmutex_unlock(rmutex_t *m)
@@ -313,7 +302,6 @@ void rmutex_unlock(rmutex_t *m)
 		return;
 
 	__atomic_store_n(&m->holder, 0, __ATOMIC_RELAXED);
-	m->holder_func = NULL;
 
 	lock_base_release((lock_base *)&m->base);
 }
@@ -356,7 +344,7 @@ static int rwlock_try_read(rwlock_t *rw)
 	return 0;
 }
 
-void _rwlock_read_lock(rwlock_t *rw, const char *func)
+void rwlock_read_lock(rwlock_t *rw)
 {
 	if (LIKELY(rwlock_try_read(rw)))
 		return;
@@ -365,8 +353,7 @@ void _rwlock_read_lock(rwlock_t *rw, const char *func)
 	int irq;
 	spinlock_lock(&rw->wait_lock, &irq);
 	while (!rwlock_try_read(rw)) {
-		ps_put_to_wait_queue(cur, (list_entry *)&rw->reader_wait_list,
-				     func);
+		ps_put_to_wait_queue(cur, (list_entry *)&rw->reader_wait_list);
 		spinlock_unlock(&rw->wait_lock, irq);
 		task_sched();
 		spinlock_lock(&rw->wait_lock, &irq);
@@ -389,7 +376,7 @@ void rwlock_read_unlock(rwlock_t *rw)
 	spinlock_unlock(&rw->wait_lock, irq);
 }
 
-void _rwlock_write_lock(rwlock_t *rw, const char *func)
+void rwlock_write_lock(rwlock_t *rw)
 {
 	unsigned int state = 0;
 	if (LIKELY(__atomic_compare_exchange_n(&rw->state, &state, RW_WRITER, 0,
@@ -410,8 +397,7 @@ void _rwlock_write_lock(rwlock_t *rw, const char *func)
 			    &rw->state, &state, RW_PENDING | RW_WRITER, 0,
 			    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 			break;
-		ps_put_to_wait_queue(cur, (list_entry *)&rw->writer_wait_list,
-				     func);
+		ps_put_to_wait_queue(cur, (list_entry *)&rw->writer_wait_list);
 		spinlock_unlock(&rw->wait_lock, irq);
 		task_sched();
 		spinlock_lock(&rw->wait_lock, &irq);
@@ -462,7 +448,7 @@ static inline int sem_try_wait(sem_t *s, int order)
 	return 0;
 }
 
-void _sem_wait(sem_t *s, const char *func)
+void sem_wait(sem_t *s)
 {
 	if (LIKELY(sem_try_wait(s, __ATOMIC_ACQUIRE)))
 		return;
@@ -477,7 +463,7 @@ void _sem_wait(sem_t *s, const char *func)
 			spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 			return;
 		}
-		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list, func);
+		ps_put_to_wait_queue(cur, (list_entry *)&s->wait_list);
 		spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 		task_sched();
 	}
@@ -515,10 +501,10 @@ void vm_lock_init(rmutex_t *lock)
 	lock->header.operations = &vm_guard_operations;
 }
 
-void vm_lock_enter(rmutex_t *lock, const char *func)
+void vm_lock_enter(rmutex_t *lock)
 {
 	unsigned irq = int_intr_disable();
-	_rmutex_lock(lock, func);
+	rmutex_lock(lock);
 	__sync_fetch_and_add(&current->sched->vm_lock_depth, 1);
 	int_intr_setlevel(irq);
 }
@@ -531,9 +517,9 @@ void vm_lock_leave(rmutex_t *lock)
 	int_intr_setlevel(irq);
 }
 
-static int guard_mutex_enter(void *lock, const char *func)
+static int guard_mutex_enter(void *lock)
 {
-	_mutex_lock(lock, func);
+	mutex_lock(lock);
 	return 0;
 }
 
@@ -542,9 +528,9 @@ static void guard_mutex_leave(void *lock, int state __attribute__((unused)))
 	mutex_unlock(lock);
 }
 
-static int guard_rmutex_enter(void *lock, const char *func)
+static int guard_rmutex_enter(void *lock)
 {
-	_rmutex_lock(lock, func);
+	rmutex_lock(lock);
 	return 0;
 }
 
@@ -553,9 +539,9 @@ static void guard_rmutex_leave(void *lock, int state __attribute__((unused)))
 	rmutex_unlock(lock);
 }
 
-static int guard_vm_enter(void *lock, const char *func)
+static int guard_vm_enter(void *lock)
 {
-	vm_lock_enter(lock, func);
+	vm_lock_enter(lock);
 	return 0;
 }
 
@@ -564,10 +550,10 @@ static void guard_vm_leave(void *lock, int state __attribute__((unused)))
 	vm_lock_leave(lock);
 }
 
-static int guard_spinlock_enter(void *lock, const char *func)
+static int guard_spinlock_enter(void *lock)
 {
 	int irq = 0;
-	_spinlock_lock(lock, &irq, func);
+	spinlock_lock(lock, &irq);
 	return irq;
 }
 
@@ -576,9 +562,9 @@ static void guard_spinlock_leave(void *lock, int state)
 	spinlock_unlock(lock, state);
 }
 
-static int guard_rwlock_enter(void *lock, const char *func)
+static int guard_rwlock_enter(void *lock)
 {
-	_rwlock_write_lock(lock, func);
+	rwlock_write_lock(lock);
 	return 0;
 }
 

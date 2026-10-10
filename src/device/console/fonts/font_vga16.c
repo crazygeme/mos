@@ -1,4 +1,4 @@
-#include <console/render.h>
+#include <device/console/render.h>
 
 /* Classic IBM VGA 8x16 font (CP437), derived from Linux kernel lib/fonts/font_8x16.c */
 

@@ -281,8 +281,7 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 			(duration_us - elapsed + 999) / 1000;
 		unsigned wait_ms = left_ms > 0xffffffffULL ? 0xffffffffU :
 							     (unsigned)left_ms;
-		if (!ps_prepare_interruptible_wait(cur, NULL, wait_ms,
-						   __func__)) {
+		if (!ps_prepare_interruptible_wait(cur, NULL, wait_ms)) {
 			task_sched();
 			ps_finish_timed_wait(cur);
 		}

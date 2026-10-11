@@ -67,6 +67,8 @@ static task_thread *alloc_thread_group(task_thread *old)
 	if (!group)
 		return NULL;
 	ref_count_init(&group->ref, release_thread_group);
+	list_init(&group->members);
+	list_init(&group->children);
 	RB_CLEAR_NODE(&group->alarm_rb);
 	list_init(&group->pending_queue);
 	if (old) {
@@ -116,6 +118,10 @@ int ps_init_private(task_struct *task)
 	task->wait->task = task;
 	task->life->psid = (unsigned)-1;
 	list_init(&task->sched->ps_list);
+	list_init(&task->sched->thread_list);
+	list_init(&task->sched->child_list);
+	list_init(&task->sched->creator_list);
+	list_init(&task->life->children);
 	list_init(&task->life->dying_queue);
 	list_init(&task->wait->io_files);
 	list_init(&task->signal->pending_queue);

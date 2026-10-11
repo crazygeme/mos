@@ -77,35 +77,50 @@ static void ps_reap_task(task_struct *task, rusage *rusage)
 	ps_free_task(task);
 }
 
-static int has_child_unsafe(task_struct *parent, unsigned pid)
+static int is_child_unsafe(task_struct *parent, task_struct *task)
 {
-	struct rb_node *node;
+	return task->life->parent_group == parent->thread;
+}
 
-	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *task =
-			(rb_entry(node, task_schedule, mgr_rb)->task);
-
-		if (task->life->ppid != parent->life->psid)
+static task_struct *find_exited_child_unsafe(task_struct *parent, unsigned pid,
+					   unsigned pgrp, int match_pgrp)
+{
+	list_entry *head = &parent->thread->children;
+	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
+		task_struct *task = container_of(entry, task_schedule, child_list)->task;
+		if (!task->life->exit_ready || task->sched->on_cpu ||
+		    task->thread->live_tasks)
 			continue;
 		if (pid && task->life->psid != pid)
 			continue;
-		return 1;
+		if (match_pgrp && task->thread->group_id != pgrp)
+			continue;
+		return task;
 	}
+	return NULL;
+}
 
-	return 0;
+static void detach_exited_child_unsafe(task_struct *task)
+{
+	list_remove_entry(&task->sched->ps_list);
+	ps_remove_mgr_unsafe(task);
+}
+
+static int has_child_unsafe(task_struct *parent, unsigned pid)
+{
+	if (pid) {
+		task_struct *task = ps_find_process_unsafe(pid);
+		return task && is_child_unsafe(parent, task);
+	}
+	return !list_is_empty(&parent->thread->children);
 }
 
 static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
-					      int options)
+					    int options)
 {
-	struct rb_node *node;
-
-	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *task =
-			(rb_entry(node, task_schedule, mgr_rb)->task);
-
-		if (task->life->ppid != parent->life->psid)
-			continue;
+	list_entry *head = &parent->thread->children;
+	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
+		task_struct *task = container_of(entry, task_schedule, child_list)->task;
 		if (pid && task->life->psid != pid)
 			continue;
 		if (!task->life->stop_report_pending)
@@ -116,25 +131,17 @@ static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
 			continue;
 		return task;
 	}
-
 	return NULL;
 }
 
 static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
 {
-	struct rb_node *node;
-
-	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *task =
-			(rb_entry(node, task_schedule, mgr_rb)->task);
-
-		if (task->life->ppid != parent->life->psid || !task->execution)
-			continue;
-		if (task->thread->group_id != pgrp)
-			continue;
-		return 1;
+	list_entry *head = &parent->thread->children;
+	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
+		task_struct *task = container_of(entry, task_schedule, child_list)->task;
+		if (task->thread->group_id == pgrp)
+			return 1;
 	}
-
 	return 0;
 }
 
@@ -162,39 +169,49 @@ void qemu_exit(unsigned char code)
 	port_write_byte(0xf4, code);
 }
 
-/* Internal: exit with an already-encoded waitpid status word. */
-/* Reparent all children of cur to init (pid 1). Must be called without
- * ps_lock held. Living children get a new parent; zombie children also
- * send SIGCHLD to init so it can reap them. */
-static void ps_reparent_children(task_struct *cur)
+/* PPid names the parent thread group. Only its final task transfers children. */
+void ps_reparent_children_unsafe(task_struct *cur)
 {
-	struct rb_node *node;
 	int notify_init = 0;
-	int irq;
-
-	spinlock_lock(&ps_lock, &irq);
+	while (!list_is_empty(&cur->life->children)) {
+		task_struct *child = container_of(cur->life->children.next,
+						 task_schedule, creator_list)->task;
+		if (child->life->pdeath_signal && child->sighand &&
+		    child->sched->status != ps_dying)
+			ps_queue_group_signal_unsafe(child, child->life->pdeath_signal);
+		list_remove_entry(&child->sched->creator_list);
+		list_init(&child->sched->creator_list);
+		child->life->creator = NULL;
+	}
+	cur->life->nchildren = 0;
+	if (cur->thread->live_tasks ||
+	    list_is_empty(&cur->thread->children))
+		return;
 	task_struct *init_task = ps_find_process_unsafe(1);
-	if (!init_task || init_task == cur)
-		goto out;
-
-	for (node = rb_first(&control.mgr_queue); node; node = rb_next(node)) {
-		task_struct *t = (rb_entry(node, task_schedule, mgr_rb)->task);
-		if (t->life->ppid != cur->life->psid)
-			continue;
-		if (t->life->pdeath_signal && t->sighand &&
-		    t->sched->status != ps_dying)
-			ps_queue_signal_unsafe(t, t->life->pdeath_signal);
-		t->life->ppid = init_task->life->psid;
-		init_task->life->nchildren++;
-		if (t->sched->status == ps_dying)
+	if (!init_task || init_task->thread == cur->thread)
+		return;
+	while (!list_is_empty(&cur->thread->children)) {
+		task_struct *child = container_of(cur->thread->children.next,
+						 task_schedule, child_list)->task;
+		ps_set_parent_unsafe(child, init_task);
+		if (child->life->exit_ready) {
+			list_remove_entry(&child->sched->ps_list);
+			list_insert_tail(&init_task->life->dying_queue,
+					 &child->sched->ps_list);
 			notify_init = 1;
+		}
 	}
 	if (notify_init) {
 		ps_queue_group_signal_unsafe(init_task, SIGCHLD);
-		if (init_task->sched->status == ps_waiting)
-			ps_put_to_ready_queue_unsafe(init_task);
+		ps_wake_parent_waiters_unsafe(init_task);
 	}
-out:
+}
+
+void ps_reparent_children(task_struct *cur)
+{
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	ps_reparent_children_unsafe(cur);
 	spinlock_unlock(&ps_lock, irq);
 }
 
@@ -265,8 +282,7 @@ void ps_stop_terminated_task(void)
 
 void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 {
-	struct rb_node *node;
-	struct rb_node *next;
+	list_entry *entry, *next;
 	list_entry reap_list;
 	int irq;
 
@@ -281,10 +297,10 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 	for (;;) {
 		int active = 0;
 		spinlock_lock(&ps_lock, &irq);
-		for (node = rb_first(&control.mgr_queue); node;
-		     node = rb_next(node)) {
+		list_entry *head = &leader->thread->members;
+		for (entry = head->next; entry != head; entry = entry->next) {
 			task_struct *task =
-				(rb_entry(node, task_schedule, mgr_rb)->task);
+				container_of(entry, task_schedule, thread_list)->task;
 			if (task != leader &&
 			    task->thread->tgid == leader->thread->tgid &&
 			    task->life->type == ps_user) {
@@ -300,10 +316,11 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 	}
 
 	spinlock_lock(&ps_lock, &irq);
-	for (node = rb_first(&control.mgr_queue); node; node = next) {
+	list_entry *head = &leader->thread->members;
+	for (entry = head->next; entry != head; entry = next) {
 		task_struct *task =
-			(rb_entry(node, task_schedule, mgr_rb)->task);
-		next = rb_next(node);
+			container_of(entry, task_schedule, thread_list)->task;
+		next = entry->next;
 
 		if (task == leader)
 			continue;
@@ -319,8 +336,9 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 		timer_disarm_unsafe(task);
 		ps_futex_remove_task_locked(task);
 		list_remove_entry(&task->sched->ps_list);
-		ps_remove_mgr_unsafe(task);
-		task->sched->status = ps_dying;
+		ps_mark_dying_unsafe(task);
+		if (task->life->fork_flag & FORK_FLAG_THREAD)
+			ps_remove_mgr_unsafe(task);
 
 		list_insert_tail(&reap_list, &task->sched->ps_list);
 	}
@@ -332,7 +350,6 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 				 ->task);
 
 		list_remove_entry(&task->sched->ps_list);
-		ps_reparent_children(task);
 		if (task->life->fork_flag & FORK_FLAG_THREAD) {
 			ps_reap_group_thread(task);
 		} else {
@@ -402,12 +419,19 @@ void do_exit(unsigned encoded_status)
 		shutdown();
 	}
 
-	ps_reparent_children(cur);
-
 	if (cur->life->fork_flag & FORK_FLAG_THREAD) {
 		int irq;
 		spinlock_lock(&ps_lock, &irq);
+		task_struct *leader = ps_find_process_unsafe(cur->thread->tgid);
 		ps_remove_mgr_unsafe(cur);
+		if (!cur->thread->live_tasks && leader && leader != cur &&
+		    leader->life->exit_ready) {
+			task_struct *parent = ps_find_process_unsafe(leader->life->ppid);
+			if (parent) {
+				ps_queue_group_signal_unsafe(parent, SIGCHLD);
+				ps_wake_parent_waiters_unsafe(parent);
+			}
+		}
 
 		cur->life->psid = 0xffffffff;
 		cur->sched->status = ps_dying;
@@ -444,7 +468,6 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 {
 	task_struct *cur = CURRENT_TASK();
 	task_struct *task = NULL;
-	list_entry *dying_task_entry;
 	int ret = -1;
 	int irq;
 
@@ -454,27 +477,12 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 	for (;;) {
 		task = NULL;
 		spinlock_lock(&ps_lock, &irq);
-		dying_task_entry = cur->life->dying_queue.next;
-		while (dying_task_entry != &cur->life->dying_queue) {
-			task = (container_of(dying_task_entry, task_schedule,
-					     ps_list)
-					->task);
-			dying_task_entry = dying_task_entry->next;
-			if (task->life->ppid != cur->life->psid)
-				continue;
-			if (task->sched->on_cpu)
-				continue;
-
-			if (pid && pid != task->life->psid)
-				continue;
-
+		task = find_exited_child_unsafe(cur, pid, 0, 0);
+		if (task) {
 			ret = task->life->psid;
 			if (status)
 				*status = task->life->exit_status;
-
-			list_remove_entry(&task->sched->ps_list);
-			ps_remove_mgr_unsafe(task);
-			cur->life->nchildren--;
+			detach_exited_child_unsafe(task);
 			goto done;
 		}
 
@@ -537,8 +545,6 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 {
 	task_struct *cur = CURRENT_TASK();
 	task_struct *task = NULL;
-	list_entry *dying_task_entry;
-	struct rb_node *node;
 	int ret = -1;
 	int irq;
 	int has_group_child = 0;
@@ -552,33 +558,20 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		has_group_child = 0;
 		spinlock_lock(&ps_lock, &irq);
 
-		dying_task_entry = cur->life->dying_queue.next;
-		while (dying_task_entry != &cur->life->dying_queue) {
-			task = (container_of(dying_task_entry, task_schedule,
-					     ps_list)
-					->task);
-			dying_task_entry = dying_task_entry->next;
-			if (task->life->ppid != cur->life->psid ||
-			    !task->execution || task->thread->group_id != pgrp)
-				continue;
-
-			has_group_child = 1;
+		task = find_exited_child_unsafe(cur, 0, pgrp, 1);
+		if (task) {
 			ret = task->life->psid;
 			if (status)
 				*status = task->life->exit_status;
-
-			list_remove_entry(&task->sched->ps_list);
-			ps_remove_mgr_unsafe(task);
-			cur->life->nchildren--;
+			detach_exited_child_unsafe(task);
 			goto done;
 		}
 
-		for (node = rb_first(&control.mgr_queue); node;
-		     node = rb_next(node)) {
-			task_struct *st =
-				(rb_entry(node, task_schedule, mgr_rb)->task);
+		list_entry *head = &cur->thread->children;
+		for (list_entry *entry = head->next; entry != head; entry = entry->next) {
+			task_struct *st = container_of(entry, task_schedule, child_list)->task;
 
-			if (st->life->ppid != cur->life->psid ||
+			if (!is_child_unsafe(cur, st) ||
 			    !st->execution || st->thread->group_id != pgrp)
 				continue;
 			has_group_child = 1;

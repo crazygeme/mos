@@ -59,6 +59,43 @@ tss_struct *tss_address = 0; /* alias used by reset_tss and ps_sched.c */
 /*
  * Static helpers — manager queue
  */
+static void ps_unlink_child_unsafe(task_struct *task)
+{
+	if (!list_is_empty(&task->sched->creator_list)) {
+		list_remove_entry(&task->sched->creator_list);
+		list_init(&task->sched->creator_list);
+		if (task->life->creator && task->life->creator->life->nchildren)
+			task->life->creator->life->nchildren--;
+	}
+	list_remove_entry(&task->sched->child_list);
+	list_init(&task->sched->child_list);
+	task->life->creator = NULL;
+	task->life->parent_group = NULL;
+}
+
+void ps_set_parent_unsafe(task_struct *task, task_struct *parent)
+{
+	ps_unlink_child_unsafe(task);
+	task->life->ppid = parent->thread->tgid;
+	if (task->life->fork_flag & FORK_FLAG_THREAD)
+		return;
+	task->life->creator = parent;
+	task->life->parent_group = parent->thread;
+	list_insert_tail(&parent->thread->children, &task->sched->child_list);
+	list_insert_tail(&parent->life->children, &task->sched->creator_list);
+	parent->life->nchildren++;
+}
+
+void ps_mark_dying_unsafe(task_struct *task)
+{
+	if (task->sched->live_member) {
+		task->sched->live_member = 0;
+		task->thread->live_tasks--;
+	}
+	task->sched->status = ps_dying;
+	ps_reparent_children_unsafe(task);
+}
+
 void ps_add_mgr_unsafe(task_struct *task)
 {
 	struct rb_root *root = &control.mgr_queue;
@@ -80,6 +117,16 @@ void ps_add_mgr_unsafe(task_struct *task)
 	rb_link_node(&task->sched->mgr_rb, parent, link);
 	rb_insert_color(&task->sched->mgr_rb, root);
 	control.ps_count++;
+	list_insert_tail(&task->thread->members, &task->sched->thread_list);
+	task->sched->live_member = 1;
+	task->thread->live_tasks++;
+	if (!(task->life->fork_flag & FORK_FLAG_THREAD)) {
+		task_struct *parent = task->life->creator;
+		if (!parent && task->life->ppid != task->life->psid)
+			parent = ps_find_process_unsafe(task->life->ppid);
+		if (parent)
+			ps_set_parent_unsafe(task, parent);
+	}
 }
 
 void ps_add_mgr(task_struct *task)
@@ -94,11 +141,16 @@ void ps_remove_mgr_unsafe(task_struct *task)
 {
 	ps_alarm_disarm_unsafe(task);
 	if (!RB_EMPTY_NODE(&task->sched->mgr_rb)) {
+		if (task->sched->live_member)
+			ps_mark_dying_unsafe(task);
 		rb_erase(&task->sched->mgr_rb, &control.mgr_queue);
 		RB_CLEAR_NODE(&task->sched->mgr_rb);
+		list_remove_entry(&task->sched->thread_list);
+		list_init(&task->sched->thread_list);
+		ps_unlink_child_unsafe(task);
+		control.ps_count--;
+		ps_id_free(task->life->psid);
 	}
-	control.ps_count--;
-	ps_id_free(task->life->psid);
 }
 
 void ps_remove_mgr(task_struct *task)
@@ -328,8 +380,8 @@ void ps_put_process_ref(task_struct *task)
 	__sync_fetch_and_sub(&current->sched->vm_lock_depth, 1);
 	if (!task->sched->enumeration_refs && task->sched->status == ps_dying) {
 		task_struct *parent = ps_find_process_unsafe(task->life->ppid);
-		if (parent && parent->sched->status == ps_waiting)
-			ps_put_to_ready_queue_unsafe(parent);
+		if (parent)
+			ps_wake_parent_waiters_unsafe(parent);
 	}
 	spinlock_unlock(&ps_lock, irq);
 }

@@ -63,6 +63,8 @@ typedef struct _signal_queue_entry {
 typedef struct _task_thread {
 	ref_count_t ref;
 	unsigned tgid, group_id, session_id;
+	unsigned live_tasks;
+	list_entry members, children;
 	ps_tick_t user_tickets, kernel_tickets, child_utime, child_stime;
 	rlimit_t rlimits[RLIM_NLIMITS];
 	sigset_t sig_pending;
@@ -148,10 +150,12 @@ typedef struct _task_schedule {
 	task_struct *task;
 	uintptr_t switch_sp;
 	unsigned on_cpu, terminate_requested, enumeration_refs;
+	unsigned live_member;
 	unsigned net_core_depth, vm_lock_depth;
 	int sched_level, priority, remain_ticks;
 	ps_status status;
 	list_entry ps_list;
+	list_entry thread_list, child_list, creator_list;
 	struct rb_node mgr_rb;
 } task_schedule;
 
@@ -171,6 +175,10 @@ typedef struct _task_lifecycle {
 	unsigned psid, ppid;
 	unsigned exit_status, exit_signal, pdeath_signal;
 	unsigned nchildren, fork_flag;
+	unsigned exit_ready;
+	struct _task_struct *creator;
+	task_thread *parent_group;
+	list_entry children;
 	unsigned stop_signal, stop_report_pending;
 	process_fn fn;
 	void *param;
@@ -304,6 +312,7 @@ void ps_put_to_ready_queue_unsafe(task_struct *task);
 void ps_put_to_ready_queue(task_struct *task);
 
 void ps_put_to_dying_queue_unsafe(task_struct *task);
+void ps_wake_parent_waiters_unsafe(task_struct *parent);
 void ps_put_to_dying_queue(task_struct *task);
 
 void ps_put_to_wait_queue_unsafe(task_struct *task, list_entry *which_list);

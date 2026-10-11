@@ -11,6 +11,7 @@ cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
 #include <signal.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 static struct {
@@ -44,7 +45,8 @@ static void reader(int index)
 }
 int main(void)
 {
-    alarm(120);
+    /* Bound stalled progress while retaining all concurrent lookup rounds. */
+    alarm(30);
     shared = mmap(NULL, sizeof(*shared), PROT_READ | PROT_WRITE,
                   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     assert(shared != MAP_FAILED);
@@ -52,10 +54,16 @@ int main(void)
     shared->finished = 0;
     for (int i = 0; i < 4; i++) shared->reads[i] = 0;
     pid_t readers[4];
+    pid_t parent = getpid();
     for (int i = 0; i < 4; i++) {
         readers[i] = fork();
         assert(readers[i] >= 0);
-        if (!readers[i]) { reader(i); _exit(0); }
+        if (!readers[i]) {
+            assert(prctl(PR_SET_PDEATHSIG, SIGKILL) == 0);
+            if (getppid() != parent) _exit(0);
+            reader(i);
+            _exit(0);
+        }
     }
     for (int i = 0; i < 500; i++) {
         pid_t pid = fork();
@@ -64,11 +72,13 @@ int main(void)
         publish(&shared->selected, pid);
         int status;
         assert(waitpid(pid, &status, 0) == pid && status == 0);
+        alarm(30);
     }
     publish(&shared->finished, 1);
     for (int i = 0; i < 4; i++) {
         int status;
         assert(waitpid(readers[i], &status, 0) == readers[i] && status == 0);
+        alarm(30);
     }
     unsigned reads = 0;
     for (int i = 0; i < 4; i++) reads += shared->reads[i];

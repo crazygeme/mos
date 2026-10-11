@@ -141,51 +141,35 @@ task_struct *ps_get_next_task_unsafe(void)
  * Public — queue transitions
  */
 
-/* Move task to the dying queue and notify its parent.
- * Status is set to ps_dying only after enqueueing so a preemption between the
- * two steps cannot lose the task (the scheduler skips ps_dying tasks). */
+void ps_wake_parent_waiters_unsafe(task_struct *parent)
+{
+	list_entry *head = &parent->thread->members;
+	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
+		task_struct *peer = container_of(entry, task_schedule, thread_list)->task;
+		if (peer->sched->status == ps_waiting &&
+		    peer->wait->wait_interruptible)
+			ps_put_to_ready_queue_unsafe(peer);
+	}
+}
+
+/* Publish the waitable exit only after its parent queue is linked. */
 void ps_put_to_dying_queue_unsafe(task_struct *task)
 {
 	task_struct *parent = ps_find_process_unsafe(task->life->ppid);
-	task_struct *init_process = ps_find_process_unsafe(1);
-	list_entry *entry;
-	int moved_children = 0;
-
-	while (!list_is_empty(&task->life->dying_queue)) {
-		task_struct *child;
-
-		entry = list_remove_head(&task->life->dying_queue);
-		child = (container_of(entry, task_schedule, ps_list)->task);
-		if (init_process) {
-			child->life->ppid = init_process->life->psid;
-			list_insert_tail(&init_process->life->dying_queue,
-					 entry);
-			moved_children = 1;
-		}
+	if (!parent || parent == task || !parent->thread->live_tasks)
+		parent = ps_find_process_unsafe(1);
+	if (!parent) {
+		klog("Parent process unavailable: %u\n", task->life->ppid);
+	} else if (task->life->parent_group != parent->thread) {
+		ps_set_parent_unsafe(task, parent);
 	}
-	if (moved_children && init_process && init_process->sighand) {
-		ps_queue_group_signal_unsafe(init_process, SIGCHLD);
-		if (init_process->sched->status == ps_waiting)
-			ps_put_to_ready_queue_unsafe(init_process);
-	}
-
-	if (!parent || parent->sched->status == ps_dying) {
-		parent = init_process;
-		if (parent)
-			task->life->ppid = parent->life->psid;
-	}
-
-	if (!parent || parent->sched->status == ps_dying)
-		klog("Can't find parent process %d or 1\n", task->life->ppid);
 
 	list_remove_entry(&task->sched->ps_list);
-
 	if (task->life->psid != 0xffffffff && parent)
-		list_insert_tail(&parent->life->dying_queue,
-				 &task->sched->ps_list);
-
+		list_insert_tail(&parent->life->dying_queue, &task->sched->ps_list);
 	ps_alarm_disarm_unsafe(task);
-	task->sched->status = ps_dying;
+	task->life->exit_ready = 1;
+	ps_mark_dying_unsafe(task);
 }
 
 void ps_put_to_dying_queue(task_struct *task)
@@ -203,8 +187,7 @@ void ps_put_to_dying_queue(task_struct *task)
 		/* Queue the requested exit signal before waking the parent so the
 		 * already pending when wait() returns to userspace. */
 		ps_queue_group_signal_unsafe(parent, task->life->exit_signal);
-		if (parent->sched->status == ps_waiting)
-			ps_put_to_ready_queue_unsafe(parent);
+		ps_wake_parent_waiters_unsafe(parent);
 	}
 out:
 	spinlock_unlock(&ps_lock, irq);

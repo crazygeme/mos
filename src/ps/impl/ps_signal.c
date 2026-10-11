@@ -81,10 +81,9 @@ void ps_queue_group_signal_unsafe(task_struct *task, int sig)
 		__atomic_fetch_and(&group->sig_pending, ~(1UL << (SIGCONT - 1)),
 				   __ATOMIC_RELEASE);
 	__atomic_fetch_or(&group->sig_pending, bit, __ATOMIC_RELEASE);
-	for (struct rb_node *node = rb_first(&control.mgr_queue); node;
-	     node = rb_next(node)) {
-		task_struct *peer =
-			(rb_entry(node, task_schedule, mgr_rb)->task);
+	list_entry *head = &group->members;
+	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
+		task_struct *peer = container_of(entry, task_schedule, thread_list)->task;
 		if (peer->execution && peer->thread == group && peer->sighand &&
 		    peer->sched->status != ps_dying)
 			wake_signal_target(peer, sig);

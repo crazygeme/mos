@@ -215,44 +215,72 @@ Steps:
 ## 7. Exit: `do_exit`
 
 ```c
-void do_exit(unsigned status);
+void do_exit(unsigned encoded_status);
 ```
 
-1. If psid == 0: `DIE()` (kernel bug).
-2. If psid == 1 (init): `shutdown()`.
-3. If vfork child: `cond_notify(&vfork_event)` (unblocks parent).
-4. Flush dirty file-backed pages (`vm_flush_all_dirty`).
-5. Close all open file descriptors.
-6. Tear down user address space (`vm_destroy` + unmap page directory).
-7. Reparent all children to init (psid 1); send SIGCHLD to init if any are zombies.
-8. `ps_put_to_dying_queue(current)` — sets status = `ps_dying`, sends SIGCHLD to parent.
-9. `task_sched()` — switch away; this task never runs again.
+`task_thread` owns a member list, a child-process list, and a count of living
+members. Each child records the parent TGID in `task_lifecycle.ppid` and links
+into the parent's group child list. A separate creator list supports
+`PR_SET_PDEATHSIG` for the thread that created the child.
+
+Exit cancels I/O waits, clears the registered child TID, releases robust futexes,
+flushes dirty shared mappings, and drops file-table references. Under `ps_lock`,
+`ps_mark_dying_unsafe()` marks the task dead, updates the living-member count,
+and processes creator-death signals. An ordinary thread exit preserves each
+child's PPid. The final living member transfers the group's remaining children
+to PID 1 and moves waitable zombies into PID 1's exit queue. Notification and
+queue updates occur within the same critical section.
+
+`exit_group` enumerates the group's member list, stops sibling tasks, and waits
+for remote execution and VM transactions to finish before releasing their
+resources. The process leader remains registered with its PID and encoded exit
+status until reaping. A leader that exits while sibling threads remain alive
+becomes waitable only after the final sibling exits.
+
+Exited ordinary threads enter a deferred cleanup queue. Their kernel stacks
+are released after they leave all CPUs and process-enumeration references have
+been dropped. A waitable process retains its resource references until
+`ps_reap_task()` records usage and releases the task. PID 1 exit invokes system
+shutdown; test mode exits QEMU with the encoded test status.
 
 ---
 
 ## 8. Wait: `do_waitpid`
 
 ```c
-int do_waitpid(int pid, unsigned *status, int options, struct rusage *ru);
+int do_waitpid(unsigned pid, int *status, int options, rusage *usage);
+int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *usage);
 ```
 
-Polling loop (yields CPU between attempts):
+Any member of a parent thread group may wait for its child processes. Thread
+members are excluded from the child-process list. PID selection uses the
+management tree for ownership checks; exit and process-group selection inspect
+only the group's child list.
 
 ```
-loop:
-  task_sched()           // yield
-  scan dying_queue:
-    match: parent == current AND (pid==0 OR psid==pid)
-      → reap child, copy exit status + rusage, return psid
-  if WNOHANG: return 0
-  check for signals:
-    non-SIGCHLD + unmasked → return -EINTR
-  if no children remain: return -ECHILD
-  ps_put_to_wait_queue(current)   // block until SIGCHLD wakes us
-  goto loop
+loop with ps_lock held:
+  scan the group child list for a matching waitable process:
+    require exit_ready, no executing CPU, and no living group members
+    detach the child, preserve status, release the lock, reap, return PID
+  report a matching pending stop when WUNTRACED or ptrace permits it
+  if no matching child exists: return -ECHILD
+  if an unmasked non-SIGCHLD signal interrupts the wait: return -EINTR
+  if WNOHANG: return 0 without modifying status or reaping another child
+  enqueue the caller as an interruptible waiter and release ps_lock
+  schedule and repeat
 ```
 
-**Reaping** (`ps_reap_task`): records usage, drops resource references, and frees task-private blocks and the kernel stack. Shared resources survive until their final reference is released.
+Exit notification wakes waiting members of the parent group, including waiters
+that block or ignore `SIGCHLD`. A task leaving its CPU also wakes the parent
+waiters so a child observed on a CPU can subsequently be reaped. Resource
+references shared with another task remain valid until their final release.
+
+`ProcessLifecycle` kernel tests cover ownership, member counts, creator-death
+signals, atomic final-exit adoption, wait selection, and PID retention.
+`test/thread_group_wait.sh` validates these operations with running clone
+threads, process-group waits, competing waiters, fatal signals, orphan reaping,
+and shared-pipe closure. Both suites are registered by the standard
+`./run.sh kvm test` workflow.
 
 ---
 
@@ -342,7 +370,7 @@ exit(status)
   └─ ps_put_to_dying_queue → SIGCHLD to parent → task_sched()
 
 waitpid(pid)
-  └─ poll dying_queue → reap → free task memory → return exit status
+  └─ scan group children → reap → free task memory → return exit status
 
 signal delivery (on return to user mode)
   └─ push signal frame on user stack → jmp to handler

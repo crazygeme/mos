@@ -110,7 +110,9 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		clone_prepare_thread_tls(cur, task, cur_intr_frame->gs);
 	}
 
-	task->life->ppid = thread_group ? cur->life->ppid : cur->life->psid;
+	task->life->ppid = thread_group ? cur->life->ppid : cur->thread->tgid;
+	if (thread_group)
+		task->life->creator = NULL;
 	task->thread->tgid = thread_group ? cur->thread->tgid :
 					    task->life->psid;
 	task->life->exit_signal = exit_signal;

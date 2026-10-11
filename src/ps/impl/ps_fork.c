@@ -52,7 +52,6 @@ static void ps_run()
 		fn(task->life->param);
 
 	ps_put_to_dying_queue(task);
-	ps_remove_mgr(task);
 	task_sched();
 }
 
@@ -360,11 +359,19 @@ task_struct *fork_alloc_child(task_struct *cur)
 				    (uintptr_t)task_intr_frame);
 	task_intr_frame->eax = 0;
 
-	task->life->ppid = cur->life->psid;
+	task->life->ppid = cur->thread->tgid;
+	task->life->creator = cur;
+	task->life->parent_group = NULL;
+	task->life->exit_ready = 0;
 	task->life->exit_signal = SIGCHLD;
 	task->life->nchildren = 0;
 	task->execution->io_bitmap = NULL;
 	list_init(&task->sched->ps_list);
+	list_init(&task->sched->thread_list);
+	list_init(&task->sched->child_list);
+	list_init(&task->sched->creator_list);
+	list_init(&task->life->children);
+	task->sched->live_member = 0;
 	list_init(&task->life->dying_queue);
 	list_init(&task->wait->io_files);
 	RB_CLEAR_NODE(&task->sched->mgr_rb);
@@ -448,7 +455,6 @@ void fork_enqueue(task_struct *cur, task_struct *task)
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	cur->life->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
@@ -464,7 +470,6 @@ void ps_enqueue_child_first(task_struct *cur, task_struct *task)
 	int irq;
 
 	spinlock_lock(&ps_lock, &irq);
-	cur->life->nchildren++;
 	ps_put_to_ready_queue_unsafe(task);
 	list_remove_entry(&task->sched->ps_list);
 	list_insert_head(&control.ready_queue[task->sched->priority],

@@ -593,11 +593,14 @@ static void update_shift_state(unsigned scancode, int release)
 	}
 }
 
+static int kb_set_leds(unsigned leds);
+
 static const chardev_keyboard_ops keyboard_control_ops = {
 	.get_map = kbd_get_kbentry,
 	.set_map = kbd_set_kbentry,
 	.get_string = kbd_get_kbsentry,
 	.set_string = kbd_set_kbsentry,
+	.set_leds = kb_set_leds,
 };
 
 static int ps2_keyboard_probe(unsigned port)
@@ -625,6 +628,43 @@ static void kb_receive_byte(unsigned char code)
 {
 	if (kb_scancodes)
 		cyb_put_record(kb_scancodes, &code, 1);
+}
+
+/* Command replies are consumed separately from keyboard scancodes. */
+static int kb_send_command_byte(unsigned char byte)
+{
+	unsigned retry;
+	for (retry = 0; retry < 3; retry++) {
+		unsigned pending;
+		unsigned char reply;
+		int ret = ps2_write_byte(PS2_PORT_KEYBOARD, byte);
+		if (ret < 0)
+			return ret;
+		for (pending = 0; pending < 64; pending++) {
+			ret = ps2_read_reply(PS2_PORT_KEYBOARD, &reply, 100000);
+			if (ret < 0)
+				return ret;
+			if (reply == 0xfa)
+				return 0;
+			if (reply == 0xfe)
+				break;
+			kb_receive_byte(reply);
+		}
+	}
+	return -EIO;
+}
+
+static int kb_set_leds(unsigned leds)
+{
+	int ret;
+	if (leds & ~7u)
+		return -EINVAL;
+	ps2_command_begin_preserve(PS2_PORT_KEYBOARD);
+	ret = kb_send_command_byte(0xed);
+	if (!ret)
+		ret = kb_send_command_byte((unsigned char)leds);
+	ps2_command_end(PS2_PORT_KEYBOARD);
+	return ret;
 }
 
 static void kb_worker(void *param)

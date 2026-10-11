@@ -20,6 +20,7 @@
 #include <mm/mmu.h>
 #include <mm/phymm.h>
 #include <ps/ps.h>
+#include <int/int.h>
 #include <driver/drm/sysfs.h>
 
 static void gpu_register(void);
@@ -90,6 +91,10 @@ struct gpu_fb {
 static volatile struct gpu_common *gpu_common;
 static volatile struct virtio_gpu_config *gpu_config;
 static volatile uint16_t *gpu_notify;
+static volatile uint8_t *gpu_isr;
+static unsigned gpu_irq = ~0U;
+static spinlock_t gpu_wait_lock;
+static task_struct *gpu_waiter;
 static struct gpu_desc *gpu_desc;
 static volatile struct gpu_avail *gpu_avail;
 static volatile struct gpu_used *gpu_used;
@@ -262,13 +267,60 @@ static unsigned gpu_chain(void *data, unsigned length, unsigned first,
 	return n;
 }
 
+static void gpu_interrupt(intr_frame *frame)
+{
+	int irq;
+	(void)frame;
+	if (!gpu_isr || !(*gpu_isr & 1))
+		return;
+	spinlock_lock(&gpu_wait_lock, &irq);
+	if (gpu_waiter) {
+		ps_put_to_ready_queue(gpu_waiter);
+		/* Interrupt exit must not defer presentation until a timeslice ends. */
+		if (ps_enabled() && gpu_waiter != CURRENT_TASK())
+			CURRENT_TASK()->sched->remain_ticks = 0;
+	}
+	spinlock_unlock(&gpu_wait_lock, irq);
+}
+
+/* Enroll under the interrupt lock and recheck the used ring to avoid a
+ * completion arriving between the readiness check and the sleep. */
+static void gpu_wait_completion(void)
+{
+	task_struct *task = CURRENT_TASK();
+	uint64_t now;
+	int irq, sleeping = 0;
+	spinlock_lock(&gpu_wait_lock, &irq);
+	now = time_now_us();
+	if (gpu_used->idx == gpu_index && now < gpu_deadline) {
+		unsigned ms =
+			gpu_irq != ~0U ?
+				(unsigned)((gpu_deadline - now + 999) / 1000) :
+				1;
+		/* Thread-group exit must retain the task while the IRQ owns it. */
+		__sync_fetch_and_add(&task->sched->vm_lock_depth, 1);
+		ps_prepare_timed_wait(task, ms);
+		gpu_waiter = task;
+		sleeping = 1;
+	}
+	spinlock_unlock(&gpu_wait_lock, irq);
+	if (!sleeping)
+		return;
+	task_sched();
+	spinlock_lock(&gpu_wait_lock, &irq);
+	gpu_waiter = NULL;
+	spinlock_unlock(&gpu_wait_lock, irq);
+	ps_finish_timed_wait(task);
+	__sync_fetch_and_sub(&task->sched->vm_lock_depth, 1);
+}
+
 /* The control queue reuses pinned DMA buffers. A pending fence owns the
  * buffers until completion, including across nonblocking resource queries. */
 static int gpu_complete(int wait)
 {
 	struct virtio_gpu_ctrl_hdr *reply = gpu_dma_output;
 	unsigned used_len;
-	uint64_t yield_at = time_now_us() + 100;
+	uint64_t spin_until = time_now_us() + 50;
 	if (!gpu_pending)
 		return 0;
 	while (gpu_used->idx == gpu_index) {
@@ -282,11 +334,10 @@ static int gpu_complete(int wait)
 		}
 		if (!wait)
 			return -EBUSY;
-		/* Keep input and other tasks runnable during host GPU waits. */
+		/* Short commands retain a bounded spin; longer waits sleep. */
 		if (ps_enabled() && sched_is_enabled() &&
-		    time_now_us() >= yield_at) {
-			task_sched();
-			yield_at = time_now_us() + 100;
+		    int_is_intr_enabled() && time_now_us() >= spin_until) {
+			gpu_wait_completion();
 		} else {
 			PAUSE();
 		}
@@ -1954,6 +2005,10 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 	gpu_common = NULL;
 	gpu_config = NULL;
 	gpu_notify = NULL;
+	gpu_isr = NULL;
+	gpu_irq = ~0U;
+	gpu_waiter = NULL;
+	spinlock_init(&gpu_wait_lock);
 	gpu_index = 0;
 	gpu_pending = gpu_response_size = gpu_mode_count = 0;
 	rmutex_init(&gpu_lock);
@@ -1978,6 +2033,9 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 			if (type == 4 && length >= sizeof(*gpu_config))
 				gpu_config = gpu_pci_map(resources, bar, offset,
 							 sizeof(*gpu_config));
+			if (type == 3 && length >= 1)
+				gpu_isr =
+					gpu_pci_map(resources, bar, offset, 1);
 			if (type == 2 &&
 			    pci_read_field(gpu_pci, cap + 2, 1) >= 20) {
 				notify_base = gpu_pci_map(resources, bar,
@@ -2031,6 +2089,19 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 	gpu_avail = avail;
 	gpu_used = used;
 	gpu_avail->flags = 1;
+	if (gpu_isr) {
+		unsigned irq = pci_read_field(gpu_pci, PCI_INTERRUPT_LINE, 1);
+		if (irq >= 3 && irq < 16 &&
+		    !int_register_irq(irq, gpu_interrupt)) {
+			gpu_irq = irq;
+			(void)*gpu_isr;
+			gpu_avail->flags = 0;
+			pci_write_field(gpu_pci, PCI_COMMAND, 2,
+					pci_read_field(gpu_pci, PCI_COMMAND,
+						       2) &
+						~(1U << 10));
+		}
+	}
 	gpu_common->queue_desc = VIRT_TO_PHY(desc);
 	gpu_common->queue_driver = VIRT_TO_PHY(avail);
 	gpu_common->queue_device = VIRT_TO_PHY(used);
@@ -2053,6 +2124,10 @@ fail:
 		while (gpu_common->device_status)
 			PAUSE();
 	}
+	if (gpu_irq != ~0U)
+		int_unregister_irq(gpu_irq, gpu_interrupt);
+	gpu_irq = ~0U;
+	gpu_isr = NULL;
 	free(resources);
 	gpu_free_pages(gpu_dma_input, GPU_MAX_COMMAND);
 	gpu_free_pages(gpu_dma_output, GPU_MAX_COMMAND);

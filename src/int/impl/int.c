@@ -26,6 +26,51 @@ static void pic_end_of_interrupt(int irq)
 }
 
 static int_callback in_callbacks[IDT_SIZE];
+#define SHARED_IRQ_HANDLERS 4
+static int_callback irq_callbacks[16][SHARED_IRQ_HANDLERS];
+
+static int irq_has_handlers(unsigned irq)
+{
+	unsigned i;
+	for (i = 0; i < SHARED_IRQ_HANDLERS; i++)
+		if (__atomic_load_n(&irq_callbacks[irq][i], __ATOMIC_ACQUIRE))
+			return 1;
+	return 0;
+}
+
+int int_register_irq(unsigned irq, int_callback fn)
+{
+	unsigned i;
+	if (irq >= 16 || !fn)
+		return -EINVAL;
+	for (i = 0; i < SHARED_IRQ_HANDLERS; i++) {
+		int_callback expected = NULL;
+		if (__atomic_compare_exchange_n(
+			    &irq_callbacks[irq][i], &expected, fn, 0,
+			    __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
+			arch_interrupt_set_gate(
+				INT_VECTOR_IRQ0 + irq,
+				intr_stubs[INT_VECTOR_IRQ0 + irq], 0, 0);
+			return 0;
+		}
+	}
+	return -ENOSPC;
+}
+
+void int_unregister_irq(unsigned irq, int_callback fn)
+{
+	unsigned i;
+	if (irq >= 16 || !fn)
+		return;
+	for (i = 0; i < SHARED_IRQ_HANDLERS; i++) {
+		int_callback expected = fn;
+		__atomic_compare_exchange_n(&irq_callbacks[irq][i], &expected,
+					    NULL, 0, __ATOMIC_RELEASE,
+					    __ATOMIC_RELAXED);
+	}
+	if (!in_callbacks[INT_VECTOR_IRQ0 + irq] && !irq_has_handlers(irq))
+		arch_interrupt_set_gate(INT_VECTOR_IRQ0 + irq, 0, 0, 0);
+}
 
 void int_register(int vec_no, int_callback fn, int is_trap, int dpl)
 {
@@ -46,7 +91,9 @@ void int_unregister(int vec_no)
 	}
 
 	in_callbacks[vec_no] = 0;
-	arch_interrupt_set_gate(vec_no, 0, 0, 0);
+	if (vec_no < INT_VECTOR_IRQ0 || vec_no >= INT_VECTOR_IRQ0 + 16 ||
+	    !irq_has_handlers(vec_no - INT_VECTOR_IRQ0))
+		arch_interrupt_set_gate(vec_no, 0, 0, 0);
 }
 static void intr_maybe_preempt(void)
 {
@@ -126,6 +173,14 @@ void intr_handler(intr_frame *frame)
 		fn(frame);
 
 	if (external) {
+		unsigned i;
+		for (i = 0; i < SHARED_IRQ_HANDLERS; i++) {
+			fn = __atomic_load_n(&irq_callbacks[frame->vec_no -
+							    INT_VECTOR_IRQ0][i],
+					     __ATOMIC_ACQUIRE);
+			if (fn)
+				fn(frame);
+		}
 		pic_end_of_interrupt(frame->vec_no);
 	}
 

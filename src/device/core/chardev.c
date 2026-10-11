@@ -252,3 +252,9 @@ int chardev_keyboard_set_string(const struct kbsentry *entry)
 		       keyboard_ops->set_string(entry) :
 		       -ENODEV;
 }
+int chardev_keyboard_set_leds(unsigned leds)
+{
+	return keyboard_ops && keyboard_ops->set_leds ?
+		       keyboard_ops->set_leds(leds) :
+		       -ENODEV;
+}

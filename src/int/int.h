@@ -50,6 +50,10 @@ void int_register(int vec_no, int_callback fn, int is_trap, int dpl);
 
 void int_unregister(int vec_no);
 
+/* Shared PCI INTx handlers acknowledge only their own device status. */
+int int_register_irq(unsigned irq, int_callback fn);
+void int_unregister_irq(unsigned irq, int_callback fn);
+
 static __attribute__((always_inline)) inline unsigned int_is_intr_enabled(void)
 {
 	unsigned flags;

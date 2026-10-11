@@ -3,6 +3,7 @@
 #include <int/int.h>
 #include <lib/port.h>
 #include <lib/klib.h>
+#include <lib/lock.h>
 #include <errno.h>
 #include <macro.h>
 
@@ -33,6 +34,8 @@ static device_t ports[2] = {
 	{ .bus = DEVICE_BUS_PS2, .address = PS2_PORT_AUX },
 };
 static volatile unsigned command_busy[2];
+static spinlock_t command_lock = SPINLOCK_INITIALIZER;
+static int command_irq[2];
 static unsigned scanned, ports_ready;
 
 static void ps2_receive(unsigned port, unsigned char byte)
@@ -203,12 +206,23 @@ static void ps2_irq(intr_frame *frame)
 	ps2_drain_input();
 }
 
+void ps2_command_begin_preserve(unsigned port)
+{
+	int irq;
+	if (port > PS2_PORT_AUX)
+		return;
+	spinlock_lock(&command_lock, &irq);
+	command_irq[port] = irq;
+	ps2_drain_input();
+	command_busy[port] = 1;
+	BARRIER();
+}
+
 void ps2_command_begin(unsigned port)
 {
 	if (port > PS2_PORT_AUX)
 		return;
-	command_busy[port] = 1;
-	BARRIER();
+	ps2_command_begin_preserve(port);
 	ps2_discard_input(port);
 }
 
@@ -219,6 +233,7 @@ void ps2_command_end(unsigned port)
 	command_busy[port] = 0;
 	BARRIER();
 	ps2_drain_input();
+	spinlock_unlock(&command_lock, command_irq[port]);
 }
 
 const device_t *ps2_device(unsigned port)

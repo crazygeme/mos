@@ -152,8 +152,9 @@ const device_t *device_find(device_bus_t bus, uint32_t address);
 void ps2_scan(void);
 const device_t *ps2_device(unsigned port);
 void ps2_drain_input(void);
-/* The protocol driver serializes command transactions on its port. */
+/* Controller command transactions serialize access to both ports. */
 void ps2_command_begin(unsigned port);
+void ps2_command_begin_preserve(unsigned port);
 void ps2_command_end(unsigned port);
 int ps2_write_byte(unsigned port, unsigned char data);
 int ps2_read_reply(unsigned port, unsigned char *data, int spins);

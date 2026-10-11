@@ -42,10 +42,12 @@ typedef struct {
 	int (*set_map)(const struct kbentry *entry);
 	int (*get_string)(struct kbsentry *entry);
 	int (*set_string)(const struct kbsentry *entry);
+	int (*set_leds)(unsigned leds);
 } chardev_keyboard_ops;
 int chardev_register_keyboard(const chardev_keyboard_ops *ops);
 int chardev_keyboard_get_map(struct kbentry *entry);
 int chardev_keyboard_set_map(const struct kbentry *entry);
 int chardev_keyboard_get_string(struct kbsentry *entry);
 int chardev_keyboard_set_string(const struct kbsentry *entry);
+int chardev_keyboard_set_leds(unsigned leds);
 #endif

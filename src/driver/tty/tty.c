@@ -1903,7 +1903,14 @@ static int tty_fs_ioctl_kdsetled(void *context __attribute__((unused)),
 {
 	file *fp = context;
 	tty_state *state = fp->f_inode->i_private;
-	state->kb_leds = (int)(uintptr_t)buf;
+	unsigned leds = (unsigned)(uintptr_t)buf;
+	int ret;
+	if (leds & ~7u)
+		leds = 0;
+	ret = chardev_keyboard_set_leds(leds);
+	if (ret < 0)
+		return ret;
+	state->kb_leds = (int)leds;
 	return 0;
 }
 

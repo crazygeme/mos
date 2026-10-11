@@ -47,6 +47,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group);
 void fill_statm(proc_buf_t *pb, task_struct *task);
 
 /* files.c */
+void fill_comm(proc_buf_t *pb, task_struct *task);
 void fill_cmdline(proc_buf_t *pb, task_struct *task);
 void fill_environ(proc_buf_t *pb, task_struct *task);
 void fill_maps(proc_buf_t *pb, task_struct *task);

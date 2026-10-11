@@ -3,10 +3,15 @@
 
 #include <arch/config.h>
 
-#define UTS_SYSNAME "Linux"
+#define UTS_SYSNAME "MOS"
 #define UTS_NODENAME "mos"
-#define UTS_RELEASE "2.4.20-8"
-#define UTS_VERSION "#1 Thu Mar 13 17:54:28 EST 2003"
+#ifndef MOS_RELEASE
+#define MOS_RELEASE "0.6_alpha"
+#endif
+#ifndef UTS_RELEASE
+#define UTS_RELEASE "2.4.20-mos-" MOS_RELEASE
+#endif
+#define UTS_VERSION "#1 MOS " MOS_RELEASE
 #define UTS_MACHINE MOS_UTS_MACHINE
 
 #define IDT_SIZE 256

@@ -23,9 +23,12 @@ make ARCH=x64 test-debug        # AMD64 debug test build
 ```
 
 The kernel command line receives `"test"`, which sets `TestControl.test = 1`.
+The RH9 glibc 2.3.2 loader requires a numeric Linux-compatible release prefix.
+The default release is `2.4.20-mos-0.6_alpha`; the MOS tag is selected by the
+Makefile, and the prefix is configured through `KERNEL_ABI_RELEASE`.
 In test mode:
-- `init` launches `test.sh` (the test harness entry point) instead of a login shell.
-- Networking is disabled (replaced by user-mode NAT for isolation).
+- PID 1 executes `/bin/bash -c '/proc/tests/all && /proc/tests/all_script'`.
+- QEMU networking uses user-mode NAT without host TAP setup.
 - When `init` exits, `system_down()` is called and QEMU exits via the debug exit port.  `run.sh` maps the exit code back to the test result.
 
 ---

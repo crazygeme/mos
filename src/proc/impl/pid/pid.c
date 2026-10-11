@@ -8,7 +8,7 @@
  *   common.c  — shared file/dir/symlink constructors, state helpers
  *   vm.c      — VM statistics (vm_get_stats, vm_fill_statm)
  *   status.c  — /status  /stat  /statm
- *   files.c   — /cmdline /environ /maps
+ *   files.c   — /comm /cmdline /environ /maps
  *   fd.c      — /fd/  and  /fd/{N}
  */
 #include "proc_pid.h"
@@ -32,7 +32,7 @@
 
 static const char *const pid_dir_entries[] = {
 	".",	   "..", "status", "stat", "statm", "cmdline", "maps",
-	"environ", "fd", "cwd",	   "exe",  "task",  NULL
+	"environ", "fd", "cwd",	   "exe",  "task",  "comm", NULL
 };
 
 static file *pid_dir_open(task_struct *task, int include_task)
@@ -116,6 +116,8 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		OPEN_TEXT_FILE(fill_statm);
 	if (strcmp(rest, "/cmdline") == 0)
 		OPEN_TEXT_FILE(fill_cmdline);
+	if (strcmp(rest, "/comm") == 0)
+		OPEN_TEXT_FILE(fill_comm);
 	if (strcmp(rest, "/environ") == 0)
 		OPEN_TEXT_FILE(fill_environ);
 	if (strcmp(rest, "/maps") == 0)

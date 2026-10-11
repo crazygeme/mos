@@ -2,6 +2,12 @@ MAINPATH = $(shell pwd)
 export MAINPATH
 MAKEFLAGS += --no-print-directory
 MAKEFLAGS += -j$(shell getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+KERNEL_RELEASE ?= $(if $(wildcard $(MAINPATH)/.git),$(shell git -C $(MAINPATH) describe --tags --abbrev=0 2>/dev/null))
+ifeq ($(strip $(KERNEL_RELEASE)),)
+KERNEL_RELEASE := 0.6_alpha
+endif
+export KERNEL_RELEASE
+KERNEL_ABI_RELEASE ?= 2.4.20
 include $(MAINPATH)/build/config.mk
 TARGET	= kernel
 

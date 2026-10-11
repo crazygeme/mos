@@ -33,6 +33,8 @@ COMMON_CFLAGS = -fno-pie\
 		-I$(MAINPATH)/arch/$(ARCH)\
 		-I$(MAINPATH)\
 		-I$(MAINPATH)/src\
+		-DMOS_RELEASE='"$(KERNEL_RELEASE)"'\
+		-DUTS_RELEASE='"$(KERNEL_ABI_RELEASE)-mos-$(KERNEL_RELEASE)"'\
 		-I$(MAINPATH)/third_party/std\
 		-I$(MAINPATH)/third_party/lwext4/include\
 		-I$(MAINPATH)/third_party/lwip/src/include\

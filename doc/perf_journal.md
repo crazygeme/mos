@@ -5,6 +5,52 @@ measurements, and validation coverage. Entries are ordered by date.
 
 ---
 
+## 2026-10-11 - Small heap allocation and process-launch performance
+
+### Root cause and fix
+
+First-fit searches across mixed-size free lists make allocation cost depend on
+heap fragmentation. A list containing 56-, 64-, 80-, and 96-byte blocks requires
+96-byte requests to traverse undersized entries. Hundreds of such entries add
+repeated pointer traversal while holding the heap lock, increasing process
+creation and execution overhead.
+
+The kernel heap allocator uses one free-list bin for each 8-byte-aligned total
+block size through 1024 bytes, including the 8-byte header. A bitmap selects an
+exact-size block or the first occupied larger bin without traversing undersized
+blocks. Larger allocations use power-of-two size ranges and may search their
+initial range before selecting a higher bin. Splitting, immediate right
+coalescing, 8-byte payload alignment, and live-allocation accounting are preserved.
+
+### Benchmark
+
+The configured MOS package build version is 149. The benchmark uses an AMD64
+release kernel, QEMU 10.2.1 with KVM and the host CPU model, two virtual CPUs,
+8192 MiB RAM, and an XFCE desktop. Each allocator configuration runs three
+invocations of `bash full.sh` from `/home/ezheng`, producing 30 timed batches
+without monitor sampling:
+
+```sh
+# test.sh
+for i in $(seq 1000); do /bin/true; done
+
+# full.sh
+for i in $(seq 10); do echo $i; time -p ./test.sh; done
+```
+
+| Small-block allocation | Timed batches | Median seconds per 1,000 launches | Range, seconds |
+| --- | ---: | ---: | ---: |
+| First-fit search across mixed sizes | 30 | 0.21 | 0.20–0.23 |
+| Exact-size bins with bitmap selection | 30 | 0.18 | 0.17–0.18 |
+
+The median decreases by 14.3%. A separate 30-batch measurement with a populated
+heap also reports a 0.18-second median and a 0.17–0.18-second range. Each elapsed
+interval includes script startup, `seq`, Bash loop execution, fork, exec, dynamic
+loading, and child waiting. The 0.01-second reporting precision and host
+scheduling limit interpretation; the results do not isolate syscall latency.
+
+---
+
 ## 2026-10-09 - Heap-region growth and process-launch scaling
 
 `sys_brk` extends a compatible anonymous heap tail with `vm_extend_map`, keeping

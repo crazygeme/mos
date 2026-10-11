@@ -148,3 +148,76 @@ KTEST(malloc, quota)
 	EXPECT_EQ(heap_quota, before);
 	return 0;
 }
+
+/* Exercise bitmap word boundaries and the transition to large size ranges. */
+KTEST(malloc, size_bin_boundaries)
+{
+	static const unsigned sizes[] = {
+		1,    16,   17,	  23,	24,   247,  248,  249,	255,
+		256,  263,  264,  503,	504,  511,  512,  519,	520,
+		759,  760,  767,  768,	775,  776,  1007, 1008, 1015,
+		1016, 1017, 1024, 2039, 2040, 2041, 4096,
+	};
+	unsigned char *blocks[sizeof(sizes) / sizeof(sizes[0])];
+	unsigned count = sizeof(sizes) / sizeof(sizes[0]);
+	unsigned before = heap_quota;
+
+	for (unsigned round = 0; round < 3; round++) {
+		for (unsigned i = 0; i < count; i++) {
+			blocks[i] = malloc(sizes[i]);
+			ASSERT_NONNULL(blocks[i]);
+			memset(blocks[i], (char)i, sizes[i]);
+		}
+		for (unsigned i = 0; i < count; i += 2) {
+			free(blocks[i]);
+			blocks[i] = malloc(sizes[i]);
+			ASSERT_NONNULL(blocks[i]);
+			memset(blocks[i], (char)i, sizes[i]);
+		}
+		for (unsigned i = count; i-- > 0;) {
+			for (unsigned j = 0; j < sizes[i]; j++)
+				EXPECT_EQ(blocks[i][j], (unsigned char)i);
+			free(blocks[i]);
+		}
+		EXPECT_EQ(heap_quota, before);
+	}
+	return 0;
+}
+
+/* Retain guards so fragmented 56-byte blocks cannot merge during reuse. */
+KTEST(malloc, fragmented_small_bins)
+{
+	void *holes[128];
+	unsigned char *guards[128];
+	unsigned char *blocks[16];
+	unsigned before = heap_quota;
+
+	for (unsigned i = 0; i < 128; i++) {
+		holes[i] = malloc(48);
+		guards[i] = malloc(16);
+		ASSERT_NONNULL(holes[i]);
+		ASSERT_NONNULL(guards[i]);
+		memset(guards[i], (char)i, 16);
+	}
+	for (unsigned i = 0; i < 128; i++)
+		free(holes[i]);
+	for (unsigned round = 0; round < 3; round++) {
+		for (unsigned i = 0; i < 16; i++) {
+			blocks[i] = malloc(88);
+			ASSERT_NONNULL(blocks[i]);
+			memset(blocks[i], (char)i, 88);
+		}
+		for (unsigned i = 0; i < 16; i++) {
+			for (unsigned j = 0; j < 88; j++)
+				EXPECT_EQ(blocks[i][j], (unsigned char)i);
+			free(blocks[i]);
+		}
+	}
+	for (unsigned i = 128; i-- > 0;) {
+		for (unsigned j = 0; j < 16; j++)
+			EXPECT_EQ(guards[i][j], (unsigned char)i);
+		free(guards[i]);
+	}
+	EXPECT_EQ(heap_quota, before);
+	return 0;
+}

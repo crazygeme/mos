@@ -1,7 +1,7 @@
 /*
  * src/lib/kmalloc.c - Kernel heap allocator
  *
- * Algorithm: segregated explicit free-lists (NUM_BINS power-of-two bins)
+ * Algorithm: segregated explicit free-lists with exact small-size bins
  * with immediate right-coalescing on free().
  *
  * Block layout (allocated):
@@ -20,12 +20,14 @@
  * Each new heap chunk gets an 8-byte epilogue sentinel (ALLOC_BIT only) at
  * its end, which stops right-coalescing at chunk boundaries.
  *
- * Bins: bin[i] holds free blocks of total size in (MIN_BLK<<(i-1), MIN_BLK<<i],
- * bin[NUM_BINS-1] is the catch-all for large blocks.
+ * Blocks through 1024 bytes have one bin per aligned size. Larger blocks use
+ * power-of-two ranges; the final bin holds blocks above 2 GiB.
+ * A bitmap identifies nonempty bins without traversing undersized blocks.
  * Each bin is a circular doubly-linked list with a sentinel head node
  * (list_entry embedded after the header of each free block).
  *
- * Complexity: O(1) free (with right-coalesce), O(k) malloc (k = blocks scanned).
+ * Free is O(1). Small allocation searches a fixed-size bitmap. Large allocation
+ * may scan blocks in its initial size range before selecting a higher bin.
  */
 
 #include <lib/klib.h>
@@ -44,7 +46,11 @@
 #define MIN_BLK (HDR_SZ + 2u * sizeof(void *))
 /* Round up to nearest 8-byte boundary. */
 #define ALIGN8(n) (((unsigned)(n) + 7u) & ~7u)
-#define NUM_BINS 16
+#define SMALL_BIN_MAX 1024u
+#define SMALL_BIN_COUNT ((SMALL_BIN_MAX - MIN_BLK) / 8u + 1u)
+#define LARGE_BIN_COUNT 22u
+#define NUM_BINS (SMALL_BIN_COUNT + LARGE_BIN_COUNT)
+#define BIN_BITMAP_WORDS ((NUM_BINS + 31u) / 32u)
 
 /* ── Heap state ──────────────────────────────────────────────────────────── */
 
@@ -92,14 +98,17 @@ static inline void *free_block(list_entry *link)
 }
 
 static list_entry bins[NUM_BINS];
+static unsigned bin_bitmap[BIN_BITMAP_WORDS];
 
 /* Return the bin index for a block of the given total size. */
-static int size_to_bin(unsigned sz)
+static unsigned size_to_bin(unsigned sz)
 {
-	unsigned bound = MIN_BLK;
-	int i;
+	unsigned bound = SMALL_BIN_MAX * 2u;
+	unsigned i;
 
-	for (i = 0; i < NUM_BINS - 1; i++, bound <<= 1) {
+	if (sz <= SMALL_BIN_MAX)
+		return (sz - MIN_BLK) / 8u;
+	for (i = SMALL_BIN_COUNT; i < NUM_BINS - 1; i++, bound <<= 1) {
 		if (sz <= bound)
 			return i;
 	}
@@ -108,18 +117,39 @@ static int size_to_bin(unsigned sz)
 
 static void fl_insert(void *block)
 {
-	list_insert_head(&bins[size_to_bin(blk_sz(block))], free_link(block));
+	unsigned bin = size_to_bin(blk_sz(block));
+	list_insert_head(&bins[bin], free_link(block));
+	bin_bitmap[bin / 32u] |= 1u << (bin % 32u);
 }
 
 static void fl_remove(void *block)
 {
+	unsigned bin = size_to_bin(blk_sz(block));
 	list_remove_entry(free_link(block));
+	if (list_is_empty(&bins[bin]))
+		bin_bitmap[bin / 32u] &= ~(1u << (bin % 32u));
 }
 
 static void bins_init(void)
 {
 	for (unsigned i = 0; i < NUM_BINS; i++)
 		list_init(&bins[i]);
+	memset(bin_bitmap, 0, sizeof(bin_bitmap));
+}
+
+static unsigned next_nonempty_bin(unsigned start)
+{
+	if (start >= NUM_BINS)
+		return NUM_BINS;
+	unsigned word = start / 32u;
+	unsigned active = bin_bitmap[word] & (~0u << (start % 32u));
+	for (;;) {
+		if (active)
+			return word * 32u + __builtin_ctz(active);
+		if (++word == BIN_BITMAP_WORDS)
+			return NUM_BINS;
+		active = bin_bitmap[word];
+	}
 }
 
 /* ── Heap extension ──────────────────────────────────────────────────────── */
@@ -190,24 +220,30 @@ static void *coalesce_right(void *b)
 
 /*
  * Find and remove a free block with total size >= need.
- * Searches bin[size_to_bin(need)] with first-fit, then higher bins
- * (all blocks there are guaranteed >= need).
+ * Small bins contain only fitting blocks. Large bins require first-fit in
+ * the initial range. Every block in a higher bin fits the request.
  */
 static void *find_free(unsigned need)
 {
-	int start = size_to_bin(need);
-	for (list_entry *node = bins[start].next; node != &bins[start];
-	     node = node->next) {
-		void *block = free_block(node);
-		if (blk_sz(block) >= need) {
-			list_remove_entry(node);
-			return block;
+	unsigned start = size_to_bin(need);
+	unsigned bin;
+	if (start >= SMALL_BIN_COUNT) {
+		for (list_entry *node = bins[start].next; node != &bins[start];
+		     node = node->next) {
+			void *block = free_block(node);
+			if (blk_sz(block) >= need) {
+				fl_remove(block);
+				return block;
+			}
 		}
+		start++;
 	}
-	for (int i = start + 1; i < NUM_BINS; i++)
-		if (!list_is_empty(&bins[i]))
-			return free_block(list_remove_head(&bins[i]));
-	return NULL;
+	bin = next_nonempty_bin(start);
+	if (bin == NUM_BINS)
+		return NULL;
+	void *block = free_block(bins[bin].next);
+	fl_remove(block);
+	return block;
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */

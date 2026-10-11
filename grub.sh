@@ -122,13 +122,11 @@ cleanup_nat() {
 
 trap 'cleanup_nat' EXIT INT TERM
 
+tools/fetch-image.sh "$diskfile" || { echo "Error: failed to prepare disk image" >&2; exit 1; }
+
 make -s -j8 BUILD="$_build" || { echo "Error: build failed" >&2; exit 1; }
 
-if [ ! -f "$diskfile" ]; then
-	unzip redhat9.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
-fi
-
-tools/guest/setup.sh "$kernel_file" || { echo "Error: failed to set up guest disk" >&2; exit 1; }
+MOS_DISK_FILE="$diskfile" tools/guest/setup.sh "$kernel_file" || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
 setup_nat
 

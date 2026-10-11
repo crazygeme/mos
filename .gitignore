@@ -7,6 +7,14 @@ out
 .DS_Store
 *.img
 *.qcow2
+*.img.zip
+*.qcow2.zip
+*.iso
+*.vmdk
+*.vdi
+*.vhd
+*.vhdx
+.image-download.*
 compile_commands.json
 *.code-workspace
 .cache

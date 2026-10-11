@@ -197,17 +197,15 @@ cleanup_nat() {
 	echo "tap: $_TAP_IF removed"
 }
 
+tools/fetch-image.sh "$diskfile" || { echo "Error: failed to prepare disk image" >&2; exit 1; }
+
 if [ "$_test" != "test" ]; then
 	setup_nat
 fi
 
 make -s -j8 ARCH="$_arch" BUILD="$_build" $_test || { echo "Error: build failed" >&2; exit 1; }
 
-if [ ! -f "$diskfile" ]; then
-	unzip redhat9.img.zip || { echo "Error: failed to extract disk image" >&2; exit 1; }
-fi
-
-tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
+MOS_DISK_FILE="$diskfile" tools/guest/setup.sh || { echo "Error: failed to set up guest disk" >&2; exit 1; }
 
 $_priviledge $_qemu -cpu $_cpu \
 	-smp "$_smp" \

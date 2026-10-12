@@ -369,67 +369,49 @@ void phymm_free_user(unsigned page_index)
 	spinlock_unlock(&buddy_lock, irq);
 }
 
-void phymm_cache_budget(unsigned total, unsigned free, unsigned cached,
-			phymm_cache_policy *policy)
+void phymm_cache_budget(unsigned total, unsigned free, unsigned file_cached,
+			unsigned block_cached, phymm_cache_policy *policy)
 {
-	unsigned budget = total / 4;
-	unsigned available = free + cached;
-	unsigned reserve = total / 8;
-
-	if (budget > (0x100000000ULL / PAGE_SIZE))
-		budget = 0x100000000ULL / PAGE_SIZE;
-	if (reserve < (16 * 1024 * 1024 / PAGE_SIZE))
-		reserve = 16 * 1024 * 1024 / PAGE_SIZE;
-	if (reserve > (256 * 1024 * 1024 / PAGE_SIZE))
-		reserve = 256 * 1024 * 1024 / PAGE_SIZE;
-	if (reserve > total / 2)
-		reserve = total / 2;
-	available = available > reserve ? available - reserve : 0;
-	if (budget > available)
-		budget = available;
+	/* Each cache can borrow all unused RAM. Subtract the other cache's
+	 * occupancy so growing one does not force eviction from the other.
+	 * Use wide arithmetic and clamp inconsistent/racing snapshots. */
+	uint64_t available = (uint64_t)free + file_cached + block_cached;
+	if (available > total)
+		available = total;
+	policy->file_pages = available > block_cached ?
+				     available - block_cached : 0;
+	policy->block_pages = available > file_cached ?
+				      available - file_cached : 0;
 	/* Keep one line per cache so filesystem I/O can still make progress. */
-	if (budget < 2)
-		budget = 2;
-	policy->block_pages = budget / 4;
+	if (!policy->file_pages)
+		policy->file_pages = 1;
 	if (!policy->block_pages)
 		policy->block_pages = 1;
 	if (policy->block_pages > MOS_BLOCK_CACHE_MAX_PAGES)
 		policy->block_pages = MOS_BLOCK_CACHE_MAX_PAGES;
-	policy->file_pages = budget - policy->block_pages;
-	policy->reserve_pages = reserve;
+	policy->reserve_pages = 0;
 }
 
 void phymm_get_cache_policy(phymm_cache_policy *policy)
 {
-	unsigned total, free, cached = fs_page_cache_pages;
+	unsigned total, free, file_cached = fs_page_cache_pages;
+	unsigned block_cached = blockdev_cached_pages();
 	int irq;
 
-	cached += blockdev_cached_pages();
 	spinlock_lock(&buddy_lock, &irq);
 	total = managed_pages;
 	free = buddy_free_pages;
 	spinlock_unlock(&buddy_lock, irq);
-	phymm_cache_budget(total, free, cached, policy);
+	phymm_cache_budget(total, free, file_cached, block_cached, policy);
 }
 
 unsigned phymm_reclaim_user_cache(unsigned target_pages)
 {
 	unsigned freed = fs_page_cache_reclaim(target_pages);
-	phymm_cache_policy policy;
-	unsigned free;
-	int irq;
 
-	if (!target_pages)
-		return 0;
-	phymm_get_cache_policy(&policy);
-	spinlock_lock(&buddy_lock, &irq);
-	free = buddy_free_pages;
-	spinlock_unlock(&buddy_lock, irq);
-	/* File pages may remain pinned by mappings; block lines can help too. */
-	if (freed < target_pages || free < policy.reserve_pages)
-		freed += blockdev_reclaim(freed < target_pages ?
-						   target_pages - freed :
-						   target_pages);
+	/* Pinned file pages do not count as reclaimed physical memory. */
+	if (freed < target_pages)
+		freed += blockdev_reclaim(target_pages - freed);
 	return freed;
 }
 

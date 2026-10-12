@@ -122,6 +122,9 @@ static int cached_range_read_page(file *fp, uint64_t offset, void *buffer)
 
 KTEST(mmap, file_cache_cached_range)
 {
+	extern unsigned fs_page_cache_searches, fs_page_cache_hits;
+	unsigned searches = fs_page_cache_searches;
+	unsigned hits = fs_page_cache_hits;
 	file_operations operations = { .read_page = cached_range_read_page };
 	inode node = { .i_ino = 1, .i_pgcache_tag = &node };
 	file fp = { .f_inode = &node, .f_fop = &operations };
@@ -132,6 +135,8 @@ KTEST(mmap, file_cache_cached_range)
 	for (unsigned i = 0; i < 4; i++)
 		EXPECT_EQ(pages[i], 0);
 	EXPECT_EQ(cached_range_reads, 0);
+	EXPECT_EQ(fs_page_cache_searches, searches);
+	EXPECT_EQ(fs_page_cache_hits, hits);
 	first = fs_page_cache_get(&fp, 0x100000000ULL + PAGE_SIZE, NULL);
 	last = fs_page_cache_get(&fp, 0x100000000ULL + 3 * PAGE_SIZE, NULL);
 	ASSERT_NE(first, 0);
@@ -139,7 +144,11 @@ KTEST(mmap, file_cache_cached_range)
 	fs_page_cache_put(first);
 	fs_page_cache_put(last);
 	EXPECT_EQ(cached_range_reads, 2);
+	searches = fs_page_cache_searches;
+	hits = fs_page_cache_hits;
 	fs_page_cache_get_cached_range(&fp, 0x100000000ULL, pages, 4);
+	EXPECT_EQ(fs_page_cache_searches, searches);
+	EXPECT_EQ(fs_page_cache_hits, hits);
 	EXPECT_EQ(pages[0], 0);
 	EXPECT_EQ(pages[1], first);
 	EXPECT_EQ(pages[2], 0);

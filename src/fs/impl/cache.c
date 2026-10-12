@@ -11,6 +11,7 @@ extern unsigned cache_count;
 
 unsigned fs_page_cache_pages = 0;
 unsigned fs_page_cache_max_pages = 0;
+/* Demand reads/faults only; speculative neighbor probes are excluded. */
 unsigned fs_page_cache_searches = 0;
 unsigned fs_page_cache_hits = 0;
 
@@ -87,16 +88,20 @@ static void fs_page_cache_insert(fs_page_cache_entry *entry)
 	rb_insert_color(&entry->rb_node, &fs_page_cache);
 }
 
-static void fs_page_cache_remove(fs_page_cache_entry *evict)
+static unsigned fs_page_cache_remove(fs_page_cache_entry *evict)
 {
 	unsigned page_index = PHY_TO_PAGE_IDX(evict->phy);
+	unsigned freed = 0;
 
 	rb_erase(&evict->rb_node, &fs_page_cache);
-	if (phymm_dereference_page(page_index) == 0)
+	if (phymm_dereference_page(page_index) == 0) {
 		phymm_free_user(page_index);
+		freed = 1;
+	}
 	cache_count--;
 	fs_page_cache_pages--;
 	free(evict);
+	return freed;
 }
 
 static void fs_page_cache_ensure_init(void)
@@ -154,16 +159,16 @@ static paddr_t fs_page_cache_load(file *fp, uint64_t offset)
 	return phy;
 }
 
-static void fs_page_cache_evict_one_locked(void)
+static unsigned fs_page_cache_evict_one_locked(void)
 {
 	fs_page_cache_entry *evict;
 
 	if (list_is_empty(&fs_page_cache_lru))
-		return;
+		return 0;
 
 	evict = container_of(list_remove_head(&fs_page_cache_lru),
 			     fs_page_cache_entry, lru);
-	fs_page_cache_remove(evict);
+	return fs_page_cache_remove(evict);
 }
 
 paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
@@ -185,7 +190,7 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 	tmp.tag = inode->i_pgcache_tag;
 	tmp.ino = inode->i_ino;
 	tmp.offset = offset & ~(uint64_t)(PAGE_SIZE - 1);
-	fs_page_cache_searches++;
+	__sync_fetch_and_add(&fs_page_cache_searches, 1);
 
 	mutex_lock(&fs_page_cache_lock);
 	entry = fs_page_cache_find(&tmp);
@@ -197,7 +202,7 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 		mutex_unlock(&fs_page_cache_lock);
 		if (cache_hit)
 			*cache_hit = 1;
-		fs_page_cache_hits++;
+		__sync_fetch_and_add(&fs_page_cache_hits, 1);
 		return phy;
 	}
 
@@ -224,7 +229,7 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 		phymm_free_user(PHY_TO_PAGE_IDX(phy));
 		if (cache_hit)
 			*cache_hit = 1;
-		fs_page_cache_hits++;
+		__sync_fetch_and_add(&fs_page_cache_hits, 1);
 		return existing;
 	}
 
@@ -262,7 +267,6 @@ void fs_page_cache_get_cached_range(file *fp, uint64_t offset, paddr_t *pages,
 	key.ino = fp->f_inode->i_ino;
 	key.offset = offset & ~(uint64_t)(PAGE_SIZE - 1);
 	mutex_lock(&fs_page_cache_lock);
-	fs_page_cache_searches += count;
 	for (i = 0; i < count; i++, key.offset += PAGE_SIZE) {
 		fs_page_cache_entry *entry = fs_page_cache_find(&key);
 
@@ -272,7 +276,6 @@ void fs_page_cache_get_cached_range(file *fp, uint64_t offset, paddr_t *pages,
 		phymm_reference_page(PHY_TO_PAGE_IDX(entry->phy));
 		list_remove_entry(&entry->lru);
 		list_insert_tail(&fs_page_cache_lru, &entry->lru);
-		fs_page_cache_hits++;
 	}
 	mutex_unlock(&fs_page_cache_lock);
 }
@@ -331,8 +334,7 @@ unsigned fs_page_cache_reclaim(unsigned target_pages)
 
 	mutex_lock(&fs_page_cache_lock);
 	while (freed < target_pages && !list_is_empty(&fs_page_cache_lru)) {
-		fs_page_cache_evict_one_locked();
-		freed++;
+		freed += fs_page_cache_evict_one_locked();
 	}
 	mutex_unlock(&fs_page_cache_lock);
 	return freed;

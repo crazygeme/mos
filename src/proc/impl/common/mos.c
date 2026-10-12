@@ -17,6 +17,7 @@ extern unsigned page_fault_cow;
 extern unsigned page_fault_invalid;
 extern unsigned page_fault_file;
 extern unsigned page_fault_file_cache_hit;
+extern unsigned page_fault_file_around;
 extern unsigned page_fault_file_read;
 extern unsigned page_fault_perm;
 extern unsigned int heap_quota;
@@ -87,11 +88,17 @@ static void mos_print_count_rate(proc_buf_t *pb, const char *name,
 	mos_print_row(pb, name, value, count, notes);
 }
 
+/* Counter multiplication must not wrap after 42,949,672 events. */
+static unsigned mos_percentage(unsigned count, unsigned total)
+{
+	return total ? (uint64_t)count * 100 / total : 0;
+}
+
 static void mos_print_usage(proc_buf_t *pb, const char *name, unsigned pages,
 			    unsigned total_pages)
 {
 	unsigned long long bytes = MOS_PAGE_BYTES(pages);
-	unsigned pct = total_pages ? pages * 100 / total_pages : 0;
+	unsigned pct = mos_percentage(pages, total_pages);
 	char value[32];
 	char notes[16];
 
@@ -105,19 +112,13 @@ static void fill(proc_buf_t *pb)
 	phymm_usage mem;
 	phymm_cache_policy cache_policy;
 	unsigned pf_cache_rate =
-		page_fault_file ?
-			page_fault_file_cache_hit * 100 / page_fault_file :
-			0;
+		mos_percentage(page_fault_file_cache_hit, page_fault_file);
 	unsigned inode_cache_rate =
-		fs_page_cache_searches ?
-			fs_page_cache_hits * 100 / fs_page_cache_searches :
-			0;
+		mos_percentage(fs_page_cache_hits, fs_page_cache_searches);
 	blockdev_stats block_stats;
 	blockdev_get_stats(&block_stats);
 	unsigned hdd_cache_rate =
-		block_stats.searches ?
-			block_stats.hits * 100 / block_stats.searches :
-			0;
+		mos_percentage(block_stats.hits, block_stats.searches);
 	phymm_get_usage(&mem);
 
 	/* ---- Memory / kernel heap ---- */
@@ -145,6 +146,7 @@ static void fill(proc_buf_t *pb)
 	mos_print_count(pb, "file-backed", page_fault_file);
 	mos_print_count_rate(pb, "file cache hit", page_fault_file_cache_hit,
 			     pf_cache_rate);
+	mos_print_count(pb, "neighbor mapped", page_fault_file_around);
 	mos_print_count(pb, "file read", page_fault_file_read);
 	mos_print_count(pb, "permission", page_fault_perm);
 	mos_table_end(pb);
@@ -163,8 +165,8 @@ static void fill(proc_buf_t *pb)
 	mos_print_bytes(pb, "budget", MOS_PAGE_BYTES(cache_policy.file_pages));
 	mos_print_bytes(pb, "current", MOS_PAGE_BYTES(fs_page_cache_pages));
 	mos_print_bytes(pb, "peak", MOS_PAGE_BYTES(fs_page_cache_max_pages));
-	mos_print_count(pb, "lookups", fs_page_cache_searches);
-	mos_print_count_rate(pb, "hits", fs_page_cache_hits, inode_cache_rate);
+	mos_print_count(pb, "read/fault lookups", fs_page_cache_searches);
+	mos_print_count_rate(pb, "read/fault hits", fs_page_cache_hits, inode_cache_rate);
 	mos_table_end(pb);
 
 	/* ---- HDD block cache ---- */

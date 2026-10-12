@@ -125,10 +125,10 @@ class ConsoleRendererHost(unittest.TestCase):
                 "cc", "-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
                 "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                 "-I", str(path), "-I", str(ROOT / "src"),
-                str(probe), str(ROOT / "src/console/render.c"),
+                str(probe), str(ROOT / "src/device/console/render.c"),
                 str(ROOT / "src/device/core/framebuffer.c"),
-                str(ROOT / "src/console/fonts/font.c"),
-                str(ROOT / "src/console/fonts/font_vga16.c"),
+                str(ROOT / "src/device/console/fonts/font.c"),
+                str(ROOT / "src/device/console/fonts/font_vga16.c"),
                 "-o", str(binary),
             ], check=True, capture_output=True, text=True)
             subprocess.run([str(binary)], check=True,

@@ -36,8 +36,6 @@
 
 #define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
 
-/* i386 alias ceiling; AMD64 block-cache budgets scale with available RAM. */
-#define HDD_CACHE_MAX_PAGES 16384 /* 64 MiB */
 
 #define USER_STACK_PAGES 4096
 /* Initial stack pages allocated at exec; stack grows down to USER_STACK_PAGES max. */

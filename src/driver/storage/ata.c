@@ -143,8 +143,8 @@ typedef struct _block_cache_item {
 	int sector; /* head sector of this cached extent        */
 	unsigned dirty; /* non-zero if write-back flush needed      */
 	int loading; /* non-zero while refill/evict I/O is in flight */
-	unsigned page_index; /* phymm_alloc_user() page backing buf */
-	void *buf; /* kernel alias for page_index */
+	unsigned page_index; /* physical cache storage */
+	void *buf; /* active kernel alias; temporary on i386 */
 	struct rb_node hash_node;
 	list_entry time_list;
 } block_cache_item;
@@ -769,10 +769,34 @@ static unsigned hdd_cache_search_count = 0;
 static unsigned hdd_cache_size = 0;
 static unsigned hdd_cache_max_size = 0;
 
+/* i386 has a small alias window: retain physical storage, not mappings.
+ * Callers hold cache_lock or own a loading line while the alias is active. */
+static int block_cache_item_map(block_cache_item *item)
+{
+	if (item->buf)
+		return 0;
+	paddr_t phy = (paddr_t)item->page_index * PAGE_SIZE;
+	if (mm_kmap_phys(phy) != 1)
+		return -1;
+	item->buf = (void *)PHY_TO_VIRT(phy);
+	return 0;
+}
+
+static void block_cache_item_unmap(block_cache_item *item)
+{
+#if MOS_PAGING_LEVELS == 2
+	if (item->buf) {
+		mm_kunmap_phys((paddr_t)item->page_index * PAGE_SIZE);
+		item->buf = NULL;
+	}
+#else
+	(void)item;
+#endif
+}
+
 static block_cache_item *block_cache_item_create(void)
 {
 	unsigned buf_pages = BLOCK_SECTOR_SIZE * PREREAD_SECTOR / PAGE_SIZE;
-	paddr_t phy;
 	block_cache_item *item;
 	phymm_cache_policy policy;
 	unsigned cached;
@@ -803,22 +827,14 @@ static block_cache_item *block_cache_item_create(void)
 		}
 	}
 
-	phy = item->page_index * PAGE_SIZE;
-	if (mm_kmap_phys(phy) != 1) {
-		phymm_free_kernel(item->page_index, buf_pages);
-		kfree(item);
-		klog("hdd: mm_kmap_phys failed for block cache item phy=%llx\n",
-		     (unsigned long long)phy);
-		return NULL;
-	}
-
-	item->buf = (void *)PHY_TO_VIRT(phy);
-	if (!item->buf) {
-		mm_kunmap_phys(phy);
+	item->buf = NULL;
+#if MOS_PAGING_LEVELS == 4
+	if (block_cache_item_map(item) != 0) {
 		phymm_free_kernel(item->page_index, buf_pages);
 		kfree(item);
 		return NULL;
 	}
+#endif
 
 	for (unsigned i = 0; i < buf_pages; i++)
 		phymm_reference_page(item->page_index + i);
@@ -835,8 +851,8 @@ static void block_cache_item_remove(block_cache_item *item)
 		buf_pages = 1;
 	if (!item)
 		return;
-	if (item->page_index != PHYMM_INVALID)
-		mm_kunmap_phys(item->page_index * PAGE_SIZE);
+	if (item->buf)
+		mm_kunmap_phys((paddr_t)item->page_index * PAGE_SIZE);
 	if (item->page_index != PHYMM_INVALID) {
 		for (unsigned i = 0; i < buf_pages; i++)
 			phymm_dereference_page(item->page_index + i);
@@ -901,12 +917,18 @@ static void hdd_cache_flush_buf(partition *p, int head_sector, void *buf,
 	partition_write(p, head_sector, buf, sectors * BLOCK_SECTOR_SIZE);
 }
 
-static void hdd_cache_flush(partition *p, block_cache_item *item)
+static int hdd_cache_flush(partition *p, block_cache_item *item)
 {
 	if (item->sector < 0 || !item->dirty)
-		return;
+		return 0;
+	int mapped = item->buf != NULL;
+	if (block_cache_item_map(item) != 0)
+		return -1;
 	hdd_cache_flush_buf(p, item->sector, item->buf, item->dirty);
 	item->dirty = 0;
+	if (!mapped)
+		block_cache_item_unmap(item);
+	return 0;
 }
 
 static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
@@ -941,17 +963,21 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 		new_item = NULL;
 	}
 
+	item = new_item ? new_item : hdd_cache_find_oldest(p);
+	if (!item)
+		return NULL;
+	if (block_cache_item_map(item) != 0) {
+		if (new_item)
+			block_cache_item_remove(new_item);
+		return NULL;
+	}
+
 	if (new_item) {
-		item = new_item;
 		p->cache.sectors += PREREAD_SECTOR;
 		hdd_cache_size += PREREAD_SECTOR;
 		if (hdd_cache_max_size < hdd_cache_size)
 			hdd_cache_max_size = hdd_cache_size;
 		list_insert_head(&p->cache.timer_list_head, &item->time_list);
-	} else {
-		item = hdd_cache_find_oldest(p);
-		if (!item)
-			return NULL;
 	}
 
 	*old_sector = item->sector;
@@ -1048,7 +1074,8 @@ static int partition_cache_reclaim_one_locked(partition *p)
 	if (!item)
 		return 0;
 
-	hdd_cache_flush(p, item);
+	if (hdd_cache_flush(p, item) != 0)
+		return 0;
 	if (item->sector >= 0)
 		hdd_cache_tree_remove(&p->cache, item);
 	list_remove_entry(&item->time_list);
@@ -1109,11 +1136,16 @@ retry:
 			task_sched();
 			goto retry;
 		}
+		if (block_cache_item_map(item) != 0) {
+			mutex_unlock(&p->cache_lock);
+			return -1;
+		}
 		/* Cache hit: promote to MRU and copy out. */
 		list_remove_entry(&item->time_list);
 		list_insert_head(&p->cache.timer_list_head, &item->time_list);
 		memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 		       BLOCK_SECTOR_SIZE);
+		block_cache_item_unmap(item);
 		mutex_unlock(&p->cache_lock);
 		hdd_cache_read_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
@@ -1143,6 +1175,7 @@ retry:
 	hdd_cache_flush_buf(p, old_sector, item->buf, old_dirty);
 	if (hdd_cache_fill_line(aux, head_sector, item->buf) != 0) {
 		mutex_lock(&p->cache_lock);
+		block_cache_item_unmap(item);
 		hdd_cache_cancel_load_locked(p, item);
 		mutex_unlock(&p->cache_lock);
 		return -1;
@@ -1152,6 +1185,7 @@ retry:
 	hdd_cache_publish_loaded_locked(item);
 	memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 	       BLOCK_SECTOR_SIZE);
+	block_cache_item_unmap(item);
 	mutex_unlock(&p->cache_lock);
 	hdd_cache_read_size += BLOCK_SECTOR_SIZE;
 	return BLOCK_SECTOR_SIZE;
@@ -1178,7 +1212,12 @@ retry:
 			task_sched();
 			goto retry;
 		}
+		if (block_cache_item_map(item) != 0) {
+			mutex_unlock(&p->cache_lock);
+			return -1;
+		}
 		hdd_cache_update(p, item, sector, buf, 1);
+		block_cache_item_unmap(item);
 		mutex_unlock(&p->cache_lock);
 		hdd_cache_write_size += BLOCK_SECTOR_SIZE;
 		return BLOCK_SECTOR_SIZE;
@@ -1211,6 +1250,7 @@ retry:
 	hdd_cache_flush_buf(p, old_sector, item->buf, old_dirty);
 	if (hdd_cache_fill_line(aux, head_sector, item->buf) != 0) {
 		mutex_lock(&p->cache_lock);
+		block_cache_item_unmap(item);
 		hdd_cache_cancel_load_locked(p, item);
 		mutex_unlock(&p->cache_lock);
 		return -1;
@@ -1219,6 +1259,7 @@ retry:
 	mutex_lock(&p->cache_lock);
 	hdd_cache_publish_loaded_locked(item);
 	hdd_cache_update(p, item, sector, buf, 1);
+	block_cache_item_unmap(item);
 	mutex_unlock(&p->cache_lock);
 	hdd_cache_write_size += len;
 	return len;
@@ -1240,7 +1281,6 @@ static void partition_cache_flush(void *aux)
 			container_of(entry, block_cache_item, time_list);
 		if (item && item->sector != -1 && item->dirty) {
 			hdd_cache_flush(p, item);
-			item->dirty = 0;
 		}
 		entry = next;
 	}

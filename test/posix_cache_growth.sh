@@ -1,9 +1,5 @@
 #!/bin/sh
 set -e
-if [ "$(uname -m)" != x86_64 ]; then
-    echo 'cache_growth: SKIP (AMD64 required)'
-    exit 0
-fi
 BASE=/tmp/posix_cache_growth_$$
 mkdir -p "$BASE"
 trap 'rm -rf "$BASE"' EXIT
@@ -16,6 +12,26 @@ cat > "$BASE/probe.c" <<'EOF'
 static void check(int ok, const char *what)
 {
     if (!ok) { fprintf(stderr, "cache_growth: %s\n", what); exit(1); }
+}
+
+static unsigned long long block_budget(void)
+{
+    FILE *f = fopen("/proc/mos", "r");
+    char line[256], metric[64], formatted[32];
+    unsigned long long value = 0;
+    int block = 0;
+    check(f != NULL, "open kernel cache statistics");
+    while (fgets(line, sizeof(line), f)) {
+        if (!strncmp(line, "Block cache", 11)) block = 1;
+        if (block && sscanf(line, "| %63s | %31s | %llu", metric,
+                            formatted, &value) == 3 && !strcmp(metric, "budget")) {
+            fclose(f);
+            return value;
+        }
+    }
+    fclose(f);
+    check(0, "find block cache budget");
+    return 0;
 }
 
 static unsigned long long memory(const char *name)
@@ -39,11 +55,12 @@ int main(int argc, char **argv)
     unsigned pass, i;
     FILE *f;
     unsigned long long buffers, cached;
-    if (memory("MemTotal:") < 4ULL * 1024 * 1024) {
-        puts("cache_growth: SKIP (more than 4 GiB usable RAM required)");
+    if (memory("MemTotal:") < 1024ULL * 1024) {
+        puts("cache_growth: SKIP (at least 1 GiB usable RAM required)");
         return 0;
     }
     check(argc == 2, "data path");
+    check(block_budget() > 64ULL * 1024 * 1024, "block budget exceeds old 64 MiB cap");
     buf = malloc(chunk);
     check(buf != NULL, "allocate transfer buffer");
     memset(buf, 0xa5, chunk);

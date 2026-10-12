@@ -187,7 +187,7 @@ static void pf_map_cached_neighbors(vaddr_t address, vm_region *region)
 		/* Preserve populated pages, including private copies and protections. */
 		if (!mm_get_map_flag(vir) &&
 		    mm_map_page(vir, pages[i], pte) == 1)
-			page_fault_file_around++;
+			__sync_fetch_and_add(&page_fault_file_around, 1);
 		fs_page_cache_put(pages[i]);
 	}
 }

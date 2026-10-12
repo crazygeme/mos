@@ -51,6 +51,21 @@ void ps_load_task_segments(task_struct *task)
 {
 	if (!task || !task->execution)
 		return;
+	struct smp_cpu *installed = arch_cpu_local();
+	uintptr_t ldt_base = task->memory->ldt_present ?
+				     (uintptr_t)task->memory->ldt_desc :
+				     0;
+	/* Activation installs this task's descriptors on any destination CPU.
+	 * An intervening migration therefore also makes this no-change return
+	 * safe; the modifying path reacquires the current CPU with IRQs masked. */
+	if (installed->loaded_ldt_valid &&
+	    installed->loaded_ldt_base == ldt_base &&
+	    installed->gdt[GDT_ENTRY_TLS_MIN] == task->execution->tls_desc[0] &&
+	    installed->gdt[GDT_ENTRY_TLS_MIN + 1] ==
+		    task->execution->tls_desc[1] &&
+	    installed->gdt[GDT_ENTRY_TLS_MIN + 2] ==
+		    task->execution->tls_desc[2])
+		return;
 	unsigned irq = int_intr_disable();
 	struct smp_cpu *cpu = arch_cpu_local();
 	for (unsigned i = 0; i < GDT_ENTRY_TLS_COUNT; i++)

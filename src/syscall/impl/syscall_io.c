@@ -175,12 +175,38 @@ int sys_ioctl(int fd, int request, char *buf)
 
 int sys_open(const char *_name, int flags, umode_t mode)
 {
-	char *name = name_get();
+	task_struct *task = current;
+	task_execution *execution = task->execution;
+	uint64_t generation = vfs_namespace_generation();
+	char *name;
 	int fd;
+	/* Repeated absolute names need neither a temporary page nor another
+	 * normalization pass. Compare user bytes each time; opens still perform
+	 * fresh filesystem lookup, permission checks, and description creation. */
+	if (_name && _name[0] == '/' && execution &&
+	    execution->open_cache_fs == task->fs &&
+	    execution->open_cache_generation == generation &&
+	    !strcmp(execution->open_cache_input, _name)) {
+		name = execution->open_cache_path;
+		fd = fs_open(name, flags, mode);
+		if (TEST_LOG(TEST_LOG_TRACE))
+			klog("open(%s, %x, %x) = %d\n", name, flags, mode, fd);
+		return fd;
+	}
+	name = name_get();
 	if (!name)
 		return -ENOMEM;
 
 	resolve_path(_name, name);
+	if (_name && _name[0] == '/' && name[0] && execution &&
+	    strlen(_name) < sizeof(execution->open_cache_input) &&
+	    strlen(name) < sizeof(execution->open_cache_path) &&
+	    generation == vfs_namespace_generation()) {
+		strcpy(execution->open_cache_input, _name);
+		strcpy(execution->open_cache_path, name);
+		execution->open_cache_fs = task->fs;
+		execution->open_cache_generation = generation;
+	}
 
 	fd = fs_open(name, flags, mode);
 

@@ -47,6 +47,10 @@ static void free_ranges(list_entry *list)
 
 void fs_posix_lock_release(file *fp, unsigned owner)
 {
+	task_thread *group = current->thread;
+	if (group && group->tgid == owner &&
+	    !__atomic_load_n(&group->posix_locks_used, __ATOMIC_ACQUIRE))
+		return;
 	list_entry garbage = { &garbage, &garbage };
 	int irq;
 	spinlock_lock(&range_lock, &irq);
@@ -114,6 +118,10 @@ int fs_posix_lock(file *fp, int cmd, struct flock64 *fl)
 	if (start < 0)
 		return -EINVAL;
 	if (cmd != F_GETLK64) {
+		/* Publish before acquiring range_lock, so a concurrent close either
+		 * precedes this request or joins the normal serialized release. */
+		__atomic_store_n(&cur->thread->posix_locks_used, 1,
+				 __ATOMIC_RELEASE);
 		fresh = malloc(sizeof(*fresh));
 		split = malloc(sizeof(*split));
 		if (!fresh || !split) {

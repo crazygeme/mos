@@ -23,7 +23,10 @@ typedef struct _arch_intr_frame {
 } __attribute__((packed)) arch_intr_frame;
 
 _Static_assert(sizeof(arch_intr_frame) == 80 &&
-		       __builtin_offsetof(arch_intr_frame, error_code) == 52,
+		       __builtin_offsetof(arch_intr_frame, error_code) == 52 &&
+		       __builtin_offsetof(arch_intr_frame, eip) == 60 &&
+		       __builtin_offsetof(arch_intr_frame, eflags) == 68 &&
+		       __builtin_offsetof(arch_intr_frame, esp) == 72,
 	       "SYSENTER frame layout");
 
 /* Generic kernel name retained for architecture-independent users. */

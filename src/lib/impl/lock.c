@@ -503,17 +503,38 @@ void vm_lock_init(rmutex_t *lock)
 
 void vm_lock_enter(rmutex_t *lock)
 {
+	/* Recursive entry already owns an outer VM transaction. */
+	if (__atomic_load_n(&lock->holder, __ATOMIC_RELAXED) ==
+		    current->life->psid &&
+	    lock->depth) {
+		lock->depth++;
+		return;
+	}
 	unsigned irq = int_intr_disable();
+	task_schedule *sched = current->sched;
 	rmutex_lock(lock);
-	__sync_fetch_and_add(&current->sched->vm_lock_depth, 1);
+	/* Only this task changes its depth, with local interrupts masked.
+	 * Remote exit/scheduling checks read it, but never update it. */
+	__atomic_store_n(
+		&sched->vm_lock_depth,
+		__atomic_load_n(&sched->vm_lock_depth, __ATOMIC_RELAXED) + 1,
+		__ATOMIC_RELEASE);
 	int_intr_setlevel(irq);
 }
 
 void vm_lock_leave(rmutex_t *lock)
 {
+	if (lock->depth > 1 && lock->holder == current->life->psid) {
+		lock->depth--;
+		return;
+	}
 	unsigned irq = int_intr_disable();
+	task_schedule *sched = current->sched;
 	rmutex_unlock(lock);
-	__sync_fetch_and_sub(&current->sched->vm_lock_depth, 1);
+	__atomic_store_n(
+		&sched->vm_lock_depth,
+		__atomic_load_n(&sched->vm_lock_depth, __ATOMIC_RELAXED) - 1,
+		__ATOMIC_RELEASE);
 	int_intr_setlevel(irq);
 }
 

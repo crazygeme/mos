@@ -64,6 +64,7 @@ typedef struct _task_thread {
 	ref_count_t ref;
 	unsigned tgid, group_id, session_id;
 	unsigned live_tasks;
+	unsigned posix_locks_used; /* Sticky hint: this group has requested range locks. */
 	list_entry members, children;
 	ps_tick_t user_tickets, kernel_tickets, child_utime, child_stime;
 	rlimit_t rlimits[RLIM_NLIMITS];
@@ -85,6 +86,14 @@ typedef struct _task_credentials {
 /* Private execution and ABI state: never shared by clone. */
 typedef struct _task_execution {
 	task_arch_context arch;
+	/* Textual final-symlink resolution; file metadata is never cached. */
+	super_block *link_cache_root;
+	uint64_t link_cache_generation;
+	char link_cache_path[256], link_cache_target[256];
+	void *ext4_file_cache; /* One closed, small description; freed with the task. */
+	task_fs *open_cache_fs;
+	uint64_t open_cache_generation;
+	char open_cache_input[256], open_cache_path[256];
 	struct _vm_region *mmap_cache;
 	task_memory *mmap_cache_vm;
 	unsigned mmap_cache_generation;
@@ -245,7 +254,16 @@ static inline unsigned long long task_utime(task_struct *task)
 	return __atomic_load_n(&task->stats->user_tickets, __ATOMIC_RELAXED);
 }
 
-task_struct *__attribute__((noinline)) CURRENT_TASK(void);
+static __attribute__((always_inline)) inline task_struct *CURRENT_TASK(void)
+{
+	uintptr_t stack;
+#if __SIZEOF_POINTER__ == 8
+	asm volatile("mov %%rsp, %0" : "=r"(stack) : : "memory");
+#else
+	asm volatile("mov %%esp, %0" : "=r"(stack) : : "memory");
+#endif
+	return (task_struct *)(stack & ~(uintptr_t)(KERNEL_TASK_BYTES - 1));
+}
 
 #define current CURRENT_TASK()
 

@@ -184,6 +184,7 @@ struct _file {
 	int f_owner; /* async I/O owner set via fcntl(F_SETOWN) */
 	int f_sigio; /* signal number for async I/O (0 => SIGIO) */
 	char *f_name;
+	unsigned f_name_inline; /* Name storage belongs to the backend description. */
 	/* The owning backend is retained independently of aliases and mount views. */
 	struct super_block *f_sb;
 	char *f_relative_path;

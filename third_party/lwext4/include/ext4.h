@@ -296,6 +296,12 @@ struct ext4_inline_link {
  * acquired during lookup. Non-inline targets have link->length == 0. */
 int ext4_fopen2_stat(ext4_file *f, const char *path, int flags, struct stat *st,
 		     struct ext4_inline_link *link);
+/* VFS has already selected the mount. Only mode is needed beyond the inode
+ * number and size in the handle; NULL selected_fs performs ordinary lookup. */
+struct ext4_fs;
+int ext4_fopen2_mode(ext4_file *f, const char *path, int flags, uint32_t *mode,
+		     struct ext4_inline_link *link,
+		     struct ext4_fs *selected_fs);
 
 /**@brief   Get file status
  * @param   filename, (has to start from mount point)

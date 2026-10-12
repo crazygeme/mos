@@ -651,14 +651,6 @@ int ps_read_process_memory(task_struct *task, const void *addr, void *dst,
 	return 0;
 }
 
-task_struct *__attribute__((noinline)) CURRENT_TASK(void)
-{
-	unsigned long esp;
-
-	LOAD_ESP(esp);
-	return (task_struct *)(esp & ~(uintptr_t)(KERNEL_TASK_BYTES - 1));
-}
-
 int ps_task_ready(task_struct *task)
 {
 	int irq, ready;

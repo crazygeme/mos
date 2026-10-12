@@ -34,6 +34,10 @@ void arch_cpu_local_init(struct smp_cpu *cpu)
 			cpu->gdt[KERNEL_CODE_SELECTOR / 8];
 		cpu->gdt[SYSENTER_CODE_SELECTOR / 8 + 1] =
 			cpu->gdt[KERNEL_DATA_SELECTOR / 8];
+		cpu->gdt[SYSEXIT_CODE_SELECTOR / 8] =
+			cpu->gdt[USER_CODE_SELECTOR / 8];
+		cpu->gdt[SYSEXIT_DATA_SELECTOR / 8] =
+			cpu->gdt[USER_DATA_SELECTOR / 8];
 		arch_cpu_write_msr(0x174, SYSENTER_CODE_SELECTOR, 0);
 		arch_cpu_write_msr(0x175, cpu->tss.tss.esp0, 0);
 		arch_cpu_write_msr(0x176, (uintptr_t)sysenter_entry, 0);

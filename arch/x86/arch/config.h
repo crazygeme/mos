@@ -29,7 +29,9 @@
 #define LDT_SELECTOR ((5 + GDT_ENTRY_TLS_COUNT + 1) << 3)
 /* SYSENTER requires adjacent ring-0 code/data descriptors. */
 #define SYSENTER_CODE_SELECTOR (11 << 3)
-#define SELECTOR_COUNT 13
+#define SYSEXIT_CODE_SELECTOR ((13 << 3) | 3)
+#define SYSEXIT_DATA_SELECTOR ((14 << 3) | 3)
+#define SELECTOR_COUNT 15
 
 /* Architecture memory model. Keep these here so common VM code does not
  * encode i386's 32-bit layout. */

@@ -797,13 +797,25 @@ typedef struct {
 	inode inode;
 } tmpfs_open_file;
 
-static file *tmpfs_make_file(tmpfs_node *tn)
+static file *tmpfs_make_file(tmpfs_node *tn, super_block *sb, const char *path)
 {
-	tmpfs_open_file *opened = zalloc(sizeof(*opened));
+	size_t base = strlen(sb->s_mountpoint), length = strlen(path);
+	int inline_name = base < sizeof(sb->s_mountpoint) - 1;
+	if (base == 1 && sb->s_mountpoint[0] == '/')
+		base = 0;
+	tmpfs_open_file *opened =
+		malloc(sizeof(*opened) + (inline_name ? base + length + 1 : 0));
 	if (!opened)
 		return NULL;
+	memset(opened, 0, sizeof(*opened));
 	inode *node = &opened->inode;
 	file *fp = &opened->file;
+	if (inline_name) {
+		fp->f_name = (char *)(opened + 1);
+		fp->f_name_inline = 1;
+		memcpy(fp->f_name, sb->s_mountpoint, base);
+		memcpy(fp->f_name + base, path, length + 1);
+	}
 
 	tmpfs_node_get(tn);
 	node->i_mode = tn->mode;
@@ -882,7 +894,7 @@ static file *tmpfs_open(super_block *sb, const char *path, int flag)
 		return tmpfs_make_dir(tn);
 
 	{
-		file *fp = tmpfs_make_file(tn);
+		file *fp = tmpfs_make_file(tn, sb, path);
 		if (!fp)
 			return NULL;
 

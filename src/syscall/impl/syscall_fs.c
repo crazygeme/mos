@@ -1188,8 +1188,10 @@ int sys_chroot(const char *path)
 
 	trim_trailing_slash(name);
 	rmutex_lock(&cur->fs->lock);
+	vfs_namespace_changed();
 	strcpy(cur->fs->root_path, name[0] ? name : "/");
 	strcpy(cur->fs->cwd, "/");
+	vfs_namespace_changed();
 	rmutex_unlock(&cur->fs->lock);
 	ret = 0;
 

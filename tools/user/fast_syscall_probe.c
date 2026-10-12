@@ -16,6 +16,7 @@ typedef long result;
 #define NR_YIELD 24
 #define NR_IOPL 172
 #define NR_PTRACE 101
+#define NR_NANOSLEEP 35
 static result call6(word n, word a, word b, word c, word d, word e, word f)
 {
 	register word r10 asm("r10") = d, r8 asm("r8") = e, r9 asm("r9") = f;
@@ -54,6 +55,7 @@ static word observed_rcx, observed_r11;
 #define NR_YIELD 158
 #define NR_IOPL 110
 #define NR_PTRACE 26
+#define NR_NANOSLEEP 162
 /* AT_SYSINFO is chosen by the kernel, including CPUs without SEP. */
 word fast_entry;
 __attribute__((naked, noinline, noclone)) static result
@@ -72,6 +74,10 @@ __attribute__((naked)) static word flag_probe(void)
 	asm volatile("std; mov $20,%eax; cmpl $0,fast_entry; je 1f;"
 		     "call *fast_entry; jmp 2f; 1: int $0x80;"
 		     "2: pushfl; pop %eax; cld; ret");
+}
+__attribute__((naked)) static word carry_probe(void)
+{
+	asm volatile("mov $20,%eax; stc; call *fast_entry; pushfl; pop %eax; ret");
 }
 __attribute__((naked)) static void restorer(void)
 {
@@ -159,6 +165,9 @@ __attribute__((used)) static void probe_main(word *stack)
 	check(pid == 1, "getpid");
 	check(call6(~0UL, 0, 0, 0, 0, 0, 0) == -38, "ENOSYS");
 	check(flag_probe() & 0x400, "DF restored");
+#ifndef __x86_64__
+	check(carry_probe() & 1, "CF restored");
+#endif
 	/* All six arguments: map the second page of a real file. */
 	result fd = call6(NR_OPEN, (word) "/root/fastcall", 0, 0, 0, 0, 0);
 	check(fd >= 0, "open file");
@@ -262,6 +271,9 @@ __attribute__((used)) static void probe_main(word *stack)
 	check(call6(NR_GETPID, 0, 0, 0, 0, 0, 0) == pid, "legacy INT80");
 	fast_entry = entry_saved;
 #endif
+	/* Let queued kernel diagnostics drain before direct COM1 output. */
+	struct { word sec, nsec; } delay = { 0, 100000000 };
+	call6(NR_NANOSLEEP, (word)&delay, 0, 0, 0, 0, 0);
 	print("FAST_SYSCALL_PASS\n");
 	finish(0);
 }

@@ -5,6 +5,65 @@ measurements, and validation coverage. Entries are ordered by date.
 
 ---
 
+## 2026-10-12 - RH9 open/close parity with Linux
+
+The x86 release kernel reaches Linux throughput for the original RH9
+`/root/open_close_perf` workload. Both operating systems boot their GRUB text
+entries on disposable snapshots of `rh9.qcow2`, with the configuration from
+`grub.sh`: KVM, `coreduo`, two QEMU CPUs, 4096 MiB RAM, IDE, and VMware VGA.
+Display is disabled; audio uses the none backend and networking uses QEMU user
+networking for SSH. CPU affinity is unrestricted. The host is an Intel Core 5
+220H running QEMU 8.2.2. Linux is RH9's uniprocessor 2.4.20-8 kernel; MOS uses
+both configured CPUs. The workload itself is single-process.
+
+Both guests use the unchanged benchmark binary with MD5
+`7f16335cc33dd4d24979536845500dc9`. Each runs three default invocations: two
+seconds per sample, three samples per path, and 1000 warmup pairs. No profiling
+or monitor sampling runs during these measurements. Medians below include nine
+samples per path; one pair is one successful open and close.
+
+| Path | Linux, µs/pair | MOS, µs/pair | MOS/Linux throughput |
+| --- | ---: | ---: | ---: |
+| Regular file | 0.476 | 0.486 | 0.98x |
+| Symlink | 0.497 | 0.490 | 1.01x |
+| Mounted tmpfs | 0.499 | 0.448 | 1.11x |
+
+The initial MOS first samples were 0.873, 1.234, and 0.679 µs/pair respectively.
+These comparisons describe warm-cache opens without file-content I/O, rather
+than cold-storage latency or concurrent-open scalability.
+
+The implementation caches bounded absolute-path normalization and textual final
+symlink resolution per task. A 64-bit namespace generation invalidates results
+around directory, mount, creation, symlink-content, and chroot changes. Dynamic
+procfs links use their normal resolution. Permission checks and inode metadata
+remain fresh. Mount lookup has four bounded slots per superblock; lwext4 retains
+its positive inode lookup cache and adds a most-recent-path hint. Opens obtain
+only the mode, inode number, and size they need from the acquired inode.
+
+File descriptions embed their names. Each task may retain one closed ext4
+description with 256 bytes of name storage; task teardown frees it. Longer names
+use ordinary allocation. Block-cache LRU uses a linked queue of unreferenced
+buffers. Recursive VM locks count outer ownership, ordinary closes avoid range
+lock scans for groups that have never requested them, and inotify reuses an
+existing superblock reference when possible. i386 SYSENTER uses guarded SYSEXIT
+returns, documented in [Fast system calls](fast_syscall.md).
+
+x86 and x64 release/test builds pass. Isolated KVM filesystem probes pass with
+two and four CPUs, covering replacement, unlink/open lifetimes, long-path rename,
+mount overlay/removal, chroot, range-lock closure, fresh permissions, inotify, and
+a full userspace x87 stack. Four-CPU syscall probes pass 36 lock, 3 dispatch, and
+12 allocator tests on each architecture, along with signals, ptrace, and fork.
+i386 without SEP passes through INT 0x80. Host notification, lookup/cache-lifetime,
+and ABI adapter checks pass.
+
+Reproduce isolated correctness checks with `tools/tests/vfs_fastpath_qemu.py`;
+performance must use the original RH9 benchmark. Raw samples, configurations,
+profiles, and validation logs are under `out/benchmarks/open-close-parity/`.
+The measured x86 kernel SHA-256 is
+`f43c6a744cf22c4872e47129d846a70a4d482ad7f05e1b7780572d0fea68afbb`.
+
+---
+
 ## 2026-10-11 - Small heap allocation and process-launch performance
 
 ### Root cause and fix

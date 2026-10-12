@@ -81,6 +81,14 @@ struct super_block {
 	char s_mountpoint[256]; /* absolute mountpoint, set by vfs_mount() */
 	mutex_t s_lock;
 	struct rb_root s_mounts; /* child mounts, ordered by path */
+	/* Direct-child lookup results, protected by s_lock and cleared on edits. */
+	struct {
+		char path[256];
+		struct _vfs_mount_node *mount;
+		size_t length;
+		int valid;
+	} s_lookup[4];
+	unsigned s_lookup_last;
 };
 
 typedef struct _vfs_mount_node {
@@ -104,6 +112,10 @@ void sb_put(super_block *sb);
 /* Resolve filesystem identity and its path suffix without acquiring a reference. */
 int sb_path_resolve(super_block *sb, const char *path, super_block **out_sb,
 		    char **out_path);
+
+/* Invalidate followed-link paths around namespace changes. */
+void vfs_namespace_changed(void);
+uint64_t vfs_namespace_generation(void);
 
 /* Mount a filesystem with operations child at path under sb. */
 int vfs_mount(super_block *sb, const char *path, super_block *child);

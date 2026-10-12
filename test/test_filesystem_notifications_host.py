@@ -70,7 +70,14 @@ typedef unsigned long sigset_t;
 #include <fs/vfs.h>
 #include <ps/signal.h>
 
+typedef struct {
+    super_block *link_cache_root;
+    uint64_t link_cache_generation;
+    char link_cache_path[256], link_cache_target[256];
+} task_execution;
+
 struct _task_struct {
+    task_execution *execution;
     struct { mutex_t lock; file *fds[MAX_FD]; unsigned long cloexec[FD_BITMAP_WORDS]; } *files;
     struct { unsigned uid, euid, gid, egid; } *credentials;
     struct { super_block *root; } *fs;
@@ -108,7 +115,8 @@ static typeof(*((task_struct *)0)->credentials) credentials;
 static typeof(*((task_struct *)0)->thread) thread;
 static typeof(*((task_struct *)0)->wait) wait;
 static typeof(*((task_struct *)0)->files) files;
-static task_struct task = { .credentials = &credentials, .fs = &fs_context, .thread = &thread, .wait = &wait, .files = &files };
+static task_execution execution;
+static task_struct task = { .execution = &execution, .credentials = &credentials, .fs = &fs_context, .thread = &thread, .wait = &wait, .files = &files };
 task_struct *current = &task;
 char *name_get(void) { char *p = malloc(MAX_PATH); if (p) { memset(p, 0xa5, MAX_PATH); p[0] = 0; } return p; }
 void name_put(char *name) { free(name); }

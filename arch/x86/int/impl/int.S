@@ -271,8 +271,18 @@ syscall_save:
     cld    /* User mode may enter with DF set; kernel string ops require DF=0. */
     pushl %edx
     mov $KERNEL_DATA_SELECTOR, %edx    /* Initialize segment registers. */
+    /* The standard user data descriptor is also flat at CPL 0. Other
+       selectors (including user LDT descriptors) need kernel replacements. */
+    cmpw $USER_DATA_SELECTOR, 48(%esp)
+    je 3f
     mov %edx, %ds
+3:
+    cmpw $USER_DATA_SELECTOR, 44(%esp)
+    je 4f
     mov %edx, %es
+4:
+    /* Nested IRQ frames can resume on a different task's GDT. Keep live
+       GS on a descriptor valid for every task while kernel C runs. */
     mov %edx, %gs
     mov $CPU_LOCAL_SELECTOR, %edx
     mov %edx, %fs
@@ -305,6 +315,8 @@ ret_from_fork:
 .global ret_from_syscall;
 ret_from_syscall:
     cli
+    cmpl $1, 52(%esp)
+    je ret_from_sysenter
     /* Restore caller's registers. */
     popal
     pop %gs
@@ -317,3 +329,19 @@ ret_from_syscall:
     addl $12, %esp
         /* Return to caller. */
     iret
+
+ret_from_sysenter:
+    popal
+    pop %gs
+    pop %fs
+    pop %es
+    pop %ds
+    /* Arithmetic/DF/IOPL flags remain visible to userspace. Keep IF clear
+       until STI's interrupt shadow covers the privilege/stack handoff. */
+    pushl 20(%esp)
+    andl $~0x200, (%esp)
+    popfl
+    movl 12(%esp), %edx
+    movl 24(%esp), %ecx
+    sti
+    sysexit

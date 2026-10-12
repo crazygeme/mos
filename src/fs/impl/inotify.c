@@ -1090,7 +1090,9 @@ void inotify_file_open(file *fp, super_block *root)
 		return;
 	mutex_lock(&notify_lock);
 	fp->f_notify_root = root;
-	sb_get(root);
+	/* Backend provenance already retains this root through file closure. */
+	if (root != fp->f_sb)
+		sb_get(root);
 	list_insert_tail(&tracked_files, &fp->f_notify_node);
 	watched = active_watches() != 0;
 	mutex_unlock(&notify_lock);
@@ -1152,7 +1154,8 @@ void inotify_file_close(file *fp)
 out:
 	mutex_unlock(&notify_lock);
 	inotify_snapshot_put(node);
-	sb_put(root);
+	if (root != fp->f_sb)
+		sb_put(root);
 }
 
 void inotify_created(super_block *root, const char *path)

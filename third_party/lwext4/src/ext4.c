@@ -94,6 +94,7 @@ struct ext4_mountpoint {
 	/**@brief   Ext4 filesystem internals.*/
 	struct ext4_fs fs;
 	struct ext4_path_cache_entry path_cache[EXT4_PATH_CACHE_SLOTS];
+	unsigned path_cache_last;
 
 	/**@brief   Dynamic allocation cache flag.*/
 	bool cache_dynamic;
@@ -954,7 +955,8 @@ static struct ext4_path_cache_entry *ext4_path_cache_slot(
 static int ext4_generic_open2_stat(ext4_file *f, const char *path, int flags,
 				   int ftype, uint32_t *parent_inode,
 				   uint32_t *name_off, struct stat *st,
-				   struct ext4_inline_link *link)
+				   struct ext4_inline_link *link,
+				   struct ext4_mountpoint *mp, uint32_t *mode)
 {
 	bool is_goal = false;
 	uint32_t imode = EXT4_INODE_MODE_DIRECTORY;
@@ -962,11 +964,13 @@ static int ext4_generic_open2_stat(ext4_file *f, const char *path, int flags,
 
 	int r;
 	int len;
-	struct ext4_mountpoint *mp = ext4_get_mount(path);
+	if (!mp)
+		mp = ext4_get_mount(path);
 	struct ext4_dir_search_result result;
 	struct ext4_inode_ref ref;
 	struct ext4_path_cache_entry *cached = NULL;
 	const char *cache_path;
+	bool cache_hit = false;
 
 	f->mp = 0;
 
@@ -987,7 +991,11 @@ static int ext4_generic_open2_stat(ext4_file *f, const char *path, int flags,
 	/* Operations needing a parent or creating entries must walk the tree. */
 	if (ftype == EXT4_DE_UNKNOWN && !(flags & O_CREAT) &&
 	    !parent_inode && !name_off) {
-		cached = ext4_path_cache_slot(mp, path);
+		cached = &mp->path_cache[mp->path_cache_last];
+		if (!cached->inode ||
+		    cached->namespace_seq != fs->namespace_seq ||
+		    strcmp(cached->path, path))
+			cached = ext4_path_cache_slot(mp, path);
 		if (cached && cached->inode &&
 		    cached->namespace_seq == fs->namespace_seq &&
 		    !strcmp(cached->path, path)) {
@@ -996,6 +1004,7 @@ static int ext4_generic_open2_stat(ext4_file *f, const char *path, int flags,
 				return r;
 			imode = ext4_inode_type(sb, ref.inode);
 			is_goal = true;
+			cache_hit = true;
 			goto loaded;
 		}
 	}
@@ -1136,17 +1145,21 @@ loaded:
 			f->fpos = f->fsize;
 		if (st)
 			ext4_inode_stat(&ref, st);
+		if (mode)
+			*mode = ext4_inode_get_mode(sb, ref.inode);
 		if (link && imode == EXT4_INODE_MODE_SOFTLINK &&
 		    f->fsize < sizeof(link->target) &&
 		    !ext4_inode_get_blocks_count(sb, ref.inode)) {
 			link->length = (size_t)f->fsize;
 			memcpy(link->target, ref.inode->blocks, link->length);
 		}
-		if (cached) {
+		if (cached && !cache_hit) {
 			cached->namespace_seq = fs->namespace_seq;
 			cached->inode = ref.index;
 			strcpy(cached->path, cache_path);
 		}
+		if (cached)
+			mp->path_cache_last = cached - mp->path_cache;
 	}
 
 	r = ext4_fs_put_inode_ref(&ref);
@@ -1165,7 +1178,7 @@ static int ext4_generic_open2(ext4_file *f, const char *path, int flags,
 			      uint32_t *name_off)
 {
 	return ext4_generic_open2_stat(f, path, flags, ftype, parent_inode,
-				       name_off, NULL, NULL);
+				       name_off, NULL, NULL, NULL, NULL);
 }
 
 /****************************************************************************/
@@ -1636,10 +1649,17 @@ int ext4_fopen2(ext4_file *f, const char *path, int flags)
 	return ext4_fopen2_stat(f, path, flags, NULL, NULL);
 }
 
-int ext4_fopen2_stat(ext4_file *f, const char *path, int flags, struct stat *st,
-		     struct ext4_inline_link *link)
+static int ext4_fopen2_metadata(ext4_file *f, const char *path, int flags,
+				struct stat *st, struct ext4_inline_link *link,
+				struct ext4_fs *selected_fs, uint32_t *mode)
 {
-	struct ext4_mountpoint *mp = ext4_get_mount(path);
+	struct ext4_mountpoint *mp =
+		selected_fs ?
+			(struct ext4_mountpoint
+				 *)((char *)selected_fs -
+				    __builtin_offsetof(struct ext4_mountpoint,
+						       fs)) :
+			ext4_get_mount(path);
 	int r;
 	if (link)
 		link->length = 0;
@@ -1651,18 +1671,34 @@ int ext4_fopen2_stat(ext4_file *f, const char *path, int flags, struct stat *st,
 	EXT4_MP_LOCK(mp);
 
 	/* Accept any existing type in one traversal. New files are regular. */
-	ext4_block_cache_write_back(mp->fs.bdev, 1);
+	bool modifying = (flags & (O_CREAT | O_TRUNC)) != 0;
+	if (modifying)
+		ext4_block_cache_write_back(mp->fs.bdev, 1);
 	r = ext4_generic_open2_stat(f, path, flags & ~O_CREAT, EXT4_DE_UNKNOWN,
-				    NULL, NULL, st, link);
+				    NULL, NULL, st, link, mp, mode);
 	if (r == ENOENT && (flags & O_CREAT))
 		r = ext4_generic_open2_stat(f, path, flags, EXT4_DE_REG_FILE,
-					    NULL, NULL, st, link);
+					    NULL, NULL, st, link, mp, mode);
 	if (r == EOK)
 		f->flags = flags;
-	ext4_block_cache_write_back(mp->fs.bdev, 0);
+	if (modifying)
+		ext4_block_cache_write_back(mp->fs.bdev, 0);
 
 	EXT4_MP_UNLOCK(mp);
 	return r;
+}
+
+int ext4_fopen2_stat(ext4_file *f, const char *path, int flags, struct stat *st,
+		     struct ext4_inline_link *link)
+{
+	return ext4_fopen2_metadata(f, path, flags, st, link, NULL, NULL);
+}
+
+int ext4_fopen2_mode(ext4_file *f, const char *path, int flags, uint32_t *mode,
+		     struct ext4_inline_link *link, struct ext4_fs *selected_fs)
+{
+	return ext4_fopen2_metadata(f, path, flags, NULL, link, selected_fs,
+				    mode);
 }
 
 int ext4_fclose(ext4_file *f)

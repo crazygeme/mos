@@ -81,8 +81,6 @@ struct ext4_buf {
 	/**@brief   LRU priority. (unused) */
 	uint32_t lru_prio;
 
-	/**@brief   LRU id.*/
-	uint32_t lru_id;
 
 	/**@brief   Reference count table*/
 	uint32_t refctr;
@@ -96,8 +94,8 @@ struct ext4_buf {
 	/**@brief   LBA tree node*/
 	RB_ENTRY(ext4_buf) lba_node;
 
-	/**@brief   LRU tree node*/
-	RB_ENTRY(ext4_buf) lru_node;
+	/**@brief   Links while the buffer has no references. */
+	struct ext4_buf *lru_prev, *lru_next;
 
 	/**@brief   Dirty list node*/
 	SLIST_ENTRY(ext4_buf) dirty_node;
@@ -125,8 +123,6 @@ struct ext4_bcache {
 	/**@brief   Item size in block cache*/
 	uint32_t itemsize;
 
-	/**@brief   Last recently used counter*/
-	uint32_t lru_ctr;
 
 	/**@brief   Currently referenced datablocks*/
 	uint32_t ref_blocks;
@@ -145,8 +141,8 @@ struct ext4_bcache {
 	/* Borrowed buffer pointers; drop_buf clears a hint before freeing it. */
 	struct ext4_buf *lookup[EXT4_BCACHE_LOOKUP_SLOTS];
 
-	/**@brief   A tree holding unreferenced bufs*/
-	RB_HEAD(ext4_buf_lru, ext4_buf) lru_root;
+	/**@brief   Unreferenced buffers, oldest release first. */
+	struct ext4_buf *lru_head, *lru_tail;
 
 	/**@brief   A singly-linked list holding dirty buffers*/
 	SLIST_HEAD(ext4_buf_dirty, ext4_buf) dirty_list;

@@ -428,10 +428,30 @@ KTEST(lock, guard_recursive_vm_ownership)
 		LOCK_GUARD(&lock);
 		LOCK_GUARD(&lock);
 		EXPECT_EQ(lock.depth, 2u);
-		EXPECT_EQ(current->sched->vm_lock_depth, before + 2);
+		EXPECT_EQ(current->sched->vm_lock_depth, before + 1);
 	}
 	EXPECT_EQ(lock.depth, 0u);
 	EXPECT_EQ(lock.base.lock, 0u);
+	EXPECT_EQ(current->sched->vm_lock_depth, before);
+	return 0;
+}
+
+KTEST(lock, vm_ownership_counts_distinct_locks)
+{
+	rmutex_t first, second;
+	unsigned before = current->sched->vm_lock_depth;
+	vm_lock_init(&first);
+	vm_lock_init(&second);
+	{
+		LOCK_GUARD(&first);
+		{
+			LOCK_GUARD(&first);
+			LOCK_GUARD(&second);
+			EXPECT_EQ(current->sched->vm_lock_depth, before + 2);
+		}
+		EXPECT_EQ(current->sched->vm_lock_depth, before + 1);
+		EXPECT_EQ(first.depth, 1u);
+	}
 	EXPECT_EQ(current->sched->vm_lock_depth, before);
 	return 0;
 }

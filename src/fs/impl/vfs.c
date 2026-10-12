@@ -11,6 +11,24 @@
 #include <errno.h>
 #include <ps/ps.h>
 
+static uint64_t namespace_generation = 1;
+
+void vfs_namespace_changed(void)
+{
+	__atomic_add_fetch(&namespace_generation, 1, __ATOMIC_RELEASE);
+}
+
+uint64_t vfs_namespace_generation(void)
+{
+#if __SIZEOF_POINTER__ == 4
+	/* GCC implements an i686 atomic 64-bit load with x87 instructions.
+	 * The kernel must not touch userspace FPU state during pathname lookup. */
+	return __sync_val_compare_and_swap(&namespace_generation, 0, 0);
+#else
+	return __atomic_load_n(&namespace_generation, __ATOMIC_ACQUIRE);
+#endif
+}
+
 /**
  * To make sure sorted by path
  */
@@ -44,21 +62,50 @@ static vfs_mount_node *sb_mount_find(super_block *sb, const char *path)
 static vfs_mount_node *sb_mount_prefix(super_block *sb, const char *path,
 				       size_t *length)
 {
+	unsigned last = sb->s_lookup_last;
+	if (sb->s_lookup[last].valid &&
+	    !strcmp(sb->s_lookup[last].path, path)) {
+		*length = sb->s_lookup[last].length;
+		return sb->s_lookup[last].mount;
+	}
 	size_t end = strlen(path);
+	unsigned slot = 0;
+	size_t path_length = end;
+	for (size_t i = 0; i < path_length; i++)
+		slot = slot * 33 + (unsigned char)path[i];
+	slot %= 4;
+	if (path_length < sizeof(sb->s_lookup[slot].path) &&
+	    sb->s_lookup[slot].valid &&
+	    !strcmp(sb->s_lookup[slot].path, path)) {
+		sb->s_lookup_last = slot;
+		*length = sb->s_lookup[slot].length;
+		return sb->s_lookup[slot].mount;
+	}
+	vfs_mount_node *found = NULL;
 	while (end) {
 		vfs_mount_node *mount = sb_mount_find_n(sb, path, end);
 		if (mount) {
 			*length = end;
-			return mount;
+			found = mount;
+			break;
 		}
 		while (end && path[--end] != '/')
 			;
 	}
-	return NULL;
+	if (path_length < sizeof(sb->s_lookup[slot].path)) {
+		memcpy(sb->s_lookup[slot].path, path, path_length + 1);
+		sb->s_lookup[slot].mount = found;
+		sb->s_lookup[slot].length = found ? end : 0;
+		sb->s_lookup[slot].valid = 1;
+		sb->s_lookup_last = slot;
+	}
+	return found;
 }
 
 static void sb_mount_insert(super_block *sb, vfs_mount_node *mount)
 {
+	vfs_namespace_changed();
+	memset(sb->s_lookup, 0, sizeof(sb->s_lookup));
 	struct rb_node **link = &sb->s_mounts.rb_node, *parent = NULL;
 	while (*link) {
 		vfs_mount_node *cur = rb_entry(*link, vfs_mount_node, rb_node);
@@ -70,14 +117,18 @@ static void sb_mount_insert(super_block *sb, vfs_mount_node *mount)
 	}
 	rb_link_node(&mount->rb_node, parent, link);
 	rb_insert_color(&mount->rb_node, &sb->s_mounts);
+	vfs_namespace_changed();
 }
 
 static void sb_mount_remove(super_block *sb, vfs_mount_node *mount)
 {
+	vfs_namespace_changed();
+	memset(sb->s_lookup, 0, sizeof(sb->s_lookup));
 	rb_erase(&mount->rb_node, &sb->s_mounts);
 	free(mount->path);
 	sb_put(mount->sb);
 	free(mount);
+	vfs_namespace_changed();
 }
 
 /*
@@ -319,7 +370,9 @@ int vfs_umount(super_block *sb, const char *path)
 int vfs_mkdir(super_block *sb, const char *path, unsigned mode)
 {
 	int ret;
+	vfs_namespace_changed();
 	VFS_PATH_RESULT(ret, mkdir, mode);
+	vfs_namespace_changed();
 	if (!ret)
 		inotify_created(sb, path);
 	return ret;
@@ -329,7 +382,9 @@ int vfs_rmdir(super_block *sb, const char *path)
 {
 	inotify_node *node = inotify_snapshot(sb, path);
 	int ret;
+	vfs_namespace_changed();
 	VFS_PATH_RESULT(ret, rmdir);
+	vfs_namespace_changed();
 	if (!ret)
 		inotify_removed(node);
 	inotify_snapshot_put(node);
@@ -340,7 +395,9 @@ int vfs_unlink(super_block *sb, const char *path)
 {
 	inotify_node *node = inotify_snapshot(sb, path);
 	int ret;
+	vfs_namespace_changed();
 	VFS_PATH_RESULT(ret, unlink);
+	vfs_namespace_changed();
 	if (!ret)
 		inotify_removed(node);
 	inotify_snapshot_put(node);
@@ -351,7 +408,9 @@ int vfs_link(super_block *sb, const char *oldpath, const char *newpath)
 {
 	inotify_node *node = inotify_snapshot(sb, oldpath);
 	int ret;
+	vfs_namespace_changed();
 	VFS_PATH2_RESULT(ret, link);
+	vfs_namespace_changed();
 	if (!ret)
 		inotify_linked(node, sb, newpath);
 	inotify_snapshot_put(node);
@@ -363,7 +422,9 @@ int vfs_rename(super_block *sb, const char *oldpath, const char *newpath)
 	inotify_node *source = inotify_snapshot(sb, oldpath);
 	inotify_node *replacement = inotify_snapshot(sb, newpath);
 	int ret;
+	vfs_namespace_changed();
 	VFS_PATH2_RESULT(ret, rename);
+	vfs_namespace_changed();
 	if (!ret)
 		inotify_renamed(source, replacement, sb, newpath);
 	inotify_snapshot_put(source);
@@ -386,7 +447,9 @@ int vfs_symlink(super_block *sb, const char *target, const char *linkpath)
 		return -EINVAL;
 	if (!target_sb->s_op || !target_sb->s_op->symlink)
 		return -ENOSYS;
+	vfs_namespace_changed();
 	int ret = target_sb->s_op->symlink(target_sb, target, rel_path);
+	vfs_namespace_changed();
 	if (!ret)
 		inotify_created(sb, linkpath);
 	return ret;
@@ -524,11 +587,15 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag,
 	 * filesystem's own open operation.
 	 */
 	if (target_sb->s_op && target_sb->s_op->open) {
+		if (flag & O_CREAT)
+			vfs_namespace_changed();
 		if (link_target && target_sb->s_op->open_link)
 			fp = target_sb->s_op->open_link(target_sb, rel_path,
 							flag, link_target);
 		else
 			fp = target_sb->s_op->open(target_sb, rel_path, flag);
+		if (flag & O_CREAT)
+			vfs_namespace_changed();
 		if (fp) {
 			vfs_set_file_origin(fp, target_sb, rel_path);
 			fp->f_mount_flags = target_sb->s_flags;
@@ -547,11 +614,22 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 	const char *lookup = path;
 	super_block *lookup_sb = sb;
 	unsigned depth;
+	task_execution *execution = current->fs ? current->execution : NULL;
+	uint64_t generation = vfs_namespace_generation();
+	char cached_target[256];
+	int cacheable = 1;
 
 	if (!sb || !path)
 		return NULL;
 	if (flag & O_NOFOLLOW)
 		return vfs_open_raw(sb, path, flag, NULL);
+	if (execution && sb == current->fs->root && !(flag & O_CREAT) &&
+	    execution->link_cache_root == sb &&
+	    execution->link_cache_generation == generation &&
+	    !strcmp(execution->link_cache_path, path)) {
+		strcpy(cached_target, execution->link_cache_target);
+		lookup = cached_target;
+	}
 	for (depth = 0; depth <= 40; depth++) {
 		size_t len = 0;
 		const char *linkpath, *slash;
@@ -573,6 +651,8 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 		}
 		if (!fp || !fp->f_inode || !S_ISLNK(fp->f_inode->i_mode))
 			goto out;
+		/* procfs links such as cwd/exe/fd are dynamic without a directory edit. */
+		cacheable = 0;
 		if (fp->f_fop && fp->f_fop->follow_link) {
 			file *target_file = fp->f_fop->follow_link(fp, flag);
 			fs_put_file(fp);
@@ -651,6 +731,16 @@ normalize_link:
 	}
 	fp = NULL;
 out:
+	if (fp && cacheable && execution && sb == current->fs->root &&
+	    lookup != path && lookup != cached_target && !(flag & O_CREAT) &&
+	    strlen(path) < sizeof(execution->link_cache_path) &&
+	    strlen(lookup) < sizeof(execution->link_cache_target) &&
+	    generation == vfs_namespace_generation()) {
+		strcpy(execution->link_cache_path, path);
+		strcpy(execution->link_cache_target, lookup);
+		execution->link_cache_root = sb;
+		execution->link_cache_generation = generation;
+	}
 	if (fp && !fp->f_name)
 		fp->f_name = strdup(lookup);
 	if (joined)

@@ -51,19 +51,32 @@ static int ext4_bcache_lba_compare(struct ext4_buf *a, struct ext4_buf *b)
 	return 0;
 }
 
-static int ext4_bcache_lru_compare(struct ext4_buf *a, struct ext4_buf *b)
-{
-	if (a->lru_id > b->lru_id)
-		return 1;
-	else if (a->lru_id < b->lru_id)
-		return -1;
-	return 0;
-}
-
 RB_GENERATE_INTERNAL(ext4_buf_lba, ext4_buf, lba_node, ext4_bcache_lba_compare,
 		     static inline)
-RB_GENERATE_INTERNAL(ext4_buf_lru, ext4_buf, lru_node, ext4_bcache_lru_compare,
-		     static inline)
+
+static void lru_remove(struct ext4_bcache *bc, struct ext4_buf *buf)
+{
+	if (buf->lru_prev)
+		buf->lru_prev->lru_next = buf->lru_next;
+	else
+		bc->lru_head = buf->lru_next;
+	if (buf->lru_next)
+		buf->lru_next->lru_prev = buf->lru_prev;
+	else
+		bc->lru_tail = buf->lru_prev;
+	buf->lru_prev = buf->lru_next = NULL;
+}
+
+static void lru_append(struct ext4_bcache *bc, struct ext4_buf *buf)
+{
+	buf->lru_prev = bc->lru_tail;
+	buf->lru_next = NULL;
+	if (bc->lru_tail)
+		bc->lru_tail->lru_next = buf;
+	else
+		bc->lru_head = buf;
+	bc->lru_tail = buf;
+}
 
 int ext4_bcache_init_dynamic(struct ext4_bcache *bc, uint32_t cnt,
 			     uint32_t itemsize)
@@ -103,15 +116,15 @@ int ext4_bcache_fini_dynamic(struct ext4_bcache *bc)
  *  Buffers in a bcache are sorted by their LBA and stored in a
  *  RB-Tree(lba_root).
  *
- *  Bcache also maintains another RB-Tree(lru_root) right now, where
- *  buffers are sorted by their LRU id.
+ *  Unreferenced buffers form a doubly-linked LRU queue. Acquiring a
+ *  buffer removes it; releasing the last reference appends it at the tail.
  *
  *  A singly-linked list is used to track those dirty buffers which are
  *  ready to be flushed. (Those buffers which are dirty but also referenced
  *  are not considered ready to be flushed.)
  *
  *  When a buffer is not referenced, it will be stored in both lba_root
- *  and lru_root, while it will only be stored in lba_root when it is
+ *  and the LRU queue, while it will only be stored in lba_root when it is
  *  referenced.
  */
 
@@ -156,7 +169,7 @@ static struct ext4_buf *ext4_buf_lookup(struct ext4_bcache *bc, uint64_t lba)
 
 struct ext4_buf *ext4_buf_lowest_lru(struct ext4_bcache *bc)
 {
-	return RB_MIN(ext4_buf_lru, &bc->lru_root);
+	return bc->lru_head;
 }
 
 void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
@@ -172,7 +185,7 @@ void ext4_bcache_drop_buf(struct ext4_bcache *bc, struct ext4_buf *buf)
 				  "lba: %" PRIu64 ", refctr: %" PRIu32 "\n",
 			 buf->lba, buf->refctr);
 	} else
-		RB_REMOVE(ext4_buf_lru, &bc->lru_root, buf);
+		lru_remove(bc, buf);
 
 	RB_REMOVE(ext4_buf_lba, &bc->lba_root, buf);
 
@@ -217,10 +230,7 @@ struct ext4_buf *ext4_bcache_find_get(struct ext4_bcache *bc,
 	if (buf) {
 		/* If buffer is not referenced. */
 		if (!buf->refctr) {
-			/* Assign new value to LRU id and increment LRU counter
-			 * by 1*/
-			buf->lru_id = ++bc->lru_ctr;
-			RB_REMOVE(ext4_buf_lru, &bc->lru_root, buf);
+			lru_remove(bc, buf);
 			if (ext4_bcache_test_flag(buf, BC_DIRTY))
 				ext4_bcache_remove_dirty_node(bc, buf);
 		}
@@ -258,9 +268,6 @@ int ext4_bcache_alloc(struct ext4_bcache *bc, struct ext4_block *b,
 		bc->max_ref_blocks = bc->ref_blocks;
 
 	ext4_bcache_inc_ref(buf);
-	/* Assign new value to LRU id and increment LRU counter
-	 * by 1*/
-	buf->lru_id = ++bc->lru_ctr;
 
 	b->buf = buf;
 	b->data = buf->data;
@@ -289,7 +296,7 @@ int ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b)
 
 	/* We are the last one touching this buffer, do the cleanups. */
 	if (!buf->refctr) {
-		RB_INSERT(ext4_buf_lru, &bc->lru_root, buf);
+		lru_append(bc, buf);
 		/* This buffer is ready to be flushed. */
 		if (ext4_bcache_test_flag(buf, BC_DIRTY) &&
 		    ext4_bcache_test_flag(buf, BC_UPTODATE)) {

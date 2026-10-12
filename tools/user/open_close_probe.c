@@ -15,6 +15,7 @@ typedef long result;
 #define NR_WAIT 61
 #define NR_MKDIR 83
 #define NR_CHDIR 80
+#define NR_CHROOT 161
 #define NR_UNLINK 87
 #define NR_SYMLINK 88
 #define NR_READLINK 89
@@ -25,6 +26,10 @@ typedef long result;
 #define NR_SETUID 105
 #define NR_IOPL 172
 #define NR_MOUNT 165
+#define NR_UMOUNT 166
+#define NR_FCNTL 72
+#define GETLK 5
+#define SETLK 6
 static result call(word n, word a, word b, word c, word d, word e)
 {
 	register word r10 asm("r10") = d, r8 asm("r8") = e;
@@ -48,6 +53,7 @@ static result call(word n, word a, word b, word c, word d, word e)
 #define NR_WAIT 114
 #define NR_MKDIR 39
 #define NR_CHDIR 12
+#define NR_CHROOT 61
 #define NR_UNLINK 10
 #define NR_SYMLINK 83
 #define NR_READLINK 85
@@ -58,6 +64,10 @@ static result call(word n, word a, word b, word c, word d, word e)
 #define NR_SETUID 213
 #define NR_IOPL 110
 #define NR_MOUNT 21
+#define NR_UMOUNT 52
+#define NR_FCNTL 221
+#define GETLK 12
+#define SETLK 13
 word fast_entry;
 __attribute__((naked, noinline, noclone)) static result
 call(word n, word a, word b, word c, word d, word e)
@@ -236,6 +246,16 @@ __attribute__((used)) static void probe_main(word *stack)
 	print("OPEN_CLOSE_BENCHMARK_PASS\n");
 	finish(0);
 #endif
+	/* Kernel pathname-generation reads must not borrow a userspace x87 slot. */
+	unsigned long long fp_values[8];
+	for (unsigned i = 0; i < 8; i++)
+		asm volatile("fld1");
+	close_file(open_file("/tmp/open-close/file", 0));
+	close_file(open_file("/tmp/open-close/file", 0));
+	for (unsigned i = 0; i < 8; i++)
+		asm volatile("fstpl %0" : "=m"(fp_values[i]));
+	for (unsigned i = 0; i < 8; i++)
+		check(fp_values[i] == 0x3ff0000000000000ULL, "pathname lookup preserves full x87 stack");
 	check(!call(NR_CHDIR, (word)"/tmp/open-close", 0, 0, 0, 0), "chdir for relative opens");
 	contents("file", 'a');
 	contents("./link", 'a');
@@ -340,6 +360,89 @@ __attribute__((used)) static void probe_main(word *stack)
 	create("/tmp/open-close/mount/file", 't');
 	create("/tmp/open-close/dup-file", 'd');
 	unlinked_duplicate("/tmp/open-close/dup-file", 'd');
+
+	/* A pooled short-name description can be renamed to a longer name. */
+	char long_parent[256], long_path[512];
+	const char *long_prefix = "/tmp/open-close/";
+	unsigned long_length = 0;
+	while (long_prefix[long_length]) {
+		long_parent[long_length] = long_prefix[long_length];
+		long_length++;
+	}
+	for (unsigned i = 0; i < 200; i++)
+		long_parent[long_length++] = 'a';
+	long_parent[long_length] = 0;
+	check(!call(NR_MKDIR, (word)long_parent, 0700, 0, 0, 0), "long parent mkdir");
+	for (unsigned i = 0; i < long_length; i++)
+		long_path[i] = long_parent[i];
+	long_path[long_length++] = '/';
+	for (unsigned i = 0; i < 80; i++)
+		long_path[long_length++] = 'b';
+	long_path[long_length] = 0;
+	create(long_path, 'l');
+	contents(long_path, 'l');
+	contents(long_path, 'l');
+	check(!call(NR_UNLINK, (word)long_path, 0, 0, 0, 0), "long path unlink");
+	create("/tmp/open-close/pool-name", 'p');
+	result renamed = open_file("/tmp/open-close/pool-name", 0);
+	check(renamed >= 0, "open before long rename");
+	check(!call(NR_RENAME, (word)"/tmp/open-close/pool-name", (word)long_path, 0, 0, 0), "rename inline name");
+	value = 0;
+	check(call(NR_READ, renamed, (word)&value, 1, 0, 0) == 1 && value == 'p', "renamed fd remains readable");
+	close_file(renamed);
+	contents(long_path, 'p');
+
+	/* Followed-link and mount caches must observe both overlay and removal. */
+	check(!call(NR_MKDIR, (word)"/tmp/open-close/crossing", 0700, 0, 0, 0), "crossing mkdir");
+	create("/tmp/open-close/crossing/file", 'u');
+	check(!call(NR_SYMLINK, (word)"crossing/file", (word)"/tmp/open-close/crossing-link", 0, 0, 0), "crossing link");
+	contents("/tmp/open-close/crossing-link", 'u');
+	contents("/tmp/open-close/crossing-link", 'u');
+	check(!call(NR_MOUNT, (word)"none", (word)"/tmp/open-close/crossing", (word)"tmpfs", 0, 0), "overlay cached link");
+	create("/tmp/open-close/crossing/file", 'o');
+	contents("/tmp/open-close/crossing-link", 'o');
+	check(!call(NR_UMOUNT, (word)"/tmp/open-close/crossing", 0, 0, 0, 0), "unmount cached link");
+	contents("/tmp/open-close/crossing-link", 'u');
+
+	/* Closing an independent descriptor releases this process's range locks;
+	 * an inherited descriptor in a child must retain the parent's locks. */
+	struct { short type, whence; long long start, length; int pid; } range = {1, 0, 0, 1, 0};
+	result locked = open_file(long_path, 2), independent = open_file(long_path, 0);
+	check(locked >= 0 && independent >= 0, "range lock opens");
+	check(!call(NR_FCNTL, locked, SETLK, (word)&range, 0, 0), "set range lock");
+	for (unsigned released = 0; released < 2; released++) {
+		result query = call(NR_FORK, 0, 0, 0, 0, 0);
+		check(query >= 0, "range query fork");
+		if (!query) {
+			range.type = 1;
+			check(!call(NR_FCNTL, locked, GETLK, (word)&range, 0, 0), "query range lock");
+			check(range.type == (released ? 2 : 1), "range lock release visibility");
+			call(NR_EXIT, 0, 0, 0, 0, 0);
+			for (;;) {}
+		}
+		int query_status = -1;
+		check(call(NR_WAIT, query, (word)&query_status, 0, 0, 0) == query && !query_status, "range query child");
+		if (!released)
+			close_file(independent);
+	}
+	close_file(locked);
+	/* The same absolute user string must resolve under a changed root. */
+	check(!call(NR_MKDIR, (word)"/tmp/open-close/jail", 0700, 0, 0, 0), "jail mkdir");
+	check(!call(NR_MKDIR, (word)"/tmp/open-close/jail/tmp", 0700, 0, 0, 0), "jail tmp mkdir");
+	check(!call(NR_MKDIR, (word)"/tmp/open-close/jail/tmp/open-close", 0700, 0, 0, 0), "jail parent mkdir");
+	create("/tmp/open-close/jail/tmp/open-close/file", 'j');
+	result jailed = call(NR_FORK, 0, 0, 0, 0, 0);
+	check(jailed >= 0, "fork chroot check");
+	if (!jailed) {
+		contents("/tmp/open-close/file", 'c');
+		check(!call(NR_CHROOT, (word)"/tmp/open-close/jail", 0, 0, 0, 0), "chroot");
+		contents("/tmp/open-close/file", 'j');
+		call(NR_EXIT, 0, 0, 0, 0, 0);
+		for (;;) {}
+	}
+	int jail_status = -1;
+	check(call(NR_WAIT, jailed, (word)&jail_status, 0, 0, 0) == jailed && !jail_status,
+	      "absolute pathname cache observes chroot");
 	close_file(open_file("/tmp/open-close/file", 1 | O_TRUNC));
 	result empty = open_file("/tmp/open-close/file", 0);
 	check(empty >= 0 && call(NR_READ, empty, (word)&value, 1, 0, 0) == 0, "cached truncate");

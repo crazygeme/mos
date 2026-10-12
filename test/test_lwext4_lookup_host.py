@@ -56,7 +56,17 @@ static void buffer_tests(void)
     struct ext4_buf *a = create_buffer(&cache, 1, 'a');
     struct ext4_buf *b = create_buffer(&cache, 17, 'b');
     uint64_t high = (1ULL << 32) | 16;
-    create_buffer(&cache, high, 'h');
+    struct ext4_buf *h = create_buffer(&cache, high, 'h');
+    assert(ext4_buf_lowest_lru(&cache) == a);
+    struct ext4_block pin1 = {0}, pin2 = {0};
+    assert(ext4_bcache_find_get(&cache, &pin1, 1) == a);
+    assert(ext4_bcache_find_get(&cache, &pin2, 1) == a);
+    assert(ext4_buf_lowest_lru(&cache) == b);
+    assert(!ext4_bcache_free(&cache, &pin1));
+    assert(ext4_buf_lowest_lru(&cache) == b); /* Still pinned. */
+    assert(!ext4_bcache_free(&cache, &pin2));
+    check_buffer(&cache, 17, 'b');
+    assert(ext4_buf_lowest_lru(&cache) == h); /* Released buffers go last. */
     for (unsigned i = 0; i < 100; ++i) {
         /* These LBAs collide, including a different high 32-bit word. */
         check_buffer(&cache, 1, 'a');

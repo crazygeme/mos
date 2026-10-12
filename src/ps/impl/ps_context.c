@@ -137,6 +137,8 @@ void ps_free_task(task_struct *task)
 	ps_put_resources(task);
 	if (task->execution)
 		kfree(task->execution->io_bitmap);
+	if (task->execution)
+		kfree(task->execution->ext4_file_cache);
 	kfree(task->execution);
 	kfree(task->credentials);
 	kfree(task->signal);

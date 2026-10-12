@@ -791,7 +791,7 @@ int fs_put_file(file *f)
 		epoll_release_file(f);
 		fs_flock_release(f);
 		inotify_file_close(f);
-		if (f->f_name)
+		if (f->f_name && !f->f_name_inline)
 			free(f->f_name);
 		free(f->f_relative_path);
 		if (f->f_fop && f->f_fop->release)
@@ -1251,6 +1251,31 @@ int resolve_path(const char *old, char *new)
 	task_fs *fs = cur && cur->fs ? cur->fs : NULL;
 	if (fs)
 		rmutex_lock(&fs->lock);
+
+	/* The common absolute path under an unchanged root needs one bounded
+	 * copy. Special trailing dot components retain the general resolver. */
+	if (old[0] == '/' &&
+	    (!fs || !fs->root_path || !strcmp(fs->root_path, "/"))) {
+		const char *source = old;
+		char *destination = new;
+		while (*source && destination < new + MAX_PATH - 1) {
+			char c = *source++;
+			*destination++ = c;
+			if (c == '/')
+				while (*source == '/')
+					source++;
+		}
+		*destination = 0;
+		if (*source) {
+			new[0] = 0;
+			goto fail;
+		}
+		if (destination == new + 1 || destination[-1] != '.') {
+			if (fs)
+				rmutex_unlock(&fs->lock);
+			return 0;
+		}
+	}
 
 	/* stat("#!/bin/bash") will also be called */
 	if (strncmp(old, "#!", 2) == 0) {

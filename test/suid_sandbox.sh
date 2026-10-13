@@ -24,6 +24,12 @@ cat > "$probe_dir/probe.c" <<'C'
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__x86_64__)
+#define CALL_OPENAT 257
+#else
+#define CALL_OPENAT 295
+#endif
+
 static void wait_ok(pid_t pid)
 {
     int status;
@@ -51,7 +57,7 @@ int main(int argc, char **argv)
     assert(munmap(wait_status, 4096) == 0);
     int proc = open("/proc", O_RDONLY | O_DIRECTORY);
     assert(proc >= 0);
-    int duplicate = openat(proc, "././.", O_RDONLY | O_DIRECTORY);
+    int duplicate = syscall(CALL_OPENAT, proc, "././.", O_RDONLY | O_DIRECTORY, 0);
     assert(duplicate >= 0);
     struct stat original, copied;
     assert(fstat(proc, &original) == 0 && fstat(duplicate, &copied) == 0);

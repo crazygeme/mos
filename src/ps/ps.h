@@ -57,6 +57,7 @@ typedef struct _signal_queue_entry {
 	list_entry list;
 	int signo, timer_id;
 	uintptr_t value;
+	struct mos_signal_info info;
 } signal_queue_entry;
 
 /* Protected by ps_lock; shared by all members of a thread group. */
@@ -70,6 +71,8 @@ typedef struct _task_thread {
 	rlimit_t rlimits[RLIM_NLIMITS];
 	sigset_t sig_pending;
 	list_entry pending_queue;
+	struct mos_signal_info pending_info[NSIG];
+	uint64_t signal_sequence[NSIG];
 	unsigned long long alarm_expire_ms, alarm_interval_ms;
 	struct rb_node alarm_rb;
 } task_thread;
@@ -121,6 +124,8 @@ typedef struct _task_signal {
 	sigset_t sig_pending;
 	sigset_t sig_mask;
 	list_entry pending_queue;
+	struct mos_signal_info pending_info[NSIG];
+	uint64_t signal_sequence[NSIG];
 	sigset_t saved_sigmask;
 	int restore_sigmask;
 	stack_t altstack;
@@ -276,6 +281,11 @@ void ps_put_resources(task_struct *task);
 unsigned long ps_pending_signals(task_struct *task);
 void ps_queue_group_signal_unsafe(task_struct *task, int sig);
 int ps_send_thread_signal(unsigned tid, int sig);
+int ps_take_signal_info(task_struct *task, sigset_t mask,
+			struct mos_signal_info *info);
+unsigned ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
+			      uint64_t *sequence);
+void ps_child_signal_unsafe(task_struct *parent, task_struct *child, int sig);
 int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
 		   uintptr_t *value);
 void ps_signal_action(task_struct *task, int sig, const struct sigaction *in,
@@ -362,7 +372,7 @@ int ps_task_ready(task_struct *task);
 /* Requires ps_lock; signal delivery is authorized by the kernel caller. */
 void ps_queue_signal_unsafe(task_struct *target, int sig);
 void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value,
-		     int thread);
+		     int thread, unsigned overrun);
 void ps_timer_poll(void);
 void ps_timer_discard_group(unsigned tgid);
 void ps_send_signal_pgrp(unsigned pgrp, int sig);

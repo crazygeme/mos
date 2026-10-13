@@ -77,6 +77,12 @@ int sys_pipe(int pipefd[2]);
 int sys_pipe2(int pipefd[2], int flags);
 int sys_inotify_init1(int flags);
 int sys_inotify_init(void);
+int sys_signalfd4(int fd, const void *mask, size_t size, int flags);
+int sys_timerfd_create(int clockid, int flags);
+int sys_timerfd_settime(int fd, int flags, const void *input, void *output);
+int sys_timerfd_gettime(int fd, void *output);
+int sys_timerfd_settime64(int fd, int flags, const void *input, void *output);
+int sys_timerfd_gettime64(int fd, void *output);
 int sys_eventfd(unsigned initval);
 int sys_eventfd2(unsigned initval, int flags);
 int sys_inotify_add_watch(int fd, const char *path, unsigned mask);
@@ -271,6 +277,7 @@ int sys_sigaltstack(const stack_t *ss, stack_t *old_ss);
 int sys_rt_sigpending(sigset_t *set, unsigned sigsetsize);
 int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 			const struct timespec *timeout, unsigned sigsetsize);
+int sys_rt_sigqueueinfo64(unsigned pid, int sig, void *uinfo);
 int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo);
 int sys_rt_sigsuspend(const sigset_t *mask, unsigned sigsetsize);
 

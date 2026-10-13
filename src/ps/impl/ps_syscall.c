@@ -428,7 +428,7 @@ void do_exit(unsigned encoded_status)
 		    leader->life->exit_ready) {
 			task_struct *parent = ps_find_process_unsafe(leader->life->ppid);
 			if (parent) {
-				ps_queue_group_signal_unsafe(parent, SIGCHLD);
+				ps_child_signal_unsafe(parent, leader, SIGCHLD);
 				ps_wake_parent_waiters_unsafe(parent);
 			}
 		}

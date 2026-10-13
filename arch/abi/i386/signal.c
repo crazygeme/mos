@@ -281,7 +281,18 @@ static void build_rt_frame(task_struct *cur, intr_frame *frame,
 		rt_sf->info.si_code = fault->code;
 		if (fault->code == -2) {
 			rt_sf->info._pad[0] = fault->timer_id;
+			rt_sf->info._pad[1] = fault->overrun;
 			rt_sf->info._pad[2] = (uint32_t)fault->value;
+		} else if (fault->queued) {
+			rt_sf->info._pad[0] = fault->pid;
+			rt_sf->info._pad[1] = fault->uid;
+			rt_sf->info._pad[2] = fault->code > 0 ?
+						      fault->status :
+						      (uint32_t)fault->value;
+			if (sig == SIGCHLD) {
+				rt_sf->info._pad[3] = fault->utime;
+				rt_sf->info._pad[4] = fault->stime;
+			}
 		} else
 			rt_sf->info._pad[0] = (uint32_t)fault->address;
 	}

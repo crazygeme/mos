@@ -7,6 +7,7 @@
  */
 
 #include <ps/ps.h>
+#include <fs/anonfd.h>
 #include <device/chardev.h>
 #include <lib/klib.h>
 
@@ -30,6 +31,8 @@ static void ps_system_service_task(void *param)
 
 		if (now >= next_timer_ms) {
 			ps_timer_poll();
+			timerfd_poll_timers();
+			signalfd_poll_signals();
 
 			next_timer_ms +=
 				((now - next_timer_ms) / TICK_MS + 1) * TICK_MS;

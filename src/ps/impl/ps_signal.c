@@ -8,6 +8,7 @@
  */
 #include <ps/ps.h>
 #include <ps/signal.h>
+#include <ps/usage.h>
 #include <int/int.h>
 #include <lib/klib.h>
 #include <config.h>
@@ -80,10 +81,17 @@ void ps_queue_group_signal_unsafe(task_struct *task, int sig)
 		 sig == SIGTTOU)
 		__atomic_fetch_and(&group->sig_pending, ~(1UL << (SIGCONT - 1)),
 				   __ATOMIC_RELEASE);
+	if (!(group->sig_pending & bit))
+		group->pending_info[sig] = (struct mos_signal_info){
+			.signo = sig, .code = 128, .timer_id = -1
+		};
+	group->signal_sequence[sig]++;
 	__atomic_fetch_or(&group->sig_pending, bit, __ATOMIC_RELEASE);
 	list_entry *head = &group->members;
-	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
-		task_struct *peer = container_of(entry, task_schedule, thread_list)->task;
+	for (list_entry *entry = head->next; entry != head;
+	     entry = entry->next) {
+		task_struct *peer =
+			container_of(entry, task_schedule, thread_list)->task;
 		if (peer->execution && peer->thread == group && peer->sighand &&
 		    peer->sched->status != ps_dying)
 			wake_signal_target(peer, sig);
@@ -91,14 +99,15 @@ void ps_queue_group_signal_unsafe(task_struct *task, int sig)
 }
 
 void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value,
-		     int thread)
+		     int thread, unsigned overrun)
 {
 	signal_queue_entry *entry = kmalloc(sizeof(*entry));
 	if (!entry)
 		return;
 	*entry = (signal_queue_entry){ .signo = signo,
 				       .timer_id = timer_id,
-				       .value = value };
+				       .value = value,
+				       .info.overrun = overrun };
 	int irq;
 	spinlock_lock(&ps_lock, &irq);
 	task_struct *target = ps_find_process_unsafe(tid);
@@ -112,6 +121,12 @@ void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value,
 				container_of(node, signal_queue_entry, list);
 			if (pending->timer_id == timer_id &&
 			    pending->signo == signo) {
+				unsigned extra = overrun == ~0U ? ~0U :
+								  overrun + 1;
+				pending->info.overrun =
+					extra > ~0U - pending->info.overrun ?
+						~0U :
+						pending->info.overrun + extra;
 				kfree(entry);
 				spinlock_unlock(&ps_lock, irq);
 				return;
@@ -129,8 +144,8 @@ void ps_timer_notify(unsigned tid, int signo, int timer_id, uintptr_t value,
 
 /* Consume bit and payload together under ps_lock. Keep the bit set while
  * another event for that signal is queued. Thread-directed events win ties. */
-int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
-		   uintptr_t *value)
+int ps_take_signal_info(task_struct *task, sigset_t mask,
+			struct mos_signal_info *info)
 {
 	int irq, sig = 0;
 	spinlock_lock(&ps_lock, &irq);
@@ -143,20 +158,21 @@ int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
 					 &task->thread->sig_pending;
 		list_entry *queue = local ? &task->signal->pending_queue :
 					    &task->thread->pending_queue;
-		if (timer_id)
-			*timer_id = -1;
-		if (value)
-			*value = 0;
+		*info = local ? task->signal->pending_info[sig] :
+				task->thread->pending_info[sig];
 		for (list_entry *node = queue->next; node != queue;
 		     node = node->next) {
 			signal_queue_entry *entry =
 				container_of(node, signal_queue_entry, list);
 			if (entry->signo != sig)
 				continue;
-			if (timer_id)
-				*timer_id = entry->timer_id;
-			if (value)
-				*value = entry->value;
+			info->timer_id = entry->timer_id;
+			info->value = entry->value;
+			if (entry->timer_id >= 0) {
+				info->code = -2;
+				info->overrun = entry->info.overrun;
+			} else
+				*info = entry->info;
 			list_remove_entry(node);
 			kfree(entry);
 			break;
@@ -171,6 +187,64 @@ int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
 	}
 	spinlock_unlock(&ps_lock, irq);
 	return sig;
+}
+
+int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
+		   uintptr_t *value)
+{
+	struct mos_signal_info info;
+	int sig = ps_take_signal_info(task, mask, &info);
+	if (sig) {
+		if (timer_id)
+			*timer_id = info.timer_id;
+		if (value)
+			*value = info.value;
+	}
+	return sig;
+}
+
+/* Snapshot the registration context without retaining a task pointer. */
+unsigned ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
+			      uint64_t *sequence)
+{
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	task_struct *task = ps_find_process_unsafe(tid);
+	if (task && (task->thread != group || !task->signal))
+		task = NULL;
+	sigset_t pending = group->sig_pending;
+	*sequence = 0;
+	for (int sig = 1; sig < NSIG; sig++) {
+		if (!(mask & (1U << (sig - 1))))
+			continue;
+		*sequence += group->signal_sequence[sig];
+		if (task)
+			*sequence += task->signal->signal_sequence[sig];
+	}
+	if (task)
+		pending |= task->signal->sig_pending;
+	spinlock_unlock(&ps_lock, irq);
+	return pending & mask;
+}
+
+void ps_child_signal_unsafe(task_struct *parent, task_struct *child, int sig)
+{
+	int pending = !!(parent->thread->sig_pending & (1U << (sig - 1)));
+	ps_queue_group_signal_unsafe(parent, sig);
+	if (!pending) {
+		unsigned status = child->life->exit_status;
+		parent->thread->pending_info[sig] = (struct mos_signal_info){
+			.signo = sig,
+			.timer_id = -1,
+			.code = (status & 0x7f) ? 2 : 1,
+			.status = (status & 0x7f) ? (status & 0x7f) :
+						    ((status >> 8) & 0xff),
+			.pid = child->thread->tgid,
+			.uid = child->credentials->uid,
+			.utime = ps_usage_read(&child->thread->user_tickets),
+			.stime = ps_usage_read(&child->thread->kernel_tickets)
+		};
+	}
 }
 
 void do_signal(intr_frame *frame);
@@ -273,6 +347,11 @@ void ps_queue_signal_unsafe(task_struct *target, int sig)
 		__atomic_fetch_and(&target->signal->sig_pending,
 				   ~(1UL << (SIGCONT - 1)), __ATOMIC_RELEASE);
 
+	if (!(target->signal->sig_pending & bit))
+		target->signal->pending_info[sig] = (struct mos_signal_info){
+			.signo = sig, .code = 128, .timer_id = -1
+		};
+	target->signal->signal_sequence[sig]++;
 	__atomic_fetch_or(&target->signal->sig_pending, bit, __ATOMIC_RELEASE);
 	wake_signal_target(target, sig);
 }
@@ -307,10 +386,21 @@ static int send_signal(unsigned pid, int sig, int thread)
 	}
 
 	if (sig) {
+		int pending = !!((thread ? target->signal->sig_pending :
+					   target->thread->sig_pending) &
+				 (1U << (sig - 1)));
 		if (thread)
 			ps_queue_signal_unsafe(target, sig);
 		else
 			ps_queue_group_signal_unsafe(target, sig);
+		if (!pending) {
+			struct mos_signal_info *info =
+				thread ? &target->signal->pending_info[sig] :
+					 &target->thread->pending_info[sig];
+			info->code = thread ? -6 : 0;
+			info->pid = sender->thread->tgid;
+			info->uid = sender->credentials->uid;
+		}
 	}
 
 done:
@@ -521,7 +611,7 @@ int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 }
 
 /* Return the lowest-numbered deliverable signal, or 0 if none. */
-static int pick_signal(task_struct *cur, int *timer_id, uintptr_t *value)
+static int pick_signal(task_struct *cur, struct mos_signal_info *info)
 {
 	unsigned long ignored = ps_pending_signals(cur) &
 				~cur->signal->sig_mask &
@@ -533,8 +623,7 @@ static int pick_signal(task_struct *cur, int *timer_id, uintptr_t *value)
 		ignored = ps_pending_signals(cur) & ~cur->signal->sig_mask &
 			  ~ps_interrupting_signals(cur);
 	}
-	return ps_take_signal(cur, ps_interrupting_signals(cur), timer_id,
-			      value);
+	return ps_take_signal_info(cur, ps_interrupting_signals(cur), info);
 }
 
 /*
@@ -605,9 +694,8 @@ void do_signal(intr_frame *frame)
 		return;
 
 next_signal:
-	int timer_id;
-	uintptr_t timer_value;
-	sig = pick_signal(cur, &timer_id, &timer_value);
+	struct mos_signal_info info;
+	sig = pick_signal(cur, &info);
 	if (!sig)
 		return;
 
@@ -635,10 +723,17 @@ next_signal:
 		goto next_signal;
 	}
 
-	struct signal_fault event = { .code = -2,
-				      .timer_id = timer_id,
-				      .value = timer_value };
-	arch_signal_deliver(cur, frame, sa, sig, timer_id >= 0 ? &event : NULL);
+	struct signal_fault event = { .code = info.code,
+				      .timer_id = info.timer_id,
+				      .value = info.value,
+				      .pid = info.pid,
+				      .uid = info.uid,
+				      .overrun = info.overrun,
+				      .status = info.status,
+				      .queued = 1,
+				      .utime = info.utime,
+				      .stime = info.stime };
+	arch_signal_deliver(cur, frame, sa, sig, &event);
 }
 
 /* Synchronous faults deliver their own context before unrelated pending signals. */
@@ -759,22 +854,29 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 
 	for (;;) {
 		unsigned sleep_ms = 0;
-		int timer_id;
-		uintptr_t value;
-		int sig = ps_take_signal(cur, wait_set, &timer_id, &value);
+		struct mos_signal_info event;
+		int sig = ps_take_signal_info(cur, wait_set, &event);
 		if (sig) {
 			if (info) {
 				uint32_t *words = info;
 				memset(info, 0, 128);
 				words[0] = sig;
-				if (timer_id >= 0) {
-					words[2] = (uint32_t)-2;
-					words[3] = timer_id;
-					words[5] = (uint32_t)value;
-#if defined(__x86_64__)
-					words[6] = (uint32_t)(value >> 32);
-#endif
+				words[2] = event.code;
+				if (event.timer_id >= 0) {
+					words[3] = event.timer_id;
+					words[4] = event.overrun;
+				} else {
+					words[3] = event.pid;
+					words[4] = event.uid;
 				}
+				words[5] = event.code > 0 ?
+						   event.status :
+						   (uint32_t)event.value;
+#if defined(__x86_64__)
+				if (event.code < 0)
+					words[6] =
+						(uint32_t)(event.value >> 32);
+#endif
 			}
 			return sig;
 		}
@@ -802,20 +904,68 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 	}
 }
 
-/*
- * rt_sigqueueinfo (178) — send a signal with siginfo to a group.
- *
- * We don't queue siginfo payloads; just deliver the signal.
- */
+/* Read the architecture-specific siginfo payload before acquiring ps_lock. */
+static int sigqueueinfo(unsigned pid, int sig, const void *uinfo, int wide)
+{
+	uint32_t wire[32];
+	if (sig <= 0 || sig >= NSIG)
+		return -EINVAL;
+	if (ps_read_process_memory(current, uinfo, wire, sizeof(wire)) < 0)
+		return -EFAULT;
+	if ((int32_t)wire[2] >= 0 || (int32_t)wire[2] == -6)
+		return -EPERM;
+	unsigned offset = wide ? 6 : 5;
+	uintptr_t value = wire[offset];
+#if defined(__x86_64__)
+	if (wide)
+		value |= (uintptr_t)wire[offset + 1] << 32;
+#endif
+	signal_queue_entry *entry = zalloc(sizeof(*entry));
+	if (!entry)
+		return -EAGAIN;
+	entry->signo = sig;
+	entry->timer_id = -1;
+	entry->info =
+		(struct mos_signal_info){ .signo = sig,
+					  .code = (int32_t)wire[2],
+					  .timer_id = -1,
+					  .pid = current->thread->tgid,
+					  .uid = current->credentials->uid,
+					  .value = value };
+	int irq, ret = 0;
+	spinlock_lock(&ps_lock, &irq);
+	task_struct *target = ps_find_process_unsafe(pid);
+	if (!target || !target->execution || !target->sighand ||
+	    target->sched->status == ps_dying) {
+		ret = -ESRCH;
+	} else if (!can_send_signal(current, target)) {
+		ret = -EPERM;
+	} else if (sig == SIGRTMIN_KERNEL ||
+		   !(target->thread->sig_pending & (1U << (sig - 1)))) {
+		unsigned queued = 0;
+		list_entry *head = &target->thread->pending_queue;
+		for (list_entry *node = head->next; node != head;
+		     node = node->next)
+			queued++;
+		if (queued >= 128) {
+			ret = -EAGAIN;
+		} else {
+			list_insert_tail(head, &entry->list);
+			ps_queue_group_signal_unsafe(target, sig);
+			entry = NULL;
+		}
+	}
+	spinlock_unlock(&ps_lock, irq);
+	free(entry);
+	return ret;
+}
 int sys_rt_sigqueueinfo(unsigned pid, int sig, void *uinfo)
 {
-	if (TEST_LOG(TEST_LOG_TRACE))
-		klog("rt_sigqueueinfo(%d, %d)\n", pid, sig);
-
-	if (sig == 0)
-		return ps_find_process(pid) ? 0 : -ESRCH;
-
-	return ps_send_signal(pid, sig);
+	return sigqueueinfo(pid, sig, uinfo, 0);
+}
+int sys_rt_sigqueueinfo64(unsigned pid, int sig, void *uinfo)
+{
+	return sigqueueinfo(pid, sig, uinfo, 1);
 }
 
 /*

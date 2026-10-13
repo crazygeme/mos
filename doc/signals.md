@@ -13,11 +13,14 @@ MOS currently supports the Linux/i386-style signal model needed by the RH9/glibc
 - `kill`, `pause`, `sigaltstack`
 - `rt_sigpending`, `rt_sigtimedwait`, `rt_sigqueueinfo`, `rt_sigsuspend`
 - `alarm`, `setitimer(ITIMER_REAL)`, and `getitimer(ITIMER_REAL)`
+- `signalfd` and `signalfd4`; descriptor semantics are specified in
+  [Signal and Timer Descriptors](signal_timer_fd.md)
 
 Standard signals use pending bitmaps. Process-directed pending state belongs
 to the shared `task_thread` block; thread-directed state belongs to the private
-`task_signal` block. Timer notifications retain their ID and value in intrusive
-`list_entry` queues, with one outstanding notification per timer.
+`task_signal` block. Timer notifications retain their ID, value, and overrun count in intrusive
+`list_entry` queues, with one outstanding notification per timer. Queued
+asynchronous sends retain their signal code and payload.
 
 ## Signal ownership
 

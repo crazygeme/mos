@@ -144,8 +144,27 @@ void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
 		if (fault->code == -2) {
 			memcpy(saved.info + 16, &fault->timer_id,
 			       sizeof(fault->timer_id));
+			memcpy(saved.info + 20, &fault->overrun,
+			       sizeof(fault->overrun));
 			memcpy(saved.info + 24, &fault->value,
 			       sizeof(fault->value));
+		} else if (fault->queued) {
+			memcpy(saved.info + 16, &fault->pid,
+			       sizeof(fault->pid));
+			memcpy(saved.info + 20, &fault->uid,
+			       sizeof(fault->uid));
+			if (fault->code > 0)
+				memcpy(saved.info + 24, &fault->status,
+				       sizeof(fault->status));
+			else
+				memcpy(saved.info + 24, &fault->value,
+				       sizeof(fault->value));
+			if (sig == SIGCHLD) {
+				memcpy(saved.info + 32, &fault->utime,
+				       sizeof(fault->utime));
+				memcpy(saved.info + 40, &fault->stime,
+				       sizeof(fault->stime));
+			}
 		} else
 			memcpy(saved.info + 16, &fault->address,
 			       sizeof(fault->address));

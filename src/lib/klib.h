@@ -48,6 +48,7 @@ void time_set_wall_offset(long long wall_us);
 void time_sync_rtc(void);
 
 unsigned long long time_wall_us(void);
+unsigned long long time_wall_snapshot_us(unsigned *generation);
 
 unsigned long long cycle_to_ms(unsigned long long dur_cycles);
 

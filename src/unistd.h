@@ -248,6 +248,13 @@
 #define __NR_rseq 386
 #define __NR_clock_gettime64 403
 #define __NR_faccessat2 439
+#define __NR_signalfd 321
+#define __NR_timerfd_create 322
+#define __NR_timerfd_settime 325
+#define __NR_timerfd_gettime 326
+#define __NR_signalfd4 327
+#define __NR_timerfd_gettime64 410
+#define __NR_timerfd_settime64 411
 #define NR_syscalls 442
 
 #define _SYS_NAMELEN 65 // in linux 2.1

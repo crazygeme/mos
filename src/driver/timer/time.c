@@ -388,6 +388,7 @@ static unsigned long long clock_start_us;
 static unsigned long long last_us;
 static unsigned long long coarse_us;
 static long long wall_offset_us;
+static unsigned wall_generation;
 static spinlock_t time_lock = SPINLOCK_INITIALIZER;
 
 /* time_lock protects shared clock state and PIT ports across CPUs. Its IRQ
@@ -489,13 +490,20 @@ unsigned long long time_now_tickets(void)
 	return now;
 }
 
-unsigned long long time_wall_us(void)
+unsigned long long time_wall_snapshot_us(unsigned *generation)
 {
 	int irq;
 	spinlock_lock(&time_lock, &irq);
 	unsigned long long now = (long long)monotonic_us() + wall_offset_us;
+	if (generation)
+		*generation = wall_generation;
 	spinlock_unlock(&time_lock, irq);
 	return now;
+}
+
+unsigned long long time_wall_us(void)
+{
+	return time_wall_snapshot_us(NULL);
 }
 
 unsigned long time_wall_sec(void)
@@ -512,6 +520,7 @@ void time_set_wall_offset(long long wall_us)
 	int irq;
 	spinlock_lock(&time_lock, &irq);
 	wall_offset_us = wall_us - (long long)monotonic_us();
+	wall_generation++;
 	spinlock_unlock(&time_lock, irq);
 }
 
@@ -522,6 +531,7 @@ void time_sync_rtc(void)
 	spinlock_lock(&time_lock, &irq);
 	wall_offset_us =
 		(long long)epoch * 1000000LL - (long long)monotonic_us();
+	wall_generation++;
 	spinlock_unlock(&time_lock, irq);
 }
 

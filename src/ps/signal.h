@@ -89,12 +89,21 @@ struct sigaction {
 /* Architecture signal delivery consumes the saved user register context. */
 struct _task_struct;
 struct _arch_intr_frame;
+struct mos_signal_info {
+	int signo, code, timer_id, status;
+	unsigned pid, uid, overrun;
+	uintptr_t value;
+	uint64_t utime, stime;
+};
 struct signal_fault {
 	uintptr_t address;
 	int code;
 	unsigned trap;
 	int timer_id;
 	uintptr_t value;
+	unsigned pid, uid, overrun;
+	int status, queued;
+	uint64_t utime, stime;
 };
 void arch_signal_deliver(struct _task_struct *, struct _arch_intr_frame *,
 			 struct sigaction *, int, const struct signal_fault *);

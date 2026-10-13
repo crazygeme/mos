@@ -137,8 +137,8 @@ KTEST(ProcessContext, PendingSignalsAndTimerPayloads)
 	uintptr_t wide = sizeof(uintptr_t) == 8 ?
 				 (uintptr_t)0x1234567887654321ULL :
 				 0x87654321U;
-	ps_timer_notify(leader->life->psid, SIGRTMIN_KERNEL, 11, wide, 0);
-	ps_timer_notify(leader->life->psid, SIGRTMIN_KERNEL, 12, 99, 0);
+	ps_timer_notify(leader->life->psid, SIGRTMIN_KERNEL, 11, wide, 0, 0);
+	ps_timer_notify(leader->life->psid, SIGRTMIN_KERNEL, 12, 99, 0, 0);
 	int id;
 	uintptr_t value;
 	EXPECT_EQ(ps_take_signal(peer, (sigset_t)-1, &id, &value),
@@ -151,7 +151,7 @@ KTEST(ProcessContext, PendingSignalsAndTimerPayloads)
 	EXPECT_EQ(id, 12);
 	EXPECT_EQ(value, (uintptr_t)99);
 	EXPECT_EQ(ps_pending_signals(leader), 0UL);
-	ps_timer_notify(leader->life->psid, SIGRTMIN_KERNEL, 13, 3, 1);
+	ps_timer_notify(leader->life->psid, SIGRTMIN_KERNEL, 13, 3, 1, 0);
 	EXPECT_EQ(ps_pending_signals(peer), 0UL);
 	EXPECT_EQ(ps_take_signal(leader, (sigset_t)-1, &id, &value),
 		  SIGRTMIN_KERNEL);

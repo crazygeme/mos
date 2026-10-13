@@ -186,7 +186,7 @@ void ps_put_to_dying_queue(task_struct *task)
 			goto out;
 		/* Queue the requested exit signal before waking the parent so the
 		 * already pending when wait() returns to userspace. */
-		ps_queue_group_signal_unsafe(parent, task->life->exit_signal);
+		ps_child_signal_unsafe(parent, task, task->life->exit_signal);
 		ps_wake_parent_waiters_unsafe(parent);
 	}
 out:

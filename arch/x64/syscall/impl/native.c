@@ -594,7 +594,7 @@ int native_sigtimedwait(const sigset_t *set, void *output, const void *timeout,
 		/* AMD64 aligns the siginfo payload to eight bytes. */
 		wire[4] = info[3];
 		wire[5] = info[4];
-		if ((int)info[2] == -2)
+		if ((int)info[2] < 0)
 			*(uint64_t *)&wire[6] = info[5] |
 						((uint64_t)info[6] << 32);
 	}

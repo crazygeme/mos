@@ -387,6 +387,7 @@ void ps_copy_thread_state(task_struct *cur, task_struct *task)
 {
 	smp_fpu_copy(cur, task);
 	if (task->memory != cur->memory) {
+		task->memory->dumpable = cur->memory->dumpable;
 		task->memory->task_size = cur->memory->task_size;
 		task->memory->mmap_base = cur->memory->mmap_base;
 		task->memory->brk_limit = cur->memory->brk_limit;

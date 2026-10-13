@@ -155,7 +155,6 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 	unsigned tty_nr;
 	int tpgid;
 	vm_stats_t vm;
-	vm_struct_t mm = task->memory;
 	uint64_t vsize, rss_pages;
 	vaddr_t stack_start;
 	unsigned long long utime, stime;
@@ -169,7 +168,7 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 	vm_get_stats(task, &vm);
 	vsize = vm.total_kb * 1024;
 	rss_pages = (vm.rss_anon_kb + vm.rss_file_kb) / (PAGE_SIZE / 1024);
-	stack_start = mm ? mm->start_stack : 0;
+	stack_start = vm.start_stack;
 
 	stime = ps_usage_read(group ? &task->thread->kernel_tickets :
 				      &task->stats->kernel_tickets);
@@ -208,8 +207,8 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 		/* 23 vsize       */ (unsigned long long)vsize,
 		/* 24 rss         */ (long long)rss_pages,
 		/* 25 rlim        */ (unsigned long)0x7ffffffful,
-		/* 26 startcode   */ (unsigned long)(mm ? mm->start_brk : 0),
-		/* 27 endcode     */ (unsigned long)(mm ? mm->brk : 0),
+		/* 26 startcode   */ (unsigned long)vm.start_brk,
+		/* 27 endcode     */ (unsigned long)vm.brk,
 		/* 28 startstack  */ (unsigned long)stack_start,
 		/* 29 kstkesp     */ (unsigned long)0,
 		/* 30 kstkeip     */ (unsigned long)0,

@@ -193,7 +193,7 @@ ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count)
 			break;
 		}
 		if (current->fs && S_ISREG(output->f_inode->i_mode)) {
-			unsigned long limit =
+			uint64_t limit =
 				current->thread->rlimits[RLIMIT_FSIZE_RESOURCE]
 					.rlim_cur;
 			if (limit != RLIM_INFINITY) {
@@ -290,7 +290,7 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 	file *fp = fs_io_begin(fd, &scope);
 	ssize_t n = -EBADF;
 	size_t size = len;
-	unsigned long limit;
+	uint64_t limit;
 	loff_t pos;
 
 	if (!fp)
@@ -366,7 +366,7 @@ int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len)
 	loff_t saved_pos;
 	loff_t pos;
 	size_t size = len;
-	unsigned long limit;
+	uint64_t limit;
 
 	if (!fp)
 		return -EBADF;

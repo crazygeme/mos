@@ -92,6 +92,12 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 	if (!task)
 		return NULL;
 
+	if ((!strncmp(rest, "/fd", 3) || !strcmp(rest, "/cwd") ||
+	     !strcmp(rest, "/exe") || !strcmp(rest, "/environ") ||
+	     !strcmp(rest, "/maps")) &&
+	    !ps_may_access_process(task))
+		return NULL;
+
 	/* "" or "/" → per-PID directory listing */
 	if (rest[0] == '\0' || (rest[0] == '/' && rest[1] == '\0'))
 		return pid_dir_open(task, include_task);

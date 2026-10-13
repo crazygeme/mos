@@ -36,11 +36,11 @@ typedef struct _task_stats {
 } task_stats_t;
 
 #define RLIM_NLIMITS 16
-#define RLIM_INFINITY 0xFFFFFFFFu
+#define RLIM_INFINITY UINT64_MAX
 
 typedef struct {
-	uint32_t rlim_cur;
-	uint32_t rlim_max;
+	uint64_t rlim_cur;
+	uint64_t rlim_max;
 } rlimit_t;
 
 /* Filesystem state is shared only by CLONE_FS. */
@@ -316,6 +316,10 @@ typedef void (*fpuser_map_callback)(void *aux, vaddr_t vir, paddr_t phy);
 void ps_enum_user_map(task_struct *task, fpuser_map_callback fn, void *aux);
 
 void ps_cleanup_all_user_map(task_struct *task);
+
+int ps_may_access_process(task_struct *target);
+task_memory *ps_get_process_memory(task_struct *task);
+void ps_replace_process_memory(task_struct *task, task_memory *memory);
 
 /* Copy between kernel buffers and a task's user address space.
  * Return 0 on completion or -EFAULT; earlier pages may have been copied.

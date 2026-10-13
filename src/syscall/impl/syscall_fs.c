@@ -84,6 +84,14 @@ int syscall_resolve_at(int dirfd, const char *path, char *name)
 	if (!base)
 		return -ENOENT;
 	base_len = strlen(base);
+	while (path[0] == '.' && path[1] == '/')
+		path += 2;
+	if (!*path || !strcmp(path, ".")) {
+		if (base_len >= MAX_PATH)
+			return -ENAMETOOLONG;
+		memcpy(name, base, base_len + 1);
+		return 0;
+	}
 	path_len = strlen(path);
 	if (base_len + path_len + 2 > MAX_PATH)
 		return -ENAMETOOLONG;
@@ -1185,6 +1193,16 @@ int sys_chroot(const char *path)
 		ret = -ENOTDIR;
 		goto done;
 	}
+
+	/* Bind dynamic proc aliases to the directory selected by this task. */
+	file *directory = fs_open_file(name, O_PATH | O_DIRECTORY, 0);
+	if (!directory) {
+		ret = -ENOENT;
+		goto done;
+	}
+	if (directory->f_name)
+		strcpy(name, directory->f_name);
+	fs_put_file(directory);
 
 	trim_trailing_slash(name);
 	rmutex_lock(&cur->fs->lock);

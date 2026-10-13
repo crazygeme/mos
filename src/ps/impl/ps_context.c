@@ -234,28 +234,19 @@ int ps_clone_resources(task_struct *parent, task_struct *child,
 	return 0;
 }
 
-/* Exec detaches objects shared with CLONE_VM/CLONE_FS/CLONE_SIGHAND peers. */
+/* Exec preserves CLONE_FS state and detaches shared signal dispositions. */
 int ps_unshare_exec_context(task_struct *task)
 {
-	task_fs *fs = NULL;
 	signal_handlers *handlers = NULL;
-	if (ref_count_read(task->fs) > 1 && !(fs = alloc_fs(task->fs)))
-		goto nomem;
 	if (ref_count_read(task->sighand) > 1 &&
 	    !(handlers = ps_copy_sighand(task->sighand)))
 		goto nomem;
-	if (fs) {
-		ref_count_put(task->fs);
-		task->fs = fs;
-	}
 	if (handlers) {
 		ref_count_put(task->sighand);
 		task->sighand = handlers;
 	}
 	return 0;
 nomem:
-	if (fs)
-		ref_count_put(fs);
 	if (handlers)
 		ref_count_put(handlers);
 	return -ENOMEM;

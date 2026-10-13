@@ -207,6 +207,8 @@ int ps_ptrace_control(int request, int pid, void *addr, void *data)
 
 	if (!ptrace_is_traced_by(target, cur))
 		return -EPERM;
+	if (!ps_may_access_process(target))
+		return -EPERM;
 
 	switch (request) {
 	case PTRACE_SETOPTIONS:
@@ -248,6 +250,8 @@ int ps_ptrace_target(int pid, task_struct **result)
 	if (!target)
 		return -ESRCH;
 	if (!ptrace_is_traced_by(target, current))
+		return -EPERM;
+	if (!ps_may_access_process(target))
 		return -EPERM;
 	*result = target;
 	return 0;

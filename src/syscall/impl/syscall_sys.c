@@ -324,11 +324,14 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 		return ps_write_process_memory(current, (void *)arg2, &value,
 					       sizeof(value));
 	}
-	/* agetty queries dumpability before opening its console. */
 	if (option == 3) /* PR_GET_DUMPABLE */
-		return 1;
-	if (option == 4) /* PR_SET_DUMPABLE */
-		return arg2 <= 2 ? 0 : -EINVAL;
+		return current->memory->dumpable;
+	if (option == 4) { /* PR_SET_DUMPABLE */
+		if (arg2 > 1)
+			return -EINVAL;
+		current->memory->dumpable = arg2;
+		return 0;
+	}
 	if (option == 7) /* PR_GET_KEEPCAPS */
 		return current->credentials->keep_capabilities;
 	if (option == 8) { /* PR_SET_KEEPCAPS */

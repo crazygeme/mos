@@ -28,6 +28,8 @@ const char *pid_state_name(ps_status st);
 /* ── VM stats (vm.c) ─────────────────────────────────────────────────── */
 
 typedef struct {
+	vaddr_t start_stack;
+	vaddr_t start_brk, brk;
 	uint64_t total_kb;
 	uint64_t text_kb;
 	uint64_t data_kb;

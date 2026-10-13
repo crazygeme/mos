@@ -237,6 +237,7 @@ vm_struct_t vm_create()
 	memset(mm->ldt_desc, 0, sizeof(mm->ldt_desc));
 	mm->ldt_present = 0;
 	mm->vma_generation = 1;
+	mm->dumpable = 1;
 	mm->command = vm_alloc(1);
 	mm->environment = vm_alloc(1);
 	if (!mm->command || !mm->environment) {

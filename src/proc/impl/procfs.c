@@ -251,9 +251,25 @@ static file *proc_open(super_block *sb, const char *path, int flag)
 
 	/* /self or /self/... */
 	if (strncmp(p, "self", 4) == 0 && (p[4] == '/' || p[4] == '\0')) {
+		file *fp;
 		pid = current->thread->tgid;
 		rest = p + 4; /* "" or "/status" etc. */
-		return proc_pid_lookup(pid, rest, flag);
+		fp = proc_pid_lookup(pid, rest, flag);
+		if (fp && !fp->f_name) {
+			if (strlen(rest) > MAX_PATH - 32) {
+				fs_put_file(fp);
+				return NULL;
+			}
+			char *name = name_get();
+			if (!name) {
+				fs_put_file(fp);
+				return NULL;
+			}
+			sprintf(name, "/proc/%u%s", pid, rest);
+			fp->f_name = strdup(name);
+			name_put(name);
+		}
+		return fp;
 	}
 
 	/* /NNN or /NNN/... */
@@ -309,6 +325,8 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 	task = proc_resolve_thread(task, &p);
 	if (!task)
 		return -ENOENT;
+	if (!ps_may_access_process(task))
+		return -EACCES;
 	if (strcmp(p, "/exe") == 0) {
 		if (!task->execution || !task->memory->executable ||
 		    !task->memory->executable->f_name)

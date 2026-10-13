@@ -7,6 +7,7 @@
 #include "proc_pid.h"
 #include <mm/mmap.h>
 #include <mm/mm.h>
+#include <mm/mmu.h>
 #include <config.h>
 #include <macro.h>
 
@@ -65,19 +66,23 @@ static void statm_resident_cb(void *arg, vaddr_t address, paddr_t physical)
 
 void vm_get_stats(task_struct *task, vm_stats_t *out)
 {
-	statm_ctx ctx = { .vm = task->memory };
+	statm_ctx ctx = { .vm = ps_get_process_memory(task) };
 
 	memset(out, 0, sizeof(*out));
 	if (!ctx.vm)
 		return;
 	vm_enum(ctx.vm, statm_region_cb, &ctx);
-	ps_enum_user_map(task, statm_resident_cb, &ctx);
+	arch_mm_enum_user(ctx.vm->page_dir, statm_resident_cb, &ctx);
+	out->start_stack = ctx.vm->start_stack;
+	out->start_brk = ctx.vm->start_brk;
+	out->brk = ctx.vm->brk;
 	out->stk_kb = ctx.stack * (PAGE_SIZE / 1024);
 	out->text_kb = ctx.text * (PAGE_SIZE / 1024);
 	out->data_kb = ctx.data * (PAGE_SIZE / 1024);
 	out->total_kb = ctx.total * (PAGE_SIZE / 1024);
 	out->rss_file_kb = ctx.file * (PAGE_SIZE / 1024);
 	out->rss_anon_kb = ctx.anon * (PAGE_SIZE / 1024);
+	ref_count_put(ctx.vm);
 }
 
 void vm_fill_statm(proc_buf_t *pb, task_struct *task)

@@ -433,7 +433,7 @@ static int execve_common(const char *f, char **argv, char **envp,
 		return -ENOMEM;
 	}
 	mm_init_process_page_dir(new_mm->page_dir);
-	cur->memory = new_mm;
+	ps_replace_process_memory(cur, new_mm);
 
 	/* save command line into task struct (bounded to one page) */
 	{
@@ -583,6 +583,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 		cur->life->pdeath_signal = 0;
 
 	/* Commit executable credentials before constructing the auxiliary vector. */
+	cur->memory->dumpable = exec_euid == cur->credentials->uid &&
+				exec_egid == cur->credentials->gid;
 	cur->credentials->euid = cur->credentials->suid =
 		cur->credentials->fsuid = exec_euid;
 	cur->credentials->egid = cur->credentials->sgid =

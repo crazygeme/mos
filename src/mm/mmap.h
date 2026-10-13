@@ -42,6 +42,7 @@ struct _task_memory {
 	vaddr_t task_size;
 	/* Incremented whenever the VMA tree changes; used by fault-time cache. */
 	unsigned vma_generation;
+	unsigned dumpable;
 	unsigned long long ldt_desc[LDT_ENTRY_COUNT]
 		__attribute__((aligned(8)));
 	unsigned ldt_present;

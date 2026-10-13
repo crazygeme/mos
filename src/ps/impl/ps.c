@@ -27,6 +27,34 @@
 #include <errno.h>
 
 #include "ps_internal.h"
+task_memory *ps_get_process_memory(task_struct *task)
+{
+	LOCK_GUARD(&ps_lock);
+	return ref_count_get(task->memory);
+}
+
+void ps_replace_process_memory(task_struct *task, task_memory *memory)
+{
+	LOCK_GUARD(&ps_lock);
+	task->memory = memory;
+}
+
+/* Process inspection requires matching credentials and a dumpable image. */
+int ps_may_access_process(task_struct *target)
+{
+	task_struct *caller = CURRENT_TASK();
+	task_credentials *user = caller->credentials;
+	task_credentials *other = target->credentials;
+	if (caller->thread == target->thread)
+		return 1;
+	if (user->euid == 0 &&
+	    (!user->cap_initialized || (user->cap_effective[0] & (1U << 19))))
+		return 1;
+	return target->memory && target->memory->dumpable == 1 &&
+	       user->fsuid == other->uid && user->fsuid == other->euid &&
+	       user->fsuid == other->suid && user->fsgid == other->gid &&
+	       user->fsgid == other->egid && user->fsgid == other->sgid;
+}
 #include <ps/smp.h>
 
 /*

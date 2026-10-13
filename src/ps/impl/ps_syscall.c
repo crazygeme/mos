@@ -627,10 +627,15 @@ done:
 
 int sys_waitpid(unsigned pid, int *status, int options)
 {
+	int value, ret;
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("waitpid(%d, %x, %d)\n", pid, status, options);
 
-	return do_waitpid(pid, status, options, NULL);
+	ret = do_waitpid(pid, &value, options, NULL);
+	if (ret > 0 && status &&
+	    ps_write_process_memory(current, status, &value, sizeof(value)) < 0)
+		return -EFAULT;
+	return ret;
 }
 
 /*

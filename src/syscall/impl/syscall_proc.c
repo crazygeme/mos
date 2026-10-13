@@ -306,8 +306,10 @@ int sys_setuid(unsigned uid)
 	} else {
 		return -EPERM;
 	}
-	if (u->euid != old_effective || u->fsuid != old_filesystem)
+	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return 0;
 }
 
@@ -337,8 +339,10 @@ int sys_setgid(unsigned gid)
 	} else {
 		return -EPERM;
 	}
-	if (u->egid != old_effective || u->fsgid != old_filesystem)
+	if (u->egid != old_effective || u->fsgid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return 0;
 }
 
@@ -375,8 +379,10 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	u->uid = new_ruid;
 	u->euid = new_euid;
 	u->fsuid = new_euid;
-	if (u->euid != old_effective || u->fsuid != old_filesystem)
+	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return 0;
 }
 
@@ -410,8 +416,10 @@ int sys_setregid(unsigned rgid, unsigned egid)
 	u->gid = new_rgid;
 	u->egid = new_egid;
 	u->fsgid = new_egid;
-	if (u->egid != old_effective || u->fsgid != old_filesystem)
+	if (u->egid != old_effective || u->fsgid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return 0;
 }
 
@@ -450,8 +458,10 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 	}
 	if (suid != (unsigned)-1)
 		u->suid = suid;
-	if (u->euid != old_effective || u->fsuid != old_filesystem)
+	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return 0;
 }
 
@@ -505,8 +515,10 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 	}
 	if (sgid != (unsigned)-1)
 		u->sgid = sgid;
-	if (u->egid != old_effective || u->fsgid != old_filesystem)
+	if (u->egid != old_effective || u->fsgid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return 0;
 }
 
@@ -545,8 +557,10 @@ int sys_setfsuid(unsigned fsuid)
 	    fsuid == u->suid || fsuid == u->fsuid)
 		u->fsuid = fsuid;
 
-	if (u->euid != old_effective || u->fsuid != old_filesystem)
+	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return old;
 }
 
@@ -564,20 +578,28 @@ int sys_setfsgid(unsigned fsgid)
 	    fsgid == u->sgid || fsgid == u->fsgid)
 		u->fsgid = fsgid;
 
-	if (u->egid != old_effective || u->fsgid != old_filesystem)
+	if (u->egid != old_effective || u->fsgid != old_filesystem) {
 		current->life->pdeath_signal = 0;
+		current->memory->dumpable = 0;
+	}
 	return old;
 }
 
 int sys_wait4(int pid, int *status, int options, void *rusage)
 {
+	int value, ret;
+	/* Wait selection holds ps_lock; user memory is copied after selection. */
 	if (pid == -1)
-		return do_waitpid(0, status, options, rusage);
+		ret = do_waitpid(0, &value, options, rusage);
 	else if (pid < -1)
-		return do_waitpid_pgrp((unsigned)(-pid), status, options,
-				       rusage);
+		ret = do_waitpid_pgrp((unsigned)(-pid), &value, options,
+				      rusage);
 	else
-		return do_waitpid(pid, status, options, rusage);
+		ret = do_waitpid(pid, &value, options, rusage);
+	if (ret > 0 && status &&
+	    ps_write_process_memory(current, status, &value, sizeof(value)) < 0)
+		return -EFAULT;
+	return ret;
 }
 
 /* Heap growth reuses the compatible tail VMA so fork work does not grow
@@ -830,8 +852,12 @@ int sys_ugetrlimit(int resource, void *limit)
 		return -EFAULT;
 
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-		rl[0] = cur->thread->rlimits[resource].rlim_cur;
-		rl[1] = cur->thread->rlimits[resource].rlim_max;
+		rl[0] = cur->thread->rlimits[resource].rlim_cur > UINT32_MAX ?
+				UINT32_MAX :
+				cur->thread->rlimits[resource].rlim_cur;
+		rl[1] = cur->thread->rlimits[resource].rlim_max > UINT32_MAX ?
+				UINT32_MAX :
+				cur->thread->rlimits[resource].rlim_max;
 	}
 
 	if (TEST_LOG(TEST_LOG_TRACE))
@@ -853,8 +879,10 @@ int sys_setrlimit(int resource, void *limit)
 		     rl ? rl[0] : 0, rl ? rl[1] : 0);
 
 	if (rl && resource >= 0 && resource < RLIM_NLIMITS) {
-		cur->thread->rlimits[resource].rlim_cur = rl[0];
-		cur->thread->rlimits[resource].rlim_max = rl[1];
+		cur->thread->rlimits[resource].rlim_cur =
+			rl[0] == UINT32_MAX ? RLIM_INFINITY : rl[0];
+		cur->thread->rlimits[resource].rlim_max =
+			rl[1] == UINT32_MAX ? RLIM_INFINITY : rl[1];
 	}
 	return 0;
 }
@@ -891,9 +919,6 @@ int sys_prlimit64(unsigned pid, unsigned resource,
 		soft = input.rlim_cur;
 		hard = input.rlim_max;
 		if (soft > hard)
-			return -EINVAL;
-		if ((soft > RLIM_INFINITY && soft != MOS_RLIM64_INFINITY) ||
-		    (hard > RLIM_INFINITY && hard != MOS_RLIM64_INFINITY))
 			return -EINVAL;
 		if (cur->credentials->euid != 0 &&
 		    hard > (limit->rlim_max == RLIM_INFINITY ?

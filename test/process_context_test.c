@@ -62,7 +62,7 @@ KTEST(ProcessContext, SharingAndForkIsolation)
 	thread->signal->sig_mask ^= 1UL << (SIGUSR1 - 1);
 	EXPECT_EQ(parent->signal->sig_mask, blocked);
 	EXPECT_EQ(ps_unshare_exec_context(thread), 0);
-	EXPECT_TRUE(thread->fs != parent->fs);
+	EXPECT_TRUE(thread->fs == parent->fs);
 	EXPECT_TRUE(thread->memory == parent->memory);
 	EXPECT_TRUE(thread->sighand != parent->sighand);
 	EXPECT_TRUE(thread->thread == parent->thread);

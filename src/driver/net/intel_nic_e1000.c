@@ -2,6 +2,7 @@
 #include <driver/driver.h>
 #include <lib/klib.h>
 #include <lib/port.h>
+#include <lib/lock.h>
 #include <mm/mm.h>
 #include <int/int.h>
 #include <macro.h>
@@ -108,6 +109,7 @@ typedef struct {
 
 	struct e1000_rx_desc *rx_descs;
 	vaddr_t rx_bufs_va; /* base VA; buf i at rx_bufs_va + i*RX_BUF_SIZE */
+	spinlock_t rx_lock;
 	uint16_t rx_cur;
 	uint16_t rx_reclaim_head;
 	uint8_t rx_reclaim_ready[E1000_NUM_RX_DESC];
@@ -158,6 +160,8 @@ static uint32_t e1000_map_mmio(uint32_t bar0)
 /* ── RX handling (called from IRQ) ─────────────────────────────────────────── */
 static void e1000_handle_rx(e1000_ctx *ctx)
 {
+	int irq;
+	spinlock_lock(&ctx->rx_lock, &irq);
 	while (1) {
 		uint16_t idx = ctx->rx_cur;
 		struct e1000_rx_desc *desc = &ctx->rx_descs[idx];
@@ -165,6 +169,9 @@ static void e1000_handle_rx(e1000_ctx *ctx)
 			break;
 
 		uint16_t len = desc->length;
+		/* A queued descriptor must not be enqueued again after ring wrap.
+		 * Hardware receives ownership only when reclaim advances RDT. */
+		desc->status = 0;
 		uint8_t *buf =
 			(uint8_t *)(uintptr_t)(ctx->rx_bufs_va +
 					       (uint32_t)idx *
@@ -190,6 +197,7 @@ static void e1000_handle_rx(e1000_ctx *ctx)
 
 		ctx->rx_cur = (uint16_t)((ctx->rx_cur + 1) % E1000_NUM_RX_DESC);
 	}
+	spinlock_unlock(&ctx->rx_lock, irq);
 }
 
 static void intel_nic_e1000_rx_reclaim(void *_dev, void *cookie)
@@ -201,6 +209,8 @@ static void intel_nic_e1000_rx_reclaim(void *_dev, void *cookie)
 	if (idx >= E1000_NUM_RX_DESC)
 		return;
 
+	int irq;
+	spinlock_lock(&ctx->rx_lock, &irq);
 	ctx->rx_reclaim_ready[idx] = 1;
 	while (ctx->rx_reclaim_ready[ctx->rx_reclaim_head]) {
 		uint16_t reclaim = ctx->rx_reclaim_head;
@@ -210,6 +220,7 @@ static void intel_nic_e1000_rx_reclaim(void *_dev, void *cookie)
 		ctx->rx_reclaim_head =
 			(uint16_t)((reclaim + 1) % E1000_NUM_RX_DESC);
 	}
+	spinlock_unlock(&ctx->rx_lock, irq);
 }
 
 /* ── Interrupt handler ──────────────────────────────────────────────────────── */
@@ -361,6 +372,7 @@ static int intel_nic_e1000_init(void *_dev)
 		(E1000_RX_BUF_SIZE * E1000_NUM_RX_DESC + PAGE_SIZE - 1) /
 		PAGE_SIZE;
 	ctx->rx_bufs_va = vm_alloc_dma(rx_buf_pages);
+	spinlock_init(&ctx->rx_lock);
 	ctx->rx_cur = 0;
 	ctx->rx_reclaim_head = 0;
 	memset(ctx->rx_reclaim_ready, 0, sizeof(ctx->rx_reclaim_ready));

@@ -94,9 +94,8 @@ Current ring sizes:
 
 ## Receive Path
 
-The receive path is deliberately split in two. The split keeps interrupt
-context allocation-free while avoiding the older extra frame copy through a
-software byte ring.
+The receive path separates allocation-free interrupt handling from deferred
+protocol processing.
 
 ### Phase 1: IRQ-safe enqueue
 
@@ -114,9 +113,15 @@ This avoids deadlocking against the heap allocator from interrupt context.
 
 `eth0_rx_dsr()` runs later from the DSR layer:
 
-- wraps the NIC DMA buffer in a custom lwIP `PBUF_REF`
-- feeds it into `eth0.input()`
-- returns the descriptor to the NIC only after lwIP releases the custom pbuf
+- copies the frame from the NIC DMA buffer into a lwIP `PBUF_POOL` buffer
+- returns the descriptor to the NIC before protocol processing
+- feeds the independent pool buffer into `eth0.input()`
+
+TCP reassembly and receive backpressure retain pool buffers without retaining
+NIC descriptors. Pool allocation failure drops the frame and releases its
+descriptor. lwIP timeout processing reclaims queued out-of-order data when the
+pool is exhausted. Descriptor consumption and reclamation share an IRQ-safe
+lock; a consumed descriptor has its completion flag cleared before enqueue.
 
 Counters updated here:
 
@@ -130,13 +135,13 @@ The resulting hot receive copy path is:
 
 ```text
 NIC DMA buffer
-  -> custom PBUF_REF
+  -> PBUF_POOL frame copy
   -> TCP/UDP/raw callback
   -> per-socket receive ring
   -> userspace buffer
 ```
 
-The pbuf layer no longer copies the frame before lwIP parses it.
+The frame copy isolates hardware receive capacity from protocol buffer lifetime.
 
 ## Transmit Path
 
@@ -388,6 +393,28 @@ Two host-side helper scripts live under `tools/`:
 `ssh_throughput.sh` intentionally uses the same legacy-compatible SSH options
 as `tools/ssh_client.sh`, then transfers data with remote `cat` rather than
 depending on guest `scp` or `sftp` support.
+
+## Receive Backpressure Test
+
+`test/internet_rx_backpressure.py` requires Python 3 on the peer and guest.
+Run the server on the peer with an address reachable through the guest NIC:
+
+```sh
+python3 test/internet_rx_backpressure.py --serve 10.0.6.1
+```
+
+Run the client in the guest:
+
+```sh
+python3 test/internet_rx_backpressure.py --host 10.0.6.1
+```
+
+The client performs three 16 MiB transfers, pauses receive processing for two
+seconds per transfer, and verifies that a parallel TCP connection remains
+usable. Each transfer must match the expected byte count and SHA-256 digest.
+The optional `--port` argument selects the TCP port; the default is `18080`.
+The peer must be reached through the guest NIC rather than loopback. Network
+emulation on that link can supply packet reordering during this test.
 
 ## Socket ioctls
 

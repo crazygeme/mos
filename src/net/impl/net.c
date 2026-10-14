@@ -169,18 +169,13 @@ void net_service_tick(void)
 	spinlock_unlock(&net_service_lock, irq);
 }
 
-/* ── RX ring buffer (IRQ → DSR context) ─────────────────────────────────────
- * The NIC ISR must not call malloc/lwIP directly — it may preempt a malloc
- * caller and deadlock. Instead the ISR enqueues references to NIC DMA
- * buffers here and schedules a DSR. The DSR wraps each DMA buffer in a
- * custom PBUF_REF so lwIP can parse it without an extra memcpy, and the
- * descriptor is only returned to hardware once lwIP frees the pbuf.
- */
+/* IRQ context queues DMA references without allocation. Deferred work copies
+ * frames into the lwIP pool and returns DMA descriptors before stack input,
+ * so TCP reassembly and receive backpressure cannot exhaust the NIC ring. */
 #define NET_RX_RING_SIZE 256
 #define NET_RX_MAX_FRAME 1600
 
 typedef struct {
-	struct pbuf_custom custom;
 	nic_dev *nic;
 	const uint8_t *data;
 	uint16_t len;
@@ -279,13 +274,6 @@ static void eth0_rx_release_slot(net_rx_slot_t *slot)
 	spinlock_unlock(&g_rx_lock, irq);
 }
 
-static void eth0_rx_free_pbuf(struct pbuf *p)
-{
-	net_rx_slot_t *slot =
-		container_of((struct pbuf_custom *)p, net_rx_slot_t, custom);
-	eth0_rx_release_slot(slot);
-}
-
 /* Drain queued frames into lwIP on the deferred-callback worker. */
 static void eth0_rx_dsr(void *param)
 {
@@ -314,17 +302,19 @@ static void eth0_rx_dsr(void *param)
 
 		LOCK_GUARD(&net_core_lock);
 		slot = &g_rx_slots[idx];
-		slot->custom.custom_free_function = eth0_rx_free_pbuf;
-		p = pbuf_alloced_custom(PBUF_RAW, slot->len, PBUF_REF,
-					&slot->custom, (void *)slot->data,
-					slot->len);
-		if (!p) {
-			eth0_rx_release_slot(slot);
-			continue;
+		p = pbuf_alloc(PBUF_RAW, slot->len, PBUF_POOL);
+		if (p && pbuf_take(p, slot->data, slot->len) != ERR_OK) {
+			pbuf_free(p);
+			p = NULL;
 		}
+		if (p) {
+			g_rx_bytes += slot->len;
+			g_rx_packets += 1;
+		}
+		eth0_rx_release_slot(slot);
+		if (!p)
+			continue;
 
-		g_rx_bytes += slot->len;
-		g_rx_packets += 1;
 		if (eth0.input(p, &eth0) != ERR_OK)
 			pbuf_free(p);
 	}

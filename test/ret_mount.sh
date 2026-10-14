@@ -38,7 +38,7 @@ Output: ${output:-<none>}"
 
 cleanup()
 {
-	umount "$MNT" >/dev/null 2>&1 || true
+	while umount "$MNT" >/dev/null 2>&1; do :; done
 	rm -rf "$BASE" >/dev/null 2>&1 || true
 }
 

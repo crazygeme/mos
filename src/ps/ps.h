@@ -65,6 +65,8 @@ typedef struct _task_thread {
 	ref_count_t ref;
 	unsigned tgid, group_id, session_id;
 	unsigned live_tasks;
+	unsigned child_subreaper;
+	int oom_score_adj;
 	unsigned posix_locks_used; /* Sticky hint: this group has requested range locks. */
 	list_entry members, children;
 	ps_tick_t user_tickets, kernel_tickets, child_utime, child_stime;
@@ -84,12 +86,14 @@ typedef struct _task_credentials {
 	unsigned fsuid, fsgid;
 	unsigned cap_effective[2], cap_permitted[2], cap_inheritable[2];
 	unsigned cap_initialized, keep_capabilities;
+	unsigned cap_bounding[2], no_new_privs;
 } task_credentials;
 
 /* Private execution and ABI state: never shared by clone. */
 typedef struct _task_execution {
 	task_arch_context arch;
 	/* Textual final-symlink resolution; file metadata is never cached. */
+	int fs_open_error;
 	super_block *link_cache_root;
 	uint64_t link_cache_generation;
 	char link_cache_path[256], link_cache_target[256];
@@ -158,6 +162,8 @@ typedef struct {
 	mutex_t lock;
 } task_files;
 
+struct mos_namespace;
+struct mos_cgroup;
 typedef struct _task_struct task_struct;
 /* Scheduler and blocking state are private even when all resources are shared. */
 typedef struct _task_schedule {
@@ -202,6 +208,9 @@ typedef struct _task_lifecycle {
 } task_lifecycle;
 
 struct _task_struct {
+	struct mos_namespace *namespaces[7], *pid_children;
+	struct mos_cgroup *cgroups[2];
+	unsigned cgroup_exited;
 	/* Private execution, scheduling, identity, and waits. */
 	task_schedule *sched;
 	task_wait *wait;
@@ -273,6 +282,7 @@ static __attribute__((always_inline)) inline task_struct *CURRENT_TASK(void)
 
 #define current CURRENT_TASK()
 
+int ps_has_capability(task_struct *task, unsigned capability);
 int ps_unshare_fds(task_struct *task);
 int ps_unshare_exec_context(task_struct *task);
 int ps_init_private(task_struct *task);

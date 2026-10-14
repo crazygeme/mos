@@ -91,6 +91,10 @@ Set `MOS_AUDIO_BACKEND` to override the host audio backend, for example
 `MOS_AUDIO_BACKEND=none ./run.sh test`. Linux defaults to PipeWire; macOS
 defaults to CoreAudio.
 
+`MOS_DISPLAY` selects the QEMU display backend. `MOS_DISPLAY=none` runs without
+a host window. `MOS_MONITOR` supplies a QEMU monitor endpoint, such as
+`unix:/tmp/mos-monitor.sock,server=on,wait=off`.
+
 ## Networking
 
 Non-test Linux boots create a user-owned TAP interface `tap0`, assign

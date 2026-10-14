@@ -345,7 +345,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 		exec_fp = fp;
 		header_is_elf = 1;
 		if (!(fp->f_mount_flags & MS_NOSUID) &&
-		    !cur->execution->ptrace_tracer) {
+		    !cur->execution->ptrace_tracer &&
+		    !cur->credentials->no_new_privs) {
 			if (s.st_mode & S_ISUID)
 				exec_euid = s.st_uid;
 			if ((s.st_mode & (S_ISGID | S_IXGRP)) ==
@@ -432,6 +433,8 @@ static int execve_common(const char *f, char **argv, char **envp,
 		name_put(file_name);
 		return -ENOMEM;
 	}
+	if (cur->life->psid == cur->thread->tgid)
+		ps_kill_thread_group(cur, 0);
 	mm_init_process_page_dir(new_mm->page_dir);
 	ps_replace_process_memory(cur, new_mm);
 
@@ -590,11 +593,26 @@ static int execve_common(const char *f, char **argv, char **envp,
 	cur->credentials->egid = cur->credentials->sgid =
 		cur->credentials->fsgid = exec_egid;
 	cur->credentials->keep_capabilities = 0;
-	memset(cur->credentials->cap_effective, 0,
-	       sizeof(cur->credentials->cap_effective));
-	memset(cur->credentials->cap_permitted, 0,
-	       sizeof(cur->credentials->cap_permitted));
-	cur->credentials->cap_initialized = 0;
+	if (cur->credentials->no_new_privs) {
+		if (!cur->credentials->cap_initialized) {
+			for (unsigned i = 0; i < 2; i++)
+				cur->credentials->cap_permitted[i] =
+					cur->credentials->euid == 0 ?
+						cur->credentials
+							->cap_bounding[i] :
+						0;
+		}
+		memcpy(cur->credentials->cap_effective,
+		       cur->credentials->cap_permitted,
+		       sizeof(cur->credentials->cap_effective));
+		cur->credentials->cap_initialized = 1;
+	} else {
+		memset(cur->credentials->cap_effective, 0,
+		       sizeof(cur->credentials->cap_effective));
+		memset(cur->credentials->cap_permitted, 0,
+		       sizeof(cur->credentials->cap_permitted));
+		cur->credentials->cap_initialized = 0;
+	}
 
 	/* setup arguments and enviroments in proper way for interp */
 	esp_top = format->setup_stack(file_name, argc, s_argv, envc, s_envp,

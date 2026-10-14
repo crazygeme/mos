@@ -20,6 +20,7 @@
 #include <fs/mount.h>
 #include <proc/proc.h>
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <mm/mmap.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
@@ -51,7 +52,8 @@ static void proc_collect_pid(task_struct *task, void *ctx)
 	pid_ctx_t *c = (pid_ctx_t *)ctx;
 	if (task->life->psid != 0xffffffff && task->life->type != ps_kernel &&
 	    task->life->psid == task->thread->tgid && c->count < PROC_MAX_PIDS)
-		c->list[c->count++] = task->life->psid;
+		if (ps_pid_visible(task->life->psid))
+			c->list[c->count++] = ps_pid_visible(task->life->psid);
 }
 
 /* ------------------------------------------------------------------ *
@@ -265,7 +267,7 @@ static file *proc_open(super_block *sb, const char *path, int flag)
 				fs_put_file(fp);
 				return NULL;
 			}
-			sprintf(name, "/proc/%u%s", pid, rest);
+			sprintf(name, "/proc/%u%s", ps_pid_visible(pid), rest);
 			fp->f_name = strdup(name);
 			name_put(name);
 		}
@@ -278,7 +280,7 @@ static file *proc_open(super_block *sb, const char *path, int flag)
 		while (*p >= '0' && *p <= '9')
 			pid = pid * 10 + (unsigned)(*p++ - '0');
 		rest = p; /* "" or "/status" or "/fd/0" … */
-		return proc_pid_lookup(pid, rest, flag);
+		return proc_pid_lookup(ps_pid_global(pid), rest, flag);
 	}
 
 	return NULL;
@@ -319,7 +321,8 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 		return -1;
 	}
 
-	task = ps_find_process_ref(pid);
+	task = ps_find_process_ref(
+		!strncmp(path, "/self/", 6) ? pid : ps_pid_global(pid));
 	if (!task)
 		return -1;
 	task = proc_resolve_thread(task, &p);
@@ -327,6 +330,8 @@ static int proc_readlink(super_block *sb, const char *path, char *buf,
 		return -ENOENT;
 	if (!ps_may_access_process(task))
 		return -EACCES;
+	if (!strncmp(p, "/ns/", 4))
+		return ps_namespace_readlink(task, p + 4, buf, bufsiz, rcnt);
 	if (strcmp(p, "/exe") == 0) {
 		if (!task->execution || !task->memory->executable ||
 		    !task->memory->executable->f_name)

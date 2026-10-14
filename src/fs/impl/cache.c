@@ -161,14 +161,45 @@ static paddr_t fs_page_cache_load(file *fp, uint64_t offset)
 
 static unsigned fs_page_cache_evict_one_unsafe(void)
 {
-	fs_page_cache_entry *evict;
+	for (list_entry *n = fs_page_cache_lru.next; n != &fs_page_cache_lru;
+	     n = n->next) {
+		fs_page_cache_entry *entry =
+			container_of(n, fs_page_cache_entry, lru);
+		unsigned index = PHY_TO_PAGE_IDX(entry->phy);
+		if (__atomic_load_n(&phymm_pages[index].ref_count,
+				    __ATOMIC_RELAXED) != 1)
+			continue;
+		list_remove_entry(&entry->lru);
+		return fs_page_cache_remove(entry);
+	}
+	return 0;
+}
 
-	if (list_is_empty(&fs_page_cache_lru))
-		return 0;
-
-	evict = container_of(list_remove_head(&fs_page_cache_lru),
-			     fs_page_cache_entry, lru);
-	return fs_page_cache_remove(evict);
+void fs_page_cache_update(file *fp, uint64_t offset, const void *data,
+			  size_t size)
+{
+	if (!fs_page_cache_ready || !fs_page_cache_can_use(fp))
+		return;
+	fs_page_cache_key key = { fp->f_inode->i_pgcache_tag,
+				  fp->f_inode->i_ino, 0 };
+	mutex_lock(&fs_page_cache_lock);
+	while (size) {
+		unsigned within = offset & (PAGE_SIZE - 1);
+		unsigned count = PAGE_SIZE - within;
+		if (count > size)
+			count = size;
+		key.offset = offset & ~(uint64_t)(PAGE_SIZE - 1);
+		fs_page_cache_entry *entry = fs_page_cache_find(&key);
+		if (entry && mm_kmap_phys(entry->phy) == 1) {
+			memmove((char *)PHY_TO_VIRT(entry->phy) + within, data,
+				count);
+			mm_kunmap_phys(entry->phy);
+		}
+		offset += count;
+		data = (const char *)data + count;
+		size -= count;
+	}
+	mutex_unlock(&fs_page_cache_lock);
 }
 
 paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
@@ -334,7 +365,10 @@ unsigned fs_page_cache_reclaim(unsigned target_pages)
 
 	mutex_lock(&fs_page_cache_lock);
 	while (freed < target_pages && !list_is_empty(&fs_page_cache_lru)) {
-		freed += fs_page_cache_evict_one_unsafe();
+		unsigned count = fs_page_cache_evict_one_unsafe();
+		if (!count)
+			break;
+		freed += count;
 	}
 	mutex_unlock(&fs_page_cache_lock);
 	return freed;

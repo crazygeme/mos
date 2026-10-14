@@ -66,6 +66,7 @@ static void proc_sys_register(void)
 	root = vfs_entry_directory(root, "sys");
 	kernel = vfs_entry_directory(root, "kernel");
 	vfs_entry_text(kernel, "osrelease", UTS_RELEASE "\n");
+	vfs_entry_text(kernel, "cap_last_cap", "40\n");
 	fs = vfs_entry_directory(root, "fs");
 	inotify = vfs_entry_directory(fs, "inotify");
 	vfs_entry_attribute(inotify, "max_user_watches", 0644, &limit_ops, NULL,

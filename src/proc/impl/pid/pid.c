@@ -13,6 +13,8 @@
  */
 #include "proc_pid.h"
 #include <ps/ps.h>
+#include <ps/namespace.h>
+#include <ps/cgroup.h>
 #include <mm/mmap.h>
 #include <config.h>
 #include <macro.h>
@@ -30,10 +32,25 @@
 		*(pp) += _d->d_reclen;                                         \
 	} while (0)
 
-static const char *const pid_dir_entries[] = {
-	".",	   "..", "status", "stat", "statm", "cmdline", "maps",
-	"environ", "fd", "cwd",	   "exe",  "task",  "comm",    NULL
-};
+static const char *const pid_dir_entries[] = { ".",
+					       "..",
+					       "status",
+					       "stat",
+					       "statm",
+					       "cmdline",
+					       "oom_score_adj",
+					       "maps",
+					       "mountinfo",
+					       "mounts",
+					       "ns",
+					       "cgroup",
+					       "environ",
+					       "fd",
+					       "cwd",
+					       "exe",
+					       "task",
+					       "comm",
+					       NULL };
 
 static file *pid_dir_open(task_struct *task, int include_task)
 {
@@ -98,6 +115,50 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 	    !ps_may_access_process(task))
 		return NULL;
 
+	if (!strcmp(rest, "/oom_score_adj"))
+		return pid_oom_open(task);
+	if (!strcmp(rest, "/cgroup")) {
+		char *path = name_get();
+		if (!path)
+			return NULL;
+		pb = proc_buf_new();
+		ps_cgroup_path(task, 0, path);
+		proc_buf_printf(pb, "1:pids:%s\n", path);
+		ps_cgroup_path(task, 1, path);
+		proc_buf_printf(pb, "2:devices:%s\n", path);
+		name_put(path);
+		return make_pid_file(pb, task);
+	}
+	if (!strncmp(rest, "/ns/", 4))
+		return ps_namespace_open(task, rest + 4);
+	if (!strcmp(rest, "/ns") || !strcmp(rest, "/ns/")) {
+		const char *names[] = { ".",   "..",  "mnt",  "uts",   "ipc",
+					"pid", "net", "user", "cgroup" };
+		char *buffer = name_get();
+		if (!buffer)
+			return NULL;
+		char *p = buffer;
+		memset(buffer, 0, 1024);
+		for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]);
+		     i++) {
+			struct linux_dirent *d = (void *)p;
+			d->d_ino = PROC_INODE;
+			strcpy(d->d_name, names[i]);
+			d->d_reclen =
+				ROUND_UP(NAME_OFFSET() + strlen(names[i]) + 1);
+			d->d_off = p - buffer + d->d_reclen;
+			p += d->d_reclen;
+		}
+		pb = proc_buf_new();
+		proc_buf_copy(pb, buffer, p - buffer);
+		name_put(buffer);
+		return make_pid_dir(pb, task);
+	}
+	if (!strcmp(rest, "/mountinfo") || !strcmp(rest, "/mounts")) {
+		pb = proc_buf_new();
+		proc_fill_mounts(pb, task, !strcmp(rest, "/mountinfo"));
+		return make_pid_file(pb, task);
+	}
 	/* "" or "/" → per-PID directory listing */
 	if (rest[0] == '\0' || (rest[0] == '/' && rest[1] == '\0'))
 		return pid_dir_open(task, include_task);

@@ -2,6 +2,7 @@
 #include <ps/ps.h>
 #include <ps/usage.h>
 #include <ps/smp.h>
+#include <ps/namespace.h>
 #include <int/int.h>
 #include <lib/klib.h>
 #include <errno.h>
@@ -728,8 +729,8 @@ int native_sched_affinity(int pid, uintptr_t size, void *mask, int set)
 		return -EINVAL;
 	if (!mask)
 		return -EFAULT;
-	task_struct *task =
-		ps_find_process_ref(pid ? (unsigned)pid : current->life->psid);
+	task_struct *task = ps_find_process_ref(
+		pid ? ps_pid_global((unsigned)pid) : current->life->psid);
 	if (!task)
 		return -ESRCH;
 	int ret = 0;
@@ -768,13 +769,24 @@ int native_sched_affinity(int pid, uintptr_t size, void *mask, int set)
 
 int native_tgkill(int tgid, int tid, int sig)
 {
-	if (tgid <= 0 || tid <= 0 || sig < 0 || sig >= NSIG)
-		return -EINVAL;
-	task_struct *task = ps_find_process_ref((unsigned)tid);
-	if (!task)
-		return -ESRCH;
-	int ret = task->thread->tgid == (unsigned)tgid ? sys_tkill(tid, sig) :
-							 -ESRCH;
-	ps_put_process_ref(task);
-	return ret;
+	return sys_tgkill(tgid, tid, sig);
+}
+
+int native_utimensat(int dirfd, const char *path, const void *times, int flags)
+{
+	const struct native_time *wire = times;
+	struct timespec converted[2];
+	if (wire)
+		for (unsigned i = 0; i < 2; i++) {
+			if (wire[i].fraction != 1073741822 &&
+			    wire[i].fraction != 1073741823) {
+				int ret = timespec32(&wire[i], &converted[i]);
+				if (ret)
+					return ret;
+			} else {
+				converted[i].tv_sec = 0;
+				converted[i].tv_nsec = wire[i].fraction;
+			}
+		}
+	return sys_utimensat(dirfd, path, wire ? converted : NULL, flags);
 }

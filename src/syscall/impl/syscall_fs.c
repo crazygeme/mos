@@ -7,9 +7,11 @@
  */
 
 #include <ps/ps.h>
+#include <ps/cgroup.h>
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <fs/fcntl.h>
+#include <fs/anonfd.h>
 #include <fs/mount.h>
 #include <device/blockdev.h>
 #include <lib/klib.h>
@@ -685,12 +687,18 @@ int sys_fchown(int fd, uint32_t uid, uint32_t gid)
 
 int sys_mknod(const char *_path, unsigned mode, unsigned dev)
 {
+	if ((S_ISCHR(mode) || S_ISBLK(mode)) && !ps_has_capability(current, 27))
+		return -EPERM;
 	task_struct *cur = CURRENT_TASK();
 	char *path = name_get();
 	int ret;
 
 	resolve_path(_path, path);
-	ret = vfs_mknod(cur->fs->root, path, mode, dev);
+	ret = (S_ISCHR(mode) || S_ISBLK(mode)) ?
+		      ps_cgroup_device(mode, dev, 4) :
+		      0;
+	if (!ret)
+		ret = vfs_mknod(cur->fs->root, path, mode, dev);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mknod(%s, %o, %x) = %d\n", _path, mode, dev, ret);
@@ -701,9 +709,13 @@ int sys_mknod(const char *_path, unsigned mode, unsigned dev)
 
 int sys_mknodat(int dirfd, const char *path, unsigned mode, unsigned dev)
 {
+	if ((S_ISCHR(mode) || S_ISBLK(mode)) && !ps_has_capability(current, 27))
+		return -EPERM;
 	char *name = name_get();
 	int ret = syscall_resolve_at(dirfd, path, name);
 
+	if (ret == 0 && (S_ISCHR(mode) || S_ISBLK(mode)))
+		ret = ps_cgroup_device(mode, dev, 4);
 	if (ret == 0)
 		ret = vfs_mknod(current->fs->root, name, mode, dev);
 	name_put(name);
@@ -944,6 +956,26 @@ static int readlink_common(int dirfd, const char *path, char *buf,
 		return -EINVAL;
 	}
 
+	if (at && path && !*path) {
+		file *fp = anonfd_get(dirfd);
+		if (!fp) {
+			name_put(name);
+			return -EBADF;
+		}
+		if (!fp->f_inode || !S_ISLNK(fp->f_inode->i_mode))
+			ret = -EINVAL;
+		else if (fp->f_fop && fp->f_fop->readlink)
+			ret = fp->f_fop->readlink(fp, buf, bufsiz, &rcnt);
+		else if (fp->f_name)
+			ret = vfs_readlink(cur->fs->root, fp->f_name, buf,
+					   bufsiz, &rcnt);
+		else
+			ret = -EINVAL;
+		fs_put_file(fp);
+		name_put(name);
+		return ret ? ret : (int)rcnt;
+	}
+
 	ret = syscall_resolve_at(dirfd, path, name);
 	if (ret) {
 		name_put(name);
@@ -982,9 +1014,43 @@ int sys_readlinkat(int dirfd, const char *path, char *buf, unsigned bufsiz)
  * Mount, sync, and cwd                                                 *
  * ------------------------------------------------------------------ */
 
+static void mount_fd_path(char *path)
+{
+	if (!strstr(path, "/fd/"))
+		return;
+	char *target = name_get();
+	if (!target)
+		return;
+	size_t length = 0;
+	if (!vfs_readlink(current->fs->root, path, target, MAX_PATH - 1,
+			  &length) &&
+	    length && target[0] == '/') {
+		target[length] = 0;
+		strcpy(path, target);
+	}
+	name_put(target);
+}
+
 int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data)
 {
-	int ret = fs_do_mount(dev, dir_name, type, flag, data);
+	char *target = name_get(), *source = NULL;
+	if (!target)
+		return -ENOMEM;
+	resolve_path(dir_name, target);
+	mount_fd_path(target);
+	if ((flag & (4096 | 8192)) && !(flag & MS_REMOUNT) && dev) {
+		source = name_get();
+		if (!source) {
+			name_put(target);
+			return -ENOMEM;
+		}
+		resolve_path(dev, source);
+		mount_fd_path(source);
+	}
+	int ret = fs_do_mount(source ? source : dev, target, type, flag, data);
+	name_put(target);
+	if (source)
+		name_put(source);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("mount(%s, %s, %s, %d, %x) = %d\n", dev, dir_name, type,
@@ -995,7 +1061,12 @@ int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data)
 
 int sys_umount(char *name, int flag)
 {
-	int ret = fs_do_umount(name, flag);
+	char *target = name_get();
+	if (!target)
+		return -ENOMEM;
+	resolve_path(name, target);
+	int ret = fs_do_umount(target, flag);
+	name_put(target);
 
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("umount(%s, %d) = %d\n", name, flag, ret);
@@ -1450,4 +1521,137 @@ int sys_fremovexattr(int fd, const char *name)
 	(void)fd;
 	(void)name;
 	return -ENODATA;
+}
+
+int sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid,
+		 int flags)
+{
+	if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH))
+		return -EINVAL;
+	if (!pathname)
+		return -EFAULT;
+	if (!*pathname && (flags & AT_EMPTY_PATH))
+		return fs_fchown(dirfd, uid, gid);
+	char *name = name_get();
+	if (!name)
+		return -ENOMEM;
+	int ret = syscall_resolve_at(dirfd, pathname, name);
+	if (!ret)
+		ret = fs_chown_flags(name, uid, gid,
+				     flags & AT_SYMLINK_NOFOLLOW ? O_NOFOLLOW :
+								   0);
+	name_put(name);
+	return ret;
+}
+
+int sys_utimensat(int dirfd, const char *pathname, const struct timespec *times,
+		  int flags)
+{
+	if (flags & ~AT_SYMLINK_NOFOLLOW)
+		return -EINVAL;
+	char *name = name_get();
+	if (!name)
+		return -ENOMEM;
+	int ret = 0;
+	file *fp = NULL;
+	if (!pathname) {
+		fp = anonfd_get(dirfd);
+		if (!fp) {
+			name_put(name);
+			return -EBADF;
+		}
+		if (!fp->f_name) {
+			fs_put_file(fp);
+			name_put(name);
+			return -EOPNOTSUPP;
+		}
+		strcpy(name, fp->f_name);
+	} else {
+		ret = syscall_resolve_at(dirfd, pathname, name);
+		if (!ret)
+			fp = vfs_open(current->fs->root, name,
+				      O_PATH | (flags ? O_NOFOLLOW : 0));
+	}
+	struct stat st;
+	if (ret)
+		goto done;
+	if (!fp) {
+		ret = -ENOENT;
+		goto done;
+	}
+	ret = fp->f_fop && fp->f_fop->getattr ? fp->f_fop->getattr(fp, &st) :
+						-EOPNOTSUPP;
+	if (ret)
+		goto done;
+	unsigned stamps[2] = { time_wall_sec(), time_wall_sec() };
+	if (times) {
+		for (unsigned i = 0; i < 2; i++) {
+			if (times[i].tv_nsec == 1073741822)
+				stamps[i] = i ? st.st_mtime : st.st_atime;
+			else if (times[i].tv_nsec != 1073741823) {
+				if (times[i].tv_sec < 0 ||
+				    times[i].tv_nsec < 0 ||
+				    times[i].tv_nsec >= 1000000000) {
+					ret = -EINVAL;
+					goto done;
+				}
+				stamps[i] = times[i].tv_sec;
+			}
+		}
+	}
+	if (current->credentials->euid &&
+	    current->credentials->euid != st.st_uid) {
+		ret = -EPERM;
+		goto done;
+	}
+	ret = vfs_utime(current->fs->root, name, stamps[0], stamps[1]);
+done:
+	if (fp)
+		fs_put_file(fp);
+	name_put(name);
+	return ret;
+}
+
+int sys_linkat(int oldfd, const char *oldpath, int newfd, const char *newpath,
+	       int flags)
+{
+	if (flags & ~(0x400 | AT_EMPTY_PATH))
+		return -EINVAL;
+	if (!oldpath || !newpath)
+		return -EFAULT;
+	char *old = name_get(), *new = name_get();
+	if (!old || !new) {
+		if (old)
+			name_put(old);
+		if (new)
+			name_put(new);
+		return -ENOMEM;
+	}
+	int ret;
+	if (!*oldpath && flags & AT_EMPTY_PATH) {
+		file *fp = anonfd_get(oldfd);
+		ret = !fp ? -EBADF : !fp->f_name ? -ENOENT : 0;
+		if (!ret)
+			strcpy(old, fp->f_name);
+		if (fp)
+			fs_put_file(fp);
+	} else
+		ret = syscall_resolve_at(oldfd, oldpath, old);
+	if (!ret)
+		ret = syscall_resolve_at(newfd, newpath, new);
+	if (!ret && (flags & 0x400)) {
+		file *fp = vfs_open(current->fs->root, old, O_PATH);
+		if (!fp)
+			ret = -ENOENT;
+		else {
+			if (fp->f_name && fp->f_name[0] == '/')
+				strcpy(old, fp->f_name);
+			fs_put_file(fp);
+		}
+	}
+	if (!ret)
+		ret = vfs_link(current->fs->root, old, new);
+	name_put(old);
+	name_put(new);
+	return ret;
 }

@@ -3,6 +3,7 @@
  */
 #include "proc_pid.h"
 #include <config.h>
+#include <ps/namespace.h>
 #include <macro.h>
 #include <mm/mmap.h>
 #include <ps/usage.h>
@@ -94,9 +95,12 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 	proc_buf_printf(pb, "State:\t%c (%s)\n",
 			pid_state_char(task->sched->status),
 			pid_state_name(task->sched->status));
-	proc_buf_printf(pb, "Tgid:\t%u\n", task->thread->tgid);
-	proc_buf_printf(pb, "Pid:\t%u\n", task->life->psid);
-	proc_buf_printf(pb, "PPid:\t%u\n", task->life->ppid);
+	proc_buf_printf(pb, "Tgid:\t%u\n",
+			ps_pid_visible(task->thread->tgid));
+	proc_buf_printf(pb, "Pid:\t%u\n",
+			ps_pid_visible(task->life->psid));
+	proc_buf_printf(pb, "PPid:\t%u\n",
+			ps_pid_visible(task->life->ppid));
 	proc_buf_printf(pb, "TracerPid:\t0\n");
 	proc_buf_printf(pb, "Uid:\t%u\t%u\t%u\t%u\n",
 			task->credentials->uid, task->credentials->euid,
@@ -124,9 +128,28 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 	proc_buf_printf(pb, "SigBlk:\t%016lx\n", sig_blocked);
 	proc_buf_printf(pb, "SigIgn:\t%016lx\n", sig_ignored_mask(task));
 	proc_buf_printf(pb, "SigCgt:\t%016lx\n", sig_caught_mask(task));
-	proc_buf_printf(pb, "CapInh:\t0000000000000000\n");
-	proc_buf_printf(pb, "CapPrm:\t0000000000000000\n");
-	proc_buf_printf(pb, "CapEff:\t0000000000000000\n");
+	task_credentials *u = task->credentials;
+	uint64_t bounding = ((uint64_t)u->cap_bounding[1] << 32) |
+			    u->cap_bounding[0];
+	uint64_t inheritable = ((uint64_t)u->cap_inheritable[1] << 32) |
+			       u->cap_inheritable[0];
+	uint64_t permitted = u->cap_initialized ?
+				     ((uint64_t)u->cap_permitted[1] << 32) |
+					     u->cap_permitted[0] :
+				     (u->euid == 0 ? bounding : 0);
+	uint64_t effective = u->cap_initialized ?
+				     ((uint64_t)u->cap_effective[1] << 32) |
+					     u->cap_effective[0] :
+				     (u->euid == 0 ? bounding : 0);
+	proc_buf_printf(pb, "CapInh:\t%016llx\n",
+			(unsigned long long)inheritable);
+	proc_buf_printf(pb, "CapPrm:\t%016llx\n",
+			(unsigned long long)permitted);
+	proc_buf_printf(pb, "CapEff:\t%016llx\n",
+			(unsigned long long)effective);
+	proc_buf_printf(pb, "CapBnd:\t%016llx\n", (unsigned long long)bounding);
+	proc_buf_printf(pb, "CapAmb:\t0000000000000000\n");
+	proc_buf_printf(pb, "NoNewPrivs:\t%u\n", u->no_new_privs);
 	proc_buf_printf(pb, "voluntary_ctxt_switches:\t%u\n",
 			task->stats->total_switches -
 				task->stats->niv_switches);
@@ -182,12 +205,12 @@ void fill_stat(proc_buf_t *pb, task_struct *task, int group)
 		"%ld %ld %ld %ld %lu %llu %lld "
 		"%lu %lu %lu %lu %lu %lu %lu %lu "
 		"%lu %lu %lu %lu %d %d\n",
-		/* 1  pid         */ task->life->psid,
+		/* 1  pid         */ ps_pid_visible(task->life->psid),
 		/* 2  comm        */ comm,
 		/* 3  state       */ pid_state_char(task->sched->status),
-		/* 4  ppid        */ task->life->ppid,
-		/* 5  pgrp        */ task->thread->group_id,
-		/* 6  session     */ task->thread->session_id,
+		/* 4  ppid        */ ps_pid_visible(task->life->ppid),
+		/* 5  pgrp        */ ps_pid_visible(task->thread->group_id),
+		/* 6  session     */ ps_pid_visible(task->thread->session_id),
 		/* 7  tty_nr      */ tty_nr,
 		/* 8  tpgid       */ tpgid,
 		/* 9  flags       */ (unsigned long)0,

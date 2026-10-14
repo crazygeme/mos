@@ -18,6 +18,7 @@
 #include <fs/fs.h>
 #include <fs/vfs.h>
 #include <fs/fcntl.h>
+#include <fs/poll.h>
 #include <lib/klib.h>
 #include <lib/cyclebuf.h>
 #include <ps/ps.h>
@@ -29,6 +30,8 @@
  * Character / block device dispatch table                             *
  * ------------------------------------------------------------------ */
 
+static file *devnode_reopen(file *fp, int flags);
+static int fifonode_open_ready(file *fp);
 static const file_operations devnode_fops;
 static const file_operations fifonode_reader_fops;
 static const file_operations fifonode_writer_fops;
@@ -97,6 +100,7 @@ static int devnode_release(file *fp)
 }
 
 static const file_operations devnode_fops = {
+	.reopen = devnode_reopen,
 	.release = devnode_release,
 	.getattr = devnode_getattr,
 	.read = devnode_read,
@@ -164,12 +168,16 @@ static unsigned fifonode_poll_common(cy_buf *b, unsigned events, poll_table *pt)
 
 	if ((events & FS_POLL_READ) && !cyb_isempty(b))
 		ready |= FS_POLL_READ;
-	if ((events & FS_POLL_WRITE) && !cyb_isfull(b))
+	if ((events & FS_POLL_HUP) && !cyb_writer_count(b))
+		ready |= FS_POLL_HUP;
+	if ((events & FS_POLL_ERR) && !cyb_reader_count(b))
+		ready |= FS_POLL_ERR;
+	if ((events & FS_POLL_WRITE) && cyb_reader_count(b) && !cyb_isfull(b))
 		ready |= FS_POLL_WRITE;
 	if (pt) {
-		if (events & FS_POLL_READ)
+		if (events & (FS_POLL_READ | FS_POLL_HUP))
 			cyb_poll_read(b, pt);
-		if (events & FS_POLL_WRITE)
+		if (events & (FS_POLL_WRITE | FS_POLL_ERR))
 			cyb_poll_write(b, pt);
 	}
 	return ready;
@@ -178,13 +186,15 @@ static unsigned fifonode_poll_common(cy_buf *b, unsigned events, poll_table *pt)
 static unsigned fifonode_read_poll(file *fp, unsigned events, poll_table *pt)
 {
 	cy_buf *b = ((devnode_info *)fp->f_inode->i_private)->fifo;
-	return fifonode_poll_common(b, events & FS_POLL_READ, pt);
+	return fifonode_poll_common(b, events & (FS_POLL_READ | FS_POLL_HUP),
+				    pt);
 }
 
 static unsigned fifonode_write_poll(file *fp, unsigned events, poll_table *pt)
 {
 	cy_buf *b = ((devnode_info *)fp->f_inode->i_private)->fifo;
-	return fifonode_poll_common(b, events & FS_POLL_WRITE, pt);
+	return fifonode_poll_common(b, events & (FS_POLL_WRITE | FS_POLL_ERR),
+				    pt);
 }
 
 static int fifonode_release_reader(file *fp)
@@ -206,6 +216,8 @@ static int fifonode_release_writer(file *fp)
 }
 
 static const file_operations fifonode_reader_fops = {
+	.reopen = devnode_reopen,
+	.open_ready = fifonode_open_ready,
 	.release = fifonode_release_reader,
 	.getattr = fifonode_getattr,
 	.read = fifonode_read,
@@ -213,16 +225,99 @@ static const file_operations fifonode_reader_fops = {
 };
 
 static const file_operations fifonode_writer_fops = {
+	.reopen = devnode_reopen,
+	.open_ready = fifonode_open_ready,
 	.release = fifonode_release_writer,
 	.getattr = fifonode_getattr,
 	.write = fifonode_write,
 	.poll = fifonode_write_poll,
 };
 
+typedef struct {
+	inode node;
+	unsigned peer_sequence;
+} fifo_open_inode;
+static int fifo_peer_check(void *opaque)
+{
+	file *fp = opaque;
+	cy_buf *b = ((devnode_info *)fp->f_inode->i_private)->fifo;
+	int writer = fp->f_mode != O_WRONLY;
+	fifo_open_inode *opened =
+		container_of(fp->f_inode, fifo_open_inode, node);
+	return (writer ? cyb_writer_count(b) : cyb_reader_count(b)) ||
+	       cyb_open_sequence(b, writer) != opened->peer_sequence;
+}
+struct fifo_peer_wait {
+	file *fp;
+	poll_table table;
+};
+static int fifo_wait_check(void *opaque)
+{
+	struct fifo_peer_wait *wait = opaque;
+	return fifo_peer_check(wait->fp);
+}
+static int fifo_wait_register(void *opaque)
+{
+	struct fifo_peer_wait *wait = opaque;
+	cy_buf *b = ((devnode_info *)wait->fp->f_inode->i_private)->fifo;
+	if (wait->fp->f_mode == O_WRONLY)
+		cyb_poll_write(b, &wait->table);
+	else
+		cyb_poll_read(b, &wait->table);
+	return wait->table.unsupported;
+}
+static void fifo_wait_deregister(void *opaque)
+{
+	struct fifo_peer_wait *wait = opaque;
+	poll_table_cleanup(&wait->table);
+}
+static int fifonode_open_ready(file *fp)
+{
+	if (fp->f_mode == O_RDWR || fifo_peer_check(fp))
+		return 0;
+	if (fp->f_flag & O_NONBLOCK)
+		return fp->f_mode == O_WRONLY ? -ENXIO : 0;
+	struct fifo_peer_wait wait = { .fp = fp };
+	poll_table_entry entry;
+	poll_table_init(&wait.table, current, &entry, 1);
+	static const struct poll_ops ops = { .check = fifo_wait_check,
+					     .reg = fifo_wait_register,
+					     .dereg = fifo_wait_deregister };
+	int ret = poll_wait_loop(&ops, &wait, 0, 1, 0);
+	poll_table_cleanup(&wait.table);
+	return ret < 0 ? ret : 0;
+}
+static int fifonode_release_rw(file *fp)
+{
+	cy_buf *b = ((devnode_info *)fp->f_inode->i_private)->fifo;
+	cyb_reader_close(b);
+	cyb_writer_close(b);
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+static unsigned fifonode_rw_poll(file *fp, unsigned events, poll_table *pt)
+{
+	return fifonode_read_poll(fp, events, pt) |
+	       fifonode_write_poll(fp, events, pt);
+}
+static const file_operations fifonode_rw_fops = {
+	.reopen = devnode_reopen,
+	.open_ready = fifonode_open_ready,
+	.release = fifonode_release_rw,
+	.getattr = fifonode_getattr,
+	.read = fifonode_read,
+	.write = fifonode_write,
+	.poll = fifonode_rw_poll,
+};
+
 static file *devnode_open_fifo(devnode_info *dn, int flag)
 {
 	cy_buf *b = dn->fifo;
-	inode *node = zalloc(sizeof(*node));
+	fifo_open_inode *opened = zalloc(sizeof(*opened));
+	inode *node = &opened->node;
+	opened->peer_sequence =
+		cyb_open_sequence(b, (flag & O_ACCMODE) != O_WRONLY);
 	file *fp = zalloc(sizeof(*fp));
 
 	node->i_mode = dn->mode;
@@ -231,7 +326,11 @@ static file *devnode_open_fifo(devnode_info *dn, int flag)
 	fp->f_inode = node;
 	fp->f_count = 1;
 
-	if ((flag & 3) == O_WRONLY) {
+	if ((flag & O_ACCMODE) == O_RDWR) {
+		cyb_reader_open(b);
+		cyb_writer_open(b);
+		fp->f_fop = &fifonode_rw_fops;
+	} else if ((flag & 3) == O_WRONLY) {
 		cyb_writer_open(b);
 		fp->f_fop = &fifonode_writer_fops;
 	} else {
@@ -259,7 +358,8 @@ static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 
 static file *devnode_open_fifo_root(super_block *sb, devnode_info *dn, int flag)
 {
-	return devnode_open_fifo(dn, flag);
+	return flag & O_PATH ? devnode_open_stub(sb, dn->mode) :
+			       devnode_open_fifo(dn, flag);
 }
 
 static file *devnode_open_stub_root(super_block *sb, devnode_info *dn, int flag)
@@ -282,6 +382,19 @@ static file *devnode_open_root(super_block *sb, int flag)
 	if (!open)
 		open = devnode_open_stub_root;
 	return open(sb, dn, flag);
+}
+
+static file *devnode_reopen(file *fp, int flags)
+{
+	if (!fp->f_sb)
+		return NULL;
+	file *next = devnode_open_root(fp->f_sb, flags);
+	if (next) {
+		vfs_set_file_origin(next, fp->f_sb, "");
+		next->f_name = fp->f_name ? strdup(fp->f_name) : NULL;
+		next->f_mount_flags = fp->f_mount_flags;
+	}
+	return next;
 }
 
 static void devnode_release_super(super_block *sb)

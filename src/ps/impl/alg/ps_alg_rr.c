@@ -185,7 +185,8 @@ void ps_put_to_dying_queue(task_struct *task)
 
 	spinlock_lock(&ps_lock, &irq);
 	ps_put_to_dying_queue_unsafe(task);
-	if (task->life->ppid && task->life->exit_signal > 0 &&
+	if (!task->sched->on_cpu && !task->thread->live_tasks &&
+	    task->life->ppid && task->life->exit_signal > 0 &&
 	    task->life->exit_signal < NSIG) {
 		task_struct *parent = ps_find_process_unsafe(task->life->ppid);
 

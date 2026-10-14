@@ -17,6 +17,7 @@ ALIASES = {
     'ugetrlimit': 'getrlimit', 'statfs64': 'statfs', 'fstatfs64': 'fstatfs',
     'fstatat64': 'newfstatat', 'clock_gettime64': 'clock_gettime',
     'futex_time64': 'futex', 'clock_getres_time64': 'clock_getres',
+    'timerfd_gettime64': 'timerfd_gettime', 'timerfd_settime64': 'timerfd_settime',
     'signal': 'rt_sigaction',
     'sigaction': 'rt_sigaction', 'sigreturn': 'rt_sigreturn',
     'umount': 'umount2', 'stime': 'settimeofday', 'nice': 'setpriority',
@@ -63,8 +64,9 @@ def main():
     shared = {normalize(name) for name in i386} - LEGACY - {'socketcall', 'ipc'}
     supported = set(native)
     assert not shared - supported, f'Missing native services: {sorted(shared - supported)}'
-    assert not supported - shared - SOCKETS - IPC - {'arch_prctl', 'sendfile'}, (
-        f'Native-only services: {sorted(supported - shared - SOCKETS - IPC - {"arch_prctl", "sendfile"})}')
+    native_only = {'arch_prctl', 'sendfile', 'sched_getaffinity', 'sched_setaffinity'}
+    assert not supported - shared - SOCKETS - IPC - native_only, (
+        f'Native-only services: {sorted(supported - shared - SOCKETS - IPC - native_only)}')
     assert SOCKETS <= supported, f'Missing socket services: {sorted(SOCKETS - supported)}'
     assert IPC <= supported, f'Missing IPC services: {sorted(IPC - supported)}'
     assert native['sendfile'][1].startswith('sys_sendfile64(')

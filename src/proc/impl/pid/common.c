@@ -215,7 +215,18 @@ static int pid_fd_metadata_release(file *fp)
 	return 0;
 }
 
+static file *pid_fd_metadata_reopen(file *fp, int flags)
+{
+	file *target = fp->f_inode->i_private;
+	if (target->f_fop && target->f_fop->reopen)
+		return target->f_fop->reopen(target, flags);
+	return target->f_name ?
+		       vfs_open(current->fs->root, target->f_name, flags) :
+		       NULL;
+}
+
 static const file_operations pid_fd_metadata_fops = {
+	.reopen = pid_fd_metadata_reopen,
 	.getattr = pid_fd_metadata_getattr,
 	.release = pid_fd_metadata_release,
 };
@@ -236,6 +247,9 @@ static file *pid_fd_link_follow(file *fp, int flags)
 		metadata->f_inode = node;
 		metadata->f_count = 1;
 		metadata->f_fop = &pid_fd_metadata_fops;
+		metadata->f_name = link->target->f_name ?
+					   strdup(link->target->f_name) :
+					   NULL;
 		fs_get_file(link->target);
 		return metadata;
 	}
@@ -258,7 +272,19 @@ static int pid_fd_link_release(file *fp)
 	return 0;
 }
 
+static int pid_fd_link_readlink(file *fp, char *buf, size_t size,
+				size_t *length)
+{
+	pid_fd_link *link = fp->f_inode->i_private;
+	*length = strlen(link->name);
+	if (*length > size)
+		*length = size;
+	memcpy(buf, link->name, *length);
+	return 0;
+}
+
 static const file_operations pid_fd_link_fops = {
+	.readlink = pid_fd_link_readlink,
 	.getattr = pid_fd_link_getattr,
 	.follow_link = pid_fd_link_follow,
 	.release = pid_fd_link_release,

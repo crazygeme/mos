@@ -105,6 +105,8 @@ typedef struct _file_operations {
 	/* Custom dtor of file struct, will call regular kfree if not provided */
 	int (*release)(file *file);
 	int (*getattr)(file *file, struct stat *s);
+	/* Complete an open after access checks and status flags are configured. */
+	int (*open_ready)(file *file);
 	/* Borrowed parent identity and entry name: 1 for a parent, 0 for a root. */
 	int (*notify_parent)(file *file, struct super_block **owner,
 			     uint64_t *ino, const char **name);
@@ -259,6 +261,7 @@ typedef struct {
 	} while (0)
 
 int resolve_path(const char *old, char *new);
+int fs_resolve_symlink_path(const char *linkpath, char *target, size_t length);
 
 /* Wake all tasks sleeping on @in's flock wait queue.  Caller holds i_flock_lock. */
 void flock_wake_all_unsafe(inode *in);
@@ -332,6 +335,7 @@ void poll_notify(list_entry *head);
 
 int fs_chmod(const char *pathname, uint32_t mode);
 
+int fs_chown_flags(const char *pathname, uint32_t uid, uint32_t gid, int flags);
 int fs_chown(const char *pathname, uint32_t uid, uint32_t gid);
 
 int fs_fchown(int fd, uint32_t uid, uint32_t gid);
@@ -343,4 +347,5 @@ int fs_put_file(file *f);
 /* Increment file reference count (analogous to Linux get_file()) */
 #define fs_get_file(f) __sync_add_and_fetch(&(((file *)f)->f_count), 1)
 
+int fs_file_readonly(file *fp);
 #endif

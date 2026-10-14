@@ -1,4 +1,5 @@
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <fs/fs.h>
 #include <mm/mmap.h>
 #include <mm/mm.h>
@@ -30,6 +31,7 @@
 struct mos_shm_segment {
 	int used;
 	int removed;
+	unsigned namespace_id;
 	int key;
 	int shmid;
 	size_t size;
@@ -177,9 +179,14 @@ static struct mos_shm_segment *shm_keys_find(int key)
 	while (node) {
 		struct mos_shm_segment *seg =
 			rb_entry(node, struct mos_shm_segment, key_node);
-		if (key == seg->key)
+		if (ps_namespace_id(current, MOS_NS_IPC) == seg->namespace_id &&
+		    key == seg->key)
 			return seg;
-		node = key < seg->key ? node->rb_left : node->rb_right;
+		unsigned ns = ps_namespace_id(current, MOS_NS_IPC);
+		node = (ns < seg->namespace_id ||
+			(ns == seg->namespace_id && key < seg->key)) ?
+			       node->rb_left :
+			       node->rb_right;
 	}
 	return NULL;
 }
@@ -190,8 +197,11 @@ static void shm_keys_insert(struct mos_shm_segment *seg)
 		struct mos_shm_segment *other =
 			rb_entry(*link, struct mos_shm_segment, key_node);
 		parent = *link;
-		link = seg->key < other->key ? &parent->rb_left :
-					       &parent->rb_right;
+		link = (seg->namespace_id < other->namespace_id ||
+			(seg->namespace_id == other->namespace_id &&
+			 seg->key < other->key)) ?
+			       &parent->rb_left :
+			       &parent->rb_right;
 	}
 	rb_init_node(&seg->key_node);
 	rb_link_node(&seg->key_node, parent, link);
@@ -222,6 +232,7 @@ static int mos_shm_create(int key, size_t size, unsigned mode)
 	struct mos_shm_segment *seg = &mos_shm_segments[i];
 	memset(seg, 0, sizeof(*seg));
 	seg->used = 1;
+	seg->namespace_id = ps_namespace_id(cur, MOS_NS_IPC);
 	seg->key = key;
 	seg->shmid = mos_shm_next_id++;
 	seg->size = (size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
@@ -369,7 +380,8 @@ static intptr_t mos_shmat(int shmid, const void *shmaddr, int shmflg,
 
 	spinlock_lock(&mos_shm_lock, &irq);
 	seg = shm_ids_find(shmid);
-	if (!seg || seg->removed) {
+	if (!seg || seg->namespace_id != ps_namespace_id(current, MOS_NS_IPC) ||
+	    seg->removed) {
 		spinlock_unlock(&mos_shm_lock, irq);
 		return -EINVAL;
 	}
@@ -402,7 +414,8 @@ static intptr_t mos_shmat(int shmid, const void *shmaddr, int shmflg,
 
 	spinlock_lock(&mos_shm_lock, &irq);
 	seg = shm_ids_find(shmid);
-	if (!seg || seg->removed) {
+	if (!seg || seg->namespace_id != ps_namespace_id(current, MOS_NS_IPC) ||
+	    seg->removed) {
 		slot_return(&shm_attach_slots, i);
 		spinlock_unlock(&mos_shm_lock, irq);
 		do_munmap((void *)(uintptr_t)mapped,
@@ -495,7 +508,7 @@ int ps_shmctl(int shmid, int cmd, struct shm_status *buf)
 	cmd &= ~MOS_IPC_64;
 	spinlock_lock(&mos_shm_lock, &irq);
 	seg = shm_ids_find(shmid);
-	if (!seg)
+	if (!seg || seg->namespace_id != ps_namespace_id(current, MOS_NS_IPC))
 		ret = -EINVAL;
 	else if ((unsigned)cmd >= sizeof(calls) / sizeof(calls[0]) ||
 		 !calls[cmd])

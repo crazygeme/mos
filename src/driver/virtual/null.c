@@ -7,6 +7,7 @@
 #include <device/devnode.h>
 #include <unistd.h>
 #include <device/devnums.h>
+#include <errno.h>
 
 static ssize_t null_read(file *fp, void *buf, size_t size, loff_t *pos)
 {
@@ -136,6 +137,37 @@ static void zero_dev_register(void)
 			 MKDEV(ZERO_MAJOR, ZERO_MINOR), "mem", zero_cdev_open);
 }
 
+/* /dev/full */
+static ssize_t full_write(file *fp, const void *buf, size_t size, loff_t *pos)
+{
+	return size ? -ENOSPC : 0;
+}
+static int full_getattr(file *fp, struct stat *s)
+{
+	zero_getattr(fp, s);
+	s->st_rdev = MKDEV(1, 7);
+	return 0;
+}
+static loff_t full_llseek(file *fp, loff_t offset, int whence)
+{
+	return 0;
+}
+static const file_operations full_fops = {
+	.release = zero_release,
+	.getattr = full_getattr,
+	.read = zero_read,
+	.write = full_write,
+	.llseek = full_llseek,
+	.poll = null_poll,
+};
+static file *full_cdev_open(super_block *sb, unsigned rdev, int flags)
+{
+	file *fp = zero_cdev_open(sb, rdev, flags);
+	if (fp)
+		fp->f_fop = &full_fops;
+	return fp;
+}
+
 static int null_dev_register_probe(void)
 {
 	null_dev_register();
@@ -153,6 +185,8 @@ DRIVER_REGISTER(null_dev_register_driver);
 static int zero_dev_register_probe(void)
 {
 	zero_dev_register();
+	vfs_entry_device(devfs_entries(), "/full", S_IFCHR | 0666, MKDEV(1, 7),
+			 "mem", full_cdev_open);
 	return 0;
 }
 

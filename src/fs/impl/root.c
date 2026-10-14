@@ -39,6 +39,7 @@ typedef struct {
 	list_entry link;
 	int orphan;
 	int cacheable;
+	int fresh_inode;
 	file file;
 	inode inode;
 } ext4_open_file;
@@ -246,8 +247,7 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 	ret = ext4_refresh_size(fp);
 	if (ret)
 		return ret;
-	if (fp->f_inode)
-		fs_page_cache_invalidate(fp);
+
 	if (fp->f_flag & O_APPEND)
 		write_pos = (loff_t)f->fsize;
 	if ((uint64_t)write_pos > f->fsize) {
@@ -262,12 +262,15 @@ static ssize_t ext4_file_write(file *fp, const void *buf, size_t size,
 		     block = block->next) {
 			size_t count = 0;
 			ret = ext4_fwrite(f, block->bytes, block->size, &count);
+			fs_page_cache_update(fp, write_pos + wcnt, block->bytes,
+					     count);
 			wcnt += count;
 			if (ret != EOK || count < block->size)
 				break;
 		}
 	} else {
 		ret = ext4_fwrite(f, buf, size, &wcnt);
+		fs_page_cache_update(fp, write_pos, buf, wcnt);
 	}
 	fs_write_size += wcnt;
 	if (ret != EOK)
@@ -421,10 +424,10 @@ static int ext4_file_write_page(file *fp, uint64_t offset, const void *buf)
 	size_t wcnt = 0;
 	int ret;
 
-	fs_page_cache_invalidate(fp);
 	if (ext4_fseek(&page, offset, SEEK_SET) != EOK)
 		return -EIO;
 	ret = ext4_fwrite(&page, buf, PAGE_SIZE, &wcnt);
+	fs_page_cache_update(fp, offset, buf, wcnt);
 	if (ret != EOK)
 		return -EIO;
 	return 0;
@@ -442,7 +445,8 @@ static int ext4_file_ftruncate(file *fp, loff_t size)
 	if (size < 0)
 		return -EINVAL;
 
-	fs_page_cache_invalidate(fp);
+	if ((uint64_t)size < f->fsize)
+		fs_page_cache_invalidate(fp);
 	if ((uint64_t)size > f->fsize)
 		ret = ext4_fenlarge(f, (uint64_t)size);
 	else
@@ -458,7 +462,10 @@ static int ext4_file_ftruncate(file *fp, loff_t size)
 	return 0;
 }
 
+static file *ext4_file_reopen(file *fp, int flags);
+
 static const file_operations ext4_file_fops = {
+	.reopen = ext4_file_reopen,
 	.release = ext4_file_release,
 	.getattr = ext4_file_getattr,
 	.readlink = ext4_file_readlink,
@@ -510,7 +517,7 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 			continue;
 		}
 		unsigned size =
-			ROUND_UP(NAME_OFFSET() + entry->name_length + 1);
+			ROUND_UP(NAME_OFFSET() + entry->name_length + 2);
 		if (size > count - out) {
 			dir->next_off = cookie;
 			*pos = cookie;
@@ -523,6 +530,13 @@ static ssize_t ext4_dir_read(file *fp, void *buf, size_t count, loff_t *pos)
 		/* Export the backing-store end offset, not the iterator sentinel. */
 		record->d_off = dir->next_off == ~0ULL ? end : dir->next_off;
 		memcpy(record->d_name, entry->name, entry->name_length);
+		static const unsigned char types[] = {
+			0, 8, 4, 2, 6, 1, 12, 10
+		};
+		((unsigned char *)record)[size - 1] =
+			entry->inode_type < sizeof(types) ?
+				types[entry->inode_type] :
+				0;
 		*pos = record->d_off;
 		out += size;
 	}
@@ -599,6 +613,47 @@ static file *ext4_alloc_file(void *content, const char *path)
 	return fp;
 }
 
+static file *ext4_file_reopen(file *fp, int flags)
+{
+	root_lock_lock();
+	ext4_open_file *source = fp->f_inode->i_private;
+	struct stat st;
+	if (ext4_file_getattr(fp, &st) ||
+	    fs_check_perm(&st,
+			  (flags & O_PATH) ?
+				  0 :
+				  ((flags & O_ACCMODE) == O_RDONLY ?
+					   4 :
+					   ((flags & O_ACCMODE) == O_WRONLY ?
+						    2 :
+						    6)))) {
+		root_lock_unlock();
+		return NULL;
+	}
+	file *next =
+		ext4_alloc_file(&source->handle, fp->f_name ? fp->f_name : "");
+	if (next) {
+		ext4_open_file *open = next->f_inode->i_private;
+		open->handle.flags = flags;
+		open->handle.fpos = 0;
+		open->fs = source->fs;
+		open->orphan = source->orphan;
+		open->owner = next;
+		list_init(&open->link);
+		list_insert_tail(&ext4_open_files, &open->link);
+		next->f_inode->i_mode = st.st_mode;
+		next->f_inode->i_ino = st.st_ino;
+		next->f_inode->i_size = st.st_size;
+		next->f_inode->i_pgcache_tag = fp->f_inode->i_pgcache_tag;
+		next->f_mount_flags = fp->f_mount_flags;
+		vfs_set_file_origin(next, fp->f_sb,
+				    fp->f_relative_path ? fp->f_relative_path :
+							  "");
+	}
+	root_lock_unlock();
+	return next;
+}
+
 static file *ext4_alloc_dir(void *content)
 {
 	inode *node = zalloc(sizeof(*node));
@@ -633,8 +688,8 @@ static file *ext4_alloc_dir(void *content)
  * For a relative target the directory part of linkpath is prepended.
  * Returns 0 on success, -1 if the result would exceed MAX_PATH.
  */
-static int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
-				   size_t name_len)
+int fs_resolve_symlink_path(const char *linkpath, char *linkcontent,
+			    size_t name_len)
 {
 	const char *r;
 	size_t base_len;
@@ -791,6 +846,7 @@ static file *ext4_path_open(const char *path, int flag, char **target_path,
 	char *link_target = NULL; /* target text, separate from cur_path */
 	const char *cur_path = path;
 	size_t link_len;
+	int fresh_inode = 0;
 	int ret, check;
 	int depth = 0;
 	file *fp = NULL;
@@ -846,6 +902,7 @@ retry_open:
 		s.st_size = f->fsize;
 	}
 	if (check != EOK && ret == EOK) {
+		fresh_inode = 1;
 		ext4_fchown(f, uid, gid);
 		ext4_file_set_ctime(cur_path, time_wall_sec());
 	}
@@ -981,6 +1038,9 @@ fail:
 	if (dir)
 		free(dir);
 done:
+	if (fp && fp->f_fop == &ext4_file_fops)
+		((ext4_open_file *)fp->f_inode->i_private)->fresh_inode =
+			fresh_inode;
 	if (f && f->mp)
 		ext4_fclose(f);
 	if (pre_res)
@@ -1043,8 +1103,11 @@ static file *ext4_open_link(super_block *sb, const char *path, int flag,
 		list_insert_tail(&ext4_open_files, &open->link);
 	}
 	if (ret && ret->f_inode) {
-		ret->f_inode->i_pgcache_tag = sb;
-		if (flag & O_TRUNC)
+		ret->f_inode->i_pgcache_tag = sb->s_backend ? sb->s_backend :
+							      sb;
+		if ((flag & O_TRUNC) ||
+		    (ret->f_fop == &ext4_file_fops &&
+		     ((ext4_open_file *)ret->f_inode->i_private)->fresh_inode))
 			fs_page_cache_invalidate(ret);
 	}
 	root_lock_unlock();
@@ -1064,7 +1127,8 @@ static file *ext4_open_root(super_block *sb, int flag)
 	file *ret = ext4_path_open(mi->mp, O_RDONLY, NULL, mi->fs);
 
 	if (ret && ret->f_inode)
-		ret->f_inode->i_pgcache_tag = sb;
+		ret->f_inode->i_pgcache_tag = sb->s_backend ? sb->s_backend :
+							      sb;
 	return ret;
 }
 

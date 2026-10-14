@@ -3,6 +3,7 @@
 #include <fs/poll.h>
 #include <syscall/syscall.h>
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <errno.h>
 
 struct signalfd_state {
@@ -123,7 +124,7 @@ static int signalfd_take(void *opaque)
 	memset(&read->info, 0, sizeof(read->info));
 	read->info.signo = sig;
 	read->info.code = info.code;
-	read->info.pid = info.pid;
+	read->info.pid = ps_pid_visible(info.pid);
 	read->info.uid = info.uid;
 	read->info.tid = info.timer_id >= 0 ? info.timer_id : 0;
 	read->info.overrun = info.overrun;

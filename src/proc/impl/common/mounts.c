@@ -24,6 +24,33 @@ static void emit_mount(const super_block *sb, void *arg)
 			sb->s_mountpoint, sb->s_fstype, opts);
 }
 
+struct mountinfo_context {
+	proc_buf_t *pb;
+	unsigned id;
+};
+static void emit_mountinfo(const super_block *sb, void *arg)
+{
+	struct mountinfo_context *c = arg;
+	unsigned id = ++c->id;
+	proc_buf_printf(c->pb, "%u 1 0:%u / %s %s - %s %s %s\n", id, id,
+			sb->s_mountpoint,
+			(sb->s_flags & MS_RDONLY) ? "ro" : "rw", sb->s_fstype,
+			sb->s_devname,
+			!strcmp(sb->s_fstype, "cgroup") ? sb->s_devname :
+			(sb->s_flags & MS_RDONLY)	? "ro" :
+							  "rw");
+}
+void proc_fill_mounts(proc_buf_t *pb, task_struct *task, int info)
+{
+	if (info) {
+		struct mountinfo_context c = { pb, 1 };
+		proc_buf_printf(pb, "1 0 0:1 / / rw - ext4 /dev/hda1 rw\n");
+		vfs_mount_walk(task->fs->root, emit_mountinfo, &c);
+	} else {
+		proc_buf_printf(pb, "rootfs / rootfs rw 0 0\n");
+		vfs_mount_walk(task->fs->root, emit_mount, pb);
+	}
+}
 static void fill(proc_buf_t *pb)
 {
 	const char *rootfs_opts =

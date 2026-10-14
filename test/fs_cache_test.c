@@ -79,7 +79,8 @@ KTEST(FileCacheTest, ReclaimCountsOnlyFreedPages)
 	fs_page_cache_put(disposable);
 	EXPECT_EQ(fs_page_cache_reclaim(1), 1);
 	/* Reclaim skipped the pinned page in its freed count and continued. */
-	EXPECT_EQ(phymm_pages[PHY_TO_PAGE_IDX(pinned)].ref_count, 1);
+	/* The cache and the retained caller reference both pin this page. */
+	EXPECT_EQ(phymm_pages[PHY_TO_PAGE_IDX(pinned)].ref_count, 2);
 	ASSERT_EQ(mm_kmap_phys(pinned), 1);
 	EXPECT_EQ(*(unsigned char *)PHY_TO_VIRT(pinned), 0x40);
 	mm_kunmap_phys(pinned);

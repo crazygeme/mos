@@ -11,6 +11,7 @@ cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
 #include <signal.h>
 #include <sched.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
@@ -26,7 +27,9 @@ static void publish(volatile int *target, int value)
 }
 static void reader(int index)
 {
-    char path[100], text[4096];
+    char path[100];
+    char *text = malloc(4096);
+    assert(text);
     while (!shared->finished) {
         int pid = shared->selected;
         if (!pid) continue;
@@ -37,7 +40,7 @@ static void reader(int index)
                 snprintf(path, sizeof(path), "/proc/%d/status", pid);
             int fd = open(path, O_RDONLY);
             if (fd < 0) continue;
-            ssize_t n = read(fd, text, sizeof(text));
+            ssize_t n = read(fd, text, 4096);
             assert(n >= 0 || errno == ESRCH || errno == ENOENT);
             if (n > 0) shared->reads[index]++;
             close(fd);
@@ -46,6 +49,16 @@ static void reader(int index)
          * while the parent and its next child are runnable. */
         assert(sched_yield() == 0);
     }
+    free(text);
+}
+static void progress(int rounds)
+{
+    char line[80];
+    int fd = open("/proc/tests/.result", O_WRONLY);
+    if (fd < 0) return;
+    int n = snprintf(line, sizeof(line), "proc_exit_lookup: completed %d/500 rounds\n", rounds);
+    assert(write(fd, line, n) == n);
+    close(fd);
 }
 int main(void)
 {
@@ -77,6 +90,7 @@ int main(void)
         int status;
         assert(waitpid(pid, &status, 0) == pid && status == 0);
         alarm(30);
+        if ((i + 1) % 100 == 0) progress(i + 1);
     }
     publish(&shared->finished, 1);
     for (int i = 0; i < 4; i++) {

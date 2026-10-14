@@ -3,6 +3,7 @@
 #include <fs/vfs.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/mount.h>
 #include <fs/inotify.h>
 #include <lib/klib.h>
 #include <lib/rbtree.h>
@@ -198,10 +199,83 @@ void sb_put(super_block *sb)
 
 	mutex_unlock(&sb->s_lock);
 
-	if (sb->s_op && sb->s_op->release)
+	if (sb->s_covered)
+		sb_put(sb->s_covered);
+	if (sb->s_backend) {
+		sb_put(sb->s_backend);
+		kfree(sb);
+	} else if (sb->s_op && sb->s_op->release)
 		sb->s_op->release(sb);
 	else
 		kfree(sb);
+}
+
+super_block *vfs_clone_mount_tree(super_block *old)
+{
+	if (!old)
+		return NULL;
+	super_block *copy = sget(old->s_op);
+	if (!copy)
+		return NULL;
+	copy->s_backend = old->s_backend ? old->s_backend : old;
+	sb_get(copy->s_backend);
+	copy->s_fs_info = old->s_fs_info;
+	if (old->s_covered) {
+		copy->s_covered = vfs_clone_mount_tree(old->s_covered);
+		if (!copy->s_covered) {
+			sb_put(copy);
+			return NULL;
+		}
+	}
+	copy->s_flags = old->s_flags;
+	strcpy(copy->s_devname, old->s_devname);
+	strcpy(copy->s_fstype, old->s_fstype);
+	strcpy(copy->s_mountpoint, old->s_mountpoint);
+	mutex_lock(&old->s_lock);
+	for (struct rb_node *n = rb_first(&old->s_mounts); n; n = rb_next(n)) {
+		vfs_mount_node *mount = rb_entry(n, vfs_mount_node, rb_node);
+		super_block *child = vfs_clone_mount_tree(mount->sb);
+		vfs_mount_node *entry = zalloc(sizeof(*entry));
+		if (!child || !entry) {
+			if (child)
+				sb_put(child);
+			free(entry);
+			mutex_unlock(&old->s_lock);
+			sb_put(copy);
+			return NULL;
+		}
+		entry->path = strdup(mount->path);
+		if (!entry->path) {
+			sb_put(child);
+			free(entry);
+			mutex_unlock(&old->s_lock);
+			sb_put(copy);
+			return NULL;
+		}
+		entry->sb = child;
+		sb_mount_insert(copy, entry);
+	}
+	mutex_unlock(&old->s_lock);
+	return copy;
+}
+
+void vfs_rebase_mount_tree(super_block *sb, const char *point)
+{
+	strncpy(sb->s_mountpoint, point, sizeof(sb->s_mountpoint) - 1);
+	mutex_lock(&sb->s_lock);
+	for (struct rb_node *n = rb_first(&sb->s_mounts); n; n = rb_next(n)) {
+		vfs_mount_node *mount = rb_entry(n, vfs_mount_node, rb_node);
+		char path[256];
+		if (!strcmp(point, "/"))
+			strcpy(path, mount->path);
+		else {
+			if (strlen(point) + strlen(mount->path) >= sizeof(path))
+				continue;
+			sprintf(path, "%s%s", point, mount->path);
+		}
+		vfs_rebase_mount_tree(mount->sb, path);
+	}
+	mutex_unlock(&sb->s_lock);
 }
 
 int vfs_mount(super_block *sb, const char *path, super_block *next)
@@ -219,10 +293,31 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 
 	mutex_lock(&sb->s_lock);
 
-	/* Reject duplicate direct registration */
-	if (sb_mount_find(sb, path)) {
+	vfs_mount_node *existing = sb_mount_find(sb, path);
+	if (existing) {
+		if (!next->s_fstype[0]) {
+			mutex_unlock(&sb->s_lock);
+			return -EEXIST;
+		}
+		file *directory =
+			existing->sb->s_op && existing->sb->s_op->open_root ?
+				existing->sb->s_op->open_root(existing->sb,
+							      O_PATH) :
+				NULL;
+		int is_dir = directory && S_ISDIR(directory->f_inode->i_mode);
+		if (directory)
+			fs_put_file(directory);
+		if (!is_dir) {
+			mutex_unlock(&sb->s_lock);
+			return -ENOTDIR;
+		}
+		vfs_rebase_mount_tree(next, existing->sb->s_mountpoint);
+		next->s_covered = existing->sb;
+		existing->sb = next;
+		memset(sb->s_lookup, 0, sizeof(sb->s_lookup));
+		vfs_namespace_changed();
 		mutex_unlock(&sb->s_lock);
-		return -EEXIST;
+		return 0;
 	}
 
 	/* Delegate through the indexed child mount. */
@@ -245,6 +340,9 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 		sprintf(child->s_mountpoint, "%s%s", sb->s_mountpoint, path);
 	}
 
+	char point[256];
+	strcpy(point, child->s_mountpoint);
+	vfs_rebase_mount_tree(child, point);
 	key = strdup(path);
 
 	vfs_mount_node *mount = kmalloc(sizeof(*mount));
@@ -282,6 +380,40 @@ void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
 	mutex_unlock(&sb->s_lock);
 }
 
+super_block *vfs_take_mount(super_block *sb, const char *path)
+{
+	if (!sb || !path || *path != '/')
+		return NULL;
+	mutex_lock(&sb->s_lock);
+	vfs_mount_node *mount = sb_mount_find(sb, path);
+	if (mount) {
+		super_block *result = mount->sb;
+		if (result->s_covered) {
+			mount->sb = result->s_covered;
+			result->s_covered = NULL;
+		} else {
+			rb_erase(&mount->rb_node, &sb->s_mounts);
+			free(mount->path);
+			free(mount);
+		}
+		memset(sb->s_lookup, 0, sizeof(sb->s_lookup));
+		vfs_namespace_changed();
+		mutex_unlock(&sb->s_lock);
+		return result;
+	}
+	size_t length;
+	mount = sb_mount_prefix(sb, path, &length);
+	super_block *child = mount ? mount->sb : NULL;
+	if (child)
+		sb_get(child);
+	mutex_unlock(&sb->s_lock);
+	if (!child)
+		return NULL;
+	super_block *result = vfs_take_mount(child, path + length);
+	sb_put(child);
+	return result;
+}
+
 int vfs_umount(super_block *sb, const char *path)
 {
 	vfs_mount_node *mount;
@@ -300,7 +432,14 @@ int vfs_umount(super_block *sb, const char *path)
 	if (mount) {
 		child = mount->sb;
 		sb_get(child);
-		sb_mount_remove(sb, mount);
+		if (child->s_covered) {
+			mount->sb = child->s_covered;
+			child->s_covered = NULL;
+			sb_put(child);
+			memset(sb->s_lookup, 0, sizeof(sb->s_lookup));
+			vfs_namespace_changed();
+		} else
+			sb_mount_remove(sb, mount);
 		mutex_unlock(&sb->s_lock);
 		if (!child->s_fstype[0])
 			inotify_removed(removed);
@@ -339,6 +478,8 @@ int vfs_umount(super_block *sb, const char *path)
 		char *_rp;                                                   \
 		if (!sb || !path || !sb_path_resolve(sb, path, &_tsb, &_rp)) \
 			(result) = -EINVAL;                                  \
+		else if (_tsb->s_flags & MS_RDONLY)                          \
+			(result) = -EROFS;                                   \
 		else if (!_tsb->s_op || !_tsb->s_op->sop_field)              \
 			(result) = -ENOSYS;                                  \
 		else                                                         \
@@ -359,6 +500,8 @@ int vfs_umount(super_block *sb, const char *path)
 		    !sb_path_resolve(sb, oldpath, &_osb, &_orp) ||          \
 		    !sb_path_resolve(sb, newpath, &_nsb, &_nrp))            \
 			(result) = -EINVAL;                                 \
+		else if ((_osb->s_flags | _nsb->s_flags) & MS_RDONLY)       \
+			(result) = -EROFS;                                  \
 		else if (_osb != _nsb)                                      \
 			(result) = -EXDEV;                                  \
 		else if (!_osb->s_op || !_osb->s_op->sop_field)             \
@@ -445,6 +588,8 @@ int vfs_symlink(super_block *sb, const char *target, const char *linkpath)
 		return -EINVAL;
 	if (!sb_path_resolve(sb, linkpath, &target_sb, &rel_path))
 		return -EINVAL;
+	if (target_sb->s_flags & MS_RDONLY)
+		return -EROFS;
 	if (!target_sb->s_op || !target_sb->s_op->symlink)
 		return -ENOSYS;
 	vfs_namespace_changed();
@@ -491,6 +636,22 @@ int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
 	if (!sb || !path || !*path)
 		return -EINVAL;
 
+	super_block *parent_sb;
+	char *suffix, *parent = name_get();
+	if (!parent)
+		return -ENOMEM;
+	strcpy(parent, path);
+	char *slash = strrchr(parent, '/');
+	if (slash == parent)
+		parent[1] = 0;
+	else if (slash)
+		*slash = 0;
+	int readonly = sb_path_resolve(sb, parent, &parent_sb, &suffix) &&
+		       (parent_sb->s_flags & MS_RDONLY);
+	name_put(parent);
+	if (readonly)
+		return -EROFS;
+
 	node_sb = devnode_create(mode, dev);
 	if (!node_sb)
 		return -ENOMEM;
@@ -519,8 +680,28 @@ int vfs_statfs(super_block *sb, const char *path, struct statfs64 *buf)
 		return -EINVAL;
 	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
 		return -EINVAL;
-	if (!target_sb->s_op || !target_sb->s_op->statfs)
-		return -ENOSYS;
+	if (!target_sb->s_op || !target_sb->s_op->statfs) {
+		/* Synthetic device entries use the containing filesystem's metadata. */
+		char *parent = name_get();
+		if (!parent)
+			return -ENOMEM;
+		strcpy(parent, path);
+		size_t length = strlen(parent);
+		while (length > 1 && parent[length - 1] == '/')
+			parent[--length] = 0;
+		char *slash = strrchr(parent, '/');
+		if (!slash || (slash == parent && !parent[1])) {
+			name_put(parent);
+			return -ENOSYS;
+		}
+		if (slash == parent)
+			parent[1] = 0;
+		else
+			*slash = 0;
+		ret = vfs_statfs(sb, parent, buf);
+		name_put(parent);
+		return ret;
+	}
 	ret = target_sb->s_op->statfs(target_sb, buf);
 	if (!ret)
 		buf->f_flags = 0x20 | (target_sb->s_flags &
@@ -569,6 +750,31 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag,
 	if (!sb_path_resolve(sb, path, &target_sb, &rel_path))
 		return NULL;
 
+	if ((target_sb->s_flags & MS_RDONLY) && !(flag & O_PATH) &&
+	    ((flag & O_ACCMODE) != O_RDONLY || (flag & (O_CREAT | O_TRUNC)))) {
+		file *metadata = (!*rel_path || !strcmp(rel_path, "/")) ?
+					 (target_sb->s_op->open_root ?
+						  target_sb->s_op->open_root(
+							  target_sb, O_PATH) :
+						  NULL) :
+					 (target_sb->s_op->open ?
+						  target_sb->s_op->open(
+							  target_sb, rel_path,
+							  O_PATH | O_NOFOLLOW) :
+						  NULL);
+		unsigned mode = metadata && metadata->f_inode ?
+					metadata->f_inode->i_mode :
+					0;
+		if (metadata)
+			fs_put_file(metadata);
+		if (!S_ISCHR(mode) && !S_ISBLK(mode) && !S_ISFIFO(mode) &&
+		    !S_ISLNK(mode)) {
+			if (current->execution)
+				current->execution->fs_open_error = -EROFS;
+			return NULL;
+		}
+	}
+
 	/* Opening the mount root: empty suffix or bare trailing slash */
 	if (*rel_path == '\0' || (rel_path[0] == '/' && rel_path[1] == '\0')) {
 		if (!target_sb->s_op || !target_sb->s_op->open_root)
@@ -608,6 +814,8 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag,
 /* Follow final symlinks through the mount tree, including ext4-to-proc links. */
 file *vfs_open(super_block *sb, const char *path, int flag)
 {
+	if (current->execution)
+		current->execution->fs_open_error = 0;
 	file *fp;
 	char *target = NULL, *joined = NULL;
 	const char *lookup = path;

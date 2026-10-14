@@ -73,7 +73,7 @@ to view the original capture, or browse the [full gallery](doc/screenshots.md).
 
 > [!NOTE]
 > Linux compatibility is incomplete. The GNU/MOS launchers for Visual Studio
-> Code and Microsoft Edge supply `--no-sandbox` because Chromium namespace
+> Code and Microsoft Edge supply `--no-sandbox` because Chromium user namespace
 > and seccomp isolation are unavailable.
 
 ---

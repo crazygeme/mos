@@ -7,6 +7,7 @@
  *         rt_sigqueueinfo, rt_sigsuspend.
  */
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <ps/signal.h>
 #include <ps/usage.h>
 #include <int/int.h>
@@ -284,6 +285,7 @@ static void send_if_other(task_struct *task, void *opaque)
 
 	if (task->life->type != ps_user ||
 	    task->life->psid != task->thread->tgid ||
+	    !ps_pid_visible(task->life->psid) ||
 	    task->life->psid == c->self->life->psid)
 		return;
 	if (ps_send_signal(task->life->psid, c->sig) == 0)
@@ -296,6 +298,7 @@ static void send_if_pgrp(task_struct *task, void *opaque)
 
 	if (task->life->type != ps_user || !task->execution ||
 	    task->life->psid != task->thread->tgid ||
+	    !ps_pid_visible(task->life->psid) ||
 	    task->life->psid == c->self->life->psid)
 		return;
 	if (task->thread->group_id != c->pgrp)
@@ -419,6 +422,12 @@ int ps_send_thread_signal(unsigned tid, int sig)
 
 int sys_kill(int pid, int sig)
 {
+	if (pid > 0) {
+		unsigned global = ps_pid_global(pid);
+		if (global == 0xffffffff)
+			return -ESRCH;
+		pid = global;
+	}
 	task_struct *cur = CURRENT_TASK();
 	int ret;
 
@@ -471,7 +480,7 @@ int sys_kill(int pid, int sig)
 	struct kill_all_ctx ctx;
 	ctx.self = cur;
 	ctx.sig = sig;
-	ctx.pgrp = (unsigned)(-pid);
+	ctx.pgrp = ps_pid_global((unsigned)(-pid));
 	ctx.sent = 0;
 	ps_enum_all(send_if_pgrp, &ctx);
 	return ctx.sent ? 0 : -ESRCH;
@@ -568,26 +577,26 @@ int sys_sigprocmask(int how, void *set, void *oset)
 /*
  * rt_sigprocmask (syscall 175).
  * The mask pointer points to an 8-byte (64-signal) kernel sigset_t.
- * Native masks contain one bit per signal supported by the architecture.
- * The i386 ABI returns a zero upper word.
+ * The native mask contains all supported signals.
  */
 int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 {
 	task_struct *cur = CURRENT_TASK();
-	sigset_t newmask;
-
+	unsigned long newmask;
+	uint64_t mask;
 	if (sigsetsize != 8)
 		return -EINVAL;
 
 	if (oset) {
-		((uint32_t *)oset)[0] = cur->signal->sig_mask;
-		((uint32_t *)oset)[1] = (uint64_t)cur->signal->sig_mask >> 32;
+		mask = cur->signal->sig_mask;
+		memcpy(oset, &mask, sizeof(mask));
 	}
 
 	if (!set)
 		return 0;
 
-	newmask = (sigset_t)*(uint64_t *)set;
+	memcpy(&mask, set, sizeof(mask));
+	newmask = mask;
 
 	switch (how) {
 	case SIG_BLOCK:
@@ -729,7 +738,7 @@ next_signal:
 	struct signal_fault event = { .code = info.code,
 				      .timer_id = info.timer_id,
 				      .value = info.value,
-				      .pid = info.pid,
+				      .pid = ps_pid_visible(info.pid),
 				      .uid = info.uid,
 				      .overrun = info.overrun,
 				      .status = info.status,
@@ -869,7 +878,7 @@ int sys_rt_sigtimedwait(const sigset_t *set, void *info,
 					words[3] = event.timer_id;
 					words[4] = event.overrun;
 				} else {
-					words[3] = event.pid;
+					words[3] = ps_pid_visible(event.pid);
 					words[4] = event.uid;
 				}
 				words[5] = event.code > 0 ?

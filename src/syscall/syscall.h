@@ -381,4 +381,17 @@ int sys_sendmmsg(int fd, void *messages, unsigned count, int flags);
 int sys_recvmmsg(int fd, void *messages, unsigned count, int flags,
 		 void *timeout);
 
+int sys_unshare(unsigned long flags);
+int sys_setns(int fd, unsigned type);
+
+int sys_tgkill(int tgid, int tid, int sig);
+
+int sys_fchownat(int dirfd, const char *pathname, uint32_t uid, uint32_t gid,
+		 int flags);
+
+int sys_utimensat(int dirfd, const char *path, const struct timespec *times,
+		  int flags);
+
+int sys_linkat(int oldfd, const char *oldpath, int newfd, const char *newpath,
+	       int flags);
 #endif /* MOS_SYSCALL_H */

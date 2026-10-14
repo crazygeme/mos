@@ -6,6 +6,7 @@
  */
 
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <ps/usage.h>
 #include <mm/mmap.h>
 #include <mm/mm.h>
@@ -21,8 +22,6 @@
 #include <syscall/syscall.h>
 
 extern unsigned phymm_used;
-
-static char sys_hostname[_SYS_NAMELEN] = "qemu-mos";
 
 struct sched_param_k {
 	int sched_priority;
@@ -63,7 +62,7 @@ int sys_uname(struct utsname *utname)
 		klog("uname\n");
 
 	strcpy(utname->sysname, UTS_SYSNAME);
-	strcpy(utname->nodename, sys_hostname);
+	strcpy(utname->nodename, ps_namespace_hostname(current));
 	strcpy(utname->release, UTS_RELEASE);
 	strcpy(utname->version, UTS_VERSION);
 	strcpy(utname->machine, UTS_MACHINE);
@@ -73,14 +72,17 @@ int sys_uname(struct utsname *utname)
 
 int sys_sethostname(const char *name, unsigned len)
 {
+	if (!ps_has_capability(current, 21))
+		return -EPERM;
 	if (!name || len > (_SYS_NAMELEN - 1))
 		return -EINVAL;
 
-	memcpy(sys_hostname, name, len);
-	sys_hostname[len] = '\0';
+	memcpy(ps_namespace_hostname(current), name, len);
+	ps_namespace_hostname(current)[len] = '\0';
 
 	if (TEST_LOG(TEST_LOG_INFO))
-		klog("sethostname(%s, %d)\n", sys_hostname, len);
+		klog("sethostname(%s, %d)\n", ps_namespace_hostname(current),
+		     len);
 
 	return 0;
 }
@@ -332,6 +334,39 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 		current->memory->dumpable = arg2;
 		return 0;
 	}
+	if (option == 23 ||
+	    option == 24) { /* PR_CAPBSET_READ, PR_CAPBSET_DROP */
+		if (arg2 > 40)
+			return -EINVAL;
+		unsigned word = arg2 / 32, bit = 1U << (arg2 % 32);
+		if (option == 23)
+			return !!(current->credentials->cap_bounding[word] &
+				  bit);
+		if (!ps_has_capability(current, 8))
+			return -EPERM;
+		current->credentials->cap_bounding[word] &= ~bit;
+		return 0;
+	}
+	if (option == 36) { /* PR_SET_CHILD_SUBREAPER */
+		current->thread->child_subreaper = !!arg2;
+		return 0;
+	}
+	if (option == 37) { /* PR_GET_CHILD_SUBREAPER */
+		int value = current->thread->child_subreaper;
+		return ps_write_process_memory(current, (void *)arg2, &value,
+					       sizeof(value));
+	}
+	if (option == 38) { /* PR_SET_NO_NEW_PRIVS */
+		if (arg2 != 1 || arg3 || arg4 || arg5)
+			return -EINVAL;
+		current->credentials->no_new_privs = 1;
+		return 0;
+	}
+	if (option == 39) { /* PR_GET_NO_NEW_PRIVS */
+		if (arg2 || arg3 || arg4 || arg5)
+			return -EINVAL;
+		return current->credentials->no_new_privs;
+	}
 	if (option == 7) /* PR_GET_KEEPCAPS */
 		return current->credentials->keep_capabilities;
 	if (option == 8) { /* PR_SET_KEEPCAPS */
@@ -534,6 +569,21 @@ int sys_mprotect(void *addr, size_t len, int prot)
 		return 0;
 
 	end = (begin + len + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+
+	if (prot & PROT_WRITE) {
+		for (vaddr_t cursor = begin; cursor < end;) {
+			vm_region *region = vm_find_vma(cur->memory, cursor);
+			if (!region || region->begin >= end)
+				break;
+			if ((region->flag & MAP_SHARED) && region->fp) {
+				if (region->fp->f_mode == O_RDONLY)
+					return -EACCES;
+				if (fs_file_readonly(region->fp))
+					return -EROFS;
+			}
+			cursor = region->end;
+		}
+	}
 
 	/* Update VM region descriptors, splitting regions at boundaries. */
 	vm_mprotect(cur->memory, begin, end, prot);

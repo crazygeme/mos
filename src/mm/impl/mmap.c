@@ -895,6 +895,16 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 			return -ENODEV;
 	}
 
+	if (node && S_ISREG(node->f_inode->i_mode)) {
+		if (node->f_mode == O_WRONLY)
+			return -EACCES;
+		if ((flags & MAP_SHARED) && (prot & PROT_WRITE)) {
+			if (node->f_mode == O_RDONLY)
+				return -EACCES;
+			if (fs_file_readonly(node))
+				return -EROFS;
+		}
+	}
 	if (node && node->f_inode->i_phys_size) {
 		if (!cur->memory ||
 		    (!node->f_inode->i_phys_user &&

@@ -716,9 +716,10 @@ super_block *vfs_entry_tree_mount(vfs_entry_tree *tree)
 	     cursor = rb_next(cursor)) {
 		vfs_mount_node *mount =
 			rb_entry(cursor, vfs_mount_node, rb_node);
-		sb_get(mount->sb);
-		if (vfs_mount(sb, mount->path, mount->sb)) {
-			sb_put(mount->sb);
+		super_block *copy = vfs_clone_mount_tree(mount->sb);
+		if (!copy || vfs_mount(sb, mount->path, copy)) {
+			if (copy)
+				sb_put(copy);
 			sb_put(sb);
 			return NULL;
 		}

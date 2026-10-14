@@ -972,7 +972,7 @@ static int sock_ioctl_siocsifflags(void *context __attribute__((unused)),
 	struct ifreq *ifr = arg;
 	if (!ifr)
 		return -EFAULT;
-	if (!current->execution || current->credentials->euid != 0)
+	if (!ps_has_capability(current, 12))
 		return -EPERM;
 	for (struct netif *nif = netif_list; nif; nif = nif->next) {
 		char name[IFNAMSIZ];

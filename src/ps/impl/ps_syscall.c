@@ -9,6 +9,8 @@
  */
 
 #include <ps/ps.h>
+#include <ps/namespace.h>
+#include <ps/cgroup.h>
 #include <mm/mmap.h>
 #include <mm/mm.h>
 #include <int/int.h>
@@ -194,7 +196,25 @@ void ps_reparent_children_unsafe(task_struct *cur)
 	cur->life->nchildren = 0;
 	if (cur->thread->live_tasks || list_is_empty(&cur->thread->children))
 		return;
-	task_struct *init_task = ps_find_process_unsafe(1);
+	unsigned namespace_init = ps_namespace_reaper(cur);
+	task_struct *init_task = ps_find_process_unsafe(namespace_init);
+	unsigned parent_pid = cur->life->ppid;
+	for (unsigned depth = 0; depth < 512; depth++) {
+		task_struct *parent = ps_find_process_unsafe(parent_pid);
+		if (!parent || parent == cur)
+			break;
+		if (parent->thread->child_subreaper &&
+		    parent->sched->status != ps_dying &&
+		    (namespace_init == 1 ||
+		     ps_pid_for(cur, parent->thread->tgid))) {
+			init_task = parent;
+			break;
+		}
+		if (parent->thread->tgid == namespace_init ||
+		    parent->life->ppid == parent_pid)
+			break;
+		parent_pid = parent->life->ppid;
+	}
 	if (!init_task || init_task->thread == cur->thread)
 		return;
 	while (!list_is_empty(&cur->thread->children)) {
@@ -440,6 +460,8 @@ void do_exit(unsigned encoded_status)
 		cond_notify(&cur->life->vfork_event);
 	}
 
+	ps_cgroup_exit(cur);
+	ps_namespace_exit(cur);
 	ps_cancel_io_wait(cur);
 	ps_clear_child_tid(cur);
 	ps_release_robust_list(cur);
@@ -532,7 +554,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 		spinlock_lock(&ps_lock, &irq);
 		task = find_exited_child_unsafe(cur, pid, 0, 0);
 		if (task) {
-			ret = task->life->psid;
+			ret = ps_pid_visible(task->life->psid);
 			if (status)
 				*status = task->life->exit_status;
 			detach_exited_child_unsafe(task);
@@ -541,7 +563,7 @@ int do_waitpid(unsigned pid, int *status, int options, rusage *rusage)
 
 		task = find_stopped_child_unsafe(cur, pid, options);
 		if (task) {
-			ret = task->life->psid;
+			ret = ps_pid_visible(task->life->psid);
 			if (status)
 				*status = W_STOPCODE(task->life->stop_signal);
 			task->life->stop_report_pending = 0;
@@ -613,7 +635,7 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 
 		task = find_exited_child_unsafe(cur, 0, pgrp, 1);
 		if (task) {
-			ret = task->life->psid;
+			ret = ps_pid_visible(task->life->psid);
 			if (status)
 				*status = task->life->exit_status;
 			detach_exited_child_unsafe(task);

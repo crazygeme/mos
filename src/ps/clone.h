@@ -9,6 +9,7 @@
 #define CLONE_THREAD 0x00010000
 #define CLONE_SETTLS 0x00080000
 #define CLONE_VFORK 0x00004000
+#define CLONE_PARENT 0x00008000
 #define CLONE_PARENT_SETTID 0x00100000
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_CHILD_SETTID 0x01000000
@@ -21,7 +22,7 @@
 #define CLONE_NEWUSER 0x10000000
 #define CLONE_NEWPID 0x20000000
 #define CLONE_NEWNET 0x40000000
-/* Namespace flags are recognized, but namespace isolation is unavailable. */
+/* Namespace creation flags. */
 #define CLONE_NAMESPACE_FLAGS                                          \
 	(CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC | \
 	 CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET)

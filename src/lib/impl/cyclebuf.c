@@ -16,6 +16,7 @@ typedef struct _cy_buf {
 	cond_t read_event; /* readers wait here: fires when data is available */
 	cond_t write_event; /* writers wait here: fires when space is available */
 	spinlock_t lock;
+	unsigned reader_sequence, writer_sequence;
 	int writer_count;
 	int reader_count;
 	unsigned ref_count;
@@ -292,13 +293,17 @@ void cyb_flush(cy_buf *b)
 void cyb_writer_open(cy_buf *b)
 {
 	__sync_add_and_fetch(&b->writer_count, 1);
+	__sync_add_and_fetch(&b->writer_sequence, 1);
 	__sync_add_and_fetch(&b->ref_count, 1);
+	cyb_notify_poll(b, 1);
 }
 
 void cyb_reader_open(cy_buf *b)
 {
 	__sync_add_and_fetch(&b->reader_count, 1);
+	__sync_add_and_fetch(&b->reader_sequence, 1);
 	__sync_add_and_fetch(&b->ref_count, 1);
+	cyb_notify_poll(b, 0);
 }
 
 void cyb_writer_close(cy_buf *b)
@@ -330,4 +335,11 @@ void cyb_poll_read(cy_buf *b, poll_table *pt)
 void cyb_poll_write(cy_buf *b, poll_table *pt)
 {
 	poll_subscribe(pt, &b->poll_writers, &b->poll_lock);
+}
+
+unsigned cyb_open_sequence(cy_buf *b, int writer)
+{
+	return __atomic_load_n(writer ? &b->writer_sequence :
+					&b->reader_sequence,
+			       __ATOMIC_ACQUIRE);
 }

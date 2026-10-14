@@ -1,6 +1,7 @@
 #include "proc_pid.h"
 #include <ext4.h>
 #include <macro.h>
+#include <ps/namespace.h>
 
 typedef struct {
 	unsigned tgid;
@@ -41,7 +42,7 @@ static void list_thread(task_struct *task, void *opaque)
 	char name[12];
 	if (!task_group_member(task, directory->tgid))
 		return;
-	sprintf(name, "%u", task->life->psid);
+	sprintf(name, "%u", ps_pid_visible(task->life->psid));
 	task_directory_entry(directory->buffer, name);
 }
 
@@ -76,7 +77,7 @@ task_struct *proc_resolve_thread(task_struct *task, const char **rest)
 	}
 	if (*path && *path != '/')
 		return NULL;
-	thread = ps_find_process_ref(tid);
+	thread = ps_find_process_ref(ps_pid_global(tid));
 	if (!thread || !task_group_member(thread, task->thread->tgid)) {
 		ps_put_process_ref(thread);
 		return NULL;

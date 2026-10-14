@@ -6,7 +6,7 @@ _build="release"
 _arch="x64"
 kernel_file=""
 _debug=""
-_window=$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")
+_window=${MOS_DISPLAY:-$([ "$(uname)" == "Linux" ] && echo "gtk,window-close=off" || echo "cocoa")}
 _verbose=""
 _logtofile="stdio"
 _vga="-vga vmware"
@@ -27,7 +27,7 @@ _smp=2
 _test=""
 _text=""
 _priviledge=""
-_qemu="qemu-system-x86_64"
+_qemu="qemu-system-i386"
 _is_macos=$([ "$(uname)" == "Darwin" ] && echo "1" || echo "0")
 if [ "$_is_macos" -eq 1 ]; then
 	_netdev="vmnet-shared,id=net0"
@@ -103,6 +103,10 @@ done
 if [ "$_arch" == "x64" ]; then
  _qemu="qemu-system-x86_64"
  if [ -z "$_kvm" ]; then _cpu="qemu64"; fi
+fi
+_monitor=()
+if [ -n "${MOS_MONITOR:-}" ]; then
+	_monitor=(-monitor "$MOS_MONITOR")
 fi
 _outdir="out/$_arch/$_build"
 if [ "$_test" == "test" ]; then
@@ -220,6 +224,7 @@ $_priviledge $_qemu -cpu $_cpu \
 	$_audio \
 	$_kvm \
 	$_debug \
+	"${_monitor[@]}" \
 	-no-reboot \
 	-rtc base=localtime \
 	-netdev $_netdev \

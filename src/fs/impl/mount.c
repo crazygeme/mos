@@ -2,9 +2,11 @@
 #include <fs/vfs.h>
 #include <fs/mount.h>
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <lib/klib.h>
 #include <macro.h>
 #include <errno.h>
+#include <fs/fcntl.h>
 
 /* =========================================================================
  * Filesystem type registry
@@ -135,10 +137,100 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	super_block *sb;
 	int ret;
 
+	/* Linux mount callers may prefix flags with MS_MGC_VAL. */
+	if ((flags & 0xffff0000U) == 0xc0ed0000U)
+		flags &= 0xffffU;
+
 	if (!target)
 		return -EINVAL;
 
-	if (!type)
+	if (!ps_has_capability(cur, 21))
+		return -EPERM;
+	if (flags & 8192) { /* MS_MOVE */
+		if (!dev || (flags & ~8192U) || !strcmp(dev, target))
+			return -EINVAL;
+		struct stat st;
+		file *destination = vfs_open(cur->fs->root, target, O_PATH);
+		if (!destination)
+			return -ENOENT;
+		int valid = destination->f_fop && destination->f_fop->getattr &&
+			    !destination->f_fop->getattr(destination, &st) &&
+			    S_ISDIR(st.st_mode);
+		fs_put_file(destination);
+		if (!valid)
+			return -ENOTDIR;
+		super_block *moved = vfs_take_mount(cur->fs->root, dev);
+		if (!moved)
+			return -EINVAL;
+		if (!strcmp(target, "/")) {
+			rmutex_lock(&cur->fs->lock);
+			super_block *old = cur->fs->root;
+			cur->fs->root = moved;
+			vfs_rebase_mount_tree(moved, "/");
+			size_t length = strlen(dev);
+			if (!strncmp(cur->fs->cwd, dev, length) &&
+			    (!cur->fs->cwd[length] ||
+			     cur->fs->cwd[length] == '/')) {
+				char *suffix = strdup(cur->fs->cwd + length);
+				strcpy(cur->fs->cwd,
+				       suffix && *suffix ? suffix : "/");
+				free(suffix);
+			} else
+				strcpy(cur->fs->cwd, "/");
+			strcpy(cur->fs->root_path, "/");
+			ps_namespace_mount_root(moved);
+			rmutex_unlock(&cur->fs->lock);
+			sb_put(old);
+			vfs_namespace_changed();
+			return 0;
+		}
+		int moved_result = vfs_mount(cur->fs->root, target, moved);
+		if (moved_result && vfs_mount(cur->fs->root, dev, moved))
+			sb_put(moved);
+		return moved_result;
+	}
+	/* Mount views do not propagate changes to other namespaces. */
+	if (flags & ((1U << 18) | (1U << 19))) { /* MS_PRIVATE, MS_SLAVE */
+		file *fp = vfs_open(cur->fs->root, target, O_PATH);
+		if (!fp)
+			return -ENOENT;
+		fs_put_file(fp);
+		return 0;
+	}
+	if (flags & ((1U << 17) | (1U << 20))) /* MS_UNBINDABLE, MS_SHARED */
+		return -EOPNOTSUPP;
+	if (flags & MS_REMOUNT) {
+		super_block *mounted = cur->fs->root;
+		char *suffix;
+		if (strcmp(target, "/") &&
+		    (!sb_path_resolve(cur->fs->root, target, &mounted,
+				      &suffix) ||
+		     *suffix))
+			return -EINVAL;
+		if ((flags & 4096) || mounted->s_backend ||
+		    !mounted->s_op->remount) {
+			mounted->s_flags = flags & ~(MS_REMOUNT | 4096 | 16384);
+			vfs_namespace_changed();
+			return 0;
+		}
+		return mounted->s_op->remount(mounted, (int)flags);
+	}
+	if (flags & 4096) { /* MS_BIND */
+		if (!dev)
+			return -EINVAL;
+		file *fp = vfs_open(cur->fs->root, dev, O_PATH);
+		if (!fp)
+			return -ENOENT;
+		fs_put_file(fp);
+		sb = vfs_bind_mount(cur->fs->root, dev, !!(flags & 16384));
+		if (!sb)
+			return -ENOMEM;
+		ret = vfs_mount(cur->fs->root, target, sb);
+		if (ret)
+			sb_put(sb);
+		return ret;
+	}
+	if (!type || !*type)
 		return -EINVAL;
 
 	/* Remount of "/" — change flags on the existing root superblock. */
@@ -158,10 +250,21 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 	if (!fst)
 		return -ENODEV;
 
+	/* Block filesystem factories require an unoccupied mount point. */
+	if (!strcmp(type, "ext3") || !strcmp(type, "ext4") ||
+	    !strcmp(type, "vfat")) {
+		super_block *mounted;
+		char *suffix;
+		if (sb_path_resolve(cur->fs->root, target, &mounted, &suffix) &&
+		    !*suffix)
+			return -EBUSY;
+	}
+
 	sb = fst->get_sb(dev, target, (int)flags, data);
 	if (!sb)
 		return -ENOMEM;
 
+	strncpy(sb->s_fstype, type, sizeof(sb->s_fstype) - 1);
 	ret = vfs_mount(cur->fs->root, target, sb);
 	if (ret == -EEXIST) {
 		sb_put(sb);
@@ -185,6 +288,8 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 int fs_do_umount(const char *target, int flags)
 {
 	task_struct *cur = CURRENT_TASK();
+	if (!ps_has_capability(cur, 21))
+		return -EPERM;
 
 	if (!target || *target != '/')
 		return -EINVAL;

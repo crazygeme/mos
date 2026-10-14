@@ -38,7 +38,8 @@ const fs_type *fs_probe_block(blockdev_handle *device);
 /*
  * fs_do_mount - core of sys_mount().
  * Looks up @type in the registry, instantiates a super_block, and calls
- * vfs_mount().  If the path is already mounted (-EEXIST), returns 0.
+ * vfs_mount(). Block filesystem factories return -EBUSY for an occupied
+ * mount point; pseudo-filesystems and bind views support stacked mounts.
  */
 int fs_do_mount(const char *dev, const char *target, const char *type,
 		unsigned flags, void *data);

@@ -10,6 +10,7 @@
 #include <lib/klib.h>
 #include <ps/ps.h>
 #include <ps/clone.h>
+#include <ps/namespace.h>
 #include <int/int.h>
 #include <mm/mmap.h>
 #include <mm/phymm.h>
@@ -153,7 +154,7 @@ unsigned _ps_create(process_fn fn, const char *name, void *param,
 	ps_put_to_ready_queue_unsafe(task);
 	ps_add_mgr_unsafe(task);
 	spinlock_unlock(&ps_lock, irq);
-	return task->life->psid;
+	return ps_pid_visible(task->life->psid);
 }
 
 /*
@@ -447,6 +448,7 @@ int fork_set_meta(task_struct *cur, task_struct *task, unsigned fork_flag)
 /* Release a fully prepared child that has not entered the task queues. */
 void fork_abort_child(task_struct *task)
 {
+	ps_namespace_unregister_pid(task);
 	ps_id_free(task->life->psid);
 	ps_free_task(task);
 }
@@ -497,18 +499,20 @@ static int do_fork(void)
 	if (!task)
 		return -ENOMEM;
 
-	if (ps_clone_resources(cur, task, SIGCHLD) ||
-	    fork_set_meta(cur, task, 0)) {
+	int ret = ps_clone_resources(cur, task, SIGCHLD);
+	if (!ret)
+		ret = fork_set_meta(cur, task, 0);
+	if (ret) {
 		fork_abort_child(task);
-		return -ENOMEM;
+		return ret;
 	}
 	task->thread->tgid = task->life->psid;
 	task->life->exit_signal = SIGCHLD;
 
 	ps_enqueue_child_first(cur, task);
-	cur_intr_frame->eax = task->life->psid;
+	cur_intr_frame->eax = ps_pid_visible(task->life->psid);
 	task_sched();
-	return task->life->psid;
+	return ps_pid_visible(task->life->psid);
 }
 
 /* vfork blocks the parent until exec/exit. Each clone flag still selects
@@ -542,8 +546,8 @@ int do_vfork(unsigned long child_stack, unsigned long flags)
 	ps_enqueue_child_first(cur, task);
 	cond_wait(&task->life->vfork_event, 0);
 
-	cur_intr_frame->eax = task->life->psid;
-	return task->life->psid;
+	cur_intr_frame->eax = ps_pid_visible(task->life->psid);
+	return ps_pid_visible(task->life->psid);
 }
 
 int sys_fork()

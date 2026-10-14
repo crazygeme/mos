@@ -59,4 +59,5 @@ void cyb_reader_close(cy_buf *b);
 void cyb_poll_read(cy_buf *b, poll_table *pt);
 void cyb_poll_write(cy_buf *b, poll_table *pt);
 
+unsigned cyb_open_sequence(cy_buf *b, int writer);
 #endif

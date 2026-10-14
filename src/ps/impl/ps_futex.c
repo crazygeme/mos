@@ -1,4 +1,5 @@
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <lib/klib.h>
 #include <mm/mmap.h>
 #include <errno.h>
@@ -35,7 +36,7 @@ static void robust_release_futex(task_struct *task, uintptr_t entry,
 		return;
 	addr = entry + offset;
 	if (robust_read(task, addr, &value, sizeof(value)) != 0 ||
-	    (value & FUTEX_TID_MASK) != task->life->psid)
+	    (value & FUTEX_TID_MASK) != ps_pid_for(task, task->life->psid))
 		return;
 	owner_died = (value & FUTEX_WAITERS) | FUTEX_OWNER_DIED;
 	if (ps_write_process_memory(task, (void *)(uintptr_t)addr, &owner_died,

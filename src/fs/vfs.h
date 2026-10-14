@@ -74,6 +74,9 @@ struct super_operations {
 struct super_block {
 	const super_operations *s_op; /* filesystem operations */
 	void *s_fs_info; /* private filesystem data */
+	super_block *
+		s_covered; /* Covered directory or mount, owned by this layer. */
+	super_block *s_backend; /* Retained owner of a private mount view. */
 	unsigned s_ref; /* reference count */
 	int s_flags; /* mount flags (MS_RDONLY etc.) */
 	char s_devname[64]; /* source device, e.g. "hda1" or "proc" */
@@ -99,6 +102,8 @@ typedef struct _vfs_mount_node {
 
 /* Allocate and initialise a new super_block with the given operations. */
 super_block *sget(const super_operations *s_op);
+super_block *vfs_clone_mount_tree(super_block *sb);
+super_block *vfs_bind_mount(super_block *root, const char *path, int recursive);
 
 /* Increment the super_block reference count. */
 void sb_get(super_block *sb);
@@ -172,4 +177,6 @@ int vfs_utime(super_block *sb, const char *path, unsigned atime,
 void vfs_mount_walk(super_block *sb, void (*cb)(const super_block *, void *),
 		    void *arg);
 
+super_block *vfs_take_mount(super_block *sb, const char *path);
+void vfs_rebase_mount_tree(super_block *sb, const char *point);
 #endif

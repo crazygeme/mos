@@ -692,7 +692,7 @@ static int getdents_convert(unsigned fd, void *output, unsigned count,
 		unsigned char type =
 			fp->f_fop->dirent_type ?
 				fp->f_fop->dirent_type(fp, entry->d_name) :
-				0;
+				(unsigned char)source[entry->d_reclen - 1];
 		emit((char *)output + out, entry, length, size, type);
 		position = entry->d_off;
 		source += entry->d_reclen;

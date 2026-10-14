@@ -206,6 +206,11 @@ is captured. The smoke case does not rerun `posix_socket` or
 
 `all_script` exits with the total failure count (0 = all passed).
 
+Namespace and descriptor probes use direct system calls when RH9 libc lacks
+the corresponding wrappers. Cgroup probes mount private `pids` and `devices`
+hierarchies. The concurrent procfs exit probe reports progress every 100 rounds
+and uses an alarm to bound stalled progress.
+
 ### Writing a Script
 
 The script must exit 0 on success and non-zero on failure. `set -e` is the standard way to make any failed command abort the script.

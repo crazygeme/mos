@@ -43,6 +43,8 @@ void vm_fill_statm(proc_buf_t *pb, task_struct *task);
 
 /* ── Per-file fill functions ─────────────────────────────────────────── */
 
+void proc_fill_mounts(proc_buf_t *pb, task_struct *task, int info);
+
 /* status.c */
 void fill_status(proc_buf_t *pb, task_struct *task);
 void fill_stat(proc_buf_t *pb, task_struct *task, int group);
@@ -56,6 +58,7 @@ void fill_maps(proc_buf_t *pb, task_struct *task);
 
 /* ── fd directory (fd.c) ─────────────────────────────────────────────── */
 
+file *pid_oom_open(task_struct *task);
 file *pid_fd_dir_open(task_struct *task);
 file *pid_task_dir_open(task_struct *task);
 unsigned proc_thread_count(unsigned tgid);

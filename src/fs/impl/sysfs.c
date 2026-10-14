@@ -26,6 +26,8 @@ static void sysfs_register(void)
 {
 	if (!device_sysfs_entries())
 		return;
+	vfs_entry_node *root = vfs_entry_root(sys_tree);
+	vfs_entry_directory_path(root, "fs/cgroup", 0755);
 	if (!vfs_entry_tree_error(sys_tree))
 		fs_register_type(&sysfs_type);
 }

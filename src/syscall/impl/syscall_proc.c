@@ -7,6 +7,7 @@
  * Signal-related syscalls live in ps/ps_signal.c.
  */
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <fs/fs.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
@@ -63,7 +64,7 @@ int sys_getpid()
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getpid() = %d\n", cur->thread->tgid);
 
-	return cur->thread->tgid;
+	return ps_pid_visible(cur->thread->tgid);
 }
 
 int sys_getppid()
@@ -73,7 +74,7 @@ int sys_getppid()
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getppid() = %d\n", cur->life->ppid);
 
-	return cur->life->ppid;
+	return ps_pid_visible(cur->life->ppid);
 }
 
 int sys_getpgrp(unsigned pid)
@@ -83,7 +84,7 @@ int sys_getpgrp(unsigned pid)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("getpgrp() = %d\n", cur->thread->group_id);
 
-	return cur->thread->group_id;
+	return ps_pid_visible(cur->thread->group_id);
 }
 
 int sys_getpgid(unsigned pid)
@@ -94,12 +95,12 @@ int sys_getpgid(unsigned pid)
 		klog("getpgid(%d)\n", pid);
 
 	if (pid == 0)
-		return current->thread->group_id;
+		return ps_pid_visible(current->thread->group_id);
 
-	t = ps_find_process(pid);
+	t = ps_find_process(ps_pid_global(pid));
 	if (!t)
 		return -ESRCH;
-	return t->thread->group_id;
+	return ps_pid_visible(t->thread->group_id);
 }
 
 int sys_setpgid(unsigned pid, unsigned pgid)
@@ -113,7 +114,7 @@ int sys_setpgid(unsigned pid, unsigned pgid)
 	if (pid == 0)
 		t = cur;
 	else {
-		t = ps_find_process(pid);
+		t = ps_find_process(ps_pid_global(pid));
 		if (!t)
 			return -ESRCH;
 	}
@@ -121,6 +122,11 @@ int sys_setpgid(unsigned pid, unsigned pgid)
 	/* pgid 0 means use the target process's own pid as pgid */
 	if (pgid == 0)
 		pgid = t->thread->tgid;
+	else {
+		pgid = ps_pid_global(pgid);
+		if (pgid == 0xffffffff)
+			return -EPERM;
+	}
 
 	t->thread->group_id = pgid;
 	return 0;
@@ -134,12 +140,12 @@ int sys_getsid(unsigned pid)
 		klog("getsid(%d)\n", pid);
 
 	if (pid == 0)
-		return current->thread->session_id;
+		return ps_pid_visible(current->thread->session_id);
 
-	t = ps_find_process(pid);
+	t = ps_find_process(ps_pid_global(pid));
 	if (!t)
 		return -ESRCH;
-	return t->thread->session_id;
+	return ps_pid_visible(t->thread->session_id);
 }
 
 int sys_setsid()
@@ -151,7 +157,7 @@ int sys_setsid()
 
 	cur->thread->session_id = cur->thread->tgid;
 	cur->thread->group_id = cur->thread->tgid;
-	return cur->thread->tgid;
+	return ps_pid_visible(cur->thread->tgid);
 }
 
 int sys_getuid()
@@ -183,12 +189,23 @@ static void cap_initialize(task_credentials *user)
 	if (user->cap_initialized)
 		return;
 	if (user->euid == 0) {
-		user->cap_effective[0] = 0xffffffffU;
-		user->cap_effective[1] = 0x1ffU;
-		user->cap_permitted[0] = 0xffffffffU;
-		user->cap_permitted[1] = 0x1ffU;
+		user->cap_effective[0] = user->cap_bounding[0];
+		user->cap_effective[1] = user->cap_bounding[1];
+		user->cap_permitted[0] = user->cap_bounding[0];
+		user->cap_permitted[1] = user->cap_bounding[1];
 	}
 	user->cap_initialized = 1;
+}
+
+int ps_has_capability(task_struct *task, unsigned capability)
+{
+	if (capability > 40 || !task || !task->credentials)
+		return 0;
+	task_credentials *user = task->credentials;
+	unsigned word = capability / 32, bit = 1U << (capability % 32);
+	if (user->cap_initialized)
+		return !!(user->cap_effective[word] & bit);
+	return user->euid == 0 && !!(user->cap_bounding[word] & bit);
 }
 
 int sys_capget(void *header_ptr, void *data_ptr)
@@ -205,9 +222,10 @@ int sys_capget(void *header_ptr, void *data_ptr)
 	    header->version != MOS_CAP_VERSION_2 &&
 	    header->version != MOS_CAP_VERSION_3) {
 		header->version = MOS_CAP_VERSION_3;
-		return -EINVAL;
+		return data ? -EINVAL : 0;
 	}
-	if (header->pid != 0 && header->pid != (int)current->thread->tgid)
+	if (header->pid != 0 &&
+	    header->pid != (int)ps_pid_visible(current->thread->tgid))
 		return -ESRCH;
 	if (!data)
 		return 0;
@@ -235,7 +253,8 @@ int sys_capset(void *header_ptr, const void *data_ptr)
 	    header->version != MOS_CAP_VERSION_2 &&
 	    header->version != MOS_CAP_VERSION_3)
 		return -EINVAL;
-	if (header->pid != 0 && header->pid != (int)current->thread->tgid)
+	if (header->pid != 0 &&
+	    header->pid != (int)ps_pid_visible(current->thread->tgid))
 		return -EPERM;
 	cap_initialize(user);
 	count = header->version == MOS_CAP_VERSION_1 ? 1 : 2;
@@ -285,17 +304,32 @@ int sys_getegid()
  *   euid==0: sets ruid=euid=suid=uid (privilege drop)
  *   euid!=0: can only set euid to current ruid or suid
  */
+static void cap_uid_changed(task_credentials *u, unsigned old_real,
+			    unsigned old_effective, unsigned old_saved)
+{
+	if ((old_real == 0 || old_effective == 0 || old_saved == 0) && u->uid &&
+	    u->euid && u->suid && !u->keep_capabilities)
+		memset(u->cap_permitted, 0, sizeof(u->cap_permitted));
+	if (old_effective == 0 && u->euid)
+		memset(u->cap_effective, 0, sizeof(u->cap_effective));
+	else if (old_effective && u->euid == 0)
+		memcpy(u->cap_effective, u->cap_permitted,
+		       sizeof(u->cap_effective));
+}
+
 int sys_setuid(unsigned uid)
 {
 	task_struct *cur = CURRENT_TASK();
 	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->euid;
+	unsigned old_real = u->uid, old_saved = u->suid;
+	cap_initialize(u);
 	unsigned old_filesystem = u->fsuid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setuid(%d)\n", uid);
 
-	if (u->euid == 0) {
+	if (ps_has_capability(cur, 7)) {
 		u->uid = uid;
 		u->euid = uid;
 		u->suid = uid;
@@ -306,6 +340,7 @@ int sys_setuid(unsigned uid)
 	} else {
 		return -EPERM;
 	}
+	cap_uid_changed(u, old_real, old_effective, old_saved);
 	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
 		current->memory->dumpable = 0;
@@ -328,7 +363,7 @@ int sys_setgid(unsigned gid)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setgid(%d)\n", gid);
 
-	if (u->euid == 0) {
+	if (ps_has_capability(cur, 6)) {
 		u->gid = gid;
 		u->egid = gid;
 		u->sgid = gid;
@@ -355,6 +390,8 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	task_struct *cur = CURRENT_TASK();
 	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->euid;
+	unsigned old_real = u->uid, old_saved = u->suid;
+	cap_initialize(u);
 	unsigned old_filesystem = u->fsuid;
 	unsigned new_ruid = (ruid == (unsigned)-1) ? u->uid : ruid;
 	unsigned new_euid = (euid == (unsigned)-1) ? u->euid : euid;
@@ -362,7 +399,7 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setreuid(%d, %d)\n", ruid, euid);
 
-	if (u->euid != 0) {
+	if (!ps_has_capability(cur, 7)) {
 		/* unprivileged: ruid must be current ruid or euid */
 		if (ruid != (unsigned)-1 && ruid != u->uid && ruid != u->euid)
 			return -EPERM;
@@ -379,6 +416,7 @@ int sys_setreuid(unsigned ruid, unsigned euid)
 	u->uid = new_ruid;
 	u->euid = new_euid;
 	u->fsuid = new_euid;
+	cap_uid_changed(u, old_real, old_effective, old_saved);
 	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
 		current->memory->dumpable = 0;
@@ -402,7 +440,7 @@ int sys_setregid(unsigned rgid, unsigned egid)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setregid(%d, %d)\n", rgid, egid);
 
-	if (u->euid != 0) {
+	if (!ps_has_capability(cur, 6)) {
 		if (rgid != (unsigned)-1 && rgid != u->gid && rgid != u->egid)
 			return -EPERM;
 		if (egid != (unsigned)-1 && egid != u->gid && egid != u->egid &&
@@ -432,12 +470,14 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 	task_struct *cur = CURRENT_TASK();
 	task_credentials *u = cur->credentials;
 	unsigned old_effective = u->euid;
+	unsigned old_real = u->uid, old_saved = u->suid;
+	cap_initialize(u);
 	unsigned old_filesystem = u->fsuid;
 
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setresuid(%d, %d, %d)\n", ruid, euid, suid);
 
-	if (u->euid != 0) {
+	if (!ps_has_capability(cur, 7)) {
 		/* unprivileged: each value must be current ruid, euid, or suid */
 		if (ruid != (unsigned)-1 && ruid != u->uid && ruid != u->euid &&
 		    ruid != u->suid)
@@ -458,6 +498,7 @@ int sys_setresuid(unsigned ruid, unsigned euid, unsigned suid)
 	}
 	if (suid != (unsigned)-1)
 		u->suid = suid;
+	cap_uid_changed(u, old_real, old_effective, old_saved);
 	if (u->euid != old_effective || u->fsuid != old_filesystem) {
 		current->life->pdeath_signal = 0;
 		current->memory->dumpable = 0;
@@ -495,7 +536,7 @@ int sys_setresgid(unsigned rgid, unsigned egid, unsigned sgid)
 	if (TEST_LOG(TEST_LOG_TRACE))
 		klog("setresgid(%d, %d, %d)\n", rgid, egid, sgid);
 
-	if (u->euid != 0) {
+	if (!ps_has_capability(cur, 6)) {
 		if (rgid != (unsigned)-1 && rgid != u->gid && rgid != u->egid &&
 		    rgid != u->sgid)
 			return -EPERM;
@@ -592,10 +633,12 @@ int sys_wait4(int pid, int *status, int options, void *rusage)
 	if (pid == -1)
 		ret = do_waitpid(0, &value, options, rusage);
 	else if (pid < -1)
-		ret = do_waitpid_pgrp((unsigned)(-pid), &value, options,
-				      rusage);
+		ret = do_waitpid_pgrp(ps_pid_global((unsigned)(-pid)), &value,
+				      options, rusage);
 	else
-		ret = do_waitpid(pid, &value, options, rusage);
+		ret = do_waitpid(pid > 0 ? ps_pid_global(pid) : pid, &value,
+				 options, rusage);
+
 	if (ret > 0 && status &&
 	    ps_write_process_memory(current, status, &value, sizeof(value)) < 0)
 		return -EFAULT;
@@ -1015,11 +1058,12 @@ int sys_exit_group(int status)
 
 int sys_gettid(void)
 {
-	return current->life->psid;
+	return ps_pid_visible(current->life->psid);
 }
 
 int sys_tkill(int tid, int sig)
 {
+	tid = ps_pid_global(tid);
 	if (sig < 0 || sig >= NSIG)
 		return -EINVAL;
 	return ps_send_thread_signal((unsigned)tid, sig);
@@ -1030,7 +1074,7 @@ int sys_set_tid_address(int *tidptr)
 	task_struct *cur = CURRENT_TASK();
 
 	cur->execution->clear_child_tid = tidptr;
-	return cur->life->psid;
+	return ps_pid_visible(cur->life->psid);
 }
 
 int sys_rseq(void *rseq, unsigned len, int flags, unsigned signature)
@@ -1061,4 +1105,19 @@ int sys_acct(const char *filename)
 		return 0; /* disabling accounting: no-op */
 
 	return -ENOSYS;
+}
+
+int sys_tgkill(int tgid, int tid, int sig)
+{
+	if (tgid <= 0 || tid <= 0 || sig < 0 || sig >= NSIG)
+		return -EINVAL;
+	unsigned global = ps_pid_global(tid);
+	task_struct *target = ps_find_process_ref(global);
+	if (!target)
+		return -ESRCH;
+	int ret = ps_pid_visible(target->thread->tgid) == (unsigned)tgid ?
+			  ps_send_thread_signal(global, sig) :
+			  -ESRCH;
+	ps_put_process_ref(target);
+	return ret;
 }

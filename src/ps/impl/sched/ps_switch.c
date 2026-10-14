@@ -80,8 +80,14 @@ void ps_switch_finish(task_struct *prev)
 	/* A parent can sleep after observing a zombie whose stack is still active. */
 	if (prev->sched->status == ps_dying && prev->life->psid != 0xffffffff) {
 		task_struct *parent = ps_find_process_unsafe(prev->life->ppid);
-		if (parent)
+		if (parent) {
+			if (prev->life->exit_signal > 0 &&
+			    prev->life->exit_signal < NSIG &&
+			    !prev->thread->live_tasks)
+				ps_child_signal_unsafe(parent, prev,
+						       prev->life->exit_signal);
 			ps_wake_parent_waiters_unsafe(parent);
+		}
 	}
 	spinlock_unlock(&ps_lock, 0);
 }

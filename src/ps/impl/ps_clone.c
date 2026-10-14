@@ -8,6 +8,7 @@
 #include "ps_internal.h"
 
 #include <ps/clone.h>
+#include <ps/namespace.h>
 
 static void clone_prepare_thread_tls(task_struct *cur, task_struct *task,
 				     unsigned short parent_gs)
@@ -63,17 +64,31 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 				 CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID |
 				 CLONE_VM | CLONE_FS | CLONE_FILES |
 				 CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS |
-				 CLONE_SYSVSEM | CLONE_DETACHED);
+				 CLONE_SYSVSEM | CLONE_DETACHED | CLONE_PARENT |
+				 CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC |
+				 CLONE_NEWPID | CLONE_NEWCGROUP);
 	if (unsupported)
 		return (unsupported & CLONE_NAMESPACE_FLAGS) ? -EINVAL :
 							       -ENOSYS;
+
+	if ((flags & CLONE_NAMESPACE_FLAGS) && !ps_has_capability(cur, 21))
+		return -EPERM;
+	if ((flags & CLONE_NEWNS) && (flags & CLONE_FS))
+		return -EINVAL;
+	if ((flags & CLONE_NEWPID) && (flags & CLONE_THREAD))
+		return -EINVAL;
 
 	if ((flags & CLONE_SIGHAND) && !share_vm)
 		return -EINVAL;
 	if (thread_group && !(flags & CLONE_SIGHAND))
 		return -EINVAL;
 
+	if ((flags & CLONE_PARENT) && !thread_group &&
+	    ps_pid_visible(cur->thread->tgid) == 1)
+		return -EINVAL;
 	if (flags & CLONE_VFORK) {
+		if (flags & CLONE_PARENT)
+			return -EINVAL;
 		if ((flags & CSIGNAL) != SIGCHLD)
 			return -EINVAL;
 		return do_vfork(child_stack, flags);
@@ -90,9 +105,10 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	if (!task)
 		return -ENOMEM;
 
-	if (ps_clone_resources(cur, task, flags)) {
+	int clone_ret = ps_clone_resources(cur, task, flags);
+	if (clone_ret) {
 		fork_abort_child(task);
-		return -ENOMEM;
+		return clone_ret;
 	}
 	if (fork_set_meta(cur, task, thread_group ? FORK_FLAG_THREAD : 0)) {
 		fork_abort_child(task);
@@ -110,8 +126,10 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		clone_prepare_thread_tls(cur, task, cur_intr_frame->gs);
 	}
 
-	task->life->ppid = thread_group ? cur->life->ppid : cur->thread->tgid;
-	if (thread_group)
+	task->life->ppid = (thread_group || (flags & CLONE_PARENT)) ?
+				   cur->life->ppid :
+				   cur->thread->tgid;
+	if (thread_group || (flags & CLONE_PARENT))
 		task->life->creator = NULL;
 	task->thread->tgid = thread_group ? cur->thread->tgid :
 					    task->life->psid;
@@ -134,14 +152,15 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	}
 
 	if ((flags & CLONE_PARENT_SETTID) && parent_tidptr)
-		*parent_tidptr = task->life->psid;
+		*parent_tidptr = ps_pid_visible(task->life->psid);
+	int child_tid = ps_pid_for(task, task->life->psid);
 	if ((flags & CLONE_CHILD_SETTID) && child_tidptr) {
 		if (share_vm)
-			*child_tidptr = task->life->psid;
+			*child_tidptr = child_tid;
 		else {
-			int rc = ps_write_process_memory(
-				task, child_tidptr, &task->life->psid,
-				sizeof(task->life->psid));
+			int rc = ps_write_process_memory(task, child_tidptr,
+							 &child_tid,
+							 sizeof(child_tid));
 
 			if (rc != 0) {
 				fork_abort_child(task);
@@ -160,7 +179,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 		ps_add_mgr_unsafe(task);
 		spinlock_unlock(&ps_lock, irq);
 	}
-	cur_intr_frame->eax = task->life->psid;
+	cur_intr_frame->eax = ps_pid_visible(task->life->psid);
 	/*
 	 * Process-style clone() is used by glibc/NPTL for fork-like children
 	 * with CLONE_CHILD_SETTID/CLEARTID. Yield once after enqueue so the
@@ -169,7 +188,7 @@ static int do_clone(unsigned long flags, unsigned long child_stack,
 	 */
 	if (!thread_group)
 		task_sched();
-	return task->life->psid;
+	return ps_pid_visible(task->life->psid);
 }
 
 int sys_clone(unsigned long flags, unsigned long child_stack,

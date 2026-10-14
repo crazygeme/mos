@@ -10,6 +10,8 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit);
 void fs_page_cache_get_cached_range(file *fp, uint64_t offset, paddr_t *pages,
 				    unsigned count);
 void fs_page_cache_put(paddr_t phy);
+void fs_page_cache_update(file *fp, uint64_t offset, const void *data,
+			  size_t size);
 void fs_page_cache_invalidate(file *fp);
 unsigned fs_page_cache_reclaim(unsigned target_pages);
 ssize_t fs_page_cache_read(file *fp, void *buf, size_t size, loff_t *pos);

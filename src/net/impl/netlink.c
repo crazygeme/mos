@@ -240,6 +240,62 @@ static int netlink_change_address(const struct nl_header *request)
 	return 0;
 }
 
+static int netlink_query(const struct nl_header *request, unsigned *index,
+			 char *name)
+{
+	unsigned offset;
+	*index = 0;
+	name[0] = 0;
+	if (request->type == RTM_GETLINK) {
+		if (request->length < sizeof(*request) + sizeof(struct nl_link))
+			return (request->flags & 0x300) == 0x300 &&
+					       request->length >
+						       sizeof(*request) ?
+				       0 :
+				       -EINVAL;
+		const struct nl_link *link = (const void *)(request + 1);
+		if (link->index < 0)
+			return -EINVAL;
+		*index = link->index;
+		offset = sizeof(*request) + sizeof(*link);
+	} else {
+		if (request->length < sizeof(*request) + sizeof(struct nl_ip))
+			return (request->flags & 0x300) == 0x300 &&
+					       request->length >
+						       sizeof(*request) ?
+				       0 :
+				       -EINVAL;
+		const struct nl_ip *ip = (const void *)(request + 1);
+		*index = ip->index;
+		offset = sizeof(*request) + sizeof(*ip);
+	}
+	while (offset < request->length) {
+		struct nl_attr attr;
+		if (request->length - offset < sizeof(attr))
+			return -EINVAL;
+		memcpy(&attr, (const char *)request + offset, sizeof(attr));
+		if (attr.length < sizeof(attr) ||
+		    attr.length > request->length - offset)
+			return -EINVAL;
+		if (request->type == RTM_GETLINK && (attr.type & 0x3fff) == 3) {
+			unsigned size = attr.length - sizeof(attr);
+			const char *value =
+				(const char *)request + offset + sizeof(attr);
+			if (!size || size > IFNAMSIZ || value[size - 1])
+				return -EINVAL;
+			memcpy(name, value, size);
+		}
+		unsigned step = NL_ALIGN(attr.length);
+		if (step > request->length - offset) {
+			if (attr.length != request->length - offset)
+				return -EINVAL;
+			step = attr.length;
+		}
+		offset += step;
+	}
+	return 0;
+}
+
 static int netlink_request(mos_sock *sk, const struct nl_header *input)
 {
 	struct nl_header request = *input;
@@ -248,7 +304,7 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 		       request.type == RTM_DELADDR;
 	int error = 0;
 	if (mutation) {
-		if (!current->execution || current->credentials->euid != 0)
+		if (!ps_has_capability(current, 12))
 			error = -EPERM;
 		else if (request.type == RTM_NEWLINK)
 			error = netlink_change_link(input);
@@ -262,7 +318,13 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 	if (!buffer)
 		return -ENOMEM;
 	unsigned length = 0;
-	if (request.type == RTM_GETLINK || request.type == RTM_GETADDR) {
+	unsigned index = 0;
+	char query_name[IFNAMSIZ];
+	int query = request.type == RTM_GETLINK || request.type == RTM_GETADDR;
+	int dump = (request.flags & 0x300) == 0x300;
+	if (query)
+		error = netlink_query(input, &index, query_name);
+	if (query && !error) {
 		for (struct netif *n = netif_list; n; n = n->next) {
 			if (length > 3500) {
 				free(buffer);
@@ -270,7 +332,7 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 			}
 			unsigned start = length;
 			struct nl_header h = { .type = request.type - 2,
-					       .flags = 2,
+					       .flags = dump ? 2 : 0,
 					       .seq = request.seq,
 					       .port = sk->netlink_port };
 			length += sizeof(h);
@@ -281,6 +343,11 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 			else
 				sprintf(name, "%c%c%u", n->name[0], n->name[1],
 					n->num);
+			if ((index && n->num + 1U != index) ||
+			    (query_name[0] && strcmp(name, query_name))) {
+				length = start;
+				continue;
+			}
 			if (request.type == RTM_GETLINK) {
 				struct nl_link link = {
 					.type = loop ? 772 : 1,
@@ -352,27 +419,32 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 			memcpy(buffer + start, &h, sizeof(h));
 		}
 	}
+	if (query && !dump && !length && !error)
+		error = -ENODEV;
 	struct nl_header done = { .length = sizeof(done) + sizeof(int),
 				  .type = NLMSG_DONE,
 				  .flags = 2,
 				  .seq = request.seq,
 				  .port = sk->netlink_port };
-	if (mutation ||
-	    (request.type != RTM_GETLINK && request.type != RTM_GETADDR)) {
+	if (error || mutation || !query ||
+	    (!dump && (request.flags & NLM_F_ACK))) {
 		done.type = NLMSG_ERROR;
 		done.flags = 0;
-		if (!mutation)
+		if (!mutation && !query)
 			error = -EOPNOTSUPP;
 		done.length += error ? request.length : sizeof(request);
 	}
-	memcpy(buffer + length, &done, sizeof(done));
-	length += sizeof(done);
-	memcpy(buffer + length, &error, sizeof(error));
-	length += sizeof(error);
-	if (done.type == NLMSG_ERROR) {
-		unsigned echoed = error ? request.length : sizeof(request);
-		memcpy(buffer + length, input, echoed);
-		length += echoed;
+	if (!query || dump || error || (request.flags & NLM_F_ACK)) {
+		memcpy(buffer + length, &done, sizeof(done));
+		length += sizeof(done);
+		memcpy(buffer + length, &error, sizeof(error));
+		length += sizeof(error);
+		if (done.type == NLMSG_ERROR) {
+			unsigned echoed = error ? request.length :
+						  sizeof(request);
+			memcpy(buffer + length, input, echoed);
+			length += echoed;
+		}
 	}
 	if (rx_free(sk) < length + sizeof(uint16_t)) {
 		free(buffer);

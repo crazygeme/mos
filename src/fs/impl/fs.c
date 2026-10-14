@@ -1,6 +1,7 @@
 #include <fs/vfs.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
+#include <fs/mount.h>
 #include <fs/ioctl.h>
 #include <fs/pipe.h>
 #include <fs/epoll.h>
@@ -8,6 +9,7 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <ps/ps.h>
+#include <ps/cgroup.h>
 #include <device/blockdev.h>
 #include <unistd.h>
 #include <macro.h>
@@ -84,6 +86,12 @@ struct file_io_scope {
 	file *fp;
 	list_entry list;
 };
+
+int fs_file_readonly(file *fp)
+{
+	return fp &&
+	       ((fp->f_sb ? fp->f_sb->s_flags : fp->f_mount_flags) & MS_RDONLY);
+}
 
 static file *fs_io_begin(int fd, struct file_io_scope *scope)
 {
@@ -268,6 +276,11 @@ int fs_writev_special(int fd, const struct iovec *iov, int count, int *handled)
 	*handled = 1;
 	if (!fp)
 		return result;
+	if (fp->f_inode && S_ISREG(fp->f_inode->i_mode) &&
+	    fs_file_readonly(fp)) {
+		result = -EROFS;
+		goto out;
+	}
 	if (!fp->f_fop || fp->f_mode == O_RDONLY)
 		goto out;
 	if (!fp->f_fop->writev) {
@@ -295,6 +308,11 @@ int fs_write(int fd, unsigned offset, const char *buf, unsigned len)
 
 	if (!fp)
 		return -EBADF;
+	if (fp->f_inode && S_ISREG(fp->f_inode->i_mode) &&
+	    fs_file_readonly(fp)) {
+		n = -EROFS;
+		goto out;
+	}
 	if (!fp->f_fop || !fp->f_fop->write)
 		goto out;
 	if (fp->f_mode == O_RDONLY)
@@ -370,6 +388,11 @@ int fs_pwrite(int fd, loff_t offset, const char *buf, unsigned len)
 
 	if (!fp)
 		return -EBADF;
+	if (fp->f_inode && S_ISREG(fp->f_inode->i_mode) &&
+	    fs_file_readonly(fp)) {
+		n = -EROFS;
+		goto out;
+	}
 	if (!fp->f_fop || !fp->f_fop->write)
 		goto out;
 	if (offset < 0) {
@@ -495,7 +518,9 @@ int fs_open(const char *path, int flag, umode_t mode)
 
 	fp = fs_open_file(path, flag, mode);
 	if (!fp)
-		return -ENOENT;
+		return cur->execution && cur->execution->fs_open_error ?
+			       cur->execution->fs_open_error :
+			       -ENOENT;
 
 	if ((flag & O_DIRECTORY) && !S_ISDIR(fp->f_inode->i_mode)) {
 		fs_put_file(fp);
@@ -517,6 +542,19 @@ int fs_open(const char *path, int flag, umode_t mode)
 		}
 	}
 
+	if (!(flag & O_PATH) &&
+	    (S_ISCHR(fp->f_inode->i_mode) || S_ISBLK(fp->f_inode->i_mode)) &&
+	    fp->f_fop && fp->f_fop->getattr &&
+	    fp->f_fop->getattr(fp, &s) == 0) {
+		unsigned access = (flag & O_ACCMODE) == O_RDONLY ? 1 :
+				  (flag & O_ACCMODE) == O_WRONLY ? 2 :
+								   3;
+		ret = ps_cgroup_device(s.st_mode, s.st_rdev, access);
+		if (ret) {
+			fs_put_file(fp);
+			return ret;
+		}
+	}
 	if (created)
 		inotify_created(cur->fs->root, fp->f_name ? fp->f_name : path);
 	fp->f_mode = (unsigned)(flag & O_ACCMODE);
@@ -540,6 +578,13 @@ int fs_open(const char *path, int flag, umode_t mode)
 					      create_mode;
 	}
 
+	if (!(flag & O_PATH) && fp->f_fop && fp->f_fop->open_ready) {
+		ret = fp->f_fop->open_ready(fp);
+		if (ret) {
+			fs_put_file(fp);
+			return ret;
+		}
+	}
 	inotify_file_open(fp, cur->fs->root);
 	if ((flag & O_TRUNC) && S_ISREG(fp->f_inode->i_mode) && fp->f_fop &&
 	    fp->f_fop->ftruncate)
@@ -1047,6 +1092,10 @@ int fs_chmod(const char *pathname, uint32_t mode)
 	if (!fp)
 		return -ENOENT;
 
+	if (fs_file_readonly(fp)) {
+		fs_put_file(fp);
+		return -EROFS;
+	}
 	if (!fp->f_fop || !fp->f_fop->setattr) {
 		fs_put_file(fp);
 		return 0;
@@ -1070,16 +1119,20 @@ int fs_chmod(const char *pathname, uint32_t mode)
 	return (0 - ret);
 }
 
-int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
+int fs_chown_flags(const char *pathname, uint32_t uid, uint32_t gid, int flags)
 {
 	task_struct *cur = CURRENT_TASK();
-	file *fp = vfs_open(cur->fs->root, pathname, O_PATH);
+	file *fp = vfs_open(cur->fs->root, pathname, O_PATH | flags);
 	struct stat s;
 	int ret;
 
 	if (!fp)
 		return -ENOENT;
 
+	if (fs_file_readonly(fp)) {
+		fs_put_file(fp);
+		return -EROFS;
+	}
 	if (!fp->f_fop || !fp->f_fop->chown) {
 		fs_put_file(fp);
 		return 0;
@@ -1118,6 +1171,11 @@ int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
 	return (0 - ret);
 }
 
+int fs_chown(const char *pathname, uint32_t uid, uint32_t gid)
+{
+	return fs_chown_flags(pathname, uid, gid, 0);
+}
+
 int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 {
 	task_struct *cur = CURRENT_TASK();
@@ -1128,6 +1186,10 @@ int fs_fchown(int fd, uint32_t uid, uint32_t gid)
 
 	if (!fp)
 		return -EBADF;
+	if (fs_file_readonly(fp)) {
+		ret = -EROFS;
+		goto out;
+	}
 	if (!fp->f_fop || !fp->f_fop->chown) {
 		ret = 0;
 		goto out;
@@ -1172,6 +1234,10 @@ int fs_fchmod(int fd, uint32_t mode)
 
 	if (!fp)
 		return -EBADF;
+	if (fs_file_readonly(fp)) {
+		ret = -EROFS;
+		goto out;
+	}
 	if (!fp->f_fop || !fp->f_fop->setattr) {
 		ret = 0;
 		goto out;
@@ -1202,6 +1268,10 @@ int fs_ftruncate(int fd, uint64_t length)
 	int result = -EINVAL;
 	if (!fp)
 		return -EBADF;
+	if (fs_file_readonly(fp)) {
+		result = -EROFS;
+		goto out;
+	}
 	if (fp->f_flag & O_PATH) {
 		result = -EBADF;
 		goto out;

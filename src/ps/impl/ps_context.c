@@ -1,6 +1,8 @@
 /* Each clone flag selects one independently reference-counted resource. */
 #include <ps/ps.h>
 #include <ps/clone.h>
+#include <ps/namespace.h>
+#include <ps/cgroup.h>
 #include <lib/klib.h>
 #include <mm/mm.h>
 #include <mm/mmap.h>
@@ -19,7 +21,7 @@ static void release_fs(ref_count_t *ref)
 	kfree(fs);
 }
 
-static task_fs *alloc_fs(task_fs *old)
+task_fs *ps_copy_fs(task_fs *old)
 {
 	task_fs *fs = zalloc(sizeof(*fs));
 	if (!fs)
@@ -75,6 +77,7 @@ static task_thread *alloc_thread_group(task_thread *old)
 		LOCK_GUARD(&ps_lock);
 		group->group_id = old->group_id;
 		group->session_id = old->session_id;
+		group->oom_score_adj = old->oom_score_adj;
 		memcpy(group->rlimits, old->rlimits, sizeof(group->rlimits));
 	} else {
 		for (unsigned i = 0; i < RLIM_NLIMITS; i++)
@@ -114,6 +117,8 @@ int ps_init_private(task_struct *task)
 	if (!task->sched || !task->wait || !task->life || !task->execution ||
 	    !task->credentials || !task->signal)
 		return -ENOMEM;
+	task->credentials->cap_bounding[0] = 0xffffffffU;
+	task->credentials->cap_bounding[1] = 0x1ffU;
 	task->sched->task = task;
 	task->wait->task = task;
 	task->life->psid = (unsigned)-1;
@@ -153,7 +158,10 @@ int ps_init_resources(task_struct *task)
 {
 	if (ps_init_private(task))
 		return -ENOMEM;
-	task->fs = alloc_fs(NULL);
+	if (ps_namespace_init(task))
+		return -ENOMEM;
+	ps_cgroup_init(task);
+	task->fs = ps_copy_fs(NULL);
 	task->thread = alloc_thread_group(NULL);
 	task->sighand = ps_copy_sighand(NULL);
 	list_init(&task->signal->pending_queue);
@@ -167,6 +175,8 @@ int ps_init_resources(task_struct *task)
 
 void ps_put_resources(task_struct *task)
 {
+	ps_cgroup_put(task);
+	ps_namespace_put(task);
 	if (task->memory) {
 		ref_count_put(task->memory);
 		task->memory = NULL;
@@ -201,7 +211,7 @@ int ps_clone_resources(task_struct *parent, task_struct *child,
 	if (flags & CLONE_FS) {
 		child->fs = ref_count_get(parent->fs);
 	} else
-		child->fs = alloc_fs(parent->fs);
+		child->fs = ps_copy_fs(parent->fs);
 	if (flags & CLONE_THREAD) {
 		child->thread = ref_count_get(parent->thread);
 	} else
@@ -214,6 +224,12 @@ int ps_clone_resources(task_struct *parent, task_struct *child,
 		return -ENOMEM;
 	if (!(flags & CLONE_THREAD))
 		child->thread->tgid = child->life->psid;
+	int cg_ret = ps_cgroup_clone(parent, child);
+	if (cg_ret)
+		return cg_ret;
+	int ns_ret = ps_namespace_clone(parent, child, flags);
+	if (ns_ret)
+		return ns_ret;
 	child->signal->sig_mask = parent->signal->sig_mask;
 	child->signal->altstack = parent->signal->altstack;
 	if ((flags & CLONE_VM) && !(flags & CLONE_VFORK))

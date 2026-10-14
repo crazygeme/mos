@@ -10,6 +10,7 @@
  */
 
 #include <ps/ps.h>
+#include <ps/namespace.h>
 #include <int/int.h>
 #include <fs/vfs.h>
 #include <fs/fs.h>
@@ -179,6 +180,7 @@ void ps_remove_mgr_unsafe(task_struct *task)
 		list_init(&task->sched->thread_list);
 		ps_unlink_child_unsafe(task);
 		control.ps_count--;
+		ps_namespace_unregister_pid(task);
 		ps_id_free(task->life->psid);
 	}
 }

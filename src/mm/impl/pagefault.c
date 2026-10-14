@@ -252,8 +252,9 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 			       ((prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC);
 		pfn_t page = phy / PAGE_SIZE;
 		/* RAM aliases must share the permanent mirror's WB cache type. */
-		if (page < phymm_begin || page >= phymm_end ||
-		    phymm_pages[page].ref_count == PHYMM_RESERVED)
+		if (f->f_inode->i_phys_cache != 1 &&
+		    (page < phymm_begin || page >= phymm_end ||
+		     phymm_pages[page].ref_count == PHYMM_RESERVED))
 			pte |= PAGE_ENTRY_CD;
 
 		if (prot & PROT_WRITE)

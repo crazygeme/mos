@@ -68,7 +68,8 @@ struct gpu_bo {
 	unsigned id, slot, size, pages, stride, width, height, named, dumb;
 	unsigned submission_ctx;
 	paddr_t *backing;
-	unsigned host_created;
+	unsigned host_created, blob_mem, blob_flags;
+	uint64_t host_offset;
 	uint64_t submission;
 };
 struct gpu_handle_entry {
@@ -81,7 +82,7 @@ struct gpu_client {
 	unsigned slot;
 	slot_pool handle_slots;
 	struct rb_root resource_handles;
-	unsigned ctx, rdev, authenticated, busid;
+	unsigned ctx, rdev, authenticated, busid, capset, rings, used;
 	struct gpu_handle_entry *handles[GPU_MAX_HANDLES];
 };
 struct gpu_fb {
@@ -116,9 +117,10 @@ static unsigned gpu_scanout_fb, gpu_scanout_x, gpu_scanout_y;
 static struct drm_mode_modeinfo gpu_scanout_mode;
 static struct drm_mode_modeinfo gpu_modes[GPU_MAX_MODES];
 static unsigned gpu_mode_count;
-static unsigned gpu_response_size;
+static unsigned gpu_response_size, gpu_features;
+static uint64_t gpu_host_base, gpu_host_size, gpu_capsets;
 static rmutex_t gpu_lock;
-static const file_operations gpu_buffer_fops;
+static const file_operations gpu_buffer_fops, gpu_host_buffer_fops;
 
 static struct gpu_bo *gpu_object_find(struct rb_root *root, unsigned id)
 {
@@ -329,7 +331,10 @@ static int gpu_complete(int wait)
 			while (gpu_common->device_status)
 				PAUSE();
 			gpu_ready = gpu_pending = 0;
-			klog("virtio_gpu: command timeout; device reset\n");
+			klog("virtio_gpu: command timeout type=%x ctx=%u flags=%x; device reset\n",
+		     ((struct virtio_gpu_ctrl_hdr *)gpu_dma_input)->type,
+		     ((struct virtio_gpu_ctrl_hdr *)gpu_dma_input)->ctx_id,
+		     ((struct virtio_gpu_ctrl_hdr *)gpu_dma_input)->flags);
 			return -ETIMEDOUT;
 		}
 		if (!wait)
@@ -418,6 +423,11 @@ static int gpu_idle_mode(unsigned ctx, int mode)
 	struct virtio_gpu_cmd_submit req = { 0 };
 	req.hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
 	req.hdr.ctx_id = ctx;
+	struct gpu_client *client = gpu_client_find(&gpu_clients, ctx);
+	if (client && client->capset) {
+		req.hdr.flags |= VIRTIO_GPU_FLAG_INFO_RING_IDX;
+		req.hdr.ring_idx = 0;
+	}
 	return gpu_simple(&req, sizeof(req), mode);
 }
 
@@ -474,9 +484,19 @@ static int gpu_buffer_release(file *fp)
 	struct gpu_bo *bo = fp->f_inode->i_private;
 	struct virtio_gpu_resource_unref req = { 0 };
 	rmutex_lock(&gpu_lock);
+	if (bo->file->f_inode->i_phys_size) {
+		struct virtio_gpu_resource_unmap_blob unmap = { 0 };
+		unmap.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNMAP_BLOB;
+		unmap.resource_id = bo->id;
+		if (gpu_simple(&unmap, sizeof(unmap), 0)) {
+			klog("virtio_gpu: retaining mapped resource %u\n", bo->id);
+			rmutex_unlock(&gpu_lock);
+			return 0;
+		}
+	}
 	req.hdr.type = VIRTIO_GPU_CMD_RESOURCE_UNREF;
 	req.resource_id = bo->id;
-	if (bo->host_created && gpu_simple(&req, sizeof(req), 1)) {
+	if (bo->host_created && gpu_simple(&req, sizeof(req), 0)) {
 		/* Retain DMA backing if host detachment cannot be confirmed. */
 		klog("virtio_gpu: retaining resource %u after unref failure\n",
 		     bo->id);
@@ -509,6 +529,11 @@ static int gpu_buffer_map(file *fp, uint64_t *offset, size_t size,
 	    size > bo->size - *offset || (flags & MAP_TYPE) != MAP_SHARED ||
 	    (prot & PROT_EXEC))
 		return -EINVAL;
+	if (bo->blob_mem == VIRTGPU_BLOB_MEM_HOST3D) {
+		if (!fp->f_inode->i_phys_size)
+			return -EINVAL;
+		*offset += fp->f_inode->i_phys_base;
+	}
 	fs_get_file(fp);
 	*backing = fp;
 	return 0;
@@ -542,6 +567,22 @@ static const file_operations gpu_buffer_fops = {
 	.mmap_file = gpu_buffer_map,
 };
 
+static int gpu_host_buffer_map(file *fp, uint64_t *offset, size_t size,
+			       unsigned prot, unsigned flags, file **backing)
+{
+	if (*offset < fp->f_inode->i_phys_base)
+		return -EINVAL;
+	*offset -= fp->f_inode->i_phys_base;
+	return gpu_buffer_map(fp, offset, size, prot, flags, backing);
+}
+
+static const file_operations gpu_host_buffer_fops = {
+	.release = gpu_buffer_release,
+	.getattr = gpu_buffer_stat,
+	.llseek = gpu_buffer_seek,
+	.mmap_file = gpu_host_buffer_map,
+};
+
 static struct gpu_bo *gpu_handle(struct gpu_client *client, unsigned handle)
 {
 	if (!handle || handle >= GPU_MAX_HANDLES || !client->handles[handle])
@@ -564,6 +605,7 @@ static int gpu_add_handle(struct gpu_client *client, file *fp)
 		slot_return(&client->handle_slots, slot);
 		return -ENOMEM;
 	}
+	client->used = 1;
 	int result = gpu_context_resource(VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE,
 					  client->ctx, bo->id);
 	if (result) {
@@ -609,6 +651,43 @@ static int gpu_create(struct gpu_client *client,
 	if (arg->bo_handle || arg->size > GPU_MAX_BYTES || !arg->width ||
 	    arg->flags & ~VIRTIO_GPU_RESOURCE_FLAG_Y_0_TOP)
 		return -EINVAL;
+	/* Texture allocations require backing for every declared base-level plane. */
+	uint64_t allocation = arg->size;
+	if (arg->target != 0 && arg->height) {
+		unsigned pixel_bytes = 0;
+		switch (arg->format) {
+		case 64: /* VIRGL_FORMAT_R8_UNORM */
+			pixel_bytes = 1;
+			break;
+		case 65: /* VIRGL_FORMAT_R8G8_UNORM */
+			pixel_bytes = 2;
+			break;
+		case 1: case 2: case 3: case 4: case 8: case 67: case 68:
+		case 98: case 99: case 100: case 101: case 102: case 103: case 104:
+		case 121: case 134: /* Four-byte color formats. */
+			pixel_bytes = 4;
+			break;
+		}
+		if (pixel_bytes) {
+			uint64_t pitch = arg->stride ? arg->stride :
+				(((uint64_t)arg->width * pixel_bytes + 255) & ~255ULL);
+			if (pitch > GPU_MAX_BYTES / arg->height)
+				return -EINVAL;
+			uint64_t image_bytes = pitch * arg->height;
+			if (arg->depth > 1) {
+				if (image_bytes > GPU_MAX_BYTES / arg->depth)
+					return -EINVAL;
+				image_bytes *= arg->depth;
+			}
+			if (arg->array_size > 1) {
+				if (image_bytes > GPU_MAX_BYTES / arg->array_size)
+					return -EINVAL;
+				image_bytes *= arg->array_size;
+			}
+			if (allocation < image_bytes)
+				allocation = image_bytes;
+		}
+	}
 	if (!gpu_next_resource)
 		return -ENOSPC;
 	slot = slot_take(&gpu_object_slots, GPU_MAX_OBJECTS);
@@ -631,7 +710,7 @@ static int gpu_create(struct gpu_client *client,
 		slot_return(&gpu_object_slots, slot);
 		return -ENOMEM;
 	}
-	bo->size = (arg->size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	bo->size = (allocation + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
 	if (!bo->size)
 		bo->size = PAGE_SIZE;
 	if (gpu_backing_alloc(bo)) {
@@ -1548,8 +1627,13 @@ static int gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle(
 	if (r->flags || r->fd < 0 || r->fd >= MAX_FD)
 		return -EINVAL;
 	fp = current->files->fds[r->fd];
-	if (!fp || fp->f_fop != &gpu_buffer_fops)
+	if (!fp || (fp->f_fop != &gpu_buffer_fops &&
+		    fp->f_fop != &gpu_host_buffer_fops))
 		return -EINVAL;
+	/* Venus requires exported blob backing for external memory imports. */
+	if (client->capset == 4 &&
+	    !((struct gpu_bo *)fp->f_inode->i_private)->blob_mem)
+		return -EOPNOTSUPP;
 	result = gpu_add_handle(client, fp);
 	if (result < 0)
 		return result;
@@ -1566,6 +1650,14 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_getparam(
 	if (r->param == VIRTGPU_PARAM_3D_FEATURES ||
 	    r->param == VIRTGPU_PARAM_CAPSET_QUERY_FIX)
 		value = 1;
+	if (r->param == VIRTGPU_PARAM_RESOURCE_BLOB)
+		value = !!(gpu_features & (1U << VIRTIO_GPU_F_RESOURCE_BLOB));
+	if (r->param == VIRTGPU_PARAM_CONTEXT_INIT)
+		value = !!(gpu_features & (1U << VIRTIO_GPU_F_CONTEXT_INIT));
+	if (r->param == VIRTGPU_PARAM_HOST_VISIBLE)
+		value = gpu_host_size != 0;
+	if (r->param == VIRTGPU_PARAM_SUPPORTED_CAPSET_IDs)
+		value = gpu_capsets;
 	return gpu_out(r->value, &value, sizeof(value));
 }
 
@@ -1589,7 +1681,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_info(
 		return -ENOENT;
 	r->res_handle = bo->id;
 	r->size = bo->size;
-	r->blob_mem = 0;
+	r->blob_mem = bo->blob_mem;
 	return 0;
 }
 
@@ -1616,8 +1708,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_get_caps(
 	void *response;
 	unsigned size;
 	int result;
-	if ((r->cap_set_id != VIRTIO_GPU_CAPSET_VIRGL &&
-	     r->cap_set_id != VIRTIO_GPU_CAPSET_VIRGL2) ||
+	if (r->cap_set_id >= 64 || !(gpu_capsets & (1ULL << r->cap_set_id)) ||
 	    !r->size || r->size > 65536 || !gpu_user_range(r->addr, r->size, 1))
 		return -EINVAL;
 	req.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET;
@@ -1637,6 +1728,280 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_get_caps(
 	return result;
 }
 
+/* Fence descriptors are published only after the selected host ring completes. */
+static unsigned gpu_fence_poll(file *fp, unsigned events, poll_table *pt)
+{
+	(void)fp;
+	(void)pt;
+	return events & FS_POLL_READ;
+}
+static int gpu_fence_stat(file *fp, struct stat *st)
+{
+	memset(st, 0, sizeof(*st));
+	st->st_mode = fp->f_inode->i_mode;
+	st->st_nlink = 1;
+	return 0;
+}
+static int gpu_fence_release(file *fp)
+{
+	free(fp->f_inode);
+	free(fp);
+	return 0;
+}
+static const file_operations gpu_fence_fops = {
+	.getattr = gpu_fence_stat,
+	.poll = gpu_fence_poll,
+	.release = gpu_fence_release,
+};
+static int gpu_signaled_fence(void)
+{
+	file *fp = zalloc(sizeof(*fp));
+	int fd;
+	if (!fp)
+		return -ENOMEM;
+	fp->f_inode = zalloc(sizeof(*fp->f_inode));
+	if (!fp->f_inode) {
+		free(fp);
+		return -ENOMEM;
+	}
+	fp->f_inode->i_mode = S_IFREG | 0600;
+	fp->f_fop = &gpu_fence_fops;
+	fp->f_count = 1;
+	fp->f_mode = O_RDONLY;
+	fd = fs_install_fd_unsafe(fp, O_CLOEXEC);
+	if (fd < 0)
+		fs_put_file(fp);
+	return fd;
+}
+
+static int gpu_context_init(void *context, unsigned cmd, void *arg)
+{
+	struct gpu_client *client = context;
+	struct drm_virtgpu_context_init *r = arg;
+	struct drm_virtgpu_context_set_param params[4];
+	struct virtio_gpu_ctx_destroy destroy = { 0 };
+	struct virtio_gpu_ctx_create create = { 0 };
+	unsigned i, seen = 0, capset = 0, rings = 1;
+	int result;
+	(void)cmd;
+	if (!(gpu_features & (1U << VIRTIO_GPU_F_CONTEXT_INIT)))
+		return -EOPNOTSUPP;
+	if (client->used)
+		return -EEXIST;
+	if (client->capset)
+		return -EBUSY;
+	if (r->pad || !r->num_params || r->num_params > 4 ||
+	    !gpu_user_range(r->ctx_set_params, r->num_params * sizeof(params[0]), 0))
+		return -EINVAL;
+	memcpy(params, (void *)(uintptr_t)r->ctx_set_params,
+	       r->num_params * sizeof(params[0]));
+	for (i = 0; i < r->num_params; i++) {
+		if (!params[i].param || params[i].param > 3 ||
+		    (seen & (1U << params[i].param)))
+			return -EINVAL;
+		seen |= 1U << params[i].param;
+		switch (params[i].param) {
+		case VIRTGPU_CONTEXT_PARAM_CAPSET_ID:
+			if (!params[i].value || params[i].value >= 64 ||
+			    !(gpu_capsets & (1ULL << params[i].value)))
+				return -EINVAL;
+			capset = params[i].value;
+			break;
+		case VIRTGPU_CONTEXT_PARAM_NUM_RINGS:
+			if (!params[i].value || params[i].value > 64)
+				return -EINVAL;
+			rings = params[i].value;
+			break;
+		case VIRTGPU_CONTEXT_PARAM_POLL_RINGS_MASK:
+			if (params[i].value)
+				return -EOPNOTSUPP;
+			break;
+		}
+	}
+	if (!capset)
+		return -EINVAL;
+	destroy.hdr.type = VIRTIO_GPU_CMD_CTX_DESTROY;
+	destroy.hdr.ctx_id = client->ctx;
+	result = gpu_simple(&destroy, sizeof(destroy), 0);
+	if (result)
+		return result;
+	create.hdr.type = VIRTIO_GPU_CMD_CTX_CREATE;
+	create.hdr.ctx_id = client->ctx;
+	create.context_init = capset;
+	create.nlen = 3;
+	memcpy(create.debug_name, "MOS", 3);
+	result = gpu_simple(&create, sizeof(create), 0);
+	if (!result) {
+		client->capset = capset;
+		client->rings = rings;
+	}
+	return result;
+}
+
+/* Allocate a non-overlapping interval in the host-visible PCI aperture. */
+static int gpu_host_interval(unsigned size, uint64_t *offset)
+{
+	uint64_t pos = 0;
+	struct rb_node *node;
+	for (;;) {
+		unsigned overlap = 0;
+		if (pos > gpu_host_size || size > gpu_host_size - pos)
+			return -ENOSPC;
+		for (node = rb_first(&gpu_objects); node; node = rb_next(node)) {
+			struct gpu_bo *other = rb_entry(node, struct gpu_bo, id_node);
+			if (!other->file->f_inode->i_phys_size)
+				continue;
+			if (pos < other->host_offset + other->size &&
+			    pos + size > other->host_offset) {
+				pos = other->host_offset + other->size;
+				overlap = 1;
+				break;
+			}
+		}
+		if (!overlap) {
+			*offset = pos;
+			return 0;
+		}
+	}
+}
+
+static int gpu_create_blob(void *context, unsigned cmd, void *arg)
+{
+	struct gpu_client *client = context;
+	struct drm_virtgpu_resource_create_blob *r = arg;
+	struct virtio_gpu_resource_create_blob *req;
+	struct virtio_gpu_mem_entry *entries;
+	struct gpu_bo *bo;
+	file *fp;
+	unsigned bytes, i;
+	int slot, result;
+	(void)cmd;
+	if (!(gpu_features & (1U << VIRTIO_GPU_F_RESOURCE_BLOB)))
+		return -EOPNOTSUPP;
+	if (r->bo_handle || r->pad || !r->size || r->size > GPU_MAX_BYTES ||
+	    (r->cmd_size & 3) || r->cmd_size > GPU_MAX_COMMAND - sizeof(struct virtio_gpu_cmd_submit) ||
+	    (!r->cmd_size && r->cmd) || !gpu_user_range(r->cmd, r->cmd_size, 0) ||
+	    (r->blob_mem != VIRTGPU_BLOB_MEM_GUEST &&
+	     r->blob_mem != VIRTGPU_BLOB_MEM_HOST3D &&
+	     r->blob_mem != VIRTGPU_BLOB_MEM_HOST3D_GUEST) ||
+	    (r->blob_flags & ~(VIRTGPU_BLOB_FLAG_USE_MAPPABLE |
+			      VIRTGPU_BLOB_FLAG_USE_SHAREABLE)) ||
+	    (r->blob_mem == VIRTGPU_BLOB_MEM_GUEST && r->blob_id) ||
+	    (r->blob_mem == VIRTGPU_BLOB_MEM_HOST3D && !client->capset && !r->cmd_size))
+		return -EINVAL;
+	if (r->cmd_size) {
+		unsigned bytes = sizeof(struct virtio_gpu_cmd_submit) + r->cmd_size;
+		struct virtio_gpu_cmd_submit *submit = gpu_pages(bytes);
+		if (!submit)
+			return -ENOMEM;
+		submit->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
+		submit->hdr.ctx_id = client->ctx;
+		submit->size = r->cmd_size;
+		memcpy(submit + 1, (void *)(uintptr_t)r->cmd, r->cmd_size);
+		client->used = 1;
+		result = gpu_simple(submit, bytes, 0);
+		gpu_free_pages(submit, bytes);
+		if (result)
+			return result;
+	}
+	if (!gpu_next_resource)
+		return -ENOSPC;
+	slot = slot_take(&gpu_object_slots, GPU_MAX_OBJECTS);
+	if (slot < 0)
+		return -ENOSPC;
+	bo = zalloc(sizeof(*bo));
+	fp = zalloc(sizeof(*fp));
+	if (!bo || !fp) {
+		free(bo);
+		free(fp);
+		slot_return(&gpu_object_slots, slot);
+		return -ENOMEM;
+	}
+	fp->f_inode = zalloc(sizeof(*fp->f_inode));
+	if (!fp->f_inode) {
+		free(bo);
+		free(fp);
+		slot_return(&gpu_object_slots, slot);
+		return -ENOMEM;
+	}
+	bo->id = gpu_next_resource++;
+	bo->slot = slot;
+	bo->size = (r->size + PAGE_SIZE - 1) & PAGE_SIZE_MASK;
+	bo->file = fp;
+	bo->blob_mem = r->blob_mem;
+	bo->blob_flags = r->blob_flags;
+	fp->f_inode->i_private = bo;
+	fp->f_inode->i_mode = S_IFREG | 0600;
+	fp->f_inode->i_size = bo->size;
+	fp->f_count = 1;
+	fp->f_mode = O_RDWR;
+	fp->f_fop = r->blob_mem == VIRTGPU_BLOB_MEM_HOST3D ?
+		&gpu_host_buffer_fops : &gpu_buffer_fops;
+	gpu_object_insert(&gpu_objects, bo);
+	if (r->blob_mem != VIRTGPU_BLOB_MEM_HOST3D) {
+		result = gpu_backing_alloc(bo);
+		if (result)
+			goto fail;
+	}
+	bytes = sizeof(*req) + bo->pages * sizeof(*entries);
+	if (bytes > GPU_MAX_COMMAND) {
+		result = -E2BIG;
+		goto fail;
+	}
+	req = gpu_pages(bytes);
+	if (!req) {
+		result = -ENOMEM;
+		goto fail;
+	}
+	req->hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB;
+	req->hdr.ctx_id = client->ctx;
+	req->resource_id = bo->id;
+	req->blob_mem = r->blob_mem;
+	req->blob_flags = r->blob_flags;
+	req->blob_id = r->blob_id;
+	req->size = r->size;
+	req->nr_entries = bo->pages;
+	entries = (void *)(req + 1);
+	for (i = 0; i < bo->pages; i++) {
+		entries[i].addr = bo->backing[i];
+		entries[i].length = PAGE_SIZE;
+	}
+	result = gpu_simple(req, bytes, 0);
+	gpu_free_pages(req, bytes);
+	if (result)
+		goto fail;
+	bo->host_created = 1;
+	if (r->blob_mem == VIRTGPU_BLOB_MEM_HOST3D &&
+	    (r->blob_flags & VIRTGPU_BLOB_FLAG_USE_MAPPABLE)) {
+		struct virtio_gpu_resource_map_blob map = { 0 };
+		struct virtio_gpu_resp_map_info response = { 0 };
+		result = gpu_host_interval(bo->size, &bo->host_offset);
+		if (result)
+			goto fail;
+		map.hdr.type = VIRTIO_GPU_CMD_RESOURCE_MAP_BLOB;
+		map.resource_id = bo->id;
+		map.offset = bo->host_offset;
+		result = gpu_command(&map, sizeof(map), &response, sizeof(response), 0);
+		if (result)
+			goto fail;
+		fp->f_inode->i_phys_base = gpu_host_base + bo->host_offset;
+		fp->f_inode->i_phys_size = bo->size;
+		fp->f_inode->i_phys_user = 1;
+		/* The host aperture is mapped with the host-reported cache policy. */
+		fp->f_inode->i_phys_cache = response.map_info & VIRTIO_GPU_MAP_CACHE_MASK;
+	}
+	result = gpu_add_handle(client, fp);
+	if (result < 0)
+		goto fail;
+	r->bo_handle = result;
+	r->res_handle = bo->id;
+	fs_put_file(fp);
+	return 0;
+fail:
+	fs_put_file(fp);
+	return result;
+}
+
 static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
@@ -1649,7 +2014,9 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
 	uint32_t *handles;
 	unsigned size;
 	int result;
-	if (r->flags || r->num_in_syncobjs || r->num_out_syncobjs ||
+	if ((r->flags & ~(VIRTGPU_EXECBUF_RING_IDX | VIRTGPU_EXECBUF_FENCE_FD_OUT)) ||
+	    ((r->flags & VIRTGPU_EXECBUF_RING_IDX) && r->ring_idx >= client->rings) ||
+	    r->num_in_syncobjs || r->num_out_syncobjs ||
 	    (r->size & 3) || r->size > GPU_MAX_COMMAND - sizeof(*req) ||
 	    r->num_bo_handles >= GPU_MAX_HANDLES ||
 	    !gpu_user_range(r->command, r->size, 0) ||
@@ -1675,6 +2042,11 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
 	}
 	req->hdr.type = VIRTIO_GPU_CMD_SUBMIT_3D;
 	req->hdr.ctx_id = client->ctx;
+	client->used = 1;
+	if (r->flags & VIRTGPU_EXECBUF_RING_IDX) {
+		req->hdr.flags |= VIRTIO_GPU_FLAG_INFO_RING_IDX;
+		req->hdr.ring_idx = r->ring_idx;
+	}
 	req->size = r->size;
 	memcpy(req + 1, (void *)(uintptr_t)r->command, r->size);
 	/* Shared resources must complete their producer's work before another
@@ -1697,7 +2069,15 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
 			bo->submission = gpu_submission;
 			bo->submission_ctx = client->ctx;
 		}
-		result = gpu_simple(req, size, 0);
+		result = gpu_simple(req, size,
+			(r->flags & VIRTGPU_EXECBUF_FENCE_FD_OUT) ? 1 : 0);
+		if (!result && (r->flags & VIRTGPU_EXECBUF_FENCE_FD_OUT)) {
+			int fd = gpu_signaled_fence();
+			if (fd < 0)
+				result = fd;
+			else
+				r->fence_fd = fd;
+		}
 	}
 	gpu_free_pages(req, size);
 	free(handles);
@@ -1750,6 +2130,8 @@ gpu_ioctl_locked_drm_ioctl_virtgpu_wait(void *context __attribute__((unused)),
 }
 
 static const command_operation gpu_authenticated_commands[256] = {
+	[DRM_IOCTL_VIRTGPU_CONTEXT_INIT & 255] = { DRM_IOCTL_VIRTGPU_CONTEXT_INIT, gpu_context_init },
+	[DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB & 255] = { DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, gpu_create_blob },
 	[DRM_IOCTL_GEM_CLOSE & 255] = { DRM_IOCTL_GEM_CLOSE,
 					gpu_ioctl_locked_drm_ioctl_gem_close },
 	[DRM_IOCTL_GEM_FLINK & 255] = { DRM_IOCTL_GEM_FLINK,
@@ -1892,7 +2274,7 @@ static int gpu_release(file *fp)
 	}
 	req.hdr.type = VIRTIO_GPU_CMD_CTX_DESTROY;
 	req.hdr.ctx_id = client->ctx;
-	gpu_simple(&req, sizeof(req), 1);
+	gpu_simple(&req, sizeof(req), 0);
 	rb_erase(&client->ctx_node, &gpu_clients);
 	slot_return(&gpu_client_slots, client->slot);
 	free(client);
@@ -1933,6 +2315,7 @@ file *gpu_open(super_block *sb, unsigned rdev, int flags)
 	client->ctx = (flags & O_PATH) ? 0 : gpu_next_context++;
 	client->slot = slot;
 	client->rdev = rdev;
+	client->rings = 1;
 	client->authenticated = MINOR(rdev) == GPU_RENDER_MINOR ||
 				current->credentials->euid == 0;
 	fp->f_inode->i_mode = S_IFCHR | 0666;
@@ -2027,6 +2410,18 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 			bar = pci_read_field(gpu_pci, cap + 4, 1);
 			offset = pci_read_field(gpu_pci, cap + 8, 4);
 			length = pci_read_field(gpu_pci, cap + 12, 4);
+			if (type == 8 && pci_read_field(gpu_pci, cap + 2, 1) >= 24 &&
+			    pci_read_field(gpu_pci, cap + 5, 1) == 1 && bar < 6) {
+				uint64_t off = offset | ((uint64_t)pci_read_field(gpu_pci, cap + 16, 4) << 32);
+				uint64_t len = length | ((uint64_t)pci_read_field(gpu_pci, cap + 20, 4) << 32);
+				if (!(resources[bar].flags & 1) && off <= resources[bar].size &&
+				    len <= resources[bar].size - off && len &&
+				    resources[bar].start + off < PHYMM_ADDRESS_LIMIT &&
+				    len <= PHYMM_ADDRESS_LIMIT - resources[bar].start - off) {
+					gpu_host_base = resources[bar].start + off;
+					gpu_host_size = len;
+				}
+			}
 			if (type == 1 && length >= sizeof(*gpu_common))
 				gpu_common = gpu_pci_map(resources, bar, offset,
 							 sizeof(*gpu_common));
@@ -2061,7 +2456,9 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 	    !(high_features & 1))
 		goto fail;
 	gpu_common->driver_feature_select = 0;
-	gpu_common->driver_feature = 1U << VIRTIO_GPU_F_VIRGL;
+	gpu_features = low_features & ((1U << VIRTIO_GPU_F_VIRGL) |
+		(1U << VIRTIO_GPU_F_RESOURCE_BLOB) | (1U << VIRTIO_GPU_F_CONTEXT_INIT));
+	gpu_common->driver_feature = gpu_features;
 	gpu_common->driver_feature_select = 1;
 	gpu_common->driver_feature = 1;
 	gpu_common->device_status = 1 | 2 | 8;
@@ -2109,6 +2506,20 @@ static int gpu_probe(unsigned pci, uint16_t vendor, uint16_t device,
 	gpu_common->queue_enable = 1;
 	gpu_common->device_status = 1 | 2 | 8 | 4;
 	gpu_ready = 1;
+	gpu_capsets = 0;
+	if (gpu_config) {
+		unsigned i;
+		for (i = 0; i < gpu_config->num_capsets && i < 64; i++) {
+			struct virtio_gpu_get_capset_info req = { 0 };
+			struct virtio_gpu_resp_capset_info resp = { 0 };
+			req.hdr.type = VIRTIO_GPU_CMD_GET_CAPSET_INFO;
+			req.capset_index = i;
+			if (!gpu_command(&req, sizeof(req), &resp, sizeof(resp), 0) &&
+			    resp.capset_id < 64)
+				gpu_capsets |= 1ULL << resp.capset_id;
+		}
+	}
+
 	if (gpu_probe_modes()) {
 		if (!gpu_ready)
 			goto fail;

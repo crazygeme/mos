@@ -893,7 +893,8 @@ intptr_t do_mmap(vaddr_t _addr, size_t _len, unsigned int prot,
 	}
 
 	if (node && node->f_inode->i_phys_size) {
-		if (!cur->memory || cur->credentials->euid != 0 ||
+		if (!cur->memory ||
+		    (!node->f_inode->i_phys_user && cur->credentials->euid != 0) ||
 		    (node->f_flag & O_PATH))
 			return -EACCES;
 		uint64_t end = (uint64_t)offset + _len;

@@ -155,8 +155,10 @@ struct _inode {
 	uint32_t i_mode;
 	uint64_t i_ino;
 	uint64_t i_size;
-	uint32_t i_phys_base;
+	uint64_t i_phys_base;
 	uint64_t i_phys_size; /* MMIO window; zero for ordinary files */
+	unsigned i_phys_user; /* Permit bounded mappings of allocated device resources. */
+	unsigned i_phys_cache; /* VirtIO cache policy; zero selects uncached MMIO. */
 	void *i_private;
 	void *i_pgcache_tag; /* stable address_space-style identity for page cache */
 

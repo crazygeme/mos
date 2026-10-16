@@ -14,16 +14,30 @@
 #define UAC_PACKET_BYTES 192
 #define UAC_FORMAT_S16_LE 0x10
 #define UAC_BYTES (USB_ISO_PACKETS * UAC_PACKET_BYTES)
+struct usb_audio;
+struct audio_stream;
+struct audio_transfer {
+	unsigned char buffer[UAC_BYTES];
+	struct usb_iso_packet packets[USB_ISO_PACKETS];
+	cond_t completion;
+	struct audio_stream *stream;
+	unsigned bytes, count, pending, done;
+	int result;
+};
 struct usb_audio {
 	ref_count_t references;
 	struct usb_interface *interface;
 	struct usb_endpoint *out;
 	mutex_t lock;
-	cond_t completion;
-	unsigned char buffer[UAC_BYTES];
-	struct usb_iso_packet packets[USB_ISO_PACKETS];
-	unsigned volume, bytes, blocks, ready;
-	int result;
+	struct audio_transfer transfers[2];
+	unsigned volume, ready, next;
+};
+struct audio_stream {
+	struct usb_audio *audio;
+	uint64_t bytes, reported_fragments;
+	unsigned fragment_bytes, fragments, queued, partial_bytes;
+	unsigned char partial[UAC_PACKET_BYTES];
+	int error;
 };
 static struct usb_audio *output;
 static spinlock_t output_lock = SPINLOCK_INITIALIZER;
@@ -35,61 +49,132 @@ static void audio_release(ref_count_t *ref)
 }
 static void audio_complete(void *context, int result)
 {
-	struct usb_audio *audio = context;
-	audio->result = result;
-	cond_notify(&audio->completion);
+	struct audio_transfer *transfer = context;
+	transfer->result = result;
+	__atomic_store_n(&transfer->done, 1, __ATOMIC_RELEASE);
+	cond_notify(&transfer->completion);
+}
+/* The device lock serializes queue accounting; callbacks only publish completion. */
+static void audio_reap(struct usb_audio *audio)
+{
+	for (unsigned bank = 0; bank < 2; bank++) {
+		struct audio_transfer *t = &audio->transfers[bank];
+		if (!t->pending || !__atomic_load_n(&t->done, __ATOMIC_ACQUIRE))
+			continue;
+		int ret = t->result;
+		for (unsigned i = 0; i < t->count && !ret; i++)
+			ret = t->packets[i].status;
+		if (ret < 0)
+			t->stream->error = ret;
+		else
+			t->stream->bytes += t->bytes;
+		t->stream->queued -= t->bytes;
+		t->pending = 0;
+		t->stream = NULL;
+	}
+}
+static void audio_wait(struct usb_audio *audio, struct audio_transfer *t)
+{
+	while (t->pending && !__atomic_load_n(&t->done, __ATOMIC_ACQUIRE))
+		cond_wait(&t->completion, 0);
+	audio_reap(audio);
+}
+static int audio_submit(struct audio_stream *stream, struct audio_transfer *t,
+			unsigned bytes, unsigned valid)
+{
+	struct usb_audio *audio = stream->audio;
+	unsigned left = audio->volume & 255, right = (audio->volume >> 8) & 255;
+	int16_t *samples = (void *)t->buffer;
+	for (unsigned i = 0; i < bytes / 2; i++)
+		samples[i] = samples[i] * (int)(i & 1 ? right : left) / 100;
+	t->count = bytes / UAC_PACKET_BYTES;
+	for (unsigned i = 0; i < t->count; i++) {
+		t->packets[i].offset = i * UAC_PACKET_BYTES;
+		t->packets[i].length = UAC_PACKET_BYTES;
+	}
+	cond_reset(&t->completion);
+	__atomic_store_n(&t->done, 0, __ATOMIC_RELEASE);
+	t->stream = stream;
+	t->bytes = valid;
+	int ret = usb_iso_submit(audio->interface->usb, audio->out, t->buffer,
+				 t->packets, t->count, audio_complete, t);
+	if (ret < 0) {
+		t->stream = NULL;
+		return ret;
+	}
+	t->pending = 1;
+	audio->next ^= 1;
+	return 0;
+}
+static int audio_drain(struct audio_stream *stream)
+{
+	struct usb_audio *audio = stream->audio;
+	if (stream->partial_bytes && audio->ready && audio->interface->usb->online) {
+		struct audio_transfer *t = &audio->transfers[audio->next];
+		audio_wait(audio, t);
+		memcpy(t->buffer, stream->partial, stream->partial_bytes);
+		memset(t->buffer + stream->partial_bytes, 0,
+		       UAC_PACKET_BYTES - stream->partial_bytes);
+		int ret = audio_submit(stream, t, UAC_PACKET_BYTES,
+				       stream->partial_bytes);
+		if (ret < 0) {
+			stream->error = ret;
+			stream->queued -= stream->partial_bytes;
+		}
+		stream->partial_bytes = 0;
+	}
+	for (unsigned bank = 0; bank < 2; bank++) {
+		struct audio_transfer *t = &audio->transfers[bank];
+		if (t->pending && t->stream == stream)
+			audio_wait(audio, t);
+	}
+	return stream->error;
 }
 static ssize_t audio_write(file *fp, const void *buffer, size_t length,
 			   loff_t *position)
 {
 	(void)position;
-	struct usb_audio *audio = fp->f_inode->i_private;
+	struct audio_stream *stream = fp->f_inode->i_private;
+	struct usb_audio *audio = stream->audio;
 	if (!length)
 		return 0;
 	if (!buffer || length % UAC_FRAME_BYTES)
 		return -EINVAL;
 	mutex_lock(&audio->lock);
-	unsigned done = 0;
+	size_t done = 0;
 	int ret = 0;
 	while (done < length && audio->ready && audio->interface->usb->online) {
-		unsigned bytes = length - done;
-		if (bytes > UAC_BYTES)
-			bytes = UAC_BYTES;
-		memcpy(audio->buffer, (const char *)buffer + done, bytes);
-		unsigned left = audio->volume & 255,
-			 right = (audio->volume >> 8) & 255;
-		int16_t *samples = (void *)audio->buffer;
-		for (unsigned i = 0; i < bytes / 2; i++)
-			samples[i] =
-				samples[i] * (int)(i & 1 ? right : left) / 100;
-		unsigned count =
-			(bytes + UAC_PACKET_BYTES - 1) / UAC_PACKET_BYTES;
-		for (unsigned i = 0; i < count; i++) {
-			unsigned size = bytes - i * UAC_PACKET_BYTES;
-			audio->packets[i].offset = i * UAC_PACKET_BYTES;
-			audio->packets[i].length = size > UAC_PACKET_BYTES ?
-							   UAC_PACKET_BYTES :
-							   size;
+		audio_reap(audio);
+		if (stream->error) {
+			ret = stream->error;
+			break;
 		}
-		cond_reset(&audio->completion);
-		ret = usb_iso_submit(audio->interface->usb, audio->out,
-				     audio->buffer, audio->packets, count,
-				     audio_complete, audio);
-		if (ret < 0)
-			break;
-		int interrupted = cond_wait(&audio->completion, 1) < 0;
-		if (interrupted)
-			cond_wait(&audio->completion, 0);
-		ret = audio->result;
-		for (unsigned i = 0; i < count && !ret; i++)
-			ret = audio->packets[i].status;
-		if (interrupted)
-			ret = -EINTR;
-		if (ret < 0)
-			break;
+		struct audio_transfer *t = &audio->transfers[audio->next];
+		unsigned capacity = stream->fragment_bytes * stream->fragments;
+		if (t->pending || stream->queued >= capacity) {
+			if (!t->pending)
+				t = &audio->transfers[audio->next ^ 1];
+			audio_wait(audio, t);
+			continue;
+		}
+		unsigned bytes = length - done > UAC_BYTES - stream->partial_bytes ?
+				 UAC_BYTES - stream->partial_bytes : length - done;
+		if (bytes > capacity - stream->queued)
+			bytes = capacity - stream->queued;
+		unsigned partial = stream->partial_bytes;
+		memcpy(t->buffer, stream->partial, partial);
+		memcpy(t->buffer + partial, (const char *)buffer + done, bytes);
+		unsigned total = partial + bytes;
+		unsigned payload = total / UAC_PACKET_BYTES * UAC_PACKET_BYTES;
+		if (payload) {
+			ret = audio_submit(stream, t, payload, payload);
+			if (ret < 0)
+				break;
+		}
+		stream->partial_bytes = total - payload;
+		memcpy(stream->partial, t->buffer + payload, stream->partial_bytes);
+		stream->queued += bytes;
 		done += bytes;
-		audio->bytes += bytes;
-		audio->blocks++;
 	}
 	if (!audio->ready || !audio->interface->usb->online)
 		ret = -ENODEV;
@@ -99,14 +184,16 @@ static ssize_t audio_write(file *fp, const void *buffer, size_t length,
 static unsigned audio_poll(file *fp, unsigned events, poll_table *table)
 {
 	(void)table;
-	struct usb_audio *audio = fp->f_inode->i_private;
+	struct audio_stream *stream = fp->f_inode->i_private;
+	struct usb_audio *audio = stream->audio;
 	return events &
 	       (audio->ready && audio->interface->usb->online ? FS_POLL_WRITE :
 								FS_POLL_ERR);
 }
 static int audio_ioctl(file *fp, unsigned command, void *buffer)
 {
-	struct usb_audio *audio = fp->f_inode->i_private;
+	struct audio_stream *stream = fp->f_inode->i_private;
+	struct usb_audio *audio = stream->audio;
 	if (!audio->ready || !audio->interface->usb->online)
 		return -ENODEV;
 	unsigned group = (command >> 8) & 255, nr = command & 255;
@@ -155,11 +242,19 @@ static int audio_ioctl(file *fp, unsigned command, void *buffer)
 		return -ENOTTY;
 	if (nr == 0) {
 		mutex_lock(&audio->lock);
-		audio->bytes = audio->blocks = 0;
+		audio_drain(stream);
+		stream->bytes = stream->reported_fragments = 0;
+		stream->error = 0;
 		mutex_unlock(&audio->lock);
 		return 0;
 	}
-	if (nr == 1 || nr == 8 || nr == 10 || nr == 14 || nr == 16)
+	if (nr == 1 || nr == 8) {
+		mutex_lock(&audio->lock);
+		int ret = audio_drain(stream);
+		mutex_unlock(&audio->lock);
+		return ret;
+	}
+	if (nr == 14)
 		return 0;
 	if (!buffer)
 		return -EFAULT;
@@ -171,7 +266,7 @@ static int audio_ioctl(file *fp, unsigned command, void *buffer)
 		*(int *)buffer = 1;
 		return 0;
 	case 4:
-		*(int *)buffer = 4096;
+		*(int *)buffer = stream->fragment_bytes;
 		return 0;
 	case 5:
 		*(int *)buffer = UAC_FORMAT_S16_LE;
@@ -179,33 +274,67 @@ static int audio_ioctl(file *fp, unsigned command, void *buffer)
 	case 6:
 		*(int *)buffer = 2;
 		return 0;
-	case 9:
-		return 0; /* Fragment size is fixed at 4096 bytes. */
+	case 10: {
+		unsigned config = *(unsigned *)buffer;
+		unsigned shift = config & 0xffff, fragments = config >> 16;
+		if (shift < 8)
+			shift = 8;
+		if (shift > 16)
+			shift = 16;
+		if (fragments < 2)
+			fragments = 2;
+		if (fragments > 1024)
+			fragments = 1024;
+		mutex_lock(&audio->lock);
+		audio_drain(stream);
+		stream->fragment_bytes = 1u << shift;
+		stream->fragments = fragments;
+		stream->bytes = stream->reported_fragments = 0;
+		stream->error = 0;
+		mutex_unlock(&audio->lock);
+		*(unsigned *)buffer = shift | (fragments << 16);
+		return 0;
+	}
 	case 11:
 		*(int *)buffer = UAC_FORMAT_S16_LE;
 		return 0;
 	case 12: {
 		int *info = buffer;
-		info[0] = info[1] = 32;
-		info[2] = 4096;
-		info[3] = 32 * 4096;
+		mutex_lock(&audio->lock);
+		audio_reap(audio);
+		unsigned available = stream->fragments * stream->fragment_bytes -
+				     stream->queued;
+		info[0] = available / stream->fragment_bytes;
+		info[1] = stream->fragments;
+		info[2] = stream->fragment_bytes;
+		info[3] = available;
+		mutex_unlock(&audio->lock);
 		return 0;
 	}
 	case 15:
 		*(int *)buffer = 0x1000;
 		return 0;
-	case 17: {
+	case 18: {
 		unsigned *info = buffer;
-		info[0] = audio->bytes;
-		info[1] = audio->blocks;
-		info[2] = 0;
+		mutex_lock(&audio->lock);
+		audio_reap(audio);
+		uint64_t fragments = stream->bytes / stream->fragment_bytes;
+		info[0] = stream->bytes;
+		info[1] = fragments - stream->reported_fragments;
+		info[2] = stream->bytes %
+			  (stream->fragments * stream->fragment_bytes);
+		stream->reported_fragments = fragments;
+		mutex_unlock(&audio->lock);
 		return 0;
 	}
-	case 18:
+	case 16:
 		*(int *)buffer = 2;
 		return 0;
 	case 23:
-		*(int *)buffer = 0;
+		mutex_lock(&audio->lock);
+		audio_reap(audio);
+		*(int *)buffer = stream->queued;
+		mutex_unlock(&audio->lock);
 		return 0;
 	default:
 		return -ENOTTY;
@@ -223,10 +352,15 @@ static int audio_getattr(file *fp, struct stat *stat)
 }
 static int audio_close(file *fp)
 {
-	ref_count_put(fp->f_inode->i_private);
+	struct audio_stream *stream = fp->f_inode->i_private;
+	mutex_lock(&stream->audio->lock);
+	int ret = audio_drain(stream);
+	mutex_unlock(&stream->audio->lock);
+	ref_count_put(stream->audio);
+	free(stream);
 	free(fp->f_inode);
 	free(fp);
-	return 0;
+	return ret;
 }
 static const file_operations audio_operations = {
 	.write = audio_write,
@@ -251,14 +385,19 @@ static file *audio_open(super_block *sb, unsigned rdev, int flags)
 		return NULL;
 	file *fp = zalloc(sizeof(*fp));
 	inode *node = zalloc(sizeof(*node));
-	if (!fp || !node) {
+	struct audio_stream *stream = zalloc(sizeof(*stream));
+	if (!fp || !node || !stream) {
 		free(fp);
 		free(node);
+		free(stream);
 		ref_count_put(audio);
 		return NULL;
 	}
 	node->i_mode = S_IFCHR | 0666;
-	node->i_private = audio;
+	stream->audio = audio;
+	stream->fragment_bytes = 4096;
+	stream->fragments = 32;
+	node->i_private = stream;
 	fp->f_inode = node;
 	fp->f_count = 1;
 	fp->f_mode = flags & O_ACCMODE;
@@ -329,7 +468,8 @@ static int audio_probe(struct usb_interface *interface)
 	audio->interface = interface;
 	ref_count_get(interface->usb);
 	mutex_init(&audio->lock);
-	cond_init(&audio->completion, 1);
+	for (unsigned bank = 0; bank < 2; bank++)
+		cond_init(&audio->transfers[bank].completion, 1);
 	audio->out = ep;
 	audio->volume = 100 | (100 << 8);
 	int ret = usb_set_interface(interface, selected->number);

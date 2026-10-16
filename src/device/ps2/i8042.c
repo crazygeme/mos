@@ -35,6 +35,8 @@ static device_t ports[2] = {
 };
 static volatile unsigned command_busy[2];
 static spinlock_t command_lock = SPINLOCK_INITIALIZER;
+/* Serialize status/data reads and delivery across IRQ and command CPUs. */
+static spinlock_t input_lock = SPINLOCK_INITIALIZER;
 static int command_irq[2];
 static unsigned scanned, ports_ready;
 
@@ -116,19 +118,20 @@ int ps2_read_reply(unsigned port, unsigned char *data, int spins)
 		return -EINVAL;
 
 	for (i = 0; i < spins; i++) {
-		unsigned irq = int_intr_disable();
+		int irq;
+		spinlock_lock(&input_lock, &irq);
 		unsigned char st = port_read_byte(I8042_STATUS);
 
 		if (st & I8042_STATUS_OBF) {
 			unsigned char byte = port_read_byte(I8042_DATA);
 			if (!!(st & I8042_STATUS_AUX) == port) {
 				*data = byte;
-				int_intr_setlevel(irq);
+				spinlock_unlock(&input_lock, irq);
 				return 0;
 			}
 			ps2_receive(!!(st & I8042_STATUS_AUX), byte);
 		}
-		int_intr_setlevel(irq);
+		spinlock_unlock(&input_lock, irq);
 		PAUSE();
 	}
 
@@ -138,20 +141,19 @@ int ps2_read_reply(unsigned port, unsigned char *data, int spins)
 static void ps2_discard_input(unsigned port)
 {
 	int i;
+	int irq;
+	spinlock_lock(&input_lock, &irq);
 
 	for (i = 0; i < 256; i++) {
-		unsigned irq = int_intr_disable();
 		unsigned char st = port_read_byte(I8042_STATUS);
 
-		if ((st & I8042_STATUS_OBF) == 0) {
-			int_intr_setlevel(irq);
-			return;
-		}
+		if ((st & I8042_STATUS_OBF) == 0)
+			break;
 		unsigned char byte = port_read_byte(I8042_DATA);
 		if (!!(st & I8042_STATUS_AUX) != port)
 			ps2_receive(!!(st & I8042_STATUS_AUX), byte);
-		int_intr_setlevel(irq);
 	}
+	spinlock_unlock(&input_lock, irq);
 }
 
 static int i8042_configure(void)
@@ -185,11 +187,10 @@ out:
 	return ret;
 }
 
-/* Both IRQ lines drain one shared controller output in byte order. */
-void ps2_drain_input(void)
+/* The caller holds input_lock through delivery to preserve byte order. */
+static void ps2_drain_input_locked(void)
 {
 	unsigned budget = 64;
-	unsigned irq = int_intr_disable();
 	while (budget--) {
 		unsigned char status = port_read_byte(I8042_STATUS);
 		unsigned port = !!(status & I8042_STATUS_AUX);
@@ -197,7 +198,15 @@ void ps2_drain_input(void)
 			break;
 		ps2_receive(port, port_read_byte(I8042_DATA));
 	}
-	int_intr_setlevel(irq);
+}
+
+/* Both IRQ lines and command paths share one ordered input stream. */
+void ps2_drain_input(void)
+{
+	int irq;
+	spinlock_lock(&input_lock, &irq);
+	ps2_drain_input_locked();
+	spinlock_unlock(&input_lock, irq);
 }
 
 static void ps2_irq(intr_frame *frame)
@@ -208,14 +217,15 @@ static void ps2_irq(intr_frame *frame)
 
 void ps2_command_begin_preserve(unsigned port)
 {
-	int irq;
+	int irq, input_irq;
 	if (port > PS2_PORT_AUX)
 		return;
 	spinlock_lock(&command_lock, &irq);
 	command_irq[port] = irq;
-	ps2_drain_input();
+	spinlock_lock(&input_lock, &input_irq);
+	ps2_drain_input_locked();
 	command_busy[port] = 1;
-	BARRIER();
+	spinlock_unlock(&input_lock, input_irq);
 }
 
 void ps2_command_begin(unsigned port)
@@ -228,11 +238,13 @@ void ps2_command_begin(unsigned port)
 
 void ps2_command_end(unsigned port)
 {
+	int input_irq;
 	if (port > PS2_PORT_AUX)
 		return;
+	spinlock_lock(&input_lock, &input_irq);
 	command_busy[port] = 0;
-	BARRIER();
-	ps2_drain_input();
+	ps2_drain_input_locked();
+	spinlock_unlock(&input_lock, input_irq);
 	spinlock_unlock(&command_lock, command_irq[port]);
 }
 

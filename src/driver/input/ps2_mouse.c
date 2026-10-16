@@ -1,4 +1,5 @@
 #include <fs/entries.h>
+#include <device/usb/usb.h>
 #include <errno.h>
 #include <fs/fcntl.h>
 #include <fs/fs.h>
@@ -178,6 +179,36 @@ static void ps2mouse_process_byte(unsigned char data)
 		mouse_queue_bytes(packet, packet_len);
 }
 
+int mouse_input_init(void)
+{
+	if (mouse_rxbuf) return 0;
+	mouse_rxbuf = cyb_create_named(1);
+	if (!mouse_rxbuf) return -ENOMEM;
+	cyb_writer_open(mouse_rxbuf);
+	mutex_init(&mouse_cmd_lock);
+	spinlock_init(&mouse_state_lock);
+	mouse_reset_runtime_state();
+	mouse_present = 1;
+	mouse_dev_register();
+	return 0;
+}
+
+void mouse_input_report(int dx, int dy, int wheel, unsigned buttons)
+{
+	unsigned char packet[4];
+	unsigned len;
+	int irq;
+	dy = -dy;
+	packet[0] = 8 | (buttons & 7) | (dx < 0 ? 0x10 : 0) | (dy < 0 ? 0x20 : 0);
+	packet[1] = dx; packet[2] = dy; packet[3] = -wheel;
+	spinlock_lock(&mouse_state_lock, &irq);
+	len = mouse_packet_len;
+	memcpy(mouse_last_packet, packet, len);
+	mouse_last_packet_len = len;
+	spinlock_unlock(&mouse_state_lock, irq);
+	mouse_queue_bytes(packet, len);
+}
+
 static int ps2mouse_probe(unsigned port)
 {
 	(void)port;
@@ -284,12 +315,52 @@ static int ps2mouse_queue_reply(const unsigned char *reply, unsigned len)
 	return 0;
 }
 
+/* The aggregate mouse endpoint retains the PS/2 userspace command ABI. */
+static int usbmouse_command(unsigned char byte, int *expect_param, unsigned char *expect_cmd)
+{
+	unsigned char reply[5] = { PS2_MOUSE_ACK };
+	unsigned len = 1;
+	int irq;
+	spinlock_lock(&mouse_state_lock, &irq);
+	if (*expect_param) {
+		if (*expect_cmd == PS2_MOUSE_CMD_SET_SAMPLE_RATE) mouse_track_sample_rate_locked(byte);
+		*expect_param = mouse_expect_param = 0;
+		*expect_cmd = mouse_expect_param_cmd = 0;
+	} else {
+		switch (byte) {
+		case PS2_MOUSE_CMD_SET_SAMPLE_RATE:
+		case PS2_MOUSE_CMD_SET_RESOLUTION:
+			*expect_param = mouse_expect_param = 1;
+			*expect_cmd = mouse_expect_param_cmd = byte;
+			break;
+		case PS2_MOUSE_CMD_RESET:
+			mouse_update_packet_mode_locked(0);
+			memset(mouse_last_sample, 0, sizeof(mouse_last_sample));
+			reply[1] = PS2_MOUSE_BAT_OK; reply[2] = 0; len = 3; break;
+		case PS2_MOUSE_CMD_SET_DEFAULTS:
+			mouse_update_packet_mode_locked(0);
+			memset(mouse_last_sample, 0, sizeof(mouse_last_sample)); break;
+		case PS2_MOUSE_CMD_GET_ID:
+			reply[1] = mouse_packet_len == 4 ? 3 : 0; len = 2; break;
+		case PS2_MOUSE_CMD_READ_DATA:
+			memcpy(reply + 1, mouse_last_packet, mouse_last_packet_len);
+			len += mouse_last_packet_len; break;
+		case PS2_MOUSE_CMD_STATUS_REQUEST:
+			reply[1] = 0x20; reply[2] = 2; reply[3] = 100; len = 4; break;
+		}
+	}
+	spinlock_unlock(&mouse_state_lock, irq);
+	return ps2mouse_queue_reply(reply, len);
+}
+
 static int ps2mouse_command_one(unsigned char byte, int *expect_param,
 				unsigned char *expect_cmd)
 {
 	unsigned char reply[5];
 	unsigned len = 0;
 	int irq;
+	const device_t *ps2 = ps2_device(PS2_PORT_AUX);
+	if (!ps2 || !ps2->driver) return usbmouse_command(byte, expect_param, expect_cmd);
 
 	if (*expect_param) {
 		if (ps2_write_byte(PS2_PORT_AUX, byte) < 0)
@@ -418,20 +489,22 @@ static ssize_t ps2mouse_write(const void *buf, size_t size)
 		return -EIO;
 
 	mutex_lock(&mouse_cmd_lock);
-	ps2_command_begin(PS2_PORT_AUX);
+	const device_t *ps2 = ps2_device(PS2_PORT_AUX);
+	int physical = ps2 && ps2->driver;
+	if (physical) ps2_command_begin(PS2_PORT_AUX);
 
 	expect_param = mouse_expect_param;
 	expect_cmd = mouse_expect_param_cmd;
 	for (i = 0; i < size; i++) {
 		if (ps2mouse_command_one(src[i], &expect_param, &expect_cmd) <
 		    0) {
-			ps2_command_end(PS2_PORT_AUX);
+			if (physical) ps2_command_end(PS2_PORT_AUX);
 			mutex_unlock(&mouse_cmd_lock);
 			return -EIO;
 		}
 	}
 
-	ps2_command_end(PS2_PORT_AUX);
+	if (physical) ps2_command_end(PS2_PORT_AUX);
 	mutex_unlock(&mouse_cmd_lock);
 	return (ssize_t)size;
 }

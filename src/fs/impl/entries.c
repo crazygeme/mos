@@ -18,7 +18,8 @@ struct vfs_entry_node {
 	super_block *sb, *provider;
 	const super_operations *provider_ops;
 	char *name, *text;
-	unsigned mode, number, tag;
+	unsigned mode, number, tag, retired;
+	super_block *target_reference;
 	uint32_t physical_base;
 	uint64_t physical_size;
 	const vfs_entry_attribute_ops *ops;
@@ -225,6 +226,18 @@ void vfs_entry_resource(vfs_entry_node *node, uint32_t base, uint64_t size)
 		node->physical_base = base;
 		node->physical_size = size;
 	}
+}
+
+/* Removable aliases retain their target until the final alias file closes. */
+vfs_entry_node *vfs_entry_link_ref(vfs_entry_node *parent, const char *name,
+				   vfs_entry_node *target)
+{
+	vfs_entry_node *node = vfs_entry_link(parent, name, target);
+	if (node) {
+		node->target_reference = target->sb;
+		sb_get(target->sb);
+	}
+	return node;
 }
 
 /* The target is relative to the link's parent and independent of mount location. */
@@ -569,9 +582,20 @@ static void entry_release_super(super_block *sb)
 {
 	vfs_entry_node *node = sb->s_fs_info;
 	vfs_entry_tree *tree = node->tree;
-	if (node->sb == sb)
+	if (node->sb == sb) {
 		node->sb = NULL;
-	else
+		if (node->target_reference)
+			sb_put(node->target_reference);
+		if (node->retired) {
+			if (node->provider) sb_put(node->provider);
+			mutex_lock(&tree->lock);
+			list_remove_entry(&node->list);
+			mutex_unlock(&tree->lock);
+			free(node->name);
+			free(node->text);
+			free(node);
+		}
+	} else
 		sb_put(node->sb);
 	free(sb);
 	vfs_entry_tree_put(tree);
@@ -814,6 +838,21 @@ vfs_entry_node *vfs_entry_device(vfs_entry_node *parent, const char *path,
 	return node;
 }
 
+/* Children with open files retain their origins and parent superblocks. */
+static void entry_retire(vfs_entry_node *node)
+{
+	struct rb_node *cursor;
+	node->retired = 1;
+	mutex_lock(&node->sb->s_lock);
+	for (cursor = rb_first(&node->sb->s_mounts); cursor;
+	     cursor = rb_next(cursor)) {
+		vfs_mount_node *mount =
+			rb_entry(cursor, vfs_mount_node, rb_node);
+		if (mount->sb->s_op == &entry_sops)
+			entry_retire(mount->sb->s_fs_info);
+	}
+	mutex_unlock(&node->sb->s_lock);
+}
 void vfs_entry_remove(vfs_entry_node *parent, const char *path)
 {
 	if (parent && path) {
@@ -824,6 +863,9 @@ void vfs_entry_remove(vfs_entry_node *parent, const char *path)
 			strcpy(canonical, path);
 		else
 			sprintf(canonical, "/%s", path);
+		vfs_entry_node *node = vfs_entry_child(parent, canonical + 1);
+		if (node)
+			entry_retire(node);
 		vfs_umount(parent->sb, canonical);
 		free(canonical);
 	}

@@ -134,13 +134,17 @@ typedef struct device_t {
 	struct driver_t *driver;
 	int match_done, probe_done, probe_error;
 	unsigned boot_logged;
-	list_entry list;
+	list_entry list, bus_list;
 	struct rb_node address_node;
 } device_t;
 
 /* Inventory only: registration never matches or probes drivers.
- * Boot-thread records remain valid for the kernel lifetime. */
+ * Fixed-bus records remain valid for the kernel lifetime. Removable bus
+ * providers own record references and serialize registration and removal. */
 void device_register(device_t *device);
+void device_unregister(device_t *device);
+const device_t *device_bus_first(device_bus_t bus);
+const device_t *device_bus_next(const device_t *device);
 const device_t *device_first(void);
 const device_t *device_next(const device_t *device);
 const device_t *device_find(device_bus_t bus, uint32_t address);
@@ -160,6 +164,7 @@ int ps2_write_byte(unsigned port, unsigned char data);
 int ps2_read_reply(unsigned port, unsigned char *data, int spins);
 
 struct device_t;
+struct usb_interface;
 
 typedef struct driver_t {
 	const char *name;
@@ -180,6 +185,9 @@ typedef struct driver_t {
 	unsigned started;
 	unsigned virtual_id;
 	int (*probe_virtual)(void);
+	unsigned usb_class, usb_subclass, usb_protocol;
+	int (*probe_usb)(struct usb_interface *interface);
+	void (*disconnect_usb)(struct usb_interface *interface);
 	unsigned ps2_port;
 	int (*probe_ps2)(unsigned port);
 	void (*receive_ps2)(unsigned char byte);

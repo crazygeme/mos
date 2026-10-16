@@ -83,8 +83,10 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 	if (level == SOL_SOCKET) {
 		switch (optname) {
 		case SO_PASSCRED:
-			if (sk->domain != AF_UNIX ||
-			    sk->type != SOCK_SEQPACKET) {
+			if (!((sk->domain == AF_UNIX &&
+			       sk->type == SOCK_SEQPACKET) ||
+			      (sk->domain == AF_NETLINK &&
+			       sk->protocol == 15))) {
 				ret = -ENOPROTOOPT;
 				goto done;
 			}
@@ -290,8 +292,10 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 	if (level == SOL_SOCKET) {
 		switch (optname) {
 		case SO_PASSCRED:
-			if (sk->domain != AF_UNIX ||
-			    sk->type != SOCK_SEQPACKET) {
+			if (!((sk->domain == AF_UNIX &&
+			       sk->type == SOCK_SEQPACKET) ||
+			      (sk->domain == AF_NETLINK &&
+			       sk->protocol == 15))) {
 				ret = -ENOPROTOOPT;
 				goto done;
 			}

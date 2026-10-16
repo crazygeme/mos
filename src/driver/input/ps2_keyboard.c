@@ -1,11 +1,11 @@
 #include <device/chardev.h>
+#include <device/usb/usb.h>
 #include <errno.h>
 #include <ps/ps.h>
 #include <int/int.h>
 #include <lib/cyclebuf.h>
 #include <lib/lock.h>
 #include <lib/klib.h>
-#include <driver/driver.h>
 #include <driver/driver.h>
 #include <fs/ioctl.h>
 #include <config.h>
@@ -603,9 +603,9 @@ static const chardev_keyboard_ops keyboard_control_ops = {
 	.set_leds = kb_set_leds,
 };
 
-static int ps2_keyboard_probe(unsigned port)
+int keyboard_input_init(void)
 {
-	(void)port;
+	if (kb_scancodes) return 0;
 	kbd_init_keymaps();
 	kbd_init_func_strings();
 	kb_scancodes = cyb_create(1);
@@ -613,19 +613,27 @@ static int ps2_keyboard_probe(unsigned port)
 			      -ENOMEM;
 }
 
-/* Called after the idle and init tasks have reserved PID 0 and PID 1. */
-static void kb_start(void)
+static int ps2_keyboard_probe(unsigned port)
 {
+	(void)port;
+	return keyboard_input_init();
+}
+
+/* Called after the idle and init tasks have reserved PID 0 and PID 1. */
+void keyboard_input_start(void)
+{
+	static unsigned started;
 	unsigned pid;
-	if (!kb_scancodes)
+	if (!kb_scancodes || started)
 		return;
+	started = 1;
 	pid = ps_create(kb_worker, NULL, ps_deferred, ps_kernel);
 
 	if (!ps_find_process(pid))
 		DIE();
 }
 
-static void kb_receive_byte(unsigned char code)
+void keyboard_input_byte(unsigned char code)
 {
 	if (kb_scancodes)
 		cyb_put_record(kb_scancodes, &code, 1);
@@ -649,7 +657,7 @@ static int kb_send_command_byte(unsigned char byte)
 				return 0;
 			if (reply == 0xfe)
 				break;
-			kb_receive_byte(reply);
+			keyboard_input_byte(reply);
 		}
 	}
 	return -EIO;
@@ -660,6 +668,9 @@ static int kb_set_leds(unsigned leds)
 	int ret;
 	if (leds & ~7u)
 		return -EINVAL;
+	ret = usb_hid_set_leds(leds);
+	const device_t *ps2 = ps2_device(PS2_PORT_KEYBOARD);
+	if (!ps2 || !ps2->driver) return ret;
 	ps2_command_begin_preserve(PS2_PORT_KEYBOARD);
 	ret = kb_send_command_byte(0xed);
 	if (!ret)
@@ -845,6 +856,12 @@ static int mediumraw_keycode(unsigned scancode)
 		return 110;
 	case 0xe053:
 		return 111;
+	case 0xe05b:
+		return 125;
+	case 0xe05c:
+		return 126;
+	case 0xe05d:
+		return 127;
 	default:
 		break;
 	}
@@ -860,7 +877,7 @@ static driver_t ps2_keyboard_driver = {
 	.early = 1,
 	.ps2_port = PS2_PORT_KEYBOARD,
 	.probe_ps2 = ps2_keyboard_probe,
-	.receive_ps2 = kb_receive_byte,
-	.start = kb_start,
+	.receive_ps2 = keyboard_input_byte,
+	.start = keyboard_input_start,
 };
 DRIVER_REGISTER(ps2_keyboard_driver);

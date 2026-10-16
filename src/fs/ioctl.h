@@ -47,6 +47,7 @@
 #define TCSETSF2 0x402C542D
 
 /* Block-device ioctls used by old util-linux/libblkid probes. */
+#define BLKFLSBUF 0x1261 /* Flush block-device buffers. */
 #define BLKGETSIZE 0x1260 /* return device size in 512-byte sectors */
 #define BLKSSZGET 0x1268 /* return logical sector size */
 #define BLKGETSIZE64 0x80041272 /* return device size in bytes */

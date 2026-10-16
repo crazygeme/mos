@@ -18,6 +18,7 @@ typedef void (*blockdev_iter_fn)(const blockdev_info *info, void *data);
 
 void blockdev_register(const char *name, unsigned major, unsigned minor,
 		       uint64_t size_bytes, unsigned flags);
+void blockdev_unregister(const char *name);
 int blockdev_update(const char *name, uint64_t size_bytes, unsigned flags);
 int blockdev_lookup(const char *name, blockdev_info *out);
 int blockdev_lookup_mountable(const char *name, blockdev_info *out);
@@ -53,6 +54,8 @@ typedef struct {
 	int (*read)(void *data, void *buffer, uint64_t sector, unsigned count);
 	int (*write)(void *data, const void *buffer, uint64_t sector,
 		     unsigned count);
+	/* Release backend ownership after removal and the final handle close. */
+	void (*release)(void *data);
 } blockdev_io;
 typedef struct blockdev_handle blockdev_handle;
 int blockdev_bind_io(const char *name, unsigned sector_size,
@@ -60,6 +63,7 @@ int blockdev_bind_io(const char *name, unsigned sector_size,
 int blockdev_unbind_io(const char *name);
 blockdev_handle *blockdev_open(const char *name);
 void blockdev_close(blockdev_handle *device);
+int blockdev_present(const blockdev_handle *device);
 unsigned blockdev_sector_size(const blockdev_handle *device);
 uint64_t blockdev_sector_count(const blockdev_handle *device);
 int blockdev_read(blockdev_handle *device, void *buffer, uint64_t sector,

@@ -39,7 +39,8 @@ static int port_used(uint32_t port, mos_sock *self)
 	for (list_entry *node = netlink_sockets.next; node != &netlink_sockets;
 	     node = node->next) {
 		mos_sock *s = container_of(node, mos_sock, netlink_list);
-		if (s != self && s->netlink_port == port)
+		if (s != self && s->protocol == self->protocol &&
+		    s->netlink_port == port)
 			return 1;
 	}
 	return 0;
@@ -57,12 +58,14 @@ static void autobind(mos_sock *sk)
 
 int netlink_socket(int type, int protocol)
 {
-	if ((type != SOCK_RAW && type != SOCK_DGRAM) || protocol != 0)
+	if ((type != SOCK_RAW && type != SOCK_DGRAM) ||
+	    (protocol != 0 && protocol != 15))
 		return -EPROTONOSUPPORT;
 	mos_sock *sk = zalloc(sizeof(*sk));
 	if (!sk)
 		return -ENOMEM;
 	sk->domain = AF_NETLINK;
+	sk->protocol = protocol;
 	list_init(&sk->netlink_list);
 	sk->type = type;
 	spinlock_init(&sk->wait_lock);
@@ -386,6 +389,8 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 int netlink_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 {
 	(void)flags;
+	if (sk->protocol == 15)
+		return -EPERM;
 	size_t total = sock_msg_iov_total_len(msg), copied = 0;
 	struct nl_header request;
 	if (total < sizeof(request) || total > 4096)
@@ -458,13 +463,57 @@ int netlink_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 	if (flags & MSG_PEEK)
 		sk->rx_head = saved;
 	msg->msg_flags = delivered < packet ? MSG_TRUNC : 0;
-	msg->msg_controllen = 0;
+	size_t control_length = 0;
+	if (sk->protocol == 15 && sk->unix_passcred && msg->msg_control) {
+		struct {
+			int pid;
+			unsigned uid, gid;
+		} credentials = { 0 };
+		sock_msg_cmsg_append(msg, &control_length, SOL_SOCKET,
+				     SCM_CREDENTIALS, &credentials,
+				     sizeof(credentials));
+	}
+	msg->msg_controllen = control_length;
 	if (msg->msg_name) {
-		struct nl_address a = { .family = AF_NETLINK };
+		struct nl_address a = {
+			.family = AF_NETLINK,
+			.groups = sk->protocol == 15 ?
+					  (sk->netlink_groups & 1 ? 1 : 2) :
+					  0
+		};
 		unsigned n = msg->msg_namelen < sizeof(a) ? msg->msg_namelen :
 							    sizeof(a);
 		memcpy(msg->msg_name, &a, n);
 		msg->msg_namelen = sizeof(a);
 	}
 	return flags & MSG_TRUNC ? packet : delivered;
+}
+
+/* Kernel-origin device events are delivered only to subscribed uevent sockets. */
+void netlink_device_event(const char *action, const char *path,
+			  const char *subsystem, const char *name,
+			  unsigned major, unsigned minor)
+{
+	LOCK_GUARD(&net_local_lock);
+	static unsigned sequence;
+	char buffer[768];
+	unsigned size = sprintf(buffer, "%s@%s", action, path) + 1;
+	size += sprintf(buffer + size, "ACTION=%s", action) + 1;
+	size += sprintf(buffer + size, "DEVPATH=%s", path) + 1;
+	size += sprintf(buffer + size, "SUBSYSTEM=%s", subsystem) + 1;
+	size += sprintf(buffer + size, "DEVNAME=%s", name) + 1;
+	size += sprintf(buffer + size, "MAJOR=%u", major) + 1;
+	size += sprintf(buffer + size, "MINOR=%u", minor) + 1;
+	size += sprintf(buffer + size, "SEQNUM=%u", ++sequence) + 1;
+	for (list_entry *entry = netlink_sockets.next;
+	     entry != &netlink_sockets; entry = entry->next) {
+		mos_sock *sk = container_of(entry, mos_sock, netlink_list);
+		if (sk->protocol != 15 || !(sk->netlink_groups & 3) ||
+		    rx_free(sk) < size + 2)
+			continue;
+		uint16_t length = size;
+		rx_write(sk, &length, sizeof(length));
+		rx_write(sk, buffer, size);
+		sock_wakeup(sk);
+	}
 }

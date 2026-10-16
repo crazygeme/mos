@@ -69,6 +69,8 @@ int netlink_sockaddr(mos_sock *, struct sockaddr *, unsigned *);
 int netlink_sendmsg(mos_sock *, const struct msghdr *, int);
 int netlink_recvmsg(mos_sock *, struct msghdr *, int);
 void netlink_release(mos_sock *);
+void netlink_device_event(const char *, const char *, const char *,
+			  const char *, unsigned, unsigned);
 int do_socketpair(int domain, int type, int protocol, int sv[2]);
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen);
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen);

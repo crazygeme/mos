@@ -6,7 +6,7 @@
 #define MAX_BLOCKDEVS 32
 
 struct blockdev_handle {
-	int used;
+	int used, removed;
 	blockdev_info info;
 	const blockdev_io *ops;
 	void *data;
@@ -33,11 +33,20 @@ static blockdev_slot *blockdev_find_slot(const char *name)
 		return NULL;
 
 	for (i = 0; i < MAX_BLOCKDEVS; i++) {
-		if (blockdev_table[i].used &&
+		if (blockdev_table[i].used && !blockdev_table[i].removed &&
 		    strcmp(blockdev_table[i].info.name, canon) == 0)
 			return &blockdev_table[i];
 	}
 	return NULL;
+}
+
+int blockdev_present(const blockdev_handle *device)
+{
+	int irq, present;
+	spinlock_lock(&blockdev_io_lock, &irq);
+	present = device && device->used && !device->removed;
+	spinlock_unlock(&blockdev_io_lock, irq);
+	return present;
 }
 
 void blockdev_register(const char *name, unsigned major, unsigned minor,
@@ -48,7 +57,8 @@ void blockdev_register(const char *name, unsigned major, unsigned minor,
 
 	if (!name || !*name)
 		return;
-
+	int irq;
+	spinlock_lock(&blockdev_io_lock, &irq);
 	slot = blockdev_find_slot(name);
 	if (!slot) {
 		for (i = 0; i < MAX_BLOCKDEVS; i++) {
@@ -59,8 +69,10 @@ void blockdev_register(const char *name, unsigned major, unsigned minor,
 			}
 		}
 	}
-	if (!slot)
+	if (!slot) {
+		spinlock_unlock(&blockdev_io_lock, irq);
 		return;
+	}
 
 	memset(&slot->info, 0, sizeof(slot->info));
 	strncpy(slot->info.name, blockdev_canon(name),
@@ -69,6 +81,7 @@ void blockdev_register(const char *name, unsigned major, unsigned minor,
 	slot->info.minor = minor;
 	slot->info.size_bytes = size_bytes;
 	slot->info.flags = flags;
+	spinlock_unlock(&blockdev_io_lock, irq);
 }
 
 int blockdev_update(const char *name, uint64_t size_bytes, unsigned flags)
@@ -90,53 +103,59 @@ int blockdev_update(const char *name, uint64_t size_bytes, unsigned flags)
 	return error;
 }
 
+static int blockdev_lookup_flags(const char *name, blockdev_info *out,
+				 unsigned required)
+{
+	int irq, found = 0;
+	spinlock_lock(&blockdev_io_lock, &irq);
+	blockdev_slot *slot = blockdev_find_slot(name);
+	if (slot && (slot->info.flags & required) == required) {
+		if (out)
+			*out = slot->info;
+		found = 1;
+	}
+	spinlock_unlock(&blockdev_io_lock, irq);
+	return found;
+}
 int blockdev_lookup(const char *name, blockdev_info *out)
 {
-	blockdev_slot *slot = blockdev_find_slot(name);
-
-	if (!slot)
-		return 0;
-	if (out)
-		*out = slot->info;
-	return 1;
+	return blockdev_lookup_flags(name, out, 0);
 }
-
 int blockdev_lookup_mountable(const char *name, blockdev_info *out)
 {
-	blockdev_slot *slot = blockdev_find_slot(name);
-
-	if (!slot || !(slot->info.flags & BLOCKDEV_FLAG_MOUNTABLE))
-		return 0;
-	if (out)
-		*out = slot->info;
-	return 1;
+	return blockdev_lookup_flags(name, out, BLOCKDEV_FLAG_MOUNTABLE);
 }
-
 int blockdev_first_mountable(blockdev_info *out)
 {
-	int i;
-
-	for (i = 0; i < MAX_BLOCKDEVS; i++) {
-		if (blockdev_table[i].used &&
-		    (blockdev_table[i].info.flags & BLOCKDEV_FLAG_MOUNTABLE)) {
+	int irq, found = 0;
+	spinlock_lock(&blockdev_io_lock, &irq);
+	for (unsigned i = 0; i < MAX_BLOCKDEVS; i++) {
+		blockdev_slot *slot = &blockdev_table[i];
+		if (slot->used && !slot->removed &&
+		    (slot->info.flags & BLOCKDEV_FLAG_MOUNTABLE)) {
 			if (out)
-				*out = blockdev_table[i].info;
-			return 1;
+				*out = slot->info;
+			found = 1;
+			break;
 		}
 	}
-	return 0;
+	spinlock_unlock(&blockdev_io_lock, irq);
+	return found;
 }
-
 void blockdev_for_each(blockdev_iter_fn fn, void *data)
 {
-	int i;
-
 	if (!fn)
 		return;
-
-	for (i = 0; i < MAX_BLOCKDEVS; i++) {
-		if (blockdev_table[i].used)
-			fn(&blockdev_table[i].info, data);
+	for (unsigned i = 0; i < MAX_BLOCKDEVS; i++) {
+		blockdev_info snapshot;
+		int irq, present;
+		spinlock_lock(&blockdev_io_lock, &irq);
+		present = blockdev_table[i].used && !blockdev_table[i].removed;
+		if (present)
+			snapshot = blockdev_table[i].info;
+		spinlock_unlock(&blockdev_io_lock, irq);
+		if (present)
+			fn(&snapshot, data);
 	}
 }
 
@@ -259,15 +278,45 @@ blockdev_handle *blockdev_open(const char *name)
 	return slot;
 }
 
+/* Retired slots remain distinct while an old filesystem retains a handle. */
+void blockdev_unregister(const char *name)
+{
+	void (*release)(void *) = NULL;
+	void *data = NULL;
+	int irq;
+	spinlock_lock(&blockdev_io_lock, &irq);
+	blockdev_slot *slot = blockdev_find_slot(name);
+	if (slot) {
+		slot->removed = 1;
+		slot->info.flags = 0;
+		if (!slot->references) {
+			release = slot->ops ? slot->ops->release : NULL;
+			data = slot->data;
+			memset(slot, 0, sizeof(*slot));
+		}
+	}
+	spinlock_unlock(&blockdev_io_lock, irq);
+	if (release)
+		release(data);
+}
 void blockdev_close(blockdev_handle *device)
 {
+	void (*release)(void *) = NULL;
+	void *data = NULL;
 	int irq;
 	if (!device)
 		return;
 	spinlock_lock(&blockdev_io_lock, &irq);
 	if (device->references)
 		device->references--;
+	if (!device->references && device->removed) {
+		release = device->ops ? device->ops->release : NULL;
+		data = device->data;
+		memset(device, 0, sizeof(*device));
+	}
 	spinlock_unlock(&blockdev_io_lock, irq);
+	if (release)
+		release(data);
 }
 
 unsigned blockdev_sector_size(const blockdev_handle *device)
@@ -286,7 +335,7 @@ static int blockdev_check_range(blockdev_handle *device, uint64_t sector,
 				unsigned count)
 {
 	uint64_t capacity = blockdev_sector_count(device);
-	if (!device || !device->ops || !device->references)
+	if (!device || device->removed || !device->ops || !device->references)
 		return -ENODEV;
 	if (sector > capacity || count > capacity - sector ||
 	    count > ~0U / device->sector_size)

@@ -125,6 +125,10 @@ extern "C" {
 #endif
 
 /**@brief   Maximum mountpoint count*/
+#ifndef CONFIG_EXT4_MOUNTPOINT_PATH_MAX
+#define CONFIG_EXT4_MOUNTPOINT_PATH_MAX 4096
+#endif
+
 #ifndef CONFIG_EXT4_MOUNTPOINTS_COUNT
 #define CONFIG_EXT4_MOUNTPOINTS_COUNT 16
 #endif

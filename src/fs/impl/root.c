@@ -29,6 +29,7 @@ unsigned fs_write_size = 0;
 static void root_lock_lock(void);
 static void root_lock_unlock(void);
 static rmutex_t root_lock_;
+static struct ext4_lock root_lock;
 
 typedef struct {
 	ext4_file handle;
@@ -1002,10 +1003,15 @@ done:
  *   secondary: mp="/mnt/"  path="/etc/hosts" → "/mnt/etc/hosts"
  * ====================================================================== */
 
+struct ext4_block_adapter;
+static void ext4_adapter_release(struct ext4_block_adapter *adapter);
+static int ext4_adapter_removed(struct ext4_block_adapter *adapter);
+
 typedef struct {
+	struct ext4_block_adapter *adapter;
 	char mp[PAGE_SIZE]; /* lwext4 mount point with trailing '/', e.g. "/mnt/" */
 	struct ext4_fs *fs;
-	char devname[64]; /* partition name, e.g. "hda1" — used for remount */
+	char devname[64]; /* Registered lwext4 device identity for remount. */
 	char loop_name[16]; /* non-empty if mount auto-attached a loop device */
 } ext4_mount_info;
 
@@ -1065,8 +1071,17 @@ static void ext4_release(super_block *sb)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
 
+	root_lock_lock();
 	ext4_cache_write_back(mi->mp, false);
-	ext4_umount(mi->mp);
+	/* Detached media cannot accept the final superblock write. */
+	if (mi->fs && ext4_adapter_removed(mi->adapter))
+		mi->fs->read_only = true;
+	int result = ext4_umount(mi->mp);
+	if (result == EOK)
+		ext4_adapter_release(mi->adapter);
+	else
+		printk("ext4: mount teardown failed for %s: %d\n", mi->mp, result);
+	root_lock_unlock();
 	if (mi->loop_name[0])
 		blockdev_detach_file(mi->loop_name);
 	free(mi);
@@ -1617,15 +1632,33 @@ static super_block *ext4_get(const char *devname)
 #define EXT4_BLOCK_ADAPTERS 32
 struct ext4_block_adapter {
 	char name[32];
+	char registration[32];
+	int pinned;
 	struct ext4_blockdev device;
 	struct ext4_blockdev_iface iface;
 	blockdev_handle *handle;
 };
 static struct ext4_block_adapter ext4_adapters[EXT4_BLOCK_ADAPTERS];
+static unsigned next_mount_device;
+static int ext4_adapter_removed(struct ext4_block_adapter *adapter)
+{
+	return adapter && !blockdev_present(adapter->handle);
+}
+static void ext4_adapter_release(struct ext4_block_adapter *adapter)
+{
+	if (!adapter)
+		return;
+	ext4_device_unregister(adapter->registration);
+	blockdev_close(adapter->handle);
+	free(adapter->iface.ph_bbuf);
+	memset(adapter, 0, sizeof(*adapter));
+}
 
 static int ext4_block_open(struct ext4_blockdev *device)
 {
 	struct ext4_block_adapter *adapter = device->aux;
+	if (adapter->pinned)
+		return blockdev_present(adapter->handle) ? EOK : ENODEV;
 	adapter->handle = blockdev_open(adapter->name);
 	if (!adapter->handle)
 		return ENODEV;
@@ -1649,8 +1682,11 @@ static int ext4_block_open(struct ext4_blockdev *device)
 static int ext4_block_close(struct ext4_blockdev *device)
 {
 	struct ext4_block_adapter *adapter = device->aux;
-	blockdev_close(adapter->handle);
-	adapter->handle = NULL;
+	/* Mount-owned handles persist across read-only/read-write remounts. */
+	if (!adapter->pinned) {
+		blockdev_close(adapter->handle);
+		adapter->handle = NULL;
+	}
 	return EOK;
 }
 
@@ -1670,7 +1706,7 @@ static int ext4_block_write(struct ext4_blockdev *device, const void *buffer,
 	return result < 0 ? -result : result;
 }
 
-static int ext4_prepare_block_device(const char *name)
+static int ext4_prepare_block_device(const char *name, char *registration)
 {
 	struct ext4_block_adapter *adapter = NULL;
 	blockdev_handle *handle;
@@ -1678,7 +1714,7 @@ static int ext4_prepare_block_device(const char *name)
 	int result = EOK;
 	root_lock_lock();
 	for (unsigned i = 0; i < EXT4_BLOCK_ADAPTERS; i++) {
-		if (!strcmp(ext4_adapters[i].name, name)) {
+		if (!registration && !strcmp(ext4_adapters[i].name, name)) {
 			root_lock_unlock();
 			return EOK;
 		}
@@ -1700,6 +1736,12 @@ static int ext4_prepare_block_device(const char *name)
 		result = ENOMEM;
 	else {
 		strncpy(adapter->name, name, sizeof(adapter->name) - 1);
+		if (registration) {
+			sprintf(adapter->registration, "mosfs%u", ++next_mount_device);
+			adapter->handle = handle;
+			adapter->pinned = 1;
+		} else
+			strncpy(adapter->registration, name, sizeof(adapter->registration) - 1);
 		adapter->iface.ph_bsize = size;
 		adapter->iface.ph_bcnt = blockdev_sector_count(handle);
 		adapter->iface.open = ext4_block_open;
@@ -1709,13 +1751,16 @@ static int ext4_prepare_block_device(const char *name)
 		adapter->device.bdif = &adapter->iface;
 		adapter->device.part_size = adapter->iface.ph_bcnt * size;
 		adapter->device.aux = adapter;
-		result = ext4_device_register(&adapter->device, NULL, name);
+		result = ext4_device_register(&adapter->device, NULL, adapter->registration);
 		if (result) {
 			free(adapter->iface.ph_bbuf);
 			memset(adapter, 0, sizeof(*adapter));
 		}
 	}
-	blockdev_close(handle);
+	if (result != EOK || !registration)
+		blockdev_close(handle);
+	else
+		strcpy(registration, adapter->registration);
 	root_lock_unlock();
 	return result;
 }
@@ -1725,6 +1770,7 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 {
 	blockdev_info bdev;
 	const char *dev_name;
+	char registration[32] = { 0 };
 	char loop_auto[16]; /* non-empty if we auto-attached a loop device */
 	char *mp;
 	size_t n;
@@ -1766,22 +1812,41 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 		mp[n + 1] = '\0';
 	}
 
+	if (strlen(mp) >= CONFIG_EXT4_MOUNTPOINT_PATH_MAX) {
+		if (loop_auto[0]) blockdev_detach_file(loop_auto);
+		name_put(mp);
+		return NULL;
+	}
 	read_only = (flags & MS_RDONLY) != 0;
-
-	ret = ext4_prepare_block_device(dev_name);
+	root_lock_lock();
+	ret = ext4_prepare_block_device(dev_name, registration);
 	if (ret == EOK)
-		ret = ext4_mount(dev_name, mp, read_only);
+		ret = ext4_mount(registration, mp, read_only);
 	if (ret != EOK) {
+		if (registration[0])
+			for (unsigned i = 0; i < EXT4_BLOCK_ADAPTERS; i++)
+				if (!strcmp(ext4_adapters[i].registration, registration)) {
+					ext4_adapter_release(&ext4_adapters[i]);
+					break;
+				}
+		root_lock_unlock();
 		if (loop_auto[0])
 			blockdev_detach_file(loop_auto);
 		name_put(mp);
 		return NULL;
 	}
-
+	ext4_mount_setup_locks(mp, &root_lock);
 	if (!read_only)
 		ext4_cache_write_back(mp, true);
 
-	sb = ext4_new_sb(mp, dev_name);
+	sb = ext4_new_sb(mp, registration);
+	ext4_mount_info *mount_info = sb->s_fs_info;
+	for (unsigned i = 0; i < EXT4_BLOCK_ADAPTERS; i++)
+		if (!strcmp(ext4_adapters[i].registration, registration)) {
+			mount_info->adapter = &ext4_adapters[i];
+			break;
+		}
+	root_lock_unlock();
 	name_put(mp);
 
 	/* For auto-looped mounts: record for teardown and show /dev/loopN
@@ -1859,7 +1924,7 @@ static void fs_mount_root(void)
 
 	printk("mnt: Mount rootfs (ro)\n");
 	cur->fs->root = ext4_get(devname);
-	if (ext4_prepare_block_device(devname) != EOK ||
+	if (ext4_prepare_block_device(devname, NULL) != EOK ||
 	    ext4_mount(devname, "/", true) != EOK) {
 		printk("ext4: cannot mount root block device %s\n", devname);
 		return;

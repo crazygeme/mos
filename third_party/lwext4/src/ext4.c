@@ -86,7 +86,7 @@ struct ext4_mountpoint {
 	bool mounted;
 
 	/**@brief   Mount point name (@ref ext4_mount)*/
-	char name[32];
+	char name[CONFIG_EXT4_MOUNTPOINT_PATH_MAX];
 
 	/**@brief   OS dependent lock/unlock functions.*/
 	const struct ext4_lock *os_locks;
@@ -360,91 +360,69 @@ static int ext4_unlink(struct ext4_mountpoint *mp,
 int ext4_mount(const char *dev_name, const char *mount_point, bool read_only)
 {
 	ext4_assert(mount_point && dev_name);
-	int r;
-	int i;
-
+	int r, i;
 	uint32_t bsize;
-	struct ext4_blockdev *bd = 0;
-	struct ext4_bcache *bc = 0;
-	struct ext4_mountpoint *mp = 0;
-
-	if (mount_point[strlen(mount_point) - 1] != '/')
+	struct ext4_blockdev *bd = NULL;
+	struct ext4_bcache *bc = NULL;
+	struct ext4_mountpoint *mp = NULL;
+	bool block_open = false;
+	bool dynamic_cache = false;
+	size_t length = strlen(mount_point);
+	if (!length || mount_point[length - 1] != '/')
 		return ENOTSUP;
-
-	for (i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; ++i) {
-		if (_bdevices[i].name) {
-			if (!strcmp(dev_name, _bdevices[i].name)) {
-				bd = _bdevices[i].bd;
-				bc = _bdevices[i].bc;
-				break;
-			}
-		}
-	}
-
-	if (!bd)
-		return ENODEV;
-
-	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT; ++i) {
-		if (!_mp[i].mounted) {
-			strcpy(_mp[i].name, mount_point);
-			_mp[i].mounted = 1;
-			mp = &_mp[i];
+	if (length >= sizeof(_mp[0].name))
+		return ERANGE;
+	for (i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; i++) {
+		if (_bdevices[i].bd && !strcmp(dev_name, _bdevices[i].name)) {
+			bd = _bdevices[i].bd;
+			bc = _bdevices[i].bc;
 			break;
 		}
-
-		if (!strcmp(_mp[i].name, mount_point))
-			return EOK;
 	}
-
+	if (!bd)
+		return ENODEV;
+	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT; i++) {
+		if (_mp[i].mounted && !strcmp(_mp[i].name, mount_point))
+			return EEXIST;
+		if (!mp && !_mp[i].mounted)
+			mp = &_mp[i];
+	}
 	if (!mp)
 		return ENOMEM;
-
+	memset(mp, 0, sizeof(*mp));
+	strcpy(mp->name, mount_point);
 	r = ext4_block_init(bd);
 	if (r != EOK)
-		return r;
-
+		goto fail;
+	block_open = true;
 	r = ext4_fs_init(&mp->fs, bd, read_only);
-	if (r != EOK) {
-		ext4_block_fini(bd);
-		return r;
-	}
-	memset(mp->path_cache, 0, sizeof(mp->path_cache));
-
+	if (r != EOK)
+		goto fail;
 	bsize = ext4_sb_get_block_size(&mp->fs.sb);
 	ext4_block_set_lb_size(bd, bsize);
-
-	mp->cache_dynamic = 0;
-
 	if (!bc) {
-		/*Automatic block cache alloc.*/
-		mp->cache_dynamic = 1;
-		bc = ext4_malloc(sizeof(struct ext4_bcache));
-
-		r = ext4_bcache_init_dynamic(bc, CONFIG_BLOCK_DEV_CACHE_SIZE,
-					     bsize);
-		if (r != EOK) {
-			ext4_free(bc);
-			ext4_block_fini(bd);
-			return r;
-		}
+		bc = ext4_malloc(sizeof(*bc));
+		if (!bc) { r = ENOMEM; goto fail; }
+		r = ext4_bcache_init_dynamic(bc, CONFIG_BLOCK_DEV_CACHE_SIZE, bsize);
+		if (r != EOK) { ext4_free(bc); bc = NULL; goto fail; }
+		dynamic_cache = true;
 	}
-
-	if (bsize != bc->itemsize)
-		return ENOTSUP;
-
-	/*Bind block cache to block device*/
+	if (bsize != bc->itemsize) { r = ENOTSUP; goto fail; }
 	r = ext4_block_bind_bcache(bd, bc);
-	if (r != EOK) {
-		ext4_bcache_cleanup(bc);
-		ext4_block_fini(bd);
-		if (mp->cache_dynamic) {
-			ext4_bcache_fini_dynamic(bc);
-			ext4_free(bc);
-		}
-		return r;
-	}
+	if (r != EOK)
+		goto fail;
 	bd->fs = &mp->fs;
-
+	mp->cache_dynamic = dynamic_cache;
+	mp->mounted = true;
+	return EOK;
+fail:
+	if (dynamic_cache) {
+		ext4_bcache_fini_dynamic(bc);
+		ext4_free(bc);
+	}
+	if (block_open)
+		ext4_block_fini(bd);
+	memset(mp, 0, sizeof(*mp));
 	return r;
 }
 

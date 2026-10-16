@@ -1,4 +1,5 @@
 #include <fs/sysfs.h>
+#include <device/usb/usb.h>
 #include <driver/driver.h>
 #include <lib/klib.h>
 #include <errno.h>
@@ -126,12 +127,27 @@ static int platform_probe(device_t *device)
 	return device->selected_driver->probe_platform(device->address);
 }
 
+static int usb_match(const driver_t *driver, device_t *device)
+{
+	struct usb_interface *interface = (struct usb_interface *)device;
+	return driver->probe_usb && driver->usb_class == device->type &&
+	       driver->usb_subclass == interface->subclass &&
+	       (!driver->usb_protocol ||
+		driver->usb_protocol == interface->protocol);
+}
+
+static int usb_probe(device_t *device)
+{
+	return device->selected_driver->probe_usb(
+		(struct usb_interface *)device);
+}
+
 static const struct driver_bus_ops {
 	int (*match)(const driver_t *, device_t *);
 	int (*probe)(device_t *);
 } bus_ops[] = {
 	[DEVICE_BUS_PCI] = { pci_match, pci_probe },
-	[DEVICE_BUS_USB] = { 0 },
+	[DEVICE_BUS_USB] = { usb_match, usb_probe },
 	[DEVICE_BUS_PS2] = { ps2_match, ps2_probe },
 	[DEVICE_BUS_VIRTUAL] = { virtual_match, virtual_probe },
 	[DEVICE_BUS_PLATFORM] = { platform_match, platform_probe },
@@ -180,11 +196,15 @@ void driver_bind(device_t *device)
 	if (!device->probe_error) {
 		device->driver = driver;
 		if (device->sysfs_entry && driver->sysfs_entry) {
-			vfs_entry_link(device->sysfs_entry, "driver",
-				       driver->sysfs_entry);
-			vfs_entry_link(driver->sysfs_entry,
-				       vfs_entry_name(device->sysfs_entry),
-				       device->sysfs_entry);
+			(device->bus == DEVICE_BUS_USB ?
+				 vfs_entry_link_ref :
+				 vfs_entry_link)(device->sysfs_entry, "driver",
+						 driver->sysfs_entry);
+			(device->bus == DEVICE_BUS_USB ? vfs_entry_link_ref :
+							 vfs_entry_link)(
+				driver->sysfs_entry,
+				vfs_entry_name(device->sysfs_entry),
+				device->sysfs_entry);
 		}
 	}
 }

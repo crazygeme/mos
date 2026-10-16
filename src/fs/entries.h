@@ -36,6 +36,8 @@ vfs_entry_node *vfs_entry_attribute(vfs_entry_node *parent, const char *name,
 				    unsigned mode,
 				    const vfs_entry_attribute_ops *ops,
 				    void *data, unsigned tag);
+/* Retain the target while a removable-device alias is open. */
+vfs_entry_node *vfs_entry_link_ref(vfs_entry_node *, const char *, vfs_entry_node *);
 void vfs_entry_resource(vfs_entry_node *node, uint32_t base, uint64_t size);
 /* Detached entries are published explicitly with vfs_mount(). */
 vfs_entry_node *vfs_entry_directory_create(vfs_entry_node *parent,

@@ -48,6 +48,12 @@
 /* /dev/loop* block devices */
 #define LOOP_MAJOR 7 /* /dev/loop0, /dev/loop1, ...: block major */
 
+/* USB SCSI disks: /dev/sda and primary partitions. */
+#define USB_STORAGE_MAJOR 8
+
+/* V4L2 USB video capture nodes. */
+#define USB_VIDEO_MAJOR 81
+
 /* /dev/rtc */
 #define RTC_MAJOR 10 /* /dev/rtc: major */
 #define RTC_MINOR 135 /* /dev/rtc: minor */

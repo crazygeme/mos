@@ -339,6 +339,7 @@ task_struct *fork_alloc_child(task_struct *cur)
 	task->execution->io_priv_level = cur->execution->io_priv_level;
 	task->execution->io_allow_all = cur->execution->io_allow_all;
 	task->execution->robust_list_size = cur->execution->robust_list_size;
+	task->sched->affinity_mask = cur->sched->affinity_mask;
 	task->sched->remain_ticks = cur->sched->remain_ticks;
 	task->magic = 0xdeadbeef;
 	list_init(&task->wait->io_files);

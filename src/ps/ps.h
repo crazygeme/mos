@@ -164,6 +164,7 @@ typedef struct _task_schedule {
 	task_struct *task;
 	uintptr_t switch_sp;
 	unsigned on_cpu, terminate_requested, enumeration_refs;
+	unsigned affinity_mask; /* Zero permits every online CPU. */
 	unsigned live_member;
 	unsigned net_core_depth, vm_lock_depth;
 	int sched_level, priority, remain_ticks;
@@ -283,7 +284,7 @@ void ps_queue_group_signal_unsafe(task_struct *task, int sig);
 int ps_send_thread_signal(unsigned tid, int sig);
 int ps_take_signal_info(task_struct *task, sigset_t mask,
 			struct mos_signal_info *info);
-unsigned ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
+sigset_t ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
 			      uint64_t *sequence);
 void ps_child_signal_unsafe(task_struct *parent, task_struct *child, int sig);
 int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,

@@ -60,7 +60,7 @@ void signalfd_poll_signals(void)
 		struct signalfd_watch *watch =
 			container_of(entry, struct signalfd_watch, list);
 		uint64_t sequence;
-		unsigned pending =
+		sigset_t pending =
 			ps_signalfd_snapshot(watch->tid, watch->group,
 					     watch->state->mask, &sequence);
 		if (pending && sequence != watch->sequence)
@@ -174,7 +174,7 @@ int sys_signalfd4(int fd, const void *mask, size_t size, int flags)
 	if (ps_read_process_memory(current, mask, &input, sizeof(input)) < 0)
 		return -EFAULT;
 	sigset_t signals = (sigset_t)input &
-			   ~((1U << (SIGKILL - 1)) | (1U << (SIGSTOP - 1)));
+			   ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 	if (fd != -1) {
 		file *fp = anonfd_get(fd);
 		if (!fp)

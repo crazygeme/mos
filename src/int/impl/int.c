@@ -146,7 +146,7 @@ static void intr_prepare_user_return(intr_frame *frame)
 	/* Use the existing bitmap so every signal source already publishes
 	 * work for this check. Ignored unmasked signals retain their cleanup
 	 * path, and saved-mask restoration still reaches signal processing. */
-	unsigned pending = ps_pending_signals(cur);
+	sigset_t pending = ps_pending_signals(cur);
 	if ((pending & ~cur->signal->sig_mask) || cur->signal->restore_sigmask)
 		do_signal(frame);
 }

@@ -43,10 +43,10 @@
 #define SIGSYS 31
 #define SIGRTMIN_KERNEL 32
 
-#define NSIG 33 /* one past the highest supported signal number */
+#define NSIG (sizeof(sigset_t) * 8 + 1) /* one past the highest signal */
 
 /* Signal mask type: one bit per signal (bit N-1 = signal N) */
-typedef uint32_t sigset_t;
+typedef unsigned long sigset_t;
 
 /* Special sa_handler values */
 #define SIG_DFL ((void (*)(int))0) /* default action  */

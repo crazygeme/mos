@@ -34,13 +34,13 @@ signals and ITIMER_REAL. `task_execution` holds private execution and ptrace
 state. Shared owners embed `ref_count_t` as their first member.
 
 `kill()` and group alarms queue to the shared pending set and wake eligible
-threads. `tkill()` queues to one task. Signal consumption and timer payload
+threads. `tkill()` queues to one task. The x64 `tgkill()` interface also validates the target thread group. Signal consumption and timer payload
 removal are serialized together by `ps_lock`; delivery observes the union of
-group and thread pending sets. `sigset_t` supports the low 32 signal bits.
+group and thread pending sets. `sigset_t` contains 64 signal bits on x64 and 32 signal bits on i386.
 
 ## Signal Numbers and Default Actions
 
-The tree uses Linux/i386 signal numbers `1..31` plus timer signal 32, with `NSIG = 33`.
+Standard signals use Linux numbers `1..31`. The x64 kernel supports signal numbers `1..64` (`NSIG = 65`); the i386 kernel supports `1..32` (`NSIG = 33`). POSIX timers accept signal numbers `1..32`.
 
 Important defaults in the current code:
 

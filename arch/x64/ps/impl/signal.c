@@ -182,7 +182,7 @@ void arch_signal_deliver_native(task_struct *task, intr_frame *frame,
 	    sp < (uintptr_t)alt->ss_sp + alt->ss_size)
 		alt->ss_flags |= SS_ONSTACK;
 	if (!(action->sa_flags & SA_NODEFER))
-		task->signal->sig_mask |= 1U << (sig - 1);
+		task->signal->sig_mask |= 1UL << (sig - 1);
 	task->signal->sig_mask |= action->sa_mask;
 	frame->edi = sig;
 	frame->esi = sp + __builtin_offsetof(struct native_signal_frame, info);
@@ -223,7 +223,7 @@ intptr_t native_sigreturn(intr_frame *frame)
 	frame->esp = (void *)(uintptr_t)sc->rsp;
 	frame->eflags = (sc->flags & 0x250dd5) | 0x202;
 	current->signal->sig_mask =
-		saved.mask & ~((1U << (SIGKILL - 1)) | (1U << (SIGSTOP - 1)));
+		saved.mask & ~((1UL << (SIGKILL - 1)) | (1UL << (SIGSTOP - 1)));
 	if (sc->fpstate) {
 		if (ps_read_process_memory(current,
 					   (void *)(uintptr_t)sc->fpstate,

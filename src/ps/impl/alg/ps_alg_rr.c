@@ -50,6 +50,8 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
 		    (!task->sched->terminate_requested ||
 		     task->sched->vm_lock_depth) &&
 		    (!task->sched->on_cpu || task == current) &&
+		    (!task->sched->affinity_mask ||
+		     (task->sched->affinity_mask & (1U << smp_cpu_id()))) &&
 		    (task->sched->priority != ps_idle ||
 		     task->life->param == (void *)(uintptr_t)smp_cpu_id())) {
 			list_remove_entry(node);

@@ -1,6 +1,7 @@
 /* Explicit AMD64 wire conversions for shared kernel services. */
 #include <ps/ps.h>
 #include <ps/usage.h>
+#include <ps/smp.h>
 #include <int/int.h>
 #include <lib/klib.h>
 #include <errno.h>
@@ -155,8 +156,8 @@ static int select64(int nfds, fd_set *reads, fd_set *writes, fd_set *excepts,
 		}
 	}
 	if (mask) {
-		temporary_mask = *mask & ~((1U << (SIGKILL - 1)) |
-					   (1U << (SIGSTOP - 1)));
+		temporary_mask = *mask & ~((1UL << (SIGKILL - 1)) |
+					   (1UL << (SIGSTOP - 1)));
 		mask = &temporary_mask;
 	}
 	int ret = do_select(nfds, local[0], local[1], local[2], timep,
@@ -213,8 +214,8 @@ int native_ppoll(struct pollfd *fds, uintptr_t nfds, void *timeout,
 		start = time_now_us();
 	}
 	if (mask) {
-		temporary_mask = *mask & ~((1U << (SIGKILL - 1)) |
-					   (1U << (SIGSTOP - 1)));
+		temporary_mask = *mask & ~((1UL << (SIGKILL - 1)) |
+					   (1UL << (SIGSTOP - 1)));
 		mask = &temporary_mask;
 	}
 	int ret = do_ppoll(fds, nfds, timep, mask);
@@ -717,4 +718,63 @@ int native_ioctl(int fd, unsigned command, void *arg)
 		return ret;
 	}
 	return sys_ioctl(fd, command, arg);
+}
+
+int native_sched_affinity(int pid, uintptr_t size, void *mask, int set)
+{
+	if (pid < 0 || !size ||
+	    (!set &&
+	     (size < sizeof(unsigned long) || size % sizeof(unsigned long))))
+		return -EINVAL;
+	if (!mask)
+		return -EFAULT;
+	task_struct *task =
+		ps_find_process_ref(pid ? (unsigned)pid : current->life->psid);
+	if (!task)
+		return -ESRCH;
+	int ret = 0;
+	unsigned online = smp_cpu_count();
+	unsigned available = online == 32 ? ~0U : (1U << online) - 1;
+	if (set) {
+		if (!ps_may_access_process(task)) {
+			ret = -EPERM;
+		} else {
+			unsigned selected = 0;
+			memcpy(&selected, mask,
+			       size < sizeof(selected) ? size :
+							 sizeof(selected));
+			selected &= available;
+			if (!selected)
+				ret = -EINVAL;
+			else
+				__atomic_store_n(&task->sched->affinity_mask,
+						 selected, __ATOMIC_RELEASE);
+		}
+	} else {
+		unsigned selected = __atomic_load_n(&task->sched->affinity_mask,
+						    __ATOMIC_ACQUIRE);
+		unsigned long value = (selected ? selected : available) &
+				      available;
+		memcpy(mask, &value, sizeof(value));
+		ret = sizeof(value);
+	}
+	int migrate = !ret && set && task == current &&
+		      !(task->sched->affinity_mask & (1U << smp_cpu_id()));
+	ps_put_process_ref(task);
+	if (migrate)
+		task_sched();
+	return ret;
+}
+
+int native_tgkill(int tgid, int tid, int sig)
+{
+	if (tgid <= 0 || tid <= 0 || sig < 0 || sig >= NSIG)
+		return -EINVAL;
+	task_struct *task = ps_find_process_ref((unsigned)tid);
+	if (!task)
+		return -ESRCH;
+	int ret = task->thread->tgid == (unsigned)tgid ? sys_tkill(tid, sig) :
+							 -ESRCH;
+	ps_put_process_ref(task);
+	return ret;
 }

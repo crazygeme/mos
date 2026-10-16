@@ -56,4 +56,6 @@ int native_get_robust_list(int, void *, void *);
 int native_shmctl(int, int, void *);
 int native_ptrace(int, int, void *, void *);
 int native_ioctl(int, unsigned, void *);
+int native_sched_affinity(int, uintptr_t, void *, int);
+int native_tgkill(int, int, int);
 #endif

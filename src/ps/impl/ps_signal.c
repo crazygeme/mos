@@ -204,7 +204,7 @@ int ps_take_signal(task_struct *task, sigset_t mask, int *timer_id,
 }
 
 /* Snapshot the registration context without retaining a task pointer. */
-unsigned ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
+sigset_t ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
 			      uint64_t *sequence)
 {
 	int irq;
@@ -215,7 +215,7 @@ unsigned ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
 	sigset_t pending = group->sig_pending;
 	*sequence = 0;
 	for (int sig = 1; sig < NSIG; sig++) {
-		if (!(mask & (1U << (sig - 1))))
+		if (!(mask & (1UL << (sig - 1))))
 			continue;
 		*sequence += group->signal_sequence[sig];
 		if (task)
@@ -229,7 +229,7 @@ unsigned ps_signalfd_snapshot(unsigned tid, task_thread *group, sigset_t mask,
 
 void ps_child_signal_unsafe(task_struct *parent, task_struct *child, int sig)
 {
-	int pending = !!(parent->thread->sig_pending & (1U << (sig - 1)));
+	int pending = !!(parent->thread->sig_pending & (1UL << (sig - 1)));
 	ps_queue_group_signal_unsafe(parent, sig);
 	if (!pending) {
 		unsigned status = child->life->exit_status;
@@ -388,7 +388,7 @@ static int send_signal(unsigned pid, int sig, int thread)
 	if (sig) {
 		int pending = !!((thread ? target->signal->sig_pending :
 					   target->thread->sig_pending) &
-				 (1U << (sig - 1)));
+				 (1UL << (sig - 1)));
 		if (thread)
 			ps_queue_signal_unsafe(target, sig);
 		else
@@ -568,23 +568,26 @@ int sys_sigprocmask(int how, void *set, void *oset)
 /*
  * rt_sigprocmask (syscall 175).
  * The mask pointer points to an 8-byte (64-signal) kernel sigset_t.
- * We only use the low 32 bits; write 8 bytes to oset so glibc sees
- * a fully initialised mask (upper 4 bytes = 0).
+ * Native masks contain one bit per signal supported by the architecture.
+ * The i386 ABI returns a zero upper word.
  */
 int sys_rt_sigprocmask(int how, void *set, void *oset, unsigned sigsetsize)
 {
 	task_struct *cur = CURRENT_TASK();
-	unsigned long newmask;
+	sigset_t newmask;
+
+	if (sigsetsize != 8)
+		return -EINVAL;
 
 	if (oset) {
 		((uint32_t *)oset)[0] = cur->signal->sig_mask;
-		((uint32_t *)oset)[1] = 0;
+		((uint32_t *)oset)[1] = (uint64_t)cur->signal->sig_mask >> 32;
 	}
 
 	if (!set)
 		return 0;
 
-	newmask = ((uint32_t *)set)[0];
+	newmask = (sigset_t)*(uint64_t *)set;
 
 	switch (how) {
 	case SIG_BLOCK:
@@ -941,7 +944,7 @@ static int sigqueueinfo(unsigned pid, int sig, const void *uinfo, int wide)
 	} else if (!can_send_signal(current, target)) {
 		ret = -EPERM;
 	} else if (sig == SIGRTMIN_KERNEL ||
-		   !(target->thread->sig_pending & (1U << (sig - 1)))) {
+		   !(target->thread->sig_pending & (1UL << (sig - 1)))) {
 		unsigned queued = 0;
 		list_entry *head = &target->thread->pending_queue;
 		for (list_entry *node = head->next; node != head;

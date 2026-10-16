@@ -294,7 +294,9 @@ Delivery consumes one signal from the union of group and thread pending sets
 under `ps_lock`. Timer payloads use `list_entry` queues so different timers do
 not overwrite one shared payload slot.
 
-Standard signals are 1–31; the supported timer signal is 32 (`NSIG = 33`).
+Standard signals are 1–31. The x64 kernel supports signals 1–64; the i386 kernel supports signals 1–32. POSIX timers accept signal numbers 1–32.
+
+The x64 `sched_getaffinity` and `sched_setaffinity` interfaces expose per-task CPU masks. The scheduler selects tasks only on permitted CPUs. Masks are inherited by clone and fork; an unset internal mask permits every online CPU.
 
 ### Delivery
 

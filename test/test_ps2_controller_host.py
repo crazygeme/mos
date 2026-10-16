@@ -84,8 +84,8 @@ static void ps2_receive(unsigned port, unsigned char byte)
 }
 '''
 code = ''
-if 'static void ps2_drain_input_locked(' in source:
-    code += function('ps2_drain_input_locked') + '\n'
+if 'static void ps2_drain_input_unsafe(' in source:
+    code += function('ps2_drain_input_unsafe') + '\n'
 code += function('ps2_drain_input') + '\n'
 code += function('ps2_read_reply') + '\n'
 code += function('ps2_discard_input')

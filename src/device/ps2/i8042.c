@@ -188,7 +188,7 @@ out:
 }
 
 /* The caller holds input_lock through delivery to preserve byte order. */
-static void ps2_drain_input_locked(void)
+static void ps2_drain_input_unsafe(void)
 {
 	unsigned budget = 64;
 	while (budget--) {
@@ -205,7 +205,7 @@ void ps2_drain_input(void)
 {
 	int irq;
 	spinlock_lock(&input_lock, &irq);
-	ps2_drain_input_locked();
+	ps2_drain_input_unsafe();
 	spinlock_unlock(&input_lock, irq);
 }
 
@@ -223,7 +223,7 @@ void ps2_command_begin_preserve(unsigned port)
 	spinlock_lock(&command_lock, &irq);
 	command_irq[port] = irq;
 	spinlock_lock(&input_lock, &input_irq);
-	ps2_drain_input_locked();
+	ps2_drain_input_unsafe();
 	command_busy[port] = 1;
 	spinlock_unlock(&input_lock, input_irq);
 }
@@ -243,7 +243,7 @@ void ps2_command_end(unsigned port)
 		return;
 	spinlock_lock(&input_lock, &input_irq);
 	command_busy[port] = 0;
-	ps2_drain_input_locked();
+	ps2_drain_input_unsafe();
 	spinlock_unlock(&input_lock, input_irq);
 	spinlock_unlock(&command_lock, command_irq[port]);
 }

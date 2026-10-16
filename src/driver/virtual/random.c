@@ -84,12 +84,13 @@ static file *random_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 static void random_dev_register(void)
 {
+	vfs_entry_device(devfs_entries(), "/random", S_IFCHR | 0666,
+			 MKDEV(RANDOM_MAJOR, RANDOM_MINOR), "mem",
+			 random_cdev_open);
 
-	
-	vfs_entry_device(devfs_entries(), "/random", S_IFCHR | 0666, MKDEV(RANDOM_MAJOR, RANDOM_MINOR), "mem", random_cdev_open);
-
-	
-	vfs_entry_device(devfs_entries(), "/urandom", S_IFCHR | 0666, MKDEV(RANDOM_MAJOR, URANDOM_MINOR), "mem", random_cdev_open);
+	vfs_entry_device(devfs_entries(), "/urandom", S_IFCHR | 0666,
+			 MKDEV(RANDOM_MAJOR, URANDOM_MINOR), "mem",
+			 random_cdev_open);
 }
 
 static int random_dev_register_probe(void)

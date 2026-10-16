@@ -13,8 +13,8 @@ static file *kmsg_open(super_block *sb, unsigned rdev, int flag)
 
 static void kmsg_register(void)
 {
-	
-	vfs_entry_device(devfs_entries(), "/kmsg", S_IFCHR | 0600, MKDEV(KMSG_MAJOR, KMSG_MINOR), "mem", kmsg_open);
+	vfs_entry_device(devfs_entries(), "/kmsg", S_IFCHR | 0600,
+			 MKDEV(KMSG_MAJOR, KMSG_MINOR), "mem", kmsg_open);
 }
 
 static int kmsg_register_probe(void)

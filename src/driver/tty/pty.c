@@ -289,15 +289,15 @@ static void pty_dev_register(void)
 	int i;
 	char path[16];
 
-	
-	
-
 	for (i = 0; i < MAX_PTS; i++) {
 		sprintf(path, "/ptyp%c", pty_hex[i]);
-		vfs_entry_device(devfs_entries(), path, S_IFCHR | 0620, MKDEV(BSD_PTM_MAJOR, i), "pty", ptm_cdev_open);
+		vfs_entry_device(devfs_entries(), path, S_IFCHR | 0620,
+				 MKDEV(BSD_PTM_MAJOR, i), "pty", ptm_cdev_open);
 
 		sprintf(path, "/ttyp%c", pty_hex[i]);
-		vfs_entry_device(devfs_entries(), path, S_IFCHR | 0620, MKDEV(BSD_PTS_MAJOR, i), "ttyp", pts_cdev_open);
+		vfs_entry_device(devfs_entries(), path, S_IFCHR | 0620,
+				 MKDEV(BSD_PTS_MAJOR, i), "ttyp",
+				 pts_cdev_open);
 	}
 }
 

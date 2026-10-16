@@ -3,7 +3,6 @@
 #include <fs/fcntl.h>
 #include <errno.h>
 
-
 static int check_IndependentRecords(char *scratch)
 {
 	file *a = syslog_open(S_IFCHR | 0600, 0);

@@ -483,7 +483,6 @@ int vfs_readlink(super_block *sb, const char *path, char *buf, size_t bufsiz,
 					 rcnt);
 }
 
-
 int vfs_mknod(super_block *sb, const char *path, unsigned mode, unsigned dev)
 {
 	super_block *node_sb;

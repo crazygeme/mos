@@ -65,7 +65,8 @@ vaddr_t mm_alloc_page_table(void)
 }
 void mm_free_page_table(vaddr_t address)
 {
-	if (address >= PAGE_TABLE_CACHE_BEGIN && address < PAGE_TABLE_CACHE_END) {
+	if (address >= PAGE_TABLE_CACHE_BEGIN &&
+	    address < PAGE_TABLE_CACHE_END) {
 		int irq;
 		spinlock_lock(&table_lock, &irq);
 		table_free[table_count++] = address;
@@ -432,14 +433,19 @@ vaddr_t mm_next_mapped_page(vaddr_t begin, vaddr_t end)
 	while (address < end) {
 		pte_t *table = (pte_t *)mm_get_pagedir();
 		unsigned shift;
-		for (shift = MMU_ROOT_SHIFT; ; shift -= MMU_TABLE_INDEX_BITS) {
-			pte_t entry = table[(address >> shift) & MMU_TABLE_INDEX_MASK];
+		for (shift = MMU_ROOT_SHIFT;; shift -= MMU_TABLE_INDEX_BITS) {
+			pte_t entry =
+				table[(address >> shift) & MMU_TABLE_INDEX_MASK];
 			if (!(entry & PAGE_ENTRY_PRESENT)) {
-				vaddr_t next = (address | (((vaddr_t)1 << shift) - 1)) + 1;
-				address = next > address && next < end ? next : end;
+				vaddr_t next = (address |
+						(((vaddr_t)1 << shift) - 1)) +
+					       1;
+				address = next > address && next < end ? next :
+									 end;
 				break;
 			}
-			if (shift == MMU_PAGE_SHIFT || (entry & PAGE_ENTRY_LARGE))
+			if (shift == MMU_PAGE_SHIFT ||
+			    (entry & PAGE_ENTRY_LARGE))
 				goto out;
 			table = table_pointer(entry);
 		}

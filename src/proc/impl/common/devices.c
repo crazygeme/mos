@@ -52,7 +52,8 @@ static void print_group(proc_buf_t *pb, unsigned mode_type, const char *title)
 	proc_devices_ctx *ctx = zalloc(sizeof(*ctx));
 	unsigned i;
 
-	if (!ctx) return;
+	if (!ctx)
+		return;
 	ctx->mode_type = mode_type;
 	if (mode_type == S_IFCHR)
 		chardev_for_each_class(collect_major, ctx);

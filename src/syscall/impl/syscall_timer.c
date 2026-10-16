@@ -263,9 +263,9 @@ void ps_timer_poll(void)
 		}
 		if (timer->notify == MOS_SIGEV_NONE)
 			continue;
-		ps_timer_notify(timer->target, timer->signo, timer->id,
-				timer->value,
-				!!(timer->notify & MOS_SIGEV_THREAD_ID),
-				timer->overrun < 0 ? 0 : (unsigned)timer->overrun);
+		ps_timer_notify(
+			timer->target, timer->signo, timer->id, timer->value,
+			!!(timer->notify & MOS_SIGEV_THREAD_ID),
+			timer->overrun < 0 ? 0 : (unsigned)timer->overrun);
 	}
 }

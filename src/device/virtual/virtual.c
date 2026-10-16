@@ -3,10 +3,9 @@
 
 static device_t virtual_devices[VDEV_COUNT];
 static unsigned scanned;
-static const char *const names[] = {
-	"tty", "pty", "ptmx", "loop", "mem", "null", "zero", "random",
-	"kmsg", "initctl", "fd"
-};
+static const char *const names[] = { "tty",  "pty",	"ptmx", "loop",
+				     "mem",  "null",	"zero", "random",
+				     "kmsg", "initctl", "fd" };
 _Static_assert(sizeof(names) / sizeof(names[0]) == VDEV_COUNT,
 	       "Every virtual device must have a name");
 

@@ -43,8 +43,7 @@ typedef struct _phymm_cache_policy {
 /* Each cache may use free RAM plus its own occupancy, subject to address
  * limits. Budgets overlap in free RAM; no data pages are reserved up front. */
 void phymm_cache_budget(unsigned total, unsigned free, unsigned file_cached,
-			unsigned block_cached,
-			phymm_cache_policy *policy);
+			unsigned block_cached, phymm_cache_policy *policy);
 void phymm_get_cache_policy(phymm_cache_policy *policy);
 
 extern phymm_page *phymm_pages;

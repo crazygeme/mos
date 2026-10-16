@@ -35,4 +35,3 @@ nic_dev *nic_getdev(int index)
 		return NULL;
 	return &network_devices[index];
 }
-

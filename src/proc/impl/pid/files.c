@@ -9,7 +9,8 @@
 void fill_comm(proc_buf_t *pb, task_struct *task)
 {
 	const char *command = task->memory->command ?
-				      (const char *)task->memory->command : "";
+				      (const char *)task->memory->command :
+				      "";
 	const char *slash = strrchr(command, '/');
 	const char *name = slash ? slash + 1 : command;
 	char comm[16];

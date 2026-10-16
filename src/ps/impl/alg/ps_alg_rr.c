@@ -144,8 +144,10 @@ task_struct *ps_get_next_task_unsafe(void)
 void ps_wake_parent_waiters_unsafe(task_struct *parent)
 {
 	list_entry *head = &parent->thread->members;
-	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
-		task_struct *peer = container_of(entry, task_schedule, thread_list)->task;
+	for (list_entry *entry = head->next; entry != head;
+	     entry = entry->next) {
+		task_struct *peer =
+			container_of(entry, task_schedule, thread_list)->task;
 		if (peer->sched->status == ps_waiting &&
 		    peer->wait->wait_interruptible)
 			ps_put_to_ready_queue_unsafe(peer);
@@ -166,7 +168,8 @@ void ps_put_to_dying_queue_unsafe(task_struct *task)
 
 	list_remove_entry(&task->sched->ps_list);
 	if (task->life->psid != 0xffffffff && parent)
-		list_insert_tail(&parent->life->dying_queue, &task->sched->ps_list);
+		list_insert_tail(&parent->life->dying_queue,
+				 &task->sched->ps_list);
 	ps_alarm_disarm_unsafe(task);
 	task->life->exit_ready = 1;
 	ps_mark_dying_unsafe(task);

@@ -622,8 +622,9 @@ int sys_madvise(void *addr, size_t length, int advice)
 			if ((region->flag & MAP_SHARED) && region->fp)
 				vm_flush_file_dirty(mm, region->fp);
 			vm_region_lock_fault(region);
-			for (cursor = mm_next_mapped_page(cursor, limit); cursor < limit;
-			     cursor = mm_next_mapped_page(cursor + PAGE_SIZE, limit))
+			for (cursor = mm_next_mapped_page(cursor, limit);
+			     cursor < limit; cursor = mm_next_mapped_page(
+						     cursor + PAGE_SIZE, limit))
 				mm_unmap_page(cursor);
 			vm_region_unlock_fault(region);
 		} else {
@@ -825,8 +826,9 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 	/* Preserve backing metadata and page permissions without user-memory I/O. */
 	moved = *region;
 	ret = do_mmap(flags & MREMAP_FIXED ? new_addr : 0, new_size_pg,
-		      region->prot, MAP_PRIVATE | MAP_ANONYMOUS |
-				    (flags & MREMAP_FIXED ? MAP_FIXED : 0),
+		      region->prot,
+		      MAP_PRIVATE | MAP_ANONYMOUS |
+			      (flags & MREMAP_FIXED ? MAP_FIXED : 0),
 		      -1, 0);
 	if (ret < 0)
 		return ret;
@@ -834,8 +836,10 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 	moved.begin = (vaddr_t)ret;
 	moved.end = moved.begin + new_size_pg;
 	vm_add_map_clone(cur->memory, &moved);
-	copy_end = old_addr + (old_size_pg < new_size_pg ? old_size_pg : new_size_pg);
-	for (cursor = mm_next_mapped_page(old_addr, copy_end); cursor < copy_end;
+	copy_end = old_addr +
+		   (old_size_pg < new_size_pg ? old_size_pg : new_size_pg);
+	for (cursor = mm_next_mapped_page(old_addr, copy_end);
+	     cursor < copy_end;
 	     cursor = mm_next_mapped_page(cursor + PAGE_SIZE, copy_end)) {
 		vaddr_t target = moved.begin + cursor - old_addr;
 		paddr_t physical = mm_virt_to_phys(cursor);
@@ -844,9 +848,10 @@ intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		if ((moved.flag & MAP_SHARED) && moved.fp &&
 		    !(moved.vm_flags & VM_REGION_F_DIRECT_PHYS))
 			page_flags &= ~PAGE_ENTRY_WRITABLE;
-		int installed = moved.vm_flags & VM_REGION_F_DIRECT_PHYS ?
-			mm_map_page_io(target, physical, page_flags) :
-			mm_map_page(target, physical, page_flags);
+		int installed =
+			moved.vm_flags & VM_REGION_F_DIRECT_PHYS ?
+				mm_map_page_io(target, physical, page_flags) :
+				mm_map_page(target, physical, page_flags);
 		if (installed != 1) {
 			do_munmap((void *)moved.begin, new_size_pg);
 			return -ENOMEM;

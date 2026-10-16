@@ -523,7 +523,6 @@ static void ptmx_fs_type_init(void)
 
 static void ptmx_dev_register(void)
 {
-
 	chardev_register_class(UNIX98_PTS_MAJOR, "pts");
 	vfs_entry_device(devfs_entries(), "/ptmx", S_IFCHR | 0666,
 			 MKDEV(UNIX98_PTMX_MAJOR, UNIX98_PTMX_MINOR), "ptmx",

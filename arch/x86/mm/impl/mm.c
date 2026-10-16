@@ -907,7 +907,8 @@ vaddr_t mm_next_mapped_page(vaddr_t begin, vaddr_t end)
 	int irq;
 	spinlock_lock(&mm_lock, &irq);
 	while (address < end) {
-		pte_t entry = ((pte_t *)mm_get_pagedir())[ADDR_TO_PGT_OFFSET(address)];
+		pte_t entry = ((
+			pte_t *)mm_get_pagedir())[ADDR_TO_PGT_OFFSET(address)];
 		vaddr_t next;
 		if (!(entry & PAGE_ENTRY_PRESENT))
 			next = (address | (((vaddr_t)1 << 22) - 1)) + 1;

@@ -942,8 +942,11 @@ static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
 		sectors = PREREAD_SECTOR;
 	if (sectors < PREREAD_SECTOR)
 		memset(buf, 0, PREREAD_SECTOR * BLOCK_SECTOR_SIZE);
-	return partition_read(aux, head_sector, buf, sectors * BLOCK_SECTOR_SIZE) ==
-		       sectors * BLOCK_SECTOR_SIZE ? 0 : -1;
+	return partition_read(aux, head_sector, buf,
+			      sectors * BLOCK_SECTOR_SIZE) ==
+			       sectors * BLOCK_SECTOR_SIZE ?
+		       0 :
+		       -1;
 }
 
 static block_cache_item *

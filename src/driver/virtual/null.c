@@ -70,8 +70,8 @@ static file *null_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 static void null_dev_register(void)
 {
-	
-	vfs_entry_device(devfs_entries(), "/null", S_IFCHR | 0666, MKDEV(NULL_MAJOR, NULL_MINOR), "mem", null_cdev_open);
+	vfs_entry_device(devfs_entries(), "/null", S_IFCHR | 0666,
+			 MKDEV(NULL_MAJOR, NULL_MINOR), "mem", null_cdev_open);
 }
 
 /* /dev/zero */
@@ -132,8 +132,8 @@ static file *zero_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 static void zero_dev_register(void)
 {
-	
-	vfs_entry_device(devfs_entries(), "/zero", S_IFCHR | 0666, MKDEV(ZERO_MAJOR, ZERO_MINOR), "mem", zero_cdev_open);
+	vfs_entry_device(devfs_entries(), "/zero", S_IFCHR | 0666,
+			 MKDEV(ZERO_MAJOR, ZERO_MINOR), "mem", zero_cdev_open);
 }
 
 static int null_dev_register_probe(void)

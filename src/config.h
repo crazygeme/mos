@@ -36,7 +36,6 @@
 
 #define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
 
-
 #define USER_STACK_PAGES 4096
 /* Initial stack pages allocated at exec; stack grows down to USER_STACK_PAGES max. */
 #define USER_STACK_INIT_PAGES 16

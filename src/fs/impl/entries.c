@@ -710,22 +710,31 @@ vfs_entry_node *vfs_entry_directory_mode(vfs_entry_node *parent,
 	return node;
 }
 
-vfs_entry_node *vfs_entry_directory_path(vfs_entry_node *parent, const char *path,
-				       unsigned mode)
+vfs_entry_node *vfs_entry_directory_path(vfs_entry_node *parent,
+					 const char *path, unsigned mode)
 {
 	char *component = malloc(256);
-	if (!component || !path) { free(component); return NULL; }
+	if (!component || !path) {
+		free(component);
+		return NULL;
+	}
 	while (*path) {
 		unsigned length = 0;
-		while (*path == '/') path++;
-		if (!*path) break;
+		while (*path == '/')
+			path++;
+		if (!*path)
+			break;
 		while (*path && *path != '/') {
-			if (length == 255) { free(component); return NULL; }
+			if (length == 255) {
+				free(component);
+				return NULL;
+			}
 			component[length++] = *path++;
 		}
 		component[length] = 0;
 		parent = vfs_entry_directory_mode(parent, component, mode);
-		if (!parent) break;
+		if (!parent)
+			break;
 	}
 	free(component);
 	return parent;

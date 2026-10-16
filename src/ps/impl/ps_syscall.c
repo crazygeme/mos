@@ -83,11 +83,13 @@ static int is_child_unsafe(task_struct *parent, task_struct *task)
 }
 
 static task_struct *find_exited_child_unsafe(task_struct *parent, unsigned pid,
-					   unsigned pgrp, int match_pgrp)
+					     unsigned pgrp, int match_pgrp)
 {
 	list_entry *head = &parent->thread->children;
-	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
-		task_struct *task = container_of(entry, task_schedule, child_list)->task;
+	for (list_entry *entry = head->next; entry != head;
+	     entry = entry->next) {
+		task_struct *task =
+			container_of(entry, task_schedule, child_list)->task;
 		if (!task->life->exit_ready || task->sched->on_cpu ||
 		    task->thread->live_tasks)
 			continue;
@@ -116,11 +118,13 @@ static int has_child_unsafe(task_struct *parent, unsigned pid)
 }
 
 static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
-					    int options)
+					      int options)
 {
 	list_entry *head = &parent->thread->children;
-	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
-		task_struct *task = container_of(entry, task_schedule, child_list)->task;
+	for (list_entry *entry = head->next; entry != head;
+	     entry = entry->next) {
+		task_struct *task =
+			container_of(entry, task_schedule, child_list)->task;
 		if (pid && task->life->psid != pid)
 			continue;
 		if (!task->life->stop_report_pending)
@@ -137,8 +141,10 @@ static task_struct *find_stopped_child_unsafe(task_struct *parent, unsigned pid,
 static int has_pgrp_child_unsafe(task_struct *parent, unsigned pgrp)
 {
 	list_entry *head = &parent->thread->children;
-	for (list_entry *entry = head->next; entry != head; entry = entry->next) {
-		task_struct *task = container_of(entry, task_schedule, child_list)->task;
+	for (list_entry *entry = head->next; entry != head;
+	     entry = entry->next) {
+		task_struct *task =
+			container_of(entry, task_schedule, child_list)->task;
 		if (task->thread->group_id == pgrp)
 			return 1;
 	}
@@ -175,24 +181,26 @@ void ps_reparent_children_unsafe(task_struct *cur)
 	int notify_init = 0;
 	while (!list_is_empty(&cur->life->children)) {
 		task_struct *child = container_of(cur->life->children.next,
-						 task_schedule, creator_list)->task;
+						  task_schedule, creator_list)
+					     ->task;
 		if (child->life->pdeath_signal && child->sighand &&
 		    child->sched->status != ps_dying)
-			ps_queue_group_signal_unsafe(child, child->life->pdeath_signal);
+			ps_queue_group_signal_unsafe(
+				child, child->life->pdeath_signal);
 		list_remove_entry(&child->sched->creator_list);
 		list_init(&child->sched->creator_list);
 		child->life->creator = NULL;
 	}
 	cur->life->nchildren = 0;
-	if (cur->thread->live_tasks ||
-	    list_is_empty(&cur->thread->children))
+	if (cur->thread->live_tasks || list_is_empty(&cur->thread->children))
 		return;
 	task_struct *init_task = ps_find_process_unsafe(1);
 	if (!init_task || init_task->thread == cur->thread)
 		return;
 	while (!list_is_empty(&cur->thread->children)) {
 		task_struct *child = container_of(cur->thread->children.next,
-						 task_schedule, child_list)->task;
+						  task_schedule, child_list)
+					     ->task;
 		ps_set_parent_unsafe(child, init_task);
 		if (child->life->exit_ready) {
 			list_remove_entry(&child->sched->ps_list);
@@ -300,7 +308,8 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 		list_entry *head = &leader->thread->members;
 		for (entry = head->next; entry != head; entry = entry->next) {
 			task_struct *task =
-				container_of(entry, task_schedule, thread_list)->task;
+				container_of(entry, task_schedule, thread_list)
+					->task;
 			if (task != leader &&
 			    task->thread->tgid == leader->thread->tgid &&
 			    task->life->type == ps_user) {
@@ -426,7 +435,8 @@ void do_exit(unsigned encoded_status)
 		ps_remove_mgr_unsafe(cur);
 		if (!cur->thread->live_tasks && leader && leader != cur &&
 		    leader->life->exit_ready) {
-			task_struct *parent = ps_find_process_unsafe(leader->life->ppid);
+			task_struct *parent =
+				ps_find_process_unsafe(leader->life->ppid);
 			if (parent) {
 				ps_child_signal_unsafe(parent, leader, SIGCHLD);
 				ps_wake_parent_waiters_unsafe(parent);
@@ -568,11 +578,14 @@ int do_waitpid_pgrp(unsigned pgrp, int *status, int options, rusage *rusage)
 		}
 
 		list_entry *head = &cur->thread->children;
-		for (list_entry *entry = head->next; entry != head; entry = entry->next) {
-			task_struct *st = container_of(entry, task_schedule, child_list)->task;
+		for (list_entry *entry = head->next; entry != head;
+		     entry = entry->next) {
+			task_struct *st =
+				container_of(entry, task_schedule, child_list)
+					->task;
 
-			if (!is_child_unsafe(cur, st) ||
-			    !st->execution || st->thread->group_id != pgrp)
+			if (!is_child_unsafe(cur, st) || !st->execution ||
+			    st->thread->group_id != pgrp)
 				continue;
 			has_group_child = 1;
 			if (!st->life->stop_report_pending)

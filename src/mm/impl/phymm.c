@@ -378,10 +378,10 @@ void phymm_cache_budget(unsigned total, unsigned free, unsigned file_cached,
 	uint64_t available = (uint64_t)free + file_cached + block_cached;
 	if (available > total)
 		available = total;
-	policy->file_pages = available > block_cached ?
-				     available - block_cached : 0;
-	policy->block_pages = available > file_cached ?
-				      available - file_cached : 0;
+	policy->file_pages =
+		available > block_cached ? available - block_cached : 0;
+	policy->block_pages =
+		available > file_cached ? available - file_cached : 0;
 	/* Keep one line per cache so filesystem I/O can still make progress. */
 	if (!policy->file_pages)
 		policy->file_pages = 1;

@@ -38,7 +38,8 @@ static void ps_system_service_task(void *param)
 				((now - next_timer_ms) / TICK_MS + 1) * TICK_MS;
 		}
 
-		if (chardev_console_needs_refresh() && now >= next_graphics_ms) {
+		if (chardev_console_needs_refresh() &&
+		    now >= next_graphics_ms) {
 			chardev_console_refresh();
 			next_graphics_ms += ((now - next_graphics_ms) /
 						     GRAPHICS_REFRESH_MS +
@@ -47,7 +48,8 @@ static void ps_system_service_task(void *param)
 		}
 
 		next_due = next_timer_ms;
-		if (chardev_console_needs_refresh() && next_graphics_ms < next_due)
+		if (chardev_console_needs_refresh() &&
+		    next_graphics_ms < next_due)
 			next_due = next_graphics_ms;
 
 		now = time_now_ms();

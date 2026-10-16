@@ -211,7 +211,8 @@ KTEST(phymm, cache_budget_large_ram)
 	EXPECT_EQ(policy.file_pages, total);
 	EXPECT_EQ(policy.reserve_pages, 0);
 	EXPECT_EQ(policy.block_pages, total < MOS_BLOCK_CACHE_MAX_PAGES ?
-					    total : MOS_BLOCK_CACHE_MAX_PAGES);
+					      total :
+					      MOS_BLOCK_CACHE_MAX_PAGES);
 	return 0;
 }
 
@@ -235,7 +236,8 @@ KTEST(phymm, cache_budget_no_capacity_ceiling)
 	phymm_cache_budget(total, total, 0, 0, &policy);
 	EXPECT_EQ(policy.file_pages, total);
 	EXPECT_EQ(policy.block_pages, total < MOS_BLOCK_CACHE_MAX_PAGES ?
-					    total : MOS_BLOCK_CACHE_MAX_PAGES);
+					      total :
+					      MOS_BLOCK_CACHE_MAX_PAGES);
 	return 0;
 }
 
@@ -276,7 +278,8 @@ KTEST(phymm, cache_budget_overflow_and_inconsistent_snapshot)
 	phymm_cache_budget(~0U, ~0U, 1, 1, &policy);
 	EXPECT_EQ(policy.file_pages, ~0U - 1);
 	EXPECT_EQ(policy.block_pages, (~0U - 1) < MOS_BLOCK_CACHE_MAX_PAGES ?
-					    (~0U - 1) : MOS_BLOCK_CACHE_MAX_PAGES);
+					      (~0U - 1) :
+					      MOS_BLOCK_CACHE_MAX_PAGES);
 	return 0;
 }
 
@@ -289,7 +292,8 @@ KTEST(phymm, cache_budget_matches_allocator)
 	phymm_get_usage(&usage);
 	phymm_cache_budget(usage.low_total_pages + usage.high_total_pages,
 			   usage.low_free_pages + usage.high_free_pages,
-			   fs_page_cache_pages, blockdev_cached_pages(), &expected);
+			   fs_page_cache_pages, blockdev_cached_pages(),
+			   &expected);
 	phymm_get_cache_policy(&actual);
 	EXPECT_EQ(actual.file_pages, expected.file_pages);
 	EXPECT_EQ(actual.block_pages, expected.block_pages);

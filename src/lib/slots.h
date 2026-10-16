@@ -13,7 +13,8 @@ typedef struct {
 static inline unsigned slot_ctz64(uint64_t value)
 {
 	uint32_t low = (uint32_t)value;
-	return low ? __builtin_ctz(low) : 32 + __builtin_ctz((uint32_t)(value >> 32));
+	return low ? __builtin_ctz(low) :
+		     32 + __builtin_ctz((uint32_t)(value >> 32));
 }
 
 static inline int slot_take(slot_pool *pool, unsigned capacity)

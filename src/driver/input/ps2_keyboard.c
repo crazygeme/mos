@@ -609,7 +609,8 @@ static int ps2_keyboard_probe(unsigned port)
 	kbd_init_keymaps();
 	kbd_init_func_strings();
 	kb_scancodes = cyb_create(1);
-	return kb_scancodes ? chardev_register_keyboard(&keyboard_control_ops) : -ENOMEM;
+	return kb_scancodes ? chardev_register_keyboard(&keyboard_control_ops) :
+			      -ENOMEM;
 }
 
 /* Called after the idle and init tasks have reserved PID 0 and PID 1. */
@@ -776,7 +777,8 @@ static void kb_handle_scancode(unsigned raw_code, int kb_mode)
 	} else if ((special = map_special_key(special_keymap, code))) {
 		if (!release) {
 			while (*special) {
-				chardev_console_input((unsigned char)*special++);
+				chardev_console_input(
+					(unsigned char)*special++);
 			}
 		}
 	} else {

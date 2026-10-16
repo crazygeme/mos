@@ -166,7 +166,8 @@ static void fill(proc_buf_t *pb)
 	mos_print_bytes(pb, "current", MOS_PAGE_BYTES(fs_page_cache_pages));
 	mos_print_bytes(pb, "peak", MOS_PAGE_BYTES(fs_page_cache_max_pages));
 	mos_print_count(pb, "read/fault lookups", fs_page_cache_searches);
-	mos_print_count_rate(pb, "read/fault hits", fs_page_cache_hits, inode_cache_rate);
+	mos_print_count_rate(pb, "read/fault hits", fs_page_cache_hits,
+			     inode_cache_rate);
 	mos_table_end(pb);
 
 	/* ---- HDD block cache ---- */

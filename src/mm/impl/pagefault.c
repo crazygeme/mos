@@ -214,7 +214,7 @@ static int pf_handle_invalid_file_map(vaddr_t address, vm_region *region,
 		paddr_t phy = f->f_fop->map_page(f, offset);
 		paddr_t source = phy;
 		unsigned pte = PAGE_ENTRY_USER_CODE |
-		       ((prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC);
+			       ((prot & PROT_EXEC) ? 0 : PAGE_ENTRY_NO_EXEC);
 		if (!phy)
 			goto FAIL;
 		if (write && !(flag & MAP_SHARED)) {
@@ -337,8 +337,8 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 
 		if (phy != 0) {
 			/* Hit — map read-only so writes go through pf_handle_permission. */
-			if (mm_map_page(address, phy, PAGE_ENTRY_USER_CODE | nx) !=
-			    1)
+			if (mm_map_page(address, phy,
+					PAGE_ENTRY_USER_CODE | nx) != 1)
 				goto DONE;
 			handled = 1;
 			goto DONE;
@@ -381,8 +381,8 @@ static int pf_handle_invalid_memory(vaddr_t address, vm_region *region,
 		 * phymm_is_cow() fires on the next write fault and COW kicks
 		 * in — the shared zero page is never dirtied.
 		 */
-		if (mm_map_page(address, zero_page_phy, PAGE_ENTRY_USER_CODE | nx) !=
-		    1)
+		if (mm_map_page(address, zero_page_phy,
+				PAGE_ENTRY_USER_CODE | nx) != 1)
 			goto DONE;
 	}
 	handled = 1;

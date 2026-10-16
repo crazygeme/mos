@@ -224,8 +224,8 @@ static file *mem_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 
 static void mem_dev_register(void)
 {
-	
-	vfs_entry_device(devfs_entries(), "/mem", S_IFCHR | 0600, MKDEV(MEM_MAJOR, MEM_MINOR), "mem", mem_cdev_open);
+	vfs_entry_device(devfs_entries(), "/mem", S_IFCHR | 0600,
+			 MKDEV(MEM_MAJOR, MEM_MINOR), "mem", mem_cdev_open);
 }
 
 static int mem_dev_register_probe(void)

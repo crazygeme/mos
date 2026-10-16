@@ -18,7 +18,8 @@
 
 static void initctl_dev_register(void)
 {
-	vfs_entry_device(devfs_entries(), "/initctl", S_IFIFO | 0600, 0, NULL, NULL);
+	vfs_entry_device(devfs_entries(), "/initctl", S_IFIFO | 0600, 0, NULL,
+			 NULL);
 }
 
 static int initctl_dev_register_probe(void)

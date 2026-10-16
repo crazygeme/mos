@@ -157,8 +157,8 @@ static vfs_entry_node *block_directory(const char *path)
 static void partition_publish(struct partition *p, unsigned nr)
 {
 	struct disk *d = p->disk;
-	vfs_entry_node *parent = vfs_entry_directory(
-		d->interface->device.sysfs_entry, "block");
+	vfs_entry_node *parent =
+		vfs_entry_directory(d->interface->device.sysfs_entry, "block");
 	if (nr)
 		parent = vfs_entry_child(parent, d->parts[0].name);
 	vfs_entry_node *node = vfs_entry_directory(parent, p->name);
@@ -178,7 +178,8 @@ static void partition_publish(struct partition *p, unsigned nr)
 		vfs_entry_text(node, "start", text);
 	}
 	sprintf(text, "MAJOR=%u\nMINOR=%u\nDEVNAME=%s\nDEVTYPE=%s\n",
-		USB_STORAGE_MAJOR, p->minor, p->name, nr ? "partition" : "disk");
+		USB_STORAGE_MAJOR, p->minor, p->name,
+		nr ? "partition" : "disk");
 	vfs_entry_text(node, "uevent", text);
 	vfs_entry_link_ref(block_directory("class/block"), p->name, node);
 	sprintf(text, "%u:%u", USB_STORAGE_MAJOR, p->minor);

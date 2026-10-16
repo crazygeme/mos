@@ -24,8 +24,10 @@ typedef volatile struct _spinlock {
 
 extern const lock_operations_t spinlock_guard_operations;
 
-#define SPINLOCK_INITIALIZER \
-	{ .header = { &spinlock_guard_operations }, .inited = 1 }
+#define SPINLOCK_INITIALIZER                                          \
+	{                                                             \
+		.header = { &spinlock_guard_operations }, .inited = 1 \
+	}
 
 void spinlock_init(spinlock_t *lock);
 void spinlock_uninit(spinlock_t *lock);

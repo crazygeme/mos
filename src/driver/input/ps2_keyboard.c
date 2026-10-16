@@ -605,7 +605,8 @@ static const chardev_keyboard_ops keyboard_control_ops = {
 
 int keyboard_input_init(void)
 {
-	if (kb_scancodes) return 0;
+	if (kb_scancodes)
+		return 0;
 	kbd_init_keymaps();
 	kbd_init_func_strings();
 	kb_scancodes = cyb_create(1);
@@ -670,7 +671,8 @@ static int kb_set_leds(unsigned leds)
 		return -EINVAL;
 	ret = usb_hid_set_leds(leds);
 	const device_t *ps2 = ps2_device(PS2_PORT_KEYBOARD);
-	if (!ps2 || !ps2->driver) return ret;
+	if (!ps2 || !ps2->driver)
+		return ret;
 	ps2_command_begin_preserve(PS2_PORT_KEYBOARD);
 	ret = kb_send_command_byte(0xed);
 	if (!ret)

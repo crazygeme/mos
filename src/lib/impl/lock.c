@@ -82,7 +82,7 @@ static void lock_init(lock_base *b, unsigned int initstat)
  * Wake one task from @list (caller must hold the enclosing wait_lock).
  * Returns 1 if a task was woken, 0 if the list was empty.
  */
-static int lock_wake_one_locked(list_entry *wait_list)
+static int lock_wake_one_unsafe(list_entry *wait_list)
 {
 	list_entry *entry;
 	task_struct *task;
@@ -144,7 +144,7 @@ static void lock_base_release(lock_base *s)
 	if (LIKELY(__atomic_load_n(&s->waiters, __ATOMIC_SEQ_CST) == 0))
 		return;
 	spinlock_lock(&s->wait_lock, &irq);
-	lock_wake_one_locked(&s->wait_list);
+	lock_wake_one_unsafe(&s->wait_list);
 	spinlock_unlock(&s->wait_lock, irq);
 }
 
@@ -201,7 +201,7 @@ int cond_wait(cond_t *s, int interruptible)
 			spinlock_lock(&b->wait_lock, &irq);
 			__atomic_sub_fetch(&b->waiters, 1, __ATOMIC_SEQ_CST);
 			if (__atomic_load_n(&b->lock, __ATOMIC_ACQUIRE) == 0)
-				lock_wake_one_locked(&b->wait_list);
+				lock_wake_one_unsafe(&b->wait_list);
 			spinlock_unlock(&b->wait_lock, irq);
 			return -1;
 		}
@@ -372,7 +372,7 @@ void rwlock_read_unlock(rwlock_t *rw)
 	int irq;
 	spinlock_lock(&rw->wait_lock, &irq);
 	if (__atomic_load_n(&rw->state, __ATOMIC_ACQUIRE) == RW_PENDING)
-		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
+		lock_wake_one_unsafe((list_entry *)&rw->writer_wait_list);
 	spinlock_unlock(&rw->wait_lock, irq);
 }
 
@@ -413,9 +413,9 @@ void rwlock_write_unlock(rwlock_t *rw)
 	spinlock_lock(&rw->wait_lock, &irq);
 	__atomic_fetch_and(&rw->state, ~RW_WRITER, __ATOMIC_RELEASE);
 	if (rw->writers_waiting > 0) {
-		lock_wake_one_locked((list_entry *)&rw->writer_wait_list);
+		lock_wake_one_unsafe((list_entry *)&rw->writer_wait_list);
 	} else {
-		while (lock_wake_one_locked(
+		while (lock_wake_one_unsafe(
 			(list_entry *)&rw->reader_wait_list))
 			;
 	}
@@ -476,7 +476,7 @@ void sem_post(sem_t *s)
 	if (LIKELY(__atomic_load_n(&s->waiters, __ATOMIC_SEQ_CST) == 0))
 		return;
 	spinlock_lock((spinlock_t *)&s->wait_lock, &irq);
-	lock_wake_one_locked((list_entry *)&s->wait_list);
+	lock_wake_one_unsafe((list_entry *)&s->wait_list);
 	spinlock_unlock((spinlock_t *)&s->wait_lock, irq);
 }
 

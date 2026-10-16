@@ -193,8 +193,11 @@ static void events_poll(struct xhci *h)
 										    [1]))
 									continue;
 								p->actual =
-									(control & XHCI_EVENT_HAS_DATA) ?
-										(residual <= p->length ? residual : 0) :
+									(control &
+									 XHCI_EVENT_HAS_DATA) ?
+										(residual <= p->length ?
+											 residual :
+											 0) :
 									residual <= p->length ?
 										p->length -
 											residual :
@@ -808,14 +811,14 @@ static int xhci_iso_submit(struct usb_device *u, struct usb_endpoint *e,
 			flags |= ((n - 1) / (e->burst + 1)) << 7;
 			flags |= ((n - 1) % (e->burst + 1)) << 16;
 		}
-		r->trbs[i][0] =
-			ring_put(&ep->ring, address, first,
-				 flags | XHCI_TRB_CHAIN);
+		r->trbs[i][0] = ring_put(&ep->ring, address, first,
+					 flags | XHCI_TRB_CHAIN);
 		r->trbs[i][1] = r->trbs[i][0];
 		if (first < p->length)
 			r->trbs[i][1] = ring_put(
 				&ep->ring, address + first, p->length - first,
-				XHCI_TRB_TYPE(XHCI_TRB_NORMAL) | XHCI_TRB_CHAIN);
+				XHCI_TRB_TYPE(XHCI_TRB_NORMAL) |
+					XHCI_TRB_CHAIN);
 		/* Event Data reports the total bytes transferred across all TD TRBs. */
 		ring_put(&ep->ring, r->trbs[i][0], 0,
 			 XHCI_TRB_TYPE(XHCI_TRB_EVENT_DATA) | XHCI_TRB_IOC);

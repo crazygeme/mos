@@ -261,7 +261,7 @@ typedef struct {
 int resolve_path(const char *old, char *new);
 
 /* Wake all tasks sleeping on @in's flock wait queue.  Caller holds i_flock_lock. */
-void flock_wake_all_locked(inode *in);
+void flock_wake_all_unsafe(inode *in);
 /* Release any flock held by @f; wakes blocked waiters.  Called by fs_put_file
  * when the last reference to an open file description is dropped. */
 void fs_flock_release(file *f);

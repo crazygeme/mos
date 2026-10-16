@@ -1376,7 +1376,7 @@ static int gpu_string(char *dst, size_t *length, const char *src)
 	return 0;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_version(void *context
+static int gpu_ioctl_drm_ioctl_version_unsafe(void *context
 					      __attribute__((unused)),
 					      unsigned cmd
 					      __attribute__((unused)),
@@ -1394,7 +1394,7 @@ static int gpu_ioctl_locked_drm_ioctl_version(void *context
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_get_unique(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_get_unique_unsafe(void *context __attribute__((unused)),
 				      unsigned cmd __attribute__((unused)),
 				      void *arg __attribute__((unused)))
 {
@@ -1416,7 +1416,7 @@ gpu_ioctl_locked_drm_ioctl_get_unique(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_set_version(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_set_version_unsafe(void *context __attribute__((unused)),
 				       unsigned cmd __attribute__((unused)),
 				       void *arg __attribute__((unused)))
 {
@@ -1432,7 +1432,7 @@ gpu_ioctl_locked_drm_ioctl_set_version(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_get_magic(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_get_magic_unsafe(void *context __attribute__((unused)),
 				     unsigned cmd __attribute__((unused)),
 				     void *arg __attribute__((unused)))
 {
@@ -1444,7 +1444,7 @@ gpu_ioctl_locked_drm_ioctl_get_magic(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_auth_magic(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_auth_magic_unsafe(void *context __attribute__((unused)),
 				      unsigned cmd __attribute__((unused)),
 				      void *arg __attribute__((unused)))
 {
@@ -1461,7 +1461,7 @@ gpu_ioctl_locked_drm_ioctl_auth_magic(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_set_master(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_set_master_unsafe(void *context __attribute__((unused)),
 				      unsigned cmd __attribute__((unused)),
 				      void *arg __attribute__((unused)))
 {
@@ -1476,7 +1476,7 @@ gpu_ioctl_locked_drm_ioctl_set_master(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_drop_master(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_drop_master_unsafe(void *context __attribute__((unused)),
 				       unsigned cmd __attribute__((unused)),
 				       void *arg __attribute__((unused)))
 {
@@ -1488,7 +1488,7 @@ gpu_ioctl_locked_drm_ioctl_drop_master(void *context __attribute__((unused)),
 	return 0;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_get_cap(void *context
+static int gpu_ioctl_drm_ioctl_get_cap_unsafe(void *context
 					      __attribute__((unused)),
 					      unsigned cmd
 					      __attribute__((unused)),
@@ -1518,7 +1518,7 @@ static int gpu_ioctl_locked_drm_ioctl_get_cap(void *context
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_set_client_cap(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_set_client_cap_unsafe(void *context __attribute__((unused)),
 					  unsigned cmd __attribute__((unused)),
 					  void *arg __attribute__((unused)))
 {
@@ -1530,29 +1530,29 @@ gpu_ioctl_locked_drm_ioctl_set_client_cap(void *context __attribute__((unused)),
 
 static const command_operation gpu_public_commands[256] = {
 	[DRM_IOCTL_VERSION & 255] = { DRM_IOCTL_VERSION,
-				      gpu_ioctl_locked_drm_ioctl_version },
+				      gpu_ioctl_drm_ioctl_version_unsafe },
 	[DRM_IOCTL_GET_UNIQUE &
 		255] = { DRM_IOCTL_GET_UNIQUE,
-			 gpu_ioctl_locked_drm_ioctl_get_unique },
+			 gpu_ioctl_drm_ioctl_get_unique_unsafe },
 	[DRM_IOCTL_SET_VERSION &
 		255] = { DRM_IOCTL_SET_VERSION,
-			 gpu_ioctl_locked_drm_ioctl_set_version },
+			 gpu_ioctl_drm_ioctl_set_version_unsafe },
 	[DRM_IOCTL_GET_MAGIC & 255] = { DRM_IOCTL_GET_MAGIC,
-					gpu_ioctl_locked_drm_ioctl_get_magic },
+					gpu_ioctl_drm_ioctl_get_magic_unsafe },
 	[DRM_IOCTL_AUTH_MAGIC &
 		255] = { DRM_IOCTL_AUTH_MAGIC,
-			 gpu_ioctl_locked_drm_ioctl_auth_magic },
+			 gpu_ioctl_drm_ioctl_auth_magic_unsafe },
 	[DRM_IOCTL_SET_MASTER &
 		255] = { DRM_IOCTL_SET_MASTER,
-			 gpu_ioctl_locked_drm_ioctl_set_master },
+			 gpu_ioctl_drm_ioctl_set_master_unsafe },
 	[DRM_IOCTL_DROP_MASTER &
 		255] = { DRM_IOCTL_DROP_MASTER,
-			 gpu_ioctl_locked_drm_ioctl_drop_master },
+			 gpu_ioctl_drm_ioctl_drop_master_unsafe },
 	[DRM_IOCTL_GET_CAP & 255] = { DRM_IOCTL_GET_CAP,
-				      gpu_ioctl_locked_drm_ioctl_get_cap },
+				      gpu_ioctl_drm_ioctl_get_cap_unsafe },
 	[DRM_IOCTL_SET_CLIENT_CAP &
 		255] = { DRM_IOCTL_SET_CLIENT_CAP,
-			 gpu_ioctl_locked_drm_ioctl_set_client_cap },
+			 gpu_ioctl_drm_ioctl_set_client_cap_unsafe },
 };
 
 static const command_operation *const gpu_public_command_groups[256] = {
@@ -1560,7 +1560,7 @@ static const command_operation *const gpu_public_command_groups[256] = {
 };
 
 static int
-gpu_ioctl_locked_drm_ioctl_gem_close(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_gem_close_unsafe(void *context __attribute__((unused)),
 				     unsigned cmd __attribute__((unused)),
 				     void *arg __attribute__((unused)))
 {
@@ -1569,7 +1569,7 @@ gpu_ioctl_locked_drm_ioctl_gem_close(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_gem_flink(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_gem_flink_unsafe(void *context __attribute__((unused)),
 				     unsigned cmd __attribute__((unused)),
 				     void *arg __attribute__((unused)))
 {
@@ -1587,7 +1587,7 @@ gpu_ioctl_locked_drm_ioctl_gem_flink(void *context __attribute__((unused)),
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_gem_open(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_gem_open_unsafe(void *context __attribute__((unused)),
 				    unsigned cmd __attribute__((unused)),
 				    void *arg __attribute__((unused)))
 {
@@ -1611,7 +1611,7 @@ gpu_ioctl_locked_drm_ioctl_gem_open(void *context __attribute__((unused)),
 	return 0;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_prime_handle_to_fd(
+static int gpu_ioctl_drm_ioctl_prime_handle_to_fd_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -1636,7 +1636,7 @@ static int gpu_ioctl_locked_drm_ioctl_prime_handle_to_fd(
 	return 0;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle(
+static int gpu_ioctl_drm_ioctl_prime_fd_to_handle_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -1662,7 +1662,7 @@ static int gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle(
 	return 0;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_virtgpu_getparam(
+static int gpu_ioctl_drm_ioctl_virtgpu_getparam_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -1682,7 +1682,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_getparam(
 	return gpu_out(r->value, &value, sizeof(value));
 }
 
-static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_create(
+static int gpu_ioctl_drm_ioctl_virtgpu_resource_create_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -1690,7 +1690,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_create(
 	return gpu_create(client, arg, 0);
 }
 
-static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_info(
+static int gpu_ioctl_drm_ioctl_virtgpu_resource_info_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -1707,7 +1707,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_resource_info(
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_virtgpu_map(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_virtgpu_map_unsafe(void *context __attribute__((unused)),
 				       unsigned cmd __attribute__((unused)),
 				       void *arg __attribute__((unused)))
 {
@@ -1720,7 +1720,7 @@ gpu_ioctl_locked_drm_ioctl_virtgpu_map(void *context __attribute__((unused)),
 	return 0;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_virtgpu_get_caps(
+static int gpu_ioctl_drm_ioctl_virtgpu_get_caps_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -2034,7 +2034,7 @@ fail:
 	return result;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
+static int gpu_ioctl_drm_ioctl_virtgpu_execbuffer_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -2119,7 +2119,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer(
 	return result;
 }
 
-static int gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host(
+static int gpu_ioctl_drm_ioctl_virtgpu_transfer_to_host_unsafe(
 	void *context __attribute__((unused)),
 	unsigned cmd __attribute__((unused)), void *arg __attribute__((unused)))
 {
@@ -2144,7 +2144,7 @@ static int gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host(
 }
 
 static int
-gpu_ioctl_locked_drm_ioctl_virtgpu_wait(void *context __attribute__((unused)),
+gpu_ioctl_drm_ioctl_virtgpu_wait_unsafe(void *context __attribute__((unused)),
 					unsigned cmd __attribute__((unused)),
 					void *arg __attribute__((unused)))
 {
@@ -2171,51 +2171,51 @@ static const command_operation gpu_authenticated_commands[256] = {
 		255] = { DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB,
 			 gpu_create_blob },
 	[DRM_IOCTL_GEM_CLOSE & 255] = { DRM_IOCTL_GEM_CLOSE,
-					gpu_ioctl_locked_drm_ioctl_gem_close },
+					gpu_ioctl_drm_ioctl_gem_close_unsafe },
 	[DRM_IOCTL_GEM_FLINK & 255] = { DRM_IOCTL_GEM_FLINK,
-					gpu_ioctl_locked_drm_ioctl_gem_flink },
+					gpu_ioctl_drm_ioctl_gem_flink_unsafe },
 	[DRM_IOCTL_GEM_OPEN & 255] = { DRM_IOCTL_GEM_OPEN,
-				       gpu_ioctl_locked_drm_ioctl_gem_open },
+				       gpu_ioctl_drm_ioctl_gem_open_unsafe },
 	[DRM_IOCTL_PRIME_HANDLE_TO_FD &
 		255] = { DRM_IOCTL_PRIME_HANDLE_TO_FD,
-			 gpu_ioctl_locked_drm_ioctl_prime_handle_to_fd },
+			 gpu_ioctl_drm_ioctl_prime_handle_to_fd_unsafe },
 	[DRM_IOCTL_PRIME_FD_TO_HANDLE &
 		255] = { DRM_IOCTL_PRIME_FD_TO_HANDLE,
-			 gpu_ioctl_locked_drm_ioctl_prime_fd_to_handle },
+			 gpu_ioctl_drm_ioctl_prime_fd_to_handle_unsafe },
 	[DRM_IOCTL_VIRTGPU_GETPARAM &
 		255] = { DRM_IOCTL_VIRTGPU_GETPARAM,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_getparam },
+			 gpu_ioctl_drm_ioctl_virtgpu_getparam_unsafe },
 	[DRM_IOCTL_VIRTGPU_RESOURCE_CREATE &
 		255] = { DRM_IOCTL_VIRTGPU_RESOURCE_CREATE,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_resource_create },
+			 gpu_ioctl_drm_ioctl_virtgpu_resource_create_unsafe },
 	[DRM_IOCTL_VIRTGPU_RESOURCE_INFO &
 		255] = { DRM_IOCTL_VIRTGPU_RESOURCE_INFO,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_resource_info },
+			 gpu_ioctl_drm_ioctl_virtgpu_resource_info_unsafe },
 	[DRM_IOCTL_VIRTGPU_MAP &
 		255] = { DRM_IOCTL_VIRTGPU_MAP,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_map },
+			 gpu_ioctl_drm_ioctl_virtgpu_map_unsafe },
 	[DRM_IOCTL_VIRTGPU_GET_CAPS &
 		255] = { DRM_IOCTL_VIRTGPU_GET_CAPS,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_get_caps },
+			 gpu_ioctl_drm_ioctl_virtgpu_get_caps_unsafe },
 	[DRM_IOCTL_VIRTGPU_EXECBUFFER &
 		255] = { DRM_IOCTL_VIRTGPU_EXECBUFFER,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_execbuffer },
+			 gpu_ioctl_drm_ioctl_virtgpu_execbuffer_unsafe },
 	[DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST &
 		255] = { DRM_IOCTL_VIRTGPU_TRANSFER_TO_HOST,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host },
+			 gpu_ioctl_drm_ioctl_virtgpu_transfer_to_host_unsafe },
 	[DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST &
 		255] = { DRM_IOCTL_VIRTGPU_TRANSFER_FROM_HOST,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_transfer_to_host },
+			 gpu_ioctl_drm_ioctl_virtgpu_transfer_to_host_unsafe },
 	[DRM_IOCTL_VIRTGPU_WAIT &
 		255] = { DRM_IOCTL_VIRTGPU_WAIT,
-			 gpu_ioctl_locked_drm_ioctl_virtgpu_wait },
+			 gpu_ioctl_drm_ioctl_virtgpu_wait_unsafe },
 };
 
 static const command_operation *const gpu_authenticated_command_groups[256] = {
 	[(DRM_IOCTL_GEM_CLOSE >> 8) & 255] = gpu_authenticated_commands,
 };
 
-static int gpu_ioctl_locked(struct gpu_client *client, unsigned cmd, void *arg)
+static int gpu_ioctl_unsafe(struct gpu_client *client, unsigned cmd, void *arg)
 {
 	command_fn invoke = command_lookup(gpu_public_command_groups, cmd);
 	if (invoke)
@@ -2252,7 +2252,7 @@ static int gpu_ioctl(file *fp, unsigned cmd, void *arg)
 		memcpy(local, arg, size);
 	rmutex_lock(&gpu_lock);
 	result = gpu_ready ?
-			 gpu_ioctl_locked(fp->f_inode->i_private, cmd, local) :
+			 gpu_ioctl_unsafe(fp->f_inode->i_private, cmd, local) :
 			 -ENODEV;
 	rmutex_unlock(&gpu_lock);
 	if (!result && (direction & 2))

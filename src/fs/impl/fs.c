@@ -749,7 +749,7 @@ int fs_dup3(int fd, int newfd, int flags)
  * Wake every task waiting on @in's flock queue.
  * Caller must hold in->i_flock_lock.
  */
-void flock_wake_all_locked(inode *in)
+void flock_wake_all_unsafe(inode *in)
 {
 	while (!list_is_empty(&in->i_flock_wait)) {
 		list_entry *e = list_remove_tail(&in->i_flock_wait);
@@ -780,7 +780,7 @@ void fs_flock_release(file *f)
 		in->i_flock_ex_owner = NULL;
 	}
 	f->f_flock = 0;
-	flock_wake_all_locked(in);
+	flock_wake_all_unsafe(in);
 	spinlock_unlock(&in->i_flock_lock, irq);
 }
 

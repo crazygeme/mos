@@ -79,7 +79,7 @@ static int notify_ready;
 static const file_operations inotify_fops;
 static void capture_open_files(void);
 static void capture_file(file *fp, int opened);
-static void lost_event_locked(void);
+static void lost_event_unsafe(void);
 
 static unsigned active_watches(void)
 {
@@ -968,7 +968,7 @@ int sys_inotify_init(void)
 }
 
 /* Metadata allocation loss is reported instead of inventing event identity. */
-static void lost_event_locked(void)
+static void lost_event_unsafe(void)
 {
 	list_entry *cursor;
 	for (cursor = instances.next; cursor != &instances;
@@ -995,7 +995,7 @@ static void lost_event(void)
 	if (!notify_ready)
 		return;
 	mutex_lock(&notify_lock);
-	lost_event_locked();
+	lost_event_unsafe();
 	mutex_unlock(&notify_lock);
 }
 
@@ -1012,7 +1012,7 @@ static void node_event(inotify_node *node, unsigned mask)
 		key_event(&node->parent, mask | directory, 0, node->name,
 			  node->unlinked);
 	if (node->parent_lost)
-		lost_event_locked();
+		lost_event_unsafe();
 }
 
 static void capture_file(file *fp, int opened)
@@ -1173,7 +1173,7 @@ void inotify_created(super_block *root, const char *path)
 		key_event(&node->parent, IN_CREATE | node_directory_flag(node),
 			  0, node->name, 0);
 	if (node->parent_lost)
-		lost_event_locked();
+		lost_event_unsafe();
 	mutex_unlock(&notify_lock);
 	inotify_snapshot_put(node);
 }
@@ -1213,7 +1213,7 @@ void inotify_removed(inotify_node *node)
 		key_event(&node->parent, IN_DELETE | node_directory_flag(node),
 			  0, node->name, 0);
 	if (node->parent_lost)
-		lost_event_locked();
+		lost_event_unsafe();
 	inode_unlinked(node);
 	for (cursor = open_files.next; cursor != &open_files;
 	     cursor = cursor->next) {
@@ -1279,7 +1279,7 @@ void inotify_renamed(inotify_node *source, inotify_node *replacement,
 			  IN_MOVED_TO | node_directory_flag(source), cookie,
 			  dest->name, 0);
 	if (source->parent_lost || dest->parent_lost)
-		lost_event_locked();
+		lost_event_unsafe();
 	if (replacement)
 		inode_unlinked(replacement);
 	key_event(&source->key, IN_MOVE_SELF, 0, NULL, 0);

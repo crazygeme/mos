@@ -23,7 +23,7 @@ static pts_pair pts_pairs[MAX_PTS];
 static unsigned pts_used;
 static struct rb_root pts_groups = _RBTREE_ROOT_INIT;
 
-static void ptmx_group_insert_locked(pts_pair *p)
+static void ptmx_group_insert_unsafe(pts_pair *p)
 {
 	struct rb_node **link = &pts_groups.rb_node, *parent = NULL;
 	while (*link) {
@@ -50,12 +50,12 @@ static void ptmx_group_changed(pts_pair *p, unsigned group)
 	}
 	p->pgrp = group;
 	if (p->used && p->master_open)
-		ptmx_group_insert_locked(p);
+		ptmx_group_insert_unsafe(p);
 	spinlock_unlock(&pts_alloc_lock, irq);
 }
 
 /* The pair allocator lock protects both the group index and allocation bits. */
-static void ptmx_pair_free_locked(pts_pair *p)
+static void ptmx_pair_free_unsafe(pts_pair *p)
 {
 	if (p->group_indexed) {
 		rb_erase(&p->group_node, &pts_groups);
@@ -64,7 +64,7 @@ static void ptmx_pair_free_locked(pts_pair *p)
 	pts_used &= ~(1U << p->idx);
 }
 
-static pts_pair *ptmx_group_find_locked(unsigned group)
+static pts_pair *ptmx_group_find_unsafe(unsigned group)
 {
 	struct rb_node *node = pts_groups.rb_node;
 	pts_pair *match = NULL;
@@ -234,7 +234,7 @@ file *ptmx_open_controlling(task_struct *task, int flag)
 	if (!task || !task->execution)
 		return NULL;
 	spinlock_lock(&pts_alloc_lock, &irq);
-	match = ptmx_group_find_locked(task->thread->group_id);
+	match = ptmx_group_find_unsafe(task->thread->group_id);
 	if (match && !(flag & O_PATH)) {
 		__sync_add_and_fetch(&match->slave_count, 1);
 		match->slave_ever_opened = 1;
@@ -464,8 +464,8 @@ static file *ptmx_cdev_open(super_block *dev_sb, unsigned rdev, int flag)
 	p->used = 1;
 	p->master_open = 1;
 	p->group_changed = ptmx_group_changed;
-	p->on_free = ptmx_pair_free_locked;
-	ptmx_group_insert_locked(p);
+	p->on_free = ptmx_pair_free_unsafe;
+	ptmx_group_insert_unsafe(p);
 	p->pt_locked = 1;
 	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IWGRP;
 	if (current->execution) {

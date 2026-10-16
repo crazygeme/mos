@@ -1256,7 +1256,7 @@ int sys_flock(int fd, int operation)
 		else if (fp->f_flock == LOCK_EX)
 			in->i_flock_ex_owner = NULL;
 		fp->f_flock = 0;
-		flock_wake_all_locked(in);
+		flock_wake_all_unsafe(in);
 		goto out;
 	}
 

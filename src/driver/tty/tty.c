@@ -117,9 +117,9 @@ static int tty_fb_text_is_visible(const tty_state *state);
 static void tty_exit_alt_screen(tty_state *state);
 static void tty_sync_fb_mode_all(void);
 static void tty_switch_internal(int n);
-static void tty_complete_switch_locked(int n);
-static void tty_capture_graphics_locked(tty_state *state);
-static void tty_restore_graphics_locked(tty_state *state);
+static void tty_complete_switch_unsafe(int n);
+static void tty_capture_graphics_unsafe(tty_state *state);
+static void tty_restore_graphics_unsafe(tty_state *state);
 static void tty_graphics_refresh_dsr(void *unused);
 static int tty_graphics_owner_fb_dirty(const tty_state *state);
 
@@ -133,7 +133,7 @@ static int tty_file_nonblock(file *fp)
 }
 
 /*
- * tty_restore_text_console_locked - bring one VT back to normal text-console
+ * tty_restore_text_console_unsafe - bring one VT back to normal text-console
  * semantics after a graphics user (typically X) is done with it.
  *
  * This function intentionally restores only VT/TTY state. It does not redraw
@@ -149,7 +149,7 @@ static int tty_file_nonblock(file *fp)
  *   keyboard mode that would make the shell unusable.
  * - The alternate screen is exited so shell text uses the normal saved buffer.
  */
-static void tty_restore_text_console_locked(tty_state *state)
+static void tty_restore_text_console_unsafe(tty_state *state)
 {
 	state->kd_mode = KD_TEXT;
 	state->kd_owner_pid = 0;
@@ -161,7 +161,7 @@ static void tty_restore_text_console_locked(tty_state *state)
 }
 
 /*
- * tty_complete_switch_locked - commit a VT switch once the kernel has
+ * tty_complete_switch_unsafe - commit a VT switch once the kernel has
  * permission to do so.
  *
  * There are two ways to reach here:
@@ -177,7 +177,7 @@ static void tty_restore_text_console_locked(tty_state *state)
  * Keeping this in one helper is important because every switch path must
  * perform the exact same state transition.
  */
-static void tty_complete_switch_locked(int n)
+static void tty_complete_switch_unsafe(int n)
 {
 	tty_state *except_tty = &ttys[n - 1];
 
@@ -200,7 +200,7 @@ static void tty_complete_switch_locked(int n)
 		console_redraw(this_ttys->cells, this_ttys->max_col,
 			       this_ttys->max_row, (unsigned)this_ttys->cursor);
 	else if (this_ttys->kd_mode == KD_GRAPHICS)
-		tty_restore_graphics_locked(this_ttys);
+		tty_restore_graphics_unsafe(this_ttys);
 }
 
 static int tty_fb_text_is_visible(const tty_state *state)
@@ -208,7 +208,7 @@ static int tty_fb_text_is_visible(const tty_state *state)
 	return state->tty_idx == active_tty_idx && state->kd_mode == KD_TEXT;
 }
 
-static void tty_capture_graphics_locked(tty_state *state)
+static void tty_capture_graphics_unsafe(tty_state *state)
 {
 	unsigned need;
 	void *newbuf;
@@ -231,7 +231,7 @@ static void tty_capture_graphics_locked(tty_state *state)
 	framebuffer_snapshot_save(state->graphics_fb, state->graphics_fb_size);
 }
 
-static void tty_restore_graphics_locked(tty_state *state)
+static void tty_restore_graphics_unsafe(tty_state *state)
 {
 	if (!state || state->kd_mode != KD_GRAPHICS || !state->graphics_fb)
 		return;
@@ -1590,8 +1590,8 @@ static void tty_switch_internal(int n)
 	old_tty = this_ttys;
 	old_graphics = old_tty && old_tty->kd_mode == KD_GRAPHICS;
 	if (old_graphics)
-		tty_capture_graphics_locked(old_tty);
-	tty_complete_switch_locked(n);
+		tty_capture_graphics_unsafe(old_tty);
+	tty_complete_switch_unsafe(n);
 
 	spinlock_unlock(&tty_switch_lock, irq);
 }
@@ -2066,7 +2066,7 @@ static int tty_fs_ioctl_kdsetmode(void *context __attribute__((unused)),
 		state->kd_mode = KD_GRAPHICS;
 		state->kd_owner_pid = cur ? cur->life->psid : 0;
 	} else {
-		tty_restore_text_console_locked(state);
+		tty_restore_text_console_unsafe(state);
 		if (tty_fb_text_is_visible(state)) {
 			/*
 				 * Returning to KD_TEXT may happen after X changed the
@@ -2373,7 +2373,7 @@ static int tty_fs_release(file *fp)
 			int irq;
 
 			spinlock_lock(&state->lock, &irq);
-			tty_restore_text_console_locked(state);
+			tty_restore_text_console_unsafe(state);
 			if (tty_fb_text_is_visible(state)) {
 				tty_sync_fb_mode_all();
 				_displayed_cursor = (unsigned)state->cursor;

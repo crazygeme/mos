@@ -92,7 +92,7 @@ static void mouse_queue_byte(unsigned char b)
 	mouse_queue_bytes(&b, 1);
 }
 
-static void mouse_update_packet_mode_locked(unsigned char id)
+static void mouse_update_packet_mode_unsafe(unsigned char id)
 {
 	if (id == PS2_MOUSE_ID_IMPS2) {
 		mouse_packet_len = 4;
@@ -116,7 +116,7 @@ static void mouse_reset_runtime_state(void)
 	mouse_last_sample[0] = 0;
 	mouse_last_sample[1] = 0;
 	mouse_last_sample[2] = 0;
-	mouse_update_packet_mode_locked(PS2_MOUSE_ID_STANDARD);
+	mouse_update_packet_mode_unsafe(PS2_MOUSE_ID_STANDARD);
 	spinlock_unlock(&mouse_state_lock, irq);
 }
 
@@ -136,7 +136,7 @@ static int ps2mouse_send_cmd_expect_ack(unsigned char cmd)
 	return reply == PS2_MOUSE_ACK ? 0 : -EIO;
 }
 
-static void mouse_track_sample_rate_locked(unsigned char rate)
+static void mouse_track_sample_rate_unsafe(unsigned char rate)
 {
 	mouse_last_sample[0] = mouse_last_sample[1];
 	mouse_last_sample[1] = mouse_last_sample[2];
@@ -144,7 +144,7 @@ static void mouse_track_sample_rate_locked(unsigned char rate)
 
 	if (mouse_last_sample[0] == 200 && mouse_last_sample[1] == 100 &&
 	    mouse_last_sample[2] == 80)
-		mouse_update_packet_mode_locked(PS2_MOUSE_ID_IMPS2);
+		mouse_update_packet_mode_unsafe(PS2_MOUSE_ID_IMPS2);
 }
 
 static void ps2mouse_process_byte(unsigned char data)
@@ -181,9 +181,11 @@ static void ps2mouse_process_byte(unsigned char data)
 
 int mouse_input_init(void)
 {
-	if (mouse_rxbuf) return 0;
+	if (mouse_rxbuf)
+		return 0;
 	mouse_rxbuf = cyb_create_named(1);
-	if (!mouse_rxbuf) return -ENOMEM;
+	if (!mouse_rxbuf)
+		return -ENOMEM;
 	cyb_writer_open(mouse_rxbuf);
 	mutex_init(&mouse_cmd_lock);
 	spinlock_init(&mouse_state_lock);
@@ -199,8 +201,11 @@ void mouse_input_report(int dx, int dy, int wheel, unsigned buttons)
 	unsigned len;
 	int irq;
 	dy = -dy;
-	packet[0] = 8 | (buttons & 7) | (dx < 0 ? 0x10 : 0) | (dy < 0 ? 0x20 : 0);
-	packet[1] = dx; packet[2] = dy; packet[3] = -wheel;
+	packet[0] = 8 | (buttons & 7) | (dx < 0 ? 0x10 : 0) |
+		    (dy < 0 ? 0x20 : 0);
+	packet[1] = dx;
+	packet[2] = dy;
+	packet[3] = -wheel;
 	spinlock_lock(&mouse_state_lock, &irq);
 	len = mouse_packet_len;
 	memcpy(mouse_last_packet, packet, len);
@@ -316,14 +321,16 @@ static int ps2mouse_queue_reply(const unsigned char *reply, unsigned len)
 }
 
 /* The aggregate mouse endpoint retains the PS/2 userspace command ABI. */
-static int usbmouse_command(unsigned char byte, int *expect_param, unsigned char *expect_cmd)
+static int usbmouse_command(unsigned char byte, int *expect_param,
+			    unsigned char *expect_cmd)
 {
 	unsigned char reply[5] = { PS2_MOUSE_ACK };
 	unsigned len = 1;
 	int irq;
 	spinlock_lock(&mouse_state_lock, &irq);
 	if (*expect_param) {
-		if (*expect_cmd == PS2_MOUSE_CMD_SET_SAMPLE_RATE) mouse_track_sample_rate_locked(byte);
+		if (*expect_cmd == PS2_MOUSE_CMD_SET_SAMPLE_RATE)
+			mouse_track_sample_rate_unsafe(byte);
 		*expect_param = mouse_expect_param = 0;
 		*expect_cmd = mouse_expect_param_cmd = 0;
 	} else {
@@ -334,19 +341,31 @@ static int usbmouse_command(unsigned char byte, int *expect_param, unsigned char
 			*expect_cmd = mouse_expect_param_cmd = byte;
 			break;
 		case PS2_MOUSE_CMD_RESET:
-			mouse_update_packet_mode_locked(0);
+			mouse_update_packet_mode_unsafe(0);
 			memset(mouse_last_sample, 0, sizeof(mouse_last_sample));
-			reply[1] = PS2_MOUSE_BAT_OK; reply[2] = 0; len = 3; break;
+			reply[1] = PS2_MOUSE_BAT_OK;
+			reply[2] = 0;
+			len = 3;
+			break;
 		case PS2_MOUSE_CMD_SET_DEFAULTS:
-			mouse_update_packet_mode_locked(0);
-			memset(mouse_last_sample, 0, sizeof(mouse_last_sample)); break;
+			mouse_update_packet_mode_unsafe(0);
+			memset(mouse_last_sample, 0, sizeof(mouse_last_sample));
+			break;
 		case PS2_MOUSE_CMD_GET_ID:
-			reply[1] = mouse_packet_len == 4 ? 3 : 0; len = 2; break;
+			reply[1] = mouse_packet_len == 4 ? 3 : 0;
+			len = 2;
+			break;
 		case PS2_MOUSE_CMD_READ_DATA:
-			memcpy(reply + 1, mouse_last_packet, mouse_last_packet_len);
-			len += mouse_last_packet_len; break;
+			memcpy(reply + 1, mouse_last_packet,
+			       mouse_last_packet_len);
+			len += mouse_last_packet_len;
+			break;
 		case PS2_MOUSE_CMD_STATUS_REQUEST:
-			reply[1] = 0x20; reply[2] = 2; reply[3] = 100; len = 4; break;
+			reply[1] = 0x20;
+			reply[2] = 2;
+			reply[3] = 100;
+			len = 4;
+			break;
 		}
 	}
 	spinlock_unlock(&mouse_state_lock, irq);
@@ -360,7 +379,8 @@ static int ps2mouse_command_one(unsigned char byte, int *expect_param,
 	unsigned len = 0;
 	int irq;
 	const device_t *ps2 = ps2_device(PS2_PORT_AUX);
-	if (!ps2 || !ps2->driver) return usbmouse_command(byte, expect_param, expect_cmd);
+	if (!ps2 || !ps2->driver)
+		return usbmouse_command(byte, expect_param, expect_cmd);
 
 	if (*expect_param) {
 		if (ps2_write_byte(PS2_PORT_AUX, byte) < 0)
@@ -373,7 +393,7 @@ static int ps2mouse_command_one(unsigned char byte, int *expect_param,
 		spinlock_lock(&mouse_state_lock, &irq);
 		if (reply[0] == PS2_MOUSE_ACK) {
 			if (*expect_cmd == PS2_MOUSE_CMD_SET_SAMPLE_RATE)
-				mouse_track_sample_rate_locked(byte);
+				mouse_track_sample_rate_unsafe(byte);
 		}
 		*expect_param = 0;
 		mouse_expect_param = 0;
@@ -404,7 +424,7 @@ static int ps2mouse_command_one(unsigned char byte, int *expect_param,
 		mouse_last_sample[0] = 0;
 		mouse_last_sample[1] = 0;
 		mouse_last_sample[2] = 0;
-		mouse_update_packet_mode_locked(reply[len - 1]);
+		mouse_update_packet_mode_unsafe(reply[len - 1]);
 		*expect_param = 0;
 		*expect_cmd = 0;
 		mouse_expect_param = 0;
@@ -418,7 +438,7 @@ static int ps2mouse_command_one(unsigned char byte, int *expect_param,
 		len++;
 
 		spinlock_lock(&mouse_state_lock, &irq);
-		mouse_update_packet_mode_locked(reply[len - 1]);
+		mouse_update_packet_mode_unsafe(reply[len - 1]);
 		spinlock_unlock(&mouse_state_lock, irq);
 		break;
 	case PS2_MOUSE_CMD_READ_DATA: {
@@ -464,7 +484,7 @@ static int ps2mouse_command_one(unsigned char byte, int *expect_param,
 		mouse_last_sample[0] = 0;
 		mouse_last_sample[1] = 0;
 		mouse_last_sample[2] = 0;
-		mouse_update_packet_mode_locked(PS2_MOUSE_ID_STANDARD);
+		mouse_update_packet_mode_unsafe(PS2_MOUSE_ID_STANDARD);
 		mouse_expect_param = 0;
 		mouse_expect_param_cmd = 0;
 		spinlock_unlock(&mouse_state_lock, irq);
@@ -491,20 +511,23 @@ static ssize_t ps2mouse_write(const void *buf, size_t size)
 	mutex_lock(&mouse_cmd_lock);
 	const device_t *ps2 = ps2_device(PS2_PORT_AUX);
 	int physical = ps2 && ps2->driver;
-	if (physical) ps2_command_begin(PS2_PORT_AUX);
+	if (physical)
+		ps2_command_begin(PS2_PORT_AUX);
 
 	expect_param = mouse_expect_param;
 	expect_cmd = mouse_expect_param_cmd;
 	for (i = 0; i < size; i++) {
 		if (ps2mouse_command_one(src[i], &expect_param, &expect_cmd) <
 		    0) {
-			if (physical) ps2_command_end(PS2_PORT_AUX);
+			if (physical)
+				ps2_command_end(PS2_PORT_AUX);
 			mutex_unlock(&mouse_cmd_lock);
 			return -EIO;
 		}
 	}
 
-	if (physical) ps2_command_end(PS2_PORT_AUX);
+	if (physical)
+		ps2_command_end(PS2_PORT_AUX);
 	mutex_unlock(&mouse_cmd_lock);
 	return (ssize_t)size;
 }

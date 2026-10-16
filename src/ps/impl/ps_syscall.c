@@ -343,7 +343,7 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 		 * structure before the leader destroys shared VM/file-table state.
 		 */
 		timer_disarm_unsafe(task);
-		ps_futex_remove_task_locked(task);
+		ps_futex_remove_task_unsafe(task);
 		list_remove_entry(&task->sched->ps_list);
 		ps_mark_dying_unsafe(task);
 		if (task->life->fork_flag & FORK_FLAG_THREAD)

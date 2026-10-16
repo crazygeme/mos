@@ -1080,7 +1080,8 @@ static void ext4_release(super_block *sb)
 	if (result == EOK)
 		ext4_adapter_release(mi->adapter);
 	else
-		printk("ext4: mount teardown failed for %s: %d\n", mi->mp, result);
+		printk("ext4: mount teardown failed for %s: %d\n", mi->mp,
+		       result);
 	root_lock_unlock();
 	if (mi->loop_name[0])
 		blockdev_detach_file(mi->loop_name);
@@ -1737,11 +1738,13 @@ static int ext4_prepare_block_device(const char *name, char *registration)
 	else {
 		strncpy(adapter->name, name, sizeof(adapter->name) - 1);
 		if (registration) {
-			sprintf(adapter->registration, "mosfs%u", ++next_mount_device);
+			sprintf(adapter->registration, "mosfs%u",
+				++next_mount_device);
 			adapter->handle = handle;
 			adapter->pinned = 1;
 		} else
-			strncpy(adapter->registration, name, sizeof(adapter->registration) - 1);
+			strncpy(adapter->registration, name,
+				sizeof(adapter->registration) - 1);
 		adapter->iface.ph_bsize = size;
 		adapter->iface.ph_bcnt = blockdev_sector_count(handle);
 		adapter->iface.open = ext4_block_open;
@@ -1751,7 +1754,8 @@ static int ext4_prepare_block_device(const char *name, char *registration)
 		adapter->device.bdif = &adapter->iface;
 		adapter->device.part_size = adapter->iface.ph_bcnt * size;
 		adapter->device.aux = adapter;
-		result = ext4_device_register(&adapter->device, NULL, adapter->registration);
+		result = ext4_device_register(&adapter->device, NULL,
+					      adapter->registration);
 		if (result) {
 			free(adapter->iface.ph_bbuf);
 			memset(adapter, 0, sizeof(*adapter));
@@ -1813,7 +1817,8 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	}
 
 	if (strlen(mp) >= CONFIG_EXT4_MOUNTPOINT_PATH_MAX) {
-		if (loop_auto[0]) blockdev_detach_file(loop_auto);
+		if (loop_auto[0])
+			blockdev_detach_file(loop_auto);
 		name_put(mp);
 		return NULL;
 	}
@@ -1825,7 +1830,8 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	if (ret != EOK) {
 		if (registration[0])
 			for (unsigned i = 0; i < EXT4_BLOCK_ADAPTERS; i++)
-				if (!strcmp(ext4_adapters[i].registration, registration)) {
+				if (!strcmp(ext4_adapters[i].registration,
+					    registration)) {
 					ext4_adapter_release(&ext4_adapters[i]);
 					break;
 				}

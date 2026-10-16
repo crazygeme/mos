@@ -950,7 +950,7 @@ static int hdd_cache_fill_line(void *aux, int head_sector, void *buf)
 }
 
 static block_cache_item *
-hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
+hdd_cache_reserve_miss_unsafe(partition *p, int head_sector, int *old_sector,
 			      int *old_dirty, block_cache_item *new_item)
 {
 	block_cache_item *item;
@@ -997,14 +997,14 @@ hdd_cache_reserve_miss_locked(partition *p, int head_sector, int *old_sector,
 	return item;
 }
 
-static void hdd_cache_publish_loaded_locked(block_cache_item *item)
+static void hdd_cache_publish_loaded_unsafe(block_cache_item *item)
 {
 	if (!item)
 		return;
 	item->loading = 0;
 }
 
-static void hdd_cache_cancel_load_locked(partition *p, block_cache_item *item)
+static void hdd_cache_cancel_load_unsafe(partition *p, block_cache_item *item)
 {
 	if (!item)
 		return;
@@ -1058,7 +1058,7 @@ static void partition_cache_evict(partition *p)
 	mutex_unlock(&p->cache_lock);
 }
 
-static int partition_cache_reclaim_one_locked(partition *p)
+static int partition_cache_reclaim_one_unsafe(partition *p)
 {
 	list_entry *entry;
 	block_cache_item *item = NULL;
@@ -1104,7 +1104,7 @@ static unsigned hdd_cache_reclaim(unsigned target_pages)
 
 		mutex_lock(&p->cache_lock);
 		while (freed < target_pages &&
-		       partition_cache_reclaim_one_locked(p))
+		       partition_cache_reclaim_one_unsafe(p))
 			freed += PREREAD_SECTOR / SECTOR_PER_PAGE;
 		mutex_unlock(&p->cache_lock);
 	}
@@ -1168,7 +1168,7 @@ retry:
 		goto retry;
 	}
 
-	item = hdd_cache_reserve_miss_locked(p, head_sector, &old_sector,
+	item = hdd_cache_reserve_miss_unsafe(p, head_sector, &old_sector,
 					     &old_dirty, new_item);
 	mutex_unlock(&p->cache_lock);
 
@@ -1179,13 +1179,13 @@ retry:
 	if (hdd_cache_fill_line(aux, head_sector, item->buf) != 0) {
 		mutex_lock(&p->cache_lock);
 		block_cache_item_unmap(item);
-		hdd_cache_cancel_load_locked(p, item);
+		hdd_cache_cancel_load_unsafe(p, item);
 		mutex_unlock(&p->cache_lock);
 		return -1;
 	}
 
 	mutex_lock(&p->cache_lock);
-	hdd_cache_publish_loaded_locked(item);
+	hdd_cache_publish_loaded_unsafe(item);
 	memcpy(buf, (char *)item->buf + sector_off * BLOCK_SECTOR_SIZE,
 	       BLOCK_SECTOR_SIZE);
 	block_cache_item_unmap(item);
@@ -1243,7 +1243,7 @@ retry:
 		goto retry;
 	}
 
-	item = hdd_cache_reserve_miss_locked(p, head_sector, &old_sector,
+	item = hdd_cache_reserve_miss_unsafe(p, head_sector, &old_sector,
 					     &old_dirty, new_item);
 	mutex_unlock(&p->cache_lock);
 
@@ -1254,13 +1254,13 @@ retry:
 	if (hdd_cache_fill_line(aux, head_sector, item->buf) != 0) {
 		mutex_lock(&p->cache_lock);
 		block_cache_item_unmap(item);
-		hdd_cache_cancel_load_locked(p, item);
+		hdd_cache_cancel_load_unsafe(p, item);
 		mutex_unlock(&p->cache_lock);
 		return -1;
 	}
 
 	mutex_lock(&p->cache_lock);
-	hdd_cache_publish_loaded_locked(item);
+	hdd_cache_publish_loaded_unsafe(item);
 	hdd_cache_update(p, item, sector, buf, 1);
 	block_cache_item_unmap(item);
 	mutex_unlock(&p->cache_lock);

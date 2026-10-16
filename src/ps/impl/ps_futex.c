@@ -43,7 +43,7 @@ static void robust_release_futex(task_struct *task, uintptr_t entry,
 		return;
 	if (value & FUTEX_WAITERS) {
 		spinlock_lock(&ps_lock, &irq);
-		ps_futex_wake_locked(task->memory, (int *)(uintptr_t)addr, 1);
+		ps_futex_wake_unsafe(task->memory, (int *)(uintptr_t)addr, 1);
 		spinlock_unlock(&ps_lock, irq);
 	}
 }
@@ -178,7 +178,7 @@ static void futex_init(void)
 
 KERNEL_INIT(7, futex_init);
 
-static int futex_wake_mask_locked(const futex_key *key, int max_wake,
+static int futex_wake_mask_unsafe(const futex_key *key, int max_wake,
 				  unsigned bitset)
 {
 	list_entry *entry = futex_waiters.next;
@@ -198,15 +198,15 @@ static int futex_wake_mask_locked(const futex_key *key, int max_wake,
 	return n;
 }
 
-int ps_futex_wake_locked(task_memory *user, int *uaddr, int max_wake)
+int ps_futex_wake_unsafe(task_memory *user, int *uaddr, int max_wake)
 {
 	futex_key key = { 0 };
 	key.identity = user;
 	key.offset = (uintptr_t)uaddr;
-	return futex_wake_mask_locked(&key, max_wake, ~0U);
+	return futex_wake_mask_unsafe(&key, max_wake, ~0U);
 }
 
-void ps_futex_remove_task_locked(task_struct *task)
+void ps_futex_remove_task_unsafe(task_struct *task)
 {
 	list_entry *entry = futex_waiters.next;
 
@@ -244,7 +244,7 @@ void ps_clear_child_tid(task_struct *task)
 			return;
 		}
 		spinlock_lock(&ps_lock, &irq);
-		ps_futex_wake_locked(task->memory,
+		ps_futex_wake_unsafe(task->memory,
 				     task->execution->clear_child_tid, 1);
 		spinlock_unlock(&ps_lock, irq);
 	}
@@ -390,7 +390,7 @@ wait_again:
 			return -EINVAL;
 
 		spinlock_lock(&ps_lock, &irq);
-		n = futex_wake_mask_locked(key, val, bitset);
+		n = futex_wake_mask_unsafe(key, val, bitset);
 		spinlock_unlock(&ps_lock, irq);
 		return n;
 

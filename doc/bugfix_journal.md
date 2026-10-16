@@ -2042,12 +2042,12 @@ ioctl(4, 1260, ...) = -25
 
 The observed crash was a kernel page fault in the release build:
 `segfault: error code 0, address eedad000, eip c022f039`. Resolving the
-release address placed the fault at `ps_futex_wake_locked+0x39`, while walking
+release address placed the fault at `ps_futex_wake_unsafe+0x39`, while walking
 the global futex waiter list.
 
 ### 1. Futex wake dereferenced a stale waiter node
 
-- **Symptom:** the kernel faulted at `ps_futex_wake_locked()` while reading
+- **Symptom:** the kernel faulted at `ps_futex_wake_unsafe()` while reading
   through an address near `0xeedad000`, below the kmap window and not in a
   normal user mapping.
 - **Root cause:** `sys_futex(FUTEX_WAIT)` stores a `futex_waiter` object on the
@@ -2061,7 +2061,7 @@ the global futex waiter list.
   stack memory.
 - **Fix:**
   - in [syscall_futex.c](../src/ps/impl/ps_futex.c), add
-    `ps_futex_remove_task_locked()` to unlink any futex waiter owned by a task
+    `ps_futex_remove_task_unsafe()` to unlink any futex waiter owned by a task
     while `ps_lock` is held
   - in [ps_internal.h](../src/ps/impl/ps_internal.h), expose the helper to process
     teardown code

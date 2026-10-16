@@ -159,7 +159,7 @@ static paddr_t fs_page_cache_load(file *fp, uint64_t offset)
 	return phy;
 }
 
-static unsigned fs_page_cache_evict_one_locked(void)
+static unsigned fs_page_cache_evict_one_unsafe(void)
 {
 	fs_page_cache_entry *evict;
 
@@ -213,7 +213,7 @@ paddr_t fs_page_cache_get(file *fp, uint64_t offset, int *cache_hit)
 	/* Bound miss latency while gradually trimming a reduced cache budget. */
 	for (unsigned n = 0; n < 32 && fs_page_cache_pages >= policy.file_pages;
 	     n++)
-		fs_page_cache_evict_one_locked();
+		fs_page_cache_evict_one_unsafe();
 	mutex_unlock(&fs_page_cache_lock);
 
 	phy = fs_page_cache_load(fp, tmp.offset);
@@ -334,7 +334,7 @@ unsigned fs_page_cache_reclaim(unsigned target_pages)
 
 	mutex_lock(&fs_page_cache_lock);
 	while (freed < target_pages && !list_is_empty(&fs_page_cache_lru)) {
-		freed += fs_page_cache_evict_one_locked();
+		freed += fs_page_cache_evict_one_unsafe();
 	}
 	mutex_unlock(&fs_page_cache_lock);
 	return freed;

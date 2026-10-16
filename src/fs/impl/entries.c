@@ -587,7 +587,8 @@ static void entry_release_super(super_block *sb)
 		if (node->target_reference)
 			sb_put(node->target_reference);
 		if (node->retired) {
-			if (node->provider) sb_put(node->provider);
+			if (node->provider)
+				sb_put(node->provider);
 			mutex_lock(&tree->lock);
 			list_remove_entry(&node->list);
 			mutex_unlock(&tree->lock);

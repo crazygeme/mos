@@ -896,8 +896,8 @@ static void video_disconnect(struct usb_interface *interface)
 	sprintf(name, "video%u", camera->index);
 	sprintf(path, "%s/%s/video4linux/%s", interface->usb->sysfs_path,
 		vfs_entry_name(interface->device.sysfs_entry), name);
-	netlink_device_event("remove", path, "video4linux", name, USB_VIDEO_MAJOR,
-			     camera->index);
+	netlink_device_event("remove", path, "video4linux", name,
+			     USB_VIDEO_MAJOR, camera->index);
 	sprintf(name, "/video%u", camera->index);
 	vfs_entry_remove(devfs_entries(), name);
 	sprintf(name, "video%u", camera->index);

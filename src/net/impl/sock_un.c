@@ -106,7 +106,7 @@ static void unix_ns_init(void)
 }
 KERNEL_INIT(2, unix_ns_init);
 
-static unix_ns_entry *unix_ns_find_locked(const char *path)
+static unix_ns_entry *unix_ns_find_unsafe(const char *path)
 {
 	struct rb_node *node = unix_ns_names.rb_node;
 	while (node) {
@@ -119,13 +119,13 @@ static unix_ns_entry *unix_ns_find_locked(const char *path)
 	return NULL;
 }
 
-static mos_sock *unix_ns_lookup_locked(const char *path)
+static mos_sock *unix_ns_lookup_unsafe(const char *path)
 {
-	unix_ns_entry *entry = unix_ns_find_locked(path);
+	unix_ns_entry *entry = unix_ns_find_unsafe(path);
 	return entry ? entry->sk : NULL;
 }
 
-static int unix_ns_register_locked(const char *path, mos_sock *sk)
+static int unix_ns_register_unsafe(const char *path, mos_sock *sk)
 {
 	struct rb_node **link = &unix_ns_names.rb_node, *parent = NULL;
 	int slot = slot_take(&unix_ns_slots, UNIX_NS_MAX);
@@ -150,7 +150,7 @@ static int unix_ns_register_locked(const char *path, mos_sock *sk)
 }
 
 /* Returns one only for the socket owning a namespace binding. */
-static int unix_ns_unregister_locked(mos_sock *sk)
+static int unix_ns_unregister_unsafe(mos_sock *sk)
 {
 	if (!sk->unix_namespace_slot)
 		return 0;
@@ -168,10 +168,10 @@ static int unix_ns_unregister_locked(mos_sock *sk)
 void unix_ns_remove_path(const char *path)
 {
 	mutex_lock(&unix_ns_lock);
-	unix_ns_entry *entry = unix_ns_find_locked(path);
+	unix_ns_entry *entry = unix_ns_find_unsafe(path);
 	if (entry) {
 		mos_sock *sk = entry->sk;
-		unix_ns_unregister_locked(sk);
+		unix_ns_unregister_unsafe(sk);
 		sk->unix_path[0] = 0;
 	}
 	mutex_unlock(&unix_ns_lock);
@@ -199,7 +199,7 @@ int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen)
 
 	mutex_lock(&unix_ns_lock);
 
-	if (unix_ns_lookup_locked(path)) {
+	if (unix_ns_lookup_unsafe(path)) {
 		ret = -EADDRINUSE;
 		goto out_unlock;
 	}
@@ -213,7 +213,7 @@ int unix_bind(mos_sock *sk, const struct sockaddr_un *addr, unsigned addrlen)
 	strncpy(sk->unix_path, path, UNIX_KEY_MAX - 1);
 	sk->unix_path[UNIX_KEY_MAX - 1] = '\0';
 
-	ret = unix_ns_register_locked(path, sk);
+	ret = unix_ns_register_unsafe(path, sk);
 	if (ret != 0) {
 		if (path[0] != '@')
 			vfs_umount(cur->fs->root, path);
@@ -269,7 +269,7 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 
 	mutex_lock(&unix_ns_lock);
 
-	listener = unix_ns_lookup_locked(path);
+	listener = unix_ns_lookup_unsafe(path);
 	if (!listener || listener->type != client->type) {
 		ret = -ECONNREFUSED;
 		goto out;
@@ -705,7 +705,7 @@ static void unix_recvmsg_fill_name(struct msghdr *msg, mos_sock *peer)
 		unix_sockaddr(peer, msg->msg_name, &msg->msg_namelen);
 }
 
-static int unix_sendmsg_dgram_locked(mos_sock *peer, const struct msghdr *msg,
+static int unix_sendmsg_dgram_unsafe(mos_sock *peer, const struct msghdr *msg,
 				     file **files, unsigned nfds,
 				     size_t total_len)
 {
@@ -1079,7 +1079,7 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 	}
 
 	if (sk->type == SOCK_DGRAM) {
-		ret = unix_sendmsg_dgram_locked(peer, msg, files, nfds,
+		ret = unix_sendmsg_dgram_unsafe(peer, msg, files, nfds,
 						total_len);
 		if (ret < 0)
 			goto out_unlock;
@@ -1182,7 +1182,7 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
  *  2. If this socket was bound, remove it from the namespace and unmount
  *     the VFS socket file.  Sockets created by accept() carry a copy of
  *     the listener's path but are NOT registered in unix_ns, so
- *     unix_ns_unregister_locked returns 0 and vfs_umount is skipped.
+ *     unix_ns_unregister_unsafe returns 0 and vfs_umount is skipped.
  *  3. Drain the accept queue: free unclaimed server sockets and disconnect
  *     their waiting client peers.
  */
@@ -1201,7 +1201,7 @@ void unix_release(mos_sock *sk)
 	if (sk->unix_path[0]) {
 		int was_registered;
 		mutex_lock(&unix_ns_lock);
-		was_registered = unix_ns_unregister_locked(sk);
+		was_registered = unix_ns_unregister_unsafe(sk);
 		mutex_unlock(&unix_ns_lock);
 		if (was_registered && sk->unix_path[0] != '@')
 			vfs_umount(cur->fs->root, sk->unix_path);

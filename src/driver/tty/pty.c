@@ -18,7 +18,7 @@ static pts_pair pts_pairs[MAX_PTS];
 static spinlock_t pts_alloc_lock;
 static struct rb_root pts_groups = _RBTREE_ROOT_INIT;
 
-static void pty_group_insert_locked(pts_pair *p)
+static void pty_group_insert_unsafe(pts_pair *p)
 {
 	struct rb_node **link = &pts_groups.rb_node, *parent = NULL;
 	while (*link) {
@@ -45,12 +45,12 @@ static void pty_group_changed(pts_pair *p, unsigned group)
 	}
 	p->pgrp = group;
 	if (p->used && p->master_open)
-		pty_group_insert_locked(p);
+		pty_group_insert_unsafe(p);
 	spinlock_unlock(&pts_alloc_lock, irq);
 }
 
 /* The pair allocator lock protects the process-group index. */
-static void pty_pair_free_locked(pts_pair *p)
+static void pty_pair_free_unsafe(pts_pair *p)
 {
 	if (p->group_indexed) {
 		rb_erase(&p->group_node, &pts_groups);
@@ -58,7 +58,7 @@ static void pty_pair_free_locked(pts_pair *p)
 	}
 }
 
-static pts_pair *pty_group_find_locked(unsigned group)
+static pts_pair *pty_group_find_unsafe(unsigned group)
 {
 	struct rb_node *node = pts_groups.rb_node;
 	pts_pair *match = NULL;
@@ -218,8 +218,8 @@ static file *ptm_cdev_open(super_block *sb, unsigned rdev, int flag)
 	p->used = 1;
 	p->master_open = 1;
 	p->group_changed = pty_group_changed;
-	p->on_free = pty_pair_free_locked;
-	pty_group_insert_locked(p);
+	p->on_free = pty_pair_free_unsafe;
+	pty_group_insert_unsafe(p);
 	p->slave_mode = S_IFCHR | S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP;
 	if (current->execution) {
 		p->slave_uid = current->credentials->uid;
@@ -273,7 +273,7 @@ file *pty_open_controlling(task_struct *task, int flag)
 	if (!task || !task->execution)
 		return NULL;
 	spinlock_lock(&pts_alloc_lock, &irq);
-	match = pty_group_find_locked(task->thread->group_id);
+	match = pty_group_find_unsafe(task->thread->group_id);
 	if (match && !(flag & O_PATH)) {
 		__sync_add_and_fetch(&match->slave_count, 1);
 		match->slave_ever_opened = 1;

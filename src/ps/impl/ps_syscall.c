@@ -268,6 +268,7 @@ void ps_reap_dead_threads(void)
 			    !candidate->sched->enumeration_refs) {
 				task = candidate;
 				list_remove_entry(node);
+				list_init(node);
 				break;
 			}
 		}
@@ -358,7 +359,9 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 			(container_of(reap_list.next, task_schedule, ps_list)
 				 ->task);
 
+		/* Cleanup may unlink the task again when publishing its exit. */
 		list_remove_entry(&task->sched->ps_list);
+		list_init(&task->sched->ps_list);
 		if (task->life->fork_flag & FORK_FLAG_THREAD) {
 			ps_reap_group_thread(task);
 		} else {

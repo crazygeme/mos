@@ -46,7 +46,9 @@ cleanup()
 trap cleanup EXIT
 cleanup
 
-expect_contains "rootfs / rootfs rw 0 0" /proc/mounts
+# The boot disk is the root filesystem; additional mount options are valid.
+awk '$2 == "/" && $3 == "ext3" && $4 ~ /^rw(,|$)/ && $5 == 0 && $6 == 0 { found = 1 } END { exit !found }' /proc/mounts ||
+	fail "missing writable ext3 root mount"
 
 mkdir -p "$MNT" >/dev/null 2>&1 || fail "mkdir failed"
 dd if=/dev/zero of="$IMG" bs=1M count=8 >/dev/null 2>&1 || fail "dd failed"

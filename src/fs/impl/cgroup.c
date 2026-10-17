@@ -37,14 +37,17 @@ static void cg_init_modes(struct mos_cgroup *g, unsigned mode)
 		g->uid[k] = current->credentials->euid;
 		g->gid[k] = current->credentials->egid;
 		g->mode[k] = k == 0 ? S_IFDIR | (mode & 0777) :
-			S_IFREG | ((k == 7 || k == 8 || k == 11) ? 0444 :
-			(k == 9 || k == 10) ? 0200 : 0644);
+				      S_IFREG | ((k == 7 || k == 8 || k == 11) ?
+							 0444 :
+						 (k == 9 || k == 10) ? 0200 :
+								       0644);
 	}
 }
 static int cg_permission(struct mos_cgroup *g, unsigned kind, int mask)
 {
 	struct stat st = { .st_mode = g->mode[kind],
-		.st_uid = g->uid[kind], .st_gid = g->gid[kind] };
+			   .st_uid = g->uid[kind],
+			   .st_gid = g->gid[kind] };
 	return fs_check_perm(&st, mask);
 }
 static void cg_prepare(void)
@@ -55,9 +58,14 @@ static void cg_prepare(void)
 	for (unsigned i = 0; i < 3; i++) {
 		roots[i].controller = i;
 		for (unsigned k = 0; k < 12; k++)
-			roots[i].mode[k] = k == 0 ? S_IFDIR | 0755 :
-				S_IFREG | ((k == 7 || k == 8 || k == 11) ? 0444 :
-				(k == 9 || k == 10) ? 0200 : 0644);
+			roots[i].mode[k] =
+				k == 0 ?
+					S_IFDIR | 0755 :
+					S_IFREG |
+						((k == 7 || k == 8 || k == 11) ?
+							 0444 :
+						 (k == 9 || k == 10) ? 0200 :
+								       0644);
 		roots[i].limit = UINT64_MAX;
 		list_init(&roots[i].children);
 	}
@@ -301,7 +309,8 @@ static int cg_setattr(file *fp, uint32_t mode)
 {
 	struct cg_file *f = fp->f_inode->i_private;
 	mutex_lock(&cg_lock);
-	f->group->mode[f->kind] = (f->group->mode[f->kind] & S_IFMT) | (mode & 07777);
+	f->group->mode[f->kind] = (f->group->mode[f->kind] & S_IFMT) |
+				  (mode & 07777);
 	fp->f_inode->i_mode = f->group->mode[f->kind];
 	mutex_unlock(&cg_lock);
 	return 0;
@@ -604,7 +613,7 @@ static ssize_t cg_write(file *fp, const void *buf, size_t size, loff_t *pos)
 			ret = -EINVAL;
 			break;
 		}
-		store_device_rule:
+store_device_rule:
 		if (g->nrules >= CG_RULES) {
 			ret = -ENOSPC;
 			break;
@@ -858,8 +867,10 @@ static super_block *cg_mount(const char *dev, const char *target, int flags,
 		sb->s_fs_info = root;
 		root->opens++;
 		mutex_unlock(&cg_lock);
-		strcpy(sb->s_devname, controller == CG_SYSTEMD ? "name=systemd" :
-		       controller == CG_DEVICES ? "devices" : "pids");
+		strcpy(sb->s_devname, controller == CG_SYSTEMD ?
+					      "name=systemd" :
+				      controller == CG_DEVICES ? "devices" :
+								 "pids");
 	}
 	return sb;
 }

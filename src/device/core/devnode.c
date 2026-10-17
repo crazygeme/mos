@@ -93,8 +93,10 @@ static int devnode_setattr(file *fp, uint32_t mode)
 static int devnode_chown(file *fp, uint32_t uid, uint32_t gid)
 {
 	devnode_info *dn = fp->f_inode->i_private;
-	if (uid != (uint32_t)-1) dn->uid = uid;
-	if (gid != (uint32_t)-1) dn->gid = gid;
+	if (uid != (uint32_t)-1)
+		dn->uid = uid;
+	if (gid != (uint32_t)-1)
+		dn->gid = gid;
 	return 0;
 }
 
@@ -403,9 +405,12 @@ static file *devnode_open_root(super_block *sb, int flag)
 {
 	devnode_info *dn = sb->s_fs_info;
 	if (!(flag & O_PATH)) {
-		struct stat st = { .st_mode = dn->mode, .st_uid = dn->uid, .st_gid = dn->gid };
+		struct stat st = { .st_mode = dn->mode,
+				   .st_uid = dn->uid,
+				   .st_gid = dn->gid };
 		int access = (flag & O_ACCMODE) == O_RDONLY ? 4 :
-			(flag & O_ACCMODE) == O_WRONLY ? 2 : 6;
+			     (flag & O_ACCMODE) == O_WRONLY ? 2 :
+							      6;
 		int error = fs_check_perm(&st, access);
 		if (error) {
 			current->execution->fs_open_error = error;

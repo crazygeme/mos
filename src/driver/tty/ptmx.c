@@ -498,7 +498,8 @@ static file *ptmx_instance_open(super_block *dev_sb, unsigned rdev, int flag)
 	struct stat permission = { .st_mode = S_IFCHR | instance->ptmx_mode };
 	if (!rdev) {
 		int access = (flag & O_ACCMODE) == O_RDONLY ? R_OK :
-			     (flag & O_ACCMODE) == O_WRONLY ? W_OK : R_OK | W_OK;
+			     (flag & O_ACCMODE) == O_WRONLY ? W_OK :
+							      R_OK | W_OK;
 		int error = fs_check_perm(&permission, access);
 		if (error) {
 			current->execution->fs_open_error = error;

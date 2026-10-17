@@ -443,7 +443,8 @@ static ssize_t inet_write(file *fp, const void *buf, size_t count, loff_t *pos)
 
 	if (sk->type == SOCK_RAW) {
 		if (sk->hdrincl)
-			return (ssize_t)raw_send_hdrincl(sk, buf, (unsigned)count);
+			return (ssize_t)raw_send_hdrincl(sk, buf,
+							 (unsigned)count);
 		if (sk->state != SS_CONNECTED || !sk->raw)
 			return -ENOTCONN;
 		ip_addr_t ip;
@@ -1082,8 +1083,7 @@ static unsigned inet_poll(file *fp, unsigned events, poll_table *pt)
 	if ((events & FS_POLL_READ) && sk->accept_tail != sk->accept_head)
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_WRITE) &&
-	    (sk->type != SOCK_STREAM ||
-	     (sk->tcp_shutdown & TCP_SHUT_WR) ||
+	    (sk->type != SOCK_STREAM || (sk->tcp_shutdown & TCP_SHUT_WR) ||
 	     ((sk->state == SS_CONNECTED || sk->state == SS_DISCONNECTING) &&
 	      sk->tcp && tcp_sndbuf(sk->tcp) > 0)))
 		ready |= FS_POLL_WRITE;
@@ -1108,8 +1108,9 @@ static unsigned unix_file_poll(file *fp, unsigned events, poll_table *pt)
 			unsigned minimum =
 				sk->type == SOCK_SEQPACKET ?
 					sizeof(unix_seqpacket_header) :
-				sk->type == SOCK_DGRAM ? sizeof(unix_dgram_header) :
-							 1;
+				sk->type == SOCK_DGRAM ?
+					sizeof(unix_dgram_header) :
+					1;
 			if (rx_free(sk->unix_peer) >= minimum)
 				ready |= FS_POLL_WRITE;
 		}

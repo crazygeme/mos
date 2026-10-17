@@ -595,12 +595,16 @@ static int execve_common(const char *f, char **argv, char **envp,
 	cur->credentials->keep_capabilities = 0;
 	cur->credentials->securebits &= ~16U;
 	if (s.st_mode & (S_ISUID | S_ISGID))
-		memset(cur->credentials->cap_ambient, 0, sizeof(cur->credentials->cap_ambient));
+		memset(cur->credentials->cap_ambient, 0,
+		       sizeof(cur->credentials->cap_ambient));
 	if (cur->credentials->no_new_privs) {
 		if (!cur->credentials->cap_initialized) {
 			for (unsigned i = 0; i < 2; i++)
 				cur->credentials->cap_permitted[i] =
-					cur->credentials->euid == 0 && !(cur->credentials->securebits & 1) ?
+					cur->credentials->euid == 0 &&
+							!(cur->credentials
+								  ->securebits &
+							  1) ?
 						cur->credentials
 							->cap_bounding[i] :
 						0;
@@ -619,8 +623,10 @@ static int execve_common(const char *f, char **argv, char **envp,
 
 	if (cur->credentials->securebits & 1 || cur->credentials->euid != 0) {
 		for (unsigned i = 0; i < 2; i++) {
-			cur->credentials->cap_permitted[i] = cur->credentials->cap_ambient[i];
-			cur->credentials->cap_effective[i] = cur->credentials->cap_ambient[i];
+			cur->credentials->cap_permitted[i] =
+				cur->credentials->cap_ambient[i];
+			cur->credentials->cap_effective[i] =
+				cur->credentials->cap_ambient[i];
 		}
 		cur->credentials->cap_initialized = 1;
 	}

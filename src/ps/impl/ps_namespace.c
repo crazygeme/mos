@@ -130,12 +130,27 @@ void ps_namespace_put(task_struct *task)
 }
 void *ps_netns_get(task_struct *task)
 {
-	return task->namespaces[MOS_NS_NET] ? ref_count_get(task->namespaces[MOS_NS_NET]) : NULL;
+	return task->namespaces[MOS_NS_NET] ?
+		       ref_count_get(task->namespaces[MOS_NS_NET]) :
+		       NULL;
 }
-void *ps_netns_retain(void *ns) { return ns ? ref_count_get((struct mos_namespace *)ns) : NULL; }
-void ps_netns_put(void *ns) { if (ns) ref_count_put((struct mos_namespace *)ns); }
-unsigned ps_netns_tag(void *ns) { return ns ? ((struct mos_namespace *)ns)->network_tag : 0; }
-struct netif *ps_netns_loop(void *ns) { return ns ? ((struct mos_namespace *)ns)->network_loop : NULL; }
+void *ps_netns_retain(void *ns)
+{
+	return ns ? ref_count_get((struct mos_namespace *)ns) : NULL;
+}
+void ps_netns_put(void *ns)
+{
+	if (ns)
+		ref_count_put((struct mos_namespace *)ns);
+}
+unsigned ps_netns_tag(void *ns)
+{
+	return ns ? ((struct mos_namespace *)ns)->network_tag : 0;
+}
+struct netif *ps_netns_loop(void *ns)
+{
+	return ns ? ((struct mos_namespace *)ns)->network_loop : NULL;
+}
 unsigned ps_namespace_id(task_struct *task, unsigned kind)
 {
 	return task->namespaces[kind] ? task->namespaces[kind]->id : 0;

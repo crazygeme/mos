@@ -95,19 +95,16 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 	proc_buf_printf(pb, "State:\t%c (%s)\n",
 			pid_state_char(task->sched->status),
 			pid_state_name(task->sched->status));
-	proc_buf_printf(pb, "Tgid:\t%u\n",
-			ps_pid_visible(task->thread->tgid));
-	proc_buf_printf(pb, "Pid:\t%u\n",
-			ps_pid_visible(task->life->psid));
-	proc_buf_printf(pb, "PPid:\t%u\n",
-			ps_pid_visible(task->life->ppid));
+	proc_buf_printf(pb, "Tgid:\t%u\n", ps_pid_visible(task->thread->tgid));
+	proc_buf_printf(pb, "Pid:\t%u\n", ps_pid_visible(task->life->psid));
+	proc_buf_printf(pb, "PPid:\t%u\n", ps_pid_visible(task->life->ppid));
 	proc_buf_printf(pb, "TracerPid:\t0\n");
-	proc_buf_printf(pb, "Uid:\t%u\t%u\t%u\t%u\n",
-			task->credentials->uid, task->credentials->euid,
-			task->credentials->suid, task->credentials->euid);
-	proc_buf_printf(pb, "Gid:\t%u\t%u\t%u\t%u\n",
-			task->credentials->gid, task->credentials->egid,
-			task->credentials->sgid, task->credentials->egid);
+	proc_buf_printf(pb, "Uid:\t%u\t%u\t%u\t%u\n", task->credentials->uid,
+			task->credentials->euid, task->credentials->suid,
+			task->credentials->euid);
+	proc_buf_printf(pb, "Gid:\t%u\t%u\t%u\t%u\n", task->credentials->gid,
+			task->credentials->egid, task->credentials->sgid,
+			task->credentials->egid);
 	proc_buf_printf(pb, "FDSize:\t%u\n", fdsize);
 	proc_buf_printf(pb, "Threads:\t%u\n",
 			proc_thread_count(task->thread->tgid));
@@ -119,8 +116,7 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 			(unsigned long long)(vm.rss_anon_kb + vm.rss_file_kb));
 	proc_buf_printf(pb, "VmData:\t%llu kB\n",
 			(unsigned long long)vm.data_kb);
-	proc_buf_printf(pb, "VmStk:\t%llu kB\n",
-			(unsigned long long)vm.stk_kb);
+	proc_buf_printf(pb, "VmStk:\t%llu kB\n", (unsigned long long)vm.stk_kb);
 	proc_buf_printf(pb, "VmExe:\t%llu kB\n",
 			(unsigned long long)vm.text_kb);
 	proc_buf_printf(pb, "VmLib:\t%u kB\n", 0);

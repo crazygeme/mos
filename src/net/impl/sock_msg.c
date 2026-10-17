@@ -208,7 +208,8 @@ static struct pbuf *msg_alloc_payload(pbuf_layer layer,
 	return p;
 }
 
-static int sock_raw_send_hdrincl_msg(mos_sock *sk, const struct msghdr *msg, size_t totlen)
+static int sock_raw_send_hdrincl_msg(mos_sock *sk, const struct msghdr *msg,
+				     size_t totlen)
 {
 	char *flat;
 	size_t i;

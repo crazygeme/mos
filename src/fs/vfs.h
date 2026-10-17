@@ -128,7 +128,8 @@ unsigned vfs_mount_poll(uint64_t seen, unsigned events, poll_table *pt);
 void vfs_namespace_track(void *token, super_block *root);
 void vfs_namespace_untrack(void *token);
 int vfs_set_propagation(super_block *root, const char *target, unsigned flags);
-int vfs_mount_propagated(super_block *root, const char *target, super_block *mount);
+int vfs_mount_propagated(super_block *root, const char *target,
+			 super_block *mount);
 int vfs_umount_propagated(super_block *root, const char *target);
 void vfs_namespace_changed(void);
 uint64_t vfs_namespace_generation(void);

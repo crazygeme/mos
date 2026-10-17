@@ -18,7 +18,25 @@ cat > "$probe_dir/probe.c" <<'C'
 #include <sys/socket.h>
 #include <sys/epoll.h>
 #include <sys/wait.h>
+#include <sys/syscall.h>
+#include <sys/uio.h>
 #include <unistd.h>
+#ifndef EPOLLRDHUP
+#define EPOLLRDHUP 0x2000
+#endif
+#ifdef __i386__
+#define CALL_EPOLL_CREATE1 329
+#define CALL_EPOLL_CTL 255
+#define CALL_EPOLL_WAIT 256
+#else
+#define CALL_EPOLL_CREATE1 291
+#define CALL_EPOLL_CTL 233
+#define CALL_EPOLL_WAIT 232
+#endif
+/* The guest libc has epoll types but no syscall wrappers. */
+#define epoll_create1(f) syscall(CALL_EPOLL_CREATE1, (f))
+#define epoll_ctl(e, op, fd, ev) syscall(CALL_EPOLL_CTL, (e), (op), (fd), (ev))
+#define epoll_wait(e, ev, n, t) syscall(CALL_EPOLL_WAIT, (e), (ev), (n), (t))
 #define CHECK(x) do { if (!(x)) { \
  fprintf(stderr, "%d: %s (errno=%d)\n", __LINE__, #x, errno); exit(1); \
 } } while (0)
@@ -154,5 +172,5 @@ int main(int argc, char **argv)
  return 0;
 }
 C
-"${CC:-gcc}" -std=gnu11 -O2 -Wall "$probe_dir/probe.c" -o "$probe_dir/probe"
+"${CC:-gcc}" -std=gnu99 -O2 -Wall "$probe_dir/probe.c" -o "$probe_dir/probe"
 "$probe_dir/probe" "$@"

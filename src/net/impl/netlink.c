@@ -41,8 +41,10 @@ static int port_used(uint32_t port, mos_sock *self)
 	for (list_entry *node = netlink_sockets.next; node != &netlink_sockets;
 	     node = node->next) {
 		mos_sock *s = container_of(node, mos_sock, netlink_list);
-		if (s != self && ps_netns_tag(s->network_namespace) == ps_netns_tag(self->network_namespace) && s->protocol == self->protocol &&
-		    s->netlink_port == port)
+		if (s != self &&
+		    ps_netns_tag(s->network_namespace) ==
+			    ps_netns_tag(self->network_namespace) &&
+		    s->protocol == self->protocol && s->netlink_port == port)
 			return 1;
 	}
 	return 0;
@@ -161,7 +163,8 @@ static int netlink_change_link(mos_sock *sk, const struct nl_header *request)
 	if (request->length < sizeof(*request) + sizeof(link))
 		return -EINVAL;
 	memcpy(&link, request + 1, sizeof(link));
-	struct netif *n = netlink_interface(link.index, ps_netns_tag(sk->network_namespace));
+	struct netif *n = netlink_interface(
+		link.index, ps_netns_tag(sk->network_namespace));
 	if (!n)
 		return -ENODEV;
 	if (link.change & ~IFF_UP ||
@@ -182,7 +185,8 @@ static int netlink_change_address(mos_sock *sk, const struct nl_header *request)
 		return -EAFNOSUPPORT;
 	if (ip.prefix > 32)
 		return -EINVAL;
-	struct netif *n = netlink_interface(ip.index, ps_netns_tag(sk->network_namespace));
+	struct netif *n = netlink_interface(
+		ip.index, ps_netns_tag(sk->network_namespace));
 	if (!n)
 		return -ENODEV;
 	unsigned offset = sizeof(*request) + sizeof(ip);
@@ -306,14 +310,15 @@ static int netlink_query(const struct nl_header *request, unsigned *index,
 static int netlink_request(mos_sock *sk, const struct nl_header *input)
 {
 	struct nl_header request = *input;
-	int mutation = request.type == RTM_NEWLINK || request.type == RTM_SETLINK ||
-		       request.type == RTM_NEWADDR ||
-		       request.type == RTM_DELADDR;
+	int mutation =
+		request.type == RTM_NEWLINK || request.type == RTM_SETLINK ||
+		request.type == RTM_NEWADDR || request.type == RTM_DELADDR;
 	int error = 0;
 	if (mutation) {
 		if (!ps_has_capability(current, 12))
 			error = -EPERM;
-		else if (request.type == RTM_NEWLINK || request.type == RTM_SETLINK)
+		else if (request.type == RTM_NEWLINK ||
+			 request.type == RTM_SETLINK)
 			error = netlink_change_link(sk, input);
 		else
 			error = netlink_change_address(sk, input);
@@ -408,7 +413,8 @@ static int netlink_request(mos_sock *sk, const struct nl_header *input)
 				struct nl_ip ip = { .family = AF_INET,
 						    .prefix = prefix,
 						    .scope = loop ? 254 : 0,
-						    .index = interface_index(n) };
+						    .index = interface_index(
+							    n) };
 				memcpy(buffer + length, &ip, sizeof(ip));
 				length += sizeof(ip);
 				attribute(buffer, &length, 1, &address,
@@ -592,8 +598,10 @@ void netlink_device_event(const char *action, const char *path,
 		if (sk->protocol != 15 || !(sk->netlink_groups & 3) ||
 		    rx_free(sk) < size + 2)
 			continue;
-		unsigned accepted = mos_bpf_run(sk->socket_filter, buffer, size);
-		if (!accepted) continue;
+		unsigned accepted =
+			mos_bpf_run(sk->socket_filter, buffer, size);
+		if (!accepted)
+			continue;
 		uint16_t length = accepted < size ? accepted : size;
 		rx_write(sk, &length, sizeof(length));
 		rx_write(sk, buffer, length);

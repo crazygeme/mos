@@ -45,7 +45,8 @@ static ssize_t pid_read(file *fp, void *buf, size_t count, loff_t *pos)
 		if (!snapshot)
 			return -ENOMEM;
 		data->mount_seen = vfs_mount_generation();
-		proc_fill_mounts_root(snapshot, data->mount_root, data->mountinfo);
+		proc_fill_mounts_root(snapshot, data->mount_root,
+				      data->mountinfo);
 		proc_buf_free(data->buffer);
 		data->buffer = snapshot;
 	}
@@ -259,13 +260,15 @@ static int pid_fd_metadata_setattr(file *fp, uint32_t mode)
 {
 	file *target = fp->f_inode->i_private;
 	return target->f_fop && target->f_fop->setattr ?
-		target->f_fop->setattr(target, mode) : EOPNOTSUPP;
+		       target->f_fop->setattr(target, mode) :
+		       EOPNOTSUPP;
 }
 static int pid_fd_metadata_chown(file *fp, uint32_t uid, uint32_t gid)
 {
 	file *target = fp->f_inode->i_private;
 	return target->f_fop && target->f_fop->chown ?
-		target->f_fop->chown(target, uid, gid) : EOPNOTSUPP;
+		       target->f_fop->chown(target, uid, gid) :
+		       EOPNOTSUPP;
 }
 
 static const file_operations pid_fd_metadata_fops = {

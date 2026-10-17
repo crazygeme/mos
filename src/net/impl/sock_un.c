@@ -30,8 +30,8 @@
 #include <lib/slots.h>
 
 /* Abstract names are encoded as hexadecimal namespace keys, without VFS nodes. */
-static int unix_address_key(mos_sock *sk, const struct sockaddr_un *addr, unsigned len,
-			    char *key)
+static int unix_address_key(mos_sock *sk, const struct sockaddr_un *addr,
+			    unsigned len, char *key)
 {
 	static const char digits[] = "0123456789abcdef";
 	unsigned n, i;
@@ -59,7 +59,8 @@ static int unix_address_key(mos_sock *sk, const struct sockaddr_un *addr, unsign
 	return 0;
 }
 
-static int unix_sockaddr_key(const char *key, struct sockaddr *addr, unsigned *addrlen)
+static int unix_sockaddr_key(const char *key, struct sockaddr *addr,
+			     unsigned *addrlen)
 {
 	struct sockaddr_un out;
 	unsigned n = 0, i, length;
@@ -303,7 +304,8 @@ int unix_connect(mos_sock *client, const struct sockaddr_un *addr,
 		ret = -ENOMEM;
 		goto out;
 	}
-	server_sk->network_namespace = ps_netns_retain(listener->network_namespace);
+	server_sk->network_namespace =
+		ps_netns_retain(listener->network_namespace);
 	if (sock_alloc_rxbuf(server_sk, sock_default_rxbuf_size(
 						AF_UNIX, client->type)) < 0) {
 		sock_destroy(server_sk);
@@ -417,7 +419,8 @@ ssize_t unix_write(file *fp, mos_sock *sk, const void *buf, size_t count)
 {
 	struct iovec iov = { .iov_base = (void *)buf, .iov_len = count };
 	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
-	return unix_sendmsg(sk, &msg, (fp->f_flag & O_NONBLOCK) ? MSG_DONTWAIT : 0);
+	return unix_sendmsg(sk, &msg,
+			    (fp->f_flag & O_NONBLOCK) ? MSG_DONTWAIT : 0);
 }
 
 static int unix_cmsg_validate_walk(const struct msghdr *msg,
@@ -529,7 +532,8 @@ static void unix_cmsg_put_files(file **files, unsigned nfds)
 }
 
 static int unix_queue_passfds(mos_sock *peer, file **files, unsigned nfds,
-			      unsigned ready_head, const unix_peercred *credentials)
+			      unsigned ready_head,
+			      const unix_peercred *credentials)
 {
 	int next_tail;
 	unix_passfd_msg *slot;
@@ -648,11 +652,12 @@ static void unix_recvmsg_fill_name(struct msghdr *msg, mos_sock *peer)
 
 static int unix_sendmsg_dgram_unsafe(mos_sock *peer, const struct msghdr *msg,
 				     file **files, unsigned nfds,
-				     size_t total_len, const unix_peercred *credentials,
+				     size_t total_len,
+				     const unix_peercred *credentials,
 				     const char *sender)
 {
 	unix_dgram_header record = { .length = total_len,
-				    .credentials = *credentials };
+				     .credentials = *credentials };
 	strncpy(record.sender, sender, sizeof(record.sender) - 1);
 	int ret;
 
@@ -787,11 +792,11 @@ static int unix_recvmsg_wait_dgram(mos_sock *sk, int flags,
 }
 
 static unsigned unix_recvmsg_dgram_payload(mos_sock *sk, struct msghdr *msg,
-					 unix_dgram_header *record)
+					   unix_dgram_header *record)
 {
 	rx_read(sk, record, sizeof(*record));
-	unsigned delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen,
-					 record->length);
+	unsigned delivered =
+		rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen, record->length);
 	rx_discard(sk, record->length - delivered);
 	msg->msg_flags = delivered < record->length ? MSG_TRUNC : 0;
 	return delivered;
@@ -881,7 +886,8 @@ static int unix_sendmsg_seqpacket(mos_sock *sk, const struct msghdr *msg,
 			record.credentials = *credentials;
 			rx_write(peer, &record, sizeof(record));
 			rx_iov_write(peer, msg->msg_iov, msg->msg_iovlen);
-			unix_queue_passfds(peer, files, nfds, peer->rx_tail, NULL);
+			unix_queue_passfds(peer, files, nfds, peer->rx_tail,
+					   NULL);
 			spinlock_unlock(&peer->rxbuf_lock, irq);
 			sock_wakeup(peer);
 			return (int)total_len;
@@ -996,7 +1002,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 		char *key = name_get();
 		if (!key)
 			return -ENOMEM;
-		ret = unix_address_key(sk, msg->msg_name, msg->msg_namelen, key);
+		ret = unix_address_key(sk, msg->msg_name, msg->msg_namelen,
+				       key);
 		if (!ret) {
 			mutex_lock(&unix_ns_lock);
 			peer = unix_ns_lookup_unsafe(key);
@@ -1032,7 +1039,8 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 
 	if (sk->type == SOCK_DGRAM) {
 		ret = unix_sendmsg_dgram_unsafe(peer, msg, files, nfds,
-						total_len, &credentials, sk->unix_path);
+						total_len, &credentials,
+						sk->unix_path);
 		if (ret < 0)
 			goto out_unlock;
 		spinlock_unlock(&peer->rxbuf_lock, irq);
@@ -1054,8 +1062,9 @@ int unix_sendmsg(mos_sock *sk, const struct msghdr *msg, int flags)
 
 	unsigned stream_start = peer->rx_tail;
 	/* Commit descriptors with the first available payload segment. */
-	sent = unix_sendmsg_stream_payload(sk, &peer, msg, &irq, files, nfds,
-					   (nfds || peer->unix_passcred) ? 1 : nonblock, deadline);
+	sent = unix_sendmsg_stream_payload(
+		sk, &peer, msg, &irq, files, nfds,
+		(nfds || peer->unix_passcred) ? 1 : nonblock, deadline);
 	if (sent < 0)
 		return sent;
 	ret = unix_queue_passfds(peer, files, nfds, peer->rx_tail,
@@ -1099,7 +1108,9 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 		delivered = unix_recvmsg_dgram_payload(sk, msg, &record);
 		if (flags & MSG_PEEK) {
 			if (sk->unix_passfd_head != sk->unix_passfd_tail) {
-				unix_passfd_msg *next = &sk->unix_passfd_queue[sk->unix_passfd_head];
+				unix_passfd_msg *next =
+					&sk->unix_passfd_queue
+						 [sk->unix_passfd_head];
 				if (next->ready_head <= sk->rx_head) {
 					nfds = next->nfds;
 					for (unsigned i = 0; i < nfds; i++) {
@@ -1116,13 +1127,16 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 		if (peer)
 			sock_wakeup(peer);
 		if (msg->msg_name)
-			unix_sockaddr_key(record.sender, msg->msg_name, &msg->msg_namelen);
+			unix_sockaddr_key(record.sender, msg->msg_name,
+					  &msg->msg_namelen);
 		void *control = msg->msg_control;
 		size_t capacity = msg->msg_controllen, off = 0;
 		if (sk->unix_passcred) {
 			if (control)
-				sock_msg_cmsg_append(msg, &off, SOL_SOCKET, SCM_CREDENTIALS,
-						     &record.credentials, sizeof(record.credentials));
+				sock_msg_cmsg_append(
+					msg, &off, SOL_SOCKET, SCM_CREDENTIALS,
+					&record.credentials,
+					sizeof(record.credentials));
 			else
 				msg->msg_flags |= MSG_CTRUNC;
 		}
@@ -1140,16 +1154,21 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 	delivered = rx_iov_read(sk, msg->msg_iov, msg->msg_iovlen,
 				unix_recvmsg_stream_limit(sk));
 	unix_peercred credentials = { 0, ~0U, ~0U };
-	unix_passfd_msg *record = sk->unix_passfd_head != sk->unix_passfd_tail ?
-		&sk->unix_passfd_queue[sk->unix_passfd_head] : NULL;
+	unix_passfd_msg *record =
+		sk->unix_passfd_head != sk->unix_passfd_tail ?
+			&sk->unix_passfd_queue[sk->unix_passfd_head] :
+			NULL;
 	if (record && record->has_credentials) {
 		credentials = (unix_peercred){ record->credential_pid,
-					      record->credential_uid, record->credential_gid };
+					       record->credential_uid,
+					       record->credential_gid };
 	}
 	unsigned record_end = record ? record->end_head : 0;
 	nfds = unix_collect_one_ready_passfd(sk, files);
 	if (record && record->has_credentials && sk->rx_head < record_end) {
-		sk->unix_passfd_head = (sk->unix_passfd_head + UNIX_PASSFD_QUEUE - 1) % UNIX_PASSFD_QUEUE;
+		sk->unix_passfd_head =
+			(sk->unix_passfd_head + UNIX_PASSFD_QUEUE - 1) %
+			UNIX_PASSFD_QUEUE;
 		record->nfds = 0;
 	}
 
@@ -1165,8 +1184,9 @@ int unix_recvmsg(mos_sock *sk, struct msghdr *msg, int flags)
 	size_t capacity = msg->msg_controllen, off = 0;
 	if (sk->unix_passcred && delivered) {
 		if (control)
-			sock_msg_cmsg_append(msg, &off, SOL_SOCKET, SCM_CREDENTIALS,
-					     &credentials, sizeof(credentials));
+			sock_msg_cmsg_append(msg, &off, SOL_SOCKET,
+					     SCM_CREDENTIALS, &credentials,
+					     sizeof(credentials));
 		else
 			msg->msg_flags |= MSG_CTRUNC;
 	}

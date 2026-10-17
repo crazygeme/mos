@@ -203,13 +203,18 @@ static tmpfs_node *tmpfs_dir_lookup(tmpfs_node *dir, const char *name)
 static int tmpfs_dir_add(tmpfs_node *dir, const char *name, tmpfs_node *node)
 {
 	tmpfs_dirent *de = zalloc(sizeof(*de));
-	if (!de) return -ENOMEM;
+	if (!de)
+		return -ENOMEM;
 	de->name = strdup(name);
-	if (!de->name) { free(de); return -ENOMEM; }
+	if (!de->name) {
+		free(de);
+		return -ENOMEM;
+	}
 	de->node = node;
 	node->parent = dir;
 	tmpfs_node_get(node);
-	if (!S_ISDIR(node->mode)) node->links++;
+	if (!S_ISDIR(node->mode))
+		node->links++;
 	list_insert_tail(&dir->children, &de->list);
 	tmpfs_touch_mctime(dir);
 	return 0;
@@ -224,7 +229,8 @@ static int tmpfs_dir_remove(tmpfs_node *dir, const char *name)
 
 		if (strcmp(de->name, name) == 0) {
 			list_remove_entry(e);
-			if (!S_ISDIR(de->node->mode) && de->node->links) de->node->links--;
+			if (!S_ISDIR(de->node->mode) && de->node->links)
+				de->node->links--;
 			tmpfs_node_put(de->node);
 			free(de->name);
 			free(de);
@@ -283,13 +289,16 @@ static tmpfs_node *tmpfs_walk_parent(tmpfs_node *root, const char *path,
 				     char *last_component)
 {
 	const char *begin = path, *end = path + strlen(path);
-	while (*begin == '/') begin++;
-	while (end > begin && end[-1] == '/') end--;
+	while (*begin == '/')
+		begin++;
+	while (end > begin && end[-1] == '/')
+		end--;
 	last_component[0] = 0;
 	if (end == begin)
 		return root;
 	const char *component = end;
-	while (component > begin && component[-1] != '/') component--;
+	while (component > begin && component[-1] != '/')
+		component--;
 	size_t length = end - component;
 	if (length > 255)
 		return NULL;
@@ -324,7 +333,8 @@ static int tmpfs_file_getattr(file *fp, struct stat *s)
 	s->st_blksize = PAGE_SIZE;
 	s->st_blocks = 0;
 	for (unsigned i = 0; i < tn->n_pages; i++)
-		if (tn->pages[i]) s->st_blocks += PAGE_SIZE / 512;
+		if (tn->pages[i])
+			s->st_blocks += PAGE_SIZE / 512;
 	s->st_uid = tn->uid;
 	s->st_gid = tn->gid;
 	s->st_nlink = tn->links;
@@ -398,7 +408,8 @@ static int tmpfs_page_resident(file *fp, uint64_t offset)
 	tmpfs_node *tn = fp->f_inode->i_private;
 	LOCK_GUARD(&tn->file_lock);
 	uint64_t index = offset / PAGE_SIZE;
-	return offset < tn->size && index < tn->n_pages && tn->pages[index] != 0;
+	return offset < tn->size && index < tn->n_pages &&
+	       tn->pages[index] != 0;
 }
 static paddr_t tmpfs_file_map_page(file *fp, uint64_t offset)
 {
@@ -525,19 +536,24 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 	return 0;
 }
 
-static int tmpfs_file_fallocate(file *fp, int mode, uint64_t offset, uint64_t length)
+static int tmpfs_file_fallocate(file *fp, int mode, uint64_t offset,
+				uint64_t length)
 {
 	tmpfs_node *tn = fp->f_inode->i_private;
 	LOCK_GUARD(&tn->file_lock);
 	uint64_t end = offset + length;
-	if (end > 0xffffffffULL) return -EFBIG;
+	if (end > 0xffffffffULL)
+		return -EFBIG;
 	if (!(mode & 1) && end > tn->size) {
 		int ret = tmpfs_file_ftruncate(fp, end);
-		if (ret) return ret;
+		if (ret)
+			return ret;
 	}
-	for (uint64_t page = offset / PAGE_SIZE; page <= (end - 1) / PAGE_SIZE; page++) {
+	for (uint64_t page = offset / PAGE_SIZE; page <= (end - 1) / PAGE_SIZE;
+	     page++) {
 		int ret = tmpfs_ensure_page(tn, page * PAGE_SIZE);
-		if (ret) return ret;
+		if (ret)
+			return ret;
 	}
 	return 0;
 }
@@ -626,7 +642,8 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 		if (tmpfs_page_write(tn->pages[page_idx], byte_off,
 				     src + transferred, copy) < 0)
 			return transferred ? transferred : -EIO;
-		if (cur_off + copy > tn->size) tn->size = cur_off + copy;
+		if (cur_off + copy > tn->size)
+			tn->size = cur_off + copy;
 		transferred += (ssize_t)copy;
 	}
 
@@ -951,7 +968,9 @@ static file *tmpfs_open_direct(super_block *sb, const char *path, int flag)
 			}
 			newfile = tmpfs_node_alloc(sbi, S_IFREG | 0666);
 			if (tmpfs_dir_add(parent, last, newfile)) {
-				tmpfs_node_put(newfile); free(last); return NULL;
+				tmpfs_node_put(newfile);
+				free(last);
+				return NULL;
 			}
 			tmpfs_node_put(newfile); /* dir_add bumped it */
 			tn = newfile;
@@ -1127,20 +1146,27 @@ static int tmpfs_mkdir_op(super_block *sb, const char *path, unsigned mode)
 	return 0;
 }
 
-static int tmpfs_link_op(super_block *sb, const char *oldpath, const char *newpath)
+static int tmpfs_link_op(super_block *sb, const char *oldpath,
+			 const char *newpath)
 {
 	tmpfs_sb_info *sbi = sb->s_fs_info;
 	LOCK_GUARD(&sbi->directory_lock);
 	tmpfs_node *node = tmpfs_walk(sbi->root, oldpath);
-	if (!node) return -ENOENT;
-	if (S_ISDIR(node->mode)) return -EPERM;
+	if (!node)
+		return -ENOENT;
+	if (S_ISDIR(node->mode))
+		return -EPERM;
 	char name[256];
 	tmpfs_node *parent = tmpfs_walk_parent(sbi->root, newpath, name);
-	if (!parent || !S_ISDIR(parent->mode)) return -ENOENT;
-	if (!name[0] || !strcmp(name, ".") || !strcmp(name, "..")) return -EEXIST;
-	if (tmpfs_dir_lookup(parent, name)) return -EEXIST;
+	if (!parent || !S_ISDIR(parent->mode))
+		return -ENOENT;
+	if (!name[0] || !strcmp(name, ".") || !strcmp(name, ".."))
+		return -EEXIST;
+	if (tmpfs_dir_lookup(parent, name))
+		return -EEXIST;
 	int ret = tmpfs_dir_add(parent, name, node);
-	if (!ret) tmpfs_touch_ctime(node);
+	if (!ret)
+		tmpfs_touch_ctime(node);
 	return ret;
 }
 
@@ -1251,7 +1277,8 @@ static int tmpfs_rename_op(super_block *sb, const char *oldpath,
 		}
 	}
 	tmpfs_node *target = tmpfs_dir_lookup(newparent, newname);
-	if (target == node) return 0;
+	if (target == node)
+		return 0;
 	if (target) {
 		if (S_ISDIR(target->mode) && !S_ISDIR(node->mode))
 			return -EISDIR;
@@ -1311,7 +1338,8 @@ static int tmpfs_statfs_op(super_block *sb, struct statfs64 *buf)
 	buf->f_bsize = PAGE_SIZE;
 	phymm_usage usage;
 	phymm_get_usage(&usage);
-	buf->f_blocks = (uint64_t)usage.low_total_pages + usage.high_total_pages;
+	buf->f_blocks =
+		(uint64_t)usage.low_total_pages + usage.high_total_pages;
 	buf->f_bfree = (uint64_t)usage.low_free_pages + usage.high_free_pages;
 	buf->f_bavail = buf->f_bfree;
 	buf->f_frsize = PAGE_SIZE;
@@ -1370,29 +1398,38 @@ static int tmpfs_root_options(tmpfs_node *node, const char *data)
 {
 	while (data && *data) {
 		const char *end = strchr(data, ',');
-		if (!end) end = data + strlen(data);
+		if (!end)
+			end = data + strlen(data);
 		unsigned *field = NULL, base = 10;
 		const char *value = NULL;
 		if (!strncmp(data, "mode=", 5)) {
-			field = &node->mode; base = 8; value = data + 5;
+			field = &node->mode;
+			base = 8;
+			value = data + 5;
 		} else if (!strncmp(data, "uid=", 4)) {
-			field = &node->uid; value = data + 4;
+			field = &node->uid;
+			value = data + 4;
 		} else if (!strncmp(data, "gid=", 4)) {
-			field = &node->gid; value = data + 4;
+			field = &node->gid;
+			value = data + 4;
 		}
 		if (field) {
 			uint64_t number = 0;
-			if (value == end) return -EINVAL;
+			if (value == end)
+				return -EINVAL;
 			for (; value < end; value++) {
 				unsigned digit = (unsigned char)*value - '0';
-				if (digit >= base || number > (UINT32_MAX - digit) / base)
+				if (digit >= base ||
+				    number > (UINT32_MAX - digit) / base)
 					return -EINVAL;
 				number = number * base + digit;
 			}
 			if (field == &node->mode) {
-				if (number > 07777) return -EINVAL;
+				if (number > 07777)
+					return -EINVAL;
 				*field = S_IFDIR | number;
-			} else *field = number;
+			} else
+				*field = number;
 		}
 		data = *end ? end + 1 : end;
 	}

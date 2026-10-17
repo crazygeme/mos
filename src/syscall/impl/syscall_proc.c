@@ -311,8 +311,8 @@ static void cap_uid_changed(task_credentials *u, unsigned old_real,
 {
 	if (u->securebits & 4) /* SECBIT_NO_SETUID_FIXUP */
 		return;
-	if ((old_real == 0 || old_effective == 0 || old_saved == 0) &&
-	    u->uid && u->euid && u->suid)
+	if ((old_real == 0 || old_effective == 0 || old_saved == 0) && u->uid &&
+	    u->euid && u->suid)
 		memset(u->cap_ambient, 0, sizeof(u->cap_ambient));
 	if ((old_real == 0 || old_effective == 0 || old_saved == 0) && u->uid &&
 	    u->euid && u->suid && !u->keep_capabilities)

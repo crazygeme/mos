@@ -37,7 +37,8 @@ unsigned vfs_mount_poll(uint64_t seen, unsigned events, poll_table *pt)
 	poll_subscribe(pt, &mount_waiters, &mount_event_lock);
 	spinlock_lock(&mount_event_lock, &irq);
 	unsigned ready = seen != vfs_mount_generation() ?
-		FS_POLL_EXCEPT | FS_POLL_ERR : 0;
+				 FS_POLL_EXCEPT | FS_POLL_ERR :
+				 0;
 	spinlock_unlock(&mount_event_lock, irq);
 	return (events & FS_POLL_READ) | ready;
 }
@@ -346,14 +347,22 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 			mutex_unlock(&sb->s_lock);
 			return -EEXIST;
 		}
-		file *covered = existing->sb->s_op && existing->sb->s_op->open_root ?
-			existing->sb->s_op->open_root(existing->sb, O_PATH) : NULL;
+		file *covered =
+			existing->sb->s_op && existing->sb->s_op->open_root ?
+				existing->sb->s_op->open_root(existing->sb,
+							      O_PATH) :
+				NULL;
 		file *incoming = next->s_op && next->s_op->open_root ?
-			next->s_op->open_root(next, O_PATH) : NULL;
-		int compatible = covered && incoming && covered->f_inode && incoming->f_inode &&
-			!!S_ISDIR(covered->f_inode->i_mode) == !!S_ISDIR(incoming->f_inode->i_mode);
-		if (covered) fs_put_file(covered);
-		if (incoming) fs_put_file(incoming);
+					 next->s_op->open_root(next, O_PATH) :
+					 NULL;
+		int compatible = covered && incoming && covered->f_inode &&
+				 incoming->f_inode &&
+				 !!S_ISDIR(covered->f_inode->i_mode) ==
+					 !!S_ISDIR(incoming->f_inode->i_mode);
+		if (covered)
+			fs_put_file(covered);
+		if (incoming)
+			fs_put_file(incoming);
 		if (!compatible) {
 			mutex_unlock(&sb->s_lock);
 			return -ENOTDIR;
@@ -858,8 +867,7 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag,
 	return NULL;
 }
 
-static void vfs_file_mount_identity(file *fp, super_block *sb,
-				    const char *path)
+static void vfs_file_mount_identity(file *fp, super_block *sb, const char *path)
 {
 	if (!fp || fp->f_mount_id)
 		return;

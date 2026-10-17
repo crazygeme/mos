@@ -86,10 +86,9 @@ void chardev_for_each_class(device_number_iter_fn fn, void *data)
 	if (!fn)
 		return;
 	for (i = 0; i < char_endpoint_count; i++)
-		if (!RB_EMPTY_NODE(&char_endpoint_table[i].major_node))
-			fn(char_endpoint_table[i].mode_type,
-			   char_endpoint_table[i].major,
-			   char_endpoint_table[i].name, data);
+		fn(char_endpoint_table[i].mode_type,
+		   char_endpoint_table[i].major, char_endpoint_table[i].name,
+		   data);
 }
 
 static file *char_endpoint_open(super_block *sb, unsigned mode, unsigned devno,

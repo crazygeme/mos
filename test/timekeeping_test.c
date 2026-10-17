@@ -1,3 +1,4 @@
+#include <src/ps/impl/ps_internal.h>
 #include <lib/klib.h>
 #include <int/int.h>
 #include <ps/ps.h>
@@ -74,13 +75,18 @@ KTEST(Timekeeping, DelayedIRQ)
 }
 
 struct clock_readers {
-	unsigned parent, arrivals, completed, errors, cpus;
+	task_struct *parent;
+	unsigned arrivals, completed, errors, cpus;
 };
 
 static void parallel_clock_reader(void *param)
 {
 	struct clock_readers *state = param;
-	current->life->ppid = state->parent;
+	/* Publish child ownership before completion makes the parent waitable. */
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	ps_set_parent_unsafe(current, state->parent);
+	spinlock_unlock(&ps_lock, irq);
 	current->life->exit_signal = 0;
 	sched_disable();
 	unsigned long long deadline = time_deadline_ms(2000);
@@ -136,7 +142,7 @@ KTEST(Timekeeping, ParallelClocksAndTimers)
 		return 0;
 	struct clock_readers *state = zalloc(sizeof(*state));
 	ASSERT_NONNULL(state);
-	state->parent = current->life->psid;
+	state->parent = current;
 	unsigned pids[2], created = 0;
 	for (unsigned i = 0; i < 2; i++) {
 		unsigned pid = ps_create(parallel_clock_reader, state,
@@ -144,7 +150,6 @@ KTEST(Timekeeping, ParallelClocksAndTimers)
 		if ((int)pid < 0)
 			break;
 		pids[created++] = pid;
-		current->life->nchildren++;
 	}
 	while (__atomic_load_n(&state->completed, __ATOMIC_ACQUIRE) < created)
 		time_wait(1);

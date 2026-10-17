@@ -133,7 +133,8 @@ typedef struct _file_operations {
 	int (*read_page)(file *file, uint64_t offset, void *buf);
 	int (*write_page)(file *file, uint64_t offset, const void *buf);
 	int (*ftruncate)(file *file, loff_t size);
-	int (*fallocate)(file *file, int mode, uint64_t offset, uint64_t length);
+	int (*fallocate)(file *file, int mode, uint64_t offset,
+			 uint64_t length);
 	/*
 	 * poll: return an FS_POLL_* readiness bitmask for the requested @events.
 	 * If @pt is non-NULL, register the requested readiness queues even if

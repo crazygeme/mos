@@ -16,6 +16,28 @@ cat > "$probe_dir/probe.c" <<'C'
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* RH9 headers/libc predate waitid and PID namespaces. */
+#ifndef WEXITED
+#define WEXITED 4
+#define WSTOPPED 2
+#define WNOWAIT 0x01000000
+#define P_ALL 0
+#define P_PID 1
+#define P_PGID 2
+#endif
+#ifndef CLONE_NEWPID
+#define CLONE_NEWPID 0x20000000
+#endif
+#ifndef SYS_waitid
+#ifdef __i386__
+#define SYS_waitid 284
+#else
+#define SYS_waitid 247
+#endif
+#endif
+#define waitid(type, pid, info, options) \
+    syscall(SYS_waitid, (type), (pid), (info), (options), NULL)
+
 static void exited(pid_t pid, int status, int options)
 {
     siginfo_t info;

@@ -23,7 +23,7 @@ vfs_entry_node *devfs_entries(void)
 }
 
 static super_block *devfs_get_sb(const char *device, const char *target,
-				int flags, void *data)
+				 int flags, void *data)
 {
 	(void)device;
 	(void)target;

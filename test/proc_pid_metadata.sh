@@ -11,25 +11,33 @@ cat > "$probe_dir/probe.c" <<'C'
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/futex.h>
-#include <sched.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #define CHECK(x) do { if (!(x)) { \
  fprintf(stderr, "%d: %s (errno=%d)\n", __LINE__, #x, errno); exit(1); \
 } } while (0)
-static int ready[2], finish[2], child_tid;
-static int worker(void *unused)
+/* RH9 libc predates the *at wrappers; exercise the kernel ABI directly. */
+#ifdef __i386__
+#define openat(d, p, f) syscall(295, (d), (p), (f), 0)
+#define readlinkat(d, p, b, n) syscall(305, (d), (p), (b), (n))
+#define fstatat(d, p, s, f) syscall(300, (d), (p), (s), (f))
+#define stat_at stat64
+#else
+#define stat_at stat
+#endif
+static int ready[2], finish[2];
+static void *worker(void *unused)
 {
- char c = 'R';
+ char c;
+ int tid = syscall(SYS_gettid);
  (void)unused;
- CHECK(write(ready[1], &c, 1) == 1);
+ CHECK(write(ready[1], &tid, sizeof(tid)) == sizeof(tid));
  CHECK(read(finish[0], &c, 1) == 1);
  return 0;
 }
@@ -54,7 +62,7 @@ static void metadata(const char *path, int pid, int tid)
 {
  char buf[131072], *line, link[4096];
  int dir = open(path, O_RDONLY | O_DIRECTORY), got_pid = 0, got_tgid = 0;
- struct stat st;
+ struct stat_at st;
  CHECK(dir >= 0);
  contents(dir, "status", buf, sizeof(buf));
  for (line = strtok(buf, "\n"); line; line = strtok(NULL, "\n")) {
@@ -84,22 +92,18 @@ static void metadata(const char *path, int pid, int tid)
  }
  close(dir);
 }
-int main(void)
+int main(int argc, char **argv)
 {
- char path[128], c, line[128];
+ char path[128], line[128];
+ int process_only = argc > 1;
+ (void)argv;
  int pid = getpid(), tid, parsed_pid, parsed_tid, seen = 0, status;
- void *stack;
+ pthread_t thread;
  FILE *ps;
  alarm(30);
  CHECK(pipe(ready) == 0 && pipe(finish) == 0);
- stack = mmap(NULL, 1024 * 1024, PROT_READ | PROT_WRITE,
-              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
- CHECK(stack != MAP_FAILED);
- tid = clone(worker, (char *)stack + 1024 * 1024,
-             CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
-             CLONE_THREAD | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID,
-             NULL, &child_tid, NULL, &child_tid);
- CHECK(tid > 0 && read(ready[0], &c, 1) == 1);
+ CHECK(pthread_create(&thread, NULL, worker, NULL) == 0);
+ CHECK(read(ready[0], &tid, sizeof(tid)) == sizeof(tid) && tid > 0);
  snprintf(path, sizeof(path), "/proc/%d", pid);
  metadata(path, pid, pid);
  metadata("/proc/self", pid, pid);
@@ -107,26 +111,36 @@ int main(void)
  metadata(path, pid, pid);
  snprintf(path, sizeof(path), "/proc/%d/task/%d", pid, tid);
  metadata(path, pid, tid);
- snprintf(path, sizeof(path), "ps -L -p %d -o pid=,lwp=", pid);
+ if (process_only)
+  snprintf(path, sizeof(path), "ps -p %d -o pid=", pid);
+ else
+  snprintf(path, sizeof(path), "ps -L -p %d -o pid=,lwp=", pid);
  CHECK((ps = popen(path, "r")));
  while (fgets(line, sizeof(line), ps)) {
-  CHECK(sscanf(line, "%d %d", &parsed_pid, &parsed_tid) == 2);
-  CHECK(parsed_pid == pid && (parsed_tid == pid || parsed_tid == tid));
-  seen |= parsed_tid == pid ? 1 : 2;
+  if (process_only) {
+   CHECK(sscanf(line, "%d", &parsed_pid) == 1 && parsed_pid == pid);
+   seen |= 1;
+  } else {
+   CHECK(sscanf(line, "%d %d", &parsed_pid, &parsed_tid) == 2);
+   CHECK(parsed_pid == pid && (parsed_tid == pid || parsed_tid == tid));
+   seen |= parsed_tid == pid ? 1 : 2;
+  }
  }
  status = pclose(ps);
- CHECK(status == 0 && seen == 3);
+ CHECK(status == 0 && seen == (process_only ? 1 : 3));
  CHECK(write(finish[1], "Q", 1) == 1);
- while (__atomic_load_n(&child_tid, __ATOMIC_ACQUIRE)) {
-  int value = __atomic_load_n(&child_tid, __ATOMIC_RELAXED);
-  if (value) syscall(SYS_futex, &child_tid, FUTEX_WAIT, value, NULL, NULL, 0);
- }
+ CHECK(pthread_join(thread, NULL) == 0);
  snprintf(path, sizeof(path), "/proc/%d/task/%d/status", pid, tid);
  CHECK(access(path, F_OK) == -1 && errno == ENOENT);
- CHECK(munmap(stack, 1024 * 1024) == 0);
  puts("proc_pid_metadata: PASS");
  return 0;
 }
 C
-"${CC:-gcc}" -std=gnu11 -O2 -Wall "$probe_dir/probe.c" -o "$probe_dir/probe"
-"$probe_dir/probe"
+"${CC:-gcc}" -std=gnu99 -O2 -Wall "$probe_dir/probe.c" -pthread -o "$probe_dir/probe"
+# RH9 procps lacks both -L and the lwp format; procfs checks above still
+# validate both live threads and removal of the worker after pthread_join.
+if ps -L -p $$ -o pid=,lwp= >/dev/null 2>&1; then
+ "$probe_dir/probe"
+else
+ "$probe_dir/probe" --process-only
+fi

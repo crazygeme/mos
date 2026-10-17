@@ -146,7 +146,8 @@ void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 	int irq;
 
 	spinlock_lock(lock, &irq);
-	if (p->used && !p->master_open && p->slave_count == 0 && !p->path_count) {
+	if (p->used && !p->master_open && p->slave_count == 0 &&
+	    !p->path_count) {
 		if (p->on_free)
 			p->on_free(p);
 		p->used = 0;

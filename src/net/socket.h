@@ -305,7 +305,6 @@ typedef struct {
 	char sender[UNIX_KEY_MAX];
 } unix_dgram_header;
 
-
 typedef struct _mos_sock {
 	void *network_namespace;
 	int domain;

@@ -346,8 +346,8 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	return ret;
 }
 
-static int stat_at_full(int dirfd, const char *path, int flags,
-			struct stat *st, file **ret_file)
+static int stat_at_full(int dirfd, const char *path, int flags, struct stat *st,
+			file **ret_file)
 {
 	file *fp = NULL;
 	int ret;
@@ -365,8 +365,12 @@ static int stat_at_full(int dirfd, const char *path, int flags,
 			return -ENOMEM;
 		ret = syscall_resolve_at(dirfd, *path ? path : ".", name);
 		if (!ret)
-			fp = fs_open_file(name, O_PATH |
-				((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0), 0);
+			fp = fs_open_file(
+				name,
+				O_PATH | ((flags & AT_SYMLINK_NOFOLLOW) ?
+						  O_NOFOLLOW :
+						  0),
+				0);
 		name_put(name);
 		if (ret)
 			return ret;
@@ -374,8 +378,8 @@ static int stat_at_full(int dirfd, const char *path, int flags,
 			return -ENOENT;
 	}
 	memset(st, 0, sizeof(*st));
-	ret = fp->f_fop && fp->f_fop->getattr ?
-		fp->f_fop->getattr(fp, st) : -ENOENT;
+	ret = fp->f_fop && fp->f_fop->getattr ? fp->f_fop->getattr(fp, st) :
+						-ENOENT;
 	if (!ret && ret_file)
 		*ret_file = fp;
 	else

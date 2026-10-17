@@ -135,9 +135,21 @@ int do_socket(int domain, int type, int protocol)
 
 	unsigned tag = ps_netns_tag(sk->network_namespace);
 	struct netif *loop = ps_netns_loop(sk->network_namespace);
-	if (sk->tcp) { sk->tcp->mos_netns = tag; if (loop) tcp_bind_netif(sk->tcp, loop); }
-	if (sk->udp) { sk->udp->mos_netns = tag; if (loop) udp_bind_netif(sk->udp, loop); }
-	if (sk->raw) { sk->raw->mos_netns = tag; if (loop) raw_bind_netif(sk->raw, loop); }
+	if (sk->tcp) {
+		sk->tcp->mos_netns = tag;
+		if (loop)
+			tcp_bind_netif(sk->tcp, loop);
+	}
+	if (sk->udp) {
+		sk->udp->mos_netns = tag;
+		if (loop)
+			udp_bind_netif(sk->udp, loop);
+	}
+	if (sk->raw) {
+		sk->raw->mos_netns = tag;
+		if (loop)
+			raw_bind_netif(sk->raw, loop);
+	}
 	int fd = sock_to_fd(sk);
 	if (fd < 0) {
 		if (type == SOCK_STREAM)
@@ -431,7 +443,8 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
-	if (sk->domain == AF_UNIX && (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM))
+	if (sk->domain == AF_UNIX &&
+	    (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM))
 		return do_sendto(fd, buf, len, flags, NULL, 0);
 	loff_t pos = 0;
 	task_struct *cur = CURRENT_TASK();
@@ -474,10 +487,13 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	}
 	if (sk->err)
 		return sk->err;
-	if (sk->domain == AF_UNIX && (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM)) {
+	if (sk->domain == AF_UNIX &&
+	    (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM)) {
 		struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
-		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1,
-			.msg_name = (void *)to, .msg_namelen = tolen };
+		struct msghdr msg = { .msg_iov = &iov,
+				      .msg_iovlen = 1,
+				      .msg_name = (void *)to,
+				      .msg_namelen = tolen };
 		if (CURRENT_TASK()->files->fds[fd]->f_flag & O_NONBLOCK)
 			flags |= MSG_DONTWAIT;
 		return unix_sendmsg(sk, &msg, flags);
@@ -675,12 +691,11 @@ int do_shutdown(int fd, int how)
 		return -EOPNOTSUPP;
 	unsigned requested = how == SHUT_RD ? TCP_SHUT_RD :
 			     how == SHUT_WR ? TCP_SHUT_WR :
-					     TCP_SHUT_RD | TCP_SHUT_WR;
+					      TCP_SHUT_RD | TCP_SHUT_WR;
 	unsigned shutdown = sk->tcp_shutdown | requested;
 	if (sk->tcp_shutdown == (TCP_SHUT_RD | TCP_SHUT_WR))
 		return 0;
-	if (!sk->tcp || sk->tcp->state == CLOSED ||
-	    sk->tcp->state == LISTEN)
+	if (!sk->tcp || sk->tcp->state == CLOSED || sk->tcp->state == LISTEN)
 		return -ENOTCONN;
 	if (shutdown == sk->tcp_shutdown)
 		return 0;
@@ -697,7 +712,7 @@ int do_shutdown(int fd, int how)
 		tcp_err(pcb, NULL);
 	}
 	err_t err = tcp_shutdown(pcb, (shutdown & TCP_SHUT_RD) != 0,
-				(shutdown & TCP_SHUT_WR) != 0);
+				 (shutdown & TCP_SHUT_WR) != 0);
 	if (err != ERR_OK) {
 		if (release) {
 			sk->tcp = pcb;

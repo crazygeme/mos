@@ -1105,7 +1105,6 @@ static void ext4_stat_identity(file *fp, struct stat *s)
 	s->st_blksize = ext4_sb_get_block_size(&mi->fs->sb);
 }
 
-
 static file *ext4_open_link(super_block *sb, const char *path, int flag,
 			    char **target)
 {
@@ -2037,13 +2036,15 @@ static int ext4_remount(super_block *sb, int flags)
 		if (ret == EOK && required_readonly)
 			ret = EROFS;
 		if (ret == EOK) {
-			ext4_set16(&mi->fs->sb, state, EXT4_SUPERBLOCK_STATE_ERROR_FS);
+			ext4_set16(&mi->fs->sb, state,
+				   EXT4_SUPERBLOCK_STATE_ERROR_FS);
 			ret = ext4_sb_write(mi->fs->bdev, &mi->fs->sb);
 		}
 	}
 	if (ret == EOK) {
 		mi->fs->read_only = rdonly;
-		sb->s_flags = (sb->s_flags & ~MS_RDONLY) | (rdonly ? MS_RDONLY : 0);
+		sb->s_flags = (sb->s_flags & ~MS_RDONLY) |
+			      (rdonly ? MS_RDONLY : 0);
 		if (!rdonly)
 			ret = ext4_cache_write_back(mi->mp, true);
 	}

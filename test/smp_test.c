@@ -1,3 +1,4 @@
+#include <src/ps/impl/ps_internal.h>
 #include <test/test.h>
 #include <ps/ps.h>
 #include <ps/smp.h>
@@ -10,7 +11,7 @@
 
 struct smp_test_state {
 	spinlock_t lock;
-	unsigned parent;
+	task_struct *parent;
 	unsigned arrivals;
 	unsigned completed;
 	unsigned cpus;
@@ -24,7 +25,11 @@ static void smp_test_worker(void *param)
 {
 	struct smp_test_state *state = param;
 	unsigned long long deadline = time_now_tickets() + 200;
-	current->life->ppid = state->parent;
+	/* Publish child ownership before completion makes the parent waitable. */
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	ps_set_parent_unsafe(current, state->parent);
+	spinlock_unlock(&ps_lock, irq);
 	current->life->exit_signal = 0;
 	sched_disable();
 	addr_space_t original_root = arch_mm_current_address_space();
@@ -73,7 +78,7 @@ KTEST(smp, parallel_kernel_and_shootdown)
 	struct smp_test_state *state = zalloc(sizeof(*state));
 	ASSERT_NONNULL(state);
 	spinlock_init(&state->lock);
-	state->parent = current->life->psid;
+	state->parent = current;
 	state->page_dir = current->memory->page_dir;
 	unsigned pids[2], created = 0;
 	for (unsigned i = 0; i < 2; i++) {
@@ -82,7 +87,6 @@ KTEST(smp, parallel_kernel_and_shootdown)
 		if ((int)pid < 0)
 			break;
 		pids[created++] = pid;
-		current->life->nchildren++;
 	}
 	while (__atomic_load_n(&state->completed, __ATOMIC_ACQUIRE) < created)
 		time_wait(1);

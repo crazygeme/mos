@@ -389,14 +389,20 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 		if (arg4 || arg5 || arg2 < 1 || arg2 > 4)
 			return -EINVAL;
 		if (arg2 == 4) {
-			if (arg3) return -EINVAL;
+			if (arg3)
+				return -EINVAL;
 			memset(u->cap_ambient, 0, sizeof(u->cap_ambient));
 			return 0;
 		}
-		if (arg3 > 40) return -EINVAL;
+		if (arg3 > 40)
+			return -EINVAL;
 		unsigned word = arg3 / 32, bit = 1U << (arg3 % 32);
-		if (arg2 == 1) return !!(u->cap_ambient[word] & bit);
-		if (arg2 == 3) { u->cap_ambient[word] &= ~bit; return 0; }
+		if (arg2 == 1)
+			return !!(u->cap_ambient[word] & bit);
+		if (arg2 == 3) {
+			u->cap_ambient[word] &= ~bit;
+			return 0;
+		}
 		if ((u->securebits & 64) || !(u->cap_permitted[word] & bit) ||
 		    !(u->cap_inheritable[word] & bit))
 			return -EPERM;
@@ -412,7 +418,8 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 			return -EPERM;
 		current->credentials->keep_capabilities = arg2;
 		current->credentials->securebits =
-			(current->credentials->securebits & ~16U) | (arg2 ? 16U : 0);
+			(current->credentials->securebits & ~16U) |
+			(arg2 ? 16U : 0);
 		return 0;
 	}
 	return -EINVAL;
@@ -692,14 +699,16 @@ int sys_mincore(void *addr, size_t length, unsigned char *vec)
 		int resident = mm_get_map_flag(address) != 0;
 		uint64_t offset = region->offset + address - region->begin;
 		if (!resident && region->anon_id)
-			resident = mm_anon_shared_find(region->anon_id, offset) != 0;
+			resident = mm_anon_shared_find(region->anon_id,
+						       offset) != 0;
 		if (!resident && region->fp) {
 			file *fp = region->fp;
 			if (fp->f_fop && fp->f_fop->page_resident)
 				resident = fp->f_fop->page_resident(fp, offset);
 			else {
 				paddr_t page = 0;
-				fs_page_cache_get_cached_range(fp, offset, &page, 1);
+				fs_page_cache_get_cached_range(fp, offset,
+							       &page, 1);
 				resident = page != 0;
 				if (page)
 					fs_page_cache_put(page);

@@ -392,7 +392,8 @@ void phymm_cache_budget(unsigned total, unsigned free, unsigned file_cached,
 	policy->reserve_pages = 0;
 }
 
-void phymm_get_cache_policy_snapshot(unsigned file_cached, unsigned block_cached,
+void phymm_get_cache_policy_snapshot(unsigned file_cached,
+				     unsigned block_cached,
 				     phymm_cache_policy *policy)
 {
 	unsigned total, free;
@@ -407,8 +408,8 @@ void phymm_get_cache_policy_snapshot(unsigned file_cached, unsigned block_cached
 
 void phymm_get_cache_policy(phymm_cache_policy *policy)
 {
-	phymm_get_cache_policy_snapshot(fs_page_cache_pages, blockdev_cached_pages(),
-				       policy);
+	phymm_get_cache_policy_snapshot(fs_page_cache_pages,
+					blockdev_cached_pages(), policy);
 }
 
 unsigned phymm_reclaim_user_cache(unsigned target_pages)

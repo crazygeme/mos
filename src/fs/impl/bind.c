@@ -80,9 +80,12 @@ static int bind_resolve_link(super_block *sb, const char *path, char **target)
 	char *full = bind_path(info, path);
 	char *text = name_get(), *link = name_get();
 	if (!full || !text || !link) {
-		if (full) name_put(full);
-		if (text) name_put(text);
-		if (link) name_put(link);
+		if (full)
+			name_put(full);
+		if (text)
+			name_put(text);
+		if (link)
+			name_put(link);
 		return -ENOMEM;
 	}
 	size_t prefix = strlen(full) - strlen(path);
@@ -93,20 +96,25 @@ static int bind_resolve_link(super_block *sb, const char *path, char **target)
 		char saved = full[prefix + i];
 		full[prefix + i] = 0;
 		size_t length = 0;
-		int ret = info->source->s_op->readlink(info->source, full,
-						      text, MAX_PATH - 1, &length);
+		int ret = info->source->s_op->readlink(info->source, full, text,
+						       MAX_PATH - 1, &length);
 		full[prefix + i] = saved;
 		if (ret || !length)
 			continue;
 		text[length] = 0;
-		const char *base = !strcmp(sb->s_mountpoint, "/") ? "" : sb->s_mountpoint;
-		if (strlen(base) + i >= MAX_PATH) { result = -ENAMETOOLONG; break; }
+		const char *base =
+			!strcmp(sb->s_mountpoint, "/") ? "" : sb->s_mountpoint;
+		if (strlen(base) + i >= MAX_PATH) {
+			result = -ENAMETOOLONG;
+			break;
+		}
 		strcpy(link, base);
 		memcpy(link + strlen(base), path, i);
 		link[strlen(base) + i] = 0;
 		ret = fs_resolve_symlink_path(link, text, length);
 		if (ret || strlen(text) + strlen(path + i) >= MAX_PATH) {
-			result = ret ? ret : -ENAMETOOLONG; break;
+			result = ret ? ret : -ENAMETOOLONG;
+			break;
 		}
 		strcat(text, path + i);
 		*target = text;
@@ -116,7 +124,8 @@ static int bind_resolve_link(super_block *sb, const char *path, char **target)
 	}
 	name_put(full);
 	name_put(link);
-	if (text) name_put(text);
+	if (text)
+		name_put(text);
 	return result;
 }
 static file *bind_open_link(super_block *sb, const char *path, int flags,
@@ -277,7 +286,8 @@ super_block *vfs_bind_mount(super_block *root, const char *path, int recursive)
 		return NULL;
 	if (!strcmp(suffix, "/"))
 		suffix++;
-	if (source->s_unbindable) return NULL;
+	if (source->s_unbindable)
+		return NULL;
 	super_block *sb = sget(&bind_sops);
 	struct bind_info *info = zalloc(sizeof(*info));
 	if (!sb || !info) {
@@ -314,7 +324,8 @@ super_block *vfs_bind_mount(super_block *root, const char *path, int recursive)
 		     n = rb_next(n)) {
 			vfs_mount_node *mount =
 				rb_entry(n, vfs_mount_node, rb_node);
-			if (mount->sb->s_unbindable) continue;
+			if (mount->sb->s_unbindable)
+				continue;
 			if (strncmp(mount->path, suffix, len) ||
 			    (len && mount->path[len] != '/'))
 				continue;

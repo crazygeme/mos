@@ -215,7 +215,8 @@ int net_namespace_visible(const struct netif *nif)
 {
 	return nif->mos_netns == net_namespace_current();
 }
-static err_t namespace_loop_output(struct netif *nif, struct pbuf *p, const ip4_addr_t *dest)
+static err_t namespace_loop_output(struct netif *nif, struct pbuf *p,
+				   const ip4_addr_t *dest)
 {
 	if (!ip4_addr_isloopback(dest) || !netif_is_up(nif))
 		return ERR_RTE;
@@ -223,7 +224,8 @@ static err_t namespace_loop_output(struct netif *nif, struct pbuf *p, const ip4_
 }
 static err_t namespace_loop_init(struct netif *nif)
 {
-	nif->name[0] = 'l'; nif->name[1] = 'o';
+	nif->name[0] = 'l';
+	nif->name[1] = 'o';
 	nif->mtu = 65535;
 	nif->output = namespace_loop_output;
 	return ERR_OK;
@@ -243,7 +245,8 @@ struct netif *net_namespace_create(unsigned tag)
 	IP4_ADDR(&ip, 127, 0, 0, 1);
 	IP4_ADDR(&mask, 255, 0, 0, 0);
 	IP4_ADDR(&gw, 0, 0, 0, 0);
-	if (!netif_add(nif, &ip, &mask, &gw, NULL, namespace_loop_init, ip_input)) {
+	if (!netif_add(nif, &ip, &mask, &gw, NULL, namespace_loop_init,
+		       ip_input)) {
 		free(nif);
 		return NULL;
 	}

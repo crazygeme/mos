@@ -3,9 +3,9 @@
 /*
  * /proc/devices — registered character and block device majors.
  *
- * Linux reports one line per registered major, grouped by device class.  MOS
- * registers handlers by minor range, so the iterator below collapses duplicate
- * ranges that share the same class and major.
+ * Device names can share a major (for example tty and ptmx). MOS registers
+ * handlers by minor range, so collapse only ranges with the same major and
+ * name.
  */
 #include <fs/entries.h>
 #include "common.h"
@@ -33,7 +33,8 @@ static void collect_major(unsigned mode_type, unsigned major, const char *name,
 		return;
 
 	for (i = 0; i < ctx->count; i++) {
-		if (ctx->entries[i].major == major)
+		if (ctx->entries[i].major == major &&
+		    !strcmp(ctx->entries[i].name, name ? name : "unknown"))
 			return;
 	}
 

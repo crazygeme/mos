@@ -109,6 +109,8 @@ static ssize_t sock_tcp_stream_write(file *fp, mos_sock *sk, const void *buf,
 		u16_t chunk;
 		err_t e;
 
+		if (sk->tcp_shutdown & TCP_SHUT_WR)
+			return done ? (ssize_t)done : -EPIPE;
 		if (sk->err)
 			return done ? (ssize_t)done : sk->err;
 		if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
@@ -408,7 +410,8 @@ static ssize_t inet_read(file *fp, void *buf, size_t count, loff_t *pos)
 	while (rx_used(sk) == 0) {
 		if (sk->err)
 			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->tcp_shutdown & TCP_SHUT_RD))
 			return 0;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;
@@ -1069,9 +1072,11 @@ static unsigned inet_poll(file *fp, unsigned events, poll_table *pt)
 		ready |= FS_POLL_READ;
 	if ((events & FS_POLL_WRITE) &&
 	    (sk->type != SOCK_STREAM ||
-	     (sk->state == SS_CONNECTED && sk->tcp && tcp_sndbuf(sk->tcp) > 0)))
+	     (sk->tcp_shutdown & TCP_SHUT_WR) ||
+	     ((sk->state == SS_CONNECTED || sk->state == SS_DISCONNECTING) &&
+	      sk->tcp && tcp_sndbuf(sk->tcp) > 0)))
 		ready |= FS_POLL_WRITE;
-	return sock_poll_common(sk, events, pt, ready, 0);
+	return sock_poll_common(sk, events, pt, ready, sk->tcp_shutdown);
 }
 
 static unsigned unix_file_poll(file *fp, unsigned events, poll_table *pt)

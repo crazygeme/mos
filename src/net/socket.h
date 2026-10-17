@@ -251,6 +251,8 @@ struct mmsghdr {
 #define SOCK_RXBUF_UNIX_SEQPACKET_SIZE \
 	(256 * 1024) /* Unix record receive ring */
 #define SOCK_ACCEPT_BACKLOG 8 /* accept queue depth */
+#define TCP_SHUT_RD 1u
+#define TCP_SHUT_WR 2u
 #define UNIX_SHUT_RD 1u
 #define UNIX_SHUT_WR 2u
 #define UNIX_PASSFD_MAX 16 /* max descriptors per SCM_RIGHTS message */
@@ -302,6 +304,7 @@ typedef struct _mos_sock {
 	int state; /* SS_* */
 	int err; /* pending negative errno, 0 = OK */
 	int tcp_nodelay; /* retained when tcp_listen replaces the full PCB */
+	unsigned tcp_shutdown; /* Local half-close state under net_core_lock. */
 	struct _file *async_file; /* owning file for FASYNC/SIGIO delivery */
 
 	union {

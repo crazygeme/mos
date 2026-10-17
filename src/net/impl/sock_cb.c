@@ -28,6 +28,21 @@ static err_t tcp_on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p,
 
 	if (!p) {
 		sk->state = SS_DISCONNECTING;
+		if (sk->tcp_shutdown & TCP_SHUT_WR) {
+			/* Peer EOF completes a local transmit shutdown. TIME_WAIT
+			 * PCBs belong to lwIP and may be reclaimed for allocation. */
+			sk->tcp = NULL;
+			sk->tcp_shutdown |= TCP_SHUT_RD;
+			tcp_arg(pcb, NULL);
+			tcp_recv(pcb, NULL);
+			tcp_sent(pcb, NULL);
+			tcp_err(pcb, NULL);
+			if (tcp_close(pcb) != ERR_OK) {
+				tcp_abort(pcb);
+				sock_wakeup(sk);
+				return ERR_ABRT;
+			}
+		}
 		sock_wakeup(sk);
 		return ERR_OK;
 	}
@@ -76,10 +91,16 @@ static err_t tcp_on_sent(void *arg, struct tcp_pcb *pcb, u16_t len)
 static void tcp_on_err(void *arg, err_t err)
 {
 	mos_sock *sk = (mos_sock *)arg;
-	(void)err;
 	sk->tcp = NULL;
-	sk->err = -ECONNREFUSED;
-	sk->state = SS_UNCONNECTED;
+	if (err == ERR_CLSD) {
+		/* lwIP completes a transmit-only shutdown through this callback. */
+		sk->err = 0;
+		sk->tcp_shutdown |= TCP_SHUT_RD | TCP_SHUT_WR;
+		sk->state = SS_DISCONNECTING;
+	} else {
+		sk->err = -ECONNREFUSED;
+		sk->state = SS_UNCONNECTED;
+	}
 	sock_wakeup(sk);
 }
 

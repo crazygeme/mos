@@ -244,7 +244,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	/* TCP — asynchronous connect */
 	if (sk->tcp && sk->tcp->state == LISTEN)
 		return -EISCONN;
-	if (sk->state == SS_CONNECTED)
+	if (sk->state == SS_CONNECTED || sk->tcp_shutdown)
 		return -EISCONN;
 
 	if (sk->state == SS_CONNECTING)
@@ -595,7 +595,8 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 	while (rx_used(sk) == 0) {
 		if (sk->err)
 			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->tcp_shutdown & TCP_SHUT_RD))
 			return 0;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;
@@ -664,10 +665,41 @@ int do_shutdown(int fd, int how)
 	}
 	if (sk->type != SOCK_STREAM)
 		return -EOPNOTSUPP;
-	if (!sk->tcp)
+	unsigned requested = how == SHUT_RD ? TCP_SHUT_RD :
+			     how == SHUT_WR ? TCP_SHUT_WR :
+					     TCP_SHUT_RD | TCP_SHUT_WR;
+	unsigned shutdown = sk->tcp_shutdown | requested;
+	if (sk->tcp_shutdown == (TCP_SHUT_RD | TCP_SHUT_WR))
+		return 0;
+	if (!sk->tcp || sk->tcp->state == CLOSED ||
+	    sk->tcp->state == LISTEN)
 		return -ENOTCONN;
-	int shut_rx = (how == SHUT_RD || how == SHUT_RDWR) ? 1 : 0;
-	int shut_tx = (how == SHUT_WR || how == SHUT_RDWR) ? 1 : 0;
-	tcp_shutdown(sk->tcp, shut_rx, shut_tx);
+	if (shutdown == sk->tcp_shutdown)
+		return 0;
+
+	struct tcp_pcb *pcb = sk->tcp;
+	int release = shutdown == (TCP_SHUT_RD | TCP_SHUT_WR);
+	if (release) {
+		/* A successful full shutdown transfers PCB ownership to lwIP.
+		 * No callback may retain the socket after that transfer. */
+		sk->tcp = NULL;
+		tcp_arg(pcb, NULL);
+		tcp_recv(pcb, NULL);
+		tcp_sent(pcb, NULL);
+		tcp_err(pcb, NULL);
+	}
+	err_t err = tcp_shutdown(pcb, (shutdown & TCP_SHUT_RD) != 0,
+				(shutdown & TCP_SHUT_WR) != 0);
+	if (err != ERR_OK) {
+		if (release) {
+			sk->tcp = pcb;
+			tcp_setup_callbacks(pcb, sk);
+		}
+		return err == ERR_MEM ? -ENOBUFS : -ENOTCONN;
+	}
+	sk->tcp_shutdown = shutdown;
+	if (release)
+		sk->state = SS_DISCONNECTING;
+	sock_wakeup(sk);
 	return 0;
 }

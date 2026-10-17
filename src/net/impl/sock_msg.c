@@ -142,6 +142,8 @@ static int sock_tcp_send_iov(mos_sock *sk, const struct msghdr *msg, int flags)
 			u16_t chunk;
 			err_t e;
 
+			if (sk->tcp_shutdown & TCP_SHUT_WR)
+				return sent > 0 ? (int)sent : -EPIPE;
 			if (sk->err)
 				return sent > 0 ? (int)sent : sk->err;
 			if (sk->state != SS_CONNECTED &&
@@ -280,7 +282,8 @@ static int sock_recv_wait_stream(mos_sock *sk, int flags,
 	while (rx_used(sk) == 0) {
 		if (sk->err)
 			return sk->err;
-		if (sk->state == SS_DISCONNECTING)
+		if (sk->state == SS_DISCONNECTING ||
+		    (sk->tcp_shutdown & TCP_SHUT_RD))
 			return 0;
 		if (sk->state == SS_UNCONNECTED)
 			return -ENOTCONN;

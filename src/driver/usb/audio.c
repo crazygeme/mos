@@ -1,5 +1,6 @@
 /* USB Audio Class 1 Type-I PCM playback through the OSS device interface. */
 #include <device/usb/usb.h>
+#include <driver/audio/alsa.h>
 #include <device/devnums.h>
 #include <device/devnode.h>
 #include <fs/entries.h>
@@ -21,7 +22,7 @@ struct audio_transfer {
 	struct usb_iso_packet packets[USB_ISO_PACKETS];
 	cond_t completion;
 	struct audio_stream *stream;
-	unsigned bytes, count, pending, done;
+	unsigned bytes, count, pending, done, accounted, packets_accounted;
 	int result;
 };
 struct usb_audio {
@@ -47,6 +48,11 @@ static void audio_release(ref_count_t *ref)
 	ref_count_put(audio->interface->usb);
 	free(audio);
 }
+static void audio_progress(struct usb_endpoint *endpoint)
+{
+	(void)endpoint;
+	alsa_wake();
+}
 static void audio_complete(void *context, int result)
 {
 	struct audio_transfer *transfer = context;
@@ -59,16 +65,31 @@ static void audio_reap(struct usb_audio *audio)
 {
 	for (unsigned bank = 0; bank < 2; bank++) {
 		struct audio_transfer *t = &audio->transfers[bank];
-		if (!t->pending || !__atomic_load_n(&t->done, __ATOMIC_ACQUIRE))
+		if (!t->pending)
 			continue;
-		int ret = t->result;
-		for (unsigned i = 0; i < t->count && !ret; i++)
-			ret = t->packets[i].status;
-		if (ret < 0)
-			t->stream->error = ret;
-		else
-			t->stream->bytes += t->bytes;
-		t->stream->queued -= t->bytes;
+		while (t->packets_accounted < t->count) {
+			struct usb_iso_packet *p =
+				&t->packets[t->packets_accounted];
+			int status =
+				__atomic_load_n(&p->status, __ATOMIC_ACQUIRE);
+			if (status == -EINPROGRESS)
+				break;
+			unsigned valid = t->bytes - t->accounted;
+			if (valid > p->length)
+				valid = p->length;
+			if (status < 0)
+				t->stream->error = status;
+			else
+				t->stream->bytes += valid;
+			t->stream->queued -= valid;
+			t->accounted += valid;
+			t->packets_accounted++;
+		}
+		if (!__atomic_load_n(&t->done, __ATOMIC_ACQUIRE) ||
+		    t->packets_accounted != t->count)
+			continue;
+		if (t->result < 0)
+			t->stream->error = t->result;
 		t->pending = 0;
 		t->stream = NULL;
 	}
@@ -96,6 +117,7 @@ static int audio_submit(struct audio_stream *stream, struct audio_transfer *t,
 	__atomic_store_n(&t->done, 0, __ATOMIC_RELEASE);
 	t->stream = stream;
 	t->bytes = valid;
+	t->accounted = t->packets_accounted = 0;
 	int ret = usb_iso_submit(audio->interface->usb, audio->out, t->buffer,
 				 t->packets, t->count, audio_complete, t);
 	if (ret < 0) {
@@ -109,7 +131,8 @@ static int audio_submit(struct audio_stream *stream, struct audio_transfer *t,
 static int audio_drain(struct audio_stream *stream)
 {
 	struct usb_audio *audio = stream->audio;
-	if (stream->partial_bytes && audio->ready && audio->interface->usb->online) {
+	if (stream->partial_bytes && audio->ready &&
+	    audio->interface->usb->online) {
 		struct audio_transfer *t = &audio->transfers[audio->next];
 		audio_wait(audio, t);
 		memcpy(t->buffer, stream->partial, stream->partial_bytes);
@@ -152,13 +175,19 @@ static ssize_t audio_write(file *fp, const void *buffer, size_t length,
 		struct audio_transfer *t = &audio->transfers[audio->next];
 		unsigned capacity = stream->fragment_bytes * stream->fragments;
 		if (t->pending || stream->queued >= capacity) {
+			if (fp->f_flag & O_NONBLOCK) {
+				ret = -EAGAIN;
+				break;
+			}
 			if (!t->pending)
 				t = &audio->transfers[audio->next ^ 1];
 			audio_wait(audio, t);
 			continue;
 		}
-		unsigned bytes = length - done > UAC_BYTES - stream->partial_bytes ?
-				 UAC_BYTES - stream->partial_bytes : length - done;
+		unsigned bytes =
+			length - done > UAC_BYTES - stream->partial_bytes ?
+				UAC_BYTES - stream->partial_bytes :
+				length - done;
 		if (bytes > capacity - stream->queued)
 			bytes = capacity - stream->queued;
 		unsigned partial = stream->partial_bytes;
@@ -172,7 +201,8 @@ static ssize_t audio_write(file *fp, const void *buffer, size_t length,
 				break;
 		}
 		stream->partial_bytes = total - payload;
-		memcpy(stream->partial, t->buffer + payload, stream->partial_bytes);
+		memcpy(stream->partial, t->buffer + payload,
+		       stream->partial_bytes);
 		stream->queued += bytes;
 		done += bytes;
 	}
@@ -302,8 +332,9 @@ static int audio_ioctl(file *fp, unsigned command, void *buffer)
 		int *info = buffer;
 		mutex_lock(&audio->lock);
 		audio_reap(audio);
-		unsigned available = stream->fragments * stream->fragment_bytes -
-				     stream->queued;
+		unsigned available =
+			stream->fragments * stream->fragment_bytes -
+			stream->queued;
 		info[0] = available / stream->fragment_bytes;
 		info[1] = stream->fragments;
 		info[2] = stream->fragment_bytes;
@@ -416,9 +447,11 @@ static void audio_disconnect(struct usb_interface *interface)
 	if (output == audio)
 		output = NULL;
 	spinlock_unlock(&output_lock, irq);
+	alsa_disconnect();
 	vfs_entry_remove(devfs_entries(), "/dsp");
 	vfs_entry_remove(devfs_entries(), "/audio");
 	vfs_entry_remove(devfs_entries(), "/mixer");
+	audio->out->tick = NULL;
 	interface->class_data = NULL;
 	ref_count_put(audio);
 }
@@ -471,6 +504,7 @@ static int audio_probe(struct usb_interface *interface)
 	for (unsigned bank = 0; bank < 2; bank++)
 		cond_init(&audio->transfers[bank].completion, 1);
 	audio->out = ep;
+	ep->tick = audio_progress;
 	audio->volume = 100 | (100 << 8);
 	int ret = usb_set_interface(interface, selected->number);
 	if (ret < 0) {
@@ -491,6 +525,7 @@ static int audio_probe(struct usb_interface *interface)
 	vfs_entry_device(devfs_entries(), "/mixer", S_IFCHR | 0666,
 			 MKDEV(SOUND_MAJOR, SOUND_MIXER_MINOR), "sound",
 			 audio_open);
+	alsa_register(audio_open);
 	printk("usb-audio: playback 48000 Hz stereo S16_LE interface=%u alternate=%u\n",
 	       interface->number, selected->number);
 	return 0;

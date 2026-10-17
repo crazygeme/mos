@@ -6,6 +6,8 @@
 #include <mm/mmu.h>
 #include <macro.h>
 #include <errno.h>
+#include <int/int.h>
+#include <int/dsr.h>
 
 #define XHCI_SLOTS 127
 #define XHCI_HOSTS 4
@@ -36,6 +38,7 @@ struct endpoint {
 	struct usb_endpoint *usb;
 	unsigned buffer_pages;
 	struct iso_request iso[2];
+	unsigned iso_frame, iso_frame_valid;
 };
 struct slot {
 	struct usb_device usb;
@@ -56,7 +59,7 @@ struct xhci {
 	struct slot *devices[XHCI_SLOTS + 1];
 	unsigned port_slot[XHCI_MAX_PORTS + 1];
 	uint64_t next_port_poll;
-	unsigned ports_changed;
+	unsigned ports_changed, irq_enabled, irq_queued;
 	mutex_t lock;
 };
 static struct xhci *hosts[XHCI_HOSTS];
@@ -120,6 +123,7 @@ static uint64_t ring_put(struct ring *r, uint64_t pointer, unsigned status,
 static void stop_host(struct xhci *h)
 {
 	h->alive = 0;
+	wr(h->runtime, XHCI_IMAN, 0);
 	for (unsigned sid = 1; sid <= h->slots; sid++)
 		if (h->devices[sid])
 			h->devices[sid]->usb.online = 0;
@@ -168,6 +172,10 @@ static void events_poll(struct xhci *h)
 				    t->pointer < ring_begin + RING_BYTES) {
 					unsigned code =
 						xhci_completion_code(t->status);
+					/* Empty isochronous rings report endpoint state, not TD completion. */
+					if (code == XHCI_CC_RING_UNDERRUN ||
+					    code == XHCI_CC_RING_OVERRUN)
+						goto next_event;
 					unsigned residual =
 						t->status &
 						XHCI_TRB_RESIDUAL_MASK;
@@ -202,7 +210,8 @@ static void events_poll(struct xhci *h)
 										p->length -
 											residual :
 										0;
-								p->status =
+								__atomic_store_n(
+									&p->status,
 									(code == XHCI_CC_SUCCESS ||
 									 code == XHCI_CC_SHORT_PACKET) ?
 										0 :
@@ -210,7 +219,12 @@ static void events_poll(struct xhci *h)
 										-EXDEV :
 									code == 3 ?
 										-EOVERFLOW :
-										-EIO;
+										-EIO,
+									__ATOMIC_RELEASE);
+								if (ep->usb &&
+								    ep->usb->tick)
+									ep->usb->tick(
+										ep->usb);
 								if (++r->completed ==
 								    r->count) {
 									r->done =
@@ -251,6 +265,30 @@ next_event:
 		}
 		wr64(h->runtime, XHCI_ERDP,
 		     VIRT_TO_PHY(&h->events[h->event_index]) | XHCI_ERDP_BUSY);
+	}
+}
+static void xhci_deferred(void *context)
+{
+	struct xhci *h = context;
+	mutex_lock(&h->lock);
+	if (h->alive)
+		events_poll(h);
+	__atomic_store_n(&h->irq_queued, 0, __ATOMIC_RELEASE);
+	mutex_unlock(&h->lock);
+}
+static void xhci_irq(intr_frame *frame)
+{
+	(void)frame;
+	for (unsigned i = 0; i < host_count; i++) {
+		struct xhci *h = hosts[i];
+		if (!h || !h->alive || !h->irq_enabled ||
+		    !(rd(h->runtime, XHCI_IMAN) & 1))
+			continue;
+		wr(h->runtime, XHCI_IMAN, 3);
+		wr(h->op, XHCI_USBSTS, 1u << 3);
+		if (!__atomic_exchange_n(&h->irq_queued, 1, __ATOMIC_ACQ_REL) &&
+		    !dsr_add(xhci_deferred, h))
+			__atomic_store_n(&h->irq_queued, 0, __ATOMIC_RELEASE);
 	}
 }
 static int command(struct xhci *h, unsigned type, uint64_t pointer,
@@ -726,8 +764,9 @@ static void iso_finish_request(struct usb_device *u, struct endpoint *ep,
 	for (unsigned i = 0; i < r->count; i++) {
 		struct usb_iso_packet *p = &r->packets[i];
 		if (p->status == -EINPROGRESS) {
-			p->status = error ? error : -EIO;
 			p->actual = 0;
+			__atomic_store_n(&p->status, error ? error : -EIO,
+					 __ATOMIC_RELEASE);
 		}
 		if (!p->status && (ep->usb->address & USB_DIR_IN) && p->actual)
 			memcpy((char *)r->data + p->offset,
@@ -776,6 +815,17 @@ static int xhci_iso_submit(struct usb_device *u, struct usb_endpoint *e,
 		mutex_unlock(&h->lock);
 		return ret;
 	}
+	unsigned scheduled = u->speed == USB_SPEED_FULL &&
+			     !(e->address & USB_DIR_IN) && e->interval == 1;
+	if (scheduled) {
+		unsigned now = rd(h->runtime, 0) & 0x3fff;
+		int delta = ((ep->iso_frame - now + 0x2000) & 0x3fff) - 0x2000;
+		if (!ep->iso_frame_valid || delta < -128 ||
+		    (!(ep->iso[0].count || ep->iso[1].count) && delta < 16)) {
+			ep->iso_frame = (now + 23) & ~7u;
+			ep->iso_frame_valid = 1;
+		}
+	}
 	unsigned bank = ep->iso[0].count ? 1 : 0;
 	struct iso_request *r = &ep->iso[bank];
 	ref_count_get(u);
@@ -804,7 +854,13 @@ static int xhci_iso_submit(struct usb_device *u, struct usb_endpoint *e,
 		unsigned boundary = 0x10000 - (address & 0xffff);
 		if (first > boundary)
 			first = boundary;
-		unsigned flags = XHCI_TRB_TYPE(XHCI_TRB_ISOCH) | (1u << 31);
+		unsigned flags = XHCI_TRB_TYPE(XHCI_TRB_ISOCH);
+		if (scheduled) {
+			/* Full-speed service intervals retain an explicit frame timeline. */
+			flags |= ((ep->iso_frame >> 3) & 0x7ff) << 20;
+			ep->iso_frame = (ep->iso_frame + 8) & 0x3fff;
+		} else
+			flags |= 1u << 31;
 		if (u->speed >= USB_SPEED_SUPER && p->length) {
 			unsigned n =
 				(p->length + e->max_packet - 1) / e->max_packet;
@@ -1312,6 +1368,15 @@ static int xhci_probe(unsigned pci, uint16_t vendor, uint16_t device,
 		return -ETIMEDOUT;
 	}
 	hosts[host_count++] = h;
+	unsigned irq = pci_read_field(pci, PCI_INTERRUPT_LINE, 1);
+	if (irq >= 3 && irq < 16 && !int_register_irq(irq, xhci_irq)) {
+		unsigned command = pci_read_field(pci, PCI_COMMAND, 2);
+		pci_write_field(pci, PCI_COMMAND, 2, command & ~(1u << 10));
+		h->irq_enabled = 1;
+		wr(h->runtime, XHCI_IMAN, 3);
+		wr(h->op, XHCI_USBCMD, rd(h->op, XHCI_USBCMD) | (1u << 2));
+		printk("usb: xhci%u interrupt line=%u\n", h->index, irq);
+	}
 	mutex_lock(&h->lock);
 	for (unsigned p = 1; p <= h->ports && h->alive; p++) {
 		unsigned off = xhci_port_offset(p), status = rd(h->op, off);

@@ -70,6 +70,8 @@ enum xhci_completion {
 	XHCI_CC_SUCCESS = 1,
 	XHCI_CC_STALL = 6,
 	XHCI_CC_SHORT_PACKET = 13,
+	XHCI_CC_RING_UNDERRUN = 14,
+	XHCI_CC_RING_OVERRUN = 15,
 };
 enum xhci_trb_bits {
 	XHCI_TRB_CYCLE = 1u << 0,

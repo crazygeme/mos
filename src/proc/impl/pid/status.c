@@ -90,47 +90,47 @@ void fill_status(proc_buf_t *pb, task_struct *task)
 
 	vm_get_stats(task, &vm);
 
-	proc_buf_printf(pb, "Name:      %s\n", name);
-	proc_buf_printf(pb, "State:     %c (%s)\n",
+	proc_buf_printf(pb, "Name:\t%s\n", name);
+	proc_buf_printf(pb, "State:\t%c (%s)\n",
 			pid_state_char(task->sched->status),
 			pid_state_name(task->sched->status));
-	proc_buf_printf(pb, "Tgid:      %u\n", task->thread->tgid);
-	proc_buf_printf(pb, "Pid:       %u\n", task->life->psid);
-	proc_buf_printf(pb, "PPid:      %u\n", task->life->ppid);
-	proc_buf_printf(pb, "TracerPid: 0\n");
-	proc_buf_printf(pb, "Uid:       %u\t%u\t%u\t%u\n",
+	proc_buf_printf(pb, "Tgid:\t%u\n", task->thread->tgid);
+	proc_buf_printf(pb, "Pid:\t%u\n", task->life->psid);
+	proc_buf_printf(pb, "PPid:\t%u\n", task->life->ppid);
+	proc_buf_printf(pb, "TracerPid:\t0\n");
+	proc_buf_printf(pb, "Uid:\t%u\t%u\t%u\t%u\n",
 			task->credentials->uid, task->credentials->euid,
 			task->credentials->suid, task->credentials->euid);
-	proc_buf_printf(pb, "Gid:       %u\t%u\t%u\t%u\n",
+	proc_buf_printf(pb, "Gid:\t%u\t%u\t%u\t%u\n",
 			task->credentials->gid, task->credentials->egid,
 			task->credentials->sgid, task->credentials->egid);
-	proc_buf_printf(pb, "FDSize:    %u\n", fdsize);
-	proc_buf_printf(pb, "Threads:   %u\n",
+	proc_buf_printf(pb, "FDSize:\t%u\n", fdsize);
+	proc_buf_printf(pb, "Threads:\t%u\n",
 			proc_thread_count(task->thread->tgid));
-	proc_buf_printf(pb, "Groups:    %u\n", task->credentials->gid);
-	proc_buf_printf(pb, "VmSize:    %llu kB\n",
+	proc_buf_printf(pb, "Groups:\t%u\n", task->credentials->gid);
+	proc_buf_printf(pb, "VmSize:\t%llu kB\n",
 			(unsigned long long)vm.total_kb);
-	proc_buf_printf(pb, "VmLck:     %u kB\n", 0);
-	proc_buf_printf(pb, "VmRSS:     %llu kB\n",
+	proc_buf_printf(pb, "VmLck:\t%u kB\n", 0);
+	proc_buf_printf(pb, "VmRSS:\t%llu kB\n",
 			(unsigned long long)(vm.rss_anon_kb + vm.rss_file_kb));
-	proc_buf_printf(pb, "VmData:    %llu kB\n",
+	proc_buf_printf(pb, "VmData:\t%llu kB\n",
 			(unsigned long long)vm.data_kb);
-	proc_buf_printf(pb, "VmStk:     %llu kB\n",
+	proc_buf_printf(pb, "VmStk:\t%llu kB\n",
 			(unsigned long long)vm.stk_kb);
-	proc_buf_printf(pb, "VmExe:     %llu kB\n",
+	proc_buf_printf(pb, "VmExe:\t%llu kB\n",
 			(unsigned long long)vm.text_kb);
-	proc_buf_printf(pb, "VmLib:     %u kB\n", 0);
-	proc_buf_printf(pb, "SigPnd: %016lx\n", sig_pending);
-	proc_buf_printf(pb, "SigBlk: %016lx\n", sig_blocked);
-	proc_buf_printf(pb, "SigIgn: %016lx\n", sig_ignored_mask(task));
-	proc_buf_printf(pb, "SigCgt: %016lx\n", sig_caught_mask(task));
-	proc_buf_printf(pb, "CapInh: 0000000000000000\n");
-	proc_buf_printf(pb, "CapPrm: 0000000000000000\n");
-	proc_buf_printf(pb, "CapEff: 0000000000000000\n");
-	proc_buf_printf(pb, "voluntary_ctxt_switches:       %u\n",
+	proc_buf_printf(pb, "VmLib:\t%u kB\n", 0);
+	proc_buf_printf(pb, "SigPnd:\t%016lx\n", sig_pending);
+	proc_buf_printf(pb, "SigBlk:\t%016lx\n", sig_blocked);
+	proc_buf_printf(pb, "SigIgn:\t%016lx\n", sig_ignored_mask(task));
+	proc_buf_printf(pb, "SigCgt:\t%016lx\n", sig_caught_mask(task));
+	proc_buf_printf(pb, "CapInh:\t0000000000000000\n");
+	proc_buf_printf(pb, "CapPrm:\t0000000000000000\n");
+	proc_buf_printf(pb, "CapEff:\t0000000000000000\n");
+	proc_buf_printf(pb, "voluntary_ctxt_switches:\t%u\n",
 			task->stats->total_switches -
 				task->stats->niv_switches);
-	proc_buf_printf(pb, "nonvoluntary_ctxt_switches:    %u\n",
+	proc_buf_printf(pb, "nonvoluntary_ctxt_switches:\t%u\n",
 			task->stats->niv_switches);
 }
 

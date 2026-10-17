@@ -73,6 +73,8 @@ struct usb_device {
 	unsigned interface_count, endpoint_count;
 	struct usb_interface interfaces[USB_MAX_INTERFACES];
 	struct usb_endpoint *endpoints[USB_MAX_ENDPOINTS];
+	struct usb_device_descriptor descriptor;
+	unsigned configuration_length;
 	unsigned char *configuration_data;
 	mutex_t lock, control_lock;
 };
@@ -88,6 +90,11 @@ int usb_interrupt_start(struct usb_device *, struct usb_endpoint *,
 int usb_clear_halt(struct usb_device *, struct usb_endpoint *);
 int usb_enumerate(struct usb_device *);
 void usb_disconnect(struct usb_device *);
+void usb_inventory_publish(struct usb_device *);
+void usb_inventory_remove(struct usb_device *);
+struct vfs_entry_node *usb_inventory_parent(struct usb_device *);
+const char *usb_inventory_parent_path(struct usb_device *);
+void usb_inventory_host(unsigned busnum, unsigned pci, unsigned ports);
 int usb_hid_set_leds(unsigned);
 void usb_hub_poll(struct usb_device *);
 int usb_set_interface(struct usb_interface *, unsigned);

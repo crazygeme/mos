@@ -199,6 +199,18 @@ int usb_iso_submit(struct usb_device *u, struct usb_endpoint *ep, void *data,
 	return u->ops->iso_submit(u, ep, data, packets, count, complete,
 				  context);
 }
+static void publish_alternate(struct usb_interface *interface)
+{
+	if (!interface->device.sysfs_entry || !interface->active)
+		return;
+	char text[16];
+	vfs_entry_remove(interface->device.sysfs_entry, "bAlternateSetting");
+	vfs_entry_remove(interface->device.sysfs_entry, "bNumEndpoints");
+	sprintf(text, "%u\n", interface->active->number);
+	vfs_entry_text(interface->device.sysfs_entry, "bAlternateSetting", text);
+	sprintf(text, "%u\n", interface->endpoint_count);
+	vfs_entry_text(interface->device.sysfs_entry, "bNumEndpoints", text);
+}
 int usb_set_interface(struct usb_interface *interface, unsigned number)
 {
 	struct usb_device *u = interface->usb;
@@ -239,6 +251,7 @@ int usb_set_interface(struct usb_interface *interface, unsigned number)
 			u->online = 0;
 	}
 out:
+	publish_alternate(interface);
 	mutex_unlock(&u->lock);
 	return ret;
 }
@@ -246,32 +259,26 @@ static void physical_register(struct usb_device *u)
 {
 	if (u->sysfs_entry)
 		return;
-	vfs_entry_node *root = vfs_entry_root(device_sysfs_entries());
-	vfs_entry_node *parent = u->parent ?
-					 u->parent->sysfs_entry :
-					 vfs_entry_directory(root, "devices");
-	char name[48], text[96];
+	vfs_entry_node *parent = usb_inventory_parent(u);
+	char name[48], text[32];
 	sprintf(name, "%u-%s", u->busnum, u->path);
 	u->sysfs_entry = vfs_entry_directory(parent, name);
-	sprintf(u->sysfs_path, "%s/%s",
-		u->parent ? u->parent->sysfs_path : "/devices", name);
+	sprintf(u->sysfs_path, "%s/%s", usb_inventory_parent_path(u), name);
 	vfs_entry_link(vfs_entry_directory(driver_bus_entry(DEVICE_BUS_USB),
 					   "devices"),
 		       name, u->sysfs_entry);
 	vfs_entry_link(u->sysfs_entry, "subsystem",
 		       driver_bus_entry(DEVICE_BUS_USB));
-	sprintf(text, "DEVTYPE=usb_device\nPRODUCT=%x/%x/0\n", u->vendor,
-		u->product);
-	vfs_entry_text(u->sysfs_entry, "uevent", text);
 	sprintf(text, "%04x\n", u->vendor);
 	vfs_entry_text(u->sysfs_entry, "idVendor", text);
 	sprintf(text, "%04x\n", u->product);
 	vfs_entry_text(u->sysfs_entry, "idProduct", text);
 	sprintf(text, "%u\n", u->busnum);
 	vfs_entry_text(u->sysfs_entry, "busnum", text);
-	sprintf(text, "%u\n", u->address);
+	sprintf(text, "%u\n", u->address + 1);
 	vfs_entry_text(u->sysfs_entry, "devnum", text);
 	vfs_entry_text(u->sysfs_entry, "devpath", u->path);
+	usb_inventory_publish(u);
 }
 static void interface_register(struct usb_interface *interface)
 {
@@ -282,7 +289,8 @@ static void interface_register(struct usb_interface *interface)
 	d->vendor_id = u->vendor;
 	d->device_id = u->product;
 	char name[40], text[40];
-	sprintf(name, "usb%u-%u:%u", d->address, u->port, interface->number);
+	sprintf(name, "%u-%s:%u.%u", u->busnum, u->path, u->configuration,
+		interface->number);
 	physical_register(u);
 	d->sysfs_entry = vfs_entry_directory(u->sysfs_entry, name);
 	vfs_entry_link(vfs_entry_directory(driver_bus_entry(DEVICE_BUS_USB),
@@ -291,6 +299,7 @@ static void interface_register(struct usb_interface *interface)
 	vfs_entry_link(d->sysfs_entry, "subsystem",
 		       driver_bus_entry(DEVICE_BUS_USB));
 	vfs_entry_text(d->sysfs_entry, "uevent", "DEVTYPE=usb_interface\n");
+	publish_alternate(interface);
 	sprintf(text, "%04x\n", u->vendor);
 	vfs_entry_text(d->sysfs_entry, "idVendor", text);
 	sprintf(text, "%04x\n", u->product);
@@ -303,11 +312,10 @@ static void interface_register(struct usb_interface *interface)
 	vfs_entry_text(d->sysfs_entry, "bInterfaceProtocol", text);
 	sprintf(text, "%02x\n", interface->number);
 	vfs_entry_text(d->sysfs_entry, "bInterfaceNumber", text);
-	sprintf(text, "%u\n", interface->endpoint_count);
-	vfs_entry_text(d->sysfs_entry, "bNumEndpoints", text);
+
 	sprintf(text, "%u\n", u->busnum);
 	vfs_entry_text(d->sysfs_entry, "busnum", text);
-	sprintf(text, "%u\n", u->address);
+	sprintf(text, "%u\n", u->address + 1);
 	vfs_entry_text(d->sysfs_entry, "devnum", text);
 	sprintf(text, "%s\n", u->path);
 	vfs_entry_text(d->sysfs_entry, "devpath", text);
@@ -375,6 +383,7 @@ static int enumerate_device(struct usb_device *u)
 	ret = descriptor_read(u, USB_DESC_DEVICE, &device, sizeof(device));
 	if (ret != sizeof(device) || !device.configurations)
 		return -EIO;
+	u->descriptor = device;
 	u->vendor = device.vendor;
 	u->product = device.product;
 	u->usb_version = device.usb_version;
@@ -397,6 +406,7 @@ static int enumerate_device(struct usb_device *u)
 		ret = -EIO;
 		goto out;
 	}
+	u->configuration_length = length;
 	u->configuration = header.value;
 	ret = parse_interfaces(u, config, length);
 	if (ret < 0)
@@ -452,18 +462,14 @@ void usb_disconnect(struct usb_device *u)
 		device->match_done = 0;
 	}
 	if (u->sysfs_entry) {
+		usb_inventory_remove(u);
 		char name[48];
 		sprintf(name, "%u-%s", u->busnum, u->path);
 		vfs_entry_remove(
 			vfs_entry_child(driver_bus_entry(DEVICE_BUS_USB),
 					"devices"),
 			name);
-		vfs_entry_node *parent =
-			u->parent ?
-				u->parent->sysfs_entry :
-				vfs_entry_child(
-					vfs_entry_root(device_sysfs_entries()),
-					"devices");
+		vfs_entry_node *parent = usb_inventory_parent(u);
 		vfs_entry_remove(parent, name);
 		u->sysfs_entry = NULL;
 	}

@@ -55,6 +55,10 @@ static void fill(proc_buf_t *pb)
 	if (family == 0x6 || family == 0xf)
 		model |= ((eax >> 16) & 0xf) << 4;
 
+	unsigned max_extended, extended_edx = 0, unused;
+	do_cpuid(0x80000000, &max_extended, &unused, &unused, &unused);
+	if (max_extended >= 0x80000001)
+		do_cpuid(0x80000001, &unused, &unused, &unused, &extended_edx);
 	cpu_brand_string(brand);
 	mhz = time_get_cpu_mhz();
 	for (unsigned cpu = 0; cpu < smp_cpu_count(); cpu++) {
@@ -114,6 +118,8 @@ static void fill(proc_buf_t *pb)
 		if (ecx & (1u << 30))
 			proc_buf_printf(pb, " rdrand");
 
+		if (extended_edx & (1U << 29))
+			proc_buf_printf(pb, " lm");
 		proc_buf_printf(pb, "\n\n");
 	}
 }

@@ -87,6 +87,20 @@ int syscall_resolve_at(int dirfd, const char *path, char *name)
 	if (!base)
 		return -ENOENT;
 	base_len = strlen(base);
+	if (!strcmp(path, "..")) {
+		if (base_len >= MAX_PATH)
+			return -ENAMETOOLONG;
+		memcpy(name, base, base_len + 1);
+		while (base_len > 1 && name[base_len - 1] == '/')
+			name[--base_len] = 0;
+		char *slash = strrchr(name, '/');
+		if (!slash || slash == name) {
+			name[0] = '/';
+			name[1] = 0;
+		} else
+			*slash = 0;
+		return 0;
+	}
 	while (path[0] == '.' && path[1] == '/')
 		path += 2;
 	if (!*path || !strcmp(path, ".")) {
@@ -1342,6 +1356,10 @@ int sys_flock(int fd, int operation)
 
 	fp = cur->files->fds[fd];
 	in = fp->f_inode;
+	struct stat st;
+	unsigned dev = fp->f_fop->getattr && !fp->f_fop->getattr(fp, &st) ?
+			       st.st_dev :
+			       0;
 
 	if (!in)
 		return -EINVAL;
@@ -1420,6 +1438,8 @@ retry:
 	}
 
 out:
+	if (!ret)
+		fs_flock_inventory(fp, dev);
 	spinlock_unlock(&in->i_flock_lock, irq);
 	return ret;
 }

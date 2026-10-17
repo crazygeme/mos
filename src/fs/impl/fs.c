@@ -825,6 +825,7 @@ void fs_flock_release(file *f)
 		in->i_flock_ex_owner = NULL;
 	}
 	f->f_flock = 0;
+	fs_flock_inventory(f, 0);
 	flock_wake_all_unsafe(in);
 	spinlock_unlock(&in->i_flock_lock, irq);
 }

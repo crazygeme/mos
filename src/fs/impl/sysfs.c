@@ -7,8 +7,10 @@ static vfs_entry_tree *sys_tree;
 
 vfs_entry_tree *device_sysfs_entries(void)
 {
-	if (!sys_tree)
+	if (!sys_tree) {
 		sys_tree = vfs_entry_tree_create();
+		vfs_entry_tree_type(sys_tree, 0x62656572);
+	}
 	return sys_tree;
 }
 

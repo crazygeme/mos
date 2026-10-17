@@ -392,10 +392,39 @@ static int ns_file_stat(file *fp, struct stat *s)
 	s->st_nlink = 1;
 	return 0;
 }
+static file *ns_file_create(struct mos_namespace *ns);
 static int ns_file_ioctl(file *fp, unsigned cmd, void *arg)
 {
 	struct mos_namespace *ns = fp->f_inode->i_private;
-	(void)arg;
+	if (cmd == 0xb701 || cmd == 0xb702) {
+		struct mos_namespace *target;
+		if (cmd == 0xb701) {
+			if (ns->kind == MOS_NS_USER)
+				return -EPERM;
+			target = initial[MOS_NS_USER];
+		} else {
+			if (ns->kind != MOS_NS_PID && ns->kind != MOS_NS_USER)
+				return -EINVAL;
+			if (!ns->parent)
+				return -EPERM;
+			target = ns->parent;
+		}
+		file *opened = ns_file_create(target);
+		if (!opened)
+			return -ENOMEM;
+		int fd = fs_install_fd(opened, O_RDONLY | O_CLOEXEC);
+		if (fd < 0)
+			fs_put_file(opened);
+		return fd;
+	}
+	if (cmd == 0xb704) {
+		if (ns->kind != MOS_NS_USER)
+			return -EINVAL;
+		if (!arg)
+			return -EFAULT;
+		*(unsigned *)arg = 0;
+		return 0;
+	}
 	if (cmd == 0xb703) /* NS_GET_NSTYPE */
 		return ns_flags[ns->kind];
 	return -ENOTTY;
@@ -437,6 +466,10 @@ file *ps_namespace_open(task_struct *task, const char *name)
 	int kind = ns_kind(name);
 	if (kind < 0 || !ps_may_access_process(task))
 		return NULL;
+	return ns_file_create(task->namespaces[kind]);
+}
+static file *ns_file_create(struct mos_namespace *ns)
+{
 	file *fp = zalloc(sizeof(*fp));
 	inode *node = zalloc(sizeof(*node));
 	if (!fp || !node) {
@@ -445,8 +478,8 @@ file *ps_namespace_open(task_struct *task, const char *name)
 		return NULL;
 	}
 	node->i_mode = S_IFREG | 0444;
-	node->i_ino = task->namespaces[kind]->id;
-	node->i_private = ref_count_get(task->namespaces[kind]);
+	node->i_ino = ns->id;
+	node->i_private = ref_count_get(ns);
 	fp->f_inode = node;
 	fp->f_fop = &ns_fops;
 	fp->f_count = 1;

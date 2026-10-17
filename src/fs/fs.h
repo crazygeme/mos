@@ -203,6 +203,9 @@ struct _file {
 	struct inotify_node *f_notify;
 	list_entry f_ep_links;
 	int f_flock; /* current flock: 0=none, LOCK_SH, or LOCK_EX */
+	list_entry f_lock_inventory;
+	unsigned f_lock_pid, f_lock_dev;
+	int f_lock_type;
 };
 
 struct linux_dirent {
@@ -273,6 +276,7 @@ void flock_wake_all_unsafe(inode *in);
 /* Release any flock held by @f; wakes blocked waiters.  Called by fs_put_file
  * when the last reference to an open file description is dropped. */
 void fs_flock_release(file *f);
+void fs_flock_inventory(file *f, unsigned dev);
 
 /* DAC permission check: returns 0 if allowed, -EACCES if denied */
 int fs_check_perm(const struct stat *s, int mask);

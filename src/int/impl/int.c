@@ -11,6 +11,7 @@
 #include <ps/smp.h>
 #include <ps/usage.h>
 #include <int/interrupt.h>
+#include <proc/impl/common/common.h>
 extern void do_signal(intr_frame *frame);
 #define gdt (smp_gdt())
 
@@ -28,6 +29,38 @@ static void pic_end_of_interrupt(int irq)
 static int_callback in_callbacks[IDT_SIZE];
 #define SHARED_IRQ_HANDLERS 4
 static int_callback irq_callbacks[16][SHARED_IRQ_HANDLERS];
+static int irq_has_handlers(unsigned irq);
+static unsigned long irq_counts[SMP_MAX_CPUS][256];
+static void interrupt_inventory(proc_buf_t *pb)
+{
+	proc_buf_printf(pb, "           ");
+	for (unsigned cpu = 0; cpu < smp_cpu_count(); cpu++)
+		proc_buf_printf(pb, "CPU%-8u", cpu);
+	proc_buf_printf(pb, "\n");
+	for (unsigned irq = 0; irq < 16; irq++) {
+		if (!in_callbacks[0x20 + irq] && !irq_has_handlers(irq))
+			continue;
+		proc_buf_printf(pb, "%3u:", irq);
+		for (unsigned cpu = 0; cpu < smp_cpu_count(); cpu++)
+			proc_buf_printf(
+				pb, " %10lu",
+				__atomic_load_n(&irq_counts[cpu][0x20 + irq],
+						__ATOMIC_RELAXED));
+		proc_buf_printf(pb, "  XT-PIC  %s\n",
+				irq == 0  ? "timer" :
+				irq == 1  ? "keyboard" :
+				irq == 12 ? "mouse" :
+					    "device");
+	}
+	proc_buf_printf(pb, "LOC:");
+	for (unsigned cpu = 0; cpu < smp_cpu_count(); cpu++)
+		proc_buf_printf(
+			pb, " %10lu",
+			__atomic_load_n(&irq_counts[cpu][SMP_TICK_VECTOR],
+					__ATOMIC_RELAXED));
+	proc_buf_printf(pb, "  Local timer interrupts\n");
+}
+DEFINE_PROC_FILE(interrupts, interrupt_inventory);
 
 static int irq_has_handlers(unsigned irq)
 {
@@ -155,6 +188,9 @@ void intr_handler(intr_frame *frame)
 {
 	int external = frame->vec_no >= 0x20 && frame->vec_no < 0x30;
 	int_callback fn = 0;
+	if (frame->vec_no >= 0x20 && frame->vec_no < 256)
+		__atomic_fetch_add(&irq_counts[smp_cpu_id()][frame->vec_no], 1,
+				   __ATOMIC_RELAXED);
 	int special = smp_interrupt(frame);
 	if (special == 1)
 		return;

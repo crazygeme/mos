@@ -1,5 +1,6 @@
 /* xHCI topology transport with queued isochronous service intervals. */
 #include <device/usb/usb.h>
+#include <fs/sysfs.h>
 #include "xhci.h"
 #include <lib/klib.h>
 #include <ps/ps.h>
@@ -903,6 +904,10 @@ static int xhci_hub_configure(struct usb_device *u, unsigned ports,
 			  XHCI_TRB_SLOT(u->slot));
 	if (ret >= 0) {
 		u->hub_ports = ports;
+		char text[16];
+		sprintf(text, "%u\n", ports);
+		vfs_entry_remove(u->sysfs_entry, "maxchild");
+		vfs_entry_text(u->sysfs_entry, "maxchild", text);
 		u->hub_think_time = think_time;
 	}
 	mutex_unlock(&h->lock);
@@ -1367,6 +1372,7 @@ static int xhci_probe(unsigned pci, uint16_t vendor, uint16_t device,
 		stop_host(h);
 		return -ETIMEDOUT;
 	}
+	usb_inventory_host(h->index + 1, pci, h->ports);
 	hosts[host_count++] = h;
 	unsigned irq = pci_read_field(pci, PCI_INTERRUPT_LINE, 1);
 	if (irq >= 3 && irq < 16 && !int_register_irq(irq, xhci_irq)) {

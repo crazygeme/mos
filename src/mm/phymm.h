@@ -44,6 +44,9 @@ typedef struct _phymm_cache_policy {
  * limits. Budgets overlap in free RAM; no data pages are reserved up front. */
 void phymm_cache_budget(unsigned total, unsigned free, unsigned file_cached,
 			unsigned block_cached, phymm_cache_policy *policy);
+/* Use known occupancy when cache locks prevent collecting backend stats. */
+void phymm_get_cache_policy_snapshot(unsigned file_cached, unsigned block_cached,
+				     phymm_cache_policy *policy);
 void phymm_get_cache_policy(phymm_cache_policy *policy);
 
 extern phymm_page *phymm_pages;

@@ -416,6 +416,19 @@ void ps_put_process_ref(task_struct *task)
 	spinlock_unlock(&ps_lock, irq);
 }
 
+/* Group membership and live_tasks are updated together under ps_lock. */
+unsigned ps_thread_count(unsigned tgid)
+{
+	unsigned count = 0;
+	int irq;
+	spinlock_lock(&ps_lock, &irq);
+	task_struct *leader = ps_find_process_unsafe(tgid);
+	if (leader && leader->life->type != ps_kernel && tgid != 0xffffffff)
+		count = leader->thread->live_tasks;
+	spinlock_unlock(&ps_lock, irq);
+	return count;
+}
+
 /* Invoke callback(task, ctx) for every live task (in psid order). */
 void ps_enum_all(ps_enum_callback callback, void *ctx)
 {

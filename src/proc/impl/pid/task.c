@@ -15,18 +15,9 @@ static int task_group_member(task_struct *task, unsigned tgid)
 	       task->sched->status != ps_dying;
 }
 
-static void count_thread(task_struct *task, void *opaque)
-{
-	task_directory *directory = opaque;
-	if (task_group_member(task, directory->tgid))
-		directory->count++;
-}
-
 unsigned proc_thread_count(unsigned tgid)
 {
-	task_directory directory = { .tgid = tgid };
-	ps_enum_all(count_thread, &directory);
-	return directory.count;
+	return ps_thread_count(tgid);
 }
 
 static void task_directory_entry(proc_buf_t *buffer, const char *name)

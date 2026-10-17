@@ -8,6 +8,7 @@
 #include <lib/klib.h>
 #include <errno.h>
 #include <mm/mmu.h>
+#include <mm/phymm.h>
 #define FIXED_PARTS 16
 #define FIXED_DISKS 16
 #define INT64_MAX_VALUE 0x7fffffffffffffffLL
@@ -20,47 +21,67 @@ struct partition {
 static struct partition parts[FIXED_DISKS][FIXED_PARTS];
 static unsigned disk_count;
 static file *storage_open(super_block *, unsigned, int);
-#define CACHE_LINES 64
-#define CACHE_PAGES 8
-#define CACHE_BYTES (CACHE_PAGES * PAGE_SIZE)
+#define CACHE_BYTES PAGE_SIZE
 struct cache_line {
-	uint64_t sector, age;
-	unsigned valid, dirty;
+	uint64_t sector;
+	paddr_t physical;
+	unsigned dirty;
+	struct rb_node node;
+	list_entry lru;
 };
 struct fixed_cache {
-	struct cache_line lines[CACHE_LINES];
-	unsigned char *data;
-	uint64_t clock, read_bytes, write_bytes, physical_read, physical_write;
+	struct rb_root lines;
+	list_entry lru;
+	unsigned pages, peak_pages;
+	uint64_t read_bytes, write_bytes, physical_read, physical_write;
 	unsigned hits, searches;
 };
-static int cache_store(struct fixed_disk *d, unsigned index)
+static unsigned cache_pages;
+extern unsigned fs_page_cache_pages;
+
+static int cache_store(struct fixed_disk *d, struct cache_line *line)
 {
-	struct fixed_cache *cache = d->cache;
-	struct cache_line *line = &cache->lines[index];
-	if (!line->valid || !line->dirty)
+	if (!line->dirty)
 		return 0;
 	unsigned n = CACHE_BYTES / d->sector_size;
 	if (n > d->sectors - line->sector)
 		n = d->sectors - line->sector;
-	int ret =
-		d->rw(d, cache->data + index * CACHE_BYTES, line->sector, n, 1);
+	if (mm_kmap_phys(line->physical) != 1)
+		return -ENOMEM;
+	int ret = d->rw(d, (void *)PHY_TO_VIRT(line->physical), line->sector, n,
+			1);
+	mm_kunmap_phys(line->physical);
 	if (!ret) {
 		line->dirty = 0;
-		cache->physical_write += (uint64_t)n * d->sector_size;
+		d->cache->physical_write += (uint64_t)n * d->sector_size;
 	}
 	return ret;
 }
 static int cache_flush(struct fixed_disk *d)
 {
-	for (unsigned i = 0; i < CACHE_LINES; i++) {
-		int ret = cache_store(d, i);
+	for (list_entry *e = d->cache->lru.next; e != &d->cache->lru;
+	     e = e->next) {
+		int ret =
+			cache_store(d, container_of(e, struct cache_line, lru));
 		if (ret)
 			return ret;
 	}
 	return d->flush(d);
 }
+static void cache_remove(struct fixed_disk *d, struct cache_line *line)
+{
+	rb_erase(&line->node, &d->cache->lines);
+	list_remove_entry(&line->lru);
+	d->cache->pages--;
+	__sync_fetch_and_sub(&cache_pages, 1);
+}
+static void cache_release(struct cache_line *line)
+{
+	phymm_free_user(PHY_TO_PAGE_IDX(line->physical));
+	free(line);
+}
 static int cache_rw(struct fixed_disk *d, void *buffer, uint64_t sector,
-		    unsigned count, int write)
+		    unsigned count, int write, unsigned budget)
 {
 	struct fixed_cache *cache = d->cache;
 	unsigned span = CACHE_BYTES / d->sector_size;
@@ -71,46 +92,90 @@ static int cache_rw(struct fixed_disk *d, void *buffer, uint64_t sector,
 		unsigned off = sector - head, n = span - off;
 		if (n > count)
 			n = count;
-		unsigned found = CACHE_LINES, victim = 0;
+		struct cache_line *line = NULL;
+		struct rb_node *node = cache->lines.rb_node;
 		cache->searches++;
-		for (unsigned i = 0; i < CACHE_LINES; i++) {
-			struct cache_line *line = &cache->lines[i];
-			if (line->valid && line->sector == head) {
-				found = i;
+		while (node) {
+			struct cache_line *cur =
+				rb_entry(node, struct cache_line, node);
+			if (head == cur->sector) {
+				line = cur;
 				cache->hits++;
 				break;
 			}
-			if (!line->valid ||
-			    (cache->lines[victim].valid &&
-			     line->age < cache->lines[victim].age))
-				victim = i;
+			node = head < cur->sector ? node->rb_left :
+						    node->rb_right;
 		}
-		if (found == CACHE_LINES) {
-			int ret = cache_store(d, victim);
-			if (ret)
-				return ret;
-			found = victim;
-			struct cache_line *line = &cache->lines[found];
-			line->valid = 0;
+		if (!line) {
+			unsigned page = PHYMM_INVALID;
+			if (cache_pages < budget)
+				page = phymm_alloc_cache();
+			/* Keep one line available when only low RAM remains. */
+			if (page == PHYMM_INVALID && list_is_empty(&cache->lru))
+				page = phymm_alloc_user();
+			if (page != PHYMM_INVALID) {
+				line = zalloc(sizeof(*line));
+				if (!line) {
+					phymm_free_user(page);
+					return -ENOMEM;
+				}
+				line->physical = (paddr_t)page * PAGE_SIZE;
+			} else if (!list_is_empty(&cache->lru)) {
+				line = container_of(cache->lru.next,
+						    struct cache_line, lru);
+				int ret = cache_store(d, line);
+				if (ret)
+					return ret;
+				cache_remove(d, line);
+			} else {
+				return -ENOMEM;
+			}
+			line->sector = head;
+			line->dirty = 0;
 			unsigned size = span;
 			if (size > d->sectors - head)
 				size = d->sectors - head;
+			if (mm_kmap_phys(line->physical) != 1) {
+				cache_release(line);
+				return -ENOMEM;
+			}
+			int ret = 0;
 			if (!write || off || n < size) {
 				ret = d->rw(d,
-					    cache->data + found * CACHE_BYTES,
+					    (void *)PHY_TO_VIRT(line->physical),
 					    head, size, 0);
-				if (ret)
-					return ret;
-				cache->physical_read +=
-					(uint64_t)size * d->sector_size;
+				if (!ret)
+					cache->physical_read +=
+						(uint64_t)size * d->sector_size;
 			}
-			line->sector = head;
-			line->valid = 1;
-			line->dirty = 0;
+			mm_kunmap_phys(line->physical);
+			if (ret) {
+				cache_release(line);
+				return ret;
+			}
+			struct rb_node **link = &cache->lines.rb_node,
+				       *parent = NULL;
+			while (*link) {
+				struct cache_line *cur = rb_entry(
+					*link, struct cache_line, node);
+				parent = *link;
+				link = head < cur->sector ? &parent->rb_left :
+							    &parent->rb_right;
+			}
+			rb_init_node(&line->node);
+			rb_link_node(&line->node, parent, link);
+			rb_insert_color(&line->node, &cache->lines);
+			list_init(&line->lru);
+			list_insert_tail(&cache->lru, &line->lru);
+			cache->pages++;
+			__sync_fetch_and_add(&cache_pages, 1);
+			if (cache->pages > cache->peak_pages)
+				cache->peak_pages = cache->pages;
 		}
-		struct cache_line *line = &cache->lines[found];
-		void *data = cache->data + found * CACHE_BYTES +
-			     off * d->sector_size;
+		if (mm_kmap_phys(line->physical) != 1)
+			return -ENOMEM;
+		void *data = (void *)(PHY_TO_VIRT(line->physical) +
+				      off * d->sector_size);
 		unsigned bytes = n * d->sector_size;
 		if (write) {
 			memcpy(data, buffer, bytes);
@@ -120,7 +185,9 @@ static int cache_rw(struct fixed_disk *d, void *buffer, uint64_t sector,
 			memcpy(buffer, data, bytes);
 			cache->read_bytes += bytes;
 		}
-		line->age = ++cache->clock;
+		mm_kunmap_phys(line->physical);
+		list_remove_entry(&line->lru);
+		list_insert_tail(&cache->lru, &line->lru);
 		count -= n;
 		sector += n;
 		buffer = (char *)buffer + bytes;
@@ -131,8 +198,11 @@ static int disk_rw(struct partition *p, void *b, uint64_t s, unsigned n, int w)
 {
 	if (s > p->sectors || n > p->sectors - s)
 		return -EIO;
+	phymm_cache_policy policy;
+	phymm_get_cache_policy_snapshot(fs_page_cache_pages, cache_pages,
+					&policy);
 	rmutex_lock(&p->disk->lock);
-	int ret = cache_rw(p->disk, b, s + p->start, n, w);
+	int ret = cache_rw(p->disk, b, s + p->start, n, w, policy.block_pages);
 	rmutex_unlock(&p->disk->lock);
 	return ret;
 }
@@ -249,8 +319,13 @@ static int node_ioctl(file *f, unsigned command, void *buffer)
 					       p->start + range[0] / ss,
 					       range[1] / ss);
 		if (!ret)
-			for (unsigned i = 0; i < CACHE_LINES; i++)
-				p->disk->cache->lines[i].valid = 0;
+			while (!list_is_empty(&p->disk->cache->lru)) {
+				struct cache_line *line =
+					container_of(p->disk->cache->lru.next,
+						     struct cache_line, lru);
+				cache_remove(p->disk, line);
+				cache_release(line);
+			}
 		rmutex_unlock(&p->disk->lock);
 		return ret;
 	}
@@ -512,8 +587,8 @@ static void cache_stats(blockdev_stats *stats)
 		struct fixed_disk *d = parts[i][0].disk;
 		struct fixed_cache *cache = d->cache;
 		rmutex_lock(&d->lock);
-		stats->cached_bytes += CACHE_LINES * CACHE_BYTES;
-		stats->peak_bytes += CACHE_LINES * CACHE_BYTES;
+		stats->cached_bytes += (uint64_t)cache->pages * CACHE_BYTES;
+		stats->peak_bytes += (uint64_t)cache->peak_pages * CACHE_BYTES;
 		stats->read_bytes += cache->read_bytes;
 		stats->write_bytes += cache->write_bytes;
 		stats->physical_read_bytes += cache->physical_read;
@@ -523,8 +598,31 @@ static void cache_stats(blockdev_stats *stats)
 		rmutex_unlock(&d->lock);
 	}
 }
+/* Reclaim only clean lines: allocation must not initiate recursive disk I/O. */
+static unsigned cache_reclaim(unsigned pages)
+{
+	unsigned freed = 0;
+	for (unsigned i = 0; i < disk_count && freed < pages; i++) {
+		struct fixed_disk *d = parts[i][0].disk;
+		rmutex_lock(&d->lock);
+		list_entry *e = d->cache->lru.next;
+		while (e != &d->cache->lru && freed < pages) {
+			struct cache_line *line =
+				container_of(e, struct cache_line, lru);
+			e = e->next;
+			if (line->dirty)
+				continue;
+			cache_remove(d, line);
+			cache_release(line);
+			freed++;
+		}
+		rmutex_unlock(&d->lock);
+	}
+	return freed;
+}
 static const blockdev_backend backend = { .flush = flush_all,
 					  .close = close_all,
+					  .reclaim = cache_reclaim,
 					  .stats = cache_stats };
 int fixed_disk_register(struct fixed_disk *d)
 {
@@ -541,13 +639,8 @@ int fixed_disk_register(struct fixed_disk *d)
 		free(buf);
 		return -ENOMEM;
 	}
-	d->cache->data = (void *)vm_alloc(CACHE_LINES * CACHE_PAGES);
-	if (!d->cache->data) {
-		free(d->cache);
-		d->cache = NULL;
-		free(buf);
-		return -ENOMEM;
-	}
+	d->cache->lines = (struct rb_root)_RBTREE_ROOT_INIT;
+	list_init(&d->cache->lru);
 	unsigned slot = disk_count++;
 	rmutex_init(&d->lock);
 	publish(d, slot, 0, 0, d->sectors);

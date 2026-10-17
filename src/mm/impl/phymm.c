@@ -392,10 +392,10 @@ void phymm_cache_budget(unsigned total, unsigned free, unsigned file_cached,
 	policy->reserve_pages = 0;
 }
 
-void phymm_get_cache_policy(phymm_cache_policy *policy)
+void phymm_get_cache_policy_snapshot(unsigned file_cached, unsigned block_cached,
+				     phymm_cache_policy *policy)
 {
-	unsigned total, free, file_cached = fs_page_cache_pages;
-	unsigned block_cached = blockdev_cached_pages();
+	unsigned total, free;
 	int irq;
 
 	spinlock_lock(&buddy_lock, &irq);
@@ -403,6 +403,12 @@ void phymm_get_cache_policy(phymm_cache_policy *policy)
 	free = buddy_free_pages;
 	spinlock_unlock(&buddy_lock, irq);
 	phymm_cache_budget(total, free, file_cached, block_cached, policy);
+}
+
+void phymm_get_cache_policy(phymm_cache_policy *policy)
+{
+	phymm_get_cache_policy_snapshot(fs_page_cache_pages, blockdev_cached_pages(),
+				       policy);
 }
 
 unsigned phymm_reclaim_user_cache(unsigned target_pages)

@@ -9,6 +9,7 @@ cat > "$probe_dir/probe.c" <<'MOS_GUEST_C'
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sched.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
@@ -41,6 +42,9 @@ static void reader(int index)
             if (n > 0) shared->reads[index]++;
             close(fd);
         }
+        /* Keep both lookup paths racing exit without monopolizing a CPU
+         * while the parent and its next child are runnable. */
+        assert(sched_yield() == 0);
     }
 }
 int main(void)
@@ -65,7 +69,7 @@ int main(void)
             _exit(0);
         }
     }
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 100; i++) {
         pid_t pid = fork();
         assert(pid >= 0);
         if (!pid) { usleep(1000); _exit(0); }

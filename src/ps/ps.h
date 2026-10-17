@@ -382,6 +382,7 @@ void ps_send_signal_owner(int owner, int sig);
 
 typedef void (*ps_enum_callback)(task_struct *task, void *ctx);
 void ps_enum_all(ps_enum_callback callback, void *ctx);
+unsigned ps_thread_count(unsigned tgid);
 // syscall handler
 int sys_fork();
 int sys_vfork();

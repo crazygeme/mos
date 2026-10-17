@@ -172,8 +172,9 @@ void smp_check_stop(void)
 void smp_idle(void)
 {
 	DISABLE_INTR();
-	/* PIT broadcasts guarantee a wake even if a ready transition races hlt. */
-	arch_cpu_idle_wait();
+	/* Switch completion can publish runnable work after idle selection. */
+	if (!ps_has_ready_task())
+		arch_cpu_idle_wait();
 	ENABLE_INTR();
 }
 

@@ -35,32 +35,53 @@ extern unsigned long long gdt[];
  * Static helpers — MPRQ algorithm
  */
 
-/* Return the first runnable task from the given RB-tree.
- * Skips sleeping (timeout in the future) and dying tasks.
- * Re-inserts the chosen task with a fresh sched_seq for round-robin fairness.
- * Must be called with ps_lock held. */
+/* Requires ps_lock while testing scheduler state. */
+static int ps_task_available(task_struct *task)
+{
+	return (task->sched->status == ps_ready || task == current) &&
+	       (!task->sched->terminate_requested ||
+		task->sched->vm_lock_depth) &&
+	       (!task->sched->on_cpu || task == current) &&
+	       (!task->sched->affinity_mask ||
+		(task->sched->affinity_mask & (1U << smp_cpu_id()))) &&
+	       (task->sched->priority != ps_idle ||
+		task->life->param == (void *)(uintptr_t)smp_cpu_id());
+}
+
+/* Return the first eligible task and rotate its ready queue. */
 static task_struct *ps_get_available_ready_task(list_entry *head)
 {
-	list_entry *node = head->next;
-
-	while (node != head) {
+	for (list_entry *node = head->next; node != head; node = node->next) {
 		task_struct *task =
-			(container_of(node, task_schedule, ps_list)->task);
-		if ((task->sched->status == ps_ready || task == current) &&
-		    (!task->sched->terminate_requested ||
-		     task->sched->vm_lock_depth) &&
-		    (!task->sched->on_cpu || task == current) &&
-		    (!task->sched->affinity_mask ||
-		     (task->sched->affinity_mask & (1U << smp_cpu_id()))) &&
-		    (task->sched->priority != ps_idle ||
-		     task->life->param == (void *)(uintptr_t)smp_cpu_id())) {
+			container_of(node, task_schedule, ps_list)->task;
+		if (ps_task_available(task)) {
 			list_remove_entry(node);
 			list_insert_tail(head, &task->sched->ps_list);
 			return task;
 		}
-		node = node->next;
 	}
 	return NULL;
+}
+
+/* Check without rotating queues or selecting an idle task. */
+int ps_has_ready_task(void)
+{
+	int irq, ready = 0;
+	spinlock_lock(&ps_lock, &irq);
+	for (int i = PS_PRIORITY_MAX - 1; i > ps_idle && !ready; i--) {
+		list_entry *head = &control.ready_queue[i];
+		for (list_entry *node = head->next; node != head;
+		     node = node->next) {
+			task_struct *task =
+				container_of(node, task_schedule, ps_list)->task;
+			if (ps_task_available(task)) {
+				ready = 1;
+				break;
+			}
+		}
+	}
+	spinlock_unlock(&ps_lock, irq);
+	return ready;
 }
 
 /*

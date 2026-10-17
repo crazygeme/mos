@@ -223,6 +223,7 @@ int sys_setresgid32(unsigned r, unsigned e, unsigned s);
 int sys_getresgid32(unsigned *r, unsigned *e, unsigned *s);
 int sys_setfsuid32(unsigned fsuid);
 int sys_setfsgid32(unsigned fsgid);
+int sys_waitid(int, unsigned, void *, int, void *);
 int sys_wait4(int pid, int *status, int options, void *rusage);
 intptr_t sys_brk(vaddr_t top);
 int sys_sched_yield();

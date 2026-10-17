@@ -518,3 +518,8 @@ intr_entry runs (IF same as after stub)
 | Hardware IRQ (0x20–0x2F) | 0                             | 0 (stays disabled)        | restored             |
 | Syscall (0x80)           | 1 (trap gate, no change)      | 1                         | restored             |
 | IPI (0xF0–0xFF)          | 0                             | 0                         | restored             |
+
+Idle CPUs check eligible non-idle tasks under the scheduler lock before executing
+`hlt`. Eligibility includes CPU affinity, active CPU ownership, and termination
+state. Work published during context-switch completion therefore prevents the
+selected idle task from sleeping while a runnable task is available.

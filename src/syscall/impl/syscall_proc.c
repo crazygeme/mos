@@ -626,6 +626,29 @@ int sys_setfsgid(unsigned fsgid)
 	return old;
 }
 
+int sys_waitid(int type, unsigned id, void *out, int options, void *usage)
+{
+	struct mos_signal_info info;
+	rusage snapshot;
+	int ret = do_waitid(type, id, &info, options, usage ? &snapshot : NULL);
+	if (ret)
+		return ret;
+	uint32_t wire[32] = { 0 };
+	wire[0] = info.signo;
+	wire[2] = info.code;
+	wire[3] = info.pid;
+	wire[4] = info.uid;
+	wire[5] = info.status;
+	wire[6] = info.utime;
+	wire[7] = info.stime;
+	if ((out &&
+	     ps_write_process_memory(current, out, wire, sizeof(wire)) < 0) ||
+	    (usage && ps_write_process_memory(current, usage, &snapshot,
+					      sizeof(snapshot)) < 0))
+		return -EFAULT;
+	return 0;
+}
+
 int sys_wait4(int pid, int *status, int options, void *rusage)
 {
 	int value, ret;

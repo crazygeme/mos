@@ -299,6 +299,29 @@ int native_getrusage(int who, void *out)
 		usage64(out, &usage);
 	return ret;
 }
+int native_waitid(int type, unsigned id, void *out, int options, void *usage)
+{
+	struct mos_signal_info info;
+	rusage snapshot;
+	int ret = do_waitid(type, id, &info, options, usage ? &snapshot : NULL);
+	if (ret)
+		return ret;
+	uint32_t wire[32] = { 0 };
+	wire[0] = info.signo;
+	wire[2] = info.code;
+	wire[4] = info.pid;
+	wire[5] = info.uid;
+	wire[6] = info.status;
+	uint64_t times[2] = { info.utime, info.stime };
+	memcpy(&wire[8], times, sizeof(times));
+	if (out &&
+	    ps_write_process_memory(current, out, wire, sizeof(wire)) < 0)
+		return -EFAULT;
+	if (usage)
+		usage64(usage, &snapshot);
+	return 0;
+}
+
 int native_wait4(int pid, int *status, int options, void *out)
 {
 	rusage usage;

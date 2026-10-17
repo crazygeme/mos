@@ -528,6 +528,119 @@ int sys_exit(unsigned status)
 	return 0;
 }
 
+/* Waitid event selection and snapshots are serialized with task transitions. */
+int do_waitid(int type, unsigned id, struct mos_signal_info *info, int options,
+	      rusage *usage)
+{
+	const unsigned supported = WNOHANG | WSTOPPED | WEXITED | WNOWAIT;
+	task_struct *cur = current, *task;
+	unsigned pid = 0, pgrp = 0;
+	int irq, ret = 0, exited = 0;
+	if (type < 0 || type > 2 || (options & ~supported) ||
+	    !(options & (WEXITED | WSTOPPED)) || id > 0x7fffffffU ||
+	    (type == 1 && !id))
+		return -EINVAL;
+	if (type == 1)
+		pid = ps_pid_global(id);
+	if (type == 2)
+		pgrp = id ? ps_pid_global(id) : cur->thread->group_id;
+	memset(info, 0, sizeof(*info));
+	if (usage)
+		memset(usage, 0, sizeof(*usage));
+	spinlock_lock(&ps_lock, &irq);
+	for (;;) {
+		int children = 0;
+		task = NULL;
+		list_entry *head = &cur->thread->children;
+		for (list_entry *entry = head->next; entry != head;
+		     entry = entry->next) {
+			task_struct *candidate =
+				container_of(entry, task_schedule, child_list)
+					->task;
+			if ((type == 1 && candidate->life->psid != pid) ||
+			    (type == 2 && candidate->thread->group_id != pgrp))
+				continue;
+			children = 1;
+			exited = candidate->life->exit_ready &&
+				 !candidate->sched->on_cpu &&
+				 !candidate->thread->live_tasks;
+			if (((options & WEXITED) && exited) ||
+			    ((options & WSTOPPED) &&
+			     candidate->life->stop_report_pending)) {
+				task = candidate;
+				break;
+			}
+		}
+		if (task) {
+			info->signo = SIGCHLD;
+			info->pid = ps_pid_visible(task->life->psid);
+			info->uid = task->credentials->uid;
+			if (exited) {
+				unsigned status = task->life->exit_status;
+				info->code = !(status & 0x7f) ? 1 :
+					     (status & 0x80)  ? 3 :
+								2;
+				info->status = status & 0x7f ?
+						       status & 0x7f :
+						       (status >> 8) & 0xff;
+			} else {
+				info->code =
+					task->execution->ptrace_tracer ? 4 : 5;
+				info->status = task->life->stop_signal;
+			}
+			info->utime =
+				ps_usage_read(&task->thread->user_tickets);
+			info->stime =
+				ps_usage_read(&task->thread->kernel_tickets);
+			if (usage) {
+				usage->ru_majflt = task->stats->pf_major;
+				usage->ru_minflt = task->stats->pf_minor;
+				usage->ru_nvcsw = task->stats->total_switches -
+						  task->stats->niv_switches;
+				usage->ru_nivcsw = task->stats->niv_switches;
+				us_to_timeval(
+					(info->utime +
+					 ps_usage_read(
+						 &task->thread->child_utime)) *
+						(1000000ULL / HZ),
+					&usage->ru_utime);
+				us_to_timeval(
+					(info->stime +
+					 ps_usage_read(
+						 &task->thread->child_stime)) *
+						(1000000ULL / HZ),
+					&usage->ru_stime);
+			}
+			if (!(options & WNOWAIT)) {
+				if (exited)
+					detach_exited_child_unsafe(task);
+				else
+					task->life->stop_report_pending = 0;
+			}
+			break;
+		}
+		if (!children) {
+			ret = -ECHILD;
+			break;
+		}
+		if (options & WNOHANG)
+			break;
+		if (ps_interrupting_signals(cur) & ~(1UL << (SIGCHLD - 1))) {
+			ret = -EINTR;
+			break;
+		}
+		ps_put_to_wait_queue_unsafe(cur, NULL);
+		cur->wait->wait_interruptible = 1;
+		spinlock_unlock(&ps_lock, irq);
+		task_sched();
+		spinlock_lock(&ps_lock, &irq);
+	}
+	spinlock_unlock(&ps_lock, irq);
+	if (task && exited && !(options & WNOWAIT))
+		ps_reap_task(task, NULL);
+	return ret;
+}
+
 /*
  * Public — waitpid
  */

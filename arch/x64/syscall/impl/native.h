@@ -21,6 +21,7 @@ int native_ppoll(struct pollfd *, uintptr_t, void *, const sigset_t *,
 		 uintptr_t);
 int native_futex(int *, int, int, const void *, int *, int);
 int native_rlimit(int, void *, int);
+int native_waitid(int, unsigned, void *, int, void *);
 int native_wait4(int, int *, int, void *);
 int native_getrusage(int, void *);
 int native_fcntl(int, int, uintptr_t);

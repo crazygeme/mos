@@ -324,6 +324,7 @@ int ps_set_ioperm(task_struct *task, unsigned long from, unsigned long num,
 
 // task functions
 void task_sched(void);
+int ps_has_ready_task(void);
 
 int sched_enable();
 
@@ -429,5 +430,7 @@ void ps_signal_wait(void);
 #define WSTOPPED WUNTRACED
 #define WEXITED 4
 #define WCONTINUED 8
+#define WNOWAIT 0x01000000
+int do_waitid(int, unsigned, struct mos_signal_info *, int, rusage *);
 
 #endif

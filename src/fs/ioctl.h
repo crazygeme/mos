@@ -48,9 +48,14 @@
 
 /* Block-device ioctls used by old util-linux/libblkid probes. */
 #define BLKFLSBUF 0x1261 /* Flush block-device buffers. */
+#define BLKDISCARD 0x1277 /* Discard a byte range. */
 #define BLKGETSIZE 0x1260 /* return device size in 512-byte sectors */
 #define BLKSSZGET 0x1268 /* return logical sector size */
-#define BLKGETSIZE64 0x80041272 /* return device size in bytes */
+#if __SIZEOF_POINTER__ == 8
+#define BLKGETSIZE64 0x80081272 /* Return device size in bytes. */
+#else
+#define BLKGETSIZE64 0x80041272 /* Return device size in bytes. */
+#endif
 
 #define TIOCPKT_DATA 0x00
 #define TIOCPKT_FLUSHREAD 0x01

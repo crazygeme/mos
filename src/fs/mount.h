@@ -2,6 +2,7 @@
 #define _FS_MOUNT_SYSCALL_H
 
 #include <fs/vfs.h>
+#include <device/blockdev.h>
 
 /* Standard mount flags (subset of Linux MS_* values) */
 #define MS_RDONLY 1
@@ -25,11 +26,14 @@ struct fs_type {
 	 */
 	super_block *(*get_sb)(const char *dev, const char *target, int flags,
 			       void *data);
+	/* Read-only format and compatibility probe; no mount or registration. */
+	int (*probe)(blockdev_handle *device);
 	struct rb_node name_node;
 };
 
 /* Add a filesystem type to the global registry. */
 void fs_register_type(fs_type *fst);
+const fs_type *fs_probe_block(blockdev_handle *device);
 
 /*
  * fs_do_mount - core of sys_mount().

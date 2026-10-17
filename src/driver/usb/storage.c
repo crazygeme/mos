@@ -209,7 +209,7 @@ static int partition_register(struct disk *d, unsigned nr, uint64_t start,
 	else
 		sprintf(p->name, "sd%c", 'a' + d->index);
 	blockdev_register(p->name, USB_STORAGE_MAJOR, p->minor,
-			  count * d->sector_size, BLOCKDEV_FLAG_MOUNTABLE);
+			  count * d->sector_size, BLOCKDEV_FLAG_VOLUME);
 	int ret = blockdev_bind_io(p->name, d->sector_size, &storage_ops, p);
 	if (ret) {
 		blockdev_unregister(p->name);

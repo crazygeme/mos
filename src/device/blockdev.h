@@ -4,7 +4,8 @@
 #include <stdint.h>
 #include <device/devnode.h>
 
-#define BLOCKDEV_FLAG_MOUNTABLE 0x0001
+/* A volume candidate requires filesystem probing before mounting. */
+#define BLOCKDEV_FLAG_VOLUME 0x0001
 
 typedef struct {
 	char name[32];

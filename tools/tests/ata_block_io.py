@@ -6,38 +6,36 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 source = (root / 'src/driver/storage/ata.c').read_text()
-start = source.index('static int ata_block_read(')
-end = source.index('static const blockdev_io ata_block_ops', start)
+start = source.index('static int ata_fixed_rw(')
+end = source.index('static int ata_fixed_flush', start)
 functions = source[start:end]
 prelude = r'''
 #include <stdint.h>
 #include <assert.h>
 #include <errno.h>
-#define HDD_CACHE_OPEN 1
-#define BLOCK_SECTOR_SIZE 512
 #define HDD_IO_MAX_SECTORS 8
 typedef struct { int unused; } partition;
-typedef struct { unsigned size; void *aux; int (*read)(void *,unsigned,void *,unsigned); int (*write)(void *,unsigned,void *,unsigned); } hdd_partition_info;
-static int calls, transfer = 512;
-static int partition_cache_read(void *p,unsigned sector,void *buf,unsigned len)
-{ calls++; return transfer; }
-static int partition_cache_write(void *p,unsigned sector,void *buf,unsigned len)
-{ calls++; return transfer; }
+struct fixed_disk { uint64_t sectors; void *private; };
+static int calls, transfer = -2;
+static int partition_read(void *p,unsigned sector,void *buf,unsigned len)
+{ calls++; return transfer==-2?len:transfer; }
+static int partition_write(void *p,unsigned sector,void *buf,unsigned len)
+{ calls++; return transfer==-2?len:transfer; }
 '''
 main = r'''
 int main(void) {
- partition p={0}; hdd_partition_info bdev={100,&p,partition_cache_read,partition_cache_write}; char buf[1024];
- assert(ata_block_read(&bdev,buf,14819236616ULL,1)==-EIO);
- assert(ata_block_write(&bdev,buf,0x100000001ULL,1)==-EIO);
- assert(ata_block_read(&bdev,buf,UINT64_MAX,2)==-EIO);
- assert(ata_block_write(&bdev,buf,99,2)==-EIO);
+ partition p={0}; struct fixed_disk bdev={100,&p}; char buf[8192];
+ assert(ata_fixed_rw(&bdev,buf,14819236616ULL,1,0)==-EIO);
+ assert(ata_fixed_rw(&bdev,buf,0x100000001ULL,1,1)==-EIO);
+ assert(ata_fixed_rw(&bdev,buf,UINT64_MAX,2,0)==-EIO);
+ assert(ata_fixed_rw(&bdev,buf,99,2,1)==-EIO);
  assert(calls==0);
- assert(ata_block_read(&bdev,buf,99,1)==0 && calls==1);
- assert(ata_block_write(&bdev,buf,99,1)==0 && calls==2);
+ assert(ata_fixed_rw(&bdev,buf,99,1,0)==0 && calls==1);
+ assert(ata_fixed_rw(&bdev,buf,0,16,1)==0 && calls==3);
  transfer=-1;
- assert(ata_block_read(&bdev,buf,0,1)==-EIO);
+ assert(ata_fixed_rw(&bdev,buf,0,1,0)==-EIO);
  transfer=0;
- assert(ata_block_write(&bdev,buf,0,1)==-EIO);
+ assert(ata_fixed_rw(&bdev,buf,0,1,1)==-EIO);
  return 0;
 }
 '''

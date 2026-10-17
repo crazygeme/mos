@@ -2,6 +2,7 @@
 #include <lib/klib.h>
 #include <lib/lock.h>
 #include <errno.h>
+#include <fs/mount.h>
 
 #define MAX_BLOCKDEVS 32
 
@@ -123,24 +124,32 @@ int blockdev_lookup(const char *name, blockdev_info *out)
 }
 int blockdev_lookup_mountable(const char *name, blockdev_info *out)
 {
-	return blockdev_lookup_flags(name, out, BLOCKDEV_FLAG_MOUNTABLE);
+	blockdev_info info;
+	if (!blockdev_lookup_flags(name, &info, BLOCKDEV_FLAG_VOLUME))
+		return 0;
+	blockdev_handle *device = blockdev_open(name);
+	if (!device)
+		return 0;
+	int found = fs_probe_block(device) != NULL;
+	blockdev_close(device);
+	if (found && out)
+		*out = info;
+	return found;
 }
 int blockdev_first_mountable(blockdev_info *out)
 {
-	int irq, found = 0;
-	spinlock_lock(&blockdev_io_lock, &irq);
 	for (unsigned i = 0; i < MAX_BLOCKDEVS; i++) {
-		blockdev_slot *slot = &blockdev_table[i];
-		if (slot->used && !slot->removed &&
-		    (slot->info.flags & BLOCKDEV_FLAG_MOUNTABLE)) {
-			if (out)
-				*out = slot->info;
-			found = 1;
-			break;
-		}
+		blockdev_info info;
+		int irq, present;
+		spinlock_lock(&blockdev_io_lock, &irq);
+		present = blockdev_table[i].used && !blockdev_table[i].removed;
+		if (present)
+			info = blockdev_table[i].info;
+		spinlock_unlock(&blockdev_io_lock, irq);
+		if (present && blockdev_lookup_mountable(info.name, out))
+			return 1;
 	}
-	spinlock_unlock(&blockdev_io_lock, irq);
-	return found;
+	return 0;
 }
 void blockdev_for_each(blockdev_iter_fn fn, void *data)
 {
@@ -269,8 +278,7 @@ blockdev_handle *blockdev_open(const char *name)
 	blockdev_slot *slot;
 	spinlock_lock(&blockdev_io_lock, &irq);
 	slot = blockdev_find_slot(name);
-	if (!slot || !slot->ops ||
-	    !(slot->info.flags & BLOCKDEV_FLAG_MOUNTABLE))
+	if (!slot || !slot->ops || !(slot->info.flags & BLOCKDEV_FLAG_VOLUME))
 		slot = NULL;
 	else
 		slot->references++;

@@ -155,7 +155,7 @@ static int loop_attach(int i, file *fp, const char *path_hint)
 		info->size_bytes = 0;
 		return error;
 	}
-	error = blockdev_update(info->name, size, BLOCKDEV_FLAG_MOUNTABLE);
+	error = blockdev_update(info->name, size, BLOCKDEV_FLAG_VOLUME);
 	if (error) {
 		blockdev_unbind_io(info->name);
 		ld->fp = NULL;

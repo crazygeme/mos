@@ -646,10 +646,10 @@ static void prepare_interactive_userspace(task_struct *cur)
 
 	printk("mnt: Re-mount rootfs (rw)\n");
 	{
-		blockdev_info rootdev;
-		if (blockdev_first_mountable(&rootdev))
-			fs_do_mount(rootdev.name, "/", "ext4", MS_REMOUNT,
-				    NULL);
+		super_block *root = cur->fs->root;
+		if (root && root->s_devname[0])
+			fs_do_mount(root->s_devname, "/", root->s_fstype,
+				    MS_REMOUNT, NULL);
 	}
 
 	printk("mnt: Mounting proc on /proc\n");

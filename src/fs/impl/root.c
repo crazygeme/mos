@@ -16,6 +16,7 @@
 #include <config.h>
 #include <ext4.h>
 #include <ext4_fs.h>
+#include <ext4_super.h>
 #include <ext4_inode.h>
 #include <ext4_dir.h>
 
@@ -1866,7 +1867,43 @@ static super_block *ext4_get_sb(const char *dev, const char *target, int flags,
 	return sb;
 }
 
-static fs_type ext4_fs_type = { .name = "ext4", .get_sb = ext4_get_sb };
+static int ext4_probe(blockdev_handle *device)
+{
+	unsigned size = blockdev_sector_size(device);
+	if (size < 512 || size > 65536 || (size & (size - 1)))
+		return 0;
+	unsigned offset = 1024 % size,
+		 count = (offset + 1024 + size - 1) / size;
+	if (1024 / size + count > blockdev_sector_count(device))
+		return 0;
+	unsigned char *buffer = malloc(count * size);
+	struct ext4_fs *fs = zalloc(sizeof(*fs));
+	if (!buffer || !fs) {
+		free(buffer);
+		free(fs);
+		return 0;
+	}
+	int valid = 0;
+	if (!blockdev_read(device, buffer, 1024 / size, count)) {
+		memcpy(&fs->sb, buffer + offset, sizeof(fs->sb));
+		uint32_t log = ext4_get32(&fs->sb, log_block_size);
+		bool ro;
+		if (log <= 6 && (1024U << log) >= size &&
+		    ext4_sb_check(&fs->sb) &&
+		    ext4_sb_get_blocks_cnt(&fs->sb) <=
+			    blockdev_sector_count(device) /
+				    ((1024U << log) / size) &&
+		    ext4_fs_check_features(fs, &ro) == EOK)
+			valid = 1;
+	}
+	free(fs);
+	free(buffer);
+	return valid;
+}
+
+static fs_type ext4_fs_type = { .name = "ext4",
+				.get_sb = ext4_get_sb,
+				.probe = ext4_probe };
 static fs_type ext3_fs_type = { .name = "ext3", .get_sb = ext4_get_sb };
 static fs_type vfat_fs_type = { .name = "vfat", .get_sb = ext4_get_sb };
 
@@ -1916,33 +1953,47 @@ static int ext4_remount(super_block *sb, int flags)
 	return 0;
 }
 
+struct root_probe {
+	int mounted;
+	blockdev_info device;
+};
+static void try_root_volume(const blockdev_info *info, void *data)
+{
+	struct root_probe *probe = data;
+	if (probe->mounted || !blockdev_lookup_mountable(info->name, NULL))
+		return;
+	int result = ext4_prepare_block_device(info->name, NULL);
+	if (result == EOK)
+		result = ext4_mount(info->name, "/", true);
+	if (result != EOK) {
+		klog("ext4: root candidate %s rejected: %d\n", info->name,
+		     result);
+		for (unsigned i = 0; i < EXT4_BLOCK_ADAPTERS; i++)
+			if (!strcmp(ext4_adapters[i].name, info->name)) {
+				ext4_adapter_release(&ext4_adapters[i]);
+				break;
+			}
+		return;
+	}
+	probe->device = *info;
+	probe->mounted = 1;
+}
 static void fs_mount_root(void)
 {
 	task_struct *cur = CURRENT_TASK();
-	blockdev_info rootdev;
-	const char *devname;
-
-	if (!blockdev_first_mountable(&rootdev)) {
-		printk("ext4: no discovered root device\n");
+	struct root_probe probe = { 0 };
+	blockdev_for_each(try_root_volume, &probe);
+	if (!probe.mounted) {
+		printk("ext4: no mountable root filesystem discovered\n");
 		return;
 	}
-	devname = rootdev.name;
-
-	printk("mnt: Mount rootfs (ro)\n");
+	const char *devname = probe.device.name;
+	printk("mnt: root filesystem %s (ro)\n", devname);
 	cur->fs->root = ext4_get(devname);
-	if (ext4_prepare_block_device(devname, NULL) != EOK ||
-	    ext4_mount(devname, "/", true) != EOK) {
-		printk("ext4: cannot mount root block device %s\n", devname);
-		return;
-	} /* read-only until init remounts rw */
 	ext4_mount_setup_locks("/", &root_lock);
-
-	/* Populate root sb metadata for /proc/mounts. */
 	sprintf(cur->fs->root->s_devname, "/dev/%s", devname);
-	strncpy(cur->fs->root->s_fstype, "ext3",
-		sizeof(cur->fs->root->s_fstype) - 1);
-	strncpy(cur->fs->root->s_mountpoint, "/",
-		sizeof(cur->fs->root->s_mountpoint) - 1);
+	strcpy(cur->fs->root->s_fstype, "ext3");
+	strcpy(cur->fs->root->s_mountpoint, "/");
 	cur->fs->root->s_flags = MS_RDONLY;
 }
 

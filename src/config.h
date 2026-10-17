@@ -29,13 +29,6 @@
 
 #define DSR_CACHE_DEPTH 4096
 
-#define HDD_CACHE_OPEN 1
-
-#define HDD_CACHE_WRITE_THOUGH 0
-#define HDD_CACHE_WRITE_BACK 1
-
-#define HDD_CACHE_WRITE_POLICY HDD_CACHE_WRITE_BACK
-
 #define USER_STACK_PAGES 4096
 /* Initial stack pages allocated at exec; stack grows down to USER_STACK_PAGES max. */
 #define USER_STACK_INIT_PAGES 16

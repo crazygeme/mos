@@ -26,7 +26,7 @@ KTEST(BlockDeviceTest, RangeErrorsAndPinnedLifetime)
 	blockdev_handle *device;
 	char buffer[16];
 	blockdev_register("test-block-io", 250, 1, 100 * 512,
-			  BLOCKDEV_FLAG_MOUNTABLE);
+			  BLOCKDEV_FLAG_VOLUME);
 	ASSERT_EQ(blockdev_bind_io("test-block-io", 512, &test_io, NULL), 0);
 	device = blockdev_open("test-block-io");
 	ASSERT_NONNULL(device);

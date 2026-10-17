@@ -28,6 +28,16 @@ void fs_register_type(fs_type *fst)
 	rb_insert_color(&fst->name_node, &fs_types);
 }
 
+const fs_type *fs_probe_block(blockdev_handle *device)
+{
+	for (struct rb_node *n = rb_first(&fs_types); n; n = rb_next(n)) {
+		fs_type *type = rb_entry(n, fs_type, name_node);
+		if (type->probe && type->probe(device) > 0)
+			return type;
+	}
+	return NULL;
+}
+
 static fs_type *fs_find_type(const char *name)
 {
 	struct rb_node *node = fs_types.rb_node;

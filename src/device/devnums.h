@@ -51,6 +51,10 @@
 /* USB SCSI disks: /dev/sda and primary partitions. */
 #define USB_STORAGE_MAJOR 8
 
+/* Fixed SATA and NVMe block devices, 16 minors per disk. */
+#define SATA_MAJOR 65
+#define NVME_MAJOR 259
+
 /* V4L2 USB video capture nodes. */
 #define USB_VIDEO_MAJOR 81
 

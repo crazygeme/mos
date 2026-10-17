@@ -23,7 +23,7 @@ struct mos_namespace {
 	super_block *mqueue_root;
 	rmutex_t mqueue_lock;
 	char hostname[65], domainname[65];
-	char *cgroup_roots[3];
+	char *cgroup_roots[4];
 };
 static unsigned next_namespace_id = 0xf0000000;
 static struct mos_namespace *initial[MOS_NS_COUNT];
@@ -56,6 +56,7 @@ static void ns_release(ref_count_t *ref)
 	free(ns->cgroup_roots[0]);
 	free(ns->cgroup_roots[1]);
 	free(ns->cgroup_roots[2]);
+	free(ns->cgroup_roots[3]);
 	free(ns);
 }
 static struct mos_namespace *ns_alloc(unsigned kind, struct mos_namespace *old)
@@ -80,7 +81,7 @@ static struct mos_namespace *ns_alloc(unsigned kind, struct mos_namespace *old)
 			ref_count_put(ns);
 			return NULL;
 		}
-		for (unsigned i = 0; i < 3; i++) {
+		for (unsigned i = 0; i < 4; i++) {
 			if (old)
 				ps_cgroup_absolute_path(current, i, path);
 			else

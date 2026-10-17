@@ -1,6 +1,7 @@
 #ifndef MOS_PS_CGROUP_H
 #define MOS_PS_CGROUP_H
 #include <ps/ps.h>
+int ps_cgroup_pids_v2(void);
 unsigned ps_cgroup_count(unsigned controller);
 void ps_cgroup_init(task_struct *task);
 void ps_cgroup_exit(task_struct *task);

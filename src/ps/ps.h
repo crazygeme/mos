@@ -211,7 +211,7 @@ typedef struct _task_lifecycle {
 
 struct _task_struct {
 	struct mos_namespace *namespaces[7], *pid_children;
-	struct mos_cgroup *cgroups[3];
+	struct mos_cgroup *cgroups[4];
 	unsigned cgroup_exited;
 	/* Private execution, scheduling, identity, and waits. */
 	task_schedule *sched;

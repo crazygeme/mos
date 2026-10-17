@@ -13,6 +13,9 @@
 #define CG_PIDS 0
 #define CG_DEVICES 1
 #define CG_SYSTEMD 2
+#define CG_UNIFIED 3
+#define CG_COUNT 4
+#define CG_KINDS 18
 #define CG_RULES 128
 struct device_rule {
 	unsigned type, major, minor, access;
@@ -22,22 +25,46 @@ struct mos_cgroup {
 	list_entry siblings, children;
 	struct mos_cgroup *parent;
 	unsigned controller, tasks, members, opens, removed;
+	unsigned subtree_pids, mounts, subtree_tasks, dying_descendants;
+	uint64_t population_sequence;
 	uint64_t limit, failures;
 	char name[128];
 	struct device_rule rules[CG_RULES];
 	unsigned nrules;
-	unsigned uid[12], gid[12], mode[12];
+	unsigned uid[CG_KINDS], gid[CG_KINDS], mode[CG_KINDS];
 };
-static struct mos_cgroup roots[3];
+static struct mos_cgroup roots[CG_COUNT];
 static mutex_t cg_lock;
 static int cg_ready;
+static spinlock_t cg_event_lock = SPINLOCK_INITIALIZER;
+static list_entry cg_waiters = { &cg_waiters, &cg_waiters };
+static void cg_notify(void)
+{
+	int irq;
+	spinlock_lock(&cg_event_lock, &irq);
+	poll_notify(&cg_waiters);
+	spinlock_unlock(&cg_event_lock, irq);
+}
+static void cg_task_count(struct mos_cgroup *g, int delta)
+{
+	g->tasks += delta;
+	for (; g; g = g->parent) {
+		unsigned populated = !!g->subtree_tasks;
+		g->subtree_tasks += delta;
+		if (populated != !!g->subtree_tasks)
+			g->population_sequence++;
+	}
+	cg_notify();
+}
 static void cg_init_modes(struct mos_cgroup *g, unsigned mode)
 {
-	for (unsigned k = 0; k < 12; k++) {
+	for (unsigned k = 0; k < CG_KINDS; k++) {
 		g->uid[k] = current->credentials->euid;
 		g->gid[k] = current->credentials->egid;
 		g->mode[k] = k == 0 ? S_IFDIR | (mode & 0777) :
-				      S_IFREG | ((k == 7 || k == 8 || k == 11) ?
+				      S_IFREG | ((k == 7 || k == 8 || k == 11 ||
+						  k == 12 || k == 14 ||
+						  k == 16 || k == 17) ?
 							 0444 :
 						 (k == 9 || k == 10) ? 0200 :
 								       0644);
@@ -55,17 +82,18 @@ static void cg_prepare(void)
 	if (cg_ready)
 		return;
 	mutex_init(&cg_lock);
-	for (unsigned i = 0; i < 3; i++) {
+	for (unsigned i = 0; i < CG_COUNT; i++) {
 		roots[i].controller = i;
-		for (unsigned k = 0; k < 12; k++)
+		for (unsigned k = 0; k < CG_KINDS; k++)
 			roots[i].mode[k] =
-				k == 0 ?
-					S_IFDIR | 0755 :
-					S_IFREG |
-						((k == 7 || k == 8 || k == 11) ?
-							 0444 :
-						 (k == 9 || k == 10) ? 0200 :
-								       0644);
+				k == 0 ? S_IFDIR | 0755 :
+					 S_IFREG | ((k == 7 || k == 8 ||
+						     k == 11 || k == 12 ||
+						     k == 14 || k == 16 ||
+						     k == 17) ?
+							    0444 :
+						    (k == 9 || k == 10) ? 0200 :
+									  0644);
 		roots[i].limit = UINT64_MAX;
 		list_init(&roots[i].children);
 	}
@@ -74,6 +102,7 @@ static void cg_prepare(void)
 struct cg_file {
 	struct mos_cgroup *group;
 	unsigned kind;
+	uint64_t seen;
 };
 enum {
 	CG_DIR,
@@ -87,7 +116,13 @@ enum {
 	CG_EVENTS,
 	CG_ALLOW,
 	CG_DENY,
-	CG_LIST
+	CG_LIST,
+	CG_CONTROLLERS,
+	CG_SUBTREE,
+	CG_POPULATED,
+	CG_TYPE,
+	CG_THREADS,
+	CG_STAT
 };
 static const char *const common_names[] = { "cgroup.procs", "tasks",
 					    "notify_on_release",
@@ -97,6 +132,21 @@ static const char *const pids_names[] = { "pids.max", "pids.current",
 static const char *const device_names[] = { "devices.allow", "devices.deny",
 					    "devices.list" };
 
+static int unified_pids_available(void)
+{
+	return !roots[CG_PIDS].mounts &&
+	       list_is_empty(&roots[CG_PIDS].children);
+}
+static int pids_visible(struct mos_cgroup *g)
+{
+	return g->controller == CG_PIDS ||
+	       (g->controller == CG_UNIFIED && g->parent &&
+		g->parent->subtree_pids);
+}
+static const char *const unified_names[] = {
+	"cgroup.controllers", "cgroup.subtree_control", "cgroup.events",
+	"cgroup.type",	      "cgroup.threads",		"cgroup.stat"
+};
 static struct mos_cgroup *task_group(task_struct *task, unsigned controller)
 {
 	return task->cgroups[controller] ? task->cgroups[controller] :
@@ -137,6 +187,8 @@ static void group_maybe_free(struct mos_cgroup *group)
 	if (!group->parent || !group->removed || group->opens || group->members)
 		return;
 	struct mos_cgroup *parent = group->parent;
+	for (struct mos_cgroup *p = parent; p; p = p->parent)
+		p->dying_descendants--;
 	free(group);
 	parent->opens--;
 	group_maybe_free(parent);
@@ -145,9 +197,9 @@ void ps_cgroup_init(task_struct *task)
 {
 	cg_prepare();
 	mutex_lock(&cg_lock);
-	for (unsigned i = 0; i < 3; i++) {
+	for (unsigned i = 0; i < CG_COUNT; i++) {
 		task->cgroups[i] = &roots[i];
-		roots[i].tasks++;
+		cg_task_count(&roots[i], 1);
 		roots[i].members++;
 	}
 	mutex_unlock(&cg_lock);
@@ -156,20 +208,16 @@ void ps_cgroup_exit(task_struct *task)
 {
 	mutex_lock(&cg_lock);
 	if (!task->cgroup_exited) {
-		for (unsigned i = 0; i < 3; i++)
+		for (unsigned i = 0; i < CG_COUNT; i++)
 			if (task->cgroups[i] && task->cgroups[i]->tasks)
-				task->cgroups[i]->tasks--;
+				cg_task_count(task->cgroups[i], -1);
 		task->cgroup_exited = 1;
 	}
 	mutex_unlock(&cg_lock);
 }
 static unsigned group_count(struct mos_cgroup *group)
 {
-	unsigned n = group->tasks;
-	for (list_entry *p = group->children.next; p != &group->children;
-	     p = p->next)
-		n += group_count(container_of(p, struct mos_cgroup, siblings));
-	return n;
+	return group->subtree_tasks;
 }
 static unsigned group_subtree_count(struct mos_cgroup *group)
 {
@@ -182,26 +230,43 @@ static unsigned group_subtree_count(struct mos_cgroup *group)
 }
 unsigned ps_cgroup_count(unsigned controller)
 {
-	if (controller > 1)
+	if (controller >= CG_COUNT)
 		return 0;
 	mutex_lock(&cg_lock);
 	unsigned count = group_subtree_count(&roots[controller]);
 	mutex_unlock(&cg_lock);
 	return count;
 }
+int ps_cgroup_pids_v2(void)
+{
+	mutex_lock(&cg_lock);
+	int active = roots[CG_UNIFIED].subtree_pids;
+	mutex_unlock(&cg_lock);
+	return active;
+}
 int ps_cgroup_clone(task_struct *parent, task_struct *child)
 {
 	mutex_lock(&cg_lock);
-	struct mos_cgroup *group = task_group(parent, CG_PIDS);
-	for (struct mos_cgroup *g = group; g; g = g->parent)
-		if ((uint64_t)group_count(g) >= g->limit) {
-			g->failures++;
-			mutex_unlock(&cg_lock);
-			return -EAGAIN;
-		}
-	for (unsigned i = 0; i < 3; i++) {
+	for (unsigned controller = CG_PIDS; controller <= CG_UNIFIED;
+	     controller += CG_UNIFIED) {
+		struct mos_cgroup *group = task_group(parent, controller);
+		for (struct mos_cgroup *g = group; g; g = g->parent)
+			if (pids_visible(g) &&
+			    (uint64_t)group_count(g) >= g->limit) {
+				if (controller == CG_UNIFIED) {
+					for (struct mos_cgroup *p = group; p;
+					     p = p->parent)
+						p->failures++;
+				} else
+					g->failures++;
+				cg_notify();
+				mutex_unlock(&cg_lock);
+				return -EAGAIN;
+			}
+	}
+	for (unsigned i = 0; i < CG_COUNT; i++) {
 		child->cgroups[i] = task_group(parent, i);
-		child->cgroups[i]->tasks++;
+		cg_task_count(child->cgroups[i], 1);
 		child->cgroups[i]->members++;
 	}
 	mutex_unlock(&cg_lock);
@@ -212,11 +277,11 @@ void ps_cgroup_put(task_struct *task)
 	if (!cg_ready)
 		return;
 	mutex_lock(&cg_lock);
-	for (unsigned i = 0; i < 3; i++) {
+	for (unsigned i = 0; i < CG_COUNT; i++) {
 		if (task->cgroups[i]) {
 			struct mos_cgroup *g = task->cgroups[i];
 			if (!task->cgroup_exited && g->tasks)
-				g->tasks--;
+				cg_task_count(g, -1);
 			g->members--;
 			group_maybe_free(g);
 		}
@@ -366,13 +431,20 @@ static ssize_t cg_read(file *fp, void *buf, size_t size, loff_t *pos)
 	case CG_DIR:
 		cg_dir_entry(pb, ".");
 		cg_dir_entry(pb, "..");
-		for (unsigned i = 0; i < 4; i++)
+		for (unsigned i = 0; i < (g->controller == CG_UNIFIED ? 1 : 4);
+		     i++)
 			cg_dir_entry(pb, common_names[i]);
-		if (!g->parent)
+		if (!g->parent && g->controller != CG_UNIFIED)
 			cg_dir_entry(pb, "release_agent");
-		for (unsigned i = 0; g->controller != CG_SYSTEMD && i < 3; i++)
-			cg_dir_entry(pb, g->controller ? device_names[i] :
-							 pids_names[i]);
+		if (g->controller == CG_UNIFIED)
+			for (unsigned i = 0; i < 6; i++)
+				cg_dir_entry(pb, unified_names[i]);
+		for (unsigned i = 0; i < 3; i++) {
+			if (pids_visible(g))
+				cg_dir_entry(pb, pids_names[i]);
+			if (g->controller == CG_DEVICES)
+				cg_dir_entry(pb, device_names[i]);
+		}
 		for (list_entry *p = g->children.next; p != &g->children;
 		     p = p->next)
 			cg_dir_entry(pb, container_of(p, struct mos_cgroup,
@@ -380,11 +452,35 @@ static ssize_t cg_read(file *fp, void *buf, size_t size, loff_t *pos)
 						 ->name);
 		break;
 	case CG_PROCS:
+	case CG_THREADS:
 	case CG_TASKS: {
 		struct cg_enumerate c = { g, pb, f->kind == CG_PROCS };
 		ps_enum_all(cg_emit_task, &c);
 		break;
 	}
+	case CG_CONTROLLERS:
+		proc_buf_printf(pb, "%s\n",
+				((!g->parent && unified_pids_available()) ||
+				 (g->parent && g->parent->subtree_pids)) ?
+					"pids" :
+					"");
+		break;
+	case CG_SUBTREE:
+		proc_buf_printf(pb, "%s\n", g->subtree_pids ? "pids" : "");
+		break;
+	case CG_POPULATED:
+		proc_buf_printf(pb, "populated %u\n", !!group_count(g));
+		f->seen = g->population_sequence;
+		break;
+	case CG_TYPE:
+		proc_buf_printf(pb, "domain\n");
+		break;
+	case CG_STAT:
+		proc_buf_printf(pb,
+				"nr_descendants %u\nnr_dying_descendants %u\n",
+				group_subtree_count(g) - 1,
+				g->dying_descendants);
+		break;
 	case CG_LIMIT:
 		if (g->limit == UINT64_MAX)
 			proc_buf_printf(pb, "max\n");
@@ -398,6 +494,7 @@ static ssize_t cg_read(file *fp, void *buf, size_t size, loff_t *pos)
 	case CG_EVENTS:
 		proc_buf_printf(pb, "max %llu\n",
 				(unsigned long long)g->failures);
+		f->seen = g->failures;
 		break;
 	case CG_LIST:
 		if (!g->nrules ||
@@ -469,12 +566,14 @@ static void cg_move_task(task_struct *task, void *opaque)
 	if (task->thread->tgid != c->tgid || task->cgroup_exited)
 		return;
 	struct mos_cgroup *old = task_group(task, c->group->controller);
+	if (old == c->group)
+		return;
 	if (task->cgroups[c->group->controller] && old->tasks)
-		old->tasks--;
+		cg_task_count(old, -1);
 	if (task->cgroups[c->group->controller])
 		old->members--;
 	task->cgroups[c->group->controller] = c->group;
-	c->group->tasks++;
+	cg_task_count(c->group, 1);
 	c->group->members++;
 	group_maybe_free(old);
 }
@@ -503,7 +602,8 @@ static ssize_t cg_write(file *fp, const void *buf, size_t size, loff_t *pos)
 	switch (f->kind) {
 	case CG_PROCS:
 	case CG_TASKS: {
-		if (number(&p, &value) || value > 0x7fffffff) {
+		if (number(&p, &value) || value > 0x7fffffff ||
+		    (*p && strcmp(p, "\n"))) {
 			ret = -EINVAL;
 			break;
 		}
@@ -523,6 +623,26 @@ static ssize_t cg_write(file *fp, const void *buf, size_t size, loff_t *pos)
 			ret = -EPERM;
 			break;
 		}
+		if (g->controller == CG_UNIFIED) {
+			struct mos_cgroup *old = task_group(task, CG_UNIFIED);
+			struct mos_cgroup *common = g;
+			for (;;) {
+				struct mos_cgroup *a = old;
+				while (a && a != common)
+					a = a->parent;
+				if (a || !common->parent)
+					break;
+				common = common->parent;
+			}
+			if (cg_permission(common, CG_PROCS, 2))
+				ret = -EACCES;
+			else if (g->parent && g->subtree_pids)
+				ret = -EBUSY;
+			if (ret) {
+				ps_put_process_ref(task);
+				break;
+			}
+		}
 		if (f->kind == CG_PROCS) {
 			struct cg_move c = { task->thread->tgid, g };
 			ps_enum_all(cg_move_task, &c);
@@ -530,18 +650,68 @@ static ssize_t cg_write(file *fp, const void *buf, size_t size, loff_t *pos)
 			struct mos_cgroup *old =
 				task_group(task, g->controller);
 			if (task->cgroups[g->controller] && old->tasks)
-				old->tasks--;
+				cg_task_count(old, -1);
 			if (task->cgroups[g->controller])
 				old->members--;
 			task->cgroups[g->controller] = g;
-			g->tasks++;
+			cg_task_count(g, 1);
 			g->members++;
 			group_maybe_free(old);
 		}
 		ps_put_process_ref(task);
 		break;
 	}
+	case CG_SUBTREE: {
+		unsigned enabled = g->subtree_pids;
+		while (*p) {
+			while (*p == ' ' || *p == '\t' || *p == '\n')
+				p++;
+			if (!*p)
+				break;
+			int add = *p == '+';
+			if ((!add && *p != '-') || strncmp(p + 1, "pids", 4) ||
+			    (p[5] && p[5] != ' ' && p[5] != '\t' &&
+			     p[5] != '\n')) {
+				ret = -EINVAL;
+				break;
+			}
+			enabled = add;
+			p += 5;
+		}
+		if (ret)
+			break;
+		if (enabled && ((!g->parent && !unified_pids_available()) ||
+				(g->parent && !g->parent->subtree_pids)))
+			ret = -ENOENT;
+		else if (enabled && g->parent && g->tasks)
+			ret = -EBUSY;
+		if (!enabled)
+			for (list_entry *n = g->children.next;
+			     n != &g->children; n = n->next)
+				if (container_of(n, struct mos_cgroup, siblings)
+					    ->subtree_pids)
+					ret = -EBUSY;
+		if (!ret && enabled != g->subtree_pids) {
+			g->subtree_pids = enabled;
+			for (list_entry *n = g->children.next;
+			     n != &g->children; n = n->next) {
+				struct mos_cgroup *child = container_of(
+					n, struct mos_cgroup, siblings);
+				child->limit = UINT64_MAX;
+				child->failures = 0;
+			}
+		}
+		break;
+	}
+	case CG_TYPE:
+	case CG_THREADS:
+		ret = -EOPNOTSUPP;
+		break;
 	case CG_LIMIT:
+		if (!pids_visible(g)) {
+			ret = -ENOENT;
+			break;
+		}
 		if (!strncmp(p, "max", 3)) {
 			value = UINT64_MAX;
 			p += 3;
@@ -549,7 +719,7 @@ static ssize_t cg_write(file *fp, const void *buf, size_t size, loff_t *pos)
 			ret = -EINVAL;
 			break;
 		}
-		if (*p && *p != '\n') {
+		if (*p && strcmp(p, "\n")) {
 			ret = -EINVAL;
 			break;
 		}
@@ -670,12 +840,40 @@ static unsigned char cg_dir_type(file *fp, const char *name)
 }
 static unsigned cg_poll(file *fp, unsigned events, poll_table *pt)
 {
-	(void)fp;
-	(void)pt;
-	return events & (FS_POLL_READ | FS_POLL_WRITE);
+	struct cg_file *f = fp->f_inode->i_private;
+	unsigned ready = events & (FS_POLL_READ | FS_POLL_WRITE);
+	if (f->kind != CG_POPULATED && f->kind != CG_EVENTS)
+		return ready;
+	poll_subscribe(pt, &cg_waiters, &cg_event_lock);
+	mutex_lock(&cg_lock);
+	uint64_t sequence = f->kind == CG_POPULATED ?
+				    f->group->population_sequence :
+				    f->group->failures;
+	if (f->seen != sequence || f->group->removed)
+		ready |= FS_POLL_EXCEPT | FS_POLL_ERR;
+	mutex_unlock(&cg_lock);
+	return ready;
+}
+static loff_t cg_llseek(file *fp, loff_t offset, int whence)
+{
+	loff_t next;
+	if (whence == SEEK_SET)
+		next = offset;
+	else if (whence == SEEK_CUR) {
+		if ((offset > 0 && fp->f_pos > INT64_MAX - offset) ||
+		    (offset < 0 && offset < -fp->f_pos))
+			return -EINVAL;
+		next = fp->f_pos + offset;
+	} else
+		return -EINVAL;
+	if (next < 0)
+		return -EINVAL;
+	fp->f_pos = next;
+	return next;
 }
 static const file_operations cg_fops = {
 	.read = cg_read,
+	.llseek = cg_llseek,
 	.write = cg_write,
 	.getattr = cg_getattr,
 	.setattr = cg_setattr,
@@ -693,15 +891,23 @@ static file *cg_open(super_block *sb, const char *path, int flags)
 	struct mos_cgroup *g = group_lookup(sb->s_fs_info, path, &leaf);
 	if (*leaf) {
 		kind = ~0U;
-		for (unsigned i = 0; i < 4; i++)
+		for (unsigned i = 0; i < (g->controller == CG_UNIFIED ? 1 : 4);
+		     i++)
 			if (!strcmp(leaf, common_names[i]))
 				kind = CG_PROCS + i;
-		for (unsigned i = 0; g->controller != CG_SYSTEMD && i < 3; i++)
-			if (!strcmp(leaf, g->controller ? device_names[i] :
-							  pids_names[i]))
-				kind = (g->controller ? CG_ALLOW : CG_LIMIT) +
-				       i;
-		if (!g->parent && !strcmp(leaf, "release_agent"))
+		for (unsigned i = 0; i < 3; i++) {
+			if (pids_visible(g) && !strcmp(leaf, pids_names[i]))
+				kind = CG_LIMIT + i;
+			if (g->controller == CG_DEVICES &&
+			    !strcmp(leaf, device_names[i]))
+				kind = CG_ALLOW + i;
+		}
+		if (g->controller == CG_UNIFIED)
+			for (unsigned i = 0; i < 6; i++)
+				if (!strcmp(leaf, unified_names[i]))
+					kind = CG_CONTROLLERS + i;
+		if (!g->parent && g->controller != CG_UNIFIED &&
+		    !strcmp(leaf, "release_agent"))
 			kind = CG_RELEASE;
 		if (kind == ~0U) {
 			mutex_unlock(&cg_lock);
@@ -722,15 +928,7 @@ static file *cg_open(super_block *sb, const char *path, int flags)
 	f->kind = kind;
 	g->opens++;
 	node->i_private = f;
-	node->i_mode = kind == CG_DIR ?
-			       S_IFDIR | 0755 :
-			       S_IFREG |
-				       ((kind == CG_CURRENT ||
-					 kind == CG_EVENTS || kind == CG_LIST) ?
-						0444 :
-					(kind == CG_ALLOW || kind == CG_DENY) ?
-						0200 :
-						0644);
+	node->i_mode = g->mode[kind];
 	node->i_ino = (uintptr_t)g + kind;
 	fp->f_inode = node;
 	fp->f_fop = &cg_fops;
@@ -756,7 +954,9 @@ static int cg_mkdir(super_block *sb, const char *path, unsigned mode)
 		return -EEXIST;
 	}
 	if (strlen(leaf) >= sizeof(parent->name) || strchr(leaf, '/') ||
-	    !strcmp(leaf, ".") || !strcmp(leaf, "..")) {
+	    !strcmp(leaf, ".") || !strcmp(leaf, "..") ||
+	    !strncmp(leaf, "cgroup.", 7) || !strncmp(leaf, "pids.", 5) ||
+	    !strncmp(leaf, "devices.", 8)) {
 		mutex_unlock(&cg_lock);
 		return -EINVAL;
 	}
@@ -803,6 +1003,9 @@ static int cg_rmdir(super_block *sb, const char *path)
 	else {
 		list_remove_entry(&g->siblings);
 		g->removed = 1;
+		for (struct mos_cgroup *p = g->parent; p; p = p->parent)
+			p->dying_descendants++;
+		cg_notify();
 		group_maybe_free(g);
 	}
 	mutex_unlock(&cg_lock);
@@ -810,9 +1013,9 @@ static int cg_rmdir(super_block *sb, const char *path)
 }
 static int cg_statfs(super_block *sb, struct statfs64 *s)
 {
-	(void)sb;
+	struct mos_cgroup *g = sb->s_fs_info;
 	memset(s, 0, sizeof(*s));
-	s->f_type = 0x27e0eb;
+	s->f_type = g->controller == CG_UNIFIED ? 0x63677270 : 0x27e0eb;
 	s->f_bsize = PAGE_SIZE;
 	s->f_namelen = 127;
 	return 0;
@@ -822,6 +1025,7 @@ static void cg_release_super(super_block *sb)
 	struct mos_cgroup *g = sb->s_fs_info;
 	mutex_lock(&cg_lock);
 	g->opens--;
+	g->mounts--;
 	group_maybe_free(g);
 	mutex_unlock(&cg_lock);
 	free(sb);
@@ -835,14 +1039,18 @@ static const super_operations cg_sops = {
 	.release = cg_release_super,
 };
 static super_block *cg_mount(const char *dev, const char *target, int flags,
-			     void *data)
+			     void *data, int unified)
 {
 	(void)dev;
 	(void)target;
 	(void)flags;
 	const char *options = data;
 	unsigned controller;
-	if (options && !strcmp(options, "pids"))
+	if (unified) {
+		if (options && *options)
+			return NULL;
+		controller = CG_UNIFIED;
+	} else if (options && !strcmp(options, "pids"))
 		controller = CG_PIDS;
 	else if (options && !strcmp(options, "devices"))
 		controller = CG_DEVICES;
@@ -856,6 +1064,11 @@ static super_block *cg_mount(const char *dev, const char *target, int flags,
 	if (sb) {
 		const char *leaf;
 		mutex_lock(&cg_lock);
+		if (controller == CG_PIDS && roots[CG_UNIFIED].subtree_pids) {
+			mutex_unlock(&cg_lock);
+			free(sb);
+			return NULL;
+		}
 		struct mos_cgroup *root = group_lookup(
 			&roots[controller],
 			ps_namespace_cgroup_root(current, controller), &leaf);
@@ -866,18 +1079,32 @@ static super_block *cg_mount(const char *dev, const char *target, int flags,
 		}
 		sb->s_fs_info = root;
 		root->opens++;
+		root->mounts++;
 		mutex_unlock(&cg_lock);
-		strcpy(sb->s_devname, controller == CG_SYSTEMD ?
-					      "name=systemd" :
-				      controller == CG_DEVICES ? "devices" :
-								 "pids");
+		strcpy(sb->s_devname,
+		       controller == CG_UNIFIED ? "cgroup2" :
+		       controller == CG_SYSTEMD ? "name=systemd" :
+		       controller == CG_DEVICES ? "devices" :
+						  "pids");
 	}
 	return sb;
 }
-static fs_type cg_type = { .name = "cgroup", .get_sb = cg_mount };
+static super_block *cg_mount_v1(const char *dev, const char *target, int flags,
+				void *data)
+{
+	return cg_mount(dev, target, flags, data, 0);
+}
+static super_block *cg_mount_v2(const char *dev, const char *target, int flags,
+				void *data)
+{
+	return cg_mount(dev, target, flags, data, 1);
+}
+static fs_type cg_type = { .name = "cgroup", .get_sb = cg_mount_v1 };
+static fs_type cg2_type = { .name = "cgroup2", .get_sb = cg_mount_v2 };
 static void cg_init(void)
 {
 	cg_prepare();
 	fs_register_type(&cg_type);
+	fs_register_type(&cg2_type);
 }
 KERNEL_INIT(2, cg_init);

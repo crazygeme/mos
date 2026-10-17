@@ -122,12 +122,16 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		if (!path)
 			return NULL;
 		pb = proc_buf_new();
-		ps_cgroup_path(task, 0, path);
-		proc_buf_printf(pb, "1:pids:%s\n", path);
+		if (!ps_cgroup_pids_v2()) {
+			ps_cgroup_path(task, 0, path);
+			proc_buf_printf(pb, "1:pids:%s\n", path);
+		}
 		ps_cgroup_path(task, 1, path);
 		proc_buf_printf(pb, "2:devices:%s\n", path);
 		ps_cgroup_path(task, 2, path);
 		proc_buf_printf(pb, "3:name=systemd:%s\n", path);
+		ps_cgroup_path(task, 3, path);
+		proc_buf_printf(pb, "0::%s\n", path);
 		name_put(path);
 		return make_pid_file(pb, task);
 	}

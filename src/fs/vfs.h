@@ -78,6 +78,8 @@ struct super_block {
 		s_covered; /* Covered directory or mount, owned by this layer. */
 	super_block *s_backend; /* Retained owner of a private mount view. */
 	unsigned s_ref; /* reference count */
+	unsigned s_mount_id; /* unique mount identity */
+	unsigned s_peer_group, s_master_group, s_unbindable;
 	int s_flags; /* mount flags (MS_RDONLY etc.) */
 	char s_devname[64]; /* source device, e.g. "hda1" or "proc" */
 	char s_fstype[32]; /* filesystem type, e.g. "ext4"; empty = not a real mount */
@@ -103,6 +105,7 @@ typedef struct _vfs_mount_node {
 /* Allocate and initialise a new super_block with the given operations. */
 super_block *sget(const super_operations *s_op);
 super_block *vfs_clone_mount_tree(super_block *sb);
+super_block *vfs_clone_bind_tree(super_block *sb);
 super_block *vfs_bind_mount(super_block *root, const char *path, int recursive);
 
 /* Increment the super_block reference count. */
@@ -119,6 +122,14 @@ int sb_path_resolve(super_block *sb, const char *path, super_block **out_sb,
 		    char **out_path);
 
 /* Invalidate followed-link paths around namespace changes. */
+void vfs_mount_changed(void);
+uint64_t vfs_mount_generation(void);
+unsigned vfs_mount_poll(uint64_t seen, unsigned events, poll_table *pt);
+void vfs_namespace_track(void *token, super_block *root);
+void vfs_namespace_untrack(void *token);
+int vfs_set_propagation(super_block *root, const char *target, unsigned flags);
+int vfs_mount_propagated(super_block *root, const char *target, super_block *mount);
+int vfs_umount_propagated(super_block *root, const char *target);
 void vfs_namespace_changed(void);
 uint64_t vfs_namespace_generation(void);
 

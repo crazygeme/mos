@@ -22,6 +22,10 @@ typedef struct pts_pair {
 	void (*group_changed)(struct pts_pair *, unsigned);
 	void (*on_free)(struct pts_pair *);
 	int idx;
+	int slot;
+	void *devpts_instance;
+	unsigned path_count;
+	void (*path_close)(struct pts_pair *);
 	int used;
 	spinlock_t lock;
 	uint32_t slave_mode;

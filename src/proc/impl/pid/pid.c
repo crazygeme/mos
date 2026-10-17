@@ -126,6 +126,8 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		proc_buf_printf(pb, "1:pids:%s\n", path);
 		ps_cgroup_path(task, 1, path);
 		proc_buf_printf(pb, "2:devices:%s\n", path);
+		ps_cgroup_path(task, 2, path);
+		proc_buf_printf(pb, "3:name=systemd:%s\n", path);
 		name_put(path);
 		return make_pid_file(pb, task);
 	}
@@ -154,11 +156,9 @@ file *proc_pid_lookup(unsigned pid, const char *rest, int flag)
 		name_put(buffer);
 		return make_pid_dir(pb, task);
 	}
-	if (!strcmp(rest, "/mountinfo") || !strcmp(rest, "/mounts")) {
-		pb = proc_buf_new();
-		proc_fill_mounts(pb, task, !strcmp(rest, "/mountinfo"));
-		return make_pid_file(pb, task);
-	}
+	if (!strcmp(rest, "/mountinfo") || !strcmp(rest, "/mounts"))
+		return make_pid_mount_file(task, !strcmp(rest, "/mountinfo"));
+
 	/* "" or "/" → per-PID directory listing */
 	if (rest[0] == '\0' || (rest[0] == '/' && rest[1] == '\0'))
 		return pid_dir_open(task, include_task);

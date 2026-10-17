@@ -456,16 +456,16 @@ netif_add(struct netif *netif,
 }
 
 static void
-netif_do_ip_addr_changed(const ip_addr_t *old_addr, const ip_addr_t *new_addr)
+netif_do_ip_addr_changed(u32_t tag, const ip_addr_t *old_addr, const ip_addr_t *new_addr)
 {
 #if LWIP_TCP
-  tcp_netif_ip_addr_changed(old_addr, new_addr);
+  tcp_netif_ip_addr_changed(tag, old_addr, new_addr);
 #endif /* LWIP_TCP */
 #if LWIP_UDP
-  udp_netif_ip_addr_changed(old_addr, new_addr);
+  udp_netif_ip_addr_changed(tag, old_addr, new_addr);
 #endif /* LWIP_UDP */
 #if LWIP_RAW
-  raw_netif_ip_addr_changed(old_addr, new_addr);
+  raw_netif_ip_addr_changed(tag, old_addr, new_addr);
 #endif /* LWIP_RAW */
 }
 
@@ -485,7 +485,7 @@ netif_do_set_ipaddr(struct netif *netif, const ip4_addr_t *ipaddr, ip_addr_t *ol
     ip_addr_copy(*old_addr, *netif_ip_addr4(netif));
 
     LWIP_DEBUGF(NETIF_DEBUG | LWIP_DBG_STATE, ("netif_set_ipaddr: netif address being changed\n"));
-    netif_do_ip_addr_changed(old_addr, &new_addr);
+    netif_do_ip_addr_changed(netif->mos_netns, old_addr, &new_addr);
 
 #if LWIP_ACD
     acd_netif_ip_addr_changed(netif, old_addr, &new_addr);
@@ -777,7 +777,7 @@ netif_remove(struct netif *netif)
 
 #if LWIP_IPV4
   if (!ip4_addr_isany_val(*netif_ip4_addr(netif))) {
-    netif_do_ip_addr_changed(netif_ip_addr4(netif), NULL);
+    netif_do_ip_addr_changed(netif->mos_netns, netif_ip_addr4(netif), NULL);
   }
 
 #if LWIP_IGMP
@@ -791,7 +791,7 @@ netif_remove(struct netif *netif)
 #if LWIP_IPV6
   for (i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
     if (ip6_addr_isvalid(netif_ip6_addr_state(netif, i))) {
-      netif_do_ip_addr_changed(netif_ip_addr6(netif, i), NULL);
+      netif_do_ip_addr_changed(netif->mos_netns, netif_ip_addr6(netif, i), NULL);
     }
   }
 #if LWIP_IPV6_MLD
@@ -1407,7 +1407,7 @@ netif_ip6_addr_set_parts(struct netif *netif, s8_t addr_idx, u32_t i0, u32_t i1,
     ip6_addr_assign_zone(ip_2_ip6(&new_ipaddr), IP6_UNICAST, netif);
 
     if (ip6_addr_isvalid(netif_ip6_addr_state(netif, addr_idx))) {
-      netif_do_ip_addr_changed(netif_ip_addr6(netif, addr_idx), &new_ipaddr);
+      netif_do_ip_addr_changed(netif->mos_netns, netif_ip_addr6(netif, addr_idx), &new_ipaddr);
     }
     /* @todo: remove/re-add mib2 ip6 entries? */
 
@@ -1467,7 +1467,7 @@ netif_ip6_addr_set_state(struct netif *netif, s8_t addr_idx, u8_t state)
 
     if (old_valid && !new_valid) {
       /* address about to be removed by setting invalid */
-      netif_do_ip_addr_changed(netif_ip_addr6(netif, addr_idx), NULL);
+      netif_do_ip_addr_changed(netif->mos_netns, netif_ip_addr6(netif, addr_idx), NULL);
       /* @todo: remove mib2 ip6 entries? */
     }
     netif->ip6_addr_state[addr_idx] = state;

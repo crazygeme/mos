@@ -9,6 +9,8 @@
 #include <ps/namespace.h>
 #include <ps/usage.h>
 #include <mm/mmap.h>
+#include <mm/cache.h>
+#include <fs/cache.h>
 #include <mm/mm.h>
 #include <mm/phymm.h>
 #include <lib/klib.h>
@@ -66,7 +68,7 @@ int sys_uname(struct utsname *utname)
 	strcpy(utname->release, UTS_RELEASE);
 	strcpy(utname->version, UTS_VERSION);
 	strcpy(utname->machine, UTS_MACHINE);
-	strcpy(utname->domain, UTS_NODENAME);
+	strcpy(utname->domain, ps_namespace_domainname(current));
 	return 0;
 }
 
@@ -367,12 +369,50 @@ int sys_prctl(int option, uintptr_t arg2, uintptr_t arg3, uintptr_t arg4,
 			return -EINVAL;
 		return current->credentials->no_new_privs;
 	}
+	if (option == 27) /* PR_GET_SECUREBITS */
+		return current->credentials->securebits;
+	if (option == 28) { /* PR_SET_SECUREBITS */
+		task_credentials *u = current->credentials;
+		unsigned old = u->securebits;
+		if (arg2 & ~0xffU)
+			return -EINVAL;
+		if (!ps_has_capability(current, 8) ||
+		    ((old ^ arg2) & ((old & 0xaaU) >> 1)) ||
+		    ((old & 0xaaU) & ~arg2))
+			return -EPERM;
+		u->securebits = arg2;
+		u->keep_capabilities = !!(arg2 & 16);
+		return 0;
+	}
+	if (option == 47) { /* PR_CAP_AMBIENT */
+		task_credentials *u = current->credentials;
+		if (arg4 || arg5 || arg2 < 1 || arg2 > 4)
+			return -EINVAL;
+		if (arg2 == 4) {
+			if (arg3) return -EINVAL;
+			memset(u->cap_ambient, 0, sizeof(u->cap_ambient));
+			return 0;
+		}
+		if (arg3 > 40) return -EINVAL;
+		unsigned word = arg3 / 32, bit = 1U << (arg3 % 32);
+		if (arg2 == 1) return !!(u->cap_ambient[word] & bit);
+		if (arg2 == 3) { u->cap_ambient[word] &= ~bit; return 0; }
+		if ((u->securebits & 64) || !(u->cap_permitted[word] & bit) ||
+		    !(u->cap_inheritable[word] & bit))
+			return -EPERM;
+		u->cap_ambient[word] |= bit;
+		return 0;
+	}
 	if (option == 7) /* PR_GET_KEEPCAPS */
 		return current->credentials->keep_capabilities;
 	if (option == 8) { /* PR_SET_KEEPCAPS */
 		if (arg2 > 1)
 			return -EINVAL;
+		if (current->credentials->securebits & 32)
+			return -EPERM;
 		current->credentials->keep_capabilities = arg2;
+		current->credentials->securebits =
+			(current->credentials->securebits & ~16U) | (arg2 ? 16U : 0);
 		return 0;
 	}
 	return -EINVAL;
@@ -622,6 +662,51 @@ int sys_mprotect(void *addr, size_t len, int prot)
 	}
 
 	vm_invalidate_task_cache(cur);
+	return 0;
+}
+
+int sys_mincore(void *addr, size_t length, unsigned char *vec)
+{
+	mm_struct *mm = current->memory;
+	vaddr_t begin = (vaddr_t)addr;
+	LOCK_GUARD(&mm->mapping_lock);
+	if (begin & (PAGE_SIZE - 1))
+		return -EINVAL;
+	if (begin >= mm->task_size || length > mm->task_size - begin ||
+	    !arch_mm_user_range_valid(begin, length))
+		return -ENOMEM;
+	size_t count = length / PAGE_SIZE + !!(length % PAGE_SIZE);
+	if (!arch_mm_user_range_valid((vaddr_t)vec, count))
+		return -EFAULT;
+	for (size_t i = 0; i < count; i++) {
+		vaddr_t address = (vaddr_t)(vec + i);
+		vm_region *out = vm_find_map(mm, address);
+		if (!out || !(out->prot & PROT_WRITE))
+			return -EFAULT;
+	}
+	for (size_t i = 0; i < count; i++) {
+		vaddr_t address = begin + i * PAGE_SIZE;
+		vm_region *region = vm_find_map(mm, address);
+		if (!region)
+			return -ENOMEM;
+		int resident = mm_get_map_flag(address) != 0;
+		uint64_t offset = region->offset + address - region->begin;
+		if (!resident && region->anon_id)
+			resident = mm_anon_shared_find(region->anon_id, offset) != 0;
+		if (!resident && region->fp) {
+			file *fp = region->fp;
+			if (fp->f_fop && fp->f_fop->page_resident)
+				resident = fp->f_fop->page_resident(fp, offset);
+			else {
+				paddr_t page = 0;
+				fs_page_cache_get_cached_range(fp, offset, &page, 1);
+				resident = page != 0;
+				if (page)
+					fs_page_cache_put(page);
+			}
+		}
+		vec[i] = resident ? 1 : 0;
+	}
 	return 0;
 }
 

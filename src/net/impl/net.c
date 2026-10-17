@@ -4,6 +4,7 @@
  * Wraps the first registered NIC (eth0) in a lwIP netif and starts DHCP.
  */
 #include <net/core.h>
+#include <ps/namespace.h>
 #include <net/net.h>
 #include <lib/klib.h>
 #include <lib/lock.h>
@@ -12,6 +13,8 @@
 #include <ps/ps.h>
 
 #include <lwip/init.h>
+#include <lwip/ip.h>
+#include <lwip/priv/tcp_priv.h>
 #include <lwip/netif.h>
 #include <lwip/etharp.h>
 #include <lwip/dhcp.h>
@@ -198,9 +201,77 @@ static unsigned long g_tx_bytes, g_tx_packets;
 
 struct netif *net_get_default_netif(void)
 {
-	return &eth0;
+	return net_namespace_current() ? NULL : &eth0;
 }
 
+unsigned net_namespace_current(void)
+{
+	void *ns = ps_netns_get(current);
+	unsigned tag = ps_netns_tag(ns);
+	ps_netns_put(ns);
+	return tag;
+}
+int net_namespace_visible(const struct netif *nif)
+{
+	return nif->mos_netns == net_namespace_current();
+}
+static err_t namespace_loop_output(struct netif *nif, struct pbuf *p, const ip4_addr_t *dest)
+{
+	if (!ip4_addr_isloopback(dest) || !netif_is_up(nif))
+		return ERR_RTE;
+	return netif_loop_output(nif, p);
+}
+static err_t namespace_loop_init(struct netif *nif)
+{
+	nif->name[0] = 'l'; nif->name[1] = 'o';
+	nif->mtu = 65535;
+	nif->output = namespace_loop_output;
+	return ERR_OK;
+}
+struct netif *net_namespace_create(unsigned tag)
+{
+	LOCK_GUARD(&net_core_lock);
+	unsigned count = 0;
+	for (struct netif *n = netif_list; n; n = n->next)
+		count++;
+	if (count >= 254)
+		return NULL;
+	struct netif *nif = zalloc(sizeof(*nif));
+	if (!nif)
+		return NULL;
+	ip4_addr_t ip, mask, gw;
+	IP4_ADDR(&ip, 127, 0, 0, 1);
+	IP4_ADDR(&mask, 255, 0, 0, 0);
+	IP4_ADDR(&gw, 0, 0, 0, 0);
+	if (!netif_add(nif, &ip, &mask, &gw, NULL, namespace_loop_init, ip_input)) {
+		free(nif);
+		return NULL;
+	}
+	nif->mos_netns = tag;
+	netif_set_link_up(nif);
+	return nif;
+}
+void net_namespace_destroy(struct netif *nif)
+{
+	LOCK_GUARD(&net_core_lock);
+	netif_set_down(nif);
+	for (unsigned i = 0; i < NUM_TCP_PCB_LISTS; i++) {
+		struct tcp_pcb *p = *tcp_pcb_lists[i];
+		while (p) {
+			struct tcp_pcb *next = p->next;
+			if (p->mos_netns == nif->mos_netns) {
+				if (p->state == LISTEN)
+					tcp_close(p);
+				else
+					tcp_abort(p);
+			}
+			p = next;
+		}
+	}
+	netif_poll(nif);
+	netif_remove(nif);
+	free(nif);
+}
 void net_get_stats(net_stats_t *s)
 {
 	s->rx_bytes = g_rx_bytes;

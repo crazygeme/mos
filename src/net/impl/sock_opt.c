@@ -6,6 +6,7 @@
 #include <lib/klib.h>
 #include <errno.h>
 #include <ps/ps.h>
+#include <lib/bpf.h>
 
 #include <lwip/tcp.h>
 #include <lwip/udp.h>
@@ -82,9 +83,35 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 
 	if (level == SOL_SOCKET) {
 		switch (optname) {
+		case 26: { /* SO_ATTACH_FILTER */
+			if (sk->domain != AF_NETLINK || sk->protocol != 15) { ret = -EOPNOTSUPP; goto done; }
+			unsigned char header[16];
+			if (optlen != 8 && optlen != 16) { ret = -EINVAL; goto done; }
+			if (ps_read_process_memory(current, optval, header, optlen) < 0) { ret = -EFAULT; goto done; }
+			uint16_t count;
+			uintptr_t address = 0;
+			memcpy(&count, header, 2);
+			if (optlen == 16) memcpy(&address, header + 8, sizeof(address));
+			else { uint32_t pointer; memcpy(&pointer, header + 4, 4); address = pointer; }
+			if (!count || count > 4096) { ret = -EINVAL; goto done; }
+			unsigned size = count * sizeof(struct mos_bpf_insn);
+			struct mos_bpf_filter *filter = malloc(sizeof(*filter) + size);
+			if (!filter) { ret = -ENOMEM; goto done; }
+			filter->count = count;
+			if (ps_read_process_memory(current, (void *)address, filter->instructions, size) < 0)
+				ret = -EFAULT;
+			else ret = mos_bpf_verify(filter);
+			if (ret) free(filter);
+			else { free(sk->socket_filter); sk->socket_filter = filter; }
+			goto done;
+		}
+		case 27: /* SO_DETACH_FILTER */
+			if (!sk->socket_filter) ret = -ENOENT;
+			else { free(sk->socket_filter); sk->socket_filter = NULL; }
+			goto done;
 		case SO_PASSCRED:
 			if (!((sk->domain == AF_UNIX &&
-			       sk->type == SOCK_SEQPACKET) ||
+			       (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM || sk->type == SOCK_STREAM)) ||
 			      (sk->domain == AF_NETLINK &&
 			       sk->protocol == 15))) {
 				ret = -ENOPROTOOPT;
@@ -260,6 +287,23 @@ int do_setsockopt(int fd, int level, int optname, const void *optval,
 			break;
 
 		case TCP_KEEPIDLE:
+		case TCP_KEEPINTVL:
+		case TCP_KEEPCNT:
+			if (sockopt_get_int(optval, optlen, &ival) || ival <= 0 ||
+			    ival > (optname == TCP_KEEPCNT ? 127 : 32767)) {
+				ret = -EINVAL;
+				goto done;
+			}
+			if (!sock_tcp_has_full_pcb(sk)) {
+				ret = -EINVAL;
+				goto done;
+			}
+			if (optname == TCP_KEEPIDLE)
+				sk->tcp->keep_idle = (unsigned)ival * 1000;
+			else if (optname == TCP_KEEPINTVL)
+				sk->tcp->keep_intvl = (unsigned)ival * 1000;
+			else
+				sk->tcp->keep_cnt = ival;
 			break;
 
 		default:
@@ -291,9 +335,18 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 
 	if (level == SOL_SOCKET) {
 		switch (optname) {
+		case 30: /* SO_ACCEPTCONN */
+			ret = sockopt_put_int(optval, optlen, sk->listening);
+			goto done;
+		case 38: /* SO_PROTOCOL */
+			ret = sockopt_put_int(optval, optlen, sk->protocol);
+			goto done;
+		case 39: /* SO_DOMAIN */
+			ret = sockopt_put_int(optval, optlen, sk->domain);
+			goto done;
 		case SO_PASSCRED:
 			if (!((sk->domain == AF_UNIX &&
-			       sk->type == SOCK_SEQPACKET) ||
+			       (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM || sk->type == SOCK_STREAM)) ||
 			      (sk->domain == AF_NETLINK &&
 			       sk->protocol == 15))) {
 				ret = -ENOPROTOOPT;
@@ -451,6 +504,17 @@ int do_getsockopt(int fd, int level, int optname, void *optval,
 		switch (optname) {
 		case TCP_NODELAY: {
 			int val = sk->tcp_nodelay;
+			ret = sockopt_put_int(optval, optlen, val);
+			goto done;
+		}
+		case TCP_KEEPIDLE:
+		case TCP_KEEPINTVL:
+		case TCP_KEEPCNT: {
+			if (!sock_tcp_has_full_pcb(sk))
+				goto done;
+			int val = optname == TCP_KEEPIDLE ? sk->tcp->keep_idle / 1000 :
+				optname == TCP_KEEPINTVL ? sk->tcp->keep_intvl / 1000 :
+				sk->tcp->keep_cnt;
 			ret = sockopt_put_int(optval, optlen, val);
 			goto done;
 		}

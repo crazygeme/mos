@@ -159,6 +159,7 @@ int sys_fstatfs64(int fd, unsigned size, struct statfs64 *buf);
 int sys_flock(int fd, int operation);
 int sys_ftruncate(int fd, unsigned long length);
 int sys_ftruncate64(int fd, uint64_t length);
+int sys_fallocate(int fd, int mode, uint64_t offset, uint64_t length);
 int sys__sysctl(void *args);
 int sys_mlock(const void *addr, size_t len);
 int sys_munlock(const void *addr, size_t len);
@@ -346,6 +347,7 @@ int sys_mmap2(unsigned addr, unsigned len, unsigned prot, unsigned flags,
 	      int fd, unsigned pgoffset);
 int sys_munmap(void *addr, size_t length);
 int sys_mprotect(void *addr, size_t len, int prot);
+int sys_mincore(void *addr, size_t length, unsigned char *vec);
 int sys_madvise(void *addr, size_t length, int advice);
 intptr_t sys_mremap(vaddr_t old_addr, size_t old_size, size_t new_size,
 		    int flags, vaddr_t new_addr);

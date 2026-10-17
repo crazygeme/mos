@@ -111,14 +111,10 @@ static super_block *stub_get_sb(const char *dev, const char *target, int flags,
 /* "proc" is registered by src/proc/procfs.c (KERNEL_INIT 4) with a real get_sb */
 /* "ext4"/"ext3" are registered by src/fs/root.c (KERNEL_INIT 3) */
 
-static fs_type devtmpfs_fs_type = { .name = "devtmpfs", .get_sb = stub_get_sb };
 static fs_type none_fs_type = { .name = "none", .get_sb = stub_get_sb };
 
 static void mount_syscall_init(void)
 {
-	printk("mnt: registered devtmpfs file type\n");
-	fs_register_type(&devtmpfs_fs_type);
-
 	printk("mnt: registered none file type\n");
 	fs_register_type(&none_fs_type);
 }
@@ -189,16 +185,10 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 			sb_put(moved);
 		return moved_result;
 	}
-	/* Mount views do not propagate changes to other namespaces. */
-	if (flags & ((1U << 18) | (1U << 19))) { /* MS_PRIVATE, MS_SLAVE */
-		file *fp = vfs_open(cur->fs->root, target, O_PATH);
-		if (!fp)
-			return -ENOENT;
-		fs_put_file(fp);
-		return 0;
+	if (flags & ((1U << 17) | (1U << 18) | (1U << 19) | (1U << 20))) {
+		ps_namespace_mount_root(cur->fs->root);
+		return vfs_set_propagation(cur->fs->root, target, flags);
 	}
-	if (flags & ((1U << 17) | (1U << 20))) /* MS_UNBINDABLE, MS_SHARED */
-		return -EOPNOTSUPP;
 	if (flags & MS_REMOUNT) {
 		super_block *mounted = cur->fs->root;
 		char *suffix;
@@ -225,7 +215,7 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 		sb = vfs_bind_mount(cur->fs->root, dev, !!(flags & 16384));
 		if (!sb)
 			return -ENOMEM;
-		ret = vfs_mount(cur->fs->root, target, sb);
+		ret = vfs_mount_propagated(cur->fs->root, target, sb);
 		if (ret)
 			sb_put(sb);
 		return ret;
@@ -265,7 +255,7 @@ int fs_do_mount(const char *dev, const char *target, const char *type,
 		return -ENOMEM;
 
 	strncpy(sb->s_fstype, type, sizeof(sb->s_fstype) - 1);
-	ret = vfs_mount(cur->fs->root, target, sb);
+	ret = vfs_mount_propagated(cur->fs->root, target, sb);
 	if (ret == -EEXIST) {
 		sb_put(sb);
 		return -EBUSY;
@@ -297,5 +287,5 @@ int fs_do_umount(const char *target, int flags)
 	if (target[1] == '\0')
 		return -EBUSY;
 
-	return vfs_umount(cur->fs->root, target);
+	return vfs_umount_propagated(cur->fs->root, target);
 }

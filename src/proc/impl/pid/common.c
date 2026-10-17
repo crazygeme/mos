@@ -12,6 +12,8 @@
 #include <macro.h>
 #include <ext4.h>
 #include <fs/fcntl.h>
+#include <errno.h>
+#include <fs/vfs.h>
 
 /* ── File operations shared by regular files and directories ─────────── */
 
@@ -21,6 +23,9 @@ typedef struct {
 	unsigned gid;
 	unsigned task_group;
 	int task_directory;
+	super_block *mount_root;
+	uint64_t mount_seen;
+	int mountinfo;
 } pid_file_data;
 
 static pid_file_data *pid_data_new(proc_buf_t *pb, task_struct *task)
@@ -35,6 +40,15 @@ static pid_file_data *pid_data_new(proc_buf_t *pb, task_struct *task)
 static ssize_t pid_read(file *fp, void *buf, size_t count, loff_t *pos)
 {
 	pid_file_data *data = fp->f_inode->i_private;
+	if (data->mount_root && !*pos) {
+		proc_buf_t *snapshot = proc_buf_new();
+		if (!snapshot)
+			return -ENOMEM;
+		data->mount_seen = vfs_mount_generation();
+		proc_fill_mounts_root(snapshot, data->mount_root, data->mountinfo);
+		proc_buf_free(data->buffer);
+		data->buffer = snapshot;
+	}
 	proc_buf_t *pb = data->buffer;
 	loff_t off = *pos;
 	ssize_t left = (ssize_t)pb->len - (ssize_t)off;
@@ -84,6 +98,8 @@ static int pid_release(file *fp)
 {
 	pid_file_data *data = fp->f_inode->i_private;
 	proc_buf_free(data->buffer);
+	if (data->mount_root)
+		sb_put(data->mount_root);
 	free(data);
 	free(fp->f_inode);
 	free(fp);
@@ -129,6 +145,20 @@ static const file_operations pid_file_fops = {
 	.read = pid_read,
 	.llseek = pid_llseek,
 	.poll = pid_poll,
+	.release = pid_release,
+};
+
+static unsigned pid_mount_poll(file *fp, unsigned events, poll_table *pt)
+{
+	pid_file_data *data = fp->f_inode->i_private;
+	return vfs_mount_poll(data->mount_seen, events, pt);
+}
+static const file_operations pid_mount_fops = {
+	.getattr = pid_file_getattr,
+	.read = pid_read,
+	.llseek = pid_llseek,
+	.poll = pid_mount_poll,
+	.epoll_regular = 1,
 	.release = pid_release,
 };
 
@@ -225,9 +255,24 @@ static file *pid_fd_metadata_reopen(file *fp, int flags)
 		       NULL;
 }
 
+static int pid_fd_metadata_setattr(file *fp, uint32_t mode)
+{
+	file *target = fp->f_inode->i_private;
+	return target->f_fop && target->f_fop->setattr ?
+		target->f_fop->setattr(target, mode) : EOPNOTSUPP;
+}
+static int pid_fd_metadata_chown(file *fp, uint32_t uid, uint32_t gid)
+{
+	file *target = fp->f_inode->i_private;
+	return target->f_fop && target->f_fop->chown ?
+		target->f_fop->chown(target, uid, gid) : EOPNOTSUPP;
+}
+
 static const file_operations pid_fd_metadata_fops = {
 	.reopen = pid_fd_metadata_reopen,
 	.getattr = pid_fd_metadata_getattr,
+	.setattr = pid_fd_metadata_setattr,
+	.chown = pid_fd_metadata_chown,
 	.release = pid_fd_metadata_release,
 };
 
@@ -247,6 +292,9 @@ static file *pid_fd_link_follow(file *fp, int flags)
 		metadata->f_inode = node;
 		metadata->f_count = 1;
 		metadata->f_fop = &pid_fd_metadata_fops;
+		metadata->f_mount_flags = link->target->f_mount_flags;
+		metadata->f_mount_id = link->target->f_mount_id;
+		metadata->f_mount_root = link->target->f_mount_root;
 		metadata->f_name = link->target->f_name ?
 					   strdup(link->target->f_name) :
 					   NULL;
@@ -303,6 +351,22 @@ file *make_pid_file(proc_buf_t *pb, task_struct *task)
 	fp->f_inode = nd;
 	fp->f_count = 1;
 	fp->f_fop = &pid_file_fops;
+	return fp;
+}
+
+file *make_pid_mount_file(task_struct *task, int info)
+{
+	proc_buf_t *pb = proc_buf_new();
+	if (!pb)
+		return NULL;
+	proc_fill_mounts_root(pb, task->fs->root, info);
+	file *fp = make_pid_file(pb, task);
+	pid_file_data *data = fp->f_inode->i_private;
+	data->mount_root = task->fs->root;
+	sb_get(data->mount_root);
+	data->mount_seen = vfs_mount_generation();
+	data->mountinfo = info;
+	fp->f_fop = &pid_mount_fops;
 	return fp;
 }
 

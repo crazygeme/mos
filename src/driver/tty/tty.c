@@ -2499,14 +2499,14 @@ static void tty_dev_register(void)
 				 MKDEV(TTY_VC_MAJOR, i), "tty", tty_vc_open);
 	}
 	printk("dev: registered /dev/console\n");
-	/* major 11: /dev/tty0, /dev/console, /dev/tty */
+	/* The active virtual console uses major 4; auxiliary terminals use major 5. */
 
 	vfs_entry_device(devfs_entries(), "/tty0", S_IFCHR | 0620,
-			 MKDEV(TTY_AUX_MAJOR, 0), "vc", tty_active_open);
+			 MKDEV(TTY_VC_MAJOR, 0), "tty", tty_active_open);
 	vfs_entry_device(devfs_entries(), "/console", S_IFCHR | 0600,
-			 MKDEV(TTY_AUX_MAJOR, 1), "vc", tty_console_open);
+			 MKDEV(TTY_AUX_MAJOR, 1), "tty", tty_console_open);
 	vfs_entry_device(devfs_entries(), "/tty", S_IFCHR | 0620,
-			 MKDEV(TTY_AUX_MAJOR, 2), "vc", tty_controlling_open);
+			 MKDEV(TTY_AUX_MAJOR, 0), "tty", tty_controlling_open);
 }
 
 static const chardev_console_ops terminal_console_ops = {

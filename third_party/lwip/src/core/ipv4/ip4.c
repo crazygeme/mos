@@ -168,6 +168,7 @@ ip4_route(const ip4_addr_t *dest)
 
   /* iterate through netifs */
   NETIF_FOREACH(netif) {
+    if (netif->mos_netns) { continue; }
     /* is the netif up, does it have a link and a valid address? */
     if (netif_is_up(netif) && netif_is_link_up(netif) && !ip4_addr_isany_val(*netif_ip4_addr(netif))) {
       /* network mask matches? */
@@ -192,6 +193,7 @@ ip4_route(const ip4_addr_t *dest)
     }
     /* default netif is not up, just use any netif for loopback traffic */
     NETIF_FOREACH(netif) {
+    if (netif->mos_netns) { continue; }
       if (netif_is_up(netif)) {
         return netif;
       }
@@ -587,6 +589,7 @@ ip4_input(struct pbuf *p, struct netif *inp)
       {
 #if !LWIP_SINGLE_NETIF
         NETIF_FOREACH(netif) {
+    if (netif->mos_netns) { continue; }
           if (netif == inp) {
             /* we checked that before already */
             continue;
@@ -884,6 +887,7 @@ ip4_output_if_opt_src(struct pbuf *p, const ip4_addr_t *src, const ip4_addr_t *d
 
   LWIP_ASSERT_CORE_LOCKED();
   LWIP_IP_CHECK_PBUF_REF_COUNT_FOR_TX(p);
+  if (!netif_is_up(netif)) { return ERR_RTE; }
 
   MIB2_STATS_INC(mib2.ipoutrequests);
 
@@ -1065,6 +1069,7 @@ ip4_output(struct pbuf *p, const ip4_addr_t *src, const ip4_addr_t *dest,
   struct netif *netif;
 
   LWIP_IP_CHECK_PBUF_REF_COUNT_FOR_TX(p);
+  if (!netif_is_up(netif)) { return ERR_RTE; }
 
   if ((netif = ip4_route_src(src, dest)) == NULL) {
     LWIP_DEBUGF(IP_DEBUG, ("ip4_output: No route to %"U16_F".%"U16_F".%"U16_F".%"U16_F"\n",
@@ -1103,6 +1108,7 @@ ip4_output_hinted(struct pbuf *p, const ip4_addr_t *src, const ip4_addr_t *dest,
   err_t err;
 
   LWIP_IP_CHECK_PBUF_REF_COUNT_FOR_TX(p);
+  if (!netif_is_up(netif)) { return ERR_RTE; }
 
   if ((netif = ip4_route_src(src, dest)) == NULL) {
     LWIP_DEBUGF(IP_DEBUG, ("ip4_output: No route to %"U16_F".%"U16_F".%"U16_F".%"U16_F"\n",

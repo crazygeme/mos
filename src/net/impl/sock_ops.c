@@ -4,6 +4,7 @@
  */
 #include <net/core.h>
 #include <net/sock.h>
+#include <ps/namespace.h>
 #include <lib/klib.h>
 #include <ps/ps.h>
 #include <fs/fs.h>
@@ -132,6 +133,11 @@ int do_socket(int domain, int type, int protocol)
 		sock_udp_recv_setup(sk->udp, sk);
 	}
 
+	unsigned tag = ps_netns_tag(sk->network_namespace);
+	struct netif *loop = ps_netns_loop(sk->network_namespace);
+	if (sk->tcp) { sk->tcp->mos_netns = tag; if (loop) tcp_bind_netif(sk->tcp, loop); }
+	if (sk->udp) { sk->udp->mos_netns = tag; if (loop) udp_bind_netif(sk->udp, loop); }
+	if (sk->raw) { sk->raw->mos_netns = tag; if (loop) raw_bind_netif(sk->raw, loop); }
 	int fd = sock_to_fd(sk);
 	if (fd < 0) {
 		if (type == SOCK_STREAM)
@@ -303,6 +309,7 @@ int do_listen(int fd, int backlog)
 	sock_tcp_accept_listen(sk->tcp, sk);
 	/* A listen PCB has no send queue or other connection-only fields. */
 	sk->state = SS_UNCONNECTED;
+	sk->listening = 1;
 	return 0;
 }
 
@@ -424,7 +431,7 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
-	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET)
+	if (sk->domain == AF_UNIX && (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM))
 		return do_sendto(fd, buf, len, flags, NULL, 0);
 	loff_t pos = 0;
 	task_struct *cur = CURRENT_TASK();
@@ -467,9 +474,10 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	}
 	if (sk->err)
 		return sk->err;
-	if (sk->domain == AF_UNIX && sk->type == SOCK_SEQPACKET) {
+	if (sk->domain == AF_UNIX && (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM)) {
 		struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
-		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+		struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1,
+			.msg_name = (void *)to, .msg_namelen = tolen };
 		if (CURRENT_TASK()->files->fds[fd]->f_flag & O_NONBLOCK)
 			flags |= MSG_DONTWAIT;
 		return unix_sendmsg(sk, &msg, flags);
@@ -484,7 +492,7 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 
 	if (sk->type == SOCK_RAW) {
 		if (sk->hdrincl)
-			return raw_send_hdrincl(buf, len);
+			return raw_send_hdrincl(sk, buf, len);
 		ip_addr_t ip;
 		ip4_addr_set_u32(ip_2_ip4(&ip), to->sin_addr.s_addr);
 		struct pbuf *p = pbuf_alloc(PBUF_IP, (u16_t)len, PBUF_RAM);

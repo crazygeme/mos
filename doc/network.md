@@ -349,7 +349,7 @@ Some options are accepted as stubs but do not currently change behavior:
 ### TCP
 
 - `TCP_NODELAY`
-- `TCP_KEEPIDLE` is currently accepted as a stub
+- `TCP_KEEPIDLE`, `TCP_KEEPINTVL`, and `TCP_KEEPCNT` configure TCP keepalive probes
 
 ## Blocking and Wakeups
 

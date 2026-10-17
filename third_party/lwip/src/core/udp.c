@@ -136,6 +136,7 @@ udp_input_local_match(struct udp_pcb *pcb, struct netif *inp, u8_t broadcast)
   LWIP_ASSERT("udp_input_local_match: invalid netif", inp != NULL);
 
   /* check if PCB is bound to specific netif */
+  if (pcb->mos_netns != ip_data.current_input_netif->mos_netns) { return 0; }
   if ((pcb->netif_idx != NETIF_NO_INDEX) &&
       (pcb->netif_idx != netif_get_index(ip_data.current_input_netif))) {
     return 0;
@@ -996,7 +997,7 @@ udp_bind(struct udp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
 #endif /* SO_REUSE */
         {
           /* port matches that of PCB in list and REUSEADDR not set -> reject */
-          if ((ipcb->local_port == port) &&
+          if ((ipcb->mos_netns == pcb->mos_netns) && (ipcb->local_port == port) &&
               (((IP_GET_TYPE(&ipcb->local_ip) == IP_GET_TYPE(ipaddr)) &&
               /* IP address matches or any IP used? */
               (ip_addr_eq(&ipcb->local_ip, ipaddr) ||
@@ -1282,14 +1283,14 @@ udp_new_ip_type(u8_t type)
  * @param old_addr IP address of the netif before change
  * @param new_addr IP address of the netif after change
  */
-void udp_netif_ip_addr_changed(const ip_addr_t *old_addr, const ip_addr_t *new_addr)
+void udp_netif_ip_addr_changed(u32_t tag, const ip_addr_t *old_addr, const ip_addr_t *new_addr)
 {
   struct udp_pcb *upcb;
 
   if (!ip_addr_isany(old_addr) && !ip_addr_isany(new_addr)) {
     for (upcb = udp_pcbs; upcb != NULL; upcb = upcb->next) {
       /* PCB bound to current local interface address? */
-      if (ip_addr_eq(&upcb->local_ip, old_addr)) {
+      if (upcb->mos_netns == tag && ip_addr_eq(&upcb->local_ip, old_addr)) {
         /* The PCB is bound to the old ipaddr and
          * is set to bound to the new one instead */
         ip_addr_copy(upcb->local_ip, *new_addr);

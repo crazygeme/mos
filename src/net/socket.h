@@ -73,7 +73,7 @@ struct sockaddr_in {
 };
 
 #define UNIX_PATH_MAX 108
-#define UNIX_KEY_MAX (2 * UNIX_PATH_MAX + 2)
+#define UNIX_KEY_MAX (2 * UNIX_PATH_MAX + 11)
 
 struct sockaddr_un {
 	sa_family_t sun_family; /* AF_UNIX */
@@ -175,6 +175,8 @@ struct icmp_filter {
 /* ── IPPROTO_TCP option names (Linux values) ────────────────────────────────── */
 #define TCP_NODELAY 1 /* disable Nagle algorithm */
 #define TCP_MAXSEG 2 /* maximum segment size */
+#define TCP_KEEPINTVL 5
+#define TCP_KEEPCNT 6
 #define TCP_KEEPIDLE 4 /* keepalive idle time (seconds) */
 
 /* ── linger structure (for SO_LINGER) ───────────────────────────────────────── */
@@ -274,6 +276,8 @@ typedef struct _unix_passfd_msg {
 	unsigned ready_head;
 	unsigned end_head;
 	unsigned nfds;
+	int credential_pid;
+	unsigned credential_uid, credential_gid, has_credentials;
 	struct _file *files[UNIX_PASSFD_MAX];
 } unix_passfd_msg;
 
@@ -295,13 +299,23 @@ typedef struct {
 	unix_peercred credentials;
 } unix_seqpacket_header;
 
+typedef struct {
+	uint32_t length;
+	unix_peercred credentials;
+	char sender[UNIX_KEY_MAX];
+} unix_dgram_header;
+
+
 typedef struct _mos_sock {
+	void *network_namespace;
 	int domain;
 	int type;
 	int protocol;
 	uint32_t netlink_port, netlink_groups;
+	struct mos_bpf_filter *socket_filter;
 	list_entry netlink_list;
 	int state; /* SS_* */
+	int listening;
 	int err; /* pending negative errno, 0 = OK */
 	int tcp_nodelay; /* retained when tcp_listen replaces the full PCB */
 	unsigned tcp_shutdown; /* Local half-close state under net_core_lock. */

@@ -54,7 +54,7 @@ mos_sock *fd_to_sock(int fd);
 
 void sock_tcp_abort(mos_sock *sk);
 void tcp_setup_callbacks(struct tcp_pcb *pcb, mos_sock *sk);
-int raw_send_hdrincl(const void *buf, unsigned len);
+int raw_send_hdrincl(mos_sock *sk, const void *buf, unsigned len);
 err_t sock_tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ip, u16_t port);
 void sock_tcp_accept_listen(struct tcp_pcb *pcb, mos_sock *sk);
 void sock_udp_recv_setup(struct udp_pcb *pcb, mos_sock *sk);

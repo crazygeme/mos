@@ -367,10 +367,15 @@ static int ext4_file_flush(file *fp)
 	return 0;
 }
 
+static void ext4_stat_identity(file *fp, struct stat *s);
+
 static int ext4_file_getattr(file *fp, struct stat *s)
 {
 	ext4_file *f = fp->f_inode->i_private;
-	return ext4_fstat(f, s);
+	int ret = ext4_fstat(f, s);
+	if (!ret)
+		ext4_stat_identity(fp, s);
+	return ret ? -ret : 0;
 }
 
 static int ext4_file_readlink(file *fp, char *buf, size_t size, size_t *length)
@@ -558,7 +563,10 @@ static loff_t ext4_dir_llseek(file *fp, loff_t offset, int whence)
 static int ext4_dir_getattr(file *fp, struct stat *s)
 {
 	ext4_dir *dir = fp->f_inode->i_private;
-	return ext4_fstat(&dir->f, s);
+	int ret = ext4_fstat(&dir->f, s);
+	if (!ret)
+		ext4_stat_identity(fp, s);
+	return ret ? -ret : 0;
 }
 
 static int ext4_dir_setattr(file *fp, uint32_t mode)
@@ -1030,6 +1038,11 @@ resolve_prefix:
 	if (!pre_res || ext4_resolve_prefix(path, pre_res) != 0 ||
 	    strcmp(pre_res, path) == 0)
 		goto fail;
+	if (target_path) {
+		*target_path = pre_res;
+		pre_res = NULL;
+		goto done;
+	}
 	cur_path = pre_res;
 	goto retry_open;
 
@@ -1075,6 +1088,23 @@ typedef struct {
 	char devname[64]; /* Registered lwext4 device identity for remount. */
 	char loop_name[16]; /* non-empty if mount auto-attached a loop device */
 } ext4_mount_info;
+
+static void ext4_stat_identity(file *fp, struct stat *s)
+{
+	super_block *sb = fp->f_inode->i_pgcache_tag;
+	if (!sb)
+		return;
+	ext4_mount_info *mi = sb->s_fs_info;
+	blockdev_info device;
+	if (S_ISCHR(s->st_mode) || S_ISBLK(s->st_mode))
+		s->st_rdev = s->st_dev;
+	if (blockdev_lookup(mi->devname, &device))
+		s->st_dev = MKDEV(device.major, device.minor);
+	else
+		s->st_dev = (uintptr_t)mi->fs;
+	s->st_blksize = ext4_sb_get_block_size(&mi->fs->sb);
+}
+
 
 static file *ext4_open_link(super_block *sb, const char *path, int flag,
 			    char **target)
@@ -1993,26 +2023,33 @@ static int ext4_remount(super_block *sb, int flags)
 {
 	ext4_mount_info *mi = sb->s_fs_info;
 	bool rdonly = (flags & MS_RDONLY) != 0;
-	int ret;
-	vfs_namespace_changed();
-
-	ext4_cache_write_back(mi->mp, false);
-	ext4_umount(mi->mp);
-
-	ret = ext4_mount(mi->devname, mi->mp, rdonly);
-	if (ret != EOK) {
-		vfs_namespace_changed();
-		return -EIO;
+	int ret = EOK;
+	root_lock_lock();
+	/* Preserve open inode handles and the shared block cache during remount. */
+	if (!mi->fs->read_only) {
+		ret = ext4_cache_write_back(mi->mp, false);
+		if (ret == EOK && rdonly)
+			ret = ext4_fs_fini(mi->fs);
 	}
-	struct ext4_sblock *disk_sb;
-	if (ext4_get_sblock(mi->mp, &disk_sb) == EOK)
-		mi->fs = container_of(disk_sb, struct ext4_fs, sb);
-
-	ext4_mount_setup_locks(mi->mp, &root_lock);
-	if (!rdonly)
-		ext4_cache_write_back(mi->mp, true);
-
-	sb->s_flags = (sb->s_flags & ~MS_RDONLY) | (rdonly ? MS_RDONLY : 0);
+	if (ret == EOK && !rdonly && mi->fs->read_only) {
+		bool required_readonly = false;
+		ret = ext4_fs_check_features(mi->fs, &required_readonly);
+		if (ret == EOK && required_readonly)
+			ret = EROFS;
+		if (ret == EOK) {
+			ext4_set16(&mi->fs->sb, state, EXT4_SUPERBLOCK_STATE_ERROR_FS);
+			ret = ext4_sb_write(mi->fs->bdev, &mi->fs->sb);
+		}
+	}
+	if (ret == EOK) {
+		mi->fs->read_only = rdonly;
+		sb->s_flags = (sb->s_flags & ~MS_RDONLY) | (rdonly ? MS_RDONLY : 0);
+		if (!rdonly)
+			ret = ext4_cache_write_back(mi->mp, true);
+	}
+	root_lock_unlock();
+	if (ret != EOK)
+		return -ret;
 	vfs_namespace_changed();
 	return 0;
 }

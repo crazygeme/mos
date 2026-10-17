@@ -593,11 +593,14 @@ static int execve_common(const char *f, char **argv, char **envp,
 	cur->credentials->egid = cur->credentials->sgid =
 		cur->credentials->fsgid = exec_egid;
 	cur->credentials->keep_capabilities = 0;
+	cur->credentials->securebits &= ~16U;
+	if (s.st_mode & (S_ISUID | S_ISGID))
+		memset(cur->credentials->cap_ambient, 0, sizeof(cur->credentials->cap_ambient));
 	if (cur->credentials->no_new_privs) {
 		if (!cur->credentials->cap_initialized) {
 			for (unsigned i = 0; i < 2; i++)
 				cur->credentials->cap_permitted[i] =
-					cur->credentials->euid == 0 ?
+					cur->credentials->euid == 0 && !(cur->credentials->securebits & 1) ?
 						cur->credentials
 							->cap_bounding[i] :
 						0;
@@ -612,6 +615,14 @@ static int execve_common(const char *f, char **argv, char **envp,
 		memset(cur->credentials->cap_permitted, 0,
 		       sizeof(cur->credentials->cap_permitted));
 		cur->credentials->cap_initialized = 0;
+	}
+
+	if (cur->credentials->securebits & 1 || cur->credentials->euid != 0) {
+		for (unsigned i = 0; i < 2; i++) {
+			cur->credentials->cap_permitted[i] = cur->credentials->cap_ambient[i];
+			cur->credentials->cap_effective[i] = cur->credentials->cap_ambient[i];
+		}
+		cur->credentials->cap_initialized = 1;
 	}
 
 	/* setup arguments and enviroments in proper way for interp */

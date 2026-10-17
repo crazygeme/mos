@@ -105,6 +105,7 @@ typedef struct _file_operations {
 	/* Custom dtor of file struct, will call regular kfree if not provided */
 	int (*release)(file *file);
 	int (*getattr)(file *file, struct stat *s);
+	int (*page_resident)(file *file, uint64_t offset);
 	/* Complete an open after access checks and status flags are configured. */
 	int (*open_ready)(file *file);
 	/* Borrowed parent identity and entry name: 1 for a parent, 0 for a root. */
@@ -132,12 +133,14 @@ typedef struct _file_operations {
 	int (*read_page)(file *file, uint64_t offset, void *buf);
 	int (*write_page)(file *file, uint64_t offset, const void *buf);
 	int (*ftruncate)(file *file, loff_t size);
+	int (*fallocate)(file *file, int mode, uint64_t offset, uint64_t length);
 	/*
 	 * poll: return an FS_POLL_* readiness bitmask for the requested @events.
 	 * If @pt is non-NULL, register the requested readiness queues even if
 	 * ready. The table owns each subscription until poll_table_cleanup().
 	 */
 	unsigned (*poll)(file *file, unsigned events, poll_table *pt);
+	unsigned epoll_regular;
 	int (*ioctl)(file *file, unsigned cmd, void *buf);
 	int (*flush)(file *file);
 	/* Return a referenced backing file and a validated byte offset. */
@@ -191,6 +194,7 @@ struct _file {
 	unsigned f_name_inline; /* Name storage belongs to the backend description. */
 	/* The owning backend is retained independently of aliases and mount views. */
 	struct super_block *f_sb;
+	unsigned f_mount_id, f_mount_root;
 	char *f_relative_path;
 	struct super_block *f_notify_root;
 	list_entry f_notify_node;
@@ -290,6 +294,7 @@ int fs_close(int fd);
 int fs_read(int fd, unsigned offset, char *buf, unsigned len);
 ssize_t fs_sendfile(int out_fd, int in_fd, loff_t *offset, size_t count);
 int fs_ftruncate(int fd, uint64_t length);
+int fs_fallocate(int fd, int mode, uint64_t offset, uint64_t length);
 int fs_readv_special(int fd, const struct iovec *iov, int count, int *handled);
 int fs_writev_special(int fd, const struct iovec *iov, int count, int *handled);
 

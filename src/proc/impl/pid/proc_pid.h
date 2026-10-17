@@ -15,6 +15,8 @@ static inline void proc_put_task(task_struct **task)
 /* ── Shared file/dir/symlink constructors (common.c) ─────────────────── */
 
 file *make_pid_file(proc_buf_t *pb, task_struct *task);
+file *make_pid_mount_file(task_struct *task, int info);
+void proc_fill_mounts_root(proc_buf_t *pb, struct super_block *root, int info);
 file *make_pid_dir(proc_buf_t *pb, task_struct *task);
 file *make_pid_task_dir(proc_buf_t *pb, task_struct *task);
 file *make_pid_symlink(const char *target);

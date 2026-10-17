@@ -60,7 +60,8 @@ struct statx_result {
 	uint32_t stx_rdev_minor;
 	uint32_t stx_dev_major;
 	uint32_t stx_dev_minor;
-	unsigned char __spare[112];
+	uint64_t stx_mnt_id;
+	unsigned char __spare[104];
 };
 
 int syscall_resolve_at(int dirfd, const char *path, char *name)
@@ -345,29 +346,45 @@ int sys_fstat64(int fd, struct stat64 *buf)
 	return ret;
 }
 
-static int stat_at(int dirfd, const char *path, int flags, struct stat *st)
+static int stat_at_full(int dirfd, const char *path, int flags,
+			struct stat *st, file **ret_file)
 {
-	char *name;
+	file *fp = NULL;
 	int ret;
-
 	if (!path)
 		return -EFAULT;
-	if (!*path) {
-		if (!(flags & AT_EMPTY_PATH))
+	if (!*path && !(flags & AT_EMPTY_PATH))
+		return -ENOENT;
+	if (!*path && dirfd != AT_FDCWD) {
+		fp = anonfd_get(dirfd);
+		if (!fp)
+			return -EBADF;
+	} else {
+		char *name = name_get();
+		if (!name)
+			return -ENOMEM;
+		ret = syscall_resolve_at(dirfd, *path ? path : ".", name);
+		if (!ret)
+			fp = fs_open_file(name, O_PATH |
+				((flags & AT_SYMLINK_NOFOLLOW) ? O_NOFOLLOW : 0), 0);
+		name_put(name);
+		if (ret)
+			return ret;
+		if (!fp)
 			return -ENOENT;
-		if (dirfd == AT_FDCWD)
-			return sys_stat(".", st);
-		return fs_fstat(dirfd, st);
 	}
-	name = name_get();
-	ret = syscall_resolve_at(dirfd, path, name);
-	if (ret == 0)
-		ret = do_stat(NULL, name, st,
-			      O_PATH | ((flags & AT_SYMLINK_NOFOLLOW) ?
-						O_NOFOLLOW :
-						0));
-	name_put(name);
+	memset(st, 0, sizeof(*st));
+	ret = fp->f_fop && fp->f_fop->getattr ?
+		fp->f_fop->getattr(fp, st) : -ENOENT;
+	if (!ret && ret_file)
+		*ret_file = fp;
+	else
+		fs_put_file(fp);
 	return ret;
+}
+static int stat_at(int dirfd, const char *path, int flags, struct stat *st)
+{
+	return stat_at_full(dirfd, path, flags, st, NULL);
 }
 
 int sys_fstatat64(int dirfd, const char *path, struct stat64 *buf, int flags)
@@ -393,6 +410,7 @@ int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
 	struct stat st;
 	struct statx_result *buf = result;
 	int ret;
+	file *fp = NULL;
 
 	if (!buf)
 		return -EFAULT;
@@ -401,7 +419,7 @@ int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
 	    ((flags & AT_STATX_FORCE_SYNC) && (flags & AT_STATX_DONT_SYNC)) ||
 	    (mask & STATX__RESERVED))
 		return -EINVAL;
-	ret = stat_at(dirfd, path, flags, &st);
+	ret = stat_at_full(dirfd, path, flags, &st, &fp);
 	if (ret != 0)
 		return ret;
 	memset(buf, 0, sizeof(*buf));
@@ -421,6 +439,14 @@ int sys_statx(int dirfd, const char *path, int flags, unsigned mask,
 	buf->stx_rdev_minor = MINOR(st.st_rdev);
 	buf->stx_dev_major = MAJOR(st.st_dev);
 	buf->stx_dev_minor = MINOR(st.st_dev);
+	if (fp->f_mount_id) {
+		buf->stx_mask |= 0x1000; /* STATX_MNT_ID */
+		buf->stx_mnt_id = fp->f_mount_id;
+		buf->stx_attributes_mask |= 0x2000; /* STATX_ATTR_MOUNT_ROOT */
+		if (fp->f_mount_root)
+			buf->stx_attributes |= 0x2000;
+	}
+	fs_put_file(fp);
 	return 0;
 }
 
@@ -836,13 +862,13 @@ static int unlink_resolved(const char *name)
 		goto done;
 	}
 
-	if (S_ISFIFO(s.st_mode)) {
-		/* Named FIFOs created by vfs_mknod are mounted devnodes. Open
+	if (S_ISFIFO(s.st_mode) || S_ISCHR(s.st_mode) || S_ISBLK(s.st_mode)) {
+		/* Nodes created by vfs_mknod are mounted devnodes. Open
 		 * files retain the superblock after its pathname is detached. */
 		ret = vfs_umount(cur->fs->root, name);
 		if (ret != -ENOENT)
 			goto done;
-		/* A filesystem-backed FIFO still uses the normal unlink path. */
+		/* Filesystem-backed nodes use the normal unlink operation. */
 	}
 
 	if (S_ISSOCK(s.st_mode)) {
@@ -1048,6 +1074,8 @@ int sys_mount(char *dev, char *dir_name, char *type, unsigned flag, void *data)
 		mount_fd_path(source);
 	}
 	int ret = fs_do_mount(source ? source : dev, target, type, flag, data);
+	if (!ret)
+		vfs_mount_changed();
 	name_put(target);
 	if (source)
 		name_put(source);
@@ -1066,6 +1094,8 @@ int sys_umount(char *name, int flag)
 		return -ENOMEM;
 	resolve_path(name, target);
 	int ret = fs_do_umount(target, flag);
+	if (!ret)
+		vfs_mount_changed();
 	name_put(target);
 
 	if (TEST_LOG(TEST_LOG_INFO))
@@ -1654,4 +1684,9 @@ int sys_linkat(int oldfd, const char *oldpath, int newfd, const char *newpath,
 	name_put(old);
 	name_put(new);
 	return ret;
+}
+
+int sys_fallocate(int fd, int mode, uint64_t offset, uint64_t length)
+{
+	return fs_fallocate(fd, mode, offset, length);
 }

@@ -1291,6 +1291,25 @@ out:
 	return result;
 }
 
+int fs_fallocate(int fd, int mode, uint64_t offset, uint64_t length)
+{
+	struct file_io_scope scope;
+	file *fp = fs_io_begin(fd, &scope);
+	int result = -EOPNOTSUPP;
+	if (!fp) return -EBADF;
+	if (fp->f_mode == O_RDONLY || (fp->f_flag & O_PATH)) result = -EBADF;
+	else if (fs_file_readonly(fp)) result = -EROFS;
+	else if (!length || offset > INT64_MAX || length > INT64_MAX) result = -EINVAL;
+	else if (offset > INT64_MAX - length) result = -EFBIG;
+	else if (mode & ~1) result = -EOPNOTSUPP;
+	else if (fp->f_fop && fp->f_fop->fallocate) {
+		result = fp->f_fop->fallocate(fp, mode, offset, length);
+		if (!result) inotify_file_event(fp, IN_MODIFY);
+	}
+	fs_io_end(&scope);
+	return result;
+}
+
 /*
  * resolve_path - turn a user-supplied path into an absolute path.
  *

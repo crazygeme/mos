@@ -72,6 +72,7 @@ static int devnode_getattr(file *fp, struct stat *s)
 	memset(s, 0, sizeof(*s));
 	s->st_mode = dn->mode;
 	s->st_rdev = dn->rdev;
+	s->st_ino = (uintptr_t)dn;
 	s->st_uid = dn->uid;
 	s->st_gid = dn->gid;
 	s->st_nlink = 1;
@@ -79,6 +80,21 @@ static int devnode_getattr(file *fp, struct stat *s)
 	s->st_ctime = time_wall_sec();
 	s->st_mtime = time_wall_sec();
 	s->st_blksize = PAGE_SIZE;
+	return 0;
+}
+
+static int devnode_setattr(file *fp, uint32_t mode)
+{
+	devnode_info *dn = fp->f_inode->i_private;
+	dn->mode = (dn->mode & S_IFMT) | (mode & 07777);
+	fp->f_inode->i_mode = dn->mode;
+	return 0;
+}
+static int devnode_chown(file *fp, uint32_t uid, uint32_t gid)
+{
+	devnode_info *dn = fp->f_inode->i_private;
+	if (uid != (uint32_t)-1) dn->uid = uid;
+	if (gid != (uint32_t)-1) dn->gid = gid;
 	return 0;
 }
 
@@ -103,6 +119,8 @@ static const file_operations devnode_fops = {
 	.reopen = devnode_reopen,
 	.release = devnode_release,
 	.getattr = devnode_getattr,
+	.setattr = devnode_setattr,
+	.chown = devnode_chown,
 	.read = devnode_read,
 	.write = devnode_write,
 };
@@ -113,10 +131,9 @@ static const file_operations devnode_fops = {
 
 static int fifonode_getattr(file *fp, struct stat *s)
 {
-	inode *node = fp->f_inode;
 	devnode_info *dn = fp->f_inode->i_private;
 	memset(s, 0, sizeof(*s));
-	s->st_mode = node->i_mode; /* mode was copied into i_mode at open */
+	s->st_mode = dn->mode;
 	s->st_uid = dn->uid;
 	s->st_gid = dn->gid;
 	s->st_nlink = 1;
@@ -220,6 +237,8 @@ static const file_operations fifonode_reader_fops = {
 	.open_ready = fifonode_open_ready,
 	.release = fifonode_release_reader,
 	.getattr = fifonode_getattr,
+	.setattr = devnode_setattr,
+	.chown = devnode_chown,
 	.read = fifonode_read,
 	.poll = fifonode_read_poll,
 };
@@ -229,6 +248,8 @@ static const file_operations fifonode_writer_fops = {
 	.open_ready = fifonode_open_ready,
 	.release = fifonode_release_writer,
 	.getattr = fifonode_getattr,
+	.setattr = devnode_setattr,
+	.chown = devnode_chown,
 	.write = fifonode_write,
 	.poll = fifonode_write_poll,
 };
@@ -306,6 +327,8 @@ static const file_operations fifonode_rw_fops = {
 	.open_ready = fifonode_open_ready,
 	.release = fifonode_release_rw,
 	.getattr = fifonode_getattr,
+	.setattr = devnode_setattr,
+	.chown = devnode_chown,
 	.read = fifonode_read,
 	.write = fifonode_write,
 	.poll = fifonode_rw_poll,
@@ -343,6 +366,8 @@ static file *devnode_open_fifo(devnode_info *dn, int flag)
 
 static file *devnode_open_node(super_block *sb, devnode_info *dn, int flag)
 {
+	if (flag & O_PATH)
+		return devnode_open_stub(sb, dn->mode);
 	int matched = 0;
 	file *fp = S_ISCHR(dn->mode) ?
 			   chardev_open(sb, dn->rdev, flag, &matched) :
@@ -377,6 +402,16 @@ static file *(*const devnode_openers[16])(super_block *, devnode_info *,
 static file *devnode_open_root(super_block *sb, int flag)
 {
 	devnode_info *dn = sb->s_fs_info;
+	if (!(flag & O_PATH)) {
+		struct stat st = { .st_mode = dn->mode, .st_uid = dn->uid, .st_gid = dn->gid };
+		int access = (flag & O_ACCMODE) == O_RDONLY ? 4 :
+			(flag & O_ACCMODE) == O_WRONLY ? 2 : 6;
+		int error = fs_check_perm(&st, access);
+		if (error) {
+			current->execution->fs_open_error = error;
+			return NULL;
+		}
+	}
 	file *(*open)(super_block *, devnode_info *, int) =
 		devnode_openers[(dn->mode & S_IFMT) >> 12];
 	if (!open)

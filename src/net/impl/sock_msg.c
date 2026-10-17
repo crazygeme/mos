@@ -208,7 +208,7 @@ static struct pbuf *msg_alloc_payload(pbuf_layer layer,
 	return p;
 }
 
-static int sock_raw_send_hdrincl_msg(const struct msghdr *msg, size_t totlen)
+static int sock_raw_send_hdrincl_msg(mos_sock *sk, const struct msghdr *msg, size_t totlen)
 {
 	char *flat;
 	size_t i;
@@ -224,7 +224,7 @@ static int sock_raw_send_hdrincl_msg(const struct msghdr *msg, size_t totlen)
 		       msg->msg_iov[i].iov_len);
 		off += msg->msg_iov[i].iov_len;
 	}
-	ret = raw_send_hdrincl(flat, (unsigned)totlen);
+	ret = raw_send_hdrincl(sk, flat, (unsigned)totlen);
 	free(flat);
 	return ret;
 }
@@ -237,7 +237,7 @@ static int sock_send_datagram(mos_sock *sk, const struct msghdr *msg,
 	err_t e;
 
 	if (sk->type == SOCK_RAW && sk->hdrincl)
-		return sock_raw_send_hdrincl_msg(msg, totlen);
+		return sock_raw_send_hdrincl_msg(sk, msg, totlen);
 
 	p = msg_alloc_payload(layer, msg, totlen);
 	if (!p)

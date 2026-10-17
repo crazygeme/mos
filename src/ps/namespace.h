@@ -14,6 +14,12 @@ enum {
 	MOS_NS_COUNT
 };
 struct mos_namespace;
+struct netif;
+void *ps_netns_get(task_struct *task);
+void *ps_netns_retain(void *ns);
+void ps_netns_put(void *ns);
+unsigned ps_netns_tag(void *ns);
+struct netif *ps_netns_loop(void *ns);
 int ps_namespace_init(task_struct *task);
 int ps_namespace_clone(task_struct *parent, task_struct *child,
 		       unsigned long flags);
@@ -24,6 +30,7 @@ void ps_namespace_put(task_struct *task);
 unsigned ps_namespace_id(task_struct *task, unsigned kind);
 const char *ps_namespace_cgroup_root(task_struct *task, unsigned controller);
 char *ps_namespace_hostname(task_struct *task);
+char *ps_namespace_domainname(task_struct *task);
 unsigned ps_pid_for(task_struct *observer, unsigned global);
 unsigned ps_pid_visible(unsigned global);
 unsigned ps_pid_global(unsigned visible);

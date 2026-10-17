@@ -715,7 +715,7 @@ tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
     /* Check if the address already is in use (on all lists) */
     for (i = 0; i < max_pcb_list; i++) {
       for (cpcb = *tcp_pcb_lists[i]; cpcb != NULL; cpcb = cpcb->next) {
-        if (cpcb->local_port == port) {
+        if (cpcb->mos_netns == pcb->mos_netns && cpcb->local_port == port) {
 #if SO_REUSE
           /* Omit checking for the same port if both pcbs have REUSEADDR set.
              For SO_REUSEADDR, the duplicate-check for a 5-tuple is done in
@@ -870,7 +870,7 @@ tcp_listen_with_backlog_and_err(struct tcp_pcb *pcb, u8_t backlog, err_t *err)
        is declared (listen-/connection-pcb), we have to make sure now that
        this port is only used once for every local IP. */
     for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
-      if ((lpcb->local_port == pcb->local_port) &&
+      if ((lpcb->mos_netns == pcb->mos_netns) && (lpcb->local_port == pcb->local_port) &&
           ip_addr_eq(&lpcb->local_ip, &pcb->local_ip)) {
         /* this address/port is already used */
         lpcb = NULL;
@@ -891,6 +891,7 @@ tcp_listen_with_backlog_and_err(struct tcp_pcb *pcb, u8_t backlog, err_t *err)
   lpcb->prio = pcb->prio;
   lpcb->so_options = pcb->so_options;
   lpcb->netif_idx = pcb->netif_idx;
+  lpcb->mos_netns = pcb->mos_netns;
   lpcb->ttl = pcb->ttl;
   lpcb->tos = pcb->tos;
 #if LWIP_VLAN_PCP
@@ -1132,7 +1133,7 @@ tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port,
       /* Don't check listen- and bound-PCBs, check active- and TIME-WAIT PCBs. */
       for (i = 2; i < NUM_TCP_PCB_LISTS; i++) {
         for (cpcb = *tcp_pcb_lists[i]; cpcb != NULL; cpcb = cpcb->next) {
-          if ((cpcb->local_port == pcb->local_port) &&
+          if ((cpcb->mos_netns == pcb->mos_netns) && (cpcb->local_port == pcb->local_port) &&
               (cpcb->remote_port == port) &&
               ip_addr_eq(&cpcb->local_ip, &pcb->local_ip) &&
               ip_addr_eq(&cpcb->remote_ip, ipaddr)) {
@@ -2306,7 +2307,7 @@ tcp_eff_send_mss_netif(u16_t sendmss, struct netif *outif, const ip_addr_t *dest
 
 /** Helper function for tcp_netif_ip_addr_changed() that iterates a pcb list */
 static void
-tcp_netif_ip_addr_changed_pcblist(const ip_addr_t *old_addr, struct tcp_pcb *pcb_list)
+tcp_netif_ip_addr_changed_pcblist(u32_t tag, const ip_addr_t *old_addr, struct tcp_pcb *pcb_list)
 {
   struct tcp_pcb *pcb;
   pcb = pcb_list;
@@ -2315,7 +2316,7 @@ tcp_netif_ip_addr_changed_pcblist(const ip_addr_t *old_addr, struct tcp_pcb *pcb
 
   while (pcb != NULL) {
     /* PCB bound to current local interface address? */
-    if (ip_addr_eq(&pcb->local_ip, old_addr)
+    if (pcb->mos_netns == tag && ip_addr_eq(&pcb->local_ip, old_addr)
 #if LWIP_AUTOIP
         /* connections to link-local addresses must persist (RFC3927 ch. 1.9) */
         && (!IP_IS_V4_VAL(pcb->local_ip) || !ip4_addr_islinklocal(ip_2_ip4(&pcb->local_ip)))
@@ -2338,19 +2339,19 @@ tcp_netif_ip_addr_changed_pcblist(const ip_addr_t *old_addr, struct tcp_pcb *pcb
  * @param new_addr IP address of the netif after change or NULL if netif has been removed
  */
 void
-tcp_netif_ip_addr_changed(const ip_addr_t *old_addr, const ip_addr_t *new_addr)
+tcp_netif_ip_addr_changed(u32_t tag, const ip_addr_t *old_addr, const ip_addr_t *new_addr)
 {
   struct tcp_pcb_listen *lpcb;
 
   if (!ip_addr_isany(old_addr)) {
-    tcp_netif_ip_addr_changed_pcblist(old_addr, tcp_active_pcbs);
-    tcp_netif_ip_addr_changed_pcblist(old_addr, tcp_bound_pcbs);
+    tcp_netif_ip_addr_changed_pcblist(tag, old_addr, tcp_active_pcbs);
+    tcp_netif_ip_addr_changed_pcblist(tag, old_addr, tcp_bound_pcbs);
 
     if (!ip_addr_isany(new_addr)) {
       /* PCB bound to current local interface address? */
       for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
         /* PCB bound to current local interface address? */
-        if (ip_addr_eq(&lpcb->local_ip, old_addr)) {
+        if (lpcb->mos_netns == tag && ip_addr_eq(&lpcb->local_ip, old_addr)) {
           /* The PCB is listening to the old ipaddr and
             * is set to listen to the new one instead */
           ip_addr_copy(lpcb->local_ip, *new_addr);

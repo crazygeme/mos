@@ -188,7 +188,7 @@ static void cap_initialize(task_credentials *user)
 {
 	if (user->cap_initialized)
 		return;
-	if (user->euid == 0) {
+	if (user->euid == 0 && !(user->securebits & 1)) {
 		user->cap_effective[0] = user->cap_bounding[0];
 		user->cap_effective[1] = user->cap_bounding[1];
 		user->cap_permitted[0] = user->cap_bounding[0];
@@ -205,7 +205,8 @@ int ps_has_capability(task_struct *task, unsigned capability)
 	unsigned word = capability / 32, bit = 1U << (capability % 32);
 	if (user->cap_initialized)
 		return !!(user->cap_effective[word] & bit);
-	return user->euid == 0 && !!(user->cap_bounding[word] & bit);
+	return user->euid == 0 && !(user->securebits & 1) &&
+	       !!(user->cap_bounding[word] & bit);
 }
 
 int sys_capget(void *header_ptr, void *data_ptr)
@@ -268,6 +269,7 @@ int sys_capset(void *header_ptr, const void *data_ptr)
 		user->cap_effective[i] = data[i].effective;
 		user->cap_permitted[i] = data[i].permitted;
 		user->cap_inheritable[i] = data[i].inheritable;
+		user->cap_ambient[i] &= data[i].permitted & data[i].inheritable;
 	}
 	return 0;
 }
@@ -307,6 +309,11 @@ int sys_getegid()
 static void cap_uid_changed(task_credentials *u, unsigned old_real,
 			    unsigned old_effective, unsigned old_saved)
 {
+	if (u->securebits & 4) /* SECBIT_NO_SETUID_FIXUP */
+		return;
+	if ((old_real == 0 || old_effective == 0 || old_saved == 0) &&
+	    u->uid && u->euid && u->suid)
+		memset(u->cap_ambient, 0, sizeof(u->cap_ambient));
 	if ((old_real == 0 || old_effective == 0 || old_saved == 0) && u->uid &&
 	    u->euid && u->suid && !u->keep_capabilities)
 		memset(u->cap_permitted, 0, sizeof(u->cap_permitted));

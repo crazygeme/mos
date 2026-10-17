@@ -267,6 +267,7 @@ typedef u8_t netif_addr_idx_t;
  *  The following fields should be filled in by the initialization
  *  function for the device driver: hwaddr_len, hwaddr[], mtu, flags */
 struct netif {
+  u32_t mos_netns;
 #if !LWIP_SINGLE_NETIF
   /** pointer to next in linked list */
   struct netif *next;

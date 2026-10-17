@@ -1,5 +1,6 @@
 #include <fs/entries.h>
 #include <fs/vfs.h>
+#include <fs/mount.h>
 #include <device/devnode.h>
 #include <lib/klib.h>
 #include <ps/ps.h>
@@ -21,6 +22,17 @@ vfs_entry_node *devfs_entries(void)
 	return dev_tree ? vfs_entry_root(dev_tree) : NULL;
 }
 
+static super_block *devfs_get_sb(const char *device, const char *target,
+				int flags, void *data)
+{
+	(void)device;
+	(void)target;
+	(void)flags;
+	(void)data;
+	return devfs_entries() ? vfs_entry_tree_mount(dev_tree) : NULL;
+}
+static fs_type devfs_type = { .name = "devtmpfs", .get_sb = devfs_get_sb };
+
 static void devfs_init(void)
 {
 	vfs_entry_node *root = devfs_entries();
@@ -33,6 +45,7 @@ static void devfs_init(void)
 	strncpy(sb->s_devname, "devtmpfs", sizeof(sb->s_devname) - 1);
 	strncpy(sb->s_fstype, "devtmpfs", sizeof(sb->s_fstype) - 1);
 	printk("mnt: Mounting devfs on /dev\n");
+	fs_register_type(&devfs_type);
 	vfs_mount(CURRENT_TASK()->fs->root, "/dev", sb);
 }
 KERNEL_INIT(6, devfs_init);

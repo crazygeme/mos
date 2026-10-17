@@ -183,6 +183,7 @@ I386_SYSCALL(213, setuid32, sys_setuid32(ARG0))
 I386_SYSCALL(214, setgid32, sys_setgid32(ARG0))
 I386_SYSCALL(215, setfsuid32, sys_setfsuid32(ARG0))
 I386_SYSCALL(216, setfsgid32, sys_setfsgid32(ARG0))
+I386_SYSCALL(218, mincore, sys_mincore(PTR0, ARG1, PTR2))
 I386_SYSCALL(219, madvise, sys_madvise(PTR0, ARG1, ARG2))
 I386_SYSCALL(220, getdents64, sys_getdents64(ARG0, PTR1, ARG2))
 I386_SYSCALL(221, fcntl64, sys_fcntl64(ARG0, ARG1, ARG2))
@@ -272,3 +273,5 @@ I386_SYSCALL(422, futex_time64, sys_futex_time64(PTR0, ARG1, ARG2, PTR3, PTR4, A
 I386_SYSCALL(436, close_range, sys_close_range(ARG0, ARG1, ARG2))
 I386_SYSCALL(439, faccessat2, sys_faccessat2(ARG0, PTR1, ARG2, ARG3))
 I386_SYSCALL(441, epoll_pwait2, sys_epoll_pwait2(ARG0, PTR1, ARG2, PTR3, PTR4, ARG5))
+
+I386_SYSCALL(324, fallocate, sys_fallocate(ARG0, ARG1, ((uint64_t)ARG3 << 32) | ARG2, ((uint64_t)ARG5 << 32) | ARG4))

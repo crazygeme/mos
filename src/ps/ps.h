@@ -65,6 +65,7 @@ typedef struct _task_thread {
 	ref_count_t ref;
 	unsigned tgid, group_id, session_id;
 	unsigned live_tasks;
+	unsigned teardown_owner;
 	unsigned child_subreaper;
 	int oom_score_adj;
 	unsigned posix_locks_used; /* Sticky hint: this group has requested range locks. */
@@ -85,7 +86,8 @@ typedef struct _task_credentials {
 	unsigned gid, egid, sgid;
 	unsigned fsuid, fsgid;
 	unsigned cap_effective[2], cap_permitted[2], cap_inheritable[2];
-	unsigned cap_initialized, keep_capabilities;
+	unsigned cap_initialized, keep_capabilities, securebits;
+	unsigned cap_ambient[2];
 	unsigned cap_bounding[2], no_new_privs;
 } task_credentials;
 
@@ -209,7 +211,7 @@ typedef struct _task_lifecycle {
 
 struct _task_struct {
 	struct mos_namespace *namespaces[7], *pid_children;
-	struct mos_cgroup *cgroups[2];
+	struct mos_cgroup *cgroups[3];
 	unsigned cgroup_exited;
 	/* Private execution, scheduling, identity, and waits. */
 	task_schedule *sched;

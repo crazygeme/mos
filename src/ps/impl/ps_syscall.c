@@ -356,6 +356,18 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 
 	if (!leader)
 		return;
+	spinlock_lock(&ps_lock, &irq);
+	if (leader->thread->teardown_owner &&
+	    leader->thread->teardown_owner != leader->life->psid + 1) {
+		leader->sched->terminate_requested = 1;
+		spinlock_unlock(&ps_lock, irq);
+		ps_stop_terminated_task();
+		for (;;)
+			task_sched();
+	}
+	leader->thread->teardown_owner = leader->life->psid + 1;
+	leader->sched->terminate_requested = 0;
+	spinlock_unlock(&ps_lock, irq);
 	ps_timer_discard_group(leader->thread->tgid);
 
 	list_init(&reap_list);
@@ -433,6 +445,9 @@ void ps_kill_thread_group(task_struct *leader, unsigned encoded_status)
 			ps_put_to_dying_queue(task);
 		}
 	}
+	spinlock_lock(&ps_lock, &irq);
+	leader->thread->teardown_owner = 0;
+	spinlock_unlock(&ps_lock, irq);
 }
 
 void do_group_exit(unsigned encoded_status)

@@ -39,11 +39,11 @@
 /* /dev/hda* block devices */
 #define HDD_MAJOR 3 /* /dev/hda1, /dev/hda2, ...: block major */
 
-/* /dev/tty1..ttyN virtual consoles */
+/* /dev/tty0 and /dev/tty1..ttyN virtual consoles */
 #define TTY_VC_MAJOR 4 /* /dev/tty1, /dev/tty2, ...: major */
 
-/* /dev/tty0, /dev/console, /dev/tty */
-#define TTY_AUX_MAJOR 11 /* /dev/tty0, /dev/console, /dev/tty: shared major */
+/* /dev/console and /dev/tty */
+#define TTY_AUX_MAJOR 5
 
 /* /dev/loop* block devices */
 #define LOOP_MAJOR 7 /* /dev/loop0, /dev/loop1, ...: block major */

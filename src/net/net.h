@@ -48,6 +48,10 @@ void net_init(void);
 /* Requires network core ownership. */
 void net_set_interface_up(struct netif *nif, int up);
 struct netif *net_get_default_netif(void);
+struct netif *net_namespace_create(unsigned tag);
+void net_namespace_destroy(struct netif *nif);
+unsigned net_namespace_current(void);
+int net_namespace_visible(const struct netif *nif);
 void net_get_stats(net_stats_t *s);
 
 #endif

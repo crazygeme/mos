@@ -58,7 +58,7 @@ struct _tmpfs_node {
 	tmpfs_node *parent;
 	/* Dirs: sentinel head of child dirent list */
 	list_entry children;
-	unsigned ref;
+	unsigned ref, links;
 	char *symlink;
 	rmutex_t *tree_lock;
 };
@@ -200,16 +200,19 @@ static tmpfs_node *tmpfs_dir_lookup(tmpfs_node *dir, const char *name)
 	return NULL;
 }
 
-static void tmpfs_dir_add(tmpfs_node *dir, const char *name, tmpfs_node *node)
+static int tmpfs_dir_add(tmpfs_node *dir, const char *name, tmpfs_node *node)
 {
 	tmpfs_dirent *de = zalloc(sizeof(*de));
-
+	if (!de) return -ENOMEM;
 	de->name = strdup(name);
+	if (!de->name) { free(de); return -ENOMEM; }
 	de->node = node;
 	node->parent = dir;
 	tmpfs_node_get(node);
+	if (!S_ISDIR(node->mode)) node->links++;
 	list_insert_tail(&dir->children, &de->list);
 	tmpfs_touch_mctime(dir);
+	return 0;
 }
 
 static int tmpfs_dir_remove(tmpfs_node *dir, const char *name)
@@ -221,6 +224,7 @@ static int tmpfs_dir_remove(tmpfs_node *dir, const char *name)
 
 		if (strcmp(de->name, name) == 0) {
 			list_remove_entry(e);
+			if (!S_ISDIR(de->node->mode) && de->node->links) de->node->links--;
 			tmpfs_node_put(de->node);
 			free(de->name);
 			free(de);
@@ -278,53 +282,32 @@ static tmpfs_node *tmpfs_walk(tmpfs_node *root, const char *path)
 static tmpfs_node *tmpfs_walk_parent(tmpfs_node *root, const char *path,
 				     char *last_component)
 {
-	const char *p = path;
-	const char *last_slash = path;
-
-	/* Skip leading slash */
-	while (*p == '/')
-		p++;
-
-	/* Find last '/' after the start */
-	{
-		const char *q = p;
-
-		while (*q) {
-			if (*q == '/')
-				last_slash = q;
-			q++;
-		}
-	}
-
-	strncpy(last_component, last_slash + 1, 255);
-	last_component[255] = '\0';
-
-	if (last_slash == path || (last_slash == path && *path == '/')) {
-		/* Parent is root */
+	const char *begin = path, *end = path + strlen(path);
+	while (*begin == '/') begin++;
+	while (end > begin && end[-1] == '/') end--;
+	last_component[0] = 0;
+	if (end == begin)
 		return root;
-	}
-
-	{
-		unsigned parent_len;
-		char *parent_path;
-		tmpfs_node *parent;
-
-		/* last_slash points into the original path string */
-		parent_len = (unsigned)(last_slash - path);
-		if (parent_len == 0)
-			return root;
-		if (parent_len >= 256)
-			return NULL;
-
-		parent_path = malloc(parent_len + 1);
-		if (!parent_path)
-			return NULL;
-		memcpy(parent_path, path, parent_len);
-		parent_path[parent_len] = '\0';
-		parent = tmpfs_walk(root, parent_path);
-		free(parent_path);
-		return parent;
-	}
+	const char *component = end;
+	while (component > begin && component[-1] != '/') component--;
+	size_t length = end - component;
+	if (length > 255)
+		return NULL;
+	memcpy(last_component, component, length);
+	last_component[length] = 0;
+	if (component == begin)
+		return root;
+	size_t parent_length = component - path;
+	if (parent_length >= MAX_PATH)
+		return NULL;
+	char *parent_path = name_get();
+	if (!parent_path)
+		return NULL;
+	memcpy(parent_path, path, parent_length);
+	parent_path[parent_length] = 0;
+	tmpfs_node *parent = tmpfs_walk(root, parent_path);
+	name_put(parent_path);
+	return parent;
 }
 
 /* ── File inode operations ────────────────────────────────────────────────── */
@@ -339,10 +322,12 @@ static int tmpfs_file_getattr(file *fp, struct stat *s)
 	s->st_ino = (unsigned long)tn->ino;
 	s->st_size = (long)tn->size;
 	s->st_blksize = PAGE_SIZE;
-	s->st_blocks = (tn->size + PAGE_SIZE - 1) / PAGE_SIZE;
+	s->st_blocks = 0;
+	for (unsigned i = 0; i < tn->n_pages; i++)
+		if (tn->pages[i]) s->st_blocks += PAGE_SIZE / 512;
 	s->st_uid = tn->uid;
 	s->st_gid = tn->gid;
-	s->st_nlink = 1;
+	s->st_nlink = tn->links;
 	s->st_atime = tn->atime;
 	s->st_mtime = tn->mtime;
 	s->st_ctime = tn->ctime;
@@ -408,6 +393,13 @@ static int tmpfs_ensure_page(tmpfs_node *tn, unsigned offset)
 	return 0;
 }
 
+static int tmpfs_page_resident(file *fp, uint64_t offset)
+{
+	tmpfs_node *tn = fp->f_inode->i_private;
+	LOCK_GUARD(&tn->file_lock);
+	uint64_t index = offset / PAGE_SIZE;
+	return offset < tn->size && index < tn->n_pages && tn->pages[index] != 0;
+}
 static paddr_t tmpfs_file_map_page(file *fp, uint64_t offset)
 {
 	tmpfs_node *tn = fp->f_inode->i_private;
@@ -533,6 +525,23 @@ static int tmpfs_file_ftruncate(file *fp, loff_t size)
 	return 0;
 }
 
+static int tmpfs_file_fallocate(file *fp, int mode, uint64_t offset, uint64_t length)
+{
+	tmpfs_node *tn = fp->f_inode->i_private;
+	LOCK_GUARD(&tn->file_lock);
+	uint64_t end = offset + length;
+	if (end > 0xffffffffULL) return -EFBIG;
+	if (!(mode & 1) && end > tn->size) {
+		int ret = tmpfs_file_ftruncate(fp, end);
+		if (ret) return ret;
+	}
+	for (uint64_t page = offset / PAGE_SIZE; page <= (end - 1) / PAGE_SIZE; page++) {
+		int ret = tmpfs_ensure_page(tn, page * PAGE_SIZE);
+		if (ret) return ret;
+	}
+	return 0;
+}
+
 /* ── File file_operations ─────────────────────────────────────────────────── */
 
 static ssize_t tmpfs_file_read(file *fp, void *buf, size_t size, loff_t *pos)
@@ -617,6 +626,7 @@ static ssize_t tmpfs_file_write(file *fp, const void *buf, size_t size,
 		if (tmpfs_page_write(tn->pages[page_idx], byte_off,
 				     src + transferred, copy) < 0)
 			return transferred ? transferred : -EIO;
+		if (cur_off + copy > tn->size) tn->size = cur_off + copy;
 		transferred += (ssize_t)copy;
 	}
 
@@ -677,8 +687,12 @@ static int tmpfs_file_readlink(file *fp, char *buf, size_t size, size_t *length)
 	return 0;
 }
 
+static file *tmpfs_file_reopen(file *fp, int flags);
+
 static const file_operations tmpfs_file_fops = {
+	.reopen = tmpfs_file_reopen,
 	.map_page = tmpfs_file_map_page,
+	.page_resident = tmpfs_page_resident,
 	.map_page_put = tmpfs_file_map_page_put,
 	.release = tmpfs_file_release,
 	.getattr = tmpfs_file_getattr,
@@ -691,6 +705,7 @@ static const file_operations tmpfs_file_fops = {
 	.read_page = tmpfs_file_read_page,
 	.write_page = tmpfs_file_write_page,
 	.ftruncate = tmpfs_file_ftruncate,
+	.fallocate = tmpfs_file_fallocate,
 };
 
 /* ── Directory inode/file operations ─────────────────────────────────────── */
@@ -854,6 +869,31 @@ static file *tmpfs_make_file(tmpfs_node *tn, super_block *sb, const char *path)
 	return fp;
 }
 
+static file *tmpfs_file_reopen(file *fp, int flags)
+{
+	if (!fp->f_sb)
+		return NULL;
+	tmpfs_node *tn = fp->f_inode->i_private;
+	LOCK_GUARD(&tn->file_lock);
+	file *out = tmpfs_make_file(tn, fp->f_sb, "");
+	if (!out)
+		return NULL;
+	if (out->f_name && !out->f_name_inline)
+		free(out->f_name);
+	out->f_name = fp->f_name ? strdup(fp->f_name) : NULL;
+	out->f_name_inline = 0;
+	out->f_sb = fp->f_sb;
+	sb_get(out->f_sb);
+	out->f_mount_id = fp->f_mount_id;
+	out->f_mount_flags = fp->f_mount_flags;
+	out->f_mount_root = fp->f_mount_root;
+	out->f_flag = flags;
+	out->f_mode = flags & O_ACCMODE;
+	if ((flags & O_TRUNC) && (flags & O_ACCMODE) != O_RDONLY)
+		tmpfs_file_ftruncate(out, 0);
+	return out;
+}
+
 static file *tmpfs_make_dir(tmpfs_node *tn)
 {
 	tmpfs_open_file *opened = zalloc(sizeof(*opened));
@@ -910,7 +950,9 @@ static file *tmpfs_open_direct(super_block *sb, const char *path, int flag)
 				return NULL;
 			}
 			newfile = tmpfs_node_alloc(sbi, S_IFREG | 0666);
-			tmpfs_dir_add(parent, last, newfile);
+			if (tmpfs_dir_add(parent, last, newfile)) {
+				tmpfs_node_put(newfile); free(last); return NULL;
+			}
 			tmpfs_node_put(newfile); /* dir_add bumped it */
 			tn = newfile;
 			free(last);
@@ -1058,6 +1100,8 @@ static int tmpfs_mkdir_op(super_block *sb, const char *path, unsigned mode)
 {
 	tmpfs_sb_info *sbi = sb->s_fs_info;
 	LOCK_GUARD(&sbi->directory_lock);
+	if (tmpfs_walk(sbi->root, path))
+		return -EEXIST;
 	char *last = malloc(256);
 	tmpfs_node *parent;
 	tmpfs_node *newdir;
@@ -1081,6 +1125,23 @@ static int tmpfs_mkdir_op(super_block *sb, const char *path, unsigned mode)
 	tmpfs_node_put(newdir);
 	free(last);
 	return 0;
+}
+
+static int tmpfs_link_op(super_block *sb, const char *oldpath, const char *newpath)
+{
+	tmpfs_sb_info *sbi = sb->s_fs_info;
+	LOCK_GUARD(&sbi->directory_lock);
+	tmpfs_node *node = tmpfs_walk(sbi->root, oldpath);
+	if (!node) return -ENOENT;
+	if (S_ISDIR(node->mode)) return -EPERM;
+	char name[256];
+	tmpfs_node *parent = tmpfs_walk_parent(sbi->root, newpath, name);
+	if (!parent || !S_ISDIR(parent->mode)) return -ENOENT;
+	if (!name[0] || !strcmp(name, ".") || !strcmp(name, "..")) return -EEXIST;
+	if (tmpfs_dir_lookup(parent, name)) return -EEXIST;
+	int ret = tmpfs_dir_add(parent, name, node);
+	if (!ret) tmpfs_touch_ctime(node);
+	return ret;
 }
 
 static int tmpfs_unlink_op(super_block *sb, const char *path)
@@ -1190,6 +1251,7 @@ static int tmpfs_rename_op(super_block *sb, const char *oldpath,
 		}
 	}
 	tmpfs_node *target = tmpfs_dir_lookup(newparent, newname);
+	if (target == node) return 0;
 	if (target) {
 		if (S_ISDIR(target->mode) && !S_ISDIR(node->mode))
 			return -EISDIR;
@@ -1247,6 +1309,12 @@ static int tmpfs_statfs_op(super_block *sb, struct statfs64 *buf)
 	memset(buf, 0, sizeof(*buf));
 	buf->f_type = 0x01021994; /* TMPFS_MAGIC */
 	buf->f_bsize = PAGE_SIZE;
+	phymm_usage usage;
+	phymm_get_usage(&usage);
+	buf->f_blocks = (uint64_t)usage.low_total_pages + usage.high_total_pages;
+	buf->f_bfree = (uint64_t)usage.low_free_pages + usage.high_free_pages;
+	buf->f_bavail = buf->f_bfree;
+	buf->f_frsize = PAGE_SIZE;
 	buf->f_namelen = 255;
 	return 0;
 }
@@ -1289,6 +1357,7 @@ static super_operations tmpfs_sops = {
 	.mkdir = tmpfs_mkdir_op,
 	.rmdir = tmpfs_rmdir_op,
 	.unlink = tmpfs_unlink_op,
+	.link = tmpfs_link_op,
 	.rename = tmpfs_rename_op,
 	.statfs = tmpfs_statfs_op,
 	.utime = tmpfs_utime_op,
@@ -1296,6 +1365,39 @@ static super_operations tmpfs_sops = {
 };
 
 /* ── get_sb — called from mount.c ────────────────────────────────────────── */
+
+static int tmpfs_root_options(tmpfs_node *node, const char *data)
+{
+	while (data && *data) {
+		const char *end = strchr(data, ',');
+		if (!end) end = data + strlen(data);
+		unsigned *field = NULL, base = 10;
+		const char *value = NULL;
+		if (!strncmp(data, "mode=", 5)) {
+			field = &node->mode; base = 8; value = data + 5;
+		} else if (!strncmp(data, "uid=", 4)) {
+			field = &node->uid; value = data + 4;
+		} else if (!strncmp(data, "gid=", 4)) {
+			field = &node->gid; value = data + 4;
+		}
+		if (field) {
+			uint64_t number = 0;
+			if (value == end) return -EINVAL;
+			for (; value < end; value++) {
+				unsigned digit = (unsigned char)*value - '0';
+				if (digit >= base || number > (UINT32_MAX - digit) / base)
+					return -EINVAL;
+				number = number * base + digit;
+			}
+			if (field == &node->mode) {
+				if (number > 07777) return -EINVAL;
+				*field = S_IFDIR | number;
+			} else *field = number;
+		}
+		data = *end ? end + 1 : end;
+	}
+	return 0;
+}
 
 static super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
 				 void *data)
@@ -1309,6 +1411,10 @@ static super_block *tmpfs_get_sb(const char *dev, const char *target, int flags,
 	sbi->root = tmpfs_node_alloc(sbi, S_IFDIR | 0777);
 	sbi->root->parent = sbi->root;
 	sb->s_fs_info = sbi;
+	if (tmpfs_root_options(sbi->root, data)) {
+		tmpfs_release_super(sb);
+		return NULL;
+	}
 	return sb;
 }
 

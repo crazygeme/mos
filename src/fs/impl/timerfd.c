@@ -159,10 +159,12 @@ int sys_timerfd_create(int clockid, int flags)
 }
 static int timerfd_ns(int64_t sec, int64_t nsec, uint64_t *ns)
 {
-	if (sec < 0 || nsec < 0 || nsec >= NS_PER_SEC ||
-	    (uint64_t)sec > (UINT64_MAX - (uint64_t)nsec) / NS_PER_SEC)
+	if (sec < 0 || nsec < 0 || nsec >= NS_PER_SEC)
 		return -EINVAL;
-	*ns = (uint64_t)sec * NS_PER_SEC + nsec;
+	if ((uint64_t)sec > (INT64_MAX - (uint64_t)nsec) / NS_PER_SEC)
+		*ns = INT64_MAX;
+	else
+		*ns = (uint64_t)sec * NS_PER_SEC + nsec;
 	return 0;
 }
 static void timerfd_get(struct timerfd_state *state, struct timerfd_spec *value)

@@ -184,7 +184,7 @@ void udp_debug_print(struct udp_hdr *udphdr);
 #define udp_debug_print(udphdr)
 #endif
 
-void udp_netif_ip_addr_changed(const ip_addr_t* old_addr, const ip_addr_t* new_addr);
+void udp_netif_ip_addr_changed(u32_t tag, const ip_addr_t* old_addr, const ip_addr_t* new_addr);
 
 #ifdef __cplusplus
 }

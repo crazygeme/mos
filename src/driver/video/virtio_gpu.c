@@ -940,6 +940,12 @@ static int gpu_upload_dumb(struct gpu_fb *fb)
 
 static int gpu_flush(struct gpu_bo *bo)
 {
+	/* Scanout reads must observe the resource producer's completed rendering. */
+	if (bo->submission > gpu_completed) {
+		int result = gpu_idle(bo->submission_ctx);
+		if (result)
+			return result;
+	}
 	struct virtio_gpu_resource_flush req = { 0 };
 	req.hdr.type = VIRTIO_GPU_CMD_RESOURCE_FLUSH;
 	req.resource_id = bo->id;

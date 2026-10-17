@@ -12,6 +12,36 @@
 #include <errno.h>
 #include <ps/ps.h>
 
+static uint64_t mount_generation = 1;
+static spinlock_t mount_event_lock = SPINLOCK_INITIALIZER;
+static list_entry mount_waiters = { &mount_waiters, &mount_waiters };
+uint64_t vfs_mount_generation(void)
+{
+#if __SIZEOF_POINTER__ == 4
+	return __sync_val_compare_and_swap(&mount_generation, 0, 0);
+#else
+	return __atomic_load_n(&mount_generation, __ATOMIC_ACQUIRE);
+#endif
+}
+void vfs_mount_changed(void)
+{
+	int irq;
+	spinlock_lock(&mount_event_lock, &irq);
+	__sync_add_and_fetch(&mount_generation, 1);
+	poll_notify(&mount_waiters);
+	spinlock_unlock(&mount_event_lock, irq);
+}
+unsigned vfs_mount_poll(uint64_t seen, unsigned events, poll_table *pt)
+{
+	int irq;
+	poll_subscribe(pt, &mount_waiters, &mount_event_lock);
+	spinlock_lock(&mount_event_lock, &irq);
+	unsigned ready = seen != vfs_mount_generation() ?
+		FS_POLL_EXCEPT | FS_POLL_ERR : 0;
+	spinlock_unlock(&mount_event_lock, irq);
+	return (events & FS_POLL_READ) | ready;
+}
+
 static uint64_t namespace_generation = 1;
 
 void vfs_namespace_changed(void)
@@ -168,6 +198,8 @@ done:
 	return 1;
 }
 
+static unsigned next_mount_id;
+
 super_block *sget(const super_operations *s_op)
 {
 	super_block *sb = zalloc(sizeof(*sb));
@@ -177,6 +209,7 @@ super_block *sget(const super_operations *s_op)
 	sb->s_mounts = _RBTREE_ROOT_INIT;
 	sb->s_op = s_op;
 	sb->s_ref = 1;
+	sb->s_mount_id = __sync_add_and_fetch(&next_mount_id, 1);
 	return sb;
 }
 
@@ -210,7 +243,7 @@ void sb_put(super_block *sb)
 		kfree(sb);
 }
 
-super_block *vfs_clone_mount_tree(super_block *old)
+static super_block *clone_mount_tree(super_block *old, int prune)
 {
 	if (!old)
 		return NULL;
@@ -221,20 +254,25 @@ super_block *vfs_clone_mount_tree(super_block *old)
 	sb_get(copy->s_backend);
 	copy->s_fs_info = old->s_fs_info;
 	if (old->s_covered) {
-		copy->s_covered = vfs_clone_mount_tree(old->s_covered);
+		copy->s_covered = clone_mount_tree(old->s_covered, prune);
 		if (!copy->s_covered) {
 			sb_put(copy);
 			return NULL;
 		}
 	}
 	copy->s_flags = old->s_flags;
+	copy->s_peer_group = old->s_peer_group;
+	copy->s_master_group = old->s_master_group;
+	copy->s_unbindable = old->s_unbindable;
 	strcpy(copy->s_devname, old->s_devname);
 	strcpy(copy->s_fstype, old->s_fstype);
 	strcpy(copy->s_mountpoint, old->s_mountpoint);
 	mutex_lock(&old->s_lock);
 	for (struct rb_node *n = rb_first(&old->s_mounts); n; n = rb_next(n)) {
 		vfs_mount_node *mount = rb_entry(n, vfs_mount_node, rb_node);
-		super_block *child = vfs_clone_mount_tree(mount->sb);
+		if (prune && mount->sb->s_unbindable)
+			continue;
+		super_block *child = clone_mount_tree(mount->sb, prune);
 		vfs_mount_node *entry = zalloc(sizeof(*entry));
 		if (!child || !entry) {
 			if (child)
@@ -257,6 +295,15 @@ super_block *vfs_clone_mount_tree(super_block *old)
 	}
 	mutex_unlock(&old->s_lock);
 	return copy;
+}
+
+super_block *vfs_clone_mount_tree(super_block *old)
+{
+	return clone_mount_tree(old, 0);
+}
+super_block *vfs_clone_bind_tree(super_block *old)
+{
+	return clone_mount_tree(old, 1);
 }
 
 void vfs_rebase_mount_tree(super_block *sb, const char *point)
@@ -299,15 +346,15 @@ int vfs_mount(super_block *sb, const char *path, super_block *next)
 			mutex_unlock(&sb->s_lock);
 			return -EEXIST;
 		}
-		file *directory =
-			existing->sb->s_op && existing->sb->s_op->open_root ?
-				existing->sb->s_op->open_root(existing->sb,
-							      O_PATH) :
-				NULL;
-		int is_dir = directory && S_ISDIR(directory->f_inode->i_mode);
-		if (directory)
-			fs_put_file(directory);
-		if (!is_dir) {
+		file *covered = existing->sb->s_op && existing->sb->s_op->open_root ?
+			existing->sb->s_op->open_root(existing->sb, O_PATH) : NULL;
+		file *incoming = next->s_op && next->s_op->open_root ?
+			next->s_op->open_root(next, O_PATH) : NULL;
+		int compatible = covered && incoming && covered->f_inode && incoming->f_inode &&
+			!!S_ISDIR(covered->f_inode->i_mode) == !!S_ISDIR(incoming->f_inode->i_mode);
+		if (covered) fs_put_file(covered);
+		if (incoming) fs_put_file(incoming);
+		if (!compatible) {
 			mutex_unlock(&sb->s_lock);
 			return -ENOTDIR;
 		}
@@ -811,6 +858,28 @@ static file *vfs_open_raw(super_block *sb, const char *path, int flag,
 	return NULL;
 }
 
+static void vfs_file_mount_identity(file *fp, super_block *sb,
+				    const char *path)
+{
+	if (!fp || fp->f_mount_id)
+		return;
+	while (sb) {
+		if (sb->s_fstype[0]) {
+			fp->f_mount_id = sb->s_mount_id;
+			fp->f_mount_root = !*path || !strcmp(path, "/");
+		}
+		size_t length;
+		mutex_lock(&sb->s_lock);
+		vfs_mount_node *mount = sb_mount_prefix(sb, path, &length);
+		super_block *child = mount ? mount->sb : NULL;
+		mutex_unlock(&sb->s_lock);
+		if (!child)
+			break;
+		sb = child;
+		path += length;
+	}
+}
+
 /* Follow final symlinks through the mount tree, including ext4-to-proc links. */
 file *vfs_open(super_block *sb, const char *path, int flag)
 {
@@ -828,8 +897,11 @@ file *vfs_open(super_block *sb, const char *path, int flag)
 
 	if (!sb || !path)
 		return NULL;
-	if (flag & O_NOFOLLOW)
-		return vfs_open_raw(sb, path, flag, NULL);
+	if (flag & O_NOFOLLOW) {
+		fp = vfs_open_raw(sb, path, flag, NULL);
+		vfs_file_mount_identity(fp, sb, path);
+		return fp;
+	}
 	if (execution && sb == current->fs->root && !(flag & O_CREAT) &&
 	    execution->link_cache_root == sb &&
 	    execution->link_cache_generation == generation &&
@@ -948,6 +1020,7 @@ out:
 		execution->link_cache_root = sb;
 		execution->link_cache_generation = generation;
 	}
+	vfs_file_mount_identity(fp, lookup_sb, lookup);
 	if (fp && !fp->f_name)
 		fp->f_name = strdup(lookup);
 	if (joined)

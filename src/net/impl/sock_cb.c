@@ -4,6 +4,7 @@
  */
 #include <net/core.h>
 #include <net/sock.h>
+#include <ps/namespace.h>
 #include <lib/klib.h>
 #include <errno.h>
 
@@ -120,6 +121,7 @@ static err_t tcp_on_accept(void *arg, struct tcp_pcb *newpcb, err_t err)
 	mos_sock *child = zalloc(sizeof(*child));
 	if (!child)
 		return ERR_MEM;
+	child->network_namespace = ps_netns_retain(sk->network_namespace);
 	if (sock_alloc_rxbuf(child, sock_default_rxbuf_size(AF_INET,
 							    SOCK_STREAM)) < 0) {
 		sock_destroy(child);
@@ -239,7 +241,7 @@ static u8_t raw_on_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p,
 
 /* ── IP_HDRINCL raw send ─────────────────────────────────────────────────── */
 
-int raw_send_hdrincl(const void *buf, unsigned len)
+int raw_send_hdrincl(mos_sock *sk, const void *buf, unsigned len)
 {
 	LOCK_GUARD(&net_core_lock);
 	if (len < sizeof(struct ip_hdr))
@@ -249,7 +251,9 @@ int raw_send_hdrincl(const void *buf, unsigned len)
 	ip4_addr_t dest;
 	dest.addr = iph->dest.addr;
 
-	struct netif *nif = ip4_route(&dest);
+	struct netif *nif = ps_netns_loop(sk->network_namespace);
+	if (!nif)
+		nif = ip4_route(&dest);
 	if (!nif)
 		return -ENETUNREACH;
 

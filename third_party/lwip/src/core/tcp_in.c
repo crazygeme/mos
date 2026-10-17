@@ -253,8 +253,9 @@ tcp_input(struct pbuf *p, struct netif *inp)
     LWIP_ASSERT("tcp_input: active pcb->state != LISTEN", pcb->state != LISTEN);
 
     /* check if PCB is bound to specific netif */
-    if ((pcb->netif_idx != NETIF_NO_INDEX) &&
-        (pcb->netif_idx != netif_get_index(ip_data.current_input_netif))) {
+    if ((pcb->mos_netns != ip_data.current_input_netif->mos_netns) ||
+        ((pcb->netif_idx != NETIF_NO_INDEX) &&
+        (pcb->netif_idx != netif_get_index(ip_data.current_input_netif)))) {
       prev = pcb;
       continue;
     }
@@ -287,8 +288,9 @@ tcp_input(struct pbuf *p, struct netif *inp)
       LWIP_ASSERT("tcp_input: TIME-WAIT pcb->state == TIME-WAIT", pcb->state == TIME_WAIT);
 
       /* check if PCB is bound to specific netif */
-      if ((pcb->netif_idx != NETIF_NO_INDEX) &&
-          (pcb->netif_idx != netif_get_index(ip_data.current_input_netif))) {
+      if ((pcb->mos_netns != ip_data.current_input_netif->mos_netns) ||
+        ((pcb->netif_idx != NETIF_NO_INDEX) &&
+          (pcb->netif_idx != netif_get_index(ip_data.current_input_netif)))) {
         continue;
       }
 
@@ -317,8 +319,9 @@ tcp_input(struct pbuf *p, struct netif *inp)
     prev = NULL;
     for (lpcb = tcp_listen_pcbs.listen_pcbs; lpcb != NULL; lpcb = lpcb->next) {
       /* check if PCB is bound to specific netif */
-      if ((lpcb->netif_idx != NETIF_NO_INDEX) &&
-          (lpcb->netif_idx != netif_get_index(ip_data.current_input_netif))) {
+      if ((lpcb->mos_netns != ip_data.current_input_netif->mos_netns) ||
+          ((lpcb->netif_idx != NETIF_NO_INDEX) &&
+          (lpcb->netif_idx != netif_get_index(ip_data.current_input_netif)))) {
         prev = (struct tcp_pcb *)lpcb;
         continue;
       }
@@ -696,6 +699,7 @@ tcp_listen_input(struct tcp_pcb_listen *pcb)
     /* inherit socket options */
     npcb->so_options = pcb->so_options & SOF_INHERITED;
     npcb->netif_idx = pcb->netif_idx;
+    npcb->mos_netns = pcb->mos_netns;
     /* Register the new PCB so that we can begin receiving segments
        for it. */
     TCP_REG_ACTIVE(npcb);

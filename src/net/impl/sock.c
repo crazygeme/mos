@@ -4,6 +4,7 @@
  */
 #include <net/core.h>
 #include <net/sock.h>
+#include <ps/namespace.h>
 #include <net/net.h>
 #include <fs/fs.h>
 #include <fs/fcntl.h>
@@ -57,6 +58,8 @@ int sock_alloc_rxbuf(mos_sock *sk, unsigned size)
 	if ((size & (size - 1)) != 0)
 		return -EINVAL;
 
+	if (!sk->network_namespace)
+		sk->network_namespace = ps_netns_get(current);
 	sk->rxbuf = zalloc(size);
 	if (!sk->rxbuf)
 		return -ENOMEM;
@@ -70,6 +73,8 @@ void sock_destroy(mos_sock *sk)
 {
 	if (!sk)
 		return;
+	ps_netns_put(sk->network_namespace);
+	free(sk->socket_filter);
 	free(sk->rxbuf);
 	free(sk);
 }
@@ -438,7 +443,7 @@ static ssize_t inet_write(file *fp, const void *buf, size_t count, loff_t *pos)
 
 	if (sk->type == SOCK_RAW) {
 		if (sk->hdrincl)
-			return (ssize_t)raw_send_hdrincl(buf, (unsigned)count);
+			return (ssize_t)raw_send_hdrincl(sk, buf, (unsigned)count);
 		if (sk->state != SS_CONNECTED || !sk->raw)
 			return -ENOTCONN;
 		ip_addr_t ip;
@@ -832,7 +837,11 @@ static void fill_lo_ifreq(struct ifreq *ifr, unsigned cmd)
 {
 	strncpy(ifr->ifr_name, "lo", IFNAMSIZ);
 
-	struct netif *lo = netif_find("lo0");
+	void *ns = ps_netns_get(current);
+	struct netif *lo = ps_netns_loop(ns);
+	if (!lo)
+		lo = netif_find("lo0");
+	ps_netns_put(ns);
 
 	command_dispatch(fill_lo_ifreq_groups, lo, cmd, ifr, 0);
 }
@@ -975,6 +984,8 @@ static int sock_ioctl_siocsifflags(void *context __attribute__((unused)),
 	if (!ps_has_capability(current, 12))
 		return -EPERM;
 	for (struct netif *nif = netif_list; nif; nif = nif->next) {
+		if (!net_namespace_visible(nif))
+			continue;
 		char name[IFNAMSIZ];
 		if (nif->name[0] == 'l' && nif->name[1] == 'o')
 			strcpy(name, "lo");
@@ -1097,7 +1108,7 @@ static unsigned unix_file_poll(file *fp, unsigned events, poll_table *pt)
 			unsigned minimum =
 				sk->type == SOCK_SEQPACKET ?
 					sizeof(unix_seqpacket_header) :
-				sk->type == SOCK_DGRAM ? sizeof(u16_t) :
+				sk->type == SOCK_DGRAM ? sizeof(unix_dgram_header) :
 							 1;
 			if (rx_free(sk->unix_peer) >= minimum)
 				ready |= FS_POLL_WRITE;

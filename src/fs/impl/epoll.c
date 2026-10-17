@@ -386,7 +386,8 @@ int sys_epoll_ctl(int epfd, int op, int fd, const struct epoll_event *event)
 	result = -EPERM;
 	if (!fp->f_fop || !fp->f_fop->poll ||
 	    (fp->f_inode &&
-	     (S_ISREG(fp->f_inode->i_mode) || S_ISDIR(fp->f_inode->i_mode))))
+	     (S_ISREG(fp->f_inode->i_mode) || S_ISDIR(fp->f_inode->i_mode)) &&
+	     !fp->f_fop->epoll_regular))
 		goto done;
 	ep = epfp->f_inode->i_private;
 	vm_lock_enter(&epoll_mutex);

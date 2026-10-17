@@ -146,7 +146,7 @@ void pts_pair_check_free(pts_pair *p, spinlock_t *lock)
 	int irq;
 
 	spinlock_lock(lock, &irq);
-	if (p->used && !p->master_open && p->slave_count == 0) {
+	if (p->used && !p->master_open && p->slave_count == 0 && !p->path_count) {
 		if (p->on_free)
 			p->on_free(p);
 		p->used = 0;
@@ -346,7 +346,8 @@ static int pts_pair_ioctl_tiocsctty(void *context __attribute__((unused)),
 	int steal = (int)(uintptr_t)buf;
 	if (!cur->execution || cur->thread->session_id != cur->thread->tgid)
 		return -EPERM;
-	if (p->pgrp && !steal)
+	if (p->pgrp && p->pgrp != cur->thread->group_id &&
+	    (!steal || !ps_has_capability(cur, 21)))
 		return -EPERM;
 	pts_pair_set_group(p, cur->thread->group_id);
 	return 0;
@@ -713,6 +714,9 @@ int pts_slave_ioctl(file *fp, unsigned cmd, void *buf)
 /* O_PATH open: metadata only, no cycbuf refs taken. */
 int pts_slave_path_release(file *fp)
 {
+	pts_pair *p = fp->f_inode->i_private;
+	if (p->path_close)
+		p->path_close(p);
 	kfree(fp->f_inode);
 	kfree(fp);
 	return 0;

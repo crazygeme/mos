@@ -71,6 +71,7 @@ raw_input_local_match(struct raw_pcb *pcb, u8_t broadcast)
   LWIP_UNUSED_ARG(broadcast); /* in IPv6 only case */
 
   /* check if PCB is bound to specific netif */
+  if (pcb->mos_netns != ip_data.current_input_netif->mos_netns) { return 0; }
   if ((pcb->netif_idx != NETIF_NO_INDEX) &&
       (pcb->netif_idx != netif_get_index(ip_data.current_input_netif))) {
     return 0;
@@ -654,14 +655,14 @@ raw_new_ip_type(u8_t type, u8_t proto)
  * @param old_addr IP address of the netif before change
  * @param new_addr IP address of the netif after change
  */
-void raw_netif_ip_addr_changed(const ip_addr_t *old_addr, const ip_addr_t *new_addr)
+void raw_netif_ip_addr_changed(u32_t tag, const ip_addr_t *old_addr, const ip_addr_t *new_addr)
 {
   struct raw_pcb *rpcb;
 
   if (!ip_addr_isany(old_addr) && !ip_addr_isany(new_addr)) {
     for (rpcb = raw_pcbs; rpcb != NULL; rpcb = rpcb->next) {
       /* PCB bound to current local interface address? */
-      if (ip_addr_eq(&rpcb->local_ip, old_addr)) {
+      if (rpcb->mos_netns == tag && ip_addr_eq(&rpcb->local_ip, old_addr)) {
         /* The PCB is bound to the old ipaddr and
          * is set to bound to the new one instead */
         ip_addr_copy(rpcb->local_ip, *new_addr);

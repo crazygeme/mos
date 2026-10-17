@@ -1,4 +1,5 @@
 #include <fs/vfs.h>
+#include <fs/fs.h>
 #include <fs/fcntl.h>
 #include <lib/klib.h>
 #include <errno.h>
@@ -71,64 +72,62 @@ static file *bind_open_root(super_block *sb, int flags)
 {
 	return bind_open(sb, "", flags);
 }
-static int bind_relative_symlink(struct bind_info *info, char *path)
+static int bind_resolve_link(super_block *sb, const char *path, char **target)
 {
+	struct bind_info *info = sb->s_fs_info;
 	if (!info->source->s_op->readlink)
 		return 0;
-	size_t begin = strlen(info->prefix), length = strlen(path);
-	for (size_t i = begin; i <= length; i++) {
+	char *full = bind_path(info, path);
+	char *text = name_get(), *link = name_get();
+	if (!full || !text || !link) {
+		if (full) name_put(full);
+		if (text) name_put(text);
+		if (link) name_put(link);
+		return -ENOMEM;
+	}
+	size_t prefix = strlen(full) - strlen(path);
+	int result = 0;
+	for (size_t i = 1; path[i - 1]; i++) {
 		if (path[i] && path[i] != '/')
 			continue;
-		char saved = path[i], first = 0;
-		size_t count = 0;
-		path[i] = 0;
-		int ret = info->source->s_op->readlink(info->source, path,
-						       &first, 1, &count);
-		path[i] = saved;
-		if (!ret && count)
-			return first != '/';
+		char saved = full[prefix + i];
+		full[prefix + i] = 0;
+		size_t length = 0;
+		int ret = info->source->s_op->readlink(info->source, full,
+						      text, MAX_PATH - 1, &length);
+		full[prefix + i] = saved;
+		if (ret || !length)
+			continue;
+		text[length] = 0;
+		const char *base = !strcmp(sb->s_mountpoint, "/") ? "" : sb->s_mountpoint;
+		if (strlen(base) + i >= MAX_PATH) { result = -ENAMETOOLONG; break; }
+		strcpy(link, base);
+		memcpy(link + strlen(base), path, i);
+		link[strlen(base) + i] = 0;
+		ret = fs_resolve_symlink_path(link, text, length);
+		if (ret || strlen(text) + strlen(path + i) >= MAX_PATH) {
+			result = ret ? ret : -ENAMETOOLONG; break;
+		}
+		strcat(text, path + i);
+		*target = text;
+		text = NULL;
+		result = 1;
+		break;
 	}
-	return 0;
+	name_put(full);
+	name_put(link);
+	if (text) name_put(text);
+	return result;
 }
-
 static file *bind_open_link(super_block *sb, const char *path, int flags,
 			    char **target)
 {
-	struct bind_info *info = sb->s_fs_info;
-	char *full = bind_path(info, path);
-	if (!full)
+	int ret = bind_resolve_link(sb, path, target);
+	if (ret)
 		return NULL;
-	file *fp = info->source->s_op->open_link ?
-			   info->source->s_op->open_link(info->source, full,
-							 flags, target) :
-			   bind_open(sb, path, flags);
-	if (target && *target && bind_relative_symlink(info, full)) {
-		size_t length = strlen(info->prefix);
-		if (!strncmp(*target, info->prefix, length) &&
-		    (!(*target)[length] || (*target)[length] == '/')) {
-			const char *tail = *target + length;
-			char *translated = name_get();
-			if (!translated ||
-			    strlen(sb->s_mountpoint) + strlen(tail) >=
-				    MAX_PATH) {
-				if (translated)
-					name_put(translated);
-				name_put(*target);
-				*target = NULL;
-			} else {
-				strcpy(translated,
-				       !strcmp(sb->s_mountpoint, "/") ?
-					       "" :
-					       sb->s_mountpoint);
-				strcat(translated, *tail ? tail : "/");
-				name_put(*target);
-				*target = translated;
-			}
-		}
-	}
-	name_put(full);
-	return bind_file_path(fp, sb, path);
+	return bind_open(sb, path, flags);
 }
+
 static int bind_mkdir(super_block *sb, const char *path, unsigned mode)
 {
 	struct bind_info *info = sb->s_fs_info;
@@ -276,6 +275,9 @@ super_block *vfs_bind_mount(super_block *root, const char *path, int recursive)
 	char *suffix;
 	if (!sb_path_resolve(root, path, &source, &suffix))
 		return NULL;
+	if (!strcmp(suffix, "/"))
+		suffix++;
+	if (source->s_unbindable) return NULL;
 	super_block *sb = sget(&bind_sops);
 	struct bind_info *info = zalloc(sizeof(*info));
 	if (!sb || !info) {
@@ -294,6 +296,8 @@ super_block *vfs_bind_mount(super_block *root, const char *path, int recursive)
 	}
 	sb->s_fs_info = info;
 	sb->s_flags = source->s_flags;
+	sb->s_peer_group = source->s_peer_group;
+	sb->s_master_group = source->s_master_group;
 	strcpy(sb->s_fstype, source->s_fstype[0] ? source->s_fstype : "none");
 	strcpy(sb->s_devname, source->s_devname);
 	file *opened = vfs_open(root, path, O_RDONLY);
@@ -310,10 +314,11 @@ super_block *vfs_bind_mount(super_block *root, const char *path, int recursive)
 		     n = rb_next(n)) {
 			vfs_mount_node *mount =
 				rb_entry(n, vfs_mount_node, rb_node);
+			if (mount->sb->s_unbindable) continue;
 			if (strncmp(mount->path, suffix, len) ||
 			    (len && mount->path[len] != '/'))
 				continue;
-			super_block *copy = vfs_clone_mount_tree(mount->sb);
+			super_block *copy = vfs_clone_bind_tree(mount->sb);
 			if (!copy || vfs_mount(sb, mount->path + len, copy)) {
 				if (copy)
 					sb_put(copy);

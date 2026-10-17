@@ -74,6 +74,7 @@ extern "C" {
    changes to this common part are made in one location instead of
    having to change all PCB structs. */
 #define IP_PCB                             \
+  u32_t mos_netns;                          \
   /* ip addresses in network byte order */ \
   ip_addr_t local_ip;                      \
   ip_addr_t remote_ip;                     \

@@ -1,4 +1,5 @@
 #include <ps/namespace.h>
+#include <net/net.h>
 #include <errno.h>
 #include <ps/cgroup.h>
 #include <fs/fcntl.h>
@@ -17,10 +18,12 @@ struct mos_namespace {
 	spinlock_t lock;
 	list_entry pids;
 	super_block *root;
+	struct netif *network_loop;
+	unsigned network_tag;
 	super_block *mqueue_root;
 	rmutex_t mqueue_lock;
-	char hostname[65];
-	char *cgroup_roots[2];
+	char hostname[65], domainname[65];
+	char *cgroup_roots[3];
 };
 static unsigned next_namespace_id = 0xf0000000;
 static struct mos_namespace *initial[MOS_NS_COUNT];
@@ -32,7 +35,7 @@ static const unsigned ns_flags[] = { CLONE_NEWNS,    CLONE_NEWUTS,
 				     CLONE_NEWCGROUP };
 #define NS_SUPPORTED                                                \
 	(CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID | \
-	 CLONE_NEWCGROUP)
+	 CLONE_NEWCGROUP | CLONE_NEWNET)
 
 static void ns_release(ref_count_t *ref)
 {
@@ -42,12 +45,17 @@ static void ns_release(ref_count_t *ref)
 				  list));
 	if (ns->parent)
 		ref_count_put(ns->parent);
-	if (ns->root)
+	if (ns->root) {
+		vfs_namespace_untrack(ns);
 		sb_put(ns->root);
+	}
 	if (ns->mqueue_root)
 		sb_put(ns->mqueue_root);
+	if (ns->network_loop)
+		net_namespace_destroy(ns->network_loop);
 	free(ns->cgroup_roots[0]);
 	free(ns->cgroup_roots[1]);
+	free(ns->cgroup_roots[2]);
 	free(ns);
 }
 static struct mos_namespace *ns_alloc(unsigned kind, struct mos_namespace *old)
@@ -65,13 +73,14 @@ static struct mos_namespace *ns_alloc(unsigned kind, struct mos_namespace *old)
 	vm_lock_init(&ns->mqueue_lock);
 	list_init(&ns->pids);
 	strcpy(ns->hostname, old ? old->hostname : "qemu-mos");
+	strcpy(ns->domainname, old ? old->domainname : "(none)");
 	if (kind == MOS_NS_CGROUP) {
 		char *path = name_get();
 		if (!path) {
 			ref_count_put(ns);
 			return NULL;
 		}
-		for (unsigned i = 0; i < 2; i++) {
+		for (unsigned i = 0; i < 3; i++) {
 			if (old)
 				ps_cgroup_absolute_path(current, i, path);
 			else
@@ -84,6 +93,14 @@ static struct mos_namespace *ns_alloc(unsigned kind, struct mos_namespace *old)
 			}
 		}
 		name_put(path);
+	}
+	if (kind == MOS_NS_NET && old) {
+		ns->network_tag = ns->id;
+		ns->network_loop = net_namespace_create(ns->network_tag);
+		if (!ns->network_loop) {
+			ref_count_put(ns);
+			return NULL;
+		}
 	}
 	if (kind == MOS_NS_PID && old)
 		ns->parent = ref_count_get(old);
@@ -111,6 +128,14 @@ void ps_namespace_put(task_struct *task)
 		ref_count_put(task->pid_children);
 	task->pid_children = NULL;
 }
+void *ps_netns_get(task_struct *task)
+{
+	return task->namespaces[MOS_NS_NET] ? ref_count_get(task->namespaces[MOS_NS_NET]) : NULL;
+}
+void *ps_netns_retain(void *ns) { return ns ? ref_count_get((struct mos_namespace *)ns) : NULL; }
+void ps_netns_put(void *ns) { if (ns) ref_count_put((struct mos_namespace *)ns); }
+unsigned ps_netns_tag(void *ns) { return ns ? ((struct mos_namespace *)ns)->network_tag : 0; }
+struct netif *ps_netns_loop(void *ns) { return ns ? ((struct mos_namespace *)ns)->network_loop : NULL; }
 unsigned ps_namespace_id(task_struct *task, unsigned kind)
 {
 	return task->namespaces[kind] ? task->namespaces[kind]->id : 0;
@@ -125,6 +150,10 @@ const char *ps_namespace_cgroup_root(task_struct *task, unsigned controller)
 char *ps_namespace_hostname(task_struct *task)
 {
 	return task->namespaces[MOS_NS_UTS]->hostname;
+}
+char *ps_namespace_domainname(task_struct *task)
+{
+	return task->namespaces[MOS_NS_UTS]->domainname;
 }
 static int ns_pid_add(struct mos_namespace *ns, unsigned global)
 {
@@ -239,6 +268,7 @@ static int ns_private_mount(task_struct *task, struct mos_namespace *ns)
 	if (!initial[MOS_NS_MNT]->root) {
 		initial[MOS_NS_MNT]->root = task->fs->root;
 		sb_get(task->fs->root);
+		vfs_namespace_track(initial[MOS_NS_MNT], task->fs->root);
 	}
 	task_fs *fs = ps_copy_fs(task->fs);
 	if (!fs)
@@ -252,6 +282,7 @@ static int ns_private_mount(task_struct *task, struct mos_namespace *ns)
 	fs->root = root;
 	ns->root = root;
 	sb_get(root);
+	vfs_namespace_track(ns, root);
 	ref_count_put(task->fs);
 	task->fs = fs;
 	return 0;
@@ -497,6 +528,7 @@ void ps_namespace_mount_root(super_block *root)
 	super_block *old = ns->root;
 	ns->root = root;
 	sb_get(root);
+	vfs_namespace_track(ns, root);
 	if (old)
 		sb_put(old);
 }

@@ -2505,7 +2505,7 @@ static void tty_dev_register(void)
 			 MKDEV(TTY_VC_MAJOR, 0), "tty", tty_active_open);
 	vfs_entry_device(devfs_entries(), "/console", S_IFCHR | 0600,
 			 MKDEV(TTY_AUX_MAJOR, 1), "tty", tty_console_open);
-	vfs_entry_device(devfs_entries(), "/tty", S_IFCHR | 0620,
+	vfs_entry_device(devfs_entries(), "/tty", S_IFCHR | 0666,
 			 MKDEV(TTY_AUX_MAJOR, 0), "tty", tty_controlling_open);
 }
 

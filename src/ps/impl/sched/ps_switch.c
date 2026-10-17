@@ -17,7 +17,6 @@
  */
 extern void ps_context_switch(uintptr_t *old_sp, uintptr_t new_sp,
 			      task_struct *prev);
-extern void ps_reap_dead_threads(void);
 
 void task_sched(void)
 {
@@ -30,7 +29,6 @@ void task_sched(void)
 	__atomic_fetch_add(&task_schedule_count, 1, __ATOMIC_RELAXED);
 
 	irq = int_intr_disable();
-	ps_reap_dead_threads();
 	spinlock_lock(&ps_lock, &lock_irq);
 	if (prev->sched->status == ps_running)
 		prev->sched->status = ps_ready;

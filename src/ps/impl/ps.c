@@ -116,6 +116,8 @@ void ps_set_parent_unsafe(task_struct *task, task_struct *parent)
 
 void ps_mark_dying_unsafe(task_struct *task)
 {
+	/* Terminal tasks cannot retain nodes in the scheduler timer tree. */
+	timer_disarm_unsafe(task);
 	if (task->sched->live_member) {
 		task->sched->live_member = 0;
 		task->thread->live_tasks--;

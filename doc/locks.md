@@ -4,9 +4,17 @@ Locking primitives are declared in `src/lib/lock.h` and implemented in
 `src/lib/impl/lock.c`.
 
 Kernel entry and return permit concurrent execution on multiple CPUs.
+Exited thread resources are destroyed by an independent kernel reaper task.
+The scheduler performs no resource destruction on an outgoing task stack.
 Subsystem locks protect shared state. The scheduler retains `ps_lock` through
-stack handoff and releases it on the incoming stack. TLB request publication
-uses a separate lock, and interrupt-masked spinlock waiters poll shootdowns.
+stack handoff and releases it on the incoming stack. Lock waiter selection and
+transition to a ready queue hold `ps_lock` while the enclosing wait lock is
+held. Timer, signal, and poll wakeups use the same scheduler lock when moving
+the task's queue entry. A task has at most one pending sleep deadline;
+rearming replaces its timer-tree node. Terminal-state publication removes
+the sleep timer before task resources can be released. TLB request
+publication uses a separate lock, and interrupt-masked spinlock waiters poll
+shootdowns.
 Address-space activation uses the same TLB lock and records the active CR3
 root in CPU-local state. User shootdowns target only online CPUs using that
 root; shared kernel mappings target all online CPUs. Scheduler switches,

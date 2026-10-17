@@ -252,8 +252,10 @@ static void ps_reap_group_thread(task_struct *task)
 }
 
 static list_entry dead_threads = { &dead_threads, &dead_threads };
+static task_struct *dead_reaper;
+static int dead_reaper_waiting;
 
-void ps_reap_dead_threads(void)
+static void ps_reap_dead_threads(void)
 {
 	int irq;
 	for (;;) {
@@ -277,6 +279,43 @@ void ps_reap_dead_threads(void)
 			return;
 		ps_reap_group_thread(task);
 	}
+}
+
+static void ps_notify_reaper_unsafe(void)
+{
+	if (dead_reaper && dead_reaper_waiting) {
+		dead_reaper_waiting = 0;
+		ps_put_to_ready_queue_unsafe(dead_reaper);
+	}
+}
+
+/* Resource destruction may block and must own an independent task context. */
+static void ps_dead_reaper(void *param)
+{
+	int irq;
+	(void)param;
+	for (;;) {
+		ps_reap_dead_threads();
+		spinlock_lock(&ps_lock, &irq);
+		if (list_is_empty(&dead_threads)) {
+			dead_reaper_waiting = 1;
+			ps_put_to_wait_queue_unsafe(current, NULL);
+			spinlock_unlock(&ps_lock, irq);
+			task_sched();
+		} else {
+			/* Retain stacks still active on a CPU or under enumeration. */
+			spinlock_unlock(&ps_lock, irq);
+			time_wait(1);
+		}
+	}
+}
+
+void ps_reaper_start(void)
+{
+	unsigned pid = ps_create(ps_dead_reaper, NULL, ps_normal, ps_kernel);
+	dead_reaper = ps_find_process(pid);
+	if (!dead_reaper)
+		DIE();
 }
 
 void ps_stop_terminated_task(void)
@@ -450,6 +489,7 @@ void do_exit(unsigned encoded_status)
 		cur->sched->status = ps_dying;
 		list_remove_entry(&cur->sched->ps_list);
 		list_insert_tail(&dead_threads, &cur->sched->ps_list);
+		ps_notify_reaper_unsafe();
 		spinlock_unlock(&ps_lock, irq);
 		task_sched();
 	}

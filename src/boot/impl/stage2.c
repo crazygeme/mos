@@ -79,6 +79,7 @@ void kmain_startup()
 			  ps_kernel);
 	}
 	dsr_start();
+	ps_reaper_start();
 	drivers_start_workers();
 	smp_start();
 

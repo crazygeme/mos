@@ -5,6 +5,9 @@
 #include <lib/lock.h>
 #include <macro.h>
 
+/* Serializes task queue membership with timer, signal and poll wakeups. */
+extern spinlock_t ps_lock;
+
 const lock_operations_t spinlock_guard_operations;
 const lock_operations_t mutex_guard_operations;
 const lock_operations_t rmutex_guard_operations;
@@ -86,13 +89,20 @@ static int lock_wake_one_unsafe(list_entry *wait_list)
 {
 	list_entry *entry;
 	task_struct *task;
+	int irq;
 
-	if (list_is_empty(wait_list))
+	/* Timer, signal and poll wakeups move ps_list under ps_lock. Keep
+	 * selection and the ready transition in the same critical section. */
+	spinlock_lock(&ps_lock, &irq);
+	if (list_is_empty(wait_list)) {
+		spinlock_unlock(&ps_lock, irq);
 		return 0;
+	}
 
-	entry = list_remove_head(wait_list);
+	entry = wait_list->next;
 	task = (container_of(entry, task_schedule, ps_list)->task);
-	ps_put_to_ready_queue(task);
+	ps_put_to_ready_queue_unsafe(task);
+	spinlock_unlock(&ps_lock, irq);
 	return 1;
 }
 

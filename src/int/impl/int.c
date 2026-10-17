@@ -158,7 +158,11 @@ void intr_handler(intr_frame *frame)
 	int special = smp_interrupt(frame);
 	if (special == 1)
 		return;
-	smp_check_stop();
+	/* A terminal task must complete an accepted PIC interrupt before its
+	 * stack can be abandoned. Otherwise the in-service IRQ blocks its line
+	 * and lower-priority devices indefinitely. */
+	if (!external)
+		smp_check_stop();
 	if (special == 2 || frame->vec_no == 0x20)
 		ps_account_tick(frame);
 	if (special == 2 && ps_enabled())
@@ -182,6 +186,7 @@ void intr_handler(intr_frame *frame)
 				fn(frame);
 		}
 		pic_end_of_interrupt(frame->vec_no);
+		smp_check_stop();
 	}
 
 	/*
@@ -216,7 +221,30 @@ void intr_syscall_handler(intr_frame *frame)
 
 static void handle_invalid_opcode(intr_frame *frame)
 {
-	sys_exit(-EFAULT);
+	if (!arch_interrupt_frame_is_user(frame)) {
+		klog("Kernel invalid opcode at %lx\n", frame->eip);
+		DIE();
+	}
+	struct signal_fault fault = {
+		.address = (uintptr_t)frame->eip,
+		.code = 2,
+		.trap = 6,
+	};
+	ps_fault_signal(frame, SIGILL, &fault);
+}
+
+static void handle_breakpoint(intr_frame *frame)
+{
+	if (!arch_interrupt_frame_is_user(frame)) {
+		klog("Kernel breakpoint at %lx\n", frame->eip);
+		DIE();
+	}
+	struct signal_fault fault = {
+		.address = (uintptr_t)frame->eip - 1,
+		.code = 128,
+		.trap = 3,
+	};
+	ps_fault_signal(frame, SIGTRAP, &fault);
 }
 
 static void handle_general_protection(intr_frame *frame)
@@ -260,8 +288,13 @@ static void handle_general_protection(intr_frame *frame)
 	     (unsigned)gdt[GDT_ENTRY_TLS_MIN + 1],
 	     (unsigned)(gdt[GDT_ENTRY_TLS_MIN + 2] >> 32),
 	     (unsigned)gdt[GDT_ENTRY_TLS_MIN + 2]);
-	/* Kill user tasks cleanly so userspace faults surface in krn.log. */
-	sys_exit(-EFAULT);
+	if (!arch_interrupt_frame_is_user(frame))
+		DIE();
+	struct signal_fault fault = {
+		.code = 128,
+		.trap = 13,
+	};
+	ps_fault_signal(frame, SIGSEGV, &fault);
 	return;
 }
 
@@ -277,6 +310,7 @@ void int_enable_all(void)
 		in_callbacks[i] = 0;
 	}
 	int_register(6, handle_invalid_opcode, 0, 3);
+	int_register(3, handle_breakpoint, 0, 3);
 	int_register(INT_VECTOR_PROTECTION, handle_general_protection, 0, 0);
 	ENABLE_INTR();
 }

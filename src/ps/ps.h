@@ -295,6 +295,7 @@ void ps_claim_signal_action(task_struct *task, int sig, struct sigaction *out);
 
 void ps_put_fds(task_struct *task);
 void ps_init();
+void ps_reaper_start(void);
 
 #define ps_create(fn, param, priority, type) \
 	_ps_create(fn, #fn, param, priority, type)

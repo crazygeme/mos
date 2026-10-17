@@ -77,6 +77,8 @@ static task_struct *ps_get_available_ready_task(list_entry *head)
  */
 void timer_arm_unsafe(task_struct *task, unsigned ms)
 {
+	/* Nested waits replace the task's single pending deadline. */
+	timer_disarm_unsafe(task);
 	struct rb_root *root = &control.timer_queue;
 	struct rb_node **link = &root->rb_node;
 	struct rb_node *parent = NULL;

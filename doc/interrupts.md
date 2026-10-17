@@ -2,6 +2,16 @@
 
 This document traces the complete lifecycle of an interrupt — from the moment the CPU recognizes it through every assembly and C layer, back to the `iret` that returns to user space. Stack diagrams are given for each stage.
 
+User invalid-opcode, breakpoint, and protection exceptions deliver SIGILL,
+SIGTRAP, and SIGSEGV respectively. Unhandled fatal signals terminate the
+thread group. Caught signals receive the fault address, signal code, and CPU
+trap number in the signal frame. These exceptions stop execution when raised
+in kernel mode.
+
+Accepted PIC interrupts run their registered callbacks and send the
+end-of-interrupt notification before checking whether the interrupted task
+must terminate. Task termination cannot abandon an in-service PIC request.
+
 ---
 
 ## 1. IDT Setup
@@ -22,10 +32,11 @@ _START static void setup_idt()
 
 All 256 entries are created as **interrupt gates** (type 14) with **DPL 0** (kernel only). Interrupt gates cause the CPU to clear IF (disable interrupts) automatically on entry.
 
-Two entries are updated later during kernel init:
+The following entries are configured during kernel initialization:
 
 | Vector | Gate type | DPL | Handler                 | When registered           |
 | ------ | --------- | --- | ----------------------- | ------------------------- |
+| `0x03` | interrupt | 3 | `handle_breakpoint` | `int.c` init |
 | `0x06` | interrupt | 3   | `handle_invalid_opcode` | `int.c` init              |
 | `0x0E` | interrupt | 0   | `pf_process`            | `pagefault.c` init        |
 | `0x80` | **trap**  | 3   | `syscall_process`       | `syscall.c` KERNEL_INIT 7 |

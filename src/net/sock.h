@@ -48,6 +48,7 @@ int sock_wait(mos_sock *sk, unsigned long long deadline);
 ssize_t sock_recvmsg_file_iov(file *fp, const struct iovec *iov, int count);
 ssize_t sock_sendmsg_file_iov(file *fp, const struct iovec *iov, int count);
 int sock_to_fd(mos_sock *sk);
+mos_sock *sock_io_begin(int fd, struct file_io_scope *scope);
 mos_sock *fd_to_sock(int fd);
 
 /* ── lwIP callback helpers (sock_cb.c) ──────────────────────────────────── */

@@ -40,7 +40,11 @@ void fs_posix_lock_release(file *fp, unsigned tgid) { (void)fp; (void)tgid; }
 void inotify_file_close(file *fp) { (void)fp; }
 void sb_put(super_block *sb) { (void)sb; }
 void ps_put_to_ready_queue(task_struct *t) { (void)t; }
-struct file_io_scope { file *fp; list_entry list; };
+typedef struct { int marker; } mos_sock;
+struct msghdr;
+mos_sock *sock_io_begin(int, struct file_io_scope *);
+static int sock_sendmsg_file(file *, int, const struct msghdr *, int);
+static int sock_recvmsg_file(file *, int, struct msghdr *, int);
 @@FUNCTIONS@@
 static int release(file *fp) {
     assert(!files.lock.held);
@@ -83,6 +87,22 @@ static file *install(void) {
     fp->f_count = 1; fp->f_fop = &ops;
     assert(!files.fds[7]); files.fds[7] = fp;
     return fp;
+}
+static int socket_callback(file *fp, int fd) {
+    assert(fp && fp->f_count == 2 && !files.lock.held);
+    assert(!fs_close(fd));
+    assert(fp->f_count == 1);
+    mos_sock *sk = fp->f_inode->i_private;
+    assert(sk->marker == 37);
+    return 23;
+}
+static int sock_sendmsg_file(file *fp, int fd, const struct msghdr *msg, int flags) {
+    (void)msg; (void)flags;
+    return socket_callback(fp, fd);
+}
+static int sock_recvmsg_file(file *fp, int fd, struct msghdr *msg, int flags) {
+    (void)msg; (void)flags;
+    return socket_callback(fp, fd);
 }
 int main(void) {
     unsigned long cloexec[FD_BITMAP_WORDS] = {0};
@@ -131,6 +151,15 @@ int main(void) {
     assert(releases == 7 && list_is_empty(&task.wait->io_files));
     fs_io_end(&scope); /* Cancellation detached and released it exactly once. */
     assert(releases == 7);
+    inode node = { .i_mode = S_IFSOCK };
+    mos_sock sk = { .marker = 37 };
+    node.i_private = &sk;
+    fp = install(); fp->f_inode = &node;
+    assert(do_sendmsg(7, NULL, 0) == 23);
+    assert(releases == 8 && list_is_empty(&task.wait->io_files));
+    fp = install(); fp->f_inode = &node;
+    assert(do_recvmsg(7, NULL, 0) == 23);
+    assert(releases == 9 && list_is_empty(&task.wait->io_files));
     puts("Descriptor callback lock order and lifetime checks: PASS");
     return 0;
 }
@@ -140,8 +169,8 @@ int main(void) {
 def main():
     source = (ROOT / 'src/fs/impl/fs.c').read_text()
     signatures = (
-        'static int fs_find_empty_fd(', 'static file *fs_io_begin(',
-        'static void fs_io_end(', 'void fs_cancel_io(',
+        'static int fs_find_empty_fd(', 'file *fs_io_begin(',
+        'void fs_io_end(', 'void fs_cancel_io(',
         'int fs_install_fd_unsafe(', 'int fs_install_fd(', 'int fs_close(',
         'int fs_put_file(', 'void poll_table_init(', 'void poll_table_cleanup(',
         'static void poll_table_cancel(', 'int poll_table_add(',
@@ -155,8 +184,13 @@ def main():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
         probe = work / 'probe.c'
-        probe.write_text(PROBE.replace('@@FUNCTIONS@@', '\n'.join(
-            function(source, signature) for signature in signatures)))
+        functions = [function(source, signature) for signature in signatures]
+        functions.append(function((ROOT / 'src/net/impl/sock.c').read_text(),
+                                  'mos_sock *sock_io_begin('))
+        messages = (ROOT / 'src/net/impl/sock_msg.c').read_text()
+        functions.extend(function(messages, signature) for signature in
+                         ('int do_sendmsg(', 'int do_recvmsg('))
+        probe.write_text(PROBE.replace('@@FUNCTIONS@@', '\n'.join(functions)))
         executable = work / 'probe'
         subprocess.run([
             os.environ.get('CC', 'cc'), '-std=gnu11', '-O1', '-g',

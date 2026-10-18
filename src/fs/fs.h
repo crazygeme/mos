@@ -354,7 +354,15 @@ int fs_fchmod(int fd, uint32_t mode);
 
 int fs_put_file(file *f);
 
-/* Increment file reference count (analogous to Linux get_file()) */
+/* Active callbacks retain descriptions independently of descriptor closure. */
+struct file_io_scope {
+	file *fp;
+	list_entry list;
+};
+file *fs_io_begin(int fd, struct file_io_scope *scope);
+void fs_io_end(struct file_io_scope *scope);
+
+/* Increment the open file description reference count. */
 #define fs_get_file(f) __sync_add_and_fetch(&(((file *)f)->f_count), 1)
 
 int fs_file_readonly(file *fp);

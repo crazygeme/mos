@@ -81,19 +81,13 @@ static int fs_find_empty_fd(file **fds)
 	return -1;
 }
 
-/* Active transfers retain descriptions independently of descriptor closure. */
-struct file_io_scope {
-	file *fp;
-	list_entry list;
-};
-
 int fs_file_readonly(file *fp)
 {
 	return fp &&
 	       ((fp->f_sb ? fp->f_sb->s_flags : fp->f_mount_flags) & MS_RDONLY);
 }
 
-static file *fs_io_begin(int fd, struct file_io_scope *scope)
+file *fs_io_begin(int fd, struct file_io_scope *scope)
 {
 	task_struct *cur = CURRENT_TASK();
 	file *fp;
@@ -112,8 +106,10 @@ static file *fs_io_begin(int fd, struct file_io_scope *scope)
 	return fp;
 }
 
-static void fs_io_end(struct file_io_scope *scope)
+void fs_io_end(struct file_io_scope *scope)
 {
+	if (!scope->fp)
+		return;
 	list_remove_entry(&scope->list);
 	list_init(&scope->list);
 	file *fp = scope->fp;

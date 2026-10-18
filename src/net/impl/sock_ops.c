@@ -168,11 +168,12 @@ int do_socket(int domain, int type, int protocol)
 
 int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("bind(fd=%d, addr=%x, addrlen=%u)\n", fd, addr, addrlen);
 
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->domain == AF_NETLINK)
@@ -212,12 +213,13 @@ int do_bind(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("connect(fd=%d, addr=%x, addrlen=%u)\n", fd, addr,
 		     addrlen);
 
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->domain == AF_NETLINK) {
@@ -279,7 +281,7 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 	while (sk->state == SS_CONNECTING) {
 		if (sk->err)
 			return sk->err;
-		if (CURRENT_TASK()->files->fds[fd]->f_flag & O_NONBLOCK)
+		if (scope.fp->f_flag & O_NONBLOCK)
 			return -EINPROGRESS;
 		if (sock_deadline_expired(deadline))
 			return -EINPROGRESS;
@@ -298,11 +300,12 @@ int do_connect(int fd, const struct sockaddr *addr, unsigned addrlen)
 
 int do_listen(int fd, int backlog)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("listen(fd=%d, backlog=%d)\n", fd, backlog);
 
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->domain == AF_UNIX)
@@ -329,17 +332,16 @@ int do_listen(int fd, int backlog)
 
 int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("accept(fd=%d, addr=%x, addrlen=%x)\n", fd, addr, addrlen);
 
-	mos_sock *sk = fd_to_sock(fd);
-	task_struct *cur = CURRENT_TASK();
 	int nonblock;
 	if (!sk)
 		return -ENOTSOCK;
-	nonblock = cur->files->fds[fd] &&
-		   (cur->files->fds[fd]->f_flag & O_NONBLOCK) != 0;
+	nonblock = (scope.fp->f_flag & O_NONBLOCK) != 0;
 	if (sk->domain == AF_UNIX)
 		return unix_accept(sk, addr, addrlen, nonblock);
 	if (sk->type != SOCK_STREAM)
@@ -386,12 +388,13 @@ int do_accept(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getsockname(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
 
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->domain == AF_NETLINK)
@@ -410,12 +413,13 @@ int do_getsockname(int fd, struct sockaddr *addr, unsigned *addrlen)
 
 int do_getpeername(int fd, struct sockaddr *addr, unsigned *addrlen)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("getpeername(fd=%d, addr=%x, addrlen=%x)\n", fd, addr,
 		     addrlen);
 
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 	if (sk->state != SS_CONNECTED && sk->state != SS_DISCONNECTING)
@@ -439,17 +443,9 @@ int do_send(int fd, const void *buf, unsigned len, int flags)
 		klog("send(fd=%d, buf=%x, len=%u, flags=%d)\n", fd, buf, len,
 		     flags);
 
-	(void)flags;
-	mos_sock *sk = fd_to_sock(fd);
-	if (!sk)
-		return -ENOTSOCK;
-	if (sk->domain == AF_UNIX &&
-	    (sk->type == SOCK_SEQPACKET || sk->type == SOCK_DGRAM))
-		return do_sendto(fd, buf, len, flags, NULL, 0);
-	loff_t pos = 0;
-	task_struct *cur = CURRENT_TASK();
-	return (int)cur->files->fds[fd]->f_fop->write(cur->files->fds[fd], buf,
-						      (size_t)len, &pos);
+	struct iovec iov = { .iov_base = (void *)buf, .iov_len = len };
+	struct msghdr msg = { .msg_iov = &iov, .msg_iovlen = 1 };
+	return do_sendmsg(fd, &msg, flags);
 }
 
 int do_recv(int fd, void *buf, unsigned len, int flags)
@@ -466,7 +462,8 @@ int do_recv(int fd, void *buf, unsigned len, int flags)
 int do_sendto(int fd, const void *buf, unsigned len, int flags,
 	      const struct sockaddr_in *to, unsigned tolen)
 {
-	mos_sock *sk = fd_to_sock(fd);
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD((sk && sk->domain != AF_UNIX) ? &net_core_lock :
 						   &net_local_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
@@ -494,16 +491,14 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 				      .msg_iovlen = 1,
 				      .msg_name = (void *)to,
 				      .msg_namelen = tolen };
-		if (CURRENT_TASK()->files->fds[fd]->f_flag & O_NONBLOCK)
+		if (scope.fp->f_flag & O_NONBLOCK)
 			flags |= MSG_DONTWAIT;
 		return unix_sendmsg(sk, &msg, flags);
 	}
 
 	if (sk->type == SOCK_STREAM) {
 		loff_t pos = 0;
-		task_struct *cur = CURRENT_TASK();
-		return (int)cur->files->fds[fd]->f_fop->write(
-			cur->files->fds[fd], buf, len, &pos);
+		return (int)scope.fp->f_fop->write(scope.fp, buf, len, &pos);
 	}
 
 	if (sk->type == SOCK_RAW) {
@@ -539,17 +534,17 @@ int do_sendto(int fd, const void *buf, unsigned len, int flags,
 int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 		struct sockaddr_in *from, unsigned *fromlen)
 {
-	mos_sock *sk = fd_to_sock(fd);
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD((sk && sk->domain != AF_UNIX) ? &net_core_lock :
 						   &net_local_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("recvfrom(fd=%d, buf=%x, len=%u, flags=%d, from=%x, fromlen=%x)\n",
 		     fd, buf, len, flags, from, fromlen);
 
-	task_struct *cur = CURRENT_TASK();
 	if (!sk)
 		return -ENOTSOCK;
-	if (cur->files->fds[fd] && (cur->files->fds[fd]->f_flag & O_NONBLOCK))
+	if (scope.fp->f_flag & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;
 	if (sk->domain == AF_NETLINK) {
 		struct iovec iov = { .iov_base = buf, .iov_len = len };
@@ -645,11 +640,12 @@ int do_recvfrom(int fd, void *buf, unsigned len, int flags,
 
 int do_shutdown(int fd, int how)
 {
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	mos_sock *sk = sock_io_begin(fd, &scope);
 	LOCK_GUARD(&net_core_lock);
 	if (TEST_LOG(TEST_LOG_INFO))
 		klog("shutdown(fd=%d, how=%d)\n", fd, how);
 
-	mos_sock *sk = fd_to_sock(fd);
 	if (!sk)
 		return -ENOTSOCK;
 

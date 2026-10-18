@@ -390,7 +390,8 @@ log:
 
 int do_sendmsg(int fd, const struct msghdr *msg, int flags)
 {
-	file *fp = fd_to_sock(fd) ? CURRENT_TASK()->files->fds[fd] : NULL;
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	file *fp = sock_io_begin(fd, &scope) ? scope.fp : NULL;
 	return sock_sendmsg_file(fp, fd, msg, flags);
 }
 
@@ -485,7 +486,8 @@ done:
 
 int do_recvmsg(int fd, struct msghdr *msg, int flags)
 {
-	file *fp = fd_to_sock(fd) ? CURRENT_TASK()->files->fds[fd] : NULL;
+	struct file_io_scope scope __attribute__((cleanup(fs_io_end))) = { 0 };
+	file *fp = sock_io_begin(fd, &scope) ? scope.fp : NULL;
 	return sock_recvmsg_file(fp, fd, msg, flags);
 }
 

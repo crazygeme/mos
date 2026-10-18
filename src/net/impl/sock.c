@@ -1201,6 +1201,14 @@ int sock_to_fd(mos_sock *sk)
 	return fd;
 }
 
+mos_sock *sock_io_begin(int fd, struct file_io_scope *scope)
+{
+	file *fp = fs_io_begin(fd, scope);
+	if (!fp || !fp->f_inode || !S_ISSOCK(fp->f_inode->i_mode))
+		return NULL;
+	return fp->f_inode->i_private;
+}
+
 mos_sock *fd_to_sock(int fd)
 {
 	task_struct *cur = CURRENT_TASK();
